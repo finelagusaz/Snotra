@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /c/workspace/Snotra log --oneline)",
+      "Bash(grep:*)"
+    ]
+  }
+}

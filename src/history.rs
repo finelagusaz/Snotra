@@ -52,6 +52,7 @@ impl HistoryStore {
         // Write to temp file then rename for atomicity
         let tmp_path = path.with_extension("bin.tmp");
         if fs::write(&tmp_path, &bytes).is_ok() {
+            let _ = fs::remove_file(&path);
             let _ = fs::rename(&tmp_path, &path);
         }
     }

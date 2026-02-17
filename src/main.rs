@@ -26,6 +26,8 @@ fn main() {
     }
 
     let mut config = config::Config::load();
+    config.appearance.max_history_display =
+        config.appearance.max_history_display.min(config.appearance.max_results);
 
     // Index applications
     let entries = indexer::scan_all(&config.paths.additional);

@@ -31,7 +31,7 @@ pub struct WindowState {
     pub results: Vec<SearchResult>,
     pub selected: usize,
     pub on_query_changed: Option<Box<dyn Fn(&str) -> Vec<SearchResult>>>,
-    pub on_launch: Option<Box<dyn Fn(&SearchResult)>>,
+    pub on_launch: Option<Box<dyn Fn(&SearchResult, &str)>>,
     pub edit_hwnd: HWND,
 }
 
@@ -210,17 +210,16 @@ unsafe extern "system" fn wnd_proc(
 fn handle_query_changed(hwnd: HWND) {
     with_state(|state| {
         let len = unsafe { GetWindowTextLengthW(state.edit_hwnd) } as usize;
-        if len == 0 {
-            state.results.clear();
-            state.selected = 0;
-        } else {
+        let query = if len > 0 {
             let mut buf = vec![0u16; len + 1];
             unsafe { GetWindowTextW(state.edit_hwnd, &mut buf) };
-            let query = String::from_utf16_lossy(&buf[..len]);
-            if let Some(ref on_query) = state.on_query_changed {
-                state.results = on_query(&query);
-                state.selected = 0;
-            }
+            String::from_utf16_lossy(&buf[..len])
+        } else {
+            String::new()
+        };
+        if let Some(ref on_query) = state.on_query_changed {
+            state.results = on_query(&query);
+            state.selected = 0;
         }
     });
     unsafe {
@@ -342,7 +341,17 @@ pub fn handle_edit_keydown(hwnd: HWND, vk: u32) -> bool {
             with_state(|state| {
                 if let Some(result) = state.results.get(state.selected) {
                     if let Some(ref on_launch) = state.on_launch {
-                        on_launch(result);
+                        // Read current query from the edit control
+                        let len =
+                            unsafe { GetWindowTextLengthW(state.edit_hwnd) } as usize;
+                        let query = if len > 0 {
+                            let mut buf = vec![0u16; len + 1];
+                            unsafe { GetWindowTextW(state.edit_hwnd, &mut buf) };
+                            String::from_utf16_lossy(&buf[..len])
+                        } else {
+                            String::new()
+                        };
+                        on_launch(result, &query);
                     }
                 }
             });

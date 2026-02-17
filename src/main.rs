@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod config;
+mod history;
 mod hotkey;
 mod indexer;
 mod launcher;
@@ -8,6 +9,7 @@ mod search;
 mod tray;
 mod window;
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use windows::Win32::Foundation::{HWND, LPARAM};
@@ -29,6 +31,13 @@ fn main() {
     let entries = indexer::scan_all(&config.paths.additional);
     let engine = Rc::new(SearchEngine::new(entries));
     let max_results = config.appearance.max_results;
+    let max_history_display = config.appearance.max_history_display;
+
+    // Load history
+    let history = Rc::new(RefCell::new(history::HistoryStore::load(
+        config.appearance.top_n_history,
+        config.appearance.max_history_display,
+    )));
 
     // Create search window
     let search_hwnd = window::create_search_window(
@@ -41,14 +50,24 @@ fn main() {
 
     // Set up callbacks
     let engine_for_search = engine.clone();
+    let history_for_search = history.clone();
+    let history_for_launch = history.clone();
     window::set_window_state(window::WindowState {
         results: Vec::new(),
         selected: 0,
         on_query_changed: Some(Box::new(move |query| {
-            engine_for_search.search(query, max_results)
+            let hist = history_for_search.borrow();
+            if query.is_empty() {
+                engine_for_search.recent_history(&hist, max_history_display)
+            } else {
+                engine_for_search.search(query, max_results, &hist)
+            }
         })),
-        on_launch: Some(Box::new(|result| {
+        on_launch: Some(Box::new(move |result, query| {
             launcher::launch(&result.path);
+            history_for_launch
+                .borrow_mut()
+                .record_launch(&result.path, query);
         })),
         edit_hwnd: get_edit_hwnd(search_hwnd),
     });

@@ -16,6 +16,7 @@ windows = { version = "0.58", features = [
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }
 fuzzy-matcher = "0.3"
+bincode = "1"
 dirs = "5"
 
 [profile.release]

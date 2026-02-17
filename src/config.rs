@@ -15,10 +15,22 @@ pub struct HotkeyConfig {
     pub key: String,
 }
 
+fn default_top_n_history() -> usize {
+    200
+}
+
+fn default_max_history_display() -> usize {
+    8
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AppearanceConfig {
     pub max_results: usize,
     pub window_width: u32,
+    #[serde(default = "default_top_n_history")]
+    pub top_n_history: usize,
+    #[serde(default = "default_max_history_display")]
+    pub max_history_display: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -36,6 +48,8 @@ impl Default for Config {
             appearance: AppearanceConfig {
                 max_results: 8,
                 window_width: 600,
+                top_n_history: 200,
+                max_history_display: 8,
             },
             paths: PathsConfig {
                 additional: Vec::new(),

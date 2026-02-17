@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use windows::core::{w, PCWSTR, PWSTR};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::HBRUSH;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
@@ -10,7 +10,7 @@ use windows::Win32::UI::Controls::{
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use crate::config::{Config, ScanPath, SearchModeConfig};
+use crate::config::{Config, ScanPath, SearchModeConfig, ThemePreset};
 
 const IDC_TAB: i32 = 2000;
 const IDC_SAVE: i32 = 2001;
@@ -19,12 +19,12 @@ const IDC_STATUS: i32 = 2003;
 
 const IDC_HOTKEY_MODIFIER: i32 = 2100;
 const IDC_HOTKEY_KEY: i32 = 2101;
-const IDC_UNSUPPORTED_GENERAL_1: i32 = 2110;
-const IDC_UNSUPPORTED_GENERAL_2: i32 = 2111;
-const IDC_UNSUPPORTED_GENERAL_3: i32 = 2112;
-const IDC_UNSUPPORTED_GENERAL_4: i32 = 2113;
-const IDC_UNSUPPORTED_GENERAL_5: i32 = 2114;
-const IDC_UNSUPPORTED_GENERAL_6: i32 = 2115;
+const IDC_GENERAL_HOTKEY_TOGGLE: i32 = 2110;
+const IDC_GENERAL_SHOW_ON_STARTUP: i32 = 2111;
+const IDC_GENERAL_AUTO_HIDE: i32 = 2112;
+const IDC_GENERAL_SHOW_TRAY: i32 = 2113;
+const IDC_GENERAL_IME_OFF: i32 = 2114;
+const IDC_GENERAL_TITLE_BAR: i32 = 2115;
 
 const IDC_SEARCH_NORMAL_MODE: i32 = 2200;
 const IDC_SEARCH_FOLDER_MODE: i32 = 2201;
@@ -42,8 +42,19 @@ const IDC_SCAN_DELETE: i32 = 2306;
 const IDC_TOP_N_HISTORY: i32 = 2307;
 const IDC_SHOW_ICONS: i32 = 2308;
 const IDC_REBUILD: i32 = 2309;
+const REBUILD_SPINNER_TIMER_ID: usize = 1;
+const REBUILD_SPINNER_INTERVAL_MS: u32 = 120;
+const SPINNER_FRAMES: [char; 4] = ['|', '/', '-', '\\'];
 
-const IDC_VISUAL_NOTE: i32 = 2400;
+const IDC_VISUAL_PRESET: i32 = 2400;
+const IDC_VISUAL_BG: i32 = 2401;
+const IDC_VISUAL_INPUT_BG: i32 = 2402;
+const IDC_VISUAL_TEXT: i32 = 2403;
+const IDC_VISUAL_SELECTED: i32 = 2404;
+const IDC_VISUAL_HINT: i32 = 2405;
+const IDC_VISUAL_FONT_FAMILY: i32 = 2406;
+const IDC_VISUAL_FONT_SIZE: i32 = 2407;
+
 const IDC_LABEL_GENERAL_MODIFIER: i32 = 2500;
 const IDC_LABEL_GENERAL_KEY: i32 = 2501;
 const IDC_LABEL_SEARCH_NORMAL: i32 = 2510;
@@ -54,6 +65,14 @@ const IDC_LABEL_INDEX_LIST: i32 = 2520;
 const IDC_LABEL_INDEX_PATH: i32 = 2521;
 const IDC_LABEL_INDEX_EXT: i32 = 2522;
 const IDC_LABEL_INDEX_TOP_N: i32 = 2523;
+const IDC_LABEL_VISUAL_PRESET: i32 = 2530;
+const IDC_LABEL_VISUAL_BG: i32 = 2531;
+const IDC_LABEL_VISUAL_INPUT_BG: i32 = 2532;
+const IDC_LABEL_VISUAL_TEXT: i32 = 2533;
+const IDC_LABEL_VISUAL_SELECTED: i32 = 2534;
+const IDC_LABEL_VISUAL_HINT: i32 = 2535;
+const IDC_LABEL_VISUAL_FONT_FAMILY: i32 = 2536;
+const IDC_LABEL_VISUAL_FONT_SIZE: i32 = 2537;
 
 thread_local! {
     static SETTINGS_STATE: RefCell<Option<SettingsState>> = const { RefCell::new(None) };
@@ -78,7 +97,10 @@ struct PendingOpen {
 struct SettingsState {
     hwnd: HWND,
     config: Config,
+    initial_config: Config,
     hooks: SettingsHooks,
+    rebuild_in_progress: bool,
+    spinner_index: usize,
 }
 
 pub fn open_or_focus(config: Config, hooks: SettingsHooks) {
@@ -113,14 +135,15 @@ pub fn open_or_focus(config: Config, hooks: SettingsHooks) {
             ..Default::default()
         };
         let _ = RegisterClassExW(&wc);
+        let placement = crate::window_data::load_settings_placement();
 
         let hwnd = CreateWindowExW(
             WS_EX_DLGMODALFRAME,
             class_name,
             w!("Snotra 設定"),
             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
+            placement.map(|p| p.x).unwrap_or(CW_USEDEFAULT),
+            placement.map(|p| p.y).unwrap_or(CW_USEDEFAULT),
             760,
             560,
             HWND::default(),
@@ -132,14 +155,6 @@ pub fn open_or_focus(config: Config, hooks: SettingsHooks) {
             let _ = ShowWindow(hwnd, SW_SHOW);
         }
     }
-}
-
-pub fn set_status_text(text: &str) {
-    SETTINGS_STATE.with(|s| {
-        if let Some(state) = s.borrow().as_ref() {
-            set_control_text(state.hwnd, IDC_STATUS, text);
-        }
-    });
 }
 
 fn existing_window() -> Option<HWND> {
@@ -166,8 +181,11 @@ unsafe extern "system" fn settings_wnd_proc(
             create_controls(hwnd);
             let mut state = SettingsState {
                 hwnd,
-                config: pending.config,
+                config: pending.config.clone(),
+                initial_config: pending.config,
                 hooks: pending.hooks,
+                rebuild_in_progress: false,
+                spinner_index: 0,
             };
             fill_controls_from_config(&mut state);
             show_tab(hwnd, 0);
@@ -192,15 +210,37 @@ unsafe extern "system" fn settings_wnd_proc(
             handle_command(hwnd, id, notify);
             LRESULT(0)
         }
+        WM_TIMER => {
+            let timer_id = wparam.0;
+            if timer_id == REBUILD_SPINNER_TIMER_ID {
+                tick_rebuild_spinner(hwnd);
+            }
+            LRESULT(0)
+        }
         WM_CLOSE => {
+            persist_settings_placement(hwnd);
             let _ = DestroyWindow(hwnd);
             LRESULT(0)
         }
         WM_DESTROY => {
+            persist_settings_placement(hwnd);
+            let _ = KillTimer(hwnd, REBUILD_SPINNER_TIMER_ID);
             SETTINGS_STATE.with(|s| *s.borrow_mut() = None);
             LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+fn persist_settings_placement(hwnd: HWND) {
+    unsafe {
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_ok() {
+            crate::window_data::save_settings_placement(crate::window_data::WindowPlacement {
+                x: rect.left,
+                y: rect.top,
+            });
+        }
     }
 }
 
@@ -255,63 +295,63 @@ fn create_controls(hwnd: HWND) {
 
         create_checkbox(
             hwnd,
-            "呼び出しキーで表示/非表示トグル (Phase 6)",
+            "呼び出しキーで表示/非表示トグル",
             30,
             100,
             360,
             22,
-            IDC_UNSUPPORTED_GENERAL_1,
-            false,
+            IDC_GENERAL_HOTKEY_TOGGLE,
+            true,
         );
         create_checkbox(
             hwnd,
-            "起動時にウィンドウ表示 (Phase 6)",
+            "起動時にウィンドウ表示",
             30,
             126,
             300,
             22,
-            IDC_UNSUPPORTED_GENERAL_2,
-            false,
+            IDC_GENERAL_SHOW_ON_STARTUP,
+            true,
         );
         create_checkbox(
             hwnd,
-            "フォーカス喪失時の自動非表示 (Phase 6)",
+            "フォーカス喪失時の自動非表示",
             30,
             152,
             340,
             22,
-            IDC_UNSUPPORTED_GENERAL_3,
-            false,
+            IDC_GENERAL_AUTO_HIDE,
+            true,
         );
         create_checkbox(
             hwnd,
-            "タスクトレイアイコン表示切替 (Phase 6)",
+            "タスクトレイアイコン表示",
             30,
             178,
             340,
             22,
-            IDC_UNSUPPORTED_GENERAL_4,
-            false,
+            IDC_GENERAL_SHOW_TRAY,
+            true,
         );
         create_checkbox(
             hwnd,
-            "IME をオフにする (Phase 6)",
+            "IME をオフにする",
             30,
             204,
             280,
             22,
-            IDC_UNSUPPORTED_GENERAL_5,
-            false,
+            IDC_GENERAL_IME_OFF,
+            true,
         );
         create_checkbox(
             hwnd,
-            "タイトルバー表示切替 (Phase 6)",
+            "タイトルバー表示",
             30,
             230,
             280,
             22,
-            IDC_UNSUPPORTED_GENERAL_6,
-            false,
+            IDC_GENERAL_TITLE_BAR,
+            true,
         );
 
         create_static(
@@ -324,6 +364,7 @@ fn create_controls(hwnd: HWND) {
             IDC_LABEL_SEARCH_NORMAL,
         );
         create_combo(hwnd, 190, 58, 180, 200, IDC_SEARCH_NORMAL_MODE);
+        fill_search_mode_combo(hwnd, IDC_SEARCH_NORMAL_MODE);
         create_static(
             hwnd,
             "フォルダ展開時検索方式:",
@@ -334,6 +375,7 @@ fn create_controls(hwnd: HWND) {
             IDC_LABEL_SEARCH_FOLDER,
         );
         create_combo(hwnd, 560, 58, 150, 200, IDC_SEARCH_FOLDER_MODE);
+        fill_search_mode_combo(hwnd, IDC_SEARCH_FOLDER_MODE);
 
         create_static(
             hwnd,
@@ -425,25 +467,90 @@ fn create_controls(hwnd: HWND) {
 
         create_static(
             hwnd,
-            "ビジュアル設定は Phase 6 で有効化予定です。",
+            "プリセット:",
             30,
             60,
-            360,
-            24,
-            IDC_VISUAL_NOTE,
+            100,
+            20,
+            IDC_LABEL_VISUAL_PRESET,
         );
+        create_combo(hwnd, 150, 58, 180, 200, IDC_VISUAL_PRESET);
+        create_static(
+            hwnd,
+            "背景色 (#RRGGBB):",
+            30,
+            96,
+            120,
+            20,
+            IDC_LABEL_VISUAL_BG,
+        );
+        create_edit(hwnd, "", 150, 94, 120, 24, IDC_VISUAL_BG);
+        create_static(
+            hwnd,
+            "入力背景色:",
+            290,
+            96,
+            90,
+            20,
+            IDC_LABEL_VISUAL_INPUT_BG,
+        );
+        create_edit(hwnd, "", 390, 94, 120, 24, IDC_VISUAL_INPUT_BG);
+        create_static(
+            hwnd,
+            "文字色:",
+            30,
+            126,
+            120,
+            20,
+            IDC_LABEL_VISUAL_TEXT,
+        );
+        create_edit(hwnd, "", 150, 124, 120, 24, IDC_VISUAL_TEXT);
+        create_static(
+            hwnd,
+            "選択行色:",
+            290,
+            126,
+            90,
+            20,
+            IDC_LABEL_VISUAL_SELECTED,
+        );
+        create_edit(hwnd, "", 390, 124, 120, 24, IDC_VISUAL_SELECTED);
+        create_static(
+            hwnd,
+            "ヒント文字色:",
+            30,
+            156,
+            120,
+            20,
+            IDC_LABEL_VISUAL_HINT,
+        );
+        create_edit(hwnd, "", 150, 154, 120, 24, IDC_VISUAL_HINT);
+        create_static(
+            hwnd,
+            "フォント:",
+            30,
+            190,
+            120,
+            20,
+            IDC_LABEL_VISUAL_FONT_FAMILY,
+        );
+        create_edit(hwnd, "", 150, 188, 220, 24, IDC_VISUAL_FONT_FAMILY);
+        create_static(
+            hwnd,
+            "サイズ:",
+            390,
+            190,
+            60,
+            20,
+            IDC_LABEL_VISUAL_FONT_SIZE,
+        );
+        create_edit(hwnd, "", 450, 188, 60, 24, IDC_VISUAL_FONT_SIZE);
 
         create_button(hwnd, "保存", 500, 474, 100, 30, IDC_SAVE);
         create_button(hwnd, "閉じる", 610, 474, 100, 30, IDC_CANCEL);
         create_static(hwnd, "", 20, 478, 460, 24, IDC_STATUS);
 
-        disable_control(hwnd, IDC_UNSUPPORTED_GENERAL_1);
-        disable_control(hwnd, IDC_UNSUPPORTED_GENERAL_2);
-        disable_control(hwnd, IDC_UNSUPPORTED_GENERAL_3);
-        disable_control(hwnd, IDC_UNSUPPORTED_GENERAL_4);
-        disable_control(hwnd, IDC_UNSUPPORTED_GENERAL_5);
-        disable_control(hwnd, IDC_UNSUPPORTED_GENERAL_6);
-        disable_control(hwnd, IDC_VISUAL_NOTE);
+        fill_preset_combo(hwnd);
     }
 }
 
@@ -527,9 +634,7 @@ fn create_combo(hwnd: HWND, x: i32, y: i32, w: i32, h: i32, id: i32) {
             None,
         )
         .unwrap_or_default();
-        combo_add(combo, "prefix");
-        combo_add(combo, "substring");
-        combo_add(combo, "fuzzy");
+        let _ = combo;
     }
 }
 
@@ -605,11 +710,65 @@ fn create_listbox(hwnd: HWND, x: i32, y: i32, w: i32, h: i32, id: i32) {
     }
 }
 
-fn disable_control(hwnd: HWND, id: i32) {
+fn set_control_enabled(hwnd: HWND, id: i32, enabled: bool) {
     unsafe {
         let ctrl = GetDlgItem(hwnd, id).unwrap_or_default();
-        let _ = SendMessageW(ctrl, WM_ENABLE, WPARAM(0), LPARAM(0));
+        let _ = SendMessageW(ctrl, WM_ENABLE, WPARAM(if enabled { 1 } else { 0 }), LPARAM(0));
     }
+}
+
+fn set_rebuild_controls_enabled(hwnd: HWND, enabled: bool) {
+    set_control_enabled(hwnd, IDC_SAVE, enabled);
+    set_control_enabled(hwnd, IDC_REBUILD, enabled);
+    set_control_enabled(hwnd, IDC_SCAN_ADD, enabled);
+    set_control_enabled(hwnd, IDC_SCAN_UPDATE, enabled);
+    set_control_enabled(hwnd, IDC_SCAN_DELETE, enabled);
+}
+
+fn begin_rebuild_ui_state(state: &mut SettingsState) {
+    if state.rebuild_in_progress {
+        return;
+    }
+    state.rebuild_in_progress = true;
+    state.spinner_index = 0;
+    let hwnd = state.hwnd;
+    set_rebuild_controls_enabled(hwnd, false);
+    unsafe {
+        let _ = SetTimer(
+            hwnd,
+            REBUILD_SPINNER_TIMER_ID,
+            REBUILD_SPINNER_INTERVAL_MS,
+            None,
+        );
+    }
+    set_control_text(hwnd, IDC_STATUS, "インデックス再構築中... |");
+}
+
+fn tick_rebuild_spinner(hwnd: HWND) {
+    SETTINGS_STATE.with(|cell| {
+        let mut binding = cell.borrow_mut();
+        let Some(state) = binding.as_mut() else {
+            return;
+        };
+        if !state.rebuild_in_progress {
+            return;
+        }
+        state.spinner_index = (state.spinner_index + 1) % SPINNER_FRAMES.len();
+        let frame = SPINNER_FRAMES[state.spinner_index];
+        let text = format!("インデックス再構築中... {}", frame);
+        set_control_text(hwnd, IDC_STATUS, &text);
+    });
+}
+
+fn end_rebuild_ui_state(state: &mut SettingsState, text: &str) {
+    state.rebuild_in_progress = false;
+    state.spinner_index = 0;
+    let hwnd = state.hwnd;
+    unsafe {
+        let _ = KillTimer(hwnd, REBUILD_SPINNER_TIMER_ID);
+    }
+    set_rebuild_controls_enabled(hwnd, true);
+    set_control_text(hwnd, IDC_STATUS, text);
 }
 
 fn fill_controls_from_config(state: &mut SettingsState) {
@@ -619,6 +778,36 @@ fn fill_controls_from_config(state: &mut SettingsState) {
         &state.config.hotkey.modifier,
     );
     set_control_text(state.hwnd, IDC_HOTKEY_KEY, &state.config.hotkey.key);
+    set_checkbox(
+        state.hwnd,
+        IDC_GENERAL_HOTKEY_TOGGLE,
+        state.config.general.hotkey_toggle,
+    );
+    set_checkbox(
+        state.hwnd,
+        IDC_GENERAL_SHOW_ON_STARTUP,
+        state.config.general.show_on_startup,
+    );
+    set_checkbox(
+        state.hwnd,
+        IDC_GENERAL_AUTO_HIDE,
+        state.config.general.auto_hide_on_focus_lost,
+    );
+    set_checkbox(
+        state.hwnd,
+        IDC_GENERAL_SHOW_TRAY,
+        state.config.general.show_tray_icon,
+    );
+    set_checkbox(
+        state.hwnd,
+        IDC_GENERAL_IME_OFF,
+        state.config.general.ime_off_on_show,
+    );
+    set_checkbox(
+        state.hwnd,
+        IDC_GENERAL_TITLE_BAR,
+        state.config.general.show_title_bar,
+    );
 
     set_mode_combo(
         state.hwnd,
@@ -657,6 +846,43 @@ fn fill_controls_from_config(state: &mut SettingsState) {
         state.config.appearance.show_icons,
     );
 
+    set_theme_preset_combo(state.hwnd, state.config.visual.preset);
+    set_control_text(
+        state.hwnd,
+        IDC_VISUAL_BG,
+        &state.config.visual.background_color,
+    );
+    set_control_text(
+        state.hwnd,
+        IDC_VISUAL_INPUT_BG,
+        &state.config.visual.input_background_color,
+    );
+    set_control_text(
+        state.hwnd,
+        IDC_VISUAL_TEXT,
+        &state.config.visual.text_color,
+    );
+    set_control_text(
+        state.hwnd,
+        IDC_VISUAL_SELECTED,
+        &state.config.visual.selected_row_color,
+    );
+    set_control_text(
+        state.hwnd,
+        IDC_VISUAL_HINT,
+        &state.config.visual.hint_text_color,
+    );
+    set_control_text(
+        state.hwnd,
+        IDC_VISUAL_FONT_FAMILY,
+        &state.config.visual.font_family,
+    );
+    set_control_text(
+        state.hwnd,
+        IDC_VISUAL_FONT_SIZE,
+        &state.config.visual.font_size.to_string(),
+    );
+
     refresh_scan_list(state.hwnd, &state.config.paths.scan);
 }
 
@@ -666,12 +892,12 @@ fn show_tab(hwnd: HWND, tab: i32) {
         IDC_LABEL_GENERAL_KEY,
         IDC_HOTKEY_MODIFIER,
         IDC_HOTKEY_KEY,
-        IDC_UNSUPPORTED_GENERAL_1,
-        IDC_UNSUPPORTED_GENERAL_2,
-        IDC_UNSUPPORTED_GENERAL_3,
-        IDC_UNSUPPORTED_GENERAL_4,
-        IDC_UNSUPPORTED_GENERAL_5,
-        IDC_UNSUPPORTED_GENERAL_6,
+        IDC_GENERAL_HOTKEY_TOGGLE,
+        IDC_GENERAL_SHOW_ON_STARTUP,
+        IDC_GENERAL_AUTO_HIDE,
+        IDC_GENERAL_SHOW_TRAY,
+        IDC_GENERAL_IME_OFF,
+        IDC_GENERAL_TITLE_BAR,
     ];
     const SEARCH_IDS: &[i32] = &[
         IDC_LABEL_SEARCH_NORMAL,
@@ -700,7 +926,24 @@ fn show_tab(hwnd: HWND, tab: i32) {
         IDC_SHOW_ICONS,
         IDC_REBUILD,
     ];
-    const VISUAL_IDS: &[i32] = &[IDC_VISUAL_NOTE];
+    const VISUAL_IDS: &[i32] = &[
+        IDC_LABEL_VISUAL_PRESET,
+        IDC_LABEL_VISUAL_BG,
+        IDC_LABEL_VISUAL_INPUT_BG,
+        IDC_LABEL_VISUAL_TEXT,
+        IDC_LABEL_VISUAL_SELECTED,
+        IDC_LABEL_VISUAL_HINT,
+        IDC_LABEL_VISUAL_FONT_FAMILY,
+        IDC_LABEL_VISUAL_FONT_SIZE,
+        IDC_VISUAL_PRESET,
+        IDC_VISUAL_BG,
+        IDC_VISUAL_INPUT_BG,
+        IDC_VISUAL_TEXT,
+        IDC_VISUAL_SELECTED,
+        IDC_VISUAL_HINT,
+        IDC_VISUAL_FONT_FAMILY,
+        IDC_VISUAL_FONT_SIZE,
+    ];
 
     for id in GENERAL_IDS {
         show_control(hwnd, *id, tab == 0);
@@ -761,6 +1004,11 @@ fn handle_command(hwnd: HWND, id: i32, notify: u32) {
 
     if id == IDC_SCAN_LIST && notify == LBN_SELCHANGE as u32 {
         scan_load_selected(hwnd);
+        return;
+    }
+
+    if id == IDC_VISUAL_PRESET && notify == CBN_SELCHANGE as u32 {
+        apply_visual_preset_to_controls(hwnd, get_theme_preset_combo(hwnd));
     }
 }
 
@@ -771,12 +1019,13 @@ fn save_from_ui(hwnd: HWND, close_after_save: bool) {
             return;
         };
 
-        let old_config = state.config.clone();
-        let requested = read_config_from_controls(hwnd, &old_config);
+        let baseline = state.initial_config.clone();
+        let requested = read_config_from_controls(hwnd, &state.config);
         let apply = (state.hooks.on_apply)(requested);
         let applied = apply.applied;
-        let rebuild_needed = needs_rebuild(&old_config, &applied);
+        let rebuild_needed = needs_rebuild(&baseline, &applied);
         state.config = applied.clone();
+        state.initial_config = applied.clone();
         fill_controls_from_config(state);
 
         if !apply.hotkey_ok {
@@ -787,9 +1036,9 @@ fn save_from_ui(hwnd: HWND, close_after_save: bool) {
         }
 
         if rebuild_needed && ask_rebuild(hwnd) {
-            set_control_text(hwnd, IDC_STATUS, "インデックス再構築中...");
+            begin_rebuild_ui_state(state);
             if !(state.hooks.on_rebuild)(applied.clone()) {
-                set_control_text(hwnd, IDC_STATUS, "再構築開始に失敗しました");
+                end_rebuild_ui_state(state, "再構築開始に失敗しました");
             }
         } else {
             set_control_text(hwnd, IDC_STATUS, "保存しました");
@@ -813,6 +1062,7 @@ fn rebuild_from_ui(hwnd: HWND) {
         let requested = read_config_from_controls(hwnd, &state.config);
         let apply = (state.hooks.on_apply)(requested);
         state.config = apply.applied.clone();
+        state.initial_config = state.config.clone();
         fill_controls_from_config(state);
 
         if !apply.hotkey_ok {
@@ -823,11 +1073,26 @@ fn rebuild_from_ui(hwnd: HWND) {
         }
 
         if ask_rebuild(hwnd) {
-            set_control_text(hwnd, IDC_STATUS, "インデックス再構築中...");
+            begin_rebuild_ui_state(state);
             if !(state.hooks.on_rebuild)(state.config.clone()) {
-                set_control_text(hwnd, IDC_STATUS, "再構築開始に失敗しました");
+                end_rebuild_ui_state(state, "再構築開始に失敗しました");
             }
         }
+    });
+}
+
+pub fn notify_rebuild_finished(success: bool) {
+    SETTINGS_STATE.with(|s| {
+        let mut binding = s.borrow_mut();
+        let Some(state) = binding.as_mut() else {
+            return;
+        };
+        let text = if success {
+            "インデックス再構築が完了しました"
+        } else {
+            "インデックス再構築に失敗しました"
+        };
+        end_rebuild_ui_state(state, text);
     });
 }
 
@@ -868,6 +1133,12 @@ fn read_config_from_controls(hwnd: HWND, base: &Config) -> Config {
 
     cfg.hotkey.modifier = get_control_text(hwnd, IDC_HOTKEY_MODIFIER);
     cfg.hotkey.key = get_control_text(hwnd, IDC_HOTKEY_KEY);
+    cfg.general.hotkey_toggle = get_checkbox(hwnd, IDC_GENERAL_HOTKEY_TOGGLE);
+    cfg.general.show_on_startup = get_checkbox(hwnd, IDC_GENERAL_SHOW_ON_STARTUP);
+    cfg.general.auto_hide_on_focus_lost = get_checkbox(hwnd, IDC_GENERAL_AUTO_HIDE);
+    cfg.general.show_tray_icon = get_checkbox(hwnd, IDC_GENERAL_SHOW_TRAY);
+    cfg.general.ime_off_on_show = get_checkbox(hwnd, IDC_GENERAL_IME_OFF);
+    cfg.general.show_title_bar = get_checkbox(hwnd, IDC_GENERAL_TITLE_BAR);
 
     cfg.search.normal_mode = get_mode_combo(hwnd, IDC_SEARCH_NORMAL_MODE);
     cfg.search.folder_mode = get_mode_combo(hwnd, IDC_SEARCH_FOLDER_MODE);
@@ -897,6 +1168,40 @@ fn read_config_from_controls(hwnd: HWND, base: &Config) -> Config {
     );
     cfg.appearance.show_icons = get_checkbox(hwnd, IDC_SHOW_ICONS);
 
+    cfg.visual.preset = get_theme_preset_combo(hwnd);
+    cfg.visual.background_color = normalize_hex_color(
+        &get_control_text(hwnd, IDC_VISUAL_BG),
+        &cfg.visual.background_color,
+    );
+    cfg.visual.input_background_color = normalize_hex_color(
+        &get_control_text(hwnd, IDC_VISUAL_INPUT_BG),
+        &cfg.visual.input_background_color,
+    );
+    cfg.visual.text_color = normalize_hex_color(
+        &get_control_text(hwnd, IDC_VISUAL_TEXT),
+        &cfg.visual.text_color,
+    );
+    cfg.visual.selected_row_color = normalize_hex_color(
+        &get_control_text(hwnd, IDC_VISUAL_SELECTED),
+        &cfg.visual.selected_row_color,
+    );
+    cfg.visual.hint_text_color = normalize_hex_color(
+        &get_control_text(hwnd, IDC_VISUAL_HINT),
+        &cfg.visual.hint_text_color,
+    );
+    let family = get_control_text(hwnd, IDC_VISUAL_FONT_FAMILY);
+    cfg.visual.font_family = if family.trim().is_empty() {
+        cfg.visual.font_family
+    } else {
+        family.trim().to_string()
+    };
+    cfg.visual.font_size = parse_u32(
+        &get_control_text(hwnd, IDC_VISUAL_FONT_SIZE),
+        cfg.visual.font_size,
+        8,
+        48,
+    );
+
     cfg.paths.scan = read_scan_entries(hwnd, &cfg.paths.scan);
     cfg
 }
@@ -905,6 +1210,15 @@ fn parse_usize(input: &str, fallback: usize, min: usize, max: usize) -> usize {
     input
         .trim()
         .parse::<usize>()
+        .ok()
+        .map(|v| v.clamp(min, max))
+        .unwrap_or(fallback)
+}
+
+fn parse_u32(input: &str, fallback: u32, min: u32, max: u32) -> u32 {
+    input
+        .trim()
+        .parse::<u32>()
         .ok()
         .map(|v| v.clamp(min, max))
         .unwrap_or(fallback)
@@ -962,6 +1276,26 @@ fn combo_add(combo: HWND, text: &str) {
     }
 }
 
+fn fill_search_mode_combo(hwnd: HWND, id: i32) {
+    unsafe {
+        let combo = GetDlgItem(hwnd, id).unwrap_or_default();
+        let _ = SendMessageW(combo, CB_RESETCONTENT, WPARAM(0), LPARAM(0));
+        combo_add(combo, "prefix");
+        combo_add(combo, "substring");
+        combo_add(combo, "fuzzy");
+    }
+}
+
+fn fill_preset_combo(hwnd: HWND) {
+    unsafe {
+        let combo = GetDlgItem(hwnd, IDC_VISUAL_PRESET).unwrap_or_default();
+        let _ = SendMessageW(combo, CB_RESETCONTENT, WPARAM(0), LPARAM(0));
+        combo_add(combo, "obsidian");
+        combo_add(combo, "paper");
+        combo_add(combo, "solarized");
+    }
+}
+
 fn set_mode_combo(hwnd: HWND, id: i32, mode: SearchModeConfig) {
     let idx = match mode {
         SearchModeConfig::Prefix => 0,
@@ -982,6 +1316,30 @@ fn get_mode_combo(hwnd: HWND, id: i32) -> SearchModeConfig {
             0 => SearchModeConfig::Prefix,
             1 => SearchModeConfig::Substring,
             _ => SearchModeConfig::Fuzzy,
+        }
+    }
+}
+
+fn set_theme_preset_combo(hwnd: HWND, preset: ThemePreset) {
+    let idx = match preset {
+        ThemePreset::Obsidian => 0,
+        ThemePreset::Paper => 1,
+        ThemePreset::Solarized => 2,
+    };
+    unsafe {
+        let ctrl = GetDlgItem(hwnd, IDC_VISUAL_PRESET).unwrap_or_default();
+        let _ = SendMessageW(ctrl, CB_SETCURSEL, WPARAM(idx), LPARAM(0));
+    }
+}
+
+fn get_theme_preset_combo(hwnd: HWND) -> ThemePreset {
+    unsafe {
+        let ctrl = GetDlgItem(hwnd, IDC_VISUAL_PRESET).unwrap_or_default();
+        let idx = SendMessageW(ctrl, CB_GETCURSEL, WPARAM(0), LPARAM(0)).0;
+        match idx {
+            1 => ThemePreset::Paper,
+            2 => ThemePreset::Solarized,
+            _ => ThemePreset::Obsidian,
         }
     }
 }
@@ -1134,6 +1492,54 @@ fn scan_delete(hwnd: HWND) {
 
 fn read_scan_entries(_hwnd: HWND, current: &[ScanPath]) -> Vec<ScanPath> {
     current.to_vec()
+}
+
+fn apply_visual_preset_to_controls(hwnd: HWND, preset: ThemePreset) {
+    let (bg, input_bg, text, selected, hint, family, size) = match preset {
+        ThemePreset::Obsidian => (
+            "#282828",
+            "#383838",
+            "#E0E0E0",
+            "#505050",
+            "#808080",
+            "Segoe UI",
+            "15",
+        ),
+        ThemePreset::Paper => (
+            "#FFFFFF",
+            "#F2F2F2",
+            "#141414",
+            "#DADADA",
+            "#707070",
+            "Segoe UI",
+            "15",
+        ),
+        ThemePreset::Solarized => (
+            "#002B36",
+            "#073642",
+            "#839496",
+            "#586E75",
+            "#93A1A1",
+            "Consolas",
+            "15",
+        ),
+    };
+    set_control_text(hwnd, IDC_VISUAL_BG, bg);
+    set_control_text(hwnd, IDC_VISUAL_INPUT_BG, input_bg);
+    set_control_text(hwnd, IDC_VISUAL_TEXT, text);
+    set_control_text(hwnd, IDC_VISUAL_SELECTED, selected);
+    set_control_text(hwnd, IDC_VISUAL_HINT, hint);
+    set_control_text(hwnd, IDC_VISUAL_FONT_FAMILY, family);
+    set_control_text(hwnd, IDC_VISUAL_FONT_SIZE, size);
+}
+
+fn normalize_hex_color(input: &str, fallback: &str) -> String {
+    let trimmed = input.trim();
+    let hex = trimmed.strip_prefix('#').unwrap_or(trimmed);
+    if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return fallback.to_string();
+    }
+    format!("#{}", hex.to_uppercase())
 }
 
 fn to_wide(text: &str) -> Vec<u16> {

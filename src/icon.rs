@@ -89,6 +89,11 @@ impl IconCache {
         }
     }
 
+    pub fn rebuild_cache(entries: &[AppEntry]) {
+        let cache = Self::build(entries);
+        cache.save();
+    }
+
     pub fn draw(&self, target_path: &str, hdc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32) {
         if let Some(&hicon) = self.runtime.get(target_path) {
             unsafe {

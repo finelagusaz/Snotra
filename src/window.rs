@@ -5,7 +5,7 @@ use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateFontIndirectW, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect,
     InvalidateRect, SelectObject, SetBkMode, SetTextColor, DT_END_ELLIPSIS, DT_LEFT, DT_SINGLELINE,
-    FONT_CHARSET, HBRUSH, LOGFONTW, PAINTSTRUCT, TRANSPARENT,
+    FONT_CHARSET, HBRUSH, HFONT, LOGFONTW, PAINTSTRUCT, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
@@ -17,13 +17,32 @@ const INPUT_HEIGHT: i32 = 40;
 const PADDING: i32 = 8;
 const ICON_AREA: i32 = 24; // 16px icon + 8px gap
 
-// Colors (BGR format for COLORREF)
-const BG_COLOR: u32 = 0x00282828;
-const INPUT_BG_COLOR: u32 = 0x00383838;
-const TEXT_COLOR: u32 = 0x00E0E0E0;
-const SELECTED_BG: u32 = 0x00505050;
-const HINT_COLOR: u32 = 0x00808080;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowTheme {
+    pub bg_color: u32,
+    pub input_bg_color: u32,
+    pub text_color: u32,
+    pub selected_bg_color: u32,
+    pub hint_color: u32,
+    pub font_family: String,
+    pub font_size: i32,
+}
 
+impl Default for WindowTheme {
+    fn default() -> Self {
+        Self {
+            bg_color: 0x00282828,
+            input_bg_color: 0x00383838,
+            text_color: 0x00E0E0E0,
+            selected_bg_color: 0x00505050,
+            hint_color: 0x00808080,
+            font_family: "Segoe UI".to_string(),
+            font_size: 15,
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct SearchResult {
     pub name: String,
     pub path: String,
@@ -50,6 +69,11 @@ pub struct WindowState {
     pub on_folder_navigate: Option<Box<dyn Fn(&str) -> Vec<SearchResult>>>,
     pub on_folder_filter: Option<Box<dyn Fn(&str, &str) -> Vec<SearchResult>>>,
     pub icon_cache: Option<Rc<crate::icon::IconCache>>,
+    pub theme: WindowTheme,
+    pub edit_font: Option<HFONT>,
+    pub auto_hide_on_focus_lost: bool,
+    pub ime_off_on_show: bool,
+    pub in_size_move: bool,
 }
 
 thread_local! {
@@ -67,7 +91,7 @@ where
     WINDOW_STATE.with(|s| s.borrow_mut().as_mut().map(f))
 }
 
-pub fn create_search_window(width: u32, max_results: usize) -> Option<HWND> {
+pub fn create_search_window(width: u32, max_results: usize, show_title_bar: bool) -> Option<HWND> {
     unsafe {
         let instance = GetModuleHandleW(None).ok()?;
         let class_name = w!("SnotraSearchWindow");
@@ -91,15 +115,20 @@ pub fn create_search_window(width: u32, max_results: usize) -> Option<HWND> {
         let screen_h = GetSystemMetrics(SM_CYSCREEN);
         let default_x = (screen_w - width as i32) / 2;
         let default_y = screen_h / 4;
-        let (x, y) = crate::window_data::load_placement()
+        let (x, y) = crate::window_data::load_search_placement()
             .map(|p| (p.x, p.y))
             .unwrap_or((default_x, default_y));
 
+        let style = if show_title_bar {
+            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
+        } else {
+            WS_POPUP
+        };
         let hwnd = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
             class_name,
             w!("Snotra"),
-            WS_POPUP,
+            style,
             x,
             y,
             width as i32,
@@ -129,10 +158,14 @@ pub fn create_search_window(width: u32, max_results: usize) -> Option<HWND> {
         .ok()?;
 
         // Set font for edit control
-        let font = create_font(18);
-        if !font.is_invalid() {
+        let theme = WindowTheme::default();
+        let font = create_font(theme.font_size + 3, &theme.font_family);
+        let edit_font = if !font.is_invalid() {
             SendMessageW(edit_hwnd, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(1));
-        }
+            Some(font)
+        } else {
+            None
+        };
 
         set_window_state(WindowState {
             results: Vec::new(),
@@ -146,18 +179,23 @@ pub fn create_search_window(width: u32, max_results: usize) -> Option<HWND> {
             on_folder_navigate: None,
             on_folder_filter: None,
             icon_cache: None,
+            theme,
+            edit_font,
+            auto_hide_on_focus_lost: true,
+            ime_off_on_show: false,
+            in_size_move: false,
         });
 
         Some(hwnd)
     }
 }
 
-fn create_font(size: i32) -> windows::Win32::Graphics::Gdi::HFONT {
+fn create_font(size: i32, family: &str) -> windows::Win32::Graphics::Gdi::HFONT {
     let mut lf = LOGFONTW::default();
     lf.lfHeight = -size;
     lf.lfWeight = 400;
     lf.lfCharSet = FONT_CHARSET(0); // DEFAULT_CHARSET
-    let face: Vec<u16> = "Segoe UI".encode_utf16().collect();
+    let face: Vec<u16> = family.encode_utf16().collect();
     let len = face.len().min(lf.lfFaceName.len() - 1);
     lf.lfFaceName[..len].copy_from_slice(&face[..len]);
     unsafe { CreateFontIndirectW(&lf) }
@@ -184,11 +222,15 @@ pub fn show_window(hwnd: HWND) {
             state.edit_hwnd
         })
         .unwrap_or_default();
+        let ime_off = with_state(|state| state.ime_off_on_show).unwrap_or(false);
         let _ = SetWindowTextW(edit_hwnd, w!(""));
 
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = SetForegroundWindow(hwnd);
         let _ = SetFocus(edit_hwnd);
+        if ime_off {
+            crate::ime::turn_off_ime(edit_hwnd);
+        }
         let _ = InvalidateRect(hwnd, None, true);
     }
 }
@@ -204,6 +246,68 @@ pub fn update_icon_cache(icon_cache: Option<Rc<crate::icon::IconCache>>) {
     with_state(|state| {
         state.icon_cache = icon_cache;
     });
+}
+
+pub fn set_theme(hwnd: HWND, theme: WindowTheme) {
+    let mut old_font = None;
+    let edit_hwnd = with_state(|state| {
+        state.theme = theme.clone();
+        if let Some(font) = state.edit_font {
+            old_font = Some(font);
+        }
+        state.edit_hwnd
+    })
+    .unwrap_or_default();
+    let font = create_font(theme.font_size + 3, &theme.font_family);
+    unsafe {
+        if !font.is_invalid() {
+            let _ = SendMessageW(edit_hwnd, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(1));
+            with_state(|state| {
+                state.edit_font = Some(font);
+            });
+            if let Some(old) = old_font {
+                if !old.is_invalid() && old != font {
+                    let _ = DeleteObject(old);
+                }
+            }
+        }
+        let _ = InvalidateRect(hwnd, None, true);
+    }
+}
+
+pub fn set_auto_hide_on_focus_lost(enabled: bool) {
+    with_state(|state| {
+        state.auto_hide_on_focus_lost = enabled;
+    });
+}
+
+pub fn set_ime_off_on_show(enabled: bool) {
+    with_state(|state| {
+        state.ime_off_on_show = enabled;
+    });
+}
+
+pub fn set_title_bar_mode(hwnd: HWND, enabled: bool) {
+    unsafe {
+        let mut style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
+        if enabled {
+            style &= !WS_POPUP.0;
+            style |= (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX).0;
+        } else {
+            style &= !(WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX).0;
+            style |= WS_POPUP.0;
+        }
+        let _ = SetWindowLongPtrW(hwnd, GWL_STYLE, style as isize);
+        let _ = SetWindowPos(
+            hwnd,
+            HWND::default(),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE,
+        );
+    }
 }
 
 pub fn update_max_results_layout(hwnd: HWND, max_results: usize) {
@@ -230,7 +334,7 @@ fn persist_window_placement(hwnd: HWND) {
     unsafe {
         let mut rect = RECT::default();
         if GetWindowRect(hwnd, &mut rect).is_ok() {
-            crate::window_data::save_placement(crate::window_data::WindowPlacement {
+            crate::window_data::save_search_placement(crate::window_data::WindowPlacement {
                 x: rect.left,
                 y: rect.top,
             });
@@ -259,14 +363,37 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_ACTIVATE => {
             let active = (wparam.0 & 0xFFFF) as u32;
-            if active == 0 {
+            let should_hide = with_state(|state| {
+                state.auto_hide_on_focus_lost && !state.in_size_move
+            })
+            .unwrap_or(true);
+            if active == 0 && should_hide {
                 // WA_INACTIVE - hide when losing focus
                 hide_window(hwnd);
             }
             LRESULT(0)
         }
+        WM_ENTERSIZEMOVE => {
+            with_state(|state| {
+                state.in_size_move = true;
+            });
+            LRESULT(0)
+        }
+        WM_EXITSIZEMOVE => {
+            with_state(|state| {
+                state.in_size_move = false;
+            });
+            LRESULT(0)
+        }
         WM_ERASEBKGND => LRESULT(1),
         WM_DESTROY => {
+            with_state(|state| {
+                if let Some(font) = state.edit_font.take() {
+                    if !font.is_invalid() {
+                        let _ = DeleteObject(font);
+                    }
+                }
+            });
             PostQuitMessage(0);
             LRESULT(0)
         }
@@ -328,7 +455,9 @@ fn paint_results(hwnd: HWND) {
         let _ = GetClientRect(hwnd, &mut rect);
 
         // Fill background
-        let bg_brush = CreateSolidBrush(COLORREF(BG_COLOR));
+        let theme = with_state(|state| state.theme.clone()).unwrap_or_default();
+
+        let bg_brush = CreateSolidBrush(COLORREF(theme.bg_color));
         FillRect(hdc, &rect, bg_brush);
         let _ = DeleteObject(bg_brush);
 
@@ -339,12 +468,12 @@ fn paint_results(hwnd: HWND) {
             right: rect.right - PADDING,
             bottom: INPUT_HEIGHT,
         };
-        let input_brush = CreateSolidBrush(COLORREF(INPUT_BG_COLOR));
+        let input_brush = CreateSolidBrush(COLORREF(theme.input_bg_color));
         FillRect(hdc, &input_rect, input_brush);
         let _ = DeleteObject(input_brush);
 
         // Draw results
-        let font = create_font(15);
+        let font = create_font(theme.font_size, &theme.font_family);
         let old_font = SelectObject(hdc, font);
         let _ = SetBkMode(hdc, TRANSPARENT);
 
@@ -367,7 +496,7 @@ fn paint_results(hwnd: HWND) {
 
                 // Highlight selected
                 if i == state.selected {
-                    let sel_brush = CreateSolidBrush(COLORREF(SELECTED_BG));
+                    let sel_brush = CreateSolidBrush(COLORREF(theme.selected_bg_color));
                     FillRect(hdc, &item_rect, sel_brush);
                     let _ = DeleteObject(sel_brush);
                 }
@@ -379,7 +508,7 @@ fn paint_results(hwnd: HWND) {
                 }
 
                 // Draw name
-                SetTextColor(hdc, COLORREF(TEXT_COLOR));
+                SetTextColor(hdc, COLORREF(theme.text_color));
                 let mut name_wide: Vec<u16> = result.name.encode_utf16().collect();
                 let mut text_rect = RECT {
                     left: item_rect.left + text_left_offset,
@@ -391,7 +520,7 @@ fn paint_results(hwnd: HWND) {
                 DrawTextW(hdc, &mut name_wide, &mut text_rect, fmt);
 
                 // Draw path (dimmed)
-                SetTextColor(hdc, COLORREF(HINT_COLOR));
+                SetTextColor(hdc, COLORREF(theme.hint_color));
                 let display_path = if result.is_folder {
                     format!("[DIR]  {}", result.path)
                 } else {
@@ -478,39 +607,43 @@ pub fn handle_edit_keydown(hwnd: HWND, vk: u32) -> bool {
         }
         0x0D => {
             // Enter - launch selected
-            let command_handled = with_state(|state| {
-                let query = get_edit_text(state.edit_hwnd);
-                if let Some(ref on_command) = state.on_command {
-                    on_command(&query)
-                } else {
-                    false
-                }
+            let (query, mut on_command) = with_state(|state| {
+                let q = get_edit_text(state.edit_hwnd);
+                let cmd = state.on_command.take();
+                (q, cmd)
             })
-            .unwrap_or(false);
+            .unwrap_or((String::new(), None));
+            let command_handled = on_command
+                .as_ref()
+                .map(|on_command| on_command(&query))
+                .unwrap_or(false);
+            with_state(|state| {
+                if state.on_command.is_none() {
+                    state.on_command = on_command.take();
+                }
+            });
             if command_handled {
                 hide_window(hwnd);
                 return true;
             }
 
+            let (selected, mut on_launch) = with_state(|state| {
+                let selected = state.results.get(state.selected).cloned();
+                let on_launch = state.on_launch.take();
+                (selected, on_launch)
+            })
+            .unwrap_or((None, None));
+            let should_hide = selected.as_ref().map(|r| !r.is_error).unwrap_or(false);
+            if let (Some(result), Some(on_launch)) = (selected.as_ref(), on_launch.as_ref()) {
+                if !result.is_error {
+                    on_launch(result, &query);
+                }
+            }
             with_state(|state| {
-                if let Some(result) = state.results.get(state.selected) {
-                    if result.is_error {
-                        return;
-                    }
-                    if let Some(ref on_launch) = state.on_launch {
-                        let query = get_edit_text(state.edit_hwnd);
-                        on_launch(result, &query);
-                    }
+                if state.on_launch.is_none() {
+                    state.on_launch = on_launch.take();
                 }
             });
-            let should_hide = with_state(|state| {
-                state
-                    .results
-                    .get(state.selected)
-                    .map(|r| !r.is_error)
-                    .unwrap_or(false)
-            })
-            .unwrap_or(false);
             if should_hide {
                 hide_window(hwnd);
             }

@@ -5,7 +5,11 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
     pub hotkey: HotkeyConfig,
+    #[serde(default)]
+    pub general: GeneralConfig,
     pub appearance: AppearanceConfig,
+    #[serde(default)]
+    pub visual: VisualConfig,
     pub paths: PathsConfig,
     #[serde(default)]
     pub search: SearchConfig,
@@ -15,6 +19,59 @@ pub struct Config {
 pub struct HotkeyConfig {
     pub modifier: String,
     pub key: String,
+}
+
+fn default_hotkey_toggle() -> bool {
+    true
+}
+
+fn default_show_on_startup() -> bool {
+    false
+}
+
+fn default_auto_hide_on_focus_lost() -> bool {
+    true
+}
+
+fn default_show_tray_icon() -> bool {
+    true
+}
+
+fn default_ime_off_on_show() -> bool {
+    false
+}
+
+fn default_show_title_bar() -> bool {
+    false
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GeneralConfig {
+    #[serde(default = "default_hotkey_toggle")]
+    pub hotkey_toggle: bool,
+    #[serde(default = "default_show_on_startup")]
+    pub show_on_startup: bool,
+    #[serde(default = "default_auto_hide_on_focus_lost")]
+    pub auto_hide_on_focus_lost: bool,
+    #[serde(default = "default_show_tray_icon")]
+    pub show_tray_icon: bool,
+    #[serde(default = "default_ime_off_on_show")]
+    pub ime_off_on_show: bool,
+    #[serde(default = "default_show_title_bar")]
+    pub show_title_bar: bool,
+}
+
+impl Default for GeneralConfig {
+    fn default() -> Self {
+        Self {
+            hotkey_toggle: true,
+            show_on_startup: false,
+            auto_hide_on_focus_lost: true,
+            show_tray_icon: true,
+            ime_off_on_show: false,
+            show_title_bar: false,
+        }
+    }
 }
 
 fn default_top_n_history() -> usize {
@@ -77,6 +134,81 @@ pub struct AppearanceConfig {
     pub show_icons: bool,
 }
 
+fn default_theme_preset() -> ThemePreset {
+    ThemePreset::Obsidian
+}
+
+fn default_background_color() -> String {
+    "#282828".to_string()
+}
+
+fn default_input_background_color() -> String {
+    "#383838".to_string()
+}
+
+fn default_text_color() -> String {
+    "#E0E0E0".to_string()
+}
+
+fn default_selected_row_color() -> String {
+    "#505050".to_string()
+}
+
+fn default_hint_text_color() -> String {
+    "#808080".to_string()
+}
+
+fn default_font_family() -> String {
+    "Segoe UI".to_string()
+}
+
+fn default_font_size() -> u32 {
+    15
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemePreset {
+    Obsidian,
+    Paper,
+    Solarized,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VisualConfig {
+    #[serde(default = "default_theme_preset")]
+    pub preset: ThemePreset,
+    #[serde(default = "default_background_color")]
+    pub background_color: String,
+    #[serde(default = "default_input_background_color")]
+    pub input_background_color: String,
+    #[serde(default = "default_text_color")]
+    pub text_color: String,
+    #[serde(default = "default_selected_row_color")]
+    pub selected_row_color: String,
+    #[serde(default = "default_hint_text_color")]
+    pub hint_text_color: String,
+    #[serde(default = "default_font_family")]
+    pub font_family: String,
+    #[serde(default = "default_font_size")]
+    pub font_size: u32,
+}
+
+impl Default for VisualConfig {
+    fn default() -> Self {
+        Self {
+            preset: ThemePreset::Obsidian,
+            background_color: default_background_color(),
+            input_background_color: default_input_background_color(),
+            text_color: default_text_color(),
+            selected_row_color: default_selected_row_color(),
+            hint_text_color: default_hint_text_color(),
+            font_family: default_font_family(),
+            font_size: default_font_size(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScanPath {
     pub path: String,
@@ -100,6 +232,7 @@ impl Default for Config {
                 modifier: "Alt".to_string(),
                 key: "Q".to_string(),
             },
+            general: GeneralConfig::default(),
             appearance: AppearanceConfig {
                 max_results: 8,
                 window_width: 600,
@@ -107,6 +240,7 @@ impl Default for Config {
                 max_history_display: 8,
                 show_icons: true,
             },
+            visual: VisualConfig::default(),
             paths: PathsConfig {
                 additional: Vec::new(),
                 scan: Vec::new(),
@@ -201,6 +335,16 @@ mod tests {
         assert_eq!(config.search.normal_mode, SearchModeConfig::Prefix);
         assert_eq!(config.search.folder_mode, SearchModeConfig::Substring);
         assert!(config.search.show_hidden_system);
+        assert!(config.general.hotkey_toggle);
+        assert!(!config.general.show_on_startup);
+        assert!(config.general.auto_hide_on_focus_lost);
+        assert!(config.general.show_tray_icon);
+        assert!(!config.general.ime_off_on_show);
+        assert!(!config.general.show_title_bar);
+        assert_eq!(config.visual.preset, ThemePreset::Obsidian);
+        assert_eq!(config.visual.background_color, "#282828");
+        assert_eq!(config.visual.font_family, "Segoe UI");
+        assert_eq!(config.visual.font_size, 15);
     }
 
     #[test]
@@ -223,6 +367,14 @@ mod tests {
         assert_eq!(config.search.normal_mode, SearchModeConfig::Fuzzy);
         assert_eq!(config.search.folder_mode, SearchModeConfig::Fuzzy);
         assert!(!config.search.show_hidden_system);
+        assert!(config.general.hotkey_toggle);
+        assert!(!config.general.show_on_startup);
+        assert!(config.general.auto_hide_on_focus_lost);
+        assert!(config.general.show_tray_icon);
+        assert!(!config.general.ime_off_on_show);
+        assert!(!config.general.show_title_bar);
+        assert_eq!(config.visual.preset, ThemePreset::Obsidian);
+        assert_eq!(config.visual.background_color, "#282828");
     }
 
     #[test]
@@ -240,6 +392,20 @@ mod tests {
         assert_eq!(config.search.normal_mode, SearchModeConfig::Fuzzy);
         assert_eq!(config.search.folder_mode, SearchModeConfig::Fuzzy);
         assert!(!config.search.show_hidden_system);
+        assert!(config.general.hotkey_toggle);
+        assert!(!config.general.show_on_startup);
+        assert!(config.general.auto_hide_on_focus_lost);
+        assert!(config.general.show_tray_icon);
+        assert!(!config.general.ime_off_on_show);
+        assert!(!config.general.show_title_bar);
+        assert_eq!(config.visual.preset, ThemePreset::Obsidian);
+        assert_eq!(config.visual.background_color, "#282828");
+        assert_eq!(config.visual.input_background_color, "#383838");
+        assert_eq!(config.visual.text_color, "#E0E0E0");
+        assert_eq!(config.visual.selected_row_color, "#505050");
+        assert_eq!(config.visual.hint_text_color, "#808080");
+        assert_eq!(config.visual.font_family, "Segoe UI");
+        assert_eq!(config.visual.font_size, 15);
     }
 
     #[test]
@@ -293,6 +459,8 @@ mod tests {
         assert_eq!(config.paths.additional, vec!["C:\\Old"]);
         assert!(config.paths.scan.is_empty());
         assert!(config.appearance.show_icons);
+        assert!(config.general.hotkey_toggle);
+        assert_eq!(config.visual.preset, ThemePreset::Obsidian);
     }
 
     #[test]
@@ -316,5 +484,54 @@ mod tests {
             config.hotkey.key = "Q".to_string();
         }
         assert_eq!(config.hotkey.key, "Q");
+    }
+
+    #[test]
+    fn deserialize_general_and_visual_config() {
+        let toml_str = r##"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+
+            [general]
+            hotkey_toggle = false
+            show_on_startup = true
+            auto_hide_on_focus_lost = false
+            show_tray_icon = false
+            ime_off_on_show = true
+            show_title_bar = true
+
+            [appearance]
+            max_results = 8
+            window_width = 600
+
+            [visual]
+            preset = "paper"
+            background_color = "#ffffff"
+            input_background_color = "#f2f2f2"
+            text_color = "#111111"
+            selected_row_color = "#d0d0d0"
+            hint_text_color = "#666666"
+            font_family = "Yu Gothic UI"
+            font_size = 18
+
+            [paths]
+            additional = []
+        "##;
+        let config: Config = toml::from_str(toml_str).expect("parse");
+        assert!(!config.general.hotkey_toggle);
+        assert!(config.general.show_on_startup);
+        assert!(!config.general.auto_hide_on_focus_lost);
+        assert!(!config.general.show_tray_icon);
+        assert!(config.general.ime_off_on_show);
+        assert!(config.general.show_title_bar);
+        assert_eq!(config.visual.preset, ThemePreset::Paper);
+        assert_eq!(config.visual.background_color, "#ffffff");
+        assert_eq!(config.visual.input_background_color, "#f2f2f2");
+        assert_eq!(config.visual.text_color, "#111111");
+        assert_eq!(config.visual.selected_row_color, "#d0d0d0");
+        assert_eq!(config.visual.hint_text_color, "#666666");
+        assert_eq!(config.visual.font_family, "Yu Gothic UI");
+        assert_eq!(config.visual.font_size, 18);
     }
 }

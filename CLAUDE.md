@@ -116,9 +116,16 @@ Testable modules:
 - `main.rs` must not grow further. New subsystems get their own module
 - Callbacks stay as thin wrappers — no business logic inside closures in `main.rs`
 - Avoid adding new `thread_local` statics; consolidate into `WindowState`
+- Each module has a single responsibility. Do not mix concerns (e.g., scoring logic in `window.rs`, file I/O in `search.rs`)
 
 ### DRY
 
 - Scoring logic lives exclusively in `search.rs` (`GLOBAL_WEIGHT`, `QUERY_WEIGHT`)
 - Filter/sort logic lives exclusively in `folder.rs`
 - Do not duplicate these in `window.rs` or `main.rs`
+
+### YAGNI
+
+- Do not add abstractions, traits, or generics for hypothetical future use
+- Do not implement features from later phases (Phase 4–6) until that phase begins
+- Prefer concrete, direct code over configurable or extensible designs unless the current task requires it

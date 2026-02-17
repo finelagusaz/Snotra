@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod config;
+mod folder;
 mod history;
 mod hotkey;
 mod indexer;
@@ -54,6 +55,9 @@ fn main() {
     let engine_for_search = engine.clone();
     let history_for_search = history.clone();
     let history_for_launch = history.clone();
+    let history_for_expand = history.clone();
+    let history_for_navigate = history.clone();
+    let history_for_filter = history.clone();
     window::set_window_state(window::WindowState {
         results: Vec::new(),
         selected: 0,
@@ -67,11 +71,44 @@ fn main() {
         })),
         on_launch: Some(Box::new(move |result, query| {
             launcher::launch(&result.path);
-            history_for_launch
-                .borrow_mut()
-                .record_launch(&result.path, query);
+            if !result.is_folder {
+                history_for_launch
+                    .borrow_mut()
+                    .record_launch(&result.path, query);
+            }
         })),
         edit_hwnd: get_edit_hwnd(search_hwnd),
+        folder_state: None,
+        on_folder_expand: Some(Box::new(move |folder_path| {
+            history_for_expand
+                .borrow_mut()
+                .record_folder_expansion(folder_path);
+            let hist = history_for_expand.borrow();
+            folder::list_folder(
+                std::path::Path::new(folder_path),
+                "",
+                &hist,
+                max_results,
+            )
+        })),
+        on_folder_navigate: Some(Box::new(move |folder_path| {
+            let hist = history_for_navigate.borrow();
+            folder::list_folder(
+                std::path::Path::new(folder_path),
+                "",
+                &hist,
+                max_results,
+            )
+        })),
+        on_folder_filter: Some(Box::new(move |folder_path, query| {
+            let hist = history_for_filter.borrow();
+            folder::list_folder(
+                std::path::Path::new(folder_path),
+                query,
+                &hist,
+                max_results,
+            )
+        })),
     });
 
     // Create hidden message-only window for tray

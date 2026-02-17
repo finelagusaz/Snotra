@@ -59,6 +59,7 @@ impl SearchEngine {
             .map(|(_, entry)| SearchResult {
                 name: entry.name.clone(),
                 path: entry.target_path.clone(),
+                is_folder: false,
             })
             .collect()
     }
@@ -82,6 +83,7 @@ impl SearchEngine {
                 path_to_entry.get(path).map(|entry| SearchResult {
                     name: entry.name.clone(),
                     path: entry.target_path.clone(),
+                    is_folder: false,
                 })
             })
             .collect()

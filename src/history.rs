@@ -16,6 +16,8 @@ pub struct GlobalEntry {
 pub struct HistoryData {
     pub global: HashMap<String, GlobalEntry>,
     pub query: HashMap<String, HashMap<String, u32>>,
+    #[serde(default)]
+    pub folder_expansion: HashMap<String, u32>,
 }
 
 pub struct HistoryStore {
@@ -112,28 +114,50 @@ impl HistoryStore {
         entries.into_iter().map(|(path, _)| path).collect()
     }
 
+    pub fn record_folder_expansion(&mut self, folder_path: &str) {
+        *self
+            .data
+            .folder_expansion
+            .entry(folder_path.to_string())
+            .or_insert(0) += 1;
+        self.save();
+    }
+
+    pub fn folder_expansion_count(&self, folder_path: &str) -> u32 {
+        self.data
+            .folder_expansion
+            .get(folder_path)
+            .copied()
+            .unwrap_or(0)
+    }
+
     fn data_path() -> Option<PathBuf> {
         Config::config_dir().map(|p| p.join("history.bin"))
     }
 
     fn prune(&mut self) {
-        if self.data.global.len() <= self.top_n {
-            return;
+        // Prune global + query entries
+        if self.data.global.len() > self.top_n {
+            let mut entries: Vec<_> = self.data.global.drain().collect();
+            entries.sort_by(|a, b| b.1.launch_count.cmp(&a.1.launch_count));
+            entries.truncate(self.top_n);
+
+            let surviving: HashMap<String, GlobalEntry> = entries.into_iter().collect();
+
+            self.data.query.retain(|_, app_map| {
+                app_map.retain(|path, _| surviving.contains_key(path));
+                !app_map.is_empty()
+            });
+
+            self.data.global = surviving;
         }
 
-        // Sort by launch_count descending, keep top_n
-        let mut entries: Vec<_> = self.data.global.drain().collect();
-        entries.sort_by(|a, b| b.1.launch_count.cmp(&a.1.launch_count));
-        entries.truncate(self.top_n);
-
-        let surviving: HashMap<String, GlobalEntry> = entries.into_iter().collect();
-
-        // Remove query entries for apps not in top_n
-        self.data.query.retain(|_, app_map| {
-            app_map.retain(|path, _| surviving.contains_key(path));
-            !app_map.is_empty()
-        });
-
-        self.data.global = surviving;
+        // Prune folder_expansion independently
+        if self.data.folder_expansion.len() > self.top_n {
+            let mut fentries: Vec<_> = self.data.folder_expansion.drain().collect();
+            fentries.sort_by(|a, b| b.1.cmp(&a.1));
+            fentries.truncate(self.top_n);
+            self.data.folder_expansion = fentries.into_iter().collect();
+        }
     }
 }

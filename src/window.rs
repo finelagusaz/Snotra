@@ -28,6 +28,7 @@ pub struct SearchResult {
     pub name: String,
     pub path: String,
     pub is_folder: bool,
+    pub is_error: bool,
 }
 
 pub struct FolderExpansionState {
@@ -84,11 +85,14 @@ pub fn create_search_window(width: u32, max_results: usize) -> Option<HWND> {
 
         let height = INPUT_HEIGHT + (ITEM_HEIGHT * max_results as i32) + PADDING * 2;
 
-        // Center on primary monitor
+        // Restore previous placement if available; otherwise center on primary monitor
         let screen_w = GetSystemMetrics(SM_CXSCREEN);
         let screen_h = GetSystemMetrics(SM_CYSCREEN);
-        let x = (screen_w - width as i32) / 2;
-        let y = screen_h / 4;
+        let default_x = (screen_w - width as i32) / 2;
+        let default_y = screen_h / 4;
+        let (x, y) = crate::window_data::load_placement()
+            .map(|p| (p.x, p.y))
+            .unwrap_or((default_x, default_y));
 
         let hwnd = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
@@ -188,7 +192,20 @@ pub fn show_window(hwnd: HWND) {
 
 pub fn hide_window(hwnd: HWND) {
     unsafe {
+        persist_window_placement(hwnd);
         let _ = ShowWindow(hwnd, SW_HIDE);
+    }
+}
+
+fn persist_window_placement(hwnd: HWND) {
+    unsafe {
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_ok() {
+            crate::window_data::save_placement(crate::window_data::WindowPlacement {
+                x: rect.left,
+                y: rect.top,
+            });
+        }
     }
 }
 
@@ -433,13 +450,26 @@ pub fn handle_edit_keydown(hwnd: HWND, vk: u32) -> bool {
             // Enter - launch selected
             with_state(|state| {
                 if let Some(result) = state.results.get(state.selected) {
+                    if result.is_error {
+                        return;
+                    }
                     if let Some(ref on_launch) = state.on_launch {
                         let query = get_edit_text(state.edit_hwnd);
                         on_launch(result, &query);
                     }
                 }
             });
-            hide_window(hwnd);
+            let should_hide = with_state(|state| {
+                state
+                    .results
+                    .get(state.selected)
+                    .map(|r| !r.is_error)
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+            if should_hide {
+                hide_window(hwnd);
+            }
             true
         }
         _ => false,
@@ -493,14 +523,9 @@ fn navigate_folder_up(hwnd: HWND) {
         let Some(ref mut fs) = state.folder_state else {
             return;
         };
-        let current = std::path::Path::new(&fs.current_dir);
-        let Some(parent) = current.parent() else {
+        let Some(parent) = crate::folder::parent_for_navigation(&fs.current_dir) else {
             return; // At drive root
         };
-        // On Windows, parent of "C:\" is "C:\" — so compare to detect root
-        if parent.to_string_lossy() == fs.current_dir {
-            return;
-        }
         let parent_str = parent.to_string_lossy().to_string();
         fs.current_dir = parent_str.clone();
         if let Some(ref on_navigate) = state.on_folder_navigate {

@@ -7,6 +7,8 @@ pub struct Config {
     pub hotkey: HotkeyConfig,
     pub appearance: AppearanceConfig,
     pub paths: PathsConfig,
+    #[serde(default)]
+    pub search: SearchConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -25,6 +27,42 @@ fn default_max_history_display() -> usize {
 
 fn default_show_icons() -> bool {
     true
+}
+
+fn default_search_mode() -> SearchModeConfig {
+    SearchModeConfig::Fuzzy
+}
+
+fn default_show_hidden_system() -> bool {
+    false
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchModeConfig {
+    Prefix,
+    Substring,
+    Fuzzy,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SearchConfig {
+    #[serde(default = "default_search_mode")]
+    pub normal_mode: SearchModeConfig,
+    #[serde(default = "default_search_mode")]
+    pub folder_mode: SearchModeConfig,
+    #[serde(default = "default_show_hidden_system")]
+    pub show_hidden_system: bool,
+}
+
+impl Default for SearchConfig {
+    fn default() -> Self {
+        Self {
+            normal_mode: SearchModeConfig::Fuzzy,
+            folder_mode: SearchModeConfig::Fuzzy,
+            show_hidden_system: false,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -73,6 +111,7 @@ impl Default for Config {
                 additional: Vec::new(),
                 scan: Vec::new(),
             },
+            search: SearchConfig::default(),
         }
     }
 }
@@ -144,6 +183,11 @@ mod tests {
 
             [paths]
             additional = ["C:\\Tools"]
+
+            [search]
+            normal_mode = "prefix"
+            folder_mode = "substring"
+            show_hidden_system = true
         "#;
         let config: Config = toml::from_str(toml_str).expect("parse");
         assert_eq!(config.hotkey.modifier, "Ctrl");
@@ -154,6 +198,9 @@ mod tests {
         assert_eq!(config.appearance.max_history_display, 5);
         assert_eq!(config.paths.additional, vec!["C:\\Tools"]);
         assert!(config.paths.scan.is_empty());
+        assert_eq!(config.search.normal_mode, SearchModeConfig::Prefix);
+        assert_eq!(config.search.folder_mode, SearchModeConfig::Substring);
+        assert!(config.search.show_hidden_system);
     }
 
     #[test]
@@ -173,6 +220,9 @@ mod tests {
         let config: Config = toml::from_str(toml_str).expect("parse");
         assert_eq!(config.appearance.top_n_history, 200);
         assert_eq!(config.appearance.max_history_display, 8);
+        assert_eq!(config.search.normal_mode, SearchModeConfig::Fuzzy);
+        assert_eq!(config.search.folder_mode, SearchModeConfig::Fuzzy);
+        assert!(!config.search.show_hidden_system);
     }
 
     #[test]
@@ -187,6 +237,9 @@ mod tests {
         assert!(config.appearance.show_icons);
         assert!(config.paths.additional.is_empty());
         assert!(config.paths.scan.is_empty());
+        assert_eq!(config.search.normal_mode, SearchModeConfig::Fuzzy);
+        assert_eq!(config.search.folder_mode, SearchModeConfig::Fuzzy);
+        assert!(!config.search.show_hidden_system);
     }
 
     #[test]

@@ -1,25 +1,40 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::os::windows::fs::MetadataExt;
+use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
+use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
 
 use crate::history::HistoryStore;
+use crate::search::SearchMode;
 use crate::window::SearchResult;
 
 pub fn list_folder(
     dir: &Path,
     filter: &str,
+    mode: SearchMode,
+    show_hidden_system: bool,
     history: &HistoryStore,
     max_results: usize,
 ) -> Vec<SearchResult> {
     let Ok(read_dir) = std::fs::read_dir(dir) else {
-        return Vec::new();
+        return vec![SearchResult {
+            name: "アクセスできません".to_string(),
+            path: dir.to_string_lossy().to_string(),
+            is_folder: false,
+            is_error: true,
+        }];
     };
 
     let mut entries: Vec<SearchResult> = read_dir
         .flatten()
         .filter_map(|entry| {
             let path = entry.path();
+            if !show_hidden_system && !is_visible_entry(&path) {
+                return None;
+            }
             let name = entry.file_name().to_string_lossy().to_string();
 
-            if !filter.is_empty() && !matches_filter(&name, filter) {
+            if !filter.is_empty() && !matches_filter(&name, filter, mode) {
                 return None;
             }
 
@@ -28,6 +43,7 @@ pub fn list_folder(
                 name,
                 path: path.to_string_lossy().to_string(),
                 is_folder,
+                is_error: false,
             })
         })
         .collect();
@@ -57,8 +73,56 @@ pub fn list_folder(
     entries
 }
 
-fn matches_filter(name: &str, filter: &str) -> bool {
-    name.to_lowercase().contains(&filter.to_lowercase())
+fn matches_filter(name: &str, filter: &str, mode: SearchMode) -> bool {
+    let name_lower = name.to_lowercase();
+    let filter_lower = filter.to_lowercase();
+    match mode {
+        SearchMode::Prefix => name_lower.starts_with(&filter_lower),
+        SearchMode::Substring => name_lower.contains(&filter_lower),
+        SearchMode::Fuzzy => SkimMatcherV2::default()
+            .fuzzy_match(&name_lower, &filter_lower)
+            .is_some(),
+    }
+}
+
+fn is_visible_entry(path: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return true;
+    };
+    let attrs = meta.file_attributes();
+    let hidden = (attrs & FILE_ATTRIBUTE_HIDDEN.0) != 0;
+    let system = (attrs & FILE_ATTRIBUTE_SYSTEM.0) != 0;
+    !hidden && !system
+}
+
+pub fn parent_for_navigation(current_dir: &str) -> Option<PathBuf> {
+    if is_navigation_root(current_dir) {
+        return None;
+    }
+    let current = Path::new(current_dir);
+    let parent = current.parent()?;
+    let parent_str = parent.to_string_lossy();
+    if parent_str.is_empty() {
+        return None;
+    }
+    Some(parent.to_path_buf())
+}
+
+pub fn is_navigation_root(path: &str) -> bool {
+    let normalized = path.trim().replace('/', "\\");
+    let trimmed = normalized.trim_end_matches('\\');
+
+    if trimmed.len() == 2 {
+        let chars: Vec<char> = trimmed.chars().collect();
+        return chars[0].is_ascii_alphabetic() && chars[1] == ':';
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("\\\\") {
+        let parts: Vec<&str> = rest.split('\\').filter(|p| !p.is_empty()).collect();
+        return parts.len() <= 2;
+    }
+
+    false
 }
 
 #[cfg(test)]
@@ -86,7 +150,7 @@ mod tests {
         fs::write(dir.join("file2.txt"), "").unwrap();
         fs::create_dir(dir.join("subdir")).unwrap();
 
-        let results = list_folder(&dir, "", &empty_history(), 100);
+        let results = list_folder(&dir, "", SearchMode::Substring, true, &empty_history(), 100);
         let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
         assert!(names.contains(&"file1.txt"));
         assert!(names.contains(&"file2.txt"));
@@ -101,7 +165,7 @@ mod tests {
         fs::write(dir.join("alpha.txt"), "").unwrap();
         fs::create_dir(dir.join("zsubdir")).unwrap();
 
-        let results = list_folder(&dir, "", &empty_history(), 100);
+        let results = list_folder(&dir, "", SearchMode::Substring, true, &empty_history(), 100);
         assert!(results[0].is_folder);
         assert!(!results.last().unwrap().is_folder);
 
@@ -115,7 +179,7 @@ mod tests {
         fs::write(dir.join("config.toml"), "").unwrap();
         fs::write(dir.join("build.rs"), "").unwrap();
 
-        let results = list_folder(&dir, "toml", &empty_history(), 100);
+        let results = list_folder(&dir, "toml", SearchMode::Substring, true, &empty_history(), 100);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "config.toml");
 
@@ -127,7 +191,7 @@ mod tests {
         let dir = temp_dir_with_contents("filter_case");
         fs::write(dir.join("README.TXT"), "").unwrap();
 
-        let results = list_folder(&dir, "readme", &empty_history(), 100);
+        let results = list_folder(&dir, "readme", SearchMode::Substring, true, &empty_history(), 100);
         assert_eq!(results.len(), 1);
 
         let _ = fs::remove_dir_all(&dir);
@@ -140,7 +204,7 @@ mod tests {
             fs::write(dir.join(format!("file{}.txt", i)), "").unwrap();
         }
 
-        let results = list_folder(&dir, "", &empty_history(), 3);
+        let results = list_folder(&dir, "", SearchMode::Substring, true, &empty_history(), 3);
         assert_eq!(results.len(), 3);
 
         let _ = fs::remove_dir_all(&dir);
@@ -150,7 +214,7 @@ mod tests {
     fn list_folder_empty_dir_returns_empty() {
         let dir = temp_dir_with_contents("empty");
 
-        let results = list_folder(&dir, "", &empty_history(), 100);
+        let results = list_folder(&dir, "", SearchMode::Substring, true, &empty_history(), 100);
         assert!(results.is_empty());
 
         let _ = fs::remove_dir_all(&dir);
@@ -159,8 +223,9 @@ mod tests {
     #[test]
     fn list_folder_nonexistent_dir_returns_empty() {
         let dir = std::env::temp_dir().join("snotra_test_nonexistent_zzz");
-        let results = list_folder(&dir, "", &empty_history(), 100);
-        assert!(results.is_empty());
+        let results = list_folder(&dir, "", SearchMode::Substring, true, &empty_history(), 100);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_error);
     }
 
     #[test]
@@ -170,10 +235,59 @@ mod tests {
         fs::create_dir(dir.join("alpha")).unwrap();
         fs::create_dir(dir.join("mu")).unwrap();
 
-        let results = list_folder(&dir, "", &empty_history(), 100);
+        let results = list_folder(&dir, "", SearchMode::Substring, true, &empty_history(), 100);
         let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(names, vec!["alpha", "mu", "zeta"]);
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn prefix_mode_matches_only_prefix() {
+        let dir = temp_dir_with_contents("prefix_filter");
+        fs::write(dir.join("report.txt"), "").unwrap();
+        fs::write(dir.join("my_report.txt"), "").unwrap();
+
+        let results = list_folder(&dir, "rep", SearchMode::Prefix, true, &empty_history(), 100);
+        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+        assert!(names.contains(&"report.txt"));
+        assert!(!names.contains(&"my_report.txt"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn fuzzy_mode_matches_skipped_characters() {
+        let dir = temp_dir_with_contents("fuzzy_filter");
+        fs::write(dir.join("Visual Studio Code.txt"), "").unwrap();
+
+        let results = list_folder(&dir, "vsc", SearchMode::Fuzzy, true, &empty_history(), 100);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Visual Studio Code.txt");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn substring_mode_does_not_match_skipped_characters() {
+        let dir = temp_dir_with_contents("substring_not_fuzzy");
+        fs::write(dir.join("Visual Studio Code.txt"), "").unwrap();
+
+        let results = list_folder(&dir, "vsc", SearchMode::Substring, true, &empty_history(), 100);
+        assert!(results.is_empty());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn detects_drive_root() {
+        assert!(is_navigation_root("C:\\"));
+        assert!(is_navigation_root("D:"));
+    }
+
+    #[test]
+    fn detects_unc_root() {
+        assert!(is_navigation_root("\\\\server\\share\\"));
+        assert!(!is_navigation_root("\\\\server\\share\\folder"));
     }
 }

@@ -1,10 +1,17 @@
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
+use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
 
+use crate::binfmt::{deserialize_with_header, serialize_with_header};
 use crate::config::{Config, ScanPath};
+
+const INDEX_MAGIC: [u8; 4] = *b"INDX";
+const INDEX_CACHE_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppEntry {
@@ -13,29 +20,33 @@ pub struct AppEntry {
     pub is_folder: bool,
 }
 
-pub fn scan_all(additional_paths: &[String], scan_paths: &[ScanPath]) -> Vec<AppEntry> {
+pub fn scan_all(
+    additional_paths: &[String],
+    scan_paths: &[ScanPath],
+    show_hidden_system: bool,
+) -> Vec<AppEntry> {
     let mut entries = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
     // Scan standard Start Menu locations (.lnk only)
     if let Some(appdata) = std::env::var_os("APPDATA") {
         let user_start = PathBuf::from(appdata).join("Microsoft\\Windows\\Start Menu\\Programs");
-        scan_directory_lnk(&user_start, &mut entries, &mut seen);
+        scan_directory_lnk(&user_start, show_hidden_system, &mut entries, &mut seen);
     }
     if let Some(programdata) = std::env::var_os("ProgramData") {
         let common_start =
             PathBuf::from(programdata).join("Microsoft\\Windows\\Start Menu\\Programs");
-        scan_directory_lnk(&common_start, &mut entries, &mut seen);
+        scan_directory_lnk(&common_start, show_hidden_system, &mut entries, &mut seen);
     }
 
     // Scan Desktop (.lnk only)
     if let Some(desktop) = dirs::desktop_dir() {
-        scan_directory_lnk(&desktop, &mut entries, &mut seen);
+        scan_directory_lnk(&desktop, show_hidden_system, &mut entries, &mut seen);
     }
 
     // Scan legacy additional paths (.lnk only)
     for path in additional_paths {
-        scan_directory_lnk(Path::new(path), &mut entries, &mut seen);
+        scan_directory_lnk(Path::new(path), show_hidden_system, &mut entries, &mut seen);
     }
 
     // Scan paths with per-path extension filtering
@@ -45,6 +56,7 @@ pub fn scan_all(additional_paths: &[String], scan_paths: &[ScanPath]) -> Vec<App
             Path::new(&sp.path),
             &exts,
             sp.include_folders,
+            show_hidden_system,
             &mut entries,
             &mut seen,
         );
@@ -56,6 +68,7 @@ pub fn scan_all(additional_paths: &[String], scan_paths: &[ScanPath]) -> Vec<App
 /// Recursively scan for .lnk shortcuts (original behavior)
 fn scan_directory_lnk(
     dir: &Path,
+    show_hidden_system: bool,
     entries: &mut Vec<AppEntry>,
     seen: &mut std::collections::HashSet<String>,
 ) {
@@ -65,11 +78,14 @@ fn scan_directory_lnk(
 
     for entry in read_dir.flatten() {
         let path = entry.path();
+        if !show_hidden_system && !is_visible_entry(&path) {
+            continue;
+        }
         if path.is_dir() {
-            scan_directory_lnk(&path, entries, seen);
+            scan_directory_lnk(&path, show_hidden_system, entries, seen);
         } else if path.extension().and_then(|e| e.to_str()) == Some("lnk") {
             if let Some(app) = parse_lnk(&path) {
-                if seen.insert(app.name.to_lowercase()) {
+                if seen.insert(normalize_entry_key(&app.target_path)) {
                     entries.push(app);
                 }
             }
@@ -82,6 +98,7 @@ fn scan_directory_with_extensions(
     dir: &Path,
     extensions: &[String],
     include_folders: bool,
+    show_hidden_system: bool,
     entries: &mut Vec<AppEntry>,
     seen: &mut std::collections::HashSet<String>,
 ) {
@@ -91,6 +108,9 @@ fn scan_directory_with_extensions(
 
     for entry in read_dir.flatten() {
         let path = entry.path();
+        if !show_hidden_system && !is_visible_entry(&path) {
+            continue;
+        }
         if path.is_dir() {
             if include_folders {
                 let name = path
@@ -99,7 +119,7 @@ fn scan_directory_with_extensions(
                     .unwrap_or("")
                     .to_string();
                 if !name.is_empty() {
-                    let key = format!("folder:{}", name.to_lowercase());
+                    let key = normalize_entry_key(&path.to_string_lossy());
                     if seen.insert(key) {
                         entries.push(AppEntry {
                             name,
@@ -109,7 +129,14 @@ fn scan_directory_with_extensions(
                     }
                 }
             }
-            scan_directory_with_extensions(&path, extensions, include_folders, entries, seen);
+            scan_directory_with_extensions(
+                &path,
+                extensions,
+                include_folders,
+                show_hidden_system,
+                entries,
+                seen,
+            );
         } else {
             let ext = path
                 .extension()
@@ -122,7 +149,8 @@ fn scan_directory_with_extensions(
                         .and_then(|s| s.to_str())
                         .unwrap_or("")
                         .to_string();
-                    if !name.is_empty() && seen.insert(name.to_lowercase()) {
+                    let key = normalize_entry_key(&path.to_string_lossy());
+                    if !name.is_empty() && seen.insert(key) {
                         entries.push(AppEntry {
                             name,
                             target_path: path.to_string_lossy().to_string(),
@@ -133,6 +161,20 @@ fn scan_directory_with_extensions(
             }
         }
     }
+}
+
+fn is_visible_entry(path: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return true;
+    };
+    let attrs = meta.file_attributes();
+    let hidden = (attrs & FILE_ATTRIBUTE_HIDDEN.0) != 0;
+    let system = (attrs & FILE_ATTRIBUTE_SYSTEM.0) != 0;
+    !hidden && !system
+}
+
+fn normalize_entry_key(path: &str) -> String {
+    path.trim().replace('/', "\\").to_lowercase()
 }
 
 fn parse_lnk(path: &Path) -> Option<AppEntry> {
@@ -157,15 +199,12 @@ fn parse_lnk(path: &Path) -> Option<AppEntry> {
 
 #[derive(Serialize, Deserialize)]
 struct IndexCache {
-    version: u32,
     built_at: u64,
     entries: Vec<AppEntry>,
     config_hash: u64,
 }
 
-const INDEX_CACHE_VERSION: u32 = 1;
-
-fn compute_config_hash(additional: &[String], scan: &[ScanPath]) -> u64 {
+fn compute_config_hash(additional: &[String], scan: &[ScanPath], show_hidden_system: bool) -> u64 {
     let mut hasher = DefaultHasher::new();
     additional.hash(&mut hasher);
     for sp in scan {
@@ -173,6 +212,7 @@ fn compute_config_hash(additional: &[String], scan: &[ScanPath]) -> u64 {
         sp.extensions.hash(&mut hasher);
         sp.include_folders.hash(&mut hasher);
     }
+    show_hidden_system.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -180,34 +220,45 @@ fn cache_path() -> Option<PathBuf> {
     Config::config_dir().map(|p| p.join("index.bin"))
 }
 
+fn icon_cache_path() -> Option<PathBuf> {
+    Config::config_dir().map(|p| p.join("icons.bin"))
+}
+
+fn invalidate_icon_cache_at(path: &Path) {
+    let _ = std::fs::remove_file(path);
+}
+
+fn invalidate_icon_cache() {
+    let Some(path) = icon_cache_path() else {
+        return;
+    };
+    invalidate_icon_cache_at(&path);
+}
+
 /// Scan filesystem every startup; compare with cache to detect changes.
 /// Returns (entries, changed) where changed=true means the entry set differs from cache.
-pub fn load_or_scan(additional: &[String], scan: &[ScanPath]) -> (Vec<AppEntry>, bool) {
-    let current_hash = compute_config_hash(additional, scan);
-    let entries = scan_all(additional, scan);
+pub fn load_or_scan(
+    additional: &[String],
+    scan: &[ScanPath],
+    show_hidden_system: bool,
+) -> (Vec<AppEntry>, bool) {
+    let current_hash = compute_config_hash(additional, scan, show_hidden_system);
 
-    // Compare with cached entries to determine if icon rebuild is needed
-    let changed = if let Some(path) = cache_path() {
-        if let Ok(bytes) = std::fs::read(&path) {
-            if let Ok(cache) = bincode::deserialize::<IndexCache>(&bytes) {
-                cache.version != INDEX_CACHE_VERSION
-                    || cache.config_hash != current_hash
-                    || !entries_equal(&cache.entries, &entries)
-            } else {
-                true
-            }
-        } else {
-            true
-        }
-    } else {
-        true
-    };
-
-    if changed {
-        save_cache(&entries, current_hash);
+    if let Some(cache) = load_cache(current_hash) {
+        let cached_entries = cache.entries.clone();
+        spawn_background_rescan(
+            additional.to_vec(),
+            scan.to_vec(),
+            show_hidden_system,
+            current_hash,
+            cached_entries.clone(),
+        );
+        return (cached_entries, false);
     }
 
-    (entries, changed)
+    let entries = scan_all(additional, scan, show_hidden_system);
+    save_cache(&entries, current_hash);
+    (entries, true)
 }
 
 fn entries_equal(a: &[AppEntry], b: &[AppEntry]) -> bool {
@@ -228,7 +279,6 @@ fn save_cache(entries: &[AppEntry], config_hash: u64) {
     }
 
     let cache = IndexCache {
-        version: INDEX_CACHE_VERSION,
         built_at: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -237,7 +287,7 @@ fn save_cache(entries: &[AppEntry], config_hash: u64) {
         config_hash,
     };
 
-    let Ok(bytes) = bincode::serialize(&cache) else {
+    let Some(bytes) = serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache) else {
         return;
     };
 
@@ -251,11 +301,44 @@ fn save_cache(entries: &[AppEntry], config_hash: u64) {
 /// Force rebuild: scan and save cache, regardless of existing cache.
 /// Called from settings dialog (Phase 5).
 #[allow(dead_code)]
-pub fn rebuild_and_save(additional: &[String], scan: &[ScanPath]) -> Vec<AppEntry> {
-    let entries = scan_all(additional, scan);
-    let config_hash = compute_config_hash(additional, scan);
+pub fn rebuild_and_save(
+    additional: &[String],
+    scan: &[ScanPath],
+    show_hidden_system: bool,
+) -> Vec<AppEntry> {
+    let entries = scan_all(additional, scan, show_hidden_system);
+    let config_hash = compute_config_hash(additional, scan, show_hidden_system);
     save_cache(&entries, config_hash);
     entries
+}
+
+fn load_cache(config_hash: u64) -> Option<IndexCache> {
+    let path = cache_path()?;
+    let bytes = std::fs::read(path).ok()?;
+    let cache: IndexCache =
+        deserialize_with_header(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION)?;
+    if cache.config_hash != config_hash {
+        return None;
+    }
+    Some(cache)
+}
+
+fn spawn_background_rescan(
+    additional: Vec<String>,
+    scan: Vec<ScanPath>,
+    show_hidden_system: bool,
+    config_hash: u64,
+    cached_entries: Vec<AppEntry>,
+) {
+    let _ = thread::Builder::new()
+        .name("snotra-index-rescan".to_string())
+        .spawn(move || {
+            let scanned = scan_all(&additional, &scan, show_hidden_system);
+            if !entries_equal(&cached_entries, &scanned) {
+                save_cache(&scanned, config_hash);
+                invalidate_icon_cache();
+            }
+        });
 }
 
 #[cfg(test)]
@@ -280,7 +363,7 @@ mod tests {
         let mut entries = Vec::new();
         let mut seen = std::collections::HashSet::new();
         let exts = vec![".exe".to_string(), ".bat".to_string()];
-        scan_directory_with_extensions(&dir, &exts, false, &mut entries, &mut seen);
+        scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
 
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         assert!(names.contains(&"app"));
@@ -300,7 +383,7 @@ mod tests {
         let mut entries = Vec::new();
         let mut seen = std::collections::HashSet::new();
         let exts = vec![".exe".to_string()];
-        scan_directory_with_extensions(&dir, &exts, true, &mut entries, &mut seen);
+        scan_directory_with_extensions(&dir, &exts, true, true, &mut entries, &mut seen);
 
         let folder_entries: Vec<&AppEntry> = entries.iter().filter(|e| e.is_folder).collect();
         assert_eq!(folder_entries.len(), 1);
@@ -323,7 +406,7 @@ mod tests {
         let mut entries = Vec::new();
         let mut seen = std::collections::HashSet::new();
         let exts = vec![".exe".to_string()];
-        scan_directory_with_extensions(&dir, &exts, false, &mut entries, &mut seen);
+        scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
 
         assert!(entries.iter().all(|e| !e.is_folder));
         assert_eq!(entries.len(), 1);
@@ -332,7 +415,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_deduplicates_by_name() {
+    fn scan_keeps_same_name_different_paths() {
         let dir = temp_dir("ext_dedup");
         let sub1 = dir.join("a");
         let sub2 = dir.join("b");
@@ -344,10 +427,10 @@ mod tests {
         let mut entries = Vec::new();
         let mut seen = std::collections::HashSet::new();
         let exts = vec![".exe".to_string()];
-        scan_directory_with_extensions(&dir, &exts, false, &mut entries, &mut seen);
+        scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
 
         let tools: Vec<&AppEntry> = entries.iter().filter(|e| e.name == "tool").collect();
-        assert_eq!(tools.len(), 1);
+        assert_eq!(tools.len(), 2);
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -360,7 +443,7 @@ mod tests {
         let mut entries = Vec::new();
         let mut seen = std::collections::HashSet::new();
         let exts = vec![".exe".to_string()];
-        scan_directory_with_extensions(&dir, &exts, false, &mut entries, &mut seen);
+        scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "app");
@@ -397,16 +480,15 @@ mod tests {
         ];
 
         let cache = IndexCache {
-            version: INDEX_CACHE_VERSION,
             built_at: 1700000000,
             entries: entries.clone(),
             config_hash: 12345,
         };
 
-        let bytes = bincode::serialize(&cache).expect("serialize");
-        let restored: IndexCache = bincode::deserialize(&bytes).expect("deserialize");
+        let bytes = serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache).expect("serialize");
+        let restored: IndexCache =
+            deserialize_with_header(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION).expect("deserialize");
 
-        assert_eq!(restored.version, INDEX_CACHE_VERSION);
         assert_eq!(restored.built_at, 1700000000);
         assert_eq!(restored.entries.len(), 2);
         assert_eq!(restored.entries[0].name, "Firefox");
@@ -418,8 +500,8 @@ mod tests {
 
     #[test]
     fn config_hash_changes_with_different_paths() {
-        let hash1 = compute_config_hash(&["C:\\A".to_string()], &[]);
-        let hash2 = compute_config_hash(&["C:\\B".to_string()], &[]);
+        let hash1 = compute_config_hash(&["C:\\A".to_string()], &[], false);
+        let hash2 = compute_config_hash(&["C:\\B".to_string()], &[], false);
         assert_ne!(hash1, hash2);
     }
 
@@ -483,8 +565,33 @@ mod tests {
             extensions: vec![".exe".to_string(), ".bat".to_string()],
             include_folders: false,
         }];
-        let hash1 = compute_config_hash(&[], &scan1);
-        let hash2 = compute_config_hash(&[], &scan2);
+        let hash1 = compute_config_hash(&[], &scan1, false);
+        let hash2 = compute_config_hash(&[], &scan2, false);
         assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn invalidate_icon_cache_removes_icons_bin_if_present() {
+        let dir = temp_dir("icons_cache_remove");
+        let icon_path = dir.join("icons.bin");
+        fs::write(&icon_path, b"dummy").unwrap();
+        assert!(icon_path.exists());
+
+        invalidate_icon_cache_at(&icon_path);
+        assert!(!icon_path.exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn invalidate_icon_cache_is_noop_when_missing() {
+        let dir = temp_dir("icons_cache_missing");
+        let icon_path = dir.join("icons.bin");
+        assert!(!icon_path.exists());
+
+        invalidate_icon_cache_at(&icon_path);
+        assert!(!icon_path.exists());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

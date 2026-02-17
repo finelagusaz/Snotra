@@ -1,131 +1,144 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+このファイルは、このリポジトリで Claude Code が作業するときの運用ガイドです。
 
-## Project Overview
+## このファイルの目的
 
-Snotra is a Windows-only keyboard launcher application written in Rust. It runs as a system tray resident app, invoked via a global hotkey (default: Alt+Q) to display a floating frameless search window for finding and launching applications.
+- 実装時の判断基準と作業ルールを短時間で確認できるようにする
+- コード変更時に守るべき原則を明確化する
+- `*.md` で意図（何を実現したいか）を管理し、コードで実装事実（どう実装したか）を管理する
 
-## Build & Run
+## 3層分担（責務分離）
+
+- 第1層（意図管理）: `SPEC.md` と `CLAUDE.md`
+  - `SPEC.md`: あるべき仕様、要件、振る舞いの定義
+  - `CLAUDE.md`: 実装時の運用ルールと判断基準
+- 第2層（実装事実）: `src/*.rs`
+  - 現在の実際の動作・制約・実装詳細
+- 第3層（整合運用）: 変更時の同期ルール
+  - 挙動変更を伴う変更では、意図（`SPEC.md`）と実装（`src/*.rs`）を同時に整合させる
+
+### 不一致時の扱い
+
+- まず「バグ」か「仕様変更」かを判定する
+- バグの場合:
+  - `SPEC.md` の意図に合わせてコードを修正する
+  - 必要に応じて `CLAUDE.md` の運用記述を更新する
+- 仕様変更の場合:
+  - 先に `SPEC.md` を更新して意図を確定する
+  - 次にコードを更新する
+  - 最後に `CLAUDE.md` を更新して運用ルールと参照先を整合させる
+
+## プロジェクト概要
+
+Snotra は Windows 専用のキーボードランチャーです。Rust + Win32 API（`windows` クレート）で実装され、システムトレイ常駐で動作します。グローバルホットキー（既定: `Alt+Q`）でフレームレス検索ウィンドウを表示し、検索と起動を行います。
+
+## ビルド・実行コマンド
 
 ```bash
-cargo build          # Debug build
-cargo build --release # Release build (optimized, stripped)
-cargo run            # Run in debug mode
-cargo test           # Run all unit tests
+cargo build            # デバッグビルド
+cargo build --release  # リリースビルド
+cargo run              # デバッグ実行
+cargo test             # ユニットテスト実行
+cargo check            # 静的チェック
+cargo clippy           # lint チェック
 ```
 
-No linter beyond `cargo check` / `cargo clippy`.
+## アーキテクチャ概要
 
-## Architecture
+純 Rust 構成で、GUI フレームワークは使わず Win32 API を直接呼び出します。
 
-Pure Rust with direct Win32 API calls via the `windows` crate (Microsoft official). No web frontend, no GUI framework.
+### モジュール構成（簡潔版）
 
-### Module Structure
+- `main.rs`:
+  - エントリポイント
+  - Win32 メッセージループと起動時配線
+  - 検索/起動/フォルダ遷移系コールバックの接続
+- `config.rs`:
+  - `%APPDATA%\Snotra\config.toml` の読込/保存
+  - 既定値補完
+  - `Alt+Space` を `Alt+Q` に補正
+- `hotkey.rs`:
+  - グローバルホットキー登録/解除
+- `tray.rs`:
+  - システムトレイアイコンとコンテキストメニュー
+- `window.rs`:
+  - 検索ウィンドウ生成・表示制御
+  - 入力・描画・選択処理
+  - `SearchResult` / `FolderExpansionState` の管理
+- `search.rs`:
+  - 検索順位計算（先頭部分一致/中間部分一致/スキップマッチング）
+  - 履歴ブースト適用
+  - 空クエリ時の履歴候補生成
+- `history.rs`:
+  - 起動履歴・クエリ別履歴・フォルダ展開履歴の管理
+  - バイナリ永続化
+- `folder.rs`:
+  - フォルダ内列挙とフィルタ/ソート
+  - ルート判定・遷移補助
+- `indexer.rs`:
+  - スキャン対象列挙と重複排除
+  - インデックスキャッシュ（設定ハッシュ付き）の読込/再構築
+- `icon.rs`:
+  - アイコン抽出とキャッシュ永続化
+- `launcher.rs`:
+  - 選択項目の起動（`ShellExecuteW`）
+- `query.rs`:
+  - クエリ正規化
+- `binfmt.rs`:
+  - `magic + version` 付きバイナリ入出力共通処理
+- `window_data.rs`:
+  - 検索ウィンドウ位置（`window.bin`）の保存/復元
 
-- `main.rs` — Entry point, Win32 message loop (`GetMessage` / `DispatchMessage`). Owns application state (previously `app.rs`), indexes apps at startup, wires 5 callbacks (`on_query_changed`, `on_launch`, `on_folder_expand`, `on_folder_navigate`, `on_folder_filter`), registers hotkey with Alt+Q fallback
-- `config.rs` — TOML config load/save from `%APPDATA%\Snotra\config.toml` via `dirs` crate. `AppearanceConfig` has serde defaults for `top_n_history`, `max_history_display`, `show_icons`. `PathsConfig` has `additional` (legacy `.lnk`-only paths) and `scan` (`Vec<ScanPath>` with per-path extensions and `include_folders`). Alt+Space hotkey is silently rewritten to Alt+Q on load
-- `hotkey.rs` — Global hotkey registration via `RegisterHotKey` / `UnregisterHotKey`
-- `tray.rs` — System tray icon via `Shell_NotifyIconW`, context menu
-- `window.rs` — Frameless popup search window (`WS_POPUP`), Edit control (child HWND), custom-painted result list. Exports `SearchResult` and `FolderExpansionState` types. Handles `WM_PAINT`, `WM_COMMAND` (EN_CHANGE), `WM_KEYDOWN`, `WM_ACTIVATE`. State stored in `thread_local! { static WINDOW_STATE }`
-- `indexer.rs` — Scans Start Menu, Desktop, and additional paths for `.lnk` shortcuts; scans `ScanPath` entries for files matching per-path extensions (with optional folder entry registration). `AppEntry { name, target_path, is_folder }` with `Serialize`/`Deserialize`. Deduplicates by lowercased name. Binary index cache (`index.bin`) with config hash for invalidation; `load_or_scan()` loads cache or rebuilds. `rebuild_and_save()` for forced rebuild from settings dialog
-- `icon.rs` — Icon extraction via `SHGetFileInfoW`, BGRA pixel data extraction via `GetDIBits`. `IconCache` stores `HashMap<String, IconData>` (path → BGRA pixels), persisted as `icons.bin` via bincode. Runtime `HashMap<String, HICON>` rebuilt from pixel data using `CreateIconIndirect`. `draw()` renders 16×16 icons via `DrawIconEx`
-- `search.rs` — Fuzzy matching with `fuzzy-matcher` (`SkimMatcherV2`). Scoring: `fuzzy_score + (global_count × 5) + (query_count × 20)`. Also provides `recent_history()` for empty-query mode
-- `history.rs` — `HistoryStore` backed by `HistoryData` (bincode-serialized). Tracks global launch counts, per-query launch counts, and folder expansion counts. Atomic write via `.bin.tmp` rename. `prune()` keeps top-N entries. Shared across callbacks via `Rc<RefCell<HistoryStore>>`
-- `folder.rs` — `list_folder(dir, filter, history, max_results)` reads a directory, applies case-insensitive substring filter, sorts: folders first → expansion count descending → alphabetical
-- `launcher.rs` — Launches selected app via `ShellExecuteW`
+### 実装上の重要パターン
 
-### Key Patterns
+- ウィンドウ状態は `thread_local!` の `WINDOW_STATE` で保持
+- 検索ウィンドウは起動時に作成し、ホットキーで表示/非表示を切替
+- ホットキーは `RegisterHotKey` でメッセージループスレッドにバインド
+- 履歴ストアは `Rc<RefCell<HistoryStore>>` を各コールバックで共有
+- フォルダ展開は「開始時スナップショットを保持し、`Escape` で一括復帰」モデル
+- 履歴/インデックス/アイコン保存は `.tmp` を使った原子的書き込み
 
-- Window state is stored in `thread_local! { static WINDOW_STATE: RefCell<Option<WindowState>> }` and accessed via closure. No `GWLP_USERDATA` usage
-- The search window is created hidden at startup and toggled visible/hidden on hotkey
-- `WM_HOTKEY` messages are received on the message loop thread since `RegisterHotKey` is thread-bound
-- `HistoryStore` is shared across 5 callbacks via `Rc<RefCell<HistoryStore>>`. Each callback clones the `Rc`; `borrow()` / `borrow_mut()` is called inline
-- Folder expansion uses a single-depth push/pop state machine. Entering a folder saves `(results, selected, query)` into `FolderExpansionState`; Escape restores it. Left-arrow navigates to OS-level parent (capped at drive root)
-- Scoring formula: `combined = fuzzy_score + (global_count × GLOBAL_WEIGHT) + (query_count × QUERY_WEIGHT)` where `GLOBAL_WEIGHT = 5`, `QUERY_WEIGHT = 20`
-- Atomic write in `history.rs`: serialize → write `.bin.tmp` → remove `.bin` → rename
-- Alt+Space hotkey is auto-rewritten to Alt+Q in `Config::load()` (OS reserves Alt+Space). Rewrite is persisted immediately
-- Index cache uses config hash (from `PathsConfig`) for invalidation; if hash changes, index is rebuilt from scratch
-- Icon extraction: `SHGetFileInfoW` → `GetIconInfo` → `GetDIBits` → BGRA pixels. Restored via `CreateIconIndirect`. `IconCache` is `Rc`-shared and stored in `WindowState`
-- `AppEntry` has `Serialize`/`Deserialize` for binary index cache. `is_folder` field distinguishes folder entries from file entries
+## 実装状況（実装フェーズ）
 
-### Config Format (TOML)
+- [x] Phase 1: 履歴・優先度システム（起動回数、クエリ別重み付け、空クエリ時履歴表示、bincode 永続化）
+- [x] Phase 2: フォルダ展開機能（左右キー遷移、フォルダ内フィルタ、`Escape` 復帰、展開回数反映）
+- [x] Phase 3: インデックス拡張（`ScanPath` 拡張子指定、フォルダ登録、アイコン抽出/キャッシュ、設定ハッシュ付きキャッシュ）
+- [x] Phase 4: 検索方式拡張（先頭部分一致/中間部分一致/スキップマッチング、`config.toml` で方式指定）
+- [ ] Phase 5: 設定画面（Win32 ダイアログ、タブ UI、`/o` コマンド）
+- [ ] Phase 6: ビジュアル・その他（プリセットテーマ、IME 制御、ホットキートグル、タイトルバー切替、ウィンドウ位置記憶、タスクトレイ表示切替）
 
-```toml
-[hotkey]
-modifier = "Alt"
-key = "Q"              # Alt+Space is auto-rewritten to Alt+Q on first load
-
-[appearance]
-max_results = 8
-window_width = 600
-top_n_history = 200        # max entries kept in history.bin (default: 200)
-max_history_display = 8    # max items shown when query is empty (default: 8)
-show_icons = true          # show file/folder icons in results (default: true)
-
-[paths]
-additional = []            # legacy: paths scanned for .lnk only
-
-[[paths.scan]]             # new: per-path extension filtering
-path = "C:\\Tools"
-extensions = [".exe", ".bat"]
-include_folders = true     # register folders as searchable entries (default: false)
-```
-
-## Data Files
-
-| File           | Location                         | Format  |
-|----------------|----------------------------------|---------|
-| `config.toml`  | `%APPDATA%\Snotra\config.toml`   | TOML    |
-| `history.bin`  | `%APPDATA%\Snotra\history.bin`   | bincode |
-| `index.bin`    | `%APPDATA%\Snotra\index.bin`     | bincode |
-| `icons.bin`    | `%APPDATA%\Snotra\icons.bin`     | bincode |
-
-`history.bin` contains `HistoryData`: global launch map, per-query map, folder expansion map. Written atomically via `.bin.tmp` intermediary. Pruned to `top_n_history` entries on every save.
-
-`index.bin` contains `IndexCache`: version, timestamp, `Vec<AppEntry>`, config hash. Invalidated when config hash changes. Written atomically via `.bin.tmp`.
-
-`icons.bin` contains `IconCacheData`: `HashMap<String, IconData>` mapping target paths to 16×16 BGRA pixel data. Rebuilt when index is rescanned.
-
-## Implementation Status
-
-- [x] Phase 1: History & priority system (launch counts, query-weighted scoring, empty-query recents, bincode persistence)
-- [x] Phase 2: Folder expansion (right/left arrow navigation, in-folder filter, Escape to restore, expansion count ranking)
-- [x] Phase 3: Index extension (per-path extensions via `ScanPath`, folder entries, icon extraction/cache via `SHGetFileInfoW`, binary index cache with config hash invalidation)
-- [ ] Phase 4: Search mode extension (prefix / substring / fuzzy, per-mode config)
-- [ ] Phase 5: Settings dialog (Win32 dialog, tab UI, `/o` command)
-- [ ] Phase 6: Visual & misc (preset themes, IME control, hotkey toggle, titlebar, window position memory, tray toggle)
-
-## Development Principles
+## 開発原則
 
 ### TDD
 
-Test pure-logic modules inline with `#[cfg(test)] mod tests { ... }`. Win32 modules (`window.rs`, `hotkey.rs`, `tray.rs`, `launcher.rs`, `main.rs`) are not unit-testable as they require a running message loop or real HWNDs.
-
-Testable modules:
-
-- `search.rs` — fuzzy ranking, history boosting, `recent_history()`, edge cases (empty index, empty query)
-- `history.rs` — increment counts, `prune()`, query-specific tracking, folder expansion, bincode roundtrip
-- `config.rs` — TOML deserialization, default field injection, `ScanPath` parsing, Alt+Space → Alt+Q rewrite
-- `folder.rs` — `list_folder()` with temp directories, filter, sort order
-- `indexer.rs` — extension filtering, folder registration, deduplication, `IndexCache` bincode roundtrip, config hash
-- `icon.rs` — `IconData` and `IconCacheData` bincode roundtrip
+- 純ロジックモジュール（`search.rs` / `history.rs` / `config.rs` / `folder.rs` / `indexer.rs` / `icon.rs` / `query.rs` / `binfmt.rs`）は `#[cfg(test)]` でユニットテストを追加する
+- Win32 依存モジュール（`window.rs` / `hotkey.rs` / `tray.rs` / `launcher.rs` / `main.rs`）はユニットテスト前提にしない
+- ロジック追加時は、可能な限りロジック層へ分離してテスト可能性を維持する
 
 ### KISS
 
-- `main.rs` must not grow further. New subsystems get their own module
-- Callbacks stay as thin wrappers — no business logic inside closures in `main.rs`
-- Avoid adding new `thread_local` statics; consolidate into `WindowState`
-- Each module has a single responsibility. Do not mix concerns (e.g., scoring logic in `window.rs`, file I/O in `search.rs`)
+- `main.rs` に業務ロジックを増やさない
+- コールバックは薄く保ち、実処理は専用モジュールへ寄せる
+- 責務を跨ぐ実装をしない（例: `window.rs` に検索スコア計算を置かない）
 
 ### DRY
 
-- Scoring logic lives exclusively in `search.rs` (`GLOBAL_WEIGHT`, `QUERY_WEIGHT`)
-- Filter/sort logic lives exclusively in `folder.rs`
-- Do not duplicate these in `window.rs` or `main.rs`
+- 検索スコア計算は `search.rs` に集約する
+- フォルダ列挙・フィルタ・並び替えは `folder.rs` に集約する
+- 同一ロジックを `main.rs` や UI 側へ重複実装しない
 
 ### YAGNI
 
-- Do not add abstractions, traits, or generics for hypothetical future use
-- Do not implement features from later phases (Phase 4–6) until that phase begins
-- Prefer concrete, direct code over configurable or extensible designs unless the current task requires it
+- 使う予定だけの抽象化（不要な trait/generics/レイヤー）を導入しない
+- 現在の要求範囲を超える機能追加を行わない
+- 拡張性より、現要件での単純さと可読性を優先する
+
+## 参照先（3層分担）
+
+- 意図（仕様）: `SPEC.md`
+- 運用ルール: `CLAUDE.md`
+- 実装事実: `src/*.rs`
+- 設定値・デフォルト: `src/config.rs`
+- 検索順位ロジック: `src/search.rs`
+- 履歴保存仕様: `src/history.rs` と `src/binfmt.rs`

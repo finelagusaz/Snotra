@@ -1,5 +1,6 @@
 #![windows_subsystem = "windows"]
 
+mod binfmt;
 mod config;
 mod folder;
 mod history;
@@ -7,9 +8,11 @@ mod hotkey;
 mod icon;
 mod indexer;
 mod launcher;
+mod query;
 mod search;
 mod tray;
 mod window;
+mod window_data;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -18,7 +21,8 @@ use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::w;
 
-use search::SearchEngine;
+use config::SearchModeConfig;
+use search::{SearchEngine, SearchMode};
 use tray::{handle_tray_message, IDM_EXIT, WM_TRAY_ICON};
 
 fn main() {
@@ -32,7 +36,11 @@ fn main() {
         config.appearance.max_history_display.min(config.appearance.max_results);
 
     // Index applications
-    let (entries, rescanned) = indexer::load_or_scan(&config.paths.additional, &config.paths.scan);
+    let (entries, rescanned) = indexer::load_or_scan(
+        &config.paths.additional,
+        &config.paths.scan,
+        config.search.show_hidden_system,
+    );
 
     // Build or load icon cache
     let icon_cache = if config.appearance.show_icons {
@@ -54,6 +62,9 @@ fn main() {
     let engine = Rc::new(SearchEngine::new(entries));
     let max_results = config.appearance.max_results;
     let max_history_display = config.appearance.max_history_display;
+    let normal_mode = to_search_mode(config.search.normal_mode);
+    let folder_mode = to_search_mode(config.search.folder_mode);
+    let show_hidden_system = config.search.show_hidden_system;
 
     // Load history
     let history = Rc::new(RefCell::new(history::HistoryStore::load(
@@ -85,7 +96,7 @@ fn main() {
             if query.is_empty() {
                 engine_for_search.recent_history(&hist, max_history_display)
             } else {
-                engine_for_search.search(query, max_results, &hist)
+                engine_for_search.search(query, max_results, &hist, normal_mode)
             }
         })),
         on_launch: Some(Box::new(move |result, query| {
@@ -106,6 +117,8 @@ fn main() {
             folder::list_folder(
                 std::path::Path::new(folder_path),
                 "",
+                folder_mode,
+                show_hidden_system,
                 &hist,
                 max_results,
             )
@@ -115,6 +128,8 @@ fn main() {
             folder::list_folder(
                 std::path::Path::new(folder_path),
                 "",
+                folder_mode,
+                show_hidden_system,
                 &hist,
                 max_results,
             )
@@ -124,6 +139,8 @@ fn main() {
             folder::list_folder(
                 std::path::Path::new(folder_path),
                 query,
+                folder_mode,
+                show_hidden_system,
                 &hist,
                 max_results,
             )
@@ -234,6 +251,14 @@ fn create_message_window() -> Option<HWND> {
             None,
         )
         .ok()
+    }
+}
+
+fn to_search_mode(mode: SearchModeConfig) -> SearchMode {
+    match mode {
+        SearchModeConfig::Prefix => SearchMode::Prefix,
+        SearchModeConfig::Substring => SearchMode::Substring,
+        SearchModeConfig::Fuzzy => SearchMode::Fuzzy,
     }
 }
 

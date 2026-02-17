@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::binfmt::{deserialize_with_header, serialize_with_header};
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, SelectObject, BITMAPINFO,
     BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
@@ -16,6 +17,8 @@ use crate::config::Config;
 use crate::indexer::AppEntry;
 
 const ICON_SIZE: i32 = 16;
+const ICON_MAGIC: [u8; 4] = *b"ICON";
+const ICON_VERSION: u32 = 1;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct IconData {
@@ -57,7 +60,7 @@ impl IconCache {
     pub fn load() -> Option<Self> {
         let path = cache_path()?;
         let bytes = std::fs::read(&path).ok()?;
-        let data: IconCacheData = bincode::deserialize(&bytes).ok()?;
+        let data: IconCacheData = deserialize_with_header(&bytes, ICON_MAGIC, ICON_VERSION)?;
 
         let mut cache = Self {
             data,
@@ -75,7 +78,7 @@ impl IconCache {
             let _ = std::fs::create_dir_all(dir);
         }
 
-        let Ok(bytes) = bincode::serialize(&self.data) else {
+        let Some(bytes) = serialize_with_header(ICON_MAGIC, ICON_VERSION, &self.data) else {
             return;
         };
 
@@ -315,8 +318,9 @@ mod tests {
             bgra: vec![0xFF; 16 * 16 * 4],
         };
 
-        let bytes = bincode::serialize(&data).expect("serialize");
-        let restored: IconData = bincode::deserialize(&bytes).expect("deserialize");
+        let bytes = serialize_with_header(ICON_MAGIC, ICON_VERSION, &data).expect("serialize");
+        let restored: IconData =
+            deserialize_with_header(&bytes, ICON_MAGIC, ICON_VERSION).expect("deserialize");
 
         assert_eq!(restored.width, 16);
         assert_eq!(restored.height, 16);
@@ -336,8 +340,9 @@ mod tests {
         );
 
         let cache_data = IconCacheData { icons };
-        let bytes = bincode::serialize(&cache_data).expect("serialize");
-        let restored: IconCacheData = bincode::deserialize(&bytes).expect("deserialize");
+        let bytes = serialize_with_header(ICON_MAGIC, ICON_VERSION, &cache_data).expect("serialize");
+        let restored: IconCacheData =
+            deserialize_with_header(&bytes, ICON_MAGIC, ICON_VERSION).expect("deserialize");
 
         assert!(restored.icons.contains_key("C:\\test.exe"));
         assert_eq!(restored.icons["C:\\test.exe"].bgra.len(), 16 * 16 * 4);

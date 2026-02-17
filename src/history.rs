@@ -4,7 +4,12 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::binfmt::{deserialize_with_header, serialize_with_header};
 use crate::config::Config;
+use crate::query::normalize_query;
+
+const HISTORY_MAGIC: [u8; 4] = *b"HIST";
+const HISTORY_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GlobalEntry {
@@ -28,16 +33,31 @@ pub struct HistoryStore {
 
 impl HistoryStore {
     pub fn load(top_n: usize, max_history_display: usize) -> Self {
-        let data = Self::data_path()
-            .and_then(|path| fs::read(&path).ok())
-            .and_then(|bytes| bincode::deserialize(&bytes).ok())
-            .unwrap_or_default();
+        let mut decode_failed = false;
+        let data = if let Some(path) = Self::data_path() {
+            match fs::read(&path)
+                .ok()
+                .and_then(|bytes| deserialize_with_header(&bytes, HISTORY_MAGIC, HISTORY_VERSION))
+            {
+                Some(data) => data,
+                None => {
+                    decode_failed = true;
+                    HistoryData::default()
+                }
+            }
+        } else {
+            HistoryData::default()
+        };
 
-        Self {
+        let mut store = Self {
             data,
             top_n,
             max_history_display,
+        };
+        if decode_failed {
+            store.save();
         }
+        store
     }
 
     pub fn save(&mut self) {
@@ -46,8 +66,11 @@ impl HistoryStore {
         let Some(path) = Self::data_path() else {
             return;
         };
+        if let Some(dir) = path.parent() {
+            let _ = fs::create_dir_all(dir);
+        }
 
-        let Ok(bytes) = bincode::serialize(&self.data) else {
+        let Some(bytes) = serialize_with_header(HISTORY_MAGIC, HISTORY_VERSION, &self.data) else {
             return;
         };
 
@@ -69,7 +92,7 @@ impl HistoryStore {
         entry.launch_count = entry.launch_count.saturating_add(1);
         entry.last_launched = now;
 
-        let norm_query = query.trim().to_lowercase();
+        let norm_query = normalize_query(query);
         if !norm_query.is_empty() {
             *self
                 .data
@@ -92,13 +115,17 @@ impl HistoryStore {
     }
 
     pub fn query_count(&self, query: &str, path: &str) -> u32 {
-        let norm_query = query.trim().to_lowercase();
+        let norm_query = normalize_query(query);
         self.data
             .query
             .get(&norm_query)
             .and_then(|m| m.get(path))
             .copied()
             .unwrap_or(0)
+    }
+
+    pub fn last_launched(&self, path: &str) -> Option<u64> {
+        self.data.global.get(path).map(|e| e.last_launched)
     }
 
     pub fn recent_launches(&self) -> Vec<&str> {
@@ -165,6 +192,7 @@ impl HistoryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::query::normalize_query;
 
     fn fresh_store() -> HistoryStore {
         HistoryStore {
@@ -218,6 +246,22 @@ mod tests {
 
         assert_eq!(store.query_count("vs", path), 1);
         assert_eq!(store.query_count("VS", path), 1);
+    }
+
+    #[test]
+    fn query_count_normalizes_whitespace() {
+        let mut store = fresh_store();
+        let path = "C:\\fake\\app.lnk";
+        let key = normalize_query("foo bar");
+        *store
+            .data
+            .query
+            .entry(key)
+            .or_default()
+            .entry(path.to_string())
+            .or_insert(0) += 1;
+
+        assert_eq!(store.query_count("  foo   bar  ", path), 1);
     }
 
     #[test]
@@ -276,8 +320,9 @@ mod tests {
             .insert("C:\\app.lnk".to_string(), 3);
         data.folder_expansion.insert("C:\\Projects".to_string(), 2);
 
-        let bytes = bincode::serialize(&data).expect("serialize");
-        let roundtripped: HistoryData = bincode::deserialize(&bytes).expect("deserialize");
+        let bytes = serialize_with_header(HISTORY_MAGIC, HISTORY_VERSION, &data).expect("serialize");
+        let roundtripped: HistoryData =
+            deserialize_with_header(&bytes, HISTORY_MAGIC, HISTORY_VERSION).expect("deserialize");
 
         assert_eq!(roundtripped.global["C:\\app.lnk"].launch_count, 5);
         assert_eq!(roundtripped.query["notepad"]["C:\\app.lnk"], 3);

@@ -89,3 +89,72 @@ impl SearchEngine {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::history::HistoryStore;
+    use crate::indexer::AppEntry;
+
+    fn make_entries(names: &[&str]) -> Vec<AppEntry> {
+        names
+            .iter()
+            .map(|n| AppEntry {
+                name: n.to_string(),
+                target_path: format!("C:\\fake\\{}.lnk", n),
+            })
+            .collect()
+    }
+
+    fn empty_history() -> HistoryStore {
+        HistoryStore::load(10, 8)
+    }
+
+    #[test]
+    fn search_empty_query_returns_empty() {
+        let engine = SearchEngine::new(make_entries(&["Firefox", "Chrome"]));
+        let results = engine.search("", 8, &empty_history());
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn search_no_entries_returns_empty() {
+        let engine = SearchEngine::new(Vec::new());
+        let results = engine.search("fire", 8, &empty_history());
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn search_returns_fuzzy_matches() {
+        let entries = make_entries(&["Firefox", "Chrome", "Notepad", "Visual Studio Code"]);
+        let engine = SearchEngine::new(entries);
+        let results = engine.search("fire", 8, &empty_history());
+        assert!(!results.is_empty());
+        assert_eq!(results[0].name, "Firefox");
+    }
+
+    #[test]
+    fn search_respects_max_results() {
+        let entries = make_entries(&["app1", "app2", "app3", "app4", "app5"]);
+        let engine = SearchEngine::new(entries);
+        let results = engine.search("app", 3, &empty_history());
+        assert!(results.len() <= 3);
+    }
+
+    #[test]
+    fn search_results_are_not_folders() {
+        let entries = make_entries(&["Firefox"]);
+        let engine = SearchEngine::new(entries);
+        let results = engine.search("fire", 8, &empty_history());
+        assert!(!results.is_empty());
+        assert!(!results[0].is_folder);
+    }
+
+    #[test]
+    fn recent_history_empty_when_no_launches() {
+        let entries = make_entries(&["Firefox", "Chrome"]);
+        let engine = SearchEngine::new(entries);
+        let results = engine.recent_history(&empty_history(), 8);
+        assert!(results.is_empty());
+    }
+}

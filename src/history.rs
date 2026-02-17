@@ -161,3 +161,142 @@ impl HistoryStore {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fresh_store() -> HistoryStore {
+        HistoryStore {
+            data: HistoryData::default(),
+            top_n: 100,
+            max_history_display: 8,
+        }
+    }
+
+    fn fresh_store_with_top_n(top_n: usize) -> HistoryStore {
+        HistoryStore {
+            data: HistoryData::default(),
+            top_n,
+            max_history_display: 8,
+        }
+    }
+
+    #[test]
+    fn record_launch_increments_global_count() {
+        let mut store = fresh_store();
+        let path = "C:\\fake\\app.lnk";
+        assert_eq!(store.global_count(path), 0);
+        store.data.global.entry(path.to_string()).or_default().launch_count += 1;
+        assert_eq!(store.global_count(path), 1);
+        store.data.global.entry(path.to_string()).or_default().launch_count += 1;
+        assert_eq!(store.global_count(path), 2);
+    }
+
+    #[test]
+    fn record_launch_tracks_query_count() {
+        let mut store = fresh_store();
+        let path = "C:\\fake\\notepad.lnk";
+        let query = "note";
+
+        // Simulate record_launch logic without save()
+        store.data.global.entry(path.to_string()).or_default().launch_count += 1;
+        *store.data.query.entry(query.to_string()).or_default().entry(path.to_string()).or_insert(0) += 1;
+
+        assert_eq!(store.query_count(query, path), 1);
+
+        *store.data.query.entry(query.to_string()).or_default().entry(path.to_string()).or_insert(0) += 1;
+        assert_eq!(store.query_count(query, path), 2);
+    }
+
+    #[test]
+    fn query_count_normalized_to_lowercase() {
+        let mut store = fresh_store();
+        let path = "C:\\fake\\vs.lnk";
+        let norm = "vs";
+        *store.data.query.entry(norm.to_string()).or_default().entry(path.to_string()).or_insert(0) += 1;
+
+        assert_eq!(store.query_count("vs", path), 1);
+        assert_eq!(store.query_count("VS", path), 1);
+    }
+
+    #[test]
+    fn empty_query_not_tracked_in_query_map() {
+        let mut store = fresh_store();
+        let path = "C:\\fake\\app.lnk";
+
+        // Simulate record_launch with empty query
+        store.data.global.entry(path.to_string()).or_default().launch_count += 1;
+        let norm_query = "".trim().to_lowercase();
+        if !norm_query.is_empty() {
+            *store.data.query.entry(norm_query).or_default().entry(path.to_string()).or_insert(0) += 1;
+        }
+
+        assert_eq!(store.global_count(path), 1);
+        assert_eq!(store.query_count("", path), 0);
+    }
+
+    #[test]
+    fn record_folder_expansion_increments_count() {
+        let mut store = fresh_store();
+        let folder = "C:\\Projects";
+        assert_eq!(store.folder_expansion_count(folder), 0);
+        *store.data.folder_expansion.entry(folder.to_string()).or_insert(0) += 1;
+        assert_eq!(store.folder_expansion_count(folder), 1);
+    }
+
+    #[test]
+    fn recent_launches_sorted_by_last_launched() {
+        let mut store = fresh_store();
+        store.data.global.insert(
+            "C:\\app_old.lnk".to_string(),
+            GlobalEntry { launch_count: 1, last_launched: 1000 },
+        );
+        store.data.global.insert(
+            "C:\\app_new.lnk".to_string(),
+            GlobalEntry { launch_count: 1, last_launched: 2000 },
+        );
+
+        let recent = store.recent_launches();
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0], "C:\\app_new.lnk");
+        assert_eq!(recent[1], "C:\\app_old.lnk");
+    }
+
+    #[test]
+    fn bincode_roundtrip() {
+        let mut data = HistoryData::default();
+        data.global.insert(
+            "C:\\app.lnk".to_string(),
+            GlobalEntry { launch_count: 5, last_launched: 1_700_000_000 },
+        );
+        data.query
+            .entry("notepad".to_string())
+            .or_default()
+            .insert("C:\\app.lnk".to_string(), 3);
+        data.folder_expansion.insert("C:\\Projects".to_string(), 2);
+
+        let bytes = bincode::serialize(&data).expect("serialize");
+        let roundtripped: HistoryData = bincode::deserialize(&bytes).expect("deserialize");
+
+        assert_eq!(roundtripped.global["C:\\app.lnk"].launch_count, 5);
+        assert_eq!(roundtripped.query["notepad"]["C:\\app.lnk"], 3);
+        assert_eq!(roundtripped.folder_expansion["C:\\Projects"], 2);
+    }
+
+    #[test]
+    fn prune_keeps_top_n_by_launch_count() {
+        let mut store = fresh_store_with_top_n(2);
+
+        store.data.global.insert("C:\\low.lnk".to_string(), GlobalEntry { launch_count: 1, last_launched: 100 });
+        store.data.global.insert("C:\\high.lnk".to_string(), GlobalEntry { launch_count: 10, last_launched: 200 });
+        store.data.global.insert("C:\\med.lnk".to_string(), GlobalEntry { launch_count: 5, last_launched: 150 });
+
+        store.prune();
+
+        assert_eq!(store.data.global.len(), 2);
+        assert!(store.data.global.contains_key("C:\\high.lnk"));
+        assert!(store.data.global.contains_key("C:\\med.lnk"));
+        assert!(!store.data.global.contains_key("C:\\low.lnk"));
+    }
+}

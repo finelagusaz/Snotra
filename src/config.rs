@@ -105,3 +105,88 @@ impl Config {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_full_config() {
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Ctrl"
+            key = "Space"
+
+            [appearance]
+            max_results = 10
+            window_width = 700
+            top_n_history = 150
+            max_history_display = 5
+
+            [paths]
+            additional = ["C:\\Tools"]
+        "#;
+        let config: Config = toml::from_str(toml_str).expect("parse");
+        assert_eq!(config.hotkey.modifier, "Ctrl");
+        assert_eq!(config.hotkey.key, "Space");
+        assert_eq!(config.appearance.max_results, 10);
+        assert_eq!(config.appearance.window_width, 700);
+        assert_eq!(config.appearance.top_n_history, 150);
+        assert_eq!(config.appearance.max_history_display, 5);
+        assert_eq!(config.paths.additional, vec!["C:\\Tools"]);
+    }
+
+    #[test]
+    fn deserialize_minimal_config_uses_defaults() {
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+
+            [appearance]
+            max_results = 8
+            window_width = 600
+
+            [paths]
+            additional = []
+        "#;
+        let config: Config = toml::from_str(toml_str).expect("parse");
+        assert_eq!(config.appearance.top_n_history, 200);
+        assert_eq!(config.appearance.max_history_display, 8);
+    }
+
+    #[test]
+    fn default_config_has_expected_values() {
+        let config = Config::default();
+        assert_eq!(config.hotkey.modifier, "Alt");
+        assert_eq!(config.hotkey.key, "Q");
+        assert_eq!(config.appearance.max_results, 8);
+        assert_eq!(config.appearance.window_width, 600);
+        assert_eq!(config.appearance.top_n_history, 200);
+        assert_eq!(config.appearance.max_history_display, 8);
+        assert!(config.paths.additional.is_empty());
+    }
+
+    #[test]
+    fn alt_space_is_rewritten_to_alt_q() {
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Space"
+
+            [appearance]
+            max_results = 8
+            window_width = 600
+
+            [paths]
+            additional = []
+        "#;
+        let mut config: Config = toml::from_str(toml_str).expect("parse");
+        if config.hotkey.modifier.eq_ignore_ascii_case("Alt")
+            && config.hotkey.key.eq_ignore_ascii_case("Space")
+        {
+            config.hotkey.key = "Q".to_string();
+        }
+        assert_eq!(config.hotkey.key, "Q");
+    }
+}

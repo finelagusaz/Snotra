@@ -4,6 +4,7 @@ mod config;
 mod folder;
 mod history;
 mod hotkey;
+mod icon;
 mod indexer;
 mod launcher;
 mod search;
@@ -31,7 +32,25 @@ fn main() {
         config.appearance.max_history_display.min(config.appearance.max_results);
 
     // Index applications
-    let entries = indexer::scan_all(&config.paths.additional);
+    let (entries, rescanned) = indexer::load_or_scan(&config.paths.additional, &config.paths.scan);
+
+    // Build or load icon cache
+    let icon_cache = if config.appearance.show_icons {
+        if rescanned {
+            let cache = icon::IconCache::build(&entries);
+            cache.save();
+            Some(Rc::new(cache))
+        } else {
+            Some(Rc::new(icon::IconCache::load().unwrap_or_else(|| {
+                let cache = icon::IconCache::build(&entries);
+                cache.save();
+                cache
+            })))
+        }
+    } else {
+        None
+    };
+
     let engine = Rc::new(SearchEngine::new(entries));
     let max_results = config.appearance.max_results;
     let max_history_display = config.appearance.max_history_display;
@@ -109,6 +128,7 @@ fn main() {
                 max_results,
             )
         })),
+        icon_cache,
     });
 
     // Create hidden message-only window for tray

@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::rc::Rc;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateFontIndirectW, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect,
@@ -14,6 +15,7 @@ const EDIT_ID: i32 = 100;
 const ITEM_HEIGHT: i32 = 36;
 const INPUT_HEIGHT: i32 = 40;
 const PADDING: i32 = 8;
+const ICON_AREA: i32 = 24; // 16px icon + 8px gap
 
 // Colors (BGR format for COLORREF)
 const BG_COLOR: u32 = 0x00282828;
@@ -45,6 +47,7 @@ pub struct WindowState {
     pub on_folder_expand: Option<Box<dyn Fn(&str) -> Vec<SearchResult>>>,
     pub on_folder_navigate: Option<Box<dyn Fn(&str) -> Vec<SearchResult>>>,
     pub on_folder_filter: Option<Box<dyn Fn(&str, &str) -> Vec<SearchResult>>>,
+    pub icon_cache: Option<Rc<crate::icon::IconCache>>,
 }
 
 thread_local! {
@@ -135,6 +138,7 @@ pub fn create_search_window(width: u32, max_results: usize) -> Option<HWND> {
             on_folder_expand: None,
             on_folder_navigate: None,
             on_folder_filter: None,
+            icon_cache: None,
         });
 
         Some(hwnd)
@@ -302,6 +306,9 @@ fn paint_results(hwnd: HWND) {
         let _ = SetBkMode(hdc, TRANSPARENT);
 
         with_state(|state| {
+            let has_icons = state.icon_cache.is_some();
+            let text_left_offset = if has_icons { PADDING + ICON_AREA } else { PADDING };
+
             for (i, result) in state.results.iter().enumerate() {
                 let y = INPUT_HEIGHT + PADDING + (i as i32 * ITEM_HEIGHT);
                 let item_rect = RECT {
@@ -318,11 +325,17 @@ fn paint_results(hwnd: HWND) {
                     let _ = DeleteObject(sel_brush);
                 }
 
+                // Draw icon
+                if let Some(ref icon_cache) = state.icon_cache {
+                    let icon_y = y + (ITEM_HEIGHT - 16) / 2;
+                    icon_cache.draw(&result.path, hdc, item_rect.left + PADDING, icon_y);
+                }
+
                 // Draw name
                 SetTextColor(hdc, COLORREF(TEXT_COLOR));
                 let mut name_wide: Vec<u16> = result.name.encode_utf16().collect();
                 let mut text_rect = RECT {
-                    left: item_rect.left + PADDING,
+                    left: item_rect.left + text_left_offset,
                     top: y + 2,
                     right: item_rect.right - PADDING,
                     bottom: y + ITEM_HEIGHT / 2 + 4,
@@ -339,7 +352,7 @@ fn paint_results(hwnd: HWND) {
                 };
                 let mut path_wide: Vec<u16> = display_path.encode_utf16().collect();
                 let mut path_rect = RECT {
-                    left: item_rect.left + PADDING,
+                    left: item_rect.left + text_left_offset,
                     top: y + ITEM_HEIGHT / 2,
                     right: item_rect.right - PADDING,
                     bottom: y + ITEM_HEIGHT - 2,

@@ -23,6 +23,10 @@ fn default_max_history_display() -> usize {
     8
 }
 
+fn default_show_icons() -> bool {
+    true
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AppearanceConfig {
     pub max_results: usize,
@@ -31,11 +35,24 @@ pub struct AppearanceConfig {
     pub top_n_history: usize,
     #[serde(default = "default_max_history_display")]
     pub max_history_display: usize,
+    #[serde(default = "default_show_icons")]
+    pub show_icons: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanPath {
+    pub path: String,
+    pub extensions: Vec<String>,
+    #[serde(default)]
+    pub include_folders: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PathsConfig {
+    #[serde(default)]
     pub additional: Vec<String>,
+    #[serde(default)]
+    pub scan: Vec<ScanPath>,
 }
 
 impl Default for Config {
@@ -50,9 +67,11 @@ impl Default for Config {
                 window_width: 600,
                 top_n_history: 200,
                 max_history_display: 8,
+                show_icons: true,
             },
             paths: PathsConfig {
                 additional: Vec::new(),
+                scan: Vec::new(),
             },
         }
     }
@@ -134,6 +153,7 @@ mod tests {
         assert_eq!(config.appearance.top_n_history, 150);
         assert_eq!(config.appearance.max_history_display, 5);
         assert_eq!(config.paths.additional, vec!["C:\\Tools"]);
+        assert!(config.paths.scan.is_empty());
     }
 
     #[test]
@@ -164,7 +184,62 @@ mod tests {
         assert_eq!(config.appearance.window_width, 600);
         assert_eq!(config.appearance.top_n_history, 200);
         assert_eq!(config.appearance.max_history_display, 8);
+        assert!(config.appearance.show_icons);
         assert!(config.paths.additional.is_empty());
+        assert!(config.paths.scan.is_empty());
+    }
+
+    #[test]
+    fn deserialize_scan_paths() {
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+
+            [appearance]
+            max_results = 8
+            window_width = 600
+
+            [paths]
+            additional = []
+
+            [[paths.scan]]
+            path = "C:\\Tools"
+            extensions = [".exe", ".bat"]
+            include_folders = true
+
+            [[paths.scan]]
+            path = "D:\\Docs"
+            extensions = [".pdf", ".xlsx"]
+        "#;
+        let config: Config = toml::from_str(toml_str).expect("parse");
+        assert_eq!(config.paths.scan.len(), 2);
+        assert_eq!(config.paths.scan[0].path, "C:\\Tools");
+        assert_eq!(config.paths.scan[0].extensions, vec![".exe", ".bat"]);
+        assert!(config.paths.scan[0].include_folders);
+        assert_eq!(config.paths.scan[1].path, "D:\\Docs");
+        assert_eq!(config.paths.scan[1].extensions, vec![".pdf", ".xlsx"]);
+        assert!(!config.paths.scan[1].include_folders);
+    }
+
+    #[test]
+    fn backward_compat_no_scan_field() {
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+
+            [appearance]
+            max_results = 8
+            window_width = 600
+
+            [paths]
+            additional = ["C:\\Old"]
+        "#;
+        let config: Config = toml::from_str(toml_str).expect("parse");
+        assert_eq!(config.paths.additional, vec!["C:\\Old"]);
+        assert!(config.paths.scan.is_empty());
+        assert!(config.appearance.show_icons);
     }
 
     #[test]

@@ -59,7 +59,7 @@ impl SearchEngine {
             .map(|(_, entry)| SearchResult {
                 name: entry.name.clone(),
                 path: entry.target_path.clone(),
-                is_folder: false,
+                is_folder: entry.is_folder,
             })
             .collect()
     }
@@ -83,7 +83,7 @@ impl SearchEngine {
                 path_to_entry.get(path).map(|entry| SearchResult {
                     name: entry.name.clone(),
                     path: entry.target_path.clone(),
-                    is_folder: false,
+                    is_folder: entry.is_folder,
                 })
             })
             .collect()
@@ -102,6 +102,7 @@ mod tests {
             .map(|n| AppEntry {
                 name: n.to_string(),
                 target_path: format!("C:\\fake\\{}.lnk", n),
+                is_folder: false,
             })
             .collect()
     }

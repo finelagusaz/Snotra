@@ -92,17 +92,7 @@ impl IconCache {
     pub fn draw(&self, target_path: &str, hdc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32) {
         if let Some(&hicon) = self.runtime.get(target_path) {
             unsafe {
-                let _ = DrawIconEx(
-                    hdc,
-                    x,
-                    y,
-                    hicon,
-                    ICON_SIZE,
-                    ICON_SIZE,
-                    0,
-                    None,
-                    DI_NORMAL,
-                );
+                let _ = DrawIconEx(hdc, x, y, hicon, ICON_SIZE, ICON_SIZE, 0, None, DI_NORMAL);
             }
         }
     }
@@ -340,7 +330,8 @@ mod tests {
         );
 
         let cache_data = IconCacheData { icons };
-        let bytes = serialize_with_header(ICON_MAGIC, ICON_VERSION, &cache_data).expect("serialize");
+        let bytes =
+            serialize_with_header(ICON_MAGIC, ICON_VERSION, &cache_data).expect("serialize");
         let restored: IconCacheData =
             deserialize_with_header(&bytes, ICON_MAGIC, ICON_VERSION).expect("deserialize");
 

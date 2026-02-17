@@ -49,8 +49,7 @@ mod tests {
     fn roundtrip_with_header() {
         let input = Dummy { value: 42 };
         let bytes = serialize_with_header(*b"TEST", 1, &input).expect("serialize");
-        let output: Dummy =
-            deserialize_with_header(&bytes, *b"TEST", 1).expect("deserialize");
+        let output: Dummy = deserialize_with_header(&bytes, *b"TEST", 1).expect("deserialize");
         assert_eq!(input, output);
     }
 

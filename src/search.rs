@@ -49,19 +49,19 @@ impl SearchEngine {
             .iter()
             .filter_map(|entry| {
                 match_score(mode, &self.matcher, &entry.name, &norm_query).map(|base_score| {
-                        let global = history.global_count(&entry.target_path) as i64;
-                        let qcount = history.query_count(&norm_query, &entry.target_path) as i64;
-                        let folder_boost = if entry.is_folder {
-                            history.folder_expansion_count(&entry.target_path) as i64
-                                * FOLDER_EXPANSION_WEIGHT
-                        } else {
-                            0
-                        };
-                        let combined =
-                            base_score + global * GLOBAL_WEIGHT + qcount * QUERY_WEIGHT + folder_boost;
-                        let last = history.last_launched(&entry.target_path).unwrap_or(0);
-                        (combined, last, entry)
-                    })
+                    let global = history.global_count(&entry.target_path) as i64;
+                    let qcount = history.query_count(&norm_query, &entry.target_path) as i64;
+                    let folder_boost = if entry.is_folder {
+                        history.folder_expansion_count(&entry.target_path) as i64
+                            * FOLDER_EXPANSION_WEIGHT
+                    } else {
+                        0
+                    };
+                    let combined =
+                        base_score + global * GLOBAL_WEIGHT + qcount * QUERY_WEIGHT + folder_boost;
+                    let last = history.last_launched(&entry.target_path).unwrap_or(0);
+                    (combined, last, entry)
+                })
             })
             .collect();
 
@@ -83,11 +83,7 @@ impl SearchEngine {
             .collect()
     }
 
-    pub fn recent_history(
-        &self,
-        history: &HistoryStore,
-        max_results: usize,
-    ) -> Vec<SearchResult> {
+    pub fn recent_history(&self, history: &HistoryStore, max_results: usize) -> Vec<SearchResult> {
         let path_to_entry: HashMap<&str, &AppEntry> = self
             .entries
             .iter()
@@ -107,6 +103,10 @@ impl SearchEngine {
                 })
             })
             .collect()
+    }
+
+    pub fn entries(&self) -> &[AppEntry] {
+        &self.entries
     }
 }
 

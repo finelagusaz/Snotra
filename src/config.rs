@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
     pub hotkey: HotkeyConfig,
     pub appearance: AppearanceConfig,
@@ -11,7 +11,7 @@ pub struct Config {
     pub search: SearchConfig,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HotkeyConfig {
     pub modifier: String,
     pub key: String,
@@ -45,7 +45,7 @@ pub enum SearchModeConfig {
     Fuzzy,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchConfig {
     #[serde(default = "default_search_mode")]
     pub normal_mode: SearchModeConfig,
@@ -65,7 +65,7 @@ impl Default for SearchConfig {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppearanceConfig {
     pub max_results: usize,
     pub window_width: u32,
@@ -77,7 +77,7 @@ pub struct AppearanceConfig {
     pub show_icons: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScanPath {
     pub path: String,
     pub extensions: Vec<String>,
@@ -85,7 +85,7 @@ pub struct ScanPath {
     pub include_folders: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PathsConfig {
     #[serde(default)]
     pub additional: Vec<String>,

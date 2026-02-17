@@ -215,9 +215,19 @@ mod tests {
         let mut store = fresh_store();
         let path = "C:\\fake\\app.lnk";
         assert_eq!(store.global_count(path), 0);
-        store.data.global.entry(path.to_string()).or_default().launch_count += 1;
+        store
+            .data
+            .global
+            .entry(path.to_string())
+            .or_default()
+            .launch_count += 1;
         assert_eq!(store.global_count(path), 1);
-        store.data.global.entry(path.to_string()).or_default().launch_count += 1;
+        store
+            .data
+            .global
+            .entry(path.to_string())
+            .or_default()
+            .launch_count += 1;
         assert_eq!(store.global_count(path), 2);
     }
 
@@ -228,12 +238,29 @@ mod tests {
         let query = "note";
 
         // Simulate record_launch logic without save()
-        store.data.global.entry(path.to_string()).or_default().launch_count += 1;
-        *store.data.query.entry(query.to_string()).or_default().entry(path.to_string()).or_insert(0) += 1;
+        store
+            .data
+            .global
+            .entry(path.to_string())
+            .or_default()
+            .launch_count += 1;
+        *store
+            .data
+            .query
+            .entry(query.to_string())
+            .or_default()
+            .entry(path.to_string())
+            .or_insert(0) += 1;
 
         assert_eq!(store.query_count(query, path), 1);
 
-        *store.data.query.entry(query.to_string()).or_default().entry(path.to_string()).or_insert(0) += 1;
+        *store
+            .data
+            .query
+            .entry(query.to_string())
+            .or_default()
+            .entry(path.to_string())
+            .or_insert(0) += 1;
         assert_eq!(store.query_count(query, path), 2);
     }
 
@@ -242,7 +269,13 @@ mod tests {
         let mut store = fresh_store();
         let path = "C:\\fake\\vs.lnk";
         let norm = "vs";
-        *store.data.query.entry(norm.to_string()).or_default().entry(path.to_string()).or_insert(0) += 1;
+        *store
+            .data
+            .query
+            .entry(norm.to_string())
+            .or_default()
+            .entry(path.to_string())
+            .or_insert(0) += 1;
 
         assert_eq!(store.query_count("vs", path), 1);
         assert_eq!(store.query_count("VS", path), 1);
@@ -270,10 +303,21 @@ mod tests {
         let path = "C:\\fake\\app.lnk";
 
         // Simulate record_launch with empty query
-        store.data.global.entry(path.to_string()).or_default().launch_count += 1;
+        store
+            .data
+            .global
+            .entry(path.to_string())
+            .or_default()
+            .launch_count += 1;
         let norm_query = "".trim().to_lowercase();
         if !norm_query.is_empty() {
-            *store.data.query.entry(norm_query).or_default().entry(path.to_string()).or_insert(0) += 1;
+            *store
+                .data
+                .query
+                .entry(norm_query)
+                .or_default()
+                .entry(path.to_string())
+                .or_insert(0) += 1;
         }
 
         assert_eq!(store.global_count(path), 1);
@@ -285,7 +329,11 @@ mod tests {
         let mut store = fresh_store();
         let folder = "C:\\Projects";
         assert_eq!(store.folder_expansion_count(folder), 0);
-        *store.data.folder_expansion.entry(folder.to_string()).or_insert(0) += 1;
+        *store
+            .data
+            .folder_expansion
+            .entry(folder.to_string())
+            .or_insert(0) += 1;
         assert_eq!(store.folder_expansion_count(folder), 1);
     }
 
@@ -294,11 +342,17 @@ mod tests {
         let mut store = fresh_store();
         store.data.global.insert(
             "C:\\app_old.lnk".to_string(),
-            GlobalEntry { launch_count: 1, last_launched: 1000 },
+            GlobalEntry {
+                launch_count: 1,
+                last_launched: 1000,
+            },
         );
         store.data.global.insert(
             "C:\\app_new.lnk".to_string(),
-            GlobalEntry { launch_count: 1, last_launched: 2000 },
+            GlobalEntry {
+                launch_count: 1,
+                last_launched: 2000,
+            },
         );
 
         let recent = store.recent_launches();
@@ -312,7 +366,10 @@ mod tests {
         let mut data = HistoryData::default();
         data.global.insert(
             "C:\\app.lnk".to_string(),
-            GlobalEntry { launch_count: 5, last_launched: 1_700_000_000 },
+            GlobalEntry {
+                launch_count: 5,
+                last_launched: 1_700_000_000,
+            },
         );
         data.query
             .entry("notepad".to_string())
@@ -320,7 +377,8 @@ mod tests {
             .insert("C:\\app.lnk".to_string(), 3);
         data.folder_expansion.insert("C:\\Projects".to_string(), 2);
 
-        let bytes = serialize_with_header(HISTORY_MAGIC, HISTORY_VERSION, &data).expect("serialize");
+        let bytes =
+            serialize_with_header(HISTORY_MAGIC, HISTORY_VERSION, &data).expect("serialize");
         let roundtripped: HistoryData =
             deserialize_with_header(&bytes, HISTORY_MAGIC, HISTORY_VERSION).expect("deserialize");
 
@@ -333,9 +391,27 @@ mod tests {
     fn prune_keeps_top_n_by_launch_count() {
         let mut store = fresh_store_with_top_n(2);
 
-        store.data.global.insert("C:\\low.lnk".to_string(), GlobalEntry { launch_count: 1, last_launched: 100 });
-        store.data.global.insert("C:\\high.lnk".to_string(), GlobalEntry { launch_count: 10, last_launched: 200 });
-        store.data.global.insert("C:\\med.lnk".to_string(), GlobalEntry { launch_count: 5, last_launched: 150 });
+        store.data.global.insert(
+            "C:\\low.lnk".to_string(),
+            GlobalEntry {
+                launch_count: 1,
+                last_launched: 100,
+            },
+        );
+        store.data.global.insert(
+            "C:\\high.lnk".to_string(),
+            GlobalEntry {
+                launch_count: 10,
+                last_launched: 200,
+            },
+        );
+        store.data.global.insert(
+            "C:\\med.lnk".to_string(),
+            GlobalEntry {
+                launch_count: 5,
+                last_launched: 150,
+            },
+        );
 
         store.prune();
 

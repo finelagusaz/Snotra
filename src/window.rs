@@ -1,15 +1,15 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use windows::core::w;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateFontIndirectW, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect,
-    InvalidateRect, SelectObject, SetBkMode, SetTextColor, DT_END_ELLIPSIS,
-    DT_LEFT, DT_SINGLELINE, FONT_CHARSET, HBRUSH, LOGFONTW, PAINTSTRUCT, TRANSPARENT,
+    InvalidateRect, SelectObject, SetBkMode, SetTextColor, DT_END_ELLIPSIS, DT_LEFT, DT_SINGLELINE,
+    FONT_CHARSET, HBRUSH, LOGFONTW, PAINTSTRUCT, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows::Win32::UI::WindowsAndMessaging::*;
-use windows::core::w;
 
 const EDIT_ID: i32 = 100;
 const ITEM_HEIGHT: i32 = 36;
@@ -43,6 +43,7 @@ pub struct WindowState {
     pub selected: usize,
     pub on_query_changed: Option<Box<dyn Fn(&str) -> Vec<SearchResult>>>,
     pub on_launch: Option<Box<dyn Fn(&SearchResult, &str)>>,
+    pub on_command: Option<Box<dyn Fn(&str) -> bool>>,
     pub edit_hwnd: HWND,
     pub folder_state: Option<FolderExpansionState>,
     pub on_folder_expand: Option<Box<dyn Fn(&str) -> Vec<SearchResult>>>,
@@ -107,7 +108,8 @@ pub fn create_search_window(width: u32, max_results: usize) -> Option<HWND> {
             None,
             instance,
             None,
-        ).ok()?;
+        )
+        .ok()?;
 
         // Create Edit control for text input
         let edit_hwnd = CreateWindowExW(
@@ -137,6 +139,7 @@ pub fn create_search_window(width: u32, max_results: usize) -> Option<HWND> {
             selected: 0,
             on_query_changed: None,
             on_launch: None,
+            on_command: None,
             edit_hwnd,
             folder_state: None,
             on_folder_expand: None,
@@ -194,6 +197,32 @@ pub fn hide_window(hwnd: HWND) {
     unsafe {
         persist_window_placement(hwnd);
         let _ = ShowWindow(hwnd, SW_HIDE);
+    }
+}
+
+pub fn update_icon_cache(icon_cache: Option<Rc<crate::icon::IconCache>>) {
+    with_state(|state| {
+        state.icon_cache = icon_cache;
+    });
+}
+
+pub fn update_max_results_layout(hwnd: HWND, max_results: usize) {
+    unsafe {
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_ok() {
+            let width = rect.right - rect.left;
+            let height = INPUT_HEIGHT + (ITEM_HEIGHT * max_results as i32) + PADDING * 2;
+            let _ = SetWindowPos(
+                hwnd,
+                HWND::default(),
+                rect.left,
+                rect.top,
+                width,
+                height,
+                SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+            let _ = InvalidateRect(hwnd, None, true);
+        }
     }
 }
 
@@ -265,16 +294,13 @@ fn set_edit_text(edit_hwnd: HWND, text: &str) {
 
 fn handle_query_changed(hwnd: HWND) {
     // Read edit text and folder state outside with_state to avoid re-entrancy
-    let (edit_hwnd, in_folder) = with_state(|state| (state.edit_hwnd, state.folder_state.is_some()))
-        .unwrap_or_default();
+    let (edit_hwnd, in_folder) =
+        with_state(|state| (state.edit_hwnd, state.folder_state.is_some())).unwrap_or_default();
     let query = get_edit_text(edit_hwnd);
 
     if in_folder {
         with_state(|state| {
-            let current_dir = state
-                .folder_state
-                .as_ref()
-                .map(|fs| fs.current_dir.clone());
+            let current_dir = state.folder_state.as_ref().map(|fs| fs.current_dir.clone());
             if let (Some(dir), Some(ref on_filter)) = (current_dir, &state.on_folder_filter) {
                 state.results = on_filter(&dir, &query);
                 state.selected = 0;
@@ -324,7 +350,11 @@ fn paint_results(hwnd: HWND) {
 
         with_state(|state| {
             let has_icons = state.icon_cache.is_some();
-            let text_left_offset = if has_icons { PADDING + ICON_AREA } else { PADDING };
+            let text_left_offset = if has_icons {
+                PADDING + ICON_AREA
+            } else {
+                PADDING
+            };
 
             for (i, result) in state.results.iter().enumerate() {
                 let y = INPUT_HEIGHT + PADDING + (i as i32 * ITEM_HEIGHT);
@@ -448,6 +478,20 @@ pub fn handle_edit_keydown(hwnd: HWND, vk: u32) -> bool {
         }
         0x0D => {
             // Enter - launch selected
+            let command_handled = with_state(|state| {
+                let query = get_edit_text(state.edit_hwnd);
+                if let Some(ref on_command) = state.on_command {
+                    on_command(&query)
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false);
+            if command_handled {
+                hide_window(hwnd);
+                return true;
+            }
+
             with_state(|state| {
                 if let Some(result) = state.results.get(state.selected) {
                     if result.is_error {

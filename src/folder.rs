@@ -1,7 +1,7 @@
-use std::path::{Path, PathBuf};
-use std::os::windows::fs::MetadataExt;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
+use std::os::windows::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
 
 use crate::history::HistoryStore;
@@ -179,7 +179,14 @@ mod tests {
         fs::write(dir.join("config.toml"), "").unwrap();
         fs::write(dir.join("build.rs"), "").unwrap();
 
-        let results = list_folder(&dir, "toml", SearchMode::Substring, true, &empty_history(), 100);
+        let results = list_folder(
+            &dir,
+            "toml",
+            SearchMode::Substring,
+            true,
+            &empty_history(),
+            100,
+        );
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "config.toml");
 
@@ -191,7 +198,14 @@ mod tests {
         let dir = temp_dir_with_contents("filter_case");
         fs::write(dir.join("README.TXT"), "").unwrap();
 
-        let results = list_folder(&dir, "readme", SearchMode::Substring, true, &empty_history(), 100);
+        let results = list_folder(
+            &dir,
+            "readme",
+            SearchMode::Substring,
+            true,
+            &empty_history(),
+            100,
+        );
         assert_eq!(results.len(), 1);
 
         let _ = fs::remove_dir_all(&dir);
@@ -273,7 +287,14 @@ mod tests {
         let dir = temp_dir_with_contents("substring_not_fuzzy");
         fs::write(dir.join("Visual Studio Code.txt"), "").unwrap();
 
-        let results = list_folder(&dir, "vsc", SearchMode::Substring, true, &empty_history(), 100);
+        let results = list_folder(
+            &dir,
+            "vsc",
+            SearchMode::Substring,
+            true,
+            &empty_history(),
+            100,
+        );
         assert!(results.is_empty());
 
         let _ = fs::remove_dir_all(&dir);

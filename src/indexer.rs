@@ -315,8 +315,7 @@ pub fn rebuild_and_save(
 fn load_cache(config_hash: u64) -> Option<IndexCache> {
     let path = cache_path()?;
     let bytes = std::fs::read(path).ok()?;
-    let cache: IndexCache =
-        deserialize_with_header(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION)?;
+    let cache: IndexCache = deserialize_with_header(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION)?;
     if cache.config_hash != config_hash {
         return None;
     }
@@ -485,7 +484,8 @@ mod tests {
             config_hash: 12345,
         };
 
-        let bytes = serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache).expect("serialize");
+        let bytes =
+            serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache).expect("serialize");
         let restored: IndexCache =
             deserialize_with_header(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION).expect("deserialize");
 
@@ -508,8 +508,16 @@ mod tests {
     #[test]
     fn entries_equal_identical() {
         let a = vec![
-            AppEntry { name: "A".into(), target_path: "C:\\a.exe".into(), is_folder: false },
-            AppEntry { name: "B".into(), target_path: "C:\\b".into(), is_folder: true },
+            AppEntry {
+                name: "A".into(),
+                target_path: "C:\\a.exe".into(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "B".into(),
+                target_path: "C:\\b".into(),
+                is_folder: true,
+            },
         ];
         let b = a.clone();
         assert!(entries_equal(&a, &b));
@@ -517,34 +525,68 @@ mod tests {
 
     #[test]
     fn entries_equal_different_length() {
-        let a = vec![
-            AppEntry { name: "A".into(), target_path: "C:\\a.exe".into(), is_folder: false },
-        ];
+        let a = vec![AppEntry {
+            name: "A".into(),
+            target_path: "C:\\a.exe".into(),
+            is_folder: false,
+        }];
         let b = vec![
-            AppEntry { name: "A".into(), target_path: "C:\\a.exe".into(), is_folder: false },
-            AppEntry { name: "B".into(), target_path: "C:\\b.exe".into(), is_folder: false },
+            AppEntry {
+                name: "A".into(),
+                target_path: "C:\\a.exe".into(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "B".into(),
+                target_path: "C:\\b.exe".into(),
+                is_folder: false,
+            },
         ];
         assert!(!entries_equal(&a, &b));
     }
 
     #[test]
     fn entries_equal_different_name() {
-        let a = vec![AppEntry { name: "A".into(), target_path: "C:\\a.exe".into(), is_folder: false }];
-        let b = vec![AppEntry { name: "B".into(), target_path: "C:\\a.exe".into(), is_folder: false }];
+        let a = vec![AppEntry {
+            name: "A".into(),
+            target_path: "C:\\a.exe".into(),
+            is_folder: false,
+        }];
+        let b = vec![AppEntry {
+            name: "B".into(),
+            target_path: "C:\\a.exe".into(),
+            is_folder: false,
+        }];
         assert!(!entries_equal(&a, &b));
     }
 
     #[test]
     fn entries_equal_different_target() {
-        let a = vec![AppEntry { name: "A".into(), target_path: "C:\\a.exe".into(), is_folder: false }];
-        let b = vec![AppEntry { name: "A".into(), target_path: "C:\\b.exe".into(), is_folder: false }];
+        let a = vec![AppEntry {
+            name: "A".into(),
+            target_path: "C:\\a.exe".into(),
+            is_folder: false,
+        }];
+        let b = vec![AppEntry {
+            name: "A".into(),
+            target_path: "C:\\b.exe".into(),
+            is_folder: false,
+        }];
         assert!(!entries_equal(&a, &b));
     }
 
     #[test]
     fn entries_equal_different_is_folder() {
-        let a = vec![AppEntry { name: "A".into(), target_path: "C:\\a".into(), is_folder: false }];
-        let b = vec![AppEntry { name: "A".into(), target_path: "C:\\a".into(), is_folder: true }];
+        let a = vec![AppEntry {
+            name: "A".into(),
+            target_path: "C:\\a".into(),
+            is_folder: false,
+        }];
+        let b = vec![AppEntry {
+            name: "A".into(),
+            target_path: "C:\\a".into(),
+            is_folder: true,
+        }];
         assert!(!entries_equal(&a, &b));
     }
 

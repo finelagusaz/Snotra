@@ -5,7 +5,13 @@
 //! There is a bunch of improvements we could do,
 //! like removing a bunch of `unwraps`.
 
-use std::{cell::RefCell, num::NonZeroU32, rc::Rc, sync::Arc, time::Instant};
+use std::{
+    cell::RefCell,
+    num::NonZeroU32,
+    rc::Rc,
+    sync::Arc,
+    time::Instant,
+};
 
 use egui_winit::ActionRequested;
 use parking_lot::Mutex;
@@ -1060,10 +1066,11 @@ fn render_immediate_viewport(
     }
 
     let clipped_primitives = egui_ctx.tessellate(shapes, pixels_per_point);
+    let clear_color = egui_ctx.style().visuals.window_fill.to_normalized_gamma_f32();
     painter.paint_and_update_textures(
         ids.this,
         pixels_per_point,
-        [0.0, 0.0, 0.0, 0.0],
+        clear_color,
         &clipped_primitives,
         &textures_delta,
         vec![],

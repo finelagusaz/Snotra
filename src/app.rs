@@ -1,14 +1,17 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command};
 use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use ab_glyph::FontRef;
 use eframe::egui::{
     self, Color32, ComboBox, FontData, FontDefinitions, FontFamily, FontId, RichText, ScrollArea,
-    TextStyle, TextureHandle, TextureOptions, ViewportCommand,
+    TextStyle, TextureHandle, TextureOptions, ViewportClass, ViewportCommand, ViewportId,
 };
 use windows::Win32::Foundation::LPARAM;
 use windows::Win32::Graphics::Gdi::{
@@ -32,8 +35,12 @@ use crate::ui_types::{FolderExpansionState, SearchResult};
 use crate::window_data;
 
 const INPUT_HEIGHT: f32 = 36.0;
-const ITEM_HEIGHT: f32 = 42.0;
+const MIN_RESULT_ROW_HEIGHT: f32 = 42.0;
+const RESULT_ROW_VERTICAL_PADDING: f32 = 14.0;
 const WINDOW_PADDING: f32 = 8.0;
+const SETTINGS_WINDOW_DEFAULT_SIZE: [f32; 2] = [760.0, 560.0];
+const SETTINGS_WINDOW_MIN_SIZE: [f32; 2] = [520.0, 360.0];
+const SETTINGS_VIEWPORT_ID_SOURCE: &str = "snotra_settings_viewport";
 const SPINNER_FRAMES: [char; 4] = ['|', '/', '-', '\\'];
 const CJK_FALLBACK_FONTS: &[&str] = &[
     "Yu Gothic UI",
@@ -98,6 +105,7 @@ pub struct SnotraApp {
     awaiting_search_focus: bool,
 
     settings_open: bool,
+    force_embed_settings: bool,
     settings_tab: SettingsTab,
     settings_draft: Config,
     settings_status: String,
@@ -113,6 +121,7 @@ pub struct SnotraApp {
 
     search_window_pos: Option<egui::Pos2>,
     settings_window_pos: Option<egui::Pos2>,
+    settings_window_size: Option<egui::Vec2>,
 
     platform: PlatformBridge,
     internal_tx: Sender<InternalEvent>,
@@ -121,8 +130,11 @@ pub struct SnotraApp {
     should_exit: bool,
     exit_sent: bool,
     minimize_on_settings_close: bool,
+    settings_window_child: Option<Child>,
+    settings_window_trace_frames: u32,
     available_fonts: Vec<String>,
     font_data_cache: HashMap<String, Arc<FontData>>,
+    invalid_font_families: HashSet<String>,
 }
 
 impl SnotraApp {
@@ -146,6 +158,7 @@ impl SnotraApp {
             initial_window_applied: false,
             awaiting_search_focus: config.general.show_on_startup,
             settings_open: false,
+            force_embed_settings: false,
             settings_tab: SettingsTab::General,
             settings_status: String::new(),
             settings_scan_path: String::new(),
@@ -166,14 +179,19 @@ impl SnotraApp {
                 .map(|p| egui::pos2(p.x as f32, p.y as f32)),
             settings_window_pos: window_data::load_settings_placement()
                 .map(|p| egui::pos2(p.x as f32, p.y as f32)),
+            settings_window_size: window_data::load_settings_size()
+                .map(|s| clamp_settings_window_size(egui::vec2(s.width as f32, s.height as f32))),
             platform: init.platform,
             internal_tx,
             internal_rx,
             should_exit: false,
             exit_sent: false,
             minimize_on_settings_close: false,
+            settings_window_child: None,
+            settings_window_trace_frames: 0,
             available_fonts,
             font_data_cache: HashMap::new(),
+            invalid_font_families: HashSet::new(),
             engine: init.engine,
             history: init.history,
             icon_cache: init.icon_cache,
@@ -181,6 +199,21 @@ impl SnotraApp {
         };
 
         app.refresh_results();
+        app
+    }
+
+    pub fn new_settings_window(cc: &eframe::CreationContext<'_>, init: AppInit) -> Self {
+        let mut app = Self::new(cc, init);
+        app.force_embed_settings = true;
+        app.settings_open = true;
+        app.show_search_window = false;
+        app.request_focus_input = false;
+        app.awaiting_search_focus = false;
+        app.minimize_on_settings_close = false;
+        app.settings_draft = app.config.clone();
+        app.settings_status.clear();
+        app.settings_window_trace_frames = 0;
+        append_runtime_debug_log("settings_window:new_settings_window");
         app
     }
 
@@ -199,7 +232,7 @@ impl SnotraApp {
                     }
                 }
                 PlatformEvent::OpenSettings => {
-                    self.open_settings_from_anywhere(ctx);
+                    self.open_settings_via_mode(ctx);
                 }
                 PlatformEvent::ExitRequested => {
                     self.should_exit = true;
@@ -282,16 +315,87 @@ impl SnotraApp {
         self.show_search_window = false;
         self.awaiting_search_focus = false;
         self.minimize_on_settings_close = true;
+        // `show_viewport_immediate` relies on the root viewport update loop.
+        // Keep root unminimized while settings are open so child content keeps painting.
         ctx.send_viewport_cmd(ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
-        ctx.send_viewport_cmd(ViewportCommand::Focus);
+    }
+
+    fn open_settings_via_mode(&mut self, ctx: &egui::Context) {
+        if self.force_embed_settings {
+            self.open_settings_from_anywhere(ctx);
+        } else {
+            append_runtime_debug_log("main_window:open_settings_via_mode external");
+            self.launch_settings_window_process();
+        }
+    }
+
+    fn reap_settings_window_process(&mut self) {
+        let mut finished = false;
+        if let Some(child) = self.settings_window_child.as_mut() {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    append_runtime_debug_log(&format!(
+                        "main_window:settings_child_exited status={status}"
+                    ));
+                    finished = true;
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    append_runtime_debug_log(&format!(
+                        "main_window:settings_child_wait_err err={err}"
+                    ));
+                    finished = true;
+                }
+            }
+        }
+        if finished {
+            self.settings_window_child = None;
+        }
+    }
+
+    fn launch_settings_window_process(&mut self) {
+        self.reap_settings_window_process();
+        if self.settings_window_child.is_some() {
+            return;
+        }
+
+        let Ok(exe_path) = std::env::current_exe() else {
+            self.settings_status =
+                "設定ウィンドウ起動に失敗しました: 実行ファイル取得不可".to_string();
+            append_runtime_debug_log("main_window:settings_spawn_fail current_exe");
+            return;
+        };
+
+        match Command::new(exe_path).arg("--settings-window").spawn() {
+            Ok(child) => {
+                append_runtime_debug_log(&format!(
+                    "main_window:settings_spawn_ok pid={}",
+                    child.id()
+                ));
+                self.settings_window_child = Some(child);
+            }
+            Err(err) => {
+                self.settings_status = format!("設定ウィンドウ起動に失敗しました: {}", err);
+                append_runtime_debug_log(&format!("main_window:settings_spawn_err err={err}"));
+            }
+        }
     }
 
     fn close_settings(&mut self, ctx: &egui::Context) {
+        if self.force_embed_settings {
+            self.settings_open = false;
+            self.show_rebuild_confirm = false;
+            self.pending_rebuild_config = None;
+            self.persist_settings_placement();
+            ctx.send_viewport_cmd(ViewportCommand::Close);
+            return;
+        }
         self.settings_open = false;
         self.show_rebuild_confirm = false;
         self.pending_rebuild_config = None;
         self.persist_settings_placement();
+        ctx.send_viewport_cmd_to(settings_viewport_id(), ViewportCommand::Close);
         if self.minimize_on_settings_close {
             ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
         }
@@ -400,7 +504,7 @@ impl SnotraApp {
 
     fn activate_selected(&mut self, ctx: &egui::Context) {
         if query::normalize_query(&self.query) == "/o" {
-            self.open_settings_from_anywhere(ctx);
+            self.open_settings_via_mode(ctx);
             return;
         }
 
@@ -517,13 +621,20 @@ impl SnotraApp {
         if family.trim().is_empty() {
             return false;
         }
+        if self
+            .invalid_font_families
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(family))
+        {
+            return false;
+        }
 
         if !self.font_data_cache.contains_key(family) {
-            let Some(bytes) = load_font_data_for_family(family) else {
+            let Some(font_data) = load_font_data_for_family(family) else {
                 return false;
             };
             self.font_data_cache
-                .insert(family.to_string(), Arc::new(FontData::from_owned(bytes)));
+                .insert(family.to_string(), Arc::new(font_data));
         }
 
         let mut fallback_families = collect_fallback_families(family, &self.available_fonts);
@@ -541,51 +652,56 @@ impl SnotraApp {
         let Some(primary_font_data) = self.font_data_cache.get(family).cloned() else {
             return false;
         };
+        let family_name = family.to_string();
+        let primary_key = format!("user_font:{family}");
 
         for fallback in &fallback_families {
+            if self
+                .invalid_font_families
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(fallback))
+            {
+                continue;
+            }
             if !self.font_data_cache.contains_key(fallback) {
-                if let Some(bytes) = load_font_data_for_family(fallback) {
+                if let Some(font_data) = load_font_data_for_family(fallback) {
                     self.font_data_cache
-                        .insert(fallback.clone(), Arc::new(FontData::from_owned(bytes)));
+                        .insert(fallback.clone(), Arc::new(font_data));
                 }
             }
         }
 
-        let family_name = family.to_string();
-        let primary_key = format!("user_font:{family}");
         let mut defs = FontDefinitions::default();
-        defs.font_data.insert(primary_key.clone(), primary_font_data);
+        defs.font_data
+            .insert(primary_key.clone(), primary_font_data);
+        let mut fallback_keys: Vec<String> = Vec::new();
+        rebuild_font_stacks(&mut defs, &family_name, &primary_key, &fallback_keys);
+        if !try_set_fonts(ctx, defs.clone()) {
+            self.invalid_font_families.insert(family.to_string());
+            self.font_data_cache.remove(family);
+            return false;
+        }
 
-        let mut fallback_keys = Vec::new();
         for fallback in &fallback_families {
             let Some(font_data) = self.font_data_cache.get(fallback).cloned() else {
                 continue;
             };
             let key = format!("fallback_font:{fallback}");
-            defs.font_data.insert(key.clone(), font_data);
-            fallback_keys.push(key);
-        }
+            let mut trial = defs.clone();
+            trial.font_data.insert(key.clone(), font_data);
 
-        let mut custom_stack = vec![primary_key.clone()];
-        custom_stack.extend(fallback_keys.clone());
-        if let Some(default_stack) = defs.families.get(&FontFamily::Proportional) {
-            custom_stack.extend(default_stack.clone());
-        }
-        defs.families
-            .insert(FontFamily::Name(family_name.clone().into()), custom_stack);
-
-        if let Some(default_stack) = defs.families.get_mut(&FontFamily::Proportional) {
-            let mut merged = vec![primary_key.clone()];
-            merged.extend(fallback_keys);
-            for key in default_stack.iter() {
-                if !merged.iter().any(|x| x == key) {
-                    merged.push(key.clone());
-                }
+            let mut trial_fallback_keys = fallback_keys.clone();
+            trial_fallback_keys.push(key);
+            rebuild_font_stacks(&mut trial, &family_name, &primary_key, &trial_fallback_keys);
+            if try_set_fonts(ctx, trial.clone()) {
+                defs = trial;
+                fallback_keys = trial_fallback_keys;
+            } else {
+                self.invalid_font_families.insert(fallback.clone());
+                self.font_data_cache.remove(fallback);
             }
-            *default_stack = merged;
         }
 
-        ctx.set_fonts(defs);
         true
     }
 
@@ -593,6 +709,18 @@ impl SnotraApp {
         let pos = ctx.input(|i| i.viewport().outer_rect.map(|rect| rect.left_top()));
         if let Some(pos) = pos {
             self.search_window_pos = Some(pos);
+        }
+    }
+
+    fn sync_settings_viewport_state(&mut self, ctx: &egui::Context) {
+        let pos = ctx.input(|i| i.viewport().outer_rect.map(|rect| rect.left_top()));
+        if let Some(pos) = pos {
+            self.settings_window_pos = Some(pos);
+        }
+
+        let size = ctx.input(|i| i.viewport().inner_rect.map(|rect| rect.size()));
+        if let Some(size) = size {
+            self.settings_window_size = Some(clamp_settings_window_size(size));
         }
     }
 
@@ -659,6 +787,7 @@ impl SnotraApp {
             }
 
             ui.add_space(6.0);
+            let row_height = search_result_row_height(self.config.visual.font_size);
 
             ScrollArea::vertical().show(ui, |ui| {
                 let rows = self.results.clone();
@@ -680,7 +809,7 @@ impl SnotraApp {
                         }
 
                         let resp = ui.add_sized(
-                            [ui.available_width(), ITEM_HEIGHT],
+                            [ui.available_width(), row_height],
                             egui::Button::selectable(selected, row_text),
                         );
 
@@ -697,32 +826,97 @@ impl SnotraApp {
         });
     }
 
-    fn draw_settings_window(&mut self, ctx: &egui::Context) {
+    fn draw_settings_window(&mut self, root_ctx: &egui::Context) {
         if !self.settings_open {
             return;
         }
 
+        if self.force_embed_settings {
+            self.apply_visual_style(root_ctx);
+            self.sync_settings_viewport_state(root_ctx);
+            egui::CentralPanel::default()
+                .frame(egui::Frame::default().fill(parse_hex_color(
+                    &self.config.visual.background_color,
+                    Color32::from_rgb(40, 40, 40),
+                )))
+                .show(root_ctx, |ui| {
+                    self.draw_settings_contents(ui, root_ctx, root_ctx);
+                });
+            return;
+        }
+
+        let mut builder = egui::ViewportBuilder::default()
+            .with_title("Snotra 設定")
+            .with_resizable(true)
+            .with_close_button(false)
+            .with_inner_size(clamp_settings_window_size(
+                self.settings_window_size.unwrap_or(egui::vec2(
+                    SETTINGS_WINDOW_DEFAULT_SIZE[0],
+                    SETTINGS_WINDOW_DEFAULT_SIZE[1],
+                )),
+            ))
+            .with_min_inner_size(egui::vec2(
+                SETTINGS_WINDOW_MIN_SIZE[0],
+                SETTINGS_WINDOW_MIN_SIZE[1],
+            ));
+
+        if let Some(pos) = self.settings_window_pos {
+            builder = builder.with_position(pos);
+        }
+
+        root_ctx.show_viewport_immediate(settings_viewport_id(), builder, |settings_ctx, class| {
+            if class == ViewportClass::Embedded {
+                self.draw_settings_embedded(root_ctx, settings_ctx);
+                return;
+            }
+
+            // Child viewport has its own style state, so apply visual settings here too.
+            self.apply_visual_style(settings_ctx);
+            self.sync_settings_viewport_state(settings_ctx);
+
+            egui::CentralPanel::default()
+                .frame(egui::Frame::default().fill(parse_hex_color(
+                    &self.config.visual.background_color,
+                    Color32::from_rgb(40, 40, 40),
+                )))
+                .show(settings_ctx, |ui| {
+                    self.draw_settings_contents(ui, root_ctx, settings_ctx);
+                });
+        });
+    }
+
+    fn draw_settings_embedded(&mut self, root_ctx: &egui::Context, settings_ctx: &egui::Context) {
         let mut open = self.settings_open;
         let mut window = egui::Window::new("Snotra 設定")
             .open(&mut open)
             .resizable(true)
-            .default_size([760.0, 560.0]);
+            .default_size(SETTINGS_WINDOW_DEFAULT_SIZE)
+            .min_size(SETTINGS_WINDOW_MIN_SIZE)
+            .vscroll(true);
 
         if let Some(pos) = self.settings_window_pos {
             window = window.default_pos(pos);
         }
 
-        if let Some(resp) = window.show(ctx, |ui| self.draw_settings_contents(ui, ctx)) {
+        if let Some(resp) = window.show(settings_ctx, |ui| {
+            self.draw_settings_contents(ui, root_ctx, settings_ctx)
+        }) {
             self.settings_window_pos = Some(resp.response.rect.left_top());
+            self.settings_window_size = Some(resp.response.rect.size());
         }
 
         if !open {
-            self.close_settings(ctx);
+            self.close_settings(root_ctx);
         }
     }
 
-    fn draw_settings_contents(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.horizontal(|ui| {
+    fn draw_settings_contents(
+        &mut self,
+        ui: &mut egui::Ui,
+        root_ctx: &egui::Context,
+        settings_ctx: &egui::Context,
+    ) {
+        ui.horizontal_wrapped(|ui| {
             ui.selectable_value(&mut self.settings_tab, SettingsTab::General, "全般");
             ui.selectable_value(&mut self.settings_tab, SettingsTab::Search, "検索");
             ui.selectable_value(&mut self.settings_tab, SettingsTab::Index, "インデックス");
@@ -731,25 +925,30 @@ impl SnotraApp {
 
         ui.separator();
 
-        match self.settings_tab {
-            SettingsTab::General => self.draw_settings_general(ui),
-            SettingsTab::Search => self.draw_settings_search(ui),
-            SettingsTab::Index => self.draw_settings_index(ui),
-            SettingsTab::Visual => self.draw_settings_visual(ui),
-        }
+        let reserved_bottom_height = 96.0;
+        let scroll_height = (ui.available_height() - reserved_bottom_height).max(120.0);
+        ScrollArea::vertical()
+            .id_salt("settings_content_scroll")
+            .max_height(scroll_height)
+            .show(ui, |ui| match self.settings_tab {
+                SettingsTab::General => self.draw_settings_general(ui),
+                SettingsTab::Search => self.draw_settings_search(ui),
+                SettingsTab::Index => self.draw_settings_index(ui),
+                SettingsTab::Visual => self.draw_settings_visual(ui),
+            });
 
         ui.separator();
 
         ui.horizontal(|ui| {
             if ui.button("保存").clicked() && !self.rebuild_in_progress {
-                self.save_settings(ctx);
+                self.save_settings(root_ctx);
             }
             if ui.button("再構築").clicked() && !self.rebuild_in_progress {
                 self.pending_rebuild_config = Some(self.settings_draft.clone());
                 self.show_rebuild_confirm = true;
             }
             if ui.button("閉じる").clicked() {
-                self.close_settings(ctx);
+                self.close_settings(root_ctx);
             }
         });
 
@@ -761,7 +960,7 @@ impl SnotraApp {
             egui::Window::new("インデックス再構築")
                 .collapsible(false)
                 .resizable(false)
-                .show(ctx, |ui| {
+                .show(settings_ctx, |ui| {
                     ui.label("インデックス再構築を開始しますか？");
                     ui.horizontal(|ui| {
                         if ui.button("開始").clicked() {
@@ -1097,10 +1296,7 @@ impl SnotraApp {
                 self.settings_draft.visual.font_family = default_font;
                 self.settings_status = "既定フォントに戻しました".to_string();
             }
-            ui.label(format!(
-                "現在: {}",
-                self.settings_draft.visual.font_family
-            ));
+            ui.label(format!("現在: {}", self.settings_draft.visual.font_family));
         });
         ui.horizontal(|ui| {
             ui.label("フォントサイズ");
@@ -1211,10 +1407,11 @@ impl SnotraApp {
 
         if old.appearance.max_results != next.appearance.max_results
             || old.appearance.window_width != next.appearance.window_width
+            || old.visual.font_size != next.visual.font_size
         {
             ctx.send_viewport_cmd(ViewportCommand::InnerSize(egui::vec2(
                 next.appearance.window_width as f32,
-                search_window_height(next.appearance.max_results),
+                search_window_height(next.appearance.max_results, next.visual.font_size),
             )));
         }
 
@@ -1284,6 +1481,11 @@ impl SnotraApp {
                 y: pos.y.round() as i32,
             });
         }
+        if let Some(size) = self.settings_window_size {
+            let width = size.x.round().max(SETTINGS_WINDOW_MIN_SIZE[0]) as i32;
+            let height = size.y.round().max(SETTINGS_WINDOW_MIN_SIZE[1]) as i32;
+            window_data::save_settings_size(window_data::WindowSize { width, height });
+        }
     }
 
     fn tick_spinner(&mut self) {
@@ -1303,13 +1505,23 @@ impl SnotraApp {
 
 impl eframe::App for SnotraApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.force_embed_settings && self.settings_window_trace_frames < 12 {
+            self.settings_window_trace_frames += 1;
+            append_runtime_debug_log(&format!(
+                "settings_window:update_frame={} open={}",
+                self.settings_window_trace_frames, self.settings_open
+            ));
+        }
         if !self.initial_window_applied {
             ctx.send_viewport_cmd(ViewportCommand::Decorations(
                 self.config.general.show_title_bar,
             ));
             ctx.send_viewport_cmd(ViewportCommand::InnerSize(egui::vec2(
                 self.config.appearance.window_width as f32,
-                search_window_height(self.config.appearance.max_results),
+                search_window_height(
+                    self.config.appearance.max_results,
+                    self.config.visual.font_size,
+                ),
             )));
             if self.show_search_window {
                 ctx.send_viewport_cmd(ViewportCommand::Visible(true));
@@ -1321,6 +1533,7 @@ impl eframe::App for SnotraApp {
 
         self.apply_visual_style(ctx);
         self.sync_search_viewport_pos(ctx);
+        self.reap_settings_window_process();
         self.handle_platform_events(ctx);
         self.handle_internal_events();
         self.tick_spinner();
@@ -1343,6 +1556,9 @@ impl eframe::App for SnotraApp {
         }
 
         self.draw_settings_window(ctx);
+        if self.settings_open && !self.force_embed_settings {
+            ctx.request_repaint_of(settings_viewport_id());
+        }
 
         ctx.request_repaint_after(Duration::from_millis(80));
     }
@@ -1359,8 +1575,24 @@ impl Drop for SnotraApp {
     }
 }
 
-pub fn search_window_height(max_results: usize) -> f32 {
-    INPUT_HEIGHT + (ITEM_HEIGHT * max_results as f32) + WINDOW_PADDING * 2.0
+fn settings_viewport_id() -> ViewportId {
+    ViewportId::from_hash_of(SETTINGS_VIEWPORT_ID_SOURCE)
+}
+
+fn clamp_settings_window_size(size: egui::Vec2) -> egui::Vec2 {
+    egui::vec2(
+        size.x.max(SETTINGS_WINDOW_MIN_SIZE[0]),
+        size.y.max(SETTINGS_WINDOW_MIN_SIZE[1]),
+    )
+}
+
+fn search_result_row_height(font_size: u32) -> f32 {
+    let clamped = font_size.clamp(8, 48) as f32;
+    (clamped * 2.0 + RESULT_ROW_VERTICAL_PADDING).max(MIN_RESULT_ROW_HEIGHT)
+}
+
+pub fn search_window_height(max_results: usize, font_size: u32) -> f32 {
+    INPUT_HEIGHT + (search_result_row_height(font_size) * max_results as f32) + WINDOW_PADDING * 2.0
 }
 
 fn runtime_from_config(config: &Config) -> RuntimeSettings {
@@ -1434,7 +1666,13 @@ fn sanitize_font_family_for_save(input: &str, available_fonts: &[String]) -> Str
 }
 
 fn default_visual_font_family(available_fonts: &[String]) -> String {
-    for preferred in ["Segoe UI", "Yu Gothic UI", "Meiryo UI", "Meiryo", "MS UI Gothic"] {
+    for preferred in [
+        "Segoe UI",
+        "Yu Gothic UI",
+        "Meiryo UI",
+        "Meiryo",
+        "MS UI Gothic",
+    ] {
         if let Some(found) = available_fonts
             .iter()
             .find(|name| name.eq_ignore_ascii_case(preferred))
@@ -1459,7 +1697,10 @@ fn collect_fallback_families(primary: &str, available_fonts: &[String]) -> Vec<S
             .iter()
             .find(|name| name.eq_ignore_ascii_case(candidate))
         {
-            if !result.iter().any(|name: &String| name.eq_ignore_ascii_case(found)) {
+            if !result
+                .iter()
+                .any(|name: &String| name.eq_ignore_ascii_case(found))
+            {
                 result.push(found.clone());
             }
         }
@@ -1641,21 +1882,69 @@ fn load_font_data_from_gdi(family: &str) -> Option<Vec<u8>> {
     }
 }
 
-fn load_font_data_for_family(family: &str) -> Option<Vec<u8>> {
-    load_font_data_from_gdi(family).or_else(|| load_font_data_from_windows_fonts(family))
+fn load_font_data_for_family(family: &str) -> Option<FontData> {
+    let mut raw_candidates = Vec::new();
+    if let Some(bytes) = load_font_data_from_windows_fonts(family) {
+        raw_candidates.push(bytes);
+    }
+    if let Some(bytes) = load_font_data_from_gdi(family) {
+        raw_candidates.push(bytes);
+    }
+
+    for bytes in raw_candidates {
+        for candidate in filter_supported_font_bytes(bytes) {
+            if font_data_is_parsable(&candidate) {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
+}
+
+fn filter_supported_font_bytes(bytes: Vec<u8>) -> Vec<FontData> {
+    if bytes.len() < 4 {
+        return Vec::new();
+    }
+    let tag = &bytes[0..4];
+    if tag == b"ttcf" {
+        let count = ttc_font_count(&bytes).unwrap_or(1).clamp(1, 16);
+        let mut candidates = Vec::with_capacity(count as usize);
+        for index in 0..count {
+            let mut data = FontData::from_owned(bytes.clone());
+            data.index = index;
+            candidates.push(data);
+        }
+        return candidates;
+    }
+    if tag == [0x00, 0x01, 0x00, 0x00] || tag == b"OTTO" || tag == b"true" || tag == b"typ1" {
+        return vec![FontData::from_owned(bytes)];
+    }
+    Vec::new()
+}
+
+fn ttc_font_count(bytes: &[u8]) -> Option<u32> {
+    if bytes.len() < 12 || &bytes[0..4] != b"ttcf" {
+        return None;
+    }
+    Some(u32::from_be_bytes([
+        bytes[8], bytes[9], bytes[10], bytes[11],
+    ]))
+}
+
+fn font_data_is_parsable(data: &FontData) -> bool {
+    FontRef::try_from_slice_and_index(data.as_ref(), data.index).is_ok()
 }
 
 fn load_font_data_from_windows_fonts(family: &str) -> Option<Vec<u8>> {
-    let mut candidates: Vec<&str> = match family.to_ascii_lowercase().as_str() {
+    let candidates: Vec<&str> = match family.to_ascii_lowercase().as_str() {
         "yu gothic ui" | "yu gothic" => vec!["YuGothM.ttc", "YuGothR.ttc"],
         "meiryo ui" | "meiryo" => vec!["meiryo.ttc"],
         "ms ui gothic" | "ms gothic" => vec!["msgothic.ttc"],
         _ => Vec::new(),
     };
     if candidates.is_empty() {
-        candidates.push("YuGothM.ttc");
-        candidates.push("meiryo.ttc");
-        candidates.push("msgothic.ttc");
+        return None;
     }
 
     let fonts_dir = windows_fonts_dir()?;
@@ -1668,9 +1957,60 @@ fn load_font_data_from_windows_fonts(family: &str) -> Option<Vec<u8>> {
     None
 }
 
+fn rebuild_font_stacks(
+    defs: &mut FontDefinitions,
+    family_name: &str,
+    primary_key: &str,
+    fallback_keys: &[String],
+) {
+    let default_stack = defs
+        .families
+        .get(&FontFamily::Proportional)
+        .cloned()
+        .unwrap_or_default();
+
+    let mut proportional_stack = vec![primary_key.to_string()];
+    for key in fallback_keys {
+        if !proportional_stack.iter().any(|existing| existing == key) {
+            proportional_stack.push(key.clone());
+        }
+    }
+    for key in default_stack {
+        if !proportional_stack.iter().any(|existing| existing == &key) {
+            proportional_stack.push(key);
+        }
+    }
+    defs.families
+        .insert(FontFamily::Proportional, proportional_stack.clone());
+    defs.families.insert(
+        FontFamily::Name(family_name.to_string().into()),
+        proportional_stack,
+    );
+}
+
+fn try_set_fonts(ctx: &egui::Context, defs: FontDefinitions) -> bool {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ctx.set_fonts(defs);
+    }))
+    .is_ok()
+}
+
 fn windows_fonts_dir() -> Option<PathBuf> {
     let windir = std::env::var_os("WINDIR")?;
     Some(PathBuf::from(windir).join("Fonts"))
+}
+
+fn append_runtime_debug_log(message: &str) {
+    let Some(base) = std::env::var_os("LOCALAPPDATA") else {
+        return;
+    };
+    let dir = PathBuf::from(base).join("Snotra");
+    let _ = fs::create_dir_all(&dir);
+    let path = dir.join("runtime_debug.log");
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        let pid = std::process::id();
+        let _ = writeln!(file, "pid={pid} {message}");
+    }
 }
 
 #[cfg(test)]
@@ -1745,5 +2085,27 @@ mod tests {
         assert_eq!(startup_visibility_label(true, false), "search_visible");
         assert_eq!(startup_visibility_label(false, true), "tray_icon_only");
         assert_eq!(startup_visibility_label(false, false), "hidden_hotkey_only");
+    }
+
+    #[test]
+    fn search_result_row_height_uses_minimum_for_small_font() {
+        assert_eq!(search_result_row_height(8), MIN_RESULT_ROW_HEIGHT);
+    }
+
+    #[test]
+    fn search_result_row_height_grows_with_font_size() {
+        assert!(search_result_row_height(24) > search_result_row_height(12));
+    }
+
+    #[test]
+    fn filter_supported_font_bytes_accepts_ttc_header() {
+        assert!(!filter_supported_font_bytes(b"ttcf....".to_vec()).is_empty());
+    }
+
+    #[test]
+    fn filter_supported_font_bytes_accepts_ttf_header() {
+        let mut bytes = vec![0x00, 0x01, 0x00, 0x00];
+        bytes.extend_from_slice(b"rest");
+        assert!(!filter_supported_font_bytes(bytes).is_empty());
     }
 }

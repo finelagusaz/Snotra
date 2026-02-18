@@ -61,6 +61,16 @@ pub struct PlatformBridge {
 }
 
 impl PlatformBridge {
+    pub fn disabled() -> Self {
+        let (_event_tx, event_rx) = mpsc::channel();
+        let (command_tx, _command_rx) = mpsc::channel();
+        Self {
+            event_rx,
+            command_tx,
+            thread_id: 0,
+        }
+    }
+
     pub fn start(initial_hotkey: HotkeyConfig, show_tray_icon: bool) -> Option<Self> {
         let (event_tx, event_rx) = mpsc::channel();
         let (command_tx, command_rx) = mpsc::channel();
@@ -91,6 +101,9 @@ impl PlatformBridge {
     }
 
     pub fn send_command(&self, command: PlatformCommand) {
+        if self.thread_id == 0 {
+            return;
+        }
         if self.command_tx.send(command).is_ok() {
             unsafe {
                 let _ = PostThreadMessageW(self.thread_id, WM_PLATFORM_WAKE, WPARAM(0), LPARAM(0));

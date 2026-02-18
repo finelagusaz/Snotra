@@ -71,6 +71,12 @@ fn main() {
         }
     }
 
+    std::panic::set_hook(Box::new(|panic_info| {
+        log_startup_line(&format!("main:panic={panic_info}"));
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        log_startup_line(&format!("main:panic_backtrace={backtrace}"));
+    }));
+
     fn acquire_singleton() -> Option<SingletonGuard> {
         let mutex_name = HSTRING::from("Global\\Snotra.Singleton");
         let handle = unsafe { CreateMutexW(None, false, PCWSTR(mutex_name.as_ptr())) }.ok()?;
@@ -103,6 +109,93 @@ fn main() {
     }
 
     log_startup_line("main:start");
+    let is_settings_window_mode = std::env::args().any(|arg| arg == "--settings-window");
+    if is_settings_window_mode {
+        log_startup_line("main:mode=settings_window");
+        let mut config = Config::load();
+        config.appearance.max_history_display = config
+            .appearance
+            .max_history_display
+            .min(config.appearance.max_results);
+
+        let mut viewport = egui::ViewportBuilder::default()
+            .with_title("Snotra 設定")
+            .with_decorations(true)
+            .with_visible(true)
+            .with_taskbar(true)
+            .with_resizable(true)
+            .with_min_inner_size([520.0, 360.0])
+            .with_inner_size([760.0, 560.0]);
+        if let Some(size) = window_data::load_settings_size() {
+            viewport =
+                viewport.with_inner_size([size.width.max(520) as f32, size.height.max(360) as f32]);
+        }
+        if let Some(placement) = window_data::load_settings_placement() {
+            viewport = viewport.with_position([placement.x as f32, placement.y as f32]);
+        }
+
+        let (renderer, renderer_label) = resolve_renderer(config.general.renderer);
+        let (wgpu_backends, wgpu_backends_label) =
+            resolve_wgpu_backends(config.general.wgpu_backend);
+        log_startup_line(&format!("main:settings_renderer={renderer_label}"));
+        log_startup_line(&format!(
+            "main:settings_wgpu_backends={wgpu_backends_label}"
+        ));
+
+        let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration::default();
+        if matches!(renderer, eframe::Renderer::Wgpu) {
+            let mut create_new = eframe::egui_wgpu::WgpuSetupCreateNew::default();
+            create_new.instance_descriptor.backends = wgpu_backends;
+            wgpu_options.wgpu_setup = eframe::egui_wgpu::WgpuSetup::CreateNew(create_new);
+        }
+
+        let native_options = eframe::NativeOptions {
+            viewport,
+            renderer,
+            wgpu_options,
+            ..Default::default()
+        };
+
+        let init = app::AppInit {
+            config: config.clone(),
+            engine: search::SearchEngine::new(Vec::new()),
+            history: history::HistoryStore::load(
+                config.appearance.top_n_history,
+                config.appearance.max_history_display,
+            ),
+            icon_cache: None,
+            platform: platform_win32::PlatformBridge::disabled(),
+        };
+
+        match eframe::run_native(
+            "Snotra 設定",
+            native_options,
+            Box::new(move |cc| Ok(Box::new(app::SnotraApp::new_settings_window(cc, init)))),
+        ) {
+            Ok(()) => {
+                log_startup_line(&format!(
+                    "main:settings_run_native_ok renderer={renderer_label} wgpu_backends={wgpu_backends_label}"
+                ));
+            }
+            Err(e) => {
+                let message = format!(
+                    "main:settings_run_native_err renderer={renderer_label} wgpu_backends={wgpu_backends_label} err={e}"
+                );
+                log_startup_line(&message);
+                let title = HSTRING::from("Snotra settings startup error");
+                let text = HSTRING::from(message);
+                unsafe {
+                    let _ = MessageBoxW(
+                        None,
+                        PCWSTR(text.as_ptr()),
+                        PCWSTR(title.as_ptr()),
+                        MB_OK | MB_ICONERROR,
+                    );
+                }
+            }
+        }
+        return;
+    }
 
     let Some(_singleton_guard) = acquire_singleton() else {
         log_startup_line("main:singleton_exists");
@@ -187,7 +280,7 @@ fn main() {
         .with_taskbar(config.general.show_on_startup)
         .with_inner_size([
             config.appearance.window_width as f32,
-            app::search_window_height(config.appearance.max_results),
+            app::search_window_height(config.appearance.max_results, config.visual.font_size),
         ]);
 
     if let Some(placement) = window_data::load_search_placement() {

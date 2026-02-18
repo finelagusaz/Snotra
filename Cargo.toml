@@ -25,6 +25,7 @@ fuzzy-matcher = "0.3"
 bincode = "1"
 dirs = "5"
 wgpu = { version = "27.0.1", default-features = false, features = ["std", "dx12", "vulkan", "gles", "wgsl"] }
+ab_glyph = "0.2.32"
 
 [patch.crates-io]
 eframe = { path = "vendor/eframe" }

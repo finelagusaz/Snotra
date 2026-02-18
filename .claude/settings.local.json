@@ -14,7 +14,14 @@
       "Bash(cmd /c \"dir %APPDATA%\\\\Snotra\")",
       "Bash(cmd /c \"type %APPDATA%\\\\Snotra\\\\config.toml\")",
       "Bash(cmd /c \"dir /s /b C:\\\\Users\\\\Eoh\\\\.cargo\\\\registry\\\\src\\\\*\\\\windows-0.58.0\\\\src\\\\Windows\\\\Win32\\\\Graphics\\\\Gdi\\\\mod.rs 2>&1\")",
-      "Bash(cmd /c:*)"
+      "Bash(cmd /c:*)",
+      "Bash(git -C \"c:/workspace/Snotra\" log --oneline -8)",
+      "Bash(git -C \"c:/workspace/Snotra\" diff HEAD~1 HEAD -- src/app.rs src/main.rs src/platform_win32.rs src/window_data.rs)",
+      "Bash(git -C \"c:/workspace/Snotra\" diff HEAD~1 HEAD -- \"vendor/eframe/src/native/wgpu_integration.rs\")",
+      "Bash(git -C \"c:/workspace/Snotra\" diff HEAD~2 HEAD~1 -- \"vendor/eframe/src/native/epi_integration.rs\" \"vendor/eframe/src/native/wgpu_integration.rs\")",
+      "Bash(git -C \"c:/workspace/Snotra\" show HEAD~1 -- \"vendor/eframe/src/native/epi_integration.rs\")",
+      "Bash(git -C c:/workspace/Snotra diff HEAD~2 HEAD -- vendor/eframe/src/native/epi_integration.rs)",
+      "Bash(git -C c:/workspace/Snotra log -3 --oneline --name-status)"
     ]
   }
 }

@@ -117,6 +117,7 @@ Snotra/
 - 履歴/インデックス/アイコン保存は `.tmp` を使った原子的書き込み
 - アイコンは base64 エンコード PNG としてフロントエンドに送り、`<img>` タグで表示
 - テーマは CSS カスタムプロパティで動的に切替
+- **Win32 メッセージ配送の注意**: Shell のトレイコールバック (`uCallbackMessage`) は `SendMessage` で配送される場合があり、`GetMessageW` ループに到達しない。カスタムメッセージ (`WM_APP + N`) をウィンドウプロシージャ (`DefWindowProcW`) だけで処理すると消滅するため、`platform_default_wnd_proc` で検出して `PostThreadMessageW` でスレッドキューに再投入する設計にしている
 
 ## 開発原則
 

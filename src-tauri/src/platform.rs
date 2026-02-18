@@ -16,7 +16,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     RegisterClassExW, SetForegroundWindow, TrackPopupMenuEx, TranslateMessage, IDC_ARROW,
     IDI_APPLICATION, MF_SEPARATOR, MF_STRING, MSG, PM_NOREMOVE, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
     TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
-    WM_COMMAND, WM_CONTEXTMENU, WM_HOTKEY, WM_LBUTTONDBLCLK, WM_RBUTTONUP, WNDCLASSEXW,
+    WM_COMMAND, WM_CONTEXTMENU, WM_HOTKEY, WM_LBUTTONDBLCLK, WM_NULL, WM_RBUTTONUP,
+    WNDCLASSEXW,
 };
 
 use crate::{hotkey, ime};
@@ -32,6 +33,12 @@ unsafe extern "system" fn platform_default_wnd_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    // Shell may deliver WM_TRAY_ICON via SendMessage (bypassing GetMessageW queue).
+    // Re-post it as a thread message so the message loop can handle it.
+    if msg == WM_TRAY_ICON {
+        let _ = PostThreadMessageW(GetCurrentThreadId(), WM_TRAY_ICON, wparam, lparam);
+        return LRESULT(0);
+    }
     windows::Win32::UI::WindowsAndMessaging::DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
@@ -259,7 +266,11 @@ fn handle_tray_message(
         x if x == WM_LBUTTONDBLCLK => {
             let _ = app_handle.emit("hotkey-pressed", ());
         }
-        x if x == WM_RBUTTONUP => {}
+        x if x == WM_RBUTTONUP => {
+            if let Some(tray) = tray.as_ref() {
+                tray.show_context_menu(hwnd);
+            }
+        }
         _ => {}
     }
 }
@@ -339,6 +350,8 @@ impl TrayIcon {
                 );
             }
 
+            // MSDN: send WM_NULL after TrackPopupMenuEx so the menu dismisses correctly.
+            let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
             let _ = DestroyMenu(hmenu);
         }
     }

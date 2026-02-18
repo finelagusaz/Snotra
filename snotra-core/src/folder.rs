@@ -6,7 +6,7 @@ use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_
 
 use crate::history::HistoryStore;
 use crate::search::SearchMode;
-use crate::window::SearchResult;
+use crate::ui_types::SearchResult;
 
 pub fn list_folder(
     dir: &Path,

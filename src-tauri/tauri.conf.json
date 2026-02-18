@@ -1,0 +1,31 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicedoc/json-schemas/master/tauri/tauri.conf.json",
+  "productName": "Snotra",
+  "version": "0.1.0",
+  "identifier": "com.snotra.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Snotra",
+        "width": 600,
+        "height": 52,
+        "visible": false,
+        "decorations": false,
+        "skipTaskbar": true,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  }
+}

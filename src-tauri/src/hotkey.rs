@@ -1,10 +1,9 @@
+use snotra_core::config::HotkeyConfig;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT,
     MOD_SHIFT, MOD_WIN,
 };
-
-use crate::config::HotkeyConfig;
 
 pub const HOTKEY_ID: i32 = 1;
 
@@ -30,16 +29,16 @@ pub fn parse_vk(s: &str) -> u32 {
         "backspace" => 0x08,
         "escape" | "esc" => 0x1B,
         s if s.len() == 1 => s.chars().next().unwrap().to_ascii_uppercase() as u32,
-        _ => 0x20, // default to space
+        _ => 0x20,
     }
 }
 
 pub fn register(config: &HotkeyConfig) -> bool {
     let modifiers = parse_modifier(&config.modifier);
     let vk = parse_vk(&config.key);
-    unsafe { RegisterHotKey(HWND::default(), HOTKEY_ID, modifiers, vk) }.is_ok()
+    unsafe { RegisterHotKey(Some(HWND::default()), HOTKEY_ID, modifiers, vk) }.is_ok()
 }
 
 pub fn unregister() {
-    let _ = unsafe { UnregisterHotKey(HWND::default(), HOTKEY_ID) };
+    let _ = unsafe { UnregisterHotKey(Some(HWND::default()), HOTKEY_ID) };
 }

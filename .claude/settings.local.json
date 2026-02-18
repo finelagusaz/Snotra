@@ -1,8 +1,19 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git -C /c/workspace/Snotra log --oneline)",
-      "Bash(grep:*)"
+      "Bash(git:*)",
+      "Bash(grep:*)",
+      "Bash(cmd /c:*)",
+      "Bash(cmd.exe:*)",
+      "Bash(powershell:*)",
+      "Bash(taskkill:*)",
+      "Bash(printenv:*)",
+      "Bash(npm install:*)",
+      "Bash(npx:*)",
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(powershell.exe -Command \"Get-ChildItem ''$env:USERPROFILE\\\\.codex\\\\rules\\\\'' | Select-Object Name, Length\")",
+      "Bash(find:*)"
     ]
   }
 }

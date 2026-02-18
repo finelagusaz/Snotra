@@ -4,8 +4,9 @@ use windows::core::w;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateFontIndirectW, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect,
-    InvalidateRect, SelectObject, SetBkMode, SetTextColor, DT_END_ELLIPSIS, DT_LEFT, DT_SINGLELINE,
-    FONT_CHARSET, HBRUSH, HFONT, LOGFONTW, PAINTSTRUCT, TRANSPARENT,
+    InvalidateRect, RedrawWindow, SelectObject, SetBkColor, SetBkMode, SetTextColor,
+    DT_END_ELLIPSIS, DT_LEFT, DT_SINGLELINE, FONT_CHARSET, HBRUSH, HDC, HFONT, HRGN, LOGFONTW,
+    PAINTSTRUCT, REDRAW_WINDOW_FLAGS, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
@@ -74,6 +75,7 @@ pub struct WindowState {
     pub auto_hide_on_focus_lost: bool,
     pub ime_off_on_show: bool,
     pub in_size_move: bool,
+    pub input_bg_brush: Option<HBRUSH>,
 }
 
 thread_local! {
@@ -167,6 +169,7 @@ pub fn create_search_window(width: u32, max_results: usize, show_title_bar: bool
             None
         };
 
+        let input_bg_brush = Some(CreateSolidBrush(COLORREF(theme.input_bg_color)));
         set_window_state(WindowState {
             results: Vec::new(),
             selected: 0,
@@ -184,6 +187,7 @@ pub fn create_search_window(width: u32, max_results: usize, show_title_bar: bool
             auto_hide_on_focus_lost: true,
             ime_off_on_show: false,
             in_size_move: false,
+            input_bg_brush,
         });
 
         Some(hwnd)
@@ -231,7 +235,14 @@ pub fn show_window(hwnd: HWND) {
         if ime_off {
             crate::ime::turn_off_ime(edit_hwnd);
         }
-        let _ = InvalidateRect(hwnd, None, true);
+        // RDW_INVALIDATE|RDW_ERASE|RDW_UPDATENOW|RDW_ALLCHILDREN: force immediate repaint of
+        // parent and all children so theme colors are applied before DWM composites the window.
+        let _ = RedrawWindow(
+            hwnd,
+            None,
+            HRGN::default(),
+            REDRAW_WINDOW_FLAGS(0x0001 | 0x0004 | 0x0100 | 0x0080),
+        );
     }
 }
 
@@ -250,16 +261,27 @@ pub fn update_icon_cache(icon_cache: Option<Rc<crate::icon::IconCache>>) {
 
 pub fn set_theme(hwnd: HWND, theme: WindowTheme) {
     let mut old_font = None;
+    let mut old_brush = None;
     let edit_hwnd = with_state(|state| {
         state.theme = theme.clone();
         if let Some(font) = state.edit_font {
             old_font = Some(font);
         }
+        old_brush = state.input_bg_brush.take();
         state.edit_hwnd
     })
     .unwrap_or_default();
     let font = create_font(theme.font_size + 3, &theme.font_family);
     unsafe {
+        // Update input background brush
+        let new_brush = CreateSolidBrush(COLORREF(theme.input_bg_color));
+        with_state(|state| {
+            state.input_bg_brush = Some(new_brush);
+        });
+        if let Some(old) = old_brush {
+            let _ = DeleteObject(old);
+        }
+
         if !font.is_invalid() {
             let _ = SendMessageW(edit_hwnd, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(1));
             with_state(|state| {
@@ -271,7 +293,12 @@ pub fn set_theme(hwnd: HWND, theme: WindowTheme) {
                 }
             }
         }
-        let _ = InvalidateRect(hwnd, None, true);
+        let _ = RedrawWindow(
+            hwnd,
+            None,
+            HRGN::default(),
+            REDRAW_WINDOW_FLAGS(0x0001 | 0x0004 | 0x0100 | 0x0080),
+        );
     }
 }
 
@@ -385,13 +412,35 @@ unsafe extern "system" fn wnd_proc(
             });
             LRESULT(0)
         }
-        WM_ERASEBKGND => LRESULT(1),
+        WM_CTLCOLOREDIT => {
+            let result = with_state(|state| {
+                let hdc = HDC(wparam.0 as *mut _);
+                SetTextColor(hdc, COLORREF(state.theme.text_color));
+                SetBkColor(hdc, COLORREF(state.theme.input_bg_color));
+                state.input_bg_brush.map(|b| LRESULT(b.0 as isize))
+            })
+            .flatten();
+            result.unwrap_or_else(|| DefWindowProcW(hwnd, msg, wparam, lparam))
+        }
+        WM_ERASEBKGND => {
+            let hdc = HDC(wparam.0 as *mut _);
+            let theme = with_state(|state| state.theme.clone()).unwrap_or_default();
+            let mut rect = RECT::default();
+            let _ = GetClientRect(hwnd, &mut rect);
+            let bg_brush = CreateSolidBrush(COLORREF(theme.bg_color));
+            FillRect(hdc, &rect, bg_brush);
+            let _ = DeleteObject(bg_brush);
+            LRESULT(1)
+        }
         WM_DESTROY => {
             with_state(|state| {
                 if let Some(font) = state.edit_font.take() {
                     if !font.is_invalid() {
                         let _ = DeleteObject(font);
                     }
+                }
+                if let Some(brush) = state.input_bg_brush.take() {
+                    let _ = DeleteObject(brush);
                 }
             });
             PostQuitMessage(0);

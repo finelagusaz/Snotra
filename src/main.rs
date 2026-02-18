@@ -340,6 +340,7 @@ fn main() {
         auto_hide_on_focus_lost: config.general.auto_hide_on_focus_lost,
         ime_off_on_show: config.general.ime_off_on_show,
         in_size_move: false,
+        input_bg_brush: None,
     });
     window::set_theme(search_hwnd, to_window_theme(&config.visual));
     window::set_title_bar_mode(search_hwnd, config.general.show_title_bar);
@@ -444,7 +445,9 @@ fn main() {
 }
 
 fn is_already_running() -> bool {
-    unsafe { FindWindowW(w!("SnotraMessageWindow"), None).is_ok() }
+    // FindWindowW cannot find message-only windows (HWND_MESSAGE parent).
+    // FindWindowExW with HWND_MESSAGE as hwndParent correctly searches them.
+    unsafe { FindWindowExW(HWND_MESSAGE, None, w!("SnotraMessageWindow"), None).is_ok() }
 }
 
 fn get_edit_hwnd(parent: HWND) -> HWND {

@@ -96,6 +96,16 @@ cargo clippy           # lint チェック
 - フォルダ展開は「開始時スナップショットを保持し、`Escape` で一括復帰」モデル
 - 履歴/インデックス/アイコン保存は `.tmp` を使った原子的書き込み
 
+### eframe パッチ運用
+
+- `eframe` は crates.io 直参照ではなく `[patch.crates-io]` で `vendor/eframe` を参照する（`Cargo.toml`）。
+- 起動時可視化のパッチ箇所は `vendor/eframe/src/native/epi_integration.rs` の `EpiIntegration::post_rendering`。
+  - `show_on_startup=false` 起動時の黒ウィンドウ一瞬表示を避けつつ、ホットキー復帰性を保つため、初回描画後の可視化動作を調整している。
+- `eframe` / `egui` などフレームワーク更新時は、以下を必ず再確認する。
+  - `post_rendering` 実装差分が取り込めるか
+  - `show_on_startup=false` で起動時に検索窓が見えないか
+  - ホットキーで検索窓が確実に表示されるか
+
 ## 実装状況（実装フェーズ）
 
 - [x] Phase 1: 履歴・優先度システム（起動回数、クエリ別重み付け、空クエリ時履歴表示、bincode 永続化）

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
@@ -15,7 +16,10 @@ use windows::Win32::Graphics::Gdi::{
     GetFontData, SelectObject, FONT_CHARSET, LOGFONTW, TEXTMETRICW,
 };
 
-use crate::config::{Config, ScanPath, SearchModeConfig, ThemePreset, VisualConfig};
+use crate::config::{
+    Config, RendererConfig, ScanPath, SearchModeConfig, ThemePreset, VisualConfig,
+    WgpuBackendConfig,
+};
 use crate::folder;
 use crate::history::HistoryStore;
 use crate::icon;
@@ -31,6 +35,14 @@ const INPUT_HEIGHT: f32 = 36.0;
 const ITEM_HEIGHT: f32 = 42.0;
 const WINDOW_PADDING: f32 = 8.0;
 const SPINNER_FRAMES: [char; 4] = ['|', '/', '-', '\\'];
+const CJK_FALLBACK_FONTS: &[&str] = &[
+    "Yu Gothic UI",
+    "Yu Gothic",
+    "Meiryo UI",
+    "Meiryo",
+    "MS UI Gothic",
+    "MS Gothic",
+];
 
 #[derive(Clone, Copy)]
 struct RuntimeSettings {
@@ -83,6 +95,7 @@ pub struct SnotraApp {
     show_search_window: bool,
     request_focus_input: bool,
     initial_window_applied: bool,
+    awaiting_search_focus: bool,
 
     settings_open: bool,
     settings_tab: SettingsTab,
@@ -110,7 +123,6 @@ pub struct SnotraApp {
     minimize_on_settings_close: bool,
     available_fonts: Vec<String>,
     font_data_cache: HashMap<String, Arc<FontData>>,
-    applied_font_family: Option<String>,
 }
 
 impl SnotraApp {
@@ -132,6 +144,7 @@ impl SnotraApp {
             show_search_window: config.general.show_on_startup,
             request_focus_input: config.general.show_on_startup,
             initial_window_applied: false,
+            awaiting_search_focus: config.general.show_on_startup,
             settings_open: false,
             settings_tab: SettingsTab::General,
             settings_status: String::new(),
@@ -161,7 +174,6 @@ impl SnotraApp {
             minimize_on_settings_close: false,
             available_fonts,
             font_data_cache: HashMap::new(),
-            applied_font_family: None,
             engine: init.engine,
             history: init.history,
             icon_cache: init.icon_cache,
@@ -232,11 +244,13 @@ impl SnotraApp {
     fn show_search_window(&mut self, ctx: &egui::Context) {
         self.show_search_window = true;
         self.request_focus_input = true;
+        self.awaiting_search_focus = true;
         self.query.clear();
         self.selected = 0;
         self.folder_state = None;
         self.refresh_results();
 
+        ctx.send_viewport_cmd(ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd(ViewportCommand::Focus);
 
@@ -248,6 +262,7 @@ impl SnotraApp {
 
     fn hide_search_window(&mut self, ctx: &egui::Context) {
         self.show_search_window = false;
+        self.awaiting_search_focus = false;
         self.persist_search_placement();
         ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
     }
@@ -265,7 +280,9 @@ impl SnotraApp {
     fn open_settings_from_anywhere(&mut self, ctx: &egui::Context) {
         self.open_settings();
         self.show_search_window = false;
+        self.awaiting_search_focus = false;
         self.minimize_on_settings_close = true;
+        ctx.send_viewport_cmd(ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd(ViewportCommand::Focus);
     }
@@ -431,6 +448,13 @@ impl SnotraApp {
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
             if self.folder_state.is_some() {
                 self.navigate_folder_up();
+            } else if let Some(result) = self.results.get(self.selected) {
+                let item_path = result.path.clone();
+                if let Some(parent) = crate::folder::parent_for_navigation(&item_path) {
+                    let parent_str = parent.to_string_lossy().to_string();
+                    self.history.record_folder_expansion(&parent_str);
+                    self.enter_folder_expansion(&parent_str);
+                }
             }
         }
 
@@ -471,11 +495,11 @@ impl SnotraApp {
         let size = self.config.visual.font_size.clamp(8, 48) as f32;
         let requested_font =
             sanitize_font_family_for_save(&self.config.visual.font_family, &self.available_fonts);
-        let family = if self.ensure_font_registered(ctx, &requested_font) {
-            FontFamily::Name(requested_font.clone().into())
-        } else {
-            FontFamily::Proportional
-        };
+        if !self.ensure_font_registered(ctx, &requested_font) {
+            let fallback = default_visual_font_family(&self.available_fonts);
+            let _ = self.ensure_font_registered(ctx, &fallback);
+        }
+        let family = FontFamily::Proportional;
         style
             .text_styles
             .insert(TextStyle::Body, FontId::new(size, family.clone()));
@@ -495,35 +519,73 @@ impl SnotraApp {
         }
 
         if !self.font_data_cache.contains_key(family) {
-            let Some(bytes) = load_font_data_from_gdi(family) else {
+            let Some(bytes) = load_font_data_for_family(family) else {
                 return false;
             };
             self.font_data_cache
                 .insert(family.to_string(), Arc::new(FontData::from_owned(bytes)));
         }
 
-        if self.applied_font_family.as_deref() == Some(family) {
-            return true;
+        let mut fallback_families = collect_fallback_families(family, &self.available_fonts);
+        for candidate in CJK_FALLBACK_FONTS {
+            if candidate.eq_ignore_ascii_case(family) {
+                continue;
+            }
+            if !fallback_families
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(candidate))
+            {
+                fallback_families.push((*candidate).to_string());
+            }
         }
-
-        let Some(font_data) = self.font_data_cache.get(family).cloned() else {
+        let Some(primary_font_data) = self.font_data_cache.get(family).cloned() else {
             return false;
         };
 
-        let family_name = family.to_string();
-        let font_key = format!("user_font:{family}");
-        let mut defs = FontDefinitions::default();
-        defs.font_data.insert(font_key.clone(), font_data);
+        for fallback in &fallback_families {
+            if !self.font_data_cache.contains_key(fallback) {
+                if let Some(bytes) = load_font_data_for_family(fallback) {
+                    self.font_data_cache
+                        .insert(fallback.clone(), Arc::new(FontData::from_owned(bytes)));
+                }
+            }
+        }
 
-        let mut custom_stack = vec![font_key];
+        let family_name = family.to_string();
+        let primary_key = format!("user_font:{family}");
+        let mut defs = FontDefinitions::default();
+        defs.font_data.insert(primary_key.clone(), primary_font_data);
+
+        let mut fallback_keys = Vec::new();
+        for fallback in &fallback_families {
+            let Some(font_data) = self.font_data_cache.get(fallback).cloned() else {
+                continue;
+            };
+            let key = format!("fallback_font:{fallback}");
+            defs.font_data.insert(key.clone(), font_data);
+            fallback_keys.push(key);
+        }
+
+        let mut custom_stack = vec![primary_key.clone()];
+        custom_stack.extend(fallback_keys.clone());
         if let Some(default_stack) = defs.families.get(&FontFamily::Proportional) {
             custom_stack.extend(default_stack.clone());
         }
         defs.families
             .insert(FontFamily::Name(family_name.clone().into()), custom_stack);
 
+        if let Some(default_stack) = defs.families.get_mut(&FontFamily::Proportional) {
+            let mut merged = vec![primary_key.clone()];
+            merged.extend(fallback_keys);
+            for key in default_stack.iter() {
+                if !merged.iter().any(|x| x == key) {
+                    merged.push(key.clone());
+                }
+            }
+            *default_stack = merged;
+        }
+
         ctx.set_fonts(defs);
-        self.applied_font_family = Some(family_name);
         true
     }
 
@@ -539,7 +601,16 @@ impl SnotraApp {
             return;
         }
 
-        if ctx.input(|i| i.viewport().focused) == Some(false) {
+        let focused = ctx.input(|i| i.viewport().focused);
+        if self.awaiting_search_focus {
+            if focused == Some(true) {
+                self.awaiting_search_focus = false;
+            } else {
+                return;
+            }
+        }
+
+        if focused == Some(false) {
             self.hide_search_window(ctx);
         }
     }
@@ -739,6 +810,77 @@ impl SnotraApp {
             &mut self.settings_draft.general.show_title_bar,
             "タイトルバー表示",
         );
+
+        ComboBox::from_label("描画レンダラー")
+            .selected_text(renderer_label(self.settings_draft.general.renderer))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(
+                    &mut self.settings_draft.general.renderer,
+                    RendererConfig::Auto,
+                    "auto",
+                );
+                ui.selectable_value(
+                    &mut self.settings_draft.general.renderer,
+                    RendererConfig::Wgpu,
+                    "wgpu",
+                );
+                ui.selectable_value(
+                    &mut self.settings_draft.general.renderer,
+                    RendererConfig::Glow,
+                    "glow",
+                );
+            });
+
+        ComboBox::from_label("wgpu バックエンド")
+            .selected_text(wgpu_backend_label(self.settings_draft.general.wgpu_backend))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(
+                    &mut self.settings_draft.general.wgpu_backend,
+                    WgpuBackendConfig::Auto,
+                    "auto",
+                );
+                ui.selectable_value(
+                    &mut self.settings_draft.general.wgpu_backend,
+                    WgpuBackendConfig::Dx12,
+                    "dx12",
+                );
+                ui.selectable_value(
+                    &mut self.settings_draft.general.wgpu_backend,
+                    WgpuBackendConfig::Vulkan,
+                    "vulkan",
+                );
+                ui.selectable_value(
+                    &mut self.settings_draft.general.wgpu_backend,
+                    WgpuBackendConfig::Gl,
+                    "gl",
+                );
+            });
+
+        ui.separator();
+        ui.label("現在適用中（再起動後に一致）");
+        ui.label(format!(
+            "show_on_startup: {}",
+            if self.config.general.show_on_startup {
+                "true"
+            } else {
+                "false"
+            }
+        ));
+        ui.label(format!(
+            "renderer: {}",
+            renderer_label(self.config.general.renderer)
+        ));
+        ui.label(format!(
+            "wgpu_backend: {}",
+            wgpu_backend_label(self.config.general.wgpu_backend)
+        ));
+        ui.label(format!(
+            "startup_visibility: {}",
+            startup_visibility_label(
+                self.config.general.show_on_startup,
+                self.config.general.show_tray_icon
+            )
+        ));
     }
 
     fn draw_settings_search(&mut self, ui: &mut egui::Ui) {
@@ -923,6 +1065,7 @@ impl SnotraApp {
         ui.text_edit_singleline(&mut self.settings_draft.visual.hint_text_color);
 
         ui.label("フォントファミリー");
+        let default_font = default_visual_font_family(&self.available_fonts);
         if self.available_fonts.is_empty() {
             ui.label("利用可能なフォントを取得できませんでした (Segoe UI を使用)");
             self.settings_draft.visual.font_family = "Segoe UI".to_string();
@@ -939,7 +1082,26 @@ impl SnotraApp {
                     }
                 });
             self.settings_draft.visual.font_family = family;
+
+            let configured = self.settings_draft.visual.font_family.clone();
+            let exists = self
+                .available_fonts
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(&configured));
+            if !exists {
+                ui.label("選択中フォントが利用不可のため既定フォントへフォールバックします");
+            }
         }
+        ui.horizontal(|ui| {
+            if ui.button("既定フォントへ戻す").clicked() {
+                self.settings_draft.visual.font_family = default_font;
+                self.settings_status = "既定フォントに戻しました".to_string();
+            }
+            ui.label(format!(
+                "現在: {}",
+                self.settings_draft.visual.font_family
+            ));
+        });
         ui.horizontal(|ui| {
             ui.label("フォントサイズ");
             ui.add(egui::DragValue::new(&mut self.settings_draft.visual.font_size).range(8..=48));
@@ -949,6 +1111,9 @@ impl SnotraApp {
     fn save_settings(&mut self, ctx: &egui::Context) {
         let old = self.config.clone();
         let mut next = self.settings_draft.clone();
+        let needs_restart = old.general.renderer != next.general.renderer
+            || old.general.wgpu_backend != next.general.wgpu_backend;
+        let mut font_fallback_applied = false;
 
         next.appearance.max_history_display = next
             .appearance
@@ -973,6 +1138,10 @@ impl SnotraApp {
             normalize_hex_color(&next.visual.hint_text_color, &old.visual.hint_text_color);
         next.visual.font_family =
             sanitize_font_family_for_save(&next.visual.font_family, &self.available_fonts);
+        if load_font_data_for_family(&next.visual.font_family).is_none() {
+            next.visual.font_family = default_visual_font_family(&self.available_fonts);
+            font_fallback_applied = true;
+        }
         next.visual.font_size = next.visual.font_size.clamp(8, 48);
 
         let mut hotkey_ok = true;
@@ -1002,16 +1171,29 @@ impl SnotraApp {
         }
 
         if hotkey_ok {
-            self.settings_status = "保存しました".to_string();
+            if needs_restart {
+                self.settings_status = "保存しました（描画設定は再起動後に反映）".to_string();
+            } else if font_fallback_applied {
+                self.settings_status =
+                    "保存しました（フォントが利用不可のため既定フォントにフォールバック）"
+                        .to_string();
+            } else {
+                self.settings_status = "保存しました".to_string();
+            }
         } else {
-            self.settings_status =
-                "保存しました（ホットキー再登録に失敗したため旧設定を維持）".to_string();
+            if needs_restart {
+                self.settings_status = "保存しました（ホットキー再登録に失敗したため旧設定を維持、描画設定は再起動後に反映）".to_string();
+            } else if font_fallback_applied {
+                self.settings_status = "保存しました（ホットキー再登録に失敗したため旧設定を維持、フォントは既定にフォールバック）".to_string();
+            } else {
+                self.settings_status =
+                    "保存しました（ホットキー再登録に失敗したため旧設定を維持）".to_string();
+            }
         }
     }
 
     fn apply_config(&mut self, ctx: &egui::Context, old: &Config, next: &Config) {
         self.config = next.clone();
-        self.applied_font_family = None;
         self.runtime = runtime_from_config(next);
         self.history = HistoryStore::load(
             next.appearance.top_n_history,
@@ -1129,8 +1311,10 @@ impl eframe::App for SnotraApp {
                 self.config.appearance.window_width as f32,
                 search_window_height(self.config.appearance.max_results),
             )));
-            if !self.show_search_window {
-                ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
+            if self.show_search_window {
+                ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+                ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(ViewportCommand::Focus);
             }
             self.initial_window_applied = true;
         }
@@ -1156,13 +1340,6 @@ impl eframe::App for SnotraApp {
         if self.show_search_window {
             self.handle_search_keyboard(ctx);
             self.draw_search_ui(ctx);
-        } else {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(24.0);
-                    ui.label(RichText::new("Snotra はトレイで動作中です"));
-                });
-            });
         }
 
         self.draw_settings_window(ctx);
@@ -1256,6 +1433,40 @@ fn sanitize_font_family_for_save(input: &str, available_fonts: &[String]) -> Str
     }
 }
 
+fn default_visual_font_family(available_fonts: &[String]) -> String {
+    for preferred in ["Segoe UI", "Yu Gothic UI", "Meiryo UI", "Meiryo", "MS UI Gothic"] {
+        if let Some(found) = available_fonts
+            .iter()
+            .find(|name| name.eq_ignore_ascii_case(preferred))
+        {
+            return found.clone();
+        }
+    }
+    if let Some(first) = available_fonts.first() {
+        first.clone()
+    } else {
+        "Segoe UI".to_string()
+    }
+}
+
+fn collect_fallback_families(primary: &str, available_fonts: &[String]) -> Vec<String> {
+    let mut result = Vec::new();
+    for candidate in CJK_FALLBACK_FONTS {
+        if candidate.eq_ignore_ascii_case(primary) {
+            continue;
+        }
+        if let Some(found) = available_fonts
+            .iter()
+            .find(|name| name.eq_ignore_ascii_case(candidate))
+        {
+            if !result.iter().any(|name: &String| name.eq_ignore_ascii_case(found)) {
+                result.push(found.clone());
+            }
+        }
+    }
+    result
+}
+
 fn needs_rebuild(old: &Config, new: &Config) -> bool {
     old.paths.scan != new.paths.scan
         || old.search.show_hidden_system != new.search.show_hidden_system
@@ -1281,6 +1492,33 @@ fn search_mode_label(mode: SearchModeConfig) -> &'static str {
         SearchModeConfig::Prefix => "prefix",
         SearchModeConfig::Substring => "substring",
         SearchModeConfig::Fuzzy => "fuzzy",
+    }
+}
+
+fn renderer_label(renderer: RendererConfig) -> &'static str {
+    match renderer {
+        RendererConfig::Auto => "auto",
+        RendererConfig::Wgpu => "wgpu",
+        RendererConfig::Glow => "glow",
+    }
+}
+
+fn wgpu_backend_label(backend: WgpuBackendConfig) -> &'static str {
+    match backend {
+        WgpuBackendConfig::Auto => "auto",
+        WgpuBackendConfig::Dx12 => "dx12",
+        WgpuBackendConfig::Vulkan => "vulkan",
+        WgpuBackendConfig::Gl => "gl",
+    }
+}
+
+fn startup_visibility_label(show_on_startup: bool, show_tray_icon: bool) -> &'static str {
+    if show_on_startup {
+        "search_visible"
+    } else if show_tray_icon {
+        "tray_icon_only"
+    } else {
+        "hidden_hotkey_only"
     }
 }
 
@@ -1403,6 +1641,38 @@ fn load_font_data_from_gdi(family: &str) -> Option<Vec<u8>> {
     }
 }
 
+fn load_font_data_for_family(family: &str) -> Option<Vec<u8>> {
+    load_font_data_from_gdi(family).or_else(|| load_font_data_from_windows_fonts(family))
+}
+
+fn load_font_data_from_windows_fonts(family: &str) -> Option<Vec<u8>> {
+    let mut candidates: Vec<&str> = match family.to_ascii_lowercase().as_str() {
+        "yu gothic ui" | "yu gothic" => vec!["YuGothM.ttc", "YuGothR.ttc"],
+        "meiryo ui" | "meiryo" => vec!["meiryo.ttc"],
+        "ms ui gothic" | "ms gothic" => vec!["msgothic.ttc"],
+        _ => Vec::new(),
+    };
+    if candidates.is_empty() {
+        candidates.push("YuGothM.ttc");
+        candidates.push("meiryo.ttc");
+        candidates.push("msgothic.ttc");
+    }
+
+    let fonts_dir = windows_fonts_dir()?;
+    for file_name in candidates {
+        let path = fonts_dir.join(file_name);
+        if let Ok(bytes) = fs::read(path) {
+            return Some(bytes);
+        }
+    }
+    None
+}
+
+fn windows_fonts_dir() -> Option<PathBuf> {
+    let windir = std::env::var_os("WINDIR")?;
+    Some(PathBuf::from(windir).join("Fonts"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1435,5 +1705,45 @@ mod tests {
         cfg.general.auto_hide_on_focus_lost = false;
         let runtime = runtime_from_config(&cfg);
         assert!(!runtime.auto_hide_on_focus_lost);
+    }
+
+    #[test]
+    fn collect_fallback_families_prefers_known_japanese_fonts() {
+        let fonts = vec![
+            "Segoe UI".to_string(),
+            "Yu Gothic UI".to_string(),
+            "Meiryo".to_string(),
+        ];
+        let fallback = collect_fallback_families("Segoe UI", &fonts);
+        assert_eq!(
+            fallback,
+            vec!["Yu Gothic UI".to_string(), "Meiryo".to_string()]
+        );
+    }
+
+    #[test]
+    fn default_visual_font_family_prefers_segoe_ui() {
+        let fonts = vec!["Meiryo".to_string(), "Segoe UI".to_string()];
+        assert_eq!(default_visual_font_family(&fonts), "Segoe UI");
+    }
+
+    #[test]
+    fn default_visual_font_family_uses_first_when_no_known_fonts() {
+        let fonts = vec!["Custom A".to_string(), "Custom B".to_string()];
+        assert_eq!(default_visual_font_family(&fonts), "Custom A");
+    }
+
+    #[test]
+    fn default_visual_font_family_uses_hardcoded_when_empty() {
+        let fonts: Vec<String> = Vec::new();
+        assert_eq!(default_visual_font_family(&fonts), "Segoe UI");
+    }
+
+    #[test]
+    fn startup_visibility_label_matches_expected_policy() {
+        assert_eq!(startup_visibility_label(true, true), "search_visible");
+        assert_eq!(startup_visibility_label(true, false), "search_visible");
+        assert_eq!(startup_visibility_label(false, true), "tray_icon_only");
+        assert_eq!(startup_visibility_label(false, false), "hidden_hotkey_only");
     }
 }

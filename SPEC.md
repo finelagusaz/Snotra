@@ -237,6 +237,13 @@
 
 - トレイアイコン表示は設定で切替
 - 右クリックメニュー: 「設定」「終了」
+- `show_on_startup = true` の起動時は、検索UI（入力欄/結果）を起動直後から表示する
+- `show_on_startup = false` の起動時は検索UI（入力欄/結果）を表示しない
+- `show_on_startup = false` の起動時は、検索UIを表示せずタスクバー非表示の最小化常駐で開始する
+- `show_on_startup = false` かつ `show_tray_icon = true` の場合は、可視要素はトレイアイコンのみ
+- `show_on_startup = false` かつ `show_tray_icon = false` の場合も非表示常駐し、ホットキー入力で表示可能
+- トレイから設定を開くときは検索UIを同時表示せず、設定画面のみ表示する
+- ホットキー登録失敗時は操作不能回避のため検索UIを表示する
 
 ## 10. ビジュアル
 

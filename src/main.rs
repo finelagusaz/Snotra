@@ -118,6 +118,22 @@ fn main() {
 
     let mut config = Config::load();
     log_startup_line("main:config_loaded");
+    log_startup_line(&format!(
+        "main:config_general show_on_startup={} show_tray_icon={} show_title_bar={} renderer={:?} wgpu_backend={:?}",
+        config.general.show_on_startup,
+        config.general.show_tray_icon,
+        config.general.show_title_bar,
+        config.general.renderer,
+        config.general.wgpu_backend
+    ));
+    let startup_visibility = if config.general.show_on_startup {
+        "search_visible"
+    } else if config.general.show_tray_icon {
+        "tray_icon_only"
+    } else {
+        "hidden_hotkey_only"
+    };
+    log_startup_line(&format!("main:startup_visibility={startup_visibility}"));
     config.appearance.max_history_display = config
         .appearance
         .max_history_display
@@ -167,6 +183,8 @@ fn main() {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Snotra")
         .with_decorations(config.general.show_title_bar)
+        .with_visible(config.general.show_on_startup)
+        .with_taskbar(config.general.show_on_startup)
         .with_inner_size([
             config.appearance.window_width as f32,
             app::search_window_height(config.appearance.max_results),

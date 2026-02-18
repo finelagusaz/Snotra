@@ -100,6 +100,10 @@ impl IconCache {
         cache.save();
     }
 
+    pub fn icon_data(&self, target_path: &str) -> Option<&IconData> {
+        self.data.icons.get(target_path)
+    }
+
     pub fn draw(&self, target_path: &str, hdc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32) {
         let hicon = self.runtime.get(target_path).copied().unwrap_or(self.default_icon);
         if !hicon.is_invalid() {

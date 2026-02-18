@@ -6,7 +6,7 @@ use fuzzy_matcher::FuzzyMatcher;
 use crate::history::HistoryStore;
 use crate::indexer::AppEntry;
 use crate::query::normalize_query;
-use crate::window::SearchResult;
+use crate::ui_types::SearchResult;
 
 const GLOBAL_WEIGHT: i64 = 5;
 const QUERY_WEIGHT: i64 = 20;

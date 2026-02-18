@@ -13,10 +13,10 @@
 - 第1層（意図管理）: `SPEC.md` と `CLAUDE.md`
   - `SPEC.md`: あるべき仕様、要件、振る舞いの定義
   - `CLAUDE.md`: 実装時の運用ルールと判断基準
-- 第2層（実装事実）: `src/*.rs`
+- 第2層（実装事実）: `snotra-core/src/*.rs`, `src-tauri/src/*.rs`, `ui/src/**`
   - 現在の実際の動作・制約・実装詳細
 - 第3層（整合運用）: 変更時の同期ルール
-  - 挙動変更を伴う変更では、意図（`SPEC.md`）と実装（`src/*.rs`）を同時に整合させる
+  - 挙動変更を伴う変更では、意図（`SPEC.md`）と実装を同時に整合させる
 
 ### 不一致時の扱い
 
@@ -31,109 +31,112 @@
 
 ## プロジェクト概要
 
-Snotra は Windows 専用のキーボードランチャーです。GUI は Rust + egui（`eframe`）で実装し、システムトレイ/グローバルホットキー/IME などの Windows 固有機能は `windows` クレートで実装します。グローバルホットキー（既定: `Alt+Q`）で検索ウィンドウを表示し、検索と起動を行います。
+Snotra は Windows 専用のキーボードランチャーです。バックエンドは Rust（Tauri v2）、フロントエンドは SolidJS + TypeScript で構築しています。システムトレイ/グローバルホットキー/IME などの Windows 固有機能は `windows` クレートで直接実装しています。グローバルホットキー（既定: `Alt+Q`）で検索ウィンドウを表示し、検索と起動を行います。
 
 ## ビルド・実行コマンド
 
 ```bash
-cargo build            # デバッグビルド
-cargo build --release  # リリースビルド
-cargo run              # デバッグ実行
-cargo test             # ユニットテスト実行
-cargo check            # 静的チェック
-cargo clippy           # lint チェック
+cargo test -p snotra-core        # ユニットテスト（64テスト）
+cargo check -p snotra            # Rustバックエンド型チェック
+cargo clippy -p snotra-core -p snotra  # lint チェック
+npx vite build                   # フロントエンドビルド
+npm run tauri dev                # 開発実行（ホットリロード付き）
+npm run tauri build              # リリースビルド
 ```
 
 ## アーキテクチャ概要
 
-純 Rust 構成で、GUI は egui（`eframe`）を利用し、OS 統合部分のみ Win32 API を直接呼び出します。
+Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-core`）と Tauri バイナリ（`src-tauri`）を分離。GUI は SolidJS + CSS 変数ベースのテーマシステムで、Tauri IPC 経由で Rust バックエンドと通信します。
 
-### モジュール構成（簡潔版）
+### ディレクトリ構成
 
-- `main.rs`:
-  - エントリポイント
-  - `eframe` 起動と初期化配線
-- `app.rs`:
-  - egui 検索UI/設定UIの描画と状態管理
-- `platform_win32.rs`:
-  - Win32 メッセージループ（ホットキー/トレイ/IME/終了制御）
-- `config.rs`:
-  - `%APPDATA%\Snotra\config.toml` の読込/保存
-  - 既定値補完
-  - `Alt+Space` を `Alt+Q` に補正
-- `hotkey.rs`:
-  - グローバルホットキー登録/解除
-- `search.rs`:
-  - 検索順位計算（先頭部分一致/中間部分一致/スキップマッチング）
-  - 履歴ブースト適用
-  - 空クエリ時の履歴候補生成
-- `history.rs`:
-  - 起動履歴・クエリ別履歴・フォルダ展開履歴の管理
-  - バイナリ永続化
-- `folder.rs`:
-  - フォルダ内列挙とフィルタ/ソート
-  - ルート判定・遷移補助
-- `indexer.rs`:
-  - スキャン対象列挙と重複排除
-  - インデックスキャッシュ（設定ハッシュ付き）の読込/再構築
-- `icon.rs`:
-  - アイコン抽出とキャッシュ永続化
-- `launcher.rs`:
-  - 選択項目の起動（`ShellExecuteW`）
-- `query.rs`:
-  - クエリ正規化
-- `binfmt.rs`:
-  - `magic + version` 付きバイナリ入出力共通処理
-- `window_data.rs`:
-  - 検索ウィンドウ位置（`window.bin`）の保存/復元
+```
+Snotra/
+  Cargo.toml              # workspace (snotra-core, src-tauri)
+  snotra-core/            # 純ロジック lib crate (9モジュール, 64テスト)
+  src-tauri/              # Tauri v2 バイナリ crate
+    src/main.rs           # エントリ + setup (hotkey/tray/IME/icon)
+    src/commands.rs       # 15 Tauriコマンド
+    src/state.rs          # AppState (Mutex<Engine/History/Config>)
+    src/platform.rs       # Win32メッセージループ + トレイ
+    src/hotkey.rs         # RegisterHotKey/UnregisterHotKey
+    src/ime.rs            # ImmSetOpenStatus
+    src/icon.rs           # HICON → BGRA → PNG → base64
+    tauri.conf.json
+    capabilities/default.json
+  ui/                     # SolidJS フロントエンド
+    index.html
+    src/App.tsx           # ルート (検索/設定の出し分け, テーマ適用, 位置復元)
+    src/components/       # SearchWindow, ResultRow, Settings*
+    src/stores/           # search.ts, settings.ts
+    src/styles/           # global.css, settings.css
+    src/lib/              # types.ts, invoke.ts, theme.ts
+  package.json, vite.config.ts, tsconfig.json
+```
+
+### モジュール構成
+
+**snotra-core（純ロジック）:**
+
+- `config.rs`: `%APPDATA%\Snotra\config.toml` の読込/保存、既定値補完
+- `search.rs`: 検索順位計算（先頭/中間/ファジー）、履歴ブースト、空クエリ時履歴候補
+- `history.rs`: 起動履歴・クエリ別履歴・フォルダ展開履歴の管理、バイナリ永続化
+- `folder.rs`: フォルダ内列挙とフィルタ/ソート、ルート判定
+- `indexer.rs`: スキャン対象列挙と重複排除、インデックスキャッシュ
+- `query.rs`: クエリ正規化
+- `binfmt.rs`: `magic + version` 付きバイナリ入出力共通処理
+- `window_data.rs`: ウィンドウ位置（`window.bin`）の保存/復元
+- `ui_types.rs`: フロントエンドとの IPC 用データ型
+
+**src-tauri（Tauri バイナリ）:**
+
+- `main.rs`: エントリポイント、Tauri セットアップ、イベントリスナー登録
+- `commands.rs`: 15個の `#[tauri::command]`（検索/履歴/設定/アイコン/ウィンドウ位置）
+- `state.rs`: `AppState` 定義（`Mutex<SearchEngine>`, `Mutex<HistoryStore>`, `Mutex<Config>`）
+- `platform.rs`: Win32 メッセージループスレッド + トレイアイコン（Tauri イベント経由で通信）
+- `hotkey.rs`: グローバルホットキー登録/解除
+- `ime.rs`: IME 制御
+- `icon.rs`: アイコン抽出（`SHGetFileInfoW` → BGRA → PNG → base64）、キャッシュ永続化
+
+**ui/src（SolidJS フロントエンド）:**
+
+- `App.tsx`: ウィンドウラベルで検索/設定を出し分け、テーマ適用、ウィンドウ位置復元
+- `components/SearchWindow.tsx`: 検索入力 + キーボードナビゲーション + `/o` コマンド
+- `components/ResultRow.tsx`: アイコン + 名前 + パス + フォルダバッジ
+- `stores/search.ts`: 検索状態管理（クエリ/結果/選択/フォルダ展開/アイコンキャッシュ）
+- `stores/settings.ts`: 設定ドラフト管理
+- `lib/invoke.ts`: 型付き Tauri IPC ラッパー
+- `lib/theme.ts`: CSS 変数によるテーマ適用
 
 ### 実装上の重要パターン
 
-- 検索/設定UI状態は `app.rs` の `SnotraApp` で保持
-- 検索ウィンドウは起動時に作成し、ホットキーで表示/非表示を切替
-- ホットキーは `RegisterHotKey` を `platform_win32.rs` のメッセージループスレッドで処理
-- 履歴ストアは UI 状態として保持し、設定反映時に再ロード
+- 検索ウィンドウは起動時に作成し `visible: false`、ホットキーで表示/非表示を切替
+- ホットキーは `RegisterHotKey` を `platform.rs` の Win32 メッセージループスレッドで処理し、`AppHandle.emit()` で Tauri イベントとして通知
+- 設定ウィンドウは `WebviewWindowBuilder` で同一プロセス内の第2ウィンドウとして生成
 - フォルダ展開は「開始時スナップショットを保持し、`Escape` で一括復帰」モデル
 - 履歴/インデックス/アイコン保存は `.tmp` を使った原子的書き込み
-
-### eframe パッチ運用
-
-- `eframe` は crates.io 直参照ではなく `[patch.crates-io]` で `vendor/eframe` を参照する（`Cargo.toml`）。
-- 起動時可視化のパッチ箇所は `vendor/eframe/src/native/epi_integration.rs` の `EpiIntegration::post_rendering`。
-  - `show_on_startup=false` 起動時の黒ウィンドウ一瞬表示を避けつつ、ホットキー復帰性を保つため、初回描画後の可視化動作を調整している。
-- `eframe` / `egui` などフレームワーク更新時は、以下を必ず再確認する。
-  - `post_rendering` 実装差分が取り込めるか
-  - `show_on_startup=false` で起動時に検索窓が見えないか
-  - ホットキーで検索窓が確実に表示されるか
-
-## 実装状況（実装フェーズ）
-
-- [x] Phase 1: 履歴・優先度システム（起動回数、クエリ別重み付け、空クエリ時履歴表示、bincode 永続化）
-- [x] Phase 2: フォルダ展開機能（左右キー遷移、フォルダ内フィルタ、`Escape` 復帰、展開回数反映）
-- [x] Phase 3: インデックス拡張（`ScanPath` 拡張子指定、フォルダ登録、アイコン抽出/キャッシュ、設定ハッシュ付きキャッシュ）
-- [x] Phase 4: 検索方式拡張（先頭部分一致/中間部分一致/スキップマッチング、`config.toml` で方式指定）
-- [x] Phase 5: 設定画面（egui 別ウィンドウ、タブ UI、`/o` コマンド）
-- [x] Phase 6: ビジュアル・その他（プリセットテーマ、IME 制御、ホットキートグル、タイトルバー切替、ウィンドウ位置記憶、タスクトレイ表示切替）
+- アイコンは base64 エンコード PNG としてフロントエンドに送り、`<img>` タグで表示
+- テーマは CSS カスタムプロパティで動的に切替
 
 ## 開発原則
 
 ### TDD
 
-- 純ロジックモジュール（`search.rs` / `history.rs` / `config.rs` / `folder.rs` / `indexer.rs` / `icon.rs` / `query.rs` / `binfmt.rs`）は `#[cfg(test)]` でユニットテストを追加する
-- Win32 依存モジュール（`window.rs` / `hotkey.rs` / `tray.rs` / `launcher.rs` / `main.rs`）はユニットテスト前提にしない
-- ロジック追加時は、可能な限りロジック層へ分離してテスト可能性を維持する
+- 純ロジックモジュール（`snotra-core/src/` 内）は `#[cfg(test)]` でユニットテストを追加する
+- Win32 依存モジュール（`src-tauri/src/` 内の `hotkey.rs`, `ime.rs`, `platform.rs`）はユニットテスト前提にしない
+- ロジック追加時は、可能な限り `snotra-core` に分離してテスト可能性を維持する
 
 ### KISS
 
 - `main.rs` に業務ロジックを増やさない
-- コールバックは薄く保ち、実処理は専用モジュールへ寄せる
-- 責務を跨ぐ実装をしない（例: `window.rs` に検索スコア計算を置かない）
+- `commands.rs` は薄いラッパーに保ち、実処理は `snotra-core` に寄せる
+- 責務を跨ぐ実装をしない
 
 ### DRY
 
-- 検索スコア計算は `search.rs` に集約する
-- フォルダ列挙・フィルタ・並び替えは `folder.rs` に集約する
-- 同一ロジックを `main.rs` や UI 側へ重複実装しない
+- 検索スコア計算は `snotra-core/src/search.rs` に集約する
+- フォルダ列挙・フィルタ・並び替えは `snotra-core/src/folder.rs` に集約する
+- TypeScript 型定義は `ui/src/lib/types.ts` に集約する
 
 ### YAGNI
 
@@ -145,7 +148,10 @@ cargo clippy           # lint チェック
 
 - 意図（仕様）: `SPEC.md`
 - 運用ルール: `CLAUDE.md`
-- 実装事実: `src/*.rs`
-- 設定値・デフォルト: `src/config.rs`
-- 検索順位ロジック: `src/search.rs`
-- 履歴保存仕様: `src/history.rs` と `src/binfmt.rs`
+- 実装事実（Rust）: `snotra-core/src/*.rs`, `src-tauri/src/*.rs`
+- 実装事実（フロントエンド）: `ui/src/**`
+- 設定値・デフォルト: `snotra-core/src/config.rs`
+- 検索順位ロジック: `snotra-core/src/search.rs`
+- 履歴保存仕様: `snotra-core/src/history.rs` と `snotra-core/src/binfmt.rs`
+- Tauri コマンド一覧: `src-tauri/src/commands.rs`
+- フロントエンド型定義: `ui/src/lib/types.ts`

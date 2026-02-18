@@ -1,0 +1,134 @@
+.settings-window {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 16px;
+  background: var(--bg-color, #282828);
+}
+
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.settings-tabs button {
+  padding: 6px 16px;
+  background: transparent;
+  border: 1px solid var(--hint-text-color, #808080);
+  border-radius: 4px;
+  color: var(--text-color, #e0e0e0);
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.settings-tabs button.active {
+  background: var(--selected-row-color, #505050);
+  border-color: var(--text-color, #e0e0e0);
+}
+
+.settings-content {
+  flex: 1;
+  overflow-y: auto;
+  margin-bottom: 12px;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-section label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9em;
+}
+
+.settings-section label.checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-section input[type="text"],
+.settings-section input[type="number"],
+.settings-section select {
+  padding: 6px 8px;
+  background: var(--input-bg-color, #383838);
+  border: 1px solid var(--hint-text-color, #808080);
+  border-radius: 4px;
+  color: var(--text-color, #e0e0e0);
+  font-size: 0.9em;
+}
+
+.settings-section input[type="color"] {
+  width: 60px;
+  height: 28px;
+  padding: 2px;
+  background: var(--input-bg-color, #383838);
+  border: 1px solid var(--hint-text-color, #808080);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.settings-section h3 {
+  margin-top: 12px;
+  font-size: 0.95em;
+  font-weight: 600;
+}
+
+.settings-section button {
+  padding: 4px 12px;
+  background: var(--input-bg-color, #383838);
+  border: 1px solid var(--hint-text-color, #808080);
+  border-radius: 4px;
+  color: var(--text-color, #e0e0e0);
+  cursor: pointer;
+  font-size: 0.85em;
+  align-self: flex-start;
+}
+
+.path-row, .scan-path-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: color-mix(in srgb, var(--input-bg-color, #383838) 50%, transparent);
+  border-radius: 4px;
+}
+
+.path-row {
+  flex-direction: row;
+  align-items: center;
+}
+
+.path-row input {
+  flex: 1;
+}
+
+.settings-footer {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hint-text-color, #808080);
+}
+
+.btn-primary {
+  padding: 6px 20px;
+  background: var(--selected-row-color, #505050);
+  border: 1px solid var(--text-color, #e0e0e0);
+  border-radius: 4px;
+  color: var(--text-color, #e0e0e0);
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.settings-status {
+  font-size: 0.85em;
+  color: var(--hint-text-color, #808080);
+}

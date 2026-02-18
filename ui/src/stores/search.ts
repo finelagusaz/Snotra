@@ -1,4 +1,5 @@
 import { createSignal, createEffect, on } from "solid-js";
+import { emit } from "@tauri-apps/api/event";
 import type { SearchResult } from "../lib/types";
 import * as api from "../lib/invoke";
 
@@ -47,6 +48,8 @@ async function refreshResults() {
 
   setResults(items);
   fetchIcons(items);
+  emit("results-updated", { results: items, selected: selected() });
+  emit("results-count-changed", items.length);
 }
 
 // Auto-refresh when query changes (non-folder mode)
@@ -69,12 +72,18 @@ createEffect(
   }),
 );
 
+function emitSelectionUpdate() {
+  emit("results-updated", { results: results(), selected: selected() });
+}
+
 function moveSelectionUp() {
   setSelected((s) => Math.max(0, s - 1));
+  emitSelectionUpdate();
 }
 
 function moveSelectionDown() {
-  setSelected((s) => Math.min(results().length - 1, s));
+  setSelected((s) => Math.min(results().length - 1, s + 1));
+  emitSelectionUpdate();
 }
 
 function enterFolderExpansion(dir: string) {

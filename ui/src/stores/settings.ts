@@ -9,9 +9,14 @@ const [activeTab, setActiveTab] = createSignal<
 >("general");
 
 async function loadDraft() {
-  const config = await api.getConfig();
-  setDraft(structuredClone(config));
-  setStatus("");
+  try {
+    const config = await api.getConfig();
+    setDraft(structuredClone(config));
+    setStatus("");
+  } catch (e) {
+    console.error("Failed to load config:", e);
+    setStatus("設定の読み込みに失敗しました");
+  }
 }
 
 function updateDraft(updater: (c: Config) => void) {

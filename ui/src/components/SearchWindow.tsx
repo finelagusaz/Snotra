@@ -1,12 +1,11 @@
-import { type Component, For, onMount } from "solid-js";
+import { type Component, onMount } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   query,
   setQuery,
   results,
   selected,
-  setSelected,
-  iconCache,
   folderState,
   folderFilter,
   setFolderFilter,
@@ -19,7 +18,14 @@ import {
   refreshResults,
 } from "../stores/search";
 import * as api from "../lib/invoke";
-import ResultRow from "./ResultRow";
+
+async function hideAllWindows() {
+  getCurrentWindow().hide();
+  const rw = await WebviewWindow.getByLabel("results");
+  if (rw) {
+    rw.hide();
+  }
+}
 
 const SearchWindow: Component = () => {
   let inputRef: HTMLInputElement | undefined;
@@ -33,7 +39,7 @@ const SearchWindow: Component = () => {
     switch (e.key) {
       case "Escape":
         if (!exitFolderExpansion()) {
-          getCurrentWindow().hide();
+          hideAllWindows();
         }
         e.preventDefault();
         break;
@@ -62,9 +68,9 @@ const SearchWindow: Component = () => {
       case "Enter":
         // /o command opens settings
         if (!folderState() && query().trim() === "/o") {
-          api.openSettings();
+          api.openSettings().catch((err) => console.error("openSettings failed:", err));
           setQuery("");
-          getCurrentWindow().hide();
+          hideAllWindows();
         } else {
           activateSelected();
         }
@@ -95,7 +101,7 @@ const SearchWindow: Component = () => {
   }
 
   return (
-    <div class="search-window" onKeyDown={handleKeyDown}>
+    <div class="search-bar" onKeyDown={handleKeyDown}>
       <input
         ref={inputRef}
         type="text"
@@ -105,22 +111,6 @@ const SearchWindow: Component = () => {
         onInput={handleInput}
         autofocus
       />
-      <div class="result-list">
-        <For each={results()}>
-          {(result, idx) => (
-            <ResultRow
-              result={result}
-              isSelected={idx() === selected()}
-              icon={iconCache().get(result.path)}
-              onClick={() => setSelected(idx())}
-              onDoubleClick={() => {
-                setSelected(idx());
-                activateSelected();
-              }}
-            />
-          )}
-        </For>
-      </div>
     </div>
   );
 };

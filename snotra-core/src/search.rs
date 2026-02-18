@@ -5,7 +5,7 @@ use fuzzy_matcher::FuzzyMatcher;
 
 use crate::history::HistoryStore;
 use crate::indexer::AppEntry;
-use crate::query::normalize_query;
+use crate::query::{normalize_query, split_query_extension};
 use crate::ui_types::SearchResult;
 
 const GLOBAL_WEIGHT: i64 = 5;
@@ -54,11 +54,21 @@ impl SearchEngine {
             return Vec::new();
         }
 
+        let (query_stem, query_ext) = split_query_extension(&norm_query);
+
         let mut scored: Vec<(i64, u64, &AppEntry)> = self
             .entries
             .iter()
             .filter_map(|entry| {
-                match_score(mode, &self.matcher, &entry.name, &norm_query).map(|base_score| {
+                // 拡張子フィルタ: クエリに拡張子があれば target_path の拡張子と一致を要求
+                if let Some(ext) = query_ext {
+                    let target_lower = entry.target_path.to_lowercase();
+                    if !target_lower.ends_with(ext) {
+                        return None;
+                    }
+                }
+                // stem 部分で照合
+                match_score_single(mode, &self.matcher, &entry.name, query_stem).map(|base_score| {
                     let global = history.global_count(&entry.target_path) as i64;
                     let qcount = history.query_count(&norm_query, &entry.target_path) as i64;
                     let folder_boost = if entry.is_folder {
@@ -120,7 +130,12 @@ impl SearchEngine {
     }
 }
 
-fn match_score(mode: SearchMode, matcher: &SkimMatcherV2, name: &str, query: &str) -> Option<i64> {
+fn match_score_single(
+    mode: SearchMode,
+    matcher: &SkimMatcherV2,
+    name: &str,
+    query: &str,
+) -> Option<i64> {
     match mode {
         SearchMode::Prefix => {
             let lname = name.to_lowercase();
@@ -214,6 +229,87 @@ mod tests {
         let engine = SearchEngine::new(entries);
         let results = engine.search("studio", 8, &empty_history(), SearchMode::Substring);
         assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn search_with_extension_matches_stem_entry() {
+        // "SSP.exe" と入力して、name="SSP", target_path="C:\\fake\\SSP.exe" にマッチする
+        let entries = vec![AppEntry {
+            name: "SSP".to_string(),
+            target_path: "C:\\fake\\SSP.exe".to_string(),
+            is_folder: false,
+        }];
+        let engine = SearchEngine::new(entries);
+        let results = engine.search("SSP.exe", 8, &empty_history(), SearchMode::Prefix);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "SSP");
+    }
+
+    #[test]
+    fn search_with_extension_substring_mode() {
+        let entries = vec![AppEntry {
+            name: "SSP".to_string(),
+            target_path: "C:\\fake\\SSP.exe".to_string(),
+            is_folder: false,
+        }];
+        let engine = SearchEngine::new(entries);
+        let results = engine.search("ssp.exe", 8, &empty_history(), SearchMode::Substring);
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn search_with_extension_fuzzy_mode() {
+        let entries = vec![AppEntry {
+            name: "SSP".to_string(),
+            target_path: "C:\\fake\\SSP.exe".to_string(),
+            is_folder: false,
+        }];
+        let engine = SearchEngine::new(entries);
+        let results = engine.search("ssp.exe", 8, &empty_history(), SearchMode::Fuzzy);
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn search_without_extension_still_works() {
+        let entries = make_entries(&["SSP"]);
+        let engine = SearchEngine::new(entries);
+        let results = engine.search("SSP", 8, &empty_history(), SearchMode::Prefix);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "SSP");
+    }
+
+    #[test]
+    fn search_with_extension_does_not_match_unrelated_exe() {
+        // "ssp.exe" で FileZilla.exe はヒットしない（stem "ssp" が fuzzy でも一致しない）
+        let entries = vec![
+            AppEntry {
+                name: "SSP".to_string(),
+                target_path: "C:\\fake\\SSP.exe".to_string(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "FileZilla".to_string(),
+                target_path: "C:\\fake\\FileZilla.exe".to_string(),
+                is_folder: false,
+            },
+        ];
+        let engine = SearchEngine::new(entries);
+        let results = engine.search("ssp.exe", 8, &empty_history(), SearchMode::Fuzzy);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "SSP");
+    }
+
+    #[test]
+    fn search_with_extension_filters_by_ext() {
+        // "ssp.exe" は .lnk の SSP にはヒットしない
+        let entries = vec![AppEntry {
+            name: "SSP".to_string(),
+            target_path: "C:\\fake\\SSP.lnk".to_string(),
+            is_folder: false,
+        }];
+        let engine = SearchEngine::new(entries);
+        let results = engine.search("ssp.exe", 8, &empty_history(), SearchMode::Prefix);
+        assert!(results.is_empty());
     }
 
     #[test]

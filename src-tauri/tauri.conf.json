@@ -15,7 +15,7 @@
         "label": "main",
         "title": "Snotra",
         "width": 600,
-        "height": 400,
+        "height": 52,
         "visible": false,
         "decorations": false,
         "skipTaskbar": true,

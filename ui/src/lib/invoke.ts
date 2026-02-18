@@ -88,3 +88,15 @@ export async function saveSettingsSize(
 ): Promise<void> {
   return invoke("save_settings_size", { width, height });
 }
+
+export async function setWindowNoActivate(): Promise<void> {
+  return invoke("set_window_no_activate");
+}
+
+export async function notifyResultClicked(index: number): Promise<void> {
+  return invoke("notify_result_clicked", { index });
+}
+
+export async function notifyResultDoubleClicked(index: number): Promise<void> {
+  return invoke("notify_result_double_clicked", { index });
+}

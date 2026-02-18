@@ -4,7 +4,7 @@ use snotra_core::search::SearchMode;
 use snotra_core::ui_types::SearchResult;
 use snotra_core::window_data::{self, WindowPlacement, WindowSize};
 use std::path::Path;
-use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 use crate::icon::IconCacheState;
 use crate::platform::{PlatformBridge, PlatformCommand};
@@ -120,19 +120,25 @@ pub fn get_config(state: State<AppState>) -> Config {
 pub fn open_settings(app: AppHandle) -> Result<(), String> {
     // If settings window already exists, just focus it
     if let Some(w) = app.get_webview_window("settings") {
+        eprintln!("[open_settings] settings window already exists, focusing");
         let _ = w.set_focus();
         return Ok(());
     }
 
-    WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App(Default::default()))
+    eprintln!("[open_settings] creating settings window");
+    WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("index.html".into()))
         .title("Snotra 設定")
         .inner_size(760.0, 560.0)
         .min_inner_size(520.0, 360.0)
         .resizable(true)
         .visible(true)
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            eprintln!("[open_settings] build failed: {e}");
+            e.to_string()
+        })?;
 
+    eprintln!("[open_settings] settings window created successfully");
     Ok(())
 }
 
@@ -180,4 +186,35 @@ pub fn save_settings_placement(x: i32, y: i32) {
 #[tauri::command]
 pub fn save_settings_size(width: i32, height: i32) {
     window_data::save_settings_size(WindowSize { width, height });
+}
+
+#[tauri::command]
+pub fn set_window_no_activate(app: AppHandle) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongW, SetWindowLongW, GWL_EXSTYLE, WS_EX_NOACTIVATE,
+        };
+        if let Some(w) = app.get_webview_window("results") {
+            let raw_hwnd = w.hwnd().map_err(|e| e.to_string())?;
+            let hwnd = HWND(raw_hwnd.0);
+            unsafe {
+                let ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
+                SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE.0 as i32);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn notify_result_clicked(index: usize, app: AppHandle) -> Result<(), String> {
+    app.emit("result-clicked", index).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn notify_result_double_clicked(index: usize, app: AppHandle) -> Result<(), String> {
+    app.emit("result-double-clicked", index)
+        .map_err(|e| e.to_string())
 }

@@ -7,6 +7,7 @@ interface ResultRowProps {
   icon?: string;
   onClick: () => void;
   onDoubleClick: () => void;
+  onMouseEnter?: () => void;
 }
 
 const ResultRow: Component<ResultRowProps> = (props) => {
@@ -16,6 +17,7 @@ const ResultRow: Component<ResultRowProps> = (props) => {
       classList={{ selected: props.isSelected }}
       onClick={props.onClick}
       onDblClick={props.onDoubleClick}
+      onMouseEnter={props.onMouseEnter}
     >
       <div class="result-icon">
         <Show

@@ -14,7 +14,15 @@ html, body, #root {
   font-size: var(--font-size, 15px);
 }
 
-.search-window {
+.search-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  height: 100%;
+  padding: 8px;
+}
+
+.results-window {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -39,14 +47,13 @@ html, body, #root {
   color: var(--hint-text-color, #808080);
 }
 
-.result-list {
+.result-list-standalone {
   flex: 1;
   overflow-y: auto;
-  margin-top: 6px;
 }
 
 /* Hide scrollbar */
-.result-list::-webkit-scrollbar {
+.result-list-standalone::-webkit-scrollbar {
   display: none;
 }
 

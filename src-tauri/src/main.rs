@@ -13,7 +13,7 @@ use snotra_core::config::Config;
 use snotra_core::history::HistoryStore;
 use snotra_core::indexer;
 use snotra_core::search::SearchEngine;
-use tauri::{Emitter, Listener, Manager};
+use tauri::{Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::platform::{PlatformBridge, PlatformCommand};
 use crate::state::AppState;
@@ -77,6 +77,9 @@ fn main() {
             commands::get_settings_placement,
             commands::save_settings_placement,
             commands::save_settings_size,
+            commands::set_window_no_activate,
+            commands::notify_result_clicked,
+            commands::notify_result_double_clicked,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
@@ -93,6 +96,18 @@ fn main() {
                 app_handle.manage(Mutex::new(bridge));
             }
 
+            // Create results window (hidden by default)
+            WebviewWindowBuilder::new(app, "results", WebviewUrl::App(Default::default()))
+                .title("")
+                .inner_size(600.0, 300.0)
+                .visible(false)
+                .decorations(false)
+                .skip_taskbar(true)
+                .always_on_top(true)
+                .resizable(false)
+                .focused(false)
+                .build()?;
+
             // Listen for hotkey toggle events
             let handle_for_hotkey = app_handle.clone();
             let toggle = hotkey_toggle;
@@ -102,6 +117,10 @@ fn main() {
                     let visible = w.is_visible().unwrap_or(false);
                     if visible && toggle {
                         let _ = w.hide();
+                        // Also hide results window
+                        if let Some(rw) = handle_for_hotkey.get_webview_window("results") {
+                            let _ = rw.hide();
+                        }
                     } else {
                         let _ = w.show();
                         let _ = w.set_focus();

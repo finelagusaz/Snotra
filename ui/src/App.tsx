@@ -10,7 +10,7 @@ import { applyTheme } from "./lib/theme";
 import * as api from "./lib/invoke";
 
 const RESULTS_GAP = 4;
-const RESULT_ROW_HEIGHT = 42;
+const RESULT_ROW_HEIGHT = 30;
 const RESULTS_PADDING = 8;
 
 const App: Component = () => {

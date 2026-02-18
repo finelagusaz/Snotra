@@ -34,6 +34,7 @@ struct RuntimeSettings {
     folder_mode: SearchMode,
     show_hidden_system: bool,
     hotkey_toggle: bool,
+    auto_hide_on_focus_lost: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -100,6 +101,7 @@ pub struct SnotraApp {
 
     should_exit: bool,
     exit_sent: bool,
+    minimize_on_settings_close: bool,
 }
 
 impl SnotraApp {
@@ -144,6 +146,7 @@ impl SnotraApp {
             internal_rx,
             should_exit: false,
             exit_sent: false,
+            minimize_on_settings_close: false,
             engine: init.engine,
             history: init.history,
             icon_cache: init.icon_cache,
@@ -169,7 +172,7 @@ impl SnotraApp {
                     }
                 }
                 PlatformEvent::OpenSettings => {
-                    self.open_settings();
+                    self.open_settings_from_anywhere(ctx);
                 }
                 PlatformEvent::ExitRequested => {
                     self.should_exit = true;
@@ -244,11 +247,23 @@ impl SnotraApp {
         self.selected_scan_index = None;
     }
 
-    fn close_settings(&mut self) {
+    fn open_settings_from_anywhere(&mut self, ctx: &egui::Context) {
+        self.open_settings();
+        self.show_search_window = false;
+        self.minimize_on_settings_close = true;
+        ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(ViewportCommand::Focus);
+    }
+
+    fn close_settings(&mut self, ctx: &egui::Context) {
         self.settings_open = false;
         self.show_rebuild_confirm = false;
         self.pending_rebuild_config = None;
         self.persist_settings_placement();
+        if self.minimize_on_settings_close {
+            ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
+        }
+        self.minimize_on_settings_close = false;
     }
 
     fn refresh_results(&mut self) {
@@ -353,8 +368,7 @@ impl SnotraApp {
 
     fn activate_selected(&mut self, ctx: &egui::Context) {
         if query::normalize_query(&self.query) == "/o" {
-            self.open_settings();
-            self.hide_search_window(ctx);
+            self.open_settings_from_anywhere(ctx);
             return;
         }
 
@@ -437,17 +451,35 @@ impl SnotraApp {
         style.visuals.weak_text_color = hint;
 
         let size = self.config.visual.font_size.clamp(8, 48) as f32;
+        let family = normalize_visual_font_family(&self.config.visual.font_family);
         style
             .text_styles
-            .insert(TextStyle::Body, FontId::proportional(size));
+            .insert(TextStyle::Body, FontId::new(size, family.clone()));
         style
             .text_styles
-            .insert(TextStyle::Button, FontId::proportional(size));
+            .insert(TextStyle::Button, FontId::new(size, family.clone()));
         style
             .text_styles
-            .insert(TextStyle::Heading, FontId::proportional(size + 2.0));
+            .insert(TextStyle::Heading, FontId::new(size + 2.0, family));
 
         ctx.set_style(style);
+    }
+
+    fn sync_search_viewport_pos(&mut self, ctx: &egui::Context) {
+        let pos = ctx.input(|i| i.viewport().outer_rect.map(|rect| rect.left_top()));
+        if let Some(pos) = pos {
+            self.search_window_pos = Some(pos);
+        }
+    }
+
+    fn handle_auto_hide_on_focus_lost(&mut self, ctx: &egui::Context) {
+        if !self.runtime.auto_hide_on_focus_lost || !self.show_search_window || self.settings_open {
+            return;
+        }
+
+        if ctx.input(|i| i.viewport().focused) == Some(false) {
+            self.hide_search_window(ctx);
+        }
     }
 
     fn ensure_icon_texture(&mut self, ctx: &egui::Context, path: &str) -> Option<egui::TextureId> {
@@ -549,7 +581,7 @@ impl SnotraApp {
         }
 
         if !open {
-            self.close_settings();
+            self.close_settings(ctx);
         }
     }
 
@@ -581,7 +613,7 @@ impl SnotraApp {
                 self.show_rebuild_confirm = true;
             }
             if ui.button("閉じる").clicked() {
-                self.close_settings();
+                self.close_settings(ctx);
             }
         });
 
@@ -825,7 +857,22 @@ impl SnotraApp {
         ui.text_edit_singleline(&mut self.settings_draft.visual.hint_text_color);
 
         ui.label("フォントファミリー");
-        ui.text_edit_singleline(&mut self.settings_draft.visual.font_family);
+        let mut family = normalize_visual_font_family(&self.settings_draft.visual.font_family);
+        ComboBox::from_id_source("visual_font_family")
+            .selected_text(visual_font_family_label(&family))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(
+                    &mut family,
+                    egui::FontFamily::Proportional,
+                    visual_font_family_label(&egui::FontFamily::Proportional),
+                );
+                ui.selectable_value(
+                    &mut family,
+                    egui::FontFamily::Monospace,
+                    visual_font_family_label(&egui::FontFamily::Monospace),
+                );
+            });
+        self.settings_draft.visual.font_family = visual_font_family_value(&family).to_string();
         ui.horizontal(|ui| {
             ui.label("フォントサイズ");
             ui.add(
@@ -858,6 +905,7 @@ impl SnotraApp {
         );
         next.visual.hint_text_color =
             normalize_hex_color(&next.visual.hint_text_color, &old.visual.hint_text_color);
+        next.visual.font_family = normalize_stored_font_family(&next.visual.font_family);
         next.visual.font_size = next.visual.font_size.clamp(8, 48);
 
         let mut hotkey_ok = true;
@@ -1020,9 +1068,11 @@ impl eframe::App for SnotraApp {
         }
 
         self.apply_visual_style(ctx);
+        self.sync_search_viewport_pos(ctx);
         self.handle_platform_events(ctx);
         self.handle_internal_events();
         self.tick_spinner();
+        self.handle_auto_hide_on_focus_lost(ctx);
 
         if self.should_exit {
             if !self.exit_sent {
@@ -1076,6 +1126,7 @@ fn runtime_from_config(config: &Config) -> RuntimeSettings {
         folder_mode: to_search_mode(config.search.folder_mode),
         show_hidden_system: config.search.show_hidden_system,
         hotkey_toggle: config.general.hotkey_toggle,
+        auto_hide_on_focus_lost: config.general.auto_hide_on_focus_lost,
     }
 }
 
@@ -1111,6 +1162,35 @@ fn normalize_hex_color(input: &str, fallback: &str) -> String {
         return fallback.to_string();
     }
     format!("#{}", hex.to_uppercase())
+}
+
+fn normalize_stored_font_family(input: &str) -> String {
+    let family = normalize_visual_font_family(input);
+    visual_font_family_value(&family).to_string()
+}
+
+fn normalize_visual_font_family(input: &str) -> egui::FontFamily {
+    let normalized = input.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "monospace" | "consolas" => egui::FontFamily::Monospace,
+        _ => egui::FontFamily::Proportional,
+    }
+}
+
+fn visual_font_family_value(family: &egui::FontFamily) -> &'static str {
+    match family {
+        egui::FontFamily::Proportional => "proportional",
+        egui::FontFamily::Monospace => "monospace",
+        egui::FontFamily::Name(_) => "proportional",
+    }
+}
+
+fn visual_font_family_label(family: &egui::FontFamily) -> &'static str {
+    match family {
+        egui::FontFamily::Proportional => "proportional",
+        egui::FontFamily::Monospace => "monospace",
+        egui::FontFamily::Name(_) => "proportional",
+    }
 }
 
 fn needs_rebuild(old: &Config, new: &Config) -> bool {
@@ -1157,7 +1237,7 @@ fn apply_visual_preset(visual: &mut VisualConfig, preset: ThemePreset) {
             "#E0E0E0",
             "#505050",
             "#808080",
-            "Segoe UI",
+            "proportional",
             15,
         ),
         ThemePreset::Paper => (
@@ -1166,7 +1246,7 @@ fn apply_visual_preset(visual: &mut VisualConfig, preset: ThemePreset) {
             "#141414",
             "#DADADA",
             "#707070",
-            "Segoe UI",
+            "proportional",
             15,
         ),
         ThemePreset::Solarized => (
@@ -1175,7 +1255,7 @@ fn apply_visual_preset(visual: &mut VisualConfig, preset: ThemePreset) {
             "#839496",
             "#586E75",
             "#93A1A1",
-            "Consolas",
+            "monospace",
             15,
         ),
     };
@@ -1187,4 +1267,24 @@ fn apply_visual_preset(visual: &mut VisualConfig, preset: ThemePreset) {
     visual.hint_text_color = hint.to_string();
     visual.font_family = family.to_string();
     visual.font_size = size;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_stored_font_family_maps_legacy_names() {
+        assert_eq!(normalize_stored_font_family("Consolas"), "monospace");
+        assert_eq!(normalize_stored_font_family("Yu Gothic UI"), "proportional");
+        assert_eq!(normalize_stored_font_family("monospace"), "monospace");
+    }
+
+    #[test]
+    fn runtime_from_config_reflects_auto_hide_on_focus_lost() {
+        let mut cfg = Config::default();
+        cfg.general.auto_hide_on_focus_lost = false;
+        let runtime = runtime_from_config(&cfg);
+        assert!(!runtime.auto_hide_on_focus_lost);
+    }
 }

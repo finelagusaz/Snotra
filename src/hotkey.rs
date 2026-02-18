@@ -37,9 +37,9 @@ pub fn parse_vk(s: &str) -> u32 {
 pub fn register(config: &HotkeyConfig) -> bool {
     let modifiers = parse_modifier(&config.modifier);
     let vk = parse_vk(&config.key);
-    unsafe { RegisterHotKey(HWND::default(), HOTKEY_ID, modifiers, vk) }.is_ok()
+    unsafe { RegisterHotKey(Some(HWND::default()), HOTKEY_ID, modifiers, vk) }.is_ok()
 }
 
 pub fn unregister() {
-    let _ = unsafe { UnregisterHotKey(HWND::default(), HOTKEY_ID) };
+    let _ = unsafe { UnregisterHotKey(Some(HWND::default()), HOTKEY_ID) };
 }

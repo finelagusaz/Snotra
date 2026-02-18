@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-eframe = "0.29"
-windows = { version = "0.58", features = [
+eframe = { version = "0.33.3", default-features = false, features = ["wgpu", "glow", "default_fonts", "accesskit"] }
+windows = { version = "0.62.2", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Controls",
     "Win32_UI_Shell",
@@ -14,6 +14,7 @@ windows = { version = "0.58", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Input_Ime",
     "Win32_System_Threading",
+    "Win32_Security",
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
     "Win32_UI_HiDpi",
@@ -23,6 +24,7 @@ serde = { version = "1", features = ["derive"] }
 fuzzy-matcher = "0.3"
 bincode = "1"
 dirs = "5"
+wgpu = { version = "27.0.1", default-features = false, features = ["std", "dx12", "vulkan", "gles", "wgsl"] }
 
 [profile.release]
 opt-level = "s"

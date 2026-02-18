@@ -18,7 +18,7 @@ pub fn launch(target_path: &str) {
 
     unsafe {
         ShellExecuteW(
-            HWND::default(),
+            Some(HWND::default()),
             PCWSTR(wide_open.as_ptr()),
             PCWSTR(wide_path.as_ptr()),
             PCWSTR::null(),

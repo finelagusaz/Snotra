@@ -2,7 +2,19 @@
   "permissions": {
     "allow": [
       "Bash(git -C /c/workspace/Snotra log --oneline)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(git checkout:*)",
+      "Bash(git stash:*)",
+      "Bash(git reset:*)",
+      "Bash(taskkill:*)",
+      "Bash(printenv:*)",
+      "Bash(cmd.exe /c \"echo %APPDATA%\")",
+      "Bash(powershell -Command \"echo $env:APPDATA\")",
+      "Bash(powershell -Command \"Get-Process | Where-Object {$_Name -match ''snotra|cargo''} | Select-Object Name, Id, StartTime\")",
+      "Bash(cmd /c \"dir %APPDATA%\\\\Snotra\")",
+      "Bash(cmd /c \"type %APPDATA%\\\\Snotra\\\\config.toml\")",
+      "Bash(cmd /c \"dir /s /b C:\\\\Users\\\\Eoh\\\\.cargo\\\\registry\\\\src\\\\*\\\\windows-0.58.0\\\\src\\\\Windows\\\\Win32\\\\Graphics\\\\Gdi\\\\mod.rs 2>&1\")",
+      "Bash(cmd /c:*)"
     ]
   }
 }

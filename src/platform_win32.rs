@@ -1,7 +1,7 @@
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Shell::{
@@ -9,13 +9,12 @@ use windows::Win32::UI::Shell::{
     NOTIFYICONDATAW, NOTIFYICON_VERSION_4,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, CreateWindowExW, DestroyMenu, DispatchMessageW,
-    GetCursorPos, GetForegroundWindow, GetMessageW, LoadIconW, PeekMessageW, PostMessageW,
-    PostQuitMessage, PostThreadMessageW, RegisterClassExW, SetForegroundWindow, TrackPopupMenuEx,
-    TranslateMessage, IDC_ARROW, IDI_APPLICATION, MF_SEPARATOR, MF_STRING, MSG, PM_NOREMOVE,
-    TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP,
-    WM_COMMAND, WM_CONTEXTMENU, WM_HOTKEY, WM_LBUTTONDBLCLK, WM_RBUTTONUP, WNDCLASSEXW,
-    WINDOW_EX_STYLE, WINDOW_STYLE,
+    AppendMenuW, CreatePopupMenu, CreateWindowExW, DestroyMenu, DispatchMessageW, GetCursorPos,
+    GetForegroundWindow, GetMessageW, LoadIconW, PeekMessageW, PostMessageW, PostQuitMessage,
+    PostThreadMessageW, RegisterClassExW, SetForegroundWindow, TrackPopupMenuEx, TranslateMessage,
+    IDC_ARROW, IDI_APPLICATION, MF_SEPARATOR, MF_STRING, MSG, PM_NOREMOVE, TPM_BOTTOMALIGN,
+    TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE,
+    WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_HOTKEY, WM_LBUTTONDBLCLK, WM_RBUTTONUP, WNDCLASSEXW,
 };
 
 use crate::config::HotkeyConfig;
@@ -27,6 +26,15 @@ const ID_MENU_SETTINGS: usize = 1000;
 const ID_MENU_EXIT: usize = 1001;
 
 pub const PLATFORM_WINDOW_CLASS: &str = "SnotraPlatformWindow";
+
+unsafe extern "system" fn platform_default_wnd_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    windows::Win32::UI::WindowsAndMessaging::DefWindowProcW(hwnd, msg, wparam, lparam)
+}
 
 #[derive(Debug)]
 pub enum PlatformEvent {
@@ -121,7 +129,7 @@ fn platform_thread_loop(
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
             style: Default::default(),
-            lpfnWndProc: Some(windows::Win32::UI::WindowsAndMessaging::DefWindowProcW),
+            lpfnWndProc: Some(platform_default_wnd_proc),
             hInstance: instance.into(),
             hCursor: windows::Win32::UI::WindowsAndMessaging::LoadCursorW(None, IDC_ARROW)
                 .unwrap_or_default(),
@@ -139,9 +147,9 @@ fn platform_thread_loop(
             0,
             0,
             0,
-            HWND::default(),
             None,
-            instance,
+            None,
+            Some(instance.into()),
             None,
         ) {
             Ok(v) => v,
@@ -177,12 +185,7 @@ fn platform_thread_loop(
                     handle_menu_command(msg.wParam, &event_tx);
                 }
                 WM_PLATFORM_WAKE => {
-                    process_commands(
-                        &command_rx,
-                        &mut current_hotkey,
-                        &mut tray,
-                        hwnd,
-                    );
+                    process_commands(&command_rx, &mut current_hotkey, &mut tray, hwnd);
                 }
                 _ => {
                     let _ = TranslateMessage(&msg);
@@ -328,11 +331,7 @@ impl TrayIcon {
 
             let command = TrackPopupMenuEx(
                 hmenu,
-                (TPM_LEFTALIGN
-                    | TPM_BOTTOMALIGN
-                    | TPM_RIGHTBUTTON
-                    | TPM_NONOTIFY
-                    | TPM_RETURNCMD)
+                (TPM_LEFTALIGN | TPM_BOTTOMALIGN | TPM_RIGHTBUTTON | TPM_NONOTIFY | TPM_RETURNCMD)
                     .0,
                 pt.x,
                 pt.y,
@@ -341,7 +340,12 @@ impl TrayIcon {
             );
 
             if command.0 != 0 {
-                let _ = PostMessageW(hwnd, WM_COMMAND, WPARAM(command.0 as usize), LPARAM(0));
+                let _ = PostMessageW(
+                    Some(hwnd),
+                    WM_COMMAND,
+                    WPARAM(command.0 as usize),
+                    LPARAM(0),
+                );
             }
 
             let _ = DestroyMenu(hmenu);

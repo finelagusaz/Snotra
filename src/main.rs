@@ -33,20 +33,91 @@ mod window_data;
 
 #[cfg(target_os = "windows")]
 fn main() {
+    use std::fs::{self, OpenOptions};
+    use std::io::Write;
+    use std::path::PathBuf;
     use std::rc::Rc;
 
     use eframe::egui;
     use windows::core::{HSTRING, PCWSTR};
-    use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
+    use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
+    use windows::Win32::System::Threading::CreateMutexW;
+    use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
 
-    use config::Config;
+    use config::{Config, RendererConfig, WgpuBackendConfig};
 
-    let class_name = HSTRING::from(platform_win32::PLATFORM_WINDOW_CLASS);
-    if unsafe { FindWindowW(PCWSTR(class_name.as_ptr()), None).is_ok() } {
-        return;
+    struct SingletonGuard(HANDLE);
+    impl Drop for SingletonGuard {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = CloseHandle(self.0);
+            }
+        }
     }
 
+    fn startup_log_path() -> Option<PathBuf> {
+        let base = std::env::var_os("LOCALAPPDATA")?;
+        Some(PathBuf::from(base).join("Snotra").join("startup.log"))
+    }
+
+    fn log_startup_line(message: &str) {
+        if let Some(path) = startup_log_path() {
+            if let Some(dir) = path.parent() {
+                let _ = fs::create_dir_all(dir);
+            }
+            if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
+                let _ = writeln!(f, "{}", message);
+            }
+        }
+    }
+
+    fn acquire_singleton() -> Option<SingletonGuard> {
+        let mutex_name = HSTRING::from("Global\\Snotra.Singleton");
+        let handle = unsafe { CreateMutexW(None, false, PCWSTR(mutex_name.as_ptr())) }.ok()?;
+        let already_exists = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
+        if already_exists {
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
+            None
+        } else {
+            Some(SingletonGuard(handle))
+        }
+    }
+
+    fn resolve_renderer(renderer: RendererConfig) -> (eframe::Renderer, &'static str) {
+        match renderer {
+            RendererConfig::Auto => (eframe::Renderer::Wgpu, "auto->wgpu"),
+            RendererConfig::Wgpu => (eframe::Renderer::Wgpu, "wgpu"),
+            RendererConfig::Glow => (eframe::Renderer::Glow, "glow"),
+        }
+    }
+
+    fn resolve_wgpu_backends(mode: WgpuBackendConfig) -> (eframe::wgpu::Backends, &'static str) {
+        match mode {
+            WgpuBackendConfig::Auto => (eframe::wgpu::Backends::DX12, "auto->dx12"),
+            WgpuBackendConfig::Dx12 => (eframe::wgpu::Backends::DX12, "dx12"),
+            WgpuBackendConfig::Vulkan => (eframe::wgpu::Backends::VULKAN, "vulkan"),
+            WgpuBackendConfig::Gl => (eframe::wgpu::Backends::GL, "gl"),
+        }
+    }
+
+    log_startup_line("main:start");
+
+    let Some(_singleton_guard) = acquire_singleton() else {
+        log_startup_line("main:singleton_exists");
+        return;
+    };
+    log_startup_line("main:singleton_acquired");
+
+    let class_name = HSTRING::from(platform_win32::PLATFORM_WINDOW_CLASS);
+    log_startup_line(&format!(
+        "main:platform_window_class={}",
+        class_name.to_string_lossy()
+    ));
+
     let mut config = Config::load();
+    log_startup_line("main:config_loaded");
     config.appearance.max_history_display = config
         .appearance
         .max_history_display
@@ -57,6 +128,11 @@ fn main() {
         &config.paths.scan,
         config.search.show_hidden_system,
     );
+    log_startup_line(&format!(
+        "main:index_loaded entries={} rescanned={}",
+        entries.len(),
+        rescanned
+    ));
 
     let icon_cache = if config.appearance.show_icons {
         if rescanned {
@@ -80,12 +156,13 @@ fn main() {
         config.appearance.max_history_display,
     );
 
-    let Some(platform) = platform_win32::PlatformBridge::start(
-        config.hotkey.clone(),
-        config.general.show_tray_icon,
-    ) else {
+    let Some(platform) =
+        platform_win32::PlatformBridge::start(config.hotkey.clone(), config.general.show_tray_icon)
+    else {
+        log_startup_line("main:platform_start_failed");
         return;
     };
+    log_startup_line("main:platform_started");
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Snotra")
@@ -99,8 +176,22 @@ fn main() {
         viewport = viewport.with_position([placement.x as f32, placement.y as f32]);
     }
 
+    let (renderer, renderer_label) = resolve_renderer(config.general.renderer);
+    let (wgpu_backends, wgpu_backends_label) = resolve_wgpu_backends(config.general.wgpu_backend);
+    log_startup_line(&format!("main:renderer={renderer_label}"));
+    log_startup_line(&format!("main:wgpu_backends={wgpu_backends_label}"));
+
+    let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration::default();
+    if matches!(renderer, eframe::Renderer::Wgpu) {
+        let mut create_new = eframe::egui_wgpu::WgpuSetupCreateNew::default();
+        create_new.instance_descriptor.backends = wgpu_backends;
+        wgpu_options.wgpu_setup = eframe::egui_wgpu::WgpuSetup::CreateNew(create_new);
+    }
+
     let native_options = eframe::NativeOptions {
         viewport,
+        renderer,
+        wgpu_options,
         ..Default::default()
     };
 
@@ -112,11 +203,33 @@ fn main() {
         platform,
     };
 
-    let _ = eframe::run_native(
+    match eframe::run_native(
         "Snotra",
         native_options,
         Box::new(move |cc| Ok(Box::new(app::SnotraApp::new(cc, init)))),
-    );
+    ) {
+        Ok(()) => {
+            log_startup_line(&format!(
+                "main:run_native_ok renderer={renderer_label} wgpu_backends={wgpu_backends_label}"
+            ));
+        }
+        Err(e) => {
+            let message = format!(
+                "main:run_native_err renderer={renderer_label} wgpu_backends={wgpu_backends_label} err={e}"
+            );
+            log_startup_line(&message);
+            let title = HSTRING::from("Snotra startup error");
+            let text = HSTRING::from(message);
+            unsafe {
+                let _ = MessageBoxW(
+                    None,
+                    PCWSTR(text.as_ptr()),
+                    PCWSTR(title.as_ptr()),
+                    MB_OK | MB_ICONERROR,
+                );
+            }
+        }
+    }
 }
 
 #[cfg(not(target_os = "windows"))]

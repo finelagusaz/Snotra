@@ -45,6 +45,31 @@ fn default_show_title_bar() -> bool {
     false
 }
 
+fn default_renderer() -> RendererConfig {
+    RendererConfig::Auto
+}
+
+fn default_wgpu_backend() -> WgpuBackendConfig {
+    WgpuBackendConfig::Auto
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RendererConfig {
+    Auto,
+    Wgpu,
+    Glow,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WgpuBackendConfig {
+    Auto,
+    Dx12,
+    Vulkan,
+    Gl,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GeneralConfig {
     #[serde(default = "default_hotkey_toggle")]
@@ -59,6 +84,10 @@ pub struct GeneralConfig {
     pub ime_off_on_show: bool,
     #[serde(default = "default_show_title_bar")]
     pub show_title_bar: bool,
+    #[serde(default = "default_renderer")]
+    pub renderer: RendererConfig,
+    #[serde(default = "default_wgpu_backend")]
+    pub wgpu_backend: WgpuBackendConfig,
 }
 
 impl Default for GeneralConfig {
@@ -70,6 +99,8 @@ impl Default for GeneralConfig {
             show_tray_icon: true,
             ime_off_on_show: false,
             show_title_bar: false,
+            renderer: RendererConfig::Auto,
+            wgpu_backend: WgpuBackendConfig::Auto,
         }
     }
 }
@@ -341,6 +372,8 @@ mod tests {
         assert!(config.general.show_tray_icon);
         assert!(!config.general.ime_off_on_show);
         assert!(!config.general.show_title_bar);
+        assert_eq!(config.general.renderer, RendererConfig::Auto);
+        assert_eq!(config.general.wgpu_backend, WgpuBackendConfig::Auto);
         assert_eq!(config.visual.preset, ThemePreset::Obsidian);
         assert_eq!(config.visual.background_color, "#282828");
         assert_eq!(config.visual.font_family, "Segoe UI");
@@ -373,6 +406,8 @@ mod tests {
         assert!(config.general.show_tray_icon);
         assert!(!config.general.ime_off_on_show);
         assert!(!config.general.show_title_bar);
+        assert_eq!(config.general.renderer, RendererConfig::Auto);
+        assert_eq!(config.general.wgpu_backend, WgpuBackendConfig::Auto);
         assert_eq!(config.visual.preset, ThemePreset::Obsidian);
         assert_eq!(config.visual.background_color, "#282828");
     }
@@ -398,6 +433,8 @@ mod tests {
         assert!(config.general.show_tray_icon);
         assert!(!config.general.ime_off_on_show);
         assert!(!config.general.show_title_bar);
+        assert_eq!(config.general.renderer, RendererConfig::Auto);
+        assert_eq!(config.general.wgpu_backend, WgpuBackendConfig::Auto);
         assert_eq!(config.visual.preset, ThemePreset::Obsidian);
         assert_eq!(config.visual.background_color, "#282828");
         assert_eq!(config.visual.input_background_color, "#383838");
@@ -460,6 +497,8 @@ mod tests {
         assert!(config.paths.scan.is_empty());
         assert!(config.appearance.show_icons);
         assert!(config.general.hotkey_toggle);
+        assert_eq!(config.general.renderer, RendererConfig::Auto);
+        assert_eq!(config.general.wgpu_backend, WgpuBackendConfig::Auto);
         assert_eq!(config.visual.preset, ThemePreset::Obsidian);
     }
 
@@ -500,6 +539,8 @@ mod tests {
             show_tray_icon = false
             ime_off_on_show = true
             show_title_bar = true
+            renderer = "glow"
+            wgpu_backend = "dx12"
 
             [appearance]
             max_results = 8
@@ -525,6 +566,8 @@ mod tests {
         assert!(!config.general.show_tray_icon);
         assert!(config.general.ime_off_on_show);
         assert!(config.general.show_title_bar);
+        assert_eq!(config.general.renderer, RendererConfig::Glow);
+        assert_eq!(config.general.wgpu_backend, WgpuBackendConfig::Dx12);
         assert_eq!(config.visual.preset, ThemePreset::Paper);
         assert_eq!(config.visual.background_color, "#ffffff");
         assert_eq!(config.visual.input_background_color, "#f2f2f2");
@@ -533,5 +576,35 @@ mod tests {
         assert_eq!(config.visual.hint_text_color, "#666666");
         assert_eq!(config.visual.font_family, "Yu Gothic UI");
         assert_eq!(config.visual.font_size, 18);
+    }
+
+    #[test]
+    fn deserialize_general_renderer_wgpu() {
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+
+            [general]
+            renderer = "wgpu"
+            wgpu_backend = "vulkan"
+
+            [appearance]
+            max_results = 8
+            window_width = 600
+
+            [paths]
+            additional = []
+        "#;
+        let config: Config = toml::from_str(toml_str).expect("parse");
+        assert_eq!(config.general.renderer, RendererConfig::Wgpu);
+        assert_eq!(config.general.wgpu_backend, WgpuBackendConfig::Vulkan);
+    }
+
+    #[test]
+    fn default_renderer_is_auto() {
+        let config = Config::default();
+        assert_eq!(config.general.renderer, RendererConfig::Auto);
+        assert_eq!(config.general.wgpu_backend, WgpuBackendConfig::Auto);
     }
 }

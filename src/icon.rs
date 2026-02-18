@@ -36,6 +36,7 @@ struct IconCacheData {
 pub struct IconCache {
     data: IconCacheData,
     runtime: HashMap<String, HICON>,
+    #[allow(dead_code)]
     default_icon: HICON,
 }
 
@@ -104,8 +105,13 @@ impl IconCache {
         self.data.icons.get(target_path)
     }
 
+    #[allow(dead_code)]
     pub fn draw(&self, target_path: &str, hdc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32) {
-        let hicon = self.runtime.get(target_path).copied().unwrap_or(self.default_icon);
+        let hicon = self
+            .runtime
+            .get(target_path)
+            .copied()
+            .unwrap_or(self.default_icon);
         if !hicon.is_invalid() {
             unsafe {
                 let _ = DrawIconEx(hdc, x, y, hicon, ICON_SIZE, ICON_SIZE, 0, None, DI_NORMAL);
@@ -194,7 +200,7 @@ fn hicon_to_bgra(hicon: HICON) -> Option<IconData> {
 
         // Get color bitmap data
         if !icon_info.hbmColor.is_invalid() {
-            let old = SelectObject(hdc_screen, icon_info.hbmColor);
+            let old = SelectObject(hdc_screen, icon_info.hbmColor.into());
             GetDIBits(
                 hdc_screen,
                 icon_info.hbmColor,
@@ -229,10 +235,10 @@ fn scopeguard_bitmaps(icon_info: &ICONINFO) -> impl Drop + '_ {
         fn drop(&mut self) {
             unsafe {
                 if !self.0.hbmColor.is_invalid() {
-                    let _ = DeleteObject(self.0.hbmColor);
+                    let _ = DeleteObject(self.0.hbmColor.into());
                 }
                 if !self.0.hbmMask.is_invalid() {
-                    let _ = DeleteObject(self.0.hbmMask);
+                    let _ = DeleteObject(self.0.hbmMask.into());
                 }
             }
         }
@@ -262,7 +268,7 @@ fn create_hicon_from_data(data: &IconData) -> Option<HICON> {
 
         let mut bits_ptr = std::ptr::null_mut();
         let hbm_color = windows::Win32::Graphics::Gdi::CreateDIBSection(
-            hdc,
+            Some(hdc),
             &bmi,
             DIB_RGB_COLORS,
             &mut bits_ptr,
@@ -274,7 +280,7 @@ fn create_hicon_from_data(data: &IconData) -> Option<HICON> {
         // Validate pixel data length before unsafe copy
         let expected_len = (data.width * data.height * 4) as usize;
         if data.bgra.len() != expected_len {
-            let _ = DeleteObject(hbm_color);
+            let _ = DeleteObject(hbm_color.into());
             let _ = DeleteDC(hdc);
             return None;
         }
@@ -304,8 +310,8 @@ fn create_hicon_from_data(data: &IconData) -> Option<HICON> {
 
         let hicon = CreateIconIndirect(&icon_info).ok();
 
-        let _ = DeleteObject(hbm_color);
-        let _ = DeleteObject(hbm_mask);
+        let _ = DeleteObject(hbm_color.into());
+        let _ = DeleteObject(hbm_mask.into());
         let _ = DeleteDC(hdc);
 
         hicon

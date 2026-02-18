@@ -12,7 +12,7 @@ use eframe::egui::{
 use windows::Win32::Foundation::LPARAM;
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateFontIndirectW, DeleteDC, DeleteObject, EnumFontFamiliesExW,
-    GetFontData, SelectObject, FONT_CHARSET, HDC, LOGFONTW, TEXTMETRICW,
+    GetFontData, SelectObject, FONT_CHARSET, LOGFONTW, TEXTMETRICW,
 };
 
 use crate::config::{Config, ScanPath, SearchModeConfig, ThemePreset, VisualConfig};
@@ -121,10 +121,8 @@ impl SnotraApp {
             .max_history_display
             .min(config.appearance.max_results);
         let available_fonts = list_system_font_families();
-        config.visual.font_family = sanitize_font_family_for_save(
-            &config.visual.font_family,
-            &available_fonts,
-        );
+        config.visual.font_family =
+            sanitize_font_family_for_save(&config.visual.font_family, &available_fonts);
 
         let (internal_tx, internal_rx) = mpsc::channel();
 
@@ -444,18 +442,22 @@ impl SnotraApp {
     fn apply_visual_style(&mut self, ctx: &egui::Context) {
         let mut style = (*ctx.style()).clone();
 
-        let bg = parse_hex_color(&self.config.visual.background_color, Color32::from_rgb(40, 40, 40));
+        let bg = parse_hex_color(
+            &self.config.visual.background_color,
+            Color32::from_rgb(40, 40, 40),
+        );
         let input_bg = parse_hex_color(
             &self.config.visual.input_background_color,
             Color32::from_rgb(56, 56, 56),
         );
-        let text = parse_hex_color(&self.config.visual.text_color, Color32::from_rgb(224, 224, 224));
+        let text = parse_hex_color(
+            &self.config.visual.text_color,
+            Color32::from_rgb(224, 224, 224),
+        );
         let selected = parse_hex_color(
             &self.config.visual.selected_row_color,
             Color32::from_rgb(80, 80, 80),
         );
-        let hint = parse_hex_color(&self.config.visual.hint_text_color, Color32::from_rgb(128, 128, 128));
-
         style.visuals.panel_fill = bg;
         style.visuals.window_fill = bg;
         style.visuals.extreme_bg_color = input_bg;
@@ -465,13 +467,10 @@ impl SnotraApp {
         style.visuals.widgets.inactive.fg_stroke.color = text;
         style.visuals.widgets.hovered.fg_stroke.color = text;
         style.visuals.widgets.active.fg_stroke.color = text;
-        style.visuals.weak_text_color = hint;
 
         let size = self.config.visual.font_size.clamp(8, 48) as f32;
-        let requested_font = sanitize_font_family_for_save(
-            &self.config.visual.font_family,
-            &self.available_fonts,
-        );
+        let requested_font =
+            sanitize_font_family_for_save(&self.config.visual.font_family, &self.available_fonts);
         let family = if self.ensure_font_registered(ctx, &requested_font) {
             FontFamily::Name(requested_font.clone().into())
         } else {
@@ -574,7 +573,10 @@ impl SnotraApp {
 
             let input = egui::TextEdit::singleline(&mut self.query)
                 .desired_width(f32::INFINITY)
-                .hint_text("検索...");
+                .hint_text(RichText::new("検索...").color(parse_hex_color(
+                    &self.config.visual.hint_text_color,
+                    Color32::from_rgb(128, 128, 128),
+                )));
             let input_response = ui.add_sized([ui.available_width(), INPUT_HEIGHT], input);
             if self.request_focus_input {
                 input_response.request_focus();
@@ -608,7 +610,7 @@ impl SnotraApp {
 
                         let resp = ui.add_sized(
                             [ui.available_width(), ITEM_HEIGHT],
-                            egui::SelectableLabel::new(selected, row_text),
+                            egui::Button::selectable(selected, row_text),
                         );
 
                         if resp.clicked() {
@@ -783,8 +785,7 @@ impl SnotraApp {
         ui.horizontal(|ui| {
             ui.label("最大表示件数");
             ui.add(
-                egui::DragValue::new(&mut self.settings_draft.appearance.max_results)
-                    .clamp_range(1..=50),
+                egui::DragValue::new(&mut self.settings_draft.appearance.max_results).range(1..=50),
             );
         });
 
@@ -792,7 +793,7 @@ impl SnotraApp {
             ui.label("履歴表示最大件数");
             ui.add(
                 egui::DragValue::new(&mut self.settings_draft.appearance.max_history_display)
-                    .clamp_range(1..=50),
+                    .range(1..=50),
             );
         });
 
@@ -853,8 +854,7 @@ impl SnotraApp {
                         let path = self.settings_scan_path.trim();
                         let exts = parse_extensions(&self.settings_scan_ext);
                         if path.is_empty() || exts.is_empty() {
-                            self.settings_status =
-                                "パスと拡張子を入力してください".to_string();
+                            self.settings_status = "パスと拡張子を入力してください".to_string();
                         } else {
                             self.settings_draft.paths.scan[idx] = ScanPath {
                                 path: path.to_string(),
@@ -887,10 +887,13 @@ impl SnotraApp {
             ui.label("履歴保存上位 N");
             ui.add(
                 egui::DragValue::new(&mut self.settings_draft.appearance.top_n_history)
-                    .clamp_range(10..=5000),
+                    .range(10..=5000),
             );
         });
-        ui.checkbox(&mut self.settings_draft.appearance.show_icons, "アイコン表示");
+        ui.checkbox(
+            &mut self.settings_draft.appearance.show_icons,
+            "アイコン表示",
+        );
     }
 
     fn draw_settings_visual(&mut self, ui: &mut egui::Ui) {
@@ -928,7 +931,7 @@ impl SnotraApp {
                 &self.settings_draft.visual.font_family,
                 &self.available_fonts,
             );
-            ComboBox::from_id_source("visual_font_family")
+            ComboBox::from_id_salt("visual_font_family")
                 .selected_text(family.clone())
                 .show_ui(ui, |ui| {
                     for candidate in &self.available_fonts {
@@ -939,9 +942,7 @@ impl SnotraApp {
         }
         ui.horizontal(|ui| {
             ui.label("フォントサイズ");
-            ui.add(
-                egui::DragValue::new(&mut self.settings_draft.visual.font_size).clamp_range(8..=48),
-            );
+            ui.add(egui::DragValue::new(&mut self.settings_draft.visual.font_size).range(8..=48));
         });
     }
 
@@ -962,7 +963,8 @@ impl SnotraApp {
             &next.visual.input_background_color,
             &old.visual.input_background_color,
         );
-        next.visual.text_color = normalize_hex_color(&next.visual.text_color, &old.visual.text_color);
+        next.visual.text_color =
+            normalize_hex_color(&next.visual.text_color, &old.visual.text_color);
         next.visual.selected_row_color = normalize_hex_color(
             &next.visual.selected_row_color,
             &old.visual.selected_row_color,
@@ -1293,31 +1295,13 @@ fn theme_preset_label(preset: ThemePreset) -> &'static str {
 fn apply_visual_preset(visual: &mut VisualConfig, preset: ThemePreset) {
     let (bg, input_bg, text, selected, hint, family, size) = match preset {
         ThemePreset::Obsidian => (
-            "#282828",
-            "#383838",
-            "#E0E0E0",
-            "#505050",
-            "#808080",
-            "Segoe UI",
-            15,
+            "#282828", "#383838", "#E0E0E0", "#505050", "#808080", "Segoe UI", 15,
         ),
         ThemePreset::Paper => (
-            "#FFFFFF",
-            "#F2F2F2",
-            "#141414",
-            "#DADADA",
-            "#707070",
-            "Segoe UI",
-            15,
+            "#FFFFFF", "#F2F2F2", "#141414", "#DADADA", "#707070", "Segoe UI", 15,
         ),
         ThemePreset::Solarized => (
-            "#002B36",
-            "#073642",
-            "#839496",
-            "#586E75",
-            "#93A1A1",
-            "Consolas",
-            15,
+            "#002B36", "#073642", "#839496", "#586E75", "#93A1A1", "Consolas", 15,
         ),
     };
 
@@ -1357,8 +1341,8 @@ fn list_system_font_families() -> Vec<String> {
     unsafe {
         let mut lf = LOGFONTW::default();
         lf.lfCharSet = FONT_CHARSET(0);
-        let hdc = CreateCompatibleDC(HDC::default());
-        if hdc.0 != 0 {
+        let hdc = CreateCompatibleDC(None);
+        if !hdc.is_invalid() {
             let ptr = &mut fonts as *mut Vec<String>;
             let _ = EnumFontFamiliesExW(hdc, &mut lf, Some(enum_proc), LPARAM(ptr as isize), 0);
             let _ = DeleteDC(hdc);
@@ -1372,8 +1356,8 @@ fn list_system_font_families() -> Vec<String> {
 fn load_font_data_from_gdi(family: &str) -> Option<Vec<u8>> {
     const GDI_ERROR_U32: u32 = 0xFFFF_FFFF;
     unsafe {
-        let hdc = CreateCompatibleDC(HDC::default());
-        if hdc.0 == 0 {
+        let hdc = CreateCompatibleDC(None);
+        if hdc.is_invalid() {
             return None;
         }
 
@@ -1386,16 +1370,16 @@ fn load_font_data_from_gdi(family: &str) -> Option<Vec<u8>> {
         lf.lfFaceName[..len].copy_from_slice(&face[..len]);
 
         let font = CreateFontIndirectW(&lf);
-        if font.0 == 0 {
+        if font.is_invalid() {
             let _ = DeleteDC(hdc);
             return None;
         }
 
-        let old_obj = SelectObject(hdc, font);
+        let old_obj = SelectObject(hdc, font.into());
         let size = GetFontData(hdc, 0, 0, None, 0);
         if size == GDI_ERROR_U32 || size == 0 {
             let _ = SelectObject(hdc, old_obj);
-            let _ = DeleteObject(font);
+            let _ = DeleteObject(font.into());
             let _ = DeleteDC(hdc);
             return None;
         }
@@ -1409,7 +1393,7 @@ fn load_font_data_from_gdi(family: &str) -> Option<Vec<u8>> {
             bytes.len() as u32,
         );
         let _ = SelectObject(hdc, old_obj);
-        let _ = DeleteObject(font);
+        let _ = DeleteObject(font.into());
         let _ = DeleteDC(hdc);
         if written == GDI_ERROR_U32 {
             None
@@ -1430,7 +1414,10 @@ mod tests {
             sanitize_font_family_for_save("proportional", &fonts),
             "Segoe UI"
         );
-        assert_eq!(sanitize_font_family_for_save("monospace", &fonts), "Consolas");
+        assert_eq!(
+            sanitize_font_family_for_save("monospace", &fonts),
+            "Consolas"
+        );
     }
 
     #[test]

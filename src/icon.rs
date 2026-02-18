@@ -9,7 +9,8 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
 use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_SMALLICON};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateIconIndirect, DestroyIcon, DrawIconEx, GetIconInfo, DI_NORMAL, HICON, ICONINFO,
+    CreateIconIndirect, DestroyIcon, DrawIconEx, GetIconInfo, LoadIconW, DI_NORMAL, HICON,
+    ICONINFO, IDI_APPLICATION,
 };
 
 use crate::config::Config;
@@ -32,6 +33,7 @@ struct IconCacheData {
 pub struct IconCache {
     data: IconCacheData,
     runtime: HashMap<String, HICON>,
+    default_icon: HICON,
 }
 
 impl IconCache {
@@ -46,9 +48,11 @@ impl IconCache {
             }
         }
 
+        let default_icon = unsafe { LoadIconW(None, IDI_APPLICATION).unwrap_or_default() };
         let mut cache = Self {
             data,
             runtime: HashMap::new(),
+            default_icon,
         };
         cache.build_runtime_icons();
         cache
@@ -59,9 +63,11 @@ impl IconCache {
         let bytes = std::fs::read(&path).ok()?;
         let data: IconCacheData = bincode::deserialize(&bytes).ok()?;
 
+        let default_icon = unsafe { LoadIconW(None, IDI_APPLICATION).unwrap_or_default() };
         let mut cache = Self {
             data,
             runtime: HashMap::new(),
+            default_icon,
         };
         cache.build_runtime_icons();
         Some(cache)
@@ -87,7 +93,8 @@ impl IconCache {
     }
 
     pub fn draw(&self, target_path: &str, hdc: windows::Win32::Graphics::Gdi::HDC, x: i32, y: i32) {
-        if let Some(&hicon) = self.runtime.get(target_path) {
+        let hicon = self.runtime.get(target_path).copied().unwrap_or(self.default_icon);
+        if !hicon.is_invalid() {
             unsafe {
                 let _ = DrawIconEx(
                     hdc,

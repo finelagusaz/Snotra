@@ -22,6 +22,13 @@ use search::SearchEngine;
 use tray::{handle_tray_message, IDM_EXIT, WM_TRAY_ICON};
 
 fn main() {
+    // Enable per-monitor DPI awareness
+    unsafe {
+        let _ = windows::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(
+            windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        );
+    }
+
     // Prevent duplicate instances
     if is_already_running() {
         return;
@@ -62,11 +69,11 @@ fn main() {
     )));
 
     // Create search window
-    let search_hwnd = window::create_search_window(
+    let result = window::create_search_window(
         config.appearance.window_width,
         config.appearance.max_results,
     );
-    let Some(search_hwnd) = search_hwnd else {
+    let Some((search_hwnd, init)) = result else {
         return;
     };
 
@@ -96,7 +103,7 @@ fn main() {
                     .record_launch(&result.path, query);
             }
         })),
-        edit_hwnd: get_edit_hwnd(search_hwnd),
+        edit_hwnd: init.edit_hwnd,
         folder_state: None,
         on_folder_expand: Some(Box::new(move |folder_path| {
             history_for_expand
@@ -129,6 +136,16 @@ fn main() {
             )
         })),
         icon_cache,
+        bg_brush: init.bg_brush,
+        input_bg_brush: init.input_bg_brush,
+        selected_bg_brush: init.selected_bg_brush,
+        edit_font: init.edit_font,
+        result_font: init.result_font,
+        item_height: init.item_height,
+        input_height: init.input_height,
+        padding: init.padding,
+        icon_area: init.icon_area,
+        suppress_repaint: false,
     });
 
     // Create hidden message-only window for tray
@@ -199,10 +216,6 @@ fn main() {
 
 fn is_already_running() -> bool {
     unsafe { FindWindowW(w!("SnotraMessageWindow"), None).is_ok() }
-}
-
-fn get_edit_hwnd(parent: HWND) -> HWND {
-    unsafe { GetDlgItem(parent, 100).unwrap_or_default() }
 }
 
 fn create_message_window() -> Option<HWND> {

@@ -2,9 +2,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreateFontIndirectW, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect,
-    InvalidateRect, SelectObject, SetBkMode, SetTextColor, DT_END_ELLIPSIS,
-    DT_LEFT, DT_SINGLELINE, FONT_CHARSET, HBRUSH, LOGFONTW, PAINTSTRUCT, TRANSPARENT,
+    BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontIndirectW,
+    CreateSolidBrush, DeleteDC, DeleteObject, DrawTextW, EndPaint, FillRect, InvalidateRect,
+    SelectObject, SetBkMode, SetTextColor, DT_END_ELLIPSIS, DT_LEFT, DT_SINGLELINE, FONT_CHARSET,
+    HBRUSH, HFONT, LOGFONTW, PAINTSTRUCT, SRCCOPY, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
@@ -37,6 +38,21 @@ pub struct FolderExpansionState {
     pub saved_query: String,
 }
 
+/// GDI objects and layout values created during window initialization.
+/// Returned from `create_search_window` so `main.rs` can build the full `WindowState`.
+pub struct WindowStateInit {
+    pub edit_hwnd: HWND,
+    pub bg_brush: HBRUSH,
+    pub input_bg_brush: HBRUSH,
+    pub selected_bg_brush: HBRUSH,
+    pub edit_font: HFONT,
+    pub result_font: HFONT,
+    pub item_height: i32,
+    pub input_height: i32,
+    pub padding: i32,
+    pub icon_area: i32,
+}
+
 pub struct WindowState {
     pub results: Vec<SearchResult>,
     pub selected: usize,
@@ -48,6 +64,19 @@ pub struct WindowState {
     pub on_folder_navigate: Option<Box<dyn Fn(&str) -> Vec<SearchResult>>>,
     pub on_folder_filter: Option<Box<dyn Fn(&str, &str) -> Vec<SearchResult>>>,
     pub icon_cache: Option<Rc<crate::icon::IconCache>>,
+    // Cached GDI objects
+    pub bg_brush: HBRUSH,
+    pub input_bg_brush: HBRUSH,
+    pub selected_bg_brush: HBRUSH,
+    pub edit_font: HFONT,
+    pub result_font: HFONT,
+    // DPI-scaled layout
+    pub item_height: i32,
+    pub input_height: i32,
+    pub padding: i32,
+    pub icon_area: i32,
+    // Repaint suppression flag
+    pub suppress_repaint: bool,
 }
 
 thread_local! {
@@ -65,10 +94,20 @@ where
     WINDOW_STATE.with(|s| s.borrow_mut().as_mut().map(f))
 }
 
-pub fn create_search_window(width: u32, max_results: usize) -> Option<HWND> {
+pub fn create_search_window(width: u32, max_results: usize) -> Option<(HWND, WindowStateInit)> {
     unsafe {
         let instance = GetModuleHandleW(None).ok()?;
         let class_name = w!("SnotraSearchWindow");
+
+        // DPI scaling
+        let dpi = windows::Win32::UI::HiDpi::GetDpiForSystem();
+        let scale = |val: i32| -> i32 { val * dpi as i32 / 96 };
+
+        let item_height = scale(ITEM_HEIGHT);
+        let input_height = scale(INPUT_HEIGHT);
+        let padding = scale(PADDING);
+        let icon_area = scale(ICON_AREA);
+        let scaled_width = scale(width as i32);
 
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
@@ -82,12 +121,12 @@ pub fn create_search_window(width: u32, max_results: usize) -> Option<HWND> {
         };
         RegisterClassExW(&wc);
 
-        let height = INPUT_HEIGHT + (ITEM_HEIGHT * max_results as i32) + PADDING * 2;
+        let height = input_height + (item_height * max_results as i32) + padding * 2;
 
         // Center on primary monitor
         let screen_w = GetSystemMetrics(SM_CXSCREEN);
         let screen_h = GetSystemMetrics(SM_CYSCREEN);
-        let x = (screen_w - width as i32) / 2;
+        let x = (screen_w - scaled_width) / 2;
         let y = screen_h / 4;
 
         let hwnd = CreateWindowExW(
@@ -97,7 +136,7 @@ pub fn create_search_window(width: u32, max_results: usize) -> Option<HWND> {
             WS_POPUP,
             x,
             y,
-            width as i32,
+            scaled_width,
             height,
             HWND::default(),
             None,
@@ -111,10 +150,10 @@ pub fn create_search_window(width: u32, max_results: usize) -> Option<HWND> {
             w!("EDIT"),
             w!(""),
             WS_CHILD | WS_VISIBLE | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
-            PADDING,
-            PADDING,
-            width as i32 - PADDING * 2,
-            INPUT_HEIGHT - PADDING,
+            padding,
+            padding,
+            scaled_width - padding * 2,
+            input_height - padding,
             hwnd,
             HMENU(EDIT_ID as *mut _),
             instance,
@@ -122,30 +161,36 @@ pub fn create_search_window(width: u32, max_results: usize) -> Option<HWND> {
         )
         .ok()?;
 
+        // Create cached GDI objects with DPI-scaled font sizes
+        let edit_font = create_font(scale(18));
+        let result_font = create_font(scale(15));
+        let bg_brush = CreateSolidBrush(COLORREF(BG_COLOR));
+        let input_bg_brush = CreateSolidBrush(COLORREF(INPUT_BG_COLOR));
+        let selected_bg_brush = CreateSolidBrush(COLORREF(SELECTED_BG));
+
         // Set font for edit control
-        let font = create_font(18);
-        if !font.is_invalid() {
-            SendMessageW(edit_hwnd, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(1));
+        if !edit_font.is_invalid() {
+            SendMessageW(edit_hwnd, WM_SETFONT, WPARAM(edit_font.0 as usize), LPARAM(1));
         }
 
-        set_window_state(WindowState {
-            results: Vec::new(),
-            selected: 0,
-            on_query_changed: None,
-            on_launch: None,
+        let init = WindowStateInit {
             edit_hwnd,
-            folder_state: None,
-            on_folder_expand: None,
-            on_folder_navigate: None,
-            on_folder_filter: None,
-            icon_cache: None,
-        });
+            bg_brush,
+            input_bg_brush,
+            selected_bg_brush,
+            edit_font,
+            result_font,
+            item_height,
+            input_height,
+            padding,
+            icon_area,
+        };
 
-        Some(hwnd)
+        Some((hwnd, init))
     }
 }
 
-fn create_font(size: i32) -> windows::Win32::Graphics::Gdi::HFONT {
+fn create_font(size: i32) -> HFONT {
     let mut lf = LOGFONTW::default();
     lf.lfHeight = -size;
     lf.lfWeight = 400;
@@ -174,15 +219,17 @@ pub fn show_window(hwnd: HWND) {
             state.results.clear();
             state.selected = 0;
             state.folder_state = None;
+            state.suppress_repaint = true;
             state.edit_hwnd
         })
         .unwrap_or_default();
         let _ = SetWindowTextW(edit_hwnd, w!(""));
+        with_state(|state| { state.suppress_repaint = false; });
 
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = SetForegroundWindow(hwnd);
         let _ = SetFocus(edit_hwnd);
-        let _ = InvalidateRect(hwnd, None, true);
+        let _ = InvalidateRect(hwnd, None, false);
     }
 }
 
@@ -271,8 +318,11 @@ fn handle_query_changed(hwnd: HWND) {
             }
         });
     }
-    unsafe {
-        let _ = InvalidateRect(hwnd, None, true);
+    let suppress = with_state(|state| state.suppress_repaint).unwrap_or(false);
+    if !suppress {
+        unsafe {
+            let _ = InvalidateRect(hwnd, None, false);
+        }
     }
 }
 
@@ -284,67 +334,73 @@ fn paint_results(hwnd: HWND) {
         let mut rect = RECT::default();
         let _ = GetClientRect(hwnd, &mut rect);
 
-        // Fill background
-        let bg_brush = CreateSolidBrush(COLORREF(BG_COLOR));
-        FillRect(hdc, &rect, bg_brush);
-        let _ = DeleteObject(bg_brush);
+        let width = rect.right - rect.left;
+        let height = rect.bottom - rect.top;
 
-        // Fill input area background
-        let input_rect = RECT {
-            left: PADDING,
-            top: PADDING,
-            right: rect.right - PADDING,
-            bottom: INPUT_HEIGHT,
-        };
-        let input_brush = CreateSolidBrush(COLORREF(INPUT_BG_COLOR));
-        FillRect(hdc, &input_rect, input_brush);
-        let _ = DeleteObject(input_brush);
+        if width <= 0 || height <= 0 {
+            let _ = EndPaint(hwnd, &ps);
+            return;
+        }
 
-        // Draw results
-        let font = create_font(15);
-        let old_font = SelectObject(hdc, font);
-        let _ = SetBkMode(hdc, TRANSPARENT);
+        // Double buffering: create off-screen DC
+        let mem_dc = CreateCompatibleDC(hdc);
+        let mem_bmp = CreateCompatibleBitmap(hdc, width, height);
+        let old_bmp = SelectObject(mem_dc, mem_bmp);
 
         with_state(|state| {
+            // Fill background
+            FillRect(mem_dc, &rect, state.bg_brush);
+
+            // Fill input area background
+            let input_rect = RECT {
+                left: state.padding,
+                top: state.padding,
+                right: rect.right - state.padding,
+                bottom: state.input_height,
+            };
+            FillRect(mem_dc, &input_rect, state.input_bg_brush);
+
+            // Draw results
+            let old_font = SelectObject(mem_dc, state.result_font);
+            let _ = SetBkMode(mem_dc, TRANSPARENT);
+
             let has_icons = state.icon_cache.is_some();
-            let text_left_offset = if has_icons { PADDING + ICON_AREA } else { PADDING };
+            let text_left_offset = if has_icons { state.padding + state.icon_area } else { state.padding };
 
             for (i, result) in state.results.iter().enumerate() {
-                let y = INPUT_HEIGHT + PADDING + (i as i32 * ITEM_HEIGHT);
+                let y = state.input_height + state.padding + (i as i32 * state.item_height);
                 let item_rect = RECT {
-                    left: PADDING,
+                    left: state.padding,
                     top: y,
-                    right: rect.right - PADDING,
-                    bottom: y + ITEM_HEIGHT,
+                    right: rect.right - state.padding,
+                    bottom: y + state.item_height,
                 };
 
                 // Highlight selected
                 if i == state.selected {
-                    let sel_brush = CreateSolidBrush(COLORREF(SELECTED_BG));
-                    FillRect(hdc, &item_rect, sel_brush);
-                    let _ = DeleteObject(sel_brush);
+                    FillRect(mem_dc, &item_rect, state.selected_bg_brush);
                 }
 
                 // Draw icon
                 if let Some(ref icon_cache) = state.icon_cache {
-                    let icon_y = y + (ITEM_HEIGHT - 16) / 2;
-                    icon_cache.draw(&result.path, hdc, item_rect.left + PADDING, icon_y);
+                    let icon_y = y + (state.item_height - 16) / 2;
+                    icon_cache.draw(&result.path, mem_dc, item_rect.left + state.padding, icon_y);
                 }
 
                 // Draw name
-                SetTextColor(hdc, COLORREF(TEXT_COLOR));
+                SetTextColor(mem_dc, COLORREF(TEXT_COLOR));
                 let mut name_wide: Vec<u16> = result.name.encode_utf16().collect();
                 let mut text_rect = RECT {
                     left: item_rect.left + text_left_offset,
                     top: y + 2,
-                    right: item_rect.right - PADDING,
-                    bottom: y + ITEM_HEIGHT / 2 + 4,
+                    right: item_rect.right - state.padding,
+                    bottom: y + state.item_height / 2 + 4,
                 };
                 let fmt = DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS;
-                DrawTextW(hdc, &mut name_wide, &mut text_rect, fmt);
+                DrawTextW(mem_dc, &mut name_wide, &mut text_rect, fmt);
 
                 // Draw path (dimmed)
-                SetTextColor(hdc, COLORREF(HINT_COLOR));
+                SetTextColor(mem_dc, COLORREF(HINT_COLOR));
                 let display_path = if result.is_folder {
                     format!("[DIR]  {}", result.path)
                 } else {
@@ -353,16 +409,24 @@ fn paint_results(hwnd: HWND) {
                 let mut path_wide: Vec<u16> = display_path.encode_utf16().collect();
                 let mut path_rect = RECT {
                     left: item_rect.left + text_left_offset,
-                    top: y + ITEM_HEIGHT / 2,
-                    right: item_rect.right - PADDING,
-                    bottom: y + ITEM_HEIGHT - 2,
+                    top: y + state.item_height / 2,
+                    right: item_rect.right - state.padding,
+                    bottom: y + state.item_height - 2,
                 };
-                DrawTextW(hdc, &mut path_wide, &mut path_rect, fmt);
+                DrawTextW(mem_dc, &mut path_wide, &mut path_rect, fmt);
             }
+
+            SelectObject(mem_dc, old_font);
         });
 
-        SelectObject(hdc, old_font);
-        let _ = DeleteObject(font);
+        // Blit to screen
+        let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY);
+
+        // Cleanup off-screen buffer
+        SelectObject(mem_dc, old_bmp);
+        let _ = DeleteObject(mem_bmp);
+        let _ = DeleteDC(mem_dc);
+
         let _ = EndPaint(hwnd, &ps);
     }
 }
@@ -386,7 +450,7 @@ pub fn handle_edit_keydown(hwnd: HWND, vk: u32) -> bool {
                 }
             });
             unsafe {
-                let _ = InvalidateRect(hwnd, None, true);
+                let _ = InvalidateRect(hwnd, None, false);
             }
             true
         }
@@ -398,7 +462,7 @@ pub fn handle_edit_keydown(hwnd: HWND, vk: u32) -> bool {
                 }
             });
             unsafe {
-                let _ = InvalidateRect(hwnd, None, true);
+                let _ = InvalidateRect(hwnd, None, false);
             }
             true
         }
@@ -477,10 +541,14 @@ fn enter_folder_expansion(hwnd: HWND, folder_path: &str) {
     .unwrap_or(false);
 
     if expanded {
-        // Clear edit text — EN_CHANGE fires here but folder_state is already set
+        // Suppress the EN_CHANGE repaint from SetWindowTextW
+        with_state(|state| { state.suppress_repaint = true; });
         unsafe {
             let _ = SetWindowTextW(edit_hwnd, w!(""));
-            let _ = InvalidateRect(hwnd, None, true);
+        }
+        with_state(|state| { state.suppress_repaint = false; });
+        unsafe {
+            let _ = InvalidateRect(hwnd, None, false);
         }
     }
 }
@@ -516,7 +584,7 @@ fn navigate_folder_up(hwnd: HWND) {
         }
     }
     unsafe {
-        let _ = InvalidateRect(hwnd, None, true);
+        let _ = InvalidateRect(hwnd, None, false);
     }
 }
 
@@ -534,7 +602,7 @@ fn exit_folder_expansion(hwnd: HWND) -> bool {
         // Restore query text — folder_state is already None so EN_CHANGE runs normal search
         set_edit_text(edit_hwnd, &query);
         unsafe {
-            let _ = InvalidateRect(hwnd, None, true);
+            let _ = InvalidateRect(hwnd, None, false);
         }
         true
     } else {

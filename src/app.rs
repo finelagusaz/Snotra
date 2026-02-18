@@ -2,11 +2,17 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use eframe::egui::{
-    self, Color32, ComboBox, FontId, RichText, ScrollArea, TextStyle, TextureHandle,
-    TextureOptions, ViewportCommand,
+    self, Color32, ComboBox, FontData, FontDefinitions, FontFamily, FontId, RichText, ScrollArea,
+    TextStyle, TextureHandle, TextureOptions, ViewportCommand,
+};
+use windows::Win32::Foundation::LPARAM;
+use windows::Win32::Graphics::Gdi::{
+    CreateCompatibleDC, CreateFontIndirectW, DeleteDC, DeleteObject, EnumFontFamiliesExW,
+    GetFontData, SelectObject, FONT_CHARSET, HDC, LOGFONTW, TEXTMETRICW,
 };
 
 use crate::config::{Config, ScanPath, SearchModeConfig, ThemePreset, VisualConfig};
@@ -102,6 +108,9 @@ pub struct SnotraApp {
     should_exit: bool,
     exit_sent: bool,
     minimize_on_settings_close: bool,
+    available_fonts: Vec<String>,
+    font_data_cache: HashMap<String, Arc<FontData>>,
+    applied_font_family: Option<String>,
 }
 
 impl SnotraApp {
@@ -111,6 +120,11 @@ impl SnotraApp {
             .appearance
             .max_history_display
             .min(config.appearance.max_results);
+        let available_fonts = list_system_font_families();
+        config.visual.font_family = sanitize_font_family_for_save(
+            &config.visual.font_family,
+            &available_fonts,
+        );
 
         let (internal_tx, internal_rx) = mpsc::channel();
 
@@ -147,6 +161,9 @@ impl SnotraApp {
             should_exit: false,
             exit_sent: false,
             minimize_on_settings_close: false,
+            available_fonts,
+            font_data_cache: HashMap::new(),
+            applied_font_family: None,
             engine: init.engine,
             history: init.history,
             icon_cache: init.icon_cache,
@@ -424,7 +441,7 @@ impl SnotraApp {
         }
     }
 
-    fn apply_visual_style(&self, ctx: &egui::Context) {
+    fn apply_visual_style(&mut self, ctx: &egui::Context) {
         let mut style = (*ctx.style()).clone();
 
         let bg = parse_hex_color(&self.config.visual.background_color, Color32::from_rgb(40, 40, 40));
@@ -451,7 +468,15 @@ impl SnotraApp {
         style.visuals.weak_text_color = hint;
 
         let size = self.config.visual.font_size.clamp(8, 48) as f32;
-        let family = normalize_visual_font_family(&self.config.visual.font_family);
+        let requested_font = sanitize_font_family_for_save(
+            &self.config.visual.font_family,
+            &self.available_fonts,
+        );
+        let family = if self.ensure_font_registered(ctx, &requested_font) {
+            FontFamily::Name(requested_font.clone().into())
+        } else {
+            FontFamily::Proportional
+        };
         style
             .text_styles
             .insert(TextStyle::Body, FontId::new(size, family.clone()));
@@ -463,6 +488,44 @@ impl SnotraApp {
             .insert(TextStyle::Heading, FontId::new(size + 2.0, family));
 
         ctx.set_style(style);
+    }
+
+    fn ensure_font_registered(&mut self, ctx: &egui::Context, family: &str) -> bool {
+        if family.trim().is_empty() {
+            return false;
+        }
+
+        if !self.font_data_cache.contains_key(family) {
+            let Some(bytes) = load_font_data_from_gdi(family) else {
+                return false;
+            };
+            self.font_data_cache
+                .insert(family.to_string(), Arc::new(FontData::from_owned(bytes)));
+        }
+
+        if self.applied_font_family.as_deref() == Some(family) {
+            return true;
+        }
+
+        let Some(font_data) = self.font_data_cache.get(family).cloned() else {
+            return false;
+        };
+
+        let family_name = family.to_string();
+        let font_key = format!("user_font:{family}");
+        let mut defs = FontDefinitions::default();
+        defs.font_data.insert(font_key.clone(), font_data);
+
+        let mut custom_stack = vec![font_key];
+        if let Some(default_stack) = defs.families.get(&FontFamily::Proportional) {
+            custom_stack.extend(default_stack.clone());
+        }
+        defs.families
+            .insert(FontFamily::Name(family_name.clone().into()), custom_stack);
+
+        ctx.set_fonts(defs);
+        self.applied_font_family = Some(family_name);
+        true
     }
 
     fn sync_search_viewport_pos(&mut self, ctx: &egui::Context) {
@@ -857,22 +920,23 @@ impl SnotraApp {
         ui.text_edit_singleline(&mut self.settings_draft.visual.hint_text_color);
 
         ui.label("フォントファミリー");
-        let mut family = normalize_visual_font_family(&self.settings_draft.visual.font_family);
-        ComboBox::from_id_source("visual_font_family")
-            .selected_text(visual_font_family_label(&family))
-            .show_ui(ui, |ui| {
-                ui.selectable_value(
-                    &mut family,
-                    egui::FontFamily::Proportional,
-                    visual_font_family_label(&egui::FontFamily::Proportional),
-                );
-                ui.selectable_value(
-                    &mut family,
-                    egui::FontFamily::Monospace,
-                    visual_font_family_label(&egui::FontFamily::Monospace),
-                );
-            });
-        self.settings_draft.visual.font_family = visual_font_family_value(&family).to_string();
+        if self.available_fonts.is_empty() {
+            ui.label("利用可能なフォントを取得できませんでした (Segoe UI を使用)");
+            self.settings_draft.visual.font_family = "Segoe UI".to_string();
+        } else {
+            let mut family = sanitize_font_family_for_save(
+                &self.settings_draft.visual.font_family,
+                &self.available_fonts,
+            );
+            ComboBox::from_id_source("visual_font_family")
+                .selected_text(family.clone())
+                .show_ui(ui, |ui| {
+                    for candidate in &self.available_fonts {
+                        ui.selectable_value(&mut family, candidate.clone(), candidate);
+                    }
+                });
+            self.settings_draft.visual.font_family = family;
+        }
         ui.horizontal(|ui| {
             ui.label("フォントサイズ");
             ui.add(
@@ -905,7 +969,8 @@ impl SnotraApp {
         );
         next.visual.hint_text_color =
             normalize_hex_color(&next.visual.hint_text_color, &old.visual.hint_text_color);
-        next.visual.font_family = normalize_stored_font_family(&next.visual.font_family);
+        next.visual.font_family =
+            sanitize_font_family_for_save(&next.visual.font_family, &self.available_fonts);
         next.visual.font_size = next.visual.font_size.clamp(8, 48);
 
         let mut hotkey_ok = true;
@@ -944,6 +1009,7 @@ impl SnotraApp {
 
     fn apply_config(&mut self, ctx: &egui::Context, old: &Config, next: &Config) {
         self.config = next.clone();
+        self.applied_font_family = None;
         self.runtime = runtime_from_config(next);
         self.history = HistoryStore::load(
             next.appearance.top_n_history,
@@ -1164,32 +1230,27 @@ fn normalize_hex_color(input: &str, fallback: &str) -> String {
     format!("#{}", hex.to_uppercase())
 }
 
-fn normalize_stored_font_family(input: &str) -> String {
-    let family = normalize_visual_font_family(input);
-    visual_font_family_value(&family).to_string()
-}
-
-fn normalize_visual_font_family(input: &str) -> egui::FontFamily {
-    let normalized = input.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "monospace" | "consolas" => egui::FontFamily::Monospace,
-        _ => egui::FontFamily::Proportional,
+fn sanitize_font_family_for_save(input: &str, available_fonts: &[String]) -> String {
+    let mut preferred = input.trim().to_string();
+    if preferred.eq_ignore_ascii_case("proportional") {
+        preferred = "Segoe UI".to_string();
+    } else if preferred.eq_ignore_ascii_case("monospace") {
+        preferred = "Consolas".to_string();
     }
-}
-
-fn visual_font_family_value(family: &egui::FontFamily) -> &'static str {
-    match family {
-        egui::FontFamily::Proportional => "proportional",
-        egui::FontFamily::Monospace => "monospace",
-        egui::FontFamily::Name(_) => "proportional",
+    if preferred.is_empty() {
+        preferred = "Segoe UI".to_string();
     }
-}
 
-fn visual_font_family_label(family: &egui::FontFamily) -> &'static str {
-    match family {
-        egui::FontFamily::Proportional => "proportional",
-        egui::FontFamily::Monospace => "monospace",
-        egui::FontFamily::Name(_) => "proportional",
+    for candidate in available_fonts {
+        if candidate.eq_ignore_ascii_case(&preferred) {
+            return candidate.clone();
+        }
+    }
+
+    if available_fonts.is_empty() {
+        preferred
+    } else {
+        available_fonts[0].clone()
     }
 }
 
@@ -1237,7 +1298,7 @@ fn apply_visual_preset(visual: &mut VisualConfig, preset: ThemePreset) {
             "#E0E0E0",
             "#505050",
             "#808080",
-            "proportional",
+            "Segoe UI",
             15,
         ),
         ThemePreset::Paper => (
@@ -1246,7 +1307,7 @@ fn apply_visual_preset(visual: &mut VisualConfig, preset: ThemePreset) {
             "#141414",
             "#DADADA",
             "#707070",
-            "proportional",
+            "Segoe UI",
             15,
         ),
         ThemePreset::Solarized => (
@@ -1255,7 +1316,7 @@ fn apply_visual_preset(visual: &mut VisualConfig, preset: ThemePreset) {
             "#839496",
             "#586E75",
             "#93A1A1",
-            "monospace",
+            "Consolas",
             15,
         ),
     };
@@ -1269,15 +1330,116 @@ fn apply_visual_preset(visual: &mut VisualConfig, preset: ThemePreset) {
     visual.font_size = size;
 }
 
+fn list_system_font_families() -> Vec<String> {
+    unsafe extern "system" fn enum_proc(
+        logfont: *const LOGFONTW,
+        _metric: *const TEXTMETRICW,
+        _font_type: u32,
+        lparam: LPARAM,
+    ) -> i32 {
+        if logfont.is_null() {
+            return 1;
+        }
+        let fonts = &mut *(lparam.0 as *mut Vec<String>);
+        let face = (*logfont).lfFaceName;
+        let len = face.iter().position(|&c| c == 0).unwrap_or(face.len());
+        if len == 0 {
+            return 1;
+        }
+        let name = String::from_utf16_lossy(&face[..len]);
+        if !name.starts_with('@') && !name.trim().is_empty() {
+            fonts.push(name);
+        }
+        1
+    }
+
+    let mut fonts = Vec::new();
+    unsafe {
+        let mut lf = LOGFONTW::default();
+        lf.lfCharSet = FONT_CHARSET(0);
+        let hdc = CreateCompatibleDC(HDC::default());
+        if hdc.0 != 0 {
+            let ptr = &mut fonts as *mut Vec<String>;
+            let _ = EnumFontFamiliesExW(hdc, &mut lf, Some(enum_proc), LPARAM(ptr as isize), 0);
+            let _ = DeleteDC(hdc);
+        }
+    }
+    fonts.sort_unstable();
+    fonts.dedup();
+    fonts
+}
+
+fn load_font_data_from_gdi(family: &str) -> Option<Vec<u8>> {
+    const GDI_ERROR_U32: u32 = 0xFFFF_FFFF;
+    unsafe {
+        let hdc = CreateCompatibleDC(HDC::default());
+        if hdc.0 == 0 {
+            return None;
+        }
+
+        let mut lf = LOGFONTW::default();
+        lf.lfHeight = -16;
+        lf.lfWeight = 400;
+        lf.lfCharSet = FONT_CHARSET(0);
+        let face: Vec<u16> = family.encode_utf16().collect();
+        let len = face.len().min(lf.lfFaceName.len() - 1);
+        lf.lfFaceName[..len].copy_from_slice(&face[..len]);
+
+        let font = CreateFontIndirectW(&lf);
+        if font.0 == 0 {
+            let _ = DeleteDC(hdc);
+            return None;
+        }
+
+        let old_obj = SelectObject(hdc, font);
+        let size = GetFontData(hdc, 0, 0, None, 0);
+        if size == GDI_ERROR_U32 || size == 0 {
+            let _ = SelectObject(hdc, old_obj);
+            let _ = DeleteObject(font);
+            let _ = DeleteDC(hdc);
+            return None;
+        }
+
+        let mut bytes = vec![0u8; size as usize];
+        let written = GetFontData(
+            hdc,
+            0,
+            0,
+            Some(bytes.as_mut_ptr().cast()),
+            bytes.len() as u32,
+        );
+        let _ = SelectObject(hdc, old_obj);
+        let _ = DeleteObject(font);
+        let _ = DeleteDC(hdc);
+        if written == GDI_ERROR_U32 {
+            None
+        } else {
+            Some(bytes)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn normalize_stored_font_family_maps_legacy_names() {
-        assert_eq!(normalize_stored_font_family("Consolas"), "monospace");
-        assert_eq!(normalize_stored_font_family("Yu Gothic UI"), "proportional");
-        assert_eq!(normalize_stored_font_family("monospace"), "monospace");
+    fn sanitize_font_family_handles_legacy_keywords() {
+        let fonts = vec!["Segoe UI".to_string(), "Consolas".to_string()];
+        assert_eq!(
+            sanitize_font_family_for_save("proportional", &fonts),
+            "Segoe UI"
+        );
+        assert_eq!(sanitize_font_family_for_save("monospace", &fonts), "Consolas");
+    }
+
+    #[test]
+    fn sanitize_font_family_falls_back_when_unknown() {
+        let fonts = vec!["Yu Gothic UI".to_string(), "Consolas".to_string()];
+        assert_eq!(
+            sanitize_font_family_for_save("Nonexistent", &fonts),
+            "Yu Gothic UI"
+        );
     }
 
     #[test]

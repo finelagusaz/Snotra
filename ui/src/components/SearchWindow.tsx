@@ -115,10 +115,10 @@ const SearchWindow: Component = () => {
   }
 
   return (
-    <div class="search-bar" onKeyDown={handleKeyDown}>
+    <div class="search-bar" data-tauri-drag-region onKeyDown={handleKeyDown}>
       <Show
         when={!indexing()}
-        fallback={<div class="indexing-message">インデックス構築中...</div>}
+        fallback={<div class="indexing-message" data-tauri-drag-region>インデックス構築中...</div>}
       >
         <input
           ref={setInputRef}

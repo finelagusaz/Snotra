@@ -101,7 +101,7 @@ Snotra/
 **ui/src（SolidJS フロントエンド）:**
 
 - `App.tsx`: ウィンドウラベルで検索/設定を出し分け、テーマ適用、ウィンドウ位置復元
-- `components/SearchWindow.tsx`: 検索入力 + キーボードナビゲーション + `/o` コマンド
+- `components/SearchWindow.tsx`: 検索入力 + キーボードナビゲーション + `/o` コマンド + ドラッグ移動
 - `components/ResultRow.tsx`: アイコン + 名前 + パス + フォルダバッジ
 - `stores/search.ts`: 検索状態管理（クエリ/結果/選択/フォルダ展開/アイコンキャッシュ）
 - `stores/settings.ts`: 設定ドラフト管理
@@ -117,6 +117,7 @@ Snotra/
 - 履歴/インデックス/アイコン保存は `.tmp` を使った原子的書き込み
 - アイコンは検索時にオンデマンドで抽出し base64 PNG としてフロントエンドに送信、キャッシュは終了時に永続化
 - テーマは CSS カスタムプロパティで動的に切替
+- 検索ウィンドウのドラッグ移動は `.search-bar` の `data-tauri-drag-region` 属性で実現。`<input>` には付与しないため入力操作は維持される。ドラッグ開始時の一時的なフォーカス喪失で `auto_hide_on_focus_lost` が誤発火するため、`onFocusChanged` の非表示処理に 100ms の猶予を設けフォーカス復帰時にキャンセルする設計
 - **Win32 メッセージ配送の注意**: Shell のトレイコールバック (`uCallbackMessage`) は `SendMessage` で配送される場合があり、`GetMessageW` ループに到達しない。カスタムメッセージ (`WM_APP + N`) をウィンドウプロシージャ (`DefWindowProcW`) だけで処理すると消滅するため、`platform_default_wnd_proc` で検出して `PostThreadMessageW` でスレッドキューに再投入する設計にしている
 
 ## 開発原則

@@ -7,17 +7,17 @@ use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Shell::{
-    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_SETVERSION,
-    NOTIFYICONDATAW, NOTIFYICON_VERSION_4,
+    ExtractIconW, Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE,
+    NIM_SETVERSION, NOTIFYICONDATAW, NOTIFYICON_VERSION_4,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, CreateWindowExW, DestroyMenu, DispatchMessageW, GetCursorPos,
-    GetMessageW, LoadIconW, PeekMessageW, PostMessageW, PostQuitMessage, PostThreadMessageW,
-    RegisterClassExW, SetForegroundWindow, TrackPopupMenuEx, TranslateMessage, IDC_ARROW,
-    IDI_APPLICATION, MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, PM_NOREMOVE, TPM_BOTTOMALIGN,
-    TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE,
-    WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_HOTKEY, WM_LBUTTONDBLCLK, WM_NULL, WM_RBUTTONUP,
-    WNDCLASSEXW,
+    AppendMenuW, CreatePopupMenu, CreateWindowExW, DestroyIcon, DestroyMenu, DispatchMessageW,
+    GetCursorPos, GetMessageW, HICON, LoadIconW, PeekMessageW, PostMessageW, PostQuitMessage,
+    PostThreadMessageW, RegisterClassExW, SetForegroundWindow, TrackPopupMenuEx, TranslateMessage,
+    IDC_ARROW, IDI_APPLICATION, MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, PM_NOREMOVE,
+    TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON,
+    WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_HOTKEY,
+    WM_LBUTTONDBLCLK, WM_NULL, WM_RBUTTONUP, WNDCLASSEXW,
 };
 
 use crate::{hotkey, ime};
@@ -285,6 +285,7 @@ fn handle_tray_message(
 
 struct TrayIcon {
     nid: NOTIFYICONDATAW,
+    owned_icon: Option<HICON>,
 }
 
 impl TrayIcon {
@@ -303,14 +304,17 @@ impl TrayIcon {
         let len = tip.len().min(nid.szTip.len());
         nid.szTip[..len].copy_from_slice(&tip[..len]);
 
-        nid.hIcon = unsafe { LoadIconW(None, IDI_APPLICATION) }.unwrap_or_default();
+        let owned_icon = load_tray_icon_from_exe();
+        nid.hIcon = owned_icon.unwrap_or_else(|| {
+            unsafe { LoadIconW(None, IDI_APPLICATION) }.unwrap_or_default()
+        });
 
         unsafe {
             let _ = Shell_NotifyIconW(NIM_ADD, &nid);
             let _ = Shell_NotifyIconW(NIM_SETVERSION, &nid);
         }
 
-        Self { nid }
+        Self { nid, owned_icon }
     }
 
     fn show_context_menu(&self, hwnd: HWND, indexing: bool) {
@@ -412,5 +416,26 @@ impl TrayIcon {
 impl Drop for TrayIcon {
     fn drop(&mut self) {
         self.remove();
+        if let Some(icon) = self.owned_icon.take() {
+            unsafe {
+                let _ = DestroyIcon(icon);
+            }
+        }
     }
+}
+
+fn load_tray_icon_from_exe() -> Option<HICON> {
+    let exe_path = std::env::current_exe().ok()?;
+    let wide_path: Vec<u16> = exe_path
+        .to_string_lossy()
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
+    // Extract the first icon from the running executable so tray icon and app icon stay aligned.
+    let icon = unsafe { ExtractIconW(None, PCWSTR(wide_path.as_ptr()), 0) };
+    if (icon.0 as usize) <= 1 {
+        return None;
+    }
+    Some(icon)
 }

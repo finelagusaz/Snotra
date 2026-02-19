@@ -90,18 +90,6 @@ const SettingsGeneral: Component = () => {
         />
         入力ウィンドウ表示時にIMEをオフ
       </label>
-      <label class="checkbox">
-        <input
-          type="checkbox"
-          checked={d().general.show_title_bar}
-          onChange={(e) =>
-            updateDraft((c) => {
-              c.general.show_title_bar = e.currentTarget.checked;
-            })
-          }
-        />
-        タイトルバー表示
-      </label>
     </div>
   );
 };

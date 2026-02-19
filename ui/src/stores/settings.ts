@@ -36,6 +36,12 @@ listen("settings-shown", () => {
   loadDraft();
 });
 
+listen("indexing-complete", () => {
+  if (status() === "保存しました（インデックスを再構築中…）") {
+    setStatus("保存しました（インデックスの再構築が完了しました）");
+  }
+});
+
 function updateDraft(updater: (c: Config) => void) {
   const d = draft();
   if (!d) return;

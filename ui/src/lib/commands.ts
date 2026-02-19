@@ -47,6 +47,3 @@ export function findCommand(input: string): SlashCommand | undefined {
   return SLASH_COMMANDS.find((c) => c.command === trimmed);
 }
 
-export function isCommandPrefix(input: string): boolean {
-  return input.trim() === "/";
-}

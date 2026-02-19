@@ -18,9 +18,8 @@ import {
   activateSelected,
   refreshResults,
   indexing,
-  isCommandMode,
 } from "../stores/search";
-import { initCommands, SLASH_COMMANDS } from "../lib/commands";
+import { initCommands } from "../lib/commands";
 
 async function hideAllWindows() {
   getCurrentWindow().hide();
@@ -76,18 +75,22 @@ const SearchWindow: Component = () => {
         if (folderState()) {
           navigateFolderUp();
           e.preventDefault();
+        } else {
+          const r = results()[selected()];
+          if (r && !r.isError) {
+            let parent = r.path.replace(/\\[^\\]+$/, "");
+            if (/^[A-Za-z]:$/.test(parent)) {
+              parent += "\\";
+            }
+            if (parent && parent !== r.path) {
+              enterFolderExpansion(parent);
+              e.preventDefault();
+            }
+          }
         }
         break;
       case "Enter":
-        if (isCommandMode()) {
-          const cmd = SLASH_COMMANDS[selected()];
-          if (cmd) {
-            setQuery("");
-            cmd.action();
-          }
-        } else {
-          activateSelected();
-        }
+        activateSelected();
         e.preventDefault();
         break;
     }

@@ -52,9 +52,15 @@ html, body, #root {
   overflow-y: auto;
 }
 
-/* Hide scrollbar */
 .result-list-standalone::-webkit-scrollbar {
-  display: none;
+  width: 4px;
+}
+.result-list-standalone::-webkit-scrollbar-track {
+  background: transparent;
+}
+.result-list-standalone::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb-color, rgba(255, 255, 255, 0.3));
+  border-radius: 2px;
 }
 
 .result-row {

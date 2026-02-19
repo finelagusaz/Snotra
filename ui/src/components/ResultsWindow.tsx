@@ -55,6 +55,11 @@ const ResultsWindow: Component = () => {
         setResults(event.payload.results);
         setSelected(event.payload.selected);
         fetchIcons(event.payload.results);
+        queueMicrotask(() => {
+          if (!listRef) return;
+          const row = listRef.children[event.payload.selected] as HTMLElement | undefined;
+          row?.scrollIntoView({ block: "nearest" });
+        });
       },
     );
   });

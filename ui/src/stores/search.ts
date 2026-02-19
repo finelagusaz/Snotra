@@ -2,11 +2,7 @@ import { createSignal, createEffect, on } from "solid-js";
 import { emit, listen } from "@tauri-apps/api/event";
 import type { SearchResult } from "../lib/types";
 import * as api from "../lib/invoke";
-import {
-  SLASH_COMMANDS,
-  findCommand,
-  isCommandPrefix,
-} from "../lib/commands";
+import { findCommand } from "../lib/commands";
 
 const DEBOUNCE_MS = 120;
 
@@ -62,17 +58,6 @@ async function refreshResults() {
   let items: SearchResult[];
   if (fs) {
     items = await api.listFolder(fs.currentDir, folderFilter());
-  } else if (isCommandPrefix(q)) {
-    items = SLASH_COMMANDS.map((c) => ({
-      name: `${c.label}  ${c.description}`,
-      path: c.command,
-      isFolder: false,
-      isError: false,
-    }));
-    setResults(items);
-    emit("results-updated", { results: items, selected: selected() });
-    emit("results-count-changed", items.length);
-    return;
   } else if (q.trim() === "") {
     items = await api.getHistoryResults();
   } else {
@@ -166,7 +151,10 @@ function navigateFolderUp() {
   const fs = folderState();
   if (!fs) return;
 
-  const parent = fs.currentDir.replace(/\\[^\\]+$/, "");
+  let parent = fs.currentDir.replace(/\\[^\\]+$/, "");
+  if (/^[A-Za-z]:$/.test(parent)) {
+    parent += "\\";
+  }
   if (parent === fs.currentDir || parent === "") {
     return;
   }
@@ -217,10 +205,6 @@ async function initIndexingState() {
   });
 }
 
-function isCommandMode(): boolean {
-  return !folderState() && isCommandPrefix(query());
-}
-
 export {
   query,
   setQuery,
@@ -241,5 +225,4 @@ export {
   resetForShow,
   indexing,
   initIndexingState,
-  isCommandMode,
 };

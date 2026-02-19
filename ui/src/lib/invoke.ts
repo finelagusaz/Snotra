@@ -100,3 +100,7 @@ export async function notifyResultClicked(index: number): Promise<void> {
 export async function notifyResultDoubleClicked(index: number): Promise<void> {
   return invoke("notify_result_double_clicked", { index });
 }
+
+export async function getIndexingState(): Promise<boolean> {
+  return invoke<boolean>("get_indexing_state");
+}

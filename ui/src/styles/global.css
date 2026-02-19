@@ -107,3 +107,13 @@ html, body, #root {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.indexing-message {
+  width: 100%;
+  padding: 8px 12px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  color: var(--hint-text-color, #808080);
+  font-size: inherit;
+}

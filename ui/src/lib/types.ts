@@ -16,9 +16,6 @@ export interface GeneralConfig {
   auto_hide_on_focus_lost: boolean;
   show_tray_icon: boolean;
   ime_off_on_show: boolean;
-  show_title_bar: boolean;
-  renderer: string;
-  wgpu_backend: string;
 }
 
 export interface AppearanceConfig {
@@ -53,7 +50,6 @@ export interface ScanPath {
 }
 
 export interface PathsConfig {
-  additional: string[];
   scan: ScanPath[];
 }
 

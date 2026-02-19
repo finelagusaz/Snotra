@@ -36,7 +36,7 @@ Snotra は Windows 専用のキーボードランチャーです。バックエ�
 ## ビルド・実行コマンド
 
 ```bash
-cargo test -p snotra-core        # ユニットテスト（64テスト）
+cargo test -p snotra-core        # ユニットテスト（80テスト）
 cargo check -p snotra            # Rustバックエンド型チェック
 cargo clippy -p snotra-core -p snotra  # lint チェック
 npx vite build                   # フロントエンドビルド
@@ -53,7 +53,7 @@ Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-
 ```
 Snotra/
   Cargo.toml              # workspace (snotra-core, src-tauri)
-  snotra-core/            # 純ロジック lib crate (9モジュール, 64テスト)
+  snotra-core/            # 純ロジック lib crate (9モジュール, 80テスト)
   src-tauri/              # Tauri v2 バイナリ crate
     src/main.rs           # エントリ + setup (hotkey/tray/IME/icon)
     src/commands.rs       # 15 Tauriコマンド
@@ -61,7 +61,7 @@ Snotra/
     src/platform.rs       # Win32メッセージループ + トレイ
     src/hotkey.rs         # RegisterHotKey/UnregisterHotKey
     src/ime.rs            # ImmSetOpenStatus
-    src/icon.rs           # HICON → BGRA → PNG → base64
+    src/icon.rs           # アイコンのオンデマンド抽出・base64キャッシュ
     tauri.conf.json
     capabilities/default.json
   ui/                     # SolidJS フロントエンド
@@ -96,7 +96,7 @@ Snotra/
 - `platform.rs`: Win32 メッセージループスレッド + トレイアイコン（Tauri イベント経由で通信）
 - `hotkey.rs`: グローバルホットキー登録/解除
 - `ime.rs`: IME 制御
-- `icon.rs`: アイコン抽出（`SHGetFileInfoW` → BGRA → PNG → base64）、キャッシュ永続化
+- `icon.rs`: アイコンのオンデマンド抽出（`SHGetFileInfoW` → PNG → base64）、検索時に遅延ロードしキャッシュ永続化
 
 **ui/src（SolidJS フロントエンド）:**
 
@@ -115,7 +115,7 @@ Snotra/
 - 設定ウィンドウは `WebviewWindowBuilder` で同一プロセス内の第2ウィンドウとして生成
 - フォルダ展開は「開始時スナップショットを保持し、`Escape` で一括復帰」モデル
 - 履歴/インデックス/アイコン保存は `.tmp` を使った原子的書き込み
-- アイコンは base64 エンコード PNG としてフロントエンドに送り、`<img>` タグで表示
+- アイコンは検索時にオンデマンドで抽出し base64 PNG としてフロントエンドに送信、キャッシュは終了時に永続化
 - テーマは CSS カスタムプロパティで動的に切替
 - 検索ウィンドウのドラッグ移動は `.search-bar` の `data-tauri-drag-region` 属性で実現。`<input>` には付与しないため入力操作は維持される。ドラッグ開始時の一時的なフォーカス喪失で `auto_hide_on_focus_lost` が誤発火するため、`onFocusChanged` の非表示処理に 100ms の猶予を設けフォーカス復帰時にキャンセルする設計
 - **Win32 メッセージ配送の注意**: Shell のトレイコールバック (`uCallbackMessage`) は `SendMessage` で配送される場合があり、`GetMessageW` ループに到達しない。カスタムメッセージ (`WM_APP + N`) をウィンドウプロシージャ (`DefWindowProcW`) だけで処理すると消滅するため、`platform_default_wnd_proc` で検出して `PostThreadMessageW` でスレッドキューに再投入する設計にしている

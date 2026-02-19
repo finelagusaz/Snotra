@@ -41,35 +41,6 @@ fn default_ime_off_on_show() -> bool {
     false
 }
 
-fn default_show_title_bar() -> bool {
-    false
-}
-
-fn default_renderer() -> RendererConfig {
-    RendererConfig::Auto
-}
-
-fn default_wgpu_backend() -> WgpuBackendConfig {
-    WgpuBackendConfig::Auto
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RendererConfig {
-    Auto,
-    Wgpu,
-    Glow,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WgpuBackendConfig {
-    Auto,
-    Dx12,
-    Vulkan,
-    Gl,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GeneralConfig {
     #[serde(default = "default_hotkey_toggle")]
@@ -82,12 +53,6 @@ pub struct GeneralConfig {
     pub show_tray_icon: bool,
     #[serde(default = "default_ime_off_on_show")]
     pub ime_off_on_show: bool,
-    #[serde(default = "default_show_title_bar")]
-    pub show_title_bar: bool,
-    #[serde(default = "default_renderer")]
-    pub renderer: RendererConfig,
-    #[serde(default = "default_wgpu_backend")]
-    pub wgpu_backend: WgpuBackendConfig,
 }
 
 impl Default for GeneralConfig {
@@ -98,9 +63,6 @@ impl Default for GeneralConfig {
             auto_hide_on_focus_lost: true,
             show_tray_icon: true,
             ime_off_on_show: false,
-            show_title_bar: false,
-            renderer: RendererConfig::Auto,
-            wgpu_backend: WgpuBackendConfig::Auto,
         }
     }
 }
@@ -250,7 +212,7 @@ pub struct ScanPath {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PathsConfig {
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub additional: Vec<String>,
     #[serde(default)]
     pub scan: Vec<ScanPath>,
@@ -331,6 +293,29 @@ impl Config {
         Self::config_dir().map(|p| p.join("config.toml"))
     }
 
+    /// Migrate legacy `paths.additional` entries into `paths.scan` with `.lnk` extension.
+    fn migrate_additional_to_scan(&mut self) {
+        if self.paths.additional.is_empty() {
+            return;
+        }
+        let lnk = ".lnk".to_string();
+        for path in self.paths.additional.drain(..) {
+            let key = path.to_lowercase();
+            if let Some(existing) = self.paths.scan.iter_mut().find(|sp| sp.path.to_lowercase() == key) {
+                // Same directory already in scan — merge .lnk into its extensions
+                if !existing.extensions.iter().any(|e| e.eq_ignore_ascii_case(&lnk)) {
+                    existing.extensions.push(lnk.clone());
+                }
+            } else {
+                self.paths.scan.push(ScanPath {
+                    path,
+                    extensions: vec![lnk.clone()],
+                    include_folders: false,
+                });
+            }
+        }
+    }
+
     pub fn load() -> Self {
         let Some(path) = Self::config_path() else {
             return Self::default();
@@ -339,10 +324,18 @@ impl Config {
         match fs::read_to_string(&path) {
             Ok(content) => {
                 let mut config: Self = toml::from_str(&content).unwrap_or_default();
+                let mut needs_save = false;
                 if config.hotkey.modifier.eq_ignore_ascii_case("Alt")
                     && config.hotkey.key.eq_ignore_ascii_case("Space")
                 {
                     config.hotkey.key = "Q".to_string();
+                    needs_save = true;
+                }
+                if !config.paths.additional.is_empty() {
+                    config.migrate_additional_to_scan();
+                    needs_save = true;
+                }
+                if needs_save {
                     config.save();
                 }
                 config
@@ -412,9 +405,6 @@ mod tests {
         assert!(config.general.auto_hide_on_focus_lost);
         assert!(config.general.show_tray_icon);
         assert!(!config.general.ime_off_on_show);
-        assert!(!config.general.show_title_bar);
-        assert_eq!(config.general.renderer, RendererConfig::Auto);
-        assert_eq!(config.general.wgpu_backend, WgpuBackendConfig::Auto);
         assert_eq!(config.visual.preset, ThemePreset::Obsidian);
         assert_eq!(config.visual.background_color, "#282828");
         assert_eq!(config.visual.font_family, "Segoe UI");
@@ -446,9 +436,6 @@ mod tests {
         assert!(config.general.auto_hide_on_focus_lost);
         assert!(config.general.show_tray_icon);
         assert!(!config.general.ime_off_on_show);
-        assert!(!config.general.show_title_bar);
-        assert_eq!(config.general.renderer, RendererConfig::Auto);
-        assert_eq!(config.general.wgpu_backend, WgpuBackendConfig::Auto);
         assert_eq!(config.visual.preset, ThemePreset::Obsidian);
         assert_eq!(config.visual.background_color, "#282828");
     }
@@ -474,9 +461,6 @@ mod tests {
         assert!(config.general.auto_hide_on_focus_lost);
         assert!(config.general.show_tray_icon);
         assert!(!config.general.ime_off_on_show);
-        assert!(!config.general.show_title_bar);
-        assert_eq!(config.general.renderer, RendererConfig::Auto);
-        assert_eq!(config.general.wgpu_backend, WgpuBackendConfig::Auto);
         assert_eq!(config.visual.preset, ThemePreset::Obsidian);
         assert_eq!(config.visual.background_color, "#282828");
         assert_eq!(config.visual.input_background_color, "#383838");
@@ -539,8 +523,6 @@ mod tests {
         assert!(config.paths.scan.is_empty());
         assert!(config.appearance.show_icons);
         assert!(config.general.hotkey_toggle);
-        assert_eq!(config.general.renderer, RendererConfig::Auto);
-        assert_eq!(config.general.wgpu_backend, WgpuBackendConfig::Auto);
         assert_eq!(config.visual.preset, ThemePreset::Obsidian);
     }
 
@@ -580,9 +562,6 @@ mod tests {
             auto_hide_on_focus_lost = false
             show_tray_icon = false
             ime_off_on_show = true
-            show_title_bar = true
-            renderer = "glow"
-            wgpu_backend = "dx12"
 
             [appearance]
             max_results = 8
@@ -607,9 +586,6 @@ mod tests {
         assert!(!config.general.auto_hide_on_focus_lost);
         assert!(!config.general.show_tray_icon);
         assert!(config.general.ime_off_on_show);
-        assert!(config.general.show_title_bar);
-        assert_eq!(config.general.renderer, RendererConfig::Glow);
-        assert_eq!(config.general.wgpu_backend, WgpuBackendConfig::Dx12);
         assert_eq!(config.visual.preset, ThemePreset::Paper);
         assert_eq!(config.visual.background_color, "#ffffff");
         assert_eq!(config.visual.input_background_color, "#f2f2f2");
@@ -618,36 +594,6 @@ mod tests {
         assert_eq!(config.visual.hint_text_color, "#666666");
         assert_eq!(config.visual.font_family, "Yu Gothic UI");
         assert_eq!(config.visual.font_size, 18);
-    }
-
-    #[test]
-    fn deserialize_general_renderer_wgpu() {
-        let toml_str = r#"
-            [hotkey]
-            modifier = "Alt"
-            key = "Q"
-
-            [general]
-            renderer = "wgpu"
-            wgpu_backend = "vulkan"
-
-            [appearance]
-            max_results = 8
-            window_width = 600
-
-            [paths]
-            additional = []
-        "#;
-        let config: Config = toml::from_str(toml_str).expect("parse");
-        assert_eq!(config.general.renderer, RendererConfig::Wgpu);
-        assert_eq!(config.general.wgpu_backend, WgpuBackendConfig::Vulkan);
-    }
-
-    #[test]
-    fn default_renderer_is_auto() {
-        let config = Config::default();
-        assert_eq!(config.general.renderer, RendererConfig::Auto);
-        assert_eq!(config.general.wgpu_backend, WgpuBackendConfig::Auto);
     }
 
     #[test]
@@ -665,5 +611,97 @@ mod tests {
         // We can't easily test is_first_run without side effects,
         // but we can verify the method exists and returns a bool
         let _result: bool = Config::is_first_run();
+    }
+
+    #[test]
+    fn migrate_additional_to_scan_converts_paths() {
+        let mut config = Config::default();
+        config.paths.additional = vec!["C:\\Tools".to_string(), "D:\\Apps".to_string()];
+        config.paths.scan.clear();
+
+        config.migrate_additional_to_scan();
+
+        assert!(config.paths.additional.is_empty());
+        assert_eq!(config.paths.scan.len(), 2);
+        assert_eq!(config.paths.scan[0].path, "C:\\Tools");
+        assert_eq!(config.paths.scan[0].extensions, vec![".lnk"]);
+        assert!(!config.paths.scan[0].include_folders);
+        assert_eq!(config.paths.scan[1].path, "D:\\Apps");
+    }
+
+    #[test]
+    fn migrate_additional_to_scan_merges_lnk_into_existing() {
+        let mut config = Config::default();
+        config.paths.scan = vec![ScanPath {
+            path: "C:\\Tools".to_string(),
+            extensions: vec![".exe".to_string()],
+            include_folders: false,
+        }];
+        config.paths.additional = vec!["C:\\Tools".to_string(), "D:\\New".to_string()];
+
+        config.migrate_additional_to_scan();
+
+        assert!(config.paths.additional.is_empty());
+        assert_eq!(config.paths.scan.len(), 2);
+        // .lnk merged into existing scan entry
+        assert_eq!(config.paths.scan[0].extensions, vec![".exe", ".lnk"]);
+        // New path added separately
+        assert_eq!(config.paths.scan[1].path, "D:\\New");
+        assert_eq!(config.paths.scan[1].extensions, vec![".lnk"]);
+    }
+
+    #[test]
+    fn migrate_additional_to_scan_case_insensitive_merge() {
+        let mut config = Config::default();
+        config.paths.scan = vec![ScanPath {
+            path: "C:\\TOOLS".to_string(),
+            extensions: vec![".exe".to_string()],
+            include_folders: false,
+        }];
+        config.paths.additional = vec!["c:\\tools".to_string()];
+
+        config.migrate_additional_to_scan();
+
+        assert!(config.paths.additional.is_empty());
+        assert_eq!(config.paths.scan.len(), 1);
+        assert_eq!(config.paths.scan[0].extensions, vec![".exe", ".lnk"]);
+    }
+
+    #[test]
+    fn migrate_additional_no_duplicate_lnk_when_already_present() {
+        let mut config = Config::default();
+        config.paths.scan = vec![ScanPath {
+            path: "C:\\Links".to_string(),
+            extensions: vec![".lnk".to_string()],
+            include_folders: false,
+        }];
+        config.paths.additional = vec!["C:\\Links".to_string()];
+
+        config.migrate_additional_to_scan();
+
+        assert!(config.paths.additional.is_empty());
+        assert_eq!(config.paths.scan.len(), 1);
+        assert_eq!(config.paths.scan[0].extensions, vec![".lnk"], ".lnk should not be duplicated");
+    }
+
+    #[test]
+    fn migrate_additional_noop_when_empty() {
+        let mut config = Config::default();
+        let scan_before = config.paths.scan.clone();
+
+        config.migrate_additional_to_scan();
+
+        assert_eq!(config.paths.scan, scan_before);
+    }
+
+    #[test]
+    fn skip_serializing_additional() {
+        let mut config = Config::default();
+        config.paths.additional = vec!["C:\\Old".to_string()];
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        assert!(
+            !toml_str.contains("additional"),
+            "additional should not appear in serialized output"
+        );
     }
 }

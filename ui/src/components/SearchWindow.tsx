@@ -1,6 +1,7 @@
 import { type Component, onMount, Show } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { listen } from "@tauri-apps/api/event";
 import {
   query,
   setQuery,
@@ -17,8 +18,9 @@ import {
   activateSelected,
   refreshResults,
   indexing,
+  isCommandMode,
 } from "../stores/search";
-import * as api from "../lib/invoke";
+import { initCommands, SLASH_COMMANDS } from "../lib/commands";
 
 async function hideAllWindows() {
   getCurrentWindow().hide();
@@ -31,9 +33,19 @@ async function hideAllWindows() {
 const SearchWindow: Component = () => {
   let inputRef: HTMLInputElement | undefined;
 
+  function setInputRef(el: HTMLInputElement) {
+    inputRef = el;
+    el.focus();
+  }
+
   onMount(() => {
+    initCommands(hideAllWindows);
     refreshResults();
-    inputRef?.focus();
+    listen("window-shown", () => {
+      requestAnimationFrame(() => {
+        inputRef?.focus();
+      });
+    });
   });
 
   function handleKeyDown(e: KeyboardEvent) {
@@ -67,11 +79,12 @@ const SearchWindow: Component = () => {
         }
         break;
       case "Enter":
-        // /o command opens settings
-        if (!folderState() && query().trim() === "/o") {
-          api.openSettings().catch((err) => console.error("openSettings failed:", err));
-          setQuery("");
-          hideAllWindows();
+        if (isCommandMode()) {
+          const cmd = SLASH_COMMANDS[selected()];
+          if (cmd) {
+            setQuery("");
+            cmd.action();
+          }
         } else {
           activateSelected();
         }
@@ -108,7 +121,7 @@ const SearchWindow: Component = () => {
         fallback={<div class="indexing-message" data-tauri-drag-region>インデックス構築中...</div>}
       >
         <input
-          ref={inputRef}
+          ref={setInputRef}
           type="text"
           class="search-input"
           placeholder={placeholderText()}

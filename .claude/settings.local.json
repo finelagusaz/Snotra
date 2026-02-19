@@ -17,7 +17,8 @@
       "WebSearch",
       "WebFetch(domain:github.com)",
       "mcp__ide__getDiagnostics",
-      "WebFetch(domain:v2.tauri.app)"
+      "WebFetch(domain:v2.tauri.app)",
+      "WebFetch(domain:blog.rust-lang.org)"
     ]
   }
 }

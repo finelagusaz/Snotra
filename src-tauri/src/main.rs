@@ -124,24 +124,45 @@ fn main() {
                 .focused(false)
                 .build()?;
 
-            // First-run: open settings window with first_run flag
-            if is_first_run {
-                let settings_url = WebviewUrl::App("index.html?first_run=1".into());
-                let settings_window = WebviewWindowBuilder::new(&app_handle, "settings", settings_url)
-                    .title("Snotra 設定")
-                    .inner_size(760.0, 560.0)
-                    .min_inner_size(520.0, 360.0)
-                    .resizable(true)
-                    .visible(true)
-                    .build()?;
+            // Create settings window (hidden by default).
+            // WebView2 initialization requires a nested message pump, which
+            // deadlocks when called during the event loop (run_on_main_thread /
+            // Tauri command). Creating the window here in setup() — before the
+            // event loop starts — avoids this entirely.
+            let settings_window = WebviewWindowBuilder::new(
+                app,
+                "settings",
+                WebviewUrl::App(Default::default()),
+            )
+            .title("Snotra 設定")
+            .inner_size(760.0, 560.0)
+            .min_inner_size(520.0, 360.0)
+            .resizable(true)
+            .visible(false)
+            .build()?;
 
-                // When settings window is closed (without saving), start build with defaults
-                let handle_for_destroy = app_handle.clone();
-                settings_window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::Destroyed = event {
-                        indexing::start_index_build(&handle_for_destroy);
+            // Intercept close to hide instead of destroy.
+            // This keeps the WebView2 instance alive so we never need to
+            // re-create it (which would deadlock during the event loop).
+            let handle_for_close = app_handle.clone();
+            settings_window.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    if let Some(w) = handle_for_close.get_webview_window("settings") {
+                        let _ = w.hide();
                     }
-                });
+                    // First-run: start index build when settings is dismissed
+                    // (safe to call multiple times — guarded by compare_exchange)
+                    let state = handle_for_close.state::<AppState>();
+                    if state.indexing.load(std::sync::atomic::Ordering::SeqCst) {
+                        indexing::start_index_build(&handle_for_close);
+                    }
+                }
+            });
+
+            if is_first_run {
+                let _ = settings_window.show();
+                let _ = settings_window.set_focus();
             }
 
             // Listen for hotkey toggle events

@@ -6,7 +6,7 @@ use snotra_core::folder;
 use snotra_core::search::SearchMode;
 use snotra_core::ui_types::SearchResult;
 use snotra_core::window_data::{self, WindowPlacement, WindowSize};
-use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::icon::IconCacheState;
 use crate::indexing;
@@ -132,32 +132,17 @@ pub fn get_config(state: State<AppState>) -> Config {
 
 #[tauri::command]
 pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), String> {
-    // Block opening settings during indexing
     if state.indexing.load(Ordering::SeqCst) {
         return Ok(());
     }
 
-    // If settings window already exists, just focus it
+    // The settings window is pre-created in setup() and hidden on close,
+    // so it always exists. Just show and focus it.
     if let Some(w) = app.get_webview_window("settings") {
-        eprintln!("[open_settings] settings window already exists, focusing");
+        let _ = app.emit("settings-shown", ());
+        let _ = w.show();
         let _ = w.set_focus();
-        return Ok(());
     }
-
-    eprintln!("[open_settings] creating settings window");
-    WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("index.html".into()))
-        .title("Snotra 設定")
-        .inner_size(760.0, 560.0)
-        .min_inner_size(520.0, 360.0)
-        .resizable(true)
-        .visible(true)
-        .build()
-        .map_err(|e| {
-            eprintln!("[open_settings] build failed: {e}");
-            e.to_string()
-        })?;
-
-    eprintln!("[open_settings] settings window created successfully");
     Ok(())
 }
 

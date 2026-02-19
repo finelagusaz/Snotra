@@ -1,14 +1,14 @@
 import { createSignal } from "solid-js";
+import { listen } from "@tauri-apps/api/event";
 import type { Config } from "../lib/types";
 import * as api from "../lib/invoke";
 
 const [draft, setDraft] = createSignal<Config | null>(null);
 const [status, setStatus] = createSignal("");
-const isFirstRun = new URLSearchParams(window.location.search).has("first_run");
 
 const [activeTab, setActiveTab] = createSignal<
   "general" | "search" | "index" | "visual"
->(isFirstRun ? "index" : "general");
+>("general");
 
 async function loadDraft() {
   try {
@@ -20,6 +20,12 @@ async function loadDraft() {
     setStatus("設定の読み込みに失敗しました");
   }
 }
+
+// Reload config each time the settings window is shown.
+// The window is pre-created and hidden on close, so onMount only fires once.
+listen("settings-shown", () => {
+  loadDraft();
+});
 
 function updateDraft(updater: (c: Config) => void) {
   const d = draft();

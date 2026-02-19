@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/finelagusaz/Snotra/actions/workflows/release.yml"><img src="https://github.com/finelagusaz/Snotra/actions/workflows/release.yml/badge.svg" alt="Build"></a>
   <img src="https://img.shields.io/badge/platform-Windows-0078D4?logo=windows" alt="Platform">
-  <img src="https://img.shields.io/badge/Rust-2021_edition-DEA584?logo=rust&logoColor=white" alt="Rust">
+  <img src="https://img.shields.io/badge/Rust-2024_edition-DEA584?logo=rust&logoColor=white" alt="Rust">
   <img src="https://img.shields.io/badge/Tauri-v2-24C8D8?logo=tauri&logoColor=white" alt="Tauri">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
 </p>

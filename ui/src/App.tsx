@@ -63,14 +63,19 @@ const App: Component = () => {
         resetForShow();
       });
 
-      // Auto-hide on focus lost
+      // Auto-hide on focus lost (with grace period for drag operations)
       if (config.general.auto_hide_on_focus_lost) {
+        let blurTimer: ReturnType<typeof setTimeout> | undefined;
         win.onFocusChanged(({ payload: focused }) => {
           if (!focused) {
-            win.hide();
-            WebviewWindow.getByLabel("results").then((rw) => {
-              if (rw) rw.hide();
-            });
+            blurTimer = setTimeout(() => {
+              win.hide();
+              WebviewWindow.getByLabel("results").then((rw) => {
+                if (rw) rw.hide();
+              });
+            }, 100);
+          } else {
+            clearTimeout(blurTimer);
           }
         });
       }

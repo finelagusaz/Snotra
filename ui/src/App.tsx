@@ -7,6 +7,7 @@ import ResultsWindow from "./components/ResultsWindow";
 import SettingsWindow from "./components/SettingsWindow";
 import { resetForShow, setSelected, activateSelected, initIndexingState } from "./stores/search";
 import { applyTheme } from "./lib/theme";
+import type { VisualConfig } from "./lib/types";
 import * as api from "./lib/invoke";
 
 const RESULTS_GAP = 4;
@@ -27,6 +28,11 @@ const App: Component = () => {
       });
       initIndexingState();
     }
+
+    // Listen for visual config changes (all windows)
+    listen<VisualConfig>("visual-config-changed", (event) => {
+      applyTheme(event.payload);
+    });
 
     // Load config and apply theme (non-fatal on failure)
     let config: Awaited<ReturnType<typeof api.getConfig>> | null = null;
@@ -120,11 +126,16 @@ const App: Component = () => {
           return;
         }
 
+        // Use current main window width (may have been updated via settings)
+        const currentSize = await win.innerSize();
+        const currentSf = await win.scaleFactor();
+        const currentWidth = currentSize.toLogical(currentSf).width;
+
         // Resize results window based on count
         const resultsHeight = Math.min(count * RESULT_ROW_HEIGHT + RESULTS_PADDING * 2, 400);
         await rw.setSize({
           type: "Logical",
-          width: windowWidth,
+          width: currentWidth,
           height: resultsHeight,
         });
 

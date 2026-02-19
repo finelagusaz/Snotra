@@ -6,12 +6,17 @@ use snotra_core::folder;
 use snotra_core::search::SearchMode;
 use snotra_core::ui_types::SearchResult;
 use snotra_core::window_data::{self, WindowPlacement, WindowSize};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, State};
 
 use crate::icon::IconCacheState;
 use crate::indexing;
 use crate::platform::{PlatformBridge, PlatformCommand};
 use crate::state::AppState;
+
+#[derive(serde::Serialize, Clone)]
+pub struct SaveConfigResult {
+    pub reindex_started: bool,
+}
 
 #[tauri::command]
 pub fn search(query: String, state: State<AppState>) -> Vec<SearchResult> {
@@ -84,9 +89,22 @@ pub fn save_config(
     config: Config,
     state: State<AppState>,
     app: AppHandle,
-) -> Result<(), String> {
+) -> Result<SaveConfigResult, String> {
     let old_config = state.config.lock().unwrap().clone();
     config.save();
+
+    // Detect what changed before moving config into state
+    let index_changed = config.paths.scan != old_config.paths.scan
+        || config.search.show_hidden_system != old_config.search.show_hidden_system
+        || config.appearance.show_icons != old_config.appearance.show_icons;
+    let visual_changed = config.visual != old_config.visual;
+    let width_changed = config.appearance.window_width != old_config.appearance.window_width;
+    let new_visual = if visual_changed {
+        Some(config.visual.clone())
+    } else {
+        None
+    };
+    let new_width = config.appearance.window_width;
 
     // Notify platform bridge of hotkey/tray changes
     if let Some(bridge) = app.try_state::<std::sync::Mutex<PlatformBridge>>() {
@@ -116,14 +134,44 @@ pub fn save_config(
     }
 
     // If indexing flag is set (first run), start the build and close settings
-    if state.indexing.load(Ordering::SeqCst) {
+    let is_first_run = state.indexing.load(Ordering::SeqCst);
+    if is_first_run {
         indexing::start_index_build(&app);
         if let Some(w) = app.get_webview_window("settings") {
             let _ = w.close();
         }
     }
 
-    Ok(())
+    // Trigger reindex if index-related settings changed (and not during first-run indexing)
+    let mut reindex_started = false;
+    if index_changed && !is_first_run {
+        state.index_build_started.store(false, Ordering::SeqCst);
+        reindex_started = indexing::start_index_build(&app);
+    }
+
+    // Emit visual config change for live theme update
+    if let Some(visual) = new_visual {
+        let _ = app.emit("visual-config-changed", &visual);
+    }
+
+    // Resize main and results windows if window_width changed
+    if width_changed && new_width > 0 {
+        for label in &["main", "results"] {
+            if let Some(w) = app.get_webview_window(label) {
+                if let Ok(size) = w.inner_size() {
+                    if let Ok(sf) = w.scale_factor() {
+                        let logical = size.to_logical::<f64>(sf);
+                        let _ = w.set_size(LogicalSize::new(
+                            f64::from(new_width),
+                            logical.height,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(SaveConfigResult { reindex_started })
 }
 
 #[tauri::command]

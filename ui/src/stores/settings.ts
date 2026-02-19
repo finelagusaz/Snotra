@@ -48,9 +48,13 @@ async function saveDraft() {
   const d = draft();
   if (!d) return;
   try {
-    await api.saveConfig(d);
+    const result = await api.saveConfig(d);
     setSavedConfig(structuredClone(d));
-    setStatus("保存しました");
+    setStatus(
+      result.reindex_started
+        ? "保存しました（インデックスを再構築中…）"
+        : "保存しました",
+    );
   } catch (e) {
     setStatus(`保存に失敗: ${e}`);
   }

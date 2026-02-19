@@ -27,8 +27,12 @@ export async function loadConfig(): Promise<Config> {
   return invoke<Config>("load_config");
 }
 
-export async function saveConfig(config: Config): Promise<void> {
-  return invoke("save_config", { config });
+export interface SaveConfigResult {
+  reindex_started: boolean;
+}
+
+export async function saveConfig(config: Config): Promise<SaveConfigResult> {
+  return invoke<SaveConfigResult>("save_config", { config });
 }
 
 export async function getConfig(): Promise<Config> {

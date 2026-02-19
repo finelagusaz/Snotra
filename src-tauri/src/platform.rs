@@ -289,12 +289,14 @@ struct TrayIcon {
 
 impl TrayIcon {
     fn create(hwnd: HWND) -> Self {
-        let mut nid = NOTIFYICONDATAW::default();
-        nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
-        nid.hWnd = hwnd;
-        nid.uID = 1;
-        nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-        nid.uCallbackMessage = WM_TRAY_ICON;
+        let mut nid = NOTIFYICONDATAW {
+            cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+            hWnd: hwnd,
+            uID: 1,
+            uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
+            uCallbackMessage: WM_TRAY_ICON,
+            ..Default::default()
+        };
         nid.Anonymous.uVersion = NOTIFYICON_VERSION_4;
 
         let tip: Vec<u16> = "Snotra".encode_utf16().chain(std::iter::once(0)).collect();

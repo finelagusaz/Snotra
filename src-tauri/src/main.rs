@@ -213,7 +213,8 @@ fn main() {
             app_handle.listen("exit-requested", move |_| {
                 // Flush any unsaved history before exit
                 {
-                    let mut history = handle_for_exit.state::<AppState>().history.lock().unwrap();
+                    let app_state = handle_for_exit.state::<AppState>();
+                    let mut history = app_state.history.lock().unwrap();
                     history.save_if_dirty(1);
                 }
                 if let Some(bridge) = handle_for_exit.try_state::<Mutex<PlatformBridge>>() {

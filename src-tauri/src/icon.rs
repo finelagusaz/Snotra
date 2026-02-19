@@ -162,7 +162,7 @@ fn hicon_to_bgra(hicon: HICON) -> Option<IconData> {
                 biHeight: -(height as i32),
                 biPlanes: 1,
                 biBitCount: 32,
-                biCompression: BI_RGB.0 as u32,
+                biCompression: BI_RGB.0,
                 ..Default::default()
             },
             ..Default::default()

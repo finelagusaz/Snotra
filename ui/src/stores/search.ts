@@ -168,7 +168,6 @@ function navigateFolderUp() {
 
   const parent = fs.currentDir.replace(/\\[^\\]+$/, "");
   if (parent === fs.currentDir || parent === "") {
-    exitFolderExpansion();
     return;
   }
   setFolderState({ ...fs, currentDir: parent });

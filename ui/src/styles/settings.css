@@ -474,6 +474,22 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-color, #e0e0e0) 20%, transparent);
 }
 
+.scan-path-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.scan-path-input-row input[type="text"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.btn-browse {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .scan-path-form-toggle {
   display: flex;
   align-items: center;

@@ -70,6 +70,7 @@ fn main() {
                 let _ = w.set_focus();
             }
         }))
+        .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .manage(icon_cache_state)
         .invoke_handler(tauri::generate_handler![

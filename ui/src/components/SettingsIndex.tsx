@@ -1,5 +1,6 @@
 import type { Component } from "solid-js";
 import { createEffect, createSignal, For, Show } from "solid-js";
+import { open } from "@tauri-apps/plugin-dialog";
 import { draft, updateDraft } from "../stores/settings";
 import SettingRow from "./SettingRow";
 import ToggleSwitch from "./ToggleSwitch";
@@ -67,6 +68,17 @@ const SettingsIndex: Component = () => {
 
   function startNew() {
     setSelectedIndex(null);
+  }
+
+  async function browsePath() {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      defaultPath: editPath() || undefined,
+    });
+    if (selected !== null) {
+      setEditPath(selected as string);
+    }
   }
 
   function formatExtensions(exts: string[]): string {
@@ -184,12 +196,17 @@ const SettingsIndex: Component = () => {
           <div class="scan-path-form">
             <label>
               パス
-              <input
-                type="text"
-                value={editPath()}
-                onInput={(e) => setEditPath(e.currentTarget.value)}
-                placeholder="C:\..."
-              />
+              <div class="scan-path-input-row">
+                <input
+                  type="text"
+                  value={editPath()}
+                  onInput={(e) => setEditPath(e.currentTarget.value)}
+                  placeholder="C:\..."
+                />
+                <button type="button" class="btn-browse" onClick={browsePath}>
+                  参照...
+                </button>
+              </div>
             </label>
             <label>
               拡張子 (カンマ区切り)

@@ -52,6 +52,18 @@ const COLOR_FIELDS: ColorFieldDef[] = [
   { key: "hint_text_color", label: "ヒントテキスト色" },
 ];
 
+const FONT_OPTIONS = [
+  "Segoe UI",
+  "Yu Gothic UI",
+  "Meiryo",
+  "BIZ UDPGothic",
+  "BIZ UDGothic",
+  "MS UI Gothic",
+  "Arial",
+  "Verdana",
+  "Consolas",
+];
+
 const SettingsVisual: Component = () => {
   const d = () => draft()!;
 
@@ -142,16 +154,19 @@ const SettingsVisual: Component = () => {
       <div class="settings-group">
         <div class="settings-group-title">フォント</div>
         <div class="settings-group-content">
-          <SettingRow label="フォントファミリー" block>
-            <input
-              type="text"
+          <SettingRow label="フォントファミリー">
+            <select
               value={d().visual.font_family}
-              onInput={(e) =>
+              onChange={(e) =>
                 updateDraft((c) => {
                   c.visual.font_family = e.currentTarget.value;
                 })
               }
-            />
+            >
+              {FONT_OPTIONS.map((f) => (
+                <option value={f}>{f}</option>
+              ))}
+            </select>
           </SettingRow>
           <SettingRow label="フォントサイズ">
             <input

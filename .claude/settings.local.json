@@ -13,7 +13,11 @@
       "Bash(python:*)",
       "Bash(pip install:*)",
       "Bash(powershell.exe -Command \"Get-ChildItem ''$env:USERPROFILE\\\\.codex\\\\rules\\\\'' | Select-Object Name, Length\")",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "mcp__ide__getDiagnostics",
+      "WebFetch(domain:v2.tauri.app)"
     ]
   }
 }

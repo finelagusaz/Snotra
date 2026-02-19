@@ -21,20 +21,10 @@ pub struct AppEntry {
     pub is_folder: bool,
 }
 
-pub fn scan_all(
-    additional_paths: &[String],
-    scan_paths: &[ScanPath],
-    show_hidden_system: bool,
-) -> Vec<AppEntry> {
+pub fn scan_all(scan_paths: &[ScanPath], show_hidden_system: bool) -> Vec<AppEntry> {
     let mut entries = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
-    // Scan legacy additional paths (.lnk only)
-    for path in additional_paths {
-        scan_directory_lnk(Path::new(path), show_hidden_system, &mut entries, &mut seen);
-    }
-
-    // Scan paths with per-path extension filtering
     for sp in scan_paths {
         let ext_set: HashSet<String> = sp.extensions.iter().map(|e| e.to_lowercase()).collect();
         scan_directory_with_extensions(
@@ -48,34 +38,6 @@ pub fn scan_all(
     }
 
     entries
-}
-
-/// Recursively scan for .lnk shortcuts (original behavior)
-fn scan_directory_lnk(
-    dir: &Path,
-    show_hidden_system: bool,
-    entries: &mut Vec<AppEntry>,
-    seen: &mut std::collections::HashSet<String>,
-) {
-    let Ok(read_dir) = std::fs::read_dir(dir) else {
-        return;
-    };
-
-    for entry in read_dir.flatten() {
-        let path = entry.path();
-        if !show_hidden_system && !is_visible_entry(&path) {
-            continue;
-        }
-        if path.is_dir() {
-            scan_directory_lnk(&path, show_hidden_system, entries, seen);
-        } else if path.extension().and_then(|e| e.to_str()) == Some("lnk") {
-            if let Some(app) = parse_lnk(&path) {
-                if seen.insert(normalize_entry_key(&app.target_path)) {
-                    entries.push(app);
-                }
-            }
-        }
-    }
 }
 
 /// Recursively scan for files matching given extensions, optionally including folders
@@ -162,26 +124,6 @@ fn normalize_entry_key(path: &str) -> String {
     path.trim().replace('/', "\\").to_lowercase()
 }
 
-fn parse_lnk(path: &Path) -> Option<AppEntry> {
-    let name = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("Unknown")
-        .to_string();
-
-    let target = path.to_string_lossy().to_string();
-
-    if target.is_empty() {
-        return None;
-    }
-
-    Some(AppEntry {
-        name,
-        target_path: target,
-        is_folder: false,
-    })
-}
-
 #[derive(Serialize, Deserialize)]
 struct IndexCache {
     built_at: u64,
@@ -189,9 +131,8 @@ struct IndexCache {
     config_hash: u64,
 }
 
-fn compute_config_hash(additional: &[String], scan: &[ScanPath], show_hidden_system: bool) -> u64 {
+fn compute_config_hash(scan: &[ScanPath], show_hidden_system: bool) -> u64 {
     let mut hasher = DefaultHasher::new();
-    additional.hash(&mut hasher);
     for sp in scan {
         sp.path.hash(&mut hasher);
         sp.extensions.hash(&mut hasher);
@@ -223,17 +164,15 @@ fn invalidate_icon_cache() {
 /// Scan filesystem every startup; compare with cache to detect changes.
 /// Returns (entries, changed) where changed=true means the entry set differs from cache.
 pub fn load_or_scan(
-    additional: &[String],
     scan: &[ScanPath],
     show_hidden_system: bool,
 ) -> (Vec<AppEntry>, bool) {
-    let current_hash = compute_config_hash(additional, scan, show_hidden_system);
+    let current_hash = compute_config_hash(scan, show_hidden_system);
 
     if let Some(cache) = load_cache(current_hash) {
         let cached_entries = cache.entries;
         let return_entries = cached_entries.clone();
         spawn_background_rescan(
-            additional.to_vec(),
             scan.to_vec(),
             show_hidden_system,
             current_hash,
@@ -242,7 +181,7 @@ pub fn load_or_scan(
         return (return_entries, false);
     }
 
-    let entries = scan_all(additional, scan, show_hidden_system);
+    let entries = scan_all(scan, show_hidden_system);
     save_cache(&entries, current_hash);
     (entries, true)
 }
@@ -287,13 +226,9 @@ fn save_cache(entries: &[AppEntry], config_hash: u64) {
 /// Force rebuild: scan and save cache, regardless of existing cache.
 /// Called from settings dialog (Phase 5).
 #[allow(dead_code)]
-pub fn rebuild_and_save(
-    additional: &[String],
-    scan: &[ScanPath],
-    show_hidden_system: bool,
-) -> Vec<AppEntry> {
-    let entries = scan_all(additional, scan, show_hidden_system);
-    let config_hash = compute_config_hash(additional, scan, show_hidden_system);
+pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> Vec<AppEntry> {
+    let entries = scan_all(scan, show_hidden_system);
+    let config_hash = compute_config_hash(scan, show_hidden_system);
     save_cache(&entries, config_hash);
     entries
 }
@@ -309,7 +244,6 @@ fn load_cache(config_hash: u64) -> Option<IndexCache> {
 }
 
 fn spawn_background_rescan(
-    additional: Vec<String>,
     scan: Vec<ScanPath>,
     show_hidden_system: bool,
     config_hash: u64,
@@ -318,7 +252,7 @@ fn spawn_background_rescan(
     let _ = thread::Builder::new()
         .name("snotra-index-rescan".to_string())
         .spawn(move || {
-            let scanned = scan_all(&additional, &scan, show_hidden_system);
+            let scanned = scan_all(&scan, show_hidden_system);
             if !entries_equal(&cached_entries, &scanned) {
                 save_cache(&scanned, config_hash);
                 invalidate_icon_cache();
@@ -437,19 +371,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_lnk_sets_is_folder_false() {
-        let dir = temp_dir("lnk_flag");
-        let lnk_path = dir.join("Test App.lnk");
-        fs::write(&lnk_path, "").unwrap();
-
-        let entry = parse_lnk(&lnk_path).unwrap();
-        assert_eq!(entry.name, "Test App");
-        assert!(!entry.is_folder);
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
     fn index_cache_bincode_roundtrip() {
         let entries = vec![
             AppEntry {
@@ -486,8 +407,18 @@ mod tests {
 
     #[test]
     fn config_hash_changes_with_different_paths() {
-        let hash1 = compute_config_hash(&["C:\\A".to_string()], &[], false);
-        let hash2 = compute_config_hash(&["C:\\B".to_string()], &[], false);
+        let scan1 = vec![ScanPath {
+            path: "C:\\A".to_string(),
+            extensions: vec![".lnk".to_string()],
+            include_folders: false,
+        }];
+        let scan2 = vec![ScanPath {
+            path: "C:\\B".to_string(),
+            extensions: vec![".lnk".to_string()],
+            include_folders: false,
+        }];
+        let hash1 = compute_config_hash(&scan1, false);
+        let hash2 = compute_config_hash(&scan2, false);
         assert_ne!(hash1, hash2);
     }
 
@@ -593,8 +524,8 @@ mod tests {
             extensions: vec![".exe".to_string(), ".bat".to_string()],
             include_folders: false,
         }];
-        let hash1 = compute_config_hash(&[], &scan1, false);
-        let hash2 = compute_config_hash(&[], &scan2, false);
+        let hash1 = compute_config_hash(&scan1, false);
+        let hash2 = compute_config_hash(&scan2, false);
         assert_ne!(hash1, hash2);
     }
 
@@ -625,7 +556,7 @@ mod tests {
 
     #[test]
     fn scan_all_empty_when_no_paths() {
-        let entries = scan_all(&[], &[], false);
+        let entries = scan_all(&[], false);
         assert!(entries.is_empty(), "scan_all with no paths should return empty");
     }
 }

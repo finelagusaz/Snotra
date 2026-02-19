@@ -30,7 +30,6 @@ fn main() {
         (Vec::new(), true)
     } else {
         let (entries, _) = indexer::load_or_scan(
-            &config.paths.additional,
             &config.paths.scan,
             config.search.show_hidden_system,
         );

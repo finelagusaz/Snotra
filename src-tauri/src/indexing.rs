@@ -34,18 +34,17 @@ pub fn start_index_build(app: &AppHandle) -> bool {
     std::thread::Builder::new()
         .name("snotra-index-build".to_string())
         .spawn(move || {
-            let (additional, scan, show_hidden_system, show_icons) = {
+            let (scan, show_hidden_system, show_icons) = {
                 let state = app_handle.state::<AppState>();
                 let config = state.config.lock().unwrap();
                 (
-                    config.paths.additional.clone(),
                     config.paths.scan.clone(),
                     config.search.show_hidden_system,
                     config.appearance.show_icons,
                 )
             };
 
-            let entries = indexer::rebuild_and_save(&additional, &scan, show_hidden_system);
+            let entries = indexer::rebuild_and_save(&scan, show_hidden_system);
 
             // Sync icon cache with current show_icons setting
             {

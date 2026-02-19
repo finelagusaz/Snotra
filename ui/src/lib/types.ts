@@ -50,7 +50,6 @@ export interface ScanPath {
 }
 
 export interface PathsConfig {
-  additional: string[];
   scan: ScanPath[];
 }
 

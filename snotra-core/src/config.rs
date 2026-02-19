@@ -212,7 +212,7 @@ pub struct ScanPath {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PathsConfig {
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub additional: Vec<String>,
     #[serde(default)]
     pub scan: Vec<ScanPath>,
@@ -293,6 +293,29 @@ impl Config {
         Self::config_dir().map(|p| p.join("config.toml"))
     }
 
+    /// Migrate legacy `paths.additional` entries into `paths.scan` with `.lnk` extension.
+    fn migrate_additional_to_scan(&mut self) {
+        if self.paths.additional.is_empty() {
+            return;
+        }
+        let lnk = ".lnk".to_string();
+        for path in self.paths.additional.drain(..) {
+            let key = path.to_lowercase();
+            if let Some(existing) = self.paths.scan.iter_mut().find(|sp| sp.path.to_lowercase() == key) {
+                // Same directory already in scan — merge .lnk into its extensions
+                if !existing.extensions.iter().any(|e| e.eq_ignore_ascii_case(&lnk)) {
+                    existing.extensions.push(lnk.clone());
+                }
+            } else {
+                self.paths.scan.push(ScanPath {
+                    path,
+                    extensions: vec![lnk.clone()],
+                    include_folders: false,
+                });
+            }
+        }
+    }
+
     pub fn load() -> Self {
         let Some(path) = Self::config_path() else {
             return Self::default();
@@ -301,10 +324,18 @@ impl Config {
         match fs::read_to_string(&path) {
             Ok(content) => {
                 let mut config: Self = toml::from_str(&content).unwrap_or_default();
+                let mut needs_save = false;
                 if config.hotkey.modifier.eq_ignore_ascii_case("Alt")
                     && config.hotkey.key.eq_ignore_ascii_case("Space")
                 {
                     config.hotkey.key = "Q".to_string();
+                    needs_save = true;
+                }
+                if !config.paths.additional.is_empty() {
+                    config.migrate_additional_to_scan();
+                    needs_save = true;
+                }
+                if needs_save {
                     config.save();
                 }
                 config
@@ -580,5 +611,97 @@ mod tests {
         // We can't easily test is_first_run without side effects,
         // but we can verify the method exists and returns a bool
         let _result: bool = Config::is_first_run();
+    }
+
+    #[test]
+    fn migrate_additional_to_scan_converts_paths() {
+        let mut config = Config::default();
+        config.paths.additional = vec!["C:\\Tools".to_string(), "D:\\Apps".to_string()];
+        config.paths.scan.clear();
+
+        config.migrate_additional_to_scan();
+
+        assert!(config.paths.additional.is_empty());
+        assert_eq!(config.paths.scan.len(), 2);
+        assert_eq!(config.paths.scan[0].path, "C:\\Tools");
+        assert_eq!(config.paths.scan[0].extensions, vec![".lnk"]);
+        assert!(!config.paths.scan[0].include_folders);
+        assert_eq!(config.paths.scan[1].path, "D:\\Apps");
+    }
+
+    #[test]
+    fn migrate_additional_to_scan_merges_lnk_into_existing() {
+        let mut config = Config::default();
+        config.paths.scan = vec![ScanPath {
+            path: "C:\\Tools".to_string(),
+            extensions: vec![".exe".to_string()],
+            include_folders: false,
+        }];
+        config.paths.additional = vec!["C:\\Tools".to_string(), "D:\\New".to_string()];
+
+        config.migrate_additional_to_scan();
+
+        assert!(config.paths.additional.is_empty());
+        assert_eq!(config.paths.scan.len(), 2);
+        // .lnk merged into existing scan entry
+        assert_eq!(config.paths.scan[0].extensions, vec![".exe", ".lnk"]);
+        // New path added separately
+        assert_eq!(config.paths.scan[1].path, "D:\\New");
+        assert_eq!(config.paths.scan[1].extensions, vec![".lnk"]);
+    }
+
+    #[test]
+    fn migrate_additional_to_scan_case_insensitive_merge() {
+        let mut config = Config::default();
+        config.paths.scan = vec![ScanPath {
+            path: "C:\\TOOLS".to_string(),
+            extensions: vec![".exe".to_string()],
+            include_folders: false,
+        }];
+        config.paths.additional = vec!["c:\\tools".to_string()];
+
+        config.migrate_additional_to_scan();
+
+        assert!(config.paths.additional.is_empty());
+        assert_eq!(config.paths.scan.len(), 1);
+        assert_eq!(config.paths.scan[0].extensions, vec![".exe", ".lnk"]);
+    }
+
+    #[test]
+    fn migrate_additional_no_duplicate_lnk_when_already_present() {
+        let mut config = Config::default();
+        config.paths.scan = vec![ScanPath {
+            path: "C:\\Links".to_string(),
+            extensions: vec![".lnk".to_string()],
+            include_folders: false,
+        }];
+        config.paths.additional = vec!["C:\\Links".to_string()];
+
+        config.migrate_additional_to_scan();
+
+        assert!(config.paths.additional.is_empty());
+        assert_eq!(config.paths.scan.len(), 1);
+        assert_eq!(config.paths.scan[0].extensions, vec![".lnk"], ".lnk should not be duplicated");
+    }
+
+    #[test]
+    fn migrate_additional_noop_when_empty() {
+        let mut config = Config::default();
+        let scan_before = config.paths.scan.clone();
+
+        config.migrate_additional_to_scan();
+
+        assert_eq!(config.paths.scan, scan_before);
+    }
+
+    #[test]
+    fn skip_serializing_additional() {
+        let mut config = Config::default();
+        config.paths.additional = vec!["C:\\Old".to_string()];
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        assert!(
+            !toml_str.contains("additional"),
+            "additional should not appear in serialized output"
+        );
     }
 }

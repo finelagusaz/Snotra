@@ -76,41 +76,6 @@ const SettingsIndex: Component = () => {
         アイコン表示
       </label>
 
-      <h3>追加パス</h3>
-      <For each={d().paths.additional}>
-        {(path, idx) => (
-          <div class="path-row">
-            <input
-              type="text"
-              value={path}
-              onInput={(e) =>
-                updateDraft((c) => {
-                  c.paths.additional[idx()] = e.currentTarget.value;
-                })
-              }
-            />
-            <button
-              onClick={() =>
-                updateDraft((c) => {
-                  c.paths.additional.splice(idx(), 1);
-                })
-              }
-            >
-              削除
-            </button>
-          </div>
-        )}
-      </For>
-      <button
-        onClick={() =>
-          updateDraft((c) => {
-            c.paths.additional.push("");
-          })
-        }
-      >
-        追加パスを追加
-      </button>
-
       <h3>スキャンパス</h3>
       <For each={d().paths.scan}>
         {(scan, idx) => (

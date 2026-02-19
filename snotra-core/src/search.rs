@@ -31,13 +31,16 @@ impl From<crate::config::SearchModeConfig> for SearchMode {
 
 pub struct SearchEngine {
     entries: Vec<AppEntry>,
+    lower_names: Vec<String>,
     matcher: SkimMatcherV2,
 }
 
 impl SearchEngine {
     pub fn new(entries: Vec<AppEntry>) -> Self {
+        let lower_names = entries.iter().map(|e| e.name.to_lowercase()).collect();
         Self {
             entries,
+            lower_names,
             matcher: SkimMatcherV2::default(),
         }
     }
@@ -56,11 +59,13 @@ impl SearchEngine {
 
         let has_dot = norm_query.contains('.');
 
-        let mut scored: Vec<(i64, u64, &AppEntry)> = self
+        let mut scored: Vec<(i64, u64, &AppEntry, &str)> = self
             .entries
             .iter()
-            .filter_map(|entry| {
-                let name_score = match_score_single(mode, &self.matcher, &entry.name, &norm_query);
+            .zip(self.lower_names.iter())
+            .filter_map(|(entry, lower_name)| {
+                let name_score =
+                    match_score_single_cached(mode, &self.matcher, lower_name, &norm_query);
                 let score = if has_dot {
                     // ドットあり → entry.name とファイル名（拡張子込み）の両方で照合し、高い方を採用
                     let fn_score = std::path::Path::new(&entry.target_path)
@@ -87,7 +92,7 @@ impl SearchEngine {
                     let combined =
                         base_score + global * GLOBAL_WEIGHT + qcount * QUERY_WEIGHT + folder_boost;
                     let last = history.last_launched(&entry.target_path).unwrap_or(0);
-                    (combined, last, entry)
+                    (combined, last, entry, lower_name.as_str())
                 })
             })
             .collect();
@@ -95,13 +100,13 @@ impl SearchEngine {
         scored.sort_by(|a, b| {
             b.0.cmp(&a.0)
                 .then_with(|| b.1.cmp(&a.1))
-                .then_with(|| a.2.name.to_lowercase().cmp(&b.2.name.to_lowercase()))
+                .then_with(|| a.3.cmp(b.3))
         });
         scored.truncate(max_results);
 
         scored
             .into_iter()
-            .map(|(_, _, entry)| SearchResult {
+            .map(|(_, _, entry, _)| SearchResult {
                 name: entry.name.clone(),
                 path: entry.target_path.clone(),
                 is_folder: entry.is_folder,
@@ -137,27 +142,35 @@ impl SearchEngine {
     }
 }
 
+/// Score using a pre-computed lowercase name (avoids repeated allocation).
+fn match_score_single_cached(
+    mode: SearchMode,
+    matcher: &SkimMatcherV2,
+    lower_name: &str,
+    query: &str,
+) -> Option<i64> {
+    match mode {
+        SearchMode::Prefix => {
+            if lower_name.starts_with(query) {
+                Some(10_000 - lower_name.len() as i64)
+            } else {
+                None
+            }
+        }
+        SearchMode::Substring => lower_name.find(query).map(|idx| 5_000 - idx as i64),
+        SearchMode::Fuzzy => matcher.fuzzy_match(lower_name, query),
+    }
+}
+
+/// Score with on-the-fly lowercase (for file names from target_path).
 fn match_score_single(
     mode: SearchMode,
     matcher: &SkimMatcherV2,
     name: &str,
     query: &str,
 ) -> Option<i64> {
-    match mode {
-        SearchMode::Prefix => {
-            let lname = name.to_lowercase();
-            if lname.starts_with(query) {
-                Some(10_000 - lname.len() as i64)
-            } else {
-                None
-            }
-        }
-        SearchMode::Substring => {
-            let lname = name.to_lowercase();
-            lname.find(query).map(|idx| 5_000 - idx as i64)
-        }
-        SearchMode::Fuzzy => matcher.fuzzy_match(&name.to_lowercase(), query),
-    }
+    let lname = name.to_lowercase();
+    match_score_single_cached(mode, matcher, &lname, query)
 }
 
 #[cfg(test)]

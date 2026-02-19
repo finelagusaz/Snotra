@@ -1,6 +1,7 @@
 import { type Component, onMount, Show } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { listen } from "@tauri-apps/api/event";
 import {
   query,
   setQuery,
@@ -31,9 +32,18 @@ async function hideAllWindows() {
 const SearchWindow: Component = () => {
   let inputRef: HTMLInputElement | undefined;
 
+  function setInputRef(el: HTMLInputElement) {
+    inputRef = el;
+    el.focus();
+  }
+
   onMount(() => {
     refreshResults();
-    inputRef?.focus();
+    listen("window-shown", () => {
+      requestAnimationFrame(() => {
+        inputRef?.focus();
+      });
+    });
   });
 
   function handleKeyDown(e: KeyboardEvent) {
@@ -108,7 +118,7 @@ const SearchWindow: Component = () => {
         fallback={<div class="indexing-message">インデックス構築中...</div>}
       >
         <input
-          ref={inputRef}
+          ref={setInputRef}
           type="text"
           class="search-input"
           placeholder={placeholderText()}

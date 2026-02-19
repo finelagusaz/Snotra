@@ -1,4 +1,4 @@
-import { type Component, Show, createSignal, createMemo, onMount, onCleanup } from "solid-js";
+import { type Component, Show, createSignal, createMemo, onMount } from "solid-js";
 import type { SearchResult } from "../lib/types";
 import { truncatePath } from "../lib/truncatePath";
 
@@ -6,6 +6,7 @@ interface ResultRowProps {
   result: SearchResult;
   isSelected: boolean;
   icon?: string;
+  containerWidth?: number;
   onClick: () => void;
   onDoubleClick: () => void;
   onMouseEnter?: () => void;
@@ -13,29 +14,13 @@ interface ResultRowProps {
 
 const ResultRow: Component<ResultRowProps> = (props) => {
   let textRef: HTMLDivElement | undefined;
-  const [containerWidth, setContainerWidth] = createSignal(0);
   const [font, setFont] = createSignal("15px 'Segoe UI'");
 
-  const updateFont = () => {
+  onMount(() => {
     if (textRef) {
       const style = getComputedStyle(textRef);
       setFont(`${style.fontSize} ${style.fontFamily}`);
     }
-  };
-
-  onMount(() => {
-    if (!textRef) return;
-
-    updateFont();
-
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setContainerWidth(entry.contentRect.width);
-      }
-      updateFont();
-    });
-    ro.observe(textRef);
-    onCleanup(() => ro.disconnect());
   });
 
   const fullPath = createMemo(() => {
@@ -44,8 +29,10 @@ const ResultRow: Component<ResultRowProps> = (props) => {
   });
 
   const displayPath = createMemo(() => {
-    const w = containerWidth();
+    const _ = props.containerWidth; // resize trigger
     const f = font();
+    if (!textRef) return fullPath();
+    const w = textRef.clientWidth;
     if (w === 0) return fullPath();
     return truncatePath(fullPath(), w, f);
   });

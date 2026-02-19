@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -35,10 +36,10 @@ pub fn scan_all(
 
     // Scan paths with per-path extension filtering
     for sp in scan_paths {
-        let exts: Vec<String> = sp.extensions.iter().map(|e| e.to_lowercase()).collect();
+        let ext_set: HashSet<String> = sp.extensions.iter().map(|e| e.to_lowercase()).collect();
         scan_directory_with_extensions(
             Path::new(&sp.path),
-            &exts,
+            &ext_set,
             sp.include_folders,
             show_hidden_system,
             &mut entries,
@@ -80,7 +81,7 @@ fn scan_directory_lnk(
 /// Recursively scan for files matching given extensions, optionally including folders
 fn scan_directory_with_extensions(
     dir: &Path,
-    extensions: &[String],
+    extensions: &HashSet<String>,
     include_folders: bool,
     show_hidden_system: bool,
     entries: &mut Vec<AppEntry>,
@@ -229,15 +230,16 @@ pub fn load_or_scan(
     let current_hash = compute_config_hash(additional, scan, show_hidden_system);
 
     if let Some(cache) = load_cache(current_hash) {
-        let cached_entries = cache.entries.clone();
+        let cached_entries = cache.entries;
+        let return_entries = cached_entries.clone();
         spawn_background_rescan(
             additional.to_vec(),
             scan.to_vec(),
             show_hidden_system,
             current_hash,
-            cached_entries.clone(),
+            cached_entries,
         );
-        return (cached_entries, false);
+        return (return_entries, false);
     }
 
     let entries = scan_all(additional, scan, show_hidden_system);
@@ -345,7 +347,7 @@ mod tests {
 
         let mut entries = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        let exts = vec![".exe".to_string(), ".bat".to_string()];
+        let exts: HashSet<String> = [".exe".to_string(), ".bat".to_string()].into_iter().collect();
         scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
 
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
@@ -365,7 +367,7 @@ mod tests {
 
         let mut entries = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        let exts = vec![".exe".to_string()];
+        let exts: HashSet<String> = [".exe".to_string()].into_iter().collect();
         scan_directory_with_extensions(&dir, &exts, true, true, &mut entries, &mut seen);
 
         let folder_entries: Vec<&AppEntry> = entries.iter().filter(|e| e.is_folder).collect();
@@ -388,7 +390,7 @@ mod tests {
 
         let mut entries = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        let exts = vec![".exe".to_string()];
+        let exts: HashSet<String> = [".exe".to_string()].into_iter().collect();
         scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
 
         assert!(entries.iter().all(|e| !e.is_folder));
@@ -409,7 +411,7 @@ mod tests {
 
         let mut entries = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        let exts = vec![".exe".to_string()];
+        let exts: HashSet<String> = [".exe".to_string()].into_iter().collect();
         scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
 
         let tools: Vec<&AppEntry> = entries.iter().filter(|e| e.name == "tool").collect();
@@ -425,7 +427,7 @@ mod tests {
 
         let mut entries = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        let exts = vec![".exe".to_string()];
+        let exts: HashSet<String> = [".exe".to_string()].into_iter().collect();
         scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
 
         assert_eq!(entries.len(), 1);

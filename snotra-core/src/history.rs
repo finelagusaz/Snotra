@@ -29,6 +29,7 @@ pub struct HistoryStore {
     data: HistoryData,
     top_n: usize,
     max_history_display: usize,
+    dirty_count: u32,
 }
 
 impl HistoryStore {
@@ -53,6 +54,7 @@ impl HistoryStore {
             data,
             top_n,
             max_history_display,
+            dirty_count: 0,
         };
         if decode_failed {
             store.save();
@@ -103,7 +105,15 @@ impl HistoryStore {
                 .or_insert(0) += 1;
         }
 
-        self.save();
+        self.dirty_count += 1;
+    }
+
+    /// Save if dirty_count has reached the given threshold, then reset.
+    pub fn save_if_dirty(&mut self, threshold: u32) {
+        if self.dirty_count >= threshold {
+            self.save();
+            self.dirty_count = 0;
+        }
     }
 
     pub fn global_count(&self, path: &str) -> u32 {
@@ -147,7 +157,7 @@ impl HistoryStore {
             .folder_expansion
             .entry(folder_path.to_string())
             .or_insert(0) += 1;
-        self.save();
+        self.dirty_count += 1;
     }
 
     pub fn folder_expansion_count(&self, folder_path: &str) -> u32 {
@@ -199,6 +209,7 @@ mod tests {
             data: HistoryData::default(),
             top_n: 100,
             max_history_display: 8,
+            dirty_count: 0,
         }
     }
 
@@ -207,6 +218,7 @@ mod tests {
             data: HistoryData::default(),
             top_n,
             max_history_display: 8,
+            dirty_count: 0,
         }
     }
 

@@ -1,4 +1,5 @@
-import type { Component } from "solid-js";
+import { type Component, For, createResource } from "solid-js";
+import * as api from "../lib/invoke";
 import { draft, updateDraft } from "../stores/settings";
 import SettingRow from "./SettingRow";
 import ThemePreview from "./ThemePreview";
@@ -52,20 +53,9 @@ const COLOR_FIELDS: ColorFieldDef[] = [
   { key: "hint_text_color", label: "ヒントテキスト色" },
 ];
 
-const FONT_OPTIONS = [
-  "Segoe UI",
-  "Yu Gothic UI",
-  "Meiryo",
-  "BIZ UDPGothic",
-  "BIZ UDGothic",
-  "MS UI Gothic",
-  "Arial",
-  "Verdana",
-  "Consolas",
-];
-
 const SettingsVisual: Component = () => {
   const d = () => draft()!;
+  const [fonts] = createResource(api.listSystemFonts);
 
   function applyPreset(presetValue: string) {
     const preset = PRESETS.find((p) => p.value === presetValue);
@@ -163,9 +153,9 @@ const SettingsVisual: Component = () => {
                 })
               }
             >
-              {FONT_OPTIONS.map((f) => (
+              <For each={fonts() ?? []}>{(f) =>
                 <option value={f}>{f}</option>
-              ))}
+              }</For>
             </select>
           </SettingRow>
           <SettingRow label="フォントサイズ">

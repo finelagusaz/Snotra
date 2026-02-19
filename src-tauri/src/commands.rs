@@ -228,3 +228,50 @@ pub fn notify_result_double_clicked(index: usize, app: AppHandle) -> Result<(), 
 pub fn get_indexing_state(state: State<AppState>) -> bool {
     state.indexing.load(Ordering::SeqCst)
 }
+
+#[tauri::command]
+pub fn list_system_fonts() -> Vec<String> {
+    #[cfg(windows)]
+    {
+        use std::collections::BTreeSet;
+        use windows::Win32::Foundation::LPARAM;
+        use windows::Win32::Graphics::Gdi::*;
+
+        unsafe extern "system" fn enum_callback(
+            logfont: *const LOGFONTW,
+            _text_metric: *const TEXTMETRICW,
+            _font_type: u32,
+            lparam: LPARAM,
+        ) -> i32 {
+            let fonts = &mut *(lparam.0 as *mut BTreeSet<String>);
+            let lf = &*logfont;
+            let name_len = lf.lfFaceName.iter().position(|&c| c == 0).unwrap_or(32);
+            let name = String::from_utf16_lossy(&lf.lfFaceName[..name_len]);
+            // @ 始まりは縦書き用フォント、除外
+            if !name.starts_with('@') {
+                fonts.insert(name);
+            }
+            1 // 列挙を続行
+        }
+
+        let mut fonts = BTreeSet::<String>::new();
+        let hdc = unsafe { GetDC(None) };
+        let mut lf: LOGFONTW = unsafe { std::mem::zeroed() };
+        lf.lfCharSet = DEFAULT_CHARSET;
+
+        unsafe {
+            EnumFontFamiliesExW(
+                hdc,
+                &lf,
+                Some(enum_callback),
+                LPARAM(&mut fonts as *mut _ as isize),
+                0,
+            );
+            ReleaseDC(None, hdc);
+        }
+
+        fonts.into_iter().collect()
+    }
+    #[cfg(not(windows))]
+    Vec::new()
+}

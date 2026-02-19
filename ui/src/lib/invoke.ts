@@ -104,3 +104,7 @@ export async function notifyResultDoubleClicked(index: number): Promise<void> {
 export async function getIndexingState(): Promise<boolean> {
   return invoke<boolean>("get_indexing_state");
 }
+
+export async function listSystemFonts(): Promise<string[]> {
+  return invoke<string[]>("list_system_fonts");
+}

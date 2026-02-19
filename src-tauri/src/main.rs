@@ -93,6 +93,7 @@ fn main() {
             commands::notify_result_clicked,
             commands::notify_result_double_clicked,
             commands::get_indexing_state,
+            commands::list_system_fonts,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();

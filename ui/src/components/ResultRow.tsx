@@ -29,8 +29,10 @@ const ResultRow: Component<ResultRowProps> = (props) => {
   });
 
   const displayPath = createMemo(() => {
-    const w = props.containerWidth ?? 0;
+    const _ = props.containerWidth; // resize trigger
     const f = font();
+    if (!textRef) return fullPath();
+    const w = textRef.clientWidth;
     if (w === 0) return fullPath();
     return truncatePath(fullPath(), w, f);
   });

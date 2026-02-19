@@ -148,7 +148,16 @@ function navigateFolderUp() {
   refreshResults();
 }
 
+async function flushPendingRefresh() {
+  if (debounceTimer !== undefined) {
+    clearTimeout(debounceTimer);
+    debounceTimer = undefined;
+    await refreshResults();
+  }
+}
+
 async function activateSelected() {
+  await flushPendingRefresh();
   const r = results()[selected()];
   if (!r) return;
 

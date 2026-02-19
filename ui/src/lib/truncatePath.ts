@@ -18,10 +18,10 @@ function measureText(text: string, font: string): number {
  *
  * Strategy:
  *   1. If the full path fits, return it as-is.
- *   2. Split by "\", keep the first segment (drive) and last segment (filename).
- *   3. Progressively add middle segments from the right (closest to filename).
- *   4. Return the most segments that fit, replacing the rest with "...".
- *   5. Minimal form: "C:\...\filename.exe"
+ *   2. Strip trailing "\" (restored after truncation for folders).
+ *   3. Detect UNC prefix ("\\server\share") vs local drive ("C:").
+ *   4. Keep prefix and last segment, progressively add middle segments from the right.
+ *   5. Minimal form: "C:\...\filename.exe" or "\\server\share\...\file.txt"
  */
 export function truncatePath(
   path: string,
@@ -35,31 +35,56 @@ export function truncatePath(
   }
 
   const sep = "\\";
-  const segments = path.split(sep);
 
-  // If 2 or fewer segments, cannot truncate further
-  if (segments.length <= 2) {
-    return path;
+  // Strip trailing separator (folders) — will be restored at the end
+  const trailingSep = path.endsWith(sep) ? sep : "";
+  const workPath = trailingSep ? path.slice(0, -1) : path;
+
+  let prefix: string;
+  let rest: string[];
+
+  if (workPath.startsWith(sep + sep)) {
+    // UNC path: \\server\share\...
+    const parts = workPath.slice(2).split(sep); // remove leading "\\" then split
+    if (parts.length <= 2) {
+      // Only \\server\share (or less) — cannot truncate
+      return path;
+    }
+    prefix = sep + sep + parts[0] + sep + parts[1]; // "\\server\share"
+    rest = parts.slice(2); // segments after share
+  } else {
+    // Local path: C:\...
+    const parts = workPath.split(sep);
+    if (parts.length <= 2) {
+      return path;
+    }
+    prefix = parts[0]; // "C:"
+    rest = parts.slice(1);
   }
 
-  const first = segments[0]; // e.g. "C:"
-  const last = segments[segments.length - 1]; // e.g. "filename.exe"
-  const middle = segments.slice(1, -1); // everything in between
+  const last = rest[rest.length - 1];
+  const middle = rest.slice(0, -1);
 
-  // Minimal form: first\...\last
-  const minimal = first + sep + "..." + sep + last;
+  // Minimal form: prefix\...\last + trailingSep
+  const minimal = prefix + sep + "..." + sep + last + trailingSep;
   if (measureText(minimal, font) > maxWidth) {
     return minimal;
   }
 
   // Try adding middle segments from the right
-  // Start with none, add one more from the right each iteration
   let bestResult = minimal;
 
   for (let keepRight = 1; keepRight <= middle.length; keepRight++) {
     const rightSegments = middle.slice(middle.length - keepRight);
     const candidate =
-      first + sep + "..." + sep + rightSegments.join(sep) + sep + last;
+      prefix +
+      sep +
+      "..." +
+      sep +
+      rightSegments.join(sep) +
+      sep +
+      last +
+      trailingSep;
 
     if (measureText(candidate, font) <= maxWidth) {
       bestResult = candidate;

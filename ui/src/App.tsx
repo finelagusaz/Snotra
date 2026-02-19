@@ -20,6 +20,14 @@ const App: Component = () => {
     const win = getCurrentWindow();
     const label = win.label;
 
+    // Register listeners before any await to avoid race conditions
+    if (label === "main") {
+      listen("window-shown", () => {
+        resetForShow();
+      });
+      initIndexingState();
+    }
+
     // Load config and apply theme (non-fatal on failure)
     let config: Awaited<ReturnType<typeof api.getConfig>> | null = null;
     try {
@@ -30,8 +38,6 @@ const App: Component = () => {
     }
 
     if (label === "main" && config) {
-      initIndexingState();
-
       // Restore search window position
       const placement = await api.getSearchPlacement();
       if (placement) {
@@ -43,8 +49,10 @@ const App: Component = () => {
       }
 
       // Apply window width from config
-      const currentSize = await win.innerSize();
-      const scaleFactor = await win.scaleFactor();
+      const [currentSize, scaleFactor] = await Promise.all([
+        win.innerSize(),
+        win.scaleFactor(),
+      ]);
       const logicalSize = currentSize.toLogical(scaleFactor);
       const windowWidth = config.appearance.window_width > 0
         ? config.appearance.window_width
@@ -57,11 +65,6 @@ const App: Component = () => {
           height: logicalSize.height,
         });
       }
-
-      // Reset search on window-shown
-      listen("window-shown", () => {
-        resetForShow();
-      });
 
       // Auto-hide on focus lost
       if (config.general.auto_hide_on_focus_lost) {

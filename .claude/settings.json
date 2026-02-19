@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "postToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "pattern": "\\.rs$",
+        "command": "cargo check -p snotra-core -p snotra --message-format short 2>&1 | head -20"
+      }
+    ]
+  }
+}

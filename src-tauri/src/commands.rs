@@ -149,8 +149,8 @@ pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), Strin
 
 #[tauri::command]
 pub fn get_icon_base64(path: String, icons: State<IconCacheState>) -> Option<String> {
-    let cache = icons.lock().unwrap();
-    cache.as_ref()?.get_base64(&path).cloned()
+    let mut cache = icons.lock().unwrap();
+    cache.as_mut()?.get_or_extract(&path)
 }
 
 #[tauri::command]
@@ -158,9 +158,9 @@ pub fn get_icons_batch(
     paths: Vec<String>,
     icons: State<IconCacheState>,
 ) -> std::collections::HashMap<String, String> {
-    let cache = icons.lock().unwrap();
-    match cache.as_ref() {
-        Some(c) => c.get_base64_batch(&paths),
+    let mut cache = icons.lock().unwrap();
+    match cache.as_mut() {
+        Some(c) => c.get_or_extract_batch(&paths),
         None => std::collections::HashMap::new(),
     }
 }

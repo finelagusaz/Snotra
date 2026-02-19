@@ -6,7 +6,6 @@ use std::sync::Mutex;
 use base64::Engine;
 use snotra_core::binfmt::{deserialize_with_header, serialize_with_header};
 use snotra_core::config::Config;
-use snotra_core::indexer::AppEntry;
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, SelectObject, BITMAPINFO,
     BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
@@ -17,102 +16,102 @@ use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, I
 
 const ICON_SIZE: i32 = 16;
 const ICON_MAGIC: [u8; 4] = *b"ICON";
-const ICON_VERSION: u32 = 2;
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct IconData {
-    pub width: u32,
-    pub height: u32,
-    pub bgra: Vec<u8>,
-}
+const ICON_VERSION: u32 = 3;
 
 #[derive(Serialize, Deserialize, Default)]
 struct IconCacheData {
-    icons: HashMap<String, IconData>,
-    #[serde(default)]
     base64: HashMap<String, String>,
 }
 
 pub struct IconCache {
     data: IconCacheData,
-    base64_cache: HashMap<String, String>,
+    dirty: bool,
 }
 
 impl IconCache {
-    pub fn load() -> Option<Self> {
-        let path = cache_path()?;
-        let bytes = std::fs::read(&path).ok()?;
-        let data: IconCacheData = deserialize_with_header(&bytes, ICON_MAGIC, ICON_VERSION)?;
-
-        // Use persisted base64 directly — no re-conversion needed
-        let base64_cache = data.base64.clone();
-
-        Some(Self {
-            data,
-            base64_cache,
-        })
+    /// Try to load persisted cache, or return empty cache. Never blocks on icon extraction.
+    pub fn load() -> Self {
+        let loaded = (|| {
+            let path = cache_path()?;
+            let bytes = std::fs::read(&path).ok()?;
+            deserialize_with_header::<IconCacheData>(&bytes, ICON_MAGIC, ICON_VERSION)
+        })();
+        match loaded {
+            Some(data) => Self { data, dirty: false },
+            None => Self {
+                data: IconCacheData::default(),
+                dirty: false,
+            },
+        }
     }
 
-    pub fn build(entries: &[AppEntry]) -> Self {
-        let mut data = IconCacheData {
-            icons: HashMap::new(),
-            base64: HashMap::new(),
-        };
+    /// Get base64 icon for a path, extracting on-demand if not cached.
+    pub fn get_or_extract(&mut self, path: &str) -> Option<String> {
+        if let Some(b64) = self.data.base64.get(path) {
+            return Some(b64.clone());
+        }
+        let icon_data = extract_icon(path)?;
+        let b64 = bgra_to_png_base64(&icon_data)?;
+        self.data.base64.insert(path.to_string(), b64.clone());
+        self.dirty = true;
+        Some(b64)
+    }
 
-        for entry in entries {
-            if let Some(icon_data) = extract_icon(&entry.target_path) {
-                if let Some(b64) = bgra_to_png_base64(&icon_data) {
-                    data.base64.insert(entry.target_path.clone(), b64);
-                }
-                data.icons.insert(entry.target_path.clone(), icon_data);
+    /// Batch version of get_or_extract.
+    pub fn get_or_extract_batch(&mut self, paths: &[String]) -> HashMap<String, String> {
+        let mut result = HashMap::new();
+        for path in paths {
+            if let Some(b64) = self.get_or_extract(path) {
+                result.insert(path.clone(), b64);
             }
         }
-
-        let base64_cache = data.base64.clone();
-        Self {
-            data,
-            base64_cache,
-        }
+        result
     }
 
-    pub fn save(&self) {
+    /// Save to disk if there are new entries since last save.
+    pub fn save_if_dirty(&mut self) {
+        if !self.dirty {
+            return;
+        }
         let Some(path) = cache_path() else {
             return;
         };
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-
         let Some(bytes) = serialize_with_header(ICON_MAGIC, ICON_VERSION, &self.data) else {
             return;
         };
-
         let tmp_path = path.with_extension("bin.tmp");
         if std::fs::write(&tmp_path, &bytes).is_ok() {
             let _ = std::fs::remove_file(&path);
             let _ = std::fs::rename(&tmp_path, &path);
+            self.dirty = false;
         }
     }
 
-    pub fn get_base64(&self, target_path: &str) -> Option<&String> {
-        self.base64_cache.get(target_path)
+    /// Clear all cached icons (used after index rebuild).
+    pub fn clear(&mut self) {
+        self.data.base64.clear();
+        self.dirty = false;
+        // Also remove persisted file so stale data is not reloaded
+        if let Some(path) = cache_path() {
+            let _ = std::fs::remove_file(&path);
+        }
     }
-
-    pub fn get_base64_batch(&self, paths: &[String]) -> HashMap<String, String> {
-        paths
-            .iter()
-            .filter_map(|p| {
-                self.base64_cache
-                    .get(p.as_str())
-                    .map(|b| (p.clone(), b.clone()))
-            })
-            .collect()
-    }
-
 }
+
+/// Managed state for icon cache
+pub type IconCacheState = Mutex<Option<IconCache>>;
 
 fn cache_path() -> Option<PathBuf> {
     Config::config_dir().map(|p| p.join("icons.bin"))
+}
+
+struct IconData {
+    width: u32,
+    height: u32,
+    bgra: Vec<u8>,
 }
 
 fn extract_icon(path: &str) -> Option<IconData> {
@@ -241,16 +240,4 @@ fn bgra_to_png_base64(data: &IconData) -> Option<String> {
 
     // Base64 encode
     Some(base64::engine::general_purpose::STANDARD.encode(&png_buf))
-}
-
-/// Managed state for icon cache
-pub type IconCacheState = Mutex<Option<IconCache>>;
-
-pub fn init_icon_cache(entries: &[AppEntry]) -> IconCacheState {
-    let cache = IconCache::load().unwrap_or_else(|| {
-        let c = IconCache::build(entries);
-        c.save();
-        c
-    });
-    Mutex::new(Some(cache))
 }

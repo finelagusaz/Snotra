@@ -17,6 +17,8 @@ use snotra_core::indexer;
 use snotra_core::search::SearchEngine;
 use tauri::{Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
 
+use crate::icon::{IconCache, IconCacheState};
+
 use crate::platform::{PlatformBridge, PlatformCommand};
 use crate::state::AppState;
 
@@ -24,26 +26,21 @@ fn main() {
     let is_first_run = Config::is_first_run();
     let config = Config::load();
 
-    let (entries, icon_cache_state, initial_indexing) = if is_first_run {
-        // First run: empty engine, skip icon cache, indexing=true
-        (
-            Vec::new(),
-            std::sync::Mutex::new(None),
-            true,
-        )
+    let (entries, initial_indexing) = if is_first_run {
+        (Vec::new(), true)
     } else {
-        // Normal startup: load or scan
         let (entries, _) = indexer::load_or_scan(
             &config.paths.additional,
             &config.paths.scan,
             config.search.show_hidden_system,
         );
-        let icons = if config.appearance.show_icons {
-            icon::init_icon_cache(&entries)
-        } else {
-            std::sync::Mutex::new(None)
-        };
-        (entries, icons, false)
+        (entries, false)
+    };
+
+    let icon_cache_state: IconCacheState = if config.appearance.show_icons {
+        Mutex::new(Some(IconCache::load()))
+    } else {
+        Mutex::new(None)
     };
 
     let history = HistoryStore::load(
@@ -211,11 +208,18 @@ fn main() {
             // Listen for exit request from tray
             let handle_for_exit = app_handle.clone();
             app_handle.listen("exit-requested", move |_| {
-                // Flush any unsaved history before exit
+                // Flush any unsaved data before exit
                 {
                     let app_state = handle_for_exit.state::<AppState>();
                     let mut history = app_state.history.lock().unwrap();
                     history.save_if_dirty(1);
+                }
+                {
+                    let icon_state = handle_for_exit.state::<IconCacheState>();
+                    let mut cache = icon_state.lock().unwrap();
+                    if let Some(c) = cache.as_mut() {
+                        c.save_if_dirty();
+                    }
                 }
                 if let Some(bridge) = handle_for_exit.try_state::<Mutex<PlatformBridge>>() {
                     if let Ok(b) = bridge.lock() {

@@ -4,16 +4,25 @@ import type { Config } from "../lib/types";
 import * as api from "../lib/invoke";
 
 const [draft, setDraft] = createSignal<Config | null>(null);
+const [savedConfig, setSavedConfig] = createSignal<Config | null>(null);
 const [status, setStatus] = createSignal("");
 
 const [activeTab, setActiveTab] = createSignal<
   "general" | "search" | "index" | "visual"
 >("general");
 
+function hasChanges(): boolean {
+  const d = draft();
+  const s = savedConfig();
+  if (!d || !s) return false;
+  return JSON.stringify(d) !== JSON.stringify(s);
+}
+
 async function loadDraft() {
   try {
     const config = await api.getConfig();
     setDraft(structuredClone(config));
+    setSavedConfig(structuredClone(config));
     setStatus("");
   } catch (e) {
     console.error("Failed to load config:", e);
@@ -40,6 +49,7 @@ async function saveDraft() {
   if (!d) return;
   try {
     await api.saveConfig(d);
+    setSavedConfig(structuredClone(d));
     setStatus("保存しました");
   } catch (e) {
     setStatus(`保存に失敗: ${e}`);
@@ -53,6 +63,7 @@ export {
   setStatus,
   activeTab,
   setActiveTab,
+  hasChanges,
   loadDraft,
   updateDraft,
   saveDraft,

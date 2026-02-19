@@ -94,6 +94,8 @@ fn main() {
             commands::notify_result_double_clicked,
             commands::get_indexing_state,
             commands::list_system_fonts,
+            commands::rebuild_index,
+            commands::quit_app,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();

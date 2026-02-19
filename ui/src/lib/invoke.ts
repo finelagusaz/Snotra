@@ -108,3 +108,11 @@ export async function getIndexingState(): Promise<boolean> {
 export async function listSystemFonts(): Promise<string[]> {
   return invoke<string[]>("list_system_fonts");
 }
+
+export async function rebuildIndex(): Promise<boolean> {
+  return invoke<boolean>("rebuild_index");
+}
+
+export async function quitApp(): Promise<void> {
+  return invoke("quit_app");
+}

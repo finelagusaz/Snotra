@@ -18,8 +18,9 @@ import {
   activateSelected,
   refreshResults,
   indexing,
+  isCommandMode,
 } from "../stores/search";
-import * as api from "../lib/invoke";
+import { initCommands, SLASH_COMMANDS } from "../lib/commands";
 
 async function hideAllWindows() {
   getCurrentWindow().hide();
@@ -38,6 +39,7 @@ const SearchWindow: Component = () => {
   }
 
   onMount(() => {
+    initCommands(hideAllWindows);
     refreshResults();
     listen("window-shown", () => {
       requestAnimationFrame(() => {
@@ -77,11 +79,12 @@ const SearchWindow: Component = () => {
         }
         break;
       case "Enter":
-        // /o command opens settings
-        if (!folderState() && query().trim() === "/o") {
-          api.openSettings().catch((err) => console.error("openSettings failed:", err));
-          setQuery("");
-          hideAllWindows();
+        if (isCommandMode()) {
+          const cmd = SLASH_COMMANDS[selected()];
+          if (cmd) {
+            setQuery("");
+            cmd.action();
+          }
         } else {
           activateSelected();
         }

@@ -230,6 +230,23 @@ pub fn get_indexing_state(state: State<AppState>) -> bool {
 }
 
 #[tauri::command]
+pub fn rebuild_index(state: State<AppState>, app: AppHandle) -> bool {
+    if state.indexing.load(Ordering::SeqCst) {
+        return false;
+    }
+    // Reset the guard so start_index_build can proceed
+    state.index_build_started.store(false, Ordering::SeqCst);
+    indexing::start_index_build(&app)
+}
+
+#[tauri::command]
+pub fn quit_app(app: AppHandle) {
+    // Reuse the existing exit-requested listener (main.rs)
+    // which flushes history/icons, notifies platform, and exits
+    let _ = app.emit("exit-requested", ());
+}
+
+#[tauri::command]
 pub fn list_system_fonts() -> Vec<String> {
     #[cfg(windows)]
     {

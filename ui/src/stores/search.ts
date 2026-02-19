@@ -2,6 +2,11 @@ import { createSignal, createEffect, on } from "solid-js";
 import { emit, listen } from "@tauri-apps/api/event";
 import type { SearchResult } from "../lib/types";
 import * as api from "../lib/invoke";
+import {
+  SLASH_COMMANDS,
+  findCommand,
+  isCommandPrefix,
+} from "../lib/commands";
 
 const DEBOUNCE_MS = 120;
 
@@ -57,6 +62,17 @@ async function refreshResults() {
   let items: SearchResult[];
   if (fs) {
     items = await api.listFolder(fs.currentDir, folderFilter());
+  } else if (isCommandPrefix(q)) {
+    items = SLASH_COMMANDS.map((c) => ({
+      name: `${c.label}  ${c.description}`,
+      path: c.command,
+      isFolder: false,
+      isError: false,
+    }));
+    setResults(items);
+    emit("results-updated", { results: items, selected: selected() });
+    emit("results-count-changed", items.length);
+    return;
   } else if (q.trim() === "") {
     items = await api.getHistoryResults();
   } else {
@@ -71,11 +87,24 @@ async function refreshResults() {
 
 // Auto-refresh when query changes (non-folder mode)
 createEffect(
-  on(query, () => {
-    if (!folderState()) {
+  on(query, (q) => {
+    if (folderState()) return;
+
+    const cmd = findCommand(q);
+    if (cmd) {
+      clearTimeout(debounceTimer);
+      debounceTimer = undefined;
+      setQuery("");
+      setResults([]);
       setSelected(0);
-      debouncedRefresh();
+      emit("results-updated", { results: [], selected: 0 });
+      emit("results-count-changed", 0);
+      cmd.action();
+      return;
     }
+
+    setSelected(0);
+    debouncedRefresh();
   }),
 );
 
@@ -189,6 +218,10 @@ async function initIndexingState() {
   });
 }
 
+function isCommandMode(): boolean {
+  return !folderState() && isCommandPrefix(query());
+}
+
 export {
   query,
   setQuery,
@@ -209,4 +242,5 @@ export {
   resetForShow,
   indexing,
   initIndexingState,
+  isCommandMode,
 };

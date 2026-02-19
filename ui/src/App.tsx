@@ -1,4 +1,4 @@
-import { type Component, createSignal, onMount, Switch, Match } from "solid-js";
+import { type Component, onMount, Switch, Match } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen } from "@tauri-apps/api/event";
@@ -15,7 +15,7 @@ const RESULT_ROW_HEIGHT = 30;
 const RESULTS_PADDING = 8;
 
 const App: Component = () => {
-  const [windowLabel, setWindowLabel] = createSignal(getCurrentWindow().label);
+  const windowLabel = getCurrentWindow().label;
 
   onMount(async () => {
     const win = getCurrentWindow();
@@ -212,14 +212,14 @@ const App: Component = () => {
   });
 
   return (
-    <Switch fallback={<div style="padding: 16px">Unknown window: {windowLabel()}</div>}>
-      <Match when={windowLabel() === "settings"}>
+    <Switch fallback={<div style="padding: 16px">Unknown window: {windowLabel}</div>}>
+      <Match when={windowLabel === "settings"}>
         <SettingsWindow />
       </Match>
-      <Match when={windowLabel() === "results"}>
+      <Match when={windowLabel === "results"}>
         <ResultsWindow />
       </Match>
-      <Match when={windowLabel() === "main"}>
+      <Match when={windowLabel === "main"}>
         <SearchWindow />
       </Match>
     </Switch>

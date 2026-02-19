@@ -224,7 +224,6 @@ fn save_cache(entries: &[AppEntry], config_hash: u64) {
 
 /// Force rebuild: scan and save cache, regardless of existing cache.
 /// Called from settings dialog (Phase 5).
-#[allow(dead_code)]
 pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> Vec<AppEntry> {
     let entries = scan_all(scan, show_hidden_system);
     let config_hash = compute_config_hash(scan, show_hidden_system);

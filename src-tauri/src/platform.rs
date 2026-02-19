@@ -14,9 +14,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DestroyMenu, DispatchMessageW, GetCursorPos,
     GetMessageW, LoadIconW, PeekMessageW, PostMessageW, PostQuitMessage, PostThreadMessageW,
     RegisterClassExW, SetForegroundWindow, TrackPopupMenuEx, TranslateMessage, IDC_ARROW,
-    IDI_APPLICATION, MF_SEPARATOR, MF_STRING, MSG, PM_NOREMOVE, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
-    TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
-    WM_COMMAND, WM_CONTEXTMENU, WM_HOTKEY, WM_LBUTTONDBLCLK, WM_NULL, WM_RBUTTONUP,
+    IDI_APPLICATION, MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, PM_NOREMOVE, TPM_BOTTOMALIGN,
+    TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE,
+    WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_HOTKEY, WM_LBUTTONDBLCLK, WM_NULL, WM_RBUTTONUP,
     WNDCLASSEXW,
 };
 
@@ -48,6 +48,7 @@ pub enum PlatformCommand {
         reply: Sender<bool>,
     },
     SetTrayVisible(bool),
+    SetIndexing(bool),
     TurnOffImeForForeground,
     Exit,
 }
@@ -170,6 +171,8 @@ fn platform_thread_loop(
             None
         };
 
+        let mut indexing_in_progress = false;
+
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
             match msg.message {
@@ -177,13 +180,13 @@ fn platform_thread_loop(
                     let _ = app_handle.emit("hotkey-pressed", ());
                 }
                 WM_TRAY_ICON => {
-                    handle_tray_message(&mut tray, hwnd, msg.lParam, &app_handle);
+                    handle_tray_message(&mut tray, hwnd, msg.lParam, &app_handle, indexing_in_progress);
                 }
                 WM_COMMAND => {
                     handle_menu_command(msg.wParam, &app_handle);
                 }
                 WM_PLATFORM_WAKE => {
-                    process_commands(&command_rx, &mut current_hotkey, &mut tray, hwnd);
+                    process_commands(&command_rx, &mut current_hotkey, &mut tray, hwnd, &mut indexing_in_progress);
                 }
                 _ => {
                     let _ = TranslateMessage(&msg);
@@ -201,6 +204,7 @@ fn process_commands(
     current_hotkey: &mut HotkeyConfig,
     tray: &mut Option<TrayIcon>,
     hwnd: HWND,
+    indexing_in_progress: &mut bool,
 ) {
     while let Ok(command) = command_rx.try_recv() {
         match command {
@@ -223,6 +227,9 @@ fn process_commands(
                 } else {
                     *tray = None;
                 }
+            }
+            PlatformCommand::SetIndexing(indexing) => {
+                *indexing_in_progress = indexing;
             }
             PlatformCommand::TurnOffImeForForeground => unsafe {
                 let fg = windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow();
@@ -255,12 +262,13 @@ fn handle_tray_message(
     hwnd: HWND,
     lparam: LPARAM,
     app_handle: &AppHandle,
+    indexing: bool,
 ) {
     let event = (lparam.0 & 0xFFFF) as u32;
     match event {
         x if x == WM_CONTEXTMENU => {
             if let Some(tray) = tray.as_ref() {
-                tray.show_context_menu(hwnd);
+                tray.show_context_menu(hwnd, indexing);
             }
         }
         x if x == WM_LBUTTONDBLCLK => {
@@ -268,7 +276,7 @@ fn handle_tray_message(
         }
         x if x == WM_RBUTTONUP => {
             if let Some(tray) = tray.as_ref() {
-                tray.show_context_menu(hwnd);
+                tray.show_context_menu(hwnd, indexing);
             }
         }
         _ => {}
@@ -303,29 +311,65 @@ impl TrayIcon {
         Self { nid }
     }
 
-    fn show_context_menu(&self, hwnd: HWND) {
+    fn show_context_menu(&self, hwnd: HWND, indexing: bool) {
         unsafe {
             let Ok(hmenu) = CreatePopupMenu() else {
                 return;
             };
 
-            let settings_text: Vec<u16> = "設定(&S)"
-                .encode_utf16()
-                .chain(std::iter::once(0))
-                .collect();
-            let exit_text: Vec<u16> = "終了(&X)"
-                .encode_utf16()
-                .chain(std::iter::once(0))
-                .collect();
+            if indexing {
+                let indexing_text: Vec<u16> = "インデックス再構築中"
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
+                let settings_text: Vec<u16> = "設定(&S)"
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
+                let exit_text: Vec<u16> = "終了(&X)"
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
 
-            let _ = AppendMenuW(
-                hmenu,
-                MF_STRING,
-                ID_MENU_SETTINGS,
-                PCWSTR(settings_text.as_ptr()),
-            );
-            let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
-            let _ = AppendMenuW(hmenu, MF_STRING, ID_MENU_EXIT, PCWSTR(exit_text.as_ptr()));
+                let _ = AppendMenuW(
+                    hmenu,
+                    MF_GRAYED,
+                    0,
+                    PCWSTR(indexing_text.as_ptr()),
+                );
+                let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
+                let _ = AppendMenuW(
+                    hmenu,
+                    MF_GRAYED,
+                    ID_MENU_SETTINGS,
+                    PCWSTR(settings_text.as_ptr()),
+                );
+                let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
+                let _ = AppendMenuW(
+                    hmenu,
+                    MF_GRAYED,
+                    ID_MENU_EXIT,
+                    PCWSTR(exit_text.as_ptr()),
+                );
+            } else {
+                let settings_text: Vec<u16> = "設定(&S)"
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
+                let exit_text: Vec<u16> = "終了(&X)"
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
+
+                let _ = AppendMenuW(
+                    hmenu,
+                    MF_STRING,
+                    ID_MENU_SETTINGS,
+                    PCWSTR(settings_text.as_ptr()),
+                );
+                let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
+                let _ = AppendMenuW(hmenu, MF_STRING, ID_MENU_EXIT, PCWSTR(exit_text.as_ptr()));
+            }
 
             let mut pt = Default::default();
             let _ = GetCursorPos(&mut pt);

@@ -5,7 +5,7 @@ use fuzzy_matcher::FuzzyMatcher;
 
 use crate::history::HistoryStore;
 use crate::indexer::AppEntry;
-use crate::query::{normalize_query, split_query_extension};
+use crate::query::normalize_query;
 use crate::ui_types::SearchResult;
 
 const GLOBAL_WEIGHT: i64 = 5;
@@ -54,21 +54,28 @@ impl SearchEngine {
             return Vec::new();
         }
 
-        let (query_stem, query_ext) = split_query_extension(&norm_query);
+        let has_dot = norm_query.contains('.');
 
         let mut scored: Vec<(i64, u64, &AppEntry)> = self
             .entries
             .iter()
             .filter_map(|entry| {
-                // 拡張子フィルタ: クエリに拡張子があれば target_path の拡張子と一致を要求
-                if let Some(ext) = query_ext {
-                    let target_lower = entry.target_path.to_lowercase();
-                    if !target_lower.ends_with(ext) {
-                        return None;
+                let name_score = match_score_single(mode, &self.matcher, &entry.name, &norm_query);
+                let score = if has_dot {
+                    // ドットあり → entry.name とファイル名（拡張子込み）の両方で照合し、高い方を採用
+                    let fn_score = std::path::Path::new(&entry.target_path)
+                        .file_name()
+                        .and_then(|f| f.to_str())
+                        .and_then(|f| match_score_single(mode, &self.matcher, f, &norm_query));
+                    match (name_score, fn_score) {
+                        (Some(a), Some(b)) => Some(a.max(b)),
+                        (a, b) => a.or(b),
                     }
-                }
-                // stem 部分で照合
-                match_score_single(mode, &self.matcher, &entry.name, query_stem).map(|base_score| {
+                } else {
+                    // ドットなし → entry.name と照合（現行動作）
+                    name_score
+                };
+                score.map(|base_score| {
                     let global = history.global_count(&entry.target_path) as i64;
                     let qcount = history.query_count(&norm_query, &entry.target_path) as i64;
                     let folder_boost = if entry.is_folder {
@@ -301,7 +308,7 @@ mod tests {
 
     #[test]
     fn search_with_extension_filters_by_ext() {
-        // "ssp.exe" は .lnk の SSP にはヒットしない
+        // "ssp.exe" は .lnk の SSP にはヒットしない（ファイル名 "SSP.lnk" と "ssp.exe" は不一致）
         let entries = vec![AppEntry {
             name: "SSP".to_string(),
             target_path: "C:\\fake\\SSP.lnk".to_string(),
@@ -310,6 +317,104 @@ mod tests {
         let engine = SearchEngine::new(entries);
         let results = engine.search("ssp.exe", 8, &empty_history(), SearchMode::Prefix);
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn search_partial_ext_dot_only() {
+        // "SSP." → target_path のファイル名 "SSP.exe" に fuzzy 一致
+        let entries = vec![AppEntry {
+            name: "SSP".to_string(),
+            target_path: "C:\\fake\\SSP.exe".to_string(),
+            is_folder: false,
+        }];
+        let engine = SearchEngine::new(entries);
+        let results = engine.search("SSP.", 8, &empty_history(), SearchMode::Fuzzy);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "SSP");
+    }
+
+    #[test]
+    fn search_partial_ext_dot_e() {
+        // "SSP.e" → target_path のファイル名 "SSP.exe" に fuzzy 一致
+        let entries = vec![AppEntry {
+            name: "SSP".to_string(),
+            target_path: "C:\\fake\\SSP.exe".to_string(),
+            is_folder: false,
+        }];
+        let engine = SearchEngine::new(entries);
+        let results = engine.search("SSP.e", 8, &empty_history(), SearchMode::Fuzzy);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "SSP");
+    }
+
+    #[test]
+    fn search_partial_ext_dot_ex() {
+        // "SSP.ex" → target_path のファイル名 "SSP.exe" に fuzzy 一致
+        let entries = vec![AppEntry {
+            name: "SSP".to_string(),
+            target_path: "C:\\fake\\SSP.exe".to_string(),
+            is_folder: false,
+        }];
+        let engine = SearchEngine::new(entries);
+        let results = engine.search("SSP.ex", 8, &empty_history(), SearchMode::Fuzzy);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "SSP");
+    }
+
+    #[test]
+    fn search_name_with_dot_matches() {
+        // name にドットを含むエントリが、ドット入りクエリでヒットする
+        let entries = vec![AppEntry {
+            name: "Dr.Web".to_string(),
+            target_path: "C:\\fake\\drweb32w.exe".to_string(),
+            is_folder: false,
+        }];
+        let engine = SearchEngine::new(entries);
+        let results = engine.search("Dr.Web", 8, &empty_history(), SearchMode::Fuzzy);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Dr.Web");
+    }
+
+    #[test]
+    fn search_name_with_dot_prefers_name() {
+        // name にドットを含むエントリが、部分一致クエリでもヒットする
+        let entries = vec![AppEntry {
+            name: "Dr.Web".to_string(),
+            target_path: "C:\\fake\\drweb32w.exe".to_string(),
+            is_folder: false,
+        }];
+        let engine = SearchEngine::new(entries);
+        let results = engine.search("dr.w", 8, &empty_history(), SearchMode::Fuzzy);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Dr.Web");
+    }
+
+    #[test]
+    fn search_double_ext_file() {
+        // 二重拡張子のファイルに対して部分一致でヒットする
+        let entries = vec![AppEntry {
+            name: "hoge".to_string(),
+            target_path: "C:\\fake\\hoge.exe.bak".to_string(),
+            is_folder: false,
+        }];
+        let engine = SearchEngine::new(entries);
+        let results = engine.search("hoge.exe", 8, &empty_history(), SearchMode::Fuzzy);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "hoge");
+    }
+
+    #[test]
+    fn search_double_ext_full() {
+        // 二重拡張子のファイルに対して完全一致でヒットする
+        let entries = vec![AppEntry {
+            name: "hoge".to_string(),
+            target_path: "C:\\fake\\hoge.exe.bak".to_string(),
+            is_folder: false,
+        }];
+        let engine = SearchEngine::new(entries);
+        let results = engine.search("hoge.exe.bak", 8, &empty_history(), SearchMode::Fuzzy);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "hoge");
     }
 
     #[test]

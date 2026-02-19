@@ -1,5 +1,6 @@
-import { type Component, Show } from "solid-js";
+import { type Component, Show, createSignal, createMemo, onMount, onCleanup } from "solid-js";
 import type { SearchResult } from "../lib/types";
+import { truncatePath } from "../lib/truncatePath";
 
 interface ResultRowProps {
   result: SearchResult;
@@ -11,6 +12,44 @@ interface ResultRowProps {
 }
 
 const ResultRow: Component<ResultRowProps> = (props) => {
+  let textRef: HTMLDivElement | undefined;
+  const [containerWidth, setContainerWidth] = createSignal(0);
+  const [font, setFont] = createSignal("15px 'Segoe UI'");
+
+  const updateFont = () => {
+    if (textRef) {
+      const style = getComputedStyle(textRef);
+      setFont(`${style.fontSize} ${style.fontFamily}`);
+    }
+  };
+
+  onMount(() => {
+    if (!textRef) return;
+
+    updateFont();
+
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerWidth(entry.contentRect.width);
+      }
+      updateFont();
+    });
+    ro.observe(textRef);
+    onCleanup(() => ro.disconnect());
+  });
+
+  const fullPath = createMemo(() => {
+    const p = props.result.path;
+    return props.result.isFolder && !p.endsWith("\\") ? p + "\\" : p;
+  });
+
+  const displayPath = createMemo(() => {
+    const w = containerWidth();
+    const f = font();
+    if (w === 0) return fullPath();
+    return truncatePath(fullPath(), w, f);
+  });
+
   return (
     <div
       class="result-row"
@@ -36,12 +75,8 @@ const ResultRow: Component<ResultRowProps> = (props) => {
           />
         </Show>
       </div>
-      <div class="result-text">
-        <div class="result-name">
-          {props.result.isFolder && <span class="folder-badge">[DIR]</span>}
-          {props.result.name}
-        </div>
-        <div class="result-path">{props.result.path}</div>
+      <div class="result-text" ref={textRef}>
+        <div class="result-path-single">{displayPath()}</div>
       </div>
     </div>
   );

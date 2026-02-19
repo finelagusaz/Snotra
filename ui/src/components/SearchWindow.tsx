@@ -1,4 +1,4 @@
-import { type Component, onMount } from "solid-js";
+import { type Component, onMount, Show } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
@@ -16,6 +16,7 @@ import {
   enterFolderExpansion,
   activateSelected,
   refreshResults,
+  indexing,
 } from "../stores/search";
 import * as api from "../lib/invoke";
 
@@ -102,15 +103,20 @@ const SearchWindow: Component = () => {
 
   return (
     <div class="search-bar" onKeyDown={handleKeyDown}>
-      <input
-        ref={inputRef}
-        type="text"
-        class="search-input"
-        placeholder={placeholderText()}
-        value={inputValue()}
-        onInput={handleInput}
-        autofocus
-      />
+      <Show
+        when={!indexing()}
+        fallback={<div class="indexing-message">インデックス構築中...</div>}
+      >
+        <input
+          ref={inputRef}
+          type="text"
+          class="search-input"
+          placeholder={placeholderText()}
+          value={inputValue()}
+          onInput={handleInput}
+          autofocus
+        />
+      </Show>
     </div>
   );
 };

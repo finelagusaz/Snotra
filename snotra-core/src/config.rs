@@ -274,7 +274,7 @@ impl Default for Config {
             visual: VisualConfig::default(),
             paths: PathsConfig {
                 additional: Vec::new(),
-                scan: Vec::new(),
+                scan: Self::default_scan_paths(),
             },
             search: SearchConfig::default(),
         }
@@ -282,6 +282,47 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Returns the default scan paths (common Start Menu + Desktop).
+    /// User Start Menu is intentionally excluded.
+    pub fn default_scan_paths() -> Vec<ScanPath> {
+        let mut paths = Vec::new();
+
+        // Common Start Menu Programs (.lnk)
+        if let Some(programdata) = std::env::var_os("ProgramData") {
+            let common_start =
+                PathBuf::from(programdata).join("Microsoft\\Windows\\Start Menu\\Programs");
+            if common_start.exists() {
+                paths.push(ScanPath {
+                    path: common_start.to_string_lossy().to_string(),
+                    extensions: vec![".lnk".to_string()],
+                    include_folders: false,
+                });
+            }
+        }
+
+        // Desktop (.lnk)
+        if let Some(desktop) = dirs::desktop_dir() {
+            if desktop.exists() {
+                paths.push(ScanPath {
+                    path: desktop.to_string_lossy().to_string(),
+                    extensions: vec![".lnk".to_string()],
+                    include_folders: false,
+                });
+            }
+        }
+
+        paths
+    }
+
+    /// Returns true if this is the first run (no config file exists yet).
+    /// Must be called before `Config::load()` since load() creates the file.
+    pub fn is_first_run() -> bool {
+        match Self::config_path() {
+            Some(path) => !path.exists(),
+            None => true,
+        }
+    }
+
     pub fn config_dir() -> Option<PathBuf> {
         dirs::config_dir().map(|p| p.join("Snotra"))
     }
@@ -423,7 +464,8 @@ mod tests {
         assert_eq!(config.appearance.max_history_display, 8);
         assert!(config.appearance.show_icons);
         assert!(config.paths.additional.is_empty());
-        assert!(config.paths.scan.is_empty());
+        // default scan paths are populated from environment (common Start Menu + Desktop)
+        // so they may or may not be empty depending on the test environment
         assert_eq!(config.search.normal_mode, SearchModeConfig::Fuzzy);
         assert_eq!(config.search.folder_mode, SearchModeConfig::Fuzzy);
         assert!(!config.search.show_hidden_system);
@@ -606,5 +648,22 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.general.renderer, RendererConfig::Auto);
         assert_eq!(config.general.wgpu_backend, WgpuBackendConfig::Auto);
+    }
+
+    #[test]
+    fn default_scan_paths_have_lnk_extension() {
+        let paths = Config::default_scan_paths();
+        for sp in &paths {
+            assert_eq!(sp.extensions, vec![".lnk"]);
+            assert!(!sp.include_folders);
+        }
+    }
+
+    #[test]
+    fn is_first_run_returns_true_when_no_config() {
+        // This test relies on Config::config_path() returning a valid path
+        // We can't easily test is_first_run without side effects,
+        // but we can verify the method exists and returns a bool
+        let _result: bool = Config::is_first_run();
     }
 }

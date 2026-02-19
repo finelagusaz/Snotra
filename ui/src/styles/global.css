@@ -58,10 +58,10 @@ html, body, #root {
 }
 
 .result-row {
-  padding: 6px 12px;
+  padding: 4px 12px;
   border-radius: 4px;
   cursor: pointer;
-  min-height: 42px;
+  min-height: 30px;
   display: flex;
   flex-direction: row;
   align-items: center;
@@ -100,7 +100,7 @@ html, body, #root {
   background: var(--selected-row-color, #505050);
 }
 
-.result-name {
+.result-path-single {
   font-size: inherit;
   line-height: 1.3;
   white-space: nowrap;
@@ -108,17 +108,12 @@ html, body, #root {
   text-overflow: ellipsis;
 }
 
-.folder-badge {
+.indexing-message {
+  width: 100%;
+  padding: 8px 12px;
+  height: 36px;
+  display: flex;
+  align-items: center;
   color: var(--hint-text-color, #808080);
-  margin-right: 4px;
-  font-size: 0.85em;
-}
-
-.result-path {
-  font-size: 0.8em;
-  color: var(--hint-text-color, #808080);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  line-height: 1.3;
+  font-size: inherit;
 }

@@ -4,9 +4,11 @@ import * as api from "../lib/invoke";
 
 const [draft, setDraft] = createSignal<Config | null>(null);
 const [status, setStatus] = createSignal("");
+const isFirstRun = new URLSearchParams(window.location.search).has("first_run");
+
 const [activeTab, setActiveTab] = createSignal<
   "general" | "search" | "index" | "visual"
->("general");
+>(isFirstRun ? "index" : "general");
 
 async function loadDraft() {
   try {

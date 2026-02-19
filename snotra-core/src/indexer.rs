@@ -28,22 +28,6 @@ pub fn scan_all(
     let mut entries = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
-    // Scan standard Start Menu locations (.lnk only)
-    if let Some(appdata) = std::env::var_os("APPDATA") {
-        let user_start = PathBuf::from(appdata).join("Microsoft\\Windows\\Start Menu\\Programs");
-        scan_directory_lnk(&user_start, show_hidden_system, &mut entries, &mut seen);
-    }
-    if let Some(programdata) = std::env::var_os("ProgramData") {
-        let common_start =
-            PathBuf::from(programdata).join("Microsoft\\Windows\\Start Menu\\Programs");
-        scan_directory_lnk(&common_start, show_hidden_system, &mut entries, &mut seen);
-    }
-
-    // Scan Desktop (.lnk only)
-    if let Some(desktop) = dirs::desktop_dir() {
-        scan_directory_lnk(&desktop, show_hidden_system, &mut entries, &mut seen);
-    }
-
     // Scan legacy additional paths (.lnk only)
     for path in additional_paths {
         scan_directory_lnk(Path::new(path), show_hidden_system, &mut entries, &mut seen);
@@ -635,5 +619,11 @@ mod tests {
         assert!(!icon_path.exists());
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_all_empty_when_no_paths() {
+        let entries = scan_all(&[], &[], false);
+        assert!(entries.is_empty(), "scan_all with no paths should return empty");
     }
 }

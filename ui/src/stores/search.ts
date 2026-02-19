@@ -1,5 +1,5 @@
 import { createSignal, createEffect, on } from "solid-js";
-import { emit } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import type { SearchResult } from "../lib/types";
 import * as api from "../lib/invoke";
 
@@ -7,6 +7,7 @@ const [query, setQuery] = createSignal("");
 const [results, setResults] = createSignal<SearchResult[]>([]);
 const [selected, setSelected] = createSignal(0);
 const [iconCache, setIconCache] = createSignal<Map<string, string>>(new Map());
+const [indexing, setIndexing] = createSignal(false);
 
 // Folder expansion state
 const [folderState, setFolderState] = createSignal<{
@@ -34,6 +35,13 @@ async function fetchIcons(items: SearchResult[]) {
 }
 
 async function refreshResults() {
+  if (indexing()) {
+    setResults([]);
+    emit("results-updated", { results: [], selected: 0 });
+    emit("results-count-changed", 0);
+    return;
+  }
+
   const q = query();
   const fs = folderState();
 
@@ -153,6 +161,16 @@ function resetForShow() {
   refreshResults();
 }
 
+async function initIndexingState() {
+  const state = await api.getIndexingState();
+  setIndexing(state);
+
+  listen("indexing-complete", () => {
+    setIndexing(false);
+    refreshResults();
+  });
+}
+
 export {
   query,
   setQuery,
@@ -171,4 +189,6 @@ export {
   activateSelected,
   refreshResults,
   resetForShow,
+  indexing,
+  initIndexingState,
 };

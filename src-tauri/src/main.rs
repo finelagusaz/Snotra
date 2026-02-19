@@ -4,9 +4,11 @@ mod commands;
 mod hotkey;
 mod icon;
 mod ime;
+mod indexing;
 mod platform;
 mod state;
 
+use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 
 use snotra_core::config::Config;
@@ -19,24 +21,35 @@ use crate::platform::{PlatformBridge, PlatformCommand};
 use crate::state::AppState;
 
 fn main() {
+    let is_first_run = Config::is_first_run();
     let config = Config::load();
 
-    let (entries, _) = indexer::load_or_scan(
-        &config.paths.additional,
-        &config.paths.scan,
-        config.search.show_hidden_system,
-    );
+    let (entries, icon_cache_state, initial_indexing) = if is_first_run {
+        // First run: empty engine, skip icon cache, indexing=true
+        (
+            Vec::new(),
+            std::sync::Mutex::new(None),
+            true,
+        )
+    } else {
+        // Normal startup: load or scan
+        let (entries, _) = indexer::load_or_scan(
+            &config.paths.additional,
+            &config.paths.scan,
+            config.search.show_hidden_system,
+        );
+        let icons = if config.appearance.show_icons {
+            icon::init_icon_cache(&entries)
+        } else {
+            std::sync::Mutex::new(None)
+        };
+        (entries, icons, false)
+    };
 
     let history = HistoryStore::load(
         config.appearance.top_n_history,
         config.appearance.max_history_display,
     );
-
-    let icon_cache_state = if config.appearance.show_icons {
-        icon::init_icon_cache(&entries)
-    } else {
-        std::sync::Mutex::new(None)
-    };
 
     let engine = SearchEngine::new(entries);
     let show_on_startup = config.general.show_on_startup;
@@ -49,6 +62,8 @@ fn main() {
         engine: Mutex::new(engine),
         history: Mutex::new(history),
         config: Mutex::new(config),
+        indexing: AtomicBool::new(initial_indexing),
+        index_build_started: AtomicBool::new(false),
     };
 
     tauri::Builder::default()
@@ -80,6 +95,7 @@ fn main() {
             commands::set_window_no_activate,
             commands::notify_result_clicked,
             commands::notify_result_double_clicked,
+            commands::get_indexing_state,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
@@ -107,6 +123,26 @@ fn main() {
                 .resizable(false)
                 .focused(false)
                 .build()?;
+
+            // First-run: open settings window with first_run flag
+            if is_first_run {
+                let settings_url = WebviewUrl::App("index.html?first_run=1".into());
+                let settings_window = WebviewWindowBuilder::new(&app_handle, "settings", settings_url)
+                    .title("Snotra 設定")
+                    .inner_size(760.0, 560.0)
+                    .min_inner_size(520.0, 360.0)
+                    .resizable(true)
+                    .visible(true)
+                    .build()?;
+
+                // When settings window is closed (without saving), start build with defaults
+                let handle_for_destroy = app_handle.clone();
+                settings_window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::Destroyed = event {
+                        indexing::start_index_build(&handle_for_destroy);
+                    }
+                });
+            }
 
             // Listen for hotkey toggle events
             let handle_for_hotkey = app_handle.clone();
@@ -145,7 +181,10 @@ fn main() {
             // Listen for open-settings event from tray
             let handle_for_settings = app_handle.clone();
             app_handle.listen("open-settings", move |_| {
-                let _ = commands::open_settings(handle_for_settings.clone());
+                let _ = commands::open_settings(
+                    handle_for_settings.state::<AppState>(),
+                    handle_for_settings.clone(),
+                );
             });
 
             // Listen for exit request from tray

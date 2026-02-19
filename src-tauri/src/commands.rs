@@ -1,12 +1,15 @@
+use std::path::Path;
+use std::sync::atomic::Ordering;
+
 use snotra_core::config::Config;
 use snotra_core::folder;
 use snotra_core::search::SearchMode;
 use snotra_core::ui_types::SearchResult;
 use snotra_core::window_data::{self, WindowPlacement, WindowSize};
-use std::path::Path;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 use crate::icon::IconCacheState;
+use crate::indexing;
 use crate::platform::{PlatformBridge, PlatformCommand};
 use crate::state::AppState;
 
@@ -106,8 +109,19 @@ pub fn save_config(
         }
     }
 
-    let mut current = state.config.lock().unwrap();
-    *current = config;
+    {
+        let mut current = state.config.lock().unwrap();
+        *current = config;
+    }
+
+    // If indexing flag is set (first run), start the build and close settings
+    if state.indexing.load(Ordering::SeqCst) {
+        indexing::start_index_build(&app);
+        if let Some(w) = app.get_webview_window("settings") {
+            let _ = w.close();
+        }
+    }
+
     Ok(())
 }
 
@@ -117,7 +131,12 @@ pub fn get_config(state: State<AppState>) -> Config {
 }
 
 #[tauri::command]
-pub fn open_settings(app: AppHandle) -> Result<(), String> {
+pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), String> {
+    // Block opening settings during indexing
+    if state.indexing.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+
     // If settings window already exists, just focus it
     if let Some(w) = app.get_webview_window("settings") {
         eprintln!("[open_settings] settings window already exists, focusing");
@@ -217,4 +236,9 @@ pub fn notify_result_clicked(index: usize, app: AppHandle) -> Result<(), String>
 pub fn notify_result_double_clicked(index: usize, app: AppHandle) -> Result<(), String> {
     app.emit("result-double-clicked", index)
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_indexing_state(state: State<AppState>) -> bool {
+    state.indexing.load(Ordering::SeqCst)
 }

@@ -25,6 +25,8 @@ pub fn list_folder(
         }];
     };
 
+    let matcher = SkimMatcherV2::default();
+
     let mut entries: Vec<SearchResult> = read_dir
         .flatten()
         .filter_map(|entry| {
@@ -34,7 +36,7 @@ pub fn list_folder(
             }
             let name = entry.file_name().to_string_lossy().to_string();
 
-            if !filter.is_empty() && !matches_filter(&name, filter, mode) {
+            if !filter.is_empty() && !matches_filter(&name, filter, mode, &matcher) {
                 return None;
             }
 
@@ -48,38 +50,57 @@ pub fn list_folder(
         })
         .collect();
 
-    entries.sort_by(|a, b| {
-        // Folders before files
-        b.is_folder
-            .cmp(&a.is_folder)
-            .then_with(|| {
-                // Higher expansion count first (for folders)
-                let b_count = if b.is_folder {
-                    history.folder_expansion_count(&b.path)
-                } else {
-                    0
-                };
-                let a_count = if a.is_folder {
-                    history.folder_expansion_count(&a.path)
-                } else {
-                    0
-                };
-                b_count.cmp(&a_count)
-            })
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    // Schwartzian transform: pre-compute sort keys to avoid repeated to_lowercase()
+    let mut keyed: Vec<(String, u32, usize)> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let lower = e.name.to_lowercase();
+            let exp_count = if e.is_folder {
+                history.folder_expansion_count(&e.path)
+            } else {
+                0
+            };
+            (lower, exp_count, i)
+        })
+        .collect();
+
+    keyed.sort_by(|a, b| {
+        let a_entry = &entries[a.2];
+        let b_entry = &entries[b.2];
+        b_entry
+            .is_folder
+            .cmp(&a_entry.is_folder)
+            .then_with(|| b.1.cmp(&a.1))
+            .then_with(|| a.0.cmp(&b.0))
     });
 
-    entries.truncate(max_results);
-    entries
+    keyed.truncate(max_results);
+
+    keyed
+        .into_iter()
+        .map(|(_, _, i)| {
+            // Take ownership by swapping with a dummy to avoid clone
+            std::mem::replace(
+                &mut entries[i],
+                SearchResult {
+                    name: String::new(),
+                    path: String::new(),
+                    is_folder: false,
+                    is_error: false,
+                },
+            )
+        })
+        .collect()
 }
 
-fn matches_filter(name: &str, filter: &str, mode: SearchMode) -> bool {
+fn matches_filter(name: &str, filter: &str, mode: SearchMode, matcher: &SkimMatcherV2) -> bool {
     let name_lower = name.to_lowercase();
     let filter_lower = filter.to_lowercase();
     match mode {
         SearchMode::Prefix => name_lower.starts_with(&filter_lower),
         SearchMode::Substring => name_lower.contains(&filter_lower),
-        SearchMode::Fuzzy => SkimMatcherV2::default()
+        SearchMode::Fuzzy => matcher
             .fuzzy_match(&name_lower, &filter_lower)
             .is_some(),
     }

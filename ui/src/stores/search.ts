@@ -3,11 +3,20 @@ import { emit, listen } from "@tauri-apps/api/event";
 import type { SearchResult } from "../lib/types";
 import * as api from "../lib/invoke";
 
+const DEBOUNCE_MS = 120;
+
 const [query, setQuery] = createSignal("");
 const [results, setResults] = createSignal<SearchResult[]>([]);
 const [selected, setSelected] = createSignal(0);
 const [iconCache, setIconCache] = createSignal<Map<string, string>>(new Map());
 const [indexing, setIndexing] = createSignal(false);
+
+let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+function debouncedRefresh() {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => refreshResults(), DEBOUNCE_MS);
+}
 
 // Folder expansion state
 const [folderState, setFolderState] = createSignal<{
@@ -65,7 +74,7 @@ createEffect(
   on(query, () => {
     if (!folderState()) {
       setSelected(0);
-      refreshResults();
+      debouncedRefresh();
     }
   }),
 );
@@ -75,7 +84,7 @@ createEffect(
   on(folderFilter, () => {
     if (folderState()) {
       setSelected(0);
-      refreshResults();
+      debouncedRefresh();
     }
   }),
 );

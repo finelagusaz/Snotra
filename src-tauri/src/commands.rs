@@ -35,6 +35,7 @@ pub fn launch_item(path: String, query: String, state: State<AppState>) {
     {
         let mut history = state.history.lock().unwrap();
         history.record_launch(&path, &query);
+        history.save_if_dirty(5);
     }
     #[cfg(windows)]
     {

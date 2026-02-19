@@ -211,6 +211,11 @@ fn main() {
             // Listen for exit request from tray
             let handle_for_exit = app_handle.clone();
             app_handle.listen("exit-requested", move |_| {
+                // Flush any unsaved history before exit
+                {
+                    let mut history = handle_for_exit.state::<AppState>().history.lock().unwrap();
+                    history.save_if_dirty(1);
+                }
                 if let Some(bridge) = handle_for_exit.try_state::<Mutex<PlatformBridge>>() {
                     if let Ok(b) = bridge.lock() {
                         b.send_command(PlatformCommand::Exit);

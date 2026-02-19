@@ -17,7 +17,7 @@ use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, I
 
 const ICON_SIZE: i32 = 16;
 const ICON_MAGIC: [u8; 4] = *b"ICON";
-const ICON_VERSION: u32 = 1;
+const ICON_VERSION: u32 = 2;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct IconData {
@@ -29,6 +29,8 @@ pub struct IconData {
 #[derive(Serialize, Deserialize, Default)]
 struct IconCacheData {
     icons: HashMap<String, IconData>,
+    #[serde(default)]
+    base64: HashMap<String, String>,
 }
 
 pub struct IconCache {
@@ -42,31 +44,35 @@ impl IconCache {
         let bytes = std::fs::read(&path).ok()?;
         let data: IconCacheData = deserialize_with_header(&bytes, ICON_MAGIC, ICON_VERSION)?;
 
-        let mut cache = Self {
+        // Use persisted base64 directly — no re-conversion needed
+        let base64_cache = data.base64.clone();
+
+        Some(Self {
             data,
-            base64_cache: HashMap::new(),
-        };
-        cache.build_base64_cache();
-        Some(cache)
+            base64_cache,
+        })
     }
 
     pub fn build(entries: &[AppEntry]) -> Self {
         let mut data = IconCacheData {
             icons: HashMap::new(),
+            base64: HashMap::new(),
         };
 
         for entry in entries {
             if let Some(icon_data) = extract_icon(&entry.target_path) {
+                if let Some(b64) = bgra_to_png_base64(&icon_data) {
+                    data.base64.insert(entry.target_path.clone(), b64);
+                }
                 data.icons.insert(entry.target_path.clone(), icon_data);
             }
         }
 
-        let mut cache = Self {
+        let base64_cache = data.base64.clone();
+        Self {
             data,
-            base64_cache: HashMap::new(),
-        };
-        cache.build_base64_cache();
-        cache
+            base64_cache,
+        }
     }
 
     pub fn save(&self) {
@@ -103,13 +109,6 @@ impl IconCache {
             .collect()
     }
 
-    fn build_base64_cache(&mut self) {
-        for (path, data) in &self.data.icons {
-            if let Some(b64) = bgra_to_png_base64(data) {
-                self.base64_cache.insert(path.clone(), b64);
-            }
-        }
-    }
 }
 
 fn cache_path() -> Option<PathBuf> {

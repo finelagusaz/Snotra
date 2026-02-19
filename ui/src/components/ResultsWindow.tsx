@@ -1,4 +1,4 @@
-import { type Component, For, createSignal, onMount } from "solid-js";
+import { type Component, For, createSignal, onMount, onCleanup } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
 import type { SearchResult } from "../lib/types";
 import * as api from "../lib/invoke";
@@ -10,6 +10,9 @@ const ResultsWindow: Component = () => {
   const [iconCache, setIconCache] = createSignal<Map<string, string>>(
     new Map(),
   );
+  const [containerWidth, setContainerWidth] = createSignal(0);
+  let listRef: HTMLDivElement | undefined;
+  let hoverTimer: ReturnType<typeof setTimeout> | undefined;
 
   async function fetchIcons(items: SearchResult[]) {
     const cache = iconCache();
@@ -26,9 +29,25 @@ const ResultsWindow: Component = () => {
     setIconCache(next);
   }
 
+  function debouncedHover(index: number) {
+    clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(() => api.notifyResultClicked(index), 50);
+  }
+
   onMount(async () => {
     // Set WS_EX_NOACTIVATE so this window never steals focus
     await api.setWindowNoActivate();
+
+    // Single ResizeObserver for the list container
+    if (listRef) {
+      const ro = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          setContainerWidth(entry.contentRect.width);
+        }
+      });
+      ro.observe(listRef);
+      onCleanup(() => ro.disconnect());
+    }
 
     listen<{ results: SearchResult[]; selected: number }>(
       "results-updated",
@@ -42,16 +61,17 @@ const ResultsWindow: Component = () => {
 
   return (
     <div class="results-window">
-      <div class="result-list-standalone">
+      <div class="result-list-standalone" ref={listRef}>
         <For each={results()}>
           {(result, idx) => (
             <ResultRow
               result={result}
               isSelected={idx() === selected()}
               icon={iconCache().get(result.path)}
+              containerWidth={containerWidth()}
               onClick={() => api.notifyResultClicked(idx())}
               onDoubleClick={() => api.notifyResultDoubleClicked(idx())}
-              onMouseEnter={() => api.notifyResultClicked(idx())}
+              onMouseEnter={() => debouncedHover(idx())}
             />
           )}
         </For>

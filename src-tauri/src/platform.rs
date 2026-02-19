@@ -32,7 +32,7 @@ unsafe extern "system" fn platform_default_wnd_proc(
     msg: u32,
     wparam: WPARAM,
     lparam: LPARAM,
-) -> LRESULT {
+) -> LRESULT { unsafe {
     // Shell may deliver WM_TRAY_ICON via SendMessage (bypassing GetMessageW queue).
     // Re-post it as a thread message so the message loop can handle it.
     if msg == WM_TRAY_ICON {
@@ -40,7 +40,7 @@ unsafe extern "system" fn platform_default_wnd_proc(
         return LRESULT(0);
     }
     windows::Win32::UI::WindowsAndMessaging::DefWindowProcW(hwnd, msg, wparam, lparam)
-}
+}}
 
 pub enum PlatformCommand {
     SetHotkey {

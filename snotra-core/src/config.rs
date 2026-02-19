@@ -263,15 +263,14 @@ impl Config {
         }
 
         // Desktop (.lnk)
-        if let Some(desktop) = dirs::desktop_dir() {
-            if desktop.exists() {
+        if let Some(desktop) = dirs::desktop_dir()
+            && desktop.exists() {
                 paths.push(ScanPath {
                     path: desktop.to_string_lossy().to_string(),
                     extensions: vec![".lnk".to_string()],
                     include_folders: false,
                 });
             }
-        }
 
         paths
     }

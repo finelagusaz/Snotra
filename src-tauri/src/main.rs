@@ -183,15 +183,12 @@ fn main() {
                         let _ = w.set_focus();
 
                         // Turn off IME if configured
-                        if ime_control {
-                            if let Some(bridge) = handle_for_hotkey
+                        if ime_control
+                            && let Some(bridge) = handle_for_hotkey
                                 .try_state::<Mutex<PlatformBridge>>()
-                            {
-                                if let Ok(b) = bridge.lock() {
+                                && let Ok(b) = bridge.lock() {
                                     b.send_command(PlatformCommand::TurnOffImeForForeground);
                                 }
-                            }
-                        }
 
                         // Notify frontend to reset search state
                         let _ = handle_for_hotkey.emit("window-shown", ());
@@ -224,21 +221,19 @@ fn main() {
                         c.save_if_dirty();
                     }
                 }
-                if let Some(bridge) = handle_for_exit.try_state::<Mutex<PlatformBridge>>() {
-                    if let Ok(b) = bridge.lock() {
+                if let Some(bridge) = handle_for_exit.try_state::<Mutex<PlatformBridge>>()
+                    && let Ok(b) = bridge.lock() {
                         b.send_command(PlatformCommand::Exit);
                     }
-                }
                 handle_for_exit.exit(0);
             });
 
             // Show window on startup if configured
-            if show_on_startup {
-                if let Some(w) = app_handle.get_webview_window("main") {
+            if show_on_startup
+                && let Some(w) = app_handle.get_webview_window("main") {
                     let _ = w.show();
                     let _ = w.set_focus();
                 }
-            }
 
             Ok(())
         })

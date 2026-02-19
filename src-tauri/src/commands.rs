@@ -107,8 +107,8 @@ pub fn save_config(
     let new_width = config.appearance.window_width;
 
     // Notify platform bridge of hotkey/tray changes
-    if let Some(bridge) = app.try_state::<std::sync::Mutex<PlatformBridge>>() {
-        if let Ok(b) = bridge.lock() {
+    if let Some(bridge) = app.try_state::<std::sync::Mutex<PlatformBridge>>()
+        && let Ok(b) = bridge.lock() {
             if config.hotkey != old_config.hotkey {
                 let (tx, rx) = std::sync::mpsc::channel();
                 b.send_command(PlatformCommand::SetHotkey {
@@ -126,7 +126,6 @@ pub fn save_config(
                 ));
             }
         }
-    }
 
     {
         let mut current = state.config.lock().unwrap();
@@ -157,17 +156,15 @@ pub fn save_config(
     // Resize main and results windows if window_width changed
     if width_changed && new_width > 0 {
         for label in &["main", "results"] {
-            if let Some(w) = app.get_webview_window(label) {
-                if let Ok(size) = w.inner_size() {
-                    if let Ok(sf) = w.scale_factor() {
+            if let Some(w) = app.get_webview_window(label)
+                && let Ok(size) = w.inner_size()
+                    && let Ok(sf) = w.scale_factor() {
                         let logical = size.to_logical::<f64>(sf);
                         let _ = w.set_size(LogicalSize::new(
                             f64::from(new_width),
                             logical.height,
                         ));
                     }
-                }
-            }
         }
     }
 
@@ -307,7 +304,7 @@ pub fn list_system_fonts() -> Vec<String> {
             _text_metric: *const TEXTMETRICW,
             _font_type: u32,
             lparam: LPARAM,
-        ) -> i32 {
+        ) -> i32 { unsafe {
             let fonts = &mut *(lparam.0 as *mut BTreeSet<String>);
             let lf = &*logfont;
             let name_len = lf.lfFaceName.iter().position(|&c| c == 0).unwrap_or(32);
@@ -317,7 +314,7 @@ pub fn list_system_fonts() -> Vec<String> {
                 fonts.insert(name);
             }
             1 // 列挙を続行
-        }
+        }}
 
         let mut fonts = BTreeSet::<String>::new();
         let hdc = unsafe { GetDC(None) };

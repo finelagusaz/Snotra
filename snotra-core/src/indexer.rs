@@ -89,8 +89,8 @@ fn scan_directory_with_extensions(
                 .extension()
                 .and_then(|e| e.to_str())
                 .map(|e| format!(".{}", e.to_lowercase()));
-            if let Some(ext) = ext {
-                if extensions.contains(&ext) {
+            if let Some(ext) = ext
+                && extensions.contains(&ext) {
                     let name = path
                         .file_stem()
                         .and_then(|s| s.to_str())
@@ -105,7 +105,6 @@ fn scan_directory_with_extensions(
                         });
                     }
                 }
-            }
         }
     }
 }

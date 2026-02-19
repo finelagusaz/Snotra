@@ -24,11 +24,10 @@ pub fn start_index_build(app: &AppHandle) -> bool {
     state.indexing.store(true, Ordering::SeqCst);
 
     // Notify platform thread
-    if let Some(bridge) = app.try_state::<Mutex<PlatformBridge>>() {
-        if let Ok(b) = bridge.lock() {
+    if let Some(bridge) = app.try_state::<Mutex<PlatformBridge>>()
+        && let Ok(b) = bridge.lock() {
             b.send_command(PlatformCommand::SetIndexing(true));
         }
-    }
 
     let app_handle = app.clone();
     std::thread::Builder::new()
@@ -75,11 +74,10 @@ pub fn start_index_build(app: &AppHandle) -> bool {
             }
 
             // Notify platform thread
-            if let Some(bridge) = app_handle.try_state::<Mutex<PlatformBridge>>() {
-                if let Ok(b) = bridge.lock() {
+            if let Some(bridge) = app_handle.try_state::<Mutex<PlatformBridge>>()
+                && let Ok(b) = bridge.lock() {
                     b.send_command(PlatformCommand::SetIndexing(false));
                 }
-            }
 
             // Notify frontend
             let _ = app_handle.emit("indexing-complete", ());

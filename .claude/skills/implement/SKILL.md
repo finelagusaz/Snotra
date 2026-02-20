@@ -41,10 +41,14 @@ Task: $ARGUMENTS
 
 Run these checks in order. If any step fails, fix and re-run from the failing step:
 
-1. `cargo check -p snotra-core -p snotra`
-2. `cargo clippy -p snotra-core -p snotra -- -D warnings`
-3. `cargo test -p snotra-core`
-4. `npx vite build` (only if TypeScript/frontend files were changed)
+1. Rust verification (chained — stops on first failure):
+   ```bash
+   cargo check -p snotra-core -p snotra && cargo clippy -p snotra-core -p snotra -- -D warnings && cargo test -p snotra-core
+   ```
+2. Frontend verification (only if TypeScript/frontend files were changed):
+   ```bash
+   npx vite build
+   ```
 
 If after 5 cycles errors persist, stop and write a diagnostic summary:
 - What was tried

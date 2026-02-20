@@ -15,6 +15,7 @@ use snotra_core::config::Config;
 use snotra_core::history::HistoryStore;
 use snotra_core::indexer;
 use snotra_core::search::SearchEngine;
+use snotra_core::window_data;
 use tauri::{Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::icon::{IconCache, IconCacheState};
@@ -53,6 +54,7 @@ fn main() {
     let ime_off = config.general.ime_off_on_show;
     let hotkey_toggle = config.general.hotkey_toggle;
     let hotkey_config = config.hotkey.clone();
+    let window_width = config.appearance.window_width;
 
     let app_state = AppState {
         engine: Mutex::new(engine),
@@ -99,6 +101,25 @@ fn main() {
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
+
+            // Restore search window position/size before event loop starts
+            // to avoid racing with hotkey-show (root cause of first-show input delay).
+            if let Some(w) = app.get_webview_window("main") {
+                if let Some(placement) = window_data::load_search_placement() {
+                    let _ = w.set_position(tauri::Position::Logical(
+                        tauri::LogicalPosition::new(placement.x as f64, placement.y as f64),
+                    ));
+                }
+                if window_width > 0 {
+                    if let Ok(current) = w.inner_size() {
+                        let sf = w.scale_factor().unwrap_or(1.0);
+                        let logical_h = current.height as f64 / sf;
+                        let _ = w.set_size(tauri::Size::Logical(
+                            tauri::LogicalSize::new(f64::from(window_width), logical_h),
+                        ));
+                    }
+                }
+            }
 
             // Start platform thread (hotkey, tray, IME)
             let platform = PlatformBridge::start(

@@ -44,34 +44,6 @@ const App: Component = () => {
     }
 
     if (label === "main" && config) {
-      // Restore search window position
-      const placement = await api.getSearchPlacement();
-      if (placement) {
-        await win.setPosition({
-          type: "Logical",
-          x: placement.x,
-          y: placement.y,
-        });
-      }
-
-      // Apply window width from config
-      const [currentSize, scaleFactor] = await Promise.all([
-        win.innerSize(),
-        win.scaleFactor(),
-      ]);
-      const logicalSize = currentSize.toLogical(scaleFactor);
-      const windowWidth = config.appearance.window_width > 0
-        ? config.appearance.window_width
-        : logicalSize.width;
-
-      if (config.appearance.window_width > 0) {
-        await win.setSize({
-          type: "Logical",
-          width: windowWidth,
-          height: logicalSize.height,
-        });
-      }
-
       // Auto-hide on focus lost (with grace period for drag operations)
       if (config.general.auto_hide_on_focus_lost) {
         let blurTimer: ReturnType<typeof setTimeout> | undefined;

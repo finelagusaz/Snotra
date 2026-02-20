@@ -33,12 +33,15 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build Tauri app
-        run: npx tauri build
+      - name: Build frontend
+        run: npm run build
+
+      - name: Build Windows executable (release)
+        run: cargo build --release -p snotra
 
       - name: Package as ZIP
         run: |
-          Compress-Archive -Path "src-tauri/target/release/snotra.exe" -DestinationPath "Snotra-${{ github.ref_name }}.zip"
+          Compress-Archive -Path "target/release/snotra.exe" -DestinationPath "Snotra-${{ github.ref_name }}.zip"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

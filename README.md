@@ -44,8 +44,11 @@
 
 ```bash
 npm install
+npm run typecheck
 npm run tauri dev
 ```
+
+CI では `npm run build` 実行時に `prebuild` 経由で型チェックが必ず実行されます。
 
 ### リリースビルド
 

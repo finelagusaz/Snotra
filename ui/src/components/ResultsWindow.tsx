@@ -34,10 +34,7 @@ const ResultsWindow: Component = () => {
     hoverTimer = setTimeout(() => api.notifyResultClicked(index), 50);
   }
 
-  onMount(async () => {
-    // Set WS_EX_NOACTIVATE so this window never steals focus
-    await api.setWindowNoActivate();
-
+  onMount(() => {
     // Single ResizeObserver for the list container
     if (listRef) {
       const ro = new ResizeObserver((entries) => {

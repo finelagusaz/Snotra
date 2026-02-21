@@ -32,19 +32,34 @@ async function hideAllWindows() {
 const SearchWindow: Component = () => {
   let inputRef: HTMLInputElement | undefined;
 
+  function focusInputSoon() {
+    // Two-frame defer avoids first-show races with native show/focus timing.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        inputRef?.focus();
+      });
+    });
+  }
+
   function setInputRef(el: HTMLInputElement) {
     inputRef = el;
-    el.focus();
+    focusInputSoon();
   }
 
   onMount(() => {
     initCommands(hideAllWindows);
     refreshResults();
     listen("window-shown", () => {
-      requestAnimationFrame(() => {
-        inputRef?.focus();
-      });
+      focusInputSoon();
     });
+
+    // Fallback for startup timing: if first window-shown was emitted
+    // before this listener mounted, focus once when already visible.
+    void (async () => {
+      if (await getCurrentWindow().isVisible()) {
+        focusInputSoon();
+      }
+    })();
   });
 
   function handleKeyDown(e: KeyboardEvent) {

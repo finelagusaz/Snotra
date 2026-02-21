@@ -2,6 +2,7 @@ import { type Component, onMount, Switch, Match } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen } from "@tauri-apps/api/event";
+import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
 import SearchWindow from "./components/SearchWindow";
 import ResultsWindow from "./components/ResultsWindow";
 import SettingsWindow from "./components/SettingsWindow";
@@ -63,28 +64,34 @@ const App: Component = () => {
 
       // Sync results window position when main moves
       let moveTimer: ReturnType<typeof setTimeout> | undefined;
+      let latestMoveEvent = 0;
       win.onMoved(({ payload: pos }) => {
+        const moveEvent = ++latestMoveEvent;
         // Save position (debounced)
         clearTimeout(moveTimer);
         moveTimer = setTimeout(() => {
-          api.saveSearchPlacement(pos.x, pos.y);
+          void (async () => {
+            const sf = await win.scaleFactor();
+            const logicalPos = pos.toLogical(sf);
+            if (moveEvent !== latestMoveEvent) return;
+            await api.saveSearchPlacement(Math.round(logicalPos.x), Math.round(logicalPos.y));
+          })();
         }, 500);
 
         // Immediately sync results window position
-        WebviewWindow.getByLabel("results").then((rw) => {
-          if (rw) {
-            win.innerSize().then((size) => {
-              win.scaleFactor().then((sf) => {
-                const logicalH = size.toLogical(sf).height;
-                rw.setPosition({
-                  type: "Logical",
-                  x: pos.x,
-                  y: pos.y + logicalH + RESULTS_GAP,
-                });
-              });
-            });
-          }
-        });
+        void (async () => {
+          const sf = await win.scaleFactor();
+          const logicalPos = pos.toLogical(sf);
+          const rw = await WebviewWindow.getByLabel("results");
+          if (!rw || moveEvent !== latestMoveEvent) return;
+
+          const size = await win.innerSize();
+          if (moveEvent !== latestMoveEvent) return;
+          const logicalH = size.toLogical(sf).height;
+          await rw.setPosition(
+            new LogicalPosition(logicalPos.x, logicalPos.y + logicalH + RESULTS_GAP),
+          );
+        })();
       });
 
       // Listen for results-count-changed to show/hide/resize results window
@@ -105,22 +112,17 @@ const App: Component = () => {
 
         // Resize results window based on count
         const resultsHeight = Math.min(count * RESULT_ROW_HEIGHT + RESULTS_PADDING * 2, 400);
-        await rw.setSize({
-          type: "Logical",
-          width: currentWidth,
-          height: resultsHeight,
-        });
+        await rw.setSize(new LogicalSize(currentWidth, resultsHeight));
 
         // Position results below main
         const mainPos = await win.outerPosition();
         const mainSize = await win.innerSize();
         const sf = await win.scaleFactor();
+        const logicalMainPos = mainPos.toLogical(sf);
         const logicalH = mainSize.toLogical(sf).height;
-        await rw.setPosition({
-          type: "Logical",
-          x: mainPos.x,
-          y: mainPos.y + logicalH + RESULTS_GAP,
-        });
+        await rw.setPosition(
+          new LogicalPosition(logicalMainPos.x, logicalMainPos.y + logicalH + RESULTS_GAP),
+        );
 
         // Show if main is visible
         const mainVisible = await win.isVisible();
@@ -146,18 +148,10 @@ const App: Component = () => {
       try {
         const [placement, size] = await api.getSettingsPlacement();
         if (size) {
-          await win.setSize({
-            type: "Logical",
-            width: size.width,
-            height: size.height,
-          });
+          await win.setSize(new LogicalSize(size.width, size.height));
         }
         if (placement) {
-          await win.setPosition({
-            type: "Logical",
-            x: placement.x,
-            y: placement.y,
-          });
+          await win.setPosition(new LogicalPosition(placement.x, placement.y));
         }
       } catch (e) {
         console.error("Settings placement restore error:", e);
@@ -168,7 +162,11 @@ const App: Component = () => {
       win.onMoved(({ payload: pos }) => {
         clearTimeout(moveTimer);
         moveTimer = setTimeout(() => {
-          api.saveSettingsPlacement(pos.x, pos.y);
+          void (async () => {
+            const sf = await win.scaleFactor();
+            const logicalPos = pos.toLogical(sf);
+            await api.saveSettingsPlacement(Math.round(logicalPos.x), Math.round(logicalPos.y));
+          })();
         }, 500);
       });
 
@@ -177,7 +175,11 @@ const App: Component = () => {
       win.onResized(({ payload: sz }) => {
         clearTimeout(resizeTimer);
         resizeTimer = setTimeout(() => {
-          api.saveSettingsSize(sz.width, sz.height);
+          void (async () => {
+            const sf = await win.scaleFactor();
+            const logicalSize = sz.toLogical(sf);
+            await api.saveSettingsSize(Math.round(logicalSize.width), Math.round(logicalSize.height));
+          })();
         }, 500);
       });
     }

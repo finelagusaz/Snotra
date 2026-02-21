@@ -144,6 +144,8 @@ fn main() {
                 .resizable(false)
                 .focused(false)
                 .build()?;
+            // Apply no-activate at creation time so first show cannot steal focus.
+            let _ = commands::set_window_no_activate(app_handle.clone());
 
             // Create settings window (hidden by default).
             // WebView2 initialization requires a nested message pump, which

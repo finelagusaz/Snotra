@@ -249,6 +249,57 @@
 - `visible: false` で WebView を作成し、条件付きで `window.show()` を呼ぶ
 - `show_on_startup = false` の場合は非表示常駐でホットキー待ち
 
+### 7.5 状態遷移図
+
+```mermaid
+stateDiagram-v2
+  state "LauncherStopped\n(未起動/終了後)" as LauncherStopped
+  state "Standby\n(起動済み・検索非表示)" as Standby
+  state "SearchVisible\n(検索ウィンドウ表示)" as SearchVisible
+  state "SettingsVisible\n(設定ウィンドウ表示)" as SettingsVisible
+  [*] --> LauncherStopped
+  LauncherStopped --> Standby: app_start
+  LauncherStopped --> SettingsVisible: app_start [is_first_run]
+  Standby --> SearchVisible: hotkey-pressed
+  Standby --> SearchVisible: app_start [show_on_startup]
+  Standby --> SettingsVisible: open-settings [!indexing]
+  Standby --> LauncherStopped: /q / exit-requested
+  SettingsVisible --> Standby: CloseRequested
+  SettingsVisible --> LauncherStopped: /q / exit-requested
+  SearchVisible --> Standby: Escape [!folderState]
+  SearchVisible --> Standby: hotkey-pressed [hotkey_toggle && main_visible]
+  SearchVisible --> Standby: focus_lost [auto_hide_on_focus_lost]
+  SearchVisible --> SettingsVisible: /o [!indexing]
+  SearchVisible --> LauncherStopped: /q / exit-requested
+
+  state SearchVisible {
+    state "NormalMode\n(通常モード)" as NormalMode
+    state "FolderExpansionMode\n(フォルダ展開モード)" as FolderExpansionMode
+    state "IndexingMode\n(インデックス中)" as IndexingMode
+    [*] --> NormalMode
+    NormalMode --> FolderExpansionMode: ArrowRight [selected.isFolder]
+    NormalMode --> FolderExpansionMode: ArrowLeft [!folderState && parent exists]
+    FolderExpansionMode --> FolderExpansionMode: ArrowRight [selected.isFolder]
+    FolderExpansionMode --> FolderExpansionMode: ArrowLeft [parent exists]
+    FolderExpansionMode --> NormalMode: Escape / exitFolderExpansion()
+    NormalMode --> IndexingMode: indexing_start
+    IndexingMode --> NormalMode: indexing-complete
+  }
+```
+
+遷移ルール要約（主要ガード条件）:
+
+- `SearchVisible -> SettingsVisible` は `/o` かつ `!indexing` のときのみ有効
+- `Standby -> SettingsVisible` はトレイ由来 `open-settings` かつ `!indexing` のときのみ有効
+- `Standby -> SearchVisible` は `hotkey-pressed` に加えて、起動直後 `app_start [show_on_startup]` でも成立
+- `SearchVisible -> Standby` の `Escape` は `!folderState` の場合のみ成立（`folderState` 中は `FolderExpansionMode -> NormalMode` を優先）
+- `SearchVisible -> Standby` の `hotkey-pressed` は `hotkey_toggle && main_visible` が前提
+- `SearchVisible -> Standby` の `focus_lost` は `auto_hide_on_focus_lost` 有効時のみ成立
+- `SettingsVisible -> Standby` は `CloseRequested` で常に待機へ戻す
+- `/q` または `exit-requested` は `Standby` / `SearchVisible` / `SettingsVisible` のいずれからでも `LauncherStopped` へ遷移
+- `/o` 実行時に `indexing == true` の場合、`open_settings` は no-op で `SettingsVisible` へは遷移しない
+- 初回起動（`is_first_run`）では補助経路として `LauncherStopped -> SettingsVisible` が発生し得る（主経路は `LauncherStopped -> Standby`）
+
 ## 8. 実行履歴メニュー
 
 - 空クエリ時に最近の実行履歴を候補表示

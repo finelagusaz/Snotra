@@ -76,6 +76,8 @@ Snotra/
   .github/workflows/    # CI/CD（リリースパイプライン）
 ```
 
+- 詳細仕様と状態遷移図: [SPEC.md](SPEC.md)
+
 ## 技術スタック
 
 <p>

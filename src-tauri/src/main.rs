@@ -8,20 +8,82 @@ mod indexing;
 mod platform;
 mod state;
 
-use std::sync::atomic::AtomicBool;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use snotra_core::config::Config;
 use snotra_core::history::HistoryStore;
 use snotra_core::indexer;
 use snotra_core::search::SearchEngine;
 use snotra_core::window_data;
-use tauri::{Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::icon::{IconCache, IconCacheState};
 
 use crate::platform::{PlatformBridge, PlatformCommand};
 use crate::state::AppState;
+
+const ALT_RELEASE_POLL_MS: u64 = 10;
+const ALT_RELEASE_TIMEOUT_MS: u64 = 350;
+
+#[cfg(windows)]
+fn is_alt_pressed() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, VK_LMENU, VK_MENU, VK_RMENU,
+    };
+    unsafe {
+        GetAsyncKeyState(VK_MENU.0 as i32) < 0
+            || GetAsyncKeyState(VK_LMENU.0 as i32) < 0
+            || GetAsyncKeyState(VK_RMENU.0 as i32) < 0
+    }
+}
+
+#[cfg(not(windows))]
+fn is_alt_pressed() -> bool {
+    false
+}
+
+fn wait_alt_release_or_timeout() {
+    use std::time::{Duration, Instant};
+
+    if !is_alt_pressed() {
+        return;
+    }
+
+    let started = Instant::now();
+    let timeout = Duration::from_millis(ALT_RELEASE_TIMEOUT_MS);
+    let poll = Duration::from_millis(ALT_RELEASE_POLL_MS);
+
+    while started.elapsed() < timeout {
+        if !is_alt_pressed() {
+            return;
+        }
+        std::thread::sleep(poll);
+    }
+}
+
+fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
+    if let Some(main) = app_handle.get_webview_window("main") {
+        if !main.is_visible().unwrap_or(false) {
+            let _ = main.show();
+        }
+
+        if main.is_visible().unwrap_or(false) {
+            let _ = main.set_focus();
+
+            // Turn off IME if configured
+            if ime_control
+                && let Some(bridge) = app_handle
+                    .try_state::<Mutex<PlatformBridge>>()
+                && let Ok(b) = bridge.lock() {
+                    b.send_command(PlatformCommand::TurnOffImeForForeground);
+                }
+
+            // Notify frontend to reset search state
+            let _ = app_handle.emit("window-shown", ());
+        }
+    }
+}
 
 fn main() {
     let is_first_run = Config::is_first_run();
@@ -192,7 +254,11 @@ fn main() {
             let handle_for_hotkey = app_handle.clone();
             let toggle = hotkey_toggle;
             let ime_control = ime_off;
+            let hotkey_generation = Arc::new(AtomicU64::new(0));
+            let hotkey_generation_for_listener = hotkey_generation.clone();
             app_handle.listen("hotkey-pressed", move |_| {
+                let current_gen =
+                    hotkey_generation_for_listener.fetch_add(1, Ordering::SeqCst) + 1;
                 if let Some(w) = handle_for_hotkey.get_webview_window("main") {
                     let visible = w.is_visible().unwrap_or(false);
                     if visible && toggle {
@@ -202,19 +268,19 @@ fn main() {
                             let _ = rw.hide();
                         }
                     } else {
-                        let _ = w.show();
-                        let _ = w.set_focus();
-
-                        // Turn off IME if configured
-                        if ime_control
-                            && let Some(bridge) = handle_for_hotkey
-                                .try_state::<Mutex<PlatformBridge>>()
-                                && let Ok(b) = bridge.lock() {
-                                    b.send_command(PlatformCommand::TurnOffImeForForeground);
+                        if is_alt_pressed() {
+                            let handle_for_show = handle_for_hotkey.clone();
+                            let hotkey_generation_for_wait = hotkey_generation_for_listener.clone();
+                            std::thread::spawn(move || {
+                                wait_alt_release_or_timeout();
+                                if hotkey_generation_for_wait.load(Ordering::SeqCst) != current_gen {
+                                    return;
                                 }
-
-                        // Notify frontend to reset search state
-                        let _ = handle_for_hotkey.emit("window-shown", ());
+                                show_main_and_emit(&handle_for_show, ime_control);
+                            });
+                        } else {
+                            show_main_and_emit(&handle_for_hotkey, ime_control);
+                        }
                     }
                 }
             });

@@ -132,18 +132,23 @@ pub fn save_config(
         *current = config;
     }
 
-    // If indexing flag is set (first run), start the build and close settings
-    let is_first_run = state.indexing.load(Ordering::SeqCst);
-    if is_first_run {
+    // First-run path: initial indexing is pending (indexing=true) but build not started yet.
+    // Do not treat regular reindex-in-progress as first run.
+    let is_first_run_pending = state.indexing.load(Ordering::SeqCst)
+        && !state.index_build_started.load(Ordering::SeqCst);
+    if is_first_run_pending {
         indexing::start_index_build(&app);
         if let Some(w) = app.get_webview_window("settings") {
             let _ = w.close();
         }
     }
 
-    // Trigger reindex if index-related settings changed (and not during first-run indexing)
+    // Trigger reindex if index-related settings changed.
+    // Never restart while a build is already running, otherwise multiple
+    // index threads can race and last-writer wins.
     let mut reindex_started = false;
-    if index_changed && !is_first_run {
+    let indexing_in_progress = state.indexing.load(Ordering::SeqCst);
+    if index_changed && !is_first_run_pending && !indexing_in_progress {
         state.index_build_started.store(false, Ordering::SeqCst);
         reindex_started = indexing::start_index_build(&app);
     }

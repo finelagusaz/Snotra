@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Config } from "../lib/types";
 import * as api from "../lib/invoke";
 
@@ -36,12 +37,6 @@ listen("settings-shown", () => {
   loadDraft();
 });
 
-listen("indexing-complete", () => {
-  if (status() === "保存しました（インデックスを再構築中…）") {
-    setStatus("保存しました（インデックスの再構築が完了しました）");
-  }
-});
-
 function updateDraft(updater: (c: Config) => void) {
   const d = draft();
   if (!d) return;
@@ -54,13 +49,14 @@ async function saveDraft() {
   const d = draft();
   if (!d) return;
   try {
-    const result = await api.saveConfig(d);
+    await api.saveConfig(d);
     setSavedConfig(structuredClone(d));
-    setStatus(
-      result.reindex_started
-        ? "保存しました（インデックスを再構築中…）"
-        : "保存しました",
-    );
+    setStatus("保存しました");
+    try {
+      await getCurrentWindow().close();
+    } catch (e) {
+      console.error("Failed to close settings window:", e);
+    }
   } catch (e) {
     setStatus(`保存に失敗: ${e}`);
   }

@@ -1,4 +1,4 @@
-import { type Component, onMount, Show } from "solid-js";
+import { type Component, onCleanup, onMount, Show } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen } from "@tauri-apps/api/event";
@@ -31,6 +31,7 @@ async function hideAllWindows() {
 
 const SearchWindow: Component = () => {
   let inputRef: HTMLInputElement | undefined;
+  const focusRetryTimers: ReturnType<typeof setTimeout>[] = [];
 
   function focusInputSoon() {
     // Two-frame defer avoids first-show races with native show/focus timing.
@@ -41,6 +42,20 @@ const SearchWindow: Component = () => {
     });
   }
 
+  function clearFocusRetryTimers() {
+    for (const timer of focusRetryTimers) {
+      clearTimeout(timer);
+    }
+    focusRetryTimers.length = 0;
+  }
+
+  function focusInputWithRetries() {
+    clearFocusRetryTimers();
+    focusInputSoon();
+    focusRetryTimers.push(setTimeout(() => focusInputSoon(), 120));
+    focusRetryTimers.push(setTimeout(() => focusInputSoon(), 280));
+  }
+
   function setInputRef(el: HTMLInputElement) {
     inputRef = el;
     focusInputSoon();
@@ -49,20 +64,47 @@ const SearchWindow: Component = () => {
   onMount(() => {
     initCommands(hideAllWindows);
     refreshResults();
-    listen("window-shown", () => {
-      focusInputSoon();
+    let unlistenWindowShown: (() => void) | undefined;
+    let unlistenFocusChanged: (() => void) | undefined;
+    void listen("window-shown", () => {
+      focusInputWithRetries();
+    }).then((unlisten) => {
+      unlistenWindowShown = unlisten;
     });
+    void getCurrentWindow()
+      .onFocusChanged(({ payload: focused }) => {
+        if (focused) {
+          focusInputWithRetries();
+        } else {
+          clearFocusRetryTimers();
+        }
+      })
+      .then((unlisten) => {
+        unlistenFocusChanged = unlisten;
+      });
 
     // Fallback for startup timing: if first window-shown was emitted
     // before this listener mounted, focus once when already visible.
     void (async () => {
       if (await getCurrentWindow().isVisible()) {
-        focusInputSoon();
+        focusInputWithRetries();
       }
     })();
+
+    onCleanup(() => {
+      clearFocusRetryTimers();
+      unlistenWindowShown?.();
+      unlistenFocusChanged?.();
+    });
   });
 
   function handleKeyDown(e: KeyboardEvent) {
+    // Prevent system beep when Alt-modified character keys slip in during focus transitions.
+    if (e.altKey && !e.ctrlKey && e.key.length === 1) {
+      e.preventDefault();
+      return;
+    }
+
     switch (e.key) {
       case "Escape":
         if (!exitFolderExpansion()) {

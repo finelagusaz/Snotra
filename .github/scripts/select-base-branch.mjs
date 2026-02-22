@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 
 function parseVersion(name) {
@@ -27,8 +27,9 @@ function compareDesc(a, b) {
   return b.patch - a.patch;
 }
 
-const refsRaw = execSync(
-  "git for-each-ref --format=%(refname:short) refs/remotes/origin",
+const refsRaw = execFileSync(
+  "git",
+  ["for-each-ref", "--format=%(refname:short)", "refs/remotes/origin"],
   { encoding: "utf8" },
 );
 

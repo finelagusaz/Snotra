@@ -61,13 +61,21 @@ if [[ ! -f "$PROMPT_FILE" ]]; then
 fi
 
 # Normalize API key env vars for Codex CLI.
-if [[ -z "${OPENAI_API_KEY:-}" && -n "${CODEX_API_KEY:-}" ]]; then
-  export OPENAI_API_KEY="$CODEX_API_KEY"
+KEY_SOURCE="OPENAI_API_KEY"
+RAW_KEY="${OPENAI_API_KEY:-}"
+if [[ -z "$RAW_KEY" && -n "${CODEX_API_KEY:-}" ]]; then
+  KEY_SOURCE="CODEX_API_KEY"
+  RAW_KEY="${CODEX_API_KEY:-}"
 fi
-if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+
+# Trim surrounding whitespace and CR to avoid accidental empty/invalid values.
+NORMALIZED_KEY="$(printf '%s' "$RAW_KEY" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+if [[ -z "$NORMALIZED_KEY" ]]; then
   echo "OPENAI_API_KEY is not set (CODEX_API_KEY fallback also unavailable)." >&2
   exit 2
 fi
+export OPENAI_API_KEY="$NORMALIZED_KEY"
+echo "Using API key source: ${KEY_SOURCE} (length=${#OPENAI_API_KEY})"
 
 if command -v codex >/dev/null 2>&1; then
   CODEX_CMD=(codex)
@@ -78,6 +86,7 @@ else
   echo "Neither 'codex' nor 'npx' command is available in PATH." >&2
   exit 127
 fi
+echo "Using Codex launcher: ${CODEX_CMD[*]}"
 
 COMMON_ARGS=(
   exec

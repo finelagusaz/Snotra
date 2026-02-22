@@ -180,7 +180,8 @@ pub fn load_or_scan(scan: &[ScanPath], show_hidden_system: bool) -> (Vec<AppEntr
     let current_hash = compute_config_hash(scan, show_hidden_system);
 
     if let Some(cache) = load_cache(current_hash) {
-        let cached_entries = cache.entries;
+        let mut cached_entries = cache.entries;
+        sort_entries_canonical(&mut cached_entries);
         let return_entries = cached_entries.clone();
         spawn_background_rescan(
             scan.to_vec(),
@@ -191,7 +192,8 @@ pub fn load_or_scan(scan: &[ScanPath], show_hidden_system: bool) -> (Vec<AppEntr
         return (return_entries, false);
     }
 
-    let entries = scan_all(scan, show_hidden_system);
+    let mut entries = scan_all(scan, show_hidden_system);
+    sort_entries_canonical(&mut entries);
     save_cache(&entries, current_hash);
     (entries, true)
 }
@@ -205,7 +207,7 @@ fn entries_equal(a: &[AppEntry], b: &[AppEntry]) -> bool {
     })
 }
 
-fn sort_entries_for_comparison(entries: &mut [AppEntry]) {
+fn sort_entries_canonical(entries: &mut [AppEntry]) {
     entries.sort_by(|a, b| {
         a.target_path
             .cmp(&b.target_path)
@@ -222,7 +224,7 @@ fn save_cache(entries: &[AppEntry], config_hash: u64) {
         let _ = std::fs::create_dir_all(dir);
     }
     let mut sorted_entries = entries.to_vec();
-    sort_entries_for_comparison(&mut sorted_entries);
+    sort_entries_canonical(&mut sorted_entries);
 
     let cache = IndexCache {
         built_at: SystemTime::now()
@@ -247,7 +249,8 @@ fn save_cache(entries: &[AppEntry], config_hash: u64) {
 /// Force rebuild: scan and save cache, regardless of existing cache.
 /// Called from settings dialog (Phase 5).
 pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> Vec<AppEntry> {
-    let entries = scan_all(scan, show_hidden_system);
+    let mut entries = scan_all(scan, show_hidden_system);
+    sort_entries_canonical(&mut entries);
     let config_hash = compute_config_hash(scan, show_hidden_system);
     save_cache(&entries, config_hash);
     entries
@@ -276,8 +279,8 @@ fn spawn_background_rescan(
             let scanned = scan_all(&scan, show_hidden_system);
             let mut cached_sorted = cached_entries;
             let mut scanned_sorted = scanned.clone();
-            sort_entries_for_comparison(&mut cached_sorted);
-            sort_entries_for_comparison(&mut scanned_sorted);
+            sort_entries_canonical(&mut cached_sorted);
+            sort_entries_canonical(&mut scanned_sorted);
             if !entries_equal(&cached_sorted, &scanned_sorted) {
                 save_cache(&scanned, config_hash);
                 invalidate_icon_cache();
@@ -574,9 +577,53 @@ mod tests {
             },
         ];
 
-        sort_entries_for_comparison(&mut a);
-        sort_entries_for_comparison(&mut b);
+        sort_entries_canonical(&mut a);
+        sort_entries_canonical(&mut b);
         assert!(entries_equal(&a, &b));
+    }
+
+    #[test]
+    fn canonical_sort_orders_by_target_then_name_then_is_folder() {
+        let mut entries = vec![
+            AppEntry {
+                name: "B".into(),
+                target_path: "C:\\a.exe".into(),
+                is_folder: true,
+            },
+            AppEntry {
+                name: "A".into(),
+                target_path: "C:\\b.exe".into(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "A".into(),
+                target_path: "C:\\a.exe".into(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "A".into(),
+                target_path: "C:\\a.exe".into(),
+                is_folder: true,
+            },
+        ];
+
+        sort_entries_canonical(&mut entries);
+
+        assert_eq!(entries[0].target_path, "C:\\a.exe");
+        assert_eq!(entries[0].name, "A");
+        assert!(!entries[0].is_folder);
+
+        assert_eq!(entries[1].target_path, "C:\\a.exe");
+        assert_eq!(entries[1].name, "A");
+        assert!(entries[1].is_folder);
+
+        assert_eq!(entries[2].target_path, "C:\\a.exe");
+        assert_eq!(entries[2].name, "B");
+        assert!(entries[2].is_folder);
+
+        assert_eq!(entries[3].target_path, "C:\\b.exe");
+        assert_eq!(entries[3].name, "A");
+        assert!(!entries[3].is_folder);
     }
 
     #[test]

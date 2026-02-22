@@ -72,6 +72,10 @@ npm run tauri build              # リリースビルド
 - 変更ごとに「入力 → 検索結果反映」までの遅延を観測し、体感を先に確認する
 - 体感改善後、必要なら p50/p95 を追加計測して次のボトルネックを特定する
 - 原則として「待ち時間」「重複」「計算量」「描画」の順を崩さない
+- 計測ログ実装（`ui/src/lib/perf.ts`）は恒久保持し、削除しない
+- 計測は **DEV かつ `localStorage.snotra_perf === "1"`** のときのみ有効化する
+- 有効化手順: DevTools で `localStorage.setItem("snotra_perf","1")` → アプリ再起動
+- 無効化手順: `localStorage.removeItem("snotra_perf")` → アプリ再起動
 
 ## 開発原則
 

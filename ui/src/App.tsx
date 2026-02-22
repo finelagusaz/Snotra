@@ -10,12 +10,16 @@ import { resetForShow, setSelected, activateSelected, initIndexingState } from "
 import { applyTheme } from "./lib/theme";
 import type { VisualConfig } from "./lib/types";
 import * as api from "./lib/invoke";
+import { perfMarkRenderDone } from "./lib/perf";
 
 const RESULTS_GAP = 4;
 const RESULT_ROW_HEIGHT = 30;
 const RESULTS_PADDING = 8;
 type ResultsCountChangedPayload = {
   count: number;
+  requestId: number;
+};
+type ResultsRenderDonePayload = {
   requestId: number;
 };
 
@@ -178,6 +182,10 @@ const App: Component = () => {
       // Listen for result-clicked from results window
       listen<number>("result-clicked", (event) => {
         setSelected(event.payload);
+      });
+
+      listen<ResultsRenderDonePayload>("results-render-done", (event) => {
+        perfMarkRenderDone(event.payload.requestId);
       });
 
       // Listen for result-double-clicked from results window

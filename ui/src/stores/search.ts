@@ -3,8 +3,9 @@ import { emit, listen } from "@tauri-apps/api/event";
 import type { SearchResult } from "../lib/types";
 import * as api from "../lib/invoke";
 import { findCommand } from "../lib/commands";
+import { perfStartSearch, perfMarkSearchDone, perfCancelSearch } from "../lib/perf";
 
-const DEBOUNCE_MS = 40;
+const DEBOUNCE_MS = 30;
 
 const [query, setQuery] = createSignal("");
 const [results, setResults] = createSignal<SearchResult[]>([]);
@@ -31,15 +32,24 @@ const [folderFilter, setFolderFilter] = createSignal("");
 
 async function refreshResults() {
   const requestId = ++latestRequestId;
+  const fs = folderState();
+  const q = query();
+  const source = indexing()
+    ? "indexing"
+    : fs
+      ? "folder"
+      : q.trim() === ""
+        ? "history"
+        : "query";
+  perfStartSearch(requestId, source);
+
   if (indexing()) {
     setResults([]);
+    perfMarkSearchDone(requestId, 0);
     emit("results-updated", { results: [], selected: 0, requestId });
     emit("results-count-changed", { count: 0, requestId });
     return;
   }
-
-  const q = query();
-  const fs = folderState();
 
   let items: SearchResult[];
   if (fs) {
@@ -51,10 +61,12 @@ async function refreshResults() {
   }
 
   if (requestId !== latestRequestId) {
+    perfCancelSearch(requestId);
     return;
   }
 
   setResults(items);
+  perfMarkSearchDone(requestId, items.length);
   emit("results-updated", { results: items, selected: selected(), requestId });
   emit("results-count-changed", { count: items.length, requestId });
 }

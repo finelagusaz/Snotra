@@ -1,5 +1,5 @@
 import { type Component, For, createSignal, onMount, onCleanup } from "solid-js";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import type { SearchResult } from "../lib/types";
 import * as api from "../lib/invoke";
 import ResultRow from "./ResultRow";
@@ -22,6 +22,19 @@ const ResultsWindow: Component = () => {
   let latestRequestId = 0;
   let lastScrolledSelected = -1;
   let lastScrolledRequestId = -1;
+
+  function ensureRowVisible(container: HTMLDivElement, row: HTMLElement) {
+    const cRect = container.getBoundingClientRect();
+    const rRect = row.getBoundingClientRect();
+
+    if (rRect.top < cRect.top) {
+      container.scrollTop -= cRect.top - rRect.top;
+      return;
+    }
+    if (rRect.bottom > cRect.bottom) {
+      container.scrollTop += rRect.bottom - cRect.bottom;
+    }
+  }
 
   async function fetchIcons(items: SearchResult[], requestId: number) {
     const cache = iconCache();
@@ -74,9 +87,13 @@ const ResultsWindow: Component = () => {
           queueMicrotask(() => {
             if (!listRef) return;
             const row = listRef.children[event.payload.selected] as HTMLElement | undefined;
-            row?.scrollIntoView({ block: "nearest" });
+            if (!row) return;
+            ensureRowVisible(listRef, row);
           });
         }
+        requestAnimationFrame(() => {
+          void emit("results-render-done", { requestId: event.payload.requestId });
+        });
       });
   });
 

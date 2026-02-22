@@ -6,6 +6,7 @@ on:
       - created
 
 permissions:
+  actions: read
   contents: write
   issues: write
   pull-requests: write
@@ -789,10 +790,43 @@ jobs:
           script: |
             const issue_number = context.issue.number;
             const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            let failedJobName = "(特定できませんでした)";
+            let failedJobUrl = runUrl;
+            let failedStepNames = [];
+
+            try {
+              const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: context.runId,
+                per_page: 100,
+              });
+              const failedJob = jobs.find(
+                (job) =>
+                  ["failure", "cancelled", "timed_out", "action_required"].includes(job.conclusion) &&
+                  job.name !== "notify_failure",
+              );
+              if (failedJob) {
+                failedJobName = failedJob.name || failedJobName;
+                failedJobUrl = failedJob.html_url || failedJobUrl;
+                failedStepNames = (failedJob.steps || [])
+                  .filter((step) =>
+                    ["failure", "cancelled", "timed_out", "action_required"].includes(step.conclusion),
+                  )
+                  .map((step) => step.name)
+                  .slice(0, 5);
+              }
+            } catch (e) {
+              core.warning(`Failed to collect failed job details: ${e.message}`);
+            }
+
             const body = [
               "Codex 自動実装が失敗しました。",
               "",
               `- Workflow Run: ${runUrl}`,
+              `- 失敗ジョブ: ${failedJobName}`,
+              `- 失敗ジョブログ: ${failedJobUrl}`,
+              `- 失敗ステップ: ${failedStepNames.length > 0 ? failedStepNames.join(", ") : "(ログを確認してください)"}`,
               "- 主な確認ポイント: `CODEX_RUNNER_COMMAND` と `scripts/run-codex.sh` の存在",
               "- 詳細は上記Runのログを確認してください。",
             ].join("\n");

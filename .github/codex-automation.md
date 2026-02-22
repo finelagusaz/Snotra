@@ -115,6 +115,8 @@ allowlist 登録者が Issue コメントで `/codex run` を投稿すると自�
 
 - 失敗通知
 - Workflow Run URL
+- 失敗ジョブ名とジョブログURL
+- 失敗ステップ名（取得できる範囲）
 - 主な確認ポイント（`CODEX_RUNNER_COMMAND` / `scripts/run-codex.sh`）
 
 あわせて `codex:needs-clarification` を付与し、進行中ラベル（`codex:in-progress` / `codex:reviewing`）を外します。

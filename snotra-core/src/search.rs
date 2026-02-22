@@ -33,15 +33,26 @@ impl From<crate::config::SearchModeConfig> for SearchMode {
 pub struct SearchEngine {
     entries: Vec<AppEntry>,
     lower_names: Vec<String>,
+    lower_file_names: Vec<Option<String>>,
     matcher: SkimMatcherV2,
 }
 
 impl SearchEngine {
     pub fn new(entries: Vec<AppEntry>) -> Self {
         let lower_names = entries.iter().map(|e| e.name.to_lowercase()).collect();
+        let lower_file_names = entries
+            .iter()
+            .map(|e| {
+                std::path::Path::new(&e.target_path)
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .map(|f| f.to_lowercase())
+            })
+            .collect();
         Self {
             entries,
             lower_names,
+            lower_file_names,
             matcher: SkimMatcherV2::default(),
         }
     }
@@ -68,15 +79,15 @@ impl SearchEngine {
             .entries
             .iter()
             .zip(self.lower_names.iter())
-            .filter_map(|(entry, lower_name)| {
+            .zip(self.lower_file_names.iter())
+            .filter_map(|((entry, lower_name), lower_file_name)| {
                 let name_score =
                     match_score_single_cached(mode, &self.matcher, lower_name, &norm_query);
                 let score = if has_dot {
                     // ドットあり → entry.name とファイル名（拡張子込み）の両方で照合し、高い方を採用
-                    let fn_score = std::path::Path::new(&entry.target_path)
-                        .file_name()
-                        .and_then(|f| f.to_str())
-                        .and_then(|f| match_score_single(mode, &self.matcher, f, &norm_query));
+                    let fn_score = lower_file_name
+                        .as_deref()
+                        .and_then(|f| match_score_single_cached(mode, &self.matcher, f, &norm_query));
                     match (name_score, fn_score) {
                         (Some(a), Some(b)) => Some(a.max(b)),
                         (a, b) => a.or(b),
@@ -151,6 +162,7 @@ fn rank_cmp(a: &(i64, u64, &AppEntry, &str), b: &(i64, u64, &AppEntry, &str)) ->
     b.0.cmp(&a.0)
         .then_with(|| b.1.cmp(&a.1))
         .then_with(|| a.3.cmp(b.3))
+        .then_with(|| a.2.target_path.cmp(&b.2.target_path))
 }
 
 /// Score using a pre-computed lowercase name (avoids repeated allocation).
@@ -171,17 +183,6 @@ fn match_score_single_cached(
         SearchMode::Substring => lower_name.find(query).map(|idx| 5_000 - idx as i64),
         SearchMode::Fuzzy => matcher.fuzzy_match(lower_name, query),
     }
-}
-
-/// Score with on-the-fly lowercase (for file names from target_path).
-fn match_score_single(
-    mode: SearchMode,
-    matcher: &SkimMatcherV2,
-    name: &str,
-    query: &str,
-) -> Option<i64> {
-    let lname = name.to_lowercase();
-    match_score_single_cached(mode, matcher, &lname, query)
 }
 
 #[cfg(test)]
@@ -446,6 +447,49 @@ mod tests {
         let entries = make_entries(&["Firefox", "Chrome"]);
         let engine = SearchEngine::new(entries);
         let results = engine.recent_history(&empty_history(), 8);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn rank_cmp_breaks_full_tie_with_target_path() {
+        let a = AppEntry {
+            name: "Tool".to_string(),
+            target_path: "C:\\B\\tool.exe".to_string(),
+            is_folder: false,
+        };
+        let b = AppEntry {
+            name: "Tool".to_string(),
+            target_path: "C:\\A\\tool.exe".to_string(),
+            is_folder: false,
+        };
+        let mut scored = vec![(100_i64, 200_u64, &a, "tool"), (100_i64, 200_u64, &b, "tool")];
+        scored.sort_by(rank_cmp);
+        assert_eq!(scored[0].2.target_path, "C:\\A\\tool.exe");
+        assert_eq!(scored[1].2.target_path, "C:\\B\\tool.exe");
+    }
+
+    #[test]
+    fn has_dot_uses_cached_lower_file_name() {
+        let entries = vec![AppEntry {
+            name: "Dummy".to_string(),
+            target_path: "C:\\fake\\Tool.EXE".to_string(),
+            is_folder: false,
+        }];
+        let engine = SearchEngine::new(entries);
+        let results = engine.search("tool.exe", 8, &empty_history(), SearchMode::Substring);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Dummy");
+    }
+
+    #[test]
+    fn has_dot_handles_missing_file_name_without_panic() {
+        let entries = vec![AppEntry {
+            name: "Dummy".to_string(),
+            target_path: "C:\\".to_string(),
+            is_folder: false,
+        }];
+        let engine = SearchEngine::new(entries);
+        let results = engine.search("dummy.exe", 8, &empty_history(), SearchMode::Fuzzy);
         assert!(results.is_empty());
     }
 }

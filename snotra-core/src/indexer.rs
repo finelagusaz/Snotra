@@ -2,11 +2,16 @@ use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
+use std::fs::Metadata;
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
+#[cfg(windows)]
+use windows::Win32::System::Threading::{
+    GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL,
+};
 
 use crate::binfmt::{deserialize_with_header, serialize_with_header};
 use crate::config::{Config, ScanPath};
@@ -55,10 +60,15 @@ fn scan_directory_with_extensions(
 
     for entry in read_dir.flatten() {
         let path = entry.path();
-        if !show_hidden_system && !is_visible_entry(&path) {
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+
+        if !show_hidden_system && !is_visible_metadata(&meta) {
             continue;
         }
-        if path.is_dir() {
+
+        if meta.is_dir() {
             if include_folders {
                 let name = path
                     .file_name()
@@ -66,11 +76,12 @@ fn scan_directory_with_extensions(
                     .unwrap_or("")
                     .to_string();
                 if !name.is_empty() {
-                    let key = normalize_entry_key(&path.to_string_lossy());
+                    let path_str = path.to_string_lossy();
+                    let key = normalize_entry_key(path_str.as_ref());
                     if seen.insert(key) {
                         entries.push(AppEntry {
                             name,
-                            target_path: path.to_string_lossy().to_string(),
+                            target_path: path_str.into_owned(),
                             is_folder: true,
                         });
                     }
@@ -96,11 +107,12 @@ fn scan_directory_with_extensions(
                         .and_then(|s| s.to_str())
                         .unwrap_or("")
                         .to_string();
-                    let key = normalize_entry_key(&path.to_string_lossy());
+                    let path_str = path.to_string_lossy();
+                    let key = normalize_entry_key(path_str.as_ref());
                     if !name.is_empty() && seen.insert(key) {
                         entries.push(AppEntry {
                             name,
-                            target_path: path.to_string_lossy().to_string(),
+                            target_path: path_str.into_owned(),
                             is_folder: false,
                         });
                     }
@@ -109,10 +121,7 @@ fn scan_directory_with_extensions(
     }
 }
 
-fn is_visible_entry(path: &Path) -> bool {
-    let Ok(meta) = std::fs::metadata(path) else {
-        return true;
-    };
+fn is_visible_metadata(meta: &Metadata) -> bool {
     let attrs = meta.file_attributes();
     let hidden = (attrs & FILE_ATTRIBUTE_HIDDEN.0) != 0;
     let system = (attrs & FILE_ATTRIBUTE_SYSTEM.0) != 0;
@@ -194,6 +203,15 @@ fn entries_equal(a: &[AppEntry], b: &[AppEntry]) -> bool {
     })
 }
 
+fn sort_entries_for_comparison(entries: &mut [AppEntry]) {
+    entries.sort_by(|a, b| {
+        a.target_path
+            .cmp(&b.target_path)
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.is_folder.cmp(&b.is_folder))
+    });
+}
+
 fn save_cache(entries: &[AppEntry], config_hash: u64) {
     let Some(path) = cache_path() else {
         return;
@@ -201,13 +219,15 @@ fn save_cache(entries: &[AppEntry], config_hash: u64) {
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
+    let mut sorted_entries = entries.to_vec();
+    sort_entries_for_comparison(&mut sorted_entries);
 
     let cache = IndexCache {
         built_at: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs(),
-        entries: entries.to_vec(),
+        entries: sorted_entries,
         config_hash,
     };
 
@@ -250,13 +270,28 @@ fn spawn_background_rescan(
     let _ = thread::Builder::new()
         .name("snotra-index-rescan".to_string())
         .spawn(move || {
+            lower_current_thread_priority();
             let scanned = scan_all(&scan, show_hidden_system);
-            if !entries_equal(&cached_entries, &scanned) {
+            let mut cached_sorted = cached_entries;
+            let mut scanned_sorted = scanned.clone();
+            sort_entries_for_comparison(&mut cached_sorted);
+            sort_entries_for_comparison(&mut scanned_sorted);
+            if !entries_equal(&cached_sorted, &scanned_sorted) {
                 save_cache(&scanned, config_hash);
                 invalidate_icon_cache();
             }
         });
 }
+
+#[cfg(windows)]
+fn lower_current_thread_priority() {
+    unsafe {
+        let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    }
+}
+
+#[cfg(not(windows))]
+fn lower_current_thread_priority() {}
 
 #[cfg(test)]
 mod tests {
@@ -508,6 +543,38 @@ mod tests {
     #[test]
     fn entries_equal_both_empty() {
         assert!(entries_equal(&[], &[]));
+    }
+
+    #[test]
+    fn sorted_comparison_ignores_enumeration_order() {
+        let mut a = vec![
+            AppEntry {
+                name: "B".into(),
+                target_path: "C:\\b.exe".into(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "A".into(),
+                target_path: "C:\\a.exe".into(),
+                is_folder: false,
+            },
+        ];
+        let mut b = vec![
+            AppEntry {
+                name: "A".into(),
+                target_path: "C:\\a.exe".into(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "B".into(),
+                target_path: "C:\\b.exe".into(),
+                is_folder: false,
+            },
+        ];
+
+        sort_entries_for_comparison(&mut a);
+        sort_entries_for_comparison(&mut b);
+        assert!(entries_equal(&a, &b));
     }
 
     #[test]

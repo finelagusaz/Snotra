@@ -64,6 +64,19 @@ const App: Component = () => {
     }
 
     if (label === "main" && config) {
+      let cachedScaleFactor = 1;
+      let cachedMainLogicalHeight = 52;
+      let positionApplyInFlight = false;
+      let pendingResultsPosition: { x: number; y: number } | undefined;
+
+      try {
+        const [sf, size] = await Promise.all([win.scaleFactor(), win.innerSize()]);
+        cachedScaleFactor = sf;
+        cachedMainLogicalHeight = size.toLogical(sf).height;
+      } catch (e) {
+        console.warn("Failed to initialize main window geometry cache:", e);
+      }
+
       // Auto-hide on focus lost (with grace period for drag operations)
       if (config.general.auto_hide_on_focus_lost) {
         let blurTimer: ReturnType<typeof setTimeout> | undefined;
@@ -81,17 +94,41 @@ const App: Component = () => {
         });
       }
 
+      const queueResultsPosition = (rw: WebviewWindow, nextPosition: { x: number; y: number }) => {
+        pendingResultsPosition = nextPosition;
+        if (positionApplyInFlight) {
+          return;
+        }
+        positionApplyInFlight = true;
+        void (async () => {
+          while (pendingResultsPosition) {
+            const target = pendingResultsPosition;
+            pendingResultsPosition = undefined;
+            await rw.setPosition(new LogicalPosition(target.x, target.y));
+            lastResultsPosition = target;
+          }
+          positionApplyInFlight = false;
+        })().catch((e) => {
+          console.error("Failed to sync results window position:", e);
+          positionApplyInFlight = false;
+        });
+      };
+
+      win.onResized(({ payload: sz }) => {
+        const logicalSize = sz.toLogical(cachedScaleFactor);
+        cachedMainLogicalHeight = logicalSize.height;
+      });
+
       // Sync results window position when main moves
       let moveTimer: ReturnType<typeof setTimeout> | undefined;
       let latestMoveEvent = 0;
       win.onMoved(({ payload: pos }) => {
         const moveEvent = ++latestMoveEvent;
+        const logicalPos = pos.toLogical(cachedScaleFactor);
         // Save position (debounced)
         clearTimeout(moveTimer);
         moveTimer = setTimeout(() => {
           void (async () => {
-            const sf = await win.scaleFactor();
-            const logicalPos = pos.toLogical(sf);
             if (moveEvent !== latestMoveEvent) return;
             await api.saveSearchPlacement(Math.round(logicalPos.x), Math.round(logicalPos.y));
           })();
@@ -99,17 +136,22 @@ const App: Component = () => {
 
         // Immediately sync results window position
         void (async () => {
-          const sf = await win.scaleFactor();
-          const logicalPos = pos.toLogical(sf);
           const rw = await getResultsWindow();
-          if (!rw || moveEvent !== latestMoveEvent) return;
-
-          const size = await win.innerSize();
-          if (moveEvent !== latestMoveEvent) return;
-          const logicalH = size.toLogical(sf).height;
-          await rw.setPosition(
-            new LogicalPosition(logicalPos.x, logicalPos.y + logicalH + RESULTS_GAP),
-          );
+          if (!rw || moveEvent !== latestMoveEvent) {
+            return;
+          }
+          const nextPosition = {
+            x: logicalPos.x,
+            y: logicalPos.y + cachedMainLogicalHeight + RESULTS_GAP,
+          };
+          if (
+            lastResultsPosition &&
+            lastResultsPosition.x === nextPosition.x &&
+            lastResultsPosition.y === nextPosition.y
+          ) {
+            return;
+          }
+          queueResultsPosition(rw, nextPosition);
         })();
       });
 
@@ -141,6 +183,8 @@ const App: Component = () => {
         const mainSize = currentSize;
         const sf = currentSf;
         const currentWidth = currentSize.toLogical(currentSf).width;
+        cachedScaleFactor = currentSf;
+        cachedMainLogicalHeight = currentSize.toLogical(currentSf).height;
 
         // Resize results window based on count
         const resultsHeight = Math.min(count * RESULT_ROW_HEIGHT + RESULTS_PADDING * 2, 400);
@@ -166,7 +210,7 @@ const App: Component = () => {
           lastResultsPosition.x !== nextPosition.x ||
           lastResultsPosition.y !== nextPosition.y
         ) {
-          await rw.setPosition(new LogicalPosition(nextPosition.x, nextPosition.y));
+          queueResultsPosition(rw, nextPosition);
           if (requestId !== latestResultsRequestId) return;
           lastResultsPosition = nextPosition;
         }

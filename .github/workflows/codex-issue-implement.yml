@@ -359,6 +359,15 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install Codex CLI
+        run: |
+          npm install -g @openai/codex
+
+      - name: Verify Codex CLI
+        run: |
+          command -v codex
+          codex --version
+
       - name: Extract latest /codex spec
         id: extract_spec
         run: |
@@ -401,6 +410,10 @@ jobs:
           if [[ "${CODEX_RUNNER_COMMAND}" == *"run-codex.sh"* ]] && [ ! -f "./scripts/run-codex.sh" ]; then
             echo "CODEX_RUNNER_COMMAND references run-codex.sh, but ./scripts/run-codex.sh was not found."
             echo "Ensure scripts/run-codex.sh exists on the default branch used by this workflow."
+            exit 1
+          fi
+          if ! command -v codex >/dev/null 2>&1; then
+            echo "'codex' command is not available in PATH."
             exit 1
           fi
 
@@ -490,6 +503,19 @@ jobs:
             git switch -c "$WORK"
           fi
           echo "work_branch=$WORK" >> "$GITHUB_OUTPUT"
+
+      - name: Validate runner script on switched branch
+        run: |
+          if [[ "${CODEX_RUNNER_COMMAND}" == *"run-codex.sh"* ]] && [ ! -f "./scripts/run-codex.sh" ]; then
+            echo "CODEX_RUNNER_COMMAND references run-codex.sh, but ./scripts/run-codex.sh was not found on the selected base/work branch."
+            exit 1
+          fi
+
+      - name: Debug working directory before implement
+        run: |
+          pwd
+          ls -la
+          ls -la scripts || true
 
       - name: Prepare implement prompt
         run: |
@@ -827,7 +853,7 @@ jobs:
               `- 失敗ジョブ: ${failedJobName}`,
               `- 失敗ジョブログ: ${failedJobUrl}`,
               `- 失敗ステップ: ${failedStepNames.length > 0 ? failedStepNames.join(", ") : "(ログを確認してください)"}`,
-              "- 主な確認ポイント: `CODEX_RUNNER_COMMAND` と `scripts/run-codex.sh` の存在",
+              "- 主な確認ポイント: `CODEX_RUNNER_COMMAND`、`scripts/run-codex.sh` の存在、`codex` CLI の PATH",
               "- 詳細は上記Runのログを確認してください。",
             ].join("\n");
 

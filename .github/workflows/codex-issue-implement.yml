@@ -22,6 +22,7 @@ jobs:
       should_run: ${{ steps.gate.outputs.should_run }}
       is_spec: ${{ steps.gate.outputs.is_spec }}
       authorized: ${{ steps.gate.outputs.authorized }}
+      run_ready: ${{ steps.gate.outputs.run_ready }}
     steps:
       - name: Evaluate command and actor authorization
         id: gate
@@ -37,6 +38,7 @@ jobs:
             const isSpec = firstLine === "/codex spec";
             core.setOutput("should_run", shouldRun ? "true" : "false");
             core.setOutput("is_spec", isSpec ? "true" : "false");
+            core.setOutput("run_ready", "false");
 
             if (!shouldRun && !isSpec) {
               core.setOutput("authorized", "false");
@@ -68,6 +70,22 @@ jobs:
                 issue_number: issueNumber,
                 body: `@${actor} は \`${firstLine}\` を実行する権限がありません。`,
               });
+              return;
+            }
+
+            if (!shouldRun) {
+              return;
+            }
+
+            const labels = (context.payload.issue?.labels || []).map((l) => l.name);
+            const runReady = labels.includes("codex:spec-approved");
+            core.setOutput("run_ready", runReady ? "true" : "false");
+            if (!runReady) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: issueNumber,
+                body: "`/codex run` の前に、allowlist 登録者が `/codex spec` を投稿し、Spec QA を通過させてください（`codex:spec-approved` ラベルが必要です）。",
+              });
             }
 
   spec_feedback:
@@ -76,40 +94,131 @@ jobs:
     if: needs.preflight.outputs.is_spec == 'true' && needs.preflight.outputs.authorized == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Validate /codex spec and comment feedback
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Extract posted /codex spec body
+        id: extract_posted_spec
+        run: |
+          SPEC_PATH="$RUNNER_TEMP/posted-codex-spec.md"
+          SPEC_PATH="$SPEC_PATH" node <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
+          const raw = (payload.comment?.body || "").replace(/\r\n/g, "\n");
+          const content = raw.split("\n").slice(1).join("\n").trim();
+          fs.writeFileSync(process.env.SPEC_PATH, `${content}\n`, "utf8");
+          NODE
+          echo "spec_path=$SPEC_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Run Spec QA for posted /codex spec
+        id: qa
+        env:
+          SPEC_INPUT_PATH: ${{ steps.extract_posted_spec.outputs.spec_path }}
+        run: |
+          RESULT_PATH="$RUNNER_TEMP/spec-qa-result.json"
+          node .github/scripts/spec-qa.mjs "$RESULT_PATH" "$SPEC_INPUT_PATH"
+
+      - name: Render clarification comment
+        if: steps.qa.outputs.status == 'BLOCK'
+        run: |
+          COMMENT_PATH="$RUNNER_TEMP/spec-qa-comment.md"
+          node .github/scripts/render-spec-qa-comment.mjs "${{ steps.qa.outputs.result_path }}" "$COMMENT_PATH"
+
+      - name: Comment PASS and mark spec approved
+        if: steps.qa.outputs.status == 'PASS'
         uses: actions/github-script@v7
         with:
           script: |
             const issueNumber = context.issue.number;
-            const body = (context.payload.comment?.body || "").replace(/\r\n/g, "\n");
-            const lines = body.split("\n");
-            const content = lines.slice(1).join("\n").trim();
-
-            const required = ["背景/目的", "受入条件", "非対象"];
-            const missing = required.filter((heading) => {
-              const re = new RegExp(`^#{1,6}\\s*${heading}\\s*$`, "m");
-              return !re.test(content);
-            });
-
-            let message = "";
-            if (!content) {
-              message = "`/codex spec` を受け付けましたが本文が空です。`## 背景/目的` `## 受入条件` `## 非対象` を含めて再投稿してください。";
-            } else if (missing.length > 0) {
-              message = `\`/codex spec\` を受け付けましたが、必須見出しが不足しています: ${missing.join(", ")}\n\n次の形式で再投稿してください:\n\`\`\`\n/codex spec\n## 背景/目的\n...\n## 受入条件\n- ...\n## 非対象\n- ...\n\`\`\``;
-            } else {
-              message = "`/codex spec` を受理しました。実行するには allowlist 登録者が `/codex run` を投稿してください。";
-            }
-
             await github.rest.issues.createComment({
               ...context.repo,
               issue_number: issueNumber,
-              body: message,
+              body: "`/codex spec` を受理しました（Spec QA: PASS）。allowlist 登録者が `/codex run` を投稿すると実装を開始します。",
             });
+
+            async function safeAdd(name) {
+              try {
+                await github.rest.issues.addLabels({
+                  ...context.repo,
+                  issue_number: issueNumber,
+                  labels: [name],
+                });
+              } catch (e) {
+                core.warning(`Failed to add label ${name}: ${e.message}`);
+              }
+            }
+            async function safeRemove(name) {
+              try {
+                await github.rest.issues.removeLabel({
+                  ...context.repo,
+                  issue_number: issueNumber,
+                  name,
+                });
+              } catch (e) {
+                if (e.status !== 404) {
+                  core.warning(`Failed to remove label ${name}: ${e.message}`);
+                }
+              }
+            }
+
+            await safeAdd("codex:spec-approved");
+            await safeRemove("codex:needs-clarification");
+
+      - name: Comment BLOCK and clear spec approval
+        if: steps.qa.outputs.status == 'BLOCK'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const issue_number = context.issue.number;
+            const commentPath = `${process.env.RUNNER_TEMP}/spec-qa-comment.md`;
+            const body = fs.readFileSync(commentPath, "utf8");
+
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number,
+              body,
+            });
+
+            async function safeAdd(name) {
+              try {
+                await github.rest.issues.addLabels({
+                  ...context.repo,
+                  issue_number,
+                  labels: [name],
+                });
+              } catch (e) {
+                core.warning(`Failed to add label ${name}: ${e.message}`);
+              }
+            }
+            async function safeRemove(name) {
+              try {
+                await github.rest.issues.removeLabel({
+                  ...context.repo,
+                  issue_number,
+                  name,
+                });
+              } catch (e) {
+                if (e.status !== 404) {
+                  core.warning(`Failed to remove label ${name}: ${e.message}`);
+                }
+              }
+            }
+
+            await safeAdd("codex:needs-clarification");
+            await safeRemove("codex:spec-approved");
 
   spec_qa:
     needs:
       - preflight
-    if: needs.preflight.outputs.should_run == 'true' && needs.preflight.outputs.authorized == 'true'
+    if: needs.preflight.outputs.should_run == 'true' && needs.preflight.outputs.authorized == 'true' && needs.preflight.outputs.run_ready == 'true'
     runs-on: ubuntu-latest
     outputs:
       qa_status: ${{ steps.qa.outputs.status }}
@@ -221,6 +330,7 @@ jobs:
             }
 
             await safeAdd("codex:needs-clarification");
+            await safeRemove("codex:spec-approved");
             await safeRemove("codex:in-progress");
             await safeRemove("codex:reviewing");
 

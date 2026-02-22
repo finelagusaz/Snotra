@@ -22,6 +22,7 @@
 `.github/labels.yml` のラベルを作成してください。
 
 - `codex:needs-clarification`
+- `codex:spec-approved`
 - `codex:in-progress`
 - `codex:reviewing`
 - `codex:ready-pr`
@@ -81,11 +82,13 @@ allowlist 登録者が次の形式で仕様を投稿します。
 - ...
 ```
 
-実行時は「allowlist 登録者による最新の有効 `/codex spec`」が採用されます。
+投稿時に Spec QA を実行し、結果をコメントで返します。  
+PASS した場合は `codex:spec-approved` が付与されます。
 
 ### `/codex run`
 
 allowlist 登録者が Issue コメントで `/codex run` を投稿すると自動実装を開始します。  
+`codex:spec-approved` が付与されている場合のみ実行されます。  
 `issue_comment.created` のみ受け付けます（コメント編集は対象外）。
 
 ## Spec QA の停止条件

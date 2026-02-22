@@ -1,6 +1,9 @@
 - name: codex:needs-clarification
   color: "fbca04"
   description: 仕様不明点あり。回答待ち
+- name: codex:spec-approved
+  color: "0e8a16"
+  description: 最新 /codex spec が Spec QA を通過
 - name: codex:in-progress
   color: "1d76db"
   description: Codex が実装中

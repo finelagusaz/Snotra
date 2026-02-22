@@ -26,6 +26,16 @@ if (!issue) {
   process.exit(1);
 }
 
+const specInputPath = process.env.SPEC_INPUT_PATH || "";
+let specBody = issue.body || "";
+if (specInputPath) {
+  if (!fs.existsSync(specInputPath)) {
+    console.error(`SPEC_INPUT_PATH file not found: ${specInputPath}`);
+    process.exit(1);
+  }
+  specBody = fs.readFileSync(specInputPath, "utf8");
+}
+
 const baseBranch = process.env.BASE_BRANCH || "";
 const workBranch = process.env.WORK_BRANCH || "";
 const reviewRound = process.env.REVIEW_ROUND || "1";
@@ -39,8 +49,11 @@ const common = `# Context
 - Issue: #${issue.number} ${issue.title}
 - Issue URL: ${issue.html_url || ""}
 
-## Issue body
-${issue.body || "(empty)"}
+## Spec source
+${specInputPath ? `/codex spec (${specInputPath})` : "Issue body"}
+
+## Spec content
+${specBody || "(empty)"}
 
 ## Global constraints
 - "受入条件" と "非対象" を最優先すること

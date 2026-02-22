@@ -50,9 +50,9 @@ if (warnings.length > 0) {
 }
 
 lines.push("回答方法:");
-lines.push("- このIssueに `A1...` 形式で回答してください。");
-lines.push("- 回答後に `codex:implement` ラベルを再付与してください。");
-lines.push("- 未回答項目が残る場合は再実行時も BLOCK になります。");
+lines.push("- allowlist登録者が `/codex spec` コメントで仕様を更新してください。");
+lines.push("- 仕様更新後に `/codex run` コメントで再実行してください。");
+lines.push("- 未解消項目が残る場合は再実行時も BLOCK になります。");
 
 fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 fs.writeFileSync(outputPath, `${lines.join("\n")}\n`, "utf8");

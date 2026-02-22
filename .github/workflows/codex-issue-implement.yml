@@ -1,9 +1,9 @@
 name: Codex Issue Implement
 
 on:
-  issues:
+  issue_comment:
     types:
-      - labeled
+      - created
 
 permissions:
   contents: write
@@ -15,16 +15,69 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  preflight:
+    if: github.event.issue.pull_request == null
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.gate.outputs.should_run }}
+      authorized: ${{ steps.gate.outputs.authorized }}
+    steps:
+      - name: Evaluate command and actor authorization
+        id: gate
+        uses: actions/github-script@v7
+        env:
+          CODEX_ALLOWED_ACTORS: ${{ vars.CODEX_ALLOWED_ACTORS }}
+        with:
+          script: |
+            const issueNumber = context.issue.number;
+            const body = (context.payload.comment?.body || "").replace(/\r\n/g, "\n");
+            const firstLine = (body.split("\n")[0] || "").trim();
+            const shouldRun = firstLine === "/codex run";
+            core.setOutput("should_run", shouldRun ? "true" : "false");
+
+            if (!shouldRun) {
+              core.setOutput("authorized", "false");
+              core.info("Not a /codex run command. Skip.");
+              return;
+            }
+
+            const allowed = (process.env.CODEX_ALLOWED_ACTORS || "")
+              .split(",")
+              .map((v) => v.trim())
+              .filter(Boolean);
+
+            if (allowed.length === 0) {
+              core.setOutput("authorized", "false");
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: issueNumber,
+                body: "Codex自動実装を開始できません。`CODEX_ALLOWED_ACTORS` が未設定です。",
+              });
+              return;
+            }
+
+            const actor = context.actor;
+            const authorized = allowed.includes(actor);
+            core.setOutput("authorized", authorized ? "true" : "false");
+            if (!authorized) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: issueNumber,
+                body: `@${actor} は \`/codex run\` を実行する権限がありません。`,
+              });
+            }
+
   spec_qa:
-    if: >-
-      github.event.action == 'labeled' &&
-      github.event.label.name == 'codex:implement' &&
-      github.event.issue.state == 'open' &&
-      github.event.issue.pull_request == null
+    needs:
+      - preflight
+    if: needs.preflight.outputs.should_run == 'true' && needs.preflight.outputs.authorized == 'true'
     runs-on: ubuntu-latest
     outputs:
       qa_status: ${{ steps.qa.outputs.status }}
       qa_result_path: ${{ steps.qa.outputs.result_path }}
+    env:
+      CODEX_ALLOWED_ACTORS: ${{ vars.CODEX_ALLOWED_ACTORS }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,11 +89,38 @@ jobs:
         with:
           node-version: 22
 
+      - name: Extract latest /codex spec
+        id: extract_spec
+        run: |
+          SPEC_PATH="$RUNNER_TEMP/latest-codex-spec.md"
+          node .github/scripts/extract-latest-codex-spec.mjs "$SPEC_PATH"
+
+      - name: Notify when spec is missing
+        if: steps.extract_spec.outputs.status == 'BLOCK'
+        uses: actions/github-script@v7
+        env:
+          REASON: ${{ steps.extract_spec.outputs.reason }}
+        with:
+          script: |
+            const issue_number = context.issue.number;
+            const reason = process.env.REASON || "allowlist登録者による有効な /codex spec が見つかりません。";
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number,
+              body: `Codex自動実装を開始できませんでした。\n\n理由: ${reason}\n\nallowlist登録者が次の形式でコメントしてください:\n\`\`\`\n/codex spec\n## 背景/目的\n...\n## 受入条件\n- ...\n## 非対象\n- ...\n\`\`\`\nその後、allowlist登録者が \`/codex run\` を実行してください。`,
+            });
+
+      - name: Stop when no valid spec is found
+        if: steps.extract_spec.outputs.status == 'BLOCK'
+        run: exit 1
+
       - name: Spec QA
         id: qa
+        env:
+          SPEC_INPUT_PATH: ${{ steps.extract_spec.outputs.spec_path }}
         run: |
           RESULT_PATH="$RUNNER_TEMP/spec-qa-result.json"
-          node .github/scripts/spec-qa.mjs "$RESULT_PATH"
+          node .github/scripts/spec-qa.mjs "$RESULT_PATH" "$SPEC_INPUT_PATH"
 
       - name: Recommend split for size:L
         if: contains(join(github.event.issue.labels.*.name, ','), 'size:L')
@@ -102,7 +182,8 @@ jobs:
             }
 
             await safeAdd("codex:needs-clarification");
-            await safeRemove("codex:implement");
+            await safeRemove("codex:in-progress");
+            await safeRemove("codex:reviewing");
 
   implement_and_review:
     needs:
@@ -113,8 +194,10 @@ jobs:
       ISSUE_NUMBER: ${{ github.event.issue.number }}
       ISSUE_TITLE: ${{ github.event.issue.title }}
       CODEX_RUNNER_COMMAND: ${{ vars.CODEX_RUNNER_COMMAND }}
+      CODEX_ALLOWED_ACTORS: ${{ vars.CODEX_ALLOWED_ACTORS }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       CODEX_API_KEY: ${{ secrets.CODEX_API_KEY }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -125,6 +208,18 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Extract latest /codex spec
+        id: extract_spec
+        run: |
+          SPEC_PATH="$RUNNER_TEMP/latest-codex-spec.md"
+          node .github/scripts/extract-latest-codex-spec.mjs "$SPEC_PATH"
+
+      - name: Stop when no valid spec is found
+        if: steps.extract_spec.outputs.status == 'BLOCK'
+        run: |
+          echo "Valid /codex spec not found."
+          exit 1
 
       - name: Setup git identity
         run: |
@@ -218,7 +313,6 @@ jobs:
               }
             }
             await safeRemove("codex:in-progress");
-            await safeRemove("codex:implement");
 
       - name: Stop when no v* branch exists
         if: steps.select_base.outcome == 'failure'
@@ -253,6 +347,7 @@ jobs:
         env:
           BASE_BRANCH: ${{ steps.select_base.outputs.base_branch }}
           WORK_BRANCH: ${{ steps.create_branch.outputs.work_branch }}
+          SPEC_INPUT_PATH: ${{ steps.extract_spec.outputs.spec_path }}
 
       - name: Run Codex implement
         run: |
@@ -281,7 +376,7 @@ jobs:
             await github.rest.issues.createComment({
               ...context.repo,
               issue_number,
-              body: "Codex 実装を実行しましたが変更差分が生成されませんでした。Issue内容を具体化して `codex:implement` を再付与してください。"
+              body: "Codex 実装を実行しましたが変更差分が生成されませんでした。`/codex spec` を具体化して `/codex run` を再実行してください。"
             });
             async function safeAdd(name) {
               try {
@@ -309,7 +404,6 @@ jobs:
             }
             await safeAdd("codex:needs-clarification");
             await safeRemove("codex:in-progress");
-            await safeRemove("codex:implement");
 
       - name: Mark reviewing
         if: steps.commit_impl.outputs.has_changes == 'true'
@@ -361,6 +455,7 @@ jobs:
             REVIEW_NOTES_PATH="$REVIEW_NOTES" \
             BASE_BRANCH="$BASE_BRANCH" \
             WORK_BRANCH="$WORK_BRANCH" \
+            SPEC_INPUT_PATH="${{ steps.extract_spec.outputs.spec_path }}" \
             node .github/scripts/prepare-codex-prompt.mjs review "$REVIEW_PROMPT"
 
             CODEX_OUTPUT_PATH="$REVIEW_NOTES" \
@@ -378,6 +473,7 @@ jobs:
             REVIEW_NOTES_PATH="$REVIEW_NOTES" \
             BASE_BRANCH="$BASE_BRANCH" \
             WORK_BRANCH="$WORK_BRANCH" \
+            SPEC_INPUT_PATH="${{ steps.extract_spec.outputs.spec_path }}" \
             node .github/scripts/prepare-codex-prompt.mjs fix "$FIX_PROMPT"
 
             node .github/scripts/run-codex-command.mjs fix "$FIX_PROMPT"
@@ -519,4 +615,3 @@ jobs:
             await safeAdd("codex:ready-pr");
             await safeRemove("codex:reviewing");
             await safeRemove("codex:in-progress");
-            await safeRemove("codex:implement");

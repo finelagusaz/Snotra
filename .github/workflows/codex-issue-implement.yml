@@ -419,6 +419,10 @@ jobs:
             echo "Neither 'codex' nor 'npx' command is available in PATH."
             exit 1
           fi
+          if [ -z "${OPENAI_API_KEY}" ] && [ -z "${CODEX_API_KEY}" ]; then
+            echo "OPENAI_API_KEY or CODEX_API_KEY secret is required."
+            exit 1
+          fi
 
       - name: Mark in progress
         uses: actions/github-script@v7

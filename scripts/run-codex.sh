@@ -60,6 +60,15 @@ if [[ ! -f "$PROMPT_FILE" ]]; then
   exit 2
 fi
 
+# Normalize API key env vars for Codex CLI.
+if [[ -z "${OPENAI_API_KEY:-}" && -n "${CODEX_API_KEY:-}" ]]; then
+  export OPENAI_API_KEY="$CODEX_API_KEY"
+fi
+if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+  echo "OPENAI_API_KEY is not set (CODEX_API_KEY fallback also unavailable)." >&2
+  exit 2
+fi
+
 if command -v codex >/dev/null 2>&1; then
   CODEX_CMD=(codex)
 elif command -v npx >/dev/null 2>&1; then

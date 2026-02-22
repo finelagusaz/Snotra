@@ -351,11 +351,11 @@ jobs:
             node .github/scripts/run-codex-command.mjs review "$REVIEW_PROMPT"
 
             if [ ! -f "$REVIEW_NOTES" ]; then
-              cat > "$REVIEW_NOTES" <<'EOF'
-判定: NO_FINDINGS
-Summary:
-- レビュー出力が生成されなかったため、修正対象はありませんでした。
-EOF
+              printf '%s\n' \
+                '判定: NO_FINDINGS' \
+                'Summary:' \
+                '- レビュー出力が生成されなかったため、修正対象はありませんでした。' \
+                > "$REVIEW_NOTES"
             fi
 
             REVIEW_ROUND="$ROUND" \

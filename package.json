@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "prebuild": "npm run typecheck",
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri"

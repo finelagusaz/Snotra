@@ -1,0 +1,506 @@
+name: Codex Issue Implement
+
+on:
+  issues:
+    types:
+      - labeled
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: codex-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  spec_qa:
+    if: >-
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'codex:implement' &&
+      github.event.issue.state == 'open' &&
+      github.event.issue.pull_request == null
+    runs-on: ubuntu-latest
+    outputs:
+      qa_status: ${{ steps.qa.outputs.status }}
+      qa_result_path: ${{ steps.qa.outputs.result_path }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Spec QA
+        id: qa
+        run: |
+          RESULT_PATH="$RUNNER_TEMP/spec-qa-result.json"
+          node .github/scripts/spec-qa.mjs "$RESULT_PATH"
+
+      - name: Recommend split for size:L
+        if: contains(join(github.event.issue.labels.*.name, ','), 'size:L')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: context.issue.number,
+              body: "このIssueは `size:L` です。必要なら受入条件を分割して複数Issueに分けてください。"
+            });
+
+      - name: Render clarification comment
+        if: steps.qa.outputs.status == 'BLOCK'
+        run: |
+          COMMENT_PATH="$RUNNER_TEMP/spec-qa-comment.md"
+          node .github/scripts/render-spec-qa-comment.mjs "${{ steps.qa.outputs.result_path }}" "$COMMENT_PATH"
+
+      - name: Comment and relabel on BLOCK
+        if: steps.qa.outputs.status == 'BLOCK'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const issue_number = context.issue.number;
+            const commentPath = `${process.env.RUNNER_TEMP}/spec-qa-comment.md`;
+            const body = fs.readFileSync(commentPath, "utf8");
+
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number,
+              body,
+            });
+
+            async function safeAdd(name) {
+              try {
+                await github.rest.issues.addLabels({
+                  ...context.repo,
+                  issue_number,
+                  labels: [name],
+                });
+              } catch (e) {
+                core.warning(`Failed to add label ${name}: ${e.message}`);
+              }
+            }
+
+            async function safeRemove(name) {
+              try {
+                await github.rest.issues.removeLabel({
+                  ...context.repo,
+                  issue_number,
+                  name,
+                });
+              } catch (e) {
+                if (e.status !== 404) {
+                  core.warning(`Failed to remove label ${name}: ${e.message}`);
+                }
+              }
+            }
+
+            await safeAdd("codex:needs-clarification");
+            await safeRemove("codex:implement");
+
+  implement_and_review:
+    needs:
+      - spec_qa
+    if: needs.spec_qa.outputs.qa_status == 'PASS'
+    runs-on: ubuntu-latest
+    env:
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      ISSUE_TITLE: ${{ github.event.issue.title }}
+      CODEX_RUNNER_COMMAND: ${{ vars.CODEX_RUNNER_COMMAND }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      CODEX_API_KEY: ${{ secrets.CODEX_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup git identity
+        run: |
+          git config user.name "codex[bot]"
+          git config user.email "codex[bot]@users.noreply.github.com"
+
+      - name: Validate Codex runner configuration
+        run: |
+          if [ -z "${CODEX_RUNNER_COMMAND}" ]; then
+            echo "CODEX_RUNNER_COMMAND repository variable is required."
+            exit 1
+          fi
+
+      - name: Mark in progress
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue_number = context.issue.number;
+            async function safeAdd(name) {
+              try {
+                await github.rest.issues.addLabels({
+                  ...context.repo,
+                  issue_number,
+                  labels: [name],
+                });
+              } catch (e) {
+                core.warning(`Failed to add label ${name}: ${e.message}`);
+              }
+            }
+            async function safeRemove(name) {
+              try {
+                await github.rest.issues.removeLabel({
+                  ...context.repo,
+                  issue_number,
+                  name,
+                });
+              } catch (e) {
+                if (e.status !== 404) {
+                  core.warning(`Failed to remove label ${name}: ${e.message}`);
+                }
+              }
+            }
+            await safeAdd("codex:in-progress");
+            await safeRemove("codex:needs-clarification");
+
+      - name: Select latest v* base branch
+        id: select_base
+        continue-on-error: true
+        run: |
+          git fetch origin "+refs/heads/*:refs/remotes/origin/*"
+          node .github/scripts/select-base-branch.mjs
+
+      - name: Notify when base branch is missing
+        if: steps.select_base.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue_number = context.issue.number;
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number,
+              body: "`origin/v*` ブランチが見つからないため自動実装を停止しました。`vX[.Y[.Z]]` 形式のブランチを作成して再実行してください。"
+            });
+            async function safeRemove(name) {
+              try {
+                await github.rest.issues.removeLabel({
+                  ...context.repo,
+                  issue_number,
+                  name,
+                });
+              } catch (e) {
+                if (e.status !== 404) {
+                  core.warning(`Failed to remove label ${name}: ${e.message}`);
+                }
+              }
+            }
+            await safeRemove("codex:in-progress");
+            await safeRemove("codex:implement");
+
+      - name: Stop when no v* branch exists
+        if: steps.select_base.outcome == 'failure'
+        run: exit 1
+
+      - name: Create working branch
+        id: create_branch
+        run: |
+          set -euo pipefail
+          BASE="${{ steps.select_base.outputs.base_branch }}"
+          WORK="codex/issue-${ISSUE_NUMBER}"
+
+          git switch "$BASE"
+
+          # Reuse existing issue branch on reruns to avoid duplicate PRs.
+          if git ls-remote --exit-code --heads origin "$WORK" >/dev/null 2>&1; then
+            git fetch origin "$WORK"
+            git switch -C "$WORK" "origin/$WORK"
+          else
+            git switch -c "$WORK"
+          fi
+          echo "work_branch=$WORK" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare implement prompt
+        run: |
+          set -euo pipefail
+          TMP_DIR="$RUNNER_TEMP/codex-${GITHUB_RUN_ID}"
+          mkdir -p "$TMP_DIR"
+          node .github/scripts/prepare-codex-prompt.mjs implement "$TMP_DIR/implement.md"
+          echo "tmp_dir=$TMP_DIR" >> "$GITHUB_OUTPUT"
+        id: prep
+        env:
+          BASE_BRANCH: ${{ steps.select_base.outputs.base_branch }}
+          WORK_BRANCH: ${{ steps.create_branch.outputs.work_branch }}
+
+      - name: Run Codex implement
+        run: |
+          node .github/scripts/run-codex-command.mjs implement "${{ steps.prep.outputs.tmp_dir }}/implement.md"
+
+      - name: Commit implementation
+        id: commit_impl
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git add -A
+          SHORT_TITLE="$(echo "$ISSUE_TITLE" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g' | cut -c1-72)"
+          git commit -m "feat(codex): implement #${ISSUE_NUMBER} ${SHORT_TITLE}"
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+
+      - name: Stop when no implementation diff
+        if: steps.commit_impl.outputs.has_changes == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue_number = context.issue.number;
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number,
+              body: "Codex 実装を実行しましたが変更差分が生成されませんでした。Issue内容を具体化して `codex:implement` を再付与してください。"
+            });
+            async function safeAdd(name) {
+              try {
+                await github.rest.issues.addLabels({
+                  ...context.repo,
+                  issue_number,
+                  labels: [name],
+                });
+              } catch (e) {
+                core.warning(`Failed to add label ${name}: ${e.message}`);
+              }
+            }
+            async function safeRemove(name) {
+              try {
+                await github.rest.issues.removeLabel({
+                  ...context.repo,
+                  issue_number,
+                  name,
+                });
+              } catch (e) {
+                if (e.status !== 404) {
+                  core.warning(`Failed to remove label ${name}: ${e.message}`);
+                }
+              }
+            }
+            await safeAdd("codex:needs-clarification");
+            await safeRemove("codex:in-progress");
+            await safeRemove("codex:implement");
+
+      - name: Mark reviewing
+        if: steps.commit_impl.outputs.has_changes == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue_number = context.issue.number;
+            async function safeAdd(name) {
+              try {
+                await github.rest.issues.addLabels({
+                  ...context.repo,
+                  issue_number,
+                  labels: [name],
+                });
+              } catch (e) {
+                core.warning(`Failed to add label ${name}: ${e.message}`);
+              }
+            }
+            async function safeRemove(name) {
+              try {
+                await github.rest.issues.removeLabel({
+                  ...context.repo,
+                  issue_number,
+                  name,
+                });
+              } catch (e) {
+                if (e.status !== 404) {
+                  core.warning(`Failed to remove label ${name}: ${e.message}`);
+                }
+              }
+            }
+            await safeAdd("codex:reviewing");
+            await safeRemove("codex:in-progress");
+
+      - name: Review and fix loop (max 2 rounds)
+        if: steps.commit_impl.outputs.has_changes == 'true'
+        run: |
+          set -euo pipefail
+          TMP_DIR="${{ steps.prep.outputs.tmp_dir }}"
+          BASE_BRANCH="${{ steps.select_base.outputs.base_branch }}"
+          WORK_BRANCH="${{ steps.create_branch.outputs.work_branch }}"
+
+          for ROUND in 1 2; do
+            REVIEW_PROMPT="$TMP_DIR/review-${ROUND}.md"
+            FIX_PROMPT="$TMP_DIR/fix-${ROUND}.md"
+            REVIEW_NOTES="$TMP_DIR/review-round-${ROUND}.md"
+
+            REVIEW_ROUND="$ROUND" \
+            REVIEW_NOTES_PATH="$REVIEW_NOTES" \
+            BASE_BRANCH="$BASE_BRANCH" \
+            WORK_BRANCH="$WORK_BRANCH" \
+            node .github/scripts/prepare-codex-prompt.mjs review "$REVIEW_PROMPT"
+
+            CODEX_OUTPUT_PATH="$REVIEW_NOTES" \
+            node .github/scripts/run-codex-command.mjs review "$REVIEW_PROMPT"
+
+            if [ ! -f "$REVIEW_NOTES" ]; then
+              cat > "$REVIEW_NOTES" <<'EOF'
+判定: NO_FINDINGS
+Summary:
+- レビュー出力が生成されなかったため、修正対象はありませんでした。
+EOF
+            fi
+
+            REVIEW_ROUND="$ROUND" \
+            REVIEW_NOTES_PATH="$REVIEW_NOTES" \
+            BASE_BRANCH="$BASE_BRANCH" \
+            WORK_BRANCH="$WORK_BRANCH" \
+            node .github/scripts/prepare-codex-prompt.mjs fix "$FIX_PROMPT"
+
+            node .github/scripts/run-codex-command.mjs fix "$FIX_PROMPT"
+
+            if [ -z "$(git status --porcelain)" ]; then
+              echo "No review fixes in round ${ROUND}."
+              break
+            fi
+
+            git add -A
+            git commit -m "fix(codex-review): address review for #${ISSUE_NUMBER} (round ${ROUND})"
+          done
+
+      - name: Push branch
+        if: steps.commit_impl.outputs.has_changes == 'true'
+        run: |
+          git push origin "${{ steps.create_branch.outputs.work_branch }}"
+
+      - name: Render PR body
+        if: steps.commit_impl.outputs.has_changes == 'true'
+        id: pr_body
+        run: |
+          PR_BODY_PATH="${{ steps.prep.outputs.tmp_dir }}/pr-body.md"
+          REVIEW1="${{ steps.prep.outputs.tmp_dir }}/review-round-1.md"
+          REVIEW2="${{ steps.prep.outputs.tmp_dir }}/review-round-2.md"
+          BASE_BRANCH="${{ steps.select_base.outputs.base_branch }}" \
+          WORK_BRANCH="${{ steps.create_branch.outputs.work_branch }}" \
+          QA_STATUS="${{ needs.spec_qa.outputs.qa_status }}" \
+          REVIEW_ROUND1_PATH="$REVIEW1" \
+          REVIEW_ROUND2_PATH="$REVIEW2" \
+          node .github/scripts/render-pr-body.mjs "$PR_BODY_PATH"
+          echo "path=$PR_BODY_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Create draft PR
+        if: steps.commit_impl.outputs.has_changes == 'true'
+        id: create_pr
+        uses: actions/github-script@v7
+        env:
+          BASE_BRANCH: ${{ steps.select_base.outputs.base_branch }}
+          WORK_BRANCH: ${{ steps.create_branch.outputs.work_branch }}
+          PR_BODY_PATH: ${{ steps.pr_body.outputs.path }}
+        with:
+          script: |
+            const fs = require("fs");
+            const issue_number = context.issue.number;
+            const issue_title = context.payload.issue.title;
+            const base = process.env.BASE_BRANCH;
+            const work = process.env.WORK_BRANCH;
+            const body = fs.readFileSync(process.env.PR_BODY_PATH, "utf8");
+            const title = `[codex] #${issue_number} ${issue_title}`;
+            const head = `${context.repo.owner}:${work}`;
+            const issueRefPattern = new RegExp(`(^|\\D)#${issue_number}(?!\\d)\\b`);
+            const closesPattern = new RegExp(`\\bCloses\\s+#${issue_number}(?!\\d)\\b`, "i");
+
+            const existing = await github.rest.pulls.list({
+              ...context.repo,
+              state: "open",
+              head,
+              base,
+            });
+
+            if (existing.data.length > 0) {
+              core.info(`PR already exists: #${existing.data[0].number}`);
+              core.setOutput("pr_number", String(existing.data[0].number));
+              core.setOutput("pr_url", existing.data[0].html_url);
+              return;
+            }
+
+            // Fallback: search open PRs by issue number marker to prevent PR duplication.
+            const openPulls = await github.paginate(github.rest.pulls.list, {
+              ...context.repo,
+              state: "open",
+              per_page: 100,
+            });
+            const matchedByIssue = openPulls.find((pr) => {
+              const prTitle = pr.title || "";
+              const prBody = pr.body || "";
+              return issueRefPattern.test(prTitle) || closesPattern.test(prBody);
+            });
+            if (matchedByIssue) {
+              core.info(`PR for issue marker already exists: #${matchedByIssue.number}`);
+              core.setOutput("pr_number", String(matchedByIssue.number));
+              core.setOutput("pr_url", matchedByIssue.html_url);
+              return;
+            }
+
+            const created = await github.rest.pulls.create({
+              ...context.repo,
+              title,
+              head: work,
+              base,
+              body,
+              draft: true,
+            });
+
+            core.setOutput("pr_number", String(created.data.number));
+            core.setOutput("pr_url", created.data.html_url);
+
+      - name: Final relabel and notify
+        if: steps.commit_impl.outputs.has_changes == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue_number = context.issue.number;
+            const prNumber = Number(`${{ steps.create_pr.outputs.pr_number }}`);
+            const prUrl = `${{ steps.create_pr.outputs.pr_url }}`;
+
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number,
+              body: `Draft PR を作成しました: #${prNumber}\n${prUrl}`,
+            });
+
+            async function safeAdd(name) {
+              try {
+                await github.rest.issues.addLabels({
+                  ...context.repo,
+                  issue_number,
+                  labels: [name],
+                });
+              } catch (e) {
+                core.warning(`Failed to add label ${name}: ${e.message}`);
+              }
+            }
+            async function safeRemove(name) {
+              try {
+                await github.rest.issues.removeLabel({
+                  ...context.repo,
+                  issue_number,
+                  name,
+                });
+              } catch (e) {
+                if (e.status !== 404) {
+                  core.warning(`Failed to remove label ${name}: ${e.message}`);
+                }
+              }
+            }
+
+            await safeAdd("codex:ready-pr");
+            await safeRemove("codex:reviewing");
+            await safeRemove("codex:in-progress");
+            await safeRemove("codex:implement");

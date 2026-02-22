@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::fs::Metadata;
+use std::hash::{Hash, Hasher};
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -176,10 +176,7 @@ fn invalidate_icon_cache() {
 
 /// Scan filesystem every startup; compare with cache to detect changes.
 /// Returns (entries, changed) where changed=true means the entry set differs from cache.
-pub fn load_or_scan(
-    scan: &[ScanPath],
-    show_hidden_system: bool,
-) -> (Vec<AppEntry>, bool) {
+pub fn load_or_scan(scan: &[ScanPath], show_hidden_system: bool) -> (Vec<AppEntry>, bool) {
     let current_hash = compute_config_hash(scan, show_hidden_system);
 
     if let Some(cache) = load_cache(current_hash) {
@@ -627,6 +624,9 @@ mod tests {
     #[test]
     fn scan_all_empty_when_no_paths() {
         let entries = scan_all(&[], false);
-        assert!(entries.is_empty(), "scan_all with no paths should return empty");
+        assert!(
+            entries.is_empty(),
+            "scan_all with no paths should return empty"
+        );
     }
 }

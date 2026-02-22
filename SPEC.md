@@ -89,14 +89,20 @@
 
 ### 3.3 検索結果の優先順位
 
-最終スコア:
+最終スコア（既定）:
 
-`final_score = fuzzy_score + 5 * global_count + 20 * query_count`
+`final_score = base_score + 5 * global_count + 20 * query_count + folder_boost`
 
-- `fuzzy_score`: 選択中検索方式のマッチスコア
+- `base_score`: 選択中検索方式のマッチスコア
 - `global_count`: アプリ全体の起動回数
 - `query_count`: 同一正規化クエリでの当該項目選択回数
+- `folder_boost`: フォルダ候補の展開履歴ブースト（非フォルダは0）
 - 履歴スコアの時間減衰は行わない
+
+オプション設定（`[search] history_normalization = "fuzzy_relative_cap"`）時:
+
+- Fuzzy モードに限り、履歴加点は `floor(max(base_score, 1) * fuzzy_history_cap_ratio)` を上限とする
+- 既定値: `fuzzy_history_cap_ratio = 0.30`
 
 同点時タイブレーク:
 

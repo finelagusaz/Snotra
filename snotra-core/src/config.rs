@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     pub hotkey: HotkeyConfig,
     #[serde(default)]
@@ -87,6 +87,14 @@ fn default_show_hidden_system() -> bool {
     false
 }
 
+fn default_history_normalization() -> SearchHistoryNormalizationConfig {
+    SearchHistoryNormalizationConfig::Disabled
+}
+
+fn default_fuzzy_history_cap_ratio() -> f64 {
+    0.30
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SearchModeConfig {
@@ -95,7 +103,14 @@ pub enum SearchModeConfig {
     Fuzzy,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchHistoryNormalizationConfig {
+    Disabled,
+    FuzzyRelativeCap,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SearchConfig {
     #[serde(default = "default_search_mode")]
     pub normal_mode: SearchModeConfig,
@@ -103,6 +118,10 @@ pub struct SearchConfig {
     pub folder_mode: SearchModeConfig,
     #[serde(default = "default_show_hidden_system")]
     pub show_hidden_system: bool,
+    #[serde(default = "default_history_normalization")]
+    pub history_normalization: SearchHistoryNormalizationConfig,
+    #[serde(default = "default_fuzzy_history_cap_ratio")]
+    pub fuzzy_history_cap_ratio: f64,
 }
 
 impl Default for SearchConfig {
@@ -111,7 +130,22 @@ impl Default for SearchConfig {
             normal_mode: SearchModeConfig::Fuzzy,
             folder_mode: SearchModeConfig::Fuzzy,
             show_hidden_system: false,
+            history_normalization: SearchHistoryNormalizationConfig::Disabled,
+            fuzzy_history_cap_ratio: default_fuzzy_history_cap_ratio(),
         }
+    }
+}
+
+impl SearchConfig {
+    pub fn sanitize(&mut self) -> bool {
+        if self.fuzzy_history_cap_ratio.is_finite()
+            && (0.0..=1.0).contains(&self.fuzzy_history_cap_ratio)
+        {
+            return false;
+        }
+
+        self.fuzzy_history_cap_ratio = default_fuzzy_history_cap_ratio();
+        true
     }
 }
 
@@ -264,13 +298,14 @@ impl Config {
 
         // Desktop (.lnk)
         if let Some(desktop) = dirs::desktop_dir()
-            && desktop.exists() {
-                paths.push(ScanPath {
-                    path: desktop.to_string_lossy().to_string(),
-                    extensions: vec![".lnk".to_string()],
-                    include_folders: false,
-                });
-            }
+            && desktop.exists()
+        {
+            paths.push(ScanPath {
+                path: desktop.to_string_lossy().to_string(),
+                extensions: vec![".lnk".to_string()],
+                include_folders: false,
+            });
+        }
 
         paths
     }
@@ -300,9 +335,18 @@ impl Config {
         let lnk = ".lnk".to_string();
         for path in self.paths.additional.drain(..) {
             let key = path.to_lowercase();
-            if let Some(existing) = self.paths.scan.iter_mut().find(|sp| sp.path.to_lowercase() == key) {
+            if let Some(existing) = self
+                .paths
+                .scan
+                .iter_mut()
+                .find(|sp| sp.path.to_lowercase() == key)
+            {
                 // Same directory already in scan — merge .lnk into its extensions
-                if !existing.extensions.iter().any(|e| e.eq_ignore_ascii_case(&lnk)) {
+                if !existing
+                    .extensions
+                    .iter()
+                    .any(|e| e.eq_ignore_ascii_case(&lnk))
+                {
                     existing.extensions.push(lnk.clone());
                 }
             } else {
@@ -332,6 +376,9 @@ impl Config {
                 }
                 if !config.paths.additional.is_empty() {
                     config.migrate_additional_to_scan();
+                    needs_save = true;
+                }
+                if config.search.sanitize() {
                     needs_save = true;
                 }
                 if needs_save {
@@ -386,6 +433,8 @@ mod tests {
             normal_mode = "prefix"
             folder_mode = "substring"
             show_hidden_system = true
+            history_normalization = "fuzzy_relative_cap"
+            fuzzy_history_cap_ratio = 0.25
         "#;
         let config: Config = toml::from_str(toml_str).expect("parse");
         assert_eq!(config.hotkey.modifier, "Ctrl");
@@ -399,6 +448,11 @@ mod tests {
         assert_eq!(config.search.normal_mode, SearchModeConfig::Prefix);
         assert_eq!(config.search.folder_mode, SearchModeConfig::Substring);
         assert!(config.search.show_hidden_system);
+        assert_eq!(
+            config.search.history_normalization,
+            SearchHistoryNormalizationConfig::FuzzyRelativeCap
+        );
+        assert!((config.search.fuzzy_history_cap_ratio - 0.25).abs() < f64::EPSILON);
         assert!(config.general.hotkey_toggle);
         assert!(!config.general.show_on_startup);
         assert!(config.general.auto_hide_on_focus_lost);
@@ -430,6 +484,11 @@ mod tests {
         assert_eq!(config.search.normal_mode, SearchModeConfig::Fuzzy);
         assert_eq!(config.search.folder_mode, SearchModeConfig::Fuzzy);
         assert!(!config.search.show_hidden_system);
+        assert_eq!(
+            config.search.history_normalization,
+            SearchHistoryNormalizationConfig::Disabled
+        );
+        assert!((config.search.fuzzy_history_cap_ratio - 0.30).abs() < f64::EPSILON);
         assert!(config.general.hotkey_toggle);
         assert!(!config.general.show_on_startup);
         assert!(config.general.auto_hide_on_focus_lost);
@@ -455,6 +514,11 @@ mod tests {
         assert_eq!(config.search.normal_mode, SearchModeConfig::Fuzzy);
         assert_eq!(config.search.folder_mode, SearchModeConfig::Fuzzy);
         assert!(!config.search.show_hidden_system);
+        assert_eq!(
+            config.search.history_normalization,
+            SearchHistoryNormalizationConfig::Disabled
+        );
+        assert!((config.search.fuzzy_history_cap_ratio - 0.30).abs() < f64::EPSILON);
         assert!(config.general.hotkey_toggle);
         assert!(!config.general.show_on_startup);
         assert!(config.general.auto_hide_on_focus_lost);
@@ -680,7 +744,11 @@ mod tests {
 
         assert!(config.paths.additional.is_empty());
         assert_eq!(config.paths.scan.len(), 1);
-        assert_eq!(config.paths.scan[0].extensions, vec![".lnk"], ".lnk should not be duplicated");
+        assert_eq!(
+            config.paths.scan[0].extensions,
+            vec![".lnk"],
+            ".lnk should not be duplicated"
+        );
     }
 
     #[test]
@@ -702,5 +770,19 @@ mod tests {
             !toml_str.contains("additional"),
             "additional should not appear in serialized output"
         );
+    }
+
+    #[test]
+    fn sanitize_invalid_fuzzy_history_cap_ratio() {
+        let mut config = SearchConfig {
+            normal_mode: SearchModeConfig::Fuzzy,
+            folder_mode: SearchModeConfig::Fuzzy,
+            show_hidden_system: false,
+            history_normalization: SearchHistoryNormalizationConfig::FuzzyRelativeCap,
+            fuzzy_history_cap_ratio: 1.5,
+        };
+
+        assert!(config.sanitize());
+        assert!((config.fuzzy_history_cap_ratio - 0.30).abs() < f64::EPSILON);
     }
 }

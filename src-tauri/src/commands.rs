@@ -3,7 +3,7 @@ use std::sync::atomic::Ordering;
 
 use snotra_core::config::Config;
 use snotra_core::folder;
-use snotra_core::search::SearchMode;
+use snotra_core::search::{HistoryBoostConfig, SearchMode};
 use snotra_core::ui_types::SearchResult;
 use snotra_core::window_data::{self, WindowPlacement, WindowSize};
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, State};
@@ -24,7 +24,14 @@ pub fn search(query: String, state: State<AppState>) -> Vec<SearchResult> {
     let engine = state.engine.lock().unwrap();
     let history = state.history.lock().unwrap();
     let mode: SearchMode = config.search.normal_mode.into();
-    engine.search(&query, config.appearance.max_results, &history, mode)
+    let history_boost_config: HistoryBoostConfig = (&config.search).into();
+    engine.search_with_history_boost(
+        &query,
+        config.appearance.max_results,
+        &history,
+        mode,
+        history_boost_config,
+    )
 }
 
 #[tauri::command]
@@ -44,9 +51,9 @@ pub fn launch_item(path: String, query: String, state: State<AppState>) {
     }
     #[cfg(windows)]
     {
-        use windows::core::HSTRING;
         use windows::Win32::UI::Shell::ShellExecuteW;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        use windows::core::HSTRING;
         unsafe {
             ShellExecuteW(
                 None,
@@ -61,11 +68,7 @@ pub fn launch_item(path: String, query: String, state: State<AppState>) {
 }
 
 #[tauri::command]
-pub fn list_folder(
-    dir: String,
-    filter: String,
-    state: State<AppState>,
-) -> Vec<SearchResult> {
+pub fn list_folder(dir: String, filter: String, state: State<AppState>) -> Vec<SearchResult> {
     let config = state.config.lock().unwrap();
     let history = state.history.lock().unwrap();
     let mode: SearchMode = config.search.folder_mode.into();
@@ -108,24 +111,25 @@ pub fn save_config(
 
     // Notify platform bridge of hotkey/tray changes
     if let Some(bridge) = app.try_state::<std::sync::Mutex<PlatformBridge>>()
-        && let Ok(b) = bridge.lock() {
-            if config.hotkey != old_config.hotkey {
-                let (tx, rx) = std::sync::mpsc::channel();
-                b.send_command(PlatformCommand::SetHotkey {
-                    config: config.hotkey.clone(),
-                    reply: tx,
-                });
-                // Wait for hotkey registration result
-                if let Ok(false) = rx.recv() {
-                    // Re-register failed, revert in-memory but still save to disk
-                }
-            }
-            if config.general.show_tray_icon != old_config.general.show_tray_icon {
-                b.send_command(PlatformCommand::SetTrayVisible(
-                    config.general.show_tray_icon,
-                ));
+        && let Ok(b) = bridge.lock()
+    {
+        if config.hotkey != old_config.hotkey {
+            let (tx, rx) = std::sync::mpsc::channel();
+            b.send_command(PlatformCommand::SetHotkey {
+                config: config.hotkey.clone(),
+                reply: tx,
+            });
+            // Wait for hotkey registration result
+            if let Ok(false) = rx.recv() {
+                // Re-register failed, revert in-memory but still save to disk
             }
         }
+        if config.general.show_tray_icon != old_config.general.show_tray_icon {
+            b.send_command(PlatformCommand::SetTrayVisible(
+                config.general.show_tray_icon,
+            ));
+        }
+    }
 
     {
         let mut current = state.config.lock().unwrap();
@@ -134,8 +138,8 @@ pub fn save_config(
 
     // First-run path: initial indexing is pending (indexing=true) but build not started yet.
     // Do not treat regular reindex-in-progress as first run.
-    let is_first_run_pending = state.indexing.load(Ordering::SeqCst)
-        && !state.index_build_started.load(Ordering::SeqCst);
+    let is_first_run_pending =
+        state.indexing.load(Ordering::SeqCst) && !state.index_build_started.load(Ordering::SeqCst);
     if is_first_run_pending {
         indexing::start_index_build(&app);
         if let Some(w) = app.get_webview_window("settings") {
@@ -163,13 +167,11 @@ pub fn save_config(
         for label in &["main", "results"] {
             if let Some(w) = app.get_webview_window(label)
                 && let Ok(size) = w.inner_size()
-                    && let Ok(sf) = w.scale_factor() {
-                        let logical = size.to_logical::<f64>(sf);
-                        let _ = w.set_size(LogicalSize::new(
-                            f64::from(new_width),
-                            logical.height,
-                        ));
-                    }
+                && let Ok(sf) = w.scale_factor()
+            {
+                let logical = size.to_logical::<f64>(sf);
+                let _ = w.set_size(LogicalSize::new(f64::from(new_width), logical.height));
+            }
         }
     }
 
@@ -249,7 +251,7 @@ pub fn set_window_no_activate(app: AppHandle) -> Result<(), String> {
     {
         use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::WindowsAndMessaging::{
-            GetWindowLongW, SetWindowLongW, GWL_EXSTYLE, WS_EX_NOACTIVATE,
+            GWL_EXSTYLE, GetWindowLongW, SetWindowLongW, WS_EX_NOACTIVATE,
         };
         if let Some(w) = app.get_webview_window("results") {
             let raw_hwnd = w.hwnd().map_err(|e| e.to_string())?;
@@ -309,17 +311,19 @@ pub fn list_system_fonts() -> Vec<String> {
             _text_metric: *const TEXTMETRICW,
             _font_type: u32,
             lparam: LPARAM,
-        ) -> i32 { unsafe {
-            let fonts = &mut *(lparam.0 as *mut BTreeSet<String>);
-            let lf = &*logfont;
-            let name_len = lf.lfFaceName.iter().position(|&c| c == 0).unwrap_or(32);
-            let name = String::from_utf16_lossy(&lf.lfFaceName[..name_len]);
-            // @ 始まりは縦書き用フォント、除外
-            if !name.starts_with('@') {
-                fonts.insert(name);
+        ) -> i32 {
+            unsafe {
+                let fonts = &mut *(lparam.0 as *mut BTreeSet<String>);
+                let lf = &*logfont;
+                let name_len = lf.lfFaceName.iter().position(|&c| c == 0).unwrap_or(32);
+                let name = String::from_utf16_lossy(&lf.lfFaceName[..name_len]);
+                // @ 始まりは縦書き用フォント、除外
+                if !name.starts_with('@') {
+                    fonts.insert(name);
+                }
+                1 // 列挙を続行
             }
-            1 // 列挙を続行
-        }}
+        }
 
         let mut fonts = BTreeSet::<String>::new();
         let hdc = unsafe { GetDC(None) };

@@ -1,5 +1,5 @@
-use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
+use fuzzy_matcher::skim::SkimMatcherV2;
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
@@ -100,9 +100,7 @@ fn matches_filter(name: &str, filter: &str, mode: SearchMode, matcher: &SkimMatc
     match mode {
         SearchMode::Prefix => name_lower.starts_with(&filter_lower),
         SearchMode::Substring => name_lower.contains(&filter_lower),
-        SearchMode::Fuzzy => matcher
-            .fuzzy_match(&name_lower, &filter_lower)
-            .is_some(),
+        SearchMode::Fuzzy => matcher.fuzzy_match(&name_lower, &filter_lower).is_some(),
     }
 }
 

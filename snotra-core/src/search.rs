@@ -1,9 +1,10 @@
-use std::collections::HashMap;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 
-use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
+use fuzzy_matcher::skim::SkimMatcherV2;
 
+use crate::config::{SearchConfig, SearchHistoryNormalizationConfig};
 use crate::history::HistoryStore;
 use crate::indexer::AppEntry;
 use crate::query::normalize_query;
@@ -26,6 +27,30 @@ impl From<crate::config::SearchModeConfig> for SearchMode {
             crate::config::SearchModeConfig::Prefix => SearchMode::Prefix,
             crate::config::SearchModeConfig::Substring => SearchMode::Substring,
             crate::config::SearchModeConfig::Fuzzy => SearchMode::Fuzzy,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HistoryBoostConfig {
+    pub normalization: SearchHistoryNormalizationConfig,
+    pub fuzzy_history_cap_ratio: f64,
+}
+
+impl Default for HistoryBoostConfig {
+    fn default() -> Self {
+        Self {
+            normalization: SearchHistoryNormalizationConfig::Disabled,
+            fuzzy_history_cap_ratio: 0.30,
+        }
+    }
+}
+
+impl From<&SearchConfig> for HistoryBoostConfig {
+    fn from(config: &SearchConfig) -> Self {
+        Self {
+            normalization: config.history_normalization,
+            fuzzy_history_cap_ratio: config.fuzzy_history_cap_ratio,
         }
     }
 }
@@ -64,6 +89,23 @@ impl SearchEngine {
         history: &HistoryStore,
         mode: SearchMode,
     ) -> Vec<SearchResult> {
+        self.search_with_history_boost(
+            query,
+            max_results,
+            history,
+            mode,
+            HistoryBoostConfig::default(),
+        )
+    }
+
+    pub fn search_with_history_boost(
+        &self,
+        query: &str,
+        max_results: usize,
+        history: &HistoryStore,
+        mode: SearchMode,
+        history_boost_config: HistoryBoostConfig,
+    ) -> Vec<SearchResult> {
         if max_results == 0 {
             return Vec::new();
         }
@@ -85,9 +127,9 @@ impl SearchEngine {
                     match_score_single_cached(mode, &self.matcher, lower_name, &norm_query);
                 let score = if has_dot {
                     // ドットあり → entry.name とファイル名（拡張子込み）の両方で照合し、高い方を採用
-                    let fn_score = lower_file_name
-                        .as_deref()
-                        .and_then(|f| match_score_single_cached(mode, &self.matcher, f, &norm_query));
+                    let fn_score = lower_file_name.as_deref().and_then(|f| {
+                        match_score_single_cached(mode, &self.matcher, f, &norm_query)
+                    });
                     match (name_score, fn_score) {
                         (Some(a), Some(b)) => Some(a.max(b)),
                         (a, b) => a.or(b),
@@ -106,8 +148,15 @@ impl SearchEngine {
                     } else {
                         0
                     };
-                    let combined =
-                        base_score + global * GLOBAL_WEIGHT + qcount * QUERY_WEIGHT + folder_boost;
+                    let raw_history_boost =
+                        global * GLOBAL_WEIGHT + qcount * QUERY_WEIGHT + folder_boost;
+                    let history_boost = adjusted_history_boost(
+                        mode,
+                        base_score,
+                        raw_history_boost,
+                        history_boost_config,
+                    );
+                    let combined = base_score + history_boost;
                     let last = history.last_launched(&entry.target_path).unwrap_or(0);
                     (combined, last, entry, lower_name.as_str())
                 })
@@ -156,6 +205,22 @@ impl SearchEngine {
     pub fn entries(&self) -> &[AppEntry] {
         &self.entries
     }
+}
+
+fn adjusted_history_boost(
+    mode: SearchMode,
+    base_score: i64,
+    raw_history_boost: i64,
+    config: HistoryBoostConfig,
+) -> i64 {
+    if mode != SearchMode::Fuzzy
+        || config.normalization != SearchHistoryNormalizationConfig::FuzzyRelativeCap
+    {
+        return raw_history_boost;
+    }
+
+    let cap = ((base_score.max(1) as f64) * config.fuzzy_history_cap_ratio).floor() as i64;
+    raw_history_boost.min(cap)
 }
 
 fn rank_cmp(a: &(i64, u64, &AppEntry, &str), b: &(i64, u64, &AppEntry, &str)) -> Ordering {
@@ -462,7 +527,10 @@ mod tests {
             target_path: "C:\\A\\tool.exe".to_string(),
             is_folder: false,
         };
-        let mut scored = vec![(100_i64, 200_u64, &a, "tool"), (100_i64, 200_u64, &b, "tool")];
+        let mut scored = vec![
+            (100_i64, 200_u64, &a, "tool"),
+            (100_i64, 200_u64, &b, "tool"),
+        ];
         scored.sort_by(rank_cmp);
         assert_eq!(scored[0].2.target_path, "C:\\A\\tool.exe");
         assert_eq!(scored[1].2.target_path, "C:\\B\\tool.exe");
@@ -491,5 +559,62 @@ mod tests {
         let engine = SearchEngine::new(entries);
         let results = engine.search("dummy.exe", 8, &empty_history(), SearchMode::Fuzzy);
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn adjusted_history_boost_disabled_uses_raw_value() {
+        let adjusted =
+            adjusted_history_boost(SearchMode::Fuzzy, 100, 250, HistoryBoostConfig::default());
+        assert_eq!(adjusted, 250);
+    }
+
+    #[test]
+    fn adjusted_history_boost_caps_only_in_fuzzy_mode() {
+        let config = HistoryBoostConfig {
+            normalization: SearchHistoryNormalizationConfig::FuzzyRelativeCap,
+            fuzzy_history_cap_ratio: 0.30,
+        };
+        let adjusted = adjusted_history_boost(SearchMode::Prefix, 100, 250, config);
+        assert_eq!(adjusted, 250);
+    }
+
+    #[test]
+    fn adjusted_history_boost_caps_fuzzy_history_by_base_ratio() {
+        let config = HistoryBoostConfig {
+            normalization: SearchHistoryNormalizationConfig::FuzzyRelativeCap,
+            fuzzy_history_cap_ratio: 0.30,
+        };
+        let adjusted = adjusted_history_boost(SearchMode::Fuzzy, 100, 250, config);
+        assert_eq!(adjusted, 30);
+    }
+
+    #[test]
+    fn adjusted_history_boost_zeroes_when_base_is_non_positive() {
+        let config = HistoryBoostConfig {
+            normalization: SearchHistoryNormalizationConfig::FuzzyRelativeCap,
+            fuzzy_history_cap_ratio: 0.30,
+        };
+        let adjusted = adjusted_history_boost(SearchMode::Fuzzy, -50, 250, config);
+        assert_eq!(adjusted, 0);
+    }
+
+    #[test]
+    fn search_with_history_boost_disabled_matches_legacy_search() {
+        let entries = make_entries(&["alpha", "alpaca", "alpine"]);
+        let engine = SearchEngine::new(entries);
+        let mut history = empty_history();
+        for _ in 0..50 {
+            history.record_launch("C:\\fake\\alpaca.lnk", "alp");
+        }
+
+        let legacy = engine.search("alp", 8, &history, SearchMode::Fuzzy);
+        let explicit = engine.search_with_history_boost(
+            "alp",
+            8,
+            &history,
+            SearchMode::Fuzzy,
+            HistoryBoostConfig::default(),
+        );
+        assert_eq!(legacy, explicit);
     }
 }

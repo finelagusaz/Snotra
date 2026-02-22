@@ -60,8 +60,13 @@ if [[ ! -f "$PROMPT_FILE" ]]; then
   exit 2
 fi
 
-if ! command -v codex >/dev/null 2>&1; then
-  echo "'codex' command is not available in PATH." >&2
+if command -v codex >/dev/null 2>&1; then
+  CODEX_CMD=(codex)
+elif command -v npx >/dev/null 2>&1; then
+  # Fallback for hosted runners where global npm bin may not be in PATH.
+  CODEX_CMD=(npx -y @openai/codex)
+else
+  echo "Neither 'codex' nor 'npx' command is available in PATH." >&2
   exit 127
 fi
 
@@ -78,7 +83,7 @@ if [[ "$MODE" == "review" ]]; then
     exit 2
   fi
   mkdir -p "$(dirname "$OUTPUT_FILE")"
-  codex "${COMMON_ARGS[@]}" --output-last-message "$OUTPUT_FILE" - < "$PROMPT_FILE"
+  "${CODEX_CMD[@]}" "${COMMON_ARGS[@]}" --output-last-message "$OUTPUT_FILE" - < "$PROMPT_FILE"
 else
-  codex "${COMMON_ARGS[@]}" - < "$PROMPT_FILE"
+  "${CODEX_CMD[@]}" "${COMMON_ARGS[@]}" - < "$PROMPT_FILE"
 fi

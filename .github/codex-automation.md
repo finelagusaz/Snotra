@@ -64,7 +64,7 @@ owner-name,maintainer-a,maintainer-b
 - allowlist 外ユーザーの `/codex run` は拒否されます。
 - review モードでは `{output_file}` へレビュー結果を保存する契約にしてください。
 - `CODEX_RUNNER_COMMAND` で `run-codex.sh` を使う場合は、デフォルトブランチに `scripts/run-codex.sh` が必要です。
-- GitHub Hosted Runner (`ubuntu-latest`) では `codex` CLI をジョブ内でインストールし、`codex --version` で事前検証してください。
+- GitHub Hosted Runner (`ubuntu-latest`) では `codex` CLI をジョブ内でインストールし、必要に応じて `npx -y @openai/codex` フォールバックを利用してください。
 
 ## コメントコマンド
 

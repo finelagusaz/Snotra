@@ -365,8 +365,11 @@ jobs:
 
       - name: Verify Codex CLI
         run: |
-          command -v codex
-          codex --version
+          if command -v codex >/dev/null 2>&1; then
+            codex --version
+          else
+            npx -y @openai/codex --version
+          fi
 
       - name: Extract latest /codex spec
         id: extract_spec
@@ -412,8 +415,8 @@ jobs:
             echo "Ensure scripts/run-codex.sh exists on the default branch used by this workflow."
             exit 1
           fi
-          if ! command -v codex >/dev/null 2>&1; then
-            echo "'codex' command is not available in PATH."
+          if ! command -v codex >/dev/null 2>&1 && ! command -v npx >/dev/null 2>&1; then
+            echo "Neither 'codex' nor 'npx' command is available in PATH."
             exit 1
           fi
 

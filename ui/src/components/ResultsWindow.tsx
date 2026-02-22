@@ -4,6 +4,12 @@ import type { SearchResult } from "../lib/types";
 import * as api from "../lib/invoke";
 import ResultRow from "./ResultRow";
 
+type ResultsUpdatedPayload = {
+  results: SearchResult[];
+  selected: number;
+  requestId: number;
+};
+
 const ResultsWindow: Component = () => {
   const [results, setResults] = createSignal<SearchResult[]>([]);
   const [selected, setSelected] = createSignal(0);
@@ -13,8 +19,11 @@ const ResultsWindow: Component = () => {
   const [containerWidth, setContainerWidth] = createSignal(0);
   let listRef: HTMLDivElement | undefined;
   let hoverTimer: ReturnType<typeof setTimeout> | undefined;
+  let latestRequestId = 0;
+  let lastScrolledSelected = -1;
+  let lastScrolledRequestId = -1;
 
-  async function fetchIcons(items: SearchResult[]) {
+  async function fetchIcons(items: SearchResult[], requestId: number) {
     const cache = iconCache();
     const missing = items
       .filter((r) => !r.isError && !cache.has(r.path))
@@ -22,6 +31,8 @@ const ResultsWindow: Component = () => {
     if (missing.length === 0) return;
 
     const batch = await api.getIconsBatch(missing);
+    if (requestId !== latestRequestId) return;
+
     const next = new Map(cache);
     for (const [k, v] of Object.entries(batch)) {
       next.set(k, v);
@@ -46,19 +57,27 @@ const ResultsWindow: Component = () => {
       onCleanup(() => ro.disconnect());
     }
 
-    listen<{ results: SearchResult[]; selected: number }>(
-      "results-updated",
-      (event) => {
+    listen<ResultsUpdatedPayload>("results-updated", (event) => {
+        if (event.payload.requestId < latestRequestId) {
+          return;
+        }
+        latestRequestId = event.payload.requestId;
         setResults(event.payload.results);
         setSelected(event.payload.selected);
-        fetchIcons(event.payload.results);
-        queueMicrotask(() => {
-          if (!listRef) return;
-          const row = listRef.children[event.payload.selected] as HTMLElement | undefined;
-          row?.scrollIntoView({ block: "nearest" });
-        });
-      },
-    );
+        fetchIcons(event.payload.results, event.payload.requestId);
+        if (
+          event.payload.selected !== lastScrolledSelected ||
+          event.payload.requestId !== lastScrolledRequestId
+        ) {
+          lastScrolledSelected = event.payload.selected;
+          lastScrolledRequestId = event.payload.requestId;
+          queueMicrotask(() => {
+            if (!listRef) return;
+            const row = listRef.children[event.payload.selected] as HTMLElement | undefined;
+            row?.scrollIntoView({ block: "nearest" });
+          });
+        }
+      });
   });
 
   return (

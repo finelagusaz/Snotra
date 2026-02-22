@@ -126,9 +126,13 @@ impl HistoryStore {
 
     pub fn query_count(&self, query: &str, path: &str) -> u32 {
         let norm_query = normalize_query(query);
+        self.query_count_normalized(&norm_query, path)
+    }
+
+    pub fn query_count_normalized(&self, normalized_query: &str, path: &str) -> u32 {
         self.data
             .query
-            .get(&norm_query)
+            .get(normalized_query)
             .and_then(|m| m.get(path))
             .copied()
             .unwrap_or(0)

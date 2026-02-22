@@ -1,0 +1,33 @@
+- name: codex:implement
+  color: "0e8a16"
+  description: Codex 自動実装の起動ラベル
+- name: codex:needs-clarification
+  color: "fbca04"
+  description: 仕様不明点あり。回答待ち
+- name: codex:in-progress
+  color: "1d76db"
+  description: Codex が実装中
+- name: codex:reviewing
+  color: "5319e7"
+  description: Codex が自己レビュー中
+- name: codex:ready-pr
+  color: "0052cc"
+  description: Codex が Draft PR を作成済み
+- name: type:feature
+  color: "a2eeef"
+  description: 新機能
+- name: type:fix
+  color: "d73a4a"
+  description: バグ修正
+- name: type:refactor
+  color: "c2e0c6"
+  description: リファクタリング
+- name: size:S
+  color: "bfdadc"
+  description: 小規模
+- name: size:M
+  color: "bfd4f2"
+  description: 中規模
+- name: size:L
+  color: "d4c5f9"
+  description: 大規模（分割推奨）

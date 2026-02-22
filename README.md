@@ -78,6 +78,11 @@ Snotra/
 
 - 詳細仕様と状態遷移図: [SPEC.md](SPEC.md)
 
+## Codex 自動化
+
+Issue 駆動で Codex 実装〜Draft PR 作成まで自動化する運用を用意しています。  
+設定方法と運用ルールは [.github/codex-automation.md](.github/codex-automation.md) を参照してください。
+
 ## 技術スタック
 
 <p>

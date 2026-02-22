@@ -75,6 +75,7 @@ if [[ -z "$NORMALIZED_KEY" ]]; then
   exit 2
 fi
 export OPENAI_API_KEY="$NORMALIZED_KEY"
+export CODEX_API_KEY="$OPENAI_API_KEY"
 echo "Using API key source: ${KEY_SOURCE} (length=${#OPENAI_API_KEY})"
 
 if command -v codex >/dev/null 2>&1; then

@@ -63,6 +63,7 @@ owner-name,maintainer-a,maintainer-b
 - `CODEX_ALLOWED_ACTORS` が空の場合は実行を拒否します。
 - allowlist 外ユーザーの `/codex run` は拒否されます。
 - review モードでは `{output_file}` へレビュー結果を保存する契約にしてください。
+- `CODEX_RUNNER_COMMAND` で `run-codex.sh` を使う場合は、デフォルトブランチに `scripts/run-codex.sh` が必要です。
 
 ## コメントコマンド
 
@@ -107,3 +108,13 @@ allowlist 登録者が Issue コメントで `/codex run` を投稿すると自�
 - `codex:needs-clarification` を付与
 
 仕様更新後、allowlist 登録者が `/codex run` を再投稿すると再実行されます。
+
+## 失敗時通知
+
+`/codex run` 実行中に失敗した場合は、Issue に次を自動コメントします。
+
+- 失敗通知
+- Workflow Run URL
+- 主な確認ポイント（`CODEX_RUNNER_COMMAND` / `scripts/run-codex.sh`）
+
+あわせて `codex:needs-clarification` を付与し、進行中ラベル（`codex:in-progress` / `codex:reviewing`）を外します。

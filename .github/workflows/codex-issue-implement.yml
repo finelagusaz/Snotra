@@ -397,6 +397,11 @@ jobs:
             echo "CODEX_RUNNER_COMMAND looks like a smoke stub. Set a real Codex execution command."
             exit 1
           fi
+          if [[ "${CODEX_RUNNER_COMMAND}" == *"run-codex.sh"* ]] && [ ! -f "./scripts/run-codex.sh" ]; then
+            echo "CODEX_RUNNER_COMMAND references run-codex.sh, but ./scripts/run-codex.sh was not found."
+            echo "Ensure scripts/run-codex.sh exists on the default branch used by this workflow."
+            exit 1
+          fi
 
       - name: Mark in progress
         uses: actions/github-script@v7
@@ -764,3 +769,65 @@ jobs:
             await safeAdd("codex:ready-pr");
             await safeRemove("codex:reviewing");
             await safeRemove("codex:in-progress");
+
+  notify_failure:
+    needs:
+      - preflight
+      - spec_qa
+      - implement_and_review
+    if: >-
+      always() &&
+      needs.preflight.outputs.should_run == 'true' &&
+      needs.preflight.outputs.authorized == 'true' &&
+      needs.preflight.outputs.run_ready == 'true' &&
+      needs.implement_and_review.result == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify failure on Issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue_number = context.issue.number;
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              "Codex 自動実装が失敗しました。",
+              "",
+              `- Workflow Run: ${runUrl}`,
+              "- 主な確認ポイント: `CODEX_RUNNER_COMMAND` と `scripts/run-codex.sh` の存在",
+              "- 詳細は上記Runのログを確認してください。",
+            ].join("\n");
+
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number,
+              body,
+            });
+
+            async function safeAdd(name) {
+              try {
+                await github.rest.issues.addLabels({
+                  ...context.repo,
+                  issue_number,
+                  labels: [name],
+                });
+              } catch (e) {
+                core.warning(`Failed to add label ${name}: ${e.message}`);
+              }
+            }
+            async function safeRemove(name) {
+              try {
+                await github.rest.issues.removeLabel({
+                  ...context.repo,
+                  issue_number,
+                  name,
+                });
+              } catch (e) {
+                if (e.status !== 404) {
+                  core.warning(`Failed to remove label ${name}: ${e.message}`);
+                }
+              }
+            }
+
+            await safeAdd("codex:needs-clarification");
+            await safeRemove("codex:in-progress");
+            await safeRemove("codex:reviewing");

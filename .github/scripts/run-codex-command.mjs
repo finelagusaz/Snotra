@@ -39,13 +39,22 @@ const expanded = cmdTemplate
 console.log(`[codex] mode=${mode}`);
 console.log(`[codex] command=${expanded}`);
 
-execSync(expanded, {
-  stdio: "inherit",
-  shell: true,
-  env: {
-    ...process.env,
-    CODEX_MODE: mode,
-    CODEX_PROMPT_FILE: promptPath,
-    CODEX_OUTPUT_FILE: outputPath,
-  },
-});
+try {
+  execSync(expanded, {
+    stdio: "inherit",
+    shell: true,
+    env: {
+      ...process.env,
+      CODEX_MODE: mode,
+      CODEX_PROMPT_FILE: promptPath,
+      CODEX_OUTPUT_FILE: outputPath,
+    },
+  });
+} catch (error) {
+  const status =
+    typeof error?.status === "number" ? String(error.status) : "unknown";
+  console.error(
+    `[codex] command failed (mode=${mode}, status=${status}). Check CODEX_RUNNER_COMMAND and runner logs.`,
+  );
+  throw error;
+}

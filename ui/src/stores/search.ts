@@ -3,16 +3,17 @@ import { emit, listen } from "@tauri-apps/api/event";
 import type { SearchResult } from "../lib/types";
 import * as api from "../lib/invoke";
 import { findCommand } from "../lib/commands";
+import { perfStartSearch, perfMarkSearchDone, perfCancelSearch } from "../lib/perf";
 
-const DEBOUNCE_MS = 120;
+const DEBOUNCE_MS = 30;
 
 const [query, setQuery] = createSignal("");
 const [results, setResults] = createSignal<SearchResult[]>([]);
 const [selected, setSelected] = createSignal(0);
-const [iconCache, setIconCache] = createSignal<Map<string, string>>(new Map());
 const [indexing, setIndexing] = createSignal(false);
 
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+let latestRequestId = 0;
 
 function debouncedRefresh() {
   clearTimeout(debounceTimer);
@@ -29,31 +30,26 @@ const [folderState, setFolderState] = createSignal<{
 
 const [folderFilter, setFolderFilter] = createSignal("");
 
-async function fetchIcons(items: SearchResult[]) {
-  const cache = iconCache();
-  const missing = items
-    .filter((r) => !r.isError && !cache.has(r.path))
-    .map((r) => r.path);
-  if (missing.length === 0) return;
-
-  const batch = await api.getIconsBatch(missing);
-  const next = new Map(cache);
-  for (const [k, v] of Object.entries(batch)) {
-    next.set(k, v);
-  }
-  setIconCache(next);
-}
-
 async function refreshResults() {
+  const requestId = ++latestRequestId;
+  const fs = folderState();
+  const q = query();
+  const source = indexing()
+    ? "indexing"
+    : fs
+      ? "folder"
+      : q.trim() === ""
+        ? "history"
+        : "query";
+  perfStartSearch(requestId, source);
+
   if (indexing()) {
     setResults([]);
-    emit("results-updated", { results: [], selected: 0 });
-    emit("results-count-changed", 0);
+    perfMarkSearchDone(requestId, 0);
+    emit("results-updated", { results: [], selected: 0, requestId });
+    emit("results-count-changed", { count: 0, requestId });
     return;
   }
-
-  const q = query();
-  const fs = folderState();
 
   let items: SearchResult[];
   if (fs) {
@@ -64,10 +60,15 @@ async function refreshResults() {
     items = await api.search(q);
   }
 
+  if (requestId !== latestRequestId) {
+    perfCancelSearch(requestId);
+    return;
+  }
+
   setResults(items);
-  fetchIcons(items);
-  emit("results-updated", { results: items, selected: selected() });
-  emit("results-count-changed", items.length);
+  perfMarkSearchDone(requestId, items.length);
+  emit("results-updated", { results: items, selected: selected(), requestId });
+  emit("results-count-changed", { count: items.length, requestId });
 }
 
 // Auto-refresh when query changes (non-folder mode)
@@ -79,11 +80,12 @@ createEffect(
     if (cmd) {
       clearTimeout(debounceTimer);
       debounceTimer = undefined;
+      const requestId = ++latestRequestId;
       setQuery("");
       setResults([]);
       setSelected(0);
-      emit("results-updated", { results: [], selected: 0 });
-      emit("results-count-changed", 0);
+      emit("results-updated", { results: [], selected: 0, requestId });
+      emit("results-count-changed", { count: 0, requestId });
       cmd.action();
       return;
     }
@@ -104,7 +106,11 @@ createEffect(
 );
 
 function emitSelectionUpdate() {
-  emit("results-updated", { results: results(), selected: selected() });
+  emit("results-updated", {
+    results: results(),
+    selected: selected(),
+    requestId: latestRequestId,
+  });
 }
 
 function moveSelectionUp() {
@@ -211,7 +217,6 @@ export {
   results,
   selected,
   setSelected,
-  iconCache,
   folderState,
   folderFilter,
   setFolderFilter,

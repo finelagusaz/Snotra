@@ -10,10 +10,18 @@ import { resetForShow, setSelected, activateSelected, initIndexingState } from "
 import { applyTheme } from "./lib/theme";
 import type { VisualConfig } from "./lib/types";
 import * as api from "./lib/invoke";
+import { perfMarkRenderDone } from "./lib/perf";
 
 const RESULTS_GAP = 4;
 const RESULT_ROW_HEIGHT = 30;
 const RESULTS_PADDING = 8;
+type ResultsCountChangedPayload = {
+  count: number;
+  requestId: number;
+};
+type ResultsRenderDonePayload = {
+  requestId: number;
+};
 
 const App: Component = () => {
   const windowLabel = getCurrentWindow().label;
@@ -21,6 +29,17 @@ const App: Component = () => {
   onMount(async () => {
     const win = getCurrentWindow();
     const label = win.label;
+    let resultsWindowPromise: Promise<WebviewWindow | null> | undefined;
+    let lastResultsSize: { width: number; height: number } | undefined;
+    let lastResultsPosition: { x: number; y: number } | undefined;
+    let latestResultsRequestId = 0;
+
+    const getResultsWindow = async () => {
+      if (!resultsWindowPromise) {
+        resultsWindowPromise = WebviewWindow.getByLabel("results");
+      }
+      return resultsWindowPromise;
+    };
 
     // Register listeners before any await to avoid race conditions
     if (label === "main") {
@@ -52,7 +71,7 @@ const App: Component = () => {
           if (!focused) {
             blurTimer = setTimeout(() => {
               win.hide();
-              WebviewWindow.getByLabel("results").then((rw) => {
+              getResultsWindow().then((rw) => {
                 if (rw) rw.hide();
               });
             }, 100);
@@ -82,7 +101,7 @@ const App: Component = () => {
         void (async () => {
           const sf = await win.scaleFactor();
           const logicalPos = pos.toLogical(sf);
-          const rw = await WebviewWindow.getByLabel("results");
+          const rw = await getResultsWindow();
           if (!rw || moveEvent !== latestMoveEvent) return;
 
           const size = await win.innerSize();
@@ -95,45 +114,78 @@ const App: Component = () => {
       });
 
       // Listen for results-count-changed to show/hide/resize results window
-      listen<number>("results-count-changed", async (event) => {
-        const count = event.payload;
-        const rw = await WebviewWindow.getByLabel("results");
+      listen<ResultsCountChangedPayload>("results-count-changed", async (event) => {
+        const { count, requestId } = event.payload;
+        if (requestId < latestResultsRequestId) return;
+        latestResultsRequestId = requestId;
+
+        const rw = await getResultsWindow();
         if (!rw) return;
 
         if (count === 0) {
-          rw.hide();
+          if (await rw.isVisible()) {
+            await rw.hide();
+          }
           return;
         }
 
         // Use current main window width (may have been updated via settings)
-        const currentSize = await win.innerSize();
-        const currentSf = await win.scaleFactor();
+        const [currentSize, currentSf, mainPos, mainVisible] = await Promise.all([
+          win.innerSize(),
+          win.scaleFactor(),
+          win.outerPosition(),
+          win.isVisible(),
+        ]);
+        if (requestId !== latestResultsRequestId) return;
+
+        const mainSize = currentSize;
+        const sf = currentSf;
         const currentWidth = currentSize.toLogical(currentSf).width;
 
         // Resize results window based on count
         const resultsHeight = Math.min(count * RESULT_ROW_HEIGHT + RESULTS_PADDING * 2, 400);
-        await rw.setSize(new LogicalSize(currentWidth, resultsHeight));
+        if (
+          !lastResultsSize ||
+          lastResultsSize.width !== currentWidth ||
+          lastResultsSize.height !== resultsHeight
+        ) {
+          await rw.setSize(new LogicalSize(currentWidth, resultsHeight));
+          if (requestId !== latestResultsRequestId) return;
+          lastResultsSize = { width: currentWidth, height: resultsHeight };
+        }
 
         // Position results below main
-        const mainPos = await win.outerPosition();
-        const mainSize = await win.innerSize();
-        const sf = await win.scaleFactor();
         const logicalMainPos = mainPos.toLogical(sf);
         const logicalH = mainSize.toLogical(sf).height;
-        await rw.setPosition(
-          new LogicalPosition(logicalMainPos.x, logicalMainPos.y + logicalH + RESULTS_GAP),
-        );
+        const nextPosition = {
+          x: logicalMainPos.x,
+          y: logicalMainPos.y + logicalH + RESULTS_GAP,
+        };
+        if (
+          !lastResultsPosition ||
+          lastResultsPosition.x !== nextPosition.x ||
+          lastResultsPosition.y !== nextPosition.y
+        ) {
+          await rw.setPosition(new LogicalPosition(nextPosition.x, nextPosition.y));
+          if (requestId !== latestResultsRequestId) return;
+          lastResultsPosition = nextPosition;
+        }
 
         // Show if main is visible
-        const mainVisible = await win.isVisible();
         if (mainVisible) {
-          rw.show();
+          if (!(await rw.isVisible())) {
+            await rw.show();
+          }
         }
       });
 
       // Listen for result-clicked from results window
       listen<number>("result-clicked", (event) => {
         setSelected(event.payload);
+      });
+
+      listen<ResultsRenderDonePayload>("results-render-done", (event) => {
+        perfMarkRenderDone(event.payload.requestId);
       });
 
       // Listen for result-double-clicked from results window

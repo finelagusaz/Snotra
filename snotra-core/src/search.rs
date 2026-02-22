@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::cmp::Ordering;
 
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
@@ -52,6 +53,10 @@ impl SearchEngine {
         history: &HistoryStore,
         mode: SearchMode,
     ) -> Vec<SearchResult> {
+        if max_results == 0 {
+            return Vec::new();
+        }
+
         let norm_query = normalize_query(query);
         if norm_query.is_empty() {
             return Vec::new();
@@ -82,7 +87,8 @@ impl SearchEngine {
                 };
                 score.map(|base_score| {
                     let global = history.global_count(&entry.target_path) as i64;
-                    let qcount = history.query_count(&norm_query, &entry.target_path) as i64;
+                    let qcount =
+                        history.query_count_normalized(&norm_query, &entry.target_path) as i64;
                     let folder_boost = if entry.is_folder {
                         history.folder_expansion_count(&entry.target_path) as i64
                             * FOLDER_EXPANSION_WEIGHT
@@ -97,12 +103,11 @@ impl SearchEngine {
             })
             .collect();
 
-        scored.sort_by(|a, b| {
-            b.0.cmp(&a.0)
-                .then_with(|| b.1.cmp(&a.1))
-                .then_with(|| a.3.cmp(b.3))
-        });
-        scored.truncate(max_results);
+        if scored.len() > max_results {
+            scored.select_nth_unstable_by(max_results - 1, rank_cmp);
+            scored.truncate(max_results);
+        }
+        scored.sort_by(rank_cmp);
 
         scored
             .into_iter()
@@ -140,6 +145,12 @@ impl SearchEngine {
     pub fn entries(&self) -> &[AppEntry] {
         &self.entries
     }
+}
+
+fn rank_cmp(a: &(i64, u64, &AppEntry, &str), b: &(i64, u64, &AppEntry, &str)) -> Ordering {
+    b.0.cmp(&a.0)
+        .then_with(|| b.1.cmp(&a.1))
+        .then_with(|| a.3.cmp(b.3))
 }
 
 /// Score using a pre-computed lowercase name (avoids repeated allocation).

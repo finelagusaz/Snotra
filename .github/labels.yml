@@ -1,6 +1,3 @@
-- name: codex:implement
-  color: "0e8a16"
-  description: Codex 自動実装の起動ラベル
 - name: codex:needs-clarification
   color: "fbca04"
   description: 仕様不明点あり。回答待ち

@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const outputPath = process.argv[2] || ".github/tmp/spec-qa-result.json";
+const specInputPath = process.argv[3] || process.env.SPEC_INPUT_PATH || "";
 
 const eventPath = process.env.GITHUB_EVENT_PATH;
 if (!eventPath) {
@@ -14,11 +15,20 @@ if (!eventPath) {
 const payload = JSON.parse(fs.readFileSync(eventPath, "utf8"));
 const issue = payload.issue;
 if (!issue) {
-  console.error("This script expects an issues event payload.");
+  console.error("Issue payload not found.");
   process.exit(1);
 }
 
-const issueBody = issue.body || "";
+let specBody = "";
+if (specInputPath) {
+  if (!fs.existsSync(specInputPath)) {
+    console.error(`SPEC_INPUT_PATH file not found: ${specInputPath}`);
+    process.exit(1);
+  }
+  specBody = fs.readFileSync(specInputPath, "utf8");
+} else {
+  specBody = issue.body || "";
+}
 
 function extractSection(body, sectionNames) {
   const lines = body.split(/\r?\n/);
@@ -84,9 +94,9 @@ const sectionNames = {
   outOfScope: ["非対象", "対象外", "out of scope", "non-goals", "not in scope"],
 };
 
-const background = extractSection(issueBody, sectionNames.background);
-const acceptance = extractSection(issueBody, sectionNames.acceptance);
-const outOfScope = extractSection(issueBody, sectionNames.outOfScope);
+const background = extractSection(specBody, sectionNames.background);
+const acceptance = extractSection(specBody, sectionNames.acceptance);
+const outOfScope = extractSection(specBody, sectionNames.outOfScope);
 
 const blockingReasons = [];
 const questions = [];
@@ -161,10 +171,10 @@ if (acceptanceBullets.length > 0 && outOfScopeBullets.length > 0) {
   }
 }
 
-if (!/テスト|test/i.test(issueBody)) {
+if (!/テスト|test/i.test(specBody)) {
   warnings.push("テスト観点が未記載です（任意）。");
 }
-if (!/#\d+|https?:\/\/github\.com\//i.test(issueBody)) {
+if (!/#\d+|https?:\/\/github\.com\//i.test(specBody)) {
   warnings.push("関連Issue/PRの参照が未記載です（任意）。");
 }
 
@@ -182,6 +192,7 @@ const result = {
     acceptance,
     out_of_scope: outOfScope,
   },
+  source: specInputPath ? "spec_input_path" : "issue_body",
 };
 
 fs.mkdirSync(path.dirname(outputPath), { recursive: true });

@@ -2,14 +2,16 @@
 
 ## 概要
 
-`codex:implement` ラベル付き Issue を起点に、次を自動実行します。
+外部ユーザーが Issue を起票する前提で、Codex 自動実装はラベル起動ではなくコメントコマンド起動です。
 
-1. Spec QA（不明点レビュー）
-2. 最新 `origin/v*` ブランチ選定
-3. `codex/issue-<番号>` ブランチ作成
-4. Codex 実装
-5. Codex レビュー + 修正（最大2ループ）
-6. 対象 `v*` ブランチ向け Draft PR 作成
+1. allowlist 登録者が `/codex spec` コメントで仕様を確定
+2. allowlist 登録者が `/codex run` コメントで実行
+3. Spec QA（不明点レビュー）
+4. 最新 `origin/v*` ブランチ選定
+5. `codex/issue-<番号>` ブランチ作成
+6. Codex 実装
+7. Codex レビュー + 修正（最大2ループ）
+8. 対象 `v*` ブランチ向け Draft PR 作成
 
 対象 workflow: `.github/workflows/codex-issue-implement.yml`
 
@@ -19,7 +21,6 @@
 
 `.github/labels.yml` のラベルを作成してください。
 
-- `codex:implement`
 - `codex:needs-clarification`
 - `codex:in-progress`
 - `codex:reviewing`
@@ -34,6 +35,7 @@
 ### Variables
 
 - `CODEX_RUNNER_COMMAND`
+- `CODEX_ALLOWED_ACTORS`
 
 `CODEX_RUNNER_COMMAND` はワークフローが実行する Codex コマンドです。  
 以下プレースホルダーを使用できます。
@@ -48,15 +50,43 @@
 bash ./scripts/run-codex.sh --mode {mode} --prompt {prompt_file} --output {output_file}
 ```
 
-このリポジトリには `scripts/run-codex.sh` を同梱しています。  
-まず GitHub Actions ランナーで `codex` コマンドが利用可能な状態にした上で、上記コマンドを `CODEX_RUNNER_COMMAND` に設定してください。
+`CODEX_ALLOWED_ACTORS` は `/codex run` 実行を許可する GitHub ユーザー名の CSV です。  
+例:
+
+```text
+owner-name,maintainer-a,maintainer-b
+```
 
 注意:
 
-- リポジトリごとに Codex CLI の実行方法は異なるため、実際のコマンドに合わせて設定してください。
+- `CODEX_ALLOWED_ACTORS` が空の場合は実行を拒否します。
+- allowlist 外ユーザーの `/codex run` は拒否されます。
 - review モードでは `{output_file}` へレビュー結果を保存する契約にしてください。
-- `CODEX_RUNNER_COMMAND` は `implement` / `fix` で実際にファイル変更が発生する実行コマンドを設定してください。
-- `echo "smoke {mode}"` のようなスタブ設定のままだと `変更差分が生成されませんでした` で停止します。
+
+## コメントコマンド
+
+### `/codex spec`
+
+allowlist 登録者が次の形式で仕様を投稿します。
+
+```md
+/codex spec
+## 背景/目的
+...
+
+## 受入条件
+- ...
+
+## 非対象
+- ...
+```
+
+実行時は「allowlist 登録者による最新の有効 `/codex spec`」が採用されます。
+
+### `/codex run`
+
+allowlist 登録者が Issue コメントで `/codex run` を投稿すると自動実装を開始します。  
+`issue_comment.created` のみ受け付けます（コメント編集は対象外）。
 
 ## Spec QA の停止条件
 
@@ -70,8 +100,7 @@ bash ./scripts/run-codex.sh --mode {mode} --prompt {prompt_file} --output {outpu
 
 `BLOCK` 時の動作:
 
-- Issue に質問コメント投稿
+- Issue に不足項目コメント投稿
 - `codex:needs-clarification` を付与
-- `codex:implement` を除去
 
-回答後、`codex:implement` を再付与すると再実行されます。
+仕様更新後、allowlist 登録者が `/codex run` を再投稿すると再実行されます。

@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ steps.gate.outputs.should_run }}
+      is_spec: ${{ steps.gate.outputs.is_spec }}
       authorized: ${{ steps.gate.outputs.authorized }}
     steps:
       - name: Evaluate command and actor authorization
@@ -33,11 +34,13 @@ jobs:
             const body = (context.payload.comment?.body || "").replace(/\r\n/g, "\n");
             const firstLine = (body.split("\n")[0] || "").trim();
             const shouldRun = firstLine === "/codex run";
+            const isSpec = firstLine === "/codex spec";
             core.setOutput("should_run", shouldRun ? "true" : "false");
+            core.setOutput("is_spec", isSpec ? "true" : "false");
 
-            if (!shouldRun) {
+            if (!shouldRun && !isSpec) {
               core.setOutput("authorized", "false");
-              core.info("Not a /codex run command. Skip.");
+              core.info("Not a Codex command. Skip.");
               return;
             }
 
@@ -63,9 +66,45 @@ jobs:
               await github.rest.issues.createComment({
                 ...context.repo,
                 issue_number: issueNumber,
-                body: `@${actor} は \`/codex run\` を実行する権限がありません。`,
+                body: `@${actor} は \`${firstLine}\` を実行する権限がありません。`,
               });
             }
+
+  spec_feedback:
+    needs:
+      - preflight
+    if: needs.preflight.outputs.is_spec == 'true' && needs.preflight.outputs.authorized == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate /codex spec and comment feedback
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNumber = context.issue.number;
+            const body = (context.payload.comment?.body || "").replace(/\r\n/g, "\n");
+            const lines = body.split("\n");
+            const content = lines.slice(1).join("\n").trim();
+
+            const required = ["背景/目的", "受入条件", "非対象"];
+            const missing = required.filter((heading) => {
+              const re = new RegExp(`^#{1,6}\\s*${heading}\\s*$`, "m");
+              return !re.test(content);
+            });
+
+            let message = "";
+            if (!content) {
+              message = "`/codex spec` を受け付けましたが本文が空です。`## 背景/目的` `## 受入条件` `## 非対象` を含めて再投稿してください。";
+            } else if (missing.length > 0) {
+              message = `\`/codex spec\` を受け付けましたが、必須見出しが不足しています: ${missing.join(", ")}\n\n次の形式で再投稿してください:\n\`\`\`\n/codex spec\n## 背景/目的\n...\n## 受入条件\n- ...\n## 非対象\n- ...\n\`\`\``;
+            } else {
+              message = "`/codex spec` を受理しました。実行するには allowlist 登録者が `/codex run` を投稿してください。";
+            }
+
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: issueNumber,
+              body: message,
+            });
 
   spec_qa:
     needs:

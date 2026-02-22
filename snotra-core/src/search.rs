@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{BinaryHeap, HashMap};
 
 use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
@@ -117,64 +117,93 @@ impl SearchEngine {
 
         let has_dot = norm_query.contains('.');
 
-        let mut scored: Vec<(i64, u64, &AppEntry, &str)> = self
+        let query_stats = history.get_query_stats(&norm_query);
+
+        // Keep only top `max_results` candidates.
+        // `rank_cmp_ranked` defines Better as `Ordering::Less`, so in `BinaryHeap<RankedEntry>`
+        // `peek()` points to the current Worst item.
+        let mut top_k: BinaryHeap<RankedEntry> = BinaryHeap::with_capacity(max_results);
+
+        for ((entry, lower_name), lower_file_name) in self
             .entries
             .iter()
             .zip(self.lower_names.iter())
             .zip(self.lower_file_names.iter())
-            .filter_map(|((entry, lower_name), lower_file_name)| {
-                let name_score =
-                    match_score_single_cached(mode, &self.matcher, lower_name, &norm_query);
-                let score = if has_dot {
-                    // ドットあり → entry.name とファイル名（拡張子込み）の両方で照合し、高い方を採用
-                    let fn_score = lower_file_name.as_deref().and_then(|f| {
-                        match_score_single_cached(mode, &self.matcher, f, &norm_query)
-                    });
-                    match (name_score, fn_score) {
-                        (Some(a), Some(b)) => Some(a.max(b)),
-                        (a, b) => a.or(b),
+        {
+            let name_score =
+                match_score_single_cached(mode, &self.matcher, lower_name, &norm_query);
+
+            let score = if has_dot {
+                if let Some(s) = name_score {
+                    if s > 9000 {
+                        // High confidence match, skip heavy fuzzy match on file name
+                        Some(s)
+                    } else {
+                        let fn_score = lower_file_name.as_deref().and_then(|f| {
+                            match_score_single_cached(mode, &self.matcher, f, &norm_query)
+                        });
+                        fn_score.map_or(Some(s), |b| Some(s.max(b)))
                     }
                 } else {
-                    // ドットなし → entry.name と照合（現行動作）
-                    name_score
-                };
-                score.map(|base_score| {
-                    let global = history.global_count(&entry.target_path) as i64;
-                    let qcount =
-                        history.query_count_normalized(&norm_query, &entry.target_path) as i64;
-                    let folder_boost = if entry.is_folder {
-                        history.folder_expansion_count(&entry.target_path) as i64
-                            * FOLDER_EXPANSION_WEIGHT
-                    } else {
-                        0
-                    };
-                    let raw_history_boost =
-                        global * GLOBAL_WEIGHT + qcount * QUERY_WEIGHT + folder_boost;
-                    let history_boost = adjusted_history_boost(
-                        mode,
-                        base_score,
-                        raw_history_boost,
-                        history_boost_config,
-                    );
-                    let combined = base_score + history_boost;
-                    let last = history.last_launched(&entry.target_path).unwrap_or(0);
-                    (combined, last, entry, lower_name.as_str())
-                })
-            })
-            .collect();
+                    lower_file_name.as_deref().and_then(|f| {
+                        match_score_single_cached(mode, &self.matcher, f, &norm_query)
+                    })
+                }
+            } else {
+                name_score
+            };
 
-        if scored.len() > max_results {
-            scored.select_nth_unstable_by(max_results - 1, rank_cmp);
-            scored.truncate(max_results);
+            if let Some(base_score) = score {
+                let (global_launches, last_launched) = history.get_global_stats(&entry.target_path);
+                let qcount = query_stats
+                    .and_then(|m| m.get(&entry.target_path))
+                    .copied()
+                    .unwrap_or(0) as i64;
+                
+                let folder_boost = if entry.is_folder {
+                    history.folder_expansion_count(&entry.target_path) as i64
+                        * FOLDER_EXPANSION_WEIGHT
+                } else {
+                    0
+                };
+                
+                let raw_history_boost =
+                    (global_launches as i64) * GLOBAL_WEIGHT + qcount * QUERY_WEIGHT + folder_boost;
+                let history_boost = adjusted_history_boost(
+                    mode,
+                    base_score,
+                    raw_history_boost,
+                    history_boost_config,
+                );
+                let combined = base_score + history_boost;
+
+                let ranked = RankedEntry {
+                    score: combined,
+                    last_launched,
+                    entry,
+                    lower_name: lower_name.as_str(),
+                };
+
+                if top_k.len() < max_results {
+                    top_k.push(ranked);
+                } else if let Some(mut worst) = top_k.peek_mut() {
+                    // Replace only when the new item is better than the current worst.
+                    if rank_cmp_ranked(&ranked, &worst) == Ordering::Less {
+                        *worst = ranked;
+                    }
+                }
+            }
         }
-        scored.sort_by(rank_cmp);
+
+        let mut scored: Vec<RankedEntry> = top_k.into_iter().collect();
+        scored.sort_by(rank_cmp_ranked);
 
         scored
             .into_iter()
-            .map(|(_, _, entry, _)| SearchResult {
-                name: entry.name.clone(),
-                path: entry.target_path.clone(),
-                is_folder: entry.is_folder,
+            .map(|r| SearchResult {
+                name: r.entry.name.clone(),
+                path: r.entry.target_path.clone(),
+                is_folder: r.entry.is_folder,
                 is_error: false,
             })
             .collect()
@@ -223,11 +252,45 @@ fn adjusted_history_boost(
     raw_history_boost.min(cap)
 }
 
-fn rank_cmp(a: &(i64, u64, &AppEntry, &str), b: &(i64, u64, &AppEntry, &str)) -> Ordering {
-    b.0.cmp(&a.0)
-        .then_with(|| b.1.cmp(&a.1))
-        .then_with(|| a.3.cmp(b.3))
-        .then_with(|| a.2.target_path.cmp(&b.2.target_path))
+struct RankedEntry<'a> {
+    score: i64,
+    last_launched: u64,
+    entry: &'a AppEntry,
+    lower_name: &'a str,
+}
+
+// Implement traits to use RankedEntry in a BinaryHeap
+impl<'a> PartialEq for RankedEntry<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        self.score == other.score
+            && self.last_launched == other.last_launched
+            && self.lower_name == other.lower_name
+            && self.entry.target_path == other.entry.target_path
+    }
+}
+
+impl<'a> Eq for RankedEntry<'a> {}
+
+impl<'a> PartialOrd for RankedEntry<'a> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<'a> Ord for RankedEntry<'a> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        rank_cmp_ranked(self, other)
+    }
+}
+
+fn rank_cmp_ranked(a: &RankedEntry, b: &RankedEntry) -> Ordering {
+    // Higher score is better, and better candidates are ordered as `Less`.
+    // This keeps final sorting intuitive (`sort_by(rank_cmp_ranked)` puts best first)
+    // while making `BinaryHeap<RankedEntry>::peek()` point to the current worst.
+    b.score.cmp(&a.score)
+        .then_with(|| b.last_launched.cmp(&a.last_launched))
+        .then_with(|| a.lower_name.cmp(b.lower_name))
+        .then_with(|| a.entry.target_path.cmp(&b.entry.target_path))
 }
 
 /// Score using a pre-computed lowercase name (avoids repeated allocation).
@@ -300,6 +363,49 @@ mod tests {
         let engine = SearchEngine::new(entries);
         let results = engine.search("app", 3, &empty_history(), SearchMode::Fuzzy);
         assert!(results.len() <= 3);
+    }
+
+    #[test]
+    fn search_top_k_replaces_worst_when_better_arrives_late() {
+        let entries = make_entries(&[
+            "appabcdefghij",
+            "appabcdefghi",
+            "appx",
+            "app",
+        ]);
+        let engine = SearchEngine::new(entries);
+
+        let results = engine.search("app", 2, &empty_history(), SearchMode::Prefix);
+        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+
+        assert_eq!(names, vec!["app", "appx"]);
+    }
+
+    #[test]
+    fn search_top_k_is_independent_from_input_order() {
+        let ordered = make_entries(&[
+            "appabcdefghij",
+            "appabcdefghi",
+            "appx",
+            "app",
+        ]);
+        let reversed = make_entries(&[
+            "app",
+            "appx",
+            "appabcdefghi",
+            "appabcdefghij",
+        ]);
+        let ordered_engine = SearchEngine::new(ordered);
+        let reversed_engine = SearchEngine::new(reversed);
+
+        let ordered_results = ordered_engine.search("app", 2, &empty_history(), SearchMode::Prefix);
+        let reversed_results = reversed_engine.search("app", 2, &empty_history(), SearchMode::Prefix);
+
+        let ordered_names: Vec<&str> = ordered_results.iter().map(|r| r.name.as_str()).collect();
+        let reversed_names: Vec<&str> = reversed_results.iter().map(|r| r.name.as_str()).collect();
+
+        assert_eq!(ordered_names, vec!["app", "appx"]);
+        assert_eq!(reversed_names, vec!["app", "appx"]);
     }
 
     #[test]
@@ -527,13 +633,22 @@ mod tests {
             target_path: "C:\\A\\tool.exe".to_string(),
             is_folder: false,
         };
-        let mut scored = vec![
-            (100_i64, 200_u64, &a, "tool"),
-            (100_i64, 200_u64, &b, "tool"),
-        ];
-        scored.sort_by(rank_cmp);
-        assert_eq!(scored[0].2.target_path, "C:\\A\\tool.exe");
-        assert_eq!(scored[1].2.target_path, "C:\\B\\tool.exe");
+        let ra = RankedEntry {
+            score: 100,
+            last_launched: 200,
+            entry: &a,
+            lower_name: "tool",
+        };
+        let rb = RankedEntry {
+            score: 100,
+            last_launched: 200,
+            entry: &b,
+            lower_name: "tool",
+        };
+        let mut scored = vec![ra, rb];
+        scored.sort_by(rank_cmp_ranked);
+        assert_eq!(scored[0].entry.target_path, "C:\\A\\tool.exe");
+        assert_eq!(scored[1].entry.target_path, "C:\\B\\tool.exe");
     }
 
     #[test]

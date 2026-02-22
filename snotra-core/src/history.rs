@@ -1,5 +1,5 @@
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -19,10 +19,10 @@ pub struct GlobalEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HistoryData {
-    pub global: HashMap<String, GlobalEntry>,
-    pub query: HashMap<String, HashMap<String, u32>>,
+    pub global: FxHashMap<String, GlobalEntry>,
+    pub query: FxHashMap<String, FxHashMap<String, u32>>,
     #[serde(default)]
-    pub folder_expansion: HashMap<String, u32>,
+    pub folder_expansion: FxHashMap<String, u32>,
 }
 
 pub struct HistoryStore {
@@ -99,7 +99,7 @@ impl HistoryStore {
             *self
                 .data
                 .query
-                .entry(norm_query)
+                .entry(norm_query.into_owned())
                 .or_default()
                 .entry(path.to_string())
                 .or_insert(0) += 1;
@@ -124,6 +124,18 @@ impl HistoryStore {
             .unwrap_or(0)
     }
 
+    pub fn last_launched(&self, path: &str) -> Option<u64> {
+        self.data.global.get(path).map(|e| e.last_launched)
+    }
+
+    pub fn get_global_stats(&self, path: &str) -> (u32, u64) {
+        self.data
+            .global
+            .get(path)
+            .map(|e| (e.launch_count, e.last_launched))
+            .unwrap_or((0, 0))
+    }
+
     pub fn query_count(&self, query: &str, path: &str) -> u32 {
         let norm_query = normalize_query(query);
         self.query_count_normalized(&norm_query, path)
@@ -138,8 +150,8 @@ impl HistoryStore {
             .unwrap_or(0)
     }
 
-    pub fn last_launched(&self, path: &str) -> Option<u64> {
-        self.data.global.get(path).map(|e| e.last_launched)
+    pub fn get_query_stats(&self, normalized_query: &str) -> Option<&FxHashMap<String, u32>> {
+        self.data.query.get(normalized_query)
     }
 
     pub fn recent_launches(&self) -> Vec<&str> {
@@ -183,7 +195,7 @@ impl HistoryStore {
             entries.sort_by(|a, b| b.1.launch_count.cmp(&a.1.launch_count));
             entries.truncate(self.top_n);
 
-            let surviving: HashMap<String, GlobalEntry> = entries.into_iter().collect();
+            let surviving: FxHashMap<String, GlobalEntry> = entries.into_iter().collect();
 
             self.data.query.retain(|_, app_map| {
                 app_map.retain(|path, _| surviving.contains_key(path));
@@ -305,7 +317,7 @@ mod tests {
         *store
             .data
             .query
-            .entry(key)
+            .entry(key.into_owned())
             .or_default()
             .entry(path.to_string())
             .or_insert(0) += 1;

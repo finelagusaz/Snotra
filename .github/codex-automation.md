@@ -45,13 +45,18 @@
 例（ラッパースクリプトを使う場合）:
 
 ```bash
-./scripts/run-codex.sh --mode {mode} --prompt {prompt_file} --output {output_file}
+bash ./scripts/run-codex.sh --mode {mode} --prompt {prompt_file} --output {output_file}
 ```
+
+このリポジトリには `scripts/run-codex.sh` を同梱しています。  
+まず GitHub Actions ランナーで `codex` コマンドが利用可能な状態にした上で、上記コマンドを `CODEX_RUNNER_COMMAND` に設定してください。
 
 注意:
 
 - リポジトリごとに Codex CLI の実行方法は異なるため、実際のコマンドに合わせて設定してください。
 - review モードでは `{output_file}` へレビュー結果を保存する契約にしてください。
+- `CODEX_RUNNER_COMMAND` は `implement` / `fix` で実際にファイル変更が発生する実行コマンドを設定してください。
+- `echo "smoke {mode}"` のようなスタブ設定のままだと `変更差分が生成されませんでした` で停止します。
 
 ## Spec QA の停止条件
 

@@ -25,5 +25,12 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Get Build Date
+        id: date
+        run: echo "BUILD_DATE=$(Get-Date -Format 'yyyyMMdd')" >> $env:GITHUB_ENV
+
       - name: Typecheck and build frontend
         run: npm run build
+        env:
+          VITE_APP_VERSION: "ci-build"
+          VITE_APP_BUILD_NUMBER: ${{ env.BUILD_DATE }}

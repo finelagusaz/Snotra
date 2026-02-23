@@ -6,6 +6,7 @@ import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
 import SearchWindow from "./components/SearchWindow";
 import ResultsWindow from "./components/ResultsWindow";
 import SettingsWindow from "./components/SettingsWindow";
+import AboutWindow from "./components/AboutWindow";
 import { resetForShow, setSelected, activateSelected, initIndexingState } from "./stores/search";
 import { applyTheme } from "./lib/theme";
 import type { VisualConfig } from "./lib/types";
@@ -291,6 +292,9 @@ const App: Component = () => {
       </Match>
       <Match when={windowLabel === "main"}>
         <SearchWindow />
+      </Match>
+      <Match when={windowLabel === "about"}>
+        <AboutWindow />
       </Match>
     </Switch>
   );

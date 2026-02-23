@@ -11,6 +11,15 @@ let hideAllWindowsFn: (() => void) | undefined;
 
 export const SLASH_COMMANDS: SlashCommand[] = [
   {
+    command: "/a",
+    label: "/a",
+    description: "バージョン情報",
+    action: () => {
+      api.openAbout();
+      hideAllWindowsFn?.();
+    },
+  },
+  {
     command: "/o",
     label: "/o",
     description: "設定を開く",

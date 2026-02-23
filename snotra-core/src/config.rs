@@ -368,12 +368,6 @@ impl Config {
             Ok(content) => {
                 let mut config: Self = toml::from_str(&content).unwrap_or_default();
                 let mut needs_save = false;
-                if config.hotkey.modifier.eq_ignore_ascii_case("Alt")
-                    && config.hotkey.key.eq_ignore_ascii_case("Space")
-                {
-                    config.hotkey.key = "Q".to_string();
-                    needs_save = true;
-                }
                 if !config.paths.additional.is_empty() {
                     config.migrate_additional_to_scan();
                     needs_save = true;
@@ -590,7 +584,7 @@ mod tests {
     }
 
     #[test]
-    fn alt_space_is_rewritten_to_alt_q() {
+    fn alt_space_is_preserved() {
         let toml_str = r#"
             [hotkey]
             modifier = "Alt"
@@ -603,13 +597,9 @@ mod tests {
             [paths]
             additional = []
         "#;
-        let mut config: Config = toml::from_str(toml_str).expect("parse");
-        if config.hotkey.modifier.eq_ignore_ascii_case("Alt")
-            && config.hotkey.key.eq_ignore_ascii_case("Space")
-        {
-            config.hotkey.key = "Q".to_string();
-        }
-        assert_eq!(config.hotkey.key, "Q");
+        let config: Config = toml::from_str(toml_str).expect("parse");
+        assert!(config.hotkey.modifier.eq_ignore_ascii_case("Alt"));
+        assert!(config.hotkey.key.eq_ignore_ascii_case("Space"));
     }
 
     #[test]

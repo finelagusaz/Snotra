@@ -2,6 +2,7 @@ import { createSignal } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Config } from "../lib/types";
+import { isHotkeyInvalid } from "../lib/hotkeyValidation";
 import * as api from "../lib/invoke";
 
 const [draft, setDraft] = createSignal<Config | null>(null);
@@ -17,6 +18,16 @@ function hasChanges(): boolean {
   const s = savedConfig();
   if (!d || !s) return false;
   return JSON.stringify(d) !== JSON.stringify(s);
+}
+
+function isHotkeyValid(): boolean {
+  const d = draft();
+  if (!d) return false;
+  return !isHotkeyInvalid(d.hotkey.modifier, d.hotkey.key);
+}
+
+function canSave(): boolean {
+  return hasChanges() && isHotkeyValid();
 }
 
 async function loadDraft() {
@@ -70,6 +81,7 @@ export {
   activeTab,
   setActiveTab,
   hasChanges,
+  canSave,
   loadDraft,
   updateDraft,
   saveDraft,

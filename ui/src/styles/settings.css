@@ -222,6 +222,16 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-color, #e0e0e0) 20%, transparent);
 }
 
+.settings-section input[type="text"].hotkey-input--invalid,
+.settings-section input[type="text"].hotkey-input--invalid:hover {
+  border-color: #e06060;
+}
+
+.settings-section input[type="text"].hotkey-input--invalid:focus-visible {
+  border-color: #e06060;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #e06060 30%, transparent);
+}
+
 .settings-section select {
   cursor: pointer;
 }

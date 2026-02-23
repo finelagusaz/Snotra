@@ -133,6 +133,7 @@ fn main() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
         .manage(app_state)
         .manage(icon_cache_state)
         .invoke_handler(tauri::generate_handler![
@@ -144,6 +145,7 @@ fn main() {
             commands::save_config,
             commands::get_config,
             commands::open_settings,
+            commands::open_about,
             commands::get_icon_base64,
             commands::get_icons_batch,
             commands::get_search_placement,
@@ -204,6 +206,25 @@ fn main() {
                 .build()?;
             // Apply no-activate at creation time so first show cannot steal focus.
             let _ = commands::set_window_no_activate(app_handle.clone());
+
+            // Create about window (hidden by default).
+            let about_window =
+                WebviewWindowBuilder::new(app, "about", WebviewUrl::App(Default::default()))
+                    .title("Snotra について")
+                    .inner_size(400.0, 300.0)
+                    .resizable(false)
+                    .visible(false)
+                    .build()?;
+
+            let handle_for_about_close = app_handle.clone();
+            about_window.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    if let Some(w) = handle_for_about_close.get_webview_window("about") {
+                        let _ = w.hide();
+                    }
+                }
+            });
 
             // Create settings window (hidden by default).
             // WebView2 initialization requires a nested message pump, which

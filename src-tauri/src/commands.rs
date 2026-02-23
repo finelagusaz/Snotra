@@ -346,3 +346,12 @@ pub fn list_system_fonts() -> Vec<String> {
     #[cfg(not(windows))]
     Vec::new()
 }
+
+#[tauri::command]
+pub fn open_about(app: AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("about") {
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+    Ok(())
+}

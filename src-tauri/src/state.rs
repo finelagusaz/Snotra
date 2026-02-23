@@ -1,5 +1,5 @@
-use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
 
 use snotra_core::config::Config;
 use snotra_core::history::HistoryStore;

@@ -89,14 +89,20 @@
 
 ### 3.3 検索結果の優先順位
 
-最終スコア:
+最終スコア（既定）:
 
-`final_score = fuzzy_score + 5 * global_count + 20 * query_count`
+`final_score = base_score + 5 * global_count + 20 * query_count + folder_boost`
 
-- `fuzzy_score`: 選択中検索方式のマッチスコア
+- `base_score`: 選択中検索方式のマッチスコア
 - `global_count`: アプリ全体の起動回数
 - `query_count`: 同一正規化クエリでの当該項目選択回数
+- `folder_boost`: フォルダ候補の展開履歴ブースト（非フォルダは0）
 - 履歴スコアの時間減衰は行わない
+
+オプション設定（`[search] history_normalization = "fuzzy_relative_cap"`）時:
+
+- Fuzzy モードに限り、履歴加点は `floor(max(base_score, 1) * fuzzy_history_cap_ratio)` を上限とする
+- 既定値: `fuzzy_history_cap_ratio = 0.30`
 
 同点時タイブレーク:
 
@@ -274,9 +280,12 @@ stateDiagram-v2
 
   state SearchVisible {
     state "NormalMode\n(通常モード)" as NormalMode
+    state "CommandMode\n(コマンドモード)" as CommandMode
     state "FolderExpansionMode\n(フォルダ展開モード)" as FolderExpansionMode
     state "IndexingMode\n(インデックス中)" as IndexingMode
     [*] --> NormalMode
+    NormalMode --> CommandMode: Input [query startsWith '/']
+    CommandMode --> NormalMode: Input [query not startsWith '/']
     NormalMode --> FolderExpansionMode: ArrowRight [selected.isFolder]
     NormalMode --> FolderExpansionMode: ArrowLeft [!folderState && parent exists]
     FolderExpansionMode --> FolderExpansionMode: ArrowRight [selected.isFolder]
@@ -374,7 +383,12 @@ stateDiagram-v2
 
 ### 14.1 概要
 
-検索ボックスで `/` から始まるテキストを入力すると、スラッシュコマンドとして解釈される。コマンド文字列が完全一致した時点で Enter なしに即実行される。
+検索ボックスで `/` から始まるテキストを入力すると、即座にコマンドモードへ遷移する。コマンド文字列が完全一致した時点で Enter なしに即実行される。
+
+補足:
+
+- 先頭 `/` はコマンドモードを優先する
+- 先頭 `/` ではない入力で `/` または `\` を含む場合は、通常検索ではなくパス（フォルダ）検索として扱う
 
 ### 14.2 コマンド一覧
 
@@ -386,14 +400,17 @@ stateDiagram-v2
 
 ### 14.3 ヘルプ表示
 
-- `/` のみを入力して停止すると、debounce 後にコマンド一覧が結果エリアに表示される
-- 矢印キーで選択し、Enter で実行可能
+- `/` を入力した時点で、結果エリアにコマンド候補一覧を即表示する
+- 部分入力（例: `/o`, `/s`）で前方一致フィルタされる
+- 一覧はコマンド文字列と説明（例: `/o 設定を開く`）を表示する
+- 矢印キーで候補選択し、Enter で選択中コマンドを実行可能
+- 一致候補がない場合は 0 件表示のままコマンドモードを維持する
 
 ### 14.4 即実行仕様
 
 - コマンド文字列（例: `/o`）が入力された時点で `createEffect` が発火し、debounce をキャンセルして即座に `action()` を実行する
 - 実行後はクエリをクリアし、結果を空にする
-- ヘルプ一覧がちらつかない（debounce キャンセルにより `/` 時点の表示が発火する前にコマンドが実行される）
+- コマンドモード中は通常検索（インデックス検索）を実行しない
 
 ### 14.5 フォルダ展開中の挙動
 

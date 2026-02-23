@@ -1,9 +1,10 @@
-use std::collections::HashMap;
 use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap};
 
-use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
+use fuzzy_matcher::skim::SkimMatcherV2;
 
+use crate::config::{SearchConfig, SearchHistoryNormalizationConfig};
 use crate::history::HistoryStore;
 use crate::indexer::AppEntry;
 use crate::query::normalize_query;
@@ -30,18 +31,53 @@ impl From<crate::config::SearchModeConfig> for SearchMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HistoryBoostConfig {
+    pub normalization: SearchHistoryNormalizationConfig,
+    pub fuzzy_history_cap_ratio: f64,
+}
+
+impl Default for HistoryBoostConfig {
+    fn default() -> Self {
+        Self {
+            normalization: SearchHistoryNormalizationConfig::Disabled,
+            fuzzy_history_cap_ratio: 0.30,
+        }
+    }
+}
+
+impl From<&SearchConfig> for HistoryBoostConfig {
+    fn from(config: &SearchConfig) -> Self {
+        Self {
+            normalization: config.history_normalization,
+            fuzzy_history_cap_ratio: config.fuzzy_history_cap_ratio,
+        }
+    }
+}
+
 pub struct SearchEngine {
     entries: Vec<AppEntry>,
     lower_names: Vec<String>,
+    lower_file_names: Vec<Option<String>>,
     matcher: SkimMatcherV2,
 }
 
 impl SearchEngine {
     pub fn new(entries: Vec<AppEntry>) -> Self {
         let lower_names = entries.iter().map(|e| e.name.to_lowercase()).collect();
+        let lower_file_names = entries
+            .iter()
+            .map(|e| {
+                std::path::Path::new(&e.target_path)
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .map(|f| f.to_lowercase())
+            })
+            .collect();
         Self {
             entries,
             lower_names,
+            lower_file_names,
             matcher: SkimMatcherV2::default(),
         }
     }
@@ -52,6 +88,23 @@ impl SearchEngine {
         max_results: usize,
         history: &HistoryStore,
         mode: SearchMode,
+    ) -> Vec<SearchResult> {
+        self.search_with_history_boost(
+            query,
+            max_results,
+            history,
+            mode,
+            HistoryBoostConfig::default(),
+        )
+    }
+
+    pub fn search_with_history_boost(
+        &self,
+        query: &str,
+        max_results: usize,
+        history: &HistoryStore,
+        mode: SearchMode,
+        history_boost_config: HistoryBoostConfig,
     ) -> Vec<SearchResult> {
         if max_results == 0 {
             return Vec::new();
@@ -64,57 +117,93 @@ impl SearchEngine {
 
         let has_dot = norm_query.contains('.');
 
-        let mut scored: Vec<(i64, u64, &AppEntry, &str)> = self
+        let query_stats = history.get_query_stats(&norm_query);
+
+        // Keep only top `max_results` candidates.
+        // `rank_cmp_ranked` defines Better as `Ordering::Less`, so in `BinaryHeap<RankedEntry>`
+        // `peek()` points to the current Worst item.
+        let mut top_k: BinaryHeap<RankedEntry> = BinaryHeap::with_capacity(max_results);
+
+        for ((entry, lower_name), lower_file_name) in self
             .entries
             .iter()
             .zip(self.lower_names.iter())
-            .filter_map(|(entry, lower_name)| {
-                let name_score =
-                    match_score_single_cached(mode, &self.matcher, lower_name, &norm_query);
-                let score = if has_dot {
-                    // ドットあり → entry.name とファイル名（拡張子込み）の両方で照合し、高い方を採用
-                    let fn_score = std::path::Path::new(&entry.target_path)
-                        .file_name()
-                        .and_then(|f| f.to_str())
-                        .and_then(|f| match_score_single(mode, &self.matcher, f, &norm_query));
-                    match (name_score, fn_score) {
-                        (Some(a), Some(b)) => Some(a.max(b)),
-                        (a, b) => a.or(b),
+            .zip(self.lower_file_names.iter())
+        {
+            let name_score =
+                match_score_single_cached(mode, &self.matcher, lower_name, &norm_query);
+
+            let score = if has_dot {
+                if let Some(s) = name_score {
+                    if s > 9000 {
+                        // High confidence match, skip heavy fuzzy match on file name
+                        Some(s)
+                    } else {
+                        let fn_score = lower_file_name.as_deref().and_then(|f| {
+                            match_score_single_cached(mode, &self.matcher, f, &norm_query)
+                        });
+                        fn_score.map_or(Some(s), |b| Some(s.max(b)))
                     }
                 } else {
-                    // ドットなし → entry.name と照合（現行動作）
-                    name_score
-                };
-                score.map(|base_score| {
-                    let global = history.global_count(&entry.target_path) as i64;
-                    let qcount =
-                        history.query_count_normalized(&norm_query, &entry.target_path) as i64;
-                    let folder_boost = if entry.is_folder {
-                        history.folder_expansion_count(&entry.target_path) as i64
-                            * FOLDER_EXPANSION_WEIGHT
-                    } else {
-                        0
-                    };
-                    let combined =
-                        base_score + global * GLOBAL_WEIGHT + qcount * QUERY_WEIGHT + folder_boost;
-                    let last = history.last_launched(&entry.target_path).unwrap_or(0);
-                    (combined, last, entry, lower_name.as_str())
-                })
-            })
-            .collect();
+                    lower_file_name.as_deref().and_then(|f| {
+                        match_score_single_cached(mode, &self.matcher, f, &norm_query)
+                    })
+                }
+            } else {
+                name_score
+            };
 
-        if scored.len() > max_results {
-            scored.select_nth_unstable_by(max_results - 1, rank_cmp);
-            scored.truncate(max_results);
+            if let Some(base_score) = score {
+                let (global_launches, last_launched) = history.get_global_stats(&entry.target_path);
+                let qcount = query_stats
+                    .and_then(|m| m.get(&entry.target_path))
+                    .copied()
+                    .unwrap_or(0) as i64;
+                
+                let folder_boost = if entry.is_folder {
+                    history.folder_expansion_count(&entry.target_path) as i64
+                        * FOLDER_EXPANSION_WEIGHT
+                } else {
+                    0
+                };
+                
+                let raw_history_boost =
+                    (global_launches as i64) * GLOBAL_WEIGHT + qcount * QUERY_WEIGHT + folder_boost;
+                let history_boost = adjusted_history_boost(
+                    mode,
+                    base_score,
+                    raw_history_boost,
+                    history_boost_config,
+                );
+                let combined = base_score + history_boost;
+
+                let ranked = RankedEntry {
+                    score: combined,
+                    last_launched,
+                    entry,
+                    lower_name: lower_name.as_str(),
+                };
+
+                if top_k.len() < max_results {
+                    top_k.push(ranked);
+                } else if let Some(mut worst) = top_k.peek_mut() {
+                    // Replace only when the new item is better than the current worst.
+                    if rank_cmp_ranked(&ranked, &worst) == Ordering::Less {
+                        *worst = ranked;
+                    }
+                }
+            }
         }
-        scored.sort_by(rank_cmp);
+
+        let mut scored: Vec<RankedEntry> = top_k.into_iter().collect();
+        scored.sort_by(rank_cmp_ranked);
 
         scored
             .into_iter()
-            .map(|(_, _, entry, _)| SearchResult {
-                name: entry.name.clone(),
-                path: entry.target_path.clone(),
-                is_folder: entry.is_folder,
+            .map(|r| SearchResult {
+                name: r.entry.name.clone(),
+                path: r.entry.target_path.clone(),
+                is_folder: r.entry.is_folder,
                 is_error: false,
             })
             .collect()
@@ -147,10 +236,61 @@ impl SearchEngine {
     }
 }
 
-fn rank_cmp(a: &(i64, u64, &AppEntry, &str), b: &(i64, u64, &AppEntry, &str)) -> Ordering {
-    b.0.cmp(&a.0)
-        .then_with(|| b.1.cmp(&a.1))
-        .then_with(|| a.3.cmp(b.3))
+fn adjusted_history_boost(
+    mode: SearchMode,
+    base_score: i64,
+    raw_history_boost: i64,
+    config: HistoryBoostConfig,
+) -> i64 {
+    if mode != SearchMode::Fuzzy
+        || config.normalization != SearchHistoryNormalizationConfig::FuzzyRelativeCap
+    {
+        return raw_history_boost;
+    }
+
+    let cap = ((base_score.max(1) as f64) * config.fuzzy_history_cap_ratio).floor() as i64;
+    raw_history_boost.min(cap)
+}
+
+struct RankedEntry<'a> {
+    score: i64,
+    last_launched: u64,
+    entry: &'a AppEntry,
+    lower_name: &'a str,
+}
+
+// Implement traits to use RankedEntry in a BinaryHeap
+impl<'a> PartialEq for RankedEntry<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        self.score == other.score
+            && self.last_launched == other.last_launched
+            && self.lower_name == other.lower_name
+            && self.entry.target_path == other.entry.target_path
+    }
+}
+
+impl<'a> Eq for RankedEntry<'a> {}
+
+impl<'a> PartialOrd for RankedEntry<'a> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<'a> Ord for RankedEntry<'a> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        rank_cmp_ranked(self, other)
+    }
+}
+
+fn rank_cmp_ranked(a: &RankedEntry, b: &RankedEntry) -> Ordering {
+    // Higher score is better, and better candidates are ordered as `Less`.
+    // This keeps final sorting intuitive (`sort_by(rank_cmp_ranked)` puts best first)
+    // while making `BinaryHeap<RankedEntry>::peek()` point to the current worst.
+    b.score.cmp(&a.score)
+        .then_with(|| b.last_launched.cmp(&a.last_launched))
+        .then_with(|| a.lower_name.cmp(b.lower_name))
+        .then_with(|| a.entry.target_path.cmp(&b.entry.target_path))
 }
 
 /// Score using a pre-computed lowercase name (avoids repeated allocation).
@@ -171,17 +311,6 @@ fn match_score_single_cached(
         SearchMode::Substring => lower_name.find(query).map(|idx| 5_000 - idx as i64),
         SearchMode::Fuzzy => matcher.fuzzy_match(lower_name, query),
     }
-}
-
-/// Score with on-the-fly lowercase (for file names from target_path).
-fn match_score_single(
-    mode: SearchMode,
-    matcher: &SkimMatcherV2,
-    name: &str,
-    query: &str,
-) -> Option<i64> {
-    let lname = name.to_lowercase();
-    match_score_single_cached(mode, matcher, &lname, query)
 }
 
 #[cfg(test)]
@@ -234,6 +363,49 @@ mod tests {
         let engine = SearchEngine::new(entries);
         let results = engine.search("app", 3, &empty_history(), SearchMode::Fuzzy);
         assert!(results.len() <= 3);
+    }
+
+    #[test]
+    fn search_top_k_replaces_worst_when_better_arrives_late() {
+        let entries = make_entries(&[
+            "appabcdefghij",
+            "appabcdefghi",
+            "appx",
+            "app",
+        ]);
+        let engine = SearchEngine::new(entries);
+
+        let results = engine.search("app", 2, &empty_history(), SearchMode::Prefix);
+        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+
+        assert_eq!(names, vec!["app", "appx"]);
+    }
+
+    #[test]
+    fn search_top_k_is_independent_from_input_order() {
+        let ordered = make_entries(&[
+            "appabcdefghij",
+            "appabcdefghi",
+            "appx",
+            "app",
+        ]);
+        let reversed = make_entries(&[
+            "app",
+            "appx",
+            "appabcdefghi",
+            "appabcdefghij",
+        ]);
+        let ordered_engine = SearchEngine::new(ordered);
+        let reversed_engine = SearchEngine::new(reversed);
+
+        let ordered_results = ordered_engine.search("app", 2, &empty_history(), SearchMode::Prefix);
+        let reversed_results = reversed_engine.search("app", 2, &empty_history(), SearchMode::Prefix);
+
+        let ordered_names: Vec<&str> = ordered_results.iter().map(|r| r.name.as_str()).collect();
+        let reversed_names: Vec<&str> = reversed_results.iter().map(|r| r.name.as_str()).collect();
+
+        assert_eq!(ordered_names, vec!["app", "appx"]);
+        assert_eq!(reversed_names, vec!["app", "appx"]);
     }
 
     #[test]
@@ -447,5 +619,117 @@ mod tests {
         let engine = SearchEngine::new(entries);
         let results = engine.recent_history(&empty_history(), 8);
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn rank_cmp_breaks_full_tie_with_target_path() {
+        let a = AppEntry {
+            name: "Tool".to_string(),
+            target_path: "C:\\B\\tool.exe".to_string(),
+            is_folder: false,
+        };
+        let b = AppEntry {
+            name: "Tool".to_string(),
+            target_path: "C:\\A\\tool.exe".to_string(),
+            is_folder: false,
+        };
+        let ra = RankedEntry {
+            score: 100,
+            last_launched: 200,
+            entry: &a,
+            lower_name: "tool",
+        };
+        let rb = RankedEntry {
+            score: 100,
+            last_launched: 200,
+            entry: &b,
+            lower_name: "tool",
+        };
+        let mut scored = vec![ra, rb];
+        scored.sort_by(rank_cmp_ranked);
+        assert_eq!(scored[0].entry.target_path, "C:\\A\\tool.exe");
+        assert_eq!(scored[1].entry.target_path, "C:\\B\\tool.exe");
+    }
+
+    #[test]
+    fn has_dot_uses_cached_lower_file_name() {
+        let entries = vec![AppEntry {
+            name: "Dummy".to_string(),
+            target_path: "C:\\fake\\Tool.EXE".to_string(),
+            is_folder: false,
+        }];
+        let engine = SearchEngine::new(entries);
+        let results = engine.search("tool.exe", 8, &empty_history(), SearchMode::Substring);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Dummy");
+    }
+
+    #[test]
+    fn has_dot_handles_missing_file_name_without_panic() {
+        let entries = vec![AppEntry {
+            name: "Dummy".to_string(),
+            target_path: "C:\\".to_string(),
+            is_folder: false,
+        }];
+        let engine = SearchEngine::new(entries);
+        let results = engine.search("dummy.exe", 8, &empty_history(), SearchMode::Fuzzy);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn adjusted_history_boost_disabled_uses_raw_value() {
+        let adjusted =
+            adjusted_history_boost(SearchMode::Fuzzy, 100, 250, HistoryBoostConfig::default());
+        assert_eq!(adjusted, 250);
+    }
+
+    #[test]
+    fn adjusted_history_boost_caps_only_in_fuzzy_mode() {
+        let config = HistoryBoostConfig {
+            normalization: SearchHistoryNormalizationConfig::FuzzyRelativeCap,
+            fuzzy_history_cap_ratio: 0.30,
+        };
+        let adjusted = adjusted_history_boost(SearchMode::Prefix, 100, 250, config);
+        assert_eq!(adjusted, 250);
+    }
+
+    #[test]
+    fn adjusted_history_boost_caps_fuzzy_history_by_base_ratio() {
+        let config = HistoryBoostConfig {
+            normalization: SearchHistoryNormalizationConfig::FuzzyRelativeCap,
+            fuzzy_history_cap_ratio: 0.30,
+        };
+        let adjusted = adjusted_history_boost(SearchMode::Fuzzy, 100, 250, config);
+        assert_eq!(adjusted, 30);
+    }
+
+    #[test]
+    fn adjusted_history_boost_zeroes_when_base_is_non_positive() {
+        let config = HistoryBoostConfig {
+            normalization: SearchHistoryNormalizationConfig::FuzzyRelativeCap,
+            fuzzy_history_cap_ratio: 0.30,
+        };
+        let adjusted = adjusted_history_boost(SearchMode::Fuzzy, -50, 250, config);
+        assert_eq!(adjusted, 0);
+    }
+
+    #[test]
+    fn search_with_history_boost_disabled_matches_legacy_search() {
+        let entries = make_entries(&["alpha", "alpaca", "alpine"]);
+        let engine = SearchEngine::new(entries);
+        let mut history = empty_history();
+        for _ in 0..50 {
+            history.record_launch("C:\\fake\\alpaca.lnk", "alp");
+        }
+
+        let legacy = engine.search("alp", 8, &history, SearchMode::Fuzzy);
+        let explicit = engine.search_with_history_boost(
+            "alp",
+            8,
+            &history,
+            SearchMode::Fuzzy,
+            HistoryBoostConfig::default(),
+        );
+        assert_eq!(legacy, explicit);
     }
 }

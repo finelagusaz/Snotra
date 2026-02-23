@@ -1,12 +1,16 @@
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashSet;
+use std::fs::Metadata;
 use std::hash::{Hash, Hasher};
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
+#[cfg(windows)]
+use windows::Win32::System::Threading::{
+    GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL,
+};
 
 use crate::binfmt::{deserialize_with_header, serialize_with_header};
 use crate::config::{Config, ScanPath};
@@ -26,10 +30,15 @@ pub fn scan_all(scan_paths: &[ScanPath], show_hidden_system: bool) -> Vec<AppEnt
     let mut seen = std::collections::HashSet::new();
 
     for sp in scan_paths {
-        let ext_set: HashSet<String> = sp.extensions.iter().map(|e| e.to_lowercase()).collect();
+        let ext_list: Vec<&str> = sp
+            .extensions
+            .iter()
+            .map(|e| e.trim_start_matches('.'))
+            .filter(|e| !e.is_empty())
+            .collect();
         scan_directory_with_extensions(
             Path::new(&sp.path),
-            &ext_set,
+            &ext_list,
             sp.include_folders,
             show_hidden_system,
             &mut entries,
@@ -43,7 +52,7 @@ pub fn scan_all(scan_paths: &[ScanPath], show_hidden_system: bool) -> Vec<AppEnt
 /// Recursively scan for files matching given extensions, optionally including folders
 fn scan_directory_with_extensions(
     dir: &Path,
-    extensions: &HashSet<String>,
+    extensions: &[&str],
     include_folders: bool,
     show_hidden_system: bool,
     entries: &mut Vec<AppEntry>,
@@ -55,10 +64,15 @@ fn scan_directory_with_extensions(
 
     for entry in read_dir.flatten() {
         let path = entry.path();
-        if !show_hidden_system && !is_visible_entry(&path) {
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+
+        if !show_hidden_system && !is_visible_metadata(&meta) {
             continue;
         }
-        if path.is_dir() {
+
+        if meta.is_dir() {
             if include_folders {
                 let name = path
                     .file_name()
@@ -66,11 +80,12 @@ fn scan_directory_with_extensions(
                     .unwrap_or("")
                     .to_string();
                 if !name.is_empty() {
-                    let key = normalize_entry_key(&path.to_string_lossy());
+                    let path_str = path.to_string_lossy();
+                    let key = normalize_entry_key(path_str.as_ref());
                     if seen.insert(key) {
                         entries.push(AppEntry {
                             name,
-                            target_path: path.to_string_lossy().to_string(),
+                            target_path: path_str.into_owned(),
                             is_folder: true,
                         });
                     }
@@ -85,34 +100,33 @@ fn scan_directory_with_extensions(
                 seen,
             );
         } else {
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| format!(".{}", e.to_lowercase()));
-            if let Some(ext) = ext
-                && extensions.contains(&ext) {
-                    let name = path
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let key = normalize_entry_key(&path.to_string_lossy());
-                    if !name.is_empty() && seen.insert(key) {
-                        entries.push(AppEntry {
-                            name,
-                            target_path: path.to_string_lossy().to_string(),
-                            is_folder: false,
-                        });
-                    }
+            let ext = path.extension().and_then(|e| e.to_str());
+            let matches = ext.is_some_and(|e| {
+                extensions
+                    .iter()
+                    .any(|allowed| allowed.eq_ignore_ascii_case(e))
+            });
+            if matches {
+                let name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                let path_str = path.to_string_lossy();
+                let key = normalize_entry_key(path_str.as_ref());
+                if !name.is_empty() && seen.insert(key) {
+                    entries.push(AppEntry {
+                        name,
+                        target_path: path_str.into_owned(),
+                        is_folder: false,
+                    });
                 }
+            }
         }
     }
 }
 
-fn is_visible_entry(path: &Path) -> bool {
-    let Ok(meta) = std::fs::metadata(path) else {
-        return true;
-    };
+fn is_visible_metadata(meta: &Metadata) -> bool {
     let attrs = meta.file_attributes();
     let hidden = (attrs & FILE_ATTRIBUTE_HIDDEN.0) != 0;
     let system = (attrs & FILE_ATTRIBUTE_SYSTEM.0) != 0;
@@ -162,14 +176,12 @@ fn invalidate_icon_cache() {
 
 /// Scan filesystem every startup; compare with cache to detect changes.
 /// Returns (entries, changed) where changed=true means the entry set differs from cache.
-pub fn load_or_scan(
-    scan: &[ScanPath],
-    show_hidden_system: bool,
-) -> (Vec<AppEntry>, bool) {
+pub fn load_or_scan(scan: &[ScanPath], show_hidden_system: bool) -> (Vec<AppEntry>, bool) {
     let current_hash = compute_config_hash(scan, show_hidden_system);
 
     if let Some(cache) = load_cache(current_hash) {
-        let cached_entries = cache.entries;
+        let mut cached_entries = cache.entries;
+        sort_entries_canonical(&mut cached_entries);
         let return_entries = cached_entries.clone();
         spawn_background_rescan(
             scan.to_vec(),
@@ -180,7 +192,8 @@ pub fn load_or_scan(
         return (return_entries, false);
     }
 
-    let entries = scan_all(scan, show_hidden_system);
+    let mut entries = scan_all(scan, show_hidden_system);
+    sort_entries_canonical(&mut entries);
     save_cache(&entries, current_hash);
     (entries, true)
 }
@@ -194,6 +207,15 @@ fn entries_equal(a: &[AppEntry], b: &[AppEntry]) -> bool {
     })
 }
 
+fn sort_entries_canonical(entries: &mut [AppEntry]) {
+    entries.sort_by(|a, b| {
+        a.target_path
+            .cmp(&b.target_path)
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.is_folder.cmp(&b.is_folder))
+    });
+}
+
 fn save_cache(entries: &[AppEntry], config_hash: u64) {
     let Some(path) = cache_path() else {
         return;
@@ -201,13 +223,15 @@ fn save_cache(entries: &[AppEntry], config_hash: u64) {
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
+    let mut sorted_entries = entries.to_vec();
+    sort_entries_canonical(&mut sorted_entries);
 
     let cache = IndexCache {
         built_at: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs(),
-        entries: entries.to_vec(),
+        entries: sorted_entries,
         config_hash,
     };
 
@@ -225,7 +249,8 @@ fn save_cache(entries: &[AppEntry], config_hash: u64) {
 /// Force rebuild: scan and save cache, regardless of existing cache.
 /// Called from settings dialog (Phase 5).
 pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> Vec<AppEntry> {
-    let entries = scan_all(scan, show_hidden_system);
+    let mut entries = scan_all(scan, show_hidden_system);
+    sort_entries_canonical(&mut entries);
     let config_hash = compute_config_hash(scan, show_hidden_system);
     save_cache(&entries, config_hash);
     entries
@@ -250,13 +275,28 @@ fn spawn_background_rescan(
     let _ = thread::Builder::new()
         .name("snotra-index-rescan".to_string())
         .spawn(move || {
+            lower_current_thread_priority();
             let scanned = scan_all(&scan, show_hidden_system);
-            if !entries_equal(&cached_entries, &scanned) {
+            let mut cached_sorted = cached_entries;
+            let mut scanned_sorted = scanned.clone();
+            sort_entries_canonical(&mut cached_sorted);
+            sort_entries_canonical(&mut scanned_sorted);
+            if !entries_equal(&cached_sorted, &scanned_sorted) {
                 save_cache(&scanned, config_hash);
                 invalidate_icon_cache();
             }
         });
 }
+
+#[cfg(windows)]
+fn lower_current_thread_priority() {
+    unsafe {
+        let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    }
+}
+
+#[cfg(not(windows))]
+fn lower_current_thread_priority() {}
 
 #[cfg(test)]
 mod tests {
@@ -279,7 +319,7 @@ mod tests {
 
         let mut entries = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        let exts: HashSet<String> = [".exe".to_string(), ".bat".to_string()].into_iter().collect();
+        let exts = vec!["exe", "bat"];
         scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
 
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
@@ -299,7 +339,7 @@ mod tests {
 
         let mut entries = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        let exts: HashSet<String> = [".exe".to_string()].into_iter().collect();
+        let exts = vec!["exe"];
         scan_directory_with_extensions(&dir, &exts, true, true, &mut entries, &mut seen);
 
         let folder_entries: Vec<&AppEntry> = entries.iter().filter(|e| e.is_folder).collect();
@@ -322,7 +362,7 @@ mod tests {
 
         let mut entries = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        let exts: HashSet<String> = [".exe".to_string()].into_iter().collect();
+        let exts = vec!["exe"];
         scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
 
         assert!(entries.iter().all(|e| !e.is_folder));
@@ -343,7 +383,7 @@ mod tests {
 
         let mut entries = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        let exts: HashSet<String> = [".exe".to_string()].into_iter().collect();
+        let exts = vec!["exe"];
         scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
 
         let tools: Vec<&AppEntry> = entries.iter().filter(|e| e.name == "tool").collect();
@@ -359,7 +399,7 @@ mod tests {
 
         let mut entries = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        let exts: HashSet<String> = [".exe".to_string()].into_iter().collect();
+        let exts = vec!["exe"];
         scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
 
         assert_eq!(entries.len(), 1);
@@ -511,6 +551,82 @@ mod tests {
     }
 
     #[test]
+    fn sorted_comparison_ignores_enumeration_order() {
+        let mut a = vec![
+            AppEntry {
+                name: "B".into(),
+                target_path: "C:\\b.exe".into(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "A".into(),
+                target_path: "C:\\a.exe".into(),
+                is_folder: false,
+            },
+        ];
+        let mut b = vec![
+            AppEntry {
+                name: "A".into(),
+                target_path: "C:\\a.exe".into(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "B".into(),
+                target_path: "C:\\b.exe".into(),
+                is_folder: false,
+            },
+        ];
+
+        sort_entries_canonical(&mut a);
+        sort_entries_canonical(&mut b);
+        assert!(entries_equal(&a, &b));
+    }
+
+    #[test]
+    fn canonical_sort_orders_by_target_then_name_then_is_folder() {
+        let mut entries = vec![
+            AppEntry {
+                name: "B".into(),
+                target_path: "C:\\a.exe".into(),
+                is_folder: true,
+            },
+            AppEntry {
+                name: "A".into(),
+                target_path: "C:\\b.exe".into(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "A".into(),
+                target_path: "C:\\a.exe".into(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "A".into(),
+                target_path: "C:\\a.exe".into(),
+                is_folder: true,
+            },
+        ];
+
+        sort_entries_canonical(&mut entries);
+
+        assert_eq!(entries[0].target_path, "C:\\a.exe");
+        assert_eq!(entries[0].name, "A");
+        assert!(!entries[0].is_folder);
+
+        assert_eq!(entries[1].target_path, "C:\\a.exe");
+        assert_eq!(entries[1].name, "A");
+        assert!(entries[1].is_folder);
+
+        assert_eq!(entries[2].target_path, "C:\\a.exe");
+        assert_eq!(entries[2].name, "B");
+        assert!(entries[2].is_folder);
+
+        assert_eq!(entries[3].target_path, "C:\\b.exe");
+        assert_eq!(entries[3].name, "A");
+        assert!(!entries[3].is_folder);
+    }
+
+    #[test]
     fn config_hash_changes_with_different_scan() {
         let scan1 = vec![ScanPath {
             path: "C:\\Tools".to_string(),
@@ -555,6 +671,9 @@ mod tests {
     #[test]
     fn scan_all_empty_when_no_paths() {
         let entries = scan_all(&[], false);
-        assert!(entries.is_empty(), "scan_all with no paths should return empty");
+        assert!(
+            entries.is_empty(),
+            "scan_all with no paths should return empty"
+        );
     }
 }

@@ -2,23 +2,23 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 use snotra_core::config::HotkeyConfig;
 use tauri::{AppHandle, Emitter};
-use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Shell::{
-    ExtractIconW, Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE,
-    NIM_SETVERSION, NOTIFYICONDATAW, NOTIFYICON_VERSION_4,
+    ExtractIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_SETVERSION,
+    NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DestroyIcon, DestroyMenu, DispatchMessageW,
-    GetCursorPos, GetMessageW, HICON, LoadIconW, PeekMessageW, PostMessageW, PostQuitMessage,
-    PostThreadMessageW, RegisterClassExW, SetForegroundWindow, TrackPopupMenuEx, TranslateMessage,
-    IDC_ARROW, IDI_APPLICATION, MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, PM_NOREMOVE,
-    TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON,
-    WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_HOTKEY,
-    WM_LBUTTONDBLCLK, WM_NULL, WM_RBUTTONUP, WNDCLASSEXW,
+    GetCursorPos, GetMessageW, HICON, IDC_ARROW, IDI_APPLICATION, LoadIconW, MF_GRAYED,
+    MF_SEPARATOR, MF_STRING, MSG, PM_NOREMOVE, PeekMessageW, PostMessageW, PostQuitMessage,
+    PostThreadMessageW, RegisterClassExW, SetForegroundWindow, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
+    TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, TranslateMessage,
+    WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_HOTKEY, WM_LBUTTONDBLCLK,
+    WM_NULL, WM_RBUTTONUP, WNDCLASSEXW,
 };
+use windows::core::{PCWSTR, w};
 
 use crate::{hotkey, ime};
 
@@ -32,15 +32,17 @@ unsafe extern "system" fn platform_default_wnd_proc(
     msg: u32,
     wparam: WPARAM,
     lparam: LPARAM,
-) -> LRESULT { unsafe {
-    // Shell may deliver WM_TRAY_ICON via SendMessage (bypassing GetMessageW queue).
-    // Re-post it as a thread message so the message loop can handle it.
-    if msg == WM_TRAY_ICON {
-        let _ = PostThreadMessageW(GetCurrentThreadId(), WM_TRAY_ICON, wparam, lparam);
-        return LRESULT(0);
+) -> LRESULT {
+    unsafe {
+        // Shell may deliver WM_TRAY_ICON via SendMessage (bypassing GetMessageW queue).
+        // Re-post it as a thread message so the message loop can handle it.
+        if msg == WM_TRAY_ICON {
+            let _ = PostThreadMessageW(GetCurrentThreadId(), WM_TRAY_ICON, wparam, lparam);
+            return LRESULT(0);
+        }
+        windows::Win32::UI::WindowsAndMessaging::DefWindowProcW(hwnd, msg, wparam, lparam)
     }
-    windows::Win32::UI::WindowsAndMessaging::DefWindowProcW(hwnd, msg, wparam, lparam)
-}}
+}
 
 pub enum PlatformCommand {
     SetHotkey {
@@ -96,8 +98,7 @@ impl PlatformBridge {
         }
         if self.command_tx.send(command).is_ok() {
             unsafe {
-                let _ =
-                    PostThreadMessageW(self.thread_id, WM_PLATFORM_WAKE, WPARAM(0), LPARAM(0));
+                let _ = PostThreadMessageW(self.thread_id, WM_PLATFORM_WAKE, WPARAM(0), LPARAM(0));
             }
         }
     }
@@ -180,13 +181,25 @@ fn platform_thread_loop(
                     let _ = app_handle.emit("hotkey-pressed", ());
                 }
                 WM_TRAY_ICON => {
-                    handle_tray_message(&mut tray, hwnd, msg.lParam, &app_handle, indexing_in_progress);
+                    handle_tray_message(
+                        &mut tray,
+                        hwnd,
+                        msg.lParam,
+                        &app_handle,
+                        indexing_in_progress,
+                    );
                 }
                 WM_COMMAND => {
                     handle_menu_command(msg.wParam, &app_handle);
                 }
                 WM_PLATFORM_WAKE => {
-                    process_commands(&command_rx, &mut current_hotkey, &mut tray, hwnd, &mut indexing_in_progress);
+                    process_commands(
+                        &command_rx,
+                        &mut current_hotkey,
+                        &mut tray,
+                        hwnd,
+                        &mut indexing_in_progress,
+                    );
                 }
                 _ => {
                     let _ = TranslateMessage(&msg);
@@ -305,9 +318,8 @@ impl TrayIcon {
         nid.szTip[..len].copy_from_slice(&tip[..len]);
 
         let owned_icon = load_tray_icon_from_exe();
-        nid.hIcon = owned_icon.unwrap_or_else(|| {
-            unsafe { LoadIconW(None, IDI_APPLICATION) }.unwrap_or_default()
-        });
+        nid.hIcon = owned_icon
+            .unwrap_or_else(|| unsafe { LoadIconW(None, IDI_APPLICATION) }.unwrap_or_default());
 
         unsafe {
             let _ = Shell_NotifyIconW(NIM_ADD, &nid);
@@ -337,12 +349,7 @@ impl TrayIcon {
                     .chain(std::iter::once(0))
                     .collect();
 
-                let _ = AppendMenuW(
-                    hmenu,
-                    MF_GRAYED,
-                    0,
-                    PCWSTR(indexing_text.as_ptr()),
-                );
+                let _ = AppendMenuW(hmenu, MF_GRAYED, 0, PCWSTR(indexing_text.as_ptr()));
                 let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
                 let _ = AppendMenuW(
                     hmenu,
@@ -351,12 +358,7 @@ impl TrayIcon {
                     PCWSTR(settings_text.as_ptr()),
                 );
                 let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
-                let _ = AppendMenuW(
-                    hmenu,
-                    MF_GRAYED,
-                    ID_MENU_EXIT,
-                    PCWSTR(exit_text.as_ptr()),
-                );
+                let _ = AppendMenuW(hmenu, MF_GRAYED, ID_MENU_EXIT, PCWSTR(exit_text.as_ptr()));
             } else {
                 let settings_text: Vec<u16> = "設定(&S)"
                     .encode_utf16()

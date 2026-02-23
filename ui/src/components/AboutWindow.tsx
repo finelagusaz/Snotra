@@ -31,7 +31,7 @@ const AboutWindow: Component = () => {
                         style={{ color: "var(--color-accent-fg)", "text-decoration": "none" }}
                         onClick={(e) => {
                             e.preventDefault();
-                            open("mailto:algiz.rune@gmail.com?subject=Snotraについて");
+                            open(`mailto:algiz.rune@gmail.com?subject=${encodeURIComponent("Snotraについて")}`);
                         }}
                     >
                         algiz.rune@gmail.com

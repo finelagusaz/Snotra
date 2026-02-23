@@ -20,6 +20,7 @@ import {
   indexing,
 } from "../stores/search";
 import { initCommands } from "../lib/commands";
+import { perfMarkInput } from "../lib/perf";
 
 async function hideAllWindows() {
   getCurrentWindow().hide();
@@ -155,6 +156,7 @@ const SearchWindow: Component = () => {
 
   function handleInput(e: InputEvent) {
     const value = (e.target as HTMLInputElement).value;
+    perfMarkInput();
     if (folderState()) {
       setFolderFilter(value);
     } else {

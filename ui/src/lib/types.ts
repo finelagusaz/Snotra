@@ -41,6 +41,8 @@ export interface SearchConfig {
   normal_mode: string;
   folder_mode: string;
   show_hidden_system: boolean;
+  history_normalization: string;
+  fuzzy_history_cap_ratio: number;
 }
 
 export interface ScanPath {

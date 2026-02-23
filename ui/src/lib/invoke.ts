@@ -120,3 +120,7 @@ export async function rebuildIndex(): Promise<boolean> {
 export async function quitApp(): Promise<void> {
   return invoke("quit_app");
 }
+
+export async function openAbout(): Promise<void> {
+  return invoke("open_about");
+}

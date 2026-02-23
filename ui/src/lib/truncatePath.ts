@@ -1,4 +1,8 @@
 let canvas: HTMLCanvasElement | null = null;
+const MAX_MEASURE_CACHE = 4096;
+const MAX_TRUNCATE_CACHE = 2048;
+const measureCache = new Map<string, number>();
+const truncateCache = new Map<string, string>();
 
 function getContext(): CanvasRenderingContext2D {
   if (!canvas) {
@@ -8,9 +12,20 @@ function getContext(): CanvasRenderingContext2D {
 }
 
 function measureText(text: string, font: string): number {
+  const key = `${font}\n${text}`;
+  const cached = measureCache.get(key);
+  if (cached !== undefined) {
+    return cached;
+  }
+
   const ctx = getContext();
   ctx.font = font;
-  return ctx.measureText(text).width;
+  const width = ctx.measureText(text).width;
+  if (measureCache.size >= MAX_MEASURE_CACHE) {
+    measureCache.clear();
+  }
+  measureCache.set(key, width);
+  return width;
 }
 
 /**
@@ -28,9 +43,20 @@ export function truncatePath(
   maxWidth: number,
   font: string,
 ): string {
+  const roundedWidth = Math.round(maxWidth);
+  const cacheKey = `${font}\n${roundedWidth}\n${path}`;
+  const cached = truncateCache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+
   if (maxWidth <= 0) return path;
 
   if (measureText(path, font) <= maxWidth) {
+    if (truncateCache.size >= MAX_TRUNCATE_CACHE) {
+      truncateCache.clear();
+    }
+    truncateCache.set(cacheKey, path);
     return path;
   }
 
@@ -68,6 +94,10 @@ export function truncatePath(
   // Minimal form: prefix\...\last + trailingSep
   const minimal = prefix + sep + "..." + sep + last + trailingSep;
   if (measureText(minimal, font) > maxWidth) {
+    if (truncateCache.size >= MAX_TRUNCATE_CACHE) {
+      truncateCache.clear();
+    }
+    truncateCache.set(cacheKey, minimal);
     return minimal;
   }
 
@@ -93,5 +123,9 @@ export function truncatePath(
     }
   }
 
+  if (truncateCache.size >= MAX_TRUNCATE_CACHE) {
+    truncateCache.clear();
+  }
+  truncateCache.set(cacheKey, bestResult);
   return bestResult;
 }

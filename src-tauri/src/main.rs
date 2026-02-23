@@ -73,11 +73,11 @@ fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
 
             // Turn off IME if configured
             if ime_control
-                && let Some(bridge) = app_handle
-                    .try_state::<Mutex<PlatformBridge>>()
-                && let Ok(b) = bridge.lock() {
-                    b.send_command(PlatformCommand::TurnOffImeForForeground);
-                }
+                && let Some(bridge) = app_handle.try_state::<Mutex<PlatformBridge>>()
+                && let Ok(b) = bridge.lock()
+            {
+                b.send_command(PlatformCommand::TurnOffImeForForeground);
+            }
 
             // Notify frontend to reset search state
             let _ = app_handle.emit("window-shown", ());
@@ -92,10 +92,8 @@ fn main() {
     let (entries, initial_indexing) = if is_first_run {
         (Vec::new(), true)
     } else {
-        let (entries, _) = indexer::load_or_scan(
-            &config.paths.scan,
-            config.search.show_hidden_system,
-        );
+        let (entries, _) =
+            indexer::load_or_scan(&config.paths.scan, config.search.show_hidden_system);
         (entries, false)
     };
 
@@ -135,6 +133,7 @@ fn main() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
         .manage(app_state)
         .manage(icon_cache_state)
         .invoke_handler(tauri::generate_handler![
@@ -146,6 +145,7 @@ fn main() {
             commands::save_config,
             commands::get_config,
             commands::open_settings,
+            commands::open_about,
             commands::get_icon_base64,
             commands::get_icons_batch,
             commands::get_search_placement,
@@ -168,27 +168,25 @@ fn main() {
             // to avoid racing with hotkey-show (root cause of first-show input delay).
             if let Some(w) = app.get_webview_window("main") {
                 if let Some(placement) = window_data::load_search_placement() {
-                    let _ = w.set_position(tauri::Position::Logical(
-                        tauri::LogicalPosition::new(placement.x as f64, placement.y as f64),
-                    ));
+                    let _ = w.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
+                        placement.x as f64,
+                        placement.y as f64,
+                    )));
                 }
                 if window_width > 0 {
                     if let Ok(current) = w.inner_size() {
                         let sf = w.scale_factor().unwrap_or(1.0);
                         let logical_h = current.height as f64 / sf;
-                        let _ = w.set_size(tauri::Size::Logical(
-                            tauri::LogicalSize::new(f64::from(window_width), logical_h),
-                        ));
+                        let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+                            f64::from(window_width),
+                            logical_h,
+                        )));
                     }
                 }
             }
 
             // Start platform thread (hotkey, tray, IME)
-            let platform = PlatformBridge::start(
-                app_handle.clone(),
-                hotkey_config,
-                show_tray,
-            );
+            let platform = PlatformBridge::start(app_handle.clone(), hotkey_config, show_tray);
 
             // Store platform bridge for later use
             if let Some(bridge) = platform {
@@ -209,22 +207,38 @@ fn main() {
             // Apply no-activate at creation time so first show cannot steal focus.
             let _ = commands::set_window_no_activate(app_handle.clone());
 
+            // Create about window (hidden by default).
+            let about_window =
+                WebviewWindowBuilder::new(app, "about", WebviewUrl::App(Default::default()))
+                    .title("Snotra について")
+                    .inner_size(400.0, 300.0)
+                    .resizable(false)
+                    .visible(false)
+                    .build()?;
+
+            let handle_for_about_close = app_handle.clone();
+            about_window.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    if let Some(w) = handle_for_about_close.get_webview_window("about") {
+                        let _ = w.hide();
+                    }
+                }
+            });
+
             // Create settings window (hidden by default).
             // WebView2 initialization requires a nested message pump, which
             // deadlocks when called during the event loop (run_on_main_thread /
             // Tauri command). Creating the window here in setup() — before the
             // event loop starts — avoids this entirely.
-            let settings_window = WebviewWindowBuilder::new(
-                app,
-                "settings",
-                WebviewUrl::App(Default::default()),
-            )
-            .title("Snotra 設定")
-            .inner_size(760.0, 560.0)
-            .min_inner_size(520.0, 360.0)
-            .resizable(true)
-            .visible(false)
-            .build()?;
+            let settings_window =
+                WebviewWindowBuilder::new(app, "settings", WebviewUrl::App(Default::default()))
+                    .title("Snotra 設定")
+                    .inner_size(760.0, 560.0)
+                    .min_inner_size(520.0, 360.0)
+                    .resizable(true)
+                    .visible(false)
+                    .build()?;
 
             // Intercept close to hide instead of destroy.
             // This keeps the WebView2 instance alive so we never need to
@@ -257,8 +271,7 @@ fn main() {
             let hotkey_generation = Arc::new(AtomicU64::new(0));
             let hotkey_generation_for_listener = hotkey_generation.clone();
             app_handle.listen("hotkey-pressed", move |_| {
-                let current_gen =
-                    hotkey_generation_for_listener.fetch_add(1, Ordering::SeqCst) + 1;
+                let current_gen = hotkey_generation_for_listener.fetch_add(1, Ordering::SeqCst) + 1;
                 if let Some(w) = handle_for_hotkey.get_webview_window("main") {
                     let visible = w.is_visible().unwrap_or(false);
                     if visible && toggle {
@@ -273,7 +286,8 @@ fn main() {
                             let hotkey_generation_for_wait = hotkey_generation_for_listener.clone();
                             std::thread::spawn(move || {
                                 wait_alt_release_or_timeout();
-                                if hotkey_generation_for_wait.load(Ordering::SeqCst) != current_gen {
+                                if hotkey_generation_for_wait.load(Ordering::SeqCst) != current_gen
+                                {
                                     return;
                                 }
                                 show_main_and_emit(&handle_for_show, ime_control);
@@ -311,18 +325,18 @@ fn main() {
                     }
                 }
                 if let Some(bridge) = handle_for_exit.try_state::<Mutex<PlatformBridge>>()
-                    && let Ok(b) = bridge.lock() {
-                        b.send_command(PlatformCommand::Exit);
-                    }
+                    && let Ok(b) = bridge.lock()
+                {
+                    b.send_command(PlatformCommand::Exit);
+                }
                 handle_for_exit.exit(0);
             });
 
             // Show window on startup if configured
-            if show_on_startup
-                && let Some(w) = app_handle.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
+            if show_on_startup && let Some(w) = app_handle.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
 
             Ok(())
         })

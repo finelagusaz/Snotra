@@ -5,6 +5,7 @@ import {
   activeTab,
   setActiveTab,
   hasChanges,
+  canSave,
   loadDraft,
   saveDraft,
 } from "../stores/settings";
@@ -62,8 +63,8 @@ const SettingsWindow: Component = () => {
         <div class="settings-footer">
           <button
             class="btn-primary"
-            classList={{ "has-changes": hasChanges() }}
-            disabled={!hasChanges()}
+            classList={{ "has-changes": canSave() }}
+            disabled={!canSave()}
             onClick={saveDraft}
           >
             {hasChanges() ? "保存" : "変更なし"}

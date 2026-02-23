@@ -21,7 +21,7 @@ pub struct SaveConfigResult {
 #[tauri::command]
 pub fn search(query: String, state: State<AppState>) -> Vec<SearchResult> {
     let config = state.config.lock().unwrap();
-    let engine = state.engine.lock().unwrap();
+    let mut engine = state.engine.lock().unwrap();
     let history = state.history.lock().unwrap();
     let mode: SearchMode = config.search.normal_mode.into();
     let history_boost_config: HistoryBoostConfig = (&config.search).into();

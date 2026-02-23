@@ -1,8 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 
-use fuzzy_matcher::FuzzyMatcher;
-use fuzzy_matcher::skim::SkimMatcherV2;
+use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32Str};
 
 use crate::config::{SearchConfig, SearchHistoryNormalizationConfig};
 use crate::history::HistoryStore;
@@ -59,7 +58,7 @@ pub struct SearchEngine {
     entries: Vec<AppEntry>,
     lower_names: Vec<String>,
     lower_file_names: Vec<Option<String>>,
-    matcher: SkimMatcherV2,
+    matcher: Matcher,
 }
 
 impl SearchEngine {
@@ -78,12 +77,12 @@ impl SearchEngine {
             entries,
             lower_names,
             lower_file_names,
-            matcher: SkimMatcherV2::default(),
+            matcher: Matcher::new(MatcherConfig::DEFAULT),
         }
     }
 
     pub fn search(
-        &self,
+        &mut self,
         query: &str,
         max_results: usize,
         history: &HistoryStore,
@@ -99,7 +98,7 @@ impl SearchEngine {
     }
 
     pub fn search_with_history_boost(
-        &self,
+        &mut self,
         query: &str,
         max_results: usize,
         history: &HistoryStore,
@@ -131,7 +130,7 @@ impl SearchEngine {
             .zip(self.lower_file_names.iter())
         {
             let name_score =
-                match_score_single_cached(mode, &self.matcher, lower_name, &norm_query);
+                match_score_single_cached(mode, &mut self.matcher,lower_name, &norm_query);
 
             let score = if has_dot {
                 if let Some(s) = name_score {
@@ -140,13 +139,13 @@ impl SearchEngine {
                         Some(s)
                     } else {
                         let fn_score = lower_file_name.as_deref().and_then(|f| {
-                            match_score_single_cached(mode, &self.matcher, f, &norm_query)
+                            match_score_single_cached(mode, &mut self.matcher,f, &norm_query)
                         });
                         fn_score.map_or(Some(s), |b| Some(s.max(b)))
                     }
                 } else {
                     lower_file_name.as_deref().and_then(|f| {
-                        match_score_single_cached(mode, &self.matcher, f, &norm_query)
+                        match_score_single_cached(mode, &mut self.matcher,f, &norm_query)
                     })
                 }
             } else {
@@ -296,7 +295,7 @@ fn rank_cmp_ranked(a: &RankedEntry, b: &RankedEntry) -> Ordering {
 /// Score using a pre-computed lowercase name (avoids repeated allocation).
 fn match_score_single_cached(
     mode: SearchMode,
-    matcher: &SkimMatcherV2,
+    matcher: &mut Matcher,
     lower_name: &str,
     query: &str,
 ) -> Option<i64> {
@@ -309,7 +308,13 @@ fn match_score_single_cached(
             }
         }
         SearchMode::Substring => lower_name.find(query).map(|idx| 5_000 - idx as i64),
-        SearchMode::Fuzzy => matcher.fuzzy_match(lower_name, query),
+        SearchMode::Fuzzy => {
+            let mut haystack_buf = Vec::new();
+            let mut needle_buf = Vec::new();
+            let haystack = Utf32Str::new(lower_name, &mut haystack_buf);
+            let needle = Utf32Str::new(query, &mut needle_buf);
+            matcher.fuzzy_match(haystack, needle).map(|s| s as i64)
+        }
     }
 }
 
@@ -336,14 +341,14 @@ mod tests {
 
     #[test]
     fn search_empty_query_returns_empty() {
-        let engine = SearchEngine::new(make_entries(&["Firefox", "Chrome"]));
+        let mut engine = SearchEngine::new(make_entries(&["Firefox", "Chrome"]));
         let results = engine.search("", 8, &empty_history(), SearchMode::Fuzzy);
         assert!(results.is_empty());
     }
 
     #[test]
     fn search_no_entries_returns_empty() {
-        let engine = SearchEngine::new(Vec::new());
+        let mut engine = SearchEngine::new(Vec::new());
         let results = engine.search("fire", 8, &empty_history(), SearchMode::Fuzzy);
         assert!(results.is_empty());
     }
@@ -351,7 +356,7 @@ mod tests {
     #[test]
     fn search_returns_fuzzy_matches() {
         let entries = make_entries(&["Firefox", "Chrome", "Notepad", "Visual Studio Code"]);
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("fire", 8, &empty_history(), SearchMode::Fuzzy);
         assert!(!results.is_empty());
         assert_eq!(results[0].name, "Firefox");
@@ -360,7 +365,7 @@ mod tests {
     #[test]
     fn search_respects_max_results() {
         let entries = make_entries(&["app1", "app2", "app3", "app4", "app5"]);
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("app", 3, &empty_history(), SearchMode::Fuzzy);
         assert!(results.len() <= 3);
     }
@@ -373,7 +378,7 @@ mod tests {
             "appx",
             "app",
         ]);
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
 
         let results = engine.search("app", 2, &empty_history(), SearchMode::Prefix);
         let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
@@ -395,8 +400,8 @@ mod tests {
             "appabcdefghi",
             "appabcdefghij",
         ]);
-        let ordered_engine = SearchEngine::new(ordered);
-        let reversed_engine = SearchEngine::new(reversed);
+        let mut ordered_engine = SearchEngine::new(ordered);
+        let mut reversed_engine = SearchEngine::new(reversed);
 
         let ordered_results = ordered_engine.search("app", 2, &empty_history(), SearchMode::Prefix);
         let reversed_results = reversed_engine.search("app", 2, &empty_history(), SearchMode::Prefix);
@@ -411,7 +416,7 @@ mod tests {
     #[test]
     fn search_results_are_not_folders() {
         let entries = make_entries(&["Firefox"]);
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("fire", 8, &empty_history(), SearchMode::Fuzzy);
         assert!(!results.is_empty());
         assert!(!results[0].is_folder);
@@ -420,7 +425,7 @@ mod tests {
     #[test]
     fn search_prefix_mode_matches_only_prefix() {
         let entries = make_entries(&["Notepad", "Pad Tool"]);
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("pad", 8, &empty_history(), SearchMode::Prefix);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Pad Tool");
@@ -429,7 +434,7 @@ mod tests {
     #[test]
     fn search_substring_mode_matches_middle() {
         let entries = make_entries(&["Visual Studio Code"]);
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("studio", 8, &empty_history(), SearchMode::Substring);
         assert_eq!(results.len(), 1);
     }
@@ -442,7 +447,7 @@ mod tests {
             target_path: "C:\\fake\\SSP.exe".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("SSP.exe", 8, &empty_history(), SearchMode::Prefix);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "SSP");
@@ -455,7 +460,7 @@ mod tests {
             target_path: "C:\\fake\\SSP.exe".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("ssp.exe", 8, &empty_history(), SearchMode::Substring);
         assert_eq!(results.len(), 1);
     }
@@ -467,7 +472,7 @@ mod tests {
             target_path: "C:\\fake\\SSP.exe".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("ssp.exe", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
     }
@@ -475,7 +480,7 @@ mod tests {
     #[test]
     fn search_without_extension_still_works() {
         let entries = make_entries(&["SSP"]);
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("SSP", 8, &empty_history(), SearchMode::Prefix);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "SSP");
@@ -496,7 +501,7 @@ mod tests {
                 is_folder: false,
             },
         ];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("ssp.exe", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "SSP");
@@ -510,7 +515,7 @@ mod tests {
             target_path: "C:\\fake\\SSP.lnk".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("ssp.exe", 8, &empty_history(), SearchMode::Prefix);
         assert!(results.is_empty());
     }
@@ -523,7 +528,7 @@ mod tests {
             target_path: "C:\\fake\\SSP.exe".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("SSP.", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "SSP");
@@ -537,7 +542,7 @@ mod tests {
             target_path: "C:\\fake\\SSP.exe".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("SSP.e", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "SSP");
@@ -551,7 +556,7 @@ mod tests {
             target_path: "C:\\fake\\SSP.exe".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("SSP.ex", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "SSP");
@@ -565,7 +570,7 @@ mod tests {
             target_path: "C:\\fake\\drweb32w.exe".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("Dr.Web", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Dr.Web");
@@ -579,7 +584,7 @@ mod tests {
             target_path: "C:\\fake\\drweb32w.exe".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("dr.w", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Dr.Web");
@@ -593,7 +598,7 @@ mod tests {
             target_path: "C:\\fake\\hoge.exe.bak".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("hoge.exe", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "hoge");
@@ -607,7 +612,7 @@ mod tests {
             target_path: "C:\\fake\\hoge.exe.bak".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("hoge.exe.bak", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "hoge");
@@ -658,7 +663,7 @@ mod tests {
             target_path: "C:\\fake\\Tool.EXE".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("tool.exe", 8, &empty_history(), SearchMode::Substring);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Dummy");
@@ -671,7 +676,7 @@ mod tests {
             target_path: "C:\\".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("dummy.exe", 8, &empty_history(), SearchMode::Fuzzy);
         assert!(results.is_empty());
     }
@@ -716,7 +721,7 @@ mod tests {
     #[test]
     fn search_with_history_boost_disabled_matches_legacy_search() {
         let entries = make_entries(&["alpha", "alpaca", "alpine"]);
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let mut history = empty_history();
         for _ in 0..50 {
             history.record_launch("C:\\fake\\alpaca.lnk", "alp");

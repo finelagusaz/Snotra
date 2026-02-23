@@ -1,5 +1,4 @@
-use fuzzy_matcher::FuzzyMatcher;
-use fuzzy_matcher::skim::SkimMatcherV2;
+use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32Str};
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
@@ -25,7 +24,7 @@ pub fn list_folder(
         }];
     };
 
-    let matcher = SkimMatcherV2::default();
+    let mut matcher = Matcher::new(MatcherConfig::DEFAULT);
 
     let mut entries: Vec<SearchResult> = read_dir
         .flatten()
@@ -36,7 +35,7 @@ pub fn list_folder(
             }
             let name = entry.file_name().to_string_lossy().to_string();
 
-            if !filter.is_empty() && !matches_filter(&name, filter, mode, &matcher) {
+            if !filter.is_empty() && !matches_filter(&name, filter, mode, &mut matcher) {
                 return None;
             }
 
@@ -94,13 +93,19 @@ pub fn list_folder(
         .collect()
 }
 
-fn matches_filter(name: &str, filter: &str, mode: SearchMode, matcher: &SkimMatcherV2) -> bool {
+fn matches_filter(name: &str, filter: &str, mode: SearchMode, matcher: &mut Matcher) -> bool {
     let name_lower = name.to_lowercase();
     let filter_lower = filter.to_lowercase();
     match mode {
         SearchMode::Prefix => name_lower.starts_with(&filter_lower),
         SearchMode::Substring => name_lower.contains(&filter_lower),
-        SearchMode::Fuzzy => matcher.fuzzy_match(&name_lower, &filter_lower).is_some(),
+        SearchMode::Fuzzy => {
+            let mut haystack_buf = Vec::new();
+            let mut needle_buf = Vec::new();
+            let haystack = Utf32Str::new(&name_lower, &mut haystack_buf);
+            let needle = Utf32Str::new(&filter_lower, &mut needle_buf);
+            matcher.fuzzy_match(haystack, needle).is_some()
+        }
     }
 }
 

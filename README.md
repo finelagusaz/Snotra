@@ -96,3 +96,54 @@ Issue 駆動で Codex 実装〜Draft PR 作成まで自動化する運用を用�
 ## ライセンス
 
 このプロジェクトは [MIT License](LICENSE) の下で公開されています。
+
+## 環境構築手順（Windows）
+
+- **前提ソフトウェア**: Visual Studio 2022（または Build Tools）で「Desktop development with C++」ワークロードとWindows SDKを有効にしてください。`git`, `rustup`, `node`/`npm` が PATH にあることを確認してください。
+- **Rust**: rustup を使って stable toolchain をインストールし、MSVC ターゲットを追加します。
+  - コマンド例:
+    - `rustup-init.exe` を実行してインストール
+    - `rustup default stable`
+    - `rustup target add x86_64-pc-windows-msvc`
+- **Node.js / npm**: Node.js LTS（README の要件では >=22）をインストールしてください。`node -v` / `npm -v` で確認します。
+- **依存インストール**: プロジェクトルートで依存をインストールします。
+  - `npm ci`（または `npm install`）
+  - フロントエンドで個別に行う場合: `cd ui && npm ci`
+- **Tauri CLI**: 必要に応じてインストールします（グローバルでも可）。
+  - `npm install -g @tauri-apps/cli` または `cargo install tauri-cli`
+- **開発起動（典型）**:
+  - フロントエンド（手動）: `cd ui && npm run dev`
+  - ルートで Tauri 開発実行: `npm run tauri dev`
+
+### トラブルシューティング（よくある問題と対策）
+
+- **`EPERM: operation not permitted, unlink ... esbuild.exe`**
+  - 原因: `esbuild.exe` が別プロセス（開発サーバ、エディタ拡張、アンチウイルス等）によりロックされています。
+  - 対処:
+    - すべての開発サーバ / ターミナル / エディタのターミナルを閉じる。
+    - `tasklist | findstr /I "esbuild node"` でプロセスを確認し、`taskkill /F /IM esbuild.exe` や `Get-Process node | Stop-Process -Force` で停止する。
+    - それでも残る場合は Sysinternals の Process Explorer（Ctrl+F 検索）や `handle.exe` でハンドルを特定し閉じる。
+    - アンチウイルスが原因ならプロジェクトフォルダを除外する。
+
+- **`failed to remove file target\\debug\\snotra.exe` (os error 5 / アクセスが拒否されました)**
+  - 原因: 前回ビルド実行中の `snotra.exe` が終了しておらずファイル削除が失敗。
+  - 対処:
+    - 実行中プロセスを確認: `Get-Process -Name snotra -ErrorAction SilentlyContinue` / `tasklist | findstr /I snotra`
+    - プロセスを終了: `taskkill /F /IM snotra.exe` または `Get-Process -Name snotra | Stop-Process -Force`。
+    - ハンドルが残る場合は Process Explorer/handle.exe でハンドルを閉じる。
+    - ファイル削除/キャッシュ掃除: `Remove-Item .\\target\\debug\\snotra.exe -Force` / `cargo clean`。
+    - 必要なら管理者としてターミナルを再起動して実行する。
+
+- **`linker not found` / MSVC 関連のビルドエラー**
+  - 対処: Visual Studio の「Desktop development with C++」ワークロードと Windows SDK を確実にインストールし、ターミナルを再起動してから再ビルドしてください。
+
+- **`tauri` CLI が見つからない/コマンドが失敗する**
+  - 対処: `npm install -g @tauri-apps/cli` または `cargo install tauri-cli` を行う。プロジェクトではローカル devDependency として管理されている場合もあるので `npm run tauri dev` を利用してください。
+
+### 短いチェックリスト
+
+- **環境確認**: `node -v`, `npm -v`, `rustc --version`, `cargo --version`, `git --version`
+- **依存インストール**: `npm ci`（必要に応じて `cd ui && npm ci`）
+- **起動**: `npm run tauri dev`
+
+問題が再発する場合、該当コマンド出力の抜粋か `tasklist` / `Get-Process` の出力を送ってください。追加で再発防止の手順（PowerShell スクリプト等）を用意します。

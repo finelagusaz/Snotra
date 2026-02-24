@@ -16,7 +16,7 @@ use crate::binfmt::{deserialize_with_header, serialize_with_header};
 use crate::config::{Config, ScanPath};
 
 const INDEX_MAGIC: [u8; 4] = *b"INDX";
-const INDEX_CACHE_VERSION: u32 = 1;
+const INDEX_CACHE_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppEntry {
@@ -409,7 +409,7 @@ mod tests {
     }
 
     #[test]
-    fn index_cache_bincode_roundtrip() {
+    fn index_cache_binary_roundtrip() {
         let entries = vec![
             AppEntry {
                 name: "Firefox".to_string(),

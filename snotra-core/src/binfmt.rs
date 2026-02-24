@@ -8,6 +8,40 @@ pub fn serialize_with_header<T: Serialize>(
     version: u32,
     payload: &T,
 ) -> Option<Vec<u8>> {
+    let body = postcard::to_allocvec(payload).ok()?;
+    let mut out = Vec::with_capacity(HEADER_LEN + body.len());
+    out.extend_from_slice(&magic);
+    out.extend_from_slice(&version.to_le_bytes());
+    out.extend_from_slice(&body);
+    Some(out)
+}
+
+/// Legacy bincode deserializer for migration from pre-postcard format.
+pub fn deserialize_bincode_with_header<T: DeserializeOwned>(
+    bytes: &[u8],
+    magic: [u8; 4],
+    version: u32,
+) -> Option<T> {
+    if bytes.len() < HEADER_LEN {
+        return None;
+    }
+    if bytes[0..4] != magic {
+        return None;
+    }
+    let mut ver = [0u8; 4];
+    ver.copy_from_slice(&bytes[4..8]);
+    if u32::from_le_bytes(ver) != version {
+        return None;
+    }
+    bincode::deserialize(&bytes[HEADER_LEN..]).ok()
+}
+
+#[cfg(test)]
+pub fn serialize_bincode_with_header<T: Serialize>(
+    magic: [u8; 4],
+    version: u32,
+    payload: &T,
+) -> Option<Vec<u8>> {
     let body = bincode::serialize(payload).ok()?;
     let mut out = Vec::with_capacity(HEADER_LEN + body.len());
     out.extend_from_slice(&magic);
@@ -32,7 +66,7 @@ pub fn deserialize_with_header<T: DeserializeOwned>(
     if u32::from_le_bytes(ver) != version {
         return None;
     }
-    bincode::deserialize(&bytes[HEADER_LEN..]).ok()
+    postcard::from_bytes(&bytes[HEADER_LEN..]).ok()
 }
 
 #[cfg(test)]
@@ -51,6 +85,29 @@ mod tests {
         let bytes = serialize_with_header(*b"TEST", 1, &input).expect("serialize");
         let output: Dummy = deserialize_with_header(&bytes, *b"TEST", 1).expect("deserialize");
         assert_eq!(input, output);
+    }
+
+    #[test]
+    fn roundtrip_bincode_with_header() {
+        let input = Dummy { value: 99 };
+        let bytes =
+            serialize_bincode_with_header(*b"TEST", 1, &input).expect("serialize bincode");
+        let output: Dummy =
+            deserialize_bincode_with_header(&bytes, *b"TEST", 1).expect("deserialize bincode");
+        assert_eq!(input, output);
+    }
+
+    #[test]
+    fn bincode_data_not_readable_by_postcard() {
+        // u32::MAX is encoded as 4 bytes (ff ff ff ff) by bincode.
+        // postcard reads it as a varint where all 4 bytes have the continuation
+        // bit set, so it requires a 5th byte that never comes → decode error → None.
+        let input = Dummy { value: u32::MAX };
+        let bytes =
+            serialize_bincode_with_header(*b"TEST", 1, &input).expect("serialize bincode");
+        // postcard cannot decode the 4-byte LE payload as a complete varint
+        let output: Option<Dummy> = deserialize_with_header(&bytes, *b"TEST", 1);
+        assert!(output.is_none());
     }
 
     #[test]

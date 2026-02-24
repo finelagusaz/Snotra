@@ -4,12 +4,13 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::binfmt::{deserialize_with_header, serialize_with_header};
+use crate::binfmt::{deserialize_bincode_with_header, deserialize_with_header, serialize_with_header};
 use crate::config::Config;
 use crate::query::normalize_query;
 
 const HISTORY_MAGIC: [u8; 4] = *b"HIST";
-const HISTORY_VERSION: u32 = 1;
+const HISTORY_VERSION: u32 = 2;        // postcard (現行)
+const HISTORY_VERSION_LEGACY: u32 = 1; // bincode (旧)
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GlobalEntry {
@@ -34,32 +35,32 @@ pub struct HistoryStore {
 
 impl HistoryStore {
     pub fn load(top_n: usize, max_history_display: usize) -> Self {
-        let mut decode_failed = false;
         let data = if let Some(path) = Self::data_path() {
-            match fs::read(&path)
-                .ok()
-                .and_then(|bytes| deserialize_with_header(&bytes, HISTORY_MAGIC, HISTORY_VERSION))
-            {
-                Some(data) => data,
-                None => {
-                    decode_failed = true;
-                    HistoryData::default()
-                }
+            if let Ok(bytes) = fs::read(&path) {
+                // Try current format (postcard V2) first
+                deserialize_with_header(&bytes, HISTORY_MAGIC, HISTORY_VERSION)
+                    // Fall back to legacy format (bincode V1)
+                    .or_else(|| {
+                        deserialize_bincode_with_header(
+                            &bytes,
+                            HISTORY_MAGIC,
+                            HISTORY_VERSION_LEGACY,
+                        )
+                    })
+                    .unwrap_or_default()
+            } else {
+                HistoryData::default()
             }
         } else {
             HistoryData::default()
         };
 
-        let mut store = Self {
+        Self {
             data,
             top_n,
             max_history_display,
             dirty_count: 0,
-        };
-        if decode_failed {
-            store.save();
         }
-        store
     }
 
     pub fn save(&mut self) {
@@ -218,6 +219,7 @@ impl HistoryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binfmt::serialize_bincode_with_header;
     use crate::query::normalize_query;
 
     fn fresh_store() -> HistoryStore {
@@ -390,7 +392,42 @@ mod tests {
     }
 
     #[test]
-    fn bincode_roundtrip() {
+    fn legacy_bincode_v1_migrates_to_current_format() {
+        let mut data = HistoryData::default();
+        data.global.insert(
+            "C:\\legacy.lnk".to_string(),
+            GlobalEntry {
+                launch_count: 7,
+                last_launched: 1_600_000_000,
+            },
+        );
+        data.query
+            .entry("leg".to_string())
+            .or_default()
+            .insert("C:\\legacy.lnk".to_string(), 4);
+        data.folder_expansion
+            .insert("C:\\LegacyFolder".to_string(), 3);
+
+        // Simulate a bincode V1 file written before postcard migration
+        let bytes = serialize_bincode_with_header(HISTORY_MAGIC, HISTORY_VERSION_LEGACY, &data)
+            .expect("serialize bincode v1");
+
+        // Should be unreadable by current postcard V2 deserializer
+        let v2_attempt: Option<HistoryData> =
+            deserialize_with_header(&bytes, HISTORY_MAGIC, HISTORY_VERSION);
+        assert!(v2_attempt.is_none());
+
+        // Should be readable via bincode V1 fallback
+        let migrated: HistoryData =
+            deserialize_bincode_with_header(&bytes, HISTORY_MAGIC, HISTORY_VERSION_LEGACY)
+                .expect("bincode v1 fallback");
+        assert_eq!(migrated.global["C:\\legacy.lnk"].launch_count, 7);
+        assert_eq!(migrated.query["leg"]["C:\\legacy.lnk"], 4);
+        assert_eq!(migrated.folder_expansion["C:\\LegacyFolder"], 3);
+    }
+
+    #[test]
+    fn binary_roundtrip() {
         let mut data = HistoryData::default();
         data.global.insert(
             "C:\\app.lnk".to_string(),

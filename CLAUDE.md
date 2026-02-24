@@ -41,7 +41,7 @@ Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-
 ## ビルド・実行コマンド
 
 ```bash
-cargo test -p snotra-core        # ユニットテスト（80テスト）
+cargo test -p snotra-core        # ユニットテスト
 cargo check -p snotra            # Rustバックエンド型チェック
 cargo clippy -p snotra-core -p snotra  # lint チェック
 npx vite build                   # フロントエンドビルド
@@ -106,6 +106,8 @@ npm run tauri build              # リリースビルド
 - Windows パスの正規化では `C:` と `C:\` の違いに注意する（ドライブルートは末尾 `\` が必須）
 - ファイルメタデータ取得時、シンボリックリンクを考慮する場合は `symlink_metadata` を使う（`metadata()` はリンク先を辿る）
 - Tauri プラグインの新機能を使う際は `capabilities/*.json` の権限宣言を確認する
+- シリアライザを切り替える場合は**必ずバージョン番号をバンプ**し、旧形式のフォールバックデシリアライザを追加する。切り替え前後でバイト列の互換性はほぼ存在しない（例: bincode の u32 は 4バイト LE、postcard は LEB128 varint）
+- `deserialize_failed → save()` パターン（デコード失敗時に空データを即時上書き保存）は HistoryStore など学習データを持つモジュールでデータ喪失を招く。フォールバック読み込みを先に試み、次回の通常 save() で新形式に昇格させること
 
 ## パフォーマンス最適化プレイブック
 

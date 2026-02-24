@@ -5,10 +5,11 @@ edition = "2024"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-bincode = "1"
+postcard = { version = "1", features = ["alloc"] }
+bincode = "1"  # 旧形式マイグレーション読み込み用
 toml = "0.8"
-fuzzy-matcher = "0.3"
-dirs = "5"
+nucleo-matcher = "0.3"
+dirs = "6"
 rustc-hash = "2.1.1"
 
 [target.'cfg(windows)'.dependencies]

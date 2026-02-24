@@ -1,0 +1,18 @@
+{
+  "recommendations": [
+    "rust-lang.rust-analyzer",
+    "vadimcn.vscode-lldb",
+    "tamasfe.even-better-toml",
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "tauri-apps.tauri-vscode",
+    "solidjs-community.solid-snippets"
+  ],
+  "unwantedRecommendations": [
+    "rust-lang.rust",
+    "matklad.rust-analyzer",
+    "ms-vscode.vscode-typescript-next",
+    "hookyqr.beautify",
+    "eg2.tslint"
+  ]
+}

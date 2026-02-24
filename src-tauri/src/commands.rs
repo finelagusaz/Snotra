@@ -94,7 +94,6 @@ pub fn save_config(
     app: AppHandle,
 ) -> Result<SaveConfigResult, String> {
     let old_config = state.config.lock().unwrap().clone();
-    config.save();
 
     // Detect what changed before moving config into state
     let index_changed = config.paths.scan != old_config.paths.scan
@@ -109,7 +108,9 @@ pub fn save_config(
     };
     let new_width = config.appearance.window_width;
 
-    // Notify platform bridge of hotkey/tray changes
+    // Notify platform bridge of hotkey/tray changes.
+    // Hotkey registration is checked BEFORE saving to disk: if registration fails,
+    // we return Err without persisting the invalid hotkey.
     if let Some(bridge) = app.try_state::<std::sync::Mutex<PlatformBridge>>()
         && let Ok(b) = bridge.lock()
     {
@@ -119,9 +120,9 @@ pub fn save_config(
                 config: config.hotkey.clone(),
                 reply: tx,
             });
-            // Wait for hotkey registration result
-            if let Ok(false) = rx.recv() {
-                // Re-register failed, revert in-memory but still save to disk
+            match rx.recv_timeout(std::time::Duration::from_secs(2)) {
+                Ok(false) | Err(_) => return Err("hotkey_registration_failed".to_string()),
+                Ok(true) => {}
             }
         }
         if config.general.show_tray_icon != old_config.general.show_tray_icon {
@@ -130,6 +131,9 @@ pub fn save_config(
             ));
         }
     }
+
+    // Save to disk only after hotkey validation succeeded
+    config.save();
 
     {
         let mut current = state.config.lock().unwrap();
@@ -345,6 +349,13 @@ pub fn list_system_fonts() -> Vec<String> {
     }
     #[cfg(not(windows))]
     Vec::new()
+}
+
+#[tauri::command]
+pub fn record_folder_expansion(path: String, state: State<AppState>) {
+    let mut history = state.history.lock().unwrap();
+    history.record_folder_expansion(&path);
+    history.save_if_dirty(5);
 }
 
 #[tauri::command]

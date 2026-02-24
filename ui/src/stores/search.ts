@@ -210,6 +210,7 @@ function enterFolderExpansion(dir: string) {
     // Already in folder mode, navigate deeper
     setFolderState({ ...fs, currentDir: dir });
   }
+  void api.recordFolderExpansion(dir);
   setFolderFilter("");
   setSelected(0);
   refreshResults();
@@ -218,11 +219,18 @@ function enterFolderExpansion(dir: string) {
 function exitFolderExpansion(): boolean {
   const fs = folderState();
   if (!fs) return false;
+
+  // デバウンスタイマーをクリア（フォルダモード中の入力残り処理を防止）
+  clearTimeout(debounceTimer);
+  debounceTimer = undefined;
+
+  const requestId = ++latestRequestId;
   setResults(fs.savedResults);
   setSelected(fs.savedSelected);
-  setQuery(fs.savedQuery);
-  setFolderState(null);
+  setFolderState(null);    // setQuery より先に null にする
   setFolderFilter("");
+  setQuery(fs.savedQuery);
+  emitResults(fs.savedResults, fs.savedSelected, requestId);
   return true;
 }
 
@@ -283,11 +291,13 @@ function resetForShow() {
   refreshResults();
 }
 
+let unlistenIndexingComplete: (() => void) | undefined;
+
 async function initIndexingState() {
   const state = await api.getIndexingState();
   setIndexing(state);
 
-  listen("indexing-complete", () => {
+  unlistenIndexingComplete = await listen("indexing-complete", () => {
     setIndexing(false);
     refreshResults();
   });
@@ -312,4 +322,5 @@ export {
   resetForShow,
   indexing,
   initIndexingState,
+  emitSelectionUpdate,
 };

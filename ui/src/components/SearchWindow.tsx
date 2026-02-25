@@ -148,7 +148,9 @@ const SearchWindow: Component = () => {
         }
         break;
       case "Enter":
-        activateSelected();
+        void activateSelected().then((launched) => {
+          if (launched) void hideAllWindows();
+        });
         e.preventDefault();
         break;
     }

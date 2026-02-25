@@ -75,9 +75,9 @@ npm run tauri build              # リリースビルド
 5. それが落ちることを確認する（Red）
 6. 最小実装で通す（Green）
 7. テストが通るまで 6 を反復する
-8. 変更後の検証を実行する
-   - Rust: `cargo check -p snotra-core -p snotra`（必要に応じて `cargo test / clippy`）
-   - TS: `npx vite build`
+8. 変更後の検証を実行する（スキップ不可）
+   - Rust ファイルを触った場合: `cargo check -p snotra-core -p snotra`（必須）、追加で `cargo test / clippy` も検討
+   - TS ファイルを触った場合: `npx vite build`（必須）
 9. 報告は「追加/更新テスト名 + 検証した不変条件」を必ず含める
 
 - Win32 依存モジュール（`src-tauri/src/` 内の `hotkey.rs`, `ime.rs`, `platform.rs`）はユニットテスト前提にしない
@@ -129,6 +129,8 @@ npm run tauri build              # リリースビルド
 - Tauri プラグインの新機能を使う際は `capabilities/*.json` の権限宣言を確認する
 - シリアライザを切り替える場合は**必ずバージョン番号をバンプ**し、旧形式のフォールバックデシリアライザを追加する。切り替え前後でバイト列の互換性はほぼ存在しない（例: bincode の u32 は 4バイト LE、postcard は LEB128 varint）
 - `deserialize_failed → save()` パターン（デコード失敗時に空データを即時上書き保存）は HistoryStore など学習データを持つモジュールでデータ喪失を招く。フォールバック読み込みを先に試み、次回の通常 save() で新形式に昇格させること
+- `ShellExecuteW` でフォルダ・画像・文書ファイルを開く場合は COM STA が必要。Tauri コマンドハンドラスレッドは COM 状態が保証されないため、`std::thread::spawn` + `CoInitializeEx(None, COINIT_APARTMENTTHREADED)` + `ShellExecuteW` + `if com_ok { CoUninitialize() }` パターンで新規スレッドに COM 環境を用意する。`is_ok()` は S_OK(0) と S_FALSE(1) を両方 true とし、どちらも CoUninitialize が必要。EXE ファイルは COM 不要なため同問題を起こさない
+- `snotra-core`（純ロジック層）に UI 表示文字列を持たない。エラー状態の意味は `is_error: true` フラグで伝え、エラーメッセージのような表示文字列は UI 層（`ResultRow.tsx` 等）が決める責務を持つ
 
 ## パフォーマンス最適化プレイブック
 
@@ -159,6 +161,7 @@ npm run tauri build              # リリースビルド
 
 ## コミュニケーション原則
 
-- ユーザーが具体的な計画や修正指示を既に提示している場合、プランモードや過度な探索に入らず即座に実装する
+- ユーザーが具体的な計画や修正指示を既に提示している場合、プランモードへの遷移・事前の全体探索を禁止する。読むファイルは直接関係する最小限（1〜2ファイル）に絞り、最初の Edit/Write から着手する
+- コミット・PR 作成を指示された場合、確認やプランモードなしに即実行する
 - 不明点がある場合は、1つの焦点を絞った質問をしてから実装に移る
 - ユーザーが分析・調査・助言を求めた場合は、調査結果のみを報告する。明示的に指示されない限り、実装計画やコード変更に踏み込まない

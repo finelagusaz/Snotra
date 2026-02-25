@@ -51,7 +51,10 @@ function clearCommandModeStateAndEmit() {
 
 function debouncedRefresh() {
   clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(() => refreshResults(), DEBOUNCE_MS);
+  debounceTimer = setTimeout(() => {
+    debounceTimer = undefined;
+    refreshResults();
+  }, DEBOUNCE_MS);
 }
 
 // Folder expansion state
@@ -259,7 +262,7 @@ async function flushPendingRefresh() {
   }
 }
 
-async function activateSelected() {
+async function activateSelected(): Promise<boolean> {
   await flushPendingRefresh();
   if (!folderState() && query().trim().startsWith("/")) {
     const cmd = commandMatches()[selected()];
@@ -267,19 +270,25 @@ async function activateSelected() {
       clearCommandModeStateAndEmit();
       cmd.action();
     }
-    return;
+    return false;
   }
   const r = results()[selected()];
-  if (!r) return;
+  if (!r) return false;
 
-  if (r.isError) return;
+  if (r.isError) return false;
 
-  if (r.isFolder) {
-    enterFolderExpansion(r.path);
-    return;
-  }
-
+  // Fix C: launchItem の前に count=0 を先行 emit し、flushPendingRefresh が
+  // 発生させた count>0 ハンドラを rw.show() 到達前に stale 化する
+  emitResults([], 0, ++latestRequestId);
   await api.launchItem(r.path, query());
+
+  setFolderState(null);
+  setFolderFilter("");
+  setResults([]);
+  setSelected(0);
+  emitResults([], 0, ++latestRequestId);
+
+  return true;
 }
 
 function resetForShow() {

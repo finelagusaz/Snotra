@@ -7,7 +7,7 @@ import SearchWindow from "./components/SearchWindow";
 import ResultsWindow from "./components/ResultsWindow";
 import SettingsWindow from "./components/SettingsWindow";
 import AboutWindow from "./components/AboutWindow";
-import { resetForShow, setSelected, activateSelected, initIndexingState, emitSelectionUpdate } from "./stores/search";
+import { resetForShow, setSelected, activateSelected, initIndexingState } from "./stores/search";
 import { applyTheme } from "./lib/theme";
 import type { VisualConfig } from "./lib/types";
 import * as api from "./lib/invoke";
@@ -211,7 +211,7 @@ const App: Component = () => {
           lastResultsPosition.x !== nextPosition.x ||
           lastResultsPosition.y !== nextPosition.y
         ) {
-          queueResultsPosition(rw, nextPosition);
+          await rw.setPosition(new LogicalPosition(nextPosition.x, nextPosition.y));
           if (requestId !== latestResultsRequestId) return;
           lastResultsPosition = nextPosition;
         }
@@ -220,14 +220,16 @@ const App: Component = () => {
         if (mainVisible) {
           if (!(await rw.isVisible())) {
             await rw.show();
+            void api.setWindowNoActivate();
           }
         }
       });
 
       // Listen for result-clicked from results window
-      listen<number>("result-clicked", (event) => {
+      listen<number>("result-clicked", async (event) => {
         setSelected(event.payload);
-        emitSelectionUpdate();
+        const launched = await activateSelected();
+        if (launched) void win.hide();
       });
 
       listen<ResultsRenderDonePayload>("results-render-done", (event) => {
@@ -235,10 +237,10 @@ const App: Component = () => {
       });
 
       // Listen for result-double-clicked from results window
-      listen<number>("result-double-clicked", (event) => {
+      listen<number>("result-double-clicked", async (event) => {
         setSelected(event.payload);
-        emitSelectionUpdate();
-        activateSelected();
+        const launched = await activateSelected();
+        if (launched) void win.hide();
       });
     }
 

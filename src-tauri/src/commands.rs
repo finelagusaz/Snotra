@@ -51,19 +51,34 @@ pub fn launch_item(path: String, query: String, state: State<AppState>) {
     }
     #[cfg(windows)]
     {
+        use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
         use windows::Win32::UI::Shell::ShellExecuteW;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
         use windows::core::HSTRING;
-        unsafe {
-            ShellExecuteW(
-                None,
-                &HSTRING::from("open"),
-                &HSTRING::from(&path),
-                None,
-                None,
-                SW_SHOWNORMAL,
-            );
-        }
+        // ShellExecuteW はフォルダ・画像などのシェル拡張に COM STA を要求する。
+        // Tauri コマンドハンドラのスレッドは COM 状態が保証されないため、
+        // 新規 OS スレッドで CoInitializeEx → ShellExecuteW → CoUninitialize を実行する。
+        // JoinHandle をドロップするとスレッドはデタッチされ fire-and-forget で実行継続する。
+        std::thread::spawn(move || {
+            unsafe {
+                // is_ok() は S_OK(0) と S_FALSE(1) の両方で true を返す。
+                // S_OK: 新規初期化 → CoUninitialize 必要
+                // S_FALSE: 同モデルで既に初期化済み（参照カウント増加）→ CoUninitialize 必要
+                // RPC_E_CHANGED_MODE: 異なる COM モデル → is_ok() == false → CoUninitialize 不要
+                let com_ok = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+                ShellExecuteW(
+                    None,
+                    &HSTRING::from("open"),
+                    &HSTRING::from(path.as_str()),
+                    None,
+                    None,
+                    SW_SHOWNORMAL,
+                );
+                if com_ok {
+                    CoUninitialize();
+                }
+            }
+        });
     }
 }
 

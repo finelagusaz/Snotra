@@ -14,7 +14,7 @@ import {
   initIndexingState,
 } from "./stores/search";
 import { applyTheme } from "./lib/theme";
-import type { VisualConfig } from "./lib/types";
+import type { BootstrapPayload, VisualConfig } from "./lib/types";
 import * as api from "./lib/invoke";
 import { perfMarkRenderDone } from "./lib/perf";
 
@@ -44,6 +44,7 @@ const App: Component = () => {
 
     const getResultsWindow = async () => {
       if (!resultsWindowPromise) {
+        await api.ensureWindow("results");
         resultsWindowPromise = WebviewWindow.getByLabel("results");
       }
       return resultsWindowPromise;
@@ -108,10 +109,9 @@ const App: Component = () => {
             latestResultsRequestId = requestId;
             const isStale = () => requestId !== latestResultsRequestId;
 
-            const rw = await getResultsWindow();
-            if (!rw || isStale()) return;
-
             if (count === 0) {
+              const rw = await WebviewWindow.getByLabel("results");
+              if (!rw || isStale()) return;
               const visible = await rw.isVisible();
               if (isStale()) return;
               if (visible) {
@@ -119,6 +119,8 @@ const App: Component = () => {
               }
               return;
             }
+            const rw = await getResultsWindow();
+            if (!rw || isStale()) return;
 
             // Use current main window width (may have been updated via settings)
             const [currentSize, currentSf, mainPos, mainVisible] = await Promise.all([
@@ -267,20 +269,21 @@ const App: Component = () => {
     }
 
     // Listen for visual config changes (all windows)
-    listen<VisualConfig>("visual-config-changed", (event) => {
+    const unlistenVisual = await listen<VisualConfig>("visual-config-changed", (event) => {
       applyTheme(event.payload);
     });
+    unlistenFns.push(unlistenVisual);
 
-    // Load config and apply theme (non-fatal on failure)
-    let config: Awaited<ReturnType<typeof api.getConfig>> | null = null;
+    // Load bootstrap payload and apply theme (non-fatal on failure)
+    let bootstrap: BootstrapPayload | null = null;
     try {
-      config = await api.getConfig();
-      applyTheme(config.visual);
+      bootstrap = await api.getBootstrapPayload();
+      applyTheme(bootstrap.visual);
     } catch (e) {
-      console.error("Failed to load config/apply theme:", e);
+      console.error("Failed to load bootstrap payload:", e);
     }
 
-    if (label === "main" && config?.general.auto_hide_on_focus_lost) {
+    if (label === "main" && bootstrap?.general.auto_hide_on_focus_lost) {
       registerAutoHideOnFocusLost?.();
     }
 

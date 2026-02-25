@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Config, SearchResult } from "./types";
+import type { BootstrapPayload, Config, SearchResult } from "./types";
 
 export async function search(query: string): Promise<SearchResult[]> {
   return invoke<SearchResult[]>("search", { query });
@@ -37,6 +37,10 @@ export async function saveConfig(config: Config): Promise<SaveConfigResult> {
 
 export async function getConfig(): Promise<Config> {
   return invoke<Config>("get_config");
+}
+
+export async function getBootstrapPayload(): Promise<BootstrapPayload> {
+  return invoke<BootstrapPayload>("get_bootstrap_payload");
 }
 
 export async function getIconBase64(path: string): Promise<string | null> {
@@ -123,6 +127,10 @@ export async function quitApp(): Promise<void> {
 
 export async function openAbout(): Promise<void> {
   return invoke("open_about");
+}
+
+export async function ensureWindow(label: "results" | "about"): Promise<boolean> {
+  return invoke<boolean>("ensure_window", { label });
 }
 
 export async function recordFolderExpansion(path: string): Promise<void> {

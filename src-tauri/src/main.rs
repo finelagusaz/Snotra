@@ -16,9 +16,9 @@ use snotra_core::history::HistoryStore;
 use snotra_core::indexer;
 use snotra_core::search::SearchEngine;
 use snotra_core::window_data;
-use tauri::{AppHandle, Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Listener, Manager};
 
-use crate::icon::{IconCache, IconCacheState};
+use crate::icon::IconCacheState;
 
 use crate::platform::{PlatformBridge, PlatformCommand};
 use crate::state::AppState;
@@ -101,7 +101,8 @@ fn main() {
     };
 
     let icon_cache_state: IconCacheState = if config.appearance.show_icons {
-        Mutex::new(Some(IconCache::load()))
+        // Lazy-load icon cache on first icon request to keep startup path short.
+        Mutex::new(None)
     } else {
         Mutex::new(None)
     };
@@ -164,6 +165,8 @@ fn main() {
             commands::rebuild_index,
             commands::quit_app,
             commands::record_folder_expansion,
+            commands::get_bootstrap_payload,
+            commands::ensure_window,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
@@ -197,77 +200,12 @@ fn main() {
                 app_handle.manage(Mutex::new(bridge));
             }
 
-            // Create results window (hidden by default)
-            WebviewWindowBuilder::new(app, "results", WebviewUrl::App(Default::default()))
-                .title("")
-                .inner_size(600.0, 300.0)
-                .visible(false)
-                .decorations(false)
-                .skip_taskbar(true)
-                .always_on_top(true)
-                .resizable(false)
-                .focused(false)
-                .build()?;
-            // Apply no-activate at creation time so first show cannot steal focus.
-            let _ = commands::set_window_no_activate(app_handle.clone());
-
-            // Create about window (hidden by default).
-            let about_window =
-                WebviewWindowBuilder::new(app, "about", WebviewUrl::App(Default::default()))
-                    .title("Snotra について")
-                    .inner_size(400.0, 300.0)
-                    .resizable(false)
-                    .visible(false)
-                    .build()?;
-
-            let handle_for_about_close = app_handle.clone();
-            about_window.on_window_event(move |event| {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    if let Some(w) = handle_for_about_close.get_webview_window("about") {
-                        let _ = w.hide();
-                    }
-                }
-            });
-
-            // Create settings window (hidden by default).
-            // WebView2 initialization requires a nested message pump, which
-            // deadlocks when called during the event loop (run_on_main_thread /
-            // Tauri command). Creating the window here in setup() — before the
-            // event loop starts — avoids this entirely.
-            let settings_window =
-                WebviewWindowBuilder::new(app, "settings", WebviewUrl::App(Default::default()))
-                    .title("Snotra 設定")
-                    .inner_size(760.0, 560.0)
-                    .min_inner_size(520.0, 360.0)
-                    .resizable(true)
-                    .visible(false)
-                    .build()?;
-
-            // Intercept close to hide instead of destroy.
-            // This keeps the WebView2 instance alive so we never need to
-            // re-create it (which would deadlock during the event loop).
-            let handle_for_close = app_handle.clone();
-            settings_window.on_window_event(move |event| {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    if let Some(w) = handle_for_close.get_webview_window("settings") {
-                        let _ = w.hide();
-                    }
-                    // First-run: start index build when settings is dismissed
-                    // (safe to call multiple times — guarded by compare_exchange)
-                    let state = handle_for_close.state::<AppState>();
-                    if state.indexing.load(std::sync::atomic::Ordering::SeqCst)
-                        && !state.index_build_started.load(std::sync::atomic::Ordering::SeqCst)
-                    {
-                        indexing::start_index_build(&handle_for_close);
-                    }
-                }
-            });
-
             if is_first_run {
-                let _ = settings_window.show();
-                let _ = settings_window.set_focus();
+                commands::ensure_settings_window(&app_handle)?;
+                if let Some(settings_window) = app_handle.get_webview_window("settings") {
+                    let _ = settings_window.show();
+                    let _ = settings_window.set_focus();
+                }
             }
 
             // Listen for hotkey toggle events

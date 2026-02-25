@@ -63,3 +63,13 @@ export interface Config {
   paths: PathsConfig;
   search: SearchConfig;
 }
+
+export interface BootstrapGeneralConfig {
+  auto_hide_on_focus_lost: boolean;
+}
+
+export interface BootstrapPayload {
+  visual: VisualConfig;
+  general: BootstrapGeneralConfig;
+  indexing: boolean;
+}

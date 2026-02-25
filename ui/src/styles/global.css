@@ -106,6 +106,18 @@ html, body, #root {
   background: var(--selected-row-color, #505050);
 }
 
+/* selected と error が同時に付与された場合は selected の background が残り、
+   キーボードナビゲーション上の位置を示す。これは意図した設計。 */
+.result-row.error {
+  color: var(--hint-text-color, #808080);
+  cursor: default;
+  opacity: 0.7;
+}
+
+.result-row.error:hover {
+  background: transparent;
+}
+
 .result-path-single {
   font-size: inherit;
   line-height: 1.3;

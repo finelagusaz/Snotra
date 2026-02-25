@@ -51,7 +51,7 @@ pub enum PlatformCommand {
     },
     SetTrayVisible(bool),
     SetIndexing(bool),
-    TurnOffImeForForeground,
+    TurnOffIme(usize),
     Exit,
 }
 
@@ -244,12 +244,17 @@ fn process_commands(
             PlatformCommand::SetIndexing(indexing) => {
                 *indexing_in_progress = indexing;
             }
-            PlatformCommand::TurnOffImeForForeground => unsafe {
-                let fg = windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow();
-                if !fg.is_invalid() {
-                    ime::turn_off_ime(fg);
+            PlatformCommand::TurnOffIme(hwnd_raw) => {
+                // Known: this command is dispatched from the platform thread after
+                // show_main_and_emit() calls show()/set_focus() on the main thread.
+                // A narrow timing window exists where the window receives focus before
+                // IME is disabled. Mitigated by passing HWND directly to avoid an extra
+                // lookup. Residual race is theoretical and not observed in practice.
+                let hwnd = windows::Win32::Foundation::HWND(hwnd_raw as *mut core::ffi::c_void);
+                if !hwnd.is_invalid() {
+                    ime::turn_off_ime(hwnd);
                 }
-            },
+            }
             PlatformCommand::Exit => unsafe {
                 PostQuitMessage(0);
             },
@@ -288,6 +293,10 @@ fn handle_tray_message(
             let _ = app_handle.emit("hotkey-pressed", ());
         }
         x if x == WM_RBUTTONUP => {
+            // Known: some environments deliver both WM_RBUTTONUP and WM_CONTEXTMENU
+            // for a single right-click, causing show_context_menu to be called twice
+            // (double menu). Accepted risk: rare in practice and distinguishing
+            // programmatic from user-initiated context menus is non-trivial.
             if let Some(tray) = tray.as_ref() {
                 tray.show_context_menu(hwnd, indexing);
             }

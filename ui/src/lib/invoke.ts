@@ -124,3 +124,7 @@ export async function quitApp(): Promise<void> {
 export async function openAbout(): Promise<void> {
   return invoke("open_about");
 }
+
+export async function recordFolderExpansion(path: string): Promise<void> {
+  return invoke("record_folder_expansion", { path });
+}

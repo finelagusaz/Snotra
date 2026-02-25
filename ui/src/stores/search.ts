@@ -14,7 +14,9 @@ const [indexing, setIndexing] = createSignal(false);
 const [commandMatches, setCommandMatches] = createSignal<SlashCommand[]>([]);
 
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+let refreshInFlight: Promise<void> | undefined;
 let latestRequestId = 0;
+let activationInFlight = false;
 
 function emitResults(items: SearchResult[], selectedIndex: number, requestId: number) {
   emit("results-updated", { results: items, selected: selectedIndex, requestId });
@@ -51,7 +53,16 @@ function clearCommandModeStateAndEmit() {
 
 function debouncedRefresh() {
   clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(() => refreshResults(), DEBOUNCE_MS);
+  debounceTimer = setTimeout(() => {
+    debounceTimer = undefined;
+    const pending = refreshResults();
+    refreshInFlight = pending;
+    void pending.finally(() => {
+      if (refreshInFlight === pending) {
+        refreshInFlight = undefined;
+      }
+    });
+  }, DEBOUNCE_MS);
 }
 
 // Folder expansion state
@@ -210,6 +221,7 @@ function enterFolderExpansion(dir: string) {
     // Already in folder mode, navigate deeper
     setFolderState({ ...fs, currentDir: dir });
   }
+  void api.recordFolderExpansion(dir);
   setFolderFilter("");
   setSelected(0);
   refreshResults();
@@ -218,11 +230,18 @@ function enterFolderExpansion(dir: string) {
 function exitFolderExpansion(): boolean {
   const fs = folderState();
   if (!fs) return false;
+
+  // デバウンスタイマーをクリア（フォルダモード中の入力残り処理を防止）
+  clearTimeout(debounceTimer);
+  debounceTimer = undefined;
+
+  const requestId = ++latestRequestId;
   setResults(fs.savedResults);
   setSelected(fs.savedSelected);
-  setQuery(fs.savedQuery);
-  setFolderState(null);
+  setFolderState(null);    // setQuery より先に null にする
   setFolderFilter("");
+  setQuery(fs.savedQuery);
+  emitResults(fs.savedResults, fs.savedSelected, requestId);
   return true;
 }
 
@@ -247,31 +266,53 @@ async function flushPendingRefresh() {
   if (debounceTimer !== undefined) {
     clearTimeout(debounceTimer);
     debounceTimer = undefined;
-    await refreshResults();
+    const pending = refreshResults();
+    refreshInFlight = pending;
+    await pending.finally(() => {
+      if (refreshInFlight === pending) {
+        refreshInFlight = undefined;
+      }
+    });
+    return;
+  }
+  if (refreshInFlight) {
+    await refreshInFlight;
   }
 }
 
-async function activateSelected() {
-  await flushPendingRefresh();
-  if (!folderState() && query().trim().startsWith("/")) {
-    const cmd = commandMatches()[selected()];
-    if (cmd) {
-      clearCommandModeStateAndEmit();
-      cmd.action();
+async function activateSelected(): Promise<boolean> {
+  if (activationInFlight) return false;
+  activationInFlight = true;
+  try {
+    await flushPendingRefresh();
+    if (!folderState() && query().trim().startsWith("/")) {
+      const cmd = commandMatches()[selected()];
+      if (cmd) {
+        clearCommandModeStateAndEmit();
+        cmd.action();
+      }
+      return false;
     }
-    return;
+    const r = results()[selected()];
+    if (!r) return false;
+
+    if (r.isError) return false;
+
+    // Fix C: launchItem の前に count=0 を先行 emit し、flushPendingRefresh が
+    // 発生させた count>0 ハンドラを rw.show() 到達前に stale 化する
+    emitResults([], 0, ++latestRequestId);
+    await api.launchItem(r.path, query());
+
+    setFolderState(null);
+    setFolderFilter("");
+    setResults([]);
+    setSelected(0);
+    emitResults([], 0, ++latestRequestId);
+
+    return true;
+  } finally {
+    activationInFlight = false;
   }
-  const r = results()[selected()];
-  if (!r) return;
-
-  if (r.isError) return;
-
-  if (r.isFolder) {
-    enterFolderExpansion(r.path);
-    return;
-  }
-
-  await api.launchItem(r.path, query());
 }
 
 function resetForShow() {
@@ -283,11 +324,13 @@ function resetForShow() {
   refreshResults();
 }
 
+let unlistenIndexingComplete: (() => void) | undefined;
+
 async function initIndexingState() {
   const state = await api.getIndexingState();
   setIndexing(state);
 
-  listen("indexing-complete", () => {
+  unlistenIndexingComplete = await listen("indexing-complete", () => {
     setIndexing(false);
     refreshResults();
   });
@@ -312,4 +355,5 @@ export {
   resetForShow,
   indexing,
   initIndexingState,
+  emitSelectionUpdate,
 };

@@ -211,7 +211,7 @@ const App: Component = () => {
           lastResultsPosition.x !== nextPosition.x ||
           lastResultsPosition.y !== nextPosition.y
         ) {
-          queueResultsPosition(rw, nextPosition);
+          await rw.setPosition(new LogicalPosition(nextPosition.x, nextPosition.y));
           if (requestId !== latestResultsRequestId) return;
           lastResultsPosition = nextPosition;
         }
@@ -220,13 +220,16 @@ const App: Component = () => {
         if (mainVisible) {
           if (!(await rw.isVisible())) {
             await rw.show();
+            void api.setWindowNoActivate();
           }
         }
       });
 
       // Listen for result-clicked from results window
-      listen<number>("result-clicked", (event) => {
+      listen<number>("result-clicked", async (event) => {
         setSelected(event.payload);
+        const launched = await activateSelected();
+        if (launched) void win.hide();
       });
 
       listen<ResultsRenderDonePayload>("results-render-done", (event) => {
@@ -236,7 +239,6 @@ const App: Component = () => {
       // Listen for result-double-clicked from results window
       listen<number>("result-double-clicked", (event) => {
         setSelected(event.payload);
-        activateSelected();
       });
     }
 

@@ -40,7 +40,7 @@ const ResultRow: Component<ResultRowProps> = (props) => {
   return (
     <div
       class="result-row"
-      classList={{ selected: props.isSelected }}
+      classList={{ selected: props.isSelected, error: props.result.isError }}
       onClick={props.onClick}
       onDblClick={props.onDoubleClick}
       onMouseEnter={props.onMouseEnter}
@@ -50,7 +50,11 @@ const ResultRow: Component<ResultRowProps> = (props) => {
           when={props.icon}
           fallback={
             <span class="icon-fallback">
-              {props.result.isFolder ? "\u{1F4C1}" : "\u{1F4C4}"}
+              {props.result.isError
+                ? "\u26A0\uFE0F"
+                : props.result.isFolder
+                  ? "\u{1F4C1}"
+                  : "\u{1F4C4}"}
             </span>
           }
         >

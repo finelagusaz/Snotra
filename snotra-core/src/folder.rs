@@ -17,7 +17,7 @@ pub fn list_folder(
 ) -> Vec<SearchResult> {
     let Ok(read_dir) = std::fs::read_dir(dir) else {
         return vec![SearchResult {
-            name: "アクセスできません".to_string(),
+            name: String::new(), // 表示文字列はUI層が決める。ロジック層は is_error: true の意味だけを持つ
             path: dir.to_string_lossy().to_string(),
             is_folder: false,
             is_error: true,
@@ -264,6 +264,7 @@ mod tests {
         let results = list_folder(&dir, "", SearchMode::Substring, true, &empty_history(), 100);
         assert_eq!(results.len(), 1);
         assert!(results[0].is_error);
+        assert_eq!(results[0].name, ""); // UI 文字列はロジック層に持たない
     }
 
     #[test]

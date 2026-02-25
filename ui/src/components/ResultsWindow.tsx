@@ -18,7 +18,6 @@ const ResultsWindow: Component = () => {
   );
   const [containerWidth, setContainerWidth] = createSignal(0);
   let listRef: HTMLDivElement | undefined;
-  let hoverTimer: ReturnType<typeof setTimeout> | undefined;
   let latestRequestId = 0;
   let lastScrolledSelected = -1;
   let lastScrolledRequestId = -1;
@@ -53,13 +52,7 @@ const ResultsWindow: Component = () => {
     setIconCache(next);
   }
 
-  function debouncedHover(index: number) {
-    clearTimeout(hoverTimer);
-    hoverTimer = setTimeout(() => api.notifyResultClicked(index), 50);
-  }
-
   onMount(() => {
-    // Single ResizeObserver for the list container
     if (listRef) {
       const ro = new ResizeObserver((entries) => {
         for (const entry of entries) {
@@ -70,7 +63,10 @@ const ResultsWindow: Component = () => {
       onCleanup(() => ro.disconnect());
     }
 
-    listen<ResultsUpdatedPayload>("results-updated", (event) => {
+    let unlisten: (() => void) | undefined;
+    onCleanup(() => unlisten?.());
+
+    void listen<ResultsUpdatedPayload>("results-updated", (event) => {
         if (event.payload.requestId < latestRequestId) {
           return;
         }
@@ -94,6 +90,8 @@ const ResultsWindow: Component = () => {
         requestAnimationFrame(() => {
           void emit("results-render-done", { requestId: event.payload.requestId });
         });
+      }).then((fn) => {
+        unlisten = fn;
       });
   });
 
@@ -109,7 +107,6 @@ const ResultsWindow: Component = () => {
               containerWidth={containerWidth()}
               onClick={() => api.notifyResultClicked(idx())}
               onDoubleClick={() => api.notifyResultDoubleClicked(idx())}
-              onMouseEnter={() => debouncedHover(idx())}
             />
           )}
         </For>

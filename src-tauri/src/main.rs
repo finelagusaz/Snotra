@@ -76,7 +76,10 @@ fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
                 && let Some(bridge) = app_handle.try_state::<Mutex<PlatformBridge>>()
                 && let Ok(b) = bridge.lock()
             {
-                b.send_command(PlatformCommand::TurnOffImeForForeground);
+                #[cfg(windows)]
+                if let Ok(hwnd) = main.hwnd() {
+                    b.send_command(PlatformCommand::TurnOffIme(hwnd.0 as usize));
+                }
             }
 
             // Notify frontend to reset search state
@@ -160,6 +163,7 @@ fn main() {
             commands::list_system_fonts,
             commands::rebuild_index,
             commands::quit_app,
+            commands::record_folder_expansion,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
@@ -253,7 +257,9 @@ fn main() {
                     // First-run: start index build when settings is dismissed
                     // (safe to call multiple times — guarded by compare_exchange)
                     let state = handle_for_close.state::<AppState>();
-                    if state.indexing.load(std::sync::atomic::Ordering::SeqCst) {
+                    if state.indexing.load(std::sync::atomic::Ordering::SeqCst)
+                        && !state.index_build_started.load(std::sync::atomic::Ordering::SeqCst)
+                    {
                         indexing::start_index_build(&handle_for_close);
                     }
                 }
@@ -333,9 +339,8 @@ fn main() {
             });
 
             // Show window on startup if configured
-            if show_on_startup && let Some(w) = app_handle.get_webview_window("main") {
-                let _ = w.show();
-                let _ = w.set_focus();
+            if show_on_startup {
+                show_main_and_emit(&app_handle, ime_off);
             }
 
             Ok(())

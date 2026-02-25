@@ -4,6 +4,7 @@ import type { SearchResult } from "../lib/types";
 import * as api from "../lib/invoke";
 import { findCommand, filterCommands, type SlashCommand } from "../lib/commands";
 import { perfStartSearch, perfMarkSearchDone, perfCancelSearch } from "../lib/perf";
+import { parsePathQuery } from "../lib/pathQuery";
 
 const DEBOUNCE_MS = 30;
 
@@ -74,34 +75,6 @@ const [folderState, setFolderState] = createSignal<{
 } | null>(null);
 
 const [folderFilter, setFolderFilter] = createSignal("");
-
-function isPathQuery(input: string): boolean {
-  const trimmed = input.trim();
-  return trimmed.startsWith("\\") || trimmed.includes("\\") || trimmed.includes("/");
-}
-
-function parsePathQuery(input: string): { dir: string; filter: string } | null {
-  const trimmed = input.trim();
-  if (!isPathQuery(trimmed)) return null;
-
-  const normalized = trimmed.replace(/\//g, "\\");
-  if (normalized.endsWith("\\")) {
-    return { dir: normalized, filter: "" };
-  }
-
-  const lastSlash = normalized.lastIndexOf("\\");
-  if (lastSlash < 0) return null;
-
-  let dir = normalized.slice(0, lastSlash + 1);
-  if (dir === "") {
-    dir = "\\";
-  }
-
-  return {
-    dir,
-    filter: normalized.slice(lastSlash + 1),
-  };
-}
 
 async function refreshResults() {
   const requestId = ++latestRequestId;

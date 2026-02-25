@@ -69,6 +69,7 @@
 - フロントエンドでは `<img src="data:image/png;base64,...">` として表示
 - アイコンなし時はフォールバック絵文字を表示
 - インデックス再構築時はキャッシュをクリア（次回検索時に再抽出）
+- `icons.bin` は起動時に先読みせず、初回アイコン取得（`get_icon_base64` / `get_icons_batch`）時に遅延ロード
 
 ## 3. 検索システム
 
@@ -183,6 +184,7 @@
 ### 6.1 実装方式
 
 - Tauri v2 の `WebviewWindowBuilder` で同一プロセス内の第2ウィンドウとして生成
+- 設定ウィンドウは原則遅延生成（初回 `/o` またはトレイの「設定」）。初回起動時のみ先行生成して表示
 - `/o` スラッシュコマンドで開く
 - タブ切り替えUI
 
@@ -229,6 +231,11 @@
   - 保存時に変更を検知し、バックグラウンドで自動再構築
   - ステータスに「インデックスを再構築中…」を表示
 
+### 6.4 起動時ブートストラップ
+
+- 起動直後のUI初期化は `get_bootstrap_payload` を使い、`visual`・`general.auto_hide_on_focus_lost`・`indexing` を一括取得する
+- メインウィンドウはこのペイロードで初期テーマ適用とフォーカス喪失時自動非表示の有効化可否を決定する
+
 ## 7. ウィンドウ動作
 
 ### 7.1 表示/非表示
@@ -252,10 +259,18 @@
 
 ### 7.4 起動時表示制御
 
-- `visible: false` で WebView を作成し、条件付きで `window.show()` を呼ぶ
+- `main` ウィンドウは `visible: false` で作成し、条件付きで `window.show()` を呼ぶ
 - `show_on_startup = false` の場合は非表示常駐でホットキー待ち
 
-### 7.5 状態遷移図
+### 7.5 サブウィンドウ生成タイミング
+
+- `results` / `about` / `settings` は起動時に一括生成しない
+- `results` は候補表示が必要になったタイミングで `ensure_window("results")` により生成
+- `about` は `open_about` 実行時に生成
+- `settings` は `/o` またはトレイ由来 `open-settings` 実行時に生成（初回起動時のみ setup で先行生成）
+- `about` と `settings` は閉じる操作で破棄せず `hide` し、次回再表示時は既存インスタンスを再利用
+
+### 7.6 状態遷移図
 
 ```mermaid
 stateDiagram-v2

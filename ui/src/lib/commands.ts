@@ -11,6 +11,14 @@ let hideAllWindowsFn: (() => void) | undefined;
 
 export const SLASH_COMMANDS: SlashCommand[] = [
   {
+    command: "/r",
+    label: "/r",
+    description: "直近履歴を表示",
+    action: () => {
+      // /r is handled by search store as a result-producing command.
+    },
+  },
+  {
     command: "/a",
     label: "/a",
     description: "バージョン情報",

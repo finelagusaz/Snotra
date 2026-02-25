@@ -105,7 +105,7 @@ const ResultsWindow: Component = () => {
               isSelected={idx() === selected()}
               icon={iconCache().get(result.path)}
               containerWidth={containerWidth()}
-              onClick={() => api.notifyResultClicked(idx())}
+              onClick={() => api.notifyResultClicked(result.path)}
               onDoubleClick={() => api.notifyResultDoubleClicked(idx())}
             />
           )}

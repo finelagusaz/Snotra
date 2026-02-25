@@ -1,7 +1,7 @@
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use snotra_core::config::HotkeyConfig;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
@@ -15,17 +15,19 @@ use windows::Win32::UI::WindowsAndMessaging::{
     MF_SEPARATOR, MF_STRING, MSG, PM_NOREMOVE, PeekMessageW, PostMessageW, PostQuitMessage,
     PostThreadMessageW, RegisterClassExW, SetForegroundWindow, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
     TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, TranslateMessage,
-    WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_HOTKEY, WM_LBUTTONDBLCLK,
+    WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_HOTKEY, WM_LBUTTONUP,
     WM_NULL, WM_RBUTTONUP, WNDCLASSEXW,
 };
 use windows::core::{PCWSTR, w};
 
-use crate::{hotkey, ime};
+use crate::state::AppState;
+use crate::{commands, hotkey, ime};
 
 const WM_PLATFORM_WAKE: u32 = WM_APP + 40;
 const WM_TRAY_ICON: u32 = WM_APP + 41;
 const ID_MENU_SETTINGS: usize = 1000;
 const ID_MENU_EXIT: usize = 1001;
+const ID_MENU_RECENT_BASE: usize = 2000;
 
 unsafe extern "system" fn platform_default_wnd_proc(
     hwnd: HWND,
@@ -190,7 +192,7 @@ fn platform_thread_loop(
                     );
                 }
                 WM_COMMAND => {
-                    handle_menu_command(msg.wParam, &app_handle);
+                    handle_menu_command(msg.wParam, &app_handle, &tray);
                 }
                 WM_PLATFORM_WAKE => {
                     process_commands(
@@ -262,7 +264,33 @@ fn process_commands(
     }
 }
 
-fn handle_menu_command(wparam: WPARAM, app_handle: &AppHandle) {
+fn recent_history_items(app_handle: &AppHandle) -> Vec<snotra_core::ui_types::SearchResult> {
+    let state = app_handle.state::<AppState>();
+    let max_history_display = {
+        let config = state.config.lock().unwrap();
+        config.appearance.max_history_display
+    };
+    let engine = state.engine.lock().unwrap();
+    let history = state.history.lock().unwrap();
+    engine.recent_history(&history, max_history_display)
+}
+
+fn format_recent_history_label(item: &snotra_core::ui_types::SearchResult) -> String {
+    const MAX_LABEL_LEN: usize = 90;
+    let base = if item.name.is_empty() || item.name == item.path {
+        item.path.clone()
+    } else {
+        format!("{} - {}", item.name, item.path)
+    };
+    if base.chars().count() <= MAX_LABEL_LEN {
+        return base;
+    }
+    let mut truncated: String = base.chars().take(MAX_LABEL_LEN - 3).collect();
+    truncated.push_str("...");
+    truncated
+}
+
+fn handle_menu_command(wparam: WPARAM, app_handle: &AppHandle, tray: &Option<TrayIcon>) {
     let id = wparam.0 & 0xFFFF;
     match id {
         ID_MENU_SETTINGS => {
@@ -270,6 +298,13 @@ fn handle_menu_command(wparam: WPARAM, app_handle: &AppHandle) {
         }
         ID_MENU_EXIT => {
             let _ = app_handle.emit("exit-requested", ());
+        }
+        id if id >= ID_MENU_RECENT_BASE => {
+            let id = id as usize;
+            if let Some(path) = tray.as_ref().and_then(|t| t.recent_path_for_id(id)) {
+                let state = app_handle.state::<AppState>();
+                commands::launch_item_with_state(&path, "", &state);
+            }
         }
         _ => {}
     }
@@ -284,13 +319,15 @@ fn handle_tray_message(
 ) {
     let event = (lparam.0 & 0xFFFF) as u32;
     match event {
+        x if x == WM_LBUTTONUP => {
+            if let Some(tray) = tray.as_mut() {
+                tray.show_recent_history_menu(hwnd, app_handle);
+            }
+        }
         x if x == WM_CONTEXTMENU => {
             if let Some(tray) = tray.as_ref() {
                 tray.show_context_menu(hwnd, indexing);
             }
-        }
-        x if x == WM_LBUTTONDBLCLK => {
-            let _ = app_handle.emit("hotkey-pressed", ());
         }
         x if x == WM_RBUTTONUP => {
             // Known: some environments deliver both WM_RBUTTONUP and WM_CONTEXTMENU
@@ -308,6 +345,7 @@ fn handle_tray_message(
 struct TrayIcon {
     nid: NOTIFYICONDATAW,
     owned_icon: Option<HICON>,
+    recent_menu_paths: Vec<String>,
 }
 
 impl TrayIcon {
@@ -335,7 +373,16 @@ impl TrayIcon {
             let _ = Shell_NotifyIconW(NIM_SETVERSION, &nid);
         }
 
-        Self { nid, owned_icon }
+        Self {
+            nid,
+            owned_icon,
+            recent_menu_paths: Vec::new(),
+        }
+    }
+
+    fn recent_path_for_id(&self, id: usize) -> Option<String> {
+        let offset = id.checked_sub(ID_MENU_RECENT_BASE)?;
+        self.recent_menu_paths.get(offset).cloned()
     }
 
     fn show_context_menu(&self, hwnd: HWND, indexing: bool) {
@@ -412,6 +459,55 @@ impl TrayIcon {
             }
 
             // MSDN: send WM_NULL after TrackPopupMenuEx so the menu dismisses correctly.
+            let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
+            let _ = DestroyMenu(hmenu);
+        }
+    }
+
+    fn show_recent_history_menu(&mut self, hwnd: HWND, app_handle: &AppHandle) {
+        unsafe {
+            let Ok(hmenu) = CreatePopupMenu() else {
+                return;
+            };
+
+            self.recent_menu_paths.clear();
+            let recent = recent_history_items(app_handle);
+            if recent.is_empty() {
+                let empty_text: Vec<u16> =
+                    "履歴なし".encode_utf16().chain(std::iter::once(0)).collect();
+                let _ = AppendMenuW(hmenu, MF_GRAYED, 0, PCWSTR(empty_text.as_ptr()));
+            } else {
+                for (idx, item) in recent.iter().enumerate() {
+                    let id = ID_MENU_RECENT_BASE + idx;
+                    let label = format_recent_history_label(item);
+                    let label_wide: Vec<u16> =
+                        label.encode_utf16().chain(std::iter::once(0)).collect();
+                    let _ = AppendMenuW(hmenu, MF_STRING, id, PCWSTR(label_wide.as_ptr()));
+                    self.recent_menu_paths.push(item.path.clone());
+                }
+            }
+
+            let mut pt = Default::default();
+            let _ = GetCursorPos(&mut pt);
+            let _ = SetForegroundWindow(hwnd);
+
+            let command = TrackPopupMenuEx(
+                hmenu,
+                (TPM_LEFTALIGN | TPM_BOTTOMALIGN | TPM_NONOTIFY | TPM_RETURNCMD).0,
+                pt.x,
+                pt.y,
+                hwnd,
+                None,
+            );
+            if command.0 != 0 {
+                let _ = PostMessageW(
+                    Some(hwnd),
+                    WM_COMMAND,
+                    WPARAM(command.0 as usize),
+                    LPARAM(0),
+                );
+            }
+
             let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
             let _ = DestroyMenu(hmenu);
         }

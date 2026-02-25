@@ -7,8 +7,9 @@ use snotra_core::search::{HistoryBoostConfig, SearchMode};
 use snotra_core::ui_types::SearchResult;
 use snotra_core::window_data::{self, WindowPlacement, WindowSize};
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, State};
+use tauri::{WebviewUrl, WebviewWindowBuilder};
 
-use crate::icon::IconCacheState;
+use crate::icon::{IconCache, IconCacheState};
 use crate::indexing;
 use crate::platform::{PlatformBridge, PlatformCommand};
 use crate::state::AppState;
@@ -16,6 +17,105 @@ use crate::state::AppState;
 #[derive(serde::Serialize, Clone)]
 pub struct SaveConfigResult {
     pub reindex_started: bool,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct BootstrapGeneralConfig {
+    pub auto_hide_on_focus_lost: bool,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct BootstrapPayload {
+    pub visual: snotra_core::config::VisualConfig,
+    pub general: BootstrapGeneralConfig,
+    pub indexing: bool,
+}
+
+fn ensure_results_window(app: &AppHandle) -> tauri::Result<()> {
+    if app.get_webview_window("results").is_some() {
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(app, "results", WebviewUrl::App(Default::default()))
+        .title("")
+        .inner_size(600.0, 300.0)
+        .visible(false)
+        .decorations(false)
+        .skip_taskbar(true)
+        .always_on_top(true)
+        .resizable(false)
+        .focused(false)
+        .build()?;
+    let _ = set_window_no_activate(app.clone());
+    Ok(())
+}
+
+fn ensure_about_window(app: &AppHandle) -> tauri::Result<()> {
+    if app.get_webview_window("about").is_some() {
+        return Ok(());
+    }
+    let about_window = WebviewWindowBuilder::new(app, "about", WebviewUrl::App(Default::default()))
+        .title("Snotra について")
+        .inner_size(400.0, 300.0)
+        .resizable(false)
+        .visible(false)
+        .build()?;
+
+    let handle_for_about_close = app.clone();
+    about_window.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            if let Some(w) = handle_for_about_close.get_webview_window("about") {
+                let _ = w.hide();
+            }
+        }
+    });
+    Ok(())
+}
+
+pub fn ensure_settings_window(app: &AppHandle) -> tauri::Result<()> {
+    if app.get_webview_window("settings").is_some() {
+        return Ok(());
+    }
+    let settings_window = WebviewWindowBuilder::new(app, "settings", WebviewUrl::App(Default::default()))
+        .title("Snotra 設定")
+        .inner_size(760.0, 560.0)
+        .min_inner_size(520.0, 360.0)
+        .resizable(true)
+        .visible(false)
+        .build()?;
+
+    // Keep window alive to avoid repeated WebView initialization.
+    let handle_for_close = app.clone();
+    settings_window.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            if let Some(w) = handle_for_close.get_webview_window("settings") {
+                let _ = w.hide();
+            }
+            // First-run: start index build when settings is dismissed.
+            let state = handle_for_close.state::<AppState>();
+            if state.indexing.load(Ordering::SeqCst) && !state.index_build_started.load(Ordering::SeqCst)
+            {
+                indexing::start_index_build(&handle_for_close);
+            }
+        }
+    });
+    Ok(())
+}
+
+fn ensure_icon_cache_loaded_if_enabled(state: &State<AppState>, icons: &State<IconCacheState>) {
+    let show_icons = {
+        let cfg = state.config.lock().unwrap();
+        cfg.appearance.show_icons
+    };
+    let mut cache = icons.lock().unwrap();
+    if !show_icons {
+        *cache = None;
+        return;
+    }
+    if cache.is_none() {
+        *cache = Some(IconCache::load());
+    }
 }
 
 #[tauri::command]
@@ -213,8 +313,7 @@ pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), Strin
         return Ok(());
     }
 
-    // The settings window is pre-created in setup() and hidden on close,
-    // so it always exists. Just show and focus it.
+    ensure_settings_window(&app).map_err(|e| e.to_string())?;
     if let Some(w) = app.get_webview_window("settings") {
         let _ = app.emit("settings-shown", ());
         let _ = w.show();
@@ -224,7 +323,12 @@ pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub fn get_icon_base64(path: String, icons: State<IconCacheState>) -> Option<String> {
+pub fn get_icon_base64(
+    path: String,
+    state: State<AppState>,
+    icons: State<IconCacheState>,
+) -> Option<String> {
+    ensure_icon_cache_loaded_if_enabled(&state, &icons);
     let mut cache = icons.lock().unwrap();
     cache.as_mut()?.get_or_extract(&path)
 }
@@ -232,8 +336,10 @@ pub fn get_icon_base64(path: String, icons: State<IconCacheState>) -> Option<Str
 #[tauri::command]
 pub fn get_icons_batch(
     paths: Vec<String>,
+    state: State<AppState>,
     icons: State<IconCacheState>,
 ) -> std::collections::HashMap<String, String> {
+    ensure_icon_cache_loaded_if_enabled(&state, &icons);
     let mut cache = icons.lock().unwrap();
     match cache.as_mut() {
         Some(c) => c.get_or_extract_batch(&paths),
@@ -380,9 +486,44 @@ pub fn record_folder_expansion(path: String, state: State<AppState>) {
 
 #[tauri::command]
 pub fn open_about(app: AppHandle) -> Result<(), String> {
+    ensure_about_window(&app).map_err(|e| e.to_string())?;
     if let Some(w) = app.get_webview_window("about") {
         let _ = w.show();
         let _ = w.set_focus();
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn get_bootstrap_payload(state: State<AppState>) -> BootstrapPayload {
+    let config = state.config.lock().unwrap();
+    BootstrapPayload {
+        visual: config.visual.clone(),
+        general: BootstrapGeneralConfig {
+            auto_hide_on_focus_lost: config.general.auto_hide_on_focus_lost,
+        },
+        indexing: state.indexing.load(Ordering::SeqCst),
+    }
+}
+
+#[tauri::command]
+pub fn ensure_window(label: String, app: AppHandle) -> Result<bool, String> {
+    match label.as_str() {
+        "results" => {
+            let existed = app.get_webview_window("results").is_some();
+            ensure_results_window(&app).map_err(|e| e.to_string())?;
+            Ok(!existed)
+        }
+        "about" => {
+            let existed = app.get_webview_window("about").is_some();
+            ensure_about_window(&app).map_err(|e| e.to_string())?;
+            Ok(!existed)
+        }
+        "settings" => {
+            let existed = app.get_webview_window("settings").is_some();
+            ensure_settings_window(&app).map_err(|e| e.to_string())?;
+            Ok(!existed)
+        }
+        _ => Err("unsupported_window_label".to_string()),
+    }
 }

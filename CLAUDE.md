@@ -44,10 +44,21 @@ Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-
 cargo test -p snotra-core        # ユニットテスト
 cargo check -p snotra            # Rustバックエンド型チェック
 cargo clippy -p snotra-core -p snotra  # lint チェック
+npm test                          # フロントユニットテスト（Vitest）
+npm run smoke:startup             # 起動時ウィンドウ生成スモーク（trace検証）
+npm run e2e:tauri:setup           # Tauri Driver E2E 用セットアップ
+npm run e2e:tauri                 # Playwright + Tauri Driver E2E
 npx vite build                   # フロントエンドビルド
 npm run tauri dev                # 開発実行（ホットリロード付き）
 npm run tauri build              # リリースビルド
 ```
+
+### E2E/スモーク運用メモ
+
+- `scripts/smoke-startup.ps1` は `SNOTRA_TRACE=1` で起動し、`main:ensure_window:ok`（`results/about/settings`）の存在と `*:error` 不在を検証する
+- `e2e/tauri.slash.e2e.ts` は Playwright runner 上で `tauri-driver + selenium-webdriver + edgedriver` を使い、起動入力・`/a`・`/o` の動作を検証する
+- E2E セットアップは `npx tauri build --no-bundle` を使う（`cargo build --release` では `localhost` を向いたバイナリになり、`ERR_CONNECTION_REFUSED` で失敗するケースがある）
+- スラッシュコマンドの実行順（`hide -> /a|/o|/s`）は `ui/src/lib/commands.test.ts` で固定し、順序変更時は必ず更新する
 
 ## 開発ワークフロー
 
@@ -78,6 +89,7 @@ npm run tauri build              # リリースビルド
 8. 変更後の検証を実行する（スキップ不可）
    - Rust ファイルを触った場合: `cargo check -p snotra-core -p snotra`（必須）、追加で `cargo test / clippy` も検討
    - TS ファイルを触った場合: `npx vite build`（必須）
+   - ウィンドウ生成/表示順・ホットキー・スラッシュコマンドを触った場合: `npm test` + `npm run smoke:startup` + `npm run e2e:tauri` を必須で実行
 9. 報告は「追加/更新テスト名 + 検証した不変条件」を必ず含める
 
 - Win32 依存モジュール（`src-tauri/src/` 内の `hotkey.rs`, `ime.rs`, `platform.rs`）はユニットテスト前提にしない
@@ -102,10 +114,12 @@ npm run tauri build              # リリースビルド
 
 - `main.rs` に業務ロジックを増やさない
 - 責務を跨ぐ実装をしない
+- 新規コードは既存のファイル構成・命名規則・スタイルパターンに合わせる。独自パターンを導入する前に既存パターンの利用を検討する
 
 ### DRY
 
 - 責務の集約先は各サブディレクトリの `CLAUDE.md` に記載
+- 同一ロジックの繰り返しは2回まで許容し、3回目で抽出を検討する（無理な抽象化よりも多少の重複を許容）
 
 ### YAGNI
 
@@ -121,6 +135,7 @@ npm run tauri build              # リリースビルド
 - 表層的なパッチの繰り返し（推測→失敗→別の推測）を避け、仮説の検証を優先する
 - バグ修正時は、修正対象のパターンをコードベース全体で検索し、同一パターンが他の箇所にも存在しないか確認してから完了とする
 - Win32 関連の不具合では、まず `config.toml`（テーマ含む）を確認し、次にウィンドウライフサイクル順序、最後に API 呼び出しを調査する（白画面バグの真因がテーマ設定だった事例あり）
+- Rust クレートをバージョン昇格する際は、対象バージョンが crates.io に実在・正当であることを確認する。大版ジャンプを前提にしない（例: `bincode 3.0.0` は `compile_error!` のみを含むジョークパッケージでコンパイル不能）
 - `windows` クレート（現在 v0.62）はバージョンごとに API シグネチャが変わる（`Result` 型の有無、ハンドル型の変更など）。コードを書く前に、使用中のバージョンで対象 API が利用可能か・型が一致するかを確認する
 - 必要な feature フラグ（`Win32_UI_WindowsAndMessaging` 等）が `Cargo.toml` に宣言されているか確認してから実装する
 - `UpdateWindow` など一部 API は windows クレートのバージョンによっては未提供。代替 API（`RedrawWindow` 等）の存在を事前に調べる
@@ -161,6 +176,7 @@ npm run tauri build              # リリースビルド
 
 ## コミュニケーション原則
 
+- タスクが真に曖昧でない限り、分析・計画より実行にバイアスをかける
 - ユーザーが具体的な計画や修正指示を既に提示している場合、プランモードへの遷移・事前の全体探索を禁止する。読むファイルは直接関係する最小限（1〜2ファイル）に絞り、最初の Edit/Write から着手する
 - コミット・PR 作成を指示された場合、確認やプランモードなしに即実行する
 - 不明点がある場合は、1つの焦点を絞った質問をしてから実装に移る

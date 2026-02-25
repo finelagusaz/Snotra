@@ -57,6 +57,11 @@ npm run tauri build
 
 ```bash
 cargo test -p snotra-core
+npm test
+npm run smoke:startup
+# Playwright runner + Tauri Driver
+npm run e2e:tauri:setup
+npm run e2e:tauri
 ```
 
 ## Architecture

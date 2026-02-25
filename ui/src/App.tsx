@@ -17,6 +17,7 @@ import { applyTheme } from "./lib/theme";
 import type { BootstrapPayload, VisualConfig } from "./lib/types";
 import * as api from "./lib/invoke";
 import { perfMarkRenderDone } from "./lib/perf";
+import { trace } from "./lib/trace";
 
 const RESULTS_GAP = 4;
 const RESULT_ROW_HEIGHT = 30;
@@ -44,8 +45,18 @@ const App: Component = () => {
 
     const getResultsWindow = async () => {
       if (!resultsWindowPromise) {
-        await api.ensureWindow("results");
-        resultsWindowPromise = WebviewWindow.getByLabel("results");
+        trace("app:results_window:ensure:start");
+        try {
+          const created = await api.ensureWindow("results");
+          trace("app:results_window:ensure:ok", { created });
+          resultsWindowPromise = WebviewWindow.getByLabel("results");
+          trace("app:results_window:get_by_label", {
+            exists: resultsWindowPromise !== null,
+          });
+        } catch (e) {
+          trace("app:results_window:ensure:error", { error: String(e) });
+          throw e;
+        }
       }
       return resultsWindowPromise;
     };
@@ -101,10 +112,16 @@ const App: Component = () => {
       const [unlistenWindowShown, unlistenResultsCountChanged, unlistenResultClicked, unlistenRenderDone, unlistenResultDoubleClicked] =
         await Promise.all([
           listen("window-shown", () => {
+            trace("app:event:window_shown");
             resetForShow();
           }),
           listen<ResultsCountChangedPayload>("results-count-changed", async (event) => {
             const { count, requestId } = event.payload;
+            trace("app:event:results_count_changed", {
+              count,
+              requestId,
+              latestResultsRequestId,
+            });
             if (requestId < latestResultsRequestId) return;
             latestResultsRequestId = requestId;
             const isStale = () => requestId !== latestResultsRequestId;
@@ -115,6 +132,7 @@ const App: Component = () => {
               const visible = await rw.isVisible();
               if (isStale()) return;
               if (visible) {
+                trace("app:results_window:hide", { reason: "count_zero", requestId });
                 await rw.hide();
               }
               return;
@@ -178,6 +196,7 @@ const App: Component = () => {
             const visible = await rw.isVisible();
             if (isStale()) return;
             if (!visible) {
+              trace("app:results_window:show", { requestId, count });
               await rw.show();
               if (isStale()) {
                 await rw.hide();
@@ -187,7 +206,9 @@ const App: Component = () => {
             }
           }),
           listen<string>("result-clicked", async (event) => {
+            trace("app:event:result_clicked", { path: event.payload });
             const launched = await activateSelectedByPath(event.payload);
+            trace("app:event:result_clicked:done", { path: event.payload, launched });
             if (launched) {
               void hideMainAndResults();
             } else {

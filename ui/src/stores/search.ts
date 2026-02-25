@@ -5,6 +5,7 @@ import * as api from "../lib/invoke";
 import { findCommand, filterCommands, type SlashCommand } from "../lib/commands";
 import { perfStartSearch, perfMarkSearchDone, perfCancelSearch } from "../lib/perf";
 import { parsePathQuery } from "../lib/pathQuery";
+import { trace } from "../lib/trace";
 
 const DEBOUNCE_MS = 30;
 
@@ -81,26 +82,38 @@ async function refreshResults() {
   const fs = folderState();
   const q = query();
   const trimmed = q.trim();
+  trace("search:refresh:start", {
+    requestId,
+    query: q,
+    trimmed,
+    folderMode: fs !== null,
+    indexing: indexing(),
+  });
   if (!fs && trimmed === "/r") {
+    trace("search:refresh:branch", { requestId, branch: "slash_r_history" });
     perfStartSearch(requestId, "history");
     const items = await api.getHistoryResults();
     if (requestId !== latestRequestId) {
+      trace("search:refresh:stale", { requestId, stage: "slash_r_history" });
       perfCancelSearch(requestId);
       return;
     }
     setCommandMatches([]);
     setResults(items);
     setSelected(0);
+    trace("search:refresh:done", { requestId, branch: "slash_r_history", count: items.length });
     perfMarkSearchDone(requestId, items.length);
     emitResults(items, 0, requestId);
     return;
   }
   if (!fs && trimmed.startsWith("/")) {
+    trace("search:refresh:branch", { requestId, branch: "slash_suggestions", input: q });
     const matches = filterCommands(q);
     setCommandMatches(matches);
     const items = matches.map(commandToResult);
     setResults(items);
     setSelected(0);
+    trace("search:refresh:done", { requestId, branch: "slash_suggestions", count: items.length });
     emitResults(items, 0, requestId);
     return;
   }
@@ -117,6 +130,7 @@ async function refreshResults() {
   if (indexing()) {
     setResults([]);
     setSelected(0);
+    trace("search:refresh:done", { requestId, branch: "indexing_guard", count: 0 });
     perfMarkSearchDone(requestId, 0);
     emitResults([], 0, requestId);
     return;
@@ -124,16 +138,33 @@ async function refreshResults() {
 
   let items: SearchResult[];
   if (fs) {
+    trace("search:api:call", {
+      requestId,
+      api: "list_folder",
+      dir: fs.currentDir,
+      filter: folderFilter(),
+      mode: "folder_state",
+    });
     items = await api.listFolder(fs.currentDir, folderFilter());
   } else if (pathQuery) {
+    trace("search:api:call", {
+      requestId,
+      api: "list_folder",
+      dir: pathQuery.dir,
+      filter: pathQuery.filter,
+      mode: "path_query",
+    });
     items = await api.listFolder(pathQuery.dir, pathQuery.filter);
   } else if (q.trim() === "") {
+    trace("search:refresh:branch", { requestId, branch: "empty_query" });
     items = [];
   } else {
+    trace("search:api:call", { requestId, api: "search", query: q });
     items = await api.search(q);
   }
 
   if (requestId !== latestRequestId) {
+    trace("search:refresh:stale", { requestId, stage: "post_api" });
     perfCancelSearch(requestId);
     return;
   }
@@ -141,6 +172,12 @@ async function refreshResults() {
   setResults(items);
   const nextSelected = clampSelectedIndex(selected(), items.length);
   setSelected(nextSelected);
+  trace("search:refresh:done", {
+    requestId,
+    branch: source,
+    count: items.length,
+    selected: nextSelected,
+  });
   perfMarkSearchDone(requestId, items.length);
   emitResults(items, nextSelected, requestId);
 }
@@ -149,17 +186,23 @@ async function refreshResults() {
 createEffect(
   on(query, (q) => {
     if (suppressNextQueryEffectRefresh) {
+      trace("search:query_effect:suppressed", { query: q });
       suppressNextQueryEffectRefresh = false;
       return;
     }
-    if (folderState()) return;
+    if (folderState()) {
+      trace("search:query_effect:ignored_folder_mode", { query: q });
+      return;
+    }
     const trimmed = q.trim();
+    trace("search:query_effect", { query: q, trimmed });
 
     if (trimmed === "/r") {
       clearTimeout(debounceTimer);
       debounceTimer = undefined;
       setCommandMatches([]);
       setSelected(0);
+      trace("search:query_effect:immediate_refresh", { reason: "slash_r" });
       void runRefresh();
       return;
     }
@@ -169,6 +212,7 @@ createEffect(
       if (cmd && cmd.command !== "/r") {
         clearTimeout(debounceTimer);
         debounceTimer = undefined;
+        trace("search:query_effect:run_command", { command: cmd.command });
         clearCommandModeStateAndEmit();
         cmd.action();
         return;
@@ -176,12 +220,14 @@ createEffect(
 
       clearTimeout(debounceTimer);
       debounceTimer = undefined;
+      trace("search:query_effect:show_command_suggestions", { input: q });
       showCommandResults(q);
       return;
     }
 
     setCommandMatches([]);
     setSelected(0);
+    trace("search:query_effect:debounced_refresh", { query: q });
     debouncedRefresh();
   }),
 );
@@ -282,6 +328,7 @@ function trackRefresh(pending: Promise<void>): Promise<void> {
 function runRefresh(): Promise<void> {
   return trackRefresh(
     refreshResults().catch((e) => {
+      trace("search:refresh:error", { error: String(e) });
       console.error("Failed to refresh results:", e);
     }),
   );
@@ -330,6 +377,7 @@ function consumeCommandSelection(index: number): boolean {
   if (!folderState() && trimmed.startsWith("/") && commandMatches().length > 0) {
     const cmd = commandMatches()[index];
     if (cmd) {
+      trace("search:command_selected", { index, command: cmd.command });
       if (cmd.command === "/r") {
         setQuery("/r");
         setCommandMatches([]);
@@ -348,23 +396,27 @@ function consumeCommandSelection(index: number): boolean {
 async function launchAndReset(result: SearchResult): Promise<boolean> {
   if (result.isError) return false;
 
+  trace("search:launch:start", { path: result.path, query: query() });
   // Fix C: launchItem の前に count=0 を先行 emit し、flushPendingRefresh が
   // 発生させた count>0 ハンドラを rw.show() 到達前に stale 化する
   emitResults([], 0, ++latestRequestId);
   let launchError: unknown;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
+      trace("search:launch:attempt", { attempt: attempt + 1, path: result.path });
       await api.launchItem(result.path, query());
       launchError = undefined;
       break;
     } catch (e) {
       launchError = e;
+      trace("search:launch:retry", { attempt: attempt + 1, error: String(e) });
       if (attempt < 2) {
         await sleep(120);
       }
     }
   }
   if (launchError !== undefined) {
+    trace("search:launch:error", { path: result.path, error: String(launchError) });
     console.error("Failed to launch item:", launchError);
     void runRefresh();
     return false;
@@ -375,6 +427,7 @@ async function launchAndReset(result: SearchResult): Promise<boolean> {
   setResults([]);
   setSelected(0);
   emitResults([], 0, ++latestRequestId);
+  trace("search:launch:done", { path: result.path });
 
   return true;
 }
@@ -416,6 +469,7 @@ async function activateSelectedByPath(path: string): Promise<boolean> {
 }
 
 function resetForShow() {
+  trace("search:reset_for_show", { query: query() });
   setFolderState(null);
   if (query() !== "") {
     suppressNextQueryEffectRefresh = true;
@@ -433,11 +487,14 @@ async function initIndexingState() {
   try {
     const state = await api.getIndexingState();
     setIndexing(state);
+    trace("search:indexing_state:init", { indexing: state });
   } catch (e) {
+    trace("search:indexing_state:error", { error: String(e) });
     console.error("Failed to get indexing state:", e);
   }
 
   unlistenIndexingComplete = await listen("indexing-complete", () => {
+    trace("search:indexing_state:complete");
     setIndexing(false);
     void runRefresh();
   });

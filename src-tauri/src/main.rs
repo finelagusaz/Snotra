@@ -9,8 +9,10 @@ mod platform;
 mod state;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 
+use serde_json::json;
 use snotra_core::config::Config;
 use snotra_core::history::HistoryStore;
 use snotra_core::indexer;
@@ -25,6 +27,66 @@ use crate::state::AppState;
 
 const ALT_RELEASE_POLL_MS: u64 = 10;
 const ALT_RELEASE_TIMEOUT_MS: u64 = 350;
+
+fn trace_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        let Ok(v) = std::env::var("SNOTRA_TRACE") else {
+            return false;
+        };
+        matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
+fn trace_main(event: &str, data: serde_json::Value) {
+    if !trace_enabled() {
+        return;
+    }
+    static TRACE_SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = TRACE_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    let ts_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    eprintln!(
+        "[trace] {}",
+        json!({
+            "seq": seq,
+            "ts_ms": ts_ms,
+            "event": event,
+            "data": data,
+        })
+    );
+}
+
+fn ensure_window_with_timing<F>(app_handle: &AppHandle, label: &str, ensure: F) -> tauri::Result<()>
+where
+    F: FnOnce(&AppHandle) -> tauri::Result<()>,
+{
+    let started = Instant::now();
+    let result = ensure(app_handle);
+    match &result {
+        Ok(()) => trace_main(
+            "main:ensure_window:ok",
+            json!({
+                "label": label,
+                "elapsed_ms": started.elapsed().as_millis(),
+            }),
+        ),
+        Err(e) => trace_main(
+            "main:ensure_window:error",
+            json!({
+                "label": label,
+                "elapsed_ms": started.elapsed().as_millis(),
+                "error": e.to_string(),
+            }),
+        ),
+    }
+    result
+}
 
 #[cfg(windows)]
 fn is_alt_pressed() -> bool {
@@ -192,6 +254,11 @@ fn main() {
                 }
             }
 
+            // Pre-create secondary windows for stability.
+            ensure_window_with_timing(&app_handle, "results", commands::ensure_results_window)?;
+            ensure_window_with_timing(&app_handle, "about", commands::ensure_about_window)?;
+            ensure_window_with_timing(&app_handle, "settings", commands::ensure_settings_window)?;
+
             // Start platform thread (hotkey, tray, IME)
             let platform = PlatformBridge::start(app_handle.clone(), hotkey_config, show_tray);
 
@@ -201,7 +268,6 @@ fn main() {
             }
 
             if is_first_run {
-                commands::ensure_settings_window(&app_handle)?;
                 if let Some(settings_window) = app_handle.get_webview_window("settings") {
                     let _ = settings_window.show();
                     let _ = settings_window.set_focus();

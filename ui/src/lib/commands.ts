@@ -4,10 +4,10 @@ export interface SlashCommand {
   command: string;
   label: string;
   description: string;
-  action: () => void;
+  action: () => void | Promise<void>;
 }
 
-let hideAllWindowsFn: (() => void) | undefined;
+let hideAllWindowsFn: (() => void | Promise<void>) | undefined;
 
 export const SLASH_COMMANDS: SlashCommand[] = [
   {
@@ -22,27 +22,27 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     command: "/a",
     label: "/a",
     description: "バージョン情報",
-    action: () => {
-      api.openAbout();
-      hideAllWindowsFn?.();
+    action: async () => {
+      await hideAllWindowsFn?.();
+      await api.openAbout();
     },
   },
   {
     command: "/o",
     label: "/o",
     description: "設定を開く",
-    action: () => {
-      api.openSettings();
-      hideAllWindowsFn?.();
+    action: async () => {
+      await hideAllWindowsFn?.();
+      await api.openSettings();
     },
   },
   {
     command: "/s",
     label: "/s",
     description: "インデックス再構築",
-    action: () => {
-      api.rebuildIndex();
-      hideAllWindowsFn?.();
+    action: async () => {
+      await hideAllWindowsFn?.();
+      await api.rebuildIndex();
     },
   },
   {
@@ -55,7 +55,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   },
 ];
 
-export function initCommands(hideAllWindows: () => void) {
+export function initCommands(hideAllWindows: () => void | Promise<void>) {
   hideAllWindowsFn = hideAllWindows;
 }
 

@@ -20,6 +20,7 @@ import {
 } from "../stores/search";
 import { initCommands } from "../lib/commands";
 import { perfMarkInput } from "../lib/perf";
+import { trace } from "../lib/trace";
 
 async function hideAllWindows() {
   getCurrentWindow().hide();
@@ -66,12 +67,14 @@ const SearchWindow: Component = () => {
     let unlistenWindowShown: (() => void) | undefined;
     let unlistenFocusChanged: (() => void) | undefined;
     void listen("window-shown", () => {
+      trace("ui:window_shown");
       focusInputWithRetries();
     }).then((unlisten) => {
       unlistenWindowShown = unlisten;
     });
     void getCurrentWindow()
       .onFocusChanged(({ payload: focused }) => {
+        trace("ui:focus_changed", { focused });
         if (focused) {
           focusInputWithRetries();
         } else {
@@ -98,28 +101,41 @@ const SearchWindow: Component = () => {
   });
 
   function handleKeyDown(e: KeyboardEvent) {
+    trace("ui:key_down", {
+      key: e.key,
+      alt: e.altKey,
+      ctrl: e.ctrlKey,
+      shift: e.shiftKey,
+      folderMode: folderState() !== null,
+      query: query(),
+    });
     // Prevent system beep when Alt-modified character keys slip in during focus transitions.
     if (e.altKey && !e.ctrlKey && e.key.length === 1) {
+      trace("ui:key_down:blocked_alt_char", { key: e.key });
       e.preventDefault();
       return;
     }
 
     switch (e.key) {
       case "Escape":
+        trace("ui:key_action", { action: "escape" });
         if (!exitFolderExpansion()) {
           hideAllWindows();
         }
         e.preventDefault();
         break;
       case "ArrowUp":
+        trace("ui:key_action", { action: "arrow_up" });
         moveSelectionUp();
         e.preventDefault();
         break;
       case "ArrowDown":
+        trace("ui:key_action", { action: "arrow_down" });
         moveSelectionDown();
         e.preventDefault();
         break;
       case "ArrowRight": {
+        trace("ui:key_action", { action: "arrow_right" });
         const r = results()[selected()];
         if (r?.isFolder) {
           enterFolderExpansion(r.path);
@@ -128,6 +144,7 @@ const SearchWindow: Component = () => {
         break;
       }
       case "ArrowLeft":
+        trace("ui:key_action", { action: "arrow_left" });
         if (folderState()) {
           navigateFolderUp();
           e.preventDefault();
@@ -146,7 +163,9 @@ const SearchWindow: Component = () => {
         }
         break;
       case "Enter":
+        trace("ui:key_action", { action: "enter" });
         void activateSelected().then((launched) => {
+          trace("ui:key_action:enter_done", { launched });
           if (launched) void hideAllWindows();
         });
         e.preventDefault();
@@ -156,6 +175,7 @@ const SearchWindow: Component = () => {
 
   function handleInput(e: InputEvent) {
     const value = (e.target as HTMLInputElement).value;
+    trace("ui:input", { value, folderMode: folderState() !== null });
     perfMarkInput();
     if (folderState()) {
       setFolderFilter(value);

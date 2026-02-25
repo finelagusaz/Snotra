@@ -5,6 +5,7 @@ use std::hash::{Hash, Hasher};
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::thread;
+use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
 #[cfg(windows)]
@@ -30,15 +31,10 @@ pub fn scan_all(scan_paths: &[ScanPath], show_hidden_system: bool) -> Vec<AppEnt
     let mut seen = std::collections::HashSet::new();
 
     for sp in scan_paths {
-        let ext_list: Vec<&str> = sp
-            .extensions
-            .iter()
-            .map(|e| e.trim_start_matches('.'))
-            .filter(|e| !e.is_empty())
-            .collect();
+        let ext_set = build_extension_list(&sp.extensions);
         scan_directory_with_extensions(
             Path::new(&sp.path),
-            &ext_list,
+            &ext_set,
             sp.include_folders,
             show_hidden_system,
             &mut entries,
@@ -52,7 +48,7 @@ pub fn scan_all(scan_paths: &[ScanPath], show_hidden_system: bool) -> Vec<AppEnt
 /// Recursively scan for files matching given extensions, optionally including folders
 fn scan_directory_with_extensions(
     dir: &Path,
-    extensions: &[&str],
+    extensions: &[String],
     include_folders: bool,
     show_hidden_system: bool,
     entries: &mut Vec<AppEntry>,
@@ -101,11 +97,7 @@ fn scan_directory_with_extensions(
             );
         } else {
             let ext = path.extension().and_then(|e| e.to_str());
-            let matches = ext.is_some_and(|e| {
-                extensions
-                    .iter()
-                    .any(|allowed| allowed.eq_ignore_ascii_case(e))
-            });
+            let matches = ext.is_some_and(|e| matches_extension(extensions, e));
             if matches {
                 let name = path
                     .file_stem()
@@ -134,7 +126,106 @@ fn is_visible_metadata(meta: &Metadata) -> bool {
 }
 
 fn normalize_entry_key(path: &str) -> String {
-    path.trim().replace('/', "\\").to_lowercase()
+    let trimmed = path.trim();
+    let mut normalized = String::with_capacity(trimmed.len());
+    for ch in trimmed.chars() {
+        if ch == '/' {
+            normalized.push('\\');
+        } else {
+            normalized.extend(ch.to_lowercase());
+        }
+    }
+    normalized
+}
+
+fn build_extension_list(extensions: &[String]) -> Vec<String> {
+    let mut normalized: Vec<String> = extensions
+        .iter()
+        .map(|ext| ext.trim_start_matches('.'))
+        .filter(|ext| !ext.is_empty())
+        .map(|ext| ext.to_ascii_lowercase())
+        .collect();
+    normalized.sort_unstable();
+    normalized.dedup();
+    normalized
+}
+
+fn matches_extension(extensions: &[String], ext: &str) -> bool {
+    extensions
+        .binary_search_by(|candidate| compare_ascii_lower(candidate.as_str(), ext))
+        .is_ok()
+}
+
+fn compare_ascii_lower(lower: &str, raw: &str) -> std::cmp::Ordering {
+    for (a, b) in lower.bytes().zip(raw.bytes()) {
+        let b_lower = b.to_ascii_lowercase();
+        match a.cmp(&b_lower) {
+            std::cmp::Ordering::Equal => {}
+            ord => return ord,
+        }
+    }
+    lower.len().cmp(&raw.len())
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct LoadOrScanStats {
+    pub cache_hit: bool,
+    pub hash_ms: u128,
+    pub cache_load_ms: u128,
+    pub scan_ms: u128,
+    pub sort_ms: u128,
+    pub cache_save_ms: u128,
+    pub total_ms: u128,
+}
+
+impl LoadOrScanStats {
+    fn from_cache_hit(hash_ms: u128, cache_load_ms: u128, total_ms: u128) -> Self {
+        Self {
+            cache_hit: true,
+            hash_ms,
+            cache_load_ms,
+            scan_ms: 0,
+            sort_ms: 0,
+            cache_save_ms: 0,
+            total_ms,
+        }
+    }
+
+    fn from_cache_miss(
+        hash_ms: u128,
+        cache_load_ms: u128,
+        scan_ms: u128,
+        sort_ms: u128,
+        cache_save_ms: u128,
+        total_ms: u128,
+    ) -> Self {
+        Self {
+            cache_hit: false,
+            hash_ms,
+            cache_load_ms,
+            scan_ms,
+            sort_ms,
+            cache_save_ms,
+            total_ms,
+        }
+    }
+
+    pub fn log_line(&self) -> String {
+        format!(
+            "cache_hit={} total={}ms hash={}ms cache_load={}ms scan={}ms sort={}ms cache_save={}ms",
+            self.cache_hit,
+            self.total_ms,
+            self.hash_ms,
+            self.cache_load_ms,
+            self.scan_ms,
+            self.sort_ms,
+            self.cache_save_ms,
+        )
+    }
+}
+
+fn elapsed_ms(started: Instant) -> u128 {
+    started.elapsed().as_millis()
 }
 
 #[derive(Serialize, Deserialize)]
@@ -177,25 +268,59 @@ fn invalidate_icon_cache() {
 /// Scan filesystem every startup; compare with cache to detect changes.
 /// Returns (entries, changed) where changed=true means the entry set differs from cache.
 pub fn load_or_scan(scan: &[ScanPath], show_hidden_system: bool) -> (Vec<AppEntry>, bool) {
-    let current_hash = compute_config_hash(scan, show_hidden_system);
+    let (entries, changed, _) = load_or_scan_with_stats(scan, show_hidden_system);
+    (entries, changed)
+}
 
+/// Same as `load_or_scan`, but also returns timing stats for startup profiling.
+pub fn load_or_scan_with_stats(
+    scan: &[ScanPath],
+    show_hidden_system: bool,
+) -> (Vec<AppEntry>, bool, LoadOrScanStats) {
+    let total_started = Instant::now();
+
+    let hash_started = Instant::now();
+    let current_hash = compute_config_hash(scan, show_hidden_system);
+    let hash_ms = elapsed_ms(hash_started);
+
+    let cache_load_started = Instant::now();
     if let Some(cache) = load_cache(current_hash) {
-        let mut cached_entries = cache.entries;
-        sort_entries_canonical(&mut cached_entries);
-        let return_entries = cached_entries.clone();
+        let cache_load_ms = elapsed_ms(cache_load_started);
+        let return_entries = cache.entries;
         spawn_background_rescan(
             scan.to_vec(),
             show_hidden_system,
             current_hash,
-            cached_entries,
+            return_entries.clone(),
         );
-        return (return_entries, false);
+        let stats =
+            LoadOrScanStats::from_cache_hit(hash_ms, cache_load_ms, elapsed_ms(total_started));
+        return (return_entries, false, stats);
     }
+    let cache_load_ms = elapsed_ms(cache_load_started);
 
+    let scan_started = Instant::now();
     let mut entries = scan_all(scan, show_hidden_system);
+    let scan_ms = elapsed_ms(scan_started);
+
+    let sort_started = Instant::now();
     sort_entries_canonical(&mut entries);
-    save_cache(&entries, current_hash);
-    (entries, true)
+    let sort_ms = elapsed_ms(sort_started);
+
+    let cache_save_started = Instant::now();
+    save_cache_sorted(&entries, current_hash);
+    let cache_save_ms = elapsed_ms(cache_save_started);
+
+    let stats = LoadOrScanStats::from_cache_miss(
+        hash_ms,
+        cache_load_ms,
+        scan_ms,
+        sort_ms,
+        cache_save_ms,
+        elapsed_ms(total_started),
+    );
+
+    (entries, true, stats)
 }
 
 fn entries_equal(a: &[AppEntry], b: &[AppEntry]) -> bool {
@@ -216,22 +341,19 @@ fn sort_entries_canonical(entries: &mut [AppEntry]) {
     });
 }
 
-fn save_cache(entries: &[AppEntry], config_hash: u64) {
+fn save_cache_sorted(entries: &[AppEntry], config_hash: u64) {
     let Some(path) = cache_path() else {
         return;
     };
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let mut sorted_entries = entries.to_vec();
-    sort_entries_canonical(&mut sorted_entries);
-
     let cache = IndexCache {
         built_at: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs(),
-        entries: sorted_entries,
+        entries: entries.to_vec(),
         config_hash,
     };
 
@@ -252,7 +374,7 @@ pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> Vec<AppE
     let mut entries = scan_all(scan, show_hidden_system);
     sort_entries_canonical(&mut entries);
     let config_hash = compute_config_hash(scan, show_hidden_system);
-    save_cache(&entries, config_hash);
+    save_cache_sorted(&entries, config_hash);
     entries
 }
 
@@ -276,13 +398,10 @@ fn spawn_background_rescan(
         .name("snotra-index-rescan".to_string())
         .spawn(move || {
             lower_current_thread_priority();
-            let scanned = scan_all(&scan, show_hidden_system);
-            let mut cached_sorted = cached_entries;
-            let mut scanned_sorted = scanned.clone();
-            sort_entries_canonical(&mut cached_sorted);
-            sort_entries_canonical(&mut scanned_sorted);
-            if !entries_equal(&cached_sorted, &scanned_sorted) {
-                save_cache(&scanned, config_hash);
+            let mut scanned = scan_all(&scan, show_hidden_system);
+            sort_entries_canonical(&mut scanned);
+            if !entries_equal(&cached_entries, &scanned) {
+                save_cache_sorted(&scanned, config_hash);
                 invalidate_icon_cache();
             }
         });
@@ -319,7 +438,7 @@ mod tests {
 
         let mut entries = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        let exts = vec!["exe", "bat"];
+        let exts = build_extension_list(&["exe".to_string(), "bat".to_string()]);
         scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
 
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
@@ -339,7 +458,7 @@ mod tests {
 
         let mut entries = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        let exts = vec!["exe"];
+        let exts = build_extension_list(&["exe".to_string()]);
         scan_directory_with_extensions(&dir, &exts, true, true, &mut entries, &mut seen);
 
         let folder_entries: Vec<&AppEntry> = entries.iter().filter(|e| e.is_folder).collect();
@@ -362,7 +481,7 @@ mod tests {
 
         let mut entries = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        let exts = vec!["exe"];
+        let exts = build_extension_list(&["exe".to_string()]);
         scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
 
         assert!(entries.iter().all(|e| !e.is_folder));
@@ -383,7 +502,7 @@ mod tests {
 
         let mut entries = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        let exts = vec!["exe"];
+        let exts = build_extension_list(&["exe".to_string()]);
         scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
 
         let tools: Vec<&AppEntry> = entries.iter().filter(|e| e.name == "tool").collect();
@@ -399,7 +518,7 @@ mod tests {
 
         let mut entries = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        let exts = vec!["exe"];
+        let exts = build_extension_list(&["exe".to_string()]);
         scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
 
         assert_eq!(entries.len(), 1);

@@ -95,8 +95,19 @@ fn main() {
     let (entries, initial_indexing) = if is_first_run {
         (Vec::new(), true)
     } else {
-        let (entries, _) =
-            indexer::load_or_scan(&config.paths.scan, config.search.show_hidden_system);
+        let (entries, _, stats) =
+            indexer::load_or_scan_with_stats(&config.paths.scan, config.search.show_hidden_system);
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "[index-load] cache_hit={} total={}ms hash={}ms cache_load={}ms scan={}ms sort={}ms cache_save={}ms",
+            stats.cache_hit,
+            stats.total_ms,
+            stats.hash_ms,
+            stats.cache_load_ms,
+            stats.scan_ms,
+            stats.sort_ms,
+            stats.cache_save_ms,
+        );
         (entries, false)
     };
 

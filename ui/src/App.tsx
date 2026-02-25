@@ -237,10 +237,8 @@ const App: Component = () => {
       });
 
       // Listen for result-double-clicked from results window
-      listen<number>("result-double-clicked", async (event) => {
+      listen<number>("result-double-clicked", (event) => {
         setSelected(event.payload);
-        const launched = await activateSelected();
-        if (launched) void win.hide();
       });
     }
 

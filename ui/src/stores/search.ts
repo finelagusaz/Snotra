@@ -14,7 +14,9 @@ const [indexing, setIndexing] = createSignal(false);
 const [commandMatches, setCommandMatches] = createSignal<SlashCommand[]>([]);
 
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+let refreshInFlight: Promise<void> | undefined;
 let latestRequestId = 0;
+let activationInFlight = false;
 
 function emitResults(items: SearchResult[], selectedIndex: number, requestId: number) {
   emit("results-updated", { results: items, selected: selectedIndex, requestId });
@@ -53,7 +55,13 @@ function debouncedRefresh() {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
     debounceTimer = undefined;
-    refreshResults();
+    const pending = refreshResults();
+    refreshInFlight = pending;
+    void pending.finally(() => {
+      if (refreshInFlight === pending) {
+        refreshInFlight = undefined;
+      }
+    });
   }, DEBOUNCE_MS);
 }
 
@@ -258,37 +266,53 @@ async function flushPendingRefresh() {
   if (debounceTimer !== undefined) {
     clearTimeout(debounceTimer);
     debounceTimer = undefined;
-    await refreshResults();
+    const pending = refreshResults();
+    refreshInFlight = pending;
+    await pending.finally(() => {
+      if (refreshInFlight === pending) {
+        refreshInFlight = undefined;
+      }
+    });
+    return;
+  }
+  if (refreshInFlight) {
+    await refreshInFlight;
   }
 }
 
 async function activateSelected(): Promise<boolean> {
-  await flushPendingRefresh();
-  if (!folderState() && query().trim().startsWith("/")) {
-    const cmd = commandMatches()[selected()];
-    if (cmd) {
-      clearCommandModeStateAndEmit();
-      cmd.action();
+  if (activationInFlight) return false;
+  activationInFlight = true;
+  try {
+    await flushPendingRefresh();
+    if (!folderState() && query().trim().startsWith("/")) {
+      const cmd = commandMatches()[selected()];
+      if (cmd) {
+        clearCommandModeStateAndEmit();
+        cmd.action();
+      }
+      return false;
     }
-    return false;
+    const r = results()[selected()];
+    if (!r) return false;
+
+    if (r.isError) return false;
+
+    // Fix C: launchItem の前に count=0 を先行 emit し、flushPendingRefresh が
+    // 発生させた count>0 ハンドラを rw.show() 到達前に stale 化する
+    emitResults([], 0, ++latestRequestId);
+    await api.launchItem(r.path, query());
+
+    setFolderState(null);
+    setFolderFilter("");
+    setResults([]);
+    setSelected(0);
+    emitResults([], 0, ++latestRequestId);
+
+    return true;
+  } finally {
+    activationInFlight = false;
   }
-  const r = results()[selected()];
-  if (!r) return false;
-
-  if (r.isError) return false;
-
-  // Fix C: launchItem の前に count=0 を先行 emit し、flushPendingRefresh が
-  // 発生させた count>0 ハンドラを rw.show() 到達前に stale 化する
-  emitResults([], 0, ++latestRequestId);
-  await api.launchItem(r.path, query());
-
-  setFolderState(null);
-  setFolderFilter("");
-  setResults([]);
-  setSelected(0);
-  emitResults([], 0, ++latestRequestId);
-
-  return true;
 }
 
 function resetForShow() {

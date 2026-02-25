@@ -13,3 +13,7 @@ Desktop.ini
 *.swp
 *.swo
 *~
+
+# Local settings
+.claude/settings.local.json
+workspace/

@@ -97,8 +97,8 @@ export async function setWindowNoActivate(): Promise<void> {
   return invoke("set_window_no_activate");
 }
 
-export async function notifyResultClicked(index: number): Promise<void> {
-  return invoke("notify_result_clicked", { index });
+export async function notifyResultClicked(path: string): Promise<void> {
+  return invoke("notify_result_clicked", { path });
 }
 
 export async function notifyResultDoubleClicked(index: number): Promise<void> {

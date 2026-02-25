@@ -44,9 +44,13 @@ pub fn get_history_results(state: State<AppState>) -> Vec<SearchResult> {
 
 #[tauri::command]
 pub fn launch_item(path: String, query: String, state: State<AppState>) {
+    launch_item_with_state(&path, &query, &state);
+}
+
+pub fn launch_item_with_state(path: &str, query: &str, state: &AppState) {
     {
         let mut history = state.history.lock().unwrap();
-        history.record_launch(&path, &query);
+        history.record_launch(path, query);
         history.save_if_dirty(5);
     }
     #[cfg(windows)]
@@ -55,6 +59,7 @@ pub fn launch_item(path: String, query: String, state: State<AppState>) {
         use windows::Win32::UI::Shell::ShellExecuteW;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
         use windows::core::HSTRING;
+        let path = path.to_string();
         // ShellExecuteW はフォルダ・画像などのシェル拡張に COM STA を要求する。
         // Tauri コマンドハンドラのスレッドは COM 状態が保証されないため、
         // 新規 OS スレッドで CoInitializeEx → ShellExecuteW → CoUninitialize を実行する。
@@ -285,8 +290,8 @@ pub fn set_window_no_activate(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn notify_result_clicked(index: usize, app: AppHandle) -> Result<(), String> {
-    app.emit("result-clicked", index).map_err(|e| e.to_string())
+pub fn notify_result_clicked(path: String, app: AppHandle) -> Result<(), String> {
+    app.emit("result-clicked", path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

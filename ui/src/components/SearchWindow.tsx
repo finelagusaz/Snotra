@@ -16,7 +16,6 @@ import {
   navigateFolderUp,
   enterFolderExpansion,
   activateSelected,
-  refreshResults,
   indexing,
 } from "../stores/search";
 import { initCommands } from "../lib/commands";
@@ -64,7 +63,6 @@ const SearchWindow: Component = () => {
 
   onMount(() => {
     initCommands(hideAllWindows);
-    refreshResults();
     let unlistenWindowShown: (() => void) | undefined;
     let unlistenFocusChanged: (() => void) | undefined;
     void listen("window-shown", () => {

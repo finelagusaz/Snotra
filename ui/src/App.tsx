@@ -1,4 +1,4 @@
-import { type Component, onMount, Switch, Match } from "solid-js";
+import { type Component, onMount, onCleanup, Switch, Match } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen } from "@tauri-apps/api/event";
@@ -7,7 +7,12 @@ import SearchWindow from "./components/SearchWindow";
 import ResultsWindow from "./components/ResultsWindow";
 import SettingsWindow from "./components/SettingsWindow";
 import AboutWindow from "./components/AboutWindow";
-import { resetForShow, setSelected, activateSelected, initIndexingState } from "./stores/search";
+import {
+  resetForShow,
+  setSelected,
+  activateSelectedByPath,
+  initIndexingState,
+} from "./stores/search";
 import { applyTheme } from "./lib/theme";
 import type { VisualConfig } from "./lib/types";
 import * as api from "./lib/invoke";
@@ -26,6 +31,7 @@ type ResultsRenderDonePayload = {
 
 const App: Component = () => {
   const windowLabel = getCurrentWindow().label;
+  const unlistenFns: Array<() => void> = [];
 
   onMount(async () => {
     const win = getCurrentWindow();
@@ -34,6 +40,7 @@ const App: Component = () => {
     let lastResultsSize: { width: number; height: number } | undefined;
     let lastResultsPosition: { x: number; y: number } | undefined;
     let latestResultsRequestId = 0;
+    let registerAutoHideOnFocusLost: (() => void) | undefined;
 
     const getResultsWindow = async () => {
       if (!resultsWindowPromise) {
@@ -42,58 +49,19 @@ const App: Component = () => {
       return resultsWindowPromise;
     };
 
-    // Register listeners before any await to avoid race conditions
     if (label === "main") {
-      listen("window-shown", () => {
-        resetForShow();
-      });
-      initIndexingState();
-    }
-
-    // Listen for visual config changes (all windows)
-    listen<VisualConfig>("visual-config-changed", (event) => {
-      applyTheme(event.payload);
-    });
-
-    // Load config and apply theme (non-fatal on failure)
-    let config: Awaited<ReturnType<typeof api.getConfig>> | null = null;
-    try {
-      config = await api.getConfig();
-      applyTheme(config.visual);
-    } catch (e) {
-      console.error("Failed to load config/apply theme:", e);
-    }
-
-    if (label === "main" && config) {
       let cachedScaleFactor = 1;
       let cachedMainLogicalHeight = 52;
       let positionApplyInFlight = false;
       let pendingResultsPosition: { x: number; y: number } | undefined;
 
-      try {
-        const [sf, size] = await Promise.all([win.scaleFactor(), win.innerSize()]);
-        cachedScaleFactor = sf;
-        cachedMainLogicalHeight = size.toLogical(sf).height;
-      } catch (e) {
-        console.warn("Failed to initialize main window geometry cache:", e);
-      }
-
-      // Auto-hide on focus lost (with grace period for drag operations)
-      if (config.general.auto_hide_on_focus_lost) {
-        let blurTimer: ReturnType<typeof setTimeout> | undefined;
-        win.onFocusChanged(({ payload: focused }) => {
-          if (!focused) {
-            blurTimer = setTimeout(() => {
-              win.hide();
-              getResultsWindow().then((rw) => {
-                if (rw) rw.hide();
-              });
-            }, 100);
-          } else {
-            clearTimeout(blurTimer);
-          }
-        });
-      }
+      const hideMainAndResults = async () => {
+        await win.hide();
+        const rw = await getResultsWindow();
+        if (rw) {
+          await rw.hide();
+        }
+      };
 
       const queueResultsPosition = (rw: WebviewWindow, nextPosition: { x: number; y: number }) => {
         pendingResultsPosition = nextPosition;
@@ -114,6 +82,146 @@ const App: Component = () => {
           positionApplyInFlight = false;
         });
       };
+
+      registerAutoHideOnFocusLost = () => {
+        let blurTimer: ReturnType<typeof setTimeout> | undefined;
+        win.onFocusChanged(({ payload: focused }) => {
+          if (!focused) {
+            blurTimer = setTimeout(() => {
+              void hideMainAndResults();
+            }, 100);
+          } else {
+            clearTimeout(blurTimer);
+          }
+        });
+      };
+
+      // Wait for all critical listeners to be attached before first reset/show.
+      const [unlistenWindowShown, unlistenResultsCountChanged, unlistenResultClicked, unlistenRenderDone, unlistenResultDoubleClicked] =
+        await Promise.all([
+          listen("window-shown", () => {
+            resetForShow();
+          }),
+          listen<ResultsCountChangedPayload>("results-count-changed", async (event) => {
+            const { count, requestId } = event.payload;
+            if (requestId < latestResultsRequestId) return;
+            latestResultsRequestId = requestId;
+            const isStale = () => requestId !== latestResultsRequestId;
+
+            const rw = await getResultsWindow();
+            if (!rw || isStale()) return;
+
+            if (count === 0) {
+              const visible = await rw.isVisible();
+              if (isStale()) return;
+              if (visible) {
+                await rw.hide();
+              }
+              return;
+            }
+
+            // Use current main window width (may have been updated via settings)
+            const [currentSize, currentSf, mainPos, mainVisible] = await Promise.all([
+              win.innerSize(),
+              win.scaleFactor(),
+              win.outerPosition(),
+              win.isVisible(),
+            ]);
+            if (isStale()) return;
+
+            const mainSize = currentSize;
+            const sf = currentSf;
+            const currentWidth = currentSize.toLogical(currentSf).width;
+            cachedScaleFactor = currentSf;
+            cachedMainLogicalHeight = currentSize.toLogical(currentSf).height;
+
+            // Resize results window based on count
+            const resultsHeight = Math.min(count * RESULT_ROW_HEIGHT + RESULTS_PADDING * 2, 400);
+            if (
+              !lastResultsSize ||
+              lastResultsSize.width !== currentWidth ||
+              lastResultsSize.height !== resultsHeight
+            ) {
+              await rw.setSize(new LogicalSize(currentWidth, resultsHeight));
+              if (isStale()) return;
+              lastResultsSize = { width: currentWidth, height: resultsHeight };
+            }
+
+            // Position results below main
+            const logicalMainPos = mainPos.toLogical(sf);
+            const logicalH = mainSize.toLogical(sf).height;
+            const nextPosition = {
+              x: logicalMainPos.x,
+              y: logicalMainPos.y + logicalH + RESULTS_GAP,
+            };
+            if (
+              !lastResultsPosition ||
+              lastResultsPosition.x !== nextPosition.x ||
+              lastResultsPosition.y !== nextPosition.y
+            ) {
+              await rw.setPosition(new LogicalPosition(nextPosition.x, nextPosition.y));
+              if (isStale()) return;
+              lastResultsPosition = nextPosition;
+            }
+
+            if (!mainVisible) {
+              const visible = await rw.isVisible();
+              if (isStale()) return;
+              if (visible) {
+                await rw.hide();
+              }
+              return;
+            }
+
+            const visible = await rw.isVisible();
+            if (isStale()) return;
+            if (!visible) {
+              await rw.show();
+              if (isStale()) {
+                await rw.hide();
+                return;
+              }
+              void api.setWindowNoActivate();
+            }
+          }),
+          listen<string>("result-clicked", async (event) => {
+            const launched = await activateSelectedByPath(event.payload);
+            if (launched) {
+              void hideMainAndResults();
+            } else {
+              console.warn("Failed to launch clicked result", { path: event.payload });
+            }
+          }),
+          listen<ResultsRenderDonePayload>("results-render-done", (event) => {
+            perfMarkRenderDone(event.payload.requestId);
+          }),
+          listen<number>("result-double-clicked", (event) => {
+            setSelected(event.payload);
+          }),
+        ]);
+
+      unlistenFns.push(
+        unlistenWindowShown,
+        unlistenResultsCountChanged,
+        unlistenResultClicked,
+        unlistenRenderDone,
+        unlistenResultDoubleClicked,
+      );
+
+      if (await win.isVisible()) {
+        resetForShow();
+      }
+      void initIndexingState();
+
+      void (async () => {
+        try {
+          const [sf, size] = await Promise.all([win.scaleFactor(), win.innerSize()]);
+          cachedScaleFactor = sf;
+          cachedMainLogicalHeight = size.toLogical(sf).height;
+        } catch (e) {
+          console.warn("Failed to initialize main window geometry cache:", e);
+        }
+      })();
 
       win.onResized(({ payload: sz }) => {
         const logicalSize = sz.toLogical(cachedScaleFactor);
@@ -156,90 +264,24 @@ const App: Component = () => {
         })();
       });
 
-      // Listen for results-count-changed to show/hide/resize results window
-      listen<ResultsCountChangedPayload>("results-count-changed", async (event) => {
-        const { count, requestId } = event.payload;
-        if (requestId < latestResultsRequestId) return;
-        latestResultsRequestId = requestId;
+    }
 
-        const rw = await getResultsWindow();
-        if (!rw) return;
+    // Listen for visual config changes (all windows)
+    listen<VisualConfig>("visual-config-changed", (event) => {
+      applyTheme(event.payload);
+    });
 
-        if (count === 0) {
-          if (await rw.isVisible()) {
-            await rw.hide();
-          }
-          return;
-        }
+    // Load config and apply theme (non-fatal on failure)
+    let config: Awaited<ReturnType<typeof api.getConfig>> | null = null;
+    try {
+      config = await api.getConfig();
+      applyTheme(config.visual);
+    } catch (e) {
+      console.error("Failed to load config/apply theme:", e);
+    }
 
-        // Use current main window width (may have been updated via settings)
-        const [currentSize, currentSf, mainPos, mainVisible] = await Promise.all([
-          win.innerSize(),
-          win.scaleFactor(),
-          win.outerPosition(),
-          win.isVisible(),
-        ]);
-        if (requestId !== latestResultsRequestId) return;
-
-        const mainSize = currentSize;
-        const sf = currentSf;
-        const currentWidth = currentSize.toLogical(currentSf).width;
-        cachedScaleFactor = currentSf;
-        cachedMainLogicalHeight = currentSize.toLogical(currentSf).height;
-
-        // Resize results window based on count
-        const resultsHeight = Math.min(count * RESULT_ROW_HEIGHT + RESULTS_PADDING * 2, 400);
-        if (
-          !lastResultsSize ||
-          lastResultsSize.width !== currentWidth ||
-          lastResultsSize.height !== resultsHeight
-        ) {
-          await rw.setSize(new LogicalSize(currentWidth, resultsHeight));
-          if (requestId !== latestResultsRequestId) return;
-          lastResultsSize = { width: currentWidth, height: resultsHeight };
-        }
-
-        // Position results below main
-        const logicalMainPos = mainPos.toLogical(sf);
-        const logicalH = mainSize.toLogical(sf).height;
-        const nextPosition = {
-          x: logicalMainPos.x,
-          y: logicalMainPos.y + logicalH + RESULTS_GAP,
-        };
-        if (
-          !lastResultsPosition ||
-          lastResultsPosition.x !== nextPosition.x ||
-          lastResultsPosition.y !== nextPosition.y
-        ) {
-          await rw.setPosition(new LogicalPosition(nextPosition.x, nextPosition.y));
-          if (requestId !== latestResultsRequestId) return;
-          lastResultsPosition = nextPosition;
-        }
-
-        // Show if main is visible
-        if (mainVisible) {
-          if (!(await rw.isVisible())) {
-            await rw.show();
-            void api.setWindowNoActivate();
-          }
-        }
-      });
-
-      // Listen for result-clicked from results window
-      listen<number>("result-clicked", async (event) => {
-        setSelected(event.payload);
-        const launched = await activateSelected();
-        if (launched) void win.hide();
-      });
-
-      listen<ResultsRenderDonePayload>("results-render-done", (event) => {
-        perfMarkRenderDone(event.payload.requestId);
-      });
-
-      // Listen for result-double-clicked from results window
-      listen<number>("result-double-clicked", (event) => {
-        setSelected(event.payload);
-      });
+    if (label === "main" && config?.general.auto_hide_on_focus_lost) {
+      registerAutoHideOnFocusLost?.();
     }
 
     if (label === "settings") {
@@ -281,6 +323,16 @@ const App: Component = () => {
           })();
         }, 500);
       });
+    }
+  });
+
+  onCleanup(() => {
+    for (const unlisten of unlistenFns) {
+      try {
+        unlisten();
+      } catch (e) {
+        console.warn("Failed to cleanup listener:", e);
+      }
     }
   });
 

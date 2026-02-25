@@ -163,7 +163,7 @@ impl HistoryStore {
             .map(|(path, entry)| (path.as_str(), entry.last_launched))
             .collect();
 
-        entries.sort_by(|a, b| b.1.cmp(&a.1));
+        entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
         entries.truncate(self.max_history_display);
         entries.into_iter().map(|(path, _)| path).collect()
     }
@@ -389,6 +389,30 @@ mod tests {
         assert_eq!(recent.len(), 2);
         assert_eq!(recent[0], "C:\\app_new.lnk");
         assert_eq!(recent[1], "C:\\app_old.lnk");
+    }
+
+    #[test]
+    fn recent_launches_same_timestamp_sorted_by_path() {
+        let mut store = fresh_store();
+        store.data.global.insert(
+            "C:\\zeta.lnk".to_string(),
+            GlobalEntry {
+                launch_count: 1,
+                last_launched: 2000,
+            },
+        );
+        store.data.global.insert(
+            "C:\\alpha.lnk".to_string(),
+            GlobalEntry {
+                launch_count: 1,
+                last_launched: 2000,
+            },
+        );
+
+        let recent = store.recent_launches();
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0], "C:\\alpha.lnk");
+        assert_eq!(recent[1], "C:\\zeta.lnk");
     }
 
     #[test]

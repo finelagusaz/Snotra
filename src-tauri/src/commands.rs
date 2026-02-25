@@ -1,6 +1,8 @@
 use std::path::Path;
-use std::sync::atomic::Ordering;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
+use serde_json::json;
 use snotra_core::config::Config;
 use snotra_core::folder;
 use snotra_core::search::{HistoryBoostConfig, SearchMode};
@@ -31,10 +33,46 @@ pub struct BootstrapPayload {
     pub indexing: bool,
 }
 
-fn ensure_results_window(app: &AppHandle) -> tauri::Result<()> {
+fn trace_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        let Ok(v) = std::env::var("SNOTRA_TRACE") else {
+            return false;
+        };
+        matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
+fn trace_command(event: &str, data: serde_json::Value) {
+    if !trace_enabled() {
+        return;
+    }
+    static TRACE_SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = TRACE_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    let ts_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    eprintln!(
+        "[trace] {}",
+        json!({
+            "seq": seq,
+            "ts_ms": ts_ms,
+            "event": event,
+            "data": data,
+        })
+    );
+}
+
+pub(crate) fn ensure_results_window(app: &AppHandle) -> tauri::Result<()> {
     if app.get_webview_window("results").is_some() {
+        trace_command("cmd:ensure_results_window:exists", json!({}));
         return Ok(());
     }
+    trace_command("cmd:ensure_results_window:create", json!({}));
     WebviewWindowBuilder::new(app, "results", WebviewUrl::App(Default::default()))
         .title("")
         .inner_size(600.0, 300.0)
@@ -49,10 +87,12 @@ fn ensure_results_window(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-fn ensure_about_window(app: &AppHandle) -> tauri::Result<()> {
+pub(crate) fn ensure_about_window(app: &AppHandle) -> tauri::Result<()> {
     if app.get_webview_window("about").is_some() {
+        trace_command("cmd:ensure_about_window:exists", json!({}));
         return Ok(());
     }
+    trace_command("cmd:ensure_about_window:create", json!({}));
     let about_window = WebviewWindowBuilder::new(app, "about", WebviewUrl::App(Default::default()))
         .title("Snotra について")
         .inner_size(400.0, 300.0)
@@ -74,8 +114,10 @@ fn ensure_about_window(app: &AppHandle) -> tauri::Result<()> {
 
 pub fn ensure_settings_window(app: &AppHandle) -> tauri::Result<()> {
     if app.get_webview_window("settings").is_some() {
+        trace_command("cmd:ensure_settings_window:exists", json!({}));
         return Ok(());
     }
+    trace_command("cmd:ensure_settings_window:create", json!({}));
     let settings_window = WebviewWindowBuilder::new(app, "settings", WebviewUrl::App(Default::default()))
         .title("Snotra 設定")
         .inner_size(760.0, 560.0)
@@ -120,26 +162,41 @@ fn ensure_icon_cache_loaded_if_enabled(state: &State<AppState>, icons: &State<Ic
 
 #[tauri::command]
 pub fn search(query: String, state: State<AppState>) -> Vec<SearchResult> {
+    trace_command("cmd:search:start", json!({ "query_len": query.chars().count() }));
     let config = state.config.lock().unwrap();
     let mut engine = state.engine.lock().unwrap();
     let history = state.history.lock().unwrap();
     let mode: SearchMode = config.search.normal_mode.into();
     let history_boost_config: HistoryBoostConfig = (&config.search).into();
-    engine.search_with_history_boost(
+    let results = engine.search_with_history_boost(
         &query,
         config.appearance.max_results,
         &history,
         mode,
         history_boost_config,
-    )
+    );
+    trace_command(
+        "cmd:search:ok",
+        json!({
+            "query_len": query.chars().count(),
+            "result_count": results.len(),
+        }),
+    );
+    results
 }
 
 #[tauri::command]
 pub fn get_history_results(state: State<AppState>) -> Vec<SearchResult> {
+    trace_command("cmd:get_history_results:start", json!({}));
     let config = state.config.lock().unwrap();
     let engine = state.engine.lock().unwrap();
     let history = state.history.lock().unwrap();
-    engine.recent_history(&history, config.appearance.max_history_display)
+    let results = engine.recent_history(&history, config.appearance.max_history_display);
+    trace_command(
+        "cmd:get_history_results:ok",
+        json!({ "result_count": results.len() }),
+    );
+    results
 }
 
 #[tauri::command]
@@ -189,17 +246,32 @@ pub fn launch_item_with_state(path: &str, query: &str, state: &AppState) {
 
 #[tauri::command]
 pub fn list_folder(dir: String, filter: String, state: State<AppState>) -> Vec<SearchResult> {
+    trace_command(
+        "cmd:list_folder:start",
+        json!({
+            "dir": dir,
+            "filter_len": filter.chars().count(),
+        }),
+    );
     let config = state.config.lock().unwrap();
     let history = state.history.lock().unwrap();
     let mode: SearchMode = config.search.folder_mode.into();
-    folder::list_folder(
+    let results = folder::list_folder(
         Path::new(&dir),
         &filter,
         mode,
         config.search.show_hidden_system,
         &history,
         config.appearance.max_results,
-    )
+    );
+    trace_command(
+        "cmd:list_folder:ok",
+        json!({
+            "dir": dir,
+            "result_count": results.len(),
+        }),
+    );
+    results
 }
 
 #[tauri::command]
@@ -309,15 +381,24 @@ pub fn get_config(state: State<AppState>) -> Config {
 
 #[tauri::command]
 pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), String> {
+    trace_command("cmd:open_settings:start", json!({}));
     if state.indexing.load(Ordering::SeqCst) {
+        trace_command("cmd:open_settings:noop_indexing", json!({}));
         return Ok(());
     }
 
-    ensure_settings_window(&app).map_err(|e| e.to_string())?;
+    if let Err(e) = ensure_settings_window(&app) {
+        let msg = e.to_string();
+        trace_command("cmd:open_settings:error", json!({ "error": msg }));
+        return Err(msg);
+    }
     if let Some(w) = app.get_webview_window("settings") {
         let _ = app.emit("settings-shown", ());
         let _ = w.show();
         let _ = w.set_focus();
+        trace_command("cmd:open_settings:ok", json!({ "window_found": true }));
+    } else {
+        trace_command("cmd:open_settings:ok", json!({ "window_found": false }));
     }
     Ok(())
 }
@@ -486,10 +567,18 @@ pub fn record_folder_expansion(path: String, state: State<AppState>) {
 
 #[tauri::command]
 pub fn open_about(app: AppHandle) -> Result<(), String> {
-    ensure_about_window(&app).map_err(|e| e.to_string())?;
+    trace_command("cmd:open_about:start", json!({}));
+    if let Err(e) = ensure_about_window(&app) {
+        let msg = e.to_string();
+        trace_command("cmd:open_about:error", json!({ "error": msg }));
+        return Err(msg);
+    }
     if let Some(w) = app.get_webview_window("about") {
         let _ = w.show();
         let _ = w.set_focus();
+        trace_command("cmd:open_about:ok", json!({ "window_found": true }));
+    } else {
+        trace_command("cmd:open_about:ok", json!({ "window_found": false }));
     }
     Ok(())
 }
@@ -508,22 +597,83 @@ pub fn get_bootstrap_payload(state: State<AppState>) -> BootstrapPayload {
 
 #[tauri::command]
 pub fn ensure_window(label: String, app: AppHandle) -> Result<bool, String> {
+    trace_command("cmd:ensure_window:start", json!({ "label": label.as_str() }));
     match label.as_str() {
         "results" => {
             let existed = app.get_webview_window("results").is_some();
-            ensure_results_window(&app).map_err(|e| e.to_string())?;
+            if let Err(e) = ensure_results_window(&app) {
+                let msg = e.to_string();
+                trace_command(
+                    "cmd:ensure_window:error",
+                    json!({
+                        "label": "results",
+                        "error": msg,
+                    }),
+                );
+                return Err(msg);
+            }
+            trace_command(
+                "cmd:ensure_window:ok",
+                json!({
+                    "label": "results",
+                    "created": !existed,
+                }),
+            );
             Ok(!existed)
         }
         "about" => {
             let existed = app.get_webview_window("about").is_some();
-            ensure_about_window(&app).map_err(|e| e.to_string())?;
+            if let Err(e) = ensure_about_window(&app) {
+                let msg = e.to_string();
+                trace_command(
+                    "cmd:ensure_window:error",
+                    json!({
+                        "label": "about",
+                        "error": msg,
+                    }),
+                );
+                return Err(msg);
+            }
+            trace_command(
+                "cmd:ensure_window:ok",
+                json!({
+                    "label": "about",
+                    "created": !existed,
+                }),
+            );
             Ok(!existed)
         }
         "settings" => {
             let existed = app.get_webview_window("settings").is_some();
-            ensure_settings_window(&app).map_err(|e| e.to_string())?;
+            if let Err(e) = ensure_settings_window(&app) {
+                let msg = e.to_string();
+                trace_command(
+                    "cmd:ensure_window:error",
+                    json!({
+                        "label": "settings",
+                        "error": msg,
+                    }),
+                );
+                return Err(msg);
+            }
+            trace_command(
+                "cmd:ensure_window:ok",
+                json!({
+                    "label": "settings",
+                    "created": !existed,
+                }),
+            );
             Ok(!existed)
         }
-        _ => Err("unsupported_window_label".to_string()),
+        _ => {
+            trace_command(
+                "cmd:ensure_window:error",
+                json!({
+                    "label": label,
+                    "error": "unsupported_window_label",
+                }),
+            );
+            Err("unsupported_window_label".to_string())
+        }
     }
 }

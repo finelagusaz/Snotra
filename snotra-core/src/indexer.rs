@@ -125,7 +125,7 @@ fn is_visible_metadata(meta: &Metadata) -> bool {
     !hidden && !system
 }
 
-fn normalize_entry_key(path: &str) -> String {
+pub fn normalize_entry_key(path: &str) -> String {
     let trimmed = path.trim();
     let mut normalized = String::with_capacity(trimmed.len());
     for ch in trimmed.chars() {

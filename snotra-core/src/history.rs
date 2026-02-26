@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::binfmt::{deserialize_bincode_with_header, deserialize_with_header, serialize_with_header};
 use crate::config::Config;
+use crate::indexer::normalize_entry_key;
 use crate::query::normalize_query;
 
 const HISTORY_MAGIC: [u8; 4] = *b"HIST";
@@ -91,7 +92,8 @@ impl HistoryStore {
             .unwrap_or_default()
             .as_secs();
 
-        let entry = self.data.global.entry(path.to_string()).or_default();
+        let norm_path = normalize_entry_key(path);
+        let entry = self.data.global.entry(norm_path.clone()).or_default();
         entry.launch_count = entry.launch_count.saturating_add(1);
         entry.last_launched = now;
 
@@ -102,7 +104,7 @@ impl HistoryStore {
                 .query
                 .entry(norm_query.into_owned())
                 .or_default()
-                .entry(path.to_string())
+                .entry(norm_path)
                 .or_insert(0) += 1;
         }
 
@@ -120,19 +122,19 @@ impl HistoryStore {
     pub fn global_count(&self, path: &str) -> u32 {
         self.data
             .global
-            .get(path)
+            .get(&normalize_entry_key(path))
             .map(|e| e.launch_count)
             .unwrap_or(0)
     }
 
     pub fn last_launched(&self, path: &str) -> Option<u64> {
-        self.data.global.get(path).map(|e| e.last_launched)
+        self.data.global.get(&normalize_entry_key(path)).map(|e| e.last_launched)
     }
 
     pub fn get_global_stats(&self, path: &str) -> (u32, u64) {
         self.data
             .global
-            .get(path)
+            .get(&normalize_entry_key(path))
             .map(|e| (e.launch_count, e.last_launched))
             .unwrap_or((0, 0))
     }
@@ -146,7 +148,7 @@ impl HistoryStore {
         self.data
             .query
             .get(normalized_query)
-            .and_then(|m| m.get(path))
+            .and_then(|m| m.get(&normalize_entry_key(path)))
             .copied()
             .unwrap_or(0)
     }
@@ -172,7 +174,7 @@ impl HistoryStore {
         *self
             .data
             .folder_expansion
-            .entry(folder_path.to_string())
+            .entry(normalize_entry_key(folder_path))
             .or_insert(0) += 1;
         self.dirty_count += 1;
     }
@@ -180,7 +182,7 @@ impl HistoryStore {
     pub fn folder_expansion_count(&self, folder_path: &str) -> u32 {
         self.data
             .folder_expansion
-            .get(folder_path)
+            .get(&normalize_entry_key(folder_path))
             .copied()
             .unwrap_or(0)
     }

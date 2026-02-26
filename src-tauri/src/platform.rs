@@ -17,7 +17,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     PostThreadMessageW, RegisterClassExW, SetForegroundWindow, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
     TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, TranslateMessage,
     WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_HOTKEY, WM_LBUTTONUP,
-    WM_NULL, WM_RBUTTONUP, WNDCLASSEXW,
+    GetMessageTime, WM_NULL, WM_RBUTTONUP, WNDCLASSEXW,
 };
 use windows::core::{PCWSTR, w};
 
@@ -192,10 +192,13 @@ fn platform_thread_loop(
         };
 
         let mut indexing_in_progress = false;
-        // Tracks whether WM_RBUTTONUP was just handled, so the immediately following
-        // WM_CONTEXTMENU (sent by some Shell environments for the same click) can be
-        // suppressed to avoid showing the context menu twice.
-        let mut rbuttonup_handled = false;
+        // Timestamp (GetMessageTime) of the last WM_RBUTTONUP we processed.
+        // Used to suppress the WM_CONTEXTMENU that some Shell environments deliver
+        // immediately after WM_RBUTTONUP for the same right-click.
+        // A bool flag is insufficient because Windows 11 does NOT send WM_CONTEXTMENU
+        // for mouse right-clicks, so the flag would stay set and later suppress
+        // keyboard-triggered WM_CONTEXTMENU (Shift+F10 / Application key).
+        let mut last_rbuttonup_msg_time: i32 = 0;
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -210,7 +213,7 @@ fn platform_thread_loop(
                         msg.lParam,
                         &app_handle,
                         indexing_in_progress,
-                        &mut rbuttonup_handled,
+                        &mut last_rbuttonup_msg_time,
                     );
                 }
                 WM_COMMAND => {
@@ -345,7 +348,7 @@ fn handle_tray_message(
     lparam: LPARAM,
     app_handle: &AppHandle,
     indexing: bool,
-    rbuttonup_handled: &mut bool,
+    last_rbuttonup_msg_time: &mut i32,
 ) {
     let event = (lparam.0 & 0xFFFF) as u32;
     match event {
@@ -355,19 +358,26 @@ fn handle_tray_message(
             }
         }
         x if x == WM_RBUTTONUP => {
-            *rbuttonup_handled = true;
+            // Record the message timestamp so WM_CONTEXTMENU can detect whether it
+            // was triggered by the same click (duplicate) or by a keyboard shortcut.
+            *last_rbuttonup_msg_time = unsafe { GetMessageTime() };
             if let Some(tray) = tray.as_ref() {
                 tray.show_context_menu(hwnd, indexing);
             }
         }
         x if x == WM_CONTEXTMENU => {
-            if *rbuttonup_handled {
-                // WM_RBUTTONUP already handled this click; clear the flag and skip.
-                // Some Shell environments deliver both messages for a single right-click.
-                *rbuttonup_handled = false;
-            } else {
-                // Keyboard-triggered (Shift+F10 / Application key): WM_RBUTTONUP is not
-                // sent in this path, so WM_CONTEXTMENU is the only notification.
+            // Some Shell environments deliver both WM_RBUTTONUP and WM_CONTEXTMENU for
+            // a single right-click.  When the messages belong to the same click they
+            // arrive within a few milliseconds of each other; we use a 500 ms threshold
+            // to distinguish that case from a keyboard-triggered context menu request
+            // (Shift+F10 / Application key), which can arrive any time after the last
+            // right-click.
+            //
+            // A bool flag is NOT sufficient here: Windows 11 does not send
+            // WM_CONTEXTMENU for mouse right-clicks, so a flag set by WM_RBUTTONUP
+            // would never be cleared and would permanently suppress keyboard requests.
+            let elapsed = unsafe { GetMessageTime() }.wrapping_sub(*last_rbuttonup_msg_time);
+            if elapsed > 500 {
                 if let Some(tray) = tray.as_ref() {
                     tray.show_context_menu(hwnd, indexing);
                 }

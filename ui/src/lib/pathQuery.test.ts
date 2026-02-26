@@ -46,4 +46,14 @@ describe("parsePathQuery", () => {
   it("normalizes yen-sign separators", () => {
     expect(parsePathQuery("C:¥Windows")).toEqual({ dir: "C:\\", filter: "Windows" });
   });
+
+  it("uppercases lowercase drive letter", () => {
+    expect(parsePathQuery("c:")).toEqual({ dir: "C:\\", filter: "" });
+    expect(parsePathQuery("c:\\")).toEqual({ dir: "C:\\", filter: "" });
+    expect(parsePathQuery("c:\\Windows")).toEqual({ dir: "C:\\", filter: "Windows" });
+    expect(parsePathQuery("c:\\Windows\\System32")).toEqual({
+      dir: "C:\\Windows\\",
+      filter: "System32",
+    });
+  });
 });

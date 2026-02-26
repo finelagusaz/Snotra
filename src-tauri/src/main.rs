@@ -22,7 +22,7 @@ use tauri::{AppHandle, Emitter, Listener, Manager};
 
 use crate::icon::IconCacheState;
 
-use crate::platform::{PlatformBridge, PlatformCommand};
+use crate::platform::{PlatformBridge, PlatformBridgePending, PlatformCommand};
 use crate::state::AppState;
 
 const ALT_RELEASE_POLL_MS: u64 = 10;
@@ -269,16 +269,17 @@ fn main() {
                 }
             }
 
+            // Spawn platform thread early to parallelize Win32 init with WebView creation.
+            // Tray is NOT created here; SetTrayVisible is sent after full setup (SPEC §7.5).
+            let platform_pending = PlatformBridge::begin(app_handle.clone(), hotkey_config);
+
             // Pre-create secondary windows for stability.
             ensure_window_with_timing(&app_handle, "results", commands::ensure_results_window)?;
             ensure_window_with_timing(&app_handle, "about", commands::ensure_about_window)?;
             ensure_window_with_timing(&app_handle, "settings", commands::ensure_settings_window)?;
 
-            // Start platform thread (hotkey, tray, IME)
-            let platform = PlatformBridge::start(app_handle.clone(), hotkey_config, show_tray);
-
-            // Store platform bridge for later use
-            if let Some(bridge) = platform {
+            // Win32 init finishes in a few ms; by the time windows are created it is already done.
+            if let Some(bridge) = platform_pending.and_then(PlatformBridgePending::wait) {
                 app_handle.manage(Mutex::new(bridge));
             }
 
@@ -296,6 +297,16 @@ fn main() {
             let hotkey_generation = Arc::new(AtomicU64::new(0));
             let hotkey_generation_for_listener = hotkey_generation.clone();
             app_handle.listen("hotkey-pressed", move |_| {
+                // Ignore the hotkey while the settings window is visible: the user may be
+                // pressing the current hotkey combination to configure a new one, and
+                // Win32 RegisterHotKey fires before the DOM keydown handler can intercept it.
+                if handle_for_hotkey
+                    .get_webview_window("settings")
+                    .and_then(|w| w.is_visible().ok())
+                    .unwrap_or(false)
+                {
+                    return;
+                }
                 let current_gen = hotkey_generation_for_listener.fetch_add(1, Ordering::SeqCst) + 1;
                 if let Some(w) = handle_for_hotkey.get_webview_window("main") {
                     let visible = w.is_visible().unwrap_or(false);
@@ -323,6 +334,15 @@ fn main() {
                     }
                 }
             });
+
+            // hotkey-pressed listener is now registered; activate hotkey on platform thread.
+            // Registering the hotkey only after the listener is ready ensures no event
+            // is emitted before there is a receiver to handle it.
+            if let Some(bridge) = app_handle.try_state::<Mutex<PlatformBridge>>()
+                && let Ok(b) = bridge.lock()
+            {
+                b.send_command(PlatformCommand::RegisterInitialHotkey);
+            }
 
             // Listen for open-settings event from tray
             let handle_for_settings = app_handle.clone();
@@ -356,6 +376,17 @@ fn main() {
                 }
                 handle_for_exit.exit(0);
             });
+
+            // All windows pre-created and all listeners registered; now safe to show tray.
+            // Showing tray before this point would allow right-click menu actions before
+            // the windows and listeners are ready (SPEC §7.5 / §9).
+            if show_tray {
+                if let Some(bridge) = app_handle.try_state::<Mutex<PlatformBridge>>()
+                    && let Ok(b) = bridge.lock()
+                {
+                    b.send_command(PlatformCommand::SetTrayVisible(true));
+                }
+            }
 
             // Show window on startup if configured
             if show_on_startup {

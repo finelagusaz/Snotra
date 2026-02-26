@@ -34,6 +34,7 @@ Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-
 - テーマは CSS カスタムプロパティで動的に切替
 - 検索結果ウィンドウの同期は `results-sync` イベント1本で扱い、`results-updated` / `results-count-changed` を新規実装で使わない
 - `launch_item` は `LaunchResult(status/code/message)` を返す契約で扱い、失敗通知の自動クリアは単一タイマーを再利用して競合を防ぐ
+- 起動時にスレッドを並列 spawn する場合、そのスレッドが発火するイベントに依存する機能（ホットキー・トレイ等）はスレッド init フェーズで有効化せず、main 側でリスナー/ウィンドウ準備が整った後にコマンド（`RegisterInitialHotkey` / `SetTrayVisible`）で有効化する。「有効化 ≥ リスナー登録」を不変条件として保つことで起動中のイベント破棄を防ぐ
 
 ### 参照先
 

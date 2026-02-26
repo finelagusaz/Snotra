@@ -6,7 +6,12 @@ export type PathQuery = {
 const DRIVE_ROOT_RE = /^[A-Za-z]:\\?$/;
 
 function normalizePathInput(input: string): string {
-  return input.trim().replace(/[\/¥]/g, "\\");
+  const s = input.trim().replace(/[\/¥]/g, "\\");
+  // Normalize drive letter to uppercase: "c:\..." → "C:\..."
+  if (s.length >= 2 && /^[a-z]:/.test(s)) {
+    return s[0].toUpperCase() + s.slice(1);
+  }
+  return s;
 }
 
 export function parsePathQuery(input: string): PathQuery | null {

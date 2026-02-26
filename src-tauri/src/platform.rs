@@ -17,7 +17,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     PostThreadMessageW, RegisterClassExW, SetForegroundWindow, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
     TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, TranslateMessage,
     WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_HOTKEY, WM_LBUTTONUP,
-    WM_NULL, WM_RBUTTONUP, WNDCLASSEXW,
+    GetMessageTime, WM_NULL, WM_RBUTTONUP, WNDCLASSEXW,
 };
 use windows::core::{PCWSTR, w};
 
@@ -43,6 +43,16 @@ unsafe extern "system" fn platform_default_wnd_proc(
             let _ = PostThreadMessageW(GetCurrentThreadId(), WM_TRAY_ICON, wparam, lparam);
             return LRESULT(0);
         }
+        // Keyboard-triggered context menu (Shift+F10 / Application key on tray icon focus)
+        // is delivered as direct WM_CONTEXTMENU to this window proc, NOT through uCallbackMessage.
+        // Re-post as WM_TRAY_ICON with NOTIFYICON_VERSION_4 lParam format so the message loop
+        // can route it through handle_tray_message.
+        // lParam format: LOWORD = event (WM_CONTEXTMENU), HIWORD = icon ID (1)
+        if msg == WM_CONTEXTMENU {
+            let synthesized = LPARAM(((1_isize) << 16) | (WM_CONTEXTMENU as isize));
+            let _ = PostThreadMessageW(GetCurrentThreadId(), WM_TRAY_ICON, wparam, synthesized);
+            return LRESULT(0);
+        }
         windows::Win32::UI::WindowsAndMessaging::DefWindowProcW(hwnd, msg, wparam, lparam)
     }
 }
@@ -55,7 +65,29 @@ pub enum PlatformCommand {
     SetTrayVisible(bool),
     SetIndexing(bool),
     TurnOffIme(usize),
+    /// Register the initial hotkey. Sent by main after the hotkey-pressed listener
+    /// is ready so that no hotkey event is dropped before there is a receiver.
+    RegisterInitialHotkey,
     Exit,
+}
+
+pub struct PlatformBridgePending {
+    command_tx: Sender<PlatformCommand>,
+    thread_id_rx: Receiver<u32>,
+}
+
+impl PlatformBridgePending {
+    /// Blocks until the platform thread signals its Win32 init is complete.
+    pub fn wait(self) -> Option<PlatformBridge> {
+        let thread_id = self.thread_id_rx.recv().ok()?;
+        if thread_id == 0 {
+            return None;
+        }
+        Some(PlatformBridge {
+            command_tx: self.command_tx,
+            thread_id,
+        })
+    }
 }
 
 pub struct PlatformBridge {
@@ -64,11 +96,13 @@ pub struct PlatformBridge {
 }
 
 impl PlatformBridge {
-    pub fn start(
+    /// Non-blocking: spawns the platform thread and returns a pending handle.
+    /// The tray icon is NOT created during init; call SetTrayVisible(true) after
+    /// all windows and event listeners are ready.
+    pub fn begin(
         app_handle: AppHandle,
         initial_hotkey: HotkeyConfig,
-        show_tray_icon: bool,
-    ) -> Option<Self> {
+    ) -> Option<PlatformBridgePending> {
         let (command_tx, command_rx) = mpsc::channel();
         let (thread_id_tx, thread_id_rx) = mpsc::channel();
 
@@ -78,21 +112,14 @@ impl PlatformBridge {
                 platform_thread_loop(
                     app_handle,
                     initial_hotkey,
-                    show_tray_icon,
+                    false, // tray starts hidden; main sends SetTrayVisible after full setup
                     command_rx,
                     thread_id_tx,
                 );
             })
             .ok()?;
 
-        let thread_id = thread_id_rx.recv().ok()?;
-        if thread_id == 0 {
-            return None;
-        }
-        Some(Self {
-            command_tx,
-            thread_id,
-        })
+        Some(PlatformBridgePending { command_tx, thread_id_rx })
     }
 
     pub fn send_command(&self, command: PlatformCommand) {
@@ -164,10 +191,9 @@ fn platform_thread_loop(
 
         let _ = thread_id_tx.send(thread_id);
 
+        // Hotkey registration is deferred: main sends RegisterInitialHotkey after
+        // the hotkey-pressed listener is ready, preventing events from being dropped.
         let mut current_hotkey = initial_hotkey;
-        if !hotkey::register(&current_hotkey) {
-            let _ = app_handle.emit("platform-event", "initial-hotkey-failed");
-        }
 
         let mut tray = if show_tray_icon {
             Some(TrayIcon::create(hwnd))
@@ -176,6 +202,13 @@ fn platform_thread_loop(
         };
 
         let mut indexing_in_progress = false;
+        // Timestamp (GetMessageTime) of the last WM_RBUTTONUP we processed.
+        // Used to suppress the WM_CONTEXTMENU that some Shell environments deliver
+        // immediately after WM_RBUTTONUP for the same right-click.
+        // A bool flag is insufficient because Windows 11 does NOT send WM_CONTEXTMENU
+        // for mouse right-clicks, so the flag would stay set and later suppress
+        // keyboard-triggered WM_CONTEXTMENU (Shift+F10 / Application key).
+        let mut last_rbuttonup_msg_time: i32 = 0;
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -190,6 +223,7 @@ fn platform_thread_loop(
                         msg.lParam,
                         &app_handle,
                         indexing_in_progress,
+                        &mut last_rbuttonup_msg_time,
                     );
                 }
                 WM_COMMAND => {
@@ -202,6 +236,7 @@ fn platform_thread_loop(
                         &mut tray,
                         hwnd,
                         &mut indexing_in_progress,
+                        &app_handle,
                     );
                 }
                 _ => {
@@ -221,6 +256,7 @@ fn process_commands(
     tray: &mut Option<TrayIcon>,
     hwnd: HWND,
     indexing_in_progress: &mut bool,
+    app_handle: &AppHandle,
 ) {
     while let Ok(command) = command_rx.try_recv() {
         match command {
@@ -256,6 +292,11 @@ fn process_commands(
                 let hwnd = windows::Win32::Foundation::HWND(hwnd_raw as *mut core::ffi::c_void);
                 if !hwnd.is_invalid() {
                     ime::turn_off_ime(hwnd);
+                }
+            }
+            PlatformCommand::RegisterInitialHotkey => {
+                if !hotkey::register(current_hotkey) {
+                    let _ = app_handle.emit("platform-event", "initial-hotkey-failed");
                 }
             }
             PlatformCommand::Exit => unsafe {
@@ -317,6 +358,7 @@ fn handle_tray_message(
     lparam: LPARAM,
     app_handle: &AppHandle,
     indexing: bool,
+    last_rbuttonup_msg_time: &mut i32,
 ) {
     let event = (lparam.0 & 0xFFFF) as u32;
     match event {
@@ -325,18 +367,31 @@ fn handle_tray_message(
                 tray.show_recent_history_menu(hwnd, app_handle);
             }
         }
-        x if x == WM_CONTEXTMENU => {
+        x if x == WM_RBUTTONUP => {
+            // Record the message timestamp so WM_CONTEXTMENU can detect whether it
+            // was triggered by the same click (duplicate) or by a keyboard shortcut.
+            *last_rbuttonup_msg_time = unsafe { GetMessageTime() };
             if let Some(tray) = tray.as_ref() {
                 tray.show_context_menu(hwnd, indexing);
             }
         }
-        x if x == WM_RBUTTONUP => {
-            // Known: some environments deliver both WM_RBUTTONUP and WM_CONTEXTMENU
-            // for a single right-click, causing show_context_menu to be called twice
-            // (double menu). Accepted risk: rare in practice and distinguishing
-            // programmatic from user-initiated context menus is non-trivial.
-            if let Some(tray) = tray.as_ref() {
-                tray.show_context_menu(hwnd, indexing);
+        x if x == WM_CONTEXTMENU => {
+            // Some Shell environments deliver both WM_RBUTTONUP and WM_CONTEXTMENU for
+            // a single right-click.  When the messages belong to the same click they
+            // arrive within a few milliseconds of each other; we use a 500 ms threshold
+            // to distinguish that case from a keyboard-triggered context menu request
+            // (Shift+F10 / Application key), which can arrive any time after the last
+            // right-click.
+            //
+            // A bool flag is NOT sufficient here: Windows 11 does not send
+            // WM_CONTEXTMENU for mouse right-clicks, so a flag set by WM_RBUTTONUP
+            // would never be cleared and would permanently suppress keyboard requests.
+            let now = unsafe { GetMessageTime() };
+            let elapsed = now.wrapping_sub(*last_rbuttonup_msg_time);
+            if elapsed > 500 {
+                if let Some(tray) = tray.as_ref() {
+                    tray.show_context_menu(hwnd, indexing);
+                }
             }
         }
         _ => {}

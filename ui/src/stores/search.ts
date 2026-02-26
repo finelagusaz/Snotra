@@ -6,6 +6,7 @@ import { findCommand, filterCommands, type SlashCommand } from "../lib/commands"
 import { perfStartSearch, perfMarkSearchDone, perfCancelSearch } from "../lib/perf";
 import { parsePathQuery } from "../lib/pathQuery";
 import { trace } from "../lib/trace";
+import type { ResultsPresentationReason } from "../lib/searchEvents";
 
 const DEBOUNCE_MS = 30;
 
@@ -14,8 +15,11 @@ const [results, setResults] = createSignal<SearchResult[]>([]);
 const [selected, setSelected] = createSignal(0);
 const [indexing, setIndexing] = createSignal(false);
 const [commandMatches, setCommandMatches] = createSignal<SlashCommand[]>([]);
+const [launching, setLaunching] = createSignal(false);
+const [launchNotice, setLaunchNotice] = createSignal<string | null>(null);
 
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+let launchNoticeTimer: ReturnType<typeof setTimeout> | undefined;
 let refreshInFlight: Promise<void> | undefined;
 let latestRequestId = 0;
 let activationInFlight = false;
@@ -26,9 +30,44 @@ function clampSelectedIndex(index: number, len: number): number {
   return Math.min(Math.max(index, 0), len - 1);
 }
 
-function emitResults(items: SearchResult[], selectedIndex: number, requestId: number) {
-  emit("results-updated", { results: items, selected: selectedIndex, requestId });
-  emit("results-count-changed", { count: items.length, requestId });
+function emitResults(
+  items: SearchResult[],
+  selectedIndex: number,
+  generation: number,
+  options?: {
+    shouldShow?: boolean;
+    reason?: ResultsPresentationReason;
+  },
+) {
+  emit("results-sync", {
+    generation,
+    results: items,
+    selected: selectedIndex,
+    shouldShow: options?.shouldShow ?? items.length > 0,
+    reason: options?.reason ?? "query",
+  });
+}
+
+function clearLaunchNotice() {
+  if (launchNoticeTimer !== undefined) {
+    clearTimeout(launchNoticeTimer);
+    launchNoticeTimer = undefined;
+  }
+  if (launchNotice() !== null) {
+    setLaunchNotice(null);
+  }
+}
+
+function setLaunchNoticeWithAutoClear(message: string) {
+  if (launchNoticeTimer !== undefined) {
+    clearTimeout(launchNoticeTimer);
+    launchNoticeTimer = undefined;
+  }
+  setLaunchNotice(message);
+  launchNoticeTimer = setTimeout(() => {
+    launchNoticeTimer = undefined;
+    setLaunchNotice(null);
+  }, 2400);
 }
 
 function commandToResult(cmd: SlashCommand): SearchResult {
@@ -47,7 +86,7 @@ function showCommandResults(input: string) {
   const requestId = ++latestRequestId;
   setResults(items);
   setSelected(0);
-  emitResults(items, 0, requestId);
+  emitResults(items, 0, requestId, { reason: "command", shouldShow: items.length > 0 });
 }
 
 function clearCommandModeStateAndEmit() {
@@ -56,7 +95,7 @@ function clearCommandModeStateAndEmit() {
   setCommandMatches([]);
   setResults([]);
   setSelected(0);
-  emitResults([], 0, requestId);
+  emitResults([], 0, requestId, { reason: "command", shouldShow: false });
 }
 
 function debouncedRefresh() {
@@ -103,7 +142,7 @@ async function refreshResults() {
     setSelected(0);
     trace("search:refresh:done", { requestId, branch: "slash_r_history", count: items.length });
     perfMarkSearchDone(requestId, items.length);
-    emitResults(items, 0, requestId);
+    emitResults(items, 0, requestId, { reason: "query", shouldShow: items.length > 0 });
     return;
   }
   if (!fs && trimmed.startsWith("/")) {
@@ -114,7 +153,7 @@ async function refreshResults() {
     setResults(items);
     setSelected(0);
     trace("search:refresh:done", { requestId, branch: "slash_suggestions", count: items.length });
-    emitResults(items, 0, requestId);
+    emitResults(items, 0, requestId, { reason: "command", shouldShow: items.length > 0 });
     return;
   }
   const pathQuery = fs ? null : parsePathQuery(q);
@@ -132,7 +171,7 @@ async function refreshResults() {
     setSelected(0);
     trace("search:refresh:done", { requestId, branch: "indexing_guard", count: 0 });
     perfMarkSearchDone(requestId, 0);
-    emitResults([], 0, requestId);
+    emitResults([], 0, requestId, { reason: "reset", shouldShow: false });
     return;
   }
 
@@ -179,7 +218,10 @@ async function refreshResults() {
     selected: nextSelected,
   });
   perfMarkSearchDone(requestId, items.length);
-  emitResults(items, nextSelected, requestId);
+  emitResults(items, nextSelected, requestId, {
+    reason: "query",
+    shouldShow: items.length > 0,
+  });
 }
 
 // Auto-refresh when query changes (non-folder mode)
@@ -247,7 +289,10 @@ function emitSelectionUpdate() {
   if (nextSelected !== selected()) {
     setSelected(nextSelected);
   }
-  emitResults(results(), nextSelected, latestRequestId);
+  emitResults(results(), nextSelected, latestRequestId, {
+    reason: "selection",
+    shouldShow: results().length > 0,
+  });
 }
 
 function moveSelectionUp() {
@@ -294,7 +339,10 @@ function exitFolderExpansion(): boolean {
   setFolderState(null);    // setQuery より先に null にする
   setFolderFilter("");
   setQuery(fs.savedQuery);
-  emitResults(fs.savedResults, fs.savedSelected, requestId);
+  emitResults(fs.savedResults, fs.savedSelected, requestId, {
+    reason: "query",
+    shouldShow: fs.savedResults.length > 0,
+  });
   return true;
 }
 
@@ -359,12 +407,6 @@ function resolveActivationIndex(items: SearchResult[], preferredPath?: string): 
   return clampSelectedIndex(selected(), items.length);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
 async function resolveActivationTarget(
   preferredPath?: string,
 ): Promise<{ idx: number; result: SearchResult } | null> {
@@ -402,40 +444,40 @@ function consumeCommandSelection(index: number): boolean {
 async function launchAndReset(result: SearchResult): Promise<boolean> {
   if (result.isError) return false;
 
+  clearLaunchNotice();
+  setLaunching(true);
   trace("search:launch:start", { path: result.path, query: query() });
-  // Fix C: launchItem の前に count=0 を先行 emit し、flushPendingRefresh が
-  // 発生させた count>0 ハンドラを rw.show() 到達前に stale 化する
-  emitResults([], 0, ++latestRequestId);
-  let launchError: unknown;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      trace("search:launch:attempt", { attempt: attempt + 1, path: result.path });
-      await api.launchItem(result.path, query());
-      launchError = undefined;
-      break;
-    } catch (e) {
-      launchError = e;
-      trace("search:launch:retry", { attempt: attempt + 1, error: String(e) });
-      if (attempt < 2) {
-        await sleep(120);
+  try {
+    // launch 開始時に results を明示的に隠す
+    emitResults([], 0, ++latestRequestId, { reason: "launch", shouldShow: false });
+    const launchResult = await api.launchItem(result.path, query());
+    if (launchResult.status !== "ok") {
+      trace("search:launch:error", {
+        path: result.path,
+        status: launchResult.status,
+        code: launchResult.code,
+        message: launchResult.message,
+      });
+      const detail = launchResult.message ? ` (${launchResult.message})` : "";
+      if (launchResult.status === "timeout") {
+        setLaunchNoticeWithAutoClear(`起動に時間がかかっています${detail}`);
+      } else {
+        setLaunchNoticeWithAutoClear(`起動に失敗しました${detail}`);
       }
+      void runRefresh();
+      return false;
     }
-  }
-  if (launchError !== undefined) {
-    trace("search:launch:error", { path: result.path, error: String(launchError) });
-    console.error("Failed to launch item:", launchError);
-    void runRefresh();
-    return false;
-  }
 
-  setFolderState(null);
-  setFolderFilter("");
-  setResults([]);
-  setSelected(0);
-  emitResults([], 0, ++latestRequestId);
-  trace("search:launch:done", { path: result.path });
-
-  return true;
+    setFolderState(null);
+    setFolderFilter("");
+    setResults([]);
+    setSelected(0);
+    emitResults([], 0, ++latestRequestId, { reason: "launch", shouldShow: false });
+    trace("search:launch:done", { path: result.path, code: launchResult.code });
+    return true;
+  } finally {
+    setLaunching(false);
+  }
 }
 
 async function activateSelected(): Promise<boolean> {
@@ -476,6 +518,8 @@ async function activateSelectedByPath(path: string): Promise<boolean> {
 
 function resetForShow() {
   trace("search:reset_for_show", { query: query() });
+  setLaunching(false);
+  clearLaunchNotice();
   setFolderState(null);
   if (query() !== "") {
     suppressNextQueryEffectRefresh = true;
@@ -527,4 +571,7 @@ export {
   indexing,
   initIndexingState,
   emitSelectionUpdate,
+  launching,
+  launchNotice,
+  clearLaunchNotice,
 };

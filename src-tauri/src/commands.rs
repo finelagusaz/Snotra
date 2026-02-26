@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use serde_json::json;
 use snotra_core::config::Config;
@@ -10,6 +11,7 @@ use snotra_core::ui_types::SearchResult;
 use snotra_core::window_data::{self, WindowPlacement, WindowSize};
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, State};
 use tauri::{WebviewUrl, WebviewWindowBuilder};
+use tokio::time::timeout;
 
 use crate::icon::{IconCache, IconCacheState};
 use crate::indexing;
@@ -32,6 +34,54 @@ pub struct BootstrapPayload {
     pub general: BootstrapGeneralConfig,
     pub indexing: bool,
 }
+
+#[derive(serde::Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LaunchStatus {
+    Ok,
+    Failed,
+    Timeout,
+}
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchResult {
+    pub status: LaunchStatus,
+    pub code: i32,
+    pub message: Option<String>,
+}
+
+impl LaunchResult {
+    fn ok(code: i32) -> Self {
+        Self {
+            status: LaunchStatus::Ok,
+            code,
+            message: None,
+        }
+    }
+
+    fn failed(code: i32, message: impl Into<String>) -> Self {
+        Self {
+            status: LaunchStatus::Failed,
+            code,
+            message: Some(message.into()),
+        }
+    }
+
+    fn timeout(timeout_ms: u64) -> Self {
+        Self {
+            status: LaunchStatus::Timeout,
+            code: -1,
+            message: Some(format!("launch_timeout_{}ms", timeout_ms)),
+        }
+    }
+
+    fn is_ok(&self) -> bool {
+        self.status == LaunchStatus::Ok
+    }
+}
+
+const LAUNCH_TIMEOUT_MS: u64 = 4_000;
 
 fn trace_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -128,13 +178,14 @@ pub fn ensure_settings_window(app: &AppHandle) -> tauri::Result<()> {
         return Ok(());
     }
     trace_command("cmd:ensure_settings_window:create", json!({}));
-    let settings_window = WebviewWindowBuilder::new(app, "settings", WebviewUrl::App(Default::default()))
-        .title("Snotra 設定")
-        .inner_size(760.0, 560.0)
-        .min_inner_size(520.0, 360.0)
-        .resizable(true)
-        .visible(false)
-        .build()?;
+    let settings_window =
+        WebviewWindowBuilder::new(app, "settings", WebviewUrl::App(Default::default()))
+            .title("Snotra 設定")
+            .inner_size(760.0, 560.0)
+            .min_inner_size(520.0, 360.0)
+            .resizable(true)
+            .visible(false)
+            .build()?;
 
     // Keep window alive to avoid repeated WebView initialization.
     let handle_for_close = app.clone();
@@ -156,7 +207,8 @@ pub fn ensure_settings_window(app: &AppHandle) -> tauri::Result<()> {
             }
             // First-run: start index build when settings is dismissed.
             let state = handle_for_close.state::<AppState>();
-            if state.indexing.load(Ordering::SeqCst) && !state.index_build_started.load(Ordering::SeqCst)
+            if state.indexing.load(Ordering::SeqCst)
+                && !state.index_build_started.load(Ordering::SeqCst)
             {
                 indexing::start_index_build(&handle_for_close);
             }
@@ -182,7 +234,10 @@ fn ensure_icon_cache_loaded_if_enabled(state: &State<AppState>, icons: &State<Ic
 
 #[tauri::command]
 pub fn search(query: String, state: State<AppState>) -> Vec<SearchResult> {
-    trace_command("cmd:search:start", json!({ "query_len": query.chars().count() }));
+    trace_command(
+        "cmd:search:start",
+        json!({ "query_len": query.chars().count() }),
+    );
     let config = state.config.lock().unwrap();
     let mut engine = state.engine.lock().unwrap();
     let history = state.history.lock().unwrap();
@@ -220,47 +275,110 @@ pub fn get_history_results(state: State<AppState>) -> Vec<SearchResult> {
 }
 
 #[tauri::command]
-pub fn launch_item(path: String, query: String, state: State<AppState>) {
-    launch_item_with_state(&path, &query, &state);
+pub async fn launch_item(
+    path: String,
+    query: String,
+    app: AppHandle,
+) -> Result<LaunchResult, String> {
+    trace_command(
+        "cmd:launch_item:start",
+        json!({
+            "path": path,
+            "query_len": query.chars().count(),
+            "timeout_ms": LAUNCH_TIMEOUT_MS,
+        }),
+    );
+    let launch_path = path.clone();
+    let join = tauri::async_runtime::spawn_blocking(move || launch_item_core(&launch_path));
+    let result = match timeout(Duration::from_millis(LAUNCH_TIMEOUT_MS), join).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => LaunchResult::failed(-1, format!("launch_worker_join_error: {e}")),
+        Err(_) => LaunchResult::timeout(LAUNCH_TIMEOUT_MS),
+    };
+
+    if result.is_ok() {
+        let state = app.state::<AppState>();
+        let mut history = state.history.lock().unwrap();
+        history.record_launch(&path, &query);
+        history.save_if_dirty(5);
+    }
+
+    trace_command(
+        "cmd:launch_item:done",
+        json!({
+            "path": path,
+            "status": result.status,
+            "code": result.code,
+            "message": result.message,
+        }),
+    );
+    Ok(result)
 }
 
-pub fn launch_item_with_state(path: &str, query: &str, state: &AppState) {
-    {
+pub fn launch_item_with_state(path: &str, query: &str, state: &AppState) -> LaunchResult {
+    let result = launch_item_core(path);
+    if result.is_ok() {
         let mut history = state.history.lock().unwrap();
         history.record_launch(path, query);
         history.save_if_dirty(5);
     }
+    result
+}
+
+fn shell_execute_error_message(code: i32) -> &'static str {
+    match code {
+        0 => "out_of_memory_or_resources",
+        2 => "file_not_found",
+        3 => "path_not_found",
+        5 => "access_denied",
+        8 => "out_of_memory",
+        26 => "sharing_violation",
+        27 => "association_incomplete",
+        28 => "dde_timeout",
+        29 => "dde_failed",
+        30 => "dde_busy",
+        31 => "no_association",
+        32 => "dll_not_found",
+        _ => "shell_execute_failed",
+    }
+}
+
+fn launch_item_core(path: &str) -> LaunchResult {
     #[cfg(windows)]
     {
-        use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+        use windows::Win32::System::Com::{
+            COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize,
+        };
         use windows::Win32::UI::Shell::ShellExecuteW;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
         use windows::core::HSTRING;
-        let path = path.to_string();
-        // ShellExecuteW はフォルダ・画像などのシェル拡張に COM STA を要求する。
-        // Tauri コマンドハンドラのスレッドは COM 状態が保証されないため、
-        // 新規 OS スレッドで CoInitializeEx → ShellExecuteW → CoUninitialize を実行する。
-        // JoinHandle をドロップするとスレッドはデタッチされ fire-and-forget で実行継続する。
-        std::thread::spawn(move || {
-            unsafe {
-                // is_ok() は S_OK(0) と S_FALSE(1) の両方で true を返す。
-                // S_OK: 新規初期化 → CoUninitialize 必要
-                // S_FALSE: 同モデルで既に初期化済み（参照カウント増加）→ CoUninitialize 必要
-                // RPC_E_CHANGED_MODE: 異なる COM モデル → is_ok() == false → CoUninitialize 不要
-                let com_ok = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
-                ShellExecuteW(
-                    None,
-                    &HSTRING::from("open"),
-                    &HSTRING::from(path.as_str()),
-                    None,
-                    None,
-                    SW_SHOWNORMAL,
-                );
-                if com_ok {
-                    CoUninitialize();
-                }
+        unsafe {
+            // S_OK / S_FALSE の場合に CoUninitialize が必要。
+            let com_ok = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+            let raw_code = ShellExecuteW(
+                None,
+                &HSTRING::from("open"),
+                &HSTRING::from(path),
+                None,
+                None,
+                SW_SHOWNORMAL,
+            )
+            .0 as isize;
+            if com_ok {
+                CoUninitialize();
             }
-        });
+            if raw_code > 32 {
+                return LaunchResult::ok(raw_code as i32);
+            }
+            let code = raw_code as i32;
+            return LaunchResult::failed(code, shell_execute_error_message(code));
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        LaunchResult::failed(-1, "unsupported_platform")
     }
 }
 
@@ -625,7 +743,10 @@ pub fn get_bootstrap_payload(state: State<AppState>) -> BootstrapPayload {
 
 #[tauri::command]
 pub fn ensure_window(label: String, app: AppHandle) -> Result<bool, String> {
-    trace_command("cmd:ensure_window:start", json!({ "label": label.as_str() }));
+    trace_command(
+        "cmd:ensure_window:start",
+        json!({ "label": label.as_str() }),
+    );
     match label.as_str() {
         "results" => {
             let existed = app.get_webview_window("results").is_some();

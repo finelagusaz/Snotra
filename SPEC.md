@@ -124,6 +124,18 @@
 - 検索ボックスが空のときは候補を表示しない
 - 直近履歴は `/r` コマンドで明示的に表示する（§14.2 参照）
 
+### 3.7 結果表示同期契約（results-sync）
+
+- 検索結果の表示責務は `results-sync` イベント1本に統一する
+- 旧イベント（`results-updated` / `results-count-changed`）は使用しない
+- `results-sync` の payload は以下を持つ
+  - `generation`: リクエスト世代番号。受信側は古い世代を破棄する
+  - `results`: 表示候補配列
+  - `selected`: 選択インデックス
+  - `shouldShow`: 結果ウィンドウを表示すべきか
+  - `reason`: 送信理由（`query` / `command` / `selection` / `reset` / `launch`）
+- 表示制御は `shouldShow` を唯一の真実源（single source of truth）として扱う
+
 ## 4. 履歴・優先度システム
 
 ### 4.1 記録内容
@@ -137,6 +149,7 @@
 - バイナリ形式で `%APPDATA%\Snotra\` に保存
 - グローバル起動回数の上位N件のみ保存（Nは設定値）
 - クエリ単位履歴は上位N件に含まれる項目のみ保持
+- `last_launched` は Unix epoch ミリ秒（ms）で保持する
 
 ## 5. フォルダ展開機能
 
@@ -392,6 +405,18 @@ stateDiagram-v2
 - `.lnk` はショートカット本体を `ShellExecute` で起動
 - ターゲット直接実行への変換は行わない
 
+### 13.2 起動API契約（launch_item）
+
+- `launch_item` は非同期コマンドとして実装し、OS実行結果を待ってフロントへ DTO を返す
+- 戻り値は `LaunchResult { status, code, message }`
+  - `status`: `ok` / `failed` / `timeout`
+  - `code`: OS戻りコード（timeout 時は `-1`）
+  - `message`: 追加情報（任意）
+- 起動成功（`status = ok`）時のみ履歴を記録する
+- OS呼び出しはタイムアウト付きで待機する（既定 4000ms）
+- フロントは実行中状態（ローディング）を表示し、失敗・タイムアウト時は通知を表示する
+- 通知の自動クリアは単一タイマーで管理し、連続失敗時は前回タイマーを clear して再設定する
+
 ## 14. スラッシュコマンド
 
 ### 14.1 概要
@@ -437,3 +462,13 @@ stateDiagram-v2
 - 通常検索応答: 30ms未満（キー入力から候補更新）
 - Tauri IPC オーバーヘッド: 通常 2ms 未満
 - 初回再構築・手動再構築は進捗表示を持つ
+
+## 16. データ互換・マイグレーション
+
+### 16.1 履歴フォーマット互換
+
+- `history.bin` は version ヘッダで管理し、現行は V3（`last_launched` ms）とする
+- 読み込みは `V3 -> V2 -> V1` の順でフォールバックする
+- V1/V2（秒単位）を読み込んだ場合は、正規化・統合処理より先に `ms` へ変換する
+  - 変換規則: `last_launched = last_launched.saturating_mul(1000)`
+- キー正規化（大文字小文字統合）時の衝突解決で `max(last_launched)` を使うため、単位混在のまま統合してはならない

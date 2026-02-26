@@ -4,14 +4,17 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::binfmt::{deserialize_bincode_with_header, deserialize_with_header, serialize_with_header};
+use crate::binfmt::{
+    deserialize_bincode_with_header, deserialize_with_header, serialize_with_header,
+};
 use crate::config::Config;
 use crate::indexer::normalize_entry_key;
 use crate::query::normalize_query;
 
 const HISTORY_MAGIC: [u8; 4] = *b"HIST";
-const HISTORY_VERSION: u32 = 2;        // postcard (現行)
-const HISTORY_VERSION_LEGACY: u32 = 1; // bincode (旧)
+const HISTORY_VERSION: u32 = 3; // postcard (現行, ms timestamp)
+const HISTORY_VERSION_POSTCARD_V2: u32 = 2; // postcard (旧, sec timestamp)
+const HISTORY_VERSION_LEGACY: u32 = 1; // bincode (旧, sec timestamp)
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GlobalEntry {
@@ -36,26 +39,17 @@ pub struct HistoryStore {
 
 impl HistoryStore {
     pub fn load(top_n: usize, max_history_display: usize) -> Self {
-        let data = if let Some(path) = Self::data_path() {
+        let (loaded_version, loaded_data) = if let Some(path) = Self::data_path() {
             if let Ok(bytes) = fs::read(&path) {
-                // Try current format (postcard V2) first
-                deserialize_with_header(&bytes, HISTORY_MAGIC, HISTORY_VERSION)
-                    // Fall back to legacy format (bincode V1)
-                    .or_else(|| {
-                        deserialize_bincode_with_header(
-                            &bytes,
-                            HISTORY_MAGIC,
-                            HISTORY_VERSION_LEGACY,
-                        )
-                    })
-                    .unwrap_or_default()
+                load_data_with_version(&bytes).unwrap_or((HISTORY_VERSION, HistoryData::default()))
             } else {
-                HistoryData::default()
+                (HISTORY_VERSION, HistoryData::default())
             }
         } else {
-            HistoryData::default()
+            (HISTORY_VERSION, HistoryData::default())
         };
 
+        let data = migrate_time_unit_if_legacy(loaded_version, loaded_data);
         let data = migrate_normalize_keys(data);
 
         Self {
@@ -92,7 +86,7 @@ impl HistoryStore {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs();
+            .as_millis() as u64;
 
         let norm_path = normalize_entry_key(path);
         let entry = self.data.global.entry(norm_path.clone()).or_default();
@@ -130,7 +124,10 @@ impl HistoryStore {
     }
 
     pub fn last_launched(&self, path: &str) -> Option<u64> {
-        self.data.global.get(&normalize_entry_key(path)).map(|e| e.last_launched)
+        self.data
+            .global
+            .get(&normalize_entry_key(path))
+            .map(|e| e.last_launched)
     }
 
     pub fn get_global_stats(&self, path: &str) -> (u32, u64) {
@@ -216,6 +213,28 @@ impl HistoryStore {
     }
 }
 
+fn load_data_with_version(bytes: &[u8]) -> Option<(u32, HistoryData)> {
+    deserialize_with_header(bytes, HISTORY_MAGIC, HISTORY_VERSION)
+        .map(|data| (HISTORY_VERSION, data))
+        .or_else(|| {
+            deserialize_with_header(bytes, HISTORY_MAGIC, HISTORY_VERSION_POSTCARD_V2)
+                .map(|data| (HISTORY_VERSION_POSTCARD_V2, data))
+        })
+        .or_else(|| {
+            deserialize_bincode_with_header(bytes, HISTORY_MAGIC, HISTORY_VERSION_LEGACY)
+                .map(|data| (HISTORY_VERSION_LEGACY, data))
+        })
+}
+
+fn migrate_time_unit_if_legacy(version: u32, mut data: HistoryData) -> HistoryData {
+    if version < HISTORY_VERSION {
+        for entry in data.global.values_mut() {
+            entry.last_launched = entry.last_launched.saturating_mul(1000);
+        }
+    }
+    data
+}
+
 /// デシリアライズ直後に全パスキーを正規化するマイグレーション。
 /// 旧バージョンで大文字・小文字が混在したキーを統一し、衝突時は加算/max で統合する。
 /// normalize_entry_key は冪等なので、正規化済みデータへの再適用も安全。
@@ -246,7 +265,11 @@ fn migrate_normalize_keys(data: HistoryData) -> HistoryData {
         *new_folder.entry(norm).or_insert(0) += count;
     }
 
-    HistoryData { global: new_global, query: new_query, folder_expansion: new_folder }
+    HistoryData {
+        global: new_global,
+        query: new_query,
+        folder_expansion: new_folder,
+    }
 }
 
 #[cfg(test)]
@@ -277,18 +300,19 @@ mod tests {
     fn record_launch_increments_global_count() {
         let mut store = fresh_store();
         let path = "C:\\fake\\app.lnk";
+        let key = normalize_entry_key(path);
         assert_eq!(store.global_count(path), 0);
         store
             .data
             .global
-            .entry(path.to_string())
+            .entry(key.clone())
             .or_default()
             .launch_count += 1;
         assert_eq!(store.global_count(path), 1);
         store
             .data
             .global
-            .entry(path.to_string())
+            .entry(key)
             .or_default()
             .launch_count += 1;
         assert_eq!(store.global_count(path), 2);
@@ -299,20 +323,22 @@ mod tests {
         let mut store = fresh_store();
         let path = "C:\\fake\\notepad.lnk";
         let query = "note";
+        let path_key = normalize_entry_key(path);
+        let query_key = normalize_query(query).into_owned();
 
         // Simulate record_launch logic without save()
         store
             .data
             .global
-            .entry(path.to_string())
+            .entry(path_key.clone())
             .or_default()
             .launch_count += 1;
         *store
             .data
             .query
-            .entry(query.to_string())
+            .entry(query_key.clone())
             .or_default()
-            .entry(path.to_string())
+            .entry(path_key.clone())
             .or_insert(0) += 1;
 
         assert_eq!(store.query_count(query, path), 1);
@@ -320,9 +346,9 @@ mod tests {
         *store
             .data
             .query
-            .entry(query.to_string())
+            .entry(query_key)
             .or_default()
-            .entry(path.to_string())
+            .entry(path_key)
             .or_insert(0) += 1;
         assert_eq!(store.query_count(query, path), 2);
     }
@@ -331,13 +357,14 @@ mod tests {
     fn query_count_normalized_to_lowercase() {
         let mut store = fresh_store();
         let path = "C:\\fake\\vs.lnk";
+        let path_key = normalize_entry_key(path);
         let norm = "vs";
         *store
             .data
             .query
             .entry(norm.to_string())
             .or_default()
-            .entry(path.to_string())
+            .entry(path_key)
             .or_insert(0) += 1;
 
         assert_eq!(store.query_count("vs", path), 1);
@@ -348,13 +375,14 @@ mod tests {
     fn query_count_normalizes_whitespace() {
         let mut store = fresh_store();
         let path = "C:\\fake\\app.lnk";
+        let path_key = normalize_entry_key(path);
         let key = normalize_query("foo bar");
         *store
             .data
             .query
             .entry(key.into_owned())
             .or_default()
-            .entry(path.to_string())
+            .entry(path_key)
             .or_insert(0) += 1;
 
         assert_eq!(store.query_count("  foo   bar  ", path), 1);
@@ -364,12 +392,13 @@ mod tests {
     fn empty_query_not_tracked_in_query_map() {
         let mut store = fresh_store();
         let path = "C:\\fake\\app.lnk";
+        let path_key = normalize_entry_key(path);
 
         // Simulate record_launch with empty query
         store
             .data
             .global
-            .entry(path.to_string())
+            .entry(path_key.clone())
             .or_default()
             .launch_count += 1;
         let norm_query = "".trim().to_lowercase();
@@ -379,7 +408,7 @@ mod tests {
                 .query
                 .entry(norm_query)
                 .or_default()
-                .entry(path.to_string())
+                .entry(path_key)
                 .or_insert(0) += 1;
         }
 
@@ -391,11 +420,12 @@ mod tests {
     fn record_folder_expansion_increments_count() {
         let mut store = fresh_store();
         let folder = "C:\\Projects";
+        let folder_key = normalize_entry_key(folder);
         assert_eq!(store.folder_expansion_count(folder), 0);
         *store
             .data
             .folder_expansion
-            .entry(folder.to_string())
+            .entry(folder_key)
             .or_insert(0) += 1;
         assert_eq!(store.folder_expansion_count(folder), 1);
     }
@@ -469,18 +499,63 @@ mod tests {
         let bytes = serialize_bincode_with_header(HISTORY_MAGIC, HISTORY_VERSION_LEGACY, &data)
             .expect("serialize bincode v1");
 
-        // Should be unreadable by current postcard V2 deserializer
-        let v2_attempt: Option<HistoryData> =
+        // Should be unreadable by current postcard V3 deserializer
+        let v3_attempt: Option<HistoryData> =
             deserialize_with_header(&bytes, HISTORY_MAGIC, HISTORY_VERSION);
-        assert!(v2_attempt.is_none());
+        assert!(v3_attempt.is_none());
 
-        // Should be readable via bincode V1 fallback
-        let migrated: HistoryData =
-            deserialize_bincode_with_header(&bytes, HISTORY_MAGIC, HISTORY_VERSION_LEGACY)
-                .expect("bincode v1 fallback");
+        let (version, loaded) = load_data_with_version(&bytes).expect("load v1 fallback");
+        assert_eq!(version, HISTORY_VERSION_LEGACY);
+        let migrated = migrate_time_unit_if_legacy(version, loaded);
         assert_eq!(migrated.global["C:\\legacy.lnk"].launch_count, 7);
+        assert_eq!(
+            migrated.global["C:\\legacy.lnk"].last_launched,
+            1_600_000_000_000
+        );
         assert_eq!(migrated.query["leg"]["C:\\legacy.lnk"], 4);
         assert_eq!(migrated.folder_expansion["C:\\LegacyFolder"], 3);
+    }
+
+    #[test]
+    fn postcard_v2_seconds_migrates_to_milliseconds() {
+        let mut data = HistoryData::default();
+        data.global.insert(
+            "C:\\v2.lnk".to_string(),
+            GlobalEntry {
+                launch_count: 2,
+                last_launched: 1_700_000_000,
+            },
+        );
+        let bytes = serialize_with_header(HISTORY_MAGIC, HISTORY_VERSION_POSTCARD_V2, &data)
+            .expect("serialize v2 postcard");
+        let (version, loaded) = load_data_with_version(&bytes).expect("load v2 postcard");
+        assert_eq!(version, HISTORY_VERSION_POSTCARD_V2);
+        let migrated = migrate_time_unit_if_legacy(version, loaded);
+        assert_eq!(
+            migrated.global["C:\\v2.lnk"].last_launched,
+            1_700_000_000_000
+        );
+    }
+
+    #[test]
+    fn postcard_v3_not_reconverted() {
+        let mut data = HistoryData::default();
+        data.global.insert(
+            "C:\\v3.lnk".to_string(),
+            GlobalEntry {
+                launch_count: 2,
+                last_launched: 1_700_000_000_000,
+            },
+        );
+        let bytes =
+            serialize_with_header(HISTORY_MAGIC, HISTORY_VERSION, &data).expect("serialize v3");
+        let (version, loaded) = load_data_with_version(&bytes).expect("load v3 postcard");
+        assert_eq!(version, HISTORY_VERSION);
+        let migrated = migrate_time_unit_if_legacy(version, loaded);
+        assert_eq!(
+            migrated.global["C:\\v3.lnk"].last_launched,
+            1_700_000_000_000
+        );
     }
 
     #[test]
@@ -550,7 +625,10 @@ mod tests {
         let mut data = HistoryData::default();
         data.global.insert(
             "C:\\FAKE\\APP.LNK".to_string(),
-            GlobalEntry { launch_count: 3, last_launched: 1000 },
+            GlobalEntry {
+                launch_count: 3,
+                last_launched: 1000,
+            },
         );
         let migrated = migrate_normalize_keys(data);
         assert!(migrated.global.contains_key("c:\\fake\\app.lnk"));
@@ -563,11 +641,17 @@ mod tests {
         let mut data = HistoryData::default();
         data.global.insert(
             "C:\\FAKE\\APP.LNK".to_string(),
-            GlobalEntry { launch_count: 3, last_launched: 2000 },
+            GlobalEntry {
+                launch_count: 3,
+                last_launched: 2000,
+            },
         );
         data.global.insert(
             "c:\\fake\\app.lnk".to_string(),
-            GlobalEntry { launch_count: 5, last_launched: 1000 },
+            GlobalEntry {
+                launch_count: 5,
+                last_launched: 1000,
+            },
         );
         let migrated = migrate_normalize_keys(data);
         assert_eq!(migrated.global.len(), 1);
@@ -581,7 +665,10 @@ mod tests {
         let mut data = HistoryData::default();
         data.global.insert(
             "c:\\fake\\app.lnk".to_string(),
-            GlobalEntry { launch_count: 5, last_launched: 1000 },
+            GlobalEntry {
+                launch_count: 5,
+                last_launched: 1000,
+            },
         );
         data.query
             .entry("app".to_string())

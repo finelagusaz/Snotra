@@ -6,8 +6,11 @@
    - 入力デバウンス見直し
    - 古い非同期リクエスト結果の破棄（request id / generation）
    - `show` / `setSize` / `setPosition` などウィンドウ操作の不要呼び出し削減
+   - OS 呼び出し待機を伴う処理（例: `launch_item`）は `timeout` を明示し、UI 側で `launching` と失敗通知を表示して「無反応」に見せない
+   - 失敗通知の自動クリアは単一タイマーで管理し、再通知時は `clearTimeout` してから再設定する
 2. 重複処理を消す（低リスク・高効率）
    - 同一データの二重取得（例: アイコン batch 取得）を責務分離して一本化
+   - 同一状態を複数イベントで配信しない。結果表示は `results-sync`（`generation` + `shouldShow`）の単一契約で同期する
 3. 計算量を下げる（中〜大規模データ向け）
    - 毎回の全件ソートを top-k 抽出へ置換
    - ループ内の再計算（正規化や同一変換）を事前計算へ移動
@@ -24,3 +27,5 @@
 - 計測は **DEV かつ `localStorage.snotra_perf === "1"`** のときのみ有効化する
 - 有効化手順: DevTools で `localStorage.setItem("snotra_perf","1")` → アプリ再起動
 - 無効化手順: `localStorage.removeItem("snotra_perf")` → アプリ再起動
+- Tauri Driver E2E でウィンドウ可視性を判定するとき、`document.visibilityState` は誤判定し得るため性能判定の根拠に使わない。`plugin:window|is_visible` を優先する
+- E2E 全体実行時間はテスト待機タイムアウトの影響を強く受ける。性能評価では、E2E 所要時間だけでなく `perf.ts` の p50/p95 と trace を併用する

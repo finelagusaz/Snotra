@@ -16,6 +16,9 @@ import {
   enterFolderExpansion,
   activateSelected,
   indexing,
+  launching,
+  launchNotice,
+  clearLaunchNotice,
 } from "../stores/search";
 import { hideAllWindows } from "../lib/commands";
 import { perfMarkInput } from "../lib/perf";
@@ -167,6 +170,7 @@ const SearchWindow: Component = () => {
     const value = (e.target as HTMLInputElement).value;
     trace("ui:input", { value, folderMode: folderState() !== null });
     perfMarkInput();
+    clearLaunchNotice();
     if (folderState()) {
       setFolderFilter(value);
     } else {
@@ -192,15 +196,24 @@ const SearchWindow: Component = () => {
         when={!indexing()}
         fallback={<div class="indexing-message" data-tauri-drag-region>インデックス構築中...</div>}
       >
-        <input
-          ref={setInputRef}
-          type="text"
-          class="search-input"
-          placeholder={placeholderText()}
-          value={inputValue()}
-          onInput={handleInput}
-          autofocus
-        />
+        <Show
+          when={!launching() && !launchNotice()}
+          fallback={
+            <div class="indexing-message" data-tauri-drag-region>
+              {launching() ? "起動中..." : launchNotice() ?? ""}
+            </div>
+          }
+        >
+          <input
+            ref={setInputRef}
+            type="text"
+            class="search-input"
+            placeholder={placeholderText()}
+            value={inputValue()}
+            onInput={handleInput}
+            autofocus
+          />
+        </Show>
       </Show>
     </div>
   );

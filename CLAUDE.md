@@ -32,6 +32,8 @@ Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-
 - 履歴/インデックス/アイコン保存は `.tmp` を使った原子的書き込み
 - アイコンは検索時にオンデマンドで抽出し base64 PNG としてフロントエンドに送信、キャッシュは終了時に永続化
 - テーマは CSS カスタムプロパティで動的に切替
+- 検索結果ウィンドウの同期は `results-sync` イベント1本で扱い、`results-updated` / `results-count-changed` を新規実装で使わない
+- `launch_item` は `LaunchResult(status/code/message)` を返す契約で扱い、失敗通知の自動クリアは単一タイマーを再利用して競合を防ぐ
 
 ### 参照先
 
@@ -59,6 +61,7 @@ npm run tauri build              # リリースビルド
 - `e2e/tauri.slash.e2e.ts` は Playwright runner 上で `tauri-driver + selenium-webdriver + edgedriver` を使い、起動入力・`/a`・`/o` の動作を検証する
 - E2E セットアップは `npx tauri build --no-bundle` を使う（`cargo build --release` では `localhost` を向いたバイナリになり、`ERR_CONNECTION_REFUSED` で失敗するケースがある）
 - スラッシュコマンドの実行順（`hide -> /a|/o|/s`）は `ui/src/lib/commands.test.ts` で固定し、順序変更時は必ず更新する
+- Tauri Driver E2E の可視判定は `document.visibilityState` を真実源にしない。`plugin:window|is_visible` を優先して判定する
 
 ## 開発ワークフロー
 
@@ -138,6 +141,7 @@ npm run tauri build              # リリースビルド
 - `snotra-core`（純ロジック層）に UI 表示文字列を持たない。エラー状態の意味は `is_error: true` フラグで伝え、エラーメッセージのような表示文字列は UI 層（`ResultRow.tsx` 等）が決める責務を持つ
 - Win32 / Tauri 固有の注意事項は `src-tauri/CLAUDE.md`、データ永続化の注意は `snotra-core/CLAUDE.md` を参照
 - 修正案が API 境界をまたぐとき、「呼び出し側パッチ」と「API 側で責務を完結させる修正」の両案を比較し、後者を優先する
+- 競合しやすい一時状態（通知・ローディング・遅延処理）を導入する場合は、タイマー/購読のライフサイクルを単一管理し、再実行時に必ず前回ハンドルを破棄する
 
 ## パフォーマンス最適化プレイブック
 

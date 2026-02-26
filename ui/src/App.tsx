@@ -18,14 +18,11 @@ import type { BootstrapPayload, VisualConfig } from "./lib/types";
 import * as api from "./lib/invoke";
 import { perfMarkRenderDone } from "./lib/perf";
 import { trace } from "./lib/trace";
+import type { ResultsSyncPayload } from "./lib/searchEvents";
 
 const RESULTS_GAP = 4;
 const RESULT_ROW_HEIGHT = 30;
 const RESULTS_PADDING = 8;
-type ResultsCountChangedPayload = {
-  count: number;
-  requestId: number;
-};
 type ResultsRenderDonePayload = {
   requestId: number;
 };
@@ -40,7 +37,7 @@ const App: Component = () => {
     let resultsWindowPromise: Promise<WebviewWindow | null> | undefined;
     let lastResultsSize: { width: number; height: number } | undefined;
     let lastResultsPosition: { x: number; y: number } | undefined;
-    let latestResultsRequestId = 0;
+    let latestResultsGeneration = 0;
     let registerAutoHideOnFocusLost: (() => void) | undefined;
 
     const getResultsWindow = async () => {
@@ -125,30 +122,33 @@ const App: Component = () => {
       };
 
       // Wait for all critical listeners to be attached before first reset/show.
-      const [unlistenWindowShown, unlistenResultsCountChanged, unlistenResultClicked, unlistenRenderDone, unlistenResultDoubleClicked, unlistenPlatformEvent] =
+      const [unlistenWindowShown, unlistenResultsSync, unlistenResultClicked, unlistenRenderDone, unlistenResultDoubleClicked, unlistenPlatformEvent] =
         await Promise.all([
           listen("window-shown", () => {
             trace("app:event:window_shown");
             resetForShow();
           }),
-          listen<ResultsCountChangedPayload>("results-count-changed", async (event) => {
-            const { count, requestId } = event.payload;
-            trace("app:event:results_count_changed", {
+          listen<ResultsSyncPayload>("results-sync", async (event) => {
+            const { generation, results, shouldShow, reason } = event.payload;
+            const count = results.length;
+            trace("app:event:results_sync", {
+              generation,
               count,
-              requestId,
-              latestResultsRequestId,
+              shouldShow,
+              reason,
+              latestResultsGeneration,
             });
-            if (requestId < latestResultsRequestId) return;
-            latestResultsRequestId = requestId;
-            const isStale = () => requestId !== latestResultsRequestId;
+            if (generation < latestResultsGeneration) return;
+            latestResultsGeneration = generation;
+            const isStale = () => generation !== latestResultsGeneration;
 
-            if (count === 0) {
+            if (!shouldShow) {
               const rw = await WebviewWindow.getByLabel("results");
               if (!rw || isStale()) return;
               const visible = await rw.isVisible();
               if (isStale()) return;
               if (visible) {
-                trace("app:results_window:hide", { reason: "count_zero", requestId });
+                trace("app:results_window:hide", { reason, generation });
                 await rw.hide();
               }
               return;
@@ -212,7 +212,7 @@ const App: Component = () => {
             const visible = await rw.isVisible();
             if (isStale()) return;
             if (!visible) {
-              trace("app:results_window:show", { requestId, count });
+              trace("app:results_window:show", { generation, count, reason });
               await rw.show();
               if (isStale()) {
                 await rw.hide();
@@ -252,7 +252,7 @@ const App: Component = () => {
 
       unlistenFns.push(
         unlistenWindowShown,
-        unlistenResultsCountChanged,
+        unlistenResultsSync,
         unlistenResultClicked,
         unlistenRenderDone,
         unlistenResultDoubleClicked,

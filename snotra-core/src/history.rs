@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::binfmt::{deserialize_bincode_with_header, deserialize_with_header, serialize_with_header};
 use crate::config::Config;
+use crate::indexer::normalize_entry_key;
 use crate::query::normalize_query;
 
 const HISTORY_MAGIC: [u8; 4] = *b"HIST";
@@ -55,6 +56,8 @@ impl HistoryStore {
             HistoryData::default()
         };
 
+        let data = migrate_normalize_keys(data);
+
         Self {
             data,
             top_n,
@@ -91,7 +94,8 @@ impl HistoryStore {
             .unwrap_or_default()
             .as_secs();
 
-        let entry = self.data.global.entry(path.to_string()).or_default();
+        let norm_path = normalize_entry_key(path);
+        let entry = self.data.global.entry(norm_path.clone()).or_default();
         entry.launch_count = entry.launch_count.saturating_add(1);
         entry.last_launched = now;
 
@@ -102,7 +106,7 @@ impl HistoryStore {
                 .query
                 .entry(norm_query.into_owned())
                 .or_default()
-                .entry(path.to_string())
+                .entry(norm_path)
                 .or_insert(0) += 1;
         }
 
@@ -120,19 +124,19 @@ impl HistoryStore {
     pub fn global_count(&self, path: &str) -> u32 {
         self.data
             .global
-            .get(path)
+            .get(&normalize_entry_key(path))
             .map(|e| e.launch_count)
             .unwrap_or(0)
     }
 
     pub fn last_launched(&self, path: &str) -> Option<u64> {
-        self.data.global.get(path).map(|e| e.last_launched)
+        self.data.global.get(&normalize_entry_key(path)).map(|e| e.last_launched)
     }
 
     pub fn get_global_stats(&self, path: &str) -> (u32, u64) {
         self.data
             .global
-            .get(path)
+            .get(&normalize_entry_key(path))
             .map(|e| (e.launch_count, e.last_launched))
             .unwrap_or((0, 0))
     }
@@ -146,13 +150,9 @@ impl HistoryStore {
         self.data
             .query
             .get(normalized_query)
-            .and_then(|m| m.get(path))
+            .and_then(|m| m.get(&normalize_entry_key(path)))
             .copied()
             .unwrap_or(0)
-    }
-
-    pub fn get_query_stats(&self, normalized_query: &str) -> Option<&FxHashMap<String, u32>> {
-        self.data.query.get(normalized_query)
     }
 
     pub fn recent_launches(&self) -> Vec<&str> {
@@ -172,7 +172,7 @@ impl HistoryStore {
         *self
             .data
             .folder_expansion
-            .entry(folder_path.to_string())
+            .entry(normalize_entry_key(folder_path))
             .or_insert(0) += 1;
         self.dirty_count += 1;
     }
@@ -180,7 +180,7 @@ impl HistoryStore {
     pub fn folder_expansion_count(&self, folder_path: &str) -> u32 {
         self.data
             .folder_expansion
-            .get(folder_path)
+            .get(&normalize_entry_key(folder_path))
             .copied()
             .unwrap_or(0)
     }
@@ -214,6 +214,39 @@ impl HistoryStore {
             self.data.folder_expansion = fentries.into_iter().collect();
         }
     }
+}
+
+/// デシリアライズ直後に全パスキーを正規化するマイグレーション。
+/// 旧バージョンで大文字・小文字が混在したキーを統一し、衝突時は加算/max で統合する。
+/// normalize_entry_key は冪等なので、正規化済みデータへの再適用も安全。
+fn migrate_normalize_keys(data: HistoryData) -> HistoryData {
+    // global: キー正規化。衝突は launch_count 加算、last_launched は max
+    let mut new_global: FxHashMap<String, GlobalEntry> = FxHashMap::default();
+    for (path, entry) in data.global {
+        let norm = normalize_entry_key(&path);
+        let e = new_global.entry(norm).or_default();
+        e.launch_count = e.launch_count.saturating_add(entry.launch_count);
+        e.last_launched = e.last_launched.max(entry.last_launched);
+    }
+
+    // query: outer キー（クエリ）は normalize_query 済みで不変。inner キー（パス）を正規化
+    let mut new_query: FxHashMap<String, FxHashMap<String, u32>> = FxHashMap::default();
+    for (q_key, app_map) in data.query {
+        let new_app_map = new_query.entry(q_key).or_default();
+        for (path, count) in app_map {
+            let norm = normalize_entry_key(&path);
+            *new_app_map.entry(norm).or_insert(0) += count;
+        }
+    }
+
+    // folder_expansion: キー正規化。衝突は加算
+    let mut new_folder: FxHashMap<String, u32> = FxHashMap::default();
+    for (path, count) in data.folder_expansion {
+        let norm = normalize_entry_key(&path);
+        *new_folder.entry(norm).or_insert(0) += count;
+    }
+
+    HistoryData { global: new_global, query: new_query, folder_expansion: new_folder }
 }
 
 #[cfg(test)]
@@ -508,5 +541,69 @@ mod tests {
         assert!(store.data.global.contains_key("C:\\high.lnk"));
         assert!(store.data.global.contains_key("C:\\med.lnk"));
         assert!(!store.data.global.contains_key("C:\\low.lnk"));
+    }
+
+    // --- migrate_normalize_keys テスト ---
+
+    #[test]
+    fn migrate_normalize_keys_lowercases_global_key() {
+        let mut data = HistoryData::default();
+        data.global.insert(
+            "C:\\FAKE\\APP.LNK".to_string(),
+            GlobalEntry { launch_count: 3, last_launched: 1000 },
+        );
+        let migrated = migrate_normalize_keys(data);
+        assert!(migrated.global.contains_key("c:\\fake\\app.lnk"));
+        assert!(!migrated.global.contains_key("C:\\FAKE\\APP.LNK"));
+        assert_eq!(migrated.global["c:\\fake\\app.lnk"].launch_count, 3);
+    }
+
+    #[test]
+    fn migrate_normalize_keys_merges_collisions() {
+        let mut data = HistoryData::default();
+        data.global.insert(
+            "C:\\FAKE\\APP.LNK".to_string(),
+            GlobalEntry { launch_count: 3, last_launched: 2000 },
+        );
+        data.global.insert(
+            "c:\\fake\\app.lnk".to_string(),
+            GlobalEntry { launch_count: 5, last_launched: 1000 },
+        );
+        let migrated = migrate_normalize_keys(data);
+        assert_eq!(migrated.global.len(), 1);
+        let entry = &migrated.global["c:\\fake\\app.lnk"];
+        assert_eq!(entry.launch_count, 8);
+        assert_eq!(entry.last_launched, 2000);
+    }
+
+    #[test]
+    fn migrate_normalize_keys_is_idempotent() {
+        let mut data = HistoryData::default();
+        data.global.insert(
+            "c:\\fake\\app.lnk".to_string(),
+            GlobalEntry { launch_count: 5, last_launched: 1000 },
+        );
+        data.query
+            .entry("app".to_string())
+            .or_default()
+            .insert("c:\\fake\\app.lnk".to_string(), 2);
+        let once = migrate_normalize_keys(data.clone());
+        let twice = migrate_normalize_keys(once.clone());
+        assert_eq!(once.global["c:\\fake\\app.lnk"].launch_count, 5);
+        assert_eq!(twice.global["c:\\fake\\app.lnk"].launch_count, 5);
+        assert_eq!(once.query["app"]["c:\\fake\\app.lnk"], 2);
+        assert_eq!(twice.query["app"]["c:\\fake\\app.lnk"], 2);
+    }
+
+    #[test]
+    fn migrate_normalize_keys_normalizes_query_inner_map() {
+        let mut data = HistoryData::default();
+        let inner = data.query.entry("app".to_string()).or_default();
+        inner.insert("C:\\FAKE\\APP.LNK".to_string(), 3);
+        inner.insert("c:\\fake\\app.lnk".to_string(), 2);
+        let migrated = migrate_normalize_keys(data);
+        let inner = &migrated.query["app"];
+        assert_eq!(inner.len(), 1);
+        assert_eq!(inner["c:\\fake\\app.lnk"], 5);
     }
 }

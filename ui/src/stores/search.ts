@@ -302,6 +302,12 @@ function navigateFolderUp() {
   const fs = folderState();
   if (!fs) return;
 
+  // UNC root: \\server\share (2 parts or fewer) → stop navigating up
+  if (fs.currentDir.startsWith("\\\\")) {
+    const parts = fs.currentDir.replace(/\\+$/, "").slice(2).split("\\").filter((p) => p.length > 0);
+    if (parts.length <= 2) return;
+  }
+
   let parent = fs.currentDir.replace(/\\[^\\]+$/, "");
   if (/^[A-Za-z]:$/.test(parent)) {
     parent += "\\";

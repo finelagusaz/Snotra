@@ -5,7 +5,7 @@ use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32Str};
 
 use crate::config::{SearchConfig, SearchHistoryNormalizationConfig};
 use crate::history::HistoryStore;
-use crate::indexer::AppEntry;
+use crate::indexer::{AppEntry, normalize_entry_key};
 use crate::query::normalize_query;
 use crate::ui_types::SearchResult;
 
@@ -116,8 +116,6 @@ impl SearchEngine {
 
         let has_dot = norm_query.contains('.');
 
-        let query_stats = history.get_query_stats(&norm_query);
-
         // Keep only top `max_results` candidates.
         // `rank_cmp_ranked` defines Better as `Ordering::Less`, so in `BinaryHeap<RankedEntry>`
         // `peek()` points to the current Worst item.
@@ -154,10 +152,8 @@ impl SearchEngine {
 
             if let Some(base_score) = score {
                 let (global_launches, last_launched) = history.get_global_stats(&entry.target_path);
-                let qcount = query_stats
-                    .and_then(|m| m.get(&entry.target_path))
-                    .copied()
-                    .unwrap_or(0) as i64;
+                let qcount =
+                    history.query_count_normalized(&norm_query, &entry.target_path) as i64;
                 
                 let folder_boost = if entry.is_folder {
                     history.folder_expansion_count(&entry.target_path) as i64
@@ -209,11 +205,15 @@ impl SearchEngine {
     }
 
     pub fn recent_history(&self, history: &HistoryStore, max_results: usize) -> Vec<SearchResult> {
-        let path_to_entry: HashMap<&str, &AppEntry> = self
+        // recent_launches() は正規化済みキーを返すため、照合側も normalize_entry_key で揃える
+        // 正規化 String を Vec で先に確保し、HashMap は &str 参照を持つことでアロケーションを節約する
+        let normalized: Vec<(String, &AppEntry)> = self
             .entries
             .iter()
-            .map(|e| (e.target_path.as_str(), e))
+            .map(|e| (normalize_entry_key(&e.target_path), e))
             .collect();
+        let path_to_entry: HashMap<&str, &AppEntry> =
+            normalized.iter().map(|(k, e)| (k.as_str(), *e)).collect();
 
         history
             .recent_launches()
@@ -736,5 +736,58 @@ mod tests {
             HistoryBoostConfig::default(),
         );
         assert_eq!(legacy, explicit);
+    }
+
+    // --- 大文字パス正規化テスト ---
+
+    #[test]
+    fn recent_history_matches_case_insensitive_path() {
+        // 大文字パスで記録した起動履歴が、元ケース AppEntry と照合できる
+        let entries = vec![AppEntry {
+            name: "App".to_string(),
+            target_path: "C:\\Fake\\App.lnk".to_string(),
+            is_folder: false,
+        }];
+        let engine = SearchEngine::new(entries);
+        let mut history = empty_history();
+        history.record_launch("C:\\FAKE\\APP.LNK", "app");
+
+        let results = engine.recent_history(&history, 8);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "App");
+    }
+
+    #[test]
+    fn query_boost_matches_case_insensitive_path() {
+        // 大文字パスで記録したクエリ別履歴がスコアブーストに反映され、
+        // 同スコアの競合エントリより上位に来る
+        let entries = vec![
+            AppEntry {
+                name: "App".to_string(),
+                target_path: "C:\\Fake\\App.lnk".to_string(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "AppX".to_string(),
+                target_path: "C:\\Other\\appx.lnk".to_string(),
+                is_folder: false,
+            },
+        ];
+        let mut engine = SearchEngine::new(entries);
+        let mut history = empty_history();
+        for _ in 0..10 {
+            history.record_launch("C:\\FAKE\\APP.LNK", "app");
+        }
+
+        let results = engine.search_with_history_boost(
+            "app",
+            8,
+            &history,
+            SearchMode::Prefix,
+            HistoryBoostConfig::default(),
+        );
+        assert!(!results.is_empty());
+        // 履歴ブーストにより "App" が "AppX" より上位に来る
+        assert_eq!(results[0].name, "App");
     }
 }

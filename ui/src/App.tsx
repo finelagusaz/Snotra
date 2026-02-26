@@ -109,7 +109,7 @@ const App: Component = () => {
       };
 
       // Wait for all critical listeners to be attached before first reset/show.
-      const [unlistenWindowShown, unlistenResultsCountChanged, unlistenResultClicked, unlistenRenderDone, unlistenResultDoubleClicked] =
+      const [unlistenWindowShown, unlistenResultsCountChanged, unlistenResultClicked, unlistenRenderDone, unlistenResultDoubleClicked, unlistenPlatformEvent] =
         await Promise.all([
           listen("window-shown", () => {
             trace("app:event:window_shown");
@@ -221,6 +221,17 @@ const App: Component = () => {
           listen<number>("result-double-clicked", (event) => {
             setSelected(event.payload);
           }),
+          listen<string>("platform-event", async (event) => {
+            if (event.payload === "initial-hotkey-failed") {
+              trace("app:event:platform_event:initial_hotkey_failed");
+              try {
+                await win.show();
+              } catch (e) {
+                console.warn("platform-event: failed to show window on initial-hotkey-failed:", e);
+              }
+              resetForShow();
+            }
+          }),
         ]);
 
       unlistenFns.push(
@@ -229,6 +240,7 @@ const App: Component = () => {
         unlistenResultClicked,
         unlistenRenderDone,
         unlistenResultDoubleClicked,
+        unlistenPlatformEvent,
       );
 
       if (await win.isVisible()) {

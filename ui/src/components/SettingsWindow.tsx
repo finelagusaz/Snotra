@@ -1,4 +1,5 @@
-import { type Component, Show, onMount } from "solid-js";
+import { type Component, Show, onMount, onCleanup } from "solid-js";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   draft,
   status,
@@ -17,6 +18,16 @@ import SettingsVisual from "./SettingsVisual";
 const SettingsWindow: Component = () => {
   onMount(() => {
     loadDraft();
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        // ホットキー入力中は window-close を抑止（SettingsGeneral で clearHotkey を処理）
+        if (document.activeElement?.classList.contains("hotkey-input")) return;
+        e.preventDefault();
+        void getCurrentWindow().close();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    onCleanup(() => window.removeEventListener("keydown", handler));
   });
 
   return (

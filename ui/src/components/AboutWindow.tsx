@@ -1,10 +1,22 @@
-import { type Component } from "solid-js";
+import { type Component, onMount, onCleanup } from "solid-js";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-shell";
 
 const AboutWindow: Component = () => {
     const rawVersion = import.meta.env.VITE_APP_VERSION || "0.9";
     const version = rawVersion.startsWith("v") ? rawVersion.slice(1) : rawVersion;
     const buildDate = import.meta.env.VITE_APP_BUILD_NUMBER || "20260223";
+
+    onMount(() => {
+        const handler = (e: KeyboardEvent) => {
+            if (e.key === "Escape") {
+                e.preventDefault();
+                void getCurrentWindow().close();
+            }
+        };
+        window.addEventListener("keydown", handler);
+        onCleanup(() => window.removeEventListener("keydown", handler));
+    });
 
     return (
         <div

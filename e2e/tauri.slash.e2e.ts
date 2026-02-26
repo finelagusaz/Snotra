@@ -194,6 +194,29 @@ async function collectWindowStates(driver: WebDriver): Promise<WindowState[]> {
   return states;
 }
 
+async function getMainAlwaysOnTop(driver: WebDriver): Promise<boolean | null> {
+  const switched = await switchToLabel(driver, "main");
+  if (!switched) return null;
+  return driver.executeAsyncScript<boolean>(`
+    const done = arguments[arguments.length - 1];
+    window.__TAURI_INTERNALS__.invoke('plugin:window|is_always_on_top', { label: 'main' })
+      .then(done)
+      .catch(() => done(null));
+  `);
+}
+
+async function waitForHiddenLabel(
+  driver: WebDriver,
+  label: string,
+  timeoutMs: number,
+): Promise<void> {
+  await driver.wait(async () => {
+    const states = await collectWindowStates(driver);
+    const target = states.find((s) => s.label === label);
+    return !target || target.visibility !== "visible";
+  }, timeoutMs);
+}
+
 async function waitForVisibleLabel(
   driver: WebDriver,
   expectedLabel: string,
@@ -312,4 +335,58 @@ test("slash /o switches visible window to settings", async ({ harness }) => {
   expect(
     states.some((state) => state.label === "settings" && state.visibility === "visible"),
   ).toBe(true);
+});
+
+test("/o で main の alwaysOnTop が外れ、settings を ESC で閉じると戻る", async ({ harness }) => {
+  const { driver } = harness;
+
+  // 初期状態: main は alwaysOnTop
+  const initial = await getMainAlwaysOnTop(driver);
+  expect(initial).toBe(true);
+
+  // /o で設定を開く
+  await switchToLabel(driver, "main");
+  const input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/o");
+  await waitForVisibleLabel(driver, "settings", 8_000);
+
+  // settings 表示中: main の alwaysOnTop が false になっている
+  const afterOpen = await getMainAlwaysOnTop(driver);
+  expect(afterOpen).toBe(false);
+
+  // settings を ESC で閉じる
+  await switchToLabel(driver, "settings");
+  await driver.actions().sendKeys(Key.ESCAPE).perform();
+  await waitForHiddenLabel(driver, "settings", 8_000);
+
+  // settings 閉じた後: main の alwaysOnTop が true に戻っている
+  const afterClose = await getMainAlwaysOnTop(driver);
+  expect(afterClose).toBe(true);
+});
+
+test("/a で main の alwaysOnTop が外れ、about を ESC で閉じると戻る", async ({ harness }) => {
+  const { driver } = harness;
+
+  // 初期状態: main は alwaysOnTop
+  const initial = await getMainAlwaysOnTop(driver);
+  expect(initial).toBe(true);
+
+  // /a で about を開く
+  await switchToLabel(driver, "main");
+  const input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/a");
+  await waitForVisibleLabel(driver, "about", 8_000);
+
+  // about 表示中: main の alwaysOnTop が false になっている
+  const afterOpen = await getMainAlwaysOnTop(driver);
+  expect(afterOpen).toBe(false);
+
+  // about を ESC で閉じる
+  await switchToLabel(driver, "about");
+  await driver.actions().sendKeys(Key.ESCAPE).perform();
+  await waitForHiddenLabel(driver, "about", 8_000);
+
+  // about 閉じた後: main の alwaysOnTop が true に戻っている
+  const afterClose = await getMainAlwaysOnTop(driver);
+  expect(afterClose).toBe(true);
 });

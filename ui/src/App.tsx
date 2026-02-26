@@ -97,12 +97,28 @@ const App: Component = () => {
 
       registerAutoHideOnFocusLost = () => {
         let blurTimer: ReturnType<typeof setTimeout> | undefined;
+        let blurCancelled = false;
         win.onFocusChanged(({ payload: focused }) => {
           if (!focused) {
-            blurTimer = setTimeout(() => {
-              void hideMainAndResults();
+            blurCancelled = false;
+            blurTimer = setTimeout(async () => {
+              try {
+                if (blurCancelled) return;
+                const sw = await WebviewWindow.getByLabel("settings");
+                const aw = await WebviewWindow.getByLabel("about");
+                if (blurCancelled) return;
+                const settingsVisible = sw && await sw.isVisible();
+                const aboutVisible = aw && await aw.isVisible();
+                if (blurCancelled) return;
+                if (!settingsVisible && !aboutVisible) {
+                  await hideMainAndResults();
+                }
+              } catch (e) {
+                console.warn("auto-hide focus check failed:", e);
+              }
             }, 100);
           } else {
+            blurCancelled = true;
             clearTimeout(blurTimer);
           }
         });

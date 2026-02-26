@@ -1,6 +1,6 @@
 # Retrospective — 残存リスク解消サイクル
 
-対象フェーズ: 残存リスク調査（research.md）→ 実装計画（plan.md）→ 実装 → レビュー指摘対応
+対象フェーズ: 残存リスク調査（research.md）→ 実装計画（plan.md）→ 実装 → レビュー指摘対応 → テスト失敗対応
 
 ---
 
@@ -24,13 +24,14 @@
 | A | `RETROSPECTIVE.md` | Risk 1 行を削除（既実装のため） |
 | B | `ui/src/stores/settings.ts` | `saveDraft()` catch ブロックに `hotkey_registration_failed` の日本語翻訳を追加 |
 | C | `ui/src/stores/search.ts` | `navigateFolderUp()` に parent が `\\server` になる場合の二重防衛 guard を追加 |
-| D | `src-tauri/src/platform.rs` | `rbuttonup_handled` フラグで WM_RBUTTONUP/WM_CONTEXTMENU の重複を排除 |
+| D | `src-tauri/src/platform.rs` | `GetMessageTime()` 時刻差でマウス起因の重複 WM_CONTEXTMENU を排除。キーボード起因は処理を維持 |
+| E | `ui/src/lib/pathQuery.ts` | `normalizePathInput` でドライブレターを大文字に正規化（`c:\` → `C:\`） |
 
 ---
 
 ## 2. 発見したバグとパターン
 
-### バグ A: 対応 D の初版実装で機能回帰（レビューで検出）
+### バグ A: 対応 D の初版実装で機能回帰（コードレビューで検出）
 
 **根本原因**: 「WM_CONTEXTMENU が二重表示の原因だ」と判断して当該ブランチを削除した。しかし `WM_CONTEXTMENU` は2つの異なる経路を担っていた。
 
@@ -41,7 +42,23 @@
 
 **壊れた不変条件**: トレイアイコンのコンテキストメニューはマウス右クリックとキーボード操作の両方から開けなければならない。
 
-**修正経路**: メッセージループのスコープに `let mut rbuttonup_handled = false` フラグを置き、`handle_tray_message` に渡す。`WM_RBUTTONUP` でフラグを立ててメニューを表示し、`WM_CONTEXTMENU` ではフラグが立っていれば「マウス起因の重複」としてスキップ・フラグをリセット、立っていなければ「キーボード起因」として表示する。
+**修正経路 v1（不十分）**: `rbuttonup_handled` bool フラグを `WM_RBUTTONUP` で立て、`WM_CONTEXTMENU` ではフラグが立っていれば「マウス起因の重複」としてスキップ。
+
+### バグ B: 対応 D の修正版（bool フラグ）がキーボード操作で再び機能しない（実機テストで検出）
+
+**根本原因**: Windows 11 は右クリックで `WM_RBUTTONUP` のみを送り `WM_CONTEXTMENU` を送らない。そのため bool フラグが `WM_RBUTTONUP` で `true` になった後、それをリセットする `WM_CONTEXTMENU` が届かず `true` のまま残る。その後にユーザーがキーボードで操作すると `WM_CONTEXTMENU` が届くが、フラグが `true` なので「マウス起因の重複」と誤判定してスキップされ、メニューが開かない。
+
+**壊れた不変条件**: 同上。
+
+**修正経路 v2（確定）**: `GetMessageTime()` でメッセージキューへの投入時刻差を計算。同一マウスクリックに由来する `WM_RBUTTONUP` と `WM_CONTEXTMENU` は数 ms 以内に届くため 500ms 閾値で確実に区別する。キーボード操作は直前の右クリックから必ず 500ms 以上経つため正しく処理される。OS 間の動作差（Win11: WM_CONTEXTMENU なし、Win10: 両方あり）に依存しない。
+
+### バグ C: `c:\` 入力時に検索結果のドライブレターが小文字になる（実機テストで発見）
+
+**根本原因**: `pathQuery.ts` の `normalizePathInput` がドライブレターをユーザー入力のまま通していた。`c:\` と入力すると `dir: "c:\\"` が生成され、`list_folder` に渡った後の結果に `c:\Windows` と小文字が残る。
+
+**壊れた不変条件**: パスのドライブレターは常に大文字で保持・表示されなければならない（Windows のパス慣習）。
+
+**修正経路**: `normalizePathInput` の末尾で `/^[a-z]:/.test(s)` にマッチした場合のみ `s[0].toUpperCase() + s.slice(1)` を返す。関数入口の一箇所で正規化するため、ドライブルート・深いパス・filter 分割の全ケースが揃う。テストケース（`c:` / `c:\` / `c:\Windows` / `c:\Windows\System32`）を追加し確認。
 
 ---
 
@@ -53,9 +70,15 @@ WM_CONTEXTMENU は「二重表示の余分なブランチ」という面だけ�
 
 **教訓**: コードを削除するとき、そのコードが担う役割（受信できる条件・発火源）を網羅的に列挙してから判断する。「問題の原因になっているパス」を消すだけでは、「問題でない別のパス」も同時に消えることがある。
 
+### 「OS 間の動作差を前提にしない修正を選ぶ」
+
+bool フラグ方式は「`WM_RBUTTONUP` の後には必ず `WM_CONTEXTMENU` が来てフラグをリセットする」という誤った仮定に依存していた。Windows 11 ではその仮定が成り立たない。
+
+**教訓**: Win32 メッセージ処理のロジックが「あるメッセージの後に別のメッセージが必ず来る」ことを前提にする場合、その前提が OS バージョン・環境によって崩れないか確認する。状態を時刻で管理する（`GetMessageTime()`）ほうが OS 差分に依存しない。
+
 ### 「残存リスクのステータスはコードで検証する」
 
-RETROSPECTIVE.md の Risk 1（ホットキー失敗時フォールバック）は「フロント側ハンドラなし・要実装」と記録されていたが、実際には App.tsx に実装済みだった。ドキュメント記載を前提に実装作業に入ると二重実装や誤った優先度判断につながる。
+RETROSPECTIVE.md の Risk 1（ホットキー失敗時フォールバック）は「フロント側ハンドラなし・要実装」と記録されていたが、実際には App.tsx に実装済みだった。
 
 **教訓**: 残存リスクを消化する前に「本当に未対応か」を必ずコードで確認する。ドキュメントの「要実装」はコードの実態を保証しない。
 

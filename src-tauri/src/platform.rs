@@ -43,6 +43,16 @@ unsafe extern "system" fn platform_default_wnd_proc(
             let _ = PostThreadMessageW(GetCurrentThreadId(), WM_TRAY_ICON, wparam, lparam);
             return LRESULT(0);
         }
+        // Keyboard-triggered context menu (Shift+F10 / Application key on tray icon focus)
+        // is delivered as direct WM_CONTEXTMENU to this window proc, NOT through uCallbackMessage.
+        // Re-post as WM_TRAY_ICON with NOTIFYICON_VERSION_4 lParam format so the message loop
+        // can route it through handle_tray_message.
+        // lParam format: LOWORD = event (WM_CONTEXTMENU), HIWORD = icon ID (1)
+        if msg == WM_CONTEXTMENU {
+            let synthesized = LPARAM(((1_isize) << 16) | (WM_CONTEXTMENU as isize));
+            let _ = PostThreadMessageW(GetCurrentThreadId(), WM_TRAY_ICON, wparam, synthesized);
+            return LRESULT(0);
+        }
         windows::Win32::UI::WindowsAndMessaging::DefWindowProcW(hwnd, msg, wparam, lparam)
     }
 }
@@ -376,7 +386,8 @@ fn handle_tray_message(
             // A bool flag is NOT sufficient here: Windows 11 does not send
             // WM_CONTEXTMENU for mouse right-clicks, so a flag set by WM_RBUTTONUP
             // would never be cleared and would permanently suppress keyboard requests.
-            let elapsed = unsafe { GetMessageTime() }.wrapping_sub(*last_rbuttonup_msg_time);
+            let now = unsafe { GetMessageTime() };
+            let elapsed = now.wrapping_sub(*last_rbuttonup_msg_time);
             if elapsed > 500 {
                 if let Some(tray) = tray.as_ref() {
                     tray.show_context_menu(hwnd, indexing);

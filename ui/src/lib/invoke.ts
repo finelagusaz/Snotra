@@ -42,11 +42,19 @@ export async function getHistoryResults(): Promise<SearchResult[]> {
   return tracedInvoke<SearchResult[]>("get_history_results");
 }
 
+export type LaunchStatus = "ok" | "failed" | "timeout";
+
+export interface LaunchResult {
+  status: LaunchStatus;
+  code: number;
+  message: string | null;
+}
+
 export async function launchItem(
   path: string,
   query: string,
-): Promise<void> {
-  return tracedInvoke("launch_item", { path, query });
+): Promise<LaunchResult> {
+  return tracedInvoke<LaunchResult>("launch_item", { path, query });
 }
 
 export async function listFolder(

@@ -25,6 +25,7 @@ type WindowState = {
   title: string;
   visibility: string;
   label: string;
+  nativeVisible: boolean | null;
 };
 
 const WD_SERVER = "http://127.0.0.1:4444/";
@@ -189,7 +190,25 @@ async function collectWindowStates(driver: WebDriver): Promise<WindowState[]> {
         )
         .catch(() => ""),
     ]);
-    states.push({ handle, title, visibility, label });
+    let nativeVisible: boolean | null = null;
+    if (label) {
+      nativeVisible = await driver
+        .executeAsyncScript<boolean | null>(
+          `
+            const done = arguments[arguments.length - 1];
+            const label = window.__TAURI_INTERNALS__?.metadata?.currentWindow?.label;
+            if (!label) {
+              done(null);
+              return;
+            }
+            window.__TAURI_INTERNALS__.invoke("plugin:window|is_visible", { label })
+              .then((visible) => done(Boolean(visible)))
+              .catch(() => done(null));
+          `,
+        )
+        .catch(() => null);
+    }
+    states.push({ handle, title, visibility, label, nativeVisible });
   }
   return states;
 }
@@ -213,7 +232,11 @@ async function waitForHiddenLabel(
   await driver.wait(async () => {
     const states = await collectWindowStates(driver);
     const target = states.find((s) => s.label === label);
-    return !target || target.visibility !== "visible";
+    return (
+      !target ||
+      target.nativeVisible === false ||
+      (target.nativeVisible == null && target.visibility !== "visible")
+    );
   }, timeoutMs);
 }
 
@@ -224,7 +247,12 @@ async function waitForVisibleLabel(
 ): Promise<void> {
   await driver.wait(async () => {
     const states = await collectWindowStates(driver);
-    return states.some((state) => state.label === expectedLabel && state.visibility === "visible");
+    return states.some(
+      (state) =>
+        state.label === expectedLabel &&
+        (state.nativeVisible === true ||
+          (state.nativeVisible == null && state.visibility === "visible")),
+    );
   }, timeoutMs);
 }
 
@@ -322,9 +350,14 @@ test("slash /a switches visible window to about", async ({ harness }) => {
   await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/a");
   await waitForVisibleLabel(harness.driver, "about", 8_000);
   const states = await collectWindowStates(harness.driver);
-  expect(states.some((state) => state.label === "about" && state.visibility === "visible")).toBe(
-    true,
-  );
+  expect(
+    states.some(
+      (state) =>
+        state.label === "about" &&
+        (state.nativeVisible === true ||
+          (state.nativeVisible == null && state.visibility === "visible")),
+    ),
+  ).toBe(true);
 });
 
 test("slash /o switches visible window to settings", async ({ harness }) => {
@@ -333,7 +366,12 @@ test("slash /o switches visible window to settings", async ({ harness }) => {
   await waitForVisibleLabel(harness.driver, "settings", 8_000);
   const states = await collectWindowStates(harness.driver);
   expect(
-    states.some((state) => state.label === "settings" && state.visibility === "visible"),
+    states.some(
+      (state) =>
+        state.label === "settings" &&
+        (state.nativeVisible === true ||
+          (state.nativeVisible == null && state.visibility === "visible")),
+    ),
   ).toBe(true);
 });
 

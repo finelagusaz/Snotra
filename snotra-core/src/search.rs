@@ -206,11 +206,14 @@ impl SearchEngine {
 
     pub fn recent_history(&self, history: &HistoryStore, max_results: usize) -> Vec<SearchResult> {
         // recent_launches() は正規化済みキーを返すため、照合側も normalize_entry_key で揃える
-        let path_to_entry: HashMap<String, &AppEntry> = self
+        // 正規化 String を Vec で先に確保し、HashMap は &str 参照を持つことでアロケーションを節約する
+        let normalized: Vec<(String, &AppEntry)> = self
             .entries
             .iter()
             .map(|e| (normalize_entry_key(&e.target_path), e))
             .collect();
+        let path_to_entry: HashMap<&str, &AppEntry> =
+            normalized.iter().map(|(k, e)| (k.as_str(), *e)).collect();
 
         history
             .recent_launches()

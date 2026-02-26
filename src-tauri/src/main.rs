@@ -157,7 +157,11 @@ fn main() {
     let (entries, initial_indexing) = if is_first_run {
         (Vec::new(), true)
     } else {
+        #[cfg(debug_assertions)]
         let (entries, _, stats) =
+            indexer::load_or_scan_with_stats(&config.paths.scan, config.search.show_hidden_system);
+        #[cfg(not(debug_assertions))]
+        let (entries, _, _) =
             indexer::load_or_scan_with_stats(&config.paths.scan, config.search.show_hidden_system);
         #[cfg(debug_assertions)]
         eprintln!(

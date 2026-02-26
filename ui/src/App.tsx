@@ -224,7 +224,11 @@ const App: Component = () => {
           listen<string>("platform-event", async (event) => {
             if (event.payload === "initial-hotkey-failed") {
               trace("app:event:platform_event:initial_hotkey_failed");
-              await win.show();
+              try {
+                await win.show();
+              } catch (e) {
+                console.warn("platform-event: failed to show window on initial-hotkey-failed:", e);
+              }
               resetForShow();
             }
           }),

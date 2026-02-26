@@ -348,6 +348,7 @@ stateDiagram-v2
 - Win32 `Shell_NotifyIconW` で実装（`platform.rs` 内）
 - トレイアイコン表示は設定で切替
 - 右クリックメニュー: 「設定」「終了」
+- キーボードフォーカス + Shift+F10 / Application キー: 右クリックと同じコンテキストメニューを表示
 - 左クリック: 最近の実行履歴をポップアップメニューとして表示
 - トレイアイコンはすべての固定ウィンドウ（`results` / `about` / `settings`）の事前生成完了後に表示する（§7.5 参照）
 - `show_on_startup = true` の起動時は、検索UI（入力欄/結果）を起動直後から表示する

@@ -192,6 +192,10 @@ fn platform_thread_loop(
         };
 
         let mut indexing_in_progress = false;
+        // Tracks whether WM_RBUTTONUP was just handled, so the immediately following
+        // WM_CONTEXTMENU (sent by some Shell environments for the same click) can be
+        // suppressed to avoid showing the context menu twice.
+        let mut rbuttonup_handled = false;
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -206,6 +210,7 @@ fn platform_thread_loop(
                         msg.lParam,
                         &app_handle,
                         indexing_in_progress,
+                        &mut rbuttonup_handled,
                     );
                 }
                 WM_COMMAND => {
@@ -340,6 +345,7 @@ fn handle_tray_message(
     lparam: LPARAM,
     app_handle: &AppHandle,
     indexing: bool,
+    rbuttonup_handled: &mut bool,
 ) {
     let event = (lparam.0 & 0xFFFF) as u32;
     match event {
@@ -348,18 +354,23 @@ fn handle_tray_message(
                 tray.show_recent_history_menu(hwnd, app_handle);
             }
         }
-        x if x == WM_CONTEXTMENU => {
+        x if x == WM_RBUTTONUP => {
+            *rbuttonup_handled = true;
             if let Some(tray) = tray.as_ref() {
                 tray.show_context_menu(hwnd, indexing);
             }
         }
-        x if x == WM_RBUTTONUP => {
-            // Known: some environments deliver both WM_RBUTTONUP and WM_CONTEXTMENU
-            // for a single right-click, causing show_context_menu to be called twice
-            // (double menu). Accepted risk: rare in practice and distinguishing
-            // programmatic from user-initiated context menus is non-trivial.
-            if let Some(tray) = tray.as_ref() {
-                tray.show_context_menu(hwnd, indexing);
+        x if x == WM_CONTEXTMENU => {
+            if *rbuttonup_handled {
+                // WM_RBUTTONUP already handled this click; clear the flag and skip.
+                // Some Shell environments deliver both messages for a single right-click.
+                *rbuttonup_handled = false;
+            } else {
+                // Keyboard-triggered (Shift+F10 / Application key): WM_RBUTTONUP is not
+                // sent in this path, so WM_CONTEXTMENU is the only notification.
+                if let Some(tray) = tray.as_ref() {
+                    tray.show_context_menu(hwnd, indexing);
+                }
             }
         }
         _ => {}

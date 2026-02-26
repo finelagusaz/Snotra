@@ -363,6 +363,12 @@ function navigateFolderUp() {
   if (parent === fs.currentDir || parent === "") {
     return;
   }
+  // 二重防衛: parent が \\server（share 未満の UNC ルート）になる場合は遷移を中断する
+  // 既存の parts.length <= 2 ガードが \\server\share で止めるが、直接入力等の異常経路への防衛として追加
+  if (parent.startsWith("\\\\")) {
+    const parentParts = parent.replace(/\\+$/, "").slice(2).split("\\").filter((p) => p.length > 0);
+    if (parentParts.length < 2) return;
+  }
   setFolderState({ ...fs, currentDir: parent });
   setFolderFilter("");
   setSelected(0);

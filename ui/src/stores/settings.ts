@@ -69,7 +69,11 @@ async function saveDraft() {
       console.error("Failed to close settings window:", e);
     }
   } catch (e) {
-    setStatus(`保存に失敗: ${e}`);
+    if (e === "hotkey_registration_failed") {
+      setStatus("保存に失敗: ホットキーの登録に失敗しました（他のアプリが同じキーを使用している可能性があります）");
+    } else {
+      setStatus(`保存に失敗: ${e}`);
+    }
   }
 }
 

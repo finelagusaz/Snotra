@@ -1,75 +1,70 @@
-# Retrospective — PlatformBridge 並列初期化サイクル (#72)
+# Retrospective — 残存リスク解消サイクル
 
-対象フェーズ: 起動フロー調査（research.md）→ 実装計画（plan.md）→ 実装 → レビュー指摘対応 → SPEC.md / CLAUDE.md 更新
+対象フェーズ: 残存リスク調査（research.md）→ 実装計画（plan.md）→ 実装 → レビュー指摘対応
 
 ---
 
 ## 1. 実施した内容
 
-### 調査・計画
+### 調査
 
-- `code-optimizer-reviewer` エージェントで起動〜トレイ表示フローを全ファイル走査し `workspace/research.md` に出力
-- 最適化候補を優先度別に整理し、lazy 化（見送り）と並列化（採用）を判断
-- `workspace/plan.md` に実装計画を策定
+- `Explore` エージェントで RETROSPECTIVE.md 記載の残存リスク 7 件をコードベース全体に照らして調査し `workspace/research.md` に出力
+- Risk 1（ホットキー失敗時フォールバック）が **既実装** であることを発見
+- 各リスクの技術的詳細・修正難易度・依存関係を整理
 
-### 実装（`feat/72-parallel-platform-init`）
+### 実装計画
 
-- `PlatformBridge::start()` を `begin()`（非ブロッキング spawn）＋ `PlatformBridgePending::wait()`（recv ブロック）に分割
-- `setup()` 内の順序を「spawn → ウィンドウ生成 × 3 → wait」に変更し、Win32 初期化とウィンドウ生成を並列化
-- トレイ・ホットキーの有効化をセットアップ完了後にコマンド経由で行う形に変更
+- `Plan` エージェントで関連ファイルを精読し `workspace/plan.md` に実装計画を策定
+- 対応 4 件（A: ドキュメント消込み、B: 英語エラー翻訳、C: UNC 境界、D: 二重メニュー）を確定
 
-### SPEC.md / CLAUDE.md 更新
+### 実装
 
-- §7.5: 並列 spawn・トレイ後出し・ホットキー後出しの3つの不変条件を追記
-- §9: トレイアイコンはウィンドウ生成完了後に表示する旨を追記
-- CLAUDE.md: 「有効化 ≥ リスナー登録」パターンを横断的実装パターンに追記
+| 対応 | 変更ファイル | 内容 |
+|------|------------|------|
+| A | `RETROSPECTIVE.md` | Risk 1 行を削除（既実装のため） |
+| B | `ui/src/stores/settings.ts` | `saveDraft()` catch ブロックに `hotkey_registration_failed` の日本語翻訳を追加 |
+| C | `ui/src/stores/search.ts` | `navigateFolderUp()` に parent が `\\server` になる場合の二重防衛 guard を追加 |
+| D | `src-tauri/src/platform.rs` | `rbuttonup_handled` フラグで WM_RBUTTONUP/WM_CONTEXTMENU の重複を排除 |
 
 ---
 
 ## 2. 発見したバグとパターン
 
-### バグ A: トレイがウィンドウ生成前に表示される（plan 段階で検出）
+### バグ A: 対応 D の初版実装で機能回帰（レビューで検出）
 
-**根本原因**: `platform_thread_loop` は `thread_id_tx.send()` 後すぐに `TrayIcon::create()` を実行する。`begin()` を window 生成前に呼ぶと、platform thread が T≈15ms でトレイを表示してしまい、about/settings ウィンドウの生成（T≈300ms）が終わる前にトレイが操作可能になる。
+**根本原因**: 「WM_CONTEXTMENU が二重表示の原因だ」と判断して当該ブランチを削除した。しかし `WM_CONTEXTMENU` は2つの異なる経路を担っていた。
 
-**壊れた不変条件**: トレイ右クリックメニューから呼び出せるウィンドウは、トレイ表示前に生成完了していなければならない。
+1. マウス右クリック → 一部環境で `WM_RBUTTONUP` と `WM_CONTEXTMENU` が両方送出（重複）
+2. キーボード操作（Shift+F10・Applicationキー）→ `WM_CONTEXTMENU` **のみ**が送出される唯一の経路
 
-**修正経路**: SPEC §7.5 の「タスクトレイ描写前に終わらせておくのが安全」要件を起点に plan の図と実際の非同期挙動のずれを発見。`SetTrayVisible(true)` をリスナー登録後に main から送る形に修正。
+削除によってキーボード経由のコンテキストメニュー表示が完全に不能になった。
 
-### バグ B: ホットキーが hotkey-pressed リスナー登録より前に有効化される（レビューで検出）
+**壊れた不変条件**: トレイアイコンのコンテキストメニューはマウス右クリックとキーボード操作の両方から開けなければならない。
 
-**根本原因**: `platform_thread_loop` は `thread_id_tx.send()` 後すぐに `hotkey::register()` を実行する（T≈2ms）。しかし `hotkey-pressed` リスナーは manage・ウィンドウ生成完了後に登録される（T≈305ms）。この約 303ms の空白期間に押されたホットキーは `app_handle.emit("hotkey-pressed")` が発行されても受け手がなく無音で破棄される。
-
-**壊れた不変条件**: `hotkey::register()` は常に `hotkey-pressed` リスナー登録後に呼ばれなければならない。
-
-**修正経路**: `platform_thread_loop` の init から `hotkey::register()` を削除し、`PlatformCommand::RegisterInitialHotkey` を追加。main が `hotkey-pressed` リスナーを登録した直後にこのコマンドを送信。`process_commands` に `app_handle: &AppHandle` を追加して失敗通知を保持。
+**修正経路**: メッセージループのスコープに `let mut rbuttonup_handled = false` フラグを置き、`handle_tray_message` に渡す。`WM_RBUTTONUP` でフラグを立ててメニューを表示し、`WM_CONTEXTMENU` ではフラグが立っていれば「マウス起因の重複」としてスキップ・フラグをリセット、立っていなければ「キーボード起因」として表示する。
 
 ---
 
 ## 3. 構造的ミスのパターン（今後への教訓）
 
-### 「意図した順序図」と「実際の非同期挙動」のずれ
+### 「削除前に担っている役割を全て列挙する」
 
-plan.md のシーケンス図は「manage → hotkey::register → TrayIcon::create」という意図した順序を示していたが、`mpsc::channel` は送信側をブロックしないため、platform thread は main が manage を呼ぶより遥かに先に hotkey/tray の処理を終えてしまう。
+WM_CONTEXTMENU は「二重表示の余分なブランチ」という面だけを見て削除した。このメッセージが「どのような状況でどのコードパスから届くか」を先に列挙していれば、キーボード経由の経路が存在することに気付けた。
 
-**教訓**: 並列・非同期の処理順序を図で示す際は「その順序がコードで強制されているか（チャネル/同期プリミティブがあるか）」を必ず確認する。「意図した順序」と「実際の実行順序」は別物。
+**教訓**: コードを削除するとき、そのコードが担う役割（受信できる条件・発火源）を網羅的に列挙してから判断する。「問題の原因になっているパス」を消すだけでは、「問題でない別のパス」も同時に消えることがある。
 
-### plan に含まれるリスク分析の不足
+### 「残存リスクのステータスはコードで検証する」
 
-初版 plan.md のリスク分析は「既存の競合ウィンドウと同等」と誤判定していた。並列化の前後で「トレイ表示タイミング（T≈15ms vs T≈315ms）」が大きく変わることを定量的に追いきれなかった。
+RETROSPECTIVE.md の Risk 1（ホットキー失敗時フォールバック）は「フロント側ハンドラなし・要実装」と記録されていたが、実際には App.tsx に実装済みだった。ドキュメント記載を前提に実装作業に入ると二重実装や誤った優先度判断につながる。
 
-**教訓**: 並列化の計画においては「各処理が完了するタイミング（相対 ms）」を明示し、依存関係のある処理が「新タイミングでも正しい順序になるか」を確認する。
+**教訓**: 残存リスクを消化する前に「本当に未対応か」を必ずコードで確認する。ドキュメントの「要実装」はコードの実態を保証しない。
 
 ---
 
-## 4. 残存リスク（前サイクルから引き継ぎ）
+## 4. 残存リスク（次サイクルへ引き継ぎ）
 
 | 問題 | 場所 | 判断 |
 |------|------|------|
-| ホットキー登録失敗時の検索UI表示フォールバック未実装 | platform.rs → App.tsx | `initial-hotkey-failed` イベント発行済みだがフロント側ハンドラなし。要実装 |
-| UNC ルート境界 `\\server\share\` での停止が不完全 | ui/src/stores/search.ts | `\\server` まで遡れてしまう。UNC 利用者のみ影響 |
 | App.tsx の win.on* 系 cleanup 未登録 | App.tsx | HMR のみ影響・TODO.md M6 に記録済み・保留 |
 | IME タイミング競合 | platform.rs | HWND 直接渡しで緩和済み・理論上残存 |
-| WM_CONTEXTMENU と WM_RBUTTONUP の二重メニュー | platform.rs | 一部環境での二重表示リスク・未対応 |
 | requestId の二重管理 | App.tsx / search.ts | 現状整合・設計上の注意点として記録 |
-| commands.rs の `"hotkey_registration_failed"` | commands.rs | ユーザーに英語コードが表示される責務違反・未対応 |

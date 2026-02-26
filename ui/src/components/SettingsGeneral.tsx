@@ -94,6 +94,8 @@ const SettingsGeneral: Component = () => {
     e.preventDefault();
 
     if (e.key === "Backspace" || e.key === "Escape") {
+      // SettingsWindow の window-level keydown リスナーへの伝播を止める（二重防御: リスナー側にも hotkey-input ガードあり）
+      e.stopPropagation();
       clearHotkey();
       return;
     }

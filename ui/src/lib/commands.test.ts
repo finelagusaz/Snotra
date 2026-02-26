@@ -1,6 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "./invoke";
-import { findCommand, initCommands } from "./commands";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { findCommand } from "./commands";
+
+const mockMainHide = vi.hoisted(() => vi.fn(async () => {}));
+const mockResultsHide = vi.hoisted(() => vi.fn(async () => {}));
+
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: vi.fn(() => ({ hide: mockMainHide })),
+}));
+
+vi.mock("@tauri-apps/api/webviewWindow", () => ({
+  WebviewWindow: {
+    getByLabel: vi.fn(async () => ({ hide: mockResultsHide })),
+  },
+}));
 
 vi.mock("./invoke", () => ({
   openAbout: vi.fn(async () => {}),
@@ -12,13 +26,12 @@ vi.mock("./invoke", () => ({
 describe("slash command actions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(WebviewWindow.getByLabel).mockResolvedValue({ hide: mockResultsHide } as never);
   });
 
-  it("/a calls hide before openAbout", async () => {
+  it("/a hides results window before openAbout", async () => {
     const order: string[] = [];
-    initCommands(async () => {
-      order.push("hide");
-    });
+    mockResultsHide.mockImplementation(async () => { order.push("hideResults"); });
     vi.mocked(api.openAbout).mockImplementation(async () => {
       order.push("openAbout");
     });
@@ -27,15 +40,14 @@ describe("slash command actions", () => {
     expect(cmd).toBeDefined();
     await cmd!.action();
 
-    expect(order).toEqual(["hide", "openAbout"]);
+    expect(order).toEqual(["hideResults", "openAbout"]);
     expect(api.openAbout).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(WebviewWindow.getByLabel)).toHaveBeenCalledWith("results");
   });
 
-  it("/o calls hide before openSettings", async () => {
+  it("/o hides results window before openSettings", async () => {
     const order: string[] = [];
-    initCommands(async () => {
-      order.push("hide");
-    });
+    mockResultsHide.mockImplementation(async () => { order.push("hideResults"); });
     vi.mocked(api.openSettings).mockImplementation(async () => {
       order.push("openSettings");
     });
@@ -44,15 +56,15 @@ describe("slash command actions", () => {
     expect(cmd).toBeDefined();
     await cmd!.action();
 
-    expect(order).toEqual(["hide", "openSettings"]);
+    expect(order).toEqual(["hideResults", "openSettings"]);
     expect(api.openSettings).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(WebviewWindow.getByLabel)).toHaveBeenCalledWith("results");
   });
 
-  it("/s calls hide before rebuildIndex", async () => {
+  it("/s hides all windows before rebuildIndex", async () => {
     const order: string[] = [];
-    initCommands(async () => {
-      order.push("hide");
-    });
+    mockMainHide.mockImplementation(async () => { order.push("hideMain"); });
+    mockResultsHide.mockImplementation(async () => { order.push("hideResults"); });
     vi.mocked(api.rebuildIndex).mockImplementation(async () => {
       order.push("rebuildIndex");
       return true;
@@ -62,19 +74,17 @@ describe("slash command actions", () => {
     expect(cmd).toBeDefined();
     await cmd!.action();
 
-    expect(order).toEqual(["hide", "rebuildIndex"]);
+    expect(order).toEqual(["hideMain", "hideResults", "rebuildIndex"]);
     expect(api.rebuildIndex).toHaveBeenCalledTimes(1);
   });
 
   it("/q does not call hide and calls quitApp", async () => {
-    const hide = vi.fn(async () => {});
-    initCommands(hide);
-
     const cmd = findCommand("/q");
     expect(cmd).toBeDefined();
     await cmd!.action();
 
-    expect(hide).not.toHaveBeenCalled();
+    expect(mockMainHide).not.toHaveBeenCalled();
+    expect(mockResultsHide).not.toHaveBeenCalled();
     expect(api.quitApp).toHaveBeenCalledTimes(1);
   });
 });

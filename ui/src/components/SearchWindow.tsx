@@ -1,6 +1,5 @@
 import { type Component, onCleanup, onMount, Show } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen } from "@tauri-apps/api/event";
 import {
   query,
@@ -18,17 +17,9 @@ import {
   activateSelected,
   indexing,
 } from "../stores/search";
-import { initCommands } from "../lib/commands";
+import { hideAllWindows } from "../lib/commands";
 import { perfMarkInput } from "../lib/perf";
 import { trace } from "../lib/trace";
-
-async function hideAllWindows() {
-  getCurrentWindow().hide();
-  const rw = await WebviewWindow.getByLabel("results");
-  if (rw) {
-    rw.hide();
-  }
-}
 
 const SearchWindow: Component = () => {
   let inputRef: HTMLInputElement | undefined;
@@ -63,7 +54,6 @@ const SearchWindow: Component = () => {
   }
 
   onMount(() => {
-    initCommands(hideAllWindows);
     let unlistenWindowShown: (() => void) | undefined;
     let unlistenFocusChanged: (() => void) | undefined;
     void listen("window-shown", () => {

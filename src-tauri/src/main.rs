@@ -297,6 +297,16 @@ fn main() {
             let hotkey_generation = Arc::new(AtomicU64::new(0));
             let hotkey_generation_for_listener = hotkey_generation.clone();
             app_handle.listen("hotkey-pressed", move |_| {
+                // Ignore the hotkey while the settings window is visible: the user may be
+                // pressing the current hotkey combination to configure a new one, and
+                // Win32 RegisterHotKey fires before the DOM keydown handler can intercept it.
+                if handle_for_hotkey
+                    .get_webview_window("settings")
+                    .and_then(|w| w.is_visible().ok())
+                    .unwrap_or(false)
+                {
+                    return;
+                }
                 let current_gen = hotkey_generation_for_listener.fetch_add(1, Ordering::SeqCst) + 1;
                 if let Some(w) = handle_for_hotkey.get_webview_window("main") {
                     let visible = w.is_visible().unwrap_or(false);

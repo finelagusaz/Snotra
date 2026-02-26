@@ -18,3 +18,6 @@ Desktop.ini
 .claude/settings.local.json
 workspace/
 research.md
+
+# Playwright テスト出力
+test-results/

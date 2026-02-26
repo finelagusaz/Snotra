@@ -107,6 +107,16 @@ pub(crate) fn ensure_about_window(app: &AppHandle) -> tauri::Result<()> {
             if let Some(w) = handle_for_about_close.get_webview_window("about") {
                 let _ = w.hide();
             }
+            // settings も非表示なら main の alwaysOnTop を戻す
+            let settings_hidden = handle_for_about_close
+                .get_webview_window("settings")
+                .map(|w| !w.is_visible().unwrap_or(true))
+                .unwrap_or(true);
+            if settings_hidden {
+                if let Some(main) = handle_for_about_close.get_webview_window("main") {
+                    let _ = main.set_always_on_top(true);
+                }
+            }
         }
     });
     Ok(())
@@ -133,6 +143,16 @@ pub fn ensure_settings_window(app: &AppHandle) -> tauri::Result<()> {
             api.prevent_close();
             if let Some(w) = handle_for_close.get_webview_window("settings") {
                 let _ = w.hide();
+            }
+            // about も非表示なら main の alwaysOnTop を戻す
+            let about_hidden = handle_for_close
+                .get_webview_window("about")
+                .map(|w| !w.is_visible().unwrap_or(true))
+                .unwrap_or(true);
+            if about_hidden {
+                if let Some(main) = handle_for_close.get_webview_window("main") {
+                    let _ = main.set_always_on_top(true);
+                }
             }
             // First-run: start index build when settings is dismissed.
             let state = handle_for_close.state::<AppState>();
@@ -393,6 +413,10 @@ pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), Strin
         return Err(msg);
     }
     if let Some(w) = app.get_webview_window("settings") {
+        // main は alwaysOnTop のため、settings が前面に出るよう一時的に外す（settings close 時に戻す）
+        if let Some(main) = app.get_webview_window("main") {
+            let _ = main.set_always_on_top(false);
+        }
         let _ = app.emit("settings-shown", ());
         let _ = w.show();
         let _ = w.set_focus();
@@ -574,6 +598,10 @@ pub fn open_about(app: AppHandle) -> Result<(), String> {
         return Err(msg);
     }
     if let Some(w) = app.get_webview_window("about") {
+        // main は alwaysOnTop のため、about が前面に出るよう一時的に外す（about close 時に戻す）
+        if let Some(main) = app.get_webview_window("main") {
+            let _ = main.set_always_on_top(false);
+        }
         let _ = w.show();
         let _ = w.set_focus();
         trace_command("cmd:open_about:ok", json!({ "window_found": true }));

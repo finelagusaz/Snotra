@@ -55,7 +55,29 @@ pub enum PlatformCommand {
     SetTrayVisible(bool),
     SetIndexing(bool),
     TurnOffIme(usize),
+    /// Register the initial hotkey. Sent by main after the hotkey-pressed listener
+    /// is ready so that no hotkey event is dropped before there is a receiver.
+    RegisterInitialHotkey,
     Exit,
+}
+
+pub struct PlatformBridgePending {
+    command_tx: Sender<PlatformCommand>,
+    thread_id_rx: Receiver<u32>,
+}
+
+impl PlatformBridgePending {
+    /// Blocks until the platform thread signals its Win32 init is complete.
+    pub fn wait(self) -> Option<PlatformBridge> {
+        let thread_id = self.thread_id_rx.recv().ok()?;
+        if thread_id == 0 {
+            return None;
+        }
+        Some(PlatformBridge {
+            command_tx: self.command_tx,
+            thread_id,
+        })
+    }
 }
 
 pub struct PlatformBridge {
@@ -64,11 +86,13 @@ pub struct PlatformBridge {
 }
 
 impl PlatformBridge {
-    pub fn start(
+    /// Non-blocking: spawns the platform thread and returns a pending handle.
+    /// The tray icon is NOT created during init; call SetTrayVisible(true) after
+    /// all windows and event listeners are ready.
+    pub fn begin(
         app_handle: AppHandle,
         initial_hotkey: HotkeyConfig,
-        show_tray_icon: bool,
-    ) -> Option<Self> {
+    ) -> Option<PlatformBridgePending> {
         let (command_tx, command_rx) = mpsc::channel();
         let (thread_id_tx, thread_id_rx) = mpsc::channel();
 
@@ -78,21 +102,14 @@ impl PlatformBridge {
                 platform_thread_loop(
                     app_handle,
                     initial_hotkey,
-                    show_tray_icon,
+                    false, // tray starts hidden; main sends SetTrayVisible after full setup
                     command_rx,
                     thread_id_tx,
                 );
             })
             .ok()?;
 
-        let thread_id = thread_id_rx.recv().ok()?;
-        if thread_id == 0 {
-            return None;
-        }
-        Some(Self {
-            command_tx,
-            thread_id,
-        })
+        Some(PlatformBridgePending { command_tx, thread_id_rx })
     }
 
     pub fn send_command(&self, command: PlatformCommand) {
@@ -164,10 +181,9 @@ fn platform_thread_loop(
 
         let _ = thread_id_tx.send(thread_id);
 
+        // Hotkey registration is deferred: main sends RegisterInitialHotkey after
+        // the hotkey-pressed listener is ready, preventing events from being dropped.
         let mut current_hotkey = initial_hotkey;
-        if !hotkey::register(&current_hotkey) {
-            let _ = app_handle.emit("platform-event", "initial-hotkey-failed");
-        }
 
         let mut tray = if show_tray_icon {
             Some(TrayIcon::create(hwnd))
@@ -202,6 +218,7 @@ fn platform_thread_loop(
                         &mut tray,
                         hwnd,
                         &mut indexing_in_progress,
+                        &app_handle,
                     );
                 }
                 _ => {
@@ -221,6 +238,7 @@ fn process_commands(
     tray: &mut Option<TrayIcon>,
     hwnd: HWND,
     indexing_in_progress: &mut bool,
+    app_handle: &AppHandle,
 ) {
     while let Ok(command) = command_rx.try_recv() {
         match command {
@@ -256,6 +274,11 @@ fn process_commands(
                 let hwnd = windows::Win32::Foundation::HWND(hwnd_raw as *mut core::ffi::c_void);
                 if !hwnd.is_invalid() {
                     ime::turn_off_ime(hwnd);
+                }
+            }
+            PlatformCommand::RegisterInitialHotkey => {
+                if !hotkey::register(current_hotkey) {
+                    let _ = app_handle.emit("platform-event", "initial-hotkey-failed");
                 }
             }
             PlatformCommand::Exit => unsafe {

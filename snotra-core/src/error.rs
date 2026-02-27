@@ -23,8 +23,9 @@ impl fmt::Display for BinError {
             Self::MagicMismatch { expected, actual } => {
                 write!(
                     f,
-                    "magic mismatch: expected {:?}, got {:?}",
-                    expected, actual
+                    "magic mismatch: expected {}, got {}",
+                    String::from_utf8_lossy(expected),
+                    String::from_utf8_lossy(actual),
                 )
             }
             Self::VersionMismatch { expected, actual } => {

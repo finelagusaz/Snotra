@@ -255,15 +255,15 @@ fn main() {
                         placement.y as f64,
                     )));
                 }
-                if window_width > 0 {
-                    if let Ok(current) = w.inner_size() {
-                        let sf = w.scale_factor().unwrap_or(1.0);
-                        let logical_h = current.height as f64 / sf;
-                        let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
-                            f64::from(window_width),
-                            logical_h,
-                        )));
-                    }
+                if window_width > 0
+                    && let Ok(current) = w.inner_size()
+                {
+                    let sf = w.scale_factor().unwrap_or(1.0);
+                    let logical_h = current.height as f64 / sf;
+                    let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+                        f64::from(window_width),
+                        logical_h,
+                    )));
                 }
             }
 
@@ -281,11 +281,11 @@ fn main() {
                 app_handle.manage(Mutex::new(bridge));
             }
 
-            if is_first_run {
-                if let Some(settings_window) = app_handle.get_webview_window("settings") {
-                    let _ = settings_window.show();
-                    let _ = settings_window.set_focus();
-                }
+            if is_first_run
+                && let Some(settings_window) = app_handle.get_webview_window("settings")
+            {
+                let _ = settings_window.show();
+                let _ = settings_window.set_focus();
             }
 
             // Listen for hotkey toggle events
@@ -314,21 +314,18 @@ fn main() {
                         if let Some(rw) = handle_for_hotkey.get_webview_window("results") {
                             let _ = rw.hide();
                         }
+                    } else if is_alt_pressed() {
+                        let handle_for_show = handle_for_hotkey.clone();
+                        let hotkey_generation_for_wait = hotkey_generation_for_listener.clone();
+                        std::thread::spawn(move || {
+                            wait_alt_release_or_timeout();
+                            if hotkey_generation_for_wait.load(Ordering::SeqCst) != current_gen {
+                                return;
+                            }
+                            show_main_and_emit(&handle_for_show, ime_control);
+                        });
                     } else {
-                        if is_alt_pressed() {
-                            let handle_for_show = handle_for_hotkey.clone();
-                            let hotkey_generation_for_wait = hotkey_generation_for_listener.clone();
-                            std::thread::spawn(move || {
-                                wait_alt_release_or_timeout();
-                                if hotkey_generation_for_wait.load(Ordering::SeqCst) != current_gen
-                                {
-                                    return;
-                                }
-                                show_main_and_emit(&handle_for_show, ime_control);
-                            });
-                        } else {
-                            show_main_and_emit(&handle_for_hotkey, ime_control);
-                        }
+                        show_main_and_emit(&handle_for_hotkey, ime_control);
                     }
                 }
             });
@@ -378,12 +375,11 @@ fn main() {
             // All windows pre-created and all listeners registered; now safe to show tray.
             // Showing tray before this point would allow right-click menu actions before
             // the windows and listeners are ready (SPEC §7.5 / §9).
-            if show_tray {
-                if let Some(bridge) = app_handle.try_state::<Mutex<PlatformBridge>>()
-                    && let Ok(b) = bridge.lock()
-                {
-                    b.send_command(PlatformCommand::SetTrayVisible(true));
-                }
+            if show_tray
+                && let Some(bridge) = app_handle.try_state::<Mutex<PlatformBridge>>()
+                && let Ok(b) = bridge.lock()
+            {
+                b.send_command(PlatformCommand::SetTrayVisible(true));
             }
 
             // Show window on startup if configured

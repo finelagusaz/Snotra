@@ -58,7 +58,6 @@ pub(super) fn handle_menu_command(
             let _ = app_handle.emit("exit-requested", ());
         }
         id if id >= ID_MENU_RECENT_BASE => {
-            let id = id as usize;
             if let Some(path) = tray.as_ref().and_then(|t| t.recent_path_for_id(id)) {
                 let state = app_handle.state::<AppState>();
                 commands::launch_item_with_state(&path, "", &state);
@@ -104,10 +103,10 @@ pub(super) fn handle_tray_message(
             // would never be cleared and would permanently suppress keyboard requests.
             let now = unsafe { GetMessageTime() };
             let elapsed = now.wrapping_sub(*last_rbuttonup_msg_time);
-            if elapsed > 500 {
-                if let Some(tray) = tray.as_ref() {
-                    tray.show_context_menu(hwnd, indexing);
-                }
+            if elapsed > 500
+                && let Some(tray) = tray.as_ref()
+            {
+                tray.show_context_menu(hwnd, indexing);
             }
         }
         _ => {}

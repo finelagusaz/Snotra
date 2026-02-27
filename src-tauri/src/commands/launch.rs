@@ -155,7 +155,7 @@ fn launch_item_core(path: &str) -> LaunchResult {
                 return LaunchResult::ok(raw_code as i32);
             }
             let code = raw_code as i32;
-            return LaunchResult::failed(code, shell_execute_error_message(code));
+            LaunchResult::failed(code, shell_execute_error_message(code))
         }
     }
 

@@ -55,10 +55,10 @@ pub(crate) fn ensure_about_window(app: &AppHandle) -> tauri::Result<()> {
                 .get_webview_window("settings")
                 .map(|w| !w.is_visible().unwrap_or(true))
                 .unwrap_or(true);
-            if settings_hidden {
-                if let Some(main) = handle_for_about_close.get_webview_window("main") {
-                    let _ = main.set_always_on_top(true);
-                }
+            if settings_hidden
+                && let Some(main) = handle_for_about_close.get_webview_window("main")
+            {
+                let _ = main.set_always_on_top(true);
             }
         }
     });
@@ -93,10 +93,10 @@ pub fn ensure_settings_window(app: &AppHandle) -> tauri::Result<()> {
                 .get_webview_window("about")
                 .map(|w| !w.is_visible().unwrap_or(true))
                 .unwrap_or(true);
-            if about_hidden {
-                if let Some(main) = handle_for_close.get_webview_window("main") {
-                    let _ = main.set_always_on_top(true);
-                }
+            if about_hidden
+                && let Some(main) = handle_for_close.get_webview_window("main")
+            {
+                let _ = main.set_always_on_top(true);
             }
             // First-run: start index build when settings is dismissed.
             let state = handle_for_close.state::<AppState>();

@@ -6,15 +6,14 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 use snotra_core::config::HotkeyConfig;
 use tauri::{AppHandle, Emitter};
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DispatchMessageW, GetMessageW, IDC_ARROW, MSG, PM_NOREMOVE, PeekMessageW,
     PostQuitMessage, PostThreadMessageW, RegisterClassExW, TranslateMessage, WINDOW_EX_STYLE,
-    WINDOW_STYLE, WM_APP, WM_COMMAND, WM_HOTKEY, WNDCLASSEXW, WPARAM,
+    WINDOW_STYLE, WM_APP, WM_COMMAND, WM_HOTKEY, WNDCLASSEXW,
 };
-use windows::Win32::Foundation::LPARAM;
 use windows::core::w;
 
 use crate::ime;

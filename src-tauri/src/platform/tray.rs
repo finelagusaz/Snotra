@@ -1,5 +1,5 @@
 use tauri::{AppHandle, Emitter, Manager};
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Shell::{
     ExtractIconW, NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE,
     NIM_SETVERSION, NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW,
@@ -9,9 +9,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     IDI_APPLICATION, LoadIconW, MF_GRAYED, MF_SEPARATOR, MF_STRING, PostMessageW,
     SetForegroundWindow, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD,
     TPM_RIGHTBUTTON, TrackPopupMenuEx, WM_COMMAND, WM_CONTEXTMENU, WM_LBUTTONUP, WM_NULL,
-    WM_RBUTTONUP, WPARAM,
+    WM_RBUTTONUP,
 };
-use windows::Win32::Foundation::LPARAM;
 use windows::core::PCWSTR;
 
 use crate::commands;

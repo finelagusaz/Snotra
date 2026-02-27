@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+#[allow(deprecated)]
 use crate::binfmt::{deserialize_bincode_with_header, deserialize_with_header, BinFile};
 
 const WINDOW_MAGIC: [u8; 4] = *b"WNDW";
@@ -63,6 +64,7 @@ pub fn save_settings_size(size: WindowSize) {
     save_state(&state);
 }
 
+#[allow(deprecated)]
 fn load_state() -> Option<WindowPlacementState> {
     let bf = bin_file()?;
     // V2/V1 deserialize different types, so we use load_bytes + manual fallback.
@@ -117,6 +119,7 @@ fn bin_file() -> Option<BinFile> {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::binfmt::{serialize_bincode_with_header, serialize_with_header};

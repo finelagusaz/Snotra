@@ -242,6 +242,7 @@ fn migrate_normalize_keys(data: HistoryData) -> HistoryData {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::binfmt::{

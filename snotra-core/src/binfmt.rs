@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::config::Config;
+use crate::error::BinError;
 
 const HEADER_LEN: usize = 8;
 
@@ -30,6 +31,7 @@ impl BinFile {
     }
 
     /// Load data from the file using the current version (postcard format).
+    #[allow(deprecated)]
     pub fn load<T: DeserializeOwned>(&self) -> Option<T> {
         let bytes = fs::read(&self.path).ok()?;
         deserialize_with_header(&bytes, self.magic, self.version)
@@ -49,6 +51,7 @@ impl BinFile {
     ///
     /// Returns `Some((data, version))` where `version` is the version that
     /// succeeded, so the caller can apply version-specific migrations.
+    #[allow(deprecated)]
     pub fn load_with_fallback<T: DeserializeOwned>(
         &self,
         fallbacks: &[(u32, bool)],
@@ -77,6 +80,7 @@ impl BinFile {
 
     /// Atomically save data: write to `.tmp`, remove old file, rename `.tmp`.
     /// Returns `true` on success.
+    #[allow(deprecated)]
     pub fn save<T: Serialize>(&self, data: &T) -> bool {
         if let Some(dir) = self.path.parent() {
             let _ = fs::create_dir_all(dir);
@@ -103,6 +107,7 @@ impl BinFile {
     }
 }
 
+#[deprecated(note = "use try_serialize_with_header for Result-based error handling")]
 pub fn serialize_with_header<T: Serialize>(
     magic: [u8; 4],
     version: u32,
@@ -114,6 +119,20 @@ pub fn serialize_with_header<T: Serialize>(
     out.extend_from_slice(&version.to_le_bytes());
     out.extend_from_slice(&body);
     Some(out)
+}
+
+/// Result-based serialization (preferred over Option-based `serialize_with_header`).
+pub fn try_serialize_with_header<T: Serialize>(
+    magic: [u8; 4],
+    version: u32,
+    payload: &T,
+) -> Result<Vec<u8>, BinError> {
+    let payload_bytes = postcard::to_allocvec(payload).map_err(|_| BinError::SerializeFailed)?;
+    let mut buf = Vec::with_capacity(HEADER_LEN + payload_bytes.len());
+    buf.extend_from_slice(&magic);
+    buf.extend_from_slice(&version.to_le_bytes());
+    buf.extend_from_slice(&payload_bytes);
+    Ok(buf)
 }
 
 /// Legacy bincode deserializer for migration from pre-postcard format.
@@ -150,6 +169,7 @@ pub fn serialize_bincode_with_header<T: Serialize>(
     Some(out)
 }
 
+#[deprecated(note = "use try_deserialize_with_header for Result-based error handling")]
 pub fn deserialize_with_header<T: DeserializeOwned>(
     bytes: &[u8],
     magic: [u8; 4],
@@ -169,7 +189,34 @@ pub fn deserialize_with_header<T: DeserializeOwned>(
     postcard::from_bytes(&bytes[HEADER_LEN..]).ok()
 }
 
+/// Result-based deserialization (preferred over Option-based `deserialize_with_header`).
+pub fn try_deserialize_with_header<T: DeserializeOwned>(
+    bytes: &[u8],
+    magic: [u8; 4],
+    version: u32,
+) -> Result<T, BinError> {
+    if bytes.len() < HEADER_LEN {
+        return Err(BinError::BufferTooShort);
+    }
+    let file_magic: [u8; 4] = bytes[0..4].try_into().unwrap();
+    if file_magic != magic {
+        return Err(BinError::MagicMismatch {
+            expected: magic,
+            actual: file_magic,
+        });
+    }
+    let file_version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+    if file_version != version {
+        return Err(BinError::VersionMismatch {
+            expected: version,
+            actual: file_version,
+        });
+    }
+    postcard::from_bytes(&bytes[HEADER_LEN..]).map_err(|_| BinError::DeserializeFailed)
+}
+
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use serde::{Deserialize, Serialize};
@@ -419,5 +466,84 @@ mod tests {
         assert!(bf.path().exists());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // --- try_deserialize_with_header / try_serialize_with_header tests ---
+
+    #[test]
+    fn try_roundtrip_with_header() {
+        let input = Dummy { value: 42 };
+        let bytes = try_serialize_with_header(*b"TEST", 1, &input).expect("serialize");
+        let output: Dummy =
+            try_deserialize_with_header(&bytes, *b"TEST", 1).expect("deserialize");
+        assert_eq!(input, output);
+    }
+
+    #[test]
+    fn try_deserialize_magic_mismatch() {
+        let input = Dummy { value: 1 };
+        let bytes = try_serialize_with_header(*b"GOOD", 1, &input).expect("serialize");
+        let err = try_deserialize_with_header::<Dummy>(&bytes, *b"BAD!", 1).unwrap_err();
+        assert!(matches!(
+            err,
+            BinError::MagicMismatch {
+                expected: [b'B', b'A', b'D', b'!'],
+                actual: [b'G', b'O', b'O', b'D'],
+            }
+        ));
+    }
+
+    #[test]
+    fn try_deserialize_version_mismatch() {
+        let input = Dummy { value: 1 };
+        let bytes = try_serialize_with_header(*b"TEST", 1, &input).expect("serialize");
+        let err = try_deserialize_with_header::<Dummy>(&bytes, *b"TEST", 2).unwrap_err();
+        assert!(matches!(
+            err,
+            BinError::VersionMismatch {
+                expected: 2,
+                actual: 1,
+            }
+        ));
+    }
+
+    #[test]
+    fn try_deserialize_short_buffer() {
+        let err = try_deserialize_with_header::<Dummy>(&[0u8; 4], *b"TEST", 1).unwrap_err();
+        assert!(matches!(err, BinError::BufferTooShort));
+    }
+
+    #[test]
+    fn try_deserialize_empty_buffer() {
+        let err = try_deserialize_with_header::<Dummy>(&[], *b"TEST", 1).unwrap_err();
+        assert!(matches!(err, BinError::BufferTooShort));
+    }
+
+    #[test]
+    fn try_deserialize_corrupt_payload() {
+        // Valid header but garbage payload
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"TEST");
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+        let err = try_deserialize_with_header::<Dummy>(&bytes, *b"TEST", 1).unwrap_err();
+        assert!(matches!(err, BinError::DeserializeFailed));
+    }
+
+    #[test]
+    fn try_serialize_roundtrip_large_struct() {
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        struct Large {
+            values: Vec<u32>,
+            name: String,
+        }
+        let input = Large {
+            values: vec![1, 2, 3, 4, 5],
+            name: "hello".to_string(),
+        };
+        let bytes = try_serialize_with_header(*b"LRGE", 2, &input).expect("serialize");
+        let output: Large =
+            try_deserialize_with_header(&bytes, *b"LRGE", 2).expect("deserialize");
+        assert_eq!(input, output);
     }
 }

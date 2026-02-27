@@ -1,6 +1,7 @@
 pub mod binfmt;
 pub mod config;
 pub mod engine;
+pub mod error;
 pub mod folder;
 pub mod history;
 pub mod indexer;

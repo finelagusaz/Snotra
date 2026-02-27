@@ -2,15 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum ConfigError {
-    HotkeyModifierEmpty,
-    HotkeyKeyEmpty,
-    MaxResultsZero,
-    WindowWidthTooSmall(u32),
-    FuzzyCapRatioOutOfRange { value: f64 },
-    ScanPathEmpty { index: usize },
-}
+pub use crate::error::ConfigError;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {

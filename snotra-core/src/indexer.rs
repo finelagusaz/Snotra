@@ -363,6 +363,7 @@ fn lower_current_thread_priority() {
 fn lower_current_thread_priority() {}
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::binfmt::{deserialize_with_header, serialize_with_header};

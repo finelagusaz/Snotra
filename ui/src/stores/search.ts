@@ -22,7 +22,7 @@ const [launchNotice, setLaunchNotice] = createSignal<string | null>(null);
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 let launchNoticeTimer: ReturnType<typeof setTimeout> | undefined;
 let refreshInFlight: Promise<void> | undefined;
-let latestRequestId = 0;
+let searchGeneration = 0;
 let activationInFlight = false;
 let suppressNextQueryEffectRefresh = false;
 
@@ -84,14 +84,14 @@ function showCommandResults(input: string) {
   const matches = filterCommands(input);
   setCommandMatches(matches);
   const items = matches.map(commandToResult);
-  const requestId = ++latestRequestId;
+  const requestId = ++searchGeneration;
   setResults(items);
   setSelected(0);
   emitResults(items, 0, requestId, { reason: "command", shouldShow: items.length > 0 });
 }
 
 function clearCommandModeStateAndEmit() {
-  const requestId = ++latestRequestId;
+  const requestId = ++searchGeneration;
   setQuery("");
   setCommandMatches([]);
   setResults([]);
@@ -110,7 +110,7 @@ function debouncedRefresh() {
 // Folder expansion state — signals live in ./folder.ts
 
 async function refreshResults() {
-  const requestId = ++latestRequestId;
+  const requestId = ++searchGeneration;
   const fs = folderState();
   const q = query();
   const trimmed = q.trim();
@@ -125,7 +125,7 @@ async function refreshResults() {
     trace("search:refresh:branch", { requestId, branch: "slash_r_history" });
     perfStartSearch(requestId, "history");
     const items = await api.getHistoryResults();
-    if (requestId !== latestRequestId) {
+    if (requestId !== searchGeneration) {
       trace("search:refresh:stale", { requestId, stage: "slash_r_history" });
       perfCancelSearch(requestId);
       return;
@@ -195,7 +195,7 @@ async function refreshResults() {
     items = await api.search(q);
   }
 
-  if (requestId !== latestRequestId) {
+  if (requestId !== searchGeneration) {
     trace("search:refresh:stale", { requestId, stage: "post_api" });
     perfCancelSearch(requestId);
     return;
@@ -282,7 +282,7 @@ function emitSelectionUpdate() {
   if (nextSelected !== selected()) {
     setSelected(nextSelected);
   }
-  emitResults(results(), nextSelected, latestRequestId, {
+  emitResults(results(), nextSelected, searchGeneration, {
     reason: "selection",
     shouldShow: results().length > 0,
   });
@@ -326,7 +326,7 @@ function exitFolderExpansion(): boolean {
   clearTimeout(debounceTimer);
   debounceTimer = undefined;
 
-  const requestId = ++latestRequestId;
+  const requestId = ++searchGeneration;
   setResults(fs.savedResults);
   setSelected(fs.savedSelected);
   setFolderState(null);    // setQuery より先に null にする
@@ -448,7 +448,7 @@ async function launchAndReset(result: SearchResult): Promise<boolean> {
   trace("search:launch:start", { path: result.path, query: query() });
   try {
     // launch 開始時に results を明示的に隠す
-    emitResults([], 0, ++latestRequestId, { reason: "launch", shouldShow: false });
+    emitResults([], 0, ++searchGeneration, { reason: "launch", shouldShow: false });
     const launchResult = await api.launchItem(result.path, query());
     if (launchResult.status !== "ok") {
       trace("search:launch:error", {
@@ -471,7 +471,7 @@ async function launchAndReset(result: SearchResult): Promise<boolean> {
     setFolderFilter("");
     setResults([]);
     setSelected(0);
-    emitResults([], 0, ++latestRequestId, { reason: "launch", shouldShow: false });
+    emitResults([], 0, ++searchGeneration, { reason: "launch", shouldShow: false });
     trace("search:launch:done", { path: result.path, code: launchResult.code });
     return true;
   } finally {

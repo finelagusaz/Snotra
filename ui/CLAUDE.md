@@ -4,11 +4,12 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 
 ## モジュール構成
 
-- `App.tsx`: ウィンドウラベルで検索/設定を出し分け、テーマ適用、ウィンドウ位置復元
+- `App.tsx`: ウィンドウラベルで検索/設定を出し分け、テーマ適用、ウィンドウ位置復元、イベントリスナー登録
 - `components/SearchWindow.tsx`: 検索入力 + キーボードナビゲーション + `/o` コマンド + ドラッグ移動
 - `components/ResultRow.tsx`: アイコン + 名前 + パス + フォルダバッジ
 - `stores/search.ts`: 検索状態管理（クエリ/結果/選択/フォルダ展開/アイコンキャッシュ）
 - `stores/settings.ts`: 設定ドラフト管理
+- `lib/resultsWindowController.ts`: results ウィンドウの位置・サイズ・表示制御（`createResultsWindowController` ファクトリ）
 - `lib/invoke.ts`: 型付き Tauri IPC ラッパー
 - `lib/theme.ts`: CSS 変数によるテーマ適用
 - `lib/types.ts`: TypeScript 型定義の集約先（DRY）
@@ -29,6 +30,6 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 
 ## 設計上の注意点
 
-### requestId の二重管理
+### searchGeneration の二重管理
 
-検索リクエストの ID は `App.tsx`（IPC 呼び出し側）と `search.ts`（ストア側）の両方で管理されている。現状は整合しているが、片方だけを変更すると古いレスポンスの破棄ロジックが壊れる。どちらかを変更するときは必ず両方を確認すること。
+検索世代 ID（`searchGeneration`）は `resultsWindowController.ts`（`windowOpsGeneration` としてウィンドウ操作の stale 判定に使用）と `search.ts`（`searchGeneration` として検索リクエストの stale 判定に使用）の両方で管理されている。現状は整合しているが、片方だけを変更すると古いレスポンスの破棄ロジックが壊れる。どちらかを変更するときは必ず両方を確認すること。

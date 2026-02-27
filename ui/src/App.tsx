@@ -19,10 +19,8 @@ import * as api from "./lib/invoke";
 import { perfMarkRenderDone } from "./lib/perf";
 import { trace } from "./lib/trace";
 import type { ResultsSyncPayload } from "./lib/searchEvents";
+import { createResultsWindowController } from "./lib/resultsWindowController";
 
-const RESULTS_GAP = 4;
-const RESULT_ROW_HEIGHT = 30;
-const RESULTS_PADDING = 8;
 type ResultsRenderDonePayload = {
   requestId: number;
 };
@@ -34,62 +32,17 @@ const App: Component = () => {
   onMount(async () => {
     const win = getCurrentWindow();
     const label = win.label;
-    let resultsWindowPromise: Promise<WebviewWindow | null> | undefined;
-    let lastResultsSize: { width: number; height: number } | undefined;
-    let lastResultsPosition: { x: number; y: number } | undefined;
-    let latestResultsGeneration = 0;
     let registerAutoHideOnFocusLost: (() => void) | undefined;
 
-    const getResultsWindow = async () => {
-      if (!resultsWindowPromise) {
-        trace("app:results_window:ensure:start");
-        try {
-          const created = await api.ensureWindow("results");
-          trace("app:results_window:ensure:ok", { created });
-          resultsWindowPromise = WebviewWindow.getByLabel("results");
-          trace("app:results_window:get_by_label", {
-            exists: resultsWindowPromise !== null,
-          });
-        } catch (e) {
-          trace("app:results_window:ensure:error", { error: String(e) });
-          throw e;
-        }
-      }
-      return resultsWindowPromise;
-    };
-
     if (label === "main") {
-      let cachedScaleFactor = 1;
-      let cachedMainLogicalHeight = 52;
-      let positionApplyInFlight = false;
-      let pendingResultsPosition: { x: number; y: number } | undefined;
+      const controller = createResultsWindowController(win);
 
       const hideMainAndResults = async () => {
         await win.hide();
-        const rw = await getResultsWindow();
+        const rw = await controller.getResultsWindow();
         if (rw) {
           await rw.hide();
         }
-      };
-
-      const queueResultsPosition = (rw: WebviewWindow, nextPosition: { x: number; y: number }) => {
-        pendingResultsPosition = nextPosition;
-        if (positionApplyInFlight) {
-          return;
-        }
-        positionApplyInFlight = true;
-        void (async () => {
-          while (pendingResultsPosition) {
-            const target = pendingResultsPosition;
-            pendingResultsPosition = undefined;
-            await rw.setPosition(new LogicalPosition(target.x, target.y));
-            lastResultsPosition = target;
-          }
-          positionApplyInFlight = false;
-        })().catch((e) => {
-          console.error("Failed to sync results window position:", e);
-          positionApplyInFlight = false;
-        });
       };
 
       registerAutoHideOnFocusLost = () => {
@@ -128,98 +81,8 @@ const App: Component = () => {
             trace("app:event:window_shown");
             resetForShow();
           }),
-          listen<ResultsSyncPayload>("results-sync", async (event) => {
-            const { generation, results, shouldShow, reason } = event.payload;
-            const count = results.length;
-            trace("app:event:results_sync", {
-              generation,
-              count,
-              shouldShow,
-              reason,
-              latestResultsGeneration,
-            });
-            if (generation < latestResultsGeneration) return;
-            latestResultsGeneration = generation;
-            const isStale = () => generation !== latestResultsGeneration;
-
-            if (!shouldShow) {
-              const rw = await WebviewWindow.getByLabel("results");
-              if (!rw || isStale()) return;
-              const visible = await rw.isVisible();
-              if (isStale()) return;
-              if (visible) {
-                trace("app:results_window:hide", { reason, generation });
-                await rw.hide();
-              }
-              return;
-            }
-            const rw = await getResultsWindow();
-            if (!rw || isStale()) return;
-
-            // Use current main window width (may have been updated via settings)
-            const [currentSize, currentSf, mainPos, mainVisible] = await Promise.all([
-              win.innerSize(),
-              win.scaleFactor(),
-              win.outerPosition(),
-              win.isVisible(),
-            ]);
-            if (isStale()) return;
-
-            const mainSize = currentSize;
-            const sf = currentSf;
-            const currentWidth = currentSize.toLogical(currentSf).width;
-            cachedScaleFactor = currentSf;
-            cachedMainLogicalHeight = currentSize.toLogical(currentSf).height;
-
-            // Resize results window based on count
-            const resultsHeight = Math.min(count * RESULT_ROW_HEIGHT + RESULTS_PADDING * 2, 400);
-            if (
-              !lastResultsSize ||
-              lastResultsSize.width !== currentWidth ||
-              lastResultsSize.height !== resultsHeight
-            ) {
-              await rw.setSize(new LogicalSize(currentWidth, resultsHeight));
-              if (isStale()) return;
-              lastResultsSize = { width: currentWidth, height: resultsHeight };
-            }
-
-            // Position results below main
-            const logicalMainPos = mainPos.toLogical(sf);
-            const logicalH = mainSize.toLogical(sf).height;
-            const nextPosition = {
-              x: logicalMainPos.x,
-              y: logicalMainPos.y + logicalH + RESULTS_GAP,
-            };
-            if (
-              !lastResultsPosition ||
-              lastResultsPosition.x !== nextPosition.x ||
-              lastResultsPosition.y !== nextPosition.y
-            ) {
-              await rw.setPosition(new LogicalPosition(nextPosition.x, nextPosition.y));
-              if (isStale()) return;
-              lastResultsPosition = nextPosition;
-            }
-
-            if (!mainVisible) {
-              const visible = await rw.isVisible();
-              if (isStale()) return;
-              if (visible) {
-                await rw.hide();
-              }
-              return;
-            }
-
-            const visible = await rw.isVisible();
-            if (isStale()) return;
-            if (!visible) {
-              trace("app:results_window:show", { generation, count, reason });
-              await rw.show();
-              if (isStale()) {
-                await rw.hide();
-                return;
-              }
-              void api.setWindowNoActivate();
-            }
+          listen<ResultsSyncPayload>("results-sync", (event) => {
+            void controller.handleResultsSync(event.payload);
           }),
           listen<string>("result-clicked", async (event) => {
             trace("app:event:result_clicked", { path: event.payload });
@@ -264,19 +127,9 @@ const App: Component = () => {
       }
       void initIndexingState();
 
-      void (async () => {
-        try {
-          const [sf, size] = await Promise.all([win.scaleFactor(), win.innerSize()]);
-          cachedScaleFactor = sf;
-          cachedMainLogicalHeight = size.toLogical(sf).height;
-        } catch (e) {
-          console.warn("Failed to initialize main window geometry cache:", e);
-        }
-      })();
-
       win.onResized(({ payload: sz }) => {
-        const logicalSize = sz.toLogical(cachedScaleFactor);
-        cachedMainLogicalHeight = logicalSize.height;
+        const logicalSize = sz.toLogical(controller.getCachedScaleFactor());
+        controller.handleMainResized(logicalSize.height);
       });
 
       // Sync results window position when main moves
@@ -284,7 +137,7 @@ const App: Component = () => {
       let latestMoveEvent = 0;
       win.onMoved(({ payload: pos }) => {
         const moveEvent = ++latestMoveEvent;
-        const logicalPos = pos.toLogical(cachedScaleFactor);
+        const logicalPos = pos.toLogical(controller.getCachedScaleFactor());
         // Save position (debounced)
         clearTimeout(moveTimer);
         moveTimer = setTimeout(() => {
@@ -295,24 +148,7 @@ const App: Component = () => {
         }, 500);
 
         // Immediately sync results window position
-        void (async () => {
-          const rw = await getResultsWindow();
-          if (!rw || moveEvent !== latestMoveEvent) {
-            return;
-          }
-          const nextPosition = {
-            x: logicalPos.x,
-            y: logicalPos.y + cachedMainLogicalHeight + RESULTS_GAP,
-          };
-          if (
-            lastResultsPosition &&
-            lastResultsPosition.x === nextPosition.x &&
-            lastResultsPosition.y === nextPosition.y
-          ) {
-            return;
-          }
-          queueResultsPosition(rw, nextPosition);
-        })();
+        void controller.handleMainMoved(logicalPos);
       });
 
     }

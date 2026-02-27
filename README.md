@@ -27,7 +27,9 @@
 - グローバルホットキー（Alt+Q）で即座に起動
 - 先頭一致・部分一致・ファジーマッチの3段階検索
 - 履歴ベースのスマートランキング
-- 矢印キーによるフォルダ内ナビゲーション
+- 矢印キーによるフォルダ展開・ナビゲーション（右で展開、左で遡り）
+- スラッシュコマンド（`/o` 設定・`/r` 履歴・`/s` 再構築・`/q` 終了など）
+- アイコン表示（オンデマンド抽出、設定で切替可能）
 - CSS カスタムプロパティベースのテーマシステム
 - IME 自動制御
 - システムトレイ常駐
@@ -44,11 +46,10 @@
 
 ```bash
 npm install
-npm run typecheck
 npm run tauri dev
 ```
 
-CI では `npm run build` 実行時に `prebuild` 経由で型チェックが必ず実行されます。
+型チェックを手動で行う場合は `npm run typecheck` を利用できます。CI では `npm run build` 実行時に `prebuild` 経由で型チェックが必ず実行されます。
 
 ### リリースビルド
 
@@ -71,6 +72,7 @@ npm run e2e:tauri
 
 ```
 Snotra/
+  Cargo.toml            # ワークスペース（snotra-core, src-tauri）
   snotra-core/          # 純ロジックライブラリ crate
   src-tauri/            # Tauri v2 バイナリ crate（Win32 連携）
   ui/                   # SolidJS フロントエンド
@@ -150,5 +152,3 @@ Issue 駆動で Codex 実装〜Draft PR 作成まで自動化する運用を用�
 - **環境確認**: `node -v`, `npm -v`, `rustc --version`, `cargo --version`, `git --version`
 - **依存インストール**: `npm ci`（必要に応じて `cd ui && npm ci`）
 - **起動**: `npm run tauri dev`
-
-問題が再発する場合、該当コマンド出力の抜粋か `tasklist` / `Get-Process` の出力を送ってください。追加で再発防止の手順（PowerShell スクリプト等）を用意します。

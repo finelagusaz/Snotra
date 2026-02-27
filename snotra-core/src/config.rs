@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+pub use crate::error::ConfigError;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     pub hotkey: HotkeyConfig,
@@ -137,6 +139,7 @@ impl Default for SearchConfig {
 }
 
 impl SearchConfig {
+    #[deprecated(note = "use Config::validate() to detect issues instead")]
     pub fn sanitize(&mut self) -> bool {
         if self.fuzzy_history_cap_ratio.is_finite()
             && (0.0..=1.0).contains(&self.fuzzy_history_cap_ratio)
@@ -372,6 +375,7 @@ impl Config {
                     config.migrate_additional_to_scan();
                     needs_save = true;
                 }
+                #[allow(deprecated)]
                 if config.search.sanitize() {
                     needs_save = true;
                 }
@@ -400,6 +404,42 @@ impl Config {
         if let Ok(content) = toml::to_string_pretty(self) {
             let _ = fs::write(path, content);
         }
+    }
+
+    /// Validates config consistency. Call before save.
+    pub fn validate(&self) -> Vec<ConfigError> {
+        let mut errors = Vec::new();
+
+        // Hotkey validation
+        if self.hotkey.modifier.trim().is_empty() {
+            errors.push(ConfigError::HotkeyModifierEmpty);
+        }
+        if self.hotkey.key.trim().is_empty() {
+            errors.push(ConfigError::HotkeyKeyEmpty);
+        }
+
+        // Appearance validation
+        if self.appearance.max_results == 0 {
+            errors.push(ConfigError::MaxResultsZero);
+        }
+        if self.appearance.window_width < 200 {
+            errors.push(ConfigError::WindowWidthTooSmall(self.appearance.window_width));
+        }
+
+        // Search validation
+        let ratio = self.search.fuzzy_history_cap_ratio;
+        if !(0.0..=1.0).contains(&ratio) {
+            errors.push(ConfigError::FuzzyCapRatioOutOfRange { value: ratio });
+        }
+
+        // Paths validation
+        for (i, scan_path) in self.paths.scan.iter().enumerate() {
+            if scan_path.path.trim().is_empty() {
+                errors.push(ConfigError::ScanPathEmpty { index: i });
+            }
+        }
+
+        errors
     }
 }
 
@@ -763,6 +803,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn sanitize_invalid_fuzzy_history_cap_ratio() {
         let mut config = SearchConfig {
             normal_mode: SearchModeConfig::Fuzzy,
@@ -774,5 +815,176 @@ mod tests {
 
         assert!(config.sanitize());
         assert!((config.fuzzy_history_cap_ratio - 0.30).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn validate_default_config_returns_no_errors() {
+        let config = Config::default();
+        let errors = config.validate();
+        assert!(errors.is_empty(), "default config should have no validation errors");
+    }
+
+    #[test]
+    fn validate_empty_hotkey_modifier() {
+        let mut config = Config::default();
+        config.hotkey.modifier = "".to_string();
+        let errors = config.validate();
+        assert!(errors.contains(&ConfigError::HotkeyModifierEmpty));
+    }
+
+    #[test]
+    fn validate_whitespace_only_hotkey_modifier() {
+        let mut config = Config::default();
+        config.hotkey.modifier = "  ".to_string();
+        let errors = config.validate();
+        assert!(errors.contains(&ConfigError::HotkeyModifierEmpty));
+    }
+
+    #[test]
+    fn validate_empty_hotkey_key() {
+        let mut config = Config::default();
+        config.hotkey.key = "".to_string();
+        let errors = config.validate();
+        assert!(errors.contains(&ConfigError::HotkeyKeyEmpty));
+    }
+
+    #[test]
+    fn validate_whitespace_only_hotkey_key() {
+        let mut config = Config::default();
+        config.hotkey.key = " ".to_string();
+        let errors = config.validate();
+        assert!(errors.contains(&ConfigError::HotkeyKeyEmpty));
+    }
+
+    #[test]
+    fn validate_max_results_zero() {
+        let mut config = Config::default();
+        config.appearance.max_results = 0;
+        let errors = config.validate();
+        assert!(errors.contains(&ConfigError::MaxResultsZero));
+    }
+
+    #[test]
+    fn validate_window_width_too_small() {
+        let mut config = Config::default();
+        config.appearance.window_width = 100;
+        let errors = config.validate();
+        assert!(errors.contains(&ConfigError::WindowWidthTooSmall(100)));
+    }
+
+    #[test]
+    fn validate_window_width_boundary_199() {
+        let mut config = Config::default();
+        config.appearance.window_width = 199;
+        let errors = config.validate();
+        assert!(errors.contains(&ConfigError::WindowWidthTooSmall(199)));
+    }
+
+    #[test]
+    fn validate_window_width_boundary_200_is_ok() {
+        let mut config = Config::default();
+        config.appearance.window_width = 200;
+        let errors = config.validate();
+        assert!(
+            !errors.iter().any(|e| matches!(e, ConfigError::WindowWidthTooSmall(_))),
+            "window_width=200 should not produce an error"
+        );
+    }
+
+    #[test]
+    fn validate_fuzzy_cap_ratio_out_of_range_above() {
+        let mut config = Config::default();
+        config.search.fuzzy_history_cap_ratio = 1.5;
+        let errors = config.validate();
+        assert!(errors.contains(&ConfigError::FuzzyCapRatioOutOfRange { value: 1.5 }));
+    }
+
+    #[test]
+    fn validate_fuzzy_cap_ratio_out_of_range_negative() {
+        let mut config = Config::default();
+        config.search.fuzzy_history_cap_ratio = -0.1;
+        let errors = config.validate();
+        assert!(errors.contains(&ConfigError::FuzzyCapRatioOutOfRange { value: -0.1 }));
+    }
+
+    #[test]
+    fn validate_fuzzy_cap_ratio_boundary_0_is_ok() {
+        let mut config = Config::default();
+        config.search.fuzzy_history_cap_ratio = 0.0;
+        let errors = config.validate();
+        assert!(
+            !errors.iter().any(|e| matches!(e, ConfigError::FuzzyCapRatioOutOfRange { .. })),
+            "ratio=0.0 should not produce an error"
+        );
+    }
+
+    #[test]
+    fn validate_fuzzy_cap_ratio_boundary_1_is_ok() {
+        let mut config = Config::default();
+        config.search.fuzzy_history_cap_ratio = 1.0;
+        let errors = config.validate();
+        assert!(
+            !errors.iter().any(|e| matches!(e, ConfigError::FuzzyCapRatioOutOfRange { .. })),
+            "ratio=1.0 should not produce an error"
+        );
+    }
+
+    #[test]
+    fn validate_empty_scan_path() {
+        let mut config = Config::default();
+        config.paths.scan = vec![
+            ScanPath {
+                path: "C:\\Valid".to_string(),
+                extensions: vec![".exe".to_string()],
+                include_folders: false,
+            },
+            ScanPath {
+                path: "".to_string(),
+                extensions: vec![".lnk".to_string()],
+                include_folders: false,
+            },
+        ];
+        let errors = config.validate();
+        assert!(errors.contains(&ConfigError::ScanPathEmpty { index: 1 }));
+        assert!(
+            !errors.contains(&ConfigError::ScanPathEmpty { index: 0 }),
+            "valid path at index 0 should not produce an error"
+        );
+    }
+
+    #[test]
+    fn validate_whitespace_only_scan_path() {
+        let mut config = Config::default();
+        config.paths.scan = vec![ScanPath {
+            path: "   ".to_string(),
+            extensions: vec![".lnk".to_string()],
+            include_folders: false,
+        }];
+        let errors = config.validate();
+        assert!(errors.contains(&ConfigError::ScanPathEmpty { index: 0 }));
+    }
+
+    #[test]
+    fn validate_multiple_errors_all_reported() {
+        let mut config = Config::default();
+        config.hotkey.modifier = "".to_string();
+        config.hotkey.key = "".to_string();
+        config.appearance.max_results = 0;
+        config.appearance.window_width = 50;
+        config.search.fuzzy_history_cap_ratio = 2.0;
+        config.paths.scan = vec![ScanPath {
+            path: "".to_string(),
+            extensions: vec![],
+            include_folders: false,
+        }];
+
+        let errors = config.validate();
+        assert!(errors.contains(&ConfigError::HotkeyModifierEmpty));
+        assert!(errors.contains(&ConfigError::HotkeyKeyEmpty));
+        assert!(errors.contains(&ConfigError::MaxResultsZero));
+        assert!(errors.contains(&ConfigError::WindowWidthTooSmall(50)));
+        assert!(errors.contains(&ConfigError::FuzzyCapRatioOutOfRange { value: 2.0 }));
+        assert!(errors.contains(&ConfigError::ScanPathEmpty { index: 0 }));
+        assert_eq!(errors.len(), 6, "all 6 errors should be reported");
     }
 }

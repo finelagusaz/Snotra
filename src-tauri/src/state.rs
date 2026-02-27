@@ -1,14 +1,10 @@
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 
-use snotra_core::config::Config;
-use snotra_core::history::HistoryStore;
-use snotra_core::search::SearchEngine;
+use snotra_core::engine::Engine;
 
 pub struct AppState {
-    pub engine: Mutex<SearchEngine>,
-    pub history: Mutex<HistoryStore>,
-    pub config: Mutex<Config>,
+    pub engine: Mutex<Engine>,
     pub indexing: AtomicBool,
     pub index_build_started: AtomicBool,
 }

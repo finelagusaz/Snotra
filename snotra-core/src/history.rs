@@ -1,13 +1,8 @@
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::binfmt::{
-    deserialize_bincode_with_header, deserialize_with_header, serialize_with_header,
-};
-use crate::config::Config;
+use crate::binfmt::BinFile;
 use crate::indexer::normalize_entry_key;
 use crate::query::normalize_query;
 
@@ -15,6 +10,13 @@ const HISTORY_MAGIC: [u8; 4] = *b"HIST";
 const HISTORY_VERSION: u32 = 3; // postcard (現行, ms timestamp)
 const HISTORY_VERSION_POSTCARD_V2: u32 = 2; // postcard (旧, sec timestamp)
 const HISTORY_VERSION_LEGACY: u32 = 1; // bincode (旧, sec timestamp)
+
+/// Fallback chain for loading legacy history formats.
+/// (version, is_bincode): v2 = postcard (false), v1 = bincode (true)
+const HISTORY_FALLBACKS: &[(u32, bool)] = &[
+    (HISTORY_VERSION_POSTCARD_V2, false),
+    (HISTORY_VERSION_LEGACY, true),
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GlobalEntry {
@@ -39,15 +41,9 @@ pub struct HistoryStore {
 
 impl HistoryStore {
     pub fn load(top_n: usize, max_history_display: usize) -> Self {
-        let (loaded_version, loaded_data) = if let Some(path) = Self::data_path() {
-            if let Ok(bytes) = fs::read(&path) {
-                load_data_with_version(&bytes).unwrap_or((HISTORY_VERSION, HistoryData::default()))
-            } else {
-                (HISTORY_VERSION, HistoryData::default())
-            }
-        } else {
-            (HISTORY_VERSION, HistoryData::default())
-        };
+        let (loaded_data, loaded_version) = Self::bin_file()
+            .and_then(|bf| bf.load_with_fallback(HISTORY_FALLBACKS))
+            .unwrap_or((HistoryData::default(), HISTORY_VERSION));
 
         let data = migrate_time_unit_if_legacy(loaded_version, loaded_data);
         let data = migrate_normalize_keys(data);
@@ -63,22 +59,8 @@ impl HistoryStore {
     pub fn save(&mut self) {
         self.prune();
 
-        let Some(path) = Self::data_path() else {
-            return;
-        };
-        if let Some(dir) = path.parent() {
-            let _ = fs::create_dir_all(dir);
-        }
-
-        let Some(bytes) = serialize_with_header(HISTORY_MAGIC, HISTORY_VERSION, &self.data) else {
-            return;
-        };
-
-        // Write to temp file then rename for atomicity
-        let tmp_path = path.with_extension("bin.tmp");
-        if fs::write(&tmp_path, &bytes).is_ok() {
-            let _ = fs::remove_file(&path);
-            let _ = fs::rename(&tmp_path, &path);
+        if let Some(bf) = Self::bin_file() {
+            bf.save(&self.data);
         }
     }
 
@@ -182,8 +164,8 @@ impl HistoryStore {
             .unwrap_or(0)
     }
 
-    fn data_path() -> Option<PathBuf> {
-        Config::config_dir().map(|p| p.join("history.bin"))
+    fn bin_file() -> Option<BinFile> {
+        BinFile::new(HISTORY_MAGIC, HISTORY_VERSION, "history.bin")
     }
 
     fn prune(&mut self) {
@@ -211,19 +193,6 @@ impl HistoryStore {
             self.data.folder_expansion = fentries.into_iter().collect();
         }
     }
-}
-
-fn load_data_with_version(bytes: &[u8]) -> Option<(u32, HistoryData)> {
-    deserialize_with_header(bytes, HISTORY_MAGIC, HISTORY_VERSION)
-        .map(|data| (HISTORY_VERSION, data))
-        .or_else(|| {
-            deserialize_with_header(bytes, HISTORY_MAGIC, HISTORY_VERSION_POSTCARD_V2)
-                .map(|data| (HISTORY_VERSION_POSTCARD_V2, data))
-        })
-        .or_else(|| {
-            deserialize_bincode_with_header(bytes, HISTORY_MAGIC, HISTORY_VERSION_LEGACY)
-                .map(|data| (HISTORY_VERSION_LEGACY, data))
-        })
 }
 
 fn migrate_time_unit_if_legacy(version: u32, mut data: HistoryData) -> HistoryData {
@@ -273,10 +242,30 @@ fn migrate_normalize_keys(data: HistoryData) -> HistoryData {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::binfmt::serialize_bincode_with_header;
+    use crate::binfmt::{
+        deserialize_with_header, serialize_bincode_with_header, serialize_with_header,
+    };
     use crate::query::normalize_query;
+    use std::path::Path;
+
+    /// Helper: create a BinFile pointing to a specific directory (bypasses Config::config_dir)
+    fn bin_file_in(dir: &Path) -> BinFile {
+        BinFile {
+            magic: HISTORY_MAGIC,
+            version: HISTORY_VERSION,
+            path: dir.join("history.bin"),
+        }
+    }
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("snotra_hist_test_{}", tag));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
 
     fn fresh_store() -> HistoryStore {
         HistoryStore {
@@ -480,6 +469,7 @@ mod tests {
 
     #[test]
     fn legacy_bincode_v1_migrates_to_current_format() {
+        let dir = temp_dir("v1_migrate");
         let mut data = HistoryData::default();
         data.global.insert(
             "C:\\legacy.lnk".to_string(),
@@ -504,7 +494,11 @@ mod tests {
             deserialize_with_header(&bytes, HISTORY_MAGIC, HISTORY_VERSION);
         assert!(v3_attempt.is_none());
 
-        let (version, loaded) = load_data_with_version(&bytes).expect("load v1 fallback");
+        // Write to disk and load via BinFile
+        let bf = bin_file_in(&dir);
+        std::fs::write(bf.path(), &bytes).unwrap();
+        let (loaded, version): (HistoryData, u32) =
+            bf.load_with_fallback(HISTORY_FALLBACKS).expect("load v1 fallback");
         assert_eq!(version, HISTORY_VERSION_LEGACY);
         let migrated = migrate_time_unit_if_legacy(version, loaded);
         assert_eq!(migrated.global["C:\\legacy.lnk"].launch_count, 7);
@@ -514,10 +508,13 @@ mod tests {
         );
         assert_eq!(migrated.query["leg"]["C:\\legacy.lnk"], 4);
         assert_eq!(migrated.folder_expansion["C:\\LegacyFolder"], 3);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn postcard_v2_seconds_migrates_to_milliseconds() {
+        let dir = temp_dir("v2_migrate");
         let mut data = HistoryData::default();
         data.global.insert(
             "C:\\v2.lnk".to_string(),
@@ -528,17 +525,23 @@ mod tests {
         );
         let bytes = serialize_with_header(HISTORY_MAGIC, HISTORY_VERSION_POSTCARD_V2, &data)
             .expect("serialize v2 postcard");
-        let (version, loaded) = load_data_with_version(&bytes).expect("load v2 postcard");
+        let bf = bin_file_in(&dir);
+        std::fs::write(bf.path(), &bytes).unwrap();
+        let (loaded, version): (HistoryData, u32) =
+            bf.load_with_fallback(HISTORY_FALLBACKS).expect("load v2 postcard");
         assert_eq!(version, HISTORY_VERSION_POSTCARD_V2);
         let migrated = migrate_time_unit_if_legacy(version, loaded);
         assert_eq!(
             migrated.global["C:\\v2.lnk"].last_launched,
             1_700_000_000_000
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn postcard_v3_not_reconverted() {
+        let dir = temp_dir("v3_no_reconvert");
         let mut data = HistoryData::default();
         data.global.insert(
             "C:\\v3.lnk".to_string(),
@@ -547,15 +550,18 @@ mod tests {
                 last_launched: 1_700_000_000_000,
             },
         );
-        let bytes =
-            serialize_with_header(HISTORY_MAGIC, HISTORY_VERSION, &data).expect("serialize v3");
-        let (version, loaded) = load_data_with_version(&bytes).expect("load v3 postcard");
+        let bf = bin_file_in(&dir);
+        assert!(bf.save(&data));
+        let (loaded, version): (HistoryData, u32) =
+            bf.load_with_fallback(HISTORY_FALLBACKS).expect("load v3 postcard");
         assert_eq!(version, HISTORY_VERSION);
         let migrated = migrate_time_unit_if_legacy(version, loaded);
         assert_eq!(
             migrated.global["C:\\v3.lnk"].last_launched,
             1_700_000_000_000
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

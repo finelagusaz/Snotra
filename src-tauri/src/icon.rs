@@ -1,11 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Mutex;
 
 use base64::Engine;
-use snotra_core::binfmt::{deserialize_with_header, serialize_with_header};
-use snotra_core::config::Config;
+use snotra_core::binfmt::BinFile;
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC,
     DeleteObject, GetDIBits, SelectObject,
@@ -31,11 +29,7 @@ pub struct IconCache {
 impl IconCache {
     /// Try to load persisted cache, or return empty cache. Never blocks on icon extraction.
     pub fn load() -> Self {
-        let loaded = (|| {
-            let path = cache_path()?;
-            let bytes = std::fs::read(&path).ok()?;
-            deserialize_with_header::<IconCacheData>(&bytes, ICON_MAGIC, ICON_VERSION)
-        })();
+        let loaded = icon_bin_file().and_then(|bf| bf.load::<IconCacheData>());
         match loaded {
             Some(data) => Self { data, dirty: false },
             None => Self {
@@ -73,19 +67,9 @@ impl IconCache {
         if !self.dirty {
             return;
         }
-        let Some(path) = cache_path() else {
-            return;
-        };
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let Some(bytes) = serialize_with_header(ICON_MAGIC, ICON_VERSION, &self.data) else {
-            return;
-        };
-        let tmp_path = path.with_extension("bin.tmp");
-        if std::fs::write(&tmp_path, &bytes).is_ok() {
-            let _ = std::fs::remove_file(&path);
-            let _ = std::fs::rename(&tmp_path, &path);
+        if let Some(bf) = icon_bin_file()
+            && bf.save(&self.data)
+        {
             self.dirty = false;
         }
     }
@@ -95,8 +79,8 @@ impl IconCache {
         self.data.base64.clear();
         self.dirty = false;
         // Also remove persisted file so stale data is not reloaded
-        if let Some(path) = cache_path() {
-            let _ = std::fs::remove_file(&path);
+        if let Some(bf) = icon_bin_file() {
+            bf.remove();
         }
     }
 }
@@ -104,8 +88,8 @@ impl IconCache {
 /// Managed state for icon cache
 pub type IconCacheState = Mutex<Option<IconCache>>;
 
-fn cache_path() -> Option<PathBuf> {
-    Config::config_dir().map(|p| p.join("icons.bin"))
+fn icon_bin_file() -> Option<BinFile> {
+    BinFile::new(ICON_MAGIC, ICON_VERSION, "icons.bin")
 }
 
 struct IconData {

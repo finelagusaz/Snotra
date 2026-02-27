@@ -5,6 +5,7 @@ import * as api from "../lib/invoke";
 import { findCommand, filterCommands, type SlashCommand } from "../lib/commands";
 import { perfStartSearch, perfMarkSearchDone, perfCancelSearch } from "../lib/perf";
 import { parsePathQuery } from "../lib/pathQuery";
+import { clampSelectedIndex, computeParentDir } from "../lib/folderNav";
 import { trace } from "../lib/trace";
 import type { ResultsPresentationReason } from "../lib/searchEvents";
 import { folderState, setFolderState, folderFilter, setFolderFilter } from "./folder";
@@ -25,11 +26,6 @@ let refreshInFlight: Promise<void> | undefined;
 let searchGeneration = 0;
 let activationInFlight = false;
 let suppressNextQueryEffectRefresh = false;
-
-function clampSelectedIndex(index: number, len: number): number {
-  if (len <= 0) return 0;
-  return Math.min(Math.max(index, 0), len - 1);
-}
 
 function emitResults(
   items: SearchResult[],
@@ -343,25 +339,9 @@ function navigateFolderUp() {
   const fs = folderState();
   if (!fs) return;
 
-  // UNC root: \\server\share (2 parts or fewer) → stop navigating up
-  if (fs.currentDir.startsWith("\\\\")) {
-    const parts = fs.currentDir.replace(/\\+$/, "").slice(2).split("\\").filter((p) => p.length > 0);
-    if (parts.length <= 2) return;
-  }
+  const parent = computeParentDir(fs.currentDir);
+  if (parent === null) return;
 
-  let parent = fs.currentDir.replace(/\\[^\\]+$/, "");
-  if (/^[A-Za-z]:$/.test(parent)) {
-    parent += "\\";
-  }
-  if (parent === fs.currentDir || parent === "") {
-    return;
-  }
-  // 二重防衛: parent が \\server（share 未満の UNC ルート）になる場合は遷移を中断する
-  // 既存の parts.length <= 2 ガードが \\server\share で止めるが、直接入力等の異常経路への防衛として追加
-  if (parent.startsWith("\\\\")) {
-    const parentParts = parent.replace(/\\+$/, "").slice(2).split("\\").filter((p) => p.length > 0);
-    if (parentParts.length < 2) return;
-  }
   setFolderState({ ...fs, currentDir: parent });
   setFolderFilter("");
   setSelected(0);

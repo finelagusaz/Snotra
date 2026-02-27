@@ -13,9 +13,9 @@ use std::time::Instant;
 
 use serde_json::json;
 use snotra_core::config::Config;
+use snotra_core::engine::Engine;
 use snotra_core::history::HistoryStore;
 use snotra_core::indexer;
-use snotra_core::search::SearchEngine;
 use snotra_core::window_data;
 use tauri::{AppHandle, Emitter, Listener, Manager};
 
@@ -188,7 +188,6 @@ fn main() {
         config.appearance.max_history_display,
     );
 
-    let engine = SearchEngine::new(entries);
     let show_on_startup = config.general.show_on_startup;
     let show_tray = config.general.show_tray_icon;
     let ime_off = config.general.ime_off_on_show;
@@ -196,10 +195,10 @@ fn main() {
     let hotkey_config = config.hotkey.clone();
     let window_width = config.appearance.window_width;
 
+    let engine = Engine::new(entries, history, config);
+
     let app_state = AppState {
         engine: Mutex::new(engine),
-        history: Mutex::new(history),
-        config: Mutex::new(config),
         indexing: AtomicBool::new(initial_indexing),
         index_build_started: AtomicBool::new(false),
     };
@@ -358,8 +357,8 @@ fn main() {
                 // Flush any unsaved data before exit
                 {
                     let app_state = handle_for_exit.state::<AppState>();
-                    let mut history = app_state.history.lock().unwrap();
-                    history.save_if_dirty(1);
+                    let mut engine = app_state.engine.lock().unwrap();
+                    engine.save_history_if_dirty(1);
                 }
                 {
                     let icon_state = handle_for_exit.state::<IconCacheState>();

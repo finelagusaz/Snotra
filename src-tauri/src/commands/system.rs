@@ -1,6 +1,6 @@
 use std::sync::atomic::Ordering;
 
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::indexing;
 use crate::state::AppState;
@@ -78,9 +78,9 @@ pub fn quit_app(app: AppHandle) {
 
 #[tauri::command]
 pub fn record_folder_expansion(path: String, state: State<AppState>) {
-    let mut history = state.history.lock().unwrap();
-    history.record_folder_expansion(&path);
-    history.save_if_dirty(5);
+    let mut engine = state.engine.lock().unwrap();
+    engine.record_folder_expansion(&path);
+    engine.save_history_if_dirty(5);
 }
 
 #[tauri::command]

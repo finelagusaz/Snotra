@@ -27,13 +27,7 @@ pub(super) fn recent_history_items(
     app_handle: &AppHandle,
 ) -> Vec<snotra_core::ui_types::SearchResult> {
     let state = app_handle.state::<AppState>();
-    let max_history_display = {
-        let config = state.config.lock().unwrap();
-        config.appearance.max_history_display
-    };
-    let engine = state.engine.lock().unwrap();
-    let history = state.history.lock().unwrap();
-    engine.recent_history(&history, max_history_display)
+    state.engine.lock().unwrap().recent_history()
 }
 
 fn format_recent_history_label(item: &snotra_core::ui_types::SearchResult) -> String {

@@ -2,7 +2,6 @@ use std::sync::Mutex;
 use std::sync::atomic::Ordering;
 
 use snotra_core::indexer;
-use snotra_core::search::SearchEngine;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::icon;
@@ -36,11 +35,11 @@ pub fn start_index_build(app: &AppHandle) -> bool {
         .spawn(move || {
             let (scan, show_hidden_system, show_icons) = {
                 let state = app_handle.state::<AppState>();
-                let config = state.config.lock().unwrap();
+                let engine = state.engine.lock().unwrap();
                 (
-                    config.paths.scan.clone(),
-                    config.search.show_hidden_system,
-                    config.appearance.show_icons,
+                    engine.config().paths.scan.clone(),
+                    engine.config().search.show_hidden_system,
+                    engine.config().appearance.show_icons,
                 )
             };
 
@@ -61,11 +60,10 @@ pub fn start_index_build(app: &AppHandle) -> bool {
                 }
             }
 
-            // Update search engine
+            // Update search engine entries
             {
                 let state = app_handle.state::<AppState>();
-                let mut engine = state.engine.lock().unwrap();
-                *engine = SearchEngine::new(entries);
+                state.engine.lock().unwrap().replace_entries(entries);
             }
 
             // Mark indexing complete

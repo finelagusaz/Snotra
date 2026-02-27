@@ -4,10 +4,8 @@ use crate::icon::{IconCache, IconCacheState};
 use crate::state::AppState;
 
 fn ensure_icon_cache_loaded_if_enabled(state: &State<AppState>, icons: &State<IconCacheState>) {
-    let show_icons = {
-        let cfg = state.config.lock().unwrap();
-        cfg.appearance.show_icons
-    };
+    // Read config value and drop engine lock before locking icon cache
+    let show_icons = state.engine.lock().unwrap().config().appearance.show_icons;
     let mut cache = icons.lock().unwrap();
     if !show_icons {
         *cache = None;

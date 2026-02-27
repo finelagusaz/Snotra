@@ -37,7 +37,8 @@ pub fn save_config(
     state: State<AppState>,
     app: AppHandle,
 ) -> Result<SaveConfigResult, String> {
-    let old_config = state.config.lock().unwrap().clone();
+    // Clone old config and drop the engine lock before platform bridge communication
+    let old_config = state.engine.lock().unwrap().config().clone();
 
     // Detect what changed before moving config into state
     let index_changed = config.paths.scan != old_config.paths.scan
@@ -55,6 +56,7 @@ pub fn save_config(
     // Notify platform bridge of hotkey/tray changes.
     // Hotkey registration is checked BEFORE saving to disk: if registration fails,
     // we return Err without persisting the invalid hotkey.
+    // Engine lock is NOT held during platform bridge communication.
     if let Some(bridge) = app.try_state::<std::sync::Mutex<PlatformBridge>>()
         && let Ok(b) = bridge.lock()
     {
@@ -79,9 +81,9 @@ pub fn save_config(
     // Save to disk only after hotkey validation succeeded
     config.save();
 
+    // Re-lock engine to update config
     {
-        let mut current = state.config.lock().unwrap();
-        *current = config;
+        state.engine.lock().unwrap().update_config(config);
     }
 
     // First-run path: initial indexing is pending (indexing=true) but build not started yet.
@@ -128,16 +130,16 @@ pub fn save_config(
 
 #[tauri::command]
 pub fn get_config(state: State<AppState>) -> Config {
-    state.config.lock().unwrap().clone()
+    state.engine.lock().unwrap().config().clone()
 }
 
 #[tauri::command]
 pub fn get_bootstrap_payload(state: State<AppState>) -> BootstrapPayload {
-    let config = state.config.lock().unwrap();
+    let engine = state.engine.lock().unwrap();
     BootstrapPayload {
-        visual: config.visual.clone(),
+        visual: engine.config().visual.clone(),
         general: BootstrapGeneralConfig {
-            auto_hide_on_focus_lost: config.general.auto_hide_on_focus_lost,
+            auto_hide_on_focus_lost: engine.config().general.auto_hide_on_focus_lost,
         },
         indexing: state.indexing.load(Ordering::SeqCst),
     }

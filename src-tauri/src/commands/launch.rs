@@ -70,6 +70,7 @@ pub async fn launch_item(
             "timeout_ms": LAUNCH_TIMEOUT_MS,
         }),
     );
+    // launch_item_core does ShellExecuteW — must NOT hold the engine lock
     let launch_path = path.clone();
     let join = tauri::async_runtime::spawn_blocking(move || launch_item_core(&launch_path));
     let result = match timeout(Duration::from_millis(LAUNCH_TIMEOUT_MS), join).await {
@@ -80,9 +81,9 @@ pub async fn launch_item(
 
     if result.is_ok() {
         let state = app.state::<AppState>();
-        let mut history = state.history.lock().unwrap();
-        history.record_launch(&path, &query);
-        history.save_if_dirty(5);
+        let mut engine = state.engine.lock().unwrap();
+        engine.record_launch(&path, &query);
+        engine.save_history_if_dirty(5);
     }
 
     trace_command(
@@ -98,11 +99,12 @@ pub async fn launch_item(
 }
 
 pub fn launch_item_with_state(path: &str, query: &str, state: &AppState) -> LaunchResult {
+    // launch_item_core does ShellExecuteW — must NOT hold the engine lock
     let result = launch_item_core(path);
     if result.is_ok() {
-        let mut history = state.history.lock().unwrap();
-        history.record_launch(path, query);
-        history.save_if_dirty(5);
+        let mut engine = state.engine.lock().unwrap();
+        engine.record_launch(path, query);
+        engine.save_history_if_dirty(5);
     }
     result
 }

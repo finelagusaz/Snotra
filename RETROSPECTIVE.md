@@ -1,93 +1,118 @@
-# Retrospective — 残存リスク解消サイクル
+# Retrospective — Phase 1-2 リファクタリングサイクル
 
-対象フェーズ: 残存リスク調査（research.md）→ 実装計画（plan.md）→ 実装 → レビュー指摘対応 → テスト失敗対応
+対象フェーズ: 再設計提案（reconstruct.md）→ 実行計画（plan.md）→ Phase 1 並列実行 → Phase 2 並列実行 → CI 整備
 
 ---
 
 ## 1. 実施した内容
 
-### 調査
+### 設計・計画
 
-- `Explore` エージェントで RETROSPECTIVE.md 記載の残存リスク 7 件をコードベース全体に照らして調査し `workspace/research.md` に出力
-- Risk 1（ホットキー失敗時フォールバック）が **既実装** であることを発見
-- 各リスクの技術的詳細・修正難易度・依存関係を整理
+- コードベースをゼロから再設計するなら、という仮想提案を `workspace/reconstruct.md` に出力
+- reconstruct.md を実コードと照合し、事実に基づく修正を加えた実行計画を `workspace/plan.md` に策定
+- TODO チェックリスト（~90項目）を Phase 1/2/3 に分類
 
-### 実装計画
+### Phase 1: ファイル分割と共通化（4ステップ並列実行）
 
-- `Plan` エージェントで関連ファイルを精読し `workspace/plan.md` に実装計画を策定
-- 対応 4 件（A: ドキュメント消込み、B: 英語エラー翻訳、C: UNC 境界、D: 二重メニュー）を確定
+| Step | 内容 | 効果 |
+|------|------|------|
+| 1.1 | `commands.rs`（829行）→ 7ファイルのディレクトリモジュール | 最大ファイル解消 |
+| 1.2 | `platform.rs`（606行）→ 4ファイル、`hotkey.rs` 吸収 | Win32 モジュールの見通し改善 |
+| 1.3 | `BinFile` struct 導入、原子的書き込みの一元化 | 4モジュールの重複パターン解消 |
+| 1.4 | `ConfigError` enum + `Config::validate()` 追加 | 設定値の型安全な検証 |
 
-### 実装
+### Phase 2: 責務分離と facade 導入（4ステップ）
 
-| 対応 | 変更ファイル | 内容 |
-|------|------------|------|
-| A | `RETROSPECTIVE.md` | Risk 1 行を削除（既実装のため） |
-| B | `ui/src/stores/settings.ts` | `saveDraft()` catch ブロックに `hotkey_registration_failed` の日本語翻訳を追加 |
-| C | `ui/src/stores/search.ts` | `navigateFolderUp()` に parent が `\\server` になる場合の二重防衛 guard を追加 |
-| D | `src-tauri/src/platform.rs` | `GetMessageTime()` 時刻差でマウス起因の重複 WM_CONTEXTMENU を排除。キーボード起因は処理を維持 |
-| E | `ui/src/lib/pathQuery.ts` | `normalizePathInput` でドライブレターを大文字に正規化（`c:\` → `C:\`） |
+| Step | 内容 | 効果 |
+|------|------|------|
+| 2.1 | `stores/folder.ts` 抽出 | search.ts からフォルダ状態を分離 |
+| 2.2 | `resultsWindowController.ts` 抽出、generation 変数リネーム | App.tsx を 410行→245行に削減 |
+| 2.3 | `Engine` facade 導入、`AppState` を単一 `Mutex<Engine>` に統合 | 3重ロック解消 |
+| 2.4 | `error.rs` 新設、Result-based binfmt API | エラー型の集約 |
+
+### CI 整備
+
+- `rust-check` ジョブを追加（Windows 上で cargo check + test + clippy）
 
 ---
 
 ## 2. 発見したバグとパターン
 
-### バグ A: 対応 D の初版実装で機能回帰（コードレビューで検出）
+### バグ A: WPARAM の import 先誤り（Step 1.2 で混入、Windows 実機で発覚）
 
-**根本原因**: 「WM_CONTEXTMENU が二重表示の原因だ」と判断して当該ブランチを削除した。しかし `WM_CONTEXTMENU` は2つの異なる経路を担っていた。
+**根本原因**: `platform.rs` をディレクトリモジュールに分割する際、`WPARAM` を `Win32::UI::WindowsAndMessaging` に配置した。正しくは `Win32::Foundation`。
 
-1. マウス右クリック → 一部環境で `WM_RBUTTONUP` と `WM_CONTEXTMENU` が両方送出（重複）
-2. キーボード操作（Shift+F10・Applicationキー）→ `WM_CONTEXTMENU` **のみ**が送出される唯一の経路
+**壊れた不変条件**: Win32 の型は正しいモジュールパスから import されなければならない。
 
-削除によってキーボード経由のコンテキストメニュー表示が完全に不能になった。
+**発見経路**: macOS のクロスコンパイル（`cargo check --target x86_64-pc-windows-gnu`）でも同じエラーが出ていたが、「macOS だから出る既知のエラー」と誤認して見過ごした。Windows 実機で `npm run tauri dev` を実行して初めて発覚。
 
-**壊れた不変条件**: トレイアイコンのコンテキストメニューはマウス右クリックとキーボード操作の両方から開けなければならない。
+**教訓**: 後述「クロスコンパイルエラーを既知と断定しない」参照。
 
-**修正経路 v1（不十分）**: `rbuttonup_handled` bool フラグを `WM_RBUTTONUP` で立て、`WM_CONTEXTMENU` ではフラグが立っていれば「マウス起因の重複」としてスキップ。
+### バグ B: BinError::Display のテスト失敗（CI で発覚）
 
-### バグ B: 対応 D の修正版（bool フラグ）がキーボード操作で再び機能しない（実機テストで検出）
+**根本原因**: `[u8; 4]` を `{:?}` でフォーマットすると `[84, 69, 83, 84]` になるが、テストは `"TEST"` という文字列を期待していた。macOS ではテスト実行不能（Windows 依存コード）のため、CI で初めて検出された。
 
-**根本原因**: Windows 11 は右クリックで `WM_RBUTTONUP` のみを送り `WM_CONTEXTMENU` を送らない。そのため bool フラグが `WM_RBUTTONUP` で `true` になった後、それをリセットする `WM_CONTEXTMENU` が届かず `true` のまま残る。その後にユーザーがキーボードで操作すると `WM_CONTEXTMENU` が届くが、フラグが `true` なので「マウス起因の重複」と誤判定してスキップされ、メニューが開かない。
+**教訓**: CI があったからこそ、push 直後に検出できた。CI 追加の判断は正しかった。
 
-**壊れた不変条件**: 同上。
+### バグ C: clippy 警告 9件（CI で発覚）
 
-**修正経路 v2（確定）**: `GetMessageTime()` でメッセージキューへの投入時刻差を計算。同一マウスクリックに由来する `WM_RBUTTONUP` と `WM_CONTEXTMENU` は数 ms 以内に届くため 500ms 閾値で確実に区別する。キーボード操作は直前の右クリックから必ず 500ms 以上経つため正しく処理される。OS 間の動作差（Win11: WM_CONTEXTMENU なし、Win10: 両方あり）に依存しない。
+**根本原因**: pre-existing の `collapsible_if`、`needless_return`、`unnecessary_cast` が `-D warnings` でエラーになった。
 
-### バグ C: `c:\` 入力時に検索結果のドライブレターが小文字になる（実機テストで発見）
-
-**根本原因**: `pathQuery.ts` の `normalizePathInput` がドライブレターをユーザー入力のまま通していた。`c:\` と入力すると `dir: "c:\\"` が生成され、`list_folder` に渡った後の結果に `c:\Windows` と小文字が残る。
-
-**壊れた不変条件**: パスのドライブレターは常に大文字で保持・表示されなければならない（Windows のパス慣習）。
-
-**修正経路**: `normalizePathInput` の末尾で `/^[a-z]:/.test(s)` にマッチした場合のみ `s[0].toUpperCase() + s.slice(1)` を返す。関数入口の一箇所で正規化するため、ドライブルート・深いパス・filter 分割の全ケースが揃う。テストケース（`c:` / `c:\` / `c:\Windows` / `c:\Windows\System32`）を追加し確認。
+**教訓**: CI に clippy を入れるとき、既存コードベースの警告を先にゼロにしておくべきだった。
 
 ---
 
 ## 3. 構造的ミスのパターン（今後への教訓）
 
-### 「削除前に担っている役割を全て列挙する」
+### 「クロスコンパイルエラーを既知と断定しない」
 
-WM_CONTEXTMENU は「二重表示の余分なブランチ」という面だけを見て削除した。このメッセージが「どのような状況でどのコードパスから届くか」を先に列挙していれば、キーボード経由の経路が存在することに気付けた。
+macOS で `cargo check --target x86_64-pc-windows-gnu` を実行すると、Windows 固有の API（`std::os::windows` 等）でエラーが出る。これは本当に「macOS だから」のエラーだが、今回の WPARAM エラーは **変更によって新たに発生したエラー** だった。両者を目視で区別するのは困難。
 
-**教訓**: コードを削除するとき、そのコードが担う役割（受信できる条件・発火源）を網羅的に列挙してから判断する。「問題の原因になっているパス」を消すだけでは、「問題でない別のパス」も同時に消えることがある。
+**対策**: CI に Windows での `cargo check` を追加した。ローカルでの判別に頼らず、CI を信頼源にする。
 
-### 「OS 間の動作差を前提にしない修正を選ぶ」
+### 「ファイル分割時は import パスを機械的に検証する」
 
-bool フラグ方式は「`WM_RBUTTONUP` の後には必ず `WM_CONTEXTMENU` が来てフラグをリセットする」という誤った仮定に依存していた。Windows 11 ではその仮定が成り立たない。
+大きなファイルを分割すると、use 文が新ファイルにコピーされ、元のモジュールパスと異なるパスに配置されることがある。分割後は全 use 文がコンパイルを通ることを確認する必要がある。
 
-**教訓**: Win32 メッセージ処理のロジックが「あるメッセージの後に別のメッセージが必ず来る」ことを前提にする場合、その前提が OS バージョン・環境によって崩れないか確認する。状態を時刻で管理する（`GetMessageTime()`）ほうが OS 差分に依存しない。
+**対策**: 分割後に必ず `cargo check` を通すこと自体は実施していたが、クロスコンパイルのエラーを誤認したため無効化されていた。CI が本質的な対策。
 
-### 「残存リスクのステータスはコードで検証する」
+### 「reconstruct.md の提案を鵜呑みにしない」
 
-RETROSPECTIVE.md の Risk 1（ホットキー失敗時フォールバック）は「フロント側ハンドラなし・要実装」と記録されていたが、実際には App.tsx に実装済みだった。
+ゼロからの再設計提案には事実誤認が複数含まれていた:
+- SearchWindow.tsx が「6000行超」→ 実際は 223行
+- Mutex デッドロックリスク → 同時保持パターンなし
+- requestId の一元化提案 → 2つは別責務（ウィンドウ操作 vs 検索状態）
+- フォルダ展開のスタック化 → SPEC.md は一括復帰が仕様で YAGNI
 
-**教訓**: 残存リスクを消化する前に「本当に未対応か」を必ずコードで確認する。ドキュメントの「要実装」はコードの実態を保証しない。
+**教訓**: 理想設計と現行コードを照合する plan.md のステップが重要だった。照合なしに reconstruct.md を実行していたら、不要な変更や破壊的変更が入っていた。
 
 ---
 
-## 4. 残存リスク（次サイクルへ引き継ぎ）
+## 4. うまくいったこと
+
+### ワークツリー並列実行
+
+Phase 1 の 4 ステップ、Phase 2 の 3 ステップ（2.1/2.3/2.4）を git worktree で並列実行し、cherry-pick で main に統合した。独立した変更を並列に進めることで、逐次実行と比べて大幅に時間を短縮できた。
+
+### 3層の設計プロセス（reconstruct → plan → execute）
+
+「理想→計画→実行」の3段階で進めたことで、実装前に事実誤認を修正できた。特に plan.md での照合ステップが、不要な変更の防止に直結した。
+
+### Phase 3 の「やらない判断」
+
+3ステップとも現時点で実施不要と判断し、実施判断基準を明記して GitHub issue (#75, #76, #77) に移管した。YAGNI の原則に従い、計画にあっても不要なものは実行しなかった。
+
+### CI 追加の即断
+
+WPARAM バグの発見直後に「なぜ早く気づけなかったか」を分析し、その場で CI に `rust-check` を追加した。問題発見→原因分析→仕組み化のサイクルが速かった。
+
+---
+
+## 5. 残存リスク（次サイクルへ引き継ぎ）
 
 | 問題 | 場所 | 判断 |
 |------|------|------|
-| App.tsx の win.on* 系 cleanup 未登録 | App.tsx | HMR のみ影響・TODO.md M6 に記録済み・保留 |
-| IME タイミング競合 | platform.rs | HWND 直接渡しで緩和済み・理論上残存 |
-| requestId の二重管理 | App.tsx / search.ts | 現状整合・設計上の注意点として記録 |
+| App.tsx の win.on* 系 cleanup 未登録 | App.tsx | HMR のみ影響・保留 |
+| IME タイミング競合 | platform/mod.rs | HWND 直接渡しで緩和済み・理論上残存 |
+| searchGeneration の二重管理 | resultsWindowController.ts / search.ts | リネーム済み・ui/CLAUDE.md に注意点記録 |
+| `workspace/reconstruct.md` の削除判断 | workspace/ | 参照価値が薄れたら削除 |

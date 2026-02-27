@@ -5,18 +5,18 @@ Tauri v2 バイナリ crate。Win32 API 統合とフロントエンドとの IPC
 ## モジュール構成
 
 - `main.rs`: エントリポイント、Tauri セットアップ、イベントリスナー登録
-- `commands.rs`: 15個の `#[tauri::command]`（検索/履歴/設定/アイコン/ウィンドウ位置）
-- `state.rs`: `AppState` 定義（`Mutex<SearchEngine>`, `Mutex<HistoryStore>`, `Mutex<Config>`）
-- `platform.rs`: Win32 メッセージループスレッド + トレイアイコン（Tauri イベント経由で通信）
-- `hotkey.rs`: グローバルホットキー登録/解除
-- `ime.rs`: IME 制御
+- `commands/`: ディレクトリモジュール（`mod.rs` + `search.rs` / `launch.rs` / `config.rs` / `icon.rs` / `window.rs` / `system.rs`）。15個の `#[tauri::command]` を責務別に分割
+- `state.rs`: `AppState` 定義（`Mutex<Engine>` + `AtomicBool` × 2）。`Engine` は `snotra-core` の facade で、検索・履歴・設定を単一ロックに統合
+- `platform/`: ディレクトリモジュール（`mod.rs` + `hotkey.rs` / `tray.rs` / `ime.rs`）。Win32 メッセージループスレッド + トレイアイコン + ホットキー + IME
 - `icon.rs`: アイコンのオンデマンド抽出（`SHGetFileInfoW` → PNG → base64）、検索時に遅延ロードしキャッシュ永続化
+- `indexing.rs`: バックグラウンドインデックス構築
 
 ## 実装パターン
 
-- ホットキーは `RegisterHotKey` を `platform.rs` の Win32 メッセージループスレッドで処理し、`AppHandle.emit()` で Tauri イベントとして通知
+- ホットキーは `RegisterHotKey` を `platform/` の Win32 メッセージループスレッドで処理し、`AppHandle.emit()` で Tauri イベントとして通知
 - 設定ウィンドウは `WebviewWindowBuilder` で同一プロセス内の第2ウィンドウとして生成
-- `commands.rs` は薄いラッパーに保ち、実処理は `snotra-core` に寄せる（KISS）
+- `commands/` は薄いラッパーに保ち、実処理は `snotra-core` に寄せる（KISS）
+- `AppState` は `Mutex<Engine>` で検索エンジン・履歴・設定を一括管理。Phase 2.3 以前の 3重ロック（`Mutex<SearchEngine>` / `Mutex<HistoryStore>` / `Mutex<Config>`）は Engine facade に統合済み
 
 ## Win32 メッセージ配送の注意
 

@@ -29,6 +29,9 @@ jobs:
         id: date
         run: echo "BUILD_DATE=$(Get-Date -Format 'yyyyMMdd')" >> $env:GITHUB_ENV
 
+      - name: Run frontend tests
+        run: npm test
+
       - name: Typecheck and build frontend
         run: npm run build
         env:

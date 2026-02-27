@@ -13,7 +13,7 @@ use windows::Win32::System::Threading::{
     GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL,
 };
 
-use crate::binfmt::{deserialize_with_header, serialize_with_header};
+use crate::binfmt::BinFile;
 use crate::config::{Config, ScanPath};
 
 const INDEX_MAGIC: [u8; 4] = *b"INDX";
@@ -196,8 +196,8 @@ fn compute_config_hash(scan: &[ScanPath], show_hidden_system: bool) -> u64 {
     hasher.finish()
 }
 
-fn cache_path() -> Option<PathBuf> {
-    Config::config_dir().map(|p| p.join("index.bin"))
+fn cache_bin_file() -> Option<BinFile> {
+    BinFile::new(INDEX_MAGIC, INDEX_CACHE_VERSION, "index.bin")
 }
 
 fn icon_cache_path() -> Option<PathBuf> {
@@ -300,12 +300,9 @@ fn sort_entries_canonical(entries: &mut [AppEntry]) {
 }
 
 fn save_cache_sorted(entries: &[AppEntry], config_hash: u64) {
-    let Some(path) = cache_path() else {
+    let Some(bf) = cache_bin_file() else {
         return;
     };
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
     let cache = IndexCache {
         built_at: SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -314,16 +311,7 @@ fn save_cache_sorted(entries: &[AppEntry], config_hash: u64) {
         entries: entries.to_vec(),
         config_hash,
     };
-
-    let Some(bytes) = serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache) else {
-        return;
-    };
-
-    let tmp_path = path.with_extension("bin.tmp");
-    if std::fs::write(&tmp_path, &bytes).is_ok() {
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::rename(&tmp_path, &path);
-    }
+    bf.save(&cache);
 }
 
 /// Force rebuild: scan and save cache, regardless of existing cache.
@@ -337,9 +325,8 @@ pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> Vec<AppE
 }
 
 fn load_cache(config_hash: u64) -> Option<IndexCache> {
-    let path = cache_path()?;
-    let bytes = std::fs::read(path).ok()?;
-    let cache: IndexCache = deserialize_with_header(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION)?;
+    let bf = cache_bin_file()?;
+    let cache: IndexCache = bf.load()?;
     if cache.config_hash != config_hash {
         return None;
     }
@@ -378,6 +365,7 @@ fn lower_current_thread_priority() {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binfmt::{deserialize_with_header, serialize_with_header};
     use std::fs;
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {

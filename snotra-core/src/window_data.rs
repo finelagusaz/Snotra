@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
-use crate::binfmt::{deserialize_bincode_with_header, deserialize_with_header, serialize_with_header};
-use crate::config::Config;
+use crate::binfmt::{deserialize_bincode_with_header, deserialize_with_header, BinFile};
 
 const WINDOW_MAGIC: [u8; 4] = *b"WNDW";
 const WINDOW_VERSION_V1: u32 = 1;
@@ -66,8 +64,9 @@ pub fn save_settings_size(size: WindowSize) {
 }
 
 fn load_state() -> Option<WindowPlacementState> {
-    let path = path()?;
-    let bytes = std::fs::read(path).ok()?;
+    let bf = bin_file()?;
+    // V2/V1 deserialize different types, so we use load_bytes + manual fallback.
+    let bytes = bf.load_bytes()?;
 
     // V4: postcard (current)
     if let Some(state) =
@@ -85,7 +84,7 @@ fn load_state() -> Option<WindowPlacementState> {
         return Some(state);
     }
 
-    // V2: bincode (legacy)
+    // V2: bincode (legacy, different struct type)
     if let Some(state) = deserialize_bincode_with_header::<WindowPlacementStateV2>(
         &bytes,
         WINDOW_MAGIC,
@@ -108,30 +107,19 @@ fn load_state() -> Option<WindowPlacementState> {
 }
 
 fn save_state(state: &WindowPlacementState) {
-    let Some(path) = path() else {
-        return;
-    };
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let Some(bytes) = serialize_with_header(WINDOW_MAGIC, WINDOW_VERSION_V4, state) else {
-        return;
-    };
-    let tmp_path = path.with_extension("bin.tmp");
-    if std::fs::write(&tmp_path, &bytes).is_ok() {
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::rename(&tmp_path, &path);
+    if let Some(bf) = bin_file() {
+        bf.save(state);
     }
 }
 
-fn path() -> Option<PathBuf> {
-    Config::config_dir().map(|p| p.join("window.bin"))
+fn bin_file() -> Option<BinFile> {
+    BinFile::new(WINDOW_MAGIC, WINDOW_VERSION_V4, "window.bin")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::binfmt::serialize_bincode_with_header;
+    use crate::binfmt::{serialize_bincode_with_header, serialize_with_header};
 
     #[test]
     fn placement_state_roundtrip_header_v4() {

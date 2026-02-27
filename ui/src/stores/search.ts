@@ -7,6 +7,7 @@ import { perfStartSearch, perfMarkSearchDone, perfCancelSearch } from "../lib/pe
 import { parsePathQuery } from "../lib/pathQuery";
 import { trace } from "../lib/trace";
 import type { ResultsPresentationReason } from "../lib/searchEvents";
+import { folderState, setFolderState, folderFilter, setFolderFilter } from "./folder";
 
 const DEBOUNCE_MS = 30;
 
@@ -106,15 +107,7 @@ function debouncedRefresh() {
   }, DEBOUNCE_MS);
 }
 
-// Folder expansion state
-const [folderState, setFolderState] = createSignal<{
-  currentDir: string;
-  savedResults: SearchResult[];
-  savedSelected: number;
-  savedQuery: string;
-} | null>(null);
-
-const [folderFilter, setFolderFilter] = createSignal("");
+// Folder expansion state — signals live in ./folder.ts
 
 async function refreshResults() {
   const requestId = ++latestRequestId;
@@ -562,9 +555,6 @@ export {
   results,
   selected,
   setSelected,
-  folderState,
-  folderFilter,
-  setFolderFilter,
   moveSelectionUp,
   moveSelectionDown,
   enterFolderExpansion,
@@ -581,3 +571,5 @@ export {
   launchNotice,
   clearLaunchNotice,
 };
+
+export { folderState, folderFilter, setFolderFilter } from "./folder";

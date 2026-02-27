@@ -19,5 +19,8 @@ Desktop.ini
 workspace/
 research.md
 
+# Tauri auto-generated (non-target platform)
+src-tauri/gen/schemas/macOS-schema.json
+
 # Playwright テスト出力
 test-results/

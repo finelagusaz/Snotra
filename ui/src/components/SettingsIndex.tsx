@@ -1,9 +1,34 @@
 import type { Component } from "solid-js";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { open } from "@tauri-apps/plugin-dialog";
-import { draft, updateDraft } from "../stores/settings";
+import { draft, updateDraft, setStatus } from "../stores/settings";
 import SettingRow from "./SettingRow";
 import ToggleSwitch from "./ToggleSwitch";
+
+function normalizeScanPathKey(path: string): string {
+  let key = path.trim().replace(/\//g, "\\").toLowerCase();
+  if (key.endsWith("\\") && !/^[a-z]:\\$/.test(key)) {
+    key = key.replace(/\\+$/, "");
+  }
+  return key;
+}
+
+function parseExtensions(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+function mergeExtensions(target: { extensions: string[] }, exts: string[]): void {
+  for (const ext of exts) {
+    const norm = ext.startsWith(".") ? ext.toLowerCase() : `.${ext.toLowerCase()}`;
+    if (!target.extensions.some((e) => e.toLowerCase() === norm)) {
+      target.extensions.push(norm);
+    }
+  }
+  target.extensions.sort();
+}
 
 const SettingsIndex: Component = () => {
   const d = () => draft()!;
@@ -12,6 +37,14 @@ const SettingsIndex: Component = () => {
   const [editPath, setEditPath] = createSignal("");
   const [editExtensions, setEditExtensions] = createSignal("");
   const [editIncludeFolders, setEditIncludeFolders] = createSignal(false);
+
+  function findDuplicateIndex(path: string, excludeIndex: number | null): number {
+    const key = normalizeScanPathKey(path);
+    if (!key) return -1;
+    return d().paths.scan.findIndex(
+      (sp, i) => i !== excludeIndex && normalizeScanPathKey(sp.path) === key
+    );
+  }
 
   // Sync form fields when selection changes
   createEffect(() => {
@@ -33,23 +66,44 @@ const SettingsIndex: Component = () => {
   function applyEdit() {
     const idx = selectedIndex();
     if (idx === null) return;
+
+    const dupIdx = findDuplicateIndex(editPath(), idx);
+    if (dupIdx >= 0) {
+      const extensions = parseExtensions(editExtensions());
+      const includeFolders = editIncludeFolders();
+      updateDraft((c) => {
+        mergeExtensions(c.paths.scan[dupIdx], extensions);
+        if (includeFolders) c.paths.scan[dupIdx].include_folders = true;
+        c.paths.scan.splice(idx, 1);
+      });
+      setSelectedIndex(dupIdx > idx ? dupIdx - 1 : dupIdx);
+      setStatus("重複するパスを統合しました");
+      return;
+    }
+
     updateDraft((c) => {
       c.paths.scan[idx].path = editPath();
-      c.paths.scan[idx].extensions = editExtensions()
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
+      c.paths.scan[idx].extensions = parseExtensions(editExtensions());
       c.paths.scan[idx].include_folders = editIncludeFolders();
     });
   }
 
   function addScanPath() {
     const path = editPath();
-    const extensions = editExtensions()
-      .split(",")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
+    const extensions = parseExtensions(editExtensions());
     const includeFolders = editIncludeFolders();
+
+    const dupIdx = findDuplicateIndex(path, null);
+    if (dupIdx >= 0) {
+      updateDraft((c) => {
+        mergeExtensions(c.paths.scan[dupIdx], extensions);
+        if (includeFolders) c.paths.scan[dupIdx].include_folders = true;
+      });
+      setSelectedIndex(dupIdx);
+      setStatus("既存のパスに統合しました");
+      return;
+    }
+
     updateDraft((c) => {
       c.paths.scan.push({ path, extensions, include_folders: includeFolders });
     });
@@ -207,6 +261,7 @@ const SettingsIndex: Component = () => {
                   参照...
                 </button>
               </div>
+              <span class="scan-path-form-hint">同じパスは自動的に統合されます</span>
             </label>
             <label>
               拡張子 (カンマ区切り)

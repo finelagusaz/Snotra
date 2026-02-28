@@ -395,7 +395,8 @@
   opacity: 0.5;
 }
 
-/* ===== Scan Path List ===== */
+/* ===== Settings Editor List ===== */
+.settings-editor-list,
 .scan-path-list {
   max-height: 200px;
   overflow-y: auto;
@@ -404,12 +405,15 @@
   border-radius: 8px;
 }
 
+.settings-editor-list::-webkit-scrollbar,
 .scan-path-list::-webkit-scrollbar {
   width: 4px;
 }
+.settings-editor-list::-webkit-scrollbar-track,
 .scan-path-list::-webkit-scrollbar-track {
   background: transparent;
 }
+.settings-editor-list::-webkit-scrollbar-thumb,
 .scan-path-list::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb-color, rgba(255, 255, 255, 0.3));
   border-radius: 2px;
@@ -480,12 +484,14 @@
   margin-left: auto;
 }
 
+.settings-editor-list-empty,
 .scan-path-list-empty {
   padding: 12px;
   font-size: 0.85em;
   color: var(--hint-text-color, #808080);
 }
 
+.settings-editor-list-actions,
 .scan-path-list-actions {
   display: flex;
   justify-content: flex-end;
@@ -532,7 +538,8 @@
   gap: 8px;
 }
 
-/* ===== Scan Path Edit Form ===== */
+/* ===== Settings Editor Form ===== */
+.settings-editor-form,
 .scan-path-form {
   display: flex;
   flex-direction: column;
@@ -543,6 +550,7 @@
   border: 1px solid color-mix(in srgb, var(--hint-text-color, #808080) 20%, transparent);
 }
 
+.settings-editor-form label,
 .scan-path-form label {
   display: flex;
   flex-direction: column;
@@ -551,6 +559,7 @@
   color: var(--hint-text-color, #808080);
 }
 
+.settings-editor-form input[type="text"],
 .scan-path-form input[type="text"] {
   padding: 6px 10px;
   background: var(--input-bg-color, #383838);
@@ -561,6 +570,7 @@
   transition: border-color 200ms;
 }
 
+.settings-editor-form input[type="text"]:focus-visible,
 .scan-path-form input[type="text"]:focus-visible {
   outline: none;
   border-color: var(--text-color, #e0e0e0);
@@ -583,6 +593,7 @@
   white-space: nowrap;
 }
 
+.settings-editor-form-toggle,
 .scan-path-form-toggle {
   display: flex;
   align-items: center;
@@ -590,17 +601,17 @@
   font-size: 0.85em;
 }
 
-.scan-path-form-actions {
+.settings-editor-actions,
+.scan-path-form-actions,
+.scan-path-form-actions--modal {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.scan-path-form-actions--modal {
   justify-content: flex-start;
   flex-wrap: wrap;
 }
 
+.settings-editor-actions-primary,
 .scan-path-form-actions-primary {
   display: flex;
   align-items: center;
@@ -728,6 +739,7 @@
   color: var(--hint-text-color, #808080);
 }
 
+.settings-editor-form-hint,
 .scan-path-form-hint {
   font-size: 0.75em;
   color: var(--hint-text-color, #808080);

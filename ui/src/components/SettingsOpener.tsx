@@ -1,8 +1,11 @@
 import type { Component } from "solid-js";
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { OpenerRule, OpenerTool } from "../lib/types";
 import { draft, updateDraft } from "../stores/settings";
+import SettingsEditableList from "./SettingsEditableList";
+import SettingsEditorActions from "./SettingsEditorActions";
+import SettingsEditorModal from "./SettingsEditorModal";
 
 type FlatEntry = {
   ruleIndex: number;
@@ -47,14 +50,6 @@ const SettingsOpener: Component = () => {
   let toolNameInputRef: HTMLInputElement | undefined;
 
   const flatList = () => buildFlatList(d().openers);
-
-  createEffect(() => {
-    if (modalMode() === null) return;
-    queueMicrotask(() => {
-      toolNameInputRef?.focus();
-      toolNameInputRef?.select();
-    });
-  });
 
   function resetForm() {
     setEditTarget("folder");
@@ -221,13 +216,6 @@ const SettingsOpener: Component = () => {
     return entry.toolIndex < (d().openers[entry.ruleIndex]?.tools.length ?? 0) - 1;
   };
 
-  function handleModalKeyDown(e: KeyboardEvent) {
-    if (e.key !== "Escape") return;
-    e.preventDefault();
-    e.stopPropagation();
-    closeModal();
-  }
-
   return (
     <div class="settings-section">
       <div class="settings-group">
@@ -238,15 +226,12 @@ const SettingsOpener: Component = () => {
             Enter で先頭ツールを起動、Shift+Enter でツール選択メニューを表示します。
           </p>
 
-          <div class="scan-path-list">
-            <For
-              each={flatList()}
-              fallback={
-                <div class="scan-path-list-empty">
-                  オープナールールはまだ登録されていません
-                </div>
-              }
-            >
+          <SettingsEditableList
+            hasItems={flatList().length > 0}
+            emptyMessage="オープナールールはまだ登録されていません"
+            onAdd={openCreateModal}
+          >
+            <For each={flatList()}>
               {(entry, fi) => (
                 <div class="scan-path-item opener-item scan-path-item--editable">
                   <div class="opener-item-main">
@@ -263,97 +248,77 @@ const SettingsOpener: Component = () => {
                 </div>
               )}
             </For>
-          </div>
-          <div class="scan-path-list-actions">
-            <button type="button" onClick={openCreateModal}>
-              追加
-            </button>
-          </div>
+          </SettingsEditableList>
         </div>
       </div>
 
-      <Show when={modalMode() !== null}>
-        <div class="settings-modal-backdrop" onClick={closeModal}>
-          <div
-            class="settings-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="opener-modal-title"
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={handleModalKeyDown}
-          >
-            <div class="settings-modal-header">
-              <div id="opener-modal-title" class="settings-modal-title">
-                {modalMode() === "edit" ? "オープナールールを編集" : "オープナールールを追加"}
-              </div>
-              <button
-                type="button"
-                class="settings-modal-close"
-                onClick={closeModal}
-                aria-label="閉じる"
+      <SettingsEditorModal
+        open={modalMode() !== null}
+        title={modalMode() === "edit" ? "オープナールールを編集" : "オープナールールを追加"}
+        titleId="opener-modal-title"
+        onClose={closeModal}
+        initialFocusEl={() => toolNameInputRef}
+      >
+        <div class="settings-editor-form">
+          <label>
+            対象
+            <div style={{ display: "flex", gap: "8px", "align-items": "center" }}>
+              <select
+                value={editTarget()}
+                onChange={(e) => setEditTarget(e.currentTarget.value)}
+                style={{ flex: "0 0 auto" }}
               >
-                x
+                <option value="folder">フォルダ</option>
+                <option value="ext">拡張子</option>
+              </select>
+              <Show when={editTarget() === "ext"}>
+                <input
+                  type="text"
+                  value={editTargetExt()}
+                  onInput={(e) => setEditTargetExt(e.currentTarget.value)}
+                  placeholder="png,jpg,gif"
+                  style={{ flex: "1" }}
+                />
+              </Show>
+            </div>
+          </label>
+          <label>
+            名前
+            <input
+              ref={toolNameInputRef}
+              type="text"
+              value={editToolName()}
+              onInput={(e) => setEditToolName(e.currentTarget.value)}
+              placeholder="Total Commander"
+            />
+          </label>
+          <label>
+            実行ファイル
+            <div class="scan-path-input-row">
+              <input
+                type="text"
+                value={editToolExe()}
+                onInput={(e) => setEditToolExe(e.currentTarget.value)}
+                placeholder="C:\tools\app.exe"
+              />
+              <button type="button" class="btn-browse" onClick={browseExe}>
+                参照...
               </button>
             </div>
-
-            <div class="scan-path-form">
-              <label>
-                対象
-                <div style={{ display: "flex", gap: "8px", "align-items": "center" }}>
-                  <select
-                    value={editTarget()}
-                    onChange={(e) => setEditTarget(e.currentTarget.value)}
-                    style={{ flex: "0 0 auto" }}
-                  >
-                    <option value="folder">フォルダ</option>
-                    <option value="ext">拡張子</option>
-                  </select>
-                  <Show when={editTarget() === "ext"}>
-                    <input
-                      type="text"
-                      value={editTargetExt()}
-                      onInput={(e) => setEditTargetExt(e.currentTarget.value)}
-                      placeholder="png,jpg,gif"
-                      style={{ flex: "1" }}
-                    />
-                  </Show>
-                </div>
-              </label>
-              <label>
-                名前
-                <input
-                  ref={toolNameInputRef}
-                  type="text"
-                  value={editToolName()}
-                  onInput={(e) => setEditToolName(e.currentTarget.value)}
-                  placeholder="Total Commander"
-                />
-              </label>
-              <label>
-                実行ファイル
-                <div class="scan-path-input-row">
-                  <input
-                    type="text"
-                    value={editToolExe()}
-                    onInput={(e) => setEditToolExe(e.currentTarget.value)}
-                    placeholder="C:\tools\app.exe"
-                  />
-                  <button type="button" class="btn-browse" onClick={browseExe}>
-                    参照...
-                  </button>
-                </div>
-              </label>
-              <label>
-                引数 (オプション)
-                <input
-                  type="text"
-                  value={editToolArgs()}
-                  onInput={(e) => setEditToolArgs(e.currentTarget.value)}
-                  placeholder="/O /T"
-                />
-              </label>
-              <div class="scan-path-form-actions scan-path-form-actions--modal">
-                <Show when={modalMode() === "edit"}>
+          </label>
+          <label>
+            引数 (オプション)
+            <input
+              type="text"
+              value={editToolArgs()}
+              onInput={(e) => setEditToolArgs(e.currentTarget.value)}
+              placeholder="/O /T"
+            />
+          </label>
+          <SettingsEditorActions
+            left={
+              modalMode() === "edit" ? (
+                <>
                   <button type="button" class="btn-danger" onClick={deleteEntry}>
                     削除
                   </button>
@@ -363,20 +328,22 @@ const SettingsOpener: Component = () => {
                   <button type="button" onClick={moveDown} disabled={!canMoveDown()} title="下へ">
                     ↓
                   </button>
-                </Show>
-                <div class="scan-path-form-actions-primary">
-                  <button type="button" onClick={closeModal}>
-                    キャンセル
-                  </button>
-                  <button type="button" class="btn-primary" onClick={saveEntry}>
-                    保存
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
+                </>
+              ) : undefined
+            }
+            right={
+              <>
+                <button type="button" onClick={closeModal}>
+                  キャンセル
+                </button>
+                <button type="button" class="btn-primary" onClick={saveEntry}>
+                  保存
+                </button>
+              </>
+            }
+          />
         </div>
-      </Show>
+      </SettingsEditorModal>
     </div>
   );
 };

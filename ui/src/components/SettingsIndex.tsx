@@ -1,8 +1,11 @@
 import type { Component } from "solid-js";
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
 import { open } from "@tauri-apps/plugin-dialog";
 import { draft, updateDraft, setStatus } from "../stores/settings";
 import SettingRow from "./SettingRow";
+import SettingsEditableList from "./SettingsEditableList";
+import SettingsEditorActions from "./SettingsEditorActions";
+import SettingsEditorModal from "./SettingsEditorModal";
 import ToggleSwitch from "./ToggleSwitch";
 
 function normalizeScanPathKey(path: string): string {
@@ -47,14 +50,6 @@ const SettingsIndex: Component = () => {
       (sp, i) => i !== excludeIndex && normalizeScanPathKey(sp.path) === key
     );
   }
-
-  createEffect(() => {
-    if (modalMode() === null) return;
-    queueMicrotask(() => {
-      pathInputRef?.focus();
-      pathInputRef?.select();
-    });
-  });
 
   function resetForm() {
     setEditPath("");
@@ -155,13 +150,6 @@ const SettingsIndex: Component = () => {
     return exts.join(", ");
   }
 
-  function handleModalKeyDown(e: KeyboardEvent) {
-    if (e.key !== "Escape") return;
-    e.preventDefault();
-    e.stopPropagation();
-    closeModal();
-  }
-
   return (
     <div class="settings-section">
       <div class="settings-group">
@@ -246,15 +234,12 @@ const SettingsIndex: Component = () => {
       <div class="settings-group">
         <div class="settings-group-title">スキャンパス</div>
         <div class="settings-group-content">
-          <div class="scan-path-list">
-            <For
-              each={d().paths.scan}
-              fallback={
-                <div class="scan-path-list-empty">
-                  スキャンパスはまだ登録されていません
-                </div>
-              }
-            >
+          <SettingsEditableList
+            hasItems={d().paths.scan.length > 0}
+            emptyMessage="スキャンパスはまだ登録されていません"
+            onAdd={openCreateModal}
+          >
+            <For each={d().paths.scan}>
               {(scan, idx) => (
                 <div class="scan-path-item scan-path-item--editable">
                   <div class="scan-path-item-main">
@@ -278,91 +263,71 @@ const SettingsIndex: Component = () => {
                 </div>
               )}
             </For>
-          </div>
-          <div class="scan-path-list-actions">
-            <button type="button" onClick={openCreateModal}>
-              追加
-            </button>
-          </div>
+          </SettingsEditableList>
         </div>
       </div>
 
-      <Show when={modalMode() !== null}>
-        <div class="settings-modal-backdrop" onClick={closeModal}>
-          <div
-            class="settings-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="scan-path-modal-title"
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={handleModalKeyDown}
-          >
-            <div class="settings-modal-header">
-              <div id="scan-path-modal-title" class="settings-modal-title">
-                {modalMode() === "edit" ? "スキャンパスを編集" : "スキャンパスを追加"}
-              </div>
-              <button
-                type="button"
-                class="settings-modal-close"
-                onClick={closeModal}
-                aria-label="閉じる"
-              >
-                x
+      <SettingsEditorModal
+        open={modalMode() !== null}
+        title={modalMode() === "edit" ? "スキャンパスを編集" : "スキャンパスを追加"}
+        titleId="scan-path-modal-title"
+        onClose={closeModal}
+        initialFocusEl={() => pathInputRef}
+      >
+        <div class="settings-editor-form">
+          <label>
+            パス
+            <div class="scan-path-input-row">
+              <input
+                ref={pathInputRef}
+                type="text"
+                value={editPath()}
+                onInput={(e) => setEditPath(e.currentTarget.value)}
+                placeholder="C:\..."
+              />
+              <button type="button" class="btn-browse" onClick={browsePath}>
+                参照...
               </button>
             </div>
-
-            <div class="scan-path-form">
-              <label>
-                パス
-                <div class="scan-path-input-row">
-                  <input
-                    ref={pathInputRef}
-                    type="text"
-                    value={editPath()}
-                    onInput={(e) => setEditPath(e.currentTarget.value)}
-                    placeholder="C:\..."
-                  />
-                  <button type="button" class="btn-browse" onClick={browsePath}>
-                    参照...
-                  </button>
-                </div>
-                <span class="scan-path-form-hint">同じパスは自動的に統合されます</span>
-              </label>
-              <label>
-                拡張子 (カンマ区切り)
-                <input
-                  type="text"
-                  value={editExtensions()}
-                  onInput={(e) => setEditExtensions(e.currentTarget.value)}
-                  placeholder=".lnk, .exe"
-                />
-              </label>
-              <div class="scan-path-form-toggle">
-                <ToggleSwitch
-                  checked={editIncludeFolders()}
-                  onChange={(v) => setEditIncludeFolders(v)}
-                />
-                <span>フォルダを含める</span>
-              </div>
-              <div class="scan-path-form-actions scan-path-form-actions--modal">
-                <Show when={modalMode() === "edit"}>
-                  <button type="button" class="btn-danger" onClick={removeScanPath}>
-                    削除
-                  </button>
-                </Show>
-                <div class="scan-path-form-actions-primary">
-                  <button type="button" onClick={closeModal}>
-                    キャンセル
-                  </button>
-                  <button type="button" class="btn-primary" onClick={saveScanPath}>
-                    保存
-                  </button>
-                </div>
-              </div>
-            </div>
+            <span class="settings-editor-form-hint">同じパスは自動的に統合されます</span>
+          </label>
+          <label>
+            拡張子 (カンマ区切り)
+            <input
+              type="text"
+              value={editExtensions()}
+              onInput={(e) => setEditExtensions(e.currentTarget.value)}
+              placeholder=".lnk, .exe"
+            />
+          </label>
+          <div class="settings-editor-form-toggle">
+            <ToggleSwitch
+              checked={editIncludeFolders()}
+              onChange={(v) => setEditIncludeFolders(v)}
+            />
+            <span>フォルダを含める</span>
           </div>
+          <SettingsEditorActions
+            left={
+              modalMode() === "edit" ? (
+                <button type="button" class="btn-danger" onClick={removeScanPath}>
+                  削除
+                </button>
+              ) : undefined
+            }
+            right={
+              <>
+                <button type="button" onClick={closeModal}>
+                  キャンセル
+                </button>
+                <button type="button" class="btn-primary" onClick={saveScanPath}>
+                  保存
+                </button>
+              </>
+            }
+          />
         </div>
-      </Show>
+      </SettingsEditorModal>
     </div>
   );
 };

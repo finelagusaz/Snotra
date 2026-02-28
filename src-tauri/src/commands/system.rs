@@ -84,8 +84,8 @@ pub fn record_folder_expansion(path: String, state: State<AppState>) {
 }
 
 #[tauri::command]
-pub fn notify_result_clicked(path: String, app: AppHandle) -> Result<(), String> {
-    app.emit("result-clicked", path).map_err(|e| e.to_string())
+pub fn notify_result_clicked(index: usize, app: AppHandle) -> Result<(), String> {
+    app.emit("result-clicked", index).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

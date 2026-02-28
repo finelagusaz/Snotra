@@ -487,7 +487,7 @@ async function launchWithSelectedTool(): Promise<boolean> {
   }
 }
 
-async function enterToolSelection(result: SearchResult): Promise<void> {
+async function enterToolSelection(result: SearchResult): Promise<boolean> {
   // 残存 debounce タイマーを破棄（C3対策）
   clearTimeout(debounceTimer);
   debounceTimer = undefined;
@@ -497,14 +497,13 @@ async function enterToolSelection(result: SearchResult): Promise<void> {
     tools = await api.getMatchingTools(result.path, result.isFolder);
   } catch (e) {
     trace("search:enter_tool_selection:error", { error: String(e) });
-    return;
+    return false;
   }
 
   if (tools.length <= 1) {
     // ツールが1件以下なら通常起動にフォールバック
     trace("search:enter_tool_selection:fallback", { toolCount: tools.length });
-    void activateSelected();
-    return;
+    return activateSelected();
   }
 
   const frame = {
@@ -530,6 +529,7 @@ async function enterToolSelection(result: SearchResult): Promise<void> {
   setSelected(0);
   emitResults(toolResults, 0, requestId, { reason: "query", shouldShow: true });
   trace("search:enter_tool_selection:ok", { path: result.path, toolCount: tools.length });
+  return false;
 }
 
 function exitToolSelection(): boolean {
@@ -609,24 +609,20 @@ async function activateSelected(): Promise<boolean> {
   }
 }
 
-async function activateSelectedByPath(path: string): Promise<boolean> {
+async function activateSelectedByIndex(index: number): Promise<boolean> {
   if (toolSelectionState()) {
-    // クリックされた tool の exe にマッチする index を探して起動
-    const frame = toolSelectionState()!;
-    const idx = frame.tools.findIndex((t) => t.exe === path);
-    if (idx >= 0) {
-      setSelected(idx);
-    }
+    // ツール選択中: インデックスを直接使う（同一 exe の複数ツールを正確に区別）
+    setSelected(index);
     return launchWithSelectedTool();
   }
   if (activationInFlight) return false;
   activationInFlight = true;
   try {
-    const target = await resolveActivationTarget(path);
-    if (!target) {
-      return false;
-    }
-    const { idx, result } = target;
+    await flushPendingRefresh();
+    const items = results();
+    const idx = clampSelectedIndex(index, items.length);
+    const result = items[idx];
+    if (!result) return false;
     if (idx !== selected()) {
       setSelected(idx);
     }
@@ -688,7 +684,7 @@ export {
   exitFolderExpansion,
   navigateFolderUp,
   activateSelected,
-  activateSelectedByPath,
+  activateSelectedByIndex,
   refreshResults,
   resetForShow,
   indexing,

@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use serde_json::json;
+use snotra_core::config::{find_matching_tools, OpenerTool};
 use tauri::{AppHandle, Manager};
 use tokio::time::timeout;
 
@@ -56,12 +57,120 @@ impl LaunchResult {
 
 const LAUNCH_TIMEOUT_MS: u64 = 4_000;
 
+/// フロントエンドへ返すオープナーツール情報（serde シリアライズ用）
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenerToolDto {
+    pub name: String,
+    pub exe: String,
+    pub args: String,
+}
+
+impl From<&OpenerTool> for OpenerToolDto {
+    fn from(t: &OpenerTool) -> Self {
+        Self {
+            name: t.name.clone(),
+            exe: t.exe.clone(),
+            args: t.args.clone(),
+        }
+    }
+}
+
+/// パスとフォルダフラグに対してマッチするオープナーツール一覧を返す。
+#[tauri::command]
+pub fn get_matching_tools(
+    path: String,
+    is_folder: bool,
+    app: AppHandle,
+) -> Result<Vec<OpenerToolDto>, String> {
+    let state = app.state::<AppState>();
+    let engine = state.engine.lock().unwrap();
+    let tools = find_matching_tools(&path, is_folder, &engine.config().openers);
+    Ok(tools.iter().map(OpenerToolDto::from).collect())
+}
+
+/// 指定ツール（exe + args）でパスを起動し、成功時に履歴を記録する。
+#[tauri::command]
+pub async fn launch_with_tool(
+    path: String,
+    query: String,
+    tool_exe: String,
+    tool_args: String,
+    app: AppHandle,
+) -> Result<LaunchResult, String> {
+    trace_command(
+        "cmd:launch_with_tool:start",
+        json!({
+            "path": path,
+            "tool_exe": tool_exe,
+            "query_len": query.chars().count(),
+            "timeout_ms": LAUNCH_TIMEOUT_MS,
+        }),
+    );
+    let launch_path = path.clone();
+    let exe = tool_exe.clone();
+    let args = tool_args.clone();
+    let join = tauri::async_runtime::spawn_blocking(move || {
+        launch_with_tool_core(&launch_path, &exe, &args)
+    });
+    let result = match timeout(Duration::from_millis(LAUNCH_TIMEOUT_MS), join).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => LaunchResult::failed(-1, format!("launch_worker_join_error: {e}")),
+        Err(_) => LaunchResult::timeout(LAUNCH_TIMEOUT_MS),
+    };
+
+    if result.is_ok() {
+        let state = app.state::<AppState>();
+        let mut engine = state.engine.lock().unwrap();
+        engine.record_launch(&path, &query);
+        engine.save_history_if_dirty(5);
+    }
+
+    trace_command(
+        "cmd:launch_with_tool:done",
+        json!({
+            "path": path,
+            "tool_exe": tool_exe,
+            "status": result.status,
+            "code": result.code,
+            "message": result.message,
+        }),
+    );
+    Ok(result)
+}
+
+fn launch_with_tool_core(path: &str, exe: &str, args: &str) -> LaunchResult {
+    let mut cmd = std::process::Command::new(exe);
+    if !args.is_empty() {
+        cmd.args(args.split_whitespace());
+    }
+    cmd.arg(path);
+    match cmd.spawn() {
+        Ok(_) => LaunchResult::ok(0),
+        Err(e) => LaunchResult::failed(-1, format!("spawn_failed: {e}")),
+    }
+}
+
 #[tauri::command]
 pub async fn launch_item(
     path: String,
     query: String,
     app: AppHandle,
 ) -> Result<LaunchResult, String> {
+    // まずオープナールールを検索（ロック取得 → 即解放）
+    let opener_tool: Option<(String, String)> = {
+        let state = app.state::<AppState>();
+        let engine = state.engine.lock().unwrap();
+        let is_folder = std::path::Path::new(&path).is_dir();
+        let tools = find_matching_tools(&path, is_folder, &engine.config().openers);
+        tools.first().map(|t| (t.exe.clone(), t.args.clone()))
+    };
+
+    if let Some((exe, args)) = opener_tool {
+        // オープナーが設定されていれば launch_with_tool で起動
+        return launch_with_tool(path, query, exe, args, app).await;
+    }
+
     trace_command(
         "cmd:launch_item:start",
         json!({
@@ -99,8 +208,21 @@ pub async fn launch_item(
 }
 
 pub fn launch_item_with_state(path: &str, query: &str, state: &AppState) -> LaunchResult {
+    // オープナールールを検索（ロック取得 → 即解放）
+    let opener_tool: Option<(String, String)> = {
+        let engine = state.engine.lock().unwrap();
+        let is_folder = std::path::Path::new(path).is_dir();
+        let tools = find_matching_tools(path, is_folder, &engine.config().openers);
+        tools.first().map(|t| (t.exe.clone(), t.args.clone()))
+    };
+
     // launch_item_core does ShellExecuteW — must NOT hold the engine lock
-    let result = launch_item_core(path);
+    let result = if let Some((exe, args)) = opener_tool {
+        launch_with_tool_core(path, &exe, &args)
+    } else {
+        launch_item_core(path)
+    };
+
     if result.is_ok() {
         let mut engine = state.engine.lock().unwrap();
         engine.record_launch(path, query);

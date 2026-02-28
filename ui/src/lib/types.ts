@@ -5,6 +5,17 @@ export interface SearchResult {
   isError: boolean;
 }
 
+export interface OpenerTool {
+  name: string;
+  exe: string;
+  args: string;
+}
+
+export interface OpenerRule {
+  target: string;
+  tools: OpenerTool[];
+}
+
 export interface HotkeyConfig {
   modifier: string;
   key: string;
@@ -62,6 +73,7 @@ export interface Config {
   visual: VisualConfig;
   paths: PathsConfig;
   search: SearchConfig;
+  openers: OpenerRule[];
 }
 
 export interface BootstrapGeneralConfig {

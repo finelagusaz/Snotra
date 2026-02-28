@@ -339,6 +339,27 @@ fn normalize_extensions(exts: &[String]) -> Vec<String> {
     result
 }
 
+fn normalize_opener_target(target: &str) -> String {
+    let trimmed = target.trim();
+    if trimmed.eq_ignore_ascii_case("folder") {
+        return "folder".to_string();
+    }
+
+    if let Some((kind, raw_exts)) = trimmed.split_once(':')
+        && kind.eq_ignore_ascii_case("ext")
+    {
+        let exts = normalize_extensions(
+            &raw_exts
+                .split(',')
+                .map(|ext| ext.to_string())
+                .collect::<Vec<_>>(),
+        );
+        return format!("ext:{}", exts.join(","));
+    }
+
+    trimmed.to_string()
+}
+
 pub fn dedup_scan_paths(scan: &[ScanPath]) -> Vec<ScanPath> {
     let mut result: Vec<ScanPath> = Vec::new();
     let mut keys: Vec<String> = Vec::new();
@@ -366,6 +387,27 @@ pub fn dedup_scan_paths(scan: &[ScanPath]) -> Vec<ScanPath> {
                 path: trimmed.to_string(),
                 extensions: exts,
                 include_folders: sp.include_folders,
+            });
+        }
+    }
+
+    result
+}
+
+pub fn normalize_openers(openers: &[OpenerRule]) -> Vec<OpenerRule> {
+    let mut result: Vec<OpenerRule> = Vec::new();
+    let mut targets: Vec<String> = Vec::new();
+
+    for rule in openers {
+        let target = normalize_opener_target(&rule.target);
+
+        if let Some(pos) = targets.iter().position(|existing| existing == &target) {
+            result[pos].tools.extend(rule.tools.iter().cloned());
+        } else {
+            targets.push(target.clone());
+            result.push(OpenerRule {
+                target,
+                tools: rule.tools.clone(),
             });
         }
     }
@@ -512,6 +554,9 @@ impl Config {
                 if config.paths.normalize_scan_paths() {
                     needs_save = true;
                 }
+                if config.normalize_openers() {
+                    needs_save = true;
+                }
                 if needs_save {
                     config.save();
                 }
@@ -573,6 +618,15 @@ impl Config {
         }
 
         errors
+    }
+
+    pub fn normalize_openers(&mut self) -> bool {
+        let normalized = normalize_openers(&self.openers);
+        if normalized != self.openers {
+            self.openers = normalized;
+            return true;
+        }
+        false
     }
 }
 
@@ -1162,6 +1216,30 @@ mod tests {
         assert_eq!(normalize_extension("  "), "");
     }
 
+    #[test]
+    fn normalize_opener_target_adds_dot_and_sorts_extensions() {
+        assert_eq!(
+            normalize_opener_target("ext: png, .JPG, gif , png"),
+            "ext:.gif,.jpg,.png"
+        );
+    }
+
+    #[test]
+    fn normalize_openers_merges_equivalent_targets() {
+        let openers = vec![
+            make_rule("ext:png,jpg", &[("Viewer 1", "viewer.exe", "")]),
+            make_rule("ext:.jpg,.png", &[("Viewer 2", "viewer2.exe", "")]),
+        ];
+
+        let normalized = normalize_openers(&openers);
+
+        assert_eq!(normalized.len(), 1);
+        assert_eq!(normalized[0].target, "ext:.jpg,.png");
+        assert_eq!(normalized[0].tools.len(), 2);
+        assert_eq!(normalized[0].tools[0].name, "Viewer 1");
+        assert_eq!(normalized[0].tools[1].name, "Viewer 2");
+    }
+
     // ---- dedup_scan_paths tests ----
 
     #[test]
@@ -1310,6 +1388,23 @@ mod tests {
             include_folders: false,
         }];
         assert!(!config.paths.normalize_scan_paths());
+    }
+
+    #[test]
+    fn normalize_openers_returns_true_when_changed() {
+        let mut config = Config::default();
+        config.openers = vec![make_rule("ext:png,jpg", &[("Viewer", "viewer.exe", "")])];
+
+        assert!(config.normalize_openers());
+        assert_eq!(config.openers[0].target, "ext:.jpg,.png");
+    }
+
+    #[test]
+    fn normalize_openers_returns_false_when_no_change() {
+        let mut config = Config::default();
+        config.openers = vec![make_rule("ext:.jpg,.png", &[("Viewer", "viewer.exe", "")])];
+
+        assert!(!config.normalize_openers());
     }
 
     // ---- find_matching_tools tests ----

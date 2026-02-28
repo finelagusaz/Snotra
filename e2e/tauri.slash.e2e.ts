@@ -470,20 +470,24 @@ test("設定オープナー: ルール追加・ツール追加・保存・永続
   );
   await openerTab.click();
 
-  // E2E config の既存ルール（folder: cmd + PowerShell）が描画されるまで待つ
+  // E2E config の既存オープナーが描画されるまで待つ
   await driver.wait(async () => {
     const lists = await driver.findElements(By.css(".scan-path-list"));
     if (lists.length === 0) return false;
     return (await lists[0].findElements(By.css(".scan-path-item"))).length >= 1;
   }, 5_000);
 
-  // ルール「追加」ボタンをクリック（selectedRule=null のとき rule form-actions に唯一の「追加」）
-  const addRuleBtn = await driver.findElement(
-    By.xpath("//div[contains(@class,'scan-path-form-actions')]//button[text()='追加']"),
-  );
-  await addRuleBtn.click();
+  const listsBefore = await driver.findElements(By.css(".scan-path-list"));
+  const openerItemsBefore = await listsBefore[0].findElements(By.css(".scan-path-item"));
+  const initialCount = openerItemsBefore.length;
 
-  // selectedRule が設定されるとツール編集フォームが現れる
+  // 「追加」ボタンでモーダルを開く
+  const addBtn = await driver.findElement(
+    By.xpath("//div[contains(@class,'scan-path-list-actions')]//button[text()='追加']"),
+  );
+  await addBtn.click();
+
+  // モーダルのフォームが表示される
   await driver.wait(
     async () =>
       (await driver.findElements(By.css("input[placeholder='Total Commander']"))).length > 0,
@@ -498,11 +502,15 @@ test("設定オープナー: ルール追加・ツール追加・保存・永続
     .findElement(By.css(".scan-path-input-row input[type='text']"))
     .then((el) => el.sendKeys("notepad.exe"));
 
-  // ツール「追加」ボタンをクリック（selectedTool=null のとき tool form-actions に唯一の「追加」）
-  const addToolBtn = await driver.findElement(
-    By.xpath("//div[contains(@class,'scan-path-form-actions')]//button[text()='追加']"),
+  // モーダル内の「保存」で反映
+  const modalSaveBtn = await driver.findElement(
+    By.xpath("//div[contains(@class,'settings-modal')]//button[text()='保存']"),
   );
-  await addToolBtn.click();
+  await modalSaveBtn.click();
+  await driver.wait(
+    async () => (await driver.findElements(By.css(".settings-modal"))).length === 0,
+    3_000,
+  );
 
   // 保存ボタンをクリック → settings window が閉じる
   const saveBtn = await driver.findElement(By.css("button.btn-primary.has-changes"));
@@ -522,16 +530,16 @@ test("設定オープナー: ルール追加・ツール追加・保存・永続
   );
   await openerTab2.click();
 
-  // ルール一覧が 2 件に増えていること（追加したルールが永続化されている）
+  // 一覧が 1 件増えていること（追加したオープナーが永続化されている）
   await driver.wait(async () => {
     const lists = await driver.findElements(By.css(".scan-path-list"));
     if (lists.length === 0) return false;
-    return (await lists[0].findElements(By.css(".scan-path-item"))).length >= 2;
+    return (await lists[0].findElements(By.css(".scan-path-item"))).length >= initialCount + 1;
   }, 5_000);
 
   const lists = await driver.findElements(By.css(".scan-path-list"));
   const ruleItems = await lists[0].findElements(By.css(".scan-path-item"));
-  expect(ruleItems.length).toBe(2);
+  expect(ruleItems.length).toBe(initialCount + 1);
 });
 
 test("/a で main の alwaysOnTop が外れ、about を ESC で閉じると戻る", async ({ harness }) => {

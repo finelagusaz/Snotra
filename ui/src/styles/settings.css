@@ -395,7 +395,8 @@
   opacity: 0.5;
 }
 
-/* ===== Scan Path List ===== */
+/* ===== Settings Editor List ===== */
+.settings-editor-list,
 .scan-path-list {
   max-height: 200px;
   overflow-y: auto;
@@ -404,12 +405,15 @@
   border-radius: 8px;
 }
 
+.settings-editor-list::-webkit-scrollbar,
 .scan-path-list::-webkit-scrollbar {
   width: 4px;
 }
+.settings-editor-list::-webkit-scrollbar-track,
 .scan-path-list::-webkit-scrollbar-track {
   background: transparent;
 }
+.settings-editor-list::-webkit-scrollbar-thumb,
 .scan-path-list::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb-color, rgba(255, 255, 255, 0.3));
   border-radius: 2px;
@@ -460,6 +464,52 @@
   font-size: 0.78em;
 }
 
+.scan-path-item--editable {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  cursor: default;
+}
+
+.scan-path-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.scan-path-edit-button {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.scan-path-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.scan-path-item-actions .scan-path-edit-button {
+  margin-left: 0;
+}
+
+.settings-editor-list-empty,
+.scan-path-list-empty {
+  padding: 12px;
+  font-size: 0.85em;
+  color: var(--hint-text-color, #808080);
+}
+
+.settings-editor-list-actions,
+.scan-path-list-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
 /* ===== Opener List (1-line layout) ===== */
 .scan-path-item.opener-item {
   flex-direction: row;
@@ -492,7 +542,16 @@
   text-overflow: ellipsis;
 }
 
-/* ===== Scan Path Edit Form ===== */
+.opener-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ===== Settings Editor Form ===== */
+.settings-editor-form,
 .scan-path-form {
   display: flex;
   flex-direction: column;
@@ -503,6 +562,7 @@
   border: 1px solid color-mix(in srgb, var(--hint-text-color, #808080) 20%, transparent);
 }
 
+.settings-editor-form label,
 .scan-path-form label {
   display: flex;
   flex-direction: column;
@@ -511,6 +571,7 @@
   color: var(--hint-text-color, #808080);
 }
 
+.settings-editor-form input[type="text"],
 .scan-path-form input[type="text"] {
   padding: 6px 10px;
   background: var(--input-bg-color, #383838);
@@ -521,6 +582,7 @@
   transition: border-color 200ms;
 }
 
+.settings-editor-form input[type="text"]:focus-visible,
 .scan-path-form input[type="text"]:focus-visible {
   outline: none;
   border-color: var(--text-color, #e0e0e0);
@@ -543,6 +605,7 @@
   white-space: nowrap;
 }
 
+.settings-editor-form-toggle,
 .scan-path-form-toggle {
   display: flex;
   align-items: center;
@@ -550,10 +613,65 @@
   font-size: 0.85em;
 }
 
-.scan-path-form-actions {
+.settings-editor-actions,
+.scan-path-form-actions,
+.scan-path-form-actions--modal {
   display: flex;
   align-items: center;
   gap: 8px;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.settings-editor-actions-primary,
+.scan-path-form-actions-primary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.settings-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+}
+
+.settings-modal {
+  width: min(100%, 520px);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  padding: 16px;
+  background: var(--bg-color, #282828);
+  border: 1px solid color-mix(in srgb, var(--hint-text-color, #808080) 30%, transparent);
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+}
+
+.settings-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.settings-modal-title {
+  font-size: 0.95em;
+  font-weight: 600;
+  color: var(--text-color, #e0e0e0);
+}
+
+.settings-modal-close {
+  flex-shrink: 0;
+  min-width: 36px;
+  padding-inline: 0 !important;
 }
 
 /* ===== Buttons ===== */
@@ -633,6 +751,7 @@
   color: var(--hint-text-color, #808080);
 }
 
+.settings-editor-form-hint,
 .scan-path-form-hint {
   font-size: 0.75em;
   color: var(--hint-text-color, #808080);

@@ -333,8 +333,11 @@ const SettingsOpener: Component = () => {
               type="text"
               value={editToolArgs()}
               onInput={(e) => setEditToolArgs(e.currentTarget.value)}
-              placeholder="/O /T"
+              placeholder='-d {path}'
             />
+            <span class="settings-editor-form-hint">
+              {"{path}"} を使うとその位置にパスを展開します。未指定時は末尾に自動追加されます
+            </span>
           </label>
           <SettingsEditorActions
             left={

@@ -306,6 +306,84 @@ pub struct PathsConfig {
     pub scan: Vec<ScanPath>,
 }
 
+fn is_drive_root(path: &str) -> bool {
+    let b = path.as_bytes();
+    b.len() == 3 && b[1] == b':' && b[2] == b'\\'
+}
+
+fn normalize_scan_path_key(path: &str) -> String {
+    let mut key = path.trim().replace('/', "\\").to_lowercase();
+    if key.ends_with('\\') && !is_drive_root(&key) {
+        let trimmed_len = key.trim_end_matches('\\').len();
+        key.truncate(trimmed_len);
+    }
+    key
+}
+
+fn normalize_extension(ext: &str) -> String {
+    let trimmed = ext.trim().trim_start_matches('.');
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    format!(".{}", trimmed.to_lowercase())
+}
+
+fn normalize_extensions(exts: &[String]) -> Vec<String> {
+    let mut result: Vec<String> = exts
+        .iter()
+        .map(|e| normalize_extension(e))
+        .filter(|e| !e.is_empty())
+        .collect();
+    result.sort();
+    result.dedup();
+    result
+}
+
+pub fn dedup_scan_paths(scan: &[ScanPath]) -> Vec<ScanPath> {
+    let mut result: Vec<ScanPath> = Vec::new();
+    let mut keys: Vec<String> = Vec::new();
+
+    for sp in scan {
+        let trimmed = sp.path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let key = normalize_scan_path_key(trimmed);
+        let exts = normalize_extensions(&sp.extensions);
+
+        if let Some(pos) = keys.iter().position(|k| k == &key) {
+            let existing = &mut result[pos];
+            for ext in &exts {
+                if !existing.extensions.iter().any(|e| e == ext) {
+                    existing.extensions.push(ext.clone());
+                }
+            }
+            existing.extensions.sort();
+            existing.include_folders |= sp.include_folders;
+        } else {
+            keys.push(key);
+            result.push(ScanPath {
+                path: trimmed.to_string(),
+                extensions: exts,
+                include_folders: sp.include_folders,
+            });
+        }
+    }
+
+    result
+}
+
+impl PathsConfig {
+    pub fn normalize_scan_paths(&mut self) -> bool {
+        let normalized = dedup_scan_paths(&self.scan);
+        if normalized != self.scan {
+            self.scan = normalized;
+            return true;
+        }
+        false
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -429,6 +507,9 @@ impl Config {
                 }
                 #[allow(deprecated)]
                 if config.search.sanitize() {
+                    needs_save = true;
+                }
+                if config.paths.normalize_scan_paths() {
                     needs_save = true;
                 }
                 if needs_save {
@@ -1014,6 +1095,221 @@ mod tests {
         }];
         let errors = config.validate();
         assert!(errors.contains(&ConfigError::ScanPathEmpty { index: 0 }));
+    }
+
+    // ---- normalize_scan_path_key tests ----
+
+    #[test]
+    fn normalize_scan_path_key_case_insensitive() {
+        assert_eq!(normalize_scan_path_key("C:\\Tools"), "c:\\tools");
+    }
+
+    #[test]
+    fn normalize_scan_path_key_slash_to_backslash() {
+        assert_eq!(normalize_scan_path_key("C:/Tools"), "c:\\tools");
+    }
+
+    #[test]
+    fn normalize_scan_path_key_trims_whitespace() {
+        assert_eq!(normalize_scan_path_key("  C:\\Tools  "), "c:\\tools");
+    }
+
+    #[test]
+    fn normalize_scan_path_key_strips_trailing_backslash() {
+        assert_eq!(normalize_scan_path_key("C:\\Tools\\"), "c:\\tools");
+    }
+
+    #[test]
+    fn normalize_scan_path_key_preserves_drive_root() {
+        assert_eq!(normalize_scan_path_key("C:\\"), "c:\\");
+    }
+
+    #[test]
+    fn normalize_scan_path_key_drive_root_forward_slash() {
+        assert_eq!(normalize_scan_path_key("C:/"), "c:\\");
+    }
+
+    #[test]
+    fn normalize_scan_path_key_equivalence() {
+        let a = normalize_scan_path_key("C:\\Tools");
+        let b = normalize_scan_path_key("c:/tools");
+        let c = normalize_scan_path_key("  C:\\Tools\\  ");
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+    }
+
+    // ---- normalize_extension tests ----
+
+    #[test]
+    fn normalize_extension_adds_dot() {
+        assert_eq!(normalize_extension("exe"), ".exe");
+    }
+
+    #[test]
+    fn normalize_extension_keeps_dot() {
+        assert_eq!(normalize_extension(".exe"), ".exe");
+    }
+
+    #[test]
+    fn normalize_extension_lowercases() {
+        assert_eq!(normalize_extension(".EXE"), ".exe");
+    }
+
+    #[test]
+    fn normalize_extension_empty() {
+        assert_eq!(normalize_extension(""), "");
+        assert_eq!(normalize_extension("."), "");
+        assert_eq!(normalize_extension("  "), "");
+    }
+
+    // ---- dedup_scan_paths tests ----
+
+    #[test]
+    fn dedup_scan_paths_merges_case_variants() {
+        let scan = vec![
+            ScanPath {
+                path: "C:\\Tools".to_string(),
+                extensions: vec![".exe".to_string()],
+                include_folders: false,
+            },
+            ScanPath {
+                path: "c:\\TOOLS".to_string(),
+                extensions: vec![".bat".to_string()],
+                include_folders: true,
+            },
+        ];
+        let result = dedup_scan_paths(&scan);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].path, "C:\\Tools");
+        assert_eq!(result[0].extensions, vec![".bat", ".exe"]);
+        assert!(result[0].include_folders);
+    }
+
+    #[test]
+    fn dedup_scan_paths_preserves_first_seen_order() {
+        let scan = vec![
+            ScanPath {
+                path: "D:\\Apps".to_string(),
+                extensions: vec![".exe".to_string()],
+                include_folders: false,
+            },
+            ScanPath {
+                path: "C:\\Tools".to_string(),
+                extensions: vec![".lnk".to_string()],
+                include_folders: false,
+            },
+            ScanPath {
+                path: "d:/apps".to_string(),
+                extensions: vec![".bat".to_string()],
+                include_folders: false,
+            },
+        ];
+        let result = dedup_scan_paths(&scan);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].path, "D:\\Apps");
+        assert_eq!(result[1].path, "C:\\Tools");
+    }
+
+    #[test]
+    fn dedup_scan_paths_normalizes_extensions() {
+        let scan = vec![ScanPath {
+            path: "C:\\Tools".to_string(),
+            extensions: vec!["EXE".to_string(), ".exe".to_string(), "bat".to_string()],
+            include_folders: false,
+        }];
+        let result = dedup_scan_paths(&scan);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].extensions, vec![".bat", ".exe"]);
+    }
+
+    #[test]
+    fn dedup_scan_paths_skips_empty_paths() {
+        let scan = vec![
+            ScanPath {
+                path: "".to_string(),
+                extensions: vec![".exe".to_string()],
+                include_folders: false,
+            },
+            ScanPath {
+                path: "  ".to_string(),
+                extensions: vec![".bat".to_string()],
+                include_folders: false,
+            },
+        ];
+        let result = dedup_scan_paths(&scan);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn dedup_scan_paths_trailing_backslash_merge() {
+        let scan = vec![
+            ScanPath {
+                path: "C:\\Tools".to_string(),
+                extensions: vec![".exe".to_string()],
+                include_folders: false,
+            },
+            ScanPath {
+                path: "C:\\Tools\\".to_string(),
+                extensions: vec![".bat".to_string()],
+                include_folders: false,
+            },
+        ];
+        let result = dedup_scan_paths(&scan);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].path, "C:\\Tools");
+        assert_eq!(result[0].extensions, vec![".bat", ".exe"]);
+    }
+
+    #[test]
+    fn dedup_scan_paths_no_duplicates_unchanged() {
+        let scan = vec![
+            ScanPath {
+                path: "C:\\Tools".to_string(),
+                extensions: vec![".exe".to_string()],
+                include_folders: false,
+            },
+            ScanPath {
+                path: "D:\\Apps".to_string(),
+                extensions: vec![".bat".to_string()],
+                include_folders: false,
+            },
+        ];
+        let result = dedup_scan_paths(&scan);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].path, "C:\\Tools");
+        assert_eq!(result[1].path, "D:\\Apps");
+    }
+
+    // ---- PathsConfig::normalize_scan_paths tests ----
+
+    #[test]
+    fn normalize_scan_paths_returns_true_when_changed() {
+        let mut config = Config::default();
+        config.paths.scan = vec![
+            ScanPath {
+                path: "C:\\Tools".to_string(),
+                extensions: vec![".exe".to_string()],
+                include_folders: false,
+            },
+            ScanPath {
+                path: "c:\\tools".to_string(),
+                extensions: vec![".bat".to_string()],
+                include_folders: false,
+            },
+        ];
+        assert!(config.paths.normalize_scan_paths());
+        assert_eq!(config.paths.scan.len(), 1);
+    }
+
+    #[test]
+    fn normalize_scan_paths_returns_false_when_no_change() {
+        let mut config = Config::default();
+        config.paths.scan = vec![ScanPath {
+            path: "C:\\Tools".to_string(),
+            extensions: vec![".exe".to_string()],
+            include_folders: false,
+        }];
+        assert!(!config.paths.normalize_scan_paths());
     }
 
     // ---- find_matching_tools tests ----

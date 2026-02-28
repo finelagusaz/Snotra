@@ -632,3 +632,9 @@
   font-size: 0.85em;
   color: var(--hint-text-color, #808080);
 }
+
+.scan-path-form-hint {
+  font-size: 0.75em;
+  color: var(--hint-text-color, #808080);
+  opacity: 0.7;
+}

@@ -33,10 +33,12 @@ pub fn load_config() -> Config {
 
 #[tauri::command]
 pub fn save_config(
-    config: Config,
+    mut config: Config,
     state: State<AppState>,
     app: AppHandle,
 ) -> Result<SaveConfigResult, String> {
+    config.paths.normalize_scan_paths();
+
     // Clone old config and drop the engine lock before platform bridge communication
     let old_config = state.engine.lock().unwrap().config().clone();
 

@@ -14,6 +14,7 @@ import SettingsGeneral from "./SettingsGeneral";
 import SettingsSearch from "./SettingsSearch";
 import SettingsIndex from "./SettingsIndex";
 import SettingsVisual from "./SettingsVisual";
+import SettingsOpener from "./SettingsOpener";
 
 const SettingsWindow: Component = () => {
   onMount(() => {
@@ -58,16 +59,25 @@ const SettingsWindow: Component = () => {
           >
             ビジュアル
           </button>
+          <button
+            classList={{ active: activeTab() === "opener" }}
+            onClick={() => setActiveTab("opener")}
+          >
+            オープナー
+          </button>
         </div>
       </div>
 
       <div class="settings-main">
         <div class="settings-content">
           <Show when={draft()}>
-            {activeTab() === "general" && <SettingsGeneral />}
-            {activeTab() === "search" && <SettingsSearch />}
-            {activeTab() === "index" && <SettingsIndex />}
-            {activeTab() === "visual" && <SettingsVisual />}
+            <>
+              {activeTab() === "general" && <SettingsGeneral />}
+              {activeTab() === "search" && <SettingsSearch />}
+              {activeTab() === "index" && <SettingsIndex />}
+              {activeTab() === "visual" && <SettingsVisual />}
+              {activeTab() === "opener" && <SettingsOpener />}
+            </>
           </Show>
         </div>
 

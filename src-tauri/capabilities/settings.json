@@ -1,12 +1,7 @@
 {
-  "identifier": "default",
-  "description": "Default capabilities for Snotra",
-  "windows": [
-    "main",
-    "results",
-    "settings",
-    "about"
-  ],
+  "identifier": "settings",
+  "description": "Capabilities for the settings window",
+  "windows": ["settings"],
   "permissions": [
     "core:default",
     "core:window:default",
@@ -17,7 +12,6 @@
     "core:window:allow-set-focus",
     "core:window:allow-set-size",
     "core:window:allow-set-position",
-    "core:window:allow-set-decorations",
     "core:window:allow-is-visible",
     "core:window:allow-is-always-on-top",
     "core:window:allow-minimize",
@@ -25,8 +19,6 @@
     "core:event:default",
     "core:event:allow-listen",
     "core:event:allow-emit",
-    "core:window:allow-start-dragging",
-    "dialog:allow-open",
-    "shell:allow-open"
+    "dialog:allow-open"
   ]
 }

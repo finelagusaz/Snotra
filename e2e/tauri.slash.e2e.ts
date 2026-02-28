@@ -29,6 +29,7 @@ type WindowState = {
 };
 
 const WD_SERVER = "http://127.0.0.1:4444/";
+const E2E_BUILD_HINT = "Run: npm run e2e:tauri:setup (or: npx tauri build --no-bundle)";
 
 const E2E_CONFIG_TOML = `
 [hotkey]
@@ -169,9 +170,7 @@ async function spawnTauriDriver(): Promise<ChildProcessWithoutNullStreams> {
 async function createWebDriverSession(): Promise<WebDriver> {
   const appBinary = getAppBinaryPath();
   if (!(await fileExists(appBinary))) {
-    throw new Error(
-      `App binary not found at ${appBinary}. Run: npm run build && cargo build -p snotra --release`,
-    );
+    throw new Error(`App binary not found at ${appBinary}. ${E2E_BUILD_HINT}`);
   }
 
   return new Builder()
@@ -285,6 +284,10 @@ async function waitAndSwitchToLabel(
   await driver.wait(async () => switchToLabel(driver, expectedLabel), timeoutMs);
 }
 
+function isDevUrlFallbackSnapshot(body: string): boolean {
+  return body.includes("ERR_CONNECTION_REFUSED") || body.includes("接続が拒否されました");
+}
+
 async function createHarness(): Promise<Harness> {
   const backup = await prepareE2EConfig();
   let tauriDriver: ChildProcessWithoutNullStreams | undefined;
@@ -309,8 +312,11 @@ async function createHarness(): Promise<Harness> {
           body: body.slice(0, 180),
         });
       }
+      const buildHint = snapshots.some((snapshot) => isDevUrlFallbackSnapshot(snapshot.body))
+        ? ` likely loaded devUrl instead of bundled assets. Rebuild the app binary with 'npx tauri build --no-bundle'; 'cargo build -p snotra --release' alone is not sufficient for this E2E harness.`
+        : "";
       throw new Error(
-        `search-input not found. states=${JSON.stringify(states)} snapshots=${JSON.stringify(snapshots)} cause=${String(e)}`,
+        `search-input not found.${buildHint} states=${JSON.stringify(states)} snapshots=${JSON.stringify(snapshots)} cause=${String(e)}`,
       );
     }
     return { driver, tauriDriver, backup };

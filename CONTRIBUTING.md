@@ -46,6 +46,11 @@ npm run tauri dev
 # テスト
 cargo test -p snotra-core   # Rust ユニットテスト
 npm test                     # フロントエンドユニットテスト
+npm run smoke:startup        # 起動スモーク
+npm run e2e:tauri:setup      # Tauri Driver + E2E用バイナリ更新
+npm run e2e:tauri            # Playwright + Tauri Driver E2E
 ```
+
+`npm run e2e:tauri:setup` は `npx tauri build --no-bundle` を含みます。Tauri Driver E2E はこのバイナリを使うため、`cargo build --release` 単体では不十分です。
 
 詳細な開発ガイドラインは [CLAUDE.md](./CLAUDE.md) を参照。

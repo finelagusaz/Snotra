@@ -68,6 +68,8 @@ npm run e2e:tauri:setup
 npm run e2e:tauri
 ```
 
+`npm run e2e:tauri:setup` installs `tauri-driver` and refreshes the E2E app binary via `npx tauri build --no-bundle`. Tauri Driver E2E uses that binary, so `cargo build --release` by itself can produce a `localhost`-targeting binary and fail with `ERR_CONNECTION_REFUSED`.
+
 ## Architecture
 
 ```
@@ -146,6 +148,10 @@ This project is licensed under the [MIT License](LICENSE).
 
 - **`tauri` CLI not found / command fails**
   - Fix: Run `npm install -g @tauri-apps/cli` or `cargo install tauri-cli`. Note that the project may manage the CLI as a local devDependency, so prefer `npm run tauri dev`.
+
+- **Tauri Driver E2E shows `ERR_CONNECTION_REFUSED` / `search-input not found`**
+  - Cause: The `target\release\snotra.exe` used by E2E is stale, or it was rebuilt with `cargo build --release` only and still targets `devUrl`.
+  - Fix: Run `npm run e2e:tauri:setup` or `npx tauri build --no-bundle` to rebuild the E2E app binary.
 
 ### Quick Checklist
 

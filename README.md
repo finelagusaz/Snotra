@@ -68,6 +68,8 @@ npm run e2e:tauri:setup
 npm run e2e:tauri
 ```
 
+`npm run e2e:tauri:setup` は `tauri-driver` のインストールに加えて `npx tauri build --no-bundle` で E2E 用の Tauri バイナリを更新します。Tauri Driver E2E はこのバイナリを使うため、`cargo build --release` 単体では `localhost` 向きバイナリになり `ERR_CONNECTION_REFUSED` で失敗します。
+
 ## アーキテクチャ
 
 ```
@@ -146,6 +148,10 @@ Issue 駆動で Codex 実装〜Draft PR 作成まで自動化する運用を用�
 
 - **`tauri` CLI が見つからない/コマンドが失敗する**
   - 対処: `npm install -g @tauri-apps/cli` または `cargo install tauri-cli` を行う。プロジェクトではローカル devDependency として管理されている場合もあるので `npm run tauri dev` を利用してください。
+
+- **Tauri Driver E2E で `ERR_CONNECTION_REFUSED` / `search-input not found`**
+  - 原因: E2E が参照する `target\\release\\snotra.exe` が古い、または `cargo build --release` だけで作られた `devUrl` 向きバイナリになっている。
+  - 対処: `npm run e2e:tauri:setup` または `npx tauri build --no-bundle` を実行して、E2E 用バイナリを作り直す。
 
 ### 短いチェックリスト
 

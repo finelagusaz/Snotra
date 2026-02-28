@@ -30,6 +30,6 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 
 ## 設計上の注意点
 
-### searchGeneration の二重管理
+### searchGeneration と windowOpsGeneration の関係
 
-検索世代 ID（`searchGeneration`）は `resultsWindowController.ts`（`windowOpsGeneration` としてウィンドウ操作の stale 判定に使用）と `search.ts`（`searchGeneration` として検索リクエストの stale 判定に使用）の両方で管理されている。現状は整合しているが、片方だけを変更すると古いレスポンスの破棄ロジックが壊れる。どちらかを変更するときは必ず両方を確認すること。
+`search.ts` の `searchGeneration`（検索リクエストの stale 判定）と `resultsWindowController.ts` の `windowOpsGeneration`（ウィンドウ操作の stale 判定）は別責務のカウンタであり、`windowOpsGeneration` は `searchGeneration` の派生値。二重管理ではなく、それぞれ独立した責務を持つ。ただし、どちらかの stale 判定ロジックを変更するときは両方に影響しないか確認すること。

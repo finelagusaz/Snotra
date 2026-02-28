@@ -56,6 +56,7 @@ impl LaunchResult {
 }
 
 const LAUNCH_TIMEOUT_MS: u64 = 4_000;
+const PATH_PLACEHOLDER: &str = "{path}";
 
 /// フロントエンドへ返すオープナーツール情報（serde シリアライズ用）
 #[derive(serde::Serialize, Clone)]
@@ -141,14 +142,33 @@ pub async fn launch_with_tool(
 
 fn launch_with_tool_core(path: &str, exe: &str, args: &str) -> LaunchResult {
     let mut cmd = std::process::Command::new(exe);
-    if !args.is_empty() {
-        cmd.args(args.split_whitespace());
+    for arg in build_launch_args(args, path) {
+        cmd.arg(arg);
     }
-    cmd.arg(path);
     match cmd.spawn() {
         Ok(_) => LaunchResult::ok(0),
         Err(e) => LaunchResult::failed(-1, format!("spawn_failed: {e}")),
     }
+}
+
+fn build_launch_args(args: &str, path: &str) -> Vec<String> {
+    let mut expanded = Vec::new();
+    let mut has_placeholder = false;
+
+    for token in args.split_whitespace() {
+        if token.contains(PATH_PLACEHOLDER) {
+            has_placeholder = true;
+            expanded.push(token.replace(PATH_PLACEHOLDER, path));
+        } else {
+            expanded.push(token.to_string());
+        }
+    }
+
+    if !has_placeholder {
+        expanded.push(path.to_string());
+    }
+
+    expanded
 }
 
 #[tauri::command]
@@ -316,5 +336,55 @@ fn launch_item_core(path: &str) -> LaunchResult {
     {
         let _ = path;
         LaunchResult::failed(-1, "unsupported_platform")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_launch_args;
+
+    #[test]
+    fn build_launch_args_appends_path_when_args_empty() {
+        assert_eq!(build_launch_args("", "C:\\file.txt"), vec!["C:\\file.txt"]);
+    }
+
+    #[test]
+    fn build_launch_args_appends_path_when_no_placeholder() {
+        assert_eq!(
+            build_launch_args("--new-window", "C:\\file.txt"),
+            vec!["--new-window", "C:\\file.txt"]
+        );
+    }
+
+    #[test]
+    fn build_launch_args_replaces_placeholder_and_skips_append() {
+        assert_eq!(
+            build_launch_args("-d {path}", "C:\\file.txt"),
+            vec!["-d", "C:\\file.txt"]
+        );
+    }
+
+    #[test]
+    fn build_launch_args_replaces_inline_placeholder() {
+        assert_eq!(
+            build_launch_args("--open={path}", "C:\\file.txt"),
+            vec!["--open=C:\\file.txt"]
+        );
+    }
+
+    #[test]
+    fn build_launch_args_keeps_space_in_replaced_path_as_single_argument() {
+        assert_eq!(
+            build_launch_args("-d {path}", "C:\\My Folder\\file.txt"),
+            vec!["-d", "C:\\My Folder\\file.txt"]
+        );
+    }
+
+    #[test]
+    fn build_launch_args_replaces_multiple_placeholders() {
+        assert_eq!(
+            build_launch_args("{path} --compare {path}", "C:\\file.txt"),
+            vec!["C:\\file.txt", "--compare", "C:\\file.txt"]
+        );
     }
 }

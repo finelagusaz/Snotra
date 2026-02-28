@@ -1,39 +1,35 @@
 import type { Component } from "solid-js";
 import { createSignal, For, Show } from "solid-js";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { OpenerRule, OpenerTool } from "../lib/types";
+import type { OpenerRule } from "../lib/types";
+import type { GroupedOpenerEntry } from "../lib/openerGroups";
+import {
+  buildGroupedOpeners,
+  cloneGroupedOpenerEntry,
+  isSameGroupedOpener,
+  mergeGroupedOpenerEntries,
+  serializeGroupedOpeners,
+} from "../lib/openerGroups";
+import {
+  getOpenerTargetExtensions,
+  normalizeOpenerTarget,
+} from "../lib/openerTarget";
 import { draft, updateDraft } from "../stores/settings";
 import SettingsEditableList from "./SettingsEditableList";
 import SettingsEditorActions from "./SettingsEditorActions";
 import SettingsEditorModal from "./SettingsEditorModal";
 
-type FlatEntry = {
-  ruleIndex: number;
-  toolIndex: number;
+type FlatEntry = GroupedOpenerEntry & {
   targetLabel: string;
   toolName: string;
 };
 
 function buildFlatList(openers: OpenerRule[]): FlatEntry[] {
-  const entries: FlatEntry[] = [];
-  for (let ri = 0; ri < openers.length; ri++) {
-    const rule = openers[ri];
-    const targetLabel =
-      rule.target === "folder"
-        ? "フォルダ"
-        : rule.target.startsWith("ext:")
-          ? rule.target.slice(4)
-          : rule.target;
-    for (let ti = 0; ti < rule.tools.length; ti++) {
-      entries.push({
-        ruleIndex: ri,
-        toolIndex: ti,
-        targetLabel,
-        toolName: rule.tools[ti].name || "(名前未設定)",
-      });
-    }
-  }
-  return entries;
+  return buildGroupedOpeners(openers).map((entry) => ({
+    ...entry,
+    targetLabel: entry.targetKind === "folder" ? "フォルダ" : entry.extensions.join(","),
+    toolName: entry.tool.name || "(名前未設定)",
+  }));
 }
 
 const SettingsOpener: Component = () => {
@@ -76,72 +72,75 @@ const SettingsOpener: Component = () => {
     if (!entry) {
       return;
     }
-    const rule = d().openers[entry.ruleIndex];
-    const tool = rule?.tools[entry.toolIndex];
-    if (!rule || !tool) {
-      return;
-    }
     setEditingFlat(flatIndex);
-    if (rule.target === "folder") {
+    if (entry.targetKind === "folder") {
       setEditTarget("folder");
       setEditTargetExt("");
     } else {
       setEditTarget("ext");
-      setEditTargetExt(rule.target.startsWith("ext:") ? rule.target.slice(4) : rule.target);
+      setEditTargetExt(entry.extensions.join(","));
     }
-    setEditToolName(tool.name);
-    setEditToolExe(tool.exe);
-    setEditToolArgs(tool.args);
+    setEditToolName(entry.tool.name);
+    setEditToolExe(entry.tool.exe);
+    setEditToolArgs(entry.tool.args);
     setModalMode("edit");
   }
 
   function buildTarget(): string {
-    return editTarget() === "folder" ? "folder" : `ext:${editTargetExt()}`;
+    return editTarget() === "folder"
+      ? "folder"
+      : normalizeOpenerTarget(`ext:${editTargetExt()}`);
+  }
+
+  function buildEntryFromForm(): GroupedOpenerEntry {
+    const target = buildTarget();
+    return {
+      targetKind: target === "folder" ? "folder" : "ext",
+      extensions:
+        target === "folder"
+          ? []
+          : getOpenerTargetExtensions(target)
+              .split(",")
+              .filter((ext) => ext.length > 0),
+      tool: {
+        name: editToolName(),
+        exe: editToolExe(),
+        args: editToolArgs(),
+      },
+    };
   }
 
   function saveEntry() {
-    const target = buildTarget();
-    const tool: OpenerTool = {
-      name: editToolName(),
-      exe: editToolExe(),
-      args: editToolArgs(),
-    };
+    const entries = flatList().map((entry) =>
+      cloneGroupedOpenerEntry({
+        targetKind: entry.targetKind,
+        extensions: entry.extensions,
+        tool: entry.tool,
+      }),
+    );
+    const nextEntry = buildEntryFromForm();
 
     if (modalMode() === "edit") {
       const fi = editingFlat();
       if (fi === null) return;
-      const entry = flatList()[fi];
-      if (!entry) return;
-
-      updateDraft((c) => {
-        const oldRule = c.openers[entry.ruleIndex];
-        if (oldRule.target === target) {
-          oldRule.tools[entry.toolIndex] = tool;
-          return;
-        }
-
-        oldRule.tools.splice(entry.toolIndex, 1);
-        if (oldRule.tools.length === 0) {
-          c.openers.splice(entry.ruleIndex, 1);
-        }
-        const newRuleIdx = c.openers.findIndex((r) => r.target === target);
-        if (newRuleIdx >= 0) {
-          c.openers[newRuleIdx].tools.push(tool);
-        } else {
-          c.openers.push({ target, tools: [tool] });
-        }
-      });
-      closeModal();
-      return;
+      entries.splice(fi, 1);
+      const mergeIndex = entries.findIndex((entry) => isSameGroupedOpener(entry, nextEntry));
+      if (mergeIndex >= 0) {
+        entries[mergeIndex] = mergeGroupedOpenerEntries(entries[mergeIndex], nextEntry);
+      } else {
+        entries.splice(Math.min(fi, entries.length), 0, nextEntry);
+      }
+    } else {
+      const mergeIndex = entries.findIndex((entry) => isSameGroupedOpener(entry, nextEntry));
+      if (mergeIndex >= 0) {
+        entries[mergeIndex] = mergeGroupedOpenerEntries(entries[mergeIndex], nextEntry);
+      } else {
+        entries.push(nextEntry);
+      }
     }
 
     updateDraft((c) => {
-      const existingRuleIdx = c.openers.findIndex((r) => r.target === target);
-      if (existingRuleIdx >= 0) {
-        c.openers[existingRuleIdx].tools.push(tool);
-      } else {
-        c.openers.push({ target, tools: [tool] });
-      }
+      c.openers = serializeGroupedOpeners(entries);
     });
     closeModal();
   }
@@ -149,24 +148,33 @@ const SettingsOpener: Component = () => {
   function deleteEntry() {
     const fi = editingFlat();
     if (fi === null) return;
-    const entry = flatList()[fi];
-    if (!entry) return;
+    const entries = flatList().map((entry) =>
+      cloneGroupedOpenerEntry({
+        targetKind: entry.targetKind,
+        extensions: entry.extensions,
+        tool: entry.tool,
+      }),
+    );
+    if (!entries[fi]) return;
+    entries.splice(fi, 1);
     updateDraft((c) => {
-      c.openers[entry.ruleIndex].tools.splice(entry.toolIndex, 1);
-      if (c.openers[entry.ruleIndex].tools.length === 0) {
-        c.openers.splice(entry.ruleIndex, 1);
-      }
+      c.openers = serializeGroupedOpeners(entries);
     });
     closeModal();
   }
 
   function moveUpAt(fi: number) {
-    const entry = flatList()[fi];
-    if (!entry || entry.toolIndex === 0) return;
-    const { ruleIndex: ri, toolIndex: ti } = entry;
+    if (fi <= 0) return;
+    const entries = flatList().map((entry) =>
+      cloneGroupedOpenerEntry({
+        targetKind: entry.targetKind,
+        extensions: entry.extensions,
+        tool: entry.tool,
+      }),
+    );
     updateDraft((c) => {
-      const tools = c.openers[ri].tools;
-      [tools[ti - 1], tools[ti]] = [tools[ti], tools[ti - 1]];
+      [entries[fi - 1], entries[fi]] = [entries[fi], entries[fi - 1]];
+      c.openers = serializeGroupedOpeners(entries);
     });
     if (editingFlat() === fi) {
       setEditingFlat(fi - 1);
@@ -174,14 +182,17 @@ const SettingsOpener: Component = () => {
   }
 
   function moveDownAt(fi: number) {
-    const entry = flatList()[fi];
-    if (!entry) return;
-    const { ruleIndex: ri, toolIndex: ti } = entry;
-    const toolCount = d().openers[ri]?.tools.length ?? 0;
-    if (ti >= toolCount - 1) return;
+    const entries = flatList().map((entry) =>
+      cloneGroupedOpenerEntry({
+        targetKind: entry.targetKind,
+        extensions: entry.extensions,
+        tool: entry.tool,
+      }),
+    );
+    if (fi < 0 || fi >= entries.length - 1) return;
     updateDraft((c) => {
-      const tools = c.openers[ri].tools;
-      [tools[ti], tools[ti + 1]] = [tools[ti + 1], tools[ti]];
+      [entries[fi], entries[fi + 1]] = [entries[fi + 1], entries[fi]];
+      c.openers = serializeGroupedOpeners(entries);
     });
     if (editingFlat() === fi) {
       setEditingFlat(fi + 1);
@@ -201,14 +212,11 @@ const SettingsOpener: Component = () => {
   }
 
   function canMoveUpAt(fi: number): boolean {
-    const entry = flatList()[fi] ?? null;
-    return entry !== null && entry.toolIndex > 0;
+    return fi > 0;
   }
 
   function canMoveDownAt(fi: number): boolean {
-    const entry = flatList()[fi] ?? null;
-    if (!entry) return false;
-    return entry.toolIndex < (d().openers[entry.ruleIndex]?.tools.length ?? 0) - 1;
+    return fi < flatList().length - 1;
   }
 
   return (
@@ -289,7 +297,7 @@ const SettingsOpener: Component = () => {
                   type="text"
                   value={editTargetExt()}
                   onInput={(e) => setEditTargetExt(e.currentTarget.value)}
-                  placeholder="png,jpg,gif"
+                  placeholder=".png,.jpg,.gif"
                   style={{ flex: "1" }}
                 />
               </Show>

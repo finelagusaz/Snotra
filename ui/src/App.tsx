@@ -10,7 +10,7 @@ import AboutWindow from "./components/AboutWindow";
 import {
   resetForShow,
   setSelected,
-  activateSelectedByPath,
+  activateSelectedByIndex,
   initIndexingState,
 } from "./stores/search";
 import { applyTheme } from "./lib/theme";
@@ -85,14 +85,14 @@ const App: Component = () => {
           listen<ResultsSyncPayload>("results-sync", (event) => {
             void controller.handleResultsSync(event.payload);
           }),
-          listen<string>("result-clicked", async (event) => {
-            trace("app:event:result_clicked", { path: event.payload });
-            const launched = await activateSelectedByPath(event.payload);
-            trace("app:event:result_clicked:done", { path: event.payload, launched });
+          listen<number>("result-clicked", async (event) => {
+            trace("app:event:result_clicked", { index: event.payload });
+            const launched = await activateSelectedByIndex(event.payload);
+            trace("app:event:result_clicked:done", { index: event.payload, launched });
             if (launched) {
               void hideMainAndResults();
             } else {
-              console.warn("Failed to launch clicked result", { path: event.payload });
+              console.warn("Failed to launch clicked result", { index: event.payload });
             }
           }),
           listen<ResultsRenderDonePayload>("results-render-done", (event) => {

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { BootstrapPayload, Config, SearchResult } from "./types";
+import type { BootstrapPayload, Config, OpenerTool, SearchResult } from "./types";
 import { trace } from "./trace";
 
 let invokeSeq = 0;
@@ -142,8 +142,8 @@ export async function setWindowNoActivate(): Promise<void> {
   return tracedInvoke("set_window_no_activate");
 }
 
-export async function notifyResultClicked(path: string): Promise<void> {
-  return tracedInvoke("notify_result_clicked", { path });
+export async function notifyResultClicked(index: number): Promise<void> {
+  return tracedInvoke("notify_result_clicked", { index });
 }
 
 export async function notifyResultDoubleClicked(index: number): Promise<void> {
@@ -176,4 +176,20 @@ export async function ensureWindow(label: "results" | "about"): Promise<boolean>
 
 export async function recordFolderExpansion(path: string): Promise<void> {
   return tracedInvoke("record_folder_expansion", { path });
+}
+
+export async function getMatchingTools(
+  path: string,
+  isFolder: boolean,
+): Promise<OpenerTool[]> {
+  return tracedInvoke<OpenerTool[]>("get_matching_tools", { path, isFolder });
+}
+
+export async function launchWithTool(
+  path: string,
+  query: string,
+  toolExe: string,
+  toolArgs: string,
+): Promise<LaunchResult> {
+  return tracedInvoke<LaunchResult>("launch_with_tool", { path, query, toolExe, toolArgs });
 }

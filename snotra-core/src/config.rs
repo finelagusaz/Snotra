@@ -4,6 +4,55 @@ use std::path::PathBuf;
 
 pub use crate::error::ConfigError;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenerTool {
+    pub name: String,
+    pub exe: String,
+    #[serde(default)]
+    pub args: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenerRule {
+    pub target: String,
+    pub tools: Vec<OpenerTool>,
+}
+
+/// パスとフォルダフラグに対してマッチするツール一覧を返す。
+/// マッチするルールがなければ空スライスを返す（呼び出し側でフォールバック処理）。
+pub fn find_matching_tools<'a>(
+    path: &str,
+    is_folder: bool,
+    rules: &'a [OpenerRule],
+) -> &'a [OpenerTool] {
+    let path_lower = path.to_lowercase();
+    let path_ext = path_lower
+        .rfind('.')
+        .map(|i| &path_lower[i..])
+        .unwrap_or("");
+
+    for rule in rules {
+        if is_folder && rule.target == "folder" {
+            return &rule.tools;
+        }
+        if !is_folder && rule.target.starts_with("ext:") {
+            let ext_part = &rule.target["ext:".len()..];
+            for raw_ext in ext_part.split(',') {
+                let ext = raw_ext.trim().to_lowercase();
+                let ext_with_dot = if ext.starts_with('.') {
+                    ext
+                } else {
+                    format!(".{ext}")
+                };
+                if path_ext == ext_with_dot {
+                    return &rule.tools;
+                }
+            }
+        }
+    }
+    &[]
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     pub hotkey: HotkeyConfig,
@@ -15,6 +64,8 @@ pub struct Config {
     pub paths: PathsConfig,
     #[serde(default)]
     pub search: SearchConfig,
+    #[serde(default)]
+    pub openers: Vec<OpenerRule>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -276,6 +327,7 @@ impl Default for Config {
                 scan: Self::default_scan_paths(),
             },
             search: SearchConfig::default(),
+            openers: Vec::new(),
         }
     }
 }
@@ -962,6 +1014,165 @@ mod tests {
         }];
         let errors = config.validate();
         assert!(errors.contains(&ConfigError::ScanPathEmpty { index: 0 }));
+    }
+
+    // ---- find_matching_tools tests ----
+
+    fn make_rule(target: &str, tools: &[(&str, &str, &str)]) -> OpenerRule {
+        OpenerRule {
+            target: target.to_string(),
+            tools: tools
+                .iter()
+                .map(|(name, exe, args)| OpenerTool {
+                    name: name.to_string(),
+                    exe: exe.to_string(),
+                    args: args.to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn find_matching_tools_folder_target() {
+        let rules = vec![
+            make_rule("folder", &[("TC", "TOTALCMD64.EXE", "/O /T")]),
+            make_rule("ext:png,jpg", &[("IrfanView", "i_view64.exe", "")]),
+        ];
+        let tools = find_matching_tools("C:\\Projects", true, &rules);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "TC");
+    }
+
+    #[test]
+    fn find_matching_tools_ext_target_with_dot() {
+        let rules = vec![make_rule("ext:.png,jpg", &[("IrfanView", "i_view64.exe", "")])];
+        let tools = find_matching_tools("C:\\image.PNG", false, &rules);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "IrfanView");
+    }
+
+    #[test]
+    fn find_matching_tools_ext_target_without_dot() {
+        let rules = vec![make_rule("ext:png,jpg,gif", &[("IrfanView", "i_view64.exe", "")])];
+        let tools = find_matching_tools("C:\\photo.jpg", false, &rules);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "IrfanView");
+    }
+
+    #[test]
+    fn find_matching_tools_no_match_returns_empty() {
+        let rules = vec![
+            make_rule("folder", &[("TC", "TOTALCMD64.EXE", "")]),
+            make_rule("ext:png,jpg", &[("IrfanView", "i_view64.exe", "")]),
+        ];
+        let tools = find_matching_tools("C:\\doc.pdf", false, &rules);
+        assert!(tools.is_empty());
+    }
+
+    #[test]
+    fn find_matching_tools_file_does_not_match_folder_rule() {
+        let rules = vec![make_rule("folder", &[("TC", "TOTALCMD64.EXE", "")])];
+        let tools = find_matching_tools("C:\\file.exe", false, &rules);
+        assert!(tools.is_empty());
+    }
+
+    #[test]
+    fn find_matching_tools_folder_does_not_match_ext_rule() {
+        let rules = vec![make_rule("ext:png", &[("IrfanView", "i_view64.exe", "")])];
+        let tools = find_matching_tools("C:\\MyFolder", true, &rules);
+        assert!(tools.is_empty());
+    }
+
+    #[test]
+    fn find_matching_tools_multiple_rules_first_wins() {
+        let rules = vec![
+            make_rule("ext:png", &[("Tool1", "tool1.exe", "")]),
+            make_rule("ext:png,jpg", &[("Tool2", "tool2.exe", "")]),
+        ];
+        let tools = find_matching_tools("C:\\image.png", false, &rules);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "Tool1");
+    }
+
+    #[test]
+    fn find_matching_tools_multiple_tools_in_rule() {
+        let rules = vec![make_rule(
+            "folder",
+            &[("TC", "TOTALCMD64.EXE", ""), ("Explorer", "explorer.exe", "")],
+        )];
+        let tools = find_matching_tools("C:\\Projects", true, &rules);
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0].name, "TC");
+        assert_eq!(tools[1].name, "Explorer");
+    }
+
+    #[test]
+    fn find_matching_tools_case_insensitive_ext() {
+        let rules = vec![make_rule("ext:PNG,JPG", &[("IrfanView", "i_view64.exe", "")])];
+        let tools = find_matching_tools("C:\\Photo.png", false, &rules);
+        assert_eq!(tools.len(), 1);
+    }
+
+    #[test]
+    fn opener_round_trip_toml() {
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+
+            [appearance]
+            max_results = 8
+            window_width = 600
+
+            [paths]
+            additional = []
+
+            [[openers]]
+            target = "folder"
+
+            [[openers.tools]]
+            name = "Total Commander"
+            exe = "C:\\totalcmd\\TOTALCMD64.EXE"
+            args = "/O /T"
+
+            [[openers.tools]]
+            name = "Explorer"
+            exe = "explorer.exe"
+
+            [[openers]]
+            target = "ext:png,jpg,gif"
+
+            [[openers.tools]]
+            name = "IrfanView"
+            exe = "C:\\irfan\\i_view64.exe"
+        "#;
+        let config: Config = toml::from_str(toml_str).expect("parse");
+        assert_eq!(config.openers.len(), 2);
+        assert_eq!(config.openers[0].target, "folder");
+        assert_eq!(config.openers[0].tools.len(), 2);
+        assert_eq!(config.openers[0].tools[0].name, "Total Commander");
+        assert_eq!(config.openers[0].tools[0].args, "/O /T");
+        assert_eq!(config.openers[0].tools[1].args, "");
+        assert_eq!(config.openers[1].target, "ext:png,jpg,gif");
+        assert_eq!(config.openers[1].tools[0].name, "IrfanView");
+    }
+
+    #[test]
+    fn config_without_openers_defaults_to_empty() {
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+
+            [appearance]
+            max_results = 8
+            window_width = 600
+
+            [paths]
+            additional = []
+        "#;
+        let config: Config = toml::from_str(toml_str).expect("parse");
+        assert!(config.openers.is_empty());
     }
 
     #[test]

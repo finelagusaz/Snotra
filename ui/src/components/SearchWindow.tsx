@@ -19,6 +19,9 @@ import {
   launching,
   launchNotice,
   clearLaunchNotice,
+  enterToolSelection,
+  exitToolSelection,
+  toolSelectionState,
 } from "../stores/search";
 import { hideAllWindows } from "../lib/commands";
 import { perfMarkInput } from "../lib/perf";
@@ -112,7 +115,7 @@ const SearchWindow: Component = () => {
     switch (e.key) {
       case "Escape":
         trace("ui:key_action", { action: "escape" });
-        if (!exitFolderExpansion()) {
+        if (!exitToolSelection() && !exitFolderExpansion()) {
           hideAllWindows();
         }
         e.preventDefault();
@@ -129,6 +132,7 @@ const SearchWindow: Component = () => {
         break;
       case "ArrowRight": {
         trace("ui:key_action", { action: "arrow_right" });
+        if (toolSelectionState()) break;
         const r = results()[selected()];
         if (r?.isFolder) {
           enterFolderExpansion(r.path);
@@ -138,6 +142,7 @@ const SearchWindow: Component = () => {
       }
       case "ArrowLeft":
         trace("ui:key_action", { action: "arrow_left" });
+        if (toolSelectionState()) break;
         if (folderState()) {
           navigateFolderUp();
           e.preventDefault();
@@ -156,17 +161,30 @@ const SearchWindow: Component = () => {
         }
         break;
       case "Enter":
-        trace("ui:key_action", { action: "enter" });
-        void activateSelected().then((launched) => {
-          trace("ui:key_action:enter_done", { launched });
-          if (launched) void hideAllWindows();
-        });
+        trace("ui:key_action", { action: "enter", shift: e.shiftKey });
+        if (e.shiftKey && !toolSelectionState()) {
+          // Shift+Enter: ツール選択メニューを表示（0/1 ツール時は通常起動にフォールバック）
+          const r = results()[selected()];
+          if (r && !r.isError) {
+            void enterToolSelection(r).then((launched) => {
+              trace("ui:key_action:enter_done", { launched, shift: true });
+              if (launched) void hideAllWindows();
+            });
+          }
+        } else {
+          void activateSelected().then((launched) => {
+            trace("ui:key_action:enter_done", { launched });
+            if (launched) void hideAllWindows();
+          });
+        }
         e.preventDefault();
         break;
     }
   }
 
   function handleInput(e: InputEvent) {
+    // ツール選択中は入力を無効化（C2対策）
+    if (toolSelectionState()) return;
     const value = (e.target as HTMLInputElement).value;
     trace("ui:input", { value, folderMode: folderState() !== null });
     perfMarkInput();
@@ -179,10 +197,19 @@ const SearchWindow: Component = () => {
   }
 
   function inputValue(): string {
+    const ts = toolSelectionState();
+    if (ts) {
+      // ツール選択中はターゲットのファイル名を表示（readonly）
+      const parts = ts.targetPath.split(/[\\/]/);
+      return parts[parts.length - 1] ?? ts.targetPath;
+    }
     return folderState() ? folderFilter() : query();
   }
 
   function placeholderText(): string {
+    if (toolSelectionState()) {
+      return "ツールを選択...";
+    }
     const fs = folderState();
     if (fs) {
       return `${fs.currentDir} 内を検索...`;

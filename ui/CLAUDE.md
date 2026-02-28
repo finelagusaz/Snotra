@@ -30,6 +30,10 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 
 ## 設計上の注意点
 
+### result-clicked / result-double-clicked のペイロード型
+
+`result-clicked`（クリック起動）と `result-double-clicked`（行選択）はどちらも **リスト行インデックス（`number`）** をペイロードとして送る。パス文字列をペイロードに使ってはならない。理由: パスは通常検索では一意だが、ツール選択モード中は同一 exe の複数ツールが同じパス（`tool.exe`）を持ちうるため非一意になる。インデックスは全コンテキストで常に一意。
+
 ### searchGeneration と windowOpsGeneration の関係
 
 `search.ts` の `searchGeneration`（検索リクエストの stale 判定）と `resultsWindowController.ts` の `windowOpsGeneration`（ウィンドウ操作の stale 判定）は別責務のカウンタであり、`windowOpsGeneration` は `searchGeneration` の派生値。二重管理ではなく、それぞれ独立した責務を持つ。ただし、どちらかの stale 判定ロジックを変更するときは両方に影響しないか確認すること。

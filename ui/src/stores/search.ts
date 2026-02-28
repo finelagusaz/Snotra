@@ -1,6 +1,6 @@
-import { createSignal, createEffect, on } from "solid-js";
+import { createSignal, createEffect, createRoot, on } from "solid-js";
 import { emit, listen } from "@tauri-apps/api/event";
-import type { SearchResult } from "../lib/types";
+import type { OpenerTool, SearchResult } from "../lib/types";
 import * as api from "../lib/invoke";
 import { findCommand, filterCommands, type SlashCommand } from "../lib/commands";
 import { perfStartSearch, perfMarkSearchDone, perfCancelSearch } from "../lib/perf";
@@ -9,6 +9,7 @@ import { clampSelectedIndex, computeParentDir } from "../lib/folderNav";
 import { trace } from "../lib/trace";
 import type { ResultsPresentationReason } from "../lib/searchEvents";
 import { folderState, setFolderState, folderFilter, setFolderFilter } from "./folder";
+import { toolSelectionState, setToolSelectionState } from "./tool-selection";
 
 const DEBOUNCE_MS = 30;
 
@@ -106,6 +107,9 @@ function debouncedRefresh() {
 // Folder expansion state — signals live in ./folder.ts
 
 async function refreshResults() {
+  // ツール選択中は通常の検索で上書きしない
+  if (toolSelectionState()) return;
+
   const requestId = ++searchGeneration;
   const fs = folderState();
   const q = query();
@@ -213,65 +217,71 @@ async function refreshResults() {
   });
 }
 
-// Auto-refresh when query changes (non-folder mode)
-createEffect(
-  on(query, (q) => {
-    if (suppressNextQueryEffectRefresh) {
-      trace("search:query_effect:suppressed", { query: q });
-      suppressNextQueryEffectRefresh = false;
-      return;
-    }
-    if (folderState()) {
-      trace("search:query_effect:ignored_folder_mode", { query: q });
-      return;
-    }
-    const trimmed = q.trim();
-    trace("search:query_effect", { query: q, trimmed });
+createRoot(() => {
+  // Auto-refresh when query changes (non-folder mode)
+  createEffect(
+    on(query, (q) => {
+      if (suppressNextQueryEffectRefresh) {
+        trace("search:query_effect:suppressed", { query: q });
+        suppressNextQueryEffectRefresh = false;
+        return;
+      }
+      if (toolSelectionState()) {
+        trace("search:query_effect:ignored_tool_selection", { query: q });
+        return;
+      }
+      if (folderState()) {
+        trace("search:query_effect:ignored_folder_mode", { query: q });
+        return;
+      }
+      const trimmed = q.trim();
+      trace("search:query_effect", { query: q, trimmed });
 
-    if (trimmed === "/r") {
-      clearTimeout(debounceTimer);
-      debounceTimer = undefined;
-      setCommandMatches([]);
-      setSelected(0);
-      trace("search:query_effect:immediate_refresh", { reason: "slash_r" });
-      void runRefresh();
-      return;
-    }
-
-    if (trimmed.startsWith("/")) {
-      const cmd = findCommand(q);
-      if (cmd && cmd.command !== "/r") {
+      if (trimmed === "/r") {
         clearTimeout(debounceTimer);
         debounceTimer = undefined;
-        trace("search:query_effect:run_command", { command: cmd.command });
-        clearCommandModeStateAndEmit();
-        cmd.action();
+        setCommandMatches([]);
+        setSelected(0);
+        trace("search:query_effect:immediate_refresh", { reason: "slash_r" });
+        void runRefresh();
         return;
       }
 
-      clearTimeout(debounceTimer);
-      debounceTimer = undefined;
-      trace("search:query_effect:show_command_suggestions", { input: q });
-      showCommandResults(q);
-      return;
-    }
+      if (trimmed.startsWith("/")) {
+        const cmd = findCommand(q);
+        if (cmd && cmd.command !== "/r") {
+          clearTimeout(debounceTimer);
+          debounceTimer = undefined;
+          trace("search:query_effect:run_command", { command: cmd.command });
+          clearCommandModeStateAndEmit();
+          cmd.action();
+          return;
+        }
 
-    setCommandMatches([]);
-    setSelected(0);
-    trace("search:query_effect:debounced_refresh", { query: q });
-    debouncedRefresh();
-  }),
-);
+        clearTimeout(debounceTimer);
+        debounceTimer = undefined;
+        trace("search:query_effect:show_command_suggestions", { input: q });
+        showCommandResults(q);
+        return;
+      }
 
-// Auto-refresh when folder filter changes
-createEffect(
-  on(folderFilter, () => {
-    if (folderState()) {
+      setCommandMatches([]);
       setSelected(0);
+      trace("search:query_effect:debounced_refresh", { query: q });
       debouncedRefresh();
-    }
-  }),
-);
+    }),
+  );
+
+  // Auto-refresh when folder filter changes
+  createEffect(
+    on(folderFilter, () => {
+      if (folderState()) {
+        setSelected(0);
+        debouncedRefresh();
+      }
+    }),
+  );
+});
 
 function emitSelectionUpdate() {
   const nextSelected = clampSelectedIndex(selected(), results().length);
@@ -420,6 +430,126 @@ function consumeCommandSelection(index: number): boolean {
   return false;
 }
 
+async function launchWithSelectedTool(): Promise<boolean> {
+  if (activationInFlight) return false;
+  const frame = toolSelectionState();
+  if (!frame) return false;
+
+  activationInFlight = true;
+  try {
+    const idx = selected();
+    const tool = frame.tools[idx];
+    if (!tool) return false;
+
+    clearLaunchNotice();
+    setLaunching(true);
+    trace("search:launch_with_tool:start", {
+      path: frame.targetPath,
+      tool: tool.exe,
+      query: frame.savedQuery,
+    });
+    // 結果を隠す
+    emitResults([], 0, ++searchGeneration, { reason: "launch", shouldShow: false });
+    const launchResult = await api.launchWithTool(
+      frame.targetPath,
+      frame.savedQuery,
+      tool.exe,
+      tool.args,
+    );
+    if (launchResult.status !== "ok") {
+      trace("search:launch_with_tool:error", {
+        path: frame.targetPath,
+        status: launchResult.status,
+        code: launchResult.code,
+        message: launchResult.message,
+      });
+      const detail = launchResult.message ? ` (${launchResult.message})` : "";
+      if (launchResult.status === "timeout") {
+        setLaunchNoticeWithAutoClear(`起動に時間がかかっています${detail}`);
+      } else {
+        setLaunchNoticeWithAutoClear(`起動に失敗しました${detail}`);
+      }
+      void runRefresh();
+      return false;
+    }
+
+    setToolSelectionState(null);
+    setFolderState(null);
+    setFolderFilter("");
+    setResults([]);
+    setSelected(0);
+    emitResults([], 0, ++searchGeneration, { reason: "launch", shouldShow: false });
+    trace("search:launch_with_tool:done", { path: frame.targetPath });
+    return true;
+  } finally {
+    setLaunching(false);
+    activationInFlight = false;
+  }
+}
+
+async function enterToolSelection(result: SearchResult): Promise<boolean> {
+  // 残存 debounce タイマーを破棄（C3対策）
+  clearTimeout(debounceTimer);
+  debounceTimer = undefined;
+
+  let tools: OpenerTool[];
+  try {
+    tools = await api.getMatchingTools(result.path, result.isFolder);
+  } catch (e) {
+    trace("search:enter_tool_selection:error", { error: String(e) });
+    return false;
+  }
+
+  if (tools.length <= 1) {
+    // ツールが1件以下なら通常起動にフォールバック
+    trace("search:enter_tool_selection:fallback", { toolCount: tools.length });
+    return activateSelected();
+  }
+
+  const frame = {
+    targetPath: result.path,
+    targetIsFolder: result.isFolder,
+    tools,
+    savedResults: results(),
+    savedSelected: selected(),
+    savedQuery: query(),
+    savedFolderFilter: folderFilter(),
+  };
+  setToolSelectionState(frame);
+
+  // ツールを SearchResult として表示
+  const toolResults: SearchResult[] = tools.map((tool) => ({
+    name: tool.name,
+    path: tool.exe,
+    isFolder: false,
+    isError: false,
+  }));
+  const requestId = ++searchGeneration;
+  setResults(toolResults);
+  setSelected(0);
+  emitResults(toolResults, 0, requestId, { reason: "query", shouldShow: true });
+  trace("search:enter_tool_selection:ok", { path: result.path, toolCount: tools.length });
+  return false;
+}
+
+function exitToolSelection(): boolean {
+  const frame = toolSelectionState();
+  if (!frame) return false;
+
+  const requestId = ++searchGeneration;
+  setResults(frame.savedResults);
+  setSelected(frame.savedSelected);
+  setToolSelectionState(null);
+  // フォルダ展開中だった場合の folderFilter を復帰
+  setFolderFilter(frame.savedFolderFilter);
+  emitResults(frame.savedResults, frame.savedSelected, requestId, {
+    reason: "query",
+    shouldShow: frame.savedResults.length > 0,
+  });
+  trace("search:exit_tool_selection:ok", { path: frame.targetPath });
+  return true;
+}
+
 async function launchAndReset(result: SearchResult): Promise<boolean> {
   if (result.isError) return false;
 
@@ -460,6 +590,9 @@ async function launchAndReset(result: SearchResult): Promise<boolean> {
 }
 
 async function activateSelected(): Promise<boolean> {
+  if (toolSelectionState()) {
+    return launchWithSelectedTool();
+  }
   if (activationInFlight) return false;
   activationInFlight = true;
   try {
@@ -476,15 +609,20 @@ async function activateSelected(): Promise<boolean> {
   }
 }
 
-async function activateSelectedByPath(path: string): Promise<boolean> {
+async function activateSelectedByIndex(index: number): Promise<boolean> {
+  if (toolSelectionState()) {
+    // ツール選択中: インデックスを直接使う（同一 exe の複数ツールを正確に区別）
+    setSelected(index);
+    return launchWithSelectedTool();
+  }
   if (activationInFlight) return false;
   activationInFlight = true;
   try {
-    const target = await resolveActivationTarget(path);
-    if (!target) {
-      return false;
-    }
-    const { idx, result } = target;
+    await flushPendingRefresh();
+    const items = results();
+    const idx = clampSelectedIndex(index, items.length);
+    const result = items[idx];
+    if (!result) return false;
     if (idx !== selected()) {
       setSelected(idx);
     }
@@ -499,6 +637,7 @@ function resetForShow() {
   trace("search:reset_for_show", { query: query() });
   setLaunching(false);
   clearLaunchNotice();
+  setToolSelectionState(null);
   setFolderState(null);
   if (query() !== "") {
     suppressNextQueryEffectRefresh = true;
@@ -545,7 +684,7 @@ export {
   exitFolderExpansion,
   navigateFolderUp,
   activateSelected,
-  activateSelectedByPath,
+  activateSelectedByIndex,
   refreshResults,
   resetForShow,
   indexing,
@@ -554,6 +693,9 @@ export {
   launching,
   launchNotice,
   clearLaunchNotice,
+  enterToolSelection,
+  exitToolSelection,
 };
 
 export { folderState, folderFilter, setFolderFilter } from "./folder";
+export { toolSelectionState } from "./tool-selection";

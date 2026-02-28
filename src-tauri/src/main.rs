@@ -215,6 +215,8 @@ fn main() {
             commands::search,
             commands::get_history_results,
             commands::launch_item,
+            commands::get_matching_tools,
+            commands::launch_with_tool,
             commands::list_folder,
             commands::load_config,
             commands::save_config,

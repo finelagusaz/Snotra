@@ -6,7 +6,7 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, DestroyIcon, DestroyMenu, GetCursorPos, GetMessageTime, HICON,
-    IDI_APPLICATION, LoadIconW, MF_GRAYED, MF_SEPARATOR, MF_STRING, PostMessageW,
+    IDI_APPLICATION, LoadIconW, MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, PostMessageW,
     SetForegroundWindow, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD,
     TPM_RIGHTBUTTON, TrackPopupMenuEx, WM_COMMAND, WM_CONTEXTMENU, WM_LBUTTONUP, WM_NULL,
     WM_RBUTTONUP,
@@ -21,6 +21,8 @@ use super::WM_TRAY_ICON;
 pub(super) const ID_MENU_SETTINGS: usize = 1000;
 pub(super) const ID_MENU_EXIT: usize = 1001;
 const ID_MENU_RECENT_BASE: usize = 2000;
+// ツールサブメニュー項目の ID 範囲（>= ID_MENU_TOOL_BASE は常に ID_MENU_RECENT_BASE より大きい）
+const ID_MENU_TOOL_BASE: usize = 3000;
 
 pub(super) fn recent_history_items(
     app_handle: &AppHandle,
@@ -56,6 +58,18 @@ pub(super) fn handle_menu_command(
         }
         ID_MENU_EXIT => {
             let _ = app_handle.emit("exit-requested", ());
+        }
+        // ID_MENU_TOOL_BASE > ID_MENU_RECENT_BASE のため先に評価する
+        id if id >= ID_MENU_TOOL_BASE => {
+            if let Some((path, exe, args)) = tray.as_ref().and_then(|t| t.recent_tool_for_id(id)) {
+                let state = app_handle.state::<AppState>();
+                if exe.is_empty() {
+                    // exe が空 = 「標準」: オープナールールを無視して ShellExecuteW で起動
+                    commands::launch_default_with_state(&path, &state);
+                } else {
+                    commands::launch_with_tool_with_state(&path, &exe, &args, &state);
+                }
+            }
         }
         id if id >= ID_MENU_RECENT_BASE => {
             if let Some(path) = tray.as_ref().and_then(|t| t.recent_path_for_id(id)) {
@@ -116,7 +130,10 @@ pub(super) fn handle_tray_message(
 pub(super) struct TrayIcon {
     nid: NOTIFYICONDATAW,
     owned_icon: Option<HICON>,
+    /// 0/1 ツール項目のパス（ID = ID_MENU_RECENT_BASE + vec の添字）
     recent_menu_paths: Vec<String>,
+    /// 2+ ツール項目のサブメニュー選択情報 (path, exe, args)（ID = ID_MENU_TOOL_BASE + vec の添字）
+    recent_menu_tools: Vec<(String, String, String)>,
 }
 
 impl TrayIcon {
@@ -149,12 +166,18 @@ impl TrayIcon {
             nid,
             owned_icon,
             recent_menu_paths: Vec::new(),
+            recent_menu_tools: Vec::new(),
         }
     }
 
     pub(super) fn recent_path_for_id(&self, id: usize) -> Option<String> {
         let offset = id.checked_sub(ID_MENU_RECENT_BASE)?;
         self.recent_menu_paths.get(offset).cloned()
+    }
+
+    pub(super) fn recent_tool_for_id(&self, id: usize) -> Option<(String, String, String)> {
+        let offset = id.checked_sub(ID_MENU_TOOL_BASE)?;
+        self.recent_menu_tools.get(offset).cloned()
     }
 
     fn show_context_menu(&self, hwnd: HWND, indexing: bool) {
@@ -243,19 +266,68 @@ impl TrayIcon {
             };
 
             self.recent_menu_paths.clear();
+            self.recent_menu_tools.clear();
             let recent = recent_history_items(app_handle);
+            let state = app_handle.state::<AppState>();
             if recent.is_empty() {
                 let empty_text: Vec<u16> =
                     "履歴なし".encode_utf16().chain(std::iter::once(0)).collect();
                 let _ = AppendMenuW(hmenu, MF_GRAYED, 0, PCWSTR(empty_text.as_ptr()));
             } else {
-                for (idx, item) in recent.iter().enumerate() {
-                    let id = ID_MENU_RECENT_BASE + idx;
+                for item in recent.iter() {
                     let label = format_recent_history_label(item);
                     let label_wide: Vec<u16> =
                         label.encode_utf16().chain(std::iter::once(0)).collect();
-                    let _ = AppendMenuW(hmenu, MF_STRING, id, PCWSTR(label_wide.as_ptr()));
-                    self.recent_menu_paths.push(item.path.clone());
+                    let tools = commands::resolve_all_openers(&item.path, &state);
+                    if tools.len() >= 2 {
+                        // 2 つ以上のツールがある場合はツール選択サブメニューを構築
+                        let Ok(hsub) = CreatePopupMenu() else {
+                            continue;
+                        };
+                        // 先頭に「標準」（ShellExecuteW 直接）を追加
+                        let standard_id = ID_MENU_TOOL_BASE + self.recent_menu_tools.len();
+                        let standard_text: Vec<u16> =
+                            "標準".encode_utf16().chain(std::iter::once(0)).collect();
+                        let _ = AppendMenuW(
+                            hsub,
+                            MF_STRING,
+                            standard_id,
+                            PCWSTR(standard_text.as_ptr()),
+                        );
+                        // exe が空文字 = 「標準」起動の番兵
+                        self.recent_menu_tools
+                            .push((item.path.clone(), String::new(), String::new()));
+                        for (name, exe, args) in &tools {
+                            let tool_id = ID_MENU_TOOL_BASE + self.recent_menu_tools.len();
+                            let name_wide: Vec<u16> =
+                                name.encode_utf16().chain(std::iter::once(0)).collect();
+                            let _ = AppendMenuW(
+                                hsub,
+                                MF_STRING,
+                                tool_id,
+                                PCWSTR(name_wide.as_ptr()),
+                            );
+                            self.recent_menu_tools
+                                .push((item.path.clone(), exe.clone(), args.clone()));
+                        }
+                        // MF_POPUP: uIDNewItem に hsub のハンドル値を渡す
+                        let _ = AppendMenuW(
+                            hmenu,
+                            MF_POPUP,
+                            hsub.0 as usize,
+                            PCWSTR(label_wide.as_ptr()),
+                        );
+                    } else {
+                        // 0/1 ツール: 直接起動（既存挙動）
+                        let direct_id = ID_MENU_RECENT_BASE + self.recent_menu_paths.len();
+                        let _ = AppendMenuW(
+                            hmenu,
+                            MF_STRING,
+                            direct_id,
+                            PCWSTR(label_wide.as_ptr()),
+                        );
+                        self.recent_menu_paths.push(item.path.clone());
+                    }
                 }
             }
 

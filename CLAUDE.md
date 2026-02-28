@@ -78,7 +78,8 @@ npm test                          # フロントユニットテスト（Vitest�
 npm run smoke:startup             # 起動時ウィンドウ生成スモーク（trace検証）
 npm run e2e:tauri:setup           # Tauri Driver E2E 用セットアップ
 npm run e2e:tauri                 # Playwright + Tauri Driver E2E
-npx vite build                   # フロントエンドビルド
+npm run build                    # フロントエンドビルド（typecheck → vite build、プロジェクトルートから実行）
+npm run verify                   # Rust + フロントエンド一括検証（cargo check + npm run build）
 npm run tauri dev                # 開発実行（ホットリロード付き）
 npm run tauri build              # リリースビルド
 ```
@@ -120,7 +121,7 @@ npm run tauri build              # リリースビルド
 7. テストが通るまで 6 を反復する
 8. 変更後の検証を実行する（スキップ不可）
    - Rust ファイルを触った場合: `cargo check -p snotra-core -p snotra`（必須）、追加で `cargo test / clippy` も検討
-   - TS ファイルを触った場合: `npx vite build`（必須）
+   - TS ファイルを触った場合: `npm run build`（必須・プロジェクトルートから実行）
    - ウィンドウ生成/表示順・ホットキー・スラッシュコマンドを触った場合: `npm test` + `npm run smoke:startup` + `npm run e2e:tauri` を必須で実行
 9. 報告は「追加/更新テスト名 + 検証した不変条件」を必ず含める
 

@@ -10,7 +10,7 @@ const [savedConfig, setSavedConfig] = createSignal<Config | null>(null);
 const [status, setStatus] = createSignal("");
 
 const [activeTab, setActiveTab] = createSignal<
-  "general" | "search" | "index" | "visual"
+  "general" | "search" | "index" | "visual" | "opener"
 >("general");
 
 function hasChanges(): boolean {

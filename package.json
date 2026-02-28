@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "prebuild": "npm run typecheck",
     "build": "vite build",
+    "verify": "cargo check -p snotra-core -p snotra && npm run build",
     "preview": "vite preview",
     "tauri": "tauri"
   },

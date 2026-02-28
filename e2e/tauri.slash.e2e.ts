@@ -69,6 +69,17 @@ folder_mode = "fuzzy"
 show_hidden_system = false
 history_normalization = "disabled"
 fuzzy_history_cap_ratio = 0.30
+
+[[openers]]
+target = "folder"
+
+[[openers.tools]]
+name = "cmd"
+exe = "cmd.exe"
+
+[[openers.tools]]
+name = "PowerShell"
+exe = "powershell.exe"
 `.trim();
 
 async function fileExists(targetPath: string): Promise<boolean> {
@@ -400,6 +411,127 @@ test("/o で main の alwaysOnTop が外れ、settings を ESC で閉じると�
   // settings 閉じた後: main の alwaysOnTop が true に戻っている
   const afterClose = await getMainAlwaysOnTop(driver);
   expect(afterClose).toBe(true);
+});
+
+test("Shift+Enter でツール選択リストが表示され Escape で元に戻る", async ({ harness }) => {
+  const { driver } = harness;
+
+  // C:\ を入力してパスクエリモード（ドライブルート一覧）を起動
+  await switchToLabel(driver, "main");
+  let input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys("C:\\");
+
+  // フォルダ結果が表示されるまで results ウィンドウを待つ
+  await waitForVisibleLabel(driver, "results", 8_000);
+
+  // Shift+Enter でツール選択へ
+  await switchToLabel(driver, "main");
+  input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(Key.chord(Key.SHIFT, Key.ENTER));
+
+  // placeholder が "ツールを選択..." に変わるまでポーリング
+  await driver.wait(async () => {
+    await switchToLabel(driver, "main");
+    const el = await driver.findElement(By.css(".search-input"));
+    return (await el.getAttribute("placeholder")) === "ツールを選択...";
+  }, 6_000, "tool selection did not activate");
+
+  // Escape でツール選択を解除
+  await switchToLabel(driver, "main");
+  await driver.actions().sendKeys(Key.ESCAPE).perform();
+
+  // placeholder が "ツールを選択..." 以外に戻るまでポーリング
+  await driver.wait(async () => {
+    await switchToLabel(driver, "main");
+    const el = await driver.findElement(By.css(".search-input"));
+    return (await el.getAttribute("placeholder")) !== "ツールを選択...";
+  }, 6_000, "tool selection did not exit");
+
+  // 元の query "C:\\" が復元されていることを確認
+  await switchToLabel(driver, "main");
+  const finalEl = await driver.findElement(By.css(".search-input"));
+  const value = await finalEl.getAttribute("value");
+  expect(value).toBe("C:\\");
+});
+
+test("設定オープナー: ルール追加・ツール追加・保存・永続化確認", async ({ harness }) => {
+  const { driver } = harness;
+
+  // /o で設定を開く
+  await switchToLabel(driver, "main");
+  let input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/o");
+  await waitForVisibleLabel(driver, "settings", 8_000);
+  await switchToLabel(driver, "settings");
+
+  // オープナータブへ移動
+  const openerTab = await driver.findElement(
+    By.xpath("//div[contains(@class,'sidebar-nav')]//button[contains(.,'オープナー')]"),
+  );
+  await openerTab.click();
+
+  // E2E config の既存ルール（folder: cmd + PowerShell）が描画されるまで待つ
+  await driver.wait(async () => {
+    const lists = await driver.findElements(By.css(".scan-path-list"));
+    if (lists.length === 0) return false;
+    return (await lists[0].findElements(By.css(".scan-path-item"))).length >= 1;
+  }, 5_000);
+
+  // ルール「追加」ボタンをクリック（selectedRule=null のとき rule form-actions に唯一の「追加」）
+  const addRuleBtn = await driver.findElement(
+    By.xpath("//div[contains(@class,'scan-path-form-actions')]//button[text()='追加']"),
+  );
+  await addRuleBtn.click();
+
+  // selectedRule が設定されるとツール編集フォームが現れる
+  await driver.wait(
+    async () =>
+      (await driver.findElements(By.css("input[placeholder='Total Commander']"))).length > 0,
+    3_000,
+  );
+
+  // ツール名と実行ファイルを入力
+  await driver
+    .findElement(By.css("input[placeholder='Total Commander']"))
+    .then((el) => el.sendKeys("TestTool"));
+  await driver
+    .findElement(By.css(".scan-path-input-row input[type='text']"))
+    .then((el) => el.sendKeys("notepad.exe"));
+
+  // ツール「追加」ボタンをクリック（selectedTool=null のとき tool form-actions に唯一の「追加」）
+  const addToolBtn = await driver.findElement(
+    By.xpath("//div[contains(@class,'scan-path-form-actions')]//button[text()='追加']"),
+  );
+  await addToolBtn.click();
+
+  // 保存ボタンをクリック → settings window が閉じる
+  const saveBtn = await driver.findElement(By.css("button.btn-primary.has-changes"));
+  await saveBtn.click();
+  await waitForHiddenLabel(driver, "settings", 8_000);
+
+  // 設定を再度開く
+  await switchToLabel(driver, "main");
+  input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/o");
+  await waitForVisibleLabel(driver, "settings", 8_000);
+  await switchToLabel(driver, "settings");
+
+  // オープナータブへ移動（タブ状態がリセットされている場合に備えてクリック）
+  const openerTab2 = await driver.findElement(
+    By.xpath("//div[contains(@class,'sidebar-nav')]//button[contains(.,'オープナー')]"),
+  );
+  await openerTab2.click();
+
+  // ルール一覧が 2 件に増えていること（追加したルールが永続化されている）
+  await driver.wait(async () => {
+    const lists = await driver.findElements(By.css(".scan-path-list"));
+    if (lists.length === 0) return false;
+    return (await lists[0].findElements(By.css(".scan-path-item"))).length >= 2;
+  }, 5_000);
+
+  const lists = await driver.findElements(By.css(".scan-path-list"));
+  const ruleItems = await lists[0].findElements(By.css(".scan-path-item"));
+  expect(ruleItems.length).toBe(2);
 });
 
 test("/a で main の alwaysOnTop が外れ、about を ESC で閉じると戻る", async ({ harness }) => {

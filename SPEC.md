@@ -233,6 +233,12 @@
 - 背景色、入力欄背景色、テキスト色、選択行色、ヒント文字色
 - フォントファミリー、フォントサイズ
 
+`[オープナー]` タブ:
+
+- カスタムオープナールール一覧（詳細は §17 参照）
+- ルール追加/編集/削除
+- ツール追加/編集/削除/並び替え（順序 = 優先度）
+
 ### 6.3 設定反映タイミング
 
 - ホットキー: 保存時に `PlatformCommand::SetHotkey` で再登録（失敗時は旧設定維持）
@@ -254,7 +260,7 @@
 ### 7.1 表示/非表示
 
 - ホットキーで表示
-- `Escape` で非表示（ただしフォルダ展開中は復帰が優先）
+- `Escape` で非表示（ただしツール選択中→フォルダ展開中の順で内側の復帰が優先）
 - フォーカス喪失時の自動非表示（`onFocusChanged` イベント、設定で切替、100ms 猶予付き）
 - ホットキーでのトグル動作（設定で切替）
 
@@ -301,7 +307,7 @@ stateDiagram-v2
   Standby --> LauncherStopped: /q / exit-requested
   SettingsVisible --> Standby: CloseRequested
   SettingsVisible --> LauncherStopped: /q / exit-requested
-  SearchVisible --> Standby: Escape [!folderState]
+  SearchVisible --> Standby: Escape [!toolSelectionState && !folderState]
   SearchVisible --> Standby: hotkey-pressed [hotkey_toggle && main_visible]
   SearchVisible --> Standby: focus_lost [auto_hide_on_focus_lost]
   SearchVisible --> SettingsVisible: /o [!indexing]
@@ -311,6 +317,7 @@ stateDiagram-v2
     state "NormalMode\n(通常モード)" as NormalMode
     state "CommandMode\n(コマンドモード)" as CommandMode
     state "FolderExpansionMode\n(フォルダ展開モード)" as FolderExpansionMode
+    state "ToolSelectionMode\n(ツール選択モード)" as ToolSelectionMode
     state "IndexingMode\n(インデックス中)" as IndexingMode
     [*] --> NormalMode
     NormalMode --> CommandMode: Input [query startsWith '/']
@@ -320,6 +327,11 @@ stateDiagram-v2
     FolderExpansionMode --> FolderExpansionMode: ArrowRight [selected.isFolder]
     FolderExpansionMode --> FolderExpansionMode: ArrowLeft [parent exists]
     FolderExpansionMode --> NormalMode: Escape / exitFolderExpansion()
+    NormalMode --> ToolSelectionMode: Shift+Enter [tools >= 2]
+    FolderExpansionMode --> ToolSelectionMode: Shift+Enter [tools >= 2]
+    ToolSelectionMode --> NormalMode: Escape [!folderState]
+    ToolSelectionMode --> FolderExpansionMode: Escape [folderState]
+    ToolSelectionMode --> NormalMode: Enter/Click [launch success && !folderState]
     NormalMode --> IndexingMode: indexing_start
     IndexingMode --> NormalMode: indexing-complete
   }
@@ -330,7 +342,7 @@ stateDiagram-v2
 - `SearchVisible -> SettingsVisible` は `/o` かつ `!indexing` のときのみ有効
 - `Standby -> SettingsVisible` はトレイ由来 `open-settings` かつ `!indexing` のときのみ有効
 - `Standby -> SearchVisible` は `hotkey-pressed` に加えて、起動直後 `app_start [show_on_startup]` でも成立
-- `SearchVisible -> Standby` の `Escape` は `!folderState` の場合のみ成立（`folderState` 中は `FolderExpansionMode -> NormalMode` を優先）
+- `SearchVisible -> Standby` の `Escape` は `!toolSelectionState && !folderState` の場合のみ成立（`toolSelectionState` 中は `ToolSelectionMode -> NormalMode/FolderExpansionMode` を優先し、`folderState` 中は `FolderExpansionMode -> NormalMode` を優先）
 - `SearchVisible -> Standby` の `hotkey-pressed` は `hotkey_toggle && main_visible` が前提
 - `SearchVisible -> Standby` の `focus_lost` は `auto_hide_on_focus_lost` 有効時のみ成立
 - `SettingsVisible -> Standby` は `CloseRequested` で常に待機へ戻す
@@ -349,7 +361,7 @@ stateDiagram-v2
 - トレイアイコン表示は設定で切替
 - 右クリックメニュー: 「設定」「終了」
 - キーボードフォーカス + Shift+F10 / Application キー: 右クリックと同じコンテキストメニューを表示
-- 左クリック: 最近の実行履歴をポップアップメニューとして表示
+- 左クリック: 最近の実行履歴をポップアップメニューとして表示。履歴からの起動にもオープナールールが適用される（§17 参照）
 - トレイアイコンはすべての固定ウィンドウ（`results` / `about` / `settings`）の事前生成完了後に表示する（§7.5 参照）
 - `show_on_startup = true` の起動時は、検索UI（入力欄/結果）を起動直後から表示する
 - `show_on_startup = false` の起動時は検索UI（入力欄/結果）を表示しない
@@ -477,3 +489,51 @@ stateDiagram-v2
 - V1/V2（秒単位）を読み込んだ場合は、正規化・統合処理より先に `ms` へ変換する
   - 変換規則: `last_launched = last_launched.saturating_mul(1000)`
 - キー正規化（大文字小文字統合）時の衝突解決で `max(last_launched)` を使うため、単位混在のまま統合してはならない
+
+## 17. カスタムオープナー機能
+
+### 17.1 概要
+
+ファイルやフォルダを開く際、Windows の既定プログラム（ShellExecuteW）の代わりに、ユーザーが設定した任意のツールに渡せる機能。
+
+### 17.2 設定構造
+
+- `config.toml` の `[[openers]]` セクションでルールを定義
+- 各ルールは `target`（マッチ条件）と `tools`（ツール一覧）を持つ
+- `target = "folder"`: 全フォルダにマッチ
+- `target = "ext:png,jpg,gif"`: 指定拡張子のファイルにマッチ（カンマ区切り、ドット有無問わず）
+- 1ルールに複数ツールを登録可能（順序が優先度）
+- `tools` の各エントリ: `name`（表示名）、`exe`（実行ファイルパス）、`args`（固定引数、省略可）
+
+### 17.3 起動フロー
+
+- **全起動経路統一**: 通常 Enter・Shift+Enter・クリック・トレイ履歴メニューのすべてでオープナールールを適用する（起動経路に関わらず同一パスは同じオープナーで開かれる）
+- 通常 Enter: マッチするルールの先頭ツールで起動
+- Shift+Enter:
+  - マッチするツールが2件以上: ツール選択メニューを表示
+  - マッチするツールが1件以下: 通常 Enter と同じ動作（ウィンドウも同様に閉じる）
+- クリック: 表示リストの行インデックスで選択ツールを一意に照合し起動（同一 exe を持つ複数ツールを正確に区別）
+- マッチするルールがない場合: 従来どおり ShellExecuteW でフォールバック
+- ツール引数: 固定引数の後にパスを末尾に付加（テンプレート構文なし）
+
+### 17.4 ツール選択メニュー
+
+- 検索結果リストをツール一覧で置換（フォルダ展開と同じモデル）
+- Escape でメニューを閉じて元の状態に復帰（フォルダ展開中の場合はフォルダ展開に復帰）
+- Enter で選択中ツールを起動
+- クリックで任意の行のツールを起動（リスト行インデックスで照合するため、同一 exe でも引数が異なるツールを正確に区別できる）
+
+### 17.5 状態モデル
+
+- `toolSelectionState` は `folderState` と直交する（フォルダ展開中でも Shift+Enter でツール選択に入れる）
+- 優先度: `toolSelectionState !== null` > `folderState !== null` > 通常モード
+- ツール選択中の入力は無効化（検索結果が上書きされない）
+- ツール選択中の ArrowRight/ArrowLeft は無効化
+- ホットキーによる再表示（`resetForShow`）でツール選択はリセットされる
+
+### 17.6 設定画面
+
+- 設定画面に「オープナー」タブを追加（全般/検索/インデックス/ビジュアル/オープナー）
+- ルール追加/編集/削除
+- ツール追加/編集/削除/並び替え（順序 = 優先度）
+- exe パス入力にファイルブラウズダイアログ

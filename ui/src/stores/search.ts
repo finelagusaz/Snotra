@@ -512,7 +512,7 @@ function resetForShow() {
 
 let unlistenIndexingComplete: (() => void) | undefined;
 
-async function initIndexingState() {
+async function initIndexingState(): Promise<() => void> {
   try {
     const state = await api.getIndexingState();
     setIndexing(state);
@@ -527,6 +527,10 @@ async function initIndexingState() {
     setIndexing(false);
     void runRefresh();
   });
+  return () => {
+    unlistenIndexingComplete?.();
+    unlistenIndexingComplete = undefined;
+  };
 }
 
 export {

@@ -32,7 +32,7 @@ const App: Component = () => {
   onMount(async () => {
     const win = getCurrentWindow();
     const label = win.label;
-    let registerAutoHideOnFocusLost: (() => void) | undefined;
+    let registerAutoHideOnFocusLost: (() => Promise<void>) | undefined;
 
     if (label === "main") {
       const controller = createResultsWindowController(win);
@@ -45,10 +45,10 @@ const App: Component = () => {
         }
       };
 
-      registerAutoHideOnFocusLost = () => {
+      registerAutoHideOnFocusLost = async () => {
         let blurTimer: ReturnType<typeof setTimeout> | undefined;
         let blurCancelled = false;
-        win.onFocusChanged(({ payload: focused }) => {
+        const unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
           if (!focused) {
             blurCancelled = false;
             blurTimer = setTimeout(async () => {
@@ -72,6 +72,7 @@ const App: Component = () => {
             clearTimeout(blurTimer);
           }
         });
+        unlistenFns.push(unlistenFocus);
       };
 
       // Wait for all critical listeners to be attached before first reset/show.
@@ -125,17 +126,18 @@ const App: Component = () => {
       if (await win.isVisible()) {
         resetForShow();
       }
-      void initIndexingState();
+      unlistenFns.push(await initIndexingState());
 
-      win.onResized(({ payload: sz }) => {
+      const unlistenMainResized = await win.onResized(({ payload: sz }) => {
         const logicalSize = sz.toLogical(controller.getCachedScaleFactor());
         controller.handleMainResized(logicalSize.height);
       });
+      unlistenFns.push(unlistenMainResized);
 
       // Sync results window position when main moves
       let moveTimer: ReturnType<typeof setTimeout> | undefined;
       let latestMoveEvent = 0;
-      win.onMoved(({ payload: pos }) => {
+      const unlistenMainMoved = await win.onMoved(({ payload: pos }) => {
         const moveEvent = ++latestMoveEvent;
         const logicalPos = pos.toLogical(controller.getCachedScaleFactor());
         // Save position (debounced)
@@ -150,6 +152,7 @@ const App: Component = () => {
         // Immediately sync results window position
         void controller.handleMainMoved(logicalPos);
       });
+      unlistenFns.push(unlistenMainMoved);
 
     }
 
@@ -169,7 +172,7 @@ const App: Component = () => {
     }
 
     if (label === "main" && bootstrap?.general.auto_hide_on_focus_lost) {
-      registerAutoHideOnFocusLost?.();
+      await registerAutoHideOnFocusLost?.();
     }
 
     if (label === "settings") {
@@ -188,7 +191,7 @@ const App: Component = () => {
 
       // Save position on move (debounced)
       let moveTimer: ReturnType<typeof setTimeout> | undefined;
-      win.onMoved(({ payload: pos }) => {
+      const unlistenSettingsMoved = await win.onMoved(({ payload: pos }) => {
         clearTimeout(moveTimer);
         moveTimer = setTimeout(() => {
           void (async () => {
@@ -198,10 +201,11 @@ const App: Component = () => {
           })();
         }, 500);
       });
+      unlistenFns.push(unlistenSettingsMoved);
 
       // Save size on resize (debounced)
       let resizeTimer: ReturnType<typeof setTimeout> | undefined;
-      win.onResized(({ payload: sz }) => {
+      const unlistenSettingsResized = await win.onResized(({ payload: sz }) => {
         clearTimeout(resizeTimer);
         resizeTimer = setTimeout(() => {
           void (async () => {
@@ -211,6 +215,7 @@ const App: Component = () => {
           })();
         }, 500);
       });
+      unlistenFns.push(unlistenSettingsResized);
     }
   });
 

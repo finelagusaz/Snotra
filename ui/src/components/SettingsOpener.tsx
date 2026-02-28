@@ -160,9 +160,7 @@ const SettingsOpener: Component = () => {
     closeModal();
   }
 
-  function moveUp() {
-    const fi = editingFlat();
-    if (fi === null) return;
+  function moveUpAt(fi: number) {
     const entry = flatList()[fi];
     if (!entry || entry.toolIndex === 0) return;
     const { ruleIndex: ri, toolIndex: ti } = entry;
@@ -170,12 +168,12 @@ const SettingsOpener: Component = () => {
       const tools = c.openers[ri].tools;
       [tools[ti - 1], tools[ti]] = [tools[ti], tools[ti - 1]];
     });
-    setEditingFlat(fi - 1);
+    if (editingFlat() === fi) {
+      setEditingFlat(fi - 1);
+    }
   }
 
-  function moveDown() {
-    const fi = editingFlat();
-    if (fi === null) return;
+  function moveDownAt(fi: number) {
     const entry = flatList()[fi];
     if (!entry) return;
     const { ruleIndex: ri, toolIndex: ti } = entry;
@@ -185,7 +183,9 @@ const SettingsOpener: Component = () => {
       const tools = c.openers[ri].tools;
       [tools[ti], tools[ti + 1]] = [tools[ti + 1], tools[ti]];
     });
-    setEditingFlat(fi + 1);
+    if (editingFlat() === fi) {
+      setEditingFlat(fi + 1);
+    }
   }
 
   async function browseExe() {
@@ -200,21 +200,16 @@ const SettingsOpener: Component = () => {
     }
   }
 
-  const currentEntry = () => {
-    const fi = editingFlat();
-    return fi !== null ? (flatList()[fi] ?? null) : null;
-  };
-
-  const canMoveUp = () => {
-    const entry = currentEntry();
+  function canMoveUpAt(fi: number): boolean {
+    const entry = flatList()[fi] ?? null;
     return entry !== null && entry.toolIndex > 0;
-  };
+  }
 
-  const canMoveDown = () => {
-    const entry = currentEntry();
+  function canMoveDownAt(fi: number): boolean {
+    const entry = flatList()[fi] ?? null;
     if (!entry) return false;
     return entry.toolIndex < (d().openers[entry.ruleIndex]?.tools.length ?? 0) - 1;
-  };
+  }
 
   return (
     <div class="settings-section">
@@ -238,13 +233,31 @@ const SettingsOpener: Component = () => {
                     <span class="opener-item-badge">{entry.targetLabel}</span>
                     <span class="opener-item-name">{entry.toolName}</span>
                   </div>
-                  <button
-                    type="button"
-                    class="scan-path-edit-button"
-                    onClick={() => openEditModal(fi())}
-                  >
-                    編集
-                  </button>
+                  <div class="scan-path-item-actions">
+                    <button
+                      type="button"
+                      class="scan-path-edit-button"
+                      onClick={() => openEditModal(fi())}
+                    >
+                      編集
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => moveUpAt(fi())}
+                      disabled={!canMoveUpAt(fi())}
+                      title="上へ"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => moveDownAt(fi())}
+                      disabled={!canMoveDownAt(fi())}
+                      title="下へ"
+                    >
+                      ↓
+                    </button>
+                  </div>
                 </div>
               )}
             </For>
@@ -318,17 +331,9 @@ const SettingsOpener: Component = () => {
           <SettingsEditorActions
             left={
               modalMode() === "edit" ? (
-                <>
-                  <button type="button" class="btn-danger" onClick={deleteEntry}>
-                    削除
-                  </button>
-                  <button type="button" onClick={moveUp} disabled={!canMoveUp()} title="上へ">
-                    ↑
-                  </button>
-                  <button type="button" onClick={moveDown} disabled={!canMoveDown()} title="下へ">
-                    ↓
-                  </button>
-                </>
+                <button type="button" class="btn-danger" onClick={deleteEntry}>
+                  削除
+                </button>
               ) : undefined
             }
             right={

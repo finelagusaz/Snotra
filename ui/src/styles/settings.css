@@ -484,6 +484,18 @@
   margin-left: auto;
 }
 
+.scan-path-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.scan-path-item-actions .scan-path-edit-button {
+  margin-left: 0;
+}
+
 .settings-editor-list-empty,
 .scan-path-list-empty {
   padding: 12px;

@@ -176,12 +176,8 @@ fn main() {
         (entries, false)
     };
 
-    let icon_cache_state: IconCacheState = if config.appearance.show_icons {
-        // Lazy-load icon cache on first icon request to keep startup path short.
-        Mutex::new(None)
-    } else {
-        Mutex::new(None)
-    };
+    // Lazy-load icon cache on first icon request to keep startup path short.
+    let icon_cache_state: IconCacheState = Mutex::new(None);
 
     let history = HistoryStore::load(
         config.appearance.top_n_history,

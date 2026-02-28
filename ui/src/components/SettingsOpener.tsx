@@ -10,10 +10,7 @@ import {
   mergeGroupedOpenerEntries,
   serializeGroupedOpeners,
 } from "../lib/openerGroups";
-import {
-  getOpenerTargetExtensions,
-  normalizeOpenerTarget,
-} from "../lib/openerTarget";
+import { normalizeOpenerTarget } from "../lib/openerTarget";
 import { draft, updateDraft } from "../stores/settings";
 import SettingsEditableList from "./SettingsEditableList";
 import SettingsEditorActions from "./SettingsEditorActions";
@@ -99,7 +96,8 @@ const SettingsOpener: Component = () => {
       extensions:
         target === "folder"
           ? []
-          : getOpenerTargetExtensions(target)
+          : target
+              .slice(4)
               .split(",")
               .filter((ext) => ext.length > 0),
       tool: {

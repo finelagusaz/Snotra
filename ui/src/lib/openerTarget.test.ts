@@ -23,4 +23,9 @@ describe("opener target normalization", () => {
   it("returns folder label for folder targets", () => {
     expect(getOpenerTargetLabel("folder")).toBe("フォルダ");
   });
+
+  it("normalizeOpenerTarget is idempotent", () => {
+    const once = normalizeOpenerTarget("ext: PNG, .JPG");
+    expect(normalizeOpenerTarget(once)).toBe(once);
+  });
 });

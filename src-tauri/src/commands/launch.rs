@@ -158,12 +158,9 @@ pub async fn launch_item(
     app: AppHandle,
 ) -> Result<LaunchResult, String> {
     // まずオープナールールを検索（ロック取得 → 即解放）
-    let opener_tool: Option<(String, String)> = {
+    let opener_tool = {
         let state = app.state::<AppState>();
-        let engine = state.engine.lock().unwrap();
-        let is_folder = std::path::Path::new(&path).is_dir();
-        let tools = find_matching_tools(&path, is_folder, &engine.config().openers);
-        tools.first().map(|t| (t.exe.clone(), t.args.clone()))
+        resolve_opener(&path, &state)
     };
 
     if let Some((exe, args)) = opener_tool {
@@ -207,14 +204,17 @@ pub async fn launch_item(
     Ok(result)
 }
 
+/// パスに対して先頭のオープナーツール (exe, args) を返す。
+/// 0/1 ツール判定の共通ロジック。ロックは即解放される。
+fn resolve_opener(path: &str, state: &AppState) -> Option<(String, String)> {
+    let engine = state.engine.lock().unwrap();
+    let is_folder = std::path::Path::new(path).is_dir();
+    let tools = find_matching_tools(path, is_folder, &engine.config().openers);
+    tools.first().map(|t| (t.exe.clone(), t.args.clone()))
+}
+
 pub fn launch_item_with_state(path: &str, query: &str, state: &AppState) -> LaunchResult {
-    // オープナールールを検索（ロック取得 → 即解放）
-    let opener_tool: Option<(String, String)> = {
-        let engine = state.engine.lock().unwrap();
-        let is_folder = std::path::Path::new(path).is_dir();
-        let tools = find_matching_tools(path, is_folder, &engine.config().openers);
-        tools.first().map(|t| (t.exe.clone(), t.args.clone()))
-    };
+    let opener_tool = resolve_opener(path, state);
 
     // launch_item_core does ShellExecuteW — must NOT hold the engine lock
     let result = if let Some((exe, args)) = opener_tool {
@@ -229,6 +229,37 @@ pub fn launch_item_with_state(path: &str, query: &str, state: &AppState) -> Laun
         engine.save_history_if_dirty(5);
     }
     result
+}
+
+/// トレイ履歴のツール選択後の起動（同期版）。
+pub fn launch_with_tool_with_state(path: &str, exe: &str, args: &str, state: &AppState) -> LaunchResult {
+    // launch_with_tool_core does NOT use ShellExecuteW; COM STA は不要
+    let result = launch_with_tool_core(path, exe, args);
+    if result.is_ok() {
+        let mut engine = state.engine.lock().unwrap();
+        engine.record_launch(path, "");
+        engine.save_history_if_dirty(5);
+    }
+    result
+}
+
+/// トレイ履歴の「標準」起動（ShellExecuteW 直接、オープナールールを無視、同期版）。
+pub fn launch_default_with_state(path: &str, state: &AppState) -> LaunchResult {
+    let result = launch_item_core(path);
+    if result.is_ok() {
+        let mut engine = state.engine.lock().unwrap();
+        engine.record_launch(path, "");
+        engine.save_history_if_dirty(5);
+    }
+    result
+}
+
+/// トレイサブメニュー構築用: パスに対するツール一覧を (name, exe, args) で返す。
+pub fn resolve_all_openers(path: &str, state: &AppState) -> Vec<(String, String, String)> {
+    let engine = state.engine.lock().unwrap();
+    let is_folder = std::path::Path::new(path).is_dir();
+    let tools = find_matching_tools(path, is_folder, &engine.config().openers);
+    tools.iter().map(|t| (t.name.clone(), t.exe.clone(), t.args.clone())).collect()
 }
 
 fn shell_execute_error_message(code: i32) -> &'static str {

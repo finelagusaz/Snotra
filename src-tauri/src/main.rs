@@ -197,11 +197,13 @@ fn icon_protocol_handler(app: &AppHandle, req: &Request<Vec<u8>>) -> Response<Ve
         Some(bytes) => Response::builder()
             .status(200)
             .header("Content-Type", "image/png")
+            .header("Access-Control-Allow-Origin", "*")
             .body(bytes)
             .unwrap(),
         None => Response::builder()
             .status(404)
             .header("Content-Type", "text/plain")
+            .header("Access-Control-Allow-Origin", "*")
             .body(b"icon not found".to_vec())
             .unwrap(),
     }

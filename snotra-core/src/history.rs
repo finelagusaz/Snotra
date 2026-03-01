@@ -120,6 +120,15 @@ impl HistoryStore {
             .unwrap_or((0, 0))
     }
 
+    /// Same as `get_global_stats` but accepts a pre-normalized key.
+    pub fn get_global_stats_normalized(&self, normalized_key: &str) -> (u32, u64) {
+        self.data
+            .global
+            .get(normalized_key)
+            .map(|e| (e.launch_count, e.last_launched))
+            .unwrap_or((0, 0))
+    }
+
     pub fn query_count(&self, query: &str, path: &str) -> u32 {
         let norm_query = normalize_query(query);
         self.query_count_normalized(&norm_query, path)
@@ -130,6 +139,16 @@ impl HistoryStore {
             .query
             .get(normalized_query)
             .and_then(|m| m.get(&normalize_entry_key(path)))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Same as `query_count_normalized` but accepts a pre-normalized path key.
+    pub fn query_count_pre_normalized(&self, normalized_query: &str, normalized_key: &str) -> u32 {
+        self.data
+            .query
+            .get(normalized_query)
+            .and_then(|m| m.get(normalized_key))
             .copied()
             .unwrap_or(0)
     }
@@ -160,6 +179,15 @@ impl HistoryStore {
         self.data
             .folder_expansion
             .get(&normalize_entry_key(folder_path))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Same as `folder_expansion_count` but accepts a pre-normalized key.
+    pub fn folder_expansion_count_normalized(&self, normalized_key: &str) -> u32 {
+        self.data
+            .folder_expansion
+            .get(normalized_key)
             .copied()
             .unwrap_or(0)
     }

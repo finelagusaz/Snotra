@@ -253,6 +253,16 @@ pub enum ThemePreset {
     Obsidian,
     Paper,
     Solarized,
+    Custom,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomTheme {
+    pub background_color: String,
+    pub input_background_color: String,
+    pub text_color: String,
+    pub selected_row_color: String,
+    pub hint_text_color: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -273,6 +283,8 @@ pub struct VisualConfig {
     pub font_family: String,
     #[serde(default = "default_font_size")]
     pub font_size: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_theme: Option<CustomTheme>,
 }
 
 impl Default for VisualConfig {
@@ -286,6 +298,7 @@ impl Default for VisualConfig {
             hint_text_color: default_hint_text_color(),
             font_family: default_font_family(),
             font_size: default_font_size(),
+            custom_theme: None,
         }
     }
 }
@@ -1588,5 +1601,76 @@ mod tests {
         assert!(errors.contains(&ConfigError::FuzzyCapRatioOutOfRange { value: 2.0 }));
         assert!(errors.contains(&ConfigError::ScanPathEmpty { index: 0 }));
         assert_eq!(errors.len(), 6, "all 6 errors should be reported");
+    }
+
+    // ---- CustomTheme / ThemePreset::Custom tests ----
+
+    #[test]
+    fn visual_config_without_custom_theme_deserializes() {
+        let toml_str = r##"
+            preset = "obsidian"
+            background_color = "#282828"
+            input_background_color = "#383838"
+            text_color = "#E0E0E0"
+            selected_row_color = "#505050"
+            hint_text_color = "#808080"
+            font_family = "Segoe UI"
+            font_size = 15
+        "##;
+        let vc: VisualConfig = toml::from_str(toml_str).expect("parse");
+        assert_eq!(vc.preset, ThemePreset::Obsidian);
+        assert!(vc.custom_theme.is_none());
+    }
+
+    #[test]
+    fn visual_config_with_custom_theme_round_trip() {
+        let toml_str = r##"
+            preset = "custom"
+            background_color = "#1a1a2a"
+            input_background_color = "#2a2a3a"
+            text_color = "#d0d0ff"
+            selected_row_color = "#3a3a5a"
+            hint_text_color = "#7070a0"
+            font_family = "Segoe UI"
+            font_size = 15
+
+            [custom_theme]
+            background_color = "#1a1a2a"
+            input_background_color = "#2a2a3a"
+            text_color = "#d0d0ff"
+            selected_row_color = "#3a3a5a"
+            hint_text_color = "#7070a0"
+        "##;
+        let vc: VisualConfig = toml::from_str(toml_str).expect("parse");
+        assert_eq!(vc.preset, ThemePreset::Custom);
+        let ct = vc.custom_theme.as_ref().expect("custom_theme should exist");
+        assert_eq!(ct.background_color, "#1a1a2a");
+        assert_eq!(ct.text_color, "#d0d0ff");
+
+        // round-trip: serialize then deserialize
+        let serialized = toml::to_string_pretty(&vc).expect("serialize");
+        let vc2: VisualConfig = toml::from_str(&serialized).expect("re-parse");
+        assert_eq!(vc, vc2);
+    }
+
+    #[test]
+    fn visual_config_custom_theme_omitted_when_none() {
+        let vc = VisualConfig::default();
+        let serialized = toml::to_string_pretty(&vc).expect("serialize");
+        assert!(
+            !serialized.contains("custom_theme"),
+            "custom_theme should not appear when None"
+        );
+    }
+
+    #[test]
+    fn theme_preset_custom_deserializes() {
+        let toml_str = r#"preset = "custom""#;
+        #[derive(Deserialize)]
+        struct Wrapper {
+            preset: ThemePreset,
+        }
+        let w: Wrapper = toml::from_str(toml_str).expect("parse");
+        assert_eq!(w.preset, ThemePreset::Custom);
     }
 }

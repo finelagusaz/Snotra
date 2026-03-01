@@ -339,6 +339,45 @@
   border: 1px solid color-mix(in srgb, var(--hint-text-color, #808080) 30%, transparent);
 }
 
+/* ===== Custom Theme Card ===== */
+.preset-card {
+  position: relative;
+}
+
+.custom-theme-delete {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  padding: 0 !important;
+  border: none !important;
+  border-radius: 50% !important;
+  background: color-mix(in srgb, var(--hint-text-color, #808080) 30%, transparent) !important;
+  color: var(--text-color, #e0e0e0) !important;
+  font-size: 0.7em;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 150ms, background 150ms;
+}
+
+.preset-card:hover .custom-theme-delete {
+  opacity: 1;
+}
+
+.custom-theme-delete:hover {
+  background: color-mix(in srgb, #e06060 40%, transparent) !important;
+  color: #e06060 !important;
+}
+
+.custom-theme-save {
+  margin-top: 6px;
+}
+
 .settings-group--sticky {
   position: sticky;
   top: 0;

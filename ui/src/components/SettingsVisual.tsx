@@ -1,4 +1,5 @@
-import { type Component, For, createResource } from "solid-js";
+import { type Component, For, Show, createResource } from "solid-js";
+import type { CustomTheme } from "../lib/types";
 import * as api from "../lib/invoke";
 import { draft, updateDraft } from "../stores/settings";
 import SettingRow from "./SettingRow";
@@ -64,8 +65,8 @@ const COLOR_FIELDS: ColorFieldDef[] = [
   { key: "hint_text_color", label: "ヒントテキスト色" },
 ];
 
-function colorsMatchPreset(visual: { [K in ColorKey]: string }, preset: PresetColors): boolean {
-  return COLOR_KEYS.every((k) => visual[k].toLowerCase() === preset[k].toLowerCase());
+function colorsMatch(visual: { [K in ColorKey]: string }, target: { [K in ColorKey]: string }): boolean {
+  return COLOR_KEYS.every((k) => visual[k].toLowerCase() === target[k].toLowerCase());
 }
 
 const SettingsVisual: Component = () => {
@@ -84,9 +85,44 @@ const SettingsVisual: Component = () => {
   function activePreset(): string | null {
     const v = d().visual;
     for (const p of PRESETS) {
-      if (colorsMatchPreset(v, p.colors)) return p.value;
+      if (colorsMatch(v, p.colors)) return p.value;
     }
+    const ct = v.custom_theme;
+    if (ct && colorsMatch(v, ct)) return "custom";
     return null;
+  }
+
+  function canSaveCustom(): boolean {
+    return activePreset() === null;
+  }
+
+  function saveCustomTheme() {
+    updateDraft((c) => {
+      c.visual.custom_theme = {
+        background_color: c.visual.background_color,
+        input_background_color: c.visual.input_background_color,
+        text_color: c.visual.text_color,
+        selected_row_color: c.visual.selected_row_color,
+        hint_text_color: c.visual.hint_text_color,
+      };
+      c.visual.preset = "custom";
+    });
+  }
+
+  function deleteCustomTheme(e: MouseEvent) {
+    e.stopPropagation();
+    updateDraft((c) => {
+      c.visual.custom_theme = undefined;
+    });
+  }
+
+  function applyCustomTheme() {
+    const ct = d().visual.custom_theme;
+    if (!ct) return;
+    updateDraft((c) => {
+      c.visual.preset = "custom";
+      Object.assign(c.visual, ct);
+    });
   }
 
   function updateColor(key: ColorKey, value: string) {
@@ -140,7 +176,38 @@ const SettingsVisual: Component = () => {
                 {preset.label}
               </button>
             ))}
+            <Show when={d().visual.custom_theme}>
+              {(ct) => (
+                <button
+                  class="preset-card"
+                  classList={{ active: activePreset() === "custom" }}
+                  onClick={() => applyCustomTheme()}
+                >
+                  <span
+                    class="custom-theme-delete"
+                    role="button"
+                    onClick={(e) => deleteCustomTheme(e)}
+                    title="マイテーマを削除"
+                  >
+                    ×
+                  </span>
+                  <div class="preset-swatches">
+                    <div class="swatch" style={{ background: ct().background_color }} />
+                    <div class="swatch" style={{ background: ct().input_background_color }} />
+                    <div class="swatch" style={{ background: ct().text_color }} />
+                    <div class="swatch" style={{ background: ct().selected_row_color }} />
+                    <div class="swatch" style={{ background: ct().hint_text_color }} />
+                  </div>
+                  マイテーマ
+                </button>
+              )}
+            </Show>
           </div>
+          <Show when={canSaveCustom()}>
+            <button class="custom-theme-save" onClick={() => saveCustomTheme()}>
+              現在の配色を保存
+            </button>
+          </Show>
         </div>
       </div>
 

@@ -253,6 +253,7 @@ pub enum ThemePreset {
     Obsidian,
     Paper,
     Solarized,
+    Monokai,
     Custom,
 }
 

@@ -39,6 +39,17 @@ const PRESETS = [
       hint_text_color: "#586e75",
     },
   },
+  {
+    value: "monokai",
+    label: "Monokai",
+    colors: {
+      background_color: "#272822",
+      input_background_color: "#3e3d32",
+      text_color: "#f8f8f2",
+      selected_row_color: "#49483e",
+      hint_text_color: "#75715e",
+    },
+  },
 ] as const;
 
 type PresetColors = (typeof PRESETS)[number]["colors"];

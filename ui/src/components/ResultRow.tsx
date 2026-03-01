@@ -1,4 +1,4 @@
-import { type Component, Show, createSignal, createMemo, onMount } from "solid-js";
+import { type Component, Show, createSignal, createMemo, onMount, mergeProps } from "solid-js";
 import type { SearchResult } from "../lib/types";
 import { truncatePath } from "../lib/truncatePath";
 
@@ -6,13 +6,15 @@ interface ResultRowProps {
   result: SearchResult;
   isSelected: boolean;
   icon?: string;
+  showIcons?: boolean;
   containerWidth?: number;
   onClick: () => void;
   onDoubleClick: () => void;
   onMouseEnter?: () => void;
 }
 
-const ResultRow: Component<ResultRowProps> = (props) => {
+const ResultRow: Component<ResultRowProps> = (rawProps) => {
+  const props = mergeProps({ showIcons: true }, rawProps);
   let textRef: HTMLDivElement | undefined;
   const [font, setFont] = createSignal("15px 'Segoe UI'");
 
@@ -45,27 +47,29 @@ const ResultRow: Component<ResultRowProps> = (props) => {
       onDblClick={props.onDoubleClick}
       onMouseEnter={props.onMouseEnter}
     >
-      <div class="result-icon">
-        <Show
-          when={props.icon}
-          fallback={
-            <span class="icon-fallback">
-              {props.result.isError
-                ? "\u26A0\uFE0F"
-                : props.result.isFolder
-                  ? "\u{1F4C1}"
-                  : "\u{1F4C4}"}
-            </span>
-          }
-        >
-          <img
-            src={props.icon}
-            alt=""
-            width="16"
-            height="16"
-          />
-        </Show>
-      </div>
+      <Show when={props.showIcons}>
+        <div class="result-icon">
+          <Show
+            when={props.icon}
+            fallback={
+              <span class="icon-fallback">
+                {props.result.isError
+                  ? "\u26A0\uFE0F"
+                  : props.result.isFolder
+                    ? "\u{1F4C1}"
+                    : "\u{1F4C4}"}
+              </span>
+            }
+          >
+            <img
+              src={props.icon}
+              alt=""
+              width="16"
+              height="16"
+            />
+          </Show>
+        </div>
+      </Show>
       <div class="result-text" ref={textRef}>
         <div class="result-path-single">{displayPath()}</div>
       </div>

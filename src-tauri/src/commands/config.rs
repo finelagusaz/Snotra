@@ -20,9 +20,15 @@ pub struct BootstrapGeneralConfig {
 }
 
 #[derive(serde::Serialize, Clone)]
+pub struct BootstrapAppearanceConfig {
+    pub show_icons: bool,
+}
+
+#[derive(serde::Serialize, Clone)]
 pub struct BootstrapPayload {
     pub visual: snotra_core::config::VisualConfig,
     pub general: BootstrapGeneralConfig,
+    pub appearance: BootstrapAppearanceConfig,
     pub indexing: bool,
 }
 
@@ -47,6 +53,8 @@ pub fn save_config(
     let index_changed = config.paths.scan != old_config.paths.scan
         || config.search.show_hidden_system != old_config.search.show_hidden_system
         || config.appearance.show_icons != old_config.appearance.show_icons;
+    let show_icons_changed = config.appearance.show_icons != old_config.appearance.show_icons;
+    let new_show_icons = config.appearance.show_icons;
     let visual_changed = config.visual != old_config.visual;
     let width_changed = config.appearance.window_width != old_config.appearance.window_width;
     let new_visual = if visual_changed {
@@ -115,6 +123,11 @@ pub fn save_config(
         let _ = app.emit("visual-config-changed", &visual);
     }
 
+    // Emit show_icons change so results window can toggle icon column
+    if show_icons_changed {
+        let _ = app.emit("show-icons-changed", new_show_icons);
+    }
+
     // Resize main and results windows if window_width changed
     if width_changed && new_width > 0 {
         for label in &["main", "results"] {
@@ -143,6 +156,9 @@ pub fn get_bootstrap_payload(state: State<AppState>) -> BootstrapPayload {
         visual: engine.config().visual.clone(),
         general: BootstrapGeneralConfig {
             auto_hide_on_focus_lost: engine.config().general.auto_hide_on_focus_lost,
+        },
+        appearance: BootstrapAppearanceConfig {
+            show_icons: engine.config().appearance.show_icons,
         },
         indexing: state.indexing.load(Ordering::SeqCst),
     }

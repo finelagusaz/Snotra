@@ -80,8 +80,13 @@ export interface BootstrapGeneralConfig {
   auto_hide_on_focus_lost: boolean;
 }
 
+export interface BootstrapAppearanceConfig {
+  show_icons: boolean;
+}
+
 export interface BootstrapPayload {
   visual: VisualConfig;
   general: BootstrapGeneralConfig;
+  appearance: BootstrapAppearanceConfig;
   indexing: boolean;
 }

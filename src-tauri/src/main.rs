@@ -18,7 +18,6 @@ use snotra_core::history::HistoryStore;
 use snotra_core::indexer;
 use snotra_core::window_data;
 use tauri::{AppHandle, Emitter, Listener, Manager};
-use tauri::http::{Request, Response};
 
 use crate::icon::IconCacheState;
 
@@ -150,64 +149,6 @@ fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
     }
 }
 
-fn icon_protocol_handler(app: &AppHandle, req: &Request<Vec<u8>>) -> Response<Vec<u8>> {
-    // Parse `path` query parameter from the URI.
-    // URL format: snotra-icon://localhost?path=<url-encoded-path>
-    let uri = req.uri().to_string();
-    let path_param = uri
-        .split_once('?')
-        .and_then(|(_, qs)| {
-            qs.split('&').find_map(|kv| {
-                let (k, v) = kv.split_once('=')?;
-                if k == "path" { Some(v) } else { None }
-            })
-        })
-        .and_then(|encoded| urlencoding::decode(encoded).ok().map(|s| s.into_owned()));
-
-    let Some(path) = path_param else {
-        return Response::builder()
-            .status(400)
-            .header("Content-Type", "text/plain")
-            .body(b"missing path parameter".to_vec())
-            .unwrap();
-    };
-
-    // Check if icons are enabled and extract bytes.
-    let state = app.state::<crate::state::AppState>();
-    let show_icons = state.engine.lock().unwrap().config().appearance.show_icons;
-    if !show_icons {
-        return Response::builder()
-            .status(404)
-            .header("Content-Type", "text/plain")
-            .body(b"icons disabled".to_vec())
-            .unwrap();
-    }
-
-    let icon_state = app.state::<IconCacheState>();
-    let mut cache_guard = icon_state.lock().unwrap();
-    if cache_guard.is_none() {
-        *cache_guard = Some(crate::icon::IconCache::load());
-    }
-
-    let png_bytes = cache_guard
-        .as_mut()
-        .and_then(|c| c.get_or_extract_png_bytes(&path));
-
-    match png_bytes {
-        Some(bytes) => Response::builder()
-            .status(200)
-            .header("Content-Type", "image/png")
-            .header("Access-Control-Allow-Origin", "*")
-            .body(bytes)
-            .unwrap(),
-        None => Response::builder()
-            .status(404)
-            .header("Content-Type", "text/plain")
-            .header("Access-Control-Allow-Origin", "*")
-            .body(b"icon not found".to_vec())
-            .unwrap(),
-    }
-}
 
 fn main() {
     let is_first_run = Config::is_first_run();
@@ -269,9 +210,6 @@ fn main() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
-        .register_uri_scheme_protocol("snotra-icon", |ctx, req| {
-            icon_protocol_handler(ctx.app_handle(), &req)
-        })
         .manage(app_state)
         .manage(icon_cache_state)
         .invoke_handler(tauri::generate_handler![

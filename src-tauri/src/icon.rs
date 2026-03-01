@@ -51,21 +51,6 @@ impl IconCache {
         Some(b64)
     }
 
-    /// Get raw PNG bytes for a path, for use with the Custom Protocol handler.
-    /// Cache on disk is still stored as base64 (reusing existing persistence);
-    /// a cheap base64 decode is performed on cache-hit instead of re-extracting.
-    pub fn get_or_extract_png_bytes(&mut self, path: &str) -> Option<Vec<u8>> {
-        if let Some(b64) = self.data.base64.get(path) {
-            return base64::engine::general_purpose::STANDARD.decode(b64).ok();
-        }
-        let icon_data = extract_icon(path)?;
-        let png_bytes = bgra_to_png_bytes(&icon_data)?;
-        let b64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
-        self.data.base64.insert(path.to_string(), b64);
-        self.dirty = true;
-        Some(png_bytes)
-    }
-
     /// Batch version of get_or_extract.
     pub fn get_or_extract_batch(&mut self, paths: &[String]) -> HashMap<String, String> {
         let mut result = HashMap::new();

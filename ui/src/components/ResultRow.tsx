@@ -1,10 +1,11 @@
-import { type Component, Show, createSignal, createMemo, createEffect, onMount } from "solid-js";
+import { type Component, Show, createSignal, createMemo, onMount } from "solid-js";
 import type { SearchResult } from "../lib/types";
 import { truncatePath } from "../lib/truncatePath";
 
 interface ResultRowProps {
   result: SearchResult;
   isSelected: boolean;
+  icon?: string;
   containerWidth?: number;
   onClick: () => void;
   onDoubleClick: () => void;
@@ -14,21 +15,12 @@ interface ResultRowProps {
 const ResultRow: Component<ResultRowProps> = (props) => {
   let textRef: HTMLDivElement | undefined;
   const [font, setFont] = createSignal("15px 'Segoe UI'");
-  // Track load failure so the emoji fallback can be shown when the protocol returns 404.
-  const [iconErrored, setIconErrored] = createSignal(false);
 
   onMount(() => {
     if (textRef) {
       const style = getComputedStyle(textRef);
       setFont(`${style.fontSize} ${style.fontFamily}`);
     }
-  });
-
-  // Reset error state when the result path changes (row reuse by SolidJS For).
-  createEffect(() => {
-    // Track props.result.path reactively; any change resets the errored flag.
-    void props.result.path;
-    setIconErrored(false);
   });
 
   const fullPath = createMemo(() => {
@@ -45,15 +37,6 @@ const ResultRow: Component<ResultRowProps> = (props) => {
     return truncatePath(fullPath(), w, f);
   });
 
-  // Build snotra-icon:// URL for file results; folders/errors always fall back to emoji.
-  const iconUrl = createMemo(() => {
-    if (props.result.isError || props.result.isFolder) return null;
-    return `snotra-icon://localhost?path=${encodeURIComponent(props.result.path)}`;
-  });
-
-  // Show the <img> only when we have a URL and it hasn't errored.
-  const showIcon = createMemo(() => iconUrl() !== null && !iconErrored());
-
   return (
     <div
       class="result-row"
@@ -64,7 +47,7 @@ const ResultRow: Component<ResultRowProps> = (props) => {
     >
       <div class="result-icon">
         <Show
-          when={showIcon()}
+          when={props.icon}
           fallback={
             <span class="icon-fallback">
               {props.result.isError
@@ -76,11 +59,10 @@ const ResultRow: Component<ResultRowProps> = (props) => {
           }
         >
           <img
-            src={iconUrl()!}
+            src={`data:image/png;base64,${props.icon}`}
             alt=""
             width="16"
             height="16"
-            onError={() => setIconErrored(true)}
           />
         </Show>
       </div>

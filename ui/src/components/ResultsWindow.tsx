@@ -8,6 +8,9 @@ import ResultRow from "./ResultRow";
 const ResultsWindow: Component = () => {
   const [results, setResults] = createSignal<SearchResult[]>([]);
   const [selected, setSelected] = createSignal(0);
+  const [iconCache, setIconCache] = createSignal<Map<string, string>>(
+    new Map(),
+  );
   const [containerWidth, setContainerWidth] = createSignal(0);
   let listRef: HTMLDivElement | undefined;
   let latestGeneration = 0;
@@ -25,6 +28,23 @@ const ResultsWindow: Component = () => {
     if (rRect.bottom > cRect.bottom) {
       container.scrollTop += rRect.bottom - cRect.bottom;
     }
+  }
+
+  async function fetchIcons(items: SearchResult[], generation: number) {
+    const cache = iconCache();
+    const missing = items
+      .filter((r) => !r.isError && !cache.has(r.path))
+      .map((r) => r.path);
+    if (missing.length === 0) return;
+
+    const batch = await api.getIconsBatch(missing);
+    if (generation !== latestGeneration) return;
+
+    const next = new Map(cache);
+    for (const [k, v] of Object.entries(batch)) {
+      next.set(k, v);
+    }
+    setIconCache(next);
   }
 
   onMount(() => {
@@ -48,8 +68,7 @@ const ResultsWindow: Component = () => {
       latestGeneration = event.payload.generation;
       setResults(event.payload.results);
       setSelected(event.payload.selected);
-      // Icons are now loaded by the browser via snotra-icon:// URLs in ResultRow.
-      // No manual fetch or JS-side cache management needed.
+      fetchIcons(event.payload.results, event.payload.generation);
       if (
         event.payload.selected !== lastScrolledSelected ||
         event.payload.generation !== lastScrolledGeneration
@@ -79,6 +98,7 @@ const ResultsWindow: Component = () => {
             <ResultRow
               result={result}
               isSelected={idx() === selected()}
+              icon={iconCache().get(result.path)}
               containerWidth={containerWidth()}
               onClick={() => api.notifyResultClicked(idx())}
               onDoubleClick={() => api.notifyResultDoubleClicked(idx())}

@@ -60,16 +60,16 @@
 
 ### 2.4 アイコン
 
-- 検索時にオンデマンドで抽出し、base64 文字列としてキャッシュ・永続化
-- `SHGetFileInfoW` → HICON → BGRA → PNG → base64 パイプラインで処理
+- 検索時にオンデマンドで抽出し、PNG バイト列としてキャッシュ・永続化
+- `SHGetFileInfoW` → HICON → BGRA → PNG パイプラインで処理（base64 エンコードなし）
 - `.lnk` -> 対象ショートカット解決結果に対応するアイコン
 - その他 -> シェル登録ファイルタイプアイコン
 - フォルダ -> フォルダアイコン
 - 表示/非表示は設定で切替可能
-- フロントエンドでは `<img src="data:image/png;base64,...">` として表示
+- フロントエンドへの転送は `tauri::ipc::Response` でバイナリ IPC（`get_icon_png`）し、`URL.createObjectURL(new Blob([buf], { type: "image/png" }))` で `<img src>` に渡す
 - アイコン非表示設定時・アイコンデータなし時はフォールバック絵文字（📁📄）を表示
 - インデックス再構築時はキャッシュをクリア（次回検索時に再抽出）
-- `icons.bin` は起動時に先読みせず、初回アイコン取得（`get_icon_base64` / `get_icons_batch`）時に遅延ロード
+- `icons.bin` は起動時に先読みせず、初回アイコン取得（`get_icon_png`）時に遅延ロード
 
 ## 3. 検索システム
 

@@ -1,3 +1,4 @@
+use tauri::ipc::Response;
 use tauri::State;
 
 use crate::icon::{IconCache, IconCacheState};
@@ -17,26 +18,16 @@ fn ensure_icon_cache_loaded_if_enabled(state: &State<AppState>, icons: &State<Ic
 }
 
 #[tauri::command]
-pub fn get_icon_base64(
+pub fn get_icon_png(
     path: String,
     state: State<AppState>,
     icons: State<IconCacheState>,
-) -> Option<String> {
+) -> Result<Response, ()> {
     ensure_icon_cache_loaded_if_enabled(&state, &icons);
     let mut cache = icons.lock().unwrap();
-    cache.as_mut()?.get_or_extract(&path)
-}
-
-#[tauri::command]
-pub fn get_icons_batch(
-    paths: Vec<String>,
-    state: State<AppState>,
-    icons: State<IconCacheState>,
-) -> std::collections::HashMap<String, String> {
-    ensure_icon_cache_loaded_if_enabled(&state, &icons);
-    let mut cache = icons.lock().unwrap();
-    match cache.as_mut() {
-        Some(c) => c.get_or_extract_batch(&paths),
-        None => std::collections::HashMap::new(),
-    }
+    cache
+        .as_mut()
+        .and_then(|c| c.get_or_extract(&path))
+        .map(Response::new)
+        .ok_or(())
 }

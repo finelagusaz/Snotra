@@ -11,12 +11,18 @@
 2. 重複処理を消す（低リスク・高効率）
    - 同一データの二重取得（例: アイコン batch 取得）を責務分離して一本化
    - 同一状態を複数イベントで配信しない。結果表示は `results-sync`（`generation` + `shouldShow`）の単一契約で同期する
+   - 画像・バイナリデータの IPC 転送は `tauri::ipc::Response` を使い base64 を排除する（転送量 ~25% 削減、Rust 側 encode コスト削減、フロント側 decode コスト削減）。`invoke<ArrayBuffer>` で受け取り `URL.createObjectURL(new Blob([buf]))` で表示する
 3. 計算量を下げる（中〜大規模データ向け）
    - 毎回の全件ソートを top-k 抽出へ置換
    - ループ内の再計算（正規化や同一変換）を事前計算へ移動
+   - `Mutex<T>` を保持したまま `SHGetFileInfoW` 等の OS IO を行うと、並列 IPC リクエストが Rust 側で直列化される。フロントの並列性（`Promise.allSettled`）を活かすには、IO 完了後にロックを取得する設計（キャッシュ済みバイト列の返却のみをクリティカルセクションに限定する等）を検討する
 4. 描画のマイクロ最適化を行う（仕上げ）
    - 文字幅計測や省略文字列生成のキャッシュ
    - 無意味な再スクロール/再レイアウト抑制
+
+## 試みたが機能しない手法
+
+- **Custom URI Scheme（`snotra-icon://` 等）による画像配信**: WebView2 では `register_uri_scheme_protocol`（WRY/Tauri）で登録したカスタムスキームへのリクエストが、WebView2 環境生成時の `SetCustomSchemeRegistrations` 事前宣言なしにはハンドラーに届かない。WRY 0.54.x では自動的に処理されず、`eprintln` 診断でハンドラーが一切呼ばれないことを確認済み。バイナリ配信の代替は `tauri::ipc::Response`（上記セクション2）を用いること。
 
 ## 計測と受け入れ基準
 

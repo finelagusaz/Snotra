@@ -59,7 +59,7 @@ const ResultRow: Component<ResultRowProps> = (props) => {
           }
         >
           <img
-            src={`data:image/png;base64,${props.icon}`}
+            src={props.icon}
             alt=""
             width="16"
             height="16"

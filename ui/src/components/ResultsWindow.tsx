@@ -16,6 +16,12 @@ const ResultsWindow: Component = () => {
   let latestGeneration = 0;
   let lastScrolledSelected = -1;
   let lastScrolledGeneration = -1;
+  const objectUrls = new Set<string>();
+  onCleanup(() => {
+    for (const url of objectUrls) {
+      URL.revokeObjectURL(url);
+    }
+  });
 
   function ensureRowVisible(container: HTMLDivElement, row: HTMLElement) {
     const cRect = container.getBoundingClientRect();
@@ -37,12 +43,23 @@ const ResultsWindow: Component = () => {
       .map((r) => r.path);
     if (missing.length === 0) return;
 
-    const batch = await api.getIconsBatch(missing);
+    const settled = await Promise.allSettled(
+      missing.map(async (path) => {
+        const buf = await api.getIconPng(path);
+        return { path, buf };
+      }),
+    );
     if (generation !== latestGeneration) return;
 
     const next = new Map(cache);
-    for (const [k, v] of Object.entries(batch)) {
-      next.set(k, v);
+    for (const r of settled) {
+      if (r.status === "fulfilled") {
+        const url = URL.createObjectURL(
+          new Blob([r.value.buf], { type: "image/png" }),
+        );
+        objectUrls.add(url);
+        next.set(r.value.path, url);
+      }
     }
     setIconCache(next);
   }

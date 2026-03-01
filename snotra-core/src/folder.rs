@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
 
 use crate::history::HistoryStore;
+use crate::query::to_lower_folded;
 use crate::search::SearchMode;
 use crate::ui_types::SearchResult;
 
@@ -54,7 +55,7 @@ pub fn list_folder(
         .iter()
         .enumerate()
         .map(|(i, e)| {
-            let lower = e.name.to_lowercase();
+            let lower = to_lower_folded(&e.name);
             let exp_count = if e.is_folder {
                 history.folder_expansion_count(&e.path)
             } else {
@@ -94,8 +95,8 @@ pub fn list_folder(
 }
 
 fn matches_filter(name: &str, filter: &str, mode: SearchMode, matcher: &mut Matcher) -> bool {
-    let name_lower = name.to_lowercase();
-    let filter_lower = filter.to_lowercase();
+    let name_lower = to_lower_folded(name);
+    let filter_lower = to_lower_folded(filter);
     match mode {
         SearchMode::Prefix => name_lower.starts_with(&filter_lower),
         SearchMode::Substring => name_lower.contains(&filter_lower),

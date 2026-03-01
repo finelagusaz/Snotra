@@ -234,7 +234,7 @@ fn migrate_time_unit_if_legacy(version: u32, mut data: HistoryData) -> HistoryDa
 
 /// デシリアライズ直後に全パスキーを正規化するマイグレーション。
 /// 旧バージョンで大文字・小文字が混在したキーを統一し、衝突時は加算/max で統合する。
-/// normalize_entry_key は冪等なので、正規化済みデータへの再適用も安全。
+/// normalize_entry_key / normalize_query は冪等なので、正規化済みデータへの再適用も安全。
 fn migrate_normalize_keys(data: HistoryData) -> HistoryData {
     // global: キー正規化。衝突は launch_count 加算、last_launched は max
     let mut new_global: FxHashMap<String, GlobalEntry> = FxHashMap::default();
@@ -245,10 +245,12 @@ fn migrate_normalize_keys(data: HistoryData) -> HistoryData {
         e.last_launched = e.last_launched.max(entry.last_launched);
     }
 
-    // query: outer キー（クエリ）は normalize_query 済みで不変。inner キー（パス）を正規化
+    // query: outer キー（クエリ）も normalize_query で再正規化（アクセント折りたたみ統一）。
+    // inner キー（パス）は normalize_entry_key で正規化。衝突時はカウント加算。
     let mut new_query: FxHashMap<String, FxHashMap<String, u32>> = FxHashMap::default();
     for (q_key, app_map) in data.query {
-        let new_app_map = new_query.entry(q_key).or_default();
+        let norm_q = normalize_query(&q_key).into_owned();
+        let new_app_map = new_query.entry(norm_q).or_default();
         for (path, count) in app_map {
             let norm = normalize_entry_key(&path);
             *new_app_map.entry(norm).or_insert(0) += count;
@@ -726,5 +728,37 @@ mod tests {
         let inner = &migrated.query["app"];
         assert_eq!(inner.len(), 1);
         assert_eq!(inner["c:\\fake\\app.lnk"], 5);
+    }
+
+    #[test]
+    fn migrate_normalize_keys_folds_accented_query_outer_key() {
+        let mut data = HistoryData::default();
+        // "résumé" と "resume" は同じバケットに統合される
+        data.query
+            .entry("résumé".to_string())
+            .or_default()
+            .insert("c:\\fake\\app.lnk".to_string(), 3);
+        data.query
+            .entry("resume".to_string())
+            .or_default()
+            .insert("c:\\fake\\app.lnk".to_string(), 2);
+        let migrated = migrate_normalize_keys(data);
+        // 両方とも "resume" に正規化されて統合
+        assert_eq!(migrated.query.len(), 1);
+        assert!(migrated.query.contains_key("resume"));
+        assert_eq!(migrated.query["resume"]["c:\\fake\\app.lnk"], 5);
+    }
+
+    #[test]
+    fn migrate_normalize_keys_accent_idempotent() {
+        let mut data = HistoryData::default();
+        data.query
+            .entry("cafe".to_string())
+            .or_default()
+            .insert("c:\\fake\\app.lnk".to_string(), 4);
+        let once = migrate_normalize_keys(data.clone());
+        let twice = migrate_normalize_keys(once.clone());
+        assert_eq!(once.query["cafe"]["c:\\fake\\app.lnk"], 4);
+        assert_eq!(twice.query["cafe"]["c:\\fake\\app.lnk"], 4);
     }
 }

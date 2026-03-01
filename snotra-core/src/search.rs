@@ -6,7 +6,7 @@ use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32Str, Utf32String};
 use crate::config::{SearchConfig, SearchHistoryNormalizationConfig};
 use crate::history::HistoryStore;
 use crate::indexer::{AppEntry, normalize_entry_key};
-use crate::query::normalize_query;
+use crate::query::{normalize_query, to_lower_folded};
 use crate::ui_types::SearchResult;
 
 const GLOBAL_WEIGHT: i64 = 5;
@@ -74,14 +74,14 @@ pub struct SearchEngine {
 
 impl SearchEngine {
     pub fn new(entries: Vec<AppEntry>) -> Self {
-        let lower_names: Vec<String> = entries.iter().map(|e| e.name.to_lowercase()).collect();
+        let lower_names: Vec<String> = entries.iter().map(|e| to_lower_folded(&e.name)).collect();
         let lower_file_names: Vec<Option<String>> = entries
             .iter()
             .map(|e| {
                 std::path::Path::new(&e.target_path)
                     .file_name()
                     .and_then(|f| f.to_str())
-                    .map(|f| f.to_lowercase())
+                    .map(to_lower_folded)
             })
             .collect();
         let lower_names_u32 = lower_names
@@ -96,9 +96,9 @@ impl SearchEngine {
             .iter()
             .map(|e| normalize_entry_key(&e.target_path))
             .collect();
-        // Non-ASCII names get u64::MAX so they always pass the bitmask filter.
-        // nucleo normalizes accented Latin chars (é→e) during fuzzy matching,
-        // but the bitmask only tracks ASCII — using MAX prevents false negatives.
+        // to_lower_folded already folds most Latin accents to ASCII (é→e),
+        // so non-ASCII names here are typically CJK, Arabic, etc.
+        // These get u64::MAX so they always pass the bitmask filter.
         let char_masks = lower_names
             .iter()
             .map(|n| if n.is_ascii() { char_bitmask(n) } else { u64::MAX })
@@ -920,5 +920,60 @@ mod tests {
         let results = engine.search("cafe", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Café");
+    }
+
+    // --- アクセント正規化統一テスト ---
+
+    #[test]
+    fn prefix_matches_accented_entry() {
+        let entries = vec![AppEntry {
+            name: "Café".to_string(),
+            target_path: "C:\\fake\\Café.lnk".to_string(),
+            is_folder: false,
+        }];
+        let mut engine = SearchEngine::new(entries);
+        let results = engine.search("cafe", 8, &empty_history(), SearchMode::Prefix);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Café");
+    }
+
+    #[test]
+    fn substring_matches_accented_entry() {
+        let entries = vec![AppEntry {
+            name: "Résumé Builder".to_string(),
+            target_path: "C:\\fake\\Résumé Builder.lnk".to_string(),
+            is_folder: false,
+        }];
+        let mut engine = SearchEngine::new(entries);
+        let results = engine.search("resume", 8, &empty_history(), SearchMode::Substring);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Résumé Builder");
+    }
+
+    #[test]
+    fn history_boost_unified_across_accent_variants() {
+        // "résumé" で起動記録 → "resume" で検索時に履歴ブーストが効く
+        let entries = vec![
+            AppEntry {
+                name: "Résumé Builder".to_string(),
+                target_path: "C:\\fake\\Résumé Builder.lnk".to_string(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "Resume Helper".to_string(),
+                target_path: "C:\\fake\\Resume Helper.lnk".to_string(),
+                is_folder: false,
+            },
+        ];
+        let mut engine = SearchEngine::new(entries);
+        let mut history = empty_history();
+        // "résumé" で Résumé Builder を多数起動
+        for _ in 0..20 {
+            history.record_launch("C:\\fake\\Résumé Builder.lnk", "résumé");
+        }
+        // "resume"（アクセントなし）で検索 → 履歴ブーストが効いて Résumé Builder が上位
+        let results = engine.search("resume", 8, &history, SearchMode::Fuzzy);
+        assert!(!results.is_empty());
+        assert_eq!(results[0].name, "Résumé Builder");
     }
 }

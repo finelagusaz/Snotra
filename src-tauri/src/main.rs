@@ -149,7 +149,6 @@ fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
     }
 }
 
-
 fn main() {
     let is_first_run = Config::is_first_run();
     let config = Config::load();

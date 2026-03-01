@@ -196,7 +196,7 @@ impl Drop for BitmapCleanup<'_> {
     }
 }
 
-fn bgra_to_png_bytes(data: &IconData) -> Option<Vec<u8>> {
+fn bgra_to_png_base64(data: &IconData) -> Option<String> {
     let w = data.width as usize;
     let h = data.height as usize;
     if data.bgra.len() != w * h * 4 {
@@ -222,10 +222,5 @@ fn bgra_to_png_bytes(data: &IconData) -> Option<Vec<u8>> {
         writer.write_image_data(&rgba).ok()?;
     }
 
-    Some(png_buf)
-}
-
-fn bgra_to_png_base64(data: &IconData) -> Option<String> {
-    let png_buf = bgra_to_png_bytes(data)?;
     Some(base64::engine::general_purpose::STANDARD.encode(&png_buf))
 }

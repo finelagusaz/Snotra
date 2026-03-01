@@ -38,16 +38,15 @@ impl IconCache {
         }
     }
 
-    /// Get PNG bytes for a path, extracting on-demand if not cached.
-    pub fn get_or_extract(&mut self, path: &str) -> Option<Vec<u8>> {
-        if let Some(png) = self.data.png.get(path) {
-            return Some(png.clone());
-        }
-        let icon_data = extract_icon(path)?;
-        let png = bgra_to_png(&icon_data)?;
-        self.data.png.insert(path.to_string(), png.clone());
+    /// Get cached PNG bytes for a path (read-only, no extraction).
+    pub fn get(&self, path: &str) -> Option<Vec<u8>> {
+        self.data.png.get(path).cloned()
+    }
+
+    /// Insert extracted PNG bytes into the cache and mark dirty.
+    pub fn insert(&mut self, path: String, png: Vec<u8>) {
+        self.data.png.insert(path, png);
         self.dirty = true;
-        Some(png)
     }
 
     /// Save to disk if there are new entries since last save.
@@ -71,6 +70,12 @@ impl IconCache {
             bf.remove();
         }
     }
+}
+
+/// Extract PNG bytes for a path without holding any lock.
+pub fn extract_png(path: &str) -> Option<Vec<u8>> {
+    let icon_data = extract_icon(path)?;
+    bgra_to_png(&icon_data)
 }
 
 /// Managed state for icon cache

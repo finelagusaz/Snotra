@@ -1,7 +1,7 @@
 use tauri::ipc::Response;
 use tauri::State;
 
-use crate::icon::{IconCache, IconCacheState};
+use crate::icon::{extract_png, IconCache, IconCacheState};
 use crate::state::AppState;
 
 fn ensure_icon_cache_loaded_if_enabled(state: &State<AppState>, icons: &State<IconCacheState>) {
@@ -24,10 +24,28 @@ pub fn get_icon_png(
     icons: State<IconCacheState>,
 ) -> Result<Response, ()> {
     ensure_icon_cache_loaded_if_enabled(&state, &icons);
+
+    // Step 1: check cache under minimal lock
+    {
+        let cache = icons.lock().unwrap();
+        match cache.as_ref() {
+            None => return Err(()), // icons disabled
+            Some(c) => {
+                if let Some(png) = c.get(&path) {
+                    return Ok(Response::new(png));
+                }
+            }
+        }
+    }
+
+    // Step 2: extract outside the lock (SHGetFileInfoW + PNG encode)
+    let png = extract_png(&path).ok_or(())?;
+
+    // Step 3: insert into cache under minimal lock and return
+    // A concurrent request for the same path may have already inserted; overwrite is benign.
     let mut cache = icons.lock().unwrap();
-    cache
-        .as_mut()
-        .and_then(|c| c.get_or_extract(&path))
-        .map(Response::new)
-        .ok_or(())
+    if let Some(c) = cache.as_mut() {
+        c.insert(path, png.clone());
+    }
+    Ok(Response::new(png))
 }

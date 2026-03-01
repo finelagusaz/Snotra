@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use base64::Engine;
 use snotra_core::binfmt::BinFile;
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC,
@@ -14,11 +13,11 @@ use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, I
 
 const ICON_SIZE: i32 = 16;
 const ICON_MAGIC: [u8; 4] = *b"ICON";
-const ICON_VERSION: u32 = 4;
+const ICON_VERSION: u32 = 5;
 
 #[derive(Serialize, Deserialize, Default)]
 struct IconCacheData {
-    base64: HashMap<String, String>,
+    png: HashMap<String, Vec<u8>>,
 }
 
 pub struct IconCache {
@@ -39,27 +38,16 @@ impl IconCache {
         }
     }
 
-    /// Get base64 icon for a path, extracting on-demand if not cached.
-    pub fn get_or_extract(&mut self, path: &str) -> Option<String> {
-        if let Some(b64) = self.data.base64.get(path) {
-            return Some(b64.clone());
+    /// Get PNG bytes for a path, extracting on-demand if not cached.
+    pub fn get_or_extract(&mut self, path: &str) -> Option<Vec<u8>> {
+        if let Some(png) = self.data.png.get(path) {
+            return Some(png.clone());
         }
         let icon_data = extract_icon(path)?;
-        let b64 = bgra_to_png_base64(&icon_data)?;
-        self.data.base64.insert(path.to_string(), b64.clone());
+        let png = bgra_to_png(&icon_data)?;
+        self.data.png.insert(path.to_string(), png.clone());
         self.dirty = true;
-        Some(b64)
-    }
-
-    /// Batch version of get_or_extract.
-    pub fn get_or_extract_batch(&mut self, paths: &[String]) -> HashMap<String, String> {
-        let mut result = HashMap::new();
-        for path in paths {
-            if let Some(b64) = self.get_or_extract(path) {
-                result.insert(path.clone(), b64);
-            }
-        }
-        result
+        Some(png)
     }
 
     /// Save to disk if there are new entries since last save.
@@ -76,7 +64,7 @@ impl IconCache {
 
     /// Clear all cached icons (used after index rebuild).
     pub fn clear(&mut self) {
-        self.data.base64.clear();
+        self.data.png.clear();
         self.dirty = false;
         // Also remove persisted file so stale data is not reloaded
         if let Some(bf) = icon_bin_file() {
@@ -196,7 +184,7 @@ impl Drop for BitmapCleanup<'_> {
     }
 }
 
-fn bgra_to_png_base64(data: &IconData) -> Option<String> {
+fn bgra_to_png(data: &IconData) -> Option<Vec<u8>> {
     let w = data.width as usize;
     let h = data.height as usize;
     if data.bgra.len() != w * h * 4 {
@@ -222,5 +210,5 @@ fn bgra_to_png_base64(data: &IconData) -> Option<String> {
         writer.write_image_data(&rgba).ok()?;
     }
 
-    Some(base64::engine::general_purpose::STANDARD.encode(&png_buf))
+    Some(png_buf)
 }

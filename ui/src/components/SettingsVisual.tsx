@@ -1,4 +1,4 @@
-import { type Component, For, createResource } from "solid-js";
+import { type Component, For, Show, createMemo, createResource } from "solid-js";
 import * as api from "../lib/invoke";
 import { draft, updateDraft } from "../stores/settings";
 import SettingRow from "./SettingRow";
@@ -38,10 +38,32 @@ const PRESETS = [
       hint_text_color: "#586e75",
     },
   },
+  {
+    value: "monokai",
+    label: "Monokai",
+    colors: {
+      background_color: "#272822",
+      input_background_color: "#3e3d32",
+      text_color: "#f8f8f2",
+      selected_row_color: "#49483e",
+      hint_text_color: "#75715e",
+    },
+  },
 ] as const;
 
+type PresetColors = (typeof PRESETS)[number]["colors"];
+type ColorKey = keyof PresetColors;
+
+const COLOR_KEYS: ColorKey[] = [
+  "background_color",
+  "input_background_color",
+  "text_color",
+  "selected_row_color",
+  "hint_text_color",
+];
+
 interface ColorFieldDef {
-  key: "background_color" | "input_background_color" | "text_color" | "selected_row_color" | "hint_text_color";
+  key: ColorKey;
   label: string;
 }
 
@@ -52,6 +74,10 @@ const COLOR_FIELDS: ColorFieldDef[] = [
   { key: "selected_row_color", label: "選択行色" },
   { key: "hint_text_color", label: "ヒントテキスト色" },
 ];
+
+function colorsMatch(visual: { [K in ColorKey]: string }, target: { [K in ColorKey]: string }): boolean {
+  return COLOR_KEYS.every((k) => visual[k].toLowerCase() === target[k].toLowerCase());
+}
 
 const SettingsVisual: Component = () => {
   const d = () => draft()!;
@@ -66,9 +92,60 @@ const SettingsVisual: Component = () => {
     });
   }
 
+  const activePreset = createMemo((): string | null => {
+    const v = d().visual;
+    for (const p of PRESETS) {
+      if (colorsMatch(v, p.colors)) return p.value;
+    }
+    const ct = v.custom_theme;
+    if (ct && colorsMatch(v, ct)) return "custom";
+    return null;
+  });
+
+  function canSaveCustom(): boolean {
+    return activePreset() === null;
+  }
+
+  function saveCustomTheme() {
+    updateDraft((c) => {
+      c.visual.custom_theme = {
+        background_color: c.visual.background_color,
+        input_background_color: c.visual.input_background_color,
+        text_color: c.visual.text_color,
+        selected_row_color: c.visual.selected_row_color,
+        hint_text_color: c.visual.hint_text_color,
+      };
+      c.visual.preset = "custom";
+    });
+  }
+
+  function deleteCustomTheme(e: MouseEvent) {
+    e.stopPropagation();
+    updateDraft((c) => {
+      c.visual.custom_theme = undefined;
+    });
+  }
+
+  function applyCustomTheme() {
+    const ct = d().visual.custom_theme;
+    if (!ct) return;
+    updateDraft((c) => {
+      c.visual.preset = "custom";
+      Object.assign(c.visual, ct);
+    });
+  }
+
+  function updateColor(key: ColorKey, value: string) {
+    updateDraft((c) => {
+      c.visual[key] = value;
+      c.visual.preset = "custom";
+    });
+  }
+
   return (
     <div class="settings-section">
-      <div class="settings-group">
+      <div class="settings-group settings-group--sticky">
+        <div class="settings-group-title">プレビュー</div>
         <div class="settings-group-content" style={{ "align-items": "flex-start" }}>
           <ThemePreview visual={d().visual} />
         </div>
@@ -81,7 +158,7 @@ const SettingsVisual: Component = () => {
             {PRESETS.map((preset) => (
               <button
                 class="preset-card"
-                classList={{ active: d().visual.preset === preset.value }}
+                classList={{ active: activePreset() === preset.value }}
                 onClick={() => applyPreset(preset.value)}
               >
                 <div class="preset-swatches">
@@ -91,17 +168,56 @@ const SettingsVisual: Component = () => {
                   />
                   <div
                     class="swatch"
+                    style={{ background: preset.colors.input_background_color }}
+                  />
+                  <div
+                    class="swatch"
                     style={{ background: preset.colors.text_color }}
                   />
                   <div
                     class="swatch"
                     style={{ background: preset.colors.selected_row_color }}
                   />
+                  <div
+                    class="swatch"
+                    style={{ background: preset.colors.hint_text_color }}
+                  />
                 </div>
                 {preset.label}
               </button>
             ))}
+            <Show when={d().visual.custom_theme}>
+              {(ct) => (
+                <button
+                  class="preset-card"
+                  classList={{ active: activePreset() === "custom" }}
+                  onClick={() => applyCustomTheme()}
+                >
+                  <span
+                    class="custom-theme-delete"
+                    role="button"
+                    onClick={(e) => deleteCustomTheme(e)}
+                    title="マイテーマを削除"
+                  >
+                    ×
+                  </span>
+                  <div class="preset-swatches">
+                    <div class="swatch" style={{ background: ct().background_color }} />
+                    <div class="swatch" style={{ background: ct().input_background_color }} />
+                    <div class="swatch" style={{ background: ct().text_color }} />
+                    <div class="swatch" style={{ background: ct().selected_row_color }} />
+                    <div class="swatch" style={{ background: ct().hint_text_color }} />
+                  </div>
+                  マイテーマ
+                </button>
+              )}
+            </Show>
           </div>
+          <Show when={canSaveCustom()}>
+            <button class="custom-theme-save" onClick={() => saveCustomTheme()}>
+              現在の配色を保存
+            </button>
+          </Show>
         </div>
       </div>
 
@@ -115,11 +231,7 @@ const SettingsVisual: Component = () => {
                   <input
                     type="color"
                     value={d().visual[field.key]}
-                    onInput={(e) =>
-                      updateDraft((c) => {
-                        c.visual[field.key] = e.currentTarget.value;
-                      })
-                    }
+                    onInput={(e) => updateColor(field.key, e.currentTarget.value)}
                   />
                 </div>
                 <input
@@ -129,9 +241,7 @@ const SettingsVisual: Component = () => {
                   onInput={(e) => {
                     const val = e.currentTarget.value;
                     if (/^#[0-9a-fA-F]{6}$/.test(val)) {
-                      updateDraft((c) => {
-                        c.visual[field.key] = val;
-                      });
+                      updateColor(field.key, val);
                     }
                   }}
                 />

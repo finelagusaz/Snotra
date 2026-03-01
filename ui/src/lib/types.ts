@@ -37,6 +37,14 @@ export interface AppearanceConfig {
   show_icons: boolean;
 }
 
+export interface CustomTheme {
+  background_color: string;
+  input_background_color: string;
+  text_color: string;
+  selected_row_color: string;
+  hint_text_color: string;
+}
+
 export interface VisualConfig {
   preset: string;
   background_color: string;
@@ -46,6 +54,7 @@ export interface VisualConfig {
   hint_text_color: string;
   font_family: string;
   font_size: number;
+  custom_theme?: CustomTheme;
 }
 
 export interface SearchConfig {

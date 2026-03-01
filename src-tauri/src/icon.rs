@@ -51,6 +51,21 @@ impl IconCache {
         Some(b64)
     }
 
+    /// Get raw PNG bytes for a path, for use with the Custom Protocol handler.
+    /// Cache on disk is still stored as base64 (reusing existing persistence);
+    /// a cheap base64 decode is performed on cache-hit instead of re-extracting.
+    pub fn get_or_extract_png_bytes(&mut self, path: &str) -> Option<Vec<u8>> {
+        if let Some(b64) = self.data.base64.get(path) {
+            return base64::engine::general_purpose::STANDARD.decode(b64).ok();
+        }
+        let icon_data = extract_icon(path)?;
+        let png_bytes = bgra_to_png_bytes(&icon_data)?;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
+        self.data.base64.insert(path.to_string(), b64);
+        self.dirty = true;
+        Some(png_bytes)
+    }
+
     /// Batch version of get_or_extract.
     pub fn get_or_extract_batch(&mut self, paths: &[String]) -> HashMap<String, String> {
         let mut result = HashMap::new();
@@ -196,7 +211,7 @@ impl Drop for BitmapCleanup<'_> {
     }
 }
 
-fn bgra_to_png_base64(data: &IconData) -> Option<String> {
+fn bgra_to_png_bytes(data: &IconData) -> Option<Vec<u8>> {
     let w = data.width as usize;
     let h = data.height as usize;
     if data.bgra.len() != w * h * 4 {
@@ -222,6 +237,10 @@ fn bgra_to_png_base64(data: &IconData) -> Option<String> {
         writer.write_image_data(&rgba).ok()?;
     }
 
-    // Base64 encode
+    Some(png_buf)
+}
+
+fn bgra_to_png_base64(data: &IconData) -> Option<String> {
+    let png_buf = bgra_to_png_bytes(data)?;
     Some(base64::engine::general_purpose::STANDARD.encode(&png_buf))
 }

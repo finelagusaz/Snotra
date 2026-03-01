@@ -5,7 +5,6 @@ import { truncatePath } from "../lib/truncatePath";
 interface ResultRowProps {
   result: SearchResult;
   isSelected: boolean;
-  icon?: string;
   containerWidth?: number;
   onClick: () => void;
   onDoubleClick: () => void;
@@ -37,6 +36,13 @@ const ResultRow: Component<ResultRowProps> = (props) => {
     return truncatePath(fullPath(), w, f);
   });
 
+  // For non-error files, derive the icon URL from the file path via custom protocol.
+  // Folders and error rows use the emoji fallback path.
+  const iconUrl = createMemo(() => {
+    if (props.result.isError || props.result.isFolder) return null;
+    return `snotra-icon://localhost?path=${encodeURIComponent(props.result.path)}`;
+  });
+
   return (
     <div
       class="result-row"
@@ -47,7 +53,7 @@ const ResultRow: Component<ResultRowProps> = (props) => {
     >
       <div class="result-icon">
         <Show
-          when={props.icon}
+          when={iconUrl()}
           fallback={
             <span class="icon-fallback">
               {props.result.isError
@@ -58,12 +64,18 @@ const ResultRow: Component<ResultRowProps> = (props) => {
             </span>
           }
         >
-          <img
-            src={`data:image/png;base64,${props.icon}`}
-            alt=""
-            width="16"
-            height="16"
-          />
+          {(url) => (
+            <img
+              src={url()}
+              alt=""
+              width="16"
+              height="16"
+              onError={(e) => {
+                // Hide broken image; Show's fallback slot handles the emoji.
+                (e.currentTarget as HTMLImageElement).style.display = "none";
+              }}
+            />
+          )}
         </Show>
       </div>
       <div class="result-text" ref={textRef}>

@@ -13,7 +13,7 @@ use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, I
 
 const ICON_SIZE: i32 = 16;
 const ICON_MAGIC: [u8; 4] = *b"ICON";
-const ICON_VERSION: u32 = 5;
+const ICON_VERSION: u32 = 5; // v4: base64 String, v5: raw PNG bytes
 
 #[derive(Serialize, Deserialize, Default)]
 struct IconCacheData {

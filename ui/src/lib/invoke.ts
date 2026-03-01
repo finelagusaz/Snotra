@@ -85,7 +85,7 @@ export async function getBootstrapPayload(): Promise<BootstrapPayload> {
 }
 
 export async function getIconPng(path: string): Promise<ArrayBuffer> {
-  return invoke<ArrayBuffer>("get_icon_png", { path });
+  return tracedInvoke<ArrayBuffer>("get_icon_png", { path });
 }
 
 export async function openSettings(): Promise<void> {

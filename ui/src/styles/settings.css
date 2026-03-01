@@ -298,6 +298,7 @@
 }
 
 .preset-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -340,21 +341,17 @@
 }
 
 /* ===== Custom Theme Card ===== */
-.preset-card {
-  position: relative;
-}
-
 .custom-theme-delete {
   position: absolute;
   top: 4px;
   right: 4px;
   width: 18px;
   height: 18px;
-  padding: 0 !important;
-  border: none !important;
-  border-radius: 50% !important;
-  background: color-mix(in srgb, var(--hint-text-color, #808080) 30%, transparent) !important;
-  color: var(--text-color, #e0e0e0) !important;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--hint-text-color, #808080) 30%, transparent);
+  color: var(--text-color, #e0e0e0);
   font-size: 12px;
   line-height: 18px;
   text-align: center;
@@ -368,8 +365,8 @@
 }
 
 .custom-theme-delete:hover {
-  background: color-mix(in srgb, #e06060 40%, transparent) !important;
-  color: #e06060 !important;
+  background: color-mix(in srgb, #e06060 40%, transparent);
+  color: #e06060;
 }
 
 .custom-theme-save {

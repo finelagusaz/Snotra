@@ -1,5 +1,4 @@
-import { type Component, For, Show, createResource } from "solid-js";
-import type { CustomTheme } from "../lib/types";
+import { type Component, For, Show, createMemo, createResource } from "solid-js";
 import * as api from "../lib/invoke";
 import { draft, updateDraft } from "../stores/settings";
 import SettingRow from "./SettingRow";
@@ -93,7 +92,7 @@ const SettingsVisual: Component = () => {
     });
   }
 
-  function activePreset(): string | null {
+  const activePreset = createMemo((): string | null => {
     const v = d().visual;
     for (const p of PRESETS) {
       if (colorsMatch(v, p.colors)) return p.value;
@@ -101,7 +100,7 @@ const SettingsVisual: Component = () => {
     const ct = v.custom_theme;
     if (ct && colorsMatch(v, ct)) return "custom";
     return null;
-  }
+  });
 
   function canSaveCustom(): boolean {
     return activePreset() === null;

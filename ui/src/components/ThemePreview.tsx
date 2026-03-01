@@ -14,6 +14,8 @@ const ThemePreview: Component<ThemePreviewProps> = (props) => {
       style={{
         background: v().background_color,
         color: v().text_color,
+        "font-family": v().font_family || undefined,
+        "font-size": `${v().font_size || 15}px`,
       }}
     >
       <div class="theme-preview-search">
@@ -31,14 +33,12 @@ const ThemePreview: Component<ThemePreviewProps> = (props) => {
           style={{ background: v().hint_text_color }}
         />
         <div class="theme-preview-text">
-          <div
-            class="theme-preview-name"
-            style={{ background: v().text_color }}
-          />
-          <div
-            class="theme-preview-path"
-            style={{ background: v().hint_text_color }}
-          />
+          <div class="theme-preview-name" style={{ color: v().text_color }}>
+            メモ帳
+          </div>
+          <div class="theme-preview-path" style={{ color: v().hint_text_color }}>
+            C:\Windows\notepad.exe
+          </div>
         </div>
       </div>
       <div class="theme-preview-row">
@@ -47,14 +47,12 @@ const ThemePreview: Component<ThemePreviewProps> = (props) => {
           style={{ background: v().hint_text_color }}
         />
         <div class="theme-preview-text">
-          <div
-            class="theme-preview-name"
-            style={{ background: v().text_color, width: "45%" }}
-          />
-          <div
-            class="theme-preview-path"
-            style={{ background: v().hint_text_color, width: "70%" }}
-          />
+          <div class="theme-preview-name" style={{ color: v().text_color }}>
+            電卓
+          </div>
+          <div class="theme-preview-path" style={{ color: v().hint_text_color }}>
+            C:\Windows\System32\calc.exe
+          </div>
         </div>
       </div>
       <div class="theme-preview-row">
@@ -63,14 +61,12 @@ const ThemePreview: Component<ThemePreviewProps> = (props) => {
           style={{ background: v().hint_text_color }}
         />
         <div class="theme-preview-text">
-          <div
-            class="theme-preview-name"
-            style={{ background: v().text_color, width: "55%" }}
-          />
-          <div
-            class="theme-preview-path"
-            style={{ background: v().hint_text_color, width: "85%" }}
-          />
+          <div class="theme-preview-name" style={{ color: v().text_color }}>
+            ペイント
+          </div>
+          <div class="theme-preview-path" style={{ color: v().hint_text_color }}>
+            C:\Windows\System32\mspaint.exe
+          </div>
         </div>
       </div>
     </div>

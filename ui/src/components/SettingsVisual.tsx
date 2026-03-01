@@ -40,8 +40,19 @@ const PRESETS = [
   },
 ] as const;
 
+type PresetColors = (typeof PRESETS)[number]["colors"];
+type ColorKey = keyof PresetColors;
+
+const COLOR_KEYS: ColorKey[] = [
+  "background_color",
+  "input_background_color",
+  "text_color",
+  "selected_row_color",
+  "hint_text_color",
+];
+
 interface ColorFieldDef {
-  key: "background_color" | "input_background_color" | "text_color" | "selected_row_color" | "hint_text_color";
+  key: ColorKey;
   label: string;
 }
 
@@ -52,6 +63,10 @@ const COLOR_FIELDS: ColorFieldDef[] = [
   { key: "selected_row_color", label: "選択行色" },
   { key: "hint_text_color", label: "ヒントテキスト色" },
 ];
+
+function colorsMatchPreset(visual: { [K in ColorKey]: string }, preset: PresetColors): boolean {
+  return COLOR_KEYS.every((k) => visual[k].toLowerCase() === preset[k].toLowerCase());
+}
 
 const SettingsVisual: Component = () => {
   const d = () => draft()!;
@@ -66,9 +81,25 @@ const SettingsVisual: Component = () => {
     });
   }
 
+  function activePreset(): string | null {
+    const v = d().visual;
+    for (const p of PRESETS) {
+      if (colorsMatchPreset(v, p.colors)) return p.value;
+    }
+    return null;
+  }
+
+  function updateColor(key: ColorKey, value: string) {
+    updateDraft((c) => {
+      c.visual[key] = value;
+      c.visual.preset = "custom";
+    });
+  }
+
   return (
     <div class="settings-section">
-      <div class="settings-group">
+      <div class="settings-group settings-group--sticky">
+        <div class="settings-group-title">プレビュー</div>
         <div class="settings-group-content" style={{ "align-items": "flex-start" }}>
           <ThemePreview visual={d().visual} />
         </div>
@@ -81,7 +112,7 @@ const SettingsVisual: Component = () => {
             {PRESETS.map((preset) => (
               <button
                 class="preset-card"
-                classList={{ active: d().visual.preset === preset.value }}
+                classList={{ active: activePreset() === preset.value }}
                 onClick={() => applyPreset(preset.value)}
               >
                 <div class="preset-swatches">
@@ -91,11 +122,19 @@ const SettingsVisual: Component = () => {
                   />
                   <div
                     class="swatch"
+                    style={{ background: preset.colors.input_background_color }}
+                  />
+                  <div
+                    class="swatch"
                     style={{ background: preset.colors.text_color }}
                   />
                   <div
                     class="swatch"
                     style={{ background: preset.colors.selected_row_color }}
+                  />
+                  <div
+                    class="swatch"
+                    style={{ background: preset.colors.hint_text_color }}
                   />
                 </div>
                 {preset.label}
@@ -115,11 +154,7 @@ const SettingsVisual: Component = () => {
                   <input
                     type="color"
                     value={d().visual[field.key]}
-                    onInput={(e) =>
-                      updateDraft((c) => {
-                        c.visual[field.key] = e.currentTarget.value;
-                      })
-                    }
+                    onInput={(e) => updateColor(field.key, e.currentTarget.value)}
                   />
                 </div>
                 <input
@@ -129,9 +164,7 @@ const SettingsVisual: Component = () => {
                   onInput={(e) => {
                     const val = e.currentTarget.value;
                     if (/^#[0-9a-fA-F]{6}$/.test(val)) {
-                      updateDraft((c) => {
-                        c.visual[field.key] = val;
-                      });
+                      updateColor(field.key, val);
                     }
                   }}
                 />

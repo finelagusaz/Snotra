@@ -329,14 +329,22 @@
 
 .preset-swatches {
   display: flex;
-  gap: 4px;
+  gap: 3px;
 }
 
 .swatch {
-  width: 20px;
-  height: 20px;
-  border-radius: 4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
   border: 1px solid color-mix(in srgb, var(--hint-text-color, #808080) 30%, transparent);
+}
+
+.settings-group--sticky {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-color, #282828);
+  padding-bottom: 4px;
 }
 
 /* ===== Theme Preview ===== */
@@ -383,16 +391,20 @@
 }
 
 .theme-preview-name {
-  height: 8px;
-  border-radius: 2px;
-  width: 60%;
+  font-size: 0.85em;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .theme-preview-path {
-  height: 6px;
-  border-radius: 2px;
-  width: 80%;
-  opacity: 0.5;
+  font-size: 0.7em;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.8;
 }
 
 /* ===== Settings Editor List ===== */

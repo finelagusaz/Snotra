@@ -168,6 +168,10 @@ export async function ensureWindow(label: "results" | "about"): Promise<boolean>
   return tracedInvoke<boolean>("ensure_window", { label });
 }
 
+export async function isMainForeground(): Promise<boolean> {
+  return tracedInvoke<boolean>("is_main_foreground");
+}
+
 export async function recordFolderExpansion(path: string): Promise<void> {
   return tracedInvoke("record_folder_expansion", { path });
 }

@@ -275,6 +275,26 @@ pub fn save_settings_size(width: i32, height: i32) {
 }
 
 #[tauri::command]
+pub fn is_main_foreground(_app: AppHandle) -> bool {
+    // "main が foreground か" ではなく "foreground が自プロセス所属か" で判定する。
+    // WS_EX_NOACTIVATE を設定しても WebView2 が SetForegroundWindow() を内部で呼ぶため
+    // results ウィンドウが foreground になることがある。自プロセス所属なら app 内操作と判断し非表示をスキップ。
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+        unsafe {
+            let foreground = GetForegroundWindow();
+            let our_pid = std::process::id();
+            let mut fg_pid = 0u32;
+            GetWindowThreadProcessId(foreground, Some(&mut fg_pid));
+            return fg_pid == our_pid;
+        }
+    }
+    #[allow(unreachable_code)]
+    false
+}
+
+#[tauri::command]
 pub fn set_window_no_activate(app: AppHandle) -> Result<(), String> {
     #[cfg(windows)]
     {

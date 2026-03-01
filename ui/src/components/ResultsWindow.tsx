@@ -129,7 +129,7 @@ const ResultsWindow: Component = () => {
   });
 
   return (
-    <div class="results-window" onContextMenu={(e) => e.preventDefault()} onMouseDown={(e) => { if (e.button === 2) e.preventDefault(); }}>
+    <div class="results-window">
       <div class="result-list-standalone" ref={listRef}>
         <For each={results()}>
           {(result, idx) => (

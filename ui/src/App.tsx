@@ -61,7 +61,13 @@ const App: Component = () => {
                 const aboutVisible = aw && await aw.isVisible();
                 if (blurCancelled) return;
                 if (!settingsVisible && !aboutVisible) {
-                  await hideMainAndResults();
+                  // WS_EX_NOACTIVATE を設定しても WebView2 が SetForegroundWindow() を呼ぶため
+                  // results クリック時も foreground が変わる。プロセス ID で自アプリ内操作を判定する。
+                  const mainForeground = await api.isMainForeground();
+                  if (blurCancelled) return;
+                  if (!mainForeground) {
+                    await hideMainAndResults();
+                  }
                 }
               } catch (e) {
                 console.warn("auto-hide focus check failed:", e);

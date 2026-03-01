@@ -1,38 +1,35 @@
-# Retrospective — カスタムオープナー不整合修正（P2 × 3件）
+# Retrospective — アイコン転送 base64 → バイナリ IPC 移行
 
 ## よかったこと
 
-### 3件の不整合を計画通りに修正できた
+### 失敗の根本原因を eprintln 診断で確定してから代替案を選んだ
 
-トレイ履歴起動のオープナー無視・Shift+Enter 0/1 ツール時の未閉鎖・クリック先頭一致バグを、計画に沿って修正できた。Fix 1・Fix 2 は一発で意図通りの実装になった。
+Custom URI Scheme が「なんとなく動かない」ではなく「WebView2 の `SetCustomSchemeRegistrations` 未宣言により `AddWebResourceRequestedFilter` にリクエストが届いていない」と一文で特定できていた（revert コミットに記録済み）。この根本原因が明確だったことで、代替案（`tauri::ipc::Response`）の有効性を迷わず判断できた。
 
-### Fix 2: 戻り型変更で完了経路を統一した
+### バイナリ IPC への移行が最小変更で完結した
 
-`enterToolSelection()` を `Promise<void>` → `Promise<boolean>` に変え、フォールバック時に `return activateSelected()` の結果を返す修正は最小変更で完了経路を通常 Enter と揃えた。「起動成功時は経路によらずウィンドウが閉じる」不変条件を小さなコード変更で回復できた好例。
+変更ファイルは 8 件だが、変更の本質は「base64 encode/decode の除去」と「キャッシュ型変更」の2点のみ。パイプラインの構造（`SHGetFileInfoW` → BGRA → PNG）、キャッシュの永続化（`icons.bin`）、フロントのフィルタロジックはすべて据え置きで、転送層だけ入れ替えられた。
 
-### Fix 3 完全版: API 境界まで遡った根本修正を施した
+### /simplify で tracedInvoke 見落としを検出できた
 
-レビューで初回実装の不完全さを指摘されたあと、受け取り側（`findIndex` ロジック）ではなく送り側（`result-clicked` のペイロード型）まで遡り、`path` → インデックス（`number`）に変更した。`result-double-clicked` との対称性も同時に回復し、全コンテキストで一意な照合を保証した。
-
-### SPEC.md の状態図に ToolSelectionMode を正確に追記した
-
-`SearchVisible` 内サブ状態として `ToolSelectionMode` を追加し、Shift+Enter の遷移条件 `[tools >= 2]`・Escape の復帰先分岐（`!folderState` / `folderState`）・Enter/Click 成功時の復帰を記述した。外側の Escape ガードも `!folderState` → `!toolSelectionState && !folderState` に修正し、仕様と実装の整合が取れた。
+`getIconPng` が唯一 `tracedInvoke` を使わずパフォーマンス計測ブランチとして致命的な抜けだったが、コードレビューエージェントが検出した。実装完了後に `/simplify` を走らせる習慣が機能した。
 
 ---
 
 ## 伸びしろ
 
-### Fix 3 初回実装が根本解決になっていなかった
+### YAGNI 判断が揺れた（bgra_to_png_bytes の統合→再分割）
 
-`results().findIndex((r) => r.path === path)` に置き換えても、ツール選択中は `result.path = tool.exe` なので同一 exe を持つ複数行は先頭一致のままだった。「呼び出し側パッチより API 側で責務を完結させる修正を優先する（CLAUDE.md）」ルールを最初から適用できていれば、送り側のペイロード型変更に最初から辿り着けた。
+revert コミットが「`bgra_to_png_bytes` 抽出は維持」と明記していたにもかかわらず、`/simplify` で「唯一の呼び出し元が1つ＝YAGNI」として統合した。その後バイナリ IPC 実装で再び分割の有用性が出てきたケースで、判断の一貫性を保てなかった。「意図的に維持した分割」かどうかをコミットメッセージから読み取るチェックが必要。
 
-### result-clicked と result-double-clicked の非対称が見えなかった
+### ObjectURL の cleanup 計画を実装前に明示しなかった
 
-既存の `result-double-clicked` がインデックス渡しだったにもかかわらず、`result-clicked` のペイロード型（`path`）の問題を Fix 3 初回実装時に見抜けなかった。「対称ペアを確認する」チェックをイベントペイロードの型にも適用していればレビュー指摘前に気づけた。
+`URL.createObjectURL` を導入する際、破棄の「場所・構造・理由」を事前に計画せず実装を先に書いた。結果として `/simplify` のレビューで指摘を受けてから `onCleanup` を追加する流れになった。CLAUDE.md の「リソース管理は生成/破棄ペアで計画する」原則を適用できていなかった。
 
 ---
 
 ## ネクストアクション
 
-- 手動確認（トレイ履歴からのオープナー適用・Shift+Enter 0/1 ツール時閉鎖・同一 exe 複数ツールクリック）はユーザー側で実施
-- `result-clicked` ペイロードの型とインデックス照合の原則を `ui/CLAUDE.md` に追記済み
+- [ ] 動作確認: `npm run tauri dev` でアイコン表示・非表示設定・インデックス再構築後の再抽出を手動確認
+- [ ] 次のボトルネック: `Mutex<IconCache>` を保持したまま `SHGetFileInfoW` を呼ぶ直列化問題（PERFORMANCE.md §3 に記録済み）を Issue 化するか判断する
+- [ ] 「意図的に維持した構造」はコミットメッセージに `[intentional]` 等の印を付ける運用を検討する

@@ -50,11 +50,11 @@ pub fn save_config(
     let old_config = state.engine.lock().unwrap().config().clone();
 
     // Detect what changed before moving config into state
-    let index_changed = config.paths.scan != old_config.paths.scan
-        || config.search.show_hidden_system != old_config.search.show_hidden_system
-        || config.appearance.show_icons != old_config.appearance.show_icons;
     let show_icons_changed = config.appearance.show_icons != old_config.appearance.show_icons;
     let new_show_icons = config.appearance.show_icons;
+    let index_changed = config.paths.scan != old_config.paths.scan
+        || config.search.show_hidden_system != old_config.search.show_hidden_system
+        || show_icons_changed;
     let visual_changed = config.visual != old_config.visual;
     let width_changed = config.appearance.window_width != old_config.appearance.window_width;
     let new_visual = if visual_changed {

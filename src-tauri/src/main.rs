@@ -239,6 +239,7 @@ fn main() {
             commands::record_folder_expansion,
             commands::get_bootstrap_payload,
             commands::ensure_window,
+            commands::is_main_foreground,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();

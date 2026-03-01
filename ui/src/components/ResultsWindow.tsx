@@ -12,6 +12,7 @@ const ResultsWindow: Component = () => {
     new Map(),
   );
   const [containerWidth, setContainerWidth] = createSignal(0);
+  const [showIcons, setShowIcons] = createSignal(true);
   let listRef: HTMLDivElement | undefined;
   let latestGeneration = 0;
   let lastScrolledSelected = -1;
@@ -37,6 +38,7 @@ const ResultsWindow: Component = () => {
   }
 
   async function fetchIcons(items: SearchResult[], generation: number) {
+    if (!showIcons()) return;
     const cache = iconCache();
     const missing = items
       .filter((r) => !r.isError && !cache.has(r.path))
@@ -65,6 +67,25 @@ const ResultsWindow: Component = () => {
   }
 
   onMount(() => {
+    // Load initial show_icons from bootstrap payload
+    void api.getBootstrapPayload().then((bootstrap) => {
+      setShowIcons(bootstrap.appearance.show_icons);
+    });
+
+    // Listen for show_icons setting changes
+    let unlistenShowIcons: (() => void) | undefined;
+    onCleanup(() => unlistenShowIcons?.());
+    void listen<boolean>("show-icons-changed", (event) => {
+      setShowIcons(event.payload);
+      if (!event.payload) {
+        for (const url of objectUrls) {
+          URL.revokeObjectURL(url);
+        }
+        objectUrls.clear();
+        setIconCache(new Map());
+      }
+    }).then((fn) => { unlistenShowIcons = fn; });
+
     if (listRef) {
       const ro = new ResizeObserver((entries) => {
         for (const entry of entries) {
@@ -116,6 +137,7 @@ const ResultsWindow: Component = () => {
               result={result}
               isSelected={idx() === selected()}
               icon={iconCache().get(result.path)}
+              showIcons={showIcons()}
               containerWidth={containerWidth()}
               onClick={() => api.notifyResultClicked(idx())}
               onDoubleClick={() => api.notifyResultDoubleClicked(idx())}

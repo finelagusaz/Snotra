@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 
-use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32Str, Utf32String};
+use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32String};
 
 use crate::config::{SearchConfig, SearchHistoryNormalizationConfig};
 use crate::history::HistoryStore;
@@ -98,7 +98,8 @@ impl SearchEngine {
             .collect();
         // to_lower_folded already folds most Latin accents to ASCII (é→e),
         // so non-ASCII names here are typically CJK, Arabic, etc.
-        // These get u64::MAX so they always pass the bitmask filter.
+        // u64::MAX ensures (query_mask & u64::MAX) == query_mask for any query_mask,
+        // so these entries always pass the bitmask pre-filter regardless of the query.
         let char_masks = lower_names
             .iter()
             .map(|n| if n.is_ascii() { char_bitmask(n) } else { u64::MAX })
@@ -159,17 +160,17 @@ impl SearchEngine {
         }
 
         let has_dot = norm_query.contains('.');
-        let query_mask = char_bitmask(&norm_query);
+        // Bitmask pre-filter is only used in Fuzzy mode; skip the computation for others.
+        let query_mask = if mode == SearchMode::Fuzzy { char_bitmask(&norm_query) } else { 0 };
 
         // Keep only top `max_results` candidates.
         // `rank_cmp_ranked` defines Better as `Ordering::Less`, so in `BinaryHeap<RankedEntry>`
         // `peek()` points to the current Worst item.
         let mut top_k: BinaryHeap<RankedEntry> = BinaryHeap::with_capacity(max_results);
 
-        // Reuse needle UTF-32 conversion buffer across all entries.
-        // The query is constant within a single search call, so Utf32Str::new fills
-        // the same content every time — only Vec capacity is amortized, not re-allocated.
-        let mut needle_buf: Vec<char> = Vec::new();
+        // Pre-compute needle as UTF-32 once before the entry loop.
+        // Reusing the same Utf32String avoids repeated O(|query|) char conversion per entry.
+        let needle_u32 = Utf32String::from(norm_query.as_ref());
 
         for i in 0..self.entries.len() {
             // Bitmask pre-filter: skip entries that lack query characters (Fuzzy only).
@@ -192,29 +193,26 @@ impl SearchEngine {
             let norm_key = &self.normalized_keys[i];
 
             let name_score =
-                match_score_single_cached(mode, &mut self.matcher, lower_name, &norm_query, name_u32, &mut needle_buf);
+                match_score_single_cached(mode, &mut self.matcher, lower_name, &norm_query, name_u32, &needle_u32);
 
             let score = if has_dot {
-                if let Some(s) = name_score {
-                    if s > 9000 {
-                        // High confidence match, skip heavy fuzzy match on file name
-                        Some(s)
-                    } else {
-                        let fn_score = fn_u32.as_ref().and_then(|u32s| {
-                            // fn_u32 and lower_file_name are built from the same source,
-                            // so Some(fn_u32) guarantees Some(lower_file_name).
-                            let fn_name = lower_file_name.as_deref()
-                                .expect("lower_file_names_u32 and lower_file_names built from same source");
-                            match_score_single_cached(mode, &mut self.matcher, fn_name, &norm_query, u32s, &mut needle_buf)
-                        });
-                        fn_score.map_or(Some(s), |b| Some(s.max(b)))
-                    }
-                } else {
+                // Skip file_name scoring only on a high-confidence name match (avoids heavy fuzzy work).
+                let needs_fn_score = name_score.map_or(true, |s| s <= 9000);
+                let fn_score = if needs_fn_score {
                     fn_u32.as_ref().and_then(|u32s| {
+                        // fn_u32 and lower_file_name are built from the same source,
+                        // so Some(fn_u32) guarantees Some(lower_file_name).
                         let fn_name = lower_file_name.as_deref()
                             .expect("lower_file_names_u32 and lower_file_names built from same source");
-                        match_score_single_cached(mode, &mut self.matcher, fn_name, &norm_query, u32s, &mut needle_buf)
+                        match_score_single_cached(mode, &mut self.matcher, fn_name, &norm_query, u32s, &needle_u32)
                     })
+                } else {
+                    None
+                };
+                match (name_score, fn_score) {
+                    (None, fn_s) => fn_s,
+                    (Some(s), Some(b)) => Some(s.max(b)),
+                    (Some(s), None) => Some(s),
                 }
             } else {
                 name_score
@@ -374,14 +372,15 @@ fn char_bitmask(lower: &str) -> u64 {
     mask
 }
 
-/// Score using pre-computed lowercase name and pre-cached UTF-32 representation.
+/// Score using pre-computed lowercase name and pre-cached UTF-32 representations.
+/// `needle_u32` must be the UTF-32 encoding of `query` (pre-computed once per search call).
 fn match_score_single_cached(
     mode: SearchMode,
     matcher: &mut Matcher,
     lower_name: &str,
     query: &str,
     haystack_u32: &Utf32String,
-    needle_buf: &mut Vec<char>,
+    needle_u32: &Utf32String,
 ) -> Option<i64> {
     match mode {
         SearchMode::Prefix => {
@@ -394,7 +393,7 @@ fn match_score_single_cached(
         SearchMode::Substring => lower_name.find(query).map(|idx| 5_000 - idx as i64),
         SearchMode::Fuzzy => {
             let haystack = haystack_u32.slice(..);
-            let needle = Utf32Str::new(query, needle_buf);
+            let needle = needle_u32.slice(..);
             matcher.fuzzy_match(haystack, needle).map(|s| s as i64)
         }
     }

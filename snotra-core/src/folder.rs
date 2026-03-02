@@ -62,7 +62,7 @@ pub(crate) fn read_dir_entries(
         if !show_hidden_system
             && meta
                 .as_ref()
-                .map(|meta| is_hidden_or_system(meta))
+                .map(is_hidden_or_system)
                 .unwrap_or(false)
         {
             continue;

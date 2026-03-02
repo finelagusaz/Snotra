@@ -104,6 +104,18 @@ pub struct SearchEngine {
     prev_mode: Option<SearchMode>,
 }
 
+/// Lightweight view over all per-entry parallel-Vec fields for index `i`.
+/// Bundles 6 immutable references without changing the underlying SoA layout,
+/// so all cache-locality properties of the parallel Vecs are preserved.
+struct EntryView<'a> {
+    entry: &'a AppEntry,
+    lower_name: &'a str,
+    lower_file_name: Option<&'a str>,
+    lower_name_u32: &'a Utf32String,
+    lower_file_name_u32: Option<&'a Utf32String>,
+    normalized_key: &'a str,
+}
+
 impl SearchEngine {
     pub fn new(entries: Vec<AppEntry>) -> Self {
         let lower_names: Vec<String> = entries.iter().map(|e| to_lower_folded(&e.name)).collect();
@@ -116,15 +128,15 @@ impl SearchEngine {
                     .map(to_lower_folded)
             })
             .collect();
-        let lower_names_u32 = lower_names
+        let lower_names_u32: Vec<_> = lower_names
             .iter()
             .map(|n| Utf32String::from(n.as_str()))
             .collect();
-        let lower_file_names_u32 = lower_file_names
+        let lower_file_names_u32: Vec<_> = lower_file_names
             .iter()
             .map(|n| n.as_deref().map(Utf32String::from))
             .collect();
-        let normalized_keys = entries
+        let normalized_keys: Vec<_> = entries
             .iter()
             .map(|e| normalize_entry_key(&e.target_path))
             .collect();
@@ -132,19 +144,29 @@ impl SearchEngine {
         // so non-ASCII names here are typically CJK, Arabic, etc.
         // u64::MAX ensures (query_mask & u64::MAX) == query_mask for any query_mask,
         // so these entries always pass the bitmask pre-filter regardless of the query.
-        let char_masks = lower_names
+        let char_masks: Vec<_> = lower_names
             .iter()
             .map(|n| if n.is_ascii() { char_bitmask(n) } else { u64::MAX })
             .collect();
         // None → 0: entries without a file_name cannot match via the file_name path,
         // so failing the bitmask check (and being skipped when the name also fails) is correct.
-        let file_name_char_masks = lower_file_names
+        let file_name_char_masks: Vec<_> = lower_file_names
             .iter()
             .map(|n| {
                 n.as_deref()
                     .map_or(0, |s| if s.is_ascii() { char_bitmask(s) } else { u64::MAX })
             })
             .collect();
+        debug_assert!(
+            lower_names.len() == entries.len()
+                && lower_file_names.len() == entries.len()
+                && lower_names_u32.len() == entries.len()
+                && lower_file_names_u32.len() == entries.len()
+                && normalized_keys.len() == entries.len()
+                && char_masks.len() == entries.len()
+                && file_name_char_masks.len() == entries.len(),
+            "SearchEngine: all parallel Vecs must have the same length as entries"
+        );
         Self {
             entries,
             lower_names,
@@ -157,6 +179,18 @@ impl SearchEngine {
             prev_query: String::new(),
             prev_candidates: Vec::new(),
             prev_mode: None,
+        }
+    }
+
+    #[inline]
+    fn entry_view(&self, i: usize) -> EntryView<'_> {
+        EntryView {
+            entry: &self.entries[i],
+            lower_name: &self.lower_names[i],
+            lower_file_name: self.lower_file_names[i].as_deref(),
+            lower_name_u32: &self.lower_names_u32[i],
+            lower_file_name_u32: self.lower_file_names_u32[i].as_ref(),
+            normalized_key: &self.normalized_keys[i],
         }
     }
 
@@ -254,19 +288,14 @@ impl SearchEngine {
                         }
                     }
 
-                    let entry = &self.entries[i];
-                    let lower_name = &self.lower_names[i];
-                    let lower_file_name = &self.lower_file_names[i];
-                    let name_u32 = &self.lower_names_u32[i];
-                    let fn_u32 = &self.lower_file_names_u32[i];
-                    let norm_key = &self.normalized_keys[i];
+                    let v = self.entry_view(i);
 
                     let name_score = match_score_single_cached(
                         mode,
                         &mut matcher,
-                        lower_name,
+                        v.lower_name,
                         norm_query_str,
-                        name_u32,
+                        v.lower_name_u32,
                         &needle_u32,
                     );
 
@@ -275,10 +304,10 @@ impl SearchEngine {
                         // (avoids heavy fuzzy work).
                         let needs_fn_score = name_score.is_none_or(|s| s <= 9000);
                         let fn_score = if needs_fn_score {
-                            fn_u32.as_ref().and_then(|u32s| {
-                                // fn_u32 and lower_file_name are built from the same source,
-                                // so Some(fn_u32) guarantees Some(lower_file_name).
-                                let fn_name = lower_file_name.as_deref().expect(
+                            v.lower_file_name_u32.and_then(|u32s| {
+                                // lower_file_name_u32 and lower_file_name are built from the same source,
+                                // so Some(lower_file_name_u32) guarantees Some(lower_file_name).
+                                let fn_name = v.lower_file_name.expect(
                                     "lower_file_names_u32 and lower_file_names built from same source",
                                 );
                                 match_score_single_cached(
@@ -305,12 +334,13 @@ impl SearchEngine {
                     if let Some(base_score) = score {
                         local_matches.push(i); // Record matching index for incremental cache
                         let (global_launches, last_launched) =
-                            history.get_global_stats_normalized(norm_key);
+                            history.get_global_stats_normalized(v.normalized_key);
                         let qcount =
-                            history.query_count_pre_normalized(norm_query_str, norm_key) as i64;
+                            history.query_count_pre_normalized(norm_query_str, v.normalized_key)
+                                as i64;
 
-                        let folder_boost = if entry.is_folder {
-                            history.folder_expansion_count_normalized(norm_key) as i64
+                        let folder_boost = if v.entry.is_folder {
+                            history.folder_expansion_count_normalized(v.normalized_key) as i64
                                 * FOLDER_EXPANSION_WEIGHT
                         } else {
                             0
@@ -330,10 +360,10 @@ impl SearchEngine {
                         let scored = ScoredEntry {
                             score: combined,
                             last_launched,
-                            lower_name: lower_name.clone(),
-                            name: entry.name.clone(),
-                            path: entry.target_path.clone(),
-                            is_folder: entry.is_folder,
+                            lower_name: v.lower_name.to_owned(),
+                            name: v.entry.name.clone(),
+                            path: v.entry.target_path.clone(),
+                            is_folder: v.entry.is_folder,
                         };
 
                         if local_heap.len() < max_results {
@@ -389,11 +419,11 @@ impl SearchEngine {
 
     pub fn recent_history(&self, history: &HistoryStore, max_results: usize) -> Vec<SearchResult> {
         // recent_launches() は正規化済みキーを返すため、照合側も正規化済み normalized_keys を使う
-        let path_to_entry: HashMap<&str, &AppEntry> = self
-            .normalized_keys
-            .iter()
-            .zip(self.entries.iter())
-            .map(|(k, e)| (k.as_str(), e))
+        let path_to_entry: HashMap<&str, &AppEntry> = (0..self.entries.len())
+            .map(|i| {
+                let v = self.entry_view(i);
+                (v.normalized_key, v.entry)
+            })
             .collect();
 
         history

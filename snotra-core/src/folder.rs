@@ -31,7 +31,7 @@ pub fn list_folder(
     score_entries(entries, history, max_results)
 }
 
-pub fn read_dir_entries(
+pub(crate) fn read_dir_entries(
     dir: &Path,
     filter: &str,
     mode: SearchMode,
@@ -53,6 +53,10 @@ pub fn read_dir_entries(
             continue;
         }
 
+        // Windows では DirEntry::metadata() は GetFileAttributesW を呼び出し、
+        // シンボリックリンクを辿った先の属性を返す（fs::metadata(path) と同等）。
+        // これにより旧実装（is_visible_entry が fs::metadata を別途呼ぶ）と
+        // シンボリックリンク挙動は変わらず、かつ追加の stat 呼び出しが不要になる。
         let meta = entry.metadata().ok();
 
         if !show_hidden_system
@@ -139,7 +143,7 @@ pub(crate) fn score_entries(
         .collect()
 }
 
-fn error_result(dir: &Path) -> Vec<SearchResult> {
+pub fn error_result(dir: &Path) -> Vec<SearchResult> {
     vec![SearchResult {
         name: String::new(), // 表示文字列はUI層が決める。ロジック層は is_error: true の意味だけを持つ
         path: dir.to_string_lossy().to_string(),

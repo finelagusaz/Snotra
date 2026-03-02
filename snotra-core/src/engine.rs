@@ -64,6 +64,10 @@ impl Engine {
         entries: Vec<folder::DirEntryData>,
         ctx: FolderListContext,
     ) -> Vec<SearchResult> {
+        // ctx は I/O 開始前にロックなしで取得したスナップショット。
+        // 設定変更が並走した場合 max_results が 1 件ずれる可能性があるが、
+        // Mutex 保持時間の最小化を優先する設計判断として許容する。
+        // history は常に現在の最新状態を使用する（スコアリングのみへの影響）。
         folder::score_entries(entries, &self.history, ctx.max_results)
     }
 

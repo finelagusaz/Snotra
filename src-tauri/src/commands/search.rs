@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use serde_json::json;
+use snotra_core::folder;
 use snotra_core::ui_types::SearchResult;
 use tauri::{AppHandle, Manager, State};
 
@@ -37,6 +38,9 @@ pub fn get_history_results(state: State<AppState>) -> Vec<SearchResult> {
     results
 }
 
+// 戻り値型は Result<_, String> だが、現在の実装ではすべてのエラーパスが
+// is_error エントリを Ok() で包んで返すため、Err 変体は実際には返されない。
+// フロントエンドとの IPC 型として Result を使い続けているため、将来の拡張に備えて維持する。
 #[tauri::command]
 pub async fn list_folder(
     dir: String,
@@ -65,7 +69,7 @@ pub async fn list_folder(
     let entries = match join.await {
         Ok(Ok(entries)) => entries,
         Ok(Err(_)) | Err(_) => {
-            let results = folder_error_result(&dir);
+            let results = folder::error_result(Path::new(&dir));
             trace_command(
                 "cmd:list_folder:ok",
                 json!({
@@ -92,13 +96,4 @@ pub async fn list_folder(
         }),
     );
     Ok(results)
-}
-
-fn folder_error_result(dir: &str) -> Vec<SearchResult> {
-    vec![SearchResult {
-        name: String::new(),
-        path: dir.to_string(),
-        is_folder: false,
-        is_error: true,
-    }]
 }

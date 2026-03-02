@@ -1002,6 +1002,70 @@ mod tests {
         assert_eq!(results[0].name, "Résumé Builder");
     }
 
+    // --- パフォーマンス計測 ---
+    // `cargo test -p snotra-core bench_ -- --ignored --nocapture` で実行
+
+    fn make_bench_entries(n: usize) -> Vec<AppEntry> {
+        // 実際のアプリ名に近い多様な文字列を生成する
+        let prefixes = [
+            "Microsoft", "Adobe", "Google", "Apple", "Mozilla", "Visual", "Windows",
+            "System", "App", "Tool", "Launcher", "Manager", "Explorer", "Editor",
+        ];
+        let suffixes = [
+            "Studio", "Reader", "Player", "Code", "Settings", "Control", "Panel",
+            "Viewer", "Browser", "Assistant", "Helper", "Updater", "Installer",
+        ];
+        (0..n)
+            .map(|i| {
+                let name = format!(
+                    "{} {} {}",
+                    prefixes[i % prefixes.len()],
+                    suffixes[i % suffixes.len()],
+                    i
+                );
+                AppEntry {
+                    target_path: format!("C:\\Program Files\\App{}\\app{}.lnk", i, i),
+                    name,
+                    is_folder: false,
+                }
+            })
+            .collect()
+    }
+
+    fn bench_search(label: &str, n: usize, queries: &[&str]) {
+        use std::time::Instant;
+        let entries = make_bench_entries(n);
+        let engine = SearchEngine::new(entries);
+        let history = empty_history();
+
+        // ウォームアップ（rayon スレッドプールの初期化を除外）
+        for q in queries {
+            let _ = engine.search(q, 10, &history, SearchMode::Fuzzy);
+        }
+
+        let iters = 20usize;
+        let mut total_ns = 0u128;
+        for _ in 0..iters {
+            for q in queries {
+                let t = Instant::now();
+                let _ = engine.search(q, 10, &history, SearchMode::Fuzzy);
+                total_ns += t.elapsed().as_nanos();
+            }
+        }
+
+        let avg_us = total_ns / (iters * queries.len()) as u128 / 1000;
+        println!("[{label}] entries={n}, avg={avg_us}µs ({} queries × {iters} iters)", queries.len());
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_fuzzy_search_scaling() {
+        let queries = ["vis", "code", "micro", "app", "sett"];
+        for &n in &[1_000, 10_000, 50_000, 100_000, 300_000] {
+            bench_search("fuzzy", n, &queries);
+        }
+    }
+
     #[test]
     fn history_boost_unified_across_accent_variants() {
         // "résumé" で起動記録 → "resume" で検索時に履歴ブーストが効く

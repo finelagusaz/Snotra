@@ -827,8 +827,8 @@
   align-items: center;
   gap: 8px;
   padding: 8px 24px;
-  background: color-mix(in srgb, #e06060 10%, var(--bg-color, #282828));
-  border-top: 1px solid color-mix(in srgb, #e06060 30%, transparent);
+  background: color-mix(in srgb, var(--selected-row-color) 15%, var(--bg-color, #282828));
+  border-top: 1px solid color-mix(in srgb, var(--hint-text-color) 30%, transparent);
   font-size: 0.85em;
   flex-wrap: wrap;
 }

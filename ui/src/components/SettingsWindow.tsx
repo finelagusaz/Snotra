@@ -27,6 +27,8 @@ const TABS: { id: TabId; label: string }[] = [
 
 const SettingsWindow: Component = () => {
   const [showDiscardBanner, setShowDiscardBanner] = createSignal(false);
+  let tablistRef: HTMLDivElement | undefined;
+  let allowClose = false;
 
   onMount(() => {
     loadDraft();
@@ -44,12 +46,25 @@ const SettingsWindow: Component = () => {
     };
     window.addEventListener("keydown", handler);
     onCleanup(() => window.removeEventListener("keydown", handler));
+
+    let unlistenClose: (() => void) | undefined;
+    onCleanup(() => unlistenClose?.());
+    getCurrentWindow().onCloseRequested((event) => {
+      if (allowClose) {
+        allowClose = false;
+        return;
+      }
+      if (hasChanges()) {
+        event.preventDefault();
+        setShowDiscardBanner(true);
+      }
+    }).then(fn => { unlistenClose = fn; });
   });
 
   return (
     <div class="settings-window">
       <div class="settings-sidebar">
-        <div class="sidebar-nav" role="tablist" aria-orientation="vertical">
+        <div class="sidebar-nav" role="tablist" aria-orientation="vertical" ref={tablistRef}>
           {TABS.map((tab, i) => (
             <button
               role="tab"
@@ -58,10 +73,14 @@ const SettingsWindow: Component = () => {
               onClick={() => setActiveTab(tab.id)}
               onKeyDown={(e) => {
                 if (e.key === "ArrowDown") {
-                  setActiveTab(TABS[(i + 1) % TABS.length].id);
+                  const next = (i + 1) % TABS.length;
+                  setActiveTab(TABS[next].id);
+                  (tablistRef?.querySelectorAll('[role="tab"]')[next] as HTMLElement | undefined)?.focus();
                   e.preventDefault();
                 } else if (e.key === "ArrowUp") {
-                  setActiveTab(TABS[(i - 1 + TABS.length) % TABS.length].id);
+                  const next = (i - 1 + TABS.length) % TABS.length;
+                  setActiveTab(TABS[next].id);
+                  (tablistRef?.querySelectorAll('[role="tab"]')[next] as HTMLElement | undefined)?.focus();
                   e.preventDefault();
                 }
               }}
@@ -90,8 +109,21 @@ const SettingsWindow: Component = () => {
             <span class="settings-discard-message">未保存の変更があります。</span>
             <button
               type="button"
-              class="btn-danger"
+              class="btn-primary"
+              onClick={async () => {
+                await saveDraft();
+                if (!hasChanges()) {
+                  setShowDiscardBanner(false);
+                  void getCurrentWindow().close();
+                }
+              }}
+            >
+              保存して閉じる
+            </button>
+            <button
+              type="button"
               onClick={() => {
+                allowClose = true;
                 setShowDiscardBanner(false);
                 void getCurrentWindow().close();
               }}

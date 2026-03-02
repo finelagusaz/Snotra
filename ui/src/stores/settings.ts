@@ -9,9 +9,9 @@ let statusClearTimer: ReturnType<typeof setTimeout> | undefined;
 const [savedConfig, setSavedConfig] = createSignal<Config | null>(null);
 const [status, setStatus] = createSignal("");
 
-const [activeTab, setActiveTab] = createSignal<
-  "general" | "search" | "index" | "visual" | "opener"
->("general");
+export type TabId = "general" | "search" | "index" | "visual" | "opener";
+
+const [activeTab, setActiveTab] = createSignal<TabId>("general");
 
 function hasChanges(): boolean {
   const d = draft();

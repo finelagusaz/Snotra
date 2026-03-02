@@ -1,6 +1,7 @@
 import { type Component, createSignal, Show, onMount, onCleanup } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  type TabId,
   draft,
   status,
   activeTab,
@@ -15,8 +16,6 @@ import SettingsSearch from "./SettingsSearch";
 import SettingsIndex from "./SettingsIndex";
 import SettingsVisual from "./SettingsVisual";
 import SettingsOpener from "./SettingsOpener";
-
-type TabId = "general" | "search" | "index" | "visual" | "opener";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "general", label: "全般" },

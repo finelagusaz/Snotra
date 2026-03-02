@@ -492,6 +492,8 @@ stateDiagram-v2
   - 変換規則: `last_launched = last_launched.saturating_mul(1000)`
 - キー正規化（大文字小文字統合）時の衝突解決で `max(last_launched)` を使うため、単位混在のまま統合してはならない
 - マイグレーション時はクエリキー（外部）にもアクセント正規化を適用し、アクセント違いのバケットを統合する（衝突時はカウント加算）
+- パスキー（`normalize_entry_key`）: lowercase + パス区切り正規化のみ。アクセント折りたたみは行わない（パスは識別子であり、`Résumé.lnk` と `Resume.lnk` は別ファイル）
+- クエリキー（`normalize_query`）: lowercase + 空白統一 + アクセント折りたたみ（é→e 等）を適用する
 
 ## 17. カスタムオープナー機能
 

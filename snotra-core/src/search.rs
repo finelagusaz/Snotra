@@ -103,6 +103,8 @@ impl SearchEngine {
             .iter()
             .map(|n| if n.is_ascii() { char_bitmask(n) } else { u64::MAX })
             .collect();
+        // None → 0: entries without a file_name cannot match via the file_name path,
+        // so failing the bitmask check (and being skipped when the name also fails) is correct.
         let file_name_char_masks = lower_file_names
             .iter()
             .map(|n| {
@@ -165,6 +167,8 @@ impl SearchEngine {
         let mut top_k: BinaryHeap<RankedEntry> = BinaryHeap::with_capacity(max_results);
 
         // Reuse needle UTF-32 conversion buffer across all entries.
+        // The query is constant within a single search call, so Utf32Str::new fills
+        // the same content every time — only Vec capacity is amortized, not re-allocated.
         let mut needle_buf: Vec<char> = Vec::new();
 
         for i in 0..self.entries.len() {
@@ -197,14 +201,18 @@ impl SearchEngine {
                         Some(s)
                     } else {
                         let fn_score = fn_u32.as_ref().and_then(|u32s| {
-                            let fn_name = lower_file_name.as_deref().unwrap_or("");
+                            // fn_u32 and lower_file_name are built from the same source,
+                            // so Some(fn_u32) guarantees Some(lower_file_name).
+                            let fn_name = lower_file_name.as_deref()
+                                .expect("lower_file_names_u32 and lower_file_names built from same source");
                             match_score_single_cached(mode, &mut self.matcher, fn_name, &norm_query, u32s, &mut needle_buf)
                         });
                         fn_score.map_or(Some(s), |b| Some(s.max(b)))
                     }
                 } else {
                     fn_u32.as_ref().and_then(|u32s| {
-                        let fn_name = lower_file_name.as_deref().unwrap_or("");
+                        let fn_name = lower_file_name.as_deref()
+                            .expect("lower_file_names_u32 and lower_file_names built from same source");
                         match_score_single_cached(mode, &mut self.matcher, fn_name, &norm_query, u32s, &mut needle_buf)
                     })
                 }

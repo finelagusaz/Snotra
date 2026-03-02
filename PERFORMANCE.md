@@ -40,6 +40,10 @@
   並列 Vec のレイアウトはキャッシュ局所性のために意図的に維持している。
   詳細は `snotra-core/src/search.rs` の `SearchEngine` 構造体コメントを参照。
 
+  **採用した別案（branch `refactor/entry-view-accessor`）**: AoS 統合の代わりに `EntryView<'a>` アクセサパターンを導入。
+  `entry_view(i)` が 6 本の並列 Vec の参照を束ねて返すことで、スコアリングループの可読性を向上させた（6 行 → 1 行）。
+  `#[inline]` により性能への影響はゼロ（メモリレイアウト不変）。`new()` 末尾の `debug_assert!` で全 Vec 長の同期を検証する。
+
 ## 計測と受け入れ基準
 
 - 変更ごとに「入力 → 検索結果反映」までの遅延を観測し、体感を先に確認する

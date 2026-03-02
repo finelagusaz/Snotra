@@ -24,6 +24,22 @@
 
 - **Custom URI Scheme（`snotra-icon://` 等）による画像配信**: WebView2 では `register_uri_scheme_protocol`（WRY/Tauri）で登録したカスタムスキームへのリクエストが、WebView2 環境生成時の `SetCustomSchemeRegistrations` 事前宣言なしにはハンドラーに届かない。WRY 0.54.x では自動的に処理されず、`eprintln` 診断でハンドラーが一切呼ばれないことを確認済み。バイナリ配信の代替は `tauri::ipc::Response`（上記セクション2）を用いること。
 
+- **`SearchEngine` の並列 Vec を `CachedEntry` 構造体に統合**（issue #110、branch `refactor/cached-entry`）:
+  保守性改善を目的に、8本の並列 Vec をフィールドごとにまとめた `CachedEntry` 構造体への移行を試みた。
+  実測で **Fuzzy full scan が 35〜120% 遅化** し却下。
+
+  | エントリ数 | 並列Vec（現行） | CachedEntry | 増加率 |
+  |----------:|---------------:|------------:|-------:|
+  |     1,000 |         ~7 ms  |      ~14 ms |  +97%  |
+  |    10,000 |        ~14 ms  |      ~21 ms |  +49%  |
+  |    50,000 |        ~14 ms  |      ~30 ms | +120%  |
+  |   100,000 |        ~22 ms  |      ~29 ms |  +35%  |
+
+  原因: `char_masks`（`Vec<u64>`）は 8エントリ/キャッシュライン で bitmask プリフィルタを高速に走査できる。
+  `CachedEntry`（~160 bytes/entry）に埋め込むと同じ走査で **~25倍のキャッシュライン**を消費する。
+  並列 Vec のレイアウトはキャッシュ局所性のために意図的に維持している。
+  詳細は `snotra-core/src/search.rs` の `SearchEngine` 構造体コメントを参照。
+
 ## 計測と受け入れ基準
 
 - 変更ごとに「入力 → 検索結果反映」までの遅延を観測し、体感を先に確認する

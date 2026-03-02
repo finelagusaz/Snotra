@@ -55,6 +55,28 @@ impl From<&SearchConfig> for HistoryBoostConfig {
     }
 }
 
+/// Search index holding per-entry pre-computed data as parallel Vecs.
+///
+/// # Why parallel Vecs instead of a single `Vec<CachedEntry>` struct?
+///
+/// A `CachedEntry` struct grouping all per-entry fields was prototyped and benchmarked
+/// (branch `refactor/cached-entry`, issue #110). Results showed **35–120% regression**
+/// in Fuzzy full-scan speed across all entry counts:
+///
+/// | entries | parallel Vec | CachedEntry struct |
+/// |--------:|-------------:|-------------------:|
+/// |   1,000 |      ~7 ms   |           ~14 ms   |
+/// |  50,000 |     ~14 ms   |           ~30 ms   |
+/// | 100,000 |     ~22 ms   |           ~29 ms   |
+///
+/// Root cause: the bitmask pre-filter (`char_masks` / `file_name_char_masks`) sweeps
+/// every candidate index before any scoring occurs.  As a compact `Vec<u64>` it fits
+/// 8 entries per 64-byte cache line.  Embedded in a `CachedEntry` (~160 bytes/entry)
+/// the same sweep loads ~25× more cache lines, degrading L1 locality significantly.
+///
+/// The parallel-Vec layout is therefore intentional, not accidental tech debt.
+/// Adding a new derived field requires updating `new()` and keeping all Vecs in sync —
+/// enforce this by running the full test suite after any structural change.
 pub struct SearchEngine {
     entries: Vec<AppEntry>,
     lower_names: Vec<String>,
@@ -65,10 +87,13 @@ pub struct SearchEngine {
     lower_file_names_u32: Vec<Option<Utf32String>>,
     /// Pre-computed normalized keys for history lookups (one per entry).
     normalized_keys: Vec<String>,
-    /// Character-presence bitmask per entry (a-z bits 0-25, 0-9 bits 26-35).
-    /// Used to skip entries that cannot possibly match the query.
+    /// Character-presence bitmask for lower_name (a-z: bits 0-25, 0-9: bits 26-35).
+    /// Kept as a compact Vec<u64> — 8 entries per cache line — so the pre-filter sweep
+    /// that discards non-matching candidates before scoring is L1-cache-friendly.
+    /// Merging this into a per-entry struct would inflate the per-entry size ~20× and
+    /// cause a measured 35–120% Fuzzy search regression (see struct-level doc comment).
     char_masks: Vec<u64>,
-    /// Character-presence bitmask per file_name entry.
+    /// Character-presence bitmask for lower_file_name (same layout as char_masks).
     file_name_char_masks: Vec<u64>,
     /// Incremental search cache: normalized query string from the previous call.
     prev_query: String,

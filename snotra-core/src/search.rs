@@ -1242,6 +1242,37 @@ mod tests {
         }
     }
 
+    fn bench_new(label: &str, n: usize) {
+        use std::time::Instant;
+        let entries = make_bench_entries(n);
+
+        // rayon スレッドプール初期化を計測から除外するためのウォームアップ
+        let _ = SearchEngine::new(entries.clone());
+
+        // 構築自体にかかる時間のみを計測する。
+        // entries.clone() のコストは Vec<AppEntry> の単純コピーであり、
+        // new() 内の lower_fold・ビットマスク計算・normalized_keys に比べ微小。
+        let iters = 5usize;
+        let mut total_ns = 0u128;
+        for _ in 0..iters {
+            let cloned = entries.clone();
+            let t = Instant::now();
+            let _ = SearchEngine::new(cloned);
+            total_ns += t.elapsed().as_nanos();
+        }
+
+        let avg_ms = total_ns / iters as u128 / 1_000_000;
+        println!("[{label}] entries={n}, avg={avg_ms}ms ({iters} iters)");
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_new_scaling() {
+        for &n in &[1_000, 10_000, 50_000, 100_000, 300_000] {
+            bench_new("new", n);
+        }
+    }
+
     #[test]
     fn history_boost_unified_across_accent_variants() {
         // "résumé" で起動記録 → "resume" で検索時に履歴ブーストが効く

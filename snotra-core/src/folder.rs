@@ -62,7 +62,7 @@ pub(crate) fn read_dir_entries(
         if !show_hidden_system
             && meta
                 .as_ref()
-                .map(|meta| !is_visible_metadata(meta))
+                .map(|meta| is_hidden_or_system(meta))
                 .unwrap_or(false)
         {
             continue;
@@ -167,11 +167,11 @@ fn matches_filter(name: &str, filter_lower: &str, mode: SearchMode, matcher: &mu
     }
 }
 
-fn is_visible_metadata(meta: &std::fs::Metadata) -> bool {
+fn is_hidden_or_system(meta: &std::fs::Metadata) -> bool {
     let attrs = meta.file_attributes();
     let hidden = (attrs & FILE_ATTRIBUTE_HIDDEN.0) != 0;
     let system = (attrs & FILE_ATTRIBUTE_SYSTEM.0) != 0;
-    !hidden && !system
+    hidden || system
 }
 
 pub fn parent_for_navigation(current_dir: &str) -> Option<PathBuf> {
@@ -376,6 +376,26 @@ mod tests {
             100,
         );
         assert!(results.is_empty());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn hidden_files_excluded_when_show_hidden_system_false() {
+        let dir = temp_dir_with_contents("hidden_filter");
+        fs::write(dir.join("visible.txt"), "").unwrap();
+        let hidden_path = dir.join("hidden.txt");
+        fs::write(&hidden_path, "").unwrap();
+        std::process::Command::new("attrib")
+            .args(["+H", hidden_path.to_str().unwrap()])
+            .status()
+            .expect("attrib command failed");
+
+        let results = list_folder(&dir, "", SearchMode::Substring, false, &empty_history(), 100);
+        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(results.len(), 1);
+        assert!(names.contains(&"visible.txt"));
+        assert!(!names.contains(&"hidden.txt"));
 
         let _ = fs::remove_dir_all(&dir);
     }

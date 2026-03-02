@@ -71,6 +71,9 @@ impl Engine {
         folder::score_entries(entries, &self.history, ctx.max_results)
     }
 
+    /// フォルダ内エントリを同期的に列挙してスコアリング済み結果を返す。
+    /// Tauri コマンドは `capture_folder_list_context` + `finalize_folder_list` の
+    /// 非同期2フェーズ版を使う。こちらは `folder.rs` のユニットテスト向け同期ラッパー。
     pub fn list_folder(&self, dir: &str, filter: &str) -> Vec<SearchResult> {
         let ctx = self.capture_folder_list_context();
         folder::list_folder(

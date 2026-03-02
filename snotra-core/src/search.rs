@@ -70,6 +70,13 @@ pub struct SearchEngine {
     char_masks: Vec<u64>,
     /// Character-presence bitmask per file_name entry.
     file_name_char_masks: Vec<u64>,
+    /// Incremental search cache: normalized query string from the previous call.
+    prev_query: String,
+    /// Incremental search cache: entry indices that matched on the previous call,
+    /// stored BEFORE truncation to `max_results` so every match is captured.
+    prev_candidates: Vec<usize>,
+    /// Incremental search cache: search mode of the previous call.
+    prev_mode: Option<SearchMode>,
 }
 
 impl SearchEngine {
@@ -122,11 +129,14 @@ impl SearchEngine {
             normalized_keys,
             char_masks,
             file_name_char_masks,
+            prev_query: String::new(),
+            prev_candidates: Vec::new(),
+            prev_mode: None,
         }
     }
 
     pub fn search(
-        &self,
+        &mut self,
         query: &str,
         max_results: usize,
         history: &HistoryStore,
@@ -142,7 +152,7 @@ impl SearchEngine {
     }
 
     pub fn search_with_history_boost(
-        &self,
+        &mut self,
         query: &str,
         max_results: usize,
         history: &HistoryStore,
@@ -167,6 +177,25 @@ impl SearchEngine {
         let needle_u32 = Utf32String::from(norm_query.as_ref());
         let norm_query_str: &str = &norm_query;
 
+        // Phase 4: incremental search – reuse previous match candidates when the query
+        // is a monotonic extension of the previous one and the mode is unchanged.
+        //
+        // Guard: (!has_dot || self.prev_query.contains('.'))
+        //   "no-dot → dot" transition must fall back to full scan because prev_candidates
+        //   was built without file_name scoring; entries that only match via file_name would
+        //   be absent from prev_candidates, causing false negatives.
+        let use_incremental = self.prev_mode == Some(mode)
+            && !self.prev_candidates.is_empty()
+            && !self.prev_query.is_empty()
+            && norm_query.starts_with(self.prev_query.as_str())
+            && (!has_dot || self.prev_query.contains('.'));
+
+        let candidate_indices: Vec<usize> = if use_incremental {
+            std::mem::take(&mut self.prev_candidates)
+        } else {
+            (0..self.entries.len()).collect()
+        };
+
         // Parallel scoring: each rayon task gets its own Matcher (created in fold init).
         // Matcher::new() is O(alloc_zeroed) — lightweight enough to create per task.
         // Each task builds a local top-k BinaryHeap; tasks are merged in reduce().
@@ -174,16 +203,20 @@ impl SearchEngine {
         // BinaryHeap<ScoredEntry> is a max-heap where peek() == worst item.
         // ScoredEntry::Ord mirrors rank_cmp_ranked: better entry has Ordering::Less,
         // so the worst (Ordering::Greater) stays at the top of the heap.
-        let top_k: BinaryHeap<ScoredEntry> = (0..self.entries.len())
+        //
+        // The fold state includes a Vec<usize> to collect ALL matching entry indices
+        // (not just top-k) for the incremental search cache.
+        let (top_k, all_match_indices): (BinaryHeap<ScoredEntry>, Vec<usize>) = candidate_indices
             .into_par_iter()
             .fold(
                 || {
                     (
                         BinaryHeap::<ScoredEntry>::with_capacity(max_results + 1),
                         Matcher::new(MatcherConfig::DEFAULT),
+                        Vec::<usize>::new(),
                     )
                 },
-                |(mut local_heap, mut matcher), i| {
+                |(mut local_heap, mut matcher, mut local_matches), i| {
                     // Bitmask pre-filter: skip entries that lack query characters (Fuzzy only).
                     // Prefix/Substring use cheap str ops, so the bitmask overhead isn't worth it.
                     if mode == SearchMode::Fuzzy {
@@ -192,7 +225,7 @@ impl SearchEngine {
                         if (query_mask & name_mask) != query_mask
                             && (!has_dot || (query_mask & fn_mask) != query_mask)
                         {
-                            return (local_heap, matcher);
+                            return (local_heap, matcher, local_matches);
                         }
                     }
 
@@ -245,6 +278,7 @@ impl SearchEngine {
                     };
 
                     if let Some(base_score) = score {
+                        local_matches.push(i); // Record matching index for incremental cache
                         let (global_launches, last_launched) =
                             history.get_global_stats_normalized(norm_key);
                         let qcount =
@@ -287,25 +321,31 @@ impl SearchEngine {
                         }
                     }
 
-                    (local_heap, matcher)
+                    (local_heap, matcher, local_matches)
                 },
             )
-            .map(|(heap, _)| heap)
+            .map(|(heap, _, matches)| (heap, matches))
             .reduce(
-                BinaryHeap::new,
-                |mut a, b| {
-                    for entry in b {
-                        if a.len() < max_results {
-                            a.push(entry);
-                        } else if let Some(mut worst) = a.peek_mut()
+                || (BinaryHeap::new(), Vec::new()),
+                |(mut a_heap, mut a_matches), (b_heap, b_matches)| {
+                    for entry in b_heap {
+                        if a_heap.len() < max_results {
+                            a_heap.push(entry);
+                        } else if let Some(mut worst) = a_heap.peek_mut()
                             && entry.cmp(&worst) == Ordering::Less
                         {
                             *worst = entry;
                         }
                     }
-                    a
+                    a_matches.extend(b_matches);
+                    (a_heap, a_matches)
                 },
             );
+
+        // Update incremental cache BEFORE sort so all matching indices are captured.
+        self.prev_query = norm_query.into_owned();
+        self.prev_candidates = all_match_indices;
+        self.prev_mode = Some(mode);
 
         // into_sorted_vec() reuses the heap's internal Vec and sorts in-place (ascending).
         // ScoredEntry::Ord: Less = better, so ascending order puts best first.
@@ -473,14 +513,14 @@ mod tests {
 
     #[test]
     fn search_empty_query_returns_empty() {
-        let engine = SearchEngine::new(make_entries(&["Firefox", "Chrome"]));
+        let mut engine = SearchEngine::new(make_entries(&["Firefox", "Chrome"]));
         let results = engine.search("", 8, &empty_history(), SearchMode::Fuzzy);
         assert!(results.is_empty());
     }
 
     #[test]
     fn search_no_entries_returns_empty() {
-        let engine = SearchEngine::new(Vec::new());
+        let mut engine = SearchEngine::new(Vec::new());
         let results = engine.search("fire", 8, &empty_history(), SearchMode::Fuzzy);
         assert!(results.is_empty());
     }
@@ -488,7 +528,7 @@ mod tests {
     #[test]
     fn search_returns_fuzzy_matches() {
         let entries = make_entries(&["Firefox", "Chrome", "Notepad", "Visual Studio Code"]);
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("fire", 8, &empty_history(), SearchMode::Fuzzy);
         assert!(!results.is_empty());
         assert_eq!(results[0].name, "Firefox");
@@ -497,7 +537,7 @@ mod tests {
     #[test]
     fn search_respects_max_results() {
         let entries = make_entries(&["app1", "app2", "app3", "app4", "app5"]);
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("app", 3, &empty_history(), SearchMode::Fuzzy);
         assert!(results.len() <= 3);
     }
@@ -510,7 +550,7 @@ mod tests {
             "appx",
             "app",
         ]);
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
 
         let results = engine.search("app", 2, &empty_history(), SearchMode::Prefix);
         let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
@@ -532,8 +572,8 @@ mod tests {
             "appabcdefghi",
             "appabcdefghij",
         ]);
-        let ordered_engine = SearchEngine::new(ordered);
-        let reversed_engine = SearchEngine::new(reversed);
+        let mut ordered_engine = SearchEngine::new(ordered);
+        let mut reversed_engine = SearchEngine::new(reversed);
 
         let ordered_results = ordered_engine.search("app", 2, &empty_history(), SearchMode::Prefix);
         let reversed_results = reversed_engine.search("app", 2, &empty_history(), SearchMode::Prefix);
@@ -548,7 +588,7 @@ mod tests {
     #[test]
     fn search_results_are_not_folders() {
         let entries = make_entries(&["Firefox"]);
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("fire", 8, &empty_history(), SearchMode::Fuzzy);
         assert!(!results.is_empty());
         assert!(!results[0].is_folder);
@@ -557,7 +597,7 @@ mod tests {
     #[test]
     fn search_prefix_mode_matches_only_prefix() {
         let entries = make_entries(&["Notepad", "Pad Tool"]);
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("pad", 8, &empty_history(), SearchMode::Prefix);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Pad Tool");
@@ -566,7 +606,7 @@ mod tests {
     #[test]
     fn search_substring_mode_matches_middle() {
         let entries = make_entries(&["Visual Studio Code"]);
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("studio", 8, &empty_history(), SearchMode::Substring);
         assert_eq!(results.len(), 1);
     }
@@ -579,7 +619,7 @@ mod tests {
             target_path: "C:\\fake\\SSP.exe".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("SSP.exe", 8, &empty_history(), SearchMode::Prefix);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "SSP");
@@ -592,7 +632,7 @@ mod tests {
             target_path: "C:\\fake\\SSP.exe".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("ssp.exe", 8, &empty_history(), SearchMode::Substring);
         assert_eq!(results.len(), 1);
     }
@@ -604,7 +644,7 @@ mod tests {
             target_path: "C:\\fake\\SSP.exe".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("ssp.exe", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
     }
@@ -612,7 +652,7 @@ mod tests {
     #[test]
     fn search_without_extension_still_works() {
         let entries = make_entries(&["SSP"]);
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("SSP", 8, &empty_history(), SearchMode::Prefix);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "SSP");
@@ -633,7 +673,7 @@ mod tests {
                 is_folder: false,
             },
         ];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("ssp.exe", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "SSP");
@@ -647,7 +687,7 @@ mod tests {
             target_path: "C:\\fake\\SSP.lnk".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("ssp.exe", 8, &empty_history(), SearchMode::Prefix);
         assert!(results.is_empty());
     }
@@ -660,7 +700,7 @@ mod tests {
             target_path: "C:\\fake\\SSP.exe".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("SSP.", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "SSP");
@@ -674,7 +714,7 @@ mod tests {
             target_path: "C:\\fake\\SSP.exe".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("SSP.e", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "SSP");
@@ -688,7 +728,7 @@ mod tests {
             target_path: "C:\\fake\\SSP.exe".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("SSP.ex", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "SSP");
@@ -702,7 +742,7 @@ mod tests {
             target_path: "C:\\fake\\drweb32w.exe".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("Dr.Web", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Dr.Web");
@@ -716,7 +756,7 @@ mod tests {
             target_path: "C:\\fake\\drweb32w.exe".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("dr.w", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Dr.Web");
@@ -730,7 +770,7 @@ mod tests {
             target_path: "C:\\fake\\hoge.exe.bak".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("hoge.exe", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "hoge");
@@ -744,7 +784,7 @@ mod tests {
             target_path: "C:\\fake\\hoge.exe.bak".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("hoge.exe.bak", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "hoge");
@@ -789,7 +829,7 @@ mod tests {
             target_path: "C:\\fake\\Tool.EXE".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("tool.exe", 8, &empty_history(), SearchMode::Substring);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Dummy");
@@ -802,7 +842,7 @@ mod tests {
             target_path: "C:\\".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("dummy.exe", 8, &empty_history(), SearchMode::Fuzzy);
         assert!(results.is_empty());
     }
@@ -847,7 +887,7 @@ mod tests {
     #[test]
     fn search_with_history_boost_disabled_matches_legacy_search() {
         let entries = make_entries(&["alpha", "alpaca", "alpine"]);
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let mut history = empty_history();
         for _ in 0..50 {
             history.record_launch("C:\\fake\\alpaca.lnk", "alp");
@@ -899,7 +939,7 @@ mod tests {
                 is_folder: false,
             },
         ];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let mut history = empty_history();
         for _ in 0..10 {
             history.record_launch("C:\\FAKE\\APP.LNK", "app");
@@ -951,7 +991,7 @@ mod tests {
     fn bitmask_filter_skips_non_matching_entries() {
         // "xyz" のクエリでビットマスクが "Firefox" にマッチしないことを確認
         let entries = make_entries(&["Firefox", "Chrome", "Xyzer"]);
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("xyz", 8, &empty_history(), SearchMode::Fuzzy);
         // "Firefox" と "Chrome" は x,y,z の全文字を含まないのでスキップされる
         // "Xyzer" は x,y,z を含むのでマッチ候補になる
@@ -968,7 +1008,7 @@ mod tests {
             target_path: "C:\\fake\\Café.lnk".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("cafe", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Café");
@@ -983,7 +1023,7 @@ mod tests {
             target_path: "C:\\fake\\Café.lnk".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("cafe", 8, &empty_history(), SearchMode::Prefix);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Café");
@@ -996,7 +1036,7 @@ mod tests {
             target_path: "C:\\fake\\Résumé Builder.lnk".to_string(),
             is_folder: false,
         }];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let results = engine.search("resume", 8, &empty_history(), SearchMode::Substring);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Résumé Builder");
@@ -1035,7 +1075,7 @@ mod tests {
     fn bench_search(label: &str, n: usize, queries: &[&str]) {
         use std::time::Instant;
         let entries = make_bench_entries(n);
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let history = empty_history();
 
         // ウォームアップ（rayon スレッドプールの初期化を除外）
@@ -1081,7 +1121,7 @@ mod tests {
                 is_folder: false,
             },
         ];
-        let engine = SearchEngine::new(entries);
+        let mut engine = SearchEngine::new(entries);
         let mut history = empty_history();
         // "résumé" で Résumé Builder を多数起動
         for _ in 0..20 {
@@ -1091,5 +1131,156 @@ mod tests {
         let results = engine.search("resume", 8, &history, SearchMode::Fuzzy);
         assert!(!results.is_empty());
         assert_eq!(results[0].name, "Résumé Builder");
+    }
+
+    // --- インクリメンタル検索テスト ---
+
+    #[test]
+    fn incremental_search_gives_correct_results_on_extension() {
+        let names = &["Firefox", "Final Cut", "Chrome", "Finder", "Fire TV"];
+        let mut engine = SearchEngine::new(make_entries(names));
+        let h = empty_history();
+
+        // 連続する monotonic 拡張で incremental パスを使う
+        let _ = engine.search("fi", 8, &h, SearchMode::Fuzzy);
+        let _ = engine.search("fir", 8, &h, SearchMode::Fuzzy);
+        let incremental = engine.search("fire", 8, &h, SearchMode::Fuzzy);
+
+        // 新鮮なエンジンでの結果と一致するか確認
+        let mut fresh = SearchEngine::new(make_entries(names));
+        let fresh_result = fresh.search("fire", 8, &h, SearchMode::Fuzzy);
+
+        let inc_names: Vec<&str> = incremental.iter().map(|r| r.name.as_str()).collect();
+        let fresh_names: Vec<&str> = fresh_result.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(inc_names, fresh_names);
+    }
+
+    #[test]
+    fn incremental_search_fallback_on_backspace() {
+        // "Firm" は fuzzy "fir" にマッチするが "fire" にはマッチしない（'e' がない）。
+        // "fire" → "fir" はバックスペースなので incremental パスは使えない。
+        // full scan にフォールバックしていなければ "Firm" が結果から漏れる。
+        let mut engine =
+            SearchEngine::new(make_entries(&["Firefox", "Final Cut", "Chrome", "Firm"]));
+        let h = empty_history();
+
+        let _ = engine.search("fire", 8, &h, SearchMode::Fuzzy);
+        // "fir" は "fire" の拡張ではない → full scan にフォールバック
+        let results = engine.search("fir", 8, &h, SearchMode::Fuzzy);
+
+        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+        assert!(names.contains(&"Firefox"), "full scan で Firefox が返る必要がある");
+        assert!(
+            names.contains(&"Firm"),
+            "Firm は 'fire' にマッチしないため前回の candidates に不在。full scan でのみ検出可能"
+        );
+    }
+
+    #[test]
+    fn incremental_search_fallback_on_mode_change() {
+        let mut engine = SearchEngine::new(make_entries(&["Firefox", "Final Cut", "Chrome"]));
+        let h = empty_history();
+
+        let _ = engine.search("fi", 8, &h, SearchMode::Fuzzy);
+        // 同じクエリでもモード変更 → full scan
+        let results = engine.search("fi", 8, &h, SearchMode::Prefix);
+
+        // Prefix "fi": "firefox" / "final cut" は先頭一致、"chrome" は不一致
+        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+        assert!(names.contains(&"Firefox"), "Prefix 'fi' で Firefox が返る必要がある");
+        assert!(names.contains(&"Final Cut"), "Prefix 'fi' で Final Cut が返る必要がある");
+        assert!(
+            !names.contains(&"Chrome"),
+            "Chrome は 'fi' で始まらないため除外される必要がある"
+        );
+    }
+
+    #[test]
+    fn incremental_search_dot_to_dot_uses_incremental() {
+        // dot → dot の拡張は incremental パスを使用できる（no-dot→dot ガードを通過する）。
+        // "ssp." → "ssp.e" はどちらもドットを含む単調拡張。
+        let entries = vec![
+            AppEntry {
+                name: "SSP".to_string(),
+                target_path: "C:\\fake\\SSP.exe".to_string(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "AnotherApp".to_string(),
+                target_path: "C:\\fake\\ssp.data".to_string(),
+                is_folder: false,
+            },
+        ];
+        let mut engine = SearchEngine::new(entries.clone());
+        let h = empty_history();
+
+        // "ssp." で両エントリが候補にキャッシュされる（prev_candidates に両インデックスが入る）
+        let _ = engine.search("ssp.", 8, &h, SearchMode::Fuzzy);
+        // "ssp.e" はドットあり拡張 → incremental で prev_candidates を再利用
+        let incremental = engine.search("ssp.e", 8, &h, SearchMode::Fuzzy);
+
+        // fresh エンジンとの比較で正確性を担保
+        let mut fresh = SearchEngine::new(entries);
+        let fresh_result = fresh.search("ssp.e", 8, &h, SearchMode::Fuzzy);
+
+        let inc_names: Vec<&str> = incremental.iter().map(|r| r.name.as_str()).collect();
+        let fresh_names: Vec<&str> = fresh_result.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(
+            inc_names,
+            fresh_names,
+            "dot→dot incremental は fresh 結果と一致する必要がある"
+        );
+    }
+
+    #[test]
+    fn incremental_search_no_dot_to_dot_falls_back_to_full_scan() {
+        // "AnotherApp" は名前では "ssp" にマッチしないが、
+        // file_name "ssp.data" は "ssp." クエリにマッチする
+        let entries = vec![
+            AppEntry {
+                name: "SSP".to_string(),
+                target_path: "C:\\fake\\SSP.exe".to_string(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "AnotherApp".to_string(),
+                target_path: "C:\\fake\\ssp.data".to_string(),
+                is_folder: false,
+            },
+        ];
+        let mut engine = SearchEngine::new(entries);
+        let h = empty_history();
+
+        // "ssp"（ドットなし）→ prev_candidates には名前マッチした SSP だけが入る
+        let _ = engine.search("ssp", 8, &h, SearchMode::Fuzzy);
+
+        // "ssp."（ドットあり）→ no-dot→dot ガードにより full scan
+        // AnotherApp の file_name "ssp.data" が "ssp." にマッチするはず
+        let results = engine.search("ssp.", 8, &h, SearchMode::Fuzzy);
+        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+        assert!(names.contains(&"SSP"), "SSP.exe が ssp. にマッチするはず");
+        assert!(
+            names.contains(&"AnotherApp"),
+            "AnotherApp の file_name ssp.data が ssp. にマッチするはず（full scan 必須）"
+        );
+    }
+
+    #[test]
+    fn incremental_search_empty_prev_candidates_falls_back() {
+        let mut engine = SearchEngine::new(make_entries(&["Firefox", "Chrome"]));
+        let h = empty_history();
+
+        // マッチなし → prev_candidates が空になる
+        let r1 = engine.search("xyz", 8, &h, SearchMode::Fuzzy);
+        assert!(r1.is_empty());
+
+        // "xyzw" は "xyz" の拡張だが prev_candidates 空 → full scan
+        let r2 = engine.search("xyzw", 8, &h, SearchMode::Fuzzy);
+        assert!(r2.is_empty());
+
+        // キャッシュが壊れていなければ通常クエリも機能する
+        let r3 = engine.search("fire", 8, &h, SearchMode::Fuzzy);
+        assert!(!r3.is_empty());
+        assert_eq!(r3[0].name, "Firefox");
     }
 }

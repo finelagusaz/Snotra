@@ -12,7 +12,8 @@ pub fn search(query: String, state: State<AppState>) -> Vec<SearchResult> {
         "cmd:search:start",
         json!({ "query_len": query.chars().count() }),
     );
-    let results = state.engine.lock().unwrap().search(&query);
+    let mut engine = state.engine.lock().unwrap();
+    let results = engine.search(&query);
     trace_command(
         "cmd:search:ok",
         json!({

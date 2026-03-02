@@ -9,6 +9,7 @@ postcard = { version = "1", features = ["alloc"] }
 bincode = "1"  # 旧形式マイグレーション読み込み用
 toml = "0.8"
 nucleo-matcher = "0.3"
+rayon = "1"
 dirs = "6"
 rustc-hash = "2.1.1"
 

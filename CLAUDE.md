@@ -72,6 +72,7 @@ Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-
 
 ```bash
 cargo test -p snotra-core        # ユニットテスト
+cargo test --release -p snotra-core bench_ -- --ignored --nocapture  # 検索パフォーマンス計測
 cargo check -p snotra            # Rustバックエンド型チェック
 cargo clippy -p snotra-core -p snotra  # lint チェック
 npm test                          # フロントユニットテスト（Vitest）

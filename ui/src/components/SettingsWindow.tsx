@@ -11,6 +11,7 @@ import {
   loadDraft,
   saveDraft,
 } from "../stores/settings";
+import * as api from "../lib/invoke";
 import SettingsGeneral from "./SettingsGeneral";
 import SettingsSearch from "./SettingsSearch";
 import SettingsIndex from "./SettingsIndex";
@@ -27,7 +28,6 @@ const TABS: { id: TabId; label: string }[] = [
 
 const SettingsWindow: Component = () => {
   let tablistRef: HTMLDivElement | undefined;
-  let allowClose = false;
 
   onMount(() => {
     loadDraft();
@@ -39,7 +39,7 @@ const SettingsWindow: Component = () => {
         if (hasChanges()) {
           return; // バナーは hasChanges() で既に表示、footer ボタンで操作
         }
-        void getCurrentWindow().close();
+        void api.hideSettings();
       }
     };
     window.addEventListener("keydown", handler);
@@ -47,14 +47,12 @@ const SettingsWindow: Component = () => {
 
     let unlistenClose: (() => void) | undefined;
     onCleanup(() => unlistenClose?.());
-    getCurrentWindow().onCloseRequested((event) => {
-      if (allowClose) {
-        allowClose = false;
-        return;
-      }
+    getCurrentWindow().onCloseRequested(async (event) => {
+      event.preventDefault();
       if (hasChanges()) {
-        event.preventDefault();
+        return; // バナー表示、footer ボタンで操作
       }
+      void api.hideSettings();
     }).then(fn => { unlistenClose = fn; });
   });
 
@@ -119,10 +117,7 @@ const SettingsWindow: Component = () => {
           <Show when={hasChanges()}>
             <button
               type="button"
-              onClick={() => {
-                allowClose = true;
-                void getCurrentWindow().close();
-              }}
+              onClick={() => void api.hideSettings()}
             >
               保存せずに閉じる
             </button>

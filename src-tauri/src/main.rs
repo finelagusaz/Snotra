@@ -222,6 +222,7 @@ fn main() {
             commands::save_config,
             commands::get_config,
             commands::open_settings,
+            commands::hide_settings,
             commands::open_about,
             commands::get_icon_png,
             commands::get_search_placement,

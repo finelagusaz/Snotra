@@ -777,6 +777,26 @@
   border-top: 1px solid color-mix(in srgb, var(--hint-text-color, #808080) 30%, transparent);
 }
 
+.settings-footer button:not(.btn-primary) {
+  padding: 5px 14px;
+  background: var(--input-bg-color, #383838);
+  border: 1px solid color-mix(in srgb, var(--hint-text-color, #808080) 60%, transparent);
+  border-radius: 6px;
+  color: var(--text-color, #e0e0e0);
+  cursor: pointer;
+  font-size: 0.85em;
+  transition: background 200ms, border-color 200ms, transform 100ms;
+}
+
+.settings-footer button:not(.btn-primary):hover {
+  border-color: var(--hint-text-color, #808080);
+  background: color-mix(in srgb, var(--selected-row-color, #505050) 40%, transparent);
+}
+
+.settings-footer button:not(.btn-primary):active {
+  transform: scale(0.98);
+}
+
 .btn-primary {
   padding: 7px 24px;
   background: color-mix(in srgb, var(--selected-row-color, #505050) 80%, var(--text-color, #e0e0e0));

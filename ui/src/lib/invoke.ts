@@ -92,6 +92,10 @@ export async function openSettings(): Promise<void> {
   return tracedInvoke("open_settings");
 }
 
+export async function hideSettings(): Promise<void> {
+  return tracedInvoke("hide_settings");
+}
+
 export interface WindowPlacement {
   x: number;
   y: number;

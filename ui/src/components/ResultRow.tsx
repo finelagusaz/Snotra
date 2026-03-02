@@ -42,6 +42,8 @@ const ResultRow: Component<ResultRowProps> = (rawProps) => {
   return (
     <div
       class="result-row"
+      role="option"
+      aria-selected={props.isSelected}
       classList={{ selected: props.isSelected, error: props.result.isError }}
       onClick={props.onClick}
       onDblClick={props.onDoubleClick}

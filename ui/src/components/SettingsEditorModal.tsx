@@ -9,6 +9,8 @@ type SettingsEditorModalProps = {
 };
 
 const SettingsEditorModal: ParentComponent<SettingsEditorModalProps> = (props) => {
+  let modalRef: HTMLDivElement | undefined;
+
   createEffect(() => {
     if (!props.open) return;
     queueMicrotask(() => {
@@ -21,11 +23,39 @@ const SettingsEditorModal: ParentComponent<SettingsEditorModalProps> = (props) =
     });
   });
 
+  function getFocusable(): HTMLElement[] {
+    if (!modalRef) return [];
+    return Array.from(
+      modalRef.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+      )
+    ).filter((el) => el.offsetParent !== null);
+  }
+
   function handleKeyDown(e: KeyboardEvent) {
-    if (e.key !== "Escape") return;
-    e.preventDefault();
-    e.stopPropagation();
-    props.onClose();
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      props.onClose();
+      return;
+    }
+    if (e.key === "Tab") {
+      const focusable = getFocusable();
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    }
   }
 
   return (
@@ -33,6 +63,7 @@ const SettingsEditorModal: ParentComponent<SettingsEditorModalProps> = (props) =
       <div class="settings-modal-backdrop" onClick={props.onClose}>
         <div
           class="settings-modal"
+          ref={modalRef}
           role="dialog"
           aria-modal="true"
           aria-labelledby={props.titleId}
@@ -50,7 +81,7 @@ const SettingsEditorModal: ParentComponent<SettingsEditorModalProps> = (props) =
               onClick={props.onClose}
               aria-label="閉じる"
             >
-              x
+              ×
             </button>
           </div>
 

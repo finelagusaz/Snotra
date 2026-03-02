@@ -232,6 +232,7 @@ fn main() {
             commands::set_window_no_activate,
             commands::notify_result_clicked,
             commands::notify_result_double_clicked,
+            commands::notify_result_hovered,
             commands::get_indexing_state,
             commands::list_system_fonts,
             commands::rebuild_index,

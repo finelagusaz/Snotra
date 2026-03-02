@@ -66,6 +66,20 @@
   padding: 20px 24px;
 }
 
+.settings-content::-webkit-scrollbar,
+.settings-modal::-webkit-scrollbar {
+  width: 4px;
+}
+.settings-content::-webkit-scrollbar-track,
+.settings-modal::-webkit-scrollbar-track {
+  background: transparent;
+}
+.settings-content::-webkit-scrollbar-thumb,
+.settings-modal::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb-color, rgba(255, 255, 255, 0.3));
+  border-radius: 2px;
+}
+
 /* ===== Section Grouping ===== */
 .settings-section {
   display: flex;
@@ -290,6 +304,15 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-color, #e0e0e0) 20%, transparent);
 }
 
+.color-hex-input--invalid {
+  border-color: #e06060;
+}
+
+.color-hex-input--invalid:focus-visible {
+  border-color: #e06060;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #e06060 30%, transparent);
+}
+
 /* ===== Preset Cards ===== */
 .preset-cards {
   display: flex;
@@ -347,7 +370,7 @@
   right: 4px;
   width: 18px;
   height: 18px;
-  padding: 0;
+  padding: 0 !important;
   border: none;
   border-radius: 50%;
   background: color-mix(in srgb, var(--hint-text-color, #808080) 30%, transparent);
@@ -795,6 +818,31 @@
 .settings-status {
   font-size: 0.85em;
   color: var(--hint-text-color, #808080);
+}
+
+.settings-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--hint-text-color, #808080);
+  font-size: 0.9em;
+}
+
+.settings-discard-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 24px;
+  background: color-mix(in srgb, #e06060 10%, var(--bg-color, #282828));
+  border-top: 1px solid color-mix(in srgb, #e06060 30%, transparent);
+  font-size: 0.85em;
+  flex-wrap: wrap;
+}
+
+.settings-discard-message {
+  flex: 1;
+  color: var(--text-color, #e0e0e0);
 }
 
 .settings-editor-form-hint,

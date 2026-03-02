@@ -82,7 +82,7 @@ const App: Component = () => {
       };
 
       // Wait for all critical listeners to be attached before first reset/show.
-      const [unlistenWindowShown, unlistenResultsSync, unlistenResultClicked, unlistenRenderDone, unlistenResultDoubleClicked, unlistenPlatformEvent] =
+      const [unlistenWindowShown, unlistenResultsSync, unlistenResultClicked, unlistenRenderDone, unlistenResultDoubleClicked, unlistenResultHovered, unlistenPlatformEvent] =
         await Promise.all([
           listen("window-shown", () => {
             trace("app:event:window_shown");
@@ -107,6 +107,9 @@ const App: Component = () => {
           listen<number>("result-double-clicked", (event) => {
             setSelected(event.payload);
           }),
+          listen<number>("result-hovered", (event) => {
+            setSelected(event.payload);
+          }),
           listen<string>("platform-event", async (event) => {
             if (event.payload === "initial-hotkey-failed") {
               trace("app:event:platform_event:initial_hotkey_failed");
@@ -126,6 +129,7 @@ const App: Component = () => {
         unlistenResultClicked,
         unlistenRenderDone,
         unlistenResultDoubleClicked,
+        unlistenResultHovered,
         unlistenPlatformEvent,
       );
 

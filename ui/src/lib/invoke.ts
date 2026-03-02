@@ -144,6 +144,10 @@ export async function notifyResultDoubleClicked(index: number): Promise<void> {
   return tracedInvoke("notify_result_double_clicked", { index });
 }
 
+export async function notifyResultHovered(index: number): Promise<void> {
+  return tracedInvoke("notify_result_hovered", { index });
+}
+
 export async function getIndexingState(): Promise<boolean> {
   return tracedInvoke<boolean>("get_indexing_state");
 }

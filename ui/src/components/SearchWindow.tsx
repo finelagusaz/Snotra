@@ -185,6 +185,8 @@ const SearchWindow: Component = () => {
   function handleInput(e: InputEvent) {
     // ツール選択中は入力を無効化（C2対策）
     if (toolSelectionState()) return;
+    // インデックス構築中は入力を無視
+    if (indexing()) return;
     const value = (e.target as HTMLInputElement).value;
     trace("ui:input", { value, folderMode: folderState() !== null });
     perfMarkInput();
@@ -217,30 +219,43 @@ const SearchWindow: Component = () => {
     return "検索...";
   }
 
+  function noResults(): boolean {
+    return (
+      results().length === 0 &&
+      !indexing() &&
+      query().length > 0 &&
+      !toolSelectionState() &&
+      !folderState()
+    );
+  }
+
   return (
     <div class="search-bar" data-tauri-drag-region onKeyDown={handleKeyDown}>
-      <Show
-        when={!indexing()}
-        fallback={<div class="indexing-message" data-tauri-drag-region>インデックス構築中...</div>}
-      >
-        <Show
-          when={!launching() && !launchNotice()}
-          fallback={
-            <div class="indexing-message" data-tauri-drag-region>
-              {launching() ? "起動中..." : launchNotice() ?? ""}
-            </div>
-          }
+      <input
+        ref={setInputRef}
+        type="text"
+        class="search-input"
+        placeholder={placeholderText()}
+        value={inputValue()}
+        onInput={handleInput}
+        autofocus
+      />
+      <Show when={indexing()}>
+        <div class="search-overlay indexing-message" data-tauri-drag-region>
+          インデックス構築中...
+        </div>
+      </Show>
+      <Show when={launching() || launchNotice()}>
+        <div
+          class="search-overlay indexing-message"
+          classList={{ "indexing-message--error": !launching() && launchNotice() !== null }}
+          data-tauri-drag-region
         >
-          <input
-            ref={setInputRef}
-            type="text"
-            class="search-input"
-            placeholder={placeholderText()}
-            value={inputValue()}
-            onInput={handleInput}
-            autofocus
-          />
-        </Show>
+          {launching() ? "起動中..." : launchNotice() ?? ""}
+        </div>
+      </Show>
+      <Show when={noResults()}>
+        <span class="no-results-hint">見つかりません</span>
       </Show>
     </div>
   );

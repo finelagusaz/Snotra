@@ -91,6 +91,7 @@ const SettingsVisual: Component = () => {
       c.visual.preset = preset.value;
       Object.assign(c.visual, preset.colors);
     });
+    setHexErrors(new Set<string>());
   }
 
   const activePreset = createMemo((): string | null => {
@@ -134,6 +135,7 @@ const SettingsVisual: Component = () => {
       c.visual.preset = "custom";
       Object.assign(c.visual, ct);
     });
+    setHexErrors(new Set<string>());
   }
 
   function updateColor(key: ColorKey, value: string) {
@@ -241,7 +243,14 @@ const SettingsVisual: Component = () => {
                     type="color"
                     aria-label={field.label}
                     value={d().visual[field.key]}
-                    onInput={(e) => updateColor(field.key, e.currentTarget.value)}
+                    onInput={(e) => {
+                      setHexErrors((prev) => {
+                        const next = new Set(prev);
+                        next.delete(field.key);
+                        return next;
+                      });
+                      updateColor(field.key, e.currentTarget.value);
+                    }}
                   />
                 </div>
                 <input

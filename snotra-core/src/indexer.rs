@@ -13,17 +13,26 @@ use windows::Win32::System::Threading::{
     GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL,
 };
 
-use crate::binfmt::BinFile;
+use crate::binfmt::{BinFile, try_deserialize_with_header};
 use crate::config::{Config, ScanPath};
+use crate::query::to_lower_folded;
 
 const INDEX_MAGIC: [u8; 4] = *b"INDX";
-const INDEX_CACHE_VERSION: u32 = 2;
+const INDEX_CACHE_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppEntry {
     pub name: String,
     pub target_path: String,
     pub is_folder: bool,
+}
+
+/// キャッシュから読み込んだビットマスクのペア。SearchEngine の構築時に渡すことで
+/// char_masks / file_name_char_masks の再計算をスキップし、起動時間を短縮する。
+#[derive(Debug)]
+pub struct CachedMasks {
+    pub char_masks: Vec<u64>,
+    pub file_name_char_masks: Vec<u64>,
 }
 
 pub fn scan_all(scan_paths: &[ScanPath], show_hidden_system: bool) -> Vec<AppEntry> {
@@ -178,11 +187,40 @@ pub struct LoadOrScanStats {
     pub total_ms: u128,
 }
 
+/// v3 フォーマット: char_masks / file_name_char_masks を含む現行スキーマ。
 #[derive(Serialize, Deserialize)]
 struct IndexCache {
     built_at: u64,
     entries: Vec<AppEntry>,
     config_hash: u64,
+    char_masks: Vec<u64>,
+    file_name_char_masks: Vec<u64>,
+}
+
+/// v2 フォールバック用スキーマ（ビットマスクフィールドなし）。
+/// v2 キャッシュをヒットした場合はマスクなし（None）で返し、
+/// SearchEngine::new() が通常通りマスクを計算する。
+#[derive(Serialize, Deserialize)]
+struct IndexCacheV2 {
+    #[allow(dead_code)]
+    built_at: u64,
+    entries: Vec<AppEntry>,
+    config_hash: u64,
+}
+
+/// char_bitmask を計算する（search.rs の同名関数と同一ロジック）。
+/// IndexCache 保存時にマスクを生成するためここで定義する。
+/// Bits 0-25 = 'a'-'z', bits 26-35 = '0'-'9'. 他の文字は無視。
+fn char_bitmask_for_cache(lower: &str) -> u64 {
+    let mut mask: u64 = 0;
+    for b in lower.bytes() {
+        match b {
+            b'a'..=b'z' => mask |= 1u64 << (b - b'a'),
+            b'0'..=b'9' => mask |= 1u64 << (26 + (b - b'0')),
+            _ => {}
+        }
+    }
+    mask
 }
 
 fn compute_config_hash(scan: &[ScanPath], show_hidden_system: bool) -> u64 {
@@ -218,15 +256,19 @@ fn invalidate_icon_cache() {
 /// Scan filesystem every startup; compare with cache to detect changes.
 /// Returns (entries, changed) where changed=true means the entry set differs from cache.
 pub fn load_or_scan(scan: &[ScanPath], show_hidden_system: bool) -> (Vec<AppEntry>, bool) {
-    let (entries, changed, _) = load_or_scan_with_stats(scan, show_hidden_system);
+    let (entries, changed, _, _) = load_or_scan_with_stats(scan, show_hidden_system);
     (entries, changed)
 }
 
-/// Same as `load_or_scan`, but also returns timing stats for startup profiling.
+/// Same as `load_or_scan`, but also returns timing stats and optional cached bitmasks.
+///
+/// The 4th return value is `Some(CachedMasks)` when a v3 cache was hit, or `None`
+/// (v2 cache or cache miss). Callers can pass the masks to
+/// `Engine::new_from_cache()` to skip bitmask recomputation in SearchEngine.
 pub fn load_or_scan_with_stats(
     scan: &[ScanPath],
     show_hidden_system: bool,
-) -> (Vec<AppEntry>, bool, LoadOrScanStats) {
+) -> (Vec<AppEntry>, bool, LoadOrScanStats, Option<CachedMasks>) {
     let total_started = Instant::now();
 
     let hash_started = Instant::now();
@@ -234,9 +276,10 @@ pub fn load_or_scan_with_stats(
     let hash_ms = hash_started.elapsed().as_millis();
 
     let cache_load_started = Instant::now();
-    if let Some(cache) = load_cache(current_hash) {
+    if let Some(result) = load_cache(current_hash) {
         let cache_load_ms = cache_load_started.elapsed().as_millis();
-        let return_entries = cache.entries;
+        let return_entries = result.entries;
+        let cached_masks = result.cached_masks;
         spawn_background_rescan(
             scan.to_vec(),
             show_hidden_system,
@@ -252,7 +295,7 @@ pub fn load_or_scan_with_stats(
             cache_save_ms: 0,
             total_ms: total_started.elapsed().as_millis(),
         };
-        return (return_entries, false, stats);
+        return (return_entries, false, stats, cached_masks);
     }
     let cache_load_ms = cache_load_started.elapsed().as_millis();
 
@@ -278,7 +321,7 @@ pub fn load_or_scan_with_stats(
         total_ms: total_started.elapsed().as_millis(),
     };
 
-    (entries, true, stats)
+    (entries, true, stats, None)
 }
 
 fn entries_equal(a: &[AppEntry], b: &[AppEntry]) -> bool {
@@ -303,6 +346,31 @@ fn save_cache_sorted(entries: &[AppEntry], config_hash: u64) {
     let Some(bf) = cache_bin_file() else {
         return;
     };
+
+    // マスクを計算してキャッシュに含める。起動時に SearchEngine::new_with_cached_masks()
+    // がマスク再計算をスキップできるようにする。
+    let lower_names: Vec<String> = entries.iter().map(|e| to_lower_folded(&e.name)).collect();
+    let lower_file_names: Vec<Option<String>> = entries
+        .iter()
+        .map(|e| {
+            std::path::Path::new(&e.target_path)
+                .file_name()
+                .and_then(|f| f.to_str())
+                .map(to_lower_folded)
+        })
+        .collect();
+    let char_masks: Vec<u64> = lower_names
+        .iter()
+        .map(|n| if n.is_ascii() { char_bitmask_for_cache(n) } else { u64::MAX })
+        .collect();
+    let file_name_char_masks: Vec<u64> = lower_file_names
+        .iter()
+        .map(|n| {
+            n.as_deref()
+                .map_or(0, |s| if s.is_ascii() { char_bitmask_for_cache(s) } else { u64::MAX })
+        })
+        .collect();
+
     let cache = IndexCache {
         built_at: SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -310,6 +378,8 @@ fn save_cache_sorted(entries: &[AppEntry], config_hash: u64) {
             .as_secs(),
         entries: entries.to_vec(),
         config_hash,
+        char_masks,
+        file_name_char_masks,
     };
     bf.save(&cache);
 }
@@ -324,13 +394,43 @@ pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> Vec<AppE
     entries
 }
 
-fn load_cache(config_hash: u64) -> Option<IndexCache> {
+/// キャッシュ読み込み結果。v3 ヒット時はマスク付き、v2 ヒット時はマスクなし。
+struct LoadCacheResult {
+    entries: Vec<AppEntry>,
+    cached_masks: Option<CachedMasks>,
+}
+
+fn load_cache(config_hash: u64) -> Option<LoadCacheResult> {
     let bf = cache_bin_file()?;
-    let cache: IndexCache = bf.load()?;
-    if cache.config_hash != config_hash {
-        return None;
+    let bytes = bf.load_bytes()?;
+
+    // v3 (現行) を試みる
+    if let Ok(cache) = try_deserialize_with_header::<IndexCache>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION) {
+        if cache.config_hash != config_hash {
+            return None;
+        }
+        let masks = CachedMasks {
+            char_masks: cache.char_masks,
+            file_name_char_masks: cache.file_name_char_masks,
+        };
+        return Some(LoadCacheResult {
+            entries: cache.entries,
+            cached_masks: Some(masks),
+        });
     }
-    Some(cache)
+
+    // v2 フォールバック (マスクなし)
+    if let Ok(cache) = try_deserialize_with_header::<IndexCacheV2>(&bytes, INDEX_MAGIC, 2) {
+        if cache.config_hash != config_hash {
+            return None;
+        }
+        return Some(LoadCacheResult {
+            entries: cache.entries,
+            cached_masks: None,
+        });
+    }
+
+    None
 }
 
 fn spawn_background_rescan(
@@ -366,7 +466,7 @@ fn lower_current_thread_priority() {}
 #[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::binfmt::{deserialize_with_header, serialize_with_header};
+    use crate::binfmt::{deserialize_with_header, serialize_with_header, try_deserialize_with_header};
     use std::fs;
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
@@ -493,6 +593,8 @@ mod tests {
             built_at: 1700000000,
             entries: entries.clone(),
             config_hash: 12345,
+            char_masks: vec![0xAB, 0xCD],
+            file_name_char_masks: vec![0x12, 0x34],
         };
 
         let bytes =
@@ -507,6 +609,38 @@ mod tests {
         assert_eq!(restored.entries[1].name, "Projects");
         assert!(restored.entries[1].is_folder);
         assert_eq!(restored.config_hash, 12345);
+        assert_eq!(restored.char_masks, vec![0xAB, 0xCD]);
+        assert_eq!(restored.file_name_char_masks, vec![0x12, 0x34]);
+    }
+
+    #[test]
+    fn load_cache_v2_migrates_to_no_masks() {
+        // v2 フォーマット（マスクなし）のキャッシュを読み込んだとき
+        // cached_masks が None で返ることを確認する。
+        let entries = vec![AppEntry {
+            name: "Firefox".to_string(),
+            target_path: "C:\\apps\\firefox.lnk".to_string(),
+            is_folder: false,
+        }];
+        let config_hash = 999u64;
+
+        let cache_v2 = IndexCacheV2 {
+            built_at: 0,
+            entries: entries.clone(),
+            config_hash,
+        };
+        let bytes =
+            serialize_with_header(INDEX_MAGIC, 2, &cache_v2).expect("serialize v2");
+
+        // try_deserialize_with_header で v2 として読める
+        let restored: IndexCacheV2 =
+            deserialize_with_header(&bytes, INDEX_MAGIC, 2).expect("deserialize v2");
+        assert_eq!(restored.entries[0].name, "Firefox");
+        assert_eq!(restored.config_hash, config_hash);
+
+        // v3 として読もうとすると失敗する（マスクフィールドがない）
+        let v3_result = try_deserialize_with_header::<IndexCache>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION);
+        assert!(v3_result.is_err(), "v2 bytes should not deserialize as v3");
     }
 
     #[test]

@@ -81,10 +81,6 @@ pub struct SearchEngine {
     entries: Vec<AppEntry>,
     lower_names: Vec<String>,
     lower_file_names: Vec<Option<String>>,
-    /// Pre-computed UTF-32 representations of lower_names for nucleo fuzzy matching.
-    lower_names_u32: Vec<Utf32String>,
-    /// Pre-computed UTF-32 representations of lower_file_names for nucleo fuzzy matching.
-    lower_file_names_u32: Vec<Option<Utf32String>>,
     /// Pre-computed normalized keys for history lookups (one per entry).
     normalized_keys: Vec<String>,
     /// Character-presence bitmask for lower_name (a-z: bits 0-25, 0-9: bits 26-35).
@@ -111,57 +107,73 @@ struct EntryView<'a> {
     entry: &'a AppEntry,
     lower_name: &'a str,
     lower_file_name: Option<&'a str>,
-    lower_name_u32: &'a Utf32String,
-    lower_file_name_u32: Option<&'a Utf32String>,
     normalized_key: &'a str,
 }
 
 impl SearchEngine {
     pub fn new(entries: Vec<AppEntry>) -> Self {
-        let lower_names: Vec<String> = entries.iter().map(|e| to_lower_folded(&e.name)).collect();
-        let lower_file_names: Vec<Option<String>> = entries
-            .iter()
-            .map(|e| {
-                std::path::Path::new(&e.target_path)
-                    .file_name()
-                    .and_then(|f| f.to_str())
-                    .map(to_lower_folded)
-            })
-            .collect();
-        let lower_names_u32: Vec<_> = lower_names
-            .iter()
-            .map(|n| Utf32String::from(n.as_str()))
-            .collect();
-        let lower_file_names_u32: Vec<_> = lower_file_names
-            .iter()
-            .map(|n| n.as_deref().map(Utf32String::from))
-            .collect();
-        let normalized_keys: Vec<_> = entries
-            .iter()
-            .map(|e| normalize_entry_key(&e.target_path))
-            .collect();
+        // Wave 1: lower_names / lower_file_names / normalized_keys は entries への
+        // 純粋な map であり相互依存がないため rayon::join で並列構築する。
+        let entries_ref = &entries;
+        let ((lower_names, lower_file_names), normalized_keys) = rayon::join(
+            || {
+                rayon::join(
+                    || {
+                        entries_ref
+                            .iter()
+                            .map(|e| to_lower_folded(&e.name))
+                            .collect::<Vec<_>>()
+                    },
+                    || {
+                        entries_ref
+                            .iter()
+                            .map(|e| {
+                                std::path::Path::new(&e.target_path)
+                                    .file_name()
+                                    .and_then(|f| f.to_str())
+                                    .map(to_lower_folded)
+                            })
+                            .collect::<Vec<_>>()
+                    },
+                )
+            },
+            || {
+                entries_ref
+                    .iter()
+                    .map(|e| normalize_entry_key(&e.target_path))
+                    .collect::<Vec<_>>()
+            },
+        );
+
+        // Wave 2: char_masks は lower_names に、file_name_char_masks は lower_file_names に
+        // それぞれ依存するため Wave 1 完了後に並列構築する。
         // to_lower_folded already folds most Latin accents to ASCII (é→e),
         // so non-ASCII names here are typically CJK, Arabic, etc.
         // u64::MAX ensures (query_mask & u64::MAX) == query_mask for any query_mask,
         // so these entries always pass the bitmask pre-filter regardless of the query.
-        let char_masks: Vec<_> = lower_names
-            .iter()
-            .map(|n| if n.is_ascii() { char_bitmask(n) } else { u64::MAX })
-            .collect();
-        // None → 0: entries without a file_name cannot match via the file_name path,
-        // so failing the bitmask check (and being skipped when the name also fails) is correct.
-        let file_name_char_masks: Vec<_> = lower_file_names
-            .iter()
-            .map(|n| {
-                n.as_deref()
-                    .map_or(0, |s| if s.is_ascii() { char_bitmask(s) } else { u64::MAX })
-            })
-            .collect();
+        let (char_masks, file_name_char_masks) = rayon::join(
+            || {
+                lower_names
+                    .iter()
+                    .map(|n| if n.is_ascii() { char_bitmask(n) } else { u64::MAX })
+                    .collect::<Vec<_>>()
+            },
+            || {
+                // None → 0: entries without a file_name cannot match via the file_name path,
+                // so failing the bitmask check (and being skipped when the name also fails) is correct.
+                lower_file_names
+                    .iter()
+                    .map(|n| {
+                        n.as_deref()
+                            .map_or(0, |s| if s.is_ascii() { char_bitmask(s) } else { u64::MAX })
+                    })
+                    .collect::<Vec<_>>()
+            },
+        );
+
         debug_assert!(
             lower_names.len() == entries.len()
                 && lower_file_names.len() == entries.len()
-                && lower_names_u32.len() == entries.len()
-                && lower_file_names_u32.len() == entries.len()
                 && normalized_keys.len() == entries.len()
                 && char_masks.len() == entries.len()
                 && file_name_char_masks.len() == entries.len(),
@@ -171,8 +183,66 @@ impl SearchEngine {
             entries,
             lower_names,
             lower_file_names,
-            lower_names_u32,
-            lower_file_names_u32,
+            normalized_keys,
+            char_masks,
+            file_name_char_masks,
+            prev_query: String::new(),
+            prev_candidates: Vec::new(),
+            prev_mode: None,
+        }
+    }
+
+    /// キャッシュから読み込んだビットマスクを使って SearchEngine を構築する。
+    /// char_masks / file_name_char_masks の再計算をスキップし、起動時間を短縮する。
+    /// lower_names / lower_file_names / normalized_keys は引き続き並列構築する。
+    pub fn new_with_cached_masks(
+        entries: Vec<AppEntry>,
+        char_masks: Vec<u64>,
+        file_name_char_masks: Vec<u64>,
+    ) -> Self {
+        let entries_ref = &entries;
+        let ((lower_names, lower_file_names), normalized_keys) = rayon::join(
+            || {
+                rayon::join(
+                    || {
+                        entries_ref
+                            .iter()
+                            .map(|e| to_lower_folded(&e.name))
+                            .collect::<Vec<_>>()
+                    },
+                    || {
+                        entries_ref
+                            .iter()
+                            .map(|e| {
+                                std::path::Path::new(&e.target_path)
+                                    .file_name()
+                                    .and_then(|f| f.to_str())
+                                    .map(to_lower_folded)
+                            })
+                            .collect::<Vec<_>>()
+                    },
+                )
+            },
+            || {
+                entries_ref
+                    .iter()
+                    .map(|e| normalize_entry_key(&e.target_path))
+                    .collect::<Vec<_>>()
+            },
+        );
+
+        debug_assert!(
+            lower_names.len() == entries.len()
+                && lower_file_names.len() == entries.len()
+                && normalized_keys.len() == entries.len()
+                && char_masks.len() == entries.len()
+                && file_name_char_masks.len() == entries.len(),
+            "SearchEngine: all parallel Vecs must have the same length as entries"
+        );
+        Self {
+            entries,
+            lower_names,
+            lower_file_names,
             normalized_keys,
             char_masks,
             file_name_char_masks,
@@ -188,8 +258,6 @@ impl SearchEngine {
             entry: &self.entries[i],
             lower_name: &self.lower_names[i],
             lower_file_name: self.lower_file_names[i].as_deref(),
-            lower_name_u32: &self.lower_names_u32[i],
-            lower_file_name_u32: self.lower_file_names_u32[i].as_ref(),
             normalized_key: &self.normalized_keys[i],
         }
     }
@@ -290,12 +358,22 @@ impl SearchEngine {
 
                     let v = self.entry_view(i);
 
+                    // Fuzzy モードのみ UTF-32 へのオンデマンド変換を行う。
+                    // ビットマスクで除外された候補には到達しないため、変換コストは
+                    // ビットマスク通過分（全体の 1-5%）にのみ発生する。
+                    // Option<Utf32String> で保持し as_ref() で &Utf32String を取り出す。
+                    let name_u32_owned: Option<Utf32String> = if mode == SearchMode::Fuzzy {
+                        Some(Utf32String::from(v.lower_name))
+                    } else {
+                        None
+                    };
+
                     let name_score = match_score_single_cached(
                         mode,
                         &mut matcher,
                         v.lower_name,
                         norm_query_str,
-                        v.lower_name_u32,
+                        name_u32_owned.as_ref(),
                         &needle_u32,
                     );
 
@@ -304,18 +382,19 @@ impl SearchEngine {
                         // (avoids heavy fuzzy work).
                         let needs_fn_score = name_score.is_none_or(|s| s <= 9000);
                         let fn_score = if needs_fn_score {
-                            v.lower_file_name_u32.and_then(|u32s| {
-                                // lower_file_name_u32 and lower_file_name are built from the same source,
-                                // so Some(lower_file_name_u32) guarantees Some(lower_file_name).
-                                let fn_name = v.lower_file_name.expect(
-                                    "lower_file_names_u32 and lower_file_names built from same source",
-                                );
+                            v.lower_file_name.and_then(|fn_name| {
+                                let fn_u32_owned: Option<Utf32String> =
+                                    if mode == SearchMode::Fuzzy {
+                                        Some(Utf32String::from(fn_name))
+                                    } else {
+                                        None
+                                    };
                                 match_score_single_cached(
                                     mode,
                                     &mut matcher,
                                     fn_name,
                                     norm_query_str,
-                                    u32s,
+                                    fn_u32_owned.as_ref(),
                                     &needle_u32,
                                 )
                             })
@@ -518,14 +597,15 @@ fn char_bitmask(lower: &str) -> u64 {
     mask
 }
 
-/// Score using pre-computed lowercase name and pre-cached UTF-32 representations.
+/// Score using pre-computed lowercase name and an optional UTF-32 haystack.
+/// `haystack_u32` is `Some` only in Fuzzy mode (computed on-demand after bitmask pre-filter).
 /// `needle_u32` must be the UTF-32 encoding of `query` (pre-computed once per search call).
 fn match_score_single_cached(
     mode: SearchMode,
     matcher: &mut Matcher,
     lower_name: &str,
     query: &str,
-    haystack_u32: &Utf32String,
+    haystack_u32: Option<&Utf32String>,
     needle_u32: &Utf32String,
 ) -> Option<i64> {
     match mode {
@@ -538,7 +618,8 @@ fn match_score_single_cached(
         }
         SearchMode::Substring => lower_name.find(query).map(|idx| 5_000 - idx as i64),
         SearchMode::Fuzzy => {
-            let haystack = haystack_u32.slice(..);
+            let h = haystack_u32.expect("Fuzzy mode requires UTF-32 haystack");
+            let haystack = h.slice(..);
             let needle = needle_u32.slice(..);
             matcher.fuzzy_match(haystack, needle).map(|s| s as i64)
         }

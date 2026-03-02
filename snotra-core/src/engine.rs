@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::folder;
 use crate::history::HistoryStore;
-use crate::indexer::AppEntry;
+use crate::indexer::{AppEntry, CachedMasks};
 use crate::search::{HistoryBoostConfig, SearchEngine, SearchMode};
 use crate::ui_types::SearchResult;
 use std::path::Path;
@@ -16,6 +16,25 @@ impl Engine {
     pub fn new(entries: Vec<AppEntry>, history: HistoryStore, config: Config) -> Self {
         Self {
             search_engine: SearchEngine::new(entries),
+            history,
+            config,
+        }
+    }
+
+    /// v3 キャッシュヒット時に使用するコンストラクタ。
+    /// キャッシュ済みビットマスクを渡すことで SearchEngine のマスク再計算をスキップする。
+    pub fn new_from_cache(
+        entries: Vec<AppEntry>,
+        cached_masks: CachedMasks,
+        history: HistoryStore,
+        config: Config,
+    ) -> Self {
+        Self {
+            search_engine: SearchEngine::new_with_cached_masks(
+                entries,
+                cached_masks.char_masks,
+                cached_masks.file_name_char_masks,
+            ),
             history,
             config,
         }

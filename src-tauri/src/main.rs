@@ -153,14 +153,14 @@ fn main() {
     let is_first_run = Config::is_first_run();
     let config = Config::load();
 
-    let (entries, initial_indexing) = if is_first_run {
-        (Vec::new(), true)
+    let (entries, initial_indexing, cached_masks) = if is_first_run {
+        (Vec::new(), true, None)
     } else {
         #[cfg(debug_assertions)]
-        let (entries, _, stats) =
+        let (entries, _, stats, cached_masks) =
             indexer::load_or_scan_with_stats(&config.paths.scan, config.search.show_hidden_system);
         #[cfg(not(debug_assertions))]
-        let (entries, _, _) =
+        let (entries, _, _, cached_masks) =
             indexer::load_or_scan_with_stats(&config.paths.scan, config.search.show_hidden_system);
         #[cfg(debug_assertions)]
         eprintln!(
@@ -173,7 +173,7 @@ fn main() {
             stats.sort_ms,
             stats.cache_save_ms,
         );
-        (entries, false)
+        (entries, false, cached_masks)
     };
 
     // Lazy-load icon cache on first icon request to keep startup path short.
@@ -191,7 +191,11 @@ fn main() {
     let hotkey_config = config.hotkey.clone();
     let window_width = config.appearance.window_width;
 
-    let engine = Engine::new(entries, history, config);
+    let engine = if let Some(masks) = cached_masks {
+        Engine::new_from_cache(entries, masks, history, config)
+    } else {
+        Engine::new(entries, history, config)
+    };
 
     let app_state = AppState {
         engine: Mutex::new(engine),

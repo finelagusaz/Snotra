@@ -343,7 +343,7 @@ impl SearchEngine {
             );
 
         // Update incremental cache BEFORE sort so all matching indices are captured.
-        self.prev_query = norm_query.to_string();
+        self.prev_query = norm_query.into_owned();
         self.prev_candidates = all_match_indices;
         self.prev_mode = Some(mode);
 

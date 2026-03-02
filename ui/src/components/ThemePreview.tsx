@@ -33,10 +33,7 @@ const ThemePreview: Component<ThemePreviewProps> = (props) => {
           style={{ background: v().hint_text_color }}
         />
         <div class="theme-preview-text">
-          <div class="theme-preview-name" style={{ color: v().text_color }}>
-            メモ帳
-          </div>
-          <div class="theme-preview-path" style={{ color: v().hint_text_color }}>
+          <div class="theme-preview-path" style={{ color: v().text_color }}>
             C:\Windows\notepad.exe
           </div>
         </div>
@@ -47,10 +44,7 @@ const ThemePreview: Component<ThemePreviewProps> = (props) => {
           style={{ background: v().hint_text_color }}
         />
         <div class="theme-preview-text">
-          <div class="theme-preview-name" style={{ color: v().text_color }}>
-            電卓
-          </div>
-          <div class="theme-preview-path" style={{ color: v().hint_text_color }}>
+          <div class="theme-preview-path" style={{ color: v().text_color }}>
             C:\Windows\System32\calc.exe
           </div>
         </div>
@@ -61,10 +55,7 @@ const ThemePreview: Component<ThemePreviewProps> = (props) => {
           style={{ background: v().hint_text_color }}
         />
         <div class="theme-preview-text">
-          <div class="theme-preview-name" style={{ color: v().text_color }}>
-            ペイント
-          </div>
-          <div class="theme-preview-path" style={{ color: v().hint_text_color }}>
+          <div class="theme-preview-path" style={{ color: v().text_color }}>
             C:\Windows\System32\mspaint.exe
           </div>
         </div>

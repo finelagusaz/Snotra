@@ -128,9 +128,18 @@ const ResultsWindow: Component = () => {
     });
   });
 
+  let hoverTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(hoverTimer));
+  function handleHover(idx: number) {
+    clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(() => {
+      void api.notifyResultHovered(idx);
+    }, 50);
+  }
+
   return (
     <div class="results-window">
-      <div class="result-list-standalone" ref={listRef}>
+      <div class="result-list-standalone" ref={listRef} role="listbox" aria-label="検索結果">
         <For each={results()}>
           {(result, idx) => (
             <ResultRow
@@ -141,6 +150,7 @@ const ResultsWindow: Component = () => {
               containerWidth={containerWidth()}
               onClick={() => api.notifyResultClicked(idx())}
               onDoubleClick={() => api.notifyResultDoubleClicked(idx())}
+              onMouseEnter={() => handleHover(idx())}
             />
           )}
         </For>

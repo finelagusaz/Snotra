@@ -1,17 +1,17 @@
 import { createSignal } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Config } from "../lib/types";
 import { isHotkeyInvalid } from "../lib/hotkeyValidation";
 import * as api from "../lib/invoke";
 
 const [draft, setDraft] = createSignal<Config | null>(null);
+let statusClearTimer: ReturnType<typeof setTimeout> | undefined;
 const [savedConfig, setSavedConfig] = createSignal<Config | null>(null);
 const [status, setStatus] = createSignal("");
 
-const [activeTab, setActiveTab] = createSignal<
-  "general" | "search" | "index" | "visual" | "opener"
->("general");
+export type TabId = "general" | "search" | "index" | "visual" | "opener";
+
+const [activeTab, setActiveTab] = createSignal<TabId>("general");
 
 function hasChanges(): boolean {
   const d = draft();
@@ -63,11 +63,8 @@ async function saveDraft() {
     await api.saveConfig(d);
     setSavedConfig(structuredClone(d));
     setStatus("保存しました");
-    try {
-      await getCurrentWindow().close();
-    } catch (e) {
-      console.error("Failed to close settings window:", e);
-    }
+    clearTimeout(statusClearTimer);
+    statusClearTimer = setTimeout(() => setStatus(""), 3000);
   } catch (e) {
     if (e === "hotkey_registration_failed") {
       setStatus("保存に失敗: ホットキーの登録に失敗しました（他のアプリが同じキーを使用している可能性があります）");

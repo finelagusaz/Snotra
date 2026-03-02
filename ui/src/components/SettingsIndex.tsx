@@ -167,7 +167,7 @@ const SettingsIndex: Component = () => {
               onInput={(e) =>
                 updateDraft((c) => {
                   c.appearance.max_results =
-                    parseInt(e.currentTarget.value) || 8;
+                    Math.max(1, Math.min(50, parseInt(e.currentTarget.value) || 8));
                 })
               }
               style={{ width: "80px" }}
@@ -185,7 +185,7 @@ const SettingsIndex: Component = () => {
               onInput={(e) =>
                 updateDraft((c) => {
                   c.appearance.window_width =
-                    parseInt(e.currentTarget.value) || 600;
+                    Math.max(300, Math.min(1200, parseInt(e.currentTarget.value) || 600));
                 })
               }
               style={{ width: "80px" }}
@@ -222,7 +222,7 @@ const SettingsIndex: Component = () => {
               onInput={(e) =>
                 updateDraft((c) => {
                   c.appearance.top_n_history =
-                    parseInt(e.currentTarget.value) || 200;
+                    Math.max(10, Math.min(1000, parseInt(e.currentTarget.value) || 200));
                 })
               }
               style={{ width: "80px" }}

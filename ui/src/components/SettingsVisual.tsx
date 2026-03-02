@@ -1,4 +1,4 @@
-import { type Component, For, Show, createMemo, createResource } from "solid-js";
+import { type Component, For, Show, createMemo, createResource, createSignal } from "solid-js";
 import * as api from "../lib/invoke";
 import { draft, updateDraft } from "../stores/settings";
 import SettingRow from "./SettingRow";
@@ -82,6 +82,7 @@ function colorsMatch(visual: { [K in ColorKey]: string }, target: { [K in ColorK
 const SettingsVisual: Component = () => {
   const d = () => draft()!;
   const [fonts] = createResource(api.listSystemFonts);
+  const [hexErrors, setHexErrors] = createSignal<Set<string>>(new Set());
 
   function applyPreset(presetValue: string) {
     const preset = PRESETS.find((p) => p.value === presetValue);
@@ -90,6 +91,7 @@ const SettingsVisual: Component = () => {
       c.visual.preset = preset.value;
       Object.assign(c.visual, preset.colors);
     });
+    setHexErrors(new Set<string>());
   }
 
   const activePreset = createMemo((): string | null => {
@@ -119,7 +121,7 @@ const SettingsVisual: Component = () => {
     });
   }
 
-  function deleteCustomTheme(e: MouseEvent) {
+  function deleteCustomTheme(e: MouseEvent | KeyboardEvent) {
     e.stopPropagation();
     updateDraft((c) => {
       c.visual.custom_theme = undefined;
@@ -133,6 +135,7 @@ const SettingsVisual: Component = () => {
       c.visual.preset = "custom";
       Object.assign(c.visual, ct);
     });
+    setHexErrors(new Set<string>());
   }
 
   function updateColor(key: ColorKey, value: string) {
@@ -196,8 +199,16 @@ const SettingsVisual: Component = () => {
                   <span
                     class="custom-theme-delete"
                     role="button"
+                    tabIndex={0}
                     onClick={(e) => deleteCustomTheme(e)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        deleteCustomTheme(e);
+                      }
+                    }}
                     title="マイテーマを削除"
+                    aria-label="マイテーマを削除"
                   >
                     ×
                   </span>
@@ -230,19 +241,36 @@ const SettingsVisual: Component = () => {
                 <div class="color-swatch">
                   <input
                     type="color"
+                    aria-label={field.label}
                     value={d().visual[field.key]}
-                    onInput={(e) => updateColor(field.key, e.currentTarget.value)}
+                    onInput={(e) => {
+                      setHexErrors((prev) => {
+                        const next = new Set(prev);
+                        next.delete(field.key);
+                        return next;
+                      });
+                      updateColor(field.key, e.currentTarget.value);
+                    }}
                   />
                 </div>
                 <input
                   class="color-hex-input"
+                  classList={{ "color-hex-input--invalid": hexErrors().has(field.key) }}
                   type="text"
                   value={d().visual[field.key]}
                   onInput={(e) => {
                     const val = e.currentTarget.value;
-                    if (/^#[0-9a-fA-F]{6}$/.test(val)) {
-                      updateColor(field.key, val);
-                    }
+                    const valid = /^#[0-9a-fA-F]{6}$/.test(val);
+                    setHexErrors((prev) => {
+                      const next = new Set(prev);
+                      if (val.length > 0 && !valid) {
+                        next.add(field.key);
+                      } else {
+                        next.delete(field.key);
+                      }
+                      return next;
+                    });
+                    if (valid) updateColor(field.key, val);
                   }}
                 />
               </div>
@@ -257,12 +285,16 @@ const SettingsVisual: Component = () => {
           <SettingRow label="フォントファミリー">
             <select
               value={d().visual.font_family}
+              disabled={fonts.loading}
               onChange={(e) =>
                 updateDraft((c) => {
                   c.visual.font_family = e.currentTarget.value;
                 })
               }
             >
+              <Show when={fonts.loading}>
+                <option value={d().visual.font_family}>{d().visual.font_family}（読み込み中...）</option>
+              </Show>
               <For each={fonts() ?? []}>{(f) =>
                 <option value={f}>{f}</option>
               }</For>
@@ -276,7 +308,7 @@ const SettingsVisual: Component = () => {
               value={d().visual.font_size}
               onInput={(e) =>
                 updateDraft((c) => {
-                  c.visual.font_size = parseInt(e.currentTarget.value) || 15;
+                  c.visual.font_size = Math.max(8, Math.min(48, parseInt(e.currentTarget.value) || 15));
                 })
               }
               style={{ width: "80px" }}

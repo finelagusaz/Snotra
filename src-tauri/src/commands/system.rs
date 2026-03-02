@@ -93,3 +93,8 @@ pub fn notify_result_double_clicked(index: usize, app: AppHandle) -> Result<(), 
     app.emit("result-double-clicked", index)
         .map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub fn notify_result_hovered(index: usize, app: AppHandle) -> Result<(), String> {
+    app.emit("result-hovered", index).map_err(|e| e.to_string())
+}

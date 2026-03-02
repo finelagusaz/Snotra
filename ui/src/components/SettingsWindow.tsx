@@ -1,6 +1,7 @@
 import { type Component, Show, onMount, onCleanup } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  type TabId,
   draft,
   status,
   activeTab,
@@ -10,13 +11,24 @@ import {
   loadDraft,
   saveDraft,
 } from "../stores/settings";
+import * as api from "../lib/invoke";
 import SettingsGeneral from "./SettingsGeneral";
 import SettingsSearch from "./SettingsSearch";
 import SettingsIndex from "./SettingsIndex";
 import SettingsVisual from "./SettingsVisual";
 import SettingsOpener from "./SettingsOpener";
 
+const TABS: { id: TabId; label: string }[] = [
+  { id: "general", label: "全般" },
+  { id: "search", label: "検索" },
+  { id: "index", label: "インデックス・表示" },
+  { id: "visual", label: "ビジュアル" },
+  { id: "opener", label: "オープナー" },
+];
+
 const SettingsWindow: Component = () => {
+  let tablistRef: HTMLDivElement | undefined;
+
   onMount(() => {
     loadDraft();
     const handler = (e: KeyboardEvent) => {
@@ -24,53 +36,59 @@ const SettingsWindow: Component = () => {
         // ホットキー入力中は window-close を抑止（SettingsGeneral で clearHotkey を処理）
         if (document.activeElement?.classList.contains("hotkey-input")) return;
         e.preventDefault();
-        void getCurrentWindow().close();
+        if (hasChanges()) {
+          return; // バナーは hasChanges() で既に表示、footer ボタンで操作
+        }
+        void api.hideSettings();
       }
     };
     window.addEventListener("keydown", handler);
     onCleanup(() => window.removeEventListener("keydown", handler));
+
+    let unlistenClose: (() => void) | undefined;
+    onCleanup(() => unlistenClose?.());
+    getCurrentWindow().onCloseRequested(async (event) => {
+      event.preventDefault();
+      if (hasChanges()) {
+        return; // バナー表示、footer ボタンで操作
+      }
+      void api.hideSettings();
+    }).then(fn => { unlistenClose = fn; });
   });
 
   return (
     <div class="settings-window">
       <div class="settings-sidebar">
-        <div class="sidebar-nav">
-          <button
-            classList={{ active: activeTab() === "general" }}
-            onClick={() => setActiveTab("general")}
-          >
-            全般
-          </button>
-          <button
-            classList={{ active: activeTab() === "search" }}
-            onClick={() => setActiveTab("search")}
-          >
-            検索
-          </button>
-          <button
-            classList={{ active: activeTab() === "index" }}
-            onClick={() => setActiveTab("index")}
-          >
-            インデックス
-          </button>
-          <button
-            classList={{ active: activeTab() === "visual" }}
-            onClick={() => setActiveTab("visual")}
-          >
-            ビジュアル
-          </button>
-          <button
-            classList={{ active: activeTab() === "opener" }}
-            onClick={() => setActiveTab("opener")}
-          >
-            オープナー
-          </button>
+        <div class="sidebar-nav" role="tablist" aria-orientation="vertical" ref={tablistRef}>
+          {TABS.map((tab, i) => (
+            <button
+              role="tab"
+              aria-selected={activeTab() === tab.id}
+              classList={{ active: activeTab() === tab.id }}
+              onClick={() => setActiveTab(tab.id)}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowDown") {
+                  const next = (i + 1) % TABS.length;
+                  setActiveTab(TABS[next].id);
+                  (tablistRef?.querySelectorAll('[role="tab"]')[next] as HTMLElement | undefined)?.focus();
+                  e.preventDefault();
+                } else if (e.key === "ArrowUp") {
+                  const next = (i - 1 + TABS.length) % TABS.length;
+                  setActiveTab(TABS[next].id);
+                  (tablistRef?.querySelectorAll('[role="tab"]')[next] as HTMLElement | undefined)?.focus();
+                  e.preventDefault();
+                }
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
       </div>
 
       <div class="settings-main">
         <div class="settings-content">
-          <Show when={draft()}>
+          <Show when={draft()} fallback={<div class="settings-loading">設定を読み込み中...</div>}>
             <>
               {activeTab() === "general" && <SettingsGeneral />}
               {activeTab() === "search" && <SettingsSearch />}
@@ -81,6 +99,12 @@ const SettingsWindow: Component = () => {
           </Show>
         </div>
 
+        <Show when={hasChanges()}>
+          <div class="settings-discard-banner">
+            <span class="settings-discard-message">未保存の変更があります。</span>
+          </div>
+        </Show>
+
         <div class="settings-footer">
           <button
             class="btn-primary"
@@ -90,6 +114,14 @@ const SettingsWindow: Component = () => {
           >
             {hasChanges() ? "保存" : "変更なし"}
           </button>
+          <Show when={hasChanges()}>
+            <button
+              type="button"
+              onClick={() => void api.hideSettings()}
+            >
+              保存せずに閉じる
+            </button>
+          </Show>
           <Show when={status()}>
             <span class="settings-status">{status()}</span>
           </Show>

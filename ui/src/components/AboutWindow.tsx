@@ -22,16 +22,17 @@ const AboutWindow: Component = () => {
         <div
             style={{
                 padding: "24px",
-                color: "var(--color-fg-default)",
+                color: "var(--text-color)",
                 "font-family": "var(--font-family)",
                 height: "100%",
                 display: "flex",
                 "flex-direction": "column",
-                background: "var(--color-bg-default)",
+                background: "var(--bg-color)",
+                "user-select": "text",
             }}
         >
-            <h2 style={{ "margin-top": "0", "margin-bottom": "8px", "color": "var(--color-accent-fg)" }}>Snotra</h2>
-            <p style={{ margin: "0 0 24px 0", color: "var(--color-fg-muted)", "font-size": "14px" }}>
+            <h2 style={{ "margin-top": "0", "margin-bottom": "8px", "color": "var(--text-color)" }}>Snotra</h2>
+            <p style={{ margin: "0 0 24px 0", color: "var(--hint-text-color)", "font-size": "14px" }}>
                 v{version} build {buildDate}
             </p>
 
@@ -40,7 +41,7 @@ const AboutWindow: Component = () => {
                 <p style={{ margin: "0 0 8px 0" }}>
                     <a
                         href="#"
-                        style={{ color: "var(--color-accent-fg)", "text-decoration": "none" }}
+                        style={{ color: "var(--text-color)", "text-decoration": "none" }}
                         onClick={(e) => {
                             e.preventDefault();
                             open(`mailto:algiz.rune@gmail.com?subject=${encodeURIComponent("Snotraについて")}`);
@@ -52,7 +53,7 @@ const AboutWindow: Component = () => {
                 <p style={{ margin: "0" }}>
                     <a
                         href="#"
-                        style={{ color: "var(--color-accent-fg)", "text-decoration": "none" }}
+                        style={{ color: "var(--text-color)", "text-decoration": "none" }}
                         onClick={(e) => {
                             e.preventDefault();
                             open("https://blankrune.sakura.ne.jp/");

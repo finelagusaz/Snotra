@@ -92,6 +92,10 @@ export async function openSettings(): Promise<void> {
   return tracedInvoke("open_settings");
 }
 
+export async function hideSettings(): Promise<void> {
+  return tracedInvoke("hide_settings");
+}
+
 export interface WindowPlacement {
   x: number;
   y: number;
@@ -142,6 +146,10 @@ export async function notifyResultClicked(index: number): Promise<void> {
 
 export async function notifyResultDoubleClicked(index: number): Promise<void> {
   return tracedInvoke("notify_result_double_clicked", { index });
+}
+
+export async function notifyResultHovered(index: number): Promise<void> {
+  return tracedInvoke("notify_result_hovered", { index });
 }
 
 export async function getIndexingState(): Promise<boolean> {

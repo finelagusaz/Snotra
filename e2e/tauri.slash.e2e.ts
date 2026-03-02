@@ -518,9 +518,17 @@ test("設定オープナー: ルール追加・ツール追加・保存・永続
     3_000,
   );
 
-  // 保存ボタンをクリック → settings window が閉じる
+  // 保存ボタンをクリック（保存後は自動クローズしない仕様）
   const saveBtn = await driver.findElement(By.css("button.btn-primary.has-changes"));
   await saveBtn.click();
+  // has-changes クラスが消えるまで待つ（保存完了 → hasChanges() === false）
+  await driver.wait(
+    async () => (await driver.findElements(By.css("button.btn-primary.has-changes"))).length === 0,
+    5_000,
+    "save did not complete",
+  );
+  // 変更なしの状態で Escape → バナーなしで即クローズ
+  await driver.actions().sendKeys(Key.ESCAPE).perform();
   await waitForHiddenLabel(driver, "settings", 8_000);
 
   // 設定を再度開く
@@ -546,6 +554,34 @@ test("設定オープナー: ルール追加・ツール追加・保存・永続
   const lists = await driver.findElements(By.css(".scan-path-list"));
   const ruleItems = await lists[0].findElements(By.css(".scan-path-item"));
   expect(ruleItems.length).toBe(initialCount + 1);
+});
+
+test("settings を ESC で閉じた後、スラッシュコマンドが動作する", async ({ harness }) => {
+  const { driver } = harness;
+
+  // /o → ESC で閉じる
+  await switchToLabel(driver, "main");
+  let input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/o");
+  await waitForVisibleLabel(driver, "settings", 8_000);
+  await switchToLabel(driver, "settings");
+  await driver.actions().sendKeys(Key.ESCAPE).perform();
+  await waitForHiddenLabel(driver, "settings", 8_000);
+
+  // IPC 生存確認: /a で about が開くか（別コマンドで IPC チャネルが壊れていないことを検証）
+  await switchToLabel(driver, "main");
+  input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/a");
+  await waitForVisibleLabel(driver, "about", 8_000);
+  const states = await collectWindowStates(driver);
+  expect(
+    states.some(
+      (state) =>
+        state.label === "about" &&
+        (state.nativeVisible === true ||
+          (state.nativeVisible == null && state.visibility === "visible")),
+    ),
+  ).toBe(true);
 });
 
 test("/a で main の alwaysOnTop が外れ、about を ESC で閉じると戻る", async ({ harness }) => {

@@ -84,30 +84,40 @@ pub fn ensure_settings_window(app: &AppHandle) -> tauri::Result<()> {
     let handle_for_close = app.clone();
     settings_window.on_window_event(move |event| {
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            // Safety net: JS が preventDefault() し忘れた場合のフォールバック。
+            // 通常は JS 側で CloseRequested を prevent し、hide_settings IPC で閉じる。
             api.prevent_close();
             if let Some(w) = handle_for_close.get_webview_window("settings") {
                 let _ = w.hide();
             }
-            // about も非表示なら main の alwaysOnTop を戻す
-            let about_hidden = handle_for_close
-                .get_webview_window("about")
-                .map(|w| !w.is_visible().unwrap_or(true))
-                .unwrap_or(true);
-            if about_hidden
-                && let Some(main) = handle_for_close.get_webview_window("main")
-            {
-                let _ = main.set_always_on_top(true);
-            }
-            // First-run: start index build when settings is dismissed.
-            let state = handle_for_close.state::<AppState>();
-            if state.indexing.load(Ordering::SeqCst)
-                && !state.index_build_started.load(Ordering::SeqCst)
-            {
-                indexing::start_index_build(&handle_for_close);
-            }
         }
     });
     Ok(())
+}
+
+#[tauri::command]
+pub fn hide_settings(state: State<AppState>, app: AppHandle) {
+    trace_command("cmd:hide_settings:start", json!({}));
+    if let Some(w) = app.get_webview_window("settings") {
+        let _ = w.hide();
+    }
+    // about も非表示なら main の alwaysOnTop を戻す
+    let about_hidden = app
+        .get_webview_window("about")
+        .map(|w| !w.is_visible().unwrap_or(true))
+        .unwrap_or(true);
+    if about_hidden
+        && let Some(main) = app.get_webview_window("main")
+    {
+        let _ = main.set_always_on_top(true);
+    }
+    // First-run: start index build when settings is dismissed.
+    if state.indexing.load(Ordering::SeqCst)
+        && !state.index_build_started.load(Ordering::SeqCst)
+    {
+        indexing::start_index_build(&app);
+    }
+    trace_command("cmd:hide_settings:ok", json!({}));
 }
 
 #[tauri::command]

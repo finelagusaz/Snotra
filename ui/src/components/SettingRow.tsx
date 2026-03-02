@@ -5,6 +5,7 @@ interface SettingRowProps {
   label: string;
   description?: string;
   block?: boolean;
+  controlId?: string;
   children: JSX.Element;
 }
 
@@ -15,7 +16,10 @@ const SettingRow: Component<SettingRowProps> = (props) => {
       classList={{ "setting-row--block": props.block }}
     >
       <div class="setting-info">
-        <span class="setting-label">{props.label}</span>
+        {props.controlId
+          ? <label class="setting-label" for={props.controlId}>{props.label}</label>
+          : <span class="setting-label">{props.label}</span>
+        }
         <Show when={props.description}>
           <span class="setting-description">{props.description}</span>
         </Show>

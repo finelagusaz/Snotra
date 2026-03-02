@@ -125,8 +125,9 @@ const SettingsGeneral: Component = () => {
       <div class="settings-group">
         <div class="settings-group-title">ホットキー</div>
         <div class="settings-group-content">
-          <SettingRow label="ホットキー" block>
+          <SettingRow label="ホットキー" block controlId="hotkey-input">
             <input
+              id="hotkey-input"
               class="hotkey-input"
               classList={{ "hotkey-input--invalid": hotkeyInvalid() }}
               type="text"

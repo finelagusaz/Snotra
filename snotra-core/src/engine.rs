@@ -21,7 +21,7 @@ impl Engine {
         }
     }
 
-    pub fn search(&self, query: &str) -> Vec<SearchResult> {
+    pub fn search(&mut self, query: &str) -> Vec<SearchResult> {
         let mode = SearchMode::from(self.config.search.normal_mode);
         let boost = HistoryBoostConfig::from(&self.config.search);
         let max = self.config.appearance.max_results;
@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn search_returns_matching_results() {
-        let engine = Engine::new(
+        let mut engine = Engine::new(
             make_entries(&["Firefox", "Chrome", "Notepad"]),
             empty_history(),
             default_config(),
@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn search_empty_query_returns_empty() {
-        let engine = Engine::new(
+        let mut engine = Engine::new(
             make_entries(&["Firefox"]),
             empty_history(),
             default_config(),
@@ -145,7 +145,7 @@ mod tests {
     fn search_respects_max_results_from_config() {
         let mut config = default_config();
         config.appearance.max_results = 2;
-        let engine = Engine::new(
+        let mut engine = Engine::new(
             make_entries(&["app1", "app2", "app3", "app4"]),
             empty_history(),
             config,

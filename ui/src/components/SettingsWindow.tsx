@@ -1,4 +1,4 @@
-import { type Component, createSignal, Show, onMount, onCleanup } from "solid-js";
+import { type Component, Show, onMount, onCleanup } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   type TabId,
@@ -26,7 +26,6 @@ const TABS: { id: TabId; label: string }[] = [
 ];
 
 const SettingsWindow: Component = () => {
-  const [showDiscardBanner, setShowDiscardBanner] = createSignal(false);
   let tablistRef: HTMLDivElement | undefined;
   let allowClose = false;
 
@@ -38,8 +37,7 @@ const SettingsWindow: Component = () => {
         if (document.activeElement?.classList.contains("hotkey-input")) return;
         e.preventDefault();
         if (hasChanges()) {
-          setShowDiscardBanner(true);
-          return;
+          return; // バナーは hasChanges() で既に表示、footer ボタンで操作
         }
         void getCurrentWindow().close();
       }
@@ -56,7 +54,6 @@ const SettingsWindow: Component = () => {
       }
       if (hasChanges()) {
         event.preventDefault();
-        setShowDiscardBanner(true);
       }
     }).then(fn => { unlistenClose = fn; });
   });
@@ -104,35 +101,9 @@ const SettingsWindow: Component = () => {
           </Show>
         </div>
 
-        <Show when={showDiscardBanner()}>
+        <Show when={hasChanges()}>
           <div class="settings-discard-banner">
             <span class="settings-discard-message">未保存の変更があります。</span>
-            <button
-              type="button"
-              class="btn-primary"
-              onClick={async () => {
-                await saveDraft();
-                if (!hasChanges()) {
-                  setShowDiscardBanner(false);
-                  void getCurrentWindow().close();
-                }
-              }}
-            >
-              保存して閉じる
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                allowClose = true;
-                setShowDiscardBanner(false);
-                void getCurrentWindow().close();
-              }}
-            >
-              破棄して閉じる
-            </button>
-            <button type="button" onClick={() => setShowDiscardBanner(false)}>
-              キャンセル
-            </button>
           </div>
         </Show>
 
@@ -145,6 +116,17 @@ const SettingsWindow: Component = () => {
           >
             {hasChanges() ? "保存" : "変更なし"}
           </button>
+          <Show when={hasChanges()}>
+            <button
+              type="button"
+              onClick={() => {
+                allowClose = true;
+                void getCurrentWindow().close();
+              }}
+            >
+              保存せずに閉じる
+            </button>
+          </Show>
           <Show when={status()}>
             <span class="settings-status">{status()}</span>
           </Show>

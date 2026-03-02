@@ -556,6 +556,34 @@ test("設定オープナー: ルール追加・ツール追加・保存・永続
   expect(ruleItems.length).toBe(initialCount + 1);
 });
 
+test("settings を ESC で閉じた後、スラッシュコマンドが動作する", async ({ harness }) => {
+  const { driver } = harness;
+
+  // /o → ESC で閉じる
+  await switchToLabel(driver, "main");
+  let input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/o");
+  await waitForVisibleLabel(driver, "settings", 8_000);
+  await switchToLabel(driver, "settings");
+  await driver.actions().sendKeys(Key.ESCAPE).perform();
+  await waitForHiddenLabel(driver, "settings", 8_000);
+
+  // IPC 生存確認: /a で about が開くか（別コマンドで IPC チャネルが壊れていないことを検証）
+  await switchToLabel(driver, "main");
+  input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/a");
+  await waitForVisibleLabel(driver, "about", 8_000);
+  const states = await collectWindowStates(driver);
+  expect(
+    states.some(
+      (state) =>
+        state.label === "about" &&
+        (state.nativeVisible === true ||
+          (state.nativeVisible == null && state.visibility === "visible")),
+    ),
+  ).toBe(true);
+});
+
 test("/a で main の alwaysOnTop が外れ、about を ESC で閉じると戻る", async ({ harness }) => {
   const { driver } = harness;
 

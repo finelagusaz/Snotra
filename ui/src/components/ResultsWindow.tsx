@@ -129,6 +129,7 @@ const ResultsWindow: Component = () => {
   });
 
   let hoverTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(hoverTimer));
   function handleHover(idx: number) {
     clearTimeout(hoverTimer);
     hoverTimer = setTimeout(() => {

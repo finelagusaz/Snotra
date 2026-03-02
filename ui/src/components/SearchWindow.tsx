@@ -1,4 +1,4 @@
-import { type Component, onCleanup, onMount, Show } from "solid-js";
+import { type Component, createMemo, onCleanup, onMount, Show } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -219,15 +219,13 @@ const SearchWindow: Component = () => {
     return "検索...";
   }
 
-  function noResults(): boolean {
-    return (
-      results().length === 0 &&
-      !indexing() &&
-      query().length > 0 &&
-      !toolSelectionState() &&
-      !folderState()
-    );
-  }
+  const noResults = createMemo(() =>
+    results().length === 0 &&
+    !indexing() &&
+    query().length > 0 &&
+    !toolSelectionState() &&
+    !folderState()
+  );
 
   return (
     <div class="search-bar" data-tauri-drag-region onKeyDown={handleKeyDown}>

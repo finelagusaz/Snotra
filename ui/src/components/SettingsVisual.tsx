@@ -120,7 +120,7 @@ const SettingsVisual: Component = () => {
     });
   }
 
-  function deleteCustomTheme(e: MouseEvent) {
+  function deleteCustomTheme(e: MouseEvent | KeyboardEvent) {
     e.stopPropagation();
     updateDraft((c) => {
       c.visual.custom_theme = undefined;
@@ -202,7 +202,7 @@ const SettingsVisual: Component = () => {
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
-                        deleteCustomTheme(e as unknown as MouseEvent);
+                        deleteCustomTheme(e);
                       }
                     }}
                     title="マイテーマを削除"

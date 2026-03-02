@@ -5,6 +5,7 @@ import { isHotkeyInvalid } from "../lib/hotkeyValidation";
 import * as api from "../lib/invoke";
 
 const [draft, setDraft] = createSignal<Config | null>(null);
+let statusClearTimer: ReturnType<typeof setTimeout> | undefined;
 const [savedConfig, setSavedConfig] = createSignal<Config | null>(null);
 const [status, setStatus] = createSignal("");
 
@@ -62,7 +63,8 @@ async function saveDraft() {
     await api.saveConfig(d);
     setSavedConfig(structuredClone(d));
     setStatus("保存しました");
-    setTimeout(() => setStatus(""), 3000);
+    clearTimeout(statusClearTimer);
+    statusClearTimer = setTimeout(() => setStatus(""), 3000);
   } catch (e) {
     if (e === "hotkey_registration_failed") {
       setStatus("保存に失敗: ホットキーの登録に失敗しました（他のアプリが同じキーを使用している可能性があります）");

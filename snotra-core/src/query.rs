@@ -1,12 +1,26 @@
 use std::borrow::Cow;
 
+use nucleo_matcher::chars::normalize as nucleo_normalize;
+
+/// Lowercase + accent-fold a string using nucleo's normalization table.
+/// This aligns with nucleo's fuzzy matcher behavior (é→e, ü→u, etc.).
+/// Order: lowercase first, then normalize — nucleo's table covers both cases
+/// (É→e, é→e) so the result is equivalent to nucleo's internal normalize→casefold.
+pub fn to_lower_folded(s: &str) -> String {
+    s.chars()
+        .flat_map(|c| c.to_lowercase())
+        .map(nucleo_normalize)
+        .collect()
+}
+
 pub fn normalize_query(query: &str) -> Cow<'_, str> {
     let trimmed = query.trim();
     if trimmed.is_empty() {
         return Cow::Borrowed("");
     }
 
-    // Check if the string needs allocation: contains uppercase or multiple adjacent whitespaces
+    // Check if the string needs allocation: contains uppercase, accented chars,
+    // or multiple adjacent whitespaces
     let mut needs_alloc = false;
     let mut prev_space = false;
     for ch in trimmed.chars() {
@@ -17,7 +31,7 @@ pub fn normalize_query(query: &str) -> Cow<'_, str> {
             }
             prev_space = true;
         } else {
-            if ch.is_uppercase() {
+            if ch.is_uppercase() || nucleo_normalize(ch) != ch {
                 needs_alloc = true;
                 break;
             }
@@ -40,7 +54,7 @@ pub fn normalize_query(query: &str) -> Cow<'_, str> {
                 prev_space_build = true;
             }
         } else {
-            out.extend(ch.to_lowercase());
+            out.extend(ch.to_lowercase().map(nucleo_normalize));
             prev_space_build = false;
         }
     }
@@ -50,7 +64,7 @@ pub fn normalize_query(query: &str) -> Cow<'_, str> {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_query;
+    use super::{normalize_query, to_lower_folded};
     use std::borrow::Cow;
 
     #[test]
@@ -75,5 +89,44 @@ mod tests {
         let q = normalize_query("foo　bar");
         assert!(matches!(q, Cow::Owned(_)));
         assert_eq!(q, "foo bar");
+    }
+
+    #[test]
+    fn accent_folding_resume() {
+        assert_eq!(normalize_query("résumé"), "resume");
+    }
+
+    #[test]
+    fn accent_folding_cafe() {
+        assert_eq!(normalize_query("Café"), "cafe");
+    }
+
+    #[test]
+    fn accent_folding_naive() {
+        assert_eq!(normalize_query("naïve"), "naive");
+    }
+
+    #[test]
+    fn accent_folding_allocates() {
+        let q = normalize_query("café");
+        assert!(matches!(q, Cow::Owned(_)));
+    }
+
+    #[test]
+    fn ascii_only_borrows() {
+        let q = normalize_query("hello");
+        assert!(matches!(q, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn to_lower_folded_strips_accents() {
+        assert_eq!(to_lower_folded("Café"), "cafe");
+        assert_eq!(to_lower_folded("RÉSUMÉ"), "resume");
+        assert_eq!(to_lower_folded("naïve"), "naive");
+    }
+
+    #[test]
+    fn to_lower_folded_ascii_unchanged() {
+        assert_eq!(to_lower_folded("Hello World"), "hello world");
     }
 }

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
 
 use crate::history::HistoryStore;
+use crate::query::to_lower_folded;
 use crate::search::SearchMode;
 use crate::ui_types::SearchResult;
 
@@ -25,6 +26,8 @@ pub fn list_folder(
     };
 
     let mut matcher = Matcher::new(MatcherConfig::DEFAULT);
+    // Pre-fold the filter once; passed to matches_filter for every entry.
+    let filter_lower = to_lower_folded(filter);
 
     let mut entries: Vec<SearchResult> = read_dir
         .flatten()
@@ -35,7 +38,7 @@ pub fn list_folder(
             }
             let name = entry.file_name().to_string_lossy().to_string();
 
-            if !filter.is_empty() && !matches_filter(&name, filter, mode, &mut matcher) {
+            if !filter.is_empty() && !matches_filter(&name, &filter_lower, mode, &mut matcher) {
                 return None;
             }
 
@@ -54,7 +57,7 @@ pub fn list_folder(
         .iter()
         .enumerate()
         .map(|(i, e)| {
-            let lower = e.name.to_lowercase();
+            let lower = to_lower_folded(&e.name);
             let exp_count = if e.is_folder {
                 history.folder_expansion_count(&e.path)
             } else {
@@ -93,17 +96,16 @@ pub fn list_folder(
         .collect()
 }
 
-fn matches_filter(name: &str, filter: &str, mode: SearchMode, matcher: &mut Matcher) -> bool {
-    let name_lower = name.to_lowercase();
-    let filter_lower = filter.to_lowercase();
+fn matches_filter(name: &str, filter_lower: &str, mode: SearchMode, matcher: &mut Matcher) -> bool {
+    let name_lower = to_lower_folded(name);
     match mode {
-        SearchMode::Prefix => name_lower.starts_with(&filter_lower),
-        SearchMode::Substring => name_lower.contains(&filter_lower),
+        SearchMode::Prefix => name_lower.starts_with(filter_lower),
+        SearchMode::Substring => name_lower.contains(filter_lower),
         SearchMode::Fuzzy => {
             let mut haystack_buf = Vec::new();
             let mut needle_buf = Vec::new();
             let haystack = Utf32Str::new(&name_lower, &mut haystack_buf);
-            let needle = Utf32Str::new(&filter_lower, &mut needle_buf);
+            let needle = Utf32Str::new(filter_lower, &mut needle_buf);
             matcher.fuzzy_match(haystack, needle).is_some()
         }
     }

@@ -1,12 +1,12 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 
-use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32Str};
+use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32String};
 
 use crate::config::{SearchConfig, SearchHistoryNormalizationConfig};
 use crate::history::HistoryStore;
 use crate::indexer::{AppEntry, normalize_entry_key};
-use crate::query::normalize_query;
+use crate::query::{normalize_query, to_lower_folded};
 use crate::ui_types::SearchResult;
 
 const GLOBAL_WEIGHT: i64 = 5;
@@ -58,25 +58,70 @@ pub struct SearchEngine {
     entries: Vec<AppEntry>,
     lower_names: Vec<String>,
     lower_file_names: Vec<Option<String>>,
+    /// Pre-computed UTF-32 representations of lower_names for nucleo fuzzy matching.
+    lower_names_u32: Vec<Utf32String>,
+    /// Pre-computed UTF-32 representations of lower_file_names for nucleo fuzzy matching.
+    lower_file_names_u32: Vec<Option<Utf32String>>,
+    /// Pre-computed normalized keys for history lookups (one per entry).
+    normalized_keys: Vec<String>,
+    /// Character-presence bitmask per entry (a-z bits 0-25, 0-9 bits 26-35).
+    /// Used to skip entries that cannot possibly match the query.
+    char_masks: Vec<u64>,
+    /// Character-presence bitmask per file_name entry.
+    file_name_char_masks: Vec<u64>,
     matcher: Matcher,
 }
 
 impl SearchEngine {
     pub fn new(entries: Vec<AppEntry>) -> Self {
-        let lower_names = entries.iter().map(|e| e.name.to_lowercase()).collect();
-        let lower_file_names = entries
+        let lower_names: Vec<String> = entries.iter().map(|e| to_lower_folded(&e.name)).collect();
+        let lower_file_names: Vec<Option<String>> = entries
             .iter()
             .map(|e| {
                 std::path::Path::new(&e.target_path)
                     .file_name()
                     .and_then(|f| f.to_str())
-                    .map(|f| f.to_lowercase())
+                    .map(to_lower_folded)
+            })
+            .collect();
+        let lower_names_u32 = lower_names
+            .iter()
+            .map(|n| Utf32String::from(n.as_str()))
+            .collect();
+        let lower_file_names_u32 = lower_file_names
+            .iter()
+            .map(|n| n.as_deref().map(Utf32String::from))
+            .collect();
+        let normalized_keys = entries
+            .iter()
+            .map(|e| normalize_entry_key(&e.target_path))
+            .collect();
+        // to_lower_folded already folds most Latin accents to ASCII (é→e),
+        // so non-ASCII names here are typically CJK, Arabic, etc.
+        // u64::MAX ensures (query_mask & u64::MAX) == query_mask for any query_mask,
+        // so these entries always pass the bitmask pre-filter regardless of the query.
+        let char_masks = lower_names
+            .iter()
+            .map(|n| if n.is_ascii() { char_bitmask(n) } else { u64::MAX })
+            .collect();
+        // None → 0: entries without a file_name cannot match via the file_name path,
+        // so failing the bitmask check (and being skipped when the name also fails) is correct.
+        let file_name_char_masks = lower_file_names
+            .iter()
+            .map(|n| {
+                n.as_deref()
+                    .map_or(0, |s| if s.is_ascii() { char_bitmask(s) } else { u64::MAX })
             })
             .collect();
         Self {
             entries,
             lower_names,
             lower_file_names,
+            lower_names_u32,
+            lower_file_names_u32,
+            normalized_keys,
+            char_masks,
+            file_name_char_masks,
             matcher: Matcher::new(MatcherConfig::DEFAULT),
         }
     }
@@ -115,48 +160,71 @@ impl SearchEngine {
         }
 
         let has_dot = norm_query.contains('.');
+        // Bitmask pre-filter is only used in Fuzzy mode; skip the computation for others.
+        let query_mask = if mode == SearchMode::Fuzzy { char_bitmask(&norm_query) } else { 0 };
 
         // Keep only top `max_results` candidates.
         // `rank_cmp_ranked` defines Better as `Ordering::Less`, so in `BinaryHeap<RankedEntry>`
         // `peek()` points to the current Worst item.
         let mut top_k: BinaryHeap<RankedEntry> = BinaryHeap::with_capacity(max_results);
 
-        for ((entry, lower_name), lower_file_name) in self
-            .entries
-            .iter()
-            .zip(self.lower_names.iter())
-            .zip(self.lower_file_names.iter())
-        {
+        // Pre-compute needle as UTF-32 once before the entry loop.
+        // Reusing the same Utf32String avoids repeated O(|query|) char conversion per entry.
+        let needle_u32 = Utf32String::from(norm_query.as_ref());
+
+        for i in 0..self.entries.len() {
+            // Bitmask pre-filter: skip entries that lack query characters (Fuzzy only).
+            // Prefix/Substring use cheap str ops, so the bitmask overhead isn't worth it.
+            if mode == SearchMode::Fuzzy {
+                let name_mask = self.char_masks[i];
+                let fn_mask = self.file_name_char_masks[i];
+                if (query_mask & name_mask) != query_mask
+                    && (!has_dot || (query_mask & fn_mask) != query_mask)
+                {
+                    continue;
+                }
+            }
+
+            let entry = &self.entries[i];
+            let lower_name = &self.lower_names[i];
+            let lower_file_name = &self.lower_file_names[i];
+            let name_u32 = &self.lower_names_u32[i];
+            let fn_u32 = &self.lower_file_names_u32[i];
+            let norm_key = &self.normalized_keys[i];
+
             let name_score =
-                match_score_single_cached(mode, &mut self.matcher,lower_name, &norm_query);
+                match_score_single_cached(mode, &mut self.matcher, lower_name, &norm_query, name_u32, &needle_u32);
 
             let score = if has_dot {
-                if let Some(s) = name_score {
-                    if s > 9000 {
-                        // High confidence match, skip heavy fuzzy match on file name
-                        Some(s)
-                    } else {
-                        let fn_score = lower_file_name.as_deref().and_then(|f| {
-                            match_score_single_cached(mode, &mut self.matcher,f, &norm_query)
-                        });
-                        fn_score.map_or(Some(s), |b| Some(s.max(b)))
-                    }
-                } else {
-                    lower_file_name.as_deref().and_then(|f| {
-                        match_score_single_cached(mode, &mut self.matcher,f, &norm_query)
+                // Skip file_name scoring only on a high-confidence name match (avoids heavy fuzzy work).
+                let needs_fn_score = name_score.map_or(true, |s| s <= 9000);
+                let fn_score = if needs_fn_score {
+                    fn_u32.as_ref().and_then(|u32s| {
+                        // fn_u32 and lower_file_name are built from the same source,
+                        // so Some(fn_u32) guarantees Some(lower_file_name).
+                        let fn_name = lower_file_name.as_deref()
+                            .expect("lower_file_names_u32 and lower_file_names built from same source");
+                        match_score_single_cached(mode, &mut self.matcher, fn_name, &norm_query, u32s, &needle_u32)
                     })
+                } else {
+                    None
+                };
+                match (name_score, fn_score) {
+                    (None, fn_s) => fn_s,
+                    (Some(s), Some(b)) => Some(s.max(b)),
+                    (Some(s), None) => Some(s),
                 }
             } else {
                 name_score
             };
 
             if let Some(base_score) = score {
-                let (global_launches, last_launched) = history.get_global_stats(&entry.target_path);
+                let (global_launches, last_launched) = history.get_global_stats_normalized(norm_key);
                 let qcount =
-                    history.query_count_normalized(&norm_query, &entry.target_path) as i64;
-                
+                    history.query_count_pre_normalized(&norm_query, norm_key) as i64;
+
                 let folder_boost = if entry.is_folder {
-                    history.folder_expansion_count(&entry.target_path) as i64
+                    history.folder_expansion_count_normalized(norm_key) as i64
                         * FOLDER_EXPANSION_WEIGHT
                 } else {
                     0
@@ -205,15 +273,13 @@ impl SearchEngine {
     }
 
     pub fn recent_history(&self, history: &HistoryStore, max_results: usize) -> Vec<SearchResult> {
-        // recent_launches() は正規化済みキーを返すため、照合側も normalize_entry_key で揃える
-        // 正規化 String を Vec で先に確保し、HashMap は &str 参照を持つことでアロケーションを節約する
-        let normalized: Vec<(String, &AppEntry)> = self
-            .entries
+        // recent_launches() は正規化済みキーを返すため、照合側も正規化済み normalized_keys を使う
+        let path_to_entry: HashMap<&str, &AppEntry> = self
+            .normalized_keys
             .iter()
-            .map(|e| (normalize_entry_key(&e.target_path), e))
+            .zip(self.entries.iter())
+            .map(|(k, e)| (k.as_str(), e))
             .collect();
-        let path_to_entry: HashMap<&str, &AppEntry> =
-            normalized.iter().map(|(k, e)| (k.as_str(), *e)).collect();
 
         history
             .recent_launches()
@@ -292,12 +358,29 @@ fn rank_cmp_ranked(a: &RankedEntry, b: &RankedEntry) -> Ordering {
         .then_with(|| a.entry.target_path.cmp(&b.entry.target_path))
 }
 
-/// Score using a pre-computed lowercase name (avoids repeated allocation).
+/// Compute a character-presence bitmask for a lowercase string.
+/// Bits 0-25 = 'a'-'z', bits 26-35 = '0'-'9'. All other chars are ignored.
+fn char_bitmask(lower: &str) -> u64 {
+    let mut mask: u64 = 0;
+    for b in lower.bytes() {
+        match b {
+            b'a'..=b'z' => mask |= 1u64 << (b - b'a'),
+            b'0'..=b'9' => mask |= 1u64 << (26 + (b - b'0')),
+            _ => {}
+        }
+    }
+    mask
+}
+
+/// Score using pre-computed lowercase name and pre-cached UTF-32 representations.
+/// `needle_u32` must be the UTF-32 encoding of `query` (pre-computed once per search call).
 fn match_score_single_cached(
     mode: SearchMode,
     matcher: &mut Matcher,
     lower_name: &str,
     query: &str,
+    haystack_u32: &Utf32String,
+    needle_u32: &Utf32String,
 ) -> Option<i64> {
     match mode {
         SearchMode::Prefix => {
@@ -309,10 +392,8 @@ fn match_score_single_cached(
         }
         SearchMode::Substring => lower_name.find(query).map(|idx| 5_000 - idx as i64),
         SearchMode::Fuzzy => {
-            let mut haystack_buf = Vec::new();
-            let mut needle_buf = Vec::new();
-            let haystack = Utf32Str::new(lower_name, &mut haystack_buf);
-            let needle = Utf32Str::new(query, &mut needle_buf);
+            let haystack = haystack_u32.slice(..);
+            let needle = needle_u32.slice(..);
             matcher.fuzzy_match(haystack, needle).map(|s| s as i64)
         }
     }
@@ -789,5 +870,117 @@ mod tests {
         assert!(!results.is_empty());
         // 履歴ブーストにより "App" が "AppX" より上位に来る
         assert_eq!(results[0].name, "App");
+    }
+
+    // --- char_bitmask テスト ---
+
+    #[test]
+    fn bitmask_lowercase_letters() {
+        let mask = char_bitmask("abc");
+        assert_ne!(mask & (1 << 0), 0); // a
+        assert_ne!(mask & (1 << 1), 0); // b
+        assert_ne!(mask & (1 << 2), 0); // c
+        assert_eq!(mask & (1 << 3), 0); // d not present
+    }
+
+    #[test]
+    fn bitmask_digits() {
+        let mask = char_bitmask("a1b2");
+        assert_ne!(mask & (1 << 0), 0);      // a
+        assert_ne!(mask & (1 << 1), 0);      // b
+        assert_ne!(mask & (1 << 27), 0);     // '1' = bit 26+1
+        assert_ne!(mask & (1 << 28), 0);     // '2' = bit 26+2
+    }
+
+    #[test]
+    fn bitmask_non_alnum_ignored() {
+        let mask = char_bitmask("a-b.c");
+        assert_ne!(mask & (1 << 0), 0); // a
+        assert_ne!(mask & (1 << 1), 0); // b
+        assert_ne!(mask & (1 << 2), 0); // c
+        // '-' and '.' don't set any bits
+        assert_eq!(mask.count_ones(), 3);
+    }
+
+    #[test]
+    fn bitmask_filter_skips_non_matching_entries() {
+        // "xyz" のクエリでビットマスクが "Firefox" にマッチしないことを確認
+        let entries = make_entries(&["Firefox", "Chrome", "Xyzer"]);
+        let mut engine = SearchEngine::new(entries);
+        let results = engine.search("xyz", 8, &empty_history(), SearchMode::Fuzzy);
+        // "Firefox" と "Chrome" は x,y,z の全文字を含まないのでスキップされる
+        // "Xyzer" は x,y,z を含むのでマッチ候補になる
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Xyzer");
+    }
+
+    #[test]
+    fn bitmask_filter_does_not_skip_accented_entries() {
+        // nucleo はアクセント正規化（é→e）でマッチするため、
+        // ビットマスクフィルタがアクセント付きエントリを除外してはならない
+        let entries = vec![AppEntry {
+            name: "Café".to_string(),
+            target_path: "C:\\fake\\Café.lnk".to_string(),
+            is_folder: false,
+        }];
+        let mut engine = SearchEngine::new(entries);
+        let results = engine.search("cafe", 8, &empty_history(), SearchMode::Fuzzy);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Café");
+    }
+
+    // --- アクセント正規化統一テスト ---
+
+    #[test]
+    fn prefix_matches_accented_entry() {
+        let entries = vec![AppEntry {
+            name: "Café".to_string(),
+            target_path: "C:\\fake\\Café.lnk".to_string(),
+            is_folder: false,
+        }];
+        let mut engine = SearchEngine::new(entries);
+        let results = engine.search("cafe", 8, &empty_history(), SearchMode::Prefix);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Café");
+    }
+
+    #[test]
+    fn substring_matches_accented_entry() {
+        let entries = vec![AppEntry {
+            name: "Résumé Builder".to_string(),
+            target_path: "C:\\fake\\Résumé Builder.lnk".to_string(),
+            is_folder: false,
+        }];
+        let mut engine = SearchEngine::new(entries);
+        let results = engine.search("resume", 8, &empty_history(), SearchMode::Substring);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Résumé Builder");
+    }
+
+    #[test]
+    fn history_boost_unified_across_accent_variants() {
+        // "résumé" で起動記録 → "resume" で検索時に履歴ブーストが効く
+        let entries = vec![
+            AppEntry {
+                name: "Résumé Builder".to_string(),
+                target_path: "C:\\fake\\Résumé Builder.lnk".to_string(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "Resume Helper".to_string(),
+                target_path: "C:\\fake\\Resume Helper.lnk".to_string(),
+                is_folder: false,
+            },
+        ];
+        let mut engine = SearchEngine::new(entries);
+        let mut history = empty_history();
+        // "résumé" で Résumé Builder を多数起動
+        for _ in 0..20 {
+            history.record_launch("C:\\fake\\Résumé Builder.lnk", "résumé");
+        }
+        // "resume"（アクセントなし）で検索 → 履歴ブーストが効いて Résumé Builder が上位
+        let results = engine.search("resume", 8, &history, SearchMode::Fuzzy);
+        assert!(!results.is_empty());
+        assert_eq!(results[0].name, "Résumé Builder");
     }
 }

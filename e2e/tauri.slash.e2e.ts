@@ -518,9 +518,17 @@ test("設定オープナー: ルール追加・ツール追加・保存・永続
     3_000,
   );
 
-  // 保存ボタンをクリック → settings window が閉じる
+  // 保存ボタンをクリック（保存後は自動クローズしない仕様）
   const saveBtn = await driver.findElement(By.css("button.btn-primary.has-changes"));
   await saveBtn.click();
+  // has-changes クラスが消えるまで待つ（保存完了 → hasChanges() === false）
+  await driver.wait(
+    async () => (await driver.findElements(By.css("button.btn-primary.has-changes"))).length === 0,
+    5_000,
+    "save did not complete",
+  );
+  // 変更なしの状態で Escape → バナーなしで即クローズ
+  await driver.actions().sendKeys(Key.ESCAPE).perform();
   await waitForHiddenLabel(driver, "settings", 8_000);
 
   // 設定を再度開く

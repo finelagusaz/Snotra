@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 
 use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32String};
+use rayon::prelude::*;
 
 use crate::config::{SearchConfig, SearchHistoryNormalizationConfig};
 use crate::history::HistoryStore;
@@ -69,7 +70,6 @@ pub struct SearchEngine {
     char_masks: Vec<u64>,
     /// Character-presence bitmask per file_name entry.
     file_name_char_masks: Vec<u64>,
-    matcher: Matcher,
 }
 
 impl SearchEngine {
@@ -122,12 +122,11 @@ impl SearchEngine {
             normalized_keys,
             char_masks,
             file_name_char_masks,
-            matcher: Matcher::new(MatcherConfig::DEFAULT),
         }
     }
 
     pub fn search(
-        &mut self,
+        &self,
         query: &str,
         max_results: usize,
         history: &HistoryStore,
@@ -143,7 +142,7 @@ impl SearchEngine {
     }
 
     pub fn search_with_history_boost(
-        &mut self,
+        &self,
         query: &str,
         max_results: usize,
         history: &HistoryStore,
@@ -163,110 +162,161 @@ impl SearchEngine {
         // Bitmask pre-filter is only used in Fuzzy mode; skip the computation for others.
         let query_mask = if mode == SearchMode::Fuzzy { char_bitmask(&norm_query) } else { 0 };
 
-        // Keep only top `max_results` candidates.
-        // `rank_cmp_ranked` defines Better as `Ordering::Less`, so in `BinaryHeap<RankedEntry>`
-        // `peek()` points to the current Worst item.
-        let mut top_k: BinaryHeap<RankedEntry> = BinaryHeap::with_capacity(max_results);
-
-        // Pre-compute needle as UTF-32 once before the entry loop.
+        // Pre-compute needle as UTF-32 once per search call and share it across threads.
         // Reusing the same Utf32String avoids repeated O(|query|) char conversion per entry.
         let needle_u32 = Utf32String::from(norm_query.as_ref());
+        let norm_query_str: &str = &norm_query;
 
-        for i in 0..self.entries.len() {
-            // Bitmask pre-filter: skip entries that lack query characters (Fuzzy only).
-            // Prefix/Substring use cheap str ops, so the bitmask overhead isn't worth it.
-            if mode == SearchMode::Fuzzy {
-                let name_mask = self.char_masks[i];
-                let fn_mask = self.file_name_char_masks[i];
-                if (query_mask & name_mask) != query_mask
-                    && (!has_dot || (query_mask & fn_mask) != query_mask)
-                {
-                    continue;
-                }
-            }
-
-            let entry = &self.entries[i];
-            let lower_name = &self.lower_names[i];
-            let lower_file_name = &self.lower_file_names[i];
-            let name_u32 = &self.lower_names_u32[i];
-            let fn_u32 = &self.lower_file_names_u32[i];
-            let norm_key = &self.normalized_keys[i];
-
-            let name_score =
-                match_score_single_cached(mode, &mut self.matcher, lower_name, &norm_query, name_u32, &needle_u32);
-
-            let score = if has_dot {
-                // Skip file_name scoring only on a high-confidence name match (avoids heavy fuzzy work).
-                let needs_fn_score = name_score.map_or(true, |s| s <= 9000);
-                let fn_score = if needs_fn_score {
-                    fn_u32.as_ref().and_then(|u32s| {
-                        // fn_u32 and lower_file_name are built from the same source,
-                        // so Some(fn_u32) guarantees Some(lower_file_name).
-                        let fn_name = lower_file_name.as_deref()
-                            .expect("lower_file_names_u32 and lower_file_names built from same source");
-                        match_score_single_cached(mode, &mut self.matcher, fn_name, &norm_query, u32s, &needle_u32)
-                    })
-                } else {
-                    None
-                };
-                match (name_score, fn_score) {
-                    (None, fn_s) => fn_s,
-                    (Some(s), Some(b)) => Some(s.max(b)),
-                    (Some(s), None) => Some(s),
-                }
-            } else {
-                name_score
-            };
-
-            if let Some(base_score) = score {
-                let (global_launches, last_launched) = history.get_global_stats_normalized(norm_key);
-                let qcount =
-                    history.query_count_pre_normalized(&norm_query, norm_key) as i64;
-
-                let folder_boost = if entry.is_folder {
-                    history.folder_expansion_count_normalized(norm_key) as i64
-                        * FOLDER_EXPANSION_WEIGHT
-                } else {
-                    0
-                };
-                
-                let raw_history_boost =
-                    (global_launches as i64) * GLOBAL_WEIGHT + qcount * QUERY_WEIGHT + folder_boost;
-                let history_boost = adjusted_history_boost(
-                    mode,
-                    base_score,
-                    raw_history_boost,
-                    history_boost_config,
-                );
-                let combined = base_score + history_boost;
-
-                let ranked = RankedEntry {
-                    score: combined,
-                    last_launched,
-                    entry,
-                    lower_name: lower_name.as_str(),
-                };
-
-                if top_k.len() < max_results {
-                    top_k.push(ranked);
-                } else if let Some(mut worst) = top_k.peek_mut() {
-                    // Replace only when the new item is better than the current worst.
-                    if rank_cmp_ranked(&ranked, &worst) == Ordering::Less {
-                        *worst = ranked;
+        // Parallel scoring: each rayon task gets its own Matcher (created in fold init).
+        // Matcher::new() is O(alloc_zeroed) — lightweight enough to create per task.
+        // Each task builds a local top-k BinaryHeap; tasks are merged in reduce().
+        //
+        // BinaryHeap<ScoredEntry> is a max-heap where peek() == worst item.
+        // ScoredEntry::Ord mirrors rank_cmp_ranked: better entry has Ordering::Less,
+        // so the worst (Ordering::Greater) stays at the top of the heap.
+        let top_k: BinaryHeap<ScoredEntry> = (0..self.entries.len())
+            .into_par_iter()
+            .fold(
+                || {
+                    (
+                        BinaryHeap::<ScoredEntry>::with_capacity(max_results + 1),
+                        Matcher::new(MatcherConfig::DEFAULT),
+                    )
+                },
+                |(mut local_heap, mut matcher), i| {
+                    // Bitmask pre-filter: skip entries that lack query characters (Fuzzy only).
+                    // Prefix/Substring use cheap str ops, so the bitmask overhead isn't worth it.
+                    if mode == SearchMode::Fuzzy {
+                        let name_mask = self.char_masks[i];
+                        let fn_mask = self.file_name_char_masks[i];
+                        if (query_mask & name_mask) != query_mask
+                            && (!has_dot || (query_mask & fn_mask) != query_mask)
+                        {
+                            return (local_heap, matcher);
+                        }
                     }
-                }
-            }
-        }
 
-        let mut scored: Vec<RankedEntry> = top_k.into_iter().collect();
-        scored.sort_by(rank_cmp_ranked);
+                    let entry = &self.entries[i];
+                    let lower_name = &self.lower_names[i];
+                    let lower_file_name = &self.lower_file_names[i];
+                    let name_u32 = &self.lower_names_u32[i];
+                    let fn_u32 = &self.lower_file_names_u32[i];
+                    let norm_key = &self.normalized_keys[i];
+
+                    let name_score = match_score_single_cached(
+                        mode,
+                        &mut matcher,
+                        lower_name,
+                        norm_query_str,
+                        name_u32,
+                        &needle_u32,
+                    );
+
+                    let score = if has_dot {
+                        // Skip file_name scoring only on a high-confidence name match
+                        // (avoids heavy fuzzy work).
+                        let needs_fn_score = name_score.is_none_or(|s| s <= 9000);
+                        let fn_score = if needs_fn_score {
+                            fn_u32.as_ref().and_then(|u32s| {
+                                // fn_u32 and lower_file_name are built from the same source,
+                                // so Some(fn_u32) guarantees Some(lower_file_name).
+                                let fn_name = lower_file_name.as_deref().expect(
+                                    "lower_file_names_u32 and lower_file_names built from same source",
+                                );
+                                match_score_single_cached(
+                                    mode,
+                                    &mut matcher,
+                                    fn_name,
+                                    norm_query_str,
+                                    u32s,
+                                    &needle_u32,
+                                )
+                            })
+                        } else {
+                            None
+                        };
+                        match (name_score, fn_score) {
+                            (None, fn_s) => fn_s,
+                            (Some(s), Some(b)) => Some(s.max(b)),
+                            (Some(s), None) => Some(s),
+                        }
+                    } else {
+                        name_score
+                    };
+
+                    if let Some(base_score) = score {
+                        let (global_launches, last_launched) =
+                            history.get_global_stats_normalized(norm_key);
+                        let qcount =
+                            history.query_count_pre_normalized(norm_query_str, norm_key) as i64;
+
+                        let folder_boost = if entry.is_folder {
+                            history.folder_expansion_count_normalized(norm_key) as i64
+                                * FOLDER_EXPANSION_WEIGHT
+                        } else {
+                            0
+                        };
+
+                        let raw_history_boost = (global_launches as i64) * GLOBAL_WEIGHT
+                            + qcount * QUERY_WEIGHT
+                            + folder_boost;
+                        let history_boost = adjusted_history_boost(
+                            mode,
+                            base_score,
+                            raw_history_boost,
+                            history_boost_config,
+                        );
+                        let combined = base_score + history_boost;
+
+                        let scored = ScoredEntry {
+                            score: combined,
+                            last_launched,
+                            lower_name: lower_name.clone(),
+                            name: entry.name.clone(),
+                            path: entry.target_path.clone(),
+                            is_folder: entry.is_folder,
+                        };
+
+                        if local_heap.len() < max_results {
+                            local_heap.push(scored);
+                        } else if let Some(mut worst) = local_heap.peek_mut() {
+                            // Replace only when the new item is better than the current worst.
+                            if scored.cmp(&worst) == Ordering::Less {
+                                *worst = scored;
+                            }
+                        }
+                    }
+
+                    (local_heap, matcher)
+                },
+            )
+            .map(|(heap, _)| heap)
+            .reduce(
+                BinaryHeap::new,
+                |mut a, b| {
+                    for entry in b {
+                        if a.len() < max_results {
+                            a.push(entry);
+                        } else if let Some(mut worst) = a.peek_mut()
+                            && entry.cmp(&worst) == Ordering::Less
+                        {
+                            *worst = entry;
+                        }
+                    }
+                    a
+                },
+            );
+
+        // into_sorted_vec() reuses the heap's internal Vec and sorts in-place (ascending).
+        // ScoredEntry::Ord: Less = better, so ascending order puts best first.
+        let scored = top_k.into_sorted_vec();
 
         scored
             .into_iter()
             .map(|r| SearchResult {
-                name: r.entry.name.clone(),
-                path: r.entry.target_path.clone(),
-                is_folder: r.entry.is_folder,
+                name: r.name,
+                path: r.path,
+                is_folder: r.is_folder,
                 is_error: false,
             })
             .collect()
@@ -317,45 +367,46 @@ fn adjusted_history_boost(
     raw_history_boost.min(cap)
 }
 
-struct RankedEntry<'a> {
+/// Owned scored entry used in the parallel top-k heap.
+/// Clones only strings that make it into the heap (at most `max_results` per rayon task).
+struct ScoredEntry {
     score: i64,
     last_launched: u64,
-    entry: &'a AppEntry,
-    lower_name: &'a str,
+    lower_name: String, // tie-breaking key (alphabetical)
+    name: String,       // for SearchResult
+    path: String,       // for SearchResult and tie-breaking (= target_path)
+    is_folder: bool,    // for SearchResult
 }
 
-// Implement traits to use RankedEntry in a BinaryHeap
-impl<'a> PartialEq for RankedEntry<'a> {
+// Higher score is better; better entries are ordered as `Ordering::Less`.
+// This makes BinaryHeap::peek() point to the current worst (max by Ord = least good).
+// scored.sort() (ascending) then puts the best entry first.
+impl PartialEq for ScoredEntry {
     fn eq(&self, other: &Self) -> bool {
         self.score == other.score
             && self.last_launched == other.last_launched
             && self.lower_name == other.lower_name
-            && self.entry.target_path == other.entry.target_path
+            && self.path == other.path
     }
 }
 
-impl<'a> Eq for RankedEntry<'a> {}
+impl Eq for ScoredEntry {}
 
-impl<'a> PartialOrd for RankedEntry<'a> {
+impl PartialOrd for ScoredEntry {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<'a> Ord for RankedEntry<'a> {
+impl Ord for ScoredEntry {
     fn cmp(&self, other: &Self) -> Ordering {
-        rank_cmp_ranked(self, other)
+        other
+            .score
+            .cmp(&self.score)
+            .then_with(|| other.last_launched.cmp(&self.last_launched))
+            .then_with(|| self.lower_name.cmp(&other.lower_name))
+            .then_with(|| self.path.cmp(&other.path))
     }
-}
-
-fn rank_cmp_ranked(a: &RankedEntry, b: &RankedEntry) -> Ordering {
-    // Higher score is better, and better candidates are ordered as `Less`.
-    // This keeps final sorting intuitive (`sort_by(rank_cmp_ranked)` puts best first)
-    // while making `BinaryHeap<RankedEntry>::peek()` point to the current worst.
-    b.score.cmp(&a.score)
-        .then_with(|| b.last_launched.cmp(&a.last_launched))
-        .then_with(|| a.lower_name.cmp(b.lower_name))
-        .then_with(|| a.entry.target_path.cmp(&b.entry.target_path))
 }
 
 /// Compute a character-presence bitmask for a lowercase string.
@@ -422,14 +473,14 @@ mod tests {
 
     #[test]
     fn search_empty_query_returns_empty() {
-        let mut engine = SearchEngine::new(make_entries(&["Firefox", "Chrome"]));
+        let engine = SearchEngine::new(make_entries(&["Firefox", "Chrome"]));
         let results = engine.search("", 8, &empty_history(), SearchMode::Fuzzy);
         assert!(results.is_empty());
     }
 
     #[test]
     fn search_no_entries_returns_empty() {
-        let mut engine = SearchEngine::new(Vec::new());
+        let engine = SearchEngine::new(Vec::new());
         let results = engine.search("fire", 8, &empty_history(), SearchMode::Fuzzy);
         assert!(results.is_empty());
     }
@@ -437,7 +488,7 @@ mod tests {
     #[test]
     fn search_returns_fuzzy_matches() {
         let entries = make_entries(&["Firefox", "Chrome", "Notepad", "Visual Studio Code"]);
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("fire", 8, &empty_history(), SearchMode::Fuzzy);
         assert!(!results.is_empty());
         assert_eq!(results[0].name, "Firefox");
@@ -446,7 +497,7 @@ mod tests {
     #[test]
     fn search_respects_max_results() {
         let entries = make_entries(&["app1", "app2", "app3", "app4", "app5"]);
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("app", 3, &empty_history(), SearchMode::Fuzzy);
         assert!(results.len() <= 3);
     }
@@ -459,7 +510,7 @@ mod tests {
             "appx",
             "app",
         ]);
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
 
         let results = engine.search("app", 2, &empty_history(), SearchMode::Prefix);
         let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
@@ -481,8 +532,8 @@ mod tests {
             "appabcdefghi",
             "appabcdefghij",
         ]);
-        let mut ordered_engine = SearchEngine::new(ordered);
-        let mut reversed_engine = SearchEngine::new(reversed);
+        let ordered_engine = SearchEngine::new(ordered);
+        let reversed_engine = SearchEngine::new(reversed);
 
         let ordered_results = ordered_engine.search("app", 2, &empty_history(), SearchMode::Prefix);
         let reversed_results = reversed_engine.search("app", 2, &empty_history(), SearchMode::Prefix);
@@ -497,7 +548,7 @@ mod tests {
     #[test]
     fn search_results_are_not_folders() {
         let entries = make_entries(&["Firefox"]);
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("fire", 8, &empty_history(), SearchMode::Fuzzy);
         assert!(!results.is_empty());
         assert!(!results[0].is_folder);
@@ -506,7 +557,7 @@ mod tests {
     #[test]
     fn search_prefix_mode_matches_only_prefix() {
         let entries = make_entries(&["Notepad", "Pad Tool"]);
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("pad", 8, &empty_history(), SearchMode::Prefix);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Pad Tool");
@@ -515,7 +566,7 @@ mod tests {
     #[test]
     fn search_substring_mode_matches_middle() {
         let entries = make_entries(&["Visual Studio Code"]);
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("studio", 8, &empty_history(), SearchMode::Substring);
         assert_eq!(results.len(), 1);
     }
@@ -528,7 +579,7 @@ mod tests {
             target_path: "C:\\fake\\SSP.exe".to_string(),
             is_folder: false,
         }];
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("SSP.exe", 8, &empty_history(), SearchMode::Prefix);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "SSP");
@@ -541,7 +592,7 @@ mod tests {
             target_path: "C:\\fake\\SSP.exe".to_string(),
             is_folder: false,
         }];
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("ssp.exe", 8, &empty_history(), SearchMode::Substring);
         assert_eq!(results.len(), 1);
     }
@@ -553,7 +604,7 @@ mod tests {
             target_path: "C:\\fake\\SSP.exe".to_string(),
             is_folder: false,
         }];
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("ssp.exe", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
     }
@@ -561,7 +612,7 @@ mod tests {
     #[test]
     fn search_without_extension_still_works() {
         let entries = make_entries(&["SSP"]);
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("SSP", 8, &empty_history(), SearchMode::Prefix);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "SSP");
@@ -582,7 +633,7 @@ mod tests {
                 is_folder: false,
             },
         ];
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("ssp.exe", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "SSP");
@@ -596,7 +647,7 @@ mod tests {
             target_path: "C:\\fake\\SSP.lnk".to_string(),
             is_folder: false,
         }];
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("ssp.exe", 8, &empty_history(), SearchMode::Prefix);
         assert!(results.is_empty());
     }
@@ -609,7 +660,7 @@ mod tests {
             target_path: "C:\\fake\\SSP.exe".to_string(),
             is_folder: false,
         }];
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("SSP.", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "SSP");
@@ -623,7 +674,7 @@ mod tests {
             target_path: "C:\\fake\\SSP.exe".to_string(),
             is_folder: false,
         }];
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("SSP.e", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "SSP");
@@ -637,7 +688,7 @@ mod tests {
             target_path: "C:\\fake\\SSP.exe".to_string(),
             is_folder: false,
         }];
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("SSP.ex", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "SSP");
@@ -651,7 +702,7 @@ mod tests {
             target_path: "C:\\fake\\drweb32w.exe".to_string(),
             is_folder: false,
         }];
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("Dr.Web", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Dr.Web");
@@ -665,7 +716,7 @@ mod tests {
             target_path: "C:\\fake\\drweb32w.exe".to_string(),
             is_folder: false,
         }];
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("dr.w", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Dr.Web");
@@ -679,7 +730,7 @@ mod tests {
             target_path: "C:\\fake\\hoge.exe.bak".to_string(),
             is_folder: false,
         }];
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("hoge.exe", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "hoge");
@@ -693,7 +744,7 @@ mod tests {
             target_path: "C:\\fake\\hoge.exe.bak".to_string(),
             is_folder: false,
         }];
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("hoge.exe.bak", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "hoge");
@@ -709,32 +760,26 @@ mod tests {
 
     #[test]
     fn rank_cmp_breaks_full_tie_with_target_path() {
-        let a = AppEntry {
-            name: "Tool".to_string(),
-            target_path: "C:\\B\\tool.exe".to_string(),
-            is_folder: false,
-        };
-        let b = AppEntry {
-            name: "Tool".to_string(),
-            target_path: "C:\\A\\tool.exe".to_string(),
-            is_folder: false,
-        };
-        let ra = RankedEntry {
+        let ra = ScoredEntry {
             score: 100,
             last_launched: 200,
-            entry: &a,
-            lower_name: "tool",
+            lower_name: "tool".to_string(),
+            name: "Tool".to_string(),
+            path: "C:\\B\\tool.exe".to_string(),
+            is_folder: false,
         };
-        let rb = RankedEntry {
+        let rb = ScoredEntry {
             score: 100,
             last_launched: 200,
-            entry: &b,
-            lower_name: "tool",
+            lower_name: "tool".to_string(),
+            name: "Tool".to_string(),
+            path: "C:\\A\\tool.exe".to_string(),
+            is_folder: false,
         };
         let mut scored = vec![ra, rb];
-        scored.sort_by(rank_cmp_ranked);
-        assert_eq!(scored[0].entry.target_path, "C:\\A\\tool.exe");
-        assert_eq!(scored[1].entry.target_path, "C:\\B\\tool.exe");
+        scored.sort();
+        assert_eq!(scored[0].path, "C:\\A\\tool.exe");
+        assert_eq!(scored[1].path, "C:\\B\\tool.exe");
     }
 
     #[test]
@@ -744,7 +789,7 @@ mod tests {
             target_path: "C:\\fake\\Tool.EXE".to_string(),
             is_folder: false,
         }];
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("tool.exe", 8, &empty_history(), SearchMode::Substring);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Dummy");
@@ -757,7 +802,7 @@ mod tests {
             target_path: "C:\\".to_string(),
             is_folder: false,
         }];
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("dummy.exe", 8, &empty_history(), SearchMode::Fuzzy);
         assert!(results.is_empty());
     }
@@ -802,7 +847,7 @@ mod tests {
     #[test]
     fn search_with_history_boost_disabled_matches_legacy_search() {
         let entries = make_entries(&["alpha", "alpaca", "alpine"]);
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let mut history = empty_history();
         for _ in 0..50 {
             history.record_launch("C:\\fake\\alpaca.lnk", "alp");
@@ -854,7 +899,7 @@ mod tests {
                 is_folder: false,
             },
         ];
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let mut history = empty_history();
         for _ in 0..10 {
             history.record_launch("C:\\FAKE\\APP.LNK", "app");
@@ -906,7 +951,7 @@ mod tests {
     fn bitmask_filter_skips_non_matching_entries() {
         // "xyz" のクエリでビットマスクが "Firefox" にマッチしないことを確認
         let entries = make_entries(&["Firefox", "Chrome", "Xyzer"]);
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("xyz", 8, &empty_history(), SearchMode::Fuzzy);
         // "Firefox" と "Chrome" は x,y,z の全文字を含まないのでスキップされる
         // "Xyzer" は x,y,z を含むのでマッチ候補になる
@@ -923,7 +968,7 @@ mod tests {
             target_path: "C:\\fake\\Café.lnk".to_string(),
             is_folder: false,
         }];
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("cafe", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Café");
@@ -938,7 +983,7 @@ mod tests {
             target_path: "C:\\fake\\Café.lnk".to_string(),
             is_folder: false,
         }];
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("cafe", 8, &empty_history(), SearchMode::Prefix);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Café");
@@ -951,7 +996,7 @@ mod tests {
             target_path: "C:\\fake\\Résumé Builder.lnk".to_string(),
             is_folder: false,
         }];
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let results = engine.search("resume", 8, &empty_history(), SearchMode::Substring);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Résumé Builder");
@@ -972,7 +1017,7 @@ mod tests {
                 is_folder: false,
             },
         ];
-        let mut engine = SearchEngine::new(entries);
+        let engine = SearchEngine::new(entries);
         let mut history = empty_history();
         // "résumé" で Résumé Builder を多数起動
         for _ in 0..20 {

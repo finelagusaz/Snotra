@@ -21,7 +21,7 @@ import SettingsOpener from "./SettingsOpener";
 const TABS: { id: TabId; label: string }[] = [
   { id: "general", label: "全般" },
   { id: "search", label: "検索" },
-  { id: "index", label: "インデックス・表示" },
+  { id: "index", label: "インデックス" },
   { id: "visual", label: "ビジュアル" },
   { id: "opener", label: "オープナー" },
 ];

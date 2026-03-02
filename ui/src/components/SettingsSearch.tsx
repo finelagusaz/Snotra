@@ -68,6 +68,30 @@ const SettingsSearch: Component = () => {
       </div>
 
       <div class="settings-group">
+        <div class="settings-group-title">履歴</div>
+        <div class="settings-group-content">
+          <SettingRow
+            label="履歴保持数"
+            description="保持する起動履歴の件数"
+          >
+            <input
+              type="number"
+              min="10"
+              max="1000"
+              value={d().appearance.top_n_history}
+              onInput={(e) =>
+                updateDraft((c) => {
+                  c.appearance.top_n_history =
+                    Math.max(10, Math.min(1000, parseInt(e.currentTarget.value) || 200));
+                })
+              }
+              style={{ width: "80px" }}
+            />
+          </SettingRow>
+        </div>
+      </div>
+
+      <div class="settings-group">
         <div class="settings-group-title">履歴スコア</div>
         <div class="settings-group-content">
           <SettingRow

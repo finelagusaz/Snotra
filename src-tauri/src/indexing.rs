@@ -60,10 +60,11 @@ pub fn start_index_build(app: &AppHandle) -> bool {
                 }
             }
 
-            // Update search engine entries
+            // SearchEngine の構築（O(N)）は Mutex 外で実施してロック保持時間を最小化する
+            let new_index = snotra_core::engine::PrebuiltIndex::new(entries);
             {
                 let state = app_handle.state::<AppState>();
-                state.engine.lock().unwrap().replace_entries(entries);
+                state.engine.lock().unwrap().apply_prebuilt_index(new_index);
             }
 
             // Mark indexing complete

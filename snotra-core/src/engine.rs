@@ -23,6 +23,16 @@ impl FolderListContext {
     }
 }
 
+/// `SearchEngine` を Mutex 外で事前構築するためのラッパー型。
+/// `Engine::apply_prebuilt_index` でロック保持時間を最小化したスワップが可能。
+pub struct PrebuiltIndex(SearchEngine);
+
+impl PrebuiltIndex {
+    pub fn new(entries: Vec<AppEntry>) -> Self {
+        Self(SearchEngine::new(entries))
+    }
+}
+
 pub struct Engine {
     search_engine: SearchEngine,
     history: HistoryStore,
@@ -131,6 +141,12 @@ impl Engine {
 
     pub fn replace_entries(&mut self, entries: Vec<AppEntry>) {
         self.search_engine = SearchEngine::new(entries);
+    }
+
+    /// Mutex 外で事前構築した SearchEngine を高速スワップする。
+    /// インデックス再構築時のロック保持時間を最小化するために使う。
+    pub fn apply_prebuilt_index(&mut self, index: PrebuiltIndex) {
+        self.search_engine = index.0;
     }
 
     pub fn entries(&self) -> &[AppEntry] {

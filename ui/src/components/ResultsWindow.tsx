@@ -92,7 +92,7 @@ const ResultsWindow: Component = () => {
       latestGeneration = event.payload.generation;
       setResults(event.payload.results);
       setSelected(event.payload.selected);
-      fetchIcons(event.payload.results, event.payload.generation);
+      void fetchIcons(event.payload.results, event.payload.generation);
       if (
         event.payload.selected !== lastScrolledSelected ||
         event.payload.generation !== lastScrolledGeneration
@@ -106,6 +106,9 @@ const ResultsWindow: Component = () => {
           ensureRowVisible(listRef, row);
         });
       }
+      // rAF でフレームが確定した直後に emit する。
+      // results-render-done は perfMarkRenderDone（計測専用）に使われるため、
+      // 非表示ウィンドウで rAF がスロットリングされても UX には影響しない。
       requestAnimationFrame(() => {
         void emit("results-render-done", { requestId: event.payload.generation });
       });

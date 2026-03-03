@@ -143,7 +143,9 @@ impl Engine {
         self.config = config;
     }
 
-    pub fn replace_entries(&mut self, entries: Vec<AppEntry>) {
+    /// テスト専用。本番コードは `apply_prebuilt_index` を使う（H-1）。
+    #[cfg(test)]
+    pub(crate) fn replace_entries(&mut self, entries: Vec<AppEntry>) {
         self.search_engine = SearchEngine::new(entries);
     }
 

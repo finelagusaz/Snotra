@@ -38,6 +38,7 @@ const App: Component = () => {
       const controller = createResultsWindowController(win);
 
       const hideMainAndResults = async () => {
+        controller.updateMainVisible(false);
         await win.hide();
         const rw = await controller.getResultsWindow();
         if (rw) {
@@ -86,6 +87,7 @@ const App: Component = () => {
         await Promise.all([
           listen("window-shown", () => {
             trace("app:event:window_shown");
+            controller.updateMainVisible(true);
             resetForShow();
           }),
           listen<ResultsSyncPayload>("results-sync", (event) => {
@@ -114,6 +116,7 @@ const App: Component = () => {
             if (event.payload === "initial-hotkey-failed") {
               trace("app:event:platform_event:initial_hotkey_failed");
               try {
+                controller.updateMainVisible(true);
                 await win.show();
               } catch (e) {
                 console.warn("platform-event: failed to show window on initial-hotkey-failed:", e);
@@ -133,14 +136,16 @@ const App: Component = () => {
         unlistenPlatformEvent,
       );
 
-      if (await win.isVisible()) {
+      const initiallyVisible = await win.isVisible();
+      controller.updateMainVisible(initiallyVisible);
+      if (initiallyVisible) {
         resetForShow();
       }
       unlistenFns.push(await initIndexingState());
 
       const unlistenMainResized = await win.onResized(({ payload: sz }) => {
         const logicalSize = sz.toLogical(controller.getCachedScaleFactor());
-        controller.handleMainResized(logicalSize.height);
+        controller.updateMainSize(logicalSize.width, logicalSize.height);
       });
       unlistenFns.push(unlistenMainResized);
 
@@ -159,7 +164,8 @@ const App: Component = () => {
           })();
         }, 500);
 
-        // Immediately sync results window position
+        // Update cached position and sync results window position
+        controller.updateMainPosition(logicalPos);
         void controller.handleMainMoved(logicalPos);
       });
       unlistenFns.push(unlistenMainMoved);

@@ -13,8 +13,10 @@ export interface ResultsWindowController {
   getResultsWindow(): Promise<WebviewWindow | null>;
   handleResultsSync(payload: ResultsSyncPayload): Promise<void>;
   handleMainMoved(logicalPos: { x: number; y: number }): Promise<void>;
-  handleMainResized(logicalHeight: number): void;
   getCachedScaleFactor(): number;
+  updateMainVisible(visible: boolean): void;
+  updateMainPosition(logicalPos: { x: number; y: number }): void;
+  updateMainSize(logicalWidth: number, logicalHeight: number): void;
 }
 
 /**
@@ -30,8 +32,13 @@ export function createResultsWindowController(
   let windowOpsGeneration = 0;
   let cachedScaleFactor = 1;
   let cachedMainLogicalHeight = 52;
+  let cachedMainLogicalWidth = 600;
+  let cachedMainLogicalPosition: { x: number; y: number } | undefined;
+  let cachedMainVisible = false;
+  let geometryInitialized = false;
   let pendingResultsPosition: { x: number; y: number } | undefined;
   let positionApplyInFlight = false;
+  let cachedResultsVisible = false;
 
   const getResultsWindow = async (): Promise<WebviewWindow | null> => {
     if (!resultsWindowPromise) {
@@ -91,31 +98,18 @@ export function createResultsWindowController(
     if (!shouldShow) {
       const rw = await WebviewWindow.getByLabel("results");
       if (!rw || isStale()) return;
-      const visible = await rw.isVisible();
-      if (isStale()) return;
-      if (visible) {
+      if (cachedResultsVisible) {
         trace("app:results_window:hide", { reason, generation });
         await rw.hide();
+        cachedResultsVisible = false;
       }
       return;
     }
     const rw = await getResultsWindow();
     if (!rw || isStale()) return;
 
-    // Use current main window width (may have been updated via settings)
-    const [currentSize, currentSf, mainPos, mainVisible] = await Promise.all([
-      mainWindow.innerSize(),
-      mainWindow.scaleFactor(),
-      mainWindow.outerPosition(),
-      mainWindow.isVisible(),
-    ]);
-    if (isStale()) return;
-
-    const mainSize = currentSize;
-    const sf = currentSf;
-    const currentWidth = currentSize.toLogical(currentSf).width;
-    cachedScaleFactor = currentSf;
-    cachedMainLogicalHeight = currentSize.toLogical(currentSf).height;
+    // Use cached geometry (updated by onMoved/onResized/onFocusChanged listeners)
+    const currentWidth = cachedMainLogicalWidth;
 
     // Resize results window based on count
     const resultsHeight = Math.min(count * RESULT_ROW_HEIGHT + RESULTS_PADDING * 2, 400);
@@ -129,41 +123,40 @@ export function createResultsWindowController(
       lastResultsSize = { width: currentWidth, height: resultsHeight };
     }
 
-    // Position results below main
-    const logicalMainPos = mainPos.toLogical(sf);
-    const logicalH = mainSize.toLogical(sf).height;
-    const nextPosition = {
-      x: logicalMainPos.x,
-      y: logicalMainPos.y + logicalH + RESULTS_GAP,
-    };
-    if (
-      !lastResultsPosition ||
-      lastResultsPosition.x !== nextPosition.x ||
-      lastResultsPosition.y !== nextPosition.y
-    ) {
-      await rw.setPosition(new LogicalPosition(nextPosition.x, nextPosition.y));
-      if (isStale()) return;
-      lastResultsPosition = nextPosition;
+    // Position results below main (use cached position)
+    if (cachedMainLogicalPosition) {
+      const nextPosition = {
+        x: cachedMainLogicalPosition.x,
+        y: cachedMainLogicalPosition.y + cachedMainLogicalHeight + RESULTS_GAP,
+      };
+      if (
+        !lastResultsPosition ||
+        lastResultsPosition.x !== nextPosition.x ||
+        lastResultsPosition.y !== nextPosition.y
+      ) {
+        await rw.setPosition(new LogicalPosition(nextPosition.x, nextPosition.y));
+        if (isStale()) return;
+        lastResultsPosition = nextPosition;
+      }
     }
 
-    if (!mainVisible) {
-      const visible = await rw.isVisible();
-      if (isStale()) return;
-      if (visible) {
+    if (!cachedMainVisible) {
+      if (cachedResultsVisible) {
         await rw.hide();
+        cachedResultsVisible = false;
       }
       return;
     }
 
-    const visible = await rw.isVisible();
-    if (isStale()) return;
-    if (!visible) {
+    if (!cachedResultsVisible) {
       trace("app:results_window:show", { generation, count, reason });
       await rw.show();
       if (isStale()) {
         await rw.hide();
+        cachedResultsVisible = false;
         return;
       }
+      cachedResultsVisible = true;
       void api.setWindowNoActivate();
     }
   };
@@ -185,21 +178,38 @@ export function createResultsWindowController(
     queueResultsPosition(rw, nextPosition);
   };
 
-  const handleMainResized = (logicalHeight: number): void => {
-    cachedMainLogicalHeight = logicalHeight;
+  const getCachedScaleFactor = (): number => cachedScaleFactor;
+
+  const updateMainVisible = (visible: boolean): void => {
+    cachedMainVisible = visible;
   };
 
-  const getCachedScaleFactor = (): number => cachedScaleFactor;
+  const updateMainPosition = (logicalPos: { x: number; y: number }): void => {
+    cachedMainLogicalPosition = logicalPos;
+  };
+
+  const updateMainSize = (logicalWidth: number, logicalHeight: number): void => {
+    cachedMainLogicalWidth = logicalWidth;
+    cachedMainLogicalHeight = logicalHeight;
+  };
 
   // Initialize geometry cache asynchronously
   void (async () => {
     try {
-      const [sf, size] = await Promise.all([
+      const [sf, size, pos, visible] = await Promise.all([
         mainWindow.scaleFactor(),
         mainWindow.innerSize(),
+        mainWindow.outerPosition(),
+        mainWindow.isVisible(),
       ]);
       cachedScaleFactor = sf;
-      cachedMainLogicalHeight = size.toLogical(sf).height;
+      const logical = size.toLogical(sf);
+      cachedMainLogicalHeight = logical.height;
+      cachedMainLogicalWidth = logical.width;
+      const logicalPos = pos.toLogical(sf);
+      cachedMainLogicalPosition = { x: logicalPos.x, y: logicalPos.y };
+      cachedMainVisible = visible;
+      geometryInitialized = true;
     } catch (e) {
       console.warn("Failed to initialize main window geometry cache:", e);
     }
@@ -209,7 +219,9 @@ export function createResultsWindowController(
     getResultsWindow,
     handleResultsSync,
     handleMainMoved,
-    handleMainResized,
     getCachedScaleFactor,
+    updateMainVisible,
+    updateMainPosition,
+    updateMainSize,
   };
 }

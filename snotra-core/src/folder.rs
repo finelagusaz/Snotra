@@ -488,4 +488,132 @@ mod tests {
         assert!(is_navigation_root("\\\\server\\share\\"));
         assert!(!is_navigation_root("\\\\server\\share\\folder"));
     }
+
+    // --- score_entries の top-k 境界テスト ---
+
+    fn make_file(name: &str) -> DirEntryData {
+        DirEntryData {
+            name: name.to_string(),
+            path: format!("C:\\test\\{}", name),
+            is_folder: false,
+        }
+    }
+
+    fn make_folder(name: &str) -> DirEntryData {
+        DirEntryData {
+            name: name.to_string(),
+            path: format!("C:\\test\\{}", name),
+            is_folder: true,
+        }
+    }
+
+    #[test]
+    fn score_entries_fewer_entries_than_max_returns_all() {
+        // N=3 < max_results=10 → 全 3 件が返る
+        let entries = vec![make_file("a"), make_file("b"), make_file("c")];
+        let results = score_entries(entries, &empty_history(), 10);
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn score_entries_max_results_zero_returns_empty() {
+        // max_results=0 は k=0 ガードで即返却する
+        let entries = vec![make_file("a"), make_file("b")];
+        let results = score_entries(entries, &empty_history(), 0);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn score_entries_k_equals_n_returns_all() {
+        // N==max_results → truncate なしで全件返る
+        let entries = vec![make_file("a"), make_file("b"), make_file("c")];
+        let results = score_entries(entries, &empty_history(), 3);
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn score_entries_k_one_returns_top_folder_over_files() {
+        // k=1 のとき最優先（フォルダ）だけが返る
+        let entries = vec![make_file("alpha"), make_folder("zeta"), make_file("beta")];
+        let results = score_entries(entries, &empty_history(), 1);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_folder);
+        assert_eq!(results[0].name, "zeta");
+    }
+
+    #[test]
+    fn score_entries_top_k_contains_correct_entries_in_order() {
+        // 2 フォルダ + 3 ファイルで k=3: フォルダ 2 件 + ファイル先頭 1 件が
+        // ソート順（フォルダ降順 → 名前昇順）で返る
+        let entries = vec![
+            make_file("delta"),
+            make_folder("zeta"),
+            make_file("alpha"),
+            make_folder("alpha_dir"),
+            make_file("beta"),
+        ];
+        let results = score_entries(entries, &empty_history(), 3);
+        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["alpha_dir", "zeta", "alpha"]);
+    }
+
+    #[test]
+    fn score_entries_top_k_order_independent_of_input_order() {
+        // select_nth_unstable_by は不安定なため、最終 sort_by がなければ
+        // 入力順によって結果順序が変わる。この回帰テストでその不変条件を固定する。
+        let entries1 = vec![
+            make_file("charlie"),
+            make_file("alpha"),
+            make_file("echo"),
+            make_file("bravo"),
+            make_file("delta"),
+        ];
+        let entries2 = vec![
+            make_file("echo"),
+            make_file("delta"),
+            make_file("bravo"),
+            make_file("alpha"),
+            make_file("charlie"),
+        ];
+        let r1 = score_entries(entries1, &empty_history(), 3);
+        let r2 = score_entries(entries2, &empty_history(), 3);
+        let names1: Vec<&str> = r1.iter().map(|r| r.name.as_str()).collect();
+        let names2: Vec<&str> = r2.iter().map(|r| r.name.as_str()).collect();
+        // 入力順によらず同一の top-3 が同一順で返る
+        assert_eq!(names1, vec!["alpha", "bravo", "charlie"]);
+        assert_eq!(names1, names2);
+    }
+
+    #[test]
+    fn score_entries_expansion_count_prioritizes_frequently_opened_folder() {
+        // expansion_count が高いフォルダは同一グループ内で先頭に来る
+        let mut history = empty_history();
+        history.record_folder_expansion("C:\\test\\often");
+        history.record_folder_expansion("C:\\test\\often");
+        history.record_folder_expansion("C:\\test\\often");
+        history.record_folder_expansion("C:\\test\\rarely");
+
+        let entries = vec![
+            DirEntryData {
+                name: "rarely".to_string(),
+                path: "C:\\test\\rarely".to_string(),
+                is_folder: true,
+            },
+            DirEntryData {
+                name: "often".to_string(),
+                path: "C:\\test\\often".to_string(),
+                is_folder: true,
+            },
+            DirEntryData {
+                name: "never".to_string(),
+                path: "C:\\test\\never".to_string(),
+                is_folder: true,
+            },
+        ];
+        // k=2: often(3回) > rarely(1回) > never(0回) の順で上位 2 件が選ばれる
+        let results = score_entries(entries, &history, 2);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].name, "often");
+        assert_eq!(results[1].name, "rarely");
+    }
 }

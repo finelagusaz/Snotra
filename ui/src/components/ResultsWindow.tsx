@@ -76,15 +76,14 @@ const ResultsWindow: Component = () => {
       .map((r) => r.path);
     if (missing.length === 0) return;
 
-    let buf: ArrayBuffer;
+    let parsed: Map<string, string>;
     try {
-      buf = await api.getIconsBatch(missing);
+      const buf = await api.getIconsBatch(missing);
+      parsed = parseBinaryBatch(buf, missing);
     } catch {
       return;
     }
     if (generation !== latestGeneration) return;
-
-    const parsed = parseBinaryBatch(buf, missing);
     if (parsed.size === 0) return;
 
     const next = new Map(cache);

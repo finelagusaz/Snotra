@@ -11,8 +11,6 @@ import type { ResultsPresentationReason } from "../lib/searchEvents";
 import { folderState, setFolderState, folderFilter, setFolderFilter } from "./folder";
 import { toolSelectionState, setToolSelectionState } from "./tool-selection";
 
-const DEBOUNCE_MS = 30;
-
 const [query, setQuery] = createSignal("");
 const [results, setResults] = createSignal<SearchResult[]>([]);
 const [selected, setSelected] = createSignal(0);
@@ -21,7 +19,7 @@ const [commandMatches, setCommandMatches] = createSignal<SlashCommand[]>([]);
 const [launching, setLaunching] = createSignal(false);
 const [launchNotice, setLaunchNotice] = createSignal<string | null>(null);
 
-let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+let debounceTimer: ReturnType<typeof requestAnimationFrame> | undefined;
 let launchNoticeTimer: ReturnType<typeof setTimeout> | undefined;
 let refreshInFlight: Promise<void> | undefined;
 let searchGeneration = 0;
@@ -97,11 +95,13 @@ function clearCommandModeStateAndEmit() {
 }
 
 function debouncedRefresh() {
-  clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(() => {
+  if (debounceTimer !== undefined) {
+    cancelAnimationFrame(debounceTimer);
+  }
+  debounceTimer = requestAnimationFrame(() => {
     debounceTimer = undefined;
     void runRefresh();
-  }, DEBOUNCE_MS);
+  });
 }
 
 // Folder expansion state — signals live in ./folder.ts
@@ -238,7 +238,7 @@ createRoot(() => {
       trace("search:query_effect", { query: q, trimmed });
 
       if (trimmed === "/r") {
-        clearTimeout(debounceTimer);
+        if (debounceTimer !== undefined) cancelAnimationFrame(debounceTimer);
         debounceTimer = undefined;
         setCommandMatches([]);
         setSelected(0);
@@ -250,7 +250,7 @@ createRoot(() => {
       if (trimmed.startsWith("/")) {
         const cmd = findCommand(q);
         if (cmd && cmd.command !== "/r") {
-          clearTimeout(debounceTimer);
+          if (debounceTimer !== undefined) cancelAnimationFrame(debounceTimer);
           debounceTimer = undefined;
           trace("search:query_effect:run_command", { command: cmd.command });
           clearCommandModeStateAndEmit();
@@ -258,7 +258,7 @@ createRoot(() => {
           return;
         }
 
-        clearTimeout(debounceTimer);
+        if (debounceTimer !== undefined) cancelAnimationFrame(debounceTimer);
         debounceTimer = undefined;
         trace("search:query_effect:show_command_suggestions", { input: q });
         showCommandResults(q);
@@ -329,7 +329,7 @@ function exitFolderExpansion(): boolean {
   if (!fs) return false;
 
   // デバウンスタイマーをクリア（フォルダモード中の入力残り処理を防止）
-  clearTimeout(debounceTimer);
+  if (debounceTimer !== undefined) cancelAnimationFrame(debounceTimer);
   debounceTimer = undefined;
 
   const requestId = ++searchGeneration;
@@ -379,7 +379,7 @@ function runRefresh(): Promise<void> {
 
 async function flushPendingRefresh() {
   if (debounceTimer !== undefined) {
-    clearTimeout(debounceTimer);
+    cancelAnimationFrame(debounceTimer);
     debounceTimer = undefined;
     await runRefresh();
     return;
@@ -489,7 +489,7 @@ async function launchWithSelectedTool(): Promise<boolean> {
 
 async function enterToolSelection(result: SearchResult): Promise<boolean> {
   // 残存 debounce タイマーを破棄（C3対策）
-  clearTimeout(debounceTimer);
+  if (debounceTimer !== undefined) cancelAnimationFrame(debounceTimer);
   debounceTimer = undefined;
 
   let tools: OpenerTool[];

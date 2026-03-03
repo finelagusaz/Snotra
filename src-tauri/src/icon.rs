@@ -39,8 +39,8 @@ impl IconCache {
     }
 
     /// Get cached PNG bytes for a path (read-only, no extraction).
-    pub fn get(&self, path: &str) -> Option<Vec<u8>> {
-        self.data.png.get(path).cloned()
+    pub fn get(&self, path: &str) -> Option<&[u8]> {
+        self.data.png.get(path).map(|v| v.as_slice())
     }
 
     /// Insert extracted PNG bytes into the cache and mark dirty.
@@ -70,6 +70,39 @@ impl IconCache {
             bf.remove();
         }
     }
+}
+
+/// Encode a batch of optional PNG slices into a length-prefixed binary frame.
+///
+/// Format:
+///   [count: u32 LE]
+///   For each icon (in request order):
+///     [status: u8] (0 = None, 1 = Some)
+///     If status == 1:
+///       [png_len: u32 LE][png_bytes: len bytes]
+pub fn encode_batch_binary(results: &[Option<&[u8]>]) -> Vec<u8> {
+    let total_data: usize = results
+        .iter()
+        .map(|r| match r {
+            Some(png) => 1 + 4 + png.len(), // status + len + data
+            None => 1,                       // status only
+        })
+        .sum();
+    let mut buf = Vec::with_capacity(4 + total_data);
+    buf.extend_from_slice(&(results.len() as u32).to_le_bytes());
+    for r in results {
+        match r {
+            Some(png) => {
+                buf.push(1);
+                buf.extend_from_slice(&(png.len() as u32).to_le_bytes());
+                buf.extend_from_slice(png);
+            }
+            None => {
+                buf.push(0);
+            }
+        }
+    }
+    buf
 }
 
 /// Extract PNG bytes for a path without holding any lock.
@@ -216,4 +249,50 @@ fn bgra_to_png(data: &IconData) -> Option<Vec<u8>> {
     }
 
     Some(png_buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encode_batch_binary_empty() {
+        let buf = encode_batch_binary(&[]);
+        assert_eq!(buf.len(), 4);
+        assert_eq!(u32::from_le_bytes(buf[0..4].try_into().unwrap()), 0);
+    }
+
+    #[test]
+    fn encode_batch_binary_mixed() {
+        let png1 = vec![0x89, 0x50, 0x4E, 0x47]; // fake PNG header
+        let results: Vec<Option<&[u8]>> = vec![Some(&png1), None, Some(&png1)];
+        let buf = encode_batch_binary(&results);
+
+        let mut offset = 0;
+        let count = u32::from_le_bytes(buf[offset..offset + 4].try_into().unwrap());
+        offset += 4;
+        assert_eq!(count, 3);
+
+        // item 0: Some
+        assert_eq!(buf[offset], 1);
+        offset += 1;
+        let len = u32::from_le_bytes(buf[offset..offset + 4].try_into().unwrap()) as usize;
+        offset += 4;
+        assert_eq!(&buf[offset..offset + len], &png1);
+        offset += len;
+
+        // item 1: None
+        assert_eq!(buf[offset], 0);
+        offset += 1;
+
+        // item 2: Some
+        assert_eq!(buf[offset], 1);
+        offset += 1;
+        let len = u32::from_le_bytes(buf[offset..offset + 4].try_into().unwrap()) as usize;
+        offset += 4;
+        assert_eq!(&buf[offset..offset + len], &png1);
+        offset += len;
+
+        assert_eq!(offset, buf.len());
+    }
 }

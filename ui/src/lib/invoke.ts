@@ -84,8 +84,8 @@ export async function getBootstrapPayload(): Promise<BootstrapPayload> {
   return tracedInvoke<BootstrapPayload>("get_bootstrap_payload");
 }
 
-export async function getIconsBatch(paths: string[]): Promise<(string | null)[]> {
-  return tracedInvoke<(string | null)[]>("get_icons_batch", { paths });
+export async function getIconsBatch(paths: string[]): Promise<ArrayBuffer> {
+  return tracedInvoke<ArrayBuffer>("get_icons_batch", { paths });
 }
 
 export async function openSettings(): Promise<void> {

@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 
@@ -17,6 +18,13 @@ const FOLDER_EXPANSION_WEIGHT: i64 = 5;
 /// Below this threshold, thread-splitting overhead exceeds the scoring cost
 /// (typical after several keystrokes when incremental search narrows candidates).
 const MIN_PAR_CANDIDATES: usize = 512;
+
+// D-5: one Matcher per rayon worker thread, reused across fold tasks.
+// Matcher::new() calls alloc_zeroed internally (several KB); thread_local avoids
+// that allocation on every rayon chunk boundary.
+thread_local! {
+    static MATCHER: RefCell<Matcher> = RefCell::new(Matcher::new(MatcherConfig::DEFAULT));
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchMode {
@@ -359,11 +367,10 @@ impl SearchEngine {
                 || {
                     (
                         BinaryHeap::<ScoredEntry>::with_capacity(max_results + 1),
-                        Matcher::new(MatcherConfig::DEFAULT),
                         Vec::<usize>::new(),
                     )
                 },
-                |(mut local_heap, mut matcher, mut local_matches), i| {
+                |(mut local_heap, mut local_matches), i| {
                     // Bitmask pre-filter: skip entries that lack query characters (Fuzzy only).
                     // Prefix/Substring use cheap str ops, so the bitmask overhead isn't worth it.
                     if mode == SearchMode::Fuzzy {
@@ -372,7 +379,7 @@ impl SearchEngine {
                         if (query_mask & name_mask) != query_mask
                             && (!has_dot || (query_mask & fn_mask) != query_mask)
                         {
-                            return (local_heap, matcher, local_matches);
+                            return (local_heap, local_matches);
                         }
                     }
 
@@ -388,14 +395,18 @@ impl SearchEngine {
                         None
                     };
 
-                    let name_score = match_score_single_cached(
-                        mode,
-                        &mut matcher,
-                        v.lower_name,
-                        norm_query_str,
-                        name_u32_owned.as_ref(),
-                        &needle_u32,
-                    );
+                    // D-5: borrow the thread-local Matcher; no alloc_zeroed per task.
+                    let name_score = MATCHER.with(|m| {
+                        let mut matcher = m.borrow_mut();
+                        match_score_single_cached(
+                            mode,
+                            &mut matcher,
+                            v.lower_name,
+                            norm_query_str,
+                            name_u32_owned.as_ref(),
+                            &needle_u32,
+                        )
+                    });
 
                     let score = if has_dot {
                         // Skip file_name scoring only on a high-confidence name match
@@ -409,14 +420,17 @@ impl SearchEngine {
                                     } else {
                                         None
                                     };
-                                match_score_single_cached(
-                                    mode,
-                                    &mut matcher,
-                                    fn_name,
-                                    norm_query_str,
-                                    fn_u32_owned.as_ref(),
-                                    &needle_u32,
-                                )
+                                MATCHER.with(|m| {
+                                    let mut matcher = m.borrow_mut();
+                                    match_score_single_cached(
+                                        mode,
+                                        &mut matcher,
+                                        fn_name,
+                                        norm_query_str,
+                                        fn_u32_owned.as_ref(),
+                                        &needle_u32,
+                                    )
+                                })
                             })
                         } else {
                             None
@@ -475,10 +489,9 @@ impl SearchEngine {
                         }
                     }
 
-                    (local_heap, matcher, local_matches)
+                    (local_heap, local_matches)
                 },
             )
-            .map(|(heap, _, matches)| (heap, matches))
             .reduce(
                 || (BinaryHeap::new(), Vec::new()),
                 |(mut a_heap, mut a_matches), (b_heap, b_matches)| {

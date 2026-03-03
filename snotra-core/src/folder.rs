@@ -8,6 +8,13 @@ use crate::query::to_lower_folded;
 use crate::search::SearchMode;
 use crate::ui_types::SearchResult;
 
+#[derive(Debug)]
+pub struct DirEntryData {
+    path: String,
+    name: String,
+    is_folder: bool,
+}
+
 pub fn list_folder(
     dir: &Path,
     filter: &str,
@@ -16,39 +23,79 @@ pub fn list_folder(
     history: &HistoryStore,
     max_results: usize,
 ) -> Vec<SearchResult> {
-    let Ok(read_dir) = std::fs::read_dir(dir) else {
-        return vec![SearchResult {
-            name: String::new(), // 表示文字列はUI層が決める。ロジック層は is_error: true の意味だけを持つ
-            path: dir.to_string_lossy().to_string(),
-            is_folder: false,
-            is_error: true,
-        }];
+    let entries = match read_dir_entries(dir, filter, mode, show_hidden_system) {
+        Ok(entries) => entries,
+        Err(_) => return error_result(dir),
     };
 
+    score_entries(entries, history, max_results)
+}
+
+pub(crate) fn read_dir_entries(
+    dir: &Path,
+    filter: &str,
+    mode: SearchMode,
+    show_hidden_system: bool,
+) -> std::io::Result<Vec<DirEntryData>> {
+    let read_dir = std::fs::read_dir(dir)?;
+    let mut entries = Vec::new();
     let mut matcher = Matcher::new(MatcherConfig::DEFAULT);
-    // Pre-fold the filter once; passed to matches_filter for every entry.
     let filter_lower = to_lower_folded(filter);
 
-    let mut entries: Vec<SearchResult> = read_dir
-        .flatten()
-        .filter_map(|entry| {
-            let path = entry.path();
-            if !show_hidden_system && !is_visible_entry(&path) {
-                return None;
-            }
-            let name = entry.file_name().to_string_lossy().to_string();
+    for entry in read_dir {
+        let Ok(entry) = entry else {
+            continue;
+        };
 
-            if !filter.is_empty() && !matches_filter(&name, &filter_lower, mode, &mut matcher) {
-                return None;
-            }
+        let name = entry.file_name().to_string_lossy().to_string();
 
-            let is_folder = path.is_dir();
-            Some(SearchResult {
-                name,
-                path: path.to_string_lossy().to_string(),
-                is_folder,
-                is_error: false,
-            })
+        if !filter.is_empty() && !matches_filter(&name, &filter_lower, mode, &mut matcher) {
+            continue;
+        }
+
+        // Windows では DirEntry::metadata() は GetFileAttributesW を呼び出し、
+        // シンボリックリンクを辿った先の属性を返す（fs::metadata(path) と同等）。
+        // これにより旧実装（is_visible_entry が fs::metadata を別途呼ぶ）と
+        // シンボリックリンク挙動は変わらず、かつ追加の stat 呼び出しが不要になる。
+        let meta = entry.metadata().ok();
+
+        if !show_hidden_system
+            && meta
+                .as_ref()
+                .map(is_hidden_or_system)
+                .unwrap_or(false)
+        {
+            continue;
+        }
+
+        let path = entry.path();
+        let is_folder = meta
+            .as_ref()
+            .map(|meta| meta.is_dir())
+            .unwrap_or_else(|| path.is_dir());
+
+        entries.push(DirEntryData {
+            path: path.to_string_lossy().to_string(),
+            name,
+            is_folder,
+        });
+    }
+
+    Ok(entries)
+}
+
+pub(crate) fn score_entries(
+    entries: Vec<DirEntryData>,
+    history: &HistoryStore,
+    max_results: usize,
+) -> Vec<SearchResult> {
+    let mut entries: Vec<SearchResult> = entries
+        .into_iter()
+        .map(|entry| SearchResult {
+            name: entry.name,
+            path: entry.path,
+            is_folder: entry.is_folder,
+            is_error: false,
         })
         .collect();
 
@@ -96,6 +143,15 @@ pub fn list_folder(
         .collect()
 }
 
+pub fn error_result(dir: &Path) -> Vec<SearchResult> {
+    vec![SearchResult {
+        name: String::new(), // 表示文字列はUI層が決める。ロジック層は is_error: true の意味だけを持つ
+        path: dir.to_string_lossy().to_string(),
+        is_folder: false,
+        is_error: true,
+    }]
+}
+
 fn matches_filter(name: &str, filter_lower: &str, mode: SearchMode, matcher: &mut Matcher) -> bool {
     let name_lower = to_lower_folded(name);
     match mode {
@@ -111,14 +167,11 @@ fn matches_filter(name: &str, filter_lower: &str, mode: SearchMode, matcher: &mu
     }
 }
 
-fn is_visible_entry(path: &Path) -> bool {
-    let Ok(meta) = std::fs::metadata(path) else {
-        return true;
-    };
+fn is_hidden_or_system(meta: &std::fs::Metadata) -> bool {
     let attrs = meta.file_attributes();
     let hidden = (attrs & FILE_ATTRIBUTE_HIDDEN.0) != 0;
     let system = (attrs & FILE_ATTRIBUTE_SYSTEM.0) != 0;
-    !hidden && !system
+    hidden || system
 }
 
 pub fn parent_for_navigation(current_dir: &str) -> Option<PathBuf> {
@@ -325,6 +378,103 @@ mod tests {
         assert!(results.is_empty());
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn hidden_files_excluded_when_show_hidden_system_false() {
+        let dir = temp_dir_with_contents("hidden_filter");
+        fs::write(dir.join("visible.txt"), "").unwrap();
+        let hidden_path = dir.join("hidden.txt");
+        fs::write(&hidden_path, "").unwrap();
+        std::process::Command::new("attrib")
+            .args(["+H", hidden_path.to_str().unwrap()])
+            .status()
+            .expect("attrib command failed");
+
+        let results = list_folder(&dir, "", SearchMode::Substring, false, &empty_history(), 100);
+        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(results.len(), 1);
+        assert!(names.contains(&"visible.txt"));
+        assert!(!names.contains(&"hidden.txt"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // --- パフォーマンス計測 ---
+    // `cargo test -p snotra-core bench_folder_ -- --ignored --nocapture` で実行
+
+    fn bench_folder_search(
+        label: &str,
+        n: usize,
+        filter: &str,
+        show_hidden_system: bool,
+        expected_results: usize,
+    ) {
+        use std::time::Instant;
+
+        let tag = format!("bench_folder_{}_{}", label, n);
+        let dir = temp_dir_with_contents(&tag);
+
+        for i in 0..n {
+            let file_name = if i + 1 == n {
+                format!("needle_match_{i}.txt")
+            } else {
+                format!("filler_file_{i}.txt")
+            };
+            fs::write(dir.join(file_name), "").unwrap();
+        }
+
+        let history = empty_history();
+
+        let warmup = list_folder(
+            &dir,
+            filter,
+            SearchMode::Substring,
+            show_hidden_system,
+            &history,
+            n.max(100),
+        );
+        assert_eq!(warmup.len(), expected_results);
+        if expected_results == 1 {
+            assert_eq!(warmup[0].name, format!("needle_match_{}.txt", n - 1));
+        }
+
+        let iters = 20usize;
+        let mut total_ns = 0u128;
+        for _ in 0..iters {
+            let t = Instant::now();
+            let results = list_folder(
+                &dir,
+                filter,
+                SearchMode::Substring,
+                show_hidden_system,
+                &history,
+                n.max(100),
+            );
+            total_ns += t.elapsed().as_nanos();
+            assert_eq!(results.len(), expected_results);
+        }
+
+        let avg_us = total_ns / iters as u128 / 1000;
+        println!("[{label}] entries={n}, avg={avg_us}µs ({iters} iters)");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_folder_narrow_filter() {
+        for &n in &[1_000, 5_000, 10_000] {
+            bench_folder_search("folder_narrow", n, "needle", true, 1);
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_folder_hidden_filter_all() {
+        for &n in &[1_000, 5_000, 10_000] {
+            bench_folder_search("folder_hidden_all", n, "", false, n);
+        }
     }
 
     #[test]

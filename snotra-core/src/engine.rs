@@ -6,6 +6,23 @@ use crate::search::{HistoryBoostConfig, SearchEngine, SearchMode};
 use crate::ui_types::SearchResult;
 use std::path::Path;
 
+#[derive(Debug, Clone, Copy)]
+pub struct FolderListContext {
+    mode: SearchMode,
+    show_hidden_system: bool,
+    max_results: usize,
+}
+
+impl FolderListContext {
+    pub fn read_dir_entries(
+        &self,
+        dir: &Path,
+        filter: &str,
+    ) -> std::io::Result<Vec<folder::DirEntryData>> {
+        folder::read_dir_entries(dir, filter, self.mode, self.show_hidden_system)
+    }
+}
+
 pub struct Engine {
     search_engine: SearchEngine,
     history: HistoryStore,
@@ -53,11 +70,39 @@ impl Engine {
         self.search_engine.recent_history(&self.history, max)
     }
 
+    pub fn capture_folder_list_context(&self) -> FolderListContext {
+        FolderListContext {
+            mode: SearchMode::from(self.config.search.folder_mode),
+            show_hidden_system: self.config.search.show_hidden_system,
+            max_results: self.config.appearance.max_results,
+        }
+    }
+
+    pub fn finalize_folder_list(
+        &self,
+        entries: Vec<folder::DirEntryData>,
+        ctx: FolderListContext,
+    ) -> Vec<SearchResult> {
+        // ctx は I/O 開始前にロックなしで取得したスナップショット。
+        // 設定変更が並走した場合 max_results が 1 件ずれる可能性があるが、
+        // Mutex 保持時間の最小化を優先する設計判断として許容する。
+        // history は常に現在の最新状態を使用する（スコアリングのみへの影響）。
+        folder::score_entries(entries, &self.history, ctx.max_results)
+    }
+
+    /// フォルダ内エントリを同期的に列挙してスコアリング済み結果を返す。
+    /// Tauri コマンドは `capture_folder_list_context` + `finalize_folder_list` の
+    /// 非同期2フェーズ版を使う。こちらは `folder.rs` のユニットテスト向け同期ラッパー。
     pub fn list_folder(&self, dir: &str, filter: &str) -> Vec<SearchResult> {
-        let mode = SearchMode::from(self.config.search.folder_mode);
-        let show_hidden = self.config.search.show_hidden_system;
-        let max = self.config.appearance.max_results;
-        folder::list_folder(Path::new(dir), filter, mode, show_hidden, &self.history, max)
+        let ctx = self.capture_folder_list_context();
+        folder::list_folder(
+            Path::new(dir),
+            filter,
+            ctx.mode,
+            ctx.show_hidden_system,
+            &self.history,
+            ctx.max_results,
+        )
     }
 
     pub fn record_launch(&mut self, path: &str, query: &str) {
@@ -132,7 +177,11 @@ mod tests {
 
     #[test]
     fn new_creates_engine() {
-        let engine = Engine::new(make_entries(&["Firefox"]), empty_history(), default_config());
+        let engine = Engine::new(
+            make_entries(&["Firefox"]),
+            empty_history(),
+            default_config(),
+        );
         assert_eq!(engine.entries().len(), 1);
         assert_eq!(engine.entries()[0].name, "Firefox");
     }
@@ -232,11 +281,7 @@ mod tests {
 
     #[test]
     fn replace_entries_updates_search() {
-        let mut engine = Engine::new(
-            make_entries(&["OldApp"]),
-            empty_history(),
-            default_config(),
-        );
+        let mut engine = Engine::new(make_entries(&["OldApp"]), empty_history(), default_config());
         assert_eq!(engine.entries().len(), 1);
         assert_eq!(engine.entries()[0].name, "OldApp");
 
@@ -247,11 +292,7 @@ mod tests {
 
     #[test]
     fn replace_entries_search_uses_new_entries() {
-        let mut engine = Engine::new(
-            make_entries(&["OldApp"]),
-            empty_history(),
-            default_config(),
-        );
+        let mut engine = Engine::new(make_entries(&["OldApp"]), empty_history(), default_config());
         let results = engine.search("old");
         assert_eq!(results.len(), 1);
 

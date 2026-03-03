@@ -18,7 +18,7 @@ use crate::config::{Config, ScanPath};
 use crate::query::to_lower_folded;
 
 const INDEX_MAGIC: [u8; 4] = *b"INDX";
-const INDEX_CACHE_VERSION: u32 = 3;
+const INDEX_CACHE_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppEntry {
@@ -27,12 +27,20 @@ pub struct AppEntry {
     pub is_folder: bool,
 }
 
-/// キャッシュから読み込んだビットマスクのペア。SearchEngine の構築時に渡すことで
-/// char_masks / file_name_char_masks の再計算をスキップし、起動時間を短縮する。
+/// キャッシュから読み込んだ事前計算データ。SearchEngine の構築時に渡すことで
+/// 起動時の計算をスキップし、起動時間を短縮する。
+///
+/// - `char_masks` / `file_name_char_masks`: v3+ キャッシュヒット時に常に存在
+/// - `lower_names` / `lower_file_names` / `normalized_keys`: v4+ ヒット時のみ存在
+///   (v3 フォールバック時は None → Wave 1 計算が走る)
 #[derive(Debug)]
 pub struct CachedMasks {
     pub char_masks: Vec<u64>,
     pub file_name_char_masks: Vec<u64>,
+    /// A-3: v4+ キャッシュ時のみ Some。存在すれば SearchEngine の Wave 1 をスキップ。
+    pub lower_names: Option<Vec<String>>,
+    pub lower_file_names: Option<Vec<Option<String>>>,
+    pub normalized_keys: Option<Vec<String>>,
 }
 
 pub fn scan_all(scan_paths: &[ScanPath], show_hidden_system: bool) -> Vec<AppEntry> {
@@ -187,9 +195,24 @@ pub struct LoadOrScanStats {
     pub total_ms: u128,
 }
 
-/// v3 フォーマット: char_masks / file_name_char_masks を含む現行スキーマ。
+/// v4 フォーマット: ビットマスクに加えて lower_names / lower_file_names / normalized_keys を保存。
+/// 起動時に SearchEngine の Wave 1（to_lower_folded / normalize_entry_key）を完全スキップできる。
 #[derive(Serialize, Deserialize)]
 struct IndexCache {
+    built_at: u64,
+    entries: Vec<AppEntry>,
+    config_hash: u64,
+    char_masks: Vec<u64>,
+    file_name_char_masks: Vec<u64>,
+    lower_names: Vec<String>,
+    lower_file_names: Vec<Option<String>>,
+    normalized_keys: Vec<String>,
+}
+
+/// v3 フォールバック用スキーマ（ビットマスクのみ、lower names なし）。
+#[derive(Serialize, Deserialize)]
+struct IndexCacheV3 {
+    #[allow(dead_code)]
     built_at: u64,
     entries: Vec<AppEntry>,
     config_hash: u64,
@@ -370,6 +393,9 @@ fn save_cache_sorted(entries: &[AppEntry], config_hash: u64) {
                 .map_or(0, |s| if s.is_ascii() { char_bitmask_for_cache(s) } else { u64::MAX })
         })
         .collect();
+    // A-3: normalized_keys もキャッシュに含める。起動時の Wave 1 計算を完全スキップするため。
+    let normalized_keys: Vec<String> =
+        entries.iter().map(|e| normalize_entry_key(&e.target_path)).collect();
 
     let cache = IndexCache {
         built_at: SystemTime::now()
@@ -380,6 +406,9 @@ fn save_cache_sorted(entries: &[AppEntry], config_hash: u64) {
         config_hash,
         char_masks,
         file_name_char_masks,
+        lower_names,
+        lower_file_names,
+        normalized_keys,
     };
     bf.save(&cache);
 }
@@ -404,7 +433,7 @@ fn load_cache(config_hash: u64) -> Option<LoadCacheResult> {
     let bf = cache_bin_file()?;
     let bytes = bf.load_bytes()?;
 
-    // v3 (現行) を試みる
+    // v4 (現行): ビットマスク + lower names / normalized_keys を含む
     if let Ok(cache) = try_deserialize_with_header::<IndexCache>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION) {
         if cache.config_hash != config_hash {
             return None;
@@ -412,6 +441,27 @@ fn load_cache(config_hash: u64) -> Option<LoadCacheResult> {
         let masks = CachedMasks {
             char_masks: cache.char_masks,
             file_name_char_masks: cache.file_name_char_masks,
+            lower_names: Some(cache.lower_names),
+            lower_file_names: Some(cache.lower_file_names),
+            normalized_keys: Some(cache.normalized_keys),
+        };
+        return Some(LoadCacheResult {
+            entries: cache.entries,
+            cached_masks: Some(masks),
+        });
+    }
+
+    // v3 フォールバック: ビットマスクのみ（lower names なし → Wave 1 は実行）
+    if let Ok(cache) = try_deserialize_with_header::<IndexCacheV3>(&bytes, INDEX_MAGIC, 3) {
+        if cache.config_hash != config_hash {
+            return None;
+        }
+        let masks = CachedMasks {
+            char_masks: cache.char_masks,
+            file_name_char_masks: cache.file_name_char_masks,
+            lower_names: None,
+            lower_file_names: None,
+            normalized_keys: None,
         };
         return Some(LoadCacheResult {
             entries: cache.entries,
@@ -595,6 +645,12 @@ mod tests {
             config_hash: 12345,
             char_masks: vec![0xAB, 0xCD],
             file_name_char_masks: vec![0x12, 0x34],
+            lower_names: vec!["firefox".to_string(), "projects".to_string()],
+            lower_file_names: vec![Some("firefox.lnk".to_string()), None],
+            normalized_keys: vec![
+                "c:\\apps\\firefox.lnk".to_string(),
+                "c:\\projects".to_string(),
+            ],
         };
 
         let bytes =
@@ -611,6 +667,15 @@ mod tests {
         assert_eq!(restored.config_hash, 12345);
         assert_eq!(restored.char_masks, vec![0xAB, 0xCD]);
         assert_eq!(restored.file_name_char_masks, vec![0x12, 0x34]);
+        assert_eq!(restored.lower_names, vec!["firefox", "projects"]);
+        assert_eq!(
+            restored.lower_file_names,
+            vec![Some("firefox.lnk".to_string()), None]
+        );
+        assert_eq!(
+            restored.normalized_keys,
+            vec!["c:\\apps\\firefox.lnk", "c:\\projects"]
+        );
     }
 
     #[test]
@@ -638,9 +703,38 @@ mod tests {
         assert_eq!(restored.entries[0].name, "Firefox");
         assert_eq!(restored.config_hash, config_hash);
 
-        // v3 として読もうとすると失敗する（マスクフィールドがない）
-        let v3_result = try_deserialize_with_header::<IndexCache>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION);
-        assert!(v3_result.is_err(), "v2 bytes should not deserialize as v3");
+        // v4 として読もうとすると失敗する（フィールドが足りない）
+        let v4_result = try_deserialize_with_header::<IndexCache>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION);
+        assert!(v4_result.is_err(), "v2 bytes should not deserialize as v4");
+    }
+
+    #[test]
+    fn load_cache_v3_fallback_yields_masks_without_lower_names() {
+        // v3 フォーマット（ビットマスクあり、lower names なし）のキャッシュを読み込んだとき
+        // CachedMasks に char_masks が入り、lower_names が None で返ることを確認する。
+        let entries = vec![AppEntry {
+            name: "Firefox".to_string(),
+            target_path: "C:\\apps\\firefox.lnk".to_string(),
+            is_folder: false,
+        }];
+        let config_hash = 42u64;
+
+        let cache_v3 = IndexCacheV3 {
+            built_at: 0,
+            entries: entries.clone(),
+            config_hash,
+            char_masks: vec![0xAB],
+            file_name_char_masks: vec![0xCD],
+        };
+        let bytes = serialize_with_header(INDEX_MAGIC, 3, &cache_v3).expect("serialize v3");
+
+        let restored: IndexCacheV3 =
+            deserialize_with_header(&bytes, INDEX_MAGIC, 3).expect("deserialize v3");
+        assert_eq!(restored.char_masks, vec![0xAB]);
+
+        // v4 として読もうとすると失敗する（lower_names フィールドがない）
+        let v4_result = try_deserialize_with_header::<IndexCache>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION);
+        assert!(v4_result.is_err(), "v3 bytes should not deserialize as v4");
     }
 
     #[test]

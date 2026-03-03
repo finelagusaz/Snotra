@@ -18,6 +18,7 @@ Desktop.ini
 .claude/settings.local.json
 workspace/
 research.md
+scripts/test-win.sh
 
 # Tauri auto-generated (non-target platform)
 src-tauri/gen/schemas/macOS-schema.json

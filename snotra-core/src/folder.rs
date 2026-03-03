@@ -99,6 +99,12 @@ pub(crate) fn score_entries(
         })
         .collect();
 
+    // k=0 のガード（usize アンダーフロー防止）
+    let k = max_results.min(entries.len());
+    if k == 0 {
+        return vec![];
+    }
+
     // Schwartzian transform: pre-compute sort keys to avoid repeated to_lowercase()
     let mut keyed: Vec<(String, u32, usize)> = entries
         .iter()
@@ -114,7 +120,9 @@ pub(crate) fn score_entries(
         })
         .collect();
 
-    keyed.sort_by(|a, b| {
+    // ソート順: is_folder 降順 → exp_count 降順 → lower_name 昇順
+    // 先頭要素が最良（最優先）エントリになる。
+    let cmp = |a: &(String, u32, usize), b: &(String, u32, usize)| {
         let a_entry = &entries[a.2];
         let b_entry = &entries[b.2];
         b_entry
@@ -122,9 +130,17 @@ pub(crate) fn score_entries(
             .cmp(&a_entry.is_folder)
             .then_with(|| b.1.cmp(&a.1))
             .then_with(|| a.0.cmp(&b.0))
-    });
+    };
 
-    keyed.truncate(max_results);
+    if k < keyed.len() {
+        // O(N) 平均の partial select で top-k を前方に集める。
+        // 全件ソート O(N log N) の代わりに O(N) + O(K log K) で済む。
+        keyed.select_nth_unstable_by(k - 1, &cmp);
+        keyed.truncate(k);
+    }
+
+    // top-k のみを安定ソートして確定順にする
+    keyed.sort_by(&cmp);
 
     keyed
         .into_iter()
@@ -474,6 +490,38 @@ mod tests {
     fn bench_folder_hidden_filter_all() {
         for &n in &[1_000, 5_000, 10_000] {
             bench_folder_search("folder_hidden_all", n, "", false, n);
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_folder_topk_sort() {
+        // max_results << N のケース: top-k 選択の効果を確認する
+        // N=10_000 エントリを max_results=50 で絞り込む
+        for &n in &[1_000, 5_000, 10_000] {
+            use std::time::Instant;
+            let tag = format!("bench_topk_{n}");
+            let dir = temp_dir_with_contents(&tag);
+            for i in 0..n {
+                fs::write(dir.join(format!("file_{i:05}.txt")), "").unwrap();
+            }
+            let history = empty_history();
+            let max_results = 50;
+            // warmup
+            let warmup = list_folder(&dir, "", SearchMode::Substring, true, &history, max_results);
+            assert_eq!(warmup.len(), max_results);
+            let iters = 20usize;
+            let mut total_ns = 0u128;
+            for _ in 0..iters {
+                let t = Instant::now();
+                let results =
+                    list_folder(&dir, "", SearchMode::Substring, true, &history, max_results);
+                total_ns += t.elapsed().as_nanos();
+                assert_eq!(results.len(), max_results);
+            }
+            let avg_us = total_ns / iters as u128 / 1000;
+            println!("[topk_sort] entries={n}, max_results={max_results}, avg={avg_us}µs ({iters} iters)");
+            let _ = fs::remove_dir_all(&dir);
         }
     }
 

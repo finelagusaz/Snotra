@@ -23,6 +23,16 @@ impl FolderListContext {
     }
 }
 
+/// `SearchEngine` を Mutex 外で事前構築するためのラッパー型。
+/// `Engine::apply_prebuilt_index` でロック保持時間を最小化したスワップが可能。
+pub struct PrebuiltIndex(SearchEngine);
+
+impl PrebuiltIndex {
+    pub fn new(entries: Vec<AppEntry>) -> Self {
+        Self(SearchEngine::new(entries))
+    }
+}
+
 pub struct Engine {
     search_engine: SearchEngine,
     history: HistoryStore,
@@ -38,8 +48,9 @@ impl Engine {
         }
     }
 
-    /// v3 キャッシュヒット時に使用するコンストラクタ。
-    /// キャッシュ済みビットマスクを渡すことで SearchEngine のマスク再計算をスキップする。
+    /// v3/v4 キャッシュヒット時に使用するコンストラクタ。
+    /// - v4 ヒット: ビットマスク + lower names を渡し Wave 1/2 を完全スキップ（A-3）
+    /// - v3 フォールバック: ビットマスクのみ渡し Wave 1 は SearchEngine 内で実行
     pub fn new_from_cache(
         entries: Vec<AppEntry>,
         cached_masks: CachedMasks,
@@ -51,6 +62,9 @@ impl Engine {
                 entries,
                 cached_masks.char_masks,
                 cached_masks.file_name_char_masks,
+                cached_masks.lower_names,
+                cached_masks.lower_file_names,
+                cached_masks.normalized_keys,
             ),
             history,
             config,
@@ -129,8 +143,16 @@ impl Engine {
         self.config = config;
     }
 
-    pub fn replace_entries(&mut self, entries: Vec<AppEntry>) {
+    /// テスト専用。本番コードは `apply_prebuilt_index` を使う（H-1）。
+    #[cfg(test)]
+    pub(crate) fn replace_entries(&mut self, entries: Vec<AppEntry>) {
         self.search_engine = SearchEngine::new(entries);
+    }
+
+    /// Mutex 外で事前構築した SearchEngine を高速スワップする。
+    /// インデックス再構築時のロック保持時間を最小化するために使う。
+    pub fn apply_prebuilt_index(&mut self, index: PrebuiltIndex) {
+        self.search_engine = index.0;
     }
 
     pub fn entries(&self) -> &[AppEntry] {

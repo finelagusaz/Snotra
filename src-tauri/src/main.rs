@@ -228,7 +228,7 @@ fn main() {
             commands::open_settings,
             commands::hide_settings,
             commands::open_about,
-            commands::get_icon_png,
+            commands::get_icons_batch,
             commands::get_search_placement,
             commands::save_search_placement,
             commands::get_settings_placement,

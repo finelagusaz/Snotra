@@ -17,13 +17,6 @@ const ResultsWindow: Component = () => {
   let latestGeneration = 0;
   let lastScrolledSelected = -1;
   let lastScrolledGeneration = -1;
-  const objectUrls = new Set<string>();
-  onCleanup(() => {
-    for (const url of objectUrls) {
-      URL.revokeObjectURL(url);
-    }
-  });
-
   function ensureRowVisible(container: HTMLDivElement, row: HTMLElement) {
     const cRect = container.getBoundingClientRect();
     const rRect = row.getBoundingClientRect();
@@ -45,22 +38,19 @@ const ResultsWindow: Component = () => {
       .map((r) => r.path);
     if (missing.length === 0) return;
 
-    const settled = await Promise.allSettled(
-      missing.map(async (path) => {
-        const buf = await api.getIconPng(path);
-        return { path, buf };
-      }),
-    );
+    let pngs: (string | null)[];
+    try {
+      pngs = await api.getIconsBatch(missing);
+    } catch {
+      return;
+    }
     if (generation !== latestGeneration) return;
 
     const next = new Map(cache);
-    for (const r of settled) {
-      if (r.status === "fulfilled") {
-        const url = URL.createObjectURL(
-          new Blob([r.value.buf], { type: "image/png" }),
-        );
-        objectUrls.add(url);
-        next.set(r.value.path, url);
+    for (let i = 0; i < missing.length; i++) {
+      const b64 = pngs[i];
+      if (b64) {
+        next.set(missing[i], `data:image/png;base64,${b64}`);
       }
     }
     setIconCache(next);
@@ -78,10 +68,6 @@ const ResultsWindow: Component = () => {
     void listen<boolean>("show-icons-changed", (event) => {
       setShowIcons(event.payload);
       if (!event.payload) {
-        for (const url of objectUrls) {
-          URL.revokeObjectURL(url);
-        }
-        objectUrls.clear();
         setIconCache(new Map());
       }
     }).then((fn) => { unlistenShowIcons = fn; });
@@ -106,7 +92,7 @@ const ResultsWindow: Component = () => {
       latestGeneration = event.payload.generation;
       setResults(event.payload.results);
       setSelected(event.payload.selected);
-      fetchIcons(event.payload.results, event.payload.generation);
+      void fetchIcons(event.payload.results, event.payload.generation);
       if (
         event.payload.selected !== lastScrolledSelected ||
         event.payload.generation !== lastScrolledGeneration
@@ -120,6 +106,9 @@ const ResultsWindow: Component = () => {
           ensureRowVisible(listRef, row);
         });
       }
+      // rAF でフレームが確定した直後に emit する。
+      // results-render-done は perfMarkRenderDone（計測専用）に使われるため、
+      // 非表示ウィンドウで rAF がスロットリングされても UX には影響しない。
       requestAnimationFrame(() => {
         void emit("results-render-done", { requestId: event.payload.generation });
       });

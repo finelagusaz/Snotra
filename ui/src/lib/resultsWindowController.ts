@@ -17,6 +17,7 @@ export interface ResultsWindowController {
   updateMainVisible(visible: boolean): void;
   updateMainPosition(logicalPos: { x: number; y: number }): void;
   updateMainSize(logicalWidth: number, logicalHeight: number): void;
+  updateResultsVisible(visible: boolean): void;
 }
 
 /**
@@ -35,7 +36,6 @@ export function createResultsWindowController(
   let cachedMainLogicalWidth = 600;
   let cachedMainLogicalPosition: { x: number; y: number } | undefined;
   let cachedMainVisible = false;
-  let geometryInitialized = false;
   let pendingResultsPosition: { x: number; y: number } | undefined;
   let positionApplyInFlight = false;
   let cachedResultsVisible = false;
@@ -193,6 +193,10 @@ export function createResultsWindowController(
     cachedMainLogicalHeight = logicalHeight;
   };
 
+  const updateResultsVisible = (visible: boolean): void => {
+    cachedResultsVisible = visible;
+  };
+
   // Initialize geometry cache asynchronously
   void (async () => {
     try {
@@ -209,7 +213,6 @@ export function createResultsWindowController(
       const logicalPos = pos.toLogical(sf);
       cachedMainLogicalPosition = { x: logicalPos.x, y: logicalPos.y };
       cachedMainVisible = visible;
-      geometryInitialized = true;
     } catch (e) {
       console.warn("Failed to initialize main window geometry cache:", e);
     }
@@ -223,5 +226,6 @@ export function createResultsWindowController(
     updateMainVisible,
     updateMainPosition,
     updateMainSize,
+    updateResultsVisible,
   };
 }

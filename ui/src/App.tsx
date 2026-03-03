@@ -39,6 +39,7 @@ const App: Component = () => {
 
       const hideMainAndResults = async () => {
         controller.updateMainVisible(false);
+        controller.updateResultsVisible(false);
         await win.hide();
         const rw = await controller.getResultsWindow();
         if (rw) {

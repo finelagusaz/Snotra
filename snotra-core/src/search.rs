@@ -13,6 +13,10 @@ use crate::ui_types::SearchResult;
 const GLOBAL_WEIGHT: i64 = 5;
 const QUERY_WEIGHT: i64 = 20;
 const FOLDER_EXPANSION_WEIGHT: i64 = 5;
+/// D-3: minimum candidate count for rayon parallel scoring.
+/// Below this threshold, thread-splitting overhead exceeds the scoring cost
+/// (typical after several keystrokes when incremental search narrows candidates).
+const MIN_PAR_CANDIDATES: usize = 512;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchMode {
@@ -192,44 +196,59 @@ impl SearchEngine {
         }
     }
 
-    /// キャッシュから読み込んだビットマスクを使って SearchEngine を構築する。
-    /// char_masks / file_name_char_masks の再計算をスキップし、起動時間を短縮する。
-    /// lower_names / lower_file_names / normalized_keys は引き続き並列構築する。
+    /// キャッシュから読み込んだデータを使って SearchEngine を構築する。
+    ///
+    /// - `char_masks` / `file_name_char_masks`: Wave 2 の再計算をスキップ
+    /// - `cached_lower_names` / `cached_lower_file_names` / `cached_normalized_keys`:
+    ///   v4+ キャッシュヒット時に Some → Wave 1 の再計算もスキップ（A-3）
+    ///   v3 フォールバック時は None → Wave 1 を通常通り並列実行
     pub fn new_with_cached_masks(
         entries: Vec<AppEntry>,
         char_masks: Vec<u64>,
         file_name_char_masks: Vec<u64>,
+        cached_lower_names: Option<Vec<String>>,
+        cached_lower_file_names: Option<Vec<Option<String>>>,
+        cached_normalized_keys: Option<Vec<String>>,
     ) -> Self {
-        let entries_ref = &entries;
-        let ((lower_names, lower_file_names), normalized_keys) = rayon::join(
-            || {
+        let ((lower_names, lower_file_names), normalized_keys) =
+            if let (Some(ln), Some(lfn), Some(nk)) =
+                (cached_lower_names, cached_lower_file_names, cached_normalized_keys)
+            {
+                // A-3: v4 キャッシュヒット → Wave 1 完全スキップ
+                ((ln, lfn), nk)
+            } else {
+                // v3 フォールバック: Wave 1 を並列実行
+                let entries_ref = &entries;
                 rayon::join(
                     || {
-                        entries_ref
-                            .iter()
-                            .map(|e| to_lower_folded(&e.name))
-                            .collect::<Vec<_>>()
+                        rayon::join(
+                            || {
+                                entries_ref
+                                    .iter()
+                                    .map(|e| to_lower_folded(&e.name))
+                                    .collect::<Vec<_>>()
+                            },
+                            || {
+                                entries_ref
+                                    .iter()
+                                    .map(|e| {
+                                        std::path::Path::new(&e.target_path)
+                                            .file_name()
+                                            .and_then(|f| f.to_str())
+                                            .map(to_lower_folded)
+                                    })
+                                    .collect::<Vec<_>>()
+                            },
+                        )
                     },
                     || {
                         entries_ref
                             .iter()
-                            .map(|e| {
-                                std::path::Path::new(&e.target_path)
-                                    .file_name()
-                                    .and_then(|f| f.to_str())
-                                    .map(to_lower_folded)
-                            })
+                            .map(|e| normalize_entry_key(&e.target_path))
                             .collect::<Vec<_>>()
                     },
                 )
-            },
-            || {
-                entries_ref
-                    .iter()
-                    .map(|e| normalize_entry_key(&e.target_path))
-                    .collect::<Vec<_>>()
-            },
-        );
+            };
 
         debug_assert!(
             lower_names.len() == entries.len()
@@ -335,6 +354,7 @@ impl SearchEngine {
         // (not just top-k) for the incremental search cache.
         let (top_k, all_match_indices): (BinaryHeap<ScoredEntry>, Vec<usize>) = candidate_indices
             .into_par_iter()
+            .with_min_len(MIN_PAR_CANDIDATES)
             .fold(
                 || {
                     (

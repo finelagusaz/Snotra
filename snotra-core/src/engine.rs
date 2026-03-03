@@ -48,8 +48,9 @@ impl Engine {
         }
     }
 
-    /// v3 キャッシュヒット時に使用するコンストラクタ。
-    /// キャッシュ済みビットマスクを渡すことで SearchEngine のマスク再計算をスキップする。
+    /// v3/v4 キャッシュヒット時に使用するコンストラクタ。
+    /// - v4 ヒット: ビットマスク + lower names を渡し Wave 1/2 を完全スキップ（A-3）
+    /// - v3 フォールバック: ビットマスクのみ渡し Wave 1 は SearchEngine 内で実行
     pub fn new_from_cache(
         entries: Vec<AppEntry>,
         cached_masks: CachedMasks,
@@ -61,6 +62,9 @@ impl Engine {
                 entries,
                 cached_masks.char_masks,
                 cached_masks.file_name_char_masks,
+                cached_masks.lower_names,
+                cached_masks.lower_file_names,
+                cached_masks.normalized_keys,
             ),
             history,
             config,

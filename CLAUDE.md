@@ -70,17 +70,24 @@ Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-
 
 ## ビルド・実行コマンド
 
+**Windows 不要**（macOS/Linux でも実行可能）:
+
+```bash
+npm test                          # フロントユニットテスト（Vitest）
+npm run build                    # フロントエンドビルド（typecheck → vite build、プロジェクトルートから実行）
+```
+
+**Windows 必須**（`windows` クレートや Win32 API・実行バイナリに依存）:
+
 ```bash
 cargo test -p snotra-core        # ユニットテスト
 cargo test --release -p snotra-core bench_ -- --ignored --nocapture  # 検索パフォーマンス計測
 cargo check -p snotra            # Rustバックエンド型チェック
 cargo clippy -p snotra-core -p snotra  # lint チェック
-npm test                          # フロントユニットテスト（Vitest）
+npm run verify                   # Rust + フロントエンド一括検証（cargo check + npm run build）
 npm run smoke:startup             # 起動時ウィンドウ生成スモーク（trace検証）
 npm run e2e:tauri:setup           # Tauri Driver E2E 用セットアップ
 npm run e2e:tauri                 # Playwright + Tauri Driver E2E
-npm run build                    # フロントエンドビルド（typecheck → vite build、プロジェクトルートから実行）
-npm run verify                   # Rust + フロントエンド一括検証（cargo check + npm run build）
 npm run tauri dev                # 開発実行（ホットリロード付き）
 npm run tauri build              # リリースビルド
 ```

@@ -265,6 +265,61 @@ const SettingsGeneral: Component = () => {
           </SettingRow>
         </div>
       </div>
+
+      <div class="settings-group">
+        <div class="settings-group-title">表示設定</div>
+        <div class="settings-group-content">
+          <SettingRow
+            label="最大表示件数"
+            description="検索結果に表示する最大候補数"
+          >
+            <input
+              type="number"
+              min="1"
+              max="50"
+              value={d().appearance.max_results}
+              onInput={(e) =>
+                updateDraft((c) => {
+                  c.appearance.max_results =
+                    Math.max(1, Math.min(50, parseInt(e.currentTarget.value) || 8));
+                })
+              }
+              style={{ width: "80px" }}
+            />
+          </SettingRow>
+          <SettingRow
+            label="ウィンドウ幅"
+            description="検索ウィンドウの横幅（論理ピクセル）"
+          >
+            <input
+              type="number"
+              min="300"
+              max="1200"
+              value={d().appearance.window_width}
+              onInput={(e) =>
+                updateDraft((c) => {
+                  c.appearance.window_width =
+                    Math.max(300, Math.min(1200, parseInt(e.currentTarget.value) || 600));
+                })
+              }
+              style={{ width: "80px" }}
+            />
+          </SettingRow>
+          <SettingRow
+            label="アイコン表示"
+            description="検索結果にファイルアイコンを表示します"
+          >
+            <ToggleSwitch
+              checked={d().appearance.show_icons}
+              onChange={(v) =>
+                updateDraft((c) => {
+                  c.appearance.show_icons = v;
+                })
+              }
+            />
+          </SettingRow>
+        </div>
+      </div>
     </div>
   );
 };

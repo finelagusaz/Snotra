@@ -13,6 +13,7 @@ const ResultsWindow: Component = () => {
   );
   const [containerWidth, setContainerWidth] = createSignal(0);
   const [showIcons, setShowIcons] = createSignal(true);
+  const [font, setFont] = createSignal("15px 'Segoe UI'");
   let listRef: HTMLDivElement | undefined;
   let latestGeneration = 0;
   let lastScrolledSelected = -1;
@@ -72,6 +73,22 @@ const ResultsWindow: Component = () => {
       }
     }).then((fn) => { unlistenShowIcons = fn; });
 
+    // Measure font once at list level for all ResultRow instances
+    if (listRef) {
+      const style = getComputedStyle(listRef);
+      setFont(`${style.fontSize} ${style.fontFamily}`);
+    }
+
+    // Listen for theme changes to update font
+    let unlistenVisualFont: (() => void) | undefined;
+    onCleanup(() => unlistenVisualFont?.());
+    void listen("visual-config-changed", () => {
+      if (listRef) {
+        const style = getComputedStyle(listRef);
+        setFont(`${style.fontSize} ${style.fontFamily}`);
+      }
+    }).then((fn) => { unlistenVisualFont = fn; });
+
     if (listRef) {
       const ro = new ResizeObserver((entries) => {
         for (const entry of entries) {
@@ -89,10 +106,15 @@ const ResultsWindow: Component = () => {
       if (event.payload.generation < latestGeneration) {
         return;
       }
+      const isSelectionOnly =
+        event.payload.reason === "selection" &&
+        event.payload.generation === latestGeneration;
       latestGeneration = event.payload.generation;
-      setResults(event.payload.results);
+      if (!isSelectionOnly) {
+        setResults(event.payload.results);
+        void fetchIcons(event.payload.results, event.payload.generation);
+      }
       setSelected(event.payload.selected);
-      void fetchIcons(event.payload.results, event.payload.generation);
       if (
         event.payload.selected !== lastScrolledSelected ||
         event.payload.generation !== lastScrolledGeneration
@@ -137,6 +159,7 @@ const ResultsWindow: Component = () => {
               icon={iconCache().get(result.path)}
               showIcons={showIcons()}
               containerWidth={containerWidth()}
+              font={font()}
               onClick={() => api.notifyResultClicked(idx())}
               onDoubleClick={() => api.notifyResultDoubleClicked(idx())}
               onMouseEnter={() => handleHover(idx())}

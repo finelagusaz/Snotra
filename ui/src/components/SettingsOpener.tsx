@@ -1,5 +1,5 @@
 import type { Component } from "solid-js";
-import { createSignal, For, Show } from "solid-js";
+import { createSignal, createMemo, For, Show } from "solid-js";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { OpenerRule } from "../lib/types";
 import type { GroupedOpenerEntry } from "../lib/openerGroups";
@@ -42,7 +42,7 @@ const SettingsOpener: Component = () => {
   const [editToolArgs, setEditToolArgs] = createSignal("");
   let toolNameInputRef: HTMLInputElement | undefined;
 
-  const flatList = () => buildFlatList(d().openers);
+  const flatList = createMemo(() => buildFlatList(d().openers));
 
   function resetForm() {
     setEditTarget("folder");

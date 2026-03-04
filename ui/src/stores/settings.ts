@@ -1,5 +1,4 @@
 import { createSignal } from "solid-js";
-import { listen } from "@tauri-apps/api/event";
 import type { Config } from "../lib/types";
 import { isHotkeyInvalid } from "../lib/hotkeyValidation";
 import * as api from "../lib/invoke";
@@ -13,21 +12,33 @@ export type TabId = "general" | "search" | "index" | "visual" | "opener";
 
 const [activeTab, setActiveTab] = createSignal<TabId>("general");
 
+// Cache the JSON.stringify result to avoid redundant serialization
+// when hasChanges is called multiple times within the same reactive cycle.
+let cachedDraftJson = "";
+let cachedSavedJson = "";
+let cachedDraftRef: Config | null = null;
+let cachedSavedRef: Config | null = null;
+
 function hasChanges(): boolean {
   const d = draft();
   const s = savedConfig();
   if (!d || !s) return false;
-  return JSON.stringify(d) !== JSON.stringify(s);
-}
-
-function isHotkeyValid(): boolean {
-  const d = draft();
-  if (!d) return false;
-  return !isHotkeyInvalid(d.hotkey.modifier, d.hotkey.key);
+  if (d !== cachedDraftRef) {
+    cachedDraftJson = JSON.stringify(d);
+    cachedDraftRef = d;
+  }
+  if (s !== cachedSavedRef) {
+    cachedSavedJson = JSON.stringify(s);
+    cachedSavedRef = s;
+  }
+  return cachedDraftJson !== cachedSavedJson;
 }
 
 function canSave(): boolean {
-  return hasChanges() && isHotkeyValid();
+  if (!hasChanges()) return false;
+  const d = draft();
+  if (!d) return false;
+  return !isHotkeyInvalid(d.hotkey.modifier, d.hotkey.key);
 }
 
 async function loadDraft() {
@@ -42,11 +53,6 @@ async function loadDraft() {
   }
 }
 
-// Reload config each time the settings window is shown.
-// The window is pre-created and hidden on close, so onMount only fires once.
-listen("settings-shown", () => {
-  loadDraft();
-});
 
 function updateDraft(updater: (c: Config) => void) {
   const d = draft();

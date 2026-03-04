@@ -1,4 +1,4 @@
-import { type Component, Show, createSignal, createMemo, onMount, mergeProps } from "solid-js";
+import { type Component, Show, createMemo, mergeProps } from "solid-js";
 import type { SearchResult } from "../lib/types";
 import { truncatePath } from "../lib/truncatePath";
 
@@ -8,6 +8,7 @@ interface ResultRowProps {
   icon?: string;
   showIcons?: boolean;
   containerWidth?: number;
+  font: string;
   onClick: () => void;
   onDoubleClick: () => void;
   onMouseEnter?: () => void;
@@ -16,14 +17,6 @@ interface ResultRowProps {
 const ResultRow: Component<ResultRowProps> = (rawProps) => {
   const props = mergeProps({ showIcons: true }, rawProps);
   let textRef: HTMLDivElement | undefined;
-  const [font, setFont] = createSignal("15px 'Segoe UI'");
-
-  onMount(() => {
-    if (textRef) {
-      const style = getComputedStyle(textRef);
-      setFont(`${style.fontSize} ${style.fontFamily}`);
-    }
-  });
 
   const fullPath = createMemo(() => {
     const p = props.result.path;
@@ -32,11 +25,10 @@ const ResultRow: Component<ResultRowProps> = (rawProps) => {
 
   const displayPath = createMemo(() => {
     void props.containerWidth; // resize trigger
-    const f = font();
     if (!textRef) return fullPath();
     const w = textRef.clientWidth;
     if (w === 0) return fullPath();
-    return truncatePath(fullPath(), w, f);
+    return truncatePath(fullPath(), w, props.font);
   });
 
   return (

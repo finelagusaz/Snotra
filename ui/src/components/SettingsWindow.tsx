@@ -1,5 +1,6 @@
 import { type Component, Show, onMount, onCleanup } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import {
   type TabId,
   draft,
@@ -31,6 +32,15 @@ const SettingsWindow: Component = () => {
 
   onMount(() => {
     loadDraft();
+
+    // Reload config each time the settings window is shown.
+    // The window is pre-created and hidden on close, so onMount only fires once.
+    let unlistenShown: (() => void) | undefined;
+    onCleanup(() => unlistenShown?.());
+    void listen("settings-shown", () => {
+      loadDraft();
+    }).then((fn) => { unlistenShown = fn; });
+
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         // ホットキー入力中は window-close を抑止（SettingsGeneral で clearHotkey を処理）

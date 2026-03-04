@@ -1,6 +1,7 @@
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as api from "./invoke";
+import { t } from "./i18n";
 
 export interface SlashCommand {
   command: string;
@@ -24,7 +25,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   {
     command: "/r",
     label: "/r",
-    description: "直近履歴を表示",
+    description: t("cmd.history.description"),
     action: () => {
       // /r is handled by search store as a result-producing command.
     },
@@ -32,7 +33,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   {
     command: "/a",
     label: "/a",
-    description: "バージョン情報",
+    description: t("cmd.about.description"),
     action: async () => {
       // results のみ非表示（検索ウィンドウは残す）
       await hideResultsWindow();
@@ -42,7 +43,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   {
     command: "/o",
     label: "/o",
-    description: "設定を開く",
+    description: t("cmd.settings.description"),
     action: async () => {
       // results のみ非表示（検索ウィンドウは残す）
       await hideResultsWindow();
@@ -52,7 +53,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   {
     command: "/s",
     label: "/s",
-    description: "インデックス再構築",
+    description: t("cmd.rebuild_index.description"),
     action: async () => {
       await hideAllWindows();
       await api.rebuildIndex();
@@ -61,7 +62,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   {
     command: "/q",
     label: "/q",
-    description: "アプリを終了",
+    description: t("cmd.quit.description"),
     action: () => {
       api.quitApp();
     },

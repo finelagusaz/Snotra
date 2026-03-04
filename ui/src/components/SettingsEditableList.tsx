@@ -1,4 +1,5 @@
 import { Show, type ParentComponent } from "solid-js";
+import { t } from "../lib/i18n";
 
 type SettingsEditableListProps = {
   hasItems: boolean;
@@ -24,7 +25,7 @@ const SettingsEditableList: ParentComponent<SettingsEditableListProps> = (props)
       </div>
       <div class="scan-path-list-actions settings-editor-list-actions">
         <button type="button" onClick={props.onAdd}>
-          {props.addLabel ?? "追加"}
+          {props.addLabel ?? t("common.add")}
         </button>
       </div>
     </>

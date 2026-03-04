@@ -1,6 +1,7 @@
 import { type Component, onMount, onCleanup } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-shell";
+import { t } from "../lib/i18n";
 
 const AboutWindow: Component = () => {
     const rawVersion = import.meta.env.VITE_APP_VERSION || "0.9";
@@ -44,7 +45,7 @@ const AboutWindow: Component = () => {
                         style={{ color: "var(--text-color)", "text-decoration": "none" }}
                         onClick={(e) => {
                             e.preventDefault();
-                            open(`mailto:algiz.rune@gmail.com?subject=${encodeURIComponent("Snotraについて")}`);
+                            open(`mailto:algiz.rune@gmail.com?subject=${encodeURIComponent(t("about.email_subject"))}`);
                         }}
                     >
                         algiz.rune@gmail.com

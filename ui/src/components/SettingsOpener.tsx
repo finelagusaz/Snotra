@@ -12,6 +12,7 @@ import {
 } from "../lib/openerGroups";
 import { normalizeOpenerTarget } from "../lib/openerTarget";
 import { draft, updateDraft } from "../stores/settings";
+import { t } from "../lib/i18n";
 import SettingsEditableList from "./SettingsEditableList";
 import SettingsEditorActions from "./SettingsEditorActions";
 import SettingsEditorModal from "./SettingsEditorModal";
@@ -24,8 +25,8 @@ type FlatEntry = GroupedOpenerEntry & {
 function buildFlatList(openers: OpenerRule[]): FlatEntry[] {
   return buildGroupedOpeners(openers).map((entry) => ({
     ...entry,
-    targetLabel: entry.targetKind === "folder" ? "フォルダ" : entry.extensions.join(","),
-    toolName: entry.tool.name || "(名前未設定)",
+    targetLabel: entry.targetKind === "folder" ? t("settings.opener.target.folder") : entry.extensions.join(","),
+    toolName: entry.tool.name || t("settings.opener.tool_name.unset"),
   }));
 }
 
@@ -220,16 +221,15 @@ const SettingsOpener: Component = () => {
   return (
     <div class="settings-section">
       <div class="settings-group">
-        <div class="settings-group-title">オープナールール</div>
+        <div class="settings-group-title">{t("settings.opener.group.rules")}</div>
         <div class="settings-group-content">
           <p style={{ "font-size": "0.85em", color: "var(--hint-text-color)", margin: "0 0 8px" }}>
-            ファイル/フォルダを開く際に使用するツールを設定します。
-            Enter で先頭ツールを起動、Shift+Enter でツール選択メニューを表示します。
+            {t("settings.opener.description")}
           </p>
 
           <SettingsEditableList
             hasItems={flatList().length > 0}
-            emptyMessage="オープナールールはまだ登録されていません"
+            emptyMessage={t("settings.opener.empty")}
             onAdd={openCreateModal}
           >
             <For each={flatList()}>
@@ -245,13 +245,13 @@ const SettingsOpener: Component = () => {
                       class="scan-path-edit-button"
                       onClick={() => openEditModal(fi())}
                     >
-                      編集
+                      {t("settings.opener.edit")}
                     </button>
                     <button
                       type="button"
                       onClick={() => moveUpAt(fi())}
                       disabled={!canMoveUpAt(fi())}
-                      title="上へ"
+                      title={t("settings.opener.move_up")}
                     >
                       ↑
                     </button>
@@ -259,7 +259,7 @@ const SettingsOpener: Component = () => {
                       type="button"
                       onClick={() => moveDownAt(fi())}
                       disabled={!canMoveDownAt(fi())}
-                      title="下へ"
+                      title={t("settings.opener.move_down")}
                     >
                       ↓
                     </button>
@@ -273,22 +273,22 @@ const SettingsOpener: Component = () => {
 
       <SettingsEditorModal
         open={modalMode() !== null}
-        title={modalMode() === "edit" ? "オープナールールを編集" : "オープナールールを追加"}
+        title={modalMode() === "edit" ? t("settings.opener.modal.edit_title") : t("settings.opener.modal.add_title")}
         titleId="opener-modal-title"
         onClose={closeModal}
         initialFocusEl={() => toolNameInputRef}
       >
         <div class="settings-editor-form">
           <label>
-            対象
+            {t("settings.opener.target.label")}
             <div style={{ display: "flex", gap: "8px", "align-items": "center" }}>
               <select
                 value={editTarget()}
                 onChange={(e) => setEditTarget(e.currentTarget.value)}
                 style={{ flex: "0 0 auto" }}
               >
-                <option value="folder">フォルダ</option>
-                <option value="ext">拡張子</option>
+                <option value="folder">{t("settings.opener.target.folder")}</option>
+                <option value="ext">{t("settings.opener.target.ext")}</option>
               </select>
               <Show when={editTarget() === "ext"}>
                 <input
@@ -302,7 +302,7 @@ const SettingsOpener: Component = () => {
             </div>
           </label>
           <label>
-            名前
+            {t("settings.opener.tool_name.label")}
             <input
               ref={toolNameInputRef}
               type="text"
@@ -312,7 +312,7 @@ const SettingsOpener: Component = () => {
             />
           </label>
           <label>
-            実行ファイル
+            {t("settings.opener.exe.label")}
             <div class="scan-path-input-row">
               <input
                 type="text"
@@ -321,12 +321,12 @@ const SettingsOpener: Component = () => {
                 placeholder="C:\tools\app.exe"
               />
               <button type="button" class="btn-browse" onClick={browseExe}>
-                参照...
+                {t("settings.opener.browse")}
               </button>
             </div>
           </label>
           <label>
-            引数 (オプション)
+            {t("settings.opener.args.label")}
             <input
               type="text"
               value={editToolArgs()}
@@ -334,24 +334,24 @@ const SettingsOpener: Component = () => {
               placeholder='-d {path}'
             />
             <span class="settings-editor-form-hint">
-              {"{path}"} を使うとその位置にパスを展開します。未指定時は末尾に自動追加されます
+              {t("settings.opener.args.hint")}
             </span>
           </label>
           <SettingsEditorActions
             left={
               modalMode() === "edit" ? (
                 <button type="button" class="btn-danger" onClick={deleteEntry}>
-                  削除
+                  {t("settings.opener.delete")}
                 </button>
               ) : undefined
             }
             right={
               <>
                 <button type="button" onClick={closeModal}>
-                  キャンセル
+                  {t("settings.opener.cancel")}
                 </button>
                 <button type="button" class="btn-primary" onClick={saveEntry}>
-                  保存
+                  {t("settings.opener.save")}
                 </button>
               </>
             }

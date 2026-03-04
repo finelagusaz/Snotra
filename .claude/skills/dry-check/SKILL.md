@@ -1,7 +1,6 @@
 ---
 name: dry-check
 description: "Given a new or modified function, grep for call sites that hand-write equivalent logic and flag DRY violations"
-disable-model-invocation: true
 argument-hint: "[function name and key operations, e.g. 'show_main_and_emit: show() + set_focus() + emit(window-shown)']"
 allowed-tools:
   - Read

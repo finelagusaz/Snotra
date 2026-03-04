@@ -20,19 +20,22 @@ Task: $ARGUMENTS
 
 ## Step 1 -- INVESTIGATE
 
-- Read `SPEC.md` and relevant `CLAUDE.md` files to understand intent and architecture
+- If `workspace/plan.md` exists, read it first — it was created by `/start-issue` and contains the investigation and plan. Skip to Step 3.
+- Otherwise: Read `SPEC.md` and relevant `CLAUDE.md` files to understand intent and architecture
 - Identify entry points and related modules from `$ARGUMENTS`
 - Search for existing code that overlaps with the requested feature
 - Note any constraints from the 3-layer model (intent in SPEC.md, implementation in code)
 
 ## Step 2 -- PLAN
 
-- Summarize the change plan in a short list (which files to create/modify and why)
-- Print the plan to the conversation--do not create external plan files
+- If `workspace/plan.md` exists, use it as the plan. Do not create a separate plan.
+- Otherwise: Summarize the change plan in a short list (which files to create/modify and why)
+- Print the plan to the conversation
 - Follow project principles: logic in `snotra-core`, thin wrappers in `commands.rs` (KISS/DRY/YAGNI)
 
 ## Step 3 -- IMPLEMENT
 
+- For `snotra-core` pure logic changes: write a failing `#[cfg(test)]` test first (Red), then implement to pass it (Green)
 - Make the changes following the plan
 - Add `#[cfg(test)]` unit tests in `snotra-core` for any new pure logic
 - If the change affects behavior described in `SPEC.md`, update `SPEC.md` accordingly
@@ -55,7 +58,11 @@ If after 5 cycles errors persist, stop and write a diagnostic summary:
 - What error persists
 - What the likely root cause is
 
-## Step 5 -- COMMIT
+## Step 5 -- REVIEW
+
+Run the `code-reviewer` agent on the changes. Fix any Critical or High findings before proceeding.
+
+## Step 6 -- COMMIT
 
 - Stage only the files changed in this task
 - Create a conventional commit (e.g. `feat:`, `fix:`, `refactor:`)

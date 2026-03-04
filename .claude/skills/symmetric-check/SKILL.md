@@ -1,7 +1,6 @@
 ---
 name: symmetric-check
 description: "Given a changed or fixed code path, find symmetric counterparts and verify the same change applies (or explicitly confirm why not)"
-disable-model-invocation: true
 argument-hint: "[changed code path or bug keyword, e.g. 'result-clicked: added emitSelectionUpdate']"
 allowed-tools:
   - Read

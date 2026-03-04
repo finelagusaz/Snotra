@@ -74,9 +74,3 @@ export function findCommand(input: string): SlashCommand | undefined {
   return SLASH_COMMANDS.find((c) => c.command === trimmed);
 }
 
-export function filterCommands(input: string): SlashCommand[] {
-  const trimmed = input.trim();
-  if (!trimmed.startsWith("/")) return [];
-  if (trimmed === "/") return SLASH_COMMANDS;
-  return SLASH_COMMANDS.filter((c) => c.command.startsWith(trimmed));
-}

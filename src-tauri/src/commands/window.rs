@@ -2,7 +2,7 @@ use std::sync::atomic::Ordering;
 
 use serde_json::json;
 use snotra_core::window_data::{self, WindowPlacement, WindowSize};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 use crate::indexing;
@@ -43,26 +43,52 @@ pub(crate) fn ensure_about_window(app: &AppHandle) -> tauri::Result<()> {
         .visible(false)
         .build()?;
 
-    let handle_for_about_close = app.clone();
+    // WebView2 はイベントループ開始後に再生成できないため、破棄せず hide する。
+    let handle_for_close = app.clone();
     about_window.on_window_event(move |event| {
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
             api.prevent_close();
-            if let Some(w) = handle_for_about_close.get_webview_window("about") {
+            if let Some(w) = handle_for_close.get_webview_window("about") {
                 let _ = w.hide();
             }
             // settings も非表示なら main の alwaysOnTop を戻す
-            let settings_hidden = handle_for_about_close
+            let settings_visible = handle_for_close
                 .get_webview_window("settings")
-                .map(|w| !w.is_visible().unwrap_or(true))
-                .unwrap_or(true);
-            if settings_hidden
-                && let Some(main) = handle_for_about_close.get_webview_window("main")
+                .and_then(|w| w.is_visible().ok())
+                .unwrap_or(false);
+            if !settings_visible
+                && let Some(main) = handle_for_close.get_webview_window("main")
             {
                 let _ = main.set_always_on_top(true);
             }
         }
     });
     Ok(())
+}
+
+/// settings ウィンドウを非表示にし、alwaysOnTop 復元と初回インデックス構築を行う。
+/// `hide_settings` コマンドと `CloseRequested` ハンドラの共通ロジック。
+fn dismiss_settings(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("settings") {
+        let _ = w.hide();
+    }
+    // about も非表示なら main の alwaysOnTop を戻す
+    let about_visible = app
+        .get_webview_window("about")
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false);
+    if !about_visible
+        && let Some(main) = app.get_webview_window("main")
+    {
+        let _ = main.set_always_on_top(true);
+    }
+    // First-run: start index build when settings is dismissed.
+    let app_state = app.state::<AppState>();
+    if app_state.indexing.load(Ordering::SeqCst)
+        && !app_state.index_build_started.load(Ordering::SeqCst)
+    {
+        indexing::start_index_build(app);
+    }
 }
 
 pub fn ensure_settings_window(app: &AppHandle) -> tauri::Result<()> {
@@ -80,74 +106,46 @@ pub fn ensure_settings_window(app: &AppHandle) -> tauri::Result<()> {
             .visible(false)
             .build()?;
 
-    // Keep window alive to avoid repeated WebView initialization.
+    // WebView2 はイベントループ開始後に再生成できないため、破棄せず hide する。
     let handle_for_close = app.clone();
     settings_window.on_window_event(move |event| {
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-            // Safety net: JS が preventDefault() し忘れた場合のフォールバック。
-            // 通常は JS 側で CloseRequested を prevent し、hide_settings IPC で閉じる。
             api.prevent_close();
-            if let Some(w) = handle_for_close.get_webview_window("settings") {
-                let _ = w.hide();
-            }
+            dismiss_settings(&handle_for_close);
         }
     });
     Ok(())
 }
 
 #[tauri::command]
-pub fn hide_settings(state: State<AppState>, app: AppHandle) {
+pub fn hide_settings(_state: State<AppState>, app: AppHandle) {
     trace_command("cmd:hide_settings:start", json!({}));
-    if let Some(w) = app.get_webview_window("settings") {
-        let _ = w.hide();
-    }
-    // about も非表示なら main の alwaysOnTop を戻す
-    let about_hidden = app
-        .get_webview_window("about")
-        .map(|w| !w.is_visible().unwrap_or(true))
-        .unwrap_or(true);
-    if about_hidden
-        && let Some(main) = app.get_webview_window("main")
-    {
-        let _ = main.set_always_on_top(true);
-    }
-    // First-run: start index build when settings is dismissed.
-    if state.indexing.load(Ordering::SeqCst)
-        && !state.index_build_started.load(Ordering::SeqCst)
-    {
-        indexing::start_index_build(&app);
-    }
+    dismiss_settings(&app);
     trace_command("cmd:hide_settings:ok", json!({}));
 }
 
 #[tauri::command]
 pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), String> {
     trace_command("cmd:open_settings:start", json!({}));
-    if state.indexing.load(Ordering::SeqCst) {
+    // インデックス構築中はブロック。ただし初回起動（未開始）は設定画面を表示する。
+    if state.indexing.load(Ordering::SeqCst) && state.index_build_started.load(Ordering::SeqCst) {
         trace_command("cmd:open_settings:noop_indexing", json!({}));
         return Ok(());
     }
 
-    if let Err(e) = ensure_settings_window(&app) {
-        let msg = e.to_string();
-        trace_command("cmd:open_settings:error", json!({ "error": msg }));
-        return Err(msg);
-    }
+    // ウィンドウは setup で事前生成済み。show/focus のみ。
     if let Some(w) = app.get_webview_window("settings") {
         // main は alwaysOnTop のため、settings が前面に出るよう一時的に外す（settings close 時に戻す）
         if let Some(main) = app.get_webview_window("main") {
             let _ = main.set_always_on_top(false);
         }
         // show() の前に保存済みの位置・サイズを復元する。
-        // JS 側の onMount でも復元するが非同期のため show() に間に合わない。
-        // Rust 側で同期的に復元することで初回表示時の白画面フラッシュを防ぐ。
         if let Some(size) = window_data::load_settings_size() {
             let _ = w.set_size(tauri::LogicalSize::new(size.width, size.height));
         }
         if let Some(placement) = window_data::load_settings_placement() {
             let _ = w.set_position(tauri::LogicalPosition::new(placement.x, placement.y));
         }
-        let _ = app.emit("settings-shown", ());
         let _ = w.show();
         let _ = w.set_focus();
         trace_command("cmd:open_settings:ok", json!({ "window_found": true }));
@@ -160,11 +158,7 @@ pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), Strin
 #[tauri::command]
 pub fn open_about(app: AppHandle) -> Result<(), String> {
     trace_command("cmd:open_about:start", json!({}));
-    if let Err(e) = ensure_about_window(&app) {
-        let msg = e.to_string();
-        trace_command("cmd:open_about:error", json!({ "error": msg }));
-        return Err(msg);
-    }
+    // ウィンドウは setup で事前生成済み。show/focus のみ。
     if let Some(w) = app.get_webview_window("about") {
         // main は alwaysOnTop のため、about が前面に出るよう一時的に外す（about close 時に戻す）
         if let Some(main) = app.get_webview_window("main") {

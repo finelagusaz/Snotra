@@ -12,8 +12,7 @@ pub use search::*;
 pub use system::*;
 pub use window::*;
 
-// Re-export pub(crate) items that main.rs references as commands::ensure_*_window
-pub(crate) use window::ensure_about_window;
+// Re-export pub(crate) items that main.rs references as commands::ensure_results_window
 pub(crate) use window::ensure_results_window;
 
 use std::sync::OnceLock;

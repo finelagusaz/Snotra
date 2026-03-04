@@ -1,6 +1,4 @@
 import { type Component, Show, onMount, onCleanup, createSignal } from "solid-js";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { listen } from "@tauri-apps/api/event";
 import {
   type TabId,
   draft,
@@ -47,18 +45,10 @@ const SettingsWindow: Component = () => {
   }
 
   onMount(() => {
+    // Window is created on-demand, so onMount fires each time it opens.
     loadDraft();
 
-    // Reload config each time the settings window is shown.
-    // The window is pre-created and hidden on close, so onMount only fires once.
-    let unlistenShown: (() => void) | undefined;
-    onCleanup(() => unlistenShown?.());
     onCleanup(() => clearTimeout(resetTimer));
-    void listen("settings-shown", () => {
-      loadDraft();
-      clearTimeout(resetTimer);
-      setResetConfirming(false);
-    }).then((fn) => { unlistenShown = fn; });
 
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -73,16 +63,6 @@ const SettingsWindow: Component = () => {
     };
     window.addEventListener("keydown", handler);
     onCleanup(() => window.removeEventListener("keydown", handler));
-
-    let unlistenClose: (() => void) | undefined;
-    onCleanup(() => unlistenClose?.());
-    getCurrentWindow().onCloseRequested(async (event) => {
-      event.preventDefault();
-      if (hasChanges()) {
-        return; // バナー表示、footer ボタンで操作
-      }
-      void api.hideSettings();
-    }).then(fn => { unlistenClose = fn; });
   });
 
   return (

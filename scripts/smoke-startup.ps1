@@ -17,7 +17,7 @@ if (-not (Test-Path $ExePath)) {
   throw "Executable not found: $ExePath"
 }
 
-$requiredLabels = @("results", "about", "settings")
+$requiredLabels = @("results")
 $summaries = @()
 $failures = @()
 $savedTraceEnv = $env:SNOTRA_TRACE
@@ -84,8 +84,6 @@ for ($run = 1; $run -le $Iterations; $run++) {
   $summaries += [pscustomobject]@{
     run = $run
     results_ms = if ($okByLabel.ContainsKey("results")) { $okByLabel["results"] } else { $null }
-    about_ms = if ($okByLabel.ContainsKey("about")) { $okByLabel["about"] } else { $null }
-    settings_ms = if ($okByLabel.ContainsKey("settings")) { $okByLabel["settings"] } else { $null }
     error_count = $errorEvents.Count
   }
 }

@@ -7,6 +7,10 @@
           {
             "type": "command",
             "command": "input=$(cat); if echo \"$input\" | grep -q '\\.rs\"'; then cargo check -p snotra-core -p snotra --message-format short 2>&1 | head -20; fi"
+          },
+          {
+            "type": "command",
+            "command": "input=$(cat); if echo \"$input\" | grep -qE '\\.(ts|tsx)\"'; then cd /c/workspace/Snotra && npm run typecheck 2>&1 | head -30; fi"
           }
         ]
       }

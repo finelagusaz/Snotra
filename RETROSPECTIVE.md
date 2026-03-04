@@ -1,35 +1,44 @@
-# Retrospective — Claude Code セットアップ改善・スキルとエージェントの整理
+# Retrospective — i18n 集中管理移行（Issue #12）
 
 ## よかったこと
 
-### insights 駆動で優先度付きの改善ができた
+### 計画と実装の完全一致
+plan.md に 14 ファイルを列挙し、実際も 14 ファイル（1新規 + 13修正）で完了。
+TranslationKey 型と JA_JP 辞書の全キーを計画時に洗い出したため、実装フェーズで設計の迷いが生じなかった。
 
-`/insights` レポートの摩擦分析から「main 直プッシュ」「計画書の勝手な簡略化」「初回ビルド失敗」を特定し、CLAUDE.md ルールと PostToolUse フックで対策した。根拠のある変更なので過剰追記にならず済んだ。
+### 型安全性による辞書漏れの仕組み的防止
+`TranslationKey` 型（ユニオン）と `Record<TranslationKey, string>` 辞書の組み合わせにより、
+キー不存在・辞書漏れをコンパイル時に検出できる設計にした。
+コードレビューで「キーの網羅性」に問題なしと評価された。
 
-### スキル・エージェントの整理を体系的に実施できた
-
-重複の特定（debugger 削除、tdd→implement 統合）と未使用原因の分析（`disable-model-invocation` が忘却を引き起こす）を行い、ワークフロー全体を `/start-issue` → `/implement` → `/retrospective` の3スキル連携に整理できた。
-
-### 和訳の一括統一でプロジェクト全体の一貫性が向上した
-
-エージェント2件（code-reviewer, code-optimizer-reviewer）+ スキル4件（implement, symmetric-check, dry-check, start-issue）を日本語化し、description のトリガー条件も日本語で記述した。
+### コードレビュー指摘をすべてコミット前に修正
+High（重複キー）+ 2×Medium（文字列結合パターン不統一・YAGNI コメント）の3点を
+修正してからコミット。手戻りなしで完了できた。
 
 ---
 
 ## 伸びしろ
 
-### MCP 設定のクロスプラットフォーム調査が後手に回った
+### 設計時に既存キーとの重複チェックが不足していた
+`opener.target.folder` を新規キーとして plan.md に記載・実装したが、
+`settings.opener.target.folder` と同一文字列であることをコードレビューで指摘されて気づいた。
 
-プロジェクト `.mcp.json` → ローカル設定 → グローバル設定と3回やり直した。Windows の `cmd /c` ラッパーが必要な点と、`.mcp.json` にクロスプラットフォーム切替機能がない点を最初に確認していれば1回で済んだ。
+根本原因: i18n キー設計時に「既に同じ文字列を返すキーがないか」を確認するステップを踏んでいなかった。
 
-### CLI バグ（`claude mcp add` の `/c` → `C:/` 変換）への対処
+対策: ui/CLAUDE.md に「新キー追加前に既存キーを確認する」ルールを追加済み。
 
-既知の issue (#20061) だが、事前に知らなかったため Python スクリプトによる手動 JSON 編集が必要になった。MCP 設定変更時は CLI を信用せず `~/.claude.json` を直接確認する運用が安全。
+### `{param}` 置換と文字列連結の設計が統一されていなかった
+plan.md で `t("notice.launch.timeout") + detail` パターンを明示的に記載しており、
+実装もその通りにしたが、`{param}` 置換機能を持ちながら一部でそれを使わない設計になっていた。
+コードレビューで指摘されて修正。
+
+根本原因: 設計時に「動的文字列はすべて `{param}` テンプレートで扱う」という統一方針を立てていなかった。
+
+対策: ui/CLAUDE.md に `{param}` 統一ルールを追加済み。
 
 ---
 
 ## ネクストアクション
 
-- [ ] 次回の実装サイクルで `/start-issue` → `/implement` → `/retrospective` の連携を実際に通してワークフローを検証する
-- [ ] symmetric-check / dry-check の自動トリガーが実際に発火するか、日本語 description での精度を観察する
-- [ ] 別マシン（macOS）で context7 MCP のグローバル設定を行い、セットアップ手順を chezmoi 管理外のドキュメントに記録する
+- [ ] PR を作成してブランチをマージする（`gh pr create`）
+- [ ] 実機で設定画面・検索画面の表示文字列が正しく表示されるか確認する

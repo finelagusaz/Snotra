@@ -1,44 +1,35 @@
-# Retrospective — 大規模インデックス対応 3フェーズ最適化
+# Retrospective — Claude Code セットアップ改善・スキルとエージェントの整理
 
 ## よかったこと
 
-### 3フェーズを独立して検証しながら段階的に実装できた
+### insights 駆動で優先度付きの改善ができた
 
-Phase 1（Lazy UTF-32）→ Phase 2（並列構築）→ Phase 3（マスクキャッシュ）の順に、
-各フェーズが独立して `cargo check / cargo test` を通過することを確認しながら進められた。
-"最小限の変更で最大の効果を得る順" という計画の意図をコードに反映できた。
+`/insights` レポートの摩擦分析から「main 直プッシュ」「計画書の勝手な簡略化」「初回ビルド失敗」を特定し、CLAUDE.md ルールと PostToolUse フックで対策した。根拠のある変更なので過剰追記にならず済んだ。
 
-### `Option<Utf32String>` パターンが "possibly uninitialized" 問題を回避した
+### スキル・エージェントの整理を体系的に実施できた
 
-最初の実装案は `let name_u32_owned; name_u32_owned = ...` の条件付き初期化パターンだったが、
-Rust のコンパイラが "possibly uninitialized" として拒否しうることに気づき、
-`Option<Utf32String>` で保持して `.as_ref()` で借用する安全なパターンに置き換えた。
-問題に気づいた時点で即座にリファクタしたため、コンパイルエラーを踏まず済んだ。
+重複の特定（debugger 削除、tdd→implement 統合）と未使用原因の分析（`disable-model-invocation` が忘却を引き起こす）を行い、ワークフロー全体を `/start-issue` → `/implement` → `/retrospective` の3スキル連携に整理できた。
 
-### DRY 原則のトレードオフを明示的に判断した
+### 和訳の一括統一でプロジェクト全体の一貫性が向上した
 
-`char_bitmask` ロジックを `search.rs` と `indexer.rs` の2箇所に持つことは「2回まで許容」
-の範囲内であると判断し、`query.rs` への抽出や `search.rs` → `indexer.rs` の依存追加を
-避けた。KISS を優先した合理的な判断として記録しておく。
+エージェント2件（code-reviewer, code-optimizer-reviewer）+ スキル4件（implement, symmetric-check, dry-check, start-issue）を日本語化し、description のトリガー条件も日本語で記述した。
 
 ---
 
 ## 伸びしろ
 
-### v2 キャッシュヒット時のアップグレードパスがない
+### MCP 設定のクロスプラットフォーム調査が後手に回った
 
-v2 フォーマットが残っている間は起動のたびに `SearchEngine::new()` がマスクを計算する。
-エントリに変更がなければ background rescan は保存しないため、v2 → v3 自動昇格は起きない。
-長期的には「v2 ヒット時に v3 で上書き保存する」パスを追加すると完全に解消できる。
+プロジェクト `.mcp.json` → ローカル設定 → グローバル設定と3回やり直した。Windows の `cmd /c` ラッパーが必要な点と、`.mcp.json` にクロスプラットフォーム切替機能がない点を最初に確認していれば1回で済んだ。
 
-### `char_bitmask_for_cache` と `search.rs::char_bitmask` の二重管理
+### CLI バグ（`claude mcp add` の `/c` → `C:/` 変換）への対処
 
-同一ロジックが2ファイルに存在する。3箇所目が増えたら `query.rs` に集約する。
+既知の issue (#20061) だが、事前に知らなかったため Python スクリプトによる手動 JSON 編集が必要になった。MCP 設定変更時は CLI を信用せず `~/.claude.json` を直接確認する運用が安全。
 
 ---
 
 ## ネクストアクション
 
-- [ ] 動作確認: `npm run tauri dev` で通常起動・インデックス再構築・検索動作を手動確認
-- [ ] `cargo test --release -p snotra-core bench_ -- --ignored --nocapture` でパフォーマンス回帰がないことを確認
-- [ ] `PERFORMANCE.md` に Phase 1-3 の効果（メモリ / 起動時間 / 検索遅延）を追記
+- [ ] 次回の実装サイクルで `/start-issue` → `/implement` → `/retrospective` の連携を実際に通してワークフローを検証する
+- [ ] symmetric-check / dry-check の自動トリガーが実際に発火するか、日本語 description での精度を観察する
+- [ ] 別マシン（macOS）で context7 MCP のグローバル設定を行い、セットアップ手順を chezmoi 管理外のドキュメントに記録する

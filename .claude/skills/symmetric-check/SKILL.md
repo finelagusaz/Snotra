@@ -1,34 +1,31 @@
 ---
 name: symmetric-check
-description: "Given a changed or fixed code path, find symmetric counterparts and verify the same change applies (or explicitly confirm why not)"
-disable-model-invocation: true
-argument-hint: "[changed code path or bug keyword, e.g. 'result-clicked: added emitSelectionUpdate']"
+description: "変更・修正したコードパスの対称ペアを検索し、同じ変更の適用要否を検証する。コードパス変更・バグ修正時に使用。"
+argument-hint: "[変更したコードパスやキーワード, 例: 'result-clicked: emitSelectionUpdate を追加']"
 allowed-tools:
   - Read
   - Grep
   - Glob
 ---
 
-Search for symmetric code paths related to: $ARGUMENTS
+$ARGUMENTS に関連する対称コードパスを検索する。
 
-## Background
+## 背景
 
-When a fix or change is applied to one code path, its symmetric counterpart often
-needs the same treatment. Missing this is a common source of bugs — the invariant
-is violated in one branch while visibly working in another.
+あるコードパスに修正や変更を適用したとき、その対称ペアにも同じ処理が必要なことが多い。これを見落とすと、片方では正しく動作するのにもう片方では不変条件が破れるバグになる。
 
-## Step 1 — Identify the pattern
+## Step 1 — パターンの特定
 
-From $ARGUMENTS, extract:
-- The affected function / event name / invariant keyword
-- The type of change (added call, removed call, reordered logic, etc.)
+$ARGUMENTS から以下を抽出する:
+- 影響を受ける関数 / イベント名 / 不変条件のキーワード
+- 変更の種類（呼び出し追加、呼び出し削除、処理順序の変更 等）
 
-## Step 2 — Search for symmetric counterparts
+## Step 2 — 対称ペアの検索
 
-Grep the codebase for pairs such as:
+コードベースを grep し、以下のようなペアを探す:
 
-| Changed | Check |
-|---------|-------|
+| 変更対象 | 確認対象 |
+|---------|---------|
 | `*clicked*` | `*double-clicked*` |
 | `show` / `open` | `hide` / `close` |
 | `enter*` | `exit*` |
@@ -36,25 +33,23 @@ Grep the codebase for pairs such as:
 | `mount` / `setup` | `unmount` / `teardown` |
 | `register` | `unregister` |
 
-Also search for other call sites of the same function or keyword to find any
-code path that was not included in the original change.
+同じ関数やキーワードの他の呼び出し箇所も検索し、元の変更に含まれなかったコードパスを見つける。
 
-## Step 3 — Evaluate each candidate
+## Step 3 — 各候補の評価
 
-For each candidate location, read enough context to enumerate all execution cases:
+候補ごとに十分なコンテキストを読み、全実行ケースを列挙する:
 
 ```
-Candidate: <file>:<line> — <description>
-  Case A: <scenario> → <effect> → OK / PROBLEM: <description>
-  Case B: <scenario> → <effect> → OK / PROBLEM: <description>
-  Decision: [APPLY] same change needed
-            [NOT NEEDED] reason: <explicit per-case justification>
+候補: <file>:<line> — <説明>
+  ケース A: <シナリオ> → <影響> → OK / 問題: <説明>
+  ケース B: <シナリオ> → <影響> → OK / 問題: <説明>
+  判定: [適用] 同じ変更が必要
+        [不要] 理由: <ケースごとの明示的な根拠>
 ```
 
-A "NOT NEEDED" decision with no case-by-case reasoning is a red flag.
-Treat unexplained exclusions as unverified.
+ケースごとの根拠なしの「不要」判定はレッドフラグ。根拠のない除外は未検証として扱う。
 
-## Output
+## 出力
 
-List every candidate with its decision and reasoning.
-If no counterparts are found, state that explicitly.
+全候補を判定と根拠付きで列挙する。
+対称ペアが見つからなかった場合は、その旨を明示する。

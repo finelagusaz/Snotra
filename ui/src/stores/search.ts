@@ -635,6 +635,10 @@ async function activateSelectedByIndex(index: number): Promise<boolean> {
 
 function resetForShow() {
   trace("search:reset_for_show", { query: query() });
+  // すでにクリーン状態なら runRefresh() をスキップ（results ウィンドウへの不要な IPC を削減）。
+  // リセット前に確認する（setFolderState / setToolSelectionState が呼ばれる前）。
+  // indexing() は含めない: indexing=true 時も results は既に非表示のため、スキップしても問題ない。
+  const skipRefresh = query() === "" && folderState() === null && toolSelectionState() === null;
   setLaunching(false);
   clearLaunchNotice();
   setToolSelectionState(null);
@@ -646,7 +650,9 @@ function resetForShow() {
   setFolderFilter("");
   setCommandMatches([]);
   setSelected(0);
-  void runRefresh();
+  if (!skipRefresh) {
+    void runRefresh();
+  }
 }
 
 let unlistenIndexingComplete: (() => void) | undefined;

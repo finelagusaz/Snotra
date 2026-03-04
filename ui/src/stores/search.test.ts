@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 // ── Tauri 依存をモック（search.ts のモジュールロード前に宣言） ──────────────
 
@@ -20,6 +20,7 @@ vi.mock("../lib/invoke", () => ({
 
 // ── モック確立後にインポート ─────────────────────────────────────────────────
 
+import * as eventApi from "@tauri-apps/api/event";
 import * as api from "../lib/invoke";
 import type { OpenerTool, SearchResult } from "../lib/types";
 import {
@@ -238,6 +239,32 @@ describe("resetForShow", () => {
     expect(query()).toBe("");
     expect(folderFilter()).toBe("");
     expect(selected()).toBe(0);
+  });
+
+  it("クリーン状態では emit('results-sync') を呼ばない", async () => {
+    // 初期状態: query="", folderState=null, toolSelectionState=null
+    const emitMock = eventApi.emit as Mock;
+    emitMock.mockClear();
+
+    resetForShow();
+
+    // runRefresh() がスキップされるため results-sync IPC は発生しない
+    await vi.runAllTimersAsync();
+    const resultsSyncCalls = emitMock.mock.calls.filter((args) => args[0] === "results-sync");
+    expect(resultsSyncCalls).toHaveLength(0);
+  });
+
+  it("クエリが非空なら emit('results-sync') を呼ぶ", async () => {
+    setQuery("hello");
+    const emitMock = eventApi.emit as Mock;
+    emitMock.mockClear();
+
+    resetForShow();
+
+    // runRefresh() が走るため results-sync IPC が発生する
+    await vi.runAllTimersAsync();
+    const resultsSyncCalls = emitMock.mock.calls.filter((args) => args[0] === "results-sync");
+    expect(resultsSyncCalls.length).toBeGreaterThan(0);
   });
 });
 

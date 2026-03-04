@@ -276,21 +276,20 @@ fn main() {
             // Tray is NOT created here; SetTrayVisible is sent after full setup (SPEC §7.5).
             let platform_pending = PlatformBridge::begin(app_handle.clone(), hotkey_config);
 
-            // Pre-create secondary windows for stability.
+            // Pre-create results window (latency-critical, used on every search).
+            // about/settings are created on-demand to reduce idle memory footprint.
             ensure_window_with_timing(&app_handle, "results", commands::ensure_results_window)?;
-            ensure_window_with_timing(&app_handle, "about", commands::ensure_about_window)?;
-            ensure_window_with_timing(&app_handle, "settings", commands::ensure_settings_window)?;
 
             // Win32 init finishes in a few ms; by the time windows are created it is already done.
             if let Some(bridge) = platform_pending.and_then(PlatformBridgePending::wait) {
                 app_handle.manage(Mutex::new(bridge));
             }
 
-            if is_first_run
-                && let Some(settings_window) = app_handle.get_webview_window("settings")
-            {
-                let _ = settings_window.show();
-                let _ = settings_window.set_focus();
+            if is_first_run {
+                let _ = commands::open_settings(
+                    app_handle.state::<AppState>(),
+                    app_handle.clone(),
+                );
             }
 
             // Listen for hotkey toggle events
@@ -377,9 +376,8 @@ fn main() {
                 handle_for_exit.exit(0);
             });
 
-            // All windows pre-created and all listeners registered; now safe to show tray.
-            // Showing tray before this point would allow right-click menu actions before
-            // the windows and listeners are ready (SPEC §7.5 / §9).
+            // All listeners registered; now safe to show tray.
+            // about/settings are created on-demand, so only results needs to be ready.
             if show_tray
                 && let Some(bridge) = app_handle.try_state::<Mutex<PlatformBridge>>()
                 && let Ok(b) = bridge.lock()

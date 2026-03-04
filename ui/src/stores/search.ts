@@ -2,7 +2,7 @@ import { createSignal, createEffect, createRoot, on } from "solid-js";
 import { emit, listen } from "@tauri-apps/api/event";
 import type { OpenerTool, SearchResult } from "../lib/types";
 import * as api from "../lib/invoke";
-import { findCommand, filterCommands, type SlashCommand } from "../lib/commands";
+import { findCommand } from "../lib/commands";
 import { perfStartSearch, perfMarkSearchDone, perfCancelSearch } from "../lib/perf";
 import { parsePathQuery } from "../lib/pathQuery";
 import { clampSelectedIndex, computeParentDir } from "../lib/folderNav";
@@ -16,7 +16,6 @@ const [query, setQuery] = createSignal("");
 const [results, setResults] = createSignal<SearchResult[]>([]);
 const [selected, setSelected] = createSignal(0);
 const [indexing, setIndexing] = createSignal(false);
-const [commandMatches, setCommandMatches] = createSignal<SlashCommand[]>([]);
 const [launching, setLaunching] = createSignal(false);
 const [launchNotice, setLaunchNotice] = createSignal<string | null>(null);
 
@@ -67,29 +66,9 @@ function setLaunchNoticeWithAutoClear(message: string) {
   }, 2400);
 }
 
-function commandToResult(cmd: SlashCommand): SearchResult {
-  return {
-    name: cmd.label,
-    path: `${cmd.command} ${cmd.description}`,
-    isFolder: false,
-    isError: false,
-  };
-}
-
-function showCommandResults(input: string) {
-  const matches = filterCommands(input);
-  setCommandMatches(matches);
-  const items = matches.map(commandToResult);
-  const requestId = ++searchGeneration;
-  setResults(items);
-  setSelected(0);
-  emitResults(items, 0, requestId, { reason: "command", shouldShow: items.length > 0 });
-}
-
 function clearCommandModeStateAndEmit() {
   const requestId = ++searchGeneration;
   setQuery("");
-  setCommandMatches([]);
   setResults([]);
   setSelected(0);
   emitResults([], 0, requestId, { reason: "command", shouldShow: false });
@@ -131,7 +110,6 @@ async function refreshResults() {
       perfCancelSearch(requestId);
       return;
     }
-    setCommandMatches([]);
     setResults(items);
     setSelected(0);
     trace("search:refresh:done", { requestId, branch: "slash_r_history", count: items.length });
@@ -140,14 +118,11 @@ async function refreshResults() {
     return;
   }
   if (!fs && trimmed.startsWith("/")) {
-    trace("search:refresh:branch", { requestId, branch: "slash_suggestions", input: q });
-    const matches = filterCommands(q);
-    setCommandMatches(matches);
-    const items = matches.map(commandToResult);
-    setResults(items);
+    // Command mode: no suggestions shown, just wait for exact match (handled by query effect).
+    trace("search:refresh:branch", { requestId, branch: "slash_noop" });
+    setResults([]);
     setSelected(0);
-    trace("search:refresh:done", { requestId, branch: "slash_suggestions", count: items.length });
-    emitResults(items, 0, requestId, { reason: "command", shouldShow: items.length > 0 });
+    emitResults([], 0, requestId, { reason: "command", shouldShow: false });
     return;
   }
   const pathQuery = fs ? null : parsePathQuery(q);
@@ -241,7 +216,6 @@ createRoot(() => {
       if (trimmed === "/r") {
         if (debounceTimer !== undefined) cancelAnimationFrame(debounceTimer);
         debounceTimer = undefined;
-        setCommandMatches([]);
         setSelected(0);
         trace("search:query_effect:immediate_refresh", { reason: "slash_r" });
         void runRefresh();
@@ -259,14 +233,17 @@ createRoot(() => {
           return;
         }
 
+        // Command mode without exact match: no suggestions, just clear results.
         if (debounceTimer !== undefined) cancelAnimationFrame(debounceTimer);
         debounceTimer = undefined;
-        trace("search:query_effect:show_command_suggestions", { input: q });
-        showCommandResults(q);
+        trace("search:query_effect:slash_noop", { input: q });
+        const requestId = ++searchGeneration;
+        setResults([]);
+        setSelected(0);
+        emitResults([], 0, requestId, { reason: "command", shouldShow: false });
         return;
       }
 
-      setCommandMatches([]);
       setSelected(0);
       trace("search:query_effect:debounced_refresh", { query: q });
       debouncedRefresh();
@@ -410,26 +387,6 @@ async function resolveActivationTarget(
   return { idx, result };
 }
 
-function consumeCommandSelection(index: number): boolean {
-  const trimmed = query().trim();
-  if (!folderState() && trimmed.startsWith("/") && commandMatches().length > 0) {
-    const cmd = commandMatches()[index];
-    if (cmd) {
-      trace("search:command_selected", { index, command: cmd.command });
-      if (cmd.command === "/r") {
-        setQuery("/r");
-        setCommandMatches([]);
-        setSelected(0);
-        void runRefresh();
-        return true;
-      }
-      clearCommandModeStateAndEmit();
-      cmd.action();
-      return true;
-    }
-  }
-  return false;
-}
 
 async function launchWithSelectedTool(): Promise<boolean> {
   if (activationInFlight) return false;
@@ -603,7 +560,6 @@ async function activateSelected(): Promise<boolean> {
     if (idx !== selected()) {
       setSelected(idx);
     }
-    if (consumeCommandSelection(idx)) return false;
     return launchAndReset(result);
   } finally {
     activationInFlight = false;
@@ -627,7 +583,6 @@ async function activateSelectedByIndex(index: number): Promise<boolean> {
     if (idx !== selected()) {
       setSelected(idx);
     }
-    if (consumeCommandSelection(idx)) return false;
     return launchAndReset(result);
   } finally {
     activationInFlight = false;
@@ -649,7 +604,6 @@ function resetForShow() {
   }
   setQuery("");
   setFolderFilter("");
-  setCommandMatches([]);
   setSelected(0);
   if (!skipRefresh) {
     void runRefresh();

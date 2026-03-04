@@ -2,7 +2,7 @@ use std::sync::atomic::Ordering;
 
 use serde_json::json;
 use snotra_core::window_data::{self, WindowPlacement, WindowSize};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 use crate::indexing;
@@ -43,13 +43,11 @@ pub(crate) fn ensure_about_window(app: &AppHandle) -> tauri::Result<()> {
         .visible(false)
         .build()?;
 
+    // Window is destroyed on close (on-demand lifecycle).
+    // Restore main's alwaysOnTop before destruction.
     let handle_for_about_close = app.clone();
     about_window.on_window_event(move |event| {
-        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-            api.prevent_close();
-            if let Some(w) = handle_for_about_close.get_webview_window("about") {
-                let _ = w.hide();
-            }
+        if let tauri::WindowEvent::CloseRequested { .. } = event {
             // settings も非表示なら main の alwaysOnTop を戻す
             let settings_hidden = handle_for_about_close
                 .get_webview_window("settings")
@@ -80,15 +78,27 @@ pub fn ensure_settings_window(app: &AppHandle) -> tauri::Result<()> {
             .visible(false)
             .build()?;
 
-    // Keep window alive to avoid repeated WebView initialization.
+    // Window is destroyed on close (on-demand lifecycle).
+    // Restore main's alwaysOnTop and trigger first-run index build before destruction.
     let handle_for_close = app.clone();
     settings_window.on_window_event(move |event| {
-        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-            // Safety net: JS が preventDefault() し忘れた場合のフォールバック。
-            // 通常は JS 側で CloseRequested を prevent し、hide_settings IPC で閉じる。
-            api.prevent_close();
-            if let Some(w) = handle_for_close.get_webview_window("settings") {
-                let _ = w.hide();
+        if let tauri::WindowEvent::CloseRequested { .. } = event {
+            // about も非表示なら main の alwaysOnTop を戻す
+            let about_hidden = handle_for_close
+                .get_webview_window("about")
+                .map(|w| !w.is_visible().unwrap_or(true))
+                .unwrap_or(true);
+            if about_hidden
+                && let Some(main) = handle_for_close.get_webview_window("main")
+            {
+                let _ = main.set_always_on_top(true);
+            }
+            // First-run: start index build when settings is dismissed.
+            let app_state = handle_for_close.state::<AppState>();
+            if app_state.indexing.load(Ordering::SeqCst)
+                && !app_state.index_build_started.load(Ordering::SeqCst)
+            {
+                indexing::start_index_build(&handle_for_close);
             }
         }
     });
@@ -96,26 +106,13 @@ pub fn ensure_settings_window(app: &AppHandle) -> tauri::Result<()> {
 }
 
 #[tauri::command]
-pub fn hide_settings(state: State<AppState>, app: AppHandle) {
+pub fn hide_settings(_state: State<AppState>, app: AppHandle) {
     trace_command("cmd:hide_settings:start", json!({}));
+    // Destroy the settings window (on-demand lifecycle).
+    // alwaysOnTop restoration and first-run index build are handled
+    // by the CloseRequested event in ensure_settings_window.
     if let Some(w) = app.get_webview_window("settings") {
-        let _ = w.hide();
-    }
-    // about も非表示なら main の alwaysOnTop を戻す
-    let about_hidden = app
-        .get_webview_window("about")
-        .map(|w| !w.is_visible().unwrap_or(true))
-        .unwrap_or(true);
-    if about_hidden
-        && let Some(main) = app.get_webview_window("main")
-    {
-        let _ = main.set_always_on_top(true);
-    }
-    // First-run: start index build when settings is dismissed.
-    if state.indexing.load(Ordering::SeqCst)
-        && !state.index_build_started.load(Ordering::SeqCst)
-    {
-        indexing::start_index_build(&app);
+        let _ = w.close();
     }
     trace_command("cmd:hide_settings:ok", json!({}));
 }
@@ -147,7 +144,6 @@ pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), Strin
         if let Some(placement) = window_data::load_settings_placement() {
             let _ = w.set_position(tauri::LogicalPosition::new(placement.x, placement.y));
         }
-        let _ = app.emit("settings-shown", ());
         let _ = w.show();
         let _ = w.set_focus();
         trace_command("cmd:open_settings:ok", json!({ "window_found": true }));

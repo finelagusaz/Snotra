@@ -154,6 +154,7 @@ npm run tauri build              # リリースビルド
 |--------|------------------------|-----------|
 | `/symmetric-check` | ステップ 2: コードパス変更・バグ発見時に対称ペアの適用漏れを確認する | `/symmetric-check result-clicked: added emitSelectionUpdate` |
 | `/dry-check` | ステップ 2: 関数を新規定義・変更したとき、手書き重複が残っていないか確認する | `/dry-check show_main_and_emit: show() + set_focus() + emit(window-shown)` |
+| `/retrospective` | サイクル終了後: 教訓を CLAUDE.md に抽出し、RETROSPECTIVE.md を更新する | `/retrospective` or `/retrospective feat/search-optimization` |
 
 ## デバッグ・バグ修正の原則
 

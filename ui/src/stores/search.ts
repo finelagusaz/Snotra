@@ -10,6 +10,7 @@ import { trace } from "../lib/trace";
 import type { ResultsPresentationReason } from "../lib/searchEvents";
 import { folderState, setFolderState, folderFilter, setFolderFilter } from "./folder";
 import { toolSelectionState, setToolSelectionState } from "./tool-selection";
+import { t } from "../lib/i18n";
 
 const [query, setQuery] = createSignal("");
 const [results, setResults] = createSignal<SearchResult[]>([]);
@@ -465,9 +466,9 @@ async function launchWithSelectedTool(): Promise<boolean> {
       });
       const detail = launchResult.message ? ` (${launchResult.message})` : "";
       if (launchResult.status === "timeout") {
-        setLaunchNoticeWithAutoClear(`起動に時間がかかっています${detail}`);
+        setLaunchNoticeWithAutoClear(t("notice.launch.timeout", { detail }));
       } else {
-        setLaunchNoticeWithAutoClear(`起動に失敗しました${detail}`);
+        setLaunchNoticeWithAutoClear(t("notice.launch.failed", { detail }));
       }
       void runRefresh();
       return false;
@@ -569,9 +570,9 @@ async function launchAndReset(result: SearchResult): Promise<boolean> {
       });
       const detail = launchResult.message ? ` (${launchResult.message})` : "";
       if (launchResult.status === "timeout") {
-        setLaunchNoticeWithAutoClear(`起動に時間がかかっています${detail}`);
+        setLaunchNoticeWithAutoClear(t("notice.launch.timeout", { detail }));
       } else {
-        setLaunchNoticeWithAutoClear(`起動に失敗しました${detail}`);
+        setLaunchNoticeWithAutoClear(t("notice.launch.failed", { detail }));
       }
       void runRefresh();
       return false;

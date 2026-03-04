@@ -1,6 +1,7 @@
 import { type Component, For, Show, createMemo, createResource, createSignal } from "solid-js";
 import * as api from "../lib/invoke";
 import { draft, updateDraft } from "../stores/settings";
+import { t } from "../lib/i18n";
 import SettingRow from "./SettingRow";
 import ThemePreview from "./ThemePreview";
 
@@ -68,11 +69,11 @@ interface ColorFieldDef {
 }
 
 const COLOR_FIELDS: ColorFieldDef[] = [
-  { key: "background_color", label: "背景色" },
-  { key: "input_background_color", label: "入力欄背景色" },
-  { key: "text_color", label: "テキスト色" },
-  { key: "selected_row_color", label: "選択行色" },
-  { key: "hint_text_color", label: "ヒントテキスト色" },
+  { key: "background_color", label: t("settings.visual.color.background") },
+  { key: "input_background_color", label: t("settings.visual.color.input_bg") },
+  { key: "text_color", label: t("settings.visual.color.text") },
+  { key: "selected_row_color", label: t("settings.visual.color.selected_row") },
+  { key: "hint_text_color", label: t("settings.visual.color.hint_text") },
 ];
 
 function colorsMatch(visual: { [K in ColorKey]: string }, target: { [K in ColorKey]: string }): boolean {
@@ -148,14 +149,14 @@ const SettingsVisual: Component = () => {
   return (
     <div class="settings-section">
       <div class="settings-group settings-group--sticky">
-        <div class="settings-group-title">プレビュー</div>
+        <div class="settings-group-title">{t("settings.visual.group.preview")}</div>
         <div class="settings-group-content" style={{ "align-items": "flex-start" }}>
           <ThemePreview visual={d().visual} />
         </div>
       </div>
 
       <div class="settings-group">
-        <div class="settings-group-title">テーマ</div>
+        <div class="settings-group-title">{t("settings.visual.group.theme")}</div>
         <div class="settings-group-content">
           <div class="preset-cards">
             {PRESETS.map((preset) => (
@@ -207,8 +208,8 @@ const SettingsVisual: Component = () => {
                         deleteCustomTheme(e);
                       }
                     }}
-                    title="マイテーマを削除"
-                    aria-label="マイテーマを削除"
+                    title={t("settings.visual.custom_theme.delete")}
+                    aria-label={t("settings.visual.custom_theme.delete")}
                   >
                     ×
                   </span>
@@ -219,21 +220,21 @@ const SettingsVisual: Component = () => {
                     <div class="swatch" style={{ background: ct().selected_row_color }} />
                     <div class="swatch" style={{ background: ct().hint_text_color }} />
                   </div>
-                  マイテーマ
+                  {t("settings.visual.custom_theme.label")}
                 </button>
               )}
             </Show>
           </div>
           <Show when={canSaveCustom()}>
             <button class="custom-theme-save" onClick={() => saveCustomTheme()}>
-              現在の配色を保存
+              {t("settings.visual.custom_theme.save")}
             </button>
           </Show>
         </div>
       </div>
 
       <div class="settings-group">
-        <div class="settings-group-title">カラー</div>
+        <div class="settings-group-title">{t("settings.visual.group.colors")}</div>
         <div class="settings-group-content">
           {COLOR_FIELDS.map((field) => (
             <SettingRow label={field.label}>
@@ -280,9 +281,9 @@ const SettingsVisual: Component = () => {
       </div>
 
       <div class="settings-group">
-        <div class="settings-group-title">フォント</div>
+        <div class="settings-group-title">{t("settings.visual.group.font")}</div>
         <div class="settings-group-content">
-          <SettingRow label="フォントファミリー">
+          <SettingRow label={t("settings.visual.font_family.label")}>
             <select
               value={d().visual.font_family}
               disabled={fonts.loading}
@@ -293,14 +294,14 @@ const SettingsVisual: Component = () => {
               }
             >
               <Show when={fonts.loading}>
-                <option value={d().visual.font_family}>{d().visual.font_family}（読み込み中...）</option>
+                <option value={d().visual.font_family}>{d().visual.font_family}{t("settings.visual.font_loading")}</option>
               </Show>
               <For each={fonts() ?? []}>{(f) =>
                 <option value={f}>{f}</option>
               }</For>
             </select>
           </SettingRow>
-          <SettingRow label="フォントサイズ">
+          <SettingRow label={t("settings.visual.font_size.label")}>
             <input
               type="number"
               min="8"

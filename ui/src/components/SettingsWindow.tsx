@@ -13,6 +13,7 @@ import {
   saveDraft,
 } from "../stores/settings";
 import * as api from "../lib/invoke";
+import { t } from "../lib/i18n";
 import SettingsGeneral from "./SettingsGeneral";
 import SettingsSearch from "./SettingsSearch";
 import SettingsIndex from "./SettingsIndex";
@@ -20,11 +21,11 @@ import SettingsVisual from "./SettingsVisual";
 import SettingsOpener from "./SettingsOpener";
 
 const TABS: { id: TabId; label: string }[] = [
-  { id: "general", label: "全般" },
-  { id: "search", label: "検索" },
-  { id: "index", label: "インデックス" },
-  { id: "visual", label: "ビジュアル" },
-  { id: "opener", label: "オープナー" },
+  { id: "general", label: t("settings.tab.general") },
+  { id: "search", label: t("settings.tab.search") },
+  { id: "index", label: t("settings.tab.index") },
+  { id: "visual", label: t("settings.tab.visual") },
+  { id: "opener", label: t("settings.tab.opener") },
 ];
 
 const SettingsWindow: Component = () => {
@@ -98,7 +99,7 @@ const SettingsWindow: Component = () => {
 
       <div class="settings-main">
         <div class="settings-content">
-          <Show when={draft()} fallback={<div class="settings-loading">設定を読み込み中...</div>}>
+          <Show when={draft()} fallback={<div class="settings-loading">{t("settings.loading")}</div>}>
             <>
               {activeTab() === "general" && <SettingsGeneral />}
               {activeTab() === "search" && <SettingsSearch />}
@@ -111,7 +112,7 @@ const SettingsWindow: Component = () => {
 
         <Show when={hasChanges()}>
           <div class="settings-discard-banner">
-            <span class="settings-discard-message">未保存の変更があります。</span>
+            <span class="settings-discard-message">{t("settings.unsaved_changes")}</span>
           </div>
         </Show>
 
@@ -122,14 +123,14 @@ const SettingsWindow: Component = () => {
             disabled={!canSave()}
             onClick={saveDraft}
           >
-            {hasChanges() ? "保存" : "変更なし"}
+            {hasChanges() ? t("settings.save") : t("settings.no_changes")}
           </button>
           <Show when={hasChanges()}>
             <button
               type="button"
               onClick={() => void api.hideSettings()}
             >
-              保存せずに閉じる
+              {t("settings.discard")}
             </button>
           </Show>
           <Show when={status()}>

@@ -1,3 +1,5 @@
+import { t } from "./i18n";
+
 function normalizeExtensionToken(ext: string): string {
   const trimmed = ext.trim().replace(/^\.+/, "");
   if (!trimmed) {
@@ -37,7 +39,7 @@ export function getOpenerTargetExtensions(target: string): string {
 export function getOpenerTargetLabel(target: string): string {
   const normalized = normalizeOpenerTarget(target);
   if (normalized === "folder") {
-    return "フォルダ";
+    return t("settings.opener.target.folder");
   }
   return normalized.startsWith("ext:") ? normalized.slice(4) : normalized;
 }

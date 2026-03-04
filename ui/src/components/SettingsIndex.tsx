@@ -2,6 +2,7 @@ import type { Component } from "solid-js";
 import { createSignal, For, Show } from "solid-js";
 import { open } from "@tauri-apps/plugin-dialog";
 import { draft, updateDraft, setStatus } from "../stores/settings";
+import { t } from "../lib/i18n";
 import SettingsEditableList from "./SettingsEditableList";
 import SettingsEditorActions from "./SettingsEditorActions";
 import SettingsEditorModal from "./SettingsEditorModal";
@@ -94,7 +95,7 @@ const SettingsIndex: Component = () => {
           if (includeFolders) c.paths.scan[dupIdx].include_folders = true;
           c.paths.scan.splice(idx, 1);
         });
-        setStatus("重複するパスを統合しました");
+        setStatus(t("settings.index.merged_duplicate"));
         closeModal();
         return;
       }
@@ -114,7 +115,7 @@ const SettingsIndex: Component = () => {
         mergeExtensions(c.paths.scan[dupIdx], extensions);
         if (includeFolders) c.paths.scan[dupIdx].include_folders = true;
       });
-      setStatus("既存のパスに統合しました");
+      setStatus(t("settings.index.merged_existing"));
       closeModal();
       return;
     }
@@ -152,24 +153,24 @@ const SettingsIndex: Component = () => {
   return (
     <div class="settings-section">
       <div class="settings-group">
-        <div class="settings-group-title">スキャンパス</div>
+        <div class="settings-group-title">{t("settings.index.group.scan")}</div>
         <div class="settings-group-content">
           <SettingsEditableList
             hasItems={d().paths.scan.length > 0}
-            emptyMessage="スキャンパスはまだ登録されていません"
+            emptyMessage={t("settings.index.empty")}
             onAdd={openCreateModal}
           >
             <For each={d().paths.scan}>
               {(scan, idx) => (
                 <div class="scan-path-item scan-path-item--editable">
                   <div class="scan-path-item-main">
-                    <div class="scan-path-item-path">{scan.path || "(未設定)"}</div>
+                    <div class="scan-path-item-path">{scan.path || t("settings.index.path.unset")}</div>
                     <div class="scan-path-item-meta">
                       <span class="scan-path-item-exts">
-                        {formatExtensions(scan.extensions) || "(拡張子未指定)"}
+                        {formatExtensions(scan.extensions) || t("settings.index.extensions.unset")}
                       </span>
                       <Show when={scan.include_folders}>
-                        <span class="scan-path-item-folder-badge" title="フォルダを含む">&#x1F4C1;</span>
+                        <span class="scan-path-item-folder-badge" title={t("settings.index.include_folders.badge")}>&#x1F4C1;</span>
                       </Show>
                     </div>
                   </div>
@@ -178,7 +179,7 @@ const SettingsIndex: Component = () => {
                     class="scan-path-edit-button"
                     onClick={() => openEditModal(idx())}
                   >
-                    編集
+                    {t("settings.index.edit")}
                   </button>
                 </div>
               )}
@@ -189,14 +190,14 @@ const SettingsIndex: Component = () => {
 
       <SettingsEditorModal
         open={modalMode() !== null}
-        title={modalMode() === "edit" ? "スキャンパスを編集" : "スキャンパスを追加"}
+        title={modalMode() === "edit" ? t("settings.index.modal.edit_title") : t("settings.index.modal.add_title")}
         titleId="scan-path-modal-title"
         onClose={closeModal}
         initialFocusEl={() => pathInputRef}
       >
         <div class="settings-editor-form">
           <label>
-            パス
+            {t("settings.index.path.label")}
             <div class="scan-path-input-row">
               <input
                 ref={pathInputRef}
@@ -206,13 +207,13 @@ const SettingsIndex: Component = () => {
                 placeholder="C:\..."
               />
               <button type="button" class="btn-browse" onClick={browsePath}>
-                参照...
+                {t("settings.index.browse")}
               </button>
             </div>
-            <span class="settings-editor-form-hint">同じパスは自動的に統合されます</span>
+            <span class="settings-editor-form-hint">{t("settings.index.path.hint")}</span>
           </label>
           <label>
-            拡張子 (カンマ区切り)
+            {t("settings.index.extensions.label")}
             <input
               type="text"
               value={editExtensions()}
@@ -225,23 +226,23 @@ const SettingsIndex: Component = () => {
               checked={editIncludeFolders()}
               onChange={(v) => setEditIncludeFolders(v)}
             />
-            <span>フォルダを含める</span>
+            <span>{t("settings.index.include_folders.label")}</span>
           </div>
           <SettingsEditorActions
             left={
               modalMode() === "edit" ? (
                 <button type="button" class="btn-danger" onClick={removeScanPath}>
-                  削除
+                  {t("settings.index.delete")}
                 </button>
               ) : undefined
             }
             right={
               <>
                 <button type="button" onClick={closeModal}>
-                  キャンセル
+                  {t("settings.index.cancel")}
                 </button>
                 <button type="button" class="btn-primary" onClick={saveScanPath}>
-                  保存
+                  {t("settings.index.save")}
                 </button>
               </>
             }

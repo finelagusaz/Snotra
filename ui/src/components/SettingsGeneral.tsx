@@ -1,5 +1,6 @@
 import type { Component } from "solid-js";
 import { draft, updateDraft } from "../stores/settings";
+import { t } from "../lib/i18n";
 import { formatHotkeyLabel, isHotkeyInvalid } from "../lib/hotkeyValidation";
 import SettingRow from "./SettingRow";
 import ToggleSwitch from "./ToggleSwitch";
@@ -78,7 +79,7 @@ const SettingsGeneral: Component = () => {
   const d = () => draft()!;
   const hotkeyLabel = () => formatHotkeyLabel(d().hotkey.modifier, d().hotkey.key);
   const hotkeyInvalid = () => isHotkeyInvalid(d().hotkey.modifier, d().hotkey.key);
-  const hotkeyDisplay = () => (hotkeyInvalid() ? "なし" : hotkeyLabel());
+  const hotkeyDisplay = () => (hotkeyInvalid() ? t("settings.general.hotkey.none") : hotkeyLabel());
 
   const clearHotkey = () =>
     updateDraft((c) => {
@@ -123,9 +124,9 @@ const SettingsGeneral: Component = () => {
   return (
     <div class="settings-section">
       <div class="settings-group">
-        <div class="settings-group-title">ホットキー</div>
+        <div class="settings-group-title">{t("settings.general.group.hotkey")}</div>
         <div class="settings-group-content">
-          <SettingRow label="ホットキー" block controlId="hotkey-input">
+          <SettingRow label={t("settings.general.hotkey.label")} block controlId="hotkey-input">
             <input
               id="hotkey-input"
               class="hotkey-input"
@@ -138,8 +139,8 @@ const SettingsGeneral: Component = () => {
             />
           </SettingRow>
           <SettingRow
-            label="トグル動作"
-            description="ホットキーで表示中のウィンドウを非表示にします"
+            label={t("settings.general.toggle.label")}
+            description={t("settings.general.toggle.description")}
           >
             <ToggleSwitch
               checked={d().general.hotkey_toggle}
@@ -154,11 +155,11 @@ const SettingsGeneral: Component = () => {
       </div>
 
       <div class="settings-group">
-        <div class="settings-group-title">表示設定</div>
+        <div class="settings-group-title">{t("settings.general.group.appearance")}</div>
         <div class="settings-group-content">
           <SettingRow
-            label="最大表示件数"
-            description="検索結果に表示する最大候補数"
+            label={t("settings.general.max_results.label")}
+            description={t("settings.general.max_results.description")}
           >
             <input
               type="number"
@@ -175,8 +176,8 @@ const SettingsGeneral: Component = () => {
             />
           </SettingRow>
           <SettingRow
-            label="ウィンドウ幅"
-            description="検索ウィンドウの横幅（論理ピクセル）"
+            label={t("settings.general.window_width.label")}
+            description={t("settings.general.window_width.description")}
           >
             <input
               type="number"
@@ -193,8 +194,8 @@ const SettingsGeneral: Component = () => {
             />
           </SettingRow>
           <SettingRow
-            label="アイコン表示"
-            description="検索結果にファイルアイコンを表示します"
+            label={t("settings.general.show_icons.label")}
+            description={t("settings.general.show_icons.description")}
           >
             <ToggleSwitch
               checked={d().appearance.show_icons}
@@ -209,11 +210,11 @@ const SettingsGeneral: Component = () => {
       </div>
 
       <div class="settings-group">
-        <div class="settings-group-title">動作</div>
+        <div class="settings-group-title">{t("settings.general.group.behavior")}</div>
         <div class="settings-group-content">
           <SettingRow
-            label="起動時に表示"
-            description="アプリ起動時に検索ウィンドウを自動表示します"
+            label={t("settings.general.show_on_startup.label")}
+            description={t("settings.general.show_on_startup.description")}
           >
             <ToggleSwitch
               checked={d().general.show_on_startup}
@@ -225,8 +226,8 @@ const SettingsGeneral: Component = () => {
             />
           </SettingRow>
           <SettingRow
-            label="フォーカス喪失時に非表示"
-            description="他のウィンドウをクリックした時に自動で隠します"
+            label={t("settings.general.auto_hide.label")}
+            description={t("settings.general.auto_hide.description")}
           >
             <ToggleSwitch
               checked={d().general.auto_hide_on_focus_lost}
@@ -238,8 +239,8 @@ const SettingsGeneral: Component = () => {
             />
           </SettingRow>
           <SettingRow
-            label="トレイアイコン"
-            description="システムトレイにアイコンを表示します"
+            label={t("settings.general.tray_icon.label")}
+            description={t("settings.general.tray_icon.description")}
           >
             <ToggleSwitch
               checked={d().general.show_tray_icon}
@@ -251,8 +252,8 @@ const SettingsGeneral: Component = () => {
             />
           </SettingRow>
           <SettingRow
-            label="表示時にIMEオフ"
-            description="ウィンドウ表示時にIMEを自動でオフにします"
+            label={t("settings.general.ime_off.label")}
+            description={t("settings.general.ime_off.description")}
           >
             <ToggleSwitch
               checked={d().general.ime_off_on_show}

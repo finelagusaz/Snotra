@@ -2,6 +2,7 @@ import { createSignal } from "solid-js";
 import type { Config } from "../lib/types";
 import { isHotkeyInvalid } from "../lib/hotkeyValidation";
 import * as api from "../lib/invoke";
+import { t } from "../lib/i18n";
 
 const [draft, setDraft] = createSignal<Config | null>(null);
 let statusClearTimer: ReturnType<typeof setTimeout> | undefined;
@@ -49,7 +50,7 @@ async function loadDraft() {
     setStatus("");
   } catch (e) {
     console.error("Failed to load config:", e);
-    setStatus("設定の読み込みに失敗しました");
+    setStatus(t("status.load_failed"));
   }
 }
 
@@ -68,14 +69,14 @@ async function saveDraft() {
   try {
     await api.saveConfig(d);
     setSavedConfig(structuredClone(d));
-    setStatus("保存しました");
+    setStatus(t("status.saved"));
     clearTimeout(statusClearTimer);
     statusClearTimer = setTimeout(() => setStatus(""), 3000);
   } catch (e) {
     if (e === "hotkey_registration_failed") {
-      setStatus("保存に失敗: ホットキーの登録に失敗しました（他のアプリが同じキーを使用している可能性があります）");
+      setStatus(t("status.save_failed.hotkey"));
     } else {
-      setStatus(`保存に失敗: ${e}`);
+      setStatus(t("status.save_failed.generic", { error: String(e) }));
     }
   }
 }

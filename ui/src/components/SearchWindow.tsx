@@ -26,6 +26,7 @@ import {
 import { hideAllWindows } from "../lib/commands";
 import { perfMarkInput } from "../lib/perf";
 import { trace } from "../lib/trace";
+import { t } from "../lib/i18n";
 
 const SearchWindow: Component = () => {
   let inputRef: HTMLInputElement | undefined;
@@ -210,13 +211,13 @@ const SearchWindow: Component = () => {
 
   function placeholderText(): string {
     if (toolSelectionState()) {
-      return "ツールを選択...";
+      return t("search.placeholder.tool_select");
     }
     const fs = folderState();
     if (fs) {
-      return `${fs.currentDir} 内を検索...`;
+      return t("search.placeholder.folder", { dir: fs.currentDir });
     }
-    return "検索...";
+    return t("search.placeholder.default");
   }
 
   const noResults = createMemo(() =>
@@ -240,7 +241,7 @@ const SearchWindow: Component = () => {
       />
       <Show when={indexing()}>
         <div class="search-overlay indexing-message" data-tauri-drag-region>
-          インデックス構築中...
+          {t("search.status.indexing")}
         </div>
       </Show>
       <Show when={launching() || launchNotice()}>
@@ -249,11 +250,11 @@ const SearchWindow: Component = () => {
           classList={{ "indexing-message--error": !launching() && launchNotice() !== null }}
           data-tauri-drag-region
         >
-          {launching() ? "起動中..." : launchNotice() ?? ""}
+          {launching() ? t("search.status.launching") : launchNotice() ?? ""}
         </div>
       </Show>
       <Show when={noResults()}>
-        <span class="no-results-hint">見つかりません</span>
+        <span class="no-results-hint">{t("search.status.no_results")}</span>
       </Show>
     </div>
   );

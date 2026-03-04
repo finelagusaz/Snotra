@@ -1,63 +1,60 @@
 ---
 name: dry-check
-description: "Given a new or modified function, grep for call sites that hand-write equivalent logic and flag DRY violations"
-argument-hint: "[function name and key operations, e.g. 'show_main_and_emit: show() + set_focus() + emit(window-shown)']"
+description: "新規・変更した関数について、同等ロジックを手書きしている箇所を grep で検索し DRY 違反をフラグする。関数の新規定義・変更時に使用。"
+argument-hint: "[関数名と主要操作, 例: 'show_main_and_emit: show() + set_focus() + emit(window-shown)']"
 allowed-tools:
   - Read
   - Grep
   - Glob
 ---
 
-Check for DRY violations related to: $ARGUMENTS
+$ARGUMENTS に関連する DRY 違反を検査する。
 
-## Background
+## 背景
 
-Creating a function and applying it to all existing code that does the same thing
-are two separate steps. Hand-written duplicates that predate the function often
-remain in place, silently missing the behaviour the function encapsulates
-(e.g. an `emit()` call that the manual version never had).
+関数を作ることと、既存コード全体にその関数を適用することは別の作業。関数より前に手書きされた重複コードは、関数が内包する振る舞い（例: `emit()` 呼び出し）を欠いたまま残りやすい。
 
-## Step 1 — Parse the function
+## Step 1 — 関数の分析
 
-From $ARGUMENTS, extract:
-- The function name
-- The key operations it performs (as a list of grep-able patterns)
+$ARGUMENTS から以下を抽出する:
+- 関数名
+- 関数が行う主要操作（grep 可能なパターンのリスト）
 
-Example:
+例:
 ```
-Function: show_main_and_emit
-Key operations:
+関数: show_main_and_emit
+主要操作:
   - .show()
   - .set_focus()
   - emit("window-shown")
 ```
 
-If $ARGUMENTS does not list operations explicitly, read the function body first.
+$ARGUMENTS に操作が明示されていない場合は、先に関数本体を読む。
 
-## Step 2 — Grep for each key operation
+## Step 2 — 各主要操作を grep
 
-Search the codebase for each operation individually.
-Exclude matches inside the function itself.
+コードベース全体で各操作を個別に検索する。
+関数自身の内部のマッチは除外する。
 
-## Step 3 — Identify hand-written duplicates
+## Step 3 — 手書き重複の特定
 
-A call site is a candidate for replacement when it:
-- Performs two or more of the key operations manually, AND
-- Does not call the function
+以下の条件を満たす呼び出し箇所を候補とする:
+- 主要操作のうち2つ以上を手動で実行している、かつ
+- 当該関数を呼び出していない
 
-Read enough context around each candidate to understand the call site.
+各候補について十分なコンテキストを読んで理解する。
 
-## Step 4 — Evaluate each candidate
+## Step 4 — 各候補の評価
 
 ```
-Candidate: <file>:<line> — <description>
-  Current: <what it does manually>
-  Missing: <what the function adds that the manual version lacks>
-  Decision: [REPLACE] with <function call>
-            [KEEP]    reason: <why replacement is not appropriate>
+候補: <file>:<line> — <説明>
+  現状: <手動で行っている処理>
+  欠落: <関数が追加する処理のうち手動版にないもの>
+  判定: [置換] <関数呼び出し> に置き換える
+        [維持] 理由: <置換が不適切な理由>
 ```
 
-## Output
+## 出力
 
-List every candidate with its decision and reasoning.
-If no violations are found, state: "No hand-written duplicates found."
+全候補を判定と根拠付きで列挙する。
+違反が見つからなかった場合: 「手書き重複は見つかりませんでした。」

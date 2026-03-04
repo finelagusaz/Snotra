@@ -276,9 +276,13 @@ fn main() {
             // Tray is NOT created here; SetTrayVisible is sent after full setup (SPEC §7.5).
             let platform_pending = PlatformBridge::begin(app_handle.clone(), hotkey_config);
 
-            // Pre-create results window (latency-critical, used on every search).
-            // about/settings are created on-demand to reduce idle memory footprint.
+            // Pre-create all windows during setup (before event loop starts).
+            // WebviewWindowBuilder::build() はイベントループ開始後のコールバック内
+            // (run_on_main_thread 含む) では WebView2 初期化がメッセージポンプを
+            // 必要とするためデッドロックする。setup フェーズでのみ正常動作する。
             ensure_window_with_timing(&app_handle, "results", commands::ensure_results_window)?;
+            ensure_window_with_timing(&app_handle, "about", commands::ensure_about_window)?;
+            ensure_window_with_timing(&app_handle, "settings", commands::ensure_settings_window)?;
 
             // Win32 init finishes in a few ms; by the time windows are created it is already done.
             if let Some(bridge) = platform_pending.and_then(PlatformBridgePending::wait) {

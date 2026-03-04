@@ -138,6 +138,15 @@ pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), Strin
         if let Some(main) = app.get_webview_window("main") {
             let _ = main.set_always_on_top(false);
         }
+        // show() の前に保存済みの位置・サイズを復元する。
+        // JS 側の onMount でも復元するが非同期のため show() に間に合わない。
+        // Rust 側で同期的に復元することで初回表示時の白画面フラッシュを防ぐ。
+        if let Some(size) = window_data::load_settings_size() {
+            let _ = w.set_size(tauri::LogicalSize::new(size.width, size.height));
+        }
+        if let Some(placement) = window_data::load_settings_placement() {
+            let _ = w.set_position(tauri::LogicalPosition::new(placement.x, placement.y));
+        }
         let _ = app.emit("settings-shown", ());
         let _ = w.show();
         let _ = w.set_focus();

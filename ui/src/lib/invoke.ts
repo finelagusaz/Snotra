@@ -80,6 +80,10 @@ export async function getConfig(): Promise<Config> {
   return tracedInvoke<Config>("get_config");
 }
 
+export async function getDefaultConfig(): Promise<Config> {
+  return tracedInvoke<Config>("get_default_config");
+}
+
 export async function getBootstrapPayload(): Promise<BootstrapPayload> {
   return tracedInvoke<BootstrapPayload>("get_bootstrap_payload");
 }

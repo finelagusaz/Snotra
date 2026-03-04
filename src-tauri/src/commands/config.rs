@@ -145,6 +145,11 @@ pub fn save_config(
 }
 
 #[tauri::command]
+pub fn get_default_config() -> Config {
+    Config::default()
+}
+
+#[tauri::command]
 pub fn get_config(state: State<AppState>) -> Config {
     state.engine.lock().unwrap().config().clone()
 }

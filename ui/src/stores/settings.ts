@@ -63,6 +63,16 @@ function updateDraft(updater: (c: Config) => void) {
   setDraft(clone);
 }
 
+async function resetToDefault() {
+  try {
+    const defaultConfig = await api.getDefaultConfig();
+    setDraft(defaultConfig);
+  } catch (e) {
+    console.error("Failed to load default config:", e);
+    setStatus(t("status.load_failed"));
+  }
+}
+
 async function saveDraft() {
   const d = draft();
   if (!d) return;
@@ -93,4 +103,5 @@ export {
   loadDraft,
   updateDraft,
   saveDraft,
+  resetToDefault,
 };

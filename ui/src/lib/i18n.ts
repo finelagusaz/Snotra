@@ -20,6 +20,8 @@ export type TranslationKey =
   | "settings.save"
   | "settings.no_changes"
   | "settings.discard"
+  | "settings.reset_to_default"
+  | "settings.reset_to_default.confirm"
   // SettingsGeneral
   | "settings.general.group.hotkey"
   | "settings.general.hotkey.label"
@@ -158,6 +160,8 @@ const JA_JP: Record<TranslationKey, string> = {
   "settings.save": "保存",
   "settings.no_changes": "変更なし",
   "settings.discard": "保存せずに閉じる",
+  "settings.reset_to_default": "初期設定に戻す",
+  "settings.reset_to_default.confirm": "本当に初期設定に戻しますか？",
   // SettingsGeneral
   "settings.general.group.hotkey": "ホットキー",
   "settings.general.hotkey.label": "ホットキー",

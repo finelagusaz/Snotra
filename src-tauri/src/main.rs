@@ -225,6 +225,7 @@ fn main() {
             commands::load_config,
             commands::save_config,
             commands::get_config,
+            commands::get_default_config,
             commands::open_settings,
             commands::hide_settings,
             commands::open_about,

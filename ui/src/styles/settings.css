@@ -777,7 +777,36 @@
   border-top: 1px solid color-mix(in srgb, var(--hint-text-color, #808080) 30%, transparent);
 }
 
-.settings-footer button:not(.btn-primary) {
+.settings-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.btn-reset-default {
+  padding: 5px 14px;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--hint-text-color, #808080) 40%, transparent);
+  border-radius: 6px;
+  color: var(--hint-text-color, #808080);
+  cursor: pointer;
+  font-size: 0.8em;
+  transition: background 200ms, border-color 200ms, color 200ms;
+}
+
+.btn-reset-default:hover {
+  border-color: var(--hint-text-color, #808080);
+  color: var(--text-color, #e0e0e0);
+}
+
+.btn-reset-default.confirming {
+  border-color: #c06040;
+  color: #e08060;
+  background: color-mix(in srgb, #c06040 15%, transparent);
+}
+
+.settings-footer button:not(.btn-primary):not(.btn-reset-default) {
   padding: 5px 14px;
   background: var(--input-bg-color, #383838);
   border: 1px solid color-mix(in srgb, var(--hint-text-color, #808080) 60%, transparent);
@@ -788,12 +817,12 @@
   transition: background 200ms, border-color 200ms, transform 100ms;
 }
 
-.settings-footer button:not(.btn-primary):hover {
+.settings-footer button:not(.btn-primary):not(.btn-reset-default):hover {
   border-color: var(--hint-text-color, #808080);
   background: color-mix(in srgb, var(--selected-row-color, #505050) 40%, transparent);
 }
 
-.settings-footer button:not(.btn-primary):active {
+.settings-footer button:not(.btn-primary):not(.btn-reset-default):active {
   transform: scale(0.98);
 }
 

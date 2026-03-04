@@ -42,8 +42,8 @@ export async function getDefaultConfig(): Promise<Config> {
 ### Phase 3: i18n キー追加
 
 **`ui/src/lib/i18n.ts`** に以下のキーを追加:
-- `"settings.reset_to_default"`: 「デフォルトに戻す」
-- `"settings.reset_to_default.confirm"`: 「本当にデフォルトに戻しますか？」
+- `"settings.reset_to_default"`: 「初期設定に戻す」
+- `"settings.reset_to_default.confirm"`: 「本当に初期設定に戻しますか？」
 
 ### Phase 4: 設定ストアに resetToDefault 関数追加
 

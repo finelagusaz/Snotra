@@ -1,4 +1,4 @@
-import { type Component, Show, onMount, onCleanup } from "solid-js";
+import { type Component, Show, onMount, onCleanup, createSignal } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -11,6 +11,7 @@ import {
   canSave,
   loadDraft,
   saveDraft,
+  resetToDefault,
 } from "../stores/settings";
 import * as api from "../lib/invoke";
 import { t } from "../lib/i18n";
@@ -30,6 +31,20 @@ const TABS: { id: TabId; label: string }[] = [
 
 const SettingsWindow: Component = () => {
   let tablistRef: HTMLDivElement | undefined;
+  const [resetConfirming, setResetConfirming] = createSignal(false);
+  let resetTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function handleResetClick() {
+    if (resetConfirming()) {
+      clearTimeout(resetTimer);
+      setResetConfirming(false);
+      void resetToDefault();
+    } else {
+      setResetConfirming(true);
+      clearTimeout(resetTimer);
+      resetTimer = setTimeout(() => setResetConfirming(false), 3000);
+    }
+  }
 
   onMount(() => {
     loadDraft();
@@ -38,8 +53,11 @@ const SettingsWindow: Component = () => {
     // The window is pre-created and hidden on close, so onMount only fires once.
     let unlistenShown: (() => void) | undefined;
     onCleanup(() => unlistenShown?.());
+    onCleanup(() => clearTimeout(resetTimer));
     void listen("settings-shown", () => {
       loadDraft();
+      clearTimeout(resetTimer);
+      setResetConfirming(false);
     }).then((fn) => { unlistenShown = fn; });
 
     const handler = (e: KeyboardEvent) => {
@@ -118,24 +136,33 @@ const SettingsWindow: Component = () => {
 
         <div class="settings-footer">
           <button
-            class="btn-primary"
-            classList={{ "has-changes": canSave() }}
-            disabled={!canSave()}
-            onClick={saveDraft}
+            class="btn-reset-default"
+            classList={{ confirming: resetConfirming() }}
+            onClick={handleResetClick}
           >
-            {hasChanges() ? t("settings.save") : t("settings.no_changes")}
+            {resetConfirming() ? t("settings.reset_to_default.confirm") : t("settings.reset_to_default")}
           </button>
-          <Show when={hasChanges()}>
+          <div class="settings-footer-actions">
             <button
-              type="button"
-              onClick={() => void api.hideSettings()}
+              class="btn-primary"
+              classList={{ "has-changes": canSave() }}
+              disabled={!canSave()}
+              onClick={saveDraft}
             >
-              {t("settings.discard")}
+              {hasChanges() ? t("settings.save") : t("settings.no_changes")}
             </button>
-          </Show>
-          <Show when={status()}>
-            <span class="settings-status">{status()}</span>
-          </Show>
+            <Show when={hasChanges()}>
+              <button
+                type="button"
+                onClick={() => void api.hideSettings()}
+              >
+                {t("settings.discard")}
+              </button>
+            </Show>
+            <Show when={status()}>
+              <span class="settings-status">{status()}</span>
+            </Show>
+          </div>
         </div>
       </div>
     </div>

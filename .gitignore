@@ -16,7 +16,6 @@ Desktop.ini
 
 # Local settings
 .claude/settings.local.json
-workspace/
 research.md
 scripts/test-win.sh
 

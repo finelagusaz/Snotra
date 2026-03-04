@@ -71,6 +71,16 @@ CLAUDE.md の開発原則（KISS/DRY/YAGNI）と開発ワークフロー（ス�
 
 レビュー結果を `workspace/plan.md` 末尾の「セルフレビュー」セクションに記録する。
 
+## Step 6 -- workspace をコミット & プッシュ
+
+セッション断絶・別マシン継続に備え、`workspace/` を必ずコミットしてプッシュする:
+
+```bash
+git add workspace/
+git commit -m "chore: workspace 調査・計画 (issue #$ARGUMENTS)"
+git push -u origin HEAD
+```
+
 ## Output
 
 最後に以下を報告:

@@ -31,6 +31,44 @@ const ResultsWindow: Component = () => {
     }
   }
 
+  /** Parse length-prefixed binary batch into per-path Blob URLs.
+   *  Format: [count:u32 LE] then per icon: [status:u8] [if 1: png_len:u32 LE, png_bytes] */
+  function parseBinaryBatch(
+    buf: ArrayBuffer,
+    paths: string[],
+  ): Map<string, string> {
+    const view = new DataView(buf);
+    let offset = 0;
+    const count = view.getUint32(offset, true);
+    offset += 4;
+    const result = new Map<string, string>();
+    for (let i = 0; i < count; i++) {
+      const status = view.getUint8(offset);
+      offset += 1;
+      if (status === 1) {
+        const pngLen = view.getUint32(offset, true);
+        offset += 4;
+        const pngBytes = new Uint8Array(buf, offset, pngLen);
+        offset += pngLen;
+        const blob = new Blob([pngBytes], { type: "image/png" });
+        const url = URL.createObjectURL(blob);
+        result.set(paths[i], url);
+        iconUrls.add(url);
+      }
+    }
+    return result;
+  }
+
+  /** Revoke all tracked Blob URLs */
+  function revokeAllIconUrls() {
+    for (const url of iconUrls) {
+      URL.revokeObjectURL(url);
+    }
+    iconUrls.clear();
+  }
+
+  const iconUrls = new Set<string>();
+
   async function fetchIcons(items: SearchResult[], generation: number) {
     if (!showIcons()) return;
     const cache = iconCache();
@@ -39,20 +77,19 @@ const ResultsWindow: Component = () => {
       .map((r) => r.path);
     if (missing.length === 0) return;
 
-    let pngs: (string | null)[];
+    let parsed: Map<string, string>;
     try {
-      pngs = await api.getIconsBatch(missing);
+      const buf = await api.getIconsBatch(missing);
+      parsed = parseBinaryBatch(buf, missing);
     } catch {
       return;
     }
     if (generation !== latestGeneration) return;
+    if (parsed.size === 0) return;
 
     const next = new Map(cache);
-    for (let i = 0; i < missing.length; i++) {
-      const b64 = pngs[i];
-      if (b64) {
-        next.set(missing[i], `data:image/png;base64,${b64}`);
-      }
+    for (const [path, url] of parsed) {
+      next.set(path, url);
     }
     setIconCache(next);
   }
@@ -66,9 +103,11 @@ const ResultsWindow: Component = () => {
     // Listen for show_icons setting changes
     let unlistenShowIcons: (() => void) | undefined;
     onCleanup(() => unlistenShowIcons?.());
+    onCleanup(() => revokeAllIconUrls());
     void listen<boolean>("show-icons-changed", (event) => {
       setShowIcons(event.payload);
       if (!event.payload) {
+        revokeAllIconUrls();
         setIconCache(new Map());
       }
     }).then((fn) => { unlistenShowIcons = fn; });

@@ -57,6 +57,22 @@ To run type checking manually, use `npm run typecheck`. In CI, type checking is 
 npm run tauri build
 ```
 
+### snotra-settings (Settings GUI)
+
+The settings GUI is a separate egui-based binary process. It is launched as a child process by the main app, but can also be run standalone during development.
+
+```bash
+# Run standalone (opens the settings window directly)
+cargo run -p snotra-settings
+
+# Type check / lint
+cargo check -p snotra-settings
+cargo clippy -p snotra-settings
+
+# Release build (normally produced automatically alongside the main build)
+cargo build --release -p snotra-settings
+```
+
 ### Tests
 
 ```bash
@@ -74,9 +90,10 @@ npm run e2e:tauri
 
 ```
 Snotra/
-  Cargo.toml            # Workspace (snotra-core, src-tauri)
+  Cargo.toml            # Workspace (snotra-core, src-tauri, snotra-settings)
   snotra-core/          # Pure logic library crate
   src-tauri/            # Tauri v2 binary crate (Win32 integration)
+  snotra-settings/      # egui settings GUI binary (About tab included)
   ui/                   # SolidJS frontend
     src/
       components/       # SearchWindow, ResultRow, Settings

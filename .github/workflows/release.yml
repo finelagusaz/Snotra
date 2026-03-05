@@ -43,9 +43,12 @@ jobs:
           VITE_APP_VERSION: ${{ github.ref_name }}
           VITE_APP_BUILD_NUMBER: ${{ env.BUILD_DATE }}
 
+      - name: Build snotra-settings (release)
+        run: cargo build --release -p snotra-settings
+
       - name: Package as ZIP
         run: |
-          Compress-Archive -Path "target/release/snotra.exe" -DestinationPath "Snotra-${{ github.ref_name }}.zip"
+          Compress-Archive -Path "target/release/snotra.exe","target/release/snotra-settings.exe" -DestinationPath "Snotra-${{ github.ref_name }}.zip"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

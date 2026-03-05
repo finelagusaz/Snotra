@@ -166,12 +166,6 @@ pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub fn open_about(app: AppHandle) -> Result<(), String> {
-    trace_command("cmd:open_about:start", json!({}));
-    launch_settings_process(&app, &["--about"])
-}
-
-#[tauri::command]
 pub fn ensure_window(label: String, app: AppHandle) -> Result<bool, String> {
     trace_command(
         "cmd:ensure_window:start",

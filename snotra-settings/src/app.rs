@@ -10,6 +10,7 @@ pub enum TabId {
     Index,
     Visual,
     Opener,
+    About,
 }
 
 impl TabId {
@@ -19,6 +20,7 @@ impl TabId {
         TabId::Index,
         TabId::Visual,
         TabId::Opener,
+        TabId::About,
     ];
 
     fn label(self) -> &'static str {
@@ -28,6 +30,7 @@ impl TabId {
             TabId::Index => "インデックス",
             TabId::Visual => "ビジュアル",
             TabId::Opener => "オープナー",
+            TabId::About => "Snotra について",
         }
     }
 
@@ -38,6 +41,7 @@ impl TabId {
             "index" => Some(TabId::Index),
             "visual" => Some(TabId::Visual),
             "opener" => Some(TabId::Opener),
+            "about" => Some(TabId::About),
             _ => None,
         }
     }
@@ -142,7 +146,7 @@ impl eframe::App for SettingsApp {
                 }
             });
 
-        // Footer
+        // Footer (hide action buttons on About tab)
         egui::TopBottomPanel::bottom("footer")
             .exact_height(40.0)
             .show(ctx, |ui| {
@@ -153,31 +157,33 @@ impl eframe::App for SettingsApp {
                         ui.separator();
                     }
 
-                    // Spacer
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.spacing_mut().button_padding = egui::vec2(12.0, 4.0);
+                    if self.active_tab != TabId::About {
+                        // Spacer
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.spacing_mut().button_padding = egui::vec2(12.0, 4.0);
 
-                        // Save button (always "保存", disabled when no changes)
-                        if ui
-                            .add_enabled(self.has_changes(), egui::Button::new("保存"))
-                            .clicked()
-                        {
-                            self.save();
-                        }
+                            // Save button (always "保存", disabled when no changes)
+                            if ui
+                                .add_enabled(self.has_changes(), egui::Button::new("保存"))
+                                .clicked()
+                            {
+                                self.save();
+                            }
 
-                        // Discard button (always visible, disabled when no changes)
-                        if ui
-                            .add_enabled(self.has_changes(), egui::Button::new("破棄"))
-                            .clicked()
-                        {
-                            self.draft = self.saved.clone();
-                        }
+                            // Discard button (always visible, disabled when no changes)
+                            if ui
+                                .add_enabled(self.has_changes(), egui::Button::new("破棄"))
+                                .clicked()
+                            {
+                                self.draft = self.saved.clone();
+                            }
 
-                        // Reset to default
-                        if ui.button("初期設定に戻す").clicked() {
-                            self.reset_to_default();
-                        }
-                    });
+                            // Reset to default
+                            if ui.button("初期設定に戻す").clicked() {
+                                self.reset_to_default();
+                            }
+                        });
+                    }
                 });
             });
 
@@ -189,6 +195,27 @@ impl eframe::App for SettingsApp {
                 TabId::Index => tabs::index::ui(ui, ctx, &mut self.draft, &mut self.index_state),
                 TabId::Visual => tabs::visual::ui(ui, &mut self.draft, &self.font_list),
                 TabId::Opener => tabs::opener::ui(ui, ctx, &mut self.draft, &mut self.opener_state),
+                TabId::About => {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(24.0);
+                        ui.heading("Snotra");
+                        ui.add_space(8.0);
+
+                        let version = env!("CARGO_PKG_VERSION");
+                        ui.label(format!("v{version}"));
+                        ui.add_space(24.0);
+
+                        ui.label("Fine Lagusaz");
+                        ui.add_space(8.0);
+
+                        if ui.link("algiz.rune@gmail.com").clicked() {
+                            let _ = open::that("mailto:algiz.rune@gmail.com?subject=Snotra%E3%81%AB%E3%81%A4%E3%81%84%E3%81%A6");
+                        }
+                        if ui.link("https://blankrune.sakura.ne.jp/").clicked() {
+                            let _ = open::that("https://blankrune.sakura.ne.jp/");
+                        }
+                    });
+                }
             }
         });
     }

@@ -31,16 +31,6 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     },
   },
   {
-    command: "/a",
-    label: "/a",
-    description: t("cmd.about.description"),
-    action: async () => {
-      // results のみ非表示（検索ウィンドウは残す）
-      await hideResultsWindow();
-      await api.openAbout();
-    },
-  },
-  {
     command: "/o",
     label: "/o",
     description: t("cmd.settings.description"),

@@ -5,18 +5,16 @@ egui ベースの設定・about バイナリ crate。本体（`src-tauri`）と�
 ## アーキテクチャ
 
 - 本体との連携は `config.toml` ファイル1点のみ。IPC は使わない
-- 設定モード（デフォルト）: 5タブの設定エディタ
-- about モード（`--about`）: バージョン情報ダイアログ（400×300、リサイズ不可）
+- 6タブの設定エディタ（最後のタブ「Snotra について」に about 情報を統合）
 - 設定の読み書きは `snotra-core::Config` を直接使用。本体は `notify` クレートで変更を検知する
 
 ## モジュール構成
 
-- `main.rs`: エントリポイント、`--about` 引数の解析、eframe 起動
-- `app.rs`: `eframe::App` 実装、タブ管理、保存/破棄/リセットロジック
-- `about.rs`: about ダイアログ UI
+- `main.rs`: エントリポイント、eframe 起動
+- `app.rs`: `eframe::App` 実装、タブ管理（About タブ含む）、保存/破棄/リセットロジック
 - `font.rs`: 日本語フォント読み込み + システムフォント列挙
 - `hotkey_input.rs`: ホットキーキャプチャウィジェット
-- `tabs/`: 5タブの UI 実装
+- `tabs/`: 5タブの UI 実装（About タブは `app.rs` に直接実装）
   - `general.rs`: 全般設定（起動時表示、トレイ、IME、ホットキー）
   - `search.rs`: 検索設定（検索モード、履歴、隠しファイル）
   - `index.rs`: インデックス設定（スキャンパス管理）

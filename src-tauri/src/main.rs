@@ -225,7 +225,6 @@ fn main() {
             commands::launch_with_tool,
             commands::list_folder,
             commands::open_settings,
-            commands::open_about,
             commands::get_icons_batch,
             commands::get_search_placement,
             commands::save_search_placement,

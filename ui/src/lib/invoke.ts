@@ -76,10 +76,6 @@ export async function openSettings(): Promise<void> {
   return tracedInvoke("open_settings");
 }
 
-export async function openAbout(): Promise<void> {
-  return tracedInvoke("open_about");
-}
-
 export interface WindowPlacement {
   x: number;
   y: number;

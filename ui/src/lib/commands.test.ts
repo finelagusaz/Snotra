@@ -17,7 +17,6 @@ vi.mock("@tauri-apps/api/webviewWindow", () => ({
 }));
 
 vi.mock("./invoke", () => ({
-  openAbout: vi.fn(async () => {}),
   openSettings: vi.fn(async () => {}),
   rebuildIndex: vi.fn(async () => true),
   quitApp: vi.fn(async () => {}),
@@ -27,22 +26,6 @@ describe("slash command actions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(WebviewWindow.getByLabel).mockResolvedValue({ hide: mockResultsHide } as never);
-  });
-
-  it("/a hides results window before openAbout", async () => {
-    const order: string[] = [];
-    mockResultsHide.mockImplementation(async () => { order.push("hideResults"); });
-    vi.mocked(api.openAbout).mockImplementation(async () => {
-      order.push("openAbout");
-    });
-
-    const cmd = findCommand("/a");
-    expect(cmd).toBeDefined();
-    await cmd!.action();
-
-    expect(order).toEqual(["hideResults", "openAbout"]);
-    expect(api.openAbout).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(WebviewWindow.getByLabel)).toHaveBeenCalledWith("results");
   });
 
   it("/o hides results window before openSettings", async () => {

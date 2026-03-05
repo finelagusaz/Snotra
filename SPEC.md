@@ -321,7 +321,7 @@ stateDiagram-v2
   SearchVisible --> LauncherStopped: /q / exit-requested
 
   note right of Standby
-    /o, /a, トレイ「設定」は snotra-settings
+    /o, トレイ「設定」は snotra-settings
     子プロセスを起動する（本体の状態遷移には影響しない）。
     初回起動時も snotra-settings を子プロセスとして起動。
   end note
@@ -353,7 +353,6 @@ stateDiagram-v2
 遷移ルール要約（主要ガード条件）:
 
 - `/o` は `snotra-settings` 子プロセスを起動する（`!indexing` のときのみ有効）。本体の状態は変わらない
-- `/a` は `snotra-settings --about` 子プロセスを起動する。本体の状態は変わらない
 - トレイ「設定」も `snotra-settings` 子プロセスを起動する（`!indexing` のときのみ有効）
 - `Standby -> SearchVisible` は `hotkey-pressed` に加えて、起動直後 `app_start [show_on_startup]` でも成立
 - `SearchVisible -> Standby` の `Escape` は `!toolSelectionState && !folderState` の場合のみ成立（`toolSelectionState` 中は `ToolSelectionMode -> NormalMode/FolderExpansionMode` を優先し、`folderState` 中は `FolderExpansionMode -> NormalMode` を優先）
@@ -465,7 +464,6 @@ stateDiagram-v2
 | -------- | ---------------------------- |
 | `/o`     | 設定ウィンドウを開く         |
 | `/s`     | インデックス再構築を開始する |
-| `/a`     | アプリの情報を表示する       |
 | `/q`     | アプリを終了する             |
 | `/r`     | 直近履歴を表示する           |
 

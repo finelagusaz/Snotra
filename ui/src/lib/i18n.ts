@@ -11,7 +11,6 @@ export type TranslationKey =
   | "search.status.no_results"
   // Slash commands
   | "cmd.history.description"
-  | "cmd.about.description"
   | "cmd.settings.description"
   | "cmd.rebuild_index.description"
   | "cmd.quit.description"
@@ -29,7 +28,6 @@ const JA_JP: Record<TranslationKey, string> = {
   "search.status.no_results": "見つかりません",
   // Slash commands
   "cmd.history.description": "直近履歴を表示",
-  "cmd.about.description": "バージョン情報",
   "cmd.settings.description": "設定を開く",
   "cmd.rebuild_index.description": "インデックス再構築",
   "cmd.quit.description": "アプリを終了",

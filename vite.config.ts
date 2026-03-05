@@ -3,8 +3,9 @@ import solid from "vite-plugin-solid";
 import process from "process";
 import packageJson from "./package.json";
 
-// 開発（ローカル）時にプロセス環境変数が無い場合、YYYYMMDD形式の日付をフォールバックとして設定
-const fallbackDate = new Date().toISOString().split('T')[0].replace(/-/g, '');
+// 開発（ローカル）時にプロセス環境変数が無い場合、YYYYMMDDHHmm形式の日付をフォールバックとして設定
+const now = new Date();
+const fallbackDate = now.toISOString().replace(/[-:T]/g, '').slice(0, 12);
 
 export default defineConfig({
   plugins: [solid()],

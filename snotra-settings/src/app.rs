@@ -308,7 +308,8 @@ impl eframe::App for SettingsApp {
                         ui.add_space(8.0);
 
                         let version = env!("CARGO_PKG_VERSION");
-                        ui.label(format!("v{version}"));
+                        let build_date = env!("APP_BUILD_DATE");
+                        ui.label(format!("v{version}(Build {build_date})"));
                         ui.add_space(24.0);
 
                         ui.label("Fine Lagusaz");

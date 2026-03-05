@@ -1,5 +1,6 @@
 use eframe::egui;
 use snotra_core::config::Config;
+use snotra_core::window_data::{self, WindowPlacement};
 
 use crate::tabs;
 
@@ -59,6 +60,7 @@ struct SettingsApp {
     opener_state: tabs::opener::OpenerTabState,
     font_list: Vec<String>,
     hotkey_state: crate::hotkey_input::HotkeyInputState,
+    last_position: Option<WindowPlacement>,
 }
 
 impl SettingsApp {
@@ -82,6 +84,7 @@ impl SettingsApp {
             opener_state: tabs::opener::OpenerTabState::default(),
             font_list: crate::font::list_system_fonts(),
             hotkey_state: Default::default(),
+            last_position: None,
         }
     }
 
@@ -110,6 +113,12 @@ impl SettingsApp {
 }
 
 impl eframe::App for SettingsApp {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Some(pos) = self.last_position {
+            window_data::save_settings_placement(pos);
+        }
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Close on Escape (skip when hotkey capture is active)
         if !self.hotkey_state.is_capturing() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -218,15 +227,30 @@ impl eframe::App for SettingsApp {
                 }
             }
         });
+
+        // Track window position for save on exit
+        if let Some(rect) = ctx.input(|i| i.viewport().outer_rect) {
+            let pos = rect.left_top();
+            self.last_position = Some(WindowPlacement {
+                x: pos.x as i32,
+                y: pos.y as i32,
+            });
+        }
     }
 }
 
 pub fn run(config: Config, first_run: bool, initial_tab: Option<String>) -> eframe::Result {
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("Snotra 設定")
+        .with_inner_size([760.0, 560.0])
+        .with_min_inner_size([520.0, 360.0]);
+
+    if let Some(pos) = window_data::load_settings_placement() {
+        viewport = viewport.with_position(egui::pos2(pos.x as f32, pos.y as f32));
+    }
+
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("Snotra 設定")
-            .with_inner_size([760.0, 560.0])
-            .with_min_inner_size([520.0, 360.0]),
+        viewport,
         ..Default::default()
     };
 

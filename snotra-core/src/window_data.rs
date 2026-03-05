@@ -45,6 +45,16 @@ pub fn save_search_placement(placement: WindowPlacement) {
     save_state(&state);
 }
 
+pub fn load_settings_placement() -> Option<WindowPlacement> {
+    load_state().and_then(|state| state.settings)
+}
+
+pub fn save_settings_placement(placement: WindowPlacement) {
+    let mut state = load_state().unwrap_or_default();
+    state.settings = Some(placement);
+    save_state(&state);
+}
+
 #[allow(deprecated)]
 fn load_state() -> Option<WindowPlacementState> {
     let bf = bin_file()?;

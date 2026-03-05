@@ -15,10 +15,11 @@ pub struct WindowPlacement {
     pub y: i32,
 }
 
+/// Kept for backward-compatible deserialization of window.bin (V3/V4).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub struct WindowSize {
-    pub width: i32,
-    pub height: i32,
+struct WindowSize {
+    width: i32,
+    height: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -41,26 +42,6 @@ pub fn load_search_placement() -> Option<WindowPlacement> {
 pub fn save_search_placement(placement: WindowPlacement) {
     let mut state = load_state().unwrap_or_default();
     state.search = Some(placement);
-    save_state(&state);
-}
-
-pub fn load_settings_placement() -> Option<WindowPlacement> {
-    load_state().and_then(|state| state.settings)
-}
-
-pub fn save_settings_placement(placement: WindowPlacement) {
-    let mut state = load_state().unwrap_or_default();
-    state.settings = Some(placement);
-    save_state(&state);
-}
-
-pub fn load_settings_size() -> Option<WindowSize> {
-    load_state().and_then(|state| state.settings_size)
-}
-
-pub fn save_settings_size(size: WindowSize) {
-    let mut state = load_state().unwrap_or_default();
-    state.settings_size = Some(size);
     save_state(&state);
 }
 

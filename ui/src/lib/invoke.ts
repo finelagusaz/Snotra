@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { BootstrapPayload, Config, OpenerTool, SearchResult } from "./types";
+import type { BootstrapPayload, OpenerTool, SearchResult } from "./types";
 import { trace } from "./trace";
 
 let invokeSeq = 0;
@@ -64,26 +64,6 @@ export async function listFolder(
   return tracedInvoke<SearchResult[]>("list_folder", { dir, filter });
 }
 
-export async function loadConfig(): Promise<Config> {
-  return tracedInvoke<Config>("load_config");
-}
-
-export interface SaveConfigResult {
-  reindex_started: boolean;
-}
-
-export async function saveConfig(config: Config): Promise<SaveConfigResult> {
-  return tracedInvoke<SaveConfigResult>("save_config", { config });
-}
-
-export async function getConfig(): Promise<Config> {
-  return tracedInvoke<Config>("get_config");
-}
-
-export async function getDefaultConfig(): Promise<Config> {
-  return tracedInvoke<Config>("get_default_config");
-}
-
 export async function getBootstrapPayload(): Promise<BootstrapPayload> {
   return tracedInvoke<BootstrapPayload>("get_bootstrap_payload");
 }
@@ -96,18 +76,13 @@ export async function openSettings(): Promise<void> {
   return tracedInvoke("open_settings");
 }
 
-export async function hideSettings(): Promise<void> {
-  return tracedInvoke("hide_settings");
+export async function openAbout(): Promise<void> {
+  return tracedInvoke("open_about");
 }
 
 export interface WindowPlacement {
   x: number;
   y: number;
-}
-
-export interface WindowSize {
-  width: number;
-  height: number;
 }
 
 export async function getSearchPlacement(): Promise<WindowPlacement | null> {
@@ -116,28 +91,6 @@ export async function getSearchPlacement(): Promise<WindowPlacement | null> {
 
 export async function saveSearchPlacement(x: number, y: number): Promise<void> {
   return tracedInvoke("save_search_placement", { x, y });
-}
-
-export async function getSettingsPlacement(): Promise<
-  [WindowPlacement | null, WindowSize | null]
-> {
-  return tracedInvoke<[WindowPlacement | null, WindowSize | null]>(
-    "get_settings_placement",
-  );
-}
-
-export async function saveSettingsPlacement(
-  x: number,
-  y: number,
-): Promise<void> {
-  return tracedInvoke("save_settings_placement", { x, y });
-}
-
-export async function saveSettingsSize(
-  width: number,
-  height: number,
-): Promise<void> {
-  return tracedInvoke("save_settings_size", { width, height });
 }
 
 export async function setWindowNoActivate(): Promise<void> {
@@ -160,10 +113,6 @@ export async function getIndexingState(): Promise<boolean> {
   return tracedInvoke<boolean>("get_indexing_state");
 }
 
-export async function listSystemFonts(): Promise<string[]> {
-  return tracedInvoke<string[]>("list_system_fonts");
-}
-
 export async function rebuildIndex(): Promise<boolean> {
   return tracedInvoke<boolean>("rebuild_index");
 }
@@ -172,11 +121,7 @@ export async function quitApp(): Promise<void> {
   return tracedInvoke("quit_app");
 }
 
-export async function openAbout(): Promise<void> {
-  return tracedInvoke("open_about");
-}
-
-export async function ensureWindow(label: "results" | "about"): Promise<boolean> {
+export async function ensureWindow(label: "results"): Promise<boolean> {
   return tracedInvoke<boolean>("ensure_window", { label });
 }
 

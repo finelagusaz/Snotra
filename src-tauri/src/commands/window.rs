@@ -3,7 +3,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
 use serde_json::json;
-use snotra_core::window_data::{self, WindowPlacement, WindowSize};
+use snotra_core::window_data::{self, WindowPlacement};
 use tauri::{AppHandle, Manager, State};
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
@@ -154,14 +154,6 @@ pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> R
     Ok(())
 }
 
-/// No-op stub kept for backward compatibility with the WebView frontend.
-/// The settings window is now a separate process; this IPC is unused but
-/// must exist until the frontend SettingsWindow.tsx is removed (Phase 6).
-#[tauri::command]
-pub fn hide_settings() {
-    // Intentionally empty — snotra-settings manages its own lifecycle.
-}
-
 #[tauri::command]
 pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), String> {
     trace_command("cmd:open_settings:start", json!({}));
@@ -230,24 +222,6 @@ pub fn get_search_placement() -> Option<WindowPlacement> {
 #[tauri::command]
 pub fn save_search_placement(x: i32, y: i32) {
     window_data::save_search_placement(WindowPlacement { x, y });
-}
-
-#[tauri::command]
-pub fn get_settings_placement() -> (Option<WindowPlacement>, Option<WindowSize>) {
-    (
-        window_data::load_settings_placement(),
-        window_data::load_settings_size(),
-    )
-}
-
-#[tauri::command]
-pub fn save_settings_placement(x: i32, y: i32) {
-    window_data::save_settings_placement(WindowPlacement { x, y });
-}
-
-#[tauri::command]
-pub fn save_settings_size(width: i32, height: i32) {
-    window_data::save_settings_size(WindowSize { width, height });
 }
 
 #[tauri::command]

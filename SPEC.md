@@ -199,9 +199,11 @@
 
 ### 6.1 実装方式
 
-- Tauri v2 の `WebviewWindowBuilder` で同一プロセス内の第2ウィンドウとして生成
-- 設定ウィンドウを含め、すべての固定ウィンドウ（`results`, `about`, `settings`）は起動時に一括で事前生成する（初回表示時の WebView 初期化による遅延を防ぐため、またトレイ表示前の生成完了を保証するため）
-- `/o` スラッシュコマンドで開く
+- 設定画面は独立した egui バイナリ `snotra-settings` として実装
+- 本体（`snotra`）から `std::process::Command` で子プロセスとして起動
+- `/o` スラッシュコマンドまたはトレイメニュー「設定」で開く
+- `snotra-settings --about` でバージョン情報ダイアログを表示
+- 設定の保存は `snotra-settings` が直接 `config.toml` に書き込み、本体は `notify` ファイル監視で検知・反映する
 - タブ切り替えUI
 
 ### 6.2 タブ構成と設定項目
@@ -250,13 +252,14 @@
 
 ### 6.4 設定反映タイミング
 
-- ホットキー: 保存時に `PlatformCommand::SetHotkey` で再登録（失敗時は旧設定維持）
-- トレイアイコン: 保存時に `PlatformCommand::SetTrayVisible` で切替
-- 検索方式/最大件数: 保存直後に即時反映
-- 見た目設定: 保存時に `visual-config-changed` イベントで全ウィンドウの CSS 変数を即時更新
-- ウィンドウ幅: 保存時に `set_size` で main/results ウィンドウを即時リサイズ
+- `snotra-settings` が `config.toml` を保存すると、本体の `config_watcher`（`notify` ファイル監視）が変更を検知し設定を再読み込みする
+- ホットキー: 検知時に `PlatformCommand::SetHotkey` で再登録（失敗時は旧設定維持）
+- トレイアイコン: 検知時に `PlatformCommand::SetTrayVisible` で切替
+- 検索方式/最大件数: 検知後即時反映
+- 見た目設定: 検知時に `visual-config-changed` イベントで全ウィンドウの CSS 変数を即時更新
+- ウィンドウ幅: 検知時に `set_size` で main/results ウィンドウを即時リサイズ
 - インデックス条件（スキャンパス・隠しファイル表示）・アイコン設定:
-  - 保存時に変更を検知し、バックグラウンドで自動再構築
+  - 検知時に変更を判定し、バックグラウンドで自動再構築
   - ステータスに「インデックスを再構築中…」を表示
 
 ### 6.5 起動時ブートストラップ
@@ -277,7 +280,7 @@
 
 - 検索ウィンドウは検索バーの余白部分（padding 領域）をドラッグして移動可能
 - 移動位置をデバウンス保存し次回表示時に復元
-- 検索ウィンドウと設定ウィンドウは独立して位置・サイズを記憶
+- 検索ウィンドウは位置を記憶（設定ウィンドウは別プロセスのため本体では管理しない）
 - `window.bin` にバイナリ形式で保存
 
 ### 7.3 タイトルバー
@@ -292,11 +295,12 @@
 
 ### 7.5 サブウィンドウ生成タイミング
 
-- `results` / `about` / `settings` は起動時のセットアップで一括生成（`visible: false`）
+- `results` ウィンドウは起動時のセットアップで事前生成（`visible: false`）
 - 初回表示時は既存インスタンスを `show` する
-- `about` と `settings` は閉じる操作で破棄せず `hide` し、次回再表示時は既存インスタンスを再利用
-- `platform.rs` の Win32 メッセージループスレッドは固定ウィンドウ事前生成より前に spawn し、Win32 初期化（`RegisterClassExW` / `CreateWindowExW`）とウィンドウ生成を並列実行する（起動時間の短縮）
-- ただしトレイアイコンの表示は固定ウィンドウの事前生成がすべて完了した後に行う。トレイ表示前にウィンドウ生成が完了していない場合、右クリックメニューからのウィンドウ呼び出し（設定・about）が機能しないため
+- `about` / `settings` は別プロセス（`snotra-settings`）として起動。本体は `SettingsProcessState`（`Mutex<Option<Child>>`）で子プロセスを管理し、二重起動を防止する
+- `snotra-settings` 起動中は本体のメインウィンドウの `alwaysOnTop` を一時的に `false` にし、終了検知時に `true` に復元する
+- `platform.rs` の Win32 メッセージループスレッドは `results` ウィンドウ事前生成より前に spawn し、Win32 初期化とウィンドウ生成を並列実行する（起動時間の短縮）
+- トレイアイコンの表示は `results` ウィンドウの事前生成完了後に行う
 - ホットキー登録（`RegisterHotKey`）は `hotkey-pressed` イベントリスナーの登録完了後に行う。リスナー未登録の状態でホットキーを有効化すると、起動中のキー入力が受け手なく破棄されるため
 
 ### 7.6 状態遷移図
@@ -306,21 +310,21 @@ stateDiagram-v2
   state "LauncherStopped\n(未起動/終了後)" as LauncherStopped
   state "Standby\n(起動済み・検索非表示)" as Standby
   state "SearchVisible\n(検索ウィンドウ表示)" as SearchVisible
-  state "SettingsVisible\n(設定ウィンドウ表示)" as SettingsVisible
   [*] --> LauncherStopped
   LauncherStopped --> Standby: app_start
-  LauncherStopped --> SettingsVisible: app_start [is_first_run]
   Standby --> SearchVisible: hotkey-pressed
   Standby --> SearchVisible: app_start [show_on_startup]
-  Standby --> SettingsVisible: open-settings [!indexing]
   Standby --> LauncherStopped: /q / exit-requested
-  SettingsVisible --> Standby: CloseRequested
-  SettingsVisible --> LauncherStopped: /q / exit-requested
   SearchVisible --> Standby: Escape [!toolSelectionState && !folderState]
   SearchVisible --> Standby: hotkey-pressed [hotkey_toggle && main_visible]
   SearchVisible --> Standby: focus_lost [auto_hide_on_focus_lost]
-  SearchVisible --> SettingsVisible: /o [!indexing]
   SearchVisible --> LauncherStopped: /q / exit-requested
+
+  note right of Standby
+    /o, /a, トレイ「設定」は snotra-settings
+    子プロセスを起動する（本体の状態遷移には影響しない）。
+    初回起動時も snotra-settings を子プロセスとして起動。
+  end note
 
   state SearchVisible {
     state "NormalMode\n(通常モード)" as NormalMode
@@ -348,16 +352,17 @@ stateDiagram-v2
 
 遷移ルール要約（主要ガード条件）:
 
-- `SearchVisible -> SettingsVisible` は `/o` かつ `!indexing` のときのみ有効
-- `Standby -> SettingsVisible` はトレイ由来 `open-settings` かつ `!indexing` のときのみ有効
+- `/o` は `snotra-settings` 子プロセスを起動する（`!indexing` のときのみ有効）。本体の状態は変わらない
+- `/a` は `snotra-settings --about` 子プロセスを起動する。本体の状態は変わらない
+- トレイ「設定」も `snotra-settings` 子プロセスを起動する（`!indexing` のときのみ有効）
 - `Standby -> SearchVisible` は `hotkey-pressed` に加えて、起動直後 `app_start [show_on_startup]` でも成立
 - `SearchVisible -> Standby` の `Escape` は `!toolSelectionState && !folderState` の場合のみ成立（`toolSelectionState` 中は `ToolSelectionMode -> NormalMode/FolderExpansionMode` を優先し、`folderState` 中は `FolderExpansionMode -> NormalMode` を優先）
 - `SearchVisible -> Standby` の `hotkey-pressed` は `hotkey_toggle && main_visible` が前提
 - `SearchVisible -> Standby` の `focus_lost` は `auto_hide_on_focus_lost` 有効時のみ成立
-- `SettingsVisible -> Standby` は `CloseRequested` で常に待機へ戻す
-- `/q` または `exit-requested` は `Standby` / `SearchVisible` / `SettingsVisible` のいずれからでも `LauncherStopped` へ遷移
-- `/o` 実行時に `indexing == true` の場合、`open_settings` は no-op で `SettingsVisible` へは遷移しない
-- 初回起動（`is_first_run`）では補助経路として `LauncherStopped -> SettingsVisible` が発生し得る（主経路は `LauncherStopped -> Standby`）
+- `/q` または `exit-requested` は `Standby` / `SearchVisible` のいずれからでも `LauncherStopped` へ遷移
+- `/o` 実行時に `indexing == true` の場合、`open_settings` は no-op
+- 初回起動（`is_first_run`）では `snotra-settings` を子プロセスとして直接起動する（indexing ガードをバイパス）
+- `snotra-settings` 起動中のホットキー入力は無視する（ホットキー再設定中の誤動作防止）
 
 ## 8. 実行履歴メニュー
 
@@ -371,7 +376,7 @@ stateDiagram-v2
 - 右クリックメニュー: 「設定」「終了」
 - キーボードフォーカス + Shift+F10 / Application キー: 右クリックと同じコンテキストメニューを表示
 - 左クリック: 最近の実行履歴をポップアップメニューとして表示。履歴からの起動にもオープナールールが適用される（§17 参照）
-- トレイアイコンはすべての固定ウィンドウ（`results` / `about` / `settings`）の事前生成完了後に表示する（§7.5 参照）
+- トレイアイコンは `results` ウィンドウの事前生成完了後に表示する（§7.5 参照）
 - `show_on_startup = true` の起動時は、検索UI（入力欄/結果）を起動直後から表示する
 - `show_on_startup = false` の起動時は検索UI（入力欄/結果）を表示しない
 - `show_on_startup = false` かつ `show_tray_icon = true` の場合は、可視要素はトレイアイコンのみ

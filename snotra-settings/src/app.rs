@@ -1,6 +1,6 @@
 use eframe::egui;
 use egui::{Color32, CornerRadius, Stroke};
-use snotra_core::config::Config;
+use snotra_core::config::{Config, ConfigError};
 use snotra_core::window_data::{self, WindowPlacement};
 
 use crate::tabs;
@@ -13,7 +13,7 @@ const ACCENT: Color32 = Color32::from_rgb(0, 103, 192); // Windows 11 default bl
 const TAB_HOVER: Color32 = Color32::from_rgb(232, 232, 232);
 const TAB_SELECTED_BG: Color32 = Color32::from_rgb(255, 255, 255);
 const TEXT_PRIMARY: Color32 = Color32::from_rgb(26, 26, 26);
-const TEXT_SECONDARY: Color32 = Color32::from_rgb(96, 96, 96);
+pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(96, 96, 96);
 const WIDGET_BG: Color32 = Color32::from_rgb(255, 255, 255);
 const WIDGET_BORDER: Color32 = Color32::from_rgb(210, 210, 210);
 
@@ -148,7 +148,7 @@ impl SettingsApp {
         config.normalize_openers();
         let errors = config.validate();
         if !errors.is_empty() {
-            self.status = format!("検証エラー: {:?}", errors[0]);
+            self.status = format!("検証エラー: {}", config_error_message(&errors[0]));
             self.status_timer = 5.0;
             return;
         }
@@ -159,6 +159,21 @@ impl SettingsApp {
 
     fn reset_to_default(&mut self) {
         self.draft = Config::default();
+    }
+}
+
+fn config_error_message(error: &ConfigError) -> String {
+    match error {
+        ConfigError::HotkeyModifierEmpty => "ホットキーの修飾キーが未設定です".to_string(),
+        ConfigError::HotkeyKeyEmpty => "ホットキーのキーが未設定です".to_string(),
+        ConfigError::MaxResultsZero => "最大表示件数は1以上にしてください".to_string(),
+        ConfigError::WindowWidthTooSmall(w) => format!("ウィンドウ幅 {} は小さすぎます（200以上）", w),
+        ConfigError::FuzzyCapRatioOutOfRange { value } => {
+            format!("ファジー履歴比率 {} は 0.0〜1.0 の範囲にしてください", value)
+        }
+        ConfigError::ScanPathEmpty { index } => {
+            format!("スキャンパス {} のパスが空です", index + 1)
+        }
     }
 }
 
@@ -223,7 +238,7 @@ impl eframe::App for SettingsApp {
                         text_pos,
                         egui::Align2::LEFT_CENTER,
                         tab.label(),
-                        egui::FontId::proportional(13.0),
+                        egui::TextStyle::Body.resolve(ui.style()),
                         if selected { TEXT_PRIMARY } else { TEXT_SECONDARY },
                     );
 
@@ -318,11 +333,24 @@ impl eframe::App for SettingsApp {
     }
 }
 
+fn load_icon() -> egui::IconData {
+    let png = include_bytes!("../../src-tauri/icons/32x32.png");
+    let img = image::load_from_memory(png).expect("icon png").into_rgba8();
+    let (w, h) = img.dimensions();
+    egui::IconData {
+        rgba: img.into_raw(),
+        width: w,
+        height: h,
+    }
+}
+
 pub fn run(config: Config, first_run: bool, initial_tab: Option<String>) -> eframe::Result {
+    let icon = load_icon();
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Snotra 設定")
         .with_inner_size([760.0, 560.0])
-        .with_min_inner_size([520.0, 360.0]);
+        .with_min_inner_size([520.0, 360.0])
+        .with_icon(icon);
 
     if let Some(pos) = window_data::load_settings_placement() {
         viewport = viewport.with_position(egui::pos2(pos.x as f32, pos.y as f32));

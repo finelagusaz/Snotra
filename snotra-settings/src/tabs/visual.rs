@@ -106,11 +106,13 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, fonts: &[String]) {
         ui.heading("カラー");
         ui.add_space(4.0);
 
-        color_row(ui, "背景色:", &mut config.visual.background_color);
-        color_row(ui, "入力欄背景:", &mut config.visual.input_background_color);
-        color_row(ui, "テキスト:", &mut config.visual.text_color);
-        color_row(ui, "選択行:", &mut config.visual.selected_row_color);
-        color_row(ui, "ヒントテキスト:", &mut config.visual.hint_text_color);
+        egui::Grid::new("color_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+            color_row(ui, "背景色:", &mut config.visual.background_color);
+            color_row(ui, "入力欄背景:", &mut config.visual.input_background_color);
+            color_row(ui, "テキスト:", &mut config.visual.text_color);
+            color_row(ui, "選択行:", &mut config.visual.selected_row_color);
+            color_row(ui, "ヒントテキスト:", &mut config.visual.hint_text_color);
+        });
 
         ui.add_space(12.0);
 
@@ -118,7 +120,7 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, fonts: &[String]) {
         ui.heading("フォント");
         ui.add_space(4.0);
 
-        ui.horizontal(|ui| {
+        egui::Grid::new("font_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
             ui.label("フォントファミリー:");
             egui::ComboBox::from_id_salt("font_family")
                 .selected_text(&config.visual.font_family)
@@ -127,19 +129,19 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, fonts: &[String]) {
                         ui.selectable_value(&mut config.visual.font_family, name.clone(), name);
                     }
                 });
-        });
+            ui.end_row();
 
-        ui.horizontal(|ui| {
             ui.label("フォントサイズ:");
-            ui.add(egui::DragValue::new(&mut config.visual.font_size).range(8..=48));
+            ui.add_sized([60.0, ui.spacing().interact_size.y], egui::DragValue::new(&mut config.visual.font_size).range(8..=48));
+            ui.end_row();
         });
     });
 }
 
 fn color_row(ui: &mut egui::Ui, label: &str, hex: &mut String) {
-    ui.horizontal(|ui| {
-        ui.label(label);
+    ui.label(label);
 
+    ui.horizontal(|ui| {
         // Color swatch button
         let mut color = Color32::from_hex(hex).unwrap_or(Color32::BLACK);
         if egui::widgets::color_picker::color_edit_button_srgba(
@@ -162,6 +164,8 @@ fn color_row(ui: &mut egui::Ui, label: &str, hex: &mut String) {
             }
         }
     });
+
+    ui.end_row();
 }
 
 fn preset_matches(config: &Config, p: &PresetDef) -> bool {
@@ -275,7 +279,7 @@ fn theme_card(ui: &mut egui::Ui, label: &str, colors: &[&str; 5], active: bool) 
             label_pos,
             egui::Align2::LEFT_TOP,
             label,
-            egui::FontId::default(),
+            egui::TextStyle::Body.resolve(ui.style()),
             ui.visuals().text_color(),
         );
     }

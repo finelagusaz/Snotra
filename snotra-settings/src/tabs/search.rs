@@ -9,14 +9,14 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config) {
         ui.heading("検索モード");
         ui.add_space(4.0);
 
-        ui.horizontal(|ui| {
+        egui::Grid::new("search_mode_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
             ui.label("通常モード:");
             search_mode_combo(ui, "normal_mode", &mut config.search.normal_mode);
-        });
+            ui.end_row();
 
-        ui.horizontal(|ui| {
             ui.label("フォルダモード:");
             search_mode_combo(ui, "folder_mode", &mut config.search.folder_mode);
+            ui.end_row();
         });
 
         ui.add_space(12.0);
@@ -36,9 +36,10 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config) {
         ui.heading("履歴");
         ui.add_space(4.0);
 
-        ui.horizontal(|ui| {
+        egui::Grid::new("history_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
             ui.label("履歴保持件数:");
-            ui.add(egui::DragValue::new(&mut config.appearance.top_n_history).range(10..=1000));
+            ui.add_sized([60.0, ui.spacing().interact_size.y], egui::DragValue::new(&mut config.appearance.top_n_history).range(10..=1000));
+            ui.end_row();
         });
 
         ui.add_space(12.0);
@@ -47,21 +48,24 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config) {
         ui.heading("履歴スコア");
         ui.add_space(4.0);
 
-        ui.horizontal(|ui| {
-            ui.label("正規化:");
-            history_normalization_combo(ui, &mut config.search.history_normalization);
-        });
-
         let cap_enabled =
             config.search.history_normalization != SearchHistoryNormalizationConfig::Disabled;
-        ui.horizontal(|ui| {
+        egui::Grid::new("history_score_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+            ui.label("正規化:");
+            history_normalization_combo(ui, &mut config.search.history_normalization);
+            ui.end_row();
+
             ui.label("Fuzzy 履歴キャップ比率:");
-            ui.add_enabled(
-                cap_enabled,
-                egui::DragValue::new(&mut config.search.fuzzy_history_cap_ratio)
-                    .range(0.0..=1.0)
-                    .speed(0.05),
-            );
+            ui.add_enabled_ui(cap_enabled, |ui| {
+                ui.add_sized(
+                    [60.0, ui.spacing().interact_size.y],
+                    egui::DragValue::new(&mut config.search.fuzzy_history_cap_ratio)
+                        .range(0.0..=1.0)
+                        .speed(0.05)
+                        .min_decimals(2),
+                );
+            });
+            ui.end_row();
         });
     });
 }

@@ -20,6 +20,7 @@ use snotra_core::indexer;
 use snotra_core::window_data;
 use tauri::{AppHandle, Emitter, Listener, Manager};
 
+use crate::commands::SettingsProcessState;
 use crate::icon::IconCacheState;
 
 use crate::platform::{PlatformBridge, PlatformBridgePending, PlatformCommand};
@@ -216,6 +217,7 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .manage(app_state)
         .manage(icon_cache_state)
+        .manage(SettingsProcessState::default())
         .invoke_handler(tauri::generate_handler![
             commands::search,
             commands::get_history_results,
@@ -277,21 +279,18 @@ fn main() {
             // Tray is NOT created here; SetTrayVisible is sent after full setup (SPEC §7.5).
             let platform_pending = PlatformBridge::begin(app_handle.clone(), hotkey_config);
 
-            // Pre-create secondary windows for stability.
+            // Pre-create results window (the only remaining WebView2 window).
             ensure_window_with_timing(&app_handle, "results", commands::ensure_results_window)?;
-            ensure_window_with_timing(&app_handle, "about", commands::ensure_about_window)?;
-            ensure_window_with_timing(&app_handle, "settings", commands::ensure_settings_window)?;
 
             // Win32 init finishes in a few ms; by the time windows are created it is already done.
             if let Some(bridge) = platform_pending.and_then(PlatformBridgePending::wait) {
                 app_handle.manage(Mutex::new(bridge));
             }
 
-            if is_first_run
-                && let Some(settings_window) = app_handle.get_webview_window("settings")
-            {
-                let _ = settings_window.show();
-                let _ = settings_window.set_focus();
+            // First-run: launch snotra-settings directly (bypassing the indexing guard
+            // in open_settings, since initial_indexing=true during first run).
+            if is_first_run {
+                let _ = commands::launch_settings_process(&app_handle, &[]);
             }
 
             // Listen for hotkey toggle events
@@ -301,13 +300,10 @@ fn main() {
             let hotkey_generation = Arc::new(AtomicU64::new(0));
             let hotkey_generation_for_listener = hotkey_generation.clone();
             app_handle.listen("hotkey-pressed", move |_| {
-                // Ignore the hotkey while the settings window is visible: the user may be
-                // pressing the current hotkey combination to configure a new one, and
-                // Win32 RegisterHotKey fires before the DOM keydown handler can intercept it.
-                if handle_for_hotkey
-                    .get_webview_window("settings")
-                    .and_then(|w| w.is_visible().ok())
-                    .unwrap_or(false)
+                // Ignore the hotkey while snotra-settings is running: the user may be
+                // pressing the current hotkey combination to configure a new one.
+                if let Some(proc_state) = handle_for_hotkey.try_state::<SettingsProcessState>()
+                    && proc_state.lock().unwrap().is_some()
                 {
                     return;
                 }
@@ -369,6 +365,13 @@ fn main() {
                     if let Some(c) = cache.as_mut() {
                         c.save_if_dirty();
                     }
+                }
+                // Kill snotra-settings child process if running.
+                if let Some(proc_state) = handle_for_exit.try_state::<SettingsProcessState>()
+                    && let Ok(mut guard) = proc_state.lock()
+                    && let Some(mut child) = guard.take()
+                {
+                    let _ = child.kill();
                 }
                 if let Some(bridge) = handle_for_exit.try_state::<Mutex<PlatformBridge>>()
                     && let Ok(b) = bridge.lock()

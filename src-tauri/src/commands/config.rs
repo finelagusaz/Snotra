@@ -7,7 +7,7 @@ use crate::indexing;
 use crate::platform::{PlatformBridge, PlatformCommand};
 use crate::state::AppState;
 
-// Note: config commands do not use trace_command or ensure_settings_window directly.
+// Note: config commands do not use trace_command directly.
 
 #[derive(serde::Serialize, Clone)]
 pub struct SaveConfigResult {
@@ -97,23 +97,13 @@ pub fn save_config(
         state.engine.lock().unwrap().update_config(config);
     }
 
-    // First-run path: initial indexing is pending (indexing=true) but build not started yet.
-    // Do not treat regular reindex-in-progress as first run.
-    let is_first_run_pending =
-        state.indexing.load(Ordering::SeqCst) && !state.index_build_started.load(Ordering::SeqCst);
-    if is_first_run_pending {
-        indexing::start_index_build(&app);
-        if let Some(w) = app.get_webview_window("settings") {
-            let _ = w.close();
-        }
-    }
-
     // Trigger reindex if index-related settings changed.
     // Never restart while a build is already running, otherwise multiple
     // index threads can race and last-writer wins.
+    // Note: first-run index build is handled by the snotra-settings monitor thread.
     let mut reindex_started = false;
     let indexing_in_progress = state.indexing.load(Ordering::SeqCst);
-    if index_changed && !is_first_run_pending && !indexing_in_progress {
+    if index_changed && !indexing_in_progress {
         state.index_build_started.store(false, Ordering::SeqCst);
         reindex_started = indexing::start_index_build(&app);
     }

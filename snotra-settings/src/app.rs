@@ -90,8 +90,6 @@ impl SettingsApp {
         config.save();
         self.saved = config.clone();
         self.draft = config;
-        self.status = "保存しました".to_string();
-        self.status_timer = 3.0;
     }
 
     fn reset_to_default(&mut self) {
@@ -101,9 +99,14 @@ impl SettingsApp {
 
 impl eframe::App for SettingsApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Close on Escape (only if no changes)
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !self.has_changes() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        // Close on Escape
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if self.has_changes() {
+                self.status = "未保存の変更があります".to_string();
+                self.status_timer = 3.0;
+            } else {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
         }
 
         // Decrement status timer
@@ -122,6 +125,7 @@ impl eframe::App for SettingsApp {
             .exact_width(120.0)
             .show(ctx, |ui| {
                 ui.add_space(8.0);
+                ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
                 for &tab in TabId::ALL {
                     let selected = self.active_tab == tab;
                     if ui.selectable_label(selected, tab.label()).clicked() {
@@ -143,18 +147,21 @@ impl eframe::App for SettingsApp {
 
                     // Spacer
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // Save button
-                        let save_enabled = self.has_changes();
-                        let save_text = if save_enabled { "保存" } else { "変更なし" };
+                        ui.spacing_mut().button_padding = egui::vec2(12.0, 4.0);
+
+                        // Save button (always "保存", disabled when no changes)
                         if ui
-                            .add_enabled(save_enabled, egui::Button::new(save_text))
+                            .add_enabled(self.has_changes(), egui::Button::new("保存"))
                             .clicked()
                         {
                             self.save();
                         }
 
-                        // Discard button
-                        if self.has_changes() && ui.button("破棄").clicked() {
+                        // Discard button (always visible, disabled when no changes)
+                        if ui
+                            .add_enabled(self.has_changes(), egui::Button::new("破棄"))
+                            .clicked()
+                        {
                             self.draft = self.saved.clone();
                         }
 

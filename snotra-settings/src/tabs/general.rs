@@ -3,6 +3,8 @@ use snotra_core::config::Config;
 
 pub fn ui(ui: &mut egui::Ui, config: &mut Config) {
     egui::ScrollArea::vertical().show(ui, |ui| {
+        // Consistent row height so checkboxes and DragValue inputs align vertically
+        ui.spacing_mut().interact_size.y = 24.0;
         // -- Hotkey --
         ui.heading("ホットキー");
         ui.add_space(4.0);

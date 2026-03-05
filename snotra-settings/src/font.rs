@@ -4,22 +4,54 @@ use eframe::egui;
 pub fn configure_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
 
-    // Try loading Yu Gothic from Windows system fonts.
-    // Fall back gracefully if not available (non-Windows or missing font).
-    let jp_font_paths = [
-        "C:\\Windows\\Fonts\\YuGothM.ttc",
-        "C:\\Windows\\Fonts\\yugothic.ttf",
-        "C:\\Windows\\Fonts\\msgothic.ttc",
-        "C:\\Windows\\Fonts\\meiryo.ttc",
+    // Try loading Japanese font from Windows system fonts (priority order).
+    // Each font has a FontTweak to align vertical position with the default Latin font.
+    // Tweak values are provisional — adjust after visual confirmation.
+    let jp_font_candidates: &[(&str, egui::FontTweak)] = &[
+        (
+            "C:\\Windows\\Fonts\\YuGothM.ttc",
+            egui::FontTweak {
+                scale: 1.0,
+                y_offset_factor: 0.3,
+                y_offset: 0.0,
+                ..Default::default()
+            },
+        ),
+        (
+            "C:\\Windows\\Fonts\\yugothic.ttf",
+            egui::FontTweak {
+                scale: 1.0,
+                y_offset_factor: 0.3,
+                y_offset: 0.0,
+                ..Default::default()
+            },
+        ),
+        (
+            "C:\\Windows\\Fonts\\msgothic.ttc",
+            egui::FontTweak {
+                scale: 1.0,
+                y_offset_factor: 0.3,
+                y_offset: 0.0,
+                ..Default::default()
+            },
+        ),
+        (
+            "C:\\Windows\\Fonts\\meiryo.ttc",
+            egui::FontTweak {
+                scale: 1.0,
+                y_offset_factor: 0.3,
+                y_offset: 0.0,
+                ..Default::default()
+            },
+        ),
     ];
 
     let mut found = false;
-    for path in &jp_font_paths {
+    for &(path, ref tweak) in jp_font_candidates {
         if let Ok(font_data) = std::fs::read(path) {
-            fonts.font_data.insert(
-                "jp_font".to_owned(),
-                egui::FontData::from_owned(font_data).into(),
-            );
+            let mut data = egui::FontData::from_owned(font_data);
+            data.tweak = *tweak;
+            fonts.font_data.insert("jp_font".to_owned(), data.into());
             // Append Japanese font as fallback for proportional text
             fonts
                 .families

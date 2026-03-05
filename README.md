@@ -57,6 +57,22 @@ npm run tauri dev
 npm run tauri build
 ```
 
+### snotra-settings（設定 GUI）
+
+設定 GUI は egui ベースの別プロセスバイナリです。本体から子プロセスとして起動されますが、単独でも開発・確認できます。
+
+```bash
+# 開発実行（設定ウィンドウを単独で起動）
+cargo run -p snotra-settings
+
+# 型チェック・lint
+cargo check -p snotra-settings
+cargo clippy -p snotra-settings
+
+# リリースビルド（本体ビルド時に自動生成されるため通常は不要）
+cargo build --release -p snotra-settings
+```
+
 ### テスト
 
 ```bash
@@ -74,9 +90,10 @@ npm run e2e:tauri
 
 ```
 Snotra/
-  Cargo.toml            # ワークスペース（snotra-core, src-tauri）
+  Cargo.toml            # ワークスペース（snotra-core, src-tauri, snotra-settings）
   snotra-core/          # 純ロジックライブラリ crate
   src-tauri/            # Tauri v2 バイナリ crate（Win32 連携）
+  snotra-settings/      # egui 設定 GUI バイナリ（About タブ統合）
   ui/                   # SolidJS フロントエンド
     src/
       components/       # SearchWindow, ResultRow, Settings

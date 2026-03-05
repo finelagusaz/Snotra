@@ -16,14 +16,15 @@ Snotra は Windows 専用のキーボードランチャー。バックエンド�
 
 ```
 Snotra/
-  Cargo.toml              # workspace (snotra-core, src-tauri)
+  Cargo.toml              # workspace (snotra-core, src-tauri, snotra-settings)
   snotra-core/            # 純ロジック lib crate → snotra-core/CLAUDE.md
   src-tauri/              # Tauri v2 バイナリ crate → src-tauri/CLAUDE.md
+  snotra-settings/        # egui 設定・about バイナリ → snotra-settings/CLAUDE.md
   ui/                     # SolidJS フロントエンド → ui/CLAUDE.md
   package.json, vite.config.ts, tsconfig.json
 ```
 
-Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-core`）と Tauri バイナリ（`src-tauri`）を分離。GUI は SolidJS + CSS 変数ベースのテーマシステムで、Tauri IPC 経由で Rust バックエンドと通信。
+Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-core`）、Tauri バイナリ（`src-tauri`）、設定 GUI（`snotra-settings`）を分離。検索 UI は SolidJS + CSS 変数ベースのテーマシステムで Tauri IPC 経由で Rust バックエンドと通信。設定・about は egui ベースの別プロセスで、`config.toml` ファイルを介して本体と連携する。
 
 ### 横断的な実装パターン
 
@@ -35,6 +36,8 @@ Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-
 - 検索結果ウィンドウの同期は `results-sync` イベント1本で扱い、`results-updated` / `results-count-changed` を新規実装で使わない
 - `launch_item` は `LaunchResult(status/code/message)` を返す契約で扱い、失敗通知の自動クリアは単一タイマーを再利用して競合を防ぐ
 - 起動時にスレッドを並列 spawn する場合、そのスレッドが発火するイベントに依存する機能（ホットキー・トレイ等）はスレッド init フェーズで有効化せず、main 側でリスナー/ウィンドウ準備が整った後にコマンド（`RegisterInitialHotkey` / `SetTrayVisible`）で有効化する（「有効化 ≥ リスナー登録」不変条件）
+- 設定・about は `snotra-settings.exe` を子プロセスとして起動する。相互依存は `config.toml` ファイル1点のみ（IPC 不要）。本体は `notify` クレートで config.toml 変更を検知し即時反映する
+- 子プロセス管理: `Mutex<Option<Child>>` で保持し、起動時に重複チェック、監視スレッドで終了検知 + alwaysOnTop 復元、exit ハンドラで kill。**子プロセスを spawn する場合は exit ハンドラでの kill を必ずペアで追加する**
 
 ### 参照先
 
@@ -125,7 +128,8 @@ npm run tauri build              # リリースビルド
    - 最適化は「意味を変えない不変条件」を箇条書きで定義
    - 挙動変更なし前提は代表入力/出力をベースライン化して差分検証
    - 境界条件を列挙し最低1件ずつ検証ケースを用意
-   - **リソース管理は生成/破棄ペアで計画する**: `listen()`・`ResizeObserver`・`URL.createObjectURL` など「戻り値がライフサイクルを持つもの」を生成する際は、破棄（`unlisten`・`disconnect`・`revokeObjectURL`）の「場所・構造・理由」まで同時に記述する
+   - **リソース管理は生成/破棄ペアで計画する**: `listen()`・`ResizeObserver`・`URL.createObjectURL`・`Child` プロセスなど「戻り値がライフサイクルを持つもの」を生成する際は、破棄（`unlisten`・`disconnect`・`revokeObjectURL`・`kill`）の「場所・構造・理由」まで同時に記述する
+   - **初回フローとガードの相互作用を検証する**: 正常運用時の早期リターンガード（`if indexing { return }` 等）が、初回起動・初期化フロー・エラーリカバリなどの特殊パスを意図せず阻害しないか確認する。ガードを追加/変更したときは「このガードが true になる全コンテキスト」を列挙する
    - **サンプルコードに構造の理由を付記する**: リソース管理・非同期処理の配置が問われる箇所に「なぜこの構造か」をコメントする
 4. 失敗するテスト（または最小再現）を追加する
 5. それが落ちることを確認する（Red）

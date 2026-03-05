@@ -1674,4 +1674,54 @@ mod tests {
         let w: Wrapper = toml::from_str(toml_str).expect("parse");
         assert_eq!(w.preset, ThemePreset::Custom);
     }
+
+    // -- Config defense tests (external process writes) --
+
+    #[test]
+    fn invalid_toml_falls_back_to_default() {
+        // Garbage text that isn't valid TOML → should parse as default
+        let config: Config = toml::from_str("{{{{not valid toml!!!!").unwrap_or_default();
+        let default = Config::default();
+        assert_eq!(config.hotkey.modifier, default.hotkey.modifier);
+        assert_eq!(config.hotkey.key, default.hotkey.key);
+        assert_eq!(config.appearance.max_results, default.appearance.max_results);
+    }
+
+    #[test]
+    fn valid_toml_invalid_values_caught_by_validate() {
+        // Config with all required sections but invalid field values
+        let toml_str = r#"
+            [hotkey]
+            modifier = ""
+            key = ""
+
+            [appearance]
+            max_results = 0
+            window_width = 50
+
+            [paths]
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let errors = config.validate();
+        // Should have errors for empty hotkey and invalid max_results/window_width
+        assert!(errors.len() >= 2, "Expected at least 2 errors, got: {:?}", errors);
+    }
+
+    #[test]
+    fn partial_toml_falls_back_to_default_via_unwrap_or_default() {
+        // Partial TOML missing required sections → toml::from_str fails,
+        // but Config::load() uses unwrap_or_default() to handle this.
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Ctrl"
+            key = "Space"
+        "#;
+        // Direct parse fails (missing required sections)
+        assert!(toml::from_str::<Config>(toml_str).is_err());
+        // But unwrap_or_default produces a usable config
+        let config: Config = toml::from_str(toml_str).unwrap_or_default();
+        let default = Config::default();
+        assert_eq!(config.hotkey.modifier, default.hotkey.modifier);
+        assert_eq!(config.appearance.max_results, default.appearance.max_results);
+    }
 }

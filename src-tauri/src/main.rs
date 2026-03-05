@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod config_watcher;
 mod icon;
 mod ime;
 mod indexing;
@@ -376,6 +377,11 @@ fn main() {
                 }
                 handle_for_exit.exit(0);
             });
+
+            // Start config.toml file watcher for external changes (snotra-settings)
+            if let Some(watcher) = config_watcher::start(&app_handle) {
+                app_handle.manage(Mutex::new(watcher));
+            }
 
             // All windows pre-created and all listeners registered; now safe to show tray.
             // Showing tray before this point would allow right-click menu actions before

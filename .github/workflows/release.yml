@@ -35,7 +35,14 @@ jobs:
 
       - name: Get Build Date
         id: date
-        run: echo "BUILD_DATE=$(Get-Date -Format 'yyyyMMdd')" >> $env:GITHUB_ENV
+        run: echo "BUILD_DATE=$(Get-Date -Format 'yyyyMMddHHmm')" >> $env:GITHUB_ENV
+
+      - name: Set version from tag
+        run: |
+          $ver = "${{ github.ref_name }}".TrimStart('v')
+          (Get-Content Cargo.toml -Raw -Encoding utf8) `
+            -replace '(?m)^version = "[\d.]+"', "version = `"$ver`"" |
+            Set-Content Cargo.toml -Encoding utf8 -NoNewline
 
       - name: Build Windows executable (release)
         run: npx tauri build --no-bundle
@@ -45,6 +52,8 @@ jobs:
 
       - name: Build snotra-settings (release)
         run: cargo build --release -p snotra-settings
+        env:
+          BUILD_DATE: ${{ env.BUILD_DATE }}
 
       - name: Verify release artifacts
         run: |

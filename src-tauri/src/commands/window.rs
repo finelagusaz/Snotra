@@ -40,6 +40,12 @@ pub(crate) fn ensure_results_window(app: &AppHandle) -> tauri::Result<()> {
 /// Deduplicates: if a settings process is already running, this is a no-op.
 /// Temporarily disables main window alwaysOnTop while the child is alive
 /// and restores it when the child exits.
+///
+/// # Errors
+/// Returns `Err` if the executable is not found or spawning fails.
+/// On first-run, failure leaves `indexing=true` permanently unless the caller
+/// provides a fallback (e.g. `indexing::start_index_build`).
+#[must_use = "failure during first-run leaves indexing=true; handle Err with a fallback"]
 pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> Result<(), String> {
     let proc_state = app
         .try_state::<SettingsProcessState>()

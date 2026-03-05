@@ -185,6 +185,13 @@ rfd = "0.15"
 **`src-tauri/src/main.rs`**:
 - setup 内で `config_watcher::start()` 起動
 
+**`snotra-core` 防御テスト追加** (config.rs):
+外部プロセスが config.toml を書き換えるのが正規パスになるため、以下のテストを追加:
+1. 不正 TOML（パース失敗）→ `Config::load()` がデフォルト設定にフォールバックすること
+2. パース成功だが値が不正（範囲外数値、空文字列等）→ `validate()` で検出されること
+3. 部分的なフィールド欠落 → serde のデフォルト値で補完されること
+4. atomic write（.tmp → rename）で書き込み途中の読み取りが発生しないこと
+
 ### Phase 5: 本体側 — snotra-settings プロセス起動 + 初回フロー
 
 **`src-tauri/src/commands/window.rs`**:

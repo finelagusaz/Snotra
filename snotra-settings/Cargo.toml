@@ -11,6 +11,7 @@ path = "src/main.rs"
 snotra-core = { path = "../snotra-core" }
 eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow"] }
 open = "5"
+rfd = "0.15"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [

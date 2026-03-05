@@ -1,3 +1,6 @@
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
 use eframe::egui;
 use snotra_core::config::Config;
 
@@ -43,6 +46,13 @@ impl TabId {
     }
 }
 
+/// Shared state for non-blocking file/folder picker (rfd + thread spawn pattern)
+#[derive(Clone, Default)]
+pub struct PickerState {
+    pub result: Arc<Mutex<Option<Option<PathBuf>>>>,
+    pub active: bool,
+}
+
 struct SettingsApp {
     draft: Config,
     saved: Config,
@@ -51,6 +61,7 @@ struct SettingsApp {
     status_timer: f64,
     #[allow(dead_code)]
     first_run: bool,
+    picker: PickerState,
 }
 
 impl SettingsApp {
@@ -70,6 +81,7 @@ impl SettingsApp {
             status: String::new(),
             status_timer: 0.0,
             first_run,
+            picker: PickerState::default(),
         }
     }
 
@@ -177,6 +189,7 @@ impl eframe::App for SettingsApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             match self.active_tab {
                 TabId::General => tabs::general::ui(ui, &mut self.draft),
+                TabId::Index => tabs::index::ui(ui, ctx, &mut self.picker),
                 _ => {
                     ui.centered_and_justified(|ui| {
                         ui.label("(未実装)");

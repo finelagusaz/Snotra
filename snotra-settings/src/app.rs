@@ -1,8 +1,58 @@
 use eframe::egui;
+use egui::{Color32, CornerRadius, Stroke};
 use snotra_core::config::Config;
 use snotra_core::window_data::{self, WindowPlacement};
 
 use crate::tabs;
+
+// Windows 11 Settings-inspired color palette
+const SIDEBAR_BG: Color32 = Color32::from_rgb(243, 243, 243); // WinUI NavigationView pane
+const CONTENT_BG: Color32 = Color32::from_rgb(249, 249, 249); // WinUI content area
+const FOOTER_BG: Color32 = Color32::from_rgb(243, 243, 243);
+const ACCENT: Color32 = Color32::from_rgb(0, 103, 192); // Windows 11 default blue
+const TAB_HOVER: Color32 = Color32::from_rgb(232, 232, 232);
+const TAB_SELECTED_BG: Color32 = Color32::from_rgb(255, 255, 255);
+const TEXT_PRIMARY: Color32 = Color32::from_rgb(26, 26, 26);
+const TEXT_SECONDARY: Color32 = Color32::from_rgb(96, 96, 96);
+const WIDGET_BG: Color32 = Color32::from_rgb(255, 255, 255);
+const WIDGET_BORDER: Color32 = Color32::from_rgb(210, 210, 210);
+
+fn apply_win11_theme(ctx: &egui::Context) {
+    let mut visuals = egui::Visuals::light();
+
+    // Panel backgrounds
+    visuals.panel_fill = CONTENT_BG;
+    visuals.window_fill = CONTENT_BG;
+
+    // Widget styles
+    visuals.widgets.noninteractive.bg_fill = CONTENT_BG;
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, TEXT_PRIMARY);
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, WIDGET_BORDER);
+
+    visuals.widgets.inactive.bg_fill = WIDGET_BG;
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, WIDGET_BORDER);
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT_PRIMARY);
+    visuals.widgets.inactive.corner_radius = CornerRadius::same(4);
+
+    visuals.widgets.hovered.bg_fill = TAB_HOVER;
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, ACCENT);
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, TEXT_PRIMARY);
+    visuals.widgets.hovered.corner_radius = CornerRadius::same(4);
+
+    visuals.widgets.active.bg_fill = Color32::from_rgb(220, 220, 220);
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0, TEXT_PRIMARY);
+    visuals.widgets.active.corner_radius = CornerRadius::same(4);
+
+    // Selection color (accent)
+    visuals.selection.bg_fill = ACCENT.gamma_multiply(0.3);
+    visuals.selection.stroke = Stroke::new(1.0, ACCENT);
+
+    // Hyperlink color
+    visuals.hyperlink_color = ACCENT;
+
+    ctx.set_visuals(visuals);
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabId {
@@ -143,13 +193,41 @@ impl eframe::App for SettingsApp {
         // Sidebar
         egui::SidePanel::left("tabs_panel")
             .resizable(false)
-            .exact_width(120.0)
+            .exact_width(140.0)
+            .frame(egui::Frame::NONE.fill(SIDEBAR_BG).inner_margin(egui::Margin::symmetric(8, 8)))
             .show(ctx, |ui| {
-                ui.add_space(8.0);
-                ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
+                let available_width = ui.available_width();
                 for &tab in TabId::ALL {
                     let selected = self.active_tab == tab;
-                    if ui.selectable_label(selected, tab.label()).clicked() {
+                    let (rect, response) = ui.allocate_exact_size(
+                        egui::vec2(available_width, 28.0),
+                        egui::Sense::click(),
+                    );
+
+                    // Background
+                    if selected {
+                        ui.painter().rect_filled(rect, CornerRadius::same(4), TAB_SELECTED_BG);
+                        // Left accent indicator (WinUI style)
+                        let indicator = egui::Rect::from_min_size(
+                            rect.left_top() + egui::vec2(0.0, 6.0),
+                            egui::vec2(3.0, rect.height() - 12.0),
+                        );
+                        ui.painter().rect_filled(indicator, CornerRadius::same(2), ACCENT);
+                    } else if response.hovered() {
+                        ui.painter().rect_filled(rect, CornerRadius::same(4), TAB_HOVER);
+                    }
+
+                    // Text
+                    let text_pos = rect.left_center() + egui::vec2(12.0, 0.0);
+                    ui.painter().text(
+                        text_pos,
+                        egui::Align2::LEFT_CENTER,
+                        tab.label(),
+                        egui::FontId::proportional(13.0),
+                        if selected { TEXT_PRIMARY } else { TEXT_SECONDARY },
+                    );
+
+                    if response.clicked() {
                         self.active_tab = tab;
                     }
                 }
@@ -158,6 +236,7 @@ impl eframe::App for SettingsApp {
         // Footer (hide action buttons on About tab)
         egui::TopBottomPanel::bottom("footer")
             .exact_height(40.0)
+            .frame(egui::Frame::NONE.fill(FOOTER_BG).inner_margin(egui::Margin::symmetric(12, 0)))
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
                     // Status
@@ -259,6 +338,7 @@ pub fn run(config: Config, first_run: bool, initial_tab: Option<String>) -> efra
         options,
         Box::new(move |cc| {
             crate::font::configure_fonts(&cc.egui_ctx);
+            apply_win11_theme(&cc.egui_ctx);
             Ok(Box::new(SettingsApp::new(config, first_run, initial_tab)))
         }),
     )

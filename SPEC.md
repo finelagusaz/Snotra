@@ -202,7 +202,7 @@
 - 設定画面は独立した egui バイナリ `snotra-settings` として実装
 - 本体（`snotra`）から `std::process::Command` で子プロセスとして起動
 - `/o` スラッシュコマンドまたはトレイメニュー「設定」で開く
-- `snotra-settings --about` でバージョン情報ダイアログを表示
+- `snotra-settings --tab about` で「Snotra について」タブを初期表示
 - 設定の保存は `snotra-settings` が直接 `config.toml` に書き込み、本体は `notify` ファイル監視で検知・反映する
 - タブ切り替えUI
 

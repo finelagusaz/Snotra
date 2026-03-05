@@ -572,30 +572,33 @@ impl Config {
                     needs_save = true;
                 }
                 if needs_save {
-                    config.save();
+                    let _ = config.save();
                 }
                 config
             }
             Err(_) => {
                 let config = Self::default();
-                config.save();
+                let _ = config.save();
                 config
             }
         }
     }
 
-    pub fn save(&self) {
-        let Some(dir) = Self::config_dir() else {
-            return;
-        };
-        let _ = fs::create_dir_all(&dir);
+    pub fn save(&self) -> Result<(), String> {
+        let dir = Self::config_dir().ok_or("設定ディレクトリが見つかりません")?;
+        fs::create_dir_all(&dir).map_err(|e| format!("ディレクトリ作成失敗: {e}"))?;
 
-        let Some(path) = Self::config_path() else {
-            return;
-        };
-        if let Ok(content) = toml::to_string_pretty(self) {
-            let _ = fs::write(path, content);
-        }
+        let path = Self::config_path().ok_or("設定パスが見つかりません")?;
+        let content =
+            toml::to_string_pretty(self).map_err(|e| format!("シリアライズ失敗: {e}"))?;
+
+        // Atomic write: .tmp → rename
+        let tmp = path.with_extension("toml.tmp");
+        fs::write(&tmp, content).map_err(|e| format!("書き込み失敗: {e}"))?;
+        fs::rename(&tmp, &path).map_err(|e| {
+            let _ = fs::remove_file(&tmp);
+            format!("リネーム失敗: {e}")
+        })
     }
 
     /// Validates config consistency. Call before save.

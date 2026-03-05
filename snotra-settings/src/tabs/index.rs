@@ -100,7 +100,7 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
                     } else {
                         scan.extensions.join(", ")
                     };
-                    ui.label(egui::RichText::new(meta).small().color(egui::Color32::GRAY));
+                    ui.label(egui::RichText::new(meta).small().color(crate::app::TEXT_SECONDARY));
                 });
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -185,7 +185,13 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut IndexTabStat
 
         ui.horizontal(|ui| {
             // Delete button (edit mode only)
-            if state.modal.mode == ModalMode::Edit && ui.button("削除").clicked() {
+            if state.modal.mode == ModalMode::Edit
+                && ui
+                    .add(egui::Button::new(
+                        egui::RichText::new("削除").color(egui::Color32::from_rgb(196, 43, 28)),
+                    ))
+                    .clicked()
+            {
                 if let Some(idx) = state.modal.editing_index {
                     if idx < config.paths.scan.len() {
                         config.paths.scan.remove(idx);
@@ -195,11 +201,11 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut IndexTabStat
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("保存").clicked() {
-                    save_scan_path(config, &state.modal);
+                if ui.button("キャンセル").clicked() {
                     state.modal.close();
                 }
-                if ui.button("キャンセル").clicked() {
+                if ui.button("保存").clicked() {
+                    save_scan_path(config, &state.modal);
                     state.modal.close();
                 }
             });

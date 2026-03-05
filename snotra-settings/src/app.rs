@@ -104,8 +104,6 @@ struct SettingsApp {
     active_tab: TabId,
     status: String,
     status_timer: f64,
-    #[allow(dead_code)]
-    first_run: bool,
     index_state: tabs::index::IndexTabState,
     opener_state: tabs::opener::OpenerTabState,
     font_list: Vec<String>,
@@ -129,7 +127,6 @@ impl SettingsApp {
             active_tab: tab,
             status: String::new(),
             status_timer: 0.0,
-            first_run,
             index_state: tabs::index::IndexTabState::default(),
             opener_state: tabs::opener::OpenerTabState::default(),
             font_list: crate::font::list_system_fonts(),
@@ -152,9 +149,15 @@ impl SettingsApp {
             self.status_timer = 5.0;
             return;
         }
-        config.save();
+        if let Err(e) = config.save() {
+            self.status = format!("保存失敗: {e}");
+            self.status_timer = 5.0;
+            return;
+        }
         self.saved = config.clone();
         self.draft = config;
+        self.status = "保存しました".to_string();
+        self.status_timer = 2.0;
     }
 
     fn reset_to_default(&mut self) {

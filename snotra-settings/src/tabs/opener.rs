@@ -17,13 +17,21 @@ pub struct OpenerTabState {
     modal: ModalState,
 }
 
+#[derive(Default, PartialEq)]
+enum TargetKind {
+    #[default]
+    Folder,
+    Extension,
+}
+
 #[derive(Default)]
 struct ModalState {
     open: bool,
     mode: ModalMode,
     editing_rule: Option<usize>,
     editing_tool: Option<usize>,
-    edit_target: String,
+    edit_target_kind: TargetKind,
+    edit_target_ext: String,
     edit_tool_name: String,
     edit_tool_exe: String,
     edit_tool_args: String,
@@ -42,7 +50,8 @@ impl ModalState {
         self.mode = ModalMode::Create;
         self.editing_rule = None;
         self.editing_tool = None;
-        self.edit_target = "folder".to_string();
+        self.edit_target_kind = TargetKind::Folder;
+        self.edit_target_ext.clear();
         self.edit_tool_name.clear();
         self.edit_tool_exe.clear();
         self.edit_tool_args.clear();
@@ -53,7 +62,13 @@ impl ModalState {
         self.mode = ModalMode::Edit;
         self.editing_rule = Some(rule_idx);
         self.editing_tool = Some(tool_idx);
-        self.edit_target = rule.target.clone();
+        if let Some(ext) = rule.target.strip_prefix("ext:") {
+            self.edit_target_kind = TargetKind::Extension;
+            self.edit_target_ext = ext.to_string();
+        } else {
+            self.edit_target_kind = TargetKind::Folder;
+            self.edit_target_ext.clear();
+        }
         self.edit_tool_name = tool.name.clone();
         self.edit_tool_exe = tool.exe.clone();
         self.edit_tool_args = tool.args.clone();
@@ -87,7 +102,7 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
         ui.label(
             egui::RichText::new("ファイル種別ごとに起動するアプリケーションを設定します。")
                 .small()
-                .color(egui::Color32::GRAY),
+                .color(crate::app::TEXT_SECONDARY),
         );
         ui.add_space(8.0);
 
@@ -141,7 +156,7 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
                     ui.label(
                         egui::RichText::new(&tool.exe)
                             .small()
-                            .color(egui::Color32::GRAY),
+                            .color(crate::app::TEXT_SECONDARY),
                     );
                 });
 
@@ -240,12 +255,25 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
 
         // Target
         ui.label("ターゲット:");
-        ui.text_edit_singleline(&mut state.modal.edit_target);
-        ui.label(
-            egui::RichText::new("\"folder\" またはカンマ区切り拡張子 (例: ext:.png,.jpg)")
-                .small()
-                .color(egui::Color32::GRAY),
-        );
+        egui::ComboBox::from_id_salt("target_kind")
+            .selected_text(match state.modal.edit_target_kind {
+                TargetKind::Folder => "フォルダ",
+                TargetKind::Extension => "拡張子",
+            })
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut state.modal.edit_target_kind, TargetKind::Folder, "フォルダ");
+                ui.selectable_value(&mut state.modal.edit_target_kind, TargetKind::Extension, "拡張子");
+            });
+
+        if state.modal.edit_target_kind == TargetKind::Extension {
+            ui.label("拡張子:");
+            ui.text_edit_singleline(&mut state.modal.edit_target_ext);
+            ui.label(
+                egui::RichText::new("カンマ区切り (例: .png, .jpg)")
+                    .small()
+                    .color(crate::app::TEXT_SECONDARY),
+            );
+        }
 
         ui.add_space(4.0);
 
@@ -285,7 +313,7 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
         ui.label(
             egui::RichText::new("{path} でファイルパスを埋め込み")
                 .small()
-                .color(egui::Color32::GRAY),
+                .color(crate::app::TEXT_SECONDARY),
         );
 
         ui.add_space(8.0);
@@ -293,7 +321,13 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
 
         ui.horizontal(|ui| {
             // Delete (edit mode only)
-            if state.modal.mode == ModalMode::Edit && ui.button("削除").clicked() {
+            if state.modal.mode == ModalMode::Edit
+                && ui
+                    .add(egui::Button::new(
+                        egui::RichText::new("削除").color(egui::Color32::from_rgb(196, 43, 28)),
+                    ))
+                    .clicked()
+            {
                 if let (Some(ri), Some(ti)) = (state.modal.editing_rule, state.modal.editing_tool) {
                     if ri < config.openers.len() && ti < config.openers[ri].tools.len() {
                         config.openers[ri].tools.remove(ti);
@@ -306,11 +340,11 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("保存").clicked() {
-                    save_opener(config, &state.modal);
+                if ui.button("キャンセル").clicked() {
                     state.modal.close();
                 }
-                if ui.button("キャンセル").clicked() {
+                if ui.button("保存").clicked() {
+                    save_opener(config, &state.modal);
                     state.modal.close();
                 }
             });
@@ -323,7 +357,10 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
 }
 
 fn save_opener(config: &mut Config, modal: &ModalState) {
-    let target = modal.edit_target.clone();
+    let target = match modal.edit_target_kind {
+        TargetKind::Folder => "folder".to_string(),
+        TargetKind::Extension => format!("ext:{}", modal.edit_target_ext.trim()),
+    };
     let tool = OpenerTool {
         name: modal.edit_tool_name.clone(),
         exe: modal.edit_tool_exe.clone(),

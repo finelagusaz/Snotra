@@ -3,6 +3,7 @@
 mod about;
 mod app;
 mod font;
+mod hotkey_input;
 mod tabs;
 
 use snotra_core::config::Config;

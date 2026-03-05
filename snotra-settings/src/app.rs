@@ -54,6 +54,7 @@ struct SettingsApp {
     index_state: tabs::index::IndexTabState,
     opener_state: tabs::opener::OpenerTabState,
     font_list: Vec<String>,
+    hotkey_state: crate::hotkey_input::HotkeyInputState,
 }
 
 impl SettingsApp {
@@ -76,6 +77,7 @@ impl SettingsApp {
             index_state: tabs::index::IndexTabState::default(),
             opener_state: tabs::opener::OpenerTabState::default(),
             font_list: crate::font::list_system_fonts(),
+            hotkey_state: Default::default(),
         }
     }
 
@@ -105,8 +107,8 @@ impl SettingsApp {
 
 impl eframe::App for SettingsApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Close on Escape
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        // Close on Escape (skip when hotkey capture is active)
+        if !self.hotkey_state.is_capturing() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             if self.has_changes() {
                 self.status = "未保存の変更があります".to_string();
                 self.status_timer = 3.0;
@@ -182,7 +184,7 @@ impl eframe::App for SettingsApp {
         // Main content
         egui::CentralPanel::default().show(ctx, |ui| {
             match self.active_tab {
-                TabId::General => tabs::general::ui(ui, &mut self.draft),
+                TabId::General => tabs::general::ui(ui, &mut self.draft, &mut self.hotkey_state),
                 TabId::Search => tabs::search::ui(ui, &mut self.draft),
                 TabId::Index => tabs::index::ui(ui, ctx, &mut self.draft, &mut self.index_state),
                 TabId::Visual => tabs::visual::ui(ui, &mut self.draft, &self.font_list),

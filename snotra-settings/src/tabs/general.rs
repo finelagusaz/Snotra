@@ -1,7 +1,9 @@
 use eframe::egui;
 use snotra_core::config::Config;
 
-pub fn ui(ui: &mut egui::Ui, config: &mut Config) {
+use crate::hotkey_input::{self, HotkeyInputState};
+
+pub fn ui(ui: &mut egui::Ui, config: &mut Config, hotkey_state: &mut HotkeyInputState) {
     egui::ScrollArea::vertical().show(ui, |ui| {
         // Consistent row height so checkboxes and DragValue inputs align vertically
         ui.spacing_mut().interact_size.y = 24.0;
@@ -11,15 +13,7 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config) {
 
         ui.horizontal(|ui| {
             ui.label("ホットキー:");
-            let display = if config.hotkey.modifier.is_empty() && config.hotkey.key.is_empty() {
-                "(未設定)".to_string()
-            } else if config.hotkey.modifier.is_empty() {
-                config.hotkey.key.clone()
-            } else {
-                format!("{} + {}", config.hotkey.modifier, config.hotkey.key)
-            };
-            ui.label(&display);
-            ui.label("(変更は後のバージョンで対応)");
+            hotkey_input::hotkey_input(ui, &mut config.hotkey, hotkey_state);
         });
 
         ui.checkbox(

@@ -1,150 +1,322 @@
-# Issue #130 実装計画: メモリ消費量削減
+# Issue #131 実装計画: 設定ウィンドウ・about を egui 別プロセスに切り出す
 
 ## 概要
 
-Tauri を維持したまま、使用頻度の低いウィンドウ（`about`, `settings`）を起動時の事前生成から除外し、都度生成・都度破棄にする。加えて、スラッシュコマンドの候補案内表示を削除する。
+設定画面と about 画面を egui ベースの単一バイナリ (`snotra-settings`) に統合し、WebView2 制約の根本解消・メモリ削減・責務分離を実現する。
 
-Issue の考慮事項に基づく判断:
-
-| 対象 | 方針 | 理由 |
-|------|------|------|
-| `about` ウィンドウ | **都度生成・都度破棄** | 静的コンテンツ、状態なし、極稀にしか使わない |
-| `settings` ウィンドウ | **都度生成・都度破棄** | 稀にしか使わない。初回表示レイテンシは許容範囲（ユーザーが意図的に開く操作） |
-| `results` ウィンドウ | **現状維持（常駐）** | 検索のたびに表示、レイテンシが重要 |
-| スラッシュコマンド候補 | **削除** | Issue で「削ってよさそう」と明記 |
-
-### メモリ削減効果の見込み
-
-- WebView2 インスタンス 2 つ分の常駐メモリを削減（about + settings）
-- 各 WebView2 インスタンスは通常 40-80 MB のメモリを使用するため、合計 80-160 MB の削減が見込める
+- 設定モード: `snotra-settings` (デフォルト) — 5タブの設定エディタ
+- about モード: `snotra-settings --about` — バージョン情報ダイアログ（400×300、リサイズ不可）
+- WebView2 は results ウィンドウの 1 インスタンスのみに削減
+- 相互依存はファイルシステム (`config.toml`) 1 点のみ。IPC 不要
 
 ## 変更ファイル一覧
 
+### 新規作成
+
+| ファイル | 内容 |
+|---------|------|
+| `snotra-settings/Cargo.toml` | egui アプリの crate 定義 |
+| `snotra-settings/src/main.rs` | エントリポイント、eframe アプリ起動 |
+| `snotra-settings/src/app.rs` | `eframe::App` 実装、タブ管理、保存/破棄ロジック |
+| `snotra-settings/src/tabs/general.rs` | 全般タブ UI |
+| `snotra-settings/src/tabs/search.rs` | 検索タブ UI |
+| `snotra-settings/src/tabs/index.rs` | インデックスタブ UI |
+| `snotra-settings/src/tabs/visual.rs` | ビジュアルタブ UI |
+| `snotra-settings/src/tabs/opener.rs` | オープナータブ UI |
+| `snotra-settings/src/tabs/mod.rs` | タブモジュール定義 |
+| `snotra-settings/src/font.rs` | 日本語フォント読み込み + システムフォント列挙 |
+| `snotra-settings/src/hotkey_input.rs` | ホットキーキャプチャウィジェット |
+| `snotra-settings/src/widgets.rs` | 共通ウィジェット（トグル、編集可能リスト等） |
+| `snotra-settings/src/about.rs` | about ダイアログ（バージョン、作者、リンク） |
+
+### 変更
+
 | ファイル | 変更内容 |
 |---------|---------|
-| `src-tauri/src/main.rs` | about/settings の事前生成を削除、first-run パス調整 |
-| `src-tauri/src/commands/window.rs` | about/settings の CloseRequested を破棄許可に変更、hide_settings→destroy、settings-shown emit 削除 |
-| `ui/src/components/SettingsWindow.tsx` | settings-shown リスナー削除、onCloseRequested の preventDefault 削除 |
-| `ui/src/stores/search.ts` | コマンド候補表示ロジック削除 |
-| `ui/src/lib/commands.ts` | `filterCommands` 関数削除 |
-| `ui/src/lib/commands.test.ts` | コマンド候補フィルタのテスト削除 |
-| `scripts/smoke-startup.ps1` | requiredLabels から about/settings 除外 |
-| `SPEC.md` | §6.1, §7.5, §8, §14.3 更新 |
+| `Cargo.toml` | workspace members に `snotra-settings` 追加 |
+| `src-tauri/src/main.rs` | about/settings 事前生成削除、first-run → sentinel ファイル、`notify` 監視開始 |
+| `src-tauri/src/commands/window.rs` | `open_settings` / `open_about` → snotra-settings プロセス起動、`hide_settings` / `ensure_about_window` 削除 |
+| `src-tauri/src/commands/config.rs` | `save_config` の設定反映ロジックを抽出→ファイル変更検知ハンドラに移植 |
+| `src-tauri/Cargo.toml` | `notify` クレート追加 |
+| `src-tauri/src/config_watcher.rs` | 新規: `notify` による config.toml 監視モジュール |
+| `src-tauri/tauri.conf.json` | `bundle.externalBin` に snotra-settings 追加、settings ウィンドウ定義削除 |
+| `ui/src/App.tsx` | settings/about 分岐削除 |
+| `ui/src/lib/commands.ts` | `/o` / `/a` → snotra-settings プロセス起動 |
+| `SPEC.md` | §6.1, §7.5, §8 更新 |
 
-計: 8 ファイル、4 フェーズ
+### 削除
+
+| ファイル | 理由 |
+|---------|------|
+| `ui/src/components/SettingsWindow.tsx` | egui に移行 |
+| `ui/src/components/SettingsGeneral.tsx` | 同上 |
+| `ui/src/components/SettingsSearch.tsx` | 同上 |
+| `ui/src/components/SettingsIndex.tsx` | 同上 |
+| `ui/src/components/SettingsVisual.tsx` | 同上 |
+| `ui/src/components/SettingsOpener.tsx` | 同上 |
+| `ui/src/components/SettingsEditableList.tsx` | 同上 |
+| `ui/src/components/SettingsEditorModal.tsx` | 同上 |
+| `ui/src/components/SettingsEditorActions.tsx` | 同上 |
+| `ui/src/stores/settings.ts` | 同上 |
+| `ui/src/lib/openerGroups.ts` | 同上 |
+| `ui/src/styles/settings.css` | 同上 |
+| `ui/src/components/AboutWindow.tsx` | egui に統合 |
+| `src-tauri/capabilities/about.json` | about ウィンドウ不要 |
+
+計: 13 新規、10 変更、14 削除、7 フェーズ
 
 ---
 
 ## 実装順序
 
-### Phase 1: about ウィンドウの都度生成・都度破棄
+### Phase 1: snotra-settings crate 骨格 + General タブ（PoC）
+
+目的: egui で最小限の設定画面が動作することを検証する。
+
+**`Cargo.toml`** (ワークスペース):
+- `members` に `"snotra-settings"` 追加
+
+**`snotra-settings/Cargo.toml`**:
+```toml
+[package]
+name = "snotra-settings"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "snotra-settings"
+path = "src/main.rs"
+
+[dependencies]
+snotra-core = { path = "../snotra-core" }
+eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "persistence"] }
+rfd = "0.15"
+```
+
+**`snotra-settings/src/main.rs`**:
+- `eframe::run_native()` でアプリ起動
+- `snotra_core::config::Config::load()` で設定読み込み
+- コマンドライン引数:
+  - `--about`: about ダイアログモード（400×300、リサイズ不可、Escape で終了）
+  - `--first-run`: 初回起動モード
+  - `--tab <name>`: 初期タブ指定
+
+**`snotra-settings/src/app.rs`**:
+- `SettingsApp` 構造体: `draft: Config`, `saved: Config`, `active_tab: TabId`
+- `eframe::App::update()` でサイドバー + コンテンツ + フッター描画
+- フッター: 保存ボタン（変更時のみ有効）、破棄ボタン、ステータス表示
+- 保存: `Config::save()` 呼び出し、first-run モード時は sentinel ファイル削除
+- Escape: 変更なしなら閉じる
+
+**`snotra-settings/src/font.rs`**:
+- `C:\Windows\Fonts\YuGothM.ttc` (Yu Gothic) をフォールバック日本語フォントとして読み込み
+- システムフォント列挙（`list_system_fonts` 相当）
+
+**`snotra-settings/src/about.rs`**:
+- about ダイアログ UI（`--about` モード時に使用）
+- 表示内容: アプリ名 "Snotra"、バージョン (env `CARGO_PKG_VERSION`)、ビルド日
+- 作者: Fine Lagusaz
+- リンク: メール (`open::that` で mailto:)、Web サイト (`open::that` で URL)
+- Escape で閉じる（プロセス終了）
+- ウィンドウ: 400×300、リサイズ不可、タイトル "Snotra について"
+
+**`snotra-settings/src/tabs/general.rs`**:
+- ホットキー入力（Phase 3 で実装、ここではテキスト入力で代替）
+- トグル: hotkey_toggle, show_on_startup, auto_hide_on_focus_lost, show_tray_icon, ime_off_on_show
+- 数値: max_results, window_width
+- トグル: show_icons
+
+### Phase 2: 残り 4 タブの UI 実装
+
+**`snotra-settings/src/tabs/search.rs`**:
+- ドロップダウン: normal_mode, folder_mode
+- トグル: show_hidden_system
+- 数値: top_n_history
+- ドロップダウン: history_normalization
+- 数値: fuzzy_history_cap_ratio（history_normalization が Disabled なら無効化）
+
+**`snotra-settings/src/tabs/index.rs`**:
+- 編集可能リスト: scan paths
+- 各エントリ: パス、拡張子（カンマ区切り）、フォルダ含むトグル
+- モーダル: 追加/編集（パスのフォルダピッカー付き）
+- 重複パスのマージ（`dedup_scan_paths` 活用）
+
+**`snotra-settings/src/tabs/visual.rs`**:
+- プリセットカード（Obsidian, Paper, Solarized, Monokai, +カスタム）
+- カラーピッカー × 5（`egui::color_picker`）
+- フォント選択ドロップダウン + フォントサイズ
+- テーマプレビュー
+
+**`snotra-settings/src/tabs/opener.rs`**:
+- 編集可能リスト: opener rules（ターゲット + ツール）
+- モーダル: 追加/編集（実行ファイルピッカー付き）
+- 並べ替え（↑↓ボタン）
+
+### Phase 3: ホットキーキャプチャ + 共通ウィジェット
+
+**`snotra-settings/src/hotkey_input.rs`**:
+- egui の `Response` + `InputState` でキー入力をキャプチャ
+- Modifier (Ctrl/Alt/Shift/Win) + メインキー (A-Z, 0-9, Space 等) を検出
+- Backspace/Escape でクリア
+- 現在のキーコンビネーションを表示
+
+**`snotra-settings/src/widgets.rs`**:
+- トグルスイッチ（カスタム描画 or `egui::Checkbox`）
+- 「初期設定に戻す」ボタン（2回クリック確認）
+
+### Phase 4: 本体側 — config.toml ファイル変更検知
+
+**`src-tauri/Cargo.toml`**:
+- `notify = "7"` 追加
+
+**`src-tauri/src/config_watcher.rs`** (新規):
+- `notify::recommended_watcher` で `config.toml` を監視
+- 変更検知時の処理（`save_config` から抽出）:
+  1. `Config::load()` で新設定読み込み
+  2. 旧設定と比較
+  3. ホットキー変更 → `PlatformCommand::SetHotkey`（失敗時はログ）
+  4. トレイ変更 → `PlatformCommand::SetTrayVisible`
+  5. インデックス変更 → `start_index_build`
+  6. ビジュアル変更 → `emit("visual-config-changed")`
+  7. show_icons 変更 → `emit("show-icons-changed")`
+  8. ウィンドウ幅変更 → main/results リサイズ
+  9. `Engine::update_config()` で状態更新
 
 **`src-tauri/src/main.rs`**:
-- `ensure_window_with_timing(&app_handle, "about", commands::ensure_about_window)?;` を削除
+- setup 内で `config_watcher::start()` 起動
 
-**`src-tauri/src/commands/window.rs`** の `ensure_about_window`:
-- `CloseRequested` ハンドラで `api.prevent_close()` を呼ばない（= 閉じると破棄される）
-- 破棄前に `main.set_always_on_top(true)` を復元（settings が表示中でない場合のみ）
-- 既存の alwaysOnTop 復元ロジックはそのまま活用し、`prevent_close` のみ削除
+**`snotra-core` 防御テスト追加** (config.rs):
+外部プロセスが config.toml を書き換えるのが正規パスになるため、以下のテストを追加:
+1. 不正 TOML（パース失敗）→ `Config::load()` がデフォルト設定にフォールバックすること
+2. パース成功だが値が不正（範囲外数値、空文字列等）→ `validate()` で検出されること
+3. 部分的なフィールド欠落 → serde のデフォルト値で補完されること
+4. atomic write（.tmp → rename）で書き込み途中の読み取りが発生しないこと
 
-### Phase 2: settings ウィンドウの都度生成・都度破棄
-
-**`src-tauri/src/main.rs`**:
-- `ensure_window_with_timing(&app_handle, "settings", commands::ensure_settings_window)?;` を削除
-- `is_first_run` 時: `open_settings` コマンドを直接呼び出す形に変更
+### Phase 5: 本体側 — snotra-settings プロセス起動 + 初回フロー
 
 **`src-tauri/src/commands/window.rs`**:
-- `ensure_settings_window`: `prevent_close` を削除、close 前に alwaysOnTop 復元 + first-run index build 開始
-- `hide_settings`: hide → `close()`（破棄）に変更。alwaysOnTop 復元 + first-run index build は close で発火する CloseRequested ハンドラに委譲
-- `open_settings`: `settings-shown` emit を削除
+- `open_settings` を変更: `snotra-settings.exe` を `std::process::Command` で起動
+  - 実行ファイルパスは自バイナリの隣（`env::current_exe().parent()`）
+  - 引数: first-run 時は `--first-run`
+  - 既にプロセスが存在する場合はフォーカス（プロセス ID を保持して監視）
+- `open_about` を変更: `snotra-settings.exe --about` を `std::process::Command` で起動
+- `hide_settings` は削除（プロセス終了は snotra-settings 自身が制御）
+- `ensure_settings_window` / `ensure_about_window` は削除
 
-**`ui/src/components/SettingsWindow.tsx`**:
-- `listen("settings-shown", ...)` リスナーを削除（都度生成で `onMount` が毎回発火するため不要）
-- `onCloseRequested` の `event.preventDefault()` を削除
-- コメント "The window is pre-created and hidden on close, so onMount only fires once." を更新
+**`src-tauri/src/main.rs`**:
+- setup から `ensure_about_window` / `ensure_settings_window` 呼び出しを削除
+- first-run 時: sentinel ファイル (`.first_run_pending`) を作成、`snotra-settings --first-run` を起動
+- sentinel ファイルの監視: `config_watcher` で `config.toml` 変更検知 + sentinel 不在チェック → index build 開始
 
-### Phase 3: スラッシュコマンド候補表示の削除
+**初回起動フロー**:
+1. 本体: `Config::is_first_run()` → sentinel ファイル作成 → `snotra-settings --first-run` 起動
+2. snotra-settings: 設定を編集・保存 → `config.toml` 書き込み → sentinel ファイル削除 → 終了
+3. 本体: `config_watcher` が `config.toml` 変更を検知 → sentinel 不在確認 → `start_index_build`
 
-**`ui/src/stores/search.ts`**:
-- `commandToResult` ヘルパー関数を削除
-- `showCommandResults` 関数を削除
-- `commandMatches` シグナルの用途を確認し、候補表示のみなら削除
-- コマンドモード時: `findCommand` で完全一致 → 即実行、部分一致 → 何も表示しない（0件）
-- `/` 入力時に results ウィンドウを表示しない
+### Phase 6: フロントエンド・本体クリーンアップ
 
-**`ui/src/lib/commands.ts`**:
-- `filterCommands` 関数を削除
+**削除**:
+- `ui/src/components/Settings*.tsx` (9 ファイル)
+- `ui/src/components/AboutWindow.tsx`
+- `ui/src/stores/settings.ts`
+- `ui/src/lib/openerGroups.ts`
+- `ui/src/styles/settings.css`
+- `ui/src/App.tsx` の settings/about 分岐
+- `src-tauri/capabilities/about.json`
 
-**`ui/src/lib/commands.test.ts`**（存在する場合）:
-- `filterCommands` 関連テストを削除
+**変更**:
+- `ui/src/lib/commands.ts`: `/o` / `/a` コマンドを `open_settings` / `open_about` IPC に変更（バックエンドがプロセス起動）
+- `src-tauri/src/commands/config.rs`: `save_config` IPC 削除（or 縮小: 本体内部用に保持する場合のみ）
+- `tauri.conf.json`: settings/about ウィンドウ定義削除
+- `src-tauri/src/commands/mod.rs`: settings/about 関連コマンドの invoke_handler 登録整理
 
-### Phase 4: スモークテスト・SPEC.md 更新
-
-**`scripts/smoke-startup.ps1`**:
-- `$requiredLabels = @("results", "about", "settings")` → `@("results")` に変更
-- サマリーから `about_ms`, `settings_ms` カラムを除外
+### Phase 7: SPEC.md 更新 + ビルド統合
 
 **`SPEC.md`**:
-- §6.1: 「すべての固定ウィンドウは起動時に一括で事前生成する」→ `results` のみ事前生成、`about`/`settings` は都度生成に変更
-- §7.5: about/settings の「hide して再利用」→「破棄して都度生成」に変更
-- §8: トレイアイコン表示条件から about/settings の事前生成完了を除外
-- §14.3: ヘルプ表示セクションを削除（候補案内なし）
+- §6.1: ウィンドウ管理の変更（settings は別プロセス）
+- §7.5: settings ウィンドウのライフサイクル変更
+- §8: トレイアイコン表示条件から settings 事前生成を除外
+- §9: 新セクション「設定プロセス連携」追加
+
+**`src-tauri/tauri.conf.json`**:
+- `bundle.externalBin` に `snotra-settings` 追加
+
+**`CLAUDE.md`**:
+- アーキテクチャセクション更新（2 バイナリ構成）
 
 ---
 
 ## 不変条件
 
-1. `open_about` / `open_settings` は内部で `ensure` を呼ぶので、事前生成なしでも動作する
-2. about/settings を閉じた後、`main` の `alwaysOnTop` が必ず復元される（他方が開いていない場合のみ）
-3. first-run 時の settings 表示と index build 開始が正常に動作する
-4. `/o`, `/a`, `/s`, `/q`, `/r` の即実行は引き続き動作する
-5. hotkey-pressed リスナー内の settings 可視チェック: ウィンドウ不在時は `None` → `unwrap_or(false)` で正常動作
+1. `config.toml` のフォーマットは変更しない（`snotra-core::Config` の Serialize/Deserialize はそのまま）
+2. 設定保存後、本体が 1 秒以内に変更を検知して反映する（`notify` の debounce）
+3. first-run 時、snotra-settings で保存→本体が index build を開始する
+4. snotra-settings がクラッシュしても本体に影響しない
+5. ホットキー登録失敗時、前のホットキーを維持する（本体側で処理）
+6. `/o`, `/a`, `/s`, `/q`, `/r` の即実行は引き続き動作する
+7. hotkey-pressed リスナーの settings 可視チェック: snotra-settings プロセスがフォアグラウンドかで判定（`GetForegroundWindow` のプロセス ID 比較）
+8. about 画面の表示内容（バージョン、作者、リンク）は従来と同一
 
 ---
 
 ## テスト方針
 
 ### 自動テスト
-- `npm test` — フロントエンドユニットテスト
-- `npm run build` — フロントエンドビルド
-- `cargo check -p snotra-core -p snotra` — Rust 型チェック
+
+- `cargo check -p snotra-settings` — 型チェック
+- `cargo clippy -p snotra-settings` — lint
+- `cargo test -p snotra-core` — 既存テスト維持
+- `npm run build` — フロントエンドビルド（settings 削除後）
+- `cargo check -p snotra` — 本体型チェック
 
 ### 手動検証（Windows 必須）
-- `npm run smoke:startup` — 起動スモーク
-- `/a` → about 表示 → Escape → about 破棄（タスクマネージャでプロセス数確認）
-- `/o` → settings 表示 → 閉じる → settings 破棄
-- first-run 時に settings が正常に表示される
-- ホットキー表示/非表示が正常動作
+
+- `snotra-settings.exe` 単体起動 → 全タブ操作 → 保存 → config.toml 更新確認
+- `snotra-settings.exe --about` → about ダイアログ表示 → Escape で閉じる確認
+- `/a` → about 表示 → リンククリック → ブラウザ/メーラー起動確認
+- 本体起動中に設定変更 → ホットキー/テーマ/トレイ反映確認
+- `/o` → snotra-settings 起動確認
+- first-run フロー: config.toml 削除 → 起動 → 設定保存 → index build 開始確認
+- snotra-settings 強制終了 → 本体に影響なし確認
 
 ---
 
 ## セルフレビュー
 
 ### 1. 対称コードパス ✅
-- `open_about` / close、`open_settings` / `hide_settings` の両方向を確認済み
-- `alwaysOnTop` 復元の about/settings 相互チェックも確認済み（close handler 内で他方の可視状態を確認）
+- `open_settings` / settings 閉じ: プロセス起動 / プロセス終了（自然終了）
+- `open_about` / about 閉じ: プロセス起動 (`--about`) / プロセス終了（Escape or ×）
+- `alwaysOnTop` 復元: snotra-settings プロセス起動時に `false`、プロセス終了検知時に `true` 復元。about/settings が同一バイナリなので、プロセス終了 = 両方閉じた。復元判定がシンプル化
+- config 変更検知の subscribe / unsubscribe: `notify` watcher は本体ライフサイクルで管理
 
 ### 2. 影響範囲の網羅性 ✅
-- `ensure_about_window` 呼び出し元: `main.rs`（削除）、`open_about`（維持）、`ensure_window` IPC（維持）
-- `ensure_settings_window` 呼び出し元: `main.rs`（削除）、`open_settings`（維持）、`ensure_window` IPC（維持）
-- `settings-shown` イベント: emit（`window.rs:150` 削除）、listen（`SettingsWindow.tsx:57` 削除）
-- `filterCommands` 呼び出し元: `search.ts:80,144` のみ → 削除可能
-- hotkey-pressed の settings 可視チェック: `None` → `false` → 変更不要
-- `hide_settings` 呼び出し元: `SettingsWindow.tsx`（Escape + footer）→ 呼び出し自体は維持、内部動作が hide→close に変更
+- `ensure_settings_window` 呼び出し元: `main.rs`（削除）、`open_settings`（プロセス起動に変更）、`ensure_window` IPC（settings ケース削除）
+- `ensure_about_window` 呼び出し元: `main.rs`（削除）、`open_about`（プロセス起動に変更）、`ensure_window` IPC（about ケース削除）
+- `settings-shown` イベント: emit (`window.rs:150` 削除)、listen (`SettingsWindow.tsx` 削除)
+- `hide_settings` IPC: `SettingsWindow.tsx`（削除）、`invoke_handler`（削除）
+- `save_config` IPC: 設定反映ロジックを `config_watcher` に移植
+- hotkey-pressed の settings 可視チェック: snotra-settings プロセスのフォアグラウンド判定に変更
+- `open-settings` Tauri イベント: トレイからの起動 → プロセス起動に変更
+- about の `shell::open` (URL/mailto): egui 側で `open::that` クレートに置換
 
 ### 3. 境界条件 ✅
-- settings 開中に about 閉じ → alwaysOnTop 復元しない（settings がまだ表示中）
-- about 開中に settings 閉じ → alwaysOnTop 復元しない（about がまだ表示中）
-- 両方閉じ → alwaysOnTop 復元する
-- settings/about 不在時に hotkey-pressed → `None` → `false` → 正常
+- snotra-settings が既に起動中に `/o` → 既存プロセスにフォーカス（二重起動防止）
+- 設定保存と本体の config 読み込みの競合 → atomic write で安全
+- notify のイベントが複数回発火 → debounce で対処
+- snotra-settings 起動中にホットキー → settings プロセスのフォアグラウンド判定で無視
+- config.toml が壊れた場合 → `Config::load()` のフォールバック（既存動作）
 
 ### 4. リソース管理 ✅
-- `on_window_event` はウィンドウ破棄で自然に解放
-- JS 側 `listen("settings-shown")` は削除
-- `onCloseRequested` のリスナーも不要に
+- `notify::Watcher`: main で生成、アプリ終了で drop
+- snotra-settings プロセス: `std::process::Child` を保持、終了を検知
+- alwaysOnTop: プロセス起動時に false、終了検知時に true 復元
 
 ### 5. 既存パターンとの整合 ✅
-- `ensure_*_window` の冪等パターンをそのまま活用（新規パターン導入なし）
+- `Config::load()` / `Config::save()` をそのまま活用（新パターンなし）
+- atomic write パターンで `notify` と自然に連携
+- snotra-core を共有ライブラリとして活用（DRY）
 
 ### 6. YAGNI 違反 ✅
-- about/settings の都度生成のみ。コード分割や追加の抽象化は導入しない
+- IPC は使わず、ファイルシステム 1 点のみ
+- 設定プロセスの状態管理は最小限（draft + saved のみ）
+- ホットキーバリデーションは本体側に委譲（案A: KISS）

@@ -1,7 +1,9 @@
+use std::process::{Child, Command};
 use std::sync::atomic::Ordering;
+use std::sync::Mutex;
 
 use serde_json::json;
-use snotra_core::window_data::{self, WindowPlacement, WindowSize};
+use snotra_core::window_data::{self, WindowPlacement};
 use tauri::{AppHandle, Manager, State};
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
@@ -9,6 +11,9 @@ use crate::indexing;
 use crate::state::AppState;
 
 use super::trace_command;
+
+/// Managed state for tracking the snotra-settings child process.
+pub type SettingsProcessState = Mutex<Option<Child>>;
 
 pub(crate) fn ensure_results_window(app: &AppHandle) -> tauri::Result<()> {
     if app.get_webview_window("results").is_some() {
@@ -30,147 +35,134 @@ pub(crate) fn ensure_results_window(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-pub(crate) fn ensure_about_window(app: &AppHandle) -> tauri::Result<()> {
-    if app.get_webview_window("about").is_some() {
-        trace_command("cmd:ensure_about_window:exists", json!({}));
-        return Ok(());
-    }
-    trace_command("cmd:ensure_about_window:create", json!({}));
-    let about_window = WebviewWindowBuilder::new(app, "about", WebviewUrl::App(Default::default()))
-        .title("Snotra について")
-        .inner_size(400.0, 300.0)
-        .resizable(false)
-        .visible(false)
-        .build()?;
+/// Launch `snotra-settings` as a child process with optional extra arguments.
+///
+/// Deduplicates: if a settings process is already running, this is a no-op.
+/// Temporarily disables main window alwaysOnTop while the child is alive
+/// and restores it when the child exits.
+pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> Result<(), String> {
+    let proc_state = app
+        .try_state::<SettingsProcessState>()
+        .ok_or("SettingsProcessState not managed")?;
 
-    // WebView2 はイベントループ開始後に再生成できないため、破棄せず hide する。
-    let handle_for_close = app.clone();
-    about_window.on_window_event(move |event| {
-        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-            api.prevent_close();
-            if let Some(w) = handle_for_close.get_webview_window("about") {
-                let _ = w.hide();
+    let mut guard = proc_state.lock().unwrap();
+
+    // Check if a settings process is already running.
+    if let Some(child) = guard.as_mut() {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                // Process has exited; clear stale handle and proceed to spawn.
+                *guard = None;
             }
-            // settings も非表示なら main の alwaysOnTop を戻す
-            let settings_visible = handle_for_close
-                .get_webview_window("settings")
-                .and_then(|w| w.is_visible().ok())
-                .unwrap_or(false);
-            if !settings_visible
-                && let Some(main) = handle_for_close.get_webview_window("main")
-            {
-                let _ = main.set_always_on_top(true);
+            Ok(None) => {
+                // Still running — do nothing.
+                trace_command(
+                    "cmd:launch_settings_process:already_running",
+                    json!({ "pid": child.id() }),
+                );
+                return Ok(());
+            }
+            Err(e) => {
+                // Error checking status; clear handle and try to spawn.
+                eprintln!("[settings-process] try_wait error: {e}");
+                *guard = None;
             }
         }
-    });
-    Ok(())
-}
+    }
 
-/// settings ウィンドウを非表示にし、alwaysOnTop 復元と初回インデックス構築を行う。
-/// `hide_settings` コマンドと `CloseRequested` ハンドラの共通ロジック。
-fn dismiss_settings(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window("settings") {
-        let _ = w.hide();
-    }
-    // about も非表示なら main の alwaysOnTop を戻す
-    let about_visible = app
-        .get_webview_window("about")
-        .and_then(|w| w.is_visible().ok())
-        .unwrap_or(false);
-    if !about_visible
-        && let Some(main) = app.get_webview_window("main")
-    {
-        let _ = main.set_always_on_top(true);
-    }
-    // First-run: start index build when settings is dismissed.
-    let app_state = app.state::<AppState>();
-    if app_state.indexing.load(Ordering::SeqCst)
-        && !app_state.index_build_started.load(Ordering::SeqCst)
-    {
-        indexing::start_index_build(app);
-    }
-}
+    // Find snotra-settings executable next to our own binary.
+    let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe_dir = exe_path.parent().ok_or("cannot determine exe directory")?;
+    let settings_exe = exe_dir.join("snotra-settings.exe");
 
-pub fn ensure_settings_window(app: &AppHandle) -> tauri::Result<()> {
-    if app.get_webview_window("settings").is_some() {
-        trace_command("cmd:ensure_settings_window:exists", json!({}));
-        return Ok(());
+    if !settings_exe.exists() {
+        let msg = format!("snotra-settings.exe not found at {}", settings_exe.display());
+        trace_command(
+            "cmd:launch_settings_process:not_found",
+            json!({ "path": settings_exe.display().to_string() }),
+        );
+        return Err(msg);
     }
-    trace_command("cmd:ensure_settings_window:create", json!({}));
-    let settings_window =
-        WebviewWindowBuilder::new(app, "settings", WebviewUrl::App(Default::default()))
-            .title("Snotra 設定")
-            .inner_size(760.0, 560.0)
-            .min_inner_size(520.0, 360.0)
-            .resizable(true)
-            .visible(false)
-            .build()?;
 
-    // WebView2 はイベントループ開始後に再生成できないため、破棄せず hide する。
-    let handle_for_close = app.clone();
-    settings_window.on_window_event(move |event| {
-        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-            api.prevent_close();
-            dismiss_settings(&handle_for_close);
+    let child = Command::new(&settings_exe)
+        .args(extra_args)
+        .spawn()
+        .map_err(|e| format!("failed to spawn snotra-settings: {e}"))?;
+
+    let pid = child.id();
+    trace_command(
+        "cmd:launch_settings_process:spawned",
+        json!({ "pid": pid, "args": extra_args }),
+    );
+
+    *guard = Some(child);
+    drop(guard);
+
+    // Temporarily disable main window alwaysOnTop so snotra-settings can be focused.
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.set_always_on_top(false);
+    }
+
+    // Spawn a monitoring thread to restore alwaysOnTop when the process exits.
+    let handle_for_monitor = app.clone();
+    std::thread::spawn(move || {
+        // Poll child process status. Child is kept in SettingsProcessState so
+        // the dedup check in launch_settings_process works.
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            let proc_state = handle_for_monitor
+                .try_state::<SettingsProcessState>()
+                .expect("SettingsProcessState not managed");
+            let mut guard = proc_state.lock().unwrap();
+            if let Some(child) = guard.as_mut() {
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        trace_command(
+                            "cmd:launch_settings_process:exited",
+                            json!({ "pid": pid, "status": status.code() }),
+                        );
+                        *guard = None;
+                        break;
+                    }
+                    Ok(None) => {} // Still running.
+                    Err(e) => {
+                        eprintln!("[settings-process] monitor try_wait error: {e}");
+                        *guard = None;
+                        break;
+                    }
+                }
+            } else {
+                // Child handle was already cleared (e.g. by exit handler).
+                break;
+            }
+        }
+
+        // Restore main window alwaysOnTop.
+        if let Some(main) = handle_for_monitor.get_webview_window("main") {
+            let _ = main.set_always_on_top(true);
+        }
+
+        // First-run: if indexing is pending and not started, kick off index build.
+        if let Some(state) = handle_for_monitor.try_state::<AppState>()
+            && state.indexing.load(Ordering::SeqCst)
+            && !state.index_build_started.load(Ordering::SeqCst)
+        {
+            indexing::start_index_build(&handle_for_monitor);
         }
     });
-    Ok(())
-}
 
-#[tauri::command]
-pub fn hide_settings(_state: State<AppState>, app: AppHandle) {
-    trace_command("cmd:hide_settings:start", json!({}));
-    dismiss_settings(&app);
-    trace_command("cmd:hide_settings:ok", json!({}));
+    Ok(())
 }
 
 #[tauri::command]
 pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), String> {
     trace_command("cmd:open_settings:start", json!({}));
-    // インデックス構築中はブロック。ただし初回起動（未開始）は設定画面を表示する。
-    if state.indexing.load(Ordering::SeqCst) && state.index_build_started.load(Ordering::SeqCst) {
+    if state.indexing.load(Ordering::SeqCst) {
         trace_command("cmd:open_settings:noop_indexing", json!({}));
         return Ok(());
     }
 
-    // ウィンドウは setup で事前生成済み。show/focus のみ。
-    if let Some(w) = app.get_webview_window("settings") {
-        // main は alwaysOnTop のため、settings が前面に出るよう一時的に外す（settings close 時に戻す）
-        if let Some(main) = app.get_webview_window("main") {
-            let _ = main.set_always_on_top(false);
-        }
-        // show() の前に保存済みの位置・サイズを復元する。
-        if let Some(size) = window_data::load_settings_size() {
-            let _ = w.set_size(tauri::LogicalSize::new(size.width, size.height));
-        }
-        if let Some(placement) = window_data::load_settings_placement() {
-            let _ = w.set_position(tauri::LogicalPosition::new(placement.x, placement.y));
-        }
-        let _ = w.show();
-        let _ = w.set_focus();
-        trace_command("cmd:open_settings:ok", json!({ "window_found": true }));
-    } else {
-        trace_command("cmd:open_settings:ok", json!({ "window_found": false }));
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub fn open_about(app: AppHandle) -> Result<(), String> {
-    trace_command("cmd:open_about:start", json!({}));
-    // ウィンドウは setup で事前生成済み。show/focus のみ。
-    if let Some(w) = app.get_webview_window("about") {
-        // main は alwaysOnTop のため、about が前面に出るよう一時的に外す（about close 時に戻す）
-        if let Some(main) = app.get_webview_window("main") {
-            let _ = main.set_always_on_top(false);
-        }
-        let _ = w.show();
-        let _ = w.set_focus();
-        trace_command("cmd:open_about:ok", json!({ "window_found": true }));
-    } else {
-        trace_command("cmd:open_about:ok", json!({ "window_found": false }));
-    }
-    Ok(())
+    launch_settings_process(&app, &[])
 }
 
 #[tauri::command]
@@ -202,50 +194,7 @@ pub fn ensure_window(label: String, app: AppHandle) -> Result<bool, String> {
             );
             Ok(!existed)
         }
-        "about" => {
-            let existed = app.get_webview_window("about").is_some();
-            if let Err(e) = ensure_about_window(&app) {
-                let msg = e.to_string();
-                trace_command(
-                    "cmd:ensure_window:error",
-                    json!({
-                        "label": "about",
-                        "error": msg,
-                    }),
-                );
-                return Err(msg);
-            }
-            trace_command(
-                "cmd:ensure_window:ok",
-                json!({
-                    "label": "about",
-                    "created": !existed,
-                }),
-            );
-            Ok(!existed)
-        }
-        "settings" => {
-            let existed = app.get_webview_window("settings").is_some();
-            if let Err(e) = ensure_settings_window(&app) {
-                let msg = e.to_string();
-                trace_command(
-                    "cmd:ensure_window:error",
-                    json!({
-                        "label": "settings",
-                        "error": msg,
-                    }),
-                );
-                return Err(msg);
-            }
-            trace_command(
-                "cmd:ensure_window:ok",
-                json!({
-                    "label": "settings",
-                    "created": !existed,
-                }),
-            );
-            Ok(!existed)
-        }
+        // about/settings are now separate processes; ensure_window is not applicable.
         _ => {
             trace_command(
                 "cmd:ensure_window:error",
@@ -267,24 +216,6 @@ pub fn get_search_placement() -> Option<WindowPlacement> {
 #[tauri::command]
 pub fn save_search_placement(x: i32, y: i32) {
     window_data::save_search_placement(WindowPlacement { x, y });
-}
-
-#[tauri::command]
-pub fn get_settings_placement() -> (Option<WindowPlacement>, Option<WindowSize>) {
-    (
-        window_data::load_settings_placement(),
-        window_data::load_settings_size(),
-    )
-}
-
-#[tauri::command]
-pub fn save_settings_placement(x: i32, y: i32) {
-    window_data::save_settings_placement(WindowPlacement { x, y });
-}
-
-#[tauri::command]
-pub fn save_settings_size(width: i32, height: i32) {
-    window_data::save_settings_size(WindowSize { width, height });
 }
 
 #[tauri::command]

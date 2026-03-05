@@ -17,6 +17,7 @@ if (-not (Test-Path $ExePath)) {
   throw "Executable not found: $ExePath"
 }
 
+# about/settings are now separate processes (snotra-settings); only results window is pre-created.
 $requiredLabels = @("results")
 $summaries = @()
 $failures = @()

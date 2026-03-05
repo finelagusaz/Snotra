@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod config_watcher;
 mod icon;
 mod ime;
 mod indexing;
@@ -19,6 +20,7 @@ use snotra_core::indexer;
 use snotra_core::window_data;
 use tauri::{AppHandle, Emitter, Listener, Manager};
 
+use crate::commands::SettingsProcessState;
 use crate::icon::IconCacheState;
 
 use crate::platform::{PlatformBridge, PlatformBridgePending, PlatformCommand};
@@ -211,10 +213,10 @@ fn main() {
                 let _ = w.set_focus();
             }
         }))
-        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .manage(app_state)
         .manage(icon_cache_state)
+        .manage(SettingsProcessState::default())
         .invoke_handler(tauri::generate_handler![
             commands::search,
             commands::get_history_results,
@@ -222,25 +224,15 @@ fn main() {
             commands::get_matching_tools,
             commands::launch_with_tool,
             commands::list_folder,
-            commands::load_config,
-            commands::save_config,
-            commands::get_config,
-            commands::get_default_config,
             commands::open_settings,
-            commands::hide_settings,
-            commands::open_about,
             commands::get_icons_batch,
             commands::get_search_placement,
             commands::save_search_placement,
-            commands::get_settings_placement,
-            commands::save_settings_placement,
-            commands::save_settings_size,
             commands::set_window_no_activate,
             commands::notify_result_clicked,
             commands::notify_result_double_clicked,
             commands::notify_result_hovered,
             commands::get_indexing_state,
-            commands::list_system_fonts,
             commands::rebuild_index,
             commands::quit_app,
             commands::record_folder_expansion,
@@ -276,24 +268,18 @@ fn main() {
             // Tray is NOT created here; SetTrayVisible is sent after full setup (SPEC §7.5).
             let platform_pending = PlatformBridge::begin(app_handle.clone(), hotkey_config);
 
-            // Pre-create all windows during setup (before event loop starts).
-            // WebviewWindowBuilder::build() はイベントループ開始後のコールバック内
-            // (run_on_main_thread 含む) では WebView2 初期化がメッセージポンプを
-            // 必要とするためデッドロックする。setup フェーズでのみ正常動作する。
+            // Pre-create results window (the only remaining WebView2 window).
             ensure_window_with_timing(&app_handle, "results", commands::ensure_results_window)?;
-            ensure_window_with_timing(&app_handle, "about", commands::ensure_about_window)?;
-            ensure_window_with_timing(&app_handle, "settings", commands::ensure_settings_window)?;
 
             // Win32 init finishes in a few ms; by the time windows are created it is already done.
             if let Some(bridge) = platform_pending.and_then(PlatformBridgePending::wait) {
                 app_handle.manage(Mutex::new(bridge));
             }
 
+            // First-run: launch snotra-settings directly (bypassing the indexing guard
+            // in open_settings, since initial_indexing=true during first run).
             if is_first_run {
-                let _ = commands::open_settings(
-                    app_handle.state::<AppState>(),
-                    app_handle.clone(),
-                );
+                let _ = commands::launch_settings_process(&app_handle, &[]);
             }
 
             // Listen for hotkey toggle events
@@ -303,13 +289,10 @@ fn main() {
             let hotkey_generation = Arc::new(AtomicU64::new(0));
             let hotkey_generation_for_listener = hotkey_generation.clone();
             app_handle.listen("hotkey-pressed", move |_| {
-                // Ignore the hotkey while the settings window is visible: the user may be
-                // pressing the current hotkey combination to configure a new one, and
-                // Win32 RegisterHotKey fires before the DOM keydown handler can intercept it.
-                if handle_for_hotkey
-                    .get_webview_window("settings")
-                    .and_then(|w| w.is_visible().ok())
-                    .unwrap_or(false)
+                // Ignore the hotkey while snotra-settings is running: the user may be
+                // pressing the current hotkey combination to configure a new one.
+                if let Some(proc_state) = handle_for_hotkey.try_state::<SettingsProcessState>()
+                    && proc_state.lock().unwrap().is_some()
                 {
                     return;
                 }
@@ -372,6 +355,13 @@ fn main() {
                         c.save_if_dirty();
                     }
                 }
+                // Kill snotra-settings child process if running.
+                if let Some(proc_state) = handle_for_exit.try_state::<SettingsProcessState>()
+                    && let Ok(mut guard) = proc_state.lock()
+                    && let Some(mut child) = guard.take()
+                {
+                    let _ = child.kill();
+                }
                 if let Some(bridge) = handle_for_exit.try_state::<Mutex<PlatformBridge>>()
                     && let Ok(b) = bridge.lock()
                 {
@@ -380,8 +370,14 @@ fn main() {
                 handle_for_exit.exit(0);
             });
 
-            // All listeners registered; now safe to show tray.
-            // about/settings are created on-demand, so only results needs to be ready.
+            // Start config.toml file watcher for external changes (snotra-settings)
+            if let Some(watcher) = config_watcher::start(&app_handle) {
+                app_handle.manage(Mutex::new(watcher));
+            }
+
+            // All windows pre-created and all listeners registered; now safe to show tray.
+            // Showing tray before this point would allow right-click menu actions before
+            // the windows and listeners are ready (SPEC §7.5 / §9).
             if show_tray
                 && let Some(bridge) = app_handle.try_state::<Mutex<PlatformBridge>>()
                 && let Ok(b) = bridge.lock()

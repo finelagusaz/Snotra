@@ -19,6 +19,9 @@ Desktop.ini
 research.md
 scripts/test-win.sh
 
+# Sidecar binaries (built by scripts/prepare-sidecar.ps1)
+src-tauri/binaries/
+
 # Tauri auto-generated (non-target platform)
 src-tauri/gen/schemas/macOS-schema.json
 

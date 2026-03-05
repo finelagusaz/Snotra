@@ -12,8 +12,9 @@ pub use search::*;
 pub use system::*;
 pub use window::*;
 
-// Re-export pub(crate) items that main.rs references as commands::ensure_results_window
+// Re-export pub(crate) items that main.rs references
 pub(crate) use window::ensure_results_window;
+pub(crate) use window::launch_settings_process;
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};

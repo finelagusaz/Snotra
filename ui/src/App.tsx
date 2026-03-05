@@ -1,12 +1,8 @@
 import { type Component, onMount, onCleanup, Switch, Match } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen } from "@tauri-apps/api/event";
-import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
 import SearchWindow from "./components/SearchWindow";
 import ResultsWindow from "./components/ResultsWindow";
-import SettingsWindow from "./components/SettingsWindow";
-import AboutWindow from "./components/AboutWindow";
 import {
   resetForShow,
   setSelected,
@@ -56,20 +52,12 @@ const App: Component = () => {
             blurTimer = setTimeout(async () => {
               try {
                 if (blurCancelled) return;
-                const sw = await WebviewWindow.getByLabel("settings");
-                const aw = await WebviewWindow.getByLabel("about");
+                // WS_EX_NOACTIVATE を設定しても WebView2 が SetForegroundWindow() を呼ぶため
+                // results クリック時も foreground が変わる。プロセス ID で自アプリ内操作を判定する。
+                const mainForeground = await api.isMainForeground();
                 if (blurCancelled) return;
-                const settingsVisible = sw && await sw.isVisible();
-                const aboutVisible = aw && await aw.isVisible();
-                if (blurCancelled) return;
-                if (!settingsVisible && !aboutVisible) {
-                  // WS_EX_NOACTIVATE を設定しても WebView2 が SetForegroundWindow() を呼ぶため
-                  // results クリック時も foreground が変わる。プロセス ID で自アプリ内操作を判定する。
-                  const mainForeground = await api.isMainForeground();
-                  if (blurCancelled) return;
-                  if (!mainForeground) {
-                    await hideMainAndResults();
-                  }
+                if (!mainForeground) {
+                  await hideMainAndResults();
                 }
               } catch (e) {
                 console.warn("auto-hide focus check failed:", e);
@@ -191,49 +179,6 @@ const App: Component = () => {
     if (label === "main" && bootstrap?.general.auto_hide_on_focus_lost) {
       await registerAutoHideOnFocusLost?.();
     }
-
-    if (label === "settings") {
-      // Restore settings window position and size
-      try {
-        const [placement, size] = await api.getSettingsPlacement();
-        if (size) {
-          await win.setSize(new LogicalSize(size.width, size.height));
-        }
-        if (placement) {
-          await win.setPosition(new LogicalPosition(placement.x, placement.y));
-        }
-      } catch (e) {
-        console.error("Settings placement restore error:", e);
-      }
-
-      // Save position on move (debounced)
-      let moveTimer: ReturnType<typeof setTimeout> | undefined;
-      const unlistenSettingsMoved = await win.onMoved(({ payload: pos }) => {
-        clearTimeout(moveTimer);
-        moveTimer = setTimeout(() => {
-          void (async () => {
-            const sf = await win.scaleFactor();
-            const logicalPos = pos.toLogical(sf);
-            await api.saveSettingsPlacement(Math.round(logicalPos.x), Math.round(logicalPos.y));
-          })();
-        }, 500);
-      });
-      unlistenFns.push(unlistenSettingsMoved);
-
-      // Save size on resize (debounced)
-      let resizeTimer: ReturnType<typeof setTimeout> | undefined;
-      const unlistenSettingsResized = await win.onResized(({ payload: sz }) => {
-        clearTimeout(resizeTimer);
-        resizeTimer = setTimeout(() => {
-          void (async () => {
-            const sf = await win.scaleFactor();
-            const logicalSize = sz.toLogical(sf);
-            await api.saveSettingsSize(Math.round(logicalSize.width), Math.round(logicalSize.height));
-          })();
-        }, 500);
-      });
-      unlistenFns.push(unlistenSettingsResized);
-    }
   });
 
   onCleanup(() => {
@@ -248,17 +193,11 @@ const App: Component = () => {
 
   return (
     <Switch fallback={<div style="padding: 16px">Unknown window: {windowLabel}</div>}>
-      <Match when={windowLabel === "settings"}>
-        <SettingsWindow />
-      </Match>
       <Match when={windowLabel === "results"}>
         <ResultsWindow />
       </Match>
       <Match when={windowLabel === "main"}>
         <SearchWindow />
-      </Match>
-      <Match when={windowLabel === "about"}>
-        <AboutWindow />
       </Match>
     </Switch>
   );

@@ -1,5 +1,5 @@
 [workspace]
-members = ["snotra-core", "src-tauri"]
+members = ["snotra-core", "src-tauri", "snotra-settings"]
 resolver = "2"
 
 [profile.release]

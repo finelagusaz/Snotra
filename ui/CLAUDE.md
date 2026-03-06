@@ -4,15 +4,41 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 
 ## モジュール構成
 
-- `App.tsx`: ウィンドウラベルで検索/設定を出し分け、テーマ適用、ウィンドウ位置復元、イベントリスナー登録
-- `components/SearchWindow.tsx`: 検索入力 + キーボードナビゲーション + `/o` コマンド + ドラッグ移動
-- `components/ResultRow.tsx`: アイコン + 名前 + パス + フォルダバッジ
-- `stores/search.ts`: 検索状態管理（クエリ/結果/選択/フォルダ展開/アイコンキャッシュ）
-- `stores/settings.ts`: 設定ドラフト管理
-- `lib/resultsWindowController.ts`: results ウィンドウの位置・サイズ・表示制御（`createResultsWindowController` ファクトリ）
-- `lib/invoke.ts`: 型付き Tauri IPC ラッパー
-- `lib/theme.ts`: CSS 変数によるテーマ適用
-- `lib/types.ts`: TypeScript 型定義の集約先（DRY）
+### エントリポイント
+
+- `App.tsx`: ウィンドウラベルで検索/results を出し分け、テーマ適用、ウィンドウ位置復元、イベントリスナー登録
+
+### components/
+
+- `SearchWindow.tsx`: 検索入力 + キーボードナビゲーション + スラッシュコマンド補完 + ドラッグ移動
+- `ResultsWindow.tsx`: 別 WebviewWindow で動作する検索結果ウィンドウ。`results-sync` イベントを受け取り結果一覧を描画。アイコンのバイナリバッチ取得・Blob URL 管理・スクロール追従を担当
+- `ResultRow.tsx`: アイコン + 名前 + パス + フォルダバッジ（1行分の描画）
+- `ToggleSwitch.tsx`: トグルスイッチ共通 UI コンポーネント
+- `ThemePreview.tsx`: `VisualConfig` を受け取ってテーマの縮小プレビューを描画
+- `SettingRow.tsx`: 設定行の共通レイアウト（label + description + control スロット）
+
+### stores/
+
+- `search.ts`: 検索状態管理（クエリ/結果/選択/モード切替/`results-sync` emit）
+- `folder.ts`: フォルダモードの状態（`FolderFrame` シグナル + `folderFilter`）。`isInFolderMode()` を公開
+- `tool-selection.ts`: ツール選択モードの状態（`ToolSelectionFrame` シグナル）
+- `settings.ts`: 設定ドラフト管理
+
+### lib/
+
+- `resultsWindowController.ts`: results ウィンドウの位置・サイズ・表示制御（`createResultsWindowController` ファクトリ）
+- `invoke.ts`: 型付き Tauri IPC ラッパー
+- `theme.ts`: CSS 変数によるテーマ適用
+- `types.ts`: TypeScript 型定義の集約先（DRY）
+- `commands.ts`: スラッシュコマンド定義（`/r` `/o` `/s` `/q`）と `SLASH_COMMANDS` 配列・`findCommand()` 関数
+- `i18n.ts`: 日本語ローカライズ。`TranslationKey` 型と `t(key, params?)` 関数。`{param}` 形式プレースホルダー対応
+- `searchEvents.ts`: `ResultsSyncPayload` 型定義（`results-sync` イベントのペイロード構造）
+- `folderNav.ts`: フォルダナビゲーション純粋ロジック（`computeParentDir`・`clampSelectedIndex`）。ドライブルート・UNC パス対応。テスト可能なため `stores/` から分離
+- `pathQuery.ts`: パスクエリ判定ロジック（`parsePathQuery`・`isPathQuery`）。入力がパス形式かを判定しフォルダ参照モードへの切り替えをトリガー
+- `hotkeyValidation.ts`: ホットキーの有効性チェック（`isHotkeyInvalid`・`formatHotkeyLabel`）。Win キー・禁止キー・修飾キーなしをガード
+- `truncatePath.ts`: Canvas API でフォント依存のピクセル幅を計測し、長いパスを中間省略する（`truncatePath`）。結果はキャッシュ済み
+- `perf.ts`: 開発時専用パフォーマンス計測（`localStorage.snotra_perf=1` で有効化）。入力→検索→描画の3フェーズ時間を計測し P50/P95 を `console.table` 出力
+- `trace.ts`: 開発時専用トレースログ（`localStorage.snotra_trace=1` で有効化）。`trace(event, data)` で `console.debug` 出力
 
 ## 実装パターン
 
@@ -21,7 +47,7 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 
 ## マルチウィンドウ通信の不変条件
 
-`main` と `results` は別 `WebviewWindow` であり JavaScript コンテキストを共有しない。`ResultsWindow` は `results-updated` Tauri イベントのみで状態を受け取る。以下の不変条件を守ること。
+`main` と `results` は別 `WebviewWindow` であり JavaScript コンテキストを共有しない。`ResultsWindow` は `results-sync` Tauri イベントのみで状態を受け取る。以下の不変条件を守ること。
 
 - `search.ts` の状態（`results`・`selected`）を変更したとき、`ResultsWindow` への通知が必要な場合は必ず `emitResults()` または `emitSelectionUpdate()` を呼ぶ
 - イベントリスナー（`listen()`）を登録したら必ず `onCleanup()` で後始末する。`onCleanup` の登録は `listen()` の呼び出しより前、同期コンテキストで行うこと（`await` や `.then()` の後ではリアクティブコンテキストが失われる）

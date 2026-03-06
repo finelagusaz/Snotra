@@ -25,14 +25,15 @@ git push origin v0.9.1
 
 - タグ名は `v<major>.<minor>.<patch>` 形式（例: `v0.9.0`）
 - タグを push すると GitHub Actions の Release ワークフローが自動実行される
-- ワークフローは Windows 向けバイナリをビルドし、ZIP にまとめて GitHub Release を作成する
+- ワークフローは `snotra.exe`（`npx tauri build --no-bundle`）と `snotra-settings.exe`（`cargo build --release -p snotra-settings`）を個別にビルドし、両バイナリを ZIP にまとめて GitHub Release を作成する
 - リリースノートは GitHub の自動生成機能を使用する
 
 ## CI
 
-- `main` ブランチへの push および PR で CI が自動実行される
-- CI はフロントエンドの型チェックとビルドを検証する
-- CI が通らない PR はマージしない
+`main` ブランチへの push および PR で以下の2ジョブが自動実行される。どちらかが失敗する PR はマージしない。
+
+- **frontend-check**: `npm test`（Vitest）+ `npm run build`（型チェック + Vite ビルド）
+- **rust-check**: `cargo check -p snotra-core -p snotra` + `cargo test -p snotra-core` + `cargo clippy -p snotra-core -p snotra -- -D warnings`
 
 ## 開発環境のセットアップ
 

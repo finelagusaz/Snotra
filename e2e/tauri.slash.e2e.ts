@@ -662,3 +662,61 @@ test("settings を ESC で閉じた後、スラッシュコマンドが動作す
   ).toBe(true);
 });
 
+test("→ キーでフォルダ展開、Escape でスナップショット復帰", async ({ harness }) => {
+  const { driver } = harness;
+
+  // C:\ を入力してフォルダ結果を表示（pathQuery モード、folderState は null）
+  await switchToLabel(driver, "main");
+  let input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys("C:\\");
+
+  await waitForVisibleLabel(driver, "results", 8_000);
+  await switchToLabel(driver, "results");
+  await driver.wait(
+    async () => (await driver.findElements(By.css(".result-row"))).length > 0,
+    6_000,
+    "C:\\ の結果が results ウィンドウに表示されない",
+  );
+
+  // → キーで最初の結果（フォルダ）に入る → folderFilter="" で input value が空になる
+  await switchToLabel(driver, "main");
+  input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(Key.ARROW_RIGHT);
+
+  await driver.wait(async () => {
+    await switchToLabel(driver, "main");
+    const el = await driver.findElement(By.css(".search-input"));
+    return (await el.getAttribute("value")) === "";
+  }, 4_000, "→ キーでフォルダモードに入らない（input が空にならない）");
+
+  // Escape でスナップショット（C:\）に一括復帰
+  await switchToLabel(driver, "main");
+  await driver.actions().sendKeys(Key.ESCAPE).perform();
+
+  await driver.wait(async () => {
+    await switchToLabel(driver, "main");
+    const el = await driver.findElement(By.css(".search-input"));
+    return (await el.getAttribute("value")) === "C:\\";
+  }, 4_000, "Escape で C:\\ に復帰しない");
+});
+
+test("/r 入力でエラーにならず main が表示されたままになる", async ({ harness }) => {
+  const { driver } = harness;
+
+  await switchToLabel(driver, "main");
+  const input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys("/r");
+
+  // 検索処理が完了するまで input value が /r になるのを待つ
+  await driver.wait(async () => {
+    await switchToLabel(driver, "main");
+    const el = await driver.findElement(By.css(".search-input"));
+    return (await el.getAttribute("value")) === "/r";
+  }, 4_000);
+
+  // main ウィンドウが表示されたまま（クラッシュ・自動非表示なし）
+  await waitForVisibleLabel(driver, "main", 4_000);
+  const el = await driver.findElement(By.css(".search-input"));
+  expect(await el.getAttribute("value")).toBe("/r");
+});
+

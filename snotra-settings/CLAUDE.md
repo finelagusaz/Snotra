@@ -15,6 +15,7 @@ egui ベースの設定・about バイナリ crate。本体（`src-tauri`）と�
 - `font.rs`: 日本語フォント読み込み + システムフォント列挙
 - `hotkey_input.rs`: ホットキーキャプチャウィジェット
 - `tabs/`: 5タブの UI 実装（About タブは `app.rs` に直接実装）
+  - `mod.rs`: サブモジュール宣言のみ
   - `general.rs`: 全般設定（起動時表示、トレイ、IME、ホットキー）
   - `search.rs`: 検索設定（検索モード、履歴、隠しファイル）
   - `index.rs`: インデックス設定（スキャンパス管理）

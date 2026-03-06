@@ -1,322 +1,170 @@
-# Issue #131 実装計画: 設定ウィンドウ・about を egui 別プロセスに切り出す
+# plan.md — issue #138: perf: opt-level クレート単位最適化
 
 ## 概要
 
-設定画面と about 画面を egui ベースの単一バイナリ (`snotra-settings`) に統合し、WebView2 制約の根本解消・メモリ削減・責務分離を実現する。
-
-- 設定モード: `snotra-settings` (デフォルト) — 5タブの設定エディタ
-- about モード: `snotra-settings --about` — バージョン情報ダイアログ（400×300、リサイズ不可）
-- WebView2 は results ウィンドウの 1 インスタンスのみに削減
-- 相互依存はファイルシステム (`config.toml`) 1 点のみ。IPC 不要
+ルート `Cargo.toml` の `[profile.release.package.*]` を使い、クレートごとの opt-level を計測・決定する。
+実装は「計測スクリプト整備 → 計測実施 → 判断 → Cargo.toml 反映」の順で進める。
 
 ## 変更ファイル一覧
 
-### 新規作成
-
-| ファイル | 内容 |
-|---------|------|
-| `snotra-settings/Cargo.toml` | egui アプリの crate 定義 |
-| `snotra-settings/src/main.rs` | エントリポイント、eframe アプリ起動 |
-| `snotra-settings/src/app.rs` | `eframe::App` 実装、タブ管理、保存/破棄ロジック |
-| `snotra-settings/src/tabs/general.rs` | 全般タブ UI |
-| `snotra-settings/src/tabs/search.rs` | 検索タブ UI |
-| `snotra-settings/src/tabs/index.rs` | インデックスタブ UI |
-| `snotra-settings/src/tabs/visual.rs` | ビジュアルタブ UI |
-| `snotra-settings/src/tabs/opener.rs` | オープナータブ UI |
-| `snotra-settings/src/tabs/mod.rs` | タブモジュール定義 |
-| `snotra-settings/src/font.rs` | 日本語フォント読み込み + システムフォント列挙 |
-| `snotra-settings/src/hotkey_input.rs` | ホットキーキャプチャウィジェット |
-| `snotra-settings/src/widgets.rs` | 共通ウィジェット（トグル、編集可能リスト等） |
-| `snotra-settings/src/about.rs` | about ダイアログ（バージョン、作者、リンク） |
-
-### 変更
-
 | ファイル | 変更内容 |
 |---------|---------|
-| `Cargo.toml` | workspace members に `snotra-settings` 追加 |
-| `src-tauri/src/main.rs` | about/settings 事前生成削除、first-run → sentinel ファイル、`notify` 監視開始 |
-| `src-tauri/src/commands/window.rs` | `open_settings` / `open_about` → snotra-settings プロセス起動、`hide_settings` / `ensure_about_window` 削除 |
-| `src-tauri/src/commands/config.rs` | `save_config` の設定反映ロジックを抽出→ファイル変更検知ハンドラに移植 |
-| `src-tauri/Cargo.toml` | `notify` クレート追加 |
-| `src-tauri/src/config_watcher.rs` | 新規: `notify` による config.toml 監視モジュール |
-| `src-tauri/tauri.conf.json` | `bundle.externalBin` に snotra-settings 追加、settings ウィンドウ定義削除 |
-| `ui/src/App.tsx` | settings/about 分岐削除 |
-| `ui/src/lib/commands.ts` | `/o` / `/a` → snotra-settings プロセス起動 |
-| `SPEC.md` | §6.1, §7.5, §8 更新 |
+| `Cargo.toml` | `[profile.release.package.*]` セクション追加（採用クレートのみ） |
 
-### 削除
-
-| ファイル | 理由 |
-|---------|------|
-| `ui/src/components/SettingsWindow.tsx` | egui に移行 |
-| `ui/src/components/SettingsGeneral.tsx` | 同上 |
-| `ui/src/components/SettingsSearch.tsx` | 同上 |
-| `ui/src/components/SettingsIndex.tsx` | 同上 |
-| `ui/src/components/SettingsVisual.tsx` | 同上 |
-| `ui/src/components/SettingsOpener.tsx` | 同上 |
-| `ui/src/components/SettingsEditableList.tsx` | 同上 |
-| `ui/src/components/SettingsEditorModal.tsx` | 同上 |
-| `ui/src/components/SettingsEditorActions.tsx` | 同上 |
-| `ui/src/stores/settings.ts` | 同上 |
-| `ui/src/lib/openerGroups.ts` | 同上 |
-| `ui/src/styles/settings.css` | 同上 |
-| `ui/src/components/AboutWindow.tsx` | egui に統合 |
-| `src-tauri/capabilities/about.json` | about ウィンドウ不要 |
-
-計: 13 新規、10 変更、14 削除、7 フェーズ
-
----
+変更ファイルは最大 1 件。計測フェーズでは Cargo.toml を一時的に変更しながら計測し、
+最終的に採用構成のみを残す。
 
 ## 実装順序
 
-### Phase 1: snotra-settings crate 骨格 + General タブ（PoC）
+### Phase 1: ベースライン取得（全クレート opt-level = 3）
 
-目的: egui で最小限の設定画面が動作することを検証する。
+現状の Cargo.toml を変更せずに計測する。
 
-**`Cargo.toml`** (ワークスペース):
-- `members` に `"snotra-settings"` 追加
-
-**`snotra-settings/Cargo.toml`**:
-```toml
-[package]
-name = "snotra-settings"
-version = "0.1.0"
-edition = "2021"
-
-[[bin]]
-name = "snotra-settings"
-path = "src/main.rs"
-
-[dependencies]
-snotra-core = { path = "../snotra-core" }
-eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "persistence"] }
-rfd = "0.15"
+**バイナリサイズ**:
+```bash
+ls -lh target/release/snotra.exe
+ls -lh target/release/snotra-settings.exe
 ```
 
-**`snotra-settings/src/main.rs`**:
-- `eframe::run_native()` でアプリ起動
-- `snotra_core::config::Config::load()` で設定読み込み
-- コマンドライン引数:
-  - `--about`: about ダイアログモード（400×300、リサイズ不可、Escape で終了）
-  - `--first-run`: 初回起動モード
-  - `--tab <name>`: 初期タブ指定
+**速度ベンチマーク**:
+```bash
+cargo test --release -p snotra-core bench_ -- --ignored --nocapture
+```
 
-**`snotra-settings/src/app.rs`**:
-- `SettingsApp` 構造体: `draft: Config`, `saved: Config`, `active_tab: TabId`
-- `eframe::App::update()` でサイドバー + コンテンツ + フッター描画
-- フッター: 保存ボタン（変更時のみ有効）、破棄ボタン、ステータス表示
-- 保存: `Config::save()` 呼び出し、first-run モード時は sentinel ファイル削除
-- Escape: 変更なしなら閉じる
-
-**`snotra-settings/src/font.rs`**:
-- `C:\Windows\Fonts\YuGothM.ttc` (Yu Gothic) をフォールバック日本語フォントとして読み込み
-- システムフォント列挙（`list_system_fonts` 相当）
-
-**`snotra-settings/src/about.rs`**:
-- about ダイアログ UI（`--about` モード時に使用）
-- 表示内容: アプリ名 "Snotra"、バージョン (env `CARGO_PKG_VERSION`)、ビルド日
-- 作者: Fine Lagusaz
-- リンク: メール (`open::that` で mailto:)、Web サイト (`open::that` で URL)
-- Escape で閉じる（プロセス終了）
-- ウィンドウ: 400×300、リサイズ不可、タイトル "Snotra について"
-
-**`snotra-settings/src/tabs/general.rs`**:
-- ホットキー入力（Phase 3 で実装、ここではテキスト入力で代替）
-- トグル: hotkey_toggle, show_on_startup, auto_hide_on_focus_lost, show_tray_icon, ime_off_on_show
-- 数値: max_results, window_width
-- トグル: show_icons
-
-### Phase 2: 残り 4 タブの UI 実装
-
-**`snotra-settings/src/tabs/search.rs`**:
-- ドロップダウン: normal_mode, folder_mode
-- トグル: show_hidden_system
-- 数値: top_n_history
-- ドロップダウン: history_normalization
-- 数値: fuzzy_history_cap_ratio（history_normalization が Disabled なら無効化）
-
-**`snotra-settings/src/tabs/index.rs`**:
-- 編集可能リスト: scan paths
-- 各エントリ: パス、拡張子（カンマ区切り）、フォルダ含むトグル
-- モーダル: 追加/編集（パスのフォルダピッカー付き）
-- 重複パスのマージ（`dedup_scan_paths` 活用）
-
-**`snotra-settings/src/tabs/visual.rs`**:
-- プリセットカード（Obsidian, Paper, Solarized, Monokai, +カスタム）
-- カラーピッカー × 5（`egui::color_picker`）
-- フォント選択ドロップダウン + フォントサイズ
-- テーマプレビュー
-
-**`snotra-settings/src/tabs/opener.rs`**:
-- 編集可能リスト: opener rules（ターゲット + ツール）
-- モーダル: 追加/編集（実行ファイルピッカー付き）
-- 並べ替え（↑↓ボタン）
-
-### Phase 3: ホットキーキャプチャ + 共通ウィジェット
-
-**`snotra-settings/src/hotkey_input.rs`**:
-- egui の `Response` + `InputState` でキー入力をキャプチャ
-- Modifier (Ctrl/Alt/Shift/Win) + メインキー (A-Z, 0-9, Space 等) を検出
-- Backspace/Escape でクリア
-- 現在のキーコンビネーションを表示
-
-**`snotra-settings/src/widgets.rs`**:
-- トグルスイッチ（カスタム描画 or `egui::Checkbox`）
-- 「初期設定に戻す」ボタン（2回クリック確認）
-
-### Phase 4: 本体側 — config.toml ファイル変更検知
-
-**`src-tauri/Cargo.toml`**:
-- `notify = "7"` 追加
-
-**`src-tauri/src/config_watcher.rs`** (新規):
-- `notify::recommended_watcher` で `config.toml` を監視
-- 変更検知時の処理（`save_config` から抽出）:
-  1. `Config::load()` で新設定読み込み
-  2. 旧設定と比較
-  3. ホットキー変更 → `PlatformCommand::SetHotkey`（失敗時はログ）
-  4. トレイ変更 → `PlatformCommand::SetTrayVisible`
-  5. インデックス変更 → `start_index_build`
-  6. ビジュアル変更 → `emit("visual-config-changed")`
-  7. show_icons 変更 → `emit("show-icons-changed")`
-  8. ウィンドウ幅変更 → main/results リサイズ
-  9. `Engine::update_config()` で状態更新
-
-**`src-tauri/src/main.rs`**:
-- setup 内で `config_watcher::start()` 起動
-
-**`snotra-core` 防御テスト追加** (config.rs):
-外部プロセスが config.toml を書き換えるのが正規パスになるため、以下のテストを追加:
-1. 不正 TOML（パース失敗）→ `Config::load()` がデフォルト設定にフォールバックすること
-2. パース成功だが値が不正（範囲外数値、空文字列等）→ `validate()` で検出されること
-3. 部分的なフィールド欠落 → serde のデフォルト値で補完されること
-4. atomic write（.tmp → rename）で書き込み途中の読み取りが発生しないこと
-
-### Phase 5: 本体側 — snotra-settings プロセス起動 + 初回フロー
-
-**`src-tauri/src/commands/window.rs`**:
-- `open_settings` を変更: `snotra-settings.exe` を `std::process::Command` で起動
-  - 実行ファイルパスは自バイナリの隣（`env::current_exe().parent()`）
-  - 引数: first-run 時は `--first-run`
-  - 既にプロセスが存在する場合はフォーカス（プロセス ID を保持して監視）
-- `open_about` を変更: `snotra-settings.exe --about` を `std::process::Command` で起動
-- `hide_settings` は削除（プロセス終了は snotra-settings 自身が制御）
-- `ensure_settings_window` / `ensure_about_window` は削除
-
-**`src-tauri/src/main.rs`**:
-- setup から `ensure_about_window` / `ensure_settings_window` 呼び出しを削除
-- first-run 時: sentinel ファイル (`.first_run_pending`) を作成、`snotra-settings --first-run` を起動
-- sentinel ファイルの監視: `config_watcher` で `config.toml` 変更検知 + sentinel 不在チェック → index build 開始
-
-**初回起動フロー**:
-1. 本体: `Config::is_first_run()` → sentinel ファイル作成 → `snotra-settings --first-run` 起動
-2. snotra-settings: 設定を編集・保存 → `config.toml` 書き込み → sentinel ファイル削除 → 終了
-3. 本体: `config_watcher` が `config.toml` 変更を検知 → sentinel 不在確認 → `start_index_build`
-
-### Phase 6: フロントエンド・本体クリーンアップ
-
-**削除**:
-- `ui/src/components/Settings*.tsx` (9 ファイル)
-- `ui/src/components/AboutWindow.tsx`
-- `ui/src/stores/settings.ts`
-- `ui/src/lib/openerGroups.ts`
-- `ui/src/styles/settings.css`
-- `ui/src/App.tsx` の settings/about 分岐
-- `src-tauri/capabilities/about.json`
-
-**変更**:
-- `ui/src/lib/commands.ts`: `/o` / `/a` コマンドを `open_settings` / `open_about` IPC に変更（バックエンドがプロセス起動）
-- `src-tauri/src/commands/config.rs`: `save_config` IPC 削除（or 縮小: 本体内部用に保持する場合のみ）
-- `tauri.conf.json`: settings/about ウィンドウ定義削除
-- `src-tauri/src/commands/mod.rs`: settings/about 関連コマンドの invoke_handler 登録整理
-
-### Phase 7: SPEC.md 更新 + ビルド統合
-
-**`SPEC.md`**:
-- §6.1: ウィンドウ管理の変更（settings は別プロセス）
-- §7.5: settings ウィンドウのライフサイクル変更
-- §8: トレイアイコン表示条件から settings 事前生成を除外
-- §9: 新セクション「設定プロセス連携」追加
-
-**`src-tauri/tauri.conf.json`**:
-- `bundle.externalBin` に `snotra-settings` 追加
-
-**`CLAUDE.md`**:
-- アーキテクチャセクション更新（2 バイナリ構成）
+結果を Issue にコメントとして記録する。
 
 ---
+
+### Phase 2: snotra-settings に opt-level = "s" を適用
+
+ルート `Cargo.toml` に以下を追記:
+
+```toml
+[profile.release.package.snotra-settings]
+opt-level = "s"
+```
+
+**ビルド**:
+```bash
+cargo build --release -p snotra-settings
+```
+
+**計測**:
+```bash
+ls -lh target/release/snotra-settings.exe
+```
+
+**動作確認**: About タブ・設定画面の表示（手動）
+
+**判断**: サイズ削減が確認できれば採用（速度は要件外・低頻度起動のため）
+
+---
+
+### Phase 3: src-tauri に opt-level = "s" を適用
+
+ルート `Cargo.toml` に以下を追加:
+
+```toml
+[profile.release.package.snotra]
+opt-level = "s"
+```
+
+**ビルド**:
+```bash
+cargo build --release -p snotra
+```
+
+**計測**:
+```bash
+ls -lh target/release/snotra.exe
+```
+
+**動作確認**: IPC・Win32 呼び出し・ホットキー・トレイ（手動）
+
+**判断**: サイズ削減がある＆動作に問題なければ採用
+
+---
+
+### Phase 4: snotra-core に opt-level = "s" を適用
+
+ルート `Cargo.toml` に以下を追加:
+
+```toml
+[profile.release.package.snotra-core]
+opt-level = "s"
+```
+
+**ベンチマーク実行**:
+```bash
+cargo test --release -p snotra-core bench_ -- --ignored --nocapture
+```
+
+ベースライン（Phase 1）との差分をスループット比で計算する。
+**判断基準**: レグレッション < 10% → 採用候補、>= 10% → 不採用
+
+---
+
+### Phase 5: 最終構成の決定・Cargo.toml 反映
+
+Phase 2〜4 の計測結果を踏まえ、採用するクレートのみ `[profile.release.package.*]` を残し、
+不採用のクレートのセクションは削除する。
+
+計測結果と採用/不採用の根拠を Issue にコメントとして記載する。
 
 ## 不変条件
 
-1. `config.toml` のフォーマットは変更しない（`snotra-core::Config` の Serialize/Deserialize はそのまま）
-2. 設定保存後、本体が 1 秒以内に変更を検知して反映する（`notify` の debounce）
-3. first-run 時、snotra-settings で保存→本体が index build を開始する
-4. snotra-settings がクラッシュしても本体に影響しない
-5. ホットキー登録失敗時、前のホットキーを維持する（本体側で処理）
-6. `/o`, `/a`, `/s`, `/q`, `/r` の即実行は引き続き動作する
-7. hotkey-pressed リスナーの settings 可視チェック: snotra-settings プロセスがフォアグラウンドかで判定（`GetForegroundWindow` のプロセス ID 比較）
-8. about 画面の表示内容（バージョン、作者、リンク）は従来と同一
-
----
+1. `snotra-core` の opt-level 変更は速度レグレッション < 10% の場合のみ採用する
+2. 動作の正確性は変わらない（最適化レベルはコード生成のみに影響）
+3. ルート `Cargo.toml` の他の設定（`lto`, `strip`, `codegen-units`, `panic`）は変更しない
+4. issue 本文に記載のある誤った方法（各クレートの Cargo.toml に `[profile.release]` を書く方法）は使わない
+   → ルート Cargo.toml の `[profile.release.package.*]` を使う
 
 ## テスト方針
 
-### 自動テスト
+自動テストは不要（プロファイル設定はコード変更なし）。
 
-- `cargo check -p snotra-settings` — 型チェック
-- `cargo clippy -p snotra-settings` — lint
-- `cargo test -p snotra-core` — 既存テスト維持
-- `npm run build` — フロントエンドビルド（settings 削除後）
-- `cargo check -p snotra` — 本体型チェック
+検証コマンド（変更後に実施）:
+```bash
+cargo check -p snotra-core -p snotra   # 型チェック
+cargo test -p snotra-core               # 既存ユニットテスト
+```
 
-### 手動検証（Windows 必須）
+## SPEC.md 更新要否
 
-- `snotra-settings.exe` 単体起動 → 全タブ操作 → 保存 → config.toml 更新確認
-- `snotra-settings.exe --about` → about ダイアログ表示 → Escape で閉じる確認
-- `/a` → about 表示 → リンククリック → ブラウザ/メーラー起動確認
-- 本体起動中に設定変更 → ホットキー/テーマ/トレイ反映確認
-- `/o` → snotra-settings 起動確認
-- first-run フロー: config.toml 削除 → 起動 → 設定保存 → index build 開始確認
-- snotra-settings 強制終了 → 本体に影響なし確認
+**不要**。opt-level はビルド設定であり、ユーザー向け挙動に変化なし。
 
 ---
 
 ## セルフレビュー
 
-### 1. 対称コードパス ✅
-- `open_settings` / settings 閉じ: プロセス起動 / プロセス終了（自然終了）
-- `open_about` / about 閉じ: プロセス起動 (`--about`) / プロセス終了（Escape or ×）
-- `alwaysOnTop` 復元: snotra-settings プロセス起動時に `false`、プロセス終了検知時に `true` 復元。about/settings が同一バイナリなので、プロセス終了 = 両方閉じた。復元判定がシンプル化
-- config 変更検知の subscribe / unsubscribe: `notify` watcher は本体ライフサイクルで管理
+### 1. 対称コードパス
 
-### 2. 影響範囲の網羅性 ✅
-- `ensure_settings_window` 呼び出し元: `main.rs`（削除）、`open_settings`（プロセス起動に変更）、`ensure_window` IPC（settings ケース削除）
-- `ensure_about_window` 呼び出し元: `main.rs`（削除）、`open_about`（プロセス起動に変更）、`ensure_window` IPC（about ケース削除）
-- `settings-shown` イベント: emit (`window.rs:150` 削除)、listen (`SettingsWindow.tsx` 削除)
-- `hide_settings` IPC: `SettingsWindow.tsx`（削除）、`invoke_handler`（削除）
-- `save_config` IPC: 設定反映ロジックを `config_watcher` に移植
-- hotkey-pressed の settings 可視チェック: snotra-settings プロセスのフォアグラウンド判定に変更
-- `open-settings` Tauri イベント: トレイからの起動 → プロセス起動に変更
-- about の `shell::open` (URL/mailto): egui 側で `open::that` クレートに置換
+対称ペアは存在しない。Cargo.toml のプロファイル設定追加のみ。
 
-### 3. 境界条件 ✅
-- snotra-settings が既に起動中に `/o` → 既存プロセスにフォーカス（二重起動防止）
-- 設定保存と本体の config 読み込みの競合 → atomic write で安全
-- notify のイベントが複数回発火 → debounce で対処
-- snotra-settings 起動中にホットキー → settings プロセスのフォアグラウンド判定で無視
-- config.toml が壊れた場合 → `Config::load()` のフォールバック（既存動作）
+### 2. 影響範囲の網羅性
 
-### 4. リソース管理 ✅
-- `notify::Watcher`: main で生成、アプリ終了で drop
-- snotra-settings プロセス: `std::process::Child` を保持、終了を検知
-- alwaysOnTop: プロセス起動時に false、終了検知時に true 復元
+- 変更箇所: ルート `Cargo.toml` のみ
+- 依存クレートの opt-level: `[profile.release.package.*]` は直接指定したクレートのみに適用。
+  依存クレート（eframe, tauri 等）は `profile.release` のデフォルト（`opt-level = 3`）を引き続き使用
 
-### 5. 既存パターンとの整合 ✅
-- `Config::load()` / `Config::save()` をそのまま活用（新パターンなし）
-- atomic write パターンで `notify` と自然に連携
-- snotra-core を共有ライブラリとして活用（DRY）
+### 3. 境界条件
 
-### 6. YAGNI 違反 ✅
-- IPC は使わず、ファイルシステム 1 点のみ
-- 設定プロセスの状態管理は最小限（draft + saved のみ）
-- ホットキーバリデーションは本体側に委譲（案A: KISS）
+- ベンチマーク計測の再現性: Windows 環境の負荷状況により変動する可能性がある。複数回実行して平均を取る
+- `lto = true` 環境: LTO によりクレート間最適化が発生するため、クレート単位の効果が緩和される可能性がある
+
+### 4. リソース管理
+
+プロファイル設定の変更のためリソース管理の考慮は不要。
+
+### 5. 既存パターンとの整合
+
+Cargo の `[profile.release.package.*]` は標準的なパターン。新規パターンなし。
+
+### 6. YAGNI 違反
+
+なし。最小限の変更（Cargo.toml に数行追加）で目的を達成する。
+
+### 修正点
+
+- issue 本文の誤った実装方法（各クレートの Cargo.toml に `[profile.release]`）を修正。
+  正しくはルート Cargo.toml の `[profile.release.package.*]` を使用。

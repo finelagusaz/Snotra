@@ -34,9 +34,19 @@ const SearchWindow: Component = () => {
 
   function focusInputSoon() {
     // Two-frame defer avoids first-show races with native show/focus timing.
+    const t0 = performance.now();
     requestAnimationFrame(() => {
+      const t1 = performance.now();
       requestAnimationFrame(() => {
+        const t2 = performance.now();
         inputRef?.focus();
+        const t3 = performance.now();
+        trace("ui:focus_input_done", {
+          raf1_ms: Math.round((t1 - t0) * 100) / 100,
+          raf2_ms: Math.round((t2 - t1) * 100) / 100,
+          focus_ms: Math.round((t3 - t2) * 100) / 100,
+          total_ms: Math.round((t3 - t0) * 100) / 100,
+        });
       });
     });
   }
@@ -61,10 +71,31 @@ const SearchWindow: Component = () => {
   }
 
   onMount(() => {
+    // Record initial visibility state for WebView2 throttle investigation
+    trace("ui:initial_visibility", {
+      state: document.visibilityState,
+      hidden: document.hidden,
+    });
+
+    // Track visibility changes to detect WebView2 suspend/resume
+    const onVisibilityChange = () => {
+      trace("ui:visibilitychange", {
+        state: document.visibilityState,
+        hidden: document.hidden,
+      });
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
     let unlistenWindowShown: (() => void) | undefined;
     let unlistenFocusChanged: (() => void) | undefined;
     void listen("window-shown", () => {
+      const t0 = performance.now();
       trace("ui:window_shown");
+      requestAnimationFrame(() => {
+        trace("ui:window_shown:first_raf", {
+          ms: Math.round((performance.now() - t0) * 100) / 100,
+        });
+      });
       focusInputWithRetries();
     }).then((unlisten) => {
       unlistenWindowShown = unlisten;
@@ -97,6 +128,7 @@ const SearchWindow: Component = () => {
 
     onCleanup(() => {
       clearFocusRetryTimers();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       unlistenWindowShown?.();
       unlistenFocusChanged?.();
     });

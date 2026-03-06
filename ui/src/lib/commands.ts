@@ -17,6 +17,7 @@ async function hideResultsWindow() {
 
 /** main webview コンテキストから呼び出すこと（getCurrentWindow() が main を返す前提） */
 export async function hideAllWindows() {
+  api.notifyMainHidden().catch(() => {});
   await getCurrentWindow().hide();
   await hideResultsWindow();
 }

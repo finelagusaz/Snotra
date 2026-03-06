@@ -32,6 +32,7 @@ const App: Component = () => {
       const hideMainAndResults = async () => {
         controller.updateMainVisible(false);
         controller.updateResultsVisible(false);
+        api.notifyMainHidden().catch(() => {});
         await win.hide();
         const rw = await controller.getResultsWindow();
         if (rw) {

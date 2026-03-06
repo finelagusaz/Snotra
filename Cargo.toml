@@ -11,3 +11,9 @@ lto = true
 strip = true
 codegen-units = 1
 panic = "abort"
+
+[profile.release.package.snotra-settings]
+opt-level = "s"
+
+[profile.release.package.snotra]
+opt-level = "s"

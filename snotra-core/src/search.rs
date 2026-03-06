@@ -112,9 +112,11 @@ pub struct SearchEngine {
     prev_mode: Option<SearchMode>,
 }
 
-/// Lightweight view over all per-entry parallel-Vec fields for index `i`.
-/// Bundles 6 immutable references without changing the underlying SoA layout,
-/// so all cache-locality properties of the parallel Vecs are preserved.
+/// Lightweight view over per-entry fields for index `i` that are used in the scoring loop.
+/// Bundles 4 references (entry / lower_name / lower_file_name / normalized_key) without
+/// changing the underlying SoA layout, so all cache-locality properties are preserved.
+/// `char_masks` / `file_name_char_masks` are accessed directly from SearchEngine in the
+/// pre-filter pass to keep the bitmask sweep L1-cache-friendly.
 struct EntryView<'a> {
     entry: &'a AppEntry,
     lower_name: &'a str,

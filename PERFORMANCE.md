@@ -67,7 +67,7 @@ opt-level = "s"
   詳細は `snotra-core/src/search.rs` の `SearchEngine` 構造体コメントを参照。
 
   **採用した別案（branch `refactor/entry-view-accessor`）**: AoS 統合の代わりに `EntryView<'a>` アクセサパターンを導入。
-  `entry_view(i)` が 6 本の並列 Vec の参照を束ねて返すことで、スコアリングループの可読性を向上させた（6 行 → 1 行）。
+  `entry_view(i)` が 4 本の並列 Vec の参照（`entry` / `lower_name` / `lower_file_name` / `normalized_key`）を束ねて返すことで、スコアリングループの可読性を向上させた（4 行 → 1 行）。`char_masks` / `file_name_char_masks` はプリフィルタのキャッシュ効率を保つため EntryView に含めず SearchEngine から直接アクセスする。
   `#[inline]` により性能への影響はゼロ（メモリレイアウト不変）。`new()` 末尾の `debug_assert!` で全 Vec 長の同期を検証する。
 
 ## 計測と受け入れ基準

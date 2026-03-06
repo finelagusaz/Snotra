@@ -1,52 +1,67 @@
-# Plan: Issue #149 — リリースビルドでアイコンが表示されない（CSP に connect-src 不足）
+# Plan: エラーハンドリング残骸の整理
 
-## 変更ファイル一覧
+## 方針
 
-| ファイル | 変更内容 |
+`void promise.then(fn => { unlisten = fn })` パターンの `.catch()` 欠如を修正する。変更は **ログ追加のみ** に限定し、制御フロー・状態遷移・戻り値には一切触れない。
+
+## 変更対象と除外の判断
+
+### 変更する (3ファイル・7箇所)
+
+| # | ファイル | 行 | パターン | 修正内容 |
+|---|---|---|---|---|
+| 1 | `ResultsWindow.tsx` | L99-101 | `void api.getBootstrapPayload().then(...)` | `.catch(e => console.warn(...))` 追加 |
+| 2 | `ResultsWindow.tsx` | L107-113 | `void listen("show-icons-changed", ...).then(...)` | 同上 |
+| 3 | `ResultsWindow.tsx` | L124-129 | `void listen("visual-config-changed", ...).then(...)` | 同上 |
+| 4 | `ResultsWindow.tsx` | L144-178 | `void listen("results-sync", ...).then(...)` | 同上 |
+| 5 | `SearchWindow.tsx` | L66-71 | `void listen("window-shown", ...).then(...)` | 同上 |
+| 6 | `SearchWindow.tsx` | L72-83 | `void getCurrentWindow().onFocusChanged(...).then(...)` | 同上 |
+| 7 | `SearchWindow.tsx` | L87-91 | `void (async () => { ... })()` | try/catch + `console.warn` で囲む |
+
+### 変更しない (理由付き)
+
+| 箇所 | 理由 |
 |---|---|
-| `src-tauri/tauri.conf.json` | CSP に `connect-src ipc: http://ipc.localhost` を追加 |
+| `App.tsx` の listen 群 (L76-116) | `await Promise.all(...)` で await 済み。失敗は `onMount` async の unhandled rejection として表面化する |
+| `App.tsx` の `saveSearchPlacement` (L150-153) | setTimeout 内の debounced fire-and-forget。位置保存失敗は非クリティカルで、ログを足しても確認する機会がない |
+| `App.tsx` の `void hideMainAndResults()` (L90) | 直前に `console.warn("Failed to launch...")` がある文脈。hide 自体の失敗は Tauri API レベルの致命的問題で、warn 1行では対処にならない |
+| `App.tsx` の `void controller.handleMainMoved(...)` (L158) | `resultsWindowController.ts` 内部に既に `.catch(console.error)` がある (L70-82) |
+| `search.ts` の `void api.recordFolderExpansion(dir)` (L299) | 非クリティカルな履歴記録。意図的な fire-and-forget |
+| `commands.ts` の `api.quitApp()` (L57) | アプリ終了。失敗してもログを見る機会がない |
+| E2E テスト内の `.catch(() => {})` | テストハーネスのクリーンアップ。意図的 |
+
+## 副作用リスクの検証
+
+### 変更が安全である根拠
+
+1. **制御フローを変えない**: `.catch()` の追加は Promise チェーンの末尾に付くだけ。`.then()` の成功パスには影響しない
+2. **`unlisten` 変数の代入タイミングを変えない**: `.catch()` は `.then()` の後に付くため、成功時の `.then(fn => { unlisten = fn })` は従来通り実行される
+3. **戻り値を変えない**: `void` で呼び出しているため戻り値は使われていない
+4. **`onCleanup` の登録タイミングに干渉しない**: `onCleanup` は `.then()` より前の同期コンテキストで登録済み（`ui/CLAUDE.md` の不変条件）
+
+### 確認すべき境界条件
+
+- `.catch()` 内で `throw` しない → `console.warn` のみなので安全
+- `.catch()` が `.then()` の実行を阻害しない → Promise の仕様上、`.then()` 成功後に `.catch()` は呼ばれない
+- SearchWindow L87-91 の try/catch 追加で `focusInputWithRetries()` の呼び出しが変わらない → catch 内は `console.warn` + `return` のみ
 
 ## 実装順序
 
-### Phase 1: CSP 修正（1ファイル）
+1. `ResultsWindow.tsx` — 4箇所に `.catch()` を追加
+2. `SearchWindow.tsx` — 3箇所に `.catch()` / try-catch を追加
+3. 検証: `npm run build` (typecheck + vite build)
+4. 検証: `npx vitest run` (既存テスト通過)
 
-`src-tauri/tauri.conf.json` の `app.security.csp` を修正:
+## warn メッセージの命名規則
 
-**Before:**
+既存の `console.warn` に合わせ、`"<コンテキスト>: <何が失敗したか>"` 形式にする:
+
 ```
-default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:
+"ResultsWindow: failed to load bootstrap payload"
+"ResultsWindow: failed to listen show-icons-changed"
+"ResultsWindow: failed to listen visual-config-changed"
+"ResultsWindow: failed to listen results-sync"
+"SearchWindow: failed to listen window-shown"
+"SearchWindow: failed to listen focus-changed"
+"SearchWindow: failed to check initial visibility"
 ```
-
-**After:**
-```
-default-src 'self'; connect-src ipc: http://ipc.localhost; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:
-```
-
-Tauri v2 公式ドキュメントの推奨に従い、`connect-src ipc: http://ipc.localhost` を追加する。
-
-## 不変条件
-
-- `invoke()` で `ipc::Response` を返すコマンドの戻り値は `ArrayBuffer` でなければならない
-- CSP は custom protocol IPC（`http://ipc.localhost`）をブロックしてはならない
-- 既存の `default-src`, `script-src`, `style-src`, `img-src` ディレクティブを変更しない
-
-## テスト方針
-
-- `npm run build` でフロントエンドビルドが通ること（CSP は JSON 文字列なのでビルドに影響しないが確認）
-- リリースビルド（`npx tauri build --no-bundle`）後、実バイナリでアイコンが表示されることを手動確認
-- 既存テスト: `npm test` が通ること
-
-## SPEC.md 更新要否
-
-不要。CSP はインフラ設定であり、ユーザー向け挙動の仕様変更ではない。
-
-## セルフレビュー
-
-1. **対称コードパス**: CSP は全ウィンドウ（main/results）に共通適用される。ウィンドウ別の設定は不要。
-2. **影響範囲の網羅性**: `ipc::Response` を使うコマンドは `get_icons_batch` のみ（grep 確認済み）。他のコマンドは JSON なので影響なし。
-3. **境界条件**: `connect-src` は IPC 通信のみ制御。`default-src`, `script-src`, `img-src` は変更しないため副作用なし。
-4. **リソース管理**: 該当なし（設定変更のみ）。
-5. **既存パターンとの整合**: Tauri v2 公式ドキュメントの推奨 CSP 例に合致。
-6. **YAGNI 違反**: なし。最小限の1行追加。
-7. **シンプル化の挑戦**: CSP 文字列に1ディレクティブ追加するだけ。これ以上シンプルにはできない。
-8. **破壊不変条件の明示**: CSP の `connect-src` が欠けると IPC custom protocol がブロックされ、バイナリ応答が壊れる。検証: リリースビルド後の手動確認（アイコン表示）。

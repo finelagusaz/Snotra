@@ -34,14 +34,22 @@ const SearchWindow: Component = () => {
   let focusRafHandle: number | undefined;
 
   function focusInputSoon() {
-    // Single-frame defer; retries at 120ms/280ms cover remaining races.
+    // Two-frame defer absorbs first-show native show/focus race on cold start.
+    // Retries at 120ms/280ms cover longer delays (WebView2 init etc.).
     const t0 = performance.now();
     focusRafHandle = requestAnimationFrame(() => {
-      focusRafHandle = undefined;
-      inputRef?.focus();
       const t1 = performance.now();
-      trace("ui:focus_input_done", {
-        raf_ms: Math.round((t1 - t0) * 100) / 100,
+      focusRafHandle = requestAnimationFrame(() => {
+        focusRafHandle = undefined;
+        const t2 = performance.now();
+        inputRef?.focus();
+        const t3 = performance.now();
+        trace("ui:focus_input_done", {
+          raf1_ms: Math.round((t1 - t0) * 100) / 100,
+          raf2_ms: Math.round((t2 - t1) * 100) / 100,
+          focus_ms: Math.round((t3 - t2) * 100) / 100,
+          total_ms: Math.round((t3 - t0) * 100) / 100,
+        });
       });
     });
   }
@@ -142,21 +150,15 @@ const SearchWindow: Component = () => {
       folderMode: folderState() !== null,
       query: query(),
     });
-    // Alt modifier may linger after the hotkey combo; prevent the system beep
-    // but still inject the character into the input so it is not lost.
-    // During tool selection or indexing, handleInput ignores dispatched events,
-    // so skip the rescue to avoid DOM / reactive-state divergence.
+    // Prevent system beep when Alt-modified character keys slip in during
+    // focus transitions.  Do NOT inject the character into the DOM here —
+    // doing so bypasses IME composition and corrupts the first keystroke
+    // under the default ime_off_on_show=false configuration.
+    // The Rust-side send_alt_key_up() is the primary mitigation; this guard
+    // is a last-resort fallback that silently drops the Alt+char event.
     if (e.altKey && !e.ctrlKey && e.key.length === 1) {
-      trace("ui:key_down:alt_char_rescue", { key: e.key });
+      trace("ui:key_down:blocked_alt_char", { key: e.key });
       e.preventDefault();
-      if (inputRef && !toolSelectionState() && !indexing()) {
-        const start = inputRef.selectionStart ?? inputRef.value.length;
-        const end = inputRef.selectionEnd ?? start;
-        inputRef.value =
-          inputRef.value.slice(0, start) + e.key + inputRef.value.slice(end);
-        inputRef.selectionStart = inputRef.selectionEnd = start + e.key.length;
-        inputRef.dispatchEvent(new InputEvent("input", { bubbles: true }));
-      }
       return;
     }
 

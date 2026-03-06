@@ -278,8 +278,14 @@ fn main() {
 
             // First-run: launch snotra-settings directly (bypassing the indexing guard
             // in open_settings, since initial_indexing=true during first run).
-            if is_first_run {
-                let _ = commands::launch_settings_process(&app_handle, &[]);
+            // Pass --first-run so SettingsApp opens on the Index tab for onboarding.
+            // On failure (exe not found / spawn error), fall back to building the index
+            // with default paths so the indexing flag eventually clears and the user
+            // can open settings via open_settings once the build finishes.
+            if is_first_run
+                && commands::launch_settings_process(&app_handle, &["--first-run"]).is_err()
+            {
+                indexing::start_index_build(&app_handle);
             }
 
             // Listen for hotkey toggle events

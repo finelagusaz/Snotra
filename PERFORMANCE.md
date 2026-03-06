@@ -86,3 +86,41 @@ opt-level = "s"
 - `bench_folder_hidden_filter_all` は `show_hidden_system = false` 相当で、`metadata()` を伴う属性判定コスト込みの回帰を確認する
 - Tauri Driver E2E でウィンドウ可視性を判定するとき、`document.visibilityState` は誤判定し得るため性能判定の根拠に使わない。`plugin:window|is_visible` を優先する
 - E2E 全体実行時間はテスト待機タイムアウトの影響を強く受ける。性能評価では、E2E 所要時間だけでなく `perf.ts` の p50/p95 と trace を併用する
+
+## 計測ベースライン（2026-03-06）
+
+環境: Windows 11 Home, release ビルド（`cargo test --release -p snotra-core bench_ -- --ignored --nocapture`）
+
+### ファジー検索（`bench_fuzzy_search_scaling`）
+
+| エントリ数 | 平均レイテンシ |
+|----------:|-------------:|
+|     1,000 |       54 µs  |
+|    10,000 |      378 µs  |
+|    50,000 |    1,314 µs  |
+|   100,000 |    2,088 µs  |
+|   300,000 |    6,923 µs  |
+
+### Engine 初期化（`bench_new_scaling`）
+
+| エントリ数 | 平均時間 |
+|----------:|---------:|
+|     1,000 |    < 1 ms |
+|    10,000 |     9 ms  |
+|    50,000 |    42 ms  |
+|   100,000 |   124 ms  |
+|   300,000 |   202 ms  |
+
+### フォルダ列挙（`bench_folder_*`、max_results=50）
+
+| ベンチ | エントリ数 | 平均時間 |
+|--------|----------:|---------:|
+| topk_sort | 1,000 | 2,677 µs |
+| topk_sort | 5,000 | 7,491 µs |
+| topk_sort | 10,000 | 14,199 µs |
+| folder_narrow | 1,000 | 3,043 µs |
+| folder_narrow | 5,000 | 6,279 µs |
+| folder_narrow | 10,000 | 10,011 µs |
+| folder_hidden_all | 1,000 | 3,251 µs |
+| folder_hidden_all | 5,000 | 8,899 µs |
+| folder_hidden_all | 10,000 | 14,829 µs |

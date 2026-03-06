@@ -18,6 +18,7 @@ type Harness = {
   driver: WebDriver;
   tauriDriver: ChildProcessWithoutNullStreams;
   backup: ConfigBackup;
+  fixtureDir: string;
 };
 
 type WindowState = {
@@ -31,7 +32,13 @@ type WindowState = {
 const WD_SERVER = "http://127.0.0.1:4444/";
 const E2E_BUILD_HINT = "Run: npm run e2e:tauri:setup (or: npx tauri build --no-bundle)";
 
-const E2E_CONFIG_TOML = `
+const E2E_FIXTURE_DIR = path.join(os.tmpdir(), "snotra-e2e-fixtures");
+const E2E_FIXTURE_FILENAMES = ["snotra-e2e-alpha.txt", "snotra-e2e-beta.txt", "snotra-e2e-gamma.txt"];
+const E2E_SEARCH_QUERY = "snotra-e2e";
+
+function buildE2EConfigToml(fixtureDir: string): string {
+  const escapedDir = fixtureDir.replace(/\\/g, "\\\\");
+  return `
 [hotkey]
 modifier = "Alt"
 key = "Q"
@@ -62,7 +69,11 @@ font_size = 15
 
 [paths]
 additional = []
-scan = []
+
+[[paths.scan]]
+path = "${escapedDir}"
+extensions = [".txt"]
+include_folders = false
 
 [search]
 normal_mode = "fuzzy"
@@ -82,6 +93,7 @@ exe = "cmd.exe"
 name = "PowerShell"
 exe = "powershell.exe"
 `.trim();
+}
 
 async function fileExists(targetPath: string): Promise<boolean> {
   try {
@@ -97,12 +109,12 @@ function getConfigPath(): string {
   return path.join(appData, "Snotra", "config.toml");
 }
 
-async function prepareE2EConfig(): Promise<ConfigBackup> {
+async function prepareE2EConfig(fixtureDir: string): Promise<ConfigBackup> {
   const configPath = getConfigPath();
   const existed = await fileExists(configPath);
   const content = existed ? await readFile(configPath, "utf8") : "";
   await mkdir(path.dirname(configPath), { recursive: true });
-  await writeFile(configPath, `${E2E_CONFIG_TOML}\n`, "utf8");
+  await writeFile(configPath, `${buildE2EConfigToml(fixtureDir)}\n`, "utf8");
   return { path: configPath, existed, content };
 }
 
@@ -112,6 +124,15 @@ async function restoreConfig(backup: ConfigBackup): Promise<void> {
     return;
   }
   await rm(backup.path, { force: true });
+}
+
+async function setupFixtureDir(): Promise<string> {
+  const dir = E2E_FIXTURE_DIR;
+  await mkdir(dir, { recursive: true });
+  for (const name of E2E_FIXTURE_FILENAMES) {
+    await writeFile(path.join(dir, name), `E2E test fixture: ${name}\n`, "utf8");
+  }
+  return dir;
 }
 
 function getAppBinaryPath(): string {
@@ -289,7 +310,8 @@ function isDevUrlFallbackSnapshot(body: string): boolean {
 }
 
 async function createHarness(): Promise<Harness> {
-  const backup = await prepareE2EConfig();
+  const fixtureDir = await setupFixtureDir();
+  const backup = await prepareE2EConfig(fixtureDir);
   let tauriDriver: ChildProcessWithoutNullStreams | undefined;
   let driver: WebDriver | undefined;
   try {
@@ -319,7 +341,7 @@ async function createHarness(): Promise<Harness> {
         `search-input not found.${buildHint} states=${JSON.stringify(states)} snapshots=${JSON.stringify(snapshots)} cause=${String(e)}`,
       );
     }
-    return { driver, tauriDriver, backup };
+    return { driver, tauriDriver, backup, fixtureDir };
   } catch (e) {
     if (driver) {
       await driver.quit().catch(() => {});
@@ -338,6 +360,7 @@ async function disposeHarness(harness: Harness): Promise<void> {
     harness.tauriDriver.kill();
   }
   await restoreConfig(harness.backup);
+  await rm(harness.fixtureDir, { recursive: true, force: true }).catch(() => {});
 }
 
 const test = base.extend<{ harness: Harness }>({
@@ -362,62 +385,22 @@ test("startup shows main input and accepts typing", async ({ harness }) => {
   expect(value).toBe("abc");
 });
 
-test("slash /a switches visible window to about", async ({ harness }) => {
-  const input = await harness.driver.findElement(By.css(".search-input"));
-  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/a");
-  await waitForVisibleLabel(harness.driver, "about", 8_000);
-  const states = await collectWindowStates(harness.driver);
-  expect(
-    states.some(
-      (state) =>
-        state.label === "about" &&
-        (state.nativeVisible === true ||
-          (state.nativeVisible == null && state.visibility === "visible")),
-    ),
-  ).toBe(true);
-});
-
-test("slash /o switches visible window to settings", async ({ harness }) => {
-  const input = await harness.driver.findElement(By.css(".search-input"));
-  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/o");
-  await waitForVisibleLabel(harness.driver, "settings", 8_000);
-  const states = await collectWindowStates(harness.driver);
-  expect(
-    states.some(
-      (state) =>
-        state.label === "settings" &&
-        (state.nativeVisible === true ||
-          (state.nativeVisible == null && state.visibility === "visible")),
-    ),
-  ).toBe(true);
-});
-
-test("/o で main の alwaysOnTop が外れ、settings を ESC で閉じると戻る", async ({ harness }) => {
+test("slash /o コマンドが実行され main の alwaysOnTop が false になる", async ({ harness }) => {
   const { driver } = harness;
 
-  // 初期状態: main は alwaysOnTop
-  const initial = await getMainAlwaysOnTop(driver);
-  expect(initial).toBe(true);
-
-  // /o で設定を開く
+  // snotra-settings は egui ネイティブウィンドウのため WebDriver から不可視
+  // /o の副作用（alwaysOnTop → false）でコマンド実行を確認する
   await switchToLabel(driver, "main");
   const input = await driver.findElement(By.css(".search-input"));
   await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/o");
-  await waitForVisibleLabel(driver, "settings", 8_000);
 
-  // settings 表示中: main の alwaysOnTop が false になっている
-  const afterOpen = await getMainAlwaysOnTop(driver);
-  expect(afterOpen).toBe(false);
+  await driver.wait(async () => {
+    return (await getMainAlwaysOnTop(driver)) === false;
+  }, 8_000, "/o コマンド後に alwaysOnTop が false にならない");
 
-  // settings を ESC で閉じる
-  await switchToLabel(driver, "settings");
-  await driver.actions().sendKeys(Key.ESCAPE).perform();
-  await waitForHiddenLabel(driver, "settings", 8_000);
-
-  // settings 閉じた後: main の alwaysOnTop が true に戻っている
-  const afterClose = await getMainAlwaysOnTop(driver);
-  expect(afterClose).toBe(true);
+  expect(await getMainAlwaysOnTop(driver)).toBe(false);
 });
+
 
 test("Shift+Enter でツール選択リストが表示され Escape で元に戻る", async ({ harness }) => {
   const { driver } = harness;
@@ -460,153 +443,265 @@ test("Shift+Enter でツール選択リストが表示され Escape で元に戻
   expect(value).toBe("C:\\");
 });
 
-test("設定オープナー: ルール追加・ツール追加・保存・永続化確認", async ({ harness }) => {
+
+test("検索クエリを入力すると results ウィンドウに結果が表示される", async ({ harness }) => {
   const { driver } = harness;
 
-  // /o で設定を開く
-  await switchToLabel(driver, "main");
-  let input = await driver.findElement(By.css(".search-input"));
-  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/o");
-  await waitForVisibleLabel(driver, "settings", 8_000);
-  await switchToLabel(driver, "settings");
-
-  // オープナータブへ移動
-  const openerTab = await driver.findElement(
-    By.xpath("//div[contains(@class,'sidebar-nav')]//button[contains(.,'オープナー')]"),
-  );
-  await openerTab.click();
-
-  // E2E config の既存オープナーが描画されるまで待つ
-  await driver.wait(async () => {
-    const lists = await driver.findElements(By.css(".scan-path-list"));
-    if (lists.length === 0) return false;
-    return (await lists[0].findElements(By.css(".scan-path-item"))).length >= 1;
-  }, 5_000);
-
-  const listsBefore = await driver.findElements(By.css(".scan-path-list"));
-  const openerItemsBefore = await listsBefore[0].findElements(By.css(".scan-path-item"));
-  const initialCount = openerItemsBefore.length;
-
-  // 「追加」ボタンでモーダルを開く
-  const addBtn = await driver.findElement(
-    By.xpath("//div[contains(@class,'scan-path-list-actions')]//button[text()='追加']"),
-  );
-  await addBtn.click();
-
-  // モーダルのフォームが表示される
-  await driver.wait(
-    async () =>
-      (await driver.findElements(By.css("input[placeholder='Total Commander']"))).length > 0,
-    3_000,
-  );
-
-  // ツール名と実行ファイルを入力
-  await driver
-    .findElement(By.css("input[placeholder='Total Commander']"))
-    .then((el) => el.sendKeys("TestTool"));
-  await driver
-    .findElement(By.css(".scan-path-input-row input[type='text']"))
-    .then((el) => el.sendKeys("notepad.exe"));
-
-  // モーダル内の「保存」で反映
-  const modalSaveBtn = await driver.findElement(
-    By.xpath("//div[contains(@class,'settings-modal')]//button[text()='保存']"),
-  );
-  await modalSaveBtn.click();
-  await driver.wait(
-    async () => (await driver.findElements(By.css(".settings-modal"))).length === 0,
-    3_000,
-  );
-
-  // 保存ボタンをクリック（保存後は自動クローズしない仕様）
-  const saveBtn = await driver.findElement(By.css("button.btn-primary.has-changes"));
-  await saveBtn.click();
-  // has-changes クラスが消えるまで待つ（保存完了 → hasChanges() === false）
-  await driver.wait(
-    async () => (await driver.findElements(By.css("button.btn-primary.has-changes"))).length === 0,
-    5_000,
-    "save did not complete",
-  );
-  // 変更なしの状態で Escape → バナーなしで即クローズ
-  await driver.actions().sendKeys(Key.ESCAPE).perform();
-  await waitForHiddenLabel(driver, "settings", 8_000);
-
-  // 設定を再度開く
-  await switchToLabel(driver, "main");
-  input = await driver.findElement(By.css(".search-input"));
-  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/o");
-  await waitForVisibleLabel(driver, "settings", 8_000);
-  await switchToLabel(driver, "settings");
-
-  // オープナータブへ移動（タブ状態がリセットされている場合に備えてクリック）
-  const openerTab2 = await driver.findElement(
-    By.xpath("//div[contains(@class,'sidebar-nav')]//button[contains(.,'オープナー')]"),
-  );
-  await openerTab2.click();
-
-  // 一覧が 1 件増えていること（追加したオープナーが永続化されている）
-  await driver.wait(async () => {
-    const lists = await driver.findElements(By.css(".scan-path-list"));
-    if (lists.length === 0) return false;
-    return (await lists[0].findElements(By.css(".scan-path-item"))).length >= initialCount + 1;
-  }, 5_000);
-
-  const lists = await driver.findElements(By.css(".scan-path-list"));
-  const ruleItems = await lists[0].findElements(By.css(".scan-path-item"));
-  expect(ruleItems.length).toBe(initialCount + 1);
-});
-
-test("settings を ESC で閉じた後、スラッシュコマンドが動作する", async ({ harness }) => {
-  const { driver } = harness;
-
-  // /o → ESC で閉じる
-  await switchToLabel(driver, "main");
-  let input = await driver.findElement(By.css(".search-input"));
-  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/o");
-  await waitForVisibleLabel(driver, "settings", 8_000);
-  await switchToLabel(driver, "settings");
-  await driver.actions().sendKeys(Key.ESCAPE).perform();
-  await waitForHiddenLabel(driver, "settings", 8_000);
-
-  // IPC 生存確認: /a で about が開くか（別コマンドで IPC チャネルが壊れていないことを検証）
-  await switchToLabel(driver, "main");
-  input = await driver.findElement(By.css(".search-input"));
-  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/a");
-  await waitForVisibleLabel(driver, "about", 8_000);
-  const states = await collectWindowStates(driver);
-  expect(
-    states.some(
-      (state) =>
-        state.label === "about" &&
-        (state.nativeVisible === true ||
-          (state.nativeVisible == null && state.visibility === "visible")),
-    ),
-  ).toBe(true);
-});
-
-test("/a で main の alwaysOnTop が外れ、about を ESC で閉じると戻る", async ({ harness }) => {
-  const { driver } = harness;
-
-  // 初期状態: main は alwaysOnTop
-  const initial = await getMainAlwaysOnTop(driver);
-  expect(initial).toBe(true);
-
-  // /a で about を開く
   await switchToLabel(driver, "main");
   const input = await driver.findElement(By.css(".search-input"));
-  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/a");
-  await waitForVisibleLabel(driver, "about", 8_000);
+  await input.sendKeys(E2E_SEARCH_QUERY);
 
-  // about 表示中: main の alwaysOnTop が false になっている
-  const afterOpen = await getMainAlwaysOnTop(driver);
-  expect(afterOpen).toBe(false);
-
-  // about を ESC で閉じる
-  await switchToLabel(driver, "about");
-  await driver.actions().sendKeys(Key.ESCAPE).perform();
-  await waitForHiddenLabel(driver, "about", 8_000);
-
-  // about 閉じた後: main の alwaysOnTop が true に戻っている
-  const afterClose = await getMainAlwaysOnTop(driver);
-  expect(afterClose).toBe(true);
+  await waitForVisibleLabel(driver, "results", 8_000);
+  await switchToLabel(driver, "results");
+  await driver.wait(
+    async () => (await driver.findElements(By.css(".result-row"))).length > 0,
+    8_000,
+    "result-row が results ウィンドウに表示されない",
+  );
+  const rows = await driver.findElements(By.css(".result-row"));
+  expect(rows.length).toBeGreaterThan(0);
 });
+
+test("↓↑ キーで results の選択行が移動する", async ({ harness }) => {
+  const { driver } = harness;
+
+  await switchToLabel(driver, "main");
+  let input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(E2E_SEARCH_QUERY);
+
+  await waitForVisibleLabel(driver, "results", 8_000);
+  await switchToLabel(driver, "results");
+  await driver.wait(
+    async () => (await driver.findElements(By.css(".result-row"))).length > 1,
+    8_000,
+    "results に2行以上表示されない",
+  );
+
+  // 初期状態: 先頭行が selected
+  const rows = await driver.findElements(By.css(".result-row"));
+  const firstClass = await rows[0].getAttribute("class");
+  expect(firstClass).toContain("selected");
+
+  // ↓ キーで2番目の行へ移動
+  await switchToLabel(driver, "main");
+  input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(Key.ARROW_DOWN);
+
+  await switchToLabel(driver, "results");
+  await driver.wait(async () => {
+    const r = await driver.findElements(By.css(".result-row"));
+    if (r.length < 2) return false;
+    return (await r[1].getAttribute("class"))?.includes("selected") ?? false;
+  }, 4_000, "↓ キーで選択が2番目に移動しない");
+
+  // ↑ キーで先頭に戻る
+  await switchToLabel(driver, "main");
+  input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(Key.ARROW_UP);
+
+  await switchToLabel(driver, "results");
+  await driver.wait(async () => {
+    const r = await driver.findElements(By.css(".result-row"));
+    if (r.length === 0) return false;
+    return (await r[0].getAttribute("class"))?.includes("selected") ?? false;
+  }, 4_000, "↑ キーで選択が先頭に戻らない");
+});
+
+test("Escape で main ウィンドウが非表示になる", async ({ harness }) => {
+  const { driver } = harness;
+
+  await waitForVisibleLabel(driver, "main", 4_000);
+  await switchToLabel(driver, "main");
+  const input = await driver.findElement(By.css(".search-input"));
+  // 空クエリの状態で Escape → main が非表示になる
+  await input.sendKeys(Key.ESCAPE);
+  await waitForHiddenLabel(driver, "main", 6_000);
+});
+
+test("/o 後に IPC チャネルが生存している", async ({ harness }) => {
+  const { driver } = harness;
+
+  // /o で snotra-settings を起動（egui ネイティブウィンドウ、WebDriver からは不可視）
+  await switchToLabel(driver, "main");
+  let input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/o");
+
+  // alwaysOnTop が false になることで /o の実行を確認
+  await driver.wait(async () => {
+    return (await getMainAlwaysOnTop(driver)) === false;
+  }, 8_000, "/o コマンドが実行されない");
+
+  // IPC 生存確認: /r コマンドが正常に処理され main が表示されたままになること
+  await switchToLabel(driver, "main");
+  input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/r");
+
+  await driver.wait(async () => {
+    await switchToLabel(driver, "main");
+    const el = await driver.findElement(By.css(".search-input"));
+    return (await el.getAttribute("value")) === "/r";
+  }, 4_000, "IPC 応答なし: /r コマンドが処理されない");
+
+  await waitForVisibleLabel(driver, "main", 4_000);
+});
+
+test("→ キーでフォルダ展開、Escape でスナップショット復帰", async ({ harness }) => {
+  const { driver } = harness;
+
+  // C:\ を入力してフォルダ結果を表示（pathQuery モード、folderState は null）
+  await switchToLabel(driver, "main");
+  let input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys("C:\\");
+
+  await waitForVisibleLabel(driver, "results", 8_000);
+  await switchToLabel(driver, "results");
+  await driver.wait(
+    async () => (await driver.findElements(By.css(".result-row"))).length > 0,
+    6_000,
+    "C:\\ の結果が results ウィンドウに表示されない",
+  );
+
+  // → キーで最初の結果（フォルダ）に入る → folderFilter="" で input value が空になる
+  await switchToLabel(driver, "main");
+  input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(Key.ARROW_RIGHT);
+
+  await driver.wait(async () => {
+    await switchToLabel(driver, "main");
+    const el = await driver.findElement(By.css(".search-input"));
+    return (await el.getAttribute("value")) === "";
+  }, 4_000, "→ キーでフォルダモードに入らない（input が空にならない）");
+
+  // Escape でスナップショット（C:\）に一括復帰
+  await switchToLabel(driver, "main");
+  await driver.actions().sendKeys(Key.ESCAPE).perform();
+
+  await driver.wait(async () => {
+    await switchToLabel(driver, "main");
+    const el = await driver.findElement(By.css(".search-input"));
+    return (await el.getAttribute("value")) === "C:\\";
+  }, 4_000, "Escape で C:\\ に復帰しない");
+});
+
+test("/r 入力でエラーにならず main が表示されたままになる", async ({ harness }) => {
+  const { driver } = harness;
+
+  await switchToLabel(driver, "main");
+  const input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys("/r");
+
+  // 検索処理が完了するまで input value が /r になるのを待つ
+  await driver.wait(async () => {
+    await switchToLabel(driver, "main");
+    const el = await driver.findElement(By.css(".search-input"));
+    return (await el.getAttribute("value")) === "/r";
+  }, 4_000);
+
+  // main ウィンドウが表示されたまま（クラッシュ・自動非表示なし）
+  await waitForVisibleLabel(driver, "main", 4_000);
+  await switchToLabel(driver, "main");
+  const el = await driver.findElement(By.css(".search-input"));
+  expect(await el.getAttribute("value")).toBe("/r");
+});
+
+test("/s 入力で main と results ウィンドウが非表示になる", async ({ harness }) => {
+  const { driver } = harness;
+
+  await switchToLabel(driver, "main");
+  const input = await driver.findElement(By.css(".search-input"));
+  // /s action: hideAllWindows() → rebuildIndex()（hide が先行する）
+  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/s");
+
+  await waitForHiddenLabel(driver, "main", 8_000);
+});
+
+test("config.toml を書き換えると max_results が即時反映される", async ({ harness }) => {
+  const { driver, backup, fixtureDir } = harness;
+
+  // ベースライン: フィクスチャファイル全件が表示される（max_results = 8）
+  await switchToLabel(driver, "main");
+  let input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(E2E_SEARCH_QUERY);
+
+  await waitForVisibleLabel(driver, "results", 8_000);
+  await switchToLabel(driver, "results");
+  await driver.wait(
+    async () =>
+      (await driver.findElements(By.css(".result-row"))).length === E2E_FIXTURE_FILENAMES.length,
+    8_000,
+    `ベースライン: ${E2E_FIXTURE_FILENAMES.length} 件が表示されない`,
+  );
+
+  // config.toml を max_results = 1 に書き換えてホットリロードをトリガー
+  const modifiedConfig = buildE2EConfigToml(fixtureDir).replace("max_results = 8", "max_results = 1");
+  await writeFile(backup.path, `${modifiedConfig}\n`, "utf8");
+
+  // config が反映されるまで clear→retype→チェックを繰り返す
+  await driver.wait(async () => {
+    await switchToLabel(driver, "main");
+    const el = await driver.findElement(By.css(".search-input"));
+    await el.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, E2E_SEARCH_QUERY);
+    await switchToLabel(driver, "results");
+    return (await driver.findElements(By.css(".result-row"))).length === 1;
+  }, 12_000, "config.toml の max_results 変更が反映されない");
+
+  const rows = await driver.findElements(By.css(".result-row"));
+  expect(rows.length).toBe(1);
+});
+
+test("/s 後にインデックス再構築が完了し検索が機能する", async ({ harness }) => {
+  const { driver } = harness;
+
+  // /s でインデックス再構築を起動 → main が非表示になる
+  await switchToLabel(driver, "main");
+  let input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/s");
+  await waitForHiddenLabel(driver, "main", 8_000);
+
+  // Tauri IPC で main を再表示（capabilities に core:window:allow-show あり）
+  await switchToLabel(driver, "main");
+  await driver.executeAsyncScript(`
+    const done = arguments[arguments.length - 1];
+    window.__TAURI_INTERNALS__.invoke("plugin:window|show", { label: "main" })
+      .then(() => done(null))
+      .catch(() => done(null));
+  `);
+  await waitForVisibleLabel(driver, "main", 6_000);
+
+  // 再構築完了まで clear→retype→チェックを繰り返す（最大 30 秒）
+  await driver.wait(async () => {
+    await switchToLabel(driver, "main");
+    const el = await driver.findElement(By.css(".search-input"));
+    await el.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, E2E_SEARCH_QUERY);
+    await switchToLabel(driver, "results");
+    return (await driver.findElements(By.css(".result-row"))).length > 0;
+  }, 30_000, "インデックス再構築後に検索結果が表示されない");
+
+  await switchToLabel(driver, "results");
+  const rows = await driver.findElements(By.css(".result-row"));
+  expect(rows.length).toBeGreaterThan(0);
+});
+
+test("Enter で検索結果を起動すると main と results が非表示になる", async ({ harness }) => {
+  const { driver } = harness;
+
+  await switchToLabel(driver, "main");
+  let input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(E2E_SEARCH_QUERY);
+
+  await waitForVisibleLabel(driver, "results", 8_000);
+  await switchToLabel(driver, "results");
+  await driver.wait(
+    async () => (await driver.findElements(By.css(".result-row"))).length > 0,
+    6_000,
+  );
+
+  // Enter で先頭の結果（snotra-e2e-*.txt）を起動
+  // 起動成功 → hideAllWindows() で main が非表示になる（side effect: txt がエディタで開く）
+  await switchToLabel(driver, "main");
+  input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(Key.ENTER);
+
+  await waitForHiddenLabel(driver, "main", 6_000);
+});
+

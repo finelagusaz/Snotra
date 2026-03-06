@@ -40,6 +40,20 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 - `perf.ts`: 開発時専用パフォーマンス計測（`localStorage.snotra_perf=1` で有効化）。入力→検索→描画の3フェーズ時間を計測し P50/P95 を `console.table` 出力
 - `trace.ts`: 開発時専用トレースログ（`localStorage.snotra_trace=1` で有効化）。`trace(event, data)` で `console.debug` 出力
 
+## テスト基盤
+
+### 構成
+
+- `vitest.config.ts` に `vite-plugin-solid({ hot: false })` を設定（`hot: false` は Windows の `@solid-refresh` URL 解決エラー回避。macOS でも無害）
+- テストファイルパターン: `ui/src/**/*.test.{ts,tsx}`
+- デフォルト環境: `node`。コンポーネントテスト（`.test.tsx`）は先頭に `// @vitest-environment jsdom` を付けて個別に jsdom を使用
+
+### 注意点
+
+- **vite-plugin-solid により SolidJS のリアクティブ初期化が走る**: SolidJS モジュール（`search.ts` 等）を import するテストは、`requestAnimationFrame` 等のブラウザ API スタブが必要。`vi.hoisted(() => { globalThis.requestAnimationFrame = ... })` でモジュールロード前に差し込むこと（`vi.stubGlobal` はホイストされないため間に合わない）
+- **Canvas API モック**: `truncatePath.ts` のように遅延初期化（初回呼び出しまで `document.createElement` しない）の場合、`vi.stubGlobal("document", { createElement: ... })` を `beforeAll` で設定すれば jsdom 不要でテスト可能
+- **コンポーネントテストでは `render(() => <Component />)` を使う**: SolidJS の `render` は関数ラッパーが必須（React と異なり直接 JSX を渡さない）
+
 ## 実装パターン
 
 - 検索ウィンドウのドラッグ移動は `.search-bar` の `data-tauri-drag-region` 属性で実現。`<input>` には付与しないため入力操作は維持される

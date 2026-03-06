@@ -22,156 +22,49 @@
 
 ---
 
+<!-- TODO: Add demo GIF here -->
+
 ## Features
 
-- Global hotkey (Alt+Q) for instant activation
-- Three-tier search: prefix match, substring match, and fuzzy match
-- History-based smart ranking
-- Folder expand and navigation with arrow keys (right to expand, left to go up)
-- Slash commands (`/o` settings · `/r` history · `/s` rebuild index · `/q` quit, and more)
-- Icon display (on-demand extraction, toggleable in settings)
-- CSS custom property-based theme system
-- Automatic IME control
-- System tray integration
+- **Global hotkey** (Alt+Q) — summon the launcher from anywhere
+- **Three-tier search**: prefix match, substring match, and fuzzy match
+- **History-based smart ranking**: frequently used apps rise to the top
+- **Folder navigation**: right arrow to expand, left arrow to go up
+- **Slash commands**: `/o` settings · `/r` history · `/s` rebuild index · `/q` quit
+- **Custom openers**: define rules to open files with any tool you choose
+- Icon display, theme customization, automatic IME control, system tray integration
 
-## Getting Started
+## Installation
 
-### Prerequisites
+1. Download the latest `Snotra-vX.X.X.zip` from [Releases](https://github.com/finelagusaz/Snotra/releases/latest)
+2. Extract the ZIP to any folder
+3. Run `snotra.exe`
 
-- **Windows 10/11**
-- **Rust** (stable toolchain)
-- **Node.js** >= 22
+## Basic Usage
 
-### Development
+| Action | Result |
+|--------|--------|
+| `Alt+Q` | Open the search window |
+| Type text | Search the index |
+| `↑` / `↓` | Navigate candidates |
+| `Enter` | Launch the selected app or file |
+| `→` (on a folder) | Expand the folder |
+| `←` | Go up to the parent folder |
+| `Shift+Enter` | Choose which custom opener tool to use |
+| `Escape` | Close the search window |
+| `/o` | Open settings |
+| `/r` | Show recent launch history |
+| `/s` | Rebuild the index |
+| `/q` | Quit the app |
 
-```bash
-npm install
-npm run tauri dev
-```
+### Direct folder access via path input
 
-To run type checking manually, use `npm run typecheck`. In CI, type checking is always run via `prebuild` when `npm run build` is executed.
-
-### Release Build
-
-```bash
-npm run tauri build
-```
-
-### snotra-settings (Settings GUI)
-
-The settings GUI is a separate egui-based binary process. It is launched as a child process by the main app, but can also be run standalone during development.
-
-```bash
-# Run standalone (opens the settings window directly)
-cargo run -p snotra-settings
-
-# Type check / lint
-cargo check -p snotra-settings
-cargo clippy -p snotra-settings
-
-# Release build (normally produced automatically alongside the main build)
-cargo build --release -p snotra-settings
-```
-
-### Tests
-
-```bash
-cargo test -p snotra-core
-npm test
-npm run smoke:startup
-# Playwright runner + Tauri Driver
-npm run e2e:tauri:setup
-npm run e2e:tauri
-```
-
-`npm run e2e:tauri:setup` installs `tauri-driver` and refreshes the E2E app binary via `npx tauri build --no-bundle`. Tauri Driver E2E uses that binary, so `cargo build --release` by itself can produce a `localhost`-targeting binary and fail with `ERR_CONNECTION_REFUSED`.
-
-## Architecture
-
-```
-Snotra/
-  Cargo.toml            # Workspace (snotra-core, src-tauri, snotra-settings)
-  snotra-core/          # Pure logic library crate
-  src-tauri/            # Tauri v2 binary crate (Win32 integration)
-  snotra-settings/      # egui settings GUI binary (About tab included)
-  ui/                   # SolidJS frontend
-    src/
-      components/       # SearchWindow, ResultRow, Settings
-      stores/           # Reactive state management
-      lib/              # Types, IPC wrappers, theme utilities
-  .github/workflows/    # CI/CD (release pipeline)
-```
-
-- Detailed spec and state diagram: [SPEC.md](SPEC.md)
-
-## Codex Automation
-
-An issue-driven workflow is available that automates the full cycle from Codex implementation to Draft PR creation.
-See [.github/codex-automation.md](.github/codex-automation.md) for configuration and usage rules.
-
-## Tech Stack
-
-<p>
-  <img src="https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white" alt="Rust">
-  <img src="https://img.shields.io/badge/Tauri_v2-24C8D8?logo=tauri&logoColor=white" alt="Tauri">
-  <img src="https://img.shields.io/badge/SolidJS-2C4F7C?logo=solid&logoColor=white" alt="SolidJS">
-  <img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
-  <img src="https://img.shields.io/badge/Vite-646CFF?logo=vite&logoColor=white" alt="Vite">
-</p>
+Type a path such as `C:\` or `D:\Projects\` directly into the search box to browse that folder's contents immediately.
 
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
 
-## Setup (Windows)
+---
 
-- **Prerequisites**: In Visual Studio 2022 (or Build Tools), enable the "Desktop development with C++" workload and the Windows SDK. Make sure `git`, `rustup`, and `node`/`npm` are on your PATH.
-- **Rust**: Install the stable toolchain via rustup and add the MSVC target.
-  - Commands:
-    - Run `rustup-init.exe` to install
-    - `rustup default stable`
-    - `rustup target add x86_64-pc-windows-msvc`
-- **Node.js / npm**: Install Node.js LTS (>= 22 as required). Verify with `node -v` / `npm -v`.
-- **Install dependencies**: From the project root, run:
-  - `npm ci` (or `npm install`)
-  - To install the frontend separately: `cd ui && npm ci`
-- **Tauri CLI**: Install if needed (global install is fine).
-  - `npm install -g @tauri-apps/cli` or `cargo install tauri-cli`
-- **Start development**:
-  - Frontend only (manual): `cd ui && npm run dev`
-  - Full Tauri dev from root: `npm run tauri dev`
-
-### Troubleshooting (Common Issues)
-
-- **`EPERM: operation not permitted, unlink ... esbuild.exe`**
-  - Cause: `esbuild.exe` is locked by another process (dev server, editor extension, antivirus, etc.).
-  - Fix:
-    - Close all dev servers, terminals, and editor terminals.
-    - Check with `tasklist | findstr /I "esbuild node"` and stop with `taskkill /F /IM esbuild.exe` or `Get-Process node | Stop-Process -Force`.
-    - If the handle persists, use Sysinternals Process Explorer (Ctrl+F) or `handle.exe` to identify and close it.
-    - If caused by antivirus, exclude the project folder.
-
-- **`failed to remove file target\debug\snotra.exe` (os error 5 / Access denied)**
-  - Cause: `snotra.exe` from a previous build is still running, preventing the file from being deleted.
-  - Fix:
-    - Check for the running process: `Get-Process -Name snotra -ErrorAction SilentlyContinue` / `tasklist | findstr /I snotra`
-    - Terminate it: `taskkill /F /IM snotra.exe` or `Get-Process -Name snotra | Stop-Process -Force`.
-    - If a handle remains, close it via Process Explorer / `handle.exe`.
-    - Clean up: `Remove-Item .\target\debug\snotra.exe -Force` / `cargo clean`.
-    - If needed, restart the terminal as administrator.
-
-- **`linker not found` / MSVC-related build errors**
-  - Fix: Make sure the "Desktop development with C++" workload and Windows SDK are installed in Visual Studio, then restart your terminal and rebuild.
-
-- **`tauri` CLI not found / command fails**
-  - Fix: Run `npm install -g @tauri-apps/cli` or `cargo install tauri-cli`. Note that the project may manage the CLI as a local devDependency, so prefer `npm run tauri dev`.
-
-- **Tauri Driver E2E shows `ERR_CONNECTION_REFUSED` / `search-input not found`**
-  - Cause: The `target\release\snotra.exe` used by E2E is stale, or it was rebuilt with `cargo build --release` only and still targets `devUrl`.
-  - Fix: Run `npm run e2e:tauri:setup` or `npx tauri build --no-bundle` to rebuild the E2E app binary.
-
-### Quick Checklist
-
-- **Verify environment**: `node -v`, `npm -v`, `rustc --version`, `cargo --version`, `git --version`
-- **Install dependencies**: `npm ci` (and `cd ui && npm ci` if needed)
-- **Start**: `npm run tauri dev`
+Development & contributing: [CONTRIBUTING.md](CONTRIBUTING.md)

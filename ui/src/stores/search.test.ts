@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
+// ── ブラウザ API スタブ（Node 環境に存在しない・vi.hoisted でモジュールロード前に実行） ──
+vi.hoisted(() => {
+  globalThis.requestAnimationFrame = ((cb: Function) => setTimeout(cb, 0)) as typeof requestAnimationFrame;
+  globalThis.cancelAnimationFrame = ((id: number) => clearTimeout(id)) as typeof cancelAnimationFrame;
+});
+
 // ── Tauri 依存をモック（search.ts のモジュールロード前に宣言） ──────────────
 
 vi.mock("@tauri-apps/api/event", () => ({

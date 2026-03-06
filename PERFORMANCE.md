@@ -8,6 +8,7 @@
    - `show` / `setSize` / `setPosition` などウィンドウ操作の不要呼び出し削減
    - OS 呼び出し待機を伴う処理（例: `launch_item`）は `timeout` を明示し、UI 側で `launching` と失敗通知を表示して「無反応」に見せない
    - 失敗通知の自動クリアは単一タイマーで管理し、再通知時は `clearTimeout` してから再設定する
+   - **Win32 IPC の cold-call を避ける**: Tauri のウィンドウ API（`is_visible()` / `show()` 等）は内部で Win32 IPC を使い、WebView2 への初回アクセスで数十ms のオーバーヘッドが発生する。ホットパス上で状態確認目的に使う場合は `AtomicBool` 等で Rust 側にキャッシュし、Win32 IPC をスキップする。冪等な操作（`show()` 等）は pre-check なしで直接呼ぶ
 2. 重複処理を消す（低リスク・高効率）
    - 同一データの二重取得（例: アイコン batch 取得）を責務分離して一本化
    - 同一状態を複数イベントで配信しない。結果表示は `results-sync`（`generation` + `shouldShow`）の単一契約で同期する
@@ -124,3 +125,15 @@ opt-level = "s"
 | folder_hidden_all | 1,000 | 3,251 µs |
 | folder_hidden_all | 5,000 | 8,899 µs |
 | folder_hidden_all | 10,000 | 14,829 µs |
+
+### ホットキー表示レイテンシ（`show_main_and_emit`、SNOTRA_TRACE=1 計測、2026-03-07）
+
+Win32 IPC cold-call 最適化（`is_visible()` → `AtomicBool`）適用後の値。
+
+| 条件 | `show_main:total` | 備考 |
+|------|------------------:|------|
+| cold（初回） | 77ms | うち ~41ms はトレース I/O オーバーヘッド |
+| warm（2回目以降） | ~38ms | |
+| cold（トレースなし推定） | ~36ms | トレース I/O 分を差し引いた推定値 |
+
+最適化前の cold は 191ms だった（`is_visible()` pre-check 61ms + ギャップ 71ms + `is_visible_after_show` 39ms）。

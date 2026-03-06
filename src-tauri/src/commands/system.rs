@@ -35,6 +35,16 @@ pub fn record_folder_expansion(path: String, state: State<AppState>) {
 }
 
 #[tauri::command]
+pub fn notify_main_shown(state: State<AppState>) {
+    state.main_visible.store(true, Ordering::SeqCst);
+}
+
+#[tauri::command]
+pub fn notify_main_hidden(state: State<AppState>) {
+    state.main_visible.store(false, Ordering::SeqCst);
+}
+
+#[tauri::command]
 pub fn notify_result_clicked(index: usize, app: AppHandle) -> Result<(), String> {
     app.emit("result-clicked", index).map_err(|e| e.to_string())
 }

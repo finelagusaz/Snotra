@@ -20,6 +20,7 @@ vi.mock("./invoke", () => ({
   openSettings: vi.fn(async () => {}),
   rebuildIndex: vi.fn(async () => true),
   quitApp: vi.fn(async () => {}),
+  notifyMainHidden: vi.fn(async () => {}),
 }));
 
 describe("SLASH_COMMANDS", () => {

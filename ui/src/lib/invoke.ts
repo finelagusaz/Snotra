@@ -93,6 +93,14 @@ export async function setWindowNoActivate(): Promise<void> {
   return tracedInvoke("set_window_no_activate");
 }
 
+export async function notifyMainShown(): Promise<void> {
+  return tracedInvoke("notify_main_shown");
+}
+
+export async function notifyMainHidden(): Promise<void> {
+  return tracedInvoke("notify_main_hidden");
+}
+
 export async function notifyResultClicked(index: number): Promise<void> {
   return tracedInvoke("notify_result_clicked", { index });
 }

@@ -32,6 +32,7 @@ const App: Component = () => {
       const hideMainAndResults = async () => {
         controller.updateMainVisible(false);
         controller.updateResultsVisible(false);
+        api.notifyMainHidden().catch(() => {});
         await win.hide();
         const rw = await controller.getResultsWindow();
         if (rw) {
@@ -103,6 +104,8 @@ const App: Component = () => {
               try {
                 controller.updateMainVisible(true);
                 await win.show();
+                // Sync Rust-side visibility flag so hotkey toggle works correctly.
+                api.notifyMainShown().catch(() => {});
               } catch (e) {
                 console.warn("platform-event: failed to show window on initial-hotkey-failed:", e);
               }

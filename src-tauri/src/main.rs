@@ -126,27 +126,55 @@ fn wait_alt_release_or_timeout() {
 }
 
 fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
+    let t0 = Instant::now();
+    let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+
     if let Some(main) = app_handle.get_webview_window("main") {
-        if !main.is_visible().unwrap_or(false) {
-            let _ = main.show();
+        trace_main("show_main:start", json!({ "ms": ms(t0.elapsed()) }));
+
+        // show() is idempotent — call unconditionally to skip the costly
+        // is_visible() pre-check (61ms + 71ms gap on first invocation).
+        trace_main("show_main:show:start", json!({ "ms": ms(t0.elapsed()) }));
+        let _ = main.show();
+        trace_main("show_main:show:end", json!({ "ms": ms(t0.elapsed()) }));
+
+        // Update tracked visibility (used by hotkey toggle instead of Win32 is_visible).
+        if let Some(state) = app_handle.try_state::<AppState>() {
+            state.main_visible.store(true, Ordering::SeqCst);
         }
 
-        if main.is_visible().unwrap_or(false) {
+        {
+            // set_focus
+            trace_main("show_main:set_focus:start", json!({ "ms": ms(t0.elapsed()) }));
             let _ = main.set_focus();
+            trace_main("show_main:set_focus:end", json!({ "ms": ms(t0.elapsed()) }));
 
-            // Turn off IME if configured
-            if ime_control
-                && let Some(bridge) = app_handle.try_state::<Mutex<PlatformBridge>>()
-                && let Ok(b) = bridge.lock()
-            {
-                #[cfg(windows)]
-                if let Ok(hwnd) = main.hwnd() {
-                    b.send_command(PlatformCommand::TurnOffIme(hwnd.0 as usize));
+            // IME control
+            if ime_control {
+                trace_main("show_main:ime_control:start", json!({ "ms": ms(t0.elapsed()) }));
+                if let Some(bridge) = app_handle.try_state::<Mutex<PlatformBridge>>()
+                    && let Ok(b) = bridge.lock()
+                {
+                    #[cfg(windows)]
+                    if let Ok(hwnd) = main.hwnd() {
+                        b.send_command(PlatformCommand::TurnOffIme(hwnd.0 as usize));
+                    }
                 }
+                trace_main("show_main:ime_control:end", json!({ "ms": ms(t0.elapsed()) }));
             }
 
-            // Notify frontend to reset search state
+            // emit window-shown
+            trace_main(
+                "show_main:emit_window_shown:start",
+                json!({ "ms": ms(t0.elapsed()) }),
+            );
             let _ = app_handle.emit("window-shown", ());
+            trace_main(
+                "show_main:emit_window_shown:end",
+                json!({ "ms": ms(t0.elapsed()) }),
+            );
+
+            trace_main("show_main:total", json!({ "ms": ms(t0.elapsed()) }));
         }
     }
 }
@@ -203,6 +231,7 @@ fn main() {
         engine: Mutex::new(engine),
         indexing: AtomicBool::new(initial_indexing),
         index_build_started: AtomicBool::new(false),
+        main_visible: AtomicBool::new(false),
     };
 
     tauri::Builder::default()
@@ -211,6 +240,9 @@ fn main() {
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.show();
                 let _ = w.set_focus();
+                if let Some(state) = app.try_state::<AppState>() {
+                    state.main_visible.store(true, Ordering::SeqCst);
+                }
             }
         }))
         .manage(app_state)
@@ -228,6 +260,8 @@ fn main() {
             commands::get_search_placement,
             commands::save_search_placement,
             commands::set_window_no_activate,
+            commands::notify_main_shown,
+            commands::notify_main_hidden,
             commands::notify_result_clicked,
             commands::notify_result_double_clicked,
             commands::notify_result_hovered,
@@ -294,6 +328,8 @@ fn main() {
             let hotkey_generation = Arc::new(AtomicU64::new(0));
             let hotkey_generation_for_listener = hotkey_generation.clone();
             app_handle.listen("hotkey-pressed", move |_| {
+                let t0 = Instant::now();
+                trace_main("hotkey:listener_enter", json!({}));
                 // Ignore the hotkey while snotra-settings is running: the user may be
                 // pressing the current hotkey combination to configure a new one.
                 if let Some(proc_state) = handle_for_hotkey.try_state::<SettingsProcessState>()
@@ -302,27 +338,39 @@ fn main() {
                     return;
                 }
                 let current_gen = hotkey_generation_for_listener.fetch_add(1, Ordering::SeqCst) + 1;
-                if let Some(w) = handle_for_hotkey.get_webview_window("main") {
-                    let visible = w.is_visible().unwrap_or(false);
-                    if visible && toggle {
+                // Use tracked AtomicBool instead of Win32 is_visible() to avoid
+                // ~35ms cold-call overhead on first hotkey press.
+                let visible = handle_for_hotkey
+                    .try_state::<AppState>()
+                    .map(|s| s.main_visible.load(Ordering::SeqCst))
+                    .unwrap_or(false);
+                trace_main("hotkey:visible_check", json!({ "visible": visible }));
+                if visible && toggle {
+                    if let Some(w) = handle_for_hotkey.get_webview_window("main") {
                         let _ = w.hide();
-                        // Also hide results window
-                        if let Some(rw) = handle_for_hotkey.get_webview_window("results") {
-                            let _ = rw.hide();
-                        }
-                    } else if is_alt_pressed() {
-                        let handle_for_show = handle_for_hotkey.clone();
-                        let hotkey_generation_for_wait = hotkey_generation_for_listener.clone();
-                        std::thread::spawn(move || {
-                            wait_alt_release_or_timeout();
-                            if hotkey_generation_for_wait.load(Ordering::SeqCst) != current_gen {
-                                return;
-                            }
-                            show_main_and_emit(&handle_for_show, ime_control);
-                        });
-                    } else {
-                        show_main_and_emit(&handle_for_hotkey, ime_control);
                     }
+                    if let Some(state) = handle_for_hotkey.try_state::<AppState>() {
+                        state.main_visible.store(false, Ordering::SeqCst);
+                    }
+                    // Also hide results window
+                    if let Some(rw) = handle_for_hotkey.get_webview_window("results") {
+                        let _ = rw.hide();
+                    }
+                } else if is_alt_pressed() {
+                    trace_main("hotkey:alt_wait_start", json!({}));
+                    let handle_for_show = handle_for_hotkey.clone();
+                    let hotkey_generation_for_wait = hotkey_generation_for_listener.clone();
+                    std::thread::spawn(move || {
+                        wait_alt_release_or_timeout();
+                        trace_main("hotkey:alt_wait_done", json!({ "waited_ms": t0.elapsed().as_secs_f64() * 1000.0 }));
+                        if hotkey_generation_for_wait.load(Ordering::SeqCst) != current_gen {
+                            return;
+                        }
+                        show_main_and_emit(&handle_for_show, ime_control);
+                    });
+                } else {
+                    trace_main("hotkey:show_direct", json!({}));
+                    show_main_and_emit(&handle_for_hotkey, ime_control);
                 }
             });
 

@@ -31,11 +31,13 @@ import { t } from "../lib/i18n";
 const SearchWindow: Component = () => {
   let inputRef: HTMLInputElement | undefined;
   const focusRetryTimers: ReturnType<typeof setTimeout>[] = [];
+  let focusRafHandle: number | undefined;
 
   function focusInputSoon() {
     // Single-frame defer; retries at 120ms/280ms cover remaining races.
     const t0 = performance.now();
-    requestAnimationFrame(() => {
+    focusRafHandle = requestAnimationFrame(() => {
+      focusRafHandle = undefined;
       inputRef?.focus();
       const t1 = performance.now();
       trace("ui:focus_input_done", {
@@ -45,6 +47,10 @@ const SearchWindow: Component = () => {
   }
 
   function clearFocusRetryTimers() {
+    if (focusRafHandle !== undefined) {
+      cancelAnimationFrame(focusRafHandle);
+      focusRafHandle = undefined;
+    }
     for (const timer of focusRetryTimers) {
       clearTimeout(timer);
     }

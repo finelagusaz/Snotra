@@ -765,3 +765,59 @@ test("config.toml を書き換えると max_results が即時反映される", a
   expect(rows.length).toBe(1);
 });
 
+test("/s 後にインデックス再構築が完了し検索が機能する", async ({ harness }) => {
+  const { driver } = harness;
+
+  // /s でインデックス再構築を起動 → main が非表示になる
+  await switchToLabel(driver, "main");
+  let input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/s");
+  await waitForHiddenLabel(driver, "main", 8_000);
+
+  // Tauri IPC で main を再表示（capabilities に core:window:allow-show あり）
+  await switchToLabel(driver, "main");
+  await driver.executeAsyncScript(`
+    const done = arguments[arguments.length - 1];
+    window.__TAURI_INTERNALS__.invoke("plugin:window|show", { label: "main" })
+      .then(() => done(null))
+      .catch(() => done(null));
+  `);
+  await waitForVisibleLabel(driver, "main", 6_000);
+
+  // 再構築完了まで clear→retype→チェックを繰り返す（最大 30 秒）
+  await driver.wait(async () => {
+    await switchToLabel(driver, "main");
+    const el = await driver.findElement(By.css(".search-input"));
+    await el.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, E2E_SEARCH_QUERY);
+    await switchToLabel(driver, "results");
+    return (await driver.findElements(By.css(".result-row"))).length > 0;
+  }, 30_000, "インデックス再構築後に検索結果が表示されない");
+
+  await switchToLabel(driver, "results");
+  const rows = await driver.findElements(By.css(".result-row"));
+  expect(rows.length).toBeGreaterThan(0);
+});
+
+test("Enter で検索結果を起動すると main と results が非表示になる", async ({ harness }) => {
+  const { driver } = harness;
+
+  await switchToLabel(driver, "main");
+  let input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(E2E_SEARCH_QUERY);
+
+  await waitForVisibleLabel(driver, "results", 8_000);
+  await switchToLabel(driver, "results");
+  await driver.wait(
+    async () => (await driver.findElements(By.css(".result-row"))).length > 0,
+    6_000,
+  );
+
+  // Enter で先頭の結果（snotra-e2e-*.txt）を起動
+  // 起動成功 → hideAllWindows() で main が非表示になる（side effect: txt がエディタで開く）
+  await switchToLabel(driver, "main");
+  input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(Key.ENTER);
+
+  await waitForHiddenLabel(driver, "main", 6_000);
+});
+

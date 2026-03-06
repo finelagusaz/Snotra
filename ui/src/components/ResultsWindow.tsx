@@ -99,7 +99,7 @@ const ResultsWindow: Component = () => {
     // Load initial show_icons from bootstrap payload
     void api.getBootstrapPayload().then((bootstrap) => {
       setShowIcons(bootstrap.appearance.show_icons);
-    });
+    }).catch((e) => console.warn("ResultsWindow: failed to load bootstrap payload:", e));
 
     // Listen for show_icons setting changes
     let unlistenShowIcons: (() => void) | undefined;
@@ -111,7 +111,8 @@ const ResultsWindow: Component = () => {
         revokeAllIconUrls();
         setIconCache(new Map());
       }
-    }).then((fn) => { unlistenShowIcons = fn; });
+    }).then((fn) => { unlistenShowIcons = fn; })
+      .catch((e) => console.warn("ResultsWindow: failed to listen show-icons-changed:", e));
 
     // Measure font once at list level for all ResultRow instances
     if (listRef) {
@@ -127,7 +128,8 @@ const ResultsWindow: Component = () => {
         const style = getComputedStyle(listRef);
         setFont(`${style.fontSize} ${style.fontFamily}`);
       }
-    }).then((fn) => { unlistenVisualFont = fn; });
+    }).then((fn) => { unlistenVisualFont = fn; })
+      .catch((e) => console.warn("ResultsWindow: failed to listen visual-config-changed:", e));
 
     if (listRef) {
       const ro = new ResizeObserver((entries) => {
@@ -172,11 +174,12 @@ const ResultsWindow: Component = () => {
       // results-render-done は perfMarkRenderDone（計測専用）に使われるため、
       // 非表示ウィンドウで rAF がスロットリングされても UX には影響しない。
       requestAnimationFrame(() => {
-        void emit("results-render-done", { requestId: event.payload.generation });
+        void emit("results-render-done", { requestId: event.payload.generation })
+          .catch((e) => console.warn("ResultsWindow: failed to emit results-render-done:", e));
       });
     }).then((fn) => {
       unlisten = fn;
-    });
+    }).catch((e) => console.warn("ResultsWindow: failed to listen results-sync:", e));
   });
 
   let hoverTimer: ReturnType<typeof setTimeout> | undefined;
@@ -184,7 +187,8 @@ const ResultsWindow: Component = () => {
   function handleHover(idx: number) {
     clearTimeout(hoverTimer);
     hoverTimer = setTimeout(() => {
-      void api.notifyResultHovered(idx);
+      void api.notifyResultHovered(idx)
+        .catch((e) => console.warn("ResultsWindow: failed to notify result hovered:", e));
     }, 50);
   }
 

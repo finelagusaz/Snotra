@@ -720,3 +720,48 @@ test("/r 入力でエラーにならず main が表示されたままになる",
   expect(await el.getAttribute("value")).toBe("/r");
 });
 
+test("/s 入力で main と results ウィンドウが非表示になる", async ({ harness }) => {
+  const { driver } = harness;
+
+  await switchToLabel(driver, "main");
+  const input = await driver.findElement(By.css(".search-input"));
+  // /s action: hideAllWindows() → rebuildIndex()（hide が先行する）
+  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/s");
+
+  await waitForHiddenLabel(driver, "main", 8_000);
+});
+
+test("config.toml を書き換えると max_results が即時反映される", async ({ harness }) => {
+  const { driver, backup, fixtureDir } = harness;
+
+  // ベースライン: フィクスチャファイル全件が表示される（max_results = 8）
+  await switchToLabel(driver, "main");
+  let input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(E2E_SEARCH_QUERY);
+
+  await waitForVisibleLabel(driver, "results", 8_000);
+  await switchToLabel(driver, "results");
+  await driver.wait(
+    async () =>
+      (await driver.findElements(By.css(".result-row"))).length === E2E_FIXTURE_FILENAMES.length,
+    8_000,
+    `ベースライン: ${E2E_FIXTURE_FILENAMES.length} 件が表示されない`,
+  );
+
+  // config.toml を max_results = 1 に書き換えてホットリロードをトリガー
+  const modifiedConfig = buildE2EConfigToml(fixtureDir).replace("max_results = 8", "max_results = 1");
+  await writeFile(backup.path, `${modifiedConfig}\n`, "utf8");
+
+  // config が反映されるまで clear→retype→チェックを繰り返す
+  await driver.wait(async () => {
+    await switchToLabel(driver, "main");
+    const el = await driver.findElement(By.css(".search-input"));
+    await el.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, E2E_SEARCH_QUERY);
+    await switchToLabel(driver, "results");
+    return (await driver.findElements(By.css(".result-row"))).length === 1;
+  }, 12_000, "config.toml の max_results 変更が反映されない");
+
+  const rows = await driver.findElements(By.css(".result-row"));
+  expect(rows.length).toBe(1);
+});
+

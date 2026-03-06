@@ -1,130 +1,68 @@
-# Research: エラーハンドリングの残骸分析
+# Research: Issue #153 — UI 部分の最適化
 
-## 背景
+## Issue の要約
 
-パフォーマンス最適化 (#116) 等の大規模リファクタを経て、エラーハンドリングがリファクタ前の前提のまま残っている箇所がある。`fetchIcons` の silent catch (#149 で発見) と同種のパターンをコードベース全体で調査した。
+度重なる改修で混入した冗長コードを整理する。分岐を減らし、ネストを浅くし、可読性を維持する。修正にはテストを先行させる。
 
-## 分類基準
+## コード品質分析結果
 
-- **要対処**: エラーが握りつぶされ、障害時の診断手がかりが失われる
-- **許容**: fire-and-forget が意図的で、失敗しても UX に影響しない
-- **良好**: 適切にログ出力またはリカバリされている
+### Safe（テスト不要で安全に修正可能）
 
----
+| # | ファイル | 行 | 問題 | 内容 |
+|---|---|---|---|---|
+| 1 | `stores/search.ts` | L217-451 | DRY 違反 | `cancelAnimationFrame(debounceTimer); debounceTimer = undefined` が5箇所に重複 |
+| 2 | `stores/search.ts` | L47-67 | DRY 違反 | `setLaunchNoticeWithAutoClear` 内のタイマー破棄が `clearLaunchNotice` と重複 |
+| 3 | `App.tsx` | L20-22 | 型の配置 | `ResultsRenderDonePayload` がローカル定義。`searchEvents.ts` に移すべき |
+| 4 | `App.tsx` | L25, 29-30 | 冗長 | `getCurrentWindow()` を2回呼び、`windowLabel` / `label` に分離。1回で済む |
+| 5 | `stores/folder.ts` | L14-16 | Dead code | `isInFolderMode()` がエクスポートされているが未使用 |
+| 6 | `lib/pathQuery.ts` | L46-48 | Dead code | `lastSlash < 0` ガードが到達不能（直前の `includes("\\")` で保証済み） |
+| 7 | `lib/truncatePath.ts` | L24-129 | 非効率 | キャッシュ溢れ時に全クリア → 最古エントリ削除に変更 |
 
-## 要対処: silent catch / 未ハンドル Promise
+### Needs-test（テスト追加が必要）
 
-### 1. ResultsWindow.tsx — listen 登録の未ハンドル (3箇所)
+| # | ファイル | 行 | 問題 | 内容 |
+|---|---|---|---|---|
+| 8 | `stores/search.ts` | L649 | 構造 | `refreshResults` がエクスポートされ、テストから直接呼ばれるが `runRefresh` のスタック追跡を迂回する |
 
-| 箇所 | 行 | パターン |
-|---|---|---|
-| `listen("show-icons-changed", ...)` | L107-113 | `.then(fn => { unlisten = fn })` のみ、`.catch()` なし |
-| `listen("visual-config-changed", ...)` | L124-129 | 同上 |
-| `listen("results-sync", ...)` | L144-178 | 同上 |
+### 情報のみ（今回対象外）
 
-**失われる情報**: listen 登録自体が失敗した場合、`unlisten` が未代入のまま残り、cleanup が no-op になる。加えてエラーログなし。
+| # | ファイル | 問題 | 理由 |
+|---|---|---|---|
+| 9 | `resultsWindowController.ts` | Promise 割り当てのエラーリカバリ | 現在の happy path に影響なし。エラーパスの挙動変更はリスクが高い |
+| 10 | `ResultsWindow.tsx` | onCleanup 配置の可読性 | `ui/CLAUDE.md` の不変条件に準拠済み。パターン変更は不要 |
 
-**リスク**: 低〜中。listen 登録の失敗は極めてまれだが、失敗時にリスナーリークする。
+## 関連コード
 
-### 2. ResultsWindow.tsx — getBootstrapPayload 未ハンドル
+### 変更対象
 
-```tsx
-// L99-101
-void api.getBootstrapPayload().then((bootstrap) => {
-  setShowIcons(bootstrap.appearance.show_icons);
-});
-```
+| ファイル | 役割 |
+|---|---|
+| `ui/src/stores/search.ts` | 検索状態管理。debounce タイマー、通知タイマー |
+| `ui/src/App.tsx` | ウィンドウルーティング、イベント初期化 |
+| `ui/src/stores/folder.ts` | フォルダモード状態管理 |
+| `ui/src/lib/pathQuery.ts` | パスクエリ判定ロジック |
+| `ui/src/lib/truncatePath.ts` | パス省略表示のキャッシュ |
+| `ui/src/lib/searchEvents.ts` | イベントペイロード型定義 |
 
-**失われる情報**: ブートストラップ取得失敗時、`showIcons` がデフォルト値のまま固定。エラーログなし。
+### 参照のみ（変更なし）
 
-**リスク**: 低。起動直後の1回きりの呼び出しで、IPC が動作していれば失敗しない。
+| ファイル | 参照理由 |
+|---|---|
+| `ui/src/components/SearchWindow.tsx` | `folderState() !== null` の使用箇所確認 |
+| `ui/src/components/ResultsWindow.tsx` | onCleanup パターン確認 |
 
-### 3. SearchWindow.tsx — listen 登録の未ハンドル (2箇所)
+## 既存パターン
 
-| 箇所 | 行 | パターン |
-|---|---|---|
-| `listen("window-shown", ...)` | L66-71 | `.then(unlisten => ...)` のみ |
-| `getCurrentWindow().onFocusChanged(...)` | L72-83 | 同上 |
+- `debouncedRefresh()` は既に `requestAnimationFrame` でタイマーをセットする関数として存在。逆操作（キャンセル）のヘルパーがない
+- `clearLaunchNotice()` はタイマーとシグナルの両方をクリアする関数として存在
+- `searchEvents.ts` にはイベントペイロード型が集約されている
 
-**失われる情報**: #1 と同構造。listen 失敗時に cleanup 不能 + エラーログなし。
+## 技術的制約
 
-### 4. App.tsx — saveSearchPlacement 未ハンドル
+- `search.ts` は SolidJS リアクティブ文脈で動作。`createEffect` 内のタイマー操作は同期的でなければならない
+- `truncatePath.ts` の `Map` は V8 の挿入順序保証に依存可能（ES2015 仕様）
+- `refreshResults` のエクスポート変更はテストファイル `search.test.ts` に影響する
 
-```tsx
-// L150-153
-void (async () => {
-  if (moveEvent !== latestMoveEvent) return;
-  await api.saveSearchPlacement(Math.round(logicalPos.x), Math.round(logicalPos.y));
-})();
-```
+## 未解決の疑問
 
-**失われる情報**: ウィンドウ位置の永続化失敗がログなしで消える。次回起動時にウィンドウ位置がリセットされるが原因不明になる。
-
-**リスク**: 低。保存先は config.toml で、書き込み失敗は通常ありえない。
-
----
-
-## 許容: 意図的な fire-and-forget
-
-### 5. search.ts — recordFolderExpansion (L299)
-
-```tsx
-void api.recordFolderExpansion(dir);
-```
-
-**判断**: 非クリティカルな履歴記録。失敗しても検索動作に影響なし。
-
-### 6. commands.ts — quitApp (L57)
-
-```tsx
-api.quitApp();
-```
-
-**判断**: アプリ終了コマンド。失敗してもプロセスは終了途中であり、ログを見る機会がない。
-
-### 7. App.tsx — hideMainAndResults / handleMainMoved (L90, L158)
-
-```tsx
-void hideMainAndResults();
-void controller.handleMainMoved(logicalPos);
-```
-
-**判断**: UI 操作の fire-and-forget。hideMainAndResults は内部で try/catch なしだが、Tauri ウィンドウ API の失敗は致命的ではない。
-
-### 8. E2E テスト内の .catch(() => {}) (複数箇所)
-
-**判断**: テストハーネスのクリーンアップ。プライマリエラーを隠さないための意図的な握りつぶし。
-
----
-
-## 良好: 適切なハンドリング
-
-| 箇所 | 行 | パターン |
-|---|---|---|
-| `search.ts` refreshResults | L351-354 | `.catch(e => { trace(...); console.error(...) })` |
-| `resultsWindowController.ts` position apply | L70-82 | `.catch(e => { console.error(...); state cleanup })` |
-| `resultsWindowController.ts` geometry init | L201-219 | `try/catch` + `console.warn` |
-
----
-
-## Rust 側の状況
-
-Rust コードベースは概ね良好。
-
-- `src-tauri/src/commands/launch.rs`: エラーパスは `LaunchResult` で型安全に返却
-- `src-tauri/src/commands/window.rs`: `let _ = set_window_no_activate(...)` 等はウィンドウ装飾の非クリティカル操作で許容
-- `src-tauri/src/main.rs`: `show_main_and_emit` の失敗はログ出力済み
-
----
-
-## 総括
-
-| 分類 | 件数 | 代表パターン |
-|---|---|---|
-| 要対処 | 4 | listen 登録の `.catch()` 欠如、Promise 未ハンドル |
-| 許容 | 4 | fire-and-forget（履歴記録、quit、hide） |
-| 良好 | 3 | console.error/warn + 状態リカバリ |
-
-**共通パターン**: `void listen(...).then(fn => { unlisten = fn })` が最も多い問題パターン（5箇所）。listen 登録は通常失敗しないが、失敗時にリスナーリーク + 診断不能になる。一括で `.catch(e => console.warn(...))` を付与するのが費用対効果が高い。
-
-**Rust 側は対処不要**。問題はフロントエンド（TypeScript）に集中している。
+- なし

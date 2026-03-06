@@ -260,6 +260,7 @@ fn main() {
             commands::get_search_placement,
             commands::save_search_placement,
             commands::set_window_no_activate,
+            commands::notify_main_shown,
             commands::notify_main_hidden,
             commands::notify_result_clicked,
             commands::notify_result_double_clicked,

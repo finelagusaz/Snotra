@@ -104,6 +104,8 @@ const App: Component = () => {
               try {
                 controller.updateMainVisible(true);
                 await win.show();
+                // Sync Rust-side visibility flag so hotkey toggle works correctly.
+                api.notifyMainShown().catch(() => {});
               } catch (e) {
                 console.warn("platform-event: failed to show window on initial-hotkey-failed:", e);
               }

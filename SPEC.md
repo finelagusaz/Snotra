@@ -66,10 +66,10 @@
 - その他 -> シェル登録ファイルタイプアイコン
 - フォルダ -> フォルダアイコン
 - 表示/非表示は設定で切替可能
-- フロントエンドへの転送は `tauri::ipc::Response` でバイナリ IPC（`get_icon_png`）し、`URL.createObjectURL(new Blob([buf], { type: "image/png" }))` で `<img src>` に渡す
+- フロントエンドへの転送は `tauri::ipc::Response` でバイナリ IPC（`get_icons_batch`）し、パスごとに `URL.createObjectURL(new Blob([bytes], { type: "image/png" }))` で `<img src>` に渡す。バッチ形式: `[count:u32 LE]` + 各アイコン `[status:u8][png_len:u32 LE][png_bytes]`
 - アイコン非表示設定時・アイコンデータなし時はフォールバック絵文字（📁📄）を表示
 - インデックス再構築時はキャッシュをクリア（次回検索時に再抽出）
-- `icons.bin` は起動時に先読みせず、初回アイコン取得（`get_icon_png`）時に遅延ロード
+- `icons.bin` は起動時に先読みせず、初回アイコン取得（`get_icons_batch`）時に遅延ロード
 
 ## 3. 検索システム
 
@@ -299,7 +299,7 @@
 - 初回表示時は既存インスタンスを `show` する
 - `about` / `settings` は別プロセス（`snotra-settings`）として起動。本体は `SettingsProcessState`（`Mutex<Option<Child>>`）で子プロセスを管理し、二重起動を防止する
 - `snotra-settings` 起動中は本体のメインウィンドウの `alwaysOnTop` を一時的に `false` にし、終了検知時に `true` に復元する
-- `platform.rs` の Win32 メッセージループスレッドは `results` ウィンドウ事前生成より前に spawn し、Win32 初期化とウィンドウ生成を並列実行する（起動時間の短縮）
+- `platform/mod.rs` の Win32 メッセージループスレッドは `results` ウィンドウ事前生成より前に spawn し、Win32 初期化とウィンドウ生成を並列実行する（起動時間の短縮）
 - トレイアイコンの表示は `results` ウィンドウの事前生成完了後に行う
 - ホットキー登録（`RegisterHotKey`）は `hotkey-pressed` イベントリスナーの登録完了後に行う。リスナー未登録の状態でホットキーを有効化すると、起動中のキー入力が受け手なく破棄されるため
 
@@ -370,7 +370,7 @@ stateDiagram-v2
 
 ## 9. システムトレイ
 
-- Win32 `Shell_NotifyIconW` で実装（`platform.rs` 内）
+- Win32 `Shell_NotifyIconW` で実装（`platform/tray.rs`）
 - トレイアイコン表示は設定で切替
 - 右クリックメニュー: 「設定」「終了」
 - キーボードフォーカス + Shift+F10 / Application キー: 右クリックと同じコンテキストメニューを表示

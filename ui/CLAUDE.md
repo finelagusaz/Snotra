@@ -20,7 +20,7 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 ### stores/
 
 - `search.ts`: 検索状態管理（クエリ/結果/選択/モード切替/`results-sync` emit）
-- `folder.ts`: フォルダモードの状態（`FolderFrame` シグナル + `folderFilter`）。`isInFolderMode()` を公開
+- `folder.ts`: フォルダモードの状態（`FolderFrame` シグナル + `folderFilter`）
 - `tool-selection.ts`: ツール選択モードの状態（`ToolSelectionFrame` シグナル）
 - `settings.ts`: 設定ドラフト管理
 

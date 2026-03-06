@@ -44,10 +44,6 @@ export function parsePathQuery(input: string): PathQuery | null {
   }
 
   const lastSlash = normalized.lastIndexOf("\\");
-  if (lastSlash < 0) {
-    return null;
-  }
-
   let dir = normalized.slice(0, lastSlash + 1);
   if (dir === "") {
     dir = "\\";

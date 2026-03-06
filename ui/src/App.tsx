@@ -14,20 +14,16 @@ import type { BootstrapPayload, VisualConfig } from "./lib/types";
 import * as api from "./lib/invoke";
 import { perfMarkRenderDone } from "./lib/perf";
 import { trace } from "./lib/trace";
-import type { ResultsSyncPayload } from "./lib/searchEvents";
+import type { ResultsSyncPayload, ResultsRenderDonePayload } from "./lib/searchEvents";
 import { createResultsWindowController } from "./lib/resultsWindowController";
 
-type ResultsRenderDonePayload = {
-  requestId: number;
-};
-
 const App: Component = () => {
-  const windowLabel = getCurrentWindow().label;
+  const win = getCurrentWindow();
+  const windowLabel = win.label;
   const unlistenFns: Array<() => void> = [];
 
   onMount(async () => {
-    const win = getCurrentWindow();
-    const label = win.label;
+    const label = windowLabel;
     let registerAutoHideOnFocusLost: (() => Promise<void>) | undefined;
 
     if (label === "main") {

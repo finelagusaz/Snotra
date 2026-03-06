@@ -22,7 +22,7 @@ function measureText(text: string, font: string): number {
   ctx.font = font;
   const width = ctx.measureText(text).width;
   if (measureCache.size >= MAX_MEASURE_CACHE) {
-    measureCache.clear();
+    measureCache.delete(measureCache.keys().next().value!);
   }
   measureCache.set(key, width);
   return width;
@@ -54,7 +54,7 @@ export function truncatePath(
 
   if (measureText(path, font) <= maxWidth) {
     if (truncateCache.size >= MAX_TRUNCATE_CACHE) {
-      truncateCache.clear();
+      truncateCache.delete(truncateCache.keys().next().value!);
     }
     truncateCache.set(cacheKey, path);
     return path;
@@ -95,7 +95,7 @@ export function truncatePath(
   const minimal = prefix + sep + "..." + sep + last + trailingSep;
   if (measureText(minimal, font) > maxWidth) {
     if (truncateCache.size >= MAX_TRUNCATE_CACHE) {
-      truncateCache.clear();
+      truncateCache.delete(truncateCache.keys().next().value!);
     }
     truncateCache.set(cacheKey, minimal);
     return minimal;
@@ -124,7 +124,7 @@ export function truncatePath(
   }
 
   if (truncateCache.size >= MAX_TRUNCATE_CACHE) {
-    truncateCache.clear();
+    truncateCache.delete(truncateCache.keys().next().value!);
   }
   truncateCache.set(cacheKey, bestResult);
   return bestResult;

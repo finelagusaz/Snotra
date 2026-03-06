@@ -599,6 +599,7 @@ test("/r 入力でエラーにならず main が表示されたままになる",
 
   // main ウィンドウが表示されたまま（クラッシュ・自動非表示なし）
   await waitForVisibleLabel(driver, "main", 4_000);
+  await switchToLabel(driver, "main");
   const el = await driver.findElement(By.css(".search-input"));
   expect(await el.getAttribute("value")).toBe("/r");
 });

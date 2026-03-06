@@ -60,10 +60,10 @@ jobs:
           workspaces: src-tauri
 
       - name: cargo check
-        run: cargo check -p snotra-core -p snotra
+        run: cargo check -p snotra-core -p snotra -p snotra-settings
 
       - name: cargo test (snotra-core)
         run: cargo test -p snotra-core
 
       - name: cargo clippy
-        run: cargo clippy -p snotra-core -p snotra -- -D warnings
+        run: cargo clippy -p snotra-core -p snotra -p snotra-settings -- -D warnings

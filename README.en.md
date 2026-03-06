@@ -9,6 +9,7 @@
 <h1 align="center">Snotra</h1>
 
 <p align="center">
+  <b>Type less, launch more.</b><br>
   <i>A fast, keyboard-driven application launcher for Windows</i>
 </p>
 

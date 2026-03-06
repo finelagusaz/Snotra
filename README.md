@@ -9,6 +9,7 @@
 <h1 align="center">Snotra</h1>
 
 <p align="center">
+  <b>Type less, launch more.</b><br>
   <i>Windows 専用の高速キーボードランチャー</i>
 </p>
 

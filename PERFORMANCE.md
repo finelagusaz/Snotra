@@ -20,6 +20,32 @@
    - 文字幅計測や省略文字列生成のキャッシュ
    - 無意味な再スクロール/再レイアウト抑制
 
+## ビルドプロファイル最適化の知見
+
+### Cargo ワークスペースのプロファイル上書き
+
+クレート単位の `opt-level` を変更するには、ワークスペースルートの `Cargo.toml` に
+`[profile.release.package.<name>]` セクションを追記する。**ワークスペースメンバーの
+`Cargo.toml` に書いた `[profile.*]` は Cargo に無視される**（ワークスペースでは無効）。
+
+```toml
+# Cargo.toml (ルート) — 正しい書き方
+[profile.release.package.snotra-settings]
+opt-level = "s"
+```
+
+### opt-level = "s" 適用結果（issue #138）
+
+| クレート | 変化 | 判断 |
+|---------|------|------|
+| `snotra-settings` | 4.0 MB → 3.8 MB (−5%) | 採用（低頻度起動） |
+| `snotra` (src-tauri) | 6.7 MB → 5.5 MB (−18%) | 採用（ホットパスなし） |
+| `snotra-core` | fuzzy +33%, new +11% | **不採用** |
+
+`snotra-core` は `nucleo-matcher` + rayon の並列スコアリングがホットパスであり、
+`opt-level = "s"` によるループアンローリング・SIMD 抑制が直撃する。
+**`snotra-core` への `opt-level = "s"` / `"z"` 適用は行わない**。
+
 ## 試みたが機能しない手法
 
 - **Custom URI Scheme（`snotra-icon://` 等）による画像配信**: WebView2 では `register_uri_scheme_protocol`（WRY/Tauri）で登録したカスタムスキームへのリクエストが、WebView2 環境生成時の `SetCustomSchemeRegistrations` 事前宣言なしにはハンドラーに届かない。WRY 0.54.x では自動的に処理されず、`eprintln` 診断でハンドラーが一切呼ばれないことを確認済み。バイナリ配信の代替は `tauri::ipc::Response`（上記セクション2）を用いること。

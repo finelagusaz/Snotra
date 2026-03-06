@@ -1,18 +1,3 @@
-- name: codex:needs-clarification
-  color: "fbca04"
-  description: 仕様不明点あり。回答待ち
-- name: codex:spec-approved
-  color: "0e8a16"
-  description: 最新 /codex spec が Spec QA を通過
-- name: codex:in-progress
-  color: "1d76db"
-  description: Codex が実装中
-- name: codex:reviewing
-  color: "5319e7"
-  description: Codex が自己レビュー中
-- name: codex:ready-pr
-  color: "0052cc"
-  description: Codex が Draft PR を作成済み
 - name: type:feature
   color: "a2eeef"
   description: 新機能

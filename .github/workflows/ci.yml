@@ -8,9 +8,16 @@ on:
     branches:
       - main
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   frontend-check:
-    runs-on: windows-latest
+    if: >-
+      github.event_name == 'push' ||
+      !contains(join(github.event.pull_request.labels.*.name, ','), 'skip-ci')
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -25,10 +32,6 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Get Build Date
-        id: date
-        run: echo "BUILD_DATE=$(Get-Date -Format 'yyyyMMdd')" >> $env:GITHUB_ENV
-
       - name: Run frontend tests
         run: npm test
 
@@ -36,9 +39,12 @@ jobs:
         run: npm run build
         env:
           VITE_APP_VERSION: "ci-build"
-          VITE_APP_BUILD_NUMBER: ${{ env.BUILD_DATE }}
+          VITE_APP_BUILD_NUMBER: "ci"
 
   rust-check:
+    if: >-
+      github.event_name == 'push' ||
+      !contains(join(github.event.pull_request.labels.*.name, ','), 'skip-ci')
     runs-on: windows-latest
 
     steps:

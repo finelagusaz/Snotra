@@ -68,8 +68,12 @@ font_family = "Segoe UI"
 font_size = 15
 
 [paths]
-additional = ["${escapedDir}"]
-scan = []
+additional = []
+
+[[paths.scan]]
+path = "${escapedDir}"
+extensions = [".txt"]
+include_folders = false
 
 [search]
 normal_mode = "fuzzy"
@@ -381,47 +385,22 @@ test("startup shows main input and accepts typing", async ({ harness }) => {
   expect(value).toBe("abc");
 });
 
-test("slash /o switches visible window to settings", async ({ harness }) => {
-  const input = await harness.driver.findElement(By.css(".search-input"));
-  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/o");
-  await waitForVisibleLabel(harness.driver, "settings", 8_000);
-  const states = await collectWindowStates(harness.driver);
-  expect(
-    states.some(
-      (state) =>
-        state.label === "settings" &&
-        (state.nativeVisible === true ||
-          (state.nativeVisible == null && state.visibility === "visible")),
-    ),
-  ).toBe(true);
-});
-
-test("/o で main の alwaysOnTop が外れ、settings を ESC で閉じると戻る", async ({ harness }) => {
+test("slash /o コマンドが実行され main の alwaysOnTop が false になる", async ({ harness }) => {
   const { driver } = harness;
 
-  // 初期状態: main は alwaysOnTop
-  const initial = await getMainAlwaysOnTop(driver);
-  expect(initial).toBe(true);
-
-  // /o で設定を開く
+  // snotra-settings は egui ネイティブウィンドウのため WebDriver から不可視
+  // /o の副作用（alwaysOnTop → false）でコマンド実行を確認する
   await switchToLabel(driver, "main");
   const input = await driver.findElement(By.css(".search-input"));
   await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/o");
-  await waitForVisibleLabel(driver, "settings", 8_000);
 
-  // settings 表示中: main の alwaysOnTop が false になっている
-  const afterOpen = await getMainAlwaysOnTop(driver);
-  expect(afterOpen).toBe(false);
+  await driver.wait(async () => {
+    return (await getMainAlwaysOnTop(driver)) === false;
+  }, 8_000, "/o コマンド後に alwaysOnTop が false にならない");
 
-  // settings を ESC で閉じる
-  await switchToLabel(driver, "settings");
-  await driver.actions().sendKeys(Key.ESCAPE).perform();
-  await waitForHiddenLabel(driver, "settings", 8_000);
-
-  // settings 閉じた後: main の alwaysOnTop が true に戻っている
-  const afterClose = await getMainAlwaysOnTop(driver);
-  expect(afterClose).toBe(true);
+  expect(await getMainAlwaysOnTop(driver)).toBe(false);
 });
+
 
 test("Shift+Enter でツール選択リストが表示され Escape で元に戻る", async ({ harness }) => {
   const { driver } = harness;
@@ -464,101 +443,6 @@ test("Shift+Enter でツール選択リストが表示され Escape で元に戻
   expect(value).toBe("C:\\");
 });
 
-test("設定オープナー: ルール追加・ツール追加・保存・永続化確認", async ({ harness }) => {
-  const { driver } = harness;
-
-  // /o で設定を開く
-  await switchToLabel(driver, "main");
-  let input = await driver.findElement(By.css(".search-input"));
-  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/o");
-  await waitForVisibleLabel(driver, "settings", 8_000);
-  await switchToLabel(driver, "settings");
-
-  // オープナータブへ移動
-  const openerTab = await driver.findElement(
-    By.xpath("//div[contains(@class,'sidebar-nav')]//button[contains(.,'オープナー')]"),
-  );
-  await openerTab.click();
-
-  // E2E config の既存オープナーが描画されるまで待つ
-  await driver.wait(async () => {
-    const lists = await driver.findElements(By.css(".scan-path-list"));
-    if (lists.length === 0) return false;
-    return (await lists[0].findElements(By.css(".scan-path-item"))).length >= 1;
-  }, 5_000);
-
-  const listsBefore = await driver.findElements(By.css(".scan-path-list"));
-  const openerItemsBefore = await listsBefore[0].findElements(By.css(".scan-path-item"));
-  const initialCount = openerItemsBefore.length;
-
-  // 「追加」ボタンでモーダルを開く
-  const addBtn = await driver.findElement(
-    By.xpath("//div[contains(@class,'scan-path-list-actions')]//button[text()='追加']"),
-  );
-  await addBtn.click();
-
-  // モーダルのフォームが表示される
-  await driver.wait(
-    async () =>
-      (await driver.findElements(By.css("input[placeholder='Total Commander']"))).length > 0,
-    3_000,
-  );
-
-  // ツール名と実行ファイルを入力
-  await driver
-    .findElement(By.css("input[placeholder='Total Commander']"))
-    .then((el) => el.sendKeys("TestTool"));
-  await driver
-    .findElement(By.css(".scan-path-input-row input[type='text']"))
-    .then((el) => el.sendKeys("notepad.exe"));
-
-  // モーダル内の「保存」で反映
-  const modalSaveBtn = await driver.findElement(
-    By.xpath("//div[contains(@class,'settings-modal')]//button[text()='保存']"),
-  );
-  await modalSaveBtn.click();
-  await driver.wait(
-    async () => (await driver.findElements(By.css(".settings-modal"))).length === 0,
-    3_000,
-  );
-
-  // 保存ボタンをクリック（保存後は自動クローズしない仕様）
-  const saveBtn = await driver.findElement(By.css("button.btn-primary.has-changes"));
-  await saveBtn.click();
-  // has-changes クラスが消えるまで待つ（保存完了 → hasChanges() === false）
-  await driver.wait(
-    async () => (await driver.findElements(By.css("button.btn-primary.has-changes"))).length === 0,
-    5_000,
-    "save did not complete",
-  );
-  // 変更なしの状態で Escape → バナーなしで即クローズ
-  await driver.actions().sendKeys(Key.ESCAPE).perform();
-  await waitForHiddenLabel(driver, "settings", 8_000);
-
-  // 設定を再度開く
-  await switchToLabel(driver, "main");
-  input = await driver.findElement(By.css(".search-input"));
-  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/o");
-  await waitForVisibleLabel(driver, "settings", 8_000);
-  await switchToLabel(driver, "settings");
-
-  // オープナータブへ移動（タブ状態がリセットされている場合に備えてクリック）
-  const openerTab2 = await driver.findElement(
-    By.xpath("//div[contains(@class,'sidebar-nav')]//button[contains(.,'オープナー')]"),
-  );
-  await openerTab2.click();
-
-  // 一覧が 1 件増えていること（追加したオープナーが永続化されている）
-  await driver.wait(async () => {
-    const lists = await driver.findElements(By.css(".scan-path-list"));
-    if (lists.length === 0) return false;
-    return (await lists[0].findElements(By.css(".scan-path-item"))).length >= initialCount + 1;
-  }, 5_000);
-
-  const lists = await driver.findElements(By.css(".scan-path-list"));
-  const ruleItems = await lists[0].findElements(By.css(".scan-path-item"));
-  expect(ruleItems.length).toBe(initialCount + 1);
-});
 
 test("検索クエリを入力すると results ウィンドウに結果が表示される", async ({ harness }) => {
   const { driver } = harness;
@@ -634,32 +518,31 @@ test("Escape で main ウィンドウが非表示になる", async ({ harness })
   await waitForHiddenLabel(driver, "main", 6_000);
 });
 
-test("settings を ESC で閉じた後、スラッシュコマンドが動作する", async ({ harness }) => {
+test("/o 後に IPC チャネルが生存している", async ({ harness }) => {
   const { driver } = harness;
 
-  // /o → ESC で閉じる
+  // /o で snotra-settings を起動（egui ネイティブウィンドウ、WebDriver からは不可視）
   await switchToLabel(driver, "main");
   let input = await driver.findElement(By.css(".search-input"));
   await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/o");
-  await waitForVisibleLabel(driver, "settings", 8_000);
-  await switchToLabel(driver, "settings");
-  await driver.actions().sendKeys(Key.ESCAPE).perform();
-  await waitForHiddenLabel(driver, "settings", 8_000);
 
-  // IPC 生存確認: /o で settings が開くか（別コマンドで IPC チャネルが壊れていないことを検証）
+  // alwaysOnTop が false になることで /o の実行を確認
+  await driver.wait(async () => {
+    return (await getMainAlwaysOnTop(driver)) === false;
+  }, 8_000, "/o コマンドが実行されない");
+
+  // IPC 生存確認: /r コマンドが正常に処理され main が表示されたままになること
   await switchToLabel(driver, "main");
   input = await driver.findElement(By.css(".search-input"));
-  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/o");
-  await waitForVisibleLabel(driver, "settings", 8_000);
-  const states = await collectWindowStates(driver);
-  expect(
-    states.some(
-      (state) =>
-        state.label === "settings" &&
-        (state.nativeVisible === true ||
-          (state.nativeVisible == null && state.visibility === "visible")),
-    ),
-  ).toBe(true);
+  await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/r");
+
+  await driver.wait(async () => {
+    await switchToLabel(driver, "main");
+    const el = await driver.findElement(By.css(".search-input"));
+    return (await el.getAttribute("value")) === "/r";
+  }, 4_000, "IPC 応答なし: /r コマンドが処理されない");
+
+  await waitForVisibleLabel(driver, "main", 4_000);
 });
 
 test("→ キーでフォルダ展開、Escape でスナップショット復帰", async ({ harness }) => {

@@ -89,6 +89,70 @@ Snotra/
 詳細仕様と状態遷移図: [SPEC.md](SPEC.md)
 実装ルール・パターン集: [CLAUDE.md](CLAUDE.md)
 
+### 検索フロー（入力 → 結果表示）
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant SW as SearchWindow.tsx
+    participant SS as search.ts (store)
+    participant API as invoke.ts (IPC)
+    participant Cmd as commands/search.rs
+    participant Eng as Engine (snotra-core)
+    participant SE as SearchEngine
+    participant RWC as resultsWindowController.ts
+    participant RW as ResultsWindow.tsx
+    participant RR as ResultRow.tsx
+
+    User->>SW: キー入力
+    SW->>SS: setQuery(value)
+
+    Note over SS: createEffect が query 変更を検知
+
+    SS->>SS: debouncedRefresh()<br/>requestAnimationFrame で合間
+
+    SS->>SS: refreshResults()<br/>searchGeneration++ (stale 検出用)
+    SS->>API: search(query)
+    API->>Cmd: invoke("search", { query })
+    Cmd->>Eng: engine.search(&query)
+    Eng->>SE: search_with_history_boost()
+
+    Note over SE: rayon 並列スコアリング<br/>1. Bitmask プレフィルタ (Fuzzy)<br/>2. match_score (Prefix/Substring/Fuzzy)<br/>3. 履歴ブースト<br/>4. BinaryHeap top-k
+
+    SE-->>Eng: Vec<SearchResult>
+    Eng-->>Cmd: Vec<SearchResult>
+    Cmd-->>API: JSON シリアライズ
+    API-->>SS: SearchResult[]
+
+    Note over SS: searchGeneration で stale チェック
+
+    SS->>SS: setResults(items), setSelected(0)
+    SS->>RWC: emit("results-sync", payload)
+    SS->>RW: emit("results-sync", payload)
+
+    par results ウィンドウ制御
+        RWC->>RWC: handleResultsSync()<br/>リサイズ・配置・表示
+    and 結果レンダリング
+        RW->>RW: setResults(), setSelected()
+        RW->>RR: <For each={results()}><br/>ResultRow × N 件
+        RR->>RR: アイコン or 📄/📁 フォールバック
+    end
+
+    RW->>API: getIconsBatch(paths)
+    API->>Cmd: invoke("get_icons_batch")
+
+    Note over Cmd: ipc::Response (バイナリ)<br/>custom protocol 経由で ArrayBuffer
+
+    Cmd-->>RW: ArrayBuffer (PNG バッチ)
+    RW->>RW: parseBinaryBatch()<br/>→ Blob URL 生成
+    RW->>RR: icon prop 更新 → <img src="blob:...">
+```
+
+**補足**:
+- `searchGeneration` は検索リクエストごとにインクリメントされるカウンタ。応答が返ったとき現在値と比較し、古いレスポンスを破棄する
+- `results-sync` は単一イベントで結果・選択・表示指示を一括通知する（main → results ウィンドウ間通信）
+- アイコンは `ipc::Response` でバイナリ返却するため、CSP の `connect-src` に `ipc: http://ipc.localhost` が必須（`tauri dev` では不要だがリリースビルドで必要）
+
 ## トラブルシューティング
 
 ### `EPERM: operation not permitted, unlink ... esbuild.exe`

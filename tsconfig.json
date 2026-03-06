@@ -13,5 +13,6 @@
     "isolatedModules": true,
     "noEmit": true
   },
-  "include": ["ui/src"]
+  "include": ["ui/src"],
+  "exclude": ["ui/src/**/*.test.ts", "ui/src/**/*.test.tsx"]
 }

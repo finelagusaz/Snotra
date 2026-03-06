@@ -81,7 +81,8 @@ const ResultsWindow: Component = () => {
     try {
       const buf = await api.getIconsBatch(missing);
       parsed = parseBinaryBatch(buf, missing);
-    } catch {
+    } catch (e) {
+      console.warn("fetchIcons failed:", e);
       return;
     }
     if (generation !== latestGeneration) return;

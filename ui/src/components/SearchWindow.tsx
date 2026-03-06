@@ -68,7 +68,7 @@ const SearchWindow: Component = () => {
       focusInputWithRetries();
     }).then((unlisten) => {
       unlistenWindowShown = unlisten;
-    });
+    }).catch((e) => console.warn("SearchWindow: failed to listen window-shown:", e));
     void getCurrentWindow()
       .onFocusChanged(({ payload: focused }) => {
         trace("ui:focus_changed", { focused });
@@ -80,13 +80,18 @@ const SearchWindow: Component = () => {
       })
       .then((unlisten) => {
         unlistenFocusChanged = unlisten;
-      });
+      })
+      .catch((e) => console.warn("SearchWindow: failed to listen focus-changed:", e));
 
     // Fallback for startup timing: if first window-shown was emitted
     // before this listener mounted, focus once when already visible.
     void (async () => {
-      if (await getCurrentWindow().isVisible()) {
-        focusInputWithRetries();
+      try {
+        if (await getCurrentWindow().isVisible()) {
+          focusInputWithRetries();
+        }
+      } catch (e) {
+        console.warn("SearchWindow: failed to check initial visibility:", e);
       }
     })();
 

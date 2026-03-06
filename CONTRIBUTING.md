@@ -30,10 +30,10 @@ git push origin v0.9.1
 
 ## CI
 
-`main` ブランチへの push および PR で以下の2ジョブが自動実行される。どちらかが失敗する PR はマージしない。
+`main` ブランチへの push および PR で以下の2ジョブが自動実行される。どちらかが失敗する PR はマージしない。同一ブランチで再 push すると、実行中の古い run は自動キャンセルされる。
 
-- **frontend-check**: `npm test`（Vitest）+ `npm run build`（型チェック + Vite ビルド）
-- **rust-check**: `cargo check -p snotra-core -p snotra` + `cargo test -p snotra-core` + `cargo clippy -p snotra-core -p snotra -- -D warnings`
+- **frontend-check** (`ubuntu-latest`): `npm test`（Vitest）+ `npm run build`（型チェック + Vite ビルド）
+- **rust-check** (`windows-latest`): `cargo check -p snotra-core -p snotra` + `cargo test -p snotra-core` + `cargo clippy -p snotra-core -p snotra -- -D warnings`
 
 ## 開発環境のセットアップ
 
@@ -83,7 +83,7 @@ Snotra/
       components/       # SearchWindow, ResultsWindow, ResultRow ほか
       stores/           # リアクティブ状態管理
       lib/              # 型定義, IPC ラッパー, テーマユーティリティ
-  .github/workflows/    # CI/CD（release.yml, ci.yml）
+  .github/workflows/    # CI/CD（ci.yml, release.yml, label-sync.yml）
 ```
 
 詳細仕様と状態遷移図: [SPEC.md](SPEC.md)

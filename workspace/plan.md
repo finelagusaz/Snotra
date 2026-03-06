@@ -1,67 +1,65 @@
-# Plan: エラーハンドリング残骸の整理
+# Plan: Issue #153 — UI 部分の最適化
 
 ## 方針
 
-`void promise.then(fn => { unlisten = fn })` パターンの `.catch()` 欠如を修正する。変更は **ログ追加のみ** に限定し、制御フロー・状態遷移・戻り値には一切触れない。
+Safe と判定された7項目のみ対象とする。制御フローの変更を伴う項目（`refreshResults` エクスポート問題、`resultsWindowController` の Promise 構造）は今回のスコープ外。
 
-## 変更対象と除外の判断
+## 変更ファイル一覧
 
-### 変更する (3ファイル・7箇所)
-
-| # | ファイル | 行 | パターン | 修正内容 |
-|---|---|---|---|---|
-| 1 | `ResultsWindow.tsx` | L99-101 | `void api.getBootstrapPayload().then(...)` | `.catch(e => console.warn(...))` 追加 |
-| 2 | `ResultsWindow.tsx` | L107-113 | `void listen("show-icons-changed", ...).then(...)` | 同上 |
-| 3 | `ResultsWindow.tsx` | L124-129 | `void listen("visual-config-changed", ...).then(...)` | 同上 |
-| 4 | `ResultsWindow.tsx` | L144-178 | `void listen("results-sync", ...).then(...)` | 同上 |
-| 5 | `SearchWindow.tsx` | L66-71 | `void listen("window-shown", ...).then(...)` | 同上 |
-| 6 | `SearchWindow.tsx` | L72-83 | `void getCurrentWindow().onFocusChanged(...).then(...)` | 同上 |
-| 7 | `SearchWindow.tsx` | L87-91 | `void (async () => { ... })()` | try/catch + `console.warn` で囲む |
-
-### 変更しない (理由付き)
-
-| 箇所 | 理由 |
-|---|---|
-| `App.tsx` の listen 群 (L76-116) | `await Promise.all(...)` で await 済み。失敗は `onMount` async の unhandled rejection として表面化する |
-| `App.tsx` の `saveSearchPlacement` (L150-153) | setTimeout 内の debounced fire-and-forget。位置保存失敗は非クリティカルで、ログを足しても確認する機会がない |
-| `App.tsx` の `void hideMainAndResults()` (L90) | 直前に `console.warn("Failed to launch...")` がある文脈。hide 自体の失敗は Tauri API レベルの致命的問題で、warn 1行では対処にならない |
-| `App.tsx` の `void controller.handleMainMoved(...)` (L158) | `resultsWindowController.ts` 内部に既に `.catch(console.error)` がある (L70-82) |
-| `search.ts` の `void api.recordFolderExpansion(dir)` (L299) | 非クリティカルな履歴記録。意図的な fire-and-forget |
-| `commands.ts` の `api.quitApp()` (L57) | アプリ終了。失敗してもログを見る機会がない |
-| E2E テスト内の `.catch(() => {})` | テストハーネスのクリーンアップ。意図的 |
-
-## 副作用リスクの検証
-
-### 変更が安全である根拠
-
-1. **制御フローを変えない**: `.catch()` の追加は Promise チェーンの末尾に付くだけ。`.then()` の成功パスには影響しない
-2. **`unlisten` 変数の代入タイミングを変えない**: `.catch()` は `.then()` の後に付くため、成功時の `.then(fn => { unlisten = fn })` は従来通り実行される
-3. **戻り値を変えない**: `void` で呼び出しているため戻り値は使われていない
-4. **`onCleanup` の登録タイミングに干渉しない**: `onCleanup` は `.then()` より前の同期コンテキストで登録済み（`ui/CLAUDE.md` の不変条件）
-
-### 確認すべき境界条件
-
-- `.catch()` 内で `throw` しない → `console.warn` のみなので安全
-- `.catch()` が `.then()` の実行を阻害しない → Promise の仕様上、`.then()` 成功後に `.catch()` は呼ばれない
-- SearchWindow L87-91 の try/catch 追加で `focusInputWithRetries()` の呼び出しが変わらない → catch 内は `console.warn` + `return` のみ
+| # | ファイル | 変更内容 |
+|---|---|---|
+| 1 | `stores/search.ts` | `cancelDebounce()` ヘルパー抽出（5箇所の重複解消） |
+| 2 | `stores/search.ts` | `setLaunchNoticeWithAutoClear` で `clearLaunchNotice()` を再利用 |
+| 3 | `lib/searchEvents.ts` | `ResultsRenderDonePayload` 型を追加 |
+| 4 | `App.tsx` | `ResultsRenderDonePayload` のローカル定義を削除、import に変更。`getCurrentWindow()` 呼び出しを1回に統合 |
+| 5 | `stores/folder.ts` | 未使用の `isInFolderMode()` を削除 |
+| 6 | `lib/pathQuery.ts` | 到達不能な `lastSlash < 0` ガードを削除 |
+| 7 | `lib/truncatePath.ts` | キャッシュ溢れ時に全クリアではなく最古エントリ削除に変更 |
 
 ## 実装順序
 
-1. `ResultsWindow.tsx` — 4箇所に `.catch()` を追加
-2. `SearchWindow.tsx` — 3箇所に `.catch()` / try-catch を追加
-3. 検証: `npm run build` (typecheck + vite build)
-4. 検証: `npx vitest run` (既存テスト通過)
+### Phase 1: テスト確認
 
-## warn メッセージの命名規則
+既存テストで十分カバーされているため、新規テストの追加は不要:
+- `stores/search.test.ts` (19 tests) — debounce・通知・クエリ効果
+- `lib/pathQuery.test.ts` (9 tests) — パスクエリ解析
+- `lib/truncatePath.test.ts` (10 tests) — パス省略
 
-既存の `console.warn` に合わせ、`"<コンテキスト>: <何が失敗したか>"` 形式にする:
+### Phase 2: 実装（7項目、依存なし）
 
-```
-"ResultsWindow: failed to load bootstrap payload"
-"ResultsWindow: failed to listen show-icons-changed"
-"ResultsWindow: failed to listen visual-config-changed"
-"ResultsWindow: failed to listen results-sync"
-"SearchWindow: failed to listen window-shown"
-"SearchWindow: failed to listen focus-changed"
-"SearchWindow: failed to check initial visibility"
-```
+1. `stores/search.ts` — `cancelDebounce()` 抽出 + `setLaunchNoticeWithAutoClear` 修正
+2. `lib/searchEvents.ts` + `App.tsx` — 型移動 + `getCurrentWindow()` 統合
+3. `stores/folder.ts` — `isInFolderMode()` 削除
+4. `lib/pathQuery.ts` — 到達不能ガード削除
+5. `lib/truncatePath.ts` — キャッシュ eviction 改善
+
+### Phase 3: 検証
+
+- `npx vitest run` — 全テスト通過
+- `npm run build` — typecheck + vite build 通過
+
+## 不変条件
+
+- `cancelDebounce()` は `cancelAnimationFrame` + `undefined` 代入を原子的に行う。呼び出し元の制御フローは変更しない
+- `setLaunchNoticeWithAutoClear` で `clearLaunchNotice()` を呼ぶと一瞬 `setLaunchNotice(null)` が走るが、直後に `setLaunchNotice(message)` で上書きされる。SolidJS はバッチ更新するため中間レンダリングは発生しない
+- `truncatePath` のキャッシュ eviction 変更は出力値を変えない。キャッシュヒット率のみ改善
+- `ResultsRenderDonePayload` の型移動は runtime に影響しない（型のみ）
+
+## テスト方針
+
+検証コマンド: `npx vitest run` + `npm run build`
+
+## SPEC.md 更新要否
+
+不要。ユーザー向け挙動の変更なし。
+
+## セルフレビュー
+
+1. **対称コードパス**: `cancelDebounce` は全5箇所で使われる。`debouncedRefresh` (タイマー設定) と `cancelDebounce` (タイマー破棄) が対称ペアとして明確化される
+2. **影響範囲の網羅性**: `isInFolderMode` の grep 結果は定義箇所のみ（0 import）。削除安全
+3. **境界条件**: `truncatePath` のキャッシュ eviction で `keys().next().value` が `undefined` になるケースは `size >= MAX` ガードにより到達不能
+4. **リソース管理**: 該当なし。新規リソース導入なし
+5. **既存パターンとの整合**: `cancelDebounce` は `clearLaunchNotice` と同じ「タイマー破棄ヘルパー」パターン
+6. **YAGNI 違反**: なし。全項目が既存コードの整理のみ
+7. **シンプル化の挑戦**: 新たな状態・抽象・インターフェースを導入しない。既存コードの削減のみ
+8. **破壊不変条件の明示**: `clearLaunchNotice()` 呼び出し追加で `setLaunchNotice(null)` が一瞬走る点が唯一のリスク。SolidJS のバッチ更新で中間レンダリングが発生しないことを確認済み

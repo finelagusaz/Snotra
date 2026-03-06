@@ -55,10 +55,7 @@ function clearLaunchNotice() {
 }
 
 function setLaunchNoticeWithAutoClear(message: string) {
-  if (launchNoticeTimer !== undefined) {
-    clearTimeout(launchNoticeTimer);
-    launchNoticeTimer = undefined;
-  }
+  clearLaunchNotice();
   setLaunchNotice(message);
   launchNoticeTimer = setTimeout(() => {
     launchNoticeTimer = undefined;
@@ -74,10 +71,15 @@ function clearCommandModeStateAndEmit() {
   emitResults([], 0, requestId, { reason: "command", shouldShow: false });
 }
 
-function debouncedRefresh() {
+function cancelDebounce() {
   if (debounceTimer !== undefined) {
     cancelAnimationFrame(debounceTimer);
+    debounceTimer = undefined;
   }
+}
+
+function debouncedRefresh() {
+  cancelDebounce();
   debounceTimer = requestAnimationFrame(() => {
     debounceTimer = undefined;
     void runRefresh();
@@ -214,8 +216,7 @@ createRoot(() => {
       trace("search:query_effect", { query: q, trimmed });
 
       if (trimmed === "/r") {
-        if (debounceTimer !== undefined) cancelAnimationFrame(debounceTimer);
-        debounceTimer = undefined;
+        cancelDebounce();
         setSelected(0);
         trace("search:query_effect:immediate_refresh", { reason: "slash_r" });
         void runRefresh();
@@ -225,8 +226,7 @@ createRoot(() => {
       if (trimmed.startsWith("/")) {
         const cmd = findCommand(q);
         if (cmd && cmd.command !== "/r") {
-          if (debounceTimer !== undefined) cancelAnimationFrame(debounceTimer);
-          debounceTimer = undefined;
+          cancelDebounce();
           trace("search:query_effect:run_command", { command: cmd.command });
           clearCommandModeStateAndEmit();
           cmd.action();
@@ -234,8 +234,7 @@ createRoot(() => {
         }
 
         // Command mode without exact match: no suggestions, just clear results.
-        if (debounceTimer !== undefined) cancelAnimationFrame(debounceTimer);
-        debounceTimer = undefined;
+        cancelDebounce();
         trace("search:query_effect:slash_noop", { input: q });
         const requestId = ++searchGeneration;
         setResults([]);
@@ -307,8 +306,7 @@ function exitFolderExpansion(): boolean {
   if (!fs) return false;
 
   // デバウンスタイマーをクリア（フォルダモード中の入力残り処理を防止）
-  if (debounceTimer !== undefined) cancelAnimationFrame(debounceTimer);
-  debounceTimer = undefined;
+  cancelDebounce();
 
   const requestId = ++searchGeneration;
   setResults(fs.savedResults);
@@ -357,8 +355,7 @@ function runRefresh(): Promise<void> {
 
 async function flushPendingRefresh() {
   if (debounceTimer !== undefined) {
-    cancelAnimationFrame(debounceTimer);
-    debounceTimer = undefined;
+    cancelDebounce();
     await runRefresh();
     return;
   }
@@ -447,8 +444,7 @@ async function launchWithSelectedTool(): Promise<boolean> {
 
 async function enterToolSelection(result: SearchResult): Promise<boolean> {
   // 残存 debounce タイマーを破棄（C3対策）
-  if (debounceTimer !== undefined) cancelAnimationFrame(debounceTimer);
-  debounceTimer = undefined;
+  cancelDebounce();
 
   let tools: OpenerTool[];
   try {

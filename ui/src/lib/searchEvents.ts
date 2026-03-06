@@ -14,3 +14,7 @@ export interface ResultsSyncPayload {
   shouldShow: boolean;
   reason: ResultsPresentationReason;
 }
+
+export interface ResultsRenderDonePayload {
+  requestId: number;
+}

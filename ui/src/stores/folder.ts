@@ -10,7 +10,3 @@ export interface FolderFrame {
 
 export const [folderState, setFolderState] = createSignal<FolderFrame | null>(null);
 export const [folderFilter, setFolderFilter] = createSignal("");
-
-export function isInFolderMode(): boolean {
-  return folderState() !== null;
-}

@@ -31,13 +31,16 @@ import { t } from "../lib/i18n";
 const SearchWindow: Component = () => {
   let inputRef: HTMLInputElement | undefined;
   const focusRetryTimers: ReturnType<typeof setTimeout>[] = [];
+  let focusRafHandle: number | undefined;
 
   function focusInputSoon() {
-    // Two-frame defer avoids first-show races with native show/focus timing.
+    // Two-frame defer absorbs first-show native show/focus race on cold start.
+    // Retries at 120ms/280ms cover longer delays (WebView2 init etc.).
     const t0 = performance.now();
-    requestAnimationFrame(() => {
+    focusRafHandle = requestAnimationFrame(() => {
       const t1 = performance.now();
-      requestAnimationFrame(() => {
+      focusRafHandle = requestAnimationFrame(() => {
+        focusRafHandle = undefined;
         const t2 = performance.now();
         inputRef?.focus();
         const t3 = performance.now();
@@ -52,6 +55,10 @@ const SearchWindow: Component = () => {
   }
 
   function clearFocusRetryTimers() {
+    if (focusRafHandle !== undefined) {
+      cancelAnimationFrame(focusRafHandle);
+      focusRafHandle = undefined;
+    }
     for (const timer of focusRetryTimers) {
       clearTimeout(timer);
     }
@@ -143,7 +150,12 @@ const SearchWindow: Component = () => {
       folderMode: folderState() !== null,
       query: query(),
     });
-    // Prevent system beep when Alt-modified character keys slip in during focus transitions.
+    // Prevent system beep when Alt-modified character keys slip in during
+    // focus transitions.  Do NOT inject the character into the DOM here —
+    // doing so bypasses IME composition and corrupts the first keystroke
+    // under the default ime_off_on_show=false configuration.
+    // The Rust-side send_alt_key_up() is the primary mitigation; this guard
+    // is a last-resort fallback that silently drops the Alt+char event.
     if (e.altKey && !e.ctrlKey && e.key.length === 1) {
       trace("ui:key_down:blocked_alt_char", { key: e.key });
       e.preventDefault();

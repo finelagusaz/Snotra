@@ -125,6 +125,32 @@ fn wait_alt_release_or_timeout() {
     }
 }
 
+/// Synthesize an Alt key-up event via `SendInput` to clear any lingering Alt
+/// modifier state in the OS keyboard buffer.  Called just before showing the
+/// search window so that WebView2 does not interpret the first keystroke as
+/// Alt+<char> (which causes the character to be swallowed and a system beep).
+#[cfg(windows)]
+fn send_alt_key_up() {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, VK_MENU,
+    };
+    let mut input = INPUT {
+        r#type: INPUT_KEYBOARD,
+        ..Default::default()
+    };
+    input.Anonymous.ki = KEYBDINPUT {
+        wVk: VK_MENU,
+        dwFlags: KEYEVENTF_KEYUP,
+        ..Default::default()
+    };
+    unsafe {
+        let _ = SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
+    }
+}
+
+#[cfg(not(windows))]
+fn send_alt_key_up() {}
+
 fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
     let t0 = Instant::now();
     let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
@@ -366,10 +392,14 @@ fn main() {
                         if hotkey_generation_for_wait.load(Ordering::SeqCst) != current_gen {
                             return;
                         }
+                        // Clear lingering Alt state before showing (hotkey-path only).
+                        send_alt_key_up();
                         show_main_and_emit(&handle_for_show, ime_control);
                     });
                 } else {
                     trace_main("hotkey:show_direct", json!({}));
+                    // Clear lingering Alt state before showing (hotkey-path only).
+                    send_alt_key_up();
                     show_main_and_emit(&handle_for_hotkey, ime_control);
                 }
             });

@@ -138,10 +138,12 @@ const SearchWindow: Component = () => {
     });
     // Alt modifier may linger after the hotkey combo; prevent the system beep
     // but still inject the character into the input so it is not lost.
+    // During tool selection or indexing, handleInput ignores dispatched events,
+    // so skip the rescue to avoid DOM / reactive-state divergence.
     if (e.altKey && !e.ctrlKey && e.key.length === 1) {
       trace("ui:key_down:alt_char_rescue", { key: e.key });
       e.preventDefault();
-      if (inputRef) {
+      if (inputRef && !toolSelectionState() && !indexing()) {
         const start = inputRef.selectionStart ?? inputRef.value.length;
         const end = inputRef.selectionEnd ?? start;
         inputRef.value =

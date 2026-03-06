@@ -392,11 +392,13 @@ fn main() {
                         if hotkey_generation_for_wait.load(Ordering::SeqCst) != current_gen {
                             return;
                         }
+                        // Clear lingering Alt state before showing (hotkey-path only).
                         send_alt_key_up();
                         show_main_and_emit(&handle_for_show, ime_control);
                     });
                 } else {
                     trace_main("hotkey:show_direct", json!({}));
+                    // Clear lingering Alt state before showing (hotkey-path only).
                     send_alt_key_up();
                     show_main_and_emit(&handle_for_hotkey, ime_control);
                 }

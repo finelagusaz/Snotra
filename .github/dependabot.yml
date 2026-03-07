@@ -1,0 +1,22 @@
+version: 2
+
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      rust-minor:
+        update-types: [minor, patch]
+    reviewers:
+      - finelagusaz
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      npm-minor:
+        update-types: [minor, patch]
+    reviewers:
+      - finelagusaz

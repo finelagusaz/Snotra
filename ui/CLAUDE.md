@@ -70,6 +70,12 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 - 新しいイベントハンドラを追加するとき、対称ペアのハンドラにも同様の処理が必要か確認する（例: `result-clicked` を変更したら `result-double-clicked` も確認する）
 - リソース管理（`ResizeObserver`・`listen()` 等）は生成と破棄を近接した独立したクリーンアップとして記述する。複数のリソースを1つの `onCleanup` にまとめると、一方の条件（`if (listRef)` 等）が他方のクリーンアップ登録を阻害する
 
+## Blob URL 管理の不変条件
+
+- アイコンの Blob URL は `LruIconCache`（`lruIconCache.ts`）が一元管理する。`URL.createObjectURL` で生成した URL は必ず `cache.set()` または早期リターン時の明示的 `revokeObjectURL` で回収する
+- `parseBinaryBatch` で Blob URL を生成した後、`cache.set()` に到達する前に早期リターンするパス（stale guard 等）では、`parsed` 内の全 URL を明示的に `revokeObjectURL` すること
+- `results-visibility-changed` で `cache.revokeAll()` を呼んだ後は `iconCacheVersion` を更新し、revoke 済み URL が `<img src>` に渡らないようにする
+
 ## 設計上の注意点
 
 ### result-clicked / result-double-clicked のペイロード型

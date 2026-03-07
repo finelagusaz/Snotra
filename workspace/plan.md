@@ -2,11 +2,12 @@
 
 ## 設計方針
 
-- **新規イベント `hotkey-registration-failed`** を統一窓口とする:
-  - 初回失敗: 既存 `platform-event: "initial-hotkey-failed"` を維持（ウィンドウ表示用）+ 新イベントを追加 emit
-  - 設定変更失敗: `eprintln!` に加え新イベントを emit
-- **ペイロード型**: `{ hotkey: String, is_initial: bool }` を `serde_json::json!()` で構成
-- **フロントエンド通知**: `setHotkeyFailureNotice(msg)` を `search.ts` に追加 export し、`MainApp.tsx` で listen
+- **イベントを役割で分離**:
+  - 初回失敗: `platform-event` のペイロードを `{ event: "initial-hotkey-failed", hotkey: "Alt+Q" }` に変更し、同ハンドラ内で通知を完結させる（`hotkey-registration-failed` は emit しない）
+  - 設定変更失敗: 新規 `hotkey-registration-failed` イベントを emit し、専用リスナーで通知
+- **初回失敗で `hotkey-registration-failed` を使わない理由**: `platform-event` ハンドラは `async` で `await win.show()` を含む。この await 中に別イベントハンドラが割り込んで通知をセットしても、後続の `resetForShow()` → `clearLaunchNotice()` で消えてしまう競合がある。通知は `resetForShow()` の後に同一ハンドラ内でセットすることで排除する
+- **unlisten パターン**: 新規リスナーはパターン B（個別 await + `unlistenFns.push`）で追加。Promise.all ブロックは変更しない
+- **フロントエンド通知**: `setHotkeyFailureNotice(msg)` を `search.ts` に追加 export し、`MainApp.tsx` で呼ぶ
 
 ## 変更ファイル一覧（6ファイル）
 
@@ -27,12 +28,11 @@
 ```rust
 PlatformCommand::RegisterInitialHotkey => {
     if !hotkey::register(current_hotkey) {
-        let _ = app_handle.emit("platform-event", "initial-hotkey-failed");
-        // 新規追加
+        // ペイロードに hotkey を埋め込む（フロント側の競合回避のため 1イベントに統合）
         let hotkey_str = format!("{}+{}", current_hotkey.modifier, current_hotkey.key);
-        let _ = app_handle.emit("hotkey-registration-failed", serde_json::json!({
+        let _ = app_handle.emit("platform-event", serde_json::json!({
+            "event": "initial-hotkey-failed",
             "hotkey": hotkey_str,
-            "is_initial": true,
         }));
     }
 }
@@ -91,21 +91,48 @@ export function setHotkeyFailureNotice(message: string) {
 ### Phase 4: フロントエンド — MainApp.tsx にリスナー追加
 
 **`ui/src/MainApp.tsx`**:
+
+**4a. `platform-event` ハンドラを更新（初回失敗の通知を resetForShow() の後にセット）**:
+```ts
+// listen<string> → listen<{event: string; hotkey: string} | string> に型変更
+listen<{ event: string; hotkey: string } | string>("platform-event", async (ev) => {
+  const p = ev.payload;
+  const isObj = typeof p === "object";
+  const isInitialFail = isObj
+    ? p.event === "initial-hotkey-failed"
+    : p === "initial-hotkey-failed";
+  if (isInitialFail) {
+    trace("app:event:platform_event:initial_hotkey_failed");
+    try {
+      controller.updateMainVisible(true);
+      await win.show();
+      api.notifyMainShown().catch(() => {});
+    } catch (e) {
+      console.warn("platform-event: failed to show window on initial-hotkey-failed:", e);
+    }
+    resetForShow();
+    // resetForShow() で clearLaunchNotice() が呼ばれた後に通知をセット（競合回避）
+    if (isObj) {
+      setHotkeyFailureNotice(t("notice.hotkey.initial_failed", { hotkey: p.hotkey }));
+    }
+  }
+}),
+```
+
+**4b. `hotkey-registration-failed` リスナーを個別 await パターン（パターン B）で追加**:
+Promise.all ブロックには追加しない。`unlistenMaxResults` の後（line 169 の後）に追加する。
+
 ```ts
 // import に追加
 import { setHotkeyFailureNotice } from "./stores/search";
 
-// listen ブロック内に追加
-listen<{ hotkey: string; is_initial: boolean }>("hotkey-registration-failed", (event) => {
-  const { hotkey, is_initial } = event.payload;
-  const msg = is_initial
-    ? t("notice.hotkey.initial_failed", { hotkey })
-    : t("notice.hotkey.change_failed", { hotkey });
-  setHotkeyFailureNotice(msg);
-}),
+// line 169 の後に追加
+const unlistenHotkeyFailed = await listen<{ hotkey: string }>("hotkey-registration-failed", (event) => {
+  const { hotkey } = event.payload;
+  setHotkeyFailureNotice(t("notice.hotkey.change_failed", { hotkey }));
+});
+unlistenFns.push(unlistenHotkeyFailed);
 ```
-
-`unlisten` 配列（`unlistenFns`）にも必ず追加する。
 
 ### Phase 5: SPEC.md 更新
 
@@ -117,8 +144,8 @@ line 393 を分割:
 
 ## 不変条件
 
-1. `platform-event: "initial-hotkey-failed"` の既存ペイロード型（`string`）・ハンドラを変更しない
-2. `hotkey-registration-failed` リスナーは `unlistenFns` に push して `onCleanup` で unlisten する
+1. `platform-event: "initial-hotkey-failed"` ハンドラで `resetForShow()` の後に通知をセットすることで、`clearLaunchNotice()` による競合を排除する
+2. `hotkey-registration-failed` リスナーは Promise.all ブロックに追加せず、個別 await パターン（`unlistenMaxResults` の後）で追加し `unlistenFns.push()` を隣接して記述する
 3. `setHotkeyFailureNotice` は `setLaunchNoticeWithAutoClear` 内の `clearLaunchNotice()` 先頭呼び出しを通じて、タイマーを単一管理する（競合防止）
 4. `format!("{}+{}", modifier, key)` は UI 表示文字列ではなくホットキー識別子。snotra-core の「UI 文字列を持たない」原則には抵触しない（これは src-tauri 内のコード）
 

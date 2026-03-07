@@ -125,27 +125,56 @@ fn wait_alt_release_or_timeout() {
     }
 }
 
-/// Synthesize an Alt key-up event via `SendInput` to clear any lingering Alt
-/// modifier state in the OS keyboard buffer.  Called just before showing the
-/// search window so that WebView2 does not interpret the first keystroke as
-/// Alt+<char> (which causes the character to be swallowed and a system beep).
+/// Clear lingering Alt modifier state via `SendInput` before showing the
+/// search window.  Uses the AutoHotkey "MenuMaskKey" technique: a dummy
+/// key-down/up (vkE8, unassigned) is injected *before* the Alt key-up so
+/// that Windows does not treat the Alt release as a bare Alt-up, which
+/// would activate the menu bar or trigger a system beep.
 #[cfg(windows)]
 fn send_alt_key_up() {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, VK_MENU,
+        INPUT, SendInput, VK_LMENU, VK_MENU, VK_RMENU, VIRTUAL_KEY,
+    };
+
+    const VK_MASK: VIRTUAL_KEY = VIRTUAL_KEY(0xE8); // unassigned — safe dummy key
+
+    let inputs = [
+        make_key_input(VK_MASK, false),  // mask key down
+        make_key_input(VK_MASK, true),   // mask key up
+        make_key_input(VK_MENU, true),   // Alt (generic) up
+        make_key_input(VK_LMENU, true),  // Left Alt up
+        make_key_input(VK_RMENU, true),  // Right Alt up
+    ];
+    unsafe {
+        let _ = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+    }
+    // Brief pause so WebView2 processes the synthetic key-ups before
+    // receiving actual user keystrokes.
+    std::thread::sleep(std::time::Duration::from_millis(5));
+}
+
+#[cfg(windows)]
+fn make_key_input(
+    vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY,
+    is_up: bool,
+) -> windows::Win32::UI::Input::KeyboardAndMouse::INPUT {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYBD_EVENT_FLAGS,
     };
     let mut input = INPUT {
         r#type: INPUT_KEYBOARD,
         ..Default::default()
     };
     input.Anonymous.ki = KEYBDINPUT {
-        wVk: VK_MENU,
-        dwFlags: KEYEVENTF_KEYUP,
+        wVk: vk,
+        dwFlags: if is_up {
+            KEYEVENTF_KEYUP
+        } else {
+            KEYBD_EVENT_FLAGS::default()
+        },
         ..Default::default()
     };
-    unsafe {
-        let _ = SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
-    }
+    input
 }
 
 #[cfg(not(windows))]

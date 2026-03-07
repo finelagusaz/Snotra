@@ -1,7 +1,7 @@
 import { type Component, For, createSignal, onMount, onCleanup } from "solid-js";
 import { emit, listen } from "@tauri-apps/api/event";
 import type { SearchResult } from "../lib/types";
-import type { ResultsSyncPayload } from "../lib/searchEvents";
+import type { ResultsDataPayload, ResultsSelectionPayload } from "../lib/searchEvents";
 import * as api from "../lib/invoke";
 import ResultRow from "./ResultRow";
 
@@ -141,45 +141,51 @@ const ResultsWindow: Component = () => {
       onCleanup(() => ro.disconnect());
     }
 
-    let unlisten: (() => void) | undefined;
-    onCleanup(() => unlisten?.());
-
-    void listen<ResultsSyncPayload>("results-sync", (event) => {
-      if (event.payload.generation < latestGeneration) {
-        return;
-      }
-      const isSelectionOnly =
-        event.payload.reason === "selection" &&
-        event.payload.generation === latestGeneration;
-      latestGeneration = event.payload.generation;
-      if (!isSelectionOnly) {
-        setResults(event.payload.results);
-        void fetchIcons(event.payload.results, event.payload.generation);
-      }
-      setSelected(event.payload.selected);
-      if (
-        event.payload.selected !== lastScrolledSelected ||
-        event.payload.generation !== lastScrolledGeneration
-      ) {
-        lastScrolledSelected = event.payload.selected;
-        lastScrolledGeneration = event.payload.generation;
+    function scrollToSelected(selectedIdx: number, generation: number) {
+      if (selectedIdx !== lastScrolledSelected || generation !== lastScrolledGeneration) {
+        lastScrolledSelected = selectedIdx;
+        lastScrolledGeneration = generation;
         queueMicrotask(() => {
           if (!listRef) return;
-          const row = listRef.children[event.payload.selected] as HTMLElement | undefined;
+          const row = listRef.children[selectedIdx] as HTMLElement | undefined;
           if (!row) return;
           ensureRowVisible(listRef, row);
         });
       }
+    }
+
+    function emitRenderDone(generation: number) {
       // rAF でフレームが確定した直後に emit する。
       // results-render-done は perfMarkRenderDone（計測専用）に使われるため、
       // 非表示ウィンドウで rAF がスロットリングされても UX には影響しない。
       requestAnimationFrame(() => {
-        void emit("results-render-done", { requestId: event.payload.generation })
+        void emit("results-render-done", { requestId: generation })
           .catch((e) => console.warn("ResultsWindow: failed to emit results-render-done:", e));
       });
-    }).then((fn) => {
-      unlisten = fn;
-    }).catch((e) => console.warn("ResultsWindow: failed to listen results-sync:", e));
+    }
+
+    let unlistenData: (() => void) | undefined;
+    onCleanup(() => unlistenData?.());
+    void listen<ResultsDataPayload>("results-data-changed", (event) => {
+      if (event.payload.generation < latestGeneration) return;
+      latestGeneration = event.payload.generation;
+      setResults(event.payload.results);
+      void fetchIcons(event.payload.results, event.payload.generation);
+      setSelected(event.payload.selected);
+      scrollToSelected(event.payload.selected, event.payload.generation);
+      emitRenderDone(event.payload.generation);
+    }).then((fn) => { unlistenData = fn; })
+      .catch((e) => console.warn("ResultsWindow: failed to listen results-data-changed:", e));
+
+    let unlistenSelection: (() => void) | undefined;
+    onCleanup(() => unlistenSelection?.());
+    void listen<ResultsSelectionPayload>("results-selection-changed", (event) => {
+      if (event.payload.generation < latestGeneration) return;
+      setSelected(event.payload.selected);
+      scrollToSelected(event.payload.selected, event.payload.generation);
+      emitRenderDone(event.payload.generation);
+    }).then((fn) => { unlistenSelection = fn; })
+      .catch((e) => console.warn("ResultsWindow: failed to listen results-selection-changed:", e));
   });
 
   let hoverTimer: ReturnType<typeof setTimeout> | undefined;

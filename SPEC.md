@@ -126,17 +126,23 @@
 - 検索ボックスが空のときは候補を表示しない
 - 直近履歴は `/r` コマンドで明示的に表示する（§14.2 参照）
 
-### 3.7 結果表示同期契約（results-sync）
+### 3.7 結果表示同期契約（3イベント分割）
 
-- 検索結果の表示責務は `results-sync` イベント1本に統一する
-- 旧イベント（`results-updated` / `results-count-changed`）は使用しない
-- `results-sync` の payload は以下を持つ
+- 検索結果の表示同期は以下の3イベントで行う（選択変更時の不要な配列シリアライズを回避）
+- **`results-data-changed`**: 結果配列が変わったとき
   - `generation`: リクエスト世代番号。受信側は古い世代を破棄する
   - `results`: 表示候補配列
   - `selected`: 選択インデックス
   - `shouldShow`: 結果ウィンドウを表示すべきか
   - `reason`: 送信理由（`query` / `command` / `selection` / `reset` / `launch`）
-- 表示制御は `shouldShow` を唯一の真実源（single source of truth）として扱う
+- **`results-selection-changed`**: 選択インデックスのみ変わったとき（配列を送らない）
+  - `generation`: リクエスト世代番号
+  - `selected`: 選択インデックス
+- **`results-visibility-changed`**: 結果ウィンドウを非表示にするとき（配列を送らない）
+  - `generation`: リクエスト世代番号
+  - `shouldShow`: 常に `false`
+  - `reason`: 送信理由（`command` / `reset` / `launch`）
+- 表示制御は `shouldShow`（`results-data-changed` / `results-visibility-changed`）を唯一の真実源として扱う
 
 ## 4. 履歴・優先度システム
 

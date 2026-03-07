@@ -40,6 +40,7 @@ import {
   activateSelected,
   enterToolSelection,
   exitToolSelection,
+  moveSelectionDown,
   refreshResults,
   resetForShow,
   toolSelectionState,
@@ -247,30 +248,37 @@ describe("resetForShow", () => {
     expect(selected()).toBe(0);
   });
 
-  it("クリーン状態では emit('results-sync') を呼ばない", async () => {
+  it("クリーン状態では結果イベントを emit しない", async () => {
     // 初期状態: query="", folderState=null, toolSelectionState=null
     const emitMock = eventApi.emit as Mock;
     emitMock.mockClear();
 
     resetForShow();
 
-    // runRefresh() がスキップされるため results-sync IPC は発生しない
+    // runRefresh() がスキップされるため IPC は発生しない
     await vi.runAllTimersAsync();
-    const resultsSyncCalls = emitMock.mock.calls.filter((args) => args[0] === "results-sync");
-    expect(resultsSyncCalls).toHaveLength(0);
+    const resultsCalls = emitMock.mock.calls.filter((args) =>
+      args[0] === "results-data-changed" ||
+      args[0] === "results-selection-changed" ||
+      args[0] === "results-visibility-changed"
+    );
+    expect(resultsCalls).toHaveLength(0);
   });
 
-  it("クエリが非空なら emit('results-sync') を呼ぶ", async () => {
+  it("クエリが非空なら結果イベントを emit する", async () => {
     setQuery("hello");
     const emitMock = eventApi.emit as Mock;
     emitMock.mockClear();
 
     resetForShow();
 
-    // runRefresh() が走るため results-sync IPC が発生する
+    // runRefresh() が走るため結果イベントが発生する
     await vi.runAllTimersAsync();
-    const resultsSyncCalls = emitMock.mock.calls.filter((args) => args[0] === "results-sync");
-    expect(resultsSyncCalls.length).toBeGreaterThan(0);
+    const resultsCalls = emitMock.mock.calls.filter((args) =>
+      args[0] === "results-data-changed" ||
+      args[0] === "results-visibility-changed"
+    );
+    expect(resultsCalls.length).toBeGreaterThan(0);
   });
 });
 
@@ -377,5 +385,32 @@ describe("refreshResults ガード (C3)", () => {
     await refreshResults();
 
     expect(api.listFolder).not.toHaveBeenCalled();
+  });
+});
+
+// ── selection-only IPC 軽量化 (#162) ──────────────────────────────────────────
+
+describe("selection-only IPC (#162)", () => {
+  it("moveSelectionDown は results-selection-changed のみ emit し results-data-changed は emit しない", async () => {
+    // 結果を2件セットアップ
+    const items: SearchResult[] = [
+      { name: "a.txt", path: "C:\\a.txt", isFolder: false, isError: false },
+      { name: "b.txt", path: "C:\\b.txt", isFolder: false, isError: false },
+    ];
+    vi.mocked(api.search).mockResolvedValue(items);
+    setQuery("test");
+    await vi.runAllTimersAsync();
+
+    const emitMock = eventApi.emit as Mock;
+    emitMock.mockClear();
+
+    moveSelectionDown();
+
+    const dataCalls = emitMock.mock.calls.filter((args) => args[0] === "results-data-changed");
+    const selectionCalls = emitMock.mock.calls.filter((args) => args[0] === "results-selection-changed");
+
+    expect(dataCalls).toHaveLength(0);
+    expect(selectionCalls).toHaveLength(1);
+    expect(selectionCalls[0][1]).toMatchObject({ selected: 1 });
   });
 });

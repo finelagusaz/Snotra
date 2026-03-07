@@ -11,7 +11,7 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 ### components/
 
 - `SearchWindow.tsx`: 検索入力 + キーボードナビゲーション + スラッシュコマンド補完 + ドラッグ移動
-- `ResultsWindow.tsx`: 別 WebviewWindow で動作する検索結果ウィンドウ。`results-sync` イベントを受け取り結果一覧を描画。アイコンのバイナリバッチ取得・Blob URL 管理・スクロール追従を担当
+- `ResultsWindow.tsx`: 別 WebviewWindow で動作する検索結果ウィンドウ。`results-data-changed` / `results-selection-changed` イベントを受け取り結果一覧を描画。アイコンのバイナリバッチ取得・Blob URL 管理・スクロール追従を担当
 - `ResultRow.tsx`: アイコン + 名前 + パス + フォルダバッジ（1行分の描画）
 - `ToggleSwitch.tsx`: トグルスイッチ共通 UI コンポーネント
 - `ThemePreview.tsx`: `VisualConfig` を受け取ってテーマの縮小プレビューを描画
@@ -19,7 +19,7 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 
 ### stores/
 
-- `search.ts`: 検索状態管理（クエリ/結果/選択/モード切替/`results-sync` emit）
+- `search.ts`: 検索状態管理（クエリ/結果/選択/モード切替/`results-data-changed` / `results-selection-changed` / `results-visibility-changed` emit）
 - `folder.ts`: フォルダモードの状態（`FolderFrame` シグナル + `folderFilter`）
 - `tool-selection.ts`: ツール選択モードの状態（`ToolSelectionFrame` シグナル）
 - `settings.ts`: 設定ドラフト管理
@@ -32,7 +32,7 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 - `types.ts`: TypeScript 型定義の集約先（DRY）
 - `commands.ts`: スラッシュコマンド定義（`/r` `/o` `/s` `/q`）と `SLASH_COMMANDS` 配列・`findCommand()` 関数
 - `i18n.ts`: 日本語ローカライズ。`TranslationKey` 型と `t(key, params?)` 関数。`{param}` 形式プレースホルダー対応
-- `searchEvents.ts`: `ResultsSyncPayload` 型定義（`results-sync` イベントのペイロード構造）
+- `searchEvents.ts`: `ResultsDataPayload` / `ResultsSelectionPayload` / `ResultsVisibilityPayload` 型定義（3分割イベントのペイロード構造）
 - `folderNav.ts`: フォルダナビゲーション純粋ロジック（`computeParentDir`・`clampSelectedIndex`）。ドライブルート・UNC パス対応。テスト可能なため `stores/` から分離
 - `pathQuery.ts`: パスクエリ判定ロジック（`parsePathQuery`・`isPathQuery`）。入力がパス形式かを判定しフォルダ参照モードへの切り替えをトリガー
 - `hotkeyValidation.ts`: ホットキーの有効性チェック（`isHotkeyInvalid`・`formatHotkeyLabel`）。Win キー・禁止キー・修飾キーなしをガード
@@ -61,9 +61,9 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 
 ## マルチウィンドウ通信の不変条件
 
-`main` と `results` は別 `WebviewWindow` であり JavaScript コンテキストを共有しない。`ResultsWindow` は `results-sync` Tauri イベントのみで状態を受け取る。以下の不変条件を守ること。
+`main` と `results` は別 `WebviewWindow` であり JavaScript コンテキストを共有しない。`ResultsWindow` は `results-data-changed` / `results-selection-changed` Tauri イベントで状態を受け取る。以下の不変条件を守ること。
 
-- `search.ts` の状態（`results`・`selected`）を変更したとき、`ResultsWindow` への通知が必要な場合は必ず `emitResults()` または `emitSelectionUpdate()` を呼ぶ
+- `search.ts` の状態（`results`・`selected`）を変更したとき、`ResultsWindow` への通知が必要な場合は必ず `emitDataChanged()` / `emitSelectionChanged()` / `emitVisibilityChanged()` のいずれかを呼ぶ
 - イベントリスナー（`listen()`）を登録したら必ず `onCleanup()` で後始末する。`onCleanup` の登録は `listen()` の呼び出しより前、同期コンテキストで行うこと（`await` や `.then()` の後ではリアクティブコンテキストが失われる）
 - 新しいイベントハンドラを追加するとき、対称ペアのハンドラにも同様の処理が必要か確認する（例: `result-clicked` を変更したら `result-double-clicked` も確認する）
 - リソース管理（`ResizeObserver`・`listen()` 等）は生成と破棄を近接した独立したクリーンアップとして記述する。複数のリソースを1つの `onCleanup` にまとめると、一方の条件（`if (listRef)` 等）が他方のクリーンアップ登録を阻害する

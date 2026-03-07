@@ -1,166 +1,103 @@
-# Plan: ResultsWindow アイコンキャッシュ LRU 化 (#164)
+# Plan: getBootstrapPayload() の重複取得削減 (#166)
 
 ## 変更ファイル一覧
 
-1. **`ui/src/components/ResultsWindow.tsx`** — iconCache を LRU 化、非表示時解放、fetchIcons 遅延実行
-2. **`ui/src/lib/lruIconCache.ts`** — 新規。LRU キャッシュ + Blob URL 管理のヘルパー
-3. **`ui/src/lib/lruIconCache.test.ts`** — 新規。LRU キャッシュのユニットテスト
-4. **`ui/CLAUDE.md`** — モジュール構成に `lruIconCache.ts` を追加
+1. **`ui/src/ResultsApp.tsx`** — bootstrap 呼び出しを削除（テーマ初期適用の責務を ResultsWindow に移す）
+2. **`ui/src/components/ResultsWindow.tsx`** — 既存の bootstrap 呼び出しにテーマ適用を追加
+3. **`ui/src/lib/invoke.ts`** — 変更なし（`getBootstrapPayload` は MainApp から引き続き使用）
+4. **`src-tauri/src/commands/config.rs`** — 変更なし
 
 ## 実装順序
 
-### Phase 1: LRU キャッシュヘルパー作成
+### Phase 1: ResultsWindow.tsx に テーマ適用を追加
 
-`ui/src/lib/lruIconCache.ts`:
-
+現状（L91-95）:
 ```ts
-const MAX_ICON_CACHE_SIZE = 200;
-
-/** Blob URL 追跡付き LRU キャッシュ。
- *  Map の挿入順序を利用: get 時に delete→re-set で末尾に移動。
- *  先頭が最古（LRU）。 */
-export class LruIconCache {
-  private map = new Map<string, string>();  // path → Blob URL
-
-  get(path: string): string | undefined {
-    const url = this.map.get(path);
-    if (url !== undefined) {
-      // LRU 更新: 末尾に移動
-      this.map.delete(path);
-      this.map.set(path, url);
-    }
-    return url;
-  }
-
-  set(path: string, url: string): void {
-    if (this.map.has(path)) {
-      // 既存エントリを更新（古い URL を revoke）
-      const old = this.map.get(path)!;
-      this.map.delete(path);
-      if (old !== url) URL.revokeObjectURL(old);
-    }
-    this.map.set(path, url);
-    this.evict();
-  }
-
-  has(path: string): boolean {
-    return this.map.has(path);
-  }
-
-  /** 全エントリの Blob URL を revoke してクリア */
-  revokeAll(): void {
-    for (const url of this.map.values()) {
-      URL.revokeObjectURL(url);
-    }
-    this.map.clear();
-  }
-
-  get size(): number {
-    return this.map.size;
-  }
-
-  private evict(): void {
-    while (this.map.size > MAX_ICON_CACHE_SIZE) {
-      const first = this.map.keys().next().value;
-      if (first === undefined) break;
-      const url = this.map.get(first)!;
-      URL.revokeObjectURL(url);
-      this.map.delete(first);
-    }
-  }
-}
+void api.getBootstrapPayload().then((bootstrap) => {
+  setShowIcons(bootstrap.appearance.show_icons);
+}).catch(...);
 ```
 
-**設計判断**: `iconUrls` Set は廃止。`LruIconCache` 内の Map が URL のライフサイクルを一元管理する。`revokeAllIconUrls()` は `cache.revokeAll()` に置換。
-
-### Phase 2: ResultsWindow.tsx の更新
-
-変更点:
-1. `iconCache` シグナル (`Map<string, string>`) → `LruIconCache` インスタンス（シグナルではなくモジュールスコープ変数）
-2. `iconCacheVersion` シグナル (`number`) を追加: cache 更新時にインクリメントし、SolidJS の再描画をトリガー
-3. `iconUrls` Set と `revokeAllIconUrls()` を削除（LruIconCache に統合）
-4. `parseBinaryBatch()`: `iconUrls.add(url)` を削除（cache.set が管理）
-5. `fetchIcons()`: `cache.has()` / `cache.set()` を使用。末尾で `setIconCacheVersion(v => v + 1)` で再描画トリガー
-6. `results-visibility-changed` リスナー追加: `cache.revokeAll()` + version リセット
-7. `fetchIcons` 呼び出しを `requestAnimationFrame` でラップ（遅延実行）
-8. `show-icons-changed(false)` ハンドラ: `cache.revokeAll()` に変更
-9. `onCleanup`: `cache.revokeAll()` に変更
-10. テンプレート内 `iconCache().get(result.path)` → `iconCacheVersion(), cache.get(result.path)` に変更
-
-**SolidJS リアクティブ戦略の変更理由**: 現在は `iconCache` を `createSignal<Map>` で管理しているが、毎回 `new Map(cache)` でコピーするのはキャッシュサイズ増加とともにコストが上がる。`LruIconCache` + `iconCacheVersion` カウンタにすれば、コピーコストゼロで再描画トリガーが可能。
-
-### Phase 3: テスト作成
-
-`ui/src/lib/lruIconCache.test.ts`:
-
-テストケース:
-- `set` で追加し `get` で取得できる
-- `get` した要素は LRU 末尾に移動する（eviction で最後に追い出される）
-- 上限超過時に最古エントリが evict される
-- evict 時に `URL.revokeObjectURL` が呼ばれる
-- `revokeAll` で全 URL が revoke される
-- `has` が正しく動作する
-- 同一パスの上書き時に古い URL が revoke される
-
-### Phase 4: CLAUDE.md 更新
-
-`ui/CLAUDE.md` の `lib/` セクションに追加:
+変更後:
+```ts
+void api.getBootstrapPayload().then((bootstrap) => {
+  setShowIcons(bootstrap.appearance.show_icons);
+  applyTheme(bootstrap.visual);
+}).catch(...);
 ```
-- `lruIconCache.ts`: Blob URL 管理付き LRU アイコンキャッシュ（`LruIconCache` クラス）。ResultsWindow で使用
+
+`applyTheme` の import を追加。
+
+### Phase 2: ResultsApp.tsx から bootstrap を削除
+
+現状:
+```ts
+import { getBootstrapPayload } from "./lib/invoke";
+// ...
+const bootstrap = await getBootstrapPayload();
+applyTheme(bootstrap.visual);
 ```
+
+変更後: bootstrap 呼び出しと `getBootstrapPayload` import を削除。`visual-config-changed` リスナーは残す（設定変更時のテーマ反映に必要）。
 
 ## 不変条件
 
-1. **Blob URL は必ず解放される**: `LruIconCache` の evict/revokeAll/set（上書き）で `URL.revokeObjectURL` が呼ばれる
-2. **revoke 済み URL が `<img src>` に渡されない**: `revokeAll()` 後は `iconCacheVersion` 更新で再描画され、`cache.get()` は `undefined` を返す
-3. **キャッシュサイズは上限を超えない**: `set` 後に `evict()` が走り、`MAX_ICON_CACHE_SIZE` 以下を保つ
-4. **テキスト描画後にアイコン取得が走る**: `requestAnimationFrame` で1フレーム遅延
-5. **非表示時にキャッシュがクリアされる**: `results-visibility-changed` で `cache.revokeAll()` + version 更新
+1. **テーマの初期適用は必ず行われる**: ResultsWindow.tsx の bootstrap 呼び出しでテーマ適用を行う。bootstrap 失敗時は CSS デフォルト値が使われる（現状と同じ振る舞い）
+2. **テーマの継続的な更新は `visual-config-changed` イベントで行われる**: ResultsApp.tsx のリスナーが維持される（変更なし）
+3. **`show_icons` の初期値は bootstrap から取得される**: 変更なし
+4. **MainApp の bootstrap 呼び出しは影響を受けない**: MainApp は `auto_hide_on_focus_lost` を含む完全な bootstrap を必要とするため、変更しない
+
+### テーマ適用タイミングの考慮
+
+- ResultsApp.tsx の bootstrap: `onMount` の `async` 内で即座に呼ばれる
+- ResultsWindow.tsx の bootstrap: `onMount` 内の fire-and-forget (`void ... .then()`) で呼ばれる
+- どちらも非同期なので、テーマ適用のタイミングに実質的な差はない
+- 結果: 初回描画でテーマ適用前に一瞬デフォルトスタイルが見える可能性があるが、これは現状でも同じ
 
 ## テスト方針
 
-- `ui/src/lib/lruIconCache.test.ts` — LRU キャッシュの純粋ロジックテスト
-  - `URL.revokeObjectURL` / `URL.createObjectURL` のモック
+- `npm run build` — ビルド成功確認（型チェック含む）
 - `npm test` — 既存テストが壊れないことを確認
-- `npm run build` — ビルド成功確認
+- 手動確認: テーマ反映と show_icons 初期化が従来どおり動くこと
+
+### 検証コマンド
+
+```bash
+npm run build    # 必須: typecheck + vite build
+npm test         # 必須: 既存テスト維持
+```
 
 ## SPEC.md 更新要否
 
-**不要**。挙動変更なし（内部のメモリ管理改善のみ）。SPEC.md §2.4 のアイコン仕様に変更はない。
+**不要**。外部挙動の変更なし（内部の IPC 呼び出し回数削減のみ）。
 
 ## セルフレビュー
 
 ### 1. 対称コードパス
-- `results-data-changed`（アイコン取得）と `results-visibility-changed`（アイコン解放）が対称ペア — 計画に含まれている
-- `show-icons-changed(true)` は現在何もしない（次の検索で fetchIcons が走る）。`show-icons-changed(false)` で cache.revokeAll() — 対称性OK
+- `applyTheme` は MainApp / ResultsApp の両方で呼ばれていた → ResultsApp の呼び出しを ResultsWindow に移動するだけ。MainApp 側に影響なし
+- `visual-config-changed` リスナーは ResultsApp.tsx に残る（テーマ変更時の継続反映）
 
 ### 2. 影響範囲の網羅性
-- `iconCache` の参照箇所: ResultsWindow.tsx 内のみ。他ファイルからの参照なし
-- `iconUrls` の参照箇所: ResultsWindow.tsx 内のみ
-- `parseBinaryBatch` の `iconUrls.add(url)` 行の削除: cache.set 内で管理に移行
+- `getBootstrapPayload` の呼び出し箇所: MainApp.tsx:168、ResultsApp.tsx:20、ResultsWindow.tsx:93 → ResultsApp.tsx:20 を削除、ResultsWindow.tsx:93 にテーマ適用を追加
+- `applyTheme` の呼び出し箇所: MainApp.tsx:169、ResultsApp.tsx:21、ResultsApp.tsx:14（イベントリスナー内） → ResultsApp.tsx:21 を削除し ResultsWindow.tsx に移動。イベントリスナー内の呼び出しは残す
 
 ### 3. 境界条件
-- キャッシュサイズ 0 件: `evict` は while ループが回らない。OK
-- 同一パスの連続 set: 古い URL が revoke される。OK
-- 空の検索結果で fetchIcons: `missing.length === 0` で早期リターン。OK
+- bootstrap 取得失敗時: 既存の catch で warn ログ。テーマもアイコンもデフォルト値で動作（現状と同じ）
+- results ウィンドウが先に描画される場合: bootstrap は非同期なので、どちらにしても初期描画後にテーマが適用される（現状と同じ）
 
 ### 4. リソース管理
-- `LruIconCache` の生成: コンポーネントスコープで1つ。破棄: `onCleanup(() => cache.revokeAll())` — ペア完備
-- `results-visibility-changed` リスナーの生成/破棄: `listen().then(fn => unlisten = fn)` + `onCleanup(() => unlisten?.())` — 既存パターン踏襲
+- 新規リソースの追加なし。既存リスナーの構造変更なし
 
 ### 5. 既存パターンとの整合
-- LRU は `Map` の挿入順序を利用する標準パターン。外部ライブラリ不要
-- リスナー登録は既存の `onCleanup` + `listen().then()` パターンを踏襲
+- 新規パターンの導入なし。既存の bootstrap 呼び出しパターンを流用
 
 ### 6. YAGNI 違反
-- `MAX_ICON_CACHE_SIZE` を設定値にしない（定数で十分）
-- LRU クラスに不要な機能（TTL、統計等）を追加しない
+- なし。要求範囲（bootstrap IPC 削減）に限定した最小変更
 
 ### 7. シンプル化の挑戦
-- **`iconCacheVersion` カウンタ vs `createSignal<Map>`**: カウンタの方がシンプル。Map コピーのコストが消え、LRU ロジックも自然に書ける
-- **`iconUrls` Set の廃止**: LruIconCache が URL ライフサイクルを一元管理することで、二重管理（Map + Set）が解消される
-- **失敗時**: `fetchIcons` 失敗は既存の early return で処理。cache 状態は変わらない
+- 新たな状態・型・コマンドを一切導入しない最もシンプルな案を選択
+- 「ResultsWindow の bootstrap でテーマも適用する」という1行追加が変更の本質
 
 ### 8. 破壊不変条件の明示
-- **Blob URL の二重 revoke**: `revokeObjectURL` を同じ URL に2回呼ぶのはスペック上 no-op。安全
-- **revoke 済み URL の `<img src>` 参照**: `revokeAll()` 後に `iconCacheVersion` を更新しないと古い URL が参照される。計画では `revokeAll()` の直後に version 更新を必ずペアにしている。検知: 目視確認（画像が壊れる）
+- **テーマ未適用で results が表示される可能性**: bootstrap が遅れた場合、デフォルト CSS が見える。ただしこれは現状でも起こりうる（ResultsApp の bootstrap も非同期）。かつ results ウィンドウは初回は非表示で作成され、表示前に bootstrap が完了する可能性が高い
+- **検知**: 手動確認（テーマが反映されることを目視）

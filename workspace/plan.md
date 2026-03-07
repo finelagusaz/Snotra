@@ -1,133 +1,180 @@
-# Plan — results-sync 分割で selection-only IPC を軽量化 (#162)
+# Plan — main と results のフロントエンドを別エントリポイントに分割 (#163)
 
 ## 変更ファイル一覧
 
-1. **`ui/src/lib/searchEvents.ts`** — 型定義を3イベント分に変更
-2. **`ui/src/stores/search.ts`** — `emitResults` / `emitSelectionUpdate` を3つの emit 関数に置き換え
-3. **`ui/src/components/ResultsWindow.tsx`** — `results-sync` リスナーを3イベントリスナーに分割
-4. **`ui/src/App.tsx`** — `results-sync` リスナーを3イベントリスナーに分割（controller 連携）
-5. **`ui/src/lib/resultsWindowController.ts`** — `handleResultsSync` を分割して selection-only / visibility-only ハンドラを追加
-6. **`ui/src/stores/search.test.ts`** — テストのイベント名・ペイロード検証を更新
-7. **`CLAUDE.md`** — `results-sync` 1本ルールを3イベント分割ルールに更新
-8. **`ui/CLAUDE.md`** — マルチウィンドウ通信の不変条件を更新
+1. **`ui/main.html`** — 新規。main ウィンドウ用 HTML エントリ
+2. **`ui/results.html`** — 新規。results ウィンドウ用 HTML エントリ
+3. **`ui/src/main.tsx`** — 新規。main ウィンドウ用 JS エントリ（MainApp をレンダリング）
+4. **`ui/src/results.tsx`** — 新規。results ウィンドウ用 JS エントリ（ResultsApp をレンダリング）
+5. **`ui/src/MainApp.tsx`** — 新規。現 `App.tsx` の main 分岐ロジックを移行
+6. **`ui/src/ResultsApp.tsx`** — 新規。現 `App.tsx` の results 分岐ロジック（テーマ適用のみ）+ `ResultsWindow` レンダリング
+7. **`ui/src/App.tsx`** — 削除
+8. **`ui/src/index.tsx`** — 削除
+9. **`ui/index.html`** — 削除
+10. **`vite.config.ts`** — multi-page build 設定追加
+11. **`src-tauri/src/commands/window.rs`** — `WebviewUrl` を `results.html` に変更
+12. **`src-tauri/tauri.conf.json`** — main ウィンドウの URL を `main.html` に変更（必要な場合）
+13. **`ui/CLAUDE.md`** — エントリポイント構成を更新
 
 ## 実装順序
 
-### Phase 1: 型定義の更新 (`searchEvents.ts`)
+### Phase 1: HTML + エントリポイント作成
 
-- `ResultsSyncPayload` を廃止し、3つのペイロード型を定義:
-  - `ResultsDataPayload`: `{ generation, results, selected, shouldShow, reason }`
-  - `ResultsSelectionPayload`: `{ generation, selected }`
-  - `ResultsVisibilityPayload`: `{ generation, shouldShow, reason }`
+`ui/main.html`:
+```html
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Snotra</title>
+    <link rel="stylesheet" href="src/styles/global.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="src/main.tsx" type="module"></script>
+  </body>
+</html>
+```
 
-### Phase 2: 送信側の分割 (`search.ts`)
+`ui/results.html`: 同構造で `src/results.tsx` を読む。
 
-- `emitResults` を3つの関数に分割:
-  - `emitDataChanged(items, selectedIndex, generation, reason)`: `emit("results-data-changed", ...)`
-  - `emitSelectionChanged(selectedIndex, generation)`: `emit("results-selection-changed", ...)`
-  - `emitVisibilityChanged(shouldShow, generation, reason)`: `emit("results-visibility-changed", ...)`
-- 既存の `emitResults` 呼び出し 14 箇所を適切な関数に置き換え:
+`ui/src/main.tsx`:
+```tsx
+import { render } from "solid-js/web";
+import MainApp from "./MainApp";
 
-| 行 | 現在の reason | shouldShow | 置き換え先 |
-|----|-------------|-----------|-----------|
-| L71 (clearCommandModeStateAndEmit) | command | false | `emitVisibilityChanged` |
-| L119 (refreshResults/slash_r) | query | items.length > 0 | `emitDataChanged` |
-| L127 (refreshResults/slash_noop) | command | false | `emitVisibilityChanged` |
-| L145 (refreshResults/indexing) | reset | false | `emitVisibilityChanged` |
-| L192 (refreshResults/normal) | query | items.length > 0 | `emitDataChanged` |
-| L242 (query effect/slash_noop) | command | false | `emitVisibilityChanged` |
-| L268 (emitSelectionUpdate) | selection | results.length > 0 | `emitSelectionChanged` |
-| L317 (exitFolderExpansion) | query | savedResults.length > 0 | `emitDataChanged` |
-| L407 (launchWithSelectedTool/pre) | launch | false | `emitVisibilityChanged` |
-| L436 (launchWithSelectedTool/post) | launch | false | `emitVisibilityChanged` |
-| L484 (enterToolSelection) | query | true | `emitDataChanged` |
-| L499 (exitToolSelection) | query | savedResults.length > 0 | `emitDataChanged` |
-| L515 (launchAndReset/pre) | launch | false | `emitVisibilityChanged` |
-| L538 (launchAndReset/post) | launch | false | `emitVisibilityChanged` |
+const root = document.getElementById("root");
+if (root) {
+  render(() => <MainApp />, root);
+}
+```
 
-- `emitSelectionUpdate` を `emitSelectionChanged` に変更
+`ui/src/results.tsx`: 同構造で `ResultsApp` をレンダリング。
 
-### Phase 3: 受信側の分割 — ResultsWindow (`ResultsWindow.tsx`)
+### Phase 2: App.tsx の分割
 
-- `listen("results-sync")` を3つのリスナーに分割:
-  - `results-data-changed`: `setResults` + `fetchIcons` + `setSelected` + スクロール + `results-render-done` emit
-  - `results-selection-changed`: `setSelected` + スクロール + `results-render-done` emit
-  - `results-visibility-changed`: リスナー不要（ResultsWindow は表示/非表示を自分で管理しない）
-- generation stale 判定は各リスナーで維持
+**`MainApp.tsx`**: 現 `App.tsx` から以下を移行:
+- `onMount` 内の `label === "main"` ブロック全体（8つの listen + controller + initIndexingState + resize/move）
+- `visual-config-changed` listen + `getBootstrapPayload` + `applyTheme`
+- `auto_hide_on_focus_lost` ロジック
+- `onCleanup`（unlistenFns）
+- レンダリング: `<SearchWindow />`（Switch/Match 不要）
 
-### Phase 4: 受信側の分割 — App.tsx + Controller
+**`ResultsApp.tsx`**: 現 `App.tsx` から以下を移行:
+- `visual-config-changed` listen + `getBootstrapPayload` + `applyTheme`（テーマのみ）
+- `onCleanup`（unlistenFns）
+- レンダリング: `<ResultsWindow />`
 
-- `App.tsx`: `listen("results-sync")` → 3つのリスナーに分割
-  - `results-data-changed` → `controller.handleDataChanged(payload)`
-  - `results-selection-changed` → no-op（ウィンドウサイズ/位置に影響なし）
-  - `results-visibility-changed` → `controller.handleVisibilityChanged(payload)`
-- `resultsWindowController.ts`:
-  - `handleResultsSync` → `handleDataChanged` + `handleVisibilityChanged` に分割
-  - `handleDataChanged`: 現在の handleResultsSync の shouldShow=true パス（サイズ計算 + 表示）
-  - `handleVisibilityChanged`: shouldShow=false 時の非表示処理
+テーマ適用は両方に必要だが、コードは 10 行程度で DRY 抽出不要（2箇所まで許容）。
 
-### Phase 5: テスト更新 (`search.test.ts`)
+### Phase 3: Vite multi-page 設定
 
-- `emit('results-sync')` の検証を3イベントに合わせて更新
-- **新規テスト**: `emitSelectionUpdate` 呼び出し時に `results-data-changed` が emit されず `results-selection-changed` のみ emit されることを検証
+`vite.config.ts`:
+```ts
+import { resolve } from "path";
 
-### Phase 6: ドキュメント更新
+export default defineConfig({
+  // ...existing...
+  build: {
+    target: "esnext",
+    outDir: "../dist",
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, "ui/main.html"),
+        results: resolve(__dirname, "ui/results.html"),
+      },
+    },
+  },
+});
+```
 
-- `CLAUDE.md`: 「`results-sync` 1本で扱い」→ 3イベント分割ルールに更新
-- `ui/CLAUDE.md`: マルチウィンドウ通信セクションのイベント名を更新
+### Phase 4: Rust 側 URL 変更
+
+`src-tauri/src/commands/window.rs` L24:
+```rust
+// Before:
+WebviewUrl::App(Default::default())
+// After:
+WebviewUrl::App("results.html".into())
+```
+
+`src-tauri/tauri.conf.json`: main ウィンドウの URL 設定。`tauri.conf.json` ではウィンドウ個別の URL は `url` フィールドで指定可能。デフォルトは `index.html` なので `main.html` に変更が必要:
+```json
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "url": "main.html",
+        ...
+      }
+    ]
+  }
+}
+```
+
+### Phase 5: 旧ファイル削除
+
+- `ui/index.html` 削除
+- `ui/src/index.tsx` 削除
+- `ui/src/App.tsx` 削除
+
+### Phase 6: テスト・ドキュメント
+
+- `npm test` — 既存テストが通ることを確認
+- `npm run build` — 2つのバンドルが生成されることを確認
+- `cargo check -p snotra` — Rust 側 URL 変更の型チェック
+- `ui/CLAUDE.md` のエントリポイントセクションを更新
 
 ## 不変条件
 
-1. **generation による stale 判定は3イベントすべてで維持する**: data/selection/visibility いずれも `generation < latestGeneration` なら無視
-2. **selection-changed では結果配列を送らない**: ペイロードは `{ generation, selected }` のみ
-3. **visibility-changed では結果配列を送らない**: ペイロードは `{ generation, shouldShow, reason }` のみ
-4. **data-changed は常に shouldShow を含む**: 受信側でサイズ計算 + 表示/非表示を1回の処理で決定
-5. **results-render-done は data-changed と selection-changed の両方で emit**: perf 計測を維持
+1. **main と results が別バンドルでビルドされる**: `dist/main.html` + `dist/results.html` が独立した JS を読む
+2. **results バンドルに search.ts が含まれない**: results.tsx → ResultsApp → ResultsWindow の依存グラフに `stores/search.ts` が入らない
+3. **テーマ適用は両ウィンドウで機能する**: `visual-config-changed` listen + `applyTheme` は両方のエントリポイントに存在
+4. **既存の E2E・スモークテストが壊れない**: ウィンドウラベル（main/results）は変更しない
 
 ## テスト方針
 
-- 既存テスト: `npm test` で全パス確認
-- 新規テスト: selection-only 経路で `results-data-changed` が emit されないことを検証
-- ビルド検証: `npm run build`（プロジェクトルートから）
-- 型チェック: `npm run typecheck`（PostToolUse フックが自動実行）
+- `npm test` — フロントエンドユニットテスト
+- `npm run build` — 2バンドル生成を確認（出力に `main.html` + `results.html` が表示される）
+- `cargo check -p snotra` — Rust URL 変更の型チェック
+- バンドルサイズ比較: ビルド出力で main.js / results.js のサイズを記録し、効果を検証
 
 ## SPEC.md 更新要否
 
-**更新必要**。SPEC.md §3.7「結果表示同期契約（results-sync）」を3イベント分割に合わせて更新する:
-- `results-sync` イベント1本 → 3イベント（`results-data-changed` / `results-selection-changed` / `results-visibility-changed`）
-- 各ペイロードの定義を記載
-- `shouldShow` は `results-data-changed` と `results-visibility-changed` で使う
+**不要**。挙動変更なし（内部のビルド構成変更のみ）。
 
 ## セルフレビュー
 
 ### 1. 対称コードパス
-- `emitResults` の全 14 箇所を列挙し、data/selection/visibility に分類済み
-- `moveSelectionUp` / `moveSelectionDown` は対称ペアで両方 `emitSelectionUpdate` を呼ぶ — 同一変更でカバー
+- `MainApp` / `ResultsApp` の対称ペアとしてテーマ適用ロジックが両方に必要 — 確認済み
 
 ### 2. 影響範囲の網羅性
-- 送信側 (`search.ts`): 14 箇所すべてを分類
-- 受信側: `ResultsWindow.tsx` と `App.tsx` の2箇所を確認
-- `resultsWindowController.ts` の `handleResultsSync` も対応必要 — 計画に含む
-- perf.ts は `results-render-done` のみに依存し、`results-sync` を直接参照しない — 変更不要
+- フロントエンド: `index.html` / `index.tsx` / `App.tsx` を参照する箇所を全検索する必要あり
+- Rust: `WebviewUrl::App(Default::default())` は `window.rs` の 1 箇所のみ
+- `tauri.conf.json`: main window の URL デフォルトが `index.html` → `main.html` に変更必要
+- E2E テスト: ウィンドウラベルは変更しないため影響なし
+- スモークテスト: `main:ensure_window:ok` の検証対象ラベルは変更なし
 
 ### 3. 境界条件
-- generation stale 判定: 3イベントが異なる順序で到着した場合 → 同一 generation なので問題なし（selection-changed は data-changed と同じ generation を使う）
-- data-changed の shouldShow=false ケース: 現状存在しない（shouldShow=false は常に results=[] で visibility-changed に分類）
+- dev server: `http://localhost:5173/main.html` でアクセス可能か要確認（Vite multi-page は公式サポート）
+- `tauri dev` 時の `devUrl`: `http://localhost:5173` がルートで、各 HTML は相対パスでアクセスされるため問題なし
 
 ### 4. リソース管理
-- 新規リスナー追加: `listen()` を3つに増やすため、`onCleanup` / `unlisten` も3つ必要
-- App.tsx の `Promise.all` で一括登録しているため、3イベント分に拡張
+- 新規リソース追加なし。既存の listen/unlisten 構造をそのまま移行
 
 ### 5. 既存パターンとの整合
-- イベント分割は issue が明示的に指示しているため、CLAUDE.md の「1本ルール」を更新して整合させる
+- Vite multi-page は公式パターン。新規独自パターンの導入なし
 
 ### 6. YAGNI 違反
-- なし。issue の要求範囲内
+- テーマ適用の共通化ヘルパー抽出は見送り（2箇所のみ、DRY 閾値内）
+- `invoke.ts` の results 用サブセット抽出は行わない（tree-shaking で自動的に不要関数は除外される）
 
 ### 7. シンプル化の挑戦
-- 3イベント分割は issue 指定だが、実装上は `emitDataChanged` が shouldShow を含むため visibility-changed との重複がある。ただし shouldShow=false 時に配列を送らない目的には必要な分割。
-- `resultsWindowController` の selection-changed ハンドラは no-op — App.tsx でリスナー登録自体を省略できる
+- `App.tsx` を分割する代わりに、結果的に2つのシンプルなコンポーネントになる。Switch/Match 分岐が消えてコードが単純化される
+- 新規状態・Mutex・子プロセスの追加なし
 
 ### 8. 破壊不変条件の明示
-- **generation 整合性**: 3イベントが同じ generation カウンタを共有するため、stale 判定が破綻するリスクはない
-- **表示/非表示の整合性**: visibility-changed でのみ非表示にし、data-changed でのみ表示する設計により、表示状態の競合は発生しない
+- **ウィンドウ URL ルーティング**: `tauri.conf.json` の `url` と `WebviewUrl::App` が正しい HTML を指さないとウィンドウが空白になる。ビルド出力確認 + `cargo check` で検知
+- **dev server ルーティング**: `tauri dev` で両 HTML にアクセスできないと開発不能。Vite multi-page の dev server 動作は公式サポートのため低リスク

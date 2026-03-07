@@ -3,6 +3,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import type { SearchResult } from "../lib/types";
 import type { ResultsDataPayload, ResultsSelectionPayload, ResultsVisibilityPayload } from "../lib/searchEvents";
 import * as api from "../lib/invoke";
+import { applyTheme } from "../lib/theme";
 import { LruIconCache } from "../lib/lruIconCache";
 import ResultRow from "./ResultRow";
 
@@ -92,6 +93,7 @@ const ResultsWindow: Component = () => {
     // Load initial show_icons from bootstrap payload
     void api.getBootstrapPayload().then((bootstrap) => {
       setShowIcons(bootstrap.appearance.show_icons);
+      applyTheme(bootstrap.visual);
     }).catch((e) => console.warn("ResultsWindow: failed to load bootstrap payload:", e));
 
     // Listen for show_icons setting changes

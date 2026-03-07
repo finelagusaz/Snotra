@@ -1,103 +1,87 @@
-# Research — main と results のフロントエンドを別エントリポイントに分割 (#163)
+# Research: ResultsWindow アイコンキャッシュ LRU 化 (#164)
 
 ## issue の要約
 
-2つの WebView（main/results）が同一 JS バンドルを重複ロードしているため、Vite multi-page build でエントリポイントを分割し、初期メモリと parse/compile コストを下げる。
+ResultsWindow.tsx の `iconCache` が無制限に成長し、Blob URL が適切に解放されない。長時間運用時のメモリ増加を抑えるため、LRU キャッシュ化と Blob URL の適切な解放を行う。
 
-## 現状分析
+## 対応内容（issue より）
 
-### バンドル構成
-
-- 単一バンドル: `index-*.js` **54.58 kB**（gzip 17.18 kB）
-- 両 WebView が同じ `index.html` → 同じ JS を読み込む
-- `App.tsx` で `getCurrentWindow().label` により `SearchWindow` / `ResultsWindow` を出し分け
-
-### 依存関係の分析
-
-**results 側が実際に使うモジュール（ソースサイズ）:**
-| モジュール | サイズ |
-|-----------|--------|
-| `ResultsWindow.tsx` | 8.4 kB |
-| `ResultRow.tsx` | 2.0 kB |
-| `invoke.ts`（一部関数のみ） | 4.2 kB |
-| `truncatePath.ts` | 3.8 kB |
-| `searchEvents.ts` | 0.9 kB |
-| `types.ts` | 0.7 kB |
-| `theme.ts` | 0.6 kB |
-| **合計** | **~20.6 kB** |
-
-**results 側が不要だが現在ロードされるモジュール:**
-| モジュール | サイズ |
-|-----------|--------|
-| `search.ts`（最大モジュール） | 19.0 kB |
-| `SearchWindow.tsx` | 9.8 kB |
-| `resultsWindowController.ts` | 8.3 kB |
-| `perf.ts` | 3.4 kB |
-| `i18n.ts` | 1.8 kB |
-| `commands.ts` | 1.7 kB |
-| `folderNav.ts` | 1.6 kB |
-| `pathQuery.ts` | 1.4 kB |
-| `hotkeyValidation.ts` | 1.4 kB |
-| `folder.ts`, `tool-selection.ts` | 0.8 kB |
-| **合計不要コード** | **~49.2 kB** |
-
-### 効果見積もり
-
-54.58 kB バンドルの内訳推定:
-- フレームワーク（solid-js + @tauri-apps/api）: ~30 kB
-- アプリケーション固有コード: ~24 kB
-
-分割後の見積もり:
-| | 現在 | 分割後 |
-|--|------|--------|
-| main bundle | 54.58 kB | ~50 kB |
-| results bundle | 54.58 kB | ~38 kB |
-| **合計ロード量** | **109 kB** | **~88 kB（19% 削減）** |
-| results parse/compile | 54.58 kB | ~38 kB（**31% 削減**） |
-
-メモリ面:
-- results WebView が `search.ts`（19 kB src）の SolidJS store を持たないため JS ヒープ減少
-- V8 compiled code も比例して減少
-- WebView2 ベースメモリ（~30-50 MB/WebView）に対して JS ヒープの差は控えめ
-
-### 結論
-
-バンドルサイズ効果は moderate（合計 19% 削減、results 側 31% 削減）。実装コストが低く（HTML/エントリポイント追加 + Vite config + Rust URL 変更）、コードの責務分離も改善されるため実施価値あり。
+1. フロント側 iconCache を件数上限付き LRU に変更
+2. shouldShow=false または結果クリア時に未使用 Blob URL を `URL.revokeObjectURL()` する
+3. アイコン取得を初回テキスト描画後に遅延実行する
 
 ## 関連コード
 
-### フロントエンド
-- `ui/index.html` — 唯一の HTML エントリ
-- `ui/src/index.tsx` — 唯一の JS エントリ（`render(() => <App />, root)`）
-- `ui/src/App.tsx` — ウィンドウラベル分岐 + main 固有リスナー（7つの listen）+ テーマ適用
+### 主要ファイル: `ui/src/components/ResultsWindow.tsx`
 
-### Rust バックエンド
-- `src-tauri/tauri.conf.json` — main ウィンドウ定義
-- `src-tauri/src/commands/window.rs:24` — `ensure_results_window` で `WebviewUrl::App(Default::default())` → `index.html`
-- `src-tauri/src/main.rs:421` — setup で `ensure_results_window` 呼び出し
-- `src-tauri/src/main.rs:382-414` — main WebView に AcceleratorKeyPressed ハンドラ登録（main のみ）
+- **`iconCache` シグナル** (L11-13): `Map<string, string>` — パス→Blob URL。無制限成長。
+- **`iconUrls` Set** (L71): 全 Blob URL を追跡。`revokeAllIconUrls()` で一括解放。
+- **`parseBinaryBatch()`** (L37-61): バイナリ→Blob URL 変換。`iconUrls.add(url)` で追跡。
+- **`fetchIcons()`** (L73-97): `results-data-changed` 受信時に呼ばれる。キャッシュにないパスのアイコンをバッチ取得。
+- **`revokeAllIconUrls()`** (L64-69): 全 URL 解放。現在は `onCleanup` と `show-icons-changed(false)` でのみ呼ばれる。
 
-### ビルド
-- `vite.config.ts` — 現在 single-page（`root: "ui"`, `build.outDir: "../dist"`）
+### イベントリスニング
 
-### テスト・スモーク
-- `scripts/smoke-startup.ps1` — `main:ensure_window:ok` で results/about/settings を検証
-- `e2e/tauri.slash.e2e.ts` — Playwright E2E
+- **`results-data-changed`** (L170-180): 結果配列変更時。`fetchIcons` を呼ぶ。
+- **`results-selection-changed`** (L184-190): 選択変更のみ。
+- **`results-visibility-changed`**: **未リスン**。非表示時の Blob URL 解放ポイントがない。
+
+### 発行側: `ui/src/stores/search.ts`
+
+- `emitVisibilityChanged(reason)` は `shouldShow: false` で emit。以下のタイミング:
+  - コマンド実行時 (L86, L142, L254)
+  - インデックス中 (L160)
+  - launch 開始時 (L414, L444, L521, L545)
 
 ## 既存パターン
 
-- Vite multi-page build: `build.rollupOptions.input` で複数 HTML を指定する公式パターン
-- Tauri v2: `WebviewUrl::App("results.html".into())` で各ウィンドウに別 HTML を割り当て可能
-- dev server: multi-page でも単一ポート（5173）で両 HTML を配信
+- `revokeAllIconUrls()` は既に存在し、全解放パターンがある
+- `iconUrls` Set で Blob URL を追跡するパターンも既存
+- SolidJS シグナルの `Map` 更新は `new Map(cache)` でイミュータブルに行う（L92-96）
 
 ## 技術的制約
 
-- `tauri.conf.json` の `build.frontendDist` / `build.devUrl` はアプリ全体の設定。ウィンドウ個別 URL は `WebviewUrl` で制御
-- Vite dev server では `http://localhost:5173/main.html` / `http://localhost:5173/results.html` でアクセス
-- `tauri.conf.json` の main window は URL 未指定で `frontendDist` のルート（= `index.html` → `main.html` に変更可能）
-- `App.tsx` の main 固有ロジック（8つの listen + resultsWindowController + initIndexingState）を `MainApp.tsx` に移す必要あり
-- results 側の `App.tsx` ロジックは `visual-config-changed` listen + `getBootstrapPayload` + `applyTheme` のみ
+- **Blob URL のライフサイクル**: `URL.createObjectURL()` で作成した URL は `URL.revokeObjectURL()` で解放しないとメモリリーク
+- **SolidJS リアクティブ**: `iconCache` は `createSignal` で管理。Map を更新するたびに新しい Map を作る必要がある
+- **LRU 実装**: 外部ライブラリなし。`Map` の挿入順序を利用して簡易 LRU を実現可能（Map は挿入順でイテレーションする）
+- **遅延実行**: `fetchIcons` を `requestAnimationFrame` で1フレーム遅延させれば、テキスト描画後にアイコン取得を開始できる
+- **非表示時の解放戦略**: `results-visibility-changed` をリッスンして全 Blob URL を解放
+
+## 妥当性チェック
+
+### 1. LRU キャッシュのサイズ上限
+
+issue は「件数上限付き LRU」と言っている。適切な上限値は？
+- 最大表示件数はデフォルト 8（`config.toml` で変更可能）
+- 検索を繰り返すとキャッシュが蓄積する。100〜200 件が妥当か
+- **結論**: 定数 `MAX_ICON_CACHE_SIZE = 200` で十分。設定値にする必要はない（YAGNI）
+
+### 2. `results-visibility-changed` リスン追加の影響
+
+- 現在 ResultsWindow はこのイベントをリスンしていない
+- 追加しても他のリスナーに影響なし（results ウィンドウ内で閉じる）
+- **結論**: 安全に追加可能
+
+### 3. 遅延実行の方法
+
+issue は「アイコン取得を初回テキスト描画後に遅延実行する」と言っている。
+- 現在 `fetchIcons` は `results-data-changed` ハンドラ内で即座に呼ばれる
+- `requestAnimationFrame` でテキスト描画フレーム後に遅延させるのが最もシンプル
+- **結論**: `fetchIcons` 呼び出しを `requestAnimationFrame` でラップ
+
+### 4. 非表示時の解放範囲
+
+- `results-visibility-changed` は結果を非表示にするとき（`shouldShow: false`）
+- 非表示時は全 Blob URL を解放してよいか？→ 次に表示されるときは新しい検索結果なので、古いキャッシュは不要。全解放で問題ない
+- ただし iconCache の Map もクリアする必要がある（revoke 済み URL を参照させないため）
+- **結論**: 非表示時は `revokeAllIconUrls()` + `setIconCache(new Map())` で全解放
+
+### 5. LRU eviction 時の Blob URL 解放
+
+- LRU からエントリを追い出すとき、対応する Blob URL を `revokeObjectURL` する必要がある
+- `iconUrls` Set からも除去する必要がある
+- **結論**: eviction 関数で revoke + Set 除去を行う
 
 ## 未解決の疑問
 
-特になし。
+なし。issue の要求は明確で、既存パターンの拡張で対応可能。

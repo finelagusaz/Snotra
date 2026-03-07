@@ -16,6 +16,7 @@ const ResultsWindow: Component = () => {
   const [font, setFont] = createSignal("15px 'Segoe UI'");
   let listRef: HTMLDivElement | undefined;
   let latestGeneration = 0;
+  let latestDataGeneration = 0;
   let lastScrolledSelected = -1;
   let lastScrolledGeneration = -1;
   function ensureRowVisible(container: HTMLDivElement, row: HTMLElement) {
@@ -85,7 +86,7 @@ const ResultsWindow: Component = () => {
       console.warn("fetchIcons failed:", e);
       return;
     }
-    if (generation !== latestGeneration) return;
+    if (generation !== latestDataGeneration) return;
     if (parsed.size === 0) return;
 
     const next = new Map(cache);
@@ -169,6 +170,7 @@ const ResultsWindow: Component = () => {
     void listen<ResultsDataPayload>("results-data-changed", (event) => {
       if (event.payload.generation < latestGeneration) return;
       latestGeneration = event.payload.generation;
+      latestDataGeneration = event.payload.generation;
       setResults(event.payload.results);
       void fetchIcons(event.payload.results, event.payload.generation);
       setSelected(event.payload.selected);

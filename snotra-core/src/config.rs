@@ -707,7 +707,7 @@ pub fn is_system_shortcut(modifier: &str, key: &str) -> bool {
         .map(|p| normalize_modifier_part(p.as_str()))
         .collect();
     // Win 8+ reserves all Win+* combinations at the shell level.
-    if parts.iter().any(|&p| p == "win") {
+    if parts.contains(&"win") {
         return true;
     }
     parts.sort_unstable();

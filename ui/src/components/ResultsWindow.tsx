@@ -74,7 +74,12 @@ const ResultsWindow: Component = () => {
       console.warn("fetchIcons failed:", e);
       return;
     }
-    if (generation !== latestDataGeneration) return;
+    if (generation !== latestDataGeneration) {
+      for (const url of parsed.values()) {
+        URL.revokeObjectURL(url);
+      }
+      return;
+    }
     if (parsed.size === 0) return;
 
     for (const [path, url] of parsed) {

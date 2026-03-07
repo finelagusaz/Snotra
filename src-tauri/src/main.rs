@@ -125,27 +125,56 @@ fn wait_alt_release_or_timeout() {
     }
 }
 
-/// Synthesize an Alt key-up event via `SendInput` to clear any lingering Alt
-/// modifier state in the OS keyboard buffer.  Called just before showing the
-/// search window so that WebView2 does not interpret the first keystroke as
-/// Alt+<char> (which causes the character to be swallowed and a system beep).
+/// Clear lingering Alt modifier state via `SendInput` before showing the
+/// search window.  Uses the AutoHotkey "MenuMaskKey" technique: a dummy
+/// key-down/up (vkE8, unassigned) is injected *before* the Alt key-up so
+/// that Windows does not treat the Alt release as a bare Alt-up, which
+/// would activate the menu bar or trigger a system beep.
 #[cfg(windows)]
 fn send_alt_key_up() {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, VK_MENU,
+        INPUT, SendInput, VK_LMENU, VK_MENU, VK_RMENU, VIRTUAL_KEY,
+    };
+
+    const VK_MASK: VIRTUAL_KEY = VIRTUAL_KEY(0xE8); // unassigned — safe dummy key
+
+    let inputs = [
+        make_key_input(VK_MASK, false),  // mask key down
+        make_key_input(VK_MASK, true),   // mask key up
+        make_key_input(VK_MENU, true),   // Alt (generic) up
+        make_key_input(VK_LMENU, true),  // Left Alt up
+        make_key_input(VK_RMENU, true),  // Right Alt up
+    ];
+    unsafe {
+        let _ = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+    }
+    // Brief pause so WebView2 processes the synthetic key-ups before
+    // receiving actual user keystrokes.
+    std::thread::sleep(std::time::Duration::from_millis(5));
+}
+
+#[cfg(windows)]
+fn make_key_input(
+    vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY,
+    is_up: bool,
+) -> windows::Win32::UI::Input::KeyboardAndMouse::INPUT {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYBD_EVENT_FLAGS,
     };
     let mut input = INPUT {
         r#type: INPUT_KEYBOARD,
         ..Default::default()
     };
     input.Anonymous.ki = KEYBDINPUT {
-        wVk: VK_MENU,
-        dwFlags: KEYEVENTF_KEYUP,
+        wVk: vk,
+        dwFlags: if is_up {
+            KEYEVENTF_KEYUP
+        } else {
+            KEYBD_EVENT_FLAGS::default()
+        },
         ..Default::default()
     };
-    unsafe {
-        let _ = SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
-    }
+    input
 }
 
 #[cfg(not(windows))]
@@ -174,6 +203,29 @@ fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
             trace_main("show_main:set_focus:start", json!({ "ms": ms(t0.elapsed()) }));
             let _ = main.set_focus();
             trace_main("show_main:set_focus:end", json!({ "ms": ms(t0.elapsed()) }));
+
+            // Ensure focus transfer is fully processed before sending synthetic
+            // key-ups.  SetForegroundWindow is partially asynchronous (Raymond
+            // Chen); WM_NULL via SendMessageTimeout blocks until the target has
+            // processed all pending activation messages.
+            #[cfg(windows)]
+            if let Ok(hwnd) = main.hwnd() {
+                use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    SendMessageTimeoutW, SMTO_NORMAL, WM_NULL,
+                };
+                let hwnd = HWND(hwnd.0);
+                let mut result = 0usize;
+                unsafe {
+                    let _ = SendMessageTimeoutW(
+                        hwnd, WM_NULL, WPARAM(0), LPARAM(0),
+                        SMTO_NORMAL, 100, Some(&mut result),
+                    );
+                }
+            }
+
+            // Clear lingering Alt modifier after focus is confirmed.
+            send_alt_key_up();
 
             // IME control
             if ime_control {
@@ -323,6 +375,44 @@ fn main() {
                 }
             }
 
+            // Register AcceleratorKeyPressed handler to suppress WM_SYSKEYDOWN
+            // (Alt+char) before TranslateMessage → WM_SYSCHAR → DefWindowProc →
+            // MessageBeep(0).  This is the root fix for the hotkey beep issue.
+            #[cfg(windows)]
+            if let Some(main) = app.get_webview_window("main") {
+                main.with_webview(move |platform_webview| {
+                    use webview2_com::Microsoft::Web::WebView2::Win32::{
+                        COREWEBVIEW2_KEY_EVENT_KIND,
+                        COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
+                    };
+                    use webview2_com::AcceleratorKeyPressedEventHandler;
+                    use windows::Win32::UI::Input::KeyboardAndMouse::VK_F4;
+
+                    let controller = platform_webview.controller();
+                    let handler = AcceleratorKeyPressedEventHandler::create(Box::new(
+                        move |_controller, args| {
+                            if let Some(args) = args {
+                                let mut kind = COREWEBVIEW2_KEY_EVENT_KIND(0);
+                                unsafe { args.KeyEventKind(&mut kind)? };
+                                if kind == COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN {
+                                    let mut vk = 0u32;
+                                    unsafe { args.VirtualKey(&mut vk)? };
+                                    // Let Alt+F4 through for window close
+                                    if vk != VK_F4.0 as u32 {
+                                        unsafe { args.SetHandled(true)? };
+                                    }
+                                }
+                            }
+                            Ok(())
+                        },
+                    ));
+                    let mut token = 0i64;
+                    unsafe {
+                        let _ = controller.add_AcceleratorKeyPressed(&handler, &mut token);
+                    }
+                }).expect("AcceleratorKeyPressed handler must register in setup phase");
+            }
+
             // Spawn platform thread early to parallelize Win32 init with WebView creation.
             // Tray is NOT created here; SetTrayVisible is sent after full setup (SPEC §7.5).
             let platform_pending = PlatformBridge::begin(app_handle.clone(), hotkey_config);
@@ -392,14 +482,10 @@ fn main() {
                         if hotkey_generation_for_wait.load(Ordering::SeqCst) != current_gen {
                             return;
                         }
-                        // Clear lingering Alt state before showing (hotkey-path only).
-                        send_alt_key_up();
                         show_main_and_emit(&handle_for_show, ime_control);
                     });
                 } else {
                     trace_main("hotkey:show_direct", json!({}));
-                    // Clear lingering Alt state before showing (hotkey-path only).
-                    send_alt_key_up();
                     show_main_and_emit(&handle_for_hotkey, ime_control);
                 }
             });

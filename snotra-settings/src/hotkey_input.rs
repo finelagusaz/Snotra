@@ -74,13 +74,17 @@ enum CaptureResult {
 }
 
 fn capture_hotkey(input: &egui::InputState) -> CaptureResult {
-    // Escape cancels capture
-    if input.key_pressed(egui::Key::Escape) {
+    let has_modifier = input.modifiers.ctrl || input.modifiers.alt || input.modifiers.shift;
+
+    // Escape cancels capture (only without modifiers; Ctrl+Shift+Escape is a system shortcut)
+    if input.key_pressed(egui::Key::Escape) && !has_modifier {
         return CaptureResult::Cancel;
     }
 
-    // Backspace/Delete clears the hotkey
-    if input.key_pressed(egui::Key::Backspace) || input.key_pressed(egui::Key::Delete) {
+    // Backspace/Delete clears the hotkey (only without modifiers; Ctrl+Alt+Delete is a system shortcut)
+    if (input.key_pressed(egui::Key::Backspace) || input.key_pressed(egui::Key::Delete))
+        && !has_modifier
+    {
         return CaptureResult::Clear;
     }
 

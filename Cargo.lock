@@ -4566,7 +4566,7 @@ dependencies = [
  "rayon",
  "rustc-hash",
  "serde",
- "toml 0.8.2",
+ "toml 0.9.12+spec-1.1.0",
  "windows 0.62.2",
 ]
 

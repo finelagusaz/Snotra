@@ -28,6 +28,7 @@ export interface BootstrapGeneralConfig {
 
 export interface BootstrapAppearanceConfig {
   show_icons: boolean;
+  max_results: number;
 }
 
 export interface BootstrapPayload {

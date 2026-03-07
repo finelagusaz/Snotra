@@ -162,11 +162,18 @@ const MainApp: Component = () => {
     });
     unlistenFns.push(unlistenVisual);
 
+    // Listen for max_results config changes
+    const unlistenMaxResults = await listen<number>("max-results-changed", (event) => {
+      controller.updateMaxResults(event.payload);
+    });
+    unlistenFns.push(unlistenMaxResults);
+
     // Load bootstrap payload and apply theme (non-fatal on failure)
     let bootstrap: BootstrapPayload | null = null;
     try {
       bootstrap = await api.getBootstrapPayload();
       applyTheme(bootstrap.visual);
+      controller.updateMaxResults(bootstrap.appearance.max_results);
     } catch (e) {
       console.error("Failed to load bootstrap payload:", e);
     }

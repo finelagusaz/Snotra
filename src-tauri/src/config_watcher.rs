@@ -65,6 +65,9 @@ fn apply_config_change(app: &AppHandle) {
         || new_config.search.show_hidden_system != old_config.search.show_hidden_system
         || show_icons_changed;
     let visual_changed = new_config.visual != old_config.visual;
+    let max_results_changed =
+        new_config.appearance.max_results != old_config.appearance.max_results;
+    let new_max_results = new_config.appearance.max_results;
     let width_changed =
         new_config.appearance.window_width != old_config.appearance.window_width;
     let new_visual = if visual_changed {
@@ -121,6 +124,11 @@ fn apply_config_change(app: &AppHandle) {
     // Emit show_icons change
     if show_icons_changed {
         let _ = app.emit("show-icons-changed", new_show_icons);
+    }
+
+    // Emit max_results change
+    if max_results_changed {
+        let _ = app.emit("max-results-changed", new_max_results);
     }
 
     // Resize windows if width changed

@@ -19,7 +19,7 @@ describe("isHotkeyInvalid", () => {
       expect(isHotkeyInvalid("Alt+Shift", "Space")).toBe(false);
     });
 
-    it("Ctrl+Space は有効", () => {
+    it("Ctrl+Space は有効（IME 切替はユーザー判断・RegisterHotKey 失敗でフォールバック）", () => {
       expect(isHotkeyInvalid("Ctrl", "Space")).toBe(false);
     });
   });
@@ -83,6 +83,49 @@ describe("isHotkeyInvalid", () => {
 
     it("Alt+Super も無効", () => {
       expect(isHotkeyInvalid("Alt+Super", "Q")).toBe(true);
+    });
+  });
+
+  describe("システムショートカットとの競合", () => {
+    it.each([
+      ["Alt", "F4"],
+      ["Ctrl+Shift", "Escape"],
+      ["Alt", "Tab"],
+      ["Ctrl+Alt", "Delete"],
+    ])("%s+%s はシステムショートカットのため無効", (mod, key) => {
+      expect(isHotkeyInvalid(mod, key)).toBe(true);
+    });
+
+    it("Ctrl+Space は有効（IME 切替はユーザー判断）", () => {
+      expect(isHotkeyInvalid("Ctrl", "Space")).toBe(false);
+    });
+
+    it("Alt+Escape は有効（RegisterHotKey が失敗するので事前ブロック不要）", () => {
+      expect(isHotkeyInvalid("Alt", "Escape")).toBe(false);
+    });
+
+    it("大文字小文字混在（alt+f4）も無効", () => {
+      expect(isHotkeyInvalid("alt", "f4")).toBe(true);
+    });
+
+    it("ALT+F4（全大文字）も無効", () => {
+      expect(isHotkeyInvalid("ALT", "F4")).toBe(true);
+    });
+
+    it("modifier 順序不問（Shift+Ctrl+Escape）も無効", () => {
+      expect(isHotkeyInvalid("Shift+Ctrl", "Escape")).toBe(true);
+    });
+
+    it("Alt+Shift+F4 は Alt+F4 と異なるので有効", () => {
+      expect(isHotkeyInvalid("Alt+Shift", "F4")).toBe(false);
+    });
+
+    it("Ctrl+F1 は有効", () => {
+      expect(isHotkeyInvalid("Ctrl", "F1")).toBe(false);
+    });
+
+    it("Alt+Q（デフォルト）は有効", () => {
+      expect(isHotkeyInvalid("Alt", "Q")).toBe(false);
     });
   });
 

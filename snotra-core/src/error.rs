@@ -63,6 +63,7 @@ impl From<std::io::Error> for BinError {
 pub enum ConfigError {
     HotkeyModifierEmpty,
     HotkeyKeyEmpty,
+    HotkeySystemConflict { modifier: String, key: String },
     MaxResultsZero,
     WindowWidthTooSmall(u32),
     FuzzyCapRatioOutOfRange { value: f64 },

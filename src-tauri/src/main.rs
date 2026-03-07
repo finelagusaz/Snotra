@@ -204,6 +204,11 @@ fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
             let _ = main.set_focus();
             trace_main("show_main:set_focus:end", json!({ "ms": ms(t0.elapsed()) }));
 
+            // Clear lingering Alt modifier *after* focus so that the synthetic
+            // key-ups are delivered to our WebView2 HWND (not the previously
+            // focused window).
+            send_alt_key_up();
+
             // IME control
             if ime_control {
                 trace_main("show_main:ime_control:start", json!({ "ms": ms(t0.elapsed()) }));
@@ -421,14 +426,10 @@ fn main() {
                         if hotkey_generation_for_wait.load(Ordering::SeqCst) != current_gen {
                             return;
                         }
-                        // Clear lingering Alt state before showing (hotkey-path only).
-                        send_alt_key_up();
                         show_main_and_emit(&handle_for_show, ime_control);
                     });
                 } else {
                     trace_main("hotkey:show_direct", json!({}));
-                    // Clear lingering Alt state before showing (hotkey-path only).
-                    send_alt_key_up();
                     show_main_and_emit(&handle_for_hotkey, ime_control);
                 }
             });

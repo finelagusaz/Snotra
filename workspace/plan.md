@@ -13,7 +13,7 @@
 
 | ファイル | 変更内容 |
 |---------|---------|
-| `src-tauri/src/platform/mod.rs` | `RegisterInitialHotkey` 失敗時に `hotkey-registration-failed` を追加 emit |
+| `src-tauri/src/platform/mod.rs` | `RegisterInitialHotkey` 失敗時の `platform-event` ペイロードを JSON object に変更し、同ハンドラ内で通知まで完結させる |
 | `src-tauri/src/config_watcher.rs` | `Ok(false)\|Err(_)` ブランチで `hotkey-registration-failed` を emit |
 | `ui/src/lib/i18n.ts` | `notice.hotkey.initial_failed` / `notice.hotkey.change_failed` キーを追加 |
 | `ui/src/stores/search.ts` | `setLaunchNoticeWithAutoClear` に timeout 引数追加。`setHotkeyFailureNotice` を追加 export |
@@ -45,10 +45,7 @@ Ok(false) | Err(_) => {
         new_config.hotkey.modifier, new_config.hotkey.key);
     // 新規追加
     let hotkey_str = format!("{}+{}", new_config.hotkey.modifier, new_config.hotkey.key);
-    let _ = app.emit("hotkey-registration-failed", serde_json::json!({
-        "hotkey": hotkey_str,
-        "is_initial": false,
-    }));
+    let _ = app.emit("hotkey-registration-failed", hotkey_str);
 }
 ```
 
@@ -127,9 +124,8 @@ Promise.all ブロックには追加しない。`unlistenMaxResults` の後（li
 import { setHotkeyFailureNotice } from "./stores/search";
 
 // line 169 の後に追加
-const unlistenHotkeyFailed = await listen<{ hotkey: string }>("hotkey-registration-failed", (event) => {
-  const { hotkey } = event.payload;
-  setHotkeyFailureNotice(t("notice.hotkey.change_failed", { hotkey }));
+const unlistenHotkeyFailed = await listen<string>("hotkey-registration-failed", (event) => {
+  setHotkeyFailureNotice(t("notice.hotkey.change_failed", { hotkey: event.payload }));
 });
 unlistenFns.push(unlistenHotkeyFailed);
 ```
@@ -170,7 +166,7 @@ line 393 を分割:
 
 ### 2. 影響範囲の網羅性
 
-- `platform-event` ペイロード型は `string` のまま変更しない → 既存リスナーへの破壊的変更なし
+- `platform-event` ペイロード型を `string` → `{event:string;hotkey:string}|string` の union に変更。TS の union 型は既存の string リテラル判定（`p === "initial-hotkey-failed"`）でフォールバックするため後方互換性あり
 - `hotkey-registration-failed` は新規イベント → 既存コードへの影響ゼロ
 - `setLaunchNoticeWithAutoClear` に引数追加（デフォルト値あり）→ 既存の2呼び出し箇所（line ~430, ~532）は変更不要
 

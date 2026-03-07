@@ -9,6 +9,7 @@ export type ResultsPresentationReason =
 /** results-data-changed: 結果配列が変わったとき */
 export interface ResultsDataPayload {
   generation: number;
+  searchRequestId: number;
   results: SearchResult[];
   selected: number;
   shouldShow: boolean;

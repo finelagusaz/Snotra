@@ -413,4 +413,29 @@ describe("selection-only IPC (#162)", () => {
     expect(selectionCalls).toHaveLength(1);
     expect(selectionCalls[0][1]).toMatchObject({ selected: 1 });
   });
+
+  it("selection-changed の generation は data-changed より大きい（レース防止）", async () => {
+    const items: SearchResult[] = [
+      { name: "a.txt", path: "C:\\a.txt", isFolder: false, isError: false },
+      { name: "b.txt", path: "C:\\b.txt", isFolder: false, isError: false },
+    ];
+    vi.mocked(api.search).mockResolvedValue(items);
+    setQuery("test");
+    await vi.runAllTimersAsync();
+
+    const emitMock = eventApi.emit as Mock;
+
+    // data-changed の generation を取得
+    const dataCall = emitMock.mock.calls.find((args) => args[0] === "results-data-changed");
+    const dataGen = dataCall![1].generation;
+
+    emitMock.mockClear();
+    moveSelectionDown();
+
+    const selectionCall = emitMock.mock.calls.find((args) => args[0] === "results-selection-changed");
+    const selectionGen = selectionCall![1].generation;
+
+    // selection-changed は data-changed より大きい generation を持つ
+    expect(selectionGen).toBeGreaterThan(dataGen);
+  });
 });

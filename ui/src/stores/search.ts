@@ -23,17 +23,19 @@ let debounceTimer: ReturnType<typeof requestAnimationFrame> | undefined;
 let launchNoticeTimer: ReturnType<typeof setTimeout> | undefined;
 let refreshInFlight: Promise<void> | undefined;
 let searchGeneration = 0;
+let eventGeneration = 0;
 let activationInFlight = false;
 let suppressNextQueryEffectRefresh = false;
 
 function emitDataChanged(
   items: SearchResult[],
   selectedIndex: number,
-  generation: number,
+  searchRequestId: number,
   reason: ResultsPresentationReason = "query",
 ) {
   const payload: ResultsDataPayload = {
-    generation,
+    generation: ++eventGeneration,
+    searchRequestId,
     results: items,
     selected: selectedIndex,
     shouldShow: items.length > 0,
@@ -42,16 +44,16 @@ function emitDataChanged(
   emit("results-data-changed", payload);
 }
 
-function emitSelectionChanged(selectedIndex: number, generation: number) {
-  emit("results-selection-changed", { generation, selected: selectedIndex });
+function emitSelectionChanged(selectedIndex: number) {
+  emit("results-selection-changed", {
+    generation: ++eventGeneration,
+    selected: selectedIndex,
+  });
 }
 
-function emitVisibilityChanged(
-  generation: number,
-  reason: ResultsPresentationReason,
-) {
+function emitVisibilityChanged(reason: ResultsPresentationReason) {
   emit("results-visibility-changed", {
-    generation,
+    generation: ++eventGeneration,
     shouldShow: false,
     reason,
   });
@@ -77,11 +79,11 @@ function setLaunchNoticeWithAutoClear(message: string) {
 }
 
 function clearCommandModeStateAndEmit() {
-  const requestId = ++searchGeneration;
+  ++searchGeneration;
   setQuery("");
   setResults([]);
   setSelected(0);
-  emitVisibilityChanged(requestId, "command");
+  emitVisibilityChanged("command");
 }
 
 function cancelDebounce() {
@@ -137,7 +139,7 @@ async function refreshResults() {
     trace("search:refresh:branch", { requestId, branch: "slash_noop" });
     setResults([]);
     setSelected(0);
-    emitVisibilityChanged(requestId, "command");
+    emitVisibilityChanged("command");
     return;
   }
   const pathQuery = fs ? null : parsePathQuery(q);
@@ -155,7 +157,7 @@ async function refreshResults() {
     setSelected(0);
     trace("search:refresh:done", { requestId, branch: "indexing_guard", count: 0 });
     perfMarkSearchDone(requestId, 0);
-    emitVisibilityChanged(requestId, "reset");
+    emitVisibilityChanged("reset");
     return;
   }
 
@@ -246,10 +248,10 @@ createRoot(() => {
         // Command mode without exact match: no suggestions, just clear results.
         cancelDebounce();
         trace("search:query_effect:slash_noop", { input: q });
-        const requestId = ++searchGeneration;
+        ++searchGeneration;
         setResults([]);
         setSelected(0);
-        emitVisibilityChanged(requestId, "command");
+        emitVisibilityChanged("command");
         return;
       }
 
@@ -275,7 +277,7 @@ function emitSelectionUpdate() {
   if (nextSelected !== selected()) {
     setSelected(nextSelected);
   }
-  emitSelectionChanged(nextSelected, searchGeneration);
+  emitSelectionChanged(nextSelected);
 }
 
 function moveSelectionUp() {
@@ -408,7 +410,8 @@ async function launchWithSelectedTool(): Promise<boolean> {
       query: frame.savedQuery,
     });
     // 結果を隠す
-    emitVisibilityChanged(++searchGeneration, "launch");
+    ++searchGeneration;
+    emitVisibilityChanged("launch");
     const launchResult = await api.launchWithTool(
       frame.targetPath,
       frame.savedQuery,
@@ -437,7 +440,8 @@ async function launchWithSelectedTool(): Promise<boolean> {
     setFolderFilter("");
     setResults([]);
     setSelected(0);
-    emitVisibilityChanged(++searchGeneration, "launch");
+    ++searchGeneration;
+    emitVisibilityChanged("launch");
     trace("search:launch_with_tool:done", { path: frame.targetPath });
     return true;
   } finally {
@@ -513,7 +517,8 @@ async function launchAndReset(result: SearchResult): Promise<boolean> {
   trace("search:launch:start", { path: result.path, query: query() });
   try {
     // launch 開始時に results を明示的に隠す
-    emitVisibilityChanged(++searchGeneration, "launch");
+    ++searchGeneration;
+    emitVisibilityChanged("launch");
     const launchResult = await api.launchItem(result.path, query());
     if (launchResult.status !== "ok") {
       trace("search:launch:error", {
@@ -536,7 +541,8 @@ async function launchAndReset(result: SearchResult): Promise<boolean> {
     setFolderFilter("");
     setResults([]);
     setSelected(0);
-    emitVisibilityChanged(++searchGeneration, "launch");
+    ++searchGeneration;
+    emitVisibilityChanged("launch");
     trace("search:launch:done", { path: result.path, code: launchResult.code });
     return true;
   } finally {

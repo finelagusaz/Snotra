@@ -129,17 +129,19 @@
 ### 3.7 結果表示同期契約（3イベント分割）
 
 - 検索結果の表示同期は以下の3イベントで行う（選択変更時の不要な配列シリアライズを回避）
+- 3イベントは共通の `eventGeneration`（単調増加カウンタ）を `generation` フィールドに使い、受信側は古い世代を破棄する。`searchGeneration`（API stale 検知用）とは独立
 - **`results-data-changed`**: 結果配列が変わったとき
-  - `generation`: リクエスト世代番号。受信側は古い世代を破棄する
+  - `generation`: イベント世代番号（`eventGeneration`）
+  - `searchRequestId`: 検索リクエスト ID（`searchGeneration`、perf 計測用）
   - `results`: 表示候補配列
   - `selected`: 選択インデックス
   - `shouldShow`: 結果ウィンドウを表示すべきか
-  - `reason`: 送信理由（`query` / `command` / `selection` / `reset` / `launch`）
+  - `reason`: 送信理由（`query` / `command` / `reset` / `launch`）
 - **`results-selection-changed`**: 選択インデックスのみ変わったとき（配列を送らない）
-  - `generation`: リクエスト世代番号
+  - `generation`: イベント世代番号（`eventGeneration`）
   - `selected`: 選択インデックス
 - **`results-visibility-changed`**: 結果ウィンドウを非表示にするとき（配列を送らない）
-  - `generation`: リクエスト世代番号
+  - `generation`: イベント世代番号（`eventGeneration`）
   - `shouldShow`: 常に `false`
   - `reason`: 送信理由（`command` / `reset` / `launch`）
 - 表示制御は `shouldShow`（`results-data-changed` / `results-visibility-changed`）を唯一の真実源として扱う

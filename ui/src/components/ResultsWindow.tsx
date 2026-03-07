@@ -173,7 +173,7 @@ const ResultsWindow: Component = () => {
       void fetchIcons(event.payload.results, event.payload.generation);
       setSelected(event.payload.selected);
       scrollToSelected(event.payload.selected, event.payload.generation);
-      emitRenderDone(event.payload.generation);
+      emitRenderDone(event.payload.searchRequestId);
     }).then((fn) => { unlistenData = fn; })
       .catch((e) => console.warn("ResultsWindow: failed to listen results-data-changed:", e));
 
@@ -181,9 +181,9 @@ const ResultsWindow: Component = () => {
     onCleanup(() => unlistenSelection?.());
     void listen<ResultsSelectionPayload>("results-selection-changed", (event) => {
       if (event.payload.generation < latestGeneration) return;
+      latestGeneration = event.payload.generation;
       setSelected(event.payload.selected);
       scrollToSelected(event.payload.selected, event.payload.generation);
-      emitRenderDone(event.payload.generation);
     }).then((fn) => { unlistenSelection = fn; })
       .catch((e) => console.warn("ResultsWindow: failed to listen results-selection-changed:", e));
   });

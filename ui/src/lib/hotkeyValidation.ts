@@ -16,13 +16,15 @@ const FORBIDDEN_MAIN_KEYS = new Set([
 ]);
 
 // Forbidden Windows system shortcuts: "normalized_modifier|normalized_key"
-// modifier_normalized: parts split by '+', trimmed, lowercased, sorted, rejoined with '+'
-// key_normalized: trimmed, lowercased
+// modifier_normalized: parts split by '+', trimmed, alias-resolved, lowercased, sorted, rejoined
+// key_normalized: alias-resolved, trimmed, lowercased
+// Entries must be pre-sorted alphabetically (e.g. "alt+ctrl" not "ctrl+alt").
 const SYSTEM_SHORTCUT_CONFLICTS = new Set([
   "alt|f4",
-  "ctrl+shift|escape",
+  "alt|space", // Alt+Space: Windows system menu (SC_KEYMENU)
   "alt|tab",
-  "ctrl+alt|delete",
+  "alt+ctrl|delete", // Ctrl+Alt+Delete: sorted alt < ctrl
+  "ctrl+shift|escape", // Ctrl+Shift+Escape: sorted ctrl < shift
 ]);
 
 function parseModifierParts(modifier: string): string[] {
@@ -32,9 +34,26 @@ function parseModifierParts(modifier: string): string[] {
     .filter((part) => part.length > 0);
 }
 
+function normalizeModifierPart(part: string): string {
+  const lower = part.toLowerCase();
+  // Resolve aliases to match hotkey.rs parse_modifier()
+  if (lower === "control") return "ctrl";
+  if (lower === "super" || lower === "meta") return "win";
+  return lower;
+}
+
+function normalizeKey(key: string): string {
+  // Resolve aliases to match hotkey.rs parse_vk()
+  const lower = key.toLowerCase();
+  if (lower === "esc") return "escape";
+  if (lower === "return") return "enter";
+  if (lower === "del") return "delete";
+  return lower;
+}
+
 function normalizeModifier(modifier: string): string {
   return parseModifierParts(modifier)
-    .map((p) => p.toLowerCase())
+    .map(normalizeModifierPart)
     .sort()
     .join("+");
 }
@@ -67,13 +86,7 @@ export function isHotkeyInvalid(modifier: string, key: string): boolean {
     return true;
   }
 
-  const isAltOnly =
-    modifierParts.length === 1 && modifierParts[0].toLowerCase() === "alt";
-  if (isAltOnly && normalizedKeyLower === "space") {
-    return true;
-  }
-
-  const conflictKey = `${normalizeModifier(modifier)}|${normalizedKeyLower}`;
+  const conflictKey = `${normalizeModifier(modifier)}|${normalizeKey(normalizedKeyLower)}`;
   if (SYSTEM_SHORTCUT_CONFLICTS.has(conflictKey)) {
     return true;
   }

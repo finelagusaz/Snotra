@@ -89,6 +89,7 @@ describe("isHotkeyInvalid", () => {
   describe("システムショートカットとの競合", () => {
     it.each([
       ["Alt", "F4"],
+      ["Alt", "Space"],
       ["Ctrl+Shift", "Escape"],
       ["Alt", "Tab"],
       ["Ctrl+Alt", "Delete"],
@@ -116,6 +117,22 @@ describe("isHotkeyInvalid", () => {
       expect(isHotkeyInvalid("Shift+Ctrl", "Escape")).toBe(true);
     });
 
+    it("Ctrl+Alt+Delete は無効", () => {
+      expect(isHotkeyInvalid("Ctrl+Alt", "Delete")).toBe(true);
+    });
+
+    it("Alt+Ctrl+Delete（順序逆）も無効", () => {
+      expect(isHotkeyInvalid("Alt+Ctrl", "Delete")).toBe(true);
+    });
+
+    it("Control（エイリアス）+Shift+Escape も無効", () => {
+      expect(isHotkeyInvalid("Control+Shift", "Escape")).toBe(true);
+    });
+
+    it("Ctrl+Shift+Esc（Esc エイリアス）も無効", () => {
+      expect(isHotkeyInvalid("Ctrl+Shift", "Esc")).toBe(true);
+    });
+
     it("Alt+Shift+F4 は Alt+F4 と異なるので有効", () => {
       expect(isHotkeyInvalid("Alt+Shift", "F4")).toBe(false);
     });
@@ -129,19 +146,6 @@ describe("isHotkeyInvalid", () => {
     });
   });
 
-  describe("Alt 単独 + Space の禁止", () => {
-    it("Alt + Space は無効", () => {
-      expect(isHotkeyInvalid("Alt", "Space")).toBe(true);
-    });
-
-    it("Alt + space（小文字）も無効", () => {
-      expect(isHotkeyInvalid("Alt", "space")).toBe(true);
-    });
-
-    it("alt（小文字）+ Space も無効", () => {
-      expect(isHotkeyInvalid("alt", "Space")).toBe(true);
-    });
-  });
 });
 
 describe("formatHotkeyLabel", () => {

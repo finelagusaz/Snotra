@@ -50,5 +50,17 @@ describe("t", () => {
         "起動に時間がかかっています{detail}",
       );
     });
+
+    it("{hotkey} を置換する（initial_failed）", () => {
+      expect(t("notice.hotkey.initial_failed", { hotkey: "Alt+Q" })).toBe(
+        "ホットキー (Alt+Q) の登録に失敗しました。他のアプリが使用中の可能性があります",
+      );
+    });
+
+    it("{hotkey} を置換する（change_failed）", () => {
+      expect(t("notice.hotkey.change_failed", { hotkey: "Ctrl+Space" })).toBe(
+        "ホットキー (Ctrl+Space) の登録に失敗しました。元のホットキーを維持します",
+      );
+    });
   });
 });

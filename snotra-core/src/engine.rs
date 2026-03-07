@@ -74,9 +74,10 @@ impl Engine {
     pub fn search(&mut self, query: &str) -> Vec<SearchResult> {
         let mode = SearchMode::from(self.config.search.normal_mode);
         let boost = HistoryBoostConfig::from(&self.config.search);
-        let max = self.config.appearance.max_results;
+        // top_n_history が取得上限。max_results はウィンドウ可視行数のみを制御する。
+        let fetch_limit = self.config.appearance.top_n_history;
         self.search_engine
-            .search_with_history_boost(query, max, &self.history, mode, boost)
+            .search_with_history_boost(query, fetch_limit, &self.history, mode, boost)
     }
 
     pub fn recent_history(&self) -> Vec<SearchResult> {
@@ -88,7 +89,7 @@ impl Engine {
         FolderListContext {
             mode: SearchMode::from(self.config.search.folder_mode),
             show_hidden_system: self.config.search.show_hidden_system,
-            max_results: self.config.appearance.max_results,
+            max_results: self.config.appearance.top_n_history,
         }
     }
 
@@ -98,7 +99,7 @@ impl Engine {
         ctx: FolderListContext,
     ) -> Vec<SearchResult> {
         // ctx は I/O 開始前にロックなしで取得したスナップショット。
-        // 設定変更が並走した場合 max_results が 1 件ずれる可能性があるが、
+        // 設定変更が並走した場合 top_n_history が 1 件ずれる可能性があるが、
         // Mutex 保持時間の最小化を優先する設計判断として許容する。
         // history は常に現在の最新状態を使用する（スコアリングのみへの影響）。
         folder::score_entries(entries, &self.history, ctx.max_results)
@@ -232,16 +233,18 @@ mod tests {
     }
 
     #[test]
-    fn search_respects_max_results_from_config() {
+    fn search_returns_up_to_top_n_history_regardless_of_max_results() {
         let mut config = default_config();
         config.appearance.max_results = 2;
+        // top_n_history はデフォルト 200 → 4 件全部取得できる。
+        // max_results はウィンドウ可視行数のみを制御する。
         let mut engine = Engine::new(
             make_entries(&["app1", "app2", "app3", "app4"]),
             empty_history(),
             config,
         );
         let results = engine.search("app");
-        assert!(results.len() <= 2);
+        assert_eq!(results.len(), 4);
     }
 
     #[test]

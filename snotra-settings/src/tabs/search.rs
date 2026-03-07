@@ -37,7 +37,7 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config) {
         ui.add_space(4.0);
 
         egui::Grid::new("history_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
-            ui.label("履歴保持件数:");
+            ui.label("最大列挙数:");
             ui.add_sized([60.0, ui.spacing().interact_size.y], egui::DragValue::new(&mut config.appearance.top_n_history).range(10..=1000));
             ui.end_row();
         });

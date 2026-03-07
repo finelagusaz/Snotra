@@ -80,8 +80,8 @@ npm run build                    # フロントエンドビルド（typecheck �
 ```bash
 cargo test -p snotra-core        # ユニットテスト
 cargo test --release -p snotra-core bench_ -- --ignored --nocapture  # 検索パフォーマンス計測
-cargo check -p snotra            # Rustバックエンド型チェック
-cargo clippy -p snotra-core -p snotra  # lint チェック
+cargo check -p snotra-core -p snotra -p snotra-settings  # Rust 全 crate 型チェック
+cargo clippy -p snotra-core -p snotra -p snotra-settings  # lint チェック
 npm run verify                   # Rust + フロントエンド一括検証（cargo check + npm run build）
 npm run smoke:startup             # 起動時ウィンドウ生成スモーク（trace検証）
 npm run e2e:tauri:setup           # Tauri Driver E2E 用セットアップ
@@ -152,7 +152,7 @@ npm run tauri build              # リリースビルド
 6. 最小実装で通す（Green）
 7. テストが通るまで 6 を反復する
 8. 変更後の検証を実行する（スキップ不可）
-   - Rust ファイルを触った場合: `cargo check -p snotra-core -p snotra`（必須）、追加で `cargo test / clippy` も検討
+   - Rust ファイルを触った場合: `cargo check -p snotra-core -p snotra -p snotra-settings`（必須）、追加で `cargo test / clippy` も検討
    - TS ファイルを触った場合: `npm run typecheck`（PostToolUse フックが自動実行）+ `npm run build`（必須・プロジェクトルートから実行）
    - ウィンドウ生成/表示順・ホットキー・スラッシュコマンドを触った場合: `npm test` + `npm run smoke:startup` + `npm run e2e:tauri` を必須で実行
 9. 報告は「追加/更新テスト名 + 検証した不変条件」を必ず含める

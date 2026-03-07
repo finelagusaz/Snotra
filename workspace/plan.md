@@ -1,198 +1,161 @@
-# plan: issue #159 — ホットキー登録失敗時のユーザー通知
+# plan: issue #191 — 最大表示行数以上の結果をスクロールで閲覧可能にする
 
 ## 設計方針
 
-- **イベントを役割で分離**:
-  - 初回失敗: `platform-event` のペイロードを `{ event: "initial-hotkey-failed", hotkey: "Alt+Q" }` に変更し、同ハンドラ内で通知を完結させる（`hotkey-registration-failed` は emit しない）
-  - 設定変更失敗: 新規 `hotkey-registration-failed` イベントを emit し、専用リスナーで通知
-- **初回失敗で `hotkey-registration-failed` を使わない理由**: `platform-event` ハンドラは `async` で `await win.show()` を含む。この await 中に別イベントハンドラが割り込んで通知をセットしても、後続の `resetForShow()` → `clearLaunchNotice()` で消えてしまう競合がある。通知は `resetForShow()` の後に同一ハンドラ内でセットすることで排除する
-- **unlisten パターン**: 新規リスナーはパターン B（個別 await + `unlistenFns.push`）で追加。Promise.all ブロックは変更しない
-- **フロントエンド通知**: `setHotkeyFailureNotice(msg)` を `search.ts` に追加 export し、`MainApp.tsx` で呼ぶ
+`max_results` の責務を「ウィンドウの可視行数」に限定し、バックエンドの取得件数上限を
+別定数 `SCROLL_FETCH_LIMIT` で管理する。フロントエンド（CSS・JS）はスクロール実装済みのため変更不要。
 
-## 変更ファイル一覧（6ファイル）
+```
+max_results (設定値) → ウィンドウ高さのみ制御
+SCROLL_FETCH_LIMIT   → バックエンドが返す最大件数（100 固定）
+```
+
+---
+
+## 変更ファイル一覧（2ファイル）
 
 | ファイル | 変更内容 |
 |---------|---------|
-| `src-tauri/src/platform/mod.rs` | `RegisterInitialHotkey` 失敗時の `platform-event` ペイロードを JSON object に変更し、同ハンドラ内で通知まで完結させる |
-| `src-tauri/src/config_watcher.rs` | `Ok(false)\|Err(_)` ブランチで `hotkey-registration-failed` を emit |
-| `ui/src/lib/i18n.ts` | `notice.hotkey.initial_failed` / `notice.hotkey.change_failed` キーを追加 |
-| `ui/src/stores/search.ts` | `setLaunchNoticeWithAutoClear` に timeout 引数追加。`setHotkeyFailureNotice` を追加 export |
-| `ui/src/MainApp.tsx` | `hotkey-registration-failed` リスナーを追加 |
-| `SPEC.md` | §9.2 line 393 を2行に分割・詳細化 |
+| `snotra-core/src/engine.rs` | `SCROLL_FETCH_LIMIT` 定数を追加し、`search()`・`capture_folder_list_context()`・`list_folder()` の件数上限を変更。テスト更新 |
+| `SPEC.md` | §3.2 の記述は既にスクロール対応を示しているため変更不要（確認のみ） |
+
+---
 
 ## 実装順序
 
-### Phase 1: Rust — イベント emit を追加
+### Phase 1: `snotra-core/src/engine.rs` の変更
 
-**`src-tauri/src/platform/mod.rs`** — `RegisterInitialHotkey` ブランチ:
+**1a. 定数追加**（ファイル先頭付近 `use` の後）:
 ```rust
-PlatformCommand::RegisterInitialHotkey => {
-    if !hotkey::register(current_hotkey) {
-        // ペイロードに hotkey を埋め込む（フロント側の競合回避のため 1イベントに統合）
-        let hotkey_str = format!("{}+{}", current_hotkey.modifier, current_hotkey.key);
-        let _ = app_handle.emit("platform-event", serde_json::json!({
-            "event": "initial-hotkey-failed",
-            "hotkey": hotkey_str,
-        }));
-    }
-}
+/// ウィンドウの可視行数（max_results）を超えてスクロールする際の検索取得上限。
+/// max_results はウィンドウ高さのみを制御し、この上限まで結果を取得してスクロールで閲覧できる。
+/// snotra-settings の max_results 最大値が 50 なので、常に 50 より大きい値を設定する。
+const SCROLL_FETCH_LIMIT: usize = 100;
 ```
 
-**`src-tauri/src/config_watcher.rs`** — `Ok(false) | Err(_)` ブランチ:
+**1b. `Engine::search()` の変更**:
 ```rust
-Ok(false) | Err(_) => {
-    eprintln!("[config-watcher] hotkey registration failed: {} + {}",
-        new_config.hotkey.modifier, new_config.hotkey.key);
-    // 新規追加
-    let hotkey_str = format!("{}+{}", new_config.hotkey.modifier, new_config.hotkey.key);
-    let _ = app.emit("hotkey-registration-failed", hotkey_str);
+pub fn search(&mut self, query: &str) -> Vec<SearchResult> {
+    let mode = SearchMode::from(self.config.search.normal_mode);
+    let boost = HistoryBoostConfig::from(&self.config.search);
+    let max = self.config.appearance.max_results;
+    self.search_engine
+        .search_with_history_boost(query, max.max(SCROLL_FETCH_LIMIT), &self.history, mode, boost)
 }
 ```
 
-> `serde_json` は Tauri が推移的に依存しており追加不要。
-
-### Phase 2: フロントエンド — i18n キー追加
-
-**`ui/src/lib/i18n.ts`**:
-
-```ts
-// TranslationKey union に追加
-| "notice.hotkey.initial_failed"
-| "notice.hotkey.change_failed"
-
-// JA_JP レコードに追加
-"notice.hotkey.initial_failed": "ホットキー ({hotkey}) の登録に失敗しました。他のアプリが使用中の可能性があります",
-"notice.hotkey.change_failed": "ホットキー ({hotkey}) の登録に失敗しました。元のホットキーを維持します",
-```
-
-### Phase 3: フロントエンド — search.ts に通知関数を追加
-
-**`ui/src/stores/search.ts`**:
-```ts
-// timeout 引数を追加（デフォルト値で既存呼び出しは無変更）
-function setLaunchNoticeWithAutoClear(message: string, delayMs = 2400) {
-  clearLaunchNotice();
-  setLaunchNotice(message);
-  launchNoticeTimer = setTimeout(() => {
-    launchNoticeTimer = undefined;
-    setLaunchNotice(null);
-  }, delayMs);
-}
-
-// 新規 export: ホットキー登録失敗通知（5秒表示）
-export function setHotkeyFailureNotice(message: string) {
-  setLaunchNoticeWithAutoClear(message, 5000);
-}
-```
-
-### Phase 4: フロントエンド — MainApp.tsx にリスナー追加
-
-**`ui/src/MainApp.tsx`**:
-
-**4a. `platform-event` ハンドラを更新（初回失敗の通知を resetForShow() の後にセット）**:
-```ts
-// listen<string> → listen<{event: string; hotkey: string} | string> に型変更
-listen<{ event: string; hotkey: string } | string>("platform-event", async (ev) => {
-  const p = ev.payload;
-  const isObj = typeof p === "object";
-  const isInitialFail = isObj
-    ? p.event === "initial-hotkey-failed"
-    : p === "initial-hotkey-failed";
-  if (isInitialFail) {
-    trace("app:event:platform_event:initial_hotkey_failed");
-    try {
-      controller.updateMainVisible(true);
-      await win.show();
-      api.notifyMainShown().catch(() => {});
-    } catch (e) {
-      console.warn("platform-event: failed to show window on initial-hotkey-failed:", e);
+**1c. `Engine::capture_folder_list_context()` の変更**:
+```rust
+pub fn capture_folder_list_context(&self) -> FolderListContext {
+    FolderListContext {
+        mode: SearchMode::from(self.config.search.folder_mode),
+        show_hidden_system: self.config.search.show_hidden_system,
+        max_results: self.config.appearance.max_results.max(SCROLL_FETCH_LIMIT),
     }
-    resetForShow();
-    // resetForShow() で clearLaunchNotice() が呼ばれた後に通知をセット（競合回避）
-    if (isObj) {
-      setHotkeyFailureNotice(t("notice.hotkey.initial_failed", { hotkey: p.hotkey }));
-    }
-  }
-}),
+}
 ```
 
-**4b. `hotkey-registration-failed` リスナーを個別 await パターン（パターン B）で追加**:
-Promise.all ブロックには追加しない。`unlistenMaxResults` の後（line 169 の後）に追加する。
+**1d. `Engine::list_folder()` の変更**（テスト用同期ラッパー）:
+```rust
+pub fn list_folder(&self, dir: &str, filter: &str) -> Vec<SearchResult> {
+    let ctx = self.capture_folder_list_context();
+    folder::list_folder(
+        Path::new(dir),
+        filter,
+        ctx.mode,
+        ctx.show_hidden_system,
+        &self.history,
+        ctx.max_results,  // capture_folder_list_context() 変更により SCROLL_FETCH_LIMIT 以上になる
+    )
+}
+```
+※ `list_folder` の引数 `ctx.max_results` は `capture_folder_list_context()` が既に `max(SCROLL_FETCH_LIMIT)` を適用するため、追加変更不要
 
-```ts
-// import に追加
-import { setHotkeyFailureNotice } from "./stores/search";
+**1e. テスト更新**:
 
-// line 169 の後に追加
-const unlistenHotkeyFailed = await listen<string>("hotkey-registration-failed", (event) => {
-  setHotkeyFailureNotice(t("notice.hotkey.change_failed", { hotkey: event.payload }));
-});
-unlistenFns.push(unlistenHotkeyFailed);
+既存テスト `search_respects_max_results_from_config` は `config.max_results = 2` で 4 エントリを検索し `results.len() <= 2` を検証。
+変更後は `SCROLL_FETCH_LIMIT.max(2) = 100` で最大 100 件取得するため、4 件全部が返る。
+
+変更方針: テスト名と検証内容を「max_results はウィンドウ高さを制御するが、結果件数は SCROLL_FETCH_LIMIT まで返る」に更新:
+```rust
+#[test]
+fn search_returns_up_to_scroll_fetch_limit_regardless_of_max_results() {
+    let mut config = default_config();
+    config.appearance.max_results = 2;
+    let mut engine = Engine::new(
+        make_entries(&["app1", "app2", "app3", "app4"]),
+        empty_history(),
+        config,
+    );
+    let results = engine.search("app");
+    // max_results はウィンドウ高さのみを制御する。
+    // 取得件数は SCROLL_FETCH_LIMIT（100）まで許可されるため、全 4 件が返る。
+    assert_eq!(results.len(), 4);
+}
 ```
 
-### Phase 5: SPEC.md 更新
-
-line 393 を分割:
-```
-- 初回ホットキー登録失敗時は操作不能回避のため検索UIを表示し、ウィンドウ内にエラー通知を表示する
-- 設定変更によるホットキー登録失敗時は旧ホットキーに復帰し、ウィンドウ内に一時エラー通知を表示する
-```
+---
 
 ## 不変条件
 
-1. `platform-event: "initial-hotkey-failed"` ハンドラで `resetForShow()` の後に通知をセットすることで、`clearLaunchNotice()` による競合を排除する
-2. `hotkey-registration-failed` リスナーは Promise.all ブロックに追加せず、個別 await パターン（`unlistenMaxResults` の後）で追加し `unlistenFns.push()` を隣接して記述する
-3. `setHotkeyFailureNotice` は `setLaunchNoticeWithAutoClear` 内の `clearLaunchNotice()` 先頭呼び出しを通じて、タイマーを単一管理する（競合防止）
-4. `format!("{}+{}", modifier, key)` は UI 表示文字列ではなくホットキー識別子。snotra-core の「UI 文字列を持たない」原則には抵触しない（これは src-tauri 内のコード）
+1. `search_with_history_boost` の引数 `max_results` は常に 1 以上（`max_results == 0` の場合は config バリデーションで弾かれる。`0.max(100) = 100`）
+2. フロントエンドのウィンドウ高さ計算 `cachedMaxResults * RESULT_ROW_HEIGHT + PADDING` は変更しない → ウィンドウ高は常に設定値に基づく固定高
+3. `recent_history()` は `max_history_display` で制御しており `SCROLL_FETCH_LIMIT` の影響を受けない
+4. `SCROLL_FETCH_LIMIT > snotra-settings の max_results 最大値 (50)` を維持する → 常にスクロール余地がある
+
+---
 
 ## テスト方針
 
-- `cargo check -p snotra-core -p snotra -p snotra-settings`: Rust 型チェック
-- `npm run typecheck` + `npm run build`: i18n キー・型変更の検証
-- 手動確認: 別アプリで同じホットキーを専有した状態で Snotra を起動 → エラー通知が表示されることを確認
+- `cargo test -p snotra-core`: 既存テスト + 更新テストが通ることを確認
+- `cargo check -p snotra-core -p snotra -p snotra-settings`: 型チェック
+- 手動確認: 検索でヒット数が `max_results` を超える場合にスクロールバーが表示されること
+
+---
 
 ## SPEC.md 更新要否
 
-あり（Phase 5 で対処）。
+不要。SPEC §3.2 L123 に「超過時はスクロールバーを表示する」と既に記述されており、今回の変更はその記述に合わせるバグ修正。
 
 ---
 
 ## セルフレビュー
 
-### 1. 対称コードパス確認
+### 1. 対称コードパス
 
-- `hotkey-pressed` / `hotkey-registration-failed`: 対称ペアに相当するが、`hotkey-pressed` は既存で変更しない → 影響なし
-- `platform-event` の既存ハンドラ（window show ロジック）はそのまま維持 → ウィンドウ表示 + 通知の両立
+- 通常検索 (`Engine::search`)・フォルダ閲覧 (`capture_folder_list_context`) の両方に適用 ✓
+- `recent_history()` は `max_history_display` で独立管理 → 変更不要であることを確認 ✓
+- `search.rs::search_with_history_boost` のシグネチャは変更しない → 呼び出し元のみ変更 ✓
 
 ### 2. 影響範囲の網羅性
 
-- `platform-event` ペイロード型を `string` → `{event:string;hotkey:string}|string` の union に変更。TS の union 型は既存の string リテラル判定（`p === "initial-hotkey-failed"`）でフォールバックするため後方互換性あり
-- `hotkey-registration-failed` は新規イベント → 既存コードへの影響ゼロ
-- `setLaunchNoticeWithAutoClear` に引数追加（デフォルト値あり）→ 既存の2呼び出し箇所（line ~430, ~532）は変更不要
+- `SCROLL_FETCH_LIMIT` を使うのは `engine.rs` の3箇所のみ
+- `search_respects_max_results_from_config` テストが壊れることを確認し更新計画に含めた ✓
+- `folder.rs::list_folder` の直接呼び出しは `engine.rs::list_folder()` 経由のみ → 変更不要 ✓
 
 ### 3. 境界条件
 
-- `hotkey-registration-failed` が `main` ウィンドウ不可視時に届いた場合: `launchNotice` は設定されるが表示されない。`resetForShow()` 時に `clearLaunchNotice()` で消えるため残留しない。初回失敗時はウィンドウ表示と同時なので問題なし。設定変更失敗時はウィンドウが可視（ユーザーが設定を変更したばかり）→ 問題なし。
-- `format!("{}+{}", modifier, key)` で生成する識別子: "Alt+Q" のような短い文字列。i18n テンプレートの `{hotkey}` に埋め込まれる。
+- `max_results = 0`: config バリデーションで弾かれる（`config.rs:640`）。`0.max(100) = 100` のため安全
+- `max_results = 50`（最大設定値）: `50.max(100) = 100` → 50 行見えて残り 50 行スクロール ✓
+- エントリ数 < SCROLL_FETCH_LIMIT: 全件返る（既存の動作と同じ）
 
 ### 4. リソース管理
 
-- `listen()` の戻り値（unlisten 関数）を `unlistenFns` 配列に追加する → `onCleanup` で自動破棄
+バックエンドの Vec サイズが増えるが、一時的なメモリ使用であり問題なし。
 
 ### 5. 既存パターンとの整合
 
-- イベントリスナー + i18n + `setLaunchNoticeWithAutoClear` の組み合わせは `notice.launch.*` で確立済みパターン。新パターン不要。
+`search_with_history_boost` は既にパラメータで上限を受け取る設計 → 新パターン不要 ✓
 
 ### 6. YAGNI 違反
 
-- 2種類のメッセージを1イベント + `is_initial` フラグで賄う。イベントを2種類に分けない → シンプル。
-- `setHotkeyFailureNotice` のタイムアウト 5000ms は固定値。設定化不要。
+新しい設定項目を追加しない。`SCROLL_FETCH_LIMIT` は固定定数 → シンプル ✓
 
 ### 7. シンプル化の挑戦
 
-`serde_json::json!()` マクロを使う。匿名 struct + `#[derive(Serialize)]` より軽量で、局所的な1回きりの用途に適する。新型を追加しない選択は YAGNI に沿っている。
+「この複雑さが必要か」: `max(max_results, SCROLL_FETCH_LIMIT)` の1行変更のみ。これ以上シンプルにできない。
 
-### 8. 破壊不変条件の明示
+### 8. 破壊不変条件
 
-- `platform-event: "initial-hotkey-failed"` のウィンドウ表示ロジックを維持 → 「ホットキー登録失敗時でも UI は必ず操作可能」の不変条件を維持。
-- `hotkey-registration-failed` リスナーの unlisten 漏れがあると、ウィンドウ再マウント時にダブルリスナーになる。`unlistenFns` への追加で防止。
+- 「ウィンドウ高さは max_results 行分に固定」の不変条件: `resultsWindowController.ts` は変更しないため維持 ✓
+- `search_with_history_boost` のインターフェースは変更しない → 既存テスト（search.rs 内）は全通過 ✓

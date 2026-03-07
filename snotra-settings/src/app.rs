@@ -169,6 +169,9 @@ fn config_error_message(error: &ConfigError) -> String {
     match error {
         ConfigError::HotkeyModifierEmpty => "ホットキーの修飾キーが未設定です".to_string(),
         ConfigError::HotkeyKeyEmpty => "ホットキーのキーが未設定です".to_string(),
+        ConfigError::HotkeySystemConflict { modifier, key } => {
+            format!("{}+{} はシステムショートカットと競合します", modifier, key)
+        }
         ConfigError::MaxResultsZero => "最大表示件数は1以上にしてください".to_string(),
         ConfigError::WindowWidthTooSmall(w) => format!("ウィンドウ幅 {} は小さすぎます（200以上）", w),
         ConfigError::FuzzyCapRatioOutOfRange { value } => {

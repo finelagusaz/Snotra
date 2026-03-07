@@ -1,5 +1,5 @@
 use eframe::egui;
-use snotra_core::config::HotkeyConfig;
+use snotra_core::config::{is_system_shortcut, HotkeyConfig};
 
 /// Hotkey capture widget state
 #[derive(Default)]
@@ -95,6 +95,10 @@ fn capture_hotkey(input: &egui::InputState) -> CaptureResult {
                 let modifier = build_modifier_string(&input.modifiers);
                 // Require at least one modifier for safety
                 if modifier.is_empty() {
+                    continue;
+                }
+                // Reject system shortcuts immediately (save-time validate is a backstop)
+                if is_system_shortcut(&modifier, &name) {
                     continue;
                 }
                 return CaptureResult::Captured {

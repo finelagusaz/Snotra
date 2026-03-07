@@ -259,7 +259,30 @@
 - ボタン押下時、`Config::default()` 相当の値をドラフトに適用する（保存は行わない）
 - 二段階押し方式で誤操作を防止する: 初回クリックで確認テキストに変わり、再クリックで実行。3秒経過で自動解除
 
-### 6.4 設定反映タイミング
+### 6.4 ホットキーバリデーションルール
+
+保存時に `Config::validate()` で以下を検証する。いずれかに該当した場合はエラーを返し保存しない。
+
+- 修飾キーが空
+- メインキーが空
+- Windows システムショートカットと競合する組み合わせ（下表）
+
+| 組み合わせ | 理由 |
+|-----------|------|
+| `Alt+F4` | ウィンドウ閉じる（RegisterHotKey 成功・OS 機能を奪う） |
+| `Ctrl+Shift+Escape` | タスクマネージャー（RegisterHotKey 成功・OS 機能を奪う） |
+| `Alt+Tab` | タスク切替（RegisterHotKey 失敗・即時フィードバック目的） |
+| `Ctrl+Alt+Delete` | セキュリティ画面（RegisterHotKey 失敗・即時フィードバック目的） |
+
+**除外の理由（ブロックしないもの）**:
+- `Ctrl+Space`: IME 切替はユーザー判断。日本語 IME はデフォルトで使用せず、中国語 IME がある場合は RegisterHotKey が失敗し既存エラー通知が捕捉する
+- `Alt+Escape`: RegisterHotKey がシェル予約により必ず失敗するため事前ブロック不要。egui のキャプチャ UI から入力もできない
+
+- 照合は modifier を `+` 分割 → trim → 小文字化 → ソート → 再結合した正規化形式で行う（`Shift+Ctrl` = `Ctrl+Shift`）
+- `Alt+Shift+F4` など modifier セットが異なる場合はブロックしない（完全一致）
+- snotra-settings のキャプチャ UI でも即時拒否し、フロントエンド（`hotkeyValidation.ts`）でも同じリストでガードする
+
+### 6.5 設定反映タイミング
 
 - `snotra-settings` が `config.toml` を保存すると、本体の `config_watcher`（`notify` ファイル監視）が変更を検知し設定を再読み込みする
 - ホットキー: 検知時に `PlatformCommand::SetHotkey` で再登録（失敗時は旧設定維持）
@@ -271,7 +294,7 @@
   - 検知時に変更を判定し、バックグラウンドで自動再構築
   - ステータスに「インデックスを再構築中…」を表示
 
-### 6.5 起動時ブートストラップ
+### 6.6 起動時ブートストラップ
 
 - 起動直後のUI初期化は `get_bootstrap_payload` を使い、`visual`・`general.auto_hide_on_focus_lost`・`indexing` を一括取得する
 - メインウィンドウはこのペイロードで初期テーマ適用とフォーカス喪失時自動非表示の有効化可否を決定する

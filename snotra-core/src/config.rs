@@ -612,6 +612,15 @@ impl Config {
         if self.hotkey.key.trim().is_empty() {
             errors.push(ConfigError::HotkeyKeyEmpty);
         }
+        if !self.hotkey.modifier.trim().is_empty()
+            && !self.hotkey.key.trim().is_empty()
+            && is_system_shortcut(&self.hotkey.modifier, &self.hotkey.key)
+        {
+            errors.push(ConfigError::HotkeySystemConflict {
+                modifier: self.hotkey.modifier.clone(),
+                key: self.hotkey.key.clone(),
+            });
+        }
 
         // Appearance validation
         if self.appearance.max_results == 0 {
@@ -645,6 +654,68 @@ impl Config {
         }
         false
     }
+}
+
+/// Forbidden (modifier_normalized, key_normalized) pairs.
+/// Entries must be pre-sorted alphabetically (e.g. "alt+ctrl" not "ctrl+alt")
+/// because is_system_shortcut() sorts modifier parts before matching.
+/// Key aliases are resolved before matching (esc→escape, del→delete, etc.)
+/// to align with hotkey.rs parse_vk().
+const SYSTEM_SHORTCUTS: &[(&str, &str)] = &[
+    ("alt", "f4"),
+    ("alt", "space"),         // Alt+Space: Windows system menu (SC_KEYMENU)
+    ("alt", "tab"),
+    ("alt+ctrl", "delete"),   // Ctrl+Alt+Delete: sorted alt < ctrl
+    ("ctrl+shift", "escape"), // Ctrl+Shift+Escape: sorted ctrl < shift
+];
+
+/// Normalizes a modifier part to its canonical form, matching hotkey.rs parse_modifier().
+/// Input must already be trimmed and lowercased.
+fn normalize_modifier_part(part: &str) -> &str {
+    match part {
+        "control" => "ctrl",
+        "super" | "meta" => "win",
+        other => other,
+    }
+}
+
+/// Normalizes a key name to its canonical form, matching hotkey.rs parse_vk().
+fn normalize_key(key: &str) -> String {
+    match key {
+        "esc" => "escape".to_string(),
+        "return" => "enter".to_string(),
+        "del" => "delete".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Returns true if the given modifier+key combination matches a known Windows system shortcut.
+/// modifier: e.g. "Ctrl+Shift", "Control+Alt". key: e.g. "F4", "Esc".
+/// Empty modifier or key always returns false (empty check runs before this in validate()).
+/// Aliases (control→ctrl, esc→escape, del→delete) are resolved to match hotkey.rs behaviour.
+pub fn is_system_shortcut(modifier: &str, key: &str) -> bool {
+    if modifier.trim().is_empty() || key.trim().is_empty() {
+        return false;
+    }
+    let lowered: Vec<String> = modifier
+        .split('+')
+        .map(|p| p.trim().to_lowercase())
+        .filter(|p| !p.is_empty())
+        .collect();
+    let mut parts: Vec<&str> = lowered
+        .iter()
+        .map(|p| normalize_modifier_part(p.as_str()))
+        .collect();
+    // Win 8+ reserves all Win+* combinations at the shell level.
+    if parts.contains(&"win") {
+        return true;
+    }
+    parts.sort_unstable();
+    let norm_mod = parts.join("+");
+    let norm_key = normalize_key(key.trim().to_lowercase().as_str());
+    SYSTEM_SHORTCUTS
+        .iter()
+        .any(|&(m, k)| m == norm_mod && k == norm_key)
 }
 
 #[cfg(test)]
@@ -1605,6 +1676,103 @@ mod tests {
         assert!(errors.contains(&ConfigError::FuzzyCapRatioOutOfRange { value: 2.0 }));
         assert!(errors.contains(&ConfigError::ScanPathEmpty { index: 0 }));
         assert_eq!(errors.len(), 6, "all 6 errors should be reported");
+    }
+
+    // ---- is_system_shortcut tests ----
+
+    #[test]
+    fn system_shortcut_blocked_combos() {
+        // Each entry in SYSTEM_SHORTCUTS must be blocked
+        let cases = [
+            ("Alt", "F4"),
+            ("Alt", "Space"),
+            ("Ctrl+Shift", "Escape"),
+            ("Alt", "Tab"),
+            ("Ctrl+Alt", "Delete"),
+        ];
+        for (modifier, key) in cases {
+            assert!(
+                is_system_shortcut(modifier, key),
+                "expected {modifier}+{key} to be a system shortcut"
+            );
+        }
+    }
+
+    #[test]
+    fn system_shortcut_win_modifier_blocked() {
+        // Win 8+ reserves all Win+* combinations at the shell level
+        assert!(is_system_shortcut("Win", "Q"));
+        assert!(is_system_shortcut("Super", "A"));
+        assert!(is_system_shortcut("Ctrl+Win", "Space"));
+        assert!(is_system_shortcut("Meta", "F1"));
+    }
+
+    #[test]
+    fn system_shortcut_case_insensitive() {
+        assert!(is_system_shortcut("alt", "f4"));
+        assert!(is_system_shortcut("ALT", "F4"));
+        assert!(is_system_shortcut("Alt", "f4"));
+    }
+
+    #[test]
+    fn system_shortcut_modifier_order_independent() {
+        assert!(is_system_shortcut("Shift+Ctrl", "Escape"));
+        assert!(is_system_shortcut("ctrl+shift", "escape"));
+        // Ctrl+Alt+Delete: sorted → alt+ctrl, must match
+        assert!(is_system_shortcut("Ctrl+Alt", "Delete"));
+        assert!(is_system_shortcut("Alt+Ctrl", "Delete"));
+    }
+
+    #[test]
+    fn system_shortcut_alias_normalization() {
+        // modifier alias: control → ctrl
+        assert!(is_system_shortcut("Control+Shift", "Escape"));
+        assert!(is_system_shortcut("Control+Alt", "Delete"));
+        // key alias: esc → escape
+        assert!(is_system_shortcut("Ctrl+Shift", "Esc"));
+        // combined aliases
+        assert!(is_system_shortcut("Control+Shift", "Esc"));
+    }
+
+    #[test]
+    fn system_shortcut_allowed_combos() {
+        assert!(!is_system_shortcut("Alt", "Q"));
+        assert!(!is_system_shortcut("Ctrl", "F1"));
+        assert!(!is_system_shortcut("Alt+Shift", "F4")); // extra modifier → not Alt+F4
+        assert!(!is_system_shortcut("Alt+Shift", "Space")); // extra modifier → not Alt+Space
+        assert!(!is_system_shortcut("Ctrl", "Space")); // IME 切替はユーザー判断
+        assert!(!is_system_shortcut("Alt", "Escape")); // RegisterHotKey が失敗するので不要
+    }
+
+    #[test]
+    fn system_shortcut_empty_inputs_return_false() {
+        assert!(!is_system_shortcut("", "F4"));
+        assert!(!is_system_shortcut("Alt", ""));
+        assert!(!is_system_shortcut("", ""));
+    }
+
+    #[test]
+    fn validate_system_shortcut_produces_conflict_error() {
+        let mut config = Config::default();
+        config.hotkey.modifier = "Alt".to_string();
+        config.hotkey.key = "F4".to_string();
+        let errors = config.validate();
+        assert!(errors.contains(&ConfigError::HotkeySystemConflict {
+            modifier: "Alt".to_string(),
+            key: "F4".to_string(),
+        }));
+    }
+
+    #[test]
+    fn validate_allowed_hotkey_no_conflict_error() {
+        let mut config = Config::default();
+        config.hotkey.modifier = "Alt".to_string();
+        config.hotkey.key = "Q".to_string();
+        let errors = config.validate();
+        let has_conflict = errors.iter().any(|e| {
+            matches!(e, ConfigError::HotkeySystemConflict { .. })
+        });
+        assert!(!has_conflict, "Alt+Q should not produce a system conflict error");
     }
 
     // ---- CustomTheme / ThemePreset::Custom tests ----

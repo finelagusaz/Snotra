@@ -1,66 +1,103 @@
-# Research — results-sync 分割で selection-only IPC を軽量化 (#162)
+# Research — main と results のフロントエンドを別エントリポイントに分割 (#163)
 
 ## issue の要約
 
-矢印キー移動・hover 時の `emitSelectionUpdate()` が `results-sync` イベントで結果配列全体をシリアライズして送っている。ResultsWindow 側は `isSelectionOnly` 判定で結果本体を無視しているが、送信側は不要なデータを送り続けている。これを分割して選択変更時には結果配列を送らないようにする。
+2つの WebView（main/results）が同一 JS バンドルを重複ロードしているため、Vite multi-page build でエントリポイントを分割し、初期メモリと parse/compile コストを下げる。
+
+## 現状分析
+
+### バンドル構成
+
+- 単一バンドル: `index-*.js` **54.58 kB**（gzip 17.18 kB）
+- 両 WebView が同じ `index.html` → 同じ JS を読み込む
+- `App.tsx` で `getCurrentWindow().label` により `SearchWindow` / `ResultsWindow` を出し分け
+
+### 依存関係の分析
+
+**results 側が実際に使うモジュール（ソースサイズ）:**
+| モジュール | サイズ |
+|-----------|--------|
+| `ResultsWindow.tsx` | 8.4 kB |
+| `ResultRow.tsx` | 2.0 kB |
+| `invoke.ts`（一部関数のみ） | 4.2 kB |
+| `truncatePath.ts` | 3.8 kB |
+| `searchEvents.ts` | 0.9 kB |
+| `types.ts` | 0.7 kB |
+| `theme.ts` | 0.6 kB |
+| **合計** | **~20.6 kB** |
+
+**results 側が不要だが現在ロードされるモジュール:**
+| モジュール | サイズ |
+|-----------|--------|
+| `search.ts`（最大モジュール） | 19.0 kB |
+| `SearchWindow.tsx` | 9.8 kB |
+| `resultsWindowController.ts` | 8.3 kB |
+| `perf.ts` | 3.4 kB |
+| `i18n.ts` | 1.8 kB |
+| `commands.ts` | 1.7 kB |
+| `folderNav.ts` | 1.6 kB |
+| `pathQuery.ts` | 1.4 kB |
+| `hotkeyValidation.ts` | 1.4 kB |
+| `folder.ts`, `tool-selection.ts` | 0.8 kB |
+| **合計不要コード** | **~49.2 kB** |
+
+### 効果見積もり
+
+54.58 kB バンドルの内訳推定:
+- フレームワーク（solid-js + @tauri-apps/api）: ~30 kB
+- アプリケーション固有コード: ~24 kB
+
+分割後の見積もり:
+| | 現在 | 分割後 |
+|--|------|--------|
+| main bundle | 54.58 kB | ~50 kB |
+| results bundle | 54.58 kB | ~38 kB |
+| **合計ロード量** | **109 kB** | **~88 kB（19% 削減）** |
+| results parse/compile | 54.58 kB | ~38 kB（**31% 削減**） |
+
+メモリ面:
+- results WebView が `search.ts`（19 kB src）の SolidJS store を持たないため JS ヒープ減少
+- V8 compiled code も比例して減少
+- WebView2 ベースメモリ（~30-50 MB/WebView）に対して JS ヒープの差は控えめ
+
+### 結論
+
+バンドルサイズ効果は moderate（合計 19% 削減、results 側 31% 削減）。実装コストが低く（HTML/エントリポイント追加 + Vite config + Rust URL 変更）、コードの責務分離も改善されるため実施価値あり。
 
 ## 関連コード
 
-### 送信側: `stores/search.ts`
+### フロントエンド
+- `ui/index.html` — 唯一の HTML エントリ
+- `ui/src/index.tsx` — 唯一の JS エントリ（`render(() => <App />, root)`）
+- `ui/src/App.tsx` — ウィンドウラベル分岐 + main 固有リスナー（7つの listen）+ テーマ適用
 
-- `emitResults()` (L29-45): すべてのケースで `emit("results-sync", { generation, results, selected, shouldShow, reason })` を呼ぶ
-- `emitSelectionUpdate()` (L263-272): `moveSelectionUp/Down` から呼ばれ、`emitResults(results(), ...)` で結果配列全体を送る — **これが最適化対象**
-- `emitResults` の呼び出し箇所は 14 箇所（L71, L119, L127, L145, L192, L242, L268, L317, L407, L436, L484, L499, L515, L538）
+### Rust バックエンド
+- `src-tauri/tauri.conf.json` — main ウィンドウ定義
+- `src-tauri/src/commands/window.rs:24` — `ensure_results_window` で `WebviewUrl::App(Default::default())` → `index.html`
+- `src-tauri/src/main.rs:421` — setup で `ensure_results_window` 呼び出し
+- `src-tauri/src/main.rs:382-414` — main WebView に AcceleratorKeyPressed ハンドラ登録（main のみ）
 
-### 受信側 1: `components/ResultsWindow.tsx`
+### ビルド
+- `vite.config.ts` — 現在 single-page（`root: "ui"`, `build.outDir: "../dist"`）
 
-- L147-182: `listen("results-sync")` で受信。L151-158 で `isSelectionOnly` 判定済み:
-  - `reason === "selection" && generation === latestGeneration` なら `setResults` / `fetchIcons` をスキップし、`setSelected` のみ実行
-  - **すでに selection-only 最適化を受信側で行っている**
-
-### 受信側 2: `App.tsx` → `resultsWindowController.ts`
-
-- App.tsx L79: `listen("results-sync")` → `controller.handleResultsSync(event.payload)`
-- `resultsWindowController.ts` L84-162: `handleResultsSync` は `results.length` でウィンドウサイズ計算、`shouldShow` で表示/非表示制御
-  - selection-only の場合、結果数は変わらないので count は不変 → サイズ変更不要
-
-### 型定義: `lib/searchEvents.ts`
-
-- `ResultsSyncPayload`: `{ generation, results, selected, shouldShow, reason }`
-- `ResultsPresentationReason`: `"query" | "reset" | "launch" | "command" | "selection"`
-
-### テスト: `stores/search.test.ts`
-
-- L250-274: `resetForShow` テストで `results-sync` emit の有無を検証
-
-### パフォーマンス計測: `lib/perf.ts`
-
-- `perfMarkRenderDone` は `results-render-done` イベント（ResultsWindow から emit）で呼ばれる
-- selection-only の場合も `results-render-done` は emit される（ResultsWindow L176-179）
+### テスト・スモーク
+- `scripts/smoke-startup.ps1` — `main:ensure_window:ok` で results/about/settings を検証
+- `e2e/tauri.slash.e2e.ts` — Playwright E2E
 
 ## 既存パターン
 
-- ResultsWindow は既に `isSelectionOnly` 分岐を持つ — 受信側最適化済み
-- `searchGeneration` による stale 判定は全イベントで共通
+- Vite multi-page build: `build.rollupOptions.input` で複数 HTML を指定する公式パターン
+- Tauri v2: `WebviewUrl::App("results.html".into())` で各ウィンドウに別 HTML を割り当て可能
+- dev server: multi-page でも単一ポート（5173）で両 HTML を配信
 
 ## 技術的制約
 
-- `results-sync` は CLAUDE.md で「1本で扱い、`results-updated` / `results-count-changed` を新規実装で使わない」と規定されている → **issue が明示的に分割を指示しているため、この制約を SPEC.md/CLAUDE.md 上で更新する**
-- Tauri イベント (`emit`/`listen`) はシリアライズ・デシリアライズを伴う。配列を含まないペイロードにすれば IPC コストが大幅に下がる
-- `resultsWindowController` は `results.length` を使うが、selection-only 時は結果数が変わらないため不要
+- `tauri.conf.json` の `build.frontendDist` / `build.devUrl` はアプリ全体の設定。ウィンドウ個別 URL は `WebviewUrl` で制御
+- Vite dev server では `http://localhost:5173/main.html` / `http://localhost:5173/results.html` でアクセス
+- `tauri.conf.json` の main window は URL 未指定で `frontendDist` のルート（= `index.html` → `main.html` に変更可能）
+- `App.tsx` の main 固有ロジック（8つの listen + resultsWindowController + initIndexingState）を `MainApp.tsx` に移す必要あり
+- results 側の `App.tsx` ロジックは `visual-config-changed` listen + `getBootstrapPayload` + `applyTheme` のみ
 
-## 対称ペア分析
+## 未解決の疑問
 
-- `emitResults` の呼び出しを reason 別に分類:
-  - **data-changed** (結果が変わった): L119, L192, L317, L484, L499 — reason=query, results 配列あり, shouldShow=true
-  - **visibility-changed** (表示/非表示が変わった): L71, L127, L145, L242, L407, L436, L515, L538 — shouldShow=false, results=[]
-  - **selection-changed** (選択のみ): L268 (emitSelectionUpdate 内) — reason=selection
-
-## 設計判断
-
-issue 指定の3イベント分割:
-1. `results-data-changed`: 結果配列 + selected + shouldShow + generation — 結果が変わったとき
-2. `results-selection-changed`: selected + generation のみ — 選択だけ変わったとき（配列不要）
-3. `results-visibility-changed`: shouldShow + generation — 非表示にするとき（配列不要）
-
-現状の `shouldShow=false` ケースは常に `results=[]` なので、visibility-changed では結果配列は不要。
+特になし。

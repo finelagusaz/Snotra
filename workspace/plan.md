@@ -38,7 +38,7 @@ const bootstrap = await getBootstrapPayload();
 applyTheme(bootstrap.visual);
 ```
 
-変更後: bootstrap 呼び出しと `getBootstrapPayload` import を削除。`visual-config-changed` リスナーは残す（設定変更時のテーマ反映に必要）。
+変更後: bootstrap 呼び出しと `getBootstrapPayload` import を削除。**`visual-config-changed` リスナーと `applyTheme` import は残す**（設定変更時のテーマ反映に必要）。bootstrap 関連の削除対象は `getBootstrapPayload` の import・呼び出し・try/catch のみ。
 
 ## 不変条件
 
@@ -74,8 +74,9 @@ npm test         # 必須: 既存テスト維持
 ## セルフレビュー
 
 ### 1. 対称コードパス
-- `applyTheme` は MainApp / ResultsApp の両方で呼ばれていた → ResultsApp の呼び出しを ResultsWindow に移動するだけ。MainApp 側に影響なし
+- `applyTheme` は MainApp / ResultsApp の両方で呼ばれていた → ResultsApp の bootstrap 内呼び出しを ResultsWindow に移動するだけ。MainApp 側に影響なし
 - `visual-config-changed` リスナーは ResultsApp.tsx に残る（テーマ変更時の継続反映）
+- **実装時の注意**: ResultsApp.tsx から削除するのは `getBootstrapPayload` の import・呼び出し・try/catch のみ。`applyTheme` import と `visual-config-changed` リスナーは残すこと（symmetric-check で確認済み）
 
 ### 2. 影響範囲の網羅性
 - `getBootstrapPayload` の呼び出し箇所: MainApp.tsx:168、ResultsApp.tsx:20、ResultsWindow.tsx:93 → ResultsApp.tsx:20 を削除、ResultsWindow.tsx:93 にテーマ適用を追加

@@ -571,6 +571,20 @@ impl Config {
                 if config.normalize_openers() {
                     needs_save = true;
                 }
+                // Fallback to default hotkey if config contains a system shortcut
+                if is_system_shortcut(&config.hotkey.modifier, &config.hotkey.key) {
+                    let default_hotkey = HotkeyConfig {
+                        modifier: "Alt".to_string(),
+                        key: "Q".to_string(),
+                    };
+                    eprintln!(
+                        "[config] system shortcut detected ({}+{}), falling back to default ({}+{})",
+                        config.hotkey.modifier, config.hotkey.key,
+                        default_hotkey.modifier, default_hotkey.key,
+                    );
+                    config.hotkey = default_hotkey;
+                    needs_save = true;
+                }
                 if needs_save {
                     let _ = config.save();
                 }

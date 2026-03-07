@@ -262,7 +262,15 @@ fn process_commands(
             }
             PlatformCommand::RegisterInitialHotkey => {
                 if !hotkey::register(current_hotkey) {
-                    let _ = app_handle.emit("platform-event", "initial-hotkey-failed");
+                    let hotkey_str =
+                        format!("{}+{}", current_hotkey.modifier, current_hotkey.key);
+                    let _ = app_handle.emit(
+                        "platform-event",
+                        serde_json::json!({
+                            "event": "initial-hotkey-failed",
+                            "hotkey": hotkey_str,
+                        }),
+                    );
                 }
             }
             PlatformCommand::Exit => unsafe {

@@ -69,13 +69,17 @@ function clearLaunchNotice() {
   }
 }
 
-function setLaunchNoticeWithAutoClear(message: string) {
+function setLaunchNoticeWithAutoClear(message: string, delayMs = 2400) {
   clearLaunchNotice();
   setLaunchNotice(message);
   launchNoticeTimer = setTimeout(() => {
     launchNoticeTimer = undefined;
     setLaunchNotice(null);
-  }, 2400);
+  }, delayMs);
+}
+
+export function setHotkeyFailureNotice(message: string) {
+  setLaunchNoticeWithAutoClear(message, 5000);
 }
 
 function clearCommandModeStateAndEmit() {

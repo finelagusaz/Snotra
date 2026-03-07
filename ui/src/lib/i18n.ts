@@ -16,7 +16,10 @@ export type TranslationKey =
   | "cmd.quit.description"
   // stores/search
   | "notice.launch.timeout"
-  | "notice.launch.failed";
+  | "notice.launch.failed"
+  // hotkey registration failure
+  | "notice.hotkey.initial_failed"
+  | "notice.hotkey.change_failed";
 
 const JA_JP: Record<TranslationKey, string> = {
   // SearchWindow
@@ -34,6 +37,11 @@ const JA_JP: Record<TranslationKey, string> = {
   // stores/search
   "notice.launch.timeout": "起動に時間がかかっています{detail}",
   "notice.launch.failed": "起動に失敗しました{detail}",
+  // hotkey registration failure
+  "notice.hotkey.initial_failed":
+    "ホットキー ({hotkey}) の登録に失敗しました。他のアプリが使用中の可能性があります",
+  "notice.hotkey.change_failed":
+    "ホットキー ({hotkey}) の登録に失敗しました。元のホットキーを維持します",
 };
 
 /**

@@ -7,8 +7,10 @@ import {
   setSelected,
   activateSelectedByIndex,
   initIndexingState,
+  setHotkeyFailureNotice,
 } from "./stores/search";
 import { applyTheme } from "./lib/theme";
+import { t } from "./lib/i18n";
 import type { BootstrapPayload, VisualConfig } from "./lib/types";
 import * as api from "./lib/invoke";
 import { perfMarkRenderDone } from "./lib/perf";
@@ -95,8 +97,9 @@ const MainApp: Component = () => {
         listen<number>("result-hovered", (event) => {
           setSelected(event.payload);
         }),
-        listen<string>("platform-event", async (event) => {
-          if (event.payload === "initial-hotkey-failed") {
+        listen<{ event: string; hotkey: string }>("platform-event", async (ev) => {
+          const p = ev.payload;
+          if (p.event === "initial-hotkey-failed") {
             trace("app:event:platform_event:initial_hotkey_failed");
             try {
               controller.updateMainVisible(true);
@@ -107,6 +110,8 @@ const MainApp: Component = () => {
               console.warn("platform-event: failed to show window on initial-hotkey-failed:", e);
             }
             resetForShow();
+            // Set notice after resetForShow() to avoid clearLaunchNotice() race.
+            setHotkeyFailureNotice(t("notice.hotkey.initial_failed", { hotkey: p.hotkey }));
           }
         }),
       ]);
@@ -167,6 +172,12 @@ const MainApp: Component = () => {
       controller.updateMaxResults(event.payload);
     });
     unlistenFns.push(unlistenMaxResults);
+
+    // Listen for hotkey registration failure (config change case)
+    const unlistenHotkeyFailed = await listen<string>("hotkey-registration-failed", (event) => {
+      setHotkeyFailureNotice(t("notice.hotkey.change_failed", { hotkey: event.payload }));
+    });
+    unlistenFns.push(unlistenHotkeyFailed);
 
     // Load bootstrap payload and apply theme (non-fatal on failure)
     let bootstrap: BootstrapPayload | null = null;

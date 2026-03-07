@@ -93,6 +93,9 @@ fn apply_config_change(app: &AppHandle) {
                         "[config-watcher] hotkey registration failed: {} + {}",
                         new_config.hotkey.modifier, new_config.hotkey.key
                     );
+                    let hotkey_str =
+                        format!("{}+{}", new_config.hotkey.modifier, new_config.hotkey.key);
+                    let _ = app.emit("hotkey-registration-failed", hotkey_str);
                 }
                 Ok(true) => {}
             }

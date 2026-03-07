@@ -3,7 +3,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
 import * as api from "./invoke";
 import { trace } from "./trace";
-import type { ResultsSyncPayload } from "./searchEvents";
+import type { ResultsDataPayload, ResultsVisibilityPayload } from "./searchEvents";
 
 const RESULTS_GAP = 4;
 const RESULT_ROW_HEIGHT = 30;
@@ -11,7 +11,8 @@ const RESULTS_PADDING = 8;
 
 export interface ResultsWindowController {
   getResultsWindow(): Promise<WebviewWindow | null>;
-  handleResultsSync(payload: ResultsSyncPayload): Promise<void>;
+  handleDataChanged(payload: ResultsDataPayload): Promise<void>;
+  handleVisibilityChanged(payload: ResultsVisibilityPayload): Promise<void>;
   handleMainMoved(logicalPos: { x: number; y: number }): Promise<void>;
   getCachedScaleFactor(): number;
   updateMainVisible(visible: boolean): void;
@@ -81,10 +82,10 @@ export function createResultsWindowController(
     });
   };
 
-  const handleResultsSync = async (payload: ResultsSyncPayload): Promise<void> => {
+  const handleDataChanged = async (payload: ResultsDataPayload): Promise<void> => {
     const { generation, results, shouldShow, reason } = payload;
     const count = results.length;
-    trace("app:event:results_sync", {
+    trace("app:event:results_data_changed", {
       generation,
       count,
       shouldShow,
@@ -161,6 +162,28 @@ export function createResultsWindowController(
     }
   };
 
+  const handleVisibilityChanged = async (payload: ResultsVisibilityPayload): Promise<void> => {
+    const { generation, shouldShow, reason } = payload;
+    trace("app:event:results_visibility_changed", {
+      generation,
+      shouldShow,
+      reason,
+      windowOpsGeneration,
+    });
+    if (generation < windowOpsGeneration) return;
+    windowOpsGeneration = generation;
+
+    if (!shouldShow) {
+      const rw = await WebviewWindow.getByLabel("results");
+      if (!rw || generation !== windowOpsGeneration) return;
+      if (cachedResultsVisible) {
+        trace("app:results_window:hide", { reason, generation });
+        await rw.hide();
+        cachedResultsVisible = false;
+      }
+    }
+  };
+
   const handleMainMoved = async (logicalPos: { x: number; y: number }): Promise<void> => {
     const rw = await getResultsWindow();
     if (!rw) return;
@@ -220,7 +243,8 @@ export function createResultsWindowController(
 
   return {
     getResultsWindow,
-    handleResultsSync,
+    handleDataChanged,
+    handleVisibilityChanged,
     handleMainMoved,
     getCachedScaleFactor,
     updateMainVisible,

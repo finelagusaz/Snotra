@@ -7,7 +7,7 @@ import { perfStartSearch, perfMarkSearchDone, perfCancelSearch } from "../lib/pe
 import { parsePathQuery } from "../lib/pathQuery";
 import { clampSelectedIndex, computeParentDir } from "../lib/folderNav";
 import { trace } from "../lib/trace";
-import type { ResultsPresentationReason } from "../lib/searchEvents";
+import type { ResultsPresentationReason, ResultsDataPayload } from "../lib/searchEvents";
 import { folderState, setFolderState, folderFilter, setFolderFilter } from "./folder";
 import { toolSelectionState, setToolSelectionState } from "./tool-selection";
 import { t } from "../lib/i18n";
@@ -23,24 +23,39 @@ let debounceTimer: ReturnType<typeof requestAnimationFrame> | undefined;
 let launchNoticeTimer: ReturnType<typeof setTimeout> | undefined;
 let refreshInFlight: Promise<void> | undefined;
 let searchGeneration = 0;
+let eventGeneration = 0;
 let activationInFlight = false;
 let suppressNextQueryEffectRefresh = false;
 
-function emitResults(
+function emitDataChanged(
   items: SearchResult[],
   selectedIndex: number,
-  generation: number,
-  options?: {
-    shouldShow?: boolean;
-    reason?: ResultsPresentationReason;
-  },
+  searchRequestId: number,
+  reason: ResultsPresentationReason = "query",
 ) {
-  emit("results-sync", {
-    generation,
+  const payload: ResultsDataPayload = {
+    generation: ++eventGeneration,
+    searchRequestId,
     results: items,
     selected: selectedIndex,
-    shouldShow: options?.shouldShow ?? items.length > 0,
-    reason: options?.reason ?? "query",
+    shouldShow: items.length > 0,
+    reason,
+  };
+  emit("results-data-changed", payload);
+}
+
+function emitSelectionChanged(selectedIndex: number) {
+  emit("results-selection-changed", {
+    generation: ++eventGeneration,
+    selected: selectedIndex,
+  });
+}
+
+function emitVisibilityChanged(reason: ResultsPresentationReason) {
+  emit("results-visibility-changed", {
+    generation: ++eventGeneration,
+    shouldShow: false,
+    reason,
   });
 }
 
@@ -64,11 +79,11 @@ function setLaunchNoticeWithAutoClear(message: string) {
 }
 
 function clearCommandModeStateAndEmit() {
-  const requestId = ++searchGeneration;
+  ++searchGeneration;
   setQuery("");
   setResults([]);
   setSelected(0);
-  emitResults([], 0, requestId, { reason: "command", shouldShow: false });
+  emitVisibilityChanged("command");
 }
 
 function cancelDebounce() {
@@ -116,7 +131,7 @@ async function refreshResults() {
     setSelected(0);
     trace("search:refresh:done", { requestId, branch: "slash_r_history", count: items.length });
     perfMarkSearchDone(requestId, items.length);
-    emitResults(items, 0, requestId, { reason: "query", shouldShow: items.length > 0 });
+    emitDataChanged(items, 0, requestId);
     return;
   }
   if (!fs && trimmed.startsWith("/")) {
@@ -124,7 +139,7 @@ async function refreshResults() {
     trace("search:refresh:branch", { requestId, branch: "slash_noop" });
     setResults([]);
     setSelected(0);
-    emitResults([], 0, requestId, { reason: "command", shouldShow: false });
+    emitVisibilityChanged("command");
     return;
   }
   const pathQuery = fs ? null : parsePathQuery(q);
@@ -142,7 +157,7 @@ async function refreshResults() {
     setSelected(0);
     trace("search:refresh:done", { requestId, branch: "indexing_guard", count: 0 });
     perfMarkSearchDone(requestId, 0);
-    emitResults([], 0, requestId, { reason: "reset", shouldShow: false });
+    emitVisibilityChanged("reset");
     return;
   }
 
@@ -189,10 +204,7 @@ async function refreshResults() {
     selected: nextSelected,
   });
   perfMarkSearchDone(requestId, items.length);
-  emitResults(items, nextSelected, requestId, {
-    reason: "query",
-    shouldShow: items.length > 0,
-  });
+  emitDataChanged(items, nextSelected, requestId);
 }
 
 createRoot(() => {
@@ -236,10 +248,10 @@ createRoot(() => {
         // Command mode without exact match: no suggestions, just clear results.
         cancelDebounce();
         trace("search:query_effect:slash_noop", { input: q });
-        const requestId = ++searchGeneration;
+        ++searchGeneration;
         setResults([]);
         setSelected(0);
-        emitResults([], 0, requestId, { reason: "command", shouldShow: false });
+        emitVisibilityChanged("command");
         return;
       }
 
@@ -265,10 +277,7 @@ function emitSelectionUpdate() {
   if (nextSelected !== selected()) {
     setSelected(nextSelected);
   }
-  emitResults(results(), nextSelected, searchGeneration, {
-    reason: "selection",
-    shouldShow: results().length > 0,
-  });
+  emitSelectionChanged(nextSelected);
 }
 
 function moveSelectionUp() {
@@ -314,10 +323,7 @@ function exitFolderExpansion(): boolean {
   setFolderState(null);    // setQuery より先に null にする
   setFolderFilter("");
   setQuery(fs.savedQuery);
-  emitResults(fs.savedResults, fs.savedSelected, requestId, {
-    reason: "query",
-    shouldShow: fs.savedResults.length > 0,
-  });
+  emitDataChanged(fs.savedResults, fs.savedSelected, requestId);
   return true;
 }
 
@@ -404,7 +410,8 @@ async function launchWithSelectedTool(): Promise<boolean> {
       query: frame.savedQuery,
     });
     // 結果を隠す
-    emitResults([], 0, ++searchGeneration, { reason: "launch", shouldShow: false });
+    ++searchGeneration;
+    emitVisibilityChanged("launch");
     const launchResult = await api.launchWithTool(
       frame.targetPath,
       frame.savedQuery,
@@ -433,7 +440,8 @@ async function launchWithSelectedTool(): Promise<boolean> {
     setFolderFilter("");
     setResults([]);
     setSelected(0);
-    emitResults([], 0, ++searchGeneration, { reason: "launch", shouldShow: false });
+    ++searchGeneration;
+    emitVisibilityChanged("launch");
     trace("search:launch_with_tool:done", { path: frame.targetPath });
     return true;
   } finally {
@@ -481,7 +489,7 @@ async function enterToolSelection(result: SearchResult): Promise<boolean> {
   const requestId = ++searchGeneration;
   setResults(toolResults);
   setSelected(0);
-  emitResults(toolResults, 0, requestId, { reason: "query", shouldShow: true });
+  emitDataChanged(toolResults, 0, requestId);
   trace("search:enter_tool_selection:ok", { path: result.path, toolCount: tools.length });
   return false;
 }
@@ -496,10 +504,7 @@ function exitToolSelection(): boolean {
   setToolSelectionState(null);
   // フォルダ展開中だった場合の folderFilter を復帰
   setFolderFilter(frame.savedFolderFilter);
-  emitResults(frame.savedResults, frame.savedSelected, requestId, {
-    reason: "query",
-    shouldShow: frame.savedResults.length > 0,
-  });
+  emitDataChanged(frame.savedResults, frame.savedSelected, requestId);
   trace("search:exit_tool_selection:ok", { path: frame.targetPath });
   return true;
 }
@@ -512,7 +517,8 @@ async function launchAndReset(result: SearchResult): Promise<boolean> {
   trace("search:launch:start", { path: result.path, query: query() });
   try {
     // launch 開始時に results を明示的に隠す
-    emitResults([], 0, ++searchGeneration, { reason: "launch", shouldShow: false });
+    ++searchGeneration;
+    emitVisibilityChanged("launch");
     const launchResult = await api.launchItem(result.path, query());
     if (launchResult.status !== "ok") {
       trace("search:launch:error", {
@@ -535,7 +541,8 @@ async function launchAndReset(result: SearchResult): Promise<boolean> {
     setFolderFilter("");
     setResults([]);
     setSelected(0);
-    emitResults([], 0, ++searchGeneration, { reason: "launch", shouldShow: false });
+    ++searchGeneration;
+    emitVisibilityChanged("launch");
     trace("search:launch:done", { path: result.path, code: launchResult.code });
     return true;
   } finally {
@@ -646,7 +653,6 @@ export {
   resetForShow,
   indexing,
   initIndexingState,
-  emitSelectionUpdate,
   launching,
   launchNotice,
   clearLaunchNotice,

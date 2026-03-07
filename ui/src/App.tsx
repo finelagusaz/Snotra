@@ -14,7 +14,7 @@ import type { BootstrapPayload, VisualConfig } from "./lib/types";
 import * as api from "./lib/invoke";
 import { perfMarkRenderDone } from "./lib/perf";
 import { trace } from "./lib/trace";
-import type { ResultsSyncPayload, ResultsRenderDonePayload } from "./lib/searchEvents";
+import type { ResultsDataPayload, ResultsVisibilityPayload, ResultsRenderDonePayload } from "./lib/searchEvents";
 import { createResultsWindowController } from "./lib/resultsWindowController";
 
 const App: Component = () => {
@@ -69,15 +69,18 @@ const App: Component = () => {
       };
 
       // Wait for all critical listeners to be attached before first reset/show.
-      const [unlistenWindowShown, unlistenResultsSync, unlistenResultClicked, unlistenRenderDone, unlistenResultDoubleClicked, unlistenResultHovered, unlistenPlatformEvent] =
+      const [unlistenWindowShown, unlistenDataChanged, unlistenVisibilityChanged, unlistenResultClicked, unlistenRenderDone, unlistenResultDoubleClicked, unlistenResultHovered, unlistenPlatformEvent] =
         await Promise.all([
           listen("window-shown", () => {
             trace("app:event:window_shown");
             controller.updateMainVisible(true);
             resetForShow();
           }),
-          listen<ResultsSyncPayload>("results-sync", (event) => {
-            void controller.handleResultsSync(event.payload);
+          listen<ResultsDataPayload>("results-data-changed", (event) => {
+            void controller.handleDataChanged(event.payload);
+          }),
+          listen<ResultsVisibilityPayload>("results-visibility-changed", (event) => {
+            void controller.handleVisibilityChanged(event.payload);
           }),
           listen<number>("result-clicked", async (event) => {
             trace("app:event:result_clicked", { index: event.payload });
@@ -116,7 +119,8 @@ const App: Component = () => {
 
       unlistenFns.push(
         unlistenWindowShown,
-        unlistenResultsSync,
+        unlistenDataChanged,
+        unlistenVisibilityChanged,
         unlistenResultClicked,
         unlistenRenderDone,
         unlistenResultDoubleClicked,

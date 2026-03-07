@@ -7,7 +7,7 @@ edition = "2024"
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["alloc"] }
 bincode = "1"  # 旧形式マイグレーション読み込み用
-toml = "0.8"
+toml = "1"
 nucleo-matcher = "0.3"
 rayon = "1"
 dirs = "6"

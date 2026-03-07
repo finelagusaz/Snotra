@@ -14,7 +14,6 @@ pub fn configure_fonts(ctx: &egui::Context) {
                 scale: 1.0,
                 y_offset_factor: 0.3,
                 y_offset: 0.0,
-                ..Default::default()
             },
         ),
         (
@@ -23,7 +22,6 @@ pub fn configure_fonts(ctx: &egui::Context) {
                 scale: 1.0,
                 y_offset_factor: 0.3,
                 y_offset: 0.0,
-                ..Default::default()
             },
         ),
         (
@@ -32,7 +30,6 @@ pub fn configure_fonts(ctx: &egui::Context) {
                 scale: 1.0,
                 y_offset_factor: 0.3,
                 y_offset: 0.0,
-                ..Default::default()
             },
         ),
         (
@@ -41,7 +38,6 @@ pub fn configure_fonts(ctx: &egui::Context) {
                 scale: 1.0,
                 y_offset_factor: 0.3,
                 y_offset: 0.0,
-                ..Default::default()
             },
         ),
     ];

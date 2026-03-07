@@ -1,16 +1,16 @@
 import { type Component, For, createSignal, onMount, onCleanup } from "solid-js";
 import { emit, listen } from "@tauri-apps/api/event";
 import type { SearchResult } from "../lib/types";
-import type { ResultsDataPayload, ResultsSelectionPayload } from "../lib/searchEvents";
+import type { ResultsDataPayload, ResultsSelectionPayload, ResultsVisibilityPayload } from "../lib/searchEvents";
 import * as api from "../lib/invoke";
+import { LruIconCache } from "../lib/lruIconCache";
 import ResultRow from "./ResultRow";
 
 const ResultsWindow: Component = () => {
   const [results, setResults] = createSignal<SearchResult[]>([]);
   const [selected, setSelected] = createSignal(0);
-  const [iconCache, setIconCache] = createSignal<Map<string, string>>(
-    new Map(),
-  );
+  const iconCache = new LruIconCache();
+  const [iconCacheVersion, setIconCacheVersion] = createSignal(0);
   const [containerWidth, setContainerWidth] = createSignal(0);
   const [showIcons, setShowIcons] = createSignal(true);
   const [font, setFont] = createSignal("15px 'Segoe UI'");
@@ -54,27 +54,15 @@ const ResultsWindow: Component = () => {
         const blob = new Blob([pngBytes], { type: "image/png" });
         const url = URL.createObjectURL(blob);
         result.set(paths[i], url);
-        iconUrls.add(url);
       }
     }
     return result;
   }
 
-  /** Revoke all tracked Blob URLs */
-  function revokeAllIconUrls() {
-    for (const url of iconUrls) {
-      URL.revokeObjectURL(url);
-    }
-    iconUrls.clear();
-  }
-
-  const iconUrls = new Set<string>();
-
   async function fetchIcons(items: SearchResult[], generation: number) {
     if (!showIcons()) return;
-    const cache = iconCache();
     const missing = items
-      .filter((r) => !r.isError && !cache.has(r.path))
+      .filter((r) => !r.isError && !iconCache.has(r.path))
       .map((r) => r.path);
     if (missing.length === 0) return;
 
@@ -86,14 +74,18 @@ const ResultsWindow: Component = () => {
       console.warn("fetchIcons failed:", e);
       return;
     }
-    if (generation !== latestDataGeneration) return;
+    if (generation !== latestDataGeneration) {
+      for (const url of parsed.values()) {
+        URL.revokeObjectURL(url);
+      }
+      return;
+    }
     if (parsed.size === 0) return;
 
-    const next = new Map(cache);
     for (const [path, url] of parsed) {
-      next.set(path, url);
+      iconCache.set(path, url);
     }
-    setIconCache(next);
+    setIconCacheVersion((v) => v + 1);
   }
 
   onMount(() => {
@@ -105,12 +97,12 @@ const ResultsWindow: Component = () => {
     // Listen for show_icons setting changes
     let unlistenShowIcons: (() => void) | undefined;
     onCleanup(() => unlistenShowIcons?.());
-    onCleanup(() => revokeAllIconUrls());
+    onCleanup(() => iconCache.revokeAll());
     void listen<boolean>("show-icons-changed", (event) => {
       setShowIcons(event.payload);
       if (!event.payload) {
-        revokeAllIconUrls();
-        setIconCache(new Map());
+        iconCache.revokeAll();
+        setIconCacheVersion((v) => v + 1);
       }
     }).then((fn) => { unlistenShowIcons = fn; })
       .catch((e) => console.warn("ResultsWindow: failed to listen show-icons-changed:", e));
@@ -165,6 +157,16 @@ const ResultsWindow: Component = () => {
       });
     }
 
+    let unlistenVisibility: (() => void) | undefined;
+    onCleanup(() => unlistenVisibility?.());
+    void listen<ResultsVisibilityPayload>("results-visibility-changed", (event) => {
+      if (event.payload.generation < latestGeneration) return;
+      latestGeneration = event.payload.generation;
+      iconCache.revokeAll();
+      setIconCacheVersion((v) => v + 1);
+    }).then((fn) => { unlistenVisibility = fn; })
+      .catch((e) => console.warn("ResultsWindow: failed to listen results-visibility-changed:", e));
+
     let unlistenData: (() => void) | undefined;
     onCleanup(() => unlistenData?.());
     void listen<ResultsDataPayload>("results-data-changed", (event) => {
@@ -172,7 +174,10 @@ const ResultsWindow: Component = () => {
       latestGeneration = event.payload.generation;
       latestDataGeneration = event.payload.generation;
       setResults(event.payload.results);
-      void fetchIcons(event.payload.results, event.payload.generation);
+      const gen = event.payload.generation;
+      requestAnimationFrame(() => {
+        void fetchIcons(event.payload.results, gen);
+      });
       setSelected(event.payload.selected);
       scrollToSelected(event.payload.selected, event.payload.generation);
       emitRenderDone(event.payload.searchRequestId);
@@ -208,7 +213,7 @@ const ResultsWindow: Component = () => {
             <ResultRow
               result={result}
               isSelected={idx() === selected()}
-              icon={iconCache().get(result.path)}
+              icon={(iconCacheVersion(), iconCache.get(result.path))}
               showIcons={showIcons()}
               containerWidth={containerWidth()}
               font={font()}

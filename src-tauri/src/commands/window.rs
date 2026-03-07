@@ -21,7 +21,7 @@ pub(crate) fn ensure_results_window(app: &AppHandle) -> tauri::Result<()> {
         return Ok(());
     }
     trace_command("cmd:ensure_results_window:create", json!({}));
-    WebviewWindowBuilder::new(app, "results", WebviewUrl::App(Default::default()))
+    WebviewWindowBuilder::new(app, "results", WebviewUrl::App("results.html".into()))
         .title("")
         .inner_size(600.0, 300.0)
         .visible(false)

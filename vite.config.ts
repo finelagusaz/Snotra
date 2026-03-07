@@ -1,3 +1,4 @@
+import { resolve } from "path";
 import { defineConfig } from "vite";
 import solid from "vite-plugin-solid";
 import process from "process";
@@ -17,6 +18,12 @@ export default defineConfig({
   build: {
     target: "esnext",
     outDir: "../dist",
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, "ui/main.html"),
+        results: resolve(__dirname, "ui/results.html"),
+      },
+    },
   },
   define: {
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(process.env.VITE_APP_VERSION || packageJson.version),

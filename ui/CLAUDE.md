@@ -4,9 +4,10 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 
 ## モジュール構成
 
-### エントリポイント
+### エントリポイント（multi-page build）
 
-- `App.tsx`: ウィンドウラベルで検索/results を出し分け、テーマ適用、ウィンドウ位置復元、イベントリスナー登録
+- `main.html` / `main.tsx` → `MainApp.tsx`: 検索ウィンドウ用エントリ。テーマ適用、ウィンドウ位置復元、イベントリスナー登録、resultsWindowController 管理
+- `results.html` / `results.tsx` → `ResultsApp.tsx`: 結果ウィンドウ用エントリ。テーマ適用のみ。search store を含まない軽量バンドル
 
 ### components/
 

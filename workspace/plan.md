@@ -1,108 +1,198 @@
-# Plan — 結果ウィンドウの高さを最大表示件数の高さに固定する (#165)
+# plan: issue #159 — ホットキー登録失敗時のユーザー通知
 
-## 変更ファイル一覧
+## 設計方針
 
-1. **`src-tauri/src/commands/config.rs`** — `BootstrapAppearanceConfig` に `max_results` を追加
-2. **`ui/src/lib/types.ts`** — `BootstrapAppearanceConfig` に `max_results` を追加
-3. **`src-tauri/src/config_watcher.rs`** — `max_results` 変更時に `max-results-changed` イベントを emit
-4. **`ui/src/lib/resultsWindowController.ts`** — `cachedMaxResults` を追加し高さ計算を固定化。Bootstrap + イベントで更新
-5. **`ui/src/MainApp.tsx`** — `max-results-changed` リスナーを追加し controller に伝達。bootstrap から初期値設定
+- **イベントを役割で分離**:
+  - 初回失敗: `platform-event` のペイロードを `{ event: "initial-hotkey-failed", hotkey: "Alt+Q" }` に変更し、同ハンドラ内で通知を完結させる（`hotkey-registration-failed` は emit しない）
+  - 設定変更失敗: 新規 `hotkey-registration-failed` イベントを emit し、専用リスナーで通知
+- **初回失敗で `hotkey-registration-failed` を使わない理由**: `platform-event` ハンドラは `async` で `await win.show()` を含む。この await 中に別イベントハンドラが割り込んで通知をセットしても、後続の `resetForShow()` → `clearLaunchNotice()` で消えてしまう競合がある。通知は `resetForShow()` の後に同一ハンドラ内でセットすることで排除する
+- **unlisten パターン**: 新規リスナーはパターン B（個別 await + `unlistenFns.push`）で追加。Promise.all ブロックは変更しない
+- **フロントエンド通知**: `setHotkeyFailureNotice(msg)` を `search.ts` に追加 export し、`MainApp.tsx` で呼ぶ
+
+## 変更ファイル一覧（6ファイル）
+
+| ファイル | 変更内容 |
+|---------|---------|
+| `src-tauri/src/platform/mod.rs` | `RegisterInitialHotkey` 失敗時の `platform-event` ペイロードを JSON object に変更し、同ハンドラ内で通知まで完結させる |
+| `src-tauri/src/config_watcher.rs` | `Ok(false)\|Err(_)` ブランチで `hotkey-registration-failed` を emit |
+| `ui/src/lib/i18n.ts` | `notice.hotkey.initial_failed` / `notice.hotkey.change_failed` キーを追加 |
+| `ui/src/stores/search.ts` | `setLaunchNoticeWithAutoClear` に timeout 引数追加。`setHotkeyFailureNotice` を追加 export |
+| `ui/src/MainApp.tsx` | `hotkey-registration-failed` リスナーを追加 |
+| `SPEC.md` | §9.2 line 393 を2行に分割・詳細化 |
 
 ## 実装順序
 
-### Phase 1: Rust 側 — BootstrapPayload に max_results を追加
+### Phase 1: Rust — イベント emit を追加
 
-**`src-tauri/src/commands/config.rs`**:
-- `BootstrapAppearanceConfig` に `max_results: usize` フィールドを追加
-- `get_bootstrap_payload()` で `engine.config().appearance.max_results` を設定
+**`src-tauri/src/platform/mod.rs`** — `RegisterInitialHotkey` ブランチ:
+```rust
+PlatformCommand::RegisterInitialHotkey => {
+    if !hotkey::register(current_hotkey) {
+        // ペイロードに hotkey を埋め込む（フロント側の競合回避のため 1イベントに統合）
+        let hotkey_str = format!("{}+{}", current_hotkey.modifier, current_hotkey.key);
+        let _ = app_handle.emit("platform-event", serde_json::json!({
+            "event": "initial-hotkey-failed",
+            "hotkey": hotkey_str,
+        }));
+    }
+}
+```
 
-### Phase 2: Rust 側 — config_watcher で max_results 変更を通知
+**`src-tauri/src/config_watcher.rs`** — `Ok(false) | Err(_)` ブランチ:
+```rust
+Ok(false) | Err(_) => {
+    eprintln!("[config-watcher] hotkey registration failed: {} + {}",
+        new_config.hotkey.modifier, new_config.hotkey.key);
+    // 新規追加
+    let hotkey_str = format!("{}+{}", new_config.hotkey.modifier, new_config.hotkey.key);
+    let _ = app.emit("hotkey-registration-failed", hotkey_str);
+}
+```
 
-**`src-tauri/src/config_watcher.rs`**:
-- `max_results` 変更検知を追加: `new_config.appearance.max_results != old_config.appearance.max_results`
-- 変更時に `app.emit("max-results-changed", new_max_results)` を emit
+> `serde_json` は Tauri が推移的に依存しており追加不要。
 
-### Phase 3: フロント型定義 — BootstrapAppearanceConfig を更新
+### Phase 2: フロントエンド — i18n キー追加
 
-**`ui/src/lib/types.ts`**:
-- `BootstrapAppearanceConfig` に `max_results: number` を追加
+**`ui/src/lib/i18n.ts`**:
 
-### Phase 4: resultsWindowController — 高さ計算を固定化
+```ts
+// TranslationKey union に追加
+| "notice.hotkey.initial_failed"
+| "notice.hotkey.change_failed"
 
-**`ui/src/lib/resultsWindowController.ts`**:
-- `cachedMaxResults` 変数を追加（初期値 8 = デフォルト）
-- `updateMaxResults(maxResults: number)` メソッドを追加
-- `handleDataChanged` の高さ計算を変更:
-  - Before: `Math.min(count * RESULT_ROW_HEIGHT + RESULTS_PADDING * 2, 400)`
-  - After: `cachedMaxResults * RESULT_ROW_HEIGHT + RESULTS_PADDING * 2`
-  - **件数に関わらず固定高**。件数 > maxResults 時はスクロールバーが CSS で自然に表示
-- **shouldShow 判定は変更なし**: `shouldShow: items.length > 0` で件数 0 時は hide（issue 要件）
+// JA_JP レコードに追加
+"notice.hotkey.initial_failed": "ホットキー ({hotkey}) の登録に失敗しました。他のアプリが使用中の可能性があります",
+"notice.hotkey.change_failed": "ホットキー ({hotkey}) の登録に失敗しました。元のホットキーを維持します",
+```
 
-### Phase 5: MainApp — 初期値設定 + 変更リスナー
+### Phase 3: フロントエンド — search.ts に通知関数を追加
+
+**`ui/src/stores/search.ts`**:
+```ts
+// timeout 引数を追加（デフォルト値で既存呼び出しは無変更）
+function setLaunchNoticeWithAutoClear(message: string, delayMs = 2400) {
+  clearLaunchNotice();
+  setLaunchNotice(message);
+  launchNoticeTimer = setTimeout(() => {
+    launchNoticeTimer = undefined;
+    setLaunchNotice(null);
+  }, delayMs);
+}
+
+// 新規 export: ホットキー登録失敗通知（5秒表示）
+export function setHotkeyFailureNotice(message: string) {
+  setLaunchNoticeWithAutoClear(message, 5000);
+}
+```
+
+### Phase 4: フロントエンド — MainApp.tsx にリスナー追加
 
 **`ui/src/MainApp.tsx`**:
-- bootstrap 取得後に `controller.updateMaxResults(bootstrap.appearance.max_results)` を呼ぶ
-- `max-results-changed` リスナーを追加: `controller.updateMaxResults(event.payload)`
+
+**4a. `platform-event` ハンドラを更新（初回失敗の通知を resetForShow() の後にセット）**:
+```ts
+// listen<string> → listen<{event: string; hotkey: string} | string> に型変更
+listen<{ event: string; hotkey: string } | string>("platform-event", async (ev) => {
+  const p = ev.payload;
+  const isObj = typeof p === "object";
+  const isInitialFail = isObj
+    ? p.event === "initial-hotkey-failed"
+    : p === "initial-hotkey-failed";
+  if (isInitialFail) {
+    trace("app:event:platform_event:initial_hotkey_failed");
+    try {
+      controller.updateMainVisible(true);
+      await win.show();
+      api.notifyMainShown().catch(() => {});
+    } catch (e) {
+      console.warn("platform-event: failed to show window on initial-hotkey-failed:", e);
+    }
+    resetForShow();
+    // resetForShow() で clearLaunchNotice() が呼ばれた後に通知をセット（競合回避）
+    if (isObj) {
+      setHotkeyFailureNotice(t("notice.hotkey.initial_failed", { hotkey: p.hotkey }));
+    }
+  }
+}),
+```
+
+**4b. `hotkey-registration-failed` リスナーを個別 await パターン（パターン B）で追加**:
+Promise.all ブロックには追加しない。`unlistenMaxResults` の後（line 169 の後）に追加する。
+
+```ts
+// import に追加
+import { setHotkeyFailureNotice } from "./stores/search";
+
+// line 169 の後に追加
+const unlistenHotkeyFailed = await listen<string>("hotkey-registration-failed", (event) => {
+  setHotkeyFailureNotice(t("notice.hotkey.change_failed", { hotkey: event.payload }));
+});
+unlistenFns.push(unlistenHotkeyFailed);
+```
+
+### Phase 5: SPEC.md 更新
+
+line 393 を分割:
+```
+- 初回ホットキー登録失敗時は操作不能回避のため検索UIを表示し、ウィンドウ内にエラー通知を表示する
+- 設定変更によるホットキー登録失敗時は旧ホットキーに復帰し、ウィンドウ内に一時エラー通知を表示する
+```
 
 ## 不変条件
 
-1. **件数 0 の場合は results ウィンドウを hide**: `shouldShow: items.length > 0` は変更しない
-2. **件数 > 0 の場合は常に max_results ベースの固定高**: 件数が 1 でも 8 でも 20 でもウィンドウ高さは同じ
-3. **config_watcher で max_results が変わったら即時反映**: 次回の handleDataChanged で新しい高さが適用される
-4. **width 変更のパターン（config_watcher → Rust 直接 set_size）は変更しない**: height の管理は resultsWindowController が行う
+1. `platform-event: "initial-hotkey-failed"` ハンドラで `resetForShow()` の後に通知をセットすることで、`clearLaunchNotice()` による競合を排除する
+2. `hotkey-registration-failed` リスナーは Promise.all ブロックに追加せず、個別 await パターン（`unlistenMaxResults` の後）で追加し `unlistenFns.push()` を隣接して記述する
+3. `setHotkeyFailureNotice` は `setLaunchNoticeWithAutoClear` 内の `clearLaunchNotice()` 先頭呼び出しを通じて、タイマーを単一管理する（競合防止）
+4. `format!("{}+{}", modifier, key)` は UI 表示文字列ではなくホットキー識別子。snotra-core の「UI 文字列を持たない」原則には抵触しない（これは src-tauri 内のコード）
 
 ## テスト方針
 
-### 自動テスト
-- `npm run build` — typecheck + vite build
-- `npm test` — 既存テスト維持
-- `cargo check -p snotra-core -p snotra -p snotra-settings` — Rust 型チェック
-
-### E2E テスト（既存）
-- `e2e/tauri.slash.e2e.ts:618` に `max_results` 変更の E2E テストが既にある（config.toml 書き換え → 表示件数確認）。高さ固定の変更でこのテストが壊れないことを確認
-
-### 手動確認
-- max_results = 8 で 3 件ヒット → ウィンドウ高さが 8 行分を維持し、下部に余白
-- max_results = 8 で 10 件ヒット → スクロールバーが表示される
-- max_results = 8 で 0 件 → ウィンドウが hide される
-- 設定で max_results を変更 → 次回表示で新しい高さが適用される
+- `cargo check -p snotra-core -p snotra -p snotra-settings`: Rust 型チェック
+- `npm run typecheck` + `npm run build`: i18n キー・型変更の検証
+- 手動確認: 別アプリで同じホットキーを専有した状態で Snotra を起動 → エラー通知が表示されることを確認
 
 ## SPEC.md 更新要否
 
-SPEC.md §3.5「最大列挙数」に以下を追記:
-> 結果ウィンドウの高さは最大表示件数に基づく固定高とする。ヒット数が最大表示件数未満でも高さは維持され、超過時はスクロールバーを表示する。
+あり（Phase 5 で対処）。
+
+---
 
 ## セルフレビュー
 
-### 1. 対称コードパス
-- `handleDataChanged` / `handleVisibilityChanged`: handleVisibilityChanged は高さ計算に関与しない（hide のみ）→ 変更不要 ✓
-- BootstrapPayload / config_watcher: 初期値と変更通知の両方でカバー ✓
+### 1. 対称コードパス確認
+
+- `hotkey-pressed` / `hotkey-registration-failed`: 対称ペアに相当するが、`hotkey-pressed` は既存で変更しない → 影響なし
+- `platform-event` の既存ハンドラ（window show ロジック）はそのまま維持 → ウィンドウ表示 + 通知の両立
 
 ### 2. 影響範囲の網羅性
-- 高さ計算は `resultsWindowController.ts:116` の1箇所のみ ✓
-- max_results は Rust 側で検索結果の切り詰めに使われるが、それはフロントの高さ表示とは独立 ✓
-- `config_watcher` の width 変更パス（results ウィンドウの `set_size`）: width のみ変更するので干渉しない。ただし、width 変更時に height が巻き込まれないよう、`logical.height` を保持する現行実装を確認済み ✓
+
+- `platform-event` ペイロード型を `string` → `{event:string;hotkey:string}|string` の union に変更。TS の union 型は既存の string リテラル判定（`p === "initial-hotkey-failed"`）でフォールバックするため後方互換性あり
+- `hotkey-registration-failed` は新規イベント → 既存コードへの影響ゼロ
+- `setLaunchNoticeWithAutoClear` に引数追加（デフォルト値あり）→ 既存の2呼び出し箇所（line ~430, ~532）は変更不要
 
 ### 3. 境界条件
-- max_results = 1: 高さ = 30 + 16 = 46px
-- max_results = 0: config バリデーションで 0 は拒否される（`config.rs:617`）→ 発生しない ✓
-- フォルダ展開・ツール選択: ツール件数や folder entries が max_results を超えることがある → スクロールバーが出る ✓
+
+- `hotkey-registration-failed` が `main` ウィンドウ不可視時に届いた場合: `launchNotice` は設定されるが表示されない。`resetForShow()` 時に `clearLaunchNotice()` で消えるため残留しない。初回失敗時はウィンドウ表示と同時なので問題なし。設定変更失敗時はウィンドウが可視（ユーザーが設定を変更したばかり）→ 問題なし。
+- `format!("{}+{}", modifier, key)` で生成する識別子: "Alt+Q" のような短い文字列。i18n テンプレートの `{hotkey}` に埋め込まれる。
 
 ### 4. リソース管理
-- 新規リスナー `max-results-changed` を追加 → `unlistenFns` に push して cleanup ✓
+
+- `listen()` の戻り値（unlisten 関数）を `unlistenFns` 配列に追加する → `onCleanup` で自動破棄
 
 ### 5. 既存パターンとの整合
-- BootstrapPayload 拡張: `show_icons` と同じパターン ✓
-- config_watcher の emit: `show-icons-changed` と同じパターン ✓
-- controller の cached 値: `cachedMainLogicalWidth` / `cachedMainLogicalHeight` と同じパターン ✓
+
+- イベントリスナー + i18n + `setLaunchNoticeWithAutoClear` の組み合わせは `notice.launch.*` で確立済みパターン。新パターン不要。
 
 ### 6. YAGNI 違反
-- なし。要求範囲に限定 ✓
+
+- 2種類のメッセージを1イベント + `is_initial` フラグで賄う。イベントを2種類に分けない → シンプル。
+- `setHotkeyFailureNotice` のタイムアウト 5000ms は固定値。設定化不要。
 
 ### 7. シンプル化の挑戦
-- 新しい状態は `cachedMaxResults` のみ。既存パターン踏襲で最小限 ✓
-- `updateMaxResults` が呼ばれるだけで、次回 `handleDataChanged` で自然に反映される。即時リサイズは不要（表示中にリサイズするとちらつきの原因になるため、次回表示時に適用で十分）
+
+`serde_json::json!()` マクロを使う。匿名 struct + `#[derive(Serialize)]` より軽量で、局所的な1回きりの用途に適する。新型を追加しない選択は YAGNI に沿っている。
 
 ### 8. 破壊不変条件の明示
-- **results ウィンドウの高さが不正な場合**: 件数 0 で固定高のウィンドウが表示される可能性 → `shouldShow` ガードで 0 件時は hide されるので安全 ✓
-- **config_watcher の emit 失敗**: `let _ =` で無視（他の emit と同じ）。次回 bootstrap で復帰 ✓
+
+- `platform-event: "initial-hotkey-failed"` のウィンドウ表示ロジックを維持 → 「ホットキー登録失敗時でも UI は必ず操作可能」の不変条件を維持。
+- `hotkey-registration-failed` リスナーの unlisten 漏れがあると、ウィンドウ再マウント時にダブルリスナーになる。`unlistenFns` への追加で防止。

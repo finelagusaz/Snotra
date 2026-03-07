@@ -44,6 +44,9 @@ import {
   refreshResults,
   resetForShow,
   toolSelectionState,
+  launchNotice,
+  clearLaunchNotice,
+  setHotkeyFailureNotice,
 } from "../stores/search";
 import { setToolSelectionState } from "../stores/tool-selection";
 
@@ -437,5 +440,46 @@ describe("selection-only IPC (#162)", () => {
 
     // selection-changed は data-changed より大きい generation を持つ
     expect(selectionGen).toBeGreaterThan(dataGen);
+  });
+});
+
+// ── setHotkeyFailureNotice ────────────────────────────────────────────────────
+
+describe("setHotkeyFailureNotice", () => {
+  beforeEach(() => {
+    clearLaunchNotice();
+  });
+
+  it("呼び出し直後に launchNotice が設定される", () => {
+    setHotkeyFailureNotice("ホットキー (Alt+Q) の登録に失敗しました");
+    expect(launchNotice()).toBe("ホットキー (Alt+Q) の登録に失敗しました");
+  });
+
+  it("5000ms 後に launchNotice が自動クリアされる", () => {
+    setHotkeyFailureNotice("テスト通知");
+    expect(launchNotice()).not.toBeNull();
+    vi.advanceTimersByTime(4999);
+    expect(launchNotice()).not.toBeNull();
+    vi.advanceTimersByTime(1);
+    expect(launchNotice()).toBeNull();
+  });
+
+  it("resetForShow() で即座にクリアされる", () => {
+    setHotkeyFailureNotice("テスト通知");
+    expect(launchNotice()).not.toBeNull();
+    resetForShow();
+    expect(launchNotice()).toBeNull();
+  });
+
+  it("連続呼び出しで前のタイマーがキャンセルされ最後の通知だけが残る", () => {
+    setHotkeyFailureNotice("1回目");
+    vi.advanceTimersByTime(3000);
+    setHotkeyFailureNotice("2回目");
+    // 3000ms 追加（1回目から合計 6000ms）しても 2回目は 5000ms 未満のため残る
+    vi.advanceTimersByTime(3000);
+    expect(launchNotice()).toBe("2回目");
+    // 2回目のタイマーが切れるまで待つ（2回目から 5000ms）
+    vi.advanceTimersByTime(2000);
+    expect(launchNotice()).toBeNull();
   });
 });

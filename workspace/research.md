@@ -1,76 +1,65 @@
-# Research — 結果ウィンドウの高さを最大表示件数の高さに固定する (#165)
+# research: issue #159 — ホットキー登録失敗時のユーザー通知
 
 ## issue の要約
 
-結果ウィンドウの高さを `max_results` の高さに固定し、ヒット件数が少なくてもウィンドウ高さを維持する。ヒット数 > max_results 時はスクロールバー表示。ヒット数 0 時は従来通り hide。
+`RegisterHotKey` 失敗時にユーザーへ通知が届いていない。2ケースに分けて対処する。
+
+| ケース | 現在 | 目標 |
+|--------|------|------|
+| 初回登録失敗 | ウィンドウを表示するだけ | + エラー通知をウィンドウ内に表示 |
+| 設定変更で失敗 | `eprintln!` のみ | + 一時エラー通知をウィンドウ内に表示 |
 
 ## 関連コード
 
-### 高さ計算の現状
+### Rust バックエンド
 
-`ui/src/lib/resultsWindowController.ts:116`:
-```ts
-const resultsHeight = Math.min(count * RESULT_ROW_HEIGHT + RESULTS_PADDING * 2, 400);
-```
-- `RESULT_ROW_HEIGHT = 30`、`RESULTS_PADDING = 8`
-- 現状は **実際の結果件数 (`count`)** ベースで高さを算出し、上限 400px でキャップ
-- `count = results.length` (payload から取得)
+- `src-tauri/src/platform/mod.rs`
+  - `PlatformCommand::RegisterInitialHotkey` ブランチ（line ~263）:
+    - `hotkey::register(current_hotkey)` 失敗時に `app_handle.emit("platform-event", "initial-hotkey-failed")` を発火（既存）
+    - `current_hotkey: HotkeyConfig` が同スコープで参照可能 → `modifier` / `key` フィールドで hotkey 文字列を構成できる
+  - `PlatformCommand::SetHotkey` ブランチ（line ~230）:
+    - 失敗時: `hotkey::register(current_hotkey)` で旧ホットキーに復帰し `reply.send(false)` するのみ
+    - 通知イベントは発火していない（通知責務は呼び出し側の `config_watcher.rs` に委譲している）
 
-### max_results の流れ
+- `src-tauri/src/config_watcher.rs`
+  - `apply_config_change()` → `SetHotkey` → `rx.recv_timeout()` → `Ok(false) | Err(_)` ブランチ（line ~93）:
+    - `eprintln!` のみで通知なし
+    - `new_config.hotkey.modifier` / `new_config.hotkey.key` が同スコープで参照可能
+    - `app: &AppHandle` が引数にある → `.emit()` 可能
 
-- **定義**: `snotra-core/src/config.rs:208` — `AppearanceConfig.max_results: usize`（デフォルト 8）
-- **検索側での使用**: `snotra-core/src/engine.rs:77` — `Engine::search()` が `self.config.appearance.max_results` で結果を切り詰め
-- **フロントへの伝達**: 現在 **BootstrapPayload に max_results は含まれていない**
-- **設定変更時**: `config_watcher.rs` で `config.toml` 変更を検知するが、max_results 変更時のフロント通知イベントは **存在しない**
+### フロントエンド
 
-### 結果ウィンドウの表示フロー
+- `ui/src/MainApp.tsx` (line 98-111):
+  - `listen<string>("platform-event", ...)` で `initial-hotkey-failed` を受け取り、ウィンドウ表示のみ実施
+  - 通知表示ロジックは未実装
 
-1. `search.ts:emitDataChanged()` → `results-data-changed` イベント emit
-2. `MainApp.tsx` のリスナーが `controller.handleDataChanged(payload)` を呼ぶ
-3. `resultsWindowController.ts:handleDataChanged()` で `results.length` から高さ算出 → `setSize` → `setPosition` → `show`
+- `ui/src/stores/search.ts`:
+  - `launchNotice` シグナル（getter export）: SearchWindow の通知オーバーレイに表示される
+  - `setLaunchNoticeWithAutoClear(msg, 2400ms)`: 内部関数、未 export
+  - `clearLaunchNotice()`: export 済み
+  - エラースタイルは `launchNotice() !== null && !launching()` 条件で自動適用（`indexing-message--error` クラス）
 
-### CSS 側
+- `ui/src/components/SearchWindow.tsx` (line 296-303):
+  - `<Show when={launching() || launchNotice()}>` で通知オーバーレイを表示
+  - `classList={{ "indexing-message--error": !launching() && launchNotice() !== null }}`
 
-- `global.css:51-53` — `.result-list-standalone { flex: 1; overflow-y: auto; }`
-- ウィンドウ自体を固定高にすれば、内容が少ない場合は余白が残り、多い場合はスクロールバーが自然に出る
+- `ui/src/lib/i18n.ts`:
+  - `TranslationKey` union 型 + `JA_JP` レコード
+  - `{param}` プレースホルダー対応の `t(key, params?)` 関数
 
 ## 既存パターン
 
-- `show_icons` は `BootstrapPayload` + `show-icons-changed` イベントで伝達する既存パターン
-- `window_width` は `config_watcher.rs` で変更検知 → Rust 側で直接 `set_size` — ただし width のみ変更し height は維持する設計
-- **`window_width` 変更パターンが最も近い**: `config_watcher` で変更検知 → results ウィンドウの `set_size` を Rust 側で直接呼ぶ
+- **通知表示**: `setLaunchNoticeWithAutoClear(message)` → `launchNotice` シグナル → SearchWindow オーバーレイ。エラー文字列は i18n で管理。
+- **フロントエンドからの通知消費**: `clearLaunchNotice` / `launchNotice` が export 済みで、store 外からも操作可能。
+- **Tauri イベント型**: `listen<T>(event, handler)` で型付き受信。
 
 ## 技術的制約
 
-- `resultsWindowController` は `main` ウィンドウ側で動作し、結果ウィンドウの `setSize` を呼ぶ
-- `max_results` の値をフロントに伝える経路が必要（Bootstrap + config 変更時）
-- `results` ウィンドウは常に Tauri のウィンドウサイズで高さが決まる（CSS は `height: 100%`）
-
-## 設計の選択肢
-
-### 案A: resultsWindowController で固定高を算出（フロント側）
-- `max_results` を BootstrapPayload + イベントでフロントに伝達
-- `resultsWindowController` が `max_results` をキャッシュし、高さ計算を `maxResults * ROW_HEIGHT + PADDING * 2` に変更
-- **メリット**: 件数ベースのリサイズロジックが一箇所に集約
-- **デメリット**: max_results を伝達する新しい IPC 経路が必要
-
-### 案B: config_watcher で Rust 側から直接 results の高さを設定 ★推奨
-- window_width と同じパターン: `config_watcher` が `max_results` 変更を検知 → results ウィンドウの高さを `set_size` で設定
-- `resultsWindowController` の高さ計算を `max_results` ベースの固定高に変更
-- 起動時は BootstrapPayload 経由で `max_results` をフロントに渡す
-- **メリット**: width 変更と同一パターン。config_watcher が results の高さも直接管理
-- **デメリット**: `resultsWindowController` も max_results を知る必要がある（size 変更のスキップ判定に使う）
-
-### 案C: handleDataChanged で max_results ベースの固定高を使う（最小変更）★最推奨
-- BootstrapPayload に `max_results` を追加
-- `max_results` 変更時のイベント `max-results-changed` を追加（config_watcher から emit）
-- `resultsWindowController` が `cachedMaxResults` を保持
-- `handleDataChanged` の高さ計算を `cachedMaxResults * ROW_HEIGHT + PADDING * 2` に変更（count ベースではなく）
-- **メリット**: 高さ計算のロジックが resultsWindowController に集約、width 変更はそのまま
-- **デメリット**: max_results のイベント経路が1つ増える
-
-→ **案C を採用**: 最もシンプル。config_watcher の Rust 直接リサイズは width だけを担当し、height は resultsWindowController が max_results ベースで固定管理。責務分離が明確。
+- Win32 `RegisterHotKey` 失敗時、競合相手アプリ名の取得は不可能（issue 記載通り）。
+- `platform-event` の既存ペイロード型は `string`。変更すると MainApp.tsx のリスナー型定義も合わせる必要がある。変更しないのが安全。
+- `setLaunchNoticeWithAutoClear` は 2400ms タイムアウト固定。ホットキーエラーメッセージは長文のため、5000ms 程度が望ましい。
+- `search.ts` のモジュールスコープ変数（`launchNotice`, `launchNoticeTimer`）は SearchWindow と同一 WebviewWindow（`main`）でのみ有効。
 
 ## 未解決の疑問
 
-なし。設計方針は明確。
+なし。調査で設計判断に必要な情報はすべて揃った。

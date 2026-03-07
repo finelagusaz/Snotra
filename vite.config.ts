@@ -18,6 +18,7 @@ export default defineConfig({
   build: {
     target: "esnext",
     outDir: "../dist",
+    emptyOutDir: true,
     rollupOptions: {
       input: {
         main: resolve(__dirname, "ui/main.html"),

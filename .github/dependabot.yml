@@ -9,7 +9,7 @@ updates:
       rust-minor:
         update-types: [minor, patch]
     reviewers:
-      - Eoh-Adam
+      - finelagusaz
 
   - package-ecosystem: npm
     directory: /
@@ -19,4 +19,4 @@ updates:
       npm-minor:
         update-types: [minor, patch]
     reviewers:
-      - Eoh-Adam
+      - finelagusaz

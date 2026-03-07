@@ -53,3 +53,6 @@ NOTIFYICON_VERSION_4 では、キーボード操作（Shift+F10 / Application �
 - Tauri プラグインの新機能を使う際は `capabilities/*.json` の権限宣言を確認する
 - `tauri.conf.json` の CSP で特定ディレクティブ（`connect-src` 等）を明示すると、そのディレクティブは `default-src` を継承しなくなる。`'self'` が必要な場合は明示的に含めること。また `tauri dev` では CSP が適用されないため、CSP 起因の問題はリリースビルドでしか再現しない
 - `ShellExecuteW` でフォルダ・画像・文書ファイルを開く場合は COM STA が必要。Tauri コマンドハンドラスレッドは COM 状態が保証されないため、`std::thread::spawn` + `CoInitializeEx(None, COINIT_APARTMENTTHREADED)` + `ShellExecuteW` + `if com_ok { CoUninitialize() }` パターンで新規スレッドに COM 環境を用意する。`is_ok()` は S_OK(0) と S_FALSE(1) を両方 true とし、どちらも CoUninitialize が必要。EXE ファイルは COM 不要なため同問題を起こさない
+- `with_webview()` → `PlatformWebview::controller()` で `ICoreWebView2Controller` にアクセスし、WebView2 COM API を直接呼べる。**setup フェーズでのみ安全**（イベントループ中はデッドロック）。`webview2_com` クレートが必要。現在 `AcceleratorKeyPressed` ハンドラを登録し、`WM_SYSKEYDOWN`（Alt+char）を `SetHandled(true)` で消費してビープ音を防止している
+- `SendInput` はシステム入力キューに注入し、ルーティングはキュー取り出し時に決定される。**フォーカス移行直後の `SendInput` は対象ウィンドウに届かない場合がある**（`SetForegroundWindow` は部分的に非同期）。`SendMessageTimeoutW(hwnd, WM_NULL, ..., SMTO_NORMAL, 100, ...)` でフォーカス完了を同期待ちしてから `SendInput` を呼ぶ（Raymond Chen 推奨パターン）
+- JS の `preventDefault()` は Chromium レンダラプロセスの IPC 経由で動作するため、**ネイティブ HWND レベルの `DefWindowProc` 呼び出し（`MessageBeep` 等）を阻止できない**。ネイティブ側で阻止する必要がある場合は `AcceleratorKeyPressed` や HWND サブクラスを使う

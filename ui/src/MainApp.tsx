@@ -9,7 +9,7 @@ import {
   initIndexingState,
 } from "./stores/search";
 import { applyTheme } from "./lib/theme";
-import type { VisualConfig } from "./lib/types";
+import type { BootstrapPayload, VisualConfig } from "./lib/types";
 import * as api from "./lib/invoke";
 import { perfMarkRenderDone } from "./lib/perf";
 import { trace } from "./lib/trace";
@@ -163,7 +163,7 @@ const MainApp: Component = () => {
     unlistenFns.push(unlistenVisual);
 
     // Load bootstrap payload and apply theme (non-fatal on failure)
-    let bootstrap = null;
+    let bootstrap: BootstrapPayload | null = null;
     try {
       bootstrap = await api.getBootstrapPayload();
       applyTheme(bootstrap.visual);

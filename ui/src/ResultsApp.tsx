@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import ResultsWindow from "./components/ResultsWindow";
 import { applyTheme } from "./lib/theme";
 import type { VisualConfig } from "./lib/types";
-import * as api from "./lib/invoke";
+import { getBootstrapPayload } from "./lib/invoke";
 
 const ResultsApp: Component = () => {
   const unlistenFns: Array<() => void> = [];
@@ -17,7 +17,7 @@ const ResultsApp: Component = () => {
 
     // Load bootstrap payload and apply theme (non-fatal on failure)
     try {
-      const bootstrap = await api.getBootstrapPayload();
+      const bootstrap = await getBootstrapPayload();
       applyTheme(bootstrap.visual);
     } catch (e) {
       console.error("Failed to load bootstrap payload:", e);

@@ -204,9 +204,27 @@ fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
             let _ = main.set_focus();
             trace_main("show_main:set_focus:end", json!({ "ms": ms(t0.elapsed()) }));
 
-            // Clear lingering Alt modifier *after* focus so that the synthetic
-            // key-ups are delivered to our WebView2 HWND (not the previously
-            // focused window).
+            // Ensure focus transfer is fully processed before sending synthetic
+            // key-ups.  SetForegroundWindow is partially asynchronous (Raymond
+            // Chen); WM_NULL via SendMessageTimeout blocks until the target has
+            // processed all pending activation messages.
+            #[cfg(windows)]
+            if let Ok(hwnd) = main.hwnd() {
+                use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    SendMessageTimeoutW, SMTO_NORMAL, WM_NULL,
+                };
+                let hwnd = HWND(hwnd.0);
+                let mut result = 0usize;
+                unsafe {
+                    let _ = SendMessageTimeoutW(
+                        hwnd, WM_NULL, WPARAM(0), LPARAM(0),
+                        SMTO_NORMAL, 100, Some(&mut result),
+                    );
+                }
+            }
+
+            // Clear lingering Alt modifier after focus is confirmed.
             send_alt_key_up();
 
             // IME control
@@ -355,6 +373,44 @@ fn main() {
                         logical_h,
                     )));
                 }
+            }
+
+            // Register AcceleratorKeyPressed handler to suppress WM_SYSKEYDOWN
+            // (Alt+char) before TranslateMessage → WM_SYSCHAR → DefWindowProc →
+            // MessageBeep(0).  This is the root fix for the hotkey beep issue.
+            #[cfg(windows)]
+            if let Some(main) = app.get_webview_window("main") {
+                main.with_webview(move |platform_webview| {
+                    use webview2_com::Microsoft::Web::WebView2::Win32::{
+                        COREWEBVIEW2_KEY_EVENT_KIND,
+                        COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
+                    };
+                    use webview2_com::AcceleratorKeyPressedEventHandler;
+                    use windows::Win32::UI::Input::KeyboardAndMouse::VK_F4;
+
+                    let controller = platform_webview.controller();
+                    let handler = AcceleratorKeyPressedEventHandler::create(Box::new(
+                        move |_controller, args| {
+                            if let Some(args) = args {
+                                let mut kind = COREWEBVIEW2_KEY_EVENT_KIND(0);
+                                unsafe { args.KeyEventKind(&mut kind)? };
+                                if kind == COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN {
+                                    let mut vk = 0u32;
+                                    unsafe { args.VirtualKey(&mut vk)? };
+                                    // Let Alt+F4 through for window close
+                                    if vk != VK_F4.0 as u32 {
+                                        unsafe { args.SetHandled(true)? };
+                                    }
+                                }
+                            }
+                            Ok(())
+                        },
+                    ));
+                    let mut token = 0i64;
+                    unsafe {
+                        let _ = controller.add_AcceleratorKeyPressed(&handler, &mut token);
+                    }
+                }).expect("AcceleratorKeyPressed handler must register in setup phase");
             }
 
             // Spawn platform thread early to parallelize Win32 init with WebView creation.

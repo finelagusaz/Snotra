@@ -17,6 +17,7 @@ tokio = { version = "1", features = ["time"] }
 notify = "7"
 
 [target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
 windows = { version = "0.62.2", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Controls",

@@ -2,12 +2,14 @@
 
 ## 設計方針
 
-`max_results` の責務を「ウィンドウの可視行数」に限定し、バックエンドの取得件数上限を
-別定数 `SCROLL_FETCH_LIMIT` で管理する。フロントエンド（CSS・JS）はスクロール実装済みのため変更不要。
+`max_results` の責務を「ウィンドウの可視行数」に限定し、バックエンドの取得件数上限は
+既存の `top_n_history`（履歴保持件数）で制御する。`top_n_history` は本来
+検索結果に表示されるアイテムの上限として設計された設定値。
+フロントエンド（CSS・JS）はスクロール実装済みのため変更不要。
 
 ```
-max_results (設定値) → ウィンドウ高さのみ制御
-SCROLL_FETCH_LIMIT   → バックエンドが返す最大件数（100 固定）
+max_results   (設定値: 1..=50, デフォルト 8)    → ウィンドウ可視行数のみ制御
+top_n_history (設定値: 10..=1000, デフォルト 200) → バックエンドが返す最大件数
 ```
 
 ---
@@ -16,7 +18,7 @@ SCROLL_FETCH_LIMIT   → バックエンドが返す最大件数（100 固定）
 
 | ファイル | 変更内容 |
 |---------|---------|
-| `snotra-core/src/engine.rs` | `SCROLL_FETCH_LIMIT` 定数を追加し、`search()`・`capture_folder_list_context()`・`list_folder()` の件数上限を変更。テスト更新 |
+| `snotra-core/src/engine.rs` | `search()`・`capture_folder_list_context()` の件数上限を `top_n_history` に変更。テスト更新 |
 | `SPEC.md` | §3.2 の記述は既にスクロール対応を示しているため変更不要（確認のみ） |
 
 ---
@@ -25,71 +27,49 @@ SCROLL_FETCH_LIMIT   → バックエンドが返す最大件数（100 固定）
 
 ### Phase 1: `snotra-core/src/engine.rs` の変更
 
-**1a. 定数追加**（ファイル先頭付近 `use` の後）:
-```rust
-/// ウィンドウの可視行数（max_results）を超えてスクロールする際の検索取得上限。
-/// max_results はウィンドウ高さのみを制御し、この上限まで結果を取得してスクロールで閲覧できる。
-/// snotra-settings の max_results 最大値が 50 なので、常に 50 より大きい値を設定する。
-const SCROLL_FETCH_LIMIT: usize = 100;
-```
-
-**1b. `Engine::search()` の変更**:
+**1a. `Engine::search()` の変更**:
 ```rust
 pub fn search(&mut self, query: &str) -> Vec<SearchResult> {
     let mode = SearchMode::from(self.config.search.normal_mode);
     let boost = HistoryBoostConfig::from(&self.config.search);
-    let max = self.config.appearance.max_results;
+    let fetch_limit = self.config.appearance.top_n_history;
     self.search_engine
-        .search_with_history_boost(query, max.max(SCROLL_FETCH_LIMIT), &self.history, mode, boost)
+        .search_with_history_boost(query, fetch_limit, &self.history, mode, boost)
 }
 ```
 
-**1c. `Engine::capture_folder_list_context()` の変更**:
+**1b. `Engine::capture_folder_list_context()` の変更**:
 ```rust
 pub fn capture_folder_list_context(&self) -> FolderListContext {
     FolderListContext {
         mode: SearchMode::from(self.config.search.folder_mode),
         show_hidden_system: self.config.search.show_hidden_system,
-        max_results: self.config.appearance.max_results.max(SCROLL_FETCH_LIMIT),
+        max_results: self.config.appearance.top_n_history,
     }
 }
 ```
 
-**1d. `Engine::list_folder()` の変更**（テスト用同期ラッパー）:
-```rust
-pub fn list_folder(&self, dir: &str, filter: &str) -> Vec<SearchResult> {
-    let ctx = self.capture_folder_list_context();
-    folder::list_folder(
-        Path::new(dir),
-        filter,
-        ctx.mode,
-        ctx.show_hidden_system,
-        &self.history,
-        ctx.max_results,  // capture_folder_list_context() 変更により SCROLL_FETCH_LIMIT 以上になる
-    )
-}
-```
-※ `list_folder` の引数 `ctx.max_results` は `capture_folder_list_context()` が既に `max(SCROLL_FETCH_LIMIT)` を適用するため、追加変更不要
+**1c. `Engine::list_folder()`**: `capture_folder_list_context()` 経由で `ctx.max_results` を使うため追加変更不要。
 
-**1e. テスト更新**:
+**1d. テスト更新**:
 
 既存テスト `search_respects_max_results_from_config` は `config.max_results = 2` で 4 エントリを検索し `results.len() <= 2` を検証。
-変更後は `SCROLL_FETCH_LIMIT.max(2) = 100` で最大 100 件取得するため、4 件全部が返る。
+変更後は `top_n_history`（デフォルト 200）で取得するため 4 件全部が返る。
 
-変更方針: テスト名と検証内容を「max_results はウィンドウ高さを制御するが、結果件数は SCROLL_FETCH_LIMIT まで返る」に更新:
 ```rust
 #[test]
-fn search_returns_up_to_scroll_fetch_limit_regardless_of_max_results() {
+fn search_returns_up_to_top_n_history_regardless_of_max_results() {
     let mut config = default_config();
     config.appearance.max_results = 2;
+    // top_n_history はデフォルト 200 → 4 件全部取得できる
     let mut engine = Engine::new(
         make_entries(&["app1", "app2", "app3", "app4"]),
         empty_history(),
         config,
     );
     let results = engine.search("app");
-    // max_results はウィンドウ高さのみを制御する。
-    // 取得件数は SCROLL_FETCH_LIMIT（100）まで許可されるため、全 4 件が返る。
+    // max_results はウィンドウ高さのみ制御する。
+    // 取得件数は top_n_history（デフォルト 200）まで許可されるため、全 4 件が返る。
     assert_eq!(results.len(), 4);
 }
 ```
@@ -98,10 +78,10 @@ fn search_returns_up_to_scroll_fetch_limit_regardless_of_max_results() {
 
 ## 不変条件
 
-1. `search_with_history_boost` の引数 `max_results` は常に 1 以上（`max_results == 0` の場合は config バリデーションで弾かれる。`0.max(100) = 100`）
-2. フロントエンドのウィンドウ高さ計算 `cachedMaxResults * RESULT_ROW_HEIGHT + PADDING` は変更しない → ウィンドウ高は常に設定値に基づく固定高
-3. `recent_history()` は `max_history_display` で制御しており `SCROLL_FETCH_LIMIT` の影響を受けない
-4. `SCROLL_FETCH_LIMIT > snotra-settings の max_results 最大値 (50)` を維持する → 常にスクロール余地がある
+1. `top_n_history >= 1`（range 10..=1000 かつ config バリデーション済み）→ `max_results == 0` バリデーションエラー経路と同様に安全
+2. フロントエンドのウィンドウ高さ計算 `cachedMaxResults * RESULT_ROW_HEIGHT + PADDING` は変更しない → ウィンドウ高は常に `max_results` に基づく固定高
+3. `recent_history()` は `max_history_display` で別途制御 → 影響なし
+4. `top_n_history >= max_results` が常に保証される必要はない（例: 最小設定 10 と max_results=8 の差は 2 行しかない）が、それ自体はユーザーの設定選択であり、システムの不変条件には影響しない
 
 ---
 
@@ -129,33 +109,33 @@ fn search_returns_up_to_scroll_fetch_limit_regardless_of_max_results() {
 
 ### 2. 影響範囲の網羅性
 
-- `SCROLL_FETCH_LIMIT` を使うのは `engine.rs` の3箇所のみ
+- `top_n_history` を検索上限に使う箇所は `engine.rs` の 2 箇所のみ
 - `search_respects_max_results_from_config` テストが壊れることを確認し更新計画に含めた ✓
 - `folder.rs::list_folder` の直接呼び出しは `engine.rs::list_folder()` 経由のみ → 変更不要 ✓
 
 ### 3. 境界条件
 
-- `max_results = 0`: config バリデーションで弾かれる（`config.rs:640`）。`0.max(100) = 100` のため安全
-- `max_results = 50`（最大設定値）: `50.max(100) = 100` → 50 行見えて残り 50 行スクロール ✓
-- エントリ数 < SCROLL_FETCH_LIMIT: 全件返る（既存の動作と同じ）
+- `top_n_history = 10`（最小設定値）かつ `max_results = 8`: スクロールで最大 10 件 → 差分は 2 行のみだが動作は正しい
+- `top_n_history = 1000`（最大設定値）: 最大 1000 件取得 → パフォーマンスへの影響は検索アルゴリズムの O(N log k) 特性から許容範囲
+- エントリ数 < `top_n_history`: 全件返る（既存の動作と同じ）
 
 ### 4. リソース管理
 
-バックエンドの Vec サイズが増えるが、一時的なメモリ使用であり問題なし。
+取得件数増加に伴う一時的な Vec サイズ増大は問題なし。
 
 ### 5. 既存パターンとの整合
 
-`search_with_history_boost` は既にパラメータで上限を受け取る設計 → 新パターン不要 ✓
+`search_with_history_boost` は既にパラメータで上限を受け取る設計 → 新パターン不要。`top_n_history` は既存の設定値を活用するため新規フィールド追加なし ✓
 
 ### 6. YAGNI 違反
 
-新しい設定項目を追加しない。`SCROLL_FETCH_LIMIT` は固定定数 → シンプル ✓
+新しい設定項目・定数を追加しない。既存の `top_n_history` を本来の目的に使う ✓
 
 ### 7. シンプル化の挑戦
 
-「この複雑さが必要か」: `max(max_results, SCROLL_FETCH_LIMIT)` の1行変更のみ。これ以上シンプルにできない。
+変更量は `engine.rs` 2 行 + テスト更新のみ。これ以上シンプルにできない。
 
 ### 8. 破壊不変条件
 
-- 「ウィンドウ高さは max_results 行分に固定」の不変条件: `resultsWindowController.ts` は変更しないため維持 ✓
+- 「ウィンドウ高さは `max_results` 行分に固定」の不変条件: `resultsWindowController.ts` は変更しないため維持 ✓
 - `search_with_history_boost` のインターフェースは変更しない → 既存テスト（search.rs 内）は全通過 ✓

@@ -16,8 +16,8 @@ export class LruIconCache {
   }
 
   set(path: string, url: string): void {
-    if (this.map.has(path)) {
-      const old = this.map.get(path)!;
+    const old = this.map.get(path);
+    if (old !== undefined) {
       this.map.delete(path);
       if (old !== url) URL.revokeObjectURL(old);
     }
@@ -41,12 +41,11 @@ export class LruIconCache {
   }
 
   private evict(): void {
-    while (this.map.size > MAX_ICON_CACHE_SIZE) {
-      const first = this.map.keys().next().value;
-      if (first === undefined) break;
-      const url = this.map.get(first)!;
-      URL.revokeObjectURL(url);
-      this.map.delete(first);
-    }
+    if (this.map.size <= MAX_ICON_CACHE_SIZE) return;
+    const entry = this.map.entries().next().value;
+    if (entry === undefined) return;
+    const [key, url] = entry;
+    URL.revokeObjectURL(url);
+    this.map.delete(key);
   }
 }

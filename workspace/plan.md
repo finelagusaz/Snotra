@@ -1,104 +1,108 @@
-# Plan: getBootstrapPayload() の重複取得削減 (#166)
+# Plan — 結果ウィンドウの高さを最大表示件数の高さに固定する (#165)
 
 ## 変更ファイル一覧
 
-1. **`ui/src/ResultsApp.tsx`** — bootstrap 呼び出しを削除（テーマ初期適用の責務を ResultsWindow に移す）
-2. **`ui/src/components/ResultsWindow.tsx`** — 既存の bootstrap 呼び出しにテーマ適用を追加
-3. **`ui/src/lib/invoke.ts`** — 変更なし（`getBootstrapPayload` は MainApp から引き続き使用）
-4. **`src-tauri/src/commands/config.rs`** — 変更なし
+1. **`src-tauri/src/commands/config.rs`** — `BootstrapAppearanceConfig` に `max_results` を追加
+2. **`ui/src/lib/types.ts`** — `BootstrapAppearanceConfig` に `max_results` を追加
+3. **`src-tauri/src/config_watcher.rs`** — `max_results` 変更時に `max-results-changed` イベントを emit
+4. **`ui/src/lib/resultsWindowController.ts`** — `cachedMaxResults` を追加し高さ計算を固定化。Bootstrap + イベントで更新
+5. **`ui/src/MainApp.tsx`** — `max-results-changed` リスナーを追加し controller に伝達。bootstrap から初期値設定
 
 ## 実装順序
 
-### Phase 1: ResultsWindow.tsx に テーマ適用を追加
+### Phase 1: Rust 側 — BootstrapPayload に max_results を追加
 
-現状（L91-95）:
-```ts
-void api.getBootstrapPayload().then((bootstrap) => {
-  setShowIcons(bootstrap.appearance.show_icons);
-}).catch(...);
-```
+**`src-tauri/src/commands/config.rs`**:
+- `BootstrapAppearanceConfig` に `max_results: usize` フィールドを追加
+- `get_bootstrap_payload()` で `engine.config().appearance.max_results` を設定
 
-変更後:
-```ts
-void api.getBootstrapPayload().then((bootstrap) => {
-  setShowIcons(bootstrap.appearance.show_icons);
-  applyTheme(bootstrap.visual);
-}).catch(...);
-```
+### Phase 2: Rust 側 — config_watcher で max_results 変更を通知
 
-`applyTheme` の import を追加。
+**`src-tauri/src/config_watcher.rs`**:
+- `max_results` 変更検知を追加: `new_config.appearance.max_results != old_config.appearance.max_results`
+- 変更時に `app.emit("max-results-changed", new_max_results)` を emit
 
-### Phase 2: ResultsApp.tsx から bootstrap を削除
+### Phase 3: フロント型定義 — BootstrapAppearanceConfig を更新
 
-現状:
-```ts
-import { getBootstrapPayload } from "./lib/invoke";
-// ...
-const bootstrap = await getBootstrapPayload();
-applyTheme(bootstrap.visual);
-```
+**`ui/src/lib/types.ts`**:
+- `BootstrapAppearanceConfig` に `max_results: number` を追加
 
-変更後: bootstrap 呼び出しと `getBootstrapPayload` import を削除。**`visual-config-changed` リスナーと `applyTheme` import は残す**（設定変更時のテーマ反映に必要）。bootstrap 関連の削除対象は `getBootstrapPayload` の import・呼び出し・try/catch のみ。
+### Phase 4: resultsWindowController — 高さ計算を固定化
+
+**`ui/src/lib/resultsWindowController.ts`**:
+- `cachedMaxResults` 変数を追加（初期値 8 = デフォルト）
+- `updateMaxResults(maxResults: number)` メソッドを追加
+- `handleDataChanged` の高さ計算を変更:
+  - Before: `Math.min(count * RESULT_ROW_HEIGHT + RESULTS_PADDING * 2, 400)`
+  - After: `cachedMaxResults * RESULT_ROW_HEIGHT + RESULTS_PADDING * 2`
+  - **件数に関わらず固定高**。件数 > maxResults 時はスクロールバーが CSS で自然に表示
+- **shouldShow 判定は変更なし**: `shouldShow: items.length > 0` で件数 0 時は hide（issue 要件）
+
+### Phase 5: MainApp — 初期値設定 + 変更リスナー
+
+**`ui/src/MainApp.tsx`**:
+- bootstrap 取得後に `controller.updateMaxResults(bootstrap.appearance.max_results)` を呼ぶ
+- `max-results-changed` リスナーを追加: `controller.updateMaxResults(event.payload)`
 
 ## 不変条件
 
-1. **テーマの初期適用は必ず行われる**: ResultsWindow.tsx の bootstrap 呼び出しでテーマ適用を行う。bootstrap 失敗時は CSS デフォルト値が使われる（現状と同じ振る舞い）
-2. **テーマの継続的な更新は `visual-config-changed` イベントで行われる**: ResultsApp.tsx のリスナーが維持される（変更なし）
-3. **`show_icons` の初期値は bootstrap から取得される**: 変更なし
-4. **MainApp の bootstrap 呼び出しは影響を受けない**: MainApp は `auto_hide_on_focus_lost` を含む完全な bootstrap を必要とするため、変更しない
-
-### テーマ適用タイミングの考慮
-
-- ResultsApp.tsx の bootstrap: `onMount` の `async` 内で即座に呼ばれる
-- ResultsWindow.tsx の bootstrap: `onMount` 内の fire-and-forget (`void ... .then()`) で呼ばれる
-- どちらも非同期なので、テーマ適用のタイミングに実質的な差はない
-- 結果: 初回描画でテーマ適用前に一瞬デフォルトスタイルが見える可能性があるが、これは現状でも同じ
+1. **件数 0 の場合は results ウィンドウを hide**: `shouldShow: items.length > 0` は変更しない
+2. **件数 > 0 の場合は常に max_results ベースの固定高**: 件数が 1 でも 8 でも 20 でもウィンドウ高さは同じ
+3. **config_watcher で max_results が変わったら即時反映**: 次回の handleDataChanged で新しい高さが適用される
+4. **width 変更のパターン（config_watcher → Rust 直接 set_size）は変更しない**: height の管理は resultsWindowController が行う
 
 ## テスト方針
 
-- `npm run build` — ビルド成功確認（型チェック含む）
-- `npm test` — 既存テストが壊れないことを確認
-- 手動確認: テーマ反映と show_icons 初期化が従来どおり動くこと
+### 自動テスト
+- `npm run build` — typecheck + vite build
+- `npm test` — 既存テスト維持
+- `cargo check -p snotra-core -p snotra -p snotra-settings` — Rust 型チェック
 
-### 検証コマンド
+### E2E テスト（既存）
+- `e2e/tauri.slash.e2e.ts:618` に `max_results` 変更の E2E テストが既にある（config.toml 書き換え → 表示件数確認）。高さ固定の変更でこのテストが壊れないことを確認
 
-```bash
-npm run build    # 必須: typecheck + vite build
-npm test         # 必須: 既存テスト維持
-```
+### 手動確認
+- max_results = 8 で 3 件ヒット → ウィンドウ高さが 8 行分を維持し、下部に余白
+- max_results = 8 で 10 件ヒット → スクロールバーが表示される
+- max_results = 8 で 0 件 → ウィンドウが hide される
+- 設定で max_results を変更 → 次回表示で新しい高さが適用される
 
 ## SPEC.md 更新要否
 
-**不要**。外部挙動の変更なし（内部の IPC 呼び出し回数削減のみ）。
+SPEC.md §3.5「最大列挙数」に以下を追記:
+> 結果ウィンドウの高さは最大表示件数に基づく固定高とする。ヒット数が最大表示件数未満でも高さは維持され、超過時はスクロールバーを表示する。
 
 ## セルフレビュー
 
 ### 1. 対称コードパス
-- `applyTheme` は MainApp / ResultsApp の両方で呼ばれていた → ResultsApp の bootstrap 内呼び出しを ResultsWindow に移動するだけ。MainApp 側に影響なし
-- `visual-config-changed` リスナーは ResultsApp.tsx に残る（テーマ変更時の継続反映）
-- **実装時の注意**: ResultsApp.tsx から削除するのは `getBootstrapPayload` の import・呼び出し・try/catch のみ。`applyTheme` import と `visual-config-changed` リスナーは残すこと（symmetric-check で確認済み）
+- `handleDataChanged` / `handleVisibilityChanged`: handleVisibilityChanged は高さ計算に関与しない（hide のみ）→ 変更不要 ✓
+- BootstrapPayload / config_watcher: 初期値と変更通知の両方でカバー ✓
 
 ### 2. 影響範囲の網羅性
-- `getBootstrapPayload` の呼び出し箇所: MainApp.tsx:168、ResultsApp.tsx:20、ResultsWindow.tsx:93 → ResultsApp.tsx:20 を削除、ResultsWindow.tsx:93 にテーマ適用を追加
-- `applyTheme` の呼び出し箇所: MainApp.tsx:169、ResultsApp.tsx:21、ResultsApp.tsx:14（イベントリスナー内） → ResultsApp.tsx:21 を削除し ResultsWindow.tsx に移動。イベントリスナー内の呼び出しは残す
+- 高さ計算は `resultsWindowController.ts:116` の1箇所のみ ✓
+- max_results は Rust 側で検索結果の切り詰めに使われるが、それはフロントの高さ表示とは独立 ✓
+- `config_watcher` の width 変更パス（results ウィンドウの `set_size`）: width のみ変更するので干渉しない。ただし、width 変更時に height が巻き込まれないよう、`logical.height` を保持する現行実装を確認済み ✓
 
 ### 3. 境界条件
-- bootstrap 取得失敗時: 既存の catch で warn ログ。テーマもアイコンもデフォルト値で動作（現状と同じ）
-- results ウィンドウが先に描画される場合: bootstrap は非同期なので、どちらにしても初期描画後にテーマが適用される（現状と同じ）
+- max_results = 1: 高さ = 30 + 16 = 46px
+- max_results = 0: config バリデーションで 0 は拒否される（`config.rs:617`）→ 発生しない ✓
+- フォルダ展開・ツール選択: ツール件数や folder entries が max_results を超えることがある → スクロールバーが出る ✓
 
 ### 4. リソース管理
-- 新規リソースの追加なし。既存リスナーの構造変更なし
+- 新規リスナー `max-results-changed` を追加 → `unlistenFns` に push して cleanup ✓
 
 ### 5. 既存パターンとの整合
-- 新規パターンの導入なし。既存の bootstrap 呼び出しパターンを流用
+- BootstrapPayload 拡張: `show_icons` と同じパターン ✓
+- config_watcher の emit: `show-icons-changed` と同じパターン ✓
+- controller の cached 値: `cachedMainLogicalWidth` / `cachedMainLogicalHeight` と同じパターン ✓
 
 ### 6. YAGNI 違反
-- なし。要求範囲（bootstrap IPC 削減）に限定した最小変更
+- なし。要求範囲に限定 ✓
 
 ### 7. シンプル化の挑戦
-- 新たな状態・型・コマンドを一切導入しない最もシンプルな案を選択
-- 「ResultsWindow の bootstrap でテーマも適用する」という1行追加が変更の本質
+- 新しい状態は `cachedMaxResults` のみ。既存パターン踏襲で最小限 ✓
+- `updateMaxResults` が呼ばれるだけで、次回 `handleDataChanged` で自然に反映される。即時リサイズは不要（表示中にリサイズするとちらつきの原因になるため、次回表示時に適用で十分）
 
 ### 8. 破壊不変条件の明示
-- **テーマ未適用で results が表示される可能性**: bootstrap が遅れた場合、デフォルト CSS が見える。ただしこれは現状でも起こりうる（ResultsApp の bootstrap も非同期）。かつ results ウィンドウは初回は非表示で作成され、表示前に bootstrap が完了する可能性が高い
-- **検知**: 手動確認（テーマが反映されることを目視）
+- **results ウィンドウの高さが不正な場合**: 件数 0 で固定高のウィンドウが表示される可能性 → `shouldShow` ガードで 0 件時は hide されるので安全 ✓
+- **config_watcher の emit 失敗**: `let _ =` で無視（他の emit と同じ）。次回 bootstrap で復帰 ✓

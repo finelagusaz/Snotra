@@ -19,6 +19,7 @@ export interface ResultsWindowController {
   updateMainPosition(logicalPos: { x: number; y: number }): void;
   updateMainSize(logicalWidth: number, logicalHeight: number): void;
   updateResultsVisible(visible: boolean): void;
+  updateMaxResults(maxResults: number): void;
 }
 
 /**
@@ -40,6 +41,7 @@ export function createResultsWindowController(
   let pendingResultsPosition: { x: number; y: number } | undefined;
   let positionApplyInFlight = false;
   let cachedResultsVisible = false;
+  let cachedMaxResults = 8;
 
   const getResultsWindow = async (): Promise<WebviewWindow | null> => {
     if (!resultsWindowPromise) {
@@ -112,8 +114,8 @@ export function createResultsWindowController(
     // Use cached geometry (updated by onMoved/onResized/onFocusChanged listeners)
     const currentWidth = cachedMainLogicalWidth;
 
-    // Resize results window based on count
-    const resultsHeight = Math.min(count * RESULT_ROW_HEIGHT + RESULTS_PADDING * 2, 400);
+    // Fixed height based on max_results setting (not actual count)
+    const resultsHeight = cachedMaxResults * RESULT_ROW_HEIGHT + RESULTS_PADDING * 2;
     if (
       !lastResultsSize ||
       lastResultsSize.width !== currentWidth ||
@@ -220,6 +222,10 @@ export function createResultsWindowController(
     cachedResultsVisible = visible;
   };
 
+  const updateMaxResults = (maxResults: number): void => {
+    cachedMaxResults = maxResults;
+  };
+
   // Initialize geometry cache asynchronously
   void (async () => {
     try {
@@ -251,5 +257,6 @@ export function createResultsWindowController(
     updateMainPosition,
     updateMainSize,
     updateResultsVisible,
+    updateMaxResults,
   };
 }

@@ -12,6 +12,7 @@ pub struct BootstrapGeneralConfig {
 #[derive(serde::Serialize, Clone)]
 pub struct BootstrapAppearanceConfig {
     pub show_icons: bool,
+    pub max_results: usize,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -32,6 +33,7 @@ pub fn get_bootstrap_payload(state: State<AppState>) -> BootstrapPayload {
         },
         appearance: BootstrapAppearanceConfig {
             show_icons: engine.config().appearance.show_icons,
+            max_results: engine.config().appearance.max_results,
         },
         indexing: state.indexing.load(Ordering::SeqCst),
     }

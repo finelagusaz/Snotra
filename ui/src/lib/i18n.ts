@@ -77,7 +77,14 @@ const TABLES: Record<Lang, Record<TranslationKey, string>> = {
   en: EN_US,
 };
 
-const [currentLang, setCurrentLang] = createSignal<Lang>("ja");
+/** OS の言語設定から初期言語を同期的に決定する（Rust 側の default_language() と同じロジック）。
+ *  bootstrap 完了前の初回描画でも正しい言語で表示するため、ここで確定する。 */
+function detectInitialLang(): Lang {
+  const locale = navigator.language ?? "";
+  return locale.startsWith("ja") ? "ja" : "en";
+}
+
+const [currentLang, setCurrentLang] = createSignal<Lang>(detectInitialLang());
 
 export { setCurrentLang as setLanguage };
 

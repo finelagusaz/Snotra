@@ -102,6 +102,16 @@ fn apply_config_change(app: &AppHandle) {
     };
     let new_width = new_config.appearance.window_width;
 
+    // Emit language change BEFORE hotkey failure so the frontend receives
+    // the new language before it formats any error notification strings.
+    if language_changed {
+        let lang_str = match new_language {
+            Language::Ja => "ja",
+            Language::En => "en",
+        };
+        let _ = app.emit("language-changed", lang_str);
+    }
+
     // Hotkey change — best-effort, log on failure (don't block)
     if let Some(bridge) = app.try_state::<Mutex<PlatformBridge>>()
         && let Ok(b) = bridge.lock()
@@ -145,15 +155,6 @@ fn apply_config_change(app: &AppHandle) {
     if index_changed && !indexing_in_progress {
         state.index_build_started.store(false, Ordering::SeqCst);
         indexing::start_index_build(app);
-    }
-
-    // Emit language change
-    if language_changed {
-        let lang_str = match new_language {
-            Language::Ja => "ja",
-            Language::En => "en",
-        };
-        let _ = app.emit("language-changed", lang_str);
     }
 
     // Emit visual config change and sync native background color

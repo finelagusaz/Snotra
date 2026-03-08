@@ -8,7 +8,7 @@ Tauri v2 バイナリ crate。Win32 API 統合とフロントエンドとの IPC
 - `state.rs`: `AppState` 定義（`Mutex<Engine>` + `AtomicBool` × 2）。`Engine` は `snotra-core` の facade で、検索・履歴・設定を単一ロックに統合
 - `icon.rs`: アイコンのオンデマンド抽出（`SHGetFileInfoW` → PNG → base64）、検索時に遅延ロードしキャッシュ永続化
 - `indexing.rs`: バックグラウンドインデックス構築
-- `config_watcher.rs`: `notify` クレートで `config.toml` 変更を監視（100ms debounce）し、差分検出後にホットキー・トレイ・インデックス・テーマ・ウィンドウ幅を反映する `apply_config_change()` を実行
+- `config_watcher.rs`: `notify` クレートで `config.toml` 変更を監視（100ms debounce）し、差分検出後にホットキー・トレイ・インデックス・テーマ・ウィンドウ幅・言語を反映する `apply_config_change()` を実行。**不変条件: `language-changed` イベントはホットキー失敗通知より先に発火する**（フロントエンドが正しい言語でエラー文字列を組み立てるため）
 - `ime.rs`: IME オフ操作（`ImmSetOpenStatus(false)`）。Win32 IMM API の薄いラッパー
 - `commands/`: ディレクトリモジュール（`mod.rs` + `search.rs` / `launch.rs` / `config.rs` / `icon.rs` / `window.rs` / `system.rs`）。`#[tauri::command]` を責務別に分割
 - `platform/`: ディレクトリモジュール（`mod.rs` + `hotkey.rs` / `tray.rs` / `wndproc.rs`）。Win32 メッセージループスレッド + トレイアイコン + ホットキー + ウィンドウプロシージャ

@@ -5,7 +5,7 @@
 ## モジュール構成
 
 - `engine.rs`: `Engine` struct（`SearchEngine` + `HistoryStore` + `Config` の facade）。`FolderListContext`（ロック外スナップショット）と `PrebuiltIndex`（インデックス高速スワップ用）を公開
-- `config.rs`: `%APPDATA%\Snotra\config.toml` の読込/保存、既定値補完
+- `config.rs`: `%APPDATA%\Snotra\config.toml` の読込/保存、既定値補完。`Language` enum（`Ja`/`En`）と `default_language()`（`sys-locale` による OS 言語自動判定、非日本語は英語フォールバック）を定義
 - `search.rs`: 検索順位計算（先頭/中間/ファジー）、履歴ブースト、空クエリ時履歴候補
 - `history.rs`: 起動履歴・クエリ別履歴・フォルダ展開履歴の管理、バイナリ永続化
 - `folder.rs`: フォルダ内列挙とフィルタ/ソート、ルート判定

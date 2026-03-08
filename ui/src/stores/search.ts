@@ -1,6 +1,6 @@
 import { createSignal, createEffect, createRoot, on, createMemo } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
-import type { OpenerTool, SearchResult } from "../lib/types";
+import type { InstantCommand, OpenerTool, SearchResult } from "../lib/types";
 import * as api from "../lib/invoke";
 import { findCommand } from "../lib/commands";
 import { perfStartSearch, perfMarkSearchDone, perfCancelSearch } from "../lib/perf";
@@ -17,6 +17,10 @@ const [selected, setSelected] = createSignal(0);
 const [indexing, setIndexing] = createSignal(false);
 const [launching, setLaunching] = createSignal(false);
 const [launchNotice, setLaunchNotice] = createSignal<string | null>(null);
+const [instantCommandPrefix, setInstantCommandPrefix] = createSignal("@");
+const [instantCommandMode, setInstantCommandMode] = createSignal(false);
+/** インスタントコマンドモード中のコマンド一覧（activateSelected で参照） */
+let instantCommandItems: InstantCommand[] = [];
 
 let debounceTimer: ReturnType<typeof requestAnimationFrame> | undefined;
 let launchNoticeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -26,7 +30,7 @@ let activationInFlight = false;
 let suppressNextQueryEffectRefresh = false;
 
 /** 結果を表示すべきかの派生シグナル。MainApp がリアクティブにウィンドウ高さを変更するために使用 */
-const shouldShowResults = createMemo(() => results().length > 0 && !indexing());
+const shouldShowResults = createMemo(() => results().length > 0 && (!indexing() || instantCommandMode()));
 
 function clearLaunchNotice() {
   if (launchNoticeTimer !== undefined) {
@@ -35,6 +39,16 @@ function clearLaunchNotice() {
   }
   if (launchNotice() !== null) {
     setLaunchNotice(null);
+  }
+}
+
+/** LaunchResult の失敗/タイムアウトに応じた通知を表示する */
+function notifyLaunchFailure(result: api.LaunchResult) {
+  const detail = result.message ? ` (${result.message})` : "";
+  if (result.status === "timeout") {
+    setLaunchNoticeWithAutoClear(t("notice.launch.timeout", { detail }));
+  } else {
+    setLaunchNoticeWithAutoClear(t("notice.launch.failed", { detail }));
   }
 }
 
@@ -76,8 +90,9 @@ function debouncedRefresh() {
 // Folder expansion state — signals live in ./folder.ts
 
 async function refreshResults() {
-  // ツール選択中は通常の検索で上書きしない
+  // ツール選択中・インスタントコマンドモード中は通常の検索で上書きしない
   if (toolSelectionState()) return;
+  if (instantCommandMode()) return;
 
   const requestId = ++searchGeneration;
   const fs = folderState();
@@ -193,7 +208,48 @@ createRoot(() => {
         return;
       }
       const trimmed = q.trim();
+      const prefix = instantCommandPrefix();
       trace("search:query_effect", { query: q, trimmed });
+
+      // インスタントコマンドモード判定（スラッシュコマンドより先に評価）
+      // trimStart() を使用: trailing whitespace はクエリの一部として保持する
+      const trimmedStart = q.trimStart();
+      if (prefix && trimmedStart.startsWith(prefix)) {
+        cancelDebounce();
+        const input = trimmedStart.slice(prefix.length);
+        // スペースがあればコマンド名部分のみでフィルタ（SPEC §18.5: スペースでマッチング確定）
+        const spaceIdx = input.indexOf(" ");
+        const filterName = spaceIdx >= 0 ? input.slice(0, spaceIdx) : input;
+        trace("search:query_effect:instant_command", { prefix, input, filterName });
+        setInstantCommandMode(true);
+        // IPC 応答前の Enter/クリックで古いコマンドを誤起動しないよう、先にクリアする
+        instantCommandItems = [];
+        void (async () => {
+          const requestId = ++searchGeneration;
+          try {
+            const commands = await api.getInstantCommands(filterName);
+            if (requestId !== searchGeneration) return;
+            instantCommandItems = commands;
+            const items: SearchResult[] = commands.map((cmd) => ({
+              name: cmd.name,
+              path: cmd.command,
+              isFolder: false,
+              isError: false,
+            }));
+            setResults(items);
+            setSelected(0);
+          } catch (e) {
+            trace("search:instant_command:error", { error: String(e) });
+          }
+        })();
+        return;
+      }
+
+      // プレフィックスなし → インスタントコマンドモードを解除
+      if (instantCommandMode()) {
+        setInstantCommandMode(false);
+        instantCommandItems = [];
+      }
 
       if (trimmed === "/r") {
         cancelDebounce();
@@ -382,12 +438,7 @@ async function launchWithSelectedTool(): Promise<boolean> {
         code: launchResult.code,
         message: launchResult.message,
       });
-      const detail = launchResult.message ? ` (${launchResult.message})` : "";
-      if (launchResult.status === "timeout") {
-        setLaunchNoticeWithAutoClear(t("notice.launch.timeout", { detail }));
-      } else {
-        setLaunchNoticeWithAutoClear(t("notice.launch.failed", { detail }));
-      }
+      notifyLaunchFailure(launchResult);
       void runRefresh();
       return false;
     }
@@ -482,12 +533,7 @@ async function launchAndReset(result: SearchResult): Promise<boolean> {
         code: launchResult.code,
         message: launchResult.message,
       });
-      const detail = launchResult.message ? ` (${launchResult.message})` : "";
-      if (launchResult.status === "timeout") {
-        setLaunchNoticeWithAutoClear(t("notice.launch.timeout", { detail }));
-      } else {
-        setLaunchNoticeWithAutoClear(t("notice.launch.failed", { detail }));
-      }
+      notifyLaunchFailure(launchResult);
       void runRefresh();
       return false;
     }
@@ -504,9 +550,69 @@ async function launchAndReset(result: SearchResult): Promise<boolean> {
   }
 }
 
+async function executeInstantCommandSelected(): Promise<boolean> {
+  if (activationInFlight) return false;
+  activationInFlight = true;
+  try {
+    const idx = clampSelectedIndex(selected(), instantCommandItems.length);
+    const cmd = instantCommandItems[idx];
+    if (!cmd) return false;
+
+    // クエリ部分を抽出（プレフィックス + コマンド名 + 空白以降）
+    const prefix = instantCommandPrefix();
+    const raw = query().trimStart().slice(prefix.length);
+    const nameEnd = raw.indexOf(" ");
+    const instantQuery = nameEnd >= 0 ? raw.slice(nameEnd + 1) : "";
+
+    clearLaunchNotice();
+    setLaunching(true);
+    trace("search:instant_command:execute", { name: cmd.name, query: instantQuery });
+
+    // 失敗時に復元するため、実行前の状態を保存
+    const savedResults = results();
+    const savedSelected = selected();
+    const savedItems = [...instantCommandItems];
+
+    ++searchGeneration;
+    setResults([]);
+    setSelected(0);
+
+    const launchResult = await api.executeInstantCommand(cmd.name, instantQuery);
+    if (launchResult.status !== "ok") {
+      trace("search:instant_command:error", {
+        name: cmd.name,
+        status: launchResult.status,
+        code: launchResult.code,
+        message: launchResult.message,
+      });
+      notifyLaunchFailure(launchResult);
+      // 失敗時: 候補リストを復元し、ユーザーが再試行できるようにする
+      ++searchGeneration;
+      instantCommandItems = savedItems;
+      setResults(savedResults);
+      setSelected(savedSelected);
+      return false;
+    }
+
+    // 成功時: モードを完全にクリアする
+    setInstantCommandMode(false);
+    instantCommandItems = [];
+    suppressNextQueryEffectRefresh = true;
+    setQuery("");
+    trace("search:instant_command:done", { name: cmd.name });
+    return true;
+  } finally {
+    setLaunching(false);
+    activationInFlight = false;
+  }
+}
+
 async function activateSelected(): Promise<boolean> {
   if (toolSelectionState()) {
     return launchWithSelectedTool();
+  }
+  if (instantCommandMode()) {
+    return executeInstantCommandSelected();
   }
   if (activationInFlight) return false;
   activationInFlight = true;
@@ -528,6 +634,10 @@ async function activateSelectedByIndex(index: number): Promise<boolean> {
     // ツール選択中: インデックスを直接使う（同一 exe の複数ツールを正確に区別）
     setSelected(index);
     return launchWithSelectedTool();
+  }
+  if (instantCommandMode()) {
+    setSelected(index);
+    return executeInstantCommandSelected();
   }
   if (activationInFlight) return false;
   activationInFlight = true;
@@ -551,11 +661,13 @@ function resetForShow() {
   // すでにクリーン状態なら runRefresh() をスキップ。
   // リセット前に確認する（setFolderState / setToolSelectionState が呼ばれる前）。
   // indexing() は含めない: indexing=true 時も results は既に非表示のため、スキップしても問題ない。
-  const skipRefresh = query() === "" && folderState() === null && toolSelectionState() === null;
+  const skipRefresh = query() === "" && folderState() === null && toolSelectionState() === null && !instantCommandMode();
   setLaunching(false);
   clearLaunchNotice();
   setToolSelectionState(null);
   setFolderState(null);
+  setInstantCommandMode(false);
+  instantCommandItems = [];
   if (query() !== "") {
     suppressNextQueryEffectRefresh = true;
   }
@@ -619,6 +731,9 @@ export {
   enterToolSelection,
   exitToolSelection,
   getSearchGeneration,
+  instantCommandMode,
+  instantCommandPrefix,
+  setInstantCommandPrefix,
 };
 
 export { folderState, folderFilter, setFolderFilter } from "./folder";

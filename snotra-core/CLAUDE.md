@@ -14,6 +14,7 @@
 - `binfmt.rs`: `magic + version` 付きバイナリ入出力共通処理
 - `error.rs`: `BinError`（バイナリシリアライズ/デシリアライズ失敗）と `ConfigError`（設定バリデーション失敗）の error 型定義
 - `window_data.rs`: ウィンドウ位置（`window.bin`）の保存/復元
+- `instant.rs`: インスタントコマンドの変数展開（`expand_instant_command`）と前方一致フィルタ（`filter_instant_commands`）
 - `ui_types.rs`: フロントエンドとの IPC 用データ型
 
 ## 開発ルール

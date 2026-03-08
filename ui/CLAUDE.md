@@ -39,6 +39,18 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 - `perf.ts`: 開発時専用パフォーマンス計測（`localStorage.snotra_perf=1` で有効化）。入力→検索→描画の3フェーズ時間を計測し P50/P95 を `console.table` 出力
 - `trace.ts`: 開発時専用トレースログ（`localStorage.snotra_trace=1` で有効化）。`trace(event, data)` で `console.debug` 出力
 
+## インスタントコマンドモード
+
+プレフィックス（デフォルト `@`）で始まる入力はインスタントコマンドモードに入る。`instantCommandMode` シグナルで状態管理。
+
+- **検出**: `query` effect 内でスラッシュコマンド判定より先に `startsWith(prefix)` を評価
+- **結果表示**: `getInstantCommands()` IPC で前方一致フィルタ済みコマンドを取得し `SearchResult[]` に変換
+- **実行**: `executeInstantCommand(name, query)` IPC。クリップボード読み取り・変数展開・ShellExecuteW はバックエンド側
+- **shouldShowResults**: `indexing()` 中でもインスタントコマンドモードなら結果を表示
+- **ガード**: ArrowRight/Left（フォルダ展開）、Shift+Enter（ツール選択）、handleInput の indexing ガードをバイパス
+- **アイコン**: インスタントコマンドモード中は `skipIcons` prop で取得をスキップ
+- **プレフィックス更新**: bootstrap payload + `instant-prefix-changed` イベントで同期
+
 ## テスト基盤
 
 ### 構成

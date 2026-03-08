@@ -34,7 +34,7 @@ impl LaunchResult {
         }
     }
 
-    fn failed(code: i32, message: impl Into<String>) -> Self {
+    pub(crate) fn failed(code: i32, message: impl Into<String>) -> Self {
         Self {
             status: LaunchStatus::Failed,
             code,
@@ -42,7 +42,7 @@ impl LaunchResult {
         }
     }
 
-    fn timeout(timeout_ms: u64) -> Self {
+    pub(crate) fn timeout(timeout_ms: u64) -> Self {
         Self {
             status: LaunchStatus::Timeout,
             code: -1,
@@ -300,7 +300,7 @@ fn shell_execute_error_message(code: i32) -> &'static str {
     }
 }
 
-fn launch_item_core(path: &str) -> LaunchResult {
+pub(crate) fn launch_item_core(path: &str) -> LaunchResult {
     #[cfg(windows)]
     {
         use windows::Win32::System::Com::{

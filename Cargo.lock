@@ -4372,8 +4372,10 @@ dependencies = [
 name = "snotra"
 version = "0.1.0"
 dependencies = [
+ "arboard",
  "notify",
  "png 0.18.1",
+ "rayon",
  "serde",
  "serde_json",
  "snotra-core",
@@ -4391,6 +4393,7 @@ version = "0.1.0"
 dependencies = [
  "dirs",
  "nucleo-matcher",
+ "percent-encoding",
  "postcard",
  "rayon",
  "rustc-hash",

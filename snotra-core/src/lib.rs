@@ -5,6 +5,7 @@ pub mod error;
 pub mod folder;
 pub mod history;
 pub mod indexer;
+pub mod instant;
 pub mod query;
 pub mod search;
 pub mod ui_types;

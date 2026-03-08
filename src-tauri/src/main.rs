@@ -327,6 +327,8 @@ fn main() {
             commands::quit_app,
             commands::record_folder_expansion,
             commands::get_bootstrap_payload,
+            commands::instant::get_instant_commands,
+            commands::instant::execute_instant_command,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();

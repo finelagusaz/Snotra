@@ -62,6 +62,7 @@ pub enum TabId {
     Index,
     Visual,
     Opener,
+    InstantCommand,
     About,
 }
 
@@ -72,6 +73,7 @@ impl TabId {
         TabId::Index,
         TabId::Visual,
         TabId::Opener,
+        TabId::InstantCommand,
         TabId::About,
     ];
 
@@ -82,6 +84,7 @@ impl TabId {
             TabId::Index => tr.tab_index(),
             TabId::Visual => tr.tab_visual(),
             TabId::Opener => tr.tab_opener(),
+            TabId::InstantCommand => tr.tab_instant_command(),
             TabId::About => tr.tab_about(),
         }
     }
@@ -93,6 +96,7 @@ impl TabId {
             "index" => Some(TabId::Index),
             "visual" => Some(TabId::Visual),
             "opener" => Some(TabId::Opener),
+            "instant_command" => Some(TabId::InstantCommand),
             "about" => Some(TabId::About),
             _ => None,
         }
@@ -107,6 +111,7 @@ struct SettingsApp {
     status_timer: f64,
     index_state: tabs::index::IndexTabState,
     opener_state: tabs::opener::OpenerTabState,
+    instant_state: tabs::instant::InstantTabState,
     font_list: Vec<String>,
     hotkey_state: crate::hotkey_input::HotkeyInputState,
     last_position: Option<WindowPlacement>,
@@ -132,6 +137,7 @@ impl SettingsApp {
             status_timer: 0.0,
             index_state: tabs::index::IndexTabState::default(),
             opener_state: tabs::opener::OpenerTabState::default(),
+            instant_state: tabs::instant::InstantTabState::default(),
             font_list: crate::font::list_system_fonts(),
             hotkey_state: Default::default(),
             last_position: None,
@@ -191,6 +197,11 @@ fn config_error_message(error: &ConfigError, tr: &Tr) -> String {
         }
         ConfigError::ScanPathEmpty { index } => {
             format!("{}{}", index + 1, tr.err_scan_path_empty())
+        }
+        ConfigError::InstantCommandPrefixEmpty => tr.err_instant_prefix_empty().to_string(),
+        ConfigError::InstantCommandPrefixSlash => tr.err_instant_prefix_slash().to_string(),
+        ConfigError::InstantCommandDuplicateName { name } => {
+            format!("{}{}", name, tr.err_instant_duplicate_name())
         }
     }
 }
@@ -319,6 +330,7 @@ impl eframe::App for SettingsApp {
                 TabId::Index => tabs::index::ui(ui, ctx, &mut self.draft, &mut self.index_state, &self.tr),
                 TabId::Visual => tabs::visual::ui(ui, &mut self.draft, &self.font_list, &self.tr),
                 TabId::Opener => tabs::opener::ui(ui, ctx, &mut self.draft, &mut self.opener_state, &self.tr),
+                TabId::InstantCommand => tabs::instant::ui(ui, ctx, &mut self.draft, &mut self.instant_state, &self.tr),
                 TabId::About => {
                     ui.vertical_centered(|ui| {
                         ui.add_space(24.0);

@@ -1,6 +1,7 @@
 mod config;
 mod icon;
-mod launch;
+pub(crate) mod instant;
+pub(crate) mod launch;
 mod search;
 mod system;
 mod window;

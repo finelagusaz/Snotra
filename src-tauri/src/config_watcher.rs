@@ -89,6 +89,9 @@ fn apply_config_change(app: &AppHandle) {
         || show_icons_changed;
     let language_changed = new_config.general.language != old_config.general.language;
     let new_language = new_config.general.language;
+    let instant_prefix_changed = new_config.search.instant_command_prefix
+        != old_config.search.instant_command_prefix;
+    let new_instant_prefix = new_config.search.instant_command_prefix.clone();
     let visual_changed = new_config.visual != old_config.visual;
     let max_results_changed =
         new_config.appearance.max_results != old_config.appearance.max_results;
@@ -171,6 +174,11 @@ fn apply_config_change(app: &AppHandle) {
     // Emit max_results change
     if max_results_changed {
         let _ = app.emit("max-results-changed", new_max_results);
+    }
+
+    // Emit instant command prefix change
+    if instant_prefix_changed {
+        let _ = app.emit("instant-prefix-changed", new_instant_prefix);
     }
 
     // Resize main window if width changed

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { BootstrapPayload, OpenerTool, SearchResult } from "./types";
+import type { BootstrapPayload, InstantCommand, OpenerTool, SearchResult } from "./types";
 import { trace } from "./trace";
 
 let invokeSeq = 0;
@@ -127,4 +127,17 @@ export async function launchWithTool(
   toolArgs: string,
 ): Promise<LaunchResult> {
   return tracedInvoke<LaunchResult>("launch_with_tool", { path, query, toolExe, toolArgs });
+}
+
+export async function getInstantCommands(
+  prefixInput: string,
+): Promise<InstantCommand[]> {
+  return tracedInvoke<InstantCommand[]>("get_instant_commands", { prefixInput });
+}
+
+export async function executeInstantCommand(
+  name: string,
+  query: string,
+): Promise<LaunchResult> {
+  return tracedInvoke<LaunchResult>("execute_instant_command", { name, query });
 }

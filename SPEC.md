@@ -361,10 +361,13 @@ stateDiagram-v2
     state "CommandMode\n(コマンドモード)" as CommandMode
     state "FolderExpansionMode\n(フォルダ展開モード)" as FolderExpansionMode
     state "ToolSelectionMode\n(ツール選択モード)" as ToolSelectionMode
+    state "InstantCommandMode\n(インスタントコマンドモード)" as InstantCommandMode
     state "IndexingMode\n(インデックス中)" as IndexingMode
     [*] --> NormalMode
     NormalMode --> CommandMode: Input [query startsWith '/']
     CommandMode --> NormalMode: Input [query not startsWith '/']
+    NormalMode --> InstantCommandMode: Input [query startsWith prefix]
+    InstantCommandMode --> NormalMode: Input [query not startsWith prefix]
     NormalMode --> FolderExpansionMode: ArrowRight [selected.isFolder]
     NormalMode --> FolderExpansionMode: ArrowLeft [!folderState && parent exists]
     FolderExpansionMode --> FolderExpansionMode: ArrowRight [selected.isFolder]
@@ -575,3 +578,105 @@ stateDiagram-v2
 - ルール追加/編集/削除
 - ツール追加/編集/削除/並び替え（順序 = 優先度）
 - exe パス入力にファイルブラウズダイアログ
+
+## 18. インスタントコマンド機能
+
+### 18.1 概要
+
+検索ボックスにプレフィックス（デフォルト `@`）を入力すると、ユーザーが定義した任意のコマンドを即座に実行できる機能。ファイル検索（通常モード + オープナー）が「どのファイルをどのアプリで」を担うのに対し、インスタントコマンドは「この処理を今すぐ」を担う。
+
+fenrir のインスタントコマンド（`instant.ini`）に相当する機能。
+
+### 18.2 設定構造
+
+```toml
+[search]
+instant_command_prefix = "@"  # デフォルト。ユーザーが変更可能
+
+[[instant_commands]]
+name = "g"
+command = "https://www.google.com/search?q={query}"
+
+[[instant_commands]]
+name = "memo"
+command = "C:\\tools\\editor.exe"
+
+[[instant_commands]]
+name = "trans"
+command = "https://www.deepl.com/translator#ja/en/{clip}"
+```
+
+- `name`: コマンド名（プレフィックス後に入力する文字列）。一意でなければならない
+- `command`: 実行するコマンドライン or URL
+- `instant_command_prefix` のバリデーション:
+  - 空文字を禁止（全入力がインスタントコマンドモードになるため）
+  - `/` を禁止（ビルトインスラッシュコマンドと衝突するため）
+  - 1文字を推奨（複数文字は許容するが入力コスト増）
+
+### 18.3 入力フォーマット
+
+```
+@<コマンド名> <引数(省略可)>
+```
+
+- `@` はデフォルトプレフィックス（設定で変更可能）
+- コマンド名の後のスペース以降が `{query}` に渡される
+- 例: `@g 機械学習` → コマンド `g`、`{query}` = `機械学習`
+
+### 18.4 変数展開
+
+| 変数 | 内容 |
+|------|------|
+| `{query}` | コマンド名以降の入力テキスト（空なら空文字で展開） |
+| `{clip}` | 実行時点のクリップボード文字列 |
+
+**URL エンコード規則**:
+- `command` が `http://` または `https://` で始まる場合: 変数値を URL エンコードしてから展開
+- それ以外（exe パス / bare コマンド名）: 変数値を生文字列のまま展開
+
+### 18.5 マッチングと結果表示
+
+- プレフィックス（`@`）だけの入力: 登録済みコマンド名を全件表示
+- プレフィックス + 文字入力: コマンド名を前方一致で絞り込み
+- 結果リストにはコマンド名のみ表示（description フィールドなし）
+- スペースが入力された時点でマッチングを確定し、以降は `{query}` として扱う
+- インスタントコマンドモード中はアイコン取得をスキップする（`path` がファイルパスではないため）
+- マッチするコマンドが0件の場合は結果を空にする（`noResults` 表示はしない）
+
+### 18.6 実行フロー
+
+- Enter / クリック: 選択中のコマンドを実行
+  1. `{query}` と `{clip}` を展開
+  2. URL 判定（`http://` `https://`）→ 変数を URL エンコード
+  3. 既存の `launch_item_core`（`ShellExecuteW` + COM STA）を再利用して実行（新規に `ShellExecuteW` 呼び出しを書かない）
+- Shift+Enter: 通常 Enter と同じ動作（インスタントコマンドにツール選択は無関係）
+- 実行後: クエリクリア、ウィンドウを非表示にする（スラッシュコマンドと同じ）
+
+### 18.7 状態モデル
+
+- `InstantCommandMode` は `NormalMode` `CommandMode` と排他的
+- プレフィックス入力で `InstantCommandMode` に遷移、プレフィックスを消すと `NormalMode` に戻る
+- `InstantCommandMode` 中は通常検索（インデックス検索）を実行しない
+- フォルダ展開中はインスタントコマンドを無視し、通常のフォルダフィルタとして処理する（スラッシュコマンドと同じ）
+- ツール選択中はインスタントコマンドを無視する
+- インデックス構築中でもインスタントコマンドは使用可能（インデックスに依存しないため）
+  - `handleInput` の indexing ガード: value 取得 → プレフィックス判定 → indexing チェック（プレフィックスありならバイパス）の順で処理
+  - `shouldShowResults`: インスタントコマンドモード中は `indexing()` を無視し `results().length > 0` で true にする
+- ホットキーによる再表示（`resetForShow`）でインスタントコマンドモードはリセットされる
+- `activateSelected` / `activateSelectedByIndex` はインスタントコマンドモード中、`executeInstantCommand` にディスパッチする
+- インスタントコマンドモード中の ArrowRight / ArrowLeft は無効化する（フォルダ展開に入らない）
+- インスタントコマンドモード中の Shift+Enter は通常 Enter と同じ動作（ツール選択に入らない）
+- プレフィックスシグナルの初期値はデフォルト `"@"`（bootstrap 到着前でも動作する）
+
+### 18.8 設定画面
+
+- 設定画面のタブ構成: 全般/検索/インデックス/ビジュアル/オープナー/インスタントコマンド
+- プレフィックス設定（テキスト入力、デフォルト `@`）
+- コマンド追加/編集/削除
+- 各コマンド: `name`（コマンド名）、`command`（実行コマンド or URL）
+
+### 18.9 設定反映
+
+- `instant_command_prefix` の変更は `config_watcher` 経由でホットリロードする
+- プレフィックス変更時は `instant-prefix-changed` イベントを emit し、フロントエンドがプレフィックスシグナルを更新する
+- `instant_commands` 配列は `get_instant_commands` IPC で毎回 config から読むため、キャッシュ無効化は不要

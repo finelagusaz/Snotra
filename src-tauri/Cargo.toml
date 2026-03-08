@@ -16,6 +16,7 @@ png = "0.18"
 tokio = { version = "1", features = ["time"] }
 rayon = "1"
 notify = "8"
+arboard = "3"
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38"

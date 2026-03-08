@@ -76,6 +76,7 @@ main ウィンドウ1つに検索入力バーと結果リストを縦配置し�
 
 **1a. search.ts のシグナル公開**
 - `shouldShowResults` を computed シグナル（`results().length > 0 && !indexing()`）として公開
+- `mainVisible` シグナルを新設（MainApp から更新）。hide 時のリソース解放判定に使う
 - 3つの emit 関数を削除（emitDataChanged / emitSelectionChanged / emitVisibilityChanged）
 - `eventGeneration` カウンタを削除
 - `searchEvents.ts` のインポートを削除
@@ -84,8 +85,18 @@ main ウィンドウ1つに検索入力バーと結果リストを縦配置し�
 - IPC リスナー（`results-data-changed` / `results-selection-changed` / `results-visibility-changed`）を削除
 - 代わりに search.ts のシグナル（`results`, `selected`, `shouldShowResults`）を直接 import
 - `onClick` / `onDoubleClick` / `onMouseEnter` をコールバック props に変更（親が search store の関数を渡す）
+- **hover debounce (50ms) を維持する**: 現在の `ResultsWindow.tsx:226-230` の `setTimeout(50ms)` パターンを ResultsSection 内に移植。削除すると高頻度 `setSelected` でパフォーマンス劣化
 - bootstrap payload からの `show_icons` / `max_results` 取得は維持
-- `iconCache.revokeAll()` は `shouldShowResults` が false になったときの createEffect で実行
+- **Blob URL 解放は `shouldShowResults` false かつ `mainVisible` false 時に実行**:
+  ```ts
+  createEffect(() => {
+    if (!shouldShowResults() || !mainVisible()) {
+      iconCache.revokeAll();
+      setIconCacheVersion((v) => v + 1); // ← revokeAll とペアで必ずインクリメント
+    }
+  });
+  ```
+- **revokeAll + setIconCacheVersion は常にペアで呼ぶ**: revoke 済み URL が `<img src>` に残ることを防ぐ（既存 ResultsWindow.tsx の3箇所すべてがこのペアを守っている）
 
 **1c. MainApp.tsx の簡素化**
 - `createResultsWindowController` 関連コード全削除
@@ -99,6 +110,8 @@ main ウィンドウ1つに検索入力バーと結果リストを縦配置し�
   });
   ```
 - `hideMainAndResults` → `hideMain`（results hide 不要）
+- **hide 時にウィンドウ高さを 52px にリセット**: `hideMain` 内で `set_size(width, 52)` を呼ぶ。これにより次回 show 時に一瞬大きいウィンドウが見えるチラつきを防止。hide 経路は3つ（Escape / ホットキートグル / auto_hide）あるが、JS 側 hide は `hideMain` に統一されるため1箇所の変更で全カバー。Rust 側ホットキートグル hide（main.rs:466）は Phase 2 で対処
+- **hide 時に `mainVisible` シグナルを false に更新**: ResultsSection の Blob URL 解放 effect がトリガーされるようにする
 - `auto_hide_on_focus_lost` の `is_main_foreground` チェック削除（同一ウィンドウなので不要）
 
 **1d. SearchWindow.tsx + CSS 統合**
@@ -117,7 +130,7 @@ main ウィンドウ1つに検索入力バーと結果リストを縦配置し�
 
 **2a. main.rs**
 - `ensure_window_with_timing(&app_handle, "results", ...)` 行を削除
-- ホットキー hide ブロックの `get_webview_window("results")` 参照削除
+- ホットキー hide ブロック（L464-474）: `get_webview_window("results")` 参照削除。**加えて、hide 後に `set_size(width, 52)` を呼んでウィンドウ高さをリセット**（Rust 側 hide 経路は JS を経由しないため、ここで直接リセットが必要）
 - `invoke_handler` から削除対象コマンド除外
 
 **2b. commands/window.rs**
@@ -156,14 +169,17 @@ main ウィンドウ1つに検索入力バーと結果リストを縦配置し�
 ## 不変条件
 
 1. **ウィンドウ高さ = 入力バー高さ(52px) + 結果表示時のみ結果エリア高さ**: `shouldShowResults` が true のとき `52 + max_results * 30 + 16`、false のとき `52`
-2. **resizable: false でも set_size は動作する**: 既存の config_watcher がこのパターンを使用
-3. **alwaysOnTop は維持**: 統合前と同じ
-4. **decorations: false は維持**: 統合前と同じ
-5. **検索状態（query / results / selected / folderState / toolSelectionState）は search.ts に集約**: 統合後もこの原則は変わらない
-6. **アイコン取得は Tauri IPC（get_icons_batch）のまま**: バイナリ転送方式は変更なし、ResultsSection 内で直接呼び出し
-7. **LruIconCache は1インスタンスのみ**: 統合により重複排除
-8. **ウィンドウ高さ変更は非同期**: `set_size` の完了を await してから次の操作に進む。ただし高頻度変更（キー入力ごと）は避け、`shouldShowResults` の変更時のみ実行
-9. **Escape / launch / 非表示時に高さを 52px に戻す**: `shouldShowResults` が false になったら自動的にリサイズ
+2. **全 hide 経路でウィンドウ高さを 52px にリセットする**: JS 側 hide（`hideMain`）と Rust 側 hide（ホットキートグル）の両方で `set_size(width, 52)` を呼ぶ。次回 show 時のチラつき防止
+3. **resizable: false でも set_size は動作する**: 既存の config_watcher がこのパターンを使用
+4. **alwaysOnTop は維持**: 統合前と同じ
+5. **decorations: false は維持**: 統合前と同じ
+6. **検索状態（query / results / selected / folderState / toolSelectionState）は search.ts に集約**: 統合後もこの原則は変わらない
+7. **アイコン取得は Tauri IPC（get_icons_batch）のまま**: バイナリ転送方式は変更なし、ResultsSection 内で直接呼び出し
+8. **LruIconCache は1インスタンスのみ**: 統合により重複排除
+9. **revokeAll と setIconCacheVersion は常にペアで呼ぶ**: revoke 済み Blob URL が `<img src>` に渡るのを防ぐ
+10. **ウィンドウ高さ変更は非同期**: `set_size` の完了を await してから次の操作に進む。ただし高頻度変更（キー入力ごと）は避け、`shouldShowResults` の変更時のみ実行
+11. **Blob URL は hide 時に解放する**: `mainVisible` false 時に revokeAll + iconCacheVersion インクリメント。Escape/ホットキー hide で results 配列がクリアされないケースでもリーク防止
+12. **hover debounce (50ms) を維持する**: ResultsSection 内の onMouseEnter で 50ms setTimeout を使い、高頻度 setSelected を抑制
 
 ## テスト方針
 
@@ -195,10 +211,13 @@ main ウィンドウ1つに検索入力バーと結果リストを縦配置し�
 
 ## セルフレビュー
 
-### 1. 対称コードパス
+### 1. 対称コードパス（/symmetric-check 反映済み）
 - results hide は `shouldShowResults` false 時にリアクティブに実行。show/hide の対称性は SolidJS のリアクティブシステムが保証 ✓
 - ウィンドウ高さ拡大/縮小は同一の `createEffect` で制御 ✓
-- Blob URL の revokeAll は `shouldShowResults` false 時の effect で実行 ✓
+- **[追加] 全 hide 経路でウィンドウ高さ 52px リセット**: JS 側 `hideMain` + Rust 側ホットキートグルの両方で set_size を呼ぶ設計を追加。次回 show 時のチラつき防止 ✓
+- **[追加] Blob URL 解放は `mainVisible` false をトリガーに含める**: Escape/ホットキー hide で results 配列がクリアされないケースでも revokeAll が発火する ✓
+- **[追加] revokeAll + setIconCacheVersion は常にペア**: 既存3箇所のパターンを維持 ✓
+- **[追加] hover debounce 50ms 維持**: ResultsSection 移行時に落とさない ✓
 
 ### 2. 影響範囲の網羅性
 - `grep -r "results" src-tauri/` で results ウィンドウ参照を全て列挙済み ✓
@@ -212,10 +231,11 @@ main ウィンドウ1つに検索入力バーと結果リストを縦配置し�
 - 結果0件: ウィンドウ高さ 52px 維持
 - indexing 中: ウィンドウ高さ 52px 維持（shouldShowResults = false）
 
-### 4. リソース管理
-- LruIconCache: 1インスタンス。`shouldShowResults` false 時に `revokeAll()` → effect で実行
+### 4. リソース管理（/symmetric-check 反映済み）
+- LruIconCache: 1インスタンス。`shouldShowResults` false **または** `mainVisible` false 時に `revokeAll()` + `setIconCacheVersion++` → effect で実行
 - ResizeObserver: ResultsSection 内。onCleanup で disconnect
 - listen() リスナー: 削減される（results 関連 IPC 不要）。残存リスナーは onCleanup で解除
+- hover debounce タイマー: ResultsSection 内。onCleanup で clearTimeout
 
 ### 5. 既存パターンとの整合
 - ウィンドウ高さ動的変更は config_watcher の既存パターンを踏襲
@@ -237,8 +257,12 @@ main ウィンドウ1つに検索入力バーと結果リストを縦配置し�
 
 | 不変条件 | リスク | 検知手段 |
 |---------|--------|---------|
-| ウィンドウ高さが結果非表示時に 52px に戻る | set_size 失敗時にウィンドウが大きいまま残る | smoke テスト + 手動確認 |
+| ウィンドウ高さが結果非表示時に 52px に戻る | set_size 失敗 or hide 経路漏れでウィンドウが大きいまま残る | smoke テスト + 手動確認（Escape / ホットキー / auto_hide の3経路） |
+| 全 hide 経路で高さリセット | JS 側 hideMain + Rust 側ホットキートグルの**両方**で set_size(52) を呼ばないとチラつく | 手動確認: ホットキーで hide→show して一瞬大きいウィンドウが見えないこと |
+| Blob URL が hide 後にリークしない | mainVisible false 時の revokeAll が全 hide 経路でトリガーされないとメモリリーク | 開発ツールで Blob URL 数を確認 |
+| revokeAll + iconCacheVersion ペア | revokeAll のみで iconCacheVersion を更新しないと revoke 済み URL が img に渡る | 目視: hide→show 後にアイコンが壊れた画像にならないこと |
 | alwaysOnTop 維持 | 変更なし | 既存テスト |
 | ホットキーで表示/非表示 | hide 時に results 参照を削除するため regression 可能性 | E2E テスト |
 | auto_hide_on_focus_lost | is_main_foreground 削除により挙動変化の可能性 | 手動確認（ドラッグ操作、外部ウィンドウクリック） |
 | ドラッグ移動 + 位置保存 | ウィンドウ高さ変更によりドラッグ判定への影響 | 手動確認 |
+| hover debounce 50ms | 移行時に落とすと高頻度 setSelected でパフォーマンス劣化 | 手動確認: マウスを素早く動かしてちらつかないこと |

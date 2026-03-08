@@ -11,6 +11,10 @@
           {
             "type": "command",
             "command": "input=$(cat); if echo \"$input\" | grep -qE '\\.(ts|tsx)\"'; then cd /c/workspace/Snotra && npm run typecheck 2>&1 | head -30; fi"
+          },
+          {
+            "type": "command",
+            "command": "input=$(cat); if echo \"$input\" | grep -qE '(tauri\\.conf\\.json|config\\.toml)'; then echo 'WARN: 設定ファイルの変更です。Windows 互換性を確認してください。' >&2; fi" 
           }
         ]
       }

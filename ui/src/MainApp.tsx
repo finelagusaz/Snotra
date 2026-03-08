@@ -27,7 +27,8 @@ const MainApp: Component = () => {
   const unlistenFns: Array<() => void> = [];
   const [mainVisible, setMainVisible] = createSignal(false);
   const [maxResults, setMaxResults] = createSignal(8);
-  let cachedWidth = 600;
+  const [showIcons, setShowIcons] = createSignal(true);
+  const [cachedWidth, setCachedWidth] = createSignal(600);
 
   onMount(async () => {
     const hideMain = async () => {
@@ -111,14 +112,14 @@ const MainApp: Component = () => {
       cachedScaleFactor = await win.scaleFactor();
       const size = await win.innerSize();
       const logical = size.toLogical(cachedScaleFactor);
-      cachedWidth = logical.width;
+      setCachedWidth(logical.width);
     } catch (e) {
       console.warn("Failed to initialize window geometry cache:", e);
     }
 
     const unlistenMainResized = await win.onResized(({ payload: sz }) => {
       const logicalSize = sz.toLogical(cachedScaleFactor);
-      cachedWidth = logicalSize.width;
+      setCachedWidth(logicalSize.width);
     });
     unlistenFns.push(unlistenMainResized);
 
@@ -150,6 +151,12 @@ const MainApp: Component = () => {
     });
     unlistenFns.push(unlistenMaxResults);
 
+    // Listen for show_icons config changes
+    const unlistenShowIcons = await listen<boolean>("show-icons-changed", (event) => {
+      setShowIcons(event.payload);
+    });
+    unlistenFns.push(unlistenShowIcons);
+
     // Listen for hotkey registration failure (config change case)
     const unlistenHotkeyFailed = await listen<string>("hotkey-registration-failed", (event) => {
       setHotkeyFailureNotice(t("notice.hotkey.change_failed", { hotkey: event.payload }));
@@ -162,6 +169,7 @@ const MainApp: Component = () => {
       bootstrap = await api.getBootstrapPayload();
       applyTheme(bootstrap.visual);
       setMaxResults(bootstrap.appearance.max_results);
+      setShowIcons(bootstrap.appearance.show_icons);
     } catch (e) {
       console.error("Failed to load bootstrap payload:", e);
     }
@@ -171,11 +179,12 @@ const MainApp: Component = () => {
     }
   });
 
-  // ウィンドウ高さを結果の表示/非表示に応じて動的変更
+  // ウィンドウサイズを結果の表示/非表示に応じて動的変更
   createEffect(() => {
     const show = shouldShowResults();
+    const width = cachedWidth();
     const height = show ? SEARCH_BAR_HEIGHT + maxResults() * RESULT_ROW_HEIGHT + RESULTS_PADDING : SEARCH_BAR_HEIGHT;
-    void win.setSize(new LogicalSize(cachedWidth, height));
+    void win.setSize(new LogicalSize(width, height));
   });
 
   onCleanup(() => {
@@ -215,6 +224,8 @@ const MainApp: Component = () => {
       <SearchWindow />
       <ResultsSection
         visible={shouldShowResults() && mainVisible()}
+        showIcons={showIcons()}
+        maxResults={maxResults()}
         onClickResult={handleClickResult}
         onDoubleClickResult={handleDoubleClickResult}
         onHoverResult={handleHoverResult}

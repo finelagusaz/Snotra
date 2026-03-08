@@ -1,15 +1,16 @@
-import { type Component, For, createSignal, createEffect, onMount, onCleanup } from "solid-js";
+import { type Component, For, createSignal, createEffect, on, onMount, onCleanup } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
 import type { SearchResult } from "../lib/types";
 import { results, selected, getSearchGeneration } from "../stores/search";
 import * as api from "../lib/invoke";
-import { applyTheme } from "../lib/theme";
 import { LruIconCache } from "../lib/lruIconCache";
 import { perfMarkRenderDone } from "../lib/perf";
 import ResultRow from "./ResultRow";
 
 export interface ResultsSectionProps {
   visible: boolean;
+  showIcons: boolean;
+  maxResults: number;
   onClickResult: (index: number) => void;
   onDoubleClickResult: (index: number) => void;
   onHoverResult: (index: number) => void;
@@ -19,10 +20,7 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
   const iconCache = new LruIconCache();
   const [iconCacheVersion, setIconCacheVersion] = createSignal(0);
   const [containerWidth, setContainerWidth] = createSignal(0);
-  const [showIcons, setShowIcons] = createSignal(true);
   const [font, setFont] = createSignal("15px 'Segoe UI'");
-  // ウィンドウの可視行数（max_results 設定値）。bootstrap と max-results-changed で更新する。
-  let cachedMaxResults = 8;
   let listRef: HTMLDivElement | undefined;
   let latestDataGeneration = 0;
   let lastScrolledSelected = -1;
@@ -100,9 +98,9 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
   }
 
   async function fetchIcons(items: SearchResult[], generation: number) {
-    if (!showIcons()) return;
+    if (!props.showIcons) return;
     // 呼び出し時点の値を固定し、await 中の設定変更でスライス境界がずれるのを防ぐ
-    const visibleCount = cachedMaxResults;
+    const visibleCount = props.maxResults;
     // Stage 1: 可視行（先頭 visibleCount 件）を優先取得 → 即時表示
     await fetchIconBatch(items.slice(0, visibleCount), generation);
     // Stage 2: スクロール域の残り分を補完（stage 1 完了後、stale なら自動スキップ）
@@ -119,81 +117,60 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
     }
   });
 
-  // results シグナルの変更を監視してアイコン取得と perf 計測を行う
-  createEffect(() => {
-    const items = results();
-    const sel = selected();
+  // results 変化時のみ: 世代更新 + アイコン取得 + perf 計測
+  createEffect(on(results, (items) => {
     const gen = ++dataGeneration;
     latestDataGeneration = gen;
 
-    // アイコン取得
     requestAnimationFrame(() => {
       void fetchIcons(items, gen);
     });
 
-    // スクロール追従
-    scrollToSelected(sel, gen);
-
-    // perf 計測: rAF 後に描画完了をマーク（searchGeneration を使用して perf エントリと一致させる）
     if (items.length > 0) {
       const perfRequestId = getSearchGeneration();
       requestAnimationFrame(() => {
         perfMarkRenderDone(perfRequestId);
       });
     }
-  });
+  }));
 
-  // selected シグナルの変更を監視してスクロール追従
+  // selected または results が変化した時: スクロール追従
   createEffect(() => {
     const sel = selected();
     scrollToSelected(sel, dataGeneration);
   });
 
   onMount(() => {
-    // Load initial values from bootstrap payload
-    void api.getBootstrapPayload().then((bootstrap) => {
-      setShowIcons(bootstrap.appearance.show_icons);
-      cachedMaxResults = bootstrap.appearance.max_results;
-      applyTheme(bootstrap.visual);
-    }).catch((e) => console.warn("ResultsSection: failed to load bootstrap payload:", e));
+    const unlistenFns: Array<() => void> = [];
+    onCleanup(() => {
+      for (const fn of unlistenFns) fn();
+      iconCache.revokeAll();
+    });
 
-    // Listen for show_icons setting changes
-    let unlistenShowIcons: (() => void) | undefined;
-    onCleanup(() => unlistenShowIcons?.());
-
-    // Listen for max_results setting changes
-    let unlistenMaxResults: (() => void) | undefined;
-    onCleanup(() => unlistenMaxResults?.());
-    void listen<number>("max-results-changed", (event) => {
-      cachedMaxResults = event.payload;
-    }).then((fn) => { unlistenMaxResults = fn; })
-      .catch((e) => console.warn("ResultsSection: failed to listen max-results-changed:", e));
-    onCleanup(() => iconCache.revokeAll());
-    void listen<boolean>("show-icons-changed", (event) => {
-      setShowIcons(event.payload);
-      if (!event.payload) {
-        iconCache.revokeAll();
-        setIconCacheVersion((v) => v + 1);
-      }
-    }).then((fn) => { unlistenShowIcons = fn; })
-      .catch((e) => console.warn("ResultsSection: failed to listen show-icons-changed:", e));
+    // show-icons-changed: showIcons は MainApp が管理するが、アイコンキャッシュの破棄はここで行う
+    void (async () => {
+      const [unlistenShowIcons, unlistenVisualFont] = await Promise.all([
+        listen<boolean>("show-icons-changed", (event) => {
+          if (!event.payload) {
+            iconCache.revokeAll();
+            setIconCacheVersion((v) => v + 1);
+          }
+        }),
+        listen("visual-config-changed", () => {
+          if (listRef) {
+            const style = getComputedStyle(listRef);
+            setFont(`${style.fontSize} ${style.fontFamily}`);
+          }
+        }),
+      ]);
+      unlistenFns.push(unlistenShowIcons, unlistenVisualFont);
+    })().catch((e) => console.warn("ResultsSection: failed to setup listeners:", e));
 
     // Measure font once at list level for all ResultRow instances
     if (listRef) {
       const style = getComputedStyle(listRef);
       setFont(`${style.fontSize} ${style.fontFamily}`);
     }
-
-    // Listen for theme changes to update font
-    let unlistenVisualFont: (() => void) | undefined;
-    onCleanup(() => unlistenVisualFont?.());
-    void listen("visual-config-changed", () => {
-      if (listRef) {
-        const style = getComputedStyle(listRef);
-        setFont(`${style.fontSize} ${style.fontFamily}`);
-      }
-    }).then((fn) => { unlistenVisualFont = fn; })
-      .catch((e) => console.warn("ResultsSection: failed to listen visual-config-changed:", e));
 
     if (listRef) {
       const ro = new ResizeObserver((entries) => {
@@ -237,7 +214,7 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
               result={result}
               isSelected={idx() === selected()}
               icon={(iconCacheVersion(), iconCache.get(result.path))}
-              showIcons={showIcons()}
+              showIcons={props.showIcons}
               containerWidth={containerWidth()}
               font={font()}
               onClick={() => props.onClickResult(idx())}

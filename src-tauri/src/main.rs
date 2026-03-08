@@ -350,6 +350,13 @@ fn main() {
                 }
             }
 
+            // Set WebView2 default background to dark to prevent white flash
+            // when the window is resized to show results (#193).
+            if let Some(ref w) = app.get_webview_window("main") {
+                use tauri::window::Color;
+                let _ = w.set_background_color(Some(Color(40, 40, 40, 255)));
+            }
+
             // Register AcceleratorKeyPressed handler to suppress WM_SYSKEYDOWN
             // (Alt+char) before TranslateMessage → WM_SYSCHAR → DefWindowProc →
             // MessageBeep(0).  This is the root fix for the hotkey beep issue.

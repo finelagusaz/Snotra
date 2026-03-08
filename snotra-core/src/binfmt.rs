@@ -45,16 +45,14 @@ impl BinFile {
 
     /// Load data, trying the current version first, then each fallback in order.
     ///
-    /// `fallbacks` is a slice of `(version, is_bincode)` pairs. Each entry
-    /// specifies a legacy version number and whether it was serialized with
-    /// bincode (`true`) or postcard (`false`).
+    /// `fallbacks` is a slice of legacy version numbers (all postcard format).
     ///
     /// Returns `Some((data, version))` where `version` is the version that
     /// succeeded, so the caller can apply version-specific migrations.
     #[allow(deprecated)]
     pub fn load_with_fallback<T: DeserializeOwned>(
         &self,
-        fallbacks: &[(u32, bool)],
+        fallbacks: &[u32],
     ) -> Option<(T, u32)> {
         let bytes = fs::read(&self.path).ok()?;
 
@@ -64,13 +62,8 @@ impl BinFile {
         }
 
         // Try each fallback
-        for &(ver, is_bincode) in fallbacks {
-            let result = if is_bincode {
-                deserialize_bincode_with_header(&bytes, self.magic, ver)
-            } else {
-                deserialize_with_header(&bytes, self.magic, ver)
-            };
-            if let Some(data) = result {
+        for &ver in fallbacks {
+            if let Some(data) = deserialize_with_header(&bytes, self.magic, ver) {
                 return Some((data, ver));
             }
         }
@@ -133,40 +126,6 @@ pub fn try_serialize_with_header<T: Serialize>(
     buf.extend_from_slice(&version.to_le_bytes());
     buf.extend_from_slice(&payload_bytes);
     Ok(buf)
-}
-
-/// Legacy bincode deserializer for migration from pre-postcard format.
-pub fn deserialize_bincode_with_header<T: DeserializeOwned>(
-    bytes: &[u8],
-    magic: [u8; 4],
-    version: u32,
-) -> Option<T> {
-    if bytes.len() < HEADER_LEN {
-        return None;
-    }
-    if bytes[0..4] != magic {
-        return None;
-    }
-    let mut ver = [0u8; 4];
-    ver.copy_from_slice(&bytes[4..8]);
-    if u32::from_le_bytes(ver) != version {
-        return None;
-    }
-    bincode::deserialize(&bytes[HEADER_LEN..]).ok()
-}
-
-#[cfg(test)]
-pub fn serialize_bincode_with_header<T: Serialize>(
-    magic: [u8; 4],
-    version: u32,
-    payload: &T,
-) -> Option<Vec<u8>> {
-    let body = bincode::serialize(payload).ok()?;
-    let mut out = Vec::with_capacity(HEADER_LEN + body.len());
-    out.extend_from_slice(&magic);
-    out.extend_from_slice(&version.to_le_bytes());
-    out.extend_from_slice(&body);
-    Some(out)
 }
 
 #[deprecated(note = "use try_deserialize_with_header for Result-based error handling")]
@@ -232,29 +191,6 @@ mod tests {
         let bytes = serialize_with_header(*b"TEST", 1, &input).expect("serialize");
         let output: Dummy = deserialize_with_header(&bytes, *b"TEST", 1).expect("deserialize");
         assert_eq!(input, output);
-    }
-
-    #[test]
-    fn roundtrip_bincode_with_header() {
-        let input = Dummy { value: 99 };
-        let bytes =
-            serialize_bincode_with_header(*b"TEST", 1, &input).expect("serialize bincode");
-        let output: Dummy =
-            deserialize_bincode_with_header(&bytes, *b"TEST", 1).expect("deserialize bincode");
-        assert_eq!(input, output);
-    }
-
-    #[test]
-    fn bincode_data_not_readable_by_postcard() {
-        // u32::MAX is encoded as 4 bytes (ff ff ff ff) by bincode.
-        // postcard reads it as a varint where all 4 bytes have the continuation
-        // bit set, so it requires a 5th byte that never comes → decode error → None.
-        let input = Dummy { value: u32::MAX };
-        let bytes =
-            serialize_bincode_with_header(*b"TEST", 1, &input).expect("serialize bincode");
-        // postcard cannot decode the 4-byte LE payload as a complete varint
-        let output: Option<Dummy> = deserialize_with_header(&bytes, *b"TEST", 1);
-        assert!(output.is_none());
     }
 
     #[test]
@@ -377,7 +313,7 @@ mod tests {
         assert!(bf.save(&input));
 
         let (output, ver): (Dummy, u32) =
-            bf.load_with_fallback(&[(2, false), (1, true)]).expect("load");
+            bf.load_with_fallback(&[2]).expect("load");
         assert_eq!(output, input);
         assert_eq!(ver, 3);
 
@@ -395,27 +331,9 @@ mod tests {
         // Create a BinFile expecting v3 as current
         let bf = bin_file_in(&dir, *b"TEST", 3, "data.bin");
         let (output, ver): (Dummy, u32) =
-            bf.load_with_fallback(&[(2, false), (1, true)]).expect("load v2 fallback");
+            bf.load_with_fallback(&[2]).expect("load v2 fallback");
         assert_eq!(output, Dummy { value: 55 });
         assert_eq!(ver, 2);
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn binfile_load_with_fallback_bincode_legacy() {
-        let dir = temp_dir("binfile_fb_bincode");
-        // Write a v1 bincode file
-        let path = dir.join("data.bin");
-        let bytes = serialize_bincode_with_header(*b"TEST", 1, &Dummy { value: 77 }).unwrap();
-        std::fs::write(&path, &bytes).unwrap();
-
-        // Create a BinFile expecting v3 as current
-        let bf = bin_file_in(&dir, *b"TEST", 3, "data.bin");
-        let (output, ver): (Dummy, u32) =
-            bf.load_with_fallback(&[(2, false), (1, true)]).expect("load v1 fallback");
-        assert_eq!(output, Dummy { value: 77 });
-        assert_eq!(ver, 1);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -429,7 +347,7 @@ mod tests {
         std::fs::write(&path, &bytes).unwrap();
 
         let bf = bin_file_in(&dir, *b"TEST", 3, "data.bin");
-        let result: Option<(Dummy, u32)> = bf.load_with_fallback(&[(2, false), (1, true)]);
+        let result: Option<(Dummy, u32)> = bf.load_with_fallback(&[2]);
         assert!(result.is_none());
 
         let _ = std::fs::remove_dir_all(&dir);

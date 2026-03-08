@@ -9,14 +9,9 @@ use crate::query::normalize_query;
 const HISTORY_MAGIC: [u8; 4] = *b"HIST";
 const HISTORY_VERSION: u32 = 3; // postcard (現行, ms timestamp)
 const HISTORY_VERSION_POSTCARD_V2: u32 = 2; // postcard (旧, sec timestamp)
-const HISTORY_VERSION_LEGACY: u32 = 1; // bincode (旧, sec timestamp)
 
-/// Fallback chain for loading legacy history formats.
-/// (version, is_bincode): v2 = postcard (false), v1 = bincode (true)
-const HISTORY_FALLBACKS: &[(u32, bool)] = &[
-    (HISTORY_VERSION_POSTCARD_V2, false),
-    (HISTORY_VERSION_LEGACY, true),
-];
+/// Fallback chain for loading legacy history formats (all postcard).
+const HISTORY_FALLBACKS: &[u32] = &[HISTORY_VERSION_POSTCARD_V2];
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GlobalEntry {
@@ -275,9 +270,7 @@ fn migrate_normalize_keys(data: HistoryData) -> HistoryData {
 #[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::binfmt::{
-        deserialize_with_header, serialize_bincode_with_header, serialize_with_header,
-    };
+    use crate::binfmt::{deserialize_with_header, serialize_with_header};
     use crate::query::normalize_query;
     use std::path::Path;
 
@@ -495,51 +488,6 @@ mod tests {
         assert_eq!(recent.len(), 2);
         assert_eq!(recent[0], "C:\\alpha.lnk");
         assert_eq!(recent[1], "C:\\zeta.lnk");
-    }
-
-    #[test]
-    fn legacy_bincode_v1_migrates_to_current_format() {
-        let dir = temp_dir("v1_migrate");
-        let mut data = HistoryData::default();
-        data.global.insert(
-            "C:\\legacy.lnk".to_string(),
-            GlobalEntry {
-                launch_count: 7,
-                last_launched: 1_600_000_000,
-            },
-        );
-        data.query
-            .entry("leg".to_string())
-            .or_default()
-            .insert("C:\\legacy.lnk".to_string(), 4);
-        data.folder_expansion
-            .insert("C:\\LegacyFolder".to_string(), 3);
-
-        // Simulate a bincode V1 file written before postcard migration
-        let bytes = serialize_bincode_with_header(HISTORY_MAGIC, HISTORY_VERSION_LEGACY, &data)
-            .expect("serialize bincode v1");
-
-        // Should be unreadable by current postcard V3 deserializer
-        let v3_attempt: Option<HistoryData> =
-            deserialize_with_header(&bytes, HISTORY_MAGIC, HISTORY_VERSION);
-        assert!(v3_attempt.is_none());
-
-        // Write to disk and load via BinFile
-        let bf = bin_file_in(&dir);
-        std::fs::write(bf.path(), &bytes).unwrap();
-        let (loaded, version): (HistoryData, u32) =
-            bf.load_with_fallback(HISTORY_FALLBACKS).expect("load v1 fallback");
-        assert_eq!(version, HISTORY_VERSION_LEGACY);
-        let migrated = migrate_time_unit_if_legacy(version, loaded);
-        assert_eq!(migrated.global["C:\\legacy.lnk"].launch_count, 7);
-        assert_eq!(
-            migrated.global["C:\\legacy.lnk"].last_launched,
-            1_600_000_000_000
-        );
-        assert_eq!(migrated.query["leg"]["C:\\legacy.lnk"], 4);
-        assert_eq!(migrated.folder_expansion["C:\\LegacyFolder"], 3);
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

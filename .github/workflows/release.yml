@@ -43,7 +43,7 @@ jobs:
 
           # Cargo.toml (workspace)
           (Get-Content Cargo.toml -Raw -Encoding utf8) `
-            -replace '(?m)^version = "[\d.]+"', "version = `"$ver`"" |
+            -replace '(?m)^version = "[^"]+"', "version = `"$ver`"" |
             Set-Content Cargo.toml -Encoding utf8 -NoNewline
 
           # package.json

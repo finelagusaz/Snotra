@@ -699,7 +699,7 @@ impl Config {
         let prefix = &self.search.instant_command_prefix;
         if prefix.is_empty() {
             errors.push(ConfigError::InstantCommandPrefixEmpty);
-        } else if prefix == "/" {
+        } else if prefix.starts_with('/') {
             errors.push(ConfigError::InstantCommandPrefixSlash);
         }
 
@@ -1730,6 +1730,14 @@ mod tests {
     fn validate_instant_command_prefix_slash() {
         let mut config = Config::default();
         config.search.instant_command_prefix = "/".to_string();
+        let errors = config.validate();
+        assert!(errors.contains(&ConfigError::InstantCommandPrefixSlash));
+    }
+
+    #[test]
+    fn validate_instant_command_prefix_slash_multi_char() {
+        let mut config = Config::default();
+        config.search.instant_command_prefix = "//".to_string();
         let errors = config.validate();
         assert!(errors.contains(&ConfigError::InstantCommandPrefixSlash));
     }

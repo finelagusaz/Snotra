@@ -42,6 +42,16 @@ function clearLaunchNotice() {
   }
 }
 
+/** LaunchResult の失敗/タイムアウトに応じた通知を表示する */
+function notifyLaunchFailure(result: api.LaunchResult) {
+  const detail = result.message ? ` (${result.message})` : "";
+  if (result.status === "timeout") {
+    setLaunchNoticeWithAutoClear(t("notice.launch.timeout", { detail }));
+  } else {
+    setLaunchNoticeWithAutoClear(t("notice.launch.failed", { detail }));
+  }
+}
+
 function setLaunchNoticeWithAutoClear(message: string, delayMs = 2400) {
   clearLaunchNotice();
   setLaunchNotice(message);
@@ -202,9 +212,11 @@ createRoot(() => {
       trace("search:query_effect", { query: q, trimmed });
 
       // インスタントコマンドモード判定（スラッシュコマンドより先に評価）
-      if (prefix && trimmed.startsWith(prefix)) {
+      // trimStart() を使用: trailing whitespace はクエリの一部として保持する
+      const trimmedStart = q.trimStart();
+      if (prefix && trimmedStart.startsWith(prefix)) {
         cancelDebounce();
-        const input = trimmed.slice(prefix.length);
+        const input = trimmedStart.slice(prefix.length);
         // スペースがあればコマンド名部分のみでフィルタ（SPEC §18.5: スペースでマッチング確定）
         const spaceIdx = input.indexOf(" ");
         const filterName = spaceIdx >= 0 ? input.slice(0, spaceIdx) : input;
@@ -424,12 +436,7 @@ async function launchWithSelectedTool(): Promise<boolean> {
         code: launchResult.code,
         message: launchResult.message,
       });
-      const detail = launchResult.message ? ` (${launchResult.message})` : "";
-      if (launchResult.status === "timeout") {
-        setLaunchNoticeWithAutoClear(t("notice.launch.timeout", { detail }));
-      } else {
-        setLaunchNoticeWithAutoClear(t("notice.launch.failed", { detail }));
-      }
+      notifyLaunchFailure(launchResult);
       void runRefresh();
       return false;
     }
@@ -524,12 +531,7 @@ async function launchAndReset(result: SearchResult): Promise<boolean> {
         code: launchResult.code,
         message: launchResult.message,
       });
-      const detail = launchResult.message ? ` (${launchResult.message})` : "";
-      if (launchResult.status === "timeout") {
-        setLaunchNoticeWithAutoClear(t("notice.launch.timeout", { detail }));
-      } else {
-        setLaunchNoticeWithAutoClear(t("notice.launch.failed", { detail }));
-      }
+      notifyLaunchFailure(launchResult);
       void runRefresh();
       return false;
     }
@@ -578,12 +580,7 @@ async function executeInstantCommandSelected(): Promise<boolean> {
         code: launchResult.code,
         message: launchResult.message,
       });
-      const detail = launchResult.message ? ` (${launchResult.message})` : "";
-      if (launchResult.status === "timeout") {
-        setLaunchNoticeWithAutoClear(t("notice.launch.timeout", { detail }));
-      } else {
-        setLaunchNoticeWithAutoClear(t("notice.launch.failed", { detail }));
-      }
+      notifyLaunchFailure(launchResult);
       return false;
     }
 

@@ -14,7 +14,7 @@ egui ベースの設定・about バイナリ crate。本体（`src-tauri`）と�
 - `app.rs`: `eframe::App` 実装、タブ管理（About タブ含む）、保存/破棄/リセットロジック
 - `font.rs`: 日本語フォント読み込み + システムフォント列挙
 - `hotkey_input.rs`: ホットキーキャプチャウィジェット
-- `i18n.rs`: 翻訳構造体 `Tr`（`Language` に基づく match ベースの多言語対応）
+- `i18n.rs`: 翻訳構造体 `Tr(Language)`。各メソッド（`tr.tab_general()` 等）が `match self.0` で `&'static str` を返す。タブ UI 関数は `tr: &Tr` を引数に取り、保存時に `self.tr = Tr(new_language)` で即時反映
 - `tabs/`: 5タブの UI 実装（About タブは `app.rs` に直接実装）
   - `mod.rs`: サブモジュール宣言のみ
   - `general.rs`: 全般設定（起動時表示、トレイ、IME、ホットキー）

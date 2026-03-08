@@ -15,6 +15,8 @@ const ResultsWindow: Component = () => {
   const [containerWidth, setContainerWidth] = createSignal(0);
   const [showIcons, setShowIcons] = createSignal(true);
   const [font, setFont] = createSignal("15px 'Segoe UI'");
+  // ウィンドウの可視行数（max_results 設定値）。bootstrap と max-results-changed で更新する。
+  let cachedMaxResults = 8;
   let listRef: HTMLDivElement | undefined;
   let latestGeneration = 0;
   let latestDataGeneration = 0;
@@ -60,8 +62,8 @@ const ResultsWindow: Component = () => {
     return result;
   }
 
-  async function fetchIcons(items: SearchResult[], generation: number) {
-    if (!showIcons()) return;
+  /** キャッシュにないアイコンを一括取得してキャッシュに格納する。stale なら Blob URL を破棄して早期リターン */
+  async function fetchIconBatch(items: SearchResult[], generation: number): Promise<void> {
     const missing = items
       .filter((r) => !r.isError && !iconCache.has(r.path))
       .map((r) => r.path);
@@ -89,16 +91,37 @@ const ResultsWindow: Component = () => {
     setIconCacheVersion((v) => v + 1);
   }
 
+  async function fetchIcons(items: SearchResult[], generation: number) {
+    if (!showIcons()) return;
+    // 呼び出し時点の値を固定し、await 中の設定変更でスライス境界がずれるのを防ぐ
+    const visibleCount = cachedMaxResults;
+    // Stage 1: 可視行（先頭 visibleCount 件）を優先取得 → 即時表示
+    await fetchIconBatch(items.slice(0, visibleCount), generation);
+    // Stage 2: スクロール域の残り分を補完（stage 1 完了後、stale なら自動スキップ）
+    if (items.length > visibleCount) {
+      await fetchIconBatch(items.slice(visibleCount), generation);
+    }
+  }
+
   onMount(() => {
-    // Load initial show_icons from bootstrap payload
+    // Load initial values from bootstrap payload
     void api.getBootstrapPayload().then((bootstrap) => {
       setShowIcons(bootstrap.appearance.show_icons);
+      cachedMaxResults = bootstrap.appearance.max_results;
       applyTheme(bootstrap.visual);
     }).catch((e) => console.warn("ResultsWindow: failed to load bootstrap payload:", e));
 
     // Listen for show_icons setting changes
     let unlistenShowIcons: (() => void) | undefined;
     onCleanup(() => unlistenShowIcons?.());
+
+    // Listen for max_results setting changes
+    let unlistenMaxResults: (() => void) | undefined;
+    onCleanup(() => unlistenMaxResults?.());
+    void listen<number>("max-results-changed", (event) => {
+      cachedMaxResults = event.payload;
+    }).then((fn) => { unlistenMaxResults = fn; })
+      .catch((e) => console.warn("ResultsWindow: failed to listen max-results-changed:", e));
     onCleanup(() => iconCache.revokeAll());
     void listen<boolean>("show-icons-changed", (event) => {
       setShowIcons(event.payload);

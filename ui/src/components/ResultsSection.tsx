@@ -205,7 +205,7 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
               result={result}
               isSelected={idx() === selected()}
               icon={(iconCacheVersion(), iconCache.get(result.path))}
-              showIcons={props.showIcons}
+              showIcons={props.showIcons && !props.skipIcons}
               containerWidth={containerWidth()}
               font={font()}
               onClick={() => props.onClickResult(idx())}

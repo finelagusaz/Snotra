@@ -176,6 +176,13 @@ impl Tr {
         }
     }
 
+    pub fn err_instant_duplicate_name(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => " はコマンド名が重複しています",
+            Language::En => " has a duplicate command name",
+        }
+    }
+
     // General tab
     pub fn heading_hotkey(&self) -> &'static str {
         match self.0 {

@@ -222,6 +222,8 @@ createRoot(() => {
         const filterName = spaceIdx >= 0 ? input.slice(0, spaceIdx) : input;
         trace("search:query_effect:instant_command", { prefix, input, filterName });
         setInstantCommandMode(true);
+        // IPC 応答前の Enter/クリックで古いコマンドを誤起動しないよう、先にクリアする
+        instantCommandItems = [];
         void (async () => {
           const requestId = ++searchGeneration;
           try {
@@ -566,11 +568,14 @@ async function executeInstantCommandSelected(): Promise<boolean> {
     setLaunching(true);
     trace("search:instant_command:execute", { name: cmd.name, query: instantQuery });
 
+    // 失敗時に復元するため、実行前の状態を保存
+    const savedResults = results();
+    const savedSelected = selected();
+    const savedItems = [...instantCommandItems];
+
     ++searchGeneration;
     setResults([]);
     setSelected(0);
-    setInstantCommandMode(false);
-    instantCommandItems = [];
 
     const launchResult = await api.executeInstantCommand(cmd.name, instantQuery);
     if (launchResult.status !== "ok") {
@@ -581,9 +586,17 @@ async function executeInstantCommandSelected(): Promise<boolean> {
         message: launchResult.message,
       });
       notifyLaunchFailure(launchResult);
+      // 失敗時: 候補リストを復元し、ユーザーが再試行できるようにする
+      ++searchGeneration;
+      instantCommandItems = savedItems;
+      setResults(savedResults);
+      setSelected(savedSelected);
       return false;
     }
 
+    // 成功時: モードを完全にクリアする
+    setInstantCommandMode(false);
+    instantCommandItems = [];
     suppressNextQueryEffectRefresh = true;
     setQuery("");
     trace("search:instant_command:done", { name: cmd.name });

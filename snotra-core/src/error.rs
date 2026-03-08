@@ -70,6 +70,7 @@ pub enum ConfigError {
     ScanPathEmpty { index: usize },
     InstantCommandPrefixEmpty,
     InstantCommandPrefixSlash,
+    InstantCommandDuplicateName { name: String },
 }
 
 #[cfg(test)]

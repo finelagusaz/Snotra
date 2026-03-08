@@ -703,6 +703,18 @@ impl Config {
             errors.push(ConfigError::InstantCommandPrefixSlash);
         }
 
+        // Instant command name uniqueness
+        {
+            let mut seen = std::collections::HashSet::new();
+            for cmd in &self.instant_commands {
+                if !cmd.name.is_empty() && !seen.insert(&cmd.name) {
+                    errors.push(ConfigError::InstantCommandDuplicateName {
+                        name: cmd.name.clone(),
+                    });
+                }
+            }
+        }
+
         errors
     }
 
@@ -1753,6 +1765,44 @@ mod tests {
                 ConfigError::InstantCommandPrefixEmpty | ConfigError::InstantCommandPrefixSlash
             )),
             "@ should not produce prefix errors"
+        );
+    }
+
+    #[test]
+    fn validate_instant_command_duplicate_name() {
+        let mut config = Config::default();
+        config.instant_commands = vec![
+            InstantCommand {
+                name: "google".to_string(),
+                command: "https://google.com".to_string(),
+            },
+            InstantCommand {
+                name: "google".to_string(),
+                command: "https://google.co.jp".to_string(),
+            },
+        ];
+        let errors = config.validate();
+        assert!(errors.contains(&ConfigError::InstantCommandDuplicateName {
+            name: "google".to_string(),
+        }));
+    }
+
+    #[test]
+    fn validate_instant_command_unique_names_ok() {
+        let mut config = Config::default();
+        config.instant_commands = vec![
+            InstantCommand {
+                name: "google".to_string(),
+                command: "https://google.com".to_string(),
+            },
+            InstantCommand {
+                name: "bing".to_string(),
+                command: "https://bing.com".to_string(),
+            },
+        ];
+        let errors = config.validate();
+        assert!(
+            !errors.iter().any(|e| matches!(e, ConfigError::InstantCommandDuplicateName { .. })),
         );
     }
 

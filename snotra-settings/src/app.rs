@@ -200,6 +200,9 @@ fn config_error_message(error: &ConfigError, tr: &Tr) -> String {
         }
         ConfigError::InstantCommandPrefixEmpty => tr.err_instant_prefix_empty().to_string(),
         ConfigError::InstantCommandPrefixSlash => tr.err_instant_prefix_slash().to_string(),
+        ConfigError::InstantCommandDuplicateName { name } => {
+            format!("{}{}", name, tr.err_instant_duplicate_name())
+        }
     }
 }
 

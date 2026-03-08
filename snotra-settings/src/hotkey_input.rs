@@ -1,6 +1,8 @@
 use eframe::egui;
 use snotra_core::config::{is_system_shortcut, HotkeyConfig};
 
+use crate::i18n::Tr;
+
 /// Hotkey capture widget state
 #[derive(Default)]
 pub struct HotkeyInputState {
@@ -18,13 +20,14 @@ pub fn hotkey_input(
     ui: &mut egui::Ui,
     config: &mut HotkeyConfig,
     state: &mut HotkeyInputState,
+    tr: &Tr,
 ) -> bool {
     let mut changed = false;
 
     let display = if state.capturing {
-        "キーを押してください...".to_string()
+        tr.hotkey_press_key().to_string()
     } else if config.modifier.is_empty() && config.key.is_empty() {
-        "(未設定)".to_string()
+        tr.hotkey_not_set().to_string()
     } else if config.modifier.is_empty() {
         config.key.clone()
     } else {

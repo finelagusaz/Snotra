@@ -13,7 +13,7 @@ import {
   shouldShowResults,
 } from "./stores/search";
 import { applyTheme } from "./lib/theme";
-import { t } from "./lib/i18n";
+import { t, setLanguage, type Lang } from "./lib/i18n";
 import type { BootstrapPayload, VisualConfig } from "./lib/types";
 import * as api from "./lib/invoke";
 import { trace } from "./lib/trace";
@@ -163,10 +163,17 @@ const MainApp: Component = () => {
     });
     unlistenFns.push(unlistenHotkeyFailed);
 
+    // Listen for language changes
+    const unlistenLang = await listen<string>("language-changed", (event) => {
+      setLanguage(event.payload as Lang);
+    });
+    unlistenFns.push(unlistenLang);
+
     // Load bootstrap payload and apply theme (non-fatal on failure)
     let bootstrap: BootstrapPayload | null = null;
     try {
       bootstrap = await api.getBootstrapPayload();
+      setLanguage(bootstrap.language as Lang);
       applyTheme(bootstrap.visual);
       setMaxResults(bootstrap.appearance.max_results);
       setShowIcons(bootstrap.appearance.show_icons);

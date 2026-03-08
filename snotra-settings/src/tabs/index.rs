@@ -4,6 +4,8 @@ use std::sync::{Arc, Mutex};
 use eframe::egui;
 use snotra_core::config::{Config, ScanPath};
 
+use crate::i18n::Tr;
+
 /// Non-blocking file/folder picker state (rfd + thread spawn pattern)
 #[derive(Clone, Default)]
 pub struct PickerState {
@@ -66,7 +68,7 @@ fn parse_extensions(raw: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &mut IndexTabState) {
+pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &mut IndexTabState, tr: &Tr) {
     // Poll picker result
     if state.picker.active {
         if let Ok(mut guard) = state.picker.result.try_lock() {
@@ -82,11 +84,11 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.spacing_mut().interact_size.y = 24.0;
 
-        ui.heading("スキャン対象");
+        ui.heading(tr.heading_scan_targets());
         ui.add_space(4.0);
 
         if config.paths.scan.is_empty() {
-            ui.label("スキャンパスが設定されていません。");
+            ui.label(tr.label_no_scan_paths());
         }
 
         // List scan paths
@@ -96,7 +98,7 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
                 ui.vertical(|ui| {
                     ui.label(&scan.path);
                     let meta = if scan.include_folders {
-                        format!("{} (フォルダ含む)", scan.extensions.join(", "))
+                        format!("{} {}", scan.extensions.join(", "), tr.label_incl_folders())
                     } else {
                         scan.extensions.join(", ")
                     };
@@ -104,7 +106,7 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
                 });
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("編集").clicked() {
+                    if ui.button(tr.btn_edit()).clicked() {
                         action = Some(ListAction::Edit(i));
                     }
                 });
@@ -112,7 +114,7 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
             ui.separator();
         }
 
-        if ui.button("追加…").clicked() {
+        if ui.button(tr.btn_add()).clicked() {
             action = Some(ListAction::OpenCreate);
         }
 
@@ -129,7 +131,7 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
 
     // Modal
     if state.modal.open {
-        show_modal(ctx, config, state);
+        show_modal(ctx, config, state, tr);
     }
 }
 
@@ -138,11 +140,11 @@ enum ListAction {
     Edit(usize),
 }
 
-fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut IndexTabState) {
+fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut IndexTabState, tr: &Tr) {
     let title = if state.modal.mode == ModalMode::Edit {
-        "スキャンパスを編集"
+        tr.modal_edit_scan_path()
     } else {
-        "スキャンパスを追加"
+        tr.modal_add_scan_path()
     };
 
     let modal = egui::Modal::new(egui::Id::new("index_modal"));
@@ -153,19 +155,20 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut IndexTabStat
         ui.add_space(4.0);
 
         // Path input + browse button
-        ui.label("パス:");
+        ui.label(tr.label_path());
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut state.modal.edit_path);
             if ui
-                .add_enabled(!state.picker.active, egui::Button::new("参照…"))
+                .add_enabled(!state.picker.active, egui::Button::new(tr.btn_browse()))
                 .clicked()
             {
                 state.picker.active = true;
                 let result = Arc::clone(&state.picker.result);
                 let repaint_ctx = ctx.clone();
+                let dialog_title = tr.dialog_select_folder().to_string();
                 std::thread::spawn(move || {
                     let path = rfd::FileDialog::new()
-                        .set_title("フォルダを選択")
+                        .set_title(&dialog_title)
                         .pick_folder();
                     *result.lock().unwrap() = Some(path);
                     repaint_ctx.request_repaint();
@@ -174,11 +177,11 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut IndexTabStat
         });
 
         ui.add_space(4.0);
-        ui.label("拡張子 (カンマ区切り):");
+        ui.label(tr.label_extensions());
         ui.text_edit_singleline(&mut state.modal.edit_extensions);
 
         ui.add_space(4.0);
-        ui.checkbox(&mut state.modal.edit_include_folders, "フォルダを含む");
+        ui.checkbox(&mut state.modal.edit_include_folders, tr.cb_include_folders());
 
         ui.add_space(8.0);
         ui.separator();
@@ -188,7 +191,7 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut IndexTabStat
             if state.modal.mode == ModalMode::Edit
                 && ui
                     .add(egui::Button::new(
-                        egui::RichText::new("削除").color(egui::Color32::from_rgb(196, 43, 28)),
+                        egui::RichText::new(tr.btn_delete()).color(egui::Color32::from_rgb(196, 43, 28)),
                     ))
                     .clicked()
             {
@@ -201,10 +204,10 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut IndexTabStat
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("キャンセル").clicked() {
+                if ui.button(tr.btn_cancel()).clicked() {
                     state.modal.close();
                 }
-                if ui.button("保存").clicked() {
+                if ui.button(tr.btn_save()).clicked() {
                     save_scan_path(config, &state.modal);
                     state.modal.close();
                 }

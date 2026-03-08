@@ -4,6 +4,8 @@ use std::sync::{Arc, Mutex};
 use eframe::egui;
 use snotra_core::config::{Config, OpenerRule, OpenerTool};
 
+use crate::i18n::Tr;
+
 /// Non-blocking file picker state for exe selection
 #[derive(Clone, Default)]
 pub struct ExePickerState {
@@ -81,7 +83,7 @@ impl ModalState {
     }
 }
 
-pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabState) {
+pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabState, tr: &Tr) {
     // Poll exe picker result
     if state.exe_picker.active {
         if let Ok(mut guard) = state.exe_picker.result.try_lock() {
@@ -97,17 +99,17 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.spacing_mut().interact_size.y = 24.0;
 
-        ui.heading("オープナールール");
+        ui.heading(tr.heading_opener_rules());
         ui.add_space(4.0);
         ui.label(
-            egui::RichText::new("ファイル種別ごとに起動するアプリケーションを設定します。")
+            egui::RichText::new(tr.opener_description())
                 .small()
                 .color(crate::app::TEXT_SECONDARY),
         );
         ui.add_space(8.0);
 
         if config.openers.is_empty() {
-            ui.label("ルールが設定されていません。");
+            ui.label(tr.label_no_rules());
         }
 
         // Flatten rules into (rule_idx, tool_idx, target, tool) for display
@@ -140,7 +142,7 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
 
                 ui.vertical(|ui| {
                     let target_label = if target == "folder" {
-                        "フォルダ".to_string()
+                        tr.label_target_folder().to_string()
                     } else {
                         target.clone()
                     };
@@ -148,7 +150,7 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
                         "[{}] {}",
                         target_label,
                         if tool.name.is_empty() {
-                            "(名前なし)"
+                            tr.label_no_name()
                         } else {
                             &tool.name
                         }
@@ -161,7 +163,7 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
                 });
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("編集").clicked() {
+                    if ui.button(tr.btn_edit()).clicked() {
                         action = Some(OpenerAction::Edit(*ri, *ti));
                     }
                 });
@@ -169,7 +171,7 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
             ui.separator();
         }
 
-        if ui.button("追加…").clicked() {
+        if ui.button(tr.btn_add()).clicked() {
             action = Some(OpenerAction::OpenCreate);
         }
 
@@ -197,7 +199,7 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
 
     // Modal
     if state.modal.open {
-        show_modal(ctx, config, state);
+        show_modal(ctx, config, state, tr);
     }
 }
 
@@ -239,11 +241,11 @@ fn swap_flat_entries(
     config.openers = rules;
 }
 
-fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabState) {
+fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabState, tr: &Tr) {
     let title = if state.modal.mode == ModalMode::Edit {
-        "ルールを編集"
+        tr.modal_edit_rule()
     } else {
-        "ルールを追加"
+        tr.modal_add_rule()
     };
 
     let modal = egui::Modal::new(egui::Id::new("opener_modal"));
@@ -254,22 +256,22 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
         ui.add_space(4.0);
 
         // Target
-        ui.label("ターゲット:");
+        ui.label(tr.label_target());
         egui::ComboBox::from_id_salt("target_kind")
             .selected_text(match state.modal.edit_target_kind {
-                TargetKind::Folder => "フォルダ",
-                TargetKind::Extension => "拡張子",
+                TargetKind::Folder => tr.target_kind_folder(),
+                TargetKind::Extension => tr.target_kind_extension(),
             })
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut state.modal.edit_target_kind, TargetKind::Folder, "フォルダ");
-                ui.selectable_value(&mut state.modal.edit_target_kind, TargetKind::Extension, "拡張子");
+                ui.selectable_value(&mut state.modal.edit_target_kind, TargetKind::Folder, tr.target_kind_folder());
+                ui.selectable_value(&mut state.modal.edit_target_kind, TargetKind::Extension, tr.target_kind_extension());
             });
 
         if state.modal.edit_target_kind == TargetKind::Extension {
-            ui.label("拡張子:");
+            ui.label(tr.label_extension());
             ui.text_edit_singleline(&mut state.modal.edit_target_ext);
             ui.label(
-                egui::RichText::new("カンマ区切り (例: .png, .jpg)")
+                egui::RichText::new(tr.hint_extension_format())
                     .small()
                     .color(crate::app::TEXT_SECONDARY),
             );
@@ -278,26 +280,28 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
         ui.add_space(4.0);
 
         // Tool name
-        ui.label("ツール名:");
+        ui.label(tr.label_tool_name());
         ui.text_edit_singleline(&mut state.modal.edit_tool_name);
 
         ui.add_space(4.0);
 
         // Tool exe + browse
-        ui.label("実行ファイル:");
+        ui.label(tr.label_executable());
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut state.modal.edit_tool_exe);
             if ui
-                .add_enabled(!state.exe_picker.active, egui::Button::new("参照…"))
+                .add_enabled(!state.exe_picker.active, egui::Button::new(tr.btn_browse()))
                 .clicked()
             {
                 state.exe_picker.active = true;
                 let result = Arc::clone(&state.exe_picker.result);
                 let repaint_ctx = ctx.clone();
+                let dialog_title = tr.dialog_select_exe().to_string();
+                let filter_label = tr.filter_executables().to_string();
                 std::thread::spawn(move || {
                     let path = rfd::FileDialog::new()
-                        .set_title("実行ファイルを選択")
-                        .add_filter("実行ファイル", &["exe", "bat", "cmd"])
+                        .set_title(&dialog_title)
+                        .add_filter(&filter_label, &["exe", "bat", "cmd"])
                         .pick_file();
                     *result.lock().unwrap() = Some(path);
                     repaint_ctx.request_repaint();
@@ -308,10 +312,10 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
         ui.add_space(4.0);
 
         // Tool args
-        ui.label("引数:");
+        ui.label(tr.label_arguments());
         ui.text_edit_singleline(&mut state.modal.edit_tool_args);
         ui.label(
-            egui::RichText::new("{path} でファイルパスを埋め込み")
+            egui::RichText::new(tr.hint_path_placeholder())
                 .small()
                 .color(crate::app::TEXT_SECONDARY),
         );
@@ -324,7 +328,7 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
             if state.modal.mode == ModalMode::Edit
                 && ui
                     .add(egui::Button::new(
-                        egui::RichText::new("削除").color(egui::Color32::from_rgb(196, 43, 28)),
+                        egui::RichText::new(tr.btn_delete()).color(egui::Color32::from_rgb(196, 43, 28)),
                     ))
                     .clicked()
             {
@@ -340,10 +344,10 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("キャンセル").clicked() {
+                if ui.button(tr.btn_cancel()).clicked() {
                     state.modal.close();
                 }
-                if ui.button("保存").clicked() {
+                if ui.button(tr.btn_save()).clicked() {
                     save_opener(config, &state.modal);
                     state.modal.close();
                 }

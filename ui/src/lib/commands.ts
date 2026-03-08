@@ -5,7 +5,7 @@ import { t } from "./i18n";
 export interface SlashCommand {
   command: string;
   label: string;
-  description: string;
+  readonly description: string;
   action: () => void | Promise<void>;
 }
 
@@ -19,7 +19,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   {
     command: "/r",
     label: "/r",
-    description: t("cmd.history.description"),
+    get description() { return t("cmd.history.description"); },
     action: () => {
       // /r is handled by search store as a result-producing command.
     },
@@ -27,7 +27,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   {
     command: "/o",
     label: "/o",
-    description: t("cmd.settings.description"),
+    get description() { return t("cmd.settings.description"); },
     action: async () => {
       await api.openSettings();
     },
@@ -35,7 +35,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   {
     command: "/s",
     label: "/s",
-    description: t("cmd.rebuild_index.description"),
+    get description() { return t("cmd.rebuild_index.description"); },
     action: async () => {
       await hideMainWindow();
       await api.rebuildIndex();
@@ -44,7 +44,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   {
     command: "/q",
     label: "/q",
-    description: t("cmd.quit.description"),
+    get description() { return t("cmd.quit.description"); },
     action: () => {
       api.quitApp();
     },

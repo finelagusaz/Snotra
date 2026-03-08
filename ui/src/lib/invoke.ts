@@ -89,28 +89,12 @@ export async function saveSearchPlacement(x: number, y: number): Promise<void> {
   return tracedInvoke("save_search_placement", { x, y });
 }
 
-export async function setWindowNoActivate(): Promise<void> {
-  return tracedInvoke("set_window_no_activate");
-}
-
 export async function notifyMainShown(): Promise<void> {
   return tracedInvoke("notify_main_shown");
 }
 
 export async function notifyMainHidden(): Promise<void> {
   return tracedInvoke("notify_main_hidden");
-}
-
-export async function notifyResultClicked(index: number): Promise<void> {
-  return tracedInvoke("notify_result_clicked", { index });
-}
-
-export async function notifyResultDoubleClicked(index: number): Promise<void> {
-  return tracedInvoke("notify_result_double_clicked", { index });
-}
-
-export async function notifyResultHovered(index: number): Promise<void> {
-  return tracedInvoke("notify_result_hovered", { index });
 }
 
 export async function getIndexingState(): Promise<boolean> {
@@ -123,14 +107,6 @@ export async function rebuildIndex(): Promise<boolean> {
 
 export async function quitApp(): Promise<void> {
   return tracedInvoke("quit_app");
-}
-
-export async function ensureWindow(label: "results"): Promise<boolean> {
-  return tracedInvoke<boolean>("ensure_window", { label });
-}
-
-export async function isMainForeground(): Promise<boolean> {
-  return tracedInvoke<boolean>("is_main_foreground");
 }
 
 export async function recordFolderExpansion(path: string): Promise<void> {

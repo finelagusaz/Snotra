@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── ブラウザ API スタブ（Node 環境に存在しない・vi.hoisted でモジュールロード前に実行） ──
 vi.hoisted(() => {
@@ -26,7 +26,6 @@ vi.mock("../lib/invoke", () => ({
 
 // ── モック確立後にインポート ─────────────────────────────────────────────────
 
-import * as eventApi from "@tauri-apps/api/event";
 import * as api from "../lib/invoke";
 import type { OpenerTool, SearchResult } from "../lib/types";
 import {
@@ -251,37 +250,26 @@ describe("resetForShow", () => {
     expect(selected()).toBe(0);
   });
 
-  it("クリーン状態では結果イベントを emit しない", async () => {
+  it("クリーン状態では api.search を呼ばない", async () => {
     // 初期状態: query="", folderState=null, toolSelectionState=null
-    const emitMock = eventApi.emit as Mock;
-    emitMock.mockClear();
+    vi.mocked(api.search).mockClear();
 
     resetForShow();
 
-    // runRefresh() がスキップされるため IPC は発生しない
+    // runRefresh() がスキップされるため search は呼ばれない
     await vi.runAllTimersAsync();
-    const resultsCalls = emitMock.mock.calls.filter((args) =>
-      args[0] === "results-data-changed" ||
-      args[0] === "results-selection-changed" ||
-      args[0] === "results-visibility-changed"
-    );
-    expect(resultsCalls).toHaveLength(0);
+    expect(api.search).not.toHaveBeenCalled();
   });
 
-  it("クエリが非空なら結果イベントを emit する", async () => {
+  it("クエリが非空でも resetForShow 後はクエリが空になり search は呼ばれない", async () => {
     setQuery("hello");
-    const emitMock = eventApi.emit as Mock;
-    emitMock.mockClear();
+    vi.mocked(api.search).mockClear();
 
     resetForShow();
 
-    // runRefresh() が走るため結果イベントが発生する
+    expect(query()).toBe("");
     await vi.runAllTimersAsync();
-    const resultsCalls = emitMock.mock.calls.filter((args) =>
-      args[0] === "results-data-changed" ||
-      args[0] === "results-visibility-changed"
-    );
-    expect(resultsCalls.length).toBeGreaterThan(0);
+    expect(api.search).not.toHaveBeenCalled();
   });
 });
 
@@ -391,10 +379,10 @@ describe("refreshResults ガード (C3)", () => {
   });
 });
 
-// ── selection-only IPC 軽量化 (#162) ──────────────────────────────────────────
+// ── selection シグナル更新 ───────────────────────────────────────────────────
 
-describe("selection-only IPC (#162)", () => {
-  it("moveSelectionDown は results-selection-changed のみ emit し results-data-changed は emit しない", async () => {
+describe("selection シグナル更新", () => {
+  it("moveSelectionDown は selected シグナルを更新する", async () => {
     // 結果を2件セットアップ
     const items: SearchResult[] = [
       { name: "a.txt", path: "C:\\a.txt", isFolder: false, isError: false },
@@ -404,42 +392,9 @@ describe("selection-only IPC (#162)", () => {
     setQuery("test");
     await vi.runAllTimersAsync();
 
-    const emitMock = eventApi.emit as Mock;
-    emitMock.mockClear();
-
+    expect(selected()).toBe(0);
     moveSelectionDown();
-
-    const dataCalls = emitMock.mock.calls.filter((args) => args[0] === "results-data-changed");
-    const selectionCalls = emitMock.mock.calls.filter((args) => args[0] === "results-selection-changed");
-
-    expect(dataCalls).toHaveLength(0);
-    expect(selectionCalls).toHaveLength(1);
-    expect(selectionCalls[0][1]).toMatchObject({ selected: 1 });
-  });
-
-  it("selection-changed の generation は data-changed より大きい（レース防止）", async () => {
-    const items: SearchResult[] = [
-      { name: "a.txt", path: "C:\\a.txt", isFolder: false, isError: false },
-      { name: "b.txt", path: "C:\\b.txt", isFolder: false, isError: false },
-    ];
-    vi.mocked(api.search).mockResolvedValue(items);
-    setQuery("test");
-    await vi.runAllTimersAsync();
-
-    const emitMock = eventApi.emit as Mock;
-
-    // data-changed の generation を取得
-    const dataCall = emitMock.mock.calls.find((args) => args[0] === "results-data-changed");
-    const dataGen = dataCall![1].generation;
-
-    emitMock.mockClear();
-    moveSelectionDown();
-
-    const selectionCall = emitMock.mock.calls.find((args) => args[0] === "results-selection-changed");
-    const selectionGen = selectionCall![1].generation;
-
-    // selection-changed は data-changed より大きい generation を持つ
-    expect(selectionGen).toBeGreaterThan(dataGen);
+    expect(selected()).toBe(1);
   });
 });
 

@@ -63,32 +63,6 @@ fn trace_main(event: &str, data: serde_json::Value) {
     );
 }
 
-fn ensure_window_with_timing<F>(app_handle: &AppHandle, label: &str, ensure: F) -> tauri::Result<()>
-where
-    F: FnOnce(&AppHandle) -> tauri::Result<()>,
-{
-    let started = Instant::now();
-    let result = ensure(app_handle);
-    match &result {
-        Ok(()) => trace_main(
-            "main:ensure_window:ok",
-            json!({
-                "label": label,
-                "elapsed_ms": started.elapsed().as_millis(),
-            }),
-        ),
-        Err(e) => trace_main(
-            "main:ensure_window:error",
-            json!({
-                "label": label,
-                "elapsed_ms": started.elapsed().as_millis(),
-                "error": e.to_string(),
-            }),
-        ),
-    }
-    result
-}
-
 #[cfg(windows)]
 fn is_alt_pressed() -> bool {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -186,6 +160,16 @@ fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
 
     if let Some(main) = app_handle.get_webview_window("main") {
         trace_main("show_main:start", json!({ "ms": ms(t0.elapsed()) }));
+
+        // Reset window height to search-bar-only (52px) before showing.
+        // This ensures no stale expanded height is visible on show, regardless
+        // of how the window was hidden (JS hideMain, Rust hotkey toggle,
+        // process crash). set_size before show() completes while hidden.
+        if let Ok(current) = main.inner_size() {
+            let sf = main.scale_factor().unwrap_or(1.0);
+            let logical_w = current.width as f64 / sf;
+            let _ = main.set_size(tauri::Size::Logical(tauri::LogicalSize::new(logical_w, 52.0)));
+        }
 
         // show() is idempotent — call unconditionally to skip the costly
         // is_visible() pre-check (61ms + 71ms gap on first invocation).
@@ -312,16 +296,13 @@ fn main() {
         main_visible: AtomicBool::new(false),
     };
 
+    let ime_off_for_si = ime_off;
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(move |app, _args, _cwd| {
             // When a second instance tries to start, show the main window
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.show();
-                let _ = w.set_focus();
-                if let Some(state) = app.try_state::<AppState>() {
-                    state.main_visible.store(true, Ordering::SeqCst);
-                }
-            }
+            // via show_main_and_emit to ensure height reset, IME control,
+            // and window-shown emit are applied consistently.
+            show_main_and_emit(app, ime_off_for_si);
         }))
         .manage(app_state)
         .manage(icon_cache_state)
@@ -337,19 +318,13 @@ fn main() {
             commands::get_icons_batch,
             commands::get_search_placement,
             commands::save_search_placement,
-            commands::set_window_no_activate,
             commands::notify_main_shown,
             commands::notify_main_hidden,
-            commands::notify_result_clicked,
-            commands::notify_result_double_clicked,
-            commands::notify_result_hovered,
             commands::get_indexing_state,
             commands::rebuild_index,
             commands::quit_app,
             commands::record_folder_expansion,
             commands::get_bootstrap_payload,
-            commands::ensure_window,
-            commands::is_main_foreground,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
@@ -417,9 +392,6 @@ fn main() {
             // Tray is NOT created here; SetTrayVisible is sent after full setup (SPEC §7.5).
             let platform_pending = PlatformBridge::begin(app_handle.clone(), hotkey_config);
 
-            // Pre-create results window (the only remaining WebView2 window).
-            ensure_window_with_timing(&app_handle, "results", commands::ensure_results_window)?;
-
             // Win32 init finishes in a few ms; by the time windows are created it is already done.
             if let Some(bridge) = platform_pending.and_then(PlatformBridgePending::wait) {
                 app_handle.manage(Mutex::new(bridge));
@@ -468,10 +440,9 @@ fn main() {
                     if let Some(state) = handle_for_hotkey.try_state::<AppState>() {
                         state.main_visible.store(false, Ordering::SeqCst);
                     }
-                    // Also hide results window
-                    if let Some(rw) = handle_for_hotkey.get_webview_window("results") {
-                        let _ = rw.hide();
-                    }
+                    // Notify JS side so mainVisible signal updates and Blob URLs are released.
+                    // Symmetric pair: window-shown is emitted in show_main_and_emit.
+                    let _ = handle_for_hotkey.emit("window-hidden", ());
                 } else if is_alt_pressed() {
                     trace_main("hotkey:alt_wait_start", json!({}));
                     let handle_for_show = handle_for_hotkey.clone();

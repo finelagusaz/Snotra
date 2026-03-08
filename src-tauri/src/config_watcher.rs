@@ -134,16 +134,14 @@ fn apply_config_change(app: &AppHandle) {
         let _ = app.emit("max-results-changed", new_max_results);
     }
 
-    // Resize windows if width changed
-    if width_changed && new_width > 0 {
-        for label in &["main", "results"] {
-            if let Some(w) = app.get_webview_window(label)
-                && let Ok(size) = w.inner_size()
-                && let Ok(sf) = w.scale_factor()
-            {
-                let logical = size.to_logical::<f64>(sf);
-                let _ = w.set_size(LogicalSize::new(f64::from(new_width), logical.height));
-            }
-        }
+    // Resize main window if width changed
+    if width_changed
+        && new_width > 0
+        && let Some(w) = app.get_webview_window("main")
+        && let Ok(size) = w.inner_size()
+        && let Ok(sf) = w.scale_factor()
+    {
+        let logical = size.to_logical::<f64>(sf);
+        let _ = w.set_size(LogicalSize::new(f64::from(new_width), logical.height));
     }
 }

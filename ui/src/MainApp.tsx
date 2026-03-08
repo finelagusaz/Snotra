@@ -1,39 +1,39 @@
-import { type Component, onMount, onCleanup } from "solid-js";
+import { type Component, onMount, onCleanup, createSignal, createEffect } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { LogicalSize } from "@tauri-apps/api/dpi";
 import { listen } from "@tauri-apps/api/event";
 import SearchWindow from "./components/SearchWindow";
+import ResultsSection from "./components/ResultsSection";
 import {
   resetForShow,
   setSelected,
   activateSelectedByIndex,
   initIndexingState,
   setHotkeyFailureNotice,
+  shouldShowResults,
 } from "./stores/search";
 import { applyTheme } from "./lib/theme";
 import { t } from "./lib/i18n";
 import type { BootstrapPayload, VisualConfig } from "./lib/types";
 import * as api from "./lib/invoke";
-import { perfMarkRenderDone } from "./lib/perf";
 import { trace } from "./lib/trace";
-import type { ResultsDataPayload, ResultsVisibilityPayload, ResultsRenderDonePayload } from "./lib/searchEvents";
-import { createResultsWindowController } from "./lib/resultsWindowController";
+
+const SEARCH_BAR_HEIGHT = 52;
+const RESULT_ROW_HEIGHT = 30;
+const RESULTS_PADDING = 8; // .results-section bottom padding
 
 const MainApp: Component = () => {
   const win = getCurrentWindow();
   const unlistenFns: Array<() => void> = [];
+  const [mainVisible, setMainVisible] = createSignal(false);
+  const [maxResults, setMaxResults] = createSignal(8);
+  let cachedWidth = 600;
 
   onMount(async () => {
-    const controller = createResultsWindowController(win);
-
-    const hideMainAndResults = async () => {
-      controller.updateMainVisible(false);
-      controller.updateResultsVisible(false);
+    const hideMain = async () => {
+      setMainVisible(false);
       api.notifyMainHidden().catch(() => {});
       await win.hide();
-      const rw = await controller.getResultsWindow();
-      if (rw) {
-        await rw.hide();
-      }
     };
 
     const registerAutoHideOnFocusLost = async () => {
@@ -45,13 +45,10 @@ const MainApp: Component = () => {
           blurTimer = setTimeout(async () => {
             try {
               if (blurCancelled) return;
-              // WS_EX_NOACTIVATE を設定しても WebView2 が SetForegroundWindow() を呼ぶため
-              // results クリック時も foreground が変わる。プロセス ID で自アプリ内操作を判定する。
-              const mainForeground = await api.isMainForeground();
-              if (blurCancelled) return;
-              if (!mainForeground) {
-                await hideMainAndResults();
-              }
+              // 統合後は results ウィンドウが同一ウィンドウ内のため、
+              // is_main_foreground によるプロセス ID 比較は不要。
+              // blurCancelled debounce はドラッグ移動時の一時的フォーカス喪失対策として維持。
+              await hideMain();
             } catch (e) {
               console.warn("auto-hide focus check failed:", e);
             }
@@ -65,44 +62,23 @@ const MainApp: Component = () => {
     };
 
     // Wait for all critical listeners to be attached before first reset/show.
-    const [unlistenWindowShown, unlistenDataChanged, unlistenVisibilityChanged, unlistenResultClicked, unlistenRenderDone, unlistenResultDoubleClicked, unlistenResultHovered, unlistenPlatformEvent] =
+    const [unlistenWindowShown, unlistenWindowHidden, unlistenPlatformEvent] =
       await Promise.all([
         listen("window-shown", () => {
           trace("app:event:window_shown");
-          controller.updateMainVisible(true);
+          setMainVisible(true);
           resetForShow();
         }),
-        listen<ResultsDataPayload>("results-data-changed", (event) => {
-          void controller.handleDataChanged(event.payload);
-        }),
-        listen<ResultsVisibilityPayload>("results-visibility-changed", (event) => {
-          void controller.handleVisibilityChanged(event.payload);
-        }),
-        listen<number>("result-clicked", async (event) => {
-          trace("app:event:result_clicked", { index: event.payload });
-          const launched = await activateSelectedByIndex(event.payload);
-          trace("app:event:result_clicked:done", { index: event.payload, launched });
-          if (launched) {
-            void hideMainAndResults();
-          } else {
-            console.warn("Failed to launch clicked result", { index: event.payload });
-          }
-        }),
-        listen<ResultsRenderDonePayload>("results-render-done", (event) => {
-          perfMarkRenderDone(event.payload.requestId);
-        }),
-        listen<number>("result-double-clicked", (event) => {
-          setSelected(event.payload);
-        }),
-        listen<number>("result-hovered", (event) => {
-          setSelected(event.payload);
+        listen("window-hidden", () => {
+          trace("app:event:window_hidden");
+          setMainVisible(false);
         }),
         listen<{ event: string; hotkey: string }>("platform-event", async (ev) => {
           const p = ev.payload;
           if (p.event === "initial-hotkey-failed") {
             trace("app:event:platform_event:initial_hotkey_failed");
             try {
-              controller.updateMainVisible(true);
+              setMainVisible(true);
               await win.show();
               // Sync Rust-side visibility flag so hotkey toggle works correctly.
               api.notifyMainShown().catch(() => {});
@@ -118,35 +94,40 @@ const MainApp: Component = () => {
 
     unlistenFns.push(
       unlistenWindowShown,
-      unlistenDataChanged,
-      unlistenVisibilityChanged,
-      unlistenResultClicked,
-      unlistenRenderDone,
-      unlistenResultDoubleClicked,
-      unlistenResultHovered,
+      unlistenWindowHidden,
       unlistenPlatformEvent,
     );
 
     const initiallyVisible = await win.isVisible();
-    controller.updateMainVisible(initiallyVisible);
+    setMainVisible(initiallyVisible);
     if (initiallyVisible) {
       resetForShow();
     }
     unlistenFns.push(await initIndexingState());
 
+    // Cache scale factor for coordinate conversion
+    let cachedScaleFactor = 1;
+    try {
+      cachedScaleFactor = await win.scaleFactor();
+      const size = await win.innerSize();
+      const logical = size.toLogical(cachedScaleFactor);
+      cachedWidth = logical.width;
+    } catch (e) {
+      console.warn("Failed to initialize window geometry cache:", e);
+    }
+
     const unlistenMainResized = await win.onResized(({ payload: sz }) => {
-      const logicalSize = sz.toLogical(controller.getCachedScaleFactor());
-      controller.updateMainSize(logicalSize.width, logicalSize.height);
+      const logicalSize = sz.toLogical(cachedScaleFactor);
+      cachedWidth = logicalSize.width;
     });
     unlistenFns.push(unlistenMainResized);
 
-    // Sync results window position when main moves
+    // Save window position (debounced)
     let moveTimer: ReturnType<typeof setTimeout> | undefined;
     let latestMoveEvent = 0;
     const unlistenMainMoved = await win.onMoved(({ payload: pos }) => {
       const moveEvent = ++latestMoveEvent;
-      const logicalPos = pos.toLogical(controller.getCachedScaleFactor());
-      // Save position (debounced)
+      const logicalPos = pos.toLogical(cachedScaleFactor);
       clearTimeout(moveTimer);
       moveTimer = setTimeout(() => {
         void (async () => {
@@ -154,10 +135,6 @@ const MainApp: Component = () => {
           await api.saveSearchPlacement(Math.round(logicalPos.x), Math.round(logicalPos.y));
         })();
       }, 500);
-
-      // Update cached position and sync results window position
-      controller.updateMainPosition(logicalPos);
-      void controller.handleMainMoved(logicalPos);
     });
     unlistenFns.push(unlistenMainMoved);
 
@@ -169,7 +146,7 @@ const MainApp: Component = () => {
 
     // Listen for max_results config changes
     const unlistenMaxResults = await listen<number>("max-results-changed", (event) => {
-      controller.updateMaxResults(event.payload);
+      setMaxResults(event.payload);
     });
     unlistenFns.push(unlistenMaxResults);
 
@@ -184,7 +161,7 @@ const MainApp: Component = () => {
     try {
       bootstrap = await api.getBootstrapPayload();
       applyTheme(bootstrap.visual);
-      controller.updateMaxResults(bootstrap.appearance.max_results);
+      setMaxResults(bootstrap.appearance.max_results);
     } catch (e) {
       console.error("Failed to load bootstrap payload:", e);
     }
@@ -192,6 +169,13 @@ const MainApp: Component = () => {
     if (bootstrap?.general.auto_hide_on_focus_lost) {
       await registerAutoHideOnFocusLost();
     }
+  });
+
+  // ウィンドウ高さを結果の表示/非表示に応じて動的変更
+  createEffect(() => {
+    const show = shouldShowResults();
+    const height = show ? SEARCH_BAR_HEIGHT + maxResults() * RESULT_ROW_HEIGHT + RESULTS_PADDING : SEARCH_BAR_HEIGHT;
+    void win.setSize(new LogicalSize(cachedWidth, height));
   });
 
   onCleanup(() => {
@@ -204,7 +188,39 @@ const MainApp: Component = () => {
     }
   });
 
-  return <SearchWindow />;
+  function handleClickResult(index: number) {
+    trace("app:event:result_clicked", { index });
+    void activateSelectedByIndex(index).then((launched) => {
+      trace("app:event:result_clicked:done", { index, launched });
+      if (launched) {
+        setMainVisible(false);
+        api.notifyMainHidden().catch(() => {});
+        void win.hide();
+      } else {
+        console.warn("Failed to launch clicked result", { index });
+      }
+    });
+  }
+
+  function handleDoubleClickResult(index: number) {
+    setSelected(index);
+  }
+
+  function handleHoverResult(index: number) {
+    setSelected(index);
+  }
+
+  return (
+    <>
+      <SearchWindow />
+      <ResultsSection
+        visible={shouldShowResults() && mainVisible()}
+        onClickResult={handleClickResult}
+        onDoubleClickResult={handleDoubleClickResult}
+        onHoverResult={handleHoverResult}
+      />
+    </>
+  );
 };
 
 export default MainApp;

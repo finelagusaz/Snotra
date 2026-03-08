@@ -127,25 +127,13 @@
 - 検索ボックスが空のときは候補を表示しない
 - 直近履歴は `/r` コマンドで明示的に表示する（§14.2 参照）
 
-### 3.7 結果表示同期契約（3イベント分割）
+### 3.7 結果表示制御（単一ウィンドウ）
 
-- 検索結果の表示同期は以下の3イベントで行う（選択変更時の不要な配列シリアライズを回避）
-- 3イベントは共通の `eventGeneration`（単調増加カウンタ）を `generation` フィールドに使い、受信側は古い世代を破棄する。`searchGeneration`（API stale 検知用）とは独立
-- **`results-data-changed`**: 結果配列が変わったとき
-  - `generation`: イベント世代番号（`eventGeneration`）
-  - `searchRequestId`: 検索リクエスト ID（`searchGeneration`、perf 計測用）
-  - `results`: 表示候補配列
-  - `selected`: 選択インデックス
-  - `shouldShow`: 結果ウィンドウを表示すべきか
-  - `reason`: 送信理由（`query` / `command` / `reset` / `launch`）
-- **`results-selection-changed`**: 選択インデックスのみ変わったとき（配列を送らない）
-  - `generation`: イベント世代番号（`eventGeneration`）
-  - `selected`: 選択インデックス
-- **`results-visibility-changed`**: 結果ウィンドウを非表示にするとき（配列を送らない）
-  - `generation`: イベント世代番号（`eventGeneration`）
-  - `shouldShow`: 常に `false`
-  - `reason`: 送信理由（`command` / `reset` / `launch`）
-- 表示制御は `shouldShow`（`results-data-changed` / `results-visibility-changed`）を唯一の真実源として扱う
+- 検索バーと検索結果は単一ウィンドウ内のコンポーネントとして共存する
+- 結果の表示/非表示は `shouldShowResults` メモシグナル（`results().length > 0 && !indexing()`）で制御する
+- ウィンドウ高さは `shouldShowResults` の値に応じて Tauri `set_size()` で動的に変更する
+- Rust 側の `show_main_and_emit` で毎回検索バー高さ（52px）にリセットしてからフロントエンドが結果に応じて拡張する
+- `results`・`selected` シグナルは `search.ts` で管理し、`ResultsSection` が直接参照する（IPC イベント不要）
 
 ## 4. 履歴・優先度システム
 
@@ -289,7 +277,7 @@
 - トレイアイコン: 検知時に `PlatformCommand::SetTrayVisible` で切替
 - 検索方式/最大件数: 検知後即時反映
 - 見た目設定: 検知時に `visual-config-changed` イベントで全ウィンドウの CSS 変数を即時更新
-- ウィンドウ幅: 検知時に `set_size` で main/results ウィンドウを即時リサイズ
+- ウィンドウ幅: 検知時に `set_size` で main ウィンドウを即時リサイズ
 - インデックス条件（スキャンパス・隠しファイル表示）・アイコン設定:
   - 検知時に変更を判定し、バックグラウンドで自動再構築
   - ステータスに「インデックスを再構築中…」を表示
@@ -325,14 +313,13 @@
 - `main` ウィンドウは `visible: false` で作成し、条件付きで `window.show()` を呼ぶ
 - `show_on_startup = false` の場合は非表示常駐でホットキー待ち
 
-### 7.5 サブウィンドウ生成タイミング
+### 7.5 ウィンドウ生成とプロセス管理
 
-- `results` ウィンドウは起動時のセットアップで事前生成（`visible: false`）
-- 初回表示時は既存インスタンスを `show` する
+- 検索ウィンドウ（`main`）は起動時のセットアップで生成（`visible: false`）。検索バーと検索結果は単一ウィンドウ内のコンポーネントとして共存する
 - `about` / `settings` は別プロセス（`snotra-settings`）として起動。本体は `SettingsProcessState`（`Mutex<Option<Child>>`）で子プロセスを管理し、二重起動を防止する
 - `snotra-settings` 起動中は本体のメインウィンドウの `alwaysOnTop` を一時的に `false` にし、終了検知時に `true` に復元する
-- `platform/mod.rs` の Win32 メッセージループスレッドは `results` ウィンドウ事前生成より前に spawn し、Win32 初期化とウィンドウ生成を並列実行する（起動時間の短縮）
-- トレイアイコンの表示は `results` ウィンドウの事前生成完了後に行う
+- `platform/mod.rs` の Win32 メッセージループスレッドはウィンドウ生成より前に spawn し、Win32 初期化とウィンドウ生成を並列実行する（起動時間の短縮）
+- トレイアイコンの表示はウィンドウ生成完了後に行う
 - ホットキー登録（`RegisterHotKey`）は `hotkey-pressed` イベントリスナーの登録完了後に行う。リスナー未登録の状態でホットキーを有効化すると、起動中のキー入力が受け手なく破棄されるため
 
 ### 7.6 状態遷移図
@@ -407,7 +394,7 @@ stateDiagram-v2
 - 右クリックメニュー: 「設定」「終了」
 - キーボードフォーカス + Shift+F10 / Application キー: 右クリックと同じコンテキストメニューを表示
 - 左クリック: 最近の実行履歴をポップアップメニューとして表示。履歴からの起動にもオープナールールが適用される（§17 参照）
-- トレイアイコンは `results` ウィンドウの事前生成完了後に表示する（§7.5 参照）
+- トレイアイコンはウィンドウ生成完了後に表示する（§7.5 参照）
 - `show_on_startup = true` の起動時は、検索UI（入力欄/結果）を起動直後から表示する
 - `show_on_startup = false` の起動時は検索UI（入力欄/結果）を表示しない
 - `show_on_startup = false` かつ `show_tray_icon = true` の場合は、可視要素はトレイアイコンのみ

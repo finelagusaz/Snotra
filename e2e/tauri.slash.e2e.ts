@@ -410,71 +410,67 @@ test("Shift+Enter でツール選択リストが表示され Escape で元に戻
   let input = await driver.findElement(By.css(".search-input"));
   await input.sendKeys("C:\\");
 
-  // フォルダ結果が表示されるまで results ウィンドウを待つ
-  await waitForVisibleLabel(driver, "results", 8_000);
+  // 結果が main ウィンドウ内の DOM に表示されるまで待つ
+  await driver.wait(
+    async () => (await driver.findElements(By.css(".result-row"))).length > 0,
+    8_000,
+    "C:\\ の結果が表示されない",
+  );
 
   // Shift+Enter でツール選択へ
-  await switchToLabel(driver, "main");
   input = await driver.findElement(By.css(".search-input"));
   await input.sendKeys(Key.chord(Key.SHIFT, Key.ENTER));
 
   // placeholder が "ツールを選択..." に変わるまでポーリング
   await driver.wait(async () => {
-    await switchToLabel(driver, "main");
     const el = await driver.findElement(By.css(".search-input"));
     return (await el.getAttribute("placeholder")) === "ツールを選択...";
   }, 6_000, "tool selection did not activate");
 
   // Escape でツール選択を解除
-  await switchToLabel(driver, "main");
   await driver.actions().sendKeys(Key.ESCAPE).perform();
 
   // placeholder が "ツールを選択..." 以外に戻るまでポーリング
   await driver.wait(async () => {
-    await switchToLabel(driver, "main");
     const el = await driver.findElement(By.css(".search-input"));
     return (await el.getAttribute("placeholder")) !== "ツールを選択...";
   }, 6_000, "tool selection did not exit");
 
   // 元の query "C:\\" が復元されていることを確認
-  await switchToLabel(driver, "main");
   const finalEl = await driver.findElement(By.css(".search-input"));
   const value = await finalEl.getAttribute("value");
   expect(value).toBe("C:\\");
 });
 
 
-test("検索クエリを入力すると results ウィンドウに結果が表示される", async ({ harness }) => {
+test("検索クエリを入力すると結果が表示される", async ({ harness }) => {
   const { driver } = harness;
 
   await switchToLabel(driver, "main");
   const input = await driver.findElement(By.css(".search-input"));
   await input.sendKeys(E2E_SEARCH_QUERY);
 
-  await waitForVisibleLabel(driver, "results", 8_000);
-  await switchToLabel(driver, "results");
+  // 結果が main ウィンドウ内の DOM に表示されるまで待つ
   await driver.wait(
     async () => (await driver.findElements(By.css(".result-row"))).length > 0,
     8_000,
-    "result-row が results ウィンドウに表示されない",
+    "result-row が表示されない",
   );
   const rows = await driver.findElements(By.css(".result-row"));
   expect(rows.length).toBeGreaterThan(0);
 });
 
-test("↓↑ キーで results の選択行が移動する", async ({ harness }) => {
+test("↓↑ キーで選択行が移動する", async ({ harness }) => {
   const { driver } = harness;
 
   await switchToLabel(driver, "main");
   let input = await driver.findElement(By.css(".search-input"));
   await input.sendKeys(E2E_SEARCH_QUERY);
 
-  await waitForVisibleLabel(driver, "results", 8_000);
-  await switchToLabel(driver, "results");
   await driver.wait(
     async () => (await driver.findElements(By.css(".result-row"))).length > 1,
     8_000,
-    "results に2行以上表示されない",
+    "結果に2行以上表示されない",
   );
 
   // 初期状態: 先頭行が selected
@@ -483,11 +479,9 @@ test("↓↑ キーで results の選択行が移動する", async ({ harness })
   expect(firstClass).toContain("selected");
 
   // ↓ キーで2番目の行へ移動
-  await switchToLabel(driver, "main");
   input = await driver.findElement(By.css(".search-input"));
   await input.sendKeys(Key.ARROW_DOWN);
 
-  await switchToLabel(driver, "results");
   await driver.wait(async () => {
     const r = await driver.findElements(By.css(".result-row"));
     if (r.length < 2) return false;
@@ -495,11 +489,9 @@ test("↓↑ キーで results の選択行が移動する", async ({ harness })
   }, 4_000, "↓ キーで選択が2番目に移動しない");
 
   // ↑ キーで先頭に戻る
-  await switchToLabel(driver, "main");
   input = await driver.findElement(By.css(".search-input"));
   await input.sendKeys(Key.ARROW_UP);
 
-  await switchToLabel(driver, "results");
   await driver.wait(async () => {
     const r = await driver.findElements(By.css(".result-row"));
     if (r.length === 0) return false;
@@ -553,31 +545,25 @@ test("→ キーでフォルダ展開、Escape でスナップショット復帰
   let input = await driver.findElement(By.css(".search-input"));
   await input.sendKeys("C:\\");
 
-  await waitForVisibleLabel(driver, "results", 8_000);
-  await switchToLabel(driver, "results");
   await driver.wait(
     async () => (await driver.findElements(By.css(".result-row"))).length > 0,
-    6_000,
-    "C:\\ の結果が results ウィンドウに表示されない",
+    8_000,
+    "C:\\ の結果が表示されない",
   );
 
   // → キーで最初の結果（フォルダ）に入る → folderFilter="" で input value が空になる
-  await switchToLabel(driver, "main");
   input = await driver.findElement(By.css(".search-input"));
   await input.sendKeys(Key.ARROW_RIGHT);
 
   await driver.wait(async () => {
-    await switchToLabel(driver, "main");
     const el = await driver.findElement(By.css(".search-input"));
     return (await el.getAttribute("value")) === "";
   }, 4_000, "→ キーでフォルダモードに入らない（input が空にならない）");
 
   // Escape でスナップショット（C:\）に一括復帰
-  await switchToLabel(driver, "main");
   await driver.actions().sendKeys(Key.ESCAPE).perform();
 
   await driver.wait(async () => {
-    await switchToLabel(driver, "main");
     const el = await driver.findElement(By.css(".search-input"));
     return (await el.getAttribute("value")) === "C:\\";
   }, 4_000, "Escape で C:\\ に復帰しない");
@@ -604,12 +590,12 @@ test("/r 入力でエラーにならず main が表示されたままになる",
   expect(await el.getAttribute("value")).toBe("/r");
 });
 
-test("/s 入力で main と results ウィンドウが非表示になる", async ({ harness }) => {
+test("/s 入力で main ウィンドウが非表示になる", async ({ harness }) => {
   const { driver } = harness;
 
   await switchToLabel(driver, "main");
   const input = await driver.findElement(By.css(".search-input"));
-  // /s action: hideAllWindows() → rebuildIndex()（hide が先行する）
+  // /s action: hideMainWindow() → rebuildIndex()（hide が先行する）
   await input.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, "/s");
 
   await waitForHiddenLabel(driver, "main", 8_000);
@@ -623,8 +609,6 @@ test("config.toml を書き換えると max_results が即時反映される", a
   let input = await driver.findElement(By.css(".search-input"));
   await input.sendKeys(E2E_SEARCH_QUERY);
 
-  await waitForVisibleLabel(driver, "results", 8_000);
-  await switchToLabel(driver, "results");
   await driver.wait(
     async () =>
       (await driver.findElements(By.css(".result-row"))).length === E2E_FIXTURE_FILENAMES.length,
@@ -638,10 +622,8 @@ test("config.toml を書き換えると max_results が即時反映される", a
 
   // config が反映されるまで clear→retype→チェックを繰り返す
   await driver.wait(async () => {
-    await switchToLabel(driver, "main");
     const el = await driver.findElement(By.css(".search-input"));
     await el.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, E2E_SEARCH_QUERY);
-    await switchToLabel(driver, "results");
     return (await driver.findElements(By.css(".result-row"))).length === 1;
   }, 12_000, "config.toml の max_results 変更が反映されない");
 
@@ -673,35 +655,29 @@ test("/s 後にインデックス再構築が完了し検索が機能する", as
     await switchToLabel(driver, "main");
     const el = await driver.findElement(By.css(".search-input"));
     await el.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, E2E_SEARCH_QUERY);
-    await switchToLabel(driver, "results");
     return (await driver.findElements(By.css(".result-row"))).length > 0;
   }, 30_000, "インデックス再構築後に検索結果が表示されない");
 
-  await switchToLabel(driver, "results");
   const rows = await driver.findElements(By.css(".result-row"));
   expect(rows.length).toBeGreaterThan(0);
 });
 
-test("Enter で検索結果を起動すると main と results が非表示になる", async ({ harness }) => {
+test("Enter で検索結果を起動すると main が非表示になる", async ({ harness }) => {
   const { driver } = harness;
 
   await switchToLabel(driver, "main");
   let input = await driver.findElement(By.css(".search-input"));
   await input.sendKeys(E2E_SEARCH_QUERY);
 
-  await waitForVisibleLabel(driver, "results", 8_000);
-  await switchToLabel(driver, "results");
   await driver.wait(
     async () => (await driver.findElements(By.css(".result-row"))).length > 0,
-    6_000,
+    8_000,
   );
 
   // Enter で先頭の結果（snotra-e2e-*.txt）を起動
-  // 起動成功 → hideAllWindows() で main が非表示になる（side effect: txt がエディタで開く）
-  await switchToLabel(driver, "main");
+  // 起動成功 → hideMain() で main が非表示になる（side effect: txt がエディタで開く）
   input = await driver.findElement(By.css(".search-input"));
   await input.sendKeys(Key.ENTER);
 
   await waitForHiddenLabel(driver, "main", 6_000);
 });
-

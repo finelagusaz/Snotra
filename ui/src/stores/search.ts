@@ -1,5 +1,5 @@
-import { createSignal, createEffect, createRoot, on } from "solid-js";
-import { emit, listen } from "@tauri-apps/api/event";
+import { createSignal, createEffect, createRoot, on, createMemo } from "solid-js";
+import { listen } from "@tauri-apps/api/event";
 import type { OpenerTool, SearchResult } from "../lib/types";
 import * as api from "../lib/invoke";
 import { findCommand } from "../lib/commands";
@@ -7,7 +7,6 @@ import { perfStartSearch, perfMarkSearchDone, perfCancelSearch } from "../lib/pe
 import { parsePathQuery } from "../lib/pathQuery";
 import { clampSelectedIndex, computeParentDir } from "../lib/folderNav";
 import { trace } from "../lib/trace";
-import type { ResultsPresentationReason, ResultsDataPayload } from "../lib/searchEvents";
 import { folderState, setFolderState, folderFilter, setFolderFilter } from "./folder";
 import { toolSelectionState, setToolSelectionState } from "./tool-selection";
 import { t } from "../lib/i18n";
@@ -23,41 +22,11 @@ let debounceTimer: ReturnType<typeof requestAnimationFrame> | undefined;
 let launchNoticeTimer: ReturnType<typeof setTimeout> | undefined;
 let refreshInFlight: Promise<void> | undefined;
 let searchGeneration = 0;
-let eventGeneration = 0;
 let activationInFlight = false;
 let suppressNextQueryEffectRefresh = false;
 
-function emitDataChanged(
-  items: SearchResult[],
-  selectedIndex: number,
-  searchRequestId: number,
-  reason: ResultsPresentationReason = "query",
-) {
-  const payload: ResultsDataPayload = {
-    generation: ++eventGeneration,
-    searchRequestId,
-    results: items,
-    selected: selectedIndex,
-    shouldShow: items.length > 0,
-    reason,
-  };
-  emit("results-data-changed", payload);
-}
-
-function emitSelectionChanged(selectedIndex: number) {
-  emit("results-selection-changed", {
-    generation: ++eventGeneration,
-    selected: selectedIndex,
-  });
-}
-
-function emitVisibilityChanged(reason: ResultsPresentationReason) {
-  emit("results-visibility-changed", {
-    generation: ++eventGeneration,
-    shouldShow: false,
-    reason,
-  });
-}
+/** 結果を表示すべきかの派生シグナル。MainApp がリアクティブにウィンドウ高さを変更するために使用 */
+const shouldShowResults = createMemo(() => results().length > 0 && !indexing());
 
 function clearLaunchNotice() {
   if (launchNoticeTimer !== undefined) {
@@ -82,12 +51,11 @@ export function setHotkeyFailureNotice(message: string) {
   setLaunchNoticeWithAutoClear(message, 5000);
 }
 
-function clearCommandModeStateAndEmit() {
+function clearCommandModeState() {
   ++searchGeneration;
   setQuery("");
   setResults([]);
   setSelected(0);
-  emitVisibilityChanged("command");
 }
 
 function cancelDebounce() {
@@ -135,7 +103,6 @@ async function refreshResults() {
     setSelected(0);
     trace("search:refresh:done", { requestId, branch: "slash_r_history", count: items.length });
     perfMarkSearchDone(requestId, items.length);
-    emitDataChanged(items, 0, requestId);
     return;
   }
   if (!fs && trimmed.startsWith("/")) {
@@ -143,7 +110,6 @@ async function refreshResults() {
     trace("search:refresh:branch", { requestId, branch: "slash_noop" });
     setResults([]);
     setSelected(0);
-    emitVisibilityChanged("command");
     return;
   }
   const pathQuery = fs ? null : parsePathQuery(q);
@@ -161,7 +127,6 @@ async function refreshResults() {
     setSelected(0);
     trace("search:refresh:done", { requestId, branch: "indexing_guard", count: 0 });
     perfMarkSearchDone(requestId, 0);
-    emitVisibilityChanged("reset");
     return;
   }
 
@@ -208,7 +173,6 @@ async function refreshResults() {
     selected: nextSelected,
   });
   perfMarkSearchDone(requestId, items.length);
-  emitDataChanged(items, nextSelected, requestId);
 }
 
 createRoot(() => {
@@ -244,7 +208,7 @@ createRoot(() => {
         if (cmd && cmd.command !== "/r") {
           cancelDebounce();
           trace("search:query_effect:run_command", { command: cmd.command });
-          clearCommandModeStateAndEmit();
+          clearCommandModeState();
           cmd.action();
           return;
         }
@@ -255,7 +219,6 @@ createRoot(() => {
         ++searchGeneration;
         setResults([]);
         setSelected(0);
-        emitVisibilityChanged("command");
         return;
       }
 
@@ -276,22 +239,12 @@ createRoot(() => {
   );
 });
 
-function emitSelectionUpdate() {
-  const nextSelected = clampSelectedIndex(selected(), results().length);
-  if (nextSelected !== selected()) {
-    setSelected(nextSelected);
-  }
-  emitSelectionChanged(nextSelected);
-}
-
 function moveSelectionUp() {
   setSelected((s) => clampSelectedIndex(s - 1, results().length));
-  emitSelectionUpdate();
 }
 
 function moveSelectionDown() {
   setSelected((s) => clampSelectedIndex(s + 1, results().length));
-  emitSelectionUpdate();
 }
 
 function enterFolderExpansion(dir: string) {
@@ -321,13 +274,12 @@ function exitFolderExpansion(): boolean {
   // デバウンスタイマーをクリア（フォルダモード中の入力残り処理を防止）
   cancelDebounce();
 
-  const requestId = ++searchGeneration;
+  ++searchGeneration;
   setResults(fs.savedResults);
   setSelected(fs.savedSelected);
   setFolderState(null);    // setQuery より先に null にする
   setFolderFilter("");
   setQuery(fs.savedQuery);
-  emitDataChanged(fs.savedResults, fs.savedSelected, requestId);
   return true;
 }
 
@@ -415,7 +367,8 @@ async function launchWithSelectedTool(): Promise<boolean> {
     });
     // 結果を隠す
     ++searchGeneration;
-    emitVisibilityChanged("launch");
+    setResults([]);
+    setSelected(0);
     const launchResult = await api.launchWithTool(
       frame.targetPath,
       frame.savedQuery,
@@ -445,7 +398,6 @@ async function launchWithSelectedTool(): Promise<boolean> {
     setResults([]);
     setSelected(0);
     ++searchGeneration;
-    emitVisibilityChanged("launch");
     trace("search:launch_with_tool:done", { path: frame.targetPath });
     return true;
   } finally {
@@ -490,10 +442,9 @@ async function enterToolSelection(result: SearchResult): Promise<boolean> {
     isFolder: false,
     isError: false,
   }));
-  const requestId = ++searchGeneration;
+  ++searchGeneration;
   setResults(toolResults);
   setSelected(0);
-  emitDataChanged(toolResults, 0, requestId);
   trace("search:enter_tool_selection:ok", { path: result.path, toolCount: tools.length });
   return false;
 }
@@ -502,13 +453,12 @@ function exitToolSelection(): boolean {
   const frame = toolSelectionState();
   if (!frame) return false;
 
-  const requestId = ++searchGeneration;
+  ++searchGeneration;
   setResults(frame.savedResults);
   setSelected(frame.savedSelected);
   setToolSelectionState(null);
   // フォルダ展開中だった場合の folderFilter を復帰
   setFolderFilter(frame.savedFolderFilter);
-  emitDataChanged(frame.savedResults, frame.savedSelected, requestId);
   trace("search:exit_tool_selection:ok", { path: frame.targetPath });
   return true;
 }
@@ -520,9 +470,10 @@ async function launchAndReset(result: SearchResult): Promise<boolean> {
   setLaunching(true);
   trace("search:launch:start", { path: result.path, query: query() });
   try {
-    // launch 開始時に results を明示的に隠す
+    // launch 開始時に results を隠す
     ++searchGeneration;
-    emitVisibilityChanged("launch");
+    setResults([]);
+    setSelected(0);
     const launchResult = await api.launchItem(result.path, query());
     if (launchResult.status !== "ok") {
       trace("search:launch:error", {
@@ -546,7 +497,6 @@ async function launchAndReset(result: SearchResult): Promise<boolean> {
     setResults([]);
     setSelected(0);
     ++searchGeneration;
-    emitVisibilityChanged("launch");
     trace("search:launch:done", { path: result.path, code: launchResult.code });
     return true;
   } finally {
@@ -598,7 +548,7 @@ async function activateSelectedByIndex(index: number): Promise<boolean> {
 
 function resetForShow() {
   trace("search:reset_for_show", { query: query() });
-  // すでにクリーン状態なら runRefresh() をスキップ（results ウィンドウへの不要な IPC を削減）。
+  // すでにクリーン状態なら runRefresh() をスキップ。
   // リセット前に確認する（setFolderState / setToolSelectionState が呼ばれる前）。
   // indexing() は含めない: indexing=true 時も results は既に非表示のため、スキップしても問題ない。
   const skipRefresh = query() === "" && folderState() === null && toolSelectionState() === null;
@@ -640,6 +590,11 @@ async function initIndexingState(): Promise<() => void> {
   };
 }
 
+/** 現在の searchGeneration を返す（perf 計測の requestId として使用） */
+function getSearchGeneration(): number {
+  return searchGeneration;
+}
+
 export {
   query,
   setQuery,
@@ -655,6 +610,7 @@ export {
   activateSelectedByIndex,
   refreshResults,
   resetForShow,
+  shouldShowResults,
   indexing,
   initIndexingState,
   launching,
@@ -662,6 +618,7 @@ export {
   clearLaunchNotice,
   enterToolSelection,
   exitToolSelection,
+  getSearchGeneration,
 };
 
 export { folderState, folderFilter, setFolderFilter } from "./folder";

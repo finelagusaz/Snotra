@@ -4,15 +4,14 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 
 ## モジュール構成
 
-### エントリポイント（multi-page build）
+### エントリポイント（single-page build）
 
-- `main.html` / `main.tsx` → `MainApp.tsx`: 検索ウィンドウ用エントリ。テーマ適用、ウィンドウ位置復元、イベントリスナー登録、resultsWindowController 管理
-- `results.html` / `results.tsx` → `ResultsApp.tsx`: 結果ウィンドウ用エントリ。テーマ適用のみ。search store を含まない軽量バンドル
+- `main.html` / `main.tsx` → `MainApp.tsx`: 検索ウィンドウ用エントリ。テーマ適用、ウィンドウ位置復元、イベントリスナー登録、動的ウィンドウ高さ管理
 
 ### components/
 
 - `SearchWindow.tsx`: 検索入力 + キーボードナビゲーション + スラッシュコマンド補完 + ドラッグ移動
-- `ResultsWindow.tsx`: 別 WebviewWindow で動作する検索結果ウィンドウ。`results-data-changed` / `results-selection-changed` イベントを受け取り結果一覧を描画。アイコンのバイナリバッチ取得・Blob URL 管理・スクロール追従を担当
+- `ResultsSection.tsx`: 検索結果をメインウィンドウ内にインライン描画。`search.ts` のシグナル（`results`・`selected`）を直接参照。アイコンのバイナリバッチ取得・Blob URL 管理・スクロール追従を担当
 - `ResultRow.tsx`: アイコン + 名前 + パス + フォルダバッジ（1行分の描画）
 - `ToggleSwitch.tsx`: トグルスイッチ共通 UI コンポーネント
 - `ThemePreview.tsx`: `VisualConfig` を受け取ってテーマの縮小プレビューを描画
@@ -20,24 +19,22 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 
 ### stores/
 
-- `search.ts`: 検索状態管理（クエリ/結果/選択/モード切替/`results-data-changed` / `results-selection-changed` / `results-visibility-changed` emit）
+- `search.ts`: 検索状態管理（クエリ/結果/選択/モード切替/`shouldShowResults` メモシグナル）
 - `folder.ts`: フォルダモードの状態（`FolderFrame` シグナル + `folderFilter`）
 - `tool-selection.ts`: ツール選択モードの状態（`ToolSelectionFrame` シグナル）
 - `settings.ts`: 設定ドラフト管理
 
 ### lib/
 
-- `resultsWindowController.ts`: results ウィンドウの位置・サイズ・表示制御（`createResultsWindowController` ファクトリ）
 - `invoke.ts`: 型付き Tauri IPC ラッパー
 - `theme.ts`: CSS 変数によるテーマ適用
 - `types.ts`: TypeScript 型定義の集約先（DRY）
-- `commands.ts`: スラッシュコマンド定義（`/r` `/o` `/s` `/q`）と `SLASH_COMMANDS` 配列・`findCommand()` 関数
+- `commands.ts`: スラッシュコマンド定義（`/r` `/o` `/s` `/q`）と `SLASH_COMMANDS` 配列・`findCommand()` 関数。`hideMainWindow()` でメインウィンドウを非表示にする
 - `i18n.ts`: 日本語ローカライズ。`TranslationKey` 型と `t(key, params?)` 関数。`{param}` 形式プレースホルダー対応
-- `searchEvents.ts`: `ResultsDataPayload` / `ResultsSelectionPayload` / `ResultsVisibilityPayload` 型定義（3分割イベントのペイロード構造）
 - `folderNav.ts`: フォルダナビゲーション純粋ロジック（`computeParentDir`・`clampSelectedIndex`）。ドライブルート・UNC パス対応。テスト可能なため `stores/` から分離
 - `pathQuery.ts`: パスクエリ判定ロジック（`parsePathQuery`・`isPathQuery`）。入力がパス形式かを判定しフォルダ参照モードへの切り替えをトリガー
 - `hotkeyValidation.ts`: ホットキーの有効性チェック（`isHotkeyInvalid`・`formatHotkeyLabel`）。Win キー・禁止キー・修飾キーなしをガード
-- `lruIconCache.ts`: Blob URL 管理付き LRU アイコンキャッシュ（`LruIconCache` クラス）。ResultsWindow で使用
+- `lruIconCache.ts`: Blob URL 管理付き LRU アイコンキャッシュ（`LruIconCache` クラス）。ResultsSection で使用
 - `truncatePath.ts`: Canvas API でフォント依存のピクセル幅を計測し、長いパスを中間省略する（`truncatePath`）。結果はキャッシュ済み
 - `perf.ts`: 開発時専用パフォーマンス計測（`localStorage.snotra_perf=1` で有効化）。入力→検索→描画の3フェーズ時間を計測し P50/P95 を `console.table` 出力
 - `trace.ts`: 開発時専用トレースログ（`localStorage.snotra_trace=1` で有効化）。`trace(event, data)` で `console.debug` 出力
@@ -62,30 +59,27 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 - ドラッグ開始時の一時的なフォーカス喪失で `auto_hide_on_focus_lost` が誤発火するため、`onFocusChanged` の非表示処理に 100ms の猶予を設けフォーカス復帰時にキャンセルする設計
 - **`async` 関数内で `await` をまたぐ可変変数はローカルキャプチャする**: `let` 変数やモジュールスコープの可変変数を `await` をまたいで参照する場合、関数冒頭で `const` にコピーしてから使う。`await` 中に外部イベントで値が書き換わると後続処理が意図しない値を参照する（例: `const visibleCount = cachedMaxResults`）
 
-## マルチウィンドウ通信の不変条件
+## 単一ウィンドウの高さ管理
 
-`main` と `results` は別 `WebviewWindow` であり JavaScript コンテキストを共有しない。`ResultsWindow` は `results-data-changed` / `results-selection-changed` Tauri イベントで状態を受け取る。以下の不変条件を守ること。
+検索バーと検索結果は1つの Tauri ウィンドウ内に共存する。結果の表示/非表示はシグナルで管理し、ウィンドウ高さは動的に変更する。
 
-- `search.ts` の状態（`results`・`selected`）を変更したとき、`ResultsWindow` への通知が必要な場合は必ず `emitDataChanged()` / `emitSelectionChanged()` / `emitVisibilityChanged()` のいずれかを呼ぶ
-- イベントリスナー（`listen()`）を登録したら必ず `onCleanup()` で後始末する。`onCleanup` の登録は `listen()` の呼び出しより前、同期コンテキストで行うこと（`await` や `.then()` の後ではリアクティブコンテキストが失われる）
-- 新しいイベントハンドラを追加するとき、対称ペアのハンドラにも同様の処理が必要か確認する（例: `result-clicked` を変更したら `result-double-clicked` も確認する）
-- リソース管理（`ResizeObserver`・`listen()` 等）は生成と破棄を近接した独立したクリーンアップとして記述する。複数のリソースを1つの `onCleanup` にまとめると、一方の条件（`if (listRef)` 等）が他方のクリーンアップ登録を阻害する
+- `shouldShowResults` メモシグナル: `results().length > 0 && !indexing()` — 結果を表示すべきかの判定
+- `mainVisible` ローカルシグナル: `window-shown` / `window-hidden` イベントで同期される — ウィンドウが可視かの判定
+- `ResultsSection` の `visible` prop: `shouldShowResults() && mainVisible()` — 実際の描画と Blob URL ライフサイクルを制御
+- `createEffect` でウィンドウ高さを計算: `shouldShowResults()` が true なら `SEARCH_BAR_HEIGHT + maxResults * RESULT_ROW_HEIGHT + RESULTS_PADDING`、false なら `SEARCH_BAR_HEIGHT`
+- Rust 側の `show_main_and_emit` で毎回 52px にリセット → フロントエンドが結果に応じて拡張。これにより表示時の一瞬のフラッシュを防止する
 
 ## Blob URL 管理の不変条件
 
 - アイコンの Blob URL は `LruIconCache`（`lruIconCache.ts`）が一元管理する。`URL.createObjectURL` で生成した URL は必ず `cache.set()` または早期リターン時の明示的 `revokeObjectURL` で回収する
 - `parseBinaryBatch` で Blob URL を生成した後、`cache.set()` に到達する前に早期リターンするパス（stale guard 等）では、`parsed` 内の全 URL を明示的に `revokeObjectURL` すること
-- `results-visibility-changed` で `cache.revokeAll()` を呼んだ後は `iconCacheVersion` を更新し、revoke 済み URL が `<img src>` に渡らないようにする
+- `ResultsSection` の `visible` prop が `false` になったとき `cache.revokeAll()` + `iconCacheVersion` 更新で Blob URL を一括解放する
 
 ## 設計上の注意点
 
-### result-clicked / result-double-clicked のペイロード型
+### result-clicked / result-double-clicked のハンドラ
 
-`result-clicked`（クリック起動）と `result-double-clicked`（行選択）はどちらも **リスト行インデックス（`number`）** をペイロードとして送る。パス文字列をペイロードに使ってはならない。理由: パスは通常検索では一意だが、ツール選択モード中は同一 exe の複数ツールが同じパス（`tool.exe`）を持ちうるため非一意になる。インデックスは全コンテキストで常に一意。
-
-### searchGeneration と windowOpsGeneration の関係
-
-`search.ts` の `searchGeneration`（検索リクエストの stale 判定）と `resultsWindowController.ts` の `windowOpsGeneration`（ウィンドウ操作の stale 判定）は別責務のカウンタであり、`windowOpsGeneration` は `searchGeneration` の派生値。二重管理ではなく、それぞれ独立した責務を持つ。ただし、どちらかの stale 判定ロジックを変更するときは両方に影響しないか確認すること。
+クリック起動 (`handleClickResult`) とダブルクリック選択 (`handleDoubleClickResult`) はどちらも **リスト行インデックス（`number`）** を引数として受け取る。パス文字列を使ってはならない。理由: パスは通常検索では一意だが、ツール選択モード中は同一 exe の複数ツールが同じパス（`tool.exe`）を持ちうるため非一意になる。インデックスは全コンテキストで常に一意。
 
 ### i18n キー設計のルール
 

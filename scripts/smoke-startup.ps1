@@ -17,8 +17,7 @@ if (-not (Test-Path $ExePath)) {
   throw "Executable not found: $ExePath"
 }
 
-# about/settings are now separate processes (snotra-settings); only results window is pre-created.
-$requiredLabels = @("results")
+# Single-window architecture: no sub-windows to verify.
 $summaries = @()
 $failures = @()
 $savedTraceEnv = $env:SNOTRA_TRACE
@@ -62,29 +61,13 @@ for ($run = 1; $run -le $Iterations; $run++) {
     }
   }
 
-  $okByLabel = @{}
-  foreach ($evt in $events) {
-    if ($evt.event -eq "main:ensure_window:ok") {
-      $label = [string]$evt.data.label
-      if ($requiredLabels -contains $label) {
-        $okByLabel[$label] = [int]$evt.data.elapsed_ms
-      }
-    }
-  }
-
   $errorEvents = @($events | Where-Object { $_.event -like "*:error" })
-  foreach ($label in $requiredLabels) {
-    if (-not $okByLabel.ContainsKey($label)) {
-      $failures += "run=$run missing main:ensure_window:ok label=$label"
-    }
-  }
   foreach ($errEvt in $errorEvents) {
     $failures += "run=$run error event=$($errEvt.event)"
   }
 
   $summaries += [pscustomobject]@{
     run = $run
-    results_ms = if ($okByLabel.ContainsKey("results")) { $okByLabel["results"] } else { $null }
     error_count = $errorEvents.Count
   }
 }

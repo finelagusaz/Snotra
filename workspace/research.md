@@ -10,11 +10,11 @@
 
 ## 現状の挙動
 
-| 操作 | 現在の動作 | issue 後のあるべき姿 |
+| 操作 | 変更前の動作 | 方式 C 適用後 |
 |------|-----------|---------------------|
 | ホバー | `setSelected(index)` — 選択が変わる | 視覚フィードバック（CSS `:hover`）のみ、`selected` は変えない |
-| シングルクリック | `activateSelectedByIndex(index)` — 即起動 | `setSelected(index)` — 選択のみ |
-| ダブルクリック | `setSelected(index)` — 選択のみ | `activateSelectedByIndex(index)` — 起動 |
+| シングルクリック | `activateSelectedByIndex(index)` — 即起動 | 変更なし（即起動を維持） |
+| ダブルクリック | `setSelected(index)` — 選択のみ | 変更なし |
 | Enter | 選択中アイテムを起動 | 変更なし |
 | Arrow ↑↓ | 選択移動 | 変更なし |
 

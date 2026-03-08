@@ -135,6 +135,13 @@
 - Rust 側の `show_main_and_emit` で毎回検索バー高さ（52px）にリセットしてからフロントエンドが結果に応じて拡張する
 - `results`・`selected` シグナルは `search.ts` で管理し、`ResultsSection` が直接参照する（IPC イベント不要）
 
+### 3.8 マウス操作
+
+- ホバー: CSS `:hover` による視覚フィードバックのみ。`selected` 状態は変化しない
+- シングルクリック: アイテムを起動する（`activateSelectedByIndex` 経由）
+- ダブルクリック: `selected` を更新する（起動しない）
+- キーボードナビゲーション（Arrow ↑↓）とマウス操作は互いに干渉しない
+
 ## 4. 履歴・優先度システム
 
 ### 4.1 記録内容

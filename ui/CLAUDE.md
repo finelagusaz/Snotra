@@ -77,9 +77,11 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 
 ## 設計上の注意点
 
-### result-clicked / result-double-clicked のハンドラ
+### マウスイベントハンドラ
 
 クリック起動 (`handleClickResult`) とダブルクリック選択 (`handleDoubleClickResult`) はどちらも **リスト行インデックス（`number`）** を引数として受け取る。パス文字列を使ってはならない。理由: パスは通常検索では一意だが、ツール選択モード中は同一 exe の複数ツールが同じパス（`tool.exe`）を持ちうるため非一意になる。インデックスは全コンテキストで常に一意。
+
+マウスホバーは CSS `:hover` による視覚フィードバックのみ。`selected` シグナルは変更しない（キーボードナビゲーションとの干渉を防ぐため）。
 
 ### i18n キー設計のルール
 

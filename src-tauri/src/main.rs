@@ -282,6 +282,7 @@ fn main() {
     let hotkey_toggle = config.general.hotkey_toggle;
     let hotkey_config = config.hotkey.clone();
     let window_width = config.appearance.window_width;
+    let bg_color = config.visual.background_color.clone();
 
     let engine = if let Some(masks) = cached_masks {
         Engine::new_from_cache(entries, masks, history, config)
@@ -350,12 +351,9 @@ fn main() {
                 }
             }
 
-            // Set WebView2 default background to dark to prevent white flash
-            // when the window is resized to show results (#193).
-            if let Some(ref w) = app.get_webview_window("main") {
-                use tauri::window::Color;
-                let _ = w.set_background_color(Some(Color(40, 40, 40, 255)));
-            }
+            // Set WebView2 default background to match the theme to prevent
+            // a white flash when the window is resized to show results (#193).
+            config_watcher::sync_webview_background(&app_handle, &bg_color);
 
             // Register AcceleratorKeyPressed handler to suppress WM_SYSKEYDOWN
             // (Alt+char) before TranslateMessage → WM_SYSCHAR → DefWindowProc →

@@ -4,11 +4,34 @@ use std::time::Duration;
 
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use snotra_core::config::Config;
+use tauri::window::Color;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager};
 
 use crate::indexing;
 use crate::platform::{PlatformBridge, PlatformCommand};
 use crate::state::AppState;
+
+/// Parse a CSS hex color string (e.g. "#282828") into a Tauri `Color`.
+fn parse_hex_color(hex: &str) -> Option<Color> {
+    let hex = hex.strip_prefix('#')?;
+    if hex.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    Some(Color(r, g, b, 255))
+}
+
+/// Set the native window/WebView2 background color to match the theme.
+/// This prevents a white flash when the window is resized to show results.
+pub(crate) fn sync_webview_background(app: &AppHandle, bg_color_hex: &str) {
+    if let Some(color) = parse_hex_color(bg_color_hex)
+        && let Some(w) = app.get_webview_window("main")
+    {
+        let _ = w.set_background_color(Some(color));
+    }
+}
 
 /// Start watching `config.toml` for external changes (e.g. from snotra-settings).
 ///
@@ -119,8 +142,9 @@ fn apply_config_change(app: &AppHandle) {
         indexing::start_index_build(app);
     }
 
-    // Emit visual config change
+    // Emit visual config change and sync native background color
     if let Some(visual) = new_visual {
+        sync_webview_background(app, &visual.background_color);
         let _ = app.emit("visual-config-changed", &visual);
     }
 

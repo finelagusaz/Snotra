@@ -44,6 +44,7 @@ modifier = "Alt"
 key = "Q"
 
 [general]
+language = "ja"
 hotkey_toggle = true
 show_on_startup = true
 auto_hide_on_focus_lost = false

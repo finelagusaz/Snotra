@@ -47,6 +47,13 @@ impl Tr {
         }
     }
 
+    pub fn tab_instant_command(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "インスタント",
+            Language::En => "Instant",
+        }
+    }
+
     pub fn tab_about(&self) -> &'static str {
         match self.0 {
             Language::Ja => "Snotra について",
@@ -152,6 +159,20 @@ impl Tr {
         match self.0 {
             Language::Ja => "のパスが空です",
             Language::En => " path is empty",
+        }
+    }
+
+    pub fn err_instant_prefix_empty(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "インスタントコマンドのプレフィックスが空です",
+            Language::En => "Instant command prefix is empty",
+        }
+    }
+
+    pub fn err_instant_prefix_slash(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "プレフィックスに / は使用できません（スラッシュコマンドと競合）",
+            Language::En => "Prefix cannot be / (conflicts with slash commands)",
         }
     }
 
@@ -691,6 +712,84 @@ impl Tr {
         match self.0 {
             Language::Ja => "(未設定)",
             Language::En => "(not set)",
+        }
+    }
+
+    // Instant command tab
+    pub fn heading_instant_prefix(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "プレフィックス",
+            Language::En => "Prefix",
+        }
+    }
+
+    pub fn label_instant_prefix(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "プレフィックス:",
+            Language::En => "Prefix:",
+        }
+    }
+
+    pub fn hint_instant_prefix(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "検索バーでこの文字を入力するとインスタントコマンドモードになります",
+            Language::En => "Type this character in the search bar to enter instant command mode",
+        }
+    }
+
+    pub fn heading_instant_commands(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "コマンド一覧",
+            Language::En => "Commands",
+        }
+    }
+
+    pub fn instant_description(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "URL や実行ファイルを登録し、検索バーから即座に実行できます。{query} と {clip} が変数として展開されます",
+            Language::En => "Register URLs or executables to run instantly from the search bar. {query} and {clip} are expanded as variables",
+        }
+    }
+
+    pub fn label_no_instant_commands(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "コマンドが登録されていません",
+            Language::En => "No commands registered",
+        }
+    }
+
+    pub fn label_instant_name(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "名前:",
+            Language::En => "Name:",
+        }
+    }
+
+    pub fn label_instant_command(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "コマンド:",
+            Language::En => "Command:",
+        }
+    }
+
+    pub fn hint_instant_command(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "{query} でクエリ、{clip} でクリップボードの内容を埋め込み。URL は自動エンコード",
+            Language::En => "Use {query} for query, {clip} for clipboard content. URLs are auto-encoded",
+        }
+    }
+
+    pub fn modal_add_instant(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "コマンドを追加",
+            Language::En => "Add Command",
+        }
+    }
+
+    pub fn modal_edit_instant(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "コマンドを編集",
+            Language::En => "Edit Command",
         }
     }
 }

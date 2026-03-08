@@ -300,7 +300,7 @@ fn shell_execute_error_message(code: i32) -> &'static str {
     }
 }
 
-fn launch_item_core(path: &str) -> LaunchResult {
+pub(crate) fn launch_item_core(path: &str) -> LaunchResult {
     #[cfg(windows)]
     {
         use windows::Win32::System::Com::{

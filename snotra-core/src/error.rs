@@ -68,6 +68,8 @@ pub enum ConfigError {
     WindowWidthTooSmall(u32),
     FuzzyCapRatioOutOfRange { value: f64 },
     ScanPathEmpty { index: usize },
+    InstantCommandPrefixEmpty,
+    InstantCommandPrefixSlash,
 }
 
 #[cfg(test)]

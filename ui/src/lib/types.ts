@@ -37,4 +37,10 @@ export interface BootstrapPayload {
   appearance: BootstrapAppearanceConfig;
   language: "ja" | "en";
   indexing: boolean;
+  instant_command_prefix: string;
+}
+
+export interface InstantCommand {
+  name: string;
+  command: string;
 }

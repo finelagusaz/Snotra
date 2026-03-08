@@ -11,6 +11,8 @@ import {
   initIndexingState,
   setHotkeyFailureNotice,
   shouldShowResults,
+  instantCommandMode,
+  setInstantCommandPrefix,
 } from "./stores/search";
 import { applyTheme } from "./lib/theme";
 import { t, setLanguage, type Lang } from "./lib/i18n";
@@ -169,6 +171,12 @@ const MainApp: Component = () => {
     });
     unlistenFns.push(unlistenLang);
 
+    // Listen for instant command prefix changes
+    const unlistenInstantPrefix = await listen<string>("instant-prefix-changed", (event) => {
+      setInstantCommandPrefix(event.payload);
+    });
+    unlistenFns.push(unlistenInstantPrefix);
+
     // Load bootstrap payload and apply theme (non-fatal on failure)
     let bootstrap: BootstrapPayload | null = null;
     try {
@@ -177,6 +185,7 @@ const MainApp: Component = () => {
       applyTheme(bootstrap.visual);
       setMaxResults(bootstrap.appearance.max_results);
       setShowIcons(bootstrap.appearance.show_icons);
+      setInstantCommandPrefix(bootstrap.instant_command_prefix);
     } catch (e) {
       console.error("Failed to load bootstrap payload:", e);
     }
@@ -228,6 +237,7 @@ const MainApp: Component = () => {
       <ResultsSection
         visible={shouldShowResults() && mainVisible()}
         showIcons={showIcons()}
+        skipIcons={instantCommandMode()}
         maxResults={maxResults()}
         onClickResult={handleClickResult}
         onDoubleClickResult={handleDoubleClickResult}

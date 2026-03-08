@@ -24,6 +24,12 @@ fn default_language() -> Language {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstantCommand {
+    pub name: String,
+    pub command: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpenerTool {
     pub name: String,
     pub exe: String,
@@ -85,6 +91,8 @@ pub struct Config {
     pub search: SearchConfig,
     #[serde(default)]
     pub openers: Vec<OpenerRule>,
+    #[serde(default)]
+    pub instant_commands: Vec<InstantCommand>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -170,6 +178,10 @@ fn default_fuzzy_history_cap_ratio() -> f64 {
     0.30
 }
 
+fn default_instant_command_prefix() -> String {
+    "@".to_string()
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SearchModeConfig {
@@ -197,6 +209,8 @@ pub struct SearchConfig {
     pub history_normalization: SearchHistoryNormalizationConfig,
     #[serde(default = "default_fuzzy_history_cap_ratio")]
     pub fuzzy_history_cap_ratio: f64,
+    #[serde(default = "default_instant_command_prefix")]
+    pub instant_command_prefix: String,
 }
 
 impl Default for SearchConfig {
@@ -207,6 +221,7 @@ impl Default for SearchConfig {
             show_hidden_system: false,
             history_normalization: SearchHistoryNormalizationConfig::Disabled,
             fuzzy_history_cap_ratio: default_fuzzy_history_cap_ratio(),
+            instant_command_prefix: default_instant_command_prefix(),
         }
     }
 }
@@ -484,6 +499,7 @@ impl Default for Config {
             },
             search: SearchConfig::default(),
             openers: Vec::new(),
+            instant_commands: Vec::new(),
         }
     }
 }
@@ -677,6 +693,14 @@ impl Config {
             if scan_path.path.trim().is_empty() {
                 errors.push(ConfigError::ScanPathEmpty { index: i });
             }
+        }
+
+        // Instant command prefix validation
+        let prefix = &self.search.instant_command_prefix;
+        if prefix.is_empty() {
+            errors.push(ConfigError::InstantCommandPrefixEmpty);
+        } else if prefix == "/" {
+            errors.push(ConfigError::InstantCommandPrefixSlash);
         }
 
         errors
@@ -1122,6 +1146,7 @@ mod tests {
             show_hidden_system: false,
             history_normalization: SearchHistoryNormalizationConfig::FuzzyRelativeCap,
             fuzzy_history_cap_ratio: 1.5,
+            instant_command_prefix: "@".to_string(),
         };
 
         assert!(config.sanitize());
@@ -1688,6 +1713,69 @@ mod tests {
         "#;
         let config: Config = toml::from_str(toml_str).expect("parse");
         assert!(config.openers.is_empty());
+        assert!(config.instant_commands.is_empty());
+    }
+
+    // ---- instant command prefix validation tests ----
+
+    #[test]
+    fn validate_instant_command_prefix_empty() {
+        let mut config = Config::default();
+        config.search.instant_command_prefix = "".to_string();
+        let errors = config.validate();
+        assert!(errors.contains(&ConfigError::InstantCommandPrefixEmpty));
+    }
+
+    #[test]
+    fn validate_instant_command_prefix_slash() {
+        let mut config = Config::default();
+        config.search.instant_command_prefix = "/".to_string();
+        let errors = config.validate();
+        assert!(errors.contains(&ConfigError::InstantCommandPrefixSlash));
+    }
+
+    #[test]
+    fn validate_instant_command_prefix_at_is_ok() {
+        let mut config = Config::default();
+        config.search.instant_command_prefix = "@".to_string();
+        let errors = config.validate();
+        assert!(
+            !errors.iter().any(|e| matches!(
+                e,
+                ConfigError::InstantCommandPrefixEmpty | ConfigError::InstantCommandPrefixSlash
+            )),
+            "@ should not produce prefix errors"
+        );
+    }
+
+    // ---- instant command TOML round-trip ----
+
+    #[test]
+    fn instant_command_round_trip_toml() {
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+
+            [appearance]
+            max_results = 8
+            window_width = 600
+
+            [paths]
+            additional = []
+
+            [[instant_commands]]
+            name = "g"
+            command = "https://google.com/search?q={query}"
+
+            [[instant_commands]]
+            name = "memo"
+            command = "C:\\tools\\editor.exe"
+        "#;
+        let config: Config = toml::from_str(toml_str).expect("parse");
+        assert_eq!(config.instant_commands.len(), 2);
+        assert_eq!(config.instant_commands[0].name, "g");
+        assert_eq!(config.instant_commands[1].name, "memo");
     }
 
     #[test]

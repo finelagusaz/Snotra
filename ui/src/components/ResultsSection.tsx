@@ -10,6 +10,7 @@ import ResultRow from "./ResultRow";
 export interface ResultsSectionProps {
   visible: boolean;
   showIcons: boolean;
+  skipIcons: boolean;
   maxResults: number;
   onClickResult: (index: number) => void;
   onDoubleClickResult: (index: number) => void;
@@ -97,7 +98,7 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
   }
 
   async function fetchIcons(items: SearchResult[], generation: number) {
-    if (!props.showIcons) return;
+    if (!props.showIcons || props.skipIcons) return;
     // 呼び出し時点の値を固定し、await 中の設定変更でスライス境界がずれるのを防ぐ
     const visibleCount = props.maxResults;
     // Stage 1: 可視行（先頭 visibleCount 件）を優先取得 → 即時表示

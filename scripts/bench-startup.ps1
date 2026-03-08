@@ -107,29 +107,10 @@ for ($run = 1; $run -le $Iterations; $run++) {
   Restore-TraceEnv -Saved $savedTraceEnv
   Start-Sleep -Milliseconds 200
 
-  # Parse trace events for window creation timing
-  $windowTimings = @{}
-  if (Test-Path $errPath) {
-    foreach ($line in Get-Content $errPath) {
-      if ($line -match '^\[trace\] (.+)$') {
-        try {
-          $evt = $Matches[1] | ConvertFrom-Json
-          if ($evt.event -eq "main:ensure_window:ok") {
-            $label = [string]$evt.data.label
-            $windowTimings[$label] = [int]$evt.data.elapsed_ms
-          }
-        } catch {}
-      }
-    }
-  }
-
   $row = [pscustomobject]@{
     run           = $run
     memory_MB     = $memMB
     processes     = $procCount
-    results_ms    = if ($windowTimings.ContainsKey("results"))  { $windowTimings["results"] }  else { "-" }
-    about_ms      = if ($windowTimings.ContainsKey("about"))    { $windowTimings["about"] }    else { "-" }
-    settings_ms   = if ($windowTimings.ContainsKey("settings")) { $windowTimings["settings"] } else { "-" }
   }
   $summaries += $row
   Write-Host ("mem={0}MB procs={1}" -f $memMB, $procCount)
@@ -143,20 +124,9 @@ $summaries | Format-Table -AutoSize
 $avgMem = [math]::Round(($summaries | Measure-Object -Property memory_MB -Average).Average, 1)
 $avgProcs = [math]::Round(($summaries | Measure-Object -Property processes -Average).Average, 1)
 
-$numericResults = @($summaries | Where-Object { $_.results_ms -ne "-" } | ForEach-Object { [int]$_.results_ms })
-$numericAbout   = @($summaries | Where-Object { $_.about_ms -ne "-" }   | ForEach-Object { [int]$_.about_ms })
-$numericSettings= @($summaries | Where-Object { $_.settings_ms -ne "-" }| ForEach-Object { [int]$_.settings_ms })
-
-$avgResults  = if ($numericResults.Count -gt 0)  { [math]::Round(($numericResults  | Measure-Object -Average).Average, 0) } else { "-" }
-$avgAbout    = if ($numericAbout.Count -gt 0)    { [math]::Round(($numericAbout    | Measure-Object -Average).Average, 0) } else { "-" }
-$avgSettings = if ($numericSettings.Count -gt 0) { [math]::Round(($numericSettings | Measure-Object -Average).Average, 0) } else { "-" }
-
 Write-Host "=== Averages ===" -ForegroundColor Green
 Write-Host ("  Memory:       {0} MB" -f $avgMem)
 Write-Host ("  Processes:    {0}" -f $avgProcs)
-Write-Host ("  results_ms:   {0}" -f $avgResults)
-Write-Host ("  about_ms:     {0}" -f $avgAbout)
-Write-Host ("  settings_ms:  {0}" -f $avgSettings)
 Write-Host ""
 
 # Output machine-readable JSON summary
@@ -167,18 +137,12 @@ $jsonSummary = @{
   averages   = @{
     memory_MB   = $avgMem
     processes   = $avgProcs
-    results_ms  = $avgResults
-    about_ms    = $avgAbout
-    settings_ms = $avgSettings
   }
   runs = @($summaries | ForEach-Object {
     @{
       run         = $_.run
       memory_MB   = $_.memory_MB
       processes   = $_.processes
-      results_ms  = $_.results_ms
-      about_ms    = $_.about_ms
-      settings_ms = $_.settings_ms
     }
   })
 } | ConvertTo-Json -Depth 3

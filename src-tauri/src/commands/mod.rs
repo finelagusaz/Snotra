@@ -13,7 +13,6 @@ pub use system::*;
 pub use window::*;
 
 // Re-export pub(crate) items that main.rs references
-pub(crate) use window::ensure_results_window;
 pub(crate) use window::launch_settings_process;
 
 use std::sync::OnceLock;

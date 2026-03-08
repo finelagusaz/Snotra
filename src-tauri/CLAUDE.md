@@ -10,7 +10,7 @@ Tauri v2 バイナリ crate。Win32 API 統合とフロントエンドとの IPC
 - `indexing.rs`: バックグラウンドインデックス構築
 - `config_watcher.rs`: `notify` クレートで `config.toml` 変更を監視（100ms debounce）し、差分検出後にホットキー・トレイ・インデックス・テーマ・ウィンドウ幅を反映する `apply_config_change()` を実行
 - `ime.rs`: IME オフ操作（`ImmSetOpenStatus(false)`）。Win32 IMM API の薄いラッパー
-- `commands/`: ディレクトリモジュール（`mod.rs` + `search.rs` / `launch.rs` / `config.rs` / `icon.rs` / `window.rs` / `system.rs`）。21個の `#[tauri::command]` を責務別に分割
+- `commands/`: ディレクトリモジュール（`mod.rs` + `search.rs` / `launch.rs` / `config.rs` / `icon.rs` / `window.rs` / `system.rs`）。`#[tauri::command]` を責務別に分割
 - `platform/`: ディレクトリモジュール（`mod.rs` + `hotkey.rs` / `tray.rs` / `wndproc.rs`）。Win32 メッセージループスレッド + トレイアイコン + ホットキー + ウィンドウプロシージャ
   - `wndproc.rs`: `SendMessage` 経由で届く `WM_TRAY_ICON` および `WM_CONTEXTMENU` を `PostThreadMessageW` でスレッドキューに再投入し、メッセージループでの統一処理を保証
 

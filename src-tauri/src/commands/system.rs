@@ -40,22 +40,7 @@ pub fn notify_main_shown(state: State<AppState>) {
 }
 
 #[tauri::command]
-pub fn notify_main_hidden(state: State<AppState>) {
+pub fn notify_main_hidden(state: State<AppState>, app: AppHandle) {
     state.main_visible.store(false, Ordering::SeqCst);
-}
-
-#[tauri::command]
-pub fn notify_result_clicked(index: usize, app: AppHandle) -> Result<(), String> {
-    app.emit("result-clicked", index).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn notify_result_double_clicked(index: usize, app: AppHandle) -> Result<(), String> {
-    app.emit("result-double-clicked", index)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn notify_result_hovered(index: usize, app: AppHandle) -> Result<(), String> {
-    app.emit("result-hovered", index).map_err(|e| e.to_string())
+    let _ = app.emit("window-hidden", ());
 }

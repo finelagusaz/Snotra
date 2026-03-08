@@ -23,7 +23,7 @@ import {
   exitToolSelection,
   toolSelectionState,
 } from "../stores/search";
-import { hideAllWindows } from "../lib/commands";
+import { hideMainWindow } from "../lib/commands";
 import { perfMarkInput } from "../lib/perf";
 import { trace } from "../lib/trace";
 import { t } from "../lib/i18n";
@@ -166,7 +166,7 @@ const SearchWindow: Component = () => {
       case "Escape":
         trace("ui:key_action", { action: "escape" });
         if (!exitToolSelection() && !exitFolderExpansion()) {
-          hideAllWindows();
+          hideMainWindow();
         }
         e.preventDefault();
         break;
@@ -218,13 +218,13 @@ const SearchWindow: Component = () => {
           if (r && !r.isError) {
             void enterToolSelection(r).then((launched) => {
               trace("ui:key_action:enter_done", { launched, shift: true });
-              if (launched) void hideAllWindows();
+              if (launched) void hideMainWindow();
             });
           }
         } else {
           void activateSelected().then((launched) => {
             trace("ui:key_action:enter_done", { launched });
-            if (launched) void hideAllWindows();
+            if (launched) void hideMainWindow();
           });
         }
         e.preventDefault();

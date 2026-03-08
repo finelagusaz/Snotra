@@ -5,7 +5,6 @@ use std::sync::Mutex;
 use serde_json::json;
 use snotra_core::window_data::{self, WindowPlacement};
 use tauri::{AppHandle, Manager, State};
-use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 use crate::indexing;
 use crate::state::AppState;
@@ -14,26 +13,6 @@ use super::trace_command;
 
 /// Managed state for tracking the snotra-settings child process.
 pub type SettingsProcessState = Mutex<Option<Child>>;
-
-pub(crate) fn ensure_results_window(app: &AppHandle) -> tauri::Result<()> {
-    if app.get_webview_window("results").is_some() {
-        trace_command("cmd:ensure_results_window:exists", json!({}));
-        return Ok(());
-    }
-    trace_command("cmd:ensure_results_window:create", json!({}));
-    WebviewWindowBuilder::new(app, "results", WebviewUrl::App("results.html".into()))
-        .title("")
-        .inner_size(600.0, 300.0)
-        .visible(false)
-        .decorations(false)
-        .skip_taskbar(true)
-        .always_on_top(true)
-        .resizable(false)
-        .focused(false)
-        .build()?;
-    let _ = set_window_no_activate(app.clone());
-    Ok(())
-}
 
 /// Launch `snotra-settings` as a child process with optional extra arguments.
 ///
@@ -172,49 +151,6 @@ pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub fn ensure_window(label: String, app: AppHandle) -> Result<bool, String> {
-    trace_command(
-        "cmd:ensure_window:start",
-        json!({ "label": label.as_str() }),
-    );
-    match label.as_str() {
-        "results" => {
-            let existed = app.get_webview_window("results").is_some();
-            if let Err(e) = ensure_results_window(&app) {
-                let msg = e.to_string();
-                trace_command(
-                    "cmd:ensure_window:error",
-                    json!({
-                        "label": "results",
-                        "error": msg,
-                    }),
-                );
-                return Err(msg);
-            }
-            trace_command(
-                "cmd:ensure_window:ok",
-                json!({
-                    "label": "results",
-                    "created": !existed,
-                }),
-            );
-            Ok(!existed)
-        }
-        // about/settings are now separate processes; ensure_window is not applicable.
-        _ => {
-            trace_command(
-                "cmd:ensure_window:error",
-                json!({
-                    "label": label,
-                    "error": "unsupported_window_label",
-                }),
-            );
-            Err("unsupported_window_label".to_string())
-        }
-    }
-}
-
-#[tauri::command]
 pub fn get_search_placement() -> Option<WindowPlacement> {
     window_data::load_search_placement()
 }
@@ -222,44 +158,4 @@ pub fn get_search_placement() -> Option<WindowPlacement> {
 #[tauri::command]
 pub fn save_search_placement(x: i32, y: i32) {
     window_data::save_search_placement(WindowPlacement { x, y });
-}
-
-#[tauri::command]
-pub fn is_main_foreground(_app: AppHandle) -> bool {
-    // "main が foreground か" ではなく "foreground が自プロセス所属か" で判定する。
-    // WS_EX_NOACTIVATE を設定しても WebView2 が SetForegroundWindow() を内部で呼ぶため
-    // results ウィンドウが foreground になることがある。自プロセス所属なら app 内操作と判断し非表示をスキップ。
-    #[cfg(windows)]
-    {
-        use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
-        unsafe {
-            let foreground = GetForegroundWindow();
-            let our_pid = std::process::id();
-            let mut fg_pid = 0u32;
-            GetWindowThreadProcessId(foreground, Some(&mut fg_pid));
-            return fg_pid == our_pid;
-        }
-    }
-    #[allow(unreachable_code)]
-    false
-}
-
-#[tauri::command]
-pub fn set_window_no_activate(app: AppHandle) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-        use windows::Win32::Foundation::HWND;
-        use windows::Win32::UI::WindowsAndMessaging::{
-            GWL_EXSTYLE, GetWindowLongW, SetWindowLongW, WS_EX_NOACTIVATE,
-        };
-        if let Some(w) = app.get_webview_window("results") {
-            let raw_hwnd = w.hwnd().map_err(|e| e.to_string())?;
-            let hwnd = HWND(raw_hwnd.0);
-            unsafe {
-                let ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
-                SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE.0 as i32);
-            }
-        }
-    }
-    Ok(())
 }

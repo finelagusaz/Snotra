@@ -33,7 +33,7 @@ Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-
 - 履歴/インデックス/アイコン保存は `.tmp` を使った原子的書き込み
 - アイコンは検索時にオンデマンドで抽出し base64 PNG としてフロントエンドに送信、キャッシュは終了時に永続化
 - テーマは CSS カスタムプロパティで動的に切替
-- 検索結果ウィンドウの同期は3イベントで扱う: `results-data-changed`（結果配列変更）、`results-selection-changed`（選択のみ変更、配列不要）、`results-visibility-changed`（非表示、配列不要）。選択変更時の不要な配列シリアライズを避けるための分割設計。3イベントは `eventGeneration`（全 emit で単調増加）を `generation` に使い、別チャネル間のレースを防止する。`searchGeneration`（API stale 検知用）とは独立のカウンタ
+- 検索バーと検索結果は単一ウィンドウ内のコンポーネント（`SearchWindow` + `ResultsSection`）。結果の表示/非表示は `shouldShowResults` メモシグナル（`results().length > 0 && !indexing()`）で制御し、ウィンドウ高さは `createEffect` + Tauri `set_size()` で動的に変更する。Rust 側の `show_main_and_emit` で毎回 52px にリセットしてからフロントエンドが結果に応じて拡張する
 - `launch_item` は `LaunchResult(status/code/message)` を返す契約で扱い、失敗通知の自動クリアは単一タイマーを再利用して競合を防ぐ
 - 起動時にスレッドを並列 spawn する場合、そのスレッドが発火するイベントに依存する機能（ホットキー・トレイ等）はスレッド init フェーズで有効化せず、main 側でリスナー/ウィンドウ準備が整った後にコマンド（`RegisterInitialHotkey` / `SetTrayVisible`）で有効化する（「有効化 ≥ リスナー登録」不変条件）
 - 設定は `snotra-settings.exe` を子プロセスとして起動する（About 情報はタブに統合）。相互依存は `config.toml` ファイル1点のみ（IPC 不要）。本体は `notify` クレートで config.toml 変更を検知し即時反映する
@@ -93,7 +93,7 @@ npm run tauri build              # リリースビルド
 
 ### E2E/スモーク運用メモ
 
-- `scripts/smoke-startup.ps1` は `SNOTRA_TRACE=1` で起動し、`main:ensure_window:ok`（`results/about/settings`）の存在と `*:error` 不在を検証する
+- `scripts/smoke-startup.ps1` は `SNOTRA_TRACE=1` で起動し、`*:error` トレースイベントが不在であることを検証する
 - `e2e/tauri.slash.e2e.ts` は Playwright runner 上で `tauri-driver + selenium-webdriver + edgedriver` を使い、起動入力・`/o` の動作を検証する
 - E2E セットアップは `npx tauri build --no-bundle` を使う（`cargo build --release` は `localhost` 向きバイナリになり `ERR_CONNECTION_REFUSED` で失敗する）
 - スラッシュコマンドの実行順（`hide -> /r|/o|/s|/q`）は `ui/src/lib/commands.test.ts` で固定し、順序変更時は必ず更新する

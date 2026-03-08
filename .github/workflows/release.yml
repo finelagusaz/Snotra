@@ -4,7 +4,7 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
+  workflow_call:
     inputs:
       tag:
         description: 'Tag name (例: v0.12.0-alpha7)'

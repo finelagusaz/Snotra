@@ -1,0 +1,61 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'リリースバージョン (例: 0.12.0, 0.12.0-alpha7)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate version format
+        run: |
+          if [[ ! "${{ inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "::error::Invalid version format: ${{ inputs.version }}"
+            exit 1
+          fi
+
+      - name: Check tag does not exist
+        run: |
+          if git rev-parse "v${{ inputs.version }}" >/dev/null 2>&1; then
+            echo "::error::Tag v${{ inputs.version }} already exists"
+            exit 1
+          fi
+
+      - name: Detect prerelease
+        id: meta
+        run: |
+          if [[ "${{ inputs.version }}" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create and push tag
+        run: |
+          git tag "v${{ inputs.version }}"
+          git push origin "v${{ inputs.version }}"
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: v${{ inputs.version }}
+          draft: true
+          prerelease: ${{ steps.meta.outputs.prerelease }}
+          generate_release_notes: true
+          body: |
+            # ざっくり
+
+            <!-- ここにユーザー向けサマリを記入してください -->
+            <!-- 例: * 🖼️ シングルウィンドウに切り替えました -->

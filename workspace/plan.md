@@ -112,7 +112,7 @@ main ウィンドウ1つに検索入力バーと結果リストを縦配置し�
 - `hideMainAndResults` → `hideMain`（results hide 不要）
 - **hide 時にウィンドウ高さを 52px にリセット**: `hideMain` 内で `set_size(width, 52)` を呼ぶ。これにより次回 show 時に一瞬大きいウィンドウが見えるチラつきを防止。hide 経路は3つ（Escape / ホットキートグル / auto_hide）あるが、JS 側 hide は `hideMain` に統一されるため1箇所の変更で全カバー。Rust 側ホットキートグル hide（main.rs:466）は Phase 2 で対処
 - **hide 時に `mainVisible` シグナルを false に更新**: ResultsSection の Blob URL 解放 effect がトリガーされるようにする
-- `auto_hide_on_focus_lost` の `is_main_foreground` チェック削除（同一ウィンドウなので不要）
+- `auto_hide_on_focus_lost` の `is_main_foreground` チェック削除（同一ウィンドウなので不要）。**削除理由と `blurCancelled` debounce を残す理由をコードコメントに明記する**（debounce はドラッグ移動時の一時的フォーカス喪失対策として引き続き必要）
 
 **1d. SearchWindow.tsx + CSS 統合**
 - SearchWindow に `<ResultsSection />` を含める
@@ -130,7 +130,7 @@ main ウィンドウ1つに検索入力バーと結果リストを縦配置し�
 
 **2a. main.rs**
 - `ensure_window_with_timing(&app_handle, "results", ...)` 行を削除
-- ホットキー hide ブロック（L464-474）: `get_webview_window("results")` 参照削除。**加えて、hide 後に `set_size(width, 52)` を呼んでウィンドウ高さをリセット**（Rust 側 hide 経路は JS を経由しないため、ここで直接リセットが必要）
+- ホットキー hide ブロック（L464-474）: `get_webview_window("results")` 参照削除。**`w.hide()` の後に `w.set_size(width, 52)` を呼んでウィンドウ高さをリセット**（順序は必ず `hide()` → `set_size()`: 非表示中にサイズ縮小し、次回 show 時にすでに 52px になっている状態にする。逆順だと縮小瞬間が見える）
 - `invoke_handler` から削除対象コマンド除外
 
 **2b. commands/window.rs**
@@ -152,6 +152,7 @@ main ウィンドウ1つに検索入力バーと結果リストを縦配置し�
 - `results_ms` 参照削除
 
 **3b. bench-startup.ps1**
+- **削除前に最終ベンチマーク値を `PERFORMANCE.md` に記録する**（results ウィンドウ生成が起動時間のどの割合を占めていたかの参考値）
 - `results_ms` 計測削除
 
 **3c. E2E テスト**
@@ -191,8 +192,9 @@ main ウィンドウ1つに検索入力バーと結果リストを縦配置し�
 - `npm run smoke:startup`: スモークテスト（results ウィンドウ検証が削除されていること）
 
 ### 手動確認
-- 検索入力→結果表示→ウィンドウ高さ拡大
-- Escape→ウィンドウ高さ縮小
+- 検索入力→結果表示→ウィンドウ高さ拡大（**拡大時に空白領域が一瞬見えないこと**）
+- Escape→ウィンドウ高さ縮小（**縮小時にチラつかないこと**）
+- ホットキー hide→show（**show 時に一瞬大きいウィンドウが見えないこと**）
 - ↑↓キーで選択移動→スクロール追従
 - フォルダ展開→通常モード復帰
 - ツール選択→Escape

@@ -59,3 +59,8 @@ jobs:
 
             <!-- ここにユーザー向けサマリを記入してください -->
             <!-- 例: * 🖼️ シングルウィンドウに切り替えました -->
+
+      - name: Trigger Build Release
+        run: gh workflow run release.yml -f tag="v${{ inputs.version }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

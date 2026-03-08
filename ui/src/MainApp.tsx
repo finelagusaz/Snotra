@@ -215,10 +215,6 @@ const MainApp: Component = () => {
     setSelected(index);
   }
 
-  function handleHoverResult(index: number) {
-    setSelected(index);
-  }
-
   return (
     <>
       <SearchWindow />
@@ -228,7 +224,6 @@ const MainApp: Component = () => {
         maxResults={maxResults()}
         onClickResult={handleClickResult}
         onDoubleClickResult={handleDoubleClickResult}
-        onHoverResult={handleHoverResult}
       />
     </>
   );

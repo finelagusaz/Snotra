@@ -11,7 +11,6 @@ interface ResultRowProps {
   font: string;
   onClick: () => void;
   onDoubleClick: () => void;
-  onMouseEnter?: () => void;
 }
 
 const ResultRow: Component<ResultRowProps> = (rawProps) => {
@@ -39,7 +38,6 @@ const ResultRow: Component<ResultRowProps> = (rawProps) => {
       classList={{ selected: props.isSelected, error: props.result.isError }}
       onClick={props.onClick}
       onDblClick={props.onDoubleClick}
-      onMouseEnter={props.onMouseEnter}
     >
       <Show when={props.showIcons}>
         <div class="result-icon">

@@ -13,7 +13,6 @@ export interface ResultsSectionProps {
   maxResults: number;
   onClickResult: (index: number) => void;
   onDoubleClickResult: (index: number) => void;
-  onHoverResult: (index: number) => void;
 }
 
 const ResultsSection: Component<ResultsSectionProps> = (props) => {
@@ -196,15 +195,6 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
     }
   }
 
-  let hoverTimer: ReturnType<typeof setTimeout> | undefined;
-  onCleanup(() => clearTimeout(hoverTimer));
-  function handleHover(idx: number) {
-    clearTimeout(hoverTimer);
-    hoverTimer = setTimeout(() => {
-      props.onHoverResult(idx);
-    }, 50);
-  }
-
   return (
     <div class="results-section">
       <div class="result-list-standalone" ref={listRef} role="listbox" aria-label="検索結果">
@@ -219,7 +209,6 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
               font={font()}
               onClick={() => props.onClickResult(idx())}
               onDoubleClick={() => props.onDoubleClickResult(idx())}
-              onMouseEnter={() => handleHover(idx())}
             />
           )}
         </For>

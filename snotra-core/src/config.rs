@@ -4,6 +4,25 @@ use std::path::PathBuf;
 
 pub use crate::error::ConfigError;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Language {
+    Ja,
+    En,
+}
+
+fn default_language() -> Language {
+    sys_locale::get_locale()
+        .map(|l| {
+            if l.starts_with("ja") {
+                Language::Ja
+            } else {
+                Language::En
+            }
+        })
+        .unwrap_or(Language::En)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpenerTool {
     pub name: String,
@@ -96,6 +115,8 @@ fn default_ime_off_on_show() -> bool {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GeneralConfig {
+    #[serde(default = "default_language")]
+    pub language: Language,
     #[serde(default = "default_hotkey_toggle")]
     pub hotkey_toggle: bool,
     #[serde(default = "default_show_on_startup")]
@@ -111,6 +132,7 @@ pub struct GeneralConfig {
 impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
+            language: default_language(),
             hotkey_toggle: true,
             show_on_startup: false,
             auto_hide_on_focus_lost: true,
@@ -1908,5 +1930,66 @@ mod tests {
         let default = Config::default();
         assert_eq!(config.hotkey.modifier, default.hotkey.modifier);
         assert_eq!(config.appearance.max_results, default.appearance.max_results);
+    }
+
+    #[test]
+    fn language_serialize_deserialize() {
+        // TOML doesn't support bare enum values; test via a wrapper struct
+        #[derive(Serialize, Deserialize, PartialEq, Debug)]
+        struct Wrapper {
+            lang: Language,
+        }
+        let ja = Wrapper { lang: Language::Ja };
+        let serialized = toml::to_string(&ja).unwrap();
+        assert!(serialized.contains("lang = \"ja\""));
+        let deserialized: Wrapper = toml::from_str(&serialized).unwrap();
+        assert_eq!(deserialized, ja);
+
+        let en = Wrapper { lang: Language::En };
+        let serialized = toml::to_string(&en).unwrap();
+        assert!(serialized.contains("lang = \"en\""));
+        let deserialized: Wrapper = toml::from_str(&serialized).unwrap();
+        assert_eq!(deserialized, en);
+    }
+
+    #[test]
+    fn language_default_in_general_config() {
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+
+            [general]
+
+            [appearance]
+            max_results = 8
+            window_width = 600
+
+            [paths]
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        // Without explicit language, should use OS-detected default
+        let expected = default_language();
+        assert_eq!(config.general.language, expected);
+    }
+
+    #[test]
+    fn language_explicit_in_config() {
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+
+            [general]
+            language = "en"
+
+            [appearance]
+            max_results = 8
+            window_width = 600
+
+            [paths]
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.general.language, Language::En);
     }
 }

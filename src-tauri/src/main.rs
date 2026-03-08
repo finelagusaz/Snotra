@@ -281,6 +281,7 @@ fn main() {
     let ime_off = config.general.ime_off_on_show;
     let hotkey_toggle = config.general.hotkey_toggle;
     let hotkey_config = config.hotkey.clone();
+    let initial_language = config.general.language;
     let window_width = config.appearance.window_width;
     let bg_color = config.visual.background_color.clone();
 
@@ -395,7 +396,7 @@ fn main() {
 
             // Spawn platform thread early to parallelize Win32 init with WebView creation.
             // Tray is NOT created here; SetTrayVisible is sent after full setup (SPEC §7.5).
-            let platform_pending = PlatformBridge::begin(app_handle.clone(), hotkey_config);
+            let platform_pending = PlatformBridge::begin(app_handle.clone(), hotkey_config, initial_language);
 
             // Win32 init finishes in a few ms; by the time windows are created it is already done.
             if let Some(bridge) = platform_pending.and_then(PlatformBridgePending::wait) {

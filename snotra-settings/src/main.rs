@@ -3,6 +3,7 @@
 mod app;
 mod font;
 mod hotkey_input;
+pub(crate) mod i18n;
 mod tabs;
 
 use snotra_core::config::Config;

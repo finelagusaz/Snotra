@@ -35,5 +35,6 @@ export interface BootstrapPayload {
   visual: VisualConfig;
   general: BootstrapGeneralConfig;
   appearance: BootstrapAppearanceConfig;
+  language: "ja" | "en";
   indexing: boolean;
 }

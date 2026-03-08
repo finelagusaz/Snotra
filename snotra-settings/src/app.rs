@@ -1,8 +1,9 @@
 use eframe::egui;
 use egui::{Color32, CornerRadius, Stroke};
-use snotra_core::config::{Config, ConfigError};
+use snotra_core::config::{Config, ConfigError, Language};
 use snotra_core::window_data::{self, WindowPlacement};
 
+use crate::i18n::Tr;
 use crate::tabs;
 
 // Windows 11 Settings-inspired color palette
@@ -74,14 +75,14 @@ impl TabId {
         TabId::About,
     ];
 
-    fn label(self) -> &'static str {
+    fn label(self, tr: &Tr) -> &'static str {
         match self {
-            TabId::General => "全般",
-            TabId::Search => "検索",
-            TabId::Index => "インデックス",
-            TabId::Visual => "ビジュアル",
-            TabId::Opener => "オープナー",
-            TabId::About => "Snotra について",
+            TabId::General => tr.tab_general(),
+            TabId::Search => tr.tab_search(),
+            TabId::Index => tr.tab_index(),
+            TabId::Visual => tr.tab_visual(),
+            TabId::Opener => tr.tab_opener(),
+            TabId::About => tr.tab_about(),
         }
     }
 
@@ -109,6 +110,7 @@ struct SettingsApp {
     font_list: Vec<String>,
     hotkey_state: crate::hotkey_input::HotkeyInputState,
     last_position: Option<WindowPlacement>,
+    tr: Tr,
 }
 
 impl SettingsApp {
@@ -121,6 +123,7 @@ impl SettingsApp {
             } else {
                 TabId::General
             });
+        let tr = Tr(config.general.language);
         Self {
             draft: config.clone(),
             saved: config,
@@ -132,6 +135,7 @@ impl SettingsApp {
             font_list: crate::font::list_system_fonts(),
             hotkey_state: Default::default(),
             last_position: None,
+            tr,
         }
     }
 
@@ -145,18 +149,24 @@ impl SettingsApp {
         config.normalize_openers();
         let errors = config.validate();
         if !errors.is_empty() {
-            self.status = format!("検証エラー: {}", config_error_message(&errors[0]));
+            self.status = format!(
+                "{}{}",
+                self.tr.status_validation_error(),
+                config_error_message(&errors[0], &self.tr)
+            );
             self.status_timer = 5.0;
             return;
         }
         if let Err(e) = config.save() {
-            self.status = format!("保存失敗: {e}");
+            self.status = format!("{}{e}", self.tr.status_save_failed());
             self.status_timer = 5.0;
             return;
         }
         self.saved = config.clone();
         self.draft = config;
-        self.status = "保存しました".to_string();
+        // Update tr for potential language change
+        self.tr = Tr(self.draft.general.language);
+        self.status = self.tr.status_saved().to_string();
         self.status_timer = 2.0;
     }
 
@@ -165,20 +175,22 @@ impl SettingsApp {
     }
 }
 
-fn config_error_message(error: &ConfigError) -> String {
+fn config_error_message(error: &ConfigError, tr: &Tr) -> String {
     match error {
-        ConfigError::HotkeyModifierEmpty => "ホットキーの修飾キーが未設定です".to_string(),
-        ConfigError::HotkeyKeyEmpty => "ホットキーのキーが未設定です".to_string(),
+        ConfigError::HotkeyModifierEmpty => tr.err_hotkey_modifier_empty().to_string(),
+        ConfigError::HotkeyKeyEmpty => tr.err_hotkey_key_empty().to_string(),
         ConfigError::HotkeySystemConflict { modifier, key } => {
-            format!("{}+{} はシステムショートカットと競合します", modifier, key)
+            format!("{}+{}{}", modifier, key, tr.err_hotkey_system_conflict())
         }
-        ConfigError::MaxResultsZero => "最大表示件数は1以上にしてください".to_string(),
-        ConfigError::WindowWidthTooSmall(w) => format!("ウィンドウ幅 {} は小さすぎます（200以上）", w),
+        ConfigError::MaxResultsZero => tr.err_max_results_zero().to_string(),
+        ConfigError::WindowWidthTooSmall(w) => {
+            format!("{}{}", w, tr.err_window_width_too_small())
+        }
         ConfigError::FuzzyCapRatioOutOfRange { value } => {
-            format!("ファジー履歴比率 {} は 0.0〜1.0 の範囲にしてください", value)
+            format!("{}{}", value, tr.err_fuzzy_cap_ratio_out_of_range())
         }
         ConfigError::ScanPathEmpty { index } => {
-            format!("スキャンパス {} のパスが空です", index + 1)
+            format!("{}{}", index + 1, tr.err_scan_path_empty())
         }
     }
 }
@@ -191,10 +203,13 @@ impl eframe::App for SettingsApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Update window title on language change
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(self.tr.window_title().to_string()));
+
         // Close on Escape (skip when hotkey capture is active)
         if !self.hotkey_state.is_capturing() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             if self.has_changes() {
-                self.status = "未保存の変更があります".to_string();
+                self.status = self.tr.status_unsaved().to_string();
                 self.status_timer = 3.0;
             } else {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -243,7 +258,7 @@ impl eframe::App for SettingsApp {
                     ui.painter().text(
                         text_pos,
                         egui::Align2::LEFT_CENTER,
-                        tab.label(),
+                        tab.label(&self.tr),
                         egui::TextStyle::Body.resolve(ui.style()),
                         if selected { TEXT_PRIMARY } else { TEXT_SECONDARY },
                     );
@@ -273,7 +288,7 @@ impl eframe::App for SettingsApp {
 
                             // Save button (always "保存", disabled when no changes)
                             if ui
-                                .add_enabled(self.has_changes(), egui::Button::new("保存"))
+                                .add_enabled(self.has_changes(), egui::Button::new(self.tr.btn_save()))
                                 .clicked()
                             {
                                 self.save();
@@ -281,14 +296,14 @@ impl eframe::App for SettingsApp {
 
                             // Discard button (always visible, disabled when no changes)
                             if ui
-                                .add_enabled(self.has_changes(), egui::Button::new("破棄"))
+                                .add_enabled(self.has_changes(), egui::Button::new(self.tr.btn_discard()))
                                 .clicked()
                             {
                                 self.draft = self.saved.clone();
                             }
 
                             // Reset to default
-                            if ui.button("初期設定に戻す").clicked() {
+                            if ui.button(self.tr.btn_reset_default()).clicked() {
                                 self.reset_to_default();
                             }
                         });
@@ -299,11 +314,11 @@ impl eframe::App for SettingsApp {
         // Main content
         egui::CentralPanel::default().show(ctx, |ui| {
             match self.active_tab {
-                TabId::General => tabs::general::ui(ui, &mut self.draft, &mut self.hotkey_state),
-                TabId::Search => tabs::search::ui(ui, &mut self.draft),
-                TabId::Index => tabs::index::ui(ui, ctx, &mut self.draft, &mut self.index_state),
-                TabId::Visual => tabs::visual::ui(ui, &mut self.draft, &self.font_list),
-                TabId::Opener => tabs::opener::ui(ui, ctx, &mut self.draft, &mut self.opener_state),
+                TabId::General => tabs::general::ui(ui, &mut self.draft, &mut self.hotkey_state, &self.tr),
+                TabId::Search => tabs::search::ui(ui, &mut self.draft, &self.tr),
+                TabId::Index => tabs::index::ui(ui, ctx, &mut self.draft, &mut self.index_state, &self.tr),
+                TabId::Visual => tabs::visual::ui(ui, &mut self.draft, &self.font_list, &self.tr),
+                TabId::Opener => tabs::opener::ui(ui, ctx, &mut self.draft, &mut self.opener_state, &self.tr),
                 TabId::About => {
                     ui.vertical_centered(|ui| {
                         ui.add_space(24.0);
@@ -353,8 +368,12 @@ fn load_icon() -> egui::IconData {
 
 pub fn run(config: Config, first_run: bool, initial_tab: Option<String>) -> eframe::Result {
     let icon = load_icon();
+    let title = match config.general.language {
+        Language::Ja => "Snotra 設定",
+        Language::En => "Snotra Settings",
+    };
     let mut viewport = egui::ViewportBuilder::default()
-        .with_title("Snotra 設定")
+        .with_title(title)
         .with_inner_size([760.0, 560.0])
         .with_min_inner_size([520.0, 360.0])
         .with_icon(icon);
@@ -369,7 +388,7 @@ pub fn run(config: Config, first_run: bool, initial_tab: Option<String>) -> efra
     };
 
     eframe::run_native(
-        "Snotra 設定",
+        title,
         options,
         Box::new(move |cc| {
             crate::font::configure_fonts(&cc.egui_ctx);

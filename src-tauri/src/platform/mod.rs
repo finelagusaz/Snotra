@@ -4,7 +4,7 @@ mod wndproc;
 
 use std::sync::mpsc::{self, Receiver, Sender};
 
-use snotra_core::config::HotkeyConfig;
+use snotra_core::config::{HotkeyConfig, Language};
 use tauri::{AppHandle, Emitter};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -31,6 +31,7 @@ pub enum PlatformCommand {
     SetTrayVisible(bool),
     SetIndexing(bool),
     TurnOffIme(usize),
+    SetLanguage(Language),
     /// Register the initial hotkey. Sent by main after the hotkey-pressed listener
     /// is ready so that no hotkey event is dropped before there is a receiver.
     RegisterInitialHotkey,
@@ -68,6 +69,7 @@ impl PlatformBridge {
     pub fn begin(
         app_handle: AppHandle,
         initial_hotkey: HotkeyConfig,
+        initial_language: Language,
     ) -> Option<PlatformBridgePending> {
         let (command_tx, command_rx) = mpsc::channel();
         let (thread_id_tx, thread_id_rx) = mpsc::channel();
@@ -78,6 +80,7 @@ impl PlatformBridge {
                 platform_thread_loop(
                     app_handle,
                     initial_hotkey,
+                    initial_language,
                     false, // tray starts hidden; main sends SetTrayVisible after full setup
                     command_rx,
                     thread_id_tx,
@@ -103,6 +106,7 @@ impl PlatformBridge {
 fn platform_thread_loop(
     app_handle: AppHandle,
     initial_hotkey: HotkeyConfig,
+    initial_language: Language,
     show_tray_icon: bool,
     command_rx: Receiver<PlatformCommand>,
     thread_id_tx: Sender<u32>,
@@ -160,9 +164,10 @@ fn platform_thread_loop(
         // Hotkey registration is deferred: main sends RegisterInitialHotkey after
         // the hotkey-pressed listener is ready, preventing events from being dropped.
         let mut current_hotkey = initial_hotkey;
+        let mut current_language = initial_language;
 
         let mut tray = if show_tray_icon {
-            Some(TrayIcon::create(hwnd))
+            Some(TrayIcon::create(hwnd, current_language))
         } else {
             None
         };
@@ -203,6 +208,7 @@ fn platform_thread_loop(
                         hwnd,
                         &mut indexing_in_progress,
                         &app_handle,
+                        &mut current_language,
                     );
                 }
                 _ => {
@@ -223,6 +229,7 @@ fn process_commands(
     hwnd: HWND,
     indexing_in_progress: &mut bool,
     app_handle: &AppHandle,
+    current_language: &mut Language,
 ) {
     while let Ok(command) = command_rx.try_recv() {
         match command {
@@ -240,7 +247,7 @@ fn process_commands(
             PlatformCommand::SetTrayVisible(show) => {
                 if show {
                     if tray.is_none() {
-                        *tray = Some(TrayIcon::create(hwnd));
+                        *tray = Some(TrayIcon::create(hwnd, *current_language));
                     }
                 } else {
                     *tray = None;
@@ -248,6 +255,12 @@ fn process_commands(
             }
             PlatformCommand::SetIndexing(indexing) => {
                 *indexing_in_progress = indexing;
+            }
+            PlatformCommand::SetLanguage(lang) => {
+                *current_language = lang;
+                if let Some(t) = tray.as_mut() {
+                    t.set_language(lang);
+                }
             }
             PlatformCommand::TurnOffIme(hwnd_raw) => {
                 // Known: this command is dispatched from the platform thread after

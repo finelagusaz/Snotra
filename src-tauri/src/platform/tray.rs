@@ -13,6 +13,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::PCWSTR;
 
+use snotra_core::config::Language;
+
 use crate::commands;
 use crate::state::AppState;
 
@@ -130,6 +132,7 @@ pub(super) fn handle_tray_message(
 pub(super) struct TrayIcon {
     nid: NOTIFYICONDATAW,
     owned_icon: Option<HICON>,
+    language: Language,
     /// 0/1 ツール項目のパス（ID = ID_MENU_RECENT_BASE + vec の添字）
     recent_menu_paths: Vec<String>,
     /// 2+ ツール項目のサブメニュー選択情報 (path, exe, args)（ID = ID_MENU_TOOL_BASE + vec の添字）
@@ -137,7 +140,11 @@ pub(super) struct TrayIcon {
 }
 
 impl TrayIcon {
-    pub(super) fn create(hwnd: HWND) -> Self {
+    pub(super) fn set_language(&mut self, lang: Language) {
+        self.language = lang;
+    }
+
+    pub(super) fn create(hwnd: HWND, language: Language) -> Self {
         let mut nid = NOTIFYICONDATAW {
             cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
             hWnd: hwnd,
@@ -165,6 +172,7 @@ impl TrayIcon {
         Self {
             nid,
             owned_icon,
+            language,
             recent_menu_paths: Vec::new(),
             recent_menu_tools: Vec::new(),
         }
@@ -186,16 +194,29 @@ impl TrayIcon {
                 return;
             };
 
+            let indexing_label = match self.language {
+                Language::Ja => "インデックス再構築中",
+                Language::En => "Rebuilding index",
+            };
+            let settings_label = match self.language {
+                Language::Ja => "設定(&S)",
+                Language::En => "&Settings",
+            };
+            let exit_label = match self.language {
+                Language::Ja => "終了(&X)",
+                Language::En => "E&xit",
+            };
+
             if indexing {
-                let indexing_text: Vec<u16> = "インデックス再構築中"
+                let indexing_text: Vec<u16> = indexing_label
                     .encode_utf16()
                     .chain(std::iter::once(0))
                     .collect();
-                let settings_text: Vec<u16> = "設定(&S)"
+                let settings_text: Vec<u16> = settings_label
                     .encode_utf16()
                     .chain(std::iter::once(0))
                     .collect();
-                let exit_text: Vec<u16> = "終了(&X)"
+                let exit_text: Vec<u16> = exit_label
                     .encode_utf16()
                     .chain(std::iter::once(0))
                     .collect();
@@ -211,11 +232,11 @@ impl TrayIcon {
                 let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
                 let _ = AppendMenuW(hmenu, MF_GRAYED, ID_MENU_EXIT, PCWSTR(exit_text.as_ptr()));
             } else {
-                let settings_text: Vec<u16> = "設定(&S)"
+                let settings_text: Vec<u16> = settings_label
                     .encode_utf16()
                     .chain(std::iter::once(0))
                     .collect();
-                let exit_text: Vec<u16> = "終了(&X)"
+                let exit_text: Vec<u16> = exit_label
                     .encode_utf16()
                     .chain(std::iter::once(0))
                     .collect();
@@ -269,9 +290,17 @@ impl TrayIcon {
             self.recent_menu_tools.clear();
             let recent = recent_history_items(app_handle);
             let state = app_handle.state::<AppState>();
+            let no_history_label = match self.language {
+                Language::Ja => "履歴なし",
+                Language::En => "No history",
+            };
+            let default_tool_label = match self.language {
+                Language::Ja => "標準",
+                Language::En => "Default",
+            };
             if recent.is_empty() {
                 let empty_text: Vec<u16> =
-                    "履歴なし".encode_utf16().chain(std::iter::once(0)).collect();
+                    no_history_label.encode_utf16().chain(std::iter::once(0)).collect();
                 let _ = AppendMenuW(hmenu, MF_GRAYED, 0, PCWSTR(empty_text.as_ptr()));
             } else {
                 for item in recent.iter() {
@@ -287,7 +316,7 @@ impl TrayIcon {
                         // 先頭に「標準」（ShellExecuteW 直接）を追加
                         let standard_id = ID_MENU_TOOL_BASE + self.recent_menu_tools.len();
                         let standard_text: Vec<u16> =
-                            "標準".encode_utf16().chain(std::iter::once(0)).collect();
+                            default_tool_label.encode_utf16().chain(std::iter::once(0)).collect();
                         let _ = AppendMenuW(
                             hsub,
                             MF_STRING,

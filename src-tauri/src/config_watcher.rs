@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use notify::{Event, EventKind, RecursiveMode, Watcher};
-use snotra_core::config::Config;
+use snotra_core::config::{Config, Language};
 use tauri::window::Color;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager};
 
@@ -87,6 +87,8 @@ fn apply_config_change(app: &AppHandle) {
     let index_changed = new_config.paths.scan != old_config.paths.scan
         || new_config.search.show_hidden_system != old_config.search.show_hidden_system
         || show_icons_changed;
+    let language_changed = new_config.general.language != old_config.general.language;
+    let new_language = new_config.general.language;
     let visual_changed = new_config.visual != old_config.visual;
     let max_results_changed =
         new_config.appearance.max_results != old_config.appearance.max_results;
@@ -99,6 +101,16 @@ fn apply_config_change(app: &AppHandle) {
         None
     };
     let new_width = new_config.appearance.window_width;
+
+    // Emit language change BEFORE hotkey failure so the frontend receives
+    // the new language before it formats any error notification strings.
+    if language_changed {
+        let lang_str = match new_language {
+            Language::Ja => "ja",
+            Language::En => "en",
+        };
+        let _ = app.emit("language-changed", lang_str);
+    }
 
     // Hotkey change — best-effort, log on failure (don't block)
     if let Some(bridge) = app.try_state::<Mutex<PlatformBridge>>()
@@ -127,6 +139,9 @@ fn apply_config_change(app: &AppHandle) {
             b.send_command(PlatformCommand::SetTrayVisible(
                 new_config.general.show_tray_icon,
             ));
+        }
+        if language_changed {
+            b.send_command(PlatformCommand::SetLanguage(new_language));
         }
     }
 

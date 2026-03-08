@@ -2,6 +2,8 @@ use eframe::egui;
 use egui::Color32;
 use snotra_core::config::{Config, CustomTheme, ThemePreset};
 
+use crate::i18n::Tr;
+
 struct PresetDef {
     preset: ThemePreset,
     label: &'static str,
@@ -53,12 +55,12 @@ const PRESETS: &[PresetDef] = &[
 
 const SWATCH_SIZE: f32 = 16.0;
 
-pub fn ui(ui: &mut egui::Ui, config: &mut Config, fonts: &[String]) {
+pub fn ui(ui: &mut egui::Ui, config: &mut Config, fonts: &[String], tr: &Tr) {
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.spacing_mut().interact_size.y = 24.0;
 
         // -- Theme presets --
-        ui.heading("テーマ");
+        ui.heading(tr.heading_theme());
         ui.add_space(4.0);
 
         ui.horizontal_wrapped(|ui| {
@@ -75,7 +77,7 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, fonts: &[String]) {
                 let is_active = config.visual.preset == ThemePreset::Custom
                     && custom_theme_matches(config, ct);
                 let ct_clone = ct.clone();
-                let response = custom_theme_card(ui, &ct_clone, is_active);
+                let response = custom_theme_card(ui, &ct_clone, is_active, tr);
                 if response.clicked() {
                     apply_custom_theme(config, &ct_clone);
                 }
@@ -89,7 +91,7 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, fonts: &[String]) {
                 .custom_theme
                 .as_ref()
                 .is_some_and(|ct| custom_theme_matches(config, ct));
-        if !matches_any && ui.button("カスタムテーマとして保存").clicked() {
+        if !matches_any && ui.button(tr.btn_save_custom_theme()).clicked() {
             config.visual.custom_theme = Some(CustomTheme {
                 background_color: config.visual.background_color.clone(),
                 input_background_color: config.visual.input_background_color.clone(),
@@ -103,25 +105,25 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, fonts: &[String]) {
         ui.add_space(12.0);
 
         // -- Colors --
-        ui.heading("カラー");
+        ui.heading(tr.heading_color());
         ui.add_space(4.0);
 
         egui::Grid::new("color_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
-            color_row(ui, "背景色:", &mut config.visual.background_color);
-            color_row(ui, "入力欄背景:", &mut config.visual.input_background_color);
-            color_row(ui, "テキスト:", &mut config.visual.text_color);
-            color_row(ui, "選択行:", &mut config.visual.selected_row_color);
-            color_row(ui, "ヒントテキスト:", &mut config.visual.hint_text_color);
+            color_row(ui, tr.label_bg_color(), &mut config.visual.background_color);
+            color_row(ui, tr.label_input_bg(), &mut config.visual.input_background_color);
+            color_row(ui, tr.label_text_color(), &mut config.visual.text_color);
+            color_row(ui, tr.label_selected_row(), &mut config.visual.selected_row_color);
+            color_row(ui, tr.label_hint_text(), &mut config.visual.hint_text_color);
         });
 
         ui.add_space(12.0);
 
         // -- Font --
-        ui.heading("フォント");
+        ui.heading(tr.heading_font());
         ui.add_space(4.0);
 
         egui::Grid::new("font_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
-            ui.label("フォントファミリー:");
+            ui.label(tr.label_font_family());
             egui::ComboBox::from_id_salt("font_family")
                 .selected_text(&config.visual.font_family)
                 .show_ui(ui, |ui| {
@@ -131,7 +133,7 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, fonts: &[String]) {
                 });
             ui.end_row();
 
-            ui.label("フォントサイズ:");
+            ui.label(tr.label_font_size());
             ui.add_sized([60.0, ui.spacing().interact_size.y], egui::DragValue::new(&mut config.visual.font_size).range(8..=48));
             ui.end_row();
         });
@@ -228,7 +230,7 @@ fn preset_card(ui: &mut egui::Ui, p: &PresetDef, active: bool) -> egui::Response
     theme_card(ui, p.label, &colors, active)
 }
 
-fn custom_theme_card(ui: &mut egui::Ui, ct: &CustomTheme, active: bool) -> egui::Response {
+fn custom_theme_card(ui: &mut egui::Ui, ct: &CustomTheme, active: bool, tr: &Tr) -> egui::Response {
     let colors = [
         ct.background_color.as_str(),
         ct.input_background_color.as_str(),
@@ -236,7 +238,7 @@ fn custom_theme_card(ui: &mut egui::Ui, ct: &CustomTheme, active: bool) -> egui:
         ct.selected_row_color.as_str(),
         ct.hint_text_color.as_str(),
     ];
-    theme_card(ui, "カスタム", &colors, active)
+    theme_card(ui, tr.label_custom_theme(), &colors, active)
 }
 
 fn theme_card(ui: &mut egui::Ui, label: &str, colors: &[&str; 5], active: bool) -> egui::Response {

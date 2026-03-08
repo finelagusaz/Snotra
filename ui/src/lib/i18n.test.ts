@@ -1,8 +1,9 @@
-import { describe, expect, it, afterEach } from "vitest";
+import { describe, expect, it, beforeEach } from "vitest";
 import { t, setLanguage } from "./i18n";
 
-afterEach(() => {
-  // Reset to default language after each test
+beforeEach(() => {
+  // Ensure each test starts with a known language (ja).
+  // The module-level default depends on navigator.language which varies by CI.
   setLanguage("ja");
 });
 

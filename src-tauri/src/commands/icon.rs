@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use tauri::State;
 use tauri::ipc::Response;
 
@@ -50,8 +51,9 @@ pub fn get_icons_batch(
     }
 
     // Step 2: extract missing icons outside the lock (SHGetFileInfoW + PNG encode)
+    // rayon で並列化: extract_png は各スレッドで独立した Win32 ハンドルを取得・破棄するためスレッドセーフ
     let extracted: Vec<(usize, String, Vec<u8>)> = misses
-        .into_iter()
+        .into_par_iter()
         .filter_map(|(i, path)| extract_png(&path).map(|png| (i, path, png)))
         .collect();
 

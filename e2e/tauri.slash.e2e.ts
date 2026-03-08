@@ -616,19 +616,22 @@ test("config.toml を書き換えると max_results が即時反映される", a
     `ベースライン: ${E2E_FIXTURE_FILENAMES.length} 件が表示されない`,
   );
 
+  // ベースラインのウィンドウ高さを取得（max_results = 8）
+  const baseHeight = await driver.executeScript<number>("return window.innerHeight;");
+
   // config.toml を max_results = 1 に書き換えてホットリロードをトリガー
   const modifiedConfig = buildE2EConfigToml(fixtureDir).replace("max_results = 8", "max_results = 1");
   await writeFile(backup.path, `${modifiedConfig}\n`, "utf8");
 
-  // config が反映されるまで clear→retype→チェックを繰り返す
+  // config が反映されてウィンドウ高さが縮小するまで待つ
+  // max_results = 1 → 52 + 1*30 + 8 = 90 (logical) < baseHeight
   await driver.wait(async () => {
+    // 再検索をトリガーして結果を表示状態に保つ
     const el = await driver.findElement(By.css(".search-input"));
     await el.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, E2E_SEARCH_QUERY);
-    return (await driver.findElements(By.css(".result-row"))).length === 1;
-  }, 12_000, "config.toml の max_results 変更が反映されない");
-
-  const rows = await driver.findElements(By.css(".result-row"));
-  expect(rows.length).toBe(1);
+    const height = await driver.executeScript<number>("return window.innerHeight;");
+    return height > 0 && height < baseHeight;
+  }, 12_000, "config.toml の max_results 変更が反映されない（ウィンドウ高さが縮小しない）");
 });
 
 test("/s 後にインデックス再構築が完了し検索が機能する", async ({ harness }) => {

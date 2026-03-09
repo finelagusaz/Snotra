@@ -573,6 +573,7 @@ async function executeInstantCommandSelected(): Promise<boolean> {
     const savedSelected = selected();
     const savedItems = [...instantCommandItems];
 
+    const preGen = searchGeneration;
     ++searchGeneration;
     setResults([]);
     setSelected(0);
@@ -586,11 +587,13 @@ async function executeInstantCommandSelected(): Promise<boolean> {
         message: launchResult.message,
       });
       notifyLaunchFailure(launchResult);
-      // 失敗時: 候補リストを復元し、ユーザーが再試行できるようにする
-      ++searchGeneration;
-      instantCommandItems = savedItems;
-      setResults(savedResults);
-      setSelected(savedSelected);
+      // 失敗時: await 中に状態が変わっていなければ候補リストを復元
+      if (searchGeneration === preGen + 1) {
+        ++searchGeneration;
+        instantCommandItems = savedItems;
+        setResults(savedResults);
+        setSelected(savedSelected);
+      }
       return false;
     }
 

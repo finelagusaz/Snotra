@@ -70,6 +70,7 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 - 検索ウィンドウのドラッグ移動は `.search-bar` の `data-tauri-drag-region` 属性で実現。`<input>` には付与しないため入力操作は維持される
 - ドラッグ開始時の一時的なフォーカス喪失で `auto_hide_on_focus_lost` が誤発火するため、`onFocusChanged` の非表示処理に 100ms の猶予を設けフォーカス復帰時にキャンセルする設計
 - **`async` 関数内で `await` をまたぐ可変変数はローカルキャプチャする**: `let` 変数やモジュールスコープの可変変数を `await` をまたいで参照する場合、関数冒頭で `const` にコピーしてから使う。`await` 中に外部イベントで値が書き換わると後続処理が意図しない値を参照する（例: `const visibleCount = cachedMaxResults`）
+- **`await` 後に保存状態を復元する場合は staleness チェックを入れる**: `await` 前に保存した状態を失敗時に復元するパターンでは、`searchGeneration` 等の世代カウンタで「`await` 中に状態が変わっていないか」を検証してから復元する。無条件復元は新しい状態を上書きするレースコンディションを生む。加えて、`await` 中にユーザー入力で状態が変わること自体を防ぐガード（`handleInput` の `launching()` チェック等）を根本対策として併用する
 
 ## 単一ウィンドウの高さ管理
 

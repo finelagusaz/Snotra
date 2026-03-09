@@ -14,6 +14,7 @@
 
 - context7 MCP が設定済み。Tauri v2 / SolidJS / Rust クレートの最新 API を調べる際は context7 を使う
 - モジュール固有の不変条件・TDD ルールは各サブディレクトリの `CLAUDE.md` を参照
+- 実装前チェック等の重要観点は `.claude/rules/` に抽出済みで、該当ファイルの読み取り時に自動配送される
 
 ## チーム憲章
 
@@ -76,7 +77,7 @@ Claude とユーザーが一緒に作業するときの関係性の原則。
 9. 報告は「追加/更新テスト名 + 検証した不変条件」を必ず含める
 
 - Win32 依存モジュール（`src-tauri/src/` 内の `hotkey.rs`, `ime.rs`, `platform.rs`）はユニットテスト前提にしない
-- モジュール固有の不変条件・TDD ルールは各サブディレクトリの `CLAUDE.md` を参照
+- モジュール固有の不変条件・TDD ルールは各サブディレクトリの `CLAUDE.md` を参照（実装前チェックは `.claude/rules/` で自動配送）
 
 ### RETROSPECTIVE.md の運用
 

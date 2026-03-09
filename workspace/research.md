@@ -1,69 +1,102 @@
-# Research — Issue #196: マウスカーソルでの検索リストのアイテム選択を明示的にしたい
+# Research — Issue #214: 英語入力のまま日本語名ファイルを検索（ローマ字/かな検索）
 
 ## issue の要約
 
-現状、検索結果リスト上にマウスカーソルが乗ると `onMouseEnter`（50ms debounce）で `selected` シグナルが更新され、意図せずホバーだけで選択が変わってしまう。キーボードで検索→選択→起動する操作フローにおいて、マウスカーソルが結果リスト上にあると選択が「吸い込まれる」問題。
+IME を切り替えずにローマ字入力のまま、カタカナ・ひらがな名のファイルやフォルダを検索できるようにする。
+"migemo 検索に対応する" が公式の案として挙げられている。
 
-**要望**: ホバー選択 → シングルクリック選択、ダブルクリック実行に変更。
-
-**付随問題**: 起動後の最初の検索と2度目以降で挙動が違う（ホバーによる `selected` 更新 + 前回 `selected` のクランプの相互作用が原因と推定。ホバー選択を廃止すれば根本解消）。
-
-## 現状の挙動
-
-| 操作 | 変更前の動作 | 方式 C 適用後 |
-|------|-----------|---------------------|
-| ホバー | `setSelected(index)` — 選択が変わる | 視覚フィードバック（CSS `:hover`）のみ、`selected` は変えない |
-| シングルクリック | `activateSelectedByIndex(index)` — 即起動 | 変更なし（即起動を維持） |
-| ダブルクリック | `setSelected(index)` — 選択のみ | 変更なし |
-| Enter | 選択中アイテムを起動 | 変更なし |
-| Arrow ↑↓ | 選択移動 | 変更なし |
+---
 
 ## 関連コード
 
-### マウスイベントハンドラチェーン
+| ファイル | 役割 | 変更要否 |
+|---------|------|--------|
+| `snotra-core/Cargo.toml` | 依存クレート | ✅ wana_kana 追加 |
+| `snotra-core/src/query.rs` | クエリ正規化 | ✅ to_kana() 追加 |
+| `snotra-core/src/search.rs` | 検索スコアリング | ✅ kana_lower_names・kana マッチ追加 |
+| `SPEC.md` | 仕様書 §3.1/3.2 | ✅ ローマ字検索の挙動を追記 |
+| `snotra-settings/**` | 設定 UI | ❌ 設定なし（常時 ON） |
 
-| ファイル | 行 | 内容 |
-|---------|-----|------|
-| `ui/src/components/ResultRow.tsx` | 40-42 | `onClick`, `onDblClick`, `onMouseEnter` バインディング |
-| `ui/src/components/ResultsSection.tsx` | 199-206 | `handleHover`: 50ms debounce → `props.onHoverResult(idx)` |
-| `ui/src/components/ResultsSection.tsx` | 220-222 | ResultRow への props 転送 |
-| `ui/src/MainApp.tsx` | 200-212 | `handleClickResult` → `activateSelectedByIndex(index)` — **起動** |
-| `ui/src/MainApp.tsx` | 214-216 | `handleDoubleClickResult` → `setSelected(index)` — **選択のみ** |
-| `ui/src/MainApp.tsx` | 218-219 | `handleHoverResult` → `setSelected(index)` — **選択のみ** |
-
-### CSS
-
-| セレクタ | 効果 | 変更要否 |
-|---------|------|---------|
-| `.result-row:hover` | `color-mix(... 50%, transparent)` — ホバー背景 | 維持（視覚フィードバック） |
-| `.result-row.selected` | `var(--selected-row-color)` — 選択行背景 | 維持 |
-
-### SPEC.md での記述
-
-- §17.3: 「クリック: 表示リストの行インデックスで選択ツールを一意に照合し起動」— ツール選択モードでのクリック起動
-- ホバー選択、通常モードでのクリック/ダブルクリックの仕様は明示されていない
-
-### ui/CLAUDE.md での記述
-
-- 「クリック起動 (`handleClickResult`) とダブルクリック選択 (`handleDoubleClickResult`) はどちらもリスト行インデックス（`number`）を引数として受け取る」
+---
 
 ## 既存パターン
 
-- ダブルクリックのハンドラ（`handleDoubleClickResult`）は既に存在する。現在は `setSelected(index)` だけ
-- シングルクリックのハンドラ（`handleClickResult`）も既に存在する。現在は `activateSelectedByIndex(index)` を呼ぶ
-- ホバーのハンドラ（`handleHoverResult`）も既に存在する。現在は `setSelected(index)` を呼ぶ
+- `SearchEngine` は Parallel Vec (SoA) レイアウト。`kana_lower_names: Vec<String>` を追加するのが自然。
+- `new()` と `new_with_cached_masks()` の両コンストラクタで Vec を構築する必要がある（`lower_names` と同じパターン）。
+- `entry_view()` / `debug_assert!` / 末尾 `Self {}` は新 Vec 追加時に必ず更新するルールが CLAUDE.md に明記されている。
+- Fuzzy モードのビットマスク pre-filter: 非 ASCII エントリは `u64::MAX` が設定されるため、カタカナ名エントリは必ず pre-filter を通過する → kana マッチの機会が確保される。
 
-→ 既存のハンドラ構造はそのまま活用可能。各ハンドラの中身を入れ替えるだけ。
+---
+
+## アプローチ選定
+
+### 採用: 常時 ON（設定フィールドなし）
+
+クエリが ASCII のみのとき → `to_hiragana(query)` で kana_query を生成
+エントリの kana_lower_name（katakana → hiragana 変換済み）に substring マッチ
+
+**偽陽性分析**:
+
+| エントリ名 | lower_name | kana_lower_name | kana_query例 "どき" | 結果 |
+|-----------|-----------|-----------------|-------------------|------|
+| "Documents" | "documents" | "documents" (変換なし) | 含まれない | 偽陽性なし ✓ |
+| "書類" (漢字) | "書類" | "書類" (変換なし) | 含まれない | 偽陽性なし ✓ |
+| "ドキュメント" | "ドキュメント" | "どきゅめんと" | 含まれる | 正しい一致 ✓ |
+| "Desukutoppu" (ASCII 日本語風) | "desukutoppu" | "desukutoppu" | 含まれない | 偽陽性なし ✓ |
+
+→ 常時 ON で安全。KISS/YAGNI の観点で設定フィールド追加不要。
+
+### 不採用: opt-in フラグ（SearchConfig に romaji_enabled 追加）
+
+偽陽性がないため、設定追加は YAGNI。
+
+---
+
+## 使用ライブラリ: wana_kana
+
+- crates.io: `wana_kana`（wana_kana.js の Rust 実装、成熟・メンテ継続中）
+- API:
+  - `wana_kana::to_hiragana("dokyu")` → `"どきゅ"`
+  - `wana_kana::to_hiragana("ドキュメント")` → `"どきゅめんと"`（katakana → hiragana も対応）
+  - ASCII 文字列はそのまま通過（"documents" → "documents"）
+- 漢字変換は **不対応**（辞書不要・軽量な点を優先。漢字名は今回対応外 = YAGNI）
+
+---
+
+## kana_lower_names の構築コスト
+
+- 各エントリ名に `to_hiragana(to_lower_folded(name))` を適用（O(name_len) の文字列操作）
+- `lower_names` 構築と同じ rayon::join の Wave 1 に追加可能
+- キャッシュ不要（`lower_names` から導出できる、インデックスファイルに保存しない）
+
+---
+
+## kana マッチのスコアリング
+
+- Primary match（既存）が `None` の場合のみ kana マッチを試みる（OR 関係）
+- kana マッチは常に Substring 方式: `4500 - byte_position`
+  - Prefix(10000) > Substring(5000) > kana-Substring(4500)
+  - 直接一致のほうが kana 経由より常に高スコア ✓
+
+---
+
+## インクリメンタルキャッシュとの整合
+
+- `prev_candidates`: primary OR kana にマッチしたインデックスを格納
+- クエリが ASCII のまま伸長 → kana_query も単調収束 → prev_candidates から絞り込み可能 ✓
+- クエリが ASCII → 非 ASCII に変化 → `norm_query.starts_with(prev_query)` が false → full scan ✓
+
+---
 
 ## 技術的制約
 
-- CSS の `:hover` 疑似クラスはブラウザネイティブなので維持する（視覚フィードバックとして有用）
-- `selected` シグナルはキーボードナビゲーション（ArrowUp/Down）と共有されるため、クリックによる選択更新もこの同一シグナルを使う
-- ホバーで `selected` を変えなくなることで、キーボード操作中にマウスカーソルが結果上にあっても干渉しなくなる
-- 50ms hover debounce タイマーは不要になる（ホバーで選択を変えないため）
-- ツール選択モード（§17.3）では「クリックで起動」が仕様。通常モードとツール選択モードでクリック挙動を変えるか、統一するかの判断が必要
-  → issue の要望は「シングルクリックで選択、ダブルクリックで実行」。ツール選択モードも同一挙動に統一するのが自然
+- `wana_kana::to_hiragana()` は部分ローマ字（"dok" の "k" など）を残す可能性がある
+  - "dok" → "どk"（"k" は kana_lower_name に存在しない → substring 失敗）
+  - インクリメンタル検索なので次のキー入力で改善。実用上問題なし
+- 漢字ファイル名（"書類フォルダ"）はローマ字検索不可 → issue には漢字は言及なし。YAGNI
+
+---
 
 ## 未解決の疑問
 
-なし。変更範囲が明確。
+- `wana_kana` の正確なバージョン（0.4.x を想定、実装時に crates.io で確認）

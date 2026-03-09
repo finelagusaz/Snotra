@@ -1,258 +1,328 @@
-# Plan — インスタントコマンド機能
-
-仕様: `SPEC.md` §18
+# Plan — Issue #214: ローマ字入力で日本語名ファイルを検索（kana マッチ）
 
 ## 概要
 
-検索ボックスにプレフィックス（デフォルト `@`）を入力すると、ユーザー定義の任意コマンドを即座に実行できる機能。
-fenrir のインスタントコマンド（`instant.ini`）に相当。
+クエリが ASCII のみかつ一定文字数以上のとき、`wana_kana::to_hiragana()` でひらがな変換した
+kana_query を生成し、エントリ名のひらがな正規化済み Vec（`kana_lower_names`）に対して
+Substring マッチする。
 
-## フェーズ構成
-
-### Phase 1: コア型定義・変数展開（snotra-core）
-
-**ファイル**: `snotra-core/src/config.rs`
-
-1. `InstantCommand` 構造体を追加
-   ```rust
-   #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-   pub struct InstantCommand {
-       pub name: String,
-       pub command: String,
-   }
-   ```
-
-2. `SearchConfig` に `instant_command_prefix` を追加（デフォルト `"@"`）
-
-3. `Config` に `instant_commands: Vec<InstantCommand>` を追加（`#[serde(default)]`）
-
-4. `Config::validate()` にプレフィックスバリデーション追加
-   - 空文字を禁止
-   - `/` を禁止（スラッシュコマンドと衝突防止）
-
-**ファイル**: `snotra-core/src/instant.rs`（新規）
-
-5. 変数展開ロジック
-   ```rust
-   pub fn expand_instant_command(
-       command: &str,
-       query: &str,
-       clipboard: &str,
-   ) -> String
-   ```
-   - URL 判定: `command.starts_with("http://") || command.starts_with("https://")`
-   - URL → `{query}` `{clip}` を URL エンコードして展開
-   - 非 URL → 生文字列で展開
-
-6. 前方一致フィルタ
-   ```rust
-   pub fn filter_instant_commands<'a>(
-       commands: &'a [InstantCommand],
-       input: &str,
-   ) -> Vec<&'a InstantCommand>
-   ```
-
-7. ユニットテスト
-   - URL エンコード展開（日本語、空白、記号）
-   - 非 URL 展開（生文字列）
-   - `{query}` 空文字展開
-   - `{clip}` 展開
-   - 前方一致フィルタ（空文字=全件、前方一致、一致なし）
-   - プレフィックスバリデーション（空文字・`/` が拒否されること）
-
-**ファイル**: `snotra-core/Cargo.toml`
-
-8. `percent-encoding` クレートを依存に追加（URL エンコード用）
-
-**検証**: `cargo test -p snotra-core`
+設定で **オン/オフ** と **最小文字数** を制御（デフォルト: off / 2文字）。
+"a" → "あ" のような単一文字の意図しないマッチを防ぐ。
 
 ---
 
-### Phase 2: バックエンド IPC（src-tauri）
-
-**ファイル**: `src-tauri/src/commands/launch.rs`
-
-1. `launch_item_core` を `pub(crate)` に変更（インスタントコマンドから再利用するため）
-
-**ファイル**: `src-tauri/src/commands/instant.rs`（新規）
-
-2. IPC コマンド `get_instant_commands`
-   - 入力: `{ prefix_input: String }` — プレフィックス除去済みの入力文字列
-   - 出力: `Vec<InstantCommand>` — 前方一致フィルタ済み
-   - config から `instant_commands` を取得し `filter_instant_commands` を呼ぶ
-
-3. IPC コマンド `execute_instant_command`
-   - 入力: `{ name: String, query: String }`
-   - 処理:
-     a. config から該当コマンドを検索
-     b. クリップボードからテキスト取得（`arboard` クレートを使用）
-     c. `expand_instant_command()` で変数展開
-     d. 既存の `launch_item_core` を再利用して `ShellExecuteW` 実行（新規に ShellExecuteW を書かない）
-   - 出力: `LaunchResult`
-
-4. `src-tauri/src/commands/mod.rs` にモジュール追加
-
-**ファイル**: `src-tauri/src/main.rs`
-
-5. `.invoke_handler()` に新コマンド追加
-
-**ファイル**: `src-tauri/Cargo.toml`
-
-6. `arboard` クレートを依存に追加（クリップボード読み取り用）
-
-**検証**: `cargo check -p snotra-core -p snotra -p snotra-settings`
-
----
-
-### Phase 3: フロントエンド（ui）
-
-**ファイル**: `ui/src/lib/types.ts`
-
-1. `InstantCommand` 型追加
-   ```typescript
-   export interface InstantCommand {
-     name: string;
-     command: string;
-   }
-   ```
-
-2. `BootstrapPayload` に `instant_command_prefix: string` フィールドを追加
-
-**ファイル**: `ui/src/lib/invoke.ts`
-
-2. IPC ラッパー追加
-   - `getInstantCommands(prefixInput: string): Promise<InstantCommand[]>`
-   - `executeInstantCommand(name: string, query: string): Promise<LaunchResult>`
-
-**ファイル**: `ui/src/stores/search.ts`
-
-3. インスタントコマンドモードの実装
-   - `query` effect 内で `startsWith(prefix)` を判定（スラッシュコマンド判定の前に配置）
-   - プレフィックス検出 → `getInstantCommands()` でコマンド一覧取得（毎回 IPC、キャッシュなし）
-   - 結果を `SearchResult[]` に変換して表示（`name` = コマンド名、`path` = command、`isFolder` = false、`isError` = false）
-   - `folderState` / `toolSelectionState` 中はスキップ
-   - `shouldShowResults` の条件修正: `results().length > 0 && (!indexing() || isInstantCommandMode())` にする（インデックス中でもインスタントコマンド結果を表示するため）
-
-4. `activateSelected` / `activateSelectedByIndex` にインスタントコマンドモード分岐を追加
-   - インスタントコマンドモード中 → `executeInstantCommand(name, query)` にディスパッチ
-   - 実行後の状態クリーンアップ: query クリア + results クリア + ウィンドウ非表示（`launchAndReset` は呼ばない → 履歴記録をスキップ）
-
-5. `resetForShow` でインスタントコマンドモードの状態もリセット
-
-6. プレフィックスシグナルを作成（初期値 `"@"`）、bootstrap payload 受信時に更新
-
-7. `instant-prefix-changed` イベントをリッスンし、プレフィックスシグナルを更新（`unlistenFns` に push して `onCleanup` で解放）
-
-**ファイル**: `ui/src/components/SearchWindow.tsx`
-
-8. `noResults` メモシグナルにインスタントコマンドモード中の除外を追加
-
-9. `handleInput` の indexing ガードバイパス: value 取得 → プレフィックス判定 → indexing チェック（プレフィックスありならバイパス）の順に変更
-
-10. `handleKeyDown` の ArrowRight / ArrowLeft 分岐にインスタントコマンドモードガードを追加（フォルダ展開に入らない）
-
-11. `handleKeyDown` の Shift+Enter 分岐にインスタントコマンドモードガードを追加: `e.shiftKey && !toolSelectionState() && !isInstantCommandMode()` に条件変更
-
-**ファイル**: `ui/src/components/ResultsSection.tsx`
-
-12. インスタントコマンドモード中のアイコン取得スキップ（props 経由でモード状態を渡すか、`showIcons` とは別の制御フラグ）
-
-**検証**: `npm run build`
-
----
-
-### Phase 4: 設定 GUI（snotra-settings）
-
-**ファイル**: `snotra-settings/src/tabs/instant.rs`（新規）
-
-1. インスタントコマンドタブ UI
-   - コマンド一覧（テーブル表示）
-   - 追加/編集/削除モーダル（name + command）
-   - プレフィックス設定テキスト入力（バリデーション: 空文字・`/` 禁止）
-
-**ファイル**: `snotra-settings/src/tabs/mod.rs`
-2. `pub mod instant;` 追加
-
-**ファイル**: `snotra-settings/src/app.rs`
-3. タブ追加
-
-**ファイル**: `snotra-settings/src/i18n.rs`
-4. 翻訳キー追加
-
-**検証**: `cargo check -p snotra-settings`
-
----
-
-### Phase 5: config_watcher ホットリロード対応
-
-**ファイル**: `src-tauri/src/config_watcher.rs`
-
-1. `apply_config_change()` にプレフィックス変更検知を追加
-2. `instant-prefix-changed` イベント emit
-3. `instant_commands` 配列の変更は IPC 毎回読み込みのためホットリロード不要
-
-**検証**: `cargo check -p snotra`
-
----
-
-### Phase 6: ドキュメント更新
-
-- `snotra-core/CLAUDE.md` — `instant.rs` モジュール追加
-- `src-tauri/CLAUDE.md` — IPC コマンド追加、`launch_item_core` の pub(crate) 化
-- `ui/CLAUDE.md` — InstantCommandMode 記述追加
-- `snotra-settings/CLAUDE.md` — タブ追加
-- `AGENTS.md` — パターン追記
-
----
-
-## 影響範囲
-
-### 触るファイル
+## 変更ファイル一覧
 
 | ファイル | 変更内容 |
 |---------|---------|
-| `snotra-core/Cargo.toml` | `percent-encoding` 依存追加 |
-| `snotra-core/src/config.rs` | `InstantCommand` 型、`SearchConfig` にプレフィックス、`Config` に配列、バリデーション |
-| `snotra-core/src/instant.rs` | 新規: 変数展開・前方一致フィルタ |
-| `snotra-core/src/lib.rs` | モジュール宣言追加 |
-| `src-tauri/Cargo.toml` | `arboard` 依存追加 |
-| `src-tauri/src/commands/launch.rs` | `launch_item_core` を `pub(crate)` に変更 |
-| `src-tauri/src/commands/instant.rs` | 新規: IPC コマンド2つ |
-| `src-tauri/src/commands/mod.rs` | モジュール宣言追加 |
-| `src-tauri/src/main.rs` | invoke_handler 追加 |
-| `src-tauri/src/config_watcher.rs` | プレフィックス変更検知 + イベント emit |
-| `ui/src/lib/types.ts` | `InstantCommand` 型 |
-| `ui/src/lib/invoke.ts` | IPC ラッパー2つ |
-| `ui/src/stores/search.ts` | モード判定・実行ロジック・resetForShow・prefix listen |
-| `ui/src/components/SearchWindow.tsx` | `noResults` 除外、`handleInput` indexing ガード順序変更、ArrowRight/Left ガード、Shift+Enter ガード |
-| `ui/src/components/ResultsSection.tsx` | アイコン取得スキップ |
-| `snotra-settings/src/tabs/instant.rs` | 新規: 設定タブ |
-| `snotra-settings/src/tabs/mod.rs` | モジュール宣言 |
-| `snotra-settings/src/app.rs` | タブ追加 |
-| `snotra-settings/src/i18n.rs` | 翻訳追加 |
-| `Cargo.lock` | 依存更新（自動） |
+| `snotra-core/Cargo.toml` | `wana_kana` 依存追加 |
+| `snotra-core/src/config.rs` | `SearchConfig` に `migemo_enabled`, `migemo_min_chars` 追加 |
+| `snotra-core/src/query.rs` | `to_kana(s: &str) -> String` 追加 |
+| `snotra-core/src/search.rs` | `kana_lower_names` Vec 追加、kana マッチロジック追加 |
+| `snotra-settings/src/tabs/search.rs` | migemo 設定 UI 追加（checkbox + DragValue） |
+| `snotra-settings/src/i18n.rs` | 翻訳キー追加（日英） |
+| `SPEC.md` | §3.1/3.2 にローマ字検索の挙動を追記 |
 
-### 触らないファイル
+---
 
-- `snotra-core/src/search.rs` — 検索ロジックは無関係
-- `snotra-core/src/history.rs` — インスタントコマンドは履歴に記録しない
-- `ui/src/lib/commands.ts` — スラッシュコマンドは変更不要（プレフィックス `/` は禁止で衝突しない）
+## フェーズ構成
 
-## 依存クレート
+### Phase 1: wana_kana 依存追加
 
-| クレート | 追加先 | 用途 |
-|---------|--------|------|
-| `percent-encoding` | `snotra-core/Cargo.toml` | URL エンコード（`{query}` `{clip}` の変数展開時） |
-| `arboard` | `src-tauri/Cargo.toml` | クリップボード読み取り（`{clip}` 変数用） |
+**ファイル**: `snotra-core/Cargo.toml`
 
-## 対称コードパスチェックリスト
+```toml
+wana_kana = "0.4"   # 実装時に crates.io で最新版を確認
+```
 
-- [x] `activateSelected` (Enter) ↔ `activateSelectedByIndex` (Click): 両方にインスタントコマンドモード分岐
-- [x] `resetForShow` (ホットキー再表示): インスタントコマンドモードもリセット
-- [x] `query` effect (入力) ↔ `refreshResults` (表示更新): 両方にインスタントコマンドモード判定
-- [x] `handleInput` の indexing ガード: value 取得 → プレフィックス判定 → indexing チェックの順
-- [x] `shouldShowResults`: インスタントコマンドモード中は `indexing()` を無視
-- [x] ArrowRight / ArrowLeft: インスタントコマンドモード中は無効化（フォルダ展開に入らない）
-- [x] Shift+Enter: インスタントコマンドモード中は通常 Enter と同じ（ツール選択に入らない）
-- [x] `instant-prefix-changed` listen → `unlistenFns` に push → `onCleanup` で解放
-- [x] プレフィックスシグナル初期値 `"@"` → bootstrap 到着時に更新 → イベントで更新
+---
+
+### Phase 2: config.rs に設定フィールド追加
+
+**ファイル**: `snotra-core/src/config.rs`、`SearchConfig` に追加:
+
+```rust
+/// ローマ字入力でかな名ファイルを検索する（migemo 風検索）。
+/// デフォルト off: "a" → "あ" のような意図しないマッチを防ぐため、
+/// ユーザーが明示的に有効化する設計。
+#[serde(default)]
+pub migemo_enabled: bool,           // default: false
+
+/// migemo 検索を有効にするクエリの最小文字数。
+/// 1文字（"a"→"あ"）の意図しないマッチを防ぐため、デフォルト 2。
+#[serde(default = "default_migemo_min_chars")]
+pub migemo_min_chars: usize,        // default: 2
+```
+
+```rust
+fn default_migemo_min_chars() -> usize { 2 }
+```
+
+`Config::validate()` に追加:
+- `migemo_min_chars == 0` → エラー（最小 1 以上）
+
+---
+
+### Phase 3: query.rs に to_kana() を追加
+
+**ファイル**: `snotra-core/src/query.rs`
+
+```rust
+/// ASCII ローマ字をひらがなに変換する（カタカナもひらがなに正規化）。
+/// 非 ASCII 文字（漢字など）はそのまま通過する。
+pub fn to_kana(s: &str) -> String {
+    wana_kana::to_hiragana(s)
+}
+```
+
+---
+
+### Phase 4: search.rs — kana_lower_names Vec と kana マッチ追加
+
+**SearchEngine struct に追加**:
+
+```rust
+/// エントリ名をひらがな正規化した Vec（katakana→hiragana、ASCII はそのまま）。
+/// migemo 検索（ローマ字→かな変換マッチ）で使用。
+kana_lower_names: Vec<String>,
+```
+
+**`new()` の Wave 1 に追加** (lower_names と rayon::join で並列):
+
+```rust
+let ((lower_names, lower_file_names), (normalized_keys, kana_lower_names)) = rayon::join(
+    || rayon::join(
+        || entries.iter().map(|e| to_lower_folded(&e.name)).collect(),
+        || /* lower_file_names (既存) */,
+    ),
+    || rayon::join(
+        || /* normalized_keys (既存) */,
+        || entries.iter().map(|e| to_kana(&to_lower_folded(&e.name))).collect(),
+    ),
+);
+```
+
+**`new_with_cached_masks()` も同様に追加**（v3 フォールバックパスと v4 キャッシュパスの両方）。
+`kana_lower_names` はインデックスキャッシュに保存しない（毎起動再計算・意図的）。
+
+**`debug_assert!` に追加**:
+
+```rust
+debug_assert!(
+    lower_names.len() == entries.len()
+        && lower_file_names.len() == entries.len()
+        && normalized_keys.len() == entries.len()
+        && char_masks.len() == entries.len()
+        && file_name_char_masks.len() == entries.len()
+        && kana_lower_names.len() == entries.len(),  // ← 追加
+    "SearchEngine: all parallel Vecs must have the same length as entries"
+);
+```
+
+**`Self {}` に `kana_lower_names` を追加**。
+
+**`search_with_history_boost()` のシグネチャ変更**: `migemo_enabled: bool` と `migemo_min_chars: usize` を受け取るか、`HistoryBoostConfig` に含めるか。
+→ `HistoryBoostConfig` に追加する（既存の渡し方に合わせる）:
+
+```rust
+pub struct HistoryBoostConfig {
+    pub normalization: ...,
+    pub fuzzy_history_cap_ratio: f64,
+    pub migemo_enabled: bool,       // 追加
+    pub migemo_min_chars: usize,    // 追加
+}
+```
+
+`impl From<&SearchConfig> for HistoryBoostConfig` にも追加。
+
+**kana_query 生成**:
+
+```rust
+let kana_query: Option<String> = if history_boost_config.migemo_enabled
+    && norm_query.is_ascii()
+    && norm_query.chars().count() >= history_boost_config.migemo_min_chars
+{
+    let k = to_kana(norm_query.as_ref());
+    // 変換されなかった（英単語など）か、ASCII アルファベットが残っている場合はスキップ
+    if k != norm_query.as_ref() && !k.bytes().any(|b| b.is_ascii_alphabetic()) {
+        Some(k)
+    } else {
+        None
+    }
+} else {
+    None
+};
+```
+
+**scoring fold 内で kana マッチを追加**:
+
+```rust
+let kana_score = if name_score.is_none() {
+    kana_query.as_deref().and_then(|kq| {
+        kana_substring_score(&self.kana_lower_names[i], kq)
+    })
+} else {
+    None
+};
+
+let score = name_score.or(kana_score);
+```
+
+**kana_substring_score 関数**:
+
+```rust
+/// ひらがな正規化済みエントリ名に対して substring マッチを行い、
+/// マッチした場合は `4500 - byte_position` を返す（Substring の 5000 より低いスコア）。
+/// byte_position: UTF-8 バイト位置。ひらがな1文字は3バイトのため、
+/// Substring の char ベーススコアとは単純比較できないが実用上は問題ない。
+fn kana_substring_score(kana_lower_name: &str, kana_query: &str) -> Option<i64> {
+    kana_lower_name.find(kana_query).map(|pos| (4500i64 - pos as i64).max(1))
+}
+```
+
+---
+
+### Phase 5: ユニットテスト追加
+
+**snotra-core/src/query.rs**:
+
+```rust
+fn to_kana_converts_romaji_to_hiragana()   // "dokyu" → "どきゅ"
+fn to_kana_converts_katakana_to_hiragana() // "ドキュメント" → "どきゅめんと"
+fn to_kana_passes_through_ascii()          // "documents" → "documents"
+fn to_kana_passes_through_kanji()          // "書類" → "書類" を含む
+```
+
+**snotra-core/src/search.rs**:
+
+```rust
+fn kana_search_disabled_by_default()              // migemo_enabled=false → マッチしない
+fn kana_search_matches_katakana_entry()            // "dokyu" で "ドキュメント" がヒット
+fn kana_search_no_false_positive_for_ascii_entry() // "dokyu" で "documents" がヒットしない
+fn kana_search_direct_match_ranks_above_kana_match()
+fn kana_search_min_chars_blocks_short_query()      // 1文字クエリが migemo_min_chars=2 でマッチしない
+fn kana_search_partial_romaji_not_used()           // "dok"（変換後に英字残存）でマッチしない
+```
+
+---
+
+### Phase 6: 設定 UI（snotra-settings）
+
+**ファイル**: `snotra-settings/src/tabs/search.rs`
+
+検索設定タブ末尾（履歴スコアセクションの後）に追加:
+
+```rust
+// -- Migemo 検索 --
+ui.heading(tr.heading_migemo());
+ui.add_space(4.0);
+
+ui.checkbox(&mut config.search.migemo_enabled, tr.cb_migemo_enabled());
+ui.label(RichText::new(tr.hint_migemo()).small().color(TEXT_SECONDARY));
+
+ui.add_space(4.0);
+
+egui::Grid::new("migemo_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+    ui.label(tr.label_migemo_min_chars());
+    ui.add_enabled_ui(config.search.migemo_enabled, |ui| {
+        ui.add_sized(
+            [60.0, ui.spacing().interact_size.y],
+            egui::DragValue::new(&mut config.search.migemo_min_chars).range(1..=10),
+        );
+    });
+    ui.end_row();
+});
+```
+
+**ファイル**: `snotra-settings/src/i18n.rs`
+
+```rust
+pub fn heading_migemo(&self) -> &'static str {
+    match self.0 {
+        Language::Ja => "ローマ字検索（Migemo）",
+        Language::En => "Romaji Search (Migemo)",
+    }
+}
+
+pub fn cb_migemo_enabled(&self) -> &'static str {
+    match self.0 {
+        Language::Ja => "ローマ字入力で日本語名ファイルを検索する",
+        Language::En => "Search Japanese filenames with romaji input",
+    }
+}
+
+pub fn hint_migemo(&self) -> &'static str {
+    match self.0 {
+        Language::Ja => "例: \"dokyu\" と入力すると \"ドキュメント\" がヒットします。漢字名は対象外",
+        Language::En => "e.g. type \"dokyu\" to find \"ドキュメント\". Kanji names are not supported",
+    }
+}
+
+pub fn label_migemo_min_chars(&self) -> &'static str {
+    match self.0 {
+        Language::Ja => "最小文字数:",
+        Language::En => "Min chars:",
+    }
+}
+```
+
+---
+
+### Phase 7: SPEC.md 更新
+
+§3.1「検索方式」の末尾に追加:
+
+```
+- ローマ字検索（設定で有効化、デフォルト無効）: クエリが ASCII のみかつ
+  最小文字数以上の場合、ひらがな変換してエントリのかな正規化名に
+  中間部分一致で検索する（カタカナ名対応、漢字名は対象外）。
+```
+
+§3.2「クエリ正規化」の末尾に追加:
+
+```
+- ローマ字検索時の追加処理: migemo_enabled が true かつクエリが ASCII のみ
+  かつ migemo_min_chars 以上の場合、to_hiragana() で kana_query を生成し、
+  エントリのかな正規化名に中間部分一致する（score: max(4500 - byte_pos, 1)）。
+  直接一致（Prefix/Substring/Fuzzy）のスコアより低い。
+  kana_query に ASCII アルファベットが残留する場合は使用しない。
+```
+
+---
+
+## 不変条件
+
+1. `kana_lower_names.len() == entries.len()` は常に成立（debug_assert で保証）
+2. kana マッチは primary match の代替（OR）であり、加算ではない
+3. `migemo_enabled = false`（デフォルト）のとき kana パスは完全に不活性
+4. `kana_query` に ASCII アルファベットが残留する場合は `None` にして使用しない
+5. kana_lower_names はインデックスキャッシュに保存しない（毎起動再計算）
+
+---
+
+## テスト方針
+
+- `cargo test -p snotra-core`（全既存テスト + 新規 10 テスト）
+- `cargo check -p snotra-core -p snotra -p snotra-settings`
+
+---
+
+## SPEC.md 更新要否
+
+✅ §3.1/3.2 に追記必要
+
+---
+
+## セルフレビュー（更新済み）
+
+| 観点 | 対応状況 |
+|------|---------|
+| 対称コードパス | `new()` / `new_with_cached_masks()` 両方に `kana_lower_names` 構築を追加 ✅ |
+| debug_assert! 更新 | `kana_lower_names.len() == entries.len()` を追加 ✅ |
+| 負スコア対策 | `.max(1)` で 0 以下を防止 ✅ |
+| 不完全ローマ字ガード | `k.bytes().any(|b| b.is_ascii_alphabetic())` で ASCII 残留を検出 → None ✅ |
+| "a" 単体問題 | `migemo_min_chars`（デフォルト 2）で排除 ✅ |
+| migemo デフォルト off | 既存ユーザーの検索結果を変えない ✅ |
+| `HistoryBoostConfig` 拡張 | `migemo_enabled` / `migemo_min_chars` を追加（既存の渡し方と統一）✅ |
+| YAGNI | 漢字未対応・kana_char_masks なし・キャッシュなし ✅ |
+| `entry_view()` 非追加 | `kana_lower_names[i]` は fold 内で直接参照（`char_masks` と同パターン）✅ |

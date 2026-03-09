@@ -2,6 +2,13 @@ use std::borrow::Cow;
 
 use nucleo_matcher::chars::normalize as nucleo_normalize;
 
+/// ASCII ローマ字をひらがなに変換する（カタカナもひらがなに正規化）。
+/// 非 ASCII 文字（漢字など）はそのまま通過する。
+pub fn to_kana(s: &str) -> String {
+    use wana_kana::ConvertJapanese;
+    s.to_hiragana()
+}
+
 /// Lowercase + accent-fold a string using nucleo's normalization table.
 /// This aligns with nucleo's fuzzy matcher behavior (é→e, ü→u, etc.).
 /// Order: lowercase first, then normalize — nucleo's table covers both cases
@@ -64,7 +71,7 @@ pub fn normalize_query(query: &str) -> Cow<'_, str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_query, to_lower_folded};
+    use super::{normalize_query, to_kana, to_lower_folded};
     use std::borrow::Cow;
 
     #[test]
@@ -128,5 +135,45 @@ mod tests {
     #[test]
     fn to_lower_folded_ascii_unchanged() {
         assert_eq!(to_lower_folded("Hello World"), "hello world");
+    }
+
+    #[test]
+    fn to_kana_converts_romaji_to_hiragana() {
+        assert_eq!(to_kana("dokyu"), "どきゅ");
+    }
+
+    #[test]
+    fn to_kana_converts_katakana_to_hiragana() {
+        assert_eq!(to_kana("ドキュメント"), "どきゅめんと");
+    }
+
+    #[test]
+    fn to_kana_fully_converts_when_possible() {
+        // "dokyu" は完全にひらがなに変換され、ASCII アルファベットが残留しない。
+        // kana_query ガード（ASCII 残留チェック）の前提を確認する。
+        let result = to_kana("dokyu");
+        assert!(
+            !result.bytes().any(|b| b.is_ascii_alphabetic()),
+            "完全に変換できるローマ字は ASCII アルファベットが残留しないはず: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn to_kana_leaves_ascii_residue_for_partial_romaji() {
+        // "documents" の "ts" は wana_kana が単独のかなにマップできないため残留する。
+        // → kana_query ガードが None にして migemo マッチをスキップする。
+        let result = to_kana("documents");
+        assert!(
+            result.bytes().any(|b| b.is_ascii_alphabetic()),
+            "部分変換で ASCII 残留が発生するはず: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn to_kana_passes_through_kanji() {
+        let result = to_kana("書類");
+        assert!(result.contains("書類"));
     }
 }

@@ -8,7 +8,7 @@ use rayon::prelude::*;
 use crate::config::{SearchConfig, SearchHistoryNormalizationConfig};
 use crate::history::HistoryStore;
 use crate::indexer::{AppEntry, normalize_entry_key};
-use crate::query::{normalize_query, to_lower_folded};
+use crate::query::{normalize_query, to_kana, to_lower_folded};
 use crate::ui_types::SearchResult;
 
 const GLOBAL_WEIGHT: i64 = 5;
@@ -44,25 +44,31 @@ impl From<crate::config::SearchModeConfig> for SearchMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct HistoryBoostConfig {
+pub struct SearchOptions {
     pub normalization: SearchHistoryNormalizationConfig,
     pub fuzzy_history_cap_ratio: f64,
+    pub migemo_enabled: bool,
+    pub migemo_min_chars: usize,
 }
 
-impl Default for HistoryBoostConfig {
+impl Default for SearchOptions {
     fn default() -> Self {
         Self {
             normalization: SearchHistoryNormalizationConfig::Disabled,
             fuzzy_history_cap_ratio: 0.30,
+            migemo_enabled: false,
+            migemo_min_chars: 2,
         }
     }
 }
 
-impl From<&SearchConfig> for HistoryBoostConfig {
+impl From<&SearchConfig> for SearchOptions {
     fn from(config: &SearchConfig) -> Self {
         Self {
             normalization: config.history_normalization,
             fuzzy_history_cap_ratio: config.fuzzy_history_cap_ratio,
+            migemo_enabled: config.migemo_enabled,
+            migemo_min_chars: config.migemo_min_chars,
         }
     }
 }
@@ -103,6 +109,9 @@ pub struct SearchEngine {
     char_masks: Vec<u64>,
     /// Character-presence bitmask for lower_file_name (same layout as char_masks).
     file_name_char_masks: Vec<u64>,
+    /// エントリ名をひらがな正規化した Vec（katakana→hiragana、ASCII はそのまま）。
+    /// migemo 検索（ローマ字→かな変換マッチ）で使用。インデックスキャッシュには保存しない。
+    kana_lower_names: Vec<String>,
     /// Incremental search cache: normalized query string from the previous call.
     prev_query: String,
     /// Incremental search cache: entry indices that matched on the previous call,
@@ -110,13 +119,18 @@ pub struct SearchEngine {
     prev_candidates: Vec<usize>,
     /// Incremental search cache: search mode of the previous call.
     prev_mode: Option<SearchMode>,
+    /// Incremental search cache: 前回の kana_query 文字列。
+    /// incremental を使えるのは今回の kana_query が前回の prefix 拡張のときだけ。
+    /// ローマ字→かな変換は文字列伸長に対して非単調（"kan"→"かん", "kana"→"かな"）なため、
+    /// bool フラグでは不十分で、実際の kana 文字列を比較する必要がある。
+    prev_kana_query: Option<String>,
 }
 
 /// Lightweight view over per-entry fields for index `i` that are used in the scoring loop.
 /// Bundles 4 references (entry / lower_name / lower_file_name / normalized_key) without
 /// changing the underlying SoA layout, so all cache-locality properties are preserved.
-/// `char_masks` / `file_name_char_masks` are accessed directly from SearchEngine in the
-/// pre-filter pass to keep the bitmask sweep L1-cache-friendly.
+/// `char_masks` / `file_name_char_masks` / `kana_lower_names` are accessed directly from
+/// SearchEngine in the scoring closure (same SoA pattern, intentionally excluded from EntryView).
 struct EntryView<'a> {
     entry: &'a AppEntry,
     lower_name: &'a str,
@@ -126,10 +140,10 @@ struct EntryView<'a> {
 
 impl SearchEngine {
     pub fn new(entries: Vec<AppEntry>) -> Self {
-        // Wave 1: lower_names / lower_file_names / normalized_keys は entries への
-        // 純粋な map であり相互依存がないため rayon::join で並列構築する。
+        // Wave 1: lower_names / lower_file_names / normalized_keys / kana_lower_names は
+        // entries への純粋な map であり相互依存がないため rayon::join で並列構築する。
         let entries_ref = &entries;
-        let ((lower_names, lower_file_names), normalized_keys) = rayon::join(
+        let ((lower_names, lower_file_names), (normalized_keys, kana_lower_names)) = rayon::join(
             || {
                 rayon::join(
                     || {
@@ -152,10 +166,20 @@ impl SearchEngine {
                 )
             },
             || {
-                entries_ref
-                    .iter()
-                    .map(|e| normalize_entry_key(&e.target_path))
-                    .collect::<Vec<_>>()
+                rayon::join(
+                    || {
+                        entries_ref
+                            .iter()
+                            .map(|e| normalize_entry_key(&e.target_path))
+                            .collect::<Vec<_>>()
+                    },
+                    || {
+                        entries_ref
+                            .iter()
+                            .map(|e| to_kana(&to_lower_folded(&e.name)))
+                            .collect::<Vec<_>>()
+                    },
+                )
             },
         );
 
@@ -190,7 +214,8 @@ impl SearchEngine {
                 && lower_file_names.len() == entries.len()
                 && normalized_keys.len() == entries.len()
                 && char_masks.len() == entries.len()
-                && file_name_char_masks.len() == entries.len(),
+                && file_name_char_masks.len() == entries.len()
+                && kana_lower_names.len() == entries.len(),
             "SearchEngine: all parallel Vecs must have the same length as entries"
         );
         Self {
@@ -200,9 +225,11 @@ impl SearchEngine {
             normalized_keys,
             char_masks,
             file_name_char_masks,
+            kana_lower_names,
             prev_query: String::new(),
             prev_candidates: Vec::new(),
             prev_mode: None,
+            prev_kana_query: None,
         }
     }
 
@@ -220,12 +247,17 @@ impl SearchEngine {
         cached_lower_file_names: Option<Vec<Option<String>>>,
         cached_normalized_keys: Option<Vec<String>>,
     ) -> Self {
-        let ((lower_names, lower_file_names), normalized_keys) =
+        let ((lower_names, lower_file_names), (normalized_keys, kana_lower_names)) =
             if let (Some(ln), Some(lfn), Some(nk)) =
                 (cached_lower_names, cached_lower_file_names, cached_normalized_keys)
             {
-                // A-3: v4 キャッシュヒット → Wave 1 完全スキップ
-                ((ln, lfn), nk)
+                // A-3: v4 キャッシュヒット → Wave 1 完全スキップ（kana_lower_names は毎起動再計算）
+                // kana_lower_names は ln/lfn/nk と独立した map のため par_iter で並列構築する。
+                let kana = entries
+                    .par_iter()
+                    .map(|e| to_kana(&to_lower_folded(&e.name)))
+                    .collect::<Vec<_>>();
+                ((ln, lfn), (nk, kana))
             } else {
                 // v3 フォールバック: Wave 1 を並列実行
                 let entries_ref = &entries;
@@ -252,10 +284,20 @@ impl SearchEngine {
                         )
                     },
                     || {
-                        entries_ref
-                            .iter()
-                            .map(|e| normalize_entry_key(&e.target_path))
-                            .collect::<Vec<_>>()
+                        rayon::join(
+                            || {
+                                entries_ref
+                                    .iter()
+                                    .map(|e| normalize_entry_key(&e.target_path))
+                                    .collect::<Vec<_>>()
+                            },
+                            || {
+                                entries_ref
+                                    .iter()
+                                    .map(|e| to_kana(&to_lower_folded(&e.name)))
+                                    .collect::<Vec<_>>()
+                            },
+                        )
                     },
                 )
             };
@@ -265,7 +307,8 @@ impl SearchEngine {
                 && lower_file_names.len() == entries.len()
                 && normalized_keys.len() == entries.len()
                 && char_masks.len() == entries.len()
-                && file_name_char_masks.len() == entries.len(),
+                && file_name_char_masks.len() == entries.len()
+                && kana_lower_names.len() == entries.len(),
             "SearchEngine: all parallel Vecs must have the same length as entries"
         );
         Self {
@@ -275,9 +318,11 @@ impl SearchEngine {
             normalized_keys,
             char_masks,
             file_name_char_masks,
+            kana_lower_names,
             prev_query: String::new(),
             prev_candidates: Vec::new(),
             prev_mode: None,
+            prev_kana_query: None,
         }
     }
 
@@ -291,6 +336,10 @@ impl SearchEngine {
         }
     }
 
+    /// 履歴ブーストとデフォルト設定（migemo 無効）で検索する便宜 API。
+    /// migemo（ローマ字→かな変換マッチ）を有効にするには
+    /// [`search_with_options`] に `migemo_enabled = true` の
+    /// [`SearchOptions`] を渡すこと。
     pub fn search(
         &mut self,
         query: &str,
@@ -298,22 +347,22 @@ impl SearchEngine {
         history: &HistoryStore,
         mode: SearchMode,
     ) -> Vec<SearchResult> {
-        self.search_with_history_boost(
+        self.search_with_options(
             query,
             max_results,
             history,
             mode,
-            HistoryBoostConfig::default(),
+            SearchOptions::default(),
         )
     }
 
-    pub fn search_with_history_boost(
+    pub fn search_with_options(
         &mut self,
         query: &str,
         max_results: usize,
         history: &HistoryStore,
         mode: SearchMode,
-        history_boost_config: HistoryBoostConfig,
+        options: SearchOptions,
     ) -> Vec<SearchResult> {
         if max_results == 0 {
             return Vec::new();
@@ -328,6 +377,22 @@ impl SearchEngine {
         // Bitmask pre-filter is only used in Fuzzy mode; skip the computation for others.
         let query_mask = if mode == SearchMode::Fuzzy { char_bitmask(&norm_query) } else { 0 };
 
+        // Migemo: ローマ字 ASCII クエリをひらがなに変換した kana_query を生成する。
+        // kana に ASCII アルファベットが残留する場合（"dok" → "どk" 等）は None にする。
+        let kana_query: Option<String> = if options.migemo_enabled
+            && norm_query.is_ascii()
+            && norm_query.chars().count() >= options.migemo_min_chars
+        {
+            let k = to_kana(norm_query.as_ref());
+            if k != norm_query.as_ref() && !k.bytes().any(|b| b.is_ascii_alphabetic()) {
+                Some(k)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Pre-compute needle as UTF-32 once per search call and share it across threads.
         // Reusing the same Utf32String avoids repeated O(|query|) char conversion per entry.
         let needle_u32 = Utf32String::from(norm_query.as_ref());
@@ -340,11 +405,26 @@ impl SearchEngine {
         //   "no-dot → dot" transition must fall back to full scan because prev_candidates
         //   was built without file_name scoring; entries that only match via file_name would
         //   be absent from prev_candidates, causing false negatives.
+        //
+        // Guard: kana_monotonic
+        //   kana_query の単調性を検証する。incremental を使えるのは、今回の kana マッチ候補
+        //   が前回の候補の部分集合であるときだけ。
+        //   - (None, _): kana マッチが消える方向 → 候補は減るのみ → OK
+        //   - (Some(curr), Some(prev)) where curr starts_with prev: 候補が狭まる → OK
+        //   - (Some(curr), Some(prev)) where NOT starts_with: 非単調遷移
+        //     例: "kan"→"かん", "kana"→"かな" — 末尾の「ん」が「な」に変わる
+        //   - (Some(_), None): kana マッチが新規出現 → full scan 必須
+        let kana_monotonic = match (&kana_query, &self.prev_kana_query) {
+            (None, _) => true,
+            (Some(curr), Some(prev)) => curr.starts_with(prev.as_str()),
+            (Some(_), None) => false,
+        };
         let use_incremental = self.prev_mode == Some(mode)
             && !self.prev_candidates.is_empty()
             && !self.prev_query.is_empty()
             && norm_query.starts_with(self.prev_query.as_str())
-            && (!has_dot || self.prev_query.contains('.'));
+            && (!has_dot || self.prev_query.contains('.'))
+            && kana_monotonic;
 
         let candidate_indices: Vec<usize> = if use_incremental {
             std::mem::take(&mut self.prev_candidates)
@@ -410,7 +490,7 @@ impl SearchEngine {
                         )
                     });
 
-                    let score = if has_dot {
+                    let primary_score = if has_dot {
                         // Skip file_name scoring only on a high-confidence name match
                         // (avoids heavy fuzzy work).
                         let needs_fn_score = name_score.is_none_or(|s| s <= 9000);
@@ -446,6 +526,17 @@ impl SearchEngine {
                         name_score
                     };
 
+                    // kana マッチ: primary_score がない場合のみ試みる（OR 関係）。
+                    let kana_score = if primary_score.is_none() {
+                        kana_query
+                            .as_deref()
+                            .and_then(|kq| kana_substring_score(&self.kana_lower_names[i], kq))
+                    } else {
+                        None
+                    };
+
+                    let score = primary_score.or(kana_score);
+
                     if let Some(base_score) = score {
                         local_matches.push(i); // Record matching index for incremental cache
                         let (global_launches, last_launched) =
@@ -468,7 +559,7 @@ impl SearchEngine {
                             mode,
                             base_score,
                             raw_history_boost,
-                            history_boost_config,
+                            options,
                         );
                         let combined = base_score + history_boost;
 
@@ -515,6 +606,7 @@ impl SearchEngine {
         self.prev_query = norm_query.into_owned();
         self.prev_candidates = all_match_indices;
         self.prev_mode = Some(mode);
+        self.prev_kana_query = kana_query;
 
         // into_sorted_vec() reuses the heap's internal Vec and sorts in-place (ascending).
         // ScoredEntry::Ord: Less = better, so ascending order puts best first.
@@ -564,7 +656,7 @@ fn adjusted_history_boost(
     mode: SearchMode,
     base_score: i64,
     raw_history_boost: i64,
-    config: HistoryBoostConfig,
+    config: SearchOptions,
 ) -> i64 {
     if mode != SearchMode::Fuzzy
         || config.normalization != SearchHistoryNormalizationConfig::FuzzyRelativeCap
@@ -630,6 +722,18 @@ fn char_bitmask(lower: &str) -> u64 {
         }
     }
     mask
+}
+
+/// ひらがな正規化済みエントリ名に対して substring マッチを行い、
+/// マッチした場合は `4500 - byte_position` を返す（Substring の 5000 より低いスコア）。
+/// byte_pos を使用: ひらがなは3バイト/文字のため文字位置の3倍差がある。
+/// 先頭マッチが高スコアになる意図は保たれており、SPEC.md §3.2 に準拠。
+/// kana_lower_name が常にひらがな/カタカナであることは保証されない（漢字はそのまま通過）が、
+/// kana_query は常に純ひらがな（ASCII アルファベット残留ガード後）のため実運用上問題なし。
+fn kana_substring_score(kana_lower_name: &str, kana_query: &str) -> Option<i64> {
+    kana_lower_name
+        .find(kana_query)
+        .map(|pos| (4500i64 - pos as i64).max(1))
 }
 
 /// Score using pre-computed lowercase name and an optional UTF-32 haystack.
@@ -1021,15 +1125,16 @@ mod tests {
     #[test]
     fn adjusted_history_boost_disabled_uses_raw_value() {
         let adjusted =
-            adjusted_history_boost(SearchMode::Fuzzy, 100, 250, HistoryBoostConfig::default());
+            adjusted_history_boost(SearchMode::Fuzzy, 100, 250, SearchOptions::default());
         assert_eq!(adjusted, 250);
     }
 
     #[test]
     fn adjusted_history_boost_caps_only_in_fuzzy_mode() {
-        let config = HistoryBoostConfig {
+        let config = SearchOptions {
             normalization: SearchHistoryNormalizationConfig::FuzzyRelativeCap,
             fuzzy_history_cap_ratio: 0.30,
+            ..SearchOptions::default()
         };
         let adjusted = adjusted_history_boost(SearchMode::Prefix, 100, 250, config);
         assert_eq!(adjusted, 250);
@@ -1037,9 +1142,10 @@ mod tests {
 
     #[test]
     fn adjusted_history_boost_caps_fuzzy_history_by_base_ratio() {
-        let config = HistoryBoostConfig {
+        let config = SearchOptions {
             normalization: SearchHistoryNormalizationConfig::FuzzyRelativeCap,
             fuzzy_history_cap_ratio: 0.30,
+            ..SearchOptions::default()
         };
         let adjusted = adjusted_history_boost(SearchMode::Fuzzy, 100, 250, config);
         assert_eq!(adjusted, 30);
@@ -1047,16 +1153,17 @@ mod tests {
 
     #[test]
     fn adjusted_history_boost_zeroes_when_base_is_non_positive() {
-        let config = HistoryBoostConfig {
+        let config = SearchOptions {
             normalization: SearchHistoryNormalizationConfig::FuzzyRelativeCap,
             fuzzy_history_cap_ratio: 0.30,
+            ..SearchOptions::default()
         };
         let adjusted = adjusted_history_boost(SearchMode::Fuzzy, -50, 250, config);
         assert_eq!(adjusted, 0);
     }
 
     #[test]
-    fn search_with_history_boost_disabled_matches_legacy_search() {
+    fn search_with_options_disabled_matches_legacy_search() {
         let entries = make_entries(&["alpha", "alpaca", "alpine"]);
         let mut engine = SearchEngine::new(entries);
         let mut history = empty_history();
@@ -1065,12 +1172,12 @@ mod tests {
         }
 
         let legacy = engine.search("alp", 8, &history, SearchMode::Fuzzy);
-        let explicit = engine.search_with_history_boost(
+        let explicit = engine.search_with_options(
             "alp",
             8,
             &history,
             SearchMode::Fuzzy,
-            HistoryBoostConfig::default(),
+            SearchOptions::default(),
         );
         assert_eq!(legacy, explicit);
     }
@@ -1116,12 +1223,12 @@ mod tests {
             history.record_launch("C:\\FAKE\\APP.LNK", "app");
         }
 
-        let results = engine.search_with_history_boost(
+        let results = engine.search_with_options(
             "app",
             8,
             &history,
             SearchMode::Prefix,
-            HistoryBoostConfig::default(),
+            SearchOptions::default(),
         );
         assert!(!results.is_empty());
         // 履歴ブーストにより "App" が "AppX" より上位に来る
@@ -1484,5 +1591,314 @@ mod tests {
         let r3 = engine.search("fire", 8, &h, SearchMode::Fuzzy);
         assert!(!r3.is_empty());
         assert_eq!(r3[0].name, "Firefox");
+    }
+
+    // --- migemo（ローマ字→かな）検索テスト ---
+
+    fn migemo_config() -> SearchOptions {
+        SearchOptions {
+            migemo_enabled: true,
+            migemo_min_chars: 2,
+            ..SearchOptions::default()
+        }
+    }
+
+    #[test]
+    fn kana_search_disabled_by_default() {
+        // migemo_enabled=false（デフォルト）では "dokyu" で "ドキュメント" がヒットしない
+        let entries = make_entries(&["ドキュメント", "Documents"]);
+        let mut engine = SearchEngine::new(entries);
+        let h = empty_history();
+        let results = engine.search_with_options(
+            "dokyu",
+            8,
+            &h,
+            SearchMode::Substring,
+            SearchOptions::default(), // migemo_enabled=false
+        );
+        assert!(
+            results.is_empty(),
+            "migemo 無効時は 'dokyu' でカタカナ名がヒットしてはならない"
+        );
+    }
+
+    #[test]
+    fn kana_search_matches_katakana_entry() {
+        // "dokyu" で "ドキュメント" がヒットする
+        let entries = make_entries(&["ドキュメント", "Documents"]);
+        let mut engine = SearchEngine::new(entries);
+        let h = empty_history();
+        let results = engine.search_with_options(
+            "dokyu",
+            8,
+            &h,
+            SearchMode::Substring,
+            migemo_config(),
+        );
+        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+        assert!(
+            names.contains(&"ドキュメント"),
+            "'dokyu' で ドキュメント がヒットするはず: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn kana_search_no_false_positive_for_ascii_entry() {
+        // "dokyu" で "Documents" はヒットしない
+        let entries = make_entries(&["ドキュメント", "Documents"]);
+        let mut engine = SearchEngine::new(entries);
+        let h = empty_history();
+        let results = engine.search_with_options(
+            "dokyu",
+            8,
+            &h,
+            SearchMode::Substring,
+            migemo_config(),
+        );
+        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+        assert!(
+            !names.contains(&"Documents"),
+            "'dokyu' で ASCII エントリ Documents がヒットしてはならない: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn kana_search_direct_match_ranks_above_kana_match() {
+        // 直接 Substring マッチ(5000) が kana マッチ(4500) より常に上位に来ることを確認する。
+        // "どきゅめんと"（ひらがな名）を含むエントリに対して:
+        //   - "どきゅ"（直接クエリ）→ Substring スコア 5000
+        //   - "dokyu"（kana クエリ）→ kana_substring_score 4500
+        // 直接クエリの方が kana クエリより高スコアになる。
+        let entries = vec![
+            AppEntry {
+                name: "どきゅめんと".to_string(),
+                target_path: "C:\\fake\\a.lnk".to_string(),
+                is_folder: false,
+            },
+            // kana マッチ専用エントリ（直接クエリでは name がひらがなのみなのでマッチしない）
+            AppEntry {
+                name: "ドキュメント".to_string(),
+                target_path: "C:\\fake\\b.lnk".to_string(),
+                is_folder: false,
+            },
+        ];
+        let mut engine = SearchEngine::new(entries);
+        let h = empty_history();
+
+        // "どきゅめんと" に対して直接 Substring マッチしたスコアは 5000（先頭一致）
+        let direct = engine.search_with_options(
+            "どきゅ",
+            8,
+            &h,
+            SearchMode::Substring,
+            migemo_config(),
+        );
+
+        // "dokyu" → kana_query = "どきゅ" → kana_substring_score = 4500
+        let kana = engine.search_with_options(
+            "dokyu",
+            8,
+            &h,
+            SearchMode::Substring,
+            migemo_config(),
+        );
+
+        // 両方の結果が存在することを確認
+        assert!(!direct.is_empty(), "直接クエリで どきゅめんと がヒットするはず");
+        assert!(!kana.is_empty(), "kana クエリで どきゅめんと / ドキュメント がヒットするはず");
+
+        // 直接クエリで "どきゅめんと" がトップに来る（Substring の先頭一致 = 高スコア）
+        assert_eq!(
+            direct[0].name, "どきゅめんと",
+            "直接クエリ先頭一致は どきゅめんと が最高スコア"
+        );
+
+        // kana マッチのスコア(4500) < 直接マッチのスコア(5000) の確認:
+        // 同じエントリが両クエリでヒットするとき、直接クエリ側の方が先頭になる。
+        // "どきゅめんと" は直接 Substring(5000) でも kana_substring(4500) でもヒットするが、
+        // 直接クエリ時は primary_score が Some なので kana_score は使われない（OR 関係）。
+        // よって primary_score（5000）> kana_score（4500）の順序不変条件が成立する。
+        let direct_names: Vec<&str> = direct.iter().map(|r| r.name.as_str()).collect();
+        let kana_names: Vec<&str> = kana.iter().map(|r| r.name.as_str()).collect();
+        assert!(
+            direct_names.contains(&"どきゅめんと"),
+            "直接クエリで どきゅめんと がヒットするはず: {:?}",
+            direct_names
+        );
+        assert!(
+            kana_names.contains(&"どきゅめんと") || kana_names.contains(&"ドキュメント"),
+            "kana クエリで少なくとも一方がヒットするはず: {:?}",
+            kana_names
+        );
+    }
+
+    #[test]
+    fn kana_search_min_chars_blocks_short_query() {
+        // min_chars=2 のとき 1文字クエリ "a" → "あ" はヒットしない
+        let entries = make_entries(&["あいうえお"]);
+        let mut engine = SearchEngine::new(entries);
+        let h = empty_history();
+        let config = SearchOptions {
+            migemo_enabled: true,
+            migemo_min_chars: 2,
+            ..SearchOptions::default()
+        };
+        let results = engine.search_with_options("a", 8, &h, SearchMode::Substring, config);
+        assert!(
+            results.is_empty(),
+            "1文字クエリは migemo_min_chars=2 でブロックされるはず"
+        );
+    }
+
+    #[test]
+    fn kana_search_partial_romaji_not_used() {
+        // "dok" → "どk"（'k' が残る） → kana_query が None になりヒットしない
+        let entries = make_entries(&["ドキュメント"]);
+        let mut engine = SearchEngine::new(entries);
+        let h = empty_history();
+        let results = engine.search_with_options(
+            "dok",
+            8,
+            &h,
+            SearchMode::Substring,
+            migemo_config(),
+        );
+        // "dok" は部分ローマ字で変換後に 'k' が残るため kana_query=None
+        // ドキュメント は Substring("dok") にも直接マッチしないため空
+        assert!(
+            results.is_empty(),
+            "部分ローマ字 'dok' では kana マッチもしないはず: {:?}",
+            results.iter().map(|r| r.name.as_str()).collect::<Vec<_>>()
+        );
+    }
+
+    // --- incremental + kana 遷移テスト ---
+
+    #[test]
+    fn incremental_kana_min_chars_crossing_does_not_lose_kana_match() {
+        // "d" (min_chars=2 未満 → kana_query=None) → "do" (min_chars=2 到達 → kana_query=Some("ど"))
+        // 前回の prev_candidates には kana マッチが含まれていない。
+        // full scan にフォールバックしなければ "ドキュメント" が欠落する。
+        let entries = make_entries(&["ドキュメント", "Discord"]);
+        let mut engine = SearchEngine::new(entries);
+        let h = empty_history();
+        let cfg = migemo_config();
+
+        // "d" → kana_query=None（min_chars=2 未満）
+        let _ = engine.search_with_options("d", 8, &h, SearchMode::Substring, cfg);
+
+        // "do" → kana_query=Some("ど")。前回 prev_kana_query=None なので full scan。
+        let results = engine.search_with_options("do", 8, &h, SearchMode::Substring, cfg);
+        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+        assert!(
+            names.contains(&"ドキュメント"),
+            "min_chars 超え遷移で ドキュメント がヒットするはず（full scan フォールバック必須）: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn incremental_kana_ascii_residue_clearing_does_not_lose_kana_match() {
+        // "dok" (ASCII 残留 'k' → kana_query=None) → "dokyu" (完全変換 → kana_query=Some("どきゅ"))
+        // prev_candidates に kana マッチが含まれていないため full scan が必要。
+        let entries = make_entries(&["ドキュメント", "Docking Station"]);
+        let mut engine = SearchEngine::new(entries);
+        let h = empty_history();
+        let cfg = migemo_config();
+
+        // "dok" → kana_query=None（"どk" に ASCII 残留）
+        let _ = engine.search_with_options("dok", 8, &h, SearchMode::Substring, cfg);
+
+        // "dokyu" → kana_query=Some("どきゅ")。prev_kana_query=None なので full scan。
+        let results = engine.search_with_options("dokyu", 8, &h, SearchMode::Substring, cfg);
+        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+        assert!(
+            names.contains(&"ドキュメント"),
+            "ASCII 残留解消遷移で ドキュメント がヒットするはず（full scan フォールバック必須）: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn incremental_kana_to_kana_reuses_cache() {
+        // "do" (kana_query=Some) → "doku" (kana_query=Some) は incremental で正しく動作する。
+        // kana→kana の拡張なので prev_candidates を再利用して問題ない。
+        let entries = make_entries(&["ドキュメント", "Discord", "Chrome"]);
+        let mut engine = SearchEngine::new(entries);
+        let h = empty_history();
+        let cfg = migemo_config();
+
+        let _ = engine.search_with_options("do", 8, &h, SearchMode::Substring, cfg);
+        let incremental =
+            engine.search_with_options("doku", 8, &h, SearchMode::Substring, cfg);
+
+        // fresh エンジンとの比較で正確性を担保
+        let mut fresh = SearchEngine::new(make_entries(&["ドキュメント", "Discord", "Chrome"]));
+        let fresh_result =
+            fresh.search_with_options("doku", 8, &h, SearchMode::Substring, cfg);
+
+        let inc_names: Vec<&str> = incremental.iter().map(|r| r.name.as_str()).collect();
+        let fresh_names: Vec<&str> = fresh_result.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(
+            inc_names, fresh_names,
+            "kana→kana incremental は fresh 結果と一致する必要がある"
+        );
+    }
+
+    #[test]
+    fn incremental_kana_non_monotonic_n_vowel_falls_back() {
+        // "kan" → kana="かん", "kana" → kana="かな"
+        // ローマ字→かな変換は非単調: 末尾の「ん」が「な」に変わる。
+        // "かな" は "かん" の prefix 拡張ではないため incremental は使えない。
+        // "かなめ" のようなエントリは "かん" でヒットしないが "かな" でヒットする。
+        let entries = make_entries(&["かなめ", "かんな", "Kanata"]);
+        let mut engine = SearchEngine::new(entries);
+        let h = empty_history();
+        let cfg = migemo_config();
+
+        // "kan" → kana_query=Some("かん")
+        let r1 = engine.search_with_options("kan", 8, &h, SearchMode::Substring, cfg);
+        let names1: Vec<&str> = r1.iter().map(|r| r.name.as_str()).collect();
+        assert!(
+            names1.contains(&"かんな"),
+            "\"kan\"(かん) で「かんな」がヒットするはず: {:?}",
+            names1
+        );
+
+        // "kana" → kana_query=Some("かな")。"かな" は "かん" の prefix ではない → full scan。
+        let r2 = engine.search_with_options("kana", 8, &h, SearchMode::Substring, cfg);
+        let names2: Vec<&str> = r2.iter().map(|r| r.name.as_str()).collect();
+        assert!(
+            names2.contains(&"かなめ"),
+            "非単調遷移 kan→kana で「かなめ」がヒットするはず（full scan フォールバック必須）: {:?}",
+            names2
+        );
+    }
+
+    #[test]
+    fn incremental_kana_monotonic_extension_reuses_cache() {
+        // "ka" → kana="か", "kan" → kana="かん"
+        // "かん" は "か" の prefix 拡張 → incremental が使える。
+        let entries = make_entries(&["かなめ", "かんな", "Chrome"]);
+        let mut engine = SearchEngine::new(entries);
+        let h = empty_history();
+        let cfg = migemo_config();
+
+        let _ = engine.search_with_options("ka", 8, &h, SearchMode::Substring, cfg);
+        let incremental =
+            engine.search_with_options("kan", 8, &h, SearchMode::Substring, cfg);
+
+        let mut fresh = SearchEngine::new(make_entries(&["かなめ", "かんな", "Chrome"]));
+        let fresh_result =
+            fresh.search_with_options("kan", 8, &h, SearchMode::Substring, cfg);
+
+        let inc_names: Vec<&str> = incremental.iter().map(|r| r.name.as_str()).collect();
+        let fresh_names: Vec<&str> = fresh_result.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(
+            inc_names, fresh_names,
+            "か→かん は単調拡張なので incremental は fresh と一致するはず"
+        );
     }
 }

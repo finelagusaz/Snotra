@@ -182,6 +182,10 @@ fn default_instant_command_prefix() -> String {
     "@".to_string()
 }
 
+fn default_migemo_min_chars() -> usize {
+    2
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SearchModeConfig {
@@ -211,6 +215,15 @@ pub struct SearchConfig {
     pub fuzzy_history_cap_ratio: f64,
     #[serde(default = "default_instant_command_prefix")]
     pub instant_command_prefix: String,
+    /// ローマ字入力でかな名ファイルを検索する（migemo 風検索）。
+    /// デフォルト off: "a" → "あ" のような意図しないマッチを防ぐため、
+    /// ユーザーが明示的に有効化する設計。
+    #[serde(default)]
+    pub migemo_enabled: bool,
+    /// migemo 検索を有効にするクエリの最小文字数。
+    /// 1文字（"a"→"あ"）の意図しないマッチを防ぐため、デフォルト 2。
+    #[serde(default = "default_migemo_min_chars")]
+    pub migemo_min_chars: usize,
 }
 
 impl Default for SearchConfig {
@@ -222,6 +235,8 @@ impl Default for SearchConfig {
             history_normalization: SearchHistoryNormalizationConfig::Disabled,
             fuzzy_history_cap_ratio: default_fuzzy_history_cap_ratio(),
             instant_command_prefix: default_instant_command_prefix(),
+            migemo_enabled: false,
+            migemo_min_chars: default_migemo_min_chars(),
         }
     }
 }
@@ -703,6 +718,11 @@ impl Config {
             errors.push(ConfigError::InstantCommandPrefixSlash);
         }
 
+        // Migemo validation
+        if self.search.migemo_min_chars == 0 {
+            errors.push(ConfigError::MigemoMinCharsZero);
+        }
+
         // Instant command name uniqueness
         {
             let mut seen = std::collections::HashSet::new();
@@ -1159,6 +1179,7 @@ mod tests {
             history_normalization: SearchHistoryNormalizationConfig::FuzzyRelativeCap,
             fuzzy_history_cap_ratio: 1.5,
             instant_command_prefix: "@".to_string(),
+            ..SearchConfig::default()
         };
 
         assert!(config.sanitize());

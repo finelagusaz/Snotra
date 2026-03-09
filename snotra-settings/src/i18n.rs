@@ -772,6 +772,13 @@ impl Tr {
         }
     }
 
+    pub fn hint_instant_name(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "プレフィックスの後に入力する文字列です（例: \"g\" と設定すると \"@g\" で呼び出し）",
+            Language::En => "Text typed after the prefix to invoke this command (e.g. name \"g\" → type \"@g\")",
+        }
+    }
+
     pub fn label_instant_command(&self) -> &'static str {
         match self.0 {
             Language::Ja => "コマンド:",

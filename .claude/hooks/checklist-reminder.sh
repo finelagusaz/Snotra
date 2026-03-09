@@ -2,7 +2,8 @@
 # Edit/Write 後に、編集先ディレクトリの CLAUDE.md チェックリストを出力する
 
 input=$(cat)
-ROOT="/c/workspace/Snotra"
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+if [ -z "$ROOT" ]; then exit 0; fi
 
 # file_path を抽出
 file_path=$(echo "$input" | grep -oP '"file_path"\s*:\s*"[^"]*"' | head -1 | sed 's/.*"file_path"\s*:\s*"//;s/"$//')

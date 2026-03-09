@@ -18,7 +18,7 @@
           },
           {
             "type": "command",
-            "command": "input=$(cat); echo \"$input\" | bash /c/workspace/Snotra/.claude/hooks/checklist-reminder.sh"
+            "command": "input=$(cat); ROOT=$(git rev-parse --show-toplevel 2>/dev/null); if [ -n \"$ROOT\" ] && [ -f \"$ROOT/.claude/hooks/checklist-reminder.sh\" ]; then echo \"$input\" | bash \"$ROOT/.claude/hooks/checklist-reminder.sh\"; fi"
           }
         ]
       }

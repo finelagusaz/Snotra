@@ -19,10 +19,9 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 
 ### stores/
 
-- `search.ts`: 検索状態管理（クエリ/結果/選択/モード切替/`shouldShowResults` メモシグナル）
+- `search.ts`: 検索状態管理（クエリ/結果/選択/モード切替/`shouldShowResults` メモシグナル）。主要な公開関数: `resetForShow()`（window-shown 時の全状態リセット）、`refreshResults()`（ソースに応じた検索実行）、`initIndexingState()`（起動時のインデックス状態初期化 + `indexing-complete` リスナー登録）。`suppressNextQueryEffectRefresh` フラグで query effect の不要な再実行を抑制
 - `folder.ts`: フォルダモードの状態（`FolderFrame` シグナル + `folderFilter`）
 - `tool-selection.ts`: ツール選択モードの状態（`ToolSelectionFrame` シグナル）
-- `settings.ts`: 設定ドラフト管理
 
 ### lib/
 
@@ -76,7 +75,7 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 
 検索バーと検索結果は1つの Tauri ウィンドウ内に共存する。結果の表示/非表示はシグナルで管理し、ウィンドウ高さは動的に変更する。
 
-- `shouldShowResults` メモシグナル: `results().length > 0 && !indexing()` — 結果を表示すべきかの判定
+- `shouldShowResults` メモシグナル: `results().length > 0 && (!indexing() || instantCommandMode())` — 結果を表示すべきかの判定（インスタントコマンドモードではインデックス構築中でも結果を表示）
 - `mainVisible` ローカルシグナル: `window-shown` / `window-hidden` イベントで同期される — ウィンドウが可視かの判定
 - `ResultsSection` の `visible` prop: `shouldShowResults() && mainVisible()` — 実際の描画と Blob URL ライフサイクルを制御
 - `createEffect` でウィンドウ高さを計算: `shouldShowResults()` が true なら `SEARCH_BAR_HEIGHT + maxResults * RESULT_ROW_HEIGHT + RESULTS_PADDING`、false なら `SEARCH_BAR_HEIGHT`

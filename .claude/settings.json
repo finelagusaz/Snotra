@@ -15,10 +15,6 @@
           {
             "type": "command",
             "command": "input=$(cat); if echo \"$input\" | grep -qE '(tauri\\.conf\\.json|config\\.toml)'; then echo 'WARN: 設定ファイルの変更です。Windows 互換性を確認してください。' >&2; fi"
-          },
-          {
-            "type": "command",
-            "command": "input=$(cat); echo \"$input\" | bash /c/workspace/Snotra/.claude/hooks/checklist-reminder.sh"
           }
         ]
       }

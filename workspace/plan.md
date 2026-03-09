@@ -2,9 +2,12 @@
 
 ## 概要
 
-クエリが ASCII のみのとき、`wana_kana::to_hiragana()` でひらがな変換した kana_query を生成し、
-エントリ名のひらがな正規化済み Vec（`kana_lower_names`）に対して Substring マッチする。
-設定フィールドなし・常時 ON。
+クエリが ASCII のみかつ一定文字数以上のとき、`wana_kana::to_hiragana()` でひらがな変換した
+kana_query を生成し、エントリ名のひらがな正規化済み Vec（`kana_lower_names`）に対して
+Substring マッチする。
+
+設定で **オン/オフ** と **最小文字数** を制御（デフォルト: off / 2文字）。
+"a" → "あ" のような単一文字の意図しないマッチを防ぐ。
 
 ---
 
@@ -13,11 +16,12 @@
 | ファイル | 変更内容 |
 |---------|---------|
 | `snotra-core/Cargo.toml` | `wana_kana` 依存追加 |
+| `snotra-core/src/config.rs` | `SearchConfig` に `migemo_enabled`, `migemo_min_chars` 追加 |
 | `snotra-core/src/query.rs` | `to_kana(s: &str) -> String` 追加 |
 | `snotra-core/src/search.rs` | `kana_lower_names` Vec 追加、kana マッチロジック追加 |
+| `snotra-settings/src/tabs/search.rs` | migemo 設定 UI 追加（checkbox + DragValue） |
+| `snotra-settings/src/i18n.rs` | 翻訳キー追加（日英） |
 | `SPEC.md` | §3.1/3.2 にローマ字検索の挙動を追記 |
-
-設定 UI（`snotra-settings`）は変更なし。
 
 ---
 
@@ -28,59 +32,80 @@
 **ファイル**: `snotra-core/Cargo.toml`
 
 ```toml
-wana_kana = "0.4"   # バージョンは実装時に crates.io で最新版を確認
+wana_kana = "0.4"   # 実装時に crates.io で最新版を確認
 ```
 
 ---
 
-### Phase 2: query.rs に to_kana() を追加
+### Phase 2: config.rs に設定フィールド追加
+
+**ファイル**: `snotra-core/src/config.rs`、`SearchConfig` に追加:
+
+```rust
+/// ローマ字入力でかな名ファイルを検索する（migemo 風検索）。
+/// デフォルト off: "a" → "あ" のような意図しないマッチを防ぐため、
+/// ユーザーが明示的に有効化する設計。
+#[serde(default)]
+pub migemo_enabled: bool,           // default: false
+
+/// migemo 検索を有効にするクエリの最小文字数。
+/// 1文字（"a"→"あ"）の意図しないマッチを防ぐため、デフォルト 2。
+#[serde(default = "default_migemo_min_chars")]
+pub migemo_min_chars: usize,        // default: 2
+```
+
+```rust
+fn default_migemo_min_chars() -> usize { 2 }
+```
+
+`Config::validate()` に追加:
+- `migemo_min_chars == 0` → エラー（最小 1 以上）
+
+---
+
+### Phase 3: query.rs に to_kana() を追加
 
 **ファイル**: `snotra-core/src/query.rs`
 
 ```rust
 /// ASCII ローマ字をひらがなに変換する（カタカナもひらがなに正規化）。
 /// 非 ASCII 文字（漢字など）はそのまま通過する。
-/// wana_kana::to_hiragana() で変換後、小文字化する。
 pub fn to_kana(s: &str) -> String {
     wana_kana::to_hiragana(s)
 }
 ```
 
-- `to_lower_folded()` の後に呼ぶ想定（インデックス構築時はすでに lower_folded 済みの文字列に適用）
-
 ---
 
-### Phase 3: search.rs — kana_lower_names Vec と kana マッチ追加
+### Phase 4: search.rs — kana_lower_names Vec と kana マッチ追加
 
 **SearchEngine struct に追加**:
 
 ```rust
 /// エントリ名をひらがな正規化した Vec（katakana→hiragana、ASCII はそのまま）。
-/// ローマ字クエリを kana 変換して substring マッチするために使用。
+/// migemo 検索（ローマ字→かな変換マッチ）で使用。
 kana_lower_names: Vec<String>,
 ```
 
 **`new()` の Wave 1 に追加** (lower_names と rayon::join で並列):
 
 ```rust
-// Wave 1: lower_names / lower_file_names / normalized_keys / kana_lower_names
 let ((lower_names, lower_file_names), (normalized_keys, kana_lower_names)) = rayon::join(
     || rayon::join(
         || entries.iter().map(|e| to_lower_folded(&e.name)).collect(),
-        || ...lower_file_names...,
+        || /* lower_file_names (既存) */,
     ),
     || rayon::join(
-        || ...normalized_keys...,
+        || /* normalized_keys (既存) */,
         || entries.iter().map(|e| to_kana(&to_lower_folded(&e.name))).collect(),
     ),
 );
 ```
 
-**`new_with_cached_masks()` も同様に追加** (v3 フォールバックパスと v4 キャッシュパスの両方)。
+**`new_with_cached_masks()` も同様に追加**（v3 フォールバックパスと v4 キャッシュパスの両方）。
+`kana_lower_names` はインデックスキャッシュに保存しない（毎起動再計算・意図的）。
 
-v4 キャッシュは `kana_lower_names` を保存しない（再計算で十分）。
-
-**`debug_assert!` 更新**:
+**`debug_assert!` に追加**:
 
 ```rust
 debug_assert!(
@@ -89,21 +114,41 @@ debug_assert!(
         && normalized_keys.len() == entries.len()
         && char_masks.len() == entries.len()
         && file_name_char_masks.len() == entries.len()
-        && kana_lower_names.len() == entries.len(),  // 追加
+        && kana_lower_names.len() == entries.len(),  // ← 追加
     "SearchEngine: all parallel Vecs must have the same length as entries"
 );
 ```
 
-**`Self {}` に kana_lower_names を追加**。
+**`Self {}` に `kana_lower_names` を追加**。
 
-**`search_with_history_boost()` に kana_query 計算を追加**:
+**`search_with_history_boost()` のシグネチャ変更**: `migemo_enabled: bool` と `migemo_min_chars: usize` を受け取るか、`HistoryBoostConfig` に含めるか。
+→ `HistoryBoostConfig` に追加する（既存の渡し方に合わせる）:
 
 ```rust
-// ローマ字検索: ASCII のみのクエリをひらがなに変換して kana マッチに使用
-let kana_query: Option<String> = if norm_query.is_ascii() && !norm_query.is_empty() {
+pub struct HistoryBoostConfig {
+    pub normalization: ...,
+    pub fuzzy_history_cap_ratio: f64,
+    pub migemo_enabled: bool,       // 追加
+    pub migemo_min_chars: usize,    // 追加
+}
+```
+
+`impl From<&SearchConfig> for HistoryBoostConfig` にも追加。
+
+**kana_query 生成**:
+
+```rust
+let kana_query: Option<String> = if history_boost_config.migemo_enabled
+    && norm_query.is_ascii()
+    && norm_query.chars().count() >= history_boost_config.migemo_min_chars
+{
     let k = to_kana(norm_query.as_ref());
-    // to_kana が同一文字列を返す場合（kana に変換されなかった場合）はスキップ
-    if k != norm_query.as_ref() { Some(k) } else { None }
+    // 変換されなかった（英単語など）か、ASCII アルファベットが残っている場合はスキップ
+    if k != norm_query.as_ref() && !k.bytes().any(|b| b.is_ascii_alphabetic()) {
+        Some(k)
+    } else {
+        None
+    }
 } else {
     None
 };
@@ -112,10 +157,6 @@ let kana_query: Option<String> = if norm_query.is_ascii() && !norm_query.is_empt
 **scoring fold 内で kana マッチを追加**:
 
 ```rust
-// primary match (既存)
-let name_score = MATCHER.with(...); // 既存ロジック
-
-// kana match: primary が失敗した場合のみ試みる
 let kana_score = if name_score.is_none() {
     kana_query.as_deref().and_then(|kq| {
         kana_substring_score(&self.kana_lower_names[i], kq)
@@ -127,92 +168,124 @@ let kana_score = if name_score.is_none() {
 let score = name_score.or(kana_score);
 ```
 
-**kana_substring_score 関数を追加**:
+**kana_substring_score 関数**:
 
 ```rust
 /// ひらがな正規化済みエントリ名に対して substring マッチを行い、
 /// マッチした場合は `4500 - byte_position` を返す（Substring の 5000 より低いスコア）。
+/// byte_position: UTF-8 バイト位置。ひらがな1文字は3バイトのため、
+/// Substring の char ベーススコアとは単純比較できないが実用上は問題ない。
 fn kana_substring_score(kana_lower_name: &str, kana_query: &str) -> Option<i64> {
-    kana_lower_name.find(kana_query).map(|pos| 4500 - pos as i64)
+    kana_lower_name.find(kana_query).map(|pos| (4500i64 - pos as i64).max(1))
 }
 ```
 
 ---
 
-### Phase 4: ユニットテスト追加
+### Phase 5: ユニットテスト追加
 
 **snotra-core/src/query.rs**:
 
 ```rust
-#[test]
-fn to_kana_converts_romaji_to_hiragana() {
-    assert_eq!(to_kana("dokyu"), "どきゅ");
-}
-
-#[test]
-fn to_kana_converts_katakana_to_hiragana() {
-    assert_eq!(to_kana("ドキュメント"), "どきゅめんと");
-}
-
-#[test]
-fn to_kana_passes_through_ascii() {
-    assert_eq!(to_kana("documents"), "documents");
-}
-
-#[test]
-fn to_kana_passes_through_kanji() {
-    // 漢字は変換しない
-    assert!(to_kana("書類").contains("書"));
-}
+fn to_kana_converts_romaji_to_hiragana()   // "dokyu" → "どきゅ"
+fn to_kana_converts_katakana_to_hiragana() // "ドキュメント" → "どきゅめんと"
+fn to_kana_passes_through_ascii()          // "documents" → "documents"
+fn to_kana_passes_through_kanji()          // "書類" → "書類" を含む
 ```
 
-**snotra-core/src/search.rs** (既存テスト群に追加):
+**snotra-core/src/search.rs**:
 
 ```rust
-#[test]
-fn kana_search_matches_katakana_entry() {
-    // "ドキュメント" を "dokyu" で検索できる
-    let engine = engine_with(vec!["ドキュメント"]);
-    let results = engine.search_raw("dokyu", SearchMode::Prefix);
-    assert!(!results.is_empty());
-    assert_eq!(results[0].name, "ドキュメント");
+fn kana_search_disabled_by_default()              // migemo_enabled=false → マッチしない
+fn kana_search_matches_katakana_entry()            // "dokyu" で "ドキュメント" がヒット
+fn kana_search_no_false_positive_for_ascii_entry() // "dokyu" で "documents" がヒットしない
+fn kana_search_direct_match_ranks_above_kana_match()
+fn kana_search_min_chars_blocks_short_query()      // 1文字クエリが migemo_min_chars=2 でマッチしない
+fn kana_search_partial_romaji_not_used()           // "dok"（変換後に英字残存）でマッチしない
+```
+
+---
+
+### Phase 6: 設定 UI（snotra-settings）
+
+**ファイル**: `snotra-settings/src/tabs/search.rs`
+
+検索設定タブ末尾（履歴スコアセクションの後）に追加:
+
+```rust
+// -- Migemo 検索 --
+ui.heading(tr.heading_migemo());
+ui.add_space(4.0);
+
+ui.checkbox(&mut config.search.migemo_enabled, tr.cb_migemo_enabled());
+ui.label(RichText::new(tr.hint_migemo()).small().color(TEXT_SECONDARY));
+
+ui.add_space(4.0);
+
+egui::Grid::new("migemo_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+    ui.label(tr.label_migemo_min_chars());
+    ui.add_enabled_ui(config.search.migemo_enabled, |ui| {
+        ui.add_sized(
+            [60.0, ui.spacing().interact_size.y],
+            egui::DragValue::new(&mut config.search.migemo_min_chars).range(1..=10),
+        );
+    });
+    ui.end_row();
+});
+```
+
+**ファイル**: `snotra-settings/src/i18n.rs`
+
+```rust
+pub fn heading_migemo(&self) -> &'static str {
+    match self.0 {
+        Language::Ja => "ローマ字検索（Migemo）",
+        Language::En => "Romaji Search (Migemo)",
+    }
 }
 
-#[test]
-fn kana_search_no_false_positive_for_ascii_entry() {
-    // ASCII 名エントリに対してローマ字クエリが誤マッチしない
-    let engine = engine_with(vec!["documents"]);
-    let results = engine.search_raw("dokyu", SearchMode::Prefix);
-    assert!(results.is_empty());
+pub fn cb_migemo_enabled(&self) -> &'static str {
+    match self.0 {
+        Language::Ja => "ローマ字入力で日本語名ファイルを検索する",
+        Language::En => "Search Japanese filenames with romaji input",
+    }
 }
 
-#[test]
-fn kana_search_direct_match_ranks_above_kana_match() {
-    // 直接一致 > kana 経由の一致
-    let engine = engine_with(vec!["doki_ドキュ", "ドキュメント"]);
-    let results = engine.search_raw("doki", SearchMode::Substring);
-    assert_eq!(results[0].name, "doki_ドキュ");  // 直接一致が先頭
+pub fn hint_migemo(&self) -> &'static str {
+    match self.0 {
+        Language::Ja => "例: \"dokyu\" と入力すると \"ドキュメント\" がヒットします。漢字名は対象外",
+        Language::En => "e.g. type \"dokyu\" to find \"ドキュメント\". Kanji names are not supported",
+    }
+}
+
+pub fn label_migemo_min_chars(&self) -> &'static str {
+    match self.0 {
+        Language::Ja => "最小文字数:",
+        Language::En => "Min chars:",
+    }
 }
 ```
 
 ---
 
-### Phase 5: SPEC.md 更新
+### Phase 7: SPEC.md 更新
 
 §3.1「検索方式」の末尾に追加:
 
 ```
-- ローマ字検索（常時有効）: クエリが ASCII のみの場合、ひらがな変換して
-  エントリのかな正規化名（カタカナ→ひらがな）に中間部分一致で検索する。
-  漢字名には対応しない。
+- ローマ字検索（設定で有効化、デフォルト無効）: クエリが ASCII のみかつ
+  最小文字数以上の場合、ひらがな変換してエントリのかな正規化名に
+  中間部分一致で検索する（カタカナ名対応、漢字名は対象外）。
 ```
 
 §3.2「クエリ正規化」の末尾に追加:
 
 ```
-- ローマ字検索時の追加正規化: クエリが ASCII のみの場合、ひらがな変換した
-  kana_query を生成し、エントリのかな正規化名に中間部分一致する（score: 4500 - pos）。
+- ローマ字検索時の追加処理: migemo_enabled が true かつクエリが ASCII のみ
+  かつ migemo_min_chars 以上の場合、to_hiragana() で kana_query を生成し、
+  エントリのかな正規化名に中間部分一致する（score: max(4500 - byte_pos, 1)）。
   直接一致（Prefix/Substring/Fuzzy）のスコアより低い。
+  kana_query に ASCII アルファベットが残留する場合は使用しない。
 ```
 
 ---
@@ -221,61 +294,35 @@ fn kana_search_direct_match_ranks_above_kana_match() {
 
 1. `kana_lower_names.len() == entries.len()` は常に成立（debug_assert で保証）
 2. kana マッチは primary match の代替（OR）であり、加算ではない
-3. kana_query は ASCII クエリのみ生成 → 非 ASCII クエリでは kana パス不活性
-4. kana_lower_names はインデックスファイルに保存しない（起動時に再計算）
+3. `migemo_enabled = false`（デフォルト）のとき kana パスは完全に不活性
+4. `kana_query` に ASCII アルファベットが残留する場合は `None` にして使用しない
+5. kana_lower_names はインデックスキャッシュに保存しない（毎起動再計算）
 
 ---
 
 ## テスト方針
 
-- 追加テスト: `to_kana()` の変換正確性 × 4 パターン
-- 追加テスト: kana マッチの検索正確性 × 3 パターン
-- 既存テスト: 全 `cargo test -p snotra-core` が通ること（回帰なし）
-- 検証コマンド: `cargo test -p snotra-core` + `cargo check -p snotra-core -p snotra -p snotra-settings`
+- `cargo test -p snotra-core`（全既存テスト + 新規 10 テスト）
+- `cargo check -p snotra-core -p snotra -p snotra-settings`
 
 ---
 
 ## SPEC.md 更新要否
 
-✅ §3.1/3.2 に追記必要（挙動変更を伴う仕様追加）
+✅ §3.1/3.2 に追記必要
 
 ---
 
-## セルフレビュー
+## セルフレビュー（更新済み）
 
-### 1. 対称コードパス
-- `new()` と `new_with_cached_masks()` の両方に `kana_lower_names` 構築を追加 ✅
-- v3 フォールバックパスも対応必要 → 計画に含めた ✅
-
-### 2. 影響範囲の網羅性
-- `SearchEngine` の 5 つの並列 Vec に対して、`debug_assert!`・`entry_view()`・`Self {}` の全箇所を更新する必要がある
-- `entry_view()` には `kana_lower_name` を追加しない（scoring loop 内で `self.kana_lower_names[i]` を直接参照する方が `char_masks` と同じパターン）→ 計画済み ✅
-
-### 3. 境界条件
-- kana_query と kana_lower_name が同じ文字列（to_kana で変換されなかった）場合は kana マッチをスキップ → `if k != norm_query { Some(k) } else { None }` で対応 ✅
-- kana_score のマイナス値: "pos" が 4500 を超えると負になる。長いエントリ名の非常に後ろでのマッチ → スコア負 → `if let Some(base_score) = score` でのみ採用されるため問題なし（負スコアエントリは採用されない）
-  - **要確認**: 負スコアを None として扱うべきか → `4500 - pos as i64` が負になる場合は None を返すよう修正が必要
-  - → `kana_substring_score` に `if score > 0 { Some(score) } else { None }` を追加 ✅（計画に反映）
-
-### 4. リソース管理
-- `kana_lower_names` は `Vec<String>` で RAII 管理。生成/破棄の追加不要 ✅
-
-### 5. 既存パターンとの整合
-- `kana_lower_names` を `SearchEngine` の Parallel Vec として追加するのは既存パターンに完全準拠 ✅
-
-### 6. YAGNI 違反
-- 設定フィールドなし・漢字未対応で最小実装 ✅
-- インデックスキャッシュへの保存なし（再計算で十分）✅
-
-### 7. シンプル化の挑戦
-- kana_query を `search_with_history_boost()` で一度計算して fold に渡す設計は最小のオーバーヘッド ✅
-- kana_char_masks の追加（最適化）は今回 YAGNI。性能問題が実測されてから検討 ✅
-
-### 8. 破壊不変条件
-- `kana_lower_names.len() == entries.len()` が崩れるとパニック（index out of bounds）。`debug_assert!` と `new()` / `new_with_cached_masks()` 両方への追加で防止 ✅
-- 既存 `lower_names` の不変条件（`new_with_cached_masks` で v3 フォールバックと v4 の両コードパス）を kana_lower_names でも同様に対応する → 計画済み ✅
-
-### セルフレビュー修正点
-
-1. **負スコア対策**: `kana_substring_score` 関数の戻り値に `score.max(1)` または `if score > 0` フィルタを追加。計画に反映済み。
-2. **to_kana が同一文字列を返す場合のスキップ**: ASCII クエリでも kana 変換しない場合（数字のみ "123" など）に無駄なマッチを防ぐ。計画に反映済み。
+| 観点 | 対応状況 |
+|------|---------|
+| 対称コードパス | `new()` / `new_with_cached_masks()` 両方に `kana_lower_names` 構築を追加 ✅ |
+| debug_assert! 更新 | `kana_lower_names.len() == entries.len()` を追加 ✅ |
+| 負スコア対策 | `.max(1)` で 0 以下を防止 ✅ |
+| 不完全ローマ字ガード | `k.bytes().any(|b| b.is_ascii_alphabetic())` で ASCII 残留を検出 → None ✅ |
+| "a" 単体問題 | `migemo_min_chars`（デフォルト 2）で排除 ✅ |
+| migemo デフォルト off | 既存ユーザーの検索結果を変えない ✅ |
+| `HistoryBoostConfig` 拡張 | `migemo_enabled` / `migemo_min_chars` を追加（既存の渡し方と統一）✅ |
+| YAGNI | 漢字未対応・kana_char_masks なし・キャッシュなし ✅ |
+| `entry_view()` 非追加 | `kana_lower_names[i]` は fold 内で直接参照（`char_masks` と同パターン）✅ |

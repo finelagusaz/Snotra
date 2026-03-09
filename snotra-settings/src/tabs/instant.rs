@@ -193,6 +193,11 @@ fn show_modal(
         // Name
         ui.label(tr.label_instant_name());
         ui.text_edit_singleline(&mut state.modal.edit_name);
+        ui.label(
+            egui::RichText::new(tr.hint_instant_name())
+                .small()
+                .color(crate::app::TEXT_SECONDARY),
+        );
 
         ui.add_space(4.0);
 

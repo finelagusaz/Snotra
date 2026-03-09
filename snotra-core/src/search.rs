@@ -119,9 +119,11 @@ pub struct SearchEngine {
     prev_candidates: Vec<usize>,
     /// Incremental search cache: search mode of the previous call.
     prev_mode: Option<SearchMode>,
-    /// Incremental search cache: migemo_enabled flag of the previous call.
-    /// migemo が有効/無効で prev_candidates の構成が変わるため、変化時は full scan へフォールバック。
-    prev_migemo_enabled: bool,
+    /// Incremental search cache: 前回の検索で kana_query が Some だったか。
+    /// kana_query が None → Some に遷移すると prev_candidates に kana 専用マッチが
+    /// 含まれていないため、full scan へフォールバックする必要がある。
+    /// (prev_migemo_enabled では min_chars 超えや ASCII 残留解消の遷移を検知できなかった)
+    prev_had_kana_query: bool,
 }
 
 /// Lightweight view over per-entry fields for index `i` that are used in the scoring loop.
@@ -227,7 +229,7 @@ impl SearchEngine {
             prev_query: String::new(),
             prev_candidates: Vec::new(),
             prev_mode: None,
-            prev_migemo_enabled: false,
+            prev_had_kana_query: false,
         }
     }
 
@@ -320,7 +322,7 @@ impl SearchEngine {
             prev_query: String::new(),
             prev_candidates: Vec::new(),
             prev_mode: None,
-            prev_migemo_enabled: false,
+            prev_had_kana_query: false,
         }
     }
 
@@ -403,12 +405,18 @@ impl SearchEngine {
         //   "no-dot → dot" transition must fall back to full scan because prev_candidates
         //   was built without file_name scoring; entries that only match via file_name would
         //   be absent from prev_candidates, causing false negatives.
+        //
+        // Guard: !(kana_query.is_some() && !self.prev_had_kana_query)
+        //   "kana_query None → Some" transition must fall back because prev_candidates
+        //   was built without kana scoring; kana-only matches would be absent.
+        //   This covers: min_chars threshold crossing (d→do), ASCII residue clearing
+        //   (dok→dokyu), and migemo_enabled toggling (false→true).
         let use_incremental = self.prev_mode == Some(mode)
             && !self.prev_candidates.is_empty()
             && !self.prev_query.is_empty()
             && norm_query.starts_with(self.prev_query.as_str())
             && (!has_dot || self.prev_query.contains('.'))
-            && self.prev_migemo_enabled == options.migemo_enabled;
+            && (kana_query.is_none() || self.prev_had_kana_query);
 
         let candidate_indices: Vec<usize> = if use_incremental {
             std::mem::take(&mut self.prev_candidates)
@@ -590,7 +598,7 @@ impl SearchEngine {
         self.prev_query = norm_query.into_owned();
         self.prev_candidates = all_match_indices;
         self.prev_mode = Some(mode);
-        self.prev_migemo_enabled = options.migemo_enabled;
+        self.prev_had_kana_query = kana_query.is_some();
 
         // into_sorted_vec() reuses the heap's internal Vec and sorts in-place (ascending).
         // ScoredEntry::Ord: Less = better, so ascending order puts best first.
@@ -1755,6 +1763,79 @@ mod tests {
             results.is_empty(),
             "部分ローマ字 'dok' では kana マッチもしないはず: {:?}",
             results.iter().map(|r| r.name.as_str()).collect::<Vec<_>>()
+        );
+    }
+
+    // --- incremental + kana 遷移テスト ---
+
+    #[test]
+    fn incremental_kana_min_chars_crossing_does_not_lose_kana_match() {
+        // "d" (min_chars=2 未満 → kana_query=None) → "do" (min_chars=2 到達 → kana_query=Some("ど"))
+        // 前回の prev_candidates には kana マッチが含まれていない。
+        // full scan にフォールバックしなければ "ドキュメント" が欠落する。
+        let entries = make_entries(&["ドキュメント", "Discord"]);
+        let mut engine = SearchEngine::new(entries);
+        let h = empty_history();
+        let cfg = migemo_config();
+
+        // "d" → kana_query=None（min_chars=2 未満）
+        let _ = engine.search_with_options("d", 8, &h, SearchMode::Substring, cfg);
+
+        // "do" → kana_query=Some("ど")。前回 prev_had_kana_query=false なので full scan。
+        let results = engine.search_with_options("do", 8, &h, SearchMode::Substring, cfg);
+        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+        assert!(
+            names.contains(&"ドキュメント"),
+            "min_chars 超え遷移で ドキュメント がヒットするはず（full scan フォールバック必須）: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn incremental_kana_ascii_residue_clearing_does_not_lose_kana_match() {
+        // "dok" (ASCII 残留 'k' → kana_query=None) → "dokyu" (完全変換 → kana_query=Some("どきゅ"))
+        // prev_candidates に kana マッチが含まれていないため full scan が必要。
+        let entries = make_entries(&["ドキュメント", "Docking Station"]);
+        let mut engine = SearchEngine::new(entries);
+        let h = empty_history();
+        let cfg = migemo_config();
+
+        // "dok" → kana_query=None（"どk" に ASCII 残留）
+        let _ = engine.search_with_options("dok", 8, &h, SearchMode::Substring, cfg);
+
+        // "dokyu" → kana_query=Some("どきゅ")。prev_had_kana_query=false なので full scan。
+        let results = engine.search_with_options("dokyu", 8, &h, SearchMode::Substring, cfg);
+        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+        assert!(
+            names.contains(&"ドキュメント"),
+            "ASCII 残留解消遷移で ドキュメント がヒットするはず（full scan フォールバック必須）: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn incremental_kana_to_kana_reuses_cache() {
+        // "do" (kana_query=Some) → "doku" (kana_query=Some) は incremental で正しく動作する。
+        // kana→kana の拡張なので prev_candidates を再利用して問題ない。
+        let entries = make_entries(&["ドキュメント", "Discord", "Chrome"]);
+        let mut engine = SearchEngine::new(entries);
+        let h = empty_history();
+        let cfg = migemo_config();
+
+        let _ = engine.search_with_options("do", 8, &h, SearchMode::Substring, cfg);
+        let incremental =
+            engine.search_with_options("doku", 8, &h, SearchMode::Substring, cfg);
+
+        // fresh エンジンとの比較で正確性を担保
+        let mut fresh = SearchEngine::new(make_entries(&["ドキュメント", "Discord", "Chrome"]));
+        let fresh_result =
+            fresh.search_with_options("doku", 8, &h, SearchMode::Substring, cfg);
+
+        let inc_names: Vec<&str> = incremental.iter().map(|r| r.name.as_str()).collect();
+        let fresh_names: Vec<&str> = fresh_result.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(
+            inc_names, fresh_names,
+            "kana→kana incremental は fresh 結果と一致する必要がある"
         );
     }
 }

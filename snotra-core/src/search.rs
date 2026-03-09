@@ -119,11 +119,11 @@ pub struct SearchEngine {
     prev_candidates: Vec<usize>,
     /// Incremental search cache: search mode of the previous call.
     prev_mode: Option<SearchMode>,
-    /// Incremental search cache: 前回の検索で kana_query が Some だったか。
-    /// kana_query が None → Some に遷移すると prev_candidates に kana 専用マッチが
-    /// 含まれていないため、full scan へフォールバックする必要がある。
-    /// (prev_migemo_enabled では min_chars 超えや ASCII 残留解消の遷移を検知できなかった)
-    prev_had_kana_query: bool,
+    /// Incremental search cache: 前回の kana_query 文字列。
+    /// incremental を使えるのは今回の kana_query が前回の prefix 拡張のときだけ。
+    /// ローマ字→かな変換は文字列伸長に対して非単調（"kan"→"かん", "kana"→"かな"）なため、
+    /// bool フラグでは不十分で、実際の kana 文字列を比較する必要がある。
+    prev_kana_query: Option<String>,
 }
 
 /// Lightweight view over per-entry fields for index `i` that are used in the scoring loop.
@@ -229,7 +229,7 @@ impl SearchEngine {
             prev_query: String::new(),
             prev_candidates: Vec::new(),
             prev_mode: None,
-            prev_had_kana_query: false,
+            prev_kana_query: None,
         }
     }
 
@@ -322,7 +322,7 @@ impl SearchEngine {
             prev_query: String::new(),
             prev_candidates: Vec::new(),
             prev_mode: None,
-            prev_had_kana_query: false,
+            prev_kana_query: None,
         }
     }
 
@@ -406,17 +406,25 @@ impl SearchEngine {
         //   was built without file_name scoring; entries that only match via file_name would
         //   be absent from prev_candidates, causing false negatives.
         //
-        // Guard: !(kana_query.is_some() && !self.prev_had_kana_query)
-        //   "kana_query None → Some" transition must fall back because prev_candidates
-        //   was built without kana scoring; kana-only matches would be absent.
-        //   This covers: min_chars threshold crossing (d→do), ASCII residue clearing
-        //   (dok→dokyu), and migemo_enabled toggling (false→true).
+        // Guard: kana_monotonic
+        //   kana_query の単調性を検証する。incremental を使えるのは、今回の kana マッチ候補
+        //   が前回の候補の部分集合であるときだけ。
+        //   - (None, _): kana マッチが消える方向 → 候補は減るのみ → OK
+        //   - (Some(curr), Some(prev)) where curr starts_with prev: 候補が狭まる → OK
+        //   - (Some(curr), Some(prev)) where NOT starts_with: 非単調遷移
+        //     例: "kan"→"かん", "kana"→"かな" — 末尾の「ん」が「な」に変わる
+        //   - (Some(_), None): kana マッチが新規出現 → full scan 必須
+        let kana_monotonic = match (&kana_query, &self.prev_kana_query) {
+            (None, _) => true,
+            (Some(curr), Some(prev)) => curr.starts_with(prev.as_str()),
+            (Some(_), None) => false,
+        };
         let use_incremental = self.prev_mode == Some(mode)
             && !self.prev_candidates.is_empty()
             && !self.prev_query.is_empty()
             && norm_query.starts_with(self.prev_query.as_str())
             && (!has_dot || self.prev_query.contains('.'))
-            && (kana_query.is_none() || self.prev_had_kana_query);
+            && kana_monotonic;
 
         let candidate_indices: Vec<usize> = if use_incremental {
             std::mem::take(&mut self.prev_candidates)
@@ -598,7 +606,7 @@ impl SearchEngine {
         self.prev_query = norm_query.into_owned();
         self.prev_candidates = all_match_indices;
         self.prev_mode = Some(mode);
-        self.prev_had_kana_query = kana_query.is_some();
+        self.prev_kana_query = kana_query;
 
         // into_sorted_vec() reuses the heap's internal Vec and sorts in-place (ascending).
         // ScoredEntry::Ord: Less = better, so ascending order puts best first.
@@ -1781,7 +1789,7 @@ mod tests {
         // "d" → kana_query=None（min_chars=2 未満）
         let _ = engine.search_with_options("d", 8, &h, SearchMode::Substring, cfg);
 
-        // "do" → kana_query=Some("ど")。前回 prev_had_kana_query=false なので full scan。
+        // "do" → kana_query=Some("ど")。前回 prev_kana_query=None なので full scan。
         let results = engine.search_with_options("do", 8, &h, SearchMode::Substring, cfg);
         let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
         assert!(
@@ -1803,7 +1811,7 @@ mod tests {
         // "dok" → kana_query=None（"どk" に ASCII 残留）
         let _ = engine.search_with_options("dok", 8, &h, SearchMode::Substring, cfg);
 
-        // "dokyu" → kana_query=Some("どきゅ")。prev_had_kana_query=false なので full scan。
+        // "dokyu" → kana_query=Some("どきゅ")。prev_kana_query=None なので full scan。
         let results = engine.search_with_options("dokyu", 8, &h, SearchMode::Substring, cfg);
         let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
         assert!(
@@ -1836,6 +1844,61 @@ mod tests {
         assert_eq!(
             inc_names, fresh_names,
             "kana→kana incremental は fresh 結果と一致する必要がある"
+        );
+    }
+
+    #[test]
+    fn incremental_kana_non_monotonic_n_vowel_falls_back() {
+        // "kan" → kana="かん", "kana" → kana="かな"
+        // ローマ字→かな変換は非単調: 末尾の「ん」が「な」に変わる。
+        // "かな" は "かん" の prefix 拡張ではないため incremental は使えない。
+        // "かなめ" のようなエントリは "かん" でヒットしないが "かな" でヒットする。
+        let entries = make_entries(&["かなめ", "かんな", "Kanata"]);
+        let mut engine = SearchEngine::new(entries);
+        let h = empty_history();
+        let cfg = migemo_config();
+
+        // "kan" → kana_query=Some("かん")
+        let r1 = engine.search_with_options("kan", 8, &h, SearchMode::Substring, cfg);
+        let names1: Vec<&str> = r1.iter().map(|r| r.name.as_str()).collect();
+        assert!(
+            names1.contains(&"かんな"),
+            "\"kan\"(かん) で「かんな」がヒットするはず: {:?}",
+            names1
+        );
+
+        // "kana" → kana_query=Some("かな")。"かな" は "かん" の prefix ではない → full scan。
+        let r2 = engine.search_with_options("kana", 8, &h, SearchMode::Substring, cfg);
+        let names2: Vec<&str> = r2.iter().map(|r| r.name.as_str()).collect();
+        assert!(
+            names2.contains(&"かなめ"),
+            "非単調遷移 kan→kana で「かなめ」がヒットするはず（full scan フォールバック必須）: {:?}",
+            names2
+        );
+    }
+
+    #[test]
+    fn incremental_kana_monotonic_extension_reuses_cache() {
+        // "ka" → kana="か", "kan" → kana="かん"
+        // "かん" は "か" の prefix 拡張 → incremental が使える。
+        let entries = make_entries(&["かなめ", "かんな", "Chrome"]);
+        let mut engine = SearchEngine::new(entries);
+        let h = empty_history();
+        let cfg = migemo_config();
+
+        let _ = engine.search_with_options("ka", 8, &h, SearchMode::Substring, cfg);
+        let incremental =
+            engine.search_with_options("kan", 8, &h, SearchMode::Substring, cfg);
+
+        let mut fresh = SearchEngine::new(make_entries(&["かなめ", "かんな", "Chrome"]));
+        let fresh_result =
+            fresh.search_with_options("kan", 8, &h, SearchMode::Substring, cfg);
+
+        let inc_names: Vec<&str> = incremental.iter().map(|r| r.name.as_str()).collect();
+        let fresh_names: Vec<&str> = fresh_result.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(
+            inc_names, fresh_names,
+            "か→かん は単調拡張なので incremental は fresh と一致するはず"
         );
     }
 }

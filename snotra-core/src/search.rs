@@ -334,6 +334,10 @@ impl SearchEngine {
         }
     }
 
+    /// 履歴ブーストとデフォルト設定（migemo 無効）で検索する便宜 API。
+    /// migemo（ローマ字→かな変換マッチ）を有効にするには
+    /// [`search_with_history_boost`] に `migemo_enabled = true` の
+    /// [`HistoryBoostConfig`] を渡すこと。
     pub fn search(
         &mut self,
         query: &str,
@@ -708,6 +712,8 @@ fn char_bitmask(lower: &str) -> u64 {
 /// マッチした場合は `4500 - byte_position` を返す（Substring の 5000 より低いスコア）。
 /// byte_pos を使用: ひらがなは3バイト/文字のため文字位置の3倍差がある。
 /// 先頭マッチが高スコアになる意図は保たれており、SPEC.md §3.2 に準拠。
+/// kana_lower_name が常にひらがな/カタカナであることは保証されない（漢字はそのまま通過）が、
+/// kana_query は常に純ひらがな（ASCII アルファベット残留ガード後）のため実運用上問題なし。
 fn kana_substring_score(kana_lower_name: &str, kana_query: &str) -> Option<i64> {
     kana_lower_name
         .find(kana_query)

@@ -28,7 +28,8 @@ Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-
 - アイコンは検索時にオンデマンドで抽出し base64 PNG としてフロントエンドに送信、キャッシュは終了時に永続化
 - テーマは CSS カスタムプロパティで動的に切替
 - 多言語対応は3層で実装: フロントエンド（`ui/src/lib/i18n.ts` — SolidJS シグナル + 翻訳テーブル）、バックエンド（`config_watcher.rs` — `language-changed` イベント発火 + `PlatformCommand::SetLanguage` でトレイ切替）、設定 GUI（`snotra-settings/src/i18n.rs` — `Tr` 構造体の match ベース翻訳）。初期言語は OS 設定から自動判定（Rust: `sys-locale`、JS: `navigator.language`、同一ロジック）
-- 検索バーと検索結果は単一ウィンドウ内のコンポーネント（`SearchWindow` + `ResultsSection`）。結果の表示/非表示は `shouldShowResults` メモシグナル（`results().length > 0 && !indexing()`）で制御し、ウィンドウ高さは `createEffect` + Tauri `set_size()` で動的に変更する。Rust 側の `show_main_and_emit` で毎回 52px にリセットしてからフロントエンドが結果に応じて拡張する
+- 検索バーと検索結果は単一ウィンドウ内のコンポーネント（`SearchWindow` + `ResultsSection`）。結果の表示/非表示は `shouldShowResults` メモシグナル（`results().length > 0 && (!indexing() || instantCommandMode())`）で制御し、ウィンドウ高さは `createEffect` + Tauri `set_size()` で動的に変更する。Rust 側の `show_main_and_emit` で毎回 52px にリセットしてからフロントエンドが結果に応じて拡張する
+- インスタントコマンドはプレフィックス（デフォルト `@`）で始まる入力でユーザー定義コマンドを即座に実行する機能。4層で実装: 純ロジック（`snotra-core/src/instant.rs` — 変数展開 `{query}`/`{clip}` + 前方一致フィルタ）、IPC（`src-tauri/src/commands/instant.rs` — クリップボード読み取り + ShellExecuteW）、UI（`ui/src/stores/search.ts` — `instantCommandMode` シグナル + query effect でモード切替）、設定 GUI（`snotra-settings/src/tabs/instant.rs`）。プレフィックス変更は `config_watcher.rs` が `instant-prefix-changed` イベントで UI に通知する
 - `launch_item` は `LaunchResult(status/code/message)` を返す契約で扱い、失敗通知の自動クリアは単一タイマーを再利用して競合を防ぐ
 - 起動時にスレッドを並列 spawn する場合、そのスレッドが発火するイベントに依存する機能（ホットキー・トレイ等）はスレッド init フェーズで有効化せず、main 側でリスナー/ウィンドウ準備が整った後にコマンド（`RegisterInitialHotkey` / `SetTrayVisible`）で有効化する（「有効化 ≥ リスナー登録」不変条件）
 - 設定は `snotra-settings.exe` を子プロセスとして起動する（About 情報はタブに統合）。相互依存は `config.toml` ファイル1点のみ（IPC 不要）。本体は `notify` クレートで config.toml 変更を検知し即時反映する

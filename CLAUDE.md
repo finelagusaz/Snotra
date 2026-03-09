@@ -91,4 +91,5 @@ Claude とユーザーが一緒に作業するときの関係性の原則。
 |--------|------------------------|-----------|
 | `/symmetric-check` | ステップ 2: コードパス変更・バグ発見時に対称ペアの適用漏れを確認する。計画レビュー時にリソースライフサイクルの対称性（生成→登録→破棄）や追跡機構の移行漏れを検証する | `/symmetric-check result-clicked: added emitSelectionUpdate` / `/symmetric-check iconUrls Set を廃止して LruIconCache に移行` |
 | `/dry-check` | ステップ 2: 関数を新規定義・変更したとき、手書き重複が残っていないか確認する | `/dry-check show_main_and_emit: show() + set_focus() + emit(window-shown)` |
+| `/race-check` | ステップ 2〜3: async 関数を新規追加・変更したとき、各 await 地点の状態競合リスクを検証する | `/race-check executeInstantCommandSelected: await api.executeInstantCommand()` |
 | `/retrospective` | サイクル終了後: 教訓を CLAUDE.md に抽出し、RETROSPECTIVE.md を更新する | `/retrospective` or `/retrospective feat/search-optimization` |

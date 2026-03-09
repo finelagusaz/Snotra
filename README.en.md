@@ -32,6 +32,7 @@
 - **History-based smart ranking**: frequently used apps rise to the top
 - **Folder navigation**: right arrow to expand, left arrow to go up
 - **Slash commands**: `/o` settings · `/r` history · `/s` rebuild index · `/q` quit
+- **Instant commands**: `@` prefix to run user-defined commands instantly (with variable expansion)
 - **Custom openers**: define rules to open files with any tool you choose
 - Icon display, theme customization, automatic IME control, system tray integration
 
@@ -57,6 +58,17 @@
 | `/r` | Show recent launch history |
 | `/s` | Rebuild the index |
 | `/q` | Quit the app |
+
+### Instant Commands
+
+Type `@` followed by a command name to instantly run a user-defined command.
+
+| Input | Result |
+|-------|--------|
+| `@google SolidJS` | Opens a URL with `{query}` expanded |
+| `@clip` | Runs a command using clipboard content (`{clip}`) |
+
+Add or edit commands from the settings screen (`/o`).
 
 ### Direct folder access via path input
 

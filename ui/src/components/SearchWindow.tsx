@@ -237,6 +237,7 @@ const SearchWindow: Component = () => {
   function handleInput(e: InputEvent) {
     // ツール選択中は入力を無効化（C2対策）
     if (toolSelectionState()) return;
+    if (launching()) return;
     const value = (e.target as HTMLInputElement).value;
     // インデックス構築中は入力を無視（ただしインスタントコマンドプレフィックスはバイパス）
     if (indexing() && !value.trimStart().startsWith(instantCommandPrefix())) return;

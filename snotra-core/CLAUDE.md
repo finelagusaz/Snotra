@@ -1,12 +1,12 @@
 # snotra-core
 
-純ロジック lib crate（11モジュール）。Win32 非依存でユニットテスト可能。
+純ロジック lib crate（12モジュール + `lib.rs`）。Win32 非依存でユニットテスト可能。
 
 ## モジュール構成
 
 - `engine.rs`: `Engine` struct（`SearchEngine` + `HistoryStore` + `Config` の facade）。`FolderListContext`（ロック外スナップショット）と `PrebuiltIndex`（インデックス高速スワップ用）を公開
 - `config.rs`: `%APPDATA%\Snotra\config.toml` の読込/保存、既定値補完。`Language` enum（`Ja`/`En`）と `default_language()`（`sys-locale` による OS 言語自動判定、非日本語は英語フォールバック）を定義
-- `search.rs`: 検索順位計算（先頭/中間/ファジー）、履歴ブースト、空クエリ時履歴候補
+- `search.rs`: 検索順位計算（Prefix/Substring/Kana/Fuzzy）、履歴ブースト、incremental search キャッシュ、空クエリ時履歴候補。`SearchEngine` は並列 Vec レイアウト（`entries` / `lower_names` / `lower_file_names` / `normalized_keys` / `char_masks` / `file_name_char_masks` / `kana_lower_names`）で cache locality を確保。`new()` は Wave 1（文字列正規化）→ Wave 2（ビットマスク計算）の 2 段並列構築
 - `history.rs`: 起動履歴・クエリ別履歴・フォルダ展開履歴の管理、バイナリ永続化
 - `folder.rs`: フォルダ内列挙とフィルタ/ソート、ルート判定
 - `indexer.rs`: スキャン対象列挙と重複排除、インデックスキャッシュ

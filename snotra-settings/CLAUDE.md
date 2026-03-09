@@ -30,7 +30,7 @@ egui ベースの設定・about バイナリ crate。本体（`src-tauri`）と�
 
 - `egui::Key::ALL` は `&[Key]`（`&&[Key]` ではない）。`for &key in egui::Key::ALL` が正しい
 - `color_edit_button_srgba` は `&mut Color32` を取る。一時変数に変換して渡すと変更が反映されない。`let mut color = Color32::from_hex(hex)` のように変数を作り、変更後に hex 文字列に書き戻す
-- `egui::Stroke::new()` に `StrokeKind` が必要（egui 0.31+）。`Stroke::new(1.0, color)` ではなく `Stroke { width: 1.0, color, kind: StrokeKind::Middle }` または対応するコンストラクタを使う
+- `egui::Stroke::new(width, color)` は 2 引数で動作する（eframe 0.33 現在）。`StrokeKind` が必要になるのは将来のバージョンの可能性があるため、egui をバージョンアップする際は確認する
 - `ThemePreset` は `Copy`。`.clone()` ではなく値コピーで渡す（clippy `clone_on_copy`）
 
 ### Win キーの制限

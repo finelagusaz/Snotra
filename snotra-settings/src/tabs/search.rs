@@ -1,6 +1,8 @@
 use eframe::egui;
+use eframe::egui::RichText;
 use snotra_core::config::{Config, SearchHistoryNormalizationConfig, SearchModeConfig};
 
+use crate::app::TEXT_SECONDARY;
 use crate::i18n::Tr;
 
 pub fn ui(ui: &mut egui::Ui, config: &mut Config, tr: &Tr) {
@@ -65,6 +67,28 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, tr: &Tr) {
                         .range(0.0..=1.0)
                         .speed(0.05)
                         .min_decimals(2),
+                );
+            });
+            ui.end_row();
+        });
+
+        ui.add_space(12.0);
+
+        // -- Migemo 検索 --
+        ui.heading(tr.heading_migemo());
+        ui.add_space(4.0);
+
+        ui.checkbox(&mut config.search.migemo_enabled, tr.cb_migemo_enabled());
+        ui.label(RichText::new(tr.hint_migemo()).small().color(TEXT_SECONDARY));
+
+        ui.add_space(4.0);
+
+        egui::Grid::new("migemo_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+            ui.label(tr.label_migemo_min_chars());
+            ui.add_enabled_ui(config.search.migemo_enabled, |ui| {
+                ui.add_sized(
+                    [60.0, ui.spacing().interact_size.y],
+                    egui::DragValue::new(&mut config.search.migemo_min_chars).range(1..=10),
                 );
             });
             ui.end_row();

@@ -13,6 +13,7 @@ dirs = "6"
 rustc-hash = "2.1.1"
 sys-locale = "0.3"
 percent-encoding = "2"
+wana_kana = "4.0"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [

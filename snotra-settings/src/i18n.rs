@@ -806,4 +806,39 @@ impl Tr {
             Language::En => "Edit Command",
         }
     }
+
+    pub fn err_migemo_min_chars_zero(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "migemo 最小文字数は 1 以上である必要があります",
+            Language::En => "Migemo min chars must be at least 1",
+        }
+    }
+
+    pub fn heading_migemo(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "ローマ字検索（Migemo）",
+            Language::En => "Romaji Search (Migemo)",
+        }
+    }
+
+    pub fn cb_migemo_enabled(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "ローマ字入力で日本語名ファイルを検索する",
+            Language::En => "Search Japanese filenames with romaji input",
+        }
+    }
+
+    pub fn hint_migemo(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "例: \"dokyu\" と入力すると \"ドキュメント\" がヒットします。漢字名は対象外",
+            Language::En => "e.g. type \"dokyu\" to find \"ドキュメント\". Kanji names are not supported",
+        }
+    }
+
+    pub fn label_migemo_min_chars(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "最小文字数:",
+            Language::En => "Min chars:",
+        }
+    }
 }

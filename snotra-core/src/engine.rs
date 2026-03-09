@@ -2,7 +2,7 @@ use crate::config::Config;
 use crate::folder;
 use crate::history::HistoryStore;
 use crate::indexer::{AppEntry, CachedMasks};
-use crate::search::{HistoryBoostConfig, SearchEngine, SearchMode};
+use crate::search::{SearchOptions, SearchEngine, SearchMode};
 use crate::ui_types::SearchResult;
 use std::path::Path;
 
@@ -73,11 +73,11 @@ impl Engine {
 
     pub fn search(&mut self, query: &str) -> Vec<SearchResult> {
         let mode = SearchMode::from(self.config.search.normal_mode);
-        let boost = HistoryBoostConfig::from(&self.config.search);
+        let boost = SearchOptions::from(&self.config.search);
         // top_n_history が取得上限。max_results はウィンドウ可視行数のみを制御する。
         let fetch_limit = self.config.appearance.top_n_history;
         self.search_engine
-            .search_with_history_boost(query, fetch_limit, &self.history, mode, boost)
+            .search_with_options(query, fetch_limit, &self.history, mode, boost)
     }
 
     pub fn recent_history(&self) -> Vec<SearchResult> {

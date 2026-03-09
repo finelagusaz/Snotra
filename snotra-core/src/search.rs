@@ -44,14 +44,14 @@ impl From<crate::config::SearchModeConfig> for SearchMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct HistoryBoostConfig {
+pub struct SearchOptions {
     pub normalization: SearchHistoryNormalizationConfig,
     pub fuzzy_history_cap_ratio: f64,
     pub migemo_enabled: bool,
     pub migemo_min_chars: usize,
 }
 
-impl Default for HistoryBoostConfig {
+impl Default for SearchOptions {
     fn default() -> Self {
         Self {
             normalization: SearchHistoryNormalizationConfig::Disabled,
@@ -62,7 +62,7 @@ impl Default for HistoryBoostConfig {
     }
 }
 
-impl From<&SearchConfig> for HistoryBoostConfig {
+impl From<&SearchConfig> for SearchOptions {
     fn from(config: &SearchConfig) -> Self {
         Self {
             normalization: config.history_normalization,
@@ -336,8 +336,8 @@ impl SearchEngine {
 
     /// 履歴ブーストとデフォルト設定（migemo 無効）で検索する便宜 API。
     /// migemo（ローマ字→かな変換マッチ）を有効にするには
-    /// [`search_with_history_boost`] に `migemo_enabled = true` の
-    /// [`HistoryBoostConfig`] を渡すこと。
+    /// [`search_with_options`] に `migemo_enabled = true` の
+    /// [`SearchOptions`] を渡すこと。
     pub fn search(
         &mut self,
         query: &str,
@@ -345,22 +345,22 @@ impl SearchEngine {
         history: &HistoryStore,
         mode: SearchMode,
     ) -> Vec<SearchResult> {
-        self.search_with_history_boost(
+        self.search_with_options(
             query,
             max_results,
             history,
             mode,
-            HistoryBoostConfig::default(),
+            SearchOptions::default(),
         )
     }
 
-    pub fn search_with_history_boost(
+    pub fn search_with_options(
         &mut self,
         query: &str,
         max_results: usize,
         history: &HistoryStore,
         mode: SearchMode,
-        history_boost_config: HistoryBoostConfig,
+        options: SearchOptions,
     ) -> Vec<SearchResult> {
         if max_results == 0 {
             return Vec::new();
@@ -377,9 +377,9 @@ impl SearchEngine {
 
         // Migemo: ローマ字 ASCII クエリをひらがなに変換した kana_query を生成する。
         // kana に ASCII アルファベットが残留する場合（"dok" → "どk" 等）は None にする。
-        let kana_query: Option<String> = if history_boost_config.migemo_enabled
+        let kana_query: Option<String> = if options.migemo_enabled
             && norm_query.is_ascii()
-            && norm_query.chars().count() >= history_boost_config.migemo_min_chars
+            && norm_query.chars().count() >= options.migemo_min_chars
         {
             let k = to_kana(norm_query.as_ref());
             if k != norm_query.as_ref() && !k.bytes().any(|b| b.is_ascii_alphabetic()) {
@@ -408,7 +408,7 @@ impl SearchEngine {
             && !self.prev_query.is_empty()
             && norm_query.starts_with(self.prev_query.as_str())
             && (!has_dot || self.prev_query.contains('.'))
-            && self.prev_migemo_enabled == history_boost_config.migemo_enabled;
+            && self.prev_migemo_enabled == options.migemo_enabled;
 
         let candidate_indices: Vec<usize> = if use_incremental {
             std::mem::take(&mut self.prev_candidates)
@@ -543,7 +543,7 @@ impl SearchEngine {
                             mode,
                             base_score,
                             raw_history_boost,
-                            history_boost_config,
+                            options,
                         );
                         let combined = base_score + history_boost;
 
@@ -590,7 +590,7 @@ impl SearchEngine {
         self.prev_query = norm_query.into_owned();
         self.prev_candidates = all_match_indices;
         self.prev_mode = Some(mode);
-        self.prev_migemo_enabled = history_boost_config.migemo_enabled;
+        self.prev_migemo_enabled = options.migemo_enabled;
 
         // into_sorted_vec() reuses the heap's internal Vec and sorts in-place (ascending).
         // ScoredEntry::Ord: Less = better, so ascending order puts best first.
@@ -640,7 +640,7 @@ fn adjusted_history_boost(
     mode: SearchMode,
     base_score: i64,
     raw_history_boost: i64,
-    config: HistoryBoostConfig,
+    config: SearchOptions,
 ) -> i64 {
     if mode != SearchMode::Fuzzy
         || config.normalization != SearchHistoryNormalizationConfig::FuzzyRelativeCap
@@ -1109,16 +1109,16 @@ mod tests {
     #[test]
     fn adjusted_history_boost_disabled_uses_raw_value() {
         let adjusted =
-            adjusted_history_boost(SearchMode::Fuzzy, 100, 250, HistoryBoostConfig::default());
+            adjusted_history_boost(SearchMode::Fuzzy, 100, 250, SearchOptions::default());
         assert_eq!(adjusted, 250);
     }
 
     #[test]
     fn adjusted_history_boost_caps_only_in_fuzzy_mode() {
-        let config = HistoryBoostConfig {
+        let config = SearchOptions {
             normalization: SearchHistoryNormalizationConfig::FuzzyRelativeCap,
             fuzzy_history_cap_ratio: 0.30,
-            ..HistoryBoostConfig::default()
+            ..SearchOptions::default()
         };
         let adjusted = adjusted_history_boost(SearchMode::Prefix, 100, 250, config);
         assert_eq!(adjusted, 250);
@@ -1126,10 +1126,10 @@ mod tests {
 
     #[test]
     fn adjusted_history_boost_caps_fuzzy_history_by_base_ratio() {
-        let config = HistoryBoostConfig {
+        let config = SearchOptions {
             normalization: SearchHistoryNormalizationConfig::FuzzyRelativeCap,
             fuzzy_history_cap_ratio: 0.30,
-            ..HistoryBoostConfig::default()
+            ..SearchOptions::default()
         };
         let adjusted = adjusted_history_boost(SearchMode::Fuzzy, 100, 250, config);
         assert_eq!(adjusted, 30);
@@ -1137,17 +1137,17 @@ mod tests {
 
     #[test]
     fn adjusted_history_boost_zeroes_when_base_is_non_positive() {
-        let config = HistoryBoostConfig {
+        let config = SearchOptions {
             normalization: SearchHistoryNormalizationConfig::FuzzyRelativeCap,
             fuzzy_history_cap_ratio: 0.30,
-            ..HistoryBoostConfig::default()
+            ..SearchOptions::default()
         };
         let adjusted = adjusted_history_boost(SearchMode::Fuzzy, -50, 250, config);
         assert_eq!(adjusted, 0);
     }
 
     #[test]
-    fn search_with_history_boost_disabled_matches_legacy_search() {
+    fn search_with_options_disabled_matches_legacy_search() {
         let entries = make_entries(&["alpha", "alpaca", "alpine"]);
         let mut engine = SearchEngine::new(entries);
         let mut history = empty_history();
@@ -1156,12 +1156,12 @@ mod tests {
         }
 
         let legacy = engine.search("alp", 8, &history, SearchMode::Fuzzy);
-        let explicit = engine.search_with_history_boost(
+        let explicit = engine.search_with_options(
             "alp",
             8,
             &history,
             SearchMode::Fuzzy,
-            HistoryBoostConfig::default(),
+            SearchOptions::default(),
         );
         assert_eq!(legacy, explicit);
     }
@@ -1207,12 +1207,12 @@ mod tests {
             history.record_launch("C:\\FAKE\\APP.LNK", "app");
         }
 
-        let results = engine.search_with_history_boost(
+        let results = engine.search_with_options(
             "app",
             8,
             &history,
             SearchMode::Prefix,
-            HistoryBoostConfig::default(),
+            SearchOptions::default(),
         );
         assert!(!results.is_empty());
         // 履歴ブーストにより "App" が "AppX" より上位に来る
@@ -1579,11 +1579,11 @@ mod tests {
 
     // --- migemo（ローマ字→かな）検索テスト ---
 
-    fn migemo_config() -> HistoryBoostConfig {
-        HistoryBoostConfig {
+    fn migemo_config() -> SearchOptions {
+        SearchOptions {
             migemo_enabled: true,
             migemo_min_chars: 2,
-            ..HistoryBoostConfig::default()
+            ..SearchOptions::default()
         }
     }
 
@@ -1593,12 +1593,12 @@ mod tests {
         let entries = make_entries(&["ドキュメント", "Documents"]);
         let mut engine = SearchEngine::new(entries);
         let h = empty_history();
-        let results = engine.search_with_history_boost(
+        let results = engine.search_with_options(
             "dokyu",
             8,
             &h,
             SearchMode::Substring,
-            HistoryBoostConfig::default(), // migemo_enabled=false
+            SearchOptions::default(), // migemo_enabled=false
         );
         assert!(
             results.is_empty(),
@@ -1612,7 +1612,7 @@ mod tests {
         let entries = make_entries(&["ドキュメント", "Documents"]);
         let mut engine = SearchEngine::new(entries);
         let h = empty_history();
-        let results = engine.search_with_history_boost(
+        let results = engine.search_with_options(
             "dokyu",
             8,
             &h,
@@ -1633,7 +1633,7 @@ mod tests {
         let entries = make_entries(&["ドキュメント", "Documents"]);
         let mut engine = SearchEngine::new(entries);
         let h = empty_history();
-        let results = engine.search_with_history_boost(
+        let results = engine.search_with_options(
             "dokyu",
             8,
             &h,
@@ -1672,7 +1672,7 @@ mod tests {
         let h = empty_history();
 
         // "どきゅめんと" に対して直接 Substring マッチしたスコアは 5000（先頭一致）
-        let direct = engine.search_with_history_boost(
+        let direct = engine.search_with_options(
             "どきゅ",
             8,
             &h,
@@ -1681,7 +1681,7 @@ mod tests {
         );
 
         // "dokyu" → kana_query = "どきゅ" → kana_substring_score = 4500
-        let kana = engine.search_with_history_boost(
+        let kana = engine.search_with_options(
             "dokyu",
             8,
             &h,
@@ -1724,12 +1724,12 @@ mod tests {
         let entries = make_entries(&["あいうえお"]);
         let mut engine = SearchEngine::new(entries);
         let h = empty_history();
-        let config = HistoryBoostConfig {
+        let config = SearchOptions {
             migemo_enabled: true,
             migemo_min_chars: 2,
-            ..HistoryBoostConfig::default()
+            ..SearchOptions::default()
         };
-        let results = engine.search_with_history_boost("a", 8, &h, SearchMode::Substring, config);
+        let results = engine.search_with_options("a", 8, &h, SearchMode::Substring, config);
         assert!(
             results.is_empty(),
             "1文字クエリは migemo_min_chars=2 でブロックされるはず"
@@ -1742,7 +1742,7 @@ mod tests {
         let entries = make_entries(&["ドキュメント"]);
         let mut engine = SearchEngine::new(entries);
         let h = empty_history();
-        let results = engine.search_with_history_boost(
+        let results = engine.search_with_options(
             "dok",
             8,
             &h,

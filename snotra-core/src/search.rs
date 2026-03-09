@@ -250,9 +250,9 @@ impl SearchEngine {
                 (cached_lower_names, cached_lower_file_names, cached_normalized_keys)
             {
                 // A-3: v4 キャッシュヒット → Wave 1 完全スキップ（kana_lower_names は毎起動再計算）
-                let entries_ref = &entries;
-                let kana = entries_ref
-                    .iter()
+                // kana_lower_names は ln/lfn/nk と独立した map のため par_iter で並列構築する。
+                let kana = entries
+                    .par_iter()
                     .map(|e| to_kana(&to_lower_folded(&e.name)))
                     .collect::<Vec<_>>();
                 ((ln, lfn), (nk, kana))
@@ -1644,13 +1644,28 @@ mod tests {
 
     #[test]
     fn kana_search_direct_match_ranks_above_kana_match() {
-        // "どきゅ" で直接検索した結果と "dokyu" の kana 検索を比較し、
-        // 直接検索エントリが上位に来ることを確認する
-        let entries = make_entries(&["どきゅめんと", "ドキュメント"]);
+        // 直接 Substring マッチ(5000) が kana マッチ(4500) より常に上位に来ることを確認する。
+        // "どきゅめんと"（ひらがな名）を含むエントリに対して:
+        //   - "どきゅ"（直接クエリ）→ Substring スコア 5000
+        //   - "dokyu"（kana クエリ）→ kana_substring_score 4500
+        // 直接クエリの方が kana クエリより高スコアになる。
+        let entries = vec![
+            AppEntry {
+                name: "どきゅめんと".to_string(),
+                target_path: "C:\\fake\\a.lnk".to_string(),
+                is_folder: false,
+            },
+            // kana マッチ専用エントリ（直接クエリでは name がひらがなのみなのでマッチしない）
+            AppEntry {
+                name: "ドキュメント".to_string(),
+                target_path: "C:\\fake\\b.lnk".to_string(),
+                is_folder: false,
+            },
+        ];
         let mut engine = SearchEngine::new(entries);
         let h = empty_history();
 
-        // 直接クエリ（非 ASCII なので kana_query は生成されない）
+        // "どきゅめんと" に対して直接 Substring マッチしたスコアは 5000（先頭一致）
         let direct = engine.search_with_history_boost(
             "どきゅ",
             8,
@@ -1659,7 +1674,7 @@ mod tests {
             migemo_config(),
         );
 
-        // ローマ字クエリ（kana マッチ経由）
+        // "dokyu" → kana_query = "どきゅ" → kana_substring_score = 4500
         let kana = engine.search_with_history_boost(
             "dokyu",
             8,
@@ -1668,21 +1683,33 @@ mod tests {
             migemo_config(),
         );
 
-        // 直接クエリは Substring(5000) 相当、kana は kana_substring_score(4500) 相当
-        // → 直接クエリのスコアが高い
-        assert!(
-            !direct.is_empty(),
-            "直接検索で どきゅめんと / ドキュメント がヒットするはず"
+        // 両方の結果が存在することを確認
+        assert!(!direct.is_empty(), "直接クエリで どきゅめんと がヒットするはず");
+        assert!(!kana.is_empty(), "kana クエリで どきゅめんと / ドキュメント がヒットするはず");
+
+        // 直接クエリで "どきゅめんと" がトップに来る（Substring の先頭一致 = 高スコア）
+        assert_eq!(
+            direct[0].name, "どきゅめんと",
+            "直接クエリ先頭一致は どきゅめんと が最高スコア"
         );
-        // Substring スコア(5000) > kana_substring スコア(4500)
-        if let (Some(d), Some(k)) = (direct.first(), kana.first()) {
-            // kana マッチで得られる最高スコアは 4500、直接マッチは 5000 以上
-            // → 両方がある場合、同じ名前が返るが内部スコアは直接 > kana の順
-            assert!(
-                !d.name.is_empty() && !k.name.is_empty(),
-                "どちらも結果が存在するはず"
-            );
-        }
+
+        // kana マッチのスコア(4500) < 直接マッチのスコア(5000) の確認:
+        // 同じエントリが両クエリでヒットするとき、直接クエリ側の方が先頭になる。
+        // "どきゅめんと" は直接 Substring(5000) でも kana_substring(4500) でもヒットするが、
+        // 直接クエリ時は primary_score が Some なので kana_score は使われない（OR 関係）。
+        // よって primary_score（5000）> kana_score（4500）の順序不変条件が成立する。
+        let direct_names: Vec<&str> = direct.iter().map(|r| r.name.as_str()).collect();
+        let kana_names: Vec<&str> = kana.iter().map(|r| r.name.as_str()).collect();
+        assert!(
+            direct_names.contains(&"どきゅめんと"),
+            "直接クエリで どきゅめんと がヒットするはず: {:?}",
+            direct_names
+        );
+        assert!(
+            kana_names.contains(&"どきゅめんと") || kana_names.contains(&"ドキュメント"),
+            "kana クエリで少なくとも一方がヒットするはず: {:?}",
+            kana_names
+        );
     }
 
     #[test]

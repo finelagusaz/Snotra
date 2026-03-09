@@ -3,15 +3,13 @@ paths:
   - "ui/src/**/*.{ts,tsx}"
 ---
 
-# ui 実装パターン
+# ui ルール
 
-- 検索ウィンドウのドラッグ移動は `.search-bar` の `data-tauri-drag-region` 属性で実現。`<input>` には付与しないため入力操作は維持される
-- ドラッグ開始時の一時的なフォーカス喪失で `auto_hide_on_focus_lost` が誤発火するため、`onFocusChanged` の非表示処理に 100ms の猶予を設けフォーカス復帰時にキャンセルする設計
-- **`async` 関数内で `await` をまたぐ可変変数はローカルキャプチャする**: `let` 変数やモジュールスコープの可変変数を `await` をまたいで参照する場合、関数冒頭で `const` にコピーしてから使う
-- **`await` 後に保存状態を復元する場合は staleness チェックを入れる**: `searchGeneration` 等の世代カウンタで「`await` 中に状態が変わっていないか」を検証してから復元する
+詳細は `ui/CLAUDE.md` を参照。
 
-## Blob URL 管理の不変条件
-
-- アイコンの Blob URL は `LruIconCache`（`lruIconCache.ts`）が一元管理する。`URL.createObjectURL` で生成した URL は必ず `cache.set()` または早期リターン時の明示的 `revokeObjectURL` で回収する
-- `parseBinaryBatch` で Blob URL を生成した後、`cache.set()` に到達する前に早期リターンするパス（stale guard 等）では、`parsed` 内の全 URL を明示的に `revokeObjectURL` すること
-- `ResultsSection` の `visible` prop が `false` になったとき `cache.revokeAll()` + `iconCacheVersion` 更新で Blob URL を一括解放する
+- **await 後の状態復元は staleness チェック必須**: `searchGeneration` カウンタで「await 中に状態が変わっていないか」を検証してから復元する
+- **モード遷移時にデバウンスをキャンセル**: フォルダ離脱・ツール選択離脱・インスタントコマンド実行時に、保留中の RAF / setTimeout を破棄する
+- **Blob URL 早期リターン時は全 URL を revoke**: `parseBinaryBatch` → stale guard で抜ける場合、`parsed` 内の URL を個別に `revokeObjectURL` しないとリーク
+- **`set_size()` は `shouldShowResults` の effect だけが呼ぶ**: 他の箇所からウィンドウサイズを変更しない
+- **選択はインデックス（number）で参照**: パス文字列を使わない（ツール選択モードでパスが重複する）
+- **Effect 内で自身が依存するシグナルを set しない**: 無限ループの原因。やむを得ない場合は `untrack()` で切る

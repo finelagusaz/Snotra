@@ -3,11 +3,12 @@ paths:
   - "snotra-core/**/*.rs"
 ---
 
-# snotra-core 実装前チェック（必須）
+# snotra-core ルール
 
-- 共通原則はルート `CLAUDE.md` の「レビュー未然防止の事前調査（必須）」に従う
-- `search.rs` で `Ord` / `Reverse` / `BinaryHeap` を扱う変更では、`BinaryHeap` の先頭が最良/最悪のどちらかを実装前に明記する
-- `search.rs` の top-k 更新ロジックを変更する場合は、入力順を変えても結果が不変であるテストを追加または更新する
-- `SearchEngine` に新しい並列 Vec フィールドを追加するとき: `EntryView` 構造体・`entry_view()` メソッド・`new()` 末尾の `debug_assert!` を同時に更新し、全 Vec 長の同期を保つ（書き込み側 `new()` と読み取り側 `entry_view()` は常にペアで更新する）
-- `search.rs` の incremental search キャッシュ（`prev_*` フィールド群）に新しい述語を追加するとき: `use_incremental` の条件式と `prev_*` の更新箇所を同時に変更し、`/cache-check` で単調性を検証する
-- `query.rs` の正規化を変更する場合は、タブ・全角スペース・NBSP を `' '` に統一するテストと冪等性テストを追加または更新する
+詳細は `snotra-core/CLAUDE.md` を参照。
+
+- **SearchEngine フィールド追加時は 5 箇所同時更新**: (1) struct (2) `new()` Wave 1/2 (3) `new_with_cached_masks()` v4+v3 パス (4) `EntryView` + `entry_view()` (5) `debug_assert!`。並列 Vec レイアウトの struct 化は禁止（ベンチマーク劣化確認済み）
+- **normalize_entry_key を変更したら 3 点確認**: 新規記録（`record_launch` 等）・既存データ移行（`migrate_normalize_keys`）・ルックアップ API の 3 者が揃っているか
+- **ビットマスク二重定義**: `indexer.rs::char_bitmask_for_cache()` と `search.rs::char_bitmask()` は同一ロジック必須。片方だけ変えるとキャッシュヒット/ミスで結果が変わる
+- **incremental cache 変更時は `/cache-check`** で単調性を検証する
+- **UI 表示文字列を持たない**: エラーは `is_error: true` フラグで伝え、表示は UI 層の責務

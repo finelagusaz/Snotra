@@ -3,24 +3,14 @@ paths:
   - "src-tauri/**/*.rs"
 ---
 
-# src-tauri 注意事項
+# src-tauri ルール
 
-## WebView2 ウィンドウ生成の制約
+詳細は `src-tauri/CLAUDE.md` を参照。
 
-`WebviewWindowBuilder::build()` は WebView2 初期化のために Win32 メッセージポンプの進行を必要とする。**「メインスレッドにいる」と「メッセージポンプが自由に回る」は別物**であり、以下の制約がある:
-
-- **setup フェーズ（イベントループ開始前）**: `build()` が自前でメッセージを処理できるため正常動作する
-- **イベントループ中のコールバック（`run_on_main_thread` / `listen` / `RunEvent` 等）**: メッセージポンプが1イテレーション内で停止しているため、`build()` がポンプ進行を待ってデッドロックする
-- **IPC ハンドラスレッド**: メインスレッドではないため同様にデッドロックする
-
-ウィンドウの生成は必ず setup フェーズで行い、ランタイムでは show/hide のみで制御する。
-
-**事前チェック**: ある操作が「内部でメッセージポンプの進行を必要とするか」を確認する。ウィンドウ生成・COM STA 初期化・モーダルダイアログ等は該当し、イベントループコールバック内から呼べない。
-
-## Win32 / Tauri 注意事項
-
-- Win32 関連の不具合では、まず `config.toml`（テーマ含む）を確認し、次にウィンドウライフサイクル順序、最後に API 呼び出しを調査する
-- `windows` クレート（現在 v0.62）はバージョンごとに API シグネチャが変わる。コードを書く前に、使用中のバージョンで対象 API が利用可能か・型が一致するかを確認する
-- 必要な feature フラグ（`Win32_UI_WindowsAndMessaging` 等）が `Cargo.toml` に宣言されているか確認してから実装する
-- Tauri プラグインの新機能を使う際は `capabilities/*.json` の権限宣言を確認する
-- `ShellExecuteW` でフォルダ・画像・文書ファイルを開く場合は COM STA が必要（`std::thread::spawn` + `CoInitializeEx` パターン）
+- **engine ロックを async/blocking 境界またぎで保持しない**: データ抽出 → 即解放 → 処理の順
+- **子プロセス spawn → exit handler kill はペア**: `main.rs` の exit ハンドラに `.kill()` を忘れない
+- **`WebviewWindowBuilder::build()` は setup フェーズのみ**: イベントループ中・IPC ハンドラからはデッドロック。ランタイムは show/hide のみ
+- **Win32 API は PlatformBridge 経由**: IPC ハンドラから直接呼ばない。platform スレッドのメッセージループで実行する
+- **`windows` クレート（v0.62）の API を使う前に**: 型・シグネチャの一致と feature フラグの宣言を確認する
+- **ShellExecuteW + シェル拡張 → COM STA 必須**: `std::thread::spawn` + `CoInitializeEx` パターン。EXE は不要
+- **イベント順序**: `language-changed` → `hotkey-registration-failed` の順（フロントエンドが正しい言語でメッセージを組み立てるため）

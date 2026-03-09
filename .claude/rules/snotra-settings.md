@@ -3,19 +3,12 @@ paths:
   - "snotra-settings/**/*.rs"
 ---
 
-# snotra-settings egui 実装の注意点
+# snotra-settings ルール
 
-## API の型に注意
+詳細は `snotra-settings/CLAUDE.md` を参照。
 
-- `egui::Key::ALL` は `&[Key]`（`&&[Key]` ではない）。`for &key in egui::Key::ALL` が正しい
-- `color_edit_button_srgba` は `&mut Color32` を取る。一時変数に変換して渡すと変更が反映されない
-- `egui::Stroke::new()` に `StrokeKind` が必要（egui 0.31+）
-- `ThemePreset` は `Copy`。`.clone()` ではなく値コピーで渡す
-
-## Win キーの制限
-
-egui の `Modifiers` は `ctrl` / `alt` / `shift` / `mac_cmd` / `command` のみ。Win キーは検出できない。ホットキーキャプチャでは Ctrl/Alt/Shift のみサポートする。
-
-## フレームごとの重い処理を避ける
-
-egui は毎フレーム `update()` を呼ぶ（60fps）。`list_system_fonts()` のような Win32 API 呼び出しをフレームごとに実行するとパフォーマンスが劣化する。初期化時に一度だけ取得して `SettingsApp` のフィールドにキャッシュする。
+- **`saved` は Save 成功時のみ更新**: `draft` は自由に変更可、`saved` を他のタイミングで変えると部分保存バグになる
+- **egui API 型注意**: `Key::ALL` は `&[Key]`（`for &key in`）、`color_edit_button_srgba` は永続変数の `&mut Color32` を渡す（一時変数だと変更が消える）、`Stroke::new()` は `StrokeKind` 必須
+- **フレームごとに重い処理を呼ばない**: `list_system_fonts()` 等は `new()` で一度だけ取得しキャッシュ
+- **PickerState の `active = false` リセット忘れ**: キャンセル・成功の両パスで必ず。忘れるとボタン永久無効化
+- **Opener ターゲット変更は remove → add**: ルールの `target` を直接書き換えると同じルール内の他ツールも巻き込まれる

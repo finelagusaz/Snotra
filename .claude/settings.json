@@ -15,10 +15,6 @@
           {
             "type": "command",
             "command": "input=$(cat); if echo \"$input\" | grep -qE '(tauri\\.conf\\.json|config\\.toml)'; then echo 'WARN: 設定ファイルの変更です。Windows 互換性を確認してください。' >&2; fi"
-          },
-          {
-            "type": "command",
-            "command": "input=$(cat); ROOT=$(git rev-parse --show-toplevel 2>/dev/null); if [ -n \"$ROOT\" ] && [ -f \"$ROOT/.claude/hooks/checklist-reminder.sh\" ]; then echo \"$input\" | bash \"$ROOT/.claude/hooks/checklist-reminder.sh\"; fi"
           }
         ]
       }

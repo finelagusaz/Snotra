@@ -1,39 +1,42 @@
-# Retrospective — インスタントコマンド機能実装 + レビュー修正
+# Retrospective — ローマ字→かな検索（migemo/kana マッチ）実装
 
 ## よかったこと
 
-### 計画駆動で4クレート横断の大規模機能を実装できた
-`workspace/plan.md` のフェーズ構成（snotra-core → src-tauri → ui → snotra-settings）に沿い、29ファイル・1300行超の変更を1コミットで完結させた。型定義から UI まで一貫した設計で、後続のレビュー修正も局所的に収まった。
+### 計画→実装→レビューの3段階が機能した
+`workspace/plan.md` で Phase 1〜6 を計画し、8コミットで段階的に実装。計画段階で SoA レイアウト（並列 Vec）への kana_lower_names 追加、キャッシュ非永続化（INDEX_CACHE_VERSION バンプ回避）、設定 UI の設計まで決めていたため、実装フェーズで大きな設計変更が不要だった。
 
-### コードレビューが実害のあるバグを複数検出できた
-2回のレビューラウンドで以下を検出・修正:
-- クリップボード読み取りが Engine mutex ロック内（ブロックリスク）
-- launch timeout の未設定（既存パターンとの不統一）
-- 非同期更新前の instantCommandItems 未クリア（古いコマンド誤起動）
-- 失敗時の無条件状態復元（レースコンディション）
+### レビューが3段階のバグを段階的に検出した
+1. **内部レビュー（Medium）**: コメント不足・技術的負債（HistoryBoostConfig の命名）を検出
+2. **P1 レビュー**: incremental cache の None→Some 遷移（min_chars 跨ぎ・ASCII 残留解消）を検出
+3. **デザインレビューチェックリスト**: ローマ字→かな変換の非単調性（"kan"→"かん", "kana"→"かな"）を検出
 
-いずれもリリース前に修正でき、段階的レビューの効果が出た。
+各段階で修正が完了してから次のレビューに進んだため、問題が積み重ならなかった。
 
-### レースコンディション修正が defense in depth で設計できた
-`handleInput` の `launching()` ガード（根本対策）と `searchGeneration` の staleness チェック（防御層）の2層構成にし、単一障害点を作らなかった。
+### 技術的負債を即時解消した
+`HistoryBoostConfig` → `SearchOptions` のリネームを「後で」ではなく同サイクル内で実施。ユーザーの「技術的負債を残すのはやめよう」という判断が正しく、リネームは5ファイル・20箇所程度で収まった。
 
 ---
 
 ## 伸びしろ
 
-### 状態復元パターンの設計時に staleness を考慮しなかった
-`executeInstantCommandSelected` に「失敗時に保存状態を復元する」ロジックを追加した時点で、`await` 中にユーザーが操作する可能性を見落とした。既存の `launchAndReset` / `launchWithSelectedTool` が復元しない設計だったため、復元パターンを初めて導入する際に必要な考慮（staleness チェック・入力ガード）が抜けた。
+### incremental cache のガード設計に3イテレーション要した
+`prev_migemo_enabled: bool` → `prev_had_kana_query: bool` → `prev_kana_query: Option<String>` と3回修正した。根本原因は「ローマ字→かな変換が入力伸長に対して非単調」という性質を初回設計で認識していなかったこと。
 
-### handleInput に launching() ガードがなかった
-初期実装時に `handleInput` は `toolSelectionState()` と `indexing()` のガードしか持っていなかった。`launching()` 中に入力を受け付ける必要がないことは明らかだったが、実害がなかったため見過ごされていた。新しい状態復元パターンの導入で初めて実害が生じた。
+**教訓**: キャッシュ再利用ロジックを設計するとき、各述語の「入力が伸びたとき出力はどう変わるか」を最初に分析すべきだった。これは `/cache-check` スキルの Step 2 として定式化済み。
 
-### 3ラウンドの修正が必要だった
-初期実装 → コードレビュー修正 → PRレビュー修正 → レースコンディション修正と、4段階を経た。PRレビュー時点で復元パターンの staleness を指摘できていれば1ラウンド減らせた。
+### wana_kana のバージョン・API を事前に確認しなかった
+`wana_kana = "0.4"` → 実際は `"4.0"`、`wana_kana::to_hiragana()` → 実際は `ConvertJapanese` trait。crates.io を確認せず計画書のまま実装に入ったため、2回のコンパイルエラーで手戻りが発生した。
+
+**教訓**: 外部クレートを初めて使う場合、cargo add で最新バージョンを確認し、docs.rs で API を確認してから実装に入る。これは一般的な慎重さの問題で CLAUDE.md に追記するほどではない。
+
+### 計画書の Phase 構成にレビュー・キャッシュ検証フェーズがなかった
+計画書は実装フェーズ（Phase 1〜6）のみで、incremental cache への影響分析フェーズが含まれていなかった。結果として実装後のレビューで初めて問題が発覚した。
 
 ---
 
 ## ネクストアクション
 
-- [ ] レースコンディション修正をコミットし、PR を更新する
-- [ ] 手動確認: `@` コマンド実行失敗時に候補リストが復元されることを検証
-- [ ] 手動確認: `@` コマンド実行中にクエリ変更不可（`launching()` ガード）を検証
+- [ ] PR #215 をマージする（全テスト 281 pass、clippy clean 確認済み）
+- [ ] 手動確認: migemo_enabled=true で「dokyu」入力 → 「ドキュメント」系エントリがヒットすることを検証
+- [ ] 手動確認: migemo_enabled=false（デフォルト）で kana マッチが発動しないことを検証
+- [ ] 手動確認: snotra-settings の Migemo セクション（checkbox + DragValue）が正しく表示・保存されることを検証

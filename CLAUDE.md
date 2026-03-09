@@ -64,6 +64,7 @@ Claude とユーザーが一緒に作業するときの関係性の原則。
    - **状態フラグも真偽ペアで計画する**: `AtomicBool` などのフラグを `true` にする操作は「誰が・どの条件で `false` に戻すか」をセットで設計する。`false` に戻す経路が存在しない場合、失敗時にシステムが回復不能な状態に固まるリスクがある。`false` に戻す責務を持つ関数（`start_index_build` 等）は `#[must_use]` を付けて `let _ =` による無視をコンパイル時に検出する
    - **初回フローとガードの相互作用を検証する**: 正常運用時の早期リターンガード（`if indexing { return }` 等）が、初回起動・初期化フロー・エラーリカバリなどの特殊パスを意図せず阻害しないか確認する。ガードを追加/変更したときは「このガードが true になる全コンテキスト」を列挙する
    - **サンプルコードに構造の理由を付記する**: リソース管理・非同期処理の配置が問われる箇所に「なぜこの構造か」をコメントする
+   - **キャッシュ再利用は述語の単調性を証明してから実装する**: 前回結果を再利用するロジック（incremental search、メモ化等）を追加・変更するとき、全述語の単調性（今回の結果集合 ⊆ 前回の結果集合）を検証する。変換関数が入力伸長に対して非単調な場合（例: ローマ字→かな）、bool フラグではなく実際の値を保持して `starts_with` 等で比較する。`/cache-check` スキルで体系的に検証できる
 4. 失敗するテスト（または最小再現）を追加する
 5. それが落ちることを確認する（Red）
 6. 最小実装で通す（Green）
@@ -92,4 +93,5 @@ Claude とユーザーが一緒に作業するときの関係性の原則。
 | `/symmetric-check` | ステップ 2: コードパス変更・バグ発見時に対称ペアの適用漏れを確認する。計画レビュー時にリソースライフサイクルの対称性（生成→登録→破棄）や追跡機構の移行漏れを検証する | `/symmetric-check result-clicked: added emitSelectionUpdate` / `/symmetric-check iconUrls Set を廃止して LruIconCache に移行` |
 | `/dry-check` | ステップ 2: 関数を新規定義・変更したとき、手書き重複が残っていないか確認する | `/dry-check show_main_and_emit: show() + set_focus() + emit(window-shown)` |
 | `/race-check` | ステップ 2〜3: async 関数を新規追加・変更したとき、各 await 地点の状態競合リスクを検証する | `/race-check executeInstantCommandSelected: await api.executeInstantCommand()` |
+| `/cache-check` | ステップ 2〜3: incremental search やメモ化など、前回結果を再利用するキャッシュロジックの追加・変更時に述語の単調性と状態遷移の安全性を検証する | `/cache-check search_with_options: use_incremental 判定` |
 | `/retrospective` | サイクル終了後: 教訓を CLAUDE.md に抽出し、RETROSPECTIVE.md を更新する | `/retrospective` or `/retrospective feat/search-optimization` |

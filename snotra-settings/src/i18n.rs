@@ -857,6 +857,133 @@ impl Tr {
         }
     }
 
+    // Backup tab
+    pub fn tab_backup(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "バックアップ",
+            Language::En => "Backup",
+        }
+    }
+
+    pub fn heading_export(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "エクスポート",
+            Language::En => "Export",
+        }
+    }
+
+    pub fn label_export_description(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "現在の設定ファイルを別の場所にコピーします。",
+            Language::En => "Copy the current settings file to another location.",
+        }
+    }
+
+    pub fn btn_export(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "設定をエクスポート…",
+            Language::En => "Export settings…",
+        }
+    }
+
+    pub fn heading_import(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "インポート",
+            Language::En => "Import",
+        }
+    }
+
+    pub fn label_import_description(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "エクスポートした設定ファイルを読み込みます。現在の設定は上書きされます。",
+            Language::En => "Load an exported settings file. Current settings will be overwritten.",
+        }
+    }
+
+    pub fn btn_import(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "設定をインポート…",
+            Language::En => "Import settings…",
+        }
+    }
+
+    pub fn heading_data_folder(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "データフォルダ",
+            Language::En => "Data folder",
+        }
+    }
+
+    pub fn label_data_folder_description(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "設定ファイルやキャッシュが保存されているフォルダを開きます。",
+            Language::En => "Open the folder where settings and cache files are stored.",
+        }
+    }
+
+    pub fn btn_open_folder(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "設定フォルダを開く",
+            Language::En => "Open settings folder",
+        }
+    }
+
+    pub fn status_export_success(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "エクスポートしました",
+            Language::En => "Exported",
+        }
+    }
+
+    pub fn status_export_failed(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "エクスポート失敗: ",
+            Language::En => "Export failed: ",
+        }
+    }
+
+    pub fn status_import_success(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "インポートしました",
+            Language::En => "Imported",
+        }
+    }
+
+    pub fn status_import_failed(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "インポート失敗: ",
+            Language::En => "Import failed: ",
+        }
+    }
+
+    pub fn status_import_validation_error(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "インポートファイルにエラーがあります: ",
+            Language::En => "Import file has errors: ",
+        }
+    }
+
+    pub fn dialog_export_config(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "設定をエクスポート",
+            Language::En => "Export settings",
+        }
+    }
+
+    pub fn dialog_import_config(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "設定をインポート",
+            Language::En => "Import settings",
+        }
+    }
+
+    pub fn filter_toml(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "TOML ファイル",
+            Language::En => "TOML files",
+        }
+    }
+
     pub fn err_migemo_min_chars_zero(&self) -> &'static str {
         match self.0 {
             Language::Ja => "migemo 最小文字数は 1 以上である必要があります",

@@ -1,6 +1,6 @@
 ---
 name: implement
-description: "自律的なフルサイクル開発: 調査 → 計画 → 実装 → 検証 → レビュー → コミット"
+description: "自律的なフルサイクル開発: 調査 → 計画 → 実装 → 検証 → レビュー → コミット。機能追加・バグ修正・リファクタリングなど、コード変更を伴うタスクの実装時に使用。"
 disable-model-invocation: true
 argument-hint: "[機能の説明]"
 allowed-tools:
@@ -12,6 +12,7 @@ allowed-tools:
   - Write
   - Grep
   - Glob
+  - Agent
 ---
 
 自律的にフルサイクル開発を行う。質問せず、コードとドキュメントから判断すること。

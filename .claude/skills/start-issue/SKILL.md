@@ -3,6 +3,13 @@ name: start-issue
 description: "GitHub issue から作業を開始する: issue 読み込み → main 最新化 → ブランチ作成 → 調査(workspace/research.md) → 実装計画(workspace/plan.md) → セルフレビューして計画更新。実装の前段階をすべて行う。"
 disable-model-invocation: true
 argument-hint: "<issue-number>"
+allowed-tools:
+  - Bash(git *)
+  - Bash(gh *)
+  - Read
+  - Write
+  - Grep
+  - Glob
 ---
 
 Issue #$ARGUMENTS の作業を開始する。質問せず自律的に進めること。

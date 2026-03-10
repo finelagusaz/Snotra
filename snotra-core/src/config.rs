@@ -43,39 +43,107 @@ pub struct OpenerRule {
     pub tools: Vec<OpenerTool>,
 }
 
+/// オープナーターゲットからパス条件を抽出する。
+/// - `"folder"` → None
+/// - `"folder:C:\\workspace"` → Some("C:\\workspace")
+/// - `"ext:.md"` → None
+/// - `"ext:.md:C:\\projects"` → Some("C:\\projects")
+pub fn extract_path_condition(target: &str) -> Option<&str> {
+    if let Some(rest) = target.strip_prefix("folder:") {
+        if !rest.is_empty() {
+            return Some(rest);
+        }
+    } else if let Some(after_ext) = target.strip_prefix("ext:") {
+        return split_ext_and_path(after_ext).1;
+    }
+    None
+}
+
+/// ターゲットから拡張子リスト部分のみ取得する（パス条件を除外）。
+pub fn extract_ext_part(target: &str) -> &str {
+    debug_assert!(target.starts_with("ext:"), "extract_ext_part called on non-ext target: {target}");
+    let after_ext = &target["ext:".len()..];
+    if let Some(path_cond) = extract_path_condition(target) {
+        // パス条件の直前のコロンまでが拡張子部分
+        let path_start = after_ext.len() - path_cond.len() - 1; // -1 for ':'
+        &after_ext[..path_start]
+    } else {
+        after_ext
+    }
+}
+
 /// パスとフォルダフラグに対してマッチするツール一覧を返す。
+/// 最も具体的にマッチした1ルールを返す（パス条件が長い方が具体的）。
 /// マッチするルールがなければ空スライスを返す（呼び出し側でフォールバック処理）。
 pub fn find_matching_tools<'a>(
     path: &str,
     is_folder: bool,
     rules: &'a [OpenerRule],
 ) -> &'a [OpenerTool] {
-    let path_lower = path.to_lowercase();
+    let path_lower = path.to_lowercase().replace('/', "\\");
     let path_ext = path_lower
         .rfind('.')
         .map(|i| &path_lower[i..])
         .unwrap_or("");
 
-    for rule in rules {
-        if is_folder && rule.target == "folder" {
-            return &rule.tools;
+    let mut best: Option<(usize, usize)> = None; // (rule_index, specificity)
+    // specificity: 0 = no path condition, N = path condition length
+
+    for (idx, rule) in rules.iter().enumerate() {
+        let target = &rule.target;
+        let path_cond = extract_path_condition(target);
+
+        // パス条件チェック（パス境界で一致を検証）
+        if let Some(cond) = path_cond {
+            let cond_lower = cond.to_lowercase().replace('/', "\\");
+            if !path_lower.starts_with(&cond_lower) {
+                continue;
+            }
+            // パス条件がパス境界で終わっていることを確認
+            // 例: 条件 "C:\workspace" はパス "C:\workspace123" にマッチしない
+            let next_byte = path_lower.as_bytes().get(cond_lower.len());
+            if next_byte.is_some() && next_byte != Some(&b'\\') && next_byte != Some(&b'/') {
+                continue;
+            }
         }
-        if !is_folder && rule.target.starts_with("ext:") {
-            let ext_part = &rule.target["ext:".len()..];
-            for raw_ext in ext_part.split(',') {
+
+        let kind_match = if is_folder {
+            target == "folder" || target.starts_with("folder:")
+        } else if target.starts_with("ext:") {
+            let ext_part = extract_ext_part(target);
+            ext_part.split(',').any(|raw_ext| {
                 let ext = raw_ext.trim().to_lowercase();
                 let ext_with_dot = if ext.starts_with('.') {
                     ext
                 } else {
                     format!(".{ext}")
                 };
-                if path_ext == ext_with_dot {
-                    return &rule.tools;
-                }
+                path_ext == ext_with_dot
+            })
+        } else {
+            false
+        };
+
+        if !kind_match {
+            continue;
+        }
+
+        let specificity = path_cond.map_or(0, |c| c.len());
+
+        if let Some((_, best_spec)) = best {
+            if specificity > best_spec {
+                best = Some((idx, specificity));
             }
+            // 同具体度は先のルール（定義順）が勝つので更新しない
+        } else {
+            best = Some((idx, specificity));
         }
     }
-    &[]
+
+    match best {
+        Some((idx, _)) => &rules[idx].tools,
+        None => &[],
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -405,22 +473,60 @@ fn normalize_extensions(exts: &[String]) -> Vec<String> {
     result
 }
 
+/// "ext:" プレフィックスの後の部分から拡張子リストとパス条件を分離する。
+/// 例: "md,txt" → ("md,txt", None)
+/// 例: ".md:C:\\projects" → (".md", Some("C:\\projects"))
+/// ドライブレターパターン `:X:\` or `:X:/` でパス条件の開始を検出する。
+fn split_ext_and_path(rest: &str) -> (&str, Option<&str>) {
+    let bytes = rest.as_bytes();
+    for i in 0..bytes.len().saturating_sub(2) {
+        if bytes[i] == b':'
+            && bytes[i + 1].is_ascii_alphabetic()
+            && i + 2 < bytes.len()
+            && (bytes[i + 2] == b':' || bytes[i + 2] == b'\\' || bytes[i + 2] == b'/')
+        {
+            let ext_part = &rest[..i];
+            let path_part = rest[i + 1..].trim();
+            if !path_part.is_empty() {
+                return (ext_part, Some(path_part));
+            }
+        }
+    }
+    (rest, None)
+}
+
 fn normalize_opener_target(target: &str) -> String {
     let trimmed = target.trim();
-    if trimmed.eq_ignore_ascii_case("folder") {
-        return "folder".to_string();
+
+    // folder, folder:<path>, ext:<exts>, ext:<exts>:<path>
+    if let Some((kind, rest)) = trimmed.split_once(':') {
+        if kind.eq_ignore_ascii_case("folder") {
+            let path_trimmed = rest.trim();
+            if path_trimmed.is_empty() {
+                return "folder".to_string();
+            }
+            return format!("folder:{path_trimmed}");
+        }
+        if kind.eq_ignore_ascii_case("ext") {
+            // rest から拡張子部分とパス条件を分離
+            let (raw_exts, path_suffix) = split_ext_and_path(rest);
+            let exts = normalize_extensions(
+                &raw_exts
+                    .split(',')
+                    .map(|ext| ext.to_string())
+                    .collect::<Vec<_>>(),
+            );
+            let ext_str = exts.join(",");
+            return if let Some(path) = path_suffix {
+                format!("ext:{ext_str}:{path}")
+            } else {
+                format!("ext:{ext_str}")
+            };
+        }
     }
 
-    if let Some((kind, raw_exts)) = trimmed.split_once(':')
-        && kind.eq_ignore_ascii_case("ext")
-    {
-        let exts = normalize_extensions(
-            &raw_exts
-                .split(',')
-                .map(|ext| ext.to_string())
-                .collect::<Vec<_>>(),
-        );
-        return format!("ext:{}", exts.join(","));
+    if trimmed.eq_ignore_ascii_case("folder") {
+        return "folder".to_string();
     }
 
     trimmed.to_string()
@@ -1764,6 +1870,170 @@ mod tests {
         let rules = vec![make_rule("ext:PNG,JPG", &[("IrfanView", "i_view64.exe", "")])];
         let tools = find_matching_tools("C:\\Photo.png", false, &rules);
         assert_eq!(tools.len(), 1);
+    }
+
+    // ---- path condition tests ----
+
+    #[test]
+    fn find_matching_tools_folder_with_path_condition() {
+        let rules = vec![
+            make_rule("folder:C:\\workspace", &[("VSCode", "code.cmd", "")]),
+            make_rule("folder", &[("Explorer", "explorer.exe", "")]),
+        ];
+        let tools = find_matching_tools("C:\\workspace\\Snotra", true, &rules);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "VSCode");
+    }
+
+    #[test]
+    fn find_matching_tools_folder_path_no_match_falls_back() {
+        let rules = vec![
+            make_rule("folder:C:\\workspace", &[("VSCode", "code.cmd", "")]),
+            make_rule("folder", &[("Explorer", "explorer.exe", "")]),
+        ];
+        let tools = find_matching_tools("D:\\other\\dir", true, &rules);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "Explorer");
+    }
+
+    #[test]
+    fn find_matching_tools_most_specific_path_wins() {
+        let rules = vec![
+            make_rule("folder:C:\\workspace", &[("VSCode", "code.cmd", "")]),
+            make_rule("folder:C:\\workspace\\Snotra", &[("Terminal", "wt.exe", "-d {path}")]),
+            make_rule("folder", &[("Explorer", "explorer.exe", "")]),
+        ];
+        let tools = find_matching_tools("C:\\workspace\\Snotra\\src", true, &rules);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "Terminal");
+    }
+
+    #[test]
+    fn find_matching_tools_path_condition_case_insensitive() {
+        let rules = vec![
+            make_rule("folder:C:\\Workspace", &[("VSCode", "code.cmd", "")]),
+        ];
+        let tools = find_matching_tools("c:\\workspace\\project", true, &rules);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "VSCode");
+    }
+
+    #[test]
+    fn find_matching_tools_ext_with_path_condition() {
+        let rules = vec![
+            make_rule("ext:md:C:\\projects", &[("VSCode", "code.cmd", "")]),
+            make_rule("ext:md", &[("Typora", "typora.exe", "")]),
+        ];
+        let tools = find_matching_tools("C:\\projects\\readme.md", false, &rules);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "VSCode");
+    }
+
+    #[test]
+    fn find_matching_tools_ext_path_no_match_falls_back() {
+        let rules = vec![
+            make_rule("ext:md:C:\\projects", &[("VSCode", "code.cmd", "")]),
+            make_rule("ext:md", &[("Typora", "typora.exe", "")]),
+        ];
+        let tools = find_matching_tools("D:\\docs\\readme.md", false, &rules);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "Typora");
+    }
+
+    #[test]
+    fn find_matching_tools_same_specificity_first_wins() {
+        let rules = vec![
+            make_rule("folder:C:\\a", &[("Tool1", "tool1.exe", "")]),
+            make_rule("folder:C:\\b", &[("Tool2", "tool2.exe", "")]),
+        ];
+        // C:\a のパス → Tool1
+        let tools = find_matching_tools("C:\\a\\sub", true, &rules);
+        assert_eq!(tools[0].name, "Tool1");
+    }
+
+    #[test]
+    fn find_matching_tools_path_condition_slash_normalized() {
+        let rules = vec![
+            make_rule("folder:C:\\workspace", &[("VSCode", "code.cmd", "")]),
+        ];
+        // パスにスラッシュが混在
+        let tools = find_matching_tools("C:/workspace/project", true, &rules);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "VSCode");
+    }
+
+    #[test]
+    fn find_matching_tools_path_condition_boundary_check() {
+        let rules = vec![
+            make_rule("folder:C:\\workspace", &[("VSCode", "code.cmd", "")]),
+            make_rule("folder", &[("Explorer", "explorer.exe", "")]),
+        ];
+        // "C:\workspaces" はパス境界で一致しないのでフォールバック
+        let tools = find_matching_tools("C:\\workspaces\\project", true, &rules);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "Explorer");
+    }
+
+    #[test]
+    fn find_matching_tools_path_condition_exact_match() {
+        let rules = vec![
+            make_rule("folder:C:\\workspace", &[("VSCode", "code.cmd", "")]),
+        ];
+        // 完全一致もマッチする
+        let tools = find_matching_tools("C:\\workspace", true, &rules);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "VSCode");
+    }
+
+    #[test]
+    fn normalize_opener_target_folder_with_path() {
+        assert_eq!(
+            normalize_opener_target("folder:C:\\workspace"),
+            "folder:C:\\workspace"
+        );
+    }
+
+    #[test]
+    fn normalize_opener_target_folder_with_empty_path() {
+        assert_eq!(normalize_opener_target("folder:"), "folder");
+        assert_eq!(normalize_opener_target("folder:  "), "folder");
+    }
+
+    #[test]
+    fn normalize_opener_target_ext_with_path() {
+        assert_eq!(
+            normalize_opener_target("ext:md:C:\\projects"),
+            "ext:.md:C:\\projects"
+        );
+    }
+
+    #[test]
+    fn normalize_opener_target_ext_with_path_normalizes_exts() {
+        assert_eq!(
+            normalize_opener_target("ext: PNG, .jpg :C:\\projects"),
+            "ext:.jpg,.png:C:\\projects"
+        );
+    }
+
+    #[test]
+    fn split_ext_and_path_no_path() {
+        assert_eq!(split_ext_and_path("md,txt"), ("md,txt", None));
+    }
+
+    #[test]
+    fn split_ext_and_path_with_drive_path() {
+        assert_eq!(
+            split_ext_and_path(".md:C:\\projects"),
+            (".md", Some("C:\\projects"))
+        );
+    }
+
+    #[test]
+    fn split_ext_and_path_forward_slash() {
+        assert_eq!(
+            split_ext_and_path(".md:D:/repos"),
+            (".md", Some("D:/repos"))
+        );
     }
 
     #[test]

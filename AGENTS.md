@@ -5,6 +5,6 @@
 ## ドキュメント参照
 
 - プロジェクト概要・ディレクトリ構成・横断パターン: `docs/architecture.md`
-- 開発ワークフロー・原則・デバッグ指針: `docs/development-workflow.md`
+- 開発原則・デバッグ指針: `docs/development-principles.md`
 - ビルド・テスト・E2E コマンド: `docs/build-commands.md`
 - モジュール詳細: 各サブディレクトリの `CLAUDE.md`（`snotra-core/`, `src-tauri/`, `ui/`, `snotra-settings/`）

@@ -125,17 +125,17 @@ const MainApp: Component = () => {
     });
     unlistenFns.push(unlistenMainResized);
 
-    // Save window position (debounced)
+    // Save window position (debounced). Rust side reads position directly
+    // from HWND and converts to monitor-relative coordinates.
     let moveTimer: ReturnType<typeof setTimeout> | undefined;
     let latestMoveEvent = 0;
-    const unlistenMainMoved = await win.onMoved(({ payload: pos }) => {
+    const unlistenMainMoved = await win.onMoved(() => {
       const moveEvent = ++latestMoveEvent;
-      const logicalPos = pos.toLogical(cachedScaleFactor);
       clearTimeout(moveTimer);
       moveTimer = setTimeout(() => {
         void (async () => {
           if (moveEvent !== latestMoveEvent) return;
-          await api.saveSearchPlacement(Math.round(logicalPos.x), Math.round(logicalPos.y));
+          await api.saveSearchPlacement();
         })();
       }, 500);
     });

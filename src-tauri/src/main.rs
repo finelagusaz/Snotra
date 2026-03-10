@@ -5,6 +5,7 @@ mod config_watcher;
 mod icon;
 mod ime;
 mod indexing;
+mod monitor;
 mod platform;
 mod state;
 
@@ -17,7 +18,6 @@ use snotra_core::config::Config;
 use snotra_core::engine::Engine;
 use snotra_core::history::HistoryStore;
 use snotra_core::indexer;
-use snotra_core::window_data;
 use tauri::{AppHandle, Emitter, Listener, Manager};
 
 use crate::commands::SettingsProcessState;
@@ -154,12 +154,70 @@ fn make_key_input(
 #[cfg(not(windows))]
 fn send_alt_key_up() {}
 
+/// Position the main window on the target monitor using saved relative coordinates.
+///
+/// Target monitor is determined by `follow_cursor_monitor` config:
+/// - true: monitor containing the mouse cursor
+/// - false: primary monitor
+///
+/// Saved relative coordinates (physical pixels from monitor work area origin)
+/// are applied and clamped to the target work area. If no saved position exists,
+/// the window is centered on the target monitor.
+#[cfg(windows)]
+fn position_on_target_monitor(
+    app_handle: &AppHandle,
+    main: &tauri::WebviewWindow,
+) {
+    use snotra_core::window_data;
+
+    // Read follow_cursor_monitor from Engine config (refreshed on every show).
+    let follow_cursor = app_handle
+        .try_state::<AppState>()
+        .map(|s| s.engine.lock().unwrap().config().general.follow_cursor_monitor)
+        .unwrap_or(true);
+
+    // Determine target monitor work area.
+    let target_wa = if follow_cursor {
+        monitor::cursor_monitor_work_area()
+    } else {
+        monitor::primary_monitor_work_area()
+    };
+    let Some(target_wa) = target_wa else { return };
+
+    // Get current window size (physical) for centering/clamping.
+    let Ok(win_size) = main.outer_size() else { return };
+    let win_w = win_size.width as i32;
+    let win_h = win_size.height as i32;
+
+    // Load saved relative placement and convert to absolute on target monitor.
+    let (abs_x, abs_y) = if let Some(placement) = window_data::load_search_placement() {
+        // Saved coordinates are physical pixels relative to monitor work area origin.
+        let x = target_wa.left + placement.x;
+        let y = target_wa.top + placement.y;
+        // Clamp to ensure the window stays within the target work area
+        // (handles different-sized monitors).
+        target_wa.clamp(x, y, win_w, win_h)
+    } else {
+        // No saved position — center on target monitor.
+        target_wa.center(win_w, win_h)
+    };
+
+    let _ = main.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
+        abs_x, abs_y,
+    )));
+}
+
 fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
     let t0 = Instant::now();
     let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
 
     if let Some(main) = app_handle.get_webview_window("main") {
         trace_main("show_main:start", json!({ "ms": ms(t0.elapsed()) }));
+
+        // Position window on the target monitor (cursor or primary) using
+        // saved relative coordinates, clamped to the target work area.
+        #[cfg(windows)]
+        position_on_target_monitor(app_handle, &main);
 
         // Reset window height to search-bar-only (52px) before showing.
         // This ensures no stale expanded height is visible on show, regardless
@@ -333,25 +391,18 @@ fn main() {
         .setup(move |app| {
             let app_handle = app.handle().clone();
 
-            // Restore search window position/size before event loop starts
-            // to avoid racing with hotkey-show (root cause of first-show input delay).
-            if let Some(w) = app.get_webview_window("main") {
-                if let Some(placement) = window_data::load_search_placement() {
-                    let _ = w.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
-                        placement.x as f64,
-                        placement.y as f64,
-                    )));
-                }
-                if window_width > 0
-                    && let Ok(current) = w.inner_size()
-                {
-                    let sf = w.scale_factor().unwrap_or(1.0);
-                    let logical_h = current.height as f64 / sf;
-                    let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
-                        f64::from(window_width),
-                        logical_h,
-                    )));
-                }
+            // Restore search window width before event loop starts.
+            // Position is handled by show_main_and_emit (multi-monitor aware).
+            if let Some(w) = app.get_webview_window("main")
+                && window_width > 0
+                && let Ok(current) = w.inner_size()
+            {
+                let sf = w.scale_factor().unwrap_or(1.0);
+                let logical_h = current.height as f64 / sf;
+                let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+                    f64::from(window_width),
+                    logical_h,
+                )));
             }
 
             // Set WebView2 default background to match the theme to prevent

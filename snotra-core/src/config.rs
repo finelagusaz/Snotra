@@ -197,6 +197,10 @@ fn default_ime_off_on_show() -> bool {
     false
 }
 
+fn default_follow_cursor_monitor() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GeneralConfig {
     #[serde(default = "default_language")]
@@ -211,6 +215,8 @@ pub struct GeneralConfig {
     pub show_tray_icon: bool,
     #[serde(default = "default_ime_off_on_show")]
     pub ime_off_on_show: bool,
+    #[serde(default = "default_follow_cursor_monitor")]
+    pub follow_cursor_monitor: bool,
 }
 
 impl Default for GeneralConfig {
@@ -222,6 +228,7 @@ impl Default for GeneralConfig {
             auto_hide_on_focus_lost: true,
             show_tray_icon: true,
             ime_off_on_show: false,
+            follow_cursor_monitor: true,
         }
     }
 }

@@ -340,13 +340,9 @@ impl eframe::App for SettingsApp {
                 TabId::InstantCommand => tabs::instant::ui(ui, ctx, &mut self.draft, &mut self.instant_state, &self.tr),
                 TabId::Backup => {
                     if let Some(result) = tabs::backup::ui(ui, ctx, &mut self.backup_state, &self.tr) {
-                        self.status = result.status;
-                        self.status_timer = result.status_timer;
-                        if let Some(config) = result.imported_config {
-                            self.draft = config.clone();
-                            self.saved = config;
-                            self.tr = Tr(self.draft.general.language);
-                        }
+                        self.draft = result.imported_config.clone();
+                        self.saved = result.imported_config;
+                        self.tr = Tr(self.draft.general.language);
                     }
                 }
                 TabId::About => {

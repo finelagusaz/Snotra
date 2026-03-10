@@ -17,14 +17,14 @@ pub struct BackupTabState {
     export_result: PickerResult,
     import_active: bool,
     import_result: PickerResult,
+    /// Inline message shown on the tab (persists until next operation).
+    message: String,
+    message_is_error: bool,
 }
 
-/// Returned to app.rs to update status (and optionally draft/saved after import).
+/// Returned to app.rs only when import succeeds (to update draft/saved).
 pub struct BackupResult {
-    /// If Some, update draft and saved to this config (import success).
-    pub imported_config: Option<Config>,
-    pub status: String,
-    pub status_timer: f64,
+    pub imported_config: Config,
 }
 
 pub fn ui(
@@ -40,7 +40,11 @@ pub fn ui(
         if let Ok(mut guard) = state.export_result.try_lock() {
             if let Some(picker_path) = guard.take() {
                 state.export_active = false;
-                result = handle_export_result(picker_path, tr);
+                let (msg, is_err) = handle_export_result(picker_path, tr);
+                if let Some(m) = msg {
+                    state.message = m;
+                    state.message_is_error = is_err;
+                }
             }
         }
     }
@@ -50,7 +54,14 @@ pub fn ui(
         if let Ok(mut guard) = state.import_result.try_lock() {
             if let Some(picker_path) = guard.take() {
                 state.import_active = false;
-                result = handle_import_result(picker_path, tr);
+                let (msg, is_err, config) = handle_import_result(picker_path, tr);
+                if let Some(m) = msg {
+                    state.message = m;
+                    state.message_is_error = is_err;
+                }
+                if let Some(c) = config {
+                    result = Some(BackupResult { imported_config: c });
+                }
             }
         }
     }
@@ -67,6 +78,7 @@ pub fn ui(
             .add_enabled(!state.export_active, egui::Button::new(tr.btn_export()))
             .clicked()
         {
+            state.message.clear();
             start_export(ctx, state, tr);
         }
 
@@ -83,6 +95,7 @@ pub fn ui(
             .add_enabled(!state.import_active, egui::Button::new(tr.btn_import()))
             .clicked()
         {
+            state.message.clear();
             start_import(ctx, state, tr);
         }
 
@@ -103,6 +116,19 @@ pub fn ui(
             if let Some(dir) = Config::config_dir() {
                 let _ = open::that(dir);
             }
+        }
+
+        // Inline message (persists until next operation)
+        if !state.message.is_empty() {
+            ui.add_space(16.0);
+            ui.separator();
+            ui.add_space(8.0);
+            let color = if state.message_is_error {
+                egui::Color32::from_rgb(196, 43, 28) // Red for errors
+            } else {
+                egui::Color32::from_rgb(16, 124, 16) // Green for success
+            };
+            ui.label(egui::RichText::new(&state.message).color(color));
         }
     });
 
@@ -151,75 +177,50 @@ fn start_import(ctx: &egui::Context, state: &mut BackupTabState, tr: &Tr) {
     });
 }
 
-fn handle_export_result(path: Option<PathBuf>, tr: &Tr) -> Option<BackupResult> {
+/// Truncate to first line to avoid multi-line status bar overflow.
+fn first_line(s: &str) -> &str {
+    s.lines().next().unwrap_or(s)
+}
+
+/// Returns (message, is_error). None message = cancelled.
+fn handle_export_result(path: Option<PathBuf>, tr: &Tr) -> (Option<String>, bool) {
     let Some(dest) = path else {
-        return None; // Cancelled
+        return (None, false); // Cancelled
     };
     let Some(src) = Config::config_path() else {
-        return Some(BackupResult {
-            imported_config: None,
-            status: format!("{}config dir not found", tr.status_export_failed()),
-            status_timer: 5.0,
-        });
+        return (Some(format!("{}config dir not found", tr.status_export_failed())), true);
     };
     match std::fs::copy(&src, &dest) {
-        Ok(_) => Some(BackupResult {
-            imported_config: None,
-            status: tr.status_export_success().to_string(),
-            status_timer: 2.0,
-        }),
-        Err(e) => Some(BackupResult {
-            imported_config: None,
-            status: format!("{}{e}", tr.status_export_failed()),
-            status_timer: 5.0,
-        }),
+        Ok(_) => (Some(tr.status_export_success().to_string()), false),
+        Err(e) => (Some(format!("{}{}", tr.status_export_failed(), first_line(&e.to_string()))), true),
     }
 }
 
-fn handle_import_result(path: Option<PathBuf>, tr: &Tr) -> Option<BackupResult> {
+/// Returns (message, is_error, imported_config). None message = cancelled.
+fn handle_import_result(path: Option<PathBuf>, tr: &Tr) -> (Option<String>, bool, Option<Config>) {
     let Some(src) = path else {
-        return None; // Cancelled
+        return (None, false, None); // Cancelled
     };
     let content = match std::fs::read_to_string(&src) {
         Ok(c) => c,
         Err(e) => {
-            return Some(BackupResult {
-                imported_config: None,
-                status: format!("{}{e}", tr.status_import_failed()),
-                status_timer: 5.0,
-            });
+            return (Some(format!("{}{}", tr.status_import_failed(), first_line(&e.to_string()))), true, None);
         }
     };
     let mut config = match Config::from_toml_str(&content) {
         Ok(c) => c,
         Err(e) => {
-            return Some(BackupResult {
-                imported_config: None,
-                status: format!("{}{e}", tr.status_import_failed()),
-                status_timer: 5.0,
-            });
+            return (Some(format!("{}{}", tr.status_import_failed(), first_line(&e))), true, None);
         }
     };
     // Apply the same migrations as Config::load() (legacy field migration, normalization, etc.)
     config.apply_migrations();
     let errors = config.validate();
     if !errors.is_empty() {
-        return Some(BackupResult {
-            imported_config: None,
-            status: format!("{}{:?}", tr.status_import_validation_error(), errors[0]),
-            status_timer: 5.0,
-        });
+        return (Some(format!("{}{:?}", tr.status_import_validation_error(), errors[0])), true, None);
     }
     if let Err(e) = config.save() {
-        return Some(BackupResult {
-            imported_config: None,
-            status: format!("{}{e}", tr.status_import_failed()),
-            status_timer: 5.0,
-        });
+        return (Some(format!("{}{}", tr.status_import_failed(), first_line(&e))), true, None);
     }
-    Some(BackupResult {
-        imported_config: Some(config),
-        status: tr.status_import_success().to_string(),
-        status_timer: 2.0,
-    })
+    (Some(tr.status_import_success().to_string()), false, Some(config))
 }

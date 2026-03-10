@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod general;
 pub mod index;
 pub mod instant;

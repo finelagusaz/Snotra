@@ -513,6 +513,15 @@ stateDiagram-v2
   - deserialize可否
   - `index.bin` は config hash 整合性確認
 
+### 12.3 設定バックアップ
+
+- 設定画面の「バックアップ」タブから config.toml のエクスポート/インポートが可能
+- エクスポート: 保存済み config.toml を指定先にコピー。ファイル名デフォルトは `config_yyyymmddhh24mm.toml`
+- インポート: TOML ファイルを選択 → パース → バリデーション → config.toml に上書き保存
+  - 欠損キーはデフォルト補完（`#[serde(default)]` 付きセクション）、未知キーは無視
+  - バリデーション失敗時はインポートを中止しエラー表示
+- 「設定フォルダを開く」: `%APPDATA%\Snotra` をエクスプローラーで開く
+
 ## 14. 実行仕様（起動）
 
 ### 13.1 `.lnk` 実行

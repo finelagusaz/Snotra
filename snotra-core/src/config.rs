@@ -885,6 +885,45 @@ impl Config {
         }
         false
     }
+
+    /// Parse a TOML string into a Config, filling missing keys with defaults.
+    /// Does NOT run migration or auto-save (unlike `load()`).
+    pub fn from_toml_str(s: &str) -> Result<Self, String> {
+        toml::from_str(s).map_err(|e| e.to_string())
+    }
+
+    /// Generate a default export filename like `config_202603111430.toml`.
+    pub fn default_export_filename() -> String {
+        use std::time::SystemTime;
+        let secs = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        // Manual UTC breakdown (no chrono dependency)
+        let days = secs / 86400;
+        let time_of_day = secs % 86400;
+        let hour = time_of_day / 3600;
+        let minute = (time_of_day % 3600) / 60;
+        // Date from days since 1970-01-01 (civil calendar algorithm)
+        let (year, month, day) = days_to_ymd(days);
+        format!("config_{year:04}{month:02}{day:02}{hour:02}{minute:02}.toml")
+    }
+}
+
+/// Convert days since 1970-01-01 to (year, month, day).
+fn days_to_ymd(days: u64) -> (u64, u64, u64) {
+    // Algorithm from https://howardhinnant.github.io/date_algorithms.html
+    let z = days + 719468;
+    let era = z / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
 }
 
 /// Forbidden (modifier_normalized, key_normalized) pairs.
@@ -2637,5 +2676,78 @@ mod tests {
         }];
         assert!(is_preset_already_added(&rules, "explorer.exe"));
         assert!(!is_preset_already_added(&rules, "code.cmd"));
+    }
+
+    #[test]
+    fn from_toml_str_fills_defaults() {
+        // hotkey, appearance, paths are required; general, visual, search, openers, instant_commands have #[serde(default)]
+        let toml = r#"
+[hotkey]
+modifier = "Ctrl"
+key = "Space"
+[appearance]
+max_results = 10
+window_width = 700
+[paths]
+scan = []
+"#;
+        let config = Config::from_toml_str(toml).expect("parse");
+        assert_eq!(config.hotkey.modifier, "Ctrl");
+        assert_eq!(config.hotkey.key, "Space");
+        assert_eq!(config.appearance.max_results, 10);
+        // Defaults filled for missing optional sections
+        assert!(config.openers.is_empty());
+        assert!(config.instant_commands.is_empty());
+    }
+
+    #[test]
+    fn from_toml_str_rejects_invalid() {
+        let result = Config::from_toml_str("this is not valid toml {{{}}}");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_toml_str_rejects_missing_required_section() {
+        // Missing [appearance] and [paths] — should fail
+        let result = Config::from_toml_str("[hotkey]\nmodifier = \"Alt\"\nkey = \"Q\"\n");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_toml_str_ignores_unknown_keys() {
+        let toml = r#"
+[hotkey]
+modifier = "Alt"
+key = "Q"
+[appearance]
+max_results = 8
+window_width = 600
+[paths]
+scan = []
+unknown_field = "hello"
+[unknown_section]
+foo = 42
+"#;
+        let config = Config::from_toml_str(toml).expect("parse");
+        assert_eq!(config.hotkey.key, "Q");
+    }
+
+    #[test]
+    fn default_export_filename_format() {
+        let name = Config::default_export_filename();
+        assert!(name.starts_with("config_"));
+        assert!(name.ends_with(".toml"));
+        // config_yyyymmddhhmm.toml = 7 + 12 + 5 = 24 chars
+        assert_eq!(name.len(), 24);
+    }
+
+    #[test]
+    fn days_to_ymd_known_dates() {
+        // 1970-01-01 = day 0
+        assert_eq!(super::days_to_ymd(0), (1970, 1, 1));
+        // 2000-01-01 = day 10957
+        assert_eq!(super::days_to_ymd(10957), (2000, 1, 1));
+        // 2026-03-11 = day 20523
+        assert_eq!(super::days_to_ymd(20523), (2026, 3, 11));
     }
 }

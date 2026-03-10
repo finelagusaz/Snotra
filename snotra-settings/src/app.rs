@@ -63,6 +63,7 @@ pub enum TabId {
     Visual,
     Opener,
     InstantCommand,
+    Backup,
     About,
 }
 
@@ -74,6 +75,7 @@ impl TabId {
         TabId::Visual,
         TabId::Opener,
         TabId::InstantCommand,
+        TabId::Backup,
         TabId::About,
     ];
 
@@ -85,6 +87,7 @@ impl TabId {
             TabId::Visual => tr.tab_visual(),
             TabId::Opener => tr.tab_opener(),
             TabId::InstantCommand => tr.tab_instant_command(),
+            TabId::Backup => tr.tab_backup(),
             TabId::About => tr.tab_about(),
         }
     }
@@ -97,6 +100,7 @@ impl TabId {
             "visual" => Some(TabId::Visual),
             "opener" => Some(TabId::Opener),
             "instant_command" => Some(TabId::InstantCommand),
+            "backup" => Some(TabId::Backup),
             "about" => Some(TabId::About),
             _ => None,
         }
@@ -112,6 +116,7 @@ struct SettingsApp {
     index_state: tabs::index::IndexTabState,
     opener_state: tabs::opener::OpenerTabState,
     instant_state: tabs::instant::InstantTabState,
+    backup_state: tabs::backup::BackupTabState,
     font_list: Vec<String>,
     hotkey_state: crate::hotkey_input::HotkeyInputState,
     last_position: Option<WindowPlacement>,
@@ -138,6 +143,7 @@ impl SettingsApp {
             index_state: tabs::index::IndexTabState::default(),
             opener_state: tabs::opener::OpenerTabState::new(),
             instant_state: tabs::instant::InstantTabState::default(),
+            backup_state: tabs::backup::BackupTabState::default(),
             font_list: crate::font::list_system_fonts(),
             hotkey_state: Default::default(),
             last_position: None,
@@ -293,7 +299,7 @@ impl eframe::App for SettingsApp {
                         ui.separator();
                     }
 
-                    if self.active_tab != TabId::About {
+                    if self.active_tab != TabId::About && self.active_tab != TabId::Backup {
                         // Spacer
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.spacing_mut().button_padding = egui::vec2(12.0, 4.0);
@@ -332,6 +338,17 @@ impl eframe::App for SettingsApp {
                 TabId::Visual => tabs::visual::ui(ui, &mut self.draft, &self.font_list, &self.tr),
                 TabId::Opener => tabs::opener::ui(ui, ctx, &mut self.draft, &mut self.opener_state, &self.tr),
                 TabId::InstantCommand => tabs::instant::ui(ui, ctx, &mut self.draft, &mut self.instant_state, &self.tr),
+                TabId::Backup => {
+                    if let Some(result) = tabs::backup::ui(ui, ctx, &mut self.backup_state, &self.tr) {
+                        self.status = result.status;
+                        self.status_timer = result.status_timer;
+                        if let Some(config) = result.imported_config {
+                            self.draft = config.clone();
+                            self.saved = config;
+                            self.tr = Tr(self.draft.general.language);
+                        }
+                    }
+                }
                 TabId::About => {
                     ui.vertical_centered(|ui| {
                         ui.add_space(24.0);

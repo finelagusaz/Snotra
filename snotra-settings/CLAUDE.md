@@ -147,6 +147,10 @@ OpenerRule のターゲットは文字列プレフィックスで種別を表現
 | 未保存警告（Escape 時） | 3秒 |
 | 保存成功 | 2秒 |
 
+### フッター vs インラインの使い分け
+
+フッターの `status` / `status_timer` は draft/saved ワークフロー（保存成功・バリデーションエラー等）に適する。draft/saved に参加しないタブ（Backup、About 等）でフィードバックが必要な場合は、タブ固有の state にメッセージを持たせてタブ内にインライン表示する。フッターを流用すると、永続性の要件（エラーは消えてほしくない）や複数行エラーとの衝突が起きる。
+
 ## ウィンドウ位置の永続化
 
 毎フレーム `ctx.input().viewport().outer_rect` からウィンドウ位置を `last_position` に記録し、`on_exit()` で `window_data::save_settings_placement()` に保存する。次回起動時に `load_settings_placement()` で復元する。

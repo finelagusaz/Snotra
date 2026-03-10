@@ -2,33 +2,30 @@
 
 ## よかったこと
 
-### ユーザーとのスコープ合意で YAGNI を実践した
-issue は3段階の優先度（トースト通知・ドキュメント・エクスポート/インポート）を含んでいたが、ユーザーとの対話で「config.toml のみ、設定画面にバックアップタブ」にスコープを絞り込めた。zip/暗号化なしの素の TOML コピーという最もシンプルな設計を採用した。
+### スコープ絞り込みで YAGNI を徹底した
+issue の3段階優先度（トースト通知・ドキュメント・エクスポート/インポート）から「config.toml のみ、バックアップタブ追加」にスコープを絞り、zip/暗号化なしの素の TOML コピーで実装した。
 
 ### 既存パターンの再利用が効いた
-PickerState パターン（index.rs）、open::that パターン（About タブ）、draft/saved 二重状態モデル（app.rs）を再利用。新規の抽象化やクレート追加なしで実装できた。
+PickerState（index.rs）、open::that（About タブ）、draft/saved 二重状態モデル（app.rs）を再利用。新規の抽象化やクレート追加なし（GetLocalTime 用の Windows feature 1件のみ）。
 
-### symmetric-check で対称性を事前検証した
-export/import の `active` フラグリセットの全パスカバレッジを実装直後に確認し、PickerState の `active = false` 漏れ（CLAUDE.md に記載の既知リスク）がないことを検証できた。
+### 手動テストで UX 問題を早期に発見・修正した
+ユーザーとの手動テスト中にメッセージ表示の問題2件（複数行はみ出し、二重表示）を発見し、即座にインライン表示に統一。フッター vs インラインの設計判断を `snotra-settings/CLAUDE.md` に教訓化した。
 
 ---
 
 ## 伸びしろ
 
 ### デシリアライズ経路の後処理パイプラインを見落とした（P1）
-`Config::from_toml_str()` + `validate()` で十分と判断したが、`Config::load()` が持つ `migrate_additional_to_scan()` / `sanitize()` / `normalize_*()` パイプラインを考慮しなかった。旧版バックアップの復元で `paths.additional` が消失する問題。**修正**: `apply_migrations()` を抽出し `load()` とインポートで共用化。**教訓**: `snotra-core/CLAUDE.md` に「Config デシリアライズ経路」セクションを追記済み。
+`Config::from_toml_str()` + `validate()` で十分と判断し、`load()` が持つマイグレーションパイプライン（`migrate_additional_to_scan` 等）を考慮しなかった。**修正**: `apply_migrations()` を抽出し共用化。**教訓**: `snotra-core/CLAUDE.md` に追記済み。
 
 ### UTC/ローカル時刻の区別を意識しなかった（P3）
-`SystemTime::UNIX_EPOCH` からの秒数を日付に分解する際、結果が UTC であることを認識せずにファイル名に使った。Windows アプリなのに `GetLocalTime` を使うべきだった。**修正**: `GetLocalTime` でローカル時刻を取得し、`Config::export_filename()` をパラメータ受け取り型に変更。
+`SystemTime::UNIX_EPOCH` からの秒数→日付変換が UTC であることを見落とした。**修正**: `GetLocalTime` Win32 API でローカル時刻を取得。
+
+### ステータスメッセージの表示先を設計段階で決めなかった（P4）
+フッターの `status_timer` を安易に流用した結果、複数行はみ出し→インライン追加→二重表示と2回の手戻りが発生。最初から「Backup タブは draft/saved に参加しないからインライン表示」と判断すべきだった。**教訓**: `snotra-settings/CLAUDE.md` に追記済み。
 
 ---
 
 ## ネクストアクション
 
-- [ ] PR を作成してマージする
-- [ ] 手動確認: エクスポート → 別名で保存 → ファイル内容が元の config.toml と一致すること
-- [ ] 手動確認: インポート → 設定が即座に UI に反映されること
-- [ ] 手動確認: 不正な TOML ファイルのインポート → エラーメッセージが表示されること
-- [ ] 手動確認: 旧版 config.toml（paths.additional あり）のインポート → scan に移行されること
-- [ ] 手動確認: エクスポートファイル名のタイムスタンプが現地時刻であること
-- [ ] 手動確認: 設定フォルダを開く → エクスプローラーが開くこと
+- [ ] PR #232 をマージする

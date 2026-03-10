@@ -513,7 +513,11 @@ fn normalize_opener_target(target: &str) -> String {
             if path_trimmed.is_empty() {
                 return "folder".to_string();
             }
-            return format!("folder:{}", normalize_scan_path_key(path_trimmed));
+            let normalized_path = normalize_scan_path_key(path_trimmed);
+            if normalized_path.is_empty() {
+                return "folder".to_string();
+            }
+            return format!("folder:{normalized_path}");
         }
         if kind.eq_ignore_ascii_case("ext") {
             // rest から拡張子部分とパス条件を分離
@@ -526,7 +530,12 @@ fn normalize_opener_target(target: &str) -> String {
             );
             let ext_str = exts.join(",");
             return if let Some(path) = path_suffix {
-                format!("ext:{ext_str}:{}", normalize_scan_path_key(path))
+                let normalized_path = normalize_scan_path_key(path);
+                if normalized_path.is_empty() {
+                    format!("ext:{ext_str}")
+                } else {
+                    format!("ext:{ext_str}:{normalized_path}")
+                }
             } else {
                 format!("ext:{ext_str}")
             };
@@ -2583,6 +2592,9 @@ mod tests {
             normalize_opener_target("ext:md:C:/Projects"),
             "ext:.md:c:\\projects"
         );
+        // 区切り文字だけのパス条件は汎用ルールに畳み込まれる
+        assert_eq!(normalize_opener_target("folder:\\"), "folder");
+        assert_eq!(normalize_opener_target("folder:/"), "folder");
     }
 
     #[test]

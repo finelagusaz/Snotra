@@ -31,9 +31,13 @@ impl WorkArea {
     }
 
     /// Clamp a point so that a window of given size stays within this work area.
+    /// If the window is wider/taller than the work area, aligns to top-left
+    /// (the window will overflow to the right/bottom but the title area remains accessible).
     pub fn clamp(&self, x: i32, y: i32, win_w: i32, win_h: i32) -> (i32, i32) {
-        let cx = x.max(self.left).min(self.right - win_w);
-        let cy = y.max(self.top).min(self.bottom - win_h);
+        let max_x = (self.right - win_w).max(self.left);
+        let max_y = (self.bottom - win_h).max(self.top);
+        let cx = x.max(self.left).min(max_x);
+        let cy = y.max(self.top).min(max_y);
         (cx, cy)
     }
 

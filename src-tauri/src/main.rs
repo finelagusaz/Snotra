@@ -214,20 +214,20 @@ fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
     if let Some(main) = app_handle.get_webview_window("main") {
         trace_main("show_main:start", json!({ "ms": ms(t0.elapsed()) }));
 
-        // Position window on the target monitor (cursor or primary) using
-        // saved relative coordinates, clamped to the target work area.
-        #[cfg(windows)]
-        position_on_target_monitor(app_handle, &main);
-
-        // Reset window height to search-bar-only (52px) before showing.
-        // This ensures no stale expanded height is visible on show, regardless
-        // of how the window was hidden (JS hideMain, Rust hotkey toggle,
-        // process crash). set_size before show() completes while hidden.
+        // Reset window height to search-bar-only (52px) before positioning.
+        // This ensures position_on_target_monitor uses the correct (collapsed)
+        // height for centering and clamping, not the stale expanded height.
         if let Ok(current) = main.inner_size() {
             let sf = main.scale_factor().unwrap_or(1.0);
             let logical_w = current.width as f64 / sf;
             let _ = main.set_size(tauri::Size::Logical(tauri::LogicalSize::new(logical_w, 52.0)));
         }
+
+        // Position window on the target monitor (cursor or primary) using
+        // saved relative coordinates, clamped to the target work area.
+        // Must run after height reset so clamp uses the collapsed size.
+        #[cfg(windows)]
+        position_on_target_monitor(app_handle, &main);
 
         // show() is idempotent — call unconditionally to skip the costly
         // is_visible() pre-check (61ms + 71ms gap on first invocation).

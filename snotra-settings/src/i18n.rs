@@ -631,13 +631,6 @@ impl Tr {
         }
     }
 
-    pub fn label_target_folder(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "フォルダ",
-            Language::En => "Folder",
-        }
-    }
-
     pub fn label_no_name(&self) -> &'static str {
         match self.0 {
             Language::Ja => "(名前なし)",
@@ -691,6 +684,27 @@ impl Tr {
         match self.0 {
             Language::Ja => "カンマ区切り (例: .png, .jpg)",
             Language::En => "Comma-separated (e.g. .png, .jpg)",
+        }
+    }
+
+    pub fn label_path_condition(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "パス条件:",
+            Language::En => "Path condition:",
+        }
+    }
+
+    pub fn hint_path_condition(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "空欄 = すべてにマッチ (例: C:\\workspace)",
+            Language::En => "Empty = match all (e.g. C:\\workspace)",
+        }
+    }
+
+    pub fn label_all_folders(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "すべてのフォルダ",
+            Language::En => "All folders",
         }
     }
 

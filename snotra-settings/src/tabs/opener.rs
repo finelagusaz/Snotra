@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use eframe::egui;
-use snotra_core::config::{self, Config, OpenerRule, OpenerTool};
+use snotra_core::config::{self, extract_path_condition, Config, OpenerRule, OpenerTool};
 
 use crate::i18n::Tr;
 
@@ -44,6 +44,7 @@ struct ModalState {
     editing_tool: Option<usize>,
     edit_target_kind: TargetKind,
     edit_target_ext: String,
+    edit_target_path: String,
     edit_tool_name: String,
     edit_tool_exe: String,
     edit_tool_args: String,
@@ -64,6 +65,7 @@ impl ModalState {
         self.editing_tool = None;
         self.edit_target_kind = TargetKind::Folder;
         self.edit_target_ext.clear();
+        self.edit_target_path.clear();
         self.edit_tool_name.clear();
         self.edit_tool_exe.clear();
         self.edit_tool_args.clear();
@@ -74,9 +76,13 @@ impl ModalState {
         self.mode = ModalMode::Edit;
         self.editing_rule = Some(rule_idx);
         self.editing_tool = Some(tool_idx);
-        if let Some(ext) = rule.target.strip_prefix("ext:") {
+        // パス条件の抽出
+        self.edit_target_path = extract_path_condition(&rule.target)
+            .unwrap_or("")
+            .to_string();
+        if rule.target.starts_with("ext:") {
             self.edit_target_kind = TargetKind::Extension;
-            self.edit_target_ext = ext.to_string();
+            self.edit_target_ext = config::extract_ext_part(&rule.target).to_string();
         } else {
             self.edit_target_kind = TargetKind::Folder;
             self.edit_target_ext.clear();
@@ -123,39 +129,21 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
         }
 
         // Flatten rules into (rule_idx, tool_idx, target, tool) for display
+        // Sort by specificity: path-qualified folder (longest first), generic folder,
+        // path-qualified ext (longest first), generic ext
         let mut flat: Vec<(usize, usize, String, OpenerTool)> = Vec::new();
         for (ri, rule) in config.openers.iter().enumerate() {
             for (ti, tool) in rule.tools.iter().enumerate() {
                 flat.push((ri, ti, rule.target.clone(), tool.clone()));
             }
         }
+        flat.sort_by(|a, b| opener_display_order(&a.2).cmp(&opener_display_order(&b.2)));
 
         let mut action: Option<OpenerAction> = None;
-        let len = flat.len();
-        for (fi, (ri, ti, target, tool)) in flat.iter().enumerate() {
+        for (ri, ti, target, tool) in &flat {
             ui.horizontal(|ui| {
-                // Move up/down
                 ui.vertical(|ui| {
-                    if ui
-                        .add_enabled(fi > 0, egui::Button::new("▲").small())
-                        .clicked()
-                    {
-                        action = Some(OpenerAction::MoveUp(fi));
-                    }
-                    if ui
-                        .add_enabled(fi < len - 1, egui::Button::new("▼").small())
-                        .clicked()
-                    {
-                        action = Some(OpenerAction::MoveDown(fi));
-                    }
-                });
-
-                ui.vertical(|ui| {
-                    let target_label = if target == "folder" {
-                        tr.label_target_folder().to_string()
-                    } else {
-                        target.clone()
-                    };
+                    let target_label = format_target_label(target, tr);
                     ui.label(format!(
                         "[{}] {}",
                         target_label,
@@ -175,6 +163,22 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button(tr.btn_edit()).clicked() {
                         action = Some(OpenerAction::Edit(*ri, *ti));
+                    }
+                    // 同一ルール内のツール並び替えボタン
+                    let tool_count = config.openers[*ri].tools.len();
+                    if tool_count > 1 {
+                        if ui
+                            .add_enabled(*ti + 1 < tool_count, egui::Button::new("▼"))
+                            .clicked()
+                        {
+                            action = Some(OpenerAction::MoveDown(*ri, *ti));
+                        }
+                        if ui
+                            .add_enabled(*ti > 0, egui::Button::new("▲"))
+                            .clicked()
+                        {
+                            action = Some(OpenerAction::MoveUp(*ri, *ti));
+                        }
                     }
                 });
             });
@@ -239,14 +243,16 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
                 let tool = &rule.tools[ti];
                 state.modal.open_edit(ri, ti, rule, tool);
             }
-            Some(OpenerAction::MoveUp(fi)) => {
-                if fi > 0 {
-                    swap_flat_entries(config, &flat, fi, fi - 1);
+            Some(OpenerAction::MoveUp(ri, ti)) => {
+                if ti > 0 && ri < config.openers.len() && ti < config.openers[ri].tools.len() {
+                    config.openers[ri].tools.swap(ti, ti - 1);
                 }
             }
-            Some(OpenerAction::MoveDown(fi)) => {
-                if fi < len - 1 {
-                    swap_flat_entries(config, &flat, fi, fi + 1);
+            Some(OpenerAction::MoveDown(ri, ti)) => {
+                if ri < config.openers.len()
+                    && ti + 1 < config.openers[ri].tools.len()
+                {
+                    config.openers[ri].tools.swap(ti, ti + 1);
                 }
             }
             None => {}
@@ -262,39 +268,8 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
 enum OpenerAction {
     OpenCreate,
     Edit(usize, usize),
-    MoveUp(usize),
-    MoveDown(usize),
-}
-
-/// Swap two flat entries by rebuilding the openers list.
-fn swap_flat_entries(
-    config: &mut Config,
-    flat: &[(usize, usize, String, OpenerTool)],
-    a: usize,
-    b: usize,
-) {
-    // Rebuild openers from flat list with swapped positions
-    let mut entries: Vec<(String, OpenerTool)> = flat
-        .iter()
-        .map(|(_, _, target, tool)| (target.clone(), tool.clone()))
-        .collect();
-    entries.swap(a, b);
-
-    // Rebuild OpenerRule[] by grouping consecutive entries with same target
-    let mut rules: Vec<OpenerRule> = Vec::new();
-    for (target, tool) in entries {
-        if let Some(last) = rules.last_mut() {
-            if last.target == target {
-                last.tools.push(tool);
-                continue;
-            }
-        }
-        rules.push(OpenerRule {
-            target,
-            tools: vec![tool],
-        });
-    }
-    config.openers = rules;
+    MoveUp(usize, usize),
+    MoveDown(usize, usize),
 }
 
 fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabState, tr: &Tr) {
@@ -332,6 +307,17 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
                     .color(crate::app::TEXT_SECONDARY),
             );
         }
+
+        ui.add_space(4.0);
+
+        // Path condition (optional, applies to both folder and extension)
+        ui.label(tr.label_path_condition());
+        ui.text_edit_singleline(&mut state.modal.edit_target_path);
+        ui.label(
+            egui::RichText::new(tr.hint_path_condition())
+                .small()
+                .color(crate::app::TEXT_SECONDARY),
+        );
 
         ui.add_space(4.0);
 
@@ -417,9 +403,23 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
 }
 
 fn save_opener(config: &mut Config, modal: &ModalState) {
+    let path_trimmed = modal.edit_target_path.trim();
     let target = match modal.edit_target_kind {
-        TargetKind::Folder => "folder".to_string(),
-        TargetKind::Extension => format!("ext:{}", modal.edit_target_ext.trim()),
+        TargetKind::Folder => {
+            if path_trimmed.is_empty() {
+                "folder".to_string()
+            } else {
+                format!("folder:{path_trimmed}")
+            }
+        }
+        TargetKind::Extension => {
+            let ext = modal.edit_target_ext.trim();
+            if path_trimmed.is_empty() {
+                format!("ext:{ext}")
+            } else {
+                format!("ext:{ext}:{path_trimmed}")
+            }
+        }
     };
     let tool = OpenerTool {
         name: modal.edit_tool_name.clone(),
@@ -459,5 +459,47 @@ fn save_opener(config: &mut Config, modal: &ModalState) {
                 tools: vec![tool],
             });
         }
+    }
+}
+
+/// ターゲット文字列の表示ラベルを生成する。
+fn format_target_label(target: &str, tr: &Tr) -> String {
+    let path_cond = extract_path_condition(target);
+    if target == "folder" {
+        tr.label_all_folders().to_string()
+    } else if target.starts_with("folder:") {
+        path_cond.unwrap_or("").to_string()
+    } else if target.starts_with("ext:") {
+        let ext_part = config::extract_ext_part(target);
+        if let Some(path) = path_cond {
+            format!("{ext_part} ({path})")
+        } else {
+            ext_part.to_string()
+        }
+    } else {
+        target.to_string()
+    }
+}
+
+/// 表示ソート用の順序キーを返す。
+/// 1. パス付きフォルダ（パスが長い順 = 負の値）
+/// 2. パスなしフォルダ
+/// 3. パス付き拡張子（パスが長い順）
+/// 4. パスなし拡張子
+fn opener_display_order(target: &str) -> (u8, i64) {
+    let path_cond = extract_path_condition(target);
+    let is_folder = target == "folder" || target.starts_with("folder:");
+    let path_len = path_cond.map_or(0i64, |p| p.len() as i64);
+
+    if is_folder {
+        if path_cond.is_some() {
+            (0, -path_len) // パス付きフォルダ、長い順
+        } else {
+            (1, 0) // パスなしフォルダ
+        }
+    } else if path_cond.is_some() {
+        (2, -path_len) // パス付き拡張子、長い順
+    } else {
+        (3, 0) // パスなし拡張子
     }
 }

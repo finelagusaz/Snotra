@@ -10,6 +10,7 @@ Tauri v2 バイナリ crate。Win32 API 統合とフロントエンドとの IPC
 - `indexing.rs`: バックグラウンドインデックス構築
 - `config_watcher.rs`: `notify` クレートで `config.toml` 変更を監視（100ms debounce）し、差分検出後にホットキー・トレイ・インデックス・テーマ・ウィンドウ幅・言語を反映する `apply_config_change()` を実行。**不変条件: 言語変更とホットキー変更が同時に発生した場合、`language-changed` イベントをホットキー失敗通知より先に発火する**（フロントエンドが正しい言語でエラー文字列を組み立てるため）。発火するイベント: `language-changed` / `hotkey-registration-failed` / `visual-config-changed` / `show-icons-changed` / `max-results-changed` / `instant-prefix-changed` / `indexing-complete`（indexing.rs から）
 - `ime.rs`: IME オフ操作（`ImmSetOpenStatus(false)`）。Win32 IMM API の薄いラッパー
+- `monitor.rs`: マルチモニター対応の Win32 ヘルパー（`GetCursorPos` / `MonitorFromPoint` / `MonitorFromWindow` / `GetMonitorInfoW`）。物理座標ベースで作業領域を取得し、ウィンドウ位置のクランプ・中央配置を提供
 - `commands/`: ディレクトリモジュール（`mod.rs` + `search.rs` / `launch.rs` / `config.rs` / `icon.rs` / `window.rs` / `system.rs` / `instant.rs`）。`#[tauri::command]` を責務別に分割。`launch.rs` は `launch_item_core`（`pub(crate)`、`instant.rs` から再利用）に加え、トレイメニューからの起動用に `launch_item_with_state` / `launch_with_tool_with_state` / `launch_default_with_state` / `resolve_all_openers` を `pub(crate)` で公開
 - `platform/`: ディレクトリモジュール（`mod.rs` + `hotkey.rs` / `tray.rs` / `wndproc.rs`）。Win32 メッセージループスレッド + トレイアイコン + ホットキー + ウィンドウプロシージャ
   - `wndproc.rs`: `SendMessage` 経由で届く `WM_TRAY_ICON` および `WM_CONTEXTMENU` を `PostThreadMessageW` でスレッドキューに再投入し、メッセージループでの統一処理を保証
@@ -21,6 +22,7 @@ Tauri v2 バイナリ crate。Win32 API 統合とフロントエンドとの IPC
 - `commands/` は薄いラッパーに保ち、実処理は `snotra-core` に寄せる（KISS）
 - `AppState` は `Mutex<Engine>` で検索エンジン・履歴・設定を一括管理。Phase 2.3 以前の 3重ロック（`Mutex<SearchEngine>` / `Mutex<HistoryStore>` / `Mutex<Config>`）は Engine facade に統合済み
 - Managed state として `IconCacheState`（`Mutex<Option<IconCache>>`、初回アイコン要求で遅延初期化）と `SettingsProcessState`（`Mutex<Option<Child>>`、設定プロセスのハンドル管理）を保持
+- **`show_main_and_emit` の操作順序制約**: 高さリセット（52px）→ `position_on_target_monitor` → `show()` の順。位置計算はウィンドウサイズ（`outer_size()`）でクランプするため、高さリセット前に位置を決めると展開時の高さでクランプされ、折りたたみ時に位置がずれる
 
 ## Win32 メッセージ配送の注意
 

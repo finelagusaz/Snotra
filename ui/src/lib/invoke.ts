@@ -85,8 +85,8 @@ export async function getSearchPlacement(): Promise<WindowPlacement | null> {
   return tracedInvoke<WindowPlacement | null>("get_search_placement");
 }
 
-export async function saveSearchPlacement(x: number, y: number): Promise<void> {
-  return tracedInvoke("save_search_placement", { x, y });
+export async function saveSearchPlacement(): Promise<void> {
+  return tracedInvoke("save_search_placement");
 }
 
 export async function notifyMainShown(): Promise<void> {

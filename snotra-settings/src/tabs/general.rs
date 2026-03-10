@@ -82,5 +82,9 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, hotkey_state: &mut HotkeyInput
             &mut config.general.ime_off_on_show,
             tr.cb_ime_off(),
         );
+        ui.checkbox(
+            &mut config.general.follow_cursor_monitor,
+            tr.cb_follow_cursor_monitor(),
+        );
     });
 }

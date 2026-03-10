@@ -268,6 +268,13 @@ impl Tr {
         }
     }
 
+    pub fn cb_follow_cursor_monitor(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "カーソルのあるモニターに表示",
+            Language::En => "Show on monitor with cursor",
+        }
+    }
+
     pub fn heading_language(&self) -> &'static str {
         match self.0 {
             Language::Ja => "言語",

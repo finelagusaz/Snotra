@@ -740,6 +740,41 @@ impl Config {
         }
     }
 
+    /// Apply post-load migrations: legacy field migration, normalization, system shortcut fallback.
+    /// Returns true if any changes were applied.
+    /// Called by `load()` (auto-save on change) and import (caller decides when to save).
+    pub fn apply_migrations(&mut self) -> bool {
+        let mut changed = false;
+        if !self.paths.additional.is_empty() {
+            self.migrate_additional_to_scan();
+            changed = true;
+        }
+        #[allow(deprecated)]
+        if self.search.sanitize() {
+            changed = true;
+        }
+        if self.paths.normalize_scan_paths() {
+            changed = true;
+        }
+        if self.normalize_openers() {
+            changed = true;
+        }
+        if is_system_shortcut(&self.hotkey.modifier, &self.hotkey.key) {
+            let default_hotkey = HotkeyConfig {
+                modifier: "Alt".to_string(),
+                key: "Q".to_string(),
+            };
+            eprintln!(
+                "[config] system shortcut detected ({}+{}), falling back to default ({}+{})",
+                self.hotkey.modifier, self.hotkey.key,
+                default_hotkey.modifier, default_hotkey.key,
+            );
+            self.hotkey = default_hotkey;
+            changed = true;
+        }
+        changed
+    }
+
     pub fn load() -> Self {
         let Some(path) = Self::config_path() else {
             return Self::default();
@@ -748,36 +783,7 @@ impl Config {
         match fs::read_to_string(&path) {
             Ok(content) => {
                 let mut config: Self = toml::from_str(&content).unwrap_or_default();
-                let mut needs_save = false;
-                if !config.paths.additional.is_empty() {
-                    config.migrate_additional_to_scan();
-                    needs_save = true;
-                }
-                #[allow(deprecated)]
-                if config.search.sanitize() {
-                    needs_save = true;
-                }
-                if config.paths.normalize_scan_paths() {
-                    needs_save = true;
-                }
-                if config.normalize_openers() {
-                    needs_save = true;
-                }
-                // Fallback to default hotkey if config contains a system shortcut
-                if is_system_shortcut(&config.hotkey.modifier, &config.hotkey.key) {
-                    let default_hotkey = HotkeyConfig {
-                        modifier: "Alt".to_string(),
-                        key: "Q".to_string(),
-                    };
-                    eprintln!(
-                        "[config] system shortcut detected ({}+{}), falling back to default ({}+{})",
-                        config.hotkey.modifier, config.hotkey.key,
-                        default_hotkey.modifier, default_hotkey.key,
-                    );
-                    config.hotkey = default_hotkey;
-                    needs_save = true;
-                }
-                if needs_save {
+                if config.apply_migrations() {
                     let _ = config.save();
                 }
                 config
@@ -893,37 +899,10 @@ impl Config {
     }
 
     /// Generate a default export filename like `config_202603111430.toml`.
-    pub fn default_export_filename() -> String {
-        use std::time::SystemTime;
-        let secs = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        // Manual UTC breakdown (no chrono dependency)
-        let days = secs / 86400;
-        let time_of_day = secs % 86400;
-        let hour = time_of_day / 3600;
-        let minute = (time_of_day % 3600) / 60;
-        // Date from days since 1970-01-01 (civil calendar algorithm)
-        let (year, month, day) = days_to_ymd(days);
+    /// Caller provides local time components (year, month, day, hour, minute).
+    pub fn export_filename(year: u16, month: u16, day: u16, hour: u16, minute: u16) -> String {
         format!("config_{year:04}{month:02}{day:02}{hour:02}{minute:02}.toml")
     }
-}
-
-/// Convert days since 1970-01-01 to (year, month, day).
-fn days_to_ymd(days: u64) -> (u64, u64, u64) {
-    // Algorithm from https://howardhinnant.github.io/date_algorithms.html
-    let z = days + 719468;
-    let era = z / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
 }
 
 /// Forbidden (modifier_normalized, key_normalized) pairs.
@@ -2733,21 +2712,24 @@ foo = 42
     }
 
     #[test]
-    fn default_export_filename_format() {
-        let name = Config::default_export_filename();
-        assert!(name.starts_with("config_"));
-        assert!(name.ends_with(".toml"));
-        // config_yyyymmddhhmm.toml = 7 + 12 + 5 = 24 chars
-        assert_eq!(name.len(), 24);
+    fn export_filename_format() {
+        let name = Config::export_filename(2026, 3, 11, 14, 30);
+        assert_eq!(name, "config_202603111430.toml");
     }
 
     #[test]
-    fn days_to_ymd_known_dates() {
-        // 1970-01-01 = day 0
-        assert_eq!(super::days_to_ymd(0), (1970, 1, 1));
-        // 2000-01-01 = day 10957
-        assert_eq!(super::days_to_ymd(10957), (2000, 1, 1));
-        // 2026-03-11 = day 20523
-        assert_eq!(super::days_to_ymd(20523), (2026, 3, 11));
+    fn export_filename_zero_pads() {
+        let name = Config::export_filename(2026, 1, 5, 9, 3);
+        assert_eq!(name, "config_202601050903.toml");
+    }
+
+    #[test]
+    fn apply_migrations_normalizes_additional() {
+        let mut config = Config::default();
+        #[allow(deprecated)]
+        config.paths.additional.push("C:\\Legacy".to_string());
+        assert!(config.apply_migrations());
+        assert!(config.paths.additional.is_empty());
+        assert!(!config.paths.scan.is_empty());
     }
 }

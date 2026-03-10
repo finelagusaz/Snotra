@@ -109,13 +109,19 @@ pub fn ui(
     result
 }
 
+fn local_time() -> (u16, u16, u16, u16, u16) {
+    let st = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+    (st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute)
+}
+
 fn start_export(ctx: &egui::Context, state: &mut BackupTabState, tr: &Tr) {
     state.export_active = true;
     let result = Arc::clone(&state.export_result);
     let repaint_ctx = ctx.clone();
     let dialog_title = tr.dialog_export_config().to_string();
     let filter_label = tr.filter_toml().to_string();
-    let default_name = Config::default_export_filename();
+    let (y, m, d, h, min) = local_time();
+    let default_name = Config::export_filename(y, m, d, h, min);
 
     std::thread::spawn(move || {
         let path = rfd::FileDialog::new()
@@ -184,7 +190,7 @@ fn handle_import_result(path: Option<PathBuf>, tr: &Tr) -> Option<BackupResult> 
             });
         }
     };
-    let config = match Config::from_toml_str(&content) {
+    let mut config = match Config::from_toml_str(&content) {
         Ok(c) => c,
         Err(e) => {
             return Some(BackupResult {
@@ -194,6 +200,8 @@ fn handle_import_result(path: Option<PathBuf>, tr: &Tr) -> Option<BackupResult> 
             });
         }
     };
+    // Apply the same migrations as Config::load() (legacy field migration, normalization, etc.)
+    config.apply_migrations();
     let errors = config.validate();
     if !errors.is_empty() {
         return Some(BackupResult {

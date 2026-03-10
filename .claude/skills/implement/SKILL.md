@@ -1,6 +1,6 @@
 ---
 name: implement
-description: "自律的なフルサイクル開発: 調査 → 計画 → 実装 → 検証 → レビュー → コミット"
+description: "自律的なフルサイクル開発: 調査 → 計画 → 実装 → 検証 → レビュー → コミット。機能追加・バグ修正・リファクタリングなど、コード変更を伴うタスクの実装時に使用。"
 disable-model-invocation: true
 argument-hint: "[機能の説明]"
 allowed-tools:
@@ -12,6 +12,8 @@ allowed-tools:
   - Write
   - Grep
   - Glob
+  - Agent
+  - Skill
 ---
 
 自律的にフルサイクル開発を行う。質問せず、コードとドキュメントから判断すること。
@@ -60,11 +62,25 @@ allowed-tools:
 
 ## Step 5 -- レビュー
 
+### 5a. check スキルの実行
+
+変更内容に応じて該当する check スキルを実行する。発見事項があれば修正してから 5b に進む。
+
+| スキル | トリガー条件 |
+|---|---|
+| `/symmetric-check` | コードパスの変更・バグ修正（ほぼ常に該当） |
+| `/dry-check` | 関数を新規定義または変更した |
+| `/race-check` | async 関数を追加・変更した（diff に `async` が含まれる） |
+| `/cache-check` | キャッシュ・インクリメンタル再利用ロジックに触れた |
+
+### 5b. code-reviewer エージェント
+
 `code-reviewer` エージェントを変更に対して実行する。Critical または High の発見事項は修正してから次に進む。
 
 ## Step 6 -- コミット
 
 - このタスクで変更したファイルのみをステージする
+- `workspace/` ディレクトリが存在する場合、削除してステージに含める（`/start-issue` の引き継ぎバッファは実装完了で役目を終える。git 履歴から復元可能）
 - conventional commit を作成する（例: `feat:`, `fix:`, `refactor:`）
 - 何を実装し、なぜ実装したかの簡潔な説明を含める
 

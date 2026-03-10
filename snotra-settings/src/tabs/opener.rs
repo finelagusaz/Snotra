@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use eframe::egui;
-use snotra_core::config::{Config, OpenerRule, OpenerTool};
+use snotra_core::config::{self, Config, OpenerRule, OpenerTool};
 
 use crate::i18n::Tr;
 
@@ -13,10 +13,20 @@ pub struct ExePickerState {
     pub active: bool,
 }
 
-#[derive(Default)]
 pub struct OpenerTabState {
     pub exe_picker: ExePickerState,
     modal: ModalState,
+    presets: Vec<config::OpenerPreset>,
+}
+
+impl OpenerTabState {
+    pub fn new() -> Self {
+        Self {
+            exe_picker: ExePickerState::default(),
+            modal: ModalState::default(),
+            presets: config::detect_opener_presets(),
+        }
+    }
 }
 
 #[derive(Default, PartialEq)]
@@ -173,6 +183,52 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
 
         if ui.button(tr.btn_add()).clicked() {
             action = Some(OpenerAction::OpenCreate);
+        }
+
+        // Presets section
+        if !state.presets.is_empty() {
+            ui.add_space(12.0);
+            ui.heading(tr.heading_presets());
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(tr.preset_description())
+                    .small()
+                    .color(crate::app::TEXT_SECONDARY),
+            );
+            ui.add_space(4.0);
+
+            let mut preset_action: Option<usize> = None;
+            for (i, preset) in state.presets.iter().enumerate() {
+                let already_added = config::is_preset_already_added(&config.openers, &preset.exe);
+                ui.horizontal(|ui| {
+                    ui.label(preset.name);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if already_added {
+                            ui.add_enabled(false, egui::Button::new(tr.label_already_added()));
+                        } else if ui.button(tr.btn_add_preset()).clicked() {
+                            preset_action = Some(i);
+                        }
+                    });
+                });
+            }
+
+            if let Some(idx) = preset_action {
+                let preset = &state.presets[idx];
+                let tool = OpenerTool {
+                    name: preset.name.to_string(),
+                    exe: preset.exe.clone(),
+                    args: preset.args.to_string(),
+                };
+                let target = preset.target.to_string();
+                if let Some(rule) = config.openers.iter_mut().find(|r| r.target == target) {
+                    rule.tools.push(tool);
+                } else {
+                    config.openers.push(OpenerRule {
+                        target,
+                        tools: vec![tool],
+                    });
+                }
+            }
         }
 
         // Apply actions (must be after iteration)

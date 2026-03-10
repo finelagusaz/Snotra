@@ -136,7 +136,7 @@ impl SettingsApp {
             status: String::new(),
             status_timer: 0.0,
             index_state: tabs::index::IndexTabState::default(),
-            opener_state: tabs::opener::OpenerTabState::default(),
+            opener_state: tabs::opener::OpenerTabState::new(),
             instant_state: tabs::instant::InstantTabState::default(),
             font_list: crate::font::list_system_fonts(),
             hotkey_state: Default::default(),

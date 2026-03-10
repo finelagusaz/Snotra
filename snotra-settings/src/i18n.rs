@@ -580,6 +580,35 @@ impl Tr {
         }
     }
 
+    // Opener tab - presets
+    pub fn heading_presets(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "よく使うツール",
+            Language::En => "Common tools",
+        }
+    }
+
+    pub fn preset_description(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "検出されたツールをワンクリックで追加できます。",
+            Language::En => "Add detected tools with one click.",
+        }
+    }
+
+    pub fn btn_add_preset(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "追加",
+            Language::En => "Add",
+        }
+    }
+
+    pub fn label_already_added(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "追加済み",
+            Language::En => "Added",
+        }
+    }
+
     // Opener tab
     pub fn heading_opener_rules(&self) -> &'static str {
         match self.0 {

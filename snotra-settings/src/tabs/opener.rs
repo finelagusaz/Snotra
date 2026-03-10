@@ -164,6 +164,22 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
                     if ui.button(tr.btn_edit()).clicked() {
                         action = Some(OpenerAction::Edit(*ri, *ti));
                     }
+                    // 同一ルール内のツール並び替えボタン
+                    let tool_count = config.openers[*ri].tools.len();
+                    if tool_count > 1 {
+                        if ui
+                            .add_enabled(*ti + 1 < tool_count, egui::Button::new("▼"))
+                            .clicked()
+                        {
+                            action = Some(OpenerAction::MoveDown(*ri, *ti));
+                        }
+                        if ui
+                            .add_enabled(*ti > 0, egui::Button::new("▲"))
+                            .clicked()
+                        {
+                            action = Some(OpenerAction::MoveUp(*ri, *ti));
+                        }
+                    }
                 });
             });
             ui.separator();
@@ -227,6 +243,18 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
                 let tool = &rule.tools[ti];
                 state.modal.open_edit(ri, ti, rule, tool);
             }
+            Some(OpenerAction::MoveUp(ri, ti)) => {
+                if ti > 0 && ri < config.openers.len() && ti < config.openers[ri].tools.len() {
+                    config.openers[ri].tools.swap(ti, ti - 1);
+                }
+            }
+            Some(OpenerAction::MoveDown(ri, ti)) => {
+                if ri < config.openers.len()
+                    && ti + 1 < config.openers[ri].tools.len()
+                {
+                    config.openers[ri].tools.swap(ti, ti + 1);
+                }
+            }
             None => {}
         }
     });
@@ -240,6 +268,8 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
 enum OpenerAction {
     OpenCreate,
     Edit(usize, usize),
+    MoveUp(usize, usize),
+    MoveDown(usize, usize),
 }
 
 fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabState, tr: &Tr) {

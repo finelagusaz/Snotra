@@ -101,9 +101,17 @@ pub fn find_matching_tools<'a>(
             }
             // パス条件がパス境界で終わっていることを確認
             // 例: 条件 "C:\workspace" はパス "C:\workspace123" にマッチしない
-            let next_byte = path_lower.as_bytes().get(cond_lower.len());
-            if next_byte.is_some() && next_byte != Some(&b'\\') && next_byte != Some(&b'/') {
-                continue;
+            // 条件自体がパス区切りで終わっている場合はすでに境界OK
+            let cond_ends_with_sep =
+                cond_lower.ends_with('\\') || cond_lower.ends_with('/');
+            if !cond_ends_with_sep {
+                let next_byte = path_lower.as_bytes().get(cond_lower.len());
+                if next_byte.is_some()
+                    && next_byte != Some(&b'\\')
+                    && next_byte != Some(&b'/')
+                {
+                    continue;
+                }
             }
         }
 
@@ -505,7 +513,7 @@ fn normalize_opener_target(target: &str) -> String {
             if path_trimmed.is_empty() {
                 return "folder".to_string();
             }
-            return format!("folder:{path_trimmed}");
+            return format!("folder:{}", normalize_scan_path_key(path_trimmed));
         }
         if kind.eq_ignore_ascii_case("ext") {
             // rest から拡張子部分とパス条件を分離
@@ -518,7 +526,7 @@ fn normalize_opener_target(target: &str) -> String {
             );
             let ext_str = exts.join(",");
             return if let Some(path) = path_suffix {
-                format!("ext:{ext_str}:{path}")
+                format!("ext:{ext_str}:{}", normalize_scan_path_key(path))
             } else {
                 format!("ext:{ext_str}")
             };
@@ -1989,7 +1997,7 @@ mod tests {
     fn normalize_opener_target_folder_with_path() {
         assert_eq!(
             normalize_opener_target("folder:C:\\workspace"),
-            "folder:C:\\workspace"
+            "folder:c:\\workspace"
         );
     }
 
@@ -2003,7 +2011,7 @@ mod tests {
     fn normalize_opener_target_ext_with_path() {
         assert_eq!(
             normalize_opener_target("ext:md:C:\\projects"),
-            "ext:.md:C:\\projects"
+            "ext:.md:c:\\projects"
         );
     }
 
@@ -2011,7 +2019,7 @@ mod tests {
     fn normalize_opener_target_ext_with_path_normalizes_exts() {
         assert_eq!(
             normalize_opener_target("ext: PNG, .jpg :C:\\projects"),
-            "ext:.jpg,.png:C:\\projects"
+            "ext:.jpg,.png:c:\\projects"
         );
     }
 
@@ -2531,6 +2539,50 @@ mod tests {
     #[test]
     fn find_in_path_returns_none_for_nonexistent() {
         assert!(find_in_path("__snotra_nonexistent_binary_xyz__").is_none());
+    }
+
+    #[test]
+    fn find_matching_tools_path_condition_trailing_separator() {
+        let rules = vec![
+            make_rule("folder:C:\\workspace\\", &[("VSCode", "code.cmd", "")]),
+            make_rule("folder", &[("Explorer", "explorer.exe", "")]),
+        ];
+        // 末尾 \ 付き条件は子孫パスにマッチする
+        let tools = find_matching_tools("C:\\workspace\\Snotra\\src", true, &rules);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "VSCode");
+
+        // 末尾 / 付き条件でも同様
+        let rules2 = vec![
+            make_rule("folder:C:\\workspace/", &[("VSCode", "code.cmd", "")]),
+        ];
+        let tools2 = find_matching_tools("C:\\workspace\\project", true, &rules2);
+        assert_eq!(tools2.len(), 1);
+        assert_eq!(tools2[0].name, "VSCode");
+    }
+
+    #[test]
+    fn normalize_opener_target_folder_path_case_and_slash_normalized() {
+        // 大文字小文字が正規化される
+        assert_eq!(
+            normalize_opener_target("folder:C:\\Workspace"),
+            "folder:c:\\workspace"
+        );
+        // / → \ に正規化される
+        assert_eq!(
+            normalize_opener_target("folder:c:/workspace"),
+            "folder:c:\\workspace"
+        );
+        // 末尾 \ が除去される
+        assert_eq!(
+            normalize_opener_target("folder:C:\\workspace\\"),
+            "folder:c:\\workspace"
+        );
+        // ext のパス部分も正規化される
+        assert_eq!(
+            normalize_opener_target("ext:md:C:/Projects"),
+            "ext:.md:c:\\projects"
+        );
     }
 
     #[test]

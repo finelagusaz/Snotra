@@ -637,7 +637,16 @@ impl Default for Config {
             },
             search: SearchConfig::default(),
             openers: Vec::new(),
-            instant_commands: Vec::new(),
+            instant_commands: vec![
+                InstantCommand {
+                    name: "g".to_string(),
+                    command: "https://www.google.com/search?q={query}".to_string(),
+                },
+                InstantCommand {
+                    name: "gh".to_string(),
+                    command: "https://github.com/search?q={query}".to_string(),
+                },
+            ],
         }
     }
 }
@@ -1136,6 +1145,18 @@ mod tests {
         assert_eq!(config.visual.hint_text_color, "#808080");
         assert_eq!(config.visual.font_family, "Segoe UI");
         assert_eq!(config.visual.font_size, 15);
+        // default instant commands
+        assert_eq!(config.instant_commands.len(), 2);
+        assert_eq!(config.instant_commands[0].name, "g");
+        assert_eq!(
+            config.instant_commands[0].command,
+            "https://www.google.com/search?q={query}"
+        );
+        assert_eq!(config.instant_commands[1].name, "gh");
+        assert_eq!(
+            config.instant_commands[1].command,
+            "https://github.com/search?q={query}"
+        );
     }
 
     #[test]

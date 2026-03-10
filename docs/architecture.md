@@ -35,6 +35,55 @@ Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-
 - 子プロセスとして起動する外部バイナリ（`snotra-settings.exe` 等）は、Cargo ワークスペースの依存関係外にある場合リリースワークフローでビルドされない。**隣接バイナリを追加・変更した場合は `release.yml` のビルドステップと artifact 検証ステップを必ず確認する**
 - `snotra-core`（純ロジック層）に UI 表示文字列を持たない。エラー状態の意味は `is_error: true` フラグで伝え、エラーメッセージのような表示文字列は UI 層（`ResultRow.tsx` 等）が決める責務を持つ
 
+## 検索フロー（入力 → 結果表示）
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant SW as SearchWindow.tsx
+    participant SS as search.ts (store)
+    participant API as invoke.ts (IPC)
+    participant Cmd as commands/search.rs
+    participant Eng as Engine (snotra-core)
+    participant SE as SearchEngine
+
+    User->>SW: キー入力
+    SW->>SS: setQuery(value)
+
+    Note over SS: createEffect が query 変更を検知
+
+    SS->>SS: debouncedRefresh()<br/>requestAnimationFrame で合間
+
+    SS->>SS: refreshResults()<br/>searchGeneration++ (stale 検出用)
+    SS->>API: search(query)
+    API->>Cmd: invoke("search", { query })
+    Cmd->>Eng: engine.search(&query)
+    Eng->>SE: search_with_history_boost()
+
+    Note over SE: rayon 並列スコアリング<br/>1. Bitmask プレフィルタ (Fuzzy)<br/>2. match_score (Prefix/Substring/Fuzzy)<br/>3. 履歴ブースト<br/>4. BinaryHeap top-k
+
+    SE-->>Eng: Vec<SearchResult>
+    Eng-->>Cmd: Vec<SearchResult>
+    Cmd-->>API: JSON シリアライズ
+    API-->>SS: SearchResult[]
+
+    Note over SS: searchGeneration で stale チェック
+
+    SS->>SS: setResults(items), setSelected(0)
+
+    SS->>API: getIconsBatch(paths)
+    API->>Cmd: invoke("get_icons_batch")
+
+    Note over Cmd: ipc::Response (バイナリ)<br/>custom protocol 経由で ArrayBuffer
+
+    Cmd-->>SS: ArrayBuffer (PNG バッチ)
+    SS->>SS: parseBinaryBatch()<br/>→ Blob URL 生成
+```
+
+**補足**:
+- `searchGeneration` は検索リクエストごとにインクリメントされるカウンタ。応答が返ったとき現在値と比較し、古いレスポンスを破棄する
+- アイコンは `ipc::Response` でバイナリ返却するため、CSP の `connect-src` に `ipc: http://ipc.localhost` が必須（`tauri dev` では不要だがリリースビルドで必要）
+
 ## 参照先
 
 - 意図（仕様）: `SPEC.md`

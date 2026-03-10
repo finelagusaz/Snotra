@@ -58,7 +58,7 @@ sequenceDiagram
     SS->>API: search(query)
     API->>Cmd: invoke("search", { query })
     Cmd->>Eng: engine.search(&query)
-    Eng->>SE: search_with_history_boost()
+    Eng->>SE: search_with_options()
 
     Note over SE: rayon 並列スコアリング<br/>1. Bitmask プレフィルタ (Fuzzy)<br/>2. match_score (Prefix/Substring/Fuzzy)<br/>3. 履歴ブースト<br/>4. BinaryHeap top-k
 

@@ -66,6 +66,7 @@ allowed-tools:
 ## Step 6 -- コミット
 
 - このタスクで変更したファイルのみをステージする
+- `workspace/` ディレクトリが存在する場合、削除してステージに含める（`/start-issue` の引き継ぎバッファは実装完了で役目を終える。git 履歴から復元可能）
 - conventional commit を作成する（例: `feat:`, `fix:`, `refactor:`）
 - 何を実装し、なぜ実装したかの簡潔な説明を含める
 

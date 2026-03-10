@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub use crate::error::ConfigError;
 
@@ -808,6 +808,86 @@ pub fn is_system_shortcut(modifier: &str, key: &str) -> bool {
     SYSTEM_SHORTCUTS
         .iter()
         .any(|&(m, k)| m == norm_mod && k == norm_key)
+}
+
+// --- Opener presets ---
+
+/// A detected opener preset available for one-click addition.
+pub struct OpenerPreset {
+    pub name: &'static str,
+    pub exe: String,
+    pub args: &'static str,
+    pub target: &'static str,
+}
+
+/// Search for `filename` in PATH directories. Returns the full path if found.
+fn find_in_path(filename: &str) -> Option<String> {
+    let path_var = std::env::var("PATH").ok()?;
+    for dir in path_var.split(';') {
+        let candidate = Path::new(dir).join(filename);
+        if candidate.is_file() {
+            return Some(candidate.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
+/// Detect opener presets available on this system.
+/// Checks PATH and known install locations. Explorer is always included.
+pub fn detect_opener_presets() -> Vec<OpenerPreset> {
+    let mut presets = Vec::new();
+
+    // VSCode: PATH 上の code.cmd、または既知のインストールパス
+    let vscode_exe = find_in_path("code.cmd").or_else(|| {
+        let local_app_data = std::env::var("LOCALAPPDATA").ok()?;
+        let known = Path::new(&local_app_data)
+            .join("Programs")
+            .join("Microsoft VS Code")
+            .join("Code.exe");
+        if known.is_file() {
+            Some(known.to_string_lossy().into_owned())
+        } else {
+            None
+        }
+    });
+    if let Some(exe) = vscode_exe {
+        presets.push(OpenerPreset {
+            name: "Visual Studio Code",
+            exe,
+            args: "",
+            target: "folder",
+        });
+    }
+
+    // Windows Terminal: PATH 上の wt.exe
+    if let Some(exe) = find_in_path("wt.exe") {
+        presets.push(OpenerPreset {
+            name: "Windows Terminal",
+            exe,
+            args: "-d {path}",
+            target: "folder",
+        });
+    }
+
+    // Explorer: 常に利用可能
+    presets.push(OpenerPreset {
+        name: "Explorer",
+        exe: "explorer.exe".to_string(),
+        args: "",
+        target: "folder",
+    });
+
+    presets
+}
+
+/// Check if a preset's exe is already present in the opener rules (case-insensitive).
+pub fn is_preset_already_added(openers: &[OpenerRule], preset_exe: &str) -> bool {
+    let preset_lower = preset_exe.to_lowercase();
+    openers.iter().any(|rule| {
+        rule.tools
+            .iter()
+            .any(|tool| tool.exe.to_lowercase() == preset_lower)
+    })
 }
 
 #[cfg(test)]
@@ -2158,5 +2238,42 @@ mod tests {
         "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(config.general.language, Language::En);
+    }
+
+    #[test]
+    fn detect_opener_presets_returns_at_least_explorer() {
+        let presets = detect_opener_presets();
+        assert!(
+            presets.iter().any(|p| p.name == "Explorer"),
+            "Explorer should always be present"
+        );
+    }
+
+    #[test]
+    fn detect_opener_presets_explorer_fields() {
+        let presets = detect_opener_presets();
+        let explorer = presets.iter().find(|p| p.name == "Explorer").unwrap();
+        assert_eq!(explorer.exe, "explorer.exe");
+        assert_eq!(explorer.args, "");
+        assert_eq!(explorer.target, "folder");
+    }
+
+    #[test]
+    fn find_in_path_returns_none_for_nonexistent() {
+        assert!(find_in_path("__snotra_nonexistent_binary_xyz__").is_none());
+    }
+
+    #[test]
+    fn is_preset_already_added_case_insensitive() {
+        let rules = vec![OpenerRule {
+            target: "folder".to_string(),
+            tools: vec![OpenerTool {
+                name: "Explorer".to_string(),
+                exe: "Explorer.EXE".to_string(),
+                args: String::new(),
+            }],
+        }];
+        assert!(is_preset_already_added(&rules, "explorer.exe"));
+        assert!(!is_preset_already_added(&rules, "code.cmd"));
     }
 }

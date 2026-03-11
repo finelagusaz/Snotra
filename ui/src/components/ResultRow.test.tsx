@@ -74,6 +74,21 @@ describe("ResultRow", () => {
     expect(row.classList.contains("error")).toBe(true);
   });
 
+  it("isError=true かつ icon=undefined でアイコン領域は空になる（取得中はちらつかない）", () => {
+    const { container } = render(() => (
+      <ResultRow
+        result={makeResult({ isError: true })}
+        isSelected={false}
+        icon={undefined}
+        font="12px sans-serif"
+        onClick={() => {}}
+        onDoubleClick={() => {}}
+      />
+    ));
+    expect(container.querySelector(".icon-fallback")).toBeNull();
+    expect(container.querySelector("img")).toBeNull();
+  });
+
   it("isError=true かつ icon=null で ⚠️ が表示される", () => {
     const { container } = render(() => (
       <ResultRow

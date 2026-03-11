@@ -308,11 +308,15 @@ pub struct SearchConfig {
     #[serde(default = "default_migemo_min_chars")]
     pub migemo_min_chars: usize,
     /// 空クエリ時に表示する履歴候補の最大件数。
-    #[serde(default = "default_top_n_history")]
-    pub top_n_history: usize,
+    /// `None` = 未設定（実効値は `effective_top_n_history()` で取得）。
+    /// `Option` にすることで「TOML に明示されたか否か」を区別し、
+    /// レガシー `[appearance]` からの移行時に明示値を上書きしない。
+    #[serde(default)]
+    pub top_n_history: Option<usize>,
     /// 空クエリ時に表示する履歴候補の上限（UI 表示件数）。
-    #[serde(default = "default_max_history_display")]
-    pub max_history_display: usize,
+    /// `None` = 未設定（実効値は `effective_max_history_display()` で取得）。
+    #[serde(default)]
+    pub max_history_display: Option<usize>,
 }
 
 impl Default for SearchConfig {
@@ -326,13 +330,23 @@ impl Default for SearchConfig {
             instant_command_prefix: default_instant_command_prefix(),
             migemo_enabled: false,
             migemo_min_chars: default_migemo_min_chars(),
-            top_n_history: default_top_n_history(),
-            max_history_display: default_max_history_display(),
+            top_n_history: None,
+            max_history_display: None,
         }
     }
 }
 
 impl SearchConfig {
+    /// 空クエリ時の履歴取得上限。`top_n_history` が未設定ならデフォルト値を返す。
+    pub fn effective_top_n_history(&self) -> usize {
+        self.top_n_history.unwrap_or_else(default_top_n_history)
+    }
+
+    /// 空クエリ時の履歴表示上限。`max_history_display` が未設定ならデフォルト値を返す。
+    pub fn effective_max_history_display(&self) -> usize {
+        self.max_history_display.unwrap_or_else(default_max_history_display)
+    }
+
     #[deprecated(note = "use Config::validate() to detect issues instead")]
     pub fn sanitize(&mut self) -> bool {
         if self.fuzzy_history_cap_ratio.is_finite()
@@ -765,16 +779,17 @@ impl Config {
         }
         // Migrate [appearance].top_n_history / max_history_display → [search]
         // take() はレガシーフィールドのクリーンアップのため常に実行する。
-        // 新フィールドがデフォルト値のときだけ補完する（新フィールドが明示的に設定済みなら上書きしない）。
+        // [search] が None（TOML に未記載）のときだけ legacy 値で補完する。
+        // [search] に値が明示されていれば（たとえそれがデフォルト値と同じでも）上書きしない。
         if let Some(v) = self.appearance.top_n_history.take() {
-            if self.search.top_n_history == default_top_n_history() {
-                self.search.top_n_history = v;
+            if self.search.top_n_history.is_none() {
+                self.search.top_n_history = Some(v);
             }
             changed = true;
         }
         if let Some(v) = self.appearance.max_history_display.take() {
-            if self.search.max_history_display == default_max_history_display() {
-                self.search.max_history_display = v;
+            if self.search.max_history_display.is_none() {
+                self.search.max_history_display = Some(v);
             }
             changed = true;
         }
@@ -1166,8 +1181,8 @@ mod tests {
         "#;
         let mut config: Config = toml::from_str(toml_str).expect("parse");
         assert!(config.apply_migrations());
-        assert_eq!(config.search.top_n_history, 300);
-        assert_eq!(config.search.max_history_display, 12);
+        assert_eq!(config.search.top_n_history, Some(300));
+        assert_eq!(config.search.max_history_display, Some(12));
         // Legacy slots are cleared after migration
         assert_eq!(config.appearance.top_n_history, None);
         assert_eq!(config.appearance.max_history_display, None);
@@ -1197,9 +1212,9 @@ mod tests {
         "#;
         let mut config: Config = toml::from_str(toml_str).expect("parse");
         assert!(config.apply_migrations());
-        // [search] の値が保持されていること
-        assert_eq!(config.search.top_n_history, 400);
-        assert_eq!(config.search.max_history_display, 15);
+        // [search] の値が保持されていること（legacy で上書きされていない）
+        assert_eq!(config.search.top_n_history, Some(400));
+        assert_eq!(config.search.max_history_display, Some(15));
         // Legacy slots はクリーンアップ済み
         assert_eq!(config.appearance.top_n_history, None);
         assert_eq!(config.appearance.max_history_display, None);
@@ -1224,8 +1239,9 @@ mod tests {
             additional = []
         "#;
         let config: Config = toml::from_str(toml_str).expect("parse");
-        assert_eq!(config.search.top_n_history, 200);
-        assert_eq!(config.search.max_history_display, 8);
+        // [search] セクションが省略されると None になり、accessor がデフォルト値を返す
+        assert_eq!(config.search.effective_top_n_history(), 200);
+        assert_eq!(config.search.effective_max_history_display(), 8);
         assert_eq!(config.search.normal_mode, SearchModeConfig::Fuzzy);
         assert_eq!(config.search.folder_mode, SearchModeConfig::Fuzzy);
         assert!(!config.search.show_hidden_system);
@@ -1250,8 +1266,8 @@ mod tests {
         assert_eq!(config.hotkey.key, "Q");
         assert_eq!(config.appearance.max_results, 8);
         assert_eq!(config.appearance.window_width, 600);
-        assert_eq!(config.search.top_n_history, 200);
-        assert_eq!(config.search.max_history_display, 8);
+        assert_eq!(config.search.effective_top_n_history(), 200);
+        assert_eq!(config.search.effective_max_history_display(), 8);
         assert!(config.appearance.show_icons);
         assert!(config.paths.additional.is_empty());
         // default scan paths are populated from environment (common Start Menu + Desktop)

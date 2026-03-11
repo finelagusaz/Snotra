@@ -29,6 +29,9 @@ pub fn start_index_build(app: &AppHandle) -> bool {
         b.send_command(PlatformCommand::SetIndexing(true));
     }
 
+    // Notify frontend that indexing has started
+    let _ = app.emit("indexing-started", ());
+
     let app_handle = app.clone();
     std::thread::Builder::new()
         .name("snotra-index-build".to_string())

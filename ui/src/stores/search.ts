@@ -692,6 +692,7 @@ function resetForShow() {
 }
 
 let unlistenIndexingComplete: (() => void) | undefined;
+let unlistenIndexingStarted: (() => void) | undefined;
 
 async function initIndexingState(): Promise<() => void> {
   try {
@@ -703,14 +704,25 @@ async function initIndexingState(): Promise<() => void> {
     console.error("Failed to get indexing state:", e);
   }
 
+  // Register indexing-started first to minimise the window between
+  // getIndexingState() and the listener being live (indexing-started always
+  // precedes indexing-complete in the event timeline).
+  unlistenIndexingStarted = await listen("indexing-started", () => {
+    trace("search:indexing_state:started");
+    setIndexing(true);
+  });
+
   unlistenIndexingComplete = await listen("indexing-complete", () => {
     trace("search:indexing_state:complete");
     setIndexing(false);
     void runRefresh();
   });
+
   return () => {
     unlistenIndexingComplete?.();
     unlistenIndexingComplete = undefined;
+    unlistenIndexingStarted?.();
+    unlistenIndexingStarted = undefined;
   };
 }
 

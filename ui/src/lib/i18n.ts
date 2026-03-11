@@ -24,7 +24,9 @@ export type TranslationKey =
   | "notice.launch.failed"
   // hotkey registration failure
   | "notice.hotkey.initial_failed"
-  | "notice.hotkey.change_failed";
+  | "notice.hotkey.change_failed"
+  // settings availability
+  | "notice.settings.unavailable_while_indexing";
 
 const JA_JP: Record<TranslationKey, string> = {
   // SearchWindow
@@ -47,6 +49,9 @@ const JA_JP: Record<TranslationKey, string> = {
     "ホットキー ({hotkey}) の登録に失敗しました。他のアプリが使用中の可能性があります",
   "notice.hotkey.change_failed":
     "ホットキー ({hotkey}) の登録に失敗しました。元のホットキーを維持します",
+  // settings availability
+  "notice.settings.unavailable_while_indexing":
+    "インデックス構築中のため、設定を開けません",
 };
 
 const EN_US: Record<TranslationKey, string> = {
@@ -70,6 +75,9 @@ const EN_US: Record<TranslationKey, string> = {
     "Failed to register hotkey ({hotkey}). Another application may be using it",
   "notice.hotkey.change_failed":
     "Failed to register hotkey ({hotkey}). Keeping the previous hotkey",
+  // settings availability
+  "notice.settings.unavailable_while_indexing":
+    "Cannot open settings while indexing.",
 };
 
 const TABLES: Record<Lang, Record<TranslationKey, string>> = {

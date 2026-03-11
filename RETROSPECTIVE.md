@@ -1,31 +1,35 @@
-# Retrospective — 設定バックアップ機能 (#226)
+# Retrospective — settings バグ修正10件 (refactor/settings)
 
 ## よかったこと
 
-### スコープ絞り込みで YAGNI を徹底した
-issue の3段階優先度（トースト通知・ドキュメント・エクスポート/インポート）から「config.toml のみ、バックアップタブ追加」にスコープを絞り、zip/暗号化なしの素の TOML コピーで実装した。
+### 多角的サブエージェント調査で計画の精度を事前に高めた
+4エージェント並列で全変更ファイルを精査し、実装前に plan.md の誤りを修正できた（`engine.rs L77 → L78` のずれ、`_legacy` フィールド方式の複雑さ → `Option<T>` + `skip_serializing` へ簡略化、Phase 5 の i18n が単一ファイルである点、既存 `launchNotice` パターンの活用で `SearchWindow.tsx` 変更が不要であることなど）。
 
-### 既存パターンの再利用が効いた
-PickerState（index.rs）、open::that（About タブ）、draft/saved 二重状態モデル（app.rs）を再利用。新規の抽象化やクレート追加なし（GetLocalTime 用の Windows feature 1件のみ）。
+### チェックリスト駆動の実装で進捗が可視化できた
+各フェーズを小粒のチェックボックスに分解し、`cargo check` / `cargo test` を各フェーズ後に実行したことで問題を局所化できた。
 
-### 手動テストで UX 問題を早期に発見・修正した
-ユーザーとの手動テスト中にメッセージ表示の問題2件（複数行はみ出し、二重表示）を発見し、即座にインライン表示に統一。フッター vs インラインの設計判断を `snotra-settings/CLAUDE.md` に教訓化した。
+### マイグレーション自動保存パターンを正しく活用した
+`apply_migrations()` が `true` を返すと `load()` が自動保存する既存パターンを活用し、旧 `config.toml` の後方互換を確保できた。
 
 ---
 
 ## 伸びしろ
 
-### デシリアライズ経路の後処理パイプラインを見落とした（P1）
-`Config::from_toml_str()` + `validate()` で十分と判断し、`load()` が持つマイグレーションパイプライン（`migrate_additional_to_scan` 等）を考慮しなかった。**修正**: `apply_migrations()` を抽出し共用化。**教訓**: `snotra-core/CLAUDE.md` に追記済み。
+### ネスト追加時の括弧インデントずれ（Phase 3）
+`if let Some(rect)` ブロックを `if !minimized { }` でラップしたとき、閉じ括弧のインデントがずれて `cargo check` 失敗。ブロックを丸ごと囲む変更ではインデントレベルを全行ずらす必要があることを意識できていなかった。
 
-### UTC/ローカル時刻の区別を意識しなかった（P3）
-`SystemTime::UNIX_EPOCH` からの秒数→日付変換が UTC であることを見落とした。**修正**: `GetLocalTime` Win32 API でローカル時刻を取得。
+### TOML フィールド移動の3連鎖エラー（Phase 4）
+`AppearanceConfig` から `SearchConfig` へのフィールド移動で以下が連鎖した:
+1. マイグレーションコードが削除後のフィールドを参照 → `Option<usize>` への型変更が必要
+2. `Config::default()` の明示的初期化に `None` を追加し忘れ → コンパイルエラー
+3. 既存テスト `deserialize_full_config` で `apply_migrations()` 呼び出しを追加したら `migrate_additional_to_scan()` の副作用（`additional → scan`）により別のアサーションが失敗
+4. 新規テスト TOML に `[paths]` セクション（必須）を含め忘れ → パースエラー
 
-### ステータスメッセージの表示先を設計段階で決めなかった（P4）
-フッターの `status_timer` を安易に流用した結果、複数行はみ出し→インライン追加→二重表示と2回の手戻りが発生。最初から「Backup タブは draft/saved に参加しないからインライン表示」と判断すべきだった。**教訓**: `snotra-settings/CLAUDE.md` に追記済み。
+フィールド移動パターンのチェックリストを `snotra-core/CLAUDE.md` に追記済み。
 
 ---
 
 ## ネクストアクション
 
-- [ ] PR #232 をマージする
+- [ ] `refactor/settings` ブランチをコミット・PR 作成・マージする
+- [ ] `workspace/research.md` と `workspace/plan.md` をコミットに含める（別マシン継続のため）

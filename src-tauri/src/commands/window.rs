@@ -95,9 +95,10 @@ pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> R
         // the dedup check in launch_settings_process works.
         loop {
             std::thread::sleep(std::time::Duration::from_millis(250));
-            let proc_state = handle_for_monitor
-                .try_state::<SettingsProcessState>()
-                .expect("SettingsProcessState not managed");
+            let Some(proc_state) = handle_for_monitor.try_state::<SettingsProcessState>() else {
+                eprintln!("[settings-monitor] SettingsProcessState not managed; exiting monitor thread");
+                break;
+            };
             let mut guard = proc_state.lock().unwrap();
             if let Some(child) = guard.as_mut() {
                 match child.try_wait() {
@@ -144,7 +145,7 @@ pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), Strin
     trace_command("cmd:open_settings:start", json!({}));
     if state.indexing.load(Ordering::SeqCst) {
         trace_command("cmd:open_settings:noop_indexing", json!({}));
-        return Ok(());
+        return Err("indexing_in_progress".to_string());
     }
 
     launch_settings_process(&app, &[])

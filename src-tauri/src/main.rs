@@ -330,8 +330,8 @@ fn main() {
     let icon_cache_state: IconCacheState = Mutex::new(None);
 
     let history = HistoryStore::load(
-        config.appearance.top_n_history,
-        config.appearance.max_history_display,
+        config.search.top_n_history,
+        config.search.max_history_display,
     );
 
     let show_on_startup = config.general.show_on_startup;

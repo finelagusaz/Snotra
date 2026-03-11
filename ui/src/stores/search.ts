@@ -60,7 +60,7 @@ function notifyLaunchFailure(result: api.LaunchResult) {
   }
 }
 
-function setLaunchNoticeWithAutoClear(message: string, delayMs = 2400) {
+export function setLaunchNoticeWithAutoClear(message: string, delayMs = 2400) {
   clearLaunchNotice();
   setLaunchNotice(message);
   launchNoticeTimer = setTimeout(() => {

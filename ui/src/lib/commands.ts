@@ -1,6 +1,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as api from "./invoke";
 import { t } from "./i18n";
+import { setLaunchNoticeWithAutoClear } from "../stores/search";
 
 export interface SlashCommand {
   command: string;
@@ -29,7 +30,16 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     label: "/o",
     get description() { return t("cmd.settings.description"); },
     action: async () => {
-      await api.openSettings();
+      try {
+        await api.openSettings();
+      } catch (e) {
+        if (String(e).includes("indexing_in_progress")) {
+          setLaunchNoticeWithAutoClear(
+            t("notice.settings.unavailable_while_indexing"),
+            3000,
+          );
+        }
+      }
     },
   },
   {

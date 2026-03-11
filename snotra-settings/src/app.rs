@@ -192,6 +192,11 @@ impl SettingsApp {
 
     fn reset_to_default(&mut self) {
         self.draft = Config::default();
+        self.tr = Tr(self.draft.general.language);
+        self.hotkey_state = Default::default();
+        self.index_state = tabs::index::IndexTabState::default();
+        self.instant_state = tabs::instant::InstantTabState::default();
+        self.opener_state = tabs::opener::OpenerTabState::new();
     }
 }
 
@@ -369,6 +374,7 @@ impl eframe::App for SettingsApp {
                                 .clicked()
                             {
                                 self.draft = self.saved.clone();
+                                self.tr = Tr(self.draft.general.language);
                             }
 
                             // Reset to default
@@ -399,13 +405,16 @@ impl eframe::App for SettingsApp {
             }
         });
 
-        // Track window position for save on exit
-        if let Some(rect) = ctx.input(|i| i.viewport().outer_rect) {
-            let pos = rect.left_top();
-            self.last_position = Some(WindowPlacement {
-                x: pos.x as i32,
-                y: pos.y as i32,
-            });
+        // Track window position for save on exit (skip when minimized to avoid saving 0,0)
+        let minimized = ctx.input(|i| i.viewport().minimized).unwrap_or(false);
+        if !minimized {
+            if let Some(rect) = ctx.input(|i| i.viewport().outer_rect) {
+                let pos = rect.left_top();
+                self.last_position = Some(WindowPlacement {
+                    x: pos.x as i32,
+                    y: pos.y as i32,
+                });
+            }
         }
     }
 }

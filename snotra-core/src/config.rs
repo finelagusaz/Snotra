@@ -307,6 +307,12 @@ pub struct SearchConfig {
     /// 1文字（"a"→"あ"）の意図しないマッチを防ぐため、デフォルト 2。
     #[serde(default = "default_migemo_min_chars")]
     pub migemo_min_chars: usize,
+    /// 空クエリ時に表示する履歴候補の最大件数。
+    #[serde(default = "default_top_n_history")]
+    pub top_n_history: usize,
+    /// 空クエリ時に表示する履歴候補の上限（UI 表示件数）。
+    #[serde(default = "default_max_history_display")]
+    pub max_history_display: usize,
 }
 
 impl Default for SearchConfig {
@@ -320,6 +326,8 @@ impl Default for SearchConfig {
             instant_command_prefix: default_instant_command_prefix(),
             migemo_enabled: false,
             migemo_min_chars: default_migemo_min_chars(),
+            top_n_history: default_top_n_history(),
+            max_history_display: default_max_history_display(),
         }
     }
 }
@@ -342,12 +350,14 @@ impl SearchConfig {
 pub struct AppearanceConfig {
     pub max_results: usize,
     pub window_width: u32,
-    #[serde(default = "default_top_n_history")]
-    pub top_n_history: usize,
-    #[serde(default = "default_max_history_display")]
-    pub max_history_display: usize,
     #[serde(default = "default_show_icons")]
     pub show_icons: bool,
+    /// Legacy: moved to `SearchConfig.top_n_history`. Deserialized from old config files only.
+    #[serde(default, skip_serializing)]
+    pub top_n_history: Option<usize>,
+    /// Legacy: moved to `SearchConfig.max_history_display`. Deserialized from old config files only.
+    #[serde(default, skip_serializing)]
+    pub max_history_display: Option<usize>,
 }
 
 fn default_theme_preset() -> ThemePreset {
@@ -633,9 +643,9 @@ impl Default for Config {
             appearance: AppearanceConfig {
                 max_results: 8,
                 window_width: 600,
-                top_n_history: 200,
-                max_history_display: 8,
                 show_icons: true,
+                top_n_history: None,
+                max_history_display: None,
             },
             visual: VisualConfig::default(),
             paths: PathsConfig {
@@ -747,6 +757,15 @@ impl Config {
         let mut changed = false;
         if !self.paths.additional.is_empty() {
             self.migrate_additional_to_scan();
+            changed = true;
+        }
+        // Migrate [appearance].top_n_history / max_history_display → [search]
+        if let Some(v) = self.appearance.top_n_history.take() {
+            self.search.top_n_history = v;
+            changed = true;
+        }
+        if let Some(v) = self.appearance.max_history_display.take() {
+            self.search.max_history_display = v;
             changed = true;
         }
         #[allow(deprecated)]
@@ -1088,15 +1107,21 @@ mod tests {
             history_normalization = "fuzzy_relative_cap"
             fuzzy_history_cap_ratio = 0.25
         "#;
-        let config: Config = toml::from_str(toml_str).expect("parse");
+        let mut config: Config = toml::from_str(toml_str).expect("parse");
+        // Legacy [appearance].top_n_history / max_history_display are migrated to [search]
+        // by apply_migrations(); verify they are in the legacy slots before migration.
+        assert_eq!(config.appearance.top_n_history, Some(150));
+        assert_eq!(config.appearance.max_history_display, Some(5));
+        assert_eq!(config.paths.additional, vec!["C:\\Tools"]);
+        config.apply_migrations();
         assert_eq!(config.hotkey.modifier, "Ctrl");
         assert_eq!(config.hotkey.key, "Space");
         assert_eq!(config.appearance.max_results, 10);
         assert_eq!(config.appearance.window_width, 700);
-        assert_eq!(config.appearance.top_n_history, 150);
-        assert_eq!(config.appearance.max_history_display, 5);
-        assert_eq!(config.paths.additional, vec!["C:\\Tools"]);
-        assert!(config.paths.scan.is_empty());
+        assert_eq!(config.search.top_n_history, 150);
+        assert_eq!(config.search.max_history_display, 5);
+        // additional is drained into scan by migrate_additional_to_scan()
+        assert!(config.paths.additional.is_empty());
         assert_eq!(config.search.normal_mode, SearchModeConfig::Prefix);
         assert_eq!(config.search.folder_mode, SearchModeConfig::Substring);
         assert!(config.search.show_hidden_system);
@@ -1117,6 +1142,31 @@ mod tests {
     }
 
     #[test]
+    fn migrate_top_n_history_from_appearance_to_search() {
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+
+            [appearance]
+            max_results = 8
+            window_width = 600
+            top_n_history = 300
+            max_history_display = 12
+
+            [paths]
+            additional = []
+        "#;
+        let mut config: Config = toml::from_str(toml_str).expect("parse");
+        assert!(config.apply_migrations());
+        assert_eq!(config.search.top_n_history, 300);
+        assert_eq!(config.search.max_history_display, 12);
+        // Legacy slots are cleared after migration
+        assert_eq!(config.appearance.top_n_history, None);
+        assert_eq!(config.appearance.max_history_display, None);
+    }
+
+    #[test]
     fn deserialize_minimal_config_uses_defaults() {
         let toml_str = r#"
             [hotkey]
@@ -1131,8 +1181,8 @@ mod tests {
             additional = []
         "#;
         let config: Config = toml::from_str(toml_str).expect("parse");
-        assert_eq!(config.appearance.top_n_history, 200);
-        assert_eq!(config.appearance.max_history_display, 8);
+        assert_eq!(config.search.top_n_history, 200);
+        assert_eq!(config.search.max_history_display, 8);
         assert_eq!(config.search.normal_mode, SearchModeConfig::Fuzzy);
         assert_eq!(config.search.folder_mode, SearchModeConfig::Fuzzy);
         assert!(!config.search.show_hidden_system);
@@ -1157,8 +1207,8 @@ mod tests {
         assert_eq!(config.hotkey.key, "Q");
         assert_eq!(config.appearance.max_results, 8);
         assert_eq!(config.appearance.window_width, 600);
-        assert_eq!(config.appearance.top_n_history, 200);
-        assert_eq!(config.appearance.max_history_display, 8);
+        assert_eq!(config.search.top_n_history, 200);
+        assert_eq!(config.search.max_history_display, 8);
         assert!(config.appearance.show_icons);
         assert!(config.paths.additional.is_empty());
         // default scan paths are populated from environment (common Start Menu + Desktop)

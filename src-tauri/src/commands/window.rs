@@ -145,6 +145,8 @@ pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), Strin
     trace_command("cmd:open_settings:start", json!({}));
     if state.indexing.load(Ordering::SeqCst) {
         trace_command("cmd:open_settings:noop_indexing", json!({}));
+        // NOTE: this error string is matched by the frontend in ui/src/lib/commands.ts
+        // (String(e).includes("indexing_in_progress")). Update both if changed.
         return Err("indexing_in_progress".to_string());
     }
 

@@ -352,10 +352,14 @@ pub struct AppearanceConfig {
     pub window_width: u32,
     #[serde(default = "default_show_icons")]
     pub show_icons: bool,
-    /// Legacy: moved to `SearchConfig.top_n_history`. Deserialized from old config files only.
+    /// Legacy: moved to `SearchConfig.top_n_history`. Read from old `config.toml` files and
+    /// migrated by `apply_migrations()`; never written back (`skip_serializing`).
+    /// Do not use in new code — read `SearchConfig.top_n_history` instead.
     #[serde(default, skip_serializing)]
     pub top_n_history: Option<usize>,
-    /// Legacy: moved to `SearchConfig.max_history_display`. Deserialized from old config files only.
+    /// Legacy: moved to `SearchConfig.max_history_display`. Read from old `config.toml` files and
+    /// migrated by `apply_migrations()`; never written back (`skip_serializing`).
+    /// Do not use in new code — read `SearchConfig.max_history_display` instead.
     #[serde(default, skip_serializing)]
     pub max_history_display: Option<usize>,
 }
@@ -1107,21 +1111,17 @@ mod tests {
             history_normalization = "fuzzy_relative_cap"
             fuzzy_history_cap_ratio = 0.25
         "#;
-        let mut config: Config = toml::from_str(toml_str).expect("parse");
-        // Legacy [appearance].top_n_history / max_history_display are migrated to [search]
-        // by apply_migrations(); verify they are in the legacy slots before migration.
-        assert_eq!(config.appearance.top_n_history, Some(150));
-        assert_eq!(config.appearance.max_history_display, Some(5));
-        assert_eq!(config.paths.additional, vec!["C:\\Tools"]);
-        config.apply_migrations();
+        // Verify raw deserialized values before any migration.
+        // top_n_history / max_history_display land in the legacy AppearanceConfig slots (Some(v));
+        // migration to SearchConfig is tested in migrate_top_n_history_from_appearance_to_search.
+        let config: Config = toml::from_str(toml_str).expect("parse");
         assert_eq!(config.hotkey.modifier, "Ctrl");
         assert_eq!(config.hotkey.key, "Space");
         assert_eq!(config.appearance.max_results, 10);
         assert_eq!(config.appearance.window_width, 700);
-        assert_eq!(config.search.top_n_history, 150);
-        assert_eq!(config.search.max_history_display, 5);
-        // additional is drained into scan by migrate_additional_to_scan()
-        assert!(config.paths.additional.is_empty());
+        assert_eq!(config.appearance.top_n_history, Some(150));
+        assert_eq!(config.appearance.max_history_display, Some(5));
+        assert_eq!(config.paths.additional, vec!["C:\\Tools"]);
         assert_eq!(config.search.normal_mode, SearchModeConfig::Prefix);
         assert_eq!(config.search.folder_mode, SearchModeConfig::Substring);
         assert!(config.search.show_hidden_system);
@@ -1168,6 +1168,10 @@ mod tests {
 
     #[test]
     fn deserialize_minimal_config_uses_defaults() {
+        // Verify that omitting the `[search]` section entirely still yields correct defaults.
+        // Each field uses `#[serde(default = "default_...")]`, so serde fills in the
+        // function-level defaults (e.g. `default_top_n_history` → 200) without needing
+        // the section to be present in the TOML.
         let toml_str = r#"
             [hotkey]
             modifier = "Alt"

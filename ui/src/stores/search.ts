@@ -185,7 +185,7 @@ async function refreshResults() {
     return;
   }
 
-  updateResults(items, source === "query");
+  updateResults(items, source === "query" && trimmed !== "");
   const nextSelected = clampSelectedIndex(selected(), items.length);
   setSelected(nextSelected);
   trace("search:refresh:done", {

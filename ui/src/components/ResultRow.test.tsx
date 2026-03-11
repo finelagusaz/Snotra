@@ -74,6 +74,22 @@ describe("ResultRow", () => {
     expect(row.classList.contains("error")).toBe(true);
   });
 
+  it("isError=true かつ icon=null で ⚠️ が表示される", () => {
+    const { container } = render(() => (
+      <ResultRow
+        result={makeResult({ isError: true })}
+        isSelected={false}
+        icon={null}
+        font="12px sans-serif"
+        onClick={() => {}}
+        onDoubleClick={() => {}}
+      />
+    ));
+    const fallback = container.querySelector(".icon-fallback");
+    expect(fallback).not.toBeNull();
+    expect(fallback!.textContent).toBe("⚠️");
+  });
+
   it("onClick がクリックで呼ばれる", () => {
     const onClick = vi.fn();
     const { container } = render(() => (

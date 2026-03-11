@@ -1,6 +1,7 @@
 # Issue #245 実装計画
 
 作成日: 2026-03-12
+調査更新日: 2026-03-12（多角的サブエージェント調査で精緻化）
 ブランチ: `fix/indexing-signal-mismatch`
 対象 Issue: #245 - インデックス再構築中に通常検索が可能になる問題
 
@@ -27,6 +28,7 @@
 
 - `src-tauri/src/indexing.rs` → `start_index_build()` に `emit("indexing-started", ())` を追加
 - `ui/src/stores/search.ts` → `initIndexingState()` に `indexing-started` リスナーを追加
+- `SPEC.md` → §8.6 状態遷移図に `indexing-started` イベント発火の明示（オプション）
 
 ### 触らない（理由）
 
@@ -42,9 +44,10 @@
 - `indexing-started` は `indexing.rs` の先頭（`state.indexing = true` セット直後）で emit
 
 両 emit とも同じ `start_index_build()` 内に配置するため、全呼び出しパスで対称性が保たれる:
-- `/s` コマンド → `rebuild_index` → `start_index_build()` ✓
-- `config_watcher` → `apply_config_change()` → `start_index_build()` ✓
-- 初回ビルド → `main.rs setup` → `start_index_build()` ✓（初回は `initIndexingState()` が `getIndexingState()` で true を取得するため、イベントが届いてもべき等）
+- `/s` コマンド → `commands/system.rs:15` → `start_index_build()` ✓
+- `config_watcher` → `config_watcher.rs:160` → `start_index_build()` ✓
+- 初回ビルド → `main.rs:465` → `start_index_build()` ✓（初回は `initIndexingState()` が `getIndexingState()` で true を取得するため、イベントが届いてもべき等）
+- snotra-settings 終了後（first-run モード） → `commands/window.rs:141` → `start_index_build()` ✓
 
 ### `docs/` 更新要否
 
@@ -83,50 +86,178 @@
 
 ### Step 1: `src-tauri/src/indexing.rs` に `indexing-started` emit を追加
 
-`start_index_build()` 内、`state.indexing.store(true, Ordering::SeqCst)` の直後（`PlatformCommand::SetIndexing(true)` 送信の後）に追加:
+**ファイル**: `src-tauri/src/indexing.rs`
+
+#### 現在の状態（調査確認済み）
+
+```rust
+// 行 23: フラグを true にセット
+state.indexing.store(true, Ordering::SeqCst);
+
+// 行 25-30: プラットフォームブリッジ通知
+if let Some(bridge) = app.try_state::<Mutex<PlatformBridge>>()
+    && let Ok(b) = bridge.lock()
+{
+    b.send_command(PlatformCommand::SetIndexing(true));
+}
+
+// 行 32: バックグラウンドスレッド spawn
+let app_handle = app.clone();
+```
+
+#### 追加箇所
+
+`PlatformCommand::SetIndexing(true)` 送信ブロックの **直後**、`app.clone()` の **直前** に以下を追加:
 
 ```rust
 // Notify frontend that indexing has started
 let _ = app.emit("indexing-started", ());
 ```
 
-### Step 2: `ui/src/stores/search.ts` の `initIndexingState()` に `indexing-started` リスナーを追加
+#### 完成形のイメージ
 
-`unlistenIndexingComplete` と対称に `unlistenIndexingStarted` を追加:
+```rust
+state.indexing.store(true, Ordering::SeqCst);
 
-```ts
-let unlistenIndexingStarted: (() => void) | undefined;
+if let Some(bridge) = app.try_state::<Mutex<PlatformBridge>>()
+    && let Ok(b) = bridge.lock()
+{
+    b.send_command(PlatformCommand::SetIndexing(true));
+}
 
-// initIndexingState() 内:
-unlistenIndexingStarted = await listen("indexing-started", () => {
-  trace("search:indexing_state:started");
-  setIndexing(true);
-});
+// ← ここに追加
+// Notify frontend that indexing has started
+let _ = app.emit("indexing-started", ());
 
-// cleanup 関数に含める:
-return () => {
-  unlistenIndexingComplete?.();
-  unlistenIndexingComplete = undefined;
-  unlistenIndexingStarted?.();
-  unlistenIndexingStarted = undefined;
-};
+let app_handle = app.clone();
+// ... spawn ...
 ```
 
-### Step 3: 検証
+#### `indexing-complete` の既存 emit との比較（対称確認）
 
-- `cargo check -p snotra-core -p snotra -p snotra-settings`
-- `npm run typecheck`
-- `npm run build`
-- `npm test`（既存テストがパスすること）
+```rust
+// 完了側（既存、行 84）
+let _ = app_handle.emit("indexing-complete", ());
+
+// 開始側（追加）
+let _ = app.emit("indexing-started", ());
+```
+
+ペイロードはどちらも `()` で統一。emit の戻り値は `let _ =` で無視（既存パターンと同じ）。
+
+---
+
+### Step 2: `ui/src/stores/search.ts` の `initIndexingState()` に `indexing-started` リスナーを追加
+
+**ファイル**: `ui/src/stores/search.ts`
+
+#### 現在の `initIndexingState()` 実装（調査確認済み、行 696-715）
+
+```typescript
+async function initIndexingState(): Promise<() => void> {
+  try {
+    const state = await api.getIndexingState();
+    setIndexing(state);
+    trace("search:indexing_state:init", { indexing: state });
+  } catch (e) {
+    trace("search:indexing_state:error", { error: String(e) });
+    console.error("Failed to get indexing state:", e);
+  }
+
+  unlistenIndexingComplete = await listen("indexing-complete", () => {
+    trace("search:indexing_state:complete");
+    setIndexing(false);
+    void runRefresh();
+  });
+  return () => {
+    unlistenIndexingComplete?.();
+    unlistenIndexingComplete = undefined;
+  };
+}
+```
+
+#### モジュールスコープの変数宣言（現在の `unlistenIndexingComplete` の定義場所に追記）
+
+`unlistenIndexingComplete` の宣言箇所（関数の近く）を探して、直下に以下を追加:
+
+```typescript
+let unlistenIndexingStarted: (() => void) | undefined;
+```
+
+#### `initIndexingState()` の変更後
+
+```typescript
+async function initIndexingState(): Promise<() => void> {
+  try {
+    const state = await api.getIndexingState();
+    setIndexing(state);
+    trace("search:indexing_state:init", { indexing: state });
+  } catch (e) {
+    trace("search:indexing_state:error", { error: String(e) });
+    console.error("Failed to get indexing state:", e);
+  }
+
+  unlistenIndexingComplete = await listen("indexing-complete", () => {
+    trace("search:indexing_state:complete");
+    setIndexing(false);
+    void runRefresh();
+  });
+
+  // ↓ 追加ブロック
+  unlistenIndexingStarted = await listen("indexing-started", () => {
+    trace("search:indexing_state:started");
+    setIndexing(true);
+  });
+
+  return () => {
+    unlistenIndexingComplete?.();
+    unlistenIndexingComplete = undefined;
+    unlistenIndexingStarted?.();          // ← 追加
+    unlistenIndexingStarted = undefined;  // ← 追加
+  };
+}
+```
+
+#### `listen` の import 確認
+
+`listen` はすでに行 2 でインポート済み（変更不要）:
+```typescript
+import { listen } from "@tauri-apps/api/event";
+```
+
+---
+
+### Step 3: テスト追加
+
+**ファイル**: `ui/src/stores/search.test.ts`
+
+既存の `search.test.ts` に `indexing-started` イベントのテストセクションを追加する。
+Tauri の `listen` はモック済み（`vi.mock("@tauri-apps/api/event")`）のため、イベントを手動で発火させる形でテストを書く。
+
+追加するテストケース:
+1. `indexing-started` イベントを受信すると `indexing()` signal が `true` になる
+2. `indexing-started` + `indexing-complete` のシーケンスで `false` に戻る
+
+---
+
+### Step 4: 検証
+
+```bash
+cargo check -p snotra-core -p snotra -p snotra-settings
+npm run typecheck
+npm run build
+npm test
+```
 
 ---
 
 ## 変更ファイル一覧
 
-| ファイル | 変更種別 | 内容 |
+| ファイル | 変更種別 | 変更行数（概算） |
 |---|---|---|
-| `src-tauri/src/indexing.rs` | 修正 | `start_index_build()` に `emit("indexing-started", ())` を追加 |
-| `ui/src/stores/search.ts` | 修正 | `initIndexingState()` に `indexing-started` リスナーを追加、cleanup に含める |
+| `src-tauri/src/indexing.rs` | 修正 | +2行（コメント + emit） |
+| `ui/src/stores/search.ts` | 修正 | +7行（変数宣言・リスナー・cleanup 2行） |
+| `ui/src/stores/search.test.ts` | テスト追加 | +20〜30行 |
 
 ---
 
@@ -134,7 +265,7 @@ return () => {
 
 ### チェック項目と結果
 
-1. **対称ペアの確認**: `indexing-started` / `indexing-complete` のペア。`indexing.rs` の `start_index_build()` 内に両方配置。全呼び出しパス（`/s`・`config_watcher`・初回ビルド）で一貫して発火する ✓
+1. **対称ペアの確認**: `indexing-started` / `indexing-complete` のペア。`indexing.rs` の `start_index_build()` 内に両方配置。全呼び出しパス（4経路）で一貫して発火する ✓
 
 2. **リソース管理**: `listen("indexing-started")` の `unlisten` を `initIndexingState()` の返り値 cleanup 関数に含める。既存の `unlistenIndexingComplete` と同パターン ✓
 
@@ -144,15 +275,19 @@ return () => {
 
 5. **`updateResults([])` の不要性を確認**: `shouldShowResults` のメモが `indexing()` に依存しているため、`setIndexing(true)` だけで表示が切り替わる。余計な結果クリアは不要 ✓
 
-6. **`src-tauri/CLAUDE.md` の発火イベント一覧の更新要否**: `config_watcher.rs` のコメントに発火イベントが列挙されているが、`indexing-started` は `indexing.rs` から発火するため、そのコメントへの追記は必要ない。ただし `src-tauri/CLAUDE.md` の `config_watcher.rs` の説明行「発火するイベント: ... `indexing-complete`（indexing.rs から）」という記述があるが、`indexing-started` も追加すべきか検討 → 追加する。
+6. **`CLAUDE.md` モジュール構成の同期**: 新規ファイル追加・削除なし。既存ファイルの修正のみ ✓
 
-7. **`CLAUDE.md` モジュール構成の同期**: 新規ファイル追加・削除なし。既存ファイルの修正のみ ✓
+7. **emit の位置**: `PlatformCommand::SetIndexing(true)` 送信後・`app.clone()` 前に配置。バックグラウンドスレッドが走り始める前に frontend へ通知されるため、race condition なし ✓
 
-### セルフレビューによる修正点
+8. **`Emitter` trait の use 文**: 既存コードで `app_handle.emit("indexing-complete", ())` が行 84 で使われているため、`Emitter` trait はすでに use 宣言済み（追加不要）✓
 
-- `initIndexingState()` のリスナー本体から `updateResults([])` と `setSelected(0)` を削除（不要と判明、Step 2 を更新済み）
-- `src-tauri/CLAUDE.md` の `config_watcher.rs` 説明行に `indexing-started`（indexing.rs から）を追記することを「触る範囲」に追加
+### セルフレビューによる修正点（初回計画からの変更）
+
+- `initIndexingState()` のリスナー本体から `updateResults([])` と `setSelected(0)` を削除（不要と判明）
+- emit 挿入位置を `app.clone()` 直前と明確化（`PlatformCommand::SetIndexing(true)` の後）
+- 4つの `start_index_build()` 呼び出し経路をすべて列挙（初回は `main.rs:465`、first-run は `commands/window.rs:141` も確認）
+- `unlistenIndexingStarted` 変数の宣言箇所の指定を追加
 
 ### 最終的な変更の最小性評価
 
-2ファイル（+ CLAUDE.md 1行）、各数行の追加のみ。既存パターンの対称的な適用であり、新しい概念を導入しない。最小変更と判断する。
+実装コードは合計約 9行の追加のみ。既存の `indexing-complete` パターンを対称的に適用するだけで、新しい概念・状態・抽象化を一切導入しない。最小変更と判断する。

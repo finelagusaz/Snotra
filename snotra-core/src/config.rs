@@ -793,6 +793,11 @@ impl Config {
             }
             changed = true;
         }
+        // migration の is_none() 判定より後で None → Some(default) に解決する。
+        // apply_migrations() 呼び出し後は常に Some(v) が保証され、
+        // 設定画面の DragValue::get_or_insert が no-op になり has_changes() の誤発火を防ぐ。
+        let _ = self.search.top_n_history.get_or_insert_with(default_top_n_history);
+        let _ = self.search.max_history_display.get_or_insert_with(default_max_history_display);
         #[allow(deprecated)]
         if self.search.sanitize() {
             changed = true;
@@ -1218,6 +1223,30 @@ mod tests {
         // Legacy slots はクリーンアップ済み
         assert_eq!(config.appearance.top_n_history, None);
         assert_eq!(config.appearance.max_history_display, None);
+    }
+
+    #[test]
+    fn apply_migrations_always_resolves_none_to_some() {
+        // [search] セクションも [appearance] legacy もない TOML では、
+        // apply_migrations() 後に None → Some(default) が補完されることを確認する。
+        // これにより設定画面の DragValue::get_or_insert が常に no-op になり、
+        // has_changes() の誤発火（draft = Some vs saved = None）を防ぐ。
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+
+            [appearance]
+            max_results = 8
+            window_width = 600
+
+            [paths]
+            additional = []
+        "#;
+        let mut config: Config = toml::from_str(toml_str).expect("parse");
+        config.apply_migrations();
+        assert_eq!(config.search.top_n_history, Some(200));
+        assert_eq!(config.search.max_history_display, Some(8));
     }
 
     #[test]

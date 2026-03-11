@@ -191,7 +191,11 @@ impl SettingsApp {
     }
 
     fn reset_to_default(&mut self) {
-        self.draft = Config::default();
+        let mut draft = Config::default();
+        // apply_migrations() で None フィールドをデフォルト値（Some(v)）に解決する。
+        // これにより saved（常に Some(v)）との PartialEq が tab 遷移順序に依存しなくなる。
+        let _ = draft.apply_migrations();
+        self.draft = draft;
         self.tr = Tr(self.draft.general.language);
         self.hotkey_state = Default::default();
         self.index_state = tabs::index::IndexTabState::default();

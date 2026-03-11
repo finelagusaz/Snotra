@@ -11,6 +11,11 @@ use crate::state::AppState;
 
 use super::trace_command;
 
+/// インデックス構築中に設定を開こうとしたときのエラーコード。
+/// フロントエンド側 `ui/src/lib/commands.ts` の `ERR_INDEXING_IN_PROGRESS` と対になる。
+/// 変更するときは両ファイルを同時に更新する。
+pub(crate) const ERR_INDEXING_IN_PROGRESS: &str = "indexing_in_progress";
+
 /// Managed state for tracking the snotra-settings child process.
 pub type SettingsProcessState = Mutex<Option<Child>>;
 
@@ -145,9 +150,7 @@ pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), Strin
     trace_command("cmd:open_settings:start", json!({}));
     if state.indexing.load(Ordering::SeqCst) {
         trace_command("cmd:open_settings:noop_indexing", json!({}));
-        // NOTE: this error string is matched by the frontend in ui/src/lib/commands.ts
-        // (String(e).includes("indexing_in_progress")). Update both if changed.
-        return Err("indexing_in_progress".to_string());
+        return Err(ERR_INDEXING_IN_PROGRESS.to_string());
     }
 
     launch_settings_process(&app, &[])

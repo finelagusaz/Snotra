@@ -177,9 +177,123 @@ fn start_import(ctx: &egui::Context, state: &mut BackupTabState, tr: &Tr) {
     });
 }
 
-/// Truncate to first line to avoid multi-line status bar overflow.
+/// Truncate to first line. Used for I/O errors which never contain newlines.
 fn first_line(s: &str) -> &str {
     s.lines().next().unwrap_or(s)
+}
+
+/// Format a toml parse error string for display.
+/// - En: returns the full error string as-is (already contains line numbers and context).
+/// - Ja: prepends a Japanese summary (with line number) before the full English original.
+fn localize_toml_error(msg: &str, tr: &crate::i18n::Tr) -> String {
+    use snotra_core::config::Language;
+    if tr.0 == Language::En {
+        return msg.to_string();
+    }
+
+    // Extract line number from first line: "TOML parse error at line N, column M"
+    let line_num: Option<u32> = msg
+        .lines()
+        .next()
+        .and_then(|first| first.split("at line ").nth(1))
+        .and_then(|rest| rest.split([',', ' ']).next())
+        .and_then(|n| n.trim().parse().ok());
+
+    // Last non-empty, non-visual-context line is the error description.
+    // Visual context lines start with '|' (after trimming); numbered source lines
+    // like "3 | key value" do not, but they appear before the description.
+    let desc = msg
+        .lines()
+        .rfind(|l| {
+            let t = l.trim();
+            !t.is_empty() && !t.starts_with('|') && !t.starts_with('^')
+        })
+        .unwrap_or(msg);
+
+    let ja_summary: String = if desc.contains("missing field") {
+        match extract_backtick(desc) {
+            Some(field) => tr.err_toml_missing_field(field),
+            None => tr.err_toml_parse_error().to_string(),
+        }
+    } else if desc.contains("invalid type") {
+        tr.err_toml_invalid_type().to_string()
+    } else {
+        tr.err_toml_parse_error().to_string()
+    };
+
+    match line_num {
+        Some(n) => format!("行 {}: {}\n\n{}", n, ja_summary, msg),
+        None => format!("{}\n\n{}", ja_summary, msg),
+    }
+}
+
+/// Extract the first backtick-quoted word: `` `target` `` → `"target"`.
+fn extract_backtick(s: &str) -> Option<&str> {
+    let start = s.find('`')? + 1;
+    let end = s[start..].find('`')? + start;
+    Some(&s[start..end])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use snotra_core::config::Language;
+
+    fn tr_ja() -> crate::i18n::Tr {
+        crate::i18n::Tr(Language::Ja)
+    }
+
+    fn tr_en() -> crate::i18n::Tr {
+        crate::i18n::Tr(Language::En)
+    }
+
+    #[test]
+    fn localize_toml_error_en_returns_input_unchanged() {
+        let msg = "TOML parse error at line 3, column 5\n  |\n3 | bad\n  | ^\nexpected '='";
+        assert_eq!(localize_toml_error(msg, &tr_en()), msg);
+    }
+
+    #[test]
+    fn localize_toml_error_ja_missing_field_extracts_name_and_line() {
+        let msg = "TOML parse error at line 1, column 1\n  |\n1 | [search]\n  | ^\nmissing field `hotkey`";
+        let out = localize_toml_error(msg, &tr_ja());
+        assert!(out.starts_with("行 1:"), "should start with line number: {}", out);
+        assert!(out.contains("\"hotkey\" が必要です"), "should contain field name: {}", out);
+        assert!(out.contains(msg), "should include original English: {}", out);
+    }
+
+    #[test]
+    fn localize_toml_error_ja_invalid_type_with_line() {
+        let msg = "TOML parse error at line 2, column 15\n  |\n2 | max_results = \"ten\"\n  |               ^^^^^\ninvalid type: string \"ten\", expected u32";
+        let out = localize_toml_error(msg, &tr_ja());
+        assert!(out.starts_with("行 2:"), "should start with line number: {}", out);
+        assert!(out.contains("値の型が違います"), "should contain type error message: {}", out);
+        assert!(out.contains(msg), "should include original English: {}", out);
+    }
+
+    #[test]
+    fn localize_toml_error_ja_syntax_error_fallback() {
+        let msg = "TOML parse error at line 5, column 3\n  |\n5 | key value\n  |   ^\nexpected '='";
+        let out = localize_toml_error(msg, &tr_ja());
+        assert!(out.starts_with("行 5:"), "should start with line number: {}", out);
+        assert!(out.contains("構文エラー"), "should contain generic message: {}", out);
+    }
+
+    #[test]
+    fn localize_toml_error_ja_no_line_number_falls_back_gracefully() {
+        let msg = "some unknown error without line info";
+        let out = localize_toml_error(msg, &tr_ja());
+        assert!(!out.starts_with("行"), "should not have line prefix: {}", out);
+        assert!(out.contains("構文エラー"), "should contain generic message: {}", out);
+        assert!(out.contains(msg), "should include original: {}", out);
+    }
+
+    #[test]
+    fn extract_backtick_extracts_first_word() {
+        assert_eq!(extract_backtick("missing field `hotkey`"), Some("hotkey"));
+        assert_eq!(extract_backtick("missing field `target`"), Some("target"));
+        assert_eq!(extract_backtick("no backticks here"), None);
+    }
 }
 
 /// Returns (message, is_error). None message = cancelled.
@@ -210,14 +324,14 @@ fn handle_import_result(path: Option<PathBuf>, tr: &Tr) -> (Option<String>, bool
     let mut config = match Config::from_toml_str(&content) {
         Ok(c) => c,
         Err(e) => {
-            return (Some(format!("{}{}", tr.status_import_failed(), first_line(&e))), true, None);
+            return (Some(format!("{}{}", tr.status_import_failed(), localize_toml_error(&e, tr))), true, None);
         }
     };
     // Apply the same migrations as Config::load() (legacy field migration, normalization, etc.)
     config.apply_migrations();
     let errors = config.validate();
     if !errors.is_empty() {
-        return (Some(format!("{}{:?}", tr.status_import_validation_error(), errors[0])), true, None);
+        return (Some(format!("{}{}", tr.status_import_validation_error(), crate::app::config_error_message(&errors[0], tr))), true, None);
     }
     if let Err(e) = config.save() {
         return (Some(format!("{}{}", tr.status_import_failed(), first_line(&e))), true, None);

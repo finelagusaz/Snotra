@@ -977,6 +977,27 @@ impl Tr {
         }
     }
 
+    pub fn err_toml_missing_field(&self, field: &str) -> String {
+        match self.0 {
+            Language::Ja => format!("\"{}\" が必要です", field),
+            Language::En => format!("missing field \"{}\"", field),
+        }
+    }
+
+    pub fn err_toml_invalid_type(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "値の型が違います",
+            Language::En => "invalid type",
+        }
+    }
+
+    pub fn err_toml_parse_error(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "構文エラー",
+            Language::En => "syntax error",
+        }
+    }
+
     pub fn err_migemo_min_chars_zero(&self) -> &'static str {
         match self.0 {
             Language::Ja => "migemo 最小文字数は 1 以上である必要があります",

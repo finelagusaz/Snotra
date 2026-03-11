@@ -120,7 +120,7 @@ describe("ResultRow", () => {
     expect(img!.getAttribute("src")).toBe("data:image/png;base64,abc");
   });
 
-  it("icon が未指定の場合フォールバック絵文字が表示される", () => {
+  it("icon が undefined の場合アイコン領域は空になる（ちらつき防止）", () => {
     const { container } = render(() => (
       <ResultRow
         result={makeResult()}
@@ -130,8 +130,26 @@ describe("ResultRow", () => {
         onDoubleClick={() => {}}
       />
     ));
-    const fallback = container.querySelector(".icon-fallback");
-    expect(fallback).not.toBeNull();
+    // 未取得中はフォールバック絵文字も img も表示しない
+    expect(container.querySelector(".icon-fallback")).toBeNull();
+    expect(container.querySelector("img")).toBeNull();
+    // レイアウトシフト防止のため枠は存在する
+    expect(container.querySelector(".result-icon")).not.toBeNull();
+  });
+
+  it("icon が null の場合フォールバック絵文字が表示される", () => {
+    const { container } = render(() => (
+      <ResultRow
+        result={makeResult()}
+        isSelected={false}
+        icon={null}
+        font="12px sans-serif"
+        onClick={() => {}}
+        onDoubleClick={() => {}}
+      />
+    ));
+    expect(container.querySelector(".icon-fallback")).not.toBeNull();
+    expect(container.querySelector("img")).toBeNull();
   });
 
   it("showIcons=false でアイコン領域が非表示", () => {

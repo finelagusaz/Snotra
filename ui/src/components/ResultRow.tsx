@@ -5,7 +5,8 @@ import { truncatePath } from "../lib/truncatePath";
 interface ResultRowProps {
   result: SearchResult;
   isSelected: boolean;
-  icon?: string;
+  /** undefined = 未取得（空表示）, null = 取得完了・アイコンなし（フォールバック絵文字）, string = Blob URL */
+  icon?: string | null;
   showIcons?: boolean;
   containerWidth?: number;
   font: string;
@@ -41,24 +42,26 @@ const ResultRow: Component<ResultRowProps> = (rawProps) => {
     >
       <Show when={props.showIcons}>
         <div class="result-icon">
-          <Show
-            when={props.icon}
-            fallback={
-              <span class="icon-fallback">
-                {props.result.isError
-                  ? "\u26A0\uFE0F"
-                  : props.result.isFolder
-                    ? "\u{1F4C1}"
-                    : "\u{1F4C4}"}
-              </span>
-            }
-          >
-            <img
-              src={props.icon}
-              alt=""
-              width="16"
-              height="16"
-            />
+          <Show when={props.icon !== undefined}>
+            <Show
+              when={props.icon}
+              fallback={
+                <span class="icon-fallback">
+                  {props.result.isError
+                    ? "\u26A0\uFE0F"
+                    : props.result.isFolder
+                      ? "\u{1F4C1}"
+                      : "\u{1F4C4}"}
+                </span>
+              }
+            >
+              <img
+                src={props.icon!}
+                alt=""
+                width="16"
+                height="16"
+              />
+            </Show>
           </Show>
         </div>
       </Show>

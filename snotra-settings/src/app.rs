@@ -195,7 +195,7 @@ impl SettingsApp {
     }
 }
 
-fn config_error_message(error: &ConfigError, tr: &Tr) -> String {
+pub(crate) fn config_error_message(error: &ConfigError, tr: &Tr) -> String {
     match error {
         ConfigError::HotkeyModifierEmpty => tr.err_hotkey_modifier_empty().to_string(),
         ConfigError::HotkeyKeyEmpty => tr.err_hotkey_key_empty().to_string(),

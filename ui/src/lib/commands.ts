@@ -1,6 +1,11 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as api from "./invoke";
 import { t } from "./i18n";
+import { setLaunchNoticeWithAutoClear } from "../stores/search";
+
+/** インデックス構築中エラーコード。Rust 側 src-tauri/src/commands/window.rs の
+ *  ERR_INDEXING_IN_PROGRESS と対になる。変更するときは両ファイルを同時に更新する。 */
+const ERR_INDEXING_IN_PROGRESS = "indexing_in_progress";
 
 export interface SlashCommand {
   command: string;
@@ -29,7 +34,18 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     label: "/o",
     get description() { return t("cmd.settings.description"); },
     action: async () => {
-      await api.openSettings();
+      try {
+        await api.openSettings();
+      } catch (e) {
+        if (String(e).includes(ERR_INDEXING_IN_PROGRESS)) {
+          setLaunchNoticeWithAutoClear(
+            t("notice.settings.unavailable_while_indexing"),
+            3000,
+          );
+        } else {
+          throw e;
+        }
+      }
     },
   },
   {

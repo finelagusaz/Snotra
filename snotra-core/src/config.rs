@@ -307,6 +307,16 @@ pub struct SearchConfig {
     /// 1文字（"a"→"あ"）の意図しないマッチを防ぐため、デフォルト 2。
     #[serde(default = "default_migemo_min_chars")]
     pub migemo_min_chars: usize,
+    /// 空クエリ時に表示する履歴候補の最大件数。
+    /// `None` = 未設定（実効値は `effective_top_n_history()` で取得）。
+    /// `Option` にすることで「TOML に明示されたか否か」を区別し、
+    /// レガシー `[appearance]` からの移行時に明示値を上書きしない。
+    #[serde(default)]
+    pub top_n_history: Option<usize>,
+    /// 空クエリ時に表示する履歴候補の上限（UI 表示件数）。
+    /// `None` = 未設定（実効値は `effective_max_history_display()` で取得）。
+    #[serde(default)]
+    pub max_history_display: Option<usize>,
 }
 
 impl Default for SearchConfig {
@@ -320,11 +330,23 @@ impl Default for SearchConfig {
             instant_command_prefix: default_instant_command_prefix(),
             migemo_enabled: false,
             migemo_min_chars: default_migemo_min_chars(),
+            top_n_history: None,
+            max_history_display: None,
         }
     }
 }
 
 impl SearchConfig {
+    /// 空クエリ時の履歴取得上限。`top_n_history` が未設定ならデフォルト値を返す。
+    pub fn effective_top_n_history(&self) -> usize {
+        self.top_n_history.unwrap_or_else(default_top_n_history)
+    }
+
+    /// 空クエリ時の履歴表示上限。`max_history_display` が未設定ならデフォルト値を返す。
+    pub fn effective_max_history_display(&self) -> usize {
+        self.max_history_display.unwrap_or_else(default_max_history_display)
+    }
+
     #[deprecated(note = "use Config::validate() to detect issues instead")]
     pub fn sanitize(&mut self) -> bool {
         if self.fuzzy_history_cap_ratio.is_finite()
@@ -342,12 +364,18 @@ impl SearchConfig {
 pub struct AppearanceConfig {
     pub max_results: usize,
     pub window_width: u32,
-    #[serde(default = "default_top_n_history")]
-    pub top_n_history: usize,
-    #[serde(default = "default_max_history_display")]
-    pub max_history_display: usize,
     #[serde(default = "default_show_icons")]
     pub show_icons: bool,
+    /// Legacy: moved to `SearchConfig.top_n_history`. Read from old `config.toml` files and
+    /// migrated by `apply_migrations()`; never written back (`skip_serializing`).
+    /// Do not use in new code — read `SearchConfig.top_n_history` instead.
+    #[serde(default, skip_serializing)]
+    pub top_n_history: Option<usize>,
+    /// Legacy: moved to `SearchConfig.max_history_display`. Read from old `config.toml` files and
+    /// migrated by `apply_migrations()`; never written back (`skip_serializing`).
+    /// Do not use in new code — read `SearchConfig.max_history_display` instead.
+    #[serde(default, skip_serializing)]
+    pub max_history_display: Option<usize>,
 }
 
 fn default_theme_preset() -> ThemePreset {
@@ -633,9 +661,9 @@ impl Default for Config {
             appearance: AppearanceConfig {
                 max_results: 8,
                 window_width: 600,
-                top_n_history: 200,
-                max_history_display: 8,
                 show_icons: true,
+                top_n_history: None,
+                max_history_display: None,
             },
             visual: VisualConfig::default(),
             paths: PathsConfig {
@@ -749,6 +777,27 @@ impl Config {
             self.migrate_additional_to_scan();
             changed = true;
         }
+        // Migrate [appearance].top_n_history / max_history_display → [search]
+        // take() はレガシーフィールドのクリーンアップのため常に実行する。
+        // [search] が None（TOML に未記載）のときだけ legacy 値で補完する。
+        // [search] に値が明示されていれば（たとえそれがデフォルト値と同じでも）上書きしない。
+        if let Some(v) = self.appearance.top_n_history.take() {
+            if self.search.top_n_history.is_none() {
+                self.search.top_n_history = Some(v);
+            }
+            changed = true;
+        }
+        if let Some(v) = self.appearance.max_history_display.take() {
+            if self.search.max_history_display.is_none() {
+                self.search.max_history_display = Some(v);
+            }
+            changed = true;
+        }
+        // migration の is_none() 判定より後で None → Some(default) に解決する。
+        // apply_migrations() 呼び出し後は常に Some(v) が保証され、
+        // 設定画面の DragValue::get_or_insert が no-op になり has_changes() の誤発火を防ぐ。
+        let _ = self.search.top_n_history.get_or_insert_with(default_top_n_history);
+        let _ = self.search.max_history_display.get_or_insert_with(default_max_history_display);
         #[allow(deprecated)]
         if self.search.sanitize() {
             changed = true;
@@ -1088,15 +1137,17 @@ mod tests {
             history_normalization = "fuzzy_relative_cap"
             fuzzy_history_cap_ratio = 0.25
         "#;
+        // Verify raw deserialized values before any migration.
+        // top_n_history / max_history_display land in the legacy AppearanceConfig slots (Some(v));
+        // migration to SearchConfig is tested in migrate_top_n_history_from_appearance_to_search.
         let config: Config = toml::from_str(toml_str).expect("parse");
         assert_eq!(config.hotkey.modifier, "Ctrl");
         assert_eq!(config.hotkey.key, "Space");
         assert_eq!(config.appearance.max_results, 10);
         assert_eq!(config.appearance.window_width, 700);
-        assert_eq!(config.appearance.top_n_history, 150);
-        assert_eq!(config.appearance.max_history_display, 5);
+        assert_eq!(config.appearance.top_n_history, Some(150));
+        assert_eq!(config.appearance.max_history_display, Some(5));
         assert_eq!(config.paths.additional, vec!["C:\\Tools"]);
-        assert!(config.paths.scan.is_empty());
         assert_eq!(config.search.normal_mode, SearchModeConfig::Prefix);
         assert_eq!(config.search.folder_mode, SearchModeConfig::Substring);
         assert!(config.search.show_hidden_system);
@@ -1117,7 +1168,93 @@ mod tests {
     }
 
     #[test]
+    fn migrate_top_n_history_from_appearance_to_search() {
+        // [appearance] のみに値があるケース: 新フィールドがデフォルト値なので legacy 値で補完する。
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+
+            [appearance]
+            max_results = 8
+            window_width = 600
+            top_n_history = 300
+            max_history_display = 12
+
+            [paths]
+            additional = []
+        "#;
+        let mut config: Config = toml::from_str(toml_str).expect("parse");
+        assert!(config.apply_migrations());
+        assert_eq!(config.search.top_n_history, Some(300));
+        assert_eq!(config.search.max_history_display, Some(12));
+        // Legacy slots are cleared after migration
+        assert_eq!(config.appearance.top_n_history, None);
+        assert_eq!(config.appearance.max_history_display, None);
+    }
+
+    #[test]
+    fn migrate_legacy_does_not_overwrite_explicit_search_values() {
+        // [appearance] と [search] の両方に値があるケース:
+        // 新フィールド ([search]) が明示的に設定されている場合は legacy 値で上書きしない。
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+
+            [appearance]
+            max_results = 8
+            window_width = 600
+            top_n_history = 50
+            max_history_display = 3
+
+            [search]
+            top_n_history = 400
+            max_history_display = 15
+
+            [paths]
+            additional = []
+        "#;
+        let mut config: Config = toml::from_str(toml_str).expect("parse");
+        assert!(config.apply_migrations());
+        // [search] の値が保持されていること（legacy で上書きされていない）
+        assert_eq!(config.search.top_n_history, Some(400));
+        assert_eq!(config.search.max_history_display, Some(15));
+        // Legacy slots はクリーンアップ済み
+        assert_eq!(config.appearance.top_n_history, None);
+        assert_eq!(config.appearance.max_history_display, None);
+    }
+
+    #[test]
+    fn apply_migrations_always_resolves_none_to_some() {
+        // [search] セクションも [appearance] legacy もない TOML では、
+        // apply_migrations() 後に None → Some(default) が補完されることを確認する。
+        // これにより設定画面の DragValue::get_or_insert が常に no-op になり、
+        // has_changes() の誤発火（draft = Some vs saved = None）を防ぐ。
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+
+            [appearance]
+            max_results = 8
+            window_width = 600
+
+            [paths]
+            additional = []
+        "#;
+        let mut config: Config = toml::from_str(toml_str).expect("parse");
+        config.apply_migrations();
+        assert_eq!(config.search.top_n_history, Some(200));
+        assert_eq!(config.search.max_history_display, Some(8));
+    }
+
+    #[test]
     fn deserialize_minimal_config_uses_defaults() {
+        // Verify that omitting the `[search]` section entirely still yields correct defaults.
+        // Each field uses `#[serde(default = "default_...")]`, so serde fills in the
+        // function-level defaults (e.g. `default_top_n_history` → 200) without needing
+        // the section to be present in the TOML.
         let toml_str = r#"
             [hotkey]
             modifier = "Alt"
@@ -1131,8 +1268,9 @@ mod tests {
             additional = []
         "#;
         let config: Config = toml::from_str(toml_str).expect("parse");
-        assert_eq!(config.appearance.top_n_history, 200);
-        assert_eq!(config.appearance.max_history_display, 8);
+        // [search] セクションが省略されると None になり、accessor がデフォルト値を返す
+        assert_eq!(config.search.effective_top_n_history(), 200);
+        assert_eq!(config.search.effective_max_history_display(), 8);
         assert_eq!(config.search.normal_mode, SearchModeConfig::Fuzzy);
         assert_eq!(config.search.folder_mode, SearchModeConfig::Fuzzy);
         assert!(!config.search.show_hidden_system);
@@ -1157,8 +1295,8 @@ mod tests {
         assert_eq!(config.hotkey.key, "Q");
         assert_eq!(config.appearance.max_results, 8);
         assert_eq!(config.appearance.window_width, 600);
-        assert_eq!(config.appearance.top_n_history, 200);
-        assert_eq!(config.appearance.max_history_display, 8);
+        assert_eq!(config.search.effective_top_n_history(), 200);
+        assert_eq!(config.search.effective_max_history_display(), 8);
         assert!(config.appearance.show_icons);
         assert!(config.paths.additional.is_empty());
         // default scan paths are populated from environment (common Start Menu + Desktop)

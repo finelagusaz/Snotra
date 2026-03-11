@@ -361,6 +361,13 @@ impl Tr {
         }
     }
 
+    pub fn label_max_history_display(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "最大履歴表示件数:",
+            Language::En => "Max history display:",
+        }
+    }
+
     pub fn heading_history_score(&self) -> &'static str {
         match self.0 {
             Language::Ja => "履歴スコア",

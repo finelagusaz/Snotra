@@ -42,7 +42,12 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, tr: &Tr) {
 
         egui::Grid::new("history_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
             ui.label(tr.label_max_history());
-            ui.add_sized([60.0, ui.spacing().interact_size.y], egui::DragValue::new(&mut config.appearance.top_n_history).range(10..=1000));
+            let top_n_default = config.search.effective_top_n_history();
+            ui.add_sized([60.0, ui.spacing().interact_size.y], egui::DragValue::new(config.search.top_n_history.get_or_insert(top_n_default)).range(10..=1000));
+            ui.end_row();
+            ui.label(tr.label_max_history_display());
+            let max_display_default = config.search.effective_max_history_display();
+            ui.add_sized([60.0, ui.spacing().interact_size.y], egui::DragValue::new(config.search.max_history_display.get_or_insert(max_display_default)).range(1..=50));
             ui.end_row();
         });
 

@@ -240,8 +240,10 @@ const SearchWindow: Component = () => {
     if (toolSelectionState()) return;
     if (launching()) return;
     const value = (e.target as HTMLInputElement).value;
-    // インデックス構築中は入力を無視（ただしインスタントコマンドプレフィックスはバイパス）
-    if (indexing() && !value.trimStart().startsWith(instantCommandPrefix())) return;
+    // インデックス構築中は通常検索を無視。ただしスラッシュコマンド（/）と
+    // インスタントコマンドプレフィックス（@等）はインデックス不要のためバイパスする。
+    const trimmed = value.trimStart();
+    if (indexing() && !trimmed.startsWith("/") && !trimmed.startsWith(instantCommandPrefix())) return;
     trace("ui:input", { value, folderMode: folderState() !== null });
     perfMarkInput();
     clearLaunchNotice();

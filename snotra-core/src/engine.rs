@@ -75,13 +75,13 @@ impl Engine {
         let mode = SearchMode::from(self.config.search.normal_mode);
         let boost = SearchOptions::from(&self.config.search);
         // top_n_history が取得上限。max_results はウィンドウ可視行数のみを制御する。
-        let fetch_limit = self.config.appearance.top_n_history;
+        let fetch_limit = self.config.search.effective_top_n_history();
         self.search_engine
             .search_with_options(query, fetch_limit, &self.history, mode, boost)
     }
 
     pub fn recent_history(&self) -> Vec<SearchResult> {
-        let max = self.config.appearance.max_history_display;
+        let max = self.config.search.effective_max_history_display();
         self.search_engine.recent_history(&self.history, max)
     }
 
@@ -89,7 +89,7 @@ impl Engine {
         FolderListContext {
             mode: SearchMode::from(self.config.search.folder_mode),
             show_hidden_system: self.config.search.show_hidden_system,
-            max_results: self.config.appearance.top_n_history,
+            max_results: self.config.search.effective_top_n_history(),
         }
     }
 
@@ -191,7 +191,7 @@ mod tests {
     }
 
     fn empty_history() -> HistoryStore {
-        HistoryStore::load(10, 8)
+        HistoryStore::load(10)
     }
 
     fn default_config() -> Config {

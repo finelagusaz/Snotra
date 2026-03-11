@@ -58,6 +58,7 @@
 - シリアライザを切り替える場合は**必ずバージョン番号をバンプ**し、旧形式のフォールバックデシリアライザを追加する。切り替え前後でバイト列の互換性はほぼ存在しない（例: bincode の u32 は 4バイト LE、postcard は LEB128 varint）
 - **データの意味（セマンティクス）を変更する場合もバージョン番号をバンプする**。バイト列のフォーマットが同一でも、値の解釈が変わればデータ破損と同じ（例: 絶対座標→モニター相対座標。旧データをそのまま新セマンティクスで読むと位置がずれる）
 - `deserialize_failed → save()` パターン（デコード失敗時に空データを即時上書き保存）は HistoryStore など学習データを持つモジュールでデータ喪失を招く。フォールバック読み込みを先に試み、次回の通常 save() で新形式に昇格させること
+- **TOML フィールドを別の struct に移動するとき**: 旧フィールドを削除するのではなく `#[serde(default, skip_serializing)] pub field: Option<T>` として残し、`apply_migrations()` で `self.old.field.take()` → 新フィールドへ代入する。`Config::default()` の明示的 struct 初期化に `field: None` を追加するのを忘れない。また、`apply_migrations()` には複数のマイグレーションが存在するため、一部だけをテストする場合でも他の副作用（`additional → scan` 移行等）を踏まえたアサーション順序・内容を設計する
 
 ## history.rs のキー正規化に関するチェックリスト
 
@@ -114,3 +115,11 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 ## Config のデシリアライズ経路
 
 `Config::load()` はデシリアライズ後に `apply_migrations()` で後処理（レガシーフィールド移行・正規化・システムショートカットフォールバック）を実行する。**Config をデシリアライズする新しい経路**（インポート、テスト用ファクトリ等）を追加するときは、`apply_migrations()` の適用要否を明示的に判断する。迂回すると旧版データの移行漏れ（例: `paths.additional` の消失）が起きる。
+
+### `Option<T>` フィールドを migration の「明示設定か否か」の sentinel に使う場合
+
+`None` = TOML 未記載、`Some(v)` = 明示設定 として使う場合、`SearchConfig::default()` は **`None` を返すこと**。`Some(default_value)` を返すと、`[search]` セクション全体が TOML に存在しない場合でも serde が `SearchConfig::default()` を使うため `Some(v)` になり、`apply_migrations()` の `is_none()` チェックが常に false になって legacy 値の移行が起きなくなる。
+
+- 正しいパターン: `Default` → `None`、使用時に `effective_*()` アクセサで `unwrap_or_else(default_fn)` する
+- migration 後の「None を解消する」処理 (`get_or_insert_with`) は `apply_migrations()` の最後にまとめて実行する
+- `reset_to_default()` でも `Config::default()` 後に `apply_migrations()` を呼び、None を解消してから保存する

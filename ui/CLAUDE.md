@@ -61,6 +61,7 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 ### 注意点
 
 - **vite-plugin-solid により SolidJS のリアクティブ初期化が走る**: SolidJS モジュール（`search.ts` 等）を import するテストは、`requestAnimationFrame` 等のブラウザ API スタブが必要。`vi.hoisted(() => { globalThis.requestAnimationFrame = ... })` でモジュールロード前に差し込むこと（`vi.stubGlobal` はホイストされないため間に合わない）
+- **`lib/` モジュールが `stores/` を import するようになった場合**: そのモジュールのテストファイルに `vi.mock("../stores/...")` を追加する。追加しないと transitive import 経由で SolidJS のモジュールレベルコードが走り `requestAnimationFrame` 等の未定義エラーが CI で発生する。`vi.hoisted` でモック関数を宣言してから `vi.mock` ファクトリ内で参照するパターンを使う
 - **Canvas API モック**: `truncatePath.ts` のように遅延初期化（初回呼び出しまで `document.createElement` しない）の場合、`vi.stubGlobal("document", { createElement: ... })` を `beforeAll` で設定すれば jsdom 不要でテスト可能
 - **コンポーネントテストでは `render(() => <Component />)` を使う**: SolidJS の `render` は関数ラッパーが必須（React と異なり直接 JSX を渡さない）
 

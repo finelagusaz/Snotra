@@ -11,6 +11,11 @@ use crate::state::AppState;
 
 use super::trace_command;
 
+/// インデックス構築中に設定を開こうとしたときのエラーコード。
+/// フロントエンド側 `ui/src/lib/commands.ts` の `ERR_INDEXING_IN_PROGRESS` と対になる。
+/// 変更するときは両ファイルを同時に更新する。
+pub(crate) const ERR_INDEXING_IN_PROGRESS: &str = "indexing_in_progress";
+
 /// Managed state for tracking the snotra-settings child process.
 pub type SettingsProcessState = Mutex<Option<Child>>;
 
@@ -95,9 +100,10 @@ pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> R
         // the dedup check in launch_settings_process works.
         loop {
             std::thread::sleep(std::time::Duration::from_millis(250));
-            let proc_state = handle_for_monitor
-                .try_state::<SettingsProcessState>()
-                .expect("SettingsProcessState not managed");
+            let Some(proc_state) = handle_for_monitor.try_state::<SettingsProcessState>() else {
+                eprintln!("[settings-monitor] SettingsProcessState not managed; exiting monitor thread");
+                break;
+            };
             let mut guard = proc_state.lock().unwrap();
             if let Some(child) = guard.as_mut() {
                 match child.try_wait() {
@@ -144,7 +150,7 @@ pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), Strin
     trace_command("cmd:open_settings:start", json!({}));
     if state.indexing.load(Ordering::SeqCst) {
         trace_command("cmd:open_settings:noop_indexing", json!({}));
-        return Ok(());
+        return Err(ERR_INDEXING_IN_PROGRESS.to_string());
     }
 
     launch_settings_process(&app, &[])

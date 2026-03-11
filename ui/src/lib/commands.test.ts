@@ -3,6 +3,7 @@ import * as api from "./invoke";
 import { findCommand, SLASH_COMMANDS } from "./commands";
 
 const mockMainHide = vi.hoisted(() => vi.fn(async () => {}));
+const mockSetLaunchNoticeWithAutoClear = vi.hoisted(() => vi.fn());
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: vi.fn(() => ({ hide: mockMainHide })),
@@ -13,6 +14,13 @@ vi.mock("./invoke", () => ({
   rebuildIndex: vi.fn(async () => true),
   quitApp: vi.fn(async () => {}),
   notifyMainHidden: vi.fn(async () => {}),
+}));
+
+// search.ts はモジュールレベルで SolidJS リアクティブコード（createSignal 等）と
+// requestAnimationFrame を使用するため、直接ロードするとテスト環境でエラーになる。
+// commands.ts が setLaunchNoticeWithAutoClear を import するためここでモックが必要。
+vi.mock("../stores/search", () => ({
+  setLaunchNoticeWithAutoClear: mockSetLaunchNoticeWithAutoClear,
 }));
 
 describe("SLASH_COMMANDS", () => {
@@ -77,6 +85,21 @@ describe("slash command actions", () => {
 
     expect(api.openSettings).toHaveBeenCalledTimes(1);
     expect(mockMainHide).not.toHaveBeenCalled();
+  });
+
+  it("/o インデックス構築中エラー時に通知を表示する", async () => {
+    vi.mocked(api.openSettings).mockRejectedValueOnce(new Error("indexing_in_progress"));
+    const cmd = findCommand("/o");
+    await cmd!.action();
+
+    expect(mockSetLaunchNoticeWithAutoClear).toHaveBeenCalledTimes(1);
+  });
+
+  it("/o 予期せぬエラーは再スローする", async () => {
+    vi.mocked(api.openSettings).mockRejectedValueOnce(new Error("unexpected_error"));
+    const cmd = findCommand("/o");
+
+    await expect(cmd!.action()).rejects.toThrow("unexpected_error");
   });
 
   it("/s hides main window before rebuildIndex", async () => {

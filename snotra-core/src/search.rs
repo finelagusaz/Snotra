@@ -633,9 +633,8 @@ impl SearchEngine {
             .collect();
 
         history
-            .recent_launches()
+            .recent_launches(max_results)
             .into_iter()
-            .take(max_results)
             .filter_map(|path| {
                 path_to_entry.get(path).map(|entry| SearchResult {
                     name: entry.name.clone(),
@@ -783,7 +782,7 @@ mod tests {
     }
 
     fn empty_history() -> HistoryStore {
-        HistoryStore::load(10, 8)
+        HistoryStore::load(10)
     }
 
     #[test]

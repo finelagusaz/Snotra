@@ -38,6 +38,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
             t("notice.settings.unavailable_while_indexing"),
             3000,
           );
+        } else {
+          throw e;
         }
       }
     },

@@ -329,10 +329,7 @@ fn main() {
     // Lazy-load icon cache on first icon request to keep startup path short.
     let icon_cache_state: IconCacheState = Mutex::new(None);
 
-    let history = HistoryStore::load(
-        config.search.top_n_history,
-        config.search.max_history_display,
-    );
+    let history = HistoryStore::load(config.search.top_n_history);
 
     let show_on_startup = config.general.show_on_startup;
     let show_tray = config.general.show_tray_icon;

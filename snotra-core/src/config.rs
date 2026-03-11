@@ -764,12 +764,18 @@ impl Config {
             changed = true;
         }
         // Migrate [appearance].top_n_history / max_history_display → [search]
+        // take() はレガシーフィールドのクリーンアップのため常に実行する。
+        // 新フィールドがデフォルト値のときだけ補完する（新フィールドが明示的に設定済みなら上書きしない）。
         if let Some(v) = self.appearance.top_n_history.take() {
-            self.search.top_n_history = v;
+            if self.search.top_n_history == default_top_n_history() {
+                self.search.top_n_history = v;
+            }
             changed = true;
         }
         if let Some(v) = self.appearance.max_history_display.take() {
-            self.search.max_history_display = v;
+            if self.search.max_history_display == default_max_history_display() {
+                self.search.max_history_display = v;
+            }
             changed = true;
         }
         #[allow(deprecated)]
@@ -1143,6 +1149,7 @@ mod tests {
 
     #[test]
     fn migrate_top_n_history_from_appearance_to_search() {
+        // [appearance] のみに値があるケース: 新フィールドがデフォルト値なので legacy 値で補完する。
         let toml_str = r#"
             [hotkey]
             modifier = "Alt"
@@ -1162,6 +1169,38 @@ mod tests {
         assert_eq!(config.search.top_n_history, 300);
         assert_eq!(config.search.max_history_display, 12);
         // Legacy slots are cleared after migration
+        assert_eq!(config.appearance.top_n_history, None);
+        assert_eq!(config.appearance.max_history_display, None);
+    }
+
+    #[test]
+    fn migrate_legacy_does_not_overwrite_explicit_search_values() {
+        // [appearance] と [search] の両方に値があるケース:
+        // 新フィールド ([search]) が明示的に設定されている場合は legacy 値で上書きしない。
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+
+            [appearance]
+            max_results = 8
+            window_width = 600
+            top_n_history = 50
+            max_history_display = 3
+
+            [search]
+            top_n_history = 400
+            max_history_display = 15
+
+            [paths]
+            additional = []
+        "#;
+        let mut config: Config = toml::from_str(toml_str).expect("parse");
+        assert!(config.apply_migrations());
+        // [search] の値が保持されていること
+        assert_eq!(config.search.top_n_history, 400);
+        assert_eq!(config.search.max_history_display, 15);
+        // Legacy slots はクリーンアップ済み
         assert_eq!(config.appearance.top_n_history, None);
         assert_eq!(config.appearance.max_history_display, None);
     }

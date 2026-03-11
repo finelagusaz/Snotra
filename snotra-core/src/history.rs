@@ -30,12 +30,11 @@ pub struct HistoryData {
 pub struct HistoryStore {
     data: HistoryData,
     top_n: usize,
-    max_history_display: usize,
     dirty_count: u32,
 }
 
 impl HistoryStore {
-    pub fn load(top_n: usize, max_history_display: usize) -> Self {
+    pub fn load(top_n: usize) -> Self {
         let (loaded_data, loaded_version) = Self::bin_file()
             .and_then(|bf| bf.load_with_fallback(HISTORY_FALLBACKS))
             .unwrap_or((HistoryData::default(), HISTORY_VERSION));
@@ -46,7 +45,6 @@ impl HistoryStore {
         Self {
             data,
             top_n,
-            max_history_display,
             dirty_count: 0,
         }
     }
@@ -148,7 +146,7 @@ impl HistoryStore {
             .unwrap_or(0)
     }
 
-    pub fn recent_launches(&self) -> Vec<&str> {
+    pub fn recent_launches(&self, max: usize) -> Vec<&str> {
         let mut entries: Vec<_> = self
             .data
             .global
@@ -157,7 +155,7 @@ impl HistoryStore {
             .collect();
 
         entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
-        entries.truncate(self.max_history_display);
+        entries.truncate(max);
         entries.into_iter().map(|(path, _)| path).collect()
     }
 
@@ -294,7 +292,6 @@ mod tests {
         HistoryStore {
             data: HistoryData::default(),
             top_n: 100,
-            max_history_display: 8,
             dirty_count: 0,
         }
     }
@@ -303,7 +300,6 @@ mod tests {
         HistoryStore {
             data: HistoryData::default(),
             top_n,
-            max_history_display: 8,
             dirty_count: 0,
         }
     }
@@ -460,7 +456,7 @@ mod tests {
             },
         );
 
-        let recent = store.recent_launches();
+        let recent = store.recent_launches(8);
         assert_eq!(recent.len(), 2);
         assert_eq!(recent[0], "C:\\app_new.lnk");
         assert_eq!(recent[1], "C:\\app_old.lnk");
@@ -484,7 +480,7 @@ mod tests {
             },
         );
 
-        let recent = store.recent_launches();
+        let recent = store.recent_launches(8);
         assert_eq!(recent.len(), 2);
         assert_eq!(recent[0], "C:\\alpha.lnk");
         assert_eq!(recent[1], "C:\\zeta.lnk");

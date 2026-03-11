@@ -26,6 +26,7 @@ function updateResults(items: SearchResult[], isNormalSearch = false) {
   setResults(items);
   setNoResults(isNormalSearch && items.length === 0);
 }
+
 /** インスタントコマンドモード中のコマンド一覧（activateSelected で参照） */
 let instantCommandItems: InstantCommand[] = [];
 
@@ -684,6 +685,7 @@ function resetForShow() {
   setQuery("");
   setFolderFilter("");
   setSelected(0);
+  setNoResults(false);
   if (!skipRefresh) {
     void runRefresh();
   }

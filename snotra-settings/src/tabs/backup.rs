@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use eframe::egui;
 use snotra_core::config::Config;
 
-use crate::app::TEXT_SECONDARY;
+use crate::app::{config_error_message, TEXT_SECONDARY};
 use crate::i18n::Tr;
 
 /// Result type for file picker threads.
@@ -331,7 +331,7 @@ fn handle_import_result(path: Option<PathBuf>, tr: &Tr) -> (Option<String>, bool
     config.apply_migrations();
     let errors = config.validate();
     if !errors.is_empty() {
-        return (Some(format!("{}{}", tr.status_import_validation_error(), crate::app::config_error_message(&errors[0], tr))), true, None);
+        return (Some(format!("{}{}", tr.status_import_validation_error(), config_error_message(&errors[0], tr))), true, None);
     }
     if let Err(e) = config.save() {
         return (Some(format!("{}{}", tr.status_import_failed(), first_line(&e))), true, None);

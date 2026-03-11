@@ -229,8 +229,13 @@ impl eframe::App for SettingsApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Update window title on language change
-        ctx.send_viewport_cmd(egui::ViewportCommand::Title(self.tr.window_title().to_string()));
+        // Update window title (language change + dirty indicator)
+        let title = if self.has_changes() {
+            format!("{}*", self.tr.window_title())
+        } else {
+            self.tr.window_title().to_string()
+        };
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
 
         // Close on Escape (skip when hotkey capture is active)
         if !self.hotkey_state.is_capturing() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -240,6 +245,13 @@ impl eframe::App for SettingsApp {
             } else {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
+        }
+
+        // Prevent close via × button / Alt+F4 when there are unsaved changes
+        if ctx.input(|i| i.viewport().close_requested()) && self.has_changes() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.status = self.tr.status_unsaved().to_string();
+            self.status_timer = 3.0;
         }
 
         // Decrement status timer
@@ -325,9 +337,16 @@ impl eframe::App for SettingsApp {
             .frame(egui::Frame::NONE.fill(FOOTER_BG).inner_margin(egui::Margin::symmetric(12, 0)))
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
-                    // Status
-                    if !self.status.is_empty() {
-                        ui.label(&self.status);
+                    // Status (timer message takes priority; otherwise show persistent unsaved indicator)
+                    let status_text = if !self.status.is_empty() {
+                        Some(&self.status as &str)
+                    } else if self.has_changes() {
+                        Some(self.tr.status_unsaved())
+                    } else {
+                        None
+                    };
+                    if let Some(text) = status_text {
+                        ui.label(text);
                         ui.separator();
                     }
 

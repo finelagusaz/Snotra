@@ -101,6 +101,18 @@ impl TabId {
             _ => None,
         }
     }
+
+    fn has_changes(self, draft: &Config, saved: &Config) -> bool {
+        match self {
+            TabId::General => draft.general != saved.general || draft.hotkey != saved.hotkey,
+            TabId::Search => draft.search != saved.search,
+            TabId::Index => draft.paths != saved.paths,
+            TabId::Visual => draft.visual != saved.visual || draft.appearance != saved.appearance,
+            TabId::Opener => draft.openers != saved.openers,
+            TabId::InstantCommand => draft.instant_commands != saved.instant_commands,
+            TabId::Backup => false,
+        }
+    }
 }
 
 struct SettingsApp {
@@ -271,10 +283,15 @@ impl eframe::App for SettingsApp {
 
                     // Text
                     let text_pos = rect.left_center() + egui::vec2(12.0, 0.0);
+                    let label = if tab.has_changes(&self.draft, &self.saved) {
+                        format!("{} •", tab.label(&self.tr))
+                    } else {
+                        tab.label(&self.tr).to_string()
+                    };
                     ui.painter().text(
                         text_pos,
                         egui::Align2::LEFT_CENTER,
-                        tab.label(&self.tr),
+                        label,
                         egui::TextStyle::Body.resolve(ui.style()),
                         if selected { TEXT_PRIMARY } else { TEXT_SECONDARY },
                     );

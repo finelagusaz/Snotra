@@ -994,19 +994,33 @@ fn find_in_path(filename: &str) -> Option<String> {
 pub fn detect_opener_presets() -> Vec<OpenerPreset> {
     let mut presets = Vec::new();
 
-    // VSCode: PATH 上の code.cmd、または既知のインストールパス
-    let vscode_exe = find_in_path("code.cmd").or_else(|| {
-        let local_app_data = std::env::var("LOCALAPPDATA").ok()?;
-        let known = Path::new(&local_app_data)
-            .join("Programs")
-            .join("Microsoft VS Code")
-            .join("Code.exe");
-        if known.is_file() {
-            Some(known.to_string_lossy().into_owned())
-        } else {
-            None
-        }
-    });
+    // VSCode: PATH 上の code.cmd から Code.exe を解決、または既知のインストールパス
+    // code.cmd はバッチファイルなので直接実行するとコマンドプロンプトが残る。
+    // code.cmd は通常 ...\Microsoft VS Code\bin\code.cmd にあるので、
+    // 親(bin/)の親に Code.exe があるかを確認する。
+    let vscode_exe = find_in_path("code.cmd")
+        .and_then(|cmd_path| {
+            let bin_dir = Path::new(&cmd_path).parent()?;
+            let vscode_dir = bin_dir.parent()?;
+            let exe = vscode_dir.join("Code.exe");
+            if exe.is_file() {
+                Some(exe.to_string_lossy().into_owned())
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            let local_app_data = std::env::var("LOCALAPPDATA").ok()?;
+            let known = Path::new(&local_app_data)
+                .join("Programs")
+                .join("Microsoft VS Code")
+                .join("Code.exe");
+            if known.is_file() {
+                Some(known.to_string_lossy().into_owned())
+            } else {
+                None
+            }
+        });
     if let Some(exe) = vscode_exe {
         presets.push(OpenerPreset {
             name: "Visual Studio Code",
@@ -1940,7 +1954,7 @@ mod tests {
     #[test]
     fn find_matching_tools_folder_with_path_condition() {
         let rules = vec![
-            make_rule("folder:C:\\workspace", &[("VSCode", "code.cmd", "")]),
+            make_rule("folder:C:\\workspace", &[("VSCode", "Code.exe", "")]),
             make_rule("folder", &[("Explorer", "explorer.exe", "")]),
         ];
         let tools = find_matching_tools("C:\\workspace\\Snotra", true, &rules);
@@ -1951,7 +1965,7 @@ mod tests {
     #[test]
     fn find_matching_tools_folder_path_no_match_falls_back() {
         let rules = vec![
-            make_rule("folder:C:\\workspace", &[("VSCode", "code.cmd", "")]),
+            make_rule("folder:C:\\workspace", &[("VSCode", "Code.exe", "")]),
             make_rule("folder", &[("Explorer", "explorer.exe", "")]),
         ];
         let tools = find_matching_tools("D:\\other\\dir", true, &rules);
@@ -1962,7 +1976,7 @@ mod tests {
     #[test]
     fn find_matching_tools_most_specific_path_wins() {
         let rules = vec![
-            make_rule("folder:C:\\workspace", &[("VSCode", "code.cmd", "")]),
+            make_rule("folder:C:\\workspace", &[("VSCode", "Code.exe", "")]),
             make_rule("folder:C:\\workspace\\Snotra", &[("Terminal", "wt.exe", "-d {path}")]),
             make_rule("folder", &[("Explorer", "explorer.exe", "")]),
         ];
@@ -1974,7 +1988,7 @@ mod tests {
     #[test]
     fn find_matching_tools_path_condition_case_insensitive() {
         let rules = vec![
-            make_rule("folder:C:\\Workspace", &[("VSCode", "code.cmd", "")]),
+            make_rule("folder:C:\\Workspace", &[("VSCode", "Code.exe", "")]),
         ];
         let tools = find_matching_tools("c:\\workspace\\project", true, &rules);
         assert_eq!(tools.len(), 1);
@@ -1984,7 +1998,7 @@ mod tests {
     #[test]
     fn find_matching_tools_ext_with_path_condition() {
         let rules = vec![
-            make_rule("ext:md:C:\\projects", &[("VSCode", "code.cmd", "")]),
+            make_rule("ext:md:C:\\projects", &[("VSCode", "Code.exe", "")]),
             make_rule("ext:md", &[("Typora", "typora.exe", "")]),
         ];
         let tools = find_matching_tools("C:\\projects\\readme.md", false, &rules);
@@ -1995,7 +2009,7 @@ mod tests {
     #[test]
     fn find_matching_tools_ext_path_no_match_falls_back() {
         let rules = vec![
-            make_rule("ext:md:C:\\projects", &[("VSCode", "code.cmd", "")]),
+            make_rule("ext:md:C:\\projects", &[("VSCode", "Code.exe", "")]),
             make_rule("ext:md", &[("Typora", "typora.exe", "")]),
         ];
         let tools = find_matching_tools("D:\\docs\\readme.md", false, &rules);
@@ -2017,7 +2031,7 @@ mod tests {
     #[test]
     fn find_matching_tools_path_condition_slash_normalized() {
         let rules = vec![
-            make_rule("folder:C:\\workspace", &[("VSCode", "code.cmd", "")]),
+            make_rule("folder:C:\\workspace", &[("VSCode", "Code.exe", "")]),
         ];
         // パスにスラッシュが混在
         let tools = find_matching_tools("C:/workspace/project", true, &rules);
@@ -2028,7 +2042,7 @@ mod tests {
     #[test]
     fn find_matching_tools_path_condition_boundary_check() {
         let rules = vec![
-            make_rule("folder:C:\\workspace", &[("VSCode", "code.cmd", "")]),
+            make_rule("folder:C:\\workspace", &[("VSCode", "Code.exe", "")]),
             make_rule("folder", &[("Explorer", "explorer.exe", "")]),
         ];
         // "C:\workspaces" はパス境界で一致しないのでフォールバック
@@ -2040,7 +2054,7 @@ mod tests {
     #[test]
     fn find_matching_tools_path_condition_exact_match() {
         let rules = vec![
-            make_rule("folder:C:\\workspace", &[("VSCode", "code.cmd", "")]),
+            make_rule("folder:C:\\workspace", &[("VSCode", "Code.exe", "")]),
         ];
         // 完全一致もマッチする
         let tools = find_matching_tools("C:\\workspace", true, &rules);
@@ -2599,7 +2613,7 @@ mod tests {
     #[test]
     fn find_matching_tools_path_condition_trailing_separator() {
         let rules = vec![
-            make_rule("folder:C:\\workspace\\", &[("VSCode", "code.cmd", "")]),
+            make_rule("folder:C:\\workspace\\", &[("VSCode", "Code.exe", "")]),
             make_rule("folder", &[("Explorer", "explorer.exe", "")]),
         ];
         // 末尾 \ 付き条件は子孫パスにマッチする
@@ -2609,7 +2623,7 @@ mod tests {
 
         // 末尾 / 付き条件でも同様
         let rules2 = vec![
-            make_rule("folder:C:\\workspace/", &[("VSCode", "code.cmd", "")]),
+            make_rule("folder:C:\\workspace/", &[("VSCode", "Code.exe", "")]),
         ];
         let tools2 = find_matching_tools("C:\\workspace\\project", true, &rules2);
         assert_eq!(tools2.len(), 1);
@@ -2654,7 +2668,7 @@ mod tests {
             }],
         }];
         assert!(is_preset_already_added(&rules, "explorer.exe"));
-        assert!(!is_preset_already_added(&rules, "code.cmd"));
+        assert!(!is_preset_already_added(&rules, "Code.exe"));
     }
 
     #[test]

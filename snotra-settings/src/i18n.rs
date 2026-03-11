@@ -54,13 +54,6 @@ impl Tr {
         }
     }
 
-    pub fn tab_about(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "Snotra について",
-            Language::En => "About Snotra",
-        }
-    }
-
     // Footer buttons
     pub fn btn_save(&self) -> &'static str {
         match self.0 {

@@ -64,7 +64,6 @@ pub enum TabId {
     Opener,
     InstantCommand,
     Backup,
-    About,
 }
 
 impl TabId {
@@ -76,7 +75,6 @@ impl TabId {
         TabId::Opener,
         TabId::InstantCommand,
         TabId::Backup,
-        TabId::About,
     ];
 
     fn label(self, tr: &Tr) -> &'static str {
@@ -88,7 +86,6 @@ impl TabId {
             TabId::Opener => tr.tab_opener(),
             TabId::InstantCommand => tr.tab_instant_command(),
             TabId::Backup => tr.tab_backup(),
-            TabId::About => tr.tab_about(),
         }
     }
 
@@ -101,7 +98,6 @@ impl TabId {
             "opener" => Some(TabId::Opener),
             "instant_command" => Some(TabId::InstantCommand),
             "backup" => Some(TabId::Backup),
-            "about" => Some(TabId::About),
             _ => None,
         }
     }
@@ -251,6 +247,8 @@ impl eframe::App for SettingsApp {
             .frame(egui::Frame::NONE.fill(SIDEBAR_BG).inner_margin(egui::Margin::symmetric(8, 8)))
             .show(ctx, |ui| {
                 let available_width = ui.available_width();
+
+                // Tab list
                 for &tab in TabId::ALL {
                     let selected = self.active_tab == tab;
                     let (rect, response) = ui.allocate_exact_size(
@@ -285,6 +283,23 @@ impl eframe::App for SettingsApp {
                         self.active_tab = tab;
                     }
                 }
+
+                // Version info at the bottom of sidebar
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        if ui.link(egui::RichText::new("Web").small()).clicked() {
+                            let _ = open::that("https://blankrune.sakura.ne.jp/");
+                        }
+                        if ui.link(egui::RichText::new("Mail").small()).clicked() {
+                            let _ = open::that("mailto:algiz.rune@gmail.com?subject=Snotra%E3%81%AB%E3%81%A4%E3%81%84%E3%81%A6");
+                        }
+                    });
+                    ui.label(egui::RichText::new("Fine Lagusaz").small().color(TEXT_SECONDARY));
+                    let version = env!("CARGO_PKG_VERSION");
+                    ui.label(egui::RichText::new(format!("v{version}")).small().color(TEXT_SECONDARY));
+                    ui.label(egui::RichText::new("Snotra").small().color(TEXT_SECONDARY));
+                });
             });
 
         // Footer (hide action buttons on About tab)
@@ -299,7 +314,7 @@ impl eframe::App for SettingsApp {
                         ui.separator();
                     }
 
-                    if self.active_tab != TabId::About && self.active_tab != TabId::Backup {
+                    if self.active_tab != TabId::Backup {
                         // Spacer
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.spacing_mut().button_padding = egui::vec2(12.0, 4.0);
@@ -344,28 +359,6 @@ impl eframe::App for SettingsApp {
                         self.saved = result.imported_config;
                         self.tr = Tr(self.draft.general.language);
                     }
-                }
-                TabId::About => {
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(24.0);
-                        ui.heading("Snotra");
-                        ui.add_space(8.0);
-
-                        let version = env!("CARGO_PKG_VERSION");
-                        let build_date = env!("APP_BUILD_DATE");
-                        ui.label(format!("v{version}(Build {build_date})"));
-                        ui.add_space(24.0);
-
-                        ui.label("Fine Lagusaz");
-                        ui.add_space(8.0);
-
-                        if ui.link("algiz.rune@gmail.com").clicked() {
-                            let _ = open::that("mailto:algiz.rune@gmail.com?subject=Snotra%E3%81%AB%E3%81%A4%E3%81%84%E3%81%A6");
-                        }
-                        if ui.link("https://blankrune.sakura.ne.jp/").clicked() {
-                            let _ = open::that("https://blankrune.sakura.ne.jp/");
-                        }
-                    });
                 }
             }
         });

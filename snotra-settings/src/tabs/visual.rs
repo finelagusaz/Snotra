@@ -137,6 +137,27 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, fonts: &[String], tr: &Tr) {
             ui.add_sized([60.0, ui.spacing().interact_size.y], egui::DragValue::new(&mut config.visual.font_size).range(8..=48));
             ui.end_row();
         });
+
+        ui.add_space(12.0);
+
+        // -- Window --
+        ui.heading(tr.heading_appearance());
+        ui.add_space(4.0);
+
+        egui::Grid::new("window_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+            ui.label(tr.label_max_results());
+            ui.add_sized([60.0, ui.spacing().interact_size.y], egui::DragValue::new(&mut config.appearance.max_results).range(1..=50));
+            ui.end_row();
+
+            ui.label(tr.label_window_width());
+            ui.horizontal(|ui| {
+                ui.add_sized([60.0, ui.spacing().interact_size.y], egui::DragValue::new(&mut config.appearance.window_width).range(300..=1200));
+                ui.label("px");
+            });
+            ui.end_row();
+        });
+
+        ui.checkbox(&mut config.appearance.show_icons, tr.cb_show_icons());
     });
 }
 

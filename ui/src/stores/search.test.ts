@@ -26,6 +26,7 @@ vi.mock("../lib/invoke", () => ({
 
 // ── モック確立後にインポート ─────────────────────────────────────────────────
 
+import * as tauriEvent from "@tauri-apps/api/event";
 import * as api from "../lib/invoke";
 import type { OpenerTool, SearchResult } from "../lib/types";
 import {
@@ -46,6 +47,8 @@ import {
   launchNotice,
   clearLaunchNotice,
   setHotkeyFailureNotice,
+  indexing,
+  initIndexingState,
 } from "../stores/search";
 import { setToolSelectionState } from "../stores/tool-selection";
 
@@ -436,5 +439,56 @@ describe("setHotkeyFailureNotice", () => {
     // 2回目のタイマーが切れるまで待つ（2回目から 5000ms）
     vi.advanceTimersByTime(2000);
     expect(launchNotice()).toBeNull();
+  });
+});
+
+// ── initIndexingState / indexing signal ──────────────────────────────────────
+
+describe("initIndexingState", () => {
+  // 各テストで listen コールバックをキャプチャするための Map
+  let eventCallbacks: Map<string, () => void>;
+
+  beforeEach(() => {
+    eventCallbacks = new Map();
+    vi.mocked(tauriEvent.listen).mockImplementation(
+      async (eventName: string, callback: (...args: unknown[]) => void) => {
+        eventCallbacks.set(eventName, callback as () => void);
+        return () => {};
+      },
+    );
+  });
+
+  it("indexing-started イベントを受信すると indexing() が true になる", async () => {
+    await initIndexingState();
+    expect(indexing()).toBe(false); // getIndexingState モックは false を返す
+
+    eventCallbacks.get("indexing-started")?.();
+
+    expect(indexing()).toBe(true);
+  });
+
+  it("indexing-started → indexing-complete のシーケンスで false に戻る", async () => {
+    await initIndexingState();
+
+    eventCallbacks.get("indexing-started")?.();
+    expect(indexing()).toBe(true);
+
+    eventCallbacks.get("indexing-complete")?.();
+    expect(indexing()).toBe(false);
+  });
+
+  it("cleanup 関数を呼ぶと indexing-started の unlisten が実行される", async () => {
+    const unlistenStarted = vi.fn();
+    vi.mocked(tauriEvent.listen).mockImplementation(
+      async (eventName: string, callback: (...args: unknown[]) => void) => {
+        eventCallbacks.set(eventName, callback as () => void);
+        return eventName === "indexing-started" ? unlistenStarted : vi.fn();
+      },
+    );
+
+    const cleanup = await initIndexingState();
+    cleanup();
+
+    expect(unlistenStarted).toHaveBeenCalledOnce();
   });
 });

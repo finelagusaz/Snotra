@@ -692,6 +692,7 @@ function resetForShow() {
 }
 
 let unlistenIndexingComplete: (() => void) | undefined;
+let unlistenIndexingStarted: (() => void) | undefined;
 
 async function initIndexingState(): Promise<() => void> {
   try {
@@ -708,9 +709,17 @@ async function initIndexingState(): Promise<() => void> {
     setIndexing(false);
     void runRefresh();
   });
+
+  unlistenIndexingStarted = await listen("indexing-started", () => {
+    trace("search:indexing_state:started");
+    setIndexing(true);
+  });
+
   return () => {
     unlistenIndexingComplete?.();
     unlistenIndexingComplete = undefined;
+    unlistenIndexingStarted?.();
+    unlistenIndexingStarted = undefined;
   };
 }
 

@@ -18,6 +18,8 @@ export interface ResultsSectionProps {
 
 const ResultsSection: Component<ResultsSectionProps> = (props) => {
   const iconCache = new LruIconCache();
+  // アイコン取得を試みたが存在しなかったパス（フォールバック絵文字を表示）
+  const fetchedNone = new Set<string>();
   const [iconCacheVersion, setIconCacheVersion] = createSignal(0);
   const [containerWidth, setContainerWidth] = createSignal(0);
   const [font, setFont] = createSignal("15px 'Segoe UI'");
@@ -71,7 +73,7 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
   /** キャッシュにないアイコンを一括取得してキャッシュに格納する。stale なら Blob URL を破棄して早期リターン */
   async function fetchIconBatch(items: SearchResult[], generation: number): Promise<void> {
     const missing = items
-      .filter((r) => !r.isError && !iconCache.has(r.path))
+      .filter((r) => !r.isError && !iconCache.has(r.path) && !fetchedNone.has(r.path))
       .map((r) => r.path);
     if (missing.length === 0) return;
 
@@ -89,10 +91,13 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
       }
       return;
     }
-    if (parsed.size === 0) return;
 
     for (const [path, url] of parsed) {
       iconCache.set(path, url);
+    }
+    // 取得できなかったパスをマーク（次回の filter でスキップ、かつフォールバック絵文字を表示）
+    for (const path of missing) {
+      if (!parsed.has(path)) fetchedNone.add(path);
     }
     setIconCacheVersion((v) => v + 1);
   }
@@ -113,6 +118,7 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
   createEffect(() => {
     if (!props.visible) {
       iconCache.revokeAll();
+      fetchedNone.clear();
       setIconCacheVersion((v) => v + 1);
     }
   });
@@ -121,6 +127,7 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
   createEffect(on(results, (items) => {
     const gen = ++dataGeneration;
     latestDataGeneration = gen;
+    fetchedNone.clear();
 
     requestAnimationFrame(() => {
       void fetchIcons(items, gen);
@@ -153,6 +160,7 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
         listen<boolean>("show-icons-changed", (event) => {
           if (!event.payload) {
             iconCache.revokeAll();
+            fetchedNone.clear();
             setIconCacheVersion((v) => v + 1);
           }
         }),
@@ -204,7 +212,7 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
             <ResultRow
               result={result}
               isSelected={idx() === selected()}
-              icon={(iconCacheVersion(), iconCache.get(result.path))}
+              icon={(iconCacheVersion(), result.isError ? null : iconCache.get(result.path) ?? (fetchedNone.has(result.path) ? null : undefined))}
               showIcons={props.showIcons && !props.skipIcons}
               containerWidth={containerWidth()}
               font={font()}

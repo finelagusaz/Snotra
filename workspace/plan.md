@@ -121,7 +121,27 @@ pub fn err_toml_parse_error(&self) -> &'static str {
 
 ### フェーズ 4: バリデーションエラーの表示改善
 
-現状 `{:?}` で Debug 表示していた部分を `{:?}` から可読フォーマットに変更（既存 `validate()` の戻り値型に依存するため調査して判断）。
+`backup.rs:220` は現状 `{:?}` Debug 表示:
+
+```rust
+// 現状: ScanPathEmpty { index: 0 } のような生の Rust 型が出る
+format!("{}{:?}", tr.status_import_validation_error(), errors[0])
+```
+
+`app.rs` にはすでに `config_error_message(&ConfigError, &Tr) -> String` 関数があり、
+各バリアントを `tr.*()` で翻訳済みテキストに変換している。この関数を共有する。
+
+**変更手順:**
+
+1. `app.rs` の `config_error_message()` を `i18n.rs` の `Tr` メソッド（`format_config_error`）に移動
+2. `app.rs` は `tr.format_config_error(&e)` に書き換え（挙動変わらず）
+3. `backup.rs:220` も `tr.format_config_error(&errors[0])` に変更
+
+**なぜフェーズ4が必要か:**
+
+インポートの主要ユースケースは「別マシンへの移動」「手書き編集」「マシン復元後」であり、
+スキャンパスの不整合・型ミスマッチなどのバリデーションエラーはインポート時にこそ起きやすい。
+`ScanPathEmpty { index: 0 }` という生の Debug 出力はユーザーに意味を伝えない。
 
 ---
 

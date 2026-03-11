@@ -115,3 +115,11 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 ## Config のデシリアライズ経路
 
 `Config::load()` はデシリアライズ後に `apply_migrations()` で後処理（レガシーフィールド移行・正規化・システムショートカットフォールバック）を実行する。**Config をデシリアライズする新しい経路**（インポート、テスト用ファクトリ等）を追加するときは、`apply_migrations()` の適用要否を明示的に判断する。迂回すると旧版データの移行漏れ（例: `paths.additional` の消失）が起きる。
+
+### `Option<T>` フィールドを migration の「明示設定か否か」の sentinel に使う場合
+
+`None` = TOML 未記載、`Some(v)` = 明示設定 として使う場合、`SearchConfig::default()` は **`None` を返すこと**。`Some(default_value)` を返すと、`[search]` セクション全体が TOML に存在しない場合でも serde が `SearchConfig::default()` を使うため `Some(v)` になり、`apply_migrations()` の `is_none()` チェックが常に false になって legacy 値の移行が起きなくなる。
+
+- 正しいパターン: `Default` → `None`、使用時に `effective_*()` アクセサで `unwrap_or_else(default_fn)` する
+- migration 後の「None を解消する」処理 (`get_or_insert_with`) は `apply_migrations()` の最後にまとめて実行する
+- `reset_to_default()` でも `Config::default()` 後に `apply_migrations()` を呼び、None を解消してから保存する

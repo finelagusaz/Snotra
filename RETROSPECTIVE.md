@@ -1,35 +1,32 @@
-# Retrospective — settings バグ修正10件 (refactor/settings)
+# Retrospective — refactor/settings バグ修正 + レビュー根治 + インデックス中 /o 修正
 
 ## よかったこと
 
-### 多角的サブエージェント調査で計画の精度を事前に高めた
-4エージェント並列で全変更ファイルを精査し、実装前に plan.md の誤りを修正できた（`engine.rs L77 → L78` のずれ、`_legacy` フィールド方式の複雑さ → `Option<T>` + `skip_serializing` へ簡略化、Phase 5 の i18n が単一ファイルである点、既存 `launchNotice` パターンの活用で `SearchWindow.tsx` 変更が不要であることなど）。
+### Option<T> 設計の正攻法採用
+レビュー指摘「default 値比較では absent と explicit-default を区別できない」に対し、`Option<usize>` + `is_none()` チェックという正攻法で根治した。`effective_*()` アクセサで None → default 変換を使用時に行う設計は、migration 判定の不変条件を明確に保てる。
 
-### チェックリスト駆動の実装で進捗が可視化できた
-各フェーズを小粒のチェックボックスに分解し、`cargo check` / `cargo test` を各フェーズ後に実行したことで問題を局所化できた。
+### 多角的安全性確認で設計変更の副作用ゼロ
+SearchWindow の `/` バイパス追加前に3サブエージェントを投入し、インデックス中に通常検索が開放されないことを独立検証してから実装した。副作用のないことを証明してから動かした。
 
-### マイグレーション自動保存パターンを正しく活用した
-`apply_migrations()` が `true` を返すと `load()` が自動保存する既存パターンを活用し、旧 `config.toml` の後方互換を確保できた。
+### ユーザー観察からの設計議論が即座にできた
+テスト実施中に「インデックス中でも検索できる」「混在状態は学習コストが高い」という UX 観点の指摘が出た。実装話に飛ばず設計意図を確認し、issue #245 として切り出す判断ができた。
 
 ---
 
 ## 伸びしろ
 
-### ネスト追加時の括弧インデントずれ（Phase 3）
-`if let Some(rect)` ブロックを `if !minimized { }` でラップしたとき、閉じ括弧のインデントがずれて `cargo check` 失敗。ブロックを丸ごと囲む変更ではインデントレベルを全行ずらす必要があることを意識できていなかった。
+### 新 cross-module import 追加時のテスト影響確認
+`commands.ts` が `stores/search` を import するようになった時点で `commands.test.ts` のモック追加が必要だったが、CI で落ちて初めて発覚した。`lib/` モジュールが `stores/` を import する変更は、そのテストファイルへの波及を即チェックすべき。→ `ui/CLAUDE.md` に追記済み。
 
-### TOML フィールド移動の3連鎖エラー（Phase 4）
-`AppearanceConfig` から `SearchConfig` へのフィールド移動で以下が連鎖した:
-1. マイグレーションコードが削除後のフィールドを参照 → `Option<usize>` への型変更が必要
-2. `Config::default()` の明示的初期化に `None` を追加し忘れ → コンパイルエラー
-3. 既存テスト `deserialize_full_config` で `apply_migrations()` 呼び出しを追加したら `migrate_additional_to_scan()` の副作用（`additional → scan`）により別のアサーションが失敗
-4. 新規テスト TOML に `[paths]` セクション（必須）を含め忘れ → パースエラー
+### serde `#[serde(default)]` の field-level vs struct-level 挙動
+`SearchConfig::default()` が `Some(200)` を返すと、`[search]` セクション全体が TOML に absent の場合でも serde が struct の default を使うため `Some(200)` になり、migration が機能しなくなった。field-level `#[serde(default)]` と親 struct の `Default` の相互作用を事前に把握できていれば、テスト失敗を防げた。→ `snotra-core/CLAUDE.md` に追記済み。
 
-フィールド移動パターンのチェックリストを `snotra-core/CLAUDE.md` に追記済み。
+### インデックス中の UX 一貫性を設計段階で考慮できなかった
+`/o` のインデックス中ブロックを実装したとき、「一部のコマンドは動くが通常検索は動かない」という混在状態がユーザー体験上どう見えるかを考慮できていなかった。実装後にユーザー指摘で気づいた。
 
 ---
 
 ## ネクストアクション
 
-- [ ] `refactor/settings` ブランチをコミット・PR 作成・マージする
-- [ ] `workspace/research.md` と `workspace/plan.md` をコミットに含める（別マシン継続のため）
+- [ ] issue #245 対応: インデックス再構築中に `indexing()` signal が正しく true になっているか検証し、なっていなければ修正する
+- [ ] インデックス構築中のホットキー押下 UX を整理する（別ブランチあり）

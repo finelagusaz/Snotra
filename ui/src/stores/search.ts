@@ -19,6 +19,13 @@ const [launching, setLaunching] = createSignal(false);
 const [launchNotice, setLaunchNotice] = createSignal<string | null>(null);
 const [instantCommandPrefix, setInstantCommandPrefix] = createSignal("@");
 const [instantCommandMode, setInstantCommandMode] = createSignal(false);
+const [noResults, setNoResults] = createSignal(false);
+
+/** setResults のラッパー。通常検索パスでのみ noResults を true にする */
+function updateResults(items: SearchResult[], isNormalSearch = false) {
+  setResults(items);
+  setNoResults(isNormalSearch && items.length === 0);
+}
 /** インスタントコマンドモード中のコマンド一覧（activateSelected で参照） */
 let instantCommandItems: InstantCommand[] = [];
 
@@ -68,7 +75,7 @@ export function setHotkeyFailureNotice(message: string) {
 function clearCommandModeState() {
   ++searchGeneration;
   setQuery("");
-  setResults([]);
+  updateResults([]);
   setSelected(0);
 }
 
@@ -114,7 +121,7 @@ async function refreshResults() {
       perfCancelSearch(requestId);
       return;
     }
-    setResults(items);
+    updateResults(items);
     setSelected(0);
     trace("search:refresh:done", { requestId, branch: "slash_r_history", count: items.length });
     perfMarkSearchDone(requestId, items.length);
@@ -123,7 +130,7 @@ async function refreshResults() {
   if (!fs && trimmed.startsWith("/")) {
     // Command mode: no suggestions shown, just wait for exact match (handled by query effect).
     trace("search:refresh:branch", { requestId, branch: "slash_noop" });
-    setResults([]);
+    updateResults([]);
     setSelected(0);
     return;
   }
@@ -138,7 +145,7 @@ async function refreshResults() {
   perfStartSearch(requestId, source);
 
   if (indexing()) {
-    setResults([]);
+    updateResults([]);
     setSelected(0);
     trace("search:refresh:done", { requestId, branch: "indexing_guard", count: 0 });
     perfMarkSearchDone(requestId, 0);
@@ -178,7 +185,7 @@ async function refreshResults() {
     return;
   }
 
-  setResults(items);
+  updateResults(items, source === "query");
   const nextSelected = clampSelectedIndex(selected(), items.length);
   setSelected(nextSelected);
   trace("search:refresh:done", {
@@ -236,7 +243,7 @@ createRoot(() => {
               isFolder: false,
               isError: false,
             }));
-            setResults(items);
+            updateResults(items);
             setSelected(0);
           } catch (e) {
             trace("search:instant_command:error", { error: String(e) });
@@ -273,7 +280,7 @@ createRoot(() => {
         cancelDebounce();
         trace("search:query_effect:slash_noop", { input: q });
         ++searchGeneration;
-        setResults([]);
+        updateResults([]);
         setSelected(0);
         return;
       }
@@ -331,7 +338,7 @@ function exitFolderExpansion(): boolean {
   cancelDebounce();
 
   ++searchGeneration;
-  setResults(fs.savedResults);
+  updateResults(fs.savedResults);
   setSelected(fs.savedSelected);
   setFolderState(null);    // setQuery より先に null にする
   setFolderFilter("");
@@ -423,7 +430,7 @@ async function launchWithSelectedTool(): Promise<boolean> {
     });
     // 結果を隠す
     ++searchGeneration;
-    setResults([]);
+    updateResults([]);
     setSelected(0);
     const launchResult = await api.launchWithTool(
       frame.targetPath,
@@ -446,7 +453,7 @@ async function launchWithSelectedTool(): Promise<boolean> {
     setToolSelectionState(null);
     setFolderState(null);
     setFolderFilter("");
-    setResults([]);
+    updateResults([]);
     setSelected(0);
     ++searchGeneration;
     trace("search:launch_with_tool:done", { path: frame.targetPath });
@@ -494,7 +501,7 @@ async function enterToolSelection(result: SearchResult): Promise<boolean> {
     isError: false,
   }));
   ++searchGeneration;
-  setResults(toolResults);
+  updateResults(toolResults);
   setSelected(0);
   trace("search:enter_tool_selection:ok", { path: result.path, toolCount: tools.length });
   return false;
@@ -505,7 +512,7 @@ function exitToolSelection(): boolean {
   if (!frame) return false;
 
   ++searchGeneration;
-  setResults(frame.savedResults);
+  updateResults(frame.savedResults);
   setSelected(frame.savedSelected);
   setToolSelectionState(null);
   // フォルダ展開中だった場合の folderFilter を復帰
@@ -523,7 +530,7 @@ async function launchAndReset(result: SearchResult): Promise<boolean> {
   try {
     // launch 開始時に results を隠す
     ++searchGeneration;
-    setResults([]);
+    updateResults([]);
     setSelected(0);
     const launchResult = await api.launchItem(result.path, query());
     if (launchResult.status !== "ok") {
@@ -540,7 +547,7 @@ async function launchAndReset(result: SearchResult): Promise<boolean> {
 
     setFolderState(null);
     setFolderFilter("");
-    setResults([]);
+    updateResults([]);
     setSelected(0);
     ++searchGeneration;
     trace("search:launch:done", { path: result.path, code: launchResult.code });
@@ -575,7 +582,7 @@ async function executeInstantCommandSelected(): Promise<boolean> {
 
     const preGen = searchGeneration;
     ++searchGeneration;
-    setResults([]);
+    updateResults([]);
     setSelected(0);
 
     const launchResult = await api.executeInstantCommand(cmd.name, instantQuery);
@@ -591,7 +598,7 @@ async function executeInstantCommandSelected(): Promise<boolean> {
       if (searchGeneration === preGen + 1) {
         ++searchGeneration;
         instantCommandItems = savedItems;
-        setResults(savedResults);
+        updateResults(savedResults);
         setSelected(savedSelected);
       }
       return false;
@@ -734,6 +741,7 @@ export {
   enterToolSelection,
   exitToolSelection,
   getSearchGeneration,
+  noResults,
   instantCommandMode,
   instantCommandPrefix,
   setInstantCommandPrefix,

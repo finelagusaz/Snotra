@@ -1,4 +1,4 @@
-import { type Component, createEffect, createSignal, on, onCleanup, onMount, Show, untrack } from "solid-js";
+import { type Component, onCleanup, onMount, Show } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -22,6 +22,7 @@ import {
   enterToolSelection,
   exitToolSelection,
   toolSelectionState,
+  noResults,
   instantCommandMode,
   instantCommandPrefix,
 } from "../stores/search";
@@ -271,21 +272,6 @@ const SearchWindow: Component = () => {
     }
     return t("search.placeholder.default");
   }
-
-  const [noResults, setNoResults] = createSignal(false);
-  createEffect(on(
-    [results, indexing, toolSelectionState, folderState, instantCommandMode],
-    ([r, isIndexing, ts, fs, instant]) => {
-      setNoResults(
-        r.length === 0 &&
-        !isIndexing &&
-        untrack(() => query().length > 0) &&
-        !ts &&
-        !fs &&
-        !instant
-      );
-    },
-  ));
 
   return (
     <div class="search-bar" data-tauri-drag-region onKeyDown={handleKeyDown}>

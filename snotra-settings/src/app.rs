@@ -260,9 +260,18 @@ impl eframe::App for SettingsApp {
         // Single memory read for both focus-sync checks below.
         let focused_id = ctx.memory(|m| m.focused());
 
-        // Auto-sync: if a content widget (not sentinel) takes keyboard focus via click,
-        // sidebar loses its logical focus.
-        // Skip during hotkey capture so that capturing a hotkey does not clear sidebar state.
+        // Auto-sync: any pointer click (including on empty content area) clears sidebar focus.
+        // The sidebar tab click handler will re-assert sidebar_focused=true if appropriate.
+        // Skip during hotkey capture to avoid clearing sidebar state unexpectedly.
+        if !self.hotkey_state.is_capturing()
+            && self.sidebar_focused
+            && ctx.input(|i| i.pointer.any_click())
+        {
+            self.sidebar_focused = false;
+        }
+
+        // Secondary auto-sync: if a widget takes keyboard focus without a pointer click
+        // (e.g. programmatic focus), clear sidebar focus as well.
         if !self.hotkey_state.is_capturing()
             && self.sidebar_focused
             && focused_id.map(|id| id != sidebar_sentinel_id).unwrap_or(false)
@@ -339,9 +348,11 @@ impl eframe::App for SettingsApp {
                 // Tab list
                 for &tab in TabId::ALL {
                     let selected = self.active_tab == tab;
+                    // Sense::CLICK (without FOCUSABLE) keeps sidebar tabs out of the Tab key order.
+                    // Sidebar navigation uses ↑↓ keys; Tab should go directly to content.
                     let (rect, response) = ui.allocate_exact_size(
                         egui::vec2(available_width, 28.0),
-                        egui::Sense::click(),
+                        egui::Sense::CLICK,
                     );
 
                     // Background
@@ -392,10 +403,12 @@ impl eframe::App for SettingsApp {
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
-                        if ui.link(egui::RichText::new("Web").small()).clicked() {
+                        // Use non-focusable sense so links don't appear in Tab order.
+                        let link_sense = egui::Sense::CLICK;
+                        if ui.add(egui::Label::new(egui::RichText::new("Web").small().color(ui.visuals().hyperlink_color)).sense(link_sense)).clicked() {
                             let _ = open::that("https://blankrune.sakura.ne.jp/");
                         }
-                        if ui.link(egui::RichText::new("Mail").small()).clicked() {
+                        if ui.add(egui::Label::new(egui::RichText::new("Mail").small().color(ui.visuals().hyperlink_color)).sense(link_sense)).clicked() {
                             let _ = open::that("mailto:algiz.rune@gmail.com?subject=Snotra%E3%81%AB%E3%81%A4%E3%81%84%E3%81%A6");
                         }
                     });

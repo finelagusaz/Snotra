@@ -112,7 +112,7 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
         }
     }
 
-    egui::ScrollArea::vertical().show(ui, |ui| {
+    egui::ScrollArea::vertical().scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).show(ui, |ui| {
         ui.spacing_mut().interact_size.y = 24.0;
 
         ui.heading(tr.heading_opener_rules());

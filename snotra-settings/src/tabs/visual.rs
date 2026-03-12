@@ -56,7 +56,7 @@ const PRESETS: &[PresetDef] = &[
 const SWATCH_SIZE: f32 = 16.0;
 
 pub fn ui(ui: &mut egui::Ui, config: &mut Config, fonts: &[String], tr: &Tr) {
-    egui::ScrollArea::vertical().show(ui, |ui| {
+    egui::ScrollArea::vertical().scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).show(ui, |ui| {
         ui.spacing_mut().interact_size.y = 24.0;
 
         // -- Theme presets --

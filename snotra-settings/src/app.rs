@@ -257,17 +257,26 @@ impl eframe::App for SettingsApp {
         // then sets sidebar_focused=true before surrendering focus, leaving no race window.
         let sidebar_sentinel_id = egui::Id::new("sidebar_sentinel");
 
+        // Single memory read for both focus-sync checks below.
+        let focused_id = ctx.memory(|m| m.focused());
+
         // Auto-sync: if a content widget (not sentinel) takes keyboard focus via click,
         // sidebar loses its logical focus.
-        if self.sidebar_focused
-            && ctx.memory(|m| m.focused().map(|id| id != sidebar_sentinel_id).unwrap_or(false))
+        // Skip during hotkey capture so that capturing a hotkey does not clear sidebar state.
+        if !self.hotkey_state.is_capturing()
+            && self.sidebar_focused
+            && focused_id.map(|id| id != sidebar_sentinel_id).unwrap_or(false)
         {
             self.sidebar_focused = false;
         }
 
         // When sentinel gets focus (Shift+Tab from first content widget, or Tab wrap-around),
         // return keyboard control to the sidebar.
-        if !self.sidebar_focused && ctx.memory(|m| m.has_focus(sidebar_sentinel_id)) {
+        // Skip during hotkey capture for symmetry with the auto-sync guard above.
+        if !self.hotkey_state.is_capturing()
+            && !self.sidebar_focused
+            && focused_id == Some(sidebar_sentinel_id)
+        {
             self.sidebar_focused = true;
             ctx.memory_mut(|m| m.surrender_focus(sidebar_sentinel_id));
         }

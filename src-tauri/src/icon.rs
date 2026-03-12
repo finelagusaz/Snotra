@@ -7,7 +7,7 @@ use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC,
     DeleteObject, GetDIBits, SelectObject,
 };
-use windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
+use windows::Win32::Storage::FileSystem::{FILE_FLAGS_AND_ATTRIBUTES, SearchPathW};
 use windows::Win32::UI::Shell::{SHFILEINFOW, SHGFI_ICON, SHGFI_SMALLICON, SHGetFileInfoW};
 use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, ICONINFO};
 
@@ -124,9 +124,34 @@ struct IconData {
     bgra: Vec<u8>,
 }
 
-fn extract_icon(path: &str) -> Option<IconData> {
+/// bare name ("explorer.exe") を PATH から検索してフルパスに解決する。
+/// パス区切り文字やドライブレターを含む場合はそのまま返す。
+fn resolve_to_full_path(path: &str) -> String {
+    if path.contains('\\') || path.contains('/') || path.contains(':') {
+        return path.to_string();
+    }
     unsafe {
-        let wide_path: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+        let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut buffer = vec![0u16; 512];
+        let len = SearchPathW(
+            windows::core::PCWSTR::null(),
+            windows::core::PCWSTR(wide.as_ptr()),
+            windows::core::PCWSTR::null(),
+            Some(&mut buffer),
+            None,
+        );
+        if len > 0 {
+            String::from_utf16_lossy(&buffer[..len as usize])
+        } else {
+            path.to_string()
+        }
+    }
+}
+
+fn extract_icon(path: &str) -> Option<IconData> {
+    let resolved = resolve_to_full_path(path);
+    unsafe {
+        let wide_path: Vec<u16> = resolved.encode_utf16().chain(std::iter::once(0)).collect();
 
         let mut shfi = SHFILEINFOW::default();
         let result = SHGetFileInfoW(

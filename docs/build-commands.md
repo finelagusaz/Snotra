@@ -1,13 +1,13 @@
 # ビルド・実行コマンド
 
-## Windows 不要（macOS/Linux でも実行可能）
+## Windows/macOS/Linux で実行可能
 
 ```bash
 npm test                          # フロントユニットテスト（Vitest）
 npm run build                    # フロントエンドビルド（typecheck → vite build、プロジェクトルートから実行）
 ```
 
-## Windows 必須（`windows` クレートや Win32 API・実行バイナリに依存）
+## Windows のみ実行可能（`windows` クレートや Win32 API・実行バイナリに依存）
 
 ```bash
 cargo test -p snotra-core        # ユニットテスト

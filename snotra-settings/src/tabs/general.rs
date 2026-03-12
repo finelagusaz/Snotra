@@ -5,7 +5,7 @@ use crate::hotkey_input::{self, HotkeyInputState};
 use crate::i18n::Tr;
 
 pub fn ui(ui: &mut egui::Ui, config: &mut Config, hotkey_state: &mut HotkeyInputState, tr: &Tr) {
-    egui::ScrollArea::vertical().show(ui, |ui| {
+    egui::ScrollArea::vertical().scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).show(ui, |ui| {
         // Consistent row height so checkboxes and DragValue inputs align vertically
         ui.spacing_mut().interact_size.y = 24.0;
 

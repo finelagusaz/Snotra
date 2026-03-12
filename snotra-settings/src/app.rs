@@ -129,6 +129,7 @@ struct SettingsApp {
     hotkey_state: crate::hotkey_input::HotkeyInputState,
     last_position: Option<WindowPlacement>,
     tr: Tr,
+    sidebar_focused: bool,
 }
 
 impl SettingsApp {
@@ -156,6 +157,7 @@ impl SettingsApp {
             hotkey_state: Default::default(),
             last_position: None,
             tr,
+            sidebar_focused: true,
         }
     }
 
@@ -246,6 +248,68 @@ impl eframe::App for SettingsApp {
         };
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
 
+        // Sentinel ID: 0-size focusable widget at the top of CentralPanel.
+        // Tab order: sidebar (↑↓) → sentinel (transparent) → content widgets → footer buttons
+        //            → sentinel → sidebar (wrap-around).
+        // The two blocks below must stay in this order: auto-sync first, sentinel detection second.
+        // Rationale: when sentinel has focus, sidebar_focused is still false (previous frame),
+        // so auto-sync does not fire (its guard is `self.sidebar_focused`). Sentinel detection
+        // then sets sidebar_focused=true before surrendering focus, leaving no race window.
+        let sidebar_sentinel_id = egui::Id::new("sidebar_sentinel");
+
+        // Single memory read for both focus-sync checks below.
+        let focused_id = ctx.memory(|m| m.focused());
+
+        // Auto-sync: any pointer click (including on empty content area) clears sidebar focus.
+        // The sidebar tab click handler will re-assert sidebar_focused=true if appropriate.
+        // Skip during hotkey capture to avoid clearing sidebar state unexpectedly.
+        if !self.hotkey_state.is_capturing()
+            && self.sidebar_focused
+            && ctx.input(|i| i.pointer.any_click())
+        {
+            self.sidebar_focused = false;
+        }
+
+        // Secondary auto-sync: if a widget takes keyboard focus without a pointer click
+        // (e.g. programmatic focus), clear sidebar focus as well.
+        if !self.hotkey_state.is_capturing()
+            && self.sidebar_focused
+            && focused_id.map(|id| id != sidebar_sentinel_id).unwrap_or(false)
+        {
+            self.sidebar_focused = false;
+        }
+
+        // When sentinel gets focus (Shift+Tab from first content widget, or Tab wrap-around),
+        // return keyboard control to the sidebar.
+        // Skip during hotkey capture for symmetry with the auto-sync guard above.
+        if !self.hotkey_state.is_capturing()
+            && !self.sidebar_focused
+            && focused_id == Some(sidebar_sentinel_id)
+        {
+            self.sidebar_focused = true;
+            ctx.memory_mut(|m| m.surrender_focus(sidebar_sentinel_id));
+        }
+
+        if !self.hotkey_state.is_capturing() && self.sidebar_focused {
+            // ↑↓: navigate sidebar tabs.
+            let tabs = TabId::ALL;
+            let current = tabs.iter().position(|&t| t == self.active_tab).unwrap_or(0);
+            if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) && current > 0 {
+                self.active_tab = tabs[current - 1];
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) && current + 1 < tabs.len() {
+                self.active_tab = tabs[current + 1];
+            }
+            // Tab: move focus to content.
+            // begin_pass already set focus_direction=Next from RawInput, so the sentinel's
+            // interested_in_focus() will fire give_to_next=true and transparently hand focus
+            // to the first focusable content widget without the sentinel ever appearing focused.
+            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)) {
+                self.sidebar_focused = false;
+                ctx.memory_mut(|m| m.request_focus(sidebar_sentinel_id));
+            }
+        }
+
         // Close on Escape (skip when hotkey capture is active)
         if !self.hotkey_state.is_capturing() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             if self.has_changes() {
@@ -284,9 +348,11 @@ impl eframe::App for SettingsApp {
                 // Tab list
                 for &tab in TabId::ALL {
                     let selected = self.active_tab == tab;
+                    // Sense::CLICK (without FOCUSABLE) keeps sidebar tabs out of the Tab key order.
+                    // Sidebar navigation uses ↑↓ keys; Tab should go directly to content.
                     let (rect, response) = ui.allocate_exact_size(
                         egui::vec2(available_width, 28.0),
-                        egui::Sense::click(),
+                        egui::Sense::CLICK,
                     );
 
                     // Background
@@ -298,6 +364,15 @@ impl eframe::App for SettingsApp {
                             egui::vec2(3.0, rect.height() - 12.0),
                         );
                         ui.painter().rect_filled(indicator, CornerRadius::same(2), ACCENT);
+                        // Keyboard focus ring: shown when sidebar holds logical focus
+                        if self.sidebar_focused {
+                            ui.painter().rect_stroke(
+                                rect,
+                                CornerRadius::same(4),
+                                egui::Stroke::new(1.5, ACCENT),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
                     } else if response.hovered() {
                         ui.painter().rect_filled(rect, CornerRadius::same(4), TAB_HOVER);
                     }
@@ -319,6 +394,8 @@ impl eframe::App for SettingsApp {
 
                     if response.clicked() {
                         self.active_tab = tab;
+                        self.sidebar_focused = true;
+                        ctx.memory_mut(|m| m.surrender_focus(sidebar_sentinel_id));
                     }
                 }
 
@@ -326,10 +403,12 @@ impl eframe::App for SettingsApp {
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
-                        if ui.link(egui::RichText::new("Web").small()).clicked() {
+                        // Use non-focusable sense so links don't appear in Tab order.
+                        let link_sense = egui::Sense::CLICK;
+                        if ui.add(egui::Label::new(egui::RichText::new("Web").small().color(ui.visuals().hyperlink_color)).sense(link_sense)).clicked() {
                             let _ = open::that("https://blankrune.sakura.ne.jp/");
                         }
-                        if ui.link(egui::RichText::new("Mail").small()).clicked() {
+                        if ui.add(egui::Label::new(egui::RichText::new("Mail").small().color(ui.visuals().hyperlink_color)).sense(link_sense)).clicked() {
                             let _ = open::that("mailto:algiz.rune@gmail.com?subject=Snotra%E3%81%AB%E3%81%A4%E3%81%84%E3%81%A6");
                         }
                     });
@@ -392,6 +471,14 @@ impl eframe::App for SettingsApp {
 
         // Main content
         egui::CentralPanel::default().show(ctx, |ui| {
+            // Sentinel: 0-size focusable widget placed first in Tab order.
+            // Shift+Tab from the first content widget lands here (via id_next_frame),
+            // which is detected next frame to return focus to the sidebar.
+            // ui.interact() does not advance the layout cursor, so rendering is unaffected.
+            let sentinel_rect =
+                egui::Rect::from_min_size(ui.next_widget_position(), egui::vec2(0.0, 0.0));
+            ui.interact(sentinel_rect, sidebar_sentinel_id, egui::Sense::focusable_noninteractive());
+
             match self.active_tab {
                 TabId::General => tabs::general::ui(ui, &mut self.draft, &mut self.hotkey_state, &self.tr),
                 TabId::Search => tabs::search::ui(ui, &mut self.draft, &self.tr),

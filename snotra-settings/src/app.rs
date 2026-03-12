@@ -246,6 +246,19 @@ impl eframe::App for SettingsApp {
         };
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
 
+        // Tab navigation with Up/Down arrows.
+        // Guard: skip when hotkey capture is active, or when a text widget has keyboard focus.
+        if !self.hotkey_state.is_capturing() && !ctx.wants_keyboard_input() {
+            let tabs = TabId::ALL;
+            let current = tabs.iter().position(|&t| t == self.active_tab).unwrap_or(0);
+            if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) && current > 0 {
+                self.active_tab = tabs[current - 1];
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) && current + 1 < tabs.len() {
+                self.active_tab = tabs[current + 1];
+            }
+        }
+
         // Close on Escape (skip when hotkey capture is active)
         if !self.hotkey_state.is_capturing() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             if self.has_changes() {

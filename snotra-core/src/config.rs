@@ -1089,10 +1089,12 @@ pub fn detect_opener_presets() -> Vec<OpenerPreset> {
         });
     }
 
-    // Explorer: 常に利用可能
+    // Explorer: 常に利用可能。find_in_path でフルパスを解決し、アイコン取得を確実にする
+    let explorer_exe = find_in_path("explorer.exe")
+        .unwrap_or_else(|| r"C:\Windows\explorer.exe".to_string());
     presets.push(OpenerPreset {
         name: "Explorer",
-        exe: "explorer.exe".to_string(),
+        exe: explorer_exe,
         args: "",
         target: "folder",
     });
@@ -1101,12 +1103,21 @@ pub fn detect_opener_presets() -> Vec<OpenerPreset> {
 }
 
 /// Check if a preset's exe is already present in the opener rules (case-insensitive).
+/// Compares by file name only so that bare names ("explorer.exe") and full paths
+/// ("C:\Windows\explorer.exe") are treated as the same executable.
 pub fn is_preset_already_added(openers: &[OpenerRule], preset_exe: &str) -> bool {
-    let preset_lower = preset_exe.to_lowercase();
+    let preset_name = Path::new(preset_exe)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
     openers.iter().any(|rule| {
-        rule.tools
-            .iter()
-            .any(|tool| tool.exe.to_lowercase() == preset_lower)
+        rule.tools.iter().any(|tool| {
+            let tool_name = Path::new(&tool.exe)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            tool_name == preset_name
+        })
     })
 }
 
@@ -2738,7 +2749,12 @@ mod tests {
     fn detect_opener_presets_explorer_fields() {
         let presets = detect_opener_presets();
         let explorer = presets.iter().find(|p| p.name == "Explorer").unwrap();
-        assert_eq!(explorer.exe, "explorer.exe");
+        // exe はフルパスまたは bare name になるが、ファイル名部分は常に "explorer.exe"
+        let file_name = Path::new(&explorer.exe)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        assert_eq!(file_name, "explorer.exe");
         assert_eq!(explorer.args, "");
         assert_eq!(explorer.target, "folder");
     }
@@ -2807,6 +2823,33 @@ mod tests {
         }];
         assert!(is_preset_already_added(&rules, "explorer.exe"));
         assert!(!is_preset_already_added(&rules, "Code.exe"));
+    }
+
+    #[test]
+    fn is_preset_already_added_fullpath_matches_bare_name() {
+        // 設定に bare name で保存済みのユーザーが、フルパスのプリセットと照合できる
+        let rules = vec![OpenerRule {
+            target: "folder".to_string(),
+            tools: vec![OpenerTool {
+                name: "Explorer".to_string(),
+                exe: "explorer.exe".to_string(),
+                args: String::new(),
+            }],
+        }];
+        assert!(is_preset_already_added(
+            &rules,
+            r"C:\Windows\explorer.exe"
+        ));
+        // 逆方向: 設定にフルパス、プリセットが bare name
+        let rules_full = vec![OpenerRule {
+            target: "folder".to_string(),
+            tools: vec![OpenerTool {
+                name: "Explorer".to_string(),
+                exe: r"C:\Windows\explorer.exe".to_string(),
+                args: String::new(),
+            }],
+        }];
+        assert!(is_preset_already_added(&rules_full, "explorer.exe"));
     }
 
     #[test]

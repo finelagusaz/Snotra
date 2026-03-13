@@ -42,27 +42,18 @@ const ResultRow: Component<ResultRowProps> = (rawProps) => {
     >
       <Show when={props.showIcons}>
         <div class="result-icon">
-          <Show when={props.icon !== undefined}>
-            <Show
-              when={props.icon}
-              fallback={
-                <span class="icon-fallback">
+          {props.icon === undefined
+            ? null
+            : props.icon
+              ? <img src={props.icon} alt="" width="16" height="16" />
+              : <span class="icon-fallback">
                   {props.result.isError
                     ? "\u26A0\uFE0F"
                     : props.result.isFolder
                       ? "\u{1F4C1}"
                       : "\u{1F4C4}"}
                 </span>
-              }
-            >
-              <img
-                src={props.icon!}
-                alt=""
-                width="16"
-                height="16"
-              />
-            </Show>
-          </Show>
+          }
         </div>
       </Show>
       <div class="result-text" ref={textRef}>

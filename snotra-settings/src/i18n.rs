@@ -1005,6 +1005,20 @@ impl Tr {
         }
     }
 
+    pub fn heading_path_env(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "PATH 実行ファイル",
+            Language::En => "PATH Executables",
+        }
+    }
+
+    pub fn cb_include_path_env(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "PATH の実行ファイルを検索対象に含める",
+            Language::En => "Include executables from PATH",
+        }
+    }
+
     pub fn err_migemo_min_chars_zero(&self) -> &'static str {
         match self.0 {
             Language::Ja => "migemo 最小文字数は 1 以上である必要があります",

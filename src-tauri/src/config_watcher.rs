@@ -86,7 +86,8 @@ fn apply_config_change(app: &AppHandle) {
     let new_show_icons = new_config.appearance.show_icons;
     let index_changed = new_config.paths.scan != old_config.paths.scan
         || new_config.search.show_hidden_system != old_config.search.show_hidden_system
-        || show_icons_changed;
+        || show_icons_changed
+        || new_config.search.include_path_env != old_config.search.include_path_env;
     let language_changed = new_config.general.language != old_config.general.language;
     let new_language = new_config.general.language;
     let instant_prefix_changed = new_config.search.instant_command_prefix

@@ -36,17 +36,25 @@ pub fn start_index_build(app: &AppHandle) -> bool {
     std::thread::Builder::new()
         .name("snotra-index-build".to_string())
         .spawn(move || {
-            let (scan, show_hidden_system, show_icons) = {
+            let (scan, show_hidden_system, show_icons, include_path_env) = {
                 let state = app_handle.state::<AppState>();
                 let engine = state.engine.lock().unwrap();
                 (
                     engine.config().paths.scan.clone(),
                     engine.config().search.show_hidden_system,
                     engine.config().appearance.show_icons,
+                    engine.config().search.include_path_env,
                 )
             };
 
             let entries = indexer::rebuild_and_save(&scan, show_hidden_system);
+
+            // PATH エントリのマージ
+            let mut entries = entries;
+            if include_path_env {
+                let path_entries = indexer::scan_path_env(&entries, show_hidden_system);
+                entries.extend(path_entries);
+            }
 
             // Sync icon cache with current show_icons setting
             {

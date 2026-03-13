@@ -240,7 +240,7 @@ const SearchWindow: Component = () => {
     if (launching()) return;
     const value = (e.target as HTMLInputElement).value;
     // インデックス構築中も setQuery は常に呼ぶ。IPC をスキップするガードは refreshResults() 側にある。
-    // これにより、構築完了後の runRefresh() が蓄積された query で即座に検索できる。
+    // これにより、構築完了後の runRefresh() が最新の query() 値で即座に検索できる。
     trace("ui:input", { value, folderMode: folderState() !== null });
     perfMarkInput();
     clearLaunchNotice();

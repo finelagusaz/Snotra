@@ -629,7 +629,7 @@ fn scan_path_dirs(
         .map(|e| normalize_entry_key(&e.target_path))
         .collect();
 
-    let path_exts = ["exe", "bat", "cmd"];
+    let path_exts = ["exe", "bat", "cmd", "com"];
     let mut new_entries = Vec::new();
 
     for dir_str in path_list.split(';') {

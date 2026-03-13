@@ -1,9 +1,11 @@
-import { type Component, onMount, onCleanup, createSignal, createEffect } from "solid-js";
+import { type Component, onMount, onCleanup, createSignal, createEffect, Show } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { listen } from "@tauri-apps/api/event";
+import { check as checkUpdate, type Update } from "@tauri-apps/plugin-updater";
 import SearchWindow from "./components/SearchWindow";
 import ResultsSection from "./components/ResultsSection";
+import UpdateToast from "./components/UpdateToast";
 import {
   resetForShow,
   setSelected,
@@ -16,7 +18,7 @@ import {
 } from "./stores/search";
 import { applyTheme } from "./lib/theme";
 import { t, setLanguage, type Lang } from "./lib/i18n";
-import type { BootstrapPayload, VisualConfig } from "./lib/types";
+import type { BootstrapPayload, UpdateAvailablePayload, VisualConfig } from "./lib/types";
 import * as api from "./lib/invoke";
 import { trace } from "./lib/trace";
 
@@ -30,12 +32,16 @@ const MainApp: Component = () => {
   const SEARCH_BAR_HEIGHT = readLayoutConst("--search-bar-height", 52);
   const RESULT_ROW_HEIGHT = readLayoutConst("--result-row-height", 30);
   const RESULTS_PADDING = readLayoutConst("--results-padding", 8);
+  const UPDATE_TOAST_HEIGHT = readLayoutConst("--update-toast-height", 52);
   const win = getCurrentWindow();
   const unlistenFns: Array<() => void> = [];
   const [mainVisible, setMainVisible] = createSignal(false);
   const [maxResults, setMaxResults] = createSignal(8);
   const [showIcons, setShowIcons] = createSignal(true);
   const [cachedWidth, setCachedWidth] = createSignal(600);
+  const [updateInfo, setUpdateInfo] = createSignal<UpdateAvailablePayload | null>(null);
+  const [updaterInstalling, setUpdaterInstalling] = createSignal(false);
+  let pendingUpdate: Update | null = null;
 
   onMount(async () => {
     const hideMain = async () => {
@@ -198,13 +204,31 @@ const MainApp: Component = () => {
     if (bootstrap?.general.auto_hide_on_focus_lost) {
       await registerAutoHideOnFocusLost();
     }
+
+    // 起動時に更新チェック（auto_update が disabled 以外の場合）
+    if (bootstrap && bootstrap.general.auto_update !== "disabled") {
+      const canInstall = bootstrap.general.auto_update === "full";
+      checkUpdate().then((update) => {
+        if (update) {
+          if (canInstall) {
+            pendingUpdate = update;
+          }
+          setUpdateInfo({ version: update.version, can_install: canInstall });
+        }
+      }).catch((e) => {
+        console.warn("Update check failed:", e);
+      });
+    }
   });
 
   // ウィンドウサイズを結果の表示/非表示に応じて動的変更
   createEffect(() => {
     const show = shouldShowResults();
     const width = cachedWidth();
-    const height = show ? SEARCH_BAR_HEIGHT + maxResults() * RESULT_ROW_HEIGHT + RESULTS_PADDING : SEARCH_BAR_HEIGHT;
+    const toast = updateInfo() !== null ? UPDATE_TOAST_HEIGHT : 0;
+    const height =
+      (show ? SEARCH_BAR_HEIGHT + maxResults() * RESULT_ROW_HEIGHT + RESULTS_PADDING : SEARCH_BAR_HEIGHT)
+      + toast;
     void win.setSize(new LogicalSize(width, height));
   });
 
@@ -217,6 +241,19 @@ const MainApp: Component = () => {
       }
     }
   });
+
+  async function handleUpdateInstall() {
+    if (!pendingUpdate) return;
+    setUpdaterInstalling(true);
+    try {
+      await pendingUpdate.downloadAndInstall();
+      await api.restartApp();
+      // アプリが再起動するためここには到達しない
+    } catch (e) {
+      console.error("Update install failed:", e);
+      setUpdaterInstalling(false);
+    }
+  }
 
   function handleClickResult(index: number) {
     trace("app:event:result_clicked", { index });
@@ -239,6 +276,15 @@ const MainApp: Component = () => {
   return (
     <>
       <SearchWindow />
+      <Show when={updateInfo() !== null}>
+        <UpdateToast
+          version={updateInfo()!.version}
+          canInstall={updateInfo()!.can_install}
+          installing={updaterInstalling()}
+          onInstall={handleUpdateInstall}
+          onDismiss={() => setUpdateInfo(null)}
+        />
+      </Show>
       <ResultsSection
         visible={shouldShowResults() && mainVisible()}
         showIcons={showIcons()}

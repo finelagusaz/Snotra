@@ -31,6 +31,7 @@
     }
   },
   "bundle": {
+    "targets": ["nsis"],
     "externalBin": [
       "binaries/snotra-settings"
     ],
@@ -41,5 +42,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "PLACEHOLDER_REPLACE_WITH_ACTUAL_PUBKEY",
+      "endpoints": [
+        "https://github.com/finelagusaz/Snotra/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

@@ -746,3 +746,43 @@ command = "https://www.deepl.com/translator#ja/en/{clip}"
 - `instant_command_prefix` の変更は `config_watcher` 経由でホットリロードする
 - プレフィックス変更時は `instant-prefix-changed` イベントを emit し、フロントエンドがプレフィックスシグナルを更新する
 - `instant_commands` 配列は `get_instant_commands` IPC で毎回 config から読むため、キャッシュ無効化は不要
+
+## 19. 自動更新
+
+### 19.1 概要
+
+Tauri の `tauri-plugin-updater` を用いて GitHub Releases 経由で自動更新を行う。
+
+### 19.2 更新モード（`auto_update`）
+
+| モード | 挙動 |
+|---|---|
+| `full` | 起動時に更新を確認し、トーストでバージョンと [今すぐ更新] ボタンを表示。インストール完了後に再起動 |
+| `check_only` | 起動時に更新を確認し、トーストで通知のみ。インストールボタンは表示しない（ポータブル版ユーザー向け） |
+| `disabled` | 更新チェックを行わない |
+
+デフォルト: `full`
+
+### 19.3 トースト UI
+
+- 高さ 52px（2行 × 26px）、検索バーと検索結果リストの間に表示
+- 行1: バージョン文字列（またはインストール中メッセージ）
+- 行2: [今すぐ更新]（`full` モードのみ）+ [閉じる] ボタン（右寄せ）
+- トーストが表示されている間、ウィンドウ高さに `--update-toast-height` (52px) を加算する
+- [閉じる] で `updateInfo` シグナルを null にし、トーストを非表示にする
+
+### 19.4 更新フロー（`full` モード）
+
+1. 起動時フロントエンドが `check()` を呼び出し、`Update` オブジェクトを `pendingUpdate` 変数に保持
+2. トーストの [今すぐ更新] をクリック: `pendingUpdate.downloadAndInstall()` 実行
+3. 完了後 `restart_app` IPC で再起動
+
+### 19.5 リリース形式
+
+- ポータブル ZIP: `snotra.exe` + `snotra-settings.exe`
+- NSIS インストーラー: `Snotra_VERSION_x64-setup.exe`（署名付き）
+- 更新エンドポイント: `https://github.com/finelagusaz/Snotra/releases/latest/download/latest.json`
+
+### 19.6 設定画面
+
+- 設定画面の「全般」タブに自動更新モード選択（ComboBox、3択）を追加

@@ -65,5 +65,40 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, hotkey_state: &mut HotkeyInput
             &mut config.general.follow_cursor_monitor,
             tr.cb_follow_cursor_monitor(),
         );
+
+        ui.add_space(12.0);
+
+        // -- Auto Update --
+        ui.heading(tr.heading_auto_update());
+        ui.add_space(4.0);
+
+        egui::Grid::new("auto_update_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+            use snotra_core::config::AutoUpdateMode;
+            let selected_label = match config.general.auto_update {
+                AutoUpdateMode::Full      => tr.auto_update_full(),
+                AutoUpdateMode::CheckOnly => tr.auto_update_check_only(),
+                AutoUpdateMode::Disabled  => tr.auto_update_disabled(),
+            };
+            egui::ComboBox::from_id_salt("auto_update_mode")
+                .selected_text(selected_label)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut config.general.auto_update,
+                        AutoUpdateMode::Full,
+                        tr.auto_update_full(),
+                    );
+                    ui.selectable_value(
+                        &mut config.general.auto_update,
+                        AutoUpdateMode::CheckOnly,
+                        tr.auto_update_check_only(),
+                    );
+                    ui.selectable_value(
+                        &mut config.general.auto_update,
+                        AutoUpdateMode::Disabled,
+                        tr.auto_update_disabled(),
+                    );
+                });
+            ui.end_row();
+        });
     });
 }

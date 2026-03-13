@@ -24,6 +24,7 @@ export interface VisualConfig {
 
 export interface BootstrapGeneralConfig {
   auto_hide_on_focus_lost: boolean;
+  auto_update: "full" | "check_only" | "disabled";
 }
 
 export interface BootstrapAppearanceConfig {
@@ -43,4 +44,9 @@ export interface BootstrapPayload {
 export interface InstantCommand {
   name: string;
   command: string;
+}
+
+export interface UpdateAvailablePayload {
+  version: string;
+  can_install: boolean;
 }

@@ -272,17 +272,37 @@ ui.checkbox(
 
 変更点:
 1. `npx tauri build --no-bundle` → `npx tauri build --bundles nsis`
+   - `--bundles nsis` は `target/release/snotra.exe`（ポータブル用）と `target/release/bundle/nsis/Snotra_*_x64-setup.exe`（インストーラー用）を同時に生成する
 2. 環境変数追加: `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（GitHub Secrets から）
-3. NSIS インストーラと `.sig` ファイルをリリースにアップロード
-4. `latest.json` を PowerShell で生成してアップロード
+3. ZIP 名を `Snotra-<tag>-portable.zip` に変更（ポータブル版であることを明示）
+4. NSIS インストーラー（`Snotra-<tag>-installer.exe`）と `.sig` ファイルをリリースにアップロード
+5. `latest.json` を PowerShell で生成してアップロード
 
-`latest.json` 生成（PowerShell）:
+**リリース成果物の構成:**
+
+| ファイル名 | 種別 | 用途 |
+|-----------|------|------|
+| `Snotra-<tag>-portable.zip` | ポータブル | 解凍して使う。自動更新なし |
+| `Snotra-<tag>-installer.exe` | インストーラー | セットアップ形式。自動更新あり |
+| `Snotra-<tag>-installer.exe.sig` | 署名 | 自動更新の整合性検証用（内部利用） |
+| `latest.json` | 更新マニフェスト | 自動更新のバージョン情報（内部利用） |
+
+**ZIP 名の変更（PowerShell）:**
+```powershell
+# 既存の Compress-Archive を変更
+Compress-Archive -Path "target/release/snotra.exe","target/release/snotra-settings.exe" `
+  -DestinationPath "Snotra-${{ env.TAG_NAME }}-portable.zip"
+```
+
+**latest.json 生成（PowerShell）:**
 ```powershell
 $ver = "${{ env.TAG_NAME }}".TrimStart('v')
-$installerPath = Get-ChildItem "target/release/bundle/nsis" -Filter "*_x64-setup.exe" | Select-Object -First 1
-$sigPath = "$($installerPath.FullName).sig"
-$sig = Get-Content $sigPath -Raw
-$installerName = $installerPath.Name
+$installerSrc = Get-ChildItem "target/release/bundle/nsis" -Filter "*_x64-setup.exe" | Select-Object -First 1
+$sigContent = Get-Content "$($installerSrc.FullName).sig" -Raw
+# リリース資産名を統一（タグ付き）
+$installerDest = "Snotra-${{ env.TAG_NAME }}-installer.exe"
+Copy-Item $installerSrc.FullName $installerDest
+Copy-Item "$($installerSrc.FullName).sig" "$installerDest.sig"
 
 $json = @{
   version  = $ver
@@ -290,8 +310,8 @@ $json = @{
   pub_date = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
   platforms = @{
     "windows-x86_64" = @{
-      signature = $sig.Trim()
-      url       = "https://github.com/finelagusaz/Snotra/releases/download/${{ env.TAG_NAME }}/$installerName"
+      signature = $sigContent.Trim()
+      url       = "https://github.com/finelagusaz/Snotra/releases/download/${{ env.TAG_NAME }}/$installerDest"
     }
   }
 } | ConvertTo-Json -Depth 5
@@ -299,12 +319,12 @@ $json = @{
 $json | Set-Content "latest.json" -Encoding utf8
 ```
 
-リリースアップロードの `files` に追加:
+リリースアップロードの `files`:
 ```yaml
 files: |
-  Snotra-${{ env.TAG_NAME }}.zip
-  target/release/bundle/nsis/*_x64-setup.exe
-  target/release/bundle/nsis/*_x64-setup.exe.sig
+  Snotra-${{ env.TAG_NAME }}-portable.zip
+  Snotra-${{ env.TAG_NAME }}-installer.exe
+  Snotra-${{ env.TAG_NAME }}-installer.exe.sig
   latest.json
 ```
 

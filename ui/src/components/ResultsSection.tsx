@@ -111,9 +111,9 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
     const visible = fetchIconBatch(items.slice(0, visibleCount), generation);
     const hidden = items.length > visibleCount
       ? fetchIconBatch(items.slice(visibleCount), generation)
-      : Promise.resolve();
+      : undefined;
     await visible;
-    await hidden;
+    if (hidden !== undefined) await hidden;
   }
 
   // visible prop が false になったとき Blob URL を解放する

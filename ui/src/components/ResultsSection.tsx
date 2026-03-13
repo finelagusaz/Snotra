@@ -106,12 +106,14 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
     if (!props.showIcons || props.skipIcons) return;
     // 呼び出し時点の値を固定し、await 中の設定変更でスライス境界がずれるのを防ぐ
     const visibleCount = props.maxResults;
-    // Stage 1: 可視行（先頭 visibleCount 件）を優先取得 → 即時表示
-    await fetchIconBatch(items.slice(0, visibleCount), generation);
-    // Stage 2: スクロール域の残り分を補完（stage 1 完了後、stale なら自動スキップ）
-    if (items.length > visibleCount) {
-      await fetchIconBatch(items.slice(visibleCount), generation);
-    }
+    // 可視行と非可視行を並列取得。可視行の完了を先に await して即時表示を最速化。
+    // stale guard は各バッチが独立して保持する generation 値で判定するため並列実行でも安全。
+    const visible = fetchIconBatch(items.slice(0, visibleCount), generation);
+    const hidden = items.length > visibleCount
+      ? fetchIconBatch(items.slice(visibleCount), generation)
+      : Promise.resolve();
+    await visible;
+    await hidden;
   }
 
   // visible prop が false になったとき Blob URL を解放する

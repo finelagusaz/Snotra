@@ -1,4 +1,4 @@
-import { type Component, For, createSignal, createEffect, on, onMount, onCleanup } from "solid-js";
+import { type Component, For, createSignal, createEffect, createMemo, on, onMount, onCleanup } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
 import type { SearchResult } from "../lib/types";
 import { results, selected, getSearchGeneration } from "../stores/search";
@@ -24,11 +24,11 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
   const [containerWidth, setContainerWidth] = createSignal(0);
   const [font, setFont] = createSignal("15px 'Segoe UI'");
   let listRef: HTMLDivElement | undefined;
-  let latestDataGeneration = 0;
+  let latestIconRequestId = 0;
   let lastScrolledSelected = -1;
   let lastScrolledGeneration = -1;
-  // results() の参照で世代を追跡（シグナルが変わるたびにインクリメント）
-  let dataGeneration = 0;
+  let iconRequestId = 0;   // アイコン取得の世代カウンタ（staleness guard 用）
+  let listGeneration = 0;  // スクロール追従の世代カウンタ（results 変化時のみ更新）
 
   function ensureRowVisible(container: HTMLDivElement, row: HTMLElement) {
     const cRect = container.getBoundingClientRect();
@@ -85,7 +85,7 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
       console.warn("fetchIcons failed:", e);
       return;
     }
-    if (generation !== latestDataGeneration) {
+    if (generation !== latestIconRequestId) {
       for (const url of parsed.values()) {
         URL.revokeObjectURL(url);
       }
@@ -103,39 +103,48 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
   }
 
   async function fetchIcons(items: SearchResult[], generation: number) {
-    if (!props.showIcons || props.skipIcons) return;
+    // RAF スケジュール後に条件が変わった場合の早期脱出（skipIcons は取得抑制のみ・破棄しない）
+    if (!iconsEnabled() || props.skipIcons) return;
     // 呼び出し時点の値を固定し、await 中の設定変更でスライス境界がずれるのを防ぐ
     const visibleCount = props.maxResults;
     // 可視行を先に await し、世代が変わっていなければ非表示行を開始する。
     // 逐次実行にすることで、連続入力で世代がすぐ変わるケースに
     // offscreen バッチ（Rust 側の rayon 処理を含む）を開始せずに済む。
     await fetchIconBatch(items.slice(0, visibleCount), generation);
-    if (generation !== latestDataGeneration) return;
+    if (generation !== latestIconRequestId) return;
     if (items.length > visibleCount) {
       await fetchIconBatch(items.slice(visibleCount), generation);
     }
   }
 
-  // visible prop が false になったとき Blob URL を解放する
-  createEffect(() => {
-    if (!props.visible) {
-      latestDataGeneration = ++dataGeneration; // in-flight fetchIconBatch を stale にする
+  // アイコン取得条件を一元管理するメモ: 3 props の組み合わせが変化したときのみ再評価
+  const iconsEnabled = createMemo(() => props.visible && props.showIcons);
+
+  // アイコンライフサイクル: results / iconsEnabled / skipIcons のいずれかが変化したとき
+  // enabled=false → キャッシュ破棄（visible 非表示・アイコン無効）
+  // skip=true     → 何もしない（IC モード中: キャッシュ保持・取得抑制）
+  // enabled かつ非 skip → 取得開始（results 変化・再表示・skipIcons 復帰すべてをカバー）
+  createEffect(on([results, iconsEnabled, () => props.skipIcons] as const, ([items, enabled, skip], prev) => {
+    if (!enabled) {
+      latestIconRequestId = ++iconRequestId;
       iconCache.revokeAll();
       fetchedNone.clear();
       setIconCacheVersion((v) => v + 1);
+      return;
     }
-  });
+    if (skip) return;
+    const id = ++iconRequestId;
+    latestIconRequestId = id;
+    // results が変化したときのみクリア。skipIcons 切替だけの場合は「アイコンなし」確定済み情報を保持する
+    if (prev === undefined || prev[0] !== items) {
+      fetchedNone.clear();
+    }
+    requestAnimationFrame(() => void fetchIcons(items, id));
+  }));
 
-  // results 変化時のみ: 世代更新 + アイコン取得 + perf 計測
+  // results 専用: perf 計測 + スクロール世代更新（アイコン条件とは独立）
   createEffect(on(results, (items) => {
-    const gen = ++dataGeneration;
-    latestDataGeneration = gen;
-    fetchedNone.clear();
-
-    requestAnimationFrame(() => {
-      void fetchIcons(items, gen);
-    });
-
+    ++listGeneration;
     if (items.length > 0) {
       const perfRequestId = getSearchGeneration();
       requestAnimationFrame(() => {
@@ -147,7 +156,7 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
   // selected または results が変化した時: スクロール追従
   createEffect(() => {
     const sel = selected();
-    scrollToSelected(sel, dataGeneration);
+    scrollToSelected(sel, listGeneration);
   });
 
   onMount(() => {
@@ -157,25 +166,16 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
       iconCache.revokeAll();
     });
 
-    // show-icons-changed: showIcons は MainApp が管理するが、アイコンキャッシュの破棄はここで行う
+    // show-icons-changed は MainApp が setShowIcons() で受け取り props.showIcons に流す。
+    // iconsEnabled メモ経由でアイコンライフサイクル effect が反応するため、ここでは listen 不要。
     void (async () => {
-      const [unlistenShowIcons, unlistenVisualFont] = await Promise.all([
-        listen<boolean>("show-icons-changed", (event) => {
-          if (!event.payload) {
-            latestDataGeneration = ++dataGeneration; // in-flight fetchIconBatch を stale にする
-            iconCache.revokeAll();
-            fetchedNone.clear();
-            setIconCacheVersion((v) => v + 1);
-          }
-        }),
-        listen("visual-config-changed", () => {
-          if (listRef) {
-            const style = getComputedStyle(listRef);
-            setFont(`${style.fontSize} ${style.fontFamily}`);
-          }
-        }),
-      ]);
-      unlistenFns.push(unlistenShowIcons, unlistenVisualFont);
+      const unlistenVisualFont = await listen("visual-config-changed", () => {
+        if (listRef) {
+          const style = getComputedStyle(listRef);
+          setFont(`${style.fontSize} ${style.fontFamily}`);
+        }
+      });
+      unlistenFns.push(unlistenVisualFont);
     })().catch((e) => console.warn("ResultsSection: failed to setup listeners:", e));
 
     // Measure font once at list level for all ResultRow instances

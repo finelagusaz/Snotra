@@ -11,6 +11,15 @@ pub enum Language {
     En,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoUpdateMode {
+    #[default]
+    Full,       // チェック + インストール（インストーラー版向け）
+    CheckOnly,  // チェックのみ・通知する（ポータブル版向け）
+    Disabled,   // チェックしない
+}
+
 fn default_language() -> Language {
     sys_locale::get_locale()
         .map(|l| {
@@ -217,6 +226,8 @@ pub struct GeneralConfig {
     pub ime_off_on_show: bool,
     #[serde(default = "default_follow_cursor_monitor")]
     pub follow_cursor_monitor: bool,
+    #[serde(default)]
+    pub auto_update: AutoUpdateMode,
 }
 
 impl Default for GeneralConfig {
@@ -229,6 +240,7 @@ impl Default for GeneralConfig {
             show_tray_icon: true,
             ime_off_on_show: false,
             follow_cursor_monitor: true,
+            auto_update: AutoUpdateMode::Full,
         }
     }
 }

@@ -2,13 +2,14 @@ use std::sync::atomic::Ordering;
 
 use tauri::State;
 
-use snotra_core::config::Language;
+use snotra_core::config::{AutoUpdateMode, Language};
 
 use crate::state::AppState;
 
 #[derive(serde::Serialize, Clone)]
 pub struct BootstrapGeneralConfig {
     pub auto_hide_on_focus_lost: bool,
+    pub auto_update: AutoUpdateMode,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -34,6 +35,7 @@ pub fn get_bootstrap_payload(state: State<AppState>) -> BootstrapPayload {
         visual: engine.config().visual.clone(),
         general: BootstrapGeneralConfig {
             auto_hide_on_focus_lost: engine.config().general.auto_hide_on_focus_lost,
+            auto_update: engine.config().general.auto_update,
         },
         appearance: BootstrapAppearanceConfig {
             show_icons: engine.config().appearance.show_icons,

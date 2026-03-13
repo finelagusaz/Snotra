@@ -1053,4 +1053,32 @@ impl Tr {
             Language::En => "Min chars:",
         }
     }
+
+    pub fn heading_auto_update(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "自動更新",
+            Language::En => "Auto Update",
+        }
+    }
+
+    pub fn auto_update_full(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "インストール含む",
+            Language::En => "Check and install",
+        }
+    }
+
+    pub fn auto_update_check_only(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "更新チェックのみ",
+            Language::En => "Check only (notify)",
+        }
+    }
+
+    pub fn auto_update_disabled(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "更新チェックしない",
+            Language::En => "Disabled",
+        }
+    }
 }

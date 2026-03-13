@@ -26,7 +26,12 @@ export type TranslationKey =
   | "notice.hotkey.initial_failed"
   | "notice.hotkey.change_failed"
   // settings availability
-  | "notice.settings.unavailable_while_indexing";
+  | "notice.settings.unavailable_while_indexing"
+  // update toast
+  | "update.available"
+  | "update.install_now"
+  | "update.dismiss"
+  | "update.installing";
 
 const JA_JP: Record<TranslationKey, string> = {
   // SearchWindow
@@ -52,6 +57,11 @@ const JA_JP: Record<TranslationKey, string> = {
   // settings availability
   "notice.settings.unavailable_while_indexing":
     "インデックス構築中のため、設定を開けません",
+  // update toast
+  "update.available": "v{version} が利用可能です",
+  "update.install_now": "今すぐ更新",
+  "update.dismiss": "閉じる",
+  "update.installing": "インストール中...",
 };
 
 const EN_US: Record<TranslationKey, string> = {
@@ -78,6 +88,11 @@ const EN_US: Record<TranslationKey, string> = {
   // settings availability
   "notice.settings.unavailable_while_indexing":
     "Cannot open settings while indexing.",
+  // update toast
+  "update.available": "v{version} is available",
+  "update.install_now": "Update now",
+  "update.dismiss": "Dismiss",
+  "update.installing": "Installing...",
 };
 
 const TABLES: Record<Lang, Record<TranslationKey, string>> = {

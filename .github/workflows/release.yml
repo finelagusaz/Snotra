@@ -68,26 +68,53 @@ jobs:
           $conf.version = $ver
           $conf | ConvertTo-Json -Depth 10 | Set-Content src-tauri/tauri.conf.json -Encoding utf8
 
-      - name: Build Windows executable (release)
-        run: npx tauri build --no-bundle
-        env:
-          VITE_APP_VERSION: ${{ env.TAG_NAME }}
-          VITE_APP_BUILD_NUMBER: ${{ env.BUILD_DATE }}
-
       - name: Build snotra-settings (release)
         run: cargo build --release -p snotra-settings
         env:
           BUILD_DATE: ${{ env.BUILD_DATE }}
+
+      - name: Copy snotra-settings to binaries/ for NSIS bundling
+        run: Copy-Item target/release/snotra-settings.exe src-tauri/binaries/snotra-settings-x86_64-pc-windows-msvc.exe -Force
+
+      - name: Build Windows executable and NSIS installer (release)
+        run: npx tauri build --bundles nsis
+        env:
+          VITE_APP_VERSION: ${{ env.TAG_NAME }}
+          VITE_APP_BUILD_NUMBER: ${{ env.BUILD_DATE }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Verify release artifacts
         run: |
           @("target/release/snotra.exe", "target/release/snotra-settings.exe") | ForEach-Object {
             if (!(Test-Path $_)) { Write-Error "$_ not found"; exit 1 }
           }
+          $nsis = Get-Item "target/release/bundle/nsis/Snotra_*_x64-setup.exe" -ErrorAction SilentlyContinue
+          if (!$nsis) { Write-Error "NSIS installer not found"; exit 1 }
+          if (!(Test-Path "$($nsis.FullName).sig")) { Write-Error "NSIS .sig not found"; exit 1 }
 
-      - name: Package as ZIP
+      - name: Package as ZIP (portable)
         run: |
           Compress-Archive -Path "target/release/snotra.exe","target/release/snotra-settings.exe" -DestinationPath "Snotra-${{ env.TAG_NAME }}.zip"
+
+      - name: Generate latest.json (updater endpoint)
+        run: |
+          $ver = "${{ env.TAG_NAME }}".TrimStart('v')
+          $nsis = Get-Item "target/release/bundle/nsis/Snotra_*_x64-setup.exe" | Select-Object -First 1
+          $sig  = (Get-Content "$($nsis.FullName).sig" -Raw -Encoding utf8).Trim()
+          $url  = "https://github.com/finelagusaz/Snotra/releases/download/${{ env.TAG_NAME }}/$($nsis.Name)"
+          $json = [ordered]@{
+            version   = $ver
+            notes     = ""
+            pub_date  = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+            platforms = [ordered]@{
+              "windows-x86_64" = [ordered]@{
+                signature = $sig
+                url       = $url
+              }
+            }
+          }
+          $json | ConvertTo-Json -Depth 5 | Set-Content latest.json -Encoding utf8
 
       - name: Detect prerelease
         id: meta
@@ -105,4 +132,7 @@ jobs:
           tag_name: ${{ env.TAG_NAME }}
           name: ${{ env.TAG_NAME }}
           prerelease: ${{ steps.meta.outputs.prerelease }}
-          files: Snotra-${{ env.TAG_NAME }}.zip
+          files: |
+            Snotra-${{ env.TAG_NAME }}.zip
+            target/release/bundle/nsis/Snotra_*_x64-setup.exe
+            latest.json

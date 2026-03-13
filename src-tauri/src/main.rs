@@ -367,6 +367,7 @@ fn main() {
 
     let ime_off_for_si = ime_off;
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(move |app, _args, _cwd| {
             // When a second instance tries to start, show the main window
             // via show_main_and_emit to ensure height reset, IME control,
@@ -396,6 +397,7 @@ fn main() {
             commands::get_bootstrap_payload,
             commands::instant::get_instant_commands,
             commands::instant::execute_instant_command,
+            commands::restart_app,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();

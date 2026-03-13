@@ -4,6 +4,7 @@ pub(crate) mod instant;
 pub(crate) mod launch;
 mod search;
 mod system;
+mod updater;
 mod window;
 
 pub use config::*;
@@ -12,6 +13,7 @@ pub use launch::*;
 pub use search::*;
 pub use system::*;
 pub use window::*;
+pub use updater::*;
 
 // Re-export pub(crate) items that main.rs references
 pub(crate) use window::launch_settings_process;

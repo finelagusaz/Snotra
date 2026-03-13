@@ -39,7 +39,7 @@ let activationInFlight = false;
 let suppressNextQueryEffectRefresh = false;
 
 /** 結果を表示すべきかの派生シグナル。MainApp がリアクティブにウィンドウ高さを変更するために使用 */
-const shouldShowResults = createMemo(() => results().length > 0 && (!indexing() || instantCommandMode()));
+const shouldShowResults = createMemo(() => results().length > 0 && (!indexing() || instantCommandMode() || folderState() !== null));
 
 function clearLaunchNotice() {
   if (launchNoticeTimer !== undefined) {
@@ -136,23 +136,21 @@ async function refreshResults() {
     setSelected(0);
     return;
   }
-  const pathQuery = fs ? null : parsePathQuery(q);
-  const source = indexing()
-    ? "indexing"
-    : trimmed === "/r"
-      ? "history"
-      : fs || pathQuery
-      ? "folder"
-      : "query";
-  perfStartSearch(requestId, source);
-
-  if (indexing()) {
+  if (indexing() && !fs) {
     updateResults([]);
     setSelected(0);
     trace("search:refresh:done", { requestId, branch: "indexing_guard", count: 0 });
     perfMarkSearchDone(requestId, 0);
     return;
   }
+
+  const pathQuery = fs ? null : parsePathQuery(q);
+  const source = trimmed === "/r"
+    ? "history"
+    : fs || pathQuery
+    ? "folder"
+    : "query";
+  perfStartSearch(requestId, source);
 
   let items: SearchResult[];
   if (fs) {

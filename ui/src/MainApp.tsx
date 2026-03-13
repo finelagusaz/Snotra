@@ -20,11 +20,16 @@ import type { BootstrapPayload, VisualConfig } from "./lib/types";
 import * as api from "./lib/invoke";
 import { trace } from "./lib/trace";
 
-const SEARCH_BAR_HEIGHT = 52;
-const RESULT_ROW_HEIGHT = 30;
-const RESULTS_PADDING = 8; // .results-section bottom padding
+function readLayoutConst(name: string, fallback: number): number {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const px = parseFloat(raw);
+  return isNaN(px) ? fallback : px;
+}
 
 const MainApp: Component = () => {
+  const SEARCH_BAR_HEIGHT = readLayoutConst("--search-bar-height", 52);
+  const RESULT_ROW_HEIGHT = readLayoutConst("--result-row-height", 30);
+  const RESULTS_PADDING = readLayoutConst("--results-padding", 8);
   const win = getCurrentWindow();
   const unlistenFns: Array<() => void> = [];
   const [mainVisible, setMainVisible] = createSignal(false);

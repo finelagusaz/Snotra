@@ -1,3 +1,9 @@
+:root {
+  --search-bar-height: 52px;
+  --result-row-height: 30px;
+  --results-padding: 8px;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -24,7 +30,7 @@ html, body, #root {
   display: flex;
   flex-direction: row;
   align-items: center;
-  height: 52px;
+  height: var(--search-bar-height);
   flex-shrink: 0;
   padding: 8px;
 }
@@ -34,7 +40,7 @@ html, body, #root {
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  padding: 0 8px 8px;
+  padding: 0 8px var(--results-padding);
 }
 
 .search-input {
@@ -75,7 +81,7 @@ html, body, #root {
   padding: 4px 12px;
   border-radius: 4px;
   cursor: pointer;
-  min-height: 30px;
+  min-height: var(--result-row-height);
   display: flex;
   flex-direction: row;
   align-items: center;

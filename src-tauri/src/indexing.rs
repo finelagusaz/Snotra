@@ -47,10 +47,9 @@ pub fn start_index_build(app: &AppHandle) -> bool {
                 )
             };
 
-            let entries = indexer::rebuild_and_save(&scan, show_hidden_system);
+            let mut entries = indexer::rebuild_and_save(&scan, show_hidden_system);
 
             // PATH エントリのマージ
-            let mut entries = entries;
             if include_path_env {
                 let path_entries = indexer::scan_path_env(&entries, show_hidden_system);
                 entries.extend(path_entries);

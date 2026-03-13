@@ -512,6 +512,235 @@ fn lower_current_thread_priority() {
 #[cfg(not(windows))]
 fn lower_current_thread_priority() {}
 
+/// レジストリキーの RAII ガード。Drop 時に自動で RegCloseKey を呼ぶ。
+#[cfg(windows)]
+struct RegKeyGuard(windows::Win32::System::Registry::HKEY);
+
+#[cfg(windows)]
+impl Drop for RegKeyGuard {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = windows::Win32::System::Registry::RegCloseKey(self.0);
+        }
+    }
+}
+
+/// ユーザー環境変数の PATH を読み取る（HKCU\Environment\Path）。
+/// システム PATH（System32 等）は含まない。
+/// REG_EXPAND_SZ の場合は環境変数を展開して返す。
+#[cfg(windows)]
+fn read_user_path() -> Option<String> {
+    use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
+    use windows::Win32::System::Registry::*;
+    use windows::core::w;
+
+    unsafe {
+        let mut raw_key = HKEY::default();
+        RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            w!("Environment"),
+            Some(0),
+            KEY_READ,
+            &mut raw_key,
+        )
+        .ok()
+        .ok()?;
+        let key = RegKeyGuard(raw_key);
+
+        let mut data_type = REG_VALUE_TYPE::default();
+        let mut buf_size: u32 = 0;
+
+        // サイズ取得
+        let status = RegQueryValueExW(
+            key.0,
+            w!("Path"),
+            None,
+            Some(&mut data_type),
+            None,
+            Some(&mut buf_size),
+        );
+        if status.is_err() || buf_size == 0 {
+            return None;
+        }
+
+        // 値取得
+        let mut buf = vec![0u16; (buf_size as usize) / 2];
+        RegQueryValueExW(
+            key.0,
+            w!("Path"),
+            None,
+            Some(&mut data_type),
+            Some(buf.as_mut_ptr() as *mut u8),
+            Some(&mut buf_size),
+        )
+        .ok()
+        .ok()?;
+
+        // null terminator を除去
+        while buf.last() == Some(&0) {
+            buf.pop();
+        }
+
+        // REG_EXPAND_SZ の場合は環境変数を展開
+        if data_type == REG_EXPAND_SZ {
+            // null terminator を付加して ExpandEnvironmentStringsW に渡す
+            buf.push(0);
+            let required = ExpandEnvironmentStringsW(
+                windows::core::PCWSTR::from_raw(buf.as_ptr()),
+                None,
+            );
+            if required == 0 {
+                buf.pop(); // remove null terminator
+                return Some(String::from_utf16_lossy(&buf));
+            }
+            let mut expanded = vec![0u16; required as usize];
+            ExpandEnvironmentStringsW(
+                windows::core::PCWSTR::from_raw(buf.as_ptr()),
+                Some(&mut expanded),
+            );
+            // null terminator を除去
+            while expanded.last() == Some(&0) {
+                expanded.pop();
+            }
+            Some(String::from_utf16_lossy(&expanded))
+        } else {
+            Some(String::from_utf16_lossy(&buf))
+        }
+    }
+    // key は RegKeyGuard の Drop で自動クローズ
+}
+
+#[cfg(not(windows))]
+fn read_user_path() -> Option<String> {
+    None
+}
+
+/// セミコロン区切りのパスリストからディレクトリを平坦スキャンし、
+/// 既存エントリにない実行ファイルを返す。
+///
+/// `read_user_path` から分離することでテスト可能性を確保。
+fn scan_path_dirs(
+    path_list: &str,
+    existing_entries: &[AppEntry],
+    show_hidden_system: bool,
+) -> Vec<AppEntry> {
+    let mut seen: std::collections::HashSet<String> = existing_entries
+        .iter()
+        .map(|e| normalize_entry_key(&e.target_path))
+        .collect();
+
+    let path_exts = ["exe", "bat", "cmd", "com"];
+    let mut new_entries = Vec::new();
+
+    for dir_str in path_list.split(';') {
+        let dir_str = dir_str.trim();
+        if dir_str.is_empty() {
+            continue;
+        }
+        let dir = Path::new(dir_str);
+        let Ok(read_dir) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            if !show_hidden_system && !is_visible_metadata(&meta) {
+                continue;
+            }
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_ascii_lowercase());
+            let Some(ref ext) = ext else { continue };
+            if !path_exts.contains(&ext.as_str()) {
+                continue;
+            }
+            let name = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            if name.is_empty() {
+                continue;
+            }
+            let path_str = path.to_string_lossy().into_owned();
+            let key = normalize_entry_key(&path_str);
+            if seen.insert(key) {
+                new_entries.push(AppEntry {
+                    name,
+                    target_path: path_str,
+                    is_folder: false,
+                });
+            }
+        }
+    }
+
+    new_entries
+}
+
+/// ユーザー PATH のディレクトリを平坦スキャンし、既存エントリにない実行ファイルを返す。
+///
+/// - レジストリ `HKCU\Environment\Path` から読み取る（システム PATH を含まない）
+/// - `REG_EXPAND_SZ` の環境変数は展開済み
+/// - 再帰スキャンなし（PATH ディレクトリの直下のみ）
+/// - 対象拡張子: .exe / .bat / .cmd
+/// - `existing_entries` に同一パスがあるものは返さない（normalize_entry_key で判定）
+/// - PATH ディレクトリ間での重複も排除する
+pub fn scan_path_env(existing_entries: &[AppEntry], show_hidden_system: bool) -> Vec<AppEntry> {
+    let user_path = match read_user_path() {
+        Some(p) if !p.is_empty() => p,
+        _ => return Vec::new(),
+    };
+    scan_path_dirs(&user_path, existing_entries, show_hidden_system)
+}
+
+/// CachedMasks の各 Vec に新しいエントリの分を追記する。
+/// インデックスキャッシュの恩恵を維持しつつ、PATH エントリ等の追加分を補完する。
+///
+/// `char_masks` / `file_name_char_masks` は常に追記。
+/// `lower_names` / `lower_file_names` / `normalized_keys` は Some の場合のみ追記。
+/// `kana_lower_names` は SearchEngine 側で entries から直接計算されるためここでは扱わない。
+pub fn extend_cached_masks(masks: &mut CachedMasks, new_entries: &[AppEntry]) {
+    for entry in new_entries {
+        let lower = to_lower_folded(&entry.name);
+        let lower_file = std::path::Path::new(&entry.target_path)
+            .file_name()
+            .and_then(|f| f.to_str())
+            .map(to_lower_folded);
+
+        let mask = if lower.is_ascii() {
+            char_bitmask_for_cache(&lower)
+        } else {
+            u64::MAX
+        };
+        let file_mask = lower_file.as_deref().map_or(0, |s| {
+            if s.is_ascii() {
+                char_bitmask_for_cache(s)
+            } else {
+                u64::MAX
+            }
+        });
+
+        masks.char_masks.push(mask);
+        masks.file_name_char_masks.push(file_mask);
+
+        if let Some(ref mut ln) = masks.lower_names {
+            ln.push(lower);
+        }
+        if let Some(ref mut lfn) = masks.lower_file_names {
+            lfn.push(lower_file);
+        }
+        if let Some(ref mut nk) = masks.normalized_keys {
+            nk.push(normalize_entry_key(&entry.target_path));
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(deprecated)]
 mod tests {
@@ -969,5 +1198,144 @@ mod tests {
             entries.is_empty(),
             "scan_all with no paths should return empty"
         );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn read_user_path_does_not_contain_unexpanded_vars() {
+        // HKCU\Environment\Path は存在しない環境もあるため、
+        // Some が返った場合のみ展開結果を検証する
+        if let Some(path) = read_user_path() {
+            assert!(!path.contains('%'), "環境変数が未展開: {path}");
+        }
+    }
+
+    #[test]
+    fn scan_path_dirs_adds_new_entries() {
+        let dir = temp_dir("path_add");
+        fs::write(dir.join("tool.exe"), "").unwrap();
+        fs::write(dir.join("script.bat"), "").unwrap();
+
+        let path_list = dir.to_string_lossy().to_string();
+        let entries = scan_path_dirs(&path_list, &[], true);
+
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().any(|e| e.name == "tool"));
+        assert!(entries.iter().any(|e| e.name == "script"));
+        assert!(entries.iter().all(|e| !e.is_folder));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_path_dirs_skips_existing_paths() {
+        let dir = temp_dir("path_skip");
+        fs::write(dir.join("tool.exe"), "").unwrap();
+
+        let existing = vec![AppEntry {
+            name: "tool".to_string(),
+            target_path: dir.join("tool.exe").to_string_lossy().into_owned(),
+            is_folder: false,
+        }];
+
+        let path_list = dir.to_string_lossy().to_string();
+        let entries = scan_path_dirs(&path_list, &existing, true);
+
+        assert!(entries.is_empty());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_path_dirs_ignores_non_executable_extensions() {
+        let dir = temp_dir("path_exts");
+        fs::write(dir.join("tool.exe"), "").unwrap();
+        fs::write(dir.join("lib.dll"), "").unwrap();
+        fs::write(dir.join("readme.txt"), "").unwrap();
+        fs::write(dir.join("data.json"), "").unwrap();
+
+        let path_list = dir.to_string_lossy().to_string();
+        let entries = scan_path_dirs(&path_list, &[], true);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "tool");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_path_dirs_deduplicates_across_dirs() {
+        let dir = temp_dir("path_dedup");
+        fs::write(dir.join("tool.exe"), "").unwrap();
+
+        // 同じディレクトリを2回指定
+        let path_list = format!("{};{}", dir.display(), dir.display());
+        let entries = scan_path_dirs(&path_list, &[], true);
+
+        assert_eq!(entries.len(), 1);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_path_dirs_handles_nonexistent_dir() {
+        let entries = scan_path_dirs("C:\\nonexistent_dir_12345", &[], true);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn scan_path_dirs_handles_empty_path_list() {
+        let entries = scan_path_dirs("", &[], true);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn extend_cached_masks_grows_all_vecs() {
+        let mut masks = CachedMasks {
+            char_masks: vec![0xAB],
+            file_name_char_masks: vec![0xCD],
+            lower_names: Some(vec!["existing".to_string()]),
+            lower_file_names: Some(vec![Some("existing.lnk".to_string())]),
+            normalized_keys: Some(vec!["c:\\existing.lnk".to_string()]),
+        };
+
+        let new_entries = vec![AppEntry {
+            name: "tool".to_string(),
+            target_path: "C:\\bin\\tool.exe".to_string(),
+            is_folder: false,
+        }];
+
+        extend_cached_masks(&mut masks, &new_entries);
+
+        assert_eq!(masks.char_masks.len(), 2);
+        assert_eq!(masks.file_name_char_masks.len(), 2);
+        assert_eq!(masks.lower_names.as_ref().unwrap().len(), 2);
+        assert_eq!(masks.lower_file_names.as_ref().unwrap().len(), 2);
+        assert_eq!(masks.normalized_keys.as_ref().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn extend_cached_masks_handles_none_optional_fields() {
+        let mut masks = CachedMasks {
+            char_masks: vec![0xAB],
+            file_name_char_masks: vec![0xCD],
+            lower_names: None,
+            lower_file_names: None,
+            normalized_keys: None,
+        };
+
+        let new_entries = vec![AppEntry {
+            name: "tool".to_string(),
+            target_path: "C:\\bin\\tool.exe".to_string(),
+            is_folder: false,
+        }];
+
+        extend_cached_masks(&mut masks, &new_entries);
+
+        assert_eq!(masks.char_masks.len(), 2);
+        assert_eq!(masks.file_name_char_masks.len(), 2);
+        assert!(masks.lower_names.is_none());
+        assert!(masks.lower_file_names.is_none());
+        assert!(masks.normalized_keys.is_none());
     }
 }

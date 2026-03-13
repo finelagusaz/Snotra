@@ -36,6 +36,17 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, tr: &Tr) {
 
         ui.add_space(12.0);
 
+        // -- PATH executables --
+        ui.heading(tr.heading_path_env());
+        ui.add_space(4.0);
+
+        ui.checkbox(
+            &mut config.search.include_path_env,
+            tr.cb_include_path_env(),
+        );
+
+        ui.add_space(12.0);
+
         // -- History --
         ui.heading(tr.heading_history());
         ui.add_space(4.0);

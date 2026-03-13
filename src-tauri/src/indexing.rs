@@ -36,17 +36,24 @@ pub fn start_index_build(app: &AppHandle) -> bool {
     std::thread::Builder::new()
         .name("snotra-index-build".to_string())
         .spawn(move || {
-            let (scan, show_hidden_system, show_icons) = {
+            let (scan, show_hidden_system, show_icons, include_path_env) = {
                 let state = app_handle.state::<AppState>();
                 let engine = state.engine.lock().unwrap();
                 (
                     engine.config().paths.scan.clone(),
                     engine.config().search.show_hidden_system,
                     engine.config().appearance.show_icons,
+                    engine.config().search.include_path_env,
                 )
             };
 
-            let entries = indexer::rebuild_and_save(&scan, show_hidden_system);
+            let mut entries = indexer::rebuild_and_save(&scan, show_hidden_system);
+
+            // PATH エントリのマージ
+            if include_path_env {
+                let path_entries = indexer::scan_path_env(&entries, show_hidden_system);
+                entries.extend(path_entries);
+            }
 
             // Sync icon cache with current show_icons setting
             {
@@ -70,10 +77,22 @@ pub fn start_index_build(app: &AppHandle) -> bool {
                 state.engine.lock().unwrap().apply_prebuilt_index(new_index);
             }
 
+            // ビルド中に設定が変わったか確認し、差異があれば再ビルドを予約
+            let needs_rebuild = {
+                let state = app_handle.state::<AppState>();
+                let engine = state.engine.lock().unwrap();
+                let cfg = engine.config();
+                cfg.paths.scan != scan
+                    || cfg.search.show_hidden_system != show_hidden_system
+                    || cfg.appearance.show_icons != show_icons
+                    || cfg.search.include_path_env != include_path_env
+            };
+
             // Mark indexing complete
             {
                 let state = app_handle.state::<AppState>();
                 state.indexing.store(false, Ordering::SeqCst);
+                state.index_build_started.store(false, Ordering::SeqCst);
             }
 
             // Notify platform thread
@@ -85,6 +104,11 @@ pub fn start_index_build(app: &AppHandle) -> bool {
 
             // Notify frontend
             let _ = app_handle.emit("indexing-complete", ());
+
+            // 設定がビルド中に変わっていた場合、再ビルドを起動
+            if needs_rebuild {
+                start_index_build(&app_handle);
+            }
         })
         .ok();
 

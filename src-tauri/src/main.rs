@@ -326,6 +326,18 @@ fn main() {
         (entries, false, cached_masks)
     };
 
+    // PATH エントリのスキャン + マージ
+    let (mut entries, mut cached_masks) = (entries, cached_masks);
+    if config.search.include_path_env {
+        let path_entries = indexer::scan_path_env(&entries, config.search.show_hidden_system);
+        if !path_entries.is_empty() {
+            if let Some(ref mut masks) = cached_masks {
+                indexer::extend_cached_masks(masks, &path_entries);
+            }
+            entries.extend(path_entries);
+        }
+    }
+
     // Lazy-load icon cache on first icon request to keep startup path short.
     let icon_cache_state: IconCacheState = Mutex::new(None);
 

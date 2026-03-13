@@ -317,6 +317,9 @@ pub struct SearchConfig {
     /// `None` = 未設定（実効値は `effective_max_history_display()` で取得）。
     #[serde(default)]
     pub max_history_display: Option<usize>,
+    /// ユーザー PATH 環境変数の実行ファイルを検索対象に含めるか。
+    #[serde(default)]
+    pub include_path_env: bool,
 }
 
 impl Default for SearchConfig {
@@ -332,6 +335,7 @@ impl Default for SearchConfig {
             migemo_min_chars: default_migemo_min_chars(),
             top_n_history: None,
             max_history_display: None,
+            include_path_env: false,
         }
     }
 }

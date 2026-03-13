@@ -6,7 +6,7 @@ use crate::app::TEXT_SECONDARY;
 use crate::i18n::Tr;
 
 pub fn ui(ui: &mut egui::Ui, config: &mut Config, tr: &Tr) {
-    egui::ScrollArea::vertical().scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).show(ui, |ui| {
+    egui::ScrollArea::vertical().auto_shrink([false, false]).scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).show(ui, |ui| {
         ui.spacing_mut().interact_size.y = 24.0;
 
         // -- Search mode --

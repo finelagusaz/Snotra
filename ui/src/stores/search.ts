@@ -30,7 +30,8 @@ function updateResults(items: SearchResult[], isNormalSearch = false) {
 /** インスタントコマンドモード中のコマンド一覧（activateSelected で参照） */
 let instantCommandItems: InstantCommand[] = [];
 
-let debounceTimer: ReturnType<typeof requestAnimationFrame> | undefined;
+const DEBOUNCE_MS = 150;
+let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 let launchNoticeTimer: ReturnType<typeof setTimeout> | undefined;
 let refreshInFlight: Promise<void> | undefined;
 let searchGeneration = 0;
@@ -82,17 +83,17 @@ function clearCommandModeState() {
 
 function cancelDebounce() {
   if (debounceTimer !== undefined) {
-    cancelAnimationFrame(debounceTimer);
+    clearTimeout(debounceTimer);
     debounceTimer = undefined;
   }
 }
 
 function debouncedRefresh() {
   cancelDebounce();
-  debounceTimer = requestAnimationFrame(() => {
+  debounceTimer = setTimeout(() => {
     debounceTimer = undefined;
     void runRefresh();
-  });
+  }, DEBOUNCE_MS);
 }
 
 // Folder expansion state — signals live in ./folder.ts

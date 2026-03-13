@@ -24,7 +24,6 @@ import {
   toolSelectionState,
   noResults,
   instantCommandMode,
-  instantCommandPrefix,
 } from "../stores/search";
 import { hideMainWindow } from "../lib/commands";
 import { perfMarkInput } from "../lib/perf";
@@ -240,10 +239,8 @@ const SearchWindow: Component = () => {
     if (toolSelectionState()) return;
     if (launching()) return;
     const value = (e.target as HTMLInputElement).value;
-    // インデックス構築中は通常検索を無視。ただしスラッシュコマンド（/）と
-    // インスタントコマンドプレフィックス（@等）はインデックス不要のためバイパスする。
-    const trimmed = value.trimStart();
-    if (indexing() && !trimmed.startsWith("/") && !trimmed.startsWith(instantCommandPrefix())) return;
+    // インデックス構築中も setQuery は常に呼ぶ。IPC をスキップするガードは refreshResults() 側にある。
+    // これにより、構築完了後の runRefresh() が最新の query() 値で即座に検索できる。
     trace("ui:input", { value, folderMode: folderState() !== null });
     perfMarkInput();
     clearLaunchNotice();

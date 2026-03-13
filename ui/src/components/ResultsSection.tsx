@@ -106,14 +106,14 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
     if (!props.showIcons || props.skipIcons) return;
     // 呼び出し時点の値を固定し、await 中の設定変更でスライス境界がずれるのを防ぐ
     const visibleCount = props.maxResults;
-    // 可視行と非可視行を並列取得。可視行の完了を先に await して即時表示を最速化。
-    // stale guard は各バッチが独立して保持する generation 値で判定するため並列実行でも安全。
-    const visible = fetchIconBatch(items.slice(0, visibleCount), generation);
-    const hidden = items.length > visibleCount
-      ? fetchIconBatch(items.slice(visibleCount), generation)
-      : undefined;
-    await visible;
-    if (hidden !== undefined) await hidden;
+    // 可視行を先に await し、世代が変わっていなければ非表示行を開始する。
+    // 逐次実行にすることで、連続入力で世代がすぐ変わるケースに
+    // offscreen バッチ（Rust 側の rayon 処理を含む）を開始せずに済む。
+    await fetchIconBatch(items.slice(0, visibleCount), generation);
+    if (generation !== latestDataGeneration) return;
+    if (items.length > visibleCount) {
+      await fetchIconBatch(items.slice(visibleCount), generation);
+    }
   }
 
   // visible prop が false になったとき Blob URL を解放する

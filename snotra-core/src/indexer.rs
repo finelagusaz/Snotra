@@ -1202,13 +1202,12 @@ mod tests {
 
     #[test]
     #[cfg(windows)]
-    fn read_user_path_returns_some() {
-        let path = read_user_path();
-        assert!(path.is_some());
-        let path = path.unwrap();
-        assert!(!path.is_empty());
-        // 展開済み: %USERPROFILE% 等が残っていないことを確認
-        assert!(!path.contains('%'));
+    fn read_user_path_does_not_contain_unexpanded_vars() {
+        // HKCU\Environment\Path は存在しない環境もあるため、
+        // Some が返った場合のみ展開結果を検証する
+        if let Some(path) = read_user_path() {
+            assert!(!path.contains('%'), "環境変数が未展開: {path}");
+        }
     }
 
     #[test]

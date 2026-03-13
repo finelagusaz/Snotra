@@ -77,10 +77,22 @@ pub fn start_index_build(app: &AppHandle) -> bool {
                 state.engine.lock().unwrap().apply_prebuilt_index(new_index);
             }
 
+            // ビルド中に設定が変わったか確認し、差異があれば再ビルドを予約
+            let needs_rebuild = {
+                let state = app_handle.state::<AppState>();
+                let engine = state.engine.lock().unwrap();
+                let cfg = engine.config();
+                cfg.paths.scan != scan
+                    || cfg.search.show_hidden_system != show_hidden_system
+                    || cfg.appearance.show_icons != show_icons
+                    || cfg.search.include_path_env != include_path_env
+            };
+
             // Mark indexing complete
             {
                 let state = app_handle.state::<AppState>();
                 state.indexing.store(false, Ordering::SeqCst);
+                state.index_build_started.store(false, Ordering::SeqCst);
             }
 
             // Notify platform thread
@@ -92,6 +104,11 @@ pub fn start_index_build(app: &AppHandle) -> bool {
 
             // Notify frontend
             let _ = app_handle.emit("indexing-complete", ());
+
+            // 設定がビルド中に変わっていた場合、再ビルドを起動
+            if needs_rebuild {
+                start_index_build(&app_handle);
+            }
         })
         .ok();
 

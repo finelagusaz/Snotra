@@ -1,28 +1,31 @@
-# Retrospective — refactor/settings バグ修正 + レビュー根治 + インデックス中 /o 修正
+# Retrospective — feat: ユーザー PATH 環境変数の実行ファイルを検索対象に追加 (#264)
 
 ## よかったこと
 
-### Option<T> 設計の正攻法採用
-レビュー指摘「default 値比較では absent と explicit-default を区別できない」に対し、`Option<usize>` + `is_none()` チェックという正攻法で根治した。`effective_*()` アクセサで None → default 変換を使用時に行う設計は、migration 判定の不変条件を明確に保てる。
+### RegKeyGuard RAII で Win32 リソース管理を安全に実装
+レジストリハンドルの `Drop` 実装を `RegKeyGuard` に集約し、早期リターンやパニックでも `RegCloseKey` が必ず呼ばれる構造にした。Win32 リソースを直接扱う新機能でも「生成/破棄ペアで計画する」原則を守れた。
 
-### 多角的安全性確認で設計変更の副作用ゼロ
-SearchWindow の `/` バイパス追加前に3サブエージェントを投入し、インデックス中に通常検索が開放されないことを独立検証してから実装した。副作用のないことを証明してから動かした。
+### P2 fix: バックグラウンドビルド完了後に設定を再比較するパターンを確立
+ビルド開始時にキャプチャした設定と完了時の現在設定を比較し、差分があれば `start_index_build` を再帰呼び出しするパターンを `indexing.rs` に実装した。「バックグラウンドスレッドは開始時キャプチャと完了後の現在値を比較する」として `CLAUDE.md` に抽出済み。
 
-### ユーザー観察からの設計議論が即座にできた
-テスト実施中に「インデックス中でも検索できる」「混在状態は学習コストが高い」という UX 観点の指摘が出た。実装話に飛ばず設計意図を確認し、issue #245 として切り出す判断ができた。
+### E2E テストを PATH 書き換えなしで実装
+レジストリを直接変更することなく、config.toml のホットリロードパターン（既存テスト #11 と同じ構造）で `include_path_env` の ON/OFF を制御するテストを書いた。環境破壊なしに機能の核心を検証できた。
+
+### CodeRabbit レビューが `.com` 拡張子漏れを発見
+実装時に `.exe/.bat/.cmd` の3種のみをスキャン対象にしていたところ、CodeRabbit が `.com` の抜けを指摘した。Windows のレガシー実行形式への配慮が自動レビューで補完された。
 
 ---
 
 ## 伸びしろ
 
-### 新 cross-module import 追加時のテスト影響確認
-`commands.ts` が `stores/search` を import するようになった時点で `commands.test.ts` のモック追加が必要だったが、CI で落ちて初めて発覚した。`lib/` モジュールが `stores/` を import する変更は、そのテストファイルへの波及を即チェックすべき。→ `ui/CLAUDE.md` に追記済み。
+### `windows` クレートのシグネチャミスをコンパイルエラーで発覚
+`RegOpenKeyExW` の `uloptions` 引数が `Option<u32>` 型なのに `0`（bare integer）を渡してコンパイルエラー。`Result<(), Error>` を `Option` 返し関数で使うために `.ok().ok()?` が必要なことも同様。`snotra-core` への Win32 依存追加は初めてのケースで、`src-tauri/CLAUDE.md` の注意事項が適用されると気づくのが遅れた。
 
-### serde `#[serde(default)]` の field-level vs struct-level 挙動
-`SearchConfig::default()` が `Some(200)` を返すと、`[search]` セクション全体が TOML に absent の場合でも serde が struct の default を使うため `Some(200)` になり、migration が機能しなくなった。field-level `#[serde(default)]` と親 struct の `Default` の相互作用を事前に把握できていれば、テスト失敗を防げた。→ `snotra-core/CLAUDE.md` に追記済み。
+### P2 バグを実装段階で見逃した
+「状態フラグの真偽ペア」チェックは知っていたが、「バックグラウンドスレッドが処理中に設定が変わったら？」という視点まで事前調査で展開できなかった。レビュー指摘で発覚し修正できたのは良いが、実装前に気づきたかった。
 
-### インデックス中の UX 一貫性を設計段階で考慮できなかった
-`/o` のインデックス中ブロックを実装したとき、「一部のコマンドは動くが通常検索は動かない」という混在状態がユーザー体験上どう見えるかを考慮できていなかった。実装後にユーザー指摘で気づいた。
+### P3: 環境依存テストを初稿で書いてしまった
+`assert!(read_user_path().is_some())` と書いたが、`HKCU\Environment\Path` が存在しない環境（CI 等）では `None` になる。「このテストが動く環境でしか通らない」視点が抜けていた。`if let Some(path) = ... { assert!() }` パターンに修正済み。`snotra-core/CLAUDE.md` に `#[cfg(windows)]` コードのテスト注意点を追記した。
 
 ---
 

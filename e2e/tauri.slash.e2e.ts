@@ -666,6 +666,48 @@ test("/s 後にインデックス再構築が完了し検索が機能する", as
   expect(rows.length).toBeGreaterThan(0);
 });
 
+test("include_path_env の切り替えで PATH 実行ファイルが検索結果に出入りする", async ({ harness }) => {
+  const { driver, backup, fixtureDir } = harness;
+  const PATH_QUERY = "cargo";
+
+  // Phase 1: include_path_env = false（デフォルト）→ "cargo" は結果に出ない
+  await switchToLabel(driver, "main");
+  let input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(PATH_QUERY);
+  // 検索処理が安定するまで少し待つ
+  await sleep(1_500);
+  let rows = await driver.findElements(By.css(".result-row"));
+  expect(rows.length).toBe(0);
+
+  // Phase 2: include_path_env = true に書き換え → config_watcher が再インデックス
+  const configWithPath = buildE2EConfigToml(fixtureDir).replace(
+    "show_hidden_system = false",
+    "show_hidden_system = false\ninclude_path_env = true",
+  );
+  await writeFile(backup.path, `${configWithPath}\n`, "utf8");
+
+  // 再インデックス完了まで clear→retype→チェック（最大 30 秒）
+  await driver.wait(async () => {
+    await switchToLabel(driver, "main");
+    const el = await driver.findElement(By.css(".search-input"));
+    await el.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, PATH_QUERY);
+    return (await driver.findElements(By.css(".result-row"))).length > 0;
+  }, 30_000, "include_path_env = true に切り替え後、PATH 実行ファイルが検索結果に出ない");
+
+  // Phase 3: include_path_env = false に戻す → PATH 結果が消える
+  await writeFile(backup.path, `${buildE2EConfigToml(fixtureDir)}\n`, "utf8");
+
+  await driver.wait(async () => {
+    await switchToLabel(driver, "main");
+    const el = await driver.findElement(By.css(".search-input"));
+    await el.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, PATH_QUERY);
+    return (await driver.findElements(By.css(".result-row"))).length === 0;
+  }, 30_000, "include_path_env = false に切り替え後、PATH 実行ファイルが検索結果に残っている");
+
+  rows = await driver.findElements(By.css(".result-row"));
+  expect(rows.length).toBe(0);
+});
+
 test("Enter で検索結果を起動すると main が非表示になる", async ({ harness }) => {
   const { driver } = harness;
 

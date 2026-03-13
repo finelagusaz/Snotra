@@ -120,8 +120,11 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
   // アイコン取得条件を一元管理するメモ: 3 props の組み合わせが変化したときのみ再評価
   const iconsEnabled = createMemo(() => props.visible && props.showIcons);
 
-  // アイコンライフサイクル: results または iconsEnabled が変化したとき取得開始 / キャッシュ破棄
-  createEffect(on([results, iconsEnabled] as const, ([items, enabled]) => {
+  // アイコンライフサイクル: results / iconsEnabled / skipIcons のいずれかが変化したとき
+  // enabled=false → キャッシュ破棄（visible 非表示・アイコン無効）
+  // skip=true     → 何もしない（IC モード中: キャッシュ保持・取得抑制）
+  // enabled かつ非 skip → 取得開始（results 変化・再表示・skipIcons 復帰すべてをカバー）
+  createEffect(on([results, iconsEnabled, () => props.skipIcons] as const, ([items, enabled, skip]) => {
     if (!enabled) {
       latestIconRequestId = ++iconRequestId;
       iconCache.revokeAll();
@@ -129,6 +132,7 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
       setIconCacheVersion((v) => v + 1);
       return;
     }
+    if (skip) return;
     const id = ++iconRequestId;
     latestIconRequestId = id;
     fetchedNone.clear();

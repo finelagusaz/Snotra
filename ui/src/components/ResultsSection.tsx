@@ -103,8 +103,8 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
   }
 
   async function fetchIcons(items: SearchResult[], generation: number) {
-    // RAF スケジュール後に条件が変わった場合の早期脱出
-    if (!iconsEnabled()) return;
+    // RAF スケジュール後に条件が変わった場合の早期脱出（skipIcons は取得抑制のみ・破棄しない）
+    if (!iconsEnabled() || props.skipIcons) return;
     // 呼び出し時点の値を固定し、await 中の設定変更でスライス境界がずれるのを防ぐ
     const visibleCount = props.maxResults;
     // 可視行を先に await し、世代が変わっていなければ非表示行を開始する。
@@ -118,7 +118,7 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
   }
 
   // アイコン取得条件を一元管理するメモ: 3 props の組み合わせが変化したときのみ再評価
-  const iconsEnabled = createMemo(() => props.visible && props.showIcons && !props.skipIcons);
+  const iconsEnabled = createMemo(() => props.visible && props.showIcons);
 
   // アイコンライフサイクル: results または iconsEnabled が変化したとき取得開始 / キャッシュ破棄
   createEffect(on([results, iconsEnabled] as const, ([items, enabled]) => {

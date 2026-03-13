@@ -124,7 +124,7 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
   // enabled=false → キャッシュ破棄（visible 非表示・アイコン無効）
   // skip=true     → 何もしない（IC モード中: キャッシュ保持・取得抑制）
   // enabled かつ非 skip → 取得開始（results 変化・再表示・skipIcons 復帰すべてをカバー）
-  createEffect(on([results, iconsEnabled, () => props.skipIcons] as const, ([items, enabled, skip]) => {
+  createEffect(on([results, iconsEnabled, () => props.skipIcons] as const, ([items, enabled, skip], prev) => {
     if (!enabled) {
       latestIconRequestId = ++iconRequestId;
       iconCache.revokeAll();
@@ -135,7 +135,10 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
     if (skip) return;
     const id = ++iconRequestId;
     latestIconRequestId = id;
-    fetchedNone.clear();
+    // results が変化したときのみクリア。skipIcons 切替だけの場合は「アイコンなし」確定済み情報を保持する
+    if (prev === undefined || prev[0] !== items) {
+      fetchedNone.clear();
+    }
     requestAnimationFrame(() => void fetchIcons(items, id));
   }));
 

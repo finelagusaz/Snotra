@@ -146,7 +146,7 @@ async function refreshResults() {
       : "query";
   perfStartSearch(requestId, source);
 
-  if (indexing()) {
+  if (indexing() && !folderState()) {
     updateResults([]);
     setSelected(0);
     trace("search:refresh:done", { requestId, branch: "indexing_guard", count: 0 });

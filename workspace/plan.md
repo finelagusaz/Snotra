@@ -30,22 +30,30 @@
 
 **1a. `snotra-core/src/config.rs`**
 
-`GeneralConfig` に追加:
+`AutoUpdateMode` enum を追加（`Language` と同じ階層）:
 ```rust
-fn default_auto_update_enabled() -> bool {
-    true
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoUpdateMode {
+    #[default]
+    Full,       // チェック + インストール（インストーラー版向け）
+    CheckOnly,  // チェックのみ・通知する（ポータブル版向け）
+    Disabled,   // チェックしない
 }
-
-// GeneralConfig 構造体
-#[serde(default = "default_auto_update_enabled")]
-pub auto_update_enabled: bool,
 ```
 
-`Default::default()` の明示的初期化にも `auto_update_enabled: true` を追加。
+`GeneralConfig` に追加:
+```rust
+// GeneralConfig 構造体
+#[serde(default)]
+pub auto_update: AutoUpdateMode,
+```
+
+`Default::default()` の明示的初期化にも `auto_update: AutoUpdateMode::Full` を追加。
 
 不変条件:
-- `serde(default)` により既存の `config.toml` に項目がなくても `true` でデシリアライズされる
-- `Config::default()` でも `true` になる
+- `serde(default)` により既存の `config.toml` に項目がなくても `Full` でデシリアライズされる
+- `rename_all = "snake_case"` により TOML 値は `"full"` / `"check_only"` / `"disabled"`
 
 ### フェーズ 2: Tauri バックエンド
 
@@ -124,15 +132,18 @@ pub use updater::*;
 .plugin(tauri_plugin_updater::init())
 ```
 
-setup クロージャ末尾に更新チェック spawn（`auto_update_enabled` を読んでから起動）:
+setup クロージャ末尾に更新チェック spawn（`auto_update` モードを読んでから起動）:
 ```rust
-let auto_update_enabled = {
+use snotra_core::config::AutoUpdateMode;
+
+let auto_update_mode = {
     let state = app.state::<AppState>();
     let engine = state.engine.lock().unwrap();
-    engine.config().general.auto_update_enabled
+    engine.config().general.auto_update.clone()
 };
-if auto_update_enabled {
+if auto_update_mode != AutoUpdateMode::Disabled {
     let handle = app.handle().clone();
+    let can_install = auto_update_mode == AutoUpdateMode::Full;
     tokio::spawn(async move {
         use tauri_plugin_updater::UpdaterExt;
         let updater = match handle.updater() {
@@ -141,7 +152,10 @@ if auto_update_enabled {
         };
         match updater.check().await {
             Ok(Some(update)) => {
-                handle.emit("update-available", update.version.to_string()).ok();
+                handle.emit("update-available", serde_json::json!({
+                    "version": update.version.to_string(),
+                    "can_install": can_install,
+                })).ok();
             }
             Ok(None) => {}
             Err(e) => eprintln!("[updater] check failed: {e}"),
@@ -160,31 +174,41 @@ tauri::generate_handler![
 
 ### フェーズ 3: フロントエンド
 
-**3a. `ui/src/lib/i18n.ts`**
+**3a. `ui/src/lib/types.ts`**
+
+```typescript
+export interface UpdateAvailablePayload {
+  version: string;
+  can_install: boolean; // Full モードのみ true
+}
+```
+
+**3b. `ui/src/lib/i18n.ts`**
 
 `TranslationKey` に追加:
 ```typescript
 | "update.available"    // "v{version} が利用可能です"
 | "update.install_now" // "今すぐ更新"
-| "update.later"       // "後で"
+| "update.dismiss"     // "閉じる"
 | "update.installing"  // "インストール中..."
 ```
 
 翻訳辞書に追加（JA/EN 両方）。
 
-**3b. `ui/src/lib/invoke.ts`**
+**3c. `ui/src/lib/invoke.ts`**
 ```typescript
 export async function installUpdate(): Promise<void> {
   return invoke("install_update");
 }
 ```
 
-**3c. `ui/src/components/UpdateToast.tsx`（新規）**
+**3d. `ui/src/components/UpdateToast.tsx`（新規）**
 
 コンポーネント仕様:
-- Props: `{ version: string; installing: boolean; onInstall: () => void; onDismiss: () => void }`
+- Props: `{ version: string; canInstall: boolean; installing: boolean; onInstall: () => void; onDismiss: () => void }`
 - 高さ: 32px 固定（MainApp.tsx の高さ計算と一致させる）
-- レイアウト: 左側にバージョンラベル、右側に「今すぐ更新」「後で」ボタン
+- `canInstall === true`: 左にバージョンラベル、右に「今すぐ更新」「閉じる」ボタン
+- `canInstall === false`: 左にバージョンラベル、右に「閉じる」ボタンのみ（CheckOnly モード: 通知だけ）
 - `installing` が true のとき: ボタンを無効化してローディング表示
 - テーマ: 既存 CSS 変数（`--bg-primary`, `--text-primary` 等）を使用
 
@@ -193,14 +217,14 @@ export async function installUpdate(): Promise<void> {
 シグナル追加:
 ```typescript
 const UPDATE_TOAST_HEIGHT = 32;
-const [updateVersion, setUpdateVersion] = createSignal<string | null>(null);
+const [updateInfo, setUpdateInfo] = createSignal<UpdateAvailablePayload | null>(null);
 const [updaterInstalling, setUpdaterInstalling] = createSignal(false);
 ```
 
 `onMount` 内に listen 追加:
 ```typescript
-const unlistenUpdate = await listen<string>("update-available", (event) => {
-  setUpdateVersion(event.payload);
+const unlistenUpdate = await listen<UpdateAvailablePayload>("update-available", (event) => {
+  setUpdateInfo(event.payload);
 });
 unlistenFns.push(unlistenUpdate);
 ```
@@ -224,7 +248,7 @@ const handleUpdateInstall = async () => {
 createEffect(() => {
   const show = shouldShowResults();
   const width = cachedWidth();
-  const toast = updateVersion() !== null ? UPDATE_TOAST_HEIGHT : 0;
+  const toast = updateInfo() !== null ? UPDATE_TOAST_HEIGHT : 0;
   const height =
     (show ? SEARCH_BAR_HEIGHT + maxResults() * RESULT_ROW_HEIGHT + RESULTS_PADDING : SEARCH_BAR_HEIGHT)
     + toast;
@@ -234,12 +258,13 @@ createEffect(() => {
 
 JSX にトーストを追加（`SearchWindow` の下、`ResultsSection` の上）:
 ```tsx
-<Show when={updateVersion() !== null}>
+<Show when={updateInfo() !== null}>
   <UpdateToast
-    version={updateVersion()!}
+    version={updateInfo()!.version}
+    canInstall={updateInfo()!.can_install}
     installing={updaterInstalling()}
     onInstall={handleUpdateInstall}
-    onDismiss={() => setUpdateVersion(null)}
+    onDismiss={() => setUpdateInfo(null)}
   />
 </Show>
 ```
@@ -248,22 +273,56 @@ JSX にトーストを追加（`SearchWindow` の下、`ResultsSection` の上�
 
 **4a. `snotra-settings/src/i18n.rs`**
 ```rust
-pub fn cb_auto_update(&self) -> &'static str {
+pub fn heading_auto_update(&self) -> &'static str {
     match self.0 {
-        Language::Ja => "新バージョンを自動で確認・更新する",
-        Language::En => "Automatically check for and apply updates",
+        Language::Ja => "自動更新",
+        Language::En => "Auto Update",
+    }
+}
+pub fn auto_update_full(&self) -> &'static str {
+    match self.0 {
+        Language::Ja => "インストール含む",
+        Language::En => "Check and install",
+    }
+}
+pub fn auto_update_check_only(&self) -> &'static str {
+    match self.0 {
+        Language::Ja => "更新チェックのみ",
+        Language::En => "Check only (notify)",
+    }
+}
+pub fn auto_update_disabled(&self) -> &'static str {
+    match self.0 {
+        Language::Ja => "更新チェックしない",
+        Language::En => "Disabled",
     }
 }
 ```
 
 **4b. `snotra-settings/src/tabs/general.rs`**
 
-`// -- Behavior --` セクションの既存 checkbox 群の末尾に追加:
+`// -- Behavior --` セクション末尾に `ComboBox` を追加:
 ```rust
-ui.checkbox(
-    &mut config.general.auto_update_enabled,
-    tr.cb_auto_update(),
-);
+ui.add_space(12.0);
+ui.heading(tr.heading_auto_update());
+ui.add_space(4.0);
+
+egui::Grid::new("auto_update_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+    use snotra_core::config::AutoUpdateMode;
+    let selected_label = match config.general.auto_update {
+        AutoUpdateMode::Full      => tr.auto_update_full(),
+        AutoUpdateMode::CheckOnly => tr.auto_update_check_only(),
+        AutoUpdateMode::Disabled  => tr.auto_update_disabled(),
+    };
+    egui::ComboBox::from_id_salt("auto_update_mode")
+        .selected_text(selected_label)
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut config.general.auto_update, AutoUpdateMode::Full,      tr.auto_update_full());
+            ui.selectable_value(&mut config.general.auto_update, AutoUpdateMode::CheckOnly, tr.auto_update_check_only());
+            ui.selectable_value(&mut config.general.auto_update, AutoUpdateMode::Disabled,  tr.auto_update_disabled());
+        });
+    ui.end_row();
+});
 ```
 
 ### フェーズ 5: CI パイプライン
@@ -344,7 +403,7 @@ files: |
 
 | 条件 | 検証方法 |
 |------|---------|
-| `auto_update_enabled` の serde default が `true` | 既存 config.toml に項目がない状態でデシリアライズしても `true` |
+| `auto_update` の serde default が `Full` | 既存 config.toml に項目がない状態でデシリアライズしても `Full` |
 | `set_size()` の呼び出しは createEffect 1箇所のみ | コードレビュー |
 | 更新チェック失敗時はサイレント（eprintln のみ） | エラーをユーザーに表示しない（起動を妨げない） |
 | トースト表示中も検索は正常動作 | 手動確認 |
@@ -362,7 +421,7 @@ files: |
 ## セルフレビュー
 
 ### 対称コードパス
-- トースト表示（`setUpdateVersion`）に対し、dismissal（`null` セット）が両パスで機能する: ✅
+- トースト表示（`setUpdateInfo`）に対し、dismissal（`null` セット）が両パスで機能する: ✅
 - `update-available` listen に対し `unlistenFns.push()` でクリーンアップ: ✅
 
 ### 影響範囲の網羅性

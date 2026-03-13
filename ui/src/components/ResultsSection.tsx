@@ -30,19 +30,6 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
   let iconRequestId = 0;   // アイコン取得の世代カウンタ（staleness guard 用）
   let listGeneration = 0;  // スクロール追従の世代カウンタ（results 変化時のみ更新）
 
-  function ensureRowVisible(container: HTMLDivElement, row: HTMLElement) {
-    const cRect = container.getBoundingClientRect();
-    const rRect = row.getBoundingClientRect();
-
-    if (rRect.top < cRect.top) {
-      container.scrollTop -= cRect.top - rRect.top;
-      return;
-    }
-    if (rRect.bottom > cRect.bottom) {
-      container.scrollTop += rRect.bottom - cRect.bottom;
-    }
-  }
-
   /** Parse length-prefixed binary batch into per-path Blob URLs.
    *  Format: [count:u32 LE] then per icon: [status:u8] [if 1: png_len:u32 LE, png_bytes] */
   function parseBinaryBatch(
@@ -203,7 +190,7 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
         if (!listRef) return;
         const row = listRef.children[selectedIdx] as HTMLElement | undefined;
         if (!row) return;
-        ensureRowVisible(listRef, row);
+        row.scrollIntoView({ block: "nearest", inline: "nearest" });
       });
     }
   }

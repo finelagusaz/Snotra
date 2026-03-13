@@ -50,6 +50,10 @@
   - ユーザースタートメニューは含めない
 - ユーザーがスキャンパスと対象拡張子の組み合わせを設定可能
   - 例: `C:\Tools` -> `.exe, .bat`, `D:\Docs` -> `.pdf, .xlsx`
+- ユーザー PATH 環境変数（`HKCU\Environment\Path`）の実行ファイルを検索対象に追加可能（設定で有効化、デフォルト無効）
+  - 対象拡張子: `.exe`, `.bat`, `.cmd`
+  - `REG_EXPAND_SZ` 形式の値は環境変数を展開してから読み取る
+  - `paths.scan` に同一パスが含まれる場合は重複排除される
 - フォルダもエントリとして登録（検索対象）
 - 隠し/システム項目はデフォルトで除外し、設定で表示可能
 
@@ -139,7 +143,7 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 - `base_score`: 選択中検索方式のマッチスコア
 - `global_count`: アプリ全体の起動回数
 - `query_count`: 同一正規化クエリでの当該項目選択回数
-- `folder_boost`: フォルダ候補の展開履歴ブースト（非フォルダは0）
+- `folder_boost`: フォルダ候補の展開履歴ブースト（非フォルダは0）。`expansion_count * 5`（`FOLDER_EXPANSION_WEIGHT = 5`）
 - 履歴スコアの時間減衰は行わない
 
 オプション設定（`[search] history_normalization = "fuzzy_relative_cap"`）時:
@@ -246,9 +250,10 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 - 設定画面は独立した egui バイナリ `snotra-settings` として実装
 - 本体（`snotra`）から `std::process::Command` で子プロセスとして起動
 - `/o` スラッシュコマンドまたはトレイメニュー「設定」で開く
-- `snotra-settings --tab about` で「Snotra について」タブを初期表示
 - 設定の保存は `snotra-settings` が直接 `config.toml` に書き込み、本体は `notify` ファイル監視で検知・反映する
-- タブ切り替えUI
+- サイドバー + コンテンツエリアのレイアウト。サイドバーにタブ一覧を表示し、下部にバージョン・作者・Web/Mail リンクを常時表示する
+- 変更のあるタブのラベルに「•」（ダーティインジケーター）を表示する
+- サイドバーで ↑↓ キーによるタブ移動が可能（テキスト入力中・ホットキーキャプチャ中はガード）
 
 ### 6.2 タブ構成と設定項目
 
@@ -261,9 +266,6 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 - タスクトレイアイコン表示切替
 - 入力ウィンドウ表示時にIMEをオフ（復元なし）
 - カーソルのあるモニターに表示（マルチモニター時のウィンドウ表示先）
-- 最大表示件数
-- ウィンドウ幅
-- アイコン表示切替
 - 言語（日本語 / English）
 
 `[検索]` タブ:
@@ -271,7 +273,12 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 - 通常時検索方式
 - フォルダ展開時検索方式
 - 隠し/システム項目表示
+- PATH の実行ファイルを検索対象に含める（`include_path_env`、デフォルト無効）
+- ローマ字検索（`migemo_enabled`、デフォルト無効）・最小文字数（`migemo_min_chars`、デフォルト 2）
 - 履歴保存の上位N件指定
+- 最大履歴表示件数（`max_history_display`）
+- 履歴スコア正規化（`history_normalization`）
+- Fuzzy 履歴キャップ比率（`fuzzy_history_cap_ratio`、デフォルト 0.30）
 
 `[インデックス]` タブ:
 
@@ -283,6 +290,9 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 - プリセットテーマ選択（色セット）
 - 背景色、入力欄背景色、テキスト色、選択行色、ヒント文字色
 - フォントファミリー、フォントサイズ
+- 最大表示件数
+- ウィンドウ幅
+- アイコン表示切替
 
 `[オープナー]` タブ:
 
@@ -328,7 +338,7 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 - 見た目設定: 検知時に `visual-config-changed` イベントで全ウィンドウの CSS 変数を即時更新
 - ウィンドウ幅: 検知時に `set_size` で main ウィンドウを即時リサイズ
 - 言語: 検知時に `language-changed` イベントでフロントエンドに通知し、`PlatformCommand::SetLanguage` でトレイメニューを切替。`language-changed` はホットキー失敗通知より先に発火する（フロントエンドが正しい言語でエラー文字列を表示できるようにするため）
-- インデックス条件（スキャンパス・隠しファイル表示）・アイコン設定:
+- インデックス条件（スキャンパス・隠しファイル表示・`include_path_env`）・アイコン設定:
   - 検知時に変更を判定し、バックグラウンドで自動再構築
   - ステータスに「インデックスを再構築中…」を表示
 
@@ -674,6 +684,9 @@ command = "https://www.deepl.com/translator#ja/en/{clip}"
 
 - `name`: コマンド名（プレフィックス後に入力する文字列）。一意でなければならない
 - `command`: 実行するコマンドライン or URL
+- デフォルト登録済みコマンド（`Config::default()`）:
+  - `g`: `https://www.google.com/search?q={query}`（Google 検索）
+  - `gh`: `https://github.com/search?q={query}`（GitHub 検索）
 - `instant_command_prefix` のバリデーション:
   - 空文字を禁止（全入力がインスタントコマンドモードになるため）
   - `/` を禁止（ビルトインスラッシュコマンドと衝突するため）

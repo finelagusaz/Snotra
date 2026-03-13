@@ -32,6 +32,7 @@
   },
   "bundle": {
     "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
     "externalBin": [
       "binaries/snotra-settings"
     ],

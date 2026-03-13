@@ -119,6 +119,7 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
   // visible prop が false になったとき Blob URL を解放する
   createEffect(() => {
     if (!props.visible) {
+      latestDataGeneration = ++dataGeneration; // in-flight fetchIconBatch を stale にする
       iconCache.revokeAll();
       fetchedNone.clear();
       setIconCacheVersion((v) => v + 1);
@@ -161,6 +162,7 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
       const [unlistenShowIcons, unlistenVisualFont] = await Promise.all([
         listen<boolean>("show-icons-changed", (event) => {
           if (!event.payload) {
+            latestDataGeneration = ++dataGeneration; // in-flight fetchIconBatch を stale にする
             iconCache.revokeAll();
             fetchedNone.clear();
             setIconCacheVersion((v) => v + 1);

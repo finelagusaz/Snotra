@@ -1,4 +1,4 @@
-import { type Component, onCleanup, onMount, Show } from "solid-js";
+import { type Component, onCleanup, onMount, Show, Switch, Match } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -286,23 +286,25 @@ const SearchWindow: Component = () => {
         onInput={handleInput}
         autofocus
       />
-      <Show when={indexing()}>
-        <div class="search-overlay indexing-message" data-tauri-drag-region>
-          {t("search.status.indexing")}
-        </div>
-      </Show>
-      <Show when={launching() || launchNotice()}>
-        <div
-          class="search-overlay indexing-message"
-          classList={{ "indexing-message--error": !launching() && launchNotice() !== null }}
-          data-tauri-drag-region
-        >
-          {launching() ? t("search.status.launching") : launchNotice() ?? ""}
-        </div>
-      </Show>
-      <Show when={noResults()}>
-        <span class="no-results-hint">{t("search.status.no_results")}</span>
-      </Show>
+      <Switch>
+        <Match when={indexing()}>
+          <div class="search-overlay indexing-message" data-tauri-drag-region>
+            {t("search.status.indexing")}
+          </div>
+        </Match>
+        <Match when={launching() || launchNotice()}>
+          <div
+            class="search-overlay indexing-message"
+            classList={{ "indexing-message--error": !launching() && launchNotice() !== null }}
+            data-tauri-drag-region
+          >
+            {launching() ? t("search.status.launching") : launchNotice() ?? ""}
+          </div>
+        </Match>
+        <Match when={noResults()}>
+          <span class="no-results-hint">{t("search.status.no_results")}</span>
+        </Match>
+      </Switch>
     </div>
   );
 };

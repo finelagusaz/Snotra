@@ -567,16 +567,21 @@ fn main() {
                 if visible && toggle {
                     if let Some(w) = handle_for_hotkey.get_webview_window("main") {
                         let _ = w.hide();
-                        // Suspend WebView2 renderer after hide (IsVisible=false).
-                        // Reduces memory/CPU while the launcher is hidden.
-                        suspend_webview(&w);
                     }
                     if let Some(state) = handle_for_hotkey.try_state::<AppState>() {
                         state.main_visible.store(false, Ordering::SeqCst);
                     }
                     // Notify JS side so mainVisible signal updates and Blob URLs are released.
                     // Symmetric pair: window-shown is emitted in show_main_and_emit.
+                    // Must precede suspend so the JS cleanup handler is queued in the
+                    // renderer before TrySuspend pauses it.
                     let _ = handle_for_hotkey.emit("window-hidden", ());
+                    // Suspend WebView2 renderer after emit (IsVisible=false from hide above).
+                    // TrySuspend is best-effort and async: the renderer finishes processing
+                    // the queued emit before actually suspending.
+                    if let Some(w) = handle_for_hotkey.get_webview_window("main") {
+                        suspend_webview(&w);
+                    }
                 } else if is_alt_pressed() {
                     trace_main("hotkey:alt_wait_start", json!({}));
                     let handle_for_show = handle_for_hotkey.clone();

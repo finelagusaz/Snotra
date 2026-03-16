@@ -48,7 +48,7 @@ NOTIFYICON_VERSION_4 では、キーボード操作（Shift+F10 / Application �
 
 非表示中に WebView2 レンダラーを中断してメモリ・CPU を削減する。`ICoreWebView2_3::TrySuspend` / `Resume`（Edge 88+）を使用。
 
-- **hide 時（ホットキートグルのみ）**: `w.hide()` → `suspend_webview(&w)`。`TrySuspend` は `IsVisible=false` を要求するため hide が先
+- **hide 時（ホットキートグルのみ）**: `w.hide()` → `emit("window-hidden")` → `suspend_webview(&w)`。emit を suspend より先に送ることで、JS 側のクリーンアップ（Blob URL 解放等）がレンダラー中断前にキューイングされる。`TrySuspend` は `IsVisible=false` を要求するため hide が先
 - **show 時**: `resume_webview(&main)` → `set_size` → `show` → `emit`。Resume は同期 API で即座に復帰
 - **フロントエンド起因の hide（Escape / クリック起動 / フォーカス喪失）では suspend しない**: `notifyMainHidden` IPC は tokio スレッドで実行されるため `with_webview(TrySuspend)` は非同期ディスパッチになり、`win.hide()` より先にメインスレッドに到達すると IsVisible=true で失敗する。ホットキートグル（メインスレッドで同期実行）に限定することで順序を保証
 - **`with_webview()` の同期性はコンテキスト依存**: setup フェーズ / `app.listen` コールバック → 同期。IPC ハンドラ / `std::thread::spawn` → 非同期（fire-and-forget）

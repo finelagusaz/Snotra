@@ -16,6 +16,9 @@ pub struct AppState {
 ///
 /// The COM pointer is obtained via `with_webview()` (safe only in setup phase) and stored
 /// here for later use in event-loop callbacks where `with_webview()` would deadlock.
+///
+/// `ICoreWebView2_6` is a COM smart pointer (`Send + Sync`) and `set_low`/`set_normal`
+/// take `&self`, so no Mutex is needed.
 #[cfg(windows)]
 pub struct WebViewMemoryControl {
     inner: webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_6,
@@ -43,5 +46,23 @@ impl WebViewMemoryControl {
         unsafe {
             let _ = self.inner.SetMemoryUsageTargetLevel(COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL);
         }
+    }
+}
+
+/// Set WebView2 memory usage to Low. No-op if WebViewMemoryControl is not registered.
+#[cfg(windows)]
+pub fn set_webview_memory_low(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    if let Some(mem) = app.try_state::<WebViewMemoryControl>() {
+        mem.set_low();
+    }
+}
+
+/// Set WebView2 memory usage to Normal. No-op if WebViewMemoryControl is not registered.
+#[cfg(windows)]
+pub fn set_webview_memory_normal(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    if let Some(mem) = app.try_state::<WebViewMemoryControl>() {
+        mem.set_normal();
     }
 }

@@ -5,7 +5,7 @@ Tauri v2 バイナリ crate。Win32 API 統合とフロントエンドとの IPC
 ## モジュール構成
 
 - `main.rs`: エントリポイント、Tauri セットアップ、イベントリスナー登録
-- `state.rs`: `AppState` 定義（`Mutex<Engine>` + `AtomicBool` × 3: `indexing` / `index_build_started` / `main_visible`）。`Engine` は `snotra-core` の facade で、検索・履歴・設定を単一ロックに統合。`main_visible` は Win32 `is_visible()` の 35ms レイテンシを回避するためのキャッシュ
+- `state.rs`: `AppState` 定義（`Mutex<Engine>` + `AtomicBool` × 3: `indexing` / `index_build_started` / `main_visible`）。`Engine` は `snotra-core` の facade で、検索・履歴・設定を単一ロックに統合。`main_visible` は Win32 `is_visible()` の 35ms レイテンシを回避するためのキャッシュ。`WebViewMemoryControl`（`ICoreWebView2_6` の COM ポインタ保持、setup フェーズで取得）と `set_webview_memory_low()` / `set_webview_memory_normal()` ヘルパーで hide/show 時のメモリレベル切り替えを提供
 - `icon.rs`: アイコンのオンデマンド抽出（`SHGetFileInfoW` → PNG → base64）、検索時に遅延ロードしキャッシュ永続化
 - `indexing.rs`: バックグラウンドインデックス構築
 - `config_watcher.rs`: `notify` クレートで `config.toml` 変更を監視（100ms debounce）し、差分検出後にホットキー・トレイ・インデックス・テーマ・ウィンドウ幅・言語を反映する `apply_config_change()` を実行。**不変条件: 言語変更とホットキー変更が同時に発生した場合、`language-changed` イベントをホットキー失敗通知より先に発火する**（フロントエンドが正しい言語でエラー文字列を組み立てるため）。発火するイベント: `language-changed` / `hotkey-registration-failed` / `visual-config-changed` / `show-icons-changed` / `max-results-changed` / `instant-prefix-changed` / `indexing-started`（indexing.rs から）/ `indexing-complete`（indexing.rs から）
@@ -21,7 +21,7 @@ Tauri v2 バイナリ crate。Win32 API 統合とフロントエンドとの IPC
 - 設定ウィンドウは `WebviewWindowBuilder` で同一プロセス内の第2ウィンドウとして生成
 - `commands/` は薄いラッパーに保ち、実処理は `snotra-core` に寄せる（KISS）
 - `AppState` は `Mutex<Engine>` で検索エンジン・履歴・設定を一括管理。Phase 2.3 以前の 3重ロック（`Mutex<SearchEngine>` / `Mutex<HistoryStore>` / `Mutex<Config>`）は Engine facade に統合済み
-- Managed state として `IconCacheState`（`Mutex<Option<IconCache>>`、初回アイコン要求で遅延初期化）と `SettingsProcessState`（`Mutex<Option<Child>>`、設定プロセスのハンドル管理）を保持
+- Managed state として `IconCacheState`（`Mutex<Option<IconCache>>`、初回アイコン要求で遅延初期化）、`SettingsProcessState`（`Mutex<Option<Child>>`、設定プロセスのハンドル管理）、`WebViewMemoryControl`（`ICoreWebView2_6`、hide 時に `MemoryUsageTargetLevel::Low`、show 時に `Normal` を設定）を保持
 - **`show_main_and_emit` の操作順序制約**: 高さリセット（52px）→ `position_on_target_monitor` → `show()` の順。位置計算はウィンドウサイズ（`outer_size()`）でクランプするため、高さリセット前に位置を決めると展開時の高さでクランプされ、折りたたみ時に位置がずれる
 
 ## Win32 メッセージ配送の注意

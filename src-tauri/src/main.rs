@@ -230,11 +230,9 @@ fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
         position_on_target_monitor(app_handle, &main);
 
         // Restore WebView2 memory usage to Normal before showing.
-        // Symmetric pair: set_low() is called on hide in the hotkey listener.
+        // Symmetric pair: set_low() is called in hotkey hide and notify_main_hidden.
         #[cfg(windows)]
-        if let Some(mem) = app_handle.try_state::<Mutex<crate::state::WebViewMemoryControl>>() {
-            if let Ok(m) = mem.lock() { m.set_normal(); }
-        }
+        crate::state::set_webview_memory_normal(app_handle);
 
         // show() is idempotent — call unconditionally to skip the costly
         // is_visible() pre-check (61ms + 71ms gap on first invocation).
@@ -479,9 +477,9 @@ fn main() {
                         unsafe { controller.CoreWebView2() };
                     if let Ok(core) = core {
                         if let Ok(core6) = core.cast::<ICoreWebView2_6>() {
-                            handle_for_mem.manage(Mutex::new(
+                            handle_for_mem.manage(
                                 crate::state::WebViewMemoryControl::new(core6),
-                            ));
+                            );
                         }
                     }
                 }).expect("WebView memory control must initialize in setup phase");
@@ -542,9 +540,7 @@ fn main() {
                     // Reduce WebView2 memory usage while hidden (best-effort, async internally).
                     // Symmetric pair: set_normal() is called in show_main_and_emit.
                     #[cfg(windows)]
-                    if let Some(mem) = handle_for_hotkey.try_state::<Mutex<crate::state::WebViewMemoryControl>>() {
-                        if let Ok(m) = mem.lock() { m.set_low(); }
-                    }
+                    crate::state::set_webview_memory_low(&handle_for_hotkey);
                     // Notify JS side so mainVisible signal updates and Blob URLs are released.
                     // Symmetric pair: window-shown is emitted in show_main_and_emit.
                     let _ = handle_for_hotkey.emit("window-hidden", ());

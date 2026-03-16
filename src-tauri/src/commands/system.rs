@@ -42,5 +42,9 @@ pub fn notify_main_shown(state: State<AppState>) {
 #[tauri::command]
 pub fn notify_main_hidden(state: State<AppState>, app: AppHandle) {
     state.main_visible.store(false, Ordering::SeqCst);
+    // Reduce WebView2 memory while hidden (symmetric pair: set_normal in show_main_and_emit).
+    // This covers hide paths triggered from JS (focus-lost, Enter launch, Escape, /s command).
+    #[cfg(windows)]
+    crate::state::set_webview_memory_low(&app);
     let _ = app.emit("window-hidden", ());
 }

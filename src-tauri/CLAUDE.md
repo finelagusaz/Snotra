@@ -6,19 +6,19 @@ Tauri v2 バイナリ crate。Win32 API 統合とフロントエンドとの IPC
 
 - `main.rs`: エントリポイント、Tauri セットアップ、イベントリスナー登録
 - `state.rs`: `AppState` 定義（`Mutex<Engine>` + `AtomicBool` × 3: `indexing` / `index_build_started` / `main_visible`）。`Engine` は `snotra-core` の facade で、検索・履歴・設定を単一ロックに統合。`main_visible` は Win32 `is_visible()` の 35ms レイテンシを回避するためのキャッシュ
-- `icon.rs`: アイコンのオンデマンド抽出（`SHGetFileInfoW` → PNG → base64）、検索時に遅延ロードしキャッシュ永続化
+- `icon.rs`: アイコンのオンデマンド抽出（`SHGetFileInfoW` → PNG バイト列）、検索時に遅延ロードしキャッシュ永続化
 - `indexing.rs`: バックグラウンドインデックス構築
 - `config_watcher.rs`: `notify` クレートで `config.toml` 変更を監視（100ms debounce）し、差分検出後にホットキー・トレイ・インデックス・テーマ・ウィンドウ幅・言語を反映する `apply_config_change()` を実行。**不変条件: 言語変更とホットキー変更が同時に発生した場合、`language-changed` イベントをホットキー失敗通知より先に発火する**（フロントエンドが正しい言語でエラー文字列を組み立てるため）。発火するイベント: `language-changed` / `hotkey-registration-failed` / `visual-config-changed` / `show-icons-changed` / `max-results-changed` / `instant-prefix-changed` / `indexing-started`（indexing.rs から）/ `indexing-complete`（indexing.rs から）
 - `ime.rs`: IME オフ操作（`ImmSetOpenStatus(false)`）。Win32 IMM API の薄いラッパー
 - `monitor.rs`: マルチモニター対応の Win32 ヘルパー（`GetCursorPos` / `MonitorFromPoint` / `MonitorFromWindow` / `GetMonitorInfoW`）。物理座標ベースで作業領域を取得し、ウィンドウ位置のクランプ・中央配置を提供
-- `commands/`: ディレクトリモジュール（`mod.rs` + `search.rs` / `launch.rs` / `config.rs` / `icon.rs` / `window.rs` / `system.rs` / `instant.rs` / `updater.rs`）。`#[tauri::command]` を責務別に分割。`launch.rs` は `launch_item_core`（`pub(crate)`、`instant.rs` から再利用）に加え、トレイメニューからの起動用に `launch_item_with_state` / `launch_with_tool_with_state` / `launch_default_with_state` / `resolve_all_openers` を `pub(crate)` で公開。`updater.rs` は `restart_app`（`downloadAndInstall()` 完了後の再起動）のみ
+- `commands/`: ディレクトリモジュール（`mod.rs` + `search.rs` / `launch.rs` / `config.rs` / `icon.rs` / `window.rs` / `system.rs` / `instant.rs` / `updater.rs`）。`#[tauri::command]` を責務別に分割。`launch.rs` は `launch_item_core`（`pub(crate)`、`instant.rs` から再利用）に加え、トレイメニューからの起動用に `launch_item_with_state` / `launch_with_tool_with_state` / `launch_default_with_state` / `resolve_all_openers` を `pub` で公開。`updater.rs` は `restart_app`（`downloadAndInstall()` 完了後の再起動）のみ
 - `platform/`: ディレクトリモジュール（`mod.rs` + `hotkey.rs` / `tray.rs` / `wndproc.rs`）。Win32 メッセージループスレッド + トレイアイコン + ホットキー + ウィンドウプロシージャ
   - `wndproc.rs`: `SendMessage` 経由で届く `WM_TRAY_ICON` および `WM_CONTEXTMENU` を `PostThreadMessageW` でスレッドキューに再投入し、メッセージループでの統一処理を保証
 
 ## 実装パターン
 
 - ホットキーは `RegisterHotKey` を `platform/` の Win32 メッセージループスレッドで処理し、`AppHandle.emit()` で Tauri イベントとして通知
-- 設定ウィンドウは `WebviewWindowBuilder` で同一プロセス内の第2ウィンドウとして生成
+- 設定画面は `snotra-settings.exe`（egui 別バイナリ）を子プロセスとして起動。`SettingsProcessState` で重複起動を防止し、子プロセス存命中はメインウィンドウの `alwaysOnTop` を一時解除する
 - `commands/` は薄いラッパーに保ち、実処理は `snotra-core` に寄せる（KISS）
 - `AppState` は `Mutex<Engine>` で検索エンジン・履歴・設定を一括管理。Phase 2.3 以前の 3重ロック（`Mutex<SearchEngine>` / `Mutex<HistoryStore>` / `Mutex<Config>`）は Engine facade に統合済み
 - Managed state として `IconCacheState`（`Mutex<Option<IconCache>>`、初回アイコン要求で遅延初期化）と `SettingsProcessState`（`Mutex<Option<Child>>`、設定プロセスのハンドル管理）を保持
@@ -40,7 +40,7 @@ NOTIFYICON_VERSION_4 では、キーボード操作（Shift+F10 / Application �
 - **イベントループ中のコールバック（`run_on_main_thread` / `listen` / `RunEvent` 等）**: メッセージポンプが1イテレーション内で停止しているため、`build()` がポンプ進行を待ってデッドロックする
 - **IPC ハンドラスレッド**: メインスレッドではないため同様にデッドロックする
 
-このため、ウィンドウの生成は必ず setup フェーズで行い、ランタイムでは show/hide のみで制御する。`CloseRequested` では `api.prevent_close()` で破棄を防ぎ hide に変換する（WebView2 はイベントループ開始後に再生成できない）。
+このため、ウィンドウの生成は必ず setup フェーズで行い、ランタイムでは show/hide のみで制御する。メインウィンドウは `decorations: false` で閉じるボタンを持たないため `CloseRequested` ハンドラは不要。非表示化はフロントエンド側の `win.hide()`（フォーカス喪失時・Escape 時等）で行う。
 
 **事前チェック**: ある操作が「内部でメッセージポンプの進行を必要とするか」を確認する。ウィンドウ生成・COM STA 初期化・モーダルダイアログ等は該当し、イベントループコールバック内から呼べない。
 

@@ -8,7 +8,7 @@ describe("LruIconCache", () => {
   let cache: LruIconCache;
 
   beforeEach(() => {
-    cache = new LruIconCache();
+    cache = new LruIconCache(100);
     revokeObjectURL.mockClear();
   });
 
@@ -75,5 +75,54 @@ describe("LruIconCache", () => {
     // p1 が最古として evict される（p0 は get で末尾に移動済み）
     expect(cache.has("p1")).toBe(false);
     expect(cache.has("p0")).toBe(true);
+  });
+
+  it("コンストラクタに小さい値を渡すとその値で eviction が動作する", () => {
+    const small = new LruIconCache(3);
+    small.set("a", "blob:a");
+    small.set("b", "blob:b");
+    small.set("c", "blob:c");
+    small.set("d", "blob:d");
+    expect(small.size).toBe(3);
+    expect(small.has("a")).toBe(false);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:a");
+    expect(small.has("b")).toBe(true);
+    expect(small.has("d")).toBe(true);
+  });
+
+  it("setMaxSize で縮小すると超過分が evict され revoke される", () => {
+    cache.set("a", "blob:a");
+    cache.set("b", "blob:b");
+    cache.set("c", "blob:c");
+    cache.set("d", "blob:d");
+    cache.set("e", "blob:e");
+    expect(cache.size).toBe(5);
+
+    cache.setMaxSize(3);
+    expect(cache.size).toBe(3);
+    // 最古の a, b が evict される
+    expect(cache.has("a")).toBe(false);
+    expect(cache.has("b")).toBe(false);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:a");
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:b");
+    // c, d, e は残る
+    expect(cache.has("c")).toBe(true);
+    expect(cache.has("d")).toBe(true);
+    expect(cache.has("e")).toBe(true);
+  });
+
+  it("setMaxSize で拡大しても既存エントリは保持される", () => {
+    const small = new LruIconCache(3);
+    small.set("a", "blob:a");
+    small.set("b", "blob:b");
+    small.set("c", "blob:c");
+    expect(small.size).toBe(3);
+
+    small.setMaxSize(10);
+    expect(small.size).toBe(3);
+    expect(small.has("a")).toBe(true);
+    expect(small.has("b")).toBe(true);
+    expect(small.has("c")).toBe(true);
+    expect(revokeObjectURL).not.toHaveBeenCalled();
   });
 });

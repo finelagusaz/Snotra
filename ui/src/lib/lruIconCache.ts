@@ -1,10 +1,18 @@
-const MAX_ICON_CACHE_SIZE = 100;
-
 /** Blob URL 追跡付き LRU キャッシュ。
  *  Map の挿入順序を利用: get 時に delete→re-set で末尾に移動。
  *  先頭が最古（LRU）。 */
 export class LruIconCache {
   private map = new Map<string, string>();
+  private maxSize: number;
+
+  constructor(maxSize: number) {
+    this.maxSize = maxSize;
+  }
+
+  setMaxSize(newSize: number): void {
+    this.maxSize = newSize;
+    this.evict();
+  }
 
   get(path: string): string | undefined {
     const url = this.map.get(path);
@@ -41,11 +49,12 @@ export class LruIconCache {
   }
 
   private evict(): void {
-    if (this.map.size <= MAX_ICON_CACHE_SIZE) return;
-    const entry = this.map.entries().next().value;
-    if (entry === undefined) return;
-    const [key, url] = entry;
-    URL.revokeObjectURL(url);
-    this.map.delete(key);
+    while (this.map.size > this.maxSize) {
+      const entry = this.map.entries().next().value;
+      if (entry === undefined) break;
+      const [key, url] = entry;
+      URL.revokeObjectURL(url);
+      this.map.delete(key);
+    }
   }
 }

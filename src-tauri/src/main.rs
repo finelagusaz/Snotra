@@ -229,6 +229,13 @@ fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
         #[cfg(windows)]
         position_on_target_monitor(app_handle, &main);
 
+        // Restore WebView2 memory usage to Normal before showing.
+        // Symmetric pair: set_low() is called on hide in the hotkey listener.
+        #[cfg(windows)]
+        if let Some(mem) = app_handle.try_state::<Mutex<crate::state::WebViewMemoryControl>>() {
+            if let Ok(m) = mem.lock() { m.set_normal(); }
+        }
+
         // show() is idempotent — call unconditionally to skip the costly
         // is_visible() pre-check (61ms + 71ms gap on first invocation).
         trace_main("show_main:show:start", json!({ "ms": ms(t0.elapsed()) }));
@@ -458,6 +465,28 @@ fn main() {
                 }).expect("AcceleratorKeyPressed handler must register in setup phase");
             }
 
+            // Extract ICoreWebView2_6 for MemoryUsageTargetLevel control (hide → Low, show → Normal).
+            // Must be done in setup phase; with_webview() deadlocks in event-loop callbacks.
+            #[cfg(windows)]
+            if let Some(main) = app.get_webview_window("main") {
+                let handle_for_mem = app_handle.clone();
+                main.with_webview(move |platform_webview| {
+                    use windows::core::Interface;
+                    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_6;
+
+                    let controller = platform_webview.controller();
+                    let core: Result<webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2, _> =
+                        unsafe { controller.CoreWebView2() };
+                    if let Ok(core) = core {
+                        if let Ok(core6) = core.cast::<ICoreWebView2_6>() {
+                            handle_for_mem.manage(Mutex::new(
+                                crate::state::WebViewMemoryControl::new(core6),
+                            ));
+                        }
+                    }
+                }).expect("WebView memory control must initialize in setup phase");
+            }
+
             // Spawn platform thread early to parallelize Win32 init with WebView creation.
             // Tray is NOT created here; SetTrayVisible is sent after full setup (SPEC §7.5).
             let platform_pending = PlatformBridge::begin(app_handle.clone(), hotkey_config, initial_language);
@@ -509,6 +538,12 @@ fn main() {
                     }
                     if let Some(state) = handle_for_hotkey.try_state::<AppState>() {
                         state.main_visible.store(false, Ordering::SeqCst);
+                    }
+                    // Reduce WebView2 memory usage while hidden (best-effort, async internally).
+                    // Symmetric pair: set_normal() is called in show_main_and_emit.
+                    #[cfg(windows)]
+                    if let Some(mem) = handle_for_hotkey.try_state::<Mutex<crate::state::WebViewMemoryControl>>() {
+                        if let Ok(m) = mem.lock() { m.set_low(); }
                     }
                     // Notify JS side so mainVisible signal updates and Blob URLs are released.
                     // Symmetric pair: window-shown is emitted in show_main_and_emit.

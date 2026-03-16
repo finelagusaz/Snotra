@@ -6,7 +6,7 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 
 ### エントリポイント（single-page build）
 
-- `main.html` / `main.tsx` → `MainApp.tsx`: 検索ウィンドウ用エントリ。テーマ適用、ウィンドウ位置復元、イベントリスナー登録、動的ウィンドウ高さ管理
+- `../main.html` / `main.tsx` → `MainApp.tsx`: 検索ウィンドウ用エントリ。テーマ適用、ウィンドウ位置復元、イベントリスナー登録、動的ウィンドウ高さ管理
 
 ### components/
 

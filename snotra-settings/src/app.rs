@@ -419,7 +419,7 @@ impl eframe::App for SettingsApp {
                 });
             });
 
-        // Footer (hide action buttons on About tab)
+        // Footer (hide action buttons on Backup tab)
         egui::TopBottomPanel::bottom("footer")
             .exact_height(40.0)
             .frame(egui::Frame::NONE.fill(FOOTER_BG).inner_margin(egui::Margin::symmetric(12, 0)))

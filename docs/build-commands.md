@@ -21,7 +21,7 @@ npm run smoke:startup             # 起動時ウィンドウ生成スモーク�
 npm run e2e:tauri:setup           # Tauri Driver E2E 用セットアップ
 npm run e2e:tauri                 # Playwright + Tauri Driver E2E
 npm run tauri dev                # 開発実行（ホットリロード付き）
-npm run tauri build              # リリースビルド
+npm run tauri build              # リリースビルド（フロント+Rust 一括。cargo build --release 単体は UI が壊れる）
 ```
 
 ## E2E/スモーク運用メモ

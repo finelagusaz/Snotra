@@ -154,6 +154,58 @@ fn make_key_input(
 #[cfg(not(windows))]
 fn send_alt_key_up() {}
 
+/// Suspend the WebView2 renderer to reduce memory/CPU while hidden.
+///
+/// Must be called AFTER `hide()` (`IsVisible=false` required by WebView2).
+/// Best-effort: silently ignored if WebView2 runtime is too old (< Edge 88)
+/// or `IsVisible` is still true.
+#[cfg(windows)]
+fn suspend_webview(window: &tauri::WebviewWindow) {
+    let _ = window.with_webview(|platform_webview| {
+        use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_3;
+        use webview2_com::TrySuspendCompletedHandler;
+        use windows_core_0_61::Interface;
+
+        let controller = platform_webview.controller();
+        let Ok(webview) = (unsafe { controller.CoreWebView2() }) else {
+            return;
+        };
+        let Ok(webview3) = webview.cast::<ICoreWebView2_3>() else {
+            return;
+        };
+
+        let handler =
+            TrySuspendCompletedHandler::create(Box::new(|_result, _is_successful| Ok(())));
+        let _ = unsafe { webview3.TrySuspend(&handler) };
+    });
+}
+
+/// Resume the WebView2 renderer before showing the window.
+/// Best-effort: silently ignored if not suspended or runtime too old.
+#[cfg(windows)]
+fn resume_webview(window: &tauri::WebviewWindow) {
+    let _ = window.with_webview(|platform_webview| {
+        use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_3;
+        use windows_core_0_61::Interface;
+
+        let controller = platform_webview.controller();
+        let Ok(webview) = (unsafe { controller.CoreWebView2() }) else {
+            return;
+        };
+        let Ok(webview3) = webview.cast::<ICoreWebView2_3>() else {
+            return;
+        };
+
+        let _ = unsafe { webview3.Resume() };
+    });
+}
+
+#[cfg(not(windows))]
+fn suspend_webview(_window: &tauri::WebviewWindow) {}
+
+#[cfg(not(windows))]
+fn resume_webview(_window: &tauri::WebviewWindow) {}
+
 /// Position the main window on the target monitor using saved relative coordinates.
 ///
 /// Target monitor is determined by `follow_cursor_monitor` config:
@@ -212,6 +264,15 @@ fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
     let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
 
     if let Some(main) = app_handle.get_webview_window("main") {
+        // Resume WebView2 renderer before any window operations.
+        // Must precede show() and emit() so the renderer can process
+        // DOM updates and receive events.
+        // Note: when called from a spawned thread (Alt-wait path),
+        // with_webview() dispatches asynchronously, but ordering is
+        // maintained because all operations serialize on the main
+        // thread's event loop.
+        resume_webview(&main);
+
         trace_main("show_main:start", json!({ "ms": ms(t0.elapsed()) }));
 
         // Reset window height to search-bar-only (52px) before positioning.
@@ -512,7 +573,15 @@ fn main() {
                     }
                     // Notify JS side so mainVisible signal updates and Blob URLs are released.
                     // Symmetric pair: window-shown is emitted in show_main_and_emit.
+                    // Must precede suspend so the JS cleanup handler is queued in the
+                    // renderer before TrySuspend pauses it.
                     let _ = handle_for_hotkey.emit("window-hidden", ());
+                    // Suspend WebView2 renderer after emit (IsVisible=false from hide above).
+                    // TrySuspend is best-effort and async: the renderer finishes processing
+                    // the queued emit before actually suspending.
+                    if let Some(w) = handle_for_hotkey.get_webview_window("main") {
+                        suspend_webview(&w);
+                    }
                 } else if is_alt_pressed() {
                     trace_main("hotkey:alt_wait_start", json!({}));
                     let handle_for_show = handle_for_hotkey.clone();

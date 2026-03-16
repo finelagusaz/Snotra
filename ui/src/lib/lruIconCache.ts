@@ -1,4 +1,4 @@
-const MAX_ICON_CACHE_SIZE = 200;
+const MAX_ICON_CACHE_SIZE = 100;
 
 /** Blob URL 追跡付き LRU キャッシュ。
  *  Map の挿入順序を利用: get 時に delete→re-set で末尾に移動。

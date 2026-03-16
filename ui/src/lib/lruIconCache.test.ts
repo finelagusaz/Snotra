@@ -52,20 +52,20 @@ describe("LruIconCache", () => {
   });
 
   it("上限超過時に最古エントリが evict され revoke される", () => {
-    for (let i = 0; i < 201; i++) {
+    for (let i = 0; i < 101; i++) {
       cache.set(`p${i}`, `blob:${i}`);
     }
-    expect(cache.size).toBe(200);
+    expect(cache.size).toBe(100);
     // p0 が evict されている
     expect(cache.has("p0")).toBe(false);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:0");
-    // p1〜p200 は残っている
+    // p1〜p100 は残っている
     expect(cache.has("p1")).toBe(true);
-    expect(cache.has("p200")).toBe(true);
+    expect(cache.has("p100")).toBe(true);
   });
 
   it("get した要素は LRU 末尾に移動し eviction で最後に追い出される", () => {
-    for (let i = 0; i < 200; i++) {
+    for (let i = 0; i < 100; i++) {
       cache.set(`p${i}`, `blob:${i}`);
     }
     // p0 を get して末尾に移動

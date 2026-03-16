@@ -2,7 +2,7 @@ import { type Component, onMount, onCleanup, createSignal, createEffect, Show } 
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { listen } from "@tauri-apps/api/event";
-import { check as checkUpdate, type Update } from "@tauri-apps/plugin-updater";
+import type { Update } from "@tauri-apps/plugin-updater";
 import SearchWindow from "./components/SearchWindow";
 import ResultsSection from "./components/ResultsSection";
 import UpdateToast from "./components/UpdateToast";
@@ -206,16 +206,19 @@ const MainApp: Component = () => {
     }
 
     // 起動時に更新チェック（auto_update が disabled 以外の場合）
+    // plugin-updater は動的 import で遅延読込し初期バンドルから除外する
     if (bootstrap && bootstrap.general.auto_update !== "disabled") {
       const canInstall = bootstrap.general.auto_update === "full";
-      checkUpdate().then((update) => {
-        if (update) {
-          if (canInstall) {
-            pendingUpdate = update;
+      import("@tauri-apps/plugin-updater").then(({ check }) =>
+        check().then((update) => {
+          if (update) {
+            if (canInstall) {
+              pendingUpdate = update;
+            }
+            setUpdateInfo({ version: update.version, can_install: canInstall });
           }
-          setUpdateInfo({ version: update.version, can_install: canInstall });
-        }
-      }).catch((e) => {
+        })
+      ).catch((e) => {
         console.warn("Update check failed:", e);
       });
     }

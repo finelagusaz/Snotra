@@ -10,7 +10,6 @@ const IPC = {
   GET_BOOTSTRAP_PAYLOAD: "get_bootstrap_payload",
   GET_ICONS_BATCH: "get_icons_batch",
   OPEN_SETTINGS: "open_settings",
-  GET_SEARCH_PLACEMENT: "get_search_placement",
   SAVE_SEARCH_PLACEMENT: "save_search_placement",
   NOTIFY_MAIN_SHOWN: "notify_main_shown",
   NOTIFY_MAIN_HIDDEN: "notify_main_hidden",
@@ -97,15 +96,6 @@ export async function getIconsBatch(paths: string[]): Promise<ArrayBuffer> {
 
 export async function openSettings(): Promise<void> {
   return tracedInvoke(IPC.OPEN_SETTINGS);
-}
-
-export interface WindowPlacement {
-  x: number;
-  y: number;
-}
-
-export async function getSearchPlacement(): Promise<WindowPlacement | null> {
-  return tracedInvoke<WindowPlacement | null>(IPC.GET_SEARCH_PLACEMENT);
 }
 
 export async function saveSearchPlacement(): Promise<void> {

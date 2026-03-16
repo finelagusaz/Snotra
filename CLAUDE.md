@@ -92,10 +92,12 @@ Claude とユーザーが一緒に作業するときの関係性の原則。
 
 ## 利用できるスキル
 
-| スキル             | 使うとき                                                                | 呼び出し例                                                                     |
-|--------------------|-------------------------------------------------------------------------|--------------------------------------------------------------------------------|
-| `/symmetric-check` | コードパス変更・バグ発見時に対称ペアの適用漏れを確認                    | `/symmetric-check result-clicked: added emitSelectionUpdate`                   |
-| `/dry-check`       | 関数を新規定義・変更したとき、手書き重複が残っていないか確認            | `/dry-check show_main_and_emit: show() + set_focus() + emit(window-shown)`     |
-| `/race-check`      | async 関数を新規追加・変更したとき、各 await 地点の状態競合リスクを検証 | `/race-check executeInstantCommandSelected: await api.executeInstantCommand()` |
-| `/cache-check`     | キャッシュロジックの追加・変更時に述語の単調性と状態遷移の安全性を検証  | `/cache-check search_with_options: use_incremental 判定`                       |
-| `/retrospective`   | サイクル終了後: 教訓を CLAUDE.md に抽出し、RETROSPECTIVE.md を更新      | `/retrospective`                                                               |
+| スキル               | 使うとき                                                                | 呼び出し例                                                                     |
+|----------------------|-------------------------------------------------------------------------|--------------------------------------------------------------------------------|
+| `/research-review`   | 調査（research.md）完了後: サブエージェントで影響範囲の漏れ・誤認識を並列検証 | `/research-review`                                                        |
+| `/plan-review`       | 計画（plan.md）完了後: サブエージェントで影響範囲・不変条件・スコープを並列検証 | `/plan-review`                                                            |
+| `/symmetric-check`   | コードパス変更・バグ発見時に対称ペアの適用漏れを確認                    | `/symmetric-check result-clicked: added emitSelectionUpdate`                   |
+| `/dry-check`         | 関数を新規定義・変更したとき、手書き重複が残っていないか確認            | `/dry-check show_main_and_emit: show() + set_focus() + emit(window-shown)`     |
+| `/race-check`        | async 関数を新規追加・変更したとき、各 await 地点の状態競合リスクを検証 | `/race-check executeInstantCommandSelected: await api.executeInstantCommand()` |
+| `/cache-check`       | キャッシュロジックの追加・変更時に述語の単調性と状態遷移の安全性を検証  | `/cache-check search_with_options: use_incremental 判定`                       |
+| `/retrospective`     | サイクル終了後: 教訓を CLAUDE.md に抽出し、RETROSPECTIVE.md を更新      | `/retrospective`                                                               |

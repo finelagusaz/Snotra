@@ -140,7 +140,7 @@ html, body, #root {
 
 .result-path-single {
   font-size: inherit;
-  line-height: 1;
+  line-height: normal;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

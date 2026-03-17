@@ -97,6 +97,9 @@ fn apply_config_change(app: &AppHandle) {
     let max_results_changed =
         new_config.appearance.max_results != old_config.appearance.max_results;
     let new_max_results = new_config.appearance.max_results;
+    let new_top_n_history = new_config.search.effective_top_n_history();
+    let top_n_history_changed =
+        new_top_n_history != old_config.search.effective_top_n_history();
     let width_changed =
         new_config.appearance.window_width != old_config.appearance.window_width;
     let new_visual = if visual_changed {
@@ -180,6 +183,11 @@ fn apply_config_change(app: &AppHandle) {
     // Emit instant command prefix change
     if instant_prefix_changed {
         let _ = app.emit("instant-prefix-changed", new_instant_prefix);
+    }
+
+    // Emit top_n_history change
+    if top_n_history_changed {
+        let _ = app.emit("top-n-history-changed", new_top_n_history);
     }
 
     // Resize main window if width changed

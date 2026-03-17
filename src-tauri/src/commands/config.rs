@@ -26,6 +26,7 @@ pub struct BootstrapPayload {
     pub language: String,
     pub indexing: bool,
     pub instant_command_prefix: String,
+    pub top_n_history: usize,
 }
 
 #[tauri::command]
@@ -47,5 +48,6 @@ pub fn get_bootstrap_payload(state: State<AppState>) -> BootstrapPayload {
         },
         indexing: state.indexing.load(Ordering::SeqCst),
         instant_command_prefix: engine.config().search.instant_command_prefix.clone(),
+        top_n_history: engine.config().search.effective_top_n_history(),
     }
 }

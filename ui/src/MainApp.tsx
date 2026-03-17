@@ -39,6 +39,7 @@ const MainApp: Component = () => {
   const [maxResults, setMaxResults] = createSignal(8);
   const [showIcons, setShowIcons] = createSignal(true);
   const [cachedWidth, setCachedWidth] = createSignal(600);
+  const [iconCacheSize, setIconCacheSize] = createSignal(200);
   const [updateInfo, setUpdateInfo] = createSignal<UpdateAvailablePayload | null>(null);
   const [updaterInstalling, setUpdaterInstalling] = createSignal(false);
   let pendingUpdate: Update | null = null;
@@ -188,6 +189,12 @@ const MainApp: Component = () => {
     });
     unlistenFns.push(unlistenInstantPrefix);
 
+    // Listen for top_n_history changes
+    const unlistenTopN = await listen<number>("top-n-history-changed", (event) => {
+      setIconCacheSize(event.payload);
+    });
+    unlistenFns.push(unlistenTopN);
+
     // Load bootstrap payload and apply theme (non-fatal on failure)
     let bootstrap: BootstrapPayload | null = null;
     try {
@@ -197,6 +204,7 @@ const MainApp: Component = () => {
       setMaxResults(bootstrap.appearance.max_results);
       setShowIcons(bootstrap.appearance.show_icons);
       setInstantCommandPrefix(bootstrap.instant_command_prefix);
+      setIconCacheSize(bootstrap.top_n_history);
     } catch (e) {
       console.error("Failed to load bootstrap payload:", e);
     }
@@ -293,6 +301,7 @@ const MainApp: Component = () => {
         showIcons={showIcons()}
         skipIcons={instantCommandMode()}
         maxResults={maxResults()}
+        iconCacheSize={iconCacheSize()}
         onClickResult={handleClickResult}
         onDoubleClickResult={handleDoubleClickResult}
       />

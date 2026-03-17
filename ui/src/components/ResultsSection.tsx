@@ -12,12 +12,13 @@ export interface ResultsSectionProps {
   showIcons: boolean;
   skipIcons: boolean;
   maxResults: number;
+  iconCacheSize: number;
   onClickResult: (index: number) => void;
   onDoubleClickResult: (index: number) => void;
 }
 
 const ResultsSection: Component<ResultsSectionProps> = (props) => {
-  const iconCache = new LruIconCache();
+  const iconCache = new LruIconCache(props.iconCacheSize);
   // アイコン取得を試みたが存在しなかったパス（フォールバック絵文字を表示）
   const fetchedNone = new Set<string>();
   const [iconCacheVersion, setIconCacheVersion] = createSignal(0);
@@ -128,6 +129,18 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
     }
     requestAnimationFrame(() => void fetchIcons(items, id));
   }));
+
+  // iconCacheSize 変更時: キャッシュを全クリアしてサイズを更新する。
+  // setMaxSize だけでは evict されたアイコンの <img src="blob:revoked"> が
+  // 壊れたまま残る（iconCacheVersion が更新されないため）。
+  // revokeAll + version bump で「全アイコン再描画 → 次回検索で再取得」にする。
+  createEffect(on(() => props.iconCacheSize, (size) => {
+    latestIconRequestId = ++iconRequestId;
+    iconCache.setMaxSize(size);
+    iconCache.revokeAll();
+    fetchedNone.clear();
+    setIconCacheVersion((v) => v + 1);
+  }, { defer: true }));
 
   // results 専用: perf 計測 + スクロール世代更新（アイコン条件とは独立）
   createEffect(on(results, (items) => {

@@ -39,6 +39,7 @@ export interface BootstrapPayload {
   language: "ja" | "en";
   indexing: boolean;
   instant_command_prefix: string;
+  top_n_history: number;
 }
 
 export interface InstantCommand {

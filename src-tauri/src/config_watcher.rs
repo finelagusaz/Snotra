@@ -97,9 +97,9 @@ fn apply_config_change(app: &AppHandle) {
     let max_results_changed =
         new_config.appearance.max_results != old_config.appearance.max_results;
     let new_max_results = new_config.appearance.max_results;
-    let top_n_history_changed = new_config.search.effective_top_n_history()
-        != old_config.search.effective_top_n_history();
     let new_top_n_history = new_config.search.effective_top_n_history();
+    let top_n_history_changed =
+        new_top_n_history != old_config.search.effective_top_n_history();
     let width_changed =
         new_config.appearance.window_width != old_config.appearance.window_width;
     let new_visual = if visual_changed {

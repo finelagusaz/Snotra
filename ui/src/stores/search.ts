@@ -30,8 +30,10 @@ function updateResults(items: SearchResult[], isNormalSearch = false) {
 /** インスタントコマンドモード中のコマンド一覧（activateSelected で参照） */
 let instantCommandItems: InstantCommand[] = [];
 
-const DEBOUNCE_MS = 150;
+const DEBOUNCE_MS = 50;
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+/** leading edge: デバウンス区間の最初の入力で即時発火済みなら true */
+let leadingFired = false;
 let launchNoticeTimer: ReturnType<typeof setTimeout> | undefined;
 let refreshInFlight: Promise<void> | undefined;
 let searchGeneration = 0;
@@ -86,12 +88,22 @@ function cancelDebounce() {
     clearTimeout(debounceTimer);
     debounceTimer = undefined;
   }
+  leadingFired = false;
 }
 
 function debouncedRefresh() {
-  cancelDebounce();
+  // Leading edge: デバウンス区間の最初の入力で即時発火する。
+  // 以降はタイマーリセットのみ行い、最後の入力から DEBOUNCE_MS 後に trailing 発火する。
+  if (!leadingFired) {
+    leadingFired = true;
+    void runRefresh();
+  }
+  if (debounceTimer !== undefined) {
+    clearTimeout(debounceTimer);
+  }
   debounceTimer = setTimeout(() => {
     debounceTimer = undefined;
+    leadingFired = false;
     void runRefresh();
   }, DEBOUNCE_MS);
 }

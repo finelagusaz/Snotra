@@ -156,11 +156,6 @@ pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), Strin
     launch_settings_process(&app, &[])
 }
 
-#[tauri::command]
-pub fn get_search_placement() -> Option<WindowPlacement> {
-    window_data::load_search_placement()
-}
-
 /// Save the main window's current position as physical-pixel coordinates
 /// relative to the monitor work area origin.
 ///

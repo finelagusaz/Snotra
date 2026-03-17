@@ -447,7 +447,6 @@ fn main() {
             commands::list_folder,
             commands::open_settings,
             commands::get_icons_batch,
-            commands::get_search_placement,
             commands::save_search_placement,
             commands::notify_main_shown,
             commands::notify_main_hidden,

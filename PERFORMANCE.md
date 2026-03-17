@@ -3,7 +3,7 @@
 検索/表示の体感遅延を改善するときは、次の順で着手すると最短で効果が出やすい。
 
 1. 待ち時間を潰す（体感改善の即効枠）
-   - 入力デバウンス見直し
+   - 入力デバウンスは leading edge（初回即時発火）+ trailing 50ms。旧値は 150ms trailing のみだった
    - 古い非同期リクエスト結果の破棄（request id / generation）
    - `show` / `setSize` / `setPosition` などウィンドウ操作の不要呼び出し削減
    - OS 呼び出し待機を伴う処理（例: `launch_item`）は `timeout` を明示し、UI 側で `launching` と失敗通知を表示して「無反応」に見せない

@@ -65,6 +65,7 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 - **`lib/` モジュールが `stores/` を import するようになった場合**: そのモジュールのテストファイルに `vi.mock("../stores/...")` を追加する。追加しないと transitive import 経由で SolidJS のモジュールレベルコードが走り `requestAnimationFrame` 等の未定義エラーが CI で発生する。`vi.hoisted` でモック関数を宣言してから `vi.mock` ファクトリ内で参照するパターンを使う
 - **Canvas API モック**: `truncatePath.ts` のように遅延初期化（初回呼び出しまで `document.createElement` しない）の場合、`vi.stubGlobal("document", { createElement: ... })` を `beforeAll` で設定すれば jsdom 不要でテスト可能
 - **コンポーネントテストでは `render(() => <Component />)` を使う**: SolidJS の `render` は関数ラッパーが必須（React と異なり直接 JSX を渡さない）
+- `cspValidation.test.ts`: Tauri v2 IPC の CSP 検証（`connect-src` に `ipc:` と `http://ipc.localhost` が必要）
 
 ## 実装パターン
 
@@ -72,12 +73,13 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 - ドラッグ開始時の一時的なフォーカス喪失で `auto_hide_on_focus_lost` が誤発火するため、`onFocusChanged` の非表示処理に 100ms の猶予を設けフォーカス復帰時にキャンセルする設計
 - **`async` 関数内で `await` をまたぐ可変変数はローカルキャプチャする**: `let` 変数やモジュールスコープの可変変数を `await` をまたいで参照する場合、関数冒頭で `const` にコピーしてから使う。`await` 中に外部イベントで値が書き換わると後続処理が意図しない値を参照する（例: `const visibleCount = cachedMaxResults`）
 - **`await` 後に保存状態を復元する場合は staleness チェックを入れる**: `await` 前に保存した状態を失敗時に復元するパターンでは、`searchGeneration` 等の世代カウンタで「`await` 中に状態が変わっていないか」を検証してから復元する。無条件復元は新しい状態を上書きするレースコンディションを生む。加えて、`await` 中にユーザー入力で状態が変わること自体を防ぐガード（`handleInput` の `launching()` チェック等）を根本対策として併用する
+- 検索デバウンスは leading edge（初回即時発火）+ trailing 50ms。`leadingFired` フラグでデバウンス区間の最初の入力を即座に `runRefresh()` し、以降は trailing タイマーのみ。`cancelDebounce()` でフラグもリセットする
 
 ## 単一ウィンドウの高さ管理
 
 検索バーと検索結果は1つの Tauri ウィンドウ内に共存する。結果の表示/非表示はシグナルで管理し、ウィンドウ高さは動的に変更する。
 
-- `shouldShowResults` メモシグナル: `results().length > 0 && (!indexing() || instantCommandMode())` — 結果を表示すべきかの判定（インスタントコマンドモードではインデックス構築中でも結果を表示）
+- `shouldShowResults` メモシグナル: `results().length > 0 && (!indexing() || instantCommandMode() || folderState() !== null)` — 結果を表示すべきかの判定（インスタントコマンドモード中・フォルダモード中はインデックス構築中でも結果を表示）
 - `mainVisible` ローカルシグナル: `window-shown` / `window-hidden` イベントで同期される — ウィンドウが可視かの判定
 - `ResultsSection` の `visible` prop: `shouldShowResults() && mainVisible()` — 実際の描画と Blob URL ライフサイクルを制御
 - `createEffect` でウィンドウ高さを計算: `shouldShowResults()` が true なら `SEARCH_BAR_HEIGHT + maxResults * RESULT_ROW_HEIGHT + RESULTS_PADDING`、false なら `SEARCH_BAR_HEIGHT`

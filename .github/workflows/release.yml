@@ -78,27 +78,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path src-tauri/binaries
           Copy-Item target/release/snotra-settings.exe src-tauri/binaries/snotra-settings-x86_64-pc-windows-msvc.exe -Force
 
-      - name: Debug signing key format
-        run: |
-          $key = $env:TAURI_SIGNING_PRIVATE_KEY
-          Write-Output "Key length: $($key.Length)"
-          Write-Output "Key is empty: $([string]::IsNullOrEmpty($key))"
-          Write-Output "First 4 chars: $($key.Substring(0, [Math]::Min(4, $key.Length)))"
-          try {
-            $decoded = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($key.Trim()))
-            Write-Output "Base64 decode: OK"
-            Write-Output "Decoded length: $($decoded.Length)"
-            Write-Output "Starts with 'untrusted comment': $($decoded.StartsWith('untrusted comment'))"
-            Write-Output "Line count: $($decoded.Split([char]10).Count)"
-          } catch {
-            Write-Output "Base64 decode: FAILED - $_"
-          }
-          $pwd = $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-          Write-Output "Password length: $(if ($null -eq $pwd) { 'null' } else { $pwd.Length })"
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-
       - name: Build Windows executable and NSIS installer (release)
         run: npx tauri build --bundles nsis
         env:

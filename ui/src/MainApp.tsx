@@ -42,6 +42,7 @@ const MainApp: Component = () => {
   const [iconCacheSize, setIconCacheSize] = createSignal(200);
   const [updateInfo, setUpdateInfo] = createSignal<UpdateAvailablePayload | null>(null);
   const [updaterInstalling, setUpdaterInstalling] = createSignal(false);
+  const [updaterError, setUpdaterError] = createSignal(false);
   let pendingUpdate: Update | null = null;
 
   onMount(async () => {
@@ -256,6 +257,7 @@ const MainApp: Component = () => {
   async function handleUpdateInstall() {
     if (!pendingUpdate) return;
     setUpdaterInstalling(true);
+    setUpdaterError(false);
     try {
       await pendingUpdate.downloadAndInstall();
       await api.restartApp();
@@ -263,6 +265,7 @@ const MainApp: Component = () => {
     } catch (e) {
       console.error("Update install failed:", e);
       setUpdaterInstalling(false);
+      setUpdaterError(true);
     }
   }
 
@@ -292,6 +295,7 @@ const MainApp: Component = () => {
           version={updateInfo()!.version}
           canInstall={updateInfo()!.can_install}
           installing={updaterInstalling()}
+          error={updaterError()}
           onInstall={handleUpdateInstall}
           onDismiss={() => setUpdateInfo(null)}
         />

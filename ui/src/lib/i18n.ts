@@ -31,7 +31,8 @@ export type TranslationKey =
   | "update.available"
   | "update.install_now"
   | "update.dismiss"
-  | "update.installing";
+  | "update.installing"
+  | "update.failed";
 
 const JA_JP: Record<TranslationKey, string> = {
   // SearchWindow
@@ -62,6 +63,7 @@ const JA_JP: Record<TranslationKey, string> = {
   "update.install_now": "今すぐ更新",
   "update.dismiss": "閉じる",
   "update.installing": "インストール中...",
+  "update.failed": "更新に失敗しました",
 };
 
 const EN_US: Record<TranslationKey, string> = {
@@ -93,6 +95,7 @@ const EN_US: Record<TranslationKey, string> = {
   "update.install_now": "Update now",
   "update.dismiss": "Dismiss",
   "update.installing": "Installing...",
+  "update.failed": "Update failed",
 };
 
 const TABLES: Record<Lang, Record<TranslationKey, string>> = {

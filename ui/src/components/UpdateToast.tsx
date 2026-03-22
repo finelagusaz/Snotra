@@ -5,6 +5,7 @@ interface Props {
   version: string;
   canInstall: boolean;
   installing: boolean;
+  error: boolean;
   onInstall: () => void;
   onDismiss: () => void;
 }
@@ -14,9 +15,11 @@ const UpdateToast: Component<Props> = (props) => {
     <div class="update-toast">
       <div class="update-toast-row1">
         <span class="update-toast-text">
-          {props.installing
-            ? t("update.installing")
-            : t("update.available", { version: props.version })}
+          {props.error
+            ? t("update.failed")
+            : props.installing
+              ? t("update.installing")
+              : t("update.available", { version: props.version })}
         </span>
       </div>
       <div class="update-toast-row2">

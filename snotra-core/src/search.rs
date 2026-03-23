@@ -398,12 +398,28 @@ impl SearchEngine {
         let needle_u32 = Utf32String::from(norm_query.as_ref());
         let norm_query_str: &str = &norm_query;
 
-        // Path matching: クエリにパス区切り文字を含む場合、normalized_key（フルパス）に対して
-        // Substring マッチを試みる。クエリ内の `/` は `\` に正規化する。
-        let has_path_sep =
-            norm_query_str.contains('\\') || norm_query_str.contains('/');
+        // Path matching: クエリにパス区切り文字（\ / ¥）を含む場合、normalized_key（フルパス）
+        // に対して Substring マッチを試みる。
+        // normalize_query() は連続スペースを潰すが normalize_entry_key() は保持するため、
+        // パスマッチ用クエリは生クエリから normalize_entry_key() 相当で正規化する。
+        // これにより "C:\My  Tools\" のような連続スペースを含むパスにもマッチする。
+        // ¥（U+00A5）は日本語 Windows でバックスラッシュとして使われるため対象に含める。
+        let has_path_sep = {
+            let q = query.trim();
+            q.contains('\\') || q.contains('/') || q.contains('\u{00a5}')
+        };
         let path_query: Option<String> = if has_path_sep {
-            Some(norm_query_str.replace('/', "\\"))
+            // normalize_entry_key と同じ正規化: 小文字化 + / と ¥ を \ に統一
+            let trimmed = query.trim();
+            let mut pq = String::with_capacity(trimmed.len());
+            for ch in trimmed.chars() {
+                if ch == '/' || ch == '\u{00a5}' {
+                    pq.push('\\');
+                } else {
+                    pq.extend(ch.to_lowercase());
+                }
+            }
+            Some(pq)
         } else {
             None
         };
@@ -436,7 +452,8 @@ impl SearchEngine {
             && (!has_dot || self.prev_query.contains('.'))
             && (!has_path_sep
                 || self.prev_query.contains('\\')
-                || self.prev_query.contains('/'))
+                || self.prev_query.contains('/')
+                || self.prev_query.contains('\u{00a5}'))
             && kana_monotonic;
 
         let candidate_indices: Vec<usize> = if use_incremental {
@@ -566,8 +583,11 @@ impl SearchEngine {
                         local_matches.push(i); // Record matching index for incremental cache
                         let (global_launches, last_launched) =
                             history.get_global_stats_normalized(v.normalized_key);
+                        // パス区切りを含むクエリでは正規化済み path_query を履歴キーに使い、
+                        // tool/editor と tool\editor の履歴バケットを統一する。
+                        let history_query_key = path_query.as_deref().unwrap_or(norm_query_str);
                         let qcount =
-                            history.query_count_pre_normalized(norm_query_str, v.normalized_key)
+                            history.query_count_pre_normalized(history_query_key, v.normalized_key)
                                 as i64;
 
                         let folder_boost = if v.entry.is_folder {
@@ -2063,5 +2083,43 @@ mod tests {
         let results = engine.search("tool\\editor", 8, &empty_history(), SearchMode::Fuzzy);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "zzz");
+    }
+
+    #[test]
+    fn path_match_yen_sign_normalized() {
+        // ¥（U+00A5）は日本語 Windows でバックスラッシュとして使われる
+        let entries = vec![make_entry("app", "C:\\tool\\editor\\app.exe")];
+        let mut engine = SearchEngine::new(entries);
+        let results = engine.search("tool\u{00a5}editor", 8, &empty_history(), SearchMode::Substring);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "app");
+    }
+
+    #[test]
+    fn path_match_consecutive_spaces_preserved() {
+        // パス成分に連続スペースを含む場合、normalize_query() で潰されない
+        let entries = vec![make_entry("app", "C:\\My  Tools\\app.exe")];
+        let mut engine = SearchEngine::new(entries);
+        let results = engine.search("My  Tools\\", 8, &empty_history(), SearchMode::Substring);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "app");
+    }
+
+    #[test]
+    fn path_match_history_key_unified_across_separators() {
+        // tool/editor と tool\editor で履歴バケットが統一される
+        let entries = vec![
+            make_entry("app1", "C:\\tool\\editor\\app1.exe"),
+            make_entry("app2", "C:\\tool\\editor\\app2.exe"),
+        ];
+        let mut history = HistoryStore::load(10);
+        // tool/editor（スラッシュ）で起動記録
+        history.record_launch("C:\\tool\\editor\\app1.exe", "tool/editor");
+
+        let mut engine = SearchEngine::new(entries);
+        // tool\editor（バックスラッシュ）で検索 → 履歴が効くべき
+        let results = engine.search("tool\\editor", 8, &history, SearchMode::Substring);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].name, "app1"); // history boost で上位
     }
 }

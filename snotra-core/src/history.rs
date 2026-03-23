@@ -70,10 +70,19 @@ impl HistoryStore {
 
         let norm_query = normalize_query(query);
         if !norm_query.is_empty() {
+            // パス区切り文字（/ ¥）を含むクエリは \ に統一して履歴キーを正規化する。
+            // tool/editor と tool\editor が同じバケットに入るようにする。
+            let query_key = if norm_query.contains('/')
+                || norm_query.contains('\u{00a5}')
+            {
+                norm_query.replace(['/', '\u{00a5}'], "\\")
+            } else {
+                norm_query.into_owned()
+            };
             *self
                 .data
                 .query
-                .entry(norm_query.into_owned())
+                .entry(query_key)
                 .or_default()
                 .entry(norm_path)
                 .or_insert(0) += 1;

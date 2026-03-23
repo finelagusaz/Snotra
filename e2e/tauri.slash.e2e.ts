@@ -538,36 +538,36 @@ test("/o 後に IPC チャネルが生存している", async ({ harness }) => {
   await waitForVisibleLabel(driver, "main", 4_000);
 });
 
-test("→ キーでフォルダ展開、Escape でスナップショット復帰", async ({ harness }) => {
+test("← キーでフォルダ展開、Escape でスナップショット復帰", async ({ harness }) => {
   const { driver } = harness;
 
-  // C:\ を入力して通常検索のパスマッチングで結果を表示（folderState は null）
+  // E2E フィクスチャのファイルを検索して結果を表示
   await switchToLabel(driver, "main");
   let input = await driver.findElement(By.css(".search-input"));
-  await input.sendKeys("C:\\");
+  await input.sendKeys(E2E_SEARCH_QUERY);
 
   await driver.wait(
     async () => (await driver.findElements(By.css(".result-row"))).length > 0,
     8_000,
-    "C:\\ の結果が表示されない",
+    "検索結果が表示されない",
   );
 
-  // → キーで最初の結果（フォルダ）に入る → folderFilter="" で input value が空になる
+  // ← キーで選択中ファイルの親ディレクトリを展開 → folderFilter="" で input value が空になる
   input = await driver.findElement(By.css(".search-input"));
-  await input.sendKeys(Key.ARROW_RIGHT);
+  await input.sendKeys(Key.ARROW_LEFT);
 
   await driver.wait(async () => {
     const el = await driver.findElement(By.css(".search-input"));
     return (await el.getAttribute("value")) === "";
-  }, 4_000, "→ キーでフォルダモードに入らない（input が空にならない）");
+  }, 4_000, "← キーでフォルダモードに入らない（input が空にならない）");
 
-  // Escape でスナップショット（C:\）に一括復帰
+  // Escape でスナップショット復帰（元のクエリと結果に戻る）
   await driver.actions().sendKeys(Key.ESCAPE).perform();
 
   await driver.wait(async () => {
     const el = await driver.findElement(By.css(".search-input"));
-    return (await el.getAttribute("value")) === "C:\\";
-  }, 4_000, "Escape で C:\\ に復帰しない");
+    return (await el.getAttribute("value")) === E2E_SEARCH_QUERY;
+  }, 4_000, `Escape で "${E2E_SEARCH_QUERY}" に復帰しない`);
 });
 
 test("/r 入力でエラーにならず main が表示されたままになる", async ({ harness }) => {

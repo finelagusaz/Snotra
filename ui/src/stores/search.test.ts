@@ -22,13 +22,15 @@ vi.mock("../lib/invoke", () => ({
   listFolder: vi.fn(async () => []),
   getIndexingState: vi.fn(async () => false),
   recordFolderExpansion: vi.fn(async () => {}),
+  getInstantCommands: vi.fn(async () => []),
+  executeInstantCommand: vi.fn(async () => ({ status: "ok", code: 0, message: null })),
 }));
 
 // ── モック確立後にインポート ─────────────────────────────────────────────────
 
 import * as tauriEvent from "@tauri-apps/api/event";
 import * as api from "../lib/invoke";
-import type { OpenerTool, SearchResult } from "../lib/types";
+import type { InstantCommand, OpenerTool, SearchResult } from "../lib/types";
 import {
   results,
   selected,
@@ -38,19 +40,25 @@ import {
   setFolderFilter,
   folderFilter,
   activateSelected,
+  activateSelectedByIndex,
   enterToolSelection,
   exitToolSelection,
   moveSelectionDown,
   refreshResults,
   resetForShow,
+  shouldShowResults,
   toolSelectionState,
   launchNotice,
   clearLaunchNotice,
   setHotkeyFailureNotice,
   indexing,
   initIndexingState,
+  instantCommandMode,
+  instantCommandPrefix,
+  setInstantCommandPrefix,
 } from "../stores/search";
 import { setToolSelectionState } from "../stores/tool-selection";
+import { setFolderState } from "../stores/folder";
 
 // ── テスト定数 ────────────────────────────────────────────────────────────────
 
@@ -64,6 +72,9 @@ const FILE_RESULT: SearchResult = {
 const TOOL_1: OpenerTool = { name: "Tool One", exe: "C:\\one.exe", args: "" };
 const TOOL_2: OpenerTool = { name: "Tool Two", exe: "C:\\two.exe", args: "" };
 
+const CMD_GOOGLE: InstantCommand = { name: "google", command: "https://google.com?q={query}" };
+const CMD_CLIP: InstantCommand = { name: "clip", command: "echo {clip}" };
+
 // ── セットアップ ──────────────────────────────────────────────────────────────
 
 beforeEach(() => {
@@ -75,9 +86,11 @@ beforeEach(() => {
 
   // シグナルをリセット
   setToolSelectionState(null);
+  setFolderState(null);
   setQuery("");
   setSelected(0);
   setFolderFilter("");
+  setInstantCommandPrefix("@");
 });
 
 afterEach(() => {
@@ -490,5 +503,202 @@ describe("initIndexingState", () => {
     cleanup();
 
     expect(unlistenStarted).toHaveBeenCalledOnce();
+  });
+});
+
+// ── instantCommandMode ────────────────────────────────────────────────────────
+
+describe("instantCommandMode", () => {
+  it("@prefix でインスタントコマンドモードに入る", async () => {
+    vi.mocked(api.getInstantCommands).mockResolvedValue([CMD_GOOGLE, CMD_CLIP]);
+
+    setQuery("@goo");
+    await vi.runAllTimersAsync();
+
+    expect(instantCommandMode()).toBe(true);
+    expect(results()).toHaveLength(2);
+    expect(results()[0].name).toBe("google");
+  });
+
+  it("コマンド名だけでフィルタリングされる（スペース後はクエリ部分）", async () => {
+    vi.mocked(api.getInstantCommands).mockResolvedValue([CMD_GOOGLE]);
+
+    setQuery("@google SolidJS tutorial");
+    await vi.runAllTimersAsync();
+
+    // getInstantCommands は "google" でフィルタされる（スペース以降は除外）
+    expect(api.getInstantCommands).toHaveBeenCalledWith("google");
+  });
+
+  it("プレフィックスを消すとモード解除", async () => {
+    vi.mocked(api.getInstantCommands).mockResolvedValue([CMD_GOOGLE]);
+    setQuery("@goo");
+    await vi.runAllTimersAsync();
+    expect(instantCommandMode()).toBe(true);
+
+    setQuery("goo");
+    await vi.runAllTimersAsync();
+    expect(instantCommandMode()).toBe(false);
+  });
+
+  it("resetForShow でモード解除", async () => {
+    vi.mocked(api.getInstantCommands).mockResolvedValue([CMD_GOOGLE]);
+    setQuery("@goo");
+    await vi.runAllTimersAsync();
+    expect(instantCommandMode()).toBe(true);
+
+    resetForShow();
+    expect(instantCommandMode()).toBe(false);
+  });
+});
+
+// ── executeInstantCommandSelected（activateSelected 経由）────────────────────
+
+describe("executeInstantCommandSelected", () => {
+  beforeEach(async () => {
+    vi.mocked(api.getInstantCommands).mockResolvedValue([CMD_GOOGLE, CMD_CLIP]);
+    setQuery("@google SolidJS");
+    await vi.runAllTimersAsync();
+    // instantCommandMode = true, results に 2 件入っている状態
+  });
+
+  it("成功: クエリクリア + モード解除", async () => {
+    vi.mocked(api.executeInstantCommand).mockResolvedValue({
+      status: "ok",
+      code: 0,
+      message: null,
+    });
+
+    const ok = await activateSelected();
+
+    expect(ok).toBe(true);
+    expect(api.executeInstantCommand).toHaveBeenCalledWith("google", "SolidJS");
+    expect(instantCommandMode()).toBe(false);
+    expect(query()).toBe("");
+  });
+
+  it("失敗: 候補が復元される", async () => {
+    vi.mocked(api.executeInstantCommand).mockResolvedValue({
+      status: "error",
+      code: 1,
+      message: "command not found",
+    });
+    const resultsBefore = results();
+    const selectedBefore = selected();
+
+    const ok = await activateSelected();
+
+    expect(ok).toBe(false);
+    expect(instantCommandMode()).toBe(true);
+    expect(results()).toEqual(resultsBefore);
+    expect(selected()).toBe(selectedBefore);
+  });
+
+  it("activateSelectedByIndex でインデックス指定実行", async () => {
+    vi.mocked(api.executeInstantCommand).mockResolvedValue({
+      status: "ok",
+      code: 0,
+      message: null,
+    });
+
+    await activateSelectedByIndex(1);
+
+    // index 1 = CMD_CLIP
+    expect(api.executeInstantCommand).toHaveBeenCalledWith("clip", "SolidJS");
+  });
+});
+
+// ── refreshResults ガード — インスタントコマンドモード ────────────────────────
+
+describe("refreshResults ガード — インスタントコマンドモード", () => {
+  it("インスタントコマンドモード中は api.search を呼ばない", async () => {
+    vi.mocked(api.getInstantCommands).mockResolvedValue([CMD_GOOGLE]);
+    setQuery("@goo");
+    await vi.runAllTimersAsync();
+    expect(instantCommandMode()).toBe(true);
+    vi.mocked(api.search).mockClear();
+
+    await refreshResults();
+
+    expect(api.search).not.toHaveBeenCalled();
+  });
+});
+
+// ── shouldShowResults ─────────────────────────────────────────────────────────
+
+describe("shouldShowResults", () => {
+  it("結果なし → false", () => {
+    expect(shouldShowResults()).toBe(false);
+  });
+
+  it("結果あり + indexing=false → true", async () => {
+    vi.mocked(api.search).mockResolvedValue([FILE_RESULT]);
+    setQuery("file");
+    await vi.runAllTimersAsync();
+
+    expect(shouldShowResults()).toBe(true);
+  });
+
+  it("結果あり + indexing=true → false（通常検索）", async () => {
+    // indexing を true にする
+    let setIndexingTrue: (() => void) | undefined;
+    vi.mocked(tauriEvent.listen).mockImplementation(
+      async (eventName: string, callback: (...args: unknown[]) => void) => {
+        if (eventName === "indexing-started") setIndexingTrue = callback as () => void;
+        return () => {};
+      },
+    );
+    await initIndexingState();
+    setIndexingTrue?.();
+    expect(indexing()).toBe(true);
+
+    // 結果を直接セットするために search をモック
+    vi.mocked(api.search).mockResolvedValue([FILE_RESULT]);
+    setQuery("file");
+    await vi.runAllTimersAsync();
+
+    expect(shouldShowResults()).toBe(false);
+  });
+
+  it("結果あり + indexing=true + instantCommandMode → true", async () => {
+    let setIndexingTrue: (() => void) | undefined;
+    vi.mocked(tauriEvent.listen).mockImplementation(
+      async (eventName: string, callback: (...args: unknown[]) => void) => {
+        if (eventName === "indexing-started") setIndexingTrue = callback as () => void;
+        return () => {};
+      },
+    );
+    await initIndexingState();
+    setIndexingTrue?.();
+
+    vi.mocked(api.getInstantCommands).mockResolvedValue([CMD_GOOGLE]);
+    setQuery("@goo");
+    await vi.runAllTimersAsync();
+
+    expect(indexing()).toBe(true);
+    expect(instantCommandMode()).toBe(true);
+    expect(results().length).toBeGreaterThan(0);
+    expect(shouldShowResults()).toBe(true);
+  });
+
+  it("結果あり + indexing=true + folderState → true", async () => {
+    let setIndexingTrue: (() => void) | undefined;
+    vi.mocked(tauriEvent.listen).mockImplementation(
+      async (eventName: string, callback: (...args: unknown[]) => void) => {
+        if (eventName === "indexing-started") setIndexingTrue = callback as () => void;
+        return () => {};
+      },
+    );
+    await initIndexingState();
+    setIndexingTrue?.();
+
+    // folderState を設定して結果をセット
+    setFolderState({ dir: "C:\\test", parentDir: null });
+    vi.mocked(api.listFolder).mockResolvedValue([FILE_RESULT]);
+    await refreshResults();
+    await vi.runAllTimersAsync();
+
+    expect(indexing()).toBe(true);
+    expect(shouldShowResults()).toBe(true);
   });
 });

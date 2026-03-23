@@ -8,7 +8,7 @@ use rayon::prelude::*;
 use crate::config::{SearchConfig, SearchHistoryNormalizationConfig};
 use crate::history::HistoryStore;
 use crate::indexer::{AppEntry, normalize_entry_key};
-use crate::query::{normalize_query, to_kana, to_lower_folded};
+use crate::query::{normalize_history_query_key, normalize_query, to_kana, to_lower_folded};
 use crate::ui_types::SearchResult;
 
 const GLOBAL_WEIGHT: i64 = 5;
@@ -423,17 +423,10 @@ impl SearchEngine {
         } else {
             None
         };
-        // 履歴キー: record_launch と同じ正規化（normalize_query + パス区切り統一）。
+        // 履歴キー: normalize_history_query_key で一元化（normalize_query + パス区切り統一）。
         // path_query は生クエリベースでスペース/アクセントの扱いが異なるため別途作る。
         let path_history_key: Option<String> = if has_path_sep {
-            let nq: &str = norm_query_str;
-            if nq.contains('/') || nq.contains('\u{00a5}') {
-                Some(nq.replace(['/', '\u{00a5}'], "\\"))
-            } else {
-                // norm_query_str が既に \ のみの場合はそのまま借用で済むが、
-                // Option<String> の型合わせのため clone する
-                Some(nq.to_owned())
-            }
+            Some(normalize_history_query_key(query).into_owned())
         } else {
             None
         };
@@ -459,15 +452,18 @@ impl SearchEngine {
             (Some(curr), Some(prev)) => curr.starts_with(prev.as_str()),
             (Some(_), None) => false,
         };
+        // Guard: !has_path_sep
+        //   パス区切りを含むクエリでは incremental を無効化する。
+        //   norm_query（アクセント折畳み・スペース圧縮）と path_query（生クエリベース）で
+        //   正規化が異なるため、norm_query の starts_with だけでは path_query の単調性を
+        //   保証できない（例: "café\\" と "cafe\\" は同じ norm_query だが異なる path_query）。
+        //   パス区切りを含むクエリは稀なため性能影響は無視できる。
         let use_incremental = self.prev_mode == Some(mode)
             && !self.prev_candidates.is_empty()
             && !self.prev_query.is_empty()
             && norm_query.starts_with(self.prev_query.as_str())
             && (!has_dot || self.prev_query.contains('.'))
-            && (!has_path_sep
-                || self.prev_query.contains('\\')
-                || self.prev_query.contains('/')
-                || self.prev_query.contains('\u{00a5}'))
+            && !has_path_sep
             && kana_monotonic;
 
         let candidate_indices: Vec<usize> = if use_incremental {
@@ -2118,6 +2114,31 @@ mod tests {
         let results = engine.search("My  Tools\\", 8, &empty_history(), SearchMode::Substring);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "app");
+    }
+
+    #[test]
+    fn path_match_incremental_disabled_avoids_accent_false_negative() {
+        // incremental cache が有効だった場合の false negative を検証する。
+        // entry path に "café" を含み、"cafe\\" (no accent) → "café\\" (with accent)
+        // の遷移で norm_query は両方 "cafe\\" だが、path_query は異なる。
+        // incremental 無効化により、full scan で正しくマッチする。
+        let entries = vec![
+            make_entry("app", "C:\\café\\app.exe"),
+            make_entry("other", "C:\\other\\other.exe"),
+        ];
+        let mut engine = SearchEngine::new(entries);
+        let h = empty_history();
+
+        // 1回目: "cafe\\" — normalized_key は "c:\café\app.exe" (accent preserved)
+        // path_query "cafe\\" は "café" にマッチしない
+        let r1 = engine.search("cafe\\", 8, &h, SearchMode::Substring);
+        assert!(r1.is_empty());
+
+        // 2回目: "café\\" — path_query "café\\" は "café" にマッチすべき
+        // incremental が有効だと前回の空結果を再利用して false negative になる
+        let r2 = engine.search("café\\", 8, &h, SearchMode::Substring);
+        assert_eq!(r2.len(), 1);
+        assert_eq!(r2[0].name, "app");
     }
 
     #[test]

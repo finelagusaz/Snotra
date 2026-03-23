@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::binfmt::BinFile;
 use crate::indexer::normalize_entry_key;
-use crate::query::normalize_query;
+use crate::query::normalize_history_query_key;
 
 const HISTORY_MAGIC: [u8; 4] = *b"HIST";
 const HISTORY_VERSION: u32 = 3; // postcard (現行, ms timestamp)
@@ -68,21 +68,12 @@ impl HistoryStore {
         entry.launch_count = entry.launch_count.saturating_add(1);
         entry.last_launched = now;
 
-        let norm_query = normalize_query(query);
+        let norm_query = normalize_history_query_key(query);
         if !norm_query.is_empty() {
-            // パス区切り文字（/ ¥）を含むクエリは \ に統一して履歴キーを正規化する。
-            // tool/editor と tool\editor が同じバケットに入るようにする。
-            let query_key = if norm_query.contains('/')
-                || norm_query.contains('\u{00a5}')
-            {
-                norm_query.replace(['/', '\u{00a5}'], "\\")
-            } else {
-                norm_query.into_owned()
-            };
             *self
                 .data
                 .query
-                .entry(query_key)
+                .entry(norm_query.into_owned())
                 .or_default()
                 .entry(norm_path)
                 .or_insert(0) += 1;
@@ -132,13 +123,7 @@ impl HistoryStore {
     }
 
     pub fn query_count(&self, query: &str, path: &str) -> u32 {
-        let nq = normalize_query(query);
-        // record_launch と同じ正規化: パス区切り（/ ¥）を \ に統一
-        let norm_query = if nq.contains('/') || nq.contains('\u{00a5}') {
-            std::borrow::Cow::Owned(nq.replace(['/', '\u{00a5}'], "\\"))
-        } else {
-            nq
-        };
+        let norm_query = normalize_history_query_key(query);
         self.query_count_normalized(&norm_query, path)
     }
 
@@ -253,15 +238,12 @@ fn migrate_normalize_keys(data: HistoryData) -> HistoryData {
         e.last_launched = e.last_launched.max(entry.last_launched);
     }
 
-    // query: outer キー（クエリ）も normalize_query で再正規化（アクセント折りたたみ統一）
-    // + パス区切り（/ ¥）を \ に統一。inner キー（パス）は normalize_entry_key で正規化。
+    // query: outer キー（クエリ）は normalize_history_query_key で正規化
+    // （normalize_query + パス区切り統一）。inner キー（パス）は normalize_entry_key で正規化。
     // 衝突時はカウント加算。
     let mut new_query: FxHashMap<String, FxHashMap<String, u32>> = FxHashMap::default();
     for (q_key, app_map) in data.query {
-        let mut norm_q = normalize_query(&q_key).into_owned();
-        if norm_q.contains('/') || norm_q.contains('\u{00a5}') {
-            norm_q = norm_q.replace(['/', '\u{00a5}'], "\\");
-        }
+        let norm_q = normalize_history_query_key(&q_key).into_owned();
         let new_app_map = new_query.entry(norm_q).or_default();
         for (path, count) in app_map {
             let norm = normalize_entry_key(&path);

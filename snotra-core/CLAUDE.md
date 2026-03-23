@@ -10,7 +10,7 @@
 - `history.rs`: 起動履歴・クエリ別履歴・フォルダ展開履歴の管理、バイナリ永続化
 - `folder.rs`: フォルダ内列挙とフィルタ/ソート、ルート判定
 - `indexer.rs`: スキャン対象列挙と重複排除、インデックスキャッシュ
-- `query.rs`: クエリ正規化
+- `query.rs`: クエリ正規化（`normalize_query`）と履歴クエリキー正規化（`normalize_history_query_key` — `normalize_query` + パス区切り統一を一元化）
 - `binfmt.rs`: `magic + version` 付きバイナリ入出力共通処理
 - `error.rs`: `BinError`（バイナリシリアライズ/デシリアライズ失敗）と `ConfigError`（設定バリデーション失敗）の error 型定義
 - `window_data.rs`: ウィンドウ位置（`window.bin`）の保存/復元
@@ -55,6 +55,10 @@
 
 `normalize_query()` は `Cow<str>` を返す。ASCII 小文字のみのクエリでは借用（ゼロアロケーション）、大文字・アクセント・連続空白がある場合のみ所有に切り替わる。正規化ロジックを変更するとき、この2パスの一貫性（チェック条件とビルド条件が同じ入力に対して同じ結果を生む）を壊さない。
 
+### incremental cache とパスクエリの非互換
+
+`has_path_sep` 時は incremental search を無条件で無効化する。理由: `norm_query`（アクセント折畳み・スペース圧縮）と `path_query`（生クエリベース・アクセント保持・スペース保持）で正規化が異なり、`norm_query` の `starts_with` では `path_query` の単調性を保証できない。パス区切りを含むクエリは稀なため性能影響は無視できる。将来 incremental を有効化するには `prev_path_query` を別途保持して単調性を検証する必要がある。
+
 ## データ永続化の注意
 
 - シリアライザを切り替える場合は**必ずバージョン番号をバンプ**し、旧形式のフォールバックデシリアライザを追加する。切り替え前後でバイト列の互換性はほぼ存在しない（例: bincode の u32 は 4バイト LE、postcard は LEB128 varint）
@@ -64,7 +68,7 @@
 
 ## history.rs のキー正規化に関するチェックリスト
 
-`history.rs` のパスキー形式（`normalize_entry_key` の適用有無など）を変更したとき、以下の3者が揃っているか確認する:
+`history.rs` のパスキー形式（`normalize_entry_key` の適用有無など）を変更したとき、以下の3者が揃っているか確認する。**クエリキーの正規化は `query.rs::normalize_history_query_key` に一元化済み**（`normalize_query` + パス区切り `/` `¥` → `\` 統一）。新しいコードパスで手書き重複を追加せず、このヘルパーを使うこと:
 
 1. **新規記録** (`record_launch` / `record_folder_expansion`): 書き込み時に正規化しているか
 2. **既存データ移行** (`load()` 内 `migrate_normalize_keys`): デシリアライズ直後に全キーを正規化しているか

@@ -1408,6 +1408,16 @@ mod tests {
         }
     }
 
+    #[test]
+    #[ignore]
+    fn bench_fuzzy_path_query_scaling() {
+        // パス区切り含有クエリ: has_path_sep=true でビットマスク pre-filter がスキップされる
+        let queries = ["fake\\vis", "fake\\code", "fake\\micro"];
+        for &n in &[1_000, 10_000, 50_000, 100_000, 300_000] {
+            bench_search("fuzzy_path", n, &queries);
+        }
+    }
+
     fn bench_new(label: &str, n: usize) {
         use std::time::Instant;
         let entries = make_bench_entries(n);

@@ -4,7 +4,6 @@ import type { InstantCommand, OpenerTool, SearchResult } from "../lib/types";
 import * as api from "../lib/invoke";
 import { findCommand } from "../lib/commands";
 import { perfStartSearch, perfMarkSearchDone, perfCancelSearch } from "../lib/perf";
-import { parsePathQuery } from "../lib/pathQuery";
 import { clampSelectedIndex, computeParentDir } from "../lib/folderNav";
 import { trace } from "../lib/trace";
 import { folderState, setFolderState, folderFilter, setFolderFilter } from "./folder";
@@ -156,10 +155,9 @@ async function refreshResults() {
     return;
   }
 
-  const pathQuery = fs ? null : parsePathQuery(q);
   const source = trimmed === "/r"
     ? "history"
-    : fs || pathQuery
+    : fs
     ? "folder"
     : "query";
   perfStartSearch(requestId, source);
@@ -174,16 +172,7 @@ async function refreshResults() {
       mode: "folder_state",
     });
     items = await api.listFolder(fs.currentDir, folderFilter());
-  } else if (pathQuery) {
-    trace("search:api:call", {
-      requestId,
-      api: "list_folder",
-      dir: pathQuery.dir,
-      filter: pathQuery.filter,
-      mode: "path_query",
-    });
-    items = await api.listFolder(pathQuery.dir, pathQuery.filter);
-  } else if (q.trim() === "") {
+  } else if (trimmed === "") {
     trace("search:refresh:branch", { requestId, branch: "empty_query" });
     items = [];
   } else {

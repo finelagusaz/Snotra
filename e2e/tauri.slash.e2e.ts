@@ -541,7 +541,7 @@ test("/o 後に IPC チャネルが生存している", async ({ harness }) => {
 test("→ キーでフォルダ展開、Escape でスナップショット復帰", async ({ harness }) => {
   const { driver } = harness;
 
-  // C:\ を入力してフォルダ結果を表示（pathQuery モード、folderState は null）
+  // C:\ を入力して通常検索のパスマッチングで結果を表示（folderState は null）
   await switchToLabel(driver, "main");
   let input = await driver.findElement(By.css(".search-input"));
   await input.sendKeys("C:\\");

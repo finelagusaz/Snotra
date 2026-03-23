@@ -132,7 +132,13 @@ impl HistoryStore {
     }
 
     pub fn query_count(&self, query: &str, path: &str) -> u32 {
-        let norm_query = normalize_query(query);
+        let nq = normalize_query(query);
+        // record_launch と同じ正規化: パス区切り（/ ¥）を \ に統一
+        let norm_query = if nq.contains('/') || nq.contains('\u{00a5}') {
+            std::borrow::Cow::Owned(nq.replace(['/', '\u{00a5}'], "\\"))
+        } else {
+            nq
+        };
         self.query_count_normalized(&norm_query, path)
     }
 

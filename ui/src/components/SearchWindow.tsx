@@ -26,6 +26,7 @@ import {
   instantCommandMode,
 } from "../stores/search";
 import { hideMainWindow } from "../lib/commands";
+import { computeParentDir } from "../lib/folderNav";
 import { perfMarkInput } from "../lib/perf";
 import { trace } from "../lib/trace";
 import { t } from "../lib/i18n";
@@ -201,11 +202,8 @@ const SearchWindow: Component = () => {
         } else {
           const r = results()[selected()];
           if (r && !r.isError) {
-            let parent = r.path.replace(/\\[^\\]+$/, "");
-            if (/^[A-Za-z]:$/.test(parent)) {
-              parent += "\\";
-            }
-            if (parent && parent !== r.path) {
+            const parent = computeParentDir(r.path);
+            if (parent) {
               enterFolderExpansion(parent);
               e.preventDefault();
             }

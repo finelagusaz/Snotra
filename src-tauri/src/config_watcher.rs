@@ -84,10 +84,7 @@ fn apply_config_change(app: &AppHandle) {
     // Detect changes
     let show_icons_changed = new_config.appearance.show_icons != old_config.appearance.show_icons;
     let new_show_icons = new_config.appearance.show_icons;
-    let index_changed = new_config.paths.scan != old_config.paths.scan
-        || new_config.search.show_hidden_system != old_config.search.show_hidden_system
-        || show_icons_changed
-        || new_config.search.include_path_env != old_config.search.include_path_env;
+    let index_changed = needs_reindex(&old_config, &new_config);
     let language_changed = new_config.general.language != old_config.general.language;
     let new_language = new_config.general.language;
     let instant_prefix_changed = new_config.search.instant_command_prefix
@@ -199,5 +196,100 @@ fn apply_config_change(app: &AppHandle) {
     {
         let logical = size.to_logical::<f64>(sf);
         let _ = w.set_size(LogicalSize::new(f64::from(new_width), logical.height));
+    }
+}
+
+/// インデックス再構築が必要かの判定ロジック。apply_config_change から抽出。
+/// scan / show_hidden_system / show_icons / include_path_env のいずれかが変わった場合 true。
+pub(crate) fn needs_reindex(old: &Config, new: &Config) -> bool {
+    old.paths.scan != new.paths.scan
+        || old.search.show_hidden_system != new.search.show_hidden_system
+        || old.appearance.show_icons != new.appearance.show_icons
+        || old.search.include_path_env != new.search.include_path_env
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tauri::window::Color;
+
+    #[test]
+    fn parse_hex_color_valid() {
+        assert_eq!(parse_hex_color("#282828"), Some(Color(0x28, 0x28, 0x28, 255)));
+        assert_eq!(parse_hex_color("#FF00AA"), Some(Color(0xFF, 0x00, 0xAA, 255)));
+        assert_eq!(parse_hex_color("#000000"), Some(Color(0, 0, 0, 255)));
+        assert_eq!(parse_hex_color("#ffffff"), Some(Color(0xFF, 0xFF, 0xFF, 255)));
+    }
+
+    #[test]
+    fn parse_hex_color_no_hash() {
+        assert_eq!(parse_hex_color("282828"), None);
+    }
+
+    #[test]
+    fn parse_hex_color_wrong_length() {
+        assert_eq!(parse_hex_color("#28282"), None);
+        assert_eq!(parse_hex_color("#2828288"), None);
+    }
+
+    #[test]
+    fn parse_hex_color_invalid_hex() {
+        assert_eq!(parse_hex_color("#gggggg"), None);
+    }
+
+    #[test]
+    fn parse_hex_color_empty() {
+        assert_eq!(parse_hex_color(""), None);
+        assert_eq!(parse_hex_color("#"), None);
+    }
+
+    #[test]
+    fn needs_reindex_no_change() {
+        let config = Config::load();
+        assert!(!needs_reindex(&config, &config));
+    }
+
+    #[test]
+    fn needs_reindex_scan_change() {
+        let old = Config::load();
+        let mut new = old.clone();
+        new.paths.scan.push(snotra_core::config::ScanPath {
+            path: "C:\\new".into(),
+            extensions: vec![".exe".into()],
+            include_folders: false,
+        });
+        assert!(needs_reindex(&old, &new));
+    }
+
+    #[test]
+    fn needs_reindex_show_icons_change() {
+        let old = Config::load();
+        let mut new = old.clone();
+        new.appearance.show_icons = !old.appearance.show_icons;
+        assert!(needs_reindex(&old, &new));
+    }
+
+    #[test]
+    fn needs_reindex_include_path_env_change() {
+        let old = Config::load();
+        let mut new = old.clone();
+        new.search.include_path_env = !old.search.include_path_env;
+        assert!(needs_reindex(&old, &new));
+    }
+
+    #[test]
+    fn needs_reindex_show_hidden_system_change() {
+        let old = Config::load();
+        let mut new = old.clone();
+        new.search.show_hidden_system = !old.search.show_hidden_system;
+        assert!(needs_reindex(&old, &new));
+    }
+
+    #[test]
+    fn needs_reindex_unrelated_change_does_not_trigger() {
+        let old = Config::load();
+        let mut new = old.clone();
+        new.appearance.max_results = old.appearance.max_results + 10;
+        assert!(!needs_reindex(&old, &new));
     }
 }

@@ -4,6 +4,7 @@ import type { SearchResult } from "../lib/types";
 import { results, selected, getSearchGeneration } from "../stores/search";
 import * as api from "../lib/invoke";
 import { LruIconCache } from "../lib/lruIconCache";
+import { parseBinaryBatch } from "../lib/iconBatch";
 import { perfMarkRenderDone } from "../lib/perf";
 import ResultRow from "./ResultRow";
 
@@ -30,33 +31,6 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
   let lastScrolledGeneration = -1;
   let iconRequestId = 0;   // アイコン取得の世代カウンタ（staleness guard 用）
   let listGeneration = 0;  // スクロール追従の世代カウンタ（results 変化時のみ更新）
-
-  /** Parse length-prefixed binary batch into per-path Blob URLs.
-   *  Format: [count:u32 LE] then per icon: [status:u8] [if 1: png_len:u32 LE, png_bytes] */
-  function parseBinaryBatch(
-    buf: ArrayBuffer,
-    paths: string[],
-  ): Map<string, string> {
-    const view = new DataView(buf);
-    let offset = 0;
-    const count = view.getUint32(offset, true);
-    offset += 4;
-    const result = new Map<string, string>();
-    for (let i = 0; i < count; i++) {
-      const status = view.getUint8(offset);
-      offset += 1;
-      if (status === 1) {
-        const pngLen = view.getUint32(offset, true);
-        offset += 4;
-        const pngBytes = new Uint8Array(buf, offset, pngLen);
-        offset += pngLen;
-        const blob = new Blob([pngBytes], { type: "image/png" });
-        const url = URL.createObjectURL(blob);
-        result.set(paths[i], url);
-      }
-    }
-    return result;
-  }
 
   /** キャッシュにないアイコンを一括取得してキャッシュに格納する。stale なら Blob URL を破棄して早期リターン */
   async function fetchIconBatch(items: SearchResult[], generation: number): Promise<void> {

@@ -20,6 +20,19 @@ pub fn to_lower_folded(s: &str) -> String {
         .collect()
 }
 
+/// `normalize_query` + パス区切り文字（`/` `¥`）を `\` に統一する。
+/// 履歴キーの正規化はこの関数に一元化する（DRY）。
+/// `record_launch`・`query_count`・`migrate_normalize_keys`・`search.rs` の
+/// `path_history_key` が全て同じ正規化を使うことを保証する。
+pub fn normalize_history_query_key(query: &str) -> Cow<'_, str> {
+    let nq = normalize_query(query);
+    if nq.contains('/') || nq.contains('\u{00a5}') {
+        Cow::Owned(nq.replace(['/', '\u{00a5}'], "\\"))
+    } else {
+        nq
+    }
+}
+
 pub fn normalize_query(query: &str) -> Cow<'_, str> {
     let trimmed = query.trim();
     if trimmed.is_empty() {
@@ -71,7 +84,7 @@ pub fn normalize_query(query: &str) -> Cow<'_, str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_query, to_kana, to_lower_folded};
+    use super::{normalize_history_query_key, normalize_query, to_kana, to_lower_folded};
     use std::borrow::Cow;
 
     #[test]
@@ -175,5 +188,43 @@ mod tests {
     fn to_kana_passes_through_kanji() {
         let result = to_kana("書類");
         assert!(result.contains("書類"));
+    }
+
+    #[test]
+    fn history_query_key_unifies_slash() {
+        assert_eq!(normalize_history_query_key("tool/editor"), "tool\\editor");
+    }
+
+    #[test]
+    fn history_query_key_unifies_yen() {
+        assert_eq!(
+            normalize_history_query_key("tool\u{00a5}editor"),
+            "tool\\editor"
+        );
+    }
+
+    #[test]
+    fn history_query_key_folds_accents() {
+        // normalize_query が é→e に折りたたむことを確認
+        assert_eq!(normalize_history_query_key("café\\foo"), "cafe\\foo");
+    }
+
+    #[test]
+    fn history_query_key_collapses_spaces() {
+        // normalize_query が連続スペースを圧縮することを確認
+        assert_eq!(normalize_history_query_key("my  tools\\foo"), "my tools\\foo");
+    }
+
+    #[test]
+    fn history_query_key_no_path_sep_passthrough() {
+        // パス区切りなしの場合は normalize_query と同じ
+        assert_eq!(normalize_history_query_key("hello"), "hello");
+    }
+
+    #[test]
+    fn history_query_key_borrows_when_no_change() {
+        // ASCII 小文字 + バックスラッシュのみの場合は Cow::Borrowed
+        let result = normalize_history_query_key("tool\\editor");
+        assert!(matches!(result, Cow::Borrowed(_)));
     }
 }

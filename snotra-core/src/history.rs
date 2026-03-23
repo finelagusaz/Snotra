@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::binfmt::BinFile;
 use crate::indexer::normalize_entry_key;
-use crate::query::normalize_query;
+use crate::query::normalize_history_query_key;
 
 const HISTORY_MAGIC: [u8; 4] = *b"HIST";
 const HISTORY_VERSION: u32 = 3; // postcard (現行, ms timestamp)
@@ -68,7 +68,7 @@ impl HistoryStore {
         entry.launch_count = entry.launch_count.saturating_add(1);
         entry.last_launched = now;
 
-        let norm_query = normalize_query(query);
+        let norm_query = normalize_history_query_key(query);
         if !norm_query.is_empty() {
             *self
                 .data
@@ -123,7 +123,7 @@ impl HistoryStore {
     }
 
     pub fn query_count(&self, query: &str, path: &str) -> u32 {
-        let norm_query = normalize_query(query);
+        let norm_query = normalize_history_query_key(query);
         self.query_count_normalized(&norm_query, path)
     }
 
@@ -238,11 +238,12 @@ fn migrate_normalize_keys(data: HistoryData) -> HistoryData {
         e.last_launched = e.last_launched.max(entry.last_launched);
     }
 
-    // query: outer キー（クエリ）も normalize_query で再正規化（アクセント折りたたみ統一）。
-    // inner キー（パス）は normalize_entry_key で正規化。衝突時はカウント加算。
+    // query: outer キー（クエリ）は normalize_history_query_key で正規化
+    // （normalize_query + パス区切り統一）。inner キー（パス）は normalize_entry_key で正規化。
+    // 衝突時はカウント加算。
     let mut new_query: FxHashMap<String, FxHashMap<String, u32>> = FxHashMap::default();
     for (q_key, app_map) in data.query {
-        let norm_q = normalize_query(&q_key).into_owned();
+        let norm_q = normalize_history_query_key(&q_key).into_owned();
         let new_app_map = new_query.entry(norm_q).or_default();
         for (path, count) in app_map {
             let norm = normalize_entry_key(&path);
@@ -704,5 +705,49 @@ mod tests {
         let twice = migrate_normalize_keys(once.clone());
         assert_eq!(once.query["cafe"]["c:\\fake\\app.lnk"], 4);
         assert_eq!(twice.query["cafe"]["c:\\fake\\app.lnk"], 4);
+    }
+
+    #[test]
+    fn migrate_normalize_keys_unifies_path_separators_in_query() {
+        // 既存の tool/editor と tool\editor の履歴バケットが統合される
+        let mut data = HistoryData::default();
+        data.query
+            .entry("tool/editor".to_string())
+            .or_default()
+            .insert("c:\\tool\\editor\\app.exe".to_string(), 3);
+        data.query
+            .entry("tool\\editor".to_string())
+            .or_default()
+            .insert("c:\\tool\\editor\\app.exe".to_string(), 2);
+        let migrated = migrate_normalize_keys(data);
+        assert_eq!(migrated.query.len(), 1);
+        assert!(migrated.query.contains_key("tool\\editor"));
+        assert_eq!(migrated.query["tool\\editor"]["c:\\tool\\editor\\app.exe"], 5);
+    }
+
+    #[test]
+    fn migrate_normalize_keys_unifies_yen_sign_in_query() {
+        // ¥（U+00A5）も \ に統一される
+        let mut data = HistoryData::default();
+        data.query
+            .entry("tool\u{00a5}editor".to_string())
+            .or_default()
+            .insert("c:\\tool\\editor\\app.exe".to_string(), 4);
+        let migrated = migrate_normalize_keys(data);
+        assert!(migrated.query.contains_key("tool\\editor"));
+        assert_eq!(migrated.query["tool\\editor"]["c:\\tool\\editor\\app.exe"], 4);
+    }
+
+    #[test]
+    fn migrate_normalize_keys_path_separator_idempotent() {
+        let mut data = HistoryData::default();
+        data.query
+            .entry("tool\\editor".to_string())
+            .or_default()
+            .insert("c:\\tool\\editor\\app.exe".to_string(), 3);
+        let once = migrate_normalize_keys(data.clone());
+        let twice = migrate_normalize_keys(once.clone());
+        assert_eq!(once.query["tool\\editor"]["c:\\tool\\editor\\app.exe"], 3);
+        assert_eq!(twice.query["tool\\editor"]["c:\\tool\\editor\\app.exe"], 3);
     }
 }

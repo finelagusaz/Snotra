@@ -6,11 +6,11 @@
 
 - `engine.rs`: `Engine` struct（`SearchEngine` + `HistoryStore` + `Config` の facade）。`FolderListContext`（ロック外スナップショット）と `PrebuiltIndex`（インデックス高速スワップ用）を公開
 - `config.rs`: `%APPDATA%\Snotra\config.toml` の読込/保存、既定値補完。`Language` enum（`Ja`/`En`）と `default_language()`（`sys-locale` による OS 言語自動判定、非日本語は英語フォールバック）を定義
-- `search.rs`: 検索順位計算（Prefix/Substring/Kana/Fuzzy）、履歴ブースト、incremental search キャッシュ、空クエリ時履歴候補。`SearchEngine` は並列 Vec レイアウト（`entries` / `lower_names` / `lower_file_names` / `normalized_keys` / `char_masks` / `file_name_char_masks` / `kana_lower_names`）で cache locality を確保。`new()` は Wave 1（文字列正規化）→ Wave 2（ビットマスク計算）の 2 段並列構築
+- `search.rs`: 検索順位計算（Prefix/Substring/Kana/Fuzzy/Path）、履歴ブースト、incremental search キャッシュ、空クエリ時履歴候補。`SearchEngine` は並列 Vec レイアウト（`entries` / `lower_names` / `lower_file_names` / `normalized_keys` / `char_masks` / `file_name_char_masks` / `kana_lower_names`）で cache locality を確保。`new()` は Wave 1（文字列正規化）→ Wave 2（ビットマスク計算）の 2 段並列構築。パスマッチング: クエリにパス区切り文字（`\` `/`）を含む場合、`normalized_key`（= `normalize_entry_key(target_path)`）に対して Substring マッチを試みる。スコアは `3000 - min(byte_pos, 500)`。name/file_name/kana 全て不成立時のフォールバック。`has_path_sep` 時は Fuzzy ビットマスク pre-filter をスキップする
 - `history.rs`: 起動履歴・クエリ別履歴・フォルダ展開履歴の管理、バイナリ永続化
 - `folder.rs`: フォルダ内列挙とフィルタ/ソート、ルート判定
 - `indexer.rs`: スキャン対象列挙と重複排除、インデックスキャッシュ
-- `query.rs`: クエリ正規化
+- `query.rs`: クエリ正規化（`normalize_query`）と履歴クエリキー正規化（`normalize_history_query_key` — `normalize_query` + パス区切り統一を一元化）
 - `binfmt.rs`: `magic + version` 付きバイナリ入出力共通処理
 - `error.rs`: `BinError`（バイナリシリアライズ/デシリアライズ失敗）と `ConfigError`（設定バリデーション失敗）の error 型定義
 - `window_data.rs`: ウィンドウ位置（`window.bin`）の保存/復元
@@ -29,6 +29,7 @@
 - 共通原則はルート `CLAUDE.md` の「レビュー未然防止の事前調査（必須）」に従う
 - `search.rs` で `Ord` / `Reverse` / `BinaryHeap` を扱う変更では、`BinaryHeap` の先頭が最良/最悪のどちらかを実装前に明記する
 - `search.rs` の top-k 更新ロジックを変更する場合は、入力順を変えても結果が不変であるテストを追加または更新する
+- `SearchEngine` にフィールドを追加する前に: 既存の並列 Vec（特に `normalized_keys`）で代替できないか先に検討する。再利用できれば 5 箇所同時更新・IndexCache バージョンバンプが不要になる
 - `SearchEngine` に新しい並列 Vec フィールドを追加するとき: `EntryView` 構造体・`entry_view()` メソッド・`new()` 末尾の `debug_assert!` を同時に更新し、全 Vec 長の同期を保つ（書き込み側 `new()` と読み取り側 `entry_view()` は常にペアで更新する）
 - `search.rs` の incremental search キャッシュ（`prev_*` フィールド群）に新しい述語を追加するとき: `use_incremental` の条件式と `prev_*` の更新箇所を同時に変更し、`/cache-check` で単調性を検証する
 - `query.rs` の正規化を変更する場合は、タブ・全角スペース・NBSP を `' '` に統一するテストと冪等性テストを追加または更新する
@@ -54,6 +55,10 @@
 
 `normalize_query()` は `Cow<str>` を返す。ASCII 小文字のみのクエリでは借用（ゼロアロケーション）、大文字・アクセント・連続空白がある場合のみ所有に切り替わる。正規化ロジックを変更するとき、この2パスの一貫性（チェック条件とビルド条件が同じ入力に対して同じ結果を生む）を壊さない。
 
+### incremental cache とパスクエリの非互換
+
+`has_path_sep` 時は incremental search を無条件で無効化する。理由: `norm_query`（アクセント折畳み・スペース圧縮）と `path_query`（生クエリベース・アクセント保持・スペース保持）で正規化が異なり、`norm_query` の `starts_with` では `path_query` の単調性を保証できない。パス区切りを含むクエリは稀なため性能影響は無視できる。将来 incremental を有効化するには `prev_path_query` を別途保持して単調性を検証する必要がある。
+
 ## データ永続化の注意
 
 - シリアライザを切り替える場合は**必ずバージョン番号をバンプ**し、旧形式のフォールバックデシリアライザを追加する。切り替え前後でバイト列の互換性はほぼ存在しない（例: bincode の u32 は 4バイト LE、postcard は LEB128 varint）
@@ -63,7 +68,7 @@
 
 ## history.rs のキー正規化に関するチェックリスト
 
-`history.rs` のパスキー形式（`normalize_entry_key` の適用有無など）を変更したとき、以下の3者が揃っているか確認する:
+`history.rs` のパスキー形式（`normalize_entry_key` の適用有無など）を変更したとき、以下の3者が揃っているか確認する。**クエリキーの正規化は `query.rs::normalize_history_query_key` に一元化済み**（`normalize_query` + パス区切り `/` `¥` → `\` 統一）。新しいコードパスで手書き重複を追加せず、このヘルパーを使うこと:
 
 1. **新規記録** (`record_launch` / `record_folder_expansion`): 書き込み時に正規化しているか
 2. **既存データ移行** (`load()` 内 `migrate_normalize_keys`): デシリアライズ直後に全キーを正規化しているか

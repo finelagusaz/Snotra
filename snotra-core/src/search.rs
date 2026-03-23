@@ -8,7 +8,7 @@ use rayon::prelude::*;
 use crate::config::{SearchConfig, SearchHistoryNormalizationConfig};
 use crate::history::HistoryStore;
 use crate::indexer::{AppEntry, normalize_entry_key};
-use crate::query::{normalize_query, to_kana, to_lower_folded};
+use crate::query::{normalize_history_query_key, normalize_query, to_kana, to_lower_folded};
 use crate::ui_types::SearchResult;
 
 const GLOBAL_WEIGHT: i64 = 5;
@@ -398,6 +398,39 @@ impl SearchEngine {
         let needle_u32 = Utf32String::from(norm_query.as_ref());
         let norm_query_str: &str = &norm_query;
 
+        // Path matching: クエリにパス区切り文字（\ / ¥）を含む場合、normalized_key（フルパス）
+        // に対して Substring マッチを試みる。
+        // normalize_query() は連続スペースを潰すが normalize_entry_key() は保持するため、
+        // パスマッチ用クエリは生クエリから normalize_entry_key() 相当で正規化する。
+        // これにより "C:\My  Tools\" のような連続スペースを含むパスにもマッチする。
+        // ¥（U+00A5）は日本語 Windows でバックスラッシュとして使われるため対象に含める。
+        let has_path_sep = {
+            let q = query.trim();
+            q.contains('\\') || q.contains('/') || q.contains('\u{00a5}')
+        };
+        let path_query: Option<String> = if has_path_sep {
+            // normalize_entry_key と同じ正規化: 小文字化 + / と ¥ を \ に統一
+            let trimmed = query.trim();
+            let mut pq = String::with_capacity(trimmed.len());
+            for ch in trimmed.chars() {
+                if ch == '/' || ch == '\u{00a5}' {
+                    pq.push('\\');
+                } else {
+                    pq.extend(ch.to_lowercase());
+                }
+            }
+            Some(pq)
+        } else {
+            None
+        };
+        // 履歴キー: normalize_history_query_key で一元化（normalize_query + パス区切り統一）。
+        // path_query は生クエリベースでスペース/アクセントの扱いが異なるため別途作る。
+        let path_history_key: Option<String> = if has_path_sep {
+            Some(normalize_history_query_key(query).into_owned())
+        } else {
+            None
+        };
+
         // Phase 4: incremental search – reuse previous match candidates when the query
         // is a monotonic extension of the previous one and the mode is unchanged.
         //
@@ -419,11 +452,18 @@ impl SearchEngine {
             (Some(curr), Some(prev)) => curr.starts_with(prev.as_str()),
             (Some(_), None) => false,
         };
+        // Guard: !has_path_sep
+        //   パス区切りを含むクエリでは incremental を無効化する。
+        //   norm_query（アクセント折畳み・スペース圧縮）と path_query（生クエリベース）で
+        //   正規化が異なるため、norm_query の starts_with だけでは path_query の単調性を
+        //   保証できない（例: "café\\" と "cafe\\" は同じ norm_query だが異なる path_query）。
+        //   パス区切りを含むクエリは稀なため性能影響は無視できる。
         let use_incremental = self.prev_mode == Some(mode)
             && !self.prev_candidates.is_empty()
             && !self.prev_query.is_empty()
             && norm_query.starts_with(self.prev_query.as_str())
             && (!has_dot || self.prev_query.contains('.'))
+            && !has_path_sep
             && kana_monotonic;
 
         let candidate_indices: Vec<usize> = if use_incremental {
@@ -455,7 +495,9 @@ impl SearchEngine {
                 |(mut local_heap, mut local_matches), i| {
                     // Bitmask pre-filter: skip entries that lack query characters (Fuzzy only).
                     // Prefix/Substring use cheap str ops, so the bitmask overhead isn't worth it.
-                    if mode == SearchMode::Fuzzy {
+                    // has_path_sep 時はスキップ: パスだけでマッチするエントリが
+                    // name/file_name のビットマスクで落ちる問題を回避する。
+                    if mode == SearchMode::Fuzzy && !has_path_sep {
                         let name_mask = self.char_masks[i];
                         let fn_mask = self.file_name_char_masks[i];
                         if (query_mask & name_mask) != query_mask
@@ -537,12 +579,26 @@ impl SearchEngine {
 
                     let score = primary_score.or(kana_score);
 
+                    // パスマッチ: name/file_name/kana 全て不成立時のフォールバック。
+                    // normalized_key は normalize_entry_key() で小文字化 + パス区切り正規化済み。
+                    // スコア 3000 は Kana(4500) より低く、名前マッチを常に優先する。
+                    let score = score.or_else(|| {
+                        path_query.as_deref().and_then(|pq| {
+                            let pos = v.normalized_key.find(pq)?;
+                            Some((3000i64 - (pos as i64).min(500)).max(1))
+                        })
+                    });
+
                     if let Some(base_score) = score {
                         local_matches.push(i); // Record matching index for incremental cache
                         let (global_launches, last_launched) =
                             history.get_global_stats_normalized(v.normalized_key);
+                        // 履歴キーは record_launch の保存形式に合わせる:
+                        // normalize_query() + パス区切り統一。path_query は生クエリベースで
+                        // スペース/アクセントが異なるため履歴キーには使わない。
+                        let history_query_key = path_history_key.as_deref().unwrap_or(norm_query_str);
                         let qcount =
-                            history.query_count_pre_normalized(norm_query_str, v.normalized_key)
+                            history.query_count_pre_normalized(history_query_key, v.normalized_key)
                                 as i64;
 
                         let folder_boost = if v.entry.is_folder {
@@ -1383,6 +1439,16 @@ mod tests {
         }
     }
 
+    #[test]
+    #[ignore]
+    fn bench_fuzzy_path_query_scaling() {
+        // パス区切り含有クエリ: has_path_sep=true でビットマスク pre-filter がスキップされる
+        let queries = ["fake\\vis", "fake\\code", "fake\\micro"];
+        for &n in &[1_000, 10_000, 50_000, 100_000, 300_000] {
+            bench_search("fuzzy_path", n, &queries);
+        }
+    }
+
     fn bench_new(label: &str, n: usize) {
         use std::time::Instant;
         let entries = make_bench_entries(n);
@@ -1899,5 +1965,197 @@ mod tests {
             inc_names, fresh_names,
             "か→かん は単調拡張なので incremental は fresh と一致するはず"
         );
+    }
+
+    // --- パスマッチング テスト ---
+
+    fn make_entry(name: &str, path: &str) -> AppEntry {
+        AppEntry {
+            name: name.to_string(),
+            target_path: path.to_string(),
+            is_folder: false,
+        }
+    }
+
+    #[test]
+    fn path_match_substring_finds_entry_by_path_segment() {
+        let entries = vec![make_entry("app", "C:\\tool\\editor\\app.exe")];
+        let mut engine = SearchEngine::new(entries);
+        let results = engine.search("tool\\editor", 8, &empty_history(), SearchMode::Substring);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "app");
+    }
+
+    #[test]
+    fn path_match_score_below_name_match() {
+        // "editor" → name="editor" に Substring マッチ (score 5000系)
+        //         → name="app" はマッチしない（path にも "editor" を含むがクエリにパス区切りなし）
+        // パス区切りなしのクエリではパスマッチは試行されない
+        let entries = vec![
+            make_entry("editor", "C:\\tool\\editor\\editor.exe"),
+            make_entry("app", "C:\\tool\\editor\\app.exe"),
+        ];
+        let mut engine = SearchEngine::new(entries);
+        let results = engine.search("editor", 8, &empty_history(), SearchMode::Substring);
+        // "editor" は name マッチ、"app" は name にもパスにも（パス区切りなしで試行されない）マッチしない
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "editor");
+
+        // パス区切りありのクエリで比較: "tool\\editor" は両方のパスにマッチするが、
+        // "editor" は name にも Substring マッチ → name_score(5000系) > path_score(3000系)
+        let entries2 = vec![
+            make_entry("editor", "C:\\tool\\editor\\editor.exe"),
+            make_entry("app", "C:\\tool\\editor\\app.exe"),
+        ];
+        let mut engine2 = SearchEngine::new(entries2);
+        let results2 =
+            engine2.search("tool\\editor", 8, &empty_history(), SearchMode::Substring);
+        assert_eq!(results2.len(), 2);
+        // "editor" の lower_name は "editor"。クエリ "tool\editor" に対して
+        // Substring マッチ: "editor".find("tool\editor") → None（クエリが長い）
+        // 両方ともパスマッチのみ → path_score で順序が決まる
+        // path_score は byte_position で比較 — 同じパスプレフィックスなのでスコア同等
+        // タイブレーク: lower_name 昇順 → "app" < "editor"
+        assert_eq!(results2[0].name, "app");
+        assert_eq!(results2[1].name, "editor");
+    }
+
+    #[test]
+    fn path_match_slash_normalized() {
+        let entries = vec![make_entry("app", "C:\\tool\\editor\\app.exe")];
+        let mut engine = SearchEngine::new(entries);
+        // `/` で入力しても `\` に正規化されてマッチする
+        let results = engine.search("tool/editor", 8, &empty_history(), SearchMode::Substring);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "app");
+    }
+
+    #[test]
+    fn path_match_receives_history_boost() {
+        let entries = vec![
+            make_entry("app1", "C:\\tool\\editor\\app1.exe"),
+            make_entry("app2", "C:\\tool\\editor\\app2.exe"),
+        ];
+        let mut history = HistoryStore::load(10);
+        for _ in 0..5 {
+            history.record_launch("C:\\tool\\editor\\app1.exe", "");
+        }
+        let mut engine = SearchEngine::new(entries);
+        let results = engine.search("tool\\editor", 8, &history, SearchMode::Substring);
+        assert_eq!(results.len(), 2);
+        // app1 は history boost で上位
+        assert_eq!(results[0].name, "app1");
+        assert_eq!(results[1].name, "app2");
+    }
+
+    #[test]
+    fn path_match_incremental_cache_monotonic() {
+        let entries = vec![
+            make_entry("app", "C:\\tool\\editor\\app.exe"),
+            make_entry("other", "C:\\other\\other.exe"),
+        ];
+        let mut engine = SearchEngine::new(entries);
+        let h = empty_history();
+
+        // 1回目: "tool\\" でパスマッチ
+        let r1 = engine.search("tool\\", 8, &h, SearchMode::Substring);
+        assert_eq!(r1.len(), 1);
+        assert_eq!(r1[0].name, "app");
+
+        // 2回目: "tool\\ed" に拡張 → incremental cache 有効
+        let r2 = engine.search("tool\\ed", 8, &h, SearchMode::Substring);
+        assert_eq!(r2.len(), 1);
+        assert_eq!(r2[0].name, "app");
+
+        // 比較: fresh engine と同じ結果になること
+        let mut fresh = SearchEngine::new(vec![
+            make_entry("app", "C:\\tool\\editor\\app.exe"),
+            make_entry("other", "C:\\other\\other.exe"),
+        ]);
+        let fresh_result = fresh.search("tool\\ed", 8, &h, SearchMode::Substring);
+        assert_eq!(r2.len(), fresh_result.len());
+        assert_eq!(r2[0].name, fresh_result[0].name);
+    }
+
+    #[test]
+    fn path_match_no_match_returns_empty() {
+        let entries = vec![make_entry("app", "C:\\tool\\editor\\app.exe")];
+        let mut engine = SearchEngine::new(entries);
+        let results = engine.search("xyz\\abc", 8, &empty_history(), SearchMode::Substring);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn path_match_fuzzy_mode_skips_bitmask_prefilter() {
+        // name="zzz" はクエリ "tool\\editor" の文字 (t,o,l,e,d,i,r) を含まない
+        // → 通常ならビットマスクで除外されるが、has_path_sep でスキップされパスマッチする
+        let entries = vec![make_entry("zzz", "C:\\tool\\editor\\zzz.exe")];
+        let mut engine = SearchEngine::new(entries);
+        let results = engine.search("tool\\editor", 8, &empty_history(), SearchMode::Fuzzy);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "zzz");
+    }
+
+    #[test]
+    fn path_match_yen_sign_normalized() {
+        // ¥（U+00A5）は日本語 Windows でバックスラッシュとして使われる
+        let entries = vec![make_entry("app", "C:\\tool\\editor\\app.exe")];
+        let mut engine = SearchEngine::new(entries);
+        let results = engine.search("tool\u{00a5}editor", 8, &empty_history(), SearchMode::Substring);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "app");
+    }
+
+    #[test]
+    fn path_match_consecutive_spaces_preserved() {
+        // パス成分に連続スペースを含む場合、normalize_query() で潰されない
+        let entries = vec![make_entry("app", "C:\\My  Tools\\app.exe")];
+        let mut engine = SearchEngine::new(entries);
+        let results = engine.search("My  Tools\\", 8, &empty_history(), SearchMode::Substring);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "app");
+    }
+
+    #[test]
+    fn path_match_incremental_disabled_avoids_accent_false_negative() {
+        // incremental cache が有効だった場合の false negative を検証する。
+        // entry path に "café" を含み、"cafe\\" (no accent) → "café\\" (with accent)
+        // の遷移で norm_query は両方 "cafe\\" だが、path_query は異なる。
+        // incremental 無効化により、full scan で正しくマッチする。
+        let entries = vec![
+            make_entry("app", "C:\\café\\app.exe"),
+            make_entry("other", "C:\\other\\other.exe"),
+        ];
+        let mut engine = SearchEngine::new(entries);
+        let h = empty_history();
+
+        // 1回目: "cafe\\" — normalized_key は "c:\café\app.exe" (accent preserved)
+        // path_query "cafe\\" は "café" にマッチしない
+        let r1 = engine.search("cafe\\", 8, &h, SearchMode::Substring);
+        assert!(r1.is_empty());
+
+        // 2回目: "café\\" — path_query "café\\" は "café" にマッチすべき
+        // incremental が有効だと前回の空結果を再利用して false negative になる
+        let r2 = engine.search("café\\", 8, &h, SearchMode::Substring);
+        assert_eq!(r2.len(), 1);
+        assert_eq!(r2[0].name, "app");
+    }
+
+    #[test]
+    fn path_match_history_key_unified_across_separators() {
+        // tool/editor と tool\editor で履歴バケットが統一される
+        let entries = vec![
+            make_entry("app1", "C:\\tool\\editor\\app1.exe"),
+            make_entry("app2", "C:\\tool\\editor\\app2.exe"),
+        ];
+        let mut history = HistoryStore::load(10);
+        // tool/editor（スラッシュ）で起動記録
+        history.record_launch("C:\\tool\\editor\\app1.exe", "tool/editor");
+
+        let mut engine = SearchEngine::new(entries);
+        // tool\editor（バックスラッシュ）で検索 → 履歴が効くべき
+        let results = engine.search("tool\\editor", 8, &history, SearchMode::Substring);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].name, "app1"); // history boost で上位
     }
 }

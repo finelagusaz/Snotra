@@ -70,9 +70,9 @@ Type `@` followed by a command name to instantly run a user-defined command.
 
 Add or edit commands from the settings screen (`/o`).
 
-### Direct folder access via path input
+### Search by partial path
 
-Type a path such as `C:\` or `D:\Projects\` directly into the search box to browse that folder's contents immediately.
+Type part of a path such as `tool\editor` or `workspace\myproject` to find matching apps and files. Press `→` on a folder result to expand and browse its contents.
 
 ## License
 

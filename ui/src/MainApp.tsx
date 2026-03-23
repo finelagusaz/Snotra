@@ -21,6 +21,7 @@ import { t, setLanguage, type Lang } from "./lib/i18n";
 import type { BootstrapPayload, UpdateAvailablePayload, VisualConfig } from "./lib/types";
 import * as api from "./lib/invoke";
 import { trace } from "./lib/trace";
+import { computeWindowHeight } from "./lib/windowHeight";
 
 function readLayoutConst(name: string, fallback: number): number {
   const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -235,12 +236,16 @@ const MainApp: Component = () => {
 
   // ウィンドウサイズを結果の表示/非表示に応じて動的変更
   createEffect(() => {
-    const show = shouldShowResults();
     const width = cachedWidth();
-    const toast = updateInfo() !== null ? UPDATE_TOAST_HEIGHT : 0;
-    const height =
-      (show ? SEARCH_BAR_HEIGHT + maxResults() * RESULT_ROW_HEIGHT + RESULTS_PADDING : SEARCH_BAR_HEIGHT)
-      + toast;
+    const height = computeWindowHeight({
+      shouldShowResults: shouldShowResults(),
+      maxResults: maxResults(),
+      hasUpdateToast: updateInfo() !== null,
+      searchBarHeight: SEARCH_BAR_HEIGHT,
+      resultRowHeight: RESULT_ROW_HEIGHT,
+      resultsPadding: RESULTS_PADDING,
+      updateToastHeight: UPDATE_TOAST_HEIGHT,
+    });
     void win.setSize(new LogicalSize(width, height));
   });
 

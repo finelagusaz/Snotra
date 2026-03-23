@@ -555,17 +555,12 @@ impl SearchEngine {
                     // パスマッチ: name/file_name/kana 全て不成立時のフォールバック。
                     // normalized_key は normalize_entry_key() で小文字化 + パス区切り正規化済み。
                     // スコア 3000 は Kana(4500) より低く、名前マッチを常に優先する。
-                    let score = if score.is_none() {
-                        path_query
-                            .as_deref()
-                            .and_then(|pq| {
-                                let pos = v.normalized_key.find(pq)?;
-                                Some((3000i64 - (pos as i64).min(500)).max(1))
-                            })
-                            .or(score)
-                    } else {
-                        score
-                    };
+                    let score = score.or_else(|| {
+                        path_query.as_deref().and_then(|pq| {
+                            let pos = v.normalized_key.find(pq)?;
+                            Some((3000i64 - (pos as i64).min(500)).max(1))
+                        })
+                    });
 
                     if let Some(base_score) = score {
                         local_matches.push(i); // Record matching index for incremental cache

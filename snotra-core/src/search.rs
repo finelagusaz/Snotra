@@ -423,6 +423,20 @@ impl SearchEngine {
         } else {
             None
         };
+        // 履歴キー: record_launch と同じ正規化（normalize_query + パス区切り統一）。
+        // path_query は生クエリベースでスペース/アクセントの扱いが異なるため別途作る。
+        let path_history_key: Option<String> = if has_path_sep {
+            let nq: &str = norm_query_str;
+            if nq.contains('/') || nq.contains('\u{00a5}') {
+                Some(nq.replace(['/', '\u{00a5}'], "\\"))
+            } else {
+                // norm_query_str が既に \ のみの場合はそのまま借用で済むが、
+                // Option<String> の型合わせのため clone する
+                Some(nq.to_owned())
+            }
+        } else {
+            None
+        };
 
         // Phase 4: incremental search – reuse previous match candidates when the query
         // is a monotonic extension of the previous one and the mode is unchanged.
@@ -583,9 +597,10 @@ impl SearchEngine {
                         local_matches.push(i); // Record matching index for incremental cache
                         let (global_launches, last_launched) =
                             history.get_global_stats_normalized(v.normalized_key);
-                        // パス区切りを含むクエリでは正規化済み path_query を履歴キーに使い、
-                        // tool/editor と tool\editor の履歴バケットを統一する。
-                        let history_query_key = path_query.as_deref().unwrap_or(norm_query_str);
+                        // 履歴キーは record_launch の保存形式に合わせる:
+                        // normalize_query() + パス区切り統一。path_query は生クエリベースで
+                        // スペース/アクセントが異なるため履歴キーには使わない。
+                        let history_query_key = path_history_key.as_deref().unwrap_or(norm_query_str);
                         let qcount =
                             history.query_count_pre_normalized(history_query_key, v.normalized_key)
                                 as i64;

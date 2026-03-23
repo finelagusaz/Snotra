@@ -247,11 +247,15 @@ fn migrate_normalize_keys(data: HistoryData) -> HistoryData {
         e.last_launched = e.last_launched.max(entry.last_launched);
     }
 
-    // query: outer キー（クエリ）も normalize_query で再正規化（アクセント折りたたみ統一）。
-    // inner キー（パス）は normalize_entry_key で正規化。衝突時はカウント加算。
+    // query: outer キー（クエリ）も normalize_query で再正規化（アクセント折りたたみ統一）
+    // + パス区切り（/ ¥）を \ に統一。inner キー（パス）は normalize_entry_key で正規化。
+    // 衝突時はカウント加算。
     let mut new_query: FxHashMap<String, FxHashMap<String, u32>> = FxHashMap::default();
     for (q_key, app_map) in data.query {
-        let norm_q = normalize_query(&q_key).into_owned();
+        let mut norm_q = normalize_query(&q_key).into_owned();
+        if norm_q.contains('/') || norm_q.contains('\u{00a5}') {
+            norm_q = norm_q.replace(['/', '\u{00a5}'], "\\");
+        }
         let new_app_map = new_query.entry(norm_q).or_default();
         for (path, count) in app_map {
             let norm = normalize_entry_key(&path);
@@ -713,5 +717,49 @@ mod tests {
         let twice = migrate_normalize_keys(once.clone());
         assert_eq!(once.query["cafe"]["c:\\fake\\app.lnk"], 4);
         assert_eq!(twice.query["cafe"]["c:\\fake\\app.lnk"], 4);
+    }
+
+    #[test]
+    fn migrate_normalize_keys_unifies_path_separators_in_query() {
+        // 既存の tool/editor と tool\editor の履歴バケットが統合される
+        let mut data = HistoryData::default();
+        data.query
+            .entry("tool/editor".to_string())
+            .or_default()
+            .insert("c:\\tool\\editor\\app.exe".to_string(), 3);
+        data.query
+            .entry("tool\\editor".to_string())
+            .or_default()
+            .insert("c:\\tool\\editor\\app.exe".to_string(), 2);
+        let migrated = migrate_normalize_keys(data);
+        assert_eq!(migrated.query.len(), 1);
+        assert!(migrated.query.contains_key("tool\\editor"));
+        assert_eq!(migrated.query["tool\\editor"]["c:\\tool\\editor\\app.exe"], 5);
+    }
+
+    #[test]
+    fn migrate_normalize_keys_unifies_yen_sign_in_query() {
+        // ¥（U+00A5）も \ に統一される
+        let mut data = HistoryData::default();
+        data.query
+            .entry("tool\u{00a5}editor".to_string())
+            .or_default()
+            .insert("c:\\tool\\editor\\app.exe".to_string(), 4);
+        let migrated = migrate_normalize_keys(data);
+        assert!(migrated.query.contains_key("tool\\editor"));
+        assert_eq!(migrated.query["tool\\editor"]["c:\\tool\\editor\\app.exe"], 4);
+    }
+
+    #[test]
+    fn migrate_normalize_keys_path_separator_idempotent() {
+        let mut data = HistoryData::default();
+        data.query
+            .entry("tool\\editor".to_string())
+            .or_default()
+            .insert("c:\\tool\\editor\\app.exe".to_string(), 3);
+        let once = migrate_normalize_keys(data.clone());
+        let twice = migrate_normalize_keys(once.clone());
+        assert_eq!(once.query["tool\\editor"]["c:\\tool\\editor\\app.exe"], 3);
+        assert_eq!(twice.query["tool\\editor"]["c:\\tool\\editor\\app.exe"], 3);
     }
 }

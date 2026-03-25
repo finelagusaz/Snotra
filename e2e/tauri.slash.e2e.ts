@@ -93,6 +93,18 @@ exe = "cmd.exe"
 [[openers.tools]]
 name = "PowerShell"
 exe = "powershell.exe"
+
+[[openers]]
+target = "ext:txt"
+
+[[openers.tools]]
+name = "Notepad"
+exe = "notepad.exe"
+
+[[openers.tools]]
+name = "Type"
+exe = "cmd.exe"
+args = "/c type \"{path}\""
 `.trim();
 }
 
@@ -406,19 +418,19 @@ test("slash /o コマンドが実行され main の alwaysOnTop が false にな
 test("Shift+Enter でツール選択リストが表示され Escape で元に戻る", async ({ harness }) => {
   const { driver } = harness;
 
-  // C:\ を入力してパスクエリモード（ドライブルート一覧）を起動
+  // E2E フィクスチャのファイルを検索して結果を表示
   await switchToLabel(driver, "main");
   let input = await driver.findElement(By.css(".search-input"));
-  await input.sendKeys("C:\\");
+  await input.sendKeys(E2E_SEARCH_QUERY);
 
   // 結果が main ウィンドウ内の DOM に表示されるまで待つ
   await driver.wait(
     async () => (await driver.findElements(By.css(".result-row"))).length > 0,
     8_000,
-    "C:\\ の結果が表示されない",
+    "検索結果が表示されない",
   );
 
-  // Shift+Enter でツール選択へ
+  // Shift+Enter でツール選択へ（ext:txt openers に 2 ツール定義済み）
   input = await driver.findElement(By.css(".search-input"));
   await input.sendKeys(Key.chord(Key.SHIFT, Key.ENTER));
 
@@ -437,10 +449,10 @@ test("Shift+Enter でツール選択リストが表示され Escape で元に戻
     return (await el.getAttribute("placeholder")) !== "ツールを選択...";
   }, 6_000, "tool selection did not exit");
 
-  // 元の query "C:\\" が復元されていることを確認
+  // 元の query が復元されていることを確認
   const finalEl = await driver.findElement(By.css(".search-input"));
   const value = await finalEl.getAttribute("value");
-  expect(value).toBe("C:\\");
+  expect(value).toBe(E2E_SEARCH_QUERY);
 });
 
 

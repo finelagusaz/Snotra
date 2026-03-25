@@ -58,9 +58,38 @@ exe = "code.exe"
 4. **リソース管理**: 新規リソース生成なし
 5. **既存パターンとの整合**: `E2E_SEARCH_QUERY` 使用は #294 で確立済みパターン
 6. **YAGNI 違反**: なし
-7. **シンプル化**: 2 ファイル・2 箇所の最小変更
+7. **シンプル化**: 1 ファイル・2 箇所の最小変更
 8. **破壊不変条件**: E2E テスト限定の変更でシステム不変条件への影響なし
 
-### 要注意: Enter 単独テストへの影響
+### 多角的レビュー結果（サブエージェント検証）
 
-`e2e/tauri.slash.e2e.ts` の「Enter で先頭の結果を起動」テスト（716行付近）が `E2E_SEARCH_QUERY` で `.txt` ファイルを Enter 起動する。openers に `ext:txt` を追加すると `tools.length == 2` だが、Enter（Shift なし）は `SearchWindow.tsx` で `activateSelected()` を呼び、`enterToolSelection()` は呼ばれない。ツール選択は Shift+Enter 専用。→ **影響なし**。
+#### 1. クリック起動パスへの影響 → 影響なし ✅
+- `handleClickResult` / `handleDoubleClickResult` は `activateSelectedByIndex()` → `launchAndReset()` を呼ぶ
+- `enterToolSelection()` は Shift+Enter のキーハンドラからのみ呼ばれる
+- クリック起動は openers の件数に依存しない
+
+#### 2. Enter 単独テスト（711行）への影響 → 影響なし ✅
+- Enter は `activateSelected()` → `launchAndReset()` → `api.launchItem()` を呼ぶ
+- Rust 側 `launch_item` は `resolve_opener()` で最初のツール（`notepad.exe`）を取得
+- 現状: `ShellExecuteW` で txt を開く → 成功 → main 非表示
+- 変更後: `notepad.exe` で txt を開く → 成功 → main 非表示
+- テストは「main が非表示になること」のみ検証 → **起動プログラムが変わっても OK**
+
+#### 3. `exitToolSelection()` の `savedQuery` 復元 → 問題なし ✅
+- `enterToolSelection()` は `setQuery()` を呼ばない → `query()` シグナルは不変
+- `inputValue()` は `toolSelectionState()` チェックで表示を切替（display only）
+- Escape → `setToolSelectionState(null)` → `inputValue()` が `query()` を返す → 自動復元
+- `exitFolderExpansion()` が `setQuery()` を呼ぶのはフォルダモードが `setQuery("")` するため。非対称は設計上正しい
+
+#### 4. `workspace/update-toast-mockup.html` の混入 → 要クリーンアップ
+- 前回作業の成果物が `git add workspace/` で混入。次回コミットで除外する
+
+#### 5. タイミング問題 → 問題なし ✅
+- `E2E_SEARCH_QUERY` での検索フローは他テスト（447行、538行、605行等）で検証済み
+- debounce（leading edge 即時発火）により入力後すぐに検索開始
+- 8秒タイムアウトは十分
+
+#### 6. `find_matching_tools()` の ext マッチング → 正確 ✅
+- `path` は常に絶対パス（`indexer.rs` の `target_path` 由来）
+- `rfind('.')` で最終拡張子を抽出 → `.txt` に一致
+- 大文字小文字無視（`to_lowercase()`）

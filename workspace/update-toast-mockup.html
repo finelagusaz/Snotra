@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Snotra Update Toast Mockup</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #141414;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    padding: 40px 32px;
+    color: #d4d4d4;
+    min-height: 100vh;
+  }
+
+  h1 {
+    font-size: 12px;
+    font-weight: 400;
+    color: #555;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 32px;
+  }
+
+  .section {
+    margin-bottom: 48px;
+  }
+
+  .section-label {
+    font-size: 11px;
+    color: #444;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+    padding-left: 2px;
+  }
+
+  .row {
+    display: flex;
+    gap: 24px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .size-label {
+    font-size: 10px;
+    color: #3a3a3a;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+    padding-left: 2px;
+  }
+
+  /* ── Snotra ウィンドウ ── */
+  .snotra-window {
+    background: #1e1e1e;
+    border: 1px solid #3c3c3c;
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+    flex-shrink: 0;
+  }
+
+  /* 検索バー */
+  .search-bar {
+    height: 52px;
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    gap: 10px;
+    background: #1e1e1e;
+    border-bottom: 1px solid #2d2d2d;
+  }
+
+  .search-icon {
+    font-size: 14px;
+    color: #555;
+    flex-shrink: 0;
+  }
+
+  .search-input {
+    flex: 1;
+    background: none;
+    border: none;
+    outline: none;
+    color: #d4d4d4;
+    font-family: inherit;
+    font-size: 14px;
+    caret-color: #d4d4d4;
+    min-width: 0;
+  }
+
+  .search-input::placeholder {
+    color: #444;
+  }
+
+  /* トースト領域 */
+  .update-toast {
+    height: 52px;
+    background: #252525;
+    border-top: 1px solid #3c3c3c;
+    border-bottom: 1px solid #3c3c3c;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 0 12px;
+    gap: 1px;
+  }
+
+  .toast-row1 {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+  }
+
+  .toast-icon {
+    font-size: 11px;
+    flex-shrink: 0;
+    line-height: 1;
+  }
+
+  .toast-text {
+    font-size: 12px;
+    color: #aaaaaa;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  .toast-row2 {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    height: 24px;
+    gap: 6px;
+  }
+
+  .btn-install {
+    background: #0e639c;
+    color: #fff;
+    border: none;
+    border-radius: 3px;
+    padding: 2px 8px;
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    line-height: 16px;
+  }
+
+  .btn-install:hover {
+    background: #1177bb;
+  }
+
+  .btn-install:disabled {
+    background: #2d2d2d;
+    color: #555;
+    cursor: default;
+  }
+
+  .btn-close {
+    background: transparent;
+    border: none;
+    color: #666;
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    padding: 2px 4px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    line-height: 16px;
+    border-radius: 2px;
+  }
+
+  .btn-close:hover {
+    color: #d4d4d4;
+  }
+
+  .btn-close:disabled {
+    color: #3a3a3a;
+    cursor: default;
+  }
+
+  /* 検索結果 */
+  .results {
+    background: #1e1e1e;
+  }
+
+  .result-row {
+    height: 30px;
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    gap: 10px;
+    border-bottom: 1px solid #2a2a2a;
+  }
+
+  .result-row:last-child {
+    border-bottom: none;
+  }
+
+  .result-row.selected {
+    background: #04395e;
+  }
+
+  .result-icon {
+    font-size: 13px;
+    flex-shrink: 0;
+    width: 16px;
+    text-align: center;
+  }
+
+  .result-name {
+    font-size: 13px;
+    color: #d4d4d4;
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  .result-path {
+    font-size: 11px;
+    color: #555;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 1;
+    min-width: 0;
+  }
+
+  .result-path-narrow {
+    display: none;
+  }
+
+  /* インストール中アニメーション */
+  @keyframes spin {
+    from { display: inline-block; transform: rotate(0deg); }
+    to   { display: inline-block; transform: rotate(360deg); }
+  }
+
+  .spinning {
+    display: inline-block;
+    animation: spin 1.2s linear infinite;
+  }
+</style>
+</head>
+<body>
+
+<h1>Snotra — Update Toast Mockup</h1>
+
+<!-- ═══════════════════════════════════════
+     状態 A: Full モード（インストール含む）
+════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-label">A — Full モード（インストール含む）</div>
+  <div class="row">
+
+    <!-- 600px -->
+    <div>
+      <div class="size-label">600px</div>
+      <div class="snotra-window" style="width:600px">
+        <div class="search-bar">
+          <span class="search-icon">🔍</span>
+          <input class="search-input" placeholder="検索...">
+        </div>
+        <div class="update-toast">
+          <div class="toast-row1">
+            <span class="toast-icon">🔄</span>
+            <span class="toast-text">v1.2.0 が利用可能です</span>
+          </div>
+          <div class="toast-row2">
+            <button class="btn-install">今すぐ更新</button>
+            <button class="btn-close">閉じる</button>
+          </div>
+        </div>
+        <div class="results">
+          <div class="result-row selected">
+            <span class="result-icon">📄</span>
+            <span class="result-name">Visual Studio Code</span>
+            <span class="result-path">C:\Users\Eoh\AppData\Local\Programs\...</span>
+          </div>
+          <div class="result-row">
+            <span class="result-icon">📁</span>
+            <span class="result-name">workspace</span>
+            <span class="result-path">C:\workspace</span>
+          </div>
+          <div class="result-row">
+            <span class="result-icon">📄</span>
+            <span class="result-name">Figma</span>
+            <span class="result-path">C:\Users\Eoh\AppData\Local\Figma\...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 350px -->
+    <div>
+      <div class="size-label">350px</div>
+      <div class="snotra-window" style="width:350px">
+        <div class="search-bar">
+          <span class="search-icon">🔍</span>
+          <input class="search-input" placeholder="検索...">
+        </div>
+        <div class="update-toast">
+          <div class="toast-row1">
+            <span class="toast-icon">🔄</span>
+            <span class="toast-text">v1.2.0 が利用可能です</span>
+          </div>
+          <div class="toast-row2">
+            <button class="btn-install">今すぐ更新</button>
+            <button class="btn-close">閉じる</button>
+          </div>
+        </div>
+        <div class="results">
+          <div class="result-row selected">
+            <span class="result-icon">📄</span>
+            <span class="result-name">Visual Studio Code</span>
+          </div>
+          <div class="result-row">
+            <span class="result-icon">📁</span>
+            <span class="result-name">workspace</span>
+          </div>
+          <div class="result-row">
+            <span class="result-icon">📄</span>
+            <span class="result-name">Figma</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     状態 B: CheckOnly モード（通知のみ）
+════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-label">B — CheckOnly モード（通知のみ）</div>
+  <div class="row">
+
+    <!-- 600px -->
+    <div>
+      <div class="size-label">600px</div>
+      <div class="snotra-window" style="width:600px">
+        <div class="search-bar">
+          <span class="search-icon">🔍</span>
+          <input class="search-input" placeholder="検索...">
+        </div>
+        <div class="update-toast">
+          <div class="toast-row1">
+            <span class="toast-icon">🔔</span>
+            <span class="toast-text">v1.2.0 が利用可能です</span>
+          </div>
+          <div class="toast-row2">
+            <button class="btn-close">閉じる</button>
+          </div>
+        </div>
+        <div class="results">
+          <div class="result-row selected">
+            <span class="result-icon">📄</span>
+            <span class="result-name">Visual Studio Code</span>
+            <span class="result-path">C:\Users\Eoh\AppData\Local\Programs\...</span>
+          </div>
+          <div class="result-row">
+            <span class="result-icon">📁</span>
+            <span class="result-name">workspace</span>
+            <span class="result-path">C:\workspace</span>
+          </div>
+          <div class="result-row">
+            <span class="result-icon">📄</span>
+            <span class="result-name">Figma</span>
+            <span class="result-path">C:\Users\Eoh\AppData\Local\Figma\...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 350px -->
+    <div>
+      <div class="size-label">350px</div>
+      <div class="snotra-window" style="width:350px">
+        <div class="search-bar">
+          <span class="search-icon">🔍</span>
+          <input class="search-input" placeholder="検索...">
+        </div>
+        <div class="update-toast">
+          <div class="toast-row1">
+            <span class="toast-icon">🔔</span>
+            <span class="toast-text">v1.2.0 が利用可能です</span>
+          </div>
+          <div class="toast-row2">
+            <button class="btn-close">閉じる</button>
+          </div>
+        </div>
+        <div class="results">
+          <div class="result-row selected">
+            <span class="result-icon">📄</span>
+            <span class="result-name">Visual Studio Code</span>
+          </div>
+          <div class="result-row">
+            <span class="result-icon">📁</span>
+            <span class="result-name">workspace</span>
+          </div>
+          <div class="result-row">
+            <span class="result-icon">📄</span>
+            <span class="result-name">Figma</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     状態 C: インストール中
+════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-label">C — インストール中（ボタン無効化）</div>
+  <div class="row">
+
+    <!-- 600px -->
+    <div>
+      <div class="size-label">600px</div>
+      <div class="snotra-window" style="width:600px">
+        <div class="search-bar">
+          <span class="search-icon">🔍</span>
+          <input class="search-input" placeholder="検索...">
+        </div>
+        <div class="update-toast">
+          <div class="toast-row1">
+            <span class="toast-icon spinning">⟳</span>
+            <span class="toast-text">インストール中...</span>
+          </div>
+          <div class="toast-row2">
+            <button class="btn-install" disabled>今すぐ更新</button>
+            <button class="btn-close" disabled>閉じる</button>
+          </div>
+        </div>
+        <div class="results">
+          <div class="result-row selected">
+            <span class="result-icon">📄</span>
+            <span class="result-name">Visual Studio Code</span>
+            <span class="result-path">C:\Users\Eoh\AppData\Local\Programs\...</span>
+          </div>
+          <div class="result-row">
+            <span class="result-icon">📁</span>
+            <span class="result-name">workspace</span>
+            <span class="result-path">C:\workspace</span>
+          </div>
+          <div class="result-row">
+            <span class="result-icon">📄</span>
+            <span class="result-name">Figma</span>
+            <span class="result-path">C:\Users\Eoh\AppData\Local\Figma\...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 350px -->
+    <div>
+      <div class="size-label">350px</div>
+      <div class="snotra-window" style="width:350px">
+        <div class="search-bar">
+          <span class="search-icon">🔍</span>
+          <input class="search-input" placeholder="検索...">
+        </div>
+        <div class="update-toast">
+          <div class="toast-row1">
+            <span class="toast-icon spinning">⟳</span>
+            <span class="toast-text">インストール中...</span>
+          </div>
+          <div class="toast-row2">
+            <button class="btn-install" disabled>今すぐ更新</button>
+            <button class="btn-close" disabled>閉じる</button>
+          </div>
+        </div>
+        <div class="results">
+          <div class="result-row selected">
+            <span class="result-icon">📄</span>
+            <span class="result-name">Visual Studio Code</span>
+          </div>
+          <div class="result-row">
+            <span class="result-icon">📁</span>
+            <span class="result-name">workspace</span>
+          </div>
+          <div class="result-row">
+            <span class="result-icon">📄</span>
+            <span class="result-name">Figma</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,4 +1,5 @@
-import { type Component, For, createSignal, createEffect, createMemo, on, onMount, onCleanup } from "solid-js";
+import { type Component, For, createSignal, createEffect, createMemo, createSelector, on, onMount, onCleanup } from "solid-js";
+import { createStore, reconcile } from "solid-js/store";
 import { listen } from "@tauri-apps/api/event";
 import type { SearchResult } from "../lib/types";
 import { results, selected, getSearchGeneration } from "../stores/search";
@@ -22,7 +23,11 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
   const iconCache = new LruIconCache(props.iconCacheSize);
   // アイコン取得を試みたが存在しなかったパス（フォールバック絵文字を表示）
   const fetchedNone = new Set<string>();
-  const [iconCacheVersion, setIconCacheVersion] = createSignal(0);
+  // per-path のリアクティブ通知: iconNotify[path] を読むことで、
+  // そのパスのアイコンが変化したときだけ該当行が再評価される。
+  // iconCacheVersion（全行ブロードキャスト）を廃止し O(変更行数) に改善。
+  const [iconNotify, setIconNotify] = createStore<Record<string, number>>({});
+  let iconNotifyCounter = 0;
   const [containerWidth, setContainerWidth] = createSignal(0);
   const [font, setFont] = createSignal("15px 'Segoe UI'");
   let listRef: HTMLDivElement | undefined;
@@ -31,6 +36,9 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
   let lastScrolledGeneration = -1;
   let iconRequestId = 0;   // アイコン取得の世代カウンタ（staleness guard 用）
   let listGeneration = 0;  // スクロール追従の世代カウンタ（results 変化時のみ更新）
+  // createSelector: selected() が変化したとき、前回値と今回値の2行だけに通知する。
+  // 全行が selected() を購読する isSelected={idx() === selected()} と異なり O(1) 更新。
+  const isRowSelected = createSelector(selected);
 
   /** キャッシュにないアイコンを一括取得してキャッシュに格納する。stale なら Blob URL を破棄して早期リターン */
   async function fetchIconBatch(items: SearchResult[], generation: number): Promise<void> {
@@ -54,14 +62,18 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
       return;
     }
 
+    const v = ++iconNotifyCounter;
     for (const [path, url] of parsed) {
       iconCache.set(path, url);
+      setIconNotify(path, v);
     }
     // 取得できなかったパスをマーク（次回の filter でスキップ、かつフォールバック絵文字を表示）
     for (const path of missing) {
-      if (!parsed.has(path)) fetchedNone.add(path);
+      if (!parsed.has(path)) {
+        fetchedNone.add(path);
+        setIconNotify(path, v);
+      }
     }
-    setIconCacheVersion((v) => v + 1);
   }
 
   async function fetchIcons(items: SearchResult[], generation: number) {
@@ -91,7 +103,7 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
       latestIconRequestId = ++iconRequestId;
       iconCache.revokeAll();
       fetchedNone.clear();
-      setIconCacheVersion((v) => v + 1);
+      setIconNotify(reconcile({}));
       return;
     }
     if (skip) return;
@@ -113,7 +125,7 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
     iconCache.setMaxSize(size);
     iconCache.revokeAll();
     fetchedNone.clear();
-    setIconCacheVersion((v) => v + 1);
+    setIconNotify(reconcile({}));
   }, { defer: true }));
 
   // results 専用: perf 計測 + スクロール世代更新（アイコン条件とは独立）
@@ -128,10 +140,10 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
   }));
 
   // selected または results が変化した時: スクロール追従
-  createEffect(() => {
-    const sel = selected();
+  // results を依存に含めることで、selected=0→0 のまま結果が変わった場合もスクロールが発火する。
+  createEffect(on([results, selected], ([, sel]) => {
     scrollToSelected(sel, listGeneration);
-  });
+  }));
 
   onMount(() => {
     const unlistenFns: Array<() => void> = [];
@@ -189,8 +201,8 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
           {(result, idx) => (
             <ResultRow
               result={result}
-              isSelected={idx() === selected()}
-              icon={(iconCacheVersion(), result.isError ? null : iconCache.get(result.path) ?? (fetchedNone.has(result.path) ? null : undefined))}
+              isSelected={isRowSelected(idx())}
+              icon={(iconNotify[result.path], result.isError ? null : iconCache.get(result.path) ?? (fetchedNone.has(result.path) ? null : undefined))}
               showIcons={props.showIcons && !props.skipIcons}
               containerWidth={containerWidth()}
               font={font()}

@@ -6,11 +6,11 @@
 
 - `engine.rs`: `Engine` struct（`SearchEngine` + `HistoryStore` + `Config` の facade）。`FolderListContext`（ロック外スナップショット）と `PrebuiltIndex`（インデックス高速スワップ用）を公開
 - `config.rs`: `%APPDATA%\Snotra\config.toml` の読込/保存、既定値補完。`Language` enum（`Ja`/`En`）と `default_language()`（`sys-locale` による OS 言語自動判定、非日本語は英語フォールバック）を定義
-- `search.rs`: 検索順位計算（Prefix/Substring/Kana/Fuzzy/Path）、履歴ブースト、incremental search キャッシュ、空クエリ時履歴候補。`SearchEngine` は並列 Vec レイアウト（`entries` / `lower_names` / `lower_file_names` / `normalized_keys` / `char_masks` / `file_name_char_masks` / `kana_lower_names`）で cache locality を確保。`new()` は Wave 1（文字列正規化）→ Wave 2（ビットマスク計算）の 2 段並列構築。パスマッチング: クエリにパス区切り文字（`\` `/`）を含む場合、`normalized_key`（= `normalize_entry_key(target_path)`）に対して Substring マッチを試みる。スコアは `3000 - min(byte_pos, 500)`。name/file_name/kana 全て不成立時のフォールバック。`has_path_sep` 時は Fuzzy ビットマスク pre-filter をスキップする
+- `search.rs`: 検索順位計算（Prefix/Substring/Kana/Fuzzy/Path）、履歴ブースト、incremental search キャッシュ、空クエリ時履歴候補。`SearchEngine` は並列 Vec レイアウト（`entries` / `lower_names` / `lower_file_names` / `normalized_keys` / `char_masks` / `file_name_char_masks` / `kana_lower_names`）で cache locality を確保。構築は `compute_wave1`（文字列正規化）→ `compute_wave2`（ビットマスク計算）のヘルパー関数で共通化し、`new()` と `new_with_cached_masks()` が共有する。パスマッチング: クエリにパス区切り文字（`\` `/`）を含む場合、`normalized_key`（= `normalize_entry_key(target_path)`）に対して Substring マッチを試みる。スコアは `3000 - min(byte_pos, 500)`。name/file_name/kana 全て不成立時のフォールバック。`has_path_sep` 時は Fuzzy ビットマスク pre-filter をスキップする
 - `history.rs`: 起動履歴・クエリ別履歴・フォルダ展開履歴の管理、バイナリ永続化
 - `folder.rs`: フォルダ内列挙とフィルタ/ソート、ルート判定
 - `indexer.rs`: スキャン対象列挙と重複排除、インデックスキャッシュ
-- `query.rs`: クエリ正規化（`normalize_query`）と履歴クエリキー正規化（`normalize_history_query_key` — `normalize_query` + パス区切り統一を一元化）
+- `query.rs`: クエリ正規化（`normalize_query`）、履歴クエリキー正規化（`normalize_history_query_key` — `normalize_query` + パス区切り統一を一元化）、`char_bitmask`（文字存在ビットマスク計算 — `search.rs` と `indexer.rs` の両方が使用）
 - `binfmt.rs`: `magic + version` 付きバイナリ入出力共通処理
 - `error.rs`: `BinError`（バイナリシリアライズ/デシリアライズ失敗）と `ConfigError`（設定バリデーション失敗）の error 型定義
 - `window_data.rs`: ウィンドウ位置（`window.bin`）の保存/復元
@@ -30,7 +30,7 @@
 - `search.rs` で `Ord` / `Reverse` / `BinaryHeap` を扱う変更では、`BinaryHeap` の先頭が最良/最悪のどちらかを実装前に明記する
 - `search.rs` の top-k 更新ロジックを変更する場合は、入力順を変えても結果が不変であるテストを追加または更新する
 - `SearchEngine` にフィールドを追加する前に: 既存の並列 Vec（特に `normalized_keys`）で代替できないか先に検討する。再利用できれば 5 箇所同時更新・IndexCache バージョンバンプが不要になる
-- `SearchEngine` に新しい並列 Vec フィールドを追加するとき: `EntryView` 構造体・`entry_view()` メソッド・`new()` 末尾の `debug_assert!` を同時に更新し、全 Vec 長の同期を保つ（書き込み側 `new()` と読み取り側 `entry_view()` は常にペアで更新する）
+- `SearchEngine` に新しい並列 Vec フィールドを追加するとき: `EntryView` 構造体・`entry_view()` メソッド・`assemble()` 内の `debug_assert!` を同時に更新し、全 Vec 長の同期を保つ。Wave 1 の文字列正規化は `compute_wave1` に、Wave 2 のビットマスク計算は `compute_wave2` に追加する（`new()` と `new_with_cached_masks()` が共有）
 - `search.rs` の incremental search キャッシュ（`prev_*` フィールド群）に新しい述語を追加するとき: `use_incremental` の条件式と `prev_*` の更新箇所を同時に変更し、`/cache-check` で単調性を検証する
 - `query.rs` の正規化を変更する場合は、タブ・全角スペース・NBSP を `' '` に統一するテストと冪等性テストを追加または更新する
 - `folder.rs` のソート順変更時: ソート順は「`is_folder` 降順 → `exp_count` 降順 → `lower_name` 昇順」で、先頭要素が最良（最優先）。`select_nth_unstable_by`（O(N) 平均の top-k 選択）＋ `sort_by`（安定ソートで確定順）の2段階を崩さない。入力順に依存しないことを確認するテスト（`score_entries_top_k_order_independent_of_input_order`）を通す
@@ -47,9 +47,9 @@
 
 この関数の正規化ルールを変更する場合は、3モジュール全てへの影響と冪等性テストを確認する。
 
-### `char_bitmask` の二重定義
+### `char_bitmask` は `query.rs` に一元化済み
 
-`search.rs::char_bitmask()` と `indexer.rs::char_bitmask_for_cache()` は同一ロジック（bits 0-25 = a-z, bits 26-35 = 0-9）。IndexCache に保存したマスクを SearchEngine がそのまま使うため、**一方を変更したら他方も必ず同時に変更する**。不一致があるとキャッシュヒット時のみ検索結果が狂う（再現困難なバグ）。
+`query::char_bitmask()` が唯一の定義（bits 0-25 = a-z, bits 26-35 = 0-9）。`search.rs` と `indexer.rs` の両方がこの関数を import して使用する。ロジックを変更する場合は `query.rs` の1箇所のみ修正すればよい。
 
 ### `query.rs` の正規化と `Cow<str>` 遅延アロケーション
 

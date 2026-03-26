@@ -15,7 +15,7 @@ use windows::Win32::System::Threading::{
 
 use crate::binfmt::{BinFile, try_deserialize_with_header};
 use crate::config::{Config, ScanPath};
-use crate::query::to_lower_folded;
+use crate::query::{char_bitmask, to_lower_folded};
 
 const INDEX_MAGIC: [u8; 4] = *b"INDX";
 const INDEX_CACHE_VERSION: u32 = 4;
@@ -231,20 +231,6 @@ struct IndexCacheV2 {
     config_hash: u64,
 }
 
-/// char_bitmask を計算する（search.rs の同名関数と同一ロジック）。
-/// IndexCache 保存時にマスクを生成するためここで定義する。
-/// Bits 0-25 = 'a'-'z', bits 26-35 = '0'-'9'. 他の文字は無視。
-fn char_bitmask_for_cache(lower: &str) -> u64 {
-    let mut mask: u64 = 0;
-    for b in lower.bytes() {
-        match b {
-            b'a'..=b'z' => mask |= 1u64 << (b - b'a'),
-            b'0'..=b'9' => mask |= 1u64 << (26 + (b - b'0')),
-            _ => {}
-        }
-    }
-    mask
-}
 
 fn compute_config_hash(scan: &[ScanPath], show_hidden_system: bool) -> u64 {
     let mut hasher = DefaultHasher::new();
@@ -384,13 +370,13 @@ fn save_cache_sorted(entries: &[AppEntry], config_hash: u64) {
         .collect();
     let char_masks: Vec<u64> = lower_names
         .iter()
-        .map(|n| if n.is_ascii() { char_bitmask_for_cache(n) } else { u64::MAX })
+        .map(|n| if n.is_ascii() { char_bitmask(n) } else { u64::MAX })
         .collect();
     let file_name_char_masks: Vec<u64> = lower_file_names
         .iter()
         .map(|n| {
             n.as_deref()
-                .map_or(0, |s| if s.is_ascii() { char_bitmask_for_cache(s) } else { u64::MAX })
+                .map_or(0, |s| if s.is_ascii() { char_bitmask(s) } else { u64::MAX })
         })
         .collect();
     // A-3: normalized_keys もキャッシュに含める。起動時の Wave 1 計算を完全スキップするため。
@@ -714,13 +700,13 @@ pub fn extend_cached_masks(masks: &mut CachedMasks, new_entries: &[AppEntry]) {
             .map(to_lower_folded);
 
         let mask = if lower.is_ascii() {
-            char_bitmask_for_cache(&lower)
+            char_bitmask(&lower)
         } else {
             u64::MAX
         };
         let file_mask = lower_file.as_deref().map_or(0, |s| {
             if s.is_ascii() {
-                char_bitmask_for_cache(s)
+                char_bitmask(s)
             } else {
                 u64::MAX
             }

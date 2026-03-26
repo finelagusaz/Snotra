@@ -8,7 +8,7 @@ use rayon::prelude::*;
 use crate::config::{SearchConfig, SearchHistoryNormalizationConfig};
 use crate::history::HistoryStore;
 use crate::indexer::{AppEntry, normalize_entry_key};
-use crate::query::{normalize_history_query_key, normalize_query, to_kana, to_lower_folded};
+use crate::query::{char_bitmask, normalize_history_query_key, normalize_query, to_kana, to_lower_folded};
 use crate::ui_types::SearchResult;
 
 const GLOBAL_WEIGHT: i64 = 5;
@@ -138,77 +138,95 @@ struct EntryView<'a> {
     normalized_key: &'a str,
 }
 
+/// Wave 1: entries から文字列正規化データを並列構築する。
+/// lower_names / lower_file_names / normalized_keys / kana_lower_names は
+/// entries への純粋な map であり相互依存がないため rayon::join で並列構築する。
+fn compute_wave1(
+    entries: &[AppEntry],
+) -> (Vec<String>, Vec<Option<String>>, Vec<String>, Vec<String>) {
+    let ((lower_names, lower_file_names), (normalized_keys, kana_lower_names)) = rayon::join(
+        || {
+            rayon::join(
+                || {
+                    entries
+                        .iter()
+                        .map(|e| to_lower_folded(&e.name))
+                        .collect::<Vec<_>>()
+                },
+                || {
+                    entries
+                        .iter()
+                        .map(|e| {
+                            std::path::Path::new(&e.target_path)
+                                .file_name()
+                                .and_then(|f| f.to_str())
+                                .map(to_lower_folded)
+                        })
+                        .collect::<Vec<_>>()
+                },
+            )
+        },
+        || {
+            rayon::join(
+                || {
+                    entries
+                        .iter()
+                        .map(|e| normalize_entry_key(&e.target_path))
+                        .collect::<Vec<_>>()
+                },
+                || {
+                    entries
+                        .iter()
+                        .map(|e| to_kana(&to_lower_folded(&e.name)))
+                        .collect::<Vec<_>>()
+                },
+            )
+        },
+    );
+    (lower_names, lower_file_names, normalized_keys, kana_lower_names)
+}
+
+/// Wave 2: lower_names / lower_file_names からビットマスクを並列構築する。
+/// to_lower_folded already folds most Latin accents to ASCII (é→e),
+/// so non-ASCII names here are typically CJK, Arabic, etc.
+/// u64::MAX ensures (query_mask & u64::MAX) == query_mask for any query_mask,
+/// so these entries always pass the bitmask pre-filter regardless of the query.
+fn compute_wave2(
+    lower_names: &[String],
+    lower_file_names: &[Option<String>],
+) -> (Vec<u64>, Vec<u64>) {
+    rayon::join(
+        || {
+            lower_names
+                .iter()
+                .map(|n| if n.is_ascii() { char_bitmask(n) } else { u64::MAX })
+                .collect::<Vec<_>>()
+        },
+        || {
+            // None → 0: entries without a file_name cannot match via the file_name path,
+            // so failing the bitmask check (and being skipped when the name also fails) is correct.
+            lower_file_names
+                .iter()
+                .map(|n| {
+                    n.as_deref()
+                        .map_or(0, |s| if s.is_ascii() { char_bitmask(s) } else { u64::MAX })
+                })
+                .collect::<Vec<_>>()
+        },
+    )
+}
+
 impl SearchEngine {
-    pub fn new(entries: Vec<AppEntry>) -> Self {
-        // Wave 1: lower_names / lower_file_names / normalized_keys / kana_lower_names は
-        // entries への純粋な map であり相互依存がないため rayon::join で並列構築する。
-        let entries_ref = &entries;
-        let ((lower_names, lower_file_names), (normalized_keys, kana_lower_names)) = rayon::join(
-            || {
-                rayon::join(
-                    || {
-                        entries_ref
-                            .iter()
-                            .map(|e| to_lower_folded(&e.name))
-                            .collect::<Vec<_>>()
-                    },
-                    || {
-                        entries_ref
-                            .iter()
-                            .map(|e| {
-                                std::path::Path::new(&e.target_path)
-                                    .file_name()
-                                    .and_then(|f| f.to_str())
-                                    .map(to_lower_folded)
-                            })
-                            .collect::<Vec<_>>()
-                    },
-                )
-            },
-            || {
-                rayon::join(
-                    || {
-                        entries_ref
-                            .iter()
-                            .map(|e| normalize_entry_key(&e.target_path))
-                            .collect::<Vec<_>>()
-                    },
-                    || {
-                        entries_ref
-                            .iter()
-                            .map(|e| to_kana(&to_lower_folded(&e.name)))
-                            .collect::<Vec<_>>()
-                    },
-                )
-            },
-        );
-
-        // Wave 2: char_masks は lower_names に、file_name_char_masks は lower_file_names に
-        // それぞれ依存するため Wave 1 完了後に並列構築する。
-        // to_lower_folded already folds most Latin accents to ASCII (é→e),
-        // so non-ASCII names here are typically CJK, Arabic, etc.
-        // u64::MAX ensures (query_mask & u64::MAX) == query_mask for any query_mask,
-        // so these entries always pass the bitmask pre-filter regardless of the query.
-        let (char_masks, file_name_char_masks) = rayon::join(
-            || {
-                lower_names
-                    .iter()
-                    .map(|n| if n.is_ascii() { char_bitmask(n) } else { u64::MAX })
-                    .collect::<Vec<_>>()
-            },
-            || {
-                // None → 0: entries without a file_name cannot match via the file_name path,
-                // so failing the bitmask check (and being skipped when the name also fails) is correct.
-                lower_file_names
-                    .iter()
-                    .map(|n| {
-                        n.as_deref()
-                            .map_or(0, |s| if s.is_ascii() { char_bitmask(s) } else { u64::MAX })
-                    })
-                    .collect::<Vec<_>>()
-            },
-        );
-
+    /// 全並列 Vec の長さが entries と一致することを検証し、Self を組み立てる。
+    fn assemble(
+        entries: Vec<AppEntry>,
+        lower_names: Vec<String>,
+        lower_file_names: Vec<Option<String>>,
+        normalized_keys: Vec<String>,
+        char_masks: Vec<u64>,
+        file_name_char_masks: Vec<u64>,
+        kana_lower_names: Vec<String>,
+    ) -> Self {
         debug_assert!(
             lower_names.len() == entries.len()
                 && lower_file_names.len() == entries.len()
@@ -233,6 +251,22 @@ impl SearchEngine {
         }
     }
 
+    pub fn new(entries: Vec<AppEntry>) -> Self {
+        let (lower_names, lower_file_names, normalized_keys, kana_lower_names) =
+            compute_wave1(&entries);
+        let (char_masks, file_name_char_masks) =
+            compute_wave2(&lower_names, &lower_file_names);
+        Self::assemble(
+            entries,
+            lower_names,
+            lower_file_names,
+            normalized_keys,
+            char_masks,
+            file_name_char_masks,
+            kana_lower_names,
+        )
+    }
+
     /// キャッシュから読み込んだデータを使って SearchEngine を構築する。
     ///
     /// - `char_masks` / `file_name_char_masks`: Wave 2 の再計算をスキップ
@@ -247,71 +281,22 @@ impl SearchEngine {
         cached_lower_file_names: Option<Vec<Option<String>>>,
         cached_normalized_keys: Option<Vec<String>>,
     ) -> Self {
-        let ((lower_names, lower_file_names), (normalized_keys, kana_lower_names)) =
+        let (lower_names, lower_file_names, normalized_keys, kana_lower_names) =
             if let (Some(ln), Some(lfn), Some(nk)) =
                 (cached_lower_names, cached_lower_file_names, cached_normalized_keys)
             {
                 // A-3: v4 キャッシュヒット → Wave 1 完全スキップ（kana_lower_names は毎起動再計算）
-                // kana_lower_names は ln/lfn/nk と独立した map のため par_iter で並列構築する。
                 let kana = entries
                     .par_iter()
                     .map(|e| to_kana(&to_lower_folded(&e.name)))
                     .collect::<Vec<_>>();
-                ((ln, lfn), (nk, kana))
+                (ln, lfn, nk, kana)
             } else {
                 // v3 フォールバック: Wave 1 を並列実行
-                let entries_ref = &entries;
-                rayon::join(
-                    || {
-                        rayon::join(
-                            || {
-                                entries_ref
-                                    .iter()
-                                    .map(|e| to_lower_folded(&e.name))
-                                    .collect::<Vec<_>>()
-                            },
-                            || {
-                                entries_ref
-                                    .iter()
-                                    .map(|e| {
-                                        std::path::Path::new(&e.target_path)
-                                            .file_name()
-                                            .and_then(|f| f.to_str())
-                                            .map(to_lower_folded)
-                                    })
-                                    .collect::<Vec<_>>()
-                            },
-                        )
-                    },
-                    || {
-                        rayon::join(
-                            || {
-                                entries_ref
-                                    .iter()
-                                    .map(|e| normalize_entry_key(&e.target_path))
-                                    .collect::<Vec<_>>()
-                            },
-                            || {
-                                entries_ref
-                                    .iter()
-                                    .map(|e| to_kana(&to_lower_folded(&e.name)))
-                                    .collect::<Vec<_>>()
-                            },
-                        )
-                    },
-                )
+                compute_wave1(&entries)
             };
 
-        debug_assert!(
-            lower_names.len() == entries.len()
-                && lower_file_names.len() == entries.len()
-                && normalized_keys.len() == entries.len()
-                && char_masks.len() == entries.len()
-                && file_name_char_masks.len() == entries.len()
-                && kana_lower_names.len() == entries.len(),
-            "SearchEngine: all parallel Vecs must have the same length as entries"
-        );
-        Self {
+        Self::assemble(
             entries,
             lower_names,
             lower_file_names,
@@ -319,11 +304,7 @@ impl SearchEngine {
             char_masks,
             file_name_char_masks,
             kana_lower_names,
-            prev_query: String::new(),
-            prev_candidates: Vec::new(),
-            prev_mode: None,
-            prev_kana_query: None,
-        }
+        )
     }
 
     #[inline]
@@ -765,19 +746,6 @@ impl Ord for ScoredEntry {
     }
 }
 
-/// Compute a character-presence bitmask for a lowercase string.
-/// Bits 0-25 = 'a'-'z', bits 26-35 = '0'-'9'. All other chars are ignored.
-fn char_bitmask(lower: &str) -> u64 {
-    let mut mask: u64 = 0;
-    for b in lower.bytes() {
-        match b {
-            b'a'..=b'z' => mask |= 1u64 << (b - b'a'),
-            b'0'..=b'9' => mask |= 1u64 << (26 + (b - b'0')),
-            _ => {}
-        }
-    }
-    mask
-}
 
 /// ひらがな正規化済みエントリ名に対して substring マッチを行い、
 /// マッチした場合は `4500 - byte_position` を返す（Substring の 5000 より低いスコア）。

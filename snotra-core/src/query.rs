@@ -33,6 +33,21 @@ pub fn normalize_history_query_key(query: &str) -> Cow<'_, str> {
     }
 }
 
+/// Compute a character-presence bitmask for a lowercase ASCII string.
+/// Bits 0-25 = 'a'-'z', bits 26-35 = '0'-'9'. All other chars are ignored.
+/// Used by both `SearchEngine` (query-time pre-filter) and `IndexCache` (build-time persistence).
+pub fn char_bitmask(lower: &str) -> u64 {
+    let mut mask: u64 = 0;
+    for b in lower.bytes() {
+        match b {
+            b'a'..=b'z' => mask |= 1u64 << (b - b'a'),
+            b'0'..=b'9' => mask |= 1u64 << (26 + (b - b'0')),
+            _ => {}
+        }
+    }
+    mask
+}
+
 pub fn normalize_query(query: &str) -> Cow<'_, str> {
     let trimmed = query.trim();
     if trimmed.is_empty() {

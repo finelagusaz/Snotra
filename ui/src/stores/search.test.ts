@@ -54,7 +54,6 @@ import {
   indexing,
   initIndexingState,
   instantCommandMode,
-  instantCommandPrefix,
   setInstantCommandPrefix,
 } from "../stores/search";
 import { setToolSelectionState } from "../stores/tool-selection";

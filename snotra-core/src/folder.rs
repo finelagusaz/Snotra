@@ -1,6 +1,6 @@
 use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32Str};
 use std::os::windows::fs::MetadataExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
 
 use crate::history::HistoryStore;
@@ -188,36 +188,6 @@ fn is_hidden_or_system(meta: &std::fs::Metadata) -> bool {
     let hidden = (attrs & FILE_ATTRIBUTE_HIDDEN.0) != 0;
     let system = (attrs & FILE_ATTRIBUTE_SYSTEM.0) != 0;
     hidden || system
-}
-
-pub fn parent_for_navigation(current_dir: &str) -> Option<PathBuf> {
-    if is_navigation_root(current_dir) {
-        return None;
-    }
-    let current = Path::new(current_dir);
-    let parent = current.parent()?;
-    let parent_str = parent.to_string_lossy();
-    if parent_str.is_empty() {
-        return None;
-    }
-    Some(parent.to_path_buf())
-}
-
-pub fn is_navigation_root(path: &str) -> bool {
-    let normalized = path.trim().replace('/', "\\");
-    let trimmed = normalized.trim_end_matches('\\');
-
-    if trimmed.len() == 2 {
-        let chars: Vec<char> = trimmed.chars().collect();
-        return chars[0].is_ascii_alphabetic() && chars[1] == ':';
-    }
-
-    if let Some(rest) = trimmed.strip_prefix("\\\\") {
-        let parts: Vec<&str> = rest.split('\\').filter(|p| !p.is_empty()).collect();
-        return parts.len() <= 2;
-    }
-
-    false
 }
 
 #[cfg(test)]
@@ -523,18 +493,6 @@ mod tests {
             println!("[topk_sort] entries={n}, max_results={max_results}, avg={avg_us}µs ({iters} iters)");
             let _ = fs::remove_dir_all(&dir);
         }
-    }
-
-    #[test]
-    fn detects_drive_root() {
-        assert!(is_navigation_root("C:\\"));
-        assert!(is_navigation_root("D:"));
-    }
-
-    #[test]
-    fn detects_unc_root() {
-        assert!(is_navigation_root("\\\\server\\share\\"));
-        assert!(!is_navigation_root("\\\\server\\share\\folder"));
     }
 
     // --- score_entries の top-k 境界テスト ---

@@ -202,7 +202,7 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
             <ResultRow
               result={result}
               isSelected={isRowSelected(idx())}
-              icon={(iconNotify[result.path], result.isError ? null : iconCache.get(result.path) ?? (fetchedNone.has(result.path) ? null : undefined))}
+              icon={(iconNotify[result.path], result.isError ? null : iconCache.peek(result.path) ?? (fetchedNone.has(result.path) ? null : undefined))}
               showIcons={props.showIcons && !props.skipIcons}
               containerWidth={containerWidth()}
               font={font()}

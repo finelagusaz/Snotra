@@ -1,4 +1,4 @@
-import { createSignal, createEffect, createRoot, on, createMemo } from "solid-js";
+import { createSignal, createEffect, createRoot, on, createMemo, batch } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
 import type { InstantCommand, OpenerTool, SearchResult } from "../lib/types";
 import * as api from "../lib/invoke";
@@ -22,8 +22,10 @@ const [noResults, setNoResults] = createSignal(false);
 
 /** setResults のラッパー。通常検索パスでのみ noResults を true にする */
 function updateResults(items: SearchResult[], isNormalSearch = false) {
-  setResults(items);
-  setNoResults(isNormalSearch && items.length === 0);
+  batch(() => {
+    setResults(items);
+    setNoResults(isNormalSearch && items.length === 0);
+  });
 }
 
 /** インスタントコマンドモード中のコマンド一覧（activateSelected で参照） */

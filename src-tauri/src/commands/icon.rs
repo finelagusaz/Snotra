@@ -30,8 +30,7 @@ pub fn get_icons_batch(
 ) -> Response {
     ensure_icon_cache_loaded_if_enabled(&state, &icons);
 
-    // Step 1: check cache for all paths in one lock
-    let mut results: Vec<Option<Vec<u8>>> = Vec::with_capacity(paths.len());
+    // Step 1: check cache for all paths in one lock — clone せずミスのみ収集
     let mut misses: Vec<(usize, String)> = Vec::new();
     {
         let cache = icons.lock().unwrap();
@@ -39,10 +38,7 @@ pub fn get_icons_batch(
             None => return Response::new(encode_batch_binary(&vec![None; paths.len()])),
             Some(c) => {
                 for (i, path) in paths.iter().enumerate() {
-                    if let Some(png) = c.get(path) {
-                        results.push(Some(png.to_vec()));
-                    } else {
-                        results.push(None);
+                    if c.get(path).is_none() {
                         misses.push((i, path.clone()));
                     }
                 }
@@ -57,18 +53,19 @@ pub fn get_icons_batch(
         .filter_map(|(i, path)| extract_png(&path).map(|png| (i, path, png)))
         .collect();
 
-    // Step 3: insert into cache and fill in results
-    {
-        let mut cache = icons.lock().unwrap();
-        if let Some(c) = cache.as_mut() {
-            for (i, path, png) in extracted {
-                results[i] = Some(png.clone());
-                c.insert(path, png);
-            }
+    // Step 3: insert extracted → cache, then build binary response in one lock
+    // ロック内でスライス参照を使うことで clone を完全に排除する。
+    let mut cache = icons.lock().unwrap();
+    if let Some(c) = cache.as_mut() {
+        for (_, path, png) in extracted {
+            c.insert(path, png);
         }
+        // Build binary frame from cache slices (zero-copy)
+        let refs: Vec<Option<&[u8]>> = paths.iter()
+            .map(|path| c.get(path))
+            .collect();
+        Response::new(encode_batch_binary(&refs))
+    } else {
+        Response::new(encode_batch_binary(&vec![None; paths.len()]))
     }
-
-    // Build binary frame: borrow slices from owned Vecs
-    let refs: Vec<Option<&[u8]>> = results.iter().map(|r| r.as_deref()).collect();
-    Response::new(encode_batch_binary(&refs))
 }

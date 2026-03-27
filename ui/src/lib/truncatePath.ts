@@ -1,14 +1,17 @@
 let canvas: HTMLCanvasElement | null = null;
+let ctx: CanvasRenderingContext2D | null = null;
+let lastFont = "";
 const MAX_MEASURE_CACHE = 4096;
 const MAX_TRUNCATE_CACHE = 2048;
 const measureCache = new Map<string, number>();
 const truncateCache = new Map<string, string>();
 
 function getContext(): CanvasRenderingContext2D {
-  if (!canvas) {
+  if (!ctx) {
     canvas = document.createElement("canvas");
+    ctx = canvas.getContext("2d")!;
   }
-  return canvas.getContext("2d")!;
+  return ctx;
 }
 
 function measureText(text: string, font: string): number {
@@ -18,9 +21,12 @@ function measureText(text: string, font: string): number {
     return cached;
   }
 
-  const ctx = getContext();
-  ctx.font = font;
-  const width = ctx.measureText(text).width;
+  const c = getContext();
+  if (font !== lastFont) {
+    c.font = font;
+    lastFont = font;
+  }
+  const width = c.measureText(text).width;
   if (measureCache.size >= MAX_MEASURE_CACHE) {
     measureCache.delete(measureCache.keys().next().value!);
   }

@@ -23,6 +23,11 @@ export class LruIconCache {
     return url;
   }
 
+  /** LRU 順序を変更せずに値を取得する。render パス（高頻度）で使用。 */
+  peek(path: string): string | undefined {
+    return this.map.get(path);
+  }
+
   set(path: string, url: string): void {
     const old = this.map.get(path);
     if (old !== undefined) {

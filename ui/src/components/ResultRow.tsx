@@ -16,17 +16,13 @@ interface ResultRowProps {
 
 const ResultRow: Component<ResultRowProps> = (rawProps) => {
   const props = mergeProps({ showIcons: true }, rawProps);
-  let textRef: HTMLDivElement | undefined;
-
   const fullPath = createMemo(() => {
     const p = props.result.path;
     return props.result.isFolder && !p.endsWith("\\") ? p + "\\" : p;
   });
 
   const displayPath = createMemo(() => {
-    void props.containerWidth; // resize trigger
-    if (!textRef) return fullPath();
-    const w = textRef.clientWidth;
+    const w = props.containerWidth ?? 0;
     if (w === 0) return fullPath();
     return truncatePath(fullPath(), w, props.font);
   });
@@ -56,7 +52,7 @@ const ResultRow: Component<ResultRowProps> = (rawProps) => {
           }
         </div>
       </Show>
-      <div class="result-text" ref={textRef}>
+      <div class="result-text">
         <div class="result-path-single">{displayPath()}</div>
       </div>
     </div>

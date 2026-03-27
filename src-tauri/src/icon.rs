@@ -61,13 +61,14 @@ impl IconCache {
         }
     }
 
-    /// Clear all cached icons (used after index rebuild).
-    pub fn clear(&mut self) {
-        self.data.png.clear();
-        self.dirty = false;
-        // Also remove persisted file so stale data is not reloaded
-        if let Some(bf) = icon_bin_file() {
-            bf.remove();
+    /// 現在のインデックスに存在するパスのみ残し、不要なエントリを除去する。
+    /// `clear()` と異なり有効なアイコンを再利用するため、再構築後の再抽出コストを削減する。
+    /// 1 件でも除去した場合は dirty フラグを立てる。
+    pub fn retain_paths(&mut self, valid_paths: &std::collections::HashSet<String>) {
+        let before = self.data.png.len();
+        self.data.png.retain(|k, _| valid_paths.contains(k));
+        if self.data.png.len() < before {
+            self.dirty = true;
         }
     }
 }

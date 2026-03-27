@@ -55,14 +55,19 @@ pub fn start_index_build(app: &AppHandle) -> bool {
                 entries.extend(path_entries);
             }
 
-            // Sync icon cache with current show_icons setting
+            // Sync icon cache with current index
             {
                 let icon_state = app_handle.state::<icon::IconCacheState>();
                 let mut current = icon_state.lock().unwrap();
                 if show_icons {
-                    // Clear stale icons — re-extracted on next search
+                    // Prune stale icons — retain only entries present in the current index.
+                    // Unlike clear(), this preserves valid icons and avoids re-extraction cost.
                     if let Some(c) = current.as_mut() {
-                        c.clear();
+                        let valid: std::collections::HashSet<String> = entries
+                            .iter()
+                            .map(|e| e.target_path.clone())
+                            .collect();
+                        c.retain_paths(&valid);
                     }
                 } else {
                     // show_icons disabled — drop the cache entirely

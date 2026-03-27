@@ -652,7 +652,31 @@ pub fn normalize_openers(openers: &[OpenerRule]) -> Vec<OpenerRule> {
         }
     }
 
+    result.sort_by(|a, b| opener_specificity_order(&a.target).cmp(&opener_specificity_order(&b.target)));
     result
+}
+
+/// オープナールールの具体度順ソートキーを返す。
+/// (1) パス付きフォルダ（パスが長い順）
+/// (2) パスなしフォルダ
+/// (3) パス付き拡張子（パスが長い順）
+/// (4) パスなし拡張子
+pub fn opener_specificity_order(target: &str) -> (u8, i64) {
+    let path_cond = extract_path_condition(target);
+    let is_folder = target == "folder" || target.starts_with("folder:");
+    let path_len = path_cond.map_or(0i64, |p| p.len() as i64);
+
+    if is_folder {
+        if path_cond.is_some() {
+            (0, -path_len)
+        } else {
+            (1, 0)
+        }
+    } else if path_cond.is_some() {
+        (2, -path_len)
+    } else {
+        (3, 0)
+    }
 }
 
 impl PathsConfig {
@@ -1850,6 +1874,45 @@ mod tests {
         assert_eq!(normalized[0].tools[1].name, "Viewer 2");
     }
 
+    #[test]
+    fn normalize_openers_sorts_by_specificity() {
+        let openers = vec![
+            make_rule("ext:txt", &[("Notepad", "notepad.exe", "")]),
+            make_rule("folder:c:\\workspace\\snotra", &[("Terminal", "wt.exe", "-d {path}")]),
+            make_rule("ext:md:c:\\projects", &[("VSCode", "Code.exe", "")]),
+            make_rule("folder", &[("Explorer", "explorer.exe", "")]),
+            make_rule("folder:c:\\workspace", &[("VSCode", "Code.exe", "")]),
+            make_rule("ext:md", &[("Typora", "typora.exe", "")]),
+        ];
+
+        let normalized = normalize_openers(&openers);
+        let targets: Vec<&str> = normalized.iter().map(|r| r.target.as_str()).collect();
+
+        // (1) パス付きフォルダ（パスが長い順）→ (2) パスなしフォルダ → (3) パス付き拡張子 → (4) パスなし拡張子
+        assert_eq!(targets, vec![
+            "folder:c:\\workspace\\snotra",
+            "folder:c:\\workspace",
+            "folder",
+            "ext:.md:c:\\projects",
+            "ext:.txt",
+            "ext:.md",
+        ]);
+    }
+
+    #[test]
+    fn opener_specificity_order_groups_correctly() {
+        // パス付きフォルダ < パスなしフォルダ < パス付き拡張子 < パスなし拡張子
+        assert!(opener_specificity_order("folder:c:\\a") < opener_specificity_order("folder"));
+        assert!(opener_specificity_order("folder") < opener_specificity_order("ext:.txt:c:\\a"));
+        assert!(opener_specificity_order("ext:.txt:c:\\a") < opener_specificity_order("ext:.txt"));
+
+        // パスが長い方が先
+        assert!(
+            opener_specificity_order("folder:c:\\workspace\\snotra")
+                < opener_specificity_order("folder:c:\\workspace")
+        );
+    }
+
     // ---- dedup_scan_paths tests ----
 
     #[test]
@@ -2014,6 +2077,17 @@ mod tests {
         let mut config = Config::default();
         config.openers = vec![make_rule("ext:.jpg,.png", &[("Viewer", "viewer.exe", "")])];
 
+        assert!(!config.normalize_openers());
+    }
+
+    #[test]
+    fn normalize_openers_returns_false_when_multiple_already_sorted() {
+        let mut config = Config::default();
+        config.openers = vec![
+            make_rule("folder:c:\\workspace", &[("Terminal", "wt.exe", "")]),
+            make_rule("folder", &[("Explorer", "explorer.exe", "")]),
+            make_rule("ext:.md", &[("Typora", "typora.exe", "")]),
+        ];
         assert!(!config.normalize_openers());
     }
 

@@ -155,12 +155,12 @@ fn build_launch_args(args: &str, path: &str) -> Vec<String> {
     let mut expanded = Vec::new();
     let mut has_placeholder = false;
 
-    for token in args.split_whitespace() {
+    for token in split_args(args) {
         if token.contains(PATH_PLACEHOLDER) {
             has_placeholder = true;
             expanded.push(token.replace(PATH_PLACEHOLDER, path));
         } else {
-            expanded.push(token.to_string());
+            expanded.push(token);
         }
     }
 
@@ -169,6 +169,35 @@ fn build_launch_args(args: &str, path: &str) -> Vec<String> {
     }
 
     expanded
+}
+
+/// シェル風クォート対応の引数分割。
+/// `"..."` で囲まれた部分はスペースを含んでも1トークンとして扱う。
+/// 閉じクォートがない場合は行末まで1トークン。
+/// 空クォート `""` はトークンを生成しない（空の引数を明示渡しする手段は提供しない）。
+fn split_args(args: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    for ch in args.chars() {
+        match ch {
+            '"' => {
+                in_quotes = !in_quotes;
+            }
+            c if c.is_whitespace() && !in_quotes => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            c => {
+                current.push(c);
+            }
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
 }
 
 #[tauri::command]
@@ -385,6 +414,52 @@ mod tests {
         assert_eq!(
             build_launch_args("{path} --compare {path}", "C:\\file.txt"),
             vec!["C:\\file.txt", "--compare", "C:\\file.txt"]
+        );
+    }
+
+    // ---- split_args (quote-aware splitting) tests ----
+
+    use super::split_args;
+
+    #[test]
+    fn split_args_quoted_token_preserves_spaces() {
+        assert_eq!(
+            split_args(r#"--dir "My Documents""#),
+            vec!["--dir", "My Documents"]
+        );
+    }
+
+    #[test]
+    fn split_args_unclosed_quote_consumes_to_end() {
+        assert_eq!(
+            split_args(r#"--dir "My Documents"#),
+            vec!["--dir", "My Documents"]
+        );
+    }
+
+    #[test]
+    fn split_args_adjacent_quotes_join() {
+        assert_eq!(
+            split_args(r#"--open="My File""#),
+            vec!["--open=My File"]
+        );
+    }
+
+    #[test]
+    fn split_args_empty_quotes_produce_no_token() {
+        assert_eq!(split_args(r#"a "" b"#), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn split_args_plain_whitespace_only() {
+        assert_eq!(split_args("  -a   -b  "), vec!["-a", "-b"]);
+    }
+
+    #[test]
+    fn build_launch_args_quoted_fixed_args_with_path() {
+        assert_eq!(
+            build_launch_args(r#"--workspace "C:\My Projects""#, "C:\\file.txt"),
+            vec!["--workspace", "C:\\My Projects", "C:\\file.txt"]
         );
     }
 }

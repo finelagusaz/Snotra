@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use eframe::egui;
-use snotra_core::config::{self, extract_path_condition, Config, OpenerRule, OpenerTool};
+use snotra_core::config::{self, extract_path_condition, opener_specificity_order, Config, OpenerRule, OpenerTool};
 
 use crate::i18n::Tr;
 
@@ -137,7 +137,7 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
                 flat.push((ri, ti, rule.target.clone(), tool.clone()));
             }
         }
-        flat.sort_by(|a, b| opener_display_order(&a.2).cmp(&opener_display_order(&b.2)));
+        flat.sort_by(|a, b| opener_specificity_order(&a.2).cmp(&opener_specificity_order(&b.2)));
 
         let mut action: Option<OpenerAction> = None;
         for (ri, ti, target, tool) in &flat {
@@ -481,25 +481,3 @@ fn format_target_label(target: &str, tr: &Tr) -> String {
     }
 }
 
-/// 表示ソート用の順序キーを返す。
-/// 1. パス付きフォルダ（パスが長い順 = 負の値）
-/// 2. パスなしフォルダ
-/// 3. パス付き拡張子（パスが長い順）
-/// 4. パスなし拡張子
-fn opener_display_order(target: &str) -> (u8, i64) {
-    let path_cond = extract_path_condition(target);
-    let is_folder = target == "folder" || target.starts_with("folder:");
-    let path_len = path_cond.map_or(0i64, |p| p.len() as i64);
-
-    if is_folder {
-        if path_cond.is_some() {
-            (0, -path_len) // パス付きフォルダ、長い順
-        } else {
-            (1, 0) // パスなしフォルダ
-        }
-    } else if path_cond.is_some() {
-        (2, -path_len) // パス付き拡張子、長い順
-    } else {
-        (3, 0) // パスなし拡張子
-    }
-}

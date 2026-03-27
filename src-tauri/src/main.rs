@@ -544,7 +544,7 @@ fn main() {
             let toggle = hotkey_toggle;
             let ime_control = ime_off;
             let hotkey_generation = Arc::new(AtomicU64::new(0));
-            let hotkey_generation_for_listener = hotkey_generation.clone();
+            let hotkey_generation_for_listener = hotkey_generation;
             app_handle.listen("hotkey-pressed", move |_| {
                 let t0 = Instant::now();
                 trace_main("hotkey:listener_enter", json!({}));

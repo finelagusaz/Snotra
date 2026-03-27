@@ -28,6 +28,12 @@ function updateResults(items: SearchResult[], isNormalSearch = false) {
   });
 }
 
+/** 結果と選択を初期状態にリセットする */
+function clearResults() {
+  updateResults([]);
+  setSelected(0);
+}
+
 /** インスタントコマンドモード中のコマンド一覧（activateSelected で参照） */
 let instantCommandItems: InstantCommand[] = [];
 
@@ -80,8 +86,7 @@ export function setHotkeyFailureNotice(message: string) {
 function clearCommandModeState() {
   ++searchGeneration;
   setQuery("");
-  updateResults([]);
-  setSelected(0);
+  clearResults();
 }
 
 function cancelDebounce() {
@@ -145,13 +150,11 @@ async function refreshResults() {
   if (!fs && trimmed.startsWith("/")) {
     // Command mode: no suggestions shown, just wait for exact match (handled by query effect).
     trace("search:refresh:branch", { requestId, branch: "slash_noop" });
-    updateResults([]);
-    setSelected(0);
+    clearResults();
     return;
   }
   if (indexing() && !fs) {
-    updateResults([]);
-    setSelected(0);
+    clearResults();
     trace("search:refresh:done", { requestId, branch: "indexing_guard", count: 0 });
     perfMarkSearchDone(requestId, 0);
     return;
@@ -433,8 +436,7 @@ async function launchWithSelectedTool(): Promise<boolean> {
     });
     // 結果を隠す
     ++searchGeneration;
-    updateResults([]);
-    setSelected(0);
+    clearResults();
     const launchResult = await api.launchWithTool(
       frame.targetPath,
       frame.savedQuery,
@@ -456,8 +458,7 @@ async function launchWithSelectedTool(): Promise<boolean> {
     setToolSelectionState(null);
     setFolderState(null);
     setFolderFilter("");
-    updateResults([]);
-    setSelected(0);
+    clearResults();
     ++searchGeneration;
     trace("search:launch_with_tool:done", { path: frame.targetPath });
     return true;
@@ -533,8 +534,7 @@ async function launchAndReset(result: SearchResult): Promise<boolean> {
   try {
     // launch 開始時に results を隠す
     ++searchGeneration;
-    updateResults([]);
-    setSelected(0);
+    clearResults();
     const launchResult = await api.launchItem(result.path, query());
     if (launchResult.status !== "ok") {
       trace("search:launch:error", {
@@ -550,8 +550,7 @@ async function launchAndReset(result: SearchResult): Promise<boolean> {
 
     setFolderState(null);
     setFolderFilter("");
-    updateResults([]);
-    setSelected(0);
+    clearResults();
     ++searchGeneration;
     trace("search:launch:done", { path: result.path, code: launchResult.code });
     return true;
@@ -585,8 +584,7 @@ async function executeInstantCommandSelected(): Promise<boolean> {
 
     const preGen = searchGeneration;
     ++searchGeneration;
-    updateResults([]);
-    setSelected(0);
+    clearResults();
 
     const launchResult = await api.executeInstantCommand(cmd.name, instantQuery);
     if (launchResult.status !== "ok") {
@@ -759,7 +757,6 @@ export {
   getSearchGeneration,
   noResults,
   instantCommandMode,
-  instantCommandPrefix,
   setInstantCommandPrefix,
 };
 

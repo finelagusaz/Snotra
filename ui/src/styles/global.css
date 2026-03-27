@@ -146,6 +146,15 @@ html, body, #root {
   text-overflow: ellipsis;
 }
 
+.result-description {
+  font-size: 0.8em;
+  line-height: normal;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--hint-text-color, #808080);
+}
+
 .indexing-message {
   width: 100%;
   padding: 8px 12px;

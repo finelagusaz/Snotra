@@ -675,6 +675,7 @@ instant_command_prefix = "@"  # デフォルト。ユーザーが変更可能
 [[instant_commands]]
 name = "g"
 command = "https://www.google.com/search?q={query}"
+description = "Google 検索"
 
 [[instant_commands]]
 name = "memo"
@@ -683,10 +684,12 @@ command = "C:\\tools\\editor.exe"
 [[instant_commands]]
 name = "trans"
 command = "https://www.deepl.com/translator#ja/en/{clip}"
+description = "DeepL 日→英翻訳"
 ```
 
 - `name`: コマンド名（プレフィックス後に入力する文字列）。一意でなければならない
 - `command`: 実行するコマンドライン or URL
+- `description`: コマンドの説明（任意）。省略可。検索結果リストに副テキストとして表示される。省略時はコマンドテンプレートが副テキストに使われる
 - デフォルト登録済みコマンド（`Config::default()`）:
   - `g`: `https://www.google.com/search?q={query}`（Google 検索）
   - `gh`: `https://github.com/search?q={query}`（GitHub 検索）
@@ -720,7 +723,7 @@ command = "https://www.deepl.com/translator#ja/en/{clip}"
 
 - プレフィックス（`@`）だけの入力: 登録済みコマンド名を全件表示
 - プレフィックス + 文字入力: コマンド名を前方一致で絞り込み
-- 結果リストにはコマンド名のみ表示（description フィールドなし）
+- 結果リストにはコマンド名を主表示、description（あればそれ、なければコマンドテンプレート）を副テキストとして表示
 - スペースが入力された時点でマッチングを確定し、以降は `{query}` として扱う
 - インスタントコマンドモード中はアイコン取得をスキップする（`path` がファイルパスではないため）
 - マッチするコマンドが0件の場合は結果を空にする（`noResults` 表示はしない）
@@ -754,8 +757,9 @@ command = "https://www.deepl.com/translator#ja/en/{clip}"
 
 - 設定画面のタブ構成: 全般/検索/インデックス/ビジュアル/オープナー/インスタントコマンド
 - プレフィックス設定（テキスト入力、デフォルト `@`）
-- コマンド追加/編集/削除
-- 各コマンド: `name`（コマンド名）、`command`（実行コマンド or URL）
+- コマンド追加/編集/削除/複製
+- 各コマンド: `name`（コマンド名）、`command`（実行コマンド or URL）、`description`（説明、任意）
+- コマンド編集モーダルに展開プレビュー表示（`{query}` に "example"、`{clip}` に "(clipboard)" を入れた結果を表示）
 
 ### 19.9 設定反映
 

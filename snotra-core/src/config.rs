@@ -36,6 +36,8 @@ fn default_language() -> Language {
 pub struct InstantCommand {
     pub name: String,
     pub command: String,
+    #[serde(default)]
+    pub description: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -716,10 +718,12 @@ impl Default for Config {
                 InstantCommand {
                     name: "g".to_string(),
                     command: "https://www.google.com/search?q={query}".to_string(),
+                    description: "Google 検索".to_string(),
                 },
                 InstantCommand {
                     name: "gh".to_string(),
                     command: "https://github.com/search?q={query}".to_string(),
+                    description: "GitHub 検索".to_string(),
                 },
             ],
         }
@@ -2462,10 +2466,12 @@ mod tests {
             InstantCommand {
                 name: "google".to_string(),
                 command: "https://google.com".to_string(),
+                description: String::new(),
             },
             InstantCommand {
                 name: "google".to_string(),
                 command: "https://google.co.jp".to_string(),
+                description: String::new(),
             },
         ];
         let errors = config.validate();
@@ -2481,10 +2487,12 @@ mod tests {
             InstantCommand {
                 name: "google".to_string(),
                 command: "https://google.com".to_string(),
+                description: String::new(),
             },
             InstantCommand {
                 name: "bing".to_string(),
                 command: "https://bing.com".to_string(),
+                description: String::new(),
             },
         ];
         let errors = config.validate();

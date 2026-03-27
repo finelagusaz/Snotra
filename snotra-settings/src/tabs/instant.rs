@@ -15,6 +15,7 @@ struct ModalState {
     editing_index: Option<usize>,
     edit_name: String,
     edit_command: String,
+    edit_description: String,
 }
 
 #[derive(Default, PartialEq)]
@@ -31,6 +32,16 @@ impl ModalState {
         self.editing_index = None;
         self.edit_name.clear();
         self.edit_command.clear();
+        self.edit_description.clear();
+    }
+
+    fn open_create_from(&mut self, cmd: &InstantCommand) {
+        self.open = true;
+        self.mode = ModalMode::Create;
+        self.editing_index = None;
+        self.edit_name = cmd.name.clone();
+        self.edit_command = cmd.command.clone();
+        self.edit_description = cmd.description.clone();
     }
 
     fn open_edit(&mut self, index: usize, cmd: &InstantCommand) {
@@ -39,6 +50,7 @@ impl ModalState {
         self.editing_index = Some(index);
         self.edit_name = cmd.name.clone();
         self.edit_command = cmd.command.clone();
+        self.edit_description = cmd.description.clone();
     }
 
     fn close(&mut self) {
@@ -119,6 +131,13 @@ pub fn ui(
                     } else {
                         &cmd.name
                     });
+                    if !cmd.description.is_empty() {
+                        ui.label(
+                            egui::RichText::new(&cmd.description)
+                                .small()
+                                .color(crate::app::TEXT_SECONDARY),
+                        );
+                    }
                     ui.label(
                         egui::RichText::new(&cmd.command)
                             .small()
@@ -129,6 +148,9 @@ pub fn ui(
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button(tr.btn_edit()).clicked() {
                         action = Some(InstantAction::Edit(i));
+                    }
+                    if ui.button(tr.btn_duplicate()).clicked() {
+                        action = Some(InstantAction::Duplicate(i));
                     }
                 });
             });
@@ -144,6 +166,10 @@ pub fn ui(
             Some(InstantAction::Edit(i)) => {
                 let cmd = &config.instant_commands[i];
                 state.modal.open_edit(i, cmd);
+            }
+            Some(InstantAction::Duplicate(i)) => {
+                let cmd = &config.instant_commands[i];
+                state.modal.open_create_from(cmd);
             }
             Some(InstantAction::MoveUp(i)) => {
                 if i > 0 {
@@ -167,6 +193,7 @@ pub fn ui(
 enum InstantAction {
     OpenCreate,
     Edit(usize),
+    Duplicate(usize),
     MoveUp(usize),
     MoveDown(usize),
 }
@@ -201,6 +228,17 @@ fn show_modal(
 
         ui.add_space(4.0);
 
+        // Description
+        ui.label(tr.label_instant_description());
+        ui.text_edit_singleline(&mut state.modal.edit_description);
+        ui.label(
+            egui::RichText::new(tr.hint_instant_description())
+                .small()
+                .color(crate::app::TEXT_SECONDARY),
+        );
+
+        ui.add_space(4.0);
+
         // Command
         ui.label(tr.label_instant_command());
         ui.text_edit_singleline(&mut state.modal.edit_command);
@@ -209,6 +247,22 @@ fn show_modal(
                 .small()
                 .color(crate::app::TEXT_SECONDARY),
         );
+
+        // Preview
+        if !state.modal.edit_command.is_empty() {
+            ui.add_space(4.0);
+            let preview = snotra_core::instant::expand_instant_command(
+                &state.modal.edit_command,
+                "example",
+                "(clipboard)",
+            );
+            ui.label(tr.label_instant_preview());
+            ui.label(
+                egui::RichText::new(&preview)
+                    .small()
+                    .color(crate::app::TEXT_SECONDARY),
+            );
+        }
 
         ui.add_space(8.0);
         ui.separator();
@@ -251,6 +305,7 @@ fn save_instant_command(config: &mut Config, modal: &ModalState) {
     let cmd = InstantCommand {
         name: modal.edit_name.clone(),
         command: modal.edit_command.clone(),
+        description: modal.edit_description.clone(),
     };
 
     if let Some(idx) = modal.editing_index {

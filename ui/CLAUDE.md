@@ -66,6 +66,21 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 - **コンポーネントテストでは `render(() => <Component />)` を使う**: SolidJS の `render` は関数ラッパーが必須（React と異なり直接 JSX を渡さない）
 - `cspValidation.test.ts`: Tauri v2 IPC の CSP 検証（`connect-src` に `ipc:` と `http://ipc.localhost` が必要）
 
+### コンポーネントテスト（.test.tsx）のモックパターン
+
+ストアをモック化するコンポーネントテストでは、`vi.mock` ファクトリがホイストされるため、モック関数を `vi.hoisted` 内で宣言する必要がある。ストアテスト（`search.test.ts`）のように `vi.mock` → `import` の順序制御だけでは不十分（コンポーネントの transitive import でモジュールロード順が変わるため）:
+
+```typescript
+const { mockFn1, mockFn2 } = vi.hoisted(() => ({
+  mockFn1: vi.fn(),
+  mockFn2: vi.fn(),
+}));
+vi.mock("../stores/search", () => ({ fn1: mockFn1, fn2: mockFn2 }));
+```
+
+- `SearchWindow.test.tsx` が基盤実装。新しいコンポーネントテストはこのパターンを踏襲する
+- Tauri API（`@tauri-apps/api/window`, `@tauri-apps/api/event`）は空モックで無害化
+
 ## 実装パターン
 
 - 検索ウィンドウのドラッグ移動は `.search-bar` の `data-tauri-drag-region` 属性で実現。`<input>` には付与しないため入力操作は維持される

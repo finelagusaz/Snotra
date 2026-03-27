@@ -147,7 +147,9 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
 
   onMount(() => {
     const unlistenFns: Array<() => void> = [];
+    let cleaned = false;
     onCleanup(() => {
+      cleaned = true;
       for (const fn of unlistenFns) fn();
       iconCache.revokeAll();
     });
@@ -161,6 +163,10 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
           setFont(`${style.fontSize} ${style.fontFamily}`);
         }
       });
+      if (cleaned) {
+        unlistenVisualFont();
+        return;
+      }
       unlistenFns.push(unlistenVisualFont);
     })().catch((e) => console.warn("ResultsSection: failed to setup listeners:", e));
 

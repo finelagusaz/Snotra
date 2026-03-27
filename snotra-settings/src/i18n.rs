@@ -843,6 +843,34 @@ impl Tr {
         }
     }
 
+    pub fn label_instant_description(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "説明（任意）:",
+            Language::En => "Description (optional):",
+        }
+    }
+
+    pub fn hint_instant_description(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "コマンドの用途を記述します。検索結果リストに表示されます",
+            Language::En => "Describe what this command does. Shown in the search results list",
+        }
+    }
+
+    pub fn label_instant_preview(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "プレビュー:",
+            Language::En => "Preview:",
+        }
+    }
+
+    pub fn btn_duplicate(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "複製",
+            Language::En => "Duplicate",
+        }
+    }
+
     pub fn modal_add_instant(&self) -> &'static str {
         match self.0 {
             Language::Ja => "コマンドを追加",

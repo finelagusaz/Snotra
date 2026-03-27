@@ -54,6 +54,9 @@ const ResultRow: Component<ResultRowProps> = (rawProps) => {
       </Show>
       <div class="result-text">
         <div class="result-path-single">{displayPath()}</div>
+        <Show when={props.result.description}>
+          <div class="result-description">{props.result.description}</div>
+        </Show>
       </div>
     </div>
   );

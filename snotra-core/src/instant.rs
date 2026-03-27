@@ -122,9 +122,9 @@ mod tests {
 
     fn sample_commands() -> Vec<InstantCommand> {
         vec![
-            InstantCommand { name: "g".to_string(), command: "https://google.com?q={query}".to_string() },
-            InstantCommand { name: "gm".to_string(), command: "https://mail.google.com".to_string() },
-            InstantCommand { name: "n".to_string(), command: "notepad.exe".to_string() },
+            InstantCommand { name: "g".to_string(), command: "https://google.com?q={query}".to_string(), description: String::new() },
+            InstantCommand { name: "gm".to_string(), command: "https://mail.google.com".to_string(), description: String::new() },
+            InstantCommand { name: "n".to_string(), command: "notepad.exe".to_string(), description: String::new() },
         ]
     }
 
@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn filter_case_insensitive() {
         let cmds = vec![
-            InstantCommand { name: "Google".to_string(), command: "https://google.com".to_string() },
+            InstantCommand { name: "Google".to_string(), command: "https://google.com".to_string(), description: String::new() },
         ];
         let result = filter_instant_commands(&cmds, "google");
         assert_eq!(result.len(), 1);

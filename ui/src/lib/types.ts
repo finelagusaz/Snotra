@@ -3,6 +3,8 @@ export interface SearchResult {
   path: string;
   isFolder: boolean;
   isError: boolean;
+  /** インスタントコマンドモード時の副表示テキスト（description or command テンプレート） */
+  description?: string;
 }
 
 export interface OpenerTool {
@@ -45,6 +47,7 @@ export interface BootstrapPayload {
 export interface InstantCommand {
   name: string;
   command: string;
+  description: string;
 }
 
 export interface UpdateAvailablePayload {

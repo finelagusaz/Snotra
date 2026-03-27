@@ -245,9 +245,10 @@ createRoot(() => {
             instantCommandItems = commands;
             const items: SearchResult[] = commands.map((cmd) => ({
               name: cmd.name,
-              path: cmd.command,
+              path: cmd.name,
               isFolder: false,
               isError: false,
+              description: cmd.description || cmd.command,
             }));
             updateResults(items);
             setSelected(0);

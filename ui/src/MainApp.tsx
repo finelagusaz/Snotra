@@ -48,6 +48,7 @@ const MainApp: Component = () => {
 
   onMount(async () => {
     const hideMain = async () => {
+      if (!mainVisible()) return;
       setMainVisible(false);
       api.notifyMainHidden().catch(() => {});
       await win.hide();

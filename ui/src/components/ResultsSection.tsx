@@ -7,6 +7,7 @@ import * as api from "../lib/invoke";
 import { LruIconCache } from "../lib/lruIconCache";
 import { parseBinaryBatch } from "../lib/iconBatch";
 import { perfMarkRenderDone } from "../lib/perf";
+import { clearTruncateCaches } from "../lib/truncatePath";
 import ResultRow from "./ResultRow";
 
 export interface ResultsSectionProps {
@@ -158,6 +159,7 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
     // iconsEnabled メモ経由でアイコンライフサイクル effect が反応するため、ここでは listen 不要。
     void (async () => {
       const unlistenVisualFont = await listen("visual-config-changed", () => {
+        clearTruncateCaches();
         if (listRef) {
           const style = getComputedStyle(listRef);
           setFont(`${style.fontSize} ${style.fontFamily}`);

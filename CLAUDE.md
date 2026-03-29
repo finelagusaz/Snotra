@@ -81,6 +81,7 @@ Claude とユーザーが一緒に作業するときの関係性の原則。
    - ウィンドウ生成/表示順・ホットキー・スラッシュコマンドを触った場合: `npm test` + `npm run smoke:startup` + `npm run e2e:tauri` を必須で実行
 9. 報告は「追加/更新テスト名 + 検証した不変条件」を必ず含める
 
+- Agent `isolation: "worktree"` を使わない（Windows でパスが壊れてゴミフォルダが残る）
 - Win32 依存モジュール（`src-tauri/src/ime.rs`, `src-tauri/src/platform/` 内の `hotkey.rs` 等）はユニットテスト前提にしない
 - モジュール固有の不変条件・TDD ルールは各サブディレクトリの `CLAUDE.md` を参照（実装前チェックは `.claude/rules/` で自動配送）
 
@@ -102,6 +103,7 @@ Claude とユーザーが一緒に作業するときの関係性の原則。
 | `/dry-check`         | 関数を新規定義・変更したとき、手書き重複が残っていないか確認            | `/dry-check show_main_and_emit: show() + set_focus() + emit(window-shown)`     |
 | `/race-check`        | async 関数を新規追加・変更したとき、各 await 地点の状態競合リスクを検証 | `/race-check executeInstantCommandSelected: await api.executeInstantCommand()` |
 | `/cache-check`       | キャッシュロジックの追加・変更時に述語の単調性と状態遷移の安全性を検証  | `/cache-check search_with_options: use_incremental 判定`                       |
-| `/retrospective`     | サイクル終了後: 教訓を CLAUDE.md に抽出し、RETROSPECTIVE.md を更新      | `/retrospective`                                                               |
+| `/health-check`      | 定期・サイクル完了後: CLAUDE.md モジュール構成・SPEC.md 番号・メモリ参照・ルール整合性を検証 | `/health-check`                                                           |
+| `/retrospective`     | サイクル終了後: 教訓を CLAUDE.md に抽出し、メモリ鮮度チェック、RETROSPECTIVE.md を更新 | `/retrospective`                                                               |
 | `/start-issue`       | GitHub issue から作業開始: issue 読込 → main 最新化 → ブランチ作成 → 調査・計画 | `/start-issue 123`                                                        |
 | `/implement`         | フルサイクル開発: 調査 → 計画 → 実装 → 検証 → レビュー → コミット      | `/implement キーボードショートカットの追加`                                     |

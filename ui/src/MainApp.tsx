@@ -1,4 +1,4 @@
-import { type Component, onMount, onCleanup, createSignal, createEffect, Show } from "solid-js";
+import { type Component, onMount, onCleanup, createSignal, createEffect, Show, untrack } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { listen } from "@tauri-apps/api/event";
@@ -48,6 +48,7 @@ const MainApp: Component = () => {
 
   onMount(async () => {
     const hideMain = async () => {
+      if (!mainVisible()) return;
       setMainVisible(false);
       api.notifyMainHidden().catch(() => {});
       await win.hide();
@@ -234,9 +235,12 @@ const MainApp: Component = () => {
     }
   });
 
-  // ウィンドウサイズを結果の表示/非表示に応じて動的変更
+  // ウィンドウサイズを結果の表示/非表示に応じて動的変更。
+  // cachedWidth は高さ計算に影響しないため untrack で依存から外す
+  // （ドラッグリサイズ中の冗長な setSize IPC を防止）。
+  // 高さが変化した場合のみ setSize を発行する。
+  let prevSetHeight = 0;
   createEffect(() => {
-    const width = cachedWidth();
     const height = computeWindowHeight({
       shouldShowResults: shouldShowResults(),
       maxResults: maxResults(),
@@ -246,6 +250,9 @@ const MainApp: Component = () => {
       resultsPadding: RESULTS_PADDING,
       updateToastHeight: UPDATE_TOAST_HEIGHT,
     });
+    if (height === prevSetHeight) return;
+    prevSetHeight = height;
+    const width = untrack(cachedWidth);
     void win.setSize(new LogicalSize(width, height));
   });
 

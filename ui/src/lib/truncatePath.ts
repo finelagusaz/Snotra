@@ -34,6 +34,12 @@ function measureText(text: string, font: string): number {
   return width;
 }
 
+/** テーマ変更時にキャッシュを全クリアする。旧フォント用の stale エントリを除去。 */
+export function clearTruncateCaches(): void {
+  measureCache.clear();
+  truncateCache.clear();
+}
+
 /**
  * Truncate a path by collapsing middle segments with "..." to fit within maxWidth.
  *

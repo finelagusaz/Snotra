@@ -34,26 +34,29 @@ async function tracedInvoke<T>(
   command: string,
   args?: Record<string, unknown>,
 ): Promise<T> {
-  const invokeId = ++invokeSeq;
-  const startedAt = performance.now();
-  trace("invoke:start", { invokeId, command, args });
-  try {
-    const result = await invoke<T>(command, args);
-    trace("invoke:ok", {
-      invokeId,
-      command,
-      elapsedMs: roundMs(performance.now() - startedAt),
-    });
-    return result;
-  } catch (e) {
-    trace("invoke:error", {
-      invokeId,
-      command,
-      elapsedMs: roundMs(performance.now() - startedAt),
-      error: String(e),
-    });
-    throw e;
+  if (import.meta.env.DEV) {
+    const invokeId = ++invokeSeq;
+    const startedAt = performance.now();
+    trace("invoke:start", { invokeId, command, args });
+    try {
+      const result = await invoke<T>(command, args);
+      trace("invoke:ok", {
+        invokeId,
+        command,
+        elapsedMs: roundMs(performance.now() - startedAt),
+      });
+      return result;
+    } catch (e) {
+      trace("invoke:error", {
+        invokeId,
+        command,
+        elapsedMs: roundMs(performance.now() - startedAt),
+        error: String(e),
+      });
+      throw e;
+    }
   }
+  return invoke<T>(command, args);
 }
 
 export async function search(query: string): Promise<SearchResult[]> {

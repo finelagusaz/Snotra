@@ -38,9 +38,11 @@ function clearResults() {
 let instantCommandItems: InstantCommand[] = [];
 
 const DEBOUNCE_MS = 50;
+const INSTANT_CMD_DEBOUNCE_MS = 30;
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 /** leading edge: デバウンス区間の最初の入力で即時発火済みなら true */
 let leadingFired = false;
+let instantCmdDebounceTimer: ReturnType<typeof setTimeout> | undefined;
 let launchNoticeTimer: ReturnType<typeof setTimeout> | undefined;
 let refreshInFlight: Promise<void> | undefined;
 let searchGeneration = 0;
@@ -237,30 +239,41 @@ createRoot(() => {
         setInstantCommandMode(true);
         // IPC 応答前の Enter/クリックで古いコマンドを誤起動しないよう、先にクリアする
         instantCommandItems = [];
-        void (async () => {
-          const requestId = ++searchGeneration;
-          try {
-            const commands = await api.getInstantCommands(filterName);
-            if (requestId !== searchGeneration) return;
-            instantCommandItems = commands;
-            const items: SearchResult[] = commands.map((cmd) => ({
-              name: cmd.name,
-              path: cmd.name,
-              isFolder: false,
-              isError: false,
-              description: cmd.description || cmd.command,
-            }));
-            updateResults(items);
-            setSelected(0);
-          } catch (e) {
-            trace("search:instant_command:error", { error: String(e) });
-          }
-        })();
+        // 高速タイピング時の不要な IPC を削減するため 30ms デバウンス
+        if (instantCmdDebounceTimer !== undefined) {
+          clearTimeout(instantCmdDebounceTimer);
+        }
+        instantCmdDebounceTimer = setTimeout(() => {
+          instantCmdDebounceTimer = undefined;
+          void (async () => {
+            const requestId = ++searchGeneration;
+            try {
+              const commands = await api.getInstantCommands(filterName);
+              if (requestId !== searchGeneration) return;
+              instantCommandItems = commands;
+              const items: SearchResult[] = commands.map((cmd) => ({
+                name: cmd.name,
+                path: cmd.name,
+                isFolder: false,
+                isError: false,
+                description: cmd.description || cmd.command,
+              }));
+              updateResults(items);
+              setSelected(0);
+            } catch (e) {
+              trace("search:instant_command:error", { error: String(e) });
+            }
+          })();
+        }, INSTANT_CMD_DEBOUNCE_MS);
         return;
       }
 
       // プレフィックスなし → インスタントコマンドモードを解除
       if (instantCommandMode()) {
+        if (instantCmdDebounceTimer !== undefined) {
+          clearTimeout(instantCmdDebounceTimer);
+          instantCmdDebounceTimer = undefined;
+        }
         setInstantCommandMode(false);
         instantCommandItems = [];
       }
@@ -607,6 +620,10 @@ async function executeInstantCommandSelected(): Promise<boolean> {
     }
 
     // 成功時: モードを完全にクリアする
+    if (instantCmdDebounceTimer !== undefined) {
+      clearTimeout(instantCmdDebounceTimer);
+      instantCmdDebounceTimer = undefined;
+    }
     setInstantCommandMode(false);
     instantCommandItems = [];
     suppressNextQueryEffectRefresh = true;
@@ -678,6 +695,10 @@ function resetForShow() {
   clearLaunchNotice();
   setToolSelectionState(null);
   setFolderState(null);
+  if (instantCmdDebounceTimer !== undefined) {
+    clearTimeout(instantCmdDebounceTimer);
+    instantCmdDebounceTimer = undefined;
+  }
   setInstantCommandMode(false);
   instantCommandItems = [];
   if (query() !== "") {

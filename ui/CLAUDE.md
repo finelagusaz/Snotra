@@ -90,6 +90,9 @@ vi.mock("../stores/search", () => ({ fn1: mockFn1, fn2: mockFn2 }));
 - **`async` 関数内で `await` をまたぐ可変変数はローカルキャプチャする**: `let` 変数やモジュールスコープの可変変数を `await` をまたいで参照する場合、関数冒頭で `const` にコピーしてから使う。`await` 中に外部イベントで値が書き換わると後続処理が意図しない値を参照する（例: `const visibleCount = cachedMaxResults`）
 - **`await` 後に保存状態を復元する場合は staleness チェックを入れる**: `await` 前に保存した状態を失敗時に復元するパターンでは、`searchGeneration` 等の世代カウンタで「`await` 中に状態が変わっていないか」を検証してから復元する。無条件復元は新しい状態を上書きするレースコンディションを生む。加えて、`await` 中にユーザー入力で状態が変わること自体を防ぐガード（`handleInput` の `launching()` チェック等）を根本対策として併用する
 - 検索デバウンスは leading edge（初回即時発火）+ trailing 50ms。`leadingFired` フラグでデバウンス区間の最初の入力を即座に `runRefresh()` し、以降は trailing タイマーのみ。`cancelDebounce()` でフラグもリセットする
+- **`createEffect` に高さ計算と無関係なシグナルを含めない**: `cachedWidth` のように effect の出力（`setSize` の引数）には必要だが変更トリガーにすべきでないシグナルは `untrack()` で依存から外す。特に Tauri の `resizable: false` 環境では、幅変化は Rust 側 `set_size` → `onResized` → JS `setSize` のループバックになりうる
+- **DEV 限定コードは `import.meta.env.DEV` でガードする**: `trace()` や `performance.now()` など開発時のみ必要な処理は、呼び出し側でも `import.meta.env.DEV` で囲む。Vite がプロダクションビルドでデッドコード除去するため、呼び出し先がノーオペレーションでも呼び出し側の引数計算コストは残る
+- **テーマ変更時はフォント依存キャッシュをクリアする**: `truncatePath.ts` の Canvas 測定キャッシュなど、フォント情報をキーに含むキャッシュは `visual-config-changed` イベントでクリアする。キーにフォントを含むため誤った結果は返さないが、stale エントリがメモリを占有し続ける
 
 ## 単一ウィンドウの高さ管理
 

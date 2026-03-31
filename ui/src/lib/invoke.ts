@@ -21,7 +21,6 @@ const IPC = {
   LAUNCH_WITH_TOOL: "launch_with_tool",
   GET_INSTANT_COMMANDS: "get_instant_commands",
   EXECUTE_INSTANT_COMMAND: "execute_instant_command",
-  RESTART_APP: "restart_app",
 } as const;
 
 let invokeSeq = 0;
@@ -158,6 +157,3 @@ export async function executeInstantCommand(
   return tracedInvoke<LaunchResult>(IPC.EXECUTE_INSTANT_COMMAND, { name, query });
 }
 
-export async function restartApp(): Promise<void> {
-  return tracedInvoke(IPC.RESTART_APP);
-}

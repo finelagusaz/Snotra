@@ -74,7 +74,7 @@ git checkout -b <branch-name>
 - **テスト方針**: 追加・更新するテストと検証コマンド
 - **SPEC.md 更新要否**: 挙動変更を伴う場合は更新内容を記載
 
-CLAUDE.md の開発原則（KISS/DRY/YAGNI）と開発ワークフロー（ステップ 0〜3）に従うこと。
+`docs/development-principles.md` の開発原則（KISS/DRY/YAGNI）と `AGENTS.md` の開発ワークフロー（ステップ 0〜3）に従うこと。
 
 ## Step 5 -- セルフレビュー & 計画更新
 

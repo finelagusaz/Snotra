@@ -42,7 +42,7 @@ allowed-tools:
 - `snotra-core` の純ロジック変更: 先に失敗する `#[cfg(test)]` テストを書き（Red）、次に実装して通す（Green）
 - 計画に沿って変更を行う
 - 新しい純ロジックには `snotra-core` に `#[cfg(test)]` ユニットテストを追加する
-- `SPEC.md` に記載された挙動に影響する変更の場合、`SPEC.md` も更新する
+- `SPEC.md` に記載された挙動に影響する変更の場合、`SPEC.md` も更新する（`AGENTS.md` の3層分担に従う）
 
 ## Step 4 -- 検証（最大5サイクル）
 

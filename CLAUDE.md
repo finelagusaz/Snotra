@@ -2,7 +2,7 @@
 
 このリポジトリで Claude Code が作業するときの運用ガイド。
 
-@import AGENTS.md
+@AGENTS.md
 
 ## 補足（Claude Code 固有）
 

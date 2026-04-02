@@ -14,6 +14,7 @@ pub fn configure_fonts(ctx: &egui::Context) {
                 scale: 1.0,
                 y_offset_factor: 0.3,
                 y_offset: 0.0,
+                ..Default::default()
             },
         ),
         (
@@ -22,6 +23,7 @@ pub fn configure_fonts(ctx: &egui::Context) {
                 scale: 1.0,
                 y_offset_factor: 0.3,
                 y_offset: 0.0,
+                ..Default::default()
             },
         ),
         (
@@ -30,6 +32,7 @@ pub fn configure_fonts(ctx: &egui::Context) {
                 scale: 1.0,
                 y_offset_factor: 0.3,
                 y_offset: 0.0,
+                ..Default::default()
             },
         ),
         (
@@ -38,6 +41,7 @@ pub fn configure_fonts(ctx: &egui::Context) {
                 scale: 1.0,
                 y_offset_factor: 0.3,
                 y_offset: 0.0,
+                ..Default::default()
             },
         ),
     ];
@@ -46,7 +50,7 @@ pub fn configure_fonts(ctx: &egui::Context) {
     for &(path, ref tweak) in jp_font_candidates {
         if let Ok(font_data) = std::fs::read(path) {
             let mut data = egui::FontData::from_owned(font_data);
-            data.tweak = *tweak;
+            data.tweak = tweak.clone();
             fonts.font_data.insert("jp_font".to_owned(), data.into());
             // Append Japanese font as fallback for proportional text
             fonts

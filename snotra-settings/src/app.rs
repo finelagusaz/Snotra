@@ -233,12 +233,17 @@ pub(crate) fn config_error_message(error: &ConfigError, tr: &Tr) -> String {
 }
 
 impl eframe::App for SettingsApp {
+    fn ui(&mut self, _ui: &mut egui::Ui, _frame: &mut eframe::Frame) {}
+
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         if let Some(pos) = self.last_position {
             window_data::save_settings_placement(pos);
         }
     }
 
+    // eframe 0.34: Panel::show(ctx) は deprecated（show_inside(ui) が推奨）。
+    // 全レイアウトを ui() メソッドに移すリファクタリングは eframe 0.35 対応時に実施する。
+    #[expect(deprecated)]
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Update window title (language change + dirty indicator)
         let title = if self.has_changes() {
@@ -338,9 +343,9 @@ impl eframe::App for SettingsApp {
         }
 
         // Sidebar
-        egui::SidePanel::left("tabs_panel")
+        egui::Panel::left("tabs_panel")
             .resizable(false)
-            .exact_width(140.0)
+            .exact_size(140.0)
             .frame(egui::Frame::NONE.fill(SIDEBAR_BG).inner_margin(egui::Margin::symmetric(8, 8)))
             .show(ctx, |ui| {
                 let available_width = ui.available_width();
@@ -420,8 +425,8 @@ impl eframe::App for SettingsApp {
             });
 
         // Footer (hide action buttons on Backup tab)
-        egui::TopBottomPanel::bottom("footer")
-            .exact_height(40.0)
+        egui::Panel::bottom("footer")
+            .exact_size(40.0)
             .frame(egui::Frame::NONE.fill(FOOTER_BG).inner_margin(egui::Margin::symmetric(12, 0)))
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {

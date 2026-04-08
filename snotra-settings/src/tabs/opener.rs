@@ -101,14 +101,13 @@ impl ModalState {
 
 pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabState, tr: &Tr) {
     // Poll exe picker result
-    if state.exe_picker.active {
-        if let Ok(mut guard) = state.exe_picker.result.try_lock() {
-            if let Some(result) = guard.take() {
-                state.exe_picker.active = false;
-                if let Some(path) = result {
-                    state.modal.edit_tool_exe = path.display().to_string();
-                }
-            }
+    if state.exe_picker.active
+        && let Ok(mut guard) = state.exe_picker.result.try_lock()
+        && let Some(result) = guard.take()
+    {
+        state.exe_picker.active = false;
+        if let Some(path) = result {
+            state.modal.edit_tool_exe = path.display().to_string();
         }
     }
 
@@ -374,12 +373,13 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
                     ))
                     .clicked()
             {
-                if let (Some(ri), Some(ti)) = (state.modal.editing_rule, state.modal.editing_tool) {
-                    if ri < config.openers.len() && ti < config.openers[ri].tools.len() {
-                        config.openers[ri].tools.remove(ti);
-                        if config.openers[ri].tools.is_empty() {
-                            config.openers.remove(ri);
-                        }
+                if let (Some(ri), Some(ti)) = (state.modal.editing_rule, state.modal.editing_tool)
+                    && ri < config.openers.len()
+                    && ti < config.openers[ri].tools.len()
+                {
+                    config.openers[ri].tools.remove(ti);
+                    if config.openers[ri].tools.is_empty() {
+                        config.openers.remove(ri);
                     }
                 }
                 state.modal.close();

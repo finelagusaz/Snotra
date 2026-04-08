@@ -36,33 +36,31 @@ pub fn ui(
     let mut result = None;
 
     // Poll export picker
-    if state.export_active {
-        if let Ok(mut guard) = state.export_result.try_lock() {
-            if let Some(picker_path) = guard.take() {
-                state.export_active = false;
-                let (msg, is_err) = handle_export_result(picker_path, tr);
-                if let Some(m) = msg {
-                    state.message = m;
-                    state.message_is_error = is_err;
-                }
-            }
+    if state.export_active
+        && let Ok(mut guard) = state.export_result.try_lock()
+        && let Some(picker_path) = guard.take()
+    {
+        state.export_active = false;
+        let (msg, is_err) = handle_export_result(picker_path, tr);
+        if let Some(m) = msg {
+            state.message = m;
+            state.message_is_error = is_err;
         }
     }
 
     // Poll import picker
-    if state.import_active {
-        if let Ok(mut guard) = state.import_result.try_lock() {
-            if let Some(picker_path) = guard.take() {
-                state.import_active = false;
-                let (msg, is_err, config) = handle_import_result(picker_path, tr);
-                if let Some(m) = msg {
-                    state.message = m;
-                    state.message_is_error = is_err;
-                }
-                if let Some(c) = config {
-                    result = Some(BackupResult { imported_config: c });
-                }
-            }
+    if state.import_active
+        && let Ok(mut guard) = state.import_result.try_lock()
+        && let Some(picker_path) = guard.take()
+    {
+        state.import_active = false;
+        let (msg, is_err, config) = handle_import_result(picker_path, tr);
+        if let Some(m) = msg {
+            state.message = m;
+            state.message_is_error = is_err;
+        }
+        if let Some(c) = config {
+            result = Some(BackupResult { imported_config: c });
         }
     }
 
@@ -112,10 +110,10 @@ pub fn ui(
             ui.label(egui::RichText::new(dir.display().to_string()).color(TEXT_SECONDARY));
         }
         ui.add_space(8.0);
-        if ui.button(tr.btn_open_folder()).clicked() {
-            if let Some(dir) = Config::config_dir() {
-                let _ = open::that(dir);
-            }
+        if ui.button(tr.btn_open_folder()).clicked()
+            && let Some(dir) = Config::config_dir()
+        {
+            let _ = open::that(dir);
         }
 
         // Inline message (persists until next operation)

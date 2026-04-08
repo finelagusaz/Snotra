@@ -503,14 +503,14 @@ impl eframe::App for SettingsApp {
 
         // Track window position for save on exit (skip when minimized to avoid saving 0,0)
         let minimized = ctx.input(|i| i.viewport().minimized).unwrap_or(false);
-        if !minimized {
-            if let Some(rect) = ctx.input(|i| i.viewport().outer_rect) {
-                let pos = rect.left_top();
-                self.last_position = Some(WindowPlacement {
-                    x: pos.x as i32,
-                    y: pos.y as i32,
-                });
-            }
+        if !minimized
+            && let Some(rect) = ctx.input(|i| i.viewport().outer_rect)
+        {
+            let pos = rect.left_top();
+            self.last_position = Some(WindowPlacement {
+                x: pos.x as i32,
+                y: pos.y as i32,
+            });
         }
     }
 }

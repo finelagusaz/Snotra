@@ -70,14 +70,13 @@ fn parse_extensions(raw: &str) -> Vec<String> {
 
 pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &mut IndexTabState, tr: &Tr) {
     // Poll picker result
-    if state.picker.active {
-        if let Ok(mut guard) = state.picker.result.try_lock() {
-            if let Some(result) = guard.take() {
-                state.picker.active = false;
-                if let Some(path) = result {
-                    state.modal.edit_path = path.display().to_string();
-                }
-            }
+    if state.picker.active
+        && let Ok(mut guard) = state.picker.result.try_lock()
+        && let Some(result) = guard.take()
+    {
+        state.picker.active = false;
+        if let Some(path) = result {
+            state.modal.edit_path = path.display().to_string();
         }
     }
 
@@ -195,10 +194,10 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut IndexTabStat
                     ))
                     .clicked()
             {
-                if let Some(idx) = state.modal.editing_index {
-                    if idx < config.paths.scan.len() {
-                        config.paths.scan.remove(idx);
-                    }
+                if let Some(idx) = state.modal.editing_index
+                    && idx < config.paths.scan.len()
+                {
+                    config.paths.scan.remove(idx);
                 }
                 state.modal.close();
             }

@@ -276,10 +276,10 @@ fn show_modal(
                     ))
                     .clicked()
             {
-                if let Some(idx) = state.modal.editing_index {
-                    if idx < config.instant_commands.len() {
-                        config.instant_commands.remove(idx);
-                    }
+                if let Some(idx) = state.modal.editing_index
+                    && idx < config.instant_commands.len()
+                {
+                    config.instant_commands.remove(idx);
                 }
                 state.modal.close();
             }

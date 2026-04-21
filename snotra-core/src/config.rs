@@ -654,7 +654,7 @@ pub fn normalize_openers(openers: &[OpenerRule]) -> Vec<OpenerRule> {
         }
     }
 
-    result.sort_by(|a, b| opener_specificity_order(&a.target).cmp(&opener_specificity_order(&b.target)));
+    result.sort_by_key(|a| opener_specificity_order(&a.target));
     result
 }
 

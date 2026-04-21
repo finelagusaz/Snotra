@@ -193,7 +193,7 @@ impl HistoryStore {
         // Prune global + query entries
         if self.data.global.len() > self.top_n {
             let mut entries: Vec<_> = self.data.global.drain().collect();
-            entries.sort_by(|a, b| b.1.launch_count.cmp(&a.1.launch_count));
+            entries.sort_by_key(|b| std::cmp::Reverse(b.1.launch_count));
             entries.truncate(self.top_n);
 
             let surviving: FxHashMap<String, GlobalEntry> = entries.into_iter().collect();
@@ -209,7 +209,7 @@ impl HistoryStore {
         // Prune folder_expansion independently
         if self.data.folder_expansion.len() > self.top_n {
             let mut fentries: Vec<_> = self.data.folder_expansion.drain().collect();
-            fentries.sort_by(|a, b| b.1.cmp(&a.1));
+            fentries.sort_by_key(|b| std::cmp::Reverse(b.1));
             fentries.truncate(self.top_n);
             self.data.folder_expansion = fentries.into_iter().collect();
         }

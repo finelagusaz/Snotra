@@ -136,7 +136,7 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
                 flat.push((ri, ti, rule.target.clone(), tool.clone()));
             }
         }
-        flat.sort_by(|a, b| opener_specificity_order(&a.2).cmp(&opener_specificity_order(&b.2)));
+        flat.sort_by_key(|a| opener_specificity_order(&a.2));
 
         let mut action: Option<OpenerAction> = None;
         for (ri, ti, target, tool) in &flat {
@@ -242,18 +242,18 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
                 let tool = &rule.tools[ti];
                 state.modal.open_edit(ri, ti, rule, tool);
             }
-            Some(OpenerAction::MoveUp(ri, ti)) => {
-                if ti > 0 && ri < config.openers.len() && ti < config.openers[ri].tools.len() {
-                    config.openers[ri].tools.swap(ti, ti - 1);
-                }
+            Some(OpenerAction::MoveUp(ri, ti))
+                if ti > 0 && ri < config.openers.len() && ti < config.openers[ri].tools.len() =>
+            {
+                config.openers[ri].tools.swap(ti, ti - 1);
             }
-            Some(OpenerAction::MoveDown(ri, ti)) => {
-                if ri < config.openers.len()
-                    && ti + 1 < config.openers[ri].tools.len()
-                {
-                    config.openers[ri].tools.swap(ti, ti + 1);
-                }
+            Some(OpenerAction::MoveUp(_, _)) => {}
+            Some(OpenerAction::MoveDown(ri, ti))
+                if ri < config.openers.len() && ti + 1 < config.openers[ri].tools.len() =>
+            {
+                config.openers[ri].tools.swap(ti, ti + 1);
             }
+            Some(OpenerAction::MoveDown(_, _)) => {}
             None => {}
         }
     });

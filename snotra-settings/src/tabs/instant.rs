@@ -171,16 +171,14 @@ pub fn ui(
                 let cmd = &config.instant_commands[i];
                 state.modal.open_create_from(cmd);
             }
-            Some(InstantAction::MoveUp(i)) => {
-                if i > 0 {
-                    config.instant_commands.swap(i, i - 1);
-                }
+            Some(InstantAction::MoveUp(i)) if i > 0 => {
+                config.instant_commands.swap(i, i - 1);
             }
-            Some(InstantAction::MoveDown(i)) => {
-                if i < len - 1 {
-                    config.instant_commands.swap(i, i + 1);
-                }
+            Some(InstantAction::MoveUp(_)) => {}
+            Some(InstantAction::MoveDown(i)) if i < len - 1 => {
+                config.instant_commands.swap(i, i + 1);
             }
+            Some(InstantAction::MoveDown(_)) => {}
             None => {}
         }
     });

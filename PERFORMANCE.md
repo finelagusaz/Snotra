@@ -80,9 +80,8 @@ opt-level = "s"
 - 計測は **DEV かつ `localStorage.snotra_perf === "1"`** のときのみ有効化する
 - 有効化手順: DevTools で `localStorage.setItem("snotra_perf","1")` → アプリ再起動
 - 無効化手順: `localStorage.removeItem("snotra_perf")` → アプリ再起動
-- コアロジックのマイクロベンチは `ignored` テストとして保持する。実行例:
-  `cargo test -p snotra-core bench_ -- --ignored --nocapture`
-- フォルダ列挙のホットパス確認には `cargo test -p snotra-core bench_folder_ -- --ignored --nocapture` を使う
+- コアロジックのマイクロベンチは `ignored` テストとして保持する。実行コマンドは [docs/build-commands.md](docs/build-commands.md) の「検索パフォーマンス計測」を SSOT として参照
+- フォルダ列挙のホットパス確認には bench フィルタを絞る: `cargo test -p snotra-core bench_folder_ -- --ignored --nocapture`（SSOT の bench コマンドに対するフィルタ違いとして個別記載）
 - `bench_folder_narrow_filter` は「大量エントリ + 狭いフィルタ」で、非一致エントリに不要な文字列化や属性判定をしていないかを確認する
 - `bench_folder_hidden_filter_all` は `show_hidden_system = false` 相当で、`metadata()` を伴う属性判定コスト込みの回帰を確認する
 - Tauri Driver E2E でウィンドウ可視性を判定するとき、`document.visibilityState` は誤判定し得るため性能判定の根拠に使わない。`plugin:window|is_visible` を優先する

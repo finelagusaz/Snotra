@@ -57,9 +57,8 @@
 6. 最小実装で通す（Green）
 7. テストが通るまで 6 を反復する
 8. 変更後の検証を実行する（スキップ不可）
-   - Rust ファイルを触った場合: `cargo check -p snotra-core -p snotra -p snotra-settings`（必須）、追加で `cargo test / clippy` も検討
-   - TS ファイルを触った場合: `npm run typecheck` + `npm run build`（必須・プロジェクトルートから実行）
-   - ウィンドウ生成/表示順・ホットキー・スラッシュコマンドを触った場合: `npm test` + `npm run smoke:startup` + `npm run e2e:tauri` を必須で実行
+   - 変更したファイルの種類に応じて、`docs/build-commands.md` の「変更後の検証チェックリスト」のカテゴリ A〜D から該当するものをすべて実行する
+   - コマンド本体は SSOT である `docs/build-commands.md` を参照（このリストとの二重メンテを避けるため、コマンド文字列はこのファイルに書かない）
 9. 報告は「追加/更新テスト名 + 検証した不変条件」を必ず含める
 
 ## 環境制約

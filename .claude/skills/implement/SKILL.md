@@ -5,7 +5,7 @@ disable-model-invocation: true
 argument-hint: "[機能の説明]"
 allowed-tools:
   - Bash(cargo *)
-  - Bash(npx vite build)
+  - Bash(npm *)
   - Bash(git *)
   - Read
   - Edit
@@ -46,16 +46,10 @@ allowed-tools:
 
 ## Step 4 -- 検証（最大5サイクル）
 
-以下のチェックを順に実行する。失敗した場合、修正して失敗したステップから再実行:
+`docs/build-commands.md` の「変更後の検証チェックリスト」を SSOT として、変更したファイルの種類に該当するカテゴリ A〜D をすべて実行する。失敗した場合、修正して失敗したステップから再実行する。
 
-1. Rust 検証（チェーン実行 — 最初の失敗で停止）:
-   ```bash
-   cargo check -p snotra-core -p snotra && cargo clippy -p snotra-core -p snotra -- -D warnings && cargo test -p snotra-core
-   ```
-2. フロントエンド検証（TypeScript/フロントエンドファイルを変更した場合のみ）:
-   ```bash
-   npx vite build
-   ```
+- カテゴリ A（Rust 変更）の追加検証（`cargo clippy` / `cargo test`）は本スキルでは**必須として扱う**（最初の失敗で停止するチェーン実行を推奨）
+- 具体的なコマンド文字列は `docs/build-commands.md` を参照（二重メンテを避けるためこの SKILL に書かない）
 
 5サイクル後もエラーが残る場合、中止して診断サマリーを書く:
 - 試みた内容

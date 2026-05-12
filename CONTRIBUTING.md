@@ -42,22 +42,15 @@ git push origin v0.9.1
   - Visual Studio 2022（または Build Tools）で「Desktop development with C++」ワークロードと Windows SDK を有効にする
 - **Node.js** >= 22
 
-### 起動
+### 起動・開発コマンド
 
-```bash
-npm ci
-npm run tauri dev
-```
+開発実行・依存インストール・設定 GUI の単独起動・テスト・E2E など、すべてのビルド／実行コマンドは [docs/build-commands.md](docs/build-commands.md) を SSOT として参照する。
 
-### snotra-settings（設定 GUI）の単独確認
+最初のセットアップから開発実行までの最短経路は以下の通り（コマンドの詳細・補足は SSOT を参照）:
 
-```bash
-cargo run -p snotra-settings
-```
-
-### テスト
-
-テストコマンドの一覧は [docs/build-commands.md](docs/build-commands.md) を参照。
+1. `npm ci` で依存をインストール
+2. `npm run tauri dev` で開発実行
+3. 設定 GUI のみ確認したい場合は `cargo run -p snotra-settings`
 
 ## アーキテクチャ
 

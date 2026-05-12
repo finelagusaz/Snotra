@@ -47,26 +47,26 @@ allowed-tools:
    - **記載あり・実ファイルなし**: 削除されたのに architecture.md が未更新
    - **実ファイルあり・記載なし**: 追加されたのに architecture.md が未更新
 
-## Check 3 -- AGENTS.md ドキュメント参照・コマンドの整合性
+## Check 3 -- AGENTS.md ドキュメント参照の実在性
 
-### 3a. ドキュメント参照の実在性
 `AGENTS.md` の「ドキュメント参照」セクションに記載されたファイルパスが実在するか検証する。
 存在しないファイルへの参照を報告する。
 
-### 3b. 検証コマンドの整合性
-`AGENTS.md` の「変更後の検証」（ステップ 8）に記載された npm コマンド（`npm run XXX`）が `package.json` の `scripts` に定義されているか検証する。
-定義されていないコマンドを報告する。
+> **Note:** 検証コマンドの整合性は SSOT である `docs/build-commands.md` を対象とする Check 5 で一括検証する（AGENTS.md は Step 8 で `docs/build-commands.md` を参照する形式に統合済み）。
 
 ## Check 4 -- SPEC.md セクション番号の連続性
 
 `SPEC.md` を読み、`## N.` と `### N.x` の番号が連続しているか確認する。
 飛び・重複・親子の不整合があれば報告する。
 
-## Check 5 -- docs/build-commands.md コマンドの実在性
+## Check 5 -- docs/build-commands.md コマンドの実在性（SSOT）
 
-`docs/build-commands.md` に記載された `npm run XXX` / `npm XXX` コマンドが `package.json` の `scripts` に定義されているか検証する。
+`docs/build-commands.md` はビルド／検証コマンドの単一の真実源（SSOT）。記載された `npm run XXX` / `npm XXX` コマンドが `package.json` の `scripts` に定義されているか検証する。
 `cargo` コマンドは `Cargo.toml` のワークスペースメンバーと照合する（`-p <crate>` のクレート名が存在するか）。
 定義されていないコマンドを報告する。
+
+加えて、SSOT ドリフトの検知として以下も確認する:
+- `AGENTS.md` Step 8 や `.claude/skills/*/SKILL.md` に **コマンド本体**（`cargo XXX` / `npm XXX` / `npx XXX` の具体的な引数を含む実行コマンド）が直書きされていないか grep する。`docs/build-commands.md` の SSOT を迂回している箇所を報告する（コマンド名への言及や参照リンク自体は許容）。
 
 ## Check 6 -- docs/development-principles.md 参照の実在性
 

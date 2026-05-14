@@ -4,6 +4,7 @@ use std::fs::Metadata;
 use std::hash::{Hash, Hasher};
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::thread;
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -308,17 +309,24 @@ pub fn load_or_scan_with_stats(
     }
     let cache_load_ms = cache_load_started.elapsed().as_millis();
 
-    let scan_started = Instant::now();
-    let mut entries = scan_all(scan, show_hidden_system);
-    let scan_ms = scan_started.elapsed().as_millis();
+    // 権威的書き手: scan + sort + save を書き込みロック保持下で行い、
+    // 背景再スキャン / 別ビルドとの index.bin 同時書き込みを防ぐ。
+    // フェーズ計測はクロージャの戻り値として持ち出す。
+    let (entries, scan_ms, sort_ms, cache_save_ms) = with_index_write_lock(|| {
+        let scan_started = Instant::now();
+        let mut entries = scan_all(scan, show_hidden_system);
+        let scan_ms = scan_started.elapsed().as_millis();
 
-    let sort_started = Instant::now();
-    sort_entries_canonical(&mut entries);
-    let sort_ms = sort_started.elapsed().as_millis();
+        let sort_started = Instant::now();
+        sort_entries_canonical(&mut entries);
+        let sort_ms = sort_started.elapsed().as_millis();
 
-    let cache_save_started = Instant::now();
-    save_cache_sorted(&entries, current_hash);
-    let cache_save_ms = cache_save_started.elapsed().as_millis();
+        let cache_save_started = Instant::now();
+        save_cache_sorted(&entries, current_hash);
+        let cache_save_ms = cache_save_started.elapsed().as_millis();
+
+        (entries, scan_ms, sort_ms, cache_save_ms)
+    });
 
     let stats = LoadOrScanStats {
         cache_hit: false,
@@ -402,11 +410,15 @@ fn save_cache_sorted(entries: &[AppEntry], config_hash: u64) {
 /// Force rebuild: scan and save cache, regardless of existing cache.
 /// Called from settings dialog (Phase 5).
 pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> Vec<AppEntry> {
-    let mut entries = scan_all(scan, show_hidden_system);
-    sort_entries_canonical(&mut entries);
-    let config_hash = compute_config_hash(scan, show_hidden_system);
-    save_cache_sorted(&entries, config_hash);
-    entries
+    // 権威的書き手: scan + sort + save を書き込みロック保持下で行い、
+    // 背景再スキャン / 別の rebuild との index.bin 同時書き込みを防ぐ。
+    with_index_write_lock(|| {
+        let mut entries = scan_all(scan, show_hidden_system);
+        sort_entries_canonical(&mut entries);
+        let config_hash = compute_config_hash(scan, show_hidden_system);
+        save_cache_sorted(&entries, config_hash);
+        entries
+    })
 }
 
 /// キャッシュ読み込み結果。v3 ヒット時はマスク付き、v2 ヒット時はマスクなし。
@@ -469,6 +481,49 @@ fn load_cache(config_hash: u64) -> Option<LoadCacheResult> {
     None
 }
 
+/// `index.bin` の scan + save 区間を直列化する書き込みロック。
+/// 権威的ビルド（`rebuild_and_save` / cache-miss save）と背景再スキャンが共有する。
+/// `save_cache_sorted` 自体はロックを取らない（呼び出し側が保持する契約）。
+static INDEX_WRITE_LOCK: Mutex<()> = Mutex::new(());
+
+/// 書き込みロックを非ブロッキングで取得し、取れたらクロージャを実行して `Some(結果)` を返す。
+/// 取得できなければクロージャを実行せず `None` を返す。背景再スキャン等の日和見的書き手が使う。
+fn try_with_index_write_lock<R>(f: impl FnOnce() -> R) -> Option<R> {
+    let _guard = INDEX_WRITE_LOCK.try_lock().ok()?;
+    Some(f())
+}
+
+/// 書き込みロックをブロッキングで取得し、クロージャを実行して結果を返す。
+/// 権威的書き手（`rebuild_and_save` / cache-miss save）が使う。
+fn with_index_write_lock<R>(f: impl FnOnce() -> R) -> R {
+    // Mutex<()> は保持する状態を持たないため、poison しても into_inner で回復して継続する。
+    // （`.unwrap()` だと一度の panic 以降、全 index 書き込みが永久に panic する）
+    let _guard = INDEX_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    f()
+}
+
+/// 背景再スキャン本体。`spawn_background_rescan` のスレッドから呼ぶ。
+/// 書き込みロックを取得できなければ（権威的ビルドが進行中）スキャン・保存をせず
+/// `false` を返す。再スキャンは日和見的な鮮度維持であり、本式ビルドが走っていれば不要。
+fn try_background_rescan(
+    scan: &[ScanPath],
+    show_hidden_system: bool,
+    config_hash: u64,
+    cached_entries: &[AppEntry],
+) -> bool {
+    // 権威的ビルド（rebuild_and_save / cache-miss save）が書き込み中ならスキップする。
+    // 背景再スキャンは日和見的な鮮度維持であり、本式ビルドが走っていれば不要。
+    try_with_index_write_lock(|| {
+        let mut scanned = scan_all(scan, show_hidden_system);
+        sort_entries_canonical(&mut scanned);
+        if !entries_equal(cached_entries, &scanned) {
+            save_cache_sorted(&scanned, config_hash);
+            invalidate_icon_cache();
+        }
+    })
+    .is_some()
+}
+
 fn spawn_background_rescan(
     scan: Vec<ScanPath>,
     show_hidden_system: bool,
@@ -479,12 +534,7 @@ fn spawn_background_rescan(
         .name("snotra-index-rescan".to_string())
         .spawn(move || {
             lower_current_thread_priority();
-            let mut scanned = scan_all(&scan, show_hidden_system);
-            sort_entries_canonical(&mut scanned);
-            if !entries_equal(&cached_entries, &scanned) {
-                save_cache_sorted(&scanned, config_hash);
-                invalidate_icon_cache();
-            }
+            let _ = try_background_rescan(&scan, show_hidden_system, config_hash, &cached_entries);
         });
 }
 
@@ -733,6 +783,12 @@ mod tests {
     use super::*;
     use crate::binfmt::{deserialize_with_header, serialize_with_header, try_deserialize_with_header};
     use std::fs;
+
+    /// `INDEX_WRITE_LOCK` に触れるテストを直列化するガード。
+    /// `cargo test` は同一ファイル内のテストを並列実行するため、「ロック空き」を
+    /// 期待するテストと「ロック保持中」を作るテストが食い合わないよう、
+    /// これらのテストは先頭でこのガードを取得する。
+    static INDEX_LOCK_TEST_GUARD: Mutex<()> = Mutex::new(());
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("snotra_idx_test_{}", tag));
@@ -1183,6 +1239,74 @@ mod tests {
         assert!(
             entries.is_empty(),
             "scan_all with no paths should return empty"
+        );
+    }
+
+    #[test]
+    fn try_background_rescan_skips_when_write_lock_held() {
+        let _serial = INDEX_LOCK_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // 権威的なインデックスビルドが書き込みロックを保持している状況を再現する。
+        let _held = INDEX_WRITE_LOCK.lock().unwrap();
+        // 背景再スキャンは書き込みロックを取得できないため、
+        // スキャンも保存もせず false（スキップ）を返さねばならない。
+        let ran = try_background_rescan(&[], false, 0, &[]);
+        assert!(
+            !ran,
+            "background rescan must skip (return false) when the index write lock is held"
+        );
+    }
+
+    #[test]
+    fn try_with_index_write_lock_skips_closure_when_lock_held() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let _serial = INDEX_LOCK_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // 権威的なインデックスビルドが書き込みロックを保持している状況を再現する。
+        let _held = INDEX_WRITE_LOCK.lock().unwrap();
+        // ロックを取得できないので、クロージャは実行されず None が返らねばならない。
+        let ran = AtomicBool::new(false);
+        let result = try_with_index_write_lock(|| ran.store(true, Ordering::SeqCst));
+        assert!(
+            !ran.load(Ordering::SeqCst),
+            "closure must not run while the index write lock is held"
+        );
+        assert!(
+            result.is_none(),
+            "try_with_index_write_lock must return None when the lock is held"
+        );
+    }
+
+    #[test]
+    fn with_index_write_lock_holds_lock_during_closure() {
+        let _serial = INDEX_LOCK_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // with_index_write_lock がクロージャ実行中ずっとロックを保持していることを、
+        // 「クロージャ内から try_lock すると失敗する」という形で決定論的に検証する。
+        // ブロッキング取得なので、他テストがロック保持中でも待つだけで flaky にならない。
+        let observed_locked = with_index_write_lock(|| INDEX_WRITE_LOCK.try_lock().is_err());
+        assert!(
+            observed_locked,
+            "with_index_write_lock must hold INDEX_WRITE_LOCK while running the closure"
+        );
+    }
+
+    #[test]
+    fn try_with_index_write_lock_runs_closure_when_lock_free() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let _serial = INDEX_LOCK_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // ロックが空いていればクロージャを実行し、Some(結果) を返す。
+        // 回帰テスト: 「スキップ」を通した最小実装が同じ2行でこの経路も満たすため即パスする。
+        let ran = AtomicBool::new(false);
+        let result = try_with_index_write_lock(|| {
+            ran.store(true, Ordering::SeqCst);
+            42
+        });
+        assert!(
+            ran.load(Ordering::SeqCst),
+            "closure must run when the index write lock is free"
+        );
+        assert_eq!(
+            result,
+            Some(42),
+            "try_with_index_write_lock must return Some(closure result) when the lock is free"
         );
     }
 

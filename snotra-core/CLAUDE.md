@@ -106,9 +106,18 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 
 新しい Engine メソッドを追加するとき、I/O やインデックス構築をロック内で行わないよう注意する。
 
+## index.bin 書き込みの排他（INDEX_WRITE_LOCK）
+
+`index.bin` を scan+save する経路は**すべて `INDEX_WRITE_LOCK`（`indexer.rs` の module-level `static Mutex<()>`）を経由する**。`BinFile::save` の tmp→rename は固定 tmp 名（`index.bin.tmp`）での原子的置換であり、単一書き手が前提。複数経路が同時に書くと tmp ファイルを食い合い破損する。
+
+- 権威的書き手（`rebuild_and_save` / `load_or_scan_with_stats` の cache-miss 枝）: `with_index_write_lock`（blocking）で取得
+- 日和見的書き手（`try_background_rescan`）: `try_with_index_write_lock`（`try_lock`、競合時スキップ）。本式ビルドが走っていれば再スキャンは不要
+- `save_cache_sorted` 自身はロックを取らない（呼び出し側が保持する契約）。ロック取得済みのクロージャ内から呼ぶ。`save_cache_sorted` がロックを取ると自己デッドロックする
+- **`index.bin` を書く新しい経路を追加するときは、必ず `with_index_write_lock` / `try_with_index_write_lock` を経由させる**
+
 ## indexer.rs の背景再スキャン
 
-`spawn_background_rescan` はキャッシュヒット時に低優先度スレッドでファイルシステムを再スキャンし、キャッシュの新鮮さを保つ。エントリが変わった場合は `save_cache_sorted` + `invalidate_icon_cache` を実行する。スキャンロジック（`scan_all` / `sort_entries_canonical` / `entries_equal`）を変更するとき、このバックグラウンドパスにも影響することを意識する。
+`spawn_background_rescan` はキャッシュヒット時に低優先度スレッドでファイルシステムを再スキャンし、キャッシュの新鮮さを保つ。本体は `try_background_rescan`（`try_with_index_write_lock` 経由）。エントリが変わった場合は `save_cache_sorted` + `invalidate_icon_cache` を実行する。スキャンロジック（`scan_all` / `sort_entries_canonical` / `entries_equal`）を変更するとき、このバックグラウンドパスにも影響することを意識する。
 
 ## エントリ名の導出ルール
 

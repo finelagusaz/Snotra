@@ -10,8 +10,6 @@ pub fn rebuild_index(state: State<AppState>, app: AppHandle) -> bool {
     if state.indexing.load(Ordering::SeqCst) {
         return false;
     }
-    // Reset the guard so start_index_build can proceed
-    state.index_build_started.store(false, Ordering::SeqCst);
     indexing::start_index_build(&app)
 }
 

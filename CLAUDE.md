@@ -43,3 +43,4 @@ Claude とユーザーが一緒に作業するときの関係性の原則。
 | `/retrospective`     | サイクル終了後: 教訓を AGENTS.md に抽出し、メモリ鮮度チェック、RETROSPECTIVE.md を更新 | `/retrospective`                                                               |
 | `/start-issue`       | GitHub issue から作業開始: issue 読込 → main 最新化 → ブランチ作成 → 調査・計画 | `/start-issue 123`                                                        |
 | `/implement`         | フルサイクル開発: 調査 → 計画 → 実装 → 検証 → レビュー → コミット      | `/implement キーボードショートカットの追加`                                     |
+| `/deps-update`       | cargo/npm の依存を一括更新し PR 作成・CI グリーン確認まで（マージは手動） | `/deps-update` または `/deps-update npm`                                       |

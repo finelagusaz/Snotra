@@ -12,4 +12,5 @@ paths:
 - **ビットマスクは `query.rs::char_bitmask()` に一元化済み**: `search.rs` と `indexer.rs` の両方が import して使用。変更は `query.rs` の1箇所のみ
 - **incremental cache 変更時は `/cache-check`** で単調性を検証する
 - **`index.bin` を書く新経路は `INDEX_WRITE_LOCK` 経由**: `with_index_write_lock`（権威的書き手・blocking）/ `try_with_index_write_lock`（背景再スキャン・try_lock）。`save_cache_sorted` 自身はロックを取らない（呼び出し側が保持）
+- **`icons.bin` に触れない**: アイコンキャッシュは `src-tauri` の資源。背景再スキャンは `RescanOutcome` で結果を伝え、無効化は呼び出し側が行う
 - **UI 表示文字列を持たない**: エラーは `is_error: true` フラグで伝え、表示は UI 層の責務

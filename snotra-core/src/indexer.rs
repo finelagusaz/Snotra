@@ -3,9 +3,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::fs::Metadata;
 use std::hash::{Hash, Hasher};
 use std::os::windows::fs::MetadataExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Mutex;
-use std::thread;
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
@@ -15,7 +14,7 @@ use windows::Win32::System::Threading::{
 };
 
 use crate::binfmt::{BinFile, try_deserialize_with_header};
-use crate::config::{Config, ScanPath};
+use crate::config::ScanPath;
 use crate::query::{char_bitmask, to_lower_folded};
 
 const INDEX_MAGIC: [u8; 4] = *b"INDX";
@@ -196,6 +195,21 @@ pub struct LoadOrScanStats {
     pub total_ms: u128,
 }
 
+/// `load_or_scan_with_stats` の戻り値。
+pub struct LoadOrScanResult {
+    /// ロード or スキャンされたエントリ集合。
+    pub entries: Vec<AppEntry>,
+    /// キャッシュが無く（または stale で）フルスキャンが走った場合 true。
+    pub cache_changed: bool,
+    /// 各フェーズの所要時間。
+    pub stats: LoadOrScanStats,
+    /// v3/v4 キャッシュヒット時の事前計算データ。
+    pub cached_masks: Option<CachedMasks>,
+    /// キャッシュヒット時のみ `Some`。`src-tauri` が低優先度スレッドで `run()` し、
+    /// `RescanOutcome::Changed` ならアイコンキャッシュを無効化する。
+    pub rescan_task: Option<BackgroundRescanTask>,
+}
+
 /// v4 フォーマット: ビットマスクに加えて lower_names / lower_file_names / normalized_keys を保存。
 /// 起動時に SearchEngine の Wave 1（to_lower_folded / normalize_entry_key）を完全スキップできる。
 #[derive(Serialize, Deserialize)]
@@ -248,37 +262,20 @@ fn cache_bin_file() -> Option<BinFile> {
     BinFile::new(INDEX_MAGIC, INDEX_CACHE_VERSION, "index.bin")
 }
 
-fn icon_cache_path() -> Option<PathBuf> {
-    Config::config_dir().map(|p| p.join("icons.bin"))
-}
-
-fn invalidate_icon_cache_at(path: &Path) {
-    let _ = std::fs::remove_file(path);
-}
-
-fn invalidate_icon_cache() {
-    let Some(path) = icon_cache_path() else {
-        return;
-    };
-    invalidate_icon_cache_at(&path);
-}
-
-/// Scan filesystem every startup; compare with cache to detect changes.
-/// Returns (entries, changed) where changed=true means the entry set differs from cache.
+/// Load cached entries or scan the filesystem. Returns `(entries, cache_changed)`
+/// where `cache_changed = true` means the cache was missing/stale and a full scan ran.
 pub fn load_or_scan(scan: &[ScanPath], show_hidden_system: bool) -> (Vec<AppEntry>, bool) {
-    let (entries, changed, _, _) = load_or_scan_with_stats(scan, show_hidden_system);
-    (entries, changed)
+    let result = load_or_scan_with_stats(scan, show_hidden_system);
+    (result.entries, result.cache_changed)
 }
 
-/// Same as `load_or_scan`, but also returns timing stats and optional cached bitmasks.
-///
-/// The 4th return value is `Some(CachedMasks)` when a v3 cache was hit, or `None`
-/// (v2 cache or cache miss). Callers can pass the masks to
-/// `Engine::new_from_cache()` to skip bitmask recomputation in SearchEngine.
+/// Same as `load_or_scan`, but returns the full `LoadOrScanResult`: timing stats,
+/// cached bitmasks, and—on cache hit—a `BackgroundRescanTask` for the caller to
+/// run on a background thread.
 pub fn load_or_scan_with_stats(
     scan: &[ScanPath],
     show_hidden_system: bool,
-) -> (Vec<AppEntry>, bool, LoadOrScanStats, Option<CachedMasks>) {
+) -> LoadOrScanResult {
     let total_started = Instant::now();
 
     let hash_started = Instant::now();
@@ -290,12 +287,14 @@ pub fn load_or_scan_with_stats(
         let cache_load_ms = cache_load_started.elapsed().as_millis();
         let return_entries = result.entries;
         let cached_masks = result.cached_masks;
-        spawn_background_rescan(
-            scan.to_vec(),
+        // 背景再スキャンはここでは spawn しない。タスクとして返し、`src-tauri` が
+        // `AppHandle` を持った状態で spawn する（`Changed` 時のアイコン無効化のため）。
+        let rescan_task = BackgroundRescanTask {
+            scan: scan.to_vec(),
             show_hidden_system,
-            current_hash,
-            return_entries.clone(),
-        );
+            config_hash: current_hash,
+            cached_entries: return_entries.clone(),
+        };
         let stats = LoadOrScanStats {
             cache_hit: true,
             hash_ms,
@@ -305,7 +304,13 @@ pub fn load_or_scan_with_stats(
             cache_save_ms: 0,
             total_ms: total_started.elapsed().as_millis(),
         };
-        return (return_entries, false, stats, cached_masks);
+        return LoadOrScanResult {
+            entries: return_entries,
+            cache_changed: false,
+            stats,
+            cached_masks,
+            rescan_task: Some(rescan_task),
+        };
     }
     let cache_load_ms = cache_load_started.elapsed().as_millis();
 
@@ -338,7 +343,13 @@ pub fn load_or_scan_with_stats(
         total_ms: total_started.elapsed().as_millis(),
     };
 
-    (entries, true, stats, None)
+    LoadOrScanResult {
+        entries,
+        cache_changed: true,
+        stats,
+        cached_masks: None,
+        rescan_task: None,
+    }
 }
 
 fn entries_equal(a: &[AppEntry], b: &[AppEntry]) -> bool {
@@ -502,51 +513,80 @@ fn with_index_write_lock<R>(f: impl FnOnce() -> R) -> R {
     f()
 }
 
-/// 背景再スキャン本体。`spawn_background_rescan` のスレッドから呼ぶ。
-/// 書き込みロックを取得できなければ（権威的ビルドが進行中）スキャン・保存をせず
-/// `false` を返す。再スキャンは日和見的な鮮度維持であり、本式ビルドが走っていれば不要。
+/// 背景再スキャンの結果。`src-tauri` 側はこれを見てアイコン無効化等の後始末を行う。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RescanOutcome {
+    /// 権威的ビルドが書き込み中でロックを取得できず、再スキャンをスキップした。
+    Skipped,
+    /// 再スキャンしたが、エントリ集合はキャッシュと同一だった。
+    Unchanged,
+    /// エントリ集合がキャッシュと異なり、`index.bin` を更新した。
+    /// 呼び出し側はアイコンキャッシュの無効化を行うこと。
+    Changed,
+}
+
+/// 背景再スキャン本体。書き込みロックを取得できなければ（権威的ビルドが進行中）
+/// スキャン・保存をせず `Skipped` を返す。再スキャンは日和見的な鮮度維持であり、
+/// 本式ビルドが走っていれば不要。アイコンキャッシュには触れない（`icons.bin` は
+/// `src-tauri` の資源 — 呼び出し側が `Changed` を見て無効化する）。
 fn try_background_rescan(
     scan: &[ScanPath],
     show_hidden_system: bool,
     config_hash: u64,
     cached_entries: &[AppEntry],
-) -> bool {
-    // 権威的ビルド（rebuild_and_save / cache-miss save）が書き込み中ならスキップする。
-    // 背景再スキャンは日和見的な鮮度維持であり、本式ビルドが走っていれば不要。
-    try_with_index_write_lock(|| {
+) -> RescanOutcome {
+    // 権威的ビルド（rebuild_and_save / cache-miss save）が書き込み中なら Skipped。
+    let changed = try_with_index_write_lock(|| {
         let mut scanned = scan_all(scan, show_hidden_system);
         sort_entries_canonical(&mut scanned);
-        if !entries_equal(cached_entries, &scanned) {
+        if entries_equal(cached_entries, &scanned) {
+            false
+        } else {
             save_cache_sorted(&scanned, config_hash);
-            invalidate_icon_cache();
+            true
         }
-    })
-    .is_some()
+    });
+    match changed {
+        None => RescanOutcome::Skipped,
+        Some(false) => RescanOutcome::Unchanged,
+        Some(true) => RescanOutcome::Changed,
+    }
 }
 
-fn spawn_background_rescan(
+/// 背景再スキャンのタスク。所有データを抱え、`src-tauri` 側のスレッドへ `move` できる。
+/// `load_or_scan_with_stats` がキャッシュヒット時に `Some` で返す。
+pub struct BackgroundRescanTask {
     scan: Vec<ScanPath>,
     show_hidden_system: bool,
     config_hash: u64,
     cached_entries: Vec<AppEntry>,
-) {
-    let _ = thread::Builder::new()
-        .name("snotra-index-rescan".to_string())
-        .spawn(move || {
-            lower_current_thread_priority();
-            let _ = try_background_rescan(&scan, show_hidden_system, config_hash, &cached_entries);
-        });
 }
 
+impl BackgroundRescanTask {
+    /// 再スキャンを実行し、結果を返す。`Changed` のときは呼び出し側が
+    /// アイコンキャッシュを無効化すること。
+    pub fn run(self) -> RescanOutcome {
+        try_background_rescan(
+            &self.scan,
+            self.show_hidden_system,
+            self.config_hash,
+            &self.cached_entries,
+        )
+    }
+}
+
+/// 呼び出し元スレッドの優先度を下げる。背景再スキャン等のバックグラウンドスレッドが
+/// 起動直後のユーザー操作と CPU を奪い合わないようにする。`src-tauri` が rescan
+/// スレッドの先頭で呼ぶ。
 #[cfg(windows)]
-fn lower_current_thread_priority() {
+pub fn lower_current_thread_priority() {
     unsafe {
         let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     }
 }
 
 #[cfg(not(windows))]
-fn lower_current_thread_priority() {}
+pub fn lower_current_thread_priority() {}
 
 /// レジストリキーの RAII ガード。Drop 時に自動で RegCloseKey を呼ぶ。
 #[cfg(windows)]
@@ -1209,31 +1249,6 @@ mod tests {
     }
 
     #[test]
-    fn invalidate_icon_cache_removes_icons_bin_if_present() {
-        let dir = temp_dir("icons_cache_remove");
-        let icon_path = dir.join("icons.bin");
-        fs::write(&icon_path, b"dummy").unwrap();
-        assert!(icon_path.exists());
-
-        invalidate_icon_cache_at(&icon_path);
-        assert!(!icon_path.exists());
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn invalidate_icon_cache_is_noop_when_missing() {
-        let dir = temp_dir("icons_cache_missing");
-        let icon_path = dir.join("icons.bin");
-        assert!(!icon_path.exists());
-
-        invalidate_icon_cache_at(&icon_path);
-        assert!(!icon_path.exists());
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
     fn scan_all_empty_when_no_paths() {
         let entries = scan_all(&[], false);
         assert!(
@@ -1248,12 +1263,26 @@ mod tests {
         // 権威的なインデックスビルドが書き込みロックを保持している状況を再現する。
         let _held = INDEX_WRITE_LOCK.lock().unwrap();
         // 背景再スキャンは書き込みロックを取得できないため、
-        // スキャンも保存もせず false（スキップ）を返さねばならない。
-        let ran = try_background_rescan(&[], false, 0, &[]);
-        assert!(
-            !ran,
-            "background rescan must skip (return false) when the index write lock is held"
+        // スキャンも保存もせず Skipped を返さねばならない。
+        let outcome = try_background_rescan(&[], false, 0, &[]);
+        assert_eq!(
+            outcome,
+            RescanOutcome::Skipped,
+            "background rescan must return Skipped when the index write lock is held"
         );
+    }
+
+    #[test]
+    fn background_rescan_task_run_reports_unchanged_for_empty_inputs() {
+        let _serial = INDEX_LOCK_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // 空のスキャン対象 → scan_all は空 → 空のキャッシュと一致 → Unchanged。
+        let task = BackgroundRescanTask {
+            scan: Vec::new(),
+            show_hidden_system: false,
+            config_hash: 0,
+            cached_entries: Vec::new(),
+        };
+        assert_eq!(task.run(), RescanOutcome::Unchanged);
     }
 
     #[test]

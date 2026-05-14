@@ -117,7 +117,11 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 
 ## indexer.rs の背景再スキャン
 
-`spawn_background_rescan` はキャッシュヒット時に低優先度スレッドでファイルシステムを再スキャンし、キャッシュの新鮮さを保つ。本体は `try_background_rescan`（`try_with_index_write_lock` 経由）。エントリが変わった場合は `save_cache_sorted` + `invalidate_icon_cache` を実行する。スキャンロジック（`scan_all` / `sort_entries_canonical` / `entries_equal`）を変更するとき、このバックグラウンドパスにも影響することを意識する。
+`load_or_scan_with_stats` はキャッシュヒット時、再スキャンを*その場で spawn せず* `LoadOrScanResult.rescan_task`（`Some(BackgroundRescanTask)`）として返す。`src-tauri` が `AppHandle` を持った状態で低優先度スレッドで `task.run()` し、`RescanOutcome::Changed` ならアイコンキャッシュを無効化する。
+
+- ロジック（lock 取得・`scan_all` / `sort_entries_canonical` / `entries_equal` 比較・`save_cache_sorted`）は `snotra-core`、spawn とアイコン無効化は `src-tauri`。`index.bin` は snotra-core の資源、`icons.bin` は src-tauri の資源——所有者に責務を寄せている
+- `try_background_rescan` はアイコンキャッシュに触れない。`RescanOutcome::{Skipped, Unchanged, Changed}` で結果を伝え、呼び出し側が `Changed` を見て無効化する
+- スキャンロジックを変更するとき、このバックグラウンドパスにも影響することを意識する
 
 ## エントリ名の導出ルール
 

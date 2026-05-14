@@ -364,27 +364,26 @@ fn main() {
     let is_first_run = Config::is_first_run();
     let config = Config::load();
 
-    let (entries, initial_indexing, cached_masks) = if is_first_run {
-        (Vec::new(), true, None)
+    let (entries, initial_indexing, cached_masks, rescan_task) = if is_first_run {
+        (Vec::new(), true, None, None)
     } else {
-        #[cfg(debug_assertions)]
-        let (entries, _, stats, cached_masks) =
-            indexer::load_or_scan_with_stats(&config.paths.scan, config.search.show_hidden_system);
-        #[cfg(not(debug_assertions))]
-        let (entries, _, _, cached_masks) =
+        let result =
             indexer::load_or_scan_with_stats(&config.paths.scan, config.search.show_hidden_system);
         #[cfg(debug_assertions)]
-        eprintln!(
-            "[index-load] cache_hit={} total={}ms hash={}ms cache_load={}ms scan={}ms sort={}ms cache_save={}ms",
-            stats.cache_hit,
-            stats.total_ms,
-            stats.hash_ms,
-            stats.cache_load_ms,
-            stats.scan_ms,
-            stats.sort_ms,
-            stats.cache_save_ms,
-        );
-        (entries, false, cached_masks)
+        {
+            let s = &result.stats;
+            eprintln!(
+                "[index-load] cache_hit={} total={}ms hash={}ms cache_load={}ms scan={}ms sort={}ms cache_save={}ms",
+                s.cache_hit,
+                s.total_ms,
+                s.hash_ms,
+                s.cache_load_ms,
+                s.scan_ms,
+                s.sort_ms,
+                s.cache_save_ms,
+            );
+        }
+        (result.entries, false, result.cached_masks, result.rescan_task)
     };
 
     // PATH エントリのスキャン + マージ
@@ -650,6 +649,22 @@ fn main() {
             // Start config.toml file watcher for external changes (snotra-settings)
             if let Some(watcher) = config_watcher::start(&app_handle) {
                 app_handle.manage(Mutex::new(watcher));
+            }
+
+            // 背景再スキャン（SPEC §3.3 ハイブリッド方式）。キャッシュヒット時のみ。
+            // ロジックは snotra-core、spawn と結果の後始末（アイコン無効化）は src-tauri。
+            if let Some(task) = rescan_task {
+                let handle_for_rescan = app_handle.clone();
+                let _ = std::thread::Builder::new()
+                    .name("snotra-index-rescan".to_string())
+                    .spawn(move || {
+                        indexer::lower_current_thread_priority();
+                        if task.run() == indexer::RescanOutcome::Changed
+                            && let Some(icons) = handle_for_rescan.try_state::<IconCacheState>()
+                        {
+                            icon::invalidate_icon_cache(&icons);
+                        }
+                    });
             }
 
             // All windows pre-created and all listeners registered; now safe to show tray.

@@ -795,7 +795,7 @@ Tauri の `tauri-plugin-updater` を用いて GitHub Releases 経由で自動更
 
 1. 起動時フロントエンドが `check()` を呼び出し、`Update` オブジェクトを `pendingUpdate` 変数に保持
 2. トーストの [今すぐ更新] をクリック: `pendingUpdate.downloadAndInstall()` 実行
-3. 完了後 `restart_app` IPC で再起動
+3. 完了後 `quit_app` IPC でアプリを終了する。プロセスの終了・再起動は NSIS インストーラに委ねる（`app.restart()` は新プロセスを先に spawn してファイルをロックし、NSIS の上書きを失敗させるため使わない）
 
 ### 20.5 リリース形式
 

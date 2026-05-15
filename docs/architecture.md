@@ -49,60 +49,21 @@ Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-
 
 ## 各クレート・パッケージの詳細
 
+ファイル単位のモジュール構成と各モジュールの責務は、各サブディレクトリの `CLAUDE.md` を SSOT とする（このセクションでは重複させない）。ここでは各クレート・パッケージの位置づけと主要な型のみを記す。
+
 ### snotra-core（純ロジック層）
 
-Win32 依存なし（`#[cfg(windows)]` ゲート以外）、完全にユニットテスト可能。UI 表示文字列を持たない（エラー状態は `is_error: true` フラグで伝え、表示文字列は UI 層が決める）。
-
-| モジュール | 責務 |
-|---|---|
-| `engine.rs` | ファサード。`SearchEngine` + `HistoryStore` + `Config` を統合し、検索・履歴記録・フォルダ列挙・インデックスホットスワップを提供 |
-| `search.rs` | 多段ランク付き検索（Prefix / Substring / Kana / Fuzzy / Path）。履歴ブースト、インクリメンタル検索キャッシュ、rayon 並列スコアリング |
-| `indexer.rs` | ファイルシステムスキャン。拡張子フィルタ、正規化キーによる重複排除、インデックスキャッシュ（v3/v4）の保存/復元 |
-| `config.rs` | `config.toml` の読み書き、デフォルト補完、レガシーフィールドの `apply_migrations()`、バリデーション |
-| `history.rs` | グローバル起動回数・クエリ別選択回数・フォルダ展開回数の管理。バイナリ永続化（V1→V2→V3 フォールバック） |
-| `folder.rs` | ディレクトリ列挙、フィルタ/ソート（フォルダ優先 → 展開回数降順 → 名前昇順）、top-k 返却 |
-| `query.rs` | クエリ正規化（小文字化・アクセント折畳み・空白統一）、かな変換、文字ビットマスク計算 |
-| `instant.rs` | インスタントコマンドの変数展開（`{query}` / `{clip}`）と前方一致フィルタリング |
-| `binfmt.rs` | バージョン付きバイナリファイル I/O（magic + version ヘッダ、tmp → rename の原子的保存） |
-| `ui_types.rs` | IPC データ型（`SearchResult`, `FolderExpansionState`） |
-| `window_data.rs` | ウィンドウ位置の保存/復元（v5: モニター相対座標） |
-| `error.rs` | エラー型定義（`BinError`, `ConfigError`） |
+Win32 依存なし（`#[cfg(windows)]` ゲート以外）、完全にユニットテスト可能。UI 表示文字列を持たない（エラー状態は `is_error: true` フラグで伝え、表示文字列は UI 層が決める）。多段ランク付き検索・履歴ブースト・インデックスキャッシュ・バイナリ永続化を担う純ロジック lib crate。
 
 主要な型: `Engine`（全操作の入口）、`AppEntry`（インデックスエントリ）、`SearchResult`（検索結果 DTO）、`Config`（設定）、`PrebuiltIndex`（ロック外で構築→スワップ）、`FolderListContext`（スナップショットパターン）
 
+→ モジュール構成は `snotra-core/CLAUDE.md`
+
 ### src-tauri（Tauri v2 バイナリ層）
 
-| モジュール | 責務 |
-|---|---|
-| `main.rs` | Tauri アプリエントリポイント。イベントループ設定、コマンド登録、リスナー接続 |
-| `state.rs` | `AppState`（`Mutex<Engine>` + `indexing` / `index_build_started` / `main_visible` の AtomicBool） |
-| `icon.rs` | `SHGetFileInfoW` → HICON → BGRA → PNG パイプラインでアイコン抽出。遅延ロード＋キャッシュ永続化 |
-| `indexing.rs` | バックグラウンドインデックス構築タスク。`indexing-started` / `indexing-complete` イベント発火 |
-| `config_watcher.rs` | `notify` で `config.toml` を監視（100ms デバウンス）。差分検知 → ホットキー/トレイ/テーマ/言語等をホットリロード |
-| `ime.rs` | Win32 IMM ラッパー（`ImmSetOpenStatus(false)`） |
-| `monitor.rs` | マルチモニター Win32 ヘルパー（物理ピクセル座標）。作業領域取得・クランプ・中央配置 |
+Tauri v2 バイナリ crate（パッケージ名 `snotra`）。Win32 API 統合（システムトレイ・グローバルホットキー・IME・マルチモニター）とフロントエンドとの IPC を担当。`commands/` は責務別に分割した `#[tauri::command]` ハンドラ群、`platform/` は Win32 メッセージループ・ホットキー・トレイのネイティブ統合。
 
-**commands/**（Tauri IPC コマンドハンドラ、責務別分割）:
-
-| モジュール | 責務 |
-|---|---|
-| `search.rs` | 検索クエリ実行 |
-| `launch.rs` | アイテム起動（ファイル・URL・ツール）。`launch_item_core`（`ShellExecuteW` + COM STA）を内部共有 |
-| `config.rs` | 設定読み書き（bootstrap payload 含む） |
-| `icon.rs` | バッチアイコン取得。`ipc::Response` でバイナリ返却、rayon 並列処理 |
-| `window.rs` | ウィンドウ表示/非表示制御、`snotra-settings` 子プロセス管理（`SettingsProcessState`） |
-| `system.rs` | システムレベルコマンド（再インデックス等） |
-| `instant.rs` | インスタントコマンドの展開・フィルタリング（クリップボード読み取り + ShellExecuteW） |
-| `updater.rs` | `restart_app`（フロントエンドの `downloadAndInstall()` 完了後に呼び出し） |
-
-**platform/**（Win32 ネイティブ統合）:
-
-| モジュール | 責務 |
-|---|---|
-| `mod.rs` | Win32 メッセージポンプスレッド。`WM_HOTKEY` / トレイメッセージを Tauri イベントへルーティング |
-| `hotkey.rs` | `RegisterHotKey` / `UnregisterHotKey` によるグローバルホットキー管理 |
-| `tray.rs` | `Shell_NotifyIconW` によるシステムトレイアイコン管理。クリック/コンテキストメニューイベント処理 |
-| `wndproc.rs` | カスタム `DefWindowProc`。`WM_TRAY_ICON` / `WM_CONTEXTMENU` を `PostThreadMessageW` で再キューイング |
+→ モジュール構成は `src-tauri/CLAUDE.md`
 
 ### ui（SolidJS フロントエンド）
 
@@ -116,67 +77,15 @@ ui/src/
   styles/              # CSS
 ```
 
-**components/**:
+**components/** は描画、**stores/** はリアクティブ状態、**lib/** はストア非依存の純ロジック・ユーティリティ。Tauri IPC は `lib/invoke.ts` の型付きラッパー経由。
 
-| ファイル | 責務 |
-|---|---|
-| `SearchWindow.tsx` | 検索入力フィールド。キーボードナビゲーション、スラッシュコマンド補完、ドラッグ移動 |
-| `ResultsSection.tsx` | 検索結果のインライン表示。バッチアイコン取得、Blob URL ライフサイクル管理、スクロール追従 |
-| `ResultRow.tsx` | 結果行（アイコン + 名前 + パス + フォルダバッジ） |
-| `UpdateToast.tsx` | 自動更新通知トースト（任意の「今すぐ更新」ボタン付き） |
-| `ToggleSwitch.tsx` | 汎用トグルスイッチコントロール |
-| `ThemePreview.tsx` | `VisualConfig` からの縮小プレビュー |
-| `SettingRow.tsx` | 設定行レイアウト（ラベル + 説明 + コントロールスロット） |
-
-**stores/**:
-
-| ファイル | 責務 |
-|---|---|
-| `search.ts` | 中央検索状態（query, results, selected, modes）。`resetForShow()`, `refreshResults()`, `initIndexingState()` |
-| `folder.ts` | フォルダ展開状態。`FolderFrame` シグナル、`folderFilter` |
-| `tool-selection.ts` | ツール選択状態。`ToolSelectionFrame` シグナル |
-
-**lib/**:
-
-| ファイル | 責務 |
-|---|---|
-| `invoke.ts` | 型安全な Tauri IPC ラッパー |
-| `types.ts` | TypeScript 型定義（単一ソース） |
-| `theme.ts` | CSS カスタムプロパティによるテーマ適用 |
-| `i18n.ts` | 日英2言語翻訳。`t(key, params?)` + SolidJS シグナルで言語切替 |
-| `commands.ts` | スラッシュコマンド定義（`/r`, `/o`, `/s`, `/q`）と `findCommand()` |
-| `folderNav.ts` | フォルダナビゲーション純ロジック（親ディレクトリ計算、ドライブルート / UNC 対応） |
-| `hotkeyValidation.ts` | ホットキー妥当性チェック（システムショートカット競合ガード） |
-| `iconBatch.ts` | バイナリバッチアイコンペイロードのパース → パス別 Blob URL 生成 |
-| `lruIconCache.ts` | アイコン Blob URL の LRU キャッシュ（自動 `revokeObjectURL`） |
-| `truncatePath.ts` | Canvas ベースのピクセル幅計測による長パスの中間省略（結果キャッシュ付き） |
-| `windowHeight.ts` | 結果件数とトースト有無からウィンドウ高さを計算 |
-| `perf.ts` | 開発用パフォーマンス計測（`localStorage.snotra_perf=1` で有効化） |
-| `trace.ts` | 開発用トレースログ（`localStorage.snotra_trace=1` で有効化） |
+→ モジュール構成は `ui/CLAUDE.md`
 
 ### snotra-settings（egui 設定 GUI）
 
-独立バイナリ。本体との通信は `config.toml` ファイル経由のみ（IPC なし）。
+独立バイナリ。本体との通信は `config.toml` ファイル経由のみ（IPC なし）。`app.rs` の draft/saved 二重状態モデルを核に、`tabs/` のタブ式設定エディタを構成する egui アプリ。
 
-| モジュール | 責務 |
-|---|---|
-| `main.rs` | エントリポイント。CLI 引数（`--first-run`, `--tab`）パース、`Config` ロード |
-| `app.rs` | `eframe::App` 実装（`SettingsApp`）。draft/saved 二重状態モデル、タブルーティング、サイドバーキーボードナビゲーション、Save/Discard/Reset、ダーティインジケーター |
-| `font.rs` | 日本語フォント読み込み（Yu Gothic → MS Gothic → Meiryo フォールバック）、システムフォントファミリー列挙 |
-| `hotkey_input.rs` | ホットキーキャプチャウィジェット。修飾キー + メインキーの組み合わせを取得、システムショートカット即時拒否 |
-| `i18n.rs` | `Tr(Language)` 翻訳構造体。match ベースで全 UI 文字列の日英切替 |
-
-**tabs/**（設定タブ、サイドバー順）:
-
-| ファイル | 責務 |
-|---|---|
-| `general.rs` | 言語・ホットキー・動作トグル（起動時表示/トレイ/IME/自動非表示/カーソルモニター追従）・自動更新モード |
-| `search.rs` | 検索方式（通常/フォルダ展開別）・隠しファイル表示・PATH 検索・履歴件数・履歴正規化・ローマ字検索 |
-| `index.rs` | スキャンパス一覧（パス + 拡張子 + フォルダ含む）。モーダルでの追加/編集、非同期フォルダピッカー |
-| `visual.rs` | テーマプリセット（Obsidian / Paper / Solarized / Monokai / Custom）・色設定・フォント・表示件数・幅・アイコン表示 |
-| `opener.rs` | オープナールール一覧（具体度順自動ソート）。ルール/ツールの追加/編集/削除/並べ替え、プリセット検出 |
-| `instant.rs` | インスタントコマンドのプレフィックス設定・コマンド追加/編集/削除/複製（変数展開プレビュー付き） |
-| `backup.rs` | config.toml のエクスポート/インポート（TOML バリデーション + マイグレーション）・設定フォルダを開く |
+→ モジュール構成は `snotra-settings/CLAUDE.md`
 
 ## 横断的な実装パターン
 

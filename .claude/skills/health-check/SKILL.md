@@ -1,6 +1,6 @@
 ---
 name: health-check
-description: "コードベースとドキュメントの衛生チェック: CLAUDE.md モジュール構成・architecture.md モジュール一覧・AGENTS.md 参照・SPEC.md 番号・build-commands.md コマンド・MEMORY.md 参照・rules パスパターンの整合性を検証する。大きなサイクル完了後や定期的に使用。"
+description: "コードベースとドキュメントの衛生チェック: CLAUDE.md モジュール構成・architecture.md モジュール表の非再導入・AGENTS.md 参照・SPEC.md 番号・build-commands.md コマンド・MEMORY.md 参照・rules パスパターンの整合性を検証する。大きなサイクル完了後や定期的に使用。"
 disable-model-invocation: true
 argument-hint: ""
 allowed-tools:
@@ -30,22 +30,17 @@ allowed-tools:
    - **記載あり・実ファイルなし**: 削除されたのに CLAUDE.md が未更新
    - **実ファイルあり・記載なし**: 追加されたのに CLAUDE.md が未更新
 
-## Check 2 -- docs/architecture.md モジュール一覧の乖離
+## Check 2 -- docs/architecture.md にファイル単位モジュール表が再導入されていないか
 
-`docs/architecture.md` の各クレート・パッケージのモジュール一覧表に記載されたファイル名が、実際のファイルと一致しているか検証する。
+`docs/architecture.md` はファイル単位のモジュール一覧を**持たない**設計。モジュール構成（各ファイルとその責務）の SSOT は各サブディレクトリの `CLAUDE.md` であり、architecture.md は位置づけ・主要な型・横断パターン・データフローのみを記す。二重管理がドリフトの温床になるため、ファイル単位のモジュール表は撤去された経緯がある。
 
-対象テーブル:
-- 「snotra-core（純ロジック層）」の表 ↔ `snotra-core/src/*.rs`
-- 「src-tauri」トップレベル + commands/ + platform/ の各表 ↔ `src-tauri/src/**/*.rs`
-- 「ui」の components/ + stores/ + lib/ の各表 ↔ `ui/src/**/*.{ts,tsx}`（テストファイル除外）
-- 「snotra-settings」トップレベル + tabs/ の各表 ↔ `snotra-settings/src/**/*.rs`
+このチェックは、その不変条件の回帰——architecture.md にファイル単位のモジュール表が再導入されていないか——を検証する。
 
 手順:
-1. `docs/architecture.md` を読み、各表からモジュール名（ファイル名）を抽出する
-2. Glob で実際のファイルを列挙する
-3. 差分を報告:
-   - **記載あり・実ファイルなし**: 削除されたのに architecture.md が未更新
-   - **実ファイルあり・記載なし**: 追加されたのに architecture.md が未更新
+1. `docs/architecture.md` を読む
+2. 先頭セルがバッククォート付きファイル名（`*.rs` / `*.ts` / `*.tsx` 等）の Markdown 表行が存在するか検査する（例: `| \`engine.rs\` | ... |`）
+3. 該当行が見つかった場合は **Warning** で報告:
+   - architecture.md にファイル単位のモジュール表が再導入されている。モジュール構成は各サブディレクトリの `CLAUDE.md` に一本化する設計のため、表の内容は該当 `CLAUDE.md` 側へ集約し、architecture.md からは撤去する
 
 ## Check 3 -- AGENTS.md ドキュメント参照の実在性
 

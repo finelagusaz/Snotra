@@ -157,7 +157,6 @@ fn apply_config_change(app: &AppHandle) {
     // Trigger reindex if needed
     let indexing_in_progress = state.indexing.load(Ordering::SeqCst);
     if index_changed && !indexing_in_progress {
-        state.index_build_started.store(false, Ordering::SeqCst);
         indexing::start_index_build(app);
     }
 

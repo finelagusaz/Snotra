@@ -119,6 +119,24 @@ fn icon_bin_file() -> Option<BinFile> {
     BinFile::new(ICON_MAGIC, ICON_VERSION, "icons.bin")
 }
 
+/// アイコンキャッシュをメモリ内・ディスク両方で無効化する。
+/// 背景再スキャンでエントリ集合が変わったときに呼ぶ。メモリ内 `IconCacheState` を
+/// `None` にし、`icons.bin` を削除する。両方やらないと、ファイルだけ消しても
+/// メモリ内の古いアイコンが終了時の `save_if_dirty` で再永続化される。
+pub fn invalidate_icon_cache(icons: &IconCacheState) {
+    invalidate_icon_cache_with(icons, icon_bin_file());
+}
+
+/// テスト可能な内部実装。`bin_file` を `None` で渡すとファイル削除をスキップする。
+fn invalidate_icon_cache_with(icons: &IconCacheState, bin_file: Option<BinFile>) {
+    // メモリ内キャッシュをクリア（次の get_icons_batch で icons.bin から再ロードされる）。
+    *icons.lock().unwrap() = None;
+    // ディスク上の icons.bin も削除（再ロード時に古いデータを読まないため）。
+    if let Some(bf) = bin_file {
+        bf.remove();
+    }
+}
+
 struct IconData {
     width: u32,
     height: u32,
@@ -320,5 +338,21 @@ mod tests {
         offset += len;
 
         assert_eq!(offset, buf.len());
+    }
+
+    #[test]
+    fn invalidate_icon_cache_clears_in_memory_state() {
+        // メモリ内にキャッシュがある状態で invalidate すると None になる
+        // （次の get_icons_batch で icons.bin から再ロードされる）。
+        // bin_file=None でファイル削除はスキップ（テストは実 icons.bin に触れない）。
+        let state: IconCacheState = Mutex::new(Some(IconCache {
+            data: IconCacheData::default(),
+            dirty: false,
+        }));
+        invalidate_icon_cache_with(&state, None);
+        assert!(
+            state.lock().unwrap().is_none(),
+            "invalidate_icon_cache must clear the in-memory IconCacheState to None"
+        );
     }
 }

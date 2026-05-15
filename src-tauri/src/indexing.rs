@@ -1,5 +1,4 @@
 use std::sync::Mutex;
-use std::sync::atomic::Ordering;
 
 use snotra_core::indexer;
 use tauri::{AppHandle, Emitter, Manager};
@@ -12,15 +11,9 @@ use crate::state::AppState;
 /// Returns `true` if the build was started, `false` if already running.
 pub fn start_index_build(app: &AppHandle) -> bool {
     let state = app.state::<AppState>();
-    if state
-        .index_build_started
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
-    {
+    if !state.try_begin_index_build() {
         return false;
     }
-
-    state.indexing.store(true, Ordering::SeqCst);
 
     // Notify platform thread
     if let Some(bridge) = app.try_state::<Mutex<PlatformBridge>>()
@@ -33,7 +26,7 @@ pub fn start_index_build(app: &AppHandle) -> bool {
     let _ = app.emit("indexing-started", ());
 
     let app_handle = app.clone();
-    std::thread::Builder::new()
+    let spawn_result = std::thread::Builder::new()
         .name("snotra-index-build".to_string())
         .spawn(move || {
             let (scan, show_hidden_system, show_icons, include_path_env) = {
@@ -94,11 +87,7 @@ pub fn start_index_build(app: &AppHandle) -> bool {
             };
 
             // Mark indexing complete
-            {
-                let state = app_handle.state::<AppState>();
-                state.indexing.store(false, Ordering::SeqCst);
-                state.index_build_started.store(false, Ordering::SeqCst);
-            }
+            app_handle.state::<AppState>().finish_index_build();
 
             // Notify platform thread
             if let Some(bridge) = app_handle.try_state::<Mutex<PlatformBridge>>()
@@ -114,8 +103,20 @@ pub fn start_index_build(app: &AppHandle) -> bool {
             if needs_rebuild {
                 start_index_build(&app_handle);
             }
-        })
-        .ok();
+        });
+
+    if spawn_result.is_err() {
+        // スレッド生成失敗。フラグをリセットし platform/frontend にも完了を通知して、
+        // index_build_started=true のまま wedge するのを防ぐ（嘘の true を返さない）。
+        state.finish_index_build();
+        if let Some(bridge) = app.try_state::<Mutex<PlatformBridge>>()
+            && let Ok(b) = bridge.lock()
+        {
+            b.send_command(PlatformCommand::SetIndexing(false));
+        }
+        let _ = app.emit("indexing-complete", ());
+        return false;
+    }
 
     true
 }

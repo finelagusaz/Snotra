@@ -3,8 +3,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::fs::Metadata;
 use std::hash::{Hash, Hasher};
 use std::os::windows::fs::MetadataExt;
-use std::path::{Path, PathBuf};
-use std::thread;
+use std::path::Path;
+use std::sync::Mutex;
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
@@ -14,7 +14,7 @@ use windows::Win32::System::Threading::{
 };
 
 use crate::binfmt::{BinFile, try_deserialize_with_header};
-use crate::config::{Config, ScanPath};
+use crate::config::ScanPath;
 use crate::query::{char_bitmask, to_lower_folded};
 
 const INDEX_MAGIC: [u8; 4] = *b"INDX";
@@ -195,6 +195,21 @@ pub struct LoadOrScanStats {
     pub total_ms: u128,
 }
 
+/// `load_or_scan_with_stats` の戻り値。
+pub struct LoadOrScanResult {
+    /// ロード or スキャンされたエントリ集合。
+    pub entries: Vec<AppEntry>,
+    /// キャッシュが無く（または stale で）フルスキャンが走った場合 true。
+    pub cache_changed: bool,
+    /// 各フェーズの所要時間。
+    pub stats: LoadOrScanStats,
+    /// v3/v4 キャッシュヒット時の事前計算データ。
+    pub cached_masks: Option<CachedMasks>,
+    /// キャッシュヒット時のみ `Some`。`src-tauri` が低優先度スレッドで `run()` し、
+    /// `RescanOutcome::Changed` ならアイコンキャッシュを無効化する。
+    pub rescan_task: Option<BackgroundRescanTask>,
+}
+
 /// v4 フォーマット: ビットマスクに加えて lower_names / lower_file_names / normalized_keys を保存。
 /// 起動時に SearchEngine の Wave 1（to_lower_folded / normalize_entry_key）を完全スキップできる。
 #[derive(Serialize, Deserialize)]
@@ -247,37 +262,20 @@ fn cache_bin_file() -> Option<BinFile> {
     BinFile::new(INDEX_MAGIC, INDEX_CACHE_VERSION, "index.bin")
 }
 
-fn icon_cache_path() -> Option<PathBuf> {
-    Config::config_dir().map(|p| p.join("icons.bin"))
-}
-
-fn invalidate_icon_cache_at(path: &Path) {
-    let _ = std::fs::remove_file(path);
-}
-
-fn invalidate_icon_cache() {
-    let Some(path) = icon_cache_path() else {
-        return;
-    };
-    invalidate_icon_cache_at(&path);
-}
-
-/// Scan filesystem every startup; compare with cache to detect changes.
-/// Returns (entries, changed) where changed=true means the entry set differs from cache.
+/// Load cached entries or scan the filesystem. Returns `(entries, cache_changed)`
+/// where `cache_changed = true` means the cache was missing/stale and a full scan ran.
 pub fn load_or_scan(scan: &[ScanPath], show_hidden_system: bool) -> (Vec<AppEntry>, bool) {
-    let (entries, changed, _, _) = load_or_scan_with_stats(scan, show_hidden_system);
-    (entries, changed)
+    let result = load_or_scan_with_stats(scan, show_hidden_system);
+    (result.entries, result.cache_changed)
 }
 
-/// Same as `load_or_scan`, but also returns timing stats and optional cached bitmasks.
-///
-/// The 4th return value is `Some(CachedMasks)` when a v3 cache was hit, or `None`
-/// (v2 cache or cache miss). Callers can pass the masks to
-/// `Engine::new_from_cache()` to skip bitmask recomputation in SearchEngine.
+/// Same as `load_or_scan`, but returns the full `LoadOrScanResult`: timing stats,
+/// cached bitmasks, and—on cache hit—a `BackgroundRescanTask` for the caller to
+/// run on a background thread.
 pub fn load_or_scan_with_stats(
     scan: &[ScanPath],
     show_hidden_system: bool,
-) -> (Vec<AppEntry>, bool, LoadOrScanStats, Option<CachedMasks>) {
+) -> LoadOrScanResult {
     let total_started = Instant::now();
 
     let hash_started = Instant::now();
@@ -289,12 +287,14 @@ pub fn load_or_scan_with_stats(
         let cache_load_ms = cache_load_started.elapsed().as_millis();
         let return_entries = result.entries;
         let cached_masks = result.cached_masks;
-        spawn_background_rescan(
-            scan.to_vec(),
+        // 背景再スキャンはここでは spawn しない。タスクとして返し、`src-tauri` が
+        // `AppHandle` を持った状態で spawn する（`Changed` 時のアイコン無効化のため）。
+        let rescan_task = BackgroundRescanTask {
+            scan: scan.to_vec(),
             show_hidden_system,
-            current_hash,
-            return_entries.clone(),
-        );
+            config_hash: current_hash,
+            cached_entries: return_entries.clone(),
+        };
         let stats = LoadOrScanStats {
             cache_hit: true,
             hash_ms,
@@ -304,21 +304,34 @@ pub fn load_or_scan_with_stats(
             cache_save_ms: 0,
             total_ms: total_started.elapsed().as_millis(),
         };
-        return (return_entries, false, stats, cached_masks);
+        return LoadOrScanResult {
+            entries: return_entries,
+            cache_changed: false,
+            stats,
+            cached_masks,
+            rescan_task: Some(rescan_task),
+        };
     }
     let cache_load_ms = cache_load_started.elapsed().as_millis();
 
-    let scan_started = Instant::now();
-    let mut entries = scan_all(scan, show_hidden_system);
-    let scan_ms = scan_started.elapsed().as_millis();
+    // 権威的書き手: scan + sort + save を書き込みロック保持下で行い、
+    // 背景再スキャン / 別ビルドとの index.bin 同時書き込みを防ぐ。
+    // フェーズ計測はクロージャの戻り値として持ち出す。
+    let (entries, scan_ms, sort_ms, cache_save_ms) = with_index_write_lock(|| {
+        let scan_started = Instant::now();
+        let mut entries = scan_all(scan, show_hidden_system);
+        let scan_ms = scan_started.elapsed().as_millis();
 
-    let sort_started = Instant::now();
-    sort_entries_canonical(&mut entries);
-    let sort_ms = sort_started.elapsed().as_millis();
+        let sort_started = Instant::now();
+        sort_entries_canonical(&mut entries);
+        let sort_ms = sort_started.elapsed().as_millis();
 
-    let cache_save_started = Instant::now();
-    save_cache_sorted(&entries, current_hash);
-    let cache_save_ms = cache_save_started.elapsed().as_millis();
+        let cache_save_started = Instant::now();
+        save_cache_sorted(&entries, current_hash);
+        let cache_save_ms = cache_save_started.elapsed().as_millis();
+
+        (entries, scan_ms, sort_ms, cache_save_ms)
+    });
 
     let stats = LoadOrScanStats {
         cache_hit: false,
@@ -330,7 +343,13 @@ pub fn load_or_scan_with_stats(
         total_ms: total_started.elapsed().as_millis(),
     };
 
-    (entries, true, stats, None)
+    LoadOrScanResult {
+        entries,
+        cache_changed: true,
+        stats,
+        cached_masks: None,
+        rescan_task: None,
+    }
 }
 
 fn entries_equal(a: &[AppEntry], b: &[AppEntry]) -> bool {
@@ -402,11 +421,15 @@ fn save_cache_sorted(entries: &[AppEntry], config_hash: u64) {
 /// Force rebuild: scan and save cache, regardless of existing cache.
 /// Called from settings dialog (Phase 5).
 pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> Vec<AppEntry> {
-    let mut entries = scan_all(scan, show_hidden_system);
-    sort_entries_canonical(&mut entries);
-    let config_hash = compute_config_hash(scan, show_hidden_system);
-    save_cache_sorted(&entries, config_hash);
-    entries
+    // 権威的書き手: scan + sort + save を書き込みロック保持下で行い、
+    // 背景再スキャン / 別の rebuild との index.bin 同時書き込みを防ぐ。
+    with_index_write_lock(|| {
+        let mut entries = scan_all(scan, show_hidden_system);
+        sort_entries_canonical(&mut entries);
+        let config_hash = compute_config_hash(scan, show_hidden_system);
+        save_cache_sorted(&entries, config_hash);
+        entries
+    })
 }
 
 /// キャッシュ読み込み結果。v3 ヒット時はマスク付き、v2 ヒット時はマスクなし。
@@ -469,34 +492,101 @@ fn load_cache(config_hash: u64) -> Option<LoadCacheResult> {
     None
 }
 
-fn spawn_background_rescan(
+/// `index.bin` の scan + save 区間を直列化する書き込みロック。
+/// 権威的ビルド（`rebuild_and_save` / cache-miss save）と背景再スキャンが共有する。
+/// `save_cache_sorted` 自体はロックを取らない（呼び出し側が保持する契約）。
+static INDEX_WRITE_LOCK: Mutex<()> = Mutex::new(());
+
+/// 書き込みロックを非ブロッキングで取得し、取れたらクロージャを実行して `Some(結果)` を返す。
+/// 取得できなければクロージャを実行せず `None` を返す。背景再スキャン等の日和見的書き手が使う。
+fn try_with_index_write_lock<R>(f: impl FnOnce() -> R) -> Option<R> {
+    let _guard = INDEX_WRITE_LOCK.try_lock().ok()?;
+    Some(f())
+}
+
+/// 書き込みロックをブロッキングで取得し、クロージャを実行して結果を返す。
+/// 権威的書き手（`rebuild_and_save` / cache-miss save）が使う。
+fn with_index_write_lock<R>(f: impl FnOnce() -> R) -> R {
+    // Mutex<()> は保持する状態を持たないため、poison しても into_inner で回復して継続する。
+    // （`.unwrap()` だと一度の panic 以降、全 index 書き込みが永久に panic する）
+    let _guard = INDEX_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    f()
+}
+
+/// 背景再スキャンの結果。`src-tauri` 側はこれを見てアイコン無効化等の後始末を行う。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RescanOutcome {
+    /// 権威的ビルドが書き込み中でロックを取得できず、再スキャンをスキップした。
+    Skipped,
+    /// 再スキャンしたが、エントリ集合はキャッシュと同一だった。
+    Unchanged,
+    /// エントリ集合がキャッシュと異なり、`index.bin` を更新した。
+    /// 呼び出し側はアイコンキャッシュの無効化を行うこと。
+    Changed,
+}
+
+/// 背景再スキャン本体。書き込みロックを取得できなければ（権威的ビルドが進行中）
+/// スキャン・保存をせず `Skipped` を返す。再スキャンは日和見的な鮮度維持であり、
+/// 本式ビルドが走っていれば不要。アイコンキャッシュには触れない（`icons.bin` は
+/// `src-tauri` の資源 — 呼び出し側が `Changed` を見て無効化する）。
+fn try_background_rescan(
+    scan: &[ScanPath],
+    show_hidden_system: bool,
+    config_hash: u64,
+    cached_entries: &[AppEntry],
+) -> RescanOutcome {
+    // 権威的ビルド（rebuild_and_save / cache-miss save）が書き込み中なら Skipped。
+    let changed = try_with_index_write_lock(|| {
+        let mut scanned = scan_all(scan, show_hidden_system);
+        sort_entries_canonical(&mut scanned);
+        if entries_equal(cached_entries, &scanned) {
+            false
+        } else {
+            save_cache_sorted(&scanned, config_hash);
+            true
+        }
+    });
+    match changed {
+        None => RescanOutcome::Skipped,
+        Some(false) => RescanOutcome::Unchanged,
+        Some(true) => RescanOutcome::Changed,
+    }
+}
+
+/// 背景再スキャンのタスク。所有データを抱え、`src-tauri` 側のスレッドへ `move` できる。
+/// `load_or_scan_with_stats` がキャッシュヒット時に `Some` で返す。
+pub struct BackgroundRescanTask {
     scan: Vec<ScanPath>,
     show_hidden_system: bool,
     config_hash: u64,
     cached_entries: Vec<AppEntry>,
-) {
-    let _ = thread::Builder::new()
-        .name("snotra-index-rescan".to_string())
-        .spawn(move || {
-            lower_current_thread_priority();
-            let mut scanned = scan_all(&scan, show_hidden_system);
-            sort_entries_canonical(&mut scanned);
-            if !entries_equal(&cached_entries, &scanned) {
-                save_cache_sorted(&scanned, config_hash);
-                invalidate_icon_cache();
-            }
-        });
 }
 
+impl BackgroundRescanTask {
+    /// 再スキャンを実行し、結果を返す。`Changed` のときは呼び出し側が
+    /// アイコンキャッシュを無効化すること。
+    pub fn run(self) -> RescanOutcome {
+        try_background_rescan(
+            &self.scan,
+            self.show_hidden_system,
+            self.config_hash,
+            &self.cached_entries,
+        )
+    }
+}
+
+/// 呼び出し元スレッドの優先度を下げる。背景再スキャン等のバックグラウンドスレッドが
+/// 起動直後のユーザー操作と CPU を奪い合わないようにする。`src-tauri` が rescan
+/// スレッドの先頭で呼ぶ。
 #[cfg(windows)]
-fn lower_current_thread_priority() {
+pub fn lower_current_thread_priority() {
     unsafe {
         let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     }
 }
 
 #[cfg(not(windows))]
-fn lower_current_thread_priority() {}
+pub fn lower_current_thread_priority() {}
 
 /// レジストリキーの RAII ガード。Drop 時に自動で RegCloseKey を呼ぶ。
 #[cfg(windows)]
@@ -733,6 +823,12 @@ mod tests {
     use super::*;
     use crate::binfmt::{deserialize_with_header, serialize_with_header, try_deserialize_with_header};
     use std::fs;
+
+    /// `INDEX_WRITE_LOCK` に触れるテストを直列化するガード。
+    /// `cargo test` は同一ファイル内のテストを並列実行するため、「ロック空き」を
+    /// 期待するテストと「ロック保持中」を作るテストが食い合わないよう、
+    /// これらのテストは先頭でこのガードを取得する。
+    static INDEX_LOCK_TEST_GUARD: Mutex<()> = Mutex::new(());
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("snotra_idx_test_{}", tag));
@@ -1153,36 +1249,93 @@ mod tests {
     }
 
     #[test]
-    fn invalidate_icon_cache_removes_icons_bin_if_present() {
-        let dir = temp_dir("icons_cache_remove");
-        let icon_path = dir.join("icons.bin");
-        fs::write(&icon_path, b"dummy").unwrap();
-        assert!(icon_path.exists());
-
-        invalidate_icon_cache_at(&icon_path);
-        assert!(!icon_path.exists());
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn invalidate_icon_cache_is_noop_when_missing() {
-        let dir = temp_dir("icons_cache_missing");
-        let icon_path = dir.join("icons.bin");
-        assert!(!icon_path.exists());
-
-        invalidate_icon_cache_at(&icon_path);
-        assert!(!icon_path.exists());
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
     fn scan_all_empty_when_no_paths() {
         let entries = scan_all(&[], false);
         assert!(
             entries.is_empty(),
             "scan_all with no paths should return empty"
+        );
+    }
+
+    #[test]
+    fn try_background_rescan_skips_when_write_lock_held() {
+        let _serial = INDEX_LOCK_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // 権威的なインデックスビルドが書き込みロックを保持している状況を再現する。
+        let _held = INDEX_WRITE_LOCK.lock().unwrap();
+        // 背景再スキャンは書き込みロックを取得できないため、
+        // スキャンも保存もせず Skipped を返さねばならない。
+        let outcome = try_background_rescan(&[], false, 0, &[]);
+        assert_eq!(
+            outcome,
+            RescanOutcome::Skipped,
+            "background rescan must return Skipped when the index write lock is held"
+        );
+    }
+
+    #[test]
+    fn background_rescan_task_run_reports_unchanged_for_empty_inputs() {
+        let _serial = INDEX_LOCK_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // 空のスキャン対象 → scan_all は空 → 空のキャッシュと一致 → Unchanged。
+        let task = BackgroundRescanTask {
+            scan: Vec::new(),
+            show_hidden_system: false,
+            config_hash: 0,
+            cached_entries: Vec::new(),
+        };
+        assert_eq!(task.run(), RescanOutcome::Unchanged);
+    }
+
+    #[test]
+    fn try_with_index_write_lock_skips_closure_when_lock_held() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let _serial = INDEX_LOCK_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // 権威的なインデックスビルドが書き込みロックを保持している状況を再現する。
+        let _held = INDEX_WRITE_LOCK.lock().unwrap();
+        // ロックを取得できないので、クロージャは実行されず None が返らねばならない。
+        let ran = AtomicBool::new(false);
+        let result = try_with_index_write_lock(|| ran.store(true, Ordering::SeqCst));
+        assert!(
+            !ran.load(Ordering::SeqCst),
+            "closure must not run while the index write lock is held"
+        );
+        assert!(
+            result.is_none(),
+            "try_with_index_write_lock must return None when the lock is held"
+        );
+    }
+
+    #[test]
+    fn with_index_write_lock_holds_lock_during_closure() {
+        let _serial = INDEX_LOCK_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // with_index_write_lock がクロージャ実行中ずっとロックを保持していることを、
+        // 「クロージャ内から try_lock すると失敗する」という形で決定論的に検証する。
+        // ブロッキング取得なので、他テストがロック保持中でも待つだけで flaky にならない。
+        let observed_locked = with_index_write_lock(|| INDEX_WRITE_LOCK.try_lock().is_err());
+        assert!(
+            observed_locked,
+            "with_index_write_lock must hold INDEX_WRITE_LOCK while running the closure"
+        );
+    }
+
+    #[test]
+    fn try_with_index_write_lock_runs_closure_when_lock_free() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let _serial = INDEX_LOCK_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        // ロックが空いていればクロージャを実行し、Some(結果) を返す。
+        // 回帰テスト: 「スキップ」を通した最小実装が同じ2行でこの経路も満たすため即パスする。
+        let ran = AtomicBool::new(false);
+        let result = try_with_index_write_lock(|| {
+            ran.store(true, Ordering::SeqCst);
+            42
+        });
+        assert!(
+            ran.load(Ordering::SeqCst),
+            "closure must run when the index write lock is free"
+        );
+        assert_eq!(
+            result,
+            Some(42),
+            "try_with_index_write_lock must return Some(closure result) when the lock is free"
         );
     }
 

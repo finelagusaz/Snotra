@@ -8,6 +8,14 @@
 
 - context7 MCP が設定済み。Tauri v2 / SolidJS / Rust クレートの最新 API を調べる際は context7 を使う
 
+## シェル環境（Windows / PowerShell）
+
+このリポジトリは Windows + PowerShell 環境で運用されている。Bash 系の慣習をそのまま持ち込むと、過去のセッションで複数回踏んだ摩擦を再発させる。
+
+- **bash の HEREDOC（`<<EOF` / `<<'EOF'`）を使わない** — PowerShell では here-string の引用境界が壊れ、終端マーカーがコミットメッセージ本文に漏れる事故が起きている。複数行のコミットメッセージは一時ファイルに書き出して `git commit -F <tmpfile>` を使うか、PowerShell の here-string `@'...'@`（閉じ `'@` は必ず行頭）を使う
+- **`git` コマンドをチェーンしない** — `git checkout <branch> && git rebase main` のような連鎖は `block-main-commit` フックを誤発火させた実績がある。`checkout` と `rebase`、`add` と `commit` のように影響範囲の異なる操作はそれぞれ独立した呼び出しに分ける
+- **パス区切りは `/` を優先** — PowerShell でも Git/Node/Cargo は `/` を受け付ける。`\` を含めるとエスケープが必要になるため、文字列中のパスは `/` で統一する
+
 ## チーム憲章
 
 Claude とユーザーが一緒に作業するときの関係性の原則。

@@ -224,6 +224,26 @@ struct IndexCache {
     normalized_keys: Vec<String>,
 }
 
+/// `IndexCache` の借用版（Serialize 専用）。`save_cache_sorted` が `entries` の全件 clone
+/// （`entries.to_vec()`）を避け、スライス参照を直接シリアライズするために使う。
+///
+/// **重要**: フィールドの順序・型を `IndexCache` と完全に一致させること。postcard は構造体を
+/// フィールド順でシリアライズし名前を見ないため、`&[T]` は `Vec<T>` とバイト列が一致する。
+/// 順序がずれると無言でフォーマットが変わり旧 `index.bin` を破損する。この不変条件は
+/// `index_cache_ref_serializes_identically_to_owned` テストでガードする。read 経路は所有版
+/// `IndexCache` のまま（バイト列不変のため `INDEX_CACHE_VERSION` バンプ不要）。
+#[derive(Serialize)]
+struct IndexCacheRef<'a> {
+    built_at: u64,
+    entries: &'a [AppEntry],
+    config_hash: u64,
+    char_masks: &'a [u64],
+    file_name_char_masks: &'a [u64],
+    lower_names: &'a [String],
+    lower_file_names: &'a [Option<String>],
+    normalized_keys: &'a [String],
+}
+
 /// v3 フォールバック用スキーマ（ビットマスクのみ、lower names なし）。
 #[derive(Serialize, Deserialize)]
 struct IndexCacheV3 {
@@ -402,18 +422,20 @@ fn save_cache_sorted(entries: &[AppEntry], config_hash: u64) {
     let normalized_keys: Vec<String> =
         entries.iter().map(|e| normalize_entry_key(&e.target_path)).collect();
 
-    let cache = IndexCache {
+    // 借用版 IndexCacheRef を使い entries の全件 clone を避ける。派生 Vec も参照で渡す
+    // （所有版 IndexCache へ move する必要がない）。出力バイト列は所有版と同一。
+    let cache = IndexCacheRef {
         built_at: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs(),
-        entries: entries.to_vec(),
+        entries,
         config_hash,
-        char_masks,
-        file_name_char_masks,
-        lower_names,
-        lower_file_names,
-        normalized_keys,
+        char_masks: &char_masks,
+        file_name_char_masks: &file_name_char_masks,
+        lower_names: &lower_names,
+        lower_file_names: &lower_file_names,
+        normalized_keys: &normalized_keys,
     };
     bf.save(&cache);
 }
@@ -987,6 +1009,69 @@ mod tests {
             restored.normalized_keys,
             vec!["c:\\apps\\firefox.lnk", "c:\\projects"]
         );
+    }
+
+    #[test]
+    fn index_cache_ref_serializes_identically_to_owned() {
+        // IndexCacheRef（save で使う借用版）が所有版 IndexCache とバイト列一致することを保証する。
+        // これが崩れると save の出力フォーマットが無言で変わり、既存 index.bin の読込が壊れる。
+        let entries = vec![
+            AppEntry {
+                name: "Firefox".to_string(),
+                target_path: "C:\\apps\\firefox.lnk".to_string(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "Projects".to_string(),
+                target_path: "C:\\Projects".to_string(),
+                is_folder: true,
+            },
+        ];
+        let char_masks = vec![0xABu64, 0xCD];
+        let file_name_char_masks = vec![0x12u64, 0x34];
+        let lower_names = vec!["firefox".to_string(), "projects".to_string()];
+        let lower_file_names = vec![Some("firefox.lnk".to_string()), None];
+        let normalized_keys =
+            vec!["c:\\apps\\firefox.lnk".to_string(), "c:\\projects".to_string()];
+        let built_at = 1_700_000_000u64;
+        let config_hash = 12345u64;
+
+        let owned = IndexCache {
+            built_at,
+            entries: entries.clone(),
+            config_hash,
+            char_masks: char_masks.clone(),
+            file_name_char_masks: file_name_char_masks.clone(),
+            lower_names: lower_names.clone(),
+            lower_file_names: lower_file_names.clone(),
+            normalized_keys: normalized_keys.clone(),
+        };
+        let borrowed = IndexCacheRef {
+            built_at,
+            entries: &entries,
+            config_hash,
+            char_masks: &char_masks,
+            file_name_char_masks: &file_name_char_masks,
+            lower_names: &lower_names,
+            lower_file_names: &lower_file_names,
+            normalized_keys: &normalized_keys,
+        };
+
+        let owned_bytes =
+            serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &owned).expect("owned");
+        let ref_bytes =
+            serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &borrowed).expect("borrowed");
+        assert_eq!(
+            owned_bytes, ref_bytes,
+            "IndexCacheRef must serialize byte-identically to owned IndexCache"
+        );
+
+        // 借用版で書いたバイト列を所有版として読み戻せること（read 経路の不変性）も確認する。
+        let restored: IndexCache =
+            deserialize_with_header(&ref_bytes, INDEX_MAGIC, INDEX_CACHE_VERSION)
+                .expect("roundtrip");
+        assert_eq!(restored.entries.len(), 2);
+        assert_eq!(restored.normalized_keys, normalized_keys);
     }
 
     #[test]

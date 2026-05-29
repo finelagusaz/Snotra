@@ -94,6 +94,7 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 5. **`save_cache_sorted()`**: 新フィールドの計算ロジックを追加
 6. **`CachedMasks` 構造体**: 新フィールドを `Option<T>` で追加（旧キャッシュでは None）
 7. **`SearchEngine::new_with_cached_masks()`**: 新パラメータを受け取り、None 時は自前で計算
+8. **`IndexCacheRef<'a>` 構造体**: `save_cache_sorted` が使う Serialize 専用の借用版。新フィールドを **`IndexCache` と完全に同じ順序・型**（`Vec<T>` → `&[T]`）で追加する。postcard は構造順依存のため、ずれると無言でフォーマットが変わり旧 `index.bin` を破損する。バイト一致は `index_cache_ref_serializes_identically_to_owned` テストでガード
 
 1つでも欠けるとキャッシュヒット時/ミス時で異なる結果を返す。
 

@@ -97,10 +97,12 @@ impl From<&SearchConfig> for SearchOptions {
 /// enforce this by running the full test suite after any structural change.
 pub struct SearchEngine {
     entries: Vec<AppEntry>,
-    lower_names: Vec<String>,
-    lower_file_names: Vec<Option<String>>,
+    /// 派生文字列の並列 Vec は `Box<str>` で保持する。これらは構築後に伸長しないため、
+    /// `String` の容量ワード（8B/要素）が無駄になる。`str` へ Deref するので読み取り側は無変更。
+    lower_names: Vec<Box<str>>,
+    lower_file_names: Vec<Option<Box<str>>>,
     /// Pre-computed normalized keys for history lookups (one per entry).
-    normalized_keys: Vec<String>,
+    normalized_keys: Vec<Box<str>>,
     /// Character-presence bitmask for lower_name (a-z: bits 0-25, 0-9: bits 26-35).
     /// Kept as a compact Vec<u64> — 8 entries per cache line — so the pre-filter sweep
     /// that discards non-matching candidates before scoring is L1-cache-friendly.
@@ -111,7 +113,7 @@ pub struct SearchEngine {
     file_name_char_masks: Vec<u64>,
     /// エントリ名をひらがな正規化した Vec（katakana→hiragana、ASCII はそのまま）。
     /// migemo 検索（ローマ字→かな変換マッチ）で使用。インデックスキャッシュには保存しない。
-    kana_lower_names: Vec<String>,
+    kana_lower_names: Vec<Box<str>>,
     /// Incremental search cache: normalized query string from the previous call.
     prev_query: String,
     /// Incremental search cache: entry indices that matched on the previous call,
@@ -138,19 +140,21 @@ struct EntryView<'a> {
     normalized_key: &'a str,
 }
 
+/// Wave 1 の出力: `(lower_names, lower_file_names, normalized_keys, kana_lower_names)`。
+/// いずれも構築後に伸長しないため `Box<str>` で保持する（容量ワード 8B/要素を節約）。
+type Wave1Strings = (Vec<Box<str>>, Vec<Option<Box<str>>>, Vec<Box<str>>, Vec<Box<str>>);
+
 /// Wave 1: entries から文字列正規化データを並列構築する。
 /// lower_names / lower_file_names / normalized_keys / kana_lower_names は
 /// entries への純粋な map であり相互依存がないため rayon::join で並列構築する。
-fn compute_wave1(
-    entries: &[AppEntry],
-) -> (Vec<String>, Vec<Option<String>>, Vec<String>, Vec<String>) {
+fn compute_wave1(entries: &[AppEntry]) -> Wave1Strings {
     let ((lower_names, lower_file_names), (normalized_keys, kana_lower_names)) = rayon::join(
         || {
             rayon::join(
                 || {
                     entries
                         .iter()
-                        .map(|e| to_lower_folded(&e.name))
+                        .map(|e| to_lower_folded(&e.name).into_boxed_str())
                         .collect::<Vec<_>>()
                 },
                 || {
@@ -160,7 +164,7 @@ fn compute_wave1(
                             std::path::Path::new(&e.target_path)
                                 .file_name()
                                 .and_then(|f| f.to_str())
-                                .map(to_lower_folded)
+                                .map(|s| to_lower_folded(s).into_boxed_str())
                         })
                         .collect::<Vec<_>>()
                 },
@@ -171,13 +175,13 @@ fn compute_wave1(
                 || {
                     entries
                         .iter()
-                        .map(|e| normalize_entry_key(&e.target_path))
+                        .map(|e| normalize_entry_key(&e.target_path).into_boxed_str())
                         .collect::<Vec<_>>()
                 },
                 || {
                     entries
                         .iter()
-                        .map(|e| to_kana(&to_lower_folded(&e.name)))
+                        .map(|e| to_kana(&to_lower_folded(&e.name)).into_boxed_str())
                         .collect::<Vec<_>>()
                 },
             )
@@ -192,8 +196,8 @@ fn compute_wave1(
 /// u64::MAX ensures (query_mask & u64::MAX) == query_mask for any query_mask,
 /// so these entries always pass the bitmask pre-filter regardless of the query.
 fn compute_wave2(
-    lower_names: &[String],
-    lower_file_names: &[Option<String>],
+    lower_names: &[Box<str>],
+    lower_file_names: &[Option<Box<str>>],
 ) -> (Vec<u64>, Vec<u64>) {
     rayon::join(
         || {
@@ -220,12 +224,12 @@ impl SearchEngine {
     /// 全並列 Vec の長さが entries と一致することを検証し、Self を組み立てる。
     fn assemble(
         entries: Vec<AppEntry>,
-        lower_names: Vec<String>,
-        lower_file_names: Vec<Option<String>>,
-        normalized_keys: Vec<String>,
+        lower_names: Vec<Box<str>>,
+        lower_file_names: Vec<Option<Box<str>>>,
+        normalized_keys: Vec<Box<str>>,
         char_masks: Vec<u64>,
         file_name_char_masks: Vec<u64>,
-        kana_lower_names: Vec<String>,
+        kana_lower_names: Vec<Box<str>>,
     ) -> Self {
         debug_assert!(
             lower_names.len() == entries.len()
@@ -285,11 +289,19 @@ impl SearchEngine {
             if let (Some(ln), Some(lfn), Some(nk)) =
                 (cached_lower_names, cached_lower_file_names, cached_normalized_keys)
             {
-                // A-3: v4 キャッシュヒット → Wave 1 完全スキップ（kana_lower_names は毎起動再計算）
+                // A-3: v4 キャッシュヒット → Wave 1 完全スキップ（kana_lower_names は毎起動再計算）。
+                // キャッシュ由来の Vec<String> を Box<str> へ移す。postcard デシリアライズ後の
+                // String は capacity == len のため into_boxed_str は再アロケーションを伴わない。
                 let kana = entries
                     .par_iter()
-                    .map(|e| to_kana(&to_lower_folded(&e.name)))
+                    .map(|e| to_kana(&to_lower_folded(&e.name)).into_boxed_str())
                     .collect::<Vec<_>>();
+                let ln = ln.into_iter().map(String::into_boxed_str).collect::<Vec<_>>();
+                let lfn = lfn
+                    .into_iter()
+                    .map(|o| o.map(String::into_boxed_str))
+                    .collect::<Vec<_>>();
+                let nk = nk.into_iter().map(String::into_boxed_str).collect::<Vec<_>>();
                 (ln, lfn, nk, kana)
             } else {
                 // v3 フォールバック: Wave 1 を並列実行

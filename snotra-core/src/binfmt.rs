@@ -106,12 +106,7 @@ pub fn serialize_with_header<T: Serialize>(
     version: u32,
     payload: &T,
 ) -> Option<Vec<u8>> {
-    let body = postcard::to_allocvec(payload).ok()?;
-    let mut out = Vec::with_capacity(HEADER_LEN + body.len());
-    out.extend_from_slice(&magic);
-    out.extend_from_slice(&version.to_le_bytes());
-    out.extend_from_slice(&body);
-    Some(out)
+    try_serialize_with_header(magic, version, payload).ok()
 }
 
 /// Result-based serialization (preferred over Option-based `serialize_with_header`).
@@ -120,12 +115,13 @@ pub fn try_serialize_with_header<T: Serialize>(
     version: u32,
     payload: &T,
 ) -> Result<Vec<u8>, BinError> {
-    let payload_bytes = postcard::to_allocvec(payload).map_err(|_| BinError::SerializeFailed)?;
-    let mut buf = Vec::with_capacity(HEADER_LEN + payload_bytes.len());
+    // ヘッダを先頭に書き込み、postcard 本体を同じ Vec へ直接追記する（postcard::to_extend）。
+    // to_allocvec で本体を別 Vec に確保してから extend_from_slice でコピーし直す二重バッファを
+    // 避け、save 区間のピークメモリと総コピー量を削減する。出力バイト列は従来と同一。
+    let mut buf = Vec::with_capacity(HEADER_LEN);
     buf.extend_from_slice(&magic);
     buf.extend_from_slice(&version.to_le_bytes());
-    buf.extend_from_slice(&payload_bytes);
-    Ok(buf)
+    postcard::to_extend(payload, buf).map_err(|_| BinError::SerializeFailed)
 }
 
 #[deprecated(note = "use try_deserialize_with_header for Result-based error handling")]

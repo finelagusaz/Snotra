@@ -105,6 +105,28 @@ impl Tr {
         }
     }
 
+    // 読み込み失敗（finding C: 一時的 read 失敗で既定値表示中）の保存ガード
+    pub fn read_failed_banner(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "⚠ 設定ファイルを読み込めませんでした。既定値で表示しています。このまま保存すると既存の設定が失われる可能性があります。",
+            Language::En => "⚠ Could not read the settings file. Showing defaults. Saving now may overwrite your existing settings.",
+        }
+    }
+
+    pub fn read_failed_confirm(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "既存設定が失われる可能性を承知の上で保存する",
+            Language::En => "Save anyway (I understand existing settings may be lost)",
+        }
+    }
+
+    pub fn status_read_failed_blocked(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "読み込み失敗中: 上のチェックを入れると保存できます",
+            Language::En => "Load failed: check the box above to enable saving",
+        }
+    }
+
     // Config error messages
     pub fn err_hotkey_modifier_empty(&self) -> &'static str {
         match self.0 {

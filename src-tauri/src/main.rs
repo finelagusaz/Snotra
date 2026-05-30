@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 use serde_json::json;
-use snotra_core::config::Config;
+use snotra_core::config::{Config, LoadOutcome};
 use snotra_core::engine::Engine;
 use snotra_core::history::HistoryStore;
 use snotra_core::indexer;
@@ -362,7 +362,7 @@ fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
 
 fn main() {
     let is_first_run = Config::is_first_run();
-    let config = Config::load();
+    let (config, load_outcome) = Config::load_reporting();
 
     let (entries, initial_indexing, cached_masks, rescan_task) = if is_first_run {
         (Vec::new(), true, None, None)
@@ -675,6 +675,13 @@ fn main() {
                 && let Ok(b) = bridge.lock()
             {
                 b.send_command(PlatformCommand::SetTrayVisible(true));
+                // config が壊れて既定値に復旧した場合、トレイ生成直後に通知する。
+                // 復旧時は config=default=show_tray ON のためこの分岐に入る。
+                // SetTrayVisible→ShowConfigRecoveryBalloon を同一チャネルに順に積むので、
+                // process_commands はトレイ生成後にバルーンを処理する。
+                if load_outcome == LoadOutcome::RecoveredFromCorrupt {
+                    b.send_command(PlatformCommand::ShowConfigRecoveryBalloon);
+                }
             }
 
             // Show window on startup if configured

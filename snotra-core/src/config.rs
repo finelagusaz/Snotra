@@ -20,6 +20,19 @@ pub enum AutoUpdateMode {
     Disabled,   // チェックしない
 }
 
+/// `Config::load_reporting()` の結果区分。UI 文字列を持たない（表示・通知は呼び出し側の責務）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoadOutcome {
+    /// 正常に parse できた。
+    Loaded,
+    /// 設定ファイルが存在せず（first-run）、既定値を生成・保存した。
+    FirstRun,
+    /// 内容が壊れていた（TOML parse 失敗 or 非 UTF-8）。`config.toml.bak` へ退避し既定値で起動。
+    RecoveredFromCorrupt,
+    /// 一時的・環境的な read 失敗（権限/ロック等）。既存ファイルを退避も上書きもせず既定値で起動。
+    ReadFailed,
+}
+
 fn default_language() -> Language {
     sys_locale::get_locale()
         .map(|l| {
@@ -869,19 +882,26 @@ impl Config {
     }
 
     pub fn load() -> Self {
+        Self::load_reporting().0
+    }
+
+    /// `load()` と同じ読み込みを行い、結果区分（`LoadOutcome`）も返す。
+    /// 退避通知（トレイ）や読込失敗時の保存ガード（設定画面）が結果を判断するために使う。
+    /// `config_dir` が解決できない極端な環境では `(default, FirstRun)` を返す。
+    pub fn load_reporting() -> (Self, LoadOutcome) {
         let Some(dir) = Self::config_dir() else {
-            return Self::default();
+            return (Self::default(), LoadOutcome::FirstRun);
         };
-        Self::load_from_dir(&dir)
+        Self::load_from_dir_reporting(&dir)
     }
 
     /// `dir`/config.toml を読み込むコア（`config_dir` を注入可能にし統合テストする）。
-    /// - parse 成功: migration 後、変化があれば保存
-    /// - parse 失敗: ログ + `.bak` 退避 + in-memory default（保存しない）
-    /// - read 失敗 (NotFound): first-run。default を生成・保存
-    /// - read 失敗 (InvalidData = 非 UTF-8): 壊れた永続データ。`.bak` 退避 + default（保存しない）
-    /// - read 失敗 (その他: permission/lock 等): 退避も上書きもせず default（保存しない）
-    fn load_from_dir(dir: &Path) -> Self {
+    /// - parse 成功: migration 後、変化があれば保存 → `Loaded`
+    /// - parse 失敗: ログ + `.bak` 退避 + in-memory default（保存しない）→ `RecoveredFromCorrupt`
+    /// - read 失敗 (NotFound): first-run。default を生成・保存 → `FirstRun`
+    /// - read 失敗 (InvalidData = 非 UTF-8): 壊れた永続データ。`.bak` 退避 + default → `RecoveredFromCorrupt`
+    /// - read 失敗 (その他: permission/lock 等): 退避も上書きもせず default → `ReadFailed`
+    fn load_from_dir_reporting(dir: &Path) -> (Self, LoadOutcome) {
         let path = dir.join("config.toml");
         match fs::read_to_string(&path) {
             Ok(content) => match toml::from_str::<Self>(&content) {
@@ -890,7 +910,7 @@ impl Config {
                     if config.apply_migrations() {
                         let _ = config.save_to_dir(dir);
                     }
-                    config
+                    (config, LoadOutcome::Loaded)
                 }
                 Err(e) => {
                     // TOML parse 失敗（ユーザーの構文ミス・破損等）。
@@ -900,14 +920,14 @@ impl Config {
                     // in-memory default で続行する（save() しない）。
                     eprintln!("[config] failed to parse {}: {e}", path.display());
                     Self::backup_invalid(&path);
-                    Self::default()
+                    (Self::default(), LoadOutcome::RecoveredFromCorrupt)
                 }
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 // first-run / ファイル不在: default を生成・保存
                 let config = Self::default();
                 let _ = config.save_to_dir(dir);
-                config
+                (config, LoadOutcome::FirstRun)
             }
             Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
                 // 不正な UTF-8 = 壊れた永続データ。parse 失敗と同質なので、同じく
@@ -916,7 +936,7 @@ impl Config {
                 // 残らず失われる（parse 失敗との保全方針の非対称を解消）。
                 eprintln!("[config] {} is not valid UTF-8: {e}", path.display());
                 Self::backup_invalid(&path);
-                Self::default()
+                (Self::default(), LoadOutcome::RecoveredFromCorrupt)
             }
             Err(e) => {
                 // permission / sharing violation / ロック等の一時的・環境的 read 失敗。
@@ -928,7 +948,7 @@ impl Config {
                     "[config] failed to read {}: {e} (running on defaults; file NOT overwritten)",
                     path.display()
                 );
-                Self::default()
+                (Self::default(), LoadOutcome::ReadFailed)
             }
         }
     }
@@ -2918,8 +2938,9 @@ mod tests {
         let bad = "{{{ not valid toml";
         fs::write(&path, bad).unwrap();
 
-        let config = Config::load_from_dir(&dir);
+        let (config, outcome) = Config::load_from_dir_reporting(&dir);
 
+        assert_eq!(outcome, LoadOutcome::RecoveredFromCorrupt);
         // default 値で起動する
         assert_eq!(config.hotkey.modifier, Config::default().hotkey.modifier);
         // parse 失敗時は default で再保存しない（config.toml は .bak へ退避され不在）
@@ -2942,8 +2963,9 @@ mod tests {
         let dir = temp_dir("load_missing");
         let path = dir.join("config.toml"); // 作らない（NotFound = first-run）
 
-        let config = Config::load_from_dir(&dir);
+        let (config, outcome) = Config::load_from_dir_reporting(&dir);
 
+        assert_eq!(outcome, LoadOutcome::FirstRun);
         assert_eq!(config.hotkey.modifier, Config::default().hotkey.modifier);
         // first-run は default を保存する
         assert!(path.exists(), "first-run must create config.toml");
@@ -2961,8 +2983,9 @@ mod tests {
         written.appearance.window_width = 777;
         fs::write(&path, toml::to_string_pretty(&written).unwrap()).unwrap();
 
-        let loaded = Config::load_from_dir(&dir);
+        let (loaded, outcome) = Config::load_from_dir_reporting(&dir);
 
+        assert_eq!(outcome, LoadOutcome::Loaded);
         assert_eq!(loaded.appearance.window_width, 777);
 
         let _ = fs::remove_dir_all(&dir);
@@ -2977,8 +3000,9 @@ mod tests {
         let invalid_utf8: &[u8] = &[0xFF, 0xFE, 0x00, 0x80];
         fs::write(&path, invalid_utf8).unwrap();
 
-        let config = Config::load_from_dir(&dir);
+        let (config, outcome) = Config::load_from_dir_reporting(&dir);
 
+        assert_eq!(outcome, LoadOutcome::RecoveredFromCorrupt);
         assert_eq!(config.hotkey.modifier, Config::default().hotkey.modifier);
         // canonical path には残さず（後続 save() で破損元を失わないため）.bak へ退避
         assert!(
@@ -3004,8 +3028,9 @@ mod tests {
         // 退避できないため、退避も上書きもせず据え置く。
         fs::create_dir(&path).unwrap();
 
-        let config = Config::load_from_dir(&dir);
+        let (config, outcome) = Config::load_from_dir_reporting(&dir);
 
+        assert_eq!(outcome, LoadOutcome::ReadFailed);
         assert_eq!(config.hotkey.modifier, Config::default().hotkey.modifier);
         assert!(
             path.is_dir(),

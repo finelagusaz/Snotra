@@ -35,6 +35,9 @@ pub enum PlatformCommand {
     /// Register the initial hotkey. Sent by main after the hotkey-pressed listener
     /// is ready so that no hotkey event is dropped before there is a receiver.
     RegisterInitialHotkey,
+    /// config が壊れて既定値にフォールバックした旨をトレイバルーンで通知する。
+    /// トレイ生成後（`SetTrayVisible(true)` の後）に送ること。
+    ShowConfigRecoveryBalloon,
     Exit,
 }
 
@@ -284,6 +287,12 @@ fn process_commands(
                             "hotkey": hotkey_str,
                         }),
                     );
+                }
+            }
+            PlatformCommand::ShowConfigRecoveryBalloon => {
+                // トレイ未生成（show_tray_icon=false 等）なら no-op。
+                if let Some(t) = tray.as_mut() {
+                    t.show_config_recovery_balloon();
                 }
             }
             PlatformCommand::Exit => unsafe {

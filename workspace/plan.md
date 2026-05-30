@@ -165,3 +165,14 @@ fn backup_invalid(path: &Path) {
 6. **YAGNI**: フロントエンド通知（item 4）除外。`.bak` はタイムスタンプ無しの単一ファイル。`config_path()` の test override（save 改修を伴う）も導入しない。要求範囲を超える追加なし。
 7. **シンプル化の挑戦**: 新たな `AtomicBool`・Mutex・子プロセス・汎用 IF を一切導入しない。parse 失敗 arm は `Self::default()` を返すのみで `save()` 呼び出しを**構造的に持たない**（「この操作が失敗したら」＝rename 失敗時も元ファイル保全・default 続行と明記済み）。copy 案を検討し rename を採用（「退避」語義＋自己回復）。
 8. **破壊不変条件の明示**: 「壊れたら即アウト」＝**ユーザーの config が default 内容で恒久上書きされる**。検知手段: (i) `load()` の parse 失敗 arm に `save()` が無いことのコードレビュー（構造的保証）、(ii) `backup_invalid` テストで「元ファイルが退避され存在しない」検証、(iii) 手動 smoke（不正 config 投入 → ログ出力／`.bak` 生成・内容保全／config.toml が default で上書きされていない、を目視）。3 点を実装報告に含める。
+
+### plan-review 結果の反映（Explore サブエージェント × 3: 影響範囲 / 不変条件 / スコープ）
+
+3 観点すべてで **要対処ゼロ**。計画の completeness 高・実装着手可。以下は検証で得た補強・実装時の注意:
+
+- **config_watcher は無限ループしない（確証）**: `src-tauri/src/config_watcher.rs` のウォッチャは CREATE/MODIFY イベントに反応し DELETE は無視する。`backup_invalid` の `rename`（config.toml を `.bak` へ移動＝config.toml は DELETE 扱い）はウォッチャを誤発火させず、再 `load()` ループを誘発しない。research.md の「起動時 load は watcher セットアップ前」に加え、たとえ起動後に発生してもループしないことが裏付けられた。
+- **parse 失敗時 default は None sentinel のまま（first-run と一貫）**: 返す `Self::default()` は `search.top_n_history` / `max_history_display` が `None`。実行時は `effective_*()`（config.rs:359,364）の `unwrap_or_else` が処理するため正常。**将来この値を `.unwrap()` で直叩きすると panic** する点に注意（first-run arm も同じ None 状態なので新規リスクではない）。
+- **item 4 除外の根拠を特定**: `.claude/rules/snotra-core.md:16`「UI 表示文字列を持たない: エラーは `is_error: true` フラグで伝え、表示は UI 層の責務」。フロントエンド通知の除外はこの明文ルールと整合。
+- **既存テストコメント修正は必須（plan Step 3 に既出）**: `config.rs:2758-2761` の「`Config::load()` uses unwrap_or_default()」コメントは実装後に実態（match + `.bak` 退避）と齟齬する。テスト本体（serde 直叩き）は維持し、コメントのみ修正。
+- **手動 smoke を実装報告の必須フィールドに**: `config_path()` が env 差し替え不可で `load()` 統合経路を自動テストできない以上、手動 smoke の「実施結果」を報告に明記する（スキップ不可）。
+- **SPEC.md 同期確認**: 実装時に SPEC.md（リポジトリ root）を grep。存在し「parse 失敗で黙って default」と明記があれば同期、なければ更新不要（plan「SPEC.md 更新要否」に既述）。

@@ -879,7 +879,8 @@ impl Config {
     /// - parse 成功: migration 後、変化があれば保存
     /// - parse 失敗: ログ + `.bak` 退避 + in-memory default（保存しない）
     /// - read 失敗 (NotFound): first-run。default を生成・保存
-    /// - read 失敗 (その他): 既存ファイルを上書きせずログ + in-memory default（保存しない）
+    /// - read 失敗 (InvalidData = 非 UTF-8): 壊れた永続データ。`.bak` 退避 + default（保存しない）
+    /// - read 失敗 (その他: permission/lock 等): 退避も上書きもせず default（保存しない）
     fn load_from_dir(dir: &Path) -> Self {
         let path = dir.join("config.toml");
         match fs::read_to_string(&path) {
@@ -908,11 +909,21 @@ impl Config {
                 let _ = config.save_to_dir(dir);
                 config
             }
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                // 不正な UTF-8 = 壊れた永続データ。parse 失敗と同質なので、同じく
+                // byte-preserving に .bak へ退避してから default で起動する。
+                // canonical path に残すと後続 save() が破損元を上書きし、.bak にも
+                // 残らず失われる（parse 失敗との保全方針の非対称を解消）。
+                eprintln!("[config] {} is not valid UTF-8: {e}", path.display());
+                Self::backup_invalid(&path);
+                Self::default()
+            }
             Err(e) => {
-                // NotFound 以外の read 失敗（permission / sharing violation / ロック /
-                // 不正バイト等）。ファイルは存在するので default で上書きしない
-                // （parse 失敗と同じデータ保全方針。`Err(_)` 一括 first-run 扱いは
-                // 一時的 read 失敗で実設定を default に潰すデータ損失経路になる）。
+                // permission / sharing violation / ロック等の一時的・環境的 read 失敗。
+                // ファイル内容は壊れていない可能性が高く読めないだけなので、退避も
+                // 上書きもせず default で起動する（読めないファイルは安全に退避できない）。
+                // `Err(_)` 一括 first-run 扱いは一時的 read 失敗で実設定を default に
+                // 潰すデータ損失経路になるため避ける。
                 eprintln!(
                     "[config] failed to read {}: {e} (running on defaults; file NOT overwritten)",
                     path.display()
@@ -2958,21 +2969,52 @@ mod tests {
     }
 
     #[test]
-    fn load_from_dir_unreadable_file_is_not_overwritten() {
-        let dir = temp_dir("load_unreadable");
+    fn load_from_dir_invalid_utf8_is_backed_up() {
+        let dir = temp_dir("load_invalid_utf8");
         let path = dir.join("config.toml");
-        // 不正な UTF-8 → read_to_string が NotFound 以外（InvalidData）で失敗する
+        // 不正な UTF-8 → read_to_string が InvalidData で失敗する。
+        // 壊れた永続データなので parse 失敗と同じく .bak へ byte-preserving 退避する。
         let invalid_utf8: &[u8] = &[0xFF, 0xFE, 0x00, 0x80];
         fs::write(&path, invalid_utf8).unwrap();
 
         let config = Config::load_from_dir(&dir);
 
         assert_eq!(config.hotkey.modifier, Config::default().hotkey.modifier);
-        // 既存ファイルは default で上書きされない（元の不正バイトを保持）
+        // canonical path には残さず（後続 save() で破損元を失わないため）.bak へ退避
+        assert!(
+            !path.exists(),
+            "corrupt (non-UTF-8) config.toml must be moved to .bak, not left at canonical path"
+        );
+        let bak = path.with_extension("toml.bak");
         assert_eq!(
-            fs::read(&path).unwrap(),
+            fs::read(&bak).unwrap(),
             invalid_utf8,
-            "existing config must NOT be overwritten on a non-NotFound read error"
+            ".bak must byte-preserve the corrupt content"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_from_dir_transient_read_error_leaves_file_intact() {
+        let dir = temp_dir("load_transient");
+        let path = dir.join("config.toml");
+        // config.toml をディレクトリにして read_to_string を NotFound/InvalidData 以外で
+        // 失敗させる（permission/lock 等の一時的失敗の代理）。読めないファイルは安全に
+        // 退避できないため、退避も上書きもせず据え置く。
+        fs::create_dir(&path).unwrap();
+
+        let config = Config::load_from_dir(&dir);
+
+        assert_eq!(config.hotkey.modifier, Config::default().hotkey.modifier);
+        assert!(
+            path.is_dir(),
+            "transient read error must NOT move or overwrite the existing path"
+        );
+        let bak = path.with_extension("toml.bak");
+        assert!(
+            !bak.exists(),
+            "transient read error must NOT create a .bak (the file may be intact, just unreadable)"
         );
 
         let _ = fs::remove_dir_all(&dir);

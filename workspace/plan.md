@@ -50,13 +50,12 @@ pub enum LoadOutcome {
 - Save は確認チェックボックス「既存設定が失われる可能性を承知で保存」をオンにするまで無効化。
 - 状態: `loaded_read_failed: bool`（`outcome==ReadFailed`）+ `confirmed_despite_read_failed: bool`（チェックボックス）。**保存成功時に両方を `false` に戻す**（戻す経路を明示）。`save()`（app.rs:187 の `saved = config.clone()` 直後）でリセット。
 
-## 未確定（要求判断・ユーザー確認）
+## 確定事項（ユーザー判断）
 
-**settings の `ReadFailed` 時の保存ガード方式**:
-- (A) 警告＋明示確認で保存許可（**推奨**: 非破壊・ユーザーを詰まらせない・実装も中庸）
-- (B) 保存を硬く拒否し「再読み込み」成功まで Save 無効（最も安全だが、読めない状態が続くとユーザーが設定変更を永続化できず詰む）
-
-→ plan-review 後・実装着手前にユーザー確認する。
+**settings の `ReadFailed` 時の保存ガード方式 = (A) 警告バナー＋確認チェックボックス**（確定）:
+- 画面上部に警告バナーを常時表示。
+- Save は「既存設定が失われる可能性を承知で保存」チェックボックスをオンにするまで無効化（2-click は不採用）。
+- 状態 `loaded_read_failed` + `confirmed_despite_read_failed`、保存成功で両方リセット。
 
 ## 変更ファイル一覧
 

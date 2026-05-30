@@ -17,7 +17,7 @@ fn main() -> eframe::Result {
         .find(|w| w[0] == "--tab")
         .map(|w| w[1].clone());
 
-    let config = Config::load();
+    let (config, load_outcome) = Config::load_reporting();
 
-    app::run(config, first_run, initial_tab)
+    app::run(config, first_run, initial_tab, load_outcome)
 }

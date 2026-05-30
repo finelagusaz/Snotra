@@ -1,6 +1,6 @@
 use eframe::egui;
 use egui::{Color32, CornerRadius, Stroke};
-use snotra_core::config::{Config, ConfigError, Language};
+use snotra_core::config::{Config, ConfigError, Language, LoadOutcome};
 use snotra_core::window_data::{self, WindowPlacement};
 
 use crate::i18n::Tr;
@@ -130,10 +130,19 @@ struct SettingsApp {
     last_position: Option<WindowPlacement>,
     tr: Tr,
     sidebar_focused: bool,
+    /// 起動時の読み込みが一時的失敗（`ReadFailed`）で既定値表示中か（finding C）。
+    loaded_read_failed: bool,
+    /// 上記のとき、既存設定喪失リスクを承知で保存する確認チェック。保存成功でリセット。
+    confirm_overwrite_despite_read_failure: bool,
 }
 
 impl SettingsApp {
-    fn new(config: Config, first_run: bool, initial_tab: Option<String>) -> Self {
+    fn new(
+        config: Config,
+        first_run: bool,
+        initial_tab: Option<String>,
+        load_outcome: LoadOutcome,
+    ) -> Self {
         let tab = initial_tab
             .as_deref()
             .and_then(TabId::from_str)
@@ -158,6 +167,8 @@ impl SettingsApp {
             last_position: None,
             tr,
             sidebar_focused: true,
+            loaded_read_failed: load_outcome == LoadOutcome::ReadFailed,
+            confirm_overwrite_despite_read_failure: false,
         }
     }
 
@@ -166,6 +177,13 @@ impl SettingsApp {
     }
 
     fn save(&mut self) {
+        // finding C: 一時的 read 失敗起因で既定値を表示している間は、明示確認なしに
+        // 保存させない（ロック解除済みの実 config.toml を既定値で上書きする事故を防ぐ）。
+        if self.loaded_read_failed && !self.confirm_overwrite_despite_read_failure {
+            self.status = self.tr.status_read_failed_blocked().to_string();
+            self.status_timer = 5.0;
+            return;
+        }
         let mut config = self.draft.clone();
         config.paths.normalize_scan_paths();
         config.normalize_openers();
@@ -186,6 +204,9 @@ impl SettingsApp {
         }
         self.saved = config.clone();
         self.draft = config;
+        // 保存成功で read 失敗ガードを解除（実 config.toml がユーザー設定で書かれた）
+        self.loaded_read_failed = false;
+        self.confirm_overwrite_despite_read_failure = false;
         // Update tr for potential language change
         self.tr = Tr(self.draft.general.language);
         self.status = self.tr.status_saved().to_string();
@@ -448,9 +469,14 @@ impl eframe::App for SettingsApp {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.spacing_mut().button_padding = egui::vec2(12.0, 4.0);
 
-                            // Save button (always "保存", disabled when no changes)
+                            // Save button (disabled when no changes; finding C: also gated by
+                            // the read-failure confirm checkbox so a temporarily-unreadable
+                            // config is not silently overwritten with defaults)
+                            let can_save = self.has_changes()
+                                && (!self.loaded_read_failed
+                                    || self.confirm_overwrite_despite_read_failure);
                             if ui
-                                .add_enabled(self.has_changes(), egui::Button::new(self.tr.btn_save()))
+                                .add_enabled(can_save, egui::Button::new(self.tr.btn_save()))
                                 .clicked()
                             {
                                 self.save();
@@ -484,6 +510,25 @@ impl eframe::App for SettingsApp {
                 egui::Rect::from_min_size(ui.next_widget_position(), egui::vec2(0.0, 0.0));
             ui.interact(sentinel_rect, sidebar_sentinel_id, egui::Sense::focusable_noninteractive());
 
+            // finding C: read 失敗起因で既定値表示中の警告バナー + 保存確認チェック。
+            // チェックを入れるまで Save は無効（下の footer 参照）。
+            if self.loaded_read_failed {
+                egui::Frame::NONE
+                    .fill(Color32::from_rgb(255, 244, 206))
+                    .inner_margin(egui::Margin::symmetric(10, 8))
+                    .show(ui, |ui| {
+                        ui.colored_label(
+                            Color32::from_rgb(140, 90, 0),
+                            self.tr.read_failed_banner(),
+                        );
+                        ui.checkbox(
+                            &mut self.confirm_overwrite_despite_read_failure,
+                            self.tr.read_failed_confirm(),
+                        );
+                    });
+                ui.add_space(8.0);
+            }
+
             match self.active_tab {
                 TabId::General => tabs::general::ui(ui, &mut self.draft, &mut self.hotkey_state, &self.tr),
                 TabId::Search => tabs::search::ui(ui, &mut self.draft, &self.tr),
@@ -496,6 +541,10 @@ impl eframe::App for SettingsApp {
                         self.draft = result.imported_config.clone();
                         self.saved = result.imported_config;
                         self.tr = Tr(self.draft.general.language);
+                        // 明示インポートで良い config を読み込んだので read 失敗ガードは解除
+                        // （save() 成功パスと対称に両フラグを戻す）
+                        self.loaded_read_failed = false;
+                        self.confirm_overwrite_despite_read_failure = false;
                     }
                 }
             }
@@ -526,7 +575,12 @@ fn load_icon() -> egui::IconData {
     }
 }
 
-pub fn run(config: Config, first_run: bool, initial_tab: Option<String>) -> eframe::Result {
+pub fn run(
+    config: Config,
+    first_run: bool,
+    initial_tab: Option<String>,
+    load_outcome: LoadOutcome,
+) -> eframe::Result {
     let icon = load_icon();
     let title = match config.general.language {
         Language::Ja => "Snotra 設定",
@@ -553,7 +607,7 @@ pub fn run(config: Config, first_run: bool, initial_tab: Option<String>) -> efra
         Box::new(move |cc| {
             crate::font::configure_fonts(&cc.egui_ctx);
             apply_win11_theme(&cc.egui_ctx);
-            Ok(Box::new(SettingsApp::new(config, first_run, initial_tab)))
+            Ok(Box::new(SettingsApp::new(config, first_run, initial_tab, load_outcome)))
         }),
     )
 }

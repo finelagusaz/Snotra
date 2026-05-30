@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use notify::{Event, EventKind, RecursiveMode, Watcher};
-use snotra_core::config::{Config, Language};
+use snotra_core::config::{Config, Language, LoadOutcome};
 use tauri::window::Color;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager};
 
@@ -76,7 +76,7 @@ pub fn start(app_handle: &AppHandle) -> Option<notify::RecommendedWatcher> {
 
 /// Load config from disk and apply changes, mirroring save_config logic.
 fn apply_config_change(app: &AppHandle) {
-    let new_config = Config::load();
+    let (new_config, load_outcome) = Config::load_reporting();
 
     let state = app.state::<AppState>();
     let old_config = state.engine.lock().unwrap().config().clone();
@@ -146,6 +146,11 @@ fn apply_config_change(app: &AppHandle) {
         }
         if language_changed {
             b.send_command(PlatformCommand::SetLanguage(new_language));
+        }
+        // 実行中に config が壊れて既定値に復旧した場合、トレイバルーンで通知する。
+        // SetLanguage の後に送り、バルーン文言が更新後の言語で表示されるようにする。
+        if load_outcome == LoadOutcome::RecoveredFromCorrupt {
+            b.send_command(PlatformCommand::ShowConfigRecoveryBalloon);
         }
     }
 

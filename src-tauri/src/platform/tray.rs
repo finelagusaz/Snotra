@@ -1,8 +1,8 @@
 use tauri::{AppHandle, Emitter, Manager};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Shell::{
-    ExtractIconW, NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE,
-    NIM_SETVERSION, NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW,
+    ExtractIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_WARNING, NIM_ADD,
+    NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, DestroyIcon, DestroyMenu, GetCursorPos, GetMessageTime, HICON,
@@ -139,9 +139,43 @@ pub(super) struct TrayIcon {
     recent_menu_tools: Vec<(String, String, String)>,
 }
 
+/// UTF-16 + NUL 終端で固定長 wide 文字列フィールド（`szTip`/`szInfo`/`szInfoTitle`）に書き込む。
+/// 長すぎる場合は末尾の NUL を必ず残して切り詰める。
+fn write_wide_field(field: &mut [u16], s: &str) {
+    field.fill(0);
+    let encoded: Vec<u16> = s.encode_utf16().collect();
+    let len = encoded.len().min(field.len().saturating_sub(1));
+    field[..len].copy_from_slice(&encoded[..len]);
+}
+
 impl TrayIcon {
     pub(super) fn set_language(&mut self, lang: Language) {
         self.language = lang;
+    }
+
+    /// 設定の読み込みに失敗し既定値で起動した（壊れた config を `config.toml.bak` へ退避済み）
+    /// ことをトレイバルーンで通知する。`NIM_MODIFY` + `NIF_INFO`。再発火を防ぐため送信直後に
+    /// `NIF_INFO` を落とす（以後の `NIM_MODIFY` でバルーンが再表示されない）。
+    pub(super) fn show_config_recovery_balloon(&mut self) {
+        let (title, body) = match self.language {
+            Language::Ja => (
+                "Snotra: 設定を読み込めませんでした",
+                "config.toml を読み込めず既定値で起動しました。元の内容は config.toml.bak に退避しています。",
+            ),
+            Language::En => (
+                "Snotra: failed to load settings",
+                "Couldn't read config.toml; started with defaults. The original was backed up to config.toml.bak.",
+            ),
+        };
+        write_wide_field(&mut self.nid.szInfoTitle, title);
+        write_wide_field(&mut self.nid.szInfo, body);
+        self.nid.dwInfoFlags = NIIF_WARNING;
+        self.nid.uFlags |= NIF_INFO;
+        unsafe {
+            let _ = Shell_NotifyIconW(NIM_MODIFY, &self.nid);
+        }
+        // 再発火防止: 以後の NIM_MODIFY でバルーンが再表示されないよう NIF_INFO を落とす
+        self.nid.uFlags &= !NIF_INFO;
     }
 
     pub(super) fn create(hwnd: HWND, language: Language) -> Self {
@@ -156,9 +190,7 @@ impl TrayIcon {
         };
         nid.Anonymous.uVersion = NOTIFYICON_VERSION_4;
 
-        let tip: Vec<u16> = "Snotra".encode_utf16().chain(std::iter::once(0)).collect();
-        let len = tip.len().min(nid.szTip.len());
-        nid.szTip[..len].copy_from_slice(&tip[..len]);
+        write_wide_field(&mut nid.szTip, "Snotra");
 
         let owned_icon = load_tray_icon_from_exe();
         nid.hIcon = owned_icon

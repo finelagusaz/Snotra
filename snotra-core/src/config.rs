@@ -874,18 +874,49 @@ impl Config {
         };
 
         match fs::read_to_string(&path) {
-            Ok(content) => {
-                let mut config: Self = toml::from_str(&content).unwrap_or_default();
-                if config.apply_migrations() {
-                    let _ = config.save();
+            Ok(content) => match toml::from_str::<Self>(&content) {
+                Ok(mut config) => {
+                    // 正常系: 従来どおり migration → 変化があれば save
+                    if config.apply_migrations() {
+                        let _ = config.save();
+                    }
+                    config
                 }
-                config
-            }
+                Err(e) => {
+                    // TOML parse 失敗（ユーザーの構文ミス・破損等）。
+                    // 黙ってデフォルトで上書きしない（snotra-core/CLAUDE.md:
+                    // deserialize_failed → save() はデータ喪失を招く）。
+                    // エラーを可視化し、不正ファイルを .bak へ退避してから
+                    // in-memory default で続行する（save() しない）。
+                    eprintln!("[config] failed to parse {}: {e}", path.display());
+                    Self::backup_invalid(&path);
+                    Self::default()
+                }
+            },
             Err(_) => {
+                // first-run / ファイル不在: 従来どおり default を生成・保存
                 let config = Self::default();
                 let _ = config.save();
                 config
             }
+        }
+    }
+
+    /// Best-effort: 解析不能な config ファイルを `<path>.bak` へ退避（移動）し、
+    /// ユーザーが手動復旧できるようにする。結果をログする。panic しない。
+    /// 退避に失敗した場合は元ファイルをその場に残し（default で上書きしない）、
+    /// ログして default 続行する。
+    fn backup_invalid(path: &Path) {
+        let bak = path.with_extension("toml.bak");
+        match fs::rename(path, &bak) {
+            Ok(()) => eprintln!(
+                "[config] backed up unparseable config to {} (running on defaults; original NOT overwritten)",
+                bak.display()
+            ),
+            Err(e) => eprintln!(
+                "[config] failed to back up unparseable config at {}: {e} (running on defaults; original left in place)",
+                path.display()
+            ),
         }
     }
 
@@ -2757,8 +2788,10 @@ mod tests {
 
     #[test]
     fn partial_toml_falls_back_to_default_via_unwrap_or_default() {
-        // Partial TOML missing required sections → toml::from_str fails,
-        // but Config::load() uses unwrap_or_default() to handle this.
+        // Partial TOML missing required sections → toml::from_str fails.
+        // Config::load() now matches on the parse error (backing the file up to
+        // .bak and falling back to an in-memory default), not unwrap_or_default().
+        // This test still pins the serde-level fallback to default values.
         let toml_str = r#"
             [hotkey]
             modifier = "Ctrl"
@@ -2771,6 +2804,73 @@ mod tests {
         let default = Config::default();
         assert_eq!(config.hotkey.modifier, default.hotkey.modifier);
         assert_eq!(config.appearance.max_results, default.appearance.max_results);
+    }
+
+    // -- backup_invalid: parse 失敗時の .bak 退避（issue #338） --
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("snotra_config_test_{}", tag));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    #[test]
+    fn backup_invalid_renames_to_bak_preserving_content() {
+        let dir = temp_dir("backup_rename");
+        let path = dir.join("config.toml");
+        let bad = "{{{{not valid toml!!!!";
+        fs::write(&path, bad).unwrap();
+
+        Config::backup_invalid(&path);
+
+        let bak = path.with_extension("toml.bak");
+        // 元ファイルは退避され存在しない（= default で上書きされ得ない）
+        assert!(
+            !path.exists(),
+            "config.toml must be moved away on parse failure (not left for default overwrite)"
+        );
+        // .bak が元の不正内容を保全している（手動復旧可能）
+        assert_eq!(
+            fs::read_to_string(&bak).unwrap(),
+            bad,
+            ".bak must preserve the original (unparseable) content"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn backup_invalid_overwrites_existing_bak() {
+        let dir = temp_dir("backup_overwrite");
+        let path = dir.join("config.toml");
+        let bak = path.with_extension("toml.bak");
+        fs::write(&bak, "OLD BAK CONTENT").unwrap();
+        let newer_bad = "also = invalid = toml";
+        fs::write(&path, newer_bad).unwrap();
+
+        Config::backup_invalid(&path);
+
+        // 単一 .bak を最新の不正内容で上書きする（KISS）
+        assert_eq!(fs::read_to_string(&bak).unwrap(), newer_bad);
+        assert!(!path.exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn backup_invalid_missing_source_is_noop_no_panic() {
+        let dir = temp_dir("backup_missing");
+        let path = dir.join("config.toml"); // 作成しない
+        // rename は Err になるが panic せず、.bak も作られない
+        Config::backup_invalid(&path);
+        let bak = path.with_extension("toml.bak");
+        assert!(
+            !bak.exists(),
+            "no .bak should be created when source is absent"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

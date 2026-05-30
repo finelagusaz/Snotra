@@ -506,6 +506,7 @@ stateDiagram-v2
 - `%APPDATA%\Snotra\config.toml`（TOML）
 - 欠損キーはデフォルト補完
 - 未知キーは無視して読み込み継続
+- TOML パースエラー時は既定値で起動し、不正な `config.toml` を `config.toml.bak` へ退避する（既定値で上書きしない）。エラーは stderr に出力する
 
 ### 13.2 アプリケーションデータ（バイナリ）
 

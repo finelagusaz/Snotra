@@ -14,7 +14,9 @@
 5. **first-run（ファイル不在）**: 従来どおり `default + save()` で `config.toml` を生成する。
 6. **migration 正常系**: `apply_migrations()` の legacy 移行（`paths.additional → scan` 等）が壊れない。
 
-スコープ外: issue item 4（フロントエンド通知）。理由は research.md「チームの既決方針」参照（`snotra-core/CLAUDE.md` の「UI 文字列を持たない」原則と衝突、`size:S`、RETROSPECTIVE 方針に不在）。
+スコープ外: issue item 4（ユーザー向け通知）。理由は research.md「チームの既決方針」参照（`snotra-core/CLAUDE.md` の「UI 文字列を持たない」原則と衝突、`size:S`、RETROSPECTIVE 方針に不在）。
+
+通知については **follow-up issue #343（トレイバルーン通知）に分離**（ユーザー合意済み）。#338 では `load() -> Config` の戻り値を変更しない（退避フラグを surface する `load_reporting()` の seam は #343 で追加。本 issue では消費者が居ないため YAGNI）。#338 の parse 失敗 arm が行う `.bak` 退避ロジックを #343 がそのまま土台に使う。
 
 ## 設計
 

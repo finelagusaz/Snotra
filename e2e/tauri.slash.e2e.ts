@@ -1,6 +1,6 @@
 import { test as base, expect } from "@playwright/test";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -104,7 +104,7 @@ exe = "notepad.exe"
 [[openers.tools]]
 name = "Type"
 exe = "cmd.exe"
-args = "/c type \"{path}\""
+args = '/c type "{path}"'
 `.trim();
 }
 
@@ -183,12 +183,56 @@ async function waitForPort(port: number, timeoutMs: number): Promise<void> {
   throw new Error(`Timed out waiting for port ${port}`);
 }
 
+/**
+ * msedgedriver must match the **WebView2 Runtime** the app embeds, not the Edge
+ * browser. The `edgedriver` package resolves the driver from the installed Edge
+ * browser version, which can differ from the WebView2 Runtime by a patch level —
+ * the mismatch makes every session fail with
+ * "session not created: Chrome instance exited". Detect the runtime version from
+ * its install directory so the downloaded driver matches what the app actually uses.
+ * Returns undefined if not found (caller falls back to the package's auto-detect).
+ */
+async function resolveWebView2DriverVersion(): Promise<string | undefined> {
+  if (process.platform !== "win32") return undefined;
+  const bases = [
+    "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application",
+    "C:\\Program Files\\Microsoft\\EdgeWebView\\Application",
+  ];
+  const cmpVersion = (a: string, b: string): number => {
+    const pa = a.split(".").map(Number);
+    const pb = b.split(".").map(Number);
+    for (let i = 0; i < 4; i++) {
+      if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0);
+    }
+    return 0;
+  };
+  for (const base of bases) {
+    try {
+      const names = await readdir(base);
+      const versions = names.filter((n) => /^\d+\.\d+\.\d+\.\d+$/.test(n)).sort(cmpVersion);
+      if (versions.length > 0) return versions[versions.length - 1];
+    } catch {
+      // directory absent — try next base
+    }
+  }
+  return undefined;
+}
+
 async function spawnTauriDriver(): Promise<ChildProcessWithoutNullStreams> {
   const tauriDriverPath = getTauriDriverPath();
   if (!(await fileExists(tauriDriverPath))) {
     throw new Error(
       `tauri-driver not found at ${tauriDriverPath}. Run: npm run e2e:tauri:setup`,
     );
+  }
+  // Pin msedgedriver to the WebView2 Runtime version (unless explicitly overridden
+  // via EDGEDRIVER_VERSION). edgedriver otherwise matches the Edge browser, which
+  // can differ from the WebView2 Runtime and break session creation.
+  if (!process.env.EDGEDRIVER_VERSION) {
+    const wv2Version = await resolveWebView2DriverVersion();
+    if (wv2Version) {
+      process.env.EDGEDRIVER_VERSION = wv2Version;
+    }
   }
   const nativeDriverPath = await downloadEdgeDriver();
   const proc = spawn(tauriDriverPath, ["--native-driver", nativeDriverPath], {

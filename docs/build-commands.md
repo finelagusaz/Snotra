@@ -74,6 +74,8 @@ npm run tauri build              # リリースビルド（フロント+Rust 一
 - **`snotra-settings` は egui ネイティブウィンドウのため WebDriver から完全に不可視**: `waitForVisibleLabel(driver, "settings", ...)` は常にタイムアウトする。`/o` コマンドの副作用（`main.alwaysOnTop → false`）など、Tauri WebView 側で観測可能な状態変化で間接的に検証すること
 - **`waitForVisibleLabel` / `waitForHiddenLabel` 後は必ず `switchToLabel` を呼ぶ**: これらの関数は内部でウィンドウを切り替えるため、返却後のドライバーコンテキストが期待のウィンドウにない場合がある。直後に `findElement` すると `NoSuchElementError` になる
 - **fixture インデックスは `[[paths.scan]]` + `extensions` で指定する**: E2E config の `paths.additional` はレガシーで `.lnk` 専用に migrate される。`.txt` 等の fixture ファイルをインデックスに載せるには `[[paths.scan]]` に `extensions = [".txt"]` を明示すること
+- **E2E ハーネスは msedgedriver を WebView2 Runtime のバージョンに合わせて自動解決する**（`resolveWebView2DriverVersion`）。アプリが automation するのは Edge ブラウザではなく WebView2 Runtime であり、両者はパッチレベルでドリフトする。不一致は全セッションが `session not created: Chrome instance exited` で失敗する。`EDGEDRIVER_VERSION` で明示上書き可能
+- **E2E が生成する `config.toml` は妥当な TOML でなければならない**: parse 失敗時アプリは `Config::default()`（Start Menu / Desktop スキャン）に**無言でフォールバック**するため、fixture が索引されず検索系テストが全滅する（エラーが出ず原因特定が困難）。`buildE2EConfigToml` を編集したら生成 TOML の妥当性を確認する。TOML 文字列に `"` を含む値は JS テンプレートリテラルの `\"` が `"` に潰れて不正になりやすいため、TOML リテラル文字列（シングルクォート）を使う。黙殺の根本は #338 で追跡
 
 ## CI/CD メモ
 

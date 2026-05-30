@@ -1,7 +1,6 @@
 ---
 name: plan-review
 description: "workspace/plan.md をサブエージェントで並列検証する。影響範囲の漏れ・対称パスの見落とし・不変条件の欠落・リソース管理の問題を洗い出す。/start-issue の Step 5 または実装前に使う。"
-disable-model-invocation: true
 allowed-tools:
   - Read
   - Agent

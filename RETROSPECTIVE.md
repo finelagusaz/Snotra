@@ -1,39 +1,38 @@
-# Retrospective — `Config::load` データ損失の根治（#338）→ 復旧通知＋保存ガード（#343）
+# Retrospective — #347 config↔派生状態コヒーレンシの一元化（Phase 1: history live-read / Phase 2: index_stale ledger）+ #348 解消
 
 ## よかったこと
 
-### アドバーサリアルレビューが「同一作者のチェックの死角」を突いた
-`/plan-review`・`/symmetric-check`・`code-reviewer` を通した #338 に対し、Codex アドバーサリアルレビュー（3周）が**自分のチェックでは出なかった実バグ**を検出した: (a) parse 失敗 arm だけ直して**兄弟 arm（read 失敗の `Err(_)` 一括 first-run 扱い）に同じ default 上書きが残っていた**、(b) `InvalidData`（非 UTF-8）を canonical path に残すと**後続 save で破損元が失われる非対称**、(c) 一時的 read 失敗後の後続 save での上書き（finding C）。データ損失系の変更では独立した批判的視点が効くことを実証。
+### 設計先行 + git archaeology が「削ってよい線」を引いた
+#347 を設計先行で起こし、git 史実調査で**本質的制約**（lock 最小化 / レイヤー境界 / 2 AtomicBool / INDEX_WRITE_LOCK、commit 証拠付き）と**偶発的複雑さ**（所有権追放 / キー二重メンテ / top_n 漏れ）を切り分けた。これにより「カテゴリ B はキャッシュ、既定 live-read」と再定義し、history を live-read 化して B を既約核（SearchEngine 1 つ）へ縮小。当初の「全 B を reconcile する機構」より単純な「**B を減らす**」解に到達。整合機構を足す前に整合対象を消せないか問う、が効いた（`docs/development-principles.md` に反映）。
 
-### レビュー指摘を「事実確認」で取捨選択した
-finding A（「Windows では既存 `.bak` への `std::fs::rename` が失敗する」）を鵜呑みにせず、`backup_invalid_overwrites_existing_bak` を**実機で実行して green を確認**＝反証（`MoveFileExW(REPLACE_EXISTING)` で置換）。逆に finding 2/B は採用。`receiving-code-review` どおり「盲従も性急な反論もせず実証で判断」できた。
+### 二段レビューが別種の欠陥を別タイミングで捕えた
+実装前のマルチパースペクティブ DESIGN レビュー（並行性 / 呼び出しグラフ / 不変条件）が **panic wedge** を実装前に検出 → catch_unwind を書く前に織り込めた。実装後の Codex レビューが **panic="abort" での過大主張**を検出。前者は「設計の前提の脆さ」、後者は「事実と主張のズレ」と、別レイヤーの欠陥を別タイミングのレビューが捕えた。
 
-### スコープ判断：同一不変条件は今ここ、別不変条件は follow-up
-read 失敗の NotFound 分離は「`load` がユーザー設定を壊さない」という #338 と同じ不変条件なので #338 内で対処。finding C（save 側の別不変条件）と通知（UX）は `load_reporting` という同一 seam に乗るため **#343 に集約**。`size:S` を保ちつつ筋を通した。
+### 「実証で判断」が過剰修正を回避
+Codex「出荷不可（panic wedge）」を盲従せず、`Cargo.toml:13` の `panic="abort"` を実際に確認 → 事実は認めつつ「release は元々 abort で挙動不変＝regression なし、silent wedge も起きない」と severity を実証で切り下げ。過剰修正（panic 方針変更・Result 大改修）を回避し、コメント是正という最小の正しい対応に着地。#338 サイクルの「盲従も性急な反論もせず実証で判断」を再演。
 
-### 注入 seam とフェーズ TDD が効いた
-#338 で作った `load_from_dir`/`save_to_dir`（`config_dir` 注入）seam が #343 の `load_reporting` の土台になり、`config_path` 固定でも全分岐を統合テストできた。各フェーズで Red→Green（invalid-UTF-8 の default 上書きを Red で捕捉等）を回し、層分離（`LoadOutcome` は UI 文字列を持たない plain enum）も保てた。
+### TDD が責務配置を示し lost-update の核を固定
+Phase 1 で engine 層の disk-非分離（load/save が固定パス）が「履歴ロジックの責務は history.rs（disk-free テスト可）」を示唆。Phase 2 で `complete_index_drain` を「無条件 clear」の仮実装にして lost-update の核テスト（`complete_index_drain_keeps_stale_when_config_changed_during_build`）を RED→GREEN で固定し、「ビルド中変更を取りこぼさない」不変条件をコードで保証。
 
 ---
 
 ## 伸びしろ
 
-### 「兄弟分岐の同型バグ」を最初の実装で見落とした
-#338 初版は parse 失敗 arm のみ直し、隣の read 失敗 arm に同じ破壊的 default 上書きを残した。「破壊的フォールバックを1分岐で直したら同じ `match` の全分岐の保全方針を揃える」を `snotra-core/CLAUDE.md` の読み込み失敗節に反映済み。
+### 設計スケッチが実呼び出しグラフを取りこぼしていた
+設計メモ §4 スケッチは「`update_config` が bit を立てる」前提だったが、first-run / 手動 rebuild / finish 窓を取りこぼしていた（config 変更を伴わない経路で begin が空振り）。実装時に全呼び出し元を grep して「`start_index_build` が bit を立てる」に確定。API スケッチを実装に落とす前に**駆動経路（特殊フロー含む）を洗う**必要を再認識（既存の「初回フローとガードの相互作用を検証する」を設計確定時にも適用）。
 
-### ビルド済みバイナリ smoke でタイムスタンプに惑わされた
-balloon smoke で `target/debug/snotra.exe`(00:48) が #343 を含むのに「stale では」と判断を往復した（cargo が deps バイナリを hardlink し直すためタイムスタンプが更新されない）。最終的に**変更固有文字列でバイナリを grep**して #343 入りを確定。教訓を `docs/build-commands.md` の smoke 節に反映済み。
+### panic 戦略（abort/unwind）をレビュー観点に入れていなかった
+catch_unwind による wedge 回復を設計したが、release の `panic="abort"` を実装前レビューも自分も見落とし、Codex が後段で検出。「panic 回復設計は build profile 依存」を `AGENTS.md` 事前調査に反映済み。
 
-### ワークフロー設定の潜在的デッドステップ
-`/start-issue` Step 5a が `/plan-review` の起動を指示するのに、当該スキルが `disable-model-invocation` でモデルから呼べず、ワークフローが機能しない不整合があった（#342 で plan-review を起動可化して解消）。「他スキルの手順から呼ばれるスキルはモデル起動可でなければならない」。
+### データ損失経路を Phase 1 の自前レビューが踏めなかった
+config ReadFailed → live-read 履歴剪定のデータ損失を、Phase 1 の TDD（disk-free）も設計レビューも踏まなかった（config_watcher 経路を通らない）。Codex アドバーサリアルレビューが捕捉。データ損失系は独立視点（特に実コードを読む手段）が効くを再確認。
 
-### 引き継ぎバッファの無言欠落
-`.gitignore` の bare `research.md`（全階層一致）が `workspace/research.md` を無視し、start-issue の handoff から静かに脱落していた（#344 で削除され untracked 化して初めて顕在化）。ルールを撤去して追跡対象化済み。
+### Codex がこの環境で不安定
+Codex のサンドボックス git が常に失敗（exit -1）し、GitHub MCP フォールバックの発火が不安定（このサイクルで 5 回中 2 回のみ実結果）。リトライは宝くじ。実コードを確実に読むリポジトリ内サブエージェントレビューが確実な代替（メモリに記録）。
 
 ---
 
 ## ネクストアクション
 
-- [ ] PR #345（#343 復旧通知＋保存ガード）をマージ（CI green 済み）
+- [ ] **#347 Phase 3**: `docs/architecture.md` に StaleSet 契約 + 設計メモ参照、`.claude/rules/*` 同期（`.claude/` 編集は相談のうえ）。完了で #347 クローズ
 - [ ] `/health-check` でモジュール構成・SPEC.md 番号・メモリ・スキル・ルールの整合を確認（サイクル末）
-- [ ] （任意）復旧バルーンを通知センターに永続化したい場合は WinRT/Tauri トースト API への置換を follow-up issue 化（#343 スコープ外。現状は `.bak`＋stderr が永続痕跡）

@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::{Config, ScanPath};
 use crate::folder;
 use crate::history::HistoryStore;
 use crate::indexer::{AppEntry, CachedMasks};
@@ -35,10 +35,41 @@ impl PrebuiltIndex {
     }
 }
 
+/// インデックス（`SearchEngine`）の構築入力。config から焼き込まれるカテゴリ B の入力一式（issue #347）。
+/// `config_watcher` の再構築要否判定（old/new 差分）と `complete_index_drain` の re-diff
+/// （ビルド開始時スナップショット/現在）で**この単一定義を共有**する（needs_reindex と in-flight
+/// needs_rebuild の二重メンテを解消）。`show_icons` は概念的には icon-stale だが、現状は index
+/// ビルドのついでにアイコンキャッシュを prune するため含める（設計メモ §6 Q2）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndexInputs {
+    pub scan: Vec<ScanPath>,
+    pub show_hidden_system: bool,
+    pub show_icons: bool,
+    pub include_path_env: bool,
+    pub migemo_enabled: bool,
+}
+
+impl IndexInputs {
+    pub fn from_config(config: &Config) -> Self {
+        Self {
+            scan: config.paths.scan.clone(),
+            show_hidden_system: config.search.show_hidden_system,
+            show_icons: config.appearance.show_icons,
+            include_path_env: config.search.include_path_env,
+            migemo_enabled: config.search.migemo_enabled,
+        }
+    }
+}
+
 pub struct Engine {
     search_engine: SearchEngine,
     history: HistoryStore,
     config: Config,
+    /// インデックスが現在の config の `IndexInputs` を反映していない可能性を表す（issue #347/#348-A）。
+    /// `start_index_build`（ビルド要求）が `mark_index_stale` で立て、`complete_index_drain` が
+    /// 「ビルド開始時スナップショット == 現在」のときだけ落とす。コヒーレンシ判断を engine Mutex
+    /// （軸1）に閉じ、lost-update 窓を塞ぐための単一の真実。
+    index_stale: bool,
 }
 
 impl Engine {
@@ -48,6 +79,7 @@ impl Engine {
             search_engine,
             history,
             config,
+            index_stale: false,
         }
     }
 
@@ -73,6 +105,7 @@ impl Engine {
             search_engine,
             history,
             config,
+            index_stale: false,
         }
     }
 
@@ -162,6 +195,38 @@ impl Engine {
     /// インデックス再構築時のロック保持時間を最小化するために使う。
     pub fn apply_prebuilt_index(&mut self, index: PrebuiltIndex) {
         self.search_engine = index.0;
+    }
+
+    /// インデックスを stale とマークする（ビルドが必要＝要求された）。
+    /// `start_index_build`（config 変更 reindex / first-run / 手動 rebuild の全経路）が呼ぶ。
+    pub fn mark_index_stale(&mut self) {
+        self.index_stale = true;
+    }
+
+    /// インデックスが stale か。`start_index_build` の finish 後再チェック（finish 窓の取りこぼし回収）に使う。
+    pub fn is_index_stale(&self) -> bool {
+        self.index_stale
+    }
+
+    /// stale なら現在の `IndexInputs` スナップショットを返す（ロック外ビルドの基準）。stale でなければ None。
+    pub fn begin_index_drain(&self) -> Option<IndexInputs> {
+        if self.index_stale {
+            Some(IndexInputs::from_config(&self.config))
+        } else {
+            None
+        }
+    }
+
+    /// ロック外で構築した index をスワップし、ビルド開始時スナップショット（`built_from`）と
+    /// 現在 config の `IndexInputs` が一致するときだけ stale を落とす。ビルド中に config が
+    /// 変わっていれば stale を残し、次の `begin_index_drain` で再ビルドさせる（lost-update を塞ぐ）。
+    pub fn complete_index_drain(&mut self, index: PrebuiltIndex, built_from: &IndexInputs) {
+        self.apply_prebuilt_index(index);
+        // ビルド開始時スナップショットと現在の index 入力が一致するときだけ stale を落とす。
+        // ビルド中に config が変わっていれば（!=）stale を残し、次の begin_index_drain で再ビルドさせる。
+        if IndexInputs::from_config(&self.config) == *built_from {
+            self.index_stale = false;
+        }
     }
 
     pub fn entries(&self) -> &[AppEntry] {
@@ -368,5 +433,101 @@ mod tests {
         assert!(results.is_empty());
         let results = engine.search("new");
         assert_eq!(results.len(), 1);
+    }
+
+    // --- Phase 2: index_stale ledger / drain（issue #347 中核 + #348-A）---
+
+    #[test]
+    fn fresh_engine_is_not_index_stale() {
+        // 構築直後は現在 config を反映済み＝stale でない。begin は None。
+        let engine = Engine::new(make_entries(&["x"]), empty_history(), default_config());
+        assert!(!engine.is_index_stale());
+        assert!(engine.begin_index_drain().is_none());
+    }
+
+    #[test]
+    fn mark_index_stale_makes_begin_return_current_inputs() {
+        let mut config = default_config();
+        config.search.migemo_enabled = true;
+        config.search.show_hidden_system = true;
+        let mut engine = Engine::new(make_entries(&["x"]), empty_history(), config);
+        engine.mark_index_stale();
+        assert!(engine.is_index_stale());
+        let inputs = engine.begin_index_drain().expect("stale なら snapshot を返す");
+        assert!(inputs.migemo_enabled);
+        assert!(inputs.show_hidden_system);
+    }
+
+    #[test]
+    fn complete_index_drain_clears_stale_when_config_stable() {
+        // ビルド中に config が変わらなければ、complete で stale が落ちる→ begin None。
+        let mut engine = Engine::new(make_entries(&["x"]), empty_history(), default_config());
+        engine.mark_index_stale();
+        let snapshot = engine.begin_index_drain().expect("snapshot");
+        engine.complete_index_drain(PrebuiltIndex::new(make_entries(&["x"]), false), &snapshot);
+        assert!(!engine.is_index_stale(), "config 安定→stale クリア");
+        assert!(engine.begin_index_drain().is_none());
+    }
+
+    #[test]
+    fn complete_index_drain_keeps_stale_when_config_changed_during_build() {
+        // lost-update の核（#348-A「前」）: ビルド開始時スナップショットと現在 config が異なれば
+        // complete は stale を残し、次の begin が再び snapshot を返す（取りこぼさない）。
+        let mut engine = Engine::new(make_entries(&["x"]), empty_history(), default_config());
+        engine.mark_index_stale();
+        let snapshot = engine.begin_index_drain().expect("snapshot");
+        // ビルド中の config 変更を模倣（index 入力キーを 1 つ反転）
+        let mut changed = engine.config().clone();
+        changed.search.show_hidden_system = !changed.search.show_hidden_system;
+        engine.update_config(changed);
+        // 古いスナップショットで complete
+        engine.complete_index_drain(PrebuiltIndex::new(make_entries(&["x"]), false), &snapshot);
+        assert!(
+            engine.is_index_stale(),
+            "ビルド中に config が変わったら stale を残す（lost-update 回避）"
+        );
+        assert!(
+            engine.begin_index_drain().is_some(),
+            "再ビルドのため begin が再び snapshot を返す"
+        );
+    }
+
+    #[test]
+    fn index_inputs_differ_on_each_index_key() {
+        let base = default_config();
+        let b = IndexInputs::from_config(&base);
+
+        let mut c = base.clone();
+        c.search.show_hidden_system = !base.search.show_hidden_system;
+        assert_ne!(b, IndexInputs::from_config(&c), "show_hidden_system");
+
+        let mut c = base.clone();
+        c.appearance.show_icons = !base.appearance.show_icons;
+        assert_ne!(b, IndexInputs::from_config(&c), "show_icons");
+
+        let mut c = base.clone();
+        c.search.include_path_env = !base.search.include_path_env;
+        assert_ne!(b, IndexInputs::from_config(&c), "include_path_env");
+
+        let mut c = base.clone();
+        c.search.migemo_enabled = !base.search.migemo_enabled;
+        assert_ne!(b, IndexInputs::from_config(&c), "migemo_enabled");
+
+        let mut c = base.clone();
+        c.paths.scan.push(crate::config::ScanPath {
+            path: "C:\\new".into(),
+            extensions: vec![".exe".into()],
+            include_folders: false,
+        });
+        assert_ne!(b, IndexInputs::from_config(&c), "scan");
+    }
+
+    #[test]
+    fn index_inputs_equal_when_unrelated_key_changes() {
+        // index 入力でないキー（max_results）の変更は IndexInputs を変えない＝再構築不要。
+        let base = default_config();
+        let mut c = base.clone();
+        c.appearance.max_results = base.appearance.max_results + 10;
+        assert_eq!(IndexInputs::from_config(&base), IndexInputs::from_config(&c));
     }
 }

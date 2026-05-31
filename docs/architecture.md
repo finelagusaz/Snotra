@@ -111,6 +111,7 @@ ui/src/
 - 本体は `notify` クレートで `config.toml` 変更を検知し即時反映する
 - 子プロセス管理: `Mutex<Option<Child>>` で保持。起動時に重複チェック、監視スレッドで終了検知 + `alwaysOnTop` 復元、exit ハンドラで kill
 - `snotra-settings` の設定編集は draft/saved 二重状態モデル（Save 時にのみ `config.toml` に書き込み）
+- **config↔派生状態のコヒーレンシ**: config 由来の派生状態は「live-read（毎操作で読み直し＝即時整合）」と「構築時焼き込み（要再構築）」の 2 種。後者の中核 `SearchEngine`（index）の整合は engine の `index_stale` ledger が所有し、`config_watcher` が `IndexInputs` 差分で `start_index_build` を kick → ロック外ビルド → `complete_index_drain` の re-diff で stale をクリアする（ビルド進行中の設定変更も取りこぼさない）。`HistoryStore` の剪定容量は live-read 化しキャッシュを持たない。詳細は `docs/design/2026-05-31-coherence-staleset.md`（StaleSet 契約）
 
 ### データ永続化
 
@@ -236,3 +237,4 @@ LauncherStopped → Standby → SearchVisible
 - 設定値・デフォルト: `snotra-core/src/config.rs`
 - パフォーマンス最適化: `PERFORMANCE.md`
 - モジュール詳細: 各サブディレクトリの `CLAUDE.md`
+- config↔派生状態コヒーレンシ設計（StaleSet 契約）: `docs/design/2026-05-31-coherence-staleset.md`

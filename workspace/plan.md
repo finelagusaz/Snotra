@@ -23,13 +23,14 @@
 3. **3 軸統合**: stale ledger を engine Mutex 軸に置き、コヒーレンシの正しさを軸1 だけに閉じる。
    軸2（AtomicBool）は CAS+UI 専用、軸3（INDEX_WRITE_LOCK）は単一書き手専用に純化
 4. **lost-update 解消**: bit-set（update_config）と bit-clear（drain 完了 re-diff）が engine ロックで相互排他 → 取りこぼし窓が閉じる
-5. **#348 統合**: top_n ドリフトは history インライン reconcile、lost-update 窓は index-stale ledger で——ひとつの契約の instance に
+5. **#348 統合**: top_n ドリフトは **history を live-read 化して B から除外**（焼き込む場所を消す）、lost-update 窓は単一 `index_stale` bit で——「config 由来キャッシュの無効化を update_config が所有」という一契約の帰結に
+6. **archaeology による精緻化**: git 史実で本質的制約（lock 最小化/レイヤー境界/2 AtomicBool/INDEX_WRITE_LOCK）と偶発的複雑さ（所有権追放/キー二重メンテ/top_n 漏れ）を切り分け。「カテゴリ B はキャッシュ」と再定義し、**B を既約核（SearchEngine 1 つ）へ縮小**＝StaleSet は単一 bit に収斂（設計メモ §1.5, §2）
 
 ## 実装ロードマップ（合意後の別サイクル・概略）
 
 設計メモ §8 を SSOT とする。要約:
-- **Phase 1**: `HistoryStore::set_top_n` + `update_config` 追従（#348 欠陥 B）。最小・独立・先行可能
-- **Phase 2**: index-stale ledger 化（#347 中核 + #348 欠陥 A）。`needs_reindex` / in-flight `needs_rebuild` を 1 機構に統合
+- **Phase 1**: history を **live-read 化**（`HistoryStore.top_n` フィールド削除、`save`/`prune` に引数渡し、`Engine` が config から渡す）。#348 欠陥 B を構造的に消す。最小・独立・先行可能
+- **Phase 2**: 単一 `index_stale` bit 化（#347 中核 + #348 欠陥 A）。`needs_reindex` / in-flight `needs_rebuild` を 1 機構に統合
 - **Phase 3**: ドキュメント同期（CLAUDE.md / rules / SPEC.md / architecture.md）
 
 ## 不変条件（実装時に守るべき・設計メモ §5 の要約）

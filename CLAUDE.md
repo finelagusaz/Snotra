@@ -18,6 +18,7 @@
 - **main の fast-forward 同期は `git pull --ff-only` を使う** — `git merge --ff-only origin/main` でも `block-main-commit` フックが `git\s+(commit|merge|rebase)` を文字列一致で弾く（コミットを作らない FF でも発火する）
 - **Bash ツールに `/tmp` は無い（Windows）** — 一時ファイルは `$env:TEMP` 配下に置くか Write ツールで作る。`cat > /tmp/...` は `FileNotFoundError` で失敗する
 - **Python で非 ASCII を標準出力するときは `PYTHONIOENCODING=utf-8` を付ける** — cp932 コンソールで `—`・日本語などを print すると `UnicodeEncodeError` で落ちる（JSON/ログ整形で多用）
+- **複数 issue にまたがる PR を squash マージするとき auto-close を明示制御する** — ブランチ各コミット本文の `Fixes/Closes #N` は squash 時に GitHub が拾い、意図しない issue を閉じうる。一部だけ閉じたい場合（例: 中核 issue は Phase 残しで open、対症療法 issue のみ close）は `gh pr merge --squash --subject "...(#issue) (#PR)" --body-file <tmp>` で最終メッセージを明示し、`Closes`/`Refs` を制御する。マージ後は `gh issue view <N> --json state` で意図どおりか検証する
 
 ## チーム憲章
 

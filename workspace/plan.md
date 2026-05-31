@@ -5,8 +5,14 @@
 > #348 の 2 症状は #347 の StaleSet 機構に統合する前提で設計済み。
 >
 > **更新（2026-05-31 合意後）**: 設計合意（Q1〜Q4 承認、設計メモ status: **Agreed**）。
-> ユーザー判断「Phase 1 先行マージ」に従い、**Phase 1（history を live-read 化）を本セッションで実装・検証済み**
-> （snotra-core 367 / snotra 33 / clippy 正規ゲート green）。Phase 2（単一 `index_stale` bit）・Phase 3（残ドキュメント同期）は別サイクル。
+> ユーザー判断「Phase 1 先行マージ」に従い、**Phase 1（history を live-read 化）を本セッションで実装・検証済み**。
+> Phase 2（単一 `index_stale` bit）・Phase 3（残ドキュメント同期）は別サイクル。
+>
+> **Codex アドバーサリアルレビュー指摘（修正済み）**: live-read 化が config_watcher の既存の穴を顕在化——
+> 一時的 config 読込失敗（`LoadOutcome::ReadFailed`）で fallback-default が適用され、live-read 履歴剪定が
+> `history.bin` を default 上限へ不可逆縮小（データ損失）。**根本修正**: `apply_config_change` が ReadFailed では
+> 何も適用せず早期 return（`should_apply_config_change()`）。`Config::load` の保全方針を適用側にも揃えた。
+> SPEC §7.5 / src-tauri CLAUDE.md に不変条件を記録。検証: snotra-core 367 / snotra 35 / clippy 正規ゲート green。
 
 ## このサイクルの成果物（= 変更ファイル）
 

@@ -78,6 +78,17 @@ pub fn start(app_handle: &AppHandle) -> Option<notify::RecommendedWatcher> {
 fn apply_config_change(app: &AppHandle) {
     let (new_config, load_outcome) = Config::load_reporting();
 
+    // 一時的・環境的な read 失敗（ReadFailed）では fallback-default を実行中エンジンへ適用しない。
+    // 適用すると live-read 化した履歴剪定（#348）が default 上限で走り history.bin が不可逆に縮む
+    // データ損失が起きるうえ、needs_reindex が default scan で誤った再構築を起こす。ファイルは
+    // 無傷なので、ロックが解けた次の保存イベントで正規の変更を拾う。
+    if !should_apply_config_change(load_outcome) {
+        eprintln!(
+            "[config-watcher] config read failed (transient); keeping current config (no apply)"
+        );
+        return;
+    }
+
     let state = app.state::<AppState>();
     let old_config = state.engine.lock().unwrap().config().clone();
 
@@ -216,6 +227,18 @@ pub(crate) fn needs_reindex(old: &Config, new: &Config) -> bool {
         || old.search.migemo_enabled != new.search.migemo_enabled
 }
 
+/// `config.toml` の読込結果を実行中エンジンへ適用してよいかの判定。
+/// `ReadFailed`（一時的・環境的な read 失敗: 権限/ロック/共有違反等）では fallback-default を
+/// 適用しない。適用すると `top_n_history` 等が default に落ち、live-read 化した履歴剪定が
+/// default 上限で走って `history.bin` が不可逆に縮む（データ損失）うえ、default scan で
+/// 誤った再構築も走る。`Config::load` の「一時的失敗は退避も上書きもしない」保全方針
+/// （snotra-core/CLAUDE.md）を apply 側にも揃える。ファイルは無傷なので、次の保存イベントで
+/// 正規の変更を拾う。`RecoveredFromCorrupt`（真の破損・.bak 退避済み）は #343 の意図的 default
+/// 適用なので適用する。
+pub(crate) fn should_apply_config_change(outcome: LoadOutcome) -> bool {
+    !matches!(outcome, LoadOutcome::ReadFailed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,5 +331,21 @@ mod tests {
         let mut new = old.clone();
         new.appearance.max_results = old.appearance.max_results + 10;
         assert!(!needs_reindex(&old, &new));
+    }
+
+    #[test]
+    fn should_apply_config_change_skips_read_failed() {
+        // 一時的 read 失敗（権限/ロック等）の fallback-default は実行中エンジンへ適用しない。
+        // 適用すると live-read 化した履歴剪定が default 上限で走り history.bin が不可逆に縮む
+        // （Codex アドバーサリアルレビュー検出のデータ損失経路）。
+        assert!(!should_apply_config_change(LoadOutcome::ReadFailed));
+    }
+
+    #[test]
+    fn should_apply_config_change_applies_normal_outcomes() {
+        // 正常読込・first-run・破損復旧（#343 の意図的 default 適用）は適用する。
+        assert!(should_apply_config_change(LoadOutcome::Loaded));
+        assert!(should_apply_config_change(LoadOutcome::FirstRun));
+        assert!(should_apply_config_change(LoadOutcome::RecoveredFromCorrupt));
     }
 }

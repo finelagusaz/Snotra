@@ -254,7 +254,7 @@ snapshot copy の蓄積コストは無視できる。
 
 | 事象 | 設計上の扱い |
 |---|---|
-| ビルド中 panic / `PrebuiltIndex::new` 失敗 | stale bit は **残る**（clear しない）。データ損失なし。次の drain 契機で再試行 |
+| ビルド中 panic / `PrebuiltIndex::new` 失敗（**panic 戦略依存**） | **release（`panic="abort"`、Cargo.toml 既定）**: build スレッド panic はプロセスを abort（loud crash）。finish も catch_unwind も走らないが、プロセスごと終了するため **silent wedge にはならず**、次回起動で fresh build される。**unwind ビルド（debug/test、または `panic="unwind"`）**: `catch_unwind` で捕捉し `finish_index_build` で flag を戻す（wedge 防止）。stale bit は残り、次の config 変更 / 手動 rebuild で回復。どちらの戦略でも「flag 固着で UI 永久構築中」は起きない（Codex 実装後レビュー反映: catch_unwind は unwind 限定で効くため、release は abort で wedge 回避） |
 | thread spawn 失敗 | 現行同様 `finish_index_build` でフラグを戻す。bit は残るので次の config 変更で回復 |
 | 唯一の再試行契機が「次の config 変更」 | **要意思決定**: 透過的回復には起動時 + 明示リトライが要るか（§6 Q4）。最低限「次回起動で必ず最新 config で構築」は現状維持 |
 | drain ループ中に何度も config 変更 | 収束性（§3.4）で停止保証。各反復は最新スナップショット |

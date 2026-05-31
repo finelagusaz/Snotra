@@ -29,13 +29,18 @@ pub fn start_index_build(app: &AppHandle) -> bool {
     let spawn_result = std::thread::Builder::new()
         .name("snotra-index-build".to_string())
         .spawn(move || {
-            // ビルド本体（drain ループ）を catch_unwind で包み、panic でも必ず flag を戻す。
-            // 主な panic 発火点（rebuild_and_save / PrebuiltIndex::new）はロック外で engine ロックを
-            // 保持しないため poison しない。これで panic 時に flag が立ったまま wedge する欠陥を防ぐ。
+            // ビルド本体（drain ループ）を catch_unwind で包む。挙動は **panic 戦略依存**:
+            // - unwind ビルド（debug/test、または release で panic="unwind"）: panic をここで捕捉し、
+            //   下の finish_index_build で flag を戻す → flag 固着（wedge）を防ぐ。主な panic 発火点
+            //   （rebuild_and_save / PrebuiltIndex::new）はロック外で engine ロックを保持しないため poison しない。
+            // - release（このワークスペースは Cargo.toml で panic="abort"）: build スレッドの panic は
+            //   プロセスを abort させ、ここには到達しない。ただし silent wedge にもならない（プロセスごと
+            //   終了し、次回起動で fresh build される）。どちらの戦略でも「flag 固着で UI が永久構築中」は起きない。
             let build_result =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drain_index(&app_handle)));
 
-            // 完了処理: panic でも必ず flag を戻して wedge を防ぐ（#347 レビュー指摘の panic wedge 対策）。
+            // 完了処理（unwind 経路）: flag を必ず戻して wedge を防ぐ。abort 経路はここに来ないが、
+            // プロセス終了済みのため wedge は発生しない。
             app_handle.state::<AppState>().finish_index_build();
             notify_indexing_complete(&app_handle);
 
@@ -54,10 +59,11 @@ pub fn start_index_build(app: &AppHandle) -> bool {
                     }
                 }
                 Err(_) => {
-                    // panic 経路では再 kick しない（決定論的 panic の無限リトライ回避）。
-                    // index_stale は残るので、次の config 変更 / 手動 rebuild で回復する。
+                    // unwind で panic を捕捉した場合（debug/test 等）: 再 kick しない
+                    // （決定論的 panic の無限リトライ回避）。index_stale は残るので次の config 変更 /
+                    // 手動 rebuild で回復する。release(panic="abort") ではこの分岐に来ない（プロセス abort 済み）。
                     eprintln!(
-                        "[indexing] build thread panicked; index_stale retained, recovery on next config change / manual rebuild"
+                        "[indexing] build thread panicked (unwind); index_stale retained, recovery on next config change / manual rebuild"
                     );
                 }
             }

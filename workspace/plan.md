@@ -12,7 +12,11 @@
 > 一時的 config 読込失敗（`LoadOutcome::ReadFailed`）で fallback-default が適用され、live-read 履歴剪定が
 > `history.bin` を default 上限へ不可逆縮小（データ損失）。**根本修正**: `apply_config_change` が ReadFailed では
 > 何も適用せず早期 return（`should_apply_config_change()`）。`Config::load` の保全方針を適用側にも揃えた。
-> SPEC §7.5 / src-tauri CLAUDE.md に不変条件を記録。検証: snotra-core 367 / snotra 35 / clippy 正規ゲート green。
+>
+> **Codex `review` 指摘 P2（修正済み）**: ReadFailed 早期 return が notify イベントを消費し、後続イベントが
+> 来ない場合に正規の変更を取りこぼす（MECE 整理で D2b と特定）。**対応**: `load_with_read_failed_retry` で
+> ReadFailed のみバウンドリトライ（3 回 × 150ms）し、予算内でロック解除すれば適用。リトライ中は適用しないため
+> データ損失安全（P1）は不変＝両不変条件を両立。検証: snotra-core 367 / snotra 39 / clippy 正規ゲート green。
 
 ## このサイクルの成果物（= 変更ファイル）
 

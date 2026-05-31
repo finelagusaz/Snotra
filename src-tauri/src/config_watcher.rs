@@ -1,9 +1,9 @@
-use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use std::time::Duration;
 
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use snotra_core::config::{Config, Language, LoadOutcome};
+use snotra_core::engine::IndexInputs;
 use tauri::window::Color;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager};
 
@@ -100,7 +100,8 @@ fn apply_config_change(app: &AppHandle) {
     // Detect changes
     let show_icons_changed = new_config.appearance.show_icons != old_config.appearance.show_icons;
     let new_show_icons = new_config.appearance.show_icons;
-    let index_changed = needs_reindex(&old_config, &new_config);
+    let index_changed =
+        IndexInputs::from_config(&old_config) != IndexInputs::from_config(&new_config);
     let language_changed = new_config.general.language != old_config.general.language;
     let new_language = new_config.general.language;
     let instant_prefix_changed = new_config.search.instant_command_prefix
@@ -175,9 +176,10 @@ fn apply_config_change(app: &AppHandle) {
         state.engine.lock().unwrap().update_config(new_config);
     }
 
-    // Trigger reindex if needed
-    let indexing_in_progress = state.indexing.load(Ordering::SeqCst);
-    if index_changed && !indexing_in_progress {
+    // Trigger reindex if needed. ビルド進行中でも常に kick する（!indexing ゲート撤去、#347/#348-A）。
+    // start_index_build が mark_index_stale で stale を立て、in-flight ビルドの complete re-diff /
+    // finish 後の再チェックが取りこぼしを拾う。CAS が二重起動を防ぐ。
+    if index_changed {
         indexing::start_index_build(app);
     }
 
@@ -217,19 +219,6 @@ fn apply_config_change(app: &AppHandle) {
         let logical = size.to_logical::<f64>(sf);
         let _ = w.set_size(LogicalSize::new(f64::from(new_width), logical.height));
     }
-}
-
-/// インデックス再構築が必要かの判定ロジック。apply_config_change から抽出。
-/// scan / show_hidden_system / show_icons / include_path_env / migemo_enabled の
-/// いずれかが変わった場合 true。
-/// migemo_enabled: kana_lower_names の構築状態を変えるため再構築が必要（issue #337）。
-/// update_config は engine を再構築しないので、トグルの反映はこの reindex 経路に依存する。
-pub(crate) fn needs_reindex(old: &Config, new: &Config) -> bool {
-    old.paths.scan != new.paths.scan
-        || old.search.show_hidden_system != new.search.show_hidden_system
-        || old.appearance.show_icons != new.appearance.show_icons
-        || old.search.include_path_env != new.search.include_path_env
-        || old.search.migemo_enabled != new.search.migemo_enabled
 }
 
 /// `config.toml` の読込結果を実行中エンジンへ適用してよいかの判定。
@@ -309,65 +298,6 @@ mod tests {
     fn parse_hex_color_empty() {
         assert_eq!(parse_hex_color(""), None);
         assert_eq!(parse_hex_color("#"), None);
-    }
-
-    #[test]
-    fn needs_reindex_no_change() {
-        let config = Config::load();
-        assert!(!needs_reindex(&config, &config));
-    }
-
-    #[test]
-    fn needs_reindex_scan_change() {
-        let old = Config::load();
-        let mut new = old.clone();
-        new.paths.scan.push(snotra_core::config::ScanPath {
-            path: "C:\\new".into(),
-            extensions: vec![".exe".into()],
-            include_folders: false,
-        });
-        assert!(needs_reindex(&old, &new));
-    }
-
-    #[test]
-    fn needs_reindex_show_icons_change() {
-        let old = Config::load();
-        let mut new = old.clone();
-        new.appearance.show_icons = !old.appearance.show_icons;
-        assert!(needs_reindex(&old, &new));
-    }
-
-    #[test]
-    fn needs_reindex_include_path_env_change() {
-        let old = Config::load();
-        let mut new = old.clone();
-        new.search.include_path_env = !old.search.include_path_env;
-        assert!(needs_reindex(&old, &new));
-    }
-
-    #[test]
-    fn needs_reindex_show_hidden_system_change() {
-        let old = Config::load();
-        let mut new = old.clone();
-        new.search.show_hidden_system = !old.search.show_hidden_system;
-        assert!(needs_reindex(&old, &new));
-    }
-
-    #[test]
-    fn needs_reindex_migemo_change() {
-        // migemo トグルは kana_lower_names の構築状態を変えるため reindex が必要（issue #337）。
-        let old = Config::load();
-        let mut new = old.clone();
-        new.search.migemo_enabled = !old.search.migemo_enabled;
-        assert!(needs_reindex(&old, &new));
-    }
-
-    #[test]
-    fn needs_reindex_unrelated_change_does_not_trigger() {
-        let old = Config::load();
-        let mut new = old.clone();
-        new.appearance.max_results = old.appearance.max_results + 10;
-        assert!(!needs_reindex(&old, &new));
     }
 
     #[test]

@@ -339,6 +339,11 @@ history を B のまま外部 reconcile に置いた場合に当たるが、本�
   - **`needs_reindex` の全 caller を grep 列挙**し、削除順序の依存を確認してから段階的に置換（一括置換しない）
   - **新しい同期軸を増やさないことの形式確認**: 変更後の `state.rs` / `engine.rs` の全フィールドを列挙し、stale 判断が `engine.stale`（軸1）のみに依存・新 `AtomicBool`/`Mutex` が増えていないことを確認
   - `IndexInputs` の snapshot/比較が現状の `indexing.rs:36` 開始時キャプチャと同コストであることを確認（§4 コストモデル）
+  - **実装済み（2026-05-31, `refactor/index-stale-ledger`）。スケッチ §4 からの確定点（マルチパースペクティブレビュー反映）**:
+    ① bit を立てるのは `update_config` ではなく **`start_index_build`**（config 変更 reindex / first-run / 手動 rebuild / 自己再 kick の全経路を統一。`update_config` を呼ぶ経路は config_watcher 唯一と確認済みなので取りこぼしなし）
+    ② **finish 後に `is_index_stale` を再チェックして再 kick**し、complete clear〜finish の窓を閉じる
+    ③ build 本体を **`catch_unwind` で包み panic でも必ず `finish_index_build`**（panic wedge 対策＝レビュー Agent 1 検出。panic 経路は再 kick せず無限リトライ回避、`index_stale` は次の契機で回復）
+    ④ 単一定義は `IndexInputs`（config_watcher の kick 判定 + `complete_index_drain` の re-diff で共有）。`needs_reindex` と in-flight `needs_rebuild` を削除
 - **Phase 3 — ドキュメント同期**: `snotra-core/CLAUDE.md`（migemo 二重メンテ記述の更新）/ `src-tauri/CLAUDE.md`（drain 機構）/
   `.claude/rules/*` / **`SPEC.md`（設定の即時反映に関する記述。特に top_n_history 変更が再起動不要になる挙動変更を同期）** /
   `docs/architecture.md`（「設定管理」節に StaleSet 契約を追記）。`docs/architecture.md` に本設計メモへの参照を追加

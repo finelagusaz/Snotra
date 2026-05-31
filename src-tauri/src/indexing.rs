@@ -29,7 +29,7 @@ pub fn start_index_build(app: &AppHandle) -> bool {
     let spawn_result = std::thread::Builder::new()
         .name("snotra-index-build".to_string())
         .spawn(move || {
-            let (scan, show_hidden_system, show_icons, include_path_env) = {
+            let (scan, show_hidden_system, show_icons, include_path_env, migemo_enabled) = {
                 let state = app_handle.state::<AppState>();
                 let engine = state.engine.lock().unwrap();
                 (
@@ -37,6 +37,7 @@ pub fn start_index_build(app: &AppHandle) -> bool {
                     engine.config().search.show_hidden_system,
                     engine.config().appearance.show_icons,
                     engine.config().search.include_path_env,
+                    engine.config().search.migemo_enabled,
                 )
             };
 
@@ -68,8 +69,9 @@ pub fn start_index_build(app: &AppHandle) -> bool {
                 }
             }
 
-            // SearchEngine の構築（O(N)）は Mutex 外で実施してロック保持時間を最小化する
-            let new_index = snotra_core::engine::PrebuiltIndex::new(entries);
+            // SearchEngine の構築（O(N)）は Mutex 外で実施してロック保持時間を最小化する。
+            // migemo 無効時は kana_lower_names を構築しない（issue #337）。
+            let new_index = snotra_core::engine::PrebuiltIndex::new(entries, migemo_enabled);
             {
                 let state = app_handle.state::<AppState>();
                 state.engine.lock().unwrap().apply_prebuilt_index(new_index);
@@ -84,6 +86,7 @@ pub fn start_index_build(app: &AppHandle) -> bool {
                     || cfg.search.show_hidden_system != show_hidden_system
                     || cfg.appearance.show_icons != show_icons
                     || cfg.search.include_path_env != include_path_env
+                    || cfg.search.migemo_enabled != migemo_enabled
             };
 
             // Mark indexing complete

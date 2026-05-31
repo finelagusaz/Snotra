@@ -147,7 +147,9 @@ type Wave1Strings = (Vec<Box<str>>, Vec<Option<Box<str>>>, Vec<Box<str>>, Vec<Bo
 /// Wave 1: entries から文字列正規化データを並列構築する。
 /// lower_names / lower_file_names / normalized_keys / kana_lower_names は
 /// entries への純粋な map であり相互依存がないため rayon::join で並列構築する。
-fn compute_wave1(entries: &[AppEntry]) -> Wave1Strings {
+/// `migemo_enabled` が false の場合、kana_lower_names は空 Vec（migemo 無効ユーザーの
+/// 死蔵メモリを削るため、issue #337）。空 Vec の検索ループ側ガードは search_with_options 参照。
+fn compute_wave1(entries: &[AppEntry], migemo_enabled: bool) -> Wave1Strings {
     let ((lower_names, lower_file_names), (normalized_keys, kana_lower_names)) = rayon::join(
         || {
             rayon::join(
@@ -179,10 +181,15 @@ fn compute_wave1(entries: &[AppEntry]) -> Wave1Strings {
                         .collect::<Vec<_>>()
                 },
                 || {
-                    entries
-                        .iter()
-                        .map(|e| to_kana(&to_lower_folded(&e.name)).into_boxed_str())
-                        .collect::<Vec<_>>()
+                    // migemo 無効時は kana を構築しない（空 Vec）。
+                    if migemo_enabled {
+                        entries
+                            .iter()
+                            .map(|e| to_kana(&to_lower_folded(&e.name)).into_boxed_str())
+                            .collect::<Vec<_>>()
+                    } else {
+                        Vec::new()
+                    }
                 },
             )
         },
@@ -236,9 +243,13 @@ impl SearchEngine {
                 && lower_file_names.len() == entries.len()
                 && normalized_keys.len() == entries.len()
                 && char_masks.len() == entries.len()
-                && file_name_char_masks.len() == entries.len()
-                && kana_lower_names.len() == entries.len(),
+                && file_name_char_masks.len() == entries.len(),
             "SearchEngine: all parallel Vecs must have the same length as entries"
+        );
+        // kana_lower_names のみ {0, entries.len()} を許す（migemo 無効時は空 Vec、issue #337）。
+        debug_assert!(
+            kana_lower_names.is_empty() || kana_lower_names.len() == entries.len(),
+            "SearchEngine: kana_lower_names must be empty or match entries length"
         );
         Self {
             entries,
@@ -255,9 +266,18 @@ impl SearchEngine {
         }
     }
 
+    /// kana_lower_names を**常に**構築する（migemo 有効相当）。テスト・ベンチ・convenience 用。
+    /// 本番のインデックス構築は config 由来の migemo フラグを渡す [`new_with_migemo`] /
+    /// [`new_with_cached_masks`] を使い、migemo 無効時は kana を構築しない（issue #337）。
     pub fn new(entries: Vec<AppEntry>) -> Self {
+        Self::new_with_migemo(entries, true)
+    }
+
+    /// `migemo_enabled` に応じて kana_lower_names の構築要否を決めて構築する。
+    /// false のとき kana は空 Vec（migemo 無効ユーザーの死蔵メモリ ~2.1–2.7MB/50k を削る）。
+    pub fn new_with_migemo(entries: Vec<AppEntry>, migemo_enabled: bool) -> Self {
         let (lower_names, lower_file_names, normalized_keys, kana_lower_names) =
-            compute_wave1(&entries);
+            compute_wave1(&entries, migemo_enabled);
         let (char_masks, file_name_char_masks) =
             compute_wave2(&lower_names, &lower_file_names);
         Self::assemble(
@@ -277,6 +297,8 @@ impl SearchEngine {
     /// - `cached_lower_names` / `cached_lower_file_names` / `cached_normalized_keys`:
     ///   v4+ キャッシュヒット時に Some → Wave 1 の再計算もスキップ（A-3）
     ///   v3 フォールバック時は None → Wave 1 を通常通り並列実行
+    /// - `migemo_enabled`: false のとき kana_lower_names を構築しない（空 Vec、issue #337）。
+    ///   v4 パス（再計算）・v3 フォールバックの**両方**でこのフラグを反映する。
     pub fn new_with_cached_masks(
         entries: Vec<AppEntry>,
         char_masks: Vec<u64>,
@@ -284,6 +306,7 @@ impl SearchEngine {
         cached_lower_names: Option<Vec<String>>,
         cached_lower_file_names: Option<Vec<Option<String>>>,
         cached_normalized_keys: Option<Vec<String>>,
+        migemo_enabled: bool,
     ) -> Self {
         let (lower_names, lower_file_names, normalized_keys, kana_lower_names) =
             if let (Some(ln), Some(lfn), Some(nk)) =
@@ -292,10 +315,15 @@ impl SearchEngine {
                 // A-3: v4 キャッシュヒット → Wave 1 完全スキップ（kana_lower_names は毎起動再計算）。
                 // キャッシュ由来の Vec<String> を Box<str> へ移す。postcard デシリアライズ後の
                 // String は capacity == len のため into_boxed_str は再アロケーションを伴わない。
-                let kana = entries
-                    .par_iter()
-                    .map(|e| to_kana(&to_lower_folded(&e.name)).into_boxed_str())
-                    .collect::<Vec<_>>();
+                // migemo 無効時は kana を再計算せず空 Vec のままにする。
+                let kana = if migemo_enabled {
+                    entries
+                        .par_iter()
+                        .map(|e| to_kana(&to_lower_folded(&e.name)).into_boxed_str())
+                        .collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                };
                 let ln = ln.into_iter().map(String::into_boxed_str).collect::<Vec<_>>();
                 let lfn = lfn
                     .into_iter()
@@ -304,8 +332,8 @@ impl SearchEngine {
                 let nk = nk.into_iter().map(String::into_boxed_str).collect::<Vec<_>>();
                 (ln, lfn, nk, kana)
             } else {
-                // v3 フォールバック: Wave 1 を並列実行
-                compute_wave1(&entries)
+                // v3 フォールバック: Wave 1 を並列実行（migemo フラグを反映）
+                compute_wave1(&entries, migemo_enabled)
             };
 
         Self::assemble(
@@ -465,6 +493,12 @@ impl SearchEngine {
             (0..self.entries.len()).collect()
         };
 
+        // kana_lower_names は migemo 無効で構築されたとき空 Vec（issue #337）。
+        // 構築時 migemo OFF → 検索時 migemo ON（kana_query=Some）の窓で
+        // self.kana_lower_names[i] が index out of bounds で panic するのを防ぐ。
+        // Copy な bool としてクロージャに move する（self への可変借用は不要）。
+        let kana_available = !self.kana_lower_names.is_empty();
+
         // Parallel scoring: each rayon task gets its own Matcher (created in fold init).
         // Matcher::new() is O(alloc_zeroed) — lightweight enough to create per task.
         // Each task builds a local top-k BinaryHeap; tasks are merged in reduce().
@@ -562,7 +596,9 @@ impl SearchEngine {
                     };
 
                     // kana マッチ: primary_score がない場合のみ試みる（OR 関係）。
-                    let kana_score = if primary_score.is_none() {
+                    // kana_available=false（migemo 無効で構築＝空 Vec）のときは
+                    // self.kana_lower_names[i] に到達させない（panic ガード）。
+                    let kana_score = if primary_score.is_none() && kana_available {
                         kana_query
                             .as_deref()
                             .and_then(|kq| kana_substring_score(&self.kana_lower_names[i], kq))
@@ -1385,6 +1421,78 @@ mod tests {
             .collect()
     }
 
+    /// カタカナ主体のエントリ生成。migemo の主対象（かな名）で kana 実体の上界を測るため。
+    fn make_bench_entries_katakana(n: usize) -> Vec<AppEntry> {
+        let prefixes = [
+            "マイクロソフト", "アドビ", "グーグル", "アップル", "システム",
+            "ツール", "ランチャー", "マネージャー", "エクスプローラー", "エディター",
+        ];
+        let suffixes = [
+            "スタジオ", "リーダー", "プレイヤー", "コード", "セッティング",
+            "コントロール", "ビューアー", "ブラウザ", "アシスタント", "ヘルパー",
+        ];
+        (0..n)
+            .map(|i| AppEntry {
+                name: format!(
+                    "{}{}{}",
+                    prefixes[i % prefixes.len()],
+                    suffixes[i % suffixes.len()],
+                    i
+                ),
+                target_path: format!("C:\\Program Files\\App{}\\app{}.lnk", i, i),
+                is_folder: false,
+            })
+            .collect()
+    }
+
+    /// kana_lower_names（`Vec<Box<str>>`）のメモリ実体を分解計測する。
+    /// migemo 無効時はこの構造体ごと空になるため、ここで測る合計が削減量に相当する。
+    /// - ポインタ配列: `capacity * size_of::<Box<str>>()`（ファットポインタ 16B/要素）
+    /// - 文字列実体: 各 Box<str> のバイト長総和（要求バイト）
+    /// - 16B 粒度丸め: 各実体を個別ヒープ確保とみなし 16B 境界へ切り上げた実 RSS 寄りの上界
+    fn measure_kana_footprint(label: &str, entries: &[AppEntry]) {
+        let kana: Vec<Box<str>> = entries
+            .iter()
+            .map(|e| to_kana(&to_lower_folded(&e.name)).into_boxed_str())
+            .collect();
+        let n = kana.len().max(1);
+        let ptr_bytes = kana.capacity() * std::mem::size_of::<Box<str>>();
+        let content_bytes: usize = kana.iter().map(|s| s.len()).sum();
+        let rounded_content: usize = kana.iter().map(|s| s.len().max(1).div_ceil(16) * 16).sum();
+        let transformed = entries
+            .iter()
+            .filter(|e| {
+                let lf = to_lower_folded(&e.name);
+                to_kana(&lf) != lf
+            })
+            .count();
+        let requested = ptr_bytes + content_bytes;
+        let rss_ish = ptr_bytes + rounded_content;
+        let mb = |b: usize| b as f64 / (1024.0 * 1024.0);
+        println!(
+            "[{label}] n={n} かな変換割合={pct:.0}%\n  \
+             ポインタ {ptr_bytes}B ({:.2}MB) + 実体 {content_bytes}B ({:.2}MB) \
+             = 要求 {requested}B ({:.2}MB) | 16B丸め {rss_ish}B ({:.2}MB)\n  \
+             1件あたり 要求 {}B / 丸め {}B",
+            mb(ptr_bytes),
+            mb(content_bytes),
+            mb(requested),
+            mb(rss_ish),
+            requested / n,
+            rss_ish / n,
+            pct = transformed as f64 * 100.0 / n as f64,
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn measure_kana_memory_footprint() {
+        for &n in &[1_000usize, 10_000, 50_000, 100_000] {
+            measure_kana_footprint(&format!("ascii    n={n}"), &make_bench_entries(n));
+            measure_kana_footprint(&format!("katakana n={n}"), &make_bench_entries_katakana(n));
+        }
+    }
+
     fn bench_search(label: &str, n: usize, queries: &[&str]) {
         use std::time::Instant;
         let entries = make_bench_entries(n);
@@ -1457,6 +1565,35 @@ mod tests {
     fn bench_new_scaling() {
         for &n in &[1_000, 10_000, 50_000, 100_000, 300_000] {
             bench_new("new", n);
+        }
+    }
+
+    /// migemo on/off の構築コスト差を計測する（issue #337）。
+    /// kana 構築（to_kana の全エントリ map）をスキップした分の差を可視化する。
+    /// 構築はロック外（PrebuiltIndex::new）で行われ、ロック保持時間は
+    /// apply_prebuilt_index の O(1) ムーブのみ（migemo 状態に依存しない）。
+    fn bench_new_migemo(label: &str, n: usize, migemo_enabled: bool) {
+        use std::time::Instant;
+        let entries = make_bench_entries_katakana(n);
+        let _ = SearchEngine::new_with_migemo(entries.clone(), migemo_enabled); // warmup
+        let iters = 5usize;
+        let mut total_ns = 0u128;
+        for _ in 0..iters {
+            let cloned = entries.clone();
+            let t = Instant::now();
+            let _ = SearchEngine::new_with_migemo(cloned, migemo_enabled);
+            total_ns += t.elapsed().as_nanos();
+        }
+        let avg_us = total_ns / iters as u128 / 1000;
+        println!("[{label}] entries={n}, migemo={migemo_enabled}, avg={avg_us}µs ({iters} iters)");
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_new_migemo_on_off() {
+        for &n in &[1_000, 10_000, 50_000, 100_000] {
+            bench_new_migemo("new_migemo_on ", n, true);
+            bench_new_migemo("new_migemo_off", n, false);
         }
     }
 
@@ -1945,6 +2082,94 @@ mod tests {
             inc_names, fresh_names,
             "か→かん は単調拡張なので incremental は fresh と一致するはず"
         );
+    }
+
+    // --- migemo 条件付き構築テスト (issue #337) ---
+
+    #[test]
+    fn migemo_disabled_build_leaves_kana_empty() {
+        // migemo OFF で構築 → kana 未構築。その後 migemo ON で検索しても
+        // panic せず、kana マッチは出ない（空ガード）。
+        let entries = make_entries(&["ドキュメント", "Documents"]);
+        let mut engine = SearchEngine::new_with_migemo(entries, false);
+        let results = engine.search_with_options(
+            "dokyu",
+            8,
+            &empty_history(),
+            SearchMode::Substring,
+            migemo_config(),
+        );
+        assert!(
+            results.is_empty(),
+            "kana 未構築時は migemo 検索が空（panic せず）: {:?}",
+            results.iter().map(|r| r.name.as_str()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn migemo_enabled_build_matches_kana() {
+        // migemo ON で構築 → kana 構築済み → ローマ字検索がヒット
+        let entries = make_entries(&["ドキュメント", "Documents"]);
+        let mut engine = SearchEngine::new_with_migemo(entries, true);
+        let results = engine.search_with_options(
+            "dokyu",
+            8,
+            &empty_history(),
+            SearchMode::Substring,
+            migemo_config(),
+        );
+        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+        assert!(
+            names.contains(&"ドキュメント"),
+            "migemo ON 構築で ドキュメント がヒット: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn kana_index_follows_migemo_on_off_on() {
+        // on→off→on の各構築で kana 挙動が追従する（必須条件 #3）
+        let names = &["ドキュメント"];
+        fn romaji_hits(engine: &mut SearchEngine) -> bool {
+            !engine
+                .search_with_options(
+                    "dokyu",
+                    8,
+                    &empty_history(),
+                    SearchMode::Substring,
+                    SearchOptions {
+                        migemo_enabled: true,
+                        migemo_min_chars: 2,
+                        ..SearchOptions::default()
+                    },
+                )
+                .is_empty()
+        }
+        let mut on1 = SearchEngine::new_with_migemo(make_entries(names), true);
+        assert!(romaji_hits(&mut on1), "on(1): kana ヒットするはず");
+        let mut off = SearchEngine::new_with_migemo(make_entries(names), false);
+        assert!(!romaji_hits(&mut off), "off: kana 未構築でヒットしない");
+        let mut on2 = SearchEngine::new_with_migemo(make_entries(names), true);
+        assert!(romaji_hits(&mut on2), "on(2): 再構築で kana 復活");
+    }
+
+    #[test]
+    fn incremental_with_kana_disabled_build_no_panic() {
+        // kana 空（migemo off 構築）+ 検索時 migemo on + incremental シーケンスでも
+        // panic せず、kana-off fresh エンジンと一致する（cache-check 由来の追加テスト）。
+        let names = &["ドキュメント", "Discord", "Chrome"];
+        let cfg = migemo_config();
+        let h = empty_history();
+        let mut engine = SearchEngine::new_with_migemo(make_entries(names), false);
+        let _ = engine.search_with_options("do", 8, &h, SearchMode::Substring, cfg);
+        let inc = engine.search_with_options("doku", 8, &h, SearchMode::Substring, cfg);
+
+        let mut fresh = SearchEngine::new_with_migemo(make_entries(names), false);
+        let fresh_r = fresh.search_with_options("doku", 8, &h, SearchMode::Substring, cfg);
+
+        let inc_names: Vec<&str> = inc.iter().map(|r| r.name.as_str()).collect();
+        let fresh_names: Vec<&str> = fresh_r.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(inc_names, fresh_names, "kana 空 + incremental は fresh と一致");
     }
 
     // --- パスマッチング テスト ---

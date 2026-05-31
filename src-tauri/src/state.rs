@@ -43,7 +43,7 @@ mod tests {
 
     fn test_state() -> AppState {
         AppState {
-            engine: Mutex::new(Engine::new(Vec::new(), HistoryStore::load(10), Config::default())),
+            engine: Mutex::new(Engine::new(Vec::new(), HistoryStore::load(), Config::default())),
             indexing: AtomicBool::new(false),
             index_build_started: AtomicBool::new(false),
             main_visible: AtomicBool::new(false),

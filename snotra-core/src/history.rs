@@ -29,12 +29,14 @@ pub struct HistoryData {
 
 pub struct HistoryStore {
     data: HistoryData,
-    top_n: usize,
     dirty_count: u32,
 }
 
 impl HistoryStore {
-    pub fn load(top_n: usize) -> Self {
+    /// 履歴をディスクから読み込む。`top_n`（剪定容量）は焼き込まず、`save`/`prune` 呼び出し時に
+    /// 引数で受け取る（live-read 化、issue #348）。これにより `top_n_history` の設定変更が
+    /// 再起動なしで反映され、`HistoryStore.top_n` の焼き込みによるドリフトが構造的に発生しない。
+    pub fn load() -> Self {
         let (loaded_data, loaded_version) = Self::bin_file()
             .and_then(|bf| bf.load_with_fallback(HISTORY_FALLBACKS))
             .unwrap_or((HistoryData::default(), HISTORY_VERSION));
@@ -44,13 +46,14 @@ impl HistoryStore {
 
         Self {
             data,
-            top_n,
             dirty_count: 0,
         }
     }
 
-    pub fn save(&mut self) {
-        self.prune();
+    /// `top_n` 件まで剪定してから永続化する。`top_n` は呼び出し側（`Engine`）が
+    /// 現在の config から渡す（live-read）。
+    pub fn save(&mut self, top_n: usize) {
+        self.prune(top_n);
 
         if let Some(bf) = Self::bin_file() {
             bf.save(&self.data);
@@ -83,9 +86,10 @@ impl HistoryStore {
     }
 
     /// Save if dirty_count has reached the given threshold, then reset.
-    pub fn save_if_dirty(&mut self, threshold: u32) {
+    /// `top_n`（剪定容量）は呼び出し側が現在の config から渡す（live-read、issue #348）。
+    pub fn save_if_dirty(&mut self, threshold: u32, top_n: usize) {
         if self.dirty_count >= threshold {
-            self.save();
+            self.save(top_n);
             self.dirty_count = 0;
         }
     }
@@ -189,12 +193,14 @@ impl HistoryStore {
         BinFile::new(HISTORY_MAGIC, HISTORY_VERSION, "history.bin")
     }
 
-    fn prune(&mut self) {
+    /// `top_n` 件まで剪定する。`top_n` は引数で受け取る（焼き込まない＝live-read、issue #348）。
+    /// 同一 store に対し異なる `top_n` で呼べば、その都度その容量で剪定される。
+    fn prune(&mut self, top_n: usize) {
         // Prune global + query entries
-        if self.data.global.len() > self.top_n {
+        if self.data.global.len() > top_n {
             let mut entries: Vec<_> = self.data.global.drain().collect();
             entries.sort_by_key(|b| std::cmp::Reverse(b.1.launch_count));
-            entries.truncate(self.top_n);
+            entries.truncate(top_n);
 
             let surviving: FxHashMap<String, GlobalEntry> = entries.into_iter().collect();
 
@@ -207,10 +213,10 @@ impl HistoryStore {
         }
 
         // Prune folder_expansion independently
-        if self.data.folder_expansion.len() > self.top_n {
+        if self.data.folder_expansion.len() > top_n {
             let mut fentries: Vec<_> = self.data.folder_expansion.drain().collect();
             fentries.sort_by_key(|b| std::cmp::Reverse(b.1));
-            fentries.truncate(self.top_n);
+            fentries.truncate(top_n);
             self.data.folder_expansion = fentries.into_iter().collect();
         }
     }
@@ -292,15 +298,6 @@ mod tests {
     fn fresh_store() -> HistoryStore {
         HistoryStore {
             data: HistoryData::default(),
-            top_n: 100,
-            dirty_count: 0,
-        }
-    }
-
-    fn fresh_store_with_top_n(top_n: usize) -> HistoryStore {
-        HistoryStore {
-            data: HistoryData::default(),
-            top_n,
             dirty_count: 0,
         }
     }
@@ -567,7 +564,7 @@ mod tests {
 
     #[test]
     fn prune_keeps_top_n_by_launch_count() {
-        let mut store = fresh_store_with_top_n(2);
+        let mut store = fresh_store();
 
         store.data.global.insert(
             "C:\\low.lnk".to_string(),
@@ -591,12 +588,58 @@ mod tests {
             },
         );
 
-        store.prune();
+        store.prune(2);
 
         assert_eq!(store.data.global.len(), 2);
         assert!(store.data.global.contains_key("C:\\high.lnk"));
         assert!(store.data.global.contains_key("C:\\med.lnk"));
         assert!(!store.data.global.contains_key("C:\\low.lnk"));
+    }
+
+    #[test]
+    fn prune_uses_passed_top_n_each_call_not_frozen() {
+        // issue #348-B の核心: top_n は prune 呼び出しごとに引数で渡る（焼き込まない）。
+        // 同一 store に異なる top_n で prune すれば、その都度その容量で剪定される
+        // ＝ HistoryStore が top_n を保持しないので「設定変更が反映されない」ドリフトは起きない。
+        let mut store = fresh_store();
+        for (path, count) in [("a", 10u32), ("b", 5), ("c", 1)] {
+            store.data.global.insert(
+                format!("c:\\{}.lnk", path),
+                GlobalEntry {
+                    launch_count: count,
+                    last_launched: u64::from(count),
+                },
+            );
+        }
+
+        // top_n=2 で剪定 → 上位 2 件（a, b）が残る
+        store.prune(2);
+        assert_eq!(store.data.global.len(), 2);
+        assert!(store.data.global.contains_key("c:\\a.lnk"));
+        assert!(store.data.global.contains_key("c:\\b.lnk"));
+
+        // 同じ store に、より小さい top_n=1 で再剪定 → さらに絞れる（焼き込みでない証拠）
+        store.prune(1);
+        assert_eq!(store.data.global.len(), 1);
+        assert!(store.data.global.contains_key("c:\\a.lnk"));
+    }
+
+    #[test]
+    fn prune_grow_top_n_keeps_more_entries() {
+        // #348-B（拡大方向）: 大きい top_n では剪定されない（深さが増える）。
+        let mut store = fresh_store();
+        for i in 0..15u32 {
+            store.data.global.insert(
+                format!("c:\\e{}.lnk", i),
+                GlobalEntry {
+                    launch_count: 15 - i,
+                    last_launched: u64::from(15 - i),
+                },
+            );
+        }
+        // top_n=200 >= 15 → 全件残る
+        store.prune(200);
+        assert_eq!(store.data.global.len(), 15);
     }
 
     // --- migrate_normalize_keys テスト ---

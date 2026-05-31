@@ -854,7 +854,7 @@ mod tests {
     }
 
     fn empty_history() -> HistoryStore {
-        HistoryStore::load(10)
+        HistoryStore::load()
     }
 
     #[test]
@@ -2241,7 +2241,7 @@ mod tests {
             make_entry("app1", "C:\\tool\\editor\\app1.exe"),
             make_entry("app2", "C:\\tool\\editor\\app2.exe"),
         ];
-        let mut history = HistoryStore::load(10);
+        let mut history = HistoryStore::load();
         for _ in 0..5 {
             history.record_launch("C:\\tool\\editor\\app1.exe", "");
         }
@@ -2353,7 +2353,7 @@ mod tests {
             make_entry("app1", "C:\\tool\\editor\\app1.exe"),
             make_entry("app2", "C:\\tool\\editor\\app2.exe"),
         ];
-        let mut history = HistoryStore::load(10);
+        let mut history = HistoryStore::load();
         // tool/editor（スラッシュ）で起動記録
         history.record_launch("C:\\tool\\editor\\app1.exe", "tool/editor");
 

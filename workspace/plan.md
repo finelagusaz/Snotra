@@ -1,128 +1,113 @@
-# plan.md — issue #337 kana_lower_names を migemo 有効時のみ常駐
+# plan.md — issue #347 StaleSet コヒーレンシ設計（設計先行サイクル）
 
-## ゴール / 受け入れ条件
+> **このサイクルのスコープ（ユーザー合意済み）**: 設計メモ先行。成果物は
+> `workspace/research.md`（現状精査）+ `docs/design/2026-05-31-coherence-staleset.md`（設計メモ）まで。
+> #348 の 2 症状は #347 の StaleSet 機構に統合する前提で設計済み。
+>
+> **更新（2026-05-31 合意後）**: 設計合意（Q1〜Q4 承認、設計メモ status: **Agreed**）。
+> ユーザー判断「Phase 1 先行マージ」に従い、**Phase 1（history を live-read 化）を本セッションで実装・検証済み**。
+> Phase 2（単一 `index_stale` bit）・Phase 3（残ドキュメント同期）は別サイクル。
+>
+> **Codex アドバーサリアルレビュー指摘（修正済み）**: live-read 化が config_watcher の既存の穴を顕在化——
+> 一時的 config 読込失敗（`LoadOutcome::ReadFailed`）で fallback-default が適用され、live-read 履歴剪定が
+> `history.bin` を default 上限へ不可逆縮小（データ損失）。**根本修正**: `apply_config_change` が ReadFailed では
+> 何も適用せず早期 return（`should_apply_config_change()`）。`Config::load` の保全方針を適用側にも揃えた。
+>
+> **Codex `review` 指摘 P2（修正済み）**: ReadFailed 早期 return が notify イベントを消費し、後続イベントが
+> 来ない場合に正規の変更を取りこぼす（MECE 整理で D2b と特定）。**対応**: `load_with_read_failed_retry` で
+> ReadFailed のみバウンドリトライ（3 回 × 150ms）し、予算内でロック解除すれば適用。リトライ中は適用しないため
+> データ損失安全（P1）は不変＝両不変条件を両立。検証: snotra-core 367 / snotra 39 / clippy 正規ゲート green。
 
-1. migemo **無効**時、`SearchEngine` の `kana_lower_names` は**空 Vec**（メモリ ~0）。50k 件で ~2.0〜2.7MB 削減
-2. migemo **有効**時、従来通り全エントリ分の kana を eager 構築し、ローマ字検索が機能する
-3. migemo OFF で構築→ON で検索しても **panic しない**（空ガード）。kana マッチは出ないが安全
-4. migemo トグル（config.toml 変更）で kana の構築状態が追従する（reindex 経由）
-5. `cargo test -p snotra-core` / `cargo clippy -- -D warnings` green。既存テスト無改変で通る
+## このサイクルの成果物（= 変更ファイル）
 
-## 設計判断（research.md の未解決疑問への結論）
+| ファイル | 内容 | 状態 |
+|---|---|---|
+| `workspace/research.md` | 現状コヒーレンシ・アーキテクチャの精査（カテゴリ A/B、3 同期軸、キー二重メンテ） | 作成済み |
+| `docs/design/2026-05-31-coherence-staleset.md` | StaleSet 契約・所有者配置・3 軸統合・収束性・失敗モード・代替案・実装ロードマップ | 作成済み |
+| `workspace/plan.md` | 本ファイル（サイクル計画 + セルフレビュー） | 本ファイル |
 
-### D-1: 構築 API は `new` 据え置き + 明示フラグ版を追加
-- `SearchEngine::new(entries)` は **kana を常時構築**（= `new_with_migemo(entries, true)` の薄いラッパー）。テスト・ベンチ・convenience 用として据え置く → **search.rs の ~70 テスト・既存ベンチを無改変で維持**
-- 本番経路だけが config 由来の `migemo_enabled` を流す:
-  - `SearchEngine::new_with_migemo(entries, migemo_enabled)`（新規 pub）
-  - `SearchEngine::new_with_cached_masks(..., migemo_enabled)`（引数追加）
-  - `PrebuiltIndex::new(entries, migemo_enabled)`（引数追加）
-  - `Engine::new` / `Engine::new_from_cache` は手元の `config.search.migemo_enabled` を導出して渡す
-- 理由: 70 箇所の機械的改変はレビュー負荷・取りこぼしリスクが高い。本番経路は必ず明示フラグを通るので最適化は確実に効く。`new` の既定 true は「フル機能エンジン」として妥当で、全既存テスト（migemo ON/OFF 双方）が無改変で通る
+**このサイクルではコード（`*.rs`）・SPEC.md・CLAUDE.md を変更しない**（設計先行のため）。
 
-### D-2: migemo トグルは reindex に乗せる（対称に閉じる）
-- `config_watcher::needs_reindex` に `old.search.migemo_enabled != new.search.migemo_enabled` を追加
-- `indexing.rs` のロック内キャプチャタプルに `migemo_enabled` を追加し、`PrebuiltIndex::new` へ渡す。in-flight `needs_rebuild`（L79-87）にも `cfg.search.migemo_enabled != migemo_enabled` を追加
-- 理由: 本変更前は migemo トグルが即時反映されていた。eager-at-construction にすると「ON にしても次の reindex まで無反応」というサイレント後退が出る。既存の reindex machinery を再利用して「トグル→再構築→kana 追従」を保証する（新規状態を増やさない＝KISS）。disk 再スキャンを伴うが show_icons / show_hidden_system トグルと同コスト水準で、migemo 切替は稀
+## 設計の要点（設計メモの要約）
 
-## 変更ファイル一覧
+1. **中核契約**: `update_config` を全カテゴリ B 派生物の単一コヒーレンシ・チョークポイントにする。
+   軽量は インライン reconcile、重量は stale ledger に記録 → ロック外 drain
+2. **所有者**: 判断（何が stale か/ループ要否/swap/軽量 reconcile）= Engine（snotra-core）、
+   重い drain の駆動（スレッド/イベント）= src-tauri。レイヤー境界を保つ
+3. **3 軸統合**: stale ledger を engine Mutex 軸に置き、コヒーレンシの正しさを軸1 だけに閉じる。
+   軸2（AtomicBool）は CAS+UI 専用、軸3（INDEX_WRITE_LOCK）は単一書き手専用に純化
+4. **lost-update 解消**: bit-set（update_config）と bit-clear（drain 完了 re-diff）が engine ロックで相互排他 → 取りこぼし窓が閉じる
+5. **#348 統合**: top_n ドリフトは **history を live-read 化して B から除外**（焼き込む場所を消す）、lost-update 窓は単一 `index_stale` bit で——「config 由来キャッシュの無効化を update_config が所有」という一契約の帰結に
+6. **archaeology による精緻化**: git 史実で本質的制約（lock 最小化/レイヤー境界/2 AtomicBool/INDEX_WRITE_LOCK）と偶発的複雑さ（所有権追放/キー二重メンテ/top_n 漏れ）を切り分け。「カテゴリ B はキャッシュ」と再定義し、**B を既約核（SearchEngine 1 つ）へ縮小**＝StaleSet は単一 bit に収斂（設計メモ §1.5, §2）
 
-### 1. snotra-core/src/search.rs
-- `compute_wave1(entries)` → `compute_wave1(entries, migemo_enabled: bool)`。最内 join の kana 側を `if migemo_enabled { entries.iter().map(...to_kana...).collect() } else { Vec::new() }` に変更
-- `new(entries)`: `Self::new_with_migemo(entries, true)` に委譲
-- `new_with_migemo(entries, migemo_enabled)`（新規 pub）: `compute_wave1(&entries, migemo_enabled)` → `compute_wave2` → `assemble`
-- `new_with_cached_masks(..., migemo_enabled: bool)`: v4 パスの kana 再計算（`par_iter`）を `if migemo_enabled { ... } else { Vec::new() }` に。v3 フォールバックは `compute_wave1(&entries, migemo_enabled)`
-- `assemble`: kana の `debug_assert!` を `(kana_lower_names.is_empty() || kana_lower_names.len() == entries.len())` に緩和（他 5 Vec は従来通り == entries.len()）
-- 検索ループ kana スコア（L564-571）: par_iter 前に `let kana_available = !self.kana_lower_names.is_empty();`（Copy bool）を計算し、`if primary_score.is_none() && kana_available { ... }` でガード。`self.kana_lower_names[i]` へ到達する前に空を弾く
-- ドキュメントコメント更新: `kana_lower_names` フィールド（L114-116）・`compute_wave1`（L143-149）に「migemo 有効時のみ構築。無効時は空 Vec」を明記
+## 実装ロードマップ（合意後の別サイクル・概略）
 
-### 2. snotra-core/src/engine.rs
-- `PrebuiltIndex::new(entries)` → `PrebuiltIndex::new(entries, migemo_enabled: bool)` → `SearchEngine::new_with_migemo(entries, migemo_enabled)`
-- `Engine::new`: `SearchEngine::new_with_migemo(entries, config.search.migemo_enabled)`
-- `Engine::new_from_cache`: `new_with_cached_masks(..., config.search.migemo_enabled)`
-- `replace_entries`（test）: `SearchEngine::new(entries)` のまま（kana 構築・テスト用途で問題なし）
+設計メモ §8 を SSOT とする。要約:
+- **Phase 1**: history を **live-read 化**（`HistoryStore.top_n` フィールド削除、`save`/`prune` に引数渡し、`Engine` が config から渡す）。#348 欠陥 B を構造的に消す。最小・独立・先行可能
+- **Phase 2**: 単一 `index_stale` bit 化（#347 中核 + #348 欠陥 A）。`needs_reindex` / in-flight `needs_rebuild` を 1 機構に統合
+- **Phase 3**: ドキュメント同期（CLAUDE.md / rules / SPEC.md / architecture.md）
 
-### 3. src-tauri/src/indexing.rs
-- ロック内キャプチャタプルに `engine.config().search.migemo_enabled` を追加（`migemo_enabled` 変数）
-- `PrebuiltIndex::new(entries)` → `PrebuiltIndex::new(entries, migemo_enabled)`
-- in-flight `needs_rebuild` に `|| cfg.search.migemo_enabled != migemo_enabled` を追加
+## 不変条件（実装時に守るべき・設計メモ §5 の要約）
 
-### 4. src-tauri/src/config_watcher.rs
-- `needs_reindex` に `|| old.search.migemo_enabled != new.search.migemo_enabled` を追加
+- ロック最小化（重い build は engine ロック外）— 維持
+- `INDEX_WRITE_LOCK` 単一書き手 — 維持
+- CAS 二重ビルド防止（`try_begin_index_build`）— 維持
+- カテゴリ A live-read — 不変
+- 新しい同期軸を増やさない（stale ledger は engine Mutex 上の状態）
+- stale bit の真偽ペア: set=update_config / clear=drain 完了 re-diff 一致時のみ / 失敗時は残す（戻せない経路を作らない）
 
-### 5. ドキュメント同期
-- `snotra-core/CLAUDE.md`: モジュール構成 search.rs 節 + 「5 箇所同時更新」節に「kana_lower_names は migemo 有効時のみ構築（無効時は空 Vec、検索ループは空ガード）」を追記
-- `.claude/rules/snotra-core-search.md`: 「Wave 1/2 変更」項に kana 条件付き構築を追記
-- SPEC.md: **更新不要**（検索時挙動・IPC 契約・incremental 不変条件は不変。kana 常駐の有無・migemo トグルの reindex は実装詳細で SPEC の文書化範囲外）。AGENTS.md step 0 判定: 文書化された挙動を変えないため「バグ/最適化」側、仕様変更ではない
+## テスト方針（合意後の実装サイクル用・設計段階で確定）
 
-## 実装順序（フェーズ）
-
-1. **Phase 1（snotra-core, TDD）**: search.rs の構築 API・ガード・assert を変更。先に Red テストを追加
-   - `migemo_disabled_build_leaves_kana_empty`: `new_with_migemo(entries, false)` 後、migemo ON 検索で空＆ panic なし
-   - `migemo_enabled_build_matches_kana`: `new_with_migemo(entries, true)` 後、`dokyu`→`ドキュメント` ヒット
-   - `kana_index_follows_migemo_on_off_on`: true→false→true の各構築で kana 挙動が追従（状態遷移、必須条件 #3）
-   - engine.rs: `apply_prebuilt_index_rebuilds_kana_per_migemo`: migemo OFF で構築した Engine に `PrebuiltIndex::new(entries, true)` をスワップ→ migemo 有効 config で `search` がローマ字ヒット（必須条件 #1 の eager 経路検証）
-2. **Phase 2（src-tauri 配線）**: indexing.rs / config_watcher.rs に migemo を追加
-   - config_watcher.rs: `needs_reindex_migemo_change` テスト追加（既存 `needs_reindex_*` パターン）
-3. **Phase 3（ベンチ, `#[ignore]`）**: search.rs に migemo on/off 構築コスト比較ベンチ
-   - `bench_new_migemo_on_off`: 50k 件で `new_with_migemo(.., true)` vs `(.., false)` の構築時間を Instant で計測（kana スキップ分の差を可視化）
-   - `apply_prebuilt_index` のスワップは O(1) ムーブ（ロック保持時間は migemo 状態に依存しない）ことをコメントで明記。「ロック保持時間」観点の検証はこの O(1) 性の確認＋構築コストがロック外であることの再確認
-4. **Phase 4**: clippy・ドキュメント同期・全テスト
-
-## 不変条件
-
-- **スコア階層不変**: Prefix(10000) > Substring(5000) > Kana(4500) > Path(3000) > Fuzzy。kana を「作らない」だけで、作ったときのスコアリングは不変
-- **並列 Vec 長**: kana 以外（lower_names / lower_file_names / normalized_keys / char_masks / file_name_char_masks）は常に == entries.len()。kana のみ {0, entries.len()} を許す。これは `assemble` の debug_assert と検索ループの空ガードの 2 点で担保
-- **kana_available の単調性（リソース・状態の対称性）**: kana は構築時に一度だけ {空, full} が決まり、SearchEngine の生存中は変化しない（`update_config` は再構築しないため）。空ガードは「構築時の migemo 状態」を反映する。migemo 状態の変化は SearchEngine の再構築（reindex / 再起動）でのみ kana に反映される ← D-2 でトグル→reindex を保証
-- **異常系**: 
-  - migemo ON 構築中に panic/中断 → 次回起動で config に従い再構築（kana は永続化されないため毎回再計算）。回復不能状態に固まる経路はない
-  - reindex 中に migemo トグル → indexing.rs in-flight needs_rebuild が拾い再ビルド。config_watcher 側は indexing_in_progress=true で start を見送るが、in-flight 検出が補完する（二重起動しない）
-- **incremental cache 非干渉**: `kana_monotonic` / `prev_kana_query` は `kana_query`（クエリ文字列）のみ参照し `kana_lower_names` に触れない。kana 空でも incremental 述語の単調性は保たれる（kana マッチが 0 件になるだけで候補集合は縮小方向）
-
-## テスト方針
-
-- snotra-core: 上記 Phase 1 ユニットテスト（状態遷移含む）。既存 ~70 テストは無改変で通ること（D-1 の検証）
-- src-tauri: config_watcher needs_reindex の migemo テスト。indexing.rs は Win32 / AppHandle 依存でユニットテスト前提にしない（AGENTS.md 環境制約）→ ロジック（needs_reindex）は config_watcher 側でテスト
-- ベンチ: `cargo test -p snotra-core bench_new_migemo -- --ignored --nocapture` で手動確認
-- 検証コマンド（docs/build-commands.md カテゴリ準拠）:
-  - Rust 変更 → `cargo test -p snotra-core`、`cargo clippy --all-targets -- -D warnings`、`cargo build`（src-tauri 含む）
-  - 全体ビルド: `cargo build` で src-tauri 配線の型整合を確認
+- **Phase 1（history）**: top_n 縮小 → `prune` 容量追従 / 拡大 → 深さ追従のユニットテスト（`history.rs` + `engine.rs`、Win32 非依存）
+- **Phase 2（index-stale）**: lost-update 窓の状態遷移ユニットテスト（`state.rs` フラグ + Engine stale 機構、AppHandle 非依存）。
+  完了後 re-diff の収束性（config 変更中ループ → 停止）テスト
+- 検証コマンドは `docs/build-commands.md` カテゴリ A（snotra-core）/ B（src-tauri）
 
 ## SPEC.md 更新要否
 
-**不要**。理由は「変更ファイル一覧 5」に記載。検索アルゴリズム・スコア・incremental 不変条件・IPC 契約は不変。kana 常駐有無は内部メモリ最適化、migemo トグル→reindex は既存 reindex トリガー群への追加（SPEC §6 はトグルの存在を述べるが反映機構は規定しない）。
+- **本サイクル: 不要**（コード挙動を変えない設計メモのみ）
+- **実装サイクル: 要**（設計メモ §6 Q5）。top_n_history 変更が再起動不要で即時反映になるのは文書化された挙動変更
+  → 実装 Phase 3 で SPEC.md の設定反映に関する記述を同期する
 
-## 実装チェックリスト（落とし穴 — plan-review/symmetric-check 由来）
-
-実装時に以下の「同時修正が必要な組」を取りこぼさない:
-
-- [ ] **kana 構築ゲートの2サブパス**: `new_with_cached_masks` は v4（`par_iter` 再計算）と v3 フォールバック（`compute_wave1`）の**両方**を migemo ゲートする。v4 だけ直して v3 を忘れると非対称
-- [ ] **indexing.rs の開始↔完了の対**: ロック内キャプチャタプル（L32-41）に migemo 追加 ⇔ in-flight `needs_rebuild`（L79-87）の比較に migemo 追加。**両方そろえる**（片方だけだとビルド中トグルを取りこぼす）
-- [ ] **reindex トリガーの2サイト**: `config_watcher::needs_reindex`（L208-213）⇔ indexing.rs in-flight `needs_rebuild`（L79-87）。両方に migemo
-- [ ] **assemble の assert**: kana のみ `{0, entries.len()}` 許容に緩和。他 5 Vec は `== entries.len()` のまま（文字列メッセージも整合）
-- [ ] **kana_available の借用**: `let kana_available = !self.kana_lower_names.is_empty();` を par_iter 前に計算し Copy bool としてクロージャに move。`self.kana_lower_names` への可変借用をクロージャに持ち込まない（borrow checker で compile-time 検出されるが意識する）
-
-## IndexCache / CachedMasks への影響
-
-**不変（バージョンバンプ不要）**。理由: `kana_lower_names` は**永続化されない**派生データで、起動時に entries から毎回再計算される（`new_with_cached_masks` の v4 パス）。本変更は「再計算するか否か」を migemo で分岐するのみで、IndexCache のフィールド・`CachedMasks` 構造体・`INDEX_CACHE_VERSION` は変えない。新規フィールド追加ではないため snotra-core/CLAUDE.md の「IndexCache バージョン変更チェックリスト」「5 箇所同時更新」（=フィールド追加時のルール）は非該当。
-
-## migemo ランタイムトグルの確証（要対処解消）
-
-snotra-settings は migemo を UI 公開している（`snotra-settings/src/tabs/search.rs:97` の `checkbox(&mut config.search.migemo_enabled)`）。よってユーザーは UI からトグルでき、config.toml 書込→config_watcher 検知→（D-2 により）reindex→kana 追従という経路が実在シナリオ。**D-2 は実在の UX 後退（チェックを入れても無反応／外しても省メモリが効かない）を防ぐ正当な修正**であることを確認済み。
-
-## 追加テスト（cache-check 由来）
-
-Phase 1 に追加:
-- [ ] `incremental_with_kana_disabled_build_no_panic`: `new_with_migemo(entries, false)` 構築 → `migemo_config()` で "do"→"doku" 逐次検索。panic せず、各結果が kana-off fresh エンジンと一致。**新状態「kana 空 + migemo-on-search + incremental」の安全性を固定**
+---
 
 ## セルフレビュー
 
-1. **対称コードパス**: /symmetric-check 実施。(A) kana 構築の全経路（new/new_with_migemo/v4/v3）一貫ゲート (B) 構築側↔検索側ガード (C) needs_reindex↔in-flight needs_rebuild (D) 開始キャプチャ↔完了比較 — 4 ペル全て [適用] として計画に反映。kana Vec のライフサイクルは Rust 所有権で自動対称 [不要]。ON→OFF 方向（メモリ即時回収）も `!=` 比較でカバー
-2. **影響範囲の網羅性**: grep 済み。`PrebuiltIndex::new` は indexing.rs:72 のみ。`apply_prebuilt_index` も同所のみ。ライブエンジン構築は「起動時 + start_index_build」の2系統のみ（背景再スキャン main.rs:656 は index.bin 保存+アイコン無効化のみでライブエンジン非再構築）。`start_index_build` の全呼び出し元は indexing.rs 単一実装に集約
-3. **境界条件**: kana 空（0 件 entries で 0==0）/ migemo off構築→on検索（panic ガード）/ incremental×kana空（追加テスト）/ ON→OFF→ON 状態遷移（Phase 1 テスト）
-4. **リソース管理**: kana Vec は所有権で自動 drop。新規 AtomicBool・listen・子プロセスなし。reindex 中トグルの二重起動は `try_begin_index_build` CAS で防止
-5. **既存パターンとの整合**: needs_reindex への設定追加は show_icons/show_hidden_system と同パターン。eager 構築は既存 compute_wave1 の延長。新規状態を増やさない
-6. **YAGNI 違反**: なし。必須条件 1〜4 に過不足なし。lazy 化（issue が否定）を避け eager のまま。D-1 で汎用化せず最小コンストラクタ追加
-7. **シンプル化の挑戦**: D-1 で「`new` シグネチャ変更（~70 テスト改変）」より「`new` 据え置き+本番経路に明示版」を選択し churn とリスクを最小化。D-2 は新規状態を導入せず既存 reindex 機構を再利用。「migemo OFF 構築 → ON 検索」の失敗系は空ガードで panic 回避、reindex で追従と明記済み
-8. **破壊不変条件**: 「`kana_lower_names[i]` への空 Vec index アクセス」が唯一の panic 経路 → `kana_available` ガード（Phase 1 テスト `migemo_disabled_build_leaves_kana_empty` で検証）。Win32 フック等の「戻ってこない」系リスクはなし（純ロジック + config 配線のみ）
+### 5a. check スキルによる計画検証
 
-**plan-review 総評**: snotra-core completeness 高、src-tauri completeness 中→（本セクションの追補で）高。実装着手可。
+| スキル | 実行 | 結果 |
+|---|---|---|
+| `/plan-review` 相当 | 実行済み（Explore 3 並列） | 設計の診断（カテゴリ A/B 分類・3 同期軸・キー二重メンテ・lost-update 窓・top_n ドリフト）が**全て実コードで裏付けられた**。「実在しない欠陥を直していないか」= No を確証 |
+| `/symmetric-check` 相当 | 実行済み（同上に統合） | カテゴリ B 消費者の網羅（SearchEngine + HistoryStore.top_n の 2 個で漏れなし、他モジュールに B なし）・キー集合の二重メンテ（needs_reindex ↔ in-flight needs_rebuild、両 5 キー一致）・set/clear ペアの対称性を確認 |
+| `/cache-check` | 不要 | incremental search キャッシュ（`prev_*`）には触れない。設計対象は config↔派生状態のコヒーレンシであり検索結果キャッシュではない。kana 空ガード等 #337 の incremental 不変条件は本設計で不変 |
+
+#### レビュー結果の反映（要対処への対応）
+
+| レビュー指摘 | 分類 | 対応 |
+|---|---|---|
+| HistoryStore.top_n に setter が無い / reconcile ループ外 | Agent 1・2「要対処」 | **設計の欠陥ではなく設計が直す対象そのもの**（#348 欠陥 B）。`set_top_n` は新規追加するメソッド（設計メモ §4）。対応不要 = 診断の確証 |
+| 「history インライン化で StaleSet 型が不要 → Alt-1 の偽装では？配置だけ一元化で機構は散在では？」 | Agent 3「要対処」最重要 | 設計メモに **§7.1** を追加。型に依存しない 3 構造デルタ（D1 所有権の帰属 / D2 キー集合の単一定義 / D3 軸1 への判断集約）で Alt-1 と本質的に異なることを明示。「StaleSet は契約名であって容器型でない」「bitflags は 3 つめの重量 B が出たら（YAGNI）」を確定 |
+| re-diff の cost model が曖昧 | Agent 3「要対処」 | 設計メモ §4 に**コストモデル**追記。`IndexInputs` snapshot = 現状 `indexing.rs:36` の `scan.clone()` と同コスト。比較 O(scan paths)、ループは収束性で 1〜2 反復 |
+| 新同期軸を増やさないことの形式確認不足 | Agent 3「要対処」 | 設計メモ §8 Phase 2 着手時チェックリストに「変更後の全フィールド列挙・新 AtomicBool/Mutex 非増加の確認」を追加 |
+| needs_reindex 削除の段階的リファクタ路が未明示 | Agent 3「軽微」 | §8 Phase 2 に「全 caller を grep 列挙・段階的置換」を追加 |
+| SPEC.md 同期が実装サイクルで漏れるリスク | Agent 3「軽微」 | §8 Phase 3 に「SPEC.md の即時反映記述（top_n_history 再起動不要化）」を明示 |
+| show_icons が icon-stale なのにコメント明示なし | Agent 1・2「軽微」 | 設計メモ §6 Q2 が「現状維持＋コメント明示」を既に推奨。実装 Phase で対応 |
+| 失敗時リトライの透過性（Q4） | Agent 3「軽微」 | 設計メモ §5/§6 Q4 で既に open decision として明示。暫定「次の config 変更/次回起動で回復、データ損失なし」、明示リトライは別 issue 候補 |
+
+### 5b. セルフレビューチェックリスト
+
+1. **対称コードパス**: 本設計の主眼が対称性の構造的解消。①カテゴリ B 消費者の網羅（SearchEngine だけでなく HistoryStore.top_n を含めた）②キー集合の二重メンテ（needs_reindex ↔ in-flight needs_rebuild）を 1 箇所に集約 ③stale bit の set/clear ペアを engine ロック軸に対称配置。`/symmetric-check` で追加検証
+2. **影響範囲の網羅性**: research.md でカテゴリ A 全消費者（8 個）・カテゴリ B 全消費者（2 個）を grep ベースで列挙。`show_icons`（icon-stale）の境界も明示。live-read は変更対象外として根拠付きで除外
+3. **境界条件**: lost-update 窓の交錯表（t1-t5）・収束性（config 落ち着き後の停止）・失敗モード（build panic / spawn 失敗 / リトライ契機）を設計メモ §3.3/§3.4/§5 に列挙
+4. **リソース管理**: stale bit を「戻せない経路を作らない」原則で設計（失敗時は残す＝wedge しない、AGENTS.md「状態フラグも真偽ペア」準拠）。新ロックを増やさず既存 3 軸を純化
+5. **既存パターンとの整合**: PrebuiltIndex（ロック外構築 + atomic swap）/「開始時キャプチャ vs 完了後現在値」比較 / CAS 二重起動防止 / FolderListContext スナップショット——全て既存パターンの再利用。新規パターンは「stale ledger を engine ロック軸に置く」のみで、これも Engine facade の単一 Mutex 設計の自然な延長
+6. **YAGNI 違反**: bitflags 型を避け最小実装（index_stale bool + snapshot）を推奨（§6 Q1）。history はインライン reconcile で StaleSet ledger に載せない（§6 Q3）。show_icons 分離はスコープ膨張回避で見送り（§6 Q2）。過剰抽象化を設計段階で削った
+7. **シンプル化の挑戦**: 「StaleSet 型は本当に要るか？」を §6/§7 で自問し、2 カテゴリの現状では bitflags 不要・概念契約（update_config が全 B を所有）が本体、と結論。新状態は engine Mutex 上の bool 1 つに留め、新 Mutex/AtomicBool/子プロセスを増やさない。「この操作が失敗したらどうなるか」を §5 で全列挙
+8. **破壊不変条件の明示**: ロック最小化・INDEX_WRITE_LOCK 単一書き手・CAS 二重ビルド防止・カテゴリ A live-read——「壊れたら即アウト」を §5 に列挙し、各々「維持」を明記。Win32 フック等「戻ってこない」系には触れない設計（純ロジック層 + 既存 src-tauri 配線のみ）。検知手段は Phase 2 の状態遷移ユニットテスト（AppHandle 非依存で書ける）
+
+### セルフレビュー所見
+
+- 設計先行スコープを厳守し、本サイクルではコード・SPEC・CLAUDE.md・`docs/architecture.md`（evergreen）を変更しない（合意前の既成事実化を避ける）
+- 並列レビュー（Explore 3）で設計の診断が全て実コードで裏付けられ、最重要批判（Alt-1 偽装疑い）には設計メモ §7.1 で正面から回答した
+- 設計メモは「契約の一元化」を主眼とし、データ構造（bitflags）は最小から始める方針で YAGNI を回避
+- 残る要確認点は設計メモ §9 のオープンクエスチョン 3 点（推奨案 Q1〜Q5 への同意 / Phase 1 先行マージ可否 / `docs/design/` 常設採用可否）→ **合意フェーズでユーザーに確認する**

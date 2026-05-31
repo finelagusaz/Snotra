@@ -2,7 +2,11 @@
 
 > **このサイクルのスコープ（ユーザー合意済み）**: 設計メモ先行。成果物は
 > `workspace/research.md`（現状精査）+ `docs/design/2026-05-31-coherence-staleset.md`（設計メモ）まで。
-> **実装は本メモの合意後の別サイクル**。#348 の 2 症状は #347 の StaleSet 機構に統合する前提で設計済み。
+> #348 の 2 症状は #347 の StaleSet 機構に統合する前提で設計済み。
+>
+> **更新（2026-05-31 合意後）**: 設計合意（Q1〜Q4 承認、設計メモ status: **Agreed**）。
+> ユーザー判断「Phase 1 先行マージ」に従い、**Phase 1（history を live-read 化）を本セッションで実装・検証済み**
+> （snotra-core 367 / snotra 33 / clippy 正規ゲート green）。Phase 2（単一 `index_stale` bit）・Phase 3（残ドキュメント同期）は別サイクル。
 
 ## このサイクルの成果物（= 変更ファイル）
 

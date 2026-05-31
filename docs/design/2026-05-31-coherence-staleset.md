@@ -1,6 +1,6 @@
 # 設計メモ: config↔派生状態コヒーレンシ所有の一元化（StaleSet 契約）
 
-- **status**: Draft（合意待ち）
+- **status**: Agreed（2026-05-31 合意: Q1 同意 / Q2 `top_n` フィールド削除に同意 / Q3 Phase 1 先行マージ / Q4 `docs/design/` 採用）
 - **rev**: 2026-05-31 archaeology による精緻化（カテゴリ B を既約核へ縮小・history を live-read 化・StaleSet は単一 `index_stale` bit に収斂）
 - **issue**: #347（構造）/ #348（下流症状の対症療法を本設計に統合）/ 経緯 #337
 - **scope**: `size:L` / `type:refactor`。**設計先行** — 本メモの合意後に実装サイクルへ

@@ -338,6 +338,7 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 - ホットキー: 検知時に `PlatformCommand::SetHotkey` で再登録（失敗時は旧設定維持）
 - トレイアイコン: 検知時に `PlatformCommand::SetTrayVisible` で切替
 - 検索方式/最大件数: 検知後即時反映
+- 履歴の保持上限（`top_n_history`）: 検知後即時反映（検索の取得上限・履歴の剪定容量とも実行時に `config` から参照する live-read のため再起動不要、#348）
 - 見た目設定: 検知時に `visual-config-changed` イベントで全ウィンドウの CSS 変数を即時更新
 - ウィンドウ幅: 検知時に `set_size` で main ウィンドウを即時リサイズ
 - 言語: 検知時に `language-changed` イベントでフロントエンドに通知し、`PlatformCommand::SetLanguage` でトレイメニューを切替。`language-changed` はホットキー失敗通知より先に発火する（フロントエンドが正しい言語でエラー文字列を表示できるようにするため）

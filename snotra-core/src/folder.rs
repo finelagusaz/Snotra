@@ -205,7 +205,7 @@ mod tests {
     }
 
     fn empty_history() -> HistoryStore {
-        HistoryStore::load(10)
+        HistoryStore::load()
     }
 
     #[test]

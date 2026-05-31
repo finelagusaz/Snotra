@@ -134,11 +134,14 @@ impl Engine {
     }
 
     pub fn save_history_if_dirty(&mut self, threshold: u32) {
-        self.history.save_if_dirty(threshold);
+        // top_n は現在の config から live-read で渡す（焼き込まない、issue #348）。
+        self.history
+            .save_if_dirty(threshold, self.config.search.effective_top_n_history());
     }
 
     pub fn flush_history(&mut self) {
-        self.history.save();
+        self.history
+            .save(self.config.search.effective_top_n_history());
     }
 
     pub fn config(&self) -> &Config {
@@ -196,7 +199,7 @@ mod tests {
     }
 
     fn empty_history() -> HistoryStore {
-        HistoryStore::load(10)
+        HistoryStore::load()
     }
 
     fn default_config() -> Config {

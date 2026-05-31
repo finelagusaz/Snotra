@@ -28,8 +28,10 @@ impl FolderListContext {
 pub struct PrebuiltIndex(SearchEngine);
 
 impl PrebuiltIndex {
-    pub fn new(entries: Vec<AppEntry>) -> Self {
-        Self(SearchEngine::new(entries))
+    /// `migemo_enabled` に応じて kana_lower_names の構築要否を決める（issue #337）。
+    /// 呼び出し側（indexing.rs）はロック内でキャプチャした config の migemo を渡す。
+    pub fn new(entries: Vec<AppEntry>, migemo_enabled: bool) -> Self {
+        Self(SearchEngine::new_with_migemo(entries, migemo_enabled))
     }
 }
 
@@ -41,8 +43,9 @@ pub struct Engine {
 
 impl Engine {
     pub fn new(entries: Vec<AppEntry>, history: HistoryStore, config: Config) -> Self {
+        let search_engine = SearchEngine::new_with_migemo(entries, config.search.migemo_enabled);
         Self {
-            search_engine: SearchEngine::new(entries),
+            search_engine,
             history,
             config,
         }
@@ -57,15 +60,17 @@ impl Engine {
         history: HistoryStore,
         config: Config,
     ) -> Self {
+        let search_engine = SearchEngine::new_with_cached_masks(
+            entries,
+            cached_masks.char_masks,
+            cached_masks.file_name_char_masks,
+            cached_masks.lower_names,
+            cached_masks.lower_file_names,
+            cached_masks.normalized_keys,
+            config.search.migemo_enabled,
+        );
         Self {
-            search_engine: SearchEngine::new_with_cached_masks(
-                entries,
-                cached_masks.char_masks,
-                cached_masks.file_name_char_masks,
-                cached_masks.lower_names,
-                cached_masks.lower_file_names,
-                cached_masks.normalized_keys,
-            ),
+            search_engine,
             history,
             config,
         }
@@ -313,6 +318,40 @@ mod tests {
         engine.replace_entries(make_entries(&["NewApp1", "NewApp2"]));
         assert_eq!(engine.entries().len(), 2);
         assert_eq!(engine.entries()[0].name, "NewApp1");
+    }
+
+    #[test]
+    fn apply_prebuilt_index_rebuilds_kana_per_migemo() {
+        // migemo 有効 config の Engine に migemo ON で構築した PrebuiltIndex をスワップ
+        // → kana が eager 構築されローマ字検索がヒットする（必須条件 #1 の eager 経路）。
+        let mut config = default_config();
+        // migemo_min_chars は default_config() で既に 2。クエリ "dokyu" は min_chars 境界に触れない。
+        config.search.migemo_enabled = true;
+        let mut engine = Engine::new(Vec::new(), empty_history(), config);
+        engine.apply_prebuilt_index(PrebuiltIndex::new(make_entries(&["ドキュメント"]), true));
+        let results = engine.search("dokyu");
+        assert!(
+            results.iter().any(|r| r.name == "ドキュメント"),
+            "migemo ON の PrebuiltIndex スワップ後、ローマ字検索がヒット: {:?}",
+            results.iter().map(|r| r.name.as_str()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn prebuilt_index_migemo_disabled_no_kana_match_no_panic() {
+        // migemo 有効 config でも、migemo OFF で構築した PrebuiltIndex をスワップすると
+        // kana 未構築のため panic せず、ローマ字検索はヒットしない（必須条件 #2 の空ガード）。
+        let mut config = default_config();
+        // migemo_min_chars は default_config() で既に 2。クエリ "dokyu" は min_chars 境界に触れない。
+        config.search.migemo_enabled = true;
+        let mut engine = Engine::new(Vec::new(), empty_history(), config);
+        engine.apply_prebuilt_index(PrebuiltIndex::new(make_entries(&["ドキュメント"]), false));
+        let results = engine.search("dokyu");
+        assert!(
+            results.is_empty(),
+            "migemo OFF 構築の PrebuiltIndex では kana 検索がヒットしない（panic せず）: {:?}",
+            results.iter().map(|r| r.name.as_str()).collect::<Vec<_>>()
+        );
     }
 
     #[test]

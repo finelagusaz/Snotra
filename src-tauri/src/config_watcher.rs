@@ -204,12 +204,16 @@ fn apply_config_change(app: &AppHandle) {
 }
 
 /// インデックス再構築が必要かの判定ロジック。apply_config_change から抽出。
-/// scan / show_hidden_system / show_icons / include_path_env のいずれかが変わった場合 true。
+/// scan / show_hidden_system / show_icons / include_path_env / migemo_enabled の
+/// いずれかが変わった場合 true。
+/// migemo_enabled: kana_lower_names の構築状態を変えるため再構築が必要（issue #337）。
+/// update_config は engine を再構築しないので、トグルの反映はこの reindex 経路に依存する。
 pub(crate) fn needs_reindex(old: &Config, new: &Config) -> bool {
     old.paths.scan != new.paths.scan
         || old.search.show_hidden_system != new.search.show_hidden_system
         || old.appearance.show_icons != new.appearance.show_icons
         || old.search.include_path_env != new.search.include_path_env
+        || old.search.migemo_enabled != new.search.migemo_enabled
 }
 
 #[cfg(test)]
@@ -286,6 +290,15 @@ mod tests {
         let old = Config::load();
         let mut new = old.clone();
         new.search.show_hidden_system = !old.search.show_hidden_system;
+        assert!(needs_reindex(&old, &new));
+    }
+
+    #[test]
+    fn needs_reindex_migemo_change() {
+        // migemo トグルは kana_lower_names の構築状態を変えるため reindex が必要（issue #337）。
+        let old = Config::load();
+        let mut new = old.clone();
+        new.search.migemo_enabled = !old.search.migemo_enabled;
         assert!(needs_reindex(&old, &new));
     }
 

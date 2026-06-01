@@ -11,6 +11,7 @@ Tauri v2 バイナリ crate。Win32 API 統合とフロントエンドとの IPC
 - `config_watcher.rs`: `notify` クレートで `config.toml` 変更を監視（100ms debounce）し、差分検出後にホットキー・トレイ・インデックス・テーマ・ウィンドウ幅・言語を反映する `apply_config_change()` を実行。**不変条件: 言語変更とホットキー変更が同時に発生した場合、`language-changed` イベントをホットキー失敗通知より先に発火する**（フロントエンドが正しい言語でエラー文字列を組み立てるため）。**不変条件: `LoadOutcome::ReadFailed`（一時的・環境的な read 失敗）では `apply_config_change` は何も適用せず早期 return する**（`should_apply_config_change()` で判定。fallback-default を実行中エンジンへ適用すると、live-read 化した履歴剪定が `history.bin` をデータ損失させ、index 再構築判定（`IndexInputs` 差分）が default scan で誤再構築を起こすため。`Config::load` の「一時的失敗は退避も上書きもしない」保全を適用側にも揃える、#348）。ただし早期 return の前に短いバウンドリトライ（`load_with_read_failed_retry`、既定 3 回 × 150ms）で一時的ロック解除を待ち、解ければ正規の変更を取りこぼさず適用する（予算超過時のみ skip。リトライ中は適用しないのでデータ損失安全は不変）。**不変条件: index 再構築の要否は `IndexInputs::from_config(old) != IndexInputs::from_config(new)` で判定し、ビルド進行中（`indexing`）でも `!indexing` ゲートなしで常に `start_index_build` を kick する**（`start_index_build` が `mark_index_stale` で stale を立て、in-flight ビルドの drain / finish 後再チェックが取りこぼしを拾う。CAS が二重起動を防ぐ。#347/#348-A）。発火するイベント: `language-changed` / `hotkey-registration-failed` / `visual-config-changed` / `show-icons-changed` / `max-results-changed` / `instant-prefix-changed` / `top-n-history-changed` / `indexing-started`（indexing.rs から）/ `indexing-complete`（indexing.rs から）
 - `ime.rs`: IME オフ操作（`ImmSetOpenStatus(false)`）。Win32 IMM API の薄いラッパー
 - `monitor.rs`: マルチモニター対応の Win32 ヘルパー（`GetCursorPos` / `MonitorFromPoint` / `MonitorFromWindow` / `GetMonitorInfoW`）。物理座標ベースで作業領域を取得し、ウィンドウ位置のクランプ・中央配置を提供
+- `working_set.rs`: 非表示アイドル時に Win32 `EmptyWorkingSet` でプロセスツリー全体（自プロセス + WebView2 子孫）の物理 working set を回収（Windows のみ、非 Windows は no-op）。`collect_descendant_pids()` は Toolhelp の (pid,ppid) 上を BFS する純関数（Win32 非依存・ユニットテスト対象）。`trim_idle_working_set()` は hide 経路（hotkey + `notify_main_hidden`）から呼ばれる best-effort 操作で、HANDLE は RAII ガードで解放し、全 Win32 失敗を握りつぶす
 - `commands/`: ディレクトリモジュール（`mod.rs` + `search.rs` / `launch.rs` / `config.rs` / `icon.rs` / `window.rs` / `system.rs` / `instant.rs`）。`#[tauri::command]` を責務別に分割。`launch.rs` は `launch_item_core`（`pub(crate)`、`instant.rs` から再利用）に加え、トレイメニューからの起動用に `launch_item_with_state` / `launch_with_tool_with_state` / `launch_default_with_state` / `resolve_all_openers` を `pub` で公開
 - `platform/`: ディレクトリモジュール（`mod.rs` + `hotkey.rs` / `tray.rs` / `wndproc.rs`）。Win32 メッセージループスレッド + トレイアイコン + ホットキー + ウィンドウプロシージャ
   - `wndproc.rs`: `SendMessage` 経由で届く `WM_TRAY_ICON` および `WM_CONTEXTMENU` を `PostThreadMessageW` でスレッドキューに再投入し、メッセージループでの統一処理を保証
@@ -54,6 +55,15 @@ NOTIFYICON_VERSION_4 では、キーボード操作（Shift+F10 / Application �
 - **フロントエンド起因の hide（Escape / クリック起動 / フォーカス喪失）では suspend しない**: `notifyMainHidden` IPC は tokio スレッドで実行されるため `with_webview(TrySuspend)` は非同期ディスパッチになり、`win.hide()` より先にメインスレッドに到達すると IsVisible=true で失敗する。ホットキートグル（メインスレッドで同期実行）に限定することで順序を保証
 - **`with_webview()` の同期性はコンテキスト依存**: setup フェーズ / `app.listen` コールバック → 同期。IPC ハンドラ / `std::thread::spawn` → 非同期（fire-and-forget）
 - **TrySuspend と MemoryUsageTargetLevel は混用禁止**: TrySuspend が自動で MemoryUsageTargetLevel を Low に設定し、Resume が Normal に戻す
+
+## WebView2 working set の能動回収（EmptyWorkingSet）
+
+TrySuspend / MemoryUsageTargetLevel.Low は**論理目標**を下げるだけで、メモリ圧迫のない環境では OS が**物理 working set を回収しない**（実測: 非表示アイドル ~110MB が表示↔非表示・120 秒放置でも不変）。`working_set::trim_idle_working_set()` が hide 経路で Win32 `EmptyWorkingSet` をプロセスツリー全体（自プロセス + WebView2 子孫）へ能動適用し、アイドル物理 RSS を数MB まで落とす（再表示は OS の透過 re-fault で ~44ms 維持、UI 正常）。
+
+- **TrySuspend とは別レイヤーで補完的**: TrySuspend=論理目標（圧迫待ち・CPU 中断）、EmptyWorkingSet=物理 working set の即時トリミング。競合しない
+- **全 hide 経路に適用**: hotkey トグル（`main.rs`、`suspend_webview` の後）と `notify_main_hidden`（`commands/system.rs`、全フロントエンド hide の IPC チョークポイント）の両方から呼ぶ。**`EmptyWorkingSet` はスレッド非依存**（`with_webview` のような非同期制約がない）ため、tokio IPC スレッドの `notify_main_hidden` からも安全
+- **show 側に逆操作は不要**: trim されたページは show 時に OS が透過的に re-fault する。明示 untrim API は存在しない。trim が hide 前後どちらで走っても無害（再 fault するだけ）
+- **best-effort・物理 RAM のみ**: Toolhelp / `OpenProcess` / `EmptyWorkingSet` の全失敗は黙ってスキップ（機能影響ゼロ）。HANDLE は RAII ガードで解放。削減対象は working set であって commit ではない
 
 ## Win32 / Tauri 注意事項
 

@@ -41,4 +41,8 @@ pub fn notify_main_shown(state: State<AppState>) {
 pub fn notify_main_hidden(state: State<AppState>, app: AppHandle) {
     state.main_visible.store(false, Ordering::SeqCst);
     let _ = app.emit("window-hidden", ());
+    // フロントエンド起因の hide（フォーカス喪失/Escape/クリック起動/スラッシュ）も
+    // working set を回収する。EmptyWorkingSet はスレッド非依存ゆえ tokio IPC スレッドから
+    // 安全に呼べる（suspend_webview の with_webview 非同期制約がない）。best-effort。
+    crate::working_set::trim_idle_working_set(std::process::id());
 }

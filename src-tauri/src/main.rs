@@ -8,6 +8,7 @@ mod indexing;
 mod monitor;
 mod platform;
 mod state;
+mod working_set;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -579,6 +580,9 @@ fn main() {
                     if let Some(w) = handle_for_hotkey.get_webview_window("main") {
                         suspend_webview(&w);
                     }
+                    // 非表示アイドルの物理 working set を回収（TrySuspend は圧迫なし環境では
+                    // 回収しないため能動適用）。best-effort・機能挙動には影響しない。
+                    working_set::trim_idle_working_set(std::process::id());
                 } else if is_alt_pressed() {
                     trace_main("hotkey:alt_wait_start", json!({}));
                     let handle_for_show = handle_for_hotkey.clone();

@@ -29,7 +29,7 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 - `invoke.ts`: 型付き Tauri IPC ラッパー
 - `theme.ts`: CSS 変数によるテーマ適用
 - `types.ts`: TypeScript 型定義の集約先（DRY）
-- `commands.ts`: スラッシュコマンド定義（`/r` `/o` `/s` `/q`）と `SLASH_COMMANDS` 配列・`findCommand()` 関数。`hideMainWindow()` でメインウィンドウを非表示にする
+- `commands.ts`: スラッシュコマンド定義（`/r` `/o` `/s` `/q`）と `SLASH_COMMANDS` 配列・`findCommand()` 関数。`hideMainWindow()` は全 frontend hide（Escape / Enter / Shift+Enter / クリック起動 / フォーカス喪失 / `/s`）の単一チョークポイント。**`await win.hide()` → `notifyMainHidden()` の順を守る**——`notifyMainHidden` 内の `EmptyWorkingSet` trim を hide 完了後に走らせることで、可視中の再 touch による working set 回収の取りこぼしを避ける（hotkey 経路と同順。#361）。MainApp.tsx のフォーカス喪失・クリック起動経路もこの関数に集約する
 - `i18n.ts`: 多言語対応（日本語・英語）。`TranslationKey` 型と `t(key, params?)` 関数。`{param}` 形式プレースホルダー対応。SolidJS シグナルで言語を管理し、`setLanguage()` で切替。初期言語は `navigator.language` から同期的に決定（bootstrap 到着前のフラッシュ防止）
 - `folderNav.ts`: フォルダナビゲーション純粋ロジック（`computeParentDir`・`clampSelectedIndex`）。ドライブルート・UNC パス対応。テスト可能なため `stores/` から分離
 - `hotkeyValidation.ts`: ホットキーの有効性チェック（`isHotkeyInvalid`・`formatHotkeyLabel`）。Win キー・禁止キー・修飾キーなしをガード

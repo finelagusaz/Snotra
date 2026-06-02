@@ -16,6 +16,7 @@ import {
   instantCommandMode,
   setInstantCommandPrefix,
 } from "./stores/search";
+import { hideMainWindow } from "./lib/commands";
 import { applyTheme } from "./lib/theme";
 import { t, setLanguage, type Lang } from "./lib/i18n";
 import type { BootstrapPayload, UpdateAvailablePayload, VisualConfig } from "./lib/types";
@@ -49,9 +50,10 @@ const MainApp: Component = () => {
   onMount(async () => {
     const hideMain = async () => {
       if (!mainVisible()) return;
+      // eager に results を畳み Blob URL を hide 前に解放する（signal 駆動）。
+      // hide→notify(trim) の順序は hideMainWindow に集約（#361）。
       setMainVisible(false);
-      api.notifyMainHidden().catch(() => {});
-      await win.hide();
+      await hideMainWindow();
     };
 
     const registerAutoHideOnFocusLost = async () => {
@@ -290,8 +292,7 @@ const MainApp: Component = () => {
       trace("app:event:result_clicked:done", { index, launched });
       if (launched) {
         setMainVisible(false);
-        api.notifyMainHidden().catch(() => {});
-        void win.hide();
+        void hideMainWindow();
       } else {
         console.warn("Failed to launch clicked result", { index });
       }

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "./invoke";
-import { findCommand, SLASH_COMMANDS } from "./commands";
+import { findCommand, hideMainWindow, SLASH_COMMANDS } from "./commands";
 
 const mockMainHide = vi.hoisted(() => vi.fn(async () => {}));
 const mockSetLaunchNoticeWithAutoClear = vi.hoisted(() => vi.fn());
@@ -125,5 +125,27 @@ describe("slash command actions", () => {
 
     expect(mockMainHide).not.toHaveBeenCalled();
     expect(api.quitApp).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("hideMainWindow", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // #361: trim（notifyMainHidden 内の EmptyWorkingSet）は win.hide() 完了後に走らせる。
+  // 可視中に trim するとレンダラがページを再 touch し working set 回収が削がれるため。
+  it("hide 完了後に notifyMainHidden(trim) を呼ぶ", async () => {
+    const order: string[] = [];
+    mockMainHide.mockImplementation(async () => {
+      order.push("hide");
+    });
+    vi.mocked(api.notifyMainHidden).mockImplementation(async () => {
+      order.push("notify");
+    });
+
+    await hideMainWindow();
+
+    expect(order).toEqual(["hide", "notify"]);
   });
 });

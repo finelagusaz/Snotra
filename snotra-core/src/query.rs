@@ -176,6 +176,16 @@ mod tests {
     }
 
     #[test]
+    fn to_kana_normalizes_halfwidth_katakana() {
+        // wana_kana 5.0 で半角カタカナの正規化が to_hiragana に入った（#365 / crate PR #21）。
+        // to_kana はクエリと索引名の両方に対称適用されるため、半角カナ入力もひらがなとして
+        // マッチするようになる。この有益な新挙動を回帰として固定する。
+        assert_eq!(to_kana("ﾜﾅｶﾅ"), "わなかな");
+        // 半角濁点（ﾞ U+FF9E）の合成も全角と同じく濁音ひらがなになる。
+        assert_eq!(to_kana("ｶﾞ"), "が");
+    }
+
+    #[test]
     fn to_kana_fully_converts_when_possible() {
         // "dokyu" は完全にひらがなに変換され、ASCII アルファベットが残留しない。
         // kana_query ガード（ASCII 残留チェック）の前提を確認する。

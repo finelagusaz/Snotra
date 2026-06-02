@@ -67,7 +67,20 @@ hide 経路で Win32 `EmptyWorkingSet` をプロセスツリー全体へ能動�
 | hotkey hide 後（自動 trim） | ~9.4 MB |
 | frontend(Escape) hide 後（自動 trim） | ~22.8 MB |
 
-再表示レイテンシは劣化しない（trim 無/有とも ~41ms、メモリ圧迫下でも 44ms、ウィンドウ出現はブロックされない）。ページは standby/pagefile に退避され show 時に OS が透過 re-fault する（圧迫下のみハード読込 ~934/s ≈ 3.6MB/s で SSD では体感不能）。削減対象は物理 working set であって commit（~195MB 不変）ではない。frontend 経路が hotkey より浅い（22.8 vs 9.4MB）のは `notify_main_hidden` が tokio で `win.hide()` と並行するタイミング差（#361 で polish）。
+再表示レイテンシは劣化しない（trim 無/有とも ~41ms、メモリ圧迫下でも 44ms、ウィンドウ出現はブロックされない）。ページは standby/pagefile に退避され show 時に OS が透過 re-fault する（圧迫下のみハード読込 ~934/s ≈ 3.6MB/s で SSD では体感不能）。削減対象は物理 working set であって commit（~195MB 不変）ではない。frontend 経路が hotkey より浅い（22.8 vs 9.4MB）のは `notify_main_hidden` が tokio で `win.hide()` と並行するタイミング差（#361 で修正済み、下記）。
+
+### follow-up: frontend hide の trim タイミング修正（issue #361 / 2026-06-02 計測）
+
+frontend hide（`hideMainWindow()`）で `notifyMainHidden()`（trim）を `await win.hide()` の**後**に呼ぶよう順序を入れ替え、可視中の trim でレンダラがページを再 touch する取りこぼしを解消（hotkey 経路と同じ hide→trim 順）。MainApp.tsx のフォーカス喪失・クリック起動経路も `hideMainWindow()` に集約（DRY）。
+
+クリーン再計測（検索なし、`%TEMP%/snotra-mem-measure.ps1`、**プロセスツリー総 WorkingSet64**= 共有ページ込みで上表の Private WS とは別指標）:
+
+| 経路 | #361 前 | #361 後 |
+|---|---|---|
+| frontend(Escape) hide 後 | ~50 MB（3 回 50-61） | **~27 MB**（3 回 27-30） |
+| hotkey hide 後（参照・無変更） | ~10 MB | ~10 MB |
+
+frontend hide の総ツリー WS が**約半減**（frontend↔hotkey 差の ~57% を解消）。残差（~17MB）は frontend 経路が `suspend_webview`（TrySuspend）を行わない設計差に起因（tokio IPC スレッドの `with_webview` 非同期制約のため hotkey 限定。`src-tauri/CLAUDE.md`「TrySuspend / Resume パターン」節）。gap は「trim タイミング」成分（#361 で解消）+「suspend 有無」成分（設計上の意図的な差）の和。
 
 ### 効かなかった/見送った手法
 

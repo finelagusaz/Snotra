@@ -14,10 +14,14 @@ export interface SlashCommand {
   action: () => void | Promise<void>;
 }
 
-/** main webview コンテキストから呼び出すこと（getCurrentWindow() が main を返す前提） */
+/** main webview コンテキストから呼び出すこと（getCurrentWindow() が main を返す前提）。
+ *  全 frontend hide（Escape / Enter / Shift+Enter / クリック起動 / フォーカス喪失 / /s）の
+ *  単一チョークポイント。notifyMainHidden() の trim（EmptyWorkingSet）は win.hide() 完了後に
+ *  走らせる——可視中に trim するとレンダラがページを再 touch し working set 回収が削がれるため
+ *  （hotkey 経路と同じ hide→trim 順に揃える。#361）。 */
 export async function hideMainWindow() {
-  api.notifyMainHidden().catch(() => {});
   await getCurrentWindow().hide();
+  api.notifyMainHidden().catch(() => {});
 }
 
 export const SLASH_COMMANDS: SlashCommand[] = [

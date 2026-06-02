@@ -102,8 +102,44 @@ hide 完了後に trim するため深く回収できる。**これが frontend 
   「hide → notify(trim)」順である旨を実装パターンに追記。
 - `src-tauri/CLAUDE.md`: `notify_main_hidden` は無変更のため記述は維持（「全 hide 経路に適用」も真）。
 
-## 未解決の疑問
+## 計測 — baseline（#361 適用前 / 現行 main コード、2026-06-02）
 
-- **クリーンな再計測**（直前検索なしのフォーカス喪失 hide で frontend が hotkey ~9MB に近づくか）は
-  release build + 手動フォーカス喪失トリガー + working set 計測が必要。ユニット/smoke では代替不能。
-  実装フェーズで build + `smoke:startup` で回帰なしを確認し、メモリ差分は手動計測を要する旨を明記する。
+`target/release/snotra.exe`（`EmptyWorkingSet` 含有を確認済み = #355/#360 適用済み）を起動し、
+合成キー入力（`keybd_event`）で駆動。**検索を一切打たないクリーン状態**で計測。
+計測スクリプト: `%TEMP%/snotra-mem-measure.ps1`。
+
+- **指標**: snotra + WebView2 子孫の**プロセスツリー全体の総 WorkingSet64**（BFS 合算、共有 Edge DLL
+  ページ込み）。PERFORMANCE.md の Private WS（共有 ~280MB 除外）とは**絶対値が異なる**。比較は相対差。
+- **健全性確認**: 「show 時に WS 上昇 → hide+trim 後に下降」パターンで自動化を検証。
+- 起動直後（hidden idle, trim 前）: 7 プロセス・総 405 MB（共有 DLL 込み）。
+
+| 経路 | hide+trim 後（3 反復） | min | 備考 |
+|---|---|---|---|
+| frontend (Escape) | 61.4 / 50.5 / 53 MB | **50.5** | 3/3 安定（~50-61MB） |
+| hotkey (Ctrl+K) | 18 / 10.6 / 68.5 MB | **10.6** | 2/3 clean。68.5 は toggle 同期ずれ（auto_hide 先行発火）で無効 |
+
+**結論**: クリーン状態でも frontend hide は hotkey hide より総 WS を ~40MB 多く残す（~50 vs ~10MB）。
+issue の前提（frontend 経路の trim 取りこぼし）はクリーン計測で**確証**。hot な 22.8 vs 9.4（Private）
+より相対差は大きく、本修正（案A）は正当化される。
+
+### 検証結果（#361 適用後 / 2026-06-02）
+
+`npx tauri build --no-bundle` で release 再ビルド → 同スクリプトで after 計測。
+
+| 経路 | baseline（前） | after（後） | 改善 |
+|---|---|---|---|
+| frontend(Escape) hide | 50.5/55 MB（min/avg・生 61.4/50.5/53） | **27.3/28.3 MB**（生 30.3/27.3/27.4） | ~23MB 減（~46%） |
+| hotkey hide（参照・無変更） | 10.6 MB | 10.6 MB | — |
+
+- frontend hide の総ツリー WS が**約半減**。frontend↔hotkey 差(~40MB)の **~57% を解消**。
+- **残差 ~17MB** は frontend 経路が `suspend_webview`（TrySuspend）を行わない設計差に起因
+  （hotkey 限定。#361 のスコープ外）。gap = trim タイミング成分（#361 で解消）+ suspend 成分（設計差）。
+- 回帰なし: `npm run typecheck` 緑 / `npm test` 216/216 緑 / `smoke:startup` 5×0err 緑。
+- 計測ノイズ: hotkey #3（baseline 68.5 / after 58.4）は toggle 同期ずれ（auto_hide 先行発火）で無効。
+  Escape（非トグル）の frontend は前後とも 3/3 密集で信頼可。
+- 記録先: `PERFORMANCE.md`「follow-up: frontend hide の trim タイミング修正（#361）」節。
+
+### 残検証（PR）
+
+- `e2e:tauri` はローカル未実行。PR に `e2e` ラベルを付与し CI（E2E & Smoke workflow）で smoke+e2e を回す
+  （カテゴリ C: hide 順序変更）。

@@ -366,6 +366,18 @@ function isDevUrlFallbackSnapshot(body: string): boolean {
   return body.includes("ERR_CONNECTION_REFUSED") || body.includes("接続が拒否されました");
 }
 
+// 検索クエリを「1 回だけ」入力する（#369）。再インデックス系の検証で毎ポール打ち直すと、
+// 打ち直しのたびに query が空→再入力で searchGeneration を bump し続ける。CI の遅い検索 IPC では
+// 検索が完了する前に次の打ち直しが generation を進めるため、refreshResults の staleness ガード
+// （requestId !== searchGeneration）が全 in-flight 検索を破棄し、results() が永遠に空のままになる。
+// 再インデックス完了は indexing-complete → runRefresh() がフロント側で自動再検索するため、
+// 入力は 1 回で足り、以降はポールで行数だけを観測すれば再構築結果が反映される。
+async function typeQueryOnce(driver: WebDriver, query: string): Promise<void> {
+  await switchToLabel(driver, "main");
+  const el = await driver.findElement(By.css(".search-input"));
+  await el.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, query);
+}
+
 async function createHarness(): Promise<Harness> {
   const fixtureDir = await setupFixtureDir();
   const backup = await prepareE2EConfig(fixtureDir);
@@ -710,11 +722,11 @@ test("/s 後にインデックス再構築が完了し検索が機能する", as
   `);
   await waitForVisibleLabel(driver, "main", 6_000);
 
-  // 再構築完了まで clear→retype→チェックを繰り返す（最大 30 秒）
+  // クエリは 1 回だけ入力し（#369: 毎ポール打ち直しは CI で全検索を staleness 破棄させる）、
+  // 行が出るまでポールする。再構築完了は indexing-complete → runRefresh() が自動再検索する。
+  await typeQueryOnce(driver, E2E_SEARCH_QUERY);
   await driver.wait(async () => {
     await switchToLabel(driver, "main");
-    const el = await driver.findElement(By.css(".search-input"));
-    await el.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, E2E_SEARCH_QUERY);
     return (await driver.findElements(By.css(".result-row"))).length > 0;
   }, 30_000, "インデックス再構築後に検索結果が表示されない");
 
@@ -742,21 +754,21 @@ test("include_path_env の切り替えで PATH 実行ファイルが検索結果
   );
   await writeFile(backup.path, `${configWithPath}\n`, "utf8");
 
-  // 再インデックス完了まで clear→retype→チェック（最大 30 秒）
+  // クエリは 1 回だけ入力し（#369）、行が出るまでポール。config 変更による再インデックス完了は
+  // indexing-complete → runRefresh() が自動で "cargo" を再検索するため、打ち直しは不要かつ有害。
+  await typeQueryOnce(driver, PATH_QUERY);
   await driver.wait(async () => {
     await switchToLabel(driver, "main");
-    const el = await driver.findElement(By.css(".search-input"));
-    await el.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, PATH_QUERY);
     return (await driver.findElements(By.css(".result-row"))).length > 0;
   }, 30_000, "include_path_env = true に切り替え後、PATH 実行ファイルが検索結果に出ない");
 
   // Phase 3: include_path_env = false に戻す → PATH 結果が消える
   await writeFile(backup.path, `${buildE2EConfigToml(fixtureDir)}\n`, "utf8");
 
+  // 打ち直さない（#369: Phase 2 で "cargo" が表示中。打ち直すと一瞬の空表示で ===0 を誤判定する）。
+  // config 無効化 → 再インデックス完了 → runRefresh() が "cargo" を再検索し 0 件に落ちるのをポールする。
   await driver.wait(async () => {
     await switchToLabel(driver, "main");
-    const el = await driver.findElement(By.css(".search-input"));
-    await el.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, PATH_QUERY);
     return (await driver.findElements(By.css(".result-row"))).length === 0;
   }, 30_000, "include_path_env = false に切り替え後、PATH 実行ファイルが検索結果に残っている");
 

@@ -1,6 +1,6 @@
 ---
 name: health-check
-description: "コードベースとドキュメントの衛生チェック: CLAUDE.md モジュール構成・architecture.md モジュール表の非再導入・AGENTS.md 参照・SPEC.md 番号・build-commands.md コマンド・MEMORY.md 参照・rules パスパターンの整合性を検証する。大きなサイクル完了後や定期的に使用。"
+description: "コードベースとドキュメントの衛生チェック: CLAUDE.md モジュール構成・architecture.md モジュール表の非再導入・AGENTS.md 参照・SPEC.md 番号・build-commands.md コマンド・build-commands↔workflow 対応・MEMORY.md 参照・rules パスパターンの整合性を検証する。大きなサイクル完了後や定期的に使用。"
 disable-model-invocation: true
 argument-hint: ""
 allowed-tools:
@@ -85,6 +85,21 @@ allowed-tools:
 `.claude/skills/*/SKILL.md` の一覧と、`CLAUDE.md` の「利用できるスキル」テーブルを比較する。
 - スキルファイルはあるがテーブルに記載なし
 - テーブルに記載があるがスキルファイルなし
+
+## Check 10 -- docs/build-commands.md ↔ .github/workflows/\* の対応
+
+`docs/build-commands.md`「変更後の検証チェックリスト」の**必須コマンド**が、いずれかの GitHub Actions workflow で実際に実行されるか検証する。CI で担保されない検証要件のドリフトを検知する。
+
+手順:
+1. `docs/build-commands.md` のカテゴリ A〜C から「必須」とマークされた `npm` / `cargo` コマンド名を抽出する（特にカテゴリ C の `smoke:startup` / `e2e:tauri`）。
+2. `.github/workflows/*.yml` を grep し、各必須コマンドを実行する `run:` ステップが存在するか確認する。npm script が薄いラッパーの場合（例: `smoke:startup` = `pwsh -File scripts/smoke-startup.ps1`）、その**ラッパーが呼ぶスクリプトパス**（`scripts/smoke-startup.ps1`）が `run:` に現れていれば「実行あり」とみなす（CI では引数を上書きして直接呼ぶことがあるため）。
+3. 「CI/CD メモ」の対応表（検証コマンド ↔ workflow）が実際の workflow 定義と一致するか照合する:
+   - 表に載っているが実行する workflow が無いコマンド
+   - workflow で実行されているが表に無いコマンド
+   - 表の workflow 名・トリガー記述が実ファイル（`name:` / `on:`）とずれている
+4. 対応 workflow が無い必須コマンド、または対応表とのずれを **Warning** で報告する（例: 「`smoke:startup` は必須だが、どの workflow にも対応する run ステップが無い」）。
+
+> **Note:** 必須コマンドが PR で自動実行されるか、`e2e` ラベル等の条件付きかは問わない（条件付き実行は許容）。検知対象は「実行する workflow が存在しない」「対応表が実態とずれている」ことのみ。
 
 ## 出力
 

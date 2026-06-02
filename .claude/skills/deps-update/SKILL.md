@@ -1,6 +1,6 @@
 ---
 name: deps-update
-description: "依存関係の定期更新: cargo/npm 更新 → ローカル検証 → chore(deps) PR 作成 → CI グリーン確認。マージは手動。Cargo/npm の依存をまとめて更新したいときに使用。"
+description: "依存関係の定期更新: cargo/npm 更新 → ローカル検証 → chore(deps) PR 作成 → CI グリーン確認（カテゴリ C 相当時は e2e ラベル付与・E2E/smoke 完了確認）。マージは手動。Cargo/npm の依存をまとめて更新したいときに使用。"
 disable-model-invocation: true
 argument-hint: "[cargo | npm | 空=両方]"
 allowed-tools:
@@ -40,7 +40,7 @@ cargo / npm の依存関係を一括更新し、ローカル検証 → PR 作成
 - カテゴリ B: 必須（TypeScript 型チェック・フロントエンドビルド）
 - カテゴリ C: フロントユニットテスト（Vitest）のみ
 
-E2E・スモークテストはローカルで実行せず CI に委ねる。具体的なコマンド文字列は `docs/build-commands.md` を参照する（二重メンテを避けるためこの SKILL に書かない）。
+E2E・スモークテストはローカルで実行せず、PR に **`e2e` ラベルを付与**して `E2E & Smoke` workflow（`e2e.yml`）に委ねる。**通常 PR CI（`ci.yml`）では smoke/E2E は走らない**ため、ラベル付与を忘れると検証されない。具体的なコマンド文字列は `docs/build-commands.md` を参照する（二重メンテを避けるためこの SKILL に書かない）。
 
 検証が失敗した場合:
 
@@ -61,11 +61,13 @@ E2E・スモークテストはローカルで実行せず CI に委ねる。具�
 - `chore(deps): ...` の conventional commit を作成する。何を更新したかの簡潔な要約を含める
 - push して `gh pr create` で PR を作成する
 - PR 本文に更新一覧を載せる。**major bump は ⚠ で明示する**
+- 依存更新がカテゴリ C 相当（Tauri 本体・WebView・ウィンドウ/ホットキー関連クレート等）に影響しうる場合は `gh pr edit --add-label e2e` でラベルを付与し、`E2E & Smoke` workflow を起動する
 
 ## Step 5 -- CI ポーリング
 
 - `gh pr checks` で CI の完了まで待機する
 - コマンド自体がエラーになる場合（PR がまだ index されていない等）は少し待って再試行する
+- `e2e` ラベルを付与した場合は `E2E & Smoke` workflow の完了も待つ（`ci.yml` とは別 workflow のため `gh pr checks` に両方が現れる）
 
 ## Step 6 -- 報告
 

@@ -16,3 +16,9 @@
 - name: size:L
   color: "d4c5f9"
   description: 大規模（分割推奨）
+- name: e2e
+  color: "5319e7"
+  description: この PR で E2E/smoke workflow を自動実行する（カテゴリ C 変更時に付与）
+- name: skip-ci
+  color: "ededed"
+  description: 通常 PR CI（frontend-check / rust-check）をスキップする

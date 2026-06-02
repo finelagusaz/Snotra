@@ -22,3 +22,14 @@
 - name: skip-ci
   color: "ededed"
   description: 通常 PR CI（frontend-check / rust-check）をスキップする
+# Dependabot が自動付与するラベル（PR / 依存系 issue で使用）。
+# delete-other-labels: true 下でも維持するため SSOT に明示する。色・説明は GitHub 既定と一致。
+- name: dependencies
+  color: "0366d6"
+  description: Pull requests that update a dependency file
+- name: javascript
+  color: "168700"
+  description: Pull requests that update javascript code
+- name: rust
+  color: "000000"
+  description: Pull requests that update rust code

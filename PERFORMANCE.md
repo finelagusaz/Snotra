@@ -47,6 +47,35 @@ opt-level = "s"
 `opt-level = "s"` によるループアンローリング・SIMD 抑制が直撃する。
 **`snotra-core` への `opt-level = "s"` / `"z"` 適用は行わない**。
 
+## アイドルメモリ（working set）の削減（2026-06-01〜02 計測）
+
+ランチャーは 99% 非表示常駐のため、アイドル時の物理メモリ（working set / private RSS）の最小化が重要。installed release ビルド（32GB/SSD 機）で WebView2 プロセスツリー（main + webview2 子孫 計 7 プロセス）を実機計測した。
+
+### 実態（Private Working Set = プロセス固有の物理 RAM）
+
+- 非表示アイドルの定常 baseline: **~110MB**。Working Set 表示値 ~390MB との差 ~280MB は Edge ランタイム共有 DLL（`msedge.dll` ~310MB 等）のページで、プロセス間共有・デマンドページゆえ Private には乗らない（「Snotra=390MB」は誤読）
+- 内訳（`VirtualQueryEx` で committed をタイプ別分類）: WebView2 エンジン固有 ~64MB（browser 33 + renderer/V8 18 + utility/crashpad 13、アプリ制御不可）+ Rust 本体 ~30MB + GPU プロセス ~18MB
+- Rust 本体 ~30MB の正体: index は極小（`index.bin` 数百 bytes）ゆえデータではなく、Tauri/WRY/tokio/serde/windows クレート + アロケータ保持の baseline（committed 42.8MB の内訳はヒープ 40.7MB / スレッドスタック 2.17MB）
+
+### 採用: hide 時の `EmptyWorkingSet`（issue #355 / PR #360）
+
+hide 経路で Win32 `EmptyWorkingSet` をプロセスツリー全体へ能動適用し、アイドル常駐を **110MB → 数MB** へ回収する。実装は `src-tauri/src/working_set.rs`、パターン詳細は `src-tauri/CLAUDE.md`「WebView2 working set の能動回収」節。
+
+| 状態 | Private WS |
+|---|---|
+| アイドル baseline | ~110 MB |
+| hotkey hide 後（自動 trim） | ~9.4 MB |
+| frontend(Escape) hide 後（自動 trim） | ~22.8 MB |
+
+再表示レイテンシは劣化しない（trim 無/有とも ~41ms、メモリ圧迫下でも 44ms、ウィンドウ出現はブロックされない）。ページは standby/pagefile に退避され show 時に OS が透過 re-fault する（圧迫下のみハード読込 ~934/s ≈ 3.6MB/s で SSD では体感不能）。削減対象は物理 working set であって commit（~195MB 不変）ではない。frontend 経路が hotkey より浅い（22.8 vs 9.4MB）のは `notify_main_hidden` が tokio で `win.hide()` と並行するタイミング差（#361 で polish）。
+
+### 効かなかった/見送った手法
+
+- **TrySuspend / MemoryUsageTargetLevel.Low 単独**: 論理目標を下げるだけで、メモリ圧迫のない実機では OS が物理 working set を回収しない（表示↔非表示・120 秒放置で 110MB 不変）。主効果は CPU 中断。working set 回収には `EmptyWorkingSet` の能動適用が必要（両者は別レイヤーで補完的）
+- **tokio / rayon の worker スレッド削減**: Rust 本体は Tauri 既定の multi-thread tokio（worker = CPU コア数）+ rayon プールで ~50 スレッドを抱えるが、スレッドスタックは計 2.17MB（committed 42.8MB の 5%）に過ぎず、worker を絞っても RSS 削減は <1MB で**無意味**。30MB の大半はヒープ/フレームワーク baseline
+- **`--disable-gpu --disable-gpu-compositing`**: GPU プロセスは消えない（in-process ソフト合成に切替）が Private 18→6MB・合計 110→99MB。ただしブラウザフラグは Microsoft 非サポート（ランタイム更新で挙動変化）＋ CPU 合成化で描画レイテンシ未検証。限界効用は `EmptyWorkingSet`（~107MB）に対し桁違いに小さく見送り
+- **アイコン PNG 圧縮強化（issue #335）**: 16×16 アイコンで実測 ~0.06MB と桁違いに小さく却下（詳細は #335）
+
 ## 試みたが機能しない手法
 
 - **Custom URI Scheme（`snotra-icon://` 等）による画像配信**: WebView2 では `register_uri_scheme_protocol`（WRY/Tauri）で登録したカスタムスキームへのリクエストが、WebView2 環境生成時の `SetCustomSchemeRegistrations` 事前宣言なしにはハンドラーに届かない。WRY 0.54.x では自動的に処理されず、`eprintln` 診断でハンドラーが一切呼ばれないことを確認済み。バイナリ配信の代替は `tauri::ipc::Response`（上記セクション2）を用いること。

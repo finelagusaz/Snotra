@@ -25,6 +25,8 @@ jobs:
         uses: EndBug/label-sync@v2
         with:
           config-file: .github/labels.yml
-          delete-other-labels: false
+          # labels.yml を唯一の真実源（SSOT）にする。ここに無いラベルは同期時に削除される。
+          # 新しいラベルを使う前に必ず labels.yml へ定義を追加すること。
+          delete-other-labels: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

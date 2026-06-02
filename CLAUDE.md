@@ -51,8 +51,8 @@ Claude とユーザーが一緒に作業するときの関係性の原則。
 | `/dry-check`         | 関数を新規定義・変更したとき、手書き重複が残っていないか確認            | `/dry-check show_main_and_emit: show() + set_focus() + emit(window-shown)`     |
 | `/race-check`        | async 関数を新規追加・変更したとき、各 await 地点の状態競合リスクを検証 | `/race-check executeInstantCommandSelected: await api.executeInstantCommand()` |
 | `/cache-check`       | キャッシュロジックの追加・変更時に述語の単調性と状態遷移の安全性を検証  | `/cache-check search_with_options: use_incremental 判定`                       |
-| `/health-check`      | 定期・サイクル完了後: モジュール構成・architecture.md・AGENTS.md・SPEC.md 番号・コマンド・メモリ・ルール・スキルの整合性を検証 | `/health-check`                                                           |
+| `/health-check`      | 定期・サイクル完了後: モジュール構成・architecture.md・AGENTS.md・SPEC.md 番号・コマンド・workflow 対応・メモリ・ルール・スキルの整合性を検証 | `/health-check`                                                           |
 | `/retrospective`     | サイクル終了後: 教訓を AGENTS.md に抽出し、メモリ鮮度チェック、RETROSPECTIVE.md を更新 | `/retrospective`                                                               |
 | `/start-issue`       | GitHub issue から作業開始: issue 読込 → main 最新化 → ブランチ作成 → 調査・計画 | `/start-issue 123`                                                        |
 | `/implement`         | フルサイクル開発: 調査 → 計画 → 実装 → 検証 → レビュー → コミット      | `/implement キーボードショートカットの追加`                                     |
-| `/deps-update`       | cargo/npm の依存を一括更新し PR 作成・CI グリーン確認まで（マージは手動） | `/deps-update` または `/deps-update npm`                                       |
+| `/deps-update`       | cargo/npm の依存を一括更新し PR 作成・CI グリーン確認まで（カテゴリ C 相当時は `e2e` ラベル付与・E2E/smoke 完了確認。マージは手動） | `/deps-update` または `/deps-update npm`                                       |

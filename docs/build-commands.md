@@ -35,6 +35,7 @@ npm run e2e:tauri        # 必須: Playwright + Tauri Driver E2E
 ```
 
 - 初回のみ `npm run e2e:tauri:setup` でセットアップが必要
+- **PR 上の実行責任**: `npm test` は通常 PR CI（`ci.yml`）で自動実行されるが、`smoke:startup` / `e2e:tauri` は**通常 PR CI では走らない**。カテゴリ C 相当の変更を含む PR には **`e2e` ラベルを付与**すること。これにより `E2E & Smoke` workflow（`e2e.yml`）が smoke + e2e を自動実行する。ローカルで上記を確認済みの場合もラベル付与を推奨（CI で再現担保するため）。「通常 CI が緑」だけでは smoke/E2E 済みを意味しない
 
 ### D. UI のスタイル・レイアウト・テキスト表示に影響する変更（A／B／C に追加）
 
@@ -79,5 +80,24 @@ npm run tauri build              # リリースビルド（フロント+Rust 一
 - **ビルド済みバイナリの手動 smoke では「変更が含まれているか」を確認する**: `cargo` は `target/debug/deps/<crate>-<hash>.exe` を `target/debug/<crate>.exe` に hardlink し直すため、ソース変更後でも（fingerprint 上「最新」と判断され再リンクされず）`<crate>.exe` のタイムスタンプが更新されないことがある。タイムスタンプを信用せず、変更固有の文字列でバイナリを grep して目的の変更が入っているか確認する（例: `[Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($exe)).Contains('<変更固有の文字列>')`）。#343 の balloon smoke で実際に踏んだ
 
 ## CI/CD メモ
+
+### 検証コマンド ↔ GitHub Actions workflow の対応
+
+「変更後の検証チェックリスト」の必須コマンドが、どの workflow でどのトリガーで自動実行されるかの対応表。エージェントが「PR CI 緑」だけで全検証済みと誤認しないための SSOT。
+
+| 検証コマンド | workflow | トリガー |
+|---|---|---|
+| `npm test`（Vitest） | `ci.yml`（frontend-check） | PR 自動（`skip-ci` ラベルで無効化可） |
+| `npm run build` / `npm run typecheck` | `ci.yml`（frontend-check） | PR 自動 |
+| `cargo check` / `cargo test -p snotra-core` / `cargo clippy` | `ci.yml`（rust-check） | PR 自動 |
+| `npm run smoke:startup`（注） | `e2e.yml`（E2E & Smoke） | `e2e` ラベル付き PR / 手動 dispatch |
+| `npm run e2e:tauri` | `e2e.yml`（E2E & Smoke） | `e2e` ラベル付き PR / 手動 dispatch |
+
+（注）CI では `e2e:tauri:setup` が生成した release バイナリを共有するため、`npm run smoke:startup`（既定 ExePath = debug）ではなく `scripts/smoke-startup.ps1 -ExePath target/release/snotra.exe` を直接実行する。検証する起動経路は同じ（release バイナリの起動 trace に `*:error` が無いこと）。これは E2E 用ビルドの起動健全性検証であり、配布バンドル（`tauri build`）の検証ではない。
+
+- カテゴリ C（ウィンドウ生成・ホットキー・スラッシュコマンド）相当の変更を含む PR には `e2e` ラベルを付与し、`E2E & Smoke` workflow を走らせること。
+- この対応関係のドリフト（必須コマンドに対応 workflow が無い等）は `/health-check` の Check 10 で検出する。
+
+### その他
 
 - **`GITHUB_TOKEN` では他のワークフローをトリガーできない**: tag push や `workflow_dispatch` を `GITHUB_TOKEN` で発火させても、別ワークフローは起動しない（GitHub の仕様）。ワークフロー間の連鎖には `workflow_call`（呼び出し元から直接呼ぶ）を使う

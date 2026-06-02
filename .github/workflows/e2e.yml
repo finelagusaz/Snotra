@@ -1,7 +1,13 @@
-name: E2E
+name: E2E & Smoke
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    # `labeled` を明示購読する。これが無いとデフォルト（opened/synchronize/reopened）のみで、
+    # PR 作成後に `e2e` ラベルを後付けしても workflow が起動しない（中核目的が破綻する）。
+    types: [opened, synchronize, reopened, labeled]
 
 concurrency:
   group: e2e-${{ github.ref }}
@@ -12,6 +18,12 @@ env:
 
 jobs:
   e2e:
+    # 手動 dispatch、または `e2e` ラベル付き PR でのみ実行（カテゴリ C 変更時に付与）。
+    # 配列 contains は要素完全一致。dispatch 時は pull_request が null → 後項 false だが
+    # OR 先頭が true で短絡するため手動実行は常に走る。
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'e2e')
     runs-on: windows-latest
     timeout-minutes: 30
 
@@ -38,6 +50,11 @@ jobs:
 
       - name: Build app and setup E2E
         run: npm run e2e:tauri:setup
+
+      # e2e:tauri:setup が生成した release バイナリを共有（debug 二重ビルドを避ける）。
+      # smoke-startup.ps1 は ExePath を Test-Path で検証し、不在なら throw する。
+      - name: Run startup smoke
+        run: pwsh -NoProfile -File scripts/smoke-startup.ps1 -ExePath target/release/snotra.exe
 
       - name: Run E2E tests
         run: npm run e2e:tauri

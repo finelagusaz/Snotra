@@ -87,6 +87,8 @@ git checkout -b <branch-name>
 | `/plan-review` | 常に実行（サブエージェントで影響範囲・不変条件・スコープを並列検証） |
 | `/symmetric-check` | 計画が対称ペアを持つコードパスに触れる |
 | `/cache-check` | 計画がキャッシュ・インクリメンタル再利用ロジックに触れる |
+| `/state-check` | 計画が UI モード・状態遷移・ガード条件に触れる |
+| `/race-check` | 計画が async 関数の追加・変更を含む |
 
 ### 5b. セルフレビューチェックリスト
 

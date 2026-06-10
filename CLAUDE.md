@@ -13,12 +13,23 @@
 このリポジトリは Windows + PowerShell 環境で運用されている。Bash 系の慣習をそのまま持ち込むと、過去のセッションで複数回踏んだ摩擦を再発させる。
 
 - **bash の HEREDOC（`<<EOF` / `<<'EOF'`）を使わない** — PowerShell では here-string の引用境界が壊れ、終端マーカーがコミットメッセージ本文に漏れる事故が起きている。複数行のコミットメッセージは一時ファイルに書き出して `git commit -F <tmpfile>` を使うか、PowerShell の here-string `@'...'@`（閉じ `'@` は必ず行頭）を使う
-- **`git` コマンドをチェーンしない** — `git checkout <branch> && git rebase main` のような連鎖は `block-main-commit` フックを誤発火させた実績がある。`checkout` と `rebase`、`add` と `commit` のように影響範囲の異なる操作はそれぞれ独立した呼び出しに分ける
 - **パス区切りは `/` を優先** — PowerShell でも Git/Node/Cargo は `/` を受け付ける。`\` を含めるとエスケープが必要になるため、文字列中のパスは `/` で統一する
-- **main の fast-forward 同期は `git pull --ff-only` を使う** — `git merge --ff-only origin/main` でも `block-main-commit` フックが `git\s+(commit|merge|rebase)` を文字列一致で弾く（コミットを作らない FF でも発火する）
 - **Bash ツールに `/tmp` は無い（Windows）** — 一時ファイルは `$env:TEMP` 配下に置くか Write ツールで作る。`cat > /tmp/...` は `FileNotFoundError` で失敗する
 - **Python で非 ASCII を標準出力するときは `PYTHONIOENCODING=utf-8` を付ける** — cp932 コンソールで `—`・日本語などを print すると `UnicodeEncodeError` で落ちる（JSON/ログ整形で多用）
+
+## Git/GitHub 運用
+
+- **`git` コマンドをチェーンしない** — `git checkout <branch> && git rebase main` のような連鎖は `block-main-commit` フックを誤発火させた実績がある。`checkout` と `rebase`、`add` と `commit` のように影響範囲の異なる操作はそれぞれ独立した呼び出しに分ける
+- **main の fast-forward 同期は `git pull --ff-only` を使う** — `git merge --ff-only origin/main` はコミットを作らない FF でも `block-main-commit` フックに弾かれる（コマンド文字列一致で判定するため）
 - **複数 issue にまたがる PR を squash マージするとき auto-close を明示制御する** — ブランチ各コミット本文の `Fixes/Closes #N` は squash 時に GitHub が拾い、意図しない issue を閉じうる。一部だけ閉じたい場合（例: 中核 issue は Phase 残しで open、対症療法 issue のみ close）は `gh pr merge --squash --subject "...(#issue) (#PR)" --body-file <tmp>` で最終メッセージを明示し、`Closes`/`Refs` を制御する。マージ後は `gh issue view <N> --json state` で意図どおりか検証する
+
+## フック（.claude/settings.json）
+
+エージェントの操作には以下のフックが介入する。発火条件の正確な定義は `.claude/settings.json` を SSOT とする。
+
+- **`block-main-commit`（PreToolUse）**: main ブランチ上の `git commit` / `merge` / `rebase` を拒否する。feature ブランチを作成してから操作する
+- **PR 作成前 push チェック（PreToolUse）**: 未 push コミットまたは upstream 未設定の状態での `gh pr create` を拒否する（空 PR / `Closes` 誤 close 防止）。`git push -u origin HEAD` してから PR を作る
+- **編集後の自動検証（PostToolUse）**: `.rs` 編集で clippy（`snotra-core` 編集では core テストも）、`.ts`/`.tsx` 編集で typecheck が自動実行される。Edit/Write 後に会話へ流れる clippy / typecheck 出力はこのフック由来であり、手動での再実行は不要
 
 ## チーム憲章
 
@@ -51,8 +62,11 @@ Claude とユーザーが一緒に作業するときの関係性の原則。
 | `/dry-check`         | 関数を新規定義・変更したとき、手書き重複が残っていないか確認            | `/dry-check show_main_and_emit: show() + set_focus() + emit(window-shown)`     |
 | `/race-check`        | async 関数を新規追加・変更したとき、各 await 地点の状態競合リスクを検証 | `/race-check executeInstantCommandSelected: await api.executeInstantCommand()` |
 | `/cache-check`       | キャッシュロジックの追加・変更時に述語の単調性と状態遷移の安全性を検証  | `/cache-check search_with_options: use_incremental 判定`                       |
+| `/state-check`       | UI モード・ガード条件の追加・変更時に直交性・リセット経路・SPEC §8.6 整合を検証 | `/state-check InstantCommandMode 追加`                                    |
 | `/health-check`      | 定期・サイクル完了後: モジュール構成・architecture.md・AGENTS.md・SPEC.md 番号・コマンド・workflow 対応・メモリ・ルール・スキルの整合性を検証 | `/health-check`                                                           |
 | `/retrospective`     | サイクル終了後: 教訓を AGENTS.md に抽出し、メモリ鮮度チェック、RETROSPECTIVE.md を更新 | `/retrospective`                                                               |
 | `/start-issue`       | GitHub issue から作業開始: issue 読込 → main 最新化 → ブランチ作成 → 調査・計画 | `/start-issue 123`                                                        |
 | `/implement`         | フルサイクル開発: 調査 → 計画 → 実装 → 検証 → レビュー → コミット      | `/implement キーボードショートカットの追加`                                     |
 | `/deps-update`       | cargo/npm の依存を一括更新し PR 作成・CI グリーン確認まで（カテゴリ C 相当時は `e2e` ラベル付与・E2E/smoke 完了確認。マージは手動） | `/deps-update` または `/deps-update npm`                                       |
+
+サブエージェント: `code-reviewer`（`.claude/agents/`）— 実装後・コミット前の3フェーズレビュー（実装検証 / 計画判断・SPEC.md 同期 / パフォーマンス）。`/implement` Step 5b が自動で起動する。

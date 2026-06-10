@@ -23,7 +23,7 @@
 
 ---
 
-<!-- TODO: デモ GIF をここに追加 -->
+<img width="1056" height="660" alt="Image" src="https://github.com/user-attachments/assets/1840de5f-47c0-4fa7-8523-0b3d975cb01e" />
 
 ## 特徴
 

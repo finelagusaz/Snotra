@@ -11,7 +11,7 @@ const {
   mockEnterToolSelection, mockActivateSelected, mockEnterFolderExpansion,
   mockNavigateFolderUp, mockMoveSelectionUp, mockMoveSelectionDown,
   mockSetQuery, mockSetFolderFilter, mockClearLaunchNotice,
-  mockHideMainWindow,
+  mockHideMainWindow, mockViewKind, mockInterpKind,
 } = vi.hoisted(() => {
   globalThis.requestAnimationFrame = ((cb: Function) =>
     setTimeout(cb, 0)) as typeof requestAnimationFrame;
@@ -43,6 +43,16 @@ const {
     mockSetFolderFilter: vi.fn(),
     mockClearLaunchNotice: vi.fn(),
     mockHideMainWindow: vi.fn(),
+    // 軸メモは下位シグナルモックから導出する（実装と同じ射影）。
+    // 既存テストは mockToolSelectionState 等を set するだけで両軸が追従する。
+    mockViewKind: vi.fn((): "results" | "folder" | "tool" =>
+      mockToolSelectionState() ? "tool" : mockFolderState() ? "folder" : "results"),
+    mockInterpKind: vi.fn((): "plain" | "command" | "instant" => {
+      if (mockToolSelectionState() || mockFolderState()) return "plain";
+      if (mockInstantCommandMode()) return "instant";
+      if (mockQuery().trimStart().startsWith("/")) return "command";
+      return "plain";
+    }),
   };
 });
 
@@ -72,6 +82,8 @@ vi.mock("../stores/search", () => ({
   toolSelectionState: mockToolSelectionState,
   noResults: mockNoResults,
   instantCommandMode: mockInstantCommandMode,
+  viewKind: mockViewKind,
+  interpKind: mockInterpKind,
 }));
 
 // ── 外部依存モック ──
@@ -258,6 +270,16 @@ describe("SearchWindow キーボードハンドリング", () => {
       fireEvent.input(input, { target: { value: "test" } });
 
       expect(mockSetQuery).toHaveBeenCalledWith("test");
+    });
+
+    it("インスタントコマンドモード中も文字入力を受理する（綻び2: 入力可否は軸1のみ依存）", () => {
+      mockInstantCommandMode.mockReturnValue(true);
+
+      const { container } = renderSearchWindow();
+      const input = getInput(container);
+      fireEvent.input(input, { target: { value: "@goo" } });
+
+      expect(mockSetQuery).toHaveBeenCalledWith("@goo");
     });
   });
 

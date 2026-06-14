@@ -49,11 +49,13 @@ let searchGeneration = 0;
 let activationInFlight = false;
 let suppressNextQueryEffectRefresh = false;
 
-/** 結果を表示すべきかの派生シグナル。MainApp がリアクティブにウィンドウ高さを変更するために使用 */
-const shouldShowResults = createMemo(() => results().length > 0 && (!indexing() || instantCommandMode() || folderState() !== null));
-
 export type ViewKind = "results" | "folder" | "tool";
 export type InterpKind = "plain" | "command" | "instant";
+
+/** 網羅的 switch の default に置き、モード追加時の分岐漏れをコンパイルエラー化する */
+function assertNever(x: never): never {
+  throw new Error(`unhandled mode: ${x}`);
+}
 
 /** 軸1: 結果リストを占める先頭ビュー（tool > folder > results の射影＝SPEC §18.5 優先度）。
  *  プリミティブを返すことで kind 変化時のみ伝播する（オブジェクト union は毎計算で新 identity）。 */
@@ -67,6 +69,23 @@ const interpKind = createMemo<InterpKind>(() => {
   if (instantCommandMode()) return "instant";
   if (query().trimStart().startsWith("/")) return "command";
   return "plain";
+});
+
+/** 結果を表示すべきかの派生シグナル。MainApp がリアクティブにウィンドウ高さを変更するために使用。
+ *  tool/folder は indexing 中でも表示。results は instant 中のみ indexing を無視する。 */
+const shouldShowResults = createMemo(() => {
+  if (results().length === 0) return false;
+  const vk = viewKind();
+  switch (vk) {
+    case "tool":
+    case "folder":
+      return true;
+    case "results":
+      // instant は生シグナル直読（interpKind 経由だと query 依存を持ち込み plain 打鍵で再計算する）
+      return instantCommandMode() || !indexing();
+    default:
+      return assertNever(vk);
+  }
 });
 
 function clearLaunchNotice() {

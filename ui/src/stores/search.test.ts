@@ -702,6 +702,28 @@ describe("shouldShowResults", () => {
     expect(indexing()).toBe(true);
     expect(shouldShowResults()).toBe(true);
   });
+
+  it("結果あり + indexing=true + toolSelectionState → true（tool 枝の明示化）", async () => {
+    let setIndexingTrue: (() => void) | undefined;
+    vi.mocked(tauriEvent.listen).mockImplementation(
+      async (eventName: string, callback: (...args: unknown[]) => void) => {
+        if (eventName === "indexing-started") setIndexingTrue = callback as () => void;
+        return () => {};
+      },
+    );
+    await initIndexingState();
+    setIndexingTrue?.();
+    expect(indexing()).toBe(true);
+
+    // ツール選択中は results にツール一覧が入る（folderState は null）。
+    // tool×indexing は通常 UI では到達不能だが、tool 枝が「常に表示」であることを単体で固定する。
+    vi.mocked(api.getMatchingTools).mockResolvedValue([TOOL_1, TOOL_2]);
+    await enterToolSelection(FILE_RESULT);
+
+    expect(toolSelectionState()).not.toBeNull();
+    expect(results().length).toBe(2);
+    expect(shouldShowResults()).toBe(true);
+  });
 });
 
 // ── viewKind（軸1: ビューフレーム射影） ───────────────────────────────────────

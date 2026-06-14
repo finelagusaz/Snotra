@@ -156,8 +156,8 @@ function debouncedRefresh() {
 
 async function refreshResults() {
   // ツール選択中・インスタントコマンドモード中は通常の検索で上書きしない
-  if (toolSelectionState()) return;
-  if (instantCommandMode()) return;
+  if (viewKind() === "tool") return;
+  if (interpKind() === "instant") return;
 
   const requestId = ++searchGeneration;
   const fs = folderState();
@@ -250,11 +250,12 @@ createRoot(() => {
         suppressNextQueryEffectRefresh = false;
         return;
       }
-      if (toolSelectionState()) {
+      const vk = viewKind();
+      if (vk === "tool") {
         trace("search:query_effect:ignored_tool_selection", { query: q });
         return;
       }
-      if (folderState()) {
+      if (vk === "folder") {
         trace("search:query_effect:ignored_folder_mode", { query: q });
         return;
       }
@@ -672,13 +673,25 @@ async function executeInstantCommandSelected(): Promise<boolean> {
   }
 }
 
-async function activateSelected(): Promise<boolean> {
-  if (toolSelectionState()) {
+/** ツール選択 / インスタントコマンドモードなら対応するディスパッチを返す。通常モードなら null
+ *  でフォールスルー。index 指定時は先に選択を移す。activationInFlight ガードより前に呼ぶこと
+ *  （ディスパッチ先が各自の並行ガードを持つ。順序は plan-review で固定）。 */
+function tryModalActivate(index?: number): Promise<boolean> | null {
+  if (viewKind() === "tool") {
+    // ツール選択中: インデックスを直接使う（同一 exe の複数ツールを正確に区別）
+    if (index !== undefined) setSelected(index);
     return launchWithSelectedTool();
   }
-  if (instantCommandMode()) {
+  if (interpKind() === "instant") {
+    if (index !== undefined) setSelected(index);
     return executeInstantCommandSelected();
   }
+  return null;
+}
+
+async function activateSelected(): Promise<boolean> {
+  const modal = tryModalActivate();
+  if (modal !== null) return modal;
   if (activationInFlight) return false;
   activationInFlight = true;
   try {
@@ -695,15 +708,8 @@ async function activateSelected(): Promise<boolean> {
 }
 
 async function activateSelectedByIndex(index: number): Promise<boolean> {
-  if (toolSelectionState()) {
-    // ツール選択中: インデックスを直接使う（同一 exe の複数ツールを正確に区別）
-    setSelected(index);
-    return launchWithSelectedTool();
-  }
-  if (instantCommandMode()) {
-    setSelected(index);
-    return executeInstantCommandSelected();
-  }
+  const modal = tryModalActivate(index);
+  if (modal !== null) return modal;
   if (activationInFlight) return false;
   activationInFlight = true;
   try {
@@ -726,7 +732,7 @@ function resetForShow() {
   // すでにクリーン状態なら runRefresh() をスキップ。
   // リセット前に確認する（setFolderState / setToolSelectionState が呼ばれる前）。
   // indexing() は含めない: indexing=true 時も results は既に非表示のため、スキップしても問題ない。
-  const skipRefresh = query() === "" && folderState() === null && toolSelectionState() === null && !instantCommandMode();
+  const skipRefresh = viewKind() === "results" && interpKind() === "plain" && query() === "";
   setLaunching(false);
   clearLaunchNotice();
   setToolSelectionState(null);

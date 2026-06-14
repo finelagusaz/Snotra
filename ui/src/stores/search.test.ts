@@ -47,6 +47,8 @@ import {
   refreshResults,
   resetForShow,
   shouldShowResults,
+  viewKind,
+  interpKind,
   toolSelectionState,
   launchNotice,
   clearLaunchNotice,
@@ -699,5 +701,75 @@ describe("shouldShowResults", () => {
 
     expect(indexing()).toBe(true);
     expect(shouldShowResults()).toBe(true);
+  });
+});
+
+// ── viewKind（軸1: ビューフレーム射影） ───────────────────────────────────────
+
+const FOLDER_FRAME = {
+  currentDir: "C:\\test",
+  savedResults: [] as SearchResult[],
+  savedSelected: 0,
+  savedQuery: "",
+};
+
+const TOOL_FRAME = {
+  targetPath: "C:\\foo.txt",
+  targetIsFolder: false,
+  tools: [TOOL_1, TOOL_2],
+  savedResults: [] as SearchResult[],
+  savedSelected: 0,
+  savedQuery: "",
+  savedFolderFilter: "",
+};
+
+describe("viewKind", () => {
+  it("通常時は 'results'", () => {
+    expect(viewKind()).toBe("results");
+  });
+
+  it("folderState セット時は 'folder'", () => {
+    setFolderState(FOLDER_FRAME);
+    expect(viewKind()).toBe("folder");
+  });
+
+  it("toolSelectionState セット時は 'tool'", () => {
+    setToolSelectionState(TOOL_FRAME);
+    expect(viewKind()).toBe("tool");
+  });
+
+  it("tool が folder の上に積まれた場合は 'tool' を優先（SPEC §18.5 直交・優先度）", () => {
+    setFolderState(FOLDER_FRAME);
+    setToolSelectionState(TOOL_FRAME);
+    expect(viewKind()).toBe("tool");
+  });
+});
+
+// ── interpKind（軸2: 入力の意味・results 限定で非 plain） ──────────────────────
+
+describe("interpKind", () => {
+  it("通常クエリは 'plain'", () => {
+    setQuery("hello");
+    expect(interpKind()).toBe("plain");
+  });
+
+  it("'/' プレフィックス（非コマンド）は 'command'", () => {
+    setQuery("/xyz");
+    expect(interpKind()).toBe("command");
+  });
+
+  it("'@' プレフィックスでインスタントコマンドモードなら 'instant'", async () => {
+    vi.mocked(api.getInstantCommands).mockResolvedValue([CMD_GOOGLE]);
+    setQuery("@goo");
+    await vi.runAllTimersAsync();
+
+    expect(instantCommandMode()).toBe(true);
+    expect(interpKind()).toBe("instant");
+  });
+
+  it("viewKind が results 以外なら常に 'plain'（folder 中の '/' でも plain）", () => {
+    setFolderState(FOLDER_FRAME);
+    setQuery("/xyz");
+    expect(interpKind()).toBe("plain");
   });
 });

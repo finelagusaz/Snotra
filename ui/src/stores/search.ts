@@ -52,6 +52,23 @@ let suppressNextQueryEffectRefresh = false;
 /** 結果を表示すべきかの派生シグナル。MainApp がリアクティブにウィンドウ高さを変更するために使用 */
 const shouldShowResults = createMemo(() => results().length > 0 && (!indexing() || instantCommandMode() || folderState() !== null));
 
+export type ViewKind = "results" | "folder" | "tool";
+export type InterpKind = "plain" | "command" | "instant";
+
+/** 軸1: 結果リストを占める先頭ビュー（tool > folder > results の射影＝SPEC §18.5 優先度）。
+ *  プリミティブを返すことで kind 変化時のみ伝播する（オブジェクト union は毎計算で新 identity）。 */
+const viewKind = createMemo<ViewKind>(() =>
+  toolSelectionState() ? "tool" : folderState() ? "folder" : "results",
+);
+
+/** 軸2: 入力の意味。viewKind=results のときだけ非 plain。既存シグナルの無損失な再パッケージ。 */
+const interpKind = createMemo<InterpKind>(() => {
+  if (viewKind() !== "results") return "plain";
+  if (instantCommandMode()) return "instant";
+  if (query().trimStart().startsWith("/")) return "command";
+  return "plain";
+});
+
 function clearLaunchNotice() {
   if (launchNoticeTimer !== undefined) {
     clearTimeout(launchNoticeTimer);
@@ -769,6 +786,8 @@ export {
   refreshResults,
   resetForShow,
   shouldShowResults,
+  viewKind,
+  interpKind,
   indexing,
   initIndexingState,
   launching,

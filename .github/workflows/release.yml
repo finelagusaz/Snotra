@@ -130,6 +130,11 @@ jobs:
         with:
           tag_name: ${{ env.TAG_NAME }}
           name: ${{ env.TAG_NAME }}
+          # draft を維持する: create-release.yml は draft: true で下書きを作るが、
+          # このアップロードで draft 指定を省くと softprops の既定 (draft=false) に
+          # 上書きされ、署名済み成果物が即時公開されてしまう。署名を人手で検証して
+          # から手動 publish する検証ゲートを残すため、ここで明示的に draft: true を指定する。
+          draft: true
           prerelease: ${{ steps.meta.outputs.prerelease }}
           files: |
             Snotra-${{ env.TAG_NAME }}.zip

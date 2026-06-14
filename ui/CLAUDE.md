@@ -82,6 +82,7 @@ vi.mock("../stores/search", () => ({ fn1: mockFn1, fn2: mockFn2 }));
 
 - `SearchWindow.test.tsx` が基盤実装。新しいコンポーネントテストはこのパターンを踏襲する
 - Tauri API（`@tauri-apps/api/window`, `@tauri-apps/api/event`）は空モックで無害化
+- **導出アクセサ（`viewKind`/`interpKind` 等）のモックは下位シグナルモックから導出させる**: ストアが既存シグナルから導出する派生アクセサを追加したとき、そのモックを下位シグナルモック（`mockToolSelectionState` 等）を読む実装（`vi.fn(() => mockToolSelectionState() ? ... : ...)`）にすると、既存テストが下位シグナルを set するだけで派生も追従し、テスト本体を書き換えずに緑を維持できる。`vi.clearAllMocks()` は `vi.fn(impl)` の実装を保持するため、`beforeEach` で下位モックを再設定すれば導出モックも最新値を反映する
 
 ## 実装パターン
 

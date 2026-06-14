@@ -13,3 +13,4 @@ paths:
 - **`set_size()` は `shouldShowResults` の effect だけが呼ぶ**: 他の箇所からウィンドウサイズを変更しない
 - **選択はインデックス（number）で参照**: パス文字列を使わない（ツール選択モードでパスが重複する）
 - **Effect 内で自身が依存するシグナルを set しない**: 無限ループの原因。やむを得ない場合は `untrack()` で切る
+- **モード判定は `viewKind()`/`interpKind()` 経由**: `toolSelectionState()`/`folderState()`/`instantCommandMode()` を直接 if して優先度を再導出しない（frame 値が要る箇所は storage 直読可）。軸メモはプリミティブを返す（オブジェクト union は毎計算で新 identity となり下流を再発火させる）

@@ -13,7 +13,7 @@ import {
   initIndexingState,
   setHotkeyFailureNotice,
   shouldShowResults,
-  instantCommandMode,
+  interpKind,
   setInstantCommandPrefix,
 } from "./stores/search";
 import { hideMainWindow } from "./lib/commands";
@@ -320,7 +320,7 @@ const MainApp: Component = () => {
       <ResultsSection
         visible={shouldShowResults() && mainVisible()}
         showIcons={showIcons()}
-        skipIcons={instantCommandMode()}
+        skipIcons={interpKind() === "instant"}
         maxResults={maxResults()}
         iconCacheSize={iconCacheSize()}
         onClickResult={handleClickResult}

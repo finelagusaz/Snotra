@@ -82,6 +82,7 @@ vi.mock("../stores/search", () => ({ fn1: mockFn1, fn2: mockFn2 }));
 
 - `SearchWindow.test.tsx` が基盤実装。新しいコンポーネントテストはこのパターンを踏襲する
 - Tauri API（`@tauri-apps/api/window`, `@tauri-apps/api/event`）は空モックで無害化
+- **導出アクセサ（`viewKind`/`interpKind` 等）のモックは下位シグナルモックから導出させる**: ストアが既存シグナルから導出する派生アクセサを追加したとき、そのモックを下位シグナルモック（`mockToolSelectionState` 等）を読む実装（`vi.fn(() => mockToolSelectionState() ? ... : ...)`）にすると、既存テストが下位シグナルを set するだけで派生も追従し、テスト本体を書き換えずに緑を維持できる。`vi.clearAllMocks()` は `vi.fn(impl)` の実装を保持するため、`beforeEach` で下位モックを再設定すれば導出モックも最新値を反映する
 
 ## 実装パターン
 
@@ -91,6 +92,7 @@ vi.mock("../stores/search", () => ({ fn1: mockFn1, fn2: mockFn2 }));
 - **`await` 後に保存状態を復元する場合は staleness チェックを入れる**: `await` 前に保存した状態を失敗時に復元するパターンでは、`searchGeneration` 等の世代カウンタで「`await` 中に状態が変わっていないか」を検証してから復元する。無条件復元は新しい状態を上書きするレースコンディションを生む。加えて、`await` 中にユーザー入力で状態が変わること自体を防ぐガード（`handleInput` の `launching()` チェック等）を根本対策として併用する
 - 検索デバウンスは leading edge（初回即時発火）+ trailing 50ms。`leadingFired` フラグでデバウンス区間の最初の入力を即座に `runRefresh()` し、以降は trailing タイマーのみ。`cancelDebounce()` でフラグもリセットする
 - **`createEffect` に高さ計算と無関係なシグナルを含めない**: `cachedWidth` のように effect の出力（`setSize` の引数）には必要だが変更トリガーにすべきでないシグナルは `untrack()` で依存から外す。特に Tauri の `resizable: false` 環境では、幅変化は Rust 側 `set_size` → `onResized` → JS `setSize` のループバックになりうる
+- **`createMemo` がオブジェクトを返すと毎計算で下流へ伝播する**: SolidJS 既定の `===` 等価ではオブジェクトリテラルが毎回新 identity となり、`kind` 等の値が不変でも購読側の memo/effect を再発火させる。頻繁に変わるシグナル（`query()` 等）に依存する派生メモは**プリミティブを返す**か `createMemo(fn, { equals })` で等価関数を与える（例: `viewKind()`/`interpKind()` は文字列を返すため `kind` 変化時のみ伝播し、plain 打鍵では下流を再計算しない）
 - **DEV 限定コードは `import.meta.env.DEV` でガードする**: `trace()` や `performance.now()` など開発時のみ必要な処理は、呼び出し側でも `import.meta.env.DEV` で囲む。Vite がプロダクションビルドでデッドコード除去するため、呼び出し先がノーオペレーションでも呼び出し側の引数計算コストは残る
 - **テーマ変更時はフォント依存キャッシュをクリアする**: `truncatePath.ts` の Canvas 測定キャッシュなど、フォント情報をキーに含むキャッシュは `visual-config-changed` イベントでクリアする。キーにフォントを含むため誤った結果は返さないが、stale エントリがメモリを占有し続ける
 
@@ -98,7 +100,7 @@ vi.mock("../stores/search", () => ({ fn1: mockFn1, fn2: mockFn2 }));
 
 検索バーと検索結果は1つの Tauri ウィンドウ内に共存する。結果の表示/非表示はシグナルで管理し、ウィンドウ高さは動的に変更する。
 
-- `shouldShowResults` メモシグナル: `results().length > 0 && (!indexing() || instantCommandMode() || folderState() !== null)` — 結果を表示すべきかの判定（インスタントコマンドモード中・フォルダモード中はインデックス構築中でも結果を表示）
+- `shouldShowResults` メモシグナル: `results().length > 0` かつ `switch(viewKind())`（tool/folder は常に表示、results は `instantCommandMode() || !indexing()`）— 結果を表示すべきかの判定（ツール選択中・フォルダモード中・インスタントコマンドモード中はインデックス構築中でも結果を表示）。詳細は「状態モデル（2 軸）」を参照
 - `mainVisible` ローカルシグナル: `window-shown` / `window-hidden` イベントで同期される — ウィンドウが可視かの判定
 - `ResultsSection` の `visible` prop: `shouldShowResults() && mainVisible()` — 実際の描画と Blob URL ライフサイクルを制御
 - `createEffect` でウィンドウ高さを計算: `shouldShowResults()` が true なら `SEARCH_BAR_HEIGHT + maxResults * RESULT_ROW_HEIGHT + RESULTS_PADDING`、false なら `SEARCH_BAR_HEIGHT`
@@ -111,6 +113,21 @@ vi.mock("../stores/search", () => ({ fn1: mockFn1, fn2: mockFn2 }));
 - `ResultsSection` の `visible` prop が `false` になったとき `cache.revokeAll()` + `iconCacheVersion` 更新で Blob URL を一括解放する
 
 ## 設計上の注意点
+
+### 状態モデル（2 軸 + オーバーレイ）
+
+検索ウィンドウの「モード」は単一の型ではなく、`search.ts` の 2 つの**プリミティブ判別子メモ**で導出する。散在ガードの優先度を一箇所に集約し、生シグナルの直接 if を避ける（SPEC §8.6 状態図 / §18.5 優先度と一対一対応）。
+
+- **軸1 `viewKind()`**（`"results" | "folder" | "tool"`）: 結果リストを占める先頭ビュー。`toolSelectionState() ? "tool" : folderState() ? "folder" : "results"`（tool > folder > results）。tool は folder の上に積まれうる（直交）。
+- **軸2 `interpKind()`**（`"plain" | "command" | "instant"`）: 入力の意味。`viewKind()==="results"` のときだけ非 plain（folder/tool 中は plain）。`instantCommandMode()` latch の無損失な再パッケージ。
+- **オーバーレイ**: `indexing()` / `launching()` は軸ではなく boolean。どのモードにも重なる。
+
+実装規約:
+
+- **モード判定は `viewKind()`/`interpKind()` 経由**。`toolSelectionState()`/`folderState()`/`instantCommandMode()` を直接 if して優先度を再導出しない（frame の値が要る箇所＝`inputValue` の `targetPath`・`placeholderText` の `currentDir` は storage を直読してよい）
+- **軸メモはプリミティブを返す**。オブジェクト union は `===` 等価で毎計算が新 identity となり、`query()` 依存の `interpKind` が plain 打鍵ごとに下流（`shouldShowResults`/`skipIcons`/アイコン effect）を再発火させる
+- **入力受理（`handleInput`）は軸1 + overlay のみに依存**。`interpKind` は読まない（インスタントコマンド中も打鍵を受理するため）
+- **網羅 switch の default は `assertNever`**（モード追加時の分岐漏れをコンパイルエラー化）。表示関数のように網羅性が degrade 許容な箇所は viewKind 経由の if でもよい
 
 ### マウスイベントハンドラ
 

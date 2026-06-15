@@ -23,7 +23,8 @@ import {
   exitToolSelection,
   toolSelectionState,
   noResults,
-  instantCommandMode,
+  viewKind,
+  interpKind,
 } from "../stores/search";
 import { hideMainWindow } from "../lib/commands";
 import { computeParentDir } from "../lib/folderNav";
@@ -185,7 +186,8 @@ const SearchWindow: Component = () => {
         break;
       case "ArrowRight": {
         trace("ui:key_action", { action: "arrow_right" });
-        if (toolSelectionState() || instantCommandMode()) break;
+        // tool(軸1) と instant(軸2) は別軸ゆえ別条件で名指す。command は結果空で展開不能のため含めない
+        if (viewKind() === "tool" || interpKind() === "instant") break;
         const r = results()[selected()];
         if (r?.isFolder) {
           enterFolderExpansion(r.path);
@@ -195,8 +197,8 @@ const SearchWindow: Component = () => {
       }
       case "ArrowLeft":
         trace("ui:key_action", { action: "arrow_left" });
-        if (toolSelectionState() || instantCommandMode()) break;
-        if (folderState()) {
+        if (viewKind() === "tool" || interpKind() === "instant") break;
+        if (viewKind() === "folder") {
           navigateFolderUp();
           e.preventDefault();
         } else {
@@ -212,7 +214,7 @@ const SearchWindow: Component = () => {
         break;
       case "Enter":
         trace("ui:key_action", { action: "enter", shift: e.shiftKey });
-        if (e.shiftKey && !toolSelectionState() && !instantCommandMode()) {
+        if (e.shiftKey && viewKind() !== "tool" && interpKind() !== "instant") {
           // Shift+Enter: ツール選択メニューを表示（0/1 ツール時は通常起動にフォールバック）
           const r = results()[selected()];
           if (r && !r.isError) {
@@ -233,8 +235,9 @@ const SearchWindow: Component = () => {
   }
 
   function handleInput(e: InputEvent) {
-    // ツール選択中は入力を無効化（C2対策）
-    if (toolSelectionState()) return;
+    // 入力可否は軸1(view)+overlay(launching)のみに依存。ツール選択中は無効化（C2対策）。
+    // インスタントコマンド中(interp=instant)は受理する＝interp は読まない（綻び2）。
+    if (viewKind() === "tool") return;
     if (launching()) return;
     const value = (e.target as HTMLInputElement).value;
     // インデックス構築中も setQuery は常に呼ぶ。IPC をスキップするガードは refreshResults() 側にある。
@@ -242,7 +245,7 @@ const SearchWindow: Component = () => {
     trace("ui:input", { value, folderMode: folderState() !== null });
     perfMarkInput();
     clearLaunchNotice();
-    if (folderState()) {
+    if (viewKind() === "folder") {
       setFolderFilter(value);
     } else {
       setQuery(value);
@@ -250,22 +253,29 @@ const SearchWindow: Component = () => {
   }
 
   function inputValue(): string {
-    const ts = toolSelectionState();
-    if (ts) {
+    // モード判定は viewKind 経由（優先度の再導出を避ける）。frame アクセスは storage を直読。
+    const vk = viewKind();
+    if (vk === "tool") {
       // ツール選択中はターゲットのファイル名を表示（readonly）
-      const parts = ts.targetPath.split(/[\\/]/);
-      return parts[parts.length - 1] ?? ts.targetPath;
+      const ts = toolSelectionState();
+      if (ts) {
+        const parts = ts.targetPath.split(/[\\/]/);
+        return parts[parts.length - 1] ?? ts.targetPath;
+      }
     }
-    return folderState() ? folderFilter() : query();
+    return vk === "folder" ? folderFilter() : query();
   }
 
   function placeholderText(): string {
-    if (toolSelectionState()) {
+    const vk = viewKind();
+    if (vk === "tool") {
       return t("search.placeholder.tool_select");
     }
-    const fs = folderState();
-    if (fs) {
-      return t("search.placeholder.folder", { dir: fs.currentDir });
+    if (vk === "folder") {
+      const fs = folderState();
+      if (fs) {
+        return t("search.placeholder.folder", { dir: fs.currentDir });
+      }
     }
     return t("search.placeholder.default");
   }

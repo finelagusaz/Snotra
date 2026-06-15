@@ -49,8 +49,44 @@ let searchGeneration = 0;
 let activationInFlight = false;
 let suppressNextQueryEffectRefresh = false;
 
-/** 結果を表示すべきかの派生シグナル。MainApp がリアクティブにウィンドウ高さを変更するために使用 */
-const shouldShowResults = createMemo(() => results().length > 0 && (!indexing() || instantCommandMode() || folderState() !== null));
+export type ViewKind = "results" | "folder" | "tool";
+export type InterpKind = "plain" | "command" | "instant";
+
+/** 網羅的 switch の default に置き、モード追加時の分岐漏れをコンパイルエラー化する */
+function assertNever(x: never): never {
+  throw new Error(`unhandled mode: ${x}`);
+}
+
+/** 軸1: 結果リストを占める先頭ビュー（tool > folder > results の射影＝SPEC §18.5 優先度）。
+ *  プリミティブを返すことで kind 変化時のみ伝播する（オブジェクト union は毎計算で新 identity）。 */
+const viewKind = createMemo<ViewKind>(() =>
+  toolSelectionState() ? "tool" : folderState() ? "folder" : "results",
+);
+
+/** 軸2: 入力の意味。viewKind=results のときだけ非 plain。既存シグナルの無損失な再パッケージ。 */
+const interpKind = createMemo<InterpKind>(() => {
+  if (viewKind() !== "results") return "plain";
+  if (instantCommandMode()) return "instant";
+  if (query().trimStart().startsWith("/")) return "command";
+  return "plain";
+});
+
+/** 結果を表示すべきかの派生シグナル。MainApp がリアクティブにウィンドウ高さを変更するために使用。
+ *  tool/folder は indexing 中でも表示。results は instant 中のみ indexing を無視する。 */
+const shouldShowResults = createMemo(() => {
+  if (results().length === 0) return false;
+  const vk = viewKind();
+  switch (vk) {
+    case "tool":
+    case "folder":
+      return true;
+    case "results":
+      // instant は生シグナル直読（interpKind 経由だと query 依存を持ち込み plain 打鍵で再計算する）
+      return instantCommandMode() || !indexing();
+    default:
+      return assertNever(vk);
+  }
+});
 
 function clearLaunchNotice() {
   if (launchNoticeTimer !== undefined) {
@@ -120,8 +156,8 @@ function debouncedRefresh() {
 
 async function refreshResults() {
   // ツール選択中・インスタントコマンドモード中は通常の検索で上書きしない
-  if (toolSelectionState()) return;
-  if (instantCommandMode()) return;
+  if (viewKind() === "tool") return;
+  if (interpKind() === "instant") return;
 
   const requestId = ++searchGeneration;
   const fs = folderState();
@@ -214,11 +250,12 @@ createRoot(() => {
         suppressNextQueryEffectRefresh = false;
         return;
       }
-      if (toolSelectionState()) {
+      const vk = viewKind();
+      if (vk === "tool") {
         trace("search:query_effect:ignored_tool_selection", { query: q });
         return;
       }
-      if (folderState()) {
+      if (vk === "folder") {
         trace("search:query_effect:ignored_folder_mode", { query: q });
         return;
       }
@@ -636,13 +673,25 @@ async function executeInstantCommandSelected(): Promise<boolean> {
   }
 }
 
-async function activateSelected(): Promise<boolean> {
-  if (toolSelectionState()) {
+/** ツール選択 / インスタントコマンドモードなら対応するディスパッチを返す。通常モードなら null
+ *  でフォールスルー。index 指定時は先に選択を移す。activationInFlight ガードより前に呼ぶこと
+ *  （ディスパッチ先が各自の並行ガードを持つ。順序は plan-review で固定）。 */
+function tryModalActivate(index?: number): Promise<boolean> | null {
+  if (viewKind() === "tool") {
+    // ツール選択中: インデックスを直接使う（同一 exe の複数ツールを正確に区別）
+    if (index !== undefined) setSelected(index);
     return launchWithSelectedTool();
   }
-  if (instantCommandMode()) {
+  if (interpKind() === "instant") {
+    if (index !== undefined) setSelected(index);
     return executeInstantCommandSelected();
   }
+  return null;
+}
+
+async function activateSelected(): Promise<boolean> {
+  const modal = tryModalActivate();
+  if (modal !== null) return modal;
   if (activationInFlight) return false;
   activationInFlight = true;
   try {
@@ -659,15 +708,8 @@ async function activateSelected(): Promise<boolean> {
 }
 
 async function activateSelectedByIndex(index: number): Promise<boolean> {
-  if (toolSelectionState()) {
-    // ツール選択中: インデックスを直接使う（同一 exe の複数ツールを正確に区別）
-    setSelected(index);
-    return launchWithSelectedTool();
-  }
-  if (instantCommandMode()) {
-    setSelected(index);
-    return executeInstantCommandSelected();
-  }
+  const modal = tryModalActivate(index);
+  if (modal !== null) return modal;
   if (activationInFlight) return false;
   activationInFlight = true;
   try {
@@ -690,7 +732,7 @@ function resetForShow() {
   // すでにクリーン状態なら runRefresh() をスキップ。
   // リセット前に確認する（setFolderState / setToolSelectionState が呼ばれる前）。
   // indexing() は含めない: indexing=true 時も results は既に非表示のため、スキップしても問題ない。
-  const skipRefresh = query() === "" && folderState() === null && toolSelectionState() === null && !instantCommandMode();
+  const skipRefresh = viewKind() === "results" && interpKind() === "plain" && query() === "";
   setLaunching(false);
   clearLaunchNotice();
   setToolSelectionState(null);
@@ -769,6 +811,8 @@ export {
   refreshResults,
   resetForShow,
   shouldShowResults,
+  viewKind,
+  interpKind,
   indexing,
   initIndexingState,
   launching,

@@ -232,6 +232,49 @@ fn extract_backtick(s: &str) -> Option<&str> {
     Some(&s[start..end])
 }
 
+/// Returns (message, is_error). None message = cancelled.
+fn handle_export_result(path: Option<PathBuf>, tr: &Tr) -> (Option<String>, bool) {
+    let Some(dest) = path else {
+        return (None, false); // Cancelled
+    };
+    let Some(src) = Config::config_path() else {
+        return (Some(format!("{}config dir not found", tr.status_export_failed())), true);
+    };
+    match std::fs::copy(&src, &dest) {
+        Ok(_) => (Some(tr.status_export_success().to_string()), false),
+        Err(e) => (Some(format!("{}{}", tr.status_export_failed(), first_line(&e.to_string()))), true),
+    }
+}
+
+/// Returns (message, is_error, imported_config). None message = cancelled.
+fn handle_import_result(path: Option<PathBuf>, tr: &Tr) -> (Option<String>, bool, Option<Config>) {
+    let Some(src) = path else {
+        return (None, false, None); // Cancelled
+    };
+    let content = match std::fs::read_to_string(&src) {
+        Ok(c) => c,
+        Err(e) => {
+            return (Some(format!("{}{}", tr.status_import_failed(), first_line(&e.to_string()))), true, None);
+        }
+    };
+    let mut config = match Config::from_toml_str(&content) {
+        Ok(c) => c,
+        Err(e) => {
+            return (Some(format!("{}{}", tr.status_import_failed(), localize_toml_error(&e, tr))), true, None);
+        }
+    };
+    // Apply the same migrations as Config::load() (legacy field migration, normalization, etc.)
+    config.apply_migrations();
+    let errors = config.validate();
+    if !errors.is_empty() {
+        return (Some(format!("{}{}", tr.status_import_validation_error(), config_error_message(&errors[0], tr))), true, None);
+    }
+    if let Err(e) = config.save() {
+        return (Some(format!("{}{}", tr.status_import_failed(), first_line(&e))), true, None);
+    }
+    (Some(tr.status_import_success().to_string()), false, Some(config))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,47 +335,4 @@ mod tests {
         assert_eq!(extract_backtick("missing field `target`"), Some("target"));
         assert_eq!(extract_backtick("no backticks here"), None);
     }
-}
-
-/// Returns (message, is_error). None message = cancelled.
-fn handle_export_result(path: Option<PathBuf>, tr: &Tr) -> (Option<String>, bool) {
-    let Some(dest) = path else {
-        return (None, false); // Cancelled
-    };
-    let Some(src) = Config::config_path() else {
-        return (Some(format!("{}config dir not found", tr.status_export_failed())), true);
-    };
-    match std::fs::copy(&src, &dest) {
-        Ok(_) => (Some(tr.status_export_success().to_string()), false),
-        Err(e) => (Some(format!("{}{}", tr.status_export_failed(), first_line(&e.to_string()))), true),
-    }
-}
-
-/// Returns (message, is_error, imported_config). None message = cancelled.
-fn handle_import_result(path: Option<PathBuf>, tr: &Tr) -> (Option<String>, bool, Option<Config>) {
-    let Some(src) = path else {
-        return (None, false, None); // Cancelled
-    };
-    let content = match std::fs::read_to_string(&src) {
-        Ok(c) => c,
-        Err(e) => {
-            return (Some(format!("{}{}", tr.status_import_failed(), first_line(&e.to_string()))), true, None);
-        }
-    };
-    let mut config = match Config::from_toml_str(&content) {
-        Ok(c) => c,
-        Err(e) => {
-            return (Some(format!("{}{}", tr.status_import_failed(), localize_toml_error(&e, tr))), true, None);
-        }
-    };
-    // Apply the same migrations as Config::load() (legacy field migration, normalization, etc.)
-    config.apply_migrations();
-    let errors = config.validate();
-    if !errors.is_empty() {
-        return (Some(format!("{}{}", tr.status_import_validation_error(), config_error_message(&errors[0], tr))), true, None);
-    }
-    if let Err(e) = config.save() {
-        return (Some(format!("{}{}", tr.status_import_failed(), first_line(&e))), true, None);
-    }
-    (Some(tr.status_import_success().to_string()), false, Some(config))
 }

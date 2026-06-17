@@ -43,6 +43,16 @@ pub fn parse_vk(s: &str) -> u32 {
     }
 }
 
+pub fn register(config: &HotkeyConfig) -> bool {
+    let modifiers = parse_modifier(&config.modifier);
+    let vk = parse_vk(&config.key);
+    unsafe { RegisterHotKey(Some(HWND::default()), HOTKEY_ID, modifiers, vk) }.is_ok()
+}
+
+pub fn unregister() {
+    let _ = unsafe { UnregisterHotKey(Some(HWND::default()), HOTKEY_ID) };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,14 +75,4 @@ mod tests {
         assert_eq!(parse_vk("pageup"), 0x21);
         assert_eq!(parse_vk("delete"), 0x2E);
     }
-}
-
-pub fn register(config: &HotkeyConfig) -> bool {
-    let modifiers = parse_modifier(&config.modifier);
-    let vk = parse_vk(&config.key);
-    unsafe { RegisterHotKey(Some(HWND::default()), HOTKEY_ID, modifiers, vk) }.is_ok()
-}
-
-pub fn unregister() {
-    let _ = unsafe { UnregisterHotKey(Some(HWND::default()), HOTKEY_ID) };
 }

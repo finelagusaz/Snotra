@@ -69,4 +69,4 @@ jobs:
         run: cargo test -p snotra-core
 
       - name: cargo clippy
-        run: cargo clippy -p snotra-core -p snotra -p snotra-settings -- -D warnings
+        run: cargo clippy -p snotra-core -p snotra -p snotra-settings --all-targets -- -D warnings

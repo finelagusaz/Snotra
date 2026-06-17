@@ -2156,8 +2156,10 @@ mod tests {
 
     #[test]
     fn normalize_openers_returns_true_when_changed() {
-        let mut config = Config::default();
-        config.openers = vec![make_rule("ext:png,jpg", &[("Viewer", "viewer.exe", "")])];
+        let mut config = Config {
+            openers: vec![make_rule("ext:png,jpg", &[("Viewer", "viewer.exe", "")])],
+            ..Default::default()
+        };
 
         assert!(config.normalize_openers());
         assert_eq!(config.openers[0].target, "ext:.jpg,.png");
@@ -2165,20 +2167,24 @@ mod tests {
 
     #[test]
     fn normalize_openers_returns_false_when_no_change() {
-        let mut config = Config::default();
-        config.openers = vec![make_rule("ext:.jpg,.png", &[("Viewer", "viewer.exe", "")])];
+        let mut config = Config {
+            openers: vec![make_rule("ext:.jpg,.png", &[("Viewer", "viewer.exe", "")])],
+            ..Default::default()
+        };
 
         assert!(!config.normalize_openers());
     }
 
     #[test]
     fn normalize_openers_returns_false_when_multiple_already_sorted() {
-        let mut config = Config::default();
-        config.openers = vec![
-            make_rule("folder:c:\\workspace", &[("Terminal", "wt.exe", "")]),
-            make_rule("folder", &[("Explorer", "explorer.exe", "")]),
-            make_rule("ext:.md", &[("Typora", "typora.exe", "")]),
-        ];
+        let mut config = Config {
+            openers: vec![
+                make_rule("folder:c:\\workspace", &[("Terminal", "wt.exe", "")]),
+                make_rule("folder", &[("Explorer", "explorer.exe", "")]),
+                make_rule("ext:.md", &[("Typora", "typora.exe", "")]),
+            ],
+            ..Default::default()
+        };
         assert!(!config.normalize_openers());
     }
 
@@ -2548,19 +2554,21 @@ mod tests {
 
     #[test]
     fn validate_instant_command_duplicate_name() {
-        let mut config = Config::default();
-        config.instant_commands = vec![
-            InstantCommand {
-                name: "google".to_string(),
-                command: "https://google.com".to_string(),
-                description: String::new(),
-            },
-            InstantCommand {
-                name: "google".to_string(),
-                command: "https://google.co.jp".to_string(),
-                description: String::new(),
-            },
-        ];
+        let config = Config {
+            instant_commands: vec![
+                InstantCommand {
+                    name: "google".to_string(),
+                    command: "https://google.com".to_string(),
+                    description: String::new(),
+                },
+                InstantCommand {
+                    name: "google".to_string(),
+                    command: "https://google.co.jp".to_string(),
+                    description: String::new(),
+                },
+            ],
+            ..Default::default()
+        };
         let errors = config.validate();
         assert!(errors.contains(&ConfigError::InstantCommandDuplicateName {
             name: "google".to_string(),
@@ -2569,19 +2577,21 @@ mod tests {
 
     #[test]
     fn validate_instant_command_unique_names_ok() {
-        let mut config = Config::default();
-        config.instant_commands = vec![
-            InstantCommand {
-                name: "google".to_string(),
-                command: "https://google.com".to_string(),
-                description: String::new(),
-            },
-            InstantCommand {
-                name: "bing".to_string(),
-                command: "https://bing.com".to_string(),
-                description: String::new(),
-            },
-        ];
+        let config = Config {
+            instant_commands: vec![
+                InstantCommand {
+                    name: "google".to_string(),
+                    command: "https://google.com".to_string(),
+                    description: String::new(),
+                },
+                InstantCommand {
+                    name: "bing".to_string(),
+                    command: "https://bing.com".to_string(),
+                    description: String::new(),
+                },
+            ],
+            ..Default::default()
+        };
         let errors = config.validate();
         assert!(
             !errors.iter().any(|e| matches!(e, ConfigError::InstantCommandDuplicateName { .. })),

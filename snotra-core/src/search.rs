@@ -1162,7 +1162,7 @@ mod tests {
             path: "C:\\A\\tool.exe".to_string(),
             is_folder: false,
         };
-        let mut scored = vec![ra, rb];
+        let mut scored = [ra, rb];
         scored.sort();
         assert_eq!(scored[0].path, "C:\\A\\tool.exe");
         assert_eq!(scored[1].path, "C:\\B\\tool.exe");

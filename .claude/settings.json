@@ -21,7 +21,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "input=$(cat); if echo \"$input\" | grep -q '\\.rs\"'; then cargo clippy -p snotra-core -p snotra -p snotra-settings --message-format short -- -D warnings 2>&1 | head -20; fi"
+            "command": "input=$(cat); if echo \"$input\" | grep -q '\\.rs\"'; then cargo clippy -p snotra-core -p snotra -p snotra-settings --all-targets --message-format short -- -D warnings 2>&1 | head -20; fi"
           },
           {
             "type": "command",

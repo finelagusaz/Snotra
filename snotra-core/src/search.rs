@@ -1493,6 +1493,55 @@ mod tests {
         }
     }
 
+    /// lower_names を name と共有する `enum LowerName`（issue #336）の ROI を実測する。
+    /// `Same`（`to_lower_folded(name) == name`）の比率と、Same エントリで排除できる
+    /// ヒープ文字列実体（現状 `Box<str>` で name とは別アロケーション）の削減量を分解計測する。
+    /// - 16B 粒度丸め: 個別ヒープ確保とみなし 16B 境界へ切り上げた実 RSS 寄りの上界
+    fn measure_lower_name_footprint(label: &str, entries: &[AppEntry]) {
+        let n = entries.len().max(1);
+        let mut same = 0usize;
+        let mut saved_requested = 0usize;
+        let mut saved_rounded = 0usize;
+        for e in entries {
+            let lower = to_lower_folded(&e.name);
+            if lower == e.name {
+                same += 1;
+                let bytes = lower.len();
+                saved_requested += bytes;
+                saved_rounded += bytes.max(1).div_ceil(16) * 16;
+            }
+        }
+        let mb = |b: usize| b as f64 / (1024.0 * 1024.0);
+        let pct = same as f64 * 100.0 / n as f64;
+        println!(
+            "[{label}] n={n} Same={same} ({pct:.1}%)\n  \
+             削減（Same のヒープ文字列実体）要求 {saved_requested}B ({:.3}MB) | 16B丸め {saved_rounded}B ({:.3}MB)\n  \
+             全entry平均 要求 {}B/件 / 丸め {}B/件 | 50k換算 丸め {:.3}MB",
+            mb(saved_requested),
+            mb(saved_rounded),
+            saved_requested / n,
+            saved_rounded / n,
+            mb(saved_rounded * 50_000 / n),
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn measure_lower_name_footprint_report() {
+        use crate::config::Config;
+        use crate::indexer::{scan_all, scan_path_env};
+
+        // 本番相当: 既定 scan paths（Start Menu + Desktop の .lnk）+ PATH 実行ファイル。
+        let mut real = scan_all(&Config::default_scan_paths(), false);
+        let path_entries = scan_path_env(&real, false);
+        real.extend(path_entries);
+        measure_lower_name_footprint("real (start menu + desktop + PATH)", &real);
+
+        // 参考: 合成ベンチ（名前パターンが本番非代表＝Same はほぼ出ない）。
+        measure_lower_name_footprint("synthetic ascii    n=10000", &make_bench_entries(10_000));
+        measure_lower_name_footprint("synthetic katakana n=10000", &make_bench_entries_katakana(10_000));
+    }
+
     fn bench_search(label: &str, n: usize, queries: &[&str]) {
         use std::time::Instant;
         let entries = make_bench_entries(n);

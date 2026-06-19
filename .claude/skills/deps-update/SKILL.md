@@ -36,7 +36,7 @@ cargo / npm の依存関係を一括更新し、ローカル検証 → PR 作成
 
 `docs/build-commands.md` を SSOT として参照し、以下のカテゴリを実行する:
 
-- カテゴリ A: 必須＋追加検証（Rust 全 crate チェック・clippy・core テスト）
+- カテゴリ A: 必須（Rust 全 crate チェック・clippy・core テスト）
 - カテゴリ B: 必須（TypeScript 型チェック・フロントエンドビルド）
 - カテゴリ C: フロントユニットテスト（Vitest）のみ
 

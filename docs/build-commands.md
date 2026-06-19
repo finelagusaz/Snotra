@@ -11,10 +11,13 @@
 ### A. Rust ファイル（`*.rs`）を変更した場合
 
 ```bash
-cargo check -p snotra-core -p snotra -p snotra-settings     # 必須: Rust 全 crate 型チェック
+cargo check -p snotra-core -p snotra -p snotra-settings                                # 必須: Rust 全 crate 型チェック
+cargo clippy -p snotra-core -p snotra -p snotra-settings --all-targets -- -D warnings  # 必須: lint（全 .rs 変更、テストターゲット含む）
+cargo test -p snotra-core                                                              # 必須（snotra-core を変更した場合）: 純ロジック層 TDD
 ```
 
-- 追加検証: `cargo clippy -p snotra-core -p snotra -p snotra-settings -- -D warnings`、`cargo test -p snotra-core`
+- **`cargo test -p snotra-core` の必須/任意**: `snotra-core`（純ロジック層）を変更した場合は**必須**（TDD 重視。PostToolUse フックも snotra-core 編集時に自動実行）。`snotra` / `snotra-settings` のみの変更ではローカル任意（純ロジック不変のため。CI の rust-check が PR で常に実行し担保）
+- 上記 3 コマンドはいずれも CI（`ci.yml` rust-check）で PR 自動実行される（「CI/CD メモ」の対応表参照）。PostToolUse フック（`.claude/settings.json`）も `.rs` 編集で clippy、`snotra-core` 編集で core テストを自動発火する
 - `snotra-settings` を含めるのは egui ネイティブウィンドウ側の型壊れも検知するため
 
 ### B. TypeScript／フロントエンドファイル（`ui/src/**/*.{ts,tsx}` 等）を変更した場合

@@ -93,7 +93,7 @@ ui/src/
 
 - 検索ウィンドウは起動時に作成し `visible: false`、ホットキーで表示/非表示を切替
 - 検索バーと検索結果は単一ウィンドウ内のコンポーネント（`SearchWindow` + `ResultsSection`）
-- 結果の表示/非表示は `shouldShowResults` メモシグナル（`results().length > 0 && (!indexing() || instantCommandMode())`）で制御
+- 結果の表示/非表示は `shouldShowResults` メモシグナル（`results().length > 0 && (!indexing() || interpKind() === "instant")`）で制御
 - ウィンドウ高さは `createEffect` + Tauri `set_size()` で動的に変更。Rust 側の `show_main_and_emit` で毎回 52px にリセットしてからフロントエンドが結果に応じて拡張する
 - マルチモニター: モニター作業領域原点からの相対座標（物理ピクセル）で位置を保存。ホットキー押下時にターゲットモニターを決定し絶対座標に変換
 
@@ -140,7 +140,7 @@ ui/src/
 
 - 純ロジック: `snotra-core/src/instant.rs` — 変数展開 `{query}` / `{clip}` + 前方一致フィルタ。URL 判定で自動 URL エンコード
 - IPC: `src-tauri/src/commands/instant.rs` — クリップボード読み取り + `launch_item_core`（ShellExecuteW）で実行
-- UI: `ui/src/stores/search.ts` — `instantCommandMode` シグナル + query effect でモード切替。indexing 中でも使用可能
+- UI: `ui/src/stores/search.ts` — `interpKind()`（`query` + prefix からの純粋導出）でモード判定。query effect が instant コマンドの IPC 取得（getInstantCommands）を担う。indexing 中でも使用可能
 - 設定 GUI: `snotra-settings/src/tabs/instant.rs` — プレフィックス設定 + コマンド CRUD + 展開プレビュー
 - プレフィックス変更は `config_watcher.rs` が `instant-prefix-changed` イベントで UI に通知
 

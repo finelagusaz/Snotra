@@ -7,7 +7,7 @@ import { render, fireEvent } from "@solidjs/testing-library";
 const {
   mockQuery, mockResults, mockSelected, mockFolderState, mockFolderFilter,
   mockToolSelectionState, mockIndexing, mockLaunching, mockLaunchNotice,
-  mockNoResults, mockInstantCommandMode, mockExitToolSelection, mockExitFolderExpansion,
+  mockNoResults, mockExitToolSelection, mockExitFolderExpansion,
   mockEnterToolSelection, mockActivateSelected, mockEnterFolderExpansion,
   mockNavigateFolderUp, mockMoveSelectionUp, mockMoveSelectionDown,
   mockSetQuery, mockSetFolderFilter, mockClearLaunchNotice,
@@ -30,7 +30,6 @@ const {
     mockLaunching: vi.fn(() => false),
     mockLaunchNotice: vi.fn((): string | null => null),
     mockNoResults: vi.fn(() => false),
-    mockInstantCommandMode: vi.fn(() => false),
     mockExitToolSelection: vi.fn(() => false),
     mockExitFolderExpansion: vi.fn(() => false),
     mockEnterToolSelection: vi.fn(async () => false),
@@ -49,8 +48,10 @@ const {
       mockToolSelectionState() ? "tool" : mockFolderState() ? "folder" : "results"),
     mockInterpKind: vi.fn((): "plain" | "command" | "instant" => {
       if (mockToolSelectionState() || mockFolderState()) return "plain";
-      if (mockInstantCommandMode()) return "instant";
-      if (mockQuery().trimStart().startsWith("/")) return "command";
+      const q = mockQuery().trimStart();
+      // prefix は既定 "@" をハードコード（component テストは prefix を変えないため）
+      if (q.startsWith("@")) return "instant";
+      if (q.startsWith("/")) return "command";
       return "plain";
     }),
   };
@@ -81,7 +82,6 @@ vi.mock("../stores/search", () => ({
   exitToolSelection: mockExitToolSelection,
   toolSelectionState: mockToolSelectionState,
   noResults: mockNoResults,
-  instantCommandMode: mockInstantCommandMode,
   viewKind: mockViewKind,
   interpKind: mockInterpKind,
 }));
@@ -141,7 +141,6 @@ beforeEach(() => {
   mockLaunching.mockReturnValue(false);
   mockLaunchNotice.mockReturnValue(null);
   mockNoResults.mockReturnValue(false);
-  mockInstantCommandMode.mockReturnValue(false);
   mockExitToolSelection.mockReturnValue(false);
   mockExitFolderExpansion.mockReturnValue(false);
   mockEnterToolSelection.mockResolvedValue(false);
@@ -174,7 +173,7 @@ describe("SearchWindow キーボードハンドリング", () => {
     });
 
     it("インスタントコマンドモード中に ArrowRight でフォルダ展開が呼ばれない", () => {
-      mockInstantCommandMode.mockReturnValue(true);
+      mockQuery.mockReturnValue("@x");
       mockResults.mockReturnValue([{ name: "folder", path: "C:\\folder", isFolder: true, isError: false }]);
       mockSelected.mockReturnValue(0);
 
@@ -273,7 +272,7 @@ describe("SearchWindow キーボードハンドリング", () => {
     });
 
     it("インスタントコマンドモード中も文字入力を受理する（綻び2: 入力可否は軸1のみ依存）", () => {
-      mockInstantCommandMode.mockReturnValue(true);
+      mockQuery.mockReturnValue("@x");
 
       const { container } = renderSearchWindow();
       const input = getInput(container);
@@ -308,7 +307,7 @@ describe("SearchWindow キーボードハンドリング", () => {
     });
 
     it("インスタントコマンドモード中の Shift+Enter → 通常 Enter として処理", () => {
-      mockInstantCommandMode.mockReturnValue(true);
+      mockQuery.mockReturnValue("@x");
       mockResults.mockReturnValue([{ name: "cmd", path: "@cmd", isFolder: false, isError: false }]);
       mockSelected.mockReturnValue(0);
 

@@ -17,7 +17,7 @@ $ARGUMENTS のモード・状態遷移・ガード条件について、既存の
 このプロダクトの UI 状態は複数の直交・排他モードの組み合わせで動く（SPEC.md §8.6 / §18.5 / §19.7）:
 
 - `folderState`（フォルダ展開）と `toolSelectionState`（ツール選択）は**直交**
-- `instantCommandMode` は `NormalMode` / `CommandMode` と**排他**
+- `interpKind()` の `instant` は `plain`（NormalMode）/ `command`（CommandMode）と**排他**（入力解釈は単一の判別子値。`query`+`prefix` から純粋導出）
 - 優先度: `toolSelectionState !== null` > `folderState !== null` > 通常モード
 
 モードやガードを1つ追加・変更すると、既存の**全モードとの組み合わせ**それぞれについて「排他か・直交か・どちらが優先か」の明示的な判断が必要になる。判断されなかった組み合わせは「たまたま動く」状態で残り、別の変更で壊れる。
@@ -49,7 +49,7 @@ $ARGUMENTS から以下を抽出する:
   判定: [整合 / 未定義 — 要対処: <内容>]
 ```
 
-最低限確認する既存状態: `folderState`、`toolSelectionState`、`instantCommandMode`、コマンドモード（`/` プレフィックス）、`indexing`、`launching`。
+最低限確認する既存状態: `folderState`、`toolSelectionState`、`interpKind()`（`plain`/`command`/`instant`。command=`/` プレフィックス、instant=コマンドプレフィックス）、`indexing`、`launching`。
 
 「未定義だが現状動いている」はレッドフラグ。偶然の動作として記録し、明示化を提案する。
 

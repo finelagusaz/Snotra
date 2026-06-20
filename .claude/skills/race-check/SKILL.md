@@ -40,7 +40,7 @@ await 地点 2: <line> — <await 対象の説明>
 |------|-----|
 | SolidJS シグナル | `results()`, `selected()`, `query()`, `launching()` |
 | モジュールスコープ変数 | `searchGeneration`, `instantCommandItems`, `activationInFlight` |
-| 外部ストアのシグナル | `folderState()`, `toolSelectionState()`, `instantCommandMode()` |
+| 外部ストアのシグナル | `folderState()`, `toolSelectionState()`, `interpKind()` |
 
 ```
 await 地点 1:
@@ -56,7 +56,7 @@ await 地点 1:
 
 | 経路 | トリガー | 影響する状態 |
 |------|---------|------------|
-| `handleInput` → `setQuery` → query effect | ユーザーのキー入力 | `query`, `results`, `selected`, `searchGeneration`, `instantCommandMode` |
+| `handleInput` → `setQuery` → query effect | ユーザーのキー入力 | `query`, `results`, `selected`, `searchGeneration`, `instantCommandItems` |
 | `handleKeyDown` → `activateSelected` | Enter キー | `activationInFlight`, `results`, `selected` |
 | `handleKeyDown` → `exitFolderExpansion` | Escape キー | `folderState`, `results`, `selected`, `searchGeneration` |
 | `resetForShow` | `window-shown` イベント | 全状態リセット |

@@ -26,10 +26,3 @@ plan の検証コマンドに `npm run lint` を記載したが、`package.json`
 
 ### 網羅 switch + assertNever は変数束ねが必須（既知だが踏んだ）
 `switch (viewKind()) { ... default: assertNever(viewKind()) }` は default 枝で関数を再呼び出しするため `never` に絞られず typecheck エラー。`const vk = viewKind()` に束ねてから switch / assertNever に渡す必要がある。typecheck で即検出できたため軽微。
-
----
-
-## ネクストアクション
-
-- [ ] push して PR 作成。キーボードナビ（Arrow/Enter/Shift+Enter）を触るため `e2e` ラベルを付与し CI（E2E & Smoke）で smoke+e2e を確認。マージは手動
-- [ ] （任意 follow-up・別 issue 候補）`instantCommandMode` ラッチの除去: instant を `interpret(query, prefix)` から純粋導出にし持続シグナルを廃す。本リファクタの読み取り集約だけで綻び(2) は解消済みのため本質的には不要。query effect の debounce/IPC オーケストレーション + テスト 510–628 に触れる別リスク

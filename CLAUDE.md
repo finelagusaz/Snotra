@@ -64,7 +64,7 @@ Claude とユーザーが一緒に作業するときの関係性の原則。
 | `/cache-check`       | キャッシュロジックの追加・変更時に述語の単調性と状態遷移の安全性を検証  | `/cache-check search_with_options: use_incremental 判定`                       |
 | `/state-check`       | UI モード・ガード条件の追加・変更時に直交性・リセット経路・SPEC §8.6 整合を検証 | `/state-check InstantCommandMode 追加`                                    |
 | `/health-check`      | 定期・サイクル完了後: モジュール構成・architecture.md・AGENTS.md・SPEC.md 番号・コマンド・workflow 対応・メモリ・ルール・スキルの整合性を検証 | `/health-check`                                                           |
-| `/retrospective`     | サイクル終了後: 教訓を AGENTS.md に抽出し、メモリ鮮度チェック、RETROSPECTIVE.md を更新 | `/retrospective`                                                               |
+| `/retrospective`     | サイクル終了後: 教訓を AGENTS.md/各 CLAUDE.md に抽出 → 残タスクを issue/PR へ振り分け → RETROSPECTIVE.md（教訓のみ）を上書き → メモリ鮮度チェック → サイクル末 health-check | `/retrospective`                                                               |
 | `/start-issue`       | GitHub issue から作業開始: issue 読込 → main 最新化 → ブランチ作成 → 調査・計画 | `/start-issue 123`                                                        |
 | `/implement`         | フルサイクル開発: 調査 → 計画 → 実装 → 検証 → レビュー → コミット      | `/implement キーボードショートカットの追加`                                     |
 | `/deps-update`       | cargo/npm の依存を一括更新し PR 作成・CI グリーン確認まで（カテゴリ C 相当時は `e2e` ラベル付与・E2E/smoke 完了確認。マージは手動） | `/deps-update` または `/deps-update npm`                                       |

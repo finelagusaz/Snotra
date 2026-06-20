@@ -17,7 +17,6 @@ const [indexing, setIndexing] = createSignal(false);
 const [launching, setLaunching] = createSignal(false);
 const [launchNotice, setLaunchNotice] = createSignal<string | null>(null);
 const [instantCommandPrefix, setInstantCommandPrefix] = createSignal("@");
-const [instantCommandMode, setInstantCommandMode] = createSignal(false);
 const [noResults, setNoResults] = createSignal(false);
 
 /** setResults のラッパー。通常検索パスでのみ noResults を true にする */
@@ -57,17 +56,24 @@ function assertNever(x: never): never {
   throw new Error(`unhandled mode: ${x}`);
 }
 
+/** instant モード検出述語。`interpKind` と query effect の単一情報源（SSOT）。
+ *  空 prefix では false（全入力が instant 化するのを防ぐ）。trim 規則もここに集約する。 */
+function isInstantPrefix(rawQuery: string, prefix: string): boolean {
+  return prefix !== "" && rawQuery.trimStart().startsWith(prefix);
+}
+
 /** 軸1: 結果リストを占める先頭ビュー（tool > folder > results の射影＝SPEC §18.5 優先度）。
  *  プリミティブを返すことで kind 変化時のみ伝播する（オブジェクト union は毎計算で新 identity）。 */
 const viewKind = createMemo<ViewKind>(() =>
   toolSelectionState() ? "tool" : folderState() ? "folder" : "results",
 );
 
-/** 軸2: 入力の意味。viewKind=results のときだけ非 plain。既存シグナルの無損失な再パッケージ。 */
+/** 軸2: 入力の意味。viewKind=results のときだけ非 plain。query+prefix からの純粋導出（持続ラッチを廃止）。 */
 const interpKind = createMemo<InterpKind>(() => {
   if (viewKind() !== "results") return "plain";
-  if (instantCommandMode()) return "instant";
-  if (query().trimStart().startsWith("/")) return "command";
+  const raw = query();
+  if (isInstantPrefix(raw, instantCommandPrefix())) return "instant";
+  if (raw.trimStart().startsWith("/")) return "command";
   return "plain";
 });
 
@@ -81,8 +87,8 @@ const shouldShowResults = createMemo(() => {
     case "folder":
       return true;
     case "results":
-      // instant は生シグナル直読（interpKind 経由だと query 依存を持ち込み plain 打鍵で再計算する）
-      return instantCommandMode() || !indexing();
+      // interpKind 経由でも plain 打鍵では値不変ゆえ非伝播（プリミティブメモの値ゲート伝播）
+      return interpKind() === "instant" || !indexing();
     default:
       return assertNever(vk);
   }
@@ -266,14 +272,13 @@ createRoot(() => {
       // インスタントコマンドモード判定（スラッシュコマンドより先に評価）
       // trimStart() を使用: trailing whitespace はクエリの一部として保持する
       const trimmedStart = q.trimStart();
-      if (prefix && trimmedStart.startsWith(prefix)) {
+      if (isInstantPrefix(q, prefix)) {
         cancelDebounce();
         const input = trimmedStart.slice(prefix.length);
         // スペースがあればコマンド名部分のみでフィルタ（SPEC §18.5: スペースでマッチング確定）
         const spaceIdx = input.indexOf(" ");
         const filterName = spaceIdx >= 0 ? input.slice(0, spaceIdx) : input;
         trace("search:query_effect:instant_command", { prefix, input, filterName });
-        setInstantCommandMode(true);
         // IPC 応答前の Enter/クリックで古いコマンドを誤起動しないよう、先にクリアする
         instantCommandItems = [];
         // 高速タイピング時の不要な IPC を削減するため 30ms デバウンス
@@ -305,13 +310,14 @@ createRoot(() => {
         return;
       }
 
-      // プレフィックスなし → インスタントコマンドモードを解除
-      if (instantCommandMode()) {
+      // プレフィックスなし → instant モードの保留 IPC / stale 候補を掃除する。
+      // interpKind は query から純粋導出されるため「モード解除」自体は状態更新不要。
+      // 掃除すべき資源（pending timer / stale items）が現存するときだけ実行する（無ければ no-op）。
+      if (instantCmdDebounceTimer !== undefined || instantCommandItems.length > 0) {
         if (instantCmdDebounceTimer !== undefined) {
           clearTimeout(instantCmdDebounceTimer);
           instantCmdDebounceTimer = undefined;
         }
-        setInstantCommandMode(false);
         instantCommandItems = [];
       }
 
@@ -656,12 +662,11 @@ async function executeInstantCommandSelected(): Promise<boolean> {
       return false;
     }
 
-    // 成功時: モードを完全にクリアする
+    // 成功時: モードを完全にクリアする（query="" で interpKind は plain へ純粋導出）
     if (instantCmdDebounceTimer !== undefined) {
       clearTimeout(instantCmdDebounceTimer);
       instantCmdDebounceTimer = undefined;
     }
-    setInstantCommandMode(false);
     instantCommandItems = [];
     suppressNextQueryEffectRefresh = true;
     setQuery("");
@@ -741,7 +746,6 @@ function resetForShow() {
     clearTimeout(instantCmdDebounceTimer);
     instantCmdDebounceTimer = undefined;
   }
-  setInstantCommandMode(false);
   instantCommandItems = [];
   if (query() !== "") {
     suppressNextQueryEffectRefresh = true;
@@ -822,7 +826,6 @@ export {
   exitToolSelection,
   getSearchGeneration,
   noResults,
-  instantCommandMode,
   setInstantCommandPrefix,
 };
 

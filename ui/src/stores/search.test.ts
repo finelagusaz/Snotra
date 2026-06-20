@@ -55,7 +55,6 @@ import {
   setHotkeyFailureNotice,
   indexing,
   initIndexingState,
-  instantCommandMode,
   setInstantCommandPrefix,
 } from "../stores/search";
 import { setToolSelectionState } from "../stores/tool-selection";
@@ -507,16 +506,16 @@ describe("initIndexingState", () => {
   });
 });
 
-// ── instantCommandMode ────────────────────────────────────────────────────────
+// ── instant モード（interpKind 純粋導出） ──────────────────────────────────────
 
-describe("instantCommandMode", () => {
+describe("instant モード", () => {
   it("@prefix でインスタントコマンドモードに入る", async () => {
     vi.mocked(api.getInstantCommands).mockResolvedValue([CMD_GOOGLE, CMD_CLIP]);
 
     setQuery("@goo");
     await vi.runAllTimersAsync();
 
-    expect(instantCommandMode()).toBe(true);
+    expect(interpKind()).toBe("instant");
     expect(results()).toHaveLength(2);
     expect(results()[0].name).toBe("google");
   });
@@ -535,21 +534,21 @@ describe("instantCommandMode", () => {
     vi.mocked(api.getInstantCommands).mockResolvedValue([CMD_GOOGLE]);
     setQuery("@goo");
     await vi.runAllTimersAsync();
-    expect(instantCommandMode()).toBe(true);
+    expect(interpKind()).toBe("instant");
 
     setQuery("goo");
     await vi.runAllTimersAsync();
-    expect(instantCommandMode()).toBe(false);
+    expect(interpKind()).toBe("plain");
   });
 
   it("resetForShow でモード解除", async () => {
     vi.mocked(api.getInstantCommands).mockResolvedValue([CMD_GOOGLE]);
     setQuery("@goo");
     await vi.runAllTimersAsync();
-    expect(instantCommandMode()).toBe(true);
+    expect(interpKind()).toBe("instant");
 
     resetForShow();
-    expect(instantCommandMode()).toBe(false);
+    expect(interpKind()).toBe("plain");
   });
 });
 
@@ -560,7 +559,7 @@ describe("executeInstantCommandSelected", () => {
     vi.mocked(api.getInstantCommands).mockResolvedValue([CMD_GOOGLE, CMD_CLIP]);
     setQuery("@google SolidJS");
     await vi.runAllTimersAsync();
-    // instantCommandMode = true, results に 2 件入っている状態
+    // instant モード（interpKind = "instant"）, results に 2 件入っている状態
   });
 
   it("成功: クエリクリア + モード解除", async () => {
@@ -574,7 +573,7 @@ describe("executeInstantCommandSelected", () => {
 
     expect(ok).toBe(true);
     expect(api.executeInstantCommand).toHaveBeenCalledWith("google", "SolidJS");
-    expect(instantCommandMode()).toBe(false);
+    expect(interpKind()).toBe("plain");
     expect(query()).toBe("");
   });
 
@@ -590,7 +589,7 @@ describe("executeInstantCommandSelected", () => {
     const ok = await activateSelected();
 
     expect(ok).toBe(false);
-    expect(instantCommandMode()).toBe(true);
+    expect(interpKind()).toBe("instant");
     expect(results()).toEqual(resultsBefore);
     expect(selected()).toBe(selectedBefore);
   });
@@ -616,7 +615,7 @@ describe("refreshResults ガード — インスタントコマンドモード",
     vi.mocked(api.getInstantCommands).mockResolvedValue([CMD_GOOGLE]);
     setQuery("@goo");
     await vi.runAllTimersAsync();
-    expect(instantCommandMode()).toBe(true);
+    expect(interpKind()).toBe("instant");
     vi.mocked(api.search).mockClear();
 
     await refreshResults();
@@ -661,7 +660,7 @@ describe("shouldShowResults", () => {
     expect(shouldShowResults()).toBe(false);
   });
 
-  it("結果あり + indexing=true + instantCommandMode → true", async () => {
+  it("結果あり + indexing=true + instant → true", async () => {
     let setIndexingTrue: (() => void) | undefined;
     vi.mocked(tauriEvent.listen).mockImplementation(
       async (eventName: string, callback: (...args: unknown[]) => void) => {
@@ -677,7 +676,7 @@ describe("shouldShowResults", () => {
     await vi.runAllTimersAsync();
 
     expect(indexing()).toBe(true);
-    expect(instantCommandMode()).toBe(true);
+    expect(interpKind()).toBe("instant");
     expect(results().length).toBeGreaterThan(0);
     expect(shouldShowResults()).toBe(true);
   });
@@ -785,13 +784,26 @@ describe("interpKind", () => {
     setQuery("@goo");
     await vi.runAllTimersAsync();
 
-    expect(instantCommandMode()).toBe(true);
     expect(interpKind()).toBe("instant");
   });
 
   it("viewKind が results 以外なら常に 'plain'（folder 中の '/' でも plain）", () => {
     setFolderState(FOLDER_FRAME);
     setQuery("/xyz");
+    expect(interpKind()).toBe("plain");
+  });
+
+  it("純粋導出: latch を介さず query から同期的に 'instant' を導出する", () => {
+    // runAllTimersAsync 不要 — interpKind は query+prefix の純粋関数（持続シグナル非依存）。
+    setQuery("@goo");
+    expect(interpKind()).toBe("instant");
+    setQuery("goo");
+    expect(interpKind()).toBe("plain");
+  });
+
+  it("空 prefix では instant 化しない（prefix && ガード）", () => {
+    setInstantCommandPrefix("");
+    setQuery("@goo");
     expect(interpKind()).toBe("plain");
   });
 });

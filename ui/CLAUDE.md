@@ -42,7 +42,7 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 
 ## インスタントコマンドモード
 
-プレフィックス（デフォルト `@`）で始まる入力はインスタントコマンドモードに入る。`instantCommandMode` シグナルで状態管理。
+プレフィックス（デフォルト `@`）で始まる入力はインスタントコマンドモードに入る。`interpKind() === "instant"`（query + prefix からの純粋導出）で判定する。
 
 - **検出**: `query` effect 内でスラッシュコマンド判定より先に `startsWith(prefix)` を評価
 - **結果表示**: `getInstantCommands()` IPC で前方一致フィルタ済みコマンドを取得し `SearchResult[]` に変換
@@ -100,7 +100,7 @@ vi.mock("../stores/search", () => ({ fn1: mockFn1, fn2: mockFn2 }));
 
 検索バーと検索結果は1つの Tauri ウィンドウ内に共存する。結果の表示/非表示はシグナルで管理し、ウィンドウ高さは動的に変更する。
 
-- `shouldShowResults` メモシグナル: `results().length > 0` かつ `switch(viewKind())`（tool/folder は常に表示、results は `instantCommandMode() || !indexing()`）— 結果を表示すべきかの判定（ツール選択中・フォルダモード中・インスタントコマンドモード中はインデックス構築中でも結果を表示）。詳細は「状態モデル（2 軸）」を参照
+- `shouldShowResults` メモシグナル: `results().length > 0` かつ `switch(viewKind())`（tool/folder は常に表示、results は `interpKind() === "instant" || !indexing()`）— 結果を表示すべきかの判定（ツール選択中・フォルダモード中・インスタントコマンドモード中はインデックス構築中でも結果を表示）。詳細は「状態モデル（2 軸）」を参照
 - `mainVisible` ローカルシグナル: `window-shown` / `window-hidden` イベントで同期される — ウィンドウが可視かの判定
 - `ResultsSection` の `visible` prop: `shouldShowResults() && mainVisible()` — 実際の描画と Blob URL ライフサイクルを制御
 - `createEffect` でウィンドウ高さを計算: `shouldShowResults()` が true なら `SEARCH_BAR_HEIGHT + maxResults * RESULT_ROW_HEIGHT + RESULTS_PADDING`、false なら `SEARCH_BAR_HEIGHT`
@@ -119,12 +119,12 @@ vi.mock("../stores/search", () => ({ fn1: mockFn1, fn2: mockFn2 }));
 検索ウィンドウの「モード」は単一の型ではなく、`search.ts` の 2 つの**プリミティブ判別子メモ**で導出する。散在ガードの優先度を一箇所に集約し、生シグナルの直接 if を避ける（SPEC §8.6 状態図 / §18.5 優先度と一対一対応）。
 
 - **軸1 `viewKind()`**（`"results" | "folder" | "tool"`）: 結果リストを占める先頭ビュー。`toolSelectionState() ? "tool" : folderState() ? "folder" : "results"`（tool > folder > results）。tool は folder の上に積まれうる（直交）。
-- **軸2 `interpKind()`**（`"plain" | "command" | "instant"`）: 入力の意味。`viewKind()==="results"` のときだけ非 plain（folder/tool 中は plain）。`instantCommandMode()` latch の無損失な再パッケージ。
+- **軸2 `interpKind()`**（`"plain" | "command" | "instant"`）: 入力の意味。`viewKind()==="results"` のときだけ非 plain（folder/tool 中は plain）。`query` + `instantCommandPrefix` からの純粋導出（持続ラッチを廃止し、二軸とも真の派生に統一）。
 - **オーバーレイ**: `indexing()` / `launching()` は軸ではなく boolean。どのモードにも重なる。
 
 実装規約:
 
-- **モード判定は `viewKind()`/`interpKind()` 経由**。`toolSelectionState()`/`folderState()`/`instantCommandMode()` を直接 if して優先度を再導出しない（frame の値が要る箇所＝`inputValue` の `targetPath`・`placeholderText` の `currentDir` は storage を直読してよい）
+- **モード判定は `viewKind()`/`interpKind()` 経由**。`toolSelectionState()`/`folderState()` を直接 if して優先度を再導出しない（frame の値が要る箇所＝`inputValue` の `targetPath`・`placeholderText` の `currentDir` は storage を直読してよい）
 - **軸メモはプリミティブを返す**。オブジェクト union は `===` 等価で毎計算が新 identity となり、`query()` 依存の `interpKind` が plain 打鍵ごとに下流（`shouldShowResults`/`skipIcons`/アイコン effect）を再発火させる
 - **入力受理（`handleInput`）は軸1 + overlay のみに依存**。`interpKind` は読まない（インスタントコマンド中も打鍵を受理するため）
 - **網羅 switch の default は `assertNever`**（モード追加時の分岐漏れをコンパイルエラー化）。表示関数のように網羅性が degrade 許容な箇所は viewKind 経由の if でもよい

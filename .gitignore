@@ -18,6 +18,9 @@ Desktop.ini
 .claude/settings.local.json
 scripts/test-win.sh
 
+# Agent worktrees (Agent isolation: "worktree") — 変更ありの worktree は手動 cleanup
+.claude/worktrees/
+
 # Sidecar binaries (built by scripts/prepare-sidecar.ps1)
 src-tauri/binaries/
 

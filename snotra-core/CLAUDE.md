@@ -14,7 +14,12 @@
 - `binfmt.rs`: `magic + version` 付きバイナリ入出力共通処理
 - `error.rs`: `BinError`（バイナリシリアライズ/デシリアライズ失敗）と `ConfigError`（設定バリデーション失敗）の error 型定義
 - `window_data.rs`: ウィンドウ位置（`window.bin`）の保存/復元
-- `instant.rs`: インスタントコマンドの変数展開（`expand_instant_command`）と前方一致フィルタ（`filter_instant_commands`）
+- `instant.rs`: インスタントコマンドの処理。**公開関数**:
+  - `split_args(args: &str) -> Vec<String>`: シェル風クォート対応の引数分割。`"..."` で囲まれた部分はスペースを含んでも1トークンとして扱う。`launch.rs` から移設。
+  - `expand_vars(template: &str, query: &str, clipboard: &str) -> String`: `{query}` / `{clip}` プレースホルダを生のまま置換（URL エンコードなし）。
+  - `expand_exec_args(args: &str, query: &str, clipboard: &str, env_expand: fn) -> Vec<String>`: exec 種別の引数列構築。手順: split_args で分割 → 各トークンに env 展開（`%VAR%`）→ `{query}`/`{clip}` 置換。この順序により (1) 外部入力 query/clip は env 展開されない、(2) env 値の空白はトークン内に留まり引数を割らない、(3) 空白入り query は1引数を保つ。
+  - `expand_instant_command(command: &str, query: &str, clipboard: &str) -> String`: URL 形式の変数展開。`http://` / `https://` で始まる場合、変数値を URL エンコード。それ以外は生のまま展開。
+  - `filter_instant_commands(commands: &[InstantCommand], input: &str) -> Vec<&InstantCommand>`: コマンド名を前方一致（大文字小文字区別しない）で絞り込み。空 input は全件返却。
 - `ui_types.rs`: フロントエンドとの IPC 用データ型
 
 ## 開発ルール

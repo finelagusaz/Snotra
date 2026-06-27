@@ -72,6 +72,7 @@
 - `deserialize_failed → save()` パターン（デコード失敗時に空データを即時上書き保存）は HistoryStore など学習データを持つモジュールでデータ喪失を招く。フォールバック読み込みを先に試み、次回の通常 save() で新形式に昇格させること
 - **読み込み失敗は種類で扱いを分ける（`Config::load`）**: 不在（`NotFound`）= 既定値を生成・保存 / 内容破損（TOML parse 失敗・非 UTF-8 `InvalidData`）= `config.toml.bak` へ退避し既定値・**保存しない** / 一時的失敗（権限・ロック等）= 退避も上書きもせず既定値・**保存しない**。`Err(_)` 一括 first-run 扱いは一時的失敗で実データを既定値に潰す。**1分岐だけ直しても同じ `match` の兄弟分岐に同じ破壊的フォールバックが残る**ため、読み込み失敗を直すときは全分岐の保全方針を揃える（#338/#343: アドバーサリアルレビューが兄弟分岐＝read 失敗 arm の漏れと「後続 save で破損元が失われる」非対称を検出した）
 - **TOML フィールドを別の struct に移動するとき**: 旧フィールドを削除するのではなく `#[serde(default, skip_serializing)] pub field: Option<T>` として残し、`apply_migrations()` で `self.old.field.take()` → 新フィールドへ代入する。`Config::default()` の明示的 struct 初期化に `field: None` を追加するのを忘れない。また、`apply_migrations()` には複数のマイグレーションが存在するため、一部だけをテストする場合でも他の副作用（`additional → scan` 移行等）を踏まえたアサーション順序・内容を設計する
+- **serde 表現（enum variant・`#[serde(untagged/flatten/tag)]`）を変更するときは、旧オンディスク形式が deserialize できるテストを「新形式の往復」とは別に必ず追加する**: 旧形式が新構造体に deserialize 失敗すると `toml::from_str::<Config>` が失敗 → `config.toml.bak` 退避 → **全設定リセット**（`apply_migrations()` は deserialize の後に走るため移行では救えない）＝データ損失。旧形式は untagged の `Legacy { .. }` variant 等で必ず受理し、移行を `apply_migrations()` で行う。新形式の往復テストだけでは parse 失敗を検出できず false-green になる（#394: 多観点レビューが `toml` で実証）
 
 ## history.rs のキー正規化に関するチェックリスト
 

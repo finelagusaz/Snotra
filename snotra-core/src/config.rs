@@ -48,9 +48,22 @@ fn default_language() -> Language {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstantCommand {
     pub name: String,
-    pub command: String,
     #[serde(default)]
     pub description: String,
+    #[serde(flatten)]
+    pub action: InstantAction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum InstantAction {
+    Url { url: String },
+    Exec {
+        exe: String,
+        #[serde(default)]
+        args: String,
+    },
+    Legacy { command: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -758,13 +771,17 @@ impl Default for Config {
             instant_commands: vec![
                 InstantCommand {
                     name: "g".to_string(),
-                    command: "https://www.google.com/search?q={query}".to_string(),
                     description: "Google 検索".to_string(),
+                    action: InstantAction::Url {
+                        url: "https://www.google.com/search?q={query}".to_string(),
+                    },
                 },
                 InstantCommand {
                     name: "gh".to_string(),
-                    command: "https://github.com/search?q={query}".to_string(),
                     description: "GitHub 検索".to_string(),
+                    action: InstantAction::Url {
+                        url: "https://github.com/search?q={query}".to_string(),
+                    },
                 },
             ],
         }
@@ -936,6 +953,14 @@ impl Config {
         }
         if self.normalize_openers() {
             changed = true;
+        }
+        // 旧 `command` 単一文字列 → `Url` へ無改変移行（自動分割しない＝ゼロ回帰）
+        for cmd in &mut self.instant_commands {
+            if let InstantAction::Legacy { command } = &mut cmd.action {
+                let url = std::mem::take(command);
+                cmd.action = InstantAction::Url { url };
+                changed = true;
+            }
         }
         if is_system_shortcut(&self.hotkey.modifier, &self.hotkey.key) {
             let default_hotkey = HotkeyConfig {
@@ -1700,13 +1725,13 @@ mod tests {
         assert_eq!(config.instant_commands.len(), 2);
         assert_eq!(config.instant_commands[0].name, "g");
         assert_eq!(
-            config.instant_commands[0].command,
-            "https://www.google.com/search?q={query}"
+            config.instant_commands[0].action,
+            InstantAction::Url { url: "https://www.google.com/search?q={query}".to_string() }
         );
         assert_eq!(config.instant_commands[1].name, "gh");
         assert_eq!(
-            config.instant_commands[1].command,
-            "https://github.com/search?q={query}"
+            config.instant_commands[1].action,
+            InstantAction::Url { url: "https://github.com/search?q={query}".to_string() }
         );
     }
 
@@ -2790,13 +2815,13 @@ mod tests {
             instant_commands: vec![
                 InstantCommand {
                     name: "google".to_string(),
-                    command: "https://google.com".to_string(),
                     description: String::new(),
+                    action: InstantAction::Url { url: "https://google.com".into() },
                 },
                 InstantCommand {
                     name: "google".to_string(),
-                    command: "https://google.co.jp".to_string(),
                     description: String::new(),
+                    action: InstantAction::Url { url: "https://google.co.jp".into() },
                 },
             ],
             ..Default::default()
@@ -2813,13 +2838,13 @@ mod tests {
             instant_commands: vec![
                 InstantCommand {
                     name: "google".to_string(),
-                    command: "https://google.com".to_string(),
                     description: String::new(),
+                    action: InstantAction::Url { url: "https://google.com".into() },
                 },
                 InstantCommand {
                     name: "bing".to_string(),
-                    command: "https://bing.com".to_string(),
                     description: String::new(),
+                    action: InstantAction::Url { url: "https://bing.com".into() },
                 },
             ],
             ..Default::default()
@@ -2838,26 +2863,23 @@ mod tests {
             [hotkey]
             modifier = "Alt"
             key = "Q"
-
             [appearance]
-            max_results = 8
             window_width = 600
-
             [paths]
             additional = []
-
             [[instant_commands]]
             name = "g"
             command = "https://google.com/search?q={query}"
-
             [[instant_commands]]
             name = "memo"
             command = "C:\\tools\\editor.exe"
         "#;
-        let config: Config = toml::from_str(toml_str).expect("parse");
+        let mut config: Config = toml::from_str(toml_str).expect("parse");
+        config.apply_migrations();
         assert_eq!(config.instant_commands.len(), 2);
         assert_eq!(config.instant_commands[0].name, "g");
-        assert_eq!(config.instant_commands[1].name, "memo");
+        assert!(matches!(config.instant_commands[0].action, InstantAction::Url { .. }));
+        assert!(matches!(config.instant_commands[1].action, InstantAction::Url { .. }));
     }
 
     #[test]
@@ -3594,5 +3616,88 @@ foo = 42
         assert!(config.apply_migrations());
         assert!(config.paths.additional.is_empty());
         assert!(!config.paths.scan.is_empty());
+    }
+
+    // ---- InstantAction serde gate (release gate: 失敗は全設定リセットを意味する) ----
+    fn cfg_with_instant(cmds: Vec<InstantCommand>) -> Config {
+        Config { instant_commands: cmds, ..Default::default() }
+    }
+
+    #[test] // T2: legacy 行が deserialize できる（最重要・データ損失検出器）
+    fn instant_legacy_command_deserializes() {
+        let legacy = cfg_with_instant(vec![InstantCommand {
+            name: "g".into(), description: String::new(),
+            action: InstantAction::Legacy { command: "https://x/?q={query}".into() },
+        }]);
+        let s = toml::to_string(&legacy).expect("serialize legacy");
+        // Legacy は `command = "..."` 形（=旧オンディスク形式）で出力される
+        assert!(s.contains("command ="));
+        let parsed: Config = toml::from_str(&s).expect("legacy deserialize must succeed");
+        assert!(matches!(parsed.instant_commands[0].action, InstantAction::Legacy { .. }));
+    }
+
+    #[test] // T15 + T17: legacy → Url 移行（自動分割しない）・冪等
+    fn instant_legacy_migrates_to_url_idempotently() {
+        let mut cfg = cfg_with_instant(vec![InstantCommand {
+            name: "ev".into(), description: String::new(),
+            action: InstantAction::Legacy { command: "C:\\tools\\editor.exe".into() },
+        }]);
+        assert!(cfg.apply_migrations());
+        assert_eq!(cfg.instant_commands[0].action,
+            InstantAction::Url { url: "C:\\tools\\editor.exe".into() }); // Exec にしない
+        // 冪等: 2回目は Legacy が残っていないので action は Url のまま
+        cfg.apply_migrations();
+        assert_eq!(cfg.instant_commands[0].action,
+            InstantAction::Url { url: "C:\\tools\\editor.exe".into() });
+    }
+
+    #[test] // T1: Config 全体の serialize 往復で変種が保たれる
+    fn instant_exec_roundtrip_preserves_variant() {
+        let cfg = cfg_with_instant(vec![InstantCommand {
+            name: "ev".into(), description: "Everything".into(),
+            action: InstantAction::Exec { exe: "everything.exe".into(), args: "-s {query}".into() },
+        }]);
+        let s = toml::to_string_pretty(&cfg).expect("serialize");
+        let parsed: Config = toml::from_str(&s).expect("deserialize");
+        assert_eq!(parsed.instant_commands[0].action,
+            InstantAction::Exec { exe: "everything.exe".into(), args: "-s {query}".into() });
+    }
+
+    #[test] // T3: url と exe を両方書いた行は Url 先勝ち（untagged 宣言順）
+    fn instant_both_url_and_exe_prefers_url() {
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+            [appearance]
+            window_width = 600
+            [paths]
+            additional = []
+            [[instant_commands]]
+            name = "x"
+            url = "https://x"
+            exe = "y.exe"
+        "#;
+        let cfg: Config = toml::from_str(toml_str).expect("parse");
+        assert!(matches!(cfg.instant_commands[0].action, InstantAction::Url { .. }));
+    }
+
+    #[test] // T4: Exec で args 省略 → 空文字
+    fn instant_exec_args_defaults_empty() {
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+            [appearance]
+            window_width = 600
+            [paths]
+            additional = []
+            [[instant_commands]]
+            name = "n"
+            exe = "notepad.exe"
+        "#;
+        let cfg: Config = toml::from_str(toml_str).expect("parse");
+        assert_eq!(cfg.instant_commands[0].action,
+            InstantAction::Exec { exe: "notepad.exe".into(), args: String::new() });
     }
 }

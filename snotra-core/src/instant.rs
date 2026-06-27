@@ -84,6 +84,7 @@ pub fn filter_instant_commands<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::InstantAction;
 
     // ---- expand_instant_command tests ----
 
@@ -169,9 +170,9 @@ mod tests {
 
     fn sample_commands() -> Vec<InstantCommand> {
         vec![
-            InstantCommand { name: "g".to_string(), command: "https://google.com?q={query}".to_string(), description: String::new() },
-            InstantCommand { name: "gm".to_string(), command: "https://mail.google.com".to_string(), description: String::new() },
-            InstantCommand { name: "n".to_string(), command: "notepad.exe".to_string(), description: String::new() },
+            InstantCommand { name: "g".to_string(), description: String::new(), action: InstantAction::Url { url: "https://google.com?q={query}".into() } },
+            InstantCommand { name: "gm".to_string(), description: String::new(), action: InstantAction::Url { url: "https://mail.google.com".into() } },
+            InstantCommand { name: "n".to_string(), description: String::new(), action: InstantAction::Url { url: "notepad.exe".into() } },
         ]
     }
 
@@ -209,7 +210,7 @@ mod tests {
     #[test]
     fn filter_case_insensitive() {
         let cmds = vec![
-            InstantCommand { name: "Google".to_string(), command: "https://google.com".to_string(), description: String::new() },
+            InstantCommand { name: "Google".to_string(), description: String::new(), action: InstantAction::Url { url: "https://google.com".into() } },
         ];
         let result = filter_instant_commands(&cmds, "google");
         assert_eq!(result.len(), 1);

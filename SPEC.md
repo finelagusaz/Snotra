@@ -876,7 +876,7 @@ URL 種別:
 - `url`: URL テンプレート（例: `https://www.google.com/search?q={query}`）
 
 exec 種別:
-- `exe`: プログラムパス（例: `C:\Windows\notepad.exe`）。手入力の単一行テキストフィールド。`.exe` 等の実行ファイルパスを直接入力する（ヒント: `hint_instant_program` 相当のヒントテキストを表示）
+- `exe`: プログラムパス（例: `C:\Windows\notepad.exe`）。テキスト入力欄に加えファイルブラウズダイアログ（参照ボタン）を併設。既定フィルタは実行ファイル（`.exe`）だが、ドロップダウンで全ファイルも選択可能（`.com`・拡張子なし・`cmd.exe` 等の正規ユースケースを塞がない）。手入力では任意のパスを直接入力できる（ヒント: `hint_instant_program` 相当のヒントテキストを表示）
 - `args`: コマンドライン引数（任意）（例: `-s {query}`）
 
 **共通フィールド**:

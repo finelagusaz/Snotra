@@ -71,6 +71,38 @@
 - hex 入力幅 `desired_width(80.0)`（visual）。
 - swatch `SWATCH_SIZE=16.0`（visual、定数化済み）。
 
+## タイポグラフィ（Windows デザインガイドライン照合）
+
+出典: Microsoft Learn「Typography in Windows」（Fluent / WinUI タイプランプ、最終更新 2026-06-25）。
+
+**Windows 11 タイプランプ（effective px, size/line-height, weight）:**
+- Caption: Regular **12** / 16
+- Body: Regular **14** / 20
+- Body Strong: Semibold 14 / 20
+- Body Large: Regular **18** / 24
+- Subtitle: Semibold 20 / 28
+- Title: Semibold 28 / 36
+
+**ガイドラインの要点:**
+- 既定フォント = Segoe UI Variable（日本語は **Yu Gothic UI**: Light/Semilight/Regular/Semibold/Bold）。
+- **最小値: 14px Semibold / 12px Regular** — これ未満は一部言語で判読不能。
+- 強調は **Bold ではなく Semibold**。センテンスケース・左揃え既定。
+
+**現状（egui 既定）との照合:**
+| 役割 | 現状 egui 既定 | Fluent 基準 | 判定 |
+|---|---|---|---|
+| 見出し `ui.heading()` | 18.0 Regular | Body Large 18 | △ サイズ圏内・ウェイト Regular（本来 Semibold） |
+| 本文 `ui.label()` / Button | **12.5** Regular | Body **14** | ✗ 14px 最小を下回る |
+| 副文 `.small()` | **9.0** Regular | Caption **12** | ✗ 12px 最小を大きく下回る |
+
+→ **結論**: タブ間バラつき以前に、本文 12.5px・副文 9px が Windows の判読最小サイズを割り込んでいる。`font.rs` は family fallback のみ設定し TextStyle サイズは egui 既定に委ねている（= ピクセル指定の不統一ではなく「既定が小さすぎる」）。
+
+**採用方針（ユーザー合意）:**
+- **見出し 18（Body Large）/ 本文 14（Body）/ 副文 12（Caption）** に揃える。本文 14・副文 12 は最小値順守で確定。
+- **ウェイトは今回サイズのみ**（見出し Semibold は別 FontFamily 登録が要るため scope 外・follow-up 候補）。`font.rs` は不変。
+- 実装レバー: `ctx` にカスタム TextStyle ランプを一度登録すれば全テキストに波及する。`style.rs::apply_type_ramp(ctx)` を `run()` で `configure_fonts` + `apply_win11_theme` と並べて呼ぶ。既存の `.small()`・`ui.heading()`・既定ラベルが新サイズを自動継承する（色 SSOT 化と同じ構図でタイポグラフィも SSOT 化）。
+- **副作用（レイアウト影響）**: 本文 12.5→14 で行が高くなる。`ROW_HEIGHT`（現 `interact_size.y=24`）を 28 へ引き上げ、ウィンドウ既定/最小（760×560 / 520×360）の収まりを目視再確認する（AGENTS.md「UI 変更はレイアウト崩れの観点で検証」）。`add_sized([_, interact_size.y])` の DragValue も自動で追従する。
+
 ## 技術的制約
 
 - **egui 即時モード**: ヘルパーは `&mut egui::Ui` を取り副作用で描画する関数として設計する（戻り値が要る場合は `Response`/ジェネリック `R` を返す）。

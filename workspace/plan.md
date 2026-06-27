@@ -2,11 +2,12 @@
 
 ## ゴールと受け入れ条件
 
-1. `snotra-settings/src/style.rs` を新設し、デザイントークン（spacing / 色 / 幅 / 行高）と共有ヘルパーを集約する。
-2. 全7タブ + `app.rs` を `style` 経由に書き換え、直書きの色リテラル・余白・ScrollArea ボイラープレートを排除する。
-3. 逸脱を解消する: backup の説明文を `.small()` 化、backup のセクション間 separator を撤去、instant のリスト行を index/opener に揃える。
-4. `snotra-settings/SETTINGS-DESIGN.md` を作成し、トークン・タイポグラフィ・レイアウト規約・パーツ選択指針を as-built で記述する。
-5. `cargo build -p snotra-settings` と clippy がグリーン。ビルドして 7タブを目視し、レイアウト崩れ（overflow/clipping）が無い。
+1. `snotra-settings/src/style.rs` を新設し、デザイントークン（spacing / 色 / 幅 / 行高 / フォントサイズ）と共有ヘルパーを集約する。
+2. **タイポグラフィを Windows 11 Fluent タイプランプに合わせる**: `style::apply_type_ramp(ctx)` でカスタム TextStyle ランプ（**見出し 18 / 本文 14 / 副文 12**）を登録し、全テキストに波及させる。現状の egui 既定（本文 12.5 / 副文 9）は Windows の判読最小（14px Regular / 12px Regular）を割り込むため是正。ウェイトは今回サイズのみ（Semibold は scope 外）。
+3. 全7タブ + `app.rs` を `style` 経由に書き換え、直書きの色リテラル・余白・ScrollArea ボイラープレートを排除する。
+4. 逸脱を解消する: backup の説明文を `.small()` 化、backup のセクション間 separator を撤去、instant のリスト行を index/opener に揃える。
+5. `snotra-settings/SETTINGS-DESIGN.md` を作成し、トークン・タイポグラフィ（Fluent 照合の出典付き）・レイアウト規約・パーツ選択指針を as-built で記述する。
+6. `cargo build -p snotra-settings` と clippy がグリーン。ビルドして 7タブを目視し、レイアウト崩れ（overflow/clipping）が無い。**フォント拡大に伴う行高・ウィンドウ収まりも目視確認**。
 
 **受け入れ条件（テスト可能な形）**:
 - `grep -rn "Color32::from_rgb" snotra-settings/src/tabs/` が **0 件**（削除/エラー/成功/警告の意味色は全て `style::STATUS_*` トークンへ）。`app.rs` 内の色も `style::` 参照のみ。
@@ -15,14 +16,20 @@
 - `grep -rn "\.small()" snotra-settings/src/tabs/backup.rs` で説明文が Small になっている。
 - 全タブのセクション間余白が `style::section_gap`（12.0）に統一されている。
 - 空状態ラベル（「該当なし」: index/opener/instant）が secondary 色（`style::hint`）に統一されている。
+- `run()` が `style::apply_type_ramp(ctx)` を呼び、TextStyle が **Heading=18 / Body=14 / Button=14 / Small=12** に登録されている（Monospace は egui 既定維持）。本文・副文が Windows 判読最小（14 / 12）以上。
 
 ## style.rs の API 設計（as-built の対象）
 
 ### トークン（`pub const`）
 
 ```
+// タイポグラフィ（Fluent タイプランプ epx。apply_type_ramp で TextStyle に登録）
+FONT_HEADING: f32 = 18.0        // Body Large（セクション見出し・モーダル題）
+FONT_BODY: f32 = 14.0           // Body（ラベル・値・項目主行・Button）
+FONT_CAPTION: f32 = 12.0        // Caption（ヒント・メタ・説明文 = .small()）
+
 // 縦リズム（spacing scale）
-ROW_HEIGHT: f32 = 24.0          // interact_size.y
+ROW_HEIGHT: f32 = 28.0          // interact_size.y（本文 14 化に伴い 24→28。目視で微調整）
 SPACE_HEADING: f32 = 4.0        // 見出し→最初のウィジェット
 SPACE_HINT: f32 = 4.0           // ウィジェット→ヒント等の小間隔
 SPACE_GROUP: f32 = 8.0          // モーダル内フィールド群 / 説明文→リスト
@@ -48,6 +55,12 @@ BANNER_CAUTION_FG: (140,90,0)
 ### ヘルパー（`pub fn`）
 
 ```
+apply_type_ramp(ctx: &egui::Context)
+    // ctx.style_mut().text_styles を in-place 更新（Monospace は温存）:
+    //   Heading=FONT_HEADING(18), Body=FONT_BODY(14), Button=FONT_BODY(14), Small=FONT_CAPTION(12)
+    // run() で configure_fonts(ctx) → apply_win11_theme(ctx) → apply_type_ramp(ctx) の順に呼ぶ。
+    // 既存の .small()/ui.heading()/既定ラベルが新サイズを自動継承（タイポグラフィの SSOT）。
+
 tab_scroll_area<R>(ui, add_contents: impl FnOnce(&mut Ui)->R) -> R
     // 標準 ScrollArea(drag:false, auto_shrink false) + interact_size.y = ROW_HEIGHT を1箇所に集約
 
@@ -101,6 +114,7 @@ modal_buttons(ui, tr: &Tr) -> ModalButtons  // { cancel: bool, save: bool }
 - `apply_win11_theme` 内の色参照を `style::ACCENT` 等に置換。`WIDGET_ACTIVE_BG` を新トークンで参照。
 - read-failed バナーの色を `style::BANNER_CAUTION_BG / BANNER_CAUTION_FG` に置換。
 - `pub const TEXT_SECONDARY` を app.rs から削除（style.rs が SSOT）。**全参照（search/index/opener/instant/backup の `crate::app::TEXT_SECONDARY`）は Phase 3 で `style::TEXT_SECONDARY` か `style::hint` へ移す**。
+- **`run()` のセットアップに `style::apply_type_ramp(&cc.egui_ctx)` を追加**（`configure_fonts` → `apply_win11_theme` の後）。この時点で全テキストが 18/14/12 になる → ビルドして**フォント拡大後のレイアウト**（行高・コントロール整列・ウィンドウ収まり）を目視し、必要なら `ROW_HEIGHT` を微調整。
 - **mid-verify**: `cargo build -p snotra-settings` → `crate::app::TEXT_SECONDARY` 参照箇所が compile-fail で列挙される（改名検出器）。Phase 3 で解消。
 
 ### Phase 3: 各タブを style:: へ移行
@@ -124,7 +138,11 @@ modal_buttons(ui, tr: &Tr) -> ModalButtons  // { cancel: bool, save: bool }
 ### Phase 4: SETTINGS-DESIGN.md 作成
 `snotra-settings/SETTINGS-DESIGN.md` を作成。内容（as-built）:
 - **デザイン言語**: Windows 11 Settings インスパイア（app.rs の既存方針を明文化）。
-- **タイポグラフィスケール**: 役割→TextStyle 対応表（見出し=Heading / ラベル・値・項目主行=Body / ヒント・メタ=Small+TEXT_SECONDARY）。ピクセル指定はしない＝egui 既定に委ねる旨。
+- **タイポグラフィスケール（Fluent 照合・出典付き）**: Windows 11 Fluent タイプランプ（Microsoft Learn「Typography in Windows」, 2026-06-25）との対応表。役割→TextStyle→px:
+  - 見出し（セクション/モーダル題）= `Heading` = **18**（Body Large）
+  - ラベル・値・項目主行・ボタン = `Body`/`Button` = **14**（Body）
+  - ヒント・メタ・説明文 = `Small`+TEXT_SECONDARY = **12**（Caption）
+  - 判読最小（14px Regular / 12px Regular）順守の根拠と、egui 既定（12.5 / 9）が小さすぎた経緯を明記。ウェイトは size のみ（Semibold は Fluent 推奨だが別 family 登録が要るため未対応＝follow-up 候補）と注記。
 - **スペーシングトークン**: ROW_HEIGHT/SPACE_* の表と用途。
 - **カラートークン**: 構造色 + セマンティック色の表（赤=削除/エラー, 緑=成功, オレンジ=警告, バナー）。
 - **レイアウト規約**: セクション=`section_heading`+内容+`section_gap`。水平 separator はモーダル境界と結果領域のみ。リスト行=`list_item`（本文左・アクション右）。2カラム設定=`settings_grid`。
@@ -141,6 +159,7 @@ modal_buttons(ui, tr: &Tr) -> ModalButtons  // { cancel: bool, save: bool }
 ## 不変条件
 
 - **色は RGB 逐語移動で見た目不変**: パレット移動で値を変えない（diff で RGB 一致を確認）。意図的変更は instant リスト行と backup 余白/separator のみ。
+- **タイポグラフィは全テキスト一律・判読最小順守**: `apply_type_ramp` は `ctx` レベルで全テキストに一律適用するため、タブ間に非対称が生じない。登録後は本文・副文が Windows 判読最小（14 / 12）以上であること（退行＝再び 12.5/9 にしない）。Monospace は egui 既定を温存（設定タブで可視利用なし）。フォント拡大はレイアウト影響を持つため `ROW_HEIGHT`・ウィンドウ収まりを目視で担保する（独立した破壊不変条件として下記チェックリスト 8 に追加）。
 - **draft/saved モデル不変**: スタイル変更は config 読み書きに触れない。`saved` 更新タイミング・保存フローは現状維持。
 - **モーダルの境界チェック不変**: `if idx < vec.len()` ガード（index/opener/instant）は `list_item`/`danger_button` 化後も保持。削除・保存ロジックは1行も変えない。
 - **PickerState の active リセット不変**: index/opener の picker ポーリング・`active=false` リセットは触れない。
@@ -153,7 +172,7 @@ modal_buttons(ui, tr: &Tr) -> ModalButtons  // { cancel: bool, save: bool }
 - snotra-settings はユニットテスト非対象（CLAUDE.md 方針）。**`cargo build -p snotra-settings` + clippy をグリーンゲート**とする。
 - backup.rs の既存ロジックテスト（`localize_toml_error_*`, `extract_backtick_*`）は**触らない**（スタイル変更はこれらの不変条件に無関係）。改名・転用でテストを壊さない。
 - **受け入れ条件の grep**（色 0 件 / ScrollArea 0 件 / backup `.small()` 付与）を検証ステップで実行。
-- **手動 smoke**: `cargo run -p snotra-settings` で 7タブ + 各モーダルを開き、レイアウト崩れ・色の退行が無いことを目視。
+- **手動 smoke**: `cargo run -p snotra-settings` で 7タブ + 各モーダルを開き、レイアウト崩れ・色の退行が無いことを目視。**フォントサイズ拡大（本文 14/副文 12/見出し 18）後の行高・整列・ウィンドウ収まり**を重点確認し、cramped なら `ROW_HEIGHT` を微調整。
 
 ## SPEC.md 更新要否
 
@@ -182,8 +201,13 @@ modal_buttons(ui, tr: &Tr) -> ModalButtons  // { cancel: bool, save: bool }
 5. **既存パターンとの整合**: egui の標準ウィジェット + 既存 painter 直描画（サイドバー/theme_card）を踏襲。新規描画パラダイムを導入しない。
 6. **YAGNI 違反**: 汎用 `numeric()`/万能リスト行は作らない（幅トークン + 薄い list_item に留める）。color_row はヘルパー化しない（egui の `&mut Color32` 永続変数制約）。モーダル保存ロジックは共通化しない（Vec ごとに異なる）。`§19.8 reorder` の SPEC 補完は scope 外に置く。
 7. **シンプル化の挑戦**: 新たな状態（AtomicBool/Mutex/子プロセス）はゼロ。`tab_scroll_area`/`list_item`/`reorder_controls`/`modal_buttons` は**戻り値で結果を返すだけの純関数的ヘルパー**で、暗黙の状態を持たない。「この操作が失敗したら」→ 描画ヘルパーは失敗経路を持たない（パニックし得る配列アクセスは呼び出し側クロージャに残す）。
-8. **破壊不変条件の明示**: 「壊れたら即アウト」は (a) 色の逐語移動で見た目が変わらないこと（検知: diff で RGB 一致 + 目視）、(b) draft/saved と保存フローが不変であること（検知: ロジック無変更 + cargo build + 目視で Save/Discard 動作）、(c) サイドバー sentinel フォーカス機構が無傷（検知: ↑↓/Tab のタブ移動を目視）。Win32 フック・ホットキー・IPC は本件で**触れない**ため wedge リスクなし。
+8. **破壊不変条件の明示**: 「壊れたら即アウト」は (a) 色の逐語移動で見た目が変わらないこと（検知: diff で RGB 一致 + 目視）、(b) draft/saved と保存フローが不変であること（検知: ロジック無変更 + cargo build + 目視で Save/Discard 動作）、(c) サイドバー sentinel フォーカス機構が無傷（検知: ↑↓/Tab のタブ移動を目視）、(d) フォント拡大で行・コントロール・ウィンドウが破綻しないこと（検知: Phase 2 末＋smoke で目視、cramped なら `ROW_HEIGHT` 調整）。Win32 フック・ホットキー・IPC は本件で**触れない**ため wedge リスクなし。
+
+### 追補 — タイポグラフィ追加（plan-review 後のユーザー要求）
+- ユーザー要求で「フォントサイズも Windows ガイドラインに合わせる」を追加。Microsoft Learn の Fluent タイプランプを照合し、現状 egui 既定（本文 12.5/副文 9）が判読最小（14/12）を割り込むことを確認 → **見出し 18/本文 14/副文 12** を `apply_type_ramp(ctx)` で登録。ウェイトはサイズのみ（Semibold は scope 外）。
+- この差分は plan-review（4エージェント）を再走させていない。理由: **`ctx` 一括の大域変更でタブ間非対称が生じず、影響は「全テキストが一律に大きくなる」=レイアウト崩れに収斂**するため、新たな並列監査より Phase 2 末＋smoke の**目視検証**が適切な検出器。`ROW_HEIGHT` 24→28 とウィンドウ収まりを目視ゲートに据えた。
+- リスク評価: 挙動・ロジック・config・IPC・状態遷移は不変（描画サイズのみ）。退行不変条件は「再び 12.5/9 にしない」「行が cramped にならない」。
 
 ### 結論
-- 計画の completeness: **高**（独立導出と主要判断が再一致、漏れ4点を反映済み）。
-- 実装着手可否: **可**。Phase 1→5 を順に、各 Phase 末に `cargo build -p snotra-settings` を改名/消費漏れ検出器として回す。
+- 計画の completeness: **高**（独立導出と主要判断が再一致、漏れ4点を反映済み。タイポグラフィは Fluent 照合で裏取り）。
+- 実装着手可否: **可**。Phase 1→5 を順に、各 Phase 末に `cargo build -p snotra-settings` を改名/消費漏れ検出器として回す。Phase 2 末でフォント拡大のレイアウトを目視ゲート。

@@ -831,7 +831,7 @@ query = "%SYSTEMROOT%"
    - 外部入力（query / clip）は env 展開されない
 2. `Command::new(exe).args(args_vec)` で生成
 3. `spawn_blocking` でスレッドプール上で起動
-4. タイムアウト（デフォルト 5 秒）で待機；超過時は強制終了
+4. `spawn_blocking` の join に 4 秒のタイムアウトを設定。`Command::spawn()` は即時復帰（fire-and-forget）であり、タイムアウトは spawn 呼び出し自体の保護。起動済みプログラムの寿命は制御しない
 5. 起動失敗（exe 不在、パーミッション等）は `LaunchResult::failed` として記録
 
 #### 起動結果
@@ -876,8 +876,7 @@ URL 種別:
 - `url`: URL テンプレート（例: `https://www.google.com/search?q={query}`）
 
 exec 種別:
-- `exe`: プログラムパス（例: `C:\Windows\notepad.exe`）
-  - ファイルブラウズダイアログ付き（`.exe` 自動フィルタ）
+- `exe`: プログラムパス（例: `C:\Windows\notepad.exe`）。手入力の単一行テキストフィールド。`.exe` 等の実行ファイルパスを直接入力する（ヒント: `hint_instant_program` 相当のヒントテキストを表示）
 - `args`: コマンドライン引数（任意）（例: `-s {query}`）
 
 **共通フィールド**:

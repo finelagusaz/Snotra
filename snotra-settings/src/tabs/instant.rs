@@ -181,9 +181,12 @@ pub fn ui(
                             },
                             false,
                         ),
-                        InstantAction::Legacy { command } => {
-                            (command.clone(), command.contains(' '))
-                        }
+                        InstantAction::Legacy { command } => (
+                            command.clone(),
+                            !command.starts_with("http://")
+                                && !command.starts_with("https://")
+                                && command.contains(' '),
+                        ),
                     };
                     ui.label(
                         egui::RichText::new(&display).small().color(crate::app::TEXT_SECONDARY),

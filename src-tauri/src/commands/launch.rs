@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use serde_json::json;
 use snotra_core::config::{find_matching_tools, InstantAction, InstantCommand, OpenerTool};
-use snotra_core::instant::{expand_exec_args, expand_vars, split_args};
+use snotra_core::instant::{expand_exec_args, split_args};
 use std::process::Stdio;
 use tauri::{AppHandle, Manager};
 use tokio::time::timeout;
@@ -172,7 +172,6 @@ fn build_launch_args(args: &str, path: &str) -> Vec<String> {
 
     expanded
 }
-
 
 #[tauri::command]
 pub async fn launch_item(
@@ -393,7 +392,7 @@ pub(crate) fn expand_env(input: &str) -> String {
 
 /// exec 種別の起動。COM 不要（CreateProcessW 直叩き）。コンソール窓抑止。
 pub(crate) fn launch_exec_core(exe: &str, args: &str, query: &str, clipboard: &str) -> LaunchResult {
-    let exe_expanded = expand_vars(&expand_env(exe), query, clipboard);
+    let exe_expanded = expand_env(exe);
     let arg_tokens = expand_exec_args(args, query, clipboard, expand_env);
 
     let mut cmd = std::process::Command::new(&exe_expanded);

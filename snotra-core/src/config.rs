@@ -2879,7 +2879,44 @@ mod tests {
         assert_eq!(config.instant_commands.len(), 2);
         assert_eq!(config.instant_commands[0].name, "g");
         assert!(matches!(config.instant_commands[0].action, InstantAction::Url { .. }));
+        assert_eq!(config.instant_commands[1].name, "memo");
         assert!(matches!(config.instant_commands[1].action, InstantAction::Url { .. }));
+    }
+
+    #[test]
+    fn instant_mixed_variants_roundtrip() {
+        // Url 1件 + Exec 1件（description 省略）の Vec が serialize → deserialize で両変種と name を保つ。
+        let config = Config {
+            instant_commands: vec![
+                InstantCommand {
+                    name: "g".to_string(),
+                    description: "Google".to_string(),
+                    action: InstantAction::Url {
+                        url: "https://www.google.com/search?q={query}".to_string(),
+                    },
+                },
+                InstantCommand {
+                    name: "ev".to_string(),
+                    description: String::new(),
+                    action: InstantAction::Exec {
+                        exe: "everything.exe".to_string(),
+                        args: "-s {query}".to_string(),
+                    },
+                },
+            ],
+            ..Default::default()
+        };
+        let serialized = toml::to_string_pretty(&config).expect("serialize");
+        let parsed: Config = toml::from_str(&serialized).expect("parse");
+        assert_eq!(parsed.instant_commands.len(), 2);
+        assert_eq!(parsed.instant_commands[0].name, "g");
+        assert!(
+            matches!(&parsed.instant_commands[0].action, InstantAction::Url { url } if url.contains("google"))
+        );
+        assert_eq!(parsed.instant_commands[1].name, "ev");
+        assert!(
+            matches!(&parsed.instant_commands[1].action, InstantAction::Exec { exe, .. } if exe == "everything.exe")
+        );
     }
 
     #[test]

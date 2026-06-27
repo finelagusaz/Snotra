@@ -303,9 +303,10 @@ git commit -m "feat(core): expand_vars / expand_exec_args を追加（exec 引�
         assert!(cfg.apply_migrations());
         assert_eq!(cfg.instant_commands[0].action,
             InstantAction::Url { url: "C:\\tools\\editor.exe".into() }); // Exec にしない
-        let changed_again = cfg.apply_migrations();
-        assert!(!changed_again || cfg.instant_commands[0].action
-            == InstantAction::Url { url: "C:\\tools\\editor.exe".into() }); // 冪等
+        // 冪等: 2回目は Legacy が残っていないので action は Url のまま
+        cfg.apply_migrations();
+        assert_eq!(cfg.instant_commands[0].action,
+            InstantAction::Url { url: "C:\\tools\\editor.exe".into() });
     }
 
     #[test] // T1: Config 全体の serialize 往復で変種が保たれる

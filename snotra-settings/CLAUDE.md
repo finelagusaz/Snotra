@@ -51,6 +51,11 @@ egui の `Modifiers` は `ctrl` / `alt` / `shift` / `mac_cmd` / `command` のみ
 
 egui は毎フレーム `update()` を呼ぶ（60fps）。`list_system_fonts()` のような Win32 API 呼び出しをフレームごとに実行するとパフォーマンスが劣化する。初期化時に一度だけ取得して `SettingsApp` のフィールドにキャッシュする。
 
+### フォント登録（`set_fonts`）の注意点
+
+- **複数フォントを1つの `FontFamily` に混ぜると混在テキストでベースラインがずれる**: Latin と CJK を別フォント（例 Segoe UI Semibold + Yu Gothic UI Semibold）で1ファミリに積むと、異なる vertical metrics + `FontTweak` により同一行（混在見出し「PATH 実行ファイル」等）で縦位置がずれる。混在スクリプトを描くパーツは、両スクリプトをカバーする**単一フォント**で統一する方が整列が安定する（#399。この欠陥は型チェック・clippy・ユニットテストを素通りし**視覚スモークでのみ顕在化**する）
+- **`set_fonts` は登録フォントを起動時に eager parse し、不正データで panic する**: ttc の範囲外 face index 等は `set_fonts` 内のパースで panic（release は `panic = "abort"` なので即 abort・`catch_unwind` 不可）。`std::fs::read` の成否だけでは「ファイルは在るが face が無い」を弾けないため、渡す前に検証する（`font.rs` の `face_index_valid` = ttc ヘッダの `numFonts` を確認）。外部リソースの「不在時フォールバック」は不在の種類（**ファイル不在 / 存在するが不正 / パース不能**）を分解して各検知点を用意する
+
 ## draft / saved 二重状態モデル
 
 `SettingsApp` は `draft: Config`（UI 編集中）と `saved: Config`（最後に保存した状態）の2つを保持する。

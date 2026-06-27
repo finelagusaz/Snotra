@@ -29,7 +29,10 @@ fn ensure_icon_cache_loaded_if_enabled(state: &State<AppState>, icons: &State<Ic
     // recent list は max_history_display 件のみ＝先読みなし）。検索結果1回分（≤ top_n_history、可視
     // max_results 件はその部分集合）のアイコンを取りこぼさず保持するには cap を top_n_history 以上に
     // 取る必要がある。フロントの LruIconCache も top_n_history でサイズされる（MainApp.tsx）。
-    // → 既定 cap 1000 は top_n_history 既定 200 を上回る（issue #333 の設計: validation は max_results、既定を大きく取る）。
+    // → 既定 cap 1000 は top_n_history 既定 200 を上回る。validate() は cap >= max(max_results,
+    //   top_n_history)（＝ワーキングセット全体）を要求し settings UI 保存を弾く。ここの floor は
+    //   その下位の最小保証（max_results）に留め、手編集で validate を迂回した極小 cap でも
+    //   表示中アイコンだけは守る（オフスクリーン先読みは degrade を許容＝ユーザーの cap 選択を尊重）。
     let effective_cap = configured_cap.max(max_results);
     let mut cache = icons.lock().unwrap();
     if !show_icons {

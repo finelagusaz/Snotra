@@ -509,8 +509,10 @@ fn default_icon_cache_cap() -> usize {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CacheConfig {
     /// アイコンキャッシュの最大保持件数。上限超過時は挿入順で最古のエントリから退避（FIFO）。
-    /// 表示中アイコンが evict されフォールバック絵文字に落ちないよう、`max_results` 以上であること
-    /// （`validate()` で検証。実効値は `commands::icon` 側で `max(max_results)` に floor される）。
+    /// 単一の `get_icons_batch` が自己 evict しないよう、表示ワーキングセット
+    /// `max(max_results, top_n_history)`（検索・フォルダの結果リスト最大件数＝フロント
+    /// LruIconCache サイズ）以上であること（`validate()` で検証）。実効値は `commands::icon`
+    /// 側で `max(max_results)` に floor される（手編集で validate を迂回した場合の表示中アイコン保証）。
     #[serde(default = "default_icon_cache_cap")]
     pub icon_cache_cap: usize,
 }
@@ -1074,12 +1076,19 @@ impl Config {
             errors.push(ConfigError::MigemoMinCharsZero);
         }
 
-        // Cache validation: icon cache cap must be >= max_results so that icons
-        // currently on screen are never evicted (would fall back to emoji).
-        if self.cache.icon_cache_cap < self.appearance.max_results {
+        // Cache validation: icon cache cap must cover the full prefetch working set so that
+        // no single get_icons_batch call self-evicts its own entries. 検索・フォルダの結果
+        // リストは最大 top_n_history 件で、フロントの先読みバッチ（ResultsSection）と
+        // LruIconCache も同サイズ。可視行（max_results）はその部分集合。よって必要最小は
+        // max(max_results, top_n_history)。
+        let icon_cache_min = self
+            .appearance
+            .max_results
+            .max(self.search.effective_top_n_history());
+        if self.cache.icon_cache_cap < icon_cache_min {
             errors.push(ConfigError::IconCacheCapTooSmall {
                 cap: self.cache.icon_cache_cap,
-                max_results: self.appearance.max_results,
+                min_required: icon_cache_min,
             });
         }
 
@@ -3308,35 +3317,60 @@ scan = []
     }
 
     #[test]
-    fn validate_icon_cache_cap_below_max_results() {
+    fn validate_icon_cache_cap_below_working_set() {
+        // 実ワーキングセットは max(max_results, top_n_history)。既定 top_n_history=200 が
+        // 支配的なので、cap=50 は不足し min_required=200 を報告する。
         let mut config = Config::default();
         config.appearance.max_results = 8;
-        config.cache.icon_cache_cap = 4;
+        config.search.top_n_history = None; // effective = 200
+        config.cache.icon_cache_cap = 50;
         let errors = config.validate();
         assert!(
             errors.iter().any(|e| matches!(
                 e,
                 ConfigError::IconCacheCapTooSmall {
-                    cap: 4,
-                    max_results: 8
+                    cap: 50,
+                    min_required: 200
                 }
             )),
-            "cap < max_results should report IconCacheCapTooSmall, got {errors:?}"
+            "cap < working set should report IconCacheCapTooSmall {{ min_required: 200 }}, got {errors:?}"
         );
     }
 
     #[test]
-    fn validate_icon_cache_cap_at_or_above_max_results_ok() {
-        // 境界: cap == max_results はエラーなし。
+    fn validate_icon_cache_cap_at_working_set_ok() {
+        // 境界: cap == ワーキングセット（= top_n_history）はエラーなし。
         let mut config = Config::default();
         config.appearance.max_results = 8;
-        config.cache.icon_cache_cap = 8;
+        config.search.top_n_history = Some(200);
+        config.cache.icon_cache_cap = 200;
         let errors = config.validate();
         assert!(
             !errors
                 .iter()
                 .any(|e| matches!(e, ConfigError::IconCacheCapTooSmall { .. })),
-            "cap == max_results should be valid, got {errors:?}"
+            "cap == working set should be valid, got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn validate_icon_cache_cap_min_required_is_max_of_max_results_and_top_n_history() {
+        // top_n_history を max_results より小さくすると max_results が支配的になる
+        // （min_required = max(max_results, top_n_history) であることの検証）。
+        let mut config = Config::default();
+        config.appearance.max_results = 12;
+        config.search.top_n_history = Some(5);
+        config.cache.icon_cache_cap = 10; // 10 < max(12, 5) = 12
+        let errors = config.validate();
+        assert!(
+            errors.iter().any(|e| matches!(
+                e,
+                ConfigError::IconCacheCapTooSmall {
+                    cap: 10,
+                    min_required: 12
+                }
+            )),
+            "min_required should be max(max_results=12, top_n_history=5)=12, got {errors:?}"
         );
     }
 

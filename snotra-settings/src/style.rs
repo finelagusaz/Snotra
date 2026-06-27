@@ -69,15 +69,21 @@ pub const BANNER_CAUTION_FG: Color32 = Color32::from_rgb(140, 90, 0);
 
 /// カスタム TextStyle ランプ（Fluent 準拠）を `ctx` に登録する。
 ///
-/// `ctx.style_mut` で各 TextStyle の `size` のみを書き換えるため、`.small()` /
+/// `ctx.all_styles_mut` で各 TextStyle の `size` を書き換えるため、`.small()` /
 /// `ui.heading()` / 既定ラベルが新サイズを自動継承する（タイポグラフィの SSOT）。
-/// Monospace と FontFamily は egui 既定を温存する。
+/// `heading_semibold` が true のとき `Heading` のファミリを Semibold
+/// （[`crate::font::SEMIBOLD_FAMILY`]）へ切り替える（Fluent: 見出しは Semibold）。
+/// false（Semibold フォント不在）なら Heading は Regular のまま据え置く。
+/// Monospace は egui 既定を温存し、Body/Button/Small のファミリも変更しない。
 /// `run()` で `configure_fonts` → `apply_win11_theme` の後に呼ぶ。
-pub fn apply_type_ramp(ctx: &egui::Context) {
+pub fn apply_type_ramp(ctx: &egui::Context, heading_semibold: bool) {
     use egui::TextStyle;
     ctx.all_styles_mut(|style| {
         if let Some(f) = style.text_styles.get_mut(&TextStyle::Heading) {
             f.size = FONT_HEADING;
+            if heading_semibold {
+                f.family = egui::FontFamily::Name(crate::font::SEMIBOLD_FAMILY.into());
+            }
         }
         if let Some(f) = style.text_styles.get_mut(&TextStyle::Body) {
             f.size = FONT_BODY;

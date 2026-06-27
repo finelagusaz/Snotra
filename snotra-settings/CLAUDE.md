@@ -12,7 +12,7 @@ egui ベースの設定・about バイナリ crate。本体（`src-tauri`）と�
 
 - `main.rs`: エントリポイント、eframe 起動
 - `app.rs`: `eframe::App` 実装、タブ管理（About タブ含む）、保存/破棄/リセットロジック。色は `style` のトークンを参照
-- `font.rs`: 日本語フォント読み込み + システムフォント列挙
+- `font.rs`: 日本語フォント読み込み（Regular の `jp_font` + 見出し用 Semibold ファミリ `SEMIBOLD_FAMILY` を登録。Semibold 不在環境では未登録のまま graceful degrade）+ システムフォント列挙
 - `hotkey_input.rs`: ホットキーキャプチャウィジェット
 - `i18n.rs`: 翻訳構造体 `Tr(Language)`。各メソッド（`tr.tab_general()` 等）が `match self.0` で `&'static str` を返す。タブ UI 関数は `tr: &Tr` を引数に取り、保存時に `self.tr = Tr(new_language)` で即時反映
 - `style.rs`: デザイントークン（色 / 余白 / フォントサイズ / 幅）と共有スタイルヘルパー（`tab_scroll_area` / `section_heading` / `hint` / `settings_grid` / `list_item` / `reorder_controls` / `modal_header` / `modal_buttons` / `danger_button` / `apply_type_ramp`）。全タブと app.rs がこれ経由で描画する。詳細は `SETTINGS-DESIGN.md`
@@ -31,7 +31,7 @@ egui ベースの設定・about バイナリ crate。本体（`src-tauri`）と�
 設定 UI のデザイン規約とトークンの SSOT は **`SETTINGS-DESIGN.md`**（クレート直下）。`src/style.rs` が実装（トークン + ヘルパー）。
 
 - **不変条件**: 色 / 余白 / ScrollArea / フォントサイズを各タブに**直書きしない**。`style` のトークン・ヘルパーを使う（`Color32::from_rgb` 直書きは visual の色編集機能を除き禁止）。
-- タイポグラフィは `style::apply_type_ramp(ctx)` が Fluent タイプランプ（見出し18 / 本文14 / 副文12）を一括登録する。`run()` で `apply_win11_theme` の後に呼ぶ。
+- タイポグラフィは `style::apply_type_ramp(ctx, heading_semibold)` が Fluent タイプランプ（見出し18 / 本文14 / 副文12）と見出しの Semibold を一括登録する。見出し（`section_heading` / `modal_header`）は Semibold、本文・副文は Regular。`heading_semibold` は `configure_fonts` の戻り値で、Semibold フォント不在時は Regular にフォールバック。`run()` で `apply_win11_theme` の後に呼ぶ。
 - 新タブ・新パーツの追加時は `SETTINGS-DESIGN.md` の「新タブ追加チェックリスト」に従い、逸脱が要る場合は先に同書を更新する。
 
 ## egui 実装の注意点
@@ -118,6 +118,7 @@ OpenerRule のターゲットは文字列プレフィックスで種別を表現
 - 境界チェック: 配列アクセス前に必ずインデックスの有効性を確認する（`if idx < vec.len()`）
 - opener のターゲット変更: ツールを旧ルールから削除し、新ルールに追加する。OpenerRule.target を上書きしない（他のツールが巻き添えになる）
 - ユニットテストは書かない方針（egui UI コードはモック困難）。ロジックのテストは `snotra-core` 側で行う
+  - 例外: 純粋な非 egui ヘルパー（例 `font.rs` の `face_index_valid`）の境界テストはインラインで置いてよい。egui モック困難の理由が当たらず、かつ degrade パスが視覚スモークで再現できない（dev 機には対象フェイスが在る）ため、テストが唯一の検証手段になる
 
 ## 本体との連携パターン
 

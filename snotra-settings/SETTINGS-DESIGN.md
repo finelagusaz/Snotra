@@ -9,7 +9,7 @@ Windows 11 Settings インスパイア（WinUI / Fluent Design）。サイドバ
 
 ## タイポグラフィ（Windows 11 Fluent タイプランプ）
 
-出典: Microsoft Learn「[Typography in Windows](https://learn.microsoft.com/en-us/windows/apps/design/signature-experiences/typography)」（2026-06-25 時点）。`style::apply_type_ramp(ctx)` が `ctx.all_styles_mut` で TextStyle の `size` を一括登録し、全テキストが継承する（タイポグラフィの SSOT）。
+出典: Microsoft Learn「[Typography in Windows](https://learn.microsoft.com/en-us/windows/apps/design/signature-experiences/typography)」（2026-06-25 時点）。`style::apply_type_ramp(ctx, heading_semibold)` が `ctx.all_styles_mut` で TextStyle の `size`（と見出しの Semibold ファミリ）を一括登録し、全テキストが継承する（タイポグラフィの SSOT）。
 
 | 役割 | egui TextStyle | サイズ(epx) | Fluent 対応 | トークン |
 |------|----------------|-------------|-------------|----------|
@@ -18,7 +18,7 @@ Windows 11 Settings インスパイア（WinUI / Fluent Design）。サイドバ
 | ヒント・メタ・説明文・空状態 | `Small`（`.small()` / `hint`） | **12** | Caption | `FONT_CAPTION` |
 
 - **判読最小の順守**: Fluent ガイドラインは「14px Regular / 12px Regular 未満は一部言語で判読不能」とする。egui 既定（Body 12.5 / Small 9）はこれを割り込んでいたため、本ランプで是正した。**サイズを 12.5/9 に戻さない**（退行）。
-- **ウェイト**: 今回は **size のみ**。Fluent は「見出しは Semibold」を推奨するが、egui で Semibold を出すには別 FontFamily の登録が要るため未対応。見出しはサイズで階層を作る。Semibold 化は follow-up（#399）。
+- **ウェイト**: 見出し（`Heading` = `section_heading` / `modal_header`）は **Semibold**（Latin・日本語とも Yu Gothic UI Semibold = `YuGothB.ttc` face 2 の単一フォントで描画。Latin を別フォント=Segoe に分けると混在見出し「PATH 実行ファイル」等でベースラインがずれるため、単一フォントで統一する）。本文・副文（Body/Button/Small）は **Regular**。`font.rs` が Semibold フェイスを `FontFamily::Name(SEMIBOLD_FAMILY)` として登録し、`apply_type_ramp` が `heading_semibold=true` のとき `Heading.family` をそこへ切り替える。**Semibold フォント不在環境では Regular にフォールバック**。`configure_fonts` は (1) ファイル不在、(2) ttc の face index 不在（`YuGothB.ttc` に face 2 が無い旧レイアウト等）の両方を検証し、不適合なら `false` を返して family を切り替えない。これにより未定義ファミリ参照 panic も、egui が `set_fonts` で全フォントを eager parse する際の範囲外 face panic（release は `panic = "abort"`）も踏まない。Semibold フェイスに無いグリフは末尾に連結した Regular の Proportional fallback で描画する（欠字なし）。
 - **Monospace** は egui 既定を温存（設定タブで可視利用なし）。
 
 ## スペーシング（縦リズム）
@@ -65,7 +65,7 @@ Windows 11 Settings インスパイア（WinUI / Fluent Design）。サイドバ
 
 | 関数 | 役割 |
 |------|------|
-| `apply_type_ramp(ctx)` | Fluent タイプランプを登録（`run()` で `apply_win11_theme` の後に呼ぶ） |
+| `apply_type_ramp(ctx, heading_semibold)` | Fluent タイプランプ（size）+ 見出しの Semibold ファミリを登録（`run()` で `apply_win11_theme` の後に呼ぶ。`heading_semibold` は `configure_fonts` の戻り値） |
 | `tab_scroll_area(ui, f)` | タブ本体の標準スクロール領域 + 行高 |
 | `section_heading(ui, t)` | 見出し + `SPACE_HEADING` |
 | `section_gap(ui)` | `SPACE_SECTION` の余白 |

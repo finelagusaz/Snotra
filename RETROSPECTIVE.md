@@ -1,28 +1,22 @@
-# Retrospective — インスタントコマンドに exec(exe+args) 種別を追加 (#394)
+# Retrospective — 設定UIの見出しに Semibold ウェイトを適用 (#399)
 
 ## よかったこと
 
-### 多観点サブエージェントレビューが「実装前」に致命的データ損失欠陥を回収した
-設計合意後、user / 実装者 / QA の3レンズで並列レビューした。QA が `toml 1.1.2` で実証——初期の serde `flatten`+`untagged` 表現は旧 `command =` config を deserialize できず `Config` 全体の parse 失敗 → `config.toml.bak` 退避 → **全設定リセット**（`apply_migrations` は deserialize 後に走るため移行で救えない）になることを発見した。3レンズは**別クラス**を捕捉: user＝移行発見 UX の欠落、実装者＝`flatten`+named-legacy の serde 非互換と表現の曖昧性、QA＝データ損失の実証。前サイクル #392 の「レビュアーの独立性は枠組みの独立が効く」を継承しつつ、対象を**「コード」から「設計・計画」へ前倒し**した点が新しい。記録（前サイクルの教訓）が次サイクルで実働した。
+### 多層レビューが「別クラスの欠陥」を順に捕捉した
+`/plan-review`（独立2サブエージェント・要対処ゼロ）→ `code-reviewer`（**High** を1件実証検出）→ **視覚スモーク**（整列バグ検出）が、それぞれ別レイヤーの問題を捕まえた。特に code-reviewer は epaint 0.34 の `set_fonts` eager-parse 内部実装まで辿り、「`YuGothB.ttc` は在るが face 2 が無い環境で範囲外 face index → panic → release `abort` で設定プロセスが起動不能」を release-blocker として前倒し回収した。plan-review の「計画の妥当性」、code-review の「実装の堅牢性」、視覚スモークの「描画の正しさ」が**重ならない盲点クラス**を分担した好例。
 
-### 最リスクの表現を「de-risk first」のゲートに据えた
-legacy deserialize 往復（T2）を実装の**最初のタスク**かつ release gate に置き、渋った場合の退避B（フラット `Option` 群 + validation）を明示した。最も壊れやすい表現選択を、その上にディスパッチ・UI・移行を積む前に検証する構造。「新形式の往復が通る」だけでは false-green になるという QA の指摘を、ゲート条件に「旧形式の deserialize」を加えることで塞いだ。
+### `apply_type_ramp` の SSOT レバーを素直に拡張した
+ctx-level の一括設定（#398 で確立）に「`Heading.family` の切り替え」を1行足すだけで、`ui.heading()` を呼ぶ唯一の2箇所（`section_heading` + `modal_header`）が同時に Semibold 化した。`ui.heading()` / `TextStyle::Heading` を grep で事前列挙し、巻き込みゼロを着手前に確定。新規パターンを作らず既存レバーに乗せた。
 
-### ゼロ回帰移行を「賢くしない」判断で守った
-旧 `command` 文字列を exe/args へ自動分割せず、`url` へ**逐語移行**した。`Url` 経路は現状の `ShellExecuteW(command)` とバイト等価のため、今日動く config（URL・引数なし exe・スペース入りパス）を1つも壊さない。唯一壊れていた引数つきコマンドは「今日も壊れている」ので回帰ではなく、新 UI での再作成に委ねた。実機 smoke（実ロードパス `load_from_dir_reporting`）で移行+全設定保持+新形式での再保存を裏取りした。
-
-### 前サイクルの教訓がそのまま機能した
-クレート単位のタスク分解で「compile-fail を改名検出器に使う」（#388 由来）、識別子改名をシンボル粒度で扱う、を今サイクルでも実働させた。`InstantCommand` の型変更が下流クレートを意図的に compile-fail させ、`.command` 参照の漏れを機械的に列挙できた。
+### issue が明記した不確実性を「実証」で潰した
+issue が「face index の調査が必要」と認めた不確実性を、推測でなく `YuGothB.ttc` の `name` テーブル列挙（実ファイルの header 解析）で **face 2 = Yu Gothic UI Semibold** と確定してから計画に落とした。同じ実証姿勢を `face_index_valid`（ttc `numFonts` の事前検証）にも適用した。
 
 ---
 
 ## 伸びしろ
 
-### docs タスクが、impl タスクが意図的に省いた機能を記述した
-docs 同期（Task 7）が SPEC §19.8 に「exe ファイルブラウズダイアログ」を記述したが、実装（Task 6）は plan で「任意（流用可）」とした通りテキスト欄のみだった。最終全ブランチレビューが **SPEC↔実装の乖離**（存在しない機能を SPEC が記述）を検出。根因は、docs を実装と**別タスク・サイクル末**に書くと、計画の楽観的な全体像をそのまま記述しやすいこと。→ AGENTS.md に「SPEC・docs は as-built を記述する」を反映。picker 自体は issue #395 で follow-up。
+### レンダリング系欠陥は AI レビュー層を素通りし、視覚スモークでのみ顕在化した
+「Latin（Segoe UI Semibold・tweak なし）と CJK（Yu Gothic UI Semibold・tweak 0.3）を1つの `FontFamily` に混ぜると、混在見出し『PATH 実行ファイル』で異なる vertical metrics によりベースラインがずれる」——この欠陥は型チェック・clippy・ユニットテスト・plan-review・code-reviewer のいずれも検出できず、**視覚スモークの目視で初めて顕在化**して手戻り1ラウンドになった。計画時に「複数フォントを1ファミリに混在させるなら、Latin+CJK 同一行の整列をエッジケースに挙げる」を持てていれば最初から単一フォントを選べた。→ `snotra-settings/CLAUDE.md` に「フォント登録の注意点」を反映。メモリ [[feedback_codex_review_unreliable]] にも「AI レビューの境界＝レンダリング欠陥は runtime 視覚スモーク必須」を記録。
 
-### 計画のサンプルコードが unsafe panic を内包していた
-plan の `expand_env` が brief の擬似コードをそのまま再現し、`ExpandEnvironmentStringsW` のバッファを clamp せず `buf[..written-1]` でスライスしていた。env 値が2回呼び出し間で伸びると境界外 → panic、release は `panic="abort"` のため **app abort** に化ける。最終/タスクレビューが検出し1行修正（`.min(buf.len())`）。unsafe ブロックは plan のサンプルコードでも実装同等の境界精査が要る。→ src-tauri/CLAUDE.md に「Win32 2回呼び出しパターンは clamp」を反映。
-
-### 計画テスト・転用テストの不変条件が滑った
-spec のテスト T5（混在 variant の往復）が plan の具体タスクに落ちず、既存 round-trip テストの `[1].name=="memo"` アサーションが転用で消えた。後者は前サイクルの「改名・転用で不変条件を孤立させない」の再発で、**plan が著者したテスト書き換えにも同じ規律が適用される**ことを確認した（手書き編集に限らない）。両者は最終 fix wave で復活。
+### graceful-degrade の「不在」を浅く定義していた
+当初の degrade は `std::fs::read` の Err（ファイル不在）しか想定せず、「ファイルは在るが face index が無い／パース不能」を見落とした。egui の `set_fonts` が全フォントを eager parse して panic（release `abort`）する挙動と結びつく重大欠陥で、code-reviewer が回収した。「不在時フォールバック」を計画する時点で、不在の種類（**ファイル不在 / 存在するが不正 / パース不能**）を分解して各検知点を列挙していれば自分で気づけた。→ `snotra-settings/CLAUDE.md` の「フォント登録の注意点」に「不在の種類を分解する」として反映。

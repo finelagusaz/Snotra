@@ -598,9 +598,9 @@ pub fn run(
         title,
         options,
         Box::new(move |cc| {
-            crate::font::configure_fonts(&cc.egui_ctx);
+            let heading_semibold = crate::font::configure_fonts(&cc.egui_ctx);
             apply_win11_theme(&cc.egui_ctx);
-            style::apply_type_ramp(&cc.egui_ctx);
+            style::apply_type_ramp(&cc.egui_ctx, heading_semibold);
             Ok(Box::new(SettingsApp::new(config, first_run, initial_tab, load_outcome)))
         }),
     )

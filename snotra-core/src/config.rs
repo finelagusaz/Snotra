@@ -743,7 +743,36 @@ impl Default for Config {
     }
 }
 
+/// アイコンキャッシュが保持する「結果リスト何本分か」。表示ワーキングセットへの倍率。
+/// 1 より大きくすることで、検索を切り替えても直近数本分のアイコンを残し再抽出を抑える。
+const ICON_CACHE_RETENTION_FACTOR: usize = 5;
+
 impl Config {
+    /// アイコンキャッシュ（常駐メモリ + `icons.bin`）の最大保持件数（派生値）。
+    ///
+    /// 表示ワーキングセット = アイコンを要求しうる結果リストの最大長
+    /// `max(max_results, top_n_history, max_history_display)`
+    /// （検索・フォルダ = `top_n_history`、空クエリ recent = `max_history_display`、
+    /// 可視行 = `max_results`。フロント `LruIconCache` サイズも `top_n_history` に一致）の
+    /// `ICON_CACHE_RETENTION_FACTOR` 倍。
+    ///
+    /// 独立した設定キーを持たず派生値とすることで「上限 ≥ ワーキングセット」が**構造的に成立**し
+    /// （検証・floor・drift が不要）、`top_n_history` 変更時は上限も自動追従する。単一の
+    /// `get_icons_batch` が自己 evict することはない。倍率で再検索時の再抽出を抑えつつ無制限増加を止める。
+    ///
+    /// 保守注意: ここの `working_set` は engine がアイコンを要求する結果リストの fetch 上限と対応する
+    /// （`Engine::search` / `capture_folder_list_context` = `effective_top_n_history`、
+    /// `recent_history` = `effective_max_history_display`）。engine 側でアイコンを要求する新たな
+    /// 長尺リスト経路を増やしたら、その上限をこの式にも反映すること。
+    pub fn icon_cache_cap(&self) -> usize {
+        let working_set = self
+            .appearance
+            .max_results
+            .max(self.search.effective_top_n_history())
+            .max(self.search.effective_max_history_display());
+        working_set.max(1).saturating_mul(ICON_CACHE_RETENTION_FACTOR)
+    }
+
     /// Returns the default scan paths (common Start Menu + Desktop).
     /// User Start Menu is intentionally excluded.
     pub fn default_scan_paths() -> Vec<ScanPath> {
@@ -1047,6 +1076,10 @@ impl Config {
         if self.search.migemo_min_chars == 0 {
             errors.push(ConfigError::MigemoMinCharsZero);
         }
+
+        // NOTE: アイコンキャッシュ上限は独立 config キーを持たず `Config::icon_cache_cap()` で
+        // 表示ワーキングセットから派生する（「上限 ≥ ワーキングセット」が構造的に成立）ため、
+        // ここでの検証は不要。
 
         // Instant command name uniqueness
         {
@@ -3252,6 +3285,55 @@ scan = []
         // Defaults filled for missing optional sections
         assert!(config.openers.is_empty());
         assert!(config.instant_commands.is_empty());
+    }
+
+    #[test]
+    fn icon_cache_cap_derives_from_working_set_times_retention() {
+        // 既定: max_results=8, top_n_history=200, max_history_display=8 → working_set=200
+        // → cap = 200 × 5 = 1000（旧 default と一致＝既定挙動は不変）。
+        let config = Config::default();
+        assert_eq!(config.search.effective_top_n_history(), 200);
+        assert_eq!(config.icon_cache_cap(), 1000);
+    }
+
+    #[test]
+    fn icon_cache_cap_scales_with_top_n_history() {
+        // top_n_history を上げると上限も自動追従する（検証不要・drift なし）。
+        let mut config = Config::default();
+        config.search.top_n_history = Some(500);
+        assert_eq!(config.icon_cache_cap(), 2500); // 500 × 5
+    }
+
+    #[test]
+    fn icon_cache_cap_uses_max_of_all_list_limits() {
+        // working_set = max(max_results, top_n_history, max_history_display)。
+        // ここでは max_history_display が支配的になるケースを検証する。
+        let mut config = Config::default();
+        config.appearance.max_results = 8;
+        config.search.top_n_history = Some(50);
+        config.search.max_history_display = Some(120);
+        assert_eq!(config.icon_cache_cap(), 600); // max(8,50,120)=120 × 5
+    }
+
+    #[test]
+    fn icon_cache_cap_max_results_dominates_when_history_limits_small() {
+        let mut config = Config::default();
+        config.appearance.max_results = 12;
+        config.search.top_n_history = Some(5);
+        config.search.max_history_display = Some(3);
+        assert_eq!(config.icon_cache_cap(), 60); // max(12,5,3)=12 × 5
+    }
+
+    #[test]
+    fn icon_cache_cap_never_collapses_to_zero() {
+        // 退行防御: 全リスト上限が 0 でも working_set は 1 で floor され、cap は RETENTION 以上。
+        // （max_results=0 は validate の MaxResultsZero 対象だが、cap 導出は panic/0 にならない）。
+        let mut config = Config::default();
+        config.appearance.max_results = 0;
+        config.search.top_n_history = Some(0);
+        config.search.max_history_display = Some(0);
+        assert_eq!(config.icon_cache_cap(), ICON_CACHE_RETENTION_FACTOR);
+        assert!(config.icon_cache_cap() >= 1);
     }
 
     #[test]

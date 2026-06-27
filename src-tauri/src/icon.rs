@@ -1,5 +1,5 @@
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Mutex;
 
 use snotra_core::binfmt::BinFile;
@@ -15,38 +15,63 @@ const ICON_SIZE: i32 = 16;
 const ICON_MAGIC: [u8; 4] = *b"ICON";
 const ICON_VERSION: u32 = 5; // v4: base64 String, v5: raw PNG bytes
 
+// `png` は挿入順を保持する `IndexMap`。HashMap と postcard の wire 形式は byte 互換
+// （どちらも serde の `serialize_map`）なので `ICON_VERSION` バンプ不要で、旧 v5 `icons.bin`
+// も読める。挿入順保持により FIFO 退避（最古から pop）と順序の永続化が自然に成立する。
 #[derive(Serialize, Deserialize, Default)]
 struct IconCacheData {
-    png: HashMap<String, Vec<u8>>,
+    png: IndexMap<String, Vec<u8>>,
 }
 
 pub struct IconCache {
     data: IconCacheData,
+    /// 最大保持件数。超過時は挿入順で最古から退避する。永続化しない runtime config
+    /// （`load(cap)` で注入。実効 cap は呼び出し側で `max(max_results)` に floor 済み）。
+    cap: usize,
     dirty: bool,
 }
 
 impl IconCache {
     /// Try to load persisted cache, or return empty cache. Never blocks on icon extraction.
-    pub fn load() -> Self {
-        let loaded = icon_bin_file().and_then(|bf| bf.load::<IconCacheData>());
-        match loaded {
-            Some(data) => Self { data, dirty: false },
-            None => Self {
-                data: IconCacheData::default(),
-                dirty: false,
-            },
-        }
+    /// `cap` 超過の既存 `icons.bin` はロード時点で切り詰め、常駐メモリを即時に頭打ちにする。
+    pub fn load(cap: usize) -> Self {
+        let data = icon_bin_file()
+            .and_then(|bf| bf.load::<IconCacheData>())
+            .unwrap_or_default();
+        let mut cache = Self {
+            data,
+            cap,
+            dirty: false,
+        };
+        // ロード時点で cap を適用。切り詰めたら dirty を立て、次回 save で永続側も頭打ちにする。
+        cache.enforce_cap();
+        cache
     }
 
     /// Get cached PNG bytes for a path (read-only, no extraction).
+    /// **read-only を厳守**: アクセス順を更新しない（更新すると検索 Step1 の read lock が
+    /// write lock に変質し性能退行する）。退避は `insert` / `load`（`&mut self`）に限定する。
     pub fn get(&self, path: &str) -> Option<&[u8]> {
         self.data.png.get(path).map(|v| v.as_slice())
     }
 
-    /// Insert extracted PNG bytes into the cache and mark dirty.
+    /// Insert extracted PNG bytes into the cache, enforce the cap, and mark dirty.
     pub fn insert(&mut self, path: String, png: Vec<u8>) {
         self.data.png.insert(path, png);
+        self.enforce_cap();
         self.dirty = true;
+    }
+
+    /// 件数上限を適用し、超過分を挿入順で最古から一括退避する。退避した件数を返す。
+    /// 退避が発生したときのみ dirty を立てる（無駄な save を避ける）。
+    fn enforce_cap(&mut self) -> usize {
+        let excess = self.data.png.len().saturating_sub(self.cap);
+        if excess > 0 {
+            // 先頭（最古挿入）から excess 件を一括退避（O(n) 一括）。
+            self.data.png.drain(0..excess);
+            self.dirty = true;
+        }
+        excess
     }
 
     /// Save to disk if there are new entries since last save.
@@ -347,6 +372,7 @@ mod tests {
         // bin_file=None でファイル削除はスキップ（テストは実 icons.bin に触れない）。
         let state: IconCacheState = Mutex::new(Some(IconCache {
             data: IconCacheData::default(),
+            cap: 1000,
             dirty: false,
         }));
         invalidate_icon_cache_with(&state, None);
@@ -354,5 +380,121 @@ mod tests {
             state.lock().unwrap().is_none(),
             "invalidate_icon_cache must clear the in-memory IconCacheState to None"
         );
+    }
+
+    /// テスト用に cap 指定で空キャッシュを構築する（ファイル I/O を伴わない）。
+    fn empty_cache_with_cap(cap: usize) -> IconCache {
+        IconCache {
+            data: IconCacheData::default(),
+            cap,
+            dirty: false,
+        }
+    }
+
+    #[test]
+    fn insert_evicts_oldest_when_over_cap() {
+        let mut cache = empty_cache_with_cap(2);
+        cache.insert("a".into(), vec![1]);
+        cache.insert("b".into(), vec![2]);
+        cache.insert("c".into(), vec![3]); // cap 超過 → 最古 "a" を退避
+
+        assert_eq!(cache.data.png.len(), 2, "cap を超えない");
+        assert!(cache.get("a").is_none(), "最古挿入の a が退避される");
+        assert_eq!(cache.get("b"), Some(&[2][..]));
+        assert_eq!(cache.get("c"), Some(&[3][..]));
+        // 残存は挿入順 b, c
+        let keys: Vec<&String> = cache.data.png.keys().collect();
+        assert_eq!(keys, vec![&"b".to_string(), &"c".to_string()]);
+    }
+
+    #[test]
+    fn insert_within_cap_keeps_all() {
+        let mut cache = empty_cache_with_cap(3);
+        cache.insert("a".into(), vec![1]);
+        cache.insert("b".into(), vec![2]);
+        assert_eq!(cache.data.png.len(), 2);
+        assert!(cache.get("a").is_some());
+        assert!(cache.get("b").is_some());
+    }
+
+    #[test]
+    fn enforce_cap_trims_when_over_cap_and_marks_dirty() {
+        // load 経由の切り詰めをエミュレート: 3 件持つ cap=2 のキャッシュで enforce_cap。
+        let mut cache = empty_cache_with_cap(2);
+        cache.data.png.insert("a".into(), vec![1]);
+        cache.data.png.insert("b".into(), vec![2]);
+        cache.data.png.insert("c".into(), vec![3]);
+        cache.dirty = false; // 直接挿入では立てていない
+
+        let evicted = cache.enforce_cap();
+        assert_eq!(evicted, 1, "超過 1 件を退避");
+        assert_eq!(cache.data.png.len(), 2);
+        assert!(cache.get("a").is_none(), "最古 a が退避");
+        assert!(cache.dirty, "退避したら dirty を立てる（永続側も頭打ちにする）");
+    }
+
+    #[test]
+    fn enforce_cap_noop_keeps_dirty_unchanged() {
+        let mut cache = empty_cache_with_cap(5);
+        cache.data.png.insert("a".into(), vec![1]);
+        cache.dirty = false;
+        let evicted = cache.enforce_cap();
+        assert_eq!(evicted, 0, "cap 以内なら退避なし");
+        assert!(!cache.dirty, "退避なしなら dirty を立てない（無駄な save を避ける）");
+    }
+
+    #[test]
+    fn get_does_not_mutate() {
+        let mut cache = empty_cache_with_cap(3);
+        cache.insert("a".into(), vec![1]);
+        cache.insert("b".into(), vec![2]);
+        let before: Vec<String> = cache.data.png.keys().cloned().collect();
+        let _ = cache.get("a"); // アクセスしても順序・件数は不変
+        let _ = cache.get("missing");
+        let after: Vec<String> = cache.data.png.keys().cloned().collect();
+        assert_eq!(before, after, "get は read-only（順序・件数を変えない）");
+    }
+
+    #[test]
+    fn retain_paths_preserves_cap_invariant() {
+        let mut cache = empty_cache_with_cap(2);
+        cache.insert("a".into(), vec![1]);
+        cache.insert("b".into(), vec![2]); // len == cap
+
+        let valid: std::collections::HashSet<String> = ["b".to_string()].into_iter().collect();
+        cache.retain_paths(&valid);
+        assert!(cache.data.png.len() <= cache.cap, "retain 後も cap 不変条件を満たす");
+        assert!(cache.get("a").is_none());
+        assert!(cache.get("b").is_some());
+    }
+
+    #[test]
+    fn wire_compat_hashmap_format_loads() {
+        // 受け入れ条件7: 旧 v5 icons.bin（HashMap 書き込み）が IndexMap 化後も読める。
+        // HashMap を持つヘルパー struct でバイト列化し、IndexMap 版 IconCacheData で読み戻す。
+        use snotra_core::binfmt::{try_deserialize_with_header, try_serialize_with_header};
+        use std::collections::HashMap;
+
+        #[derive(serde::Serialize)]
+        struct LegacyIconCacheData {
+            png: HashMap<String, Vec<u8>>,
+        }
+
+        let mut legacy = HashMap::new();
+        legacy.insert("c:/a.exe".to_string(), vec![1u8, 2, 3]);
+        legacy.insert("c:/b.exe".to_string(), vec![4u8, 5]);
+        let bytes = try_serialize_with_header(
+            ICON_MAGIC,
+            ICON_VERSION,
+            &LegacyIconCacheData { png: legacy },
+        )
+        .expect("serialize legacy");
+
+        let restored: IconCacheData =
+            try_deserialize_with_header(&bytes, ICON_MAGIC, ICON_VERSION)
+                .expect("deserialize into IndexMap-backed IconCacheData");
+        assert_eq!(restored.png.len(), 2);
+        assert_eq!(restored.png.get("c:/a.exe"), Some(&vec![1, 2, 3]));
+        assert_eq!(restored.png.get("c:/b.exe"), Some(&vec![4, 5]));
     }
 }

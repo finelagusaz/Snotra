@@ -6,15 +6,22 @@ use crate::icon::{encode_batch_binary, extract_png, IconCache, IconCacheState};
 use crate::state::AppState;
 
 fn ensure_icon_cache_loaded_if_enabled(state: &State<AppState>, icons: &State<IconCacheState>) {
-    // Read config value and drop engine lock before locking icon cache
-    let show_icons = state.engine.lock().unwrap().config().appearance.show_icons;
+    // Read config under a single engine lock, then drop it before locking icon cache
+    // (engine ロックを跨いで I/O しない)。cap は `Config::icon_cache_cap()` が表示ワーキングセット
+    // から派生する（独立 config キー・検証・floor を持たず「cap ≥ ワーキングセット」が構造的に成立。
+    // 詳細は snotra-core の同メソッド doc を参照）。
+    let (show_icons, cap) = {
+        let engine = state.engine.lock().unwrap();
+        let cfg = engine.config();
+        (cfg.appearance.show_icons, cfg.icon_cache_cap())
+    };
     let mut cache = icons.lock().unwrap();
     if !show_icons {
         *cache = None;
         return;
     }
     if cache.is_none() {
-        *cache = Some(IconCache::load());
+        *cache = Some(IconCache::load(cap));
     }
 }
 

@@ -18,7 +18,7 @@ Windows 11 Settings インスパイア（WinUI / Fluent Design）。サイドバ
 | ヒント・メタ・説明文・空状態 | `Small`（`.small()` / `hint`） | **12** | Caption | `FONT_CAPTION` |
 
 - **判読最小の順守**: Fluent ガイドラインは「14px Regular / 12px Regular 未満は一部言語で判読不能」とする。egui 既定（Body 12.5 / Small 9）はこれを割り込んでいたため、本ランプで是正した。**サイズを 12.5/9 に戻さない**（退行）。
-- **ウェイト**: 今回は **size のみ**。Fluent は「見出しは Semibold」を推奨するが、egui で Semibold を出すには別 FontFamily の登録が要るため未対応。見出しはサイズで階層を作る。Semibold 化は follow-up 候補。
+- **ウェイト**: 今回は **size のみ**。Fluent は「見出しは Semibold」を推奨するが、egui で Semibold を出すには別 FontFamily の登録が要るため未対応。見出しはサイズで階層を作る。Semibold 化は follow-up（#399）。
 - **Monospace** は egui 既定を温存（設定タブで可視利用なし）。
 
 ## スペーシング（縦リズム）

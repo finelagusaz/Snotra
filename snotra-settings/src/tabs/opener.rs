@@ -5,6 +5,7 @@ use eframe::egui;
 use snotra_core::config::{self, extract_path_condition, opener_specificity_order, Config, OpenerRule, OpenerTool};
 
 use crate::i18n::Tr;
+use crate::style;
 
 /// Non-blocking file picker state for exe selection
 #[derive(Clone, Default)]
@@ -111,20 +112,13 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
         }
     }
 
-    egui::ScrollArea::vertical().auto_shrink([false, false]).scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).show(ui, |ui| {
-        ui.spacing_mut().interact_size.y = 24.0;
-
-        ui.heading(tr.heading_opener_rules());
-        ui.add_space(4.0);
-        ui.label(
-            egui::RichText::new(tr.opener_description())
-                .small()
-                .color(crate::app::TEXT_SECONDARY),
-        );
-        ui.add_space(8.0);
+    style::tab_scroll_area(ui, |ui| {
+        style::section_heading(ui, tr.heading_opener_rules());
+        style::hint(ui, tr.opener_description());
+        ui.add_space(style::SPACE_GROUP);
 
         if config.openers.is_empty() {
-            ui.label(tr.label_no_rules());
+            style::hint(ui, tr.label_no_rules());
         }
 
         // Flatten rules into (rule_idx, tool_idx, target, tool) for display
@@ -140,8 +134,9 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
 
         let mut action: Option<OpenerAction> = None;
         for (ri, ti, target, tool) in &flat {
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
+            style::list_item(
+                ui,
+                |ui| {
                     let target_label = format_target_label(target, tr);
                     ui.label(format!(
                         "[{}] {}",
@@ -152,36 +147,27 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
                             &tool.name
                         }
                     ));
-                    ui.label(
-                        egui::RichText::new(&tool.exe)
-                            .small()
-                            .color(crate::app::TEXT_SECONDARY),
-                    );
-                });
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    style::hint(ui, &tool.exe);
+                },
+                |ui| {
                     if ui.button(tr.btn_edit()).clicked() {
                         action = Some(OpenerAction::Edit(*ri, *ti));
                     }
                     // 同一ルール内のツール並び替えボタン
                     let tool_count = config.openers[*ri].tools.len();
                     if tool_count > 1 {
-                        if ui
-                            .add_enabled(*ti + 1 < tool_count, egui::Button::new("▼"))
-                            .clicked()
-                        {
-                            action = Some(OpenerAction::MoveDown(*ri, *ti));
-                        }
-                        if ui
-                            .add_enabled(*ti > 0, egui::Button::new("▲"))
-                            .clicked()
-                        {
-                            action = Some(OpenerAction::MoveUp(*ri, *ti));
+                        match style::reorder_controls(ui, *ti > 0, *ti + 1 < tool_count) {
+                            Some(style::ReorderDir::Up) => {
+                                action = Some(OpenerAction::MoveUp(*ri, *ti));
+                            }
+                            Some(style::ReorderDir::Down) => {
+                                action = Some(OpenerAction::MoveDown(*ri, *ti));
+                            }
+                            None => {}
                         }
                     }
-                });
-            });
-            ui.separator();
+                },
+            );
         }
 
         if ui.button(tr.btn_add()).clicked() {
@@ -190,15 +176,10 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
 
         // Presets section
         if !state.presets.is_empty() {
-            ui.add_space(12.0);
-            ui.heading(tr.heading_presets());
-            ui.add_space(4.0);
-            ui.label(
-                egui::RichText::new(tr.preset_description())
-                    .small()
-                    .color(crate::app::TEXT_SECONDARY),
-            );
-            ui.add_space(4.0);
+            style::section_gap(ui);
+            style::section_heading(ui, tr.heading_presets());
+            style::hint(ui, tr.preset_description());
+            ui.add_space(style::SPACE_HINT);
 
             let mut preset_action: Option<usize> = None;
             for (i, preset) in state.presets.iter().enumerate() {
@@ -281,9 +262,7 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
     let modal = egui::Modal::new(egui::Id::new("opener_modal"));
 
     let resp = modal.show(ctx, |ui| {
-        ui.heading(title);
-        ui.separator();
-        ui.add_space(4.0);
+        style::modal_header(ui, title);
 
         // Target
         ui.label(tr.label_target());
@@ -300,31 +279,23 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
         if state.modal.edit_target_kind == TargetKind::Extension {
             ui.label(tr.label_extension());
             ui.text_edit_singleline(&mut state.modal.edit_target_ext);
-            ui.label(
-                egui::RichText::new(tr.hint_extension_format())
-                    .small()
-                    .color(crate::app::TEXT_SECONDARY),
-            );
+            style::hint(ui, tr.hint_extension_format());
         }
 
-        ui.add_space(4.0);
+        ui.add_space(style::SPACE_HINT);
 
         // Path condition (optional, applies to both folder and extension)
         ui.label(tr.label_path_condition());
         ui.text_edit_singleline(&mut state.modal.edit_target_path);
-        ui.label(
-            egui::RichText::new(tr.hint_path_condition())
-                .small()
-                .color(crate::app::TEXT_SECONDARY),
-        );
+        style::hint(ui, tr.hint_path_condition());
 
-        ui.add_space(4.0);
+        ui.add_space(style::SPACE_HINT);
 
         // Tool name
         ui.label(tr.label_tool_name());
         ui.text_edit_singleline(&mut state.modal.edit_tool_name);
 
-        ui.add_space(4.0);
+        ui.add_space(style::SPACE_HINT);
 
         // Tool exe + browse
         ui.label(tr.label_executable());
@@ -350,28 +321,19 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
             }
         });
 
-        ui.add_space(4.0);
+        ui.add_space(style::SPACE_HINT);
 
         // Tool args
         ui.label(tr.label_arguments());
         ui.text_edit_singleline(&mut state.modal.edit_tool_args);
-        ui.label(
-            egui::RichText::new(tr.hint_path_placeholder())
-                .small()
-                .color(crate::app::TEXT_SECONDARY),
-        );
+        style::hint(ui, tr.hint_path_placeholder());
 
-        ui.add_space(8.0);
+        ui.add_space(style::SPACE_GROUP);
         ui.separator();
 
         ui.horizontal(|ui| {
             // Delete (edit mode only)
-            if state.modal.mode == ModalMode::Edit
-                && ui
-                    .add(egui::Button::new(
-                        egui::RichText::new(tr.btn_delete()).color(egui::Color32::from_rgb(196, 43, 28)),
-                    ))
-                    .clicked()
+            if state.modal.mode == ModalMode::Edit && style::danger_button(ui, tr.btn_delete()).clicked()
             {
                 if let (Some(ri), Some(ti)) = (state.modal.editing_rule, state.modal.editing_tool)
                     && ri < config.openers.len()
@@ -385,15 +347,14 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
                 state.modal.close();
             }
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button(tr.btn_cancel()).clicked() {
-                    state.modal.close();
-                }
-                if ui.button(tr.btn_save()).clicked() {
-                    save_opener(config, &state.modal);
-                    state.modal.close();
-                }
-            });
+            let buttons = style::modal_buttons(ui, tr);
+            if buttons.cancel {
+                state.modal.close();
+            }
+            if buttons.save {
+                save_opener(config, &state.modal);
+                state.modal.close();
+            }
         });
     });
 
@@ -480,4 +441,3 @@ fn format_target_label(target: &str, tr: &Tr) -> String {
         target.to_string()
     }
 }
-

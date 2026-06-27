@@ -55,8 +55,13 @@ pub struct ExePickerState {
   UI スレッド直呼びはフリーズ（snotra-settings/CLAUDE.md「非同期ファイルピッカーパターン」）。
 - **`active=false` の書き忘れ = ボタン永久無効化バグ**（CLAUDE.md 明記）。キャンセル・成功の両パスでリセット必須。
 - **egui ユニットテスト不可**（モック困難）。検証はビルド + clippy + 視覚スモーク。
-- **フィルタ拡張子は `["exe"]` 限定**が防御の核心。opener の `["exe","bat","cmd"]` をそのまま流用してはならない。
-- spawn に渡す `extensions` は `'static` 寿命（`&["exe"]` リテラル）で問題なし。rfd `add_filter` は `&[impl ToString]`。
+- **instant exec は `.exe` 限定でない（重要・当初前提の是正）**: `launch_exec_core`（`launch.rs:394`）は
+  `Command::new(expand_env(exe))` で拡張子検証なし。受理範囲＝`.exe` / 拡張子なし（CreateProcessW が `.exe` 補完）
+  / `.com` 等 PE / `cmd.exe`（SPEC §19.2:711-715 が例示）/ `.bat`・`.cmd`（Rust std が cmd.exe 経由起動）。
+  `.lnk` のみ非対応。opener も同一機構で picker フィルタは `["exe","bat","cmd"]`。
+  → フィルタ範囲はユーザー確認で **`["exe"]`（既定誘導）+ `["*"]`（全ファイル）** に確定（plan.md 参照）。
+- **rfd 0.17.2 の複数フィルタ**（`dialog_ffi.rs:175-207`、実ソース確認）: `add_filter` を複数呼ぶとドロップダウン生成、
+  **最初のフィルタが既定**（`set_default_extension`）、`["*"]` は spec `*.*`（全ファイル）。`extensions` は `&[impl ToString]`。
 
 ## 未解決の疑問
 

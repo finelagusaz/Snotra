@@ -25,7 +25,20 @@ symmetric-check で crate 全体に3つのピッカーが存在することが�
 
 ## 変更ファイル一覧
 
-### 1. `snotra-settings/src/tabs/instant.rs`（参照ボタン追加 — 唯一のコード変更）
+### フィルタ方針（ユーザー確定 — Option 3）
+
+ピッカーは **2フィルタ**: `["exe"]`（既定・誘導）+ `["*"]`（すべてのファイル）。手入力欄は従来どおり何でも受理。
+**根拠**: 確認の結果、instant exec（`launch_exec_core` → `Command::new(exe)`）は `.exe` 限定ではなく、拡張子なし
+（CreateProcessW が `.exe` 補完）・`.com`・`cmd.exe`（SPEC §19.2 が例示）・`.bat`/`.cmd`（Rust std が cmd.exe 経由起動）
+を受け付ける。opener も同一機構で `["exe","bat","cmd"]`。よって `["exe"]` 限定はピッカーを能力より狭め opener と非対称に
+なるため、**既定 .exe で誘導しつつ全ファイルも選べる**折衷に決定。
+
+**rfd 0.17.2 実ソース確認済**（`backend/win_cid/file_dialog/dialog_ffi.rs:175-207`）:
+- 複数 `add_filter` → ドロップダウン生成（`for f in filters.iter()`）
+- **最初のフィルタが既定**（`set_default_extension(first.first_extension)`）→ `["exe"]` を**先に**置く
+- `["*"]` → spec `*.*`（`write!("*.{ext};", "*")`）= 全ファイル一致
+
+### 1. `snotra-settings/src/tabs/instant.rs`（参照ボタン追加）
 
 - import 追加:
   - `use std::sync::Arc;`（inline spawn で `Arc::clone` を使う）
@@ -46,7 +59,7 @@ symmetric-check で crate 全体に3つのピッカーが存在することが�
   ```
 - `show_modal()` の `EditKind::Program` ブランチ（281-299）で exe フィールドを `ui.horizontal` に包み、
   `text_edit_singleline(&mut state.modal.edit_exe)` の右に参照ボタン（opener.rs:302-322 と同型、
-  **フィルタのみ `&["exe"]`**）:
+  **フィルタは exe 既定 + 全ファイル**）:
   ```
   ui.horizontal(|ui| {
       ui.text_edit_singleline(&mut state.modal.edit_exe);
@@ -55,11 +68,13 @@ symmetric-check で crate 全体に3つのピッカーが存在することが�
           let result = Arc::clone(&state.exe_picker.result);
           let repaint_ctx = ctx.clone();
           let dialog_title = tr.dialog_select_exe().to_string();
-          let filter_label = tr.filter_executables().to_string();
+          let exe_label = tr.filter_executables().to_string();
+          let all_label = tr.filter_all_files().to_string();        // ← 新規 i18n
           std::thread::spawn(move || {
               let path = rfd::FileDialog::new()
                   .set_title(&dialog_title)
-                  .add_filter(&filter_label, &["exe"])  // ← 防御: exe 限定
+                  .add_filter(&exe_label, &["exe"])  // 既定（誘導）— 先に置く
+                  .add_filter(&all_label, &["*"])     // すべてのファイル（*.* 相当）
                   .pick_file();
               *result.lock().unwrap() = Some(path);
               repaint_ctx.request_repaint();
@@ -72,24 +87,38 @@ symmetric-check で crate 全体に3つのピッカーが存在することが�
 > **opener.rs / index.rs / backup.rs は変更しない**。index↔opener のピッカー統合は #395 スコープ外
 > （folder vs file の一般化が必要）。将来の DRY 改善候補だが本 issue では扱わない。
 
+### 2. `snotra-settings/src/i18n.rs`（全ファイルフィルタのラベル追加）
+
+- `filter_all_files()` を新設（既存 `filter_executables()` の直後に配置）:
+  ```
+  pub fn filter_all_files(&self) -> &'static str {
+      match self.0 {
+          Language::Ja => "すべてのファイル",
+          Language::En => "All files",
+      }
+  }
+  ```
+  既存 `filter_executables()`（"実行ファイル" / "Executables"）は exe 既定フィルタのラベルに流用。
+
 ### 3. `SPEC.md` §19.8（as-built 同期）
 
 - line 879 の「手入力の単一行テキストフィールド」を、参照ボタン併設に更新。
   手入力も従来通り可能であることを残す（ピッカーは加算的）。
-- **記述粒度の決定**（plan-review 軽微懸念への対応）: opener §18.6 は「exe パス入力にファイルブラウズダイアログ」と
-  極簡潔（フィルタ仕様なし）。instant の `["exe"]` 限定は opener（`.bat`/`.cmd` 許容）より**意図的に厳しく**、
-  セキュリティ防御が理由。よって §19.8 には参照ボタン併設 + **`.exe` 限定フィルタ** + 防御理由を**一行**で添える。
-  これは既存 §19.4（「env 変数へのインジェクション防止」を簡潔に明記）の様式と調和する。冗長な説明はしない。
-  記述案: 「`exe` パス入力に `.exe` 限定のファイルブラウズダイアログ（参照ボタン）を併設。手入力も可。
-  `.bat`/`.cmd` は `cmd.exe` 経由で `{query}` がメタ文字に晒されるため除外する。」
+- **記述方針（フィルタ確定後）**: ピッカーは制限ではなく**誘導**。既定フィルタ＝実行ファイル（`.exe`）だが
+  ドロップダウンで全ファイル選択も可能（`.com`・拡張子なし・`cmd.exe` 等の正規ユースケースを塞がない）。
+  当初案の「`.bat`/`.cmd` を除外する防御」記述は**撤回**（全ファイル選択で選べるため事実と異なる）。
+  opener §18.6（「exe パス入力にファイルブラウズダイアログ」）の簡潔様式に倣う。
+  記述案: 「`exe` パス入力にファイルブラウズダイアログ（参照ボタン）を併設。既定フィルタは実行ファイル（`.exe`）、
+  ドロップダウンで全ファイルも選択可能。手入力も従来どおり可。」
 
 ## 実装順序（依存関係）
 
-1. instant.rs に import（`Arc` + `ExePickerState`）+ `InstantTabState` フィールド追加
-2. instant.rs `ui()` 冒頭に poll を inline
-3. instant.rs `show_modal()` Program ブランチに参照ボタン（inline spawn, filter `&["exe"]`）
-4. SPEC.md §19.8 同期
-5. ビルド + clippy（PostToolUse フックが自動実行）+ 視覚スモーク
+1. i18n.rs に `filter_all_files()` 追加
+2. instant.rs に import（`Arc` + `ExePickerState`）+ `InstantTabState` フィールド追加
+3. instant.rs `ui()` 冒頭に poll を inline
+4. instant.rs `show_modal()` Program ブランチに参照ボタン（inline spawn, filter `["exe"]` + `["*"]`）
+5. SPEC.md §19.8 同期
+6. ビルド + clippy（PostToolUse フックが自動実行）+ 視覚スモーク
 
 ## 不変条件
 
@@ -146,14 +175,20 @@ symmetric-check で crate 全体に3つのピッカーが存在することが�
 4. **リソース管理**: spawn（active=true / thread）↔ poll（active=false / take）のペアを inline で両立。
    thread は detach だが rfd 完了で必ず result 書込 → poll が回収。panic 時は panic=abort で即終了（wedge なし）。
 5. **既存パターンとの整合**: 新規パターン導入なし。opener の inline poll/spawn を同型流用。`ExePickerState` 構造体を再利用。
-6. **YAGNI 違反**: なし。issue 要求（ExePickerState 流用 + `["exe"]` フィルタ）のみ。index 統合・新抽象は持ち込まない。
+6. **YAGNI 違反**: なし。issue 要求（ExePickerState 流用 + フィルタ）のみ。フィルタ範囲はユーザー確認で確定
+   （`["exe"]` + `["*"]`）。index 統合・新抽象は持ち込まない。
 7. **シンプル化の挑戦**: メソッド抽出案（新抽象）を棄却し inline（既存規約）を採用。`AtomicBool`/`Mutex`/子プロセス等の
    新状態は増えない（`ExePickerState` の既存 `Arc<Mutex>` を流用）。「参照ボタン押下で spawn 失敗時」は active=true の
    まま残るが、release=abort のため即プロセス終了で wedge にならない（5a /race-check 参照）。
 8. **破壊不変条件の明示**: 「壊れたら即アウト」級なし（UI 入力経路の加算的追加。Win32 フック/ホットキー/IPC に非接触）。
    検知手段=ビルド + clippy + 視覚スモーク（ダイアログが exe フィルタで開く・選択で反映・レイアウト崩れなし）。
 
-### 修正した点（plan-review/symmetric-check 起点）
+### 修正した点（plan-review/symmetric-check/ユーザー確認 起点）
 
 - 当初の「spawn/poll メソッド抽出（opener.rs 改変）」案を symmetric-check で棄却 → **Option A（inline・opener.rs 非改変）**へ。
-- SPEC §19.8 の記述粒度を plan-review 指摘で確定（防御理由を一行、§19.4 様式に調和）。
+- **フィルタ前提の誤りをユーザー確認で是正**: issue の「`["exe"]` 限定が防御」を鵜呑みにしていたが、確認の結果
+  instant exec は `.exe` 限定でない（`Command::new(exe)` が拡張子なし・`.com`・`cmd.exe`・`.bat`/`.cmd` を受理、
+  SPEC §19.2 が `cmd.exe` を例示、opener も `["exe","bat","cmd"]`）。`["exe"]` 限定はピッカーを能力より狭め
+  opener と非対称になるため、ユーザー判断で **`["exe"]`（既定誘導）+ `["*"]`（全ファイル）** の折衷に変更。
+- SPEC §19.8 の「`.bat`/`.cmd` を除外する防御」記述を**撤回**（全ファイル選択で選べるため）。誘導記述に修正。
+- rfd 0.17.2 の複数フィルタ・`["*"]`→`*.*`・最初が既定、を実ソースで確認（i18n に `filter_all_files` 追加）。

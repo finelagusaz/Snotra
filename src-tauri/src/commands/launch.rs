@@ -1,8 +1,9 @@
 use std::time::Duration;
 
 use serde_json::json;
-use snotra_core::config::{find_matching_tools, OpenerTool};
-use snotra_core::instant::split_args;
+use snotra_core::config::{find_matching_tools, InstantAction, InstantCommand, OpenerTool};
+use snotra_core::instant::{expand_exec_args, expand_vars, split_args};
+use std::process::Stdio;
 use tauri::{AppHandle, Manager};
 use tokio::time::timeout;
 
@@ -341,9 +342,98 @@ pub(crate) fn launch_item_core(path: &str) -> LaunchResult {
     }
 }
 
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// フロントへ返すインスタントコマンド情報（種別の内部構造を隠す）
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct InstantCommandDto {
+    pub name: String,
+    pub description: String,
+    pub display: String,
+}
+
+impl From<&InstantCommand> for InstantCommandDto {
+    fn from(c: &InstantCommand) -> Self {
+        let display = match &c.action {
+            InstantAction::Url { url } => url.clone(),
+            InstantAction::Exec { exe, args } => {
+                if args.is_empty() { exe.clone() } else { format!("{exe} {args}") }
+            }
+            InstantAction::Legacy { command } => command.clone(),
+        };
+        Self { name: c.name.clone(), description: c.description.clone(), display }
+    }
+}
+
+/// 環境変数 `%VAR%` を展開する（Win32 ExpandEnvironmentStringsW）。非 Windows は素通し。
+pub(crate) fn expand_env(input: &str) -> String {
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
+        use windows::core::HSTRING;
+        let src = HSTRING::from(input);
+        unsafe {
+            let needed = ExpandEnvironmentStringsW(&src, None);
+            if needed == 0 { return input.to_string(); }
+            let mut buf = vec![0u16; needed as usize];
+            let written = ExpandEnvironmentStringsW(&src, Some(&mut buf));
+            if written == 0 { return input.to_string(); }
+            // 末尾 NUL を除いて UTF-16 → String
+            let len = (written as usize).saturating_sub(1);
+            String::from_utf16_lossy(&buf[..len])
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        input.to_string()
+    }
+}
+
+/// exec 種別の起動。COM 不要（CreateProcessW 直叩き）。コンソール窓抑止。
+pub(crate) fn launch_exec_core(exe: &str, args: &str, query: &str, clipboard: &str) -> LaunchResult {
+    let exe_expanded = expand_vars(&expand_env(exe), query, clipboard);
+    let arg_tokens = expand_exec_args(args, query, clipboard, expand_env);
+
+    let mut cmd = std::process::Command::new(&exe_expanded);
+    cmd.args(&arg_tokens);
+    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    match cmd.spawn() {
+        Ok(_) => LaunchResult::ok(0),
+        Err(e) => LaunchResult::failed(-1, format!("spawn_failed: {e}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::build_launch_args;
+    use super::InstantCommandDto;
+    use snotra_core::config::{InstantAction, InstantCommand};
+
+    #[test]
+    fn instant_dto_display_url() {
+        let c = InstantCommand { name: "g".into(), description: "d".into(),
+            action: InstantAction::Url { url: "https://x".into() } };
+        assert_eq!(InstantCommandDto::from(&c).display, "https://x");
+    }
+    #[test]
+    fn instant_dto_display_exec_with_args() {
+        let c = InstantCommand { name: "ev".into(), description: String::new(),
+            action: InstantAction::Exec { exe: "everything.exe".into(), args: "-s {query}".into() } };
+        assert_eq!(InstantCommandDto::from(&c).display, "everything.exe -s {query}");
+    }
+    #[test]
+    fn instant_dto_display_exec_no_args_has_no_trailing_space() {
+        let c = InstantCommand { name: "n".into(), description: String::new(),
+            action: InstantAction::Exec { exe: "notepad.exe".into(), args: String::new() } };
+        assert_eq!(InstantCommandDto::from(&c).display, "notepad.exe");
+    }
 
     #[test]
     fn build_launch_args_appends_path_when_args_empty() {

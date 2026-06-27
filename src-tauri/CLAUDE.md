@@ -76,6 +76,7 @@ TrySuspend / MemoryUsageTargetLevel.Low は**論理目標**を下げるだけで
 - `UpdateWindow` など一部 API は windows クレートのバージョンによっては未提供。代替 API（`RedrawWindow` 等）の存在を事前に調べる
 - Windows パスの正規化では `C:` と `C:\` の違いに注意する（ドライブルートは末尾 `\` が必須）
 - ファイルメタデータ取得時、シンボリックリンクを考慮する場合は `symlink_metadata` を使う（`metadata()` はリンク先を辿る）
+- **Win32 の「サイズ取得 → バッファ充填」2回呼び出しパターン**（`ExpandEnvironmentStringsW` 等）では、2回目の戻り値（書込長）を必ず**バッファ長で clamp してからスライス**する（`written.min(buf.len())`）。値が2呼び出し間で伸びると戻り値 > バッファ長になり `buf[..written-1]` が境界外 panic、release は `Cargo.toml` で `panic="abort"` のためプロセス abort に化ける（#394）
 - Tauri プラグインの新機能を使う際は `capabilities/*.json` の権限宣言を確認する
 - `tauri.conf.json` の CSP で特定ディレクティブ（`connect-src` 等）を明示すると、そのディレクティブは `default-src` を継承しなくなる。`'self'` が必要な場合は明示的に含めること。また `tauri dev` では CSP が適用されないため、CSP 起因の問題はリリースビルドでしか再現しない
 - `ShellExecuteW` でフォルダ・画像・文書ファイルを開く場合は COM STA が必要。Tauri コマンドハンドラスレッドは COM 状態が保証されないため、`std::thread::spawn` + `CoInitializeEx(None, COINIT_APARTMENTTHREADED)` + `ShellExecuteW` + `if com_ok { CoUninitialize() }` パターンで新規スレッドに COM 環境を用意する。`is_ok()` は S_OK(0) と S_FALSE(1) を両方 true とし、どちらも CoUninitialize が必要。EXE ファイルは COM 不要なため同問題を起こさない

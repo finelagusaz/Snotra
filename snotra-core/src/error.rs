@@ -72,9 +72,6 @@ pub enum ConfigError {
     InstantCommandPrefixSlash,
     InstantCommandDuplicateName { name: String },
     MigemoMinCharsZero,
-    /// アイコンキャッシュ上限が表示ワーキングセット（`max(max_results, top_n_history)`）未満。
-    /// `min_required` は必要な最小 cap。
-    IconCacheCapTooSmall { cap: usize, min_required: usize },
 }
 
 #[cfg(test)]

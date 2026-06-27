@@ -250,9 +250,6 @@ pub(crate) fn config_error_message(error: &ConfigError, tr: &Tr) -> String {
             format!("{}{}", name, tr.err_instant_duplicate_name())
         }
         ConfigError::MigemoMinCharsZero => tr.err_migemo_min_chars_zero().to_string(),
-        ConfigError::IconCacheCapTooSmall { cap, min_required } => {
-            format!("{} (cap={}, min={})", tr.err_icon_cache_cap_too_small(), cap, min_required)
-        }
     }
 }
 

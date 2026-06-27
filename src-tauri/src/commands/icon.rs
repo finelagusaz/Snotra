@@ -6,41 +6,22 @@ use crate::icon::{encode_batch_binary, extract_png, IconCache, IconCacheState};
 use crate::state::AppState;
 
 fn ensure_icon_cache_loaded_if_enabled(state: &State<AppState>, icons: &State<IconCacheState>) {
-    // Read config values under a single engine lock, then drop it before locking icon cache
-    // (engine ロックを跨いで I/O しない)。
-    let (show_icons, configured_cap, max_results) = {
+    // Read config under a single engine lock, then drop it before locking icon cache
+    // (engine ロックを跨いで I/O しない)。cap は `Config::icon_cache_cap()` が表示ワーキングセット
+    // から派生する（独立 config キー・検証・floor を持たず「cap ≥ ワーキングセット」が構造的に成立。
+    // 詳細は snotra-core の同メソッド doc を参照）。
+    let (show_icons, cap) = {
         let engine = state.engine.lock().unwrap();
         let cfg = engine.config();
-        (
-            cfg.appearance.show_icons,
-            cfg.cache.icon_cache_cap,
-            cfg.appearance.max_results,
-        )
+        (cfg.appearance.show_icons, cfg.icon_cache_cap())
     };
-    // 表示中アイコン（可視バッチ = `items.slice(0, max_results)`）が evict されフォールバック絵文字に
-    // 落ちないよう、実効 cap を max_results で floor する。可視バッチは 1 回の get_icons_batch で
-    // max_results 件以下のミスしか挿入しないため、cap >= max_results なら**バッチ自身のミス同士は
-    // 退避し合わず**、新規抽出アイコンは応答に正しく載る（その後オフスクリーンバッチで古い順に
-    // evict されてもフロントは Blob URL を保持済み）。validate() をすり抜けた手編集の極小 cap への防御でもある。
-    // 厳密には、cap 飽和時に同一バッチが要求する**既存ヒットのうち最古エントリ**が、そのバッチの新規
-    // insert で退避され Step3 末尾の get で None になる窓はありうる（次バッチで再抽出され自己回復する
-    // 1 フレームの揺らぎ）。これは既定 cap=1000 では到達困難。
-    // また検索・フォルダのオフスクリーン先読みバッチは最大 top_n_history 件になりうる（空クエリの
-    // recent list は max_history_display 件のみ＝先読みなし）。検索結果1回分（≤ top_n_history、可視
-    // max_results 件はその部分集合）のアイコンを取りこぼさず保持するには cap を top_n_history 以上に
-    // 取る必要がある。フロントの LruIconCache も top_n_history でサイズされる（MainApp.tsx）。
-    // → 既定 cap 1000 は top_n_history 既定 200 を上回る。validate() は cap >= max(max_results,
-    //   top_n_history)（＝ワーキングセット全体）を要求し settings UI 保存を弾く。ここの floor は
-    //   その下位の最小保証（max_results）に留め、手編集で validate を迂回した極小 cap でも
-    //   表示中アイコンだけは守る（オフスクリーン先読みは degrade を許容＝ユーザーの cap 選択を尊重）。
-    let effective_cap = configured_cap.max(max_results);
     let mut cache = icons.lock().unwrap();
     if !show_icons {
         *cache = None;
         return;
     }
     if cache.is_none() {
-        *cache = Some(IconCache::load(effective_cap));
+        *cache = Some(IconCache::load(cap));
     }
 }
 

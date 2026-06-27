@@ -93,7 +93,7 @@
 - アイコン非表示設定時・アイコンデータなし時はフォールバック絵文字（📁📄）を表示
 - インデックス再構築時はキャッシュをクリア（次回検索時に再抽出）
 - `icons.bin` は起動時に先読みせず、初回アイコン取得（`get_icons_batch`）時に遅延ロード
-- 件数上限 `cache.icon_cache_cap`（既定 1000）を超えると挿入順で最古から退避（FIFO）し、常駐メモリと `icons.bin` の両方を頭打ちにする。退避は書き込み経路（挿入・ロード）でのみ行い、取得（`get`）はアクセス順を更新しない。単一の `get_icons_batch` が自己 evict しないよう、`validate()` は cap が表示ワーキングセット `max(max_results, top_n_history)`（検索・フォルダ結果リストの最大件数＝フロント先読み・LruIconCache サイズ）以上であることを要求する。`icon_cache_cap` は設定画面に公開しない `config.toml` 専用キー（手編集で調整）
+- 件数上限を超えると挿入順で最古から退避（FIFO）し、常駐メモリと `icons.bin` の両方を頭打ちにする。退避は書き込み経路（挿入・ロード）でのみ行い、取得（`get`）はアクセス順を更新しない。上限は独立した設定キーを持たず、表示ワーキングセット `max(max_results, top_n_history, max_history_display)`（アイコンを要求しうる結果リストの最大件数＝フロント先読み・`LruIconCache` サイズ）の定数倍（実装は ×5、既定 200×5=1000）として導出する。これにより「上限 ≥ ワーキングセット」を検証なしで構造的に保証し、単一の `get_icons_batch` が自己 evict することはなく、`top_n_history` 変更時は上限も自動追従する
 
 ## 4. 検索システム
 
@@ -521,7 +521,7 @@ stateDiagram-v2
 用途別ファイル分割:
 
 - `%APPDATA%\Snotra\index.bin`
-- `%APPDATA%\Snotra\icons.bin`（件数上限 `cache.icon_cache_cap` で頭打ち。§3.4 参照）
+- `%APPDATA%\Snotra\icons.bin`（件数上限で頭打ち。上限は表示ワーキングセットから派生、§3.4 参照）
 - `%APPDATA%\Snotra\history.bin`
 - `%APPDATA%\Snotra\window.bin`
 

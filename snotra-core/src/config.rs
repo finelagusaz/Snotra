@@ -190,8 +190,6 @@ pub struct Config {
     #[serde(default)]
     pub search: SearchConfig,
     #[serde(default)]
-    pub cache: CacheConfig,
-    #[serde(default)]
     pub openers: Vec<OpenerRule>,
     #[serde(default)]
     pub instant_commands: Vec<InstantCommand>,
@@ -500,31 +498,6 @@ impl Default for VisualConfig {
     }
 }
 
-fn default_icon_cache_cap() -> usize {
-    1000
-}
-
-/// アイコンキャッシュ（常駐メモリ + `icons.bin`）のチューニング。
-/// 設定画面 UI には公開せず、`config.toml` の手編集で調整する内部ノブ。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CacheConfig {
-    /// アイコンキャッシュの最大保持件数。上限超過時は挿入順で最古のエントリから退避（FIFO）。
-    /// 単一の `get_icons_batch` が自己 evict しないよう、表示ワーキングセット
-    /// `max(max_results, top_n_history)`（検索・フォルダの結果リスト最大件数＝フロント
-    /// LruIconCache サイズ）以上であること（`validate()` で検証）。実効値は `commands::icon`
-    /// 側で `max(max_results)` に floor される（手編集で validate を迂回した場合の表示中アイコン保証）。
-    #[serde(default = "default_icon_cache_cap")]
-    pub icon_cache_cap: usize,
-}
-
-impl Default for CacheConfig {
-    fn default() -> Self {
-        Self {
-            icon_cache_cap: default_icon_cache_cap(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScanPath {
     pub path: String,
@@ -753,7 +726,6 @@ impl Default for Config {
                 scan: Self::default_scan_paths(),
             },
             search: SearchConfig::default(),
-            cache: CacheConfig::default(),
             openers: Vec::new(),
             instant_commands: vec![
                 InstantCommand {
@@ -771,7 +743,36 @@ impl Default for Config {
     }
 }
 
+/// アイコンキャッシュが保持する「結果リスト何本分か」。表示ワーキングセットへの倍率。
+/// 1 より大きくすることで、検索を切り替えても直近数本分のアイコンを残し再抽出を抑える。
+const ICON_CACHE_RETENTION_FACTOR: usize = 5;
+
 impl Config {
+    /// アイコンキャッシュ（常駐メモリ + `icons.bin`）の最大保持件数（派生値）。
+    ///
+    /// 表示ワーキングセット = アイコンを要求しうる結果リストの最大長
+    /// `max(max_results, top_n_history, max_history_display)`
+    /// （検索・フォルダ = `top_n_history`、空クエリ recent = `max_history_display`、
+    /// 可視行 = `max_results`。フロント `LruIconCache` サイズも `top_n_history` に一致）の
+    /// `ICON_CACHE_RETENTION_FACTOR` 倍。
+    ///
+    /// 独立した設定キーを持たず派生値とすることで「上限 ≥ ワーキングセット」が**構造的に成立**し
+    /// （検証・floor・drift が不要）、`top_n_history` 変更時は上限も自動追従する。単一の
+    /// `get_icons_batch` が自己 evict することはない。倍率で再検索時の再抽出を抑えつつ無制限増加を止める。
+    ///
+    /// 保守注意: ここの `working_set` は engine がアイコンを要求する結果リストの fetch 上限と対応する
+    /// （`Engine::search` / `capture_folder_list_context` = `effective_top_n_history`、
+    /// `recent_history` = `effective_max_history_display`）。engine 側でアイコンを要求する新たな
+    /// 長尺リスト経路を増やしたら、その上限をこの式にも反映すること。
+    pub fn icon_cache_cap(&self) -> usize {
+        let working_set = self
+            .appearance
+            .max_results
+            .max(self.search.effective_top_n_history())
+            .max(self.search.effective_max_history_display());
+        working_set.max(1).saturating_mul(ICON_CACHE_RETENTION_FACTOR)
+    }
+
     /// Returns the default scan paths (common Start Menu + Desktop).
     /// User Start Menu is intentionally excluded.
     pub fn default_scan_paths() -> Vec<ScanPath> {
@@ -1076,21 +1077,9 @@ impl Config {
             errors.push(ConfigError::MigemoMinCharsZero);
         }
 
-        // Cache validation: icon cache cap must cover the full prefetch working set so that
-        // no single get_icons_batch call self-evicts its own entries. 検索・フォルダの結果
-        // リストは最大 top_n_history 件で、フロントの先読みバッチ（ResultsSection）と
-        // LruIconCache も同サイズ。可視行（max_results）はその部分集合。よって必要最小は
-        // max(max_results, top_n_history)。
-        let icon_cache_min = self
-            .appearance
-            .max_results
-            .max(self.search.effective_top_n_history());
-        if self.cache.icon_cache_cap < icon_cache_min {
-            errors.push(ConfigError::IconCacheCapTooSmall {
-                cap: self.cache.icon_cache_cap,
-                min_required: icon_cache_min,
-            });
-        }
+        // NOTE: アイコンキャッシュ上限は独立 config キーを持たず `Config::icon_cache_cap()` で
+        // 表示ワーキングセットから派生する（「上限 ≥ ワーキングセット」が構造的に成立）ため、
+        // ここでの検証は不要。
 
         // Instant command name uniqueness
         {
@@ -3299,79 +3288,52 @@ scan = []
     }
 
     #[test]
-    fn cache_config_defaults_when_section_missing() {
-        // 既存 config.toml に [cache] セクションが無い場合でも icon_cache_cap が
-        // デフォルト値で補完される（後方互換）。
-        let toml = r#"
-[hotkey]
-modifier = "Alt"
-key = "Q"
-[appearance]
-max_results = 8
-window_width = 600
-[paths]
-scan = []
-"#;
-        let config = Config::from_toml_str(toml).expect("parse");
-        assert_eq!(config.cache.icon_cache_cap, 1000);
+    fn icon_cache_cap_derives_from_working_set_times_retention() {
+        // 既定: max_results=8, top_n_history=200, max_history_display=8 → working_set=200
+        // → cap = 200 × 5 = 1000（旧 default と一致＝既定挙動は不変）。
+        let config = Config::default();
+        assert_eq!(config.search.effective_top_n_history(), 200);
+        assert_eq!(config.icon_cache_cap(), 1000);
     }
 
     #[test]
-    fn validate_icon_cache_cap_below_working_set() {
-        // 実ワーキングセットは max(max_results, top_n_history)。既定 top_n_history=200 が
-        // 支配的なので、cap=50 は不足し min_required=200 を報告する。
+    fn icon_cache_cap_scales_with_top_n_history() {
+        // top_n_history を上げると上限も自動追従する（検証不要・drift なし）。
+        let mut config = Config::default();
+        config.search.top_n_history = Some(500);
+        assert_eq!(config.icon_cache_cap(), 2500); // 500 × 5
+    }
+
+    #[test]
+    fn icon_cache_cap_uses_max_of_all_list_limits() {
+        // working_set = max(max_results, top_n_history, max_history_display)。
+        // ここでは max_history_display が支配的になるケースを検証する。
         let mut config = Config::default();
         config.appearance.max_results = 8;
-        config.search.top_n_history = None; // effective = 200
-        config.cache.icon_cache_cap = 50;
-        let errors = config.validate();
-        assert!(
-            errors.iter().any(|e| matches!(
-                e,
-                ConfigError::IconCacheCapTooSmall {
-                    cap: 50,
-                    min_required: 200
-                }
-            )),
-            "cap < working set should report IconCacheCapTooSmall {{ min_required: 200 }}, got {errors:?}"
-        );
+        config.search.top_n_history = Some(50);
+        config.search.max_history_display = Some(120);
+        assert_eq!(config.icon_cache_cap(), 600); // max(8,50,120)=120 × 5
     }
 
     #[test]
-    fn validate_icon_cache_cap_at_working_set_ok() {
-        // 境界: cap == ワーキングセット（= top_n_history）はエラーなし。
-        let mut config = Config::default();
-        config.appearance.max_results = 8;
-        config.search.top_n_history = Some(200);
-        config.cache.icon_cache_cap = 200;
-        let errors = config.validate();
-        assert!(
-            !errors
-                .iter()
-                .any(|e| matches!(e, ConfigError::IconCacheCapTooSmall { .. })),
-            "cap == working set should be valid, got {errors:?}"
-        );
-    }
-
-    #[test]
-    fn validate_icon_cache_cap_min_required_is_max_of_max_results_and_top_n_history() {
-        // top_n_history を max_results より小さくすると max_results が支配的になる
-        // （min_required = max(max_results, top_n_history) であることの検証）。
+    fn icon_cache_cap_max_results_dominates_when_history_limits_small() {
         let mut config = Config::default();
         config.appearance.max_results = 12;
         config.search.top_n_history = Some(5);
-        config.cache.icon_cache_cap = 10; // 10 < max(12, 5) = 12
-        let errors = config.validate();
-        assert!(
-            errors.iter().any(|e| matches!(
-                e,
-                ConfigError::IconCacheCapTooSmall {
-                    cap: 10,
-                    min_required: 12
-                }
-            )),
-            "min_required should be max(max_results=12, top_n_history=5)=12, got {errors:?}"
-        );
+        config.search.max_history_display = Some(3);
+        assert_eq!(config.icon_cache_cap(), 60); // max(12,5,3)=12 × 5
+    }
+
+    #[test]
+    fn icon_cache_cap_never_collapses_to_zero() {
+        // 退行防御: 全リスト上限が 0 でも working_set は 1 で floor され、cap は RETENTION 以上。
+        // （max_results=0 は validate の MaxResultsZero 対象だが、cap 導出は panic/0 にならない）。
+        let mut config = Config::default();
+        config.appearance.max_results = 0;
+        config.search.top_n_history = Some(0);
+        config.search.max_history_display = Some(0);
+        assert_eq!(config.icon_cache_cap(), ICON_CACHE_RETENTION_FACTOR);
+        assert!(config.icon_cache_cap() >= 1);
     }
 
     #[test]

@@ -32,8 +32,10 @@ config キー名は `SPEC.md` §7 等に記載される設定スキーマ。挙�
    - **末尾 `get_or_insert_with`**: 現行 `search.top_n_history.get_or_insert_with(default_top_n_history)`/`max_history_display` を**削除し**、`visible_rows.get_or_insert_with(default_visible_rows)`/`result_limit.get_or_insert_with(default_result_limit)`/`recent_limit` の**3つに置き換える**（OLD を残すと take 後 legacy が再 Some 化し skip_serializing が無効になる）
 6. **`validate()`**: `appearance.max_results == 0` → `appearance.effective_visible_rows() == 0`。`Config::icon_cache_cap()`（line 762/764-772 付近）の `effective_top_n_history()`/`effective_max_history_display()`/`appearance.max_results` を新 accessor（`effective_result_limit`/`effective_recent_limit`/`effective_visible_rows`）へ（**コメント line 764-765 も新名に同期**）
 7. **`error.rs` + 全参照（4箇所チェックリスト）**: `ConfigError::MaxResultsZero` → `VisibleRowsZero`。同期先: ① error.rs:67（定義）② config.rs:1048（push）③ config.rs テスト assert（`MaxResultsZero` grep、2箇所）④ snotra-settings app.rs:237（match arm）⑤ i18n.rs:152（`err_max_results_zero`→`err_visible_rows_zero`）
-8. **テスト**:
+8. **テスト**（**周辺調査の追加2件を含む**）:
    - 既存 assert の `config.appearance.max_results` → `.visible_rows`、`effective_top_n_history()`→`effective_result_limit()` 等を改名
+   - **既存マイグレーションテスト群の意味的 retarget（config.rs:1323-1424 クラスタ・約12 assert）**: `migrate_top_n_history_from_appearance_to_search` 等は到達先を `config.search.top_n_history`/`max_history_display` で assert している。改名後はマイグレーション鎖が1層増える（`appearance.* → [search.* legacy] → result_limit/recent_limit`）。**各テストを読み、到達先 assert を `result_limit`/`recent_limit` に張り替え**、新中間層（`search.top_n_history` legacy）の扱いを反映する。機械的改名でなく意味的更新
+   - **テストコメント内の旧シンボル名**（config.rs:1431 `default_top_n_history`、config.rs:3330 `MaxResultsZero`/`max_results=0`）も新名へ
    - 既存 `validate_max_results_zero` を **`validate_visible_rows_zero` に改名**（新規でなく rename。内部の `max_results = 0` → `visible_rows = 0`）
    - **新規 migration テスト**: `migrate_legacy_max_results_to_visible_rows` / `migrate_search_top_n_history_to_result_limit`（intermediate）/ `migrate_appearance_top_n_history_to_result_limit`（oldest）/ **`migrate_prefers_search_over_appearance_top_n_history`（両在 fixture: `[appearance] top_n_history=100` + `[search] top_n_history=200` → result_limit=200 で search 優先）** / `migrate_max_history_display_chain`
    - **round-trip**: `new_keys_save_and_reload`（新キー読込→保存）/ `legacy_keys_not_serialized`（保存後の TOML に旧キーが出ない）
@@ -112,7 +114,7 @@ Phase 1（core）→ Phase 2/3（core に依存）→ Phase 4（bootstrap 型に
 ### 5b. セルフレビューチェックリスト
 
 1. **対称コードパス**: save↔load（skip_serializing↔migration）、new↔legacy、2層レガシー集約を確認（plan-review 検証済み）
-2. **影響範囲の網羅性**: 3キーを rust/ts/md/e2e で grep 済み。config フィールドアクセス（改名対象）と汎用 top-k パラメータ（OUT）を分離。bootstrap/config_watcher/settings/frontend/docs を列挙
+2. **影響範囲の網羅性（シンボル単位で再列挙）**: レビュー指摘の共通項＝「config キー“文字列”粒度の推論」（名前↔概念が多対多で、間接命名は漏れ・同名別概念は誤検出）。対策として**改名する各シンボル**（3 フィールド・3 `effective_*`・2 `default_*`・4 i18n メソッド・`MaxResultsZero` variant）の全呼び出し元を grep で列挙し被覆を検証。汎用 top-k パラメータ（`folder.rs`/`search.rs`/`ctx.max_results`）と config フィールドアクセスを概念で分離（OUT）。この再列挙で engine.rs（accessor 呼び出し元）・既存マイグレーションテスト群・テストコメントの追加取りこぼしを回収
 3. **境界条件**: legacy+new 両 None→default、2層両在→search 優先、visible_rows 必須→default(8) 緩和、icon_cache_cap 派生不変
 4. **リソース管理**: 新規フラグ・プロセス・listen なし。legacy フィールドは `skip_serializing` で保存されず次回 load で消える（migration 済みなら take で空）
 5. **既存パターンとの整合**: Option+apply_migrations（既存の appearance→search 移行と同型）を踏襲。serde alias（新規パターン・toml サポート不確実）を避ける。`visible_rows` のみ非 Option（max_results が元々必須のため、各キーの現状の型を尊重）

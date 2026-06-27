@@ -4,8 +4,9 @@ use std::sync::{Arc, Mutex};
 use eframe::egui;
 use snotra_core::config::Config;
 
-use crate::app::{config_error_message, TEXT_SECONDARY};
+use crate::app::config_error_message;
 use crate::i18n::Tr;
+use crate::style;
 
 /// Result type for file picker threads.
 /// None = still running, Some(None) = cancelled, Some(Some(path)) = selected.
@@ -64,14 +65,11 @@ pub fn ui(
         }
     }
 
-    egui::ScrollArea::vertical().auto_shrink([false, false]).scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).show(ui, |ui| {
-        ui.spacing_mut().interact_size.y = 24.0;
-
+    style::tab_scroll_area(ui, |ui| {
         // Export section
-        ui.heading(tr.heading_export());
-        ui.add_space(4.0);
-        ui.label(egui::RichText::new(tr.label_export_description()).color(TEXT_SECONDARY));
-        ui.add_space(8.0);
+        style::section_heading(ui, tr.heading_export());
+        style::hint(ui, tr.label_export_description());
+        ui.add_space(style::SPACE_GROUP);
         if ui
             .add_enabled(!state.export_active, egui::Button::new(tr.btn_export()))
             .clicked()
@@ -80,15 +78,12 @@ pub fn ui(
             start_export(ctx, state, tr);
         }
 
-        ui.add_space(16.0);
-        ui.separator();
-        ui.add_space(8.0);
+        style::section_gap(ui);
 
         // Import section
-        ui.heading(tr.heading_import());
-        ui.add_space(4.0);
-        ui.label(egui::RichText::new(tr.label_import_description()).color(TEXT_SECONDARY));
-        ui.add_space(8.0);
+        style::section_heading(ui, tr.heading_import());
+        style::hint(ui, tr.label_import_description());
+        ui.add_space(style::SPACE_GROUP);
         if ui
             .add_enabled(!state.import_active, egui::Button::new(tr.btn_import()))
             .clicked()
@@ -97,34 +92,32 @@ pub fn ui(
             start_import(ctx, state, tr);
         }
 
-        ui.add_space(16.0);
-        ui.separator();
-        ui.add_space(8.0);
+        style::section_gap(ui);
 
         // Open folder section
-        ui.heading(tr.heading_data_folder());
-        ui.add_space(4.0);
-        ui.label(egui::RichText::new(tr.label_data_folder_description()).color(TEXT_SECONDARY));
+        style::section_heading(ui, tr.heading_data_folder());
+        style::hint(ui, tr.label_data_folder_description());
         if let Some(dir) = Config::config_dir() {
-            ui.add_space(2.0);
-            ui.label(egui::RichText::new(dir.display().to_string()).color(TEXT_SECONDARY));
+            ui.add_space(style::SPACE_HINT);
+            style::hint(ui, &dir.display().to_string());
         }
-        ui.add_space(8.0);
+        ui.add_space(style::SPACE_GROUP);
         if ui.button(tr.btn_open_folder()).clicked()
             && let Some(dir) = Config::config_dir()
         {
             let _ = open::that(dir);
         }
 
-        // Inline message (persists until next operation)
+        // Inline message (persists until next operation).
+        // 結果領域の境界として水平 separator を残す（セクション間の区切りとは別の用途）。
         if !state.message.is_empty() {
-            ui.add_space(16.0);
+            ui.add_space(style::SPACE_GROUP);
             ui.separator();
-            ui.add_space(8.0);
+            ui.add_space(style::SPACE_GROUP);
             let color = if state.message_is_error {
-                egui::Color32::from_rgb(196, 43, 28) // Red for errors
+                style::STATUS_ERROR
             } else {
-                egui::Color32::from_rgb(16, 124, 16) // Green for success
+                style::STATUS_SUCCESS
             };
             ui.label(egui::RichText::new(&state.message).color(color));
         }

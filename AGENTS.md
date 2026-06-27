@@ -15,6 +15,7 @@
 - 開発原則・デバッグ指針（汎用）: `docs/development-principles.md`
 - ビルド・テストコマンド: `docs/build-commands.md`
 - モジュール固有の不変条件: 各サブディレクトリの `CLAUDE.md`（`snotra-core/`, `src-tauri/`, `ui/`, `snotra-settings/`）
+- 設定 UI デザインガイドライン: `snotra-settings/SETTINGS-DESIGN.md`（デザイントークン・Fluent タイポグラフィ・レイアウト規約）
 - 実装前チェック: `.claude/rules/`（該当ファイルの読み取り時に自動配送）
 
 ## 開発ワークフロー

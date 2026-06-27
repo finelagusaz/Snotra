@@ -3,6 +3,7 @@ use egui::Color32;
 use snotra_core::config::{Config, CustomTheme, ThemePreset};
 
 use crate::i18n::Tr;
+use crate::style;
 
 struct PresetDef {
     preset: ThemePreset,
@@ -56,12 +57,9 @@ const PRESETS: &[PresetDef] = &[
 const SWATCH_SIZE: f32 = 16.0;
 
 pub fn ui(ui: &mut egui::Ui, config: &mut Config, fonts: &[String], tr: &Tr) {
-    egui::ScrollArea::vertical().auto_shrink([false, false]).scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).show(ui, |ui| {
-        ui.spacing_mut().interact_size.y = 24.0;
-
+    style::tab_scroll_area(ui, |ui| {
         // -- Theme presets --
-        ui.heading(tr.heading_theme());
-        ui.add_space(4.0);
+        style::section_heading(ui, tr.heading_theme());
 
         ui.horizontal_wrapped(|ui| {
             for p in PRESETS {
@@ -102,13 +100,12 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, fonts: &[String], tr: &Tr) {
             config.visual.preset = ThemePreset::Custom;
         }
 
-        ui.add_space(12.0);
+        style::section_gap(ui);
 
         // -- Colors --
-        ui.heading(tr.heading_color());
-        ui.add_space(4.0);
+        style::section_heading(ui, tr.heading_color());
 
-        egui::Grid::new("color_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+        style::settings_grid("color_grid").show(ui, |ui| {
             color_row(ui, tr.label_bg_color(), &mut config.visual.background_color);
             color_row(ui, tr.label_input_bg(), &mut config.visual.input_background_color);
             color_row(ui, tr.label_text_color(), &mut config.visual.text_color);
@@ -116,13 +113,12 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, fonts: &[String], tr: &Tr) {
             color_row(ui, tr.label_hint_text(), &mut config.visual.hint_text_color);
         });
 
-        ui.add_space(12.0);
+        style::section_gap(ui);
 
         // -- Font --
-        ui.heading(tr.heading_font());
-        ui.add_space(4.0);
+        style::section_heading(ui, tr.heading_font());
 
-        egui::Grid::new("font_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+        style::settings_grid("font_grid").show(ui, |ui| {
             ui.label(tr.label_font_family());
             egui::ComboBox::from_id_salt("font_family")
                 .selected_text(&config.visual.font_family)
@@ -134,25 +130,34 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, fonts: &[String], tr: &Tr) {
             ui.end_row();
 
             ui.label(tr.label_font_size());
-            ui.add_sized([60.0, ui.spacing().interact_size.y], egui::DragValue::new(&mut config.visual.font_size).range(8..=48));
+            ui.add_sized(
+                [style::FIELD_NUMERIC, ui.spacing().interact_size.y],
+                egui::DragValue::new(&mut config.visual.font_size).range(8..=48),
+            );
             ui.end_row();
         });
 
-        ui.add_space(12.0);
+        style::section_gap(ui);
 
         // -- Window --
-        ui.heading(tr.heading_appearance());
-        ui.add_space(4.0);
+        style::section_heading(ui, tr.heading_appearance());
 
-        egui::Grid::new("window_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+        style::settings_grid("window_grid").show(ui, |ui| {
             ui.label(tr.label_visible_rows());
             let visible_default = config.appearance.effective_visible_rows();
-            ui.add_sized([60.0, ui.spacing().interact_size.y], egui::DragValue::new(config.appearance.visible_rows.get_or_insert(visible_default)).range(1..=50));
+            ui.add_sized(
+                [style::FIELD_NUMERIC, ui.spacing().interact_size.y],
+                egui::DragValue::new(config.appearance.visible_rows.get_or_insert(visible_default))
+                    .range(1..=50),
+            );
             ui.end_row();
 
             ui.label(tr.label_window_width());
             ui.horizontal(|ui| {
-                ui.add_sized([60.0, ui.spacing().interact_size.y], egui::DragValue::new(&mut config.appearance.window_width).range(300..=1200));
+                ui.add_sized(
+                    [style::FIELD_NUMERIC, ui.spacing().interact_size.y],
+                    egui::DragValue::new(&mut config.appearance.window_width).range(300..=1200),
+                );
                 ui.label("px");
             });
             ui.end_row();
@@ -179,7 +184,7 @@ fn color_row(ui: &mut egui::Ui, label: &str, hex: &mut String) {
         }
 
         // Hex text input
-        let resp = ui.add(egui::TextEdit::singleline(hex).desired_width(80.0));
+        let resp = ui.add(egui::TextEdit::singleline(hex).desired_width(style::FIELD_HEX));
         if resp.lost_focus() {
             // Validate on focus loss
             if Color32::from_hex(hex).is_err() {

@@ -1,22 +1,15 @@
 use eframe::egui;
-use egui::{Color32, CornerRadius, Stroke};
+use egui::{CornerRadius, Stroke};
 use snotra_core::config::{Config, ConfigError, Language, LoadOutcome};
 use snotra_core::window_data::{self, WindowPlacement};
 
 use crate::i18n::Tr;
+use crate::style;
+use crate::style::{
+    ACCENT, BANNER_CAUTION_BG, BANNER_CAUTION_FG, CONTENT_BG, FOOTER_BG, SIDEBAR_BG, TAB_HOVER,
+    TAB_SELECTED_BG, TEXT_PRIMARY, TEXT_SECONDARY, WIDGET_ACTIVE_BG, WIDGET_BG, WIDGET_BORDER,
+};
 use crate::tabs;
-
-// Windows 11 Settings-inspired color palette
-const SIDEBAR_BG: Color32 = Color32::from_rgb(243, 243, 243); // WinUI NavigationView pane
-const CONTENT_BG: Color32 = Color32::from_rgb(249, 249, 249); // WinUI content area
-const FOOTER_BG: Color32 = Color32::from_rgb(243, 243, 243);
-const ACCENT: Color32 = Color32::from_rgb(0, 103, 192); // Windows 11 default blue
-const TAB_HOVER: Color32 = Color32::from_rgb(232, 232, 232);
-const TAB_SELECTED_BG: Color32 = Color32::from_rgb(255, 255, 255);
-const TEXT_PRIMARY: Color32 = Color32::from_rgb(26, 26, 26);
-pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(96, 96, 96);
-const WIDGET_BG: Color32 = Color32::from_rgb(255, 255, 255);
-const WIDGET_BORDER: Color32 = Color32::from_rgb(210, 210, 210);
 
 fn apply_win11_theme(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::light();
@@ -40,7 +33,7 @@ fn apply_win11_theme(ctx: &egui::Context) {
     visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, TEXT_PRIMARY);
     visuals.widgets.hovered.corner_radius = CornerRadius::same(4);
 
-    visuals.widgets.active.bg_fill = Color32::from_rgb(220, 220, 220);
+    visuals.widgets.active.bg_fill = WIDGET_ACTIVE_BG;
     visuals.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT);
     visuals.widgets.active.fg_stroke = Stroke::new(1.0, TEXT_PRIMARY);
     visuals.widgets.active.corner_radius = CornerRadius::same(4);
@@ -514,11 +507,11 @@ impl eframe::App for SettingsApp {
             // チェックを入れるまで Save は無効（下の footer 参照）。
             if self.loaded_read_failed {
                 egui::Frame::NONE
-                    .fill(Color32::from_rgb(255, 244, 206))
+                    .fill(BANNER_CAUTION_BG)
                     .inner_margin(egui::Margin::symmetric(10, 8))
                     .show(ui, |ui| {
                         ui.colored_label(
-                            Color32::from_rgb(140, 90, 0),
+                            BANNER_CAUTION_FG,
                             self.tr.read_failed_banner(),
                         );
                         ui.checkbox(
@@ -607,6 +600,7 @@ pub fn run(
         Box::new(move |cc| {
             crate::font::configure_fonts(&cc.egui_ctx);
             apply_win11_theme(&cc.egui_ctx);
+            style::apply_type_ramp(&cc.egui_ctx);
             Ok(Box::new(SettingsApp::new(config, first_run, initial_tab, load_outcome)))
         }),
     )

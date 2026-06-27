@@ -1,19 +1,15 @@
 use eframe::egui;
-use eframe::egui::RichText;
 use snotra_core::config::{Config, SearchHistoryNormalizationConfig, SearchModeConfig};
 
-use crate::app::TEXT_SECONDARY;
 use crate::i18n::Tr;
+use crate::style;
 
 pub fn ui(ui: &mut egui::Ui, config: &mut Config, tr: &Tr) {
-    egui::ScrollArea::vertical().auto_shrink([false, false]).scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).show(ui, |ui| {
-        ui.spacing_mut().interact_size.y = 24.0;
-
+    style::tab_scroll_area(ui, |ui| {
         // -- Search mode --
-        ui.heading(tr.heading_search_mode());
-        ui.add_space(4.0);
+        style::section_heading(ui, tr.heading_search_mode());
 
-        egui::Grid::new("search_mode_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+        style::settings_grid("search_mode_grid").show(ui, |ui| {
             ui.label(tr.label_normal_mode());
             search_mode_combo(ui, "normal_mode", &mut config.search.normal_mode, tr);
             ui.end_row();
@@ -23,54 +19,50 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, tr: &Tr) {
             ui.end_row();
         });
 
-        ui.add_space(12.0);
+        style::section_gap(ui);
 
         // -- Visibility --
-        ui.heading(tr.heading_visibility());
-        ui.add_space(4.0);
+        style::section_heading(ui, tr.heading_visibility());
+        ui.checkbox(&mut config.search.show_hidden_system, tr.cb_show_hidden_system());
 
-        ui.checkbox(
-            &mut config.search.show_hidden_system,
-            tr.cb_show_hidden_system(),
-        );
-
-        ui.add_space(12.0);
+        style::section_gap(ui);
 
         // -- PATH executables --
-        ui.heading(tr.heading_path_env());
-        ui.add_space(4.0);
+        style::section_heading(ui, tr.heading_path_env());
+        ui.checkbox(&mut config.search.include_path_env, tr.cb_include_path_env());
 
-        ui.checkbox(
-            &mut config.search.include_path_env,
-            tr.cb_include_path_env(),
-        );
-
-        ui.add_space(12.0);
+        style::section_gap(ui);
 
         // -- History --
-        ui.heading(tr.heading_history());
-        ui.add_space(4.0);
+        style::section_heading(ui, tr.heading_history());
 
-        egui::Grid::new("history_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+        style::settings_grid("history_grid").show(ui, |ui| {
             ui.label(tr.label_result_limit());
             let result_limit_default = config.search.effective_result_limit();
-            ui.add_sized([60.0, ui.spacing().interact_size.y], egui::DragValue::new(config.search.result_limit.get_or_insert(result_limit_default)).range(10..=1000));
+            ui.add_sized(
+                [style::FIELD_NUMERIC, ui.spacing().interact_size.y],
+                egui::DragValue::new(config.search.result_limit.get_or_insert(result_limit_default))
+                    .range(10..=1000),
+            );
             ui.end_row();
             ui.label(tr.label_recent_limit());
             let recent_limit_default = config.search.effective_recent_limit();
-            ui.add_sized([60.0, ui.spacing().interact_size.y], egui::DragValue::new(config.search.recent_limit.get_or_insert(recent_limit_default)).range(1..=50));
+            ui.add_sized(
+                [style::FIELD_NUMERIC, ui.spacing().interact_size.y],
+                egui::DragValue::new(config.search.recent_limit.get_or_insert(recent_limit_default))
+                    .range(1..=50),
+            );
             ui.end_row();
         });
 
-        ui.add_space(12.0);
+        style::section_gap(ui);
 
         // -- History score --
-        ui.heading(tr.heading_history_score());
-        ui.add_space(4.0);
+        style::section_heading(ui, tr.heading_history_score());
 
         let cap_enabled =
             config.search.history_normalization != SearchHistoryNormalizationConfig::Disabled;
-        egui::Grid::new("history_score_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+        style::settings_grid("history_score_grid").show(ui, |ui| {
             ui.label(tr.label_normalization());
             history_normalization_combo(ui, &mut config.search.history_normalization, tr);
             ui.end_row();
@@ -78,7 +70,7 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, tr: &Tr) {
             ui.label(tr.label_fuzzy_cap_ratio());
             ui.add_enabled_ui(cap_enabled, |ui| {
                 ui.add_sized(
-                    [60.0, ui.spacing().interact_size.y],
+                    [style::FIELD_NUMERIC, ui.spacing().interact_size.y],
                     egui::DragValue::new(&mut config.search.fuzzy_history_cap_ratio)
                         .range(0.0..=1.0)
                         .speed(0.05)
@@ -88,22 +80,21 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, tr: &Tr) {
             ui.end_row();
         });
 
-        ui.add_space(12.0);
+        style::section_gap(ui);
 
         // -- Migemo 検索 --
-        ui.heading(tr.heading_migemo());
-        ui.add_space(4.0);
+        style::section_heading(ui, tr.heading_migemo());
 
         ui.checkbox(&mut config.search.migemo_enabled, tr.cb_migemo_enabled());
-        ui.label(RichText::new(tr.hint_migemo()).small().color(TEXT_SECONDARY));
+        style::hint(ui, tr.hint_migemo());
 
-        ui.add_space(4.0);
+        ui.add_space(style::SPACE_HINT);
 
-        egui::Grid::new("migemo_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+        style::settings_grid("migemo_grid").show(ui, |ui| {
             ui.label(tr.label_migemo_min_chars());
             ui.add_enabled_ui(config.search.migemo_enabled, |ui| {
                 ui.add_sized(
-                    [60.0, ui.spacing().interact_size.y],
+                    [style::FIELD_NUMERIC, ui.spacing().interact_size.y],
                     egui::DragValue::new(&mut config.search.migemo_min_chars).range(1..=10),
                 );
             });

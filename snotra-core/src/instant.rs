@@ -2,6 +2,53 @@ use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 
 use crate::config::InstantCommand;
 
+/// シェル風クォート対応の引数分割。
+/// `"..."` で囲まれた部分はスペースを含んでも1トークンとして扱う。
+/// 閉じクォートがない場合は行末まで1トークン。
+/// 空クォート `""` はトークンを生成しない。
+pub fn split_args(args: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    for ch in args.chars() {
+        match ch {
+            '"' => in_quotes = !in_quotes,
+            c if c.is_whitespace() && !in_quotes => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            c => current.push(c),
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
+/// `{query}` / `{clip}` を生のまま置換する。URL エンコードはしない。
+pub fn expand_vars(template: &str, query: &str, clipboard: &str) -> String {
+    template.replace("{query}", query).replace("{clip}", clipboard)
+}
+
+/// exec 種別の引数トークン列を構築する。
+/// 手順: `split_args` で分割 → 各トークンに `env_expand`（環境変数展開）→ `{query}`/`{clip}` 置換。
+/// この順序により (1) 外部入力 query/clip は env 展開されない、(2) env 値の空白は
+/// トークン内に留まり引数を割らない、(3) 空白入り query は1引数を保つ。
+/// `build_launch_args` の `{path}` 末尾補完は行わない（exec は path を持たない）。
+pub fn expand_exec_args(
+    args: &str,
+    query: &str,
+    clipboard: &str,
+    env_expand: impl Fn(&str) -> String,
+) -> Vec<String> {
+    split_args(args)
+        .into_iter()
+        .map(|tok| expand_vars(&env_expand(&tok), query, clipboard))
+        .collect()
+}
+
 /// Expand `{query}` and `{clip}` placeholders in an instant command template.
 ///
 /// If the command starts with `http://` or `https://`, variable values are
@@ -12,9 +59,9 @@ pub fn expand_instant_command(command: &str, query: &str, clipboard: &str) -> St
     if is_url {
         let q = utf8_percent_encode(query, NON_ALPHANUMERIC).to_string();
         let c = utf8_percent_encode(clipboard, NON_ALPHANUMERIC).to_string();
-        command.replace("{query}", &q).replace("{clip}", &c)
+        expand_vars(command, &q, &c)
     } else {
-        command.replace("{query}", query).replace("{clip}", clipboard)
+        expand_vars(command, query, clipboard)
     }
 }
 
@@ -37,6 +84,7 @@ pub fn filter_instant_commands<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::InstantAction;
 
     // ---- expand_instant_command tests ----
 
@@ -122,9 +170,9 @@ mod tests {
 
     fn sample_commands() -> Vec<InstantCommand> {
         vec![
-            InstantCommand { name: "g".to_string(), command: "https://google.com?q={query}".to_string(), description: String::new() },
-            InstantCommand { name: "gm".to_string(), command: "https://mail.google.com".to_string(), description: String::new() },
-            InstantCommand { name: "n".to_string(), command: "notepad.exe".to_string(), description: String::new() },
+            InstantCommand { name: "g".to_string(), description: String::new(), action: InstantAction::Url { url: "https://google.com?q={query}".into() } },
+            InstantCommand { name: "gm".to_string(), description: String::new(), action: InstantAction::Url { url: "https://mail.google.com".into() } },
+            InstantCommand { name: "n".to_string(), description: String::new(), action: InstantAction::Url { url: "notepad.exe".into() } },
         ]
     }
 
@@ -162,9 +210,84 @@ mod tests {
     #[test]
     fn filter_case_insensitive() {
         let cmds = vec![
-            InstantCommand { name: "Google".to_string(), command: "https://google.com".to_string(), description: String::new() },
+            InstantCommand { name: "Google".to_string(), description: String::new(), action: InstantAction::Url { url: "https://google.com".into() } },
         ];
         let result = filter_instant_commands(&cmds, "google");
         assert_eq!(result.len(), 1);
+    }
+
+    // ---- expand_exec_args tests ----
+    fn no_env(s: &str) -> String { s.to_string() }
+
+    #[test]
+    fn exec_args_empty_is_no_tokens() {
+        let r = expand_exec_args("", "q", "c", no_env);
+        assert!(r.is_empty()); // build_launch_args と異なり末尾 append しない
+    }
+    #[test]
+    fn exec_args_query_with_spaces_stays_one_arg() {
+        let r = expand_exec_args("-s {query}", "hello world", "", no_env);
+        assert_eq!(r, vec!["-s", "hello world"]);
+    }
+    #[test]
+    fn exec_args_query_cannot_inject_extra_args() {
+        let r = expand_exec_args("-s {query}", "--flag a b", "", no_env);
+        assert_eq!(r, vec!["-s", "--flag a b"]); // 展開は split 後なので1引数のまま
+    }
+    #[test]
+    fn exec_args_query_quote_is_literal() {
+        let r = expand_exec_args("{query}", "a\"b", "", no_env);
+        assert_eq!(r, vec!["a\"b"]); // split は展開前に走るので再分割しない
+    }
+    #[test]
+    fn exec_args_clip_newline_is_literal() {
+        let r = expand_exec_args("{clip}", "", "a\nb", no_env);
+        assert_eq!(r, vec!["a\nb"]);
+    }
+    #[test]
+    fn exec_args_empty_query_yields_empty_arg() {
+        let r = expand_exec_args("-s {query}", "", "", no_env);
+        assert_eq!(r, vec!["-s", ""]);
+    }
+    #[test]
+    fn exec_args_inline_placeholder_preserves_space() {
+        let r = expand_exec_args("-s={query}", "hello world", "", no_env);
+        assert_eq!(r, vec!["-s=hello world"]);
+    }
+    #[test]
+    fn exec_args_env_value_with_space_stays_in_token() {
+        // env 展開は split 後なので env 値の空白が引数を割らない
+        let env = |s: &str| s.replace("%FOO%", "C:\\a b");
+        let r = expand_exec_args("--dir %FOO%", "", "", env);
+        assert_eq!(r, vec!["--dir", "C:\\a b"]);
+    }
+    #[test]
+    fn exec_args_external_input_is_not_env_expanded() {
+        // query が運んだ %FOO% は展開されない（env 展開はトークン→置換の順で置換が後）
+        let env = |s: &str| s.replace("%FOO%", "EXPANDED");
+        let r = expand_exec_args("{query}", "%FOO%", "", env);
+        assert_eq!(r, vec!["%FOO%"]);
+    }
+
+    // ---- split_args (quote-aware splitting) tests ----
+    #[test]
+    fn split_args_quoted_token_preserves_spaces() {
+        assert_eq!(split_args(r#"--dir "My Documents""#), vec!["--dir", "My Documents"]);
+    }
+    #[test]
+    fn split_args_unclosed_quote_consumes_to_end() {
+        assert_eq!(split_args(r#"--dir "My Documents"#), vec!["--dir", "My Documents"]);
+    }
+    #[test]
+    fn split_args_adjacent_quotes_join() {
+        assert_eq!(split_args(r#"--open="My File""#), vec!["--open=My File"]);
+    }
+    #[test]
+    fn split_args_empty_quotes_produce_no_token() {
+        assert_eq!(split_args(r#"a "" b"#), vec!["a", "b"]);
+    }
+    #[test]
+    fn split_args_plain_whitespace_only() {
+        assert_eq!(split_args("  -a   -b  "), vec!["-a", "-b"]);
     }
 }

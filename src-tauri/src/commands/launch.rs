@@ -1,7 +1,9 @@
 use std::time::Duration;
 
 use serde_json::json;
-use snotra_core::config::{find_matching_tools, OpenerTool};
+use snotra_core::config::{find_matching_tools, InstantAction, InstantCommand, OpenerTool};
+use snotra_core::instant::{expand_exec_args, split_args};
+use std::process::Stdio;
 use tauri::{AppHandle, Manager};
 use tokio::time::timeout;
 
@@ -169,35 +171,6 @@ fn build_launch_args(args: &str, path: &str) -> Vec<String> {
     }
 
     expanded
-}
-
-/// シェル風クォート対応の引数分割。
-/// `"..."` で囲まれた部分はスペースを含んでも1トークンとして扱う。
-/// 閉じクォートがない場合は行末まで1トークン。
-/// 空クォート `""` はトークンを生成しない（空の引数を明示渡しする手段は提供しない）。
-fn split_args(args: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let mut in_quotes = false;
-    for ch in args.chars() {
-        match ch {
-            '"' => {
-                in_quotes = !in_quotes;
-            }
-            c if c.is_whitespace() && !in_quotes => {
-                if !current.is_empty() {
-                    tokens.push(std::mem::take(&mut current));
-                }
-            }
-            c => {
-                current.push(c);
-            }
-        }
-    }
-    if !current.is_empty() {
-        tokens.push(current);
-    }
-    tokens
 }
 
 #[tauri::command]
@@ -368,9 +341,98 @@ pub(crate) fn launch_item_core(path: &str) -> LaunchResult {
     }
 }
 
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// フロントへ返すインスタントコマンド情報（種別の内部構造を隠す）
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct InstantCommandDto {
+    pub name: String,
+    pub description: String,
+    pub display: String,
+}
+
+impl From<&InstantCommand> for InstantCommandDto {
+    fn from(c: &InstantCommand) -> Self {
+        let display = match &c.action {
+            InstantAction::Url { url } => url.clone(),
+            InstantAction::Exec { exe, args } => {
+                if args.is_empty() { exe.clone() } else { format!("{exe} {args}") }
+            }
+            InstantAction::Legacy { command } => command.clone(),
+        };
+        Self { name: c.name.clone(), description: c.description.clone(), display }
+    }
+}
+
+/// 環境変数 `%VAR%` を展開する（Win32 ExpandEnvironmentStringsW）。非 Windows は素通し。
+pub(crate) fn expand_env(input: &str) -> String {
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
+        use windows::core::HSTRING;
+        let src = HSTRING::from(input);
+        unsafe {
+            let needed = ExpandEnvironmentStringsW(&src, None);
+            if needed == 0 { return input.to_string(); }
+            let mut buf = vec![0u16; needed as usize];
+            let written = ExpandEnvironmentStringsW(&src, Some(&mut buf));
+            if written == 0 { return input.to_string(); }
+            // 末尾 NUL を除いて UTF-16 → String
+            let len = (written as usize).saturating_sub(1).min(buf.len());
+            String::from_utf16_lossy(&buf[..len])
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        input.to_string()
+    }
+}
+
+/// exec 種別の起動。COM 不要（CreateProcessW 直叩き）。コンソール窓抑止。
+pub(crate) fn launch_exec_core(exe: &str, args: &str, query: &str, clipboard: &str) -> LaunchResult {
+    let exe_expanded = expand_env(exe);
+    let arg_tokens = expand_exec_args(args, query, clipboard, expand_env);
+
+    let mut cmd = std::process::Command::new(&exe_expanded);
+    cmd.args(&arg_tokens);
+    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    match cmd.spawn() {
+        Ok(_) => LaunchResult::ok(0),
+        Err(e) => LaunchResult::failed(-1, format!("spawn_failed: {e}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::build_launch_args;
+    use super::InstantCommandDto;
+    use snotra_core::config::{InstantAction, InstantCommand};
+
+    #[test]
+    fn instant_dto_display_url() {
+        let c = InstantCommand { name: "g".into(), description: "d".into(),
+            action: InstantAction::Url { url: "https://x".into() } };
+        assert_eq!(InstantCommandDto::from(&c).display, "https://x");
+    }
+    #[test]
+    fn instant_dto_display_exec_with_args() {
+        let c = InstantCommand { name: "ev".into(), description: String::new(),
+            action: InstantAction::Exec { exe: "everything.exe".into(), args: "-s {query}".into() } };
+        assert_eq!(InstantCommandDto::from(&c).display, "everything.exe -s {query}");
+    }
+    #[test]
+    fn instant_dto_display_exec_no_args_has_no_trailing_space() {
+        let c = InstantCommand { name: "n".into(), description: String::new(),
+            action: InstantAction::Exec { exe: "notepad.exe".into(), args: String::new() } };
+        assert_eq!(InstantCommandDto::from(&c).display, "notepad.exe");
+    }
 
     #[test]
     fn build_launch_args_appends_path_when_args_empty() {
@@ -415,44 +477,6 @@ mod tests {
             build_launch_args("{path} --compare {path}", "C:\\file.txt"),
             vec!["C:\\file.txt", "--compare", "C:\\file.txt"]
         );
-    }
-
-    // ---- split_args (quote-aware splitting) tests ----
-
-    use super::split_args;
-
-    #[test]
-    fn split_args_quoted_token_preserves_spaces() {
-        assert_eq!(
-            split_args(r#"--dir "My Documents""#),
-            vec!["--dir", "My Documents"]
-        );
-    }
-
-    #[test]
-    fn split_args_unclosed_quote_consumes_to_end() {
-        assert_eq!(
-            split_args(r#"--dir "My Documents"#),
-            vec!["--dir", "My Documents"]
-        );
-    }
-
-    #[test]
-    fn split_args_adjacent_quotes_join() {
-        assert_eq!(
-            split_args(r#"--open="My File""#),
-            vec!["--open=My File"]
-        );
-    }
-
-    #[test]
-    fn split_args_empty_quotes_produce_no_token() {
-        assert_eq!(split_args(r#"a "" b"#), vec!["a", "b"]);
-    }
-
-    #[test]
-    fn split_args_plain_whitespace_only() {
-        assert_eq!(split_args("  -a   -b  "), vec!["-a", "-b"]);
     }
 
     #[test]

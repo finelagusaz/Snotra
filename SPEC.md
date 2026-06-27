@@ -677,31 +677,68 @@ fenrir のインスタントコマンド（`instant.ini`）に相当する機能
 
 ### 19.2 設定構造
 
+インスタントコマンドは **2種別** に分類される：
+
+#### URL 種別（`url` フィールド）
+
 ```toml
 [search]
 instant_command_prefix = "@"  # デフォルト。ユーザーが変更可能
 
 [[instant_commands]]
 name = "g"
-command = "https://www.google.com/search?q={query}"
+url = "https://www.google.com/search?q={query}"
 description = "Google 検索"
 
 [[instant_commands]]
-name = "memo"
-command = "C:\\tools\\editor.exe"
-
-[[instant_commands]]
 name = "trans"
-command = "https://www.deepl.com/translator#ja/en/{clip}"
+url = "https://www.deepl.com/translator#ja/en/{clip}"
 description = "DeepL 日→英翻訳"
 ```
 
+- `http://` または `https://` で始まる URL を実行。`ShellExecuteW` で既定ブラウザで開く
+- 変数値（`{query}` / `{clip}`）は実行前に URL エンコードされる
+
+#### プログラム実行種別（`exe` + `args` フィールド）
+
+```toml
+[[instant_commands]]
+name = "ev"
+exe = "C:\\Users\\User\\scoop\\shims\\everything.exe"
+args = "-s {query}"
+description = "Everything ファイル検索"
+
+[[instant_commands]]
+name = "cmd"
+exe = "cmd.exe"
+args = "/c start notepad.exe {clip}"
+```
+
+- `exe`: プログラムのパス
+- `args`: コマンドライン引数（変数展開対応）。省略可
+- `Command::new(exe).args(args_vec)` で起動。`CREATE_NO_WINDOW` フラグ + stdout/stderr を `/dev/null` にリダイレクト
+- 変数値（`{query}` / `{clip}`）は生のまま展開される（URL エンコードなし）
+
+#### 旧形式（`command` フィールド）
+
+```toml
+# 旧形式（廃止・自動移行）
+[[instant_commands]]
+name = "g"
+command = "https://www.google.com/search?q={query}"
+```
+
+- 旧型式 `command =` は `url` へ無改変移行される（スマート分割なし）
+- 読み込み時に `apply_migrations()` が自動で `url` へ変換
+
+#### 共通フィールド
+
 - `name`: コマンド名（プレフィックス後に入力する文字列）。一意でなければならない
-- `command`: 実行するコマンドライン or URL
-- `description`: コマンドの説明（任意）。省略可。検索結果リストに副テキストとして表示される。省略時はコマンドテンプレートが副テキストに使われる
+- `description`: コマンドの説明（任意）。省略可
+- `display`: 結果リスト副テキスト（url または `exe args` の表現）。省略時は説明を使い、説明も無い場合はコマンドテンプレートを自動生成
 - デフォルト登録済みコマンド（`Config::default()`）:
-  - `g`: `https://www.google.com/search?q={query}`（Google 検索）
-  - `gh`: `https://github.com/search?q={query}`（GitHub 検索）
+  - `g`: URL 種別 `https://www.google.com/search?q={query}`（Google 検索）
+  - `gh`: URL 種別 `https://github.com/search?q={query}`（GitHub 検索）
 - `instant_command_prefix` のバリデーション:
   - 空文字を禁止（全入力がインスタントコマンドモードになるため）
   - `/` を禁止（ビルトインスラッシュコマンドと衝突するため）
@@ -724,27 +761,83 @@ description = "DeepL 日→英翻訳"
 | `{query}` | コマンド名以降の入力テキスト（空なら空文字で展開） |
 | `{clip}` | 実行時点のクリップボード文字列 |
 
-**URL エンコード規則**:
-- `command` が `http://` または `https://` で始まる場合: 変数値を URL エンコードしてから展開
-- それ以外（exe パス / bare コマンド名）: 変数値を生文字列のまま展開
+#### URL 種別の展開
+
+- 変数値を URL エンコードしてから展開（`%` でエスケープ）
+- 記号・空白・非 ASCII 文字が URL 安全形式に変換される
+- 例: `hello world` → `hello%20world`、`機械学習` → `%E6%A9%9F...`
+
+#### プログラム実行種別の展開
+
+exec 種別では、以下の順で展開が行われる:
+
+1. `split_args`: args テンプレートをシェル風にトークン分割（`"..."` で囲まれた部分は空白を保持）
+2. **環境変数展開**: 各トークン内の `%VAR%` を展開（Windows 形式）
+3. **変数置換**: 各トークン内の `{query}` / `{clip}` を展開（生のまま、エンコードなし）
+
+このため以下の性質が成立する:
+- **外部入力（query / clip）は env 展開されない**: `{query}` に `%SYSTEMROOT%` が入力されても文字列通りに展開される（env 変数へのインジェクション防止）
+- **env 値の空白は引数を分割しない**: `%TEMP%` が `C:\a b` の場合、`--dir %TEMP%` は `["--dir", "C:\a b"]` になり（token 内に留まる）、`"--dir" "C:\a b"` のように分割されない
+- **query の空白は1引数を保つ**: `-s {query}` に `hello world` を入力すると `["-s", "hello world"]` になり、`["-s", "hello", "world"]` に分割されない
+- **query に特殊文字が含まれても安全**: `{query}` が `"quoted"` でも `--flag a b` でも、token 内に留まり引数を増やさない
+
+例:
+```
+args = "-s {query}"
+query = "hello world"
+→ ["-s", "hello world"]
+
+args = "--env %APPDATA%"
+%APPDATA% = "C:\a b"
+→ ["--env", "C:\a b"]  # env 値の空白は token 内に留まる
+
+args = "{query}"
+query = "%SYSTEMROOT%"
+→ ["%SYSTEMROOT%"]  # env 展開されず生文字列のまま
+```
 
 ### 19.5 マッチングと結果表示
 
 - プレフィックス（`@`）だけの入力: 登録済みコマンド名を全件表示
-- プレフィックス + 文字入力: コマンド名を前方一致で絞り込み
-- 結果リストにはコマンド名を主表示、description（あればそれ、なければコマンドテンプレート）を副テキストとして表示
+- プレフィックス + 文字入力: コマンド名を前方一致で絞り込み（大文字小文字を区別しない）
+- 結果リストの副テキスト（`display` フィールド）:
+  - URL 種別: URL テンプレート（例: `https://www.google.com/search?q={query}`）
+  - exec 種別: `exe args` の組み合わせ（例: `C:\everything.exe -s {query}`）
+  - `description` が設定されている場合、これを優先表示（`display` は表示されない）
 - スペースが入力された時点でマッチングを確定し、以降は `{query}` として扱う
 - インスタントコマンドモード中はアイコン取得をスキップする（`path` がファイルパスではないため）
 - マッチするコマンドが0件の場合は結果を空にする（`noResults` 表示はしない）
 
 ### 19.6 実行フロー
 
+#### 実行基本
+
 - Enter / クリック: 選択中のコマンドを実行
-  1. `{query}` と `{clip}` を展開
-  2. URL 判定（`http://` `https://`）→ 変数を URL エンコード
-  3. 既存の `launch_item_core`（`ShellExecuteW` + COM STA）を再利用して実行（新規に `ShellExecuteW` 呼び出しを書かない）
 - Shift+Enter: 通常 Enter と同じ動作（インスタントコマンドにツール選択は無関係）
 - 実行後: クエリクリア、ウィンドウを非表示にする（スラッシュコマンドと同じ）
+
+#### 種別ディスパッチ
+
+実行時に `action` フィールドの種別に応じてディスパッチ:
+
+**URL 種別** (`InstantAction::Url`):
+1. 変数を展開（`{query}` / `{clip}`）して URL エンコード
+2. `ShellExecuteW(..., "open", url, ...)` で既定ブラウザで開く
+3. 既存の `launch_item_core` を再利用
+
+**プログラム実行種別** (`InstantAction::Exec`):
+1. `expand_exec_args(args, query, clipboard, env_expand)` で引数ベクタを構築
+   - split → env 展開 → 変数置換の順序で処理
+   - 外部入力（query / clip）は env 展開されない
+2. `Command::new(exe).args(args_vec)` で生成
+3. `spawn_blocking` でスレッドプール上で起動
+4. `spawn_blocking` の join に 4 秒のタイムアウトを設定。`Command::spawn()` は即時復帰（fire-and-forget）であり、タイムアウトは spawn 呼び出し自体の保護。起動済みプログラムの寿命は制御しない
+5. 起動失敗（exe 不在、パーミッション等）は `LaunchResult::failed` として記録
+
+#### 起動結果
+
+- `LaunchResult::succeeded`: 起動成功（ブラウザ・プロセスが spawned）
+- `LaunchResult::failed`: 起動失敗（exe 不在、パーミッション不足等）。エラーメッセージをログに記録
 
 ### 19.7 状態モデル
 
@@ -767,8 +860,36 @@ description = "DeepL 日→英翻訳"
 - 設定画面のタブ構成: 全般/検索/インデックス/ビジュアル/オープナー/インスタントコマンド
 - プレフィックス設定（テキスト入力、デフォルト `@`）
 - コマンド追加/編集/削除/複製
-- 各コマンド: `name`（コマンド名）、`command`（実行コマンド or URL）、`description`（説明、任意）
-- コマンド編集モーダルに展開プレビュー表示（`{query}` に "example"、`{clip}` に "(clipboard)" を入れた結果を表示）
+
+#### コマンド編集フォーム
+
+**必須フィールド**:
+- `name`: コマンド名
+
+**種別選択** (ラジオボタン):
+- URL: URL ベースのコマンド（`http://` / `https://`）
+- exec: プログラム実行（`.exe` 等）
+
+**種別別フィールド**:
+
+URL 種別:
+- `url`: URL テンプレート（例: `https://www.google.com/search?q={query}`）
+
+exec 種別:
+- `exe`: プログラムパス（例: `C:\Windows\notepad.exe`）。手入力の単一行テキストフィールド。`.exe` 等の実行ファイルパスを直接入力する（ヒント: `hint_instant_program` 相当のヒントテキストを表示）
+- `args`: コマンドライン引数（任意）（例: `-s {query}`）
+
+**共通フィールド**:
+- `description`: 説明（任意）。結果リスト副テキストとして表示
+
+**展開プレビュー**:
+- 編集モーダル下部に「展開例」を表示
+- `{query}` を "example" で、`{clip}` を "(clipboard)" で置換した結果をプレビュー
+- URL 種別: URL エンコード状態を表示
+- exec 種別: 分割後の引数ベクタをプレビュー（`[exe, arg1, arg2, ...]` の形式）
+
+**旧形式からの移行ヒント**:
+- 既存 config に旧 `command =` フィールドが存在する場合、フォーム内に「この設定は旧形式です。読み込み時に自動で `url` へ移行されます」と表示
 
 ### 19.9 設定反映
 

@@ -298,7 +298,7 @@ createRoot(() => {
                 path: cmd.name,
                 isFolder: false,
                 isError: false,
-                description: cmd.description || cmd.command,
+                description: cmd.description || cmd.display,
               }));
               updateResults(items);
               setSelected(0);

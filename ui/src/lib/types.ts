@@ -46,7 +46,7 @@ export interface BootstrapPayload {
 
 export interface InstantCommand {
   name: string;
-  command: string;
+  display: string;
   description: string;
 }
 

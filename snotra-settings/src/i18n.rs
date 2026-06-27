@@ -1076,6 +1076,13 @@ impl Tr {
         }
     }
 
+    pub fn err_icon_cache_cap_too_small(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "アイコンキャッシュ上限は表示件数（max_results）以上である必要があります",
+            Language::En => "Icon cache cap must be at least max_results",
+        }
+    }
+
     pub fn heading_migemo(&self) -> &'static str {
         match self.0 {
             Language::Ja => "ローマ字検索（Migemo）",

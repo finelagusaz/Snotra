@@ -93,6 +93,7 @@
 - アイコン非表示設定時・アイコンデータなし時はフォールバック絵文字（📁📄）を表示
 - インデックス再構築時はキャッシュをクリア（次回検索時に再抽出）
 - `icons.bin` は起動時に先読みせず、初回アイコン取得（`get_icons_batch`）時に遅延ロード
+- 件数上限 `cache.icon_cache_cap`（既定 1000、実効最小は `max_results`）を超えると挿入順で最古から退避（FIFO）し、常駐メモリと `icons.bin` の両方を頭打ちにする。退避は書き込み経路（挿入・ロード）でのみ行い、取得（`get`）はアクセス順を更新しない。`icon_cache_cap` は設定画面に公開しない `config.toml` 専用キー（手編集で調整）
 
 ## 4. 検索システム
 
@@ -520,7 +521,7 @@ stateDiagram-v2
 用途別ファイル分割:
 
 - `%APPDATA%\Snotra\index.bin`
-- `%APPDATA%\Snotra\icons.bin`
+- `%APPDATA%\Snotra\icons.bin`（件数上限 `cache.icon_cache_cap` で頭打ち。§3.4 参照）
 - `%APPDATA%\Snotra\history.bin`
 - `%APPDATA%\Snotra\window.bin`
 

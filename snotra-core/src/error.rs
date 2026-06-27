@@ -72,6 +72,7 @@ pub enum ConfigError {
     InstantCommandPrefixSlash,
     InstantCommandDuplicateName { name: String },
     MigemoMinCharsZero,
+    IconCacheCapTooSmall { cap: usize, max_results: usize },
 }
 
 #[cfg(test)]

@@ -4628,6 +4628,7 @@ name = "snotra"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "indexmap 2.14.0",
  "notify",
  "png 0.18.1",
  "rayon",

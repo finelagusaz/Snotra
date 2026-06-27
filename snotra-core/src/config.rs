@@ -190,6 +190,8 @@ pub struct Config {
     #[serde(default)]
     pub search: SearchConfig,
     #[serde(default)]
+    pub cache: CacheConfig,
+    #[serde(default)]
     pub openers: Vec<OpenerRule>,
     #[serde(default)]
     pub instant_commands: Vec<InstantCommand>,
@@ -498,6 +500,29 @@ impl Default for VisualConfig {
     }
 }
 
+fn default_icon_cache_cap() -> usize {
+    1000
+}
+
+/// アイコンキャッシュ（常駐メモリ + `icons.bin`）のチューニング。
+/// 設定画面 UI には公開せず、`config.toml` の手編集で調整する内部ノブ。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CacheConfig {
+    /// アイコンキャッシュの最大保持件数。上限超過時は挿入順で最古のエントリから退避（FIFO）。
+    /// 表示中アイコンが evict されフォールバック絵文字に落ちないよう、`max_results` 以上であること
+    /// （`validate()` で検証。実効値は `commands::icon` 側で `max(max_results)` に floor される）。
+    #[serde(default = "default_icon_cache_cap")]
+    pub icon_cache_cap: usize,
+}
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self {
+            icon_cache_cap: default_icon_cache_cap(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScanPath {
     pub path: String,
@@ -726,6 +751,7 @@ impl Default for Config {
                 scan: Self::default_scan_paths(),
             },
             search: SearchConfig::default(),
+            cache: CacheConfig::default(),
             openers: Vec::new(),
             instant_commands: vec![
                 InstantCommand {
@@ -1046,6 +1072,15 @@ impl Config {
         // Migemo validation
         if self.search.migemo_min_chars == 0 {
             errors.push(ConfigError::MigemoMinCharsZero);
+        }
+
+        // Cache validation: icon cache cap must be >= max_results so that icons
+        // currently on screen are never evicted (would fall back to emoji).
+        if self.cache.icon_cache_cap < self.appearance.max_results {
+            errors.push(ConfigError::IconCacheCapTooSmall {
+                cap: self.cache.icon_cache_cap,
+                max_results: self.appearance.max_results,
+            });
         }
 
         // Instant command name uniqueness
@@ -3252,6 +3287,57 @@ scan = []
         // Defaults filled for missing optional sections
         assert!(config.openers.is_empty());
         assert!(config.instant_commands.is_empty());
+    }
+
+    #[test]
+    fn cache_config_defaults_when_section_missing() {
+        // 既存 config.toml に [cache] セクションが無い場合でも icon_cache_cap が
+        // デフォルト値で補完される（後方互換）。
+        let toml = r#"
+[hotkey]
+modifier = "Alt"
+key = "Q"
+[appearance]
+max_results = 8
+window_width = 600
+[paths]
+scan = []
+"#;
+        let config = Config::from_toml_str(toml).expect("parse");
+        assert_eq!(config.cache.icon_cache_cap, 1000);
+    }
+
+    #[test]
+    fn validate_icon_cache_cap_below_max_results() {
+        let mut config = Config::default();
+        config.appearance.max_results = 8;
+        config.cache.icon_cache_cap = 4;
+        let errors = config.validate();
+        assert!(
+            errors.iter().any(|e| matches!(
+                e,
+                ConfigError::IconCacheCapTooSmall {
+                    cap: 4,
+                    max_results: 8
+                }
+            )),
+            "cap < max_results should report IconCacheCapTooSmall, got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn validate_icon_cache_cap_at_or_above_max_results_ok() {
+        // 境界: cap == max_results はエラーなし。
+        let mut config = Config::default();
+        config.appearance.max_results = 8;
+        config.cache.icon_cache_cap = 8;
+        let errors = config.validate();
+        assert!(
+            !errors
+                .iter()
+                .any(|e| matches!(e, ConfigError::IconCacheCapTooSmall { .. })),
+            "cap == max_results should be valid, got {errors:?}"
+        );
     }
 
     #[test]

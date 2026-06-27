@@ -35,6 +35,7 @@ config キー名は `SPEC.md` §7 等に記載される設定スキーマ。挙�
 8. **テスト**（**周辺調査の追加2件を含む**）:
    - 既存 assert の `config.appearance.max_results` → `.visible_rows`、`effective_top_n_history()`→`effective_result_limit()` 等を改名
    - **既存マイグレーションテスト群の意味的 retarget（config.rs:1323-1424 クラスタ・約12 assert）**: `migrate_top_n_history_from_appearance_to_search` 等は到達先を `config.search.top_n_history`/`max_history_display` で assert している。改名後はマイグレーション鎖が1層増える（`appearance.* → [search.* legacy] → result_limit/recent_limit`）。**各テストを読み、到達先 assert を `result_limit`/`recent_limit` に張り替え**、新中間層（`search.top_n_history` legacy）の扱いを反映する。機械的改名でなく意味的更新
+     - **特に `migrate_legacy_does_not_overwrite_explicit_search_values`（1372-1401）**: `[search].top_n_history=400` の明示値が改名後は「中間 legacy」扱いになり、期待値の意味が変わる（`result_limit==Some(400)`＝中間 legacy が集約され最古 appearance は無視）。最も解釈が tricky。意図を再設計する
    - **テストコメント内の旧シンボル名**（config.rs:1431 `default_top_n_history`、config.rs:3330 `MaxResultsZero`/`max_results=0`）も新名へ
    - 既存 `validate_max_results_zero` を **`validate_visible_rows_zero` に改名**（新規でなく rename。内部の `max_results = 0` → `visible_rows = 0`）
    - **新規 migration テスト**: `migrate_legacy_max_results_to_visible_rows` / `migrate_search_top_n_history_to_result_limit`（intermediate）/ `migrate_appearance_top_n_history_to_result_limit`（oldest）/ **`migrate_prefers_search_over_appearance_top_n_history`（両在 fixture: `[appearance] top_n_history=100` + `[search] top_n_history=200` → result_limit=200 で search 優先）** / `migrate_max_history_display_chain`
@@ -106,6 +107,7 @@ Phase 1（core）→ Phase 2/3（core に依存）→ Phase 4（bootstrap 型に
 |---|---|---|
 | `/plan-review` | 実行（3 Explore 並列: migration / bootstrap・UI / scope・docs） | 設計矛盾なし。明示度向上の指摘を反映済み（get_or_insert 置換・visible_rows migration 明示・ConfigError 4箇所・2層両在テスト・validate test 改名・label_max_history→label_result_limit・Phase1 mid-verify） |
 | Codex レビュー（`codex:rescue`） | 実行 | **Critical 1 + WARN 3 を反映**: ① engine.rs の effective_* 本番5箇所を Phase 1 に追加（漏れると compile-fail）② visible_rows を Option 化し migration を3キー対称に（両在で新優先）③ PERFORMANCE.md:156 は汎用 bench param＝OUT に修正 ④ icon.rs:29 の stale floor コメント（#387 で撤去済み）を修正対象に追加 |
+| **独立導出レビュー**（`Plan` エージェントに plan/research を見せず issue+コードのみから再導出 → 差分） | 実行 | **主要判断はすべて独立に再一致＝完全性を裏付け。新規の変更必須ファイル漏れ 0**。追加された差分は軽微: ⓐ `backup.rs:308` の `max_results="ten"`（TOML エラーローカライザのダミー＝同文字列別概念）を明示的 OUT に ⓑ `windowHeight.ts`/`ResultsSection.tsx` の `maxResults` prop も内部名で OUT ⓒ `migrate_legacy_does_not_overwrite_explicit_search_values` の意味再設計を明記 ⓓ concept を指すコメント（config_watcher:226 / engine 115・140 / history.rs:37）も新名へ。**「成果物監査」でなく「独立再導出+差分」が盲点クラスのエラーに最も効く**ことを実証 |
 | `/symmetric-check` | plan-review 内で実施 | 対称ペア = save(skip_serializing 旧キー)↔load(migration 旧キー)、new↔legacy フィールド、2層レガシー(search↔appearance)。plan-review agent1 が take/get_or_insert 順序と skip_serializing の整合を検証。emit↔listen は文字列据え置きで対称保持 |
 | `/state-check` | N/A | UI モード・状態遷移図・ガード条件を追加しない。純粋な識別子改名 |
 | `/race-check` | N/A | 新規 async 関数なし |

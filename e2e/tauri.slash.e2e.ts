@@ -6,7 +6,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { download as downloadEdgeDriver } from "edgedriver";
-import { Builder, By, Key, until, type WebDriver } from "selenium-webdriver";
+import { Builder, By, Key, until, error, type WebDriver } from "selenium-webdriver";
 
 type ConfigBackup = {
   path: string;
@@ -542,10 +542,23 @@ test("↓↑ キーで選択行が移動する", async ({ harness }) => {
     "結果に2行以上表示されない",
   );
 
-  // 初期状態: 先頭行が selected
-  const rows = await driver.findElements(By.css(".result-row"));
-  const firstClass = await rows[0].getAttribute("class");
-  expect(firstClass).toContain("selected");
+  // 初期状態: 先頭行が selected。この確認だけはクエリ入力直後＝検索デバウンスの
+  // trailing リフレッシュ（+50ms）が保留中の危険ゾーンで走るため、findElements →
+  // getAttribute の間に結果リストが再レンダリングされて掴んだハンドルが stale 化しうる。
+  // driver.wait は throw をリトライしない（falsy return のみ再ポーリング）ので、
+  // StaleElementReferenceError を catch して return false へ変換し再 find を待つ。
+  // （↓/↑ 確認はクエリ非変更のキー入力後で trailing リフレッシュが保留せず、
+  //   SolidJS が class だけ更新し行 DOM を作り直さないため catch 不要＝意図的な非対称）
+  await driver.wait(async () => {
+    try {
+      const r = await driver.findElements(By.css(".result-row"));
+      if (r.length === 0) return false;
+      return (await r[0].getAttribute("class"))?.includes("selected") ?? false;
+    } catch (e) {
+      if (e instanceof error.StaleElementReferenceError) return false;
+      throw e;
+    }
+  }, 4_000, "初期状態で先頭行が selected にならない");
 
   // ↓ キーで2番目の行へ移動
   input = await driver.findElement(By.css(".search-input"));

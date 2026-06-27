@@ -779,6 +779,13 @@ impl Tr {
         }
     }
 
+    pub fn filter_all_files(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "すべてのファイル",
+            Language::En => "All files",
+        }
+    }
+
     // Hotkey input
     pub fn hotkey_press_key(&self) -> &'static str {
         match self.0 {

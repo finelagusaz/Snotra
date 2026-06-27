@@ -1,12 +1,16 @@
+use std::sync::Arc;
+
 use eframe::egui;
 use snotra_core::config::{Config, InstantAction, InstantCommand};
 
 use crate::i18n::Tr;
 use crate::style;
+use crate::tabs::opener::ExePickerState;
 
 #[derive(Default)]
 pub struct InstantTabState {
     modal: ModalState,
+    exe_picker: ExePickerState,
 }
 
 #[derive(Default, PartialEq, Clone, Copy)]
@@ -99,6 +103,17 @@ pub fn ui(
     state: &mut InstantTabState,
     tr: &Tr,
 ) {
+    // Poll exe picker result（opener タブと同型の非同期ピッカーパターン）
+    if state.exe_picker.active
+        && let Ok(mut guard) = state.exe_picker.result.try_lock()
+        && let Some(result) = guard.take()
+    {
+        state.exe_picker.active = false;
+        if let Some(path) = result {
+            state.modal.edit_exe = path.display().to_string();
+        }
+    }
+
     style::tab_scroll_area(ui, |ui| {
         // Prefix setting
         style::section_heading(ui, tr.heading_instant_prefix());
@@ -280,7 +295,31 @@ fn show_modal(
             }
             EditKind::Program => {
                 ui.label(tr.label_instant_exe());
-                ui.text_edit_singleline(&mut state.modal.edit_exe);
+                ui.horizontal(|ui| {
+                    ui.text_edit_singleline(&mut state.modal.edit_exe);
+                    if ui
+                        .add_enabled(!state.exe_picker.active, egui::Button::new(tr.btn_browse()))
+                        .clicked()
+                    {
+                        state.exe_picker.active = true;
+                        let result = Arc::clone(&state.exe_picker.result);
+                        let repaint_ctx = ctx.clone();
+                        let dialog_title = tr.dialog_select_exe().to_string();
+                        let exe_label = tr.filter_executables().to_string();
+                        let all_label = tr.filter_all_files().to_string();
+                        std::thread::spawn(move || {
+                            // exe を既定フィルタで誘導しつつ、全ファイル選択も許す（.com/拡張子なし/cmd.exe 等）。
+                            // 最初の add_filter が既定フィルタになる（rfd 0.17 の set_default_extension）。
+                            let path = rfd::FileDialog::new()
+                                .set_title(&dialog_title)
+                                .add_filter(&exe_label, &["exe"])
+                                .add_filter(&all_label, &["*"])
+                                .pick_file();
+                            *result.lock().unwrap() = Some(path);
+                            repaint_ctx.request_repaint();
+                        });
+                    }
+                });
                 ui.label(tr.label_instant_args());
                 ui.text_edit_singleline(&mut state.modal.edit_args);
                 style::hint(ui, tr.hint_instant_program());

@@ -25,9 +25,11 @@ fn ensure_icon_cache_loaded_if_enabled(state: &State<AppState>, icons: &State<Ic
     // 厳密には、cap 飽和時に同一バッチが要求する**既存ヒットのうち最古エントリ**が、そのバッチの新規
     // insert で退避され Step3 末尾の get で None になる窓はありうる（次バッチで再抽出され自己回復する
     // 1 フレームの揺らぎ）。これは既定 cap=1000 では到達困難。
-    // また空クエリのオフスクリーン先読みバッチは最大 top_n_history 件になりうるため、表示ワーキングセット
-    // 全体（max_results + top_n_history）を確実にキャッシュするには cap をそれ以上に取る必要がある
-    // → 既定 cap 1000 はこれを上回る（issue #333 の設計: validation は max_results、既定を大きく取る）。
+    // また検索・フォルダのオフスクリーン先読みバッチは最大 top_n_history 件になりうる（空クエリの
+    // recent list は max_history_display 件のみ＝先読みなし）。検索結果1回分（≤ top_n_history、可視
+    // max_results 件はその部分集合）のアイコンを取りこぼさず保持するには cap を top_n_history 以上に
+    // 取る必要がある。フロントの LruIconCache も top_n_history でサイズされる（MainApp.tsx）。
+    // → 既定 cap 1000 は top_n_history 既定 200 を上回る（issue #333 の設計: validation は max_results、既定を大きく取る）。
     let effective_cap = configured_cap.max(max_results);
     let mut cache = icons.lock().unwrap();
     if !show_icons {

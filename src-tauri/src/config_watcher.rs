@@ -108,12 +108,10 @@ fn apply_config_change(app: &AppHandle) {
         != old_config.search.instant_command_prefix;
     let new_instant_prefix = new_config.search.instant_command_prefix.clone();
     let visual_changed = new_config.visual != old_config.visual;
-    let max_results_changed =
-        new_config.appearance.max_results != old_config.appearance.max_results;
-    let new_max_results = new_config.appearance.max_results;
-    let new_top_n_history = new_config.search.effective_top_n_history();
-    let top_n_history_changed =
-        new_top_n_history != old_config.search.effective_top_n_history();
+    let new_visible_rows = new_config.appearance.effective_visible_rows();
+    let visible_rows_changed = new_visible_rows != old_config.appearance.effective_visible_rows();
+    let new_result_limit = new_config.search.effective_result_limit();
+    let result_limit_changed = new_result_limit != old_config.search.effective_result_limit();
     let width_changed =
         new_config.appearance.window_width != old_config.appearance.window_width;
     let new_visual = if visual_changed {
@@ -194,9 +192,10 @@ fn apply_config_change(app: &AppHandle) {
         let _ = app.emit("show-icons-changed", new_show_icons);
     }
 
-    // Emit max_results change
-    if max_results_changed {
-        let _ = app.emit("max-results-changed", new_max_results);
+    // Emit visible_rows change.
+    // イベント名は IPC 安定のため旧名 "max-results-changed" を維持する（config キーは visible_rows に改名済み、#388）。
+    if visible_rows_changed {
+        let _ = app.emit("max-results-changed", new_visible_rows);
     }
 
     // Emit instant command prefix change
@@ -204,9 +203,10 @@ fn apply_config_change(app: &AppHandle) {
         let _ = app.emit("instant-prefix-changed", new_instant_prefix);
     }
 
-    // Emit top_n_history change
-    if top_n_history_changed {
-        let _ = app.emit("top-n-history-changed", new_top_n_history);
+    // Emit result_limit change.
+    // イベント名は IPC 安定のため旧名 "top-n-history-changed" を維持する（config キーは result_limit に改名済み、#388）。
+    if result_limit_changed {
+        let _ = app.emit("top-n-history-changed", new_result_limit);
     }
 
     // Resize main window if width changed
@@ -223,7 +223,7 @@ fn apply_config_change(app: &AppHandle) {
 
 /// `config.toml` の読込結果を実行中エンジンへ適用してよいかの判定。
 /// `ReadFailed`（一時的・環境的な read 失敗: 権限/ロック/共有違反等）では fallback-default を
-/// 適用しない。適用すると `top_n_history` 等が default に落ち、live-read 化した履歴剪定が
+/// 適用しない。適用すると `result_limit` 等が default に落ち、live-read 化した履歴剪定が
 /// default 上限で走って `history.bin` が不可逆に縮む（データ損失）うえ、default scan で
 /// 誤った再構築も走る。`Config::load` の「一時的失敗は退避も上書きもしない」保全方針
 /// （snotra-core/CLAUDE.md）を apply 側にも揃える。ファイルは無傷なので、次の保存イベントで

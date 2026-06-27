@@ -26,7 +26,7 @@ struct IconCacheData {
 pub struct IconCache {
     data: IconCacheData,
     /// 最大保持件数。超過時は挿入順で最古から退避する。永続化しない runtime config
-    /// （`load(cap)` で注入。実効 cap は呼び出し側で `max(max_results)` に floor 済み）。
+    /// （`load(cap)` で注入。値は `Config::icon_cache_cap()` が表示ワーキングセットから派生する）。
     cap: usize,
     dirty: bool,
 }

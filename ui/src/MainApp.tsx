@@ -164,7 +164,7 @@ const MainApp: Component = () => {
     });
     unlistenFns.push(unlistenVisual);
 
-    // Listen for max_results config changes
+    // Listen for visible_rows config changes (event name kept as "max-results-changed" for IPC stability, #388)
     const unlistenMaxResults = await listen<number>("max-results-changed", (event) => {
       setMaxResults(event.payload);
     });
@@ -194,7 +194,7 @@ const MainApp: Component = () => {
     });
     unlistenFns.push(unlistenInstantPrefix);
 
-    // Listen for top_n_history changes
+    // Listen for result_limit changes (event name kept as "top-n-history-changed" for IPC stability, #388)
     const unlistenTopN = await listen<number>("top-n-history-changed", (event) => {
       setIconCacheSize(event.payload);
     });
@@ -206,10 +206,10 @@ const MainApp: Component = () => {
       bootstrap = await api.getBootstrapPayload();
       setLanguage(bootstrap.language as Lang);
       applyTheme(bootstrap.visual);
-      setMaxResults(bootstrap.appearance.max_results);
+      setMaxResults(bootstrap.appearance.visible_rows);
       setShowIcons(bootstrap.appearance.show_icons);
       setInstantCommandPrefix(bootstrap.instant_command_prefix);
-      setIconCacheSize(bootstrap.top_n_history);
+      setIconCacheSize(bootstrap.result_limit);
     } catch (e) {
       console.error("Failed to load bootstrap payload:", e);
     }

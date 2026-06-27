@@ -112,14 +112,14 @@ impl Engine {
     pub fn search(&mut self, query: &str) -> Vec<SearchResult> {
         let mode = SearchMode::from(self.config.search.normal_mode);
         let boost = SearchOptions::from(&self.config.search);
-        // top_n_history が取得上限。max_results はウィンドウ可視行数のみを制御する。
-        let fetch_limit = self.config.search.effective_top_n_history();
+        // result_limit が取得上限。visible_rows はウィンドウ可視行数のみを制御する。
+        let fetch_limit = self.config.search.effective_result_limit();
         self.search_engine
             .search_with_options(query, fetch_limit, &self.history, mode, boost)
     }
 
     pub fn recent_history(&self) -> Vec<SearchResult> {
-        let max = self.config.search.effective_max_history_display();
+        let max = self.config.search.effective_recent_limit();
         self.search_engine.recent_history(&self.history, max)
     }
 
@@ -127,7 +127,7 @@ impl Engine {
         FolderListContext {
             mode: SearchMode::from(self.config.search.folder_mode),
             show_hidden_system: self.config.search.show_hidden_system,
-            max_results: self.config.search.effective_top_n_history(),
+            max_results: self.config.search.effective_result_limit(),
         }
     }
 
@@ -137,7 +137,7 @@ impl Engine {
         ctx: FolderListContext,
     ) -> Vec<SearchResult> {
         // ctx は I/O 開始前にロックなしで取得したスナップショット。
-        // 設定変更が並走した場合 top_n_history が 1 件ずれる可能性があるが、
+        // 設定変更が並走した場合 result_limit が 1 件ずれる可能性があるが、
         // Mutex 保持時間の最小化を優先する設計判断として許容する。
         // history は常に現在の最新状態を使用する（スコアリングのみへの影響）。
         folder::score_entries(entries, &self.history, ctx.max_results)
@@ -169,12 +169,12 @@ impl Engine {
     pub fn save_history_if_dirty(&mut self, threshold: u32) {
         // top_n は現在の config から live-read で渡す（焼き込まない、issue #348）。
         self.history
-            .save_if_dirty(threshold, self.config.search.effective_top_n_history());
+            .save_if_dirty(threshold, self.config.search.effective_result_limit());
     }
 
     pub fn flush_history(&mut self) {
         self.history
-            .save(self.config.search.effective_top_n_history());
+            .save(self.config.search.effective_result_limit());
     }
 
     pub fn config(&self) -> &Config {
@@ -306,11 +306,11 @@ mod tests {
     }
 
     #[test]
-    fn search_returns_up_to_top_n_history_regardless_of_max_results() {
+    fn search_returns_up_to_result_limit_regardless_of_visible_rows() {
         let mut config = default_config();
-        config.appearance.max_results = 2;
-        // top_n_history はデフォルト 200 → 4 件全部取得できる。
-        // max_results はウィンドウ可視行数のみを制御する。
+        config.appearance.visible_rows = Some(2);
+        // result_limit はデフォルト 200 → 4 件全部取得できる。
+        // visible_rows はウィンドウ可視行数のみを制御する。
         let mut engine = Engine::new(
             make_entries(&["app1", "app2", "app3", "app4"]),
             empty_history(),
@@ -372,9 +372,9 @@ mod tests {
     fn update_config_changes_config() {
         let mut engine = Engine::new(Vec::new(), empty_history(), default_config());
         let mut new_config = default_config();
-        new_config.appearance.max_results = 42;
+        new_config.appearance.visible_rows = Some(42);
         engine.update_config(new_config);
-        assert_eq!(engine.config().appearance.max_results, 42);
+        assert_eq!(engine.config().appearance.visible_rows, Some(42));
     }
 
     #[test]
@@ -524,10 +524,10 @@ mod tests {
 
     #[test]
     fn index_inputs_equal_when_unrelated_key_changes() {
-        // index 入力でないキー（max_results）の変更は IndexInputs を変えない＝再構築不要。
+        // index 入力でないキー（visible_rows）の変更は IndexInputs を変えない＝再構築不要。
         let base = default_config();
         let mut c = base.clone();
-        c.appearance.max_results = base.appearance.max_results + 10;
+        c.appearance.visible_rows = Some(base.appearance.effective_visible_rows() + 10);
         assert_eq!(IndexInputs::from_config(&base), IndexInputs::from_config(&c));
     }
 }

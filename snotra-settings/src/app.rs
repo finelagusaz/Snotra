@@ -234,7 +234,7 @@ pub(crate) fn config_error_message(error: &ConfigError, tr: &Tr) -> String {
         ConfigError::HotkeySystemConflict { modifier, key } => {
             format!("{}+{}{}", modifier, key, tr.err_hotkey_system_conflict())
         }
-        ConfigError::MaxResultsZero => tr.err_max_results_zero().to_string(),
+        ConfigError::VisibleRowsZero => tr.err_visible_rows_zero().to_string(),
         ConfigError::WindowWidthTooSmall(w) => {
             format!("{}{}", w, tr.err_window_width_too_small())
         }

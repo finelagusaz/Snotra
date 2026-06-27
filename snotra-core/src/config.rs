@@ -260,11 +260,15 @@ impl Default for GeneralConfig {
     }
 }
 
-fn default_top_n_history() -> usize {
+fn default_result_limit() -> usize {
     200
 }
 
-fn default_max_history_display() -> usize {
+fn default_recent_limit() -> usize {
+    8
+}
+
+fn default_visible_rows() -> usize {
     8
 }
 
@@ -334,15 +338,23 @@ pub struct SearchConfig {
     /// 1文字（"a"→"あ"）の意図しないマッチを防ぐため、デフォルト 2。
     #[serde(default = "default_migemo_min_chars")]
     pub migemo_min_chars: usize,
-    /// 空クエリ時に表示する履歴候補の最大件数。
-    /// `None` = 未設定（実効値は `effective_top_n_history()` で取得）。
+    /// 検索・フォルダの結果リスト最大長（materialize 件数・スクロール対象。fetch_limit）。
+    /// `None` = 未設定（実効値は `effective_result_limit()` で取得）。
     /// `Option` にすることで「TOML に明示されたか否か」を区別し、
-    /// レガシー `[appearance]` からの移行時に明示値を上書きしない。
+    /// レガシー（`top_n_history` / `[appearance]`）からの移行時に明示値を上書きしない。
     #[serde(default)]
+    pub result_limit: Option<usize>,
+    /// 空クエリ時の recent リスト件数（UI 表示件数）。
+    /// `None` = 未設定（実効値は `effective_recent_limit()` で取得）。
+    #[serde(default)]
+    pub recent_limit: Option<usize>,
+    /// Legacy: 旧キー `[search].top_n_history`。`apply_migrations()` で `result_limit` へ移行し、
+    /// 書き戻さない（`skip_serializing`）。新コードは `result_limit` を読む。
+    #[serde(default, skip_serializing)]
     pub top_n_history: Option<usize>,
-    /// 空クエリ時に表示する履歴候補の上限（UI 表示件数）。
-    /// `None` = 未設定（実効値は `effective_max_history_display()` で取得）。
-    #[serde(default)]
+    /// Legacy: 旧キー `[search].max_history_display`。`apply_migrations()` で `recent_limit` へ移行。
+    /// 書き戻さない（`skip_serializing`）。新コードは `recent_limit` を読む。
+    #[serde(default, skip_serializing)]
     pub max_history_display: Option<usize>,
     /// ユーザー PATH 環境変数の実行ファイルを検索対象に含めるか。
     #[serde(default)]
@@ -360,6 +372,8 @@ impl Default for SearchConfig {
             instant_command_prefix: default_instant_command_prefix(),
             migemo_enabled: false,
             migemo_min_chars: default_migemo_min_chars(),
+            result_limit: None,
+            recent_limit: None,
             top_n_history: None,
             max_history_display: None,
             include_path_env: false,
@@ -368,14 +382,14 @@ impl Default for SearchConfig {
 }
 
 impl SearchConfig {
-    /// 空クエリ時の履歴取得上限。`top_n_history` が未設定ならデフォルト値を返す。
-    pub fn effective_top_n_history(&self) -> usize {
-        self.top_n_history.unwrap_or_else(default_top_n_history)
+    /// 検索・フォルダの結果リスト最大長。`result_limit` が未設定ならデフォルト値を返す。
+    pub fn effective_result_limit(&self) -> usize {
+        self.result_limit.unwrap_or_else(default_result_limit)
     }
 
-    /// 空クエリ時の履歴表示上限。`max_history_display` が未設定ならデフォルト値を返す。
-    pub fn effective_max_history_display(&self) -> usize {
-        self.max_history_display.unwrap_or_else(default_max_history_display)
+    /// 空クエリ時の recent リスト件数。`recent_limit` が未設定ならデフォルト値を返す。
+    pub fn effective_recent_limit(&self) -> usize {
+        self.recent_limit.unwrap_or_else(default_recent_limit)
     }
 
     #[deprecated(note = "use Config::validate() to detect issues instead")]
@@ -393,20 +407,33 @@ impl SearchConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppearanceConfig {
-    pub max_results: usize,
+    /// ウィンドウ可視行数。`None` = 未設定（実効値は `effective_visible_rows()` で取得）。
+    /// `Option` にすることで「TOML に明示されたか否か」を区別し、レガシー `max_results` からの
+    /// 移行時に明示値を上書きしない。
+    #[serde(default)]
+    pub visible_rows: Option<usize>,
     pub window_width: u32,
     #[serde(default = "default_show_icons")]
     pub show_icons: bool,
-    /// Legacy: moved to `SearchConfig.top_n_history`. Read from old `config.toml` files and
-    /// migrated by `apply_migrations()`; never written back (`skip_serializing`).
-    /// Do not use in new code — read `SearchConfig.top_n_history` instead.
+    /// Legacy: 旧キー `[appearance].max_results`。`apply_migrations()` で `visible_rows` へ移行し、
+    /// 書き戻さない（`skip_serializing`）。新コードは `visible_rows` を読む。
+    #[serde(default, skip_serializing)]
+    pub max_results: Option<usize>,
+    /// Legacy: 最古キー `[appearance].top_n_history`。`apply_migrations()` で `SearchConfig.result_limit`
+    /// へ移行し、書き戻さない（`skip_serializing`）。新コードは `SearchConfig.result_limit` を読む。
     #[serde(default, skip_serializing)]
     pub top_n_history: Option<usize>,
-    /// Legacy: moved to `SearchConfig.max_history_display`. Read from old `config.toml` files and
-    /// migrated by `apply_migrations()`; never written back (`skip_serializing`).
-    /// Do not use in new code — read `SearchConfig.max_history_display` instead.
+    /// Legacy: 最古キー `[appearance].max_history_display`。`apply_migrations()` で
+    /// `SearchConfig.recent_limit` へ移行し、書き戻さない（`skip_serializing`）。
     #[serde(default, skip_serializing)]
     pub max_history_display: Option<usize>,
+}
+
+impl AppearanceConfig {
+    /// ウィンドウ可視行数。`visible_rows` が未設定ならデフォルト値を返す。
+    pub fn effective_visible_rows(&self) -> usize {
+        self.visible_rows.unwrap_or_else(default_visible_rows)
+    }
 }
 
 fn default_theme_preset() -> ThemePreset {
@@ -714,9 +741,10 @@ impl Default for Config {
             },
             general: GeneralConfig::default(),
             appearance: AppearanceConfig {
-                max_results: 8,
+                visible_rows: None,
                 window_width: 600,
                 show_icons: true,
+                max_results: None,
                 top_n_history: None,
                 max_history_display: None,
             },
@@ -751,25 +779,25 @@ impl Config {
     /// アイコンキャッシュ（常駐メモリ + `icons.bin`）の最大保持件数（派生値）。
     ///
     /// 表示ワーキングセット = アイコンを要求しうる結果リストの最大長
-    /// `max(max_results, top_n_history, max_history_display)`
-    /// （検索・フォルダ = `top_n_history`、空クエリ recent = `max_history_display`、
-    /// 可視行 = `max_results`。フロント `LruIconCache` サイズも `top_n_history` に一致）の
+    /// `max(visible_rows, result_limit, recent_limit)`
+    /// （検索・フォルダ = `result_limit`、空クエリ recent = `recent_limit`、
+    /// 可視行 = `visible_rows`。フロント `LruIconCache` サイズも `result_limit` に一致）の
     /// `ICON_CACHE_RETENTION_FACTOR` 倍。
     ///
     /// 独立した設定キーを持たず派生値とすることで「上限 ≥ ワーキングセット」が**構造的に成立**し
-    /// （検証・floor・drift が不要）、`top_n_history` 変更時は上限も自動追従する。単一の
+    /// （検証・floor・drift が不要）、`result_limit` 変更時は上限も自動追従する。単一の
     /// `get_icons_batch` が自己 evict することはない。倍率で再検索時の再抽出を抑えつつ無制限増加を止める。
     ///
     /// 保守注意: ここの `working_set` は engine がアイコンを要求する結果リストの fetch 上限と対応する
-    /// （`Engine::search` / `capture_folder_list_context` = `effective_top_n_history`、
-    /// `recent_history` = `effective_max_history_display`）。engine 側でアイコンを要求する新たな
+    /// （`Engine::search` / `capture_folder_list_context` = `effective_result_limit`、
+    /// `recent_history` = `effective_recent_limit`）。engine 側でアイコンを要求する新たな
     /// 長尺リスト経路を増やしたら、その上限をこの式にも反映すること。
     pub fn icon_cache_cap(&self) -> usize {
         let working_set = self
             .appearance
-            .max_results
-            .max(self.search.effective_top_n_history())
-            .max(self.search.effective_max_history_display());
+            .effective_visible_rows()
+            .max(self.search.effective_result_limit())
+            .max(self.search.effective_recent_limit());
         working_set.max(1).saturating_mul(ICON_CACHE_RETENTION_FACTOR)
     }
 
@@ -863,27 +891,42 @@ impl Config {
             self.migrate_additional_to_scan();
             changed = true;
         }
-        // Migrate [appearance].top_n_history / max_history_display → [search]
-        // take() はレガシーフィールドのクリーンアップのため常に実行する。
-        // [search] が None（TOML に未記載）のときだけ legacy 値で補完する。
-        // [search] に値が明示されていれば（たとえそれがデフォルト値と同じでも）上書きしない。
-        if let Some(v) = self.appearance.top_n_history.take() {
-            if self.search.top_n_history.is_none() {
-                self.search.top_n_history = Some(v);
-            }
+        // 件数 config キーの改名マイグレーション（#388）。各新フィールドへ legacy を集約する。
+        // take() で legacy 層を常にクリアし、新フィールドが None（= 新キー未明示）のときだけ
+        // get_or_insert で補完する（新キーが明示されていれば上書きしない＝新優先）。
+        // visible_rows ← [appearance].max_results（1層）
+        if let Some(v) = self.appearance.max_results.take() {
+            self.appearance.visible_rows.get_or_insert(v);
             changed = true;
         }
-        if let Some(v) = self.appearance.max_history_display.take() {
-            if self.search.max_history_display.is_none() {
-                self.search.max_history_display = Some(v);
-            }
+        // result_limit ← [search].top_n_history（中間）> [appearance].top_n_history（最古）。
+        // 両 legacy 層を take() で常にクリアし、search 側を優先する（.or は両引数を評価する）。
+        if let Some(v) = self
+            .search
+            .top_n_history
+            .take()
+            .or(self.appearance.top_n_history.take())
+        {
+            self.search.result_limit.get_or_insert(v);
             changed = true;
         }
-        // migration の is_none() 判定より後で None → Some(default) に解決する。
-        // apply_migrations() 呼び出し後は常に Some(v) が保証され、
-        // 設定画面の DragValue::get_or_insert が no-op になり has_changes() の誤発火を防ぐ。
-        let _ = self.search.top_n_history.get_or_insert_with(default_top_n_history);
-        let _ = self.search.max_history_display.get_or_insert_with(default_max_history_display);
+        // recent_limit ← [search].max_history_display（中間）> [appearance].max_history_display（最古）
+        if let Some(v) = self
+            .search
+            .max_history_display
+            .take()
+            .or(self.appearance.max_history_display.take())
+        {
+            self.search.recent_limit.get_or_insert(v);
+            changed = true;
+        }
+        // 補完より後で None → Some(default) に解決する。apply_migrations() 呼び出し後は常に
+        // Some(v) が保証され、設定画面の DragValue::get_or_insert が no-op になり has_changes()
+        // の誤発火を防ぐ。旧 legacy フィールドへの get_or_insert は行わない（take 後の再 Some 化で
+        // skip_serializing が無効化されるため）。
+        let _ = self.appearance.visible_rows.get_or_insert_with(default_visible_rows);
+        let _ = self.search.result_limit.get_or_insert_with(default_result_limit);
+        let _ = self.search.recent_limit.get_or_insert_with(default_recent_limit);
         #[allow(deprecated)]
         if self.search.sanitize() {
             changed = true;
@@ -1044,8 +1087,8 @@ impl Config {
         }
 
         // Appearance validation
-        if self.appearance.max_results == 0 {
-            errors.push(ConfigError::MaxResultsZero);
+        if self.appearance.effective_visible_rows() == 0 {
+            errors.push(ConfigError::VisibleRowsZero);
         }
         if self.appearance.window_width < 200 {
             errors.push(ConfigError::WindowWidthTooSmall(self.appearance.window_width));
@@ -1313,12 +1356,12 @@ mod tests {
             fuzzy_history_cap_ratio = 0.25
         "#;
         // Verify raw deserialized values before any migration.
-        // top_n_history / max_history_display land in the legacy AppearanceConfig slots (Some(v));
-        // migration to SearchConfig is tested in migrate_top_n_history_from_appearance_to_search.
+        // 旧キー max_results / top_n_history / max_history_display は legacy slot（Some(v)）に入る。
+        // SearchConfig / visible_rows への migration は migrate_oldest_appearance_legacy_to_new_keys で検証。
         let config: Config = toml::from_str(toml_str).expect("parse");
         assert_eq!(config.hotkey.modifier, "Ctrl");
         assert_eq!(config.hotkey.key, "Space");
-        assert_eq!(config.appearance.max_results, 10);
+        assert_eq!(config.appearance.max_results, Some(10));
         assert_eq!(config.appearance.window_width, 700);
         assert_eq!(config.appearance.top_n_history, Some(150));
         assert_eq!(config.appearance.max_history_display, Some(5));
@@ -1343,8 +1386,10 @@ mod tests {
     }
 
     #[test]
-    fn migrate_top_n_history_from_appearance_to_search() {
-        // [appearance] のみに値があるケース: 新フィールドがデフォルト値なので legacy 値で補完する。
+    fn migrate_oldest_appearance_legacy_to_new_keys() {
+        // 最古 [appearance] legacy のみに値があるケース: 新フィールドが None なので legacy 値で補完する。
+        // max_results → visible_rows、appearance.top_n_history → result_limit、
+        // appearance.max_history_display → recent_limit。
         let toml_str = r#"
             [hotkey]
             modifier = "Alt"
@@ -1361,17 +1406,19 @@ mod tests {
         "#;
         let mut config: Config = toml::from_str(toml_str).expect("parse");
         assert!(config.apply_migrations());
-        assert_eq!(config.search.top_n_history, Some(300));
-        assert_eq!(config.search.max_history_display, Some(12));
+        assert_eq!(config.search.result_limit, Some(300));
+        assert_eq!(config.search.recent_limit, Some(12));
+        assert_eq!(config.appearance.visible_rows, Some(8));
         // Legacy slots are cleared after migration
+        assert_eq!(config.appearance.max_results, None);
         assert_eq!(config.appearance.top_n_history, None);
         assert_eq!(config.appearance.max_history_display, None);
     }
 
     #[test]
-    fn migrate_legacy_does_not_overwrite_explicit_search_values() {
-        // [appearance] と [search] の両方に値があるケース:
-        // 新フィールド ([search]) が明示的に設定されている場合は legacy 値で上書きしない。
+    fn migrate_prefers_search_legacy_over_appearance_legacy() {
+        // #388 改名後: [search].top_n_history（中間 legacy）と [appearance].top_n_history（最古 legacy）の
+        // 両方に値があるケース。両 legacy を result_limit へ集約し、中間（search）を優先する。
         let toml_str = r#"
             [hotkey]
             modifier = "Alt"
@@ -1392,10 +1439,12 @@ mod tests {
         "#;
         let mut config: Config = toml::from_str(toml_str).expect("parse");
         assert!(config.apply_migrations());
-        // [search] の値が保持されていること（legacy で上書きされていない）
-        assert_eq!(config.search.top_n_history, Some(400));
-        assert_eq!(config.search.max_history_display, Some(15));
-        // Legacy slots はクリーンアップ済み
+        // 中間 legacy（search）の値が result_limit/recent_limit へ集約され、最古（appearance）に勝つ
+        assert_eq!(config.search.result_limit, Some(400));
+        assert_eq!(config.search.recent_limit, Some(15));
+        // Legacy slots は全層クリーンアップ済み
+        assert_eq!(config.search.top_n_history, None);
+        assert_eq!(config.search.max_history_display, None);
         assert_eq!(config.appearance.top_n_history, None);
         assert_eq!(config.appearance.max_history_display, None);
     }
@@ -1420,15 +1469,165 @@ mod tests {
         "#;
         let mut config: Config = toml::from_str(toml_str).expect("parse");
         config.apply_migrations();
-        assert_eq!(config.search.top_n_history, Some(200));
-        assert_eq!(config.search.max_history_display, Some(8));
+        assert_eq!(config.search.result_limit, Some(200));
+        assert_eq!(config.search.recent_limit, Some(8));
+        assert_eq!(config.appearance.visible_rows, Some(8));
+    }
+
+    #[test]
+    fn migrate_legacy_max_results_to_visible_rows() {
+        // 旧キー [appearance].max_results のみ → visible_rows へ移行（#388）。
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+
+            [appearance]
+            max_results = 15
+            window_width = 600
+
+            [paths]
+            additional = []
+        "#;
+        let mut config: Config = toml::from_str(toml_str).expect("parse");
+        assert!(config.apply_migrations());
+        assert_eq!(config.appearance.effective_visible_rows(), 15);
+        assert_eq!(config.appearance.max_results, None); // legacy cleared
+    }
+
+    #[test]
+    fn migrate_search_intermediate_legacy_to_result_limit() {
+        // 中間 legacy [search].top_n_history のみ（appearance 最古なし）→ result_limit へ移行（#388）。
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+
+            [appearance]
+            window_width = 600
+
+            [search]
+            top_n_history = 333
+            max_history_display = 7
+
+            [paths]
+            additional = []
+        "#;
+        let mut config: Config = toml::from_str(toml_str).expect("parse");
+        assert!(config.apply_migrations());
+        assert_eq!(config.search.result_limit, Some(333));
+        assert_eq!(config.search.recent_limit, Some(7));
+        assert_eq!(config.search.top_n_history, None); // intermediate legacy cleared
+        assert_eq!(config.search.max_history_display, None);
+    }
+
+    #[test]
+    fn migrate_new_key_wins_over_legacy() {
+        // 核心不変条件: 新キー（明示）と legacy が両在 → 新キーが勝つ（get_or_insert が no-op、新優先）。
+        // この回帰ガードがないと get_or_insert を `= Some(v)`（無条件上書き）に誤改変しても検知できない。
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+
+            [appearance]
+            visible_rows = 12
+            max_results = 99
+            window_width = 600
+
+            [search]
+            result_limit = 250
+            top_n_history = 999
+            recent_limit = 6
+            max_history_display = 88
+
+            [paths]
+            additional = []
+        "#;
+        let mut config: Config = toml::from_str(toml_str).expect("parse");
+        config.apply_migrations();
+        // 新キーが legacy で上書きされない
+        assert_eq!(config.appearance.visible_rows, Some(12));
+        assert_eq!(config.search.result_limit, Some(250));
+        assert_eq!(config.search.recent_limit, Some(6));
+        // legacy は全層クリア済み
+        assert_eq!(config.appearance.max_results, None);
+        assert_eq!(config.search.top_n_history, None);
+        assert_eq!(config.search.max_history_display, None);
+    }
+
+    #[test]
+    fn new_keys_round_trip_and_legacy_not_serialized() {
+        // 新キーで読み込み → serialize → 旧キーが出力されず（skip_serializing）新キーで再読み込みできる。
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+
+            [appearance]
+            visible_rows = 20
+            window_width = 600
+
+            [search]
+            result_limit = 250
+            recent_limit = 6
+
+            [paths]
+            additional = []
+        "#;
+        let mut config: Config = toml::from_str(toml_str).expect("parse");
+        config.apply_migrations();
+        assert_eq!(config.appearance.effective_visible_rows(), 20);
+        assert_eq!(config.search.effective_result_limit(), 250);
+        assert_eq!(config.search.effective_recent_limit(), 6);
+
+        let serialized = toml::to_string(&config).expect("serialize");
+        // 旧キーは skip_serializing で出力されない
+        assert!(!serialized.contains("max_results"), "old key leaked: {serialized}");
+        assert!(!serialized.contains("top_n_history"), "old key leaked: {serialized}");
+        assert!(!serialized.contains("max_history_display"), "old key leaked: {serialized}");
+        // 新キーは出力される
+        assert!(serialized.contains("visible_rows"));
+        assert!(serialized.contains("result_limit"));
+        assert!(serialized.contains("recent_limit"));
+
+        // 再読み込みで同値
+        let reloaded: Config = toml::from_str(&serialized).expect("reparse");
+        assert_eq!(reloaded.appearance.effective_visible_rows(), 20);
+        assert_eq!(reloaded.search.effective_result_limit(), 250);
+        assert_eq!(reloaded.search.effective_recent_limit(), 6);
+    }
+
+    #[test]
+    fn all_legacy_keys_behavior_unchanged() {
+        // 全旧キーを持つ config が改名前と同じ実効値・icon_cache_cap に解決する（挙動不変）。
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+
+            [appearance]
+            max_results = 8
+            window_width = 600
+            top_n_history = 200
+            max_history_display = 8
+
+            [paths]
+            additional = []
+        "#;
+        let mut config: Config = toml::from_str(toml_str).expect("parse");
+        config.apply_migrations();
+        assert_eq!(config.appearance.effective_visible_rows(), 8);
+        assert_eq!(config.search.effective_result_limit(), 200);
+        assert_eq!(config.search.effective_recent_limit(), 8);
+        assert_eq!(config.icon_cache_cap(), 1000); // 改名前と同値
     }
 
     #[test]
     fn deserialize_minimal_config_uses_defaults() {
         // Verify that omitting the `[search]` section entirely still yields correct defaults.
         // Each field uses `#[serde(default = "default_...")]`, so serde fills in the
-        // function-level defaults (e.g. `default_top_n_history` → 200) without needing
+        // function-level defaults (e.g. `default_result_limit` → 200) without needing
         // the section to be present in the TOML.
         let toml_str = r#"
             [hotkey]
@@ -1444,8 +1643,8 @@ mod tests {
         "#;
         let config: Config = toml::from_str(toml_str).expect("parse");
         // [search] セクションが省略されると None になり、accessor がデフォルト値を返す
-        assert_eq!(config.search.effective_top_n_history(), 200);
-        assert_eq!(config.search.effective_max_history_display(), 8);
+        assert_eq!(config.search.effective_result_limit(), 200);
+        assert_eq!(config.search.effective_recent_limit(), 8);
         assert_eq!(config.search.normal_mode, SearchModeConfig::Fuzzy);
         assert_eq!(config.search.folder_mode, SearchModeConfig::Fuzzy);
         assert!(!config.search.show_hidden_system);
@@ -1468,10 +1667,10 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.hotkey.modifier, "Alt");
         assert_eq!(config.hotkey.key, "Q");
-        assert_eq!(config.appearance.max_results, 8);
+        assert_eq!(config.appearance.effective_visible_rows(), 8);
         assert_eq!(config.appearance.window_width, 600);
-        assert_eq!(config.search.effective_top_n_history(), 200);
-        assert_eq!(config.search.effective_max_history_display(), 8);
+        assert_eq!(config.search.effective_result_limit(), 200);
+        assert_eq!(config.search.effective_recent_limit(), 8);
         assert!(config.appearance.show_icons);
         assert!(config.paths.additional.is_empty());
         // default scan paths are populated from environment (common Start Menu + Desktop)
@@ -1802,11 +2001,11 @@ mod tests {
     }
 
     #[test]
-    fn validate_max_results_zero() {
+    fn validate_visible_rows_zero() {
         let mut config = Config::default();
-        config.appearance.max_results = 0;
+        config.appearance.visible_rows = Some(0);
         let errors = config.validate();
-        assert!(errors.contains(&ConfigError::MaxResultsZero));
+        assert!(errors.contains(&ConfigError::VisibleRowsZero));
     }
 
     #[test]
@@ -2666,7 +2865,7 @@ mod tests {
         let mut config = Config::default();
         config.hotkey.modifier = "".to_string();
         config.hotkey.key = "".to_string();
-        config.appearance.max_results = 0;
+        config.appearance.visible_rows = Some(0);
         config.appearance.window_width = 50;
         config.search.fuzzy_history_cap_ratio = 2.0;
         config.paths.scan = vec![ScanPath {
@@ -2678,7 +2877,7 @@ mod tests {
         let errors = config.validate();
         assert!(errors.contains(&ConfigError::HotkeyModifierEmpty));
         assert!(errors.contains(&ConfigError::HotkeyKeyEmpty));
-        assert!(errors.contains(&ConfigError::MaxResultsZero));
+        assert!(errors.contains(&ConfigError::VisibleRowsZero));
         assert!(errors.contains(&ConfigError::WindowWidthTooSmall(50)));
         assert!(errors.contains(&ConfigError::FuzzyCapRatioOutOfRange { value: 2.0 }));
         assert!(errors.contains(&ConfigError::ScanPathEmpty { index: 0 }));
@@ -2862,7 +3061,10 @@ mod tests {
         let default = Config::default();
         assert_eq!(config.hotkey.modifier, default.hotkey.modifier);
         assert_eq!(config.hotkey.key, default.hotkey.key);
-        assert_eq!(config.appearance.max_results, default.appearance.max_results);
+        assert_eq!(
+            config.appearance.effective_visible_rows(),
+            default.appearance.effective_visible_rows()
+        );
     }
 
     #[test]
@@ -2874,14 +3076,14 @@ mod tests {
             key = ""
 
             [appearance]
-            max_results = 0
+            visible_rows = 0
             window_width = 50
 
             [paths]
         "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let errors = config.validate();
-        // Should have errors for empty hotkey and invalid max_results/window_width
+        // Should have errors for empty hotkey and invalid visible_rows/window_width
         assert!(errors.len() >= 2, "Expected at least 2 errors, got: {:?}", errors);
     }
 
@@ -2902,7 +3104,10 @@ mod tests {
         let config: Config = toml::from_str(toml_str).unwrap_or_default();
         let default = Config::default();
         assert_eq!(config.hotkey.modifier, default.hotkey.modifier);
-        assert_eq!(config.appearance.max_results, default.appearance.max_results);
+        assert_eq!(
+            config.appearance.effective_visible_rows(),
+            default.appearance.effective_visible_rows()
+        );
     }
 
     // -- backup_invalid: parse 失敗時の .bak 退避（issue #338） --
@@ -3281,7 +3486,8 @@ scan = []
         let config = Config::from_toml_str(toml).expect("parse");
         assert_eq!(config.hotkey.modifier, "Ctrl");
         assert_eq!(config.hotkey.key, "Space");
-        assert_eq!(config.appearance.max_results, 10);
+        // 旧キー max_results は legacy slot に入る（from_toml_str は migration を実行しない）
+        assert_eq!(config.appearance.max_results, Some(10));
         // Defaults filled for missing optional sections
         assert!(config.openers.is_empty());
         assert!(config.instant_commands.is_empty());
@@ -3289,49 +3495,49 @@ scan = []
 
     #[test]
     fn icon_cache_cap_derives_from_working_set_times_retention() {
-        // 既定: max_results=8, top_n_history=200, max_history_display=8 → working_set=200
+        // 既定: visible_rows=8, result_limit=200, recent_limit=8 → working_set=200
         // → cap = 200 × 5 = 1000（旧 default と一致＝既定挙動は不変）。
         let config = Config::default();
-        assert_eq!(config.search.effective_top_n_history(), 200);
+        assert_eq!(config.search.effective_result_limit(), 200);
         assert_eq!(config.icon_cache_cap(), 1000);
     }
 
     #[test]
-    fn icon_cache_cap_scales_with_top_n_history() {
-        // top_n_history を上げると上限も自動追従する（検証不要・drift なし）。
+    fn icon_cache_cap_scales_with_result_limit() {
+        // result_limit を上げると上限も自動追従する（検証不要・drift なし）。
         let mut config = Config::default();
-        config.search.top_n_history = Some(500);
+        config.search.result_limit = Some(500);
         assert_eq!(config.icon_cache_cap(), 2500); // 500 × 5
     }
 
     #[test]
     fn icon_cache_cap_uses_max_of_all_list_limits() {
-        // working_set = max(max_results, top_n_history, max_history_display)。
-        // ここでは max_history_display が支配的になるケースを検証する。
+        // working_set = max(visible_rows, result_limit, recent_limit)。
+        // ここでは recent_limit が支配的になるケースを検証する。
         let mut config = Config::default();
-        config.appearance.max_results = 8;
-        config.search.top_n_history = Some(50);
-        config.search.max_history_display = Some(120);
+        config.appearance.visible_rows = Some(8);
+        config.search.result_limit = Some(50);
+        config.search.recent_limit = Some(120);
         assert_eq!(config.icon_cache_cap(), 600); // max(8,50,120)=120 × 5
     }
 
     #[test]
-    fn icon_cache_cap_max_results_dominates_when_history_limits_small() {
+    fn icon_cache_cap_visible_rows_dominates_when_list_limits_small() {
         let mut config = Config::default();
-        config.appearance.max_results = 12;
-        config.search.top_n_history = Some(5);
-        config.search.max_history_display = Some(3);
+        config.appearance.visible_rows = Some(12);
+        config.search.result_limit = Some(5);
+        config.search.recent_limit = Some(3);
         assert_eq!(config.icon_cache_cap(), 60); // max(12,5,3)=12 × 5
     }
 
     #[test]
     fn icon_cache_cap_never_collapses_to_zero() {
         // 退行防御: 全リスト上限が 0 でも working_set は 1 で floor され、cap は RETENTION 以上。
-        // （max_results=0 は validate の MaxResultsZero 対象だが、cap 導出は panic/0 にならない）。
+        // （visible_rows=0 は validate の VisibleRowsZero 対象だが、cap 導出は panic/0 にならない）。
         let mut config = Config::default();
-        config.appearance.max_results = 0;
-        config.search.top_n_history = Some(0);
-        config.search.max_history_display = Some(0);
+        config.appearance.visible_rows = Some(0);
+        config.search.result_limit = Some(0);
+        config.search.recent_limit = Some(0);
         assert_eq!(config.icon_cache_cap(), ICON_CACHE_RETENTION_FACTOR);
         assert!(config.icon_cache_cap() >= 1);
     }

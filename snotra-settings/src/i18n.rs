@@ -149,7 +149,7 @@ impl Tr {
         }
     }
 
-    pub fn err_max_results_zero(&self) -> &'static str {
+    pub fn err_visible_rows_zero(&self) -> &'static str {
         match self.0 {
             Language::Ja => "最大表示件数は1以上にしてください",
             Language::En => "Max results must be at least 1",
@@ -227,7 +227,7 @@ impl Tr {
         }
     }
 
-    pub fn label_max_results(&self) -> &'static str {
+    pub fn label_visible_rows(&self) -> &'static str {
         match self.0 {
             Language::Ja => "最大表示件数:",
             Language::En => "Max results:",
@@ -376,14 +376,14 @@ impl Tr {
         }
     }
 
-    pub fn label_max_history(&self) -> &'static str {
+    pub fn label_result_limit(&self) -> &'static str {
         match self.0 {
             Language::Ja => "最大列挙数:",
             Language::En => "Max entries:",
         }
     }
 
-    pub fn label_max_history_display(&self) -> &'static str {
+    pub fn label_recent_limit(&self) -> &'static str {
         match self.0 {
             Language::Ja => "最大履歴表示件数:",
             Language::En => "Max history display:",

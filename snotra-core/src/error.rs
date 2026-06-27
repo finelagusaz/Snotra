@@ -64,7 +64,7 @@ pub enum ConfigError {
     HotkeyModifierEmpty,
     HotkeyKeyEmpty,
     HotkeySystemConflict { modifier: String, key: String },
-    MaxResultsZero,
+    VisibleRowsZero,
     WindowWidthTooSmall(u32),
     FuzzyCapRatioOutOfRange { value: f64 },
     ScanPathEmpty { index: usize },

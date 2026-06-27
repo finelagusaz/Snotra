@@ -93,7 +93,7 @@
 - アイコン非表示設定時・アイコンデータなし時はフォールバック絵文字（📁📄）を表示
 - インデックス再構築時はキャッシュをクリア（次回検索時に再抽出）
 - `icons.bin` は起動時に先読みせず、初回アイコン取得（`get_icons_batch`）時に遅延ロード
-- 件数上限を超えると挿入順で最古から退避（FIFO）し、常駐メモリと `icons.bin` の両方を頭打ちにする。退避は書き込み経路（挿入・ロード）でのみ行い、取得（`get`）はアクセス順を更新しない。上限は独立した設定キーを持たず、表示ワーキングセット `max(max_results, top_n_history, max_history_display)`（アイコンを要求しうる結果リストの最大件数＝フロント先読み・`LruIconCache` サイズ）の定数倍（実装は ×5、既定 200×5=1000）として導出する。これにより「上限 ≥ ワーキングセット」を検証なしで構造的に保証し、単一の `get_icons_batch` が自己 evict することはなく、`top_n_history` 変更時は上限も自動追従する
+- 件数上限を超えると挿入順で最古から退避（FIFO）し、常駐メモリと `icons.bin` の両方を頭打ちにする。退避は書き込み経路（挿入・ロード）でのみ行い、取得（`get`）はアクセス順を更新しない。上限は独立した設定キーを持たず、表示ワーキングセット `max(visible_rows, result_limit, recent_limit)`（アイコンを要求しうる結果リストの最大件数＝フロント先読み・`LruIconCache` サイズ）の定数倍（実装は ×5、既定 200×5=1000）として導出する。これにより「上限 ≥ ワーキングセット」を検証なしで構造的に保証し、単一の `get_icons_batch` が自己 evict することはなく、`result_limit` 変更時は上限も自動追従する
 
 ## 4. 検索システム
 
@@ -280,7 +280,7 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 - PATH の実行ファイルを検索対象に含める（`include_path_env`、デフォルト無効）
 - ローマ字検索（`migemo_enabled`、デフォルト無効）・最小文字数（`migemo_min_chars`、デフォルト 2）
 - 履歴保存の上位N件指定
-- 最大履歴表示件数（`max_history_display`）
+- 最大履歴表示件数（`recent_limit`）
 - 履歴スコア正規化（`history_normalization`）
 - Fuzzy 履歴キャップ比率（`fuzzy_history_cap_ratio`、デフォルト 0.30）
 
@@ -339,7 +339,7 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 - ホットキー: 検知時に `PlatformCommand::SetHotkey` で再登録（失敗時は旧設定維持）
 - トレイアイコン: 検知時に `PlatformCommand::SetTrayVisible` で切替
 - 検索方式/最大件数: 検知後即時反映
-- 履歴の保持上限（`top_n_history`）: 検知後即時反映（検索の取得上限・履歴の剪定容量とも実行時に `config` から参照する live-read のため再起動不要、#348）
+- 履歴の保持上限（`result_limit`）: 検知後即時反映（検索の取得上限・履歴の剪定容量とも実行時に `config` から参照する live-read のため再起動不要、#348）
 - 見た目設定: 検知時に `visual-config-changed` イベントで全ウィンドウの CSS 変数を即時更新
 - ウィンドウ幅: 検知時に `set_size` で main ウィンドウを即時リサイズ
 - 言語: 検知時に `language-changed` イベントでフロントエンドに通知し、`PlatformCommand::SetLanguage` でトレイメニューを切替。`language-changed` はホットキー失敗通知より先に発火する（フロントエンドが正しい言語でエラー文字列を表示できるようにするため）

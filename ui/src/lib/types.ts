@@ -31,7 +31,7 @@ export interface BootstrapGeneralConfig {
 
 export interface BootstrapAppearanceConfig {
   show_icons: boolean;
-  max_results: number;
+  visible_rows: number;
 }
 
 export interface BootstrapPayload {
@@ -41,7 +41,7 @@ export interface BootstrapPayload {
   language: "ja" | "en";
   indexing: boolean;
   instant_command_prefix: string;
-  top_n_history: number;
+  result_limit: number;
 }
 
 export interface InstantCommand {

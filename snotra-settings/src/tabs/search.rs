@@ -52,13 +52,13 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, tr: &Tr) {
         ui.add_space(4.0);
 
         egui::Grid::new("history_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
-            ui.label(tr.label_max_history());
-            let top_n_default = config.search.effective_top_n_history();
-            ui.add_sized([60.0, ui.spacing().interact_size.y], egui::DragValue::new(config.search.top_n_history.get_or_insert(top_n_default)).range(10..=1000));
+            ui.label(tr.label_result_limit());
+            let result_limit_default = config.search.effective_result_limit();
+            ui.add_sized([60.0, ui.spacing().interact_size.y], egui::DragValue::new(config.search.result_limit.get_or_insert(result_limit_default)).range(10..=1000));
             ui.end_row();
-            ui.label(tr.label_max_history_display());
-            let max_display_default = config.search.effective_max_history_display();
-            ui.add_sized([60.0, ui.spacing().interact_size.y], egui::DragValue::new(config.search.max_history_display.get_or_insert(max_display_default)).range(1..=50));
+            ui.label(tr.label_recent_limit());
+            let recent_limit_default = config.search.effective_recent_limit();
+            ui.add_sized([60.0, ui.spacing().interact_size.y], egui::DragValue::new(config.search.recent_limit.get_or_insert(recent_limit_default)).range(1..=50));
             ui.end_row();
         });
 

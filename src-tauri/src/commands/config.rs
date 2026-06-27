@@ -15,7 +15,7 @@ pub struct BootstrapGeneralConfig {
 #[derive(serde::Serialize, Clone)]
 pub struct BootstrapAppearanceConfig {
     pub show_icons: bool,
-    pub max_results: usize,
+    pub visible_rows: usize,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -26,7 +26,7 @@ pub struct BootstrapPayload {
     pub language: String,
     pub indexing: bool,
     pub instant_command_prefix: String,
-    pub top_n_history: usize,
+    pub result_limit: usize,
 }
 
 #[tauri::command]
@@ -40,7 +40,7 @@ pub fn get_bootstrap_payload(state: State<AppState>) -> BootstrapPayload {
         },
         appearance: BootstrapAppearanceConfig {
             show_icons: engine.config().appearance.show_icons,
-            max_results: engine.config().appearance.max_results,
+            visible_rows: engine.config().appearance.effective_visible_rows(),
         },
         language: match engine.config().general.language {
             Language::Ja => "ja".to_string(),
@@ -48,6 +48,6 @@ pub fn get_bootstrap_payload(state: State<AppState>) -> BootstrapPayload {
         },
         indexing: state.indexing.load(Ordering::SeqCst),
         instant_command_prefix: engine.config().search.instant_command_prefix.clone(),
-        top_n_history: engine.config().search.effective_top_n_history(),
+        result_limit: engine.config().search.effective_result_limit(),
     }
 }

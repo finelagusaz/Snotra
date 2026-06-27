@@ -34,7 +34,7 @@ pub struct HistoryStore {
 
 impl HistoryStore {
     /// 履歴をディスクから読み込む。`top_n`（剪定容量）は焼き込まず、`save`/`prune` 呼び出し時に
-    /// 引数で受け取る（live-read 化、issue #348）。これにより `top_n_history` の設定変更が
+    /// 引数で受け取る（live-read 化、issue #348）。これにより `result_limit` の設定変更が
     /// 再起動なしで反映され、`HistoryStore.top_n` の焼き込みによるドリフトが構造的に発生しない。
     pub fn load() -> Self {
         let (loaded_data, loaded_version) = Self::bin_file()

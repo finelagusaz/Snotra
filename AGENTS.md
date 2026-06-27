@@ -69,7 +69,7 @@
 
 ## 環境制約
 
-- Agent `isolation: "worktree"` を使わない（Windows でパスが壊れてゴミフォルダが残る）
+- Agent `isolation: "worktree"` は使用可（worktree は `.claude/worktrees/agent-<id>/` に作られ、パス破壊は起きない／Git 2.54.0.windows.1 で検証済み）。変更なしの worktree は自動 cleanup されるが、**ファイルを変更した worktree は成果保全のため自動削除されず残る**ため、`git worktree remove --force <path>` + `git branch -D worktree-agent-<id>` で手動 cleanup する（`.claude/worktrees/` は `.gitignore` 済み＝誤コミット防止）
 - Win32 依存モジュール（`src-tauri/src/ime.rs`, `src-tauri/src/platform/` 内の `hotkey.rs` 等）はユニットテスト前提にしない
 - モジュール固有の不変条件・TDD ルールは各サブディレクトリの `CLAUDE.md` を参照（実装前チェックは `.claude/rules/` で自動配送）
 

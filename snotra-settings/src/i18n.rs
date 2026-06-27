@@ -907,6 +907,55 @@ impl Tr {
         }
     }
 
+    pub fn label_instant_kind(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "種別",
+            Language::En => "Kind",
+        }
+    }
+
+    pub fn radio_instant_url(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "URL / 既定アプリで開く",
+            Language::En => "URL / open with default app",
+        }
+    }
+
+    pub fn radio_instant_program(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "プログラム（exe + 引数）",
+            Language::En => "Program (exe + args)",
+        }
+    }
+
+    pub fn label_instant_exe(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "実行ファイル (.exe)",
+            Language::En => "Executable (.exe)",
+        }
+    }
+
+    pub fn label_instant_args(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "引数",
+            Language::En => "Arguments",
+        }
+    }
+
+    pub fn hint_instant_program(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => ".exe のみ。スクリプトはインタプリタを実行ファイルに指定。{query} / {clip} と %VAR% が使えます",
+            Language::En => ".exe only. For scripts, set the interpreter as the executable. {query} / {clip} and %VAR% are supported",
+        }
+    }
+
+    pub fn hint_instant_migrate(&self) -> &'static str {
+        match self.0 {
+            Language::Ja => "引数つきの可能性があります。プログラム種別へ作り直すと正しく起動します",
+            Language::En => "This may contain arguments. Recreate it as a Program command to launch correctly",
+        }
+    }
+
     // Backup tab
     pub fn tab_backup(&self) -> &'static str {
         match self.0 {

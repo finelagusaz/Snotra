@@ -72,8 +72,8 @@ const FILE_RESULT: SearchResult = {
 const TOOL_1: OpenerTool = { name: "Tool One", exe: "C:\\one.exe", args: "" };
 const TOOL_2: OpenerTool = { name: "Tool Two", exe: "C:\\two.exe", args: "" };
 
-const CMD_GOOGLE: InstantCommand = { name: "google", command: "https://google.com?q={query}", description: "Google 検索" };
-const CMD_CLIP: InstantCommand = { name: "clip", command: "echo {clip}", description: "" };
+const CMD_GOOGLE: InstantCommand = { name: "google", display: "https://google.com?q={query}", description: "Google 検索" };
+const CMD_CLIP: InstantCommand = { name: "clip", display: "echo {clip}", description: "" };
 
 // ── セットアップ ──────────────────────────────────────────────────────────────
 

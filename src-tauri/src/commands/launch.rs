@@ -381,7 +381,7 @@ pub(crate) fn expand_env(input: &str) -> String {
             let written = ExpandEnvironmentStringsW(&src, Some(&mut buf));
             if written == 0 { return input.to_string(); }
             // 末尾 NUL を除いて UTF-16 → String
-            let len = (written as usize).saturating_sub(1);
+            let len = (written as usize).saturating_sub(1).min(buf.len());
             String::from_utf16_lossy(&buf[..len])
         }
     }

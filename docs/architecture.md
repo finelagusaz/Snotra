@@ -138,7 +138,7 @@ ui/src/
 
 ### インスタントコマンド（4層）
 
-- 純ロジック: `snotra-core/src/instant.rs` — 変数展開 `{query}` / `{clip}`（修飾子パイプ `{name | lower|upper|trim|default:x|raw}` 対応）+ 前方一致フィルタ。エンコードはシンク（種別）責務で URL 判定時に自動付与、`raw` で抑止。不明修飾子は `Config::validate` が保存時に拒否
+- 純ロジック: `snotra-core/src/instant.rs` — 変数展開 `{query}` / `{clip}` / `{date:書式}` / `{uuid}`（修飾子パイプ `{name | lower|upper|trim|default:x|raw}` 対応）+ `{{…}}` リテラルエスケープ + 前方一致フィルタ。date は strftime（不正書式は空文字でフォールバック＝panic 回避）、uuid は v4。`{{X}}` は literal `{X}`（変数名と衝突する literal の opt-out）。エンコードはシンク（種別）責務で URL 判定時に自動付与、`raw` で抑止。不明修飾子は `Config::validate` が保存時に拒否
 - IPC: `src-tauri/src/commands/instant.rs` — クリップボード読み取り + `launch_item_core`（ShellExecuteW）で実行
 - UI: `ui/src/stores/search.ts` — `interpKind()`（`query` + prefix からの純粋導出）でモード判定。query effect が instant コマンドの IPC 取得（getInstantCommands）を担う。indexing 中でも使用可能
 - 設定 GUI: `snotra-settings/src/tabs/instant.rs` — プレフィックス設定 + コマンド CRUD + 展開プレビュー

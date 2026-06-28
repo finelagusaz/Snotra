@@ -1,6 +1,11 @@
+use chrono::{DateTime, Local};
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+use uuid::Uuid;
 
 use crate::config::InstantCommand;
+
+/// `{date}`（書式省略時）の既定 strftime 書式。
+const DEFAULT_DATE_FMT: &str = "%Y-%m-%d";
 
 /// シェル風クォート対応の引数分割。
 /// `"..."` で囲まれた部分はスペースを含んでも1トークンとして扱う。
@@ -50,10 +55,14 @@ enum Modifier {
 }
 
 /// 認識する変数名。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum VarKind {
     Query,
     Clip,
+    /// 実行時のローカル日時を strftime 書式で展開（引数は書式文字列）。
+    Date(String),
+    /// ランダムな UUID v4（出現ごとに新規生成）。
+    Uuid,
 }
 
 /// 修飾子セグメント。`Unknown` は設定保存時バリデーションが拒否する。
@@ -76,17 +85,46 @@ enum TplEvent<'a> {
 }
 
 /// `{...}` の内側文字列（波括弧を除いた部分）を解析する。
-/// name が `query` / `clip` 以外なら `None`（呼び出し側がリテラル扱い）。
+/// 認識しない変数名なら `None`（呼び出し側がリテラル扱い）。
 /// **runtime 適用と保存時バリデーションで共有する単一パーサ**。
+///
+/// 変数名はオプション引数を `:` で取れる（`date:%Y-%m-%d`）。name と arg は最初の
+/// `:` で分割し、arg 内の `:` はリテラル（`date:%H:%M:%S` → 書式 `%H:%M:%S`）。
+/// `query` / `clip` / `uuid` は引数を取らない——引数付き（例 `{query:x}`）は
+/// 認識せずリテラルに戻し、従来挙動を保つ。
 fn parse_placeholder(inner: &str) -> Option<Placeholder> {
     let mut segments = inner.split('|');
-    let var = match segments.next()?.trim() {
-        "query" => VarKind::Query,
-        "clip" => VarKind::Clip,
+    let name_seg = segments.next()?.trim();
+    let (name, arg) = match name_seg.split_once(':') {
+        Some((n, a)) => (n.trim(), Some(a.trim())),
+        None => (name_seg, None),
+    };
+    let var = match (name, arg) {
+        ("query", None) => VarKind::Query,
+        ("clip", None) => VarKind::Clip,
+        ("uuid", None) => VarKind::Uuid,
+        ("date", a) => VarKind::Date(a.unwrap_or(DEFAULT_DATE_FMT).to_string()),
         _ => return None,
     };
     let mods = segments.map(parse_modifier).collect();
     Some(Placeholder { var, mods })
+}
+
+/// ローカル日時を strftime 書式で整形する。**panic 安全**: 整形不能な書式は
+/// すべて空文字列にフォールバックする——`Item::Error` を生む不正指定子（`%!` 等）
+/// に加え、パースは成功するが整形時に `fmt::Error` を返す**パース専用指定子**
+/// （`%#z` = `Fixed::TimezoneOffsetPermissive` 等）の両方を含む。
+/// `to_string()` は `fmt::Error` を `.expect()` で unwrap して panic し、release の
+/// `panic = "abort"` ではプロセス abort に化ける（#394）。代わりに `write!` で
+/// Display の Err を panic させず値として伝播させ、Err なら空文字列を返す。
+/// （`Item::Error` の事前走査はパース専用指定子を取りこぼすため不採用——code-reviewer 検出）
+fn format_date(now: &DateTime<Local>, fmt: &str) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    if write!(out, "{}", now.format(fmt)).is_err() {
+        return String::new();
+    }
+    out
 }
 
 /// 1個の修飾子セグメントを解析する。`name:arg` は最初の `:` で分割し、
@@ -131,12 +169,28 @@ fn apply_modifiers(value: &str, mods: &[ModSeg]) -> (String, bool) {
 
 /// テンプレートを走査し、リテラル片と認識プレースホルダを順に `on_event` へ渡す。
 /// 認識しない `{...}`・閉じ `}` 不在はリテラルとして温存する（total・panic しない）。
+/// `{{...}}` はエスケープで literal な `{...}` を出力する（変数名と衝突する literal を
+/// 書く唯一の手段。予約語が増えても opt-out が常に存在する）。
 /// `expand_template`（適用）と `collect_unknown_modifiers`（検証）が共有する。
 fn walk_template(template: &str, mut on_event: impl FnMut(TplEvent)) {
     let mut rest = template;
     while let Some(open) = rest.find('{') {
         on_event(TplEvent::Literal(&rest[..open]));
         let after = &rest[open + 1..];
+        // `{{X}}` エスケープ → literal `{X}`。中身は変数/修飾子として解釈しない。
+        if let Some(inner_start) = after.strip_prefix('{') {
+            if let Some(close) = inner_start.find("}}") {
+                on_event(TplEvent::Literal("{"));
+                on_event(TplEvent::Literal(&inner_start[..close]));
+                on_event(TplEvent::Literal("}"));
+                rest = &inner_start[close + 2..];
+            } else {
+                // 閉じ `}}` 不在 → 先頭 `{` だけ literal 化し2個目の `{` から再走査（best-effort）
+                on_event(TplEvent::Literal("{"));
+                rest = after;
+            }
+            continue;
+        }
         if let Some(close) = after.find('}') {
             let inner = &after[..close];
             match parse_placeholder(inner) {
@@ -160,18 +214,30 @@ fn walk_template(template: &str, mut on_event: impl FnMut(TplEvent)) {
 }
 
 /// インスタントコマンドのテンプレートを展開する。
-/// `{query|mods}` / `{clip|mods}` を 変数解決 → 修飾子チェーン →（`encode && !raw` のとき
-/// URL エンコード）で置換する。**エンコードはシンク（種別）の責務**であり、修飾子は内容変換のみ。
-fn expand_template(template: &str, query: &str, clipboard: &str, encode: bool) -> String {
+/// `{query|mods}` / `{clip|mods}` / `{date:書式|mods}` / `{uuid|mods}` を
+/// 変数解決 → 修飾子チェーン →（`encode && !raw` のとき URL エンコード）で置換する。
+/// **エンコードはシンク（種別）の責務**であり、修飾子は内容変換のみ。
+/// `now` は呼び出し側が1回だけ捕捉して渡す——同一テンプレート内の複数 `{date}` が
+/// 同じ実行時刻を反映するため（`{uuid}` は出現ごとに新規生成し意図的に異なる）。
+fn expand_template(
+    template: &str,
+    query: &str,
+    clipboard: &str,
+    now: &DateTime<Local>,
+    encode: bool,
+) -> String {
     let mut out = String::with_capacity(template.len());
     walk_template(template, |ev| match ev {
         TplEvent::Literal(s) => out.push_str(s),
         TplEvent::Placeholder(ph) => {
-            let raw_value = match ph.var {
-                VarKind::Query => query,
-                VarKind::Clip => clipboard,
+            // date/uuid は実行時に解決する不純な源。query/clip は呼び出し側が渡す純値。
+            let raw_value = match &ph.var {
+                VarKind::Query => query.to_string(),
+                VarKind::Clip => clipboard.to_string(),
+                VarKind::Date(fmt) => format_date(now, fmt),
+                VarKind::Uuid => Uuid::new_v4().to_string(),
             };
-            let (value, raw) = apply_modifiers(raw_value, &ph.mods);
+            let (value, raw) = apply_modifiers(&raw_value, &ph.mods);
             if encode && !raw {
                 out.extend(utf8_percent_encode(&value, NON_ALPHANUMERIC));
             } else {
@@ -201,13 +267,13 @@ pub fn collect_unknown_modifiers(template: &str) -> Vec<String> {
     unknown
 }
 
-/// Expand `{query}` / `{clip}`（修飾子パイプ対応）in a URL/command template.
+/// Expand `{query}` / `{clip}` / `{date:書式}` / `{uuid}`（修飾子パイプ対応）in a URL/command template.
 ///
 /// `http://` / `https://` で始まる場合は各プレースホルダ単位で URL エンコードする
 /// （`raw` 修飾子が付く値は抑止）。それ以外は生のまま展開する。
 pub fn expand_instant_command(command: &str, query: &str, clipboard: &str) -> String {
     let is_url = command.starts_with("http://") || command.starts_with("https://");
-    expand_template(command, query, clipboard, is_url)
+    expand_template(command, query, clipboard, &Local::now(), is_url)
 }
 
 /// exec 種別の引数トークン列を構築する。
@@ -222,9 +288,11 @@ pub fn expand_exec_args(
     clipboard: &str,
     env_expand: impl Fn(&str) -> String,
 ) -> Vec<String> {
+    // 全トークン共通の実行時刻を1回だけ捕捉（`{date}` の一貫性）。
+    let now = Local::now();
     split_args(args)
         .into_iter()
-        .map(|tok| expand_template(&env_expand(&tok), query, clipboard, false))
+        .map(|tok| expand_template(&env_expand(&tok), query, clipboard, &now, false))
         .collect()
 }
 
@@ -601,7 +669,210 @@ mod tests {
     }
     #[test]
     fn unknown_modifiers_ignores_unrecognized_name() {
-        // name が query/clip 以外（リテラル）の `{...}` は修飾子検査の対象外
+        // name が認識外（リテラル）の `{...}` は修飾子検査の対象外
         assert!(collect_unknown_modifiers("{foo | bogus}").is_empty());
+    }
+    #[test]
+    fn unknown_modifiers_works_with_date_uuid() {
+        // date/uuid 変数でも修飾子検査が機能する
+        assert_eq!(collect_unknown_modifiers("{date:%Y | bogus}"), vec!["bogus"]);
+        assert_eq!(collect_unknown_modifiers("{uuid | nope}"), vec!["nope"]);
+        assert!(collect_unknown_modifiers("{date:%Y-%m-%d | upper}").is_empty());
+        assert!(collect_unknown_modifiers("{uuid | upper}").is_empty());
+    }
+
+    // ---- date / uuid 変数 ----
+
+    #[test]
+    fn date_formats_with_strftime() {
+        use chrono::TimeZone;
+        // 固定ローカル時刻で決定論的に検証（now を注入できる純ヘルパー）
+        let dt = Local.with_ymd_and_hms(2026, 6, 28, 13, 5, 9).unwrap();
+        assert_eq!(format_date(&dt, "%Y-%m-%d"), "2026-06-28");
+        assert_eq!(format_date(&dt, "%Y/%m/%d %H:%M:%S"), "2026/06/28 13:05:09");
+    }
+
+    #[test]
+    fn date_invalid_format_is_empty_no_panic() {
+        use chrono::TimeZone;
+        let dt = Local.with_ymd_and_hms(2026, 6, 28, 13, 5, 9).unwrap();
+        // 不正な書式指定子は空文字列にフォールバック（panic/abort しない、#394）
+        assert_eq!(format_date(&dt, "%!"), "");
+        assert_eq!(format_date(&dt, "%"), "");
+        // パース専用指定子 %#z は Item::Error にならず整形時に fmt::Error を返す。
+        // `write!` フォールバックがこれも空にすることを保証する（code-reviewer 検出の回帰防止）。
+        assert_eq!(format_date(&dt, "%#z"), "");
+    }
+
+    #[test]
+    fn date_default_format_when_no_arg() {
+        // `{date}`（書式省略）は DEFAULT_DATE_FMT を採用する
+        let ph = parse_placeholder("date").unwrap();
+        assert_eq!(ph.var, VarKind::Date(DEFAULT_DATE_FMT.to_string()));
+    }
+
+    #[test]
+    fn date_arg_keeps_second_colon() {
+        // name と書式は最初の `:` で分割。書式中の `:` はリテラル
+        let ph = parse_placeholder("date:%H:%M:%S").unwrap();
+        assert_eq!(ph.var, VarKind::Date("%H:%M:%S".to_string()));
+    }
+
+    #[test]
+    fn date_arg_is_trimmed() {
+        let ph = parse_placeholder("date: %Y-%m-%d ").unwrap();
+        assert_eq!(ph.var, VarKind::Date("%Y-%m-%d".to_string()));
+    }
+
+    #[test]
+    fn url_date_is_expanded_and_encoded() {
+        // URL 種別: `{date:%Y-%m-%d}` は展開され、ハイフンが URL エンコードされる（%2D）
+        let r = expand_instant_command("https://x/?d={date:%Y-%m-%d}", "", "");
+        assert!(r.contains("%2D"), "hyphen should be encoded: {r}");
+        assert!(!r.contains("{date"), "placeholder should be gone: {r}");
+    }
+
+    #[test]
+    fn exec_date_is_raw_not_encoded() {
+        // exec 種別: 生展開（ハイフンそのまま）。空白入り書式も1引数を保つ
+        let r = expand_exec_args("{date:%Y-%m-%d %H:%M}", "", "", no_env);
+        assert_eq!(r.len(), 1, "braced placeholder stays one token: {r:?}");
+        assert!(r[0].contains('-'), "hyphen kept raw: {r:?}");
+        assert!(!r[0].contains("{date"), "placeholder should be gone: {r:?}");
+    }
+
+    #[test]
+    fn date_chains_with_upper_modifier() {
+        // `{date:%b | upper}` は月名略称（英語ロケール、ASCII 3文字）を大文字化。
+        // expand 経路を実際に通して修飾子パイプとの合成を検証する。
+        let r = expand_exec_args("{date:%b | upper}", "", "", no_env);
+        assert_eq!(r.len(), 1);
+        assert!(!r[0].contains("{date"), "expanded: {r:?}");
+        assert!(
+            !r[0].is_empty() && r[0].chars().all(|c| c.is_ascii_uppercase()),
+            "upper-cased month abbrev: {r:?}"
+        );
+    }
+
+    #[test]
+    fn uuid_is_v4_lowercase_hyphenated() {
+        let r = expand_exec_args("{uuid}", "", "", no_env);
+        assert_eq!(r.len(), 1);
+        let u = &r[0];
+        let parts: Vec<&str> = u.split('-').collect();
+        assert_eq!(
+            parts.iter().map(|p| p.len()).collect::<Vec<_>>(),
+            vec![8, 4, 4, 4, 12],
+            "8-4-4-4-12 hex layout: {u}"
+        );
+        assert_eq!(parts[2].chars().next(), Some('4'), "version nibble: {u}");
+        assert!(
+            u.chars().all(|c| c == '-' || c.is_ascii_hexdigit()),
+            "hex only: {u}"
+        );
+        assert!(
+            u.chars().all(|c| !c.is_ascii_uppercase()),
+            "lowercase: {u}"
+        );
+    }
+
+    #[test]
+    fn uuid_is_fresh_each_occurrence() {
+        // 同一テンプレート内の2つの `{uuid}` は新規生成され異なる
+        let r = expand_exec_args("{uuid} {uuid}", "", "", no_env);
+        assert_eq!(r.len(), 2);
+        assert_ne!(r[0], r[1], "each occurrence should be unique");
+    }
+
+    #[test]
+    fn uuid_with_upper_modifier() {
+        let r = expand_exec_args("{uuid | upper}", "", "", no_env);
+        assert_eq!(r.len(), 1);
+        assert!(
+            r[0].chars().all(|c| c == '-' || !c.is_ascii_lowercase()),
+            "upper applied: {:?}",
+            r
+        );
+    }
+
+    // ---- 後方互換: 引数付き query/clip/uuid はリテラル ----
+
+    #[test]
+    fn query_with_colon_arg_is_literal() {
+        // `{query:x}` は変数として認識せずリテラルに戻す（従来挙動の保全）
+        assert!(parse_placeholder("query:x").is_none());
+        let r = expand_instant_command("C:/e.exe {query:x}", "", "");
+        assert!(r.contains("{query:x}"), "should stay literal: {r}");
+    }
+
+    #[test]
+    fn uuid_with_colon_arg_is_literal() {
+        assert!(parse_placeholder("uuid:x").is_none());
+    }
+
+    // ---- {{...}} エスケープ（変数名と衝突する literal の opt-out） ----
+
+    #[test]
+    fn escape_yields_literal_for_reserved_word() {
+        // {{date}} → literal {date}（展開しない）。URL でも braces は literal 経路で未エンコード
+        let r = expand_instant_command("https://x/?d={{date}}", "", "");
+        assert_eq!(r, "https://x/?d={date}");
+    }
+
+    #[test]
+    fn escape_literal_query_and_clip() {
+        let r = expand_instant_command("C:/t.exe {{query}} {{clip}}", "Q", "C");
+        assert_eq!(r, "C:/t.exe {query} {clip}");
+    }
+
+    #[test]
+    fn escape_mixed_with_real_placeholder() {
+        // {{query}} は literal、{query} は展開（同一テンプレートで共存）
+        let r = expand_instant_command("C:/t.exe {{query}}={query}", "hello", "");
+        assert_eq!(r, "C:/t.exe {query}=hello");
+    }
+
+    #[test]
+    fn escape_works_for_non_reserved_too() {
+        // 一貫性: {{foo}} も literal {foo}（予約語に限らずエスケープは普遍）
+        let r = expand_instant_command("C:/t.exe {{foo}}", "", "");
+        assert_eq!(r, "C:/t.exe {foo}");
+    }
+
+    #[test]
+    fn escape_in_exec_stays_one_token() {
+        let r = expand_exec_args("{{date}}", "", "", no_env);
+        assert_eq!(r, vec!["{date}"]);
+    }
+
+    #[test]
+    fn escape_in_exec_with_inner_space_stays_one_token() {
+        // 中に空白があっても brace 深度で1トークンを保つ（argv 不可分）
+        let r = expand_exec_args("{{my note}}", "", "", no_env);
+        assert_eq!(r, vec!["{my note}"]);
+    }
+
+    #[test]
+    fn escape_content_is_not_modifier_validated() {
+        // {{date | bogus}} は完全に literal。修飾子検査の対象外（保存時に弾かない）
+        assert!(collect_unknown_modifiers("{{date | bogus}}").is_empty());
+    }
+
+    #[test]
+    fn escape_asymmetric_is_modifier_validated() {
+        // 非対称 {{date | bogus}（閉じ }} 不在）は best-effort で「{ + placeholder」と解釈され、
+        // runtime/検証とも一貫して bogus を未知修飾子として扱う（malformed を保守的に弾く）。
+        // 対称 {{…}}（literal・非検査）との非対称性を意図として固定する。
+        assert_eq!(collect_unknown_modifiers("{{date | bogus}"), vec!["bogus"]);
+    }
+
+    #[test]
+    fn escape_asymmetric_is_best_effort_no_panic() {
+        // {{date}（閉じ }} 不在）は先頭 { を literal 化し残りを placeholder 扱い（best-effort）。
+        // → "{" + 展開された日付。panic せず total。
+        let r = expand_exec_args("{{date}", "", "", no_env);
+        assert_eq!(r.len(), 1);
+        assert!(r[0].starts_with('{'), "leading brace kept literal: {r:?}");
+        assert!(!r[0].contains("{date}"), "second brace opened a placeholder: {r:?}");
     }
 }

@@ -4649,6 +4649,7 @@ dependencies = [
 name = "snotra-core"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "dirs",
  "nucleo-matcher",
  "percent-encoding",
@@ -4658,6 +4659,7 @@ dependencies = [
  "serde",
  "sys-locale",
  "toml 1.1.2+spec-1.1.0",
+ "uuid",
  "wana_kana",
  "windows 0.62.2",
 ]

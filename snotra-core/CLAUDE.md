@@ -15,10 +15,11 @@
 - `error.rs`: `BinError`（バイナリシリアライズ/デシリアライズ失敗）と `ConfigError`（設定バリデーション失敗）の error 型定義
 - `window_data.rs`: ウィンドウ位置（`window.bin`）の保存/復元
 - `instant.rs`: インスタントコマンドの処理。**公開関数**:
-  - `split_args(args: &str) -> Vec<String>`: シェル風クォート対応の引数分割。`"..."` で囲まれた部分はスペースを含んでも1トークンとして扱う。`launch.rs` から移設。
-  - `expand_vars(template: &str, query: &str, clipboard: &str) -> String`: `{query}` / `{clip}` プレースホルダを生のまま置換（URL エンコードなし）。
-  - `expand_exec_args(args: &str, query: &str, clipboard: &str, env_expand: fn) -> Vec<String>`: exec 種別の引数列構築。手順: split_args で分割 → 各トークンに env 展開（`%VAR%`）→ `{query}`/`{clip}` 置換。この順序により (1) 外部入力 query/clip は env 展開されない、(2) env 値の空白はトークン内に留まり引数を割らない、(3) 空白入り query は1引数を保つ。
-  - `expand_instant_command(command: &str, query: &str, clipboard: &str) -> String`: URL 形式の変数展開。`http://` / `https://` で始まる場合、変数値を URL エンコード。それ以外は生のまま展開。
+  - `split_args(args: &str) -> Vec<String>`: シェル風クォート対応の引数分割。`"..."` で囲まれた部分はスペースを含んでも1トークンとして扱う。**`{...}` 内のスペースも分割しない**（`{query | trim}` 等の修飾子パイプを1トークンに保つ）。`launch.rs` から移設。
+  - 変数展開は**修飾子パイプ `{name | mod | ...}`**（name = query/clip、v1 修飾子 `lower`/`upper`/`trim`/`default:<text>`/`raw`）に対応する。内部の単一 walker `expand_template`（private）が `{...}` を走査し、変数解決 → 修飾子チェーン（左→右）→ シンク処理（`encode && !raw` のとき URL エンコード）を行う。**エンコードはシンク（種別）の責務**で修飾子は内容変換のみ（`urlencode` 修飾子は提供せず、`raw` が唯一の抑止）。未認識 `{...}`・閉じ `}` 不在はリテラル温存（total）。`parse_placeholder` を runtime 適用と保存時検証で共有する。
+  - `expand_exec_args(args: &str, query: &str, clipboard: &str, env_expand: fn) -> Vec<String>`: exec 種別の引数列構築。手順: split_args で分割 → 各トークンに env 展開（`%VAR%`）→ 修飾子パイプ付き変数置換（encode なし）。この順序により (1) 外部入力 query/clip は env 展開されない、(2) env 値の空白はトークン内に留まり引数を割らない、(3) 空白入り query は1引数を保つ。修飾子適用後の値も同トークン内に in-place 置換され引数を増やさない。
+  - `expand_instant_command(command: &str, query: &str, clipboard: &str) -> String`: URL/コマンドの変数展開。`http://` / `https://` で始まる場合は各プレースホルダ単位で URL エンコード（`raw` 抑止）。それ以外は生のまま展開。
+  - `collect_unknown_modifiers(template: &str) -> Vec<String>`: テンプレート中の未知修飾子名を収集（`Config::validate` が保存時バリデーションに使用）。`walk_template` を `expand_template` と共有。
   - `filter_instant_commands(commands: &[InstantCommand], input: &str) -> Vec<&InstantCommand>`: コマンド名を前方一致（大文字小文字区別しない）で絞り込み。空 input は全件返却。
 - `ui_types.rs`: フロントエンドとの IPC 用データ型
 

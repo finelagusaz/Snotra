@@ -1161,6 +1161,23 @@ impl Config {
             }
         }
 
+        // Instant command modifier names: reject unknown modifiers in the
+        // variable-expansion templates (url / args / legacy command) at save time
+        // so they never reach runtime expansion.
+        for cmd in &self.instant_commands {
+            let template = match &cmd.action {
+                InstantAction::Url { url } => url.as_str(),
+                InstantAction::Exec { args, .. } => args.as_str(),
+                InstantAction::Legacy { command } => command.as_str(),
+            };
+            for modifier in crate::instant::collect_unknown_modifiers(template) {
+                errors.push(ConfigError::InstantCommandUnknownModifier {
+                    name: cmd.name.clone(),
+                    modifier,
+                });
+            }
+        }
+
         errors
     }
 
@@ -2852,6 +2869,65 @@ mod tests {
         let errors = config.validate();
         assert!(
             !errors.iter().any(|e| matches!(e, ConfigError::InstantCommandDuplicateName { .. })),
+        );
+    }
+
+    #[test]
+    fn validate_instant_command_unknown_modifier_url() {
+        let config = Config {
+            instant_commands: vec![InstantCommand {
+                name: "g".to_string(),
+                description: String::new(),
+                action: InstantAction::Url {
+                    url: "https://x.com/?q={query | bogus}".into(),
+                },
+            }],
+            ..Default::default()
+        };
+        let errors = config.validate();
+        assert!(errors.contains(&ConfigError::InstantCommandUnknownModifier {
+            name: "g".to_string(),
+            modifier: "bogus".to_string(),
+        }));
+    }
+
+    #[test]
+    fn validate_instant_command_unknown_modifier_in_args() {
+        let config = Config {
+            instant_commands: vec![InstantCommand {
+                name: "ev".to_string(),
+                description: String::new(),
+                action: InstantAction::Exec {
+                    exe: "everything.exe".into(),
+                    args: "-s {query | nope}".into(),
+                },
+            }],
+            ..Default::default()
+        };
+        let errors = config.validate();
+        assert!(errors.contains(&ConfigError::InstantCommandUnknownModifier {
+            name: "ev".to_string(),
+            modifier: "nope".to_string(),
+        }));
+    }
+
+    #[test]
+    fn validate_instant_command_known_modifiers_ok() {
+        let config = Config {
+            instant_commands: vec![InstantCommand {
+                name: "g".to_string(),
+                description: String::new(),
+                action: InstantAction::Url {
+                    url: "https://x.com/?q={query | lower | trim | default:x | raw}".into(),
+                },
+            }],
+            ..Default::default()
+        };
+        let errors = config.validate();
+        assert!(
+            !errors
+                .iter()
+                .any(|e| matches!(e, ConfigError::InstantCommandUnknownModifier { .. })),
         );
     }
 

@@ -4,16 +4,26 @@ use crate::config::InstantCommand;
 
 /// シェル風クォート対応の引数分割。
 /// `"..."` で囲まれた部分はスペースを含んでも1トークンとして扱う。
-/// 閉じクォートがない場合は行末まで1トークン。
-/// 空クォート `""` はトークンを生成しない。
+/// `{...}`（変数プレースホルダ）の内側のスペースも分割しない——`{query | trim}` の
+/// ように修飾子パイプを含むプレースホルダを1トークンに保つため（exec の argv 不可分）。
+/// 閉じクォートがない場合は行末まで1トークン。空クォート `""` はトークンを生成しない。
 pub fn split_args(args: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
     let mut in_quotes = false;
+    let mut brace_depth = 0u32;
     for ch in args.chars() {
         match ch {
             '"' => in_quotes = !in_quotes,
-            c if c.is_whitespace() && !in_quotes => {
+            '{' if !in_quotes => {
+                brace_depth += 1;
+                current.push(ch);
+            }
+            '}' if !in_quotes => {
+                brace_depth = brace_depth.saturating_sub(1);
+                current.push(ch);
+            }
+            c if c.is_whitespace() && !in_quotes && brace_depth == 0 => {
                 if !current.is_empty() {
                     tokens.push(std::mem::take(&mut current));
                 }
@@ -27,15 +37,184 @@ pub fn split_args(args: &str) -> Vec<String> {
     tokens
 }
 
-/// `{query}` / `{clip}` を生のまま置換する。URL エンコードはしない。
-pub fn expand_vars(template: &str, query: &str, clipboard: &str) -> String {
-    template.replace("{query}", query).replace("{clip}", clipboard)
+/// 変数に付与できる変換修飾子（v1）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Modifier {
+    Lower,
+    Upper,
+    Trim,
+    /// 値が空のとき代替する既定文字列。
+    Default(String),
+    /// URL 種別の自動エンコードを抑止するフラグ（値そのものは変えない）。
+    Raw,
+}
+
+/// 認識する変数名。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VarKind {
+    Query,
+    Clip,
+}
+
+/// 修飾子セグメント。`Unknown` は設定保存時バリデーションが拒否する。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ModSeg {
+    Known(Modifier),
+    Unknown(String),
+}
+
+/// `{...}` の解析結果（変数 + 修飾子チェーン）。
+struct Placeholder {
+    var: VarKind,
+    mods: Vec<ModSeg>,
+}
+
+/// テンプレート走査イベント。
+enum TplEvent<'a> {
+    Literal(&'a str),
+    Placeholder(&'a Placeholder),
+}
+
+/// `{...}` の内側文字列（波括弧を除いた部分）を解析する。
+/// name が `query` / `clip` 以外なら `None`（呼び出し側がリテラル扱い）。
+/// **runtime 適用と保存時バリデーションで共有する単一パーサ**。
+fn parse_placeholder(inner: &str) -> Option<Placeholder> {
+    let mut segments = inner.split('|');
+    let var = match segments.next()?.trim() {
+        "query" => VarKind::Query,
+        "clip" => VarKind::Clip,
+        _ => return None,
+    };
+    let mods = segments.map(parse_modifier).collect();
+    Some(Placeholder { var, mods })
+}
+
+/// 1個の修飾子セグメントを解析する。`name:arg` は最初の `:` で分割し、
+/// arg 内の `:` はリテラル（例: `default:about:blank` → arg = `about:blank`）。
+fn parse_modifier(seg: &str) -> ModSeg {
+    let (name, arg) = match seg.trim().split_once(':') {
+        // arg の前後空白は trim（SPEC §19.4「`:` 周りの空白は任意」）。内部空白は保持される。
+        Some((n, a)) => (n.trim(), Some(a.trim())),
+        None => (seg.trim(), None),
+    };
+    match name {
+        "lower" => ModSeg::Known(Modifier::Lower),
+        "upper" => ModSeg::Known(Modifier::Upper),
+        "trim" => ModSeg::Known(Modifier::Trim),
+        "raw" => ModSeg::Known(Modifier::Raw),
+        "default" => ModSeg::Known(Modifier::Default(arg.unwrap_or("").to_string())),
+        other => ModSeg::Unknown(other.to_string()),
+    }
+}
+
+/// 修飾子チェーンを左→右に適用する。戻り値 `.1` は `raw` 検出フラグ。
+fn apply_modifiers(value: &str, mods: &[ModSeg]) -> (String, bool) {
+    let mut v = value.to_string();
+    let mut raw = false;
+    for m in mods {
+        match m {
+            ModSeg::Known(Modifier::Lower) => v = v.to_lowercase(),
+            ModSeg::Known(Modifier::Upper) => v = v.to_uppercase(),
+            ModSeg::Known(Modifier::Trim) => v = v.trim().to_string(),
+            ModSeg::Known(Modifier::Default(d)) => {
+                if v.is_empty() {
+                    v = d.clone();
+                }
+            }
+            ModSeg::Known(Modifier::Raw) => raw = true,
+            // 保存時バリデーションが拒否済み。runtime に到達したら無視する。
+            ModSeg::Unknown(_) => {}
+        }
+    }
+    (v, raw)
+}
+
+/// テンプレートを走査し、リテラル片と認識プレースホルダを順に `on_event` へ渡す。
+/// 認識しない `{...}`・閉じ `}` 不在はリテラルとして温存する（total・panic しない）。
+/// `expand_template`（適用）と `collect_unknown_modifiers`（検証）が共有する。
+fn walk_template(template: &str, mut on_event: impl FnMut(TplEvent)) {
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        on_event(TplEvent::Literal(&rest[..open]));
+        let after = &rest[open + 1..];
+        if let Some(close) = after.find('}') {
+            let inner = &after[..close];
+            match parse_placeholder(inner) {
+                Some(ph) => on_event(TplEvent::Placeholder(&ph)),
+                None => {
+                    // 認識しない `{...}` はリテラル温存
+                    on_event(TplEvent::Literal("{"));
+                    on_event(TplEvent::Literal(inner));
+                    on_event(TplEvent::Literal("}"));
+                }
+            }
+            rest = &after[close + 1..];
+        } else {
+            // 閉じ `}` が無い → 残りをリテラルに
+            on_event(TplEvent::Literal("{"));
+            on_event(TplEvent::Literal(after));
+            return;
+        }
+    }
+    on_event(TplEvent::Literal(rest));
+}
+
+/// インスタントコマンドのテンプレートを展開する。
+/// `{query|mods}` / `{clip|mods}` を 変数解決 → 修飾子チェーン →（`encode && !raw` のとき
+/// URL エンコード）で置換する。**エンコードはシンク（種別）の責務**であり、修飾子は内容変換のみ。
+fn expand_template(template: &str, query: &str, clipboard: &str, encode: bool) -> String {
+    let mut out = String::with_capacity(template.len());
+    walk_template(template, |ev| match ev {
+        TplEvent::Literal(s) => out.push_str(s),
+        TplEvent::Placeholder(ph) => {
+            let raw_value = match ph.var {
+                VarKind::Query => query,
+                VarKind::Clip => clipboard,
+            };
+            let (value, raw) = apply_modifiers(raw_value, &ph.mods);
+            if encode && !raw {
+                out.extend(utf8_percent_encode(&value, NON_ALPHANUMERIC));
+            } else {
+                out.push_str(&value);
+            }
+        }
+    });
+    out
+}
+
+/// テンプレート中の `{query|…}` / `{clip|…}` から未知の修飾子名を収集する。
+/// 設定保存時バリデーション（`Config::validate`）が使用。`walk_template` を共有。
+pub fn collect_unknown_modifiers(template: &str) -> Vec<String> {
+    let mut unknown = Vec::new();
+    walk_template(template, |ev| {
+        if let TplEvent::Placeholder(ph) = ev {
+            for m in &ph.mods {
+                // 空セグメント（`{query | }` 等の末尾/連続パイプ）は Unknown("") になるが
+                // 報告しない（runtime も no-op。空名のエラーは原因が伝わらないため）。
+                match m {
+                    ModSeg::Unknown(name) if !name.is_empty() => unknown.push(name.clone()),
+                    _ => {}
+                }
+            }
+        }
+    });
+    unknown
+}
+
+/// Expand `{query}` / `{clip}`（修飾子パイプ対応）in a URL/command template.
+///
+/// `http://` / `https://` で始まる場合は各プレースホルダ単位で URL エンコードする
+/// （`raw` 修飾子が付く値は抑止）。それ以外は生のまま展開する。
+pub fn expand_instant_command(command: &str, query: &str, clipboard: &str) -> String {
+    let is_url = command.starts_with("http://") || command.starts_with("https://");
+    expand_template(command, query, clipboard, is_url)
 }
 
 /// exec 種別の引数トークン列を構築する。
-/// 手順: `split_args` で分割 → 各トークンに `env_expand`（環境変数展開）→ `{query}`/`{clip}` 置換。
+/// 手順: `split_args` で分割 → 各トークンに `env_expand`（環境変数展開）→ 修飾子パイプ付き変数置換。
 /// この順序により (1) 外部入力 query/clip は env 展開されない、(2) env 値の空白は
 /// トークン内に留まり引数を割らない、(3) 空白入り query は1引数を保つ。
+/// 修飾子適用後の値も同じトークン内に in-place 置換され、引数を増やさない。
 /// `build_launch_args` の `{path}` 末尾補完は行わない（exec は path を持たない）。
 pub fn expand_exec_args(
     args: &str,
@@ -45,24 +224,8 @@ pub fn expand_exec_args(
 ) -> Vec<String> {
     split_args(args)
         .into_iter()
-        .map(|tok| expand_vars(&env_expand(&tok), query, clipboard))
+        .map(|tok| expand_template(&env_expand(&tok), query, clipboard, false))
         .collect()
-}
-
-/// Expand `{query}` and `{clip}` placeholders in an instant command template.
-///
-/// If the command starts with `http://` or `https://`, variable values are
-/// URL-encoded before substitution. Otherwise they are inserted as-is.
-pub fn expand_instant_command(command: &str, query: &str, clipboard: &str) -> String {
-    let is_url = command.starts_with("http://") || command.starts_with("https://");
-
-    if is_url {
-        let q = utf8_percent_encode(query, NON_ALPHANUMERIC).to_string();
-        let c = utf8_percent_encode(clipboard, NON_ALPHANUMERIC).to_string();
-        expand_vars(command, &q, &c)
-    } else {
-        expand_vars(command, query, clipboard)
-    }
 }
 
 /// Filter instant commands by prefix-matching `input` against command names.
@@ -289,5 +452,156 @@ mod tests {
     #[test]
     fn split_args_plain_whitespace_only() {
         assert_eq!(split_args("  -a   -b  "), vec!["-a", "-b"]);
+    }
+    #[test]
+    fn split_args_keeps_braced_placeholder_with_spaces() {
+        // `{...}` 内の空白は分割しない（修飾子パイプを1トークンに保つ）
+        assert_eq!(split_args("-s {query | trim}"), vec!["-s", "{query | trim}"]);
+    }
+    #[test]
+    fn split_args_keeps_braced_default_with_spaces() {
+        assert_eq!(
+            split_args("{query | default:a b}"),
+            vec!["{query | default:a b}"]
+        );
+    }
+    #[test]
+    fn split_args_unbalanced_brace_in_quotes_does_not_leak() {
+        // クォート内の不均衡 `{` は brace_depth に影響しない（クォート外へ持ち越さない）
+        assert_eq!(split_args(r#""a{b" c"#), vec!["a{b", "c"]);
+    }
+
+    // ---- modifier pipe: URL sink ----
+    #[test]
+    fn url_modifier_lower() {
+        let r = expand_instant_command("https://x.com/?q={query | lower}", "FooBar", "");
+        assert_eq!(r, "https://x.com/?q=foobar");
+    }
+    #[test]
+    fn url_modifier_upper() {
+        let r = expand_instant_command("https://x.com/?q={query | upper}", "abc", "");
+        assert_eq!(r, "https://x.com/?q=ABC");
+    }
+    #[test]
+    fn url_modifier_trim_then_encode() {
+        // trim 後に（シンクが）URL エンコード
+        let r = expand_instant_command("https://x.com/?q={query | trim}", "  Foo Bar  ", "");
+        assert_eq!(r, "https://x.com/?q=Foo%20Bar");
+    }
+    #[test]
+    fn url_modifier_lower_then_raw_suppresses_encode() {
+        // lower 適用後、raw でエンコード抑止 → スラッシュ温存
+        let r = expand_instant_command("https://x.com/{query | lower | raw}/end", "Docs/API", "");
+        assert_eq!(r, "https://x.com/docs/api/end");
+    }
+    #[test]
+    fn url_without_raw_encodes_slash() {
+        let r = expand_instant_command("https://x.com/{query}/end", "a/b", "");
+        assert_eq!(r, "https://x.com/a%2Fb/end");
+    }
+    #[test]
+    fn url_modifier_whitespace_is_optional() {
+        let a = expand_instant_command("https://x.com/?q={query|lower}", "AB", "");
+        let b = expand_instant_command("https://x.com/?q={query | lower}", "AB", "");
+        assert_eq!(a, b);
+        assert_eq!(a, "https://x.com/?q=ab");
+    }
+    #[test]
+    fn url_clip_modifier() {
+        let r = expand_instant_command("https://x.com/?q={clip | upper}", "", "hi");
+        assert_eq!(r, "https://x.com/?q=HI");
+    }
+
+    // ---- modifier pipe: default ----
+    #[test]
+    fn default_fills_empty_query() {
+        let r = expand_instant_command("https://x.com/{query | default:home}", "", "");
+        assert_eq!(r, "https://x.com/home");
+    }
+    #[test]
+    fn default_ignored_when_nonempty() {
+        let r = expand_instant_command("https://x.com/{query | default:home}", "page", "");
+        assert_eq!(r, "https://x.com/page");
+    }
+    #[test]
+    fn default_arg_keeps_second_colon() {
+        // default:about:blank → 既定値は "about:blank"（2個目以降の : はリテラル）
+        let r = expand_instant_command("C:\\b.exe {query | default:about:blank}", "", "");
+        assert_eq!(r, "C:\\b.exe about:blank");
+    }
+    #[test]
+    fn default_arg_is_trimmed() {
+        // `:` 直後の空白は trim（SPEC §19.4「`:` 周りの空白は任意」）。内部空白は保持
+        let trimmed = expand_instant_command("C:\\b.exe {query | default: home}", "", "");
+        assert_eq!(trimmed, "C:\\b.exe home");
+        let inner = expand_instant_command("C:\\b.exe {query | default:a b}", "", "");
+        assert_eq!(inner, "C:\\b.exe a b");
+    }
+
+    // ---- modifier pipe: literal / robustness ----
+    #[test]
+    fn unrecognized_placeholder_is_literal() {
+        let r = expand_instant_command("C:\\app.exe {foo} {query}", "Q", "");
+        assert_eq!(r, "C:\\app.exe {foo} Q");
+    }
+    #[test]
+    fn unclosed_brace_is_literal() {
+        let r = expand_instant_command("C:\\app.exe {query", "Q", "");
+        assert_eq!(r, "C:\\app.exe {query");
+    }
+    #[test]
+    fn unknown_modifier_at_runtime_is_ignored() {
+        // 保存時に拒否される想定だが、runtime に到達しても panic せず既知のみ適用
+        let r = expand_instant_command("C:\\app.exe {query | bogus | upper}", "ab", "");
+        assert_eq!(r, "C:\\app.exe AB");
+    }
+
+    // ---- modifier pipe: exec sink + invariants ----
+    #[test]
+    fn exec_modifier_trim_stays_one_arg() {
+        let r = expand_exec_args("-s {query | trim}", "  report  ", "", no_env);
+        assert_eq!(r, vec!["-s", "report"]);
+    }
+    #[test]
+    fn exec_default_fills_empty_query() {
+        let r = expand_exec_args("{query | default:.}", "", "", no_env);
+        assert_eq!(r, vec!["."]);
+    }
+    #[test]
+    fn exec_modifier_value_stays_one_arg() {
+        // 修飾子適用後の空白入り値も1引数（argv 不可分）
+        let r = expand_exec_args("-s {query | lower}", "Hello World", "", no_env);
+        assert_eq!(r, vec!["-s", "hello world"]);
+    }
+    #[test]
+    fn exec_modifier_value_is_not_env_expanded() {
+        // {clip | upper} の値が %FOO% でも env 展開されない（大文字化のみ・置換は env の後）
+        let env = |s: &str| s.replace("%FOO%", "EXPANDED");
+        let r = expand_exec_args("{clip | upper}", "", "%foo%", env);
+        assert_eq!(r, vec!["%FOO%"]);
+    }
+    #[test]
+    fn exec_raw_is_noop() {
+        // exec では raw は no-op（値不変・エラー無し）
+        let r = expand_exec_args("{query | raw}", "A/B", "", no_env);
+        assert_eq!(r, vec!["A/B"]);
+    }
+
+    // ---- collect_unknown_modifiers (save-time validation) ----
+    #[test]
+    fn unknown_modifiers_known_only_is_empty() {
+        assert!(collect_unknown_modifiers("{query | lower | trim | raw}").is_empty());
+        assert!(collect_unknown_modifiers("{clip | default:x | upper}").is_empty());
+        assert!(collect_unknown_modifiers("no placeholders here").is_empty());
+    }
+    #[test]
+    fn unknown_modifiers_collects_bogus() {
+        let u = collect_unknown_modifiers("{query | lower | bogus}");
+        assert_eq!(u, vec!["bogus"]);
+    }
+    #[test]
+    fn unknown_modifiers_ignores_unrecognized_name() {
+        // name が query/clip 以外（リテラル）の `{...}` は修飾子検査の対象外
+        assert!(collect_unknown_modifiers("{foo | bogus}").is_empty());
     }
 }

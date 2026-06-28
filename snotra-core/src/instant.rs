@@ -169,12 +169,28 @@ fn apply_modifiers(value: &str, mods: &[ModSeg]) -> (String, bool) {
 
 /// テンプレートを走査し、リテラル片と認識プレースホルダを順に `on_event` へ渡す。
 /// 認識しない `{...}`・閉じ `}` 不在はリテラルとして温存する（total・panic しない）。
+/// `{{...}}` はエスケープで literal な `{...}` を出力する（変数名と衝突する literal を
+/// 書く唯一の手段。予約語が増えても opt-out が常に存在する）。
 /// `expand_template`（適用）と `collect_unknown_modifiers`（検証）が共有する。
 fn walk_template(template: &str, mut on_event: impl FnMut(TplEvent)) {
     let mut rest = template;
     while let Some(open) = rest.find('{') {
         on_event(TplEvent::Literal(&rest[..open]));
         let after = &rest[open + 1..];
+        // `{{X}}` エスケープ → literal `{X}`。中身は変数/修飾子として解釈しない。
+        if let Some(inner_start) = after.strip_prefix('{') {
+            if let Some(close) = inner_start.find("}}") {
+                on_event(TplEvent::Literal("{"));
+                on_event(TplEvent::Literal(&inner_start[..close]));
+                on_event(TplEvent::Literal("}"));
+                rest = &inner_start[close + 2..];
+            } else {
+                // 閉じ `}}` 不在 → 先頭 `{` だけ literal 化し2個目の `{` から再走査（best-effort）
+                on_event(TplEvent::Literal("{"));
+                rest = after;
+            }
+            continue;
+        }
         if let Some(close) = after.find('}') {
             let inner = &after[..close];
             match parse_placeholder(inner) {
@@ -792,5 +808,71 @@ mod tests {
     #[test]
     fn uuid_with_colon_arg_is_literal() {
         assert!(parse_placeholder("uuid:x").is_none());
+    }
+
+    // ---- {{...}} エスケープ（変数名と衝突する literal の opt-out） ----
+
+    #[test]
+    fn escape_yields_literal_for_reserved_word() {
+        // {{date}} → literal {date}（展開しない）。URL でも braces は literal 経路で未エンコード
+        let r = expand_instant_command("https://x/?d={{date}}", "", "");
+        assert_eq!(r, "https://x/?d={date}");
+    }
+
+    #[test]
+    fn escape_literal_query_and_clip() {
+        let r = expand_instant_command("C:/t.exe {{query}} {{clip}}", "Q", "C");
+        assert_eq!(r, "C:/t.exe {query} {clip}");
+    }
+
+    #[test]
+    fn escape_mixed_with_real_placeholder() {
+        // {{query}} は literal、{query} は展開（同一テンプレートで共存）
+        let r = expand_instant_command("C:/t.exe {{query}}={query}", "hello", "");
+        assert_eq!(r, "C:/t.exe {query}=hello");
+    }
+
+    #[test]
+    fn escape_works_for_non_reserved_too() {
+        // 一貫性: {{foo}} も literal {foo}（予約語に限らずエスケープは普遍）
+        let r = expand_instant_command("C:/t.exe {{foo}}", "", "");
+        assert_eq!(r, "C:/t.exe {foo}");
+    }
+
+    #[test]
+    fn escape_in_exec_stays_one_token() {
+        let r = expand_exec_args("{{date}}", "", "", no_env);
+        assert_eq!(r, vec!["{date}"]);
+    }
+
+    #[test]
+    fn escape_in_exec_with_inner_space_stays_one_token() {
+        // 中に空白があっても brace 深度で1トークンを保つ（argv 不可分）
+        let r = expand_exec_args("{{my note}}", "", "", no_env);
+        assert_eq!(r, vec!["{my note}"]);
+    }
+
+    #[test]
+    fn escape_content_is_not_modifier_validated() {
+        // {{date | bogus}} は完全に literal。修飾子検査の対象外（保存時に弾かない）
+        assert!(collect_unknown_modifiers("{{date | bogus}}").is_empty());
+    }
+
+    #[test]
+    fn escape_asymmetric_is_modifier_validated() {
+        // 非対称 {{date | bogus}（閉じ }} 不在）は best-effort で「{ + placeholder」と解釈され、
+        // runtime/検証とも一貫して bogus を未知修飾子として扱う（malformed を保守的に弾く）。
+        // 対称 {{…}}（literal・非検査）との非対称性を意図として固定する。
+        assert_eq!(collect_unknown_modifiers("{{date | bogus}"), vec!["bogus"]);
+    }
+
+    #[test]
+    fn escape_asymmetric_is_best_effort_no_panic() {
+        // {{date}（閉じ }} 不在）は先頭 { を literal 化し残りを placeholder 扱い（best-effort）。
+        // → "{" + 展開された日付。panic せず total。
+        let r = expand_exec_args("{{date}", "", "", no_env);
+        assert_eq!(r.len(), 1);
+        assert!(r[0].starts_with('{'), "leading brace kept literal: {r:?}");
+        assert!(!r[0].contains("{date}"), "second brace opened a placeholder: {r:?}");
     }
 }

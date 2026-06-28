@@ -874,8 +874,8 @@ impl Tr {
 
     pub fn hint_instant_command(&self) -> &'static str {
         match self.0 {
-            Language::Ja => "{query} クエリ・{clip} クリップボード・{date:%Y-%m-%d} 日時・{uuid} を埋め込み。URL は自動エンコード",
-            Language::En => "Embed {query}, {clip}, {date:%Y-%m-%d}, {uuid}. URLs are auto-encoded",
+            Language::Ja => "{query} クエリ・{clip} クリップボード・{date:%Y-%m-%d} 日時・{uuid} を埋め込み。literal は {{ }}（{{date}}）。URL は自動エンコード",
+            Language::En => "Embed {query}, {clip}, {date:%Y-%m-%d}, {uuid}; literal via {{ }}. URLs are auto-encoded",
         }
     }
 
@@ -958,8 +958,8 @@ impl Tr {
 
     pub fn hint_instant_program(&self) -> &'static str {
         match self.0 {
-            Language::Ja => ".exe のみ。スクリプトはインタプリタを実行ファイルに指定。{query} / {clip} / {date} / {uuid} と %VAR% が使えます",
-            Language::En => ".exe only. For scripts, set the interpreter as the executable. {query} / {clip} / {date} / {uuid} and %VAR% are supported",
+            Language::Ja => ".exe のみ。スクリプトはインタプリタを実行ファイルに指定。{query} / {clip} / {date} / {uuid} と %VAR% が使えます。literal は {{ }}",
+            Language::En => ".exe only. For scripts, set the interpreter as the executable. {query} / {clip} / {date} / {uuid} and %VAR% are supported; literal via {{ }}",
         }
     }
 

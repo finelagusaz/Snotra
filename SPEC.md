@@ -769,7 +769,8 @@ command = "https://www.google.com/search?q={query}"
 
 - 文法: `{` name ( `:` arg )? ( `|` modifier )* `}`。`|` `:` 周りの空白は任意（trim する）。`{query|lower}` ≡ `{query | lower}`
 - name はオプション引数を `:` で取れる（現状 `date:<書式>` のみ。name と arg は最初の `:` で分割）。`query` / `clip` / `uuid` は引数を取らず、引数付き（例 `{query:x}`）はリテラルに戻る（後方互換）
-- 認識対象は `{query…}` `{clip…}` `{date…}` `{uuid…}` のみ。それ以外の `{…}` はリテラルとして扱う（エスケープ不要・後方互換）
+- 認識対象は `{query…}` `{clip…}` `{date…}` `{uuid…}` のみ。それ以外の `{…}`（例 `{foo}`）はリテラルとして扱う（エスケープ不要）
+- **リテラルエスケープ `{{…}}`**: 変数名と衝突する literal を書く手段。`{{date}}` → literal `{date}`（展開しない）。`{{foo}}` → `{foo}`。中身は変数・修飾子として解釈しない。予約語が増えても literal の opt-out が常に存在する（下記「リテラルエスケープ」参照）
 - 修飾子は左から右へ順に適用する
 
 | 修飾子 | 動作 |
@@ -795,7 +796,20 @@ command = "https://www.google.com/search?q={query}"
 {query | lower | raw}         "Docs/API"    → docs/api         # lower 後 raw: エンコードせずスラッシュ温存
 args = "-s {query | trim}"    "  report  "  → ["-s", "report"]
 args = "{query | default:.}"  (空)          → ["."]
+{{date}}                      （展開なし）   → {date}            # リテラルエスケープ
 ```
+
+#### リテラルエスケープ（`{{…}}`）
+
+- `{{X}}` は literal `{X}` を出力する。中身 `X` は変数・修飾子として一切解釈しない（`{{date}}` → `{date}`、`{{query | upper}}` → `{query | upper}`）
+- **用途**: 変数名（`query`/`clip`/`date`/`uuid` および将来の予約語）と衝突する literal を書く唯一の手段。「変数展開がデフォルト、literal は `{{…}}` で opt-in」（`raw` と同じく「安全側がデフォルト」の設計 DNA）
+- 未認識名（`{foo}` 等）は元々 literal だが、`{{foo}}` でも同じく `{foo}` になり一貫する
+- **後方互換の注意**（2つの破壊的変更を伴う）:
+  1. 既存テンプレートの **literal な `{date}` / `{uuid}` が変数として展開されるようになった**。literal を保ちたい場合は `{{date}}` / `{{uuid}}` に書き換える（`{query}` / `{clip}` は従来から変数のため影響なし）
+  2. 既存テンプレートの **literal な `{{…}}` が `{…}` に collapse するようになった**（旧来は素通り）。exec 引数に Handlebars / Jinja 等の `{{var}}` テンプレートを渡していた既存 config が `{var}` に変わる。**literal な `{{` 自体を出力する手段は現状ない**（`{{…}}` は常にエスケープと解釈される）——下流ツールへ `{{` テンプレートを渡す用途は当該ツール側の入力経路を変える等で回避する
+- exec 種別では `{{…}}` も brace 深度で1 argv トークンに保たれる（`{{my note}}` → `["{my note}"]`、内部空白も分割しない）
+- URL 種別では literal `{` `}` は他の literal 同様にエンコードせず素通りする（変数値のみエンコード対象）
+- 閉じ `}}` を欠く `{{…`（例 `{{date}`）は best-effort: 先頭 `{` を literal 化し残りを placeholder として処理する（panic しない・total）
 
 #### 日時・UUID 変数
 
@@ -934,6 +948,7 @@ exec 種別:
 - `{query}` を "example" で、`{clip}` を "(clipboard)" で置換した結果をプレビュー
 - `{date}` / `{uuid}` は実行時と同じ経路で展開され、現在時刻・ランダム UUID の実値を表示する（再描画ごとに更新されうる）
 - 修飾子パイプ（`| lower` 等）を含む場合、チェーン適用後の結果を反映する（§19.4 参照）
+- `{{…}}` エスケープは literal `{…}` として表示される（§19.4 参照）
 - URL 種別: URL エンコード状態を表示
 - exec 種別: 分割後の引数ベクタをプレビュー（`[exe, arg1, arg2, ...]` の形式）
 

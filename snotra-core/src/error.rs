@@ -71,6 +71,7 @@ pub enum ConfigError {
     InstantCommandPrefixEmpty,
     InstantCommandPrefixSlash,
     InstantCommandDuplicateName { name: String },
+    InstantCommandUnknownModifier { name: String, modifier: String },
     MigemoMinCharsZero,
 }
 

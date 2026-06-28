@@ -773,7 +773,7 @@ command = "https://www.google.com/search?q={query}"
 |--------|------|
 | `lower` / `upper` | 小文字化 / 大文字化 |
 | `trim` | 前後空白除去 |
-| `default:<text>` | その時点の値が空（`is_empty()`）なら `<text>` で代替。引数は最初の `:` 以降〜次の `|` または `}` まで（2個目以降の `:` はリテラル。例: `default:about:blank` → `about:blank`）。引数中の `|` は非対応 |
+| `default:<text>` | その時点の値が空（`is_empty()`）なら `<text>` で代替。引数は最初の `:` 以降〜次の `|` または `}` まで（2個目以降の `:` はリテラル。例: `default:about:blank` → `about:blank`）。引数の前後空白は trim（`default: home` → `home`、内部空白は保持）。引数中の `|` は非対応 |
 | `raw` | URL 種別で型の自動 URL エンコードを抑止する。exec 種別では no-op（エラーにしない） |
 
 - **エンコードはシンク（種別）の責務**であり、修飾子は内容変換のみを担う。`urlencode` 相当の修飾子は提供しない（URL 種別が値を自動エンコードするため、二重エンコードを構造的に防ぐ）。自動エンコードの唯一の抑止手段が `raw`（「安全がデフォルト、生はオプトイン」）
@@ -789,7 +789,7 @@ command = "https://www.google.com/search?q={query}"
 例:
 ```
 {query | trim}                "  Foo Bar "  → Foo%20Bar       # trim → URL 自動エンコード
-{query | lower | raw}         "Docs/API"    → docs/API         # raw: エンコードせずスラッシュ温存
+{query | lower | raw}         "Docs/API"    → docs/api         # lower 後 raw: エンコードせずスラッシュ温存
 args = "-s {query | trim}"    "  report  "  → ["-s", "report"]
 args = "{query | default:.}"  (空)          → ["."]
 ```

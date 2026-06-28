@@ -198,6 +198,13 @@ impl Tr {
         }
     }
 
+    pub fn err_instant_unknown_modifier(&self, modifier: &str) -> String {
+        match self.0 {
+            Language::Ja => format!("不明な修飾子「{modifier}」が含まれています"),
+            Language::En => format!("contains unknown modifier \"{modifier}\""),
+        }
+    }
+
     // General tab
     pub fn heading_hotkey(&self) -> &'static str {
         match self.0 {

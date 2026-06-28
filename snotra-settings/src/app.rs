@@ -242,6 +242,9 @@ pub(crate) fn config_error_message(error: &ConfigError, tr: &Tr) -> String {
         ConfigError::InstantCommandDuplicateName { name } => {
             format!("{}{}", name, tr.err_instant_duplicate_name())
         }
+        ConfigError::InstantCommandUnknownModifier { name, modifier } => {
+            format!("{}: {}", name, tr.err_instant_unknown_modifier(modifier))
+        }
         ConfigError::MigemoMinCharsZero => tr.err_migemo_min_chars_zero().to_string(),
     }
 }

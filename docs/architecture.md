@@ -11,13 +11,13 @@ Snotra/
   Cargo.toml              # workspace (snotra-core, src-tauri, snotra-settings)
   snotra-core/            # 純ロジック lib crate
   src-tauri/              # Tauri v2 バイナリ crate
-  snotra-settings/        # egui 設定バイナリ（About タブ統合）
+  snotra-settings/        # egui 設定バイナリ（版数・About はサイドバー表示）
   ui/                     # SolidJS フロントエンド
   e2e/                    # E2E テスト
   package.json, vite.config.ts, tsconfig.json
 ```
 
-Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-core`）、Tauri バイナリ（`src-tauri`）、設定 GUI（`snotra-settings`）を分離。検索 UI は SolidJS + CSS 変数ベースのテーマシステムで Tauri IPC 経由で Rust バックエンドと通信。設定は egui ベースの別プロセスで（About 情報はタブとして統合）、`config.toml` ファイルを介して本体と連携する。
+Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-core`）、Tauri バイナリ（`src-tauri`）、設定 GUI（`snotra-settings`）を分離。検索 UI は SolidJS + CSS 変数ベースのテーマシステムで Tauri IPC 経由で Rust バックエンドと通信。設定は egui ベースの別プロセスで（版数・About 情報はサイドバーに表示）、`config.toml` ファイルを介して本体と連携する。
 
 ## レイヤー構成
 
@@ -93,7 +93,7 @@ ui/src/
 
 - 検索ウィンドウは起動時に作成し `visible: false`、ホットキーで表示/非表示を切替
 - 検索バーと検索結果は単一ウィンドウ内のコンポーネント（`SearchWindow` + `ResultsSection`）
-- 結果の表示/非表示は `shouldShowResults` メモシグナル（`results().length > 0 && (!indexing() || interpKind() === "instant")`）で制御
+- 結果の表示/非表示は `shouldShowResults` メモシグナル（`results().length > 0` を前提に `switch(viewKind())`: tool/folder は indexing 中でも常に表示、results は `interpKind() === "instant" || !indexing()`）で制御
 - ウィンドウ高さは `createEffect` + Tauri `set_size()` で動的に変更。Rust 側の `show_main_and_emit` で毎回 52px にリセットしてからフロントエンドが結果に応じて拡張する
 - マルチモニター: モニター作業領域原点からの相対座標（物理ピクセル）で位置を保存。ホットキー押下時にターゲットモニターを決定し絶対座標に変換
 
@@ -102,7 +102,7 @@ ui/src/
 - `platform/mod.rs` の Win32 メッセージループスレッドはウィンドウ生成より前に spawn し、Win32 初期化とウィンドウ生成を並列実行（起動時間短縮）
 - トレイアイコンの表示はウィンドウ生成完了後に行う
 - ホットキー登録（`RegisterHotKey`）は `hotkey-pressed` イベントリスナーの登録完了後に行う（「有効化 ≥ リスナー登録」不変条件）
-- 起動時 UI 初期化は `get_bootstrap_payload` で `visual` / `auto_hide_on_focus_lost` / `indexing` / `language` を一括取得
+- 起動時 UI 初期化は `get_bootstrap_payload` で `visual` / `general`（auto_hide_on_focus_lost・auto_update）/ `appearance`（show_icons・visible_rows）/ `language` / `indexing` / `instant_command_prefix` / `result_limit` を一括取得
 - フロントエンドは bootstrap 到着前のフラッシュ防止のため `navigator.language` から同期的に初期言語を決定
 
 ### 設定管理
@@ -124,7 +124,7 @@ ui/src/
 
 - `SHGetFileInfoW` → HICON → BGRA → PNG で抽出（base64 エンコードなし）
 - フロントエンドへは `tauri::ipc::Response` でバイナリ IPC（`get_icons_batch`）
-- バッチ形式: `[count:u32 LE]` + 各アイコン `[status:u8][png_len:u32 LE][png_bytes]`
+- バッチ形式: `[count:u32 LE]` + 各アイコン `[status:u8]`（0=None / 1=Some）、status==1 のときのみ `[png_len:u32 LE][png_bytes]` が続く
 - フロントエンド側は `parseBinaryBatch()` → `URL.createObjectURL(new Blob(...))` で `<img src>` に渡す
 - `LruIconCache` で Blob URL を管理し、自動 `revokeObjectURL` でメモリリーク防止
 - CSP の `connect-src` に `ipc: http://ipc.localhost` が必須（リリースビルドで必要）
@@ -139,7 +139,7 @@ ui/src/
 ### インスタントコマンド（4層）
 
 - 純ロジック: `snotra-core/src/instant.rs` — 変数展開 `{query}` / `{clip}` / `{date:書式}` / `{uuid}`（修飾子パイプ `{name | lower|upper|trim|default:x|raw}` 対応）+ `{{…}}` リテラルエスケープ + 前方一致フィルタ。date は strftime（不正書式は空文字でフォールバック＝panic 回避）、uuid は v4。`{{X}}` は literal `{X}`（変数名と衝突する literal の opt-out）。エンコードはシンク（種別）責務で URL 判定時に自動付与、`raw` で抑止。不明修飾子は `Config::validate` が保存時に拒否
-- IPC: `src-tauri/src/commands/instant.rs` — クリップボード読み取り + `launch_item_core`（ShellExecuteW）で実行
+- IPC: `src-tauri/src/commands/instant.rs` — クリップボード読み取り + 種別分岐で実行（URL/Legacy は `expand_instant_command` → `launch_item_core`（ShellExecuteW）、Exec は `launch_exec_core`（exe + args 起動））
 - UI: `ui/src/stores/search.ts` — `interpKind()`（`query` + prefix からの純粋導出）でモード判定。query effect が instant コマンドの IPC 取得（getInstantCommands）を担う。indexing 中でも使用可能
 - 設定 GUI: `snotra-settings/src/tabs/instant.rs` — プレフィックス設定 + コマンド CRUD + 展開プレビュー
 - プレフィックス変更は `config_watcher.rs` が `instant-prefix-changed` イベントで UI に通知
@@ -183,7 +183,7 @@ sequenceDiagram
 
     Note over SS: createEffect が query 変更を検知
 
-    SS->>SS: debouncedRefresh()<br/>requestAnimationFrame で合間
+    SS->>SS: debouncedRefresh()<br/>setTimeout で leading+trailing 50ms
 
     SS->>SS: refreshResults()<br/>searchGeneration++ (stale 検出用)
     SS->>API: search(query)
@@ -227,6 +227,7 @@ LauncherStopped → Standby → SearchVisible
                               └── IndexingMode (構築中)
 ```
 
+- 上図の括弧内は実装上 **2 軸 + オーバーレイ**に対応: NormalMode/CommandMode/InstantCommandMode は軸2 `interpKind`（plain/command/instant）、FolderExpansionMode/ToolSelectionMode は軸1 `viewKind`（folder/tool）。**IndexingMode は排他モードではなくオーバーレイ**（`indexing` はどのモードにも重なる）
 - `Escape` は内側のモードから順に復帰（ToolSelection → FolderExpansion → NormalMode → Standby）
 - `snotra-settings` は子プロセスとして起動され、本体の状態遷移には影響しない
 - 詳細な遷移ルールは `SPEC.md` §8.6 を参照

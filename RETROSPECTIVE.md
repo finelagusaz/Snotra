@@ -1,22 +1,22 @@
-# Retrospective — 設定UIの見出しに Semibold ウェイトを適用 (#399)
+# Retrospective — SPEC.md を実装済み機能の as-built に同期 (#404)
 
 ## よかったこと
 
-### 多層レビューが「別クラスの欠陥」を順に捕捉した
-`/plan-review`（独立2サブエージェント・要対処ゼロ）→ `code-reviewer`（**High** を1件実証検出）→ **視覚スモーク**（整列バグ検出）が、それぞれ別レイヤーの問題を捕まえた。特に code-reviewer は epaint 0.34 の `set_fonts` eager-parse 内部実装まで辿り、「`YuGothB.ttc` は在るが face 2 が無い環境で範囲外 face index → panic → release `abort` で設定プロセスが起動不能」を release-blocker として前倒し回収した。plan-review の「計画の妥当性」、code-review の「実装の堅牢性」、視覚スモークの「描画の正しさ」が**重ならない盲点クラス**を分担した好例。
+### 「枠組みの独立」な再導出が section 分割監査の境界盲点を回収した
+SPEC 全文の陳腐化を、まず §0-8 / §9-17 / §18-20 の 3 分割監査で洗い、`/plan-review` Step 2b の**独立再導出**（plan/research を見せない別枠監査）で差分を取った。明示例（§1 のインスタントコマンド「将来」framing）+ git/コメントで裏取りした factual 矛盾（§7.4 Alt+Space/Win+\*、§17.1 V1 廃止）は前者が検出したが、**§4.7 の `shouldShowResults` 式・§19.2 の `display` 反転・§18/§19 のタブ列挙という"地味な factual ドリフト" 3 件は独立再導出だけが拾った**。レビュアーの独立性は「実行の独立」より「枠組みの独立」が盲点に効く、という Step 2b の主張が doc 監査タスクで実証された。
 
-### `apply_type_ramp` の SSOT レバーを素直に拡張した
-ctx-level の一括設定（#398 で確立）に「`Heading.family` の切り替え」を1行足すだけで、`ui.heading()` を呼ぶ唯一の2箇所（`section_heading` + `modal_header`）が同時に Semibold 化した。`ui.heading()` / `TextStyle::Heading` を grep で事前列挙し、巻き込みゼロを着手前に確定。新規パターンを作らず既存レバーに乗せた。
+### 「バグか仕様変更か」を意図の証跡で判定し、doc を黙って実装に寄せなかった
+SPEC が実装より「多く」約束している箇所（§17.1 の V1 fallback）で、削除が事故か意図かを `git log -S`（#198「旧フォーマットフォールバック廃止」）で確認してから as-built に寄せた。§7.4 の Win+\*/Alt+Space も `SC_KEYMENU`・`Win 8+ shell reservation` のコードコメントで意図を確認。意図の証跡があるからこそ「実装が正・SPEC を寄せる」と確信でき、データ損失バグを doc で隠蔽するリスクを避けられた。
 
-### issue が明記した不確実性を「実証」で潰した
-issue が「face index の調査が必要」と認めた不確実性を、推測でなく `YuGothB.ttc` の `name` テーブル列挙（実ファイルの header 解析）で **face 2 = Yu Gothic UI Semibold** と確定してから計画に落とした。同じ実証姿勢を `face_index_valid`（ttc `numFonts` の事前検証）にも適用した。
+### 高リスク候補を自分でも独立に裏取りし、制御された auto-close でマージした
+「§20 自動更新が未実装なのに実装記述では」という最大リスクを、監査エージェント任せにせず自分でも `tauri-plugin-updater` 依存を grep して否定した。マージは `gh pr merge --squash --subject/--body-file` で auto-close を明示制御し、中核 #404 のみ close・follow-up #408/#409/#410 を open 保持。マージ後に issue state を検証した。
 
 ---
 
 ## 伸びしろ
 
-### レンダリング系欠陥は AI レビュー層を素通りし、視覚スモークでのみ顕在化した
-「Latin（Segoe UI Semibold・tweak なし）と CJK（Yu Gothic UI Semibold・tweak 0.3）を1つの `FontFamily` に混ぜると、混在見出し『PATH 実行ファイル』で異なる vertical metrics によりベースラインがずれる」——この欠陥は型チェック・clippy・ユニットテスト・plan-review・code-reviewer のいずれも検出できず、**視覚スモークの目視で初めて顕在化**して手戻り1ラウンドになった。計画時に「複数フォントを1ファミリに混在させるなら、Latin+CJK 同一行の整列をエッジケースに挙げる」を持てていれば最初から単一フォントを選べた。→ `snotra-settings/CLAUDE.md` に「フォント登録の注意点」を反映。メモリ [[feedback_codex_review_unreliable]] にも「AI レビューの境界＝レンダリング欠陥は runtime 視覚スモーク必須」を記録。
+### 単一の分解枠組みは「自身の盲点」を構造的に継承する
+最初の 3 分割 section 監査は §18-§20 を「陳腐化なし」と報告したが、実際にはその範囲内に F5（§19.2 display）・F6（§19.8 タブ列挙）が潜んでいた。section で分担し「将来 framing と明白な矛盾」に焦点を絞った監査は、フィールド定義の反転・列挙のドリフト・実装式の変化といった"地味だが factual な陳腐化"を境界で取りこぼす。**これに頼り切っていれば SPEC は 3 箇所で陳腐化したままマージされていた**。網羅性が要件のタスク（全文監査・陳腐化スイープ・全箇所改名）では、枠組みの異なる独立再導出を必須の補完として組み込む——これは [[feedback_codex_review_unreliable]] の「独立フレーミングによる盲点検出」と同根。
 
-### graceful-degrade の「不在」を浅く定義していた
-当初の degrade は `std::fs::read` の Err（ファイル不在）しか想定せず、「ファイルは在るが face index が無い／パース不能」を見落とした。egui の `set_fonts` が全フォントを eager parse して panic（release `abort`）する挙動と結びつく重大欠陥で、code-reviewer が回収した。「不在時フォールバック」を計画する時点で、不在の種類（**ファイル不在 / 存在するが不正 / パース不能**）を分解して各検知点を列挙していれば自分で気づけた。→ `snotra-settings/CLAUDE.md` の「フォント登録の注意点」に「不在の種類を分解する」として反映。
+### 計画書の行番号は編集中にドリフトする
+plan.md の引用行番号が実 SPEC と 2 行ずれていた（F3: 608-609 を 610-611 と記載）。編集を「変更前テキストの文字列一致」で行っていたため実害は無かったが、行番号で機械編集していれば温存対象（「単位混在」行）を誤って触る危険があった。doc 編集計画では行番号ではなく逐語引用テキストを SSOT にする運用が安全。

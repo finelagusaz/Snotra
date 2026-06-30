@@ -340,7 +340,7 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 
 - 照合は modifier を `+` 分割 → trim → 小文字化 → ソート → 再結合した正規化形式で行う（`Shift+Ctrl` = `Ctrl+Shift`）
 - 下表のエントリは modifier セット完全一致でブロックする（`Alt+Shift+F4` など modifier セットが異なれば非ブロック）。ただし Win 修飾キーを含む組み合わせは上記のとおりワイルドカードで無条件ブロックする（完全一致の例外）
-- snotra-settings のキャプチャ UI でも即時拒否し、フロントエンド（`hotkeyValidation.ts`）でも同じリストでガードする
+- snotra-settings のキャプチャ UI（`hotkey_input.rs`）でも `is_system_shortcut` で即時拒否する（保存時の `Config::validate()` がバックストップ）
 
 ### 7.5 設定反映タイミング
 

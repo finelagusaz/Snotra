@@ -40,7 +40,7 @@ egui ベースの設定・about バイナリ crate。本体（`src-tauri`）と�
 
 - `egui::Key::ALL` は `&[Key]`（`&&[Key]` ではない）。`for &key in egui::Key::ALL` が正しい
 - `color_edit_button_srgba` は `&mut Color32` を取る。一時変数に変換して渡すと変更が反映されない。`let mut color = Color32::from_hex(hex)` のように変数を作り、変更後に hex 文字列に書き戻す
-- `egui::Stroke::new(width, color)` は 2 引数で動作する（eframe 0.33 現在）。`StrokeKind` が必要になるのは将来のバージョンの可能性があるため、egui をバージョンアップする際は確認する
+- `egui::Stroke::new(width, color)` は 2 引数で動作する（egui 0.35 現在）。`StrokeKind` enum は 0.35 で追加されたが、`Stroke::new` と `Visuals` の stroke フィールドはこれを要求しない。egui をバージョンアップする際は `Stroke::new` が `StrokeKind` を取るようになっていないか確認する
 - `ThemePreset` は `Copy`。`.clone()` ではなく値コピーで渡す（clippy `clone_on_copy`）
 
 ### Win キーの制限
@@ -49,7 +49,7 @@ egui の `Modifiers` は `ctrl` / `alt` / `shift` / `mac_cmd` / `command` のみ
 
 ### フレームごとの重い処理を避ける
 
-egui は毎フレーム `update()` を呼ぶ（60fps）。`list_system_fonts()` のような Win32 API 呼び出しをフレームごとに実行するとパフォーマンスが劣化する。初期化時に一度だけ取得して `SettingsApp` のフィールドにキャッシュする。
+eframe は毎フレーム `App::ui()`（旧 `update()`。eframe 0.35 で `logic()` / `ui()` に分割）を呼ぶ（60fps）。`list_system_fonts()` のような Win32 API 呼び出しをフレームごとに実行するとパフォーマンスが劣化する。初期化時に一度だけ取得して `SettingsApp` のフィールドにキャッシュする。
 
 ### フォント登録（`set_fonts`）の注意点
 

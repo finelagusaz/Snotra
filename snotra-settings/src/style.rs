@@ -105,7 +105,7 @@ pub fn tab_scroll_area<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .scroll_source(egui::scroll_area::ScrollSource {
-            drag: false,
+            drag: egui::scroll_area::DragScroll::Never,
             ..Default::default()
         })
         .show(ui, |ui| {

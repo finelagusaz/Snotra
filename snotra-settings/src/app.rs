@@ -250,18 +250,17 @@ pub(crate) fn config_error_message(error: &ConfigError, tr: &Tr) -> String {
 }
 
 impl eframe::App for SettingsApp {
-    fn ui(&mut self, _ui: &mut egui::Ui, _frame: &mut eframe::Frame) {}
-
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         if let Some(pos) = self.last_position {
             window_data::save_settings_placement(pos);
         }
     }
 
-    // eframe 0.34: Panel::show(ctx) は deprecated（show_inside(ui) が推奨）。
-    // 全レイアウトを ui() メソッドに移すリファクタリングは eframe 0.35 対応時に実施する。
-    #[expect(deprecated)]
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    // eframe 0.35: App::update は logic()/ui() に分割された。全レイアウトを ui() が受け取る
+    // ルート Ui 上に置き、各 Panel は show(ui) で描画する（旧 Panel::show(ctx) は 0.35 で削除、
+    // show_inside は show へ改名）。ctx はルート Ui から取得する。
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         // Update window title (language change + dirty indicator)
         let title = if self.has_changes() {
             format!("{}*", self.tr.window_title())
@@ -364,7 +363,7 @@ impl eframe::App for SettingsApp {
             .resizable(false)
             .exact_size(140.0)
             .frame(egui::Frame::NONE.fill(SIDEBAR_BG).inner_margin(egui::Margin::symmetric(8, 8)))
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 let available_width = ui.available_width();
 
                 // Tab list
@@ -445,7 +444,7 @@ impl eframe::App for SettingsApp {
         egui::Panel::bottom("footer")
             .exact_size(40.0)
             .frame(egui::Frame::NONE.fill(FOOTER_BG).inner_margin(egui::Margin::symmetric(12, 0)))
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
                     // Status (timer message takes priority; otherwise show persistent unsaved indicator)
                     let status_text = if !self.status.is_empty() {
@@ -497,7 +496,7 @@ impl eframe::App for SettingsApp {
             });
 
         // Main content
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             // Sentinel: 0-size focusable widget placed first in Tab order.
             // Shift+Tab from the first content widget lands here (via id_next_frame),
             // which is detected next frame to return focus to the sidebar.
@@ -528,12 +527,12 @@ impl eframe::App for SettingsApp {
             match self.active_tab {
                 TabId::General => tabs::general::ui(ui, &mut self.draft, &mut self.hotkey_state, &self.tr),
                 TabId::Search => tabs::search::ui(ui, &mut self.draft, &self.tr),
-                TabId::Index => tabs::index::ui(ui, ctx, &mut self.draft, &mut self.index_state, &self.tr),
+                TabId::Index => tabs::index::ui(ui, &ctx, &mut self.draft, &mut self.index_state, &self.tr),
                 TabId::Visual => tabs::visual::ui(ui, &mut self.draft, &self.font_list, &self.tr),
-                TabId::Opener => tabs::opener::ui(ui, ctx, &mut self.draft, &mut self.opener_state, &self.tr),
-                TabId::InstantCommand => tabs::instant::ui(ui, ctx, &mut self.draft, &mut self.instant_state, &self.tr),
+                TabId::Opener => tabs::opener::ui(ui, &ctx, &mut self.draft, &mut self.opener_state, &self.tr),
+                TabId::InstantCommand => tabs::instant::ui(ui, &ctx, &mut self.draft, &mut self.instant_state, &self.tr),
                 TabId::Backup => {
-                    if let Some(result) = tabs::backup::ui(ui, ctx, &mut self.backup_state, &self.tr) {
+                    if let Some(result) = tabs::backup::ui(ui, &ctx, &mut self.backup_state, &self.tr) {
                         self.draft = result.imported_config.clone();
                         self.saved = result.imported_config;
                         self.tr = Tr(self.draft.general.language);

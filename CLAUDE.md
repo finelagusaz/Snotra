@@ -63,10 +63,10 @@ Claude とユーザーが一緒に作業するときの関係性の原則。
 | `/race-check`        | async 関数を新規追加・変更したとき、各 await 地点の状態競合リスクを検証 | `/race-check executeInstantCommandSelected: await api.executeInstantCommand()` |
 | `/cache-check`       | キャッシュロジックの追加・変更時に述語の単調性と状態遷移の安全性を検証  | `/cache-check search_with_options: use_incremental 判定`                       |
 | `/state-check`       | UI モード・ガード条件の追加・変更時に直交性・リセット経路・SPEC §8.6 整合を検証 | `/state-check InstantCommandMode 追加`                                    |
-| `/health-check`      | 定期・サイクル完了後: モジュール構成・architecture.md・AGENTS.md・SPEC.md 番号・コマンド・workflow 対応・メモリ・ルール・スキルの整合性を検証 | `/health-check`                                                           |
-| `/retrospective`     | サイクル終了後: 教訓を AGENTS.md/各 CLAUDE.md に抽出 → 残タスクを issue/PR へ振り分け → RETROSPECTIVE.md（教訓のみ）を上書き → メモリ鮮度チェック → サイクル末 health-check | `/retrospective`                                                               |
-| `/start-issue`       | GitHub issue から作業開始: issue 読込 → main 最新化 → ブランチ作成 → 調査・計画 | `/start-issue 123`                                                        |
-| `/implement`         | フルサイクル開発: 調査 → 計画 → 実装 → 検証 → レビュー → コミット      | `/implement キーボードショートカットの追加`                                     |
-| `/deps-update`       | cargo/npm の依存を一括更新し PR 作成・CI グリーン確認まで（カテゴリ C 相当時は `e2e` ラベル付与・E2E/smoke 完了確認。マージは手動） | `/deps-update` または `/deps-update npm`                                       |
+| `/health-check`      | 定期・サイクル完了後にドキュメントと実装の整合性を10項目で検証（報告のみ・修正しない） | `/health-check`                                                           |
+| `/retrospective`     | サイクル終了後に教訓の抽出・残タスクの振り分け・RETROSPECTIVE.md 上書きを実施 | `/retrospective`                                                               |
+| `/start-issue`       | GitHub issue から作業を開始（実装前段階のブランチ作成・調査・計画まで）  | `/start-issue 123`                                                        |
+| `/implement`         | コード変更を伴うタスクの実装（調査からコミットまでのフルサイクル）      | `/implement キーボードショートカットの追加`                                     |
+| `/deps-update`       | cargo/npm の依存を一括更新し PR 作成・CI 確認まで（マージは手動）       | `/deps-update` または `/deps-update npm`                                       |
 
 サブエージェント: `code-reviewer`（`.claude/agents/`）— 実装後・コミット前の3フェーズレビュー（実装検証 / 計画判断・SPEC.md 同期 / パフォーマンス）。`/implement` Step 5b が自動で起動する。

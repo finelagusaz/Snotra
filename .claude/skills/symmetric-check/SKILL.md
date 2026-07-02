@@ -1,6 +1,6 @@
 ---
 name: symmetric-check
-description: "変更・修正したコードパスの対称ペアとリソースライフサイクルの対称性を検証する。コードパス変更・バグ修正・実装計画のレビュー時に使用。"
+description: "コードパスの変更・バグ修正時、または計画レビュー時に使用。対称ペア（show/hide 等）とリソース生成/破棄の適用漏れを検証する。"
 argument-hint: "[変更内容やキーワード, 例: 'result-clicked: emitSelectionUpdate を追加' / 'iconUrls Set を廃止して LruIconCache に移行']"
 allowed-tools:
   - Read
@@ -9,6 +9,7 @@ allowed-tools:
 ---
 
 $ARGUMENTS に関連する対称性を2軸（コードパス対称・リソースライフサイクル対称）で検証する。
+$ARGUMENTS が空の場合は、会話の直近の変更内容から対象を推定する。
 
 実装後のコードレビューだけでなく、`workspace/plan.md` の計画レビューにも使える。計画段階で対称性を検証し、見落としがあれば計画を更新してから実装に進む。
 

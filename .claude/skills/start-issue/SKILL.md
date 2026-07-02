@@ -1,6 +1,6 @@
 ---
 name: start-issue
-description: "GitHub issue から作業を開始する: issue 読み込み → main 最新化 → ブランチ作成 → 調査(workspace/research.md) → 実装計画(workspace/plan.md) → セルフレビューして計画更新。実装の前段階をすべて行う。"
+description: "GitHub issue から作業を開始するときに使用。実装の前段階（ブランチ作成・調査・計画・計画レビュー）までを行う。"
 disable-model-invocation: true
 argument-hint: "<issue-number>"
 allowed-tools:
@@ -15,7 +15,7 @@ allowed-tools:
 
 Issue #$ARGUMENTS の作業を開始する。実装判断は自律的に行い、要求判断が必要な場合のみ確認する（後述）。
 
-## Step 1 -- ISSUE 読み込み & 要求の曖昧さ判定
+## Step 1 — ISSUE 読み込み & 要求の曖昧さ判定
 
 ```bash
 gh issue view $ARGUMENTS
@@ -33,7 +33,7 @@ issue の内容（タイトル・本文・ラベル・コメント）を把握�
 
 回答を得てから Step 2 に進む。
 
-## Step 2 -- main 最新化 & ブランチ作成
+## Step 2 — main 最新化 & ブランチ作成
 
 ```bash
 git checkout main && git pull --ff-only
@@ -48,7 +48,7 @@ issue の内容から適切なブランチ名を決める:
 git checkout -b <branch-name>
 ```
 
-## Step 3 -- 調査と分析（workspace/research.md）
+## Step 3 — 調査と分析（workspace/research.md）
 
 `workspace/research.md` と `workspace/plan.md` が既に存在する場合は上書きする（前回の作業成果物）。
 
@@ -62,7 +62,7 @@ git checkout -b <branch-name>
 - **技術的制約**: Win32 依存、IPC 境界、リアクティブ制約など。Win32 API を使う場合、`SendInput`/`SetForegroundWindow`/`ShowWindow` 等の入力・ウィンドウ系 API は部分的に非同期な場合がある。計画時に MSDN で同期性を確認し、技術的制約に記録する
 - **未解決の疑問**: 調査で判明しなかった点（あれば）
 
-## Step 4 -- 実装計画（workspace/plan.md）
+## Step 4 — 実装計画（workspace/plan.md）
 
 `workspace/research.md` の分析結果をもとに、`workspace/plan.md` に実装計画を作成する。
 
@@ -76,7 +76,7 @@ git checkout -b <branch-name>
 
 `docs/development-principles.md` の開発原則（KISS/DRY/YAGNI）と `AGENTS.md` の開発ワークフロー（ステップ 0〜3）に従うこと。
 
-## Step 5 -- セルフレビュー & 計画更新
+## Step 5 — セルフレビュー & 計画更新
 
 ### 5a. check スキルによる計画検証
 
@@ -105,7 +105,7 @@ git checkout -b <branch-name>
 
 レビュー結果を `workspace/plan.md` 末尾の「セルフレビュー」セクションに記録する。
 
-## Step 6 -- workspace をコミット & プッシュ
+## Step 6 — workspace をコミット & プッシュ
 
 セッション断絶・別マシン継続に備え、`workspace/` を必ずコミットしてプッシュする:
 
@@ -115,7 +115,7 @@ git commit -m "chore: workspace 調査・計画 (issue #$ARGUMENTS)"
 git push -u origin HEAD
 ```
 
-## Output
+## 出力
 
 最後に以下を報告:
 

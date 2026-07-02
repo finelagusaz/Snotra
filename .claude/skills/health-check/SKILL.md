@@ -1,6 +1,6 @@
 ---
 name: health-check
-description: "コードベースとドキュメントの衛生チェック: CLAUDE.md モジュール構成・architecture.md モジュール表の非再導入・AGENTS.md 参照・SPEC.md 番号・build-commands.md コマンド・build-commands↔workflow 対応・MEMORY.md 参照・rules パスパターンの整合性を検証する。大きなサイクル完了後や定期的に使用。"
+description: "大きなサイクル完了後や定期メンテナンス時に使用。ドキュメントと実装の整合性を10項目で検証し報告する（修正はしない）。"
 disable-model-invocation: true
 argument-hint: ""
 allowed-tools:
@@ -13,7 +13,7 @@ allowed-tools:
 
 コードベースとドキュメントの衛生状態を検証する。発見事項を報告し、修正は行わない。
 
-## Check 1 -- CLAUDE.md モジュール構成の乖離
+## Check 1 — CLAUDE.md モジュール構成の乖離
 
 各サブディレクトリの `CLAUDE.md` に記載されたモジュール構成が、実際のファイル一覧と一致しているか検証する。
 
@@ -30,7 +30,7 @@ allowed-tools:
    - **記載あり・実ファイルなし**: 削除されたのに CLAUDE.md が未更新
    - **実ファイルあり・記載なし**: 追加されたのに CLAUDE.md が未更新
 
-## Check 2 -- docs/architecture.md にファイル単位モジュール表が再導入されていないか
+## Check 2 — docs/architecture.md にファイル単位モジュール表が再導入されていないか
 
 `docs/architecture.md` はファイル単位のモジュール一覧を**持たない**設計。モジュール構成（各ファイルとその責務）の SSOT は各サブディレクトリの `CLAUDE.md` であり、architecture.md は位置づけ・主要な型・横断パターン・データフローのみを記す。二重管理がドリフトの温床になるため、ファイル単位のモジュール表は撤去された経緯がある。
 
@@ -42,19 +42,19 @@ allowed-tools:
 3. 該当行が見つかった場合は **Warning** で報告:
    - architecture.md にファイル単位のモジュール表が再導入されている。モジュール構成は各サブディレクトリの `CLAUDE.md` に一本化する設計のため、表の内容は該当 `CLAUDE.md` 側へ集約し、architecture.md からは撤去する
 
-## Check 3 -- AGENTS.md ドキュメント参照の実在性
+## Check 3 — AGENTS.md ドキュメント参照の実在性
 
 `AGENTS.md` の「ドキュメント参照」セクションに記載されたファイルパスが実在するか検証する。
 存在しないファイルへの参照を報告する。
 
 > **Note:** 検証コマンドの整合性は SSOT である `docs/build-commands.md` を対象とする Check 5 で一括検証する（AGENTS.md は Step 8 で `docs/build-commands.md` を参照する形式に統合済み）。
 
-## Check 4 -- SPEC.md セクション番号の連続性
+## Check 4 — SPEC.md セクション番号の連続性
 
 `SPEC.md` を読み、`## N.` と `### N.x` の番号が連続しているか確認する。
 飛び・重複・親子の不整合があれば報告する。
 
-## Check 5 -- docs/build-commands.md コマンドの実在性（SSOT）
+## Check 5 — docs/build-commands.md コマンドの実在性（SSOT）
 
 `docs/build-commands.md` はビルド／検証コマンドの単一の真実源（SSOT）。記載された `npm run XXX` / `npm XXX` コマンドが `package.json` の `scripts` に定義されているか検証する。
 `cargo` コマンドは `Cargo.toml` のワークスペースメンバーと照合する（`-p <crate>` のクレート名が存在するか）。
@@ -63,30 +63,30 @@ allowed-tools:
 加えて、SSOT ドリフトの検知として以下も確認する:
 - `AGENTS.md` Step 8 や `.claude/skills/*/SKILL.md` に **コマンド本体**（`cargo XXX` / `npm XXX` / `npx XXX` の具体的な引数を含む実行コマンド）が直書きされていないか grep する。`docs/build-commands.md` の SSOT を迂回している箇所を報告する（コマンド名への言及や参照リンク自体は許容）。
 
-## Check 6 -- docs/development-principles.md 参照の実在性
+## Check 6 — docs/development-principles.md 参照の実在性
 
 `docs/development-principles.md` に記載されたファイルパス参照（バッククォート内の `*.md`, `*.rs` 等）が実在するか検証する。
 存在しないファイルへの参照を報告する。
 
-## Check 7 -- MEMORY.md 参照の実在性
+## Check 7 — MEMORY.md 参照の実在性
 
 `MEMORY.md` を読み、リンク先のメモリファイルが実在するか確認する。
 存在しないファイルへの参照を報告する。
 
 各メモリファイルの `description` が内容と合っているか簡易チェックする（ファイルを読んで description と内容を比較）。
 
-## Check 8 -- .claude/rules/ パスパターンの有効性
+## Check 8 — .claude/rules/ パスパターンの有効性
 
 `.claude/rules/` 内の各ルールファイルを読み、`paths:` フロントマターに記載されたパスパターンが実在するファイルにマッチするか Glob で検証する。
 マッチ 0 件のパターンを報告する。
 
-## Check 9 -- スキル定義の整合性
+## Check 9 — スキル定義の整合性
 
 `.claude/skills/*/SKILL.md` の一覧と、`CLAUDE.md` の「利用できるスキル」テーブルを比較する。
 - スキルファイルはあるがテーブルに記載なし
 - テーブルに記載があるがスキルファイルなし
 
-## Check 10 -- docs/build-commands.md ↔ .github/workflows/\* の対応
+## Check 10 — docs/build-commands.md ↔ .github/workflows/\* の対応
 
 `docs/build-commands.md`「変更後の検証チェックリスト」の**必須コマンド**が、いずれかの GitHub Actions workflow で実際に実行されるか検証する。CI で担保されない検証要件のドリフトを検知する。
 

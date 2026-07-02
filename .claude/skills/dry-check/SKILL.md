@@ -1,6 +1,6 @@
 ---
 name: dry-check
-description: "新規・変更した関数について、同等ロジックを手書きしている箇所を grep で検索し DRY 違反をフラグする。関数の新規定義・変更時に使用。"
+description: "関数を新規定義・変更したときに使用。同等ロジックを手書きしている重複箇所を検出する。"
 argument-hint: "[関数名と主要操作, 例: 'show_main_and_emit: show() + set_focus() + emit(window-shown)']"
 allowed-tools:
   - Read
@@ -9,6 +9,7 @@ allowed-tools:
 ---
 
 $ARGUMENTS に関連する DRY 違反を検査する。
+$ARGUMENTS が空の場合は、会話の直近の変更内容から対象を推定する。
 
 ## 背景
 

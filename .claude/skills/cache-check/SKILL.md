@@ -1,6 +1,6 @@
 ---
 name: cache-check
-description: "キャッシュ再利用ロジックの述語単調性と状態遷移の安全性を検証する。incremental search やメモ化など、前回結果を再利用するコードの追加・変更時に使用。"
+description: "incremental search・メモ化など前回結果を再利用するコードの追加・変更時、または計画レビュー時に使用。述語の単調性と状態遷移の安全性を検証する。"
 argument-hint: "[対象, 例: 'search_with_options: use_incremental 判定' / 'folder cache: prev_filter reuse']"
 allowed-tools:
   - Read
@@ -9,6 +9,7 @@ allowed-tools:
 ---
 
 $ARGUMENTS のキャッシュ再利用ロジックについて、述語の単調性と状態遷移の安全性を検証する。
+$ARGUMENTS が空の場合は、会話の直近の変更内容から対象を推定する。
 
 実装後のコードレビューだけでなく、`workspace/plan.md` の計画レビューにも使える。計画段階で「このキャッシュ再利用は安全か？」を検証し、見落としがあれば計画を更新してから実装に進む。
 

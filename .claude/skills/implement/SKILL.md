@@ -1,6 +1,6 @@
 ---
 name: implement
-description: "自律的なフルサイクル開発: 調査 → 計画 → 実装 → 検証 → レビュー → コミット。機能追加・バグ修正・リファクタリングなど、コード変更を伴うタスクの実装時に使用。"
+description: "コード変更を伴うタスク（機能追加・バグ修正・リファクタリング）の実装時に使用。調査からコミット作成まで自律的に行う。"
 disable-model-invocation: true
 argument-hint: "[機能の説明]"
 allowed-tools:
@@ -20,7 +20,7 @@ allowed-tools:
 
 タスク: $ARGUMENTS
 
-## Step 1 -- 調査
+## Step 1 — 調査
 
 - `workspace/plan.md` が存在する場合、先に読む — `/start-issue` で作成された調査・計画が含まれている。Step 3 に進む。
 - それ以外: `SPEC.md` と関連する `CLAUDE.md` を読み、意図とアーキテクチャを理解する
@@ -28,7 +28,7 @@ allowed-tools:
 - 要求された機能と重複する既存コードを検索する
 - 3層モデルの制約（意図は SPEC.md、実装はコード）に留意する
 
-## Step 2 -- 計画
+## Step 2 — 計画
 
 - `workspace/plan.md` が存在する場合、それを計画として使用する。別の計画を作成しない。
 - それ以外:
@@ -37,14 +37,14 @@ allowed-tools:
 - 計画を会話に出力する
 - プロジェクト原則に従う: ロジックは `snotra-core`、薄いラッパーは `commands.rs`（KISS/DRY/YAGNI）
 
-## Step 3 -- 実装
+## Step 3 — 実装
 
 - `snotra-core` の純ロジック変更: 先に失敗する `#[cfg(test)]` テストを書き（Red）、次に実装して通す（Green）
 - 計画に沿って変更を行う
 - 新しい純ロジックには `snotra-core` に `#[cfg(test)]` ユニットテストを追加する
 - `SPEC.md` に記載された挙動に影響する変更の場合、`SPEC.md` も更新する（`AGENTS.md` の3層分担に従う）
 
-## Step 4 -- 検証（最大5サイクル）
+## Step 4 — 検証（最大5サイクル）
 
 `docs/build-commands.md` の「変更後の検証チェックリスト」を SSOT として、変更したファイルの種類に該当するカテゴリ A〜D をすべて実行する。失敗した場合、修正して失敗したステップから再実行する。
 
@@ -56,7 +56,7 @@ allowed-tools:
 - 残存するエラー
 - 根本原因の推定
 
-## Step 5 -- レビュー
+## Step 5 — レビュー
 
 ### 5a. check スキルの実行
 
@@ -74,7 +74,7 @@ allowed-tools:
 
 `code-reviewer` エージェントを変更に対して実行する。Critical または High の発見事項は修正してから次に進む。
 
-## Step 6 -- コミット
+## Step 6 — コミット
 
 - このタスクで変更したファイルのみをステージする
 - `workspace/` ディレクトリが存在する場合、削除してステージに含める（`/start-issue` の引き継ぎバッファは実装完了で役目を終える。git 履歴から復元可能）

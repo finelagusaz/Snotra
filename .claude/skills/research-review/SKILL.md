@@ -1,6 +1,6 @@
 ---
 name: research-review
-description: "workspace/research.md をサブエージェントで並列検証する。影響範囲の漏れ・誤認識・未調査コードパスを洗い出す。/start-issue の Step 3 完了後に使う。"
+description: "workspace/research.md の調査完了後（/start-issue Step 3 の後）、plan.md 作成前に使用。影響範囲の漏れ・誤認識・未調査コードパスを検証する。"
 disable-model-invocation: true
 allowed-tools:
   - Read
@@ -9,7 +9,7 @@ allowed-tools:
 
 `workspace/research.md` を読み、内容に基づいてサブエージェントを並列起動して検証する。
 
-## Step 1 -- research.md の読み込み
+## Step 1 — research.md の読み込み
 
 `workspace/research.md` を読み、以下を把握する:
 
@@ -18,7 +18,7 @@ allowed-tools:
 - 技術的制約として挙げられている事項
 - 未解決の疑問（あれば）
 
-## Step 2 -- 並列サブエージェントで検証
+## Step 2 — 並列サブエージェントで検証
 
 research.md に記載された関連コードのレイヤー（Rust / TypeScript / 設定 など）ごとにサブエージェントを分割して並列起動する。
 
@@ -34,7 +34,7 @@ research.md に記載された関連コードのレイヤー（Rust / TypeScript
 
 サブエージェントは `Explore` タイプを使用する。
 
-## Step 3 -- 結果の統合と報告
+## Step 3 — 結果の統合と報告
 
 各サブエージェントの結果を統合し、以下の形式で報告する:
 

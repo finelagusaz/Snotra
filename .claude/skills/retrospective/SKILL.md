@@ -1,6 +1,6 @@
 ---
 name: retrospective
-description: "開発サイクル終了後の振り返り: 変更差分の分析 → 教訓の抽出とドキュメント反映 → 残タスクの issue/PR 振り分け → RETROSPECTIVE.md（教訓のみ）の上書き → メモリ鮮度チェック → サイクル末 health-check。サイクル完了時に使用。"
+description: "開発サイクル完了時（実装・レビュー・追加修正まで済んだ後）に使用。教訓の抽出・残タスクの振り分け・RETROSPECTIVE.md 更新を行う。"
 disable-model-invocation: true
 argument-hint: "[対象ブランチ名や作業の概要（省略時は現在のブランチの差分を使用）]"
 allowed-tools:
@@ -17,7 +17,7 @@ allowed-tools:
 
 対象: $ARGUMENTS
 
-## Step 1 -- サイクルの全体像を把握
+## Step 1 — サイクルの全体像を把握
 
 ```bash
 git log main..HEAD --oneline
@@ -28,7 +28,7 @@ git diff main..HEAD --stat
 - `workspace/plan.md` があれば読み、当初の計画と実際の実装を比較する
 - PR のコメントやレビュー指摘があれば `gh pr view` で確認する
 
-## Step 2 -- 振り返りの分析
+## Step 2 — 振り返りの分析
 
 以下の3観点で分析する:
 
@@ -47,7 +47,7 @@ git diff main..HEAD --stat
 - 「この判断基準は明文化すべき」→ `docs/development-principles.md` の開発原則候補
 - 「このワークフローステップ自体が機能しなかった・足りなかった」→ スキルの更新候補（実際に更新するかはユーザーと相談する）
 
-## Step 3 -- 教訓のドキュメント反映
+## Step 3 — 教訓のドキュメント反映
 
 Step 2 で抽出した構造的パターンのうち、今後のサイクルで繰り返し参照する価値があるものを特定し、適切なドキュメントに反映する:
 
@@ -59,7 +59,7 @@ Step 2 で抽出した構造的パターンのうち、今後のサイクルで�
 
 **反映の判断基準**: 単発の出来事ではなく、再発しうるパターンのみ反映する。過剰な追記はドキュメントの可読性を下げるため、既存ルールで包含できる場合は追記しない。
 
-## Step 4 -- 残タスクの振り分け（issue / PR）
+## Step 4 — 残タスクの振り分け（issue / PR）
 
 `RETROSPECTIVE.md` は上書きファイルであり、サイクルを越えて生き残るタスクを置くと次サイクルの上書きで失われる。Step 2 で洗い出した「実行が必要な項目」のうち、Step 3 でドキュメントに反映しきれなかったものを、以下の追跡先へ振り分ける（`RETROSPECTIVE.md` には残さない）:
 
@@ -68,7 +68,7 @@ Step 2 で抽出した構造的パターンのうち、今後のサイクルで�
 
 既に完了済みのタスク（merge 済み PR の手順など）は振り分け不要。振り分けた issue 番号 / PR チェックリストは出力に記録する。
 
-## Step 5 -- RETROSPECTIVE.md の上書き（教訓のみ）
+## Step 5 — RETROSPECTIVE.md の上書き（教訓のみ）
 
 Step 3・Step 4 が完了してから、`RETROSPECTIVE.md` を以下の **2 セクション**フォーマットで**上書き**する。タスク（ネクストアクション）は Step 4 で振り分け済みのため**含めない**:
 
@@ -91,7 +91,7 @@ Step 3・Step 4 が完了してから、`RETROSPECTIVE.md` を以下の **2 セ�
 - 前回の内容は上書きする（追記しない）
 - 実行タスク・未完了項目は書かない（Step 4 で issue / PR へ振り分け済み）
 
-## Step 6 -- メモリの鮮度チェック
+## Step 6 — メモリの鮮度チェック
 
 サイクルで変更した内容に関連するメモリが `MEMORY.md` に存在するか確認する。
 
@@ -102,7 +102,7 @@ Step 3・Step 4 が完了してから、`RETROSPECTIVE.md` を以下の **2 セ�
 
 **判断基準**: メモリは「コードやドキュメントから読み取れない、セッション横断で有用な情報」のみ保持する。コードの構造やパターンは AGENTS.md / 各 CLAUDE.md の責務。
 
-## Step 7 -- サイクル末の health-check
+## Step 7 — サイクル末の health-check
 
 サイクル末の衛生チェックを実施する（実行責任は `/retrospective` が負う）。`/health-check` は user 起動専用（`disable-model-invocation`）でスキルからは起動できないため、その定義 `.claude/skills/health-check/SKILL.md` の Check 1〜10 を本スキルが直接実施する（Read / Grep / Glob）。health-check は「報告のみ・修正しない」定義のため、発見事項の処理は本スキルが担い、Step 3・Step 4 の方針に従って振り分ける:
 

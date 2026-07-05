@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
@@ -22,6 +23,38 @@ const FOLDER_EXPANSION_WEIGHT: i64 = 5;
 /// (typical after several keystrokes when incremental search narrows candidates).
 const MIN_PAR_CANDIDATES: usize = 512;
 
+/// マッチ種別ごとの基準スコア（全順序の不変条件を単一定義に集約）。
+///
+/// 実行時スコアは Prefix > Substring > Kana > Path > Fuzzy(nucleo) の全順序を保つ。
+/// ここに置くのは各種別の**基準定数**のみ——直後の `const _` コンパイル時アサーションが
+/// 基準定数の大小（`PREFIX_BASE > SUBSTRING_BASE > KANA_BASE > PATH_BASE`）を守る。
+/// 位置ペナルティ（`- byte_pos`）・`.max(1)` 補正込みの実行時全順序は、既存の挙動テスト
+/// （`kana_search_direct_match_ranks_above_kana_match` 等）が保証する。
+/// Fuzzy は nucleo-matcher が独自スコアを返すため基準定数を持たない。
+/// （命名: fold ボディのローカル変数 `score` との視覚的衝突を避け `score_tier` とする）
+mod score_tier {
+    /// Prefix マッチ: `PREFIX_BASE - lower_name.len()`（短い名前ほど高スコア）。
+    pub const PREFIX_BASE: i64 = 10_000;
+    /// Substring マッチ: `SUBSTRING_BASE - byte_idx`。
+    pub const SUBSTRING_BASE: i64 = 5_000;
+    /// Kana（migemo）マッチ: `KANA_BASE - byte_pos`（Substring より低い）。
+    pub const KANA_BASE: i64 = 4_500;
+    /// Path マッチ: `PATH_BASE - min(byte_pos, PATH_POS_CAP)`（Kana より低い）。
+    pub const PATH_BASE: i64 = 3_000;
+    /// Path マッチの位置ペナルティ上限。
+    pub const PATH_POS_CAP: i64 = 500;
+}
+
+/// 基準スコアの全順序 Prefix > Substring > Kana > Path をコンパイル時に強制する
+/// （test ビルドに限らず全ビルドで検証。値を反転させる編集はビルドを止める）。
+const _: () = {
+    assert!(score_tier::PREFIX_BASE > score_tier::SUBSTRING_BASE);
+    assert!(score_tier::SUBSTRING_BASE > score_tier::KANA_BASE);
+    assert!(score_tier::KANA_BASE > score_tier::PATH_BASE);
+    assert!(score_tier::PATH_BASE > 0);
+    assert!(score_tier::PATH_POS_CAP > 0);
+};
+
 // D-5: one Matcher per rayon worker thread, reused across fold tasks.
 // Matcher::new() calls alloc_zeroed internally (several KB); thread_local avoids
 // that allocation on every rayon chunk boundary.
@@ -29,6 +62,12 @@ thread_local! {
     static MATCHER: RefCell<Matcher> = RefCell::new(Matcher::new(MatcherConfig::DEFAULT));
 }
 
+/// 検索エンジン内部で使うマッチ方式のドメイン enum。
+///
+/// `config::SearchModeConfig`（serde 由来の config.toml wire 形式）とは**意図的に別定義**とする。
+/// engine 側を serde 非依存に保つための層境界（anti-corruption boundary）であり、
+/// 下記 `From` 変換が config→engine の唯一の橋渡し（`SearchOptions ← SearchConfig` と同型）。
+/// 統合すると engine が serde/wire 形式に依存するため、二重定義は仕様であって重複ではない。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchMode {
     Prefix,
@@ -141,6 +180,30 @@ struct EntryView<'a> {
     lower_name: &'a str,
     lower_file_name: Option<&'a str>,
     normalized_key: &'a str,
+}
+
+/// 1 回の検索呼び出しでクエリから 1 度だけ導出する、スコアリング共有データ。
+/// `search_with_options` の候補準備フェーズ（`prepare_query_plan`）が構築し、
+/// `decide_incremental` と `score_one_entry` が `&QueryPlan` で共有する。
+/// `norm_query` のみ入力 `query` を借用しうる（ASCII 小文字クエリはゼロアロケーション）。
+/// `needle_u32` は `norm_query` から生成後は独立（借用しない）。
+struct QueryPlan<'a> {
+    /// 正規化済みクエリ（アクセント折畳み・連続スペース圧縮・小文字化）。
+    norm_query: Cow<'a, str>,
+    /// `norm_query` が `.` を含むか（file_name スコアリングと incremental ガードに連動）。
+    has_dot: bool,
+    /// 生クエリがパス区切り（`\` `/` `¥`）を含むか。
+    has_path_sep: bool,
+    /// Fuzzy モードのビットマスク pre-filter 用クエリマスク（非 Fuzzy では 0）。
+    query_mask: u64,
+    /// migemo 用ひらがな変換クエリ（ASCII 残留や条件未達のとき `None`）。
+    kana_query: Option<String>,
+    /// `norm_query` の UTF-32 事前計算（Fuzzy マッチで全スレッド共有）。
+    needle_u32: Utf32String,
+    /// パスマッチ用クエリ（生クエリベース・アクセント/連続スペース保持）。`has_path_sep` 時のみ。
+    path_query: Option<String>,
+    /// パスクエリの履歴照合キー（`normalize_history_query_key` 由来）。`path_query` とは別。
+    path_history_key: Option<String>,
 }
 
 /// Wave 1 の出力: `(lower_names, lower_file_names, normalized_keys, kana_lower_names)`。
@@ -379,103 +442,17 @@ impl SearchEngine {
             return Vec::new();
         }
 
-        let norm_query = normalize_query(query);
-        if norm_query.is_empty() {
+        // 候補準備: クエリ解析・migemo/path クエリ・UTF-32 needle を 1 度だけ導出する。
+        // norm_query が空のとき None（早期 return）。
+        let Some(plan) = prepare_query_plan(query, mode, &options) else {
             return Vec::new();
-        }
-
-        let has_dot = norm_query.contains('.');
-        // Bitmask pre-filter is only used in Fuzzy mode; skip the computation for others.
-        let query_mask = if mode == SearchMode::Fuzzy { char_bitmask(&norm_query) } else { 0 };
-
-        // Migemo: ローマ字 ASCII クエリをひらがなに変換した kana_query を生成する。
-        // kana に ASCII アルファベットが残留する場合（"dok" → "どk" 等）は None にする。
-        let kana_query: Option<String> = if options.migemo_enabled
-            && norm_query.is_ascii()
-            && norm_query.chars().count() >= options.migemo_min_chars
-        {
-            let k = to_kana(norm_query.as_ref());
-            if k != norm_query.as_ref() && !k.bytes().any(|b| b.is_ascii_alphabetic()) {
-                Some(k)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        // Pre-compute needle as UTF-32 once per search call and share it across threads.
-        // Reusing the same Utf32String avoids repeated O(|query|) char conversion per entry.
-        let needle_u32 = Utf32String::from(norm_query.as_ref());
-        let norm_query_str: &str = &norm_query;
-
-        // Path matching: クエリにパス区切り文字（\ / ¥）を含む場合、normalized_key（フルパス）
-        // に対して Substring マッチを試みる。
-        // normalize_query() は連続スペースを潰すが normalize_entry_key() は保持するため、
-        // パスマッチ用クエリは生クエリから normalize_entry_key() 相当で正規化する。
-        // これにより "C:\My  Tools\" のような連続スペースを含むパスにもマッチする。
-        // ¥（U+00A5）は日本語 Windows でバックスラッシュとして使われるため対象に含める。
-        let has_path_sep = {
-            let q = query.trim();
-            q.contains('\\') || q.contains('/') || q.contains('\u{00a5}')
-        };
-        let path_query: Option<String> = if has_path_sep {
-            // normalize_entry_key と同じ正規化: 小文字化 + / と ¥ を \ に統一
-            let trimmed = query.trim();
-            let mut pq = String::with_capacity(trimmed.len());
-            for ch in trimmed.chars() {
-                if ch == '/' || ch == '\u{00a5}' {
-                    pq.push('\\');
-                } else {
-                    pq.extend(ch.to_lowercase());
-                }
-            }
-            Some(pq)
-        } else {
-            None
-        };
-        // 履歴キー: normalize_history_query_key で一元化（normalize_query + パス区切り統一）。
-        // path_query は生クエリベースでスペース/アクセントの扱いが異なるため別途作る。
-        let path_history_key: Option<String> = if has_path_sep {
-            Some(normalize_history_query_key(query).into_owned())
-        } else {
-            None
         };
 
         // Phase 4: incremental search – reuse previous match candidates when the query
         // is a monotonic extension of the previous one and the mode is unchanged.
-        //
-        // Guard: (!has_dot || self.prev_query.contains('.'))
-        //   "no-dot → dot" transition must fall back to full scan because prev_candidates
-        //   was built without file_name scoring; entries that only match via file_name would
-        //   be absent from prev_candidates, causing false negatives.
-        //
-        // Guard: kana_monotonic
-        //   kana_query の単調性を検証する。incremental を使えるのは、今回の kana マッチ候補
-        //   が前回の候補の部分集合であるときだけ。
-        //   - (None, _): kana マッチが消える方向 → 候補は減るのみ → OK
-        //   - (Some(curr), Some(prev)) where curr starts_with prev: 候補が狭まる → OK
-        //   - (Some(curr), Some(prev)) where NOT starts_with: 非単調遷移
-        //     例: "kan"→"かん", "kana"→"かな" — 末尾の「ん」が「な」に変わる
-        //   - (Some(_), None): kana マッチが新規出現 → full scan 必須
-        let kana_monotonic = match (&kana_query, &self.prev_kana_query) {
-            (None, _) => true,
-            (Some(curr), Some(prev)) => curr.starts_with(prev.as_str()),
-            (Some(_), None) => false,
-        };
-        // Guard: !has_path_sep
-        //   パス区切りを含むクエリでは incremental を無効化する。
-        //   norm_query（アクセント折畳み・スペース圧縮）と path_query（生クエリベース）で
-        //   正規化が異なるため、norm_query の starts_with だけでは path_query の単調性を
-        //   保証できない（例: "café\\" と "cafe\\" は同じ norm_query だが異なる path_query）。
-        //   パス区切りを含むクエリは稀なため性能影響は無視できる。
-        let use_incremental = self.prev_mode == Some(mode)
-            && !self.prev_candidates.is_empty()
-            && !self.prev_query.is_empty()
-            && norm_query.starts_with(self.prev_query.as_str())
-            && (!has_dot || self.prev_query.contains('.'))
-            && !has_path_sep
-            && kana_monotonic;
+        // 述語（no-dot→dot / kana 単調性 / !has_path_sep）と prev_* の read は
+        // decide_incremental に集約する。ここでは write のみを fold 後に行う。
+        let use_incremental = self.decide_incremental(&plan, mode);
 
         let candidate_indices: Vec<usize> = if use_incremental {
             std::mem::take(&mut self.prev_candidates)
@@ -510,143 +487,14 @@ impl SearchEngine {
                     )
                 },
                 |(mut local_heap, mut local_matches), i| {
-                    // Bitmask pre-filter: skip entries that lack query characters (Fuzzy only).
-                    // Prefix/Substring use cheap str ops, so the bitmask overhead isn't worth it.
-                    // has_path_sep 時はスキップ: パスだけでマッチするエントリが
-                    // name/file_name のビットマスクで落ちる問題を回避する。
-                    if mode == SearchMode::Fuzzy && !has_path_sep {
-                        let name_mask = self.char_masks[i];
-                        let fn_mask = self.file_name_char_masks[i];
-                        if (query_mask & name_mask) != query_mask
-                            && (!has_dot || (query_mask & fn_mask) != query_mask)
-                        {
-                            return (local_heap, local_matches);
-                        }
-                    }
-
-                    let v = self.entry_view(i);
-
-                    // Fuzzy モードのみ UTF-32 へのオンデマンド変換を行う。
-                    // ビットマスクで除外された候補には到達しないため、変換コストは
-                    // ビットマスク通過分（全体の 1-5%）にのみ発生する。
-                    // Option<Utf32String> で保持し as_ref() で &Utf32String を取り出す。
-                    let name_u32_owned: Option<Utf32String> = if mode == SearchMode::Fuzzy {
-                        Some(Utf32String::from(v.lower_name))
-                    } else {
-                        None
-                    };
-
-                    // D-5: borrow the thread-local Matcher; no alloc_zeroed per task.
-                    let name_score = MATCHER.with(|m| {
-                        let mut matcher = m.borrow_mut();
-                        match_score_single_cached(
-                            mode,
-                            &mut matcher,
-                            v.lower_name,
-                            norm_query_str,
-                            name_u32_owned.as_ref(),
-                            &needle_u32,
-                        )
-                    });
-
-                    let primary_score = if has_dot {
-                        // Skip file_name scoring only on a high-confidence name match
-                        // (avoids heavy fuzzy work).
-                        let needs_fn_score = name_score.is_none_or(|s| s <= 9000);
-                        let fn_score = if needs_fn_score {
-                            v.lower_file_name.and_then(|fn_name| {
-                                let fn_u32_owned: Option<Utf32String> =
-                                    if mode == SearchMode::Fuzzy {
-                                        Some(Utf32String::from(fn_name))
-                                    } else {
-                                        None
-                                    };
-                                MATCHER.with(|m| {
-                                    let mut matcher = m.borrow_mut();
-                                    match_score_single_cached(
-                                        mode,
-                                        &mut matcher,
-                                        fn_name,
-                                        norm_query_str,
-                                        fn_u32_owned.as_ref(),
-                                        &needle_u32,
-                                    )
-                                })
-                            })
-                        } else {
-                            None
-                        };
-                        match (name_score, fn_score) {
-                            (None, fn_s) => fn_s,
-                            (Some(s), Some(b)) => Some(s.max(b)),
-                            (Some(s), None) => Some(s),
-                        }
-                    } else {
-                        name_score
-                    };
-
-                    // kana マッチ: primary_score がない場合のみ試みる（OR 関係）。
-                    // kana_available=false（migemo 無効で構築＝空 Vec）のときは
-                    // self.kana_lower_names[i] に到達させない（panic ガード）。
-                    let kana_score = if primary_score.is_none() && kana_available {
-                        kana_query
-                            .as_deref()
-                            .and_then(|kq| kana_substring_score(&self.kana_lower_names[i], kq))
-                    } else {
-                        None
-                    };
-
-                    let score = primary_score.or(kana_score);
-
-                    // パスマッチ: name/file_name/kana 全て不成立時のフォールバック。
-                    // normalized_key は normalize_entry_key() で小文字化 + パス区切り正規化済み。
-                    // スコア 3000 は Kana(4500) より低く、名前マッチを常に優先する。
-                    let score = score.or_else(|| {
-                        path_query.as_deref().and_then(|pq| {
-                            let pos = v.normalized_key.find(pq)?;
-                            Some((3000i64 - (pos as i64).min(500)).max(1))
-                        })
-                    });
-
-                    if let Some(base_score) = score {
-                        local_matches.push(i); // Record matching index for incremental cache
-                        let (global_launches, last_launched) =
-                            history.get_global_stats_normalized(v.normalized_key);
-                        // 履歴キーは record_launch の保存形式に合わせる:
-                        // normalize_query() + パス区切り統一。path_query は生クエリベースで
-                        // スペース/アクセントが異なるため履歴キーには使わない。
-                        let history_query_key = path_history_key.as_deref().unwrap_or(norm_query_str);
-                        let qcount =
-                            history.query_count_pre_normalized(history_query_key, v.normalized_key)
-                                as i64;
-
-                        let folder_boost = if v.entry.is_folder {
-                            history.folder_expansion_count_normalized(v.normalized_key) as i64
-                                * FOLDER_EXPANSION_WEIGHT
-                        } else {
-                            0
-                        };
-
-                        let raw_history_boost = (global_launches as i64) * GLOBAL_WEIGHT
-                            + qcount * QUERY_WEIGHT
-                            + folder_boost;
-                        let history_boost = adjusted_history_boost(
-                            mode,
-                            base_score,
-                            raw_history_boost,
-                            options,
-                        );
-                        let combined = base_score + history_boost;
-
-                        let scored = ScoredEntry {
-                            score: combined,
-                            last_launched,
-                            lower_name: v.lower_name.to_owned(),
-                            name: v.entry.name.clone(),
-                            path: v.entry.target_path.clone(),
-                            is_folder: v.entry.is_folder,
-                        };
-
+                    // スコアリング本体は score_one_entry に委譲する（bitmask pre-filter →
+                    // name/file_name/kana/path スコア → 履歴ブースト → ScoredEntry 構築）。
+                    // Some ⟺ マッチ成立。local_matches.push(i) は heap 採否より前に無条件で
+                    // 行い、top-k から落ちた一致も incremental cache に残す（縮小を防ぐ）。
+                    if let Some(scored) =
+                        self.score_one_entry(i, &plan, mode, kana_available, history, options)
+                    {
+                        local_matches.push(i);
                         if local_heap.len() < max_results {
                             local_heap.push(scored);
                         } else if let Some(mut worst) = local_heap.peek_mut() {
@@ -678,24 +526,193 @@ impl SearchEngine {
             );
 
         // Update incremental cache BEFORE sort so all matching indices are captured.
-        self.prev_query = norm_query.into_owned();
+        // write は fold/reduce 後・sort 前（read は decide_incremental に集約）。
+        self.prev_query = plan.norm_query.into_owned();
         self.prev_candidates = all_match_indices;
         self.prev_mode = Some(mode);
-        self.prev_kana_query = kana_query;
+        self.prev_kana_query = plan.kana_query;
 
-        // into_sorted_vec() reuses the heap's internal Vec and sorts in-place (ascending).
-        // ScoredEntry::Ord: Less = better, so ascending order puts best first.
-        let scored = top_k.into_sorted_vec();
+        heap_into_results(top_k)
+    }
 
-        scored
-            .into_iter()
-            .map(|r| SearchResult {
-                name: r.name,
-                path: r.path,
-                is_folder: r.is_folder,
-                is_error: false,
+    /// incremental search（前回候補の再利用）の可否を判定する。
+    ///
+    /// 全述語は「今回の候補集合 ⊆ 前回の候補集合」を保証する単調条件。
+    /// `self.prev_*` を **read のみ**で参照する（write は `search_with_options` が fold 後に行う）。
+    ///
+    /// - `!has_dot || prev_query.contains('.')`: "no-dot → dot" 遷移は full scan にフォールバック。
+    ///   prev_candidates が file_name スコアリングなしで構築されており、file_name のみで
+    ///   マッチするエントリが欠落して false negative になるのを防ぐ。
+    /// - kana_monotonic: kana_query の単調性。(None,_)→OK / (Some curr, Some prev) は
+    ///   `curr.starts_with(prev)` のとき候補が狭まる / (Some,None) は新規出現ゆえ full scan。
+    ///   ローマ字→かな変換は非単調（"kan"→"かん", "kana"→"かな"）ゆえ実値比較が必要。
+    /// - `!has_path_sep`: パスクエリは norm_query と path_query で正規化が異なり単調性を
+    ///   保証できないため無条件で無効化する（稀ゆえ性能影響は無視できる）。
+    fn decide_incremental(&self, plan: &QueryPlan, mode: SearchMode) -> bool {
+        let kana_monotonic = match (&plan.kana_query, &self.prev_kana_query) {
+            (None, _) => true,
+            (Some(curr), Some(prev)) => curr.starts_with(prev.as_str()),
+            (Some(_), None) => false,
+        };
+        self.prev_mode == Some(mode)
+            && !self.prev_candidates.is_empty()
+            && !self.prev_query.is_empty()
+            && plan.norm_query.starts_with(self.prev_query.as_str())
+            && (!plan.has_dot || self.prev_query.contains('.'))
+            && !plan.has_path_sep
+            && kana_monotonic
+    }
+
+    /// 1 エントリ（index `i`）をスコアリングし、マッチすれば `ScoredEntry` を返す。
+    /// `Some` ⟺ マッチ成立（= base score が Some）。呼び出し側はこの条件で incremental
+    /// cache 用の index 記録（`local_matches.push(i)`）を行う。
+    ///
+    /// **内部順序の不変条件（性能）**:
+    /// - bitmask pre-filter を関数**先頭**に置く（`entry_view` / `Utf32String::from` より前）。
+    ///   pre-filter で落ちる候補に UTF-32 変換コストを掛けないため。
+    /// - `has_dot` の file_name 短絡（`name_score <= 9000`）を保存する（MATCHER 呼び出し回数）。
+    ///
+    /// ホットループから呼ばれるため `#[inline]`、全引数を参照/Copy で受け取り fold 内 codegen を保つ。
+    #[inline]
+    fn score_one_entry(
+        &self,
+        i: usize,
+        plan: &QueryPlan,
+        mode: SearchMode,
+        kana_available: bool,
+        history: &HistoryStore,
+        options: SearchOptions,
+    ) -> Option<ScoredEntry> {
+        // Bitmask pre-filter: skip entries that lack query characters (Fuzzy only).
+        // Prefix/Substring use cheap str ops, so the bitmask overhead isn't worth it.
+        // has_path_sep 時はスキップ: パスだけでマッチするエントリが
+        // name/file_name のビットマスクで落ちる問題を回避する。
+        // **必ず関数先頭**（entry_view / Utf32String 変換より前）。
+        if mode == SearchMode::Fuzzy && !plan.has_path_sep {
+            let name_mask = self.char_masks[i];
+            let fn_mask = self.file_name_char_masks[i];
+            if (plan.query_mask & name_mask) != plan.query_mask
+                && (!plan.has_dot || (plan.query_mask & fn_mask) != plan.query_mask)
+            {
+                return None;
+            }
+        }
+
+        let v = self.entry_view(i);
+        let norm_query_str: &str = plan.norm_query.as_ref();
+
+        // Fuzzy モードのみ UTF-32 へのオンデマンド変換を行う。
+        // ビットマスクで除外された候補には到達しないため、変換コストは
+        // ビットマスク通過分（全体の 1-5%）にのみ発生する。
+        let name_u32_owned: Option<Utf32String> = if mode == SearchMode::Fuzzy {
+            Some(Utf32String::from(v.lower_name))
+        } else {
+            None
+        };
+
+        // D-5: borrow the thread-local Matcher; no alloc_zeroed per task.
+        let name_score = MATCHER.with(|m| {
+            let mut matcher = m.borrow_mut();
+            match_score_single_cached(
+                mode,
+                &mut matcher,
+                v.lower_name,
+                norm_query_str,
+                name_u32_owned.as_ref(),
+                &plan.needle_u32,
+            )
+        });
+
+        let primary_score = if plan.has_dot {
+            // Skip file_name scoring only on a high-confidence name match
+            // (avoids heavy fuzzy work).
+            // 注: 9000 は「file_name スコアリングを短絡する閾値」であり
+            // score_tier の基準スコアではない（PREFIX_BASE=10000 と混同しないこと）。
+            let needs_fn_score = name_score.is_none_or(|s| s <= 9000);
+            let fn_score = if needs_fn_score {
+                v.lower_file_name.and_then(|fn_name| {
+                    let fn_u32_owned: Option<Utf32String> = if mode == SearchMode::Fuzzy {
+                        Some(Utf32String::from(fn_name))
+                    } else {
+                        None
+                    };
+                    MATCHER.with(|m| {
+                        let mut matcher = m.borrow_mut();
+                        match_score_single_cached(
+                            mode,
+                            &mut matcher,
+                            fn_name,
+                            norm_query_str,
+                            fn_u32_owned.as_ref(),
+                            &plan.needle_u32,
+                        )
+                    })
+                })
+            } else {
+                None
+            };
+            match (name_score, fn_score) {
+                (None, fn_s) => fn_s,
+                (Some(s), Some(b)) => Some(s.max(b)),
+                (Some(s), None) => Some(s),
+            }
+        } else {
+            name_score
+        };
+
+        // kana マッチ: primary_score がない場合のみ試みる（OR 関係）。
+        // kana_available=false（migemo 無効で構築＝空 Vec）のときは
+        // self.kana_lower_names[i] に到達させない（panic ガード）。
+        let kana_score = if primary_score.is_none() && kana_available {
+            plan.kana_query
+                .as_deref()
+                .and_then(|kq| kana_substring_score(&self.kana_lower_names[i], kq))
+        } else {
+            None
+        };
+
+        let score = primary_score.or(kana_score);
+
+        // パスマッチ: name/file_name/kana 全て不成立時のフォールバック。
+        // normalized_key は normalize_entry_key() で小文字化 + パス区切り正規化済み。
+        // スコア PATH_BASE(3000) は Kana(4500) より低く、名前マッチを常に優先する。
+        let score = score.or_else(|| {
+            plan.path_query.as_deref().and_then(|pq| {
+                let pos = v.normalized_key.find(pq)?;
+                Some((score_tier::PATH_BASE - (pos as i64).min(score_tier::PATH_POS_CAP)).max(1))
             })
-            .collect()
+        });
+
+        let base_score = score?;
+
+        let (global_launches, last_launched) = history.get_global_stats_normalized(v.normalized_key);
+        // 履歴キーは record_launch の保存形式に合わせる:
+        // normalize_query() + パス区切り統一。path_query は生クエリベースで
+        // スペース/アクセントが異なるため履歴キーには使わない。
+        let history_query_key = plan.path_history_key.as_deref().unwrap_or(norm_query_str);
+        let qcount =
+            history.query_count_pre_normalized(history_query_key, v.normalized_key) as i64;
+
+        let folder_boost = if v.entry.is_folder {
+            history.folder_expansion_count_normalized(v.normalized_key) as i64
+                * FOLDER_EXPANSION_WEIGHT
+        } else {
+            0
+        };
+
+        let raw_history_boost =
+            (global_launches as i64) * GLOBAL_WEIGHT + qcount * QUERY_WEIGHT + folder_boost;
+        let history_boost = adjusted_history_boost(mode, base_score, raw_history_boost, options);
+        let combined = base_score + history_boost;
+
+        Some(ScoredEntry {
+            score: combined,
+            last_launched,
+            lower_name: v.lower_name.to_owned(),
+            name: v.entry.name.clone(),
+            path: v.entry.target_path.clone(),
+            is_folder: v.entry.is_folder,
+        })
     }
 
     pub fn recent_history(&self, history: &HistoryStore, max_results: usize) -> Vec<SearchResult> {
@@ -724,6 +741,103 @@ impl SearchEngine {
     pub fn entries(&self) -> &[AppEntry] {
         &self.entries
     }
+}
+
+/// 検索呼び出しの候補準備フェーズ。クエリを解析して [`QueryPlan`] を組み立てる。
+/// `norm_query` が空のとき `None`（呼び出し側は空結果を返す）。`self` 非依存の自由 fn。
+fn prepare_query_plan<'a>(
+    query: &'a str,
+    mode: SearchMode,
+    options: &SearchOptions,
+) -> Option<QueryPlan<'a>> {
+    let norm_query = normalize_query(query);
+    if norm_query.is_empty() {
+        return None;
+    }
+
+    let has_dot = norm_query.contains('.');
+    // Bitmask pre-filter is only used in Fuzzy mode; skip the computation for others.
+    let query_mask = if mode == SearchMode::Fuzzy { char_bitmask(&norm_query) } else { 0 };
+
+    // Migemo: ローマ字 ASCII クエリをひらがなに変換した kana_query を生成する。
+    // kana に ASCII アルファベットが残留する場合（"dok" → "どk" 等）は None にする。
+    let kana_query: Option<String> = if options.migemo_enabled
+        && norm_query.is_ascii()
+        && norm_query.chars().count() >= options.migemo_min_chars
+    {
+        let k = to_kana(norm_query.as_ref());
+        if k != norm_query.as_ref() && !k.bytes().any(|b| b.is_ascii_alphabetic()) {
+            Some(k)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Pre-compute needle as UTF-32 once per search call and share it across threads.
+    // Reusing the same Utf32String avoids repeated O(|query|) char conversion per entry.
+    let needle_u32 = Utf32String::from(norm_query.as_ref());
+
+    // Path matching: クエリにパス区切り文字（\ / ¥）を含む場合、normalized_key（フルパス）
+    // に対して Substring マッチを試みる。
+    // normalize_query() は連続スペースを潰すが normalize_entry_key() は保持するため、
+    // パスマッチ用クエリは生クエリから normalize_entry_key() 相当で正規化する。
+    // これにより "C:\My  Tools\" のような連続スペースを含むパスにもマッチする。
+    // ¥（U+00A5）は日本語 Windows でバックスラッシュとして使われるため対象に含める。
+    let has_path_sep = {
+        let q = query.trim();
+        q.contains('\\') || q.contains('/') || q.contains('\u{00a5}')
+    };
+    let path_query: Option<String> = if has_path_sep {
+        // normalize_entry_key と同じ正規化: 小文字化 + / と ¥ を \ に統一
+        let trimmed = query.trim();
+        let mut pq = String::with_capacity(trimmed.len());
+        for ch in trimmed.chars() {
+            if ch == '/' || ch == '\u{00a5}' {
+                pq.push('\\');
+            } else {
+                pq.extend(ch.to_lowercase());
+            }
+        }
+        Some(pq)
+    } else {
+        None
+    };
+    // 履歴キー: normalize_history_query_key で一元化（normalize_query + パス区切り統一）。
+    // path_query は生クエリベースでスペース/アクセントの扱いが異なるため別途作る。
+    let path_history_key: Option<String> = if has_path_sep {
+        Some(normalize_history_query_key(query).into_owned())
+    } else {
+        None
+    };
+
+    Some(QueryPlan {
+        norm_query,
+        has_dot,
+        has_path_sep,
+        query_mask,
+        kana_query,
+        needle_u32,
+        path_query,
+        path_history_key,
+    })
+}
+
+/// top-k ヒープを best-first の [`SearchResult`] 列へ変換する（結果組立フェーズ）。
+/// `into_sorted_vec()` はヒープ内部 Vec を再利用して昇順ソートする。
+/// `ScoredEntry::Ord` は Less = better ゆえ昇順で best が先頭になる（tie-break の意味を保つ）。
+fn heap_into_results(top_k: BinaryHeap<ScoredEntry>) -> Vec<SearchResult> {
+    top_k
+        .into_sorted_vec()
+        .into_iter()
+        .map(|r| SearchResult {
+            name: r.name,
+            path: r.path,
+            is_folder: r.is_folder,
+            is_error: false,
+        })
+        .collect()
 }
 
 fn adjusted_history_boost(
@@ -786,15 +900,16 @@ impl Ord for ScoredEntry {
 
 
 /// ひらがな正規化済みエントリ名に対して substring マッチを行い、
-/// マッチした場合は `4500 - byte_position` を返す（Substring の 5000 より低いスコア）。
+/// マッチした場合は `score_tier::KANA_BASE - byte_position` を返す
+/// （Substring の `SUBSTRING_BASE` より低いスコア）。
 /// byte_pos を使用: ひらがなは3バイト/文字のため文字位置の3倍差がある。
-/// 先頭マッチが高スコアになる意図は保たれており、SPEC.md §3.2 に準拠。
+/// 先頭マッチが高スコアになる意図は保たれており、SPEC.md §4.2 に準拠。
 /// kana_lower_name が常にひらがな/カタカナであることは保証されない（漢字はそのまま通過）が、
 /// kana_query は常に純ひらがな（ASCII アルファベット残留ガード後）のため実運用上問題なし。
 fn kana_substring_score(kana_lower_name: &str, kana_query: &str) -> Option<i64> {
     kana_lower_name
         .find(kana_query)
-        .map(|pos| (4500i64 - pos as i64).max(1))
+        .map(|pos| (score_tier::KANA_BASE - pos as i64).max(1))
 }
 
 /// Score using pre-computed lowercase name and an optional UTF-32 haystack.
@@ -811,12 +926,14 @@ fn match_score_single_cached(
     match mode {
         SearchMode::Prefix => {
             if lower_name.starts_with(query) {
-                Some(10_000 - lower_name.len() as i64)
+                Some(score_tier::PREFIX_BASE - lower_name.len() as i64)
             } else {
                 None
             }
         }
-        SearchMode::Substring => lower_name.find(query).map(|idx| 5_000 - idx as i64),
+        SearchMode::Substring => {
+            lower_name.find(query).map(|idx| score_tier::SUBSTRING_BASE - idx as i64)
+        }
         SearchMode::Fuzzy => {
             let h = haystack_u32.expect("Fuzzy mode requires UTF-32 haystack");
             let haystack = h.slice(..);
@@ -2306,7 +2423,8 @@ mod tests {
         assert_eq!(r1.len(), 1);
         assert_eq!(r1[0].name, "app");
 
-        // 2回目: "tool\\ed" に拡張 → incremental cache 有効
+        // 2回目: "tool\\ed" に拡張 → パス区切りを含むため incremental は無効化される
+        //（decide_incremental の !has_path_sep ガード）。fresh scan と一致することを検証。
         let r2 = engine.search("tool\\ed", 8, &h, SearchMode::Substring);
         assert_eq!(r2.len(), 1);
         assert_eq!(r2[0].name, "app");

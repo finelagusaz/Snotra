@@ -48,6 +48,43 @@ pub fn char_bitmask(lower: &str) -> u64 {
     mask
 }
 
+/// Character-presence bitmask for a single lowercase entry name (or file name).
+/// ASCII strings get the bit-exact mask from [`char_bitmask`]; non-ASCII strings
+/// (typically CJK, Arabic, etc. — `to_lower_folded` already folds Latin accents to
+/// ASCII) get `u64::MAX` so `(query_mask & u64::MAX) == query_mask` always holds and
+/// the entry is never excluded by the bitmask pre-filter.
+///
+/// Single definition shared by `search.rs` (Wave 2) and `indexer.rs` (cache build /
+/// incremental extend) — previously duplicated in 3 call sites (issue #437).
+#[inline]
+pub fn name_char_mask(lower: &str) -> u64 {
+    if lower.is_ascii() {
+        char_bitmask(lower)
+    } else {
+        u64::MAX
+    }
+}
+
+/// Character-presence bitmask for an optional lowercase file name. `None` (entry has no
+/// file_name component) yields `0` — such entries cannot match via the file_name path,
+/// so failing the bitmask pre-filter is correct. `Some` defers to [`name_char_mask`].
+#[inline]
+pub fn file_char_mask(lower_file_name: Option<&str>) -> u64 {
+    lower_file_name.map_or(0, name_char_mask)
+}
+
+/// Derive the lowercase, accent-folded file name from an entry's `target_path`, or
+/// `None` if the path has no file name component. Single definition shared by
+/// `search.rs` (Wave 1) and `indexer.rs` (cache build / incremental extend) —
+/// previously duplicated in 3 call sites (issue #437).
+#[inline]
+pub fn lower_file_name(target_path: &str) -> Option<String> {
+    std::path::Path::new(target_path)
+        .file_name()
+        .and_then(|f| f.to_str())
+        .map(to_lower_folded)
+}
+
 pub fn normalize_query(query: &str) -> Cow<'_, str> {
     let trimmed = query.trim();
     if trimmed.is_empty() {

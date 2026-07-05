@@ -295,10 +295,9 @@ fn migrate_normalize_keys(data: HistoryData) -> HistoryData {
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::binfmt::{deserialize_with_header, serialize_with_header};
+    use crate::binfmt::{try_deserialize_with_header, try_serialize_with_header};
     use crate::query::normalize_query;
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
@@ -508,7 +507,7 @@ mod tests {
                 last_launched: 1_700_000_000,
             },
         );
-        let bytes = serialize_with_header(HISTORY_MAGIC, HISTORY_VERSION_POSTCARD_V2, &data)
+        let bytes = try_serialize_with_header(HISTORY_MAGIC, HISTORY_VERSION_POSTCARD_V2, &data)
             .expect("serialize v2 postcard");
         let bf = HistoryStore::bin_file_in(&dir);
         std::fs::write(bf.path(), &bytes).unwrap();
@@ -566,9 +565,9 @@ mod tests {
         data.folder_expansion.insert("C:\\Projects".to_string(), 2);
 
         let bytes =
-            serialize_with_header(HISTORY_MAGIC, HISTORY_VERSION, &data).expect("serialize");
-        let roundtripped: HistoryData =
-            deserialize_with_header(&bytes, HISTORY_MAGIC, HISTORY_VERSION).expect("deserialize");
+            try_serialize_with_header(HISTORY_MAGIC, HISTORY_VERSION, &data).expect("serialize");
+        let roundtripped: HistoryData = try_deserialize_with_header(&bytes, HISTORY_MAGIC, HISTORY_VERSION)
+            .expect("deserialize");
 
         assert_eq!(roundtripped.global["C:\\app.lnk"].launch_count, 5);
         assert_eq!(roundtripped.query["notepad"]["C:\\app.lnk"], 3);

@@ -404,18 +404,6 @@ impl SearchConfig {
     pub fn effective_recent_limit(&self) -> usize {
         self.recent_limit.unwrap_or_else(default_recent_limit)
     }
-
-    #[deprecated(note = "use Config::validate() to detect issues instead")]
-    pub fn sanitize(&mut self) -> bool {
-        if self.fuzzy_history_cap_ratio.is_finite()
-            && (0.0..=1.0).contains(&self.fuzzy_history_cap_ratio)
-        {
-            return false;
-        }
-
-        self.fuzzy_history_cap_ratio = default_fuzzy_history_cap_ratio();
-        true
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -944,8 +932,12 @@ impl Config {
         let _ = self.appearance.visible_rows.get_or_insert_with(default_visible_rows);
         let _ = self.search.result_limit.get_or_insert_with(default_result_limit);
         let _ = self.search.recent_limit.get_or_insert_with(default_recent_limit);
-        #[allow(deprecated)]
-        if self.search.sanitize() {
+        // fuzzy_history_cap_ratio が不正（非有限 or [0.0, 1.0] 範囲外）なら既定値へ補正する。
+        // `Config::validate()` は同条件で問題を検出するが補正はしない（検出=validate / 補正=migration
+        // の責務分離。旧 `SearchConfig::sanitize()` の直接処理をここへ移設、issue #437）。
+        let ratio = self.search.fuzzy_history_cap_ratio;
+        if !ratio.is_finite() || !(0.0..=1.0).contains(&ratio) {
+            self.search.fuzzy_history_cap_ratio = default_fuzzy_history_cap_ratio();
             changed = true;
         }
         if self.paths.normalize_scan_paths() {
@@ -1987,20 +1979,52 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
-    fn sanitize_invalid_fuzzy_history_cap_ratio() {
-        let mut config = SearchConfig {
-            normal_mode: SearchModeConfig::Fuzzy,
-            folder_mode: SearchModeConfig::Fuzzy,
-            show_hidden_system: false,
-            history_normalization: SearchHistoryNormalizationConfig::FuzzyRelativeCap,
-            fuzzy_history_cap_ratio: 1.5,
-            instant_command_prefix: "@".to_string(),
-            ..SearchConfig::default()
-        };
+    fn apply_migrations_sanitizes_invalid_fuzzy_history_cap_ratio() {
+        // 旧 `SearchConfig::sanitize()` の直接処理を `apply_migrations()` へ移設した
+        // 補正ロジックを検証する（issue #437）。範囲外（> 1.0）の値は既定値へ補正される。
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
 
-        assert!(config.sanitize());
-        assert!((config.fuzzy_history_cap_ratio - 0.30).abs() < f64::EPSILON);
+            [appearance]
+            window_width = 600
+
+            [search]
+            fuzzy_history_cap_ratio = 1.5
+
+            [paths]
+            additional = []
+        "#;
+        let mut config: Config = toml::from_str(toml_str).expect("parse");
+        assert!(config.apply_migrations());
+        assert!((config.search.fuzzy_history_cap_ratio - 0.30).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn apply_migrations_leaves_valid_fuzzy_history_cap_ratio_unchanged() {
+        // 有効範囲内の値は補正されず、apply_migrations() の changed フラグにも寄与しない
+        // （他の移行項目が無い最小 TOML では false を返す）ことを確認する。
+        let toml_str = r#"
+            [hotkey]
+            modifier = "Alt"
+            key = "Q"
+
+            [appearance]
+            window_width = 600
+            visible_rows = 10
+
+            [search]
+            fuzzy_history_cap_ratio = 0.5
+            result_limit = 200
+            recent_limit = 10
+
+            [paths]
+            additional = []
+        "#;
+        let mut config: Config = toml::from_str(toml_str).expect("parse");
+        assert!(!config.apply_migrations());
+        assert!((config.search.fuzzy_history_cap_ratio - 0.5).abs() < f64::EPSILON);
     }
 
     #[test]

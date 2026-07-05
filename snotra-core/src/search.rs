@@ -8,7 +8,10 @@ use rayon::prelude::*;
 use crate::config::{SearchConfig, SearchHistoryNormalizationConfig};
 use crate::history::HistoryStore;
 use crate::indexer::{AppEntry, normalize_entry_key};
-use crate::query::{char_bitmask, normalize_history_query_key, normalize_query, to_kana, to_lower_folded};
+use crate::query::{
+    char_bitmask, file_char_mask, lower_file_name, name_char_mask, normalize_history_query_key,
+    normalize_query, to_kana, to_lower_folded,
+};
 use crate::ui_types::SearchResult;
 
 const GLOBAL_WEIGHT: i64 = 5;
@@ -162,12 +165,7 @@ fn compute_wave1(entries: &[AppEntry], migemo_enabled: bool) -> Wave1Strings {
                 || {
                     entries
                         .iter()
-                        .map(|e| {
-                            std::path::Path::new(&e.target_path)
-                                .file_name()
-                                .and_then(|f| f.to_str())
-                                .map(|s| to_lower_folded(s).into_boxed_str())
-                        })
+                        .map(|e| lower_file_name(&e.target_path).map(String::into_boxed_str))
                         .collect::<Vec<_>>()
                 },
             )
@@ -207,21 +205,13 @@ fn compute_wave2(
     lower_file_names: &[Option<Box<str>>],
 ) -> (Vec<u64>, Vec<u64>) {
     rayon::join(
-        || {
-            lower_names
-                .iter()
-                .map(|n| if n.is_ascii() { char_bitmask(n) } else { u64::MAX })
-                .collect::<Vec<_>>()
-        },
+        || lower_names.iter().map(|n| name_char_mask(n)).collect::<Vec<_>>(),
         || {
             // None → 0: entries without a file_name cannot match via the file_name path,
             // so failing the bitmask check (and being skipped when the name also fails) is correct.
             lower_file_names
                 .iter()
-                .map(|n| {
-                    n.as_deref()
-                        .map_or(0, |s| if s.is_ascii() { char_bitmask(s) } else { u64::MAX })
-                })
+                .map(|n| file_char_mask(n.as_deref()))
                 .collect::<Vec<_>>()
         },
     )

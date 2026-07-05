@@ -62,6 +62,7 @@ Claude とユーザーが一緒に作業するときの関係性の原則。
 | `/dry-check`         | 関数を新規定義・変更したとき、手書き重複が残っていないか確認            | `/dry-check show_main_and_emit: show() + set_focus() + emit(window-shown)`     |
 | `/race-check`        | async 関数を新規追加・変更したとき、各 await 地点の状態競合リスクを検証 | `/race-check executeInstantCommandSelected: await api.executeInstantCommand()` |
 | `/cache-check`       | キャッシュロジックの追加・変更時に述語の単調性と状態遷移の安全性を検証  | `/cache-check search_with_options: use_incremental 判定`                       |
+| `/persistence-check` | シリアライズ・on-disk 形式（index.bin/config.toml/history/window.bin）の変更時に version バンプ要否・旧形式の後方互換テスト・デコード失敗時のデータ保全を検証 | `/persistence-check IndexCache: Cow 統合`                       |
 | `/state-check`       | UI モード・ガード条件の追加・変更時に直交性・リセット経路・SPEC §8.6 整合を検証 | `/state-check InstantCommandMode 追加`                                    |
 | `/health-check`      | 定期・サイクル完了後にドキュメントと実装の整合性を10項目で検証（報告のみ・修正しない） | `/health-check`                                                           |
 | `/retrospective`     | サイクル終了後に教訓の抽出・残タスクの振り分け・RETROSPECTIVE.md 上書きを実施 | `/retrospective`                                                               |

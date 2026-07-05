@@ -29,6 +29,10 @@
           },
           {
             "type": "command",
+            "command": "input=$(cat); if echo \"$input\" | grep -q 'snotra-settings.*\\.rs\"'; then cargo test -p snotra-settings 2>&1 | tail -8; fi"
+          },
+          {
+            "type": "command",
             "command": "input=$(cat); if echo \"$input\" | grep -qE '\\.(ts|tsx)\"'; then cd /c/workspace/Snotra && npm run typecheck 2>&1 | head -30; fi"
           },
           {

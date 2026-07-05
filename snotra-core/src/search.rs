@@ -22,6 +22,38 @@ const FOLDER_EXPANSION_WEIGHT: i64 = 5;
 /// (typical after several keystrokes when incremental search narrows candidates).
 const MIN_PAR_CANDIDATES: usize = 512;
 
+/// マッチ種別ごとの基準スコア（全順序の不変条件を単一定義に集約）。
+///
+/// 実行時スコアは Prefix > Substring > Kana > Path > Fuzzy(nucleo) の全順序を保つ。
+/// ここに置くのは各種別の**基準定数**のみ——直後の `const _` コンパイル時アサーションが
+/// 基準定数の大小（`PREFIX_BASE > SUBSTRING_BASE > KANA_BASE > PATH_BASE`）を守る。
+/// 位置ペナルティ（`- byte_pos`）・`.max(1)` 補正込みの実行時全順序は、既存の挙動テスト
+/// （`kana_search_direct_match_ranks_above_kana_match` 等）が保証する。
+/// Fuzzy は nucleo-matcher が独自スコアを返すため基準定数を持たない。
+/// （命名: fold ボディのローカル変数 `score` との視覚的衝突を避け `score_tier` とする）
+mod score_tier {
+    /// Prefix マッチ: `PREFIX_BASE - lower_name.len()`（短い名前ほど高スコア）。
+    pub const PREFIX_BASE: i64 = 10_000;
+    /// Substring マッチ: `SUBSTRING_BASE - byte_idx`。
+    pub const SUBSTRING_BASE: i64 = 5_000;
+    /// Kana（migemo）マッチ: `KANA_BASE - byte_pos`（Substring より低い）。
+    pub const KANA_BASE: i64 = 4_500;
+    /// Path マッチ: `PATH_BASE - min(byte_pos, PATH_POS_CAP)`（Kana より低い）。
+    pub const PATH_BASE: i64 = 3_000;
+    /// Path マッチの位置ペナルティ上限。
+    pub const PATH_POS_CAP: i64 = 500;
+}
+
+/// 基準スコアの全順序 Prefix > Substring > Kana > Path をコンパイル時に強制する
+/// （test ビルドに限らず全ビルドで検証。値を反転させる編集はビルドを止める）。
+const _: () = {
+    assert!(score_tier::PREFIX_BASE > score_tier::SUBSTRING_BASE);
+    assert!(score_tier::SUBSTRING_BASE > score_tier::KANA_BASE);
+    assert!(score_tier::KANA_BASE > score_tier::PATH_BASE);
+    assert!(score_tier::PATH_BASE > 0);
+    assert!(score_tier::PATH_POS_CAP > 0);
+};
+
 // D-5: one Matcher per rayon worker thread, reused across fold tasks.
 // Matcher::new() calls alloc_zeroed internally (several KB); thread_local avoids
 // that allocation on every rayon chunk boundary.
@@ -552,6 +584,8 @@ impl SearchEngine {
                     let primary_score = if has_dot {
                         // Skip file_name scoring only on a high-confidence name match
                         // (avoids heavy fuzzy work).
+                        // 注: 9000 は「file_name スコアリングを短絡する閾値」であり
+                        // score_tier の基準スコアではない（PREFIX_BASE=10000 と混同しないこと）。
                         let needs_fn_score = name_score.is_none_or(|s| s <= 9000);
                         let fn_score = if needs_fn_score {
                             v.lower_file_name.and_then(|fn_name| {
@@ -604,7 +638,10 @@ impl SearchEngine {
                     let score = score.or_else(|| {
                         path_query.as_deref().and_then(|pq| {
                             let pos = v.normalized_key.find(pq)?;
-                            Some((3000i64 - (pos as i64).min(500)).max(1))
+                            Some(
+                                (score_tier::PATH_BASE - (pos as i64).min(score_tier::PATH_POS_CAP))
+                                    .max(1),
+                            )
                         })
                     });
 
@@ -794,7 +831,7 @@ impl Ord for ScoredEntry {
 fn kana_substring_score(kana_lower_name: &str, kana_query: &str) -> Option<i64> {
     kana_lower_name
         .find(kana_query)
-        .map(|pos| (4500i64 - pos as i64).max(1))
+        .map(|pos| (score_tier::KANA_BASE - pos as i64).max(1))
 }
 
 /// Score using pre-computed lowercase name and an optional UTF-32 haystack.
@@ -811,12 +848,14 @@ fn match_score_single_cached(
     match mode {
         SearchMode::Prefix => {
             if lower_name.starts_with(query) {
-                Some(10_000 - lower_name.len() as i64)
+                Some(score_tier::PREFIX_BASE - lower_name.len() as i64)
             } else {
                 None
             }
         }
-        SearchMode::Substring => lower_name.find(query).map(|idx| 5_000 - idx as i64),
+        SearchMode::Substring => {
+            lower_name.find(query).map(|idx| score_tier::SUBSTRING_BASE - idx as i64)
+        }
         SearchMode::Fuzzy => {
             let h = haystack_u32.expect("Fuzzy mode requires UTF-32 haystack");
             let haystack = h.slice(..);

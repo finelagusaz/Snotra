@@ -48,21 +48,7 @@ jobs:
       - name: Set version from tag
         run: |
           $ver = "${{ env.TAG_NAME }}".TrimStart('v')
-
-          # Cargo.toml (workspace)
-          (Get-Content Cargo.toml -Raw -Encoding utf8) `
-            -replace '(?m)^version = "[^"]+"', "version = `"$ver`"" |
-            Set-Content Cargo.toml -Encoding utf8 -NoNewline
-
-          # package.json
-          $pkg = Get-Content package.json -Raw -Encoding utf8 | ConvertFrom-Json
-          $pkg.version = $ver
-          $pkg | ConvertTo-Json -Depth 10 | Set-Content package.json -Encoding utf8
-
-          # tauri.conf.json
-          $conf = Get-Content src-tauri/tauri.conf.json -Raw -Encoding utf8 | ConvertFrom-Json
-          $conf.version = $ver
-          $conf | ConvertTo-Json -Depth 10 | Set-Content src-tauri/tauri.conf.json -Encoding utf8
+          ./scripts/inject-version.ps1 -Version $ver
 
       - name: Build snotra-settings (release)
         run: cargo build --release -p snotra-settings
@@ -90,6 +76,13 @@ jobs:
           $nsis = Get-Item "target/release/bundle/nsis/Snotra_*_x64-setup.exe" -ErrorAction SilentlyContinue
           if (!$nsis) { Write-Error "NSIS installer not found"; exit 1 }
           if (!(Test-Path "$($nsis.FullName).sig")) { Write-Error "NSIS .sig not found"; exit 1 }
+
+      # 成果物の存在検証だけでは実際の起動可否は保証されない。e2e.yml (L53-54) が
+      # release バイナリに対して行っている起動スモークと同じスクリプトを、ビルド済み
+      # exe（NSIS インストーラーではなく target/release/snotra.exe）に対して実行し、
+      # アップロード前に起動失敗を検知するゲートとする。
+      - name: Run startup smoke on release binary
+        run: pwsh -NoProfile -File scripts/smoke-startup.ps1 -ExePath target/release/snotra.exe
 
       - name: Package as ZIP (portable)
         run: |

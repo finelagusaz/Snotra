@@ -11,7 +11,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 
 vi.mock("./invoke", () => ({
   openSettings: vi.fn(async () => {}),
-  rebuildIndex: vi.fn(async () => true),
+  rebuildIndex: vi.fn(async () => {}),
   quitApp: vi.fn(async () => {}),
   notifyMainHidden: vi.fn(async () => {}),
 }));
@@ -107,7 +107,6 @@ describe("slash command actions", () => {
     mockMainHide.mockImplementation(async () => { order.push("hideMain"); });
     vi.mocked(api.rebuildIndex).mockImplementation(async () => {
       order.push("rebuildIndex");
-      return true;
     });
 
     const cmd = findCommand("/s");
@@ -116,6 +115,21 @@ describe("slash command actions", () => {
 
     expect(order).toEqual(["hideMain", "rebuildIndex"]);
     expect(api.rebuildIndex).toHaveBeenCalledTimes(1);
+  });
+
+  it("/s インデックス構築中エラーは無視する（bool→Result 契約変更後もユーザー可視の挙動は現状維持、#434）", async () => {
+    vi.mocked(api.rebuildIndex).mockRejectedValueOnce(new Error("indexing_in_progress"));
+    const cmd = findCommand("/s");
+
+    await expect(cmd!.action()).resolves.toBeUndefined();
+    expect(mockSetLaunchNoticeWithAutoClear).not.toHaveBeenCalled();
+  });
+
+  it("/s 予期せぬエラーは再スローする", async () => {
+    vi.mocked(api.rebuildIndex).mockRejectedValueOnce(new Error("unexpected_error"));
+    const cmd = findCommand("/s");
+
+    await expect(cmd!.action()).rejects.toThrow("unexpected_error");
   });
 
   it("/q calls quitApp without hiding", async () => {

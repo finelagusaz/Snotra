@@ -5,12 +5,30 @@ use tauri::{AppHandle, Emitter, State};
 use crate::indexing;
 use crate::state::AppState;
 
-#[tauri::command]
-pub fn rebuild_index(state: State<AppState>, app: AppHandle) -> bool {
+use super::window::ERR_INDEXING_IN_PROGRESS;
+
+/// `state.indexing` が既に true かどうかだけを見る純粋な分岐。`start_index_build` 自体は
+/// `AppHandle` を要求し単体テスト不能なため、`AppHandle` 抜きでテスト可能な部分を切り出す。
+fn ensure_not_indexing(state: &AppState) -> Result<(), String> {
     if state.indexing.load(Ordering::SeqCst) {
-        return false;
+        return Err(ERR_INDEXING_IN_PROGRESS.to_string());
     }
-    indexing::start_index_build(&app)
+    Ok(())
+}
+
+// IPC 返り値契約（src-tauri/CLAUDE.md「IPC コマンドの返り値契約」）の「失敗しうる操作系」:
+// `open_settings` と同じ ERR_INDEXING_IN_PROGRESS 定数で「インデックス構築中」を表現する
+// （#434。以前は bool で open_settings の Result 契約と不一致だった）。
+#[tauri::command]
+pub fn rebuild_index(state: State<AppState>, app: AppHandle) -> Result<(), String> {
+    ensure_not_indexing(&state)?;
+    if indexing::start_index_build(&app) {
+        Ok(())
+    } else {
+        // try_begin_index_build の CAS に負けた（既に別スレッドがビルド中）場合も
+        // 同一のエラーコードで表現する。
+        Err(ERR_INDEXING_IN_PROGRESS.to_string())
+    }
 }
 
 #[tauri::command]
@@ -45,4 +63,43 @@ pub fn notify_main_hidden(state: State<AppState>, app: AppHandle) {
     // working set を回収する。EmptyWorkingSet はスレッド非依存ゆえ tokio IPC スレッドから
     // 安全に呼べる（suspend_webview の with_webview 非同期制約がない）。best-effort。
     crate::working_set::trim_idle_working_set(std::process::id());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use snotra_core::config::Config;
+    use snotra_core::engine::Engine;
+    use snotra_core::history::HistoryStore;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Mutex;
+
+    fn test_state(indexing: bool) -> AppState {
+        AppState {
+            engine: Mutex::new(Engine::new(Vec::new(), HistoryStore::load(), Config::default())),
+            indexing: AtomicBool::new(indexing),
+            index_build_started: AtomicBool::new(false),
+            main_visible: AtomicBool::new(false),
+        }
+    }
+
+    #[test]
+    fn ensure_not_indexing_rejects_while_indexing_in_progress() {
+        let state = test_state(true);
+        assert_eq!(
+            ensure_not_indexing(&state),
+            Err(ERR_INDEXING_IN_PROGRESS.to_string()),
+            "rebuild_index must reject with ERR_INDEXING_IN_PROGRESS while a build is in flight \
+             (same contract as open_settings)"
+        );
+    }
+
+    #[test]
+    fn ensure_not_indexing_allows_when_idle() {
+        let state = test_state(false);
+        assert!(
+            ensure_not_indexing(&state).is_ok(),
+            "rebuild_index must allow starting a build when idle"
+        );
+    }
 }

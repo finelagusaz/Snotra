@@ -95,18 +95,33 @@ impl TabId {
         }
     }
 
+    /// タブ別ダーティ点（`•`）の判定を `SECTION_TABLE` から導出する。
+    /// 新セクション追加時は `SECTION_TABLE` の1箇所だけを更新すればよい
+    /// （`section_table_covers_all_config_fields` テストが更新漏れを検出する）。
     fn has_changes(self, draft: &Config, saved: &Config) -> bool {
-        match self {
-            TabId::General => draft.general != saved.general || draft.hotkey != saved.hotkey,
-            TabId::Search => draft.search != saved.search,
-            TabId::Index => draft.paths != saved.paths,
-            TabId::Visual => draft.visual != saved.visual || draft.appearance != saved.appearance,
-            TabId::Opener => draft.openers != saved.openers,
-            TabId::InstantCommand => draft.instant_commands != saved.instant_commands,
-            TabId::Backup => false,
-        }
+        SECTION_TABLE.iter().any(|(tab, diff)| *tab == self && diff(draft, saved))
     }
 }
+
+/// Config セクション → TabId の対応表（SSOT）。
+///
+/// タブ別ダーティ点（[`TabId::has_changes`]）はここから導出される。全体判定
+/// （[`SettingsApp::has_changes`]）は構造体全体の `PartialEq`（`draft != saved`）を使うため
+/// 新フィールド追加時も自動追従するが、この表を更新し忘れるとタブ点だけが無反応になりうる。
+/// `section_table_covers_all_config_fields` テストが、この表の合成が `draft != saved` と
+/// 一致すること（＝更新漏れがないこと）を Config の全フィールドについて検証する。
+type SectionDiff = fn(&Config, &Config) -> bool;
+
+const SECTION_TABLE: &[(TabId, SectionDiff)] = &[
+    (TabId::General, |d, s| d.hotkey != s.hotkey),
+    (TabId::General, |d, s| d.general != s.general),
+    (TabId::Search, |d, s| d.search != s.search),
+    (TabId::Index, |d, s| d.paths != s.paths),
+    (TabId::Visual, |d, s| d.visual != s.visual),
+    (TabId::Visual, |d, s| d.appearance != s.appearance),
+    (TabId::Opener, |d, s| d.openers != s.openers),
+    (TabId::InstantCommand, |d, s| d.instant_commands != s.instant_commands),
+];
 
 struct SettingsApp {
     draft: Config,
@@ -207,11 +222,9 @@ impl SettingsApp {
     }
 
     fn reset_to_default(&mut self) {
-        let mut draft = Config::default();
-        // apply_migrations() で None フィールドをデフォルト値（Some(v)）に解決する。
-        // これにより saved（常に Some(v)）との PartialEq が tab 遷移順序に依存しなくなる。
-        let _ = draft.apply_migrations();
-        self.draft = draft;
+        // Config::normalized_default() が正規化（apply_migrations 相当）済みの既定値を返すため、
+        // ここで呼び忘れても draft/saved の PartialEq が tab 遷移順序に依存する心配はない。
+        self.draft = Config::normalized_default();
         self.tr = Tr(self.draft.general.language);
         self.hotkey_state = Default::default();
         self.index_state = tabs::index::IndexTabState::default();
@@ -606,4 +619,110 @@ pub fn run(
             Ok(Box::new(SettingsApp::new(config, first_run, initial_tab, load_outcome)))
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use snotra_core::config::{InstantAction, InstantCommand, OpenerRule, OpenerTool, ScanPath};
+
+    /// Config の全トップレベルフィールドを1つずつ変更する mutation の一覧。
+    ///
+    /// 冒頭の `..` なし destructure が Config のフィールド網羅をコンパイル時に強制する:
+    /// Config に新フィールド（新セクション）を追加するとここがコンパイルエラーになり、
+    /// mutation と `SECTION_TABLE` の両方に対応を追加するまで検出が続く。
+    type FieldMutation = (&'static str, fn(&mut Config));
+
+    fn field_mutations() -> Vec<FieldMutation> {
+        // 網羅性ガード: 新フィールド追加でコンパイルエラーにする（`..` を使わないこと）。
+        let Config {
+            hotkey: _,
+            general: _,
+            appearance: _,
+            visual: _,
+            paths: _,
+            search: _,
+            openers: _,
+            instant_commands: _,
+        } = Config::normalized_default();
+        vec![
+            ("hotkey", |c: &mut Config| c.hotkey.key = "Z".to_string()),
+            ("general", |c: &mut Config| {
+                c.general.show_on_startup = !c.general.show_on_startup;
+            }),
+            ("appearance", |c: &mut Config| c.appearance.window_width += 10),
+            ("visual", |c: &mut Config| {
+                c.visual.background_color = "#123456".to_string();
+            }),
+            ("paths", |c: &mut Config| {
+                c.paths.scan.push(ScanPath {
+                    path: "C:/mutation".to_string(),
+                    extensions: vec![".txt".to_string()],
+                    include_folders: false,
+                });
+            }),
+            ("search", |c: &mut Config| {
+                c.search.show_hidden_system = !c.search.show_hidden_system;
+            }),
+            ("openers", |c: &mut Config| {
+                c.openers.push(OpenerRule {
+                    target: "folder".to_string(),
+                    tools: vec![OpenerTool {
+                        name: "t".to_string(),
+                        exe: "x.exe".to_string(),
+                        args: String::new(),
+                    }],
+                });
+            }),
+            ("instant_commands", |c: &mut Config| {
+                c.instant_commands.push(InstantCommand {
+                    name: "mutation".to_string(),
+                    description: String::new(),
+                    action: InstantAction::Url { url: "https://example.com".to_string() },
+                });
+            }),
+        ]
+    }
+
+    // 不変条件: SECTION_TABLE（全 TabId の対応の合成）は全体判定 `draft != saved` と一致する。
+    // Config のどのフィールドを変えても、少なくとも1つのタブ点が点灯しなければならない。
+    #[test]
+    fn section_table_covers_all_config_fields() {
+        let saved = Config::normalized_default();
+        for (name, mutate) in field_mutations() {
+            let mut draft = saved.clone();
+            mutate(&mut draft);
+            assert_ne!(draft, saved, "mutation `{name}` must actually change the config");
+            let any_tab_dirty = TabId::ALL.iter().any(|t| t.has_changes(&draft, &saved));
+            assert!(
+                any_tab_dirty,
+                "SECTION_TABLE lacks a mapping for config field `{name}`: \
+                 tab dot would stay off while overall draft != saved is true"
+            );
+        }
+    }
+
+    // 不変条件: draft == saved のとき、どのタブ点も点灯しない（偽陽性なし）。
+    #[test]
+    fn section_table_no_false_positive_when_unchanged() {
+        let saved = Config::normalized_default();
+        let draft = saved.clone();
+        for &tab in TabId::ALL {
+            assert!(!tab.has_changes(&draft, &saved), "{tab:?} must not light when unchanged");
+        }
+    }
+
+    // 不変条件: Backup タブは draft/saved に参加しないため、どの変更でも点灯しない。
+    #[test]
+    fn backup_tab_never_shows_dirty_dot() {
+        let saved = Config::normalized_default();
+        for (name, mutate) in field_mutations() {
+            let mut draft = saved.clone();
+            mutate(&mut draft);
+            assert!(
+                !TabId::Backup.has_changes(&draft, &saved),
+                "Backup tab must not light for `{name}`"
+            );
+        }
+    }
 }

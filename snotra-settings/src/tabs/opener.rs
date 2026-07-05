@@ -1,29 +1,22 @@
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-
 use eframe::egui;
 use snotra_core::config::{self, extract_path_condition, opener_specificity_order, Config, OpenerRule, OpenerTool};
 
 use crate::i18n::Tr;
 use crate::style;
-
-/// Non-blocking file picker state for exe selection
-#[derive(Clone, Default)]
-pub struct ExePickerState {
-    pub result: Arc<Mutex<Option<Option<PathBuf>>>>,
-    pub active: bool,
-}
+use crate::tabs::common::{ModalState, PickerState};
 
 pub struct OpenerTabState {
-    pub exe_picker: ExePickerState,
-    modal: ModalState,
+    pub exe_picker: PickerState,
+    /// ネストした `(rule_idx, tool_idx)` を編集スナップショットに持つ（フラットリストの
+    /// index / instant と異なり、Save/Delete の境界チェックは opener 固有ロジックで行う）。
+    modal: ModalState<OpenerFields, (usize, usize)>,
     presets: Vec<config::OpenerPreset>,
 }
 
 impl OpenerTabState {
     pub fn new() -> Self {
         Self {
-            exe_picker: ExePickerState::default(),
+            exe_picker: PickerState::default(),
             modal: ModalState::default(),
             presets: config::detect_opener_presets(),
         }
@@ -37,79 +30,41 @@ enum TargetKind {
     Extension,
 }
 
+/// オープナーモーダルのタブ固有編集フィールド。
 #[derive(Default)]
-struct ModalState {
-    open: bool,
-    mode: ModalMode,
-    editing_rule: Option<usize>,
-    editing_tool: Option<usize>,
-    edit_target_kind: TargetKind,
-    edit_target_ext: String,
-    edit_target_path: String,
-    edit_tool_name: String,
-    edit_tool_exe: String,
-    edit_tool_args: String,
+struct OpenerFields {
+    target_kind: TargetKind,
+    target_ext: String,
+    target_path: String,
+    tool_name: String,
+    tool_exe: String,
+    tool_args: String,
 }
 
-#[derive(Default, PartialEq)]
-enum ModalMode {
-    #[default]
-    Create,
-    Edit,
-}
-
-impl ModalState {
-    fn open_create(&mut self) {
-        self.open = true;
-        self.mode = ModalMode::Create;
-        self.editing_rule = None;
-        self.editing_tool = None;
-        self.edit_target_kind = TargetKind::Folder;
-        self.edit_target_ext.clear();
-        self.edit_target_path.clear();
-        self.edit_tool_name.clear();
-        self.edit_tool_exe.clear();
-        self.edit_tool_args.clear();
-    }
-
-    fn open_edit(&mut self, rule_idx: usize, tool_idx: usize, rule: &OpenerRule, tool: &OpenerTool) {
-        self.open = true;
-        self.mode = ModalMode::Edit;
-        self.editing_rule = Some(rule_idx);
-        self.editing_tool = Some(tool_idx);
-        // パス条件の抽出
-        self.edit_target_path = extract_path_condition(&rule.target)
-            .unwrap_or("")
-            .to_string();
+impl OpenerFields {
+    fn from_rule_tool(rule: &OpenerRule, tool: &OpenerTool) -> Self {
+        let mut fields = Self {
+            // パス条件の抽出
+            target_path: extract_path_condition(&rule.target).unwrap_or("").to_string(),
+            tool_name: tool.name.clone(),
+            tool_exe: tool.exe.clone(),
+            tool_args: tool.args.clone(),
+            ..Self::default()
+        };
         if rule.target.starts_with("ext:") {
-            self.edit_target_kind = TargetKind::Extension;
-            self.edit_target_ext = config::extract_ext_part(&rule.target).to_string();
+            fields.target_kind = TargetKind::Extension;
+            fields.target_ext = config::extract_ext_part(&rule.target).to_string();
         } else {
-            self.edit_target_kind = TargetKind::Folder;
-            self.edit_target_ext.clear();
+            fields.target_kind = TargetKind::Folder;
         }
-        self.edit_tool_name = tool.name.clone();
-        self.edit_tool_exe = tool.exe.clone();
-        self.edit_tool_args = tool.args.clone();
-    }
-
-    fn close(&mut self) {
-        self.open = false;
-        self.editing_rule = None;
-        self.editing_tool = None;
+        fields
     }
 }
 
 pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabState, tr: &Tr) {
     // Poll exe picker result
-    if state.exe_picker.active
-        && let Ok(mut guard) = state.exe_picker.result.try_lock()
-        && let Some(result) = guard.take()
-    {
-        state.exe_picker.active = false;
-        if let Some(path) = result {
-            state.modal.edit_tool_exe = path.display().to_string();
-        }
+    if let Some(Some(path)) = state.exe_picker.poll() {
+        state.modal.fields.tool_exe = path.display().to_string();
     }
 
     style::tab_scroll_area(ui, |ui| {
@@ -220,8 +175,8 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
             Some(OpenerAction::OpenCreate) => state.modal.open_create(),
             Some(OpenerAction::Edit(ri, ti)) => {
                 let rule = &config.openers[ri];
-                let tool = &rule.tools[ti];
-                state.modal.open_edit(ri, ti, rule, tool);
+                let fields = OpenerFields::from_rule_tool(rule, &rule.tools[ti]);
+                state.modal.open_edit((ri, ti), fields);
             }
             Some(OpenerAction::MoveUp(ri, ti))
                 if ti > 0 && ri < config.openers.len() && ti < config.openers[ri].tools.len() =>
@@ -253,7 +208,7 @@ enum OpenerAction {
 }
 
 fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabState, tr: &Tr) {
-    let title = if state.modal.mode == ModalMode::Edit {
+    let title = if state.modal.is_edit() {
         tr.modal_edit_rule()
     } else {
         tr.modal_add_rule()
@@ -267,18 +222,18 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
         // Target
         ui.label(tr.label_target());
         egui::ComboBox::from_id_salt("target_kind")
-            .selected_text(match state.modal.edit_target_kind {
+            .selected_text(match state.modal.fields.target_kind {
                 TargetKind::Folder => tr.target_kind_folder(),
                 TargetKind::Extension => tr.target_kind_extension(),
             })
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut state.modal.edit_target_kind, TargetKind::Folder, tr.target_kind_folder());
-                ui.selectable_value(&mut state.modal.edit_target_kind, TargetKind::Extension, tr.target_kind_extension());
+                ui.selectable_value(&mut state.modal.fields.target_kind, TargetKind::Folder, tr.target_kind_folder());
+                ui.selectable_value(&mut state.modal.fields.target_kind, TargetKind::Extension, tr.target_kind_extension());
             });
 
-        if state.modal.edit_target_kind == TargetKind::Extension {
+        if state.modal.fields.target_kind == TargetKind::Extension {
             ui.label(tr.label_extension());
-            ui.text_edit_singleline(&mut state.modal.edit_target_ext);
+            ui.text_edit_singleline(&mut state.modal.fields.target_ext);
             style::hint(ui, tr.hint_extension_format());
         }
 
@@ -286,37 +241,32 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
 
         // Path condition (optional, applies to both folder and extension)
         ui.label(tr.label_path_condition());
-        ui.text_edit_singleline(&mut state.modal.edit_target_path);
+        ui.text_edit_singleline(&mut state.modal.fields.target_path);
         style::hint(ui, tr.hint_path_condition());
 
         ui.add_space(style::SPACE_HINT);
 
         // Tool name
         ui.label(tr.label_tool_name());
-        ui.text_edit_singleline(&mut state.modal.edit_tool_name);
+        ui.text_edit_singleline(&mut state.modal.fields.tool_name);
 
         ui.add_space(style::SPACE_HINT);
 
         // Tool exe + browse
         ui.label(tr.label_executable());
         ui.horizontal(|ui| {
-            ui.text_edit_singleline(&mut state.modal.edit_tool_exe);
+            ui.text_edit_singleline(&mut state.modal.fields.tool_exe);
             if ui
                 .add_enabled(!state.exe_picker.active, egui::Button::new(tr.btn_browse()))
                 .clicked()
             {
-                state.exe_picker.active = true;
-                let result = Arc::clone(&state.exe_picker.result);
-                let repaint_ctx = ctx.clone();
                 let dialog_title = tr.dialog_select_exe().to_string();
                 let filter_label = tr.filter_executables().to_string();
-                std::thread::spawn(move || {
-                    let path = rfd::FileDialog::new()
+                state.exe_picker.launch(ctx, move || {
+                    rfd::FileDialog::new()
                         .set_title(&dialog_title)
                         .add_filter(&filter_label, &["exe", "bat", "cmd"])
-                        .pick_file();
-                    *result.lock().unwrap() = Some(path);
-                    repaint_ctx.request_repaint();
+                        .pick_file()
                 });
             }
         });
@@ -325,7 +275,7 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
 
         // Tool args
         ui.label(tr.label_arguments());
-        ui.text_edit_singleline(&mut state.modal.edit_tool_args);
+        ui.text_edit_singleline(&mut state.modal.fields.tool_args);
         style::hint(ui, tr.hint_path_placeholder());
 
         ui.add_space(style::SPACE_GROUP);
@@ -333,9 +283,8 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
 
         ui.horizontal(|ui| {
             // Delete (edit mode only)
-            if state.modal.mode == ModalMode::Edit && style::danger_button(ui, tr.btn_delete()).clicked()
-            {
-                if let (Some(ri), Some(ti)) = (state.modal.editing_rule, state.modal.editing_tool)
+            if state.modal.is_edit() && style::danger_button(ui, tr.btn_delete()).clicked() {
+                if let Some((ri, ti)) = state.modal.editing
                     && ri < config.openers.len()
                     && ti < config.openers[ri].tools.len()
                 {
@@ -363,9 +312,9 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
     }
 }
 
-fn save_opener(config: &mut Config, modal: &ModalState) {
-    let path_trimmed = modal.edit_target_path.trim();
-    let target = match modal.edit_target_kind {
+fn save_opener(config: &mut Config, modal: &ModalState<OpenerFields, (usize, usize)>) {
+    let path_trimmed = modal.fields.target_path.trim();
+    let target = match modal.fields.target_kind {
         TargetKind::Folder => {
             if path_trimmed.is_empty() {
                 "folder".to_string()
@@ -374,7 +323,7 @@ fn save_opener(config: &mut Config, modal: &ModalState) {
             }
         }
         TargetKind::Extension => {
-            let ext = modal.edit_target_ext.trim();
+            let ext = modal.fields.target_ext.trim();
             if path_trimmed.is_empty() {
                 format!("ext:{ext}")
             } else {
@@ -383,12 +332,12 @@ fn save_opener(config: &mut Config, modal: &ModalState) {
         }
     };
     let tool = OpenerTool {
-        name: modal.edit_tool_name.clone(),
-        exe: modal.edit_tool_exe.clone(),
-        args: modal.edit_tool_args.clone(),
+        name: modal.fields.tool_name.clone(),
+        exe: modal.fields.tool_exe.clone(),
+        args: modal.fields.tool_args.clone(),
     };
 
-    if let (Some(ri), Some(ti)) = (modal.editing_rule, modal.editing_tool) {
+    if let Some((ri, ti)) = modal.editing {
         // Edit existing
         if ri < config.openers.len() && ti < config.openers[ri].tools.len() {
             if config.openers[ri].target == target {

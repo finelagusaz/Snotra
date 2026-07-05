@@ -970,6 +970,19 @@ impl Config {
         changed
     }
 
+    /// `Config::default()` に `apply_migrations()` を適用した「正規化済み既定値」を返す。
+    ///
+    /// `Config::default()` は一部フィールドを `None`（sentinel、明示未設定を表す）のまま返すため、
+    /// 読み込み経由（`load()` は必ず `apply_migrations()` を通す）で得た `Some(v)` な Config と
+    /// フィールド単位の `PartialEq` を比較すると、`None` を `Some` に解決する順序（DragValue の
+    /// `get_or_insert` 等）次第で結果が変わりうる。この関数は正規化を呼び忘れる余地を型レベルで
+    /// なくし、`Config::default()` の生値ではなく常にこちらを「比較可能な既定値」として使う。
+    pub fn normalized_default() -> Self {
+        let mut config = Self::default();
+        let _ = config.apply_migrations();
+        config
+    }
+
     pub fn load() -> Self {
         Self::load_reporting().0
     }
@@ -1506,6 +1519,40 @@ mod tests {
         assert_eq!(config.search.result_limit, Some(200));
         assert_eq!(config.search.recent_limit, Some(8));
         assert_eq!(config.appearance.visible_rows, Some(8));
+    }
+
+    #[test]
+    fn normalized_default_resolves_all_migration_sentinels() {
+        // #439: reset_to_default の apply_migrations() 手動呼び出し回避策をモデル層に閉じ込める。
+        // normalized_default() は常に Some(v) を返し、legacy 二層フィールドは take() 済みで None。
+        let config = Config::normalized_default();
+        assert!(config.appearance.visible_rows.is_some());
+        assert!(config.search.result_limit.is_some());
+        assert!(config.search.recent_limit.is_some());
+        assert_eq!(config.appearance.max_results, None);
+        assert_eq!(config.appearance.top_n_history, None);
+        assert_eq!(config.appearance.max_history_display, None);
+        assert_eq!(config.search.top_n_history, None);
+        assert_eq!(config.search.max_history_display, None);
+    }
+
+    #[test]
+    fn normalized_default_matches_default_plus_manual_migrations() {
+        let mut expected = Config::default();
+        expected.apply_migrations();
+        assert_eq!(Config::normalized_default(), expected);
+    }
+
+    #[test]
+    fn normalized_default_is_idempotent_under_reapplied_migrations() {
+        // モデル層で正規化済みなら、タブ遷移順序の違いを模した再適用（DragValue の
+        // get_or_insert 等）で値が変化しない。変化すれば draft/saved の PartialEq が
+        // 遷移順序に依存する既知のバグが再発している。
+        let mut config = Config::normalized_default();
+        let before = config.clone();
+        let changed = config.apply_migrations();
+        assert!(!changed, "normalized_default() should already be migration-stable");
+        assert_eq!(config, before);
     }
 
     #[test]

@@ -14,9 +14,6 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 - `ResultsSection.tsx`: 検索結果をメインウィンドウ内にインライン描画。`search.ts` のシグナル（`results`・`selected`）を直接参照。アイコンのバイナリバッチ取得・Blob URL 管理・スクロール追従を担当
 - `ResultRow.tsx`: アイコン + 名前 + パス + フォルダバッジ（1行分の描画）
 - `UpdateToast.tsx`: 自動更新通知トースト（2行 52px）。`canInstall` prop で [今すぐ更新] ボタンの表示を制御
-- `ToggleSwitch.tsx`: トグルスイッチ共通 UI コンポーネント
-- `ThemePreview.tsx`: `VisualConfig` を受け取ってテーマの縮小プレビューを描画
-- `SettingRow.tsx`: 設定行の共通レイアウト（label + description + control スロット）
 
 ### stores/
 

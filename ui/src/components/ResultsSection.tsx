@@ -8,6 +8,7 @@ import { LruIconCache } from "../lib/lruIconCache";
 import { parseBinaryBatch } from "../lib/iconBatch";
 import { perfMarkRenderDone } from "../lib/perf";
 import { clearTruncateCaches } from "../lib/truncatePath";
+import { t } from "../lib/i18n";
 import ResultRow from "./ResultRow";
 
 export interface ResultsSectionProps {
@@ -204,7 +205,7 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
 
   return (
     <div class="results-section">
-      <div class="result-list-standalone" ref={listRef} role="listbox" aria-label="検索結果">
+      <div class="result-list-standalone" ref={listRef} role="listbox" aria-label={t("results.list.aria_label")}>
         <For each={results()}>
           {(result, idx) => (
             <ResultRow

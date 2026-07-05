@@ -55,8 +55,10 @@ impl HistoryStore {
     pub fn save(&mut self, top_n: usize) {
         self.prune(top_n);
 
-        if let Some(bf) = Self::bin_file() {
-            bf.save(&self.data);
+        if let Some(bf) = Self::bin_file()
+            && !bf.save(&self.data)
+        {
+            eprintln!("[history] failed to save {}", bf.path().display());
         }
     }
 

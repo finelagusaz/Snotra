@@ -16,41 +16,8 @@ pub use window::*;
 // Re-export pub(crate) items that main.rs references
 pub(crate) use window::launch_settings_process;
 
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-use serde_json::json;
-
-pub(crate) fn trace_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        let Ok(v) = std::env::var("SNOTRA_TRACE") else {
-            return false;
-        };
-        matches!(
-            v.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        )
-    })
-}
-
+/// Thin wrapper kept so call sites read `trace_command(...)`; logic lives in
+/// the shared `crate::trace` module (deduped with `main.rs`'s `trace_main`, #433).
 pub(crate) fn trace_command(event: &str, data: serde_json::Value) {
-    if !trace_enabled() {
-        return;
-    }
-    static TRACE_SEQ: AtomicU64 = AtomicU64::new(0);
-    let seq = TRACE_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
-    let ts_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    eprintln!(
-        "[trace] {}",
-        json!({
-            "seq": seq,
-            "ts_ms": ts_ms,
-            "event": event,
-            "data": data,
-        })
-    );
+    crate::trace::trace(event, data);
 }

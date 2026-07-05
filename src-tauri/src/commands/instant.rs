@@ -1,14 +1,9 @@
-use std::time::Duration;
-
 use snotra_core::instant::{expand_instant_command, filter_instant_commands};
 use tauri::Manager;
-use tokio::time::timeout;
 
 use crate::state::AppState;
 
-use super::launch::LaunchResult;
-
-const LAUNCH_TIMEOUT_MS: u64 = 4_000;
+use super::launch::{run_launch_blocking, LaunchResult};
 
 #[tauri::command]
 pub fn get_instant_commands(
@@ -53,7 +48,7 @@ pub async fn execute_instant_command(
     // 変数展開: URL テンプレートは自動エンコード、それ以外は生展開。
     // セキュリティモデル: コマンドテンプレートはユーザーが config.toml で
     // 自身で定義したものであり、信頼済みコンテンツとして扱う。
-    let join = tauri::async_runtime::spawn_blocking(move || {
+    let result = run_launch_blocking(move || {
         use snotra_core::config::InstantAction;
         match action {
             InstantAction::Url { url } => {
@@ -69,12 +64,8 @@ pub async fn execute_instant_command(
                 super::launch::launch_item_core(&expanded)
             }
         }
-    });
-    let result = match timeout(Duration::from_millis(LAUNCH_TIMEOUT_MS), join).await {
-        Ok(Ok(v)) => v,
-        Ok(Err(e)) => LaunchResult::failed(-1, format!("launch_worker_join_error: {e}")),
-        Err(_) => LaunchResult::timeout(LAUNCH_TIMEOUT_MS),
-    };
+    })
+    .await;
 
     Ok(result)
 }

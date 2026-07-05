@@ -14,10 +14,11 @@
 cargo check -p snotra-core -p snotra -p snotra-settings                                # 必須: Rust 全 crate 型チェック
 cargo clippy -p snotra-core -p snotra -p snotra-settings --all-targets -- -D warnings  # 必須: lint（全 .rs 変更、テストターゲット含む）
 cargo test -p snotra-core                                                              # 必須（snotra-core を変更した場合）: 純ロジック層 TDD
+cargo test -p snotra-settings                                                          # 必須（snotra-settings を変更した場合）: 設定 GUI の純ロジックテスト
 ```
 
-- **`cargo test -p snotra-core` の必須/任意**: `snotra-core`（純ロジック層）を変更した場合は**必須**（TDD 重視。PostToolUse フックも snotra-core 編集時に自動実行）。`snotra` / `snotra-settings` のみの変更ではローカル任意（純ロジック不変のため。CI の rust-check が PR で常に実行し担保）
-- 上記 3 コマンドはいずれも CI（`ci.yml` rust-check）で PR 自動実行される（「CI/CD メモ」の対応表参照）。PostToolUse フック（`.claude/settings.json`）も `.rs` 編集で clippy、`snotra-core` 編集で core テストを自動発火する
+- **`cargo test` の必須/任意**: 変更した crate のテストはローカル**必須**（`snotra-core` は TDD 重視で PostToolUse フックも自動実行）。変更していない crate のテストはローカル任意（CI の rust-check が PR で `snotra-core`・`snotra-settings` の両テストを常に実行し担保）
+- 上記のコマンドはいずれも CI（`ci.yml` rust-check）で PR 自動実行される（「CI/CD メモ」の対応表参照）。PostToolUse フック（`.claude/settings.json`）も `.rs` 編集で clippy、`snotra-core` 編集で core テストを自動発火する
 - `snotra-settings` を含めるのは egui ネイティブウィンドウ側の型壊れも検知するため
 
 ### B. TypeScript／フロントエンドファイル（`ui/src/**/*.{ts,tsx}` 等）を変更した場合
@@ -55,7 +56,8 @@ npm run build                    # フロントエンドビルド（typecheck �
 
 ```bash
 npm ci                           # 依存インストール（初回セットアップ・CI）
-cargo test -p snotra-core        # ユニットテスト
+cargo test -p snotra-core        # ユニットテスト（純ロジック層）
+cargo test -p snotra-settings    # ユニットテスト（設定 GUI の純ロジック: font face 検証・TOML エラーローカライズ）
 cargo test --release -p snotra-core bench_ -- --ignored --nocapture  # 検索パフォーマンス計測（詳細: PERFORMANCE.md）
 cargo check -p snotra-core -p snotra -p snotra-settings  # Rust 全 crate 型チェック
 cargo clippy -p snotra-core -p snotra -p snotra-settings  # lint チェック
@@ -93,7 +95,7 @@ npm run tauri build              # リリースビルド（フロント+Rust 一
 |---|---|---|
 | `npm test`（Vitest） | `ci.yml`（frontend-check） | PR 自動（`skip-ci` ラベルで無効化可） |
 | `npm run build` / `npm run typecheck` | `ci.yml`（frontend-check） | PR 自動 |
-| `cargo check` / `cargo test -p snotra-core` / `cargo clippy` | `ci.yml`（rust-check） | PR 自動 |
+| `cargo check` / `cargo test -p snotra-core` / `cargo test -p snotra-settings` / `cargo clippy` | `ci.yml`（rust-check） | PR 自動 |
 | `npm run smoke:startup`（注） | `e2e.yml`（E2E & Smoke） | `e2e` ラベル付き PR / 手動 dispatch |
 | `npm run e2e:tauri` | `e2e.yml`（E2E & Smoke） | `e2e` ラベル付き PR / 手動 dispatch |
 

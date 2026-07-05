@@ -61,7 +61,7 @@ Win32 依存なし（`#[cfg(windows)]` ゲート以外）、完全にユニッ�
 
 ### src-tauri（Tauri v2 バイナリ層）
 
-Tauri v2 バイナリ crate（パッケージ名 `snotra`）。Win32 API 統合（システムトレイ・グローバルホットキー・IME・マルチモニター）とフロントエンドとの IPC を担当。`commands/` は責務別に分割した `#[tauri::command]` ハンドラ群、`platform/` は Win32 メッセージループ・ホットキー・トレイのネイティブ統合。
+Tauri v2 バイナリ crate（パッケージ名 `snotra`）。Win32 API 統合（システムトレイ・グローバルホットキー・IME・マルチモニター）とフロントエンドとの IPC を担当。`commands/` は責務別に分割した `#[tauri::command]` ハンドラ群、`platform/` は Win32 メッセージループ・ホットキー・トレイのネイティブ統合。IPC コマンドの返り値契約（読み取り系/起動系/失敗しうる操作系の3系統）は `src-tauri/CLAUDE.md` の「IPC コマンドの返り値契約」節を参照（規約本文はそちらが SSOT）。
 
 → モジュール構成は `src-tauri/CLAUDE.md`
 

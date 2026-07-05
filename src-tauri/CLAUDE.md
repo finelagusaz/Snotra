@@ -27,6 +27,22 @@ Tauri v2 バイナリ crate。Win32 API 統合とフロントエンドとの IPC
 - Managed state として `IconCacheState`（`Mutex<Option<IconCache>>`、初回アイコン要求で遅延初期化）と `SettingsProcessState`（`Mutex<Option<Child>>`、設定プロセスのハンドル管理）を保持
 - **`show_main_and_emit` の操作順序制約**: 高さリセット（52px）→ `position_on_target_monitor` → `show()` の順。位置計算はウィンドウサイズ（`outer_size()`）でクランプするため、高さリセット前に位置を決めると展開時の高さでクランプされ、折りたたみ時に位置がずれる
 
+## IPC コマンドの返り値契約
+
+新規 `#[tauri::command]` は以下の3系統のいずれかに従う（#434: as-built で4系統に分裂していたものを整理した規約）。
+
+1. **読み取り・検索系**（失敗を結果 DTO で表現するもの）: 素の `T` を返す。エラーは DTO 内の `is_error` フラグ + UI 層で表示文字列を決定する（`snotra-core` の設計と整合）。例: `search` / `get_history_results` / `list_folder`
+2. **起動系**: `LaunchResult { status, code, message }` 契約（`launch_item` / `launch_with_tool` / `execute_instant_command`）
+3. **失敗しうる操作系**: `Result<T, String>`。「実行できない状態」（インデックス構築中など）も `Err(定数)` で表現する。例: `open_settings` / `rebuild_index`
+
+`bool` 返しは新規コマンドで使用しない（「成功/失敗」と「実行できない状態」を混同しやすく、フロントエンドが呼び出しごとに異なる判定を実装する原因になる）。
+
+補足:
+
+- `notify_main_shown` / `notify_main_hidden` の命名は実態（`AppState` のフラグ更新が主目的）とややズレるが、IPC 改名はフロントエンド・トレースログ双方に波及する churn の割に得られる整合性が小さいため改名しない
+- 「インデックス構築中で実行できない」という同一条件を表すエラー定数は、`open_settings`（`commands/window.rs` の `ERR_INDEXING_IN_PROGRESS`）と `rebuild_index`（同定数を再利用）で共有する。新たに「実行できない状態」を追加する場合もこの定数を再利用するか、命名パターン（`ERR_<状態>`）を揃える
+- 既存コマンドの一斉移行はしない。上記規約は「新規コマンド」と、契約と実装が乖離していた `list_folder`（型が `Result` だが `Err` を返さない死蔵の型）・`rebuild_index`（`bool` と `open_settings` の `Result` で同一条件が不一致）の是正に適用する
+
 ## Win32 メッセージ配送の注意
 
 Shell のトレイコールバック (`uCallbackMessage`) は `SendMessage` で配送される場合があり、`GetMessageW` ループに到達しない。カスタムメッセージ (`WM_APP + N`) をウィンドウプロシージャ (`DefWindowProcW`) だけで処理すると消滅するため、`platform_default_wnd_proc` で検出して `PostThreadMessageW` でスレッドキューに再投入する設計にしている。

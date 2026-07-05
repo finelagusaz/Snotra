@@ -58,7 +58,17 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     get description() { return t("cmd.rebuild_index.description"); },
     action: async () => {
       await hideMainWindow();
-      await api.rebuildIndex();
+      try {
+        await api.rebuildIndex();
+      } catch (e) {
+        // rebuildIndex は bool → Result<(), String> に契約変更（#434）。以前は
+        // 「インデックス構築中」を false で表現し戻り値を無視していた（無反応・無音）。
+        // Err(ERR_INDEXING_IN_PROGRESS) も同様に無視し、ユーザー可視の挙動を変えない。
+        // それ以外のエラーは想定外のため再送出する。
+        if (!String(e).includes(ERR_INDEXING_IN_PROGRESS)) {
+          throw e;
+        }
+      }
     },
   },
   {

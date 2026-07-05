@@ -116,8 +116,8 @@ export async function getIndexingState(): Promise<boolean> {
   return tracedInvoke<boolean>(IPC.GET_INDEXING_STATE);
 }
 
-export async function rebuildIndex(): Promise<boolean> {
-  return tracedInvoke<boolean>(IPC.REBUILD_INDEX);
+export async function rebuildIndex(): Promise<void> {
+  return tracedInvoke<void>(IPC.REBUILD_INDEX);
 }
 
 export async function quitApp(): Promise<void> {

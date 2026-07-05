@@ -8,7 +8,9 @@
 
 ## 変更ファイル一覧
 
-### `snotra-core/src/search.rs`（唯一の変更対象）
+**コード変更は `snotra-core/src/search.rs` の 1 ファイルのみ。** Phase C で doc（`.claude/rules/snotra-core-search.md`）も更新する（コードではない・下記 Phase C）。
+
+### `snotra-core/src/search.rs`（唯一のコード変更対象）
 
 **A. スコア階層の宣言化（direction 3）**
 
@@ -39,6 +41,11 @@ mod score {
 - L797 `4500i64 - pos` → `score::KANA_BASE - pos`
 - L607 `3000i64 - (pos).min(500)` → `score::PATH_BASE - (pos).min(score::PATH_POS_CAP)`
 
+**`mod score` に含めないもの（Codex 指摘）**:
+- **`9000`（L555 `name_score.is_none_or(|s| s <= 9000)`）はスコア階層 *ではない***——「Prefix 高信頼 name マッチなら file_name scoring を短絡スキップ」の閾値。`PREFIX_BASE` と混同禁止。`mod score` に入れず、インラインのまま残す（別 const 化は最小主義で見送り、混同防止のコメントのみ付す）
+- history weight（`GLOBAL_WEIGHT`/`QUERY_WEIGHT`/`FOLDER_EXPANSION_WEIGHT`, L17-23）は base score と別単位ゆえ `mod score` に混ぜない（現状維持）
+- **`score_tiers_are_strictly_ordered` の射程**: base const の大小（`PREFIX_BASE > SUBSTRING_BASE > KANA_BASE > PATH_BASE`）のみを守る安価ガード。実行時の全順序（`- len` / `.max(1)` 補正込み）は既存の挙動テスト（`kana_search_direct_match_ranks_above_kana_match` 等）が保証する。`mod score` の doc コメントも「base 定数の順序」と明記して過信を防ぐ
+
 **B. `search_with_options` の分割（direction 2）**
 
 現状 330 行を、既に明瞭な 4 フェーズ境界で分ける。**挙動・順序・incremental 候補集合を完全保存**する純リファクタ。
@@ -64,7 +71,12 @@ mod score {
    phase (b) L445-478 の `kana_monotonic` + `use_incremental` 述語を**逐語移設**（変更なし）。`self.prev_*` の read はここに集約。
 
 4. **`#[inline] fn score_one_entry(&self, i, plan: &QueryPlan, mode, kana_available, history, options) -> Option<ScoredEntry>`**（メソッド・**inline 必須**）:
-   phase (c) の per-entry ボディ L513-648 を移設。bitmask pre-filter → name/file_name/kana/path スコア → 履歴ブースト → `ScoredEntry` 構築まで。`Some` ⟺ マッチ成立（現行 `local_matches.push(i)` の条件と 1:1）。`MATCHER` thread_local はボディ内で借用（引数化しない）。全引数を参照/Copy で受け、rayon fold 内 codegen を不変に保つ。
+   phase (c) の per-entry ボディ L513-648 を移設。bitmask pre-filter → name/file_name/kana/path スコア → 履歴ブースト → `ScoredEntry` 構築まで。`Some` ⟺ マッチ成立（`base_score.is_some()`。現行 `local_matches.push(i)` の条件と 1:1）。`MATCHER` thread_local はボディ内で借用（引数化しない）。全引数を参照/Copy で受け、rayon fold 内 codegen を不変に保つ。
+
+   **逐語保存が必須の内部順序・分岐（Codex 指摘）**:
+   - **bitmask pre-filter は関数の *先頭***（L517-525）。`entry_view(i)` 生成・`Utf32String::from`（L527/533）より前に置く。pre-filter で落ちる候補に `entry_view`/UTF-32 変換コストを掛けると退行する
+   - **`has_dot` の file_name 短絡** `name_score.is_none_or(|s| s <= 9000)`（L555）を逐語保存。「name/file_name の max を常に計算」に単純化すると `MATCHER` 呼び出し回数が変わる（挙動は同値だが性能退行）
+   - **履歴キーは `path_history_key`（`normalize_history_query_key(query)` 由来, L618）を使い、`path_query`（パスマッチ用・アクセント/スペース保持）と混同しない**。`QueryPlan` で両者を別フィールドに保つ（下記 struct 参照）
 
 5. **orchestrator `search_with_options`**（~40 行に縮む）:
    ```
@@ -87,6 +99,8 @@ mod score {
    heap_into_results(top_k)   // top_k → Vec<SearchResult> の純変換のみ抽出
    ```
    heap push/replace と reduce マージは orchestrator に残す（top-k 縮約の機構であり per-entry スコアリングではないため）。`prev_*` の write は orchestrator に残し、`decide_incremental` の read と**同一関数の視界**に置く（incremental 契約の可読性）。
+   - **`prev_*` 更新は fold/reduce 後・sort 前**（現行 L680 の位置）を厳守。`heap_into_results` の後には移さない（`all_match_indices` は sort 前に確定済みゆえ位置の自由度はあるが、現行位置を保って diff を最小化）
+   - **`heap_into_results` は `top_k.into_sorted_vec()` を使う**（`ScoredEntry::Ord` 逆順で昇順=best-first, L686-688）。通常の降順 re-sort に置き換えると同点 tie-break の意味が変わる。純変換（heap→昇順 Vec→`SearchResult` map）のみ抽出し、比較ロジックは触らない
 
 **C. direction 4 の文書化（削除しない）**
 
@@ -98,7 +112,8 @@ mod score {
 
 1. **Phase A（低リスク・独立）**: `mod score` 追加 + 4 箇所の const 置換 + `score_tiers_are_strictly_ordered` テスト追加 → test green → commit
 2. **Phase B（分割本体）**: `QueryPlan` + `prepare_query_plan` + `decide_incremental` + `score_one_entry` + `heap_into_results` 抽出、orchestrator 縮約 → test green → commit
-3. **Phase C（文書化）**: (i) `SearchMode`（L32）doc コメントに層境界の理由を追記 (ii) `.claude/rules/snotra-core-search.md` L10 のスコア階層行を「`mod score` に集約」へ更新 (iii) **SPEC 節参照の是正**——`kana_substring_score` の doc（L791）が「SPEC.md §3.2 に準拠」と書くが §3.2 は*エントリ識別子*の節。スコア記述は §4.2（かな `max(4500-byte_pos,1)`, SPEC:122）/§4.3（パス 3000, SPEC:146）。正しい節番号へ訂正（既存 doc ドリフトの as-built 是正・実装時に SPEC.md で節番号を再確認）→ commit
+3. **Phase C（文書化）**: (i) `SearchMode`（L32）doc コメントに層境界の理由を追記 (ii) `.claude/rules/snotra-core-search.md` L10 のスコア階層行を「`mod score` に集約」へ更新 (iii) **SPEC 節参照の是正**——`kana_substring_score` の doc（L791）が「SPEC.md §3.2 に準拠」と書くが §3.2 は*エントリ識別子*の節。スコア記述は §4.2（かな `max(4500-byte_pos,1)`, SPEC:122）/§4.3（パス 3000, SPEC:146）。正しい節番号へ訂正（既存 doc ドリフトの as-built 是正・実装時に SPEC.md で節番号を再確認） (iv)（オプション）`path_match_incremental_cache_monotonic` の L2309 コメント「incremental cache 有効」を「path は `!has_path_sep` で incremental 無効・fresh 一致を検証」へ訂正 → commit
+   - **doc 更新の要否確認**: `snotra-core/CLAUDE.md` の path score 記述（`3000 - min(byte_pos, 500)`）は**値保存ゆえ正確なまま**——更新不要（Codex 指摘に対する結論。実装時に値一致を確認）
 
 ## 不変条件（壊れたら即アウト）
 
@@ -106,7 +121,7 @@ mod score {
 2. **top-k 順序の一致**: heap ロジック（`ScoredEntry::Ord` 逆順・push/replace・reduce マージ）は逐語で不動
 3. **incremental 候補集合の一致**: `decide_incremental` の述語は逐語移設。`local_matches.push(i)` は `score_one_entry` が `Some` を返す条件（= 現行 `base_score.is_some()`）と 1:1
 4. **`prev_*` 更新タイミングの不変**: fold 後・sort 前（L680 の位置）。`decide_incremental` の read と orchestrator の write が同一視界
-5. **性能非退行**: `score_one_entry` は `#[inline]`、全引数 参照/Copy、`MATCHER` thread_local 不変 → fold 内 codegen 不変。SoA/cache 形式に非接触
+5. **性能非退行**: `score_one_entry` は `#[inline]`、全引数 参照/Copy、`MATCHER` thread_local 不変 → fold 内 codegen 不変。SoA/cache 形式に非接触。**内部順序 3 点を逐語保存**（Codex 指摘）: (a) bitmask pre-filter を関数先頭に置き `entry_view`/`Utf32String::from` より前（無駄な UTF-32 変換の回避）、(b) `has_dot` の file_name 短絡 `<= 9000` を保存（`MATCHER` 呼び出し回数）、(c) `with_min_len(MIN_PAR_CANDIDATES)` を orchestrator の同 iterator 上に保持。自動ベンチ不在ゆえ**性能退行はテストで捕捉できない**——上記の構造保存が唯一のガード（レビューで pre-filter 位置・短絡・inline を目視確認する）
 
 ## テスト方針
 
@@ -154,4 +169,17 @@ mod score {
 
 **移設の唯一のリスク＝順序**: `decide_incremental`（`prev_*` READ）→ `take(&mut prev_candidates)`（L481）→ fold → `prev_*` WRITE（fold 後）の順を厳守。述語は**旧** `prev_*` を読み、書き込みは fold 後（不変条件#4）。Explore が read/write 分離を確認済み。
 
-**退行ガード = 既存 incremental テスト 14 本**（`incremental_search_*` 7 本 + `incremental_kana_*` 5 本 + `path_match_incremental_*` 2 本）が extension/backspace/mode-change/dot 遷移/kana 単調性/path を網羅。移設が順序 or 述語を壊せば必ず落ちる。**結論: 全述語で単調性が保証されており、キャッシュ再利用は安全**。
+**退行ガード = 既存 incremental テスト 14 本**（`incremental_search_*` 7 本 + `incremental_kana_*` 5 本 + `path_match_incremental_*` 2 本）が extension/backspace/mode-change/dot 遷移/kana 単調性/path を網羅。移設が順序 or 述語を壊せば必ず落ちる。
+
+**path テストの根拠は「再利用単調性」ではなく「incremental 無効化の正しさ」（Codex 指摘・実証済み）**: `path_match_incremental_cache_monotonic`（L2296）の L2309 コメントは「incremental cache 有効」と書くが、クエリ `tool\ed` は `\` を含み `!has_path_sep` ガード（L477）で incremental は**無効**。テストは path クエリが fresh 一致の結果を返すことを検証する有効な回帰だが、path が incremental *再利用* する経路は存在しない。→ Phase C(iv) でこの誤解コメントを訂正（オプション・doc ドリフト是正）。
+
+**結論: 全述語で単調性が保証されており、キャッシュ再利用は安全**（path は再利用せず無効化で安全側に倒す）。
+
+**Codex 独立レビュー（計画段階・実証フィルタ後）**
+
+Codex に plan を独立レビューさせ、severity をコードで実証して取捨選択（[[feedback_codex_review_unreliable]]）。**既にカバー済み**（`Some`=base_score・`matches.push` 先行・借用/部分ムーブ・read-before-take）は完全性の再確認として記録。**実質回収 4 件を計画へ反映済み**:
+1. `9000`（L555）は score 階層でなく file_name 短絡閾値 → `mod score` から除外を明記（Part A）
+2. スコープ記述の矛盾（「search.rs のみ」↔ Phase C の `.claude/rules`）→ 「コード変更のみ search.rs」へ是正（変更ファイル一覧）
+3. 性能不変条件の欠落 → bitmask pre-filter を `score_one_entry` 先頭に固定（不変条件#5・Part B item 4）
+4. `path_match_incremental_cache_monotonic` の誤解コメント → cache-check の根拠を「無効化の正しさ」へ訂正 + Phase C(iv) で修正
+その他（`.max(1)` 条件付き不変・`snotra-core/CLAUDE.md` path score 値保存）も記述に取り込み済み。

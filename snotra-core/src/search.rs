@@ -62,6 +62,12 @@ thread_local! {
     static MATCHER: RefCell<Matcher> = RefCell::new(Matcher::new(MatcherConfig::DEFAULT));
 }
 
+/// 検索エンジン内部で使うマッチ方式のドメイン enum。
+///
+/// `config::SearchModeConfig`（serde 由来の config.toml wire 形式）とは**意図的に別定義**とする。
+/// engine 側を serde 非依存に保つための層境界（anti-corruption boundary）であり、
+/// 下記 `From` 変換が config→engine の唯一の橋渡し（`SearchOptions ← SearchConfig` と同型）。
+/// 統合すると engine が serde/wire 形式に依存するため、二重定義は仕様であって重複ではない。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchMode {
     Prefix,
@@ -894,9 +900,10 @@ impl Ord for ScoredEntry {
 
 
 /// ひらがな正規化済みエントリ名に対して substring マッチを行い、
-/// マッチした場合は `4500 - byte_position` を返す（Substring の 5000 より低いスコア）。
+/// マッチした場合は `score_tier::KANA_BASE - byte_position` を返す
+/// （Substring の `SUBSTRING_BASE` より低いスコア）。
 /// byte_pos を使用: ひらがなは3バイト/文字のため文字位置の3倍差がある。
-/// 先頭マッチが高スコアになる意図は保たれており、SPEC.md §3.2 に準拠。
+/// 先頭マッチが高スコアになる意図は保たれており、SPEC.md §4.2 に準拠。
 /// kana_lower_name が常にひらがな/カタカナであることは保証されない（漢字はそのまま通過）が、
 /// kana_query は常に純ひらがな（ASCII アルファベット残留ガード後）のため実運用上問題なし。
 fn kana_substring_score(kana_lower_name: &str, kana_query: &str) -> Option<i64> {
@@ -2416,7 +2423,8 @@ mod tests {
         assert_eq!(r1.len(), 1);
         assert_eq!(r1[0].name, "app");
 
-        // 2回目: "tool\\ed" に拡張 → incremental cache 有効
+        // 2回目: "tool\\ed" に拡張 → パス区切りを含むため incremental は無効化される
+        //（decide_incremental の !has_path_sep ガード）。fresh scan と一致することを検証。
         let r2 = engine.search("tool\\ed", 8, &h, SearchMode::Substring);
         assert_eq!(r2.len(), 1);
         assert_eq!(r2[0].name, "app");

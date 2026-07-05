@@ -63,6 +63,16 @@ draft/saved モデルと検証死角に対応するシナリオを追加:
 
 **不要**。挙動変更なし（テストインフラ追加 + 機械的リファクタのみ）。IPC 契約・状態遷移・フローに変更なし。`ui_impl` 切り出しは実装事実の内部整理で、SPEC の意図に影響しない。
 
+## as-built（実装後の差分記録）
+
+Phase 1 スパイクの実証で計画から変わった点:
+
+- **テストは `tests/settings_ui.rs` でなくインライン `app.rs #[cfg(test)] mod tests`**: `SettingsApp`/`new`/`has_changes` が private のため integration test から不可視。内部状態 assert にはインラインが必須。
+- **font DI 不要**: `list_system_fonts()`（Win32 GDI）はヘッドレスでも動作。`new_for_test` は追加せず `new()` をそのまま使用（計画からさらに単純化）。
+- **`Harness::run()` でなく `settle`（固定 step）**: UI が checkbox アニメで毎フレーム repaint 要求 → `run()` は収束前提で panic。`step()` を数回。
+- **実装したテスト**: `kittest_checkbox_click_makes_draft_dirty` / `kittest_discard_reverts_draft_to_saved` / `kittest_reset_to_default_makes_dirty` / `kittest_save_with_validation_error_keeps_saved`（フッターボタン wiring + save→validate 経路。dirty-dot/modal は純ロジックテスト済みのため重複回避）。
+- **検証結果**: `cargo test -p snotra-settings` 32 passed / `cargo clippy --all-targets -D warnings` クリーン。
+
 ## セルフレビュー
 
 ### `/plan-review`（Explore 2体: Rust feasibility / CI・docs 同期）+ 主エージェント直接確認

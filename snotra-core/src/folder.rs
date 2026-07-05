@@ -1,9 +1,8 @@
 use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32Str};
-use std::os::windows::fs::MetadataExt;
 use std::path::Path;
-use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
 
 use crate::history::HistoryStore;
+use crate::indexer::is_hidden_or_system;
 use crate::query::to_lower_folded;
 use crate::search::SearchMode;
 use crate::ui_types::SearchResult;
@@ -181,13 +180,6 @@ fn matches_filter(name: &str, filter_lower: &str, mode: SearchMode, matcher: &mu
             matcher.fuzzy_match(haystack, needle).is_some()
         }
     }
-}
-
-fn is_hidden_or_system(meta: &std::fs::Metadata) -> bool {
-    let attrs = meta.file_attributes();
-    let hidden = (attrs & FILE_ATTRIBUTE_HIDDEN.0) != 0;
-    let system = (attrs & FILE_ATTRIBUTE_SYSTEM.0) != 0;
-    hidden || system
 }
 
 #[cfg(test)]

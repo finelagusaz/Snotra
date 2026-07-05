@@ -37,10 +37,9 @@ impl BinFile {
     }
 
     /// Load data from the file using the current version (postcard format).
-    #[allow(deprecated)]
     pub fn load<T: DeserializeOwned>(&self) -> Option<T> {
         let bytes = fs::read(&self.path).ok()?;
-        deserialize_with_header(&bytes, self.magic, self.version)
+        try_deserialize_with_header(&bytes, self.magic, self.version).ok()
     }
 
     /// Read raw file bytes. Useful when the caller needs custom deserialization
@@ -55,7 +54,6 @@ impl BinFile {
     ///
     /// Returns `Some((data, version))` where `version` is the version that
     /// succeeded, so the caller can apply version-specific migrations.
-    #[allow(deprecated)]
     pub fn load_with_fallback<T: DeserializeOwned>(
         &self,
         fallbacks: &[u32],
@@ -63,13 +61,13 @@ impl BinFile {
         let bytes = fs::read(&self.path).ok()?;
 
         // Try current version (always postcard)
-        if let Some(data) = deserialize_with_header(&bytes, self.magic, self.version) {
+        if let Ok(data) = try_deserialize_with_header(&bytes, self.magic, self.version) {
             return Some((data, self.version));
         }
 
         // Try each fallback
         for &ver in fallbacks {
-            if let Some(data) = deserialize_with_header(&bytes, self.magic, ver) {
+            if let Ok(data) = try_deserialize_with_header(&bytes, self.magic, ver) {
                 return Some((data, ver));
             }
         }
@@ -80,13 +78,12 @@ impl BinFile {
     /// Atomically save data: write to `.tmp`, remove old file, rename `.tmp`.
     /// Returns `true` on success. `#[must_use]`: callers must check for failure and
     /// surface it (log/eprintln) rather than silently discard it (issue #428).
-    #[allow(deprecated)]
     #[must_use]
     pub fn save<T: Serialize>(&self, data: &T) -> bool {
         if let Some(dir) = self.path.parent() {
             let _ = fs::create_dir_all(dir);
         }
-        let Some(bytes) = serialize_with_header(self.magic, self.version, data) else {
+        let Ok(bytes) = try_serialize_with_header(self.magic, self.version, data) else {
             return false;
         };
         let tmp = self.path.with_extension("bin.tmp");
@@ -108,16 +105,7 @@ impl BinFile {
     }
 }
 
-#[deprecated(note = "use try_serialize_with_header for Result-based error handling")]
-pub fn serialize_with_header<T: Serialize>(
-    magic: [u8; 4],
-    version: u32,
-    payload: &T,
-) -> Option<Vec<u8>> {
-    try_serialize_with_header(magic, version, payload).ok()
-}
-
-/// Result-based serialization (preferred over Option-based `serialize_with_header`).
+/// Result-based serialization.
 pub fn try_serialize_with_header<T: Serialize>(
     magic: [u8; 4],
     version: u32,
@@ -132,27 +120,7 @@ pub fn try_serialize_with_header<T: Serialize>(
     postcard::to_extend(payload, buf).map_err(|_| BinError::SerializeFailed)
 }
 
-#[deprecated(note = "use try_deserialize_with_header for Result-based error handling")]
-pub fn deserialize_with_header<T: DeserializeOwned>(
-    bytes: &[u8],
-    magic: [u8; 4],
-    version: u32,
-) -> Option<T> {
-    if bytes.len() < HEADER_LEN {
-        return None;
-    }
-    if bytes[0..4] != magic {
-        return None;
-    }
-    let mut ver = [0u8; 4];
-    ver.copy_from_slice(&bytes[4..8]);
-    if u32::from_le_bytes(ver) != version {
-        return None;
-    }
-    postcard::from_bytes(&bytes[HEADER_LEN..]).ok()
-}
-
-/// Result-based deserialization (preferred over Option-based `deserialize_with_header`).
+/// Result-based deserialization.
 pub fn try_deserialize_with_header<T: DeserializeOwned>(
     bytes: &[u8],
     magic: [u8; 4],
@@ -179,7 +147,6 @@ pub fn try_deserialize_with_header<T: DeserializeOwned>(
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
     use serde::{Deserialize, Serialize};
@@ -189,31 +156,10 @@ mod tests {
         value: u32,
     }
 
-    #[test]
-    fn roundtrip_with_header() {
-        let input = Dummy { value: 42 };
-        let bytes = serialize_with_header(*b"TEST", 1, &input).expect("serialize");
-        let output: Dummy = deserialize_with_header(&bytes, *b"TEST", 1).expect("deserialize");
-        assert_eq!(input, output);
-    }
-
-    #[test]
-    fn deserialize_fails_on_magic_mismatch() {
-        let input = Dummy { value: 1 };
-        let bytes = serialize_with_header(*b"GOOD", 1, &input).expect("serialize");
-        let output: Option<Dummy> = deserialize_with_header(&bytes, *b"BAD!", 1);
-        assert!(output.is_none());
-    }
-
-    #[test]
-    fn deserialize_fails_on_version_mismatch() {
-        let input = Dummy { value: 1 };
-        let bytes = serialize_with_header(*b"TEST", 1, &input).expect("serialize");
-        let output: Option<Dummy> = deserialize_with_header(&bytes, *b"TEST", 2);
-        assert!(output.is_none());
-    }
-
     // --- BinFile tests ---
+    // NOTE: header roundtrip / magic mismatch / version mismatch coverage lives in
+    // the `try_roundtrip_with_header` / `try_deserialize_magic_mismatch` /
+    // `try_deserialize_version_mismatch` tests below (Result-based API).
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("snotra_binfmt_test_{}", tag));
@@ -335,7 +281,7 @@ mod tests {
         let dir = temp_dir("binfile_fb_postcard");
         // Write a v2 postcard file
         let path = dir.join("data.bin");
-        let bytes = serialize_with_header(*b"TEST", 2, &Dummy { value: 55 }).unwrap();
+        let bytes = try_serialize_with_header(*b"TEST", 2, &Dummy { value: 55 }).unwrap();
         std::fs::write(&path, &bytes).unwrap();
 
         // Create a BinFile expecting v3 as current
@@ -353,7 +299,7 @@ mod tests {
         let dir = temp_dir("binfile_fb_nomatch");
         // Write a file with a different magic
         let path = dir.join("data.bin");
-        let bytes = serialize_with_header(*b"NOPE", 1, &Dummy { value: 1 }).unwrap();
+        let bytes = try_serialize_with_header(*b"NOPE", 1, &Dummy { value: 1 }).unwrap();
         std::fs::write(&path, &bytes).unwrap();
 
         let bf = bin_file_in(&dir, *b"TEST", 3, "data.bin");
@@ -374,7 +320,7 @@ mod tests {
         let raw = bf.load_bytes().expect("load_bytes");
         // Verify the raw bytes can be deserialized manually
         let output: Dummy =
-            deserialize_with_header(&raw, *b"TEST", 1).expect("manual deserialize");
+            try_deserialize_with_header(&raw, *b"TEST", 1).expect("manual deserialize");
         assert_eq!(input, output);
 
         let _ = std::fs::remove_dir_all(&dir);

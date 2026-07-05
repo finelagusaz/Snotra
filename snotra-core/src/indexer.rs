@@ -15,7 +15,7 @@ use windows::Win32::System::Threading::{
 
 use crate::binfmt::{BinFile, try_deserialize_with_header};
 use crate::config::{Config, ScanPath};
-use crate::query::{char_bitmask, to_lower_folded};
+use crate::query::{file_char_mask, lower_file_name, name_char_mask, to_lower_folded};
 
 const INDEX_MAGIC: [u8; 4] = *b"INDX";
 const INDEX_CACHE_VERSION: u32 = 4;
@@ -81,7 +81,7 @@ fn scan_directory_with_extensions(
             continue;
         };
 
-        if !show_hidden_system && !is_visible_metadata(&meta) {
+        if !show_hidden_system && is_hidden_or_system(&meta) {
             continue;
         }
 
@@ -135,11 +135,14 @@ fn scan_directory_with_extensions(
     }
 }
 
-fn is_visible_metadata(meta: &Metadata) -> bool {
+/// エントリが hidden または system 属性を持つか判定する。
+/// `folder.rs` の同名判定と逆極性の2重定義があったため、単一定義に統一（issue #437）。
+/// `folder.rs::read_dir_entries` はこの関数をそのまま import して使う。
+pub(crate) fn is_hidden_or_system(meta: &Metadata) -> bool {
     let attrs = meta.file_attributes();
     let hidden = (attrs & FILE_ATTRIBUTE_HIDDEN.0) != 0;
     let system = (attrs & FILE_ATTRIBUTE_SYSTEM.0) != 0;
-    !hidden && !system
+    hidden || system
 }
 
 pub fn normalize_entry_key(path: &str) -> String {
@@ -406,23 +409,12 @@ fn save_cache_sorted_in(dir: &Path, entries: &[AppEntry], config_hash: u64) {
     let lower_names: Vec<String> = entries.iter().map(|e| to_lower_folded(&e.name)).collect();
     let lower_file_names: Vec<Option<String>> = entries
         .iter()
-        .map(|e| {
-            std::path::Path::new(&e.target_path)
-                .file_name()
-                .and_then(|f| f.to_str())
-                .map(to_lower_folded)
-        })
+        .map(|e| lower_file_name(&e.target_path))
         .collect();
-    let char_masks: Vec<u64> = lower_names
-        .iter()
-        .map(|n| if n.is_ascii() { char_bitmask(n) } else { u64::MAX })
-        .collect();
+    let char_masks: Vec<u64> = lower_names.iter().map(|n| name_char_mask(n)).collect();
     let file_name_char_masks: Vec<u64> = lower_file_names
         .iter()
-        .map(|n| {
-            n.as_deref()
-                .map_or(0, |s| if s.is_ascii() { char_bitmask(s) } else { u64::MAX })
-        })
+        .map(|n| file_char_mask(n.as_deref()))
         .collect();
     // A-3: normalized_keys もキャッシュに含める。起動時の Wave 1 計算を完全スキップするため。
     let normalized_keys: Vec<String> =
@@ -761,7 +753,7 @@ fn scan_path_dirs(
             let Ok(meta) = entry.metadata() else {
                 continue;
             };
-            if !show_hidden_system && !is_visible_metadata(&meta) {
+            if !show_hidden_system && is_hidden_or_system(&meta) {
                 continue;
             }
             let ext = path
@@ -820,23 +812,10 @@ pub fn scan_path_env(existing_entries: &[AppEntry], show_hidden_system: bool) ->
 pub fn extend_cached_masks(masks: &mut CachedMasks, new_entries: &[AppEntry]) {
     for entry in new_entries {
         let lower = to_lower_folded(&entry.name);
-        let lower_file = std::path::Path::new(&entry.target_path)
-            .file_name()
-            .and_then(|f| f.to_str())
-            .map(to_lower_folded);
+        let lower_file = lower_file_name(&entry.target_path);
 
-        let mask = if lower.is_ascii() {
-            char_bitmask(&lower)
-        } else {
-            u64::MAX
-        };
-        let file_mask = lower_file.as_deref().map_or(0, |s| {
-            if s.is_ascii() {
-                char_bitmask(s)
-            } else {
-                u64::MAX
-            }
-        });
+        let mask = name_char_mask(&lower);
+        let file_mask = file_char_mask(lower_file.as_deref());
 
         masks.char_masks.push(mask);
         masks.file_name_char_masks.push(file_mask);
@@ -854,10 +833,9 @@ pub fn extend_cached_masks(masks: &mut CachedMasks, new_entries: &[AppEntry]) {
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::binfmt::{deserialize_with_header, serialize_with_header, try_deserialize_with_header};
+    use crate::binfmt::{try_deserialize_with_header, try_serialize_with_header};
     use std::fs;
 
     /// `INDEX_WRITE_LOCK` に触れるテストを直列化するガード。
@@ -1000,10 +978,10 @@ mod tests {
             ],
         };
 
-        let bytes =
-            serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache).expect("serialize");
+        let bytes = try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache)
+            .expect("serialize");
         let restored: IndexCache =
-            deserialize_with_header(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION).expect("deserialize");
+            try_deserialize_with_header(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION).expect("deserialize");
 
         assert_eq!(restored.built_at, 1700000000);
         assert_eq!(restored.entries.len(), 2);
@@ -1072,9 +1050,9 @@ mod tests {
         };
 
         let owned_bytes =
-            serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &owned).expect("owned");
+            try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &owned).expect("owned");
         let ref_bytes =
-            serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &borrowed).expect("borrowed");
+            try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &borrowed).expect("borrowed");
         assert_eq!(
             owned_bytes, ref_bytes,
             "IndexCacheRef must serialize byte-identically to owned IndexCache"
@@ -1082,7 +1060,7 @@ mod tests {
 
         // 借用版で書いたバイト列を所有版として読み戻せること（read 経路の不変性）も確認する。
         let restored: IndexCache =
-            deserialize_with_header(&ref_bytes, INDEX_MAGIC, INDEX_CACHE_VERSION)
+            try_deserialize_with_header(&ref_bytes, INDEX_MAGIC, INDEX_CACHE_VERSION)
                 .expect("roundtrip");
         assert_eq!(restored.entries.len(), 2);
         assert_eq!(restored.normalized_keys, normalized_keys);
@@ -1145,11 +1123,11 @@ mod tests {
             config_hash,
         };
         let bytes =
-            serialize_with_header(INDEX_MAGIC, 2, &cache_v2).expect("serialize v2");
+            try_serialize_with_header(INDEX_MAGIC, 2, &cache_v2).expect("serialize v2");
 
         // try_deserialize_with_header で v2 として読める
         let restored: IndexCacheV2 =
-            deserialize_with_header(&bytes, INDEX_MAGIC, 2).expect("deserialize v2");
+            try_deserialize_with_header(&bytes, INDEX_MAGIC, 2).expect("deserialize v2");
         assert_eq!(restored.entries[0].name, "Firefox");
         assert_eq!(restored.config_hash, config_hash);
 
@@ -1176,10 +1154,10 @@ mod tests {
             char_masks: vec![0xAB],
             file_name_char_masks: vec![0xCD],
         };
-        let bytes = serialize_with_header(INDEX_MAGIC, 3, &cache_v3).expect("serialize v3");
+        let bytes = try_serialize_with_header(INDEX_MAGIC, 3, &cache_v3).expect("serialize v3");
 
         let restored: IndexCacheV3 =
-            deserialize_with_header(&bytes, INDEX_MAGIC, 3).expect("deserialize v3");
+            try_deserialize_with_header(&bytes, INDEX_MAGIC, 3).expect("deserialize v3");
         assert_eq!(restored.char_masks, vec![0xAB]);
 
         // v4 として読もうとすると失敗する（lower_names フィールドがない）

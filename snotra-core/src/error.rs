@@ -13,7 +13,6 @@ pub enum BinError {
     },
     DeserializeFailed,
     SerializeFailed,
-    IoError(std::io::Error),
     BufferTooShort,
 }
 
@@ -37,26 +36,12 @@ impl fmt::Display for BinError {
             }
             Self::DeserializeFailed => write!(f, "deserialization failed"),
             Self::SerializeFailed => write!(f, "serialization failed"),
-            Self::IoError(e) => write!(f, "I/O error: {}", e),
             Self::BufferTooShort => write!(f, "buffer too short for header"),
         }
     }
 }
 
-impl std::error::Error for BinError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::IoError(e) => Some(e),
-            _ => None,
-        }
-    }
-}
-
-impl From<std::io::Error> for BinError {
-    fn from(e: std::io::Error) -> Self {
-        Self::IoError(e)
-    }
-}
+impl std::error::Error for BinError {}
 
 /// Errors from config validation.
 #[derive(Debug, Clone, PartialEq)]
@@ -116,31 +101,13 @@ mod tests {
     }
 
     #[test]
-    fn bin_error_display_io_error() {
-        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
-        let err = BinError::IoError(io_err);
-        let msg = format!("{}", err);
-        assert!(msg.contains("I/O error"));
-        assert!(msg.contains("file not found"));
-    }
-
-    #[test]
     fn bin_error_display_buffer_too_short() {
         let err = BinError::BufferTooShort;
         assert_eq!(format!("{}", err), "buffer too short for header");
     }
 
     #[test]
-    fn bin_error_source_io_error() {
-        use std::error::Error;
-        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
-        let err = BinError::IoError(io_err);
-        let source = err.source().expect("IoError should have a source");
-        assert!(source.to_string().contains("access denied"));
-    }
-
-    #[test]
-    fn bin_error_source_non_io_variants_return_none() {
+    fn bin_error_source_all_variants_return_none() {
         use std::error::Error;
         let variants: Vec<BinError> = vec![
             BinError::MagicMismatch {
@@ -162,12 +129,5 @@ mod tests {
                 variant
             );
         }
-    }
-
-    #[test]
-    fn bin_error_from_io_error() {
-        let io_err = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "broken");
-        let bin_err: BinError = io_err.into();
-        assert!(matches!(bin_err, BinError::IoError(_)));
     }
 }

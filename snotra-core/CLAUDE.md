@@ -60,6 +60,12 @@
 
 `query::char_bitmask()` が唯一の定義（bits 0-25 = a-z, bits 26-35 = 0-9）。`search.rs` と `indexer.rs` の両方がこの関数を import して使用する。ロジックを変更する場合は `query.rs` の1箇所のみ修正すればよい。
 
+**エントリ単位のマスク導出・file_name 導出も `query.rs` に集約済み**（issue #437）: 「ascii なら `char_bitmask`、非 ascii なら `u64::MAX`」は `query::name_char_mask()`、file_name 側の `None→0` を含む版は `query::file_char_mask()`、`target_path` から小文字 file_name を導出する処理は `query::lower_file_name()` に一元化。`search.rs`（Wave 2 / Wave 1）と `indexer.rs`（`save_cache_sorted_in` / `extend_cached_masks`）が共有する。検索ホットパスのため3関数とも `#[inline]`。
+
+### hidden/system 判定は `indexer::is_hidden_or_system` に一元化済み
+
+`indexer.rs` の `is_hidden_or_system(meta) -> bool`（true = hidden または system）が唯一の定義。`folder.rs::read_dir_entries` はこれを import して使う（旧 `folder.rs::is_hidden_or_system` は逆極性の別定義だったため削除・統合済み、issue #437）。
+
 ### `query.rs` の正規化と `Cow<str>` 遅延アロケーション
 
 `normalize_query()` は `Cow<str>` を返す。ASCII 小文字のみのクエリでは借用（ゼロアロケーション）、大文字・アクセント・連続空白がある場合のみ所有に切り替わる。正規化ロジックを変更するとき、この2パスの一貫性（チェック条件とビルド条件が同じ入力に対して同じ結果を生む）を壊さない。

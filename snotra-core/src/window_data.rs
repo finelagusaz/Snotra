@@ -92,10 +92,9 @@ fn save_state_in(state: &WindowPlacementState, dir: &Path) {
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::binfmt::{deserialize_with_header, serialize_with_header};
+    use crate::binfmt::{try_deserialize_with_header, try_serialize_with_header};
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("snotra_window_test_{}", tag));
@@ -139,7 +138,7 @@ mod tests {
                 height: 600,
             }),
         };
-        let bytes = serialize_with_header(WINDOW_MAGIC, WINDOW_VERSION_V4, &v4_state)
+        let bytes = try_serialize_with_header(WINDOW_MAGIC, WINDOW_VERSION_V4, &v4_state)
             .expect("serialize v4");
         let path = dir.join("window.bin");
         std::fs::write(&path, &bytes).expect("write v4 window.bin");
@@ -157,12 +156,12 @@ mod tests {
         // ディスク上のファイルは V5 として再保存されている。
         let raw = std::fs::read(&path).expect("read persisted window.bin");
         let reloaded_v5: WindowPlacementState =
-            deserialize_with_header(&raw, WINDOW_MAGIC, WINDOW_VERSION_V5)
+            try_deserialize_with_header(&raw, WINDOW_MAGIC, WINDOW_VERSION_V5)
                 .expect("persisted file should now deserialize as V5");
         assert_eq!(reloaded_v5, migrated);
-        let as_v4: Option<WindowPlacementState> =
-            deserialize_with_header(&raw, WINDOW_MAGIC, WINDOW_VERSION_V4);
-        assert!(as_v4.is_none(), "persisted file should no longer be readable as V4");
+        let as_v4: Result<WindowPlacementState, _> =
+            try_deserialize_with_header(&raw, WINDOW_MAGIC, WINDOW_VERSION_V4);
+        assert!(as_v4.is_err(), "persisted file should no longer be readable as V4");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -178,9 +177,9 @@ mod tests {
             }),
         };
         let bytes =
-            serialize_with_header(WINDOW_MAGIC, WINDOW_VERSION_V4, &state).expect("serialize");
+            try_serialize_with_header(WINDOW_MAGIC, WINDOW_VERSION_V4, &state).expect("serialize");
         let restored: WindowPlacementState =
-            deserialize_with_header(&bytes, WINDOW_MAGIC, WINDOW_VERSION_V4).expect("deserialize");
+            try_deserialize_with_header(&bytes, WINDOW_MAGIC, WINDOW_VERSION_V4).expect("deserialize");
         assert_eq!(state, restored);
     }
 
@@ -195,9 +194,9 @@ mod tests {
             }),
         };
         let bytes =
-            serialize_with_header(WINDOW_MAGIC, WINDOW_VERSION_V5, &state).expect("serialize");
+            try_serialize_with_header(WINDOW_MAGIC, WINDOW_VERSION_V5, &state).expect("serialize");
         let restored: WindowPlacementState =
-            deserialize_with_header(&bytes, WINDOW_MAGIC, WINDOW_VERSION_V5).expect("deserialize");
+            try_deserialize_with_header(&bytes, WINDOW_MAGIC, WINDOW_VERSION_V5).expect("deserialize");
         assert_eq!(state, restored);
     }
 
@@ -211,9 +210,9 @@ mod tests {
             settings_size: None,
         };
         let bytes =
-            serialize_with_header(WINDOW_MAGIC, WINDOW_VERSION_V4, &state).expect("serialize");
-        let result: Option<WindowPlacementState> =
-            deserialize_with_header(&bytes, WINDOW_MAGIC, WINDOW_VERSION_V5);
-        assert!(result.is_none(), "V4 data should not load as V5");
+            try_serialize_with_header(WINDOW_MAGIC, WINDOW_VERSION_V4, &state).expect("serialize");
+        let result: Result<WindowPlacementState, _> =
+            try_deserialize_with_header(&bytes, WINDOW_MAGIC, WINDOW_VERSION_V5);
+        assert!(result.is_err(), "V4 data should not load as V5");
     }
 }

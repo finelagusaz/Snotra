@@ -60,6 +60,33 @@ impl LaunchResult {
 const LAUNCH_TIMEOUT_MS: u64 = 4_000;
 const PATH_PLACEHOLDER: &str = "{path}";
 
+/// Run a blocking launch closure on the blocking pool, bounded by
+/// `LAUNCH_TIMEOUT_MS`. Common wrapper for the three launch entry points
+/// (`launch_with_tool`, `launch_item`, `commands::instant::execute_instant_command`),
+/// all of which spawn a blocking Win32/process call that must not stall the
+/// async runtime forever.
+pub(crate) async fn run_launch_blocking<F>(f: F) -> LaunchResult
+where
+    F: FnOnce() -> LaunchResult + Send + 'static,
+{
+    let join = tauri::async_runtime::spawn_blocking(f);
+    match timeout(Duration::from_millis(LAUNCH_TIMEOUT_MS), join).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => LaunchResult::failed(-1, format!("launch_worker_join_error: {e}")),
+        Err(_) => LaunchResult::timeout(LAUNCH_TIMEOUT_MS),
+    }
+}
+
+/// Record a successful launch in history and persist if the pending-write
+/// threshold is reached. Common tail of all launch entry points
+/// (`launch_with_tool`, `launch_item`, `launch_item_with_state`,
+/// `launch_with_tool_with_state`, `launch_default_with_state`).
+fn record_and_save(state: &AppState, path: &str, query: &str) {
+    let mut engine = state.engine.lock().unwrap();
+    engine.record_launch(path, query);
+    engine.save_history_if_dirty(5);
+}
+
 /// フロントエンドへ返すオープナーツール情報（serde シリアライズ用）
 #[derive(serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -113,20 +140,11 @@ pub async fn launch_with_tool(
     let launch_path = path.clone();
     let exe = tool_exe.clone();
     let args = tool_args.clone();
-    let join = tauri::async_runtime::spawn_blocking(move || {
-        launch_with_tool_core(&launch_path, &exe, &args)
-    });
-    let result = match timeout(Duration::from_millis(LAUNCH_TIMEOUT_MS), join).await {
-        Ok(Ok(v)) => v,
-        Ok(Err(e)) => LaunchResult::failed(-1, format!("launch_worker_join_error: {e}")),
-        Err(_) => LaunchResult::timeout(LAUNCH_TIMEOUT_MS),
-    };
+    let result = run_launch_blocking(move || launch_with_tool_core(&launch_path, &exe, &args)).await;
 
     if result.is_ok() {
         let state = app.state::<AppState>();
-        let mut engine = state.engine.lock().unwrap();
-        engine.record_launch(&path, &query);
-        engine.save_history_if_dirty(5);
+        record_and_save(&state, &path, &query);
     }
 
     trace_command(
@@ -200,18 +218,11 @@ pub async fn launch_item(
     );
     // launch_item_core does ShellExecuteW — must NOT hold the engine lock
     let launch_path = path.clone();
-    let join = tauri::async_runtime::spawn_blocking(move || launch_item_core(&launch_path));
-    let result = match timeout(Duration::from_millis(LAUNCH_TIMEOUT_MS), join).await {
-        Ok(Ok(v)) => v,
-        Ok(Err(e)) => LaunchResult::failed(-1, format!("launch_worker_join_error: {e}")),
-        Err(_) => LaunchResult::timeout(LAUNCH_TIMEOUT_MS),
-    };
+    let result = run_launch_blocking(move || launch_item_core(&launch_path)).await;
 
     if result.is_ok() {
         let state = app.state::<AppState>();
-        let mut engine = state.engine.lock().unwrap();
-        engine.record_launch(&path, &query);
-        engine.save_history_if_dirty(5);
+        record_and_save(&state, &path, &query);
     }
 
     trace_command(
@@ -246,9 +257,7 @@ pub fn launch_item_with_state(path: &str, query: &str, state: &AppState) -> Laun
     };
 
     if result.is_ok() {
-        let mut engine = state.engine.lock().unwrap();
-        engine.record_launch(path, query);
-        engine.save_history_if_dirty(5);
+        record_and_save(state, path, query);
     }
     result
 }
@@ -258,9 +267,7 @@ pub fn launch_with_tool_with_state(path: &str, exe: &str, args: &str, state: &Ap
     // launch_with_tool_core does NOT use ShellExecuteW; COM STA は不要
     let result = launch_with_tool_core(path, exe, args);
     if result.is_ok() {
-        let mut engine = state.engine.lock().unwrap();
-        engine.record_launch(path, "");
-        engine.save_history_if_dirty(5);
+        record_and_save(state, path, "");
     }
     result
 }
@@ -269,9 +276,7 @@ pub fn launch_with_tool_with_state(path: &str, exe: &str, args: &str, state: &Ap
 pub fn launch_default_with_state(path: &str, state: &AppState) -> LaunchResult {
     let result = launch_item_core(path);
     if result.is_ok() {
-        let mut engine = state.engine.lock().unwrap();
-        engine.record_launch(path, "");
-        engine.save_history_if_dirty(5);
+        record_and_save(state, path, "");
     }
     result
 }

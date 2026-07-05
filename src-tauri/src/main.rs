@@ -8,14 +8,15 @@ mod indexing;
 mod monitor;
 mod platform;
 mod state;
+mod trace;
 mod working_set;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use serde_json::json;
-use snotra_core::config::{Config, LoadOutcome};
+use snotra_core::config::{Config, HotkeyConfig, Language, LoadOutcome};
 use snotra_core::engine::Engine;
 use snotra_core::history::HistoryStore;
 use snotra_core::indexer;
@@ -30,38 +31,10 @@ use crate::state::AppState;
 const ALT_RELEASE_POLL_MS: u64 = 10;
 const ALT_RELEASE_TIMEOUT_MS: u64 = 350;
 
-fn trace_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        let Ok(v) = std::env::var("SNOTRA_TRACE") else {
-            return false;
-        };
-        matches!(
-            v.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        )
-    })
-}
-
+/// Thin wrapper kept so call sites read `trace_main(...)`; logic lives in the
+/// shared `crate::trace` module (deduped with `commands::trace_command`, #433).
 fn trace_main(event: &str, data: serde_json::Value) {
-    if !trace_enabled() {
-        return;
-    }
-    static TRACE_SEQ: AtomicU64 = AtomicU64::new(0);
-    let seq = TRACE_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
-    let ts_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    eprintln!(
-        "[trace] {}",
-        json!({
-            "seq": seq,
-            "ts_ms": ts_ms,
-            "event": event,
-            "data": data,
-        })
-    );
+    trace::trace(event, data);
 }
 
 #[cfg(windows)]
@@ -260,9 +233,99 @@ fn position_on_target_monitor(
     )));
 }
 
+fn elapsed_ms(t0: Instant) -> f64 {
+    t0.elapsed().as_secs_f64() * 1000.0
+}
+
+/// Reset window height to search-bar-only (52px) before positioning.
+/// Must run before `position_on_target_monitor` so clamping/centering uses
+/// the collapsed height, not the stale expanded height from a previous show.
+fn reset_search_height(main: &tauri::WebviewWindow) {
+    if let Ok(current) = main.inner_size() {
+        let sf = main.scale_factor().unwrap_or(1.0);
+        let logical_w = current.width as f64 / sf;
+        let _ = main.set_size(tauri::Size::Logical(tauri::LogicalSize::new(logical_w, 52.0)));
+    }
+}
+
+/// Show the main window and give it focus.
+///
+/// Order (must not change): `show()` (idempotent — called unconditionally to
+/// skip the costly `is_visible()` pre-check) → update tracked `main_visible`
+/// flag → `set_focus()` → synchronous `WM_NULL` wait (`SetForegroundWindow` is
+/// partially async per Raymond Chen; this blocks until focus activation
+/// messages are fully processed) → Alt key-up (must follow confirmed focus
+/// transfer, see `send_alt_key_up` doc comment).
+fn show_and_focus_main(app_handle: &AppHandle, main: &tauri::WebviewWindow, t0: Instant) {
+    trace_main("show_main:show:start", json!({ "ms": elapsed_ms(t0) }));
+    let _ = main.show();
+    trace_main("show_main:show:end", json!({ "ms": elapsed_ms(t0) }));
+
+    // Update tracked visibility (used by hotkey toggle instead of Win32 is_visible).
+    if let Some(state) = app_handle.try_state::<AppState>() {
+        state.main_visible.store(true, Ordering::SeqCst);
+    }
+
+    trace_main("show_main:set_focus:start", json!({ "ms": elapsed_ms(t0) }));
+    let _ = main.set_focus();
+    trace_main("show_main:set_focus:end", json!({ "ms": elapsed_ms(t0) }));
+
+    // Ensure focus transfer is fully processed before sending synthetic
+    // key-ups.  SetForegroundWindow is partially asynchronous (Raymond
+    // Chen); WM_NULL via SendMessageTimeout blocks until the target has
+    // processed all pending activation messages.
+    #[cfg(windows)]
+    if let Ok(hwnd) = main.hwnd() {
+        use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SendMessageTimeoutW, SMTO_NORMAL, WM_NULL,
+        };
+        let hwnd = HWND(hwnd.0);
+        let mut result = 0usize;
+        unsafe {
+            let _ = SendMessageTimeoutW(
+                hwnd, WM_NULL, WPARAM(0), LPARAM(0),
+                SMTO_NORMAL, 100, Some(&mut result),
+            );
+        }
+    }
+
+    // Clear lingering Alt modifier after focus is confirmed.
+    send_alt_key_up();
+}
+
+/// Turn IME composition off on the main window. Must run after focus is
+/// confirmed (called from `show_main_and_emit` after `show_and_focus_main`).
+fn apply_ime_control(app_handle: &AppHandle, main: &tauri::WebviewWindow, t0: Instant) {
+    trace_main("show_main:ime_control:start", json!({ "ms": elapsed_ms(t0) }));
+    if let Some(bridge) = app_handle.try_state::<Mutex<PlatformBridge>>()
+        && let Ok(b) = bridge.lock()
+    {
+        #[cfg(windows)]
+        if let Ok(hwnd) = main.hwnd() {
+            b.send_command(PlatformCommand::TurnOffIme(hwnd.0 as usize));
+        }
+    }
+    trace_main("show_main:ime_control:end", json!({ "ms": elapsed_ms(t0) }));
+}
+
+/// Emit `window-shown` to the frontend. Must be the last step of
+/// `show_main_and_emit` (frontend reacts to this event assuming the window is
+/// already shown, focused, and IME state is settled).
+fn emit_window_shown(app_handle: &AppHandle, t0: Instant) {
+    trace_main(
+        "show_main:emit_window_shown:start",
+        json!({ "ms": elapsed_ms(t0) }),
+    );
+    let _ = app_handle.emit("window-shown", ());
+    trace_main(
+        "show_main:emit_window_shown:end",
+        json!({ "ms": elapsed_ms(t0) }),
+    );
+}
+
 fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
     let t0 = Instant::now();
-    let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
 
     if let Some(main) = app_handle.get_webview_window("main") {
         // Resume WebView2 renderer before any window operations.
@@ -274,16 +337,10 @@ fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
         // thread's event loop.
         resume_webview(&main);
 
-        trace_main("show_main:start", json!({ "ms": ms(t0.elapsed()) }));
+        trace_main("show_main:start", json!({ "ms": elapsed_ms(t0) }));
 
-        // Reset window height to search-bar-only (52px) before positioning.
-        // This ensures position_on_target_monitor uses the correct (collapsed)
-        // height for centering and clamping, not the stale expanded height.
-        if let Ok(current) = main.inner_size() {
-            let sf = main.scale_factor().unwrap_or(1.0);
-            let logical_w = current.width as f64 / sf;
-            let _ = main.set_size(tauri::Size::Logical(tauri::LogicalSize::new(logical_w, 52.0)));
-        }
+        // Reset height before positioning (see reset_search_height doc comment).
+        reset_search_height(&main);
 
         // Position window on the target monitor (cursor or primary) using
         // saved relative coordinates, clamped to the target work area.
@@ -291,73 +348,15 @@ fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
         #[cfg(windows)]
         position_on_target_monitor(app_handle, &main);
 
-        // show() is idempotent — call unconditionally to skip the costly
-        // is_visible() pre-check (61ms + 71ms gap on first invocation).
-        trace_main("show_main:show:start", json!({ "ms": ms(t0.elapsed()) }));
-        let _ = main.show();
-        trace_main("show_main:show:end", json!({ "ms": ms(t0.elapsed()) }));
+        show_and_focus_main(app_handle, &main, t0);
 
-        // Update tracked visibility (used by hotkey toggle instead of Win32 is_visible).
-        if let Some(state) = app_handle.try_state::<AppState>() {
-            state.main_visible.store(true, Ordering::SeqCst);
+        if ime_control {
+            apply_ime_control(app_handle, &main, t0);
         }
 
-        {
-            // set_focus
-            trace_main("show_main:set_focus:start", json!({ "ms": ms(t0.elapsed()) }));
-            let _ = main.set_focus();
-            trace_main("show_main:set_focus:end", json!({ "ms": ms(t0.elapsed()) }));
+        emit_window_shown(app_handle, t0);
 
-            // Ensure focus transfer is fully processed before sending synthetic
-            // key-ups.  SetForegroundWindow is partially asynchronous (Raymond
-            // Chen); WM_NULL via SendMessageTimeout blocks until the target has
-            // processed all pending activation messages.
-            #[cfg(windows)]
-            if let Ok(hwnd) = main.hwnd() {
-                use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-                use windows::Win32::UI::WindowsAndMessaging::{
-                    SendMessageTimeoutW, SMTO_NORMAL, WM_NULL,
-                };
-                let hwnd = HWND(hwnd.0);
-                let mut result = 0usize;
-                unsafe {
-                    let _ = SendMessageTimeoutW(
-                        hwnd, WM_NULL, WPARAM(0), LPARAM(0),
-                        SMTO_NORMAL, 100, Some(&mut result),
-                    );
-                }
-            }
-
-            // Clear lingering Alt modifier after focus is confirmed.
-            send_alt_key_up();
-
-            // IME control
-            if ime_control {
-                trace_main("show_main:ime_control:start", json!({ "ms": ms(t0.elapsed()) }));
-                if let Some(bridge) = app_handle.try_state::<Mutex<PlatformBridge>>()
-                    && let Ok(b) = bridge.lock()
-                {
-                    #[cfg(windows)]
-                    if let Ok(hwnd) = main.hwnd() {
-                        b.send_command(PlatformCommand::TurnOffIme(hwnd.0 as usize));
-                    }
-                }
-                trace_main("show_main:ime_control:end", json!({ "ms": ms(t0.elapsed()) }));
-            }
-
-            // emit window-shown
-            trace_main(
-                "show_main:emit_window_shown:start",
-                json!({ "ms": ms(t0.elapsed()) }),
-            );
-            let _ = app_handle.emit("window-shown", ());
-            trace_main(
-                "show_main:emit_window_shown:end",
-                json!({ "ms": ms(t0.elapsed()) }),
-            );
-
-            trace_main("show_main:total", json!({ "ms": ms(t0.elapsed()) }));
-        }
+        trace_main("show_main:total", json!({ "ms": elapsed_ms(t0) }));
     }
 }
 
@@ -463,17 +462,7 @@ fn main() {
 
             // Restore search window width before event loop starts.
             // Position is handled by show_main_and_emit (multi-monitor aware).
-            if let Some(w) = app.get_webview_window("main")
-                && window_width > 0
-                && let Ok(current) = w.inner_size()
-            {
-                let sf = w.scale_factor().unwrap_or(1.0);
-                let logical_h = current.height as f64 / sf;
-                let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
-                    f64::from(window_width),
-                    logical_h,
-                )));
-            }
+            setup_window_geometry(&app_handle, window_width);
 
             // Set WebView2 default background to match the theme to prevent
             // a white flash when the window is resized to show results (#193).
@@ -482,219 +471,309 @@ fn main() {
             // Register AcceleratorKeyPressed handler to suppress WM_SYSKEYDOWN
             // (Alt+char) before TranslateMessage → WM_SYSCHAR → DefWindowProc →
             // MessageBeep(0).  This is the root fix for the hotkey beep issue.
-            #[cfg(windows)]
-            if let Some(main) = app.get_webview_window("main") {
-                main.with_webview(move |platform_webview| {
-                    use webview2_com::Microsoft::Web::WebView2::Win32::{
-                        COREWEBVIEW2_KEY_EVENT_KIND,
-                        COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
-                    };
-                    use webview2_com::AcceleratorKeyPressedEventHandler;
-                    use windows::Win32::UI::Input::KeyboardAndMouse::VK_F4;
-
-                    let controller = platform_webview.controller();
-                    let handler = AcceleratorKeyPressedEventHandler::create(Box::new(
-                        move |_controller, args| {
-                            if let Some(args) = args {
-                                let mut kind = COREWEBVIEW2_KEY_EVENT_KIND(0);
-                                unsafe { args.KeyEventKind(&mut kind)? };
-                                if kind == COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN {
-                                    let mut vk = 0u32;
-                                    unsafe { args.VirtualKey(&mut vk)? };
-                                    // Let Alt+F4 through for window close
-                                    if vk != VK_F4.0 as u32 {
-                                        unsafe { args.SetHandled(true)? };
-                                    }
-                                }
-                            }
-                            Ok(())
-                        },
-                    ));
-                    let mut token = 0i64;
-                    unsafe {
-                        let _ = controller.add_AcceleratorKeyPressed(&handler, &mut token);
-                    }
-                }).expect("AcceleratorKeyPressed handler must register in setup phase");
-            }
+            setup_accelerator_handler(&app_handle);
 
             // Spawn platform thread early to parallelize Win32 init with WebView creation.
             // Tray is NOT created here; SetTrayVisible is sent after full setup (SPEC §7.5).
-            let platform_pending = PlatformBridge::begin(app_handle.clone(), hotkey_config, initial_language);
-
-            // Win32 init finishes in a few ms; by the time windows are created it is already done.
-            if let Some(bridge) = platform_pending.and_then(PlatformBridgePending::wait) {
-                app_handle.manage(Mutex::new(bridge));
-            }
+            // Must precede setup_hotkey_listener below, which sends RegisterInitialHotkey
+            // through the platform bridge managed here.
+            setup_platform_thread(&app_handle, hotkey_config, initial_language);
 
             // First-run: launch snotra-settings directly (bypassing the indexing guard
             // in open_settings, since initial_indexing=true during first run).
-            // Pass --first-run so SettingsApp opens on the Index tab for onboarding.
-            // On failure (exe not found / spawn error), fall back to building the index
-            // with default paths so the indexing flag eventually clears and the user
-            // can open settings via open_settings once the build finishes.
-            if is_first_run
-                && commands::launch_settings_process(&app_handle, &["--first-run"]).is_err()
-            {
-                indexing::start_index_build(&app_handle);
-            }
+            setup_first_run(&app_handle, is_first_run);
 
-            // Listen for hotkey toggle events
-            let handle_for_hotkey = app_handle.clone();
-            let toggle = hotkey_toggle;
-            let ime_control = ime_off;
-            let hotkey_generation = Arc::new(AtomicU64::new(0));
-            let hotkey_generation_for_listener = hotkey_generation;
-            app_handle.listen("hotkey-pressed", move |_| {
-                let t0 = Instant::now();
-                trace_main("hotkey:listener_enter", json!({}));
-                // Ignore the hotkey while snotra-settings is running: the user may be
-                // pressing the current hotkey combination to configure a new one.
-                if let Some(proc_state) = handle_for_hotkey.try_state::<SettingsProcessState>()
-                    && proc_state.lock().unwrap().is_some()
-                {
-                    return;
-                }
-                let current_gen = hotkey_generation_for_listener.fetch_add(1, Ordering::SeqCst) + 1;
-                // Use tracked AtomicBool instead of Win32 is_visible() to avoid
-                // ~35ms cold-call overhead on first hotkey press.
-                let visible = handle_for_hotkey
-                    .try_state::<AppState>()
-                    .map(|s| s.main_visible.load(Ordering::SeqCst))
-                    .unwrap_or(false);
-                trace_main("hotkey:visible_check", json!({ "visible": visible }));
-                if visible && toggle {
-                    if let Some(w) = handle_for_hotkey.get_webview_window("main") {
-                        let _ = w.hide();
-                    }
-                    if let Some(state) = handle_for_hotkey.try_state::<AppState>() {
-                        state.main_visible.store(false, Ordering::SeqCst);
-                    }
-                    // Notify JS side so mainVisible signal updates and Blob URLs are released.
-                    // Symmetric pair: window-shown is emitted in show_main_and_emit.
-                    // Must precede suspend so the JS cleanup handler is queued in the
-                    // renderer before TrySuspend pauses it.
-                    let _ = handle_for_hotkey.emit("window-hidden", ());
-                    // Suspend WebView2 renderer after emit (IsVisible=false from hide above).
-                    // TrySuspend is best-effort and async: the renderer finishes processing
-                    // the queued emit before actually suspending.
-                    if let Some(w) = handle_for_hotkey.get_webview_window("main") {
-                        suspend_webview(&w);
-                    }
-                    // 非表示アイドルの物理 working set を回収（TrySuspend は圧迫なし環境では
-                    // 回収しないため能動適用）。best-effort・機能挙動には影響しない。
-                    working_set::trim_idle_working_set(std::process::id());
-                } else if is_alt_pressed() {
-                    trace_main("hotkey:alt_wait_start", json!({}));
-                    let handle_for_show = handle_for_hotkey.clone();
-                    let hotkey_generation_for_wait = hotkey_generation_for_listener.clone();
-                    std::thread::spawn(move || {
-                        wait_alt_release_or_timeout();
-                        trace_main("hotkey:alt_wait_done", json!({ "waited_ms": t0.elapsed().as_secs_f64() * 1000.0 }));
-                        if hotkey_generation_for_wait.load(Ordering::SeqCst) != current_gen {
-                            return;
-                        }
-                        show_main_and_emit(&handle_for_show, ime_control);
-                    });
-                } else {
-                    trace_main("hotkey:show_direct", json!({}));
-                    show_main_and_emit(&handle_for_hotkey, ime_control);
-                }
-            });
-
-            // hotkey-pressed listener is now registered; activate hotkey on platform thread.
-            // Registering the hotkey only after the listener is ready ensures no event
-            // is emitted before there is a receiver to handle it.
-            if let Some(bridge) = app_handle.try_state::<Mutex<PlatformBridge>>()
-                && let Ok(b) = bridge.lock()
-            {
-                b.send_command(PlatformCommand::RegisterInitialHotkey);
-            }
+            // Listen for hotkey-pressed events, then activate the hotkey on the
+            // platform thread. Registering the listener before activating the
+            // hotkey ensures no event is emitted before there is a receiver to
+            // handle it — this order must not change (src-tauri/CLAUDE.md).
+            setup_hotkey_listener(&app_handle, hotkey_toggle, ime_off);
 
             // Listen for open-settings event from tray
-            let handle_for_settings = app_handle.clone();
-            app_handle.listen("open-settings", move |_| {
-                let _ = commands::open_settings(
-                    handle_for_settings.state::<AppState>(),
-                    handle_for_settings.clone(),
-                );
-            });
+            setup_open_settings_listener(&app_handle);
 
             // Listen for exit request from tray
-            let handle_for_exit = app_handle.clone();
-            app_handle.listen("exit-requested", move |_| {
-                // Flush any unsaved data before exit
-                {
-                    let app_state = handle_for_exit.state::<AppState>();
-                    let mut engine = app_state.engine.lock().unwrap();
-                    engine.save_history_if_dirty(1);
-                }
-                {
-                    let icon_state = handle_for_exit.state::<IconCacheState>();
-                    let mut cache = icon_state.lock().unwrap();
-                    if let Some(c) = cache.as_mut() {
-                        c.save_if_dirty();
-                    }
-                }
-                // Kill snotra-settings child process if running.
-                if let Some(proc_state) = handle_for_exit.try_state::<SettingsProcessState>()
-                    && let Ok(mut guard) = proc_state.lock()
-                    && let Some(mut child) = guard.take()
-                {
-                    let _ = child.kill();
-                }
-                if let Some(bridge) = handle_for_exit.try_state::<Mutex<PlatformBridge>>()
-                    && let Ok(b) = bridge.lock()
-                {
-                    b.send_command(PlatformCommand::Exit);
-                }
-                handle_for_exit.exit(0);
-            });
+            setup_exit_listener(&app_handle);
 
             // Start config.toml file watcher for external changes (snotra-settings)
-            if let Some(watcher) = config_watcher::start(&app_handle) {
-                app_handle.manage(Mutex::new(watcher));
-            }
+            setup_config_watcher(&app_handle);
 
             // 背景再スキャン（SPEC §3.3 ハイブリッド方式）。キャッシュヒット時のみ。
             // ロジックは snotra-core、spawn と結果の後始末（アイコン無効化）は src-tauri。
-            if let Some(task) = rescan_task {
-                let handle_for_rescan = app_handle.clone();
-                let _ = std::thread::Builder::new()
-                    .name("snotra-index-rescan".to_string())
-                    .spawn(move || {
-                        indexer::lower_current_thread_priority();
-                        if task.run() == indexer::RescanOutcome::Changed
-                            && let Some(icons) = handle_for_rescan.try_state::<IconCacheState>()
-                        {
-                            icon::invalidate_icon_cache(&icons);
-                        }
-                    });
-            }
+            setup_background_rescan(&app_handle, rescan_task);
 
             // All windows pre-created and all listeners registered; now safe to show tray.
             // Showing tray before this point would allow right-click menu actions before
-            // the windows and listeners are ready (SPEC §7.5 / §9).
-            if show_tray
-                && let Some(bridge) = app_handle.try_state::<Mutex<PlatformBridge>>()
-                && let Ok(b) = bridge.lock()
-            {
-                b.send_command(PlatformCommand::SetTrayVisible(true));
-                // config が壊れて既定値に復旧した場合、トレイ生成直後に通知する。
-                // 復旧時は config=default=show_tray ON のためこの分岐に入る。
-                // SetTrayVisible→ShowConfigRecoveryBalloon を同一チャネルに順に積むので、
-                // process_commands はトレイ生成後にバルーンを処理する。
-                if load_outcome == LoadOutcome::RecoveredFromCorrupt {
-                    b.send_command(PlatformCommand::ShowConfigRecoveryBalloon);
-                }
-            }
+            // the windows and listeners are ready (SPEC §7.5 / §9). Must run after every
+            // setup_*_listener call above.
+            setup_tray(&app_handle, show_tray, load_outcome);
 
-            // Show window on startup if configured
-            if show_on_startup {
-                show_main_and_emit(&app_handle, ime_off);
-            }
+            // Show window on startup if configured. Must run last: relies on the
+            // platform bridge (IME control) and listeners registered above.
+            setup_startup_display(&app_handle, show_on_startup, ime_off);
 
             Ok(())
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Restore the search window's saved width before the event loop starts.
+/// Position is handled separately by `position_on_target_monitor`
+/// (multi-monitor aware, applied on every show).
+fn setup_window_geometry(app_handle: &AppHandle, window_width: u32) {
+    if let Some(w) = app_handle.get_webview_window("main")
+        && window_width > 0
+        && let Ok(current) = w.inner_size()
+    {
+        let sf = w.scale_factor().unwrap_or(1.0);
+        let logical_h = current.height as f64 / sf;
+        let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+            f64::from(window_width),
+            logical_h,
+        )));
+    }
+}
+
+/// Register the AcceleratorKeyPressed handler used to suppress WM_SYSKEYDOWN
+/// (Alt+char) before TranslateMessage → WM_SYSCHAR → DefWindowProc →
+/// MessageBeep(0). Root fix for the hotkey beep issue. Must run in the setup
+/// phase: `with_webview()` needs the message pump, which only runs freely
+/// before the event loop starts (src-tauri/CLAUDE.md WebView2 constraints).
+fn setup_accelerator_handler(app_handle: &AppHandle) {
+    #[cfg(windows)]
+    if let Some(main) = app_handle.get_webview_window("main") {
+        main.with_webview(move |platform_webview| {
+            use webview2_com::Microsoft::Web::WebView2::Win32::{
+                COREWEBVIEW2_KEY_EVENT_KIND,
+                COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
+            };
+            use webview2_com::AcceleratorKeyPressedEventHandler;
+            use windows::Win32::UI::Input::KeyboardAndMouse::VK_F4;
+
+            let controller = platform_webview.controller();
+            let handler = AcceleratorKeyPressedEventHandler::create(Box::new(
+                move |_controller, args| {
+                    if let Some(args) = args {
+                        let mut kind = COREWEBVIEW2_KEY_EVENT_KIND(0);
+                        unsafe { args.KeyEventKind(&mut kind)? };
+                        if kind == COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN {
+                            let mut vk = 0u32;
+                            unsafe { args.VirtualKey(&mut vk)? };
+                            // Let Alt+F4 through for window close
+                            if vk != VK_F4.0 as u32 {
+                                unsafe { args.SetHandled(true)? };
+                            }
+                        }
+                    }
+                    Ok(())
+                },
+            ));
+            let mut token = 0i64;
+            unsafe {
+                let _ = controller.add_AcceleratorKeyPressed(&handler, &mut token);
+            }
+        }).expect("AcceleratorKeyPressed handler must register in setup phase");
+    }
+}
+
+/// Spawn the Win32 platform thread early to parallelize its init with WebView
+/// creation, and manage the resulting `PlatformBridge` once ready. The tray
+/// is NOT created here; `setup_tray` sends `SetTrayVisible` later, after all
+/// windows and listeners are ready (SPEC §7.5).
+fn setup_platform_thread(app_handle: &AppHandle, hotkey_config: HotkeyConfig, initial_language: Language) {
+    let platform_pending = PlatformBridge::begin(app_handle.clone(), hotkey_config, initial_language);
+
+    // Win32 init finishes in a few ms; by the time windows are created it is already done.
+    if let Some(bridge) = platform_pending.and_then(PlatformBridgePending::wait) {
+        app_handle.manage(Mutex::new(bridge));
+    }
+}
+
+/// First-run: launch snotra-settings directly (bypassing the indexing guard
+/// in open_settings, since initial_indexing=true during first run).
+/// Pass --first-run so SettingsApp opens on the Index tab for onboarding.
+/// On failure (exe not found / spawn error), fall back to building the index
+/// with default paths so the indexing flag eventually clears and the user
+/// can open settings via open_settings once the build finishes.
+fn setup_first_run(app_handle: &AppHandle, is_first_run: bool) {
+    if is_first_run && commands::launch_settings_process(app_handle, &["--first-run"]).is_err() {
+        indexing::start_index_build(app_handle);
+    }
+}
+
+/// Register the `hotkey-pressed` listener, then activate the hotkey on the
+/// platform thread. **Order must not change**: registering the listener
+/// before sending `RegisterInitialHotkey` ensures no event is emitted before
+/// there is a receiver to handle it (src-tauri/CLAUDE.md).
+fn setup_hotkey_listener(app_handle: &AppHandle, hotkey_toggle: bool, ime_off: bool) {
+    let handle_for_hotkey = app_handle.clone();
+    let toggle = hotkey_toggle;
+    let ime_control = ime_off;
+    let hotkey_generation = Arc::new(AtomicU64::new(0));
+    let hotkey_generation_for_listener = hotkey_generation;
+    app_handle.listen("hotkey-pressed", move |_| {
+        let t0 = Instant::now();
+        trace_main("hotkey:listener_enter", json!({}));
+        // Ignore the hotkey while snotra-settings is running: the user may be
+        // pressing the current hotkey combination to configure a new one.
+        if let Some(proc_state) = handle_for_hotkey.try_state::<SettingsProcessState>()
+            && proc_state.lock().unwrap().is_some()
+        {
+            return;
+        }
+        let current_gen = hotkey_generation_for_listener.fetch_add(1, Ordering::SeqCst) + 1;
+        // Use tracked AtomicBool instead of Win32 is_visible() to avoid
+        // ~35ms cold-call overhead on first hotkey press.
+        let visible = handle_for_hotkey
+            .try_state::<AppState>()
+            .map(|s| s.main_visible.load(Ordering::SeqCst))
+            .unwrap_or(false);
+        trace_main("hotkey:visible_check", json!({ "visible": visible }));
+        if visible && toggle {
+            if let Some(w) = handle_for_hotkey.get_webview_window("main") {
+                let _ = w.hide();
+            }
+            if let Some(state) = handle_for_hotkey.try_state::<AppState>() {
+                state.main_visible.store(false, Ordering::SeqCst);
+            }
+            // Notify JS side so mainVisible signal updates and Blob URLs are released.
+            // Symmetric pair: window-shown is emitted in show_main_and_emit.
+            // Must precede suspend so the JS cleanup handler is queued in the
+            // renderer before TrySuspend pauses it.
+            let _ = handle_for_hotkey.emit("window-hidden", ());
+            // Suspend WebView2 renderer after emit (IsVisible=false from hide above).
+            // TrySuspend is best-effort and async: the renderer finishes processing
+            // the queued emit before actually suspending.
+            if let Some(w) = handle_for_hotkey.get_webview_window("main") {
+                suspend_webview(&w);
+            }
+            // 非表示アイドルの物理 working set を回収（TrySuspend は圧迫なし環境では
+            // 回収しないため能動適用）。best-effort・機能挙動には影響しない。
+            working_set::trim_idle_working_set(std::process::id());
+        } else if is_alt_pressed() {
+            trace_main("hotkey:alt_wait_start", json!({}));
+            let handle_for_show = handle_for_hotkey.clone();
+            let hotkey_generation_for_wait = hotkey_generation_for_listener.clone();
+            std::thread::spawn(move || {
+                wait_alt_release_or_timeout();
+                trace_main("hotkey:alt_wait_done", json!({ "waited_ms": t0.elapsed().as_secs_f64() * 1000.0 }));
+                if hotkey_generation_for_wait.load(Ordering::SeqCst) != current_gen {
+                    return;
+                }
+                show_main_and_emit(&handle_for_show, ime_control);
+            });
+        } else {
+            trace_main("hotkey:show_direct", json!({}));
+            show_main_and_emit(&handle_for_hotkey, ime_control);
+        }
+    });
+
+    // hotkey-pressed listener is now registered; activate hotkey on platform thread.
+    // Registering the hotkey only after the listener is ready ensures no event
+    // is emitted before there is a receiver to handle it.
+    if let Some(bridge) = app_handle.try_state::<Mutex<PlatformBridge>>()
+        && let Ok(b) = bridge.lock()
+    {
+        b.send_command(PlatformCommand::RegisterInitialHotkey);
+    }
+}
+
+/// Listen for the `open-settings` event emitted by the tray menu.
+fn setup_open_settings_listener(app_handle: &AppHandle) {
+    let handle_for_settings = app_handle.clone();
+    app_handle.listen("open-settings", move |_| {
+        let _ = commands::open_settings(
+            handle_for_settings.state::<AppState>(),
+            handle_for_settings.clone(),
+        );
+    });
+}
+
+/// Listen for the `exit-requested` event emitted by the tray menu: flush
+/// unsaved data, kill the snotra-settings child process if running, and exit.
+fn setup_exit_listener(app_handle: &AppHandle) {
+    let handle_for_exit = app_handle.clone();
+    app_handle.listen("exit-requested", move |_| {
+        // Flush any unsaved data before exit
+        {
+            let app_state = handle_for_exit.state::<AppState>();
+            let mut engine = app_state.engine.lock().unwrap();
+            engine.save_history_if_dirty(1);
+        }
+        {
+            let icon_state = handle_for_exit.state::<IconCacheState>();
+            let mut cache = icon_state.lock().unwrap();
+            if let Some(c) = cache.as_mut() {
+                c.save_if_dirty();
+            }
+        }
+        // Kill snotra-settings child process if running.
+        if let Some(proc_state) = handle_for_exit.try_state::<SettingsProcessState>()
+            && let Ok(mut guard) = proc_state.lock()
+            && let Some(mut child) = guard.take()
+        {
+            let _ = child.kill();
+        }
+        if let Some(bridge) = handle_for_exit.try_state::<Mutex<PlatformBridge>>()
+            && let Ok(b) = bridge.lock()
+        {
+            b.send_command(PlatformCommand::Exit);
+        }
+        handle_for_exit.exit(0);
+    });
+}
+
+/// Start the `config.toml` file watcher for external changes (snotra-settings).
+fn setup_config_watcher(app_handle: &AppHandle) {
+    if let Some(watcher) = config_watcher::start(app_handle) {
+        app_handle.manage(Mutex::new(watcher));
+    }
+}
+
+/// キャッシュヒット時のみ `Some` で渡される背景再スキャンタスクを低優先度スレッド
+/// で実行する（SPEC §3.3 ハイブリッド方式）。ロジックは snotra-core、spawn と結果の
+/// 後始末（アイコン無効化）は src-tauri の責務。
+fn setup_background_rescan(app_handle: &AppHandle, rescan_task: Option<indexer::BackgroundRescanTask>) {
+    if let Some(task) = rescan_task {
+        let handle_for_rescan = app_handle.clone();
+        let _ = std::thread::Builder::new()
+            .name("snotra-index-rescan".to_string())
+            .spawn(move || {
+                indexer::lower_current_thread_priority();
+                if task.run() == indexer::RescanOutcome::Changed
+                    && let Some(icons) = handle_for_rescan.try_state::<IconCacheState>()
+                {
+                    icon::invalidate_icon_cache(&icons);
+                }
+            });
+    }
+}
+
+/// Show the tray icon now that all windows are pre-created and all event
+/// listeners are registered. Showing tray before this point would allow
+/// right-click menu actions before the windows/listeners are ready (SPEC
+/// §7.5 / §9).
+fn setup_tray(app_handle: &AppHandle, show_tray: bool, load_outcome: LoadOutcome) {
+    if show_tray
+        && let Some(bridge) = app_handle.try_state::<Mutex<PlatformBridge>>()
+        && let Ok(b) = bridge.lock()
+    {
+        b.send_command(PlatformCommand::SetTrayVisible(true));
+        // config が壊れて既定値に復旧した場合、トレイ生成直後に通知する。
+        // 復旧時は config=default=show_tray ON のためこの分岐に入る。
+        // SetTrayVisible→ShowConfigRecoveryBalloon を同一チャネルに順に積むので、
+        // process_commands はトレイ生成後にバルーンを処理する。
+        if load_outcome == LoadOutcome::RecoveredFromCorrupt {
+            b.send_command(PlatformCommand::ShowConfigRecoveryBalloon);
+        }
+    }
+}
+
+/// Show the main window on startup if configured. Must run after tray/listener
+/// setup: `show_main_and_emit` depends on the platform bridge (IME control).
+fn setup_startup_display(app_handle: &AppHandle, show_on_startup: bool, ime_off: bool) {
+    if show_on_startup {
+        show_main_and_emit(app_handle, ime_off);
+    }
 }

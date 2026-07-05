@@ -1054,12 +1054,21 @@ mod tests {
              意図的なら INDEX_CACHE_VERSION をバンプし golden を更新すること"
         );
 
-        // Cow::Borrowed(save) が Owned で読み戻せること（read 経路の不変性）も確認。
+        // backward-compat: 凍結 GOLDEN（= #461 前の owned IndexCache が書いた v4 バイト列と
+        // バイト同一。feasibility spike + postcard 手動デコードで実証済み）を、統合後の新コードが
+        // Owned で正しくロードできることを確認する。これで「既存 index.bin が新コードでロード可能」
+        // を bytes(新規生成)ではなく凍結バイトから証明する（fixture 改変にも頑健）。
         let restored: IndexCache<'static> =
-            try_deserialize_with_header(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION)
-                .expect("roundtrip");
+            try_deserialize_with_header(GOLDEN, INDEX_MAGIC, INDEX_CACHE_VERSION)
+                .expect("既存 v4 形式バイトが新コードでロードできること");
         assert!(matches!(restored.entries, Cow::Owned(_)));
         assert_eq!(restored.entries.len(), 2);
+        assert_eq!(restored.entries[0].name, "Firefox");
+        assert_eq!(restored.entries[0].target_path, "C:\\apps\\firefox.lnk");
+        assert!(!restored.entries[0].is_folder);
+        assert_eq!(restored.entries[1].name, "Projects");
+        assert!(restored.entries[1].is_folder);
+        assert_eq!(restored.char_masks.into_owned(), char_masks);
         assert_eq!(restored.normalized_keys.into_owned(), normalized_keys);
     }
 

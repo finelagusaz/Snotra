@@ -105,16 +105,17 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 
 `indexer.rs` の `IndexCache` にフィールドを追加する場合、以下を全て更新する:
 
-1. **IndexCache 構造体**: 新フィールドを追加
+1. **`IndexCache<'a>` 構造体**: 新フィールドを `Cow<'a, [T]>` で追加（owned/borrowed は #461 で `Cow` 統合済み。save は `Cow::Borrowed` で全件 clone 回避、load は `IndexCache<'static>` へ Owned deserialize）
 2. **バージョン番号**: `INDEX_CACHE_VERSION` をバンプ
 3. **旧バージョン用フォールバック構造体**: 旧スキーマを `IndexCacheVN` として残す
-4. **`load_cache()`**: 新バージョン → 旧バージョンのフォールバックチェーンを追加
-5. **`save_cache_sorted()`**: 新フィールドの計算ロジックを追加
+4. **`load_cache()`**: 新バージョン → 旧バージョンのフォールバックチェーンを追加（Cow フィールドは `.into_owned()` で `CachedMasks`/`entries` へ）
+5. **`save_cache_sorted()`**: 新フィールドの計算ロジックを追加（`Cow::Borrowed` で渡す）
 6. **`CachedMasks` 構造体**: 新フィールドを `Option<T>` で追加（旧キャッシュでは None）
 7. **`SearchEngine::new_with_cached_masks()`**: 新パラメータを受け取り、None 時は自前で計算
-8. **`IndexCacheRef<'a>` 構造体**: `save_cache_sorted` が使う Serialize 専用の借用版。新フィールドを **`IndexCache` と完全に同じ順序・型**（`Vec<T>` → `&[T]`）で追加する。postcard は構造順依存のため、ずれると無言でフォーマットが変わり旧 `index.bin` を破損する。バイト一致は `index_cache_ref_serializes_identically_to_owned` テストでガード
 
 1つでも欠けるとキャッシュヒット時/ミス時で異なる結果を返す。
+
+**on-disk 形式の安定ガード**: 旧 `IndexCacheRef`（borrowed 双子）は #461 で `Cow` 統合され消滅した（owned/borrowed のフィールド順ズレ→`index.bin` 無言破損の footgun が型として解消）。統合後は save/load が単一 struct を共有するためフィールド reorder が roundtrip テストを素通りする。**バイト形式の絶対安定は `index_cache_on_disk_format_is_stable`（golden bytes）がガードする**。フィールド追加・順序変更で `INDEX_CACHE_VERSION` をバンプしたら、この golden bytes も更新すること。
 
 ## engine.rs のロック最小化パターン
 

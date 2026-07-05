@@ -72,6 +72,8 @@
 ## 環境制約
 
 - Agent `isolation: "worktree"` は使用可（worktree は `.claude/worktrees/agent-<id>/` に作られ、パス破壊は起きない／Git 2.54.0.windows.1 で検証済み）。変更なしの worktree は自動 cleanup されるが、**ファイルを変更した worktree は成果保全のため自動削除されず残る**ため、`git worktree remove --force <path>` + `git branch -D worktree-agent-<id>` で手動 cleanup する（`.claude/worktrees/` は `.gitignore` 済み＝誤コミット防止）
+- **並列エージェント委譲はファイル境界で衝突を予測してから行う**: 同一ファイルに触りうるタスクは並列にせず、直列化するかマージ順を決めて委譲する。境界の見積もりは issue 記載の対象ファイルだけでなく「実装中に踏み込みうる隣接ファイル」まで含める（settings 中心の #439 が snotra-core/config.rs に `normalized_default()` を追加し、config.rs 分割の #435 と conflict した実績。リベース解決はコンテキストを保持した実装エージェント本人に依頼するのが最短）
+- **長時間の委譲タスクは中断を前提に設計する**: セッションリミット・API エラーでエージェントは途中終了しうる（resume は可能だが worktree が消え未コミット作業が失われたケースあり）。大きなタスクは Phase 分割し「各 Phase の検証 green 後にコミット」を指示に含める（#431 のフェーズ制が好例）
 - Win32 依存モジュール（`src-tauri/src/ime.rs`, `src-tauri/src/platform/` 内の `hotkey.rs` 等）はユニットテスト前提にしない
 - モジュール固有の不変条件・TDD ルールは各サブディレクトリの `CLAUDE.md` を参照（実装前チェックは `.claude/rules/` で自動配送）
 

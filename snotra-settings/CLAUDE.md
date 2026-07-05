@@ -18,6 +18,7 @@ egui ベースの設定・about バイナリ crate。本体（`src-tauri`）と�
 - `style.rs`: デザイントークン（色 / 余白 / フォントサイズ / 幅）と共有スタイルヘルパー（`tab_scroll_area` / `section_heading` / `hint` / `settings_grid` / `list_item` / `reorder_controls` / `modal_header` / `modal_buttons` / `danger_button` / `apply_type_ramp`）。全タブと app.rs がこれ経由で描画する。詳細は `SETTINGS-DESIGN.md`
 - `tabs/`: 7タブの UI 実装
   - `mod.rs`: サブモジュール宣言のみ
+  - `common.rs`: index / opener / instant 3タブ共通のモーダル状態（`ModalState<F, I>` / `ModalMode` / `save_entry` / `delete_entry`）と非同期ファイルピッカー（`PickerState::poll` / `launch`）。純ロジックのみ（egui 描画は各タブに残す）。ユニットテストあり
   - `general.rs`: 全般設定（起動時表示、トレイ、IME、ホットキー）
   - `search.rs`: 検索設定（検索モード、履歴、隠しファイル）
   - `index.rs`: インデックス設定（スキャンパス管理）
@@ -64,7 +65,8 @@ eframe は毎フレーム `App::ui()`（旧 `update()`。eframe 0.35 で `logic(
 - **saved**: `save()` 成功時のみ `draft` のクローンで更新。バリデーション失敗や I/O エラー時は更新されない
 - **has_changes()**: `draft != saved` で判定。Save/Discard ボタンの有効化に使用
 - **Discard**: `draft = saved.clone()` で全タブの編集を一括破棄
-- **Reset to default**: `draft = Config::default()` で既定値に戻す（saved は変更しない → has_changes() が true になり Save が必要）
+- **Reset to default**: `draft = Config::normalized_default()` で既定値に戻す（saved は変更しない → has_changes() が true になり Save が必要）。`normalized_default()` は `apply_migrations()` 適用済みの「正規化済み（Option フィールドが全 Some）」既定値を返すため、`saved` との `PartialEq` がタブ遷移順序（DragValue の `get_or_insert`）に依存しない
+- **タブ別ダーティ点（`•`）**: `app.rs` の `SECTION_TABLE`（Config セクション → TabId 対応表、SSOT）から導出。Config に新セクションを追加したら表を1箇所更新する（更新漏れは `section_table_covers_all_config_fields` テストの網羅 destructure がコンパイルエラー/テスト失敗で検出する）
 
 ### 保存フロー
 
@@ -81,21 +83,22 @@ Save クリック → draft.clone() → normalize_scan_paths() → normalize_ope
 
 | タブ | ステート | 特記 |
 |------|---------|------|
-| index | `IndexTabState` | `PickerState`（フォルダ選択）+ `ModalState`（Create/Edit） |
-| opener | `OpenerTabState` | `ExePickerState`（exe 選択）+ `ModalState`（ネストした rule/tool インデックス） |
-| instant | `InstantTabState` | `ModalState` のみ（シンプルなフラットリスト） |
+| index | `IndexTabState` | `common::PickerState`（フォルダ選択）+ `common::ModalState<ScanPathFields>` |
+| opener | `OpenerTabState` | `common::PickerState`（exe 選択）+ `common::ModalState<OpenerFields, (usize, usize)>`（ネストした rule/tool インデックス） |
+| instant | `InstantTabState` | `common::ModalState<InstantFields>` + exe 用 `common::PickerState` |
 
 ## モーダル Create/Edit パターン
 
-index / opener / instant の3タブが共通して使うモーダルの設計パターン:
+index / opener / instant の3タブが共通して使うモーダルの状態機械は `tabs/common.rs` の `ModalState<F, I = usize>`（`F` = タブ固有編集フィールド struct、`I` = 編集スナップショットの位置型）に集約されている:
 
-- `ModalMode::Create`: フィールド初期化 → モーダル表示 → Save で Vec に `push`
-- `ModalMode::Edit`: 既存値をフィールドにコピー → モーダル表示 → Save でインデックス指定で上書き。Delete ボタンも表示
-- **インデックス陳腐化ガード**: Edit モードで保持する `editing_index` はモーダルを開いた時点のスナップショット。モーダル表示中に外部で行が削除されるケース（このアプリでは発生しないが）に備え、Save/Delete 前に必ず `if idx < vec.len()` で境界チェックする
+- `ModalMode::Create`: `open_create()`（フィールドを `F::default()` に初期化）→ モーダル表示 → Save で `common::save_entry` が Vec に `push`。複製は `open_create_with(fields)`
+- `ModalMode::Edit`: `open_edit(index, fields)` で既存値をコピー → モーダル表示 → Save で `common::save_entry` がインデックス指定で上書き。Delete ボタンも表示（`common::delete_entry`）
+- **インデックス陳腐化ガード**: Edit モードで保持する `editing` はモーダルを開いた時点のスナップショット。モーダル表示中に外部で行が削除されるケース（このアプリでは発生しないが）に備え、`save_entry` / `delete_entry` が境界チェックを内蔵する（範囲外は no-op）。opener はネスト `(rule, tool)` のため Save/Delete の境界チェックのみ固有ロジック（`save_opener` / Delete ハンドラ）に残る
+- モーダルの egui 描画（`show_modal` の `ui.xxx()` 列）はタブごとに固有のまま各タブに残す。共通化するのは状態遷移・境界チェックだけ
 
 ## 非同期ファイルピッカーパターン
 
-`rfd::FileDialog` はブロッキング API のため、egui の UI スレッドで直接呼ぶとフリーズする。代わりにスレッド spawn + `Arc<Mutex<Option<Option<PathBuf>>>>` パターンを使う。
+`rfd::FileDialog` はブロッキング API のため、egui の UI スレッドで直接呼ぶとフリーズする。スレッド spawn + `Arc<Mutex<Option<Option<PathBuf>>>>` パターンを `tabs/common.rs` の `PickerState` に集約している。
 
 ```
 PickerState {
@@ -104,9 +107,9 @@ PickerState {
 }
 ```
 
-- スレッド内で `ctx.request_repaint()` を呼んで UI 更新をトリガーする
-- 毎フレーム `try_lock()`（非ブロッキング）で結果をポーリングし、取得後に `.take()` + `active = false`
-- **`active = false` の書き忘れはボタンが永久に無効化されるバグになる**
+- `launch(ctx, dialog)`: `active = true` にしてスレッド spawn。完了時に `ctx.request_repaint()` で UI 更新をトリガーする
+- `poll()`: 毎フレームの非ブロッキングポーリング（`try_lock` + `.take()`）。結果取得時（キャンセル含む）に `active = false` へ戻す
+- **`active = false` の戻し忘れはボタンが永久に無効化されるバグになる** — この責務は `poll()` 1箇所に集約されており、各タブで手書きしない
 
 ## opener のターゲットエンコーディング
 

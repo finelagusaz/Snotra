@@ -68,6 +68,7 @@ allowed-tools:
 | `/dry-check` | 関数を新規定義または変更した |
 | `/race-check` | async 関数を追加・変更した（diff に `async` が含まれる） |
 | `/cache-check` | キャッシュ・インクリメンタル再利用ロジックに触れた |
+| `/persistence-check` | シリアライズ・on-disk 形式（index.bin / config.toml / history / window.bin）を変更した |
 | `/state-check` | UI モード・状態遷移・ガード条件を追加・変更した |
 
 ### 5b. code-reviewer エージェント

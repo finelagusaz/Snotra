@@ -126,7 +126,33 @@ OpenerRule のターゲットは文字列プレフィックスで種別を表現
 - 境界チェック: 配列アクセス前に必ずインデックスの有効性を確認する（`if idx < vec.len()`）
 - opener のターゲット変更: ツールを旧ルールから削除し、新ルールに追加する。OpenerRule.target を上書きしない（他のツールが巻き添えになる）
 - ユニットテストは書かない方針（egui UI コードはモック困難）。ロジックのテストは `snotra-core` 側で行う
-  - 例外: 純粋な非 egui ヘルパー（例 `font.rs` の `face_index_valid`）の境界テストはインラインで置いてよい。egui モック困難の理由が当たらず、かつ degrade パスが視覚スモークで再現できない（dev 機には対象フェイスが在る）ため、テストが唯一の検証手段になる
+  - 例外1: 純粋な非 egui ヘルパー（例 `font.rs` の `face_index_valid`）の境界テストはインラインで置いてよい。egui モック困難の理由が当たらず、かつ degrade パスが視覚スモークで再現できない（dev 機には対象フェイスが在る）ため、テストが唯一の検証手段になる
+  - 例外2: **UI 操作 + 状態観測**は `egui_kittest`（AccessKit）でヘッドレステストできる（下記「ヘッドレス UI テスト」）。「egui モック困難」は描画のモックを指し、AccessKit ツリー経由の操作には当たらない
+
+## ヘッドレス UI テスト（egui_kittest）
+
+`egui_kittest`（dev-dependency）で AccessKit ツリー経由の操作テストを書ける。対象は
+**フッターボタン（Save/Discard/Reset）の wiring + draft/saved フロー**——実 UI を操作して初めて
+検証できる死角（#440）。テストは `app.rs` の `#[cfg(test)] mod tests` に**インラインで置く**
+（`SettingsApp` / `new` / `has_changes` が private のため `tests/` の integration test からは不可視）。
+
+- **パターン**: `Harness::new_ui_state(|ui, app| app.ui_impl(ui), app)` で `SettingsApp` を state
+  として載せ、`harness.get_by_label(...).click()` で操作、`harness.state()` / `state_mut()` で
+  内部状態を観測。`ui_impl` は `App::ui` から `eframe::Frame` 依存を除いた本体（`ui()` は 1 行委譲）。
+- **`run()` でなく固定ステップ（`settle`）を使う**: この UI は checkbox 等のアニメーションで毎フレーム
+  repaint を要求し、収束前提の `Harness::run()` は `max_steps` 超過で panic する。観測対象は描画の
+  収束ではなく draft の内部状態なので、`step()` を数回回してクリック（press→release）を処理させる。
+- **言語は `Language::En` 固定**: `default_language()` は OS 依存でラベルが非決定的になる。
+- **重複させない**: dirty-dot 導出（`section_table_*`）とモーダル状態機械（`tabs::common::tests`）は
+  純ロジックテスト済み。kittest は「実 UI 操作でしか検証できない wiring」に絞る。
+
+### 境界（kittest で検証できないもの）
+
+`egui_kittest` は AccessKit ツリー（操作・状態）の検証に限る。**レイアウト・レンダリング欠陥**
+（#399 型のベースラインずれ・フォント混在・overflow 等）は**引き続き人手の視覚スモークが唯一の検知手段**。
+wgpu スナップショット比較は評価の結果**採用しない**（フォント/GPU/driver 依存で CI flaky、かつ環境差を
+吸収する threshold が #399 型欠陥そのものをマスクするため ROI が低い。#440 の判断）。CI に GPU 依存を
+持ち込まないため dev-dependency は `default-features = false`（wgpu/snapshot/x11 を引き込まない）。
 
 ## 本体との連携パターン
 

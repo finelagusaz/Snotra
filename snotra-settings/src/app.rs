@@ -272,7 +272,18 @@ impl eframe::App for SettingsApp {
     // eframe 0.35: App::update は logic()/ui() に分割された。全レイアウトを ui() が受け取る
     // ルート Ui 上に置き、各 Panel は show(ui) で描画する（旧 Panel::show(ctx) は 0.35 で削除、
     // show_inside は show へ改名）。ctx はルート Ui から取得する。
+    // 本体は `ui_impl` に委譲する（`_frame` 未使用のため挙動不変）。egui_kittest の
+    // `Harness::new_ui_state` は `FnMut(&mut Ui, &mut State)` を取り Frame を渡せないため、
+    // Frame 非依存の `ui_impl` を切り出してヘッドレステストから直接呼べるようにしている。
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.ui_impl(ui);
+    }
+}
+
+impl SettingsApp {
+    /// eframe の `App::ui` 本体（`eframe::Frame` 非依存）。本番は `ui()` から、テストは
+    /// egui_kittest の Harness から呼ぶ。egui 描画コードはここに集約する。
+    fn ui_impl(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         // Update window title (language change + dirty indicator)
         let title = if self.has_changes() {
@@ -724,5 +735,132 @@ mod tests {
                 "Backup tab must not light for `{name}`"
             );
         }
+    }
+
+    // === egui_kittest による AccessKit ヘッドレス操作テスト（#440） ===
+    //
+    // 対象は「フッターボタン（Save/Discard/Reset）の wiring + draft/saved フロー」——
+    // 実 UI を操作して初めて検証できる死角。dirty-dot 導出（`section_table_*`）と
+    // モーダル状態機械（`tabs::common::tests`）は純ロジックテスト済みのため重複させない。
+    //
+    // 実装メモ:
+    // - `Harness::new_ui_state` に SettingsApp を state として渡し、Frame 非依存の
+    //   `ui_impl` を呼ぶ。`harness.state()` で内部状態（private フィールド含む・同 mod）を観測。
+    // - `run()` は「repaint 要求が止まる」収束前提だが、この UI は checkbox 等の
+    //   アニメーションで毎フレーム repaint を要求し発散する。観測対象は描画の収束ではなく
+    //   draft の内部状態なので、固定ステップ（`settle`）でクリック（press→release）を
+    //   処理させれば十分。wgpu 不要 = GPU なし CI で決定的に回る。
+    // - 言語は En 固定（`default_language()` は OS 依存でラベルが非決定的になるため）。
+
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    /// En 言語の SettingsApp を Harness に載せる（未編集 = clean 状態）。
+    fn en_harness(config: Config) -> Harness<'static, SettingsApp> {
+        let app = SettingsApp::new(config, false, None, LoadOutcome::Loaded);
+        Harness::new_ui_state(|ui, app: &mut SettingsApp| app.ui_impl(ui), app)
+    }
+
+    fn en_config() -> Config {
+        let mut config = Config::normalized_default();
+        config.general.language = Language::En;
+        config
+    }
+
+    /// クリック（press→release）とアニメーションを固定ステップで処理する。
+    fn settle(harness: &mut Harness<'static, SettingsApp>) {
+        for _ in 0..4 {
+            harness.step();
+        }
+    }
+
+    // 不変条件: General タブの checkbox クリックで draft != saved（dirty）になる。
+    #[test]
+    fn kittest_checkbox_click_makes_draft_dirty() {
+        let mut harness = en_harness(en_config());
+        assert!(!harness.state().has_changes(), "initial state must be clean");
+
+        harness.get_by_label(Tr(Language::En).cb_hotkey_toggle()).click();
+        settle(&mut harness);
+
+        assert!(
+            harness.state().has_changes(),
+            "clicking the checkbox must make draft != saved (dirty)"
+        );
+    }
+
+    // 不変条件: Discard ボタンで draft が saved に戻る（編集が破棄される）。
+    #[test]
+    fn kittest_discard_reverts_draft_to_saved() {
+        let mut harness = en_harness(en_config());
+        let original_toggle = harness.state().saved.general.hotkey_toggle;
+
+        // 編集して dirty にする（Discard は has_changes() で有効化されるため先に編集）。
+        harness.get_by_label(Tr(Language::En).cb_hotkey_toggle()).click();
+        settle(&mut harness);
+        assert!(harness.state().has_changes());
+        assert_ne!(harness.state().draft.general.hotkey_toggle, original_toggle);
+
+        // Discard → draft = saved.clone()。
+        harness.get_by_label(Tr(Language::En).btn_discard()).click();
+        settle(&mut harness);
+
+        assert!(!harness.state().has_changes(), "discard must clear dirty state");
+        assert_eq!(
+            harness.state().draft.general.hotkey_toggle,
+            original_toggle,
+            "discard must revert the edited field"
+        );
+    }
+
+    // 不変条件: Reset to default で draft が normalized_default になり、
+    // saved が非既定なら has_changes() が true になる（保存が必要な状態）。
+    #[test]
+    fn kittest_reset_to_default_makes_dirty() {
+        // saved を「既定と1フィールド違う」状態にする（reset で差分が生まれるように）。
+        let default_toggle = Config::normalized_default().general.hotkey_toggle;
+        let mut config = en_config();
+        config.general.hotkey_toggle = !default_toggle;
+        let mut harness = en_harness(config);
+        assert!(!harness.state().has_changes(), "saved==draft initially = clean");
+
+        harness.get_by_label(Tr(Language::En).btn_reset_default()).click();
+        settle(&mut harness);
+
+        assert_eq!(
+            harness.state().draft.general.hotkey_toggle,
+            default_toggle,
+            "reset must set draft to normalized_default value"
+        );
+        assert!(
+            harness.state().has_changes(),
+            "reset changes draft but not saved → must be dirty (needs Save)"
+        );
+    }
+
+    // 不変条件: Save ボタンでバリデーションエラーがあると、ステータスにエラーが出て
+    // saved は更新されない（不正な draft を disk に書かない）。Save→validate 経路の UI wiring。
+    #[test]
+    fn kittest_save_with_validation_error_keeps_saved() {
+        let mut harness = en_harness(en_config());
+        let saved_before = harness.state().saved.clone();
+
+        // draft を「dirty かつ不正」にする（UI の DragValue で不正値まで駆動するのは煩雑なため
+        // 中間状態を直接構築。テストが検証するのは Save ボタン→save()→validate 分岐の wiring）。
+        // window_width を最小未満にすると ConfigError::WindowWidthTooSmall になる。
+        harness.state_mut().draft.appearance.window_width = 1;
+        assert!(harness.state().has_changes(), "draft must be dirty so Save is enabled");
+
+        harness.get_by_label(Tr(Language::En).btn_save()).click();
+        settle(&mut harness);
+
+        assert!(
+            !harness.state().status.is_empty(),
+            "validation error must surface a status message"
+        );
+        assert_eq!(
+            harness.state().saved, saved_before,
+            "saved must not be updated when validation fails"
+        );
     }
 }

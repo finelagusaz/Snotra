@@ -14,6 +14,8 @@ export type TranslationKey =
   | "search.status.indexing"
   | "search.status.launching"
   | "search.status.no_results"
+  // ResultsSection
+  | "results.list.aria_label"
   // Slash commands
   | "cmd.history.description"
   | "cmd.settings.description"
@@ -42,6 +44,8 @@ const JA_JP: Record<TranslationKey, string> = {
   "search.status.indexing": "インデックス構築中...",
   "search.status.launching": "起動中...",
   "search.status.no_results": "見つかりません",
+  // ResultsSection
+  "results.list.aria_label": "検索結果",
   // Slash commands
   "cmd.history.description": "直近履歴を表示",
   "cmd.settings.description": "設定を開く",
@@ -74,6 +78,8 @@ const EN_US: Record<TranslationKey, string> = {
   "search.status.indexing": "Building index...",
   "search.status.launching": "Launching...",
   "search.status.no_results": "No results found",
+  // ResultsSection
+  "results.list.aria_label": "Search results",
   // Slash commands
   "cmd.history.description": "Show recent history",
   "cmd.settings.description": "Open settings",

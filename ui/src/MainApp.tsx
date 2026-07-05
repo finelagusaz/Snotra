@@ -37,6 +37,8 @@ const MainApp: Component = () => {
   const UPDATE_TOAST_HEIGHT = readLayoutConst("--update-toast-height", 52);
   const win = getCurrentWindow();
   const unlistenFns: Array<() => void> = [];
+  let blurTimer: ReturnType<typeof setTimeout> | undefined;
+  let moveTimer: ReturnType<typeof setTimeout> | undefined;
   const [mainVisible, setMainVisible] = createSignal(false);
   const [maxResults, setMaxResults] = createSignal(8);
   const [showIcons, setShowIcons] = createSignal(true);
@@ -57,7 +59,6 @@ const MainApp: Component = () => {
     };
 
     const registerAutoHideOnFocusLost = async () => {
-      let blurTimer: ReturnType<typeof setTimeout> | undefined;
       let blurCancelled = false;
       const unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
         if (!focused) {
@@ -144,7 +145,6 @@ const MainApp: Component = () => {
 
     // Save window position (debounced). Rust side reads position directly
     // from HWND and converts to monitor-relative coordinates.
-    let moveTimer: ReturnType<typeof setTimeout> | undefined;
     let latestMoveEvent = 0;
     const unlistenMainMoved = await win.onMoved(() => {
       const moveEvent = ++latestMoveEvent;
@@ -266,6 +266,8 @@ const MainApp: Component = () => {
         console.warn("Failed to cleanup listener:", e);
       }
     }
+    clearTimeout(blurTimer);
+    clearTimeout(moveTimer);
   });
 
   async function handleUpdateInstall() {

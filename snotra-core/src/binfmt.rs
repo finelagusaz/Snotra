@@ -23,11 +23,17 @@ impl BinFile {
     /// Create a new BinFile handle. Returns `None` if config dir is unavailable.
     pub fn new(magic: [u8; 4], version: u32, filename: &str) -> Option<Self> {
         let dir = Config::config_dir()?;
-        Some(Self {
+        Some(Self::new_in(&dir, magic, version, filename))
+    }
+
+    /// Create a new BinFile handle rooted at `dir` (injectable, e.g. for tests).
+    /// Infallible: unlike `new`, the caller already resolved the directory.
+    pub fn new_in(dir: &Path, magic: [u8; 4], version: u32, filename: &str) -> Self {
+        Self {
             magic,
             version,
             path: dir.join(filename),
-        })
+        }
     }
 
     /// Load data from the file using the current version (postcard format).
@@ -218,11 +224,17 @@ mod tests {
 
     /// Helper: create a BinFile pointing to a specific directory (bypasses Config::config_dir)
     fn bin_file_in(dir: &Path, magic: [u8; 4], version: u32, filename: &str) -> BinFile {
-        BinFile {
-            magic,
-            version,
-            path: dir.join(filename),
-        }
+        BinFile::new_in(dir, magic, version, filename)
+    }
+
+    #[test]
+    fn binfile_new_in_joins_dir_and_filename() {
+        let dir = temp_dir("binfile_new_in");
+        let bf = BinFile::new_in(&dir, *b"TEST", 1, "data.bin");
+        assert_eq!(bf.path(), dir.join("data.bin"));
+        assert_eq!(bf.magic, *b"TEST");
+        assert_eq!(bf.version, 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -372,11 +384,7 @@ mod tests {
     fn binfile_save_creates_parent_directories() {
         let dir = temp_dir("binfile_mkdir");
         let nested = dir.join("sub").join("dir");
-        let bf = BinFile {
-            magic: *b"TEST",
-            version: 1,
-            path: nested.join("data.bin"),
-        };
+        let bf = BinFile::new_in(&nested, *b"TEST", 1, "data.bin");
 
         assert!(bf.save(&Dummy { value: 1 }));
         assert!(bf.path().exists());

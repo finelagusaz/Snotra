@@ -14,7 +14,7 @@ use windows::Win32::System::Threading::{
 };
 
 use crate::binfmt::{BinFile, try_deserialize_with_header};
-use crate::config::ScanPath;
+use crate::config::{Config, ScanPath};
 use crate::query::{char_bitmask, to_lower_folded};
 
 const INDEX_MAGIC: [u8; 4] = *b"INDX";
@@ -278,8 +278,8 @@ fn compute_config_hash(scan: &[ScanPath], show_hidden_system: bool) -> u64 {
     hasher.finish()
 }
 
-fn cache_bin_file() -> Option<BinFile> {
-    BinFile::new(INDEX_MAGIC, INDEX_CACHE_VERSION, "index.bin")
+fn cache_bin_file_in(dir: &Path) -> BinFile {
+    BinFile::new_in(dir, INDEX_MAGIC, INDEX_CACHE_VERSION, "index.bin")
 }
 
 /// Load cached entries or scan the filesystem. Returns `(entries, cache_changed)`
@@ -391,9 +391,15 @@ fn sort_entries_canonical(entries: &mut [AppEntry]) {
 }
 
 fn save_cache_sorted(entries: &[AppEntry], config_hash: u64) {
-    let Some(bf) = cache_bin_file() else {
+    let Some(dir) = Config::config_dir() else {
         return;
     };
+    save_cache_sorted_in(&dir, entries, config_hash);
+}
+
+/// `save_cache_sorted` と同じ保存処理を `dir` 注入で行う（統合テスト用、issue #429）。
+fn save_cache_sorted_in(dir: &Path, entries: &[AppEntry], config_hash: u64) {
+    let bf = cache_bin_file_in(dir);
 
     // マスクを計算してキャッシュに含める。起動時に SearchEngine::new_with_cached_masks()
     // がマスク再計算をスキップできるようにする。
@@ -463,7 +469,13 @@ struct LoadCacheResult {
 }
 
 fn load_cache(config_hash: u64) -> Option<LoadCacheResult> {
-    let bf = cache_bin_file()?;
+    let dir = Config::config_dir()?;
+    load_cache_in(&dir, config_hash)
+}
+
+/// `load_cache` と同じ読み込みを `dir` 注入で行う（統合テスト用、issue #429）。
+fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
+    let bf = cache_bin_file_in(dir);
     let bytes = bf.load_bytes()?;
 
     // v4 (現行): ビットマスク + lower names / normalized_keys を含む
@@ -1074,6 +1086,46 @@ mod tests {
                 .expect("roundtrip");
         assert_eq!(restored.entries.len(), 2);
         assert_eq!(restored.normalized_keys, normalized_keys);
+    }
+
+    #[test]
+    fn save_cache_sorted_in_then_load_cache_in_roundtrip() {
+        // issue #429: BinFile の dir 注入経路（save_cache_sorted_in / load_cache_in）が
+        // 実ファイル I/O を通して往復することを検証する（旧来は config_dir 固定で統合テスト不可）。
+        let dir = temp_dir("cache_dir_injection_roundtrip");
+        let entries = vec![
+            AppEntry {
+                name: "Firefox".to_string(),
+                target_path: "C:\\apps\\firefox.lnk".to_string(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "Projects".to_string(),
+                target_path: "C:\\Projects".to_string(),
+                is_folder: true,
+            },
+        ];
+        let config_hash = 42u64;
+
+        save_cache_sorted_in(&dir, &entries, config_hash);
+
+        let result = load_cache_in(&dir, config_hash).expect("load cache written to dir");
+        assert_eq!(result.entries.len(), 2);
+        assert_eq!(result.entries[0].name, "Firefox");
+        assert_eq!(result.entries[1].name, "Projects");
+        let masks = result.cached_masks.expect("v4 cache should include masks");
+        assert_eq!(
+            masks.normalized_keys,
+            Some(vec![
+                "c:\\apps\\firefox.lnk".to_string(),
+                "c:\\projects".to_string(),
+            ])
+        );
+
+        // config_hash が異なると stale 扱いで None
+        assert!(load_cache_in(&dir, config_hash.wrapping_add(1)).is_none());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

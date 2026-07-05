@@ -72,8 +72,10 @@ impl BinFile {
     }
 
     /// Atomically save data: write to `.tmp`, remove old file, rename `.tmp`.
-    /// Returns `true` on success.
+    /// Returns `true` on success. `#[must_use]`: callers must check for failure and
+    /// surface it (log/eprintln) rather than silently discard it (issue #428).
     #[allow(deprecated)]
+    #[must_use]
     pub fn save<T: Serialize>(&self, data: &T) -> bool {
         if let Some(dir) = self.path.parent() {
             let _ = fs::create_dir_all(dir);

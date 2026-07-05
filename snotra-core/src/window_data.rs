@@ -66,8 +66,10 @@ fn load_state_v5() -> Option<WindowPlacementState> {
 }
 
 fn save_state(state: &WindowPlacementState) {
-    if let Some(bf) = BinFile::new(WINDOW_MAGIC, WINDOW_VERSION_V5, "window.bin") {
-        bf.save(state);
+    if let Some(bf) = BinFile::new(WINDOW_MAGIC, WINDOW_VERSION_V5, "window.bin")
+        && !bf.save(state)
+    {
+        eprintln!("[window] failed to save {}", bf.path().display());
     }
 }
 

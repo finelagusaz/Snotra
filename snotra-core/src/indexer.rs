@@ -437,7 +437,9 @@ fn save_cache_sorted(entries: &[AppEntry], config_hash: u64) {
         lower_file_names: &lower_file_names,
         normalized_keys: &normalized_keys,
     };
-    bf.save(&cache);
+    if !bf.save(&cache) {
+        eprintln!("[indexer] failed to save {}", bf.path().display());
+    }
 }
 
 /// Force rebuild: scan and save cache, regardless of existing cache.

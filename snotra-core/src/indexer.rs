@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
 use std::fs::Metadata;
 use std::hash::{Hash, Hasher};
@@ -215,36 +216,24 @@ pub struct LoadOrScanResult {
 
 /// v4 フォーマット: ビットマスクに加えて lower_names / lower_file_names / normalized_keys を保存。
 /// 起動時に SearchEngine の Wave 1（to_lower_folded / normalize_entry_key）を完全スキップできる。
-#[derive(Serialize, Deserialize)]
-struct IndexCache {
-    built_at: u64,
-    entries: Vec<AppEntry>,
-    config_hash: u64,
-    char_masks: Vec<u64>,
-    file_name_char_masks: Vec<u64>,
-    lower_names: Vec<String>,
-    lower_file_names: Vec<Option<String>>,
-    normalized_keys: Vec<String>,
-}
-
-/// `IndexCache` の借用版（Serialize 専用）。`save_cache_sorted` が `entries` の全件 clone
-/// （`entries.to_vec()`）を避け、スライス参照を直接シリアライズするために使う。
 ///
-/// **重要**: フィールドの順序・型を `IndexCache` と完全に一致させること。postcard は構造体を
-/// フィールド順でシリアライズし名前を見ないため、`&[T]` は `Vec<T>` とバイト列が一致する。
-/// 順序がずれると無言でフォーマットが変わり旧 `index.bin` を破損する。この不変条件は
-/// `index_cache_ref_serializes_identically_to_owned` テストでガードする。read 経路は所有版
-/// `IndexCache` のまま（バイト列不変のため `INDEX_CACHE_VERSION` バンプ不要）。
-#[derive(Serialize)]
-struct IndexCacheRef<'a> {
+/// **owned/borrowed を単一 struct に統合する（`Cow<'a, [T]>`）**。save は `Cow::Borrowed` で
+/// `entries` の全件 clone を避けてシリアライズし、load は `Cow::Owned` で deserialize する
+/// （`IndexCache<'static>`）。単一 struct ゆえ「owned 版と borrowed 版でフィールド順がズレて
+/// `index.bin` を無言破損する」footgun は型として起こり得ない。`Cow<[T]>` は Borrowed/Owned とも
+/// 内側スライスの `serialize_seq` に委譲し `Vec<T>`/`&[T]` とバイト列が一致するため、
+/// バイト形式は不変（`INDEX_CACHE_VERSION` バンプ不要）。形式の絶対安定は
+/// `index_cache_on_disk_format_is_stable`（golden bytes）でガードする。
+#[derive(Serialize, Deserialize)]
+struct IndexCache<'a> {
     built_at: u64,
-    entries: &'a [AppEntry],
+    entries: Cow<'a, [AppEntry]>,
     config_hash: u64,
-    char_masks: &'a [u64],
-    file_name_char_masks: &'a [u64],
-    lower_names: &'a [String],
-    lower_file_names: &'a [Option<String>],
-    normalized_keys: &'a [String],
+    char_masks: Cow<'a, [u64]>,
+    file_name_char_masks: Cow<'a, [u64]>,
+    lower_names: Cow<'a, [String]>,
+    lower_file_names: Cow<'a, [Option<String>]>,
+    normalized_keys: Cow<'a, [String]>,
 }
 
 /// v3 フォールバック用スキーマ（ビットマスクのみ、lower names なし）。
@@ -420,20 +409,20 @@ fn save_cache_sorted_in(dir: &Path, entries: &[AppEntry], config_hash: u64) {
     let normalized_keys: Vec<String> =
         entries.iter().map(|e| normalize_entry_key(&e.target_path)).collect();
 
-    // 借用版 IndexCacheRef を使い entries の全件 clone を避ける。派生 Vec も参照で渡す
-    // （所有版 IndexCache へ move する必要がない）。出力バイト列は所有版と同一。
-    let cache = IndexCacheRef {
+    // Cow::Borrowed で entries の全件 clone を避ける（派生 Vec も参照で渡す）。
+    // 出力バイト列は Owned 版と同一（golden テストで保証）。
+    let cache = IndexCache {
         built_at: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs(),
-        entries,
+        entries: Cow::Borrowed(entries),
         config_hash,
-        char_masks: &char_masks,
-        file_name_char_masks: &file_name_char_masks,
-        lower_names: &lower_names,
-        lower_file_names: &lower_file_names,
-        normalized_keys: &normalized_keys,
+        char_masks: Cow::Borrowed(&char_masks),
+        file_name_char_masks: Cow::Borrowed(&file_name_char_masks),
+        lower_names: Cow::Borrowed(&lower_names),
+        lower_file_names: Cow::Borrowed(&lower_file_names),
+        normalized_keys: Cow::Borrowed(&normalized_keys),
     };
     if !bf.save(&cache) {
         eprintln!("[indexer] failed to save {}", bf.path().display());
@@ -470,20 +459,23 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
     let bf = cache_bin_file_in(dir);
     let bytes = bf.load_bytes()?;
 
-    // v4 (現行): ビットマスク + lower names / normalized_keys を含む
-    if let Ok(cache) = try_deserialize_with_header::<IndexCache>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION) {
+    // v4 (現行): ビットマスク + lower names / normalized_keys を含む。
+    // deserialize は Cow::Owned を返すため .into_owned() は clone なしの move。
+    if let Ok(cache) =
+        try_deserialize_with_header::<IndexCache<'static>>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION)
+    {
         if cache.config_hash != config_hash {
             return None;
         }
         let masks = CachedMasks {
-            char_masks: cache.char_masks,
-            file_name_char_masks: cache.file_name_char_masks,
-            lower_names: Some(cache.lower_names),
-            lower_file_names: Some(cache.lower_file_names),
-            normalized_keys: Some(cache.normalized_keys),
+            char_masks: cache.char_masks.into_owned(),
+            file_name_char_masks: cache.file_name_char_masks.into_owned(),
+            lower_names: Some(cache.lower_names.into_owned()),
+            lower_file_names: Some(cache.lower_file_names.into_owned()),
+            normalized_keys: Some(cache.normalized_keys.into_owned()),
         };
         return Some(LoadCacheResult {
-            entries: cache.entries,
+            entries: cache.entries.into_owned(),
             cached_masks: Some(masks),
         });
     }
@@ -966,21 +958,21 @@ mod tests {
 
         let cache = IndexCache {
             built_at: 1700000000,
-            entries: entries.clone(),
+            entries: Cow::Owned(entries.clone()),
             config_hash: 12345,
-            char_masks: vec![0xAB, 0xCD],
-            file_name_char_masks: vec![0x12, 0x34],
-            lower_names: vec!["firefox".to_string(), "projects".to_string()],
-            lower_file_names: vec![Some("firefox.lnk".to_string()), None],
-            normalized_keys: vec![
+            char_masks: Cow::Owned(vec![0xAB, 0xCD]),
+            file_name_char_masks: Cow::Owned(vec![0x12, 0x34]),
+            lower_names: Cow::Owned(vec!["firefox".to_string(), "projects".to_string()]),
+            lower_file_names: Cow::Owned(vec![Some("firefox.lnk".to_string()), None]),
+            normalized_keys: Cow::Owned(vec![
                 "c:\\apps\\firefox.lnk".to_string(),
                 "c:\\projects".to_string(),
-            ],
+            ]),
         };
 
         let bytes = try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache)
             .expect("serialize");
-        let restored: IndexCache =
+        let restored: IndexCache<'static> =
             try_deserialize_with_header(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION).expect("deserialize");
 
         assert_eq!(restored.built_at, 1700000000);
@@ -990,23 +982,27 @@ mod tests {
         assert_eq!(restored.entries[1].name, "Projects");
         assert!(restored.entries[1].is_folder);
         assert_eq!(restored.config_hash, 12345);
-        assert_eq!(restored.char_masks, vec![0xAB, 0xCD]);
-        assert_eq!(restored.file_name_char_masks, vec![0x12, 0x34]);
-        assert_eq!(restored.lower_names, vec!["firefox", "projects"]);
+        // Cow フィールドは into_owned() で Vec に戻して比較（deserialize は Owned ゆえ move）。
+        assert_eq!(restored.char_masks.into_owned(), vec![0xABu64, 0xCD]);
+        assert_eq!(restored.file_name_char_masks.into_owned(), vec![0x12u64, 0x34]);
+        assert_eq!(restored.lower_names.into_owned(), vec!["firefox", "projects"]);
         assert_eq!(
-            restored.lower_file_names,
+            restored.lower_file_names.into_owned(),
             vec![Some("firefox.lnk".to_string()), None]
         );
         assert_eq!(
-            restored.normalized_keys,
+            restored.normalized_keys.into_owned(),
             vec!["c:\\apps\\firefox.lnk", "c:\\projects"]
         );
     }
 
     #[test]
-    fn index_cache_ref_serializes_identically_to_owned() {
-        // IndexCacheRef（save で使う借用版）が所有版 IndexCache とバイト列一致することを保証する。
-        // これが崩れると save の出力フォーマットが無言で変わり、既存 index.bin の読込が壊れる。
+    fn index_cache_on_disk_format_is_stable() {
+        // on-disk バイト形式の絶対安定を守る golden テスト。
+        // IndexCache のフィールド順・型を変えると（= 既存 index.bin を無言破損）バイト列が変化し
+        // このテストが落ちる。save/load が単一 struct を共有する統合後、フィールド reorder は
+        // roundtrip テストを素通りするため、この golden が唯一の検出器（version 非バンプでも検出）。
+        // 意図的な形式変更（INDEX_CACHE_VERSION バンプ）時は golden を更新すること。
         let entries = vec![
             AppEntry {
                 name: "Firefox".to_string(),
@@ -1025,45 +1021,46 @@ mod tests {
         let lower_file_names = vec![Some("firefox.lnk".to_string()), None];
         let normalized_keys =
             vec!["c:\\apps\\firefox.lnk".to_string(), "c:\\projects".to_string()];
-        let built_at = 1_700_000_000u64;
-        let config_hash = 12345u64;
 
-        let owned = IndexCache {
-            built_at,
-            entries: entries.clone(),
-            config_hash,
-            char_masks: char_masks.clone(),
-            file_name_char_masks: file_name_char_masks.clone(),
-            lower_names: lower_names.clone(),
-            lower_file_names: lower_file_names.clone(),
-            normalized_keys: normalized_keys.clone(),
+        // save 経路と同じ Cow::Borrowed で構築する。
+        let cache = IndexCache {
+            built_at: 1_700_000_000,
+            entries: Cow::Borrowed(&entries),
+            config_hash: 12345,
+            char_masks: Cow::Borrowed(&char_masks),
+            file_name_char_masks: Cow::Borrowed(&file_name_char_masks),
+            lower_names: Cow::Borrowed(&lower_names),
+            lower_file_names: Cow::Borrowed(&lower_file_names),
+            normalized_keys: Cow::Borrowed(&normalized_keys),
         };
-        let borrowed = IndexCacheRef {
-            built_at,
-            entries: &entries,
-            config_hash,
-            char_masks: &char_masks,
-            file_name_char_masks: &file_name_char_masks,
-            lower_names: &lower_names,
-            lower_file_names: &lower_file_names,
-            normalized_keys: &normalized_keys,
-        };
+        let bytes = try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache)
+            .expect("serialize");
 
-        let owned_bytes =
-            try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &owned).expect("owned");
-        let ref_bytes =
-            try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &borrowed).expect("borrowed");
+        // 凍結 golden（固定 fixture の serialize 出力・INDX magic + version 4 ヘッダー込み）。
+        // 形式変更時のみ更新する。
+        const GOLDEN: &[u8] = &[
+            73, 78, 68, 88, 4, 0, 0, 0, 128, 226, 207, 170, 6, 2, 7, 70, 105, 114, 101, 102, 111,
+            120, 19, 67, 58, 92, 97, 112, 112, 115, 92, 102, 105, 114, 101, 102, 111, 120, 46, 108,
+            110, 107, 0, 8, 80, 114, 111, 106, 101, 99, 116, 115, 11, 67, 58, 92, 80, 114, 111,
+            106, 101, 99, 116, 115, 1, 185, 96, 2, 171, 1, 205, 1, 2, 18, 52, 2, 7, 102, 105, 114,
+            101, 102, 111, 120, 8, 112, 114, 111, 106, 101, 99, 116, 115, 2, 1, 11, 102, 105, 114,
+            101, 102, 111, 120, 46, 108, 110, 107, 0, 2, 19, 99, 58, 92, 97, 112, 112, 115, 92,
+            102, 105, 114, 101, 102, 111, 120, 46, 108, 110, 107, 11, 99, 58, 92, 112, 114, 111,
+            106, 101, 99, 116, 115,
+        ];
         assert_eq!(
-            owned_bytes, ref_bytes,
-            "IndexCacheRef must serialize byte-identically to owned IndexCache"
+            bytes, GOLDEN,
+            "on-disk 形式が変化した。IndexCache のフィールド順/型変更は既存 index.bin を破損する。\
+             意図的なら INDEX_CACHE_VERSION をバンプし golden を更新すること"
         );
 
-        // 借用版で書いたバイト列を所有版として読み戻せること（read 経路の不変性）も確認する。
-        let restored: IndexCache =
-            try_deserialize_with_header(&ref_bytes, INDEX_MAGIC, INDEX_CACHE_VERSION)
+        // Cow::Borrowed(save) が Owned で読み戻せること（read 経路の不変性）も確認。
+        let restored: IndexCache<'static> =
+            try_deserialize_with_header(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION)
                 .expect("roundtrip");
+        assert!(matches!(restored.entries, Cow::Owned(_)));
         assert_eq!(restored.entries.len(), 2);
-        assert_eq!(restored.normalized_keys, normalized_keys);
+        assert_eq!(restored.normalized_keys.into_owned(), normalized_keys);
     }
 
     #[test]

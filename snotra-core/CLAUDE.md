@@ -83,6 +83,7 @@
 - **読み込み失敗は種類で扱いを分ける（`Config::load`）**: 不在（`NotFound`）= 既定値を生成・保存 / 内容破損（TOML parse 失敗・非 UTF-8 `InvalidData`）= `config.toml.bak` へ退避し既定値・**保存しない** / 一時的失敗（権限・ロック等）= 退避も上書きもせず既定値・**保存しない**。`Err(_)` 一括 first-run 扱いは一時的失敗で実データを既定値に潰す。**1分岐だけ直しても同じ `match` の兄弟分岐に同じ破壊的フォールバックが残る**ため、読み込み失敗を直すときは全分岐の保全方針を揃える（#338/#343: アドバーサリアルレビューが兄弟分岐＝read 失敗 arm の漏れと「後続 save で破損元が失われる」非対称を検出した）
 - **TOML フィールドを別の struct に移動するとき**: 旧フィールドを削除するのではなく `#[serde(default, skip_serializing)] pub field: Option<T>` として残し、`apply_migrations()` で `self.old.field.take()` → 新フィールドへ代入する。`Config::default()` の明示的 struct 初期化に `field: None` を追加するのを忘れない。また、`apply_migrations()` には複数のマイグレーションが存在するため、一部だけをテストする場合でも他の副作用（`additional → scan` 移行等）を踏まえたアサーション順序・内容を設計する
 - **serde 表現（enum variant・`#[serde(untagged/flatten/tag)]`）を変更するときは、旧オンディスク形式が deserialize できるテストを「新形式の往復」とは別に必ず追加する**: 旧形式が新構造体に deserialize 失敗すると `toml::from_str::<Config>` が失敗 → `config.toml.bak` 退避 → **全設定リセット**（`apply_migrations()` は deserialize の後に走るため移行では救えない）＝データ損失。旧形式は untagged の `Legacy { .. }` variant 等で必ず受理し、移行を `apply_migrations()` で行う。新形式の往復テストだけでは parse 失敗を検出できず false-green になる（#394: 多観点レビューが `toml` で実証）
+- **オンディスクのシリアライズ struct をリファクタするとき（「バイト形式不変」を主張する場合も含む）は、後方互換を *旧形式の凍結バイト列* を入力にした load テストで証明する**: 新コードの出力を golden 化しても保証されるのは forward-stability だけで、「新出力＝旧形式」を独立には証明しない（形式が壊れていても新 golden がそれを凍結して素通りする）。正しい向きは「旧形式の凍結バイト列 → 新コードで deserialize できる」の検証。加えて、形式を変える計画は着手前に最小 spike で往復バイト一致を実証してから plan を建てる（前提が崩れれば approach 自体が不成立ゆえ [[feedback_verify_issue_premises]]）。#461: owned/borrowed struct の `Cow` 統合で当初 golden を新コード出力から採取し forward-stability のみになっていたのを code-reviewer が検出、凍結バイト列からの deserialize に修正した
 
 ## history.rs のキー正規化に関するチェックリスト
 
@@ -105,16 +106,17 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 
 `indexer.rs` の `IndexCache` にフィールドを追加する場合、以下を全て更新する:
 
-1. **IndexCache 構造体**: 新フィールドを追加
+1. **`IndexCache<'a>` 構造体**: 新フィールドを `Cow<'a, [T]>` で追加（owned/borrowed は #461 で `Cow` 統合済み。save は `Cow::Borrowed` で全件 clone 回避、load は `IndexCache<'static>` へ Owned deserialize）
 2. **バージョン番号**: `INDEX_CACHE_VERSION` をバンプ
 3. **旧バージョン用フォールバック構造体**: 旧スキーマを `IndexCacheVN` として残す
-4. **`load_cache()`**: 新バージョン → 旧バージョンのフォールバックチェーンを追加
-5. **`save_cache_sorted()`**: 新フィールドの計算ロジックを追加
+4. **`load_cache()`**: 新バージョン → 旧バージョンのフォールバックチェーンを追加（Cow フィールドは `.into_owned()` で `CachedMasks`/`entries` へ）
+5. **`save_cache_sorted()`**: 新フィールドの計算ロジックを追加（`Cow::Borrowed` で渡す）
 6. **`CachedMasks` 構造体**: 新フィールドを `Option<T>` で追加（旧キャッシュでは None）
 7. **`SearchEngine::new_with_cached_masks()`**: 新パラメータを受け取り、None 時は自前で計算
-8. **`IndexCacheRef<'a>` 構造体**: `save_cache_sorted` が使う Serialize 専用の借用版。新フィールドを **`IndexCache` と完全に同じ順序・型**（`Vec<T>` → `&[T]`）で追加する。postcard は構造順依存のため、ずれると無言でフォーマットが変わり旧 `index.bin` を破損する。バイト一致は `index_cache_ref_serializes_identically_to_owned` テストでガード
 
 1つでも欠けるとキャッシュヒット時/ミス時で異なる結果を返す。
+
+**on-disk 形式の安定ガード**: 旧 `IndexCacheRef`（borrowed 双子）は #461 で `Cow` 統合され消滅した（owned/borrowed のフィールド順ズレ→`index.bin` 無言破損の footgun が型として解消）。統合後は save/load が単一 struct を共有するためフィールド reorder が roundtrip テストを素通りする。**バイト形式の絶対安定は `index_cache_on_disk_format_is_stable`（golden bytes）がガードする**。フィールド追加・順序変更で `INDEX_CACHE_VERSION` をバンプしたら、この golden bytes も更新すること。
 
 ## engine.rs のロック最小化パターン
 

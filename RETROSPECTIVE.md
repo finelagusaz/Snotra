@@ -1,25 +1,22 @@
-# Retrospective — 構成改善サイクル（構成調査 → 17 issue 起票 → 5原則の明文化 → 13 issue を並列委譲で実装・マージ）
+# Retrospective — 単一ドライバ sequential 2-issue サイクル（#436 Phase 1 分割リファクタ merged / #461 IndexCache Cow 統合 PR #463）
 
 ## よかったこと
 
-### 「調査 → 抽象化 → 原則 → issue → 実装」の3層連結が機能した
-4領域の並列 Explore による構成調査を、PR 単位で着手可能な 17 issue に整理し、さらに5つの構造的原因へ抽象化して `docs/development-principles.md`「構造的設計原則と強制の階梯」に明文化した（#443）。各 issue に対応原則を逆リンクし、実装エージェントへの委譲プロンプトにも原則を織り込んだ結果、個別修正が場当たりにならず「どの階梯を上る変更か」が一貫した。チェックリストの存在を「構造未吸収の診断信号」と定義し、削除可能になることを検収条件にする運用も開始した。
+### issue の額面を疑い「一段抽象化 → concern 分解 → 射程確定」を両 issue で貫いた
+#436（size:L・4 direction）と #461（cache 集約）のどちらも、issue の提案規模を鵜呑みにせず実コードを読んで concern 分解し、cost/risk で射程を絞った。#436 は 4 direction を「1 事実の N 箇所コピー」に抽象化し、2+3（読み手側 80/20）を実装・1 を #461 へ分離・4 を偽陽性（config↔engine の意図的層境界）と判定。#461 は「大集約」を owned/borrowed 双子・versioning・field-list マクロの 3 concern に割り、畳めるもの（Cow 統合）だけ実施し versioning（irreducible）と macro（過剰設計）を明示除外。issue を書いた本人（前サイクルの自分）の楽観的な「13→1 集約」像を、実コードで「本当の 80% は footgun 除去」に修正できた。射程は situation/abstraction を prose で提示した上で AskUserQuestion に委ねた。
 
-### オーケストレーション体制（統括 + 実装委譲 + 検証の使い分け）が1日で 13 issue を消化した
-依存関係で Wave を組み（検証インフラ → それをガードにしたリファクタ）、クレース単位で disjoint なタスクを最大3並列の worktree で委譲。レビューは変更の質でスケールさせた——機械的変更は diff 直接レビュー + 決め手となる1点の裏取り（例: #454 の `resolve_count_param_defaults` が `changed` 非計上である旧挙動の保存を main 直読で確認）、初期化順序・状態機械に触れる2件（#449 / #455）は code-reviewer 3フェーズ + E2E ゲート。全 14 PR が CI green + レビュー通過でマージされ、リグレッションゼロ。
+### 前提をコードで裏取りしてから計画を建てた（feasibility spike）
+#461 の approach 全体が「serde の `Cow<[T]>` がバイト一致で serialize・Owned で deserialize」という一点に依存していたため、plan 着手前に使い捨て spike を実 serde/postcard で回して version バンプ不要を確定してから計画を書いた。前提が崩れれば approach 自体が不成立ゆえ、投機的な計画を防いだ。spike は実施後に撤去し、知見を plan/PR に記録した。
 
-### A/B ベースライン検証を GUI 問題の初動に適用し、30分で無罪証明と機構特定に到達した
-「破棄ボタンの赤枠」報告に対し、推測を並べる前に2つの基準ビルド（#452 直前 / eframe 0.35 直前）を worktree で作り A/B 比較 → 両方で再現＝直近変更の無罪を証明。並行して cargo registry の egui ソースを直読し、`warn_on_id_clash: cfg!(debug_assertions)` による debug 限定の ID 重複警告と特定（#456 起票）。`docs/development-principles.md` の「ベースライン A/B」原則がコード外（GUI 挙動）でもそのまま効いた。
+### 多経路レビューが設計・実装の両段階で独立に別クラスの盲点を回収した
+#436 は plan-review（Explore 2 体）+ Codex 独立レビュー（設計段階）が私と Explore の盲点 4 件（9000 閾値の score_tier 混同・SPEC §3.2 誤参照・bitmask pre-filter の順序不変条件・スコープ記述の矛盾）を回収。#461 は code-reviewer が golden テストの「生成方向」の穴（新コード採取ゆえ forward-stability のみ）を指摘し、凍結バイト列からの deserialize に強化。設計段階の Codex と実装段階の code-reviewer が別クラスの欠陥を捕らえ、独立フレーミングの価値が両段階で確認された。
 
 ---
 
 ## 伸びしろ
 
-### 並列委譲のファイル境界見積もりが「issue 記載のファイル」ベースで、実装中のスコープ拡大を拾えなかった
-settings 中心の #439 が実装中に snotra-core/config.rs へ `normalized_default()` を追加し、config.rs 分割の #435 と conflict した。リベース解決（コンテキストを保持した実装エージェント本人に依頼）で 3分で復旧したが、委譲前に「実装中に踏み込みうる隣接ファイル」まで境界を見積もっていれば直列化できた。AGENTS.md 環境制約に運用ルールとして反映済み。
+### 「バイト形式不変を主張するリファクタ」に既存の後方互換ルールを初手で適用しなかった
+snotra-core/CLAUDE.md には #394 由来の「旧オンディスク形式が deserialize できるテストを別に追加する」ルールが既にあったが、#461 の Cow 統合を「バイト不変ゆえ該当せず」と見送り、golden を新コード出力から採取して forward-stability のみのテストにしてしまった（code-reviewer が検出）。既存ルールのトリガーが「serde 表現を変更するとき」に閉じて読め、「形式不変を主張する struct リファクタ」も証明対象だという一般化が抜けていた。→ snotra-core/CLAUDE.md のデータ永続化ルールに「凍結バイト列を入力にした load テストで後方互換を証明」「着手前 spike で往復バイト一致を実証」を追記済み。
 
-### 長時間エージェントの中断リスクに無防備だった
-セッションリミットで実装エージェント2体が同時中断。resume で復旧できたが、1体は worktree が消え未コミット作業の実質やり直しになった。「Phase ごとの検証 green 後にコミット」を委譲プロンプトの標準に含める（#431 のフェーズ制が好例）。AGENTS.md に反映済み。
-
-### settings（egui）の視覚検証が依然サイクル末の人手1回に依存している
-#452（egui 状態リファクタ）はマージ後のユーザー視覚スモークで初めて赤枠が観察された（結果は無罪だったが、検出がマージ後になる構造は #399 と同じ）。egui に触れる PR のマージ前視覚確認を挟むか、#440（egui_kittest ヘッドレステスト）で構造対策するかの判断が次サイクルの課題。
+### plan の「影響範囲網羅」が型構築箇所（テスト fixture）を取りこぼした
+#461 の plan は struct フィールド型変更（Vec→Cow）が `index_cache_binary_roundtrip` テストの *構築* 箇所を compile-fail させることを列挙し損ね、「影響範囲網羅」と自己申告したが plan-review（Explore）が回収した。型シグネチャ変更は呼び出し元だけでなく「その型を構築する箇所（テスト fixture 含む）」も compile-fail 対象。実害は最小（Phase 1 の cargo test の build gate で即露見）だったが、plan の網羅性主張を誇張した。AGENTS.md の「compile-fail を検出器として使う」ルールが検出自体は保証しており（実際 build が捕捉）、これは検出ギャップでなく plan 記述精度の問題ゆえ新ルールは追加しない。

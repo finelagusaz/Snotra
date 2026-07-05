@@ -272,7 +272,18 @@ impl eframe::App for SettingsApp {
     // eframe 0.35: App::update は logic()/ui() に分割された。全レイアウトを ui() が受け取る
     // ルート Ui 上に置き、各 Panel は show(ui) で描画する（旧 Panel::show(ctx) は 0.35 で削除、
     // show_inside は show へ改名）。ctx はルート Ui から取得する。
+    // 本体は `ui_impl` に委譲する（`_frame` 未使用のため挙動不変）。egui_kittest の
+    // `Harness::new_ui_state` は `FnMut(&mut Ui, &mut State)` を取り Frame を渡せないため、
+    // Frame 非依存の `ui_impl` を切り出してヘッドレステストから直接呼べるようにしている。
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.ui_impl(ui);
+    }
+}
+
+impl SettingsApp {
+    /// eframe の `App::ui` 本体（`eframe::Frame` 非依存）。本番は `ui()` から、テストは
+    /// egui_kittest の Harness から呼ぶ。egui 描画コードはここに集約する。
+    fn ui_impl(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         // Update window title (language change + dirty indicator)
         let title = if self.has_changes() {
@@ -724,5 +735,45 @@ mod tests {
                 "Backup tab must not light for `{name}`"
             );
         }
+    }
+
+    // === Phase 1 スパイク（#440）: egui_kittest による AccessKit 操作テストの実証 ===
+    // 目的: (1) ヘッドレスで SettingsApp の UI を Harness に載せられるか
+    //       (2) AccessKit 経由でウィジェットを操作し内部状態（draft/saved）を観測できるか
+    //       (3) wgpu なし（GPU 不要）で決定的に回るか — CI 安定性の裏取り
+    #[test]
+    fn kittest_general_checkbox_toggles_dirty_state() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+
+        // 言語を明示（default_language() は OS 依存でラベルが非決定的になるため）。
+        let mut config = Config::normalized_default();
+        config.general.language = Language::En;
+        let app = SettingsApp::new(config, false, None, LoadOutcome::Loaded);
+
+        // SettingsApp を state として保持し、Frame 非依存の ui_impl を Harness から呼ぶ。
+        let mut harness =
+            Harness::new_ui_state(|ui, app: &mut SettingsApp| app.ui_impl(ui), app);
+
+        // 初期状態: 未編集なので dirty ではない。
+        assert!(!harness.state().has_changes(), "initial state must be clean");
+
+        // General タブの「Toggle window visibility with hotkey」チェックボックスを
+        // AccessKit ラベルで見つけてクリック。
+        let label = Tr(Language::En).cb_hotkey_toggle();
+        harness.get_by_label(label).click();
+        // run() は「repaint 要求が止まる」収束を前提とするが、この UI は checkbox の
+        // アニメーション等で毎フレーム repaint を要求し発散する。ここで観測するのは
+        // 収束後の描画ではなく draft の内部状態なので、固定ステップでクリック（press→release）
+        // を処理させれば十分。
+        for _ in 0..4 {
+            harness.step();
+        }
+
+        // 編集後: draft != saved で dirty になる（内部状態を Harness 経由で観測）。
+        assert!(
+            harness.state().has_changes(),
+            "clicking the checkbox must make draft != saved (dirty)"
+        );
     }
 }

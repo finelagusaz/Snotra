@@ -14,6 +14,11 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 open = "5"
 rfd = "0.17"
 
+[dev-dependencies]
+# ヘッドレス UI テスト（AccessKit 経由）。default-features = false で wgpu/snapshot/x11 を
+# 引き込まない（GPU 依存を CI に持ち込まないため。0.35 時点で default feature は無いが将来防御）。
+egui_kittest = { version = "0.35", default-features = false }
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [
     "Win32_Graphics_Gdi",

@@ -78,6 +78,9 @@ vi.mock("../stores/search", () => ({ fn1: mockFn1, fn2: mockFn2 }));
 
 - `SearchWindow.test.tsx` が基盤実装。新しいコンポーネントテストはこのパターンを踏襲する
 - Tauri API（`@tauri-apps/api/window`, `@tauri-apps/api/event`）は空モックで無害化
+- **自動 cleanup は登録されない（vitest globals 無効のため）**: `@solidjs/testing-library` の auto-cleanup はグローバル `afterEach` に依存する。明示的に `afterEach(() => cleanup())` を書かないと、前のテストのコンポーネントがシグナル購読を持ったまま残り、後続テストのシグナル更新に反応してモック呼び出し回数を汚染する（`ResultsSection.test.tsx` で実証済み）
+- **effect の再実行を検証するテストではストアモックに実シグナルを使う**: `vi.fn(() => value)` の静的モックでは購読が発生せず effect が再実行されない。`vi.mock` の async ファクトリ内で `createSignal` を作り、setter を `__setResults` 等の名前で一緒に export してテストから駆動する（`ResultsSection.test.tsx` が基盤実装）
+- **コンポーネント境界の配線テストは子コンポーネントを props 捕捉モックにする**: 親（`MainApp` 等）のハンドラ配線・props 導出を検証するとき、子を `(props) => { captured = props; return null; }` でモックすると、jsdom 描画に依存せず「どの props / コールバックが渡ったか」を直接アサートできる（`MainApp.test.tsx` が基盤実装。Solid の props は getter なので捕捉後も live 値を返す）
 - **導出アクセサ（`viewKind`/`interpKind` 等）のモックは下位シグナルモックから導出させる**: ストアが既存シグナルから導出する派生アクセサを追加したとき、そのモックを下位シグナルモック（`mockToolSelectionState` 等）を読む実装（`vi.fn(() => mockToolSelectionState() ? ... : ...)`）にすると、既存テストが下位シグナルを set するだけで派生も追従し、テスト本体を書き換えずに緑を維持できる。`vi.clearAllMocks()` は `vi.fn(impl)` の実装を保持するため、`beforeEach` で下位モックを再設定すれば導出モックも最新値を反映する
 
 ## 実装パターン

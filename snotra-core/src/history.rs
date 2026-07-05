@@ -1,8 +1,10 @@
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::binfmt::BinFile;
+use crate::config::Config;
 use crate::indexer::normalize_entry_key;
 use crate::query::normalize_history_query_key;
 
@@ -37,13 +39,25 @@ impl HistoryStore {
     /// 引数で受け取る（live-read 化、issue #348）。これにより `result_limit` の設定変更が
     /// 再起動なしで反映され、`HistoryStore.top_n` の焼き込みによるドリフトが構造的に発生しない。
     pub fn load() -> Self {
-        let (loaded_data, loaded_version) = Self::bin_file()
-            .and_then(|bf| bf.load_with_fallback(HISTORY_FALLBACKS))
-            .unwrap_or((HistoryData::default(), HISTORY_VERSION));
+        match Config::config_dir() {
+            Some(dir) => Self::load_in(&dir),
+            None => Self::from_loaded(HistoryData::default(), HISTORY_VERSION),
+        }
+    }
 
+    /// `load()` と同じ読み込みを `dir` 注入で行う（統合テスト用、issue #429）。
+    pub fn load_in(dir: &Path) -> Self {
+        let (loaded_data, loaded_version) = Self::bin_file_in(dir)
+            .load_with_fallback(HISTORY_FALLBACKS)
+            .unwrap_or((HistoryData::default(), HISTORY_VERSION));
+        Self::from_loaded(loaded_data, loaded_version)
+    }
+
+    /// 読み込んだ生データに対し、バージョン別マイグレーションを適用して Self を組み立てる。
+    /// `load()` / `load_in()` の共有ロジック。
+    fn from_loaded(loaded_data: HistoryData, loaded_version: u32) -> Self {
         let data = migrate_time_unit_if_legacy(loaded_version, loaded_data);
         let data = migrate_normalize_keys(data);
-
         Self {
             data,
             dirty_count: 0,
@@ -53,11 +67,18 @@ impl HistoryStore {
     /// `top_n` 件まで剪定してから永続化する。`top_n` は呼び出し側（`Engine`）が
     /// 現在の config から渡す（live-read）。
     pub fn save(&mut self, top_n: usize) {
+        match Config::config_dir() {
+            Some(dir) => self.save_in(top_n, &dir),
+            None => self.prune(top_n),
+        }
+    }
+
+    /// `save()` と同じ剪定+永続化を `dir` 注入で行う（統合テスト用、issue #429）。
+    pub fn save_in(&mut self, top_n: usize, dir: &Path) {
         self.prune(top_n);
 
-        if let Some(bf) = Self::bin_file()
-            && !bf.save(&self.data)
-        {
+        let bf = Self::bin_file_in(dir);
+        if !bf.save(&self.data) {
             eprintln!("[history] failed to save {}", bf.path().display());
         }
     }
@@ -191,8 +212,8 @@ impl HistoryStore {
             .unwrap_or(0)
     }
 
-    fn bin_file() -> Option<BinFile> {
-        BinFile::new(HISTORY_MAGIC, HISTORY_VERSION, "history.bin")
+    fn bin_file_in(dir: &Path) -> BinFile {
+        BinFile::new_in(dir, HISTORY_MAGIC, HISTORY_VERSION, "history.bin")
     }
 
     /// `top_n` 件まで剪定する。`top_n` は引数で受け取る（焼き込まない＝live-read、issue #348）。
@@ -279,16 +300,6 @@ mod tests {
     use super::*;
     use crate::binfmt::{deserialize_with_header, serialize_with_header};
     use crate::query::normalize_query;
-    use std::path::Path;
-
-    /// Helper: create a BinFile pointing to a specific directory (bypasses Config::config_dir)
-    fn bin_file_in(dir: &Path) -> BinFile {
-        BinFile {
-            magic: HISTORY_MAGIC,
-            version: HISTORY_VERSION,
-            path: dir.join("history.bin"),
-        }
-    }
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("snotra_hist_test_{}", tag));
@@ -499,7 +510,7 @@ mod tests {
         );
         let bytes = serialize_with_header(HISTORY_MAGIC, HISTORY_VERSION_POSTCARD_V2, &data)
             .expect("serialize v2 postcard");
-        let bf = bin_file_in(&dir);
+        let bf = HistoryStore::bin_file_in(&dir);
         std::fs::write(bf.path(), &bytes).unwrap();
         let (loaded, version): (HistoryData, u32) =
             bf.load_with_fallback(HISTORY_FALLBACKS).expect("load v2 postcard");
@@ -524,7 +535,7 @@ mod tests {
                 last_launched: 1_700_000_000_000,
             },
         );
-        let bf = bin_file_in(&dir);
+        let bf = HistoryStore::bin_file_in(&dir);
         assert!(bf.save(&data));
         let (loaded, version): (HistoryData, u32) =
             bf.load_with_fallback(HISTORY_FALLBACKS).expect("load v3 postcard");
@@ -794,5 +805,53 @@ mod tests {
         let twice = migrate_normalize_keys(once.clone());
         assert_eq!(once.query["tool\\editor"]["c:\\tool\\editor\\app.exe"], 3);
         assert_eq!(twice.query["tool\\editor"]["c:\\tool\\editor\\app.exe"], 3);
+    }
+
+    // --- save_in / load_in ラウンドトリップ（issue #429, dir 注入で統合テスト可能に）---
+
+    #[test]
+    fn save_in_load_in_roundtrip_preserves_data() {
+        let dir = temp_dir("save_load_roundtrip");
+        let mut store = fresh_store();
+        store.record_launch("C:\\fake\\app.lnk", "app query");
+        store.record_launch("C:\\fake\\app.lnk", "app query");
+        store.record_folder_expansion("C:\\Projects");
+
+        store.save_in(100, &dir);
+
+        let loaded = HistoryStore::load_in(&dir);
+        assert_eq!(loaded.global_count("C:\\fake\\app.lnk"), 2);
+        assert_eq!(loaded.query_count("app query", "C:\\fake\\app.lnk"), 2);
+        assert_eq!(loaded.folder_expansion_count("C:\\Projects"), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_in_prunes_before_persisting_and_load_in_reflects_pruned_data() {
+        // save_in は prune → 永続化の順（HistoryStore::save_in 実装どおり）。
+        // top_n=2 で保存した内容を dir から読み直し、低カウントの entry が
+        // ディスク上でも剪定されていること（インメモリだけの剪定ではないこと）を検証する。
+        let dir = temp_dir("save_prune_roundtrip");
+        let mut store = fresh_store();
+        for (name, count) in [("a", 10u32), ("b", 5), ("c", 1)] {
+            let path = format!("c:\\{}.lnk", name);
+            for _ in 0..count {
+                store.record_launch(&path, "");
+            }
+        }
+
+        store.save_in(2, &dir);
+
+        let loaded = HistoryStore::load_in(&dir);
+        assert_eq!(loaded.global_count("c:\\a.lnk"), 10);
+        assert_eq!(loaded.global_count("c:\\b.lnk"), 5);
+        assert_eq!(
+            loaded.global_count("c:\\c.lnk"),
+            0,
+            "low-count entry should be pruned before persisting to disk"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -1,6 +1,6 @@
 import { createSignal, createEffect, createRoot, on, createMemo, batch } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
-import type { InstantCommand, OpenerTool, SearchResult } from "../lib/types";
+import type { OpenerTool, SavedViewState, SearchResult } from "../lib/types";
 import * as api from "../lib/invoke";
 import { findCommand } from "../lib/commands";
 import { perfStartSearch, perfMarkSearchDone, perfCancelSearch } from "../lib/perf";
@@ -8,14 +8,21 @@ import { clampSelectedIndex, computeParentDir } from "../lib/folderNav";
 import { trace } from "../lib/trace";
 import { folderState, setFolderState, folderFilter, setFolderFilter } from "./folder";
 import { toolSelectionState, setToolSelectionState } from "./tool-selection";
-import { t } from "../lib/i18n";
+import { clearLaunchNotice, notifyLaunchFailure } from "./launchNotice";
+import {
+  getInstantCommandItems,
+  setInstantCommandItems,
+  clearInstantCommandItems,
+  hasPendingInstantCommandFetch,
+  cancelInstantCommandDebounce,
+  scheduleInstantCommandFetch,
+} from "./instantCommand";
 
 const [query, setQuery] = createSignal("");
 const [results, setResults] = createSignal<SearchResult[]>([]);
 const [selected, setSelected] = createSignal(0);
 const [indexing, setIndexing] = createSignal(false);
 const [launching, setLaunching] = createSignal(false);
-const [launchNotice, setLaunchNotice] = createSignal<string | null>(null);
 const [instantCommandPrefix, setInstantCommandPrefix] = createSignal("@");
 const [noResults, setNoResults] = createSignal(false);
 
@@ -33,20 +40,37 @@ function clearResults() {
   setSelected(0);
 }
 
-/** インスタントコマンドモード中のコマンド一覧（activateSelected で参照） */
-let instantCommandItems: InstantCommand[] = [];
+/** モーダル的なビュー（フォルダ展開・ツール選択）に入る直前の results/selected を退避する
+ *  唯一の生成経路（choke point）。frame 固有の追加フィールド（currentDir・savedQuery 等）は
+ *  呼び出し側でスプレッドして合成する。 */
+function saveView(): SavedViewState {
+  return { savedResults: results(), savedSelected: selected() };
+}
+
+/** saveView() で退避した results/selected を復元する唯一の経路（choke point）。
+ *  frame 固有のフィールド（savedQuery 等）の復元は意味が呼び出し側ごとに異なるため含まない
+ *  （folder は setQuery で復元、tool は復元せず起動時の元クエリとして使うのみ）。 */
+function restoreView(saved: SavedViewState) {
+  updateResults(saved.savedResults);
+  setSelected(saved.savedSelected);
+}
 
 const DEBOUNCE_MS = 50;
-const INSTANT_CMD_DEBOUNCE_MS = 30;
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 /** leading edge: デバウンス区間の最初の入力で即時発火済みなら true */
 let leadingFired = false;
-let instantCmdDebounceTimer: ReturnType<typeof setTimeout> | undefined;
-let launchNoticeTimer: ReturnType<typeof setTimeout> | undefined;
 let refreshInFlight: Promise<void> | undefined;
 let searchGeneration = 0;
 let activationInFlight = false;
 let suppressNextQueryEffectRefresh = false;
+
+/** 世代カウンタの唯一の更新経路（choke point）。呼ぶたびに `searchGeneration` を +1 して
+ *  新しい世代番号を返す。`searchGeneration` への書き込みはここだけを経由すること
+ *  ——手書きの `++searchGeneration` を各所に散在させると加算漏れ・重複が stale 表示バグに
+ *  直結する（#431）。読み取り（staleness チェック）は引き続き `searchGeneration` を直読してよい。 */
+function nextGeneration(): number {
+  return ++searchGeneration;
+}
 
 export type ViewKind = "results" | "folder" | "tool";
 export type InterpKind = "plain" | "command" | "instant";
@@ -77,6 +101,15 @@ const interpKind = createMemo<InterpKind>(() => {
   return "plain";
 });
 
+/** フォルダ展開（ArrowRight/Left）・ツール選択（Shift+Enter）という「新規モーダル遷移」を
+ *  許可するかの述語。tool 選択中（viewKind()==="tool"）または instant コマンドモード中
+ *  （interpKind()==="instant"）はいずれも遷移をブロックする——という優先度をここに集約し、
+ *  SearchWindow のキーハンドラはこれを消費するだけにする（複合条件を個別に再導出しない。
+ *  development-principles.md「優先度・排他律は導出源の一箇所だけに書く」#431）。 */
+function allowsFolderNav(): boolean {
+  return viewKind() !== "tool" && interpKind() !== "instant";
+}
+
 /** 結果を表示すべきかの派生シグナル。MainApp がリアクティブにウィンドウ高さを変更するために使用。
  *  tool/folder は indexing 中でも表示。results は instant 中のみ indexing を無視する。 */
 const shouldShowResults = createMemo(() => {
@@ -94,41 +127,8 @@ const shouldShowResults = createMemo(() => {
   }
 });
 
-function clearLaunchNotice() {
-  if (launchNoticeTimer !== undefined) {
-    clearTimeout(launchNoticeTimer);
-    launchNoticeTimer = undefined;
-  }
-  if (launchNotice() !== null) {
-    setLaunchNotice(null);
-  }
-}
-
-/** LaunchResult の失敗/タイムアウトに応じた通知を表示する */
-function notifyLaunchFailure(result: api.LaunchResult) {
-  const detail = result.message ? ` (${result.message})` : "";
-  if (result.status === "timeout") {
-    setLaunchNoticeWithAutoClear(t("notice.launch.timeout", { detail }));
-  } else {
-    setLaunchNoticeWithAutoClear(t("notice.launch.failed", { detail }));
-  }
-}
-
-export function setLaunchNoticeWithAutoClear(message: string, delayMs = 2400) {
-  clearLaunchNotice();
-  setLaunchNotice(message);
-  launchNoticeTimer = setTimeout(() => {
-    launchNoticeTimer = undefined;
-    setLaunchNotice(null);
-  }, delayMs);
-}
-
-export function setHotkeyFailureNotice(message: string) {
-  setLaunchNoticeWithAutoClear(message, 5000);
-}
-
 function clearCommandModeState() {
-  ++searchGeneration;
+  nextGeneration();
   setQuery("");
   clearResults();
 }
@@ -165,7 +165,7 @@ async function refreshResults() {
   if (viewKind() === "tool") return;
   if (interpKind() === "instant") return;
 
-  const requestId = ++searchGeneration;
+  const requestId = nextGeneration();
   const fs = folderState();
   const q = query();
   const trimmed = q.trim();
@@ -247,6 +247,69 @@ async function refreshResults() {
   perfMarkSearchDone(requestId, items.length);
 }
 
+/** instant コマンド入力のディスパッチ（interpKind()==="instant"）。30ms デバウンス IPC 取得は
+ *  stores/instantCommand.ts の choke point（scheduleInstantCommandFetch）に委譲し、ここでは
+ *  世代管理（staleness 判定用の hooks）と結果反映のみを担う。 */
+function handleInstantQueryInput(q: string) {
+  cancelDebounce();
+  const prefix = instantCommandPrefix();
+  // trimStart() を使用: trailing whitespace はクエリの一部として保持する
+  const trimmedStart = q.trimStart();
+  const input = trimmedStart.slice(prefix.length);
+  // スペースがあればコマンド名部分のみでフィルタ（SPEC §18.5: スペースでマッチング確定）
+  const spaceIdx = input.indexOf(" ");
+  const filterName = spaceIdx >= 0 ? input.slice(0, spaceIdx) : input;
+  trace("search:query_effect:instant_command", { prefix, input, filterName });
+  scheduleInstantCommandFetch(filterName, {
+    nextRequestId: nextGeneration,
+    isStale: (requestId) => requestId !== searchGeneration,
+    onFetched: (fetchedResults) => {
+      updateResults(fetchedResults);
+      setSelected(0);
+    },
+    onError: (e) => {
+      trace("search:instant_command:error", { error: String(e) });
+    },
+  });
+}
+
+/** スラッシュコマンド入力のディスパッチ（interpKind()==="command"）。"/r" は履歴の即時表示という
+ *  特例、それ以外は完全一致コマンドの実行 or 候補なしクリアに分岐する。 */
+function handleCommandQueryInput(q: string) {
+  const trimmed = q.trim();
+  if (trimmed === "/r") {
+    cancelDebounce();
+    setSelected(0);
+    trace("search:query_effect:immediate_refresh", { reason: "slash_r" });
+    void runRefresh();
+    return;
+  }
+
+  const cmd = findCommand(q);
+  if (cmd && cmd.command !== "/r") {
+    cancelDebounce();
+    trace("search:query_effect:run_command", { command: cmd.command });
+    clearCommandModeState();
+    cmd.action();
+    return;
+  }
+
+  // Command mode without exact match: no suggestions, just clear results.
+  cancelDebounce();
+  trace("search:query_effect:slash_noop", { input: q });
+  nextGeneration();
+  updateResults([]);
+  setSelected(0);
+}
+
+/** 通常クエリ入力のディスパッチ（interpKind()==="plain"）。leading+trailing デバウンスで
+ *  refreshResults() へ委譲する。 */
+function handlePlainQueryInput(q: string) {
+  setSelected(0);
+  trace("search:query_effect:debounced_refresh", { query: q });
+  debouncedRefresh();
+}
+
 createRoot(() => {
   // Auto-refresh when query changes (non-folder mode)
   createEffect(
@@ -265,92 +328,34 @@ createRoot(() => {
         trace("search:query_effect:ignored_folder_mode", { query: q });
         return;
       }
-      const trimmed = q.trim();
-      const prefix = instantCommandPrefix();
-      trace("search:query_effect", { query: q, trimmed });
+      trace("search:query_effect", { query: q, trimmed: q.trim() });
 
-      // インスタントコマンドモード判定（スラッシュコマンドより先に評価）
-      // trimStart() を使用: trailing whitespace はクエリの一部として保持する
-      const trimmedStart = q.trimStart();
-      if (isInstantPrefix(q, prefix)) {
-        cancelDebounce();
-        const input = trimmedStart.slice(prefix.length);
-        // スペースがあればコマンド名部分のみでフィルタ（SPEC §18.5: スペースでマッチング確定）
-        const spaceIdx = input.indexOf(" ");
-        const filterName = spaceIdx >= 0 ? input.slice(0, spaceIdx) : input;
-        trace("search:query_effect:instant_command", { prefix, input, filterName });
-        // IPC 応答前の Enter/クリックで古いコマンドを誤起動しないよう、先にクリアする
-        instantCommandItems = [];
-        // 高速タイピング時の不要な IPC を削減するため 30ms デバウンス
-        if (instantCmdDebounceTimer !== undefined) {
-          clearTimeout(instantCmdDebounceTimer);
-        }
-        instantCmdDebounceTimer = setTimeout(() => {
-          instantCmdDebounceTimer = undefined;
-          void (async () => {
-            const requestId = ++searchGeneration;
-            try {
-              const commands = await api.getInstantCommands(filterName);
-              if (requestId !== searchGeneration) return;
-              instantCommandItems = commands;
-              const items: SearchResult[] = commands.map((cmd) => ({
-                name: cmd.name,
-                path: cmd.name,
-                isFolder: false,
-                isError: false,
-                description: cmd.description || cmd.display,
-              }));
-              updateResults(items);
-              setSelected(0);
-            } catch (e) {
-              trace("search:instant_command:error", { error: String(e) });
-            }
-          })();
-        }, INSTANT_CMD_DEBOUNCE_MS);
+      // ディスパッチは interpKind() 経由（優先度の再導出はしない。development-principles.md
+      // 「優先度・排他律は導出源の一箇所だけに書く」#431 Phase3）。
+      const kind = interpKind();
+      if (kind === "instant") {
+        handleInstantQueryInput(q);
         return;
       }
 
       // プレフィックスなし → instant モードの保留 IPC / stale 候補を掃除する。
       // interpKind は query から純粋導出されるため「モード解除」自体は状態更新不要。
-      // 掃除すべき資源（pending timer / stale items）が現存するときだけ実行する（無ければ no-op）。
-      if (instantCmdDebounceTimer !== undefined || instantCommandItems.length > 0) {
-        if (instantCmdDebounceTimer !== undefined) {
-          clearTimeout(instantCmdDebounceTimer);
-          instantCmdDebounceTimer = undefined;
-        }
-        instantCommandItems = [];
+      // 掃除すべき資源（pending fetch / stale items）が現存するときだけ実行する（無ければ no-op）。
+      if (hasPendingInstantCommandFetch() || getInstantCommandItems().length > 0) {
+        cancelInstantCommandDebounce();
+        clearInstantCommandItems();
       }
 
-      if (trimmed === "/r") {
-        cancelDebounce();
-        setSelected(0);
-        trace("search:query_effect:immediate_refresh", { reason: "slash_r" });
-        void runRefresh();
-        return;
-      }
-
-      if (trimmed.startsWith("/")) {
-        const cmd = findCommand(q);
-        if (cmd && cmd.command !== "/r") {
-          cancelDebounce();
-          trace("search:query_effect:run_command", { command: cmd.command });
-          clearCommandModeState();
-          cmd.action();
+      switch (kind) {
+        case "command":
+          handleCommandQueryInput(q);
           return;
-        }
-
-        // Command mode without exact match: no suggestions, just clear results.
-        cancelDebounce();
-        trace("search:query_effect:slash_noop", { input: q });
-        ++searchGeneration;
-        updateResults([]);
-        setSelected(0);
-        return;
+        case "plain":
+          handlePlainQueryInput(q);
+          return;
+        default:
+          return assertNever(kind);
       }
-
-      setSelected(0);
-      trace("search:query_effect:debounced_refresh", { query: q });
-      debouncedRefresh();
     }),
   );
 
@@ -379,8 +384,7 @@ function enterFolderExpansion(dir: string) {
     // Save current state before entering folder mode
     setFolderState({
       currentDir: dir,
-      savedResults: results(),
-      savedSelected: selected(),
+      ...saveView(),
       savedQuery: query(),
     });
   } else {
@@ -400,9 +404,8 @@ function exitFolderExpansion(): boolean {
   // デバウンスタイマーをクリア（フォルダモード中の入力残り処理を防止）
   cancelDebounce();
 
-  ++searchGeneration;
-  updateResults(fs.savedResults);
-  setSelected(fs.savedSelected);
+  nextGeneration();
+  restoreView(fs);
   setFolderState(null);    // setQuery より先に null にする
   setFolderFilter("");
   setQuery(fs.savedQuery);
@@ -473,6 +476,35 @@ async function resolveActivationTarget(
 }
 
 
+/** 起動フローの共通骨格（choke point）。「通知クリア→launching→世代更新→結果クリア→
+ *  await→成功/失敗分岐→finally で launching 解除」を1箇所に閉じ込め、`launchAndReset` /
+ *  `launchWithSelectedTool` / `executeInstantCommandSelected` の三重複を解消する（#431）。
+ *  呼び出し側は「起動 API 呼び出し」と「成功/失敗時の後始末（trace・状態復元）」だけを渡す。
+ *  `activationInFlight` ガードは呼び出し元ごとに事前条件チェックの粒度が異なる（tool フレーム有無・
+ *  instant コマンド解決など）ため、ここでは扱わず各呼び出し元が個別に管理する。 */
+async function withLaunchLifecycle(
+  launch: () => Promise<api.LaunchResult>,
+  onSuccess: (result: api.LaunchResult) => void,
+  onFailure: (result: api.LaunchResult) => void,
+): Promise<boolean> {
+  clearLaunchNotice();
+  setLaunching(true);
+  try {
+    nextGeneration();
+    clearResults();
+    const launchResult = await launch();
+    if (launchResult.status !== "ok") {
+      notifyLaunchFailure(launchResult);
+      onFailure(launchResult);
+      return false;
+    }
+    onSuccess(launchResult);
+    return true;
+  } finally {
+    setLaunching(false);
+  }
+}
+
 async function launchWithSelectedTool(): Promise<boolean> {
   if (activationInFlight) return false;
   const frame = toolSelectionState();
@@ -484,43 +516,32 @@ async function launchWithSelectedTool(): Promise<boolean> {
     const tool = frame.tools[idx];
     if (!tool) return false;
 
-    clearLaunchNotice();
-    setLaunching(true);
     trace("search:launch_with_tool:start", {
       path: frame.targetPath,
       tool: tool.exe,
       query: frame.savedQuery,
     });
-    // 結果を隠す
-    ++searchGeneration;
-    clearResults();
-    const launchResult = await api.launchWithTool(
-      frame.targetPath,
-      frame.savedQuery,
-      tool.exe,
-      tool.args,
+    return await withLaunchLifecycle(
+      () => api.launchWithTool(frame.targetPath, frame.savedQuery, tool.exe, tool.args),
+      () => {
+        setToolSelectionState(null);
+        setFolderState(null);
+        setFolderFilter("");
+        clearResults();
+        nextGeneration();
+        trace("search:launch_with_tool:done", { path: frame.targetPath });
+      },
+      (launchResult) => {
+        trace("search:launch_with_tool:error", {
+          path: frame.targetPath,
+          status: launchResult.status,
+          code: launchResult.code,
+          message: launchResult.message,
+        });
+        void runRefresh();
+      },
     );
-    if (launchResult.status !== "ok") {
-      trace("search:launch_with_tool:error", {
-        path: frame.targetPath,
-        status: launchResult.status,
-        code: launchResult.code,
-        message: launchResult.message,
-      });
-      notifyLaunchFailure(launchResult);
-      void runRefresh();
-      return false;
-    }
-
-    setToolSelectionState(null);
-    setFolderState(null);
-    setFolderFilter("");
-    clearResults();
-    ++searchGeneration;
-    trace("search:launch_with_tool:done", { path: frame.targetPath });
-    return true;
   } finally {
-    setLaunching(false);
     activationInFlight = false;
   }
 }
@@ -547,8 +568,7 @@ async function enterToolSelection(result: SearchResult): Promise<boolean> {
     targetPath: result.path,
     targetIsFolder: result.isFolder,
     tools,
-    savedResults: results(),
-    savedSelected: selected(),
+    ...saveView(),
     savedQuery: query(),
     savedFolderFilter: folderFilter(),
   };
@@ -561,7 +581,7 @@ async function enterToolSelection(result: SearchResult): Promise<boolean> {
     isFolder: false,
     isError: false,
   }));
-  ++searchGeneration;
+  nextGeneration();
   updateResults(toolResults);
   setSelected(0);
   trace("search:enter_tool_selection:ok", { path: result.path, toolCount: tools.length });
@@ -572,9 +592,8 @@ function exitToolSelection(): boolean {
   const frame = toolSelectionState();
   if (!frame) return false;
 
-  ++searchGeneration;
-  updateResults(frame.savedResults);
-  setSelected(frame.savedSelected);
+  nextGeneration();
+  restoreView(frame);
   setToolSelectionState(null);
   // フォルダ展開中だった場合の folderFilter を復帰
   setFolderFilter(frame.savedFolderFilter);
@@ -585,43 +604,35 @@ function exitToolSelection(): boolean {
 async function launchAndReset(result: SearchResult): Promise<boolean> {
   if (result.isError) return false;
 
-  clearLaunchNotice();
-  setLaunching(true);
   trace("search:launch:start", { path: result.path, query: query() });
-  try {
-    // launch 開始時に results を隠す
-    ++searchGeneration;
-    clearResults();
-    const launchResult = await api.launchItem(result.path, query());
-    if (launchResult.status !== "ok") {
+  return withLaunchLifecycle(
+    () => api.launchItem(result.path, query()),
+    (launchResult) => {
+      setFolderState(null);
+      setFolderFilter("");
+      clearResults();
+      nextGeneration();
+      trace("search:launch:done", { path: result.path, code: launchResult.code });
+    },
+    (launchResult) => {
       trace("search:launch:error", {
         path: result.path,
         status: launchResult.status,
         code: launchResult.code,
         message: launchResult.message,
       });
-      notifyLaunchFailure(launchResult);
       void runRefresh();
-      return false;
-    }
-
-    setFolderState(null);
-    setFolderFilter("");
-    clearResults();
-    ++searchGeneration;
-    trace("search:launch:done", { path: result.path, code: launchResult.code });
-    return true;
-  } finally {
-    setLaunching(false);
-  }
+    },
+  );
 }
 
 async function executeInstantCommandSelected(): Promise<boolean> {
   if (activationInFlight) return false;
   activationInFlight = true;
   try {
-    const idx = clampSelectedIndex(selected(), instantCommandItems.length);
-    const cmd = instantCommandItems[idx];
+    const items = getInstantCommandItems();
+    const idx = clampSelectedIndex(selected(), items.length);
+    const cmd = items[idx];
     if (!cmd) return false;
 
     // クエリ部分を抽出（プレフィックス + コマンド名 + 空白以降）
@@ -630,50 +641,42 @@ async function executeInstantCommandSelected(): Promise<boolean> {
     const nameEnd = raw.indexOf(" ");
     const instantQuery = nameEnd >= 0 ? raw.slice(nameEnd + 1) : "";
 
-    clearLaunchNotice();
-    setLaunching(true);
     trace("search:instant_command:execute", { name: cmd.name, query: instantQuery });
 
     // 失敗時に復元するため、実行前の状態を保存
     const savedResults = results();
     const savedSelected = selected();
-    const savedItems = [...instantCommandItems];
-
+    const savedItems = [...items];
+    // withLaunchLifecycle が世代を+1する直前の値。await 中の追加変化を検知するベースライン。
     const preGen = searchGeneration;
-    ++searchGeneration;
-    clearResults();
 
-    const launchResult = await api.executeInstantCommand(cmd.name, instantQuery);
-    if (launchResult.status !== "ok") {
-      trace("search:instant_command:error", {
-        name: cmd.name,
-        status: launchResult.status,
-        code: launchResult.code,
-        message: launchResult.message,
-      });
-      notifyLaunchFailure(launchResult);
-      // 失敗時: await 中に状態が変わっていなければ候補リストを復元
-      if (searchGeneration === preGen + 1) {
-        ++searchGeneration;
-        instantCommandItems = savedItems;
-        updateResults(savedResults);
-        setSelected(savedSelected);
-      }
-      return false;
-    }
-
-    // 成功時: モードを完全にクリアする（query="" で interpKind は plain へ純粋導出）
-    if (instantCmdDebounceTimer !== undefined) {
-      clearTimeout(instantCmdDebounceTimer);
-      instantCmdDebounceTimer = undefined;
-    }
-    instantCommandItems = [];
-    suppressNextQueryEffectRefresh = true;
-    setQuery("");
-    trace("search:instant_command:done", { name: cmd.name });
-    return true;
+    return await withLaunchLifecycle(
+      () => api.executeInstantCommand(cmd.name, instantQuery),
+      () => {
+        // 成功時: モードを完全にクリアする（query="" で interpKind は plain へ純粋導出）
+        cancelInstantCommandDebounce();
+        clearInstantCommandItems();
+        suppressNextQueryEffectRefresh = true;
+        setQuery("");
+        trace("search:instant_command:done", { name: cmd.name });
+      },
+      (launchResult) => {
+        trace("search:instant_command:error", {
+          name: cmd.name,
+          status: launchResult.status,
+          code: launchResult.code,
+          message: launchResult.message,
+        });
+        // 失敗時: await 中に状態が変わっていなければ候補リストを復元
+        if (searchGeneration === preGen + 1) {
+          nextGeneration();
+          setInstantCommandItems(savedItems);
+          updateResults(savedResults);
+          setSelected(savedSelected);
+        }
+      },
+    );
   } finally {
-    setLaunching(false);
     activationInFlight = false;
   }
 }
@@ -742,11 +745,8 @@ function resetForShow() {
   clearLaunchNotice();
   setToolSelectionState(null);
   setFolderState(null);
-  if (instantCmdDebounceTimer !== undefined) {
-    clearTimeout(instantCmdDebounceTimer);
-    instantCmdDebounceTimer = undefined;
-  }
-  instantCommandItems = [];
+  cancelInstantCommandDebounce();
+  clearInstantCommandItems();
   if (query() !== "") {
     suppressNextQueryEffectRefresh = true;
   }
@@ -817,11 +817,10 @@ export {
   shouldShowResults,
   viewKind,
   interpKind,
+  allowsFolderNav,
   indexing,
   initIndexingState,
   launching,
-  launchNotice,
-  clearLaunchNotice,
   enterToolSelection,
   exitToolSelection,
   getSearchGeneration,
@@ -831,3 +830,10 @@ export {
 
 export { folderState, folderFilter, setFolderFilter } from "./folder";
 export { toolSelectionState } from "./tool-selection";
+// 公開 API は変えず、実装のみ stores/launchNotice.ts へ分割（#431 Phase3・DRY 再 export）
+export {
+  launchNotice,
+  clearLaunchNotice,
+  setLaunchNoticeWithAutoClear,
+  setHotkeyFailureNotice,
+} from "./launchNotice";

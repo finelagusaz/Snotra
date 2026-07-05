@@ -24,7 +24,7 @@ import {
   toolSelectionState,
   noResults,
   viewKind,
-  interpKind,
+  allowsFolderNav,
 } from "../stores/search";
 import { hideMainWindow } from "../lib/commands";
 import { computeParentDir } from "../lib/folderNav";
@@ -186,8 +186,8 @@ const SearchWindow: Component = () => {
         break;
       case "ArrowRight": {
         trace("ui:key_action", { action: "arrow_right" });
-        // tool(軸1) と instant(軸2) は別軸ゆえ別条件で名指す。command は結果空で展開不能のため含めない
-        if (viewKind() === "tool" || interpKind() === "instant") break;
+        // 優先度の導出は allowsFolderNav() 側に集約済み（command は結果空で展開不能のため含めない）
+        if (!allowsFolderNav()) break;
         const r = results()[selected()];
         if (r?.isFolder) {
           enterFolderExpansion(r.path);
@@ -197,7 +197,7 @@ const SearchWindow: Component = () => {
       }
       case "ArrowLeft":
         trace("ui:key_action", { action: "arrow_left" });
-        if (viewKind() === "tool" || interpKind() === "instant") break;
+        if (!allowsFolderNav()) break;
         if (viewKind() === "folder") {
           navigateFolderUp();
           e.preventDefault();
@@ -214,7 +214,7 @@ const SearchWindow: Component = () => {
         break;
       case "Enter":
         trace("ui:key_action", { action: "enter", shift: e.shiftKey });
-        if (e.shiftKey && viewKind() !== "tool" && interpKind() !== "instant") {
+        if (e.shiftKey && allowsFolderNav()) {
           // Shift+Enter: ツール選択メニューを表示（0/1 ツール時は通常起動にフォールバック）
           const r = results()[selected()];
           if (r && !r.isError) {

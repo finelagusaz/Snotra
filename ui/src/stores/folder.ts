@@ -1,10 +1,9 @@
 import { createSignal } from "solid-js";
-import type { SearchResult } from "../lib/types";
+import type { SavedViewState } from "../lib/types";
 
-export interface FolderFrame {
+export interface FolderFrame extends SavedViewState {
   currentDir: string;
-  savedResults: SearchResult[];
-  savedSelected: number;
+  /** フォルダモード離脱時に setQuery() で復元する検索欄の値（tool の savedQuery とは用途が異なる） */
   savedQuery: string;
 }
 

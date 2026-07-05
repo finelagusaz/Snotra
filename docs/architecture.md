@@ -140,7 +140,7 @@ ui/src/
 
 - 純ロジック: `snotra-core/src/instant.rs` — 変数展開 `{query}` / `{clip}` / `{date:書式}` / `{uuid}`（修飾子パイプ `{name | lower|upper|trim|default:x|raw}` 対応）+ `{{…}}` リテラルエスケープ + 前方一致フィルタ。date は strftime（不正書式は空文字でフォールバック＝panic 回避）、uuid は v4。`{{X}}` は literal `{X}`（変数名と衝突する literal の opt-out）。エンコードはシンク（種別）責務で URL 判定時に自動付与、`raw` で抑止。不明修飾子は `Config::validate` が保存時に拒否
 - IPC: `src-tauri/src/commands/instant.rs` — クリップボード読み取り + 種別分岐で実行（URL/Legacy は `expand_instant_command` → `launch_item_core`（ShellExecuteW）、Exec は `launch_exec_core`（exe + args 起動））
-- UI: `ui/src/stores/search.ts` — `interpKind()`（`query` + prefix からの純粋導出）でモード判定。query effect が instant コマンドの IPC 取得（getInstantCommands）を担う。indexing 中でも使用可能
+- UI: `ui/src/stores/search.ts` — `interpKind()`（`query` + prefix からの純粋導出）でモード判定。IPC 取得（getInstantCommands）は `stores/instantCommand.ts` の `scheduleInstantCommandFetch`（30ms デバウンス）に集約。indexing 中でも使用可能
 - 設定 GUI: `snotra-settings/src/tabs/instant.rs` — プレフィックス設定 + コマンド CRUD + 展開プレビュー
 - プレフィックス変更は `config_watcher.rs` が `instant-prefix-changed` イベントで UI に通知
 
@@ -185,7 +185,7 @@ sequenceDiagram
 
     SS->>SS: debouncedRefresh()<br/>setTimeout で leading+trailing 50ms
 
-    SS->>SS: refreshResults()<br/>searchGeneration++ (stale 検出用)
+    SS->>SS: refreshResults()<br/>nextGeneration() (stale 検出用)
     SS->>API: search(query)
     API->>Cmd: invoke("search", { query })
     Cmd->>Eng: engine.search(&query)

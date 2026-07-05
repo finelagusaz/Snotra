@@ -1,12 +1,11 @@
 import { createSignal } from "solid-js";
-import type { OpenerTool, SearchResult } from "../lib/types";
+import type { OpenerTool, SavedViewState } from "../lib/types";
 
-export interface ToolSelectionFrame {
+export interface ToolSelectionFrame extends SavedViewState {
   targetPath: string;
   targetIsFolder: boolean;
   tools: OpenerTool[];
-  savedResults: SearchResult[];
-  savedSelected: number;
+  /** ツール起動時に渡す元クエリ（folder の savedQuery と異なり離脱時の復元には使わない） */
   savedQuery: string;
   savedFolderFilter: string;
 }

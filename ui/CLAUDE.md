@@ -17,9 +17,11 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 
 ### stores/
 
-- `search.ts`: 検索状態管理（クエリ/結果/選択/モード切替/`shouldShowResults` メモシグナル）。主要な公開関数: `resetForShow()`（window-shown 時の全状態リセット）、`refreshResults()`（ソースに応じた検索実行）、`initIndexingState()`（起動時のインデックス状態初期化 + `indexing-started` / `indexing-complete` リスナー登録）。`suppressNextQueryEffectRefresh` フラグで query effect の不要な再実行を抑制
-- `folder.ts`: フォルダモードの状態（`FolderFrame` シグナル + `folderFilter`）
-- `tool-selection.ts`: ツール選択モードの状態（`ToolSelectionFrame` シグナル）
+- `search.ts`: 検索状態管理（クエリ/結果/選択/モード切替/`shouldShowResults` メモシグナル）の調停役。主要な公開関数: `resetForShow()`（window-shown 時の全状態リセット）、`refreshResults()`（ソースに応じた検索実行）、`initIndexingState()`（起動時のインデックス状態初期化 + `indexing-started` / `indexing-complete` リスナー登録）。`suppressNextQueryEffectRefresh` フラグで query effect の不要な再実行を抑制。横断規約の choke point: `nextGeneration()`（`searchGeneration` 更新の唯一経路）、`withLaunchLifecycle()`（起動フロー三種の共通骨格）、`saveView()`/`restoreView()`（`SavedViewState` の退避/復元）、`allowsFolderNav()`（フォルダ展開・ツール選択遷移の許可述語、`viewKind`/`interpKind` 由来）。`instantCommand.ts`/`launchNotice.ts` を re-export し公開 API を単一箇所に保つ
+- `instantCommand.ts`: インスタントコマンド候補一覧の状態（`instantCommandItems`）と 30ms デバウンス IPC 取得（`scheduleInstantCommandFetch`）。`api`/`lib/types` のみに依存し `search.ts` へ逆依存しない（循環 import 回避）。staleness 判定・世代更新は呼び出し側が hooks（`nextRequestId`/`isStale`）で注入する
+- `launchNotice.ts`: 起動失敗・ホットキー失敗の一時通知（`launchNotice` シグナル + 自動クリアタイマー）。`notifyLaunchFailure`/`setLaunchNoticeWithAutoClear`/`setHotkeyFailureNotice`/`clearLaunchNotice` を提供
+- `folder.ts`: フォルダモードの状態（`FolderFrame` シグナル + `folderFilter`）。`FolderFrame` は `lib/types.ts` の `SavedViewState` を拡張
+- `tool-selection.ts`: ツール選択モードの状態（`ToolSelectionFrame` シグナル）。`ToolSelectionFrame` は `lib/types.ts` の `SavedViewState` を拡張
 
 ### lib/
 

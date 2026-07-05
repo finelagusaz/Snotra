@@ -1,94 +1,66 @@
-# research — #440 egui 設定 GUI のヘッドレス UI テスト導入検討
+# research — issue #436 検索エンジンの拡張コスト削減
 
 ## issue の要約
 
-設定 GUI（`snotra-settings`, egui）は「型検査 + clippy + 人手の視覚スモーク」だけで守られており、コードベース最大の検証死角。egui はネイティブ描画のため WebDriver ベース E2E から原理的に不可視。egui 公式のヘッドレステストハーネス `egui_kittest`（AccessKit 経由の操作 + スナップショット比較）を評価し、以下を判断する:
+SearchEngine の SoA（並列 Vec）レイアウトは性能実測に基づく意図的設計だが、派生フィールド 1 本の追加に多数の同時更新＋キャッシュスキーマの version バンプが必要で、拡張コストが構造的に最大の領域になっている。read 側 SoA は維持したまま、書き込み・構築・スコアリングの表現を集約したい。
 
-1. draft/saved フロー・バリデーションの**操作テスト**が書けるか（AccessKit 経由）
-2. **スナップショット比較**で #399 型の視覚回帰を検知できるか（フォントレンダリングの環境差にどう耐えるか）
-3. **CI**（GitHub Actions windows ランナー）で安定して回るか
+issue が挙げる改善の方向性は 4 本:
+1. 派生 Vec 生成を単一 builder に集約（「フィールド追加は 1 関数」に近づける）
+2. `search_with_options`（約 330 行）を候補準備とスコアリング fold に関数分割
+3. スコア階層（Prefix 10000 / Substring 5000 / Kana 4500 / Path 3000）を宣言的に定義
+4. `SearchMode` の二重定義解消
 
-導入コストが見合わない場合の代替（起動スモーク + タブのスクリーンショット保存）も比較する。
+## 一段抽象化 — 4 方向は「同一構造の別クラス」
 
-## 確定した事実（実証・一次情報）
+4 方向は全て「**1 つの事実が N 箇所に手書きコピーされている**」の顕現。ただしコスト・リスクで階層が分かれる:
 
-### egui_kittest 0.35 は存在し、eframe 統合機能を持つ
+| 方向 | 本質 | リスク | 判断 |
+|---|---|---|---|
+| **2. fn 分割** | 1 関数が N 責務（逆向きの同型） | 低（挙動不変・serialize 非関与） | **今 PR** |
+| **3. スコア階層宣言化** | スコア定数が 3 関数に散在 | 低 | **今 PR**（文書化された不変条件をコードで強制していない＝checklist は構造未吸収の診断信号） |
+| **1. cache 三兄弟集約** | 同一カラム集合が owned/borrowed/optional の 3 定義 | 高（postcard 位置依存＋on-disk version） | **別 issue で再評価**（field-list マクロなしには畳めず＝過剰設計境界。build 側は #337/#437 で集約済み、残余は cache スキーマに集中） |
+| **4. SearchMode 二重定義** | — | — | **偽陽性・畳まない**（下記） |
 
-`cargo add egui_kittest@0.35 --dev -p snotra-settings --dry-run` の実行結果:
+### direction 4 の裏取り（issue 前提の検証）
 
-```
-Adding egui_kittest v0.35 to dev-dependencies
-Features as of v0.35.0:
-- document-features
-- eframe      ← eframe::App を直接テストする統合
-- snapshot    ← 画像スナップショット比較（wgpu 必須）
-- wgpu        ← GPU レンダラ（スナップショットに必要）
-- x11
-```
+- `config::SearchModeConfig`（config.rs:199）: `#[derive(Serialize, Deserialize)] #[serde(rename_all = "snake_case")]` — **config.toml の wire 形式**に紐づく serde 型
+- `search::SearchMode`（search.rs:32）: serde 非依存の**純ドメイン enum**
+- `From<SearchModeConfig> for SearchMode`（search.rs:39）: config↔engine の**意図的アンチコラプション境界**。`From<&SearchConfig> for SearchOptions`（search.rs:68）と同じパターン
 
-- eframe 0.35 と**バージョン整合**（egui_kittest は egui/eframe とロックステップでリリース）。本 crate は `eframe = "0.35"` なので追加互換性リスクは低い。
-- `eframe` feature があり、`SettingsApp`（`impl eframe::App`）をそのまま Harness に載せる経路がありうる（詳細は要スパイク）。
+畳むと「engine が serde/wire 形式に依存」または「config が engine 内部に依存」となり層が結合する。→ **削除せず、`SearchMode` の doc コメントに「なぜ 2 定義か（層境界）」を明記**して checklist 化を防ぐ。issue 前提「二重定義解消」を「二重定義の *理由* を明文化」に読み替える（[[feedback_verify_issue_premises]]）。
 
-### API 形状が `SettingsApp::ui()` とほぼ一致（切り出しが薄い）
+## 関連コード
 
-context7（`/websites/crates_io_crates_egui_kittest`）の README:
+### 今 PR で触る（direction 2+3）
 
-```rust
-let app = |ui: &mut egui::Ui| { ui.checkbox(&mut checked, "Check me!"); };
-let mut harness = Harness::new_ui(app);
-let checkbox = harness.get_by_label("Check me!");
-checkbox.click();
-harness.run();
-assert_eq!(harness.get_by_label("Check me!").accesskit_node().toggled(), Some(Toggled::True));
-harness.fit_contents();
-#[cfg(all(feature = "wgpu", feature = "snapshot"))]
-harness.snapshot("readme_example");   // 画像スナップショットは wgpu+snapshot 限定
-```
+- `snotra-core/src/search.rs:370-699` — `search_with_options` 本体。フェーズ構造は既に明瞭:
+  - **(a) クエリ準備** L382-443: `norm_query` / `has_dot` / `query_mask` / `kana_query` / `needle_u32` / `has_path_sep` / `path_query` / `path_history_key`
+  - **(b) incremental 判定** L445-490: `kana_monotonic` / `use_incremental` / `candidate_indices` / `kana_available`
+  - **(c) 並列 fold スコアリング** L492-678: bitmask pre-filter → name/file_name/kana/path スコア → 履歴ブースト → top-k heap
+  - **(d) cache 更新 + 結果組立** L680-698: `prev_*` 更新 → `into_sorted_vec` → `SearchResult` 変換
+- `snotra-core/src/search.rs:803-827` — `match_score_single_cached`。`10_000`（Prefix, L814）・`5_000`（Substring, L819）がインライン
+- `snotra-core/src/search.rs:794-798` — `kana_substring_score`。`4500`（L797）がインライン
+- `snotra-core/src/search.rs:604-608` — path マッチ。`3000`（L607）がインライン
+- `snotra-core/src/search.rs:729-743` — `adjusted_history_boost`（既に抽出済みヘルパー、参考）
 
-- `Harness::new_ui(|ui: &mut egui::Ui| …)` は**現行の `SettingsApp::ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame)`（`app.rs:275`）とシグネチャがほぼ一致**。`_frame` は未使用（アンダースコア）なので、`fn ui_impl(&mut self, ui: &mut egui::Ui)` を切り出して両方（eframe の `ui()` と kittest Harness）から呼べば、egui 描画コードを一切書き換えずにヘッドレステスト可能。
-- 操作は AccessKit ツリー経由（`get_by_label` / `.click()` / `.run()`）。**wgpu 不要**。
+### 触らない（direction 1・別 issue）
 
-### スナップショットの環境差リスク（context7 一次情報）
+- SoA レイアウト（`SearchEngine` struct / `compute_wave1/2` / `assemble` / `EntryView`）
+- `indexer.rs` の cache スキーマ（`IndexCache` / `IndexCacheRef` / `CachedMasks` / `INDEX_CACHE_VERSION` / `load_cache` / `save_cache_sorted` / `extend_cached_masks`）
 
-egui_kittest 公式ドキュメント「What to do when CI / another computer produces a different image?」が明示:
+## 既存パターン（再利用可能）
 
-- 画像差は **GPU / OS / レンダリングバックエンド（Metal/Vulkan/DX12）/ グラフィックドライバ**依存。MSAA のサンプル配置・テクスチャフィルタ・浮動小数点評価・偏微分（dpdx）の実装差で発生。
-- 対策は「全 test run で feature を統一」「`SnapshotOptions::threshold` と許容ピクセル数を調整」だが、**「許容度を上げすぎると本物の失敗をマスクする」と警告**。
+- **フェーズ抽出は自由 fn へ**: `adjusted_history_boost` / `kana_substring_score` / `match_score_single_cached` は既に `impl` 外の自由関数。同じ形で `score_one_entry` を抽出できる（`self` を明示引数化）
+- **`EntryView`**: fold ボディが既に `self.entry_view(i)` で per-entry データを束ねている。スコアリング抽出の引数はこの view + マスク配列参照 + クエリコンテキストで構成できる
+- **スコア定数の集約先**: 現状の名前付き const（`GLOBAL_WEIGHT` 等 L17-23）と同じモジュールトップに `mod score` を置く
 
-## テスト可能性の分析（コード側の制約）
+## 技術的制約
 
-### 操作テスト（AccessKit）— 実現可能・障壁小
+- **性能クリティカル・inline 保持が必須**: 抽出した `score_one_entry` は `#[inline]` を付け、rayon fold 内 codegen を変えない。すべて参照/Copy で受け取り、`Matcher` は既存の `thread_local! MATCHER` をボディ内で借りる（引数化しない）。挙動不変＝スコア値・順位・incremental 候補集合が完全一致すること
+- **自動ベンチは無い**: `snotra-core/benches/` は存在せず、`PERFORMANCE.md` はプレイブック（数値ベースライン file ではない）。「ベースライン比較」の実体は **既存テストスイート＋不変条件**。Phase 1 は SoA/cache 形式に非接触ゆえ、テスト green ＝退行なしの十分条件に近い
+- **スコア階層は不変条件**（`.claude/rules/snotra-core-search.md`）: Prefix(10000) > Substring(5000) > Kana(4500) > Path(3000) > Fuzzy。const 化してもこの全順序を崩さない。テスト `kana_search_direct_match_ranks_above_kana_match` が保証
+- **incremental cache の単調性**（`.claude/rules`）: `use_incremental` 述語（`kana_monotonic` 等）と `prev_*` 更新を **(b) と (d) に分けても連動を保つ**。ロジックは移動のみ・変更なし。`/cache-check` で単調性の非退行を確認
 
-`SettingsApp` の draft/saved 二重状態モデルは純ロジック（`has_changes()` = `draft != saved`, `save()`, `reset_to_default()`, `SECTION_TABLE` ダーティ点導出）。AccessKit 経由で「入力ウィジェットを操作 → 内部状態を assert」が書ける。
+## 未解決の疑問
 
-検証死角として issue が挙げた項目のうち **AccessKit で書けるもの**:
-- draft 編集 → `has_changes()` true → ウィンドウタイトル `*` 付与
-- Discard クリック → `draft = saved` で編集破棄
-- Reset to default → `draft = normalized_default()`
-- バリデーションエラー時のステータス表示（`save()` は `validate()` を disk 書き込み前に呼ぶ = **バリデーション経路は disk に触れずテスト可能**）
-- タブ別ダーティ点（`•`）の導出
-- モーダル Create/Edit 状態機械（`tabs/common.rs`）
-
-### 障壁: `new()` の Win32 依存と `save()` の disk 書き込み
-
-- `SettingsApp::new()` は `crate::font::list_system_fonts()`（Win32）を呼ぶ（`app.rs:173`）。ヘッドレス CI では列挙結果が dev 機と異なる/空になりうる。テスト用に **font_list を注入する `new_for_test(config, font_list)` 経路**か、`list_system_fonts` を DI 可能にする必要がある。
-- `save()` の成功経路は `Config::save()` で**実 `config.toml` に書き込む**（`app.rs:208`）。Save クリックの成功をテストするには temp dir 注入が要る。ただし **disk 書き込み後の状態遷移（`saved = draft`）は snotra-core 側の `Config::save`/`load` テストで既にカバー**されており、settings 側の操作テストは「Save 前のバリデーション分岐」「Discard」「dirty 判定」に絞れば disk 注入なしで成立する。
-
-### スナップショットテスト — 実現可能だが CI 安定性に本質的リスク
-
-- `snapshot` + `wgpu` feature が要る。Windows GH Actions ランナーで wgpu を回すには DX12 か software adapter（WARP）が要り、**フォントレンダリングが system font（Yu Gothic UI / Segoe UI）依存**。日本語見出しを含む本 UI のスナップショットは dev 機と CI で確実にピクセル差が出る。
-- 環境差を吸収する高い threshold は、issue が検知したい **#399 型欠陥（混在見出しのサブピクセル・ベースラインずれ）そのものをマスク**する。つまりスナップショットは「守りたい欠陥クラス」と「吸収したいノイズ」が同じ粒度に居るため、この特定欠陥に対する ROI が低い。
-
-## 代替案（fallback）との比較
-
-| 手段 | 検知できる欠陥 | CI 安定性 | コスト | #399 型検知 |
-|------|--------------|----------|--------|-----------|
-| AccessKit 操作テスト | 状態遷移・バリデーション・ダーティ・モーダルの**ロジック回帰** | ◎ 決定的・GPU 不要 | 小（`ui_impl` 切り出し + テスト） | ✗（レイアウトは見ない） |
-| wgpu スナップショット | レイアウト・レンダリング回帰（理論上） | △ GPU/フォント/driver 依存で flaky | 中（feature + threshold 調整の継続コスト） | △ 高 threshold がマスクする |
-| 起動スモーク + スクショ保存（fallback） | クラッシュ・パニック（起動時）+ **人手レビュー補助** | ◎ assert しない artifact 保存なら安定 | 小（release smoke #441 の延長） | ✗ 自動検知はしない（目視補助のみ） |
-
-## 未解決の疑問（スパイクで確定させる = /implement Phase 1）
-
-1. `egui_kittest` の `eframe` feature で `SettingsApp`（`impl eframe::App`）を直接載せられるか、それとも `Harness::new_ui(ui_impl)` の方が薄いか。→ 両方試して薄い方を採る。
-2. `list_system_fonts()` のヘッドレス挙動（空 Vec を返すか panic か）。→ 空でも Harness が回るなら注入不要かもしれない。
-3. GH Actions windows ランナーで `cargo test -p snotra-settings`（wgpu **なし**、AccessKit のみ）が追加インフラなしで green になるか。
+- なし（射程はユーザー承認済み：段階分割・direction 2+3 を今 PR、1 は別 issue、4 は文書化）

@@ -1,102 +1,157 @@
-# plan — #440 egui ヘッドレス UI テスト導入
+# plan — issue #436 Phase 1: search.rs スコアリングの分割と階層宣言化
 
-## 結論（推奨パス）
+## 射程（ユーザー承認済み）
 
-research の実証に基づく判断:
-
-- **採用**: `egui_kittest` の **AccessKit 操作テスト**（wgpu なし）。決定的・GPU 不要・CI 安定。設定 GUI の状態遷移／バリデーション／ダーティ判定／モーダル状態機械という「ロジック検証死角」を自動化する。
-- **非採用（CI ゲート）**: **wgpu スナップショット**。フォント/GPU/driver 依存で flaky、かつ環境差吸収 threshold が #399 型欠陥をマスクするため ROI が低い。将来ローカル opt-in の余地は残すが CI では回さない。
-- **任意（低優先・別 issue 候補）**: 起動時スクショ artifact 保存。assert しない目視補助。release smoke（#441）の延長で安価だが、本 issue の必須スコープには含めない。
-
-この plan は **Phase 1（スパイク = 実証）を最初に置き、そこで採用是非を最終確定**する。スパイクが green なら Phase 2〜3 に進み、赤なら research の未解決点を反映して再判断する。
+- **今 PR = direction 2（fn 分割）+ direction 3（スコア階層宣言化）**。search.rs 内で完結、SoA/cache 形式に非接触
+- **direction 1（cache 三兄弟集約）= 別 issue**。PERFORMANCE 実測後に「マクロに値するか」を判断
+- **direction 4（SearchMode）= 畳まない**。doc コメントで層境界を明文化
 
 ## 変更ファイル一覧
 
-| ファイル | 変更内容 | Phase |
-|---------|---------|-------|
-| `snotra-settings/Cargo.toml` | `[dev-dependencies] egui_kittest = { version = "0.35", default-features = false }`（wgpu/snapshot feature は付けない） | 1 |
-| `snotra-settings/src/app.rs` | `SettingsApp::ui()` から `fn ui_impl(&mut self, ui: &mut egui::Ui)` を切り出し、eframe の `ui()` はそれを呼ぶだけにする。テスト用コンストラクタ `new_for_test(config, font_list)`（または `list_system_fonts` の DI）を追加 | 1 |
-| `snotra-settings/tests/settings_ui.rs`（新規） | egui_kittest による AccessKit 操作テスト（下記シナリオ） | 2 |
-| `snotra-settings/CLAUDE.md` | 「ユニットテストは書かない方針」の**例外拡張**を明文化（egui_kittest による操作テストは書ける／スナップショットは CI で回さない理由）。モジュール構成に `tests/` 追記 | 3 |
-| `.github/workflows/ci.yml` | rust-check の `cargo test (snotra-settings)` が新テストを含むことを確認（既に #444 で test ステップ追加済み。feature 追加なしなら**変更不要**の可能性大 → 実測で確定） | 3 |
-| `docs/build-commands.md` | 検証チェックリストに影響あれば同期（テストコマンドは既存の `cargo test -p snotra-settings` で足りる見込み → 差分が出たときのみ） | 3 |
+### `snotra-core/src/search.rs`（唯一の変更対象）
 
-## 実装順序（フェーズ分け）
+**A. スコア階層の宣言化（direction 3）**
 
-### Phase 1 — スパイク（実証で採用是非を確定）
-1. `egui_kittest = "0.35"`（wgpu/snapshot なし）を dev-dependency に追加。
-2. `ui_impl` 切り出し + `new_for_test` 追加。`cargo build -p snotra-settings` green を確認。
-3. **最小テスト 1 本**（例: General タブでホットキー入力を変える → `harness` 経由で `has_changes()` 相当が true）を書いて `cargo test -p snotra-settings` が**ローカルで green** かつ **CI windows で green** になることを確認（この 1 点が採用可否の決め手＝実証）。
-   - `list_system_fonts()` がヘッドレスで空 Vec を返すだけなら DI 不要。panic するなら `new_for_test` で注入。→ 実測で分岐。
-4. **ゲート**: Phase 1 が赤（wgpu 抜きでも AccessKit が回らない / Harness に載らない）なら、fallback（スクショ artifact）へ切替を再検討し plan を更新してからユーザーに報告。
+モジュールトップ（`GLOBAL_WEIGHT` 群の近傍, L17-23）に `mod score` を追加:
 
-### Phase 2 — 操作テスト拡充（Phase 1 green 前提）
-draft/saved モデルと検証死角に対応するシナリオを追加:
-- **dirty flow**: draft 編集 → `has_changes()` true → タイトル `*`
-- **Discard**: 編集後 Discard → `draft == saved`
-- **Reset to default**: → `draft == Config::normalized_default()`、`has_changes()` true
-- **バリデーションエラー**: 不正入力（例: window width を最小未満）で Save → ステータスにエラー、`saved` 不変（disk 非依存 = `validate()` 分岐）
-- **タブ別ダーティ点**: あるセクションを編集 → 対応タブのみ `•`
-- **モーダル状態機械**: index/opener/instant いずれかで Create → Save で Vec に push、Edit → 上書き、Delete（`tabs/common.rs` の境界チェック込み）
+```rust
+/// スコア階層（全順序の不変条件）: Prefix > Substring > Kana > Path > Fuzzy(nucleo)。
+/// 散在していた基準スコアをこの単一定義に吸収する。値を変更する場合も全順序を崩さない
+/// （テスト kana_search_direct_match_ranks_above_kana_match / score_tiers_are_strictly_ordered が保証）。
+/// Fuzzy は nucleo-matcher が独自スコアを返すため基準 const を持たない。
+mod score {
+    /// Prefix: `PREFIX_BASE - lower_name.len()`（短い名前を優先）。
+    pub const PREFIX_BASE: i64 = 10_000;
+    /// Substring: `SUBSTRING_BASE - byte_idx`。
+    pub const SUBSTRING_BASE: i64 = 5_000;
+    /// Kana（migemo）: `KANA_BASE - byte_pos`。
+    pub const KANA_BASE: i64 = 4_500;
+    /// Path: `PATH_BASE - min(byte_pos, PATH_POS_CAP)`。
+    pub const PATH_BASE: i64 = 3_000;
+    /// Path マッチの位置ペナルティ上限。
+    pub const PATH_POS_CAP: i64 = 500;
+}
+```
 
-各テストは AccessKit ノード操作 + 内部状態 assert。disk 書き込みを伴う Save 成功経路は snotra-core 側テストに委ね、settings 側は「Save 前分岐」「Discard」「dirty」に限定する。
+インライン数値を const 参照に置換（**値は完全保存**、意味変更なし）:
+- L814 `10_000 - lower_name.len()` → `score::PREFIX_BASE - lower_name.len()`
+- L819 `5_000 - idx` → `score::SUBSTRING_BASE - idx`
+- L797 `4500i64 - pos` → `score::KANA_BASE - pos`
+- L607 `3000i64 - (pos).min(500)` → `score::PATH_BASE - (pos).min(score::PATH_POS_CAP)`
 
-### Phase 3 — ドキュメント同期
-- `snotra-settings/CLAUDE.md`: 「ユニットテスト書かない方針」の例外に「egui_kittest 操作テスト（AccessKit）は書く。wgpu スナップショットは環境差 flaky + #399 型欠陥をマスクするため CI 非採用」を追記。`tests/settings_ui.rs` をモジュール構成へ。
-- 視覚回帰（#399 型・レイアウト崩れ）は依然として**人手視覚スモークが唯一の検知手段**である旨を維持（メモリ `feedback_codex_review_unreliable` の境界と整合）。
-- `docs/build-commands.md` / `ci.yml` は実測差分が出たときのみ同期。
+**B. `search_with_options` の分割（direction 2）**
 
-## 不変条件
+現状 330 行を、既に明瞭な 4 フェーズ境界で分ける。**挙動・順序・incremental 候補集合を完全保存**する純リファクタ。
 
-- **egui 描画コードを書き換えない**: `ui_impl` 切り出しは純粋な機械的抽出（`_frame` 未使用のため挙動不変）。eframe の `ui()` は `ui_impl` への 1 行委譲になる。切り出し前後で `cargo run -p snotra-settings` の視覚スモークが同一であることを目視確認する（レイアウト崩れ観点）。
-- **テスト専用経路が本番挙動を変えない**: `new_for_test` / font_list DI は `#[cfg(test)]` もしくはテスト専用引数に閉じ、`run()` の本番パス（`list_system_fonts()` 呼び出し）を変えない。
-- **CI に GPU 依存を持ち込まない**: dev-dependency は `default-features = false` で wgpu/snapshot を**引き込まない**。これにより既存 CI（windows ランナー、GPU なし）がそのまま回る。feature 追加は将来 opt-in の別判断。
-- **失敗時の挙動**: Phase 1 スパイクが CI で不安定なら、feature/インフラを増やす前に fallback へ退避（本 plan の Phase 1 ゲート）。回復不能な状態フラグ・プロセス・Win32 フックは導入しない（純テストコードのみ）。
+1. **`struct QueryPlan`**（phase (a) の出力を束ねる）:
+   ```rust
+   struct QueryPlan<'a> {
+       norm_query: std::borrow::Cow<'a, str>,
+       has_dot: bool,
+       has_path_sep: bool,
+       query_mask: u64,
+       kana_query: Option<String>,
+       needle_u32: Utf32String,       // norm_query から生成後は独立（借用しない）
+       path_query: Option<String>,
+       path_history_key: Option<String>,
+   }
+   ```
+
+2. **`fn prepare_query_plan(query, mode, options) -> Option<QueryPlan>`**（自由 fn）:
+   phase (a) L382-443 を移設。`norm_query.is_empty()` の早期 return は `None` で表現。`self` 不要。
+
+3. **`fn decide_incremental(&self, plan: &QueryPlan, mode) -> bool`**（メソッド）:
+   phase (b) L445-478 の `kana_monotonic` + `use_incremental` 述語を**逐語移設**（変更なし）。`self.prev_*` の read はここに集約。
+
+4. **`#[inline] fn score_one_entry(&self, i, plan: &QueryPlan, mode, kana_available, history, options) -> Option<ScoredEntry>`**（メソッド・**inline 必須**）:
+   phase (c) の per-entry ボディ L513-648 を移設。bitmask pre-filter → name/file_name/kana/path スコア → 履歴ブースト → `ScoredEntry` 構築まで。`Some` ⟺ マッチ成立（現行 `local_matches.push(i)` の条件と 1:1）。`MATCHER` thread_local はボディ内で借用（引数化しない）。全引数を参照/Copy で受け、rayon fold 内 codegen を不変に保つ。
+
+5. **orchestrator `search_with_options`**（~40 行に縮む）:
+   ```
+   if max_results == 0 { return Vec::new(); }
+   let Some(plan) = prepare_query_plan(query, mode, &options) else { return Vec::new(); };
+   let use_incremental = self.decide_incremental(&plan, mode);
+   let candidate_indices = if use_incremental { take(prev_candidates) } else { (0..len).collect() };
+   let kana_available = !self.kana_lower_names.is_empty();
+   let (top_k, all_match_indices) = candidate_indices.into_par_iter()...fold(|(heap,matches), i| {
+       if let Some(scored) = self.score_one_entry(i, &plan, mode, kana_available, history, options) {
+           matches.push(i);
+           // heap push/replace（L650-657 逐語）
+       }
+   }).reduce(...);           // reduce の heap マージ（L663-678）は逐語
+   // phase (d): prev_* 更新（plan を destructure して move）→ into_sorted_vec → SearchResult
+   self.prev_query = plan.norm_query.into_owned();
+   self.prev_candidates = all_match_indices;
+   self.prev_mode = Some(mode);
+   self.prev_kana_query = plan.kana_query;
+   heap_into_results(top_k)   // top_k → Vec<SearchResult> の純変換のみ抽出
+   ```
+   heap push/replace と reduce マージは orchestrator に残す（top-k 縮約の機構であり per-entry スコアリングではないため）。`prev_*` の write は orchestrator に残し、`decide_incremental` の read と**同一関数の視界**に置く（incremental 契約の可読性）。
+
+**C. direction 4 の文書化（削除しない）**
+
+`search::SearchMode`（L32）の doc コメントに追記: 「`config::SearchModeConfig`（serde/wire 形式）と分離した純ドメイン enum。`From` 変換が config↔engine の層境界。統合すると engine が serde に依存するため意図的に 2 定義とする」。
+
+## 実装順序（フェーズ）
+
+各フェーズ完了後に `cargo test -p snotra-core` green を確認してからコミット（中断耐性）。
+
+1. **Phase A（低リスク・独立）**: `mod score` 追加 + 4 箇所の const 置換 + `score_tiers_are_strictly_ordered` テスト追加 → test green → commit
+2. **Phase B（分割本体）**: `QueryPlan` + `prepare_query_plan` + `decide_incremental` + `score_one_entry` + `heap_into_results` 抽出、orchestrator 縮約 → test green → commit
+3. **Phase C（文書化）**: (i) `SearchMode`（L32）doc コメントに層境界の理由を追記 (ii) `.claude/rules/snotra-core-search.md` L10 のスコア階層行を「`mod score` に集約」へ更新 (iii) **SPEC 節参照の是正**——`kana_substring_score` の doc（L791）が「SPEC.md §3.2 に準拠」と書くが §3.2 は*エントリ識別子*の節。スコア記述は §4.2（かな `max(4500-byte_pos,1)`, SPEC:122）/§4.3（パス 3000, SPEC:146）。正しい節番号へ訂正（既存 doc ドリフトの as-built 是正・実装時に SPEC.md で節番号を再確認）→ commit
+
+## 不変条件（壊れたら即アウト）
+
+1. **スコア値の完全一致**: const 置換は値保存。prefix/substring/kana/path の各順位テストが green
+2. **top-k 順序の一致**: heap ロジック（`ScoredEntry::Ord` 逆順・push/replace・reduce マージ）は逐語で不動
+3. **incremental 候補集合の一致**: `decide_incremental` の述語は逐語移設。`local_matches.push(i)` は `score_one_entry` が `Some` を返す条件（= 現行 `base_score.is_some()`）と 1:1
+4. **`prev_*` 更新タイミングの不変**: fold 後・sort 前（L680 の位置）。`decide_incremental` の read と orchestrator の write が同一視界
+5. **性能非退行**: `score_one_entry` は `#[inline]`、全引数 参照/Copy、`MATCHER` thread_local 不変 → fold 内 codegen 不変。SoA/cache 形式に非接触
 
 ## テスト方針
 
-- 追加テスト: `snotra-settings/tests/settings_ui.rs`（egui_kittest）。検証する不変条件は各シナリオ（dirty / discard / reset / validation / dirty-dot / modal）。
-- 検証コマンド: `cargo test -p snotra-settings`（category A）、`cargo clippy -p snotra-settings`（PostToolUse フック自動）、`cargo run -p snotra-settings` 視覚スモーク（`ui_impl` 切り出しの挙動不変確認）。
-- Red→Green: Phase 1 の最小テストは、まず AccessKit で「操作 → 状態変化」を書き、切り出し前は Harness に載らない（コンパイル不可）= Red、`ui_impl` 追加で Green。
+- **一次ガード = 既存 search.rs テストスイート全 green**（スコア・順序・incremental・path・kana・migemo を網羅済み）。純リファクタゆえ「テスト green ＝退行なし」が成立
+- **追加**: `score_tiers_are_strictly_ordered` — `score::PREFIX_BASE > SUBSTRING_BASE > KANA_BASE > PATH_BASE` を assert（将来の const 編集が全順序を反転させないコンパイル近接ガード）
+- **`/cache-check`**: incremental 述語を `decide_incremental` へ移設した後の単調性非退行を検証
+- 検証コマンド: `docs/build-commands.md` のカテゴリに従い `cargo test -p snotra-core` + clippy（PostToolUse フックが .rs 編集で自動実行）
 
 ## SPEC.md 更新要否
 
-**不要**。挙動変更なし（テストインフラ追加 + 機械的リファクタのみ）。IPC 契約・状態遷移・フローに変更なし。`ui_impl` 切り出しは実装事実の内部整理で、SPEC の意図に影響しない。
+- **不要**。挙動・IPC 契約・状態遷移に変更なし（純内部リファクタ）。スコア階層は SPEC.md §3.2 の記述と一致を保つ（値不変）
 
-## as-built（実装後の差分記録）
+## セルフレビュー（Step 5b）
 
-Phase 1 スパイクの実証で計画から変わった点:
+1. **対称コードパス**: `search` / `search_with_options` の関係は「便宜 API → 本体」。`search`（L354）は `search_with_options` へ委譲するのみで分割の影響を受けない（引数転送）。show/hide 型の対称ペアなし
+2. **影響範囲の網羅性**: `search_with_options` の呼び出し元 = `search`（同ファイル L361 委譲）+ `engine.rs:118`（`Engine::search`）。シグネチャ不変ゆえ全呼び出し元（IPC `src-tauri/commands/search.rs:20`・フロント `ui/src/stores/search.ts` 含む）無変更。スコア階層をエンコードする本番リテラルは **4 箇所（L607/797/814/819）で確定**。**注意**: `10_000`/`5_000`/`4500`/`3000` は他にも出現するが（ベンチ件数 L1480 群・説明コメント L603/L789-793）スコア階層コードではないため置換対象外。`#[cfg(test)]` にこれら数値を assert するテストは無い（順位のみ検証）ため、const 化でテスト更新は発生しない
+3. **境界条件**: `max_results == 0`（早期 return 維持）/ `norm_query 空`（`prepare_query_plan` → None）/ `candidate_indices` 空 / `kana_available == false`（空 Vec ガード）/ `has_path_sep`（bitmask skip）— いずれも既存テストが被覆、移設で分岐位置不変
+4. **リソース管理**: 新規リソース（listen/Mutex/子プロセス/AtomicBool）なし。`MATCHER` thread_local は既存、生成/破棄ペア不変
+5. **既存パターン整合**: 抽出先は既存の自由 fn（`adjusted_history_boost` 等）と同型。新パターン導入なし。`QueryPlan` は phase (a) の局所変数を束ねるだけの純データ struct
+6. **YAGNI**: マクロ・trait・汎用 builder を導入しない（direction 1 を意図的に除外）。`QueryPlan` は今の分割に必要な最小
+7. **シンプル化の挑戦**: `heap_into_results` は 15 行程度——抽出すべきか？ → orchestrator の視覚ノイズ（`.map(SearchResult{..})`）を除くため抽出。ただし `prev_*` 更新は `&mut self` 依存かつ incremental 契約の一部ゆえ orchestrator に残す（過度に細分化しない）
+8. **破壊不変条件の明示**: 上記「不変条件」5 項が該当。検知手段 = 既存テストスイート（スコア/順序/incremental）+ `score_tiers_are_strictly_ordered` + `/cache-check`。Win32/ホットキー/IPC など「戻ってこない」系のリスクなし（純ロジック lib crate 内）
 
-- **テストは `tests/settings_ui.rs` でなくインライン `app.rs #[cfg(test)] mod tests`**: `SettingsApp`/`new`/`has_changes` が private のため integration test から不可視。内部状態 assert にはインラインが必須。
-- **font DI 不要**: `list_system_fonts()`（Win32 GDI）はヘッドレスでも動作。`new_for_test` は追加せず `new()` をそのまま使用（計画からさらに単純化）。
-- **`Harness::run()` でなく `settle`（固定 step）**: UI が checkbox アニメで毎フレーム repaint 要求 → `run()` は収束前提で panic。`step()` を数回。
-- **実装したテスト**: `kittest_checkbox_click_makes_draft_dirty` / `kittest_discard_reverts_draft_to_saved` / `kittest_reset_to_default_makes_dirty` / `kittest_save_with_validation_error_keeps_saved`（フッターボタン wiring + save→validate 経路。dirty-dot/modal は純ロジックテスト済みのため重複回避）。
-- **検証結果**: `cargo test -p snotra-settings` 32 passed / `cargo clippy --all-targets -D warnings` クリーン。
+### plan-review / check スキル結果（Step 5a）
 
-## セルフレビュー
+**`/plan-review`（Explore 2 体・忠実性 + スコープ）— 要対処ゼロ**
 
-### `/plan-review`（Explore 2体: Rust feasibility / CI・docs 同期）+ 主エージェント直接確認
+- **抽出の忠実性（5 観点すべて問題なし）**:
+  - `score_one_entry -> Option<ScoredEntry>` は現行 `local_matches.push(i)`（唯一 L612・`if let Some(base_score)` 直下）と 1:1。`Some` ⟺ マッチ成立。**実装ウォッチ**: `matches.push(i)` は heap 採否（L650-657）に**先行し独立**——heap 落ちエントリも記録する。orchestrator で heap 枝に畳み込むと incremental cache 退行（不変条件#3 で明記済み）
+  - fold body の `&mut self` 変異は皆無。`self` アクセスは全 read（char_masks/file_name_char_masks/entry_view/kana_lower_names）。thread_local は MATCHER のみ
+  - `needle_u32` は `Utf32String::from` で所有型・`norm_query` 非借用（`&plan` 共有・fold 後の部分ムーブ健全。QueryPlan は Send+Sync・Drop 未実装）
+  - `decide_incremental` の述語（L461-478）は `prev_*` を READ のみ。WRITE（L481 take・L681-684）は述語より後で orchestrator 残留。`&mut self` 不要
+- **スコープ過不足なし**: 本番リテラル 4 箇所確定。呼び出し元（engine.rs:118 / IPC / フロント）シグネチャ不変で無変更。SearchMode 二重定義は search→config の単方向依存・serde 染み出し回避の**意図的層分離**（統合不可・文書化が正当）
+- **軽微指摘 2 件を計画へ反映済み**: (a) セルフレビュー#2 の grep 主張を訂正 (b) SPEC §3.2 誤参照を Phase C(iii) で是正
 
-**要対処: なし。** Step 2b（独立再導出）は本計画が局所的（単一 crate・rename/config キー/移行/横断スイープなし）のためトリガー外 = 省略。
+**`/cache-check` — 単調性保証あり・再利用は安全**
 
-**問題なし（一次資料で確認）**
-- `_frame` は `app.rs:275` のシグネチャのみに出現（他の一致はコメント `id_next_frame`）→ `ui_impl` 切り出しは**挙動不変**。
-- `SettingsApp::ui` の直接呼び出し元は src に無し（eframe 内部のみ）。タブの `ui` は別 free 関数で無関係。`SettingsApp::new` の呼び出し元は `run()`（`app.rs:619`）のみ → `new_for_test` 追加は本番パス不変。
-- `save()` は `validate()`（`app.rs:198`）を `config.save()`（`app.rs:208`, disk 書き込み）**前に**呼ぶ → バリデーションテストは disk 非依存で成立。
-- `egui_kittest 0.35` は `[features]` に `default` エントリが**無く全 opt-in**（`ci.yml` は windows-latest・GPU なし）→ AccessKit テストは feature 追加なしで回る。`ci.yml:68-69` に `cargo test -p snotra-settings` 実在、cargo autodiscovery で `tests/settings_ui.rs` を自動収集 → **CI 変更不要**（実測前でも確定）。`docs/build-commands.md:17` に該当コマンド既存。
-- CLAUDE.md 方針例外拡張 + `tests/` モジュール構成追記は計画に含む（AGENTS.md:42 準拠）。SPEC.md 更新不要は妥当。
+計画は `use_incremental` 述語の**逐語移設のみ**（ロジック不変）。全 7 述語は既に単調:
+1. `prev_mode == Some(mode)` — モード切替で full scan
+2. `!prev_candidates.is_empty()` / 3. `!prev_query.is_empty()` — 前回状態の存在
+4. `norm_query.starts_with(prev_query)` — prefix 拡張（狭まる方向）。backspace で不成立→full scan
+5. `!has_dot || prev_query.contains('.')` — no-dot→dot 遷移は file_name スコア未適用ゆえ full scan
+6. `!has_path_sep` — path クエリは正規化が異なり単調性を保証できないため無条件無効
+7. `kana_monotonic` — (None,_)→OK / (Some curr, Some prev) は `curr.starts_with(prev)` / (Some,None)→full scan（非単調 "kan"→"かん"/"kana"→"かな" を捕捉）
 
-**軽微な懸念（実装時に注意）**
-1. `ci.yml:72` の clippy は `--all-targets -- -D warnings` → 新規 integration test も lint 対象。`tests/settings_ui.rs` は clippy クリーン必須。
-2. `egui_kittest` はデフォルト feature ゼロのため `default-features = false` は冗長。ただし将来版が default を追加した際の防御として**明示 + コメント**で残す（`# wgpu/snapshot を引き込まない意図`）。
+**移設の唯一のリスク＝順序**: `decide_incremental`（`prev_*` READ）→ `take(&mut prev_candidates)`（L481）→ fold → `prev_*` WRITE（fold 後）の順を厳守。述語は**旧** `prev_*` を読み、書き込みは fold 後（不変条件#4）。Explore が read/write 分離を確認済み。
 
-### セルフレビューチェックリスト（Step 5b）
-
-1. **対称コードパス**: `ui()`/`new()` に対称ペアなし。テストが行使する Create/Edit/Delete・Discard/Save は既存の状態機械で、新規ペアを追加しない。
-2. **影響範囲の網羅性**: `_frame`・`ui()`・`new()`・`list_system_fonts` の呼び出し元を grep 済み（上記）。
-3. **境界条件**: モーダル境界チェック（`common.rs` の index 陳腐化ガード）は既存テスト対象。バリデーション最小値・空入力を Phase 2 シナリオに含む。
-4. **リソース管理**: 新規リソース（listen/子プロセス/AtomicBool）の生成なし。純テストコード + dev-dependency のみ。
-5. **既存パターン整合**: egui 描画は書き換えず `ui_impl` 委譲のみ。テスト用 DI は `common.rs` の既存パターン（純ロジック分離）と整合。
-6. **YAGNI 違反**: wgpu スナップショットを**採らない**判断で範囲を絞る。fallback スクショは必須スコープ外（別 issue 候補）。
-7. **シンプル化**: `new_for_test` を増やすより `list_system_fonts` を「起動時に渡す引数」に変える方が薄いかは Phase 1 スパイクで実測比較（薄い方を採る）。新状態フラグ・Mutex・子プロセスの導入なし。
-8. **破壊不変条件**: Win32 フック/ホットキー/IPC に触れない。唯一の runtime リスクは `ui_impl` 切り出しのレイアウト崩れ = `cargo run -p snotra-settings` 視覚スモークで検知（不変条件に明記済み）。
+**退行ガード = 既存 incremental テスト 14 本**（`incremental_search_*` 7 本 + `incremental_kana_*` 5 本 + `path_match_incremental_*` 2 本）が extension/backspace/mode-change/dot 遷移/kana 単調性/path を網羅。移設が順序 or 述語を壊せば必ず落ちる。**結論: 全述語で単調性が保証されており、キャッシュ再利用は安全**。

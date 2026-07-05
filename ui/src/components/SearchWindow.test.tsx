@@ -11,7 +11,7 @@ const {
   mockEnterToolSelection, mockActivateSelected, mockEnterFolderExpansion,
   mockNavigateFolderUp, mockMoveSelectionUp, mockMoveSelectionDown,
   mockSetQuery, mockSetFolderFilter, mockClearLaunchNotice,
-  mockHideMainWindow, mockViewKind, mockInterpKind,
+  mockHideMainWindow, mockViewKind, mockInterpKind, mockAllowsFolderNav,
 } = vi.hoisted(() => {
   globalThis.requestAnimationFrame = ((cb: Function) =>
     setTimeout(cb, 0)) as typeof requestAnimationFrame;
@@ -54,6 +54,8 @@ const {
       if (q.startsWith("/")) return "command";
       return "plain";
     }),
+    // 導出述語も下位軸モックから導出する（実装 allowsFolderNav() と同じ射影）
+    mockAllowsFolderNav: vi.fn((): boolean => mockViewKind() !== "tool" && mockInterpKind() !== "instant"),
   };
 });
 
@@ -84,6 +86,7 @@ vi.mock("../stores/search", () => ({
   noResults: mockNoResults,
   viewKind: mockViewKind,
   interpKind: mockInterpKind,
+  allowsFolderNav: mockAllowsFolderNav,
 }));
 
 // ── 外部依存モック ──

@@ -13,6 +13,16 @@ export interface OpenerTool {
   args: string;
 }
 
+/** モーダル的なビュー（フォルダ展開・ツール選択）が退避する「戻り先」の共通部分。
+ *  `search.ts` の `saveView()`/`restoreView()` が唯一の生成/復元経路（choke point）。
+ *  各 frame（`FolderFrame`/`ToolSelectionFrame`）はこれを拡張し、固有の追加フィールド
+ *  （`savedQuery` の意味はモードごとに異なる——folder は復元用、tool は起動時の元クエリ）
+ *  を持つ。 */
+export interface SavedViewState {
+  savedResults: SearchResult[];
+  savedSelected: number;
+}
+
 export interface VisualConfig {
   preset: string;
   background_color: string;

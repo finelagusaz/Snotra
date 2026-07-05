@@ -49,6 +49,7 @@ import {
   shouldShowResults,
   viewKind,
   interpKind,
+  allowsFolderNav,
   toolSelectionState,
   launchNotice,
   clearLaunchNotice,
@@ -805,5 +806,34 @@ describe("interpKind", () => {
     setInstantCommandPrefix("");
     setQuery("@goo");
     expect(interpKind()).toBe("plain");
+  });
+});
+
+// ── allowsFolderNav（Phase 2: 複合条件の一本化） ──────────────────────────────
+
+describe("allowsFolderNav", () => {
+  it("通常モードでは true", () => {
+    expect(allowsFolderNav()).toBe(true);
+  });
+
+  it("folder モード中は true（フォルダ内でのさらなる展開・離脱は許可）", () => {
+    setFolderState(FOLDER_FRAME);
+    expect(allowsFolderNav()).toBe(true);
+  });
+
+  it("tool 選択中は false", () => {
+    setToolSelectionState(TOOL_FRAME);
+    expect(allowsFolderNav()).toBe(false);
+  });
+
+  it("instant コマンドモード中は false", () => {
+    setQuery("@goo");
+    expect(allowsFolderNav()).toBe(false);
+  });
+
+  it("tool が folder の上に積まれている場合も false（tool 優先）", () => {
+    setFolderState(FOLDER_FRAME);
+    setToolSelectionState(TOOL_FRAME);
+    expect(allowsFolderNav()).toBe(false);
   });
 });

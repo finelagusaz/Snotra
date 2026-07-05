@@ -484,8 +484,18 @@ impl SettingsApp {
                     }
 
                     if self.active_tab != TabId::Backup {
-                        // Spacer
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // 明示 id でアクションボタン群の auto-id を status ラベルの有無から独立させる。
+                        // status ラベルが dirty の切り替わりで出現/消失すると前置ウィジェット数が変わり、
+                        // 明示 id がないと RTL（矩形固定）のボタン auto-id がフレーム間で変化して egui の
+                        // `warn_if_rect_changes_id`（debug 限定の赤枠）が発火する。`push_id`/`id_salt`
+                        // （`IdSource::Child`）は unique_id に親カウンタを混ぜるため解消できず、
+                        // `UiBuilder::id`（`IdSource::Explicit`）のみがカウンタ混入を断つ（#456）。
+                        // `with_layout` は `scope_builder(UiBuilder::new().layout(..), ..)` の薄いラッパ
+                        // なので、`.id()` を足すだけでレイアウト・挙動は不変。
+                        let action_group = egui::UiBuilder::new()
+                            .id(egui::Id::new("footer_actions"))
+                            .layout(egui::Layout::right_to_left(egui::Align::Center));
+                        ui.scope_builder(action_group, |ui| {
                             ui.spacing_mut().button_padding = egui::vec2(12.0, 4.0);
 
                             // Save button (disabled when no changes; finding C: also gated by
@@ -862,5 +872,70 @@ mod tests {
             harness.state().saved, saved_before,
             "saved must not be updated when validation fails"
         );
+    }
+
+    // 不変条件: 「破棄」クリックの遷移フレームで egui の id 不安定性警告
+    // （`warn_if_rect_changes_id` = 赤枠 2px, debug 限定）が出ないこと（#456）。
+    //
+    // 破棄で dirty が解消するとフッターの status ラベル（「未保存の変更があります」）が消え、
+    // 前置ウィジェット数が変わる。アクションボタン群を RTL（右寄せ・矩形固定）で並べているため、
+    // 明示 id を与えないと配下ボタンの auto-id がフレーム間で変化し「同矩形・別 id」警告が出る。
+    // ボタン群コンテナの明示 id（`UiBuilder::id`）がこれを防ぐことを保証する。
+    //
+    // 検出マーカー: `warn_if_rect_changes_id` は赤 2px 枠を `Color32::RED`（egui context.rs で
+    // ハードコード）で描く。`check_for_id_clash`（ID 重複）の 1px 枠は `error_fg_color`（既定で
+    // 同じ赤）のため、`== Color32::RED` フィルタで両方の回帰を捕捉できる。
+    // `.click()` は press+release を 1 step 内で処理し過渡フレームを潰すため、
+    // ポインタイベントを `_step` 単位で個別に送り、各フレームで警告矩形 0 件を確認する。
+    #[test]
+    fn kittest_discard_no_rect_id_instability_warning() {
+        fn red_error_rects(harness: &Harness<'static, SettingsApp>) -> usize {
+            harness
+                .output()
+                .shapes
+                .iter()
+                .filter(|cs| {
+                    matches!(&cs.shape, egui::Shape::Rect(r) if r.stroke.color == egui::Color32::RED)
+                })
+                .count()
+        }
+
+        let mut h = en_harness(en_config());
+        h.set_size(egui::vec2(760.0, 560.0));
+
+        // dirty 化（status ラベルが出る = フッターの前置ウィジェットが増える）
+        h.get_by_label(Tr(Language::En).cb_hotkey_toggle()).click();
+        settle(&mut h);
+        assert!(h.state().has_changes());
+
+        let center = h.get_by_label(Tr(Language::En).btn_discard()).rect().center();
+        let button = |pressed: bool| egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+
+        // hover → press → hold → release → 遷移直後（修正前はここで赤枠が出る）→ +1
+        let sequence = [
+            Some(egui::Event::PointerMoved(center)),
+            Some(button(true)),
+            None, // hold
+            Some(button(false)),
+            None, // 遷移フレーム
+            None, // 遷移+1
+        ];
+        for (i, ev) in sequence.into_iter().enumerate() {
+            if let Some(ev) = ev {
+                h.event(ev);
+            }
+            h.step();
+            assert_eq!(
+                red_error_rects(&h),
+                0,
+                "discard 遷移フレーム{i}で egui の id 不安定性警告（赤枠）が出た（#456 回帰）"
+            );
+        }
+        assert!(!h.state().has_changes(), "discard で dirty が解消しているはず");
     }
 }

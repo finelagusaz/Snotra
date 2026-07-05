@@ -44,6 +44,14 @@ egui ベースの設定・about バイナリ crate。本体（`src-tauri`）と�
 - `egui::Stroke::new(width, color)` は 2 引数で動作する（egui 0.35 現在）。`StrokeKind` enum は 0.35 で追加されたが、`Stroke::new` と `Visuals` の stroke フィールドはこれを要求しない。egui をバージョンアップする際は `Stroke::new` が `StrokeKind` を取るようになっていないか確認する
 - `ThemePreset` は `Copy`。`.clone()` ではなく値コピーで渡す（clippy `clone_on_copy`）
 
+### ウィジェット id のフレーム間安定性（`warn_if_rect_changes_id`）
+
+**条件付きの前置ウィジェットは、後続の auto-id ウィジェットの id をフレーム間で不安定にする**。egui は「同じ矩形位置のウィジェットがパス間で別 id を持つ」と debug 限定の警告 `warn_if_rect_changes_id`（赤の 2px 枠。色は `Color32::RED` のハードコード。🔥 テキストと 1px 枠[`error_fg_color`]を描く `check_for_id_clash`＝**ID 重複**とは別物。既定ではどちらも赤）を出す。
+
+- **発生例（#456）**: フッターの status ラベル（「未保存の変更があります」）が `has_changes()` の切り替わりで出現/消失すると、その後に置いた RTL（右寄せ・矩形固定）アクションボタン群の auto-id 種がずれ、矩形は同じなのに id が変わって発火した（破棄押下でボタン周辺に赤枠が1フレーム）。debug 限定（`cfg!(debug_assertions)`）で release 不可視。
+- **`push_id` / `id_salt` では直らない**: `IdSource::Child` は `unique_id = stable_id.with(next_auto_id_salt)` と**親の auto カウンタを混ぜる**ため、前置ウィジェット数の変化が依然 id に流入する。**`UiBuilder::new().id(Id::new(...))`（`IdSource::Explicit`）**でコンテナに明示 id を与えるとカウンタ混入を断ち、配下 auto-id が安定する。`with_layout(layout, f)` は `scope_builder(UiBuilder::new().layout(layout), f)` の薄いラッパなので、`.id()` を足すだけでレイアウト・挙動は不変。
+- **検証**: egui_kittest で headless 再現できる。`.click()` は press+release を 1 step 内で処理し過渡フレームを潰すため、ポインタイベントを `_step` 単位で個別に送り、各フレームの `output().shapes` に `Color32::RED` の rect_stroke が出ないことを検証する（`kittest_discard_no_rect_id_instability_warning`）。この赤枠検出は `check_for_id_clash`（ID 重複）の回帰も同時に捕捉する。
+
 ### Win キーの制限
 
 egui の `Modifiers` は `ctrl` / `alt` / `shift` / `mac_cmd` / `command` のみ。Win キーは検出できない。ホットキーキャプチャでは Ctrl/Alt/Shift のみサポートする。デフォルトホットキー `Alt+Q` は問題なく動作する。

@@ -102,3 +102,107 @@ unsafe fn work_area_from_hmonitor(
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::WorkArea;
+
+    /// 単一モニター相当の標準的な作業領域（1920x1080、原点は左上）。
+    fn area() -> WorkArea {
+        WorkArea {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        }
+    }
+
+    #[test]
+    fn clamp_within_bounds_is_unchanged() {
+        let a = area();
+        assert_eq!(a.clamp(100, 100, 400, 300), (100, 100));
+    }
+
+    #[test]
+    fn clamp_position_beyond_bottom_right_clamps_to_max() {
+        let a = area();
+        // max_x = 1920-400=1520, max_y = 1080-300=780
+        assert_eq!(a.clamp(2000, 2000, 400, 300), (1520, 780));
+    }
+
+    #[test]
+    fn clamp_negative_position_clamps_to_top_left() {
+        let a = area();
+        assert_eq!(a.clamp(-500, -500, 400, 300), (0, 0));
+    }
+
+    #[test]
+    fn clamp_exact_boundary_is_stable() {
+        // x/y already equal max_x/max_y: applying clamp again must not shift by one.
+        let a = area();
+        assert_eq!(a.clamp(1520, 780, 400, 300), (1520, 780));
+    }
+
+    #[test]
+    fn clamp_window_wider_than_work_area_aligns_to_left() {
+        // win_w(2000) > width(1920): max_x = (1920-2000).max(left) = left(0)
+        let a = area();
+        assert_eq!(a.clamp(500, 100, 2000, 300), (0, 100));
+    }
+
+    #[test]
+    fn clamp_window_taller_than_work_area_aligns_to_top() {
+        let a = area();
+        assert_eq!(a.clamp(100, 500, 400, 2000), (100, 0));
+    }
+
+    #[test]
+    fn clamp_negative_origin_monitor() {
+        // secondary monitor positioned to the left of the primary (negative coordinates).
+        let a = WorkArea {
+            left: -1920,
+            top: 0,
+            right: 0,
+            bottom: 1080,
+        };
+        assert_eq!(a.clamp(-1000, 500, 400, 300), (-1000, 500));
+        // beyond this monitor's own right edge clamps to its own max_x (-400), not 0.
+        assert_eq!(a.clamp(500, 500, 400, 300), (-400, 500));
+    }
+
+    #[test]
+    fn center_normal_case() {
+        let a = area();
+        assert_eq!(a.center(800, 600), (560, 240));
+    }
+
+    #[test]
+    fn center_truncates_odd_remainder_toward_left_top() {
+        // width 1921 - win_w 800 = 1121 (odd); integer division truncates 560.5 -> 560.
+        let a = WorkArea {
+            left: 0,
+            top: 0,
+            right: 1921,
+            bottom: 1080,
+        };
+        assert_eq!(a.center(800, 600), (560, 240));
+    }
+
+    #[test]
+    fn center_window_larger_than_work_area_goes_negative() {
+        // unlike clamp, center has no lower bound: an oversized window centers off-screen.
+        let a = area();
+        assert_eq!(a.center(2000, 1200), (-40, -60));
+    }
+
+    #[test]
+    fn center_negative_origin_monitor() {
+        let a = WorkArea {
+            left: -1920,
+            top: 0,
+            right: 0,
+            bottom: 1080,
+        };
+        assert_eq!(a.center(800, 600), (-1360, 240));
+    }
+}

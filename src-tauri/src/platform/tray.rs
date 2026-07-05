@@ -451,3 +451,76 @@ fn load_tray_icon_from_exe() -> Option<HICON> {
     }
     Some(icon)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::format_recent_history_label;
+    use snotra_core::ui_types::SearchResult;
+
+    fn item(name: &str, path: &str) -> SearchResult {
+        SearchResult {
+            name: name.to_string(),
+            path: path.to_string(),
+            is_folder: false,
+            is_error: false,
+        }
+    }
+
+    #[test]
+    fn empty_name_falls_back_to_path_only() {
+        let label = format_recent_history_label(&item("", "C:/Users/foo/bar.exe"));
+        assert_eq!(label, "C:/Users/foo/bar.exe");
+    }
+
+    #[test]
+    fn name_equal_to_path_dedupes_to_path_only() {
+        let label = format_recent_history_label(&item("C:/Users/foo/bar.exe", "C:/Users/foo/bar.exe"));
+        assert_eq!(label, "C:/Users/foo/bar.exe");
+    }
+
+    #[test]
+    fn both_empty_yields_empty_label() {
+        // name.is_empty() は true なので path (空文字) をそのまま返す。
+        let label = format_recent_history_label(&item("", ""));
+        assert_eq!(label, "");
+    }
+
+    #[test]
+    fn distinct_name_and_path_formats_as_name_dash_path() {
+        let label = format_recent_history_label(&item("bar.exe", "C:/Users/foo/bar.exe"));
+        assert_eq!(label, "bar.exe - C:/Users/foo/bar.exe");
+    }
+
+    #[test]
+    fn exactly_max_len_is_not_truncated() {
+        // MAX_LABEL_LEN(90) ちょうどでは "..." を付けない（境界値）。
+        let path = "x".repeat(90);
+        let label = format_recent_history_label(&item("", &path));
+        assert_eq!(label, path);
+        assert_eq!(label.chars().count(), 90);
+    }
+
+    #[test]
+    fn one_over_max_len_truncates_to_87_chars_plus_ellipsis() {
+        // 91 文字は 87 文字 + "..." の合計 90 文字に切り詰められる。
+        let path = "x".repeat(91);
+        let label = format_recent_history_label(&item("", &path));
+        let expected = format!("{}...", "x".repeat(87));
+        assert_eq!(label, expected);
+        assert_eq!(label.chars().count(), 90);
+    }
+
+    #[test]
+    fn multibyte_truncation_cuts_on_char_boundary_not_byte_boundary() {
+        // 日本語（1文字3バイト）で 103 文字のラベルを構築し、マルチバイト境界での
+        // 切り詰めがパニックせず、文字単位（バイト単位ではない）で 87 文字に切り詰められることを検証する。
+        let name = "あ".repeat(50);
+        let path = "い".repeat(50);
+        let label = format_recent_history_label(&item(&name, &path));
+
+        // base = "あ"*50 + " - " + "い"*50 = 103 文字。先頭 87 文字 = "あ"*50 + " - " + "い"*34。
+        let expected = format!("{}{}{}...", "あ".repeat(50), " - ", "い".repeat(34));
+        assert_eq!(label, expected);
+        assert_eq!(label.chars().count(), 90);
+    }
+}

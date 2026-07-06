@@ -36,8 +36,26 @@ const E2E_FIXTURE_DIR = path.join(os.tmpdir(), "snotra-e2e-fixtures");
 const E2E_FIXTURE_FILENAMES = ["snotra-e2e-alpha.txt", "snotra-e2e-beta.txt", "snotra-e2e-gamma.txt"];
 const E2E_SEARCH_QUERY = "snotra-e2e";
 
+// instant コマンド E2E 用（#396）。先頭文字を意図的に分岐させる（u/c）——共通接頭辞だと
+// sendKeys の逐次入力中に一時的に両者が前方一致し曖昧な候補になりうる（filter_instant_commands
+// の前方一致フィルタ由来）。
+const E2E_INSTANT_URL_COMMAND_NAME = "urlmark";
+const E2E_INSTANT_EXEC_COMMAND_NAME = "cmdmark";
+const E2E_INSTANT_EXEC_MARKER_FILENAME = "instant-exec-marker.txt";
+const E2E_INSTANT_EXEC_QUERY = "e2eexecmarker";
+
+// TOML の basic string（ダブルクォート）用にエスケープする。literal string（シングルクォート）は
+// エスケープ機構を持たず値に `'` を含められないため使わない——Windows のユーザー名に apostrophe を
+// 含む環境（例: `C:\Users\O'Connor\...`）では fixtureDir 由来のパスが `'` を含みうり、literal
+// string に生埋め込みすると構文エラーになる（Codex レビューで指摘、cargo test で実証済み）。
+function toTomlString(value: string): string {
+  const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `"${escaped}"`;
+}
+
 function buildE2EConfigToml(fixtureDir: string): string {
-  const escapedDir = fixtureDir.replace(/\\/g, "\\\\");
+  const instantUrlTarget = path.join(fixtureDir, E2E_FIXTURE_FILENAMES[0]);
+  const instantExecMarkerPath = path.join(fixtureDir, E2E_INSTANT_EXEC_MARKER_FILENAME);
   return `
 [hotkey]
 modifier = "Alt"
@@ -72,7 +90,7 @@ font_size = 15
 additional = []
 
 [[paths.scan]]
-path = "${escapedDir}"
+path = ${toTomlString(fixtureDir)}
 extensions = [".txt"]
 include_folders = false
 
@@ -105,6 +123,17 @@ exe = "notepad.exe"
 name = "Type"
 exe = "cmd.exe"
 args = '/c type "{path}"'
+
+[[instant_commands]]
+name = "${E2E_INSTANT_URL_COMMAND_NAME}"
+description = "E2E url instant command"
+url = ${toTomlString(instantUrlTarget)}
+
+[[instant_commands]]
+name = "${E2E_INSTANT_EXEC_COMMAND_NAME}"
+description = "E2E exec instant command"
+exe = "cmd.exe"
+args = ${toTomlString(`/c echo {query}> "${instantExecMarkerPath}"`)}
 `.trim();
 }
 
@@ -376,6 +405,30 @@ async function typeQueryOnce(driver: WebDriver, query: string): Promise<void> {
   await switchToLabel(driver, "main");
   const el = await driver.findElement(By.css(".search-input"));
   await el.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, query);
+}
+
+// instant コマンドを入力（typeQueryOnce と同じ「1 回だけ入力」パターン、#369）→ 候補が1件に
+// 絞られるまで待つ → Enter → main 非表示を待つ、までの一連の流れを担う（#396）。
+// E2E config の instant_command_prefix は既定値 "@" のまま変更していない。
+async function runInstantCommand(
+  driver: WebDriver,
+  name: string,
+  query: string,
+  candidateNotFoundMessage: string,
+): Promise<void> {
+  const text = query === "" ? `@${name}` : `@${name} ${query}`;
+  await typeQueryOnce(driver, text);
+
+  await driver.wait(
+    async () => (await driver.findElements(By.css(".result-row"))).length === 1,
+    8_000,
+    candidateNotFoundMessage,
+  );
+
+  const input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(Key.ENTER);
+
+  await waitForHiddenLabel(driver, "main", 8_000);
 }
 
 async function createHarness(): Promise<Harness> {
@@ -807,4 +860,40 @@ test("Enter で検索結果を起動すると main が非表示になる", async
   await input.sendKeys(Key.ENTER);
 
   await waitForHiddenLabel(driver, "main", 6_000);
+});
+
+test("@<name> url インスタントコマンドが実行され main が非表示になる", async ({ harness }) => {
+  const { driver } = harness;
+
+  // InstantAction::Url は launch_item_core（生 ShellExecuteW、openers を経由しない）を呼ぶ。
+  // lpParameters を持たないため query 経由の副作用は仕込めず、main 非表示のみで間接検証する（#396）。
+  await runInstantCommand(
+    driver,
+    E2E_INSTANT_URL_COMMAND_NAME,
+    "",
+    "url インスタントコマンドの候補が1件に絞られない",
+  );
+});
+
+test("@<name> exec インスタントコマンドが実行され main が非表示になり marker ファイルに query が書き込まれる", async ({ harness }) => {
+  const { driver, fixtureDir } = harness;
+  const markerPath = path.join(fixtureDir, E2E_INSTANT_EXEC_MARKER_FILENAME);
+  // 前回実行の残骸（disposeHarness の rm は失敗を握りつぶす）が残っていた場合に、
+  // 今回のテンプレート展開・プロセス起動が壊れていても偽陽性で通ってしまうのを防ぐ。
+  await rm(markerPath, { force: true }).catch(() => {});
+
+  // InstantAction::Exec は launch_exec_core（CREATE_NO_WINDOW の Command::spawn）を呼ぶ。
+  // GUI を開かずファイル書き込みという決定的な副作用を残すため、main 非表示に加えて
+  // マーカーファイルの内容一致まで確認する（テンプレート展開と実プロセス起動の両方を実証、#396）。
+  await runInstantCommand(
+    driver,
+    E2E_INSTANT_EXEC_COMMAND_NAME,
+    E2E_INSTANT_EXEC_QUERY,
+    "exec インスタントコマンドの候補が1件に絞られない",
+  );
+
+  await driver.wait(async () => {
+    const content = await readFile(markerPath, "utf8").catch(() => "");
+    return content.includes(E2E_INSTANT_EXEC_QUERY);
+  }, 8_000, "exec インスタントコマンドの marker ファイルに query が書き込まれない");
 });

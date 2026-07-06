@@ -54,7 +54,6 @@ function toTomlString(value: string): string {
 }
 
 function buildE2EConfigToml(fixtureDir: string): string {
-  const escapedDir = fixtureDir.replace(/\\/g, "\\\\");
   const instantUrlTarget = path.join(fixtureDir, E2E_FIXTURE_FILENAMES[0]);
   const instantExecMarkerPath = path.join(fixtureDir, E2E_INSTANT_EXEC_MARKER_FILENAME);
   return `
@@ -91,7 +90,7 @@ font_size = 15
 additional = []
 
 [[paths.scan]]
-path = "${escapedDir}"
+path = ${toTomlString(fixtureDir)}
 extensions = [".txt"]
 include_folders = false
 
@@ -408,15 +407,28 @@ async function typeQueryOnce(driver: WebDriver, query: string): Promise<void> {
   await el.sendKeys(Key.chord(Key.CONTROL, "a"), Key.BACK_SPACE, query);
 }
 
-// instant コマンド入力も typeQueryOnce と同じ「1 回だけ入力」パターンを踏襲する（#369）。
-async function typeInstantCommandOnce(
+// instant コマンドを入力（typeQueryOnce と同じ「1 回だけ入力」パターン、#369）→ 候補が1件に
+// 絞られるまで待つ → Enter → main 非表示を待つ、までの一連の流れを担う（#396）。
+// E2E config の instant_command_prefix は既定値 "@" のまま変更していない。
+async function runInstantCommand(
   driver: WebDriver,
-  prefix: string,
   name: string,
   query: string,
+  candidateNotFoundMessage: string,
 ): Promise<void> {
-  const text = query === "" ? `${prefix}${name}` : `${prefix}${name} ${query}`;
+  const text = query === "" ? `@${name}` : `@${name} ${query}`;
   await typeQueryOnce(driver, text);
+
+  await driver.wait(
+    async () => (await driver.findElements(By.css(".result-row"))).length === 1,
+    8_000,
+    candidateNotFoundMessage,
+  );
+
+  const input = await driver.findElement(By.css(".search-input"));
+  await input.sendKeys(Key.ENTER);
+
+  await waitForHiddenLabel(driver, "main", 8_000);
 }
 
 async function createHarness(): Promise<Harness> {
@@ -855,18 +867,12 @@ test("@<name> url インスタントコマンドが実行され main が非表�
 
   // InstantAction::Url は launch_item_core（生 ShellExecuteW、openers を経由しない）を呼ぶ。
   // lpParameters を持たないため query 経由の副作用は仕込めず、main 非表示のみで間接検証する（#396）。
-  await typeInstantCommandOnce(driver, "@", E2E_INSTANT_URL_COMMAND_NAME, "");
-
-  await driver.wait(
-    async () => (await driver.findElements(By.css(".result-row"))).length === 1,
-    8_000,
+  await runInstantCommand(
+    driver,
+    E2E_INSTANT_URL_COMMAND_NAME,
+    "",
     "url インスタントコマンドの候補が1件に絞られない",
   );
-
-  const input = await driver.findElement(By.css(".search-input"));
-  await input.sendKeys(Key.ENTER);
-
-  await waitForHiddenLabel(driver, "main", 8_000);
 });
 
 test("@<name> exec インスタントコマンドが実行され main が非表示になり marker ファイルに query が書き込まれる", async ({ harness }) => {
@@ -879,18 +885,12 @@ test("@<name> exec インスタントコマンドが実行され main が非表�
   // InstantAction::Exec は launch_exec_core（CREATE_NO_WINDOW の Command::spawn）を呼ぶ。
   // GUI を開かずファイル書き込みという決定的な副作用を残すため、main 非表示に加えて
   // マーカーファイルの内容一致まで確認する（テンプレート展開と実プロセス起動の両方を実証、#396）。
-  await typeInstantCommandOnce(driver, "@", E2E_INSTANT_EXEC_COMMAND_NAME, E2E_INSTANT_EXEC_QUERY);
-
-  await driver.wait(
-    async () => (await driver.findElements(By.css(".result-row"))).length === 1,
-    8_000,
+  await runInstantCommand(
+    driver,
+    E2E_INSTANT_EXEC_COMMAND_NAME,
+    E2E_INSTANT_EXEC_QUERY,
     "exec インスタントコマンドの候補が1件に絞られない",
   );
-
-  const input = await driver.findElement(By.css(".search-input"));
-  await input.sendKeys(Key.ENTER);
-
-  await waitForHiddenLabel(driver, "main", 8_000);
 
   await driver.wait(async () => {
     const content = await readFile(markerPath, "utf8").catch(() => "");

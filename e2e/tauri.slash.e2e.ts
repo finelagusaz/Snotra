@@ -44,9 +44,17 @@ const E2E_INSTANT_EXEC_COMMAND_NAME = "cmdmark";
 const E2E_INSTANT_EXEC_MARKER_FILENAME = "instant-exec-marker.txt";
 const E2E_INSTANT_EXEC_QUERY = "e2eexecmarker";
 
+// TOML の basic string（ダブルクォート）用にエスケープする。literal string（シングルクォート）は
+// エスケープ機構を持たず値に `'` を含められないため使わない——Windows のユーザー名に apostrophe を
+// 含む環境（例: `C:\Users\O'Connor\...`）では fixtureDir 由来のパスが `'` を含みうり、literal
+// string に生埋め込みすると構文エラーになる（Codex レビューで指摘、cargo test で実証済み）。
+function toTomlString(value: string): string {
+  const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `"${escaped}"`;
+}
+
 function buildE2EConfigToml(fixtureDir: string): string {
   const escapedDir = fixtureDir.replace(/\\/g, "\\\\");
-  // TOML リテラル文字列（'...'）はバックスラッシュを二重化不要でそのまま埋め込める。
   const instantUrlTarget = path.join(fixtureDir, E2E_FIXTURE_FILENAMES[0]);
   const instantExecMarkerPath = path.join(fixtureDir, E2E_INSTANT_EXEC_MARKER_FILENAME);
   return `
@@ -120,13 +128,13 @@ args = '/c type "{path}"'
 [[instant_commands]]
 name = "${E2E_INSTANT_URL_COMMAND_NAME}"
 description = "E2E url instant command"
-url = '${instantUrlTarget}'
+url = ${toTomlString(instantUrlTarget)}
 
 [[instant_commands]]
 name = "${E2E_INSTANT_EXEC_COMMAND_NAME}"
 description = "E2E exec instant command"
 exe = "cmd.exe"
-args = '/c echo {query}> "${instantExecMarkerPath}"'
+args = ${toTomlString(`/c echo {query}> "${instantExecMarkerPath}"`)}
 `.trim();
 }
 

@@ -1,20 +1,20 @@
 use eframe::egui;
 use snotra_core::config::{Config, SearchHistoryNormalizationConfig, SearchModeConfig};
 
-use crate::i18n::Tr;
+use crate::i18n::{Tr, TrKey};
 use crate::style;
 
 pub fn ui(ui: &mut egui::Ui, config: &mut Config, tr: &Tr) {
     style::tab_scroll_area(ui, |ui| {
         // -- Search mode --
-        style::section_heading(ui, tr.heading_search_mode());
+        style::section_heading(ui, tr.t(TrKey::HeadingSearchMode));
 
         style::settings_grid("search_mode_grid").show(ui, |ui| {
-            ui.label(tr.label_normal_mode());
+            ui.label(tr.t(TrKey::LabelNormalMode));
             search_mode_combo(ui, "normal_mode", &mut config.search.normal_mode, tr);
             ui.end_row();
 
-            ui.label(tr.label_folder_mode());
+            ui.label(tr.t(TrKey::LabelFolderMode));
             search_mode_combo(ui, "folder_mode", &mut config.search.folder_mode, tr);
             ui.end_row();
         });
@@ -22,22 +22,22 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, tr: &Tr) {
         style::section_gap(ui);
 
         // -- Visibility --
-        style::section_heading(ui, tr.heading_visibility());
-        ui.checkbox(&mut config.search.show_hidden_system, tr.cb_show_hidden_system());
+        style::section_heading(ui, tr.t(TrKey::HeadingVisibility));
+        ui.checkbox(&mut config.search.show_hidden_system, tr.t(TrKey::CbShowHiddenSystem));
 
         style::section_gap(ui);
 
         // -- PATH executables --
-        style::section_heading(ui, tr.heading_path_env());
-        ui.checkbox(&mut config.search.include_path_env, tr.cb_include_path_env());
+        style::section_heading(ui, tr.t(TrKey::HeadingPathEnv));
+        ui.checkbox(&mut config.search.include_path_env, tr.t(TrKey::CbIncludePathEnv));
 
         style::section_gap(ui);
 
         // -- History --
-        style::section_heading(ui, tr.heading_history());
+        style::section_heading(ui, tr.t(TrKey::HeadingHistory));
 
         style::settings_grid("history_grid").show(ui, |ui| {
-            ui.label(tr.label_result_limit());
+            ui.label(tr.t(TrKey::LabelResultLimit));
             let result_limit_default = config.search.effective_result_limit();
             ui.add_sized(
                 [style::FIELD_NUMERIC, ui.spacing().interact_size.y],
@@ -45,7 +45,7 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, tr: &Tr) {
                     .range(10..=1000),
             );
             ui.end_row();
-            ui.label(tr.label_recent_limit());
+            ui.label(tr.t(TrKey::LabelRecentLimit));
             let recent_limit_default = config.search.effective_recent_limit();
             ui.add_sized(
                 [style::FIELD_NUMERIC, ui.spacing().interact_size.y],
@@ -58,16 +58,16 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, tr: &Tr) {
         style::section_gap(ui);
 
         // -- History score --
-        style::section_heading(ui, tr.heading_history_score());
+        style::section_heading(ui, tr.t(TrKey::HeadingHistoryScore));
 
         let cap_enabled =
             config.search.history_normalization != SearchHistoryNormalizationConfig::Disabled;
         style::settings_grid("history_score_grid").show(ui, |ui| {
-            ui.label(tr.label_normalization());
+            ui.label(tr.t(TrKey::LabelNormalization));
             history_normalization_combo(ui, &mut config.search.history_normalization, tr);
             ui.end_row();
 
-            ui.label(tr.label_fuzzy_cap_ratio());
+            ui.label(tr.t(TrKey::LabelFuzzyCapRatio));
             ui.add_enabled_ui(cap_enabled, |ui| {
                 ui.add_sized(
                     [style::FIELD_NUMERIC, ui.spacing().interact_size.y],
@@ -83,15 +83,15 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, tr: &Tr) {
         style::section_gap(ui);
 
         // -- Migemo 検索 --
-        style::section_heading(ui, tr.heading_migemo());
+        style::section_heading(ui, tr.t(TrKey::HeadingMigemo));
 
-        ui.checkbox(&mut config.search.migemo_enabled, tr.cb_migemo_enabled());
-        style::hint(ui, tr.hint_migemo());
+        ui.checkbox(&mut config.search.migemo_enabled, tr.t(TrKey::CbMigemoEnabled));
+        style::hint(ui, tr.t(TrKey::HintMigemo));
 
         ui.add_space(style::SPACE_HINT);
 
         style::settings_grid("migemo_grid").show(ui, |ui| {
-            ui.label(tr.label_migemo_min_chars());
+            ui.label(tr.t(TrKey::LabelMigemoMinChars));
             ui.add_enabled_ui(config.search.migemo_enabled, |ui| {
                 ui.add_sized(
                     [style::FIELD_NUMERIC, ui.spacing().interact_size.y],
@@ -105,16 +105,16 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, tr: &Tr) {
 
 fn search_mode_combo(ui: &mut egui::Ui, id: &str, mode: &mut SearchModeConfig, tr: &Tr) {
     let label = match mode {
-        SearchModeConfig::Prefix => tr.search_mode_prefix(),
-        SearchModeConfig::Substring => tr.search_mode_substring(),
-        SearchModeConfig::Fuzzy => tr.search_mode_fuzzy(),
+        SearchModeConfig::Prefix => tr.t(TrKey::SearchModePrefix),
+        SearchModeConfig::Substring => tr.t(TrKey::SearchModeSubstring),
+        SearchModeConfig::Fuzzy => tr.t(TrKey::SearchModeFuzzy),
     };
     egui::ComboBox::from_id_salt(id)
         .selected_text(label)
         .show_ui(ui, |ui| {
-            ui.selectable_value(mode, SearchModeConfig::Prefix, tr.search_mode_prefix());
-            ui.selectable_value(mode, SearchModeConfig::Substring, tr.search_mode_substring());
-            ui.selectable_value(mode, SearchModeConfig::Fuzzy, tr.search_mode_fuzzy());
+            ui.selectable_value(mode, SearchModeConfig::Prefix, tr.t(TrKey::SearchModePrefix));
+            ui.selectable_value(mode, SearchModeConfig::Substring, tr.t(TrKey::SearchModeSubstring));
+            ui.selectable_value(mode, SearchModeConfig::Fuzzy, tr.t(TrKey::SearchModeFuzzy));
         });
 }
 
@@ -124,17 +124,17 @@ fn history_normalization_combo(
     tr: &Tr,
 ) {
     let label = match norm {
-        SearchHistoryNormalizationConfig::Disabled => tr.normalization_disabled(),
-        SearchHistoryNormalizationConfig::FuzzyRelativeCap => tr.normalization_fuzzy_relative_cap(),
+        SearchHistoryNormalizationConfig::Disabled => tr.t(TrKey::NormalizationDisabled),
+        SearchHistoryNormalizationConfig::FuzzyRelativeCap => tr.t(TrKey::NormalizationFuzzyRelativeCap),
     };
     egui::ComboBox::from_id_salt("history_normalization")
         .selected_text(label)
         .show_ui(ui, |ui| {
-            ui.selectable_value(norm, SearchHistoryNormalizationConfig::Disabled, tr.normalization_disabled());
+            ui.selectable_value(norm, SearchHistoryNormalizationConfig::Disabled, tr.t(TrKey::NormalizationDisabled));
             ui.selectable_value(
                 norm,
                 SearchHistoryNormalizationConfig::FuzzyRelativeCap,
-                tr.normalization_fuzzy_relative_cap(),
+                tr.t(TrKey::NormalizationFuzzyRelativeCap),
             );
         });
 }

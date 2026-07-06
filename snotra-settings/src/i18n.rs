@@ -2,1196 +2,655 @@ use snotra_core::config::Language;
 
 pub struct Tr(pub Language);
 
-impl Tr {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TrKey {
     // Window title
-    pub fn window_title(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "Snotra 設定",
-            Language::En => "Snotra Settings",
-        }
-    }
-
+    WindowTitle,
     // Tab names
-    pub fn tab_general(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "全般",
-            Language::En => "General",
-        }
-    }
-
-    pub fn tab_search(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "検索",
-            Language::En => "Search",
-        }
-    }
-
-    pub fn tab_index(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "インデックス",
-            Language::En => "Index",
-        }
-    }
-
-    pub fn tab_visual(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "ビジュアル",
-            Language::En => "Visual",
-        }
-    }
-
-    pub fn tab_opener(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "オープナー",
-            Language::En => "Opener",
-        }
-    }
-
-    pub fn tab_instant_command(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "インスタント",
-            Language::En => "Instant",
-        }
-    }
-
+    TabGeneral,
+    TabSearch,
+    TabIndex,
+    TabVisual,
+    TabOpener,
+    TabInstantCommand,
     // Footer buttons
-    pub fn btn_save(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "保存",
-            Language::En => "Save",
-        }
-    }
-
-    pub fn btn_discard(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "破棄",
-            Language::En => "Discard",
-        }
-    }
-
-    pub fn btn_reset_default(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "初期設定に戻す",
-            Language::En => "Reset to default",
-        }
-    }
-
+    BtnSave,
+    BtnDiscard,
+    BtnResetDefault,
     // Status messages
-    pub fn status_saved(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "保存しました",
-            Language::En => "Saved",
-        }
-    }
-
-    pub fn status_unsaved(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "未保存の変更があります",
-            Language::En => "Unsaved changes",
-        }
-    }
-
-    pub fn status_validation_error(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "検証エラー: ",
-            Language::En => "Validation error: ",
-        }
-    }
-
-    pub fn status_save_failed(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "保存失敗: ",
-            Language::En => "Save failed: ",
-        }
-    }
-
+    StatusSaved,
+    StatusUnsaved,
+    StatusValidationError,
+    StatusSaveFailed,
     // 読み込み失敗（finding C: 一時的 read 失敗で既定値表示中）の保存ガード
-    pub fn read_failed_banner(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "⚠ 設定ファイルを読み込めませんでした。既定値で表示しています。このまま保存すると既存の設定が失われる可能性があります。",
-            Language::En => "⚠ Could not read the settings file. Showing defaults. Saving now may overwrite your existing settings.",
-        }
-    }
-
-    pub fn read_failed_confirm(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "既存設定が失われる可能性を承知の上で保存する",
-            Language::En => "Save anyway (I understand existing settings may be lost)",
-        }
-    }
-
-    pub fn status_read_failed_blocked(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "読み込み失敗中: 上のチェックを入れると保存できます",
-            Language::En => "Load failed: check the box above to enable saving",
-        }
-    }
-
+    ReadFailedBanner,
+    ReadFailedConfirm,
+    StatusReadFailedBlocked,
     // Config error messages
-    pub fn err_hotkey_modifier_empty(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "ホットキーの修飾キーが未設定です",
-            Language::En => "Hotkey modifier is not set",
-        }
-    }
-
-    pub fn err_hotkey_key_empty(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "ホットキーのキーが未設定です",
-            Language::En => "Hotkey key is not set",
-        }
-    }
-
-    pub fn err_hotkey_system_conflict(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => " はシステムショートカットと競合します",
-            Language::En => " conflicts with a system shortcut",
-        }
-    }
-
-    pub fn err_visible_rows_zero(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "最大表示件数は1以上にしてください",
-            Language::En => "Max results must be at least 1",
-        }
-    }
-
-    pub fn err_window_width_too_small(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => " は小さすぎます（200以上）",
-            Language::En => " is too small (min 200)",
-        }
-    }
-
-    pub fn err_fuzzy_cap_ratio_out_of_range(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => " は 0.0〜1.0 の範囲にしてください",
-            Language::En => " must be between 0.0 and 1.0",
-        }
-    }
-
-    pub fn err_scan_path_empty(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "のパスが空です",
-            Language::En => " path is empty",
-        }
-    }
-
-    pub fn err_instant_prefix_empty(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "インスタントコマンドのプレフィックスが空です",
-            Language::En => "Instant command prefix is empty",
-        }
-    }
-
-    pub fn err_instant_prefix_slash(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "プレフィックスに / は使用できません（スラッシュコマンドと競合）",
-            Language::En => "Prefix cannot be / (conflicts with slash commands)",
-        }
-    }
-
-    pub fn err_instant_duplicate_name(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => " はコマンド名が重複しています",
-            Language::En => " has a duplicate command name",
-        }
-    }
-
-    pub fn err_instant_unknown_modifier(&self, modifier: &str) -> String {
-        match self.0 {
-            Language::Ja => format!("不明な修飾子「{modifier}」が含まれています"),
-            Language::En => format!("contains unknown modifier \"{modifier}\""),
-        }
-    }
-
+    ErrHotkeyModifierEmpty,
+    ErrHotkeyKeyEmpty,
+    ErrHotkeySystemConflict,
+    ErrVisibleRowsZero,
+    ErrWindowWidthTooSmall,
+    ErrFuzzyCapRatioOutOfRange,
+    ErrScanPathEmpty,
+    ErrInstantPrefixEmpty,
+    ErrInstantPrefixSlash,
+    ErrInstantDuplicateName,
+    ErrInstantUnknownModifier,
     // General tab
-    pub fn heading_hotkey(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "ホットキー",
-            Language::En => "Hotkey",
-        }
-    }
-
-    pub fn label_hotkey(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "ホットキー:",
-            Language::En => "Hotkey:",
-        }
-    }
-
-    pub fn cb_hotkey_toggle(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "ホットキーで表示中のウィンドウを非表示にする",
-            Language::En => "Toggle window visibility with hotkey",
-        }
-    }
-
-    pub fn heading_appearance(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "外観",
-            Language::En => "Appearance",
-        }
-    }
-
-    pub fn label_visible_rows(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "最大表示件数:",
-            Language::En => "Max results:",
-        }
-    }
-
-    pub fn label_window_width(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "ウィンドウ幅:",
-            Language::En => "Window width:",
-        }
-    }
-
-    pub fn cb_show_icons(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "アイコンを表示",
-            Language::En => "Show icons",
-        }
-    }
-
-    pub fn heading_behavior(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "動作",
-            Language::En => "Behavior",
-        }
-    }
-
-    pub fn cb_show_on_startup(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "起動時にウィンドウを表示",
-            Language::En => "Show window on startup",
-        }
-    }
-
-    pub fn cb_auto_hide(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "フォーカス喪失時に非表示",
-            Language::En => "Hide on focus lost",
-        }
-    }
-
-    pub fn cb_tray_icon(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "トレイアイコンを表示",
-            Language::En => "Show tray icon",
-        }
-    }
-
-    pub fn cb_ime_off(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "表示時に IME をオフにする",
-            Language::En => "Turn off IME on show",
-        }
-    }
-
-    pub fn cb_follow_cursor_monitor(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "カーソルのあるモニターに表示",
-            Language::En => "Show on monitor with cursor",
-        }
-    }
-
-    pub fn heading_language(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "言語",
-            Language::En => "Language",
-        }
-    }
-
-    pub fn label_language(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "言語:",
-            Language::En => "Language:",
-        }
-    }
-
-    pub fn language_ja(&self) -> &'static str {
-        "日本語"
-    }
-
-    pub fn language_en(&self) -> &'static str {
-        "English"
-    }
-
+    HeadingHotkey,
+    LabelHotkey,
+    CbHotkeyToggle,
+    HeadingAppearance,
+    LabelVisibleRows,
+    LabelWindowWidth,
+    CbShowIcons,
+    HeadingBehavior,
+    CbShowOnStartup,
+    CbAutoHide,
+    CbTrayIcon,
+    CbImeOff,
+    CbFollowCursorMonitor,
+    HeadingLanguage,
+    LabelLanguage,
+    LanguageJa,
+    LanguageEn,
     // Search tab
-    pub fn heading_search_mode(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "検索モード",
-            Language::En => "Search mode",
-        }
-    }
-
-    pub fn label_normal_mode(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "通常モード:",
-            Language::En => "Normal mode:",
-        }
-    }
-
-    pub fn label_folder_mode(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "フォルダモード:",
-            Language::En => "Folder mode:",
-        }
-    }
-
-    pub fn search_mode_prefix(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "前方一致",
-            Language::En => "Prefix",
-        }
-    }
-
-    pub fn search_mode_substring(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "部分一致",
-            Language::En => "Substring",
-        }
-    }
-
-    pub fn search_mode_fuzzy(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "あいまい",
-            Language::En => "Fuzzy",
-        }
-    }
-
-    pub fn heading_visibility(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "表示",
-            Language::En => "Visibility",
-        }
-    }
-
-    pub fn cb_show_hidden_system(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "隠しファイル・システムファイルを表示",
-            Language::En => "Show hidden/system files",
-        }
-    }
-
-    pub fn heading_history(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "履歴",
-            Language::En => "History",
-        }
-    }
-
-    pub fn label_result_limit(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "最大列挙数:",
-            Language::En => "Max entries:",
-        }
-    }
-
-    pub fn label_recent_limit(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "最大履歴表示件数:",
-            Language::En => "Max history display:",
-        }
-    }
-
-    pub fn heading_history_score(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "履歴スコア",
-            Language::En => "History score",
-        }
-    }
-
-    pub fn label_normalization(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "正規化:",
-            Language::En => "Normalization:",
-        }
-    }
-
-    pub fn normalization_disabled(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "無効",
-            Language::En => "Disabled",
-        }
-    }
-
-    pub fn normalization_fuzzy_relative_cap(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "Fuzzy 相対キャップ",
-            Language::En => "Fuzzy relative cap",
-        }
-    }
-
-    pub fn label_fuzzy_cap_ratio(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "Fuzzy 履歴キャップ比率:",
-            Language::En => "Fuzzy history cap ratio:",
-        }
-    }
-
+    HeadingSearchMode,
+    LabelNormalMode,
+    LabelFolderMode,
+    SearchModePrefix,
+    SearchModeSubstring,
+    SearchModeFuzzy,
+    HeadingVisibility,
+    CbShowHiddenSystem,
+    HeadingHistory,
+    LabelResultLimit,
+    LabelRecentLimit,
+    HeadingHistoryScore,
+    LabelNormalization,
+    NormalizationDisabled,
+    NormalizationFuzzyRelativeCap,
+    LabelFuzzyCapRatio,
     // Index tab
-    pub fn heading_scan_targets(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "スキャン対象",
-            Language::En => "Scan targets",
-        }
-    }
-
-    pub fn label_no_scan_paths(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "スキャンパスが設定されていません。",
-            Language::En => "No scan paths configured.",
-        }
-    }
-
-    pub fn label_incl_folders(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "(フォルダ含む)",
-            Language::En => "(incl. folders)",
-        }
-    }
-
-    pub fn btn_edit(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "編集",
-            Language::En => "Edit",
-        }
-    }
-
-    pub fn btn_add(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "追加…",
-            Language::En => "Add…",
-        }
-    }
-
-    pub fn modal_edit_scan_path(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "スキャンパスを編集",
-            Language::En => "Edit scan path",
-        }
-    }
-
-    pub fn modal_add_scan_path(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "スキャンパスを追加",
-            Language::En => "Add scan path",
-        }
-    }
-
-    pub fn label_path(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "パス:",
-            Language::En => "Path:",
-        }
-    }
-
-    pub fn btn_browse(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "参照…",
-            Language::En => "Browse…",
-        }
-    }
-
-    pub fn label_extensions(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "拡張子 (カンマ区切り):",
-            Language::En => "Extensions (comma-separated):",
-        }
-    }
-
-    pub fn cb_include_folders(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "フォルダを含む",
-            Language::En => "Include folders",
-        }
-    }
-
-    pub fn btn_delete(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "削除",
-            Language::En => "Delete",
-        }
-    }
-
-    pub fn btn_cancel(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "キャンセル",
-            Language::En => "Cancel",
-        }
-    }
-
-    pub fn dialog_select_folder(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "フォルダを選択",
-            Language::En => "Select folder",
-        }
-    }
-
+    HeadingScanTargets,
+    LabelNoScanPaths,
+    IndexScanExtensionsWithFolders,
+    BtnEdit,
+    BtnAdd,
+    ModalEditScanPath,
+    ModalAddScanPath,
+    LabelPath,
+    BtnBrowse,
+    LabelExtensions,
+    CbIncludeFolders,
+    BtnDelete,
+    BtnCancel,
+    DialogSelectFolder,
     // Visual tab
-    pub fn heading_theme(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "テーマ",
-            Language::En => "Theme",
-        }
-    }
-
-    pub fn btn_save_custom_theme(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "カスタムテーマとして保存",
-            Language::En => "Save as custom theme",
-        }
-    }
-
-    pub fn heading_color(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "カラー",
-            Language::En => "Colors",
-        }
-    }
-
-    pub fn label_bg_color(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "背景色:",
-            Language::En => "Background:",
-        }
-    }
-
-    pub fn label_input_bg(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "入力欄背景:",
-            Language::En => "Input background:",
-        }
-    }
-
-    pub fn label_text_color(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "テキスト:",
-            Language::En => "Text:",
-        }
-    }
-
-    pub fn label_selected_row(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "選択行:",
-            Language::En => "Selected row:",
-        }
-    }
-
-    pub fn label_hint_text(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "ヒントテキスト:",
-            Language::En => "Hint text:",
-        }
-    }
-
-    pub fn heading_font(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "フォント",
-            Language::En => "Font",
-        }
-    }
-
-    pub fn label_font_family(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "フォントファミリー:",
-            Language::En => "Font family:",
-        }
-    }
-
-    pub fn label_font_size(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "フォントサイズ:",
-            Language::En => "Font size:",
-        }
-    }
-
-    pub fn label_custom_theme(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "カスタム",
-            Language::En => "Custom",
-        }
-    }
-
+    HeadingTheme,
+    BtnSaveCustomTheme,
+    HeadingColor,
+    LabelBgColor,
+    LabelInputBg,
+    LabelTextColor,
+    LabelSelectedRow,
+    LabelHintText,
+    HeadingFont,
+    LabelFontFamily,
+    LabelFontSize,
+    LabelCustomTheme,
     // Opener tab - presets
-    pub fn heading_presets(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "よく使うツール",
-            Language::En => "Common tools",
-        }
-    }
-
-    pub fn preset_description(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "検出されたツールをワンクリックで追加できます。",
-            Language::En => "Add detected tools with one click.",
-        }
-    }
-
-    pub fn btn_add_preset(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "追加",
-            Language::En => "Add",
-        }
-    }
-
-    pub fn label_already_added(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "追加済み",
-            Language::En => "Added",
-        }
-    }
-
+    HeadingPresets,
+    PresetDescription,
+    BtnAddPreset,
+    LabelAlreadyAdded,
     // Opener tab
-    pub fn heading_opener_rules(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "オープナールール",
-            Language::En => "Opener rules",
-        }
-    }
-
-    pub fn opener_description(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "ファイル種別ごとに起動するアプリケーションを設定します。",
-            Language::En => "Configure applications to launch by file type.",
-        }
-    }
-
-    pub fn label_no_rules(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "ルールが設定されていません。",
-            Language::En => "No rules configured.",
-        }
-    }
-
-    pub fn label_no_name(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "(名前なし)",
-            Language::En => "(unnamed)",
-        }
-    }
-
-    pub fn modal_edit_rule(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "ルールを編集",
-            Language::En => "Edit rule",
-        }
-    }
-
-    pub fn modal_add_rule(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "ルールを追加",
-            Language::En => "Add rule",
-        }
-    }
-
-    pub fn label_target(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "ターゲット:",
-            Language::En => "Target:",
-        }
-    }
-
-    pub fn target_kind_folder(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "フォルダ",
-            Language::En => "Folder",
-        }
-    }
-
-    pub fn target_kind_extension(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "拡張子",
-            Language::En => "Extension",
-        }
-    }
-
-    pub fn label_extension(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "拡張子:",
-            Language::En => "Extension:",
-        }
-    }
-
-    pub fn hint_extension_format(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "カンマ区切り (例: .png, .jpg)",
-            Language::En => "Comma-separated (e.g. .png, .jpg)",
-        }
-    }
-
-    pub fn label_path_condition(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "パス条件:",
-            Language::En => "Path condition:",
-        }
-    }
-
-    pub fn hint_path_condition(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "空欄 = すべてにマッチ (例: C:\\workspace)",
-            Language::En => "Empty = match all (e.g. C:\\workspace)",
-        }
-    }
-
-    pub fn label_all_folders(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "すべてのフォルダ",
-            Language::En => "All folders",
-        }
-    }
-
-    pub fn label_tool_name(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "ツール名:",
-            Language::En => "Tool name:",
-        }
-    }
-
-    pub fn label_executable(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "実行ファイル:",
-            Language::En => "Executable:",
-        }
-    }
-
-    pub fn label_arguments(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "引数:",
-            Language::En => "Arguments:",
-        }
-    }
-
-    pub fn hint_path_placeholder(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "{path} でファイルパスを埋め込み",
-            Language::En => "Use {path} for file path",
-        }
-    }
-
-    pub fn dialog_select_exe(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "実行ファイルを選択",
-            Language::En => "Select executable",
-        }
-    }
-
-    pub fn filter_executables(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "実行ファイル",
-            Language::En => "Executables",
-        }
-    }
-
-    pub fn filter_all_files(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "すべてのファイル",
-            Language::En => "All files",
-        }
-    }
-
+    HeadingOpenerRules,
+    OpenerDescription,
+    LabelNoRules,
+    LabelNoName,
+    ModalEditRule,
+    ModalAddRule,
+    LabelTarget,
+    TargetKindFolder,
+    TargetKindExtension,
+    LabelExtension,
+    HintExtensionFormat,
+    LabelPathCondition,
+    HintPathCondition,
+    LabelAllFolders,
+    LabelToolName,
+    LabelExecutable,
+    LabelArguments,
+    HintPathPlaceholder,
+    DialogSelectExe,
+    FilterExecutables,
+    FilterAllFiles,
     // Hotkey input
-    pub fn hotkey_press_key(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "キーを押してください...",
-            Language::En => "Press a key...",
-        }
-    }
-
-    pub fn hotkey_not_set(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "(未設定)",
-            Language::En => "(not set)",
-        }
-    }
-
+    HotkeyPressKey,
+    HotkeyNotSet,
     // Instant command tab
-    pub fn heading_instant_prefix(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "プレフィックス",
-            Language::En => "Prefix",
-        }
-    }
-
-    pub fn label_instant_prefix(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "プレフィックス:",
-            Language::En => "Prefix:",
-        }
-    }
-
-    pub fn hint_instant_prefix(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "検索バーでこの文字を入力するとインスタントコマンドモードになります",
-            Language::En => "Type this character in the search bar to enter instant command mode",
-        }
-    }
-
-    pub fn heading_instant_commands(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "コマンド一覧",
-            Language::En => "Commands",
-        }
-    }
-
-    pub fn instant_description(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "URL や実行ファイルを登録し、検索バーから即座に実行できます。{query} {clip} {date} {uuid} が変数として展開されます",
-            Language::En => "Register URLs or executables to run instantly from the search bar. {query}, {clip}, {date}, {uuid} are expanded as variables",
-        }
-    }
-
-    pub fn label_no_instant_commands(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "コマンドが登録されていません",
-            Language::En => "No commands registered",
-        }
-    }
-
-    pub fn label_instant_name(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "名前:",
-            Language::En => "Name:",
-        }
-    }
-
-    pub fn hint_instant_name(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "プレフィックスの後に入力する文字列です（例: \"g\" と設定すると \"@g\" で呼び出し）",
-            Language::En => "Text typed after the prefix to invoke this command (e.g. name \"g\" → type \"@g\")",
-        }
-    }
-
-    pub fn label_instant_command(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "コマンド:",
-            Language::En => "Command:",
-        }
-    }
-
-    pub fn hint_instant_command(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "{query} クエリ・{clip} クリップボード・{date:%Y-%m-%d} 日時・{uuid} を埋め込み。literal は {{ }}（{{date}}）。URL は自動エンコード",
-            Language::En => "Embed {query}, {clip}, {date:%Y-%m-%d}, {uuid}; literal via {{ }}. URLs are auto-encoded",
-        }
-    }
-
-    pub fn label_instant_description(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "説明（任意）:",
-            Language::En => "Description (optional):",
-        }
-    }
-
-    pub fn hint_instant_description(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "コマンドの用途を記述します。検索結果リストに表示されます",
-            Language::En => "Describe what this command does. Shown in the search results list",
-        }
-    }
-
-    pub fn label_instant_preview(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "プレビュー:",
-            Language::En => "Preview:",
-        }
-    }
-
-    pub fn btn_duplicate(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "複製",
-            Language::En => "Duplicate",
-        }
-    }
-
-    pub fn modal_add_instant(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "コマンドを追加",
-            Language::En => "Add Command",
-        }
-    }
-
-    pub fn modal_edit_instant(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "コマンドを編集",
-            Language::En => "Edit Command",
-        }
-    }
-
-    pub fn label_instant_kind(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "種別",
-            Language::En => "Kind",
-        }
-    }
-
-    pub fn radio_instant_url(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "URL / 既定アプリで開く",
-            Language::En => "URL / open with default app",
-        }
-    }
-
-    pub fn radio_instant_program(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "プログラム（exe + 引数）",
-            Language::En => "Program (exe + args)",
-        }
-    }
-
-    pub fn label_instant_exe(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "実行ファイル (.exe)",
-            Language::En => "Executable (.exe)",
-        }
-    }
-
-    pub fn label_instant_args(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "引数",
-            Language::En => "Arguments",
-        }
-    }
-
-    pub fn hint_instant_program(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => ".exe のみ。スクリプトはインタプリタを実行ファイルに指定。{query} / {clip} / {date} / {uuid} と %VAR% が使えます。literal は {{ }}",
-            Language::En => ".exe only. For scripts, set the interpreter as the executable. {query} / {clip} / {date} / {uuid} and %VAR% are supported; literal via {{ }}",
-        }
-    }
-
-    pub fn hint_instant_migrate(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "引数つきの可能性があります。プログラム種別へ作り直すと正しく起動します",
-            Language::En => "This may contain arguments. Recreate it as a Program command to launch correctly",
-        }
-    }
-
+    HeadingInstantPrefix,
+    LabelInstantPrefix,
+    HintInstantPrefix,
+    HeadingInstantCommands,
+    InstantDescription,
+    LabelNoInstantCommands,
+    LabelInstantName,
+    HintInstantName,
+    LabelInstantCommand,
+    HintInstantCommand,
+    LabelInstantDescription,
+    HintInstantDescription,
+    LabelInstantPreview,
+    BtnDuplicate,
+    ModalAddInstant,
+    ModalEditInstant,
+    LabelInstantKind,
+    RadioInstantUrl,
+    RadioInstantProgram,
+    LabelInstantExe,
+    LabelInstantArgs,
+    HintInstantProgram,
+    HintInstantMigrate,
     // Backup tab
-    pub fn tab_backup(&self) -> &'static str {
+    TabBackup,
+    HeadingExport,
+    LabelExportDescription,
+    BtnExport,
+    HeadingImport,
+    LabelImportDescription,
+    BtnImport,
+    HeadingDataFolder,
+    LabelDataFolderDescription,
+    BtnOpenFolder,
+    StatusExportSuccess,
+    StatusExportFailed,
+    StatusImportSuccess,
+    StatusImportFailed,
+    StatusImportValidationError,
+    DialogExportConfig,
+    DialogImportConfig,
+    FilterToml,
+    ErrTomlMissingField,
+    ErrTomlInvalidType,
+    ErrTomlParseError,
+    HeadingPathEnv,
+    CbIncludePathEnv,
+    ErrMigemoMinCharsZero,
+    HeadingMigemo,
+    CbMigemoEnabled,
+    HintMigemo,
+    LabelMigemoMinChars,
+    HeadingAutoUpdate,
+    AutoUpdateFull,
+    AutoUpdateCheckOnly,
+    AutoUpdateDisabled,
+}
+
+#[deny(clippy::wildcard_enum_match_arm)]
+fn ja(key: TrKey) -> &'static str {
+    match key {
+        // Window title
+        TrKey::WindowTitle => "Snotra 設定",
+        // Tab names
+        TrKey::TabGeneral => "全般",
+        TrKey::TabSearch => "検索",
+        TrKey::TabIndex => "インデックス",
+        TrKey::TabVisual => "ビジュアル",
+        TrKey::TabOpener => "オープナー",
+        TrKey::TabInstantCommand => "インスタント",
+        // Footer buttons
+        TrKey::BtnSave => "保存",
+        TrKey::BtnDiscard => "破棄",
+        TrKey::BtnResetDefault => "初期設定に戻す",
+        // Status messages
+        TrKey::StatusSaved => "保存しました",
+        TrKey::StatusUnsaved => "未保存の変更があります",
+        TrKey::StatusValidationError => "検証エラー: ",
+        TrKey::StatusSaveFailed => "保存失敗: ",
+        // 読み込み失敗（finding C: 一時的 read 失敗で既定値表示中）の保存ガード
+        TrKey::ReadFailedBanner => "⚠ 設定ファイルを読み込めませんでした。既定値で表示しています。このまま保存すると既存の設定が失われる可能性があります。",
+        TrKey::ReadFailedConfirm => "既存設定が失われる可能性を承知の上で保存する",
+        TrKey::StatusReadFailedBlocked => "読み込み失敗中: 上のチェックを入れると保存できます",
+        // Config error messages
+        TrKey::ErrHotkeyModifierEmpty => "ホットキーの修飾キーが未設定です",
+        TrKey::ErrHotkeyKeyEmpty => "ホットキーのキーが未設定です",
+        TrKey::ErrHotkeySystemConflict => "{value} はシステムショートカットと競合します",
+        TrKey::ErrVisibleRowsZero => "最大表示件数は1以上にしてください",
+        TrKey::ErrWindowWidthTooSmall => "{value} は小さすぎます（200以上）",
+        TrKey::ErrFuzzyCapRatioOutOfRange => "{value} は 0.0〜1.0 の範囲にしてください",
+        TrKey::ErrScanPathEmpty => "{n}のパスが空です",
+        TrKey::ErrInstantPrefixEmpty => "インスタントコマンドのプレフィックスが空です",
+        TrKey::ErrInstantPrefixSlash => "プレフィックスに / は使用できません（スラッシュコマンドと競合）",
+        TrKey::ErrInstantDuplicateName => "{name} はコマンド名が重複しています",
+        TrKey::ErrInstantUnknownModifier => "{name}: 不明な修飾子「{modifier}」が含まれています",
+        // General tab
+        TrKey::HeadingHotkey => "ホットキー",
+        TrKey::LabelHotkey => "ホットキー:",
+        TrKey::CbHotkeyToggle => "ホットキーで表示中のウィンドウを非表示にする",
+        TrKey::HeadingAppearance => "外観",
+        TrKey::LabelVisibleRows => "最大表示件数:",
+        TrKey::LabelWindowWidth => "ウィンドウ幅:",
+        TrKey::CbShowIcons => "アイコンを表示",
+        TrKey::HeadingBehavior => "動作",
+        TrKey::CbShowOnStartup => "起動時にウィンドウを表示",
+        TrKey::CbAutoHide => "フォーカス喪失時に非表示",
+        TrKey::CbTrayIcon => "トレイアイコンを表示",
+        TrKey::CbImeOff => "表示時に IME をオフにする",
+        TrKey::CbFollowCursorMonitor => "カーソルのあるモニターに表示",
+        TrKey::HeadingLanguage => "言語",
+        TrKey::LabelLanguage => "言語:",
+        TrKey::LanguageJa => "日本語",
+        TrKey::LanguageEn => "English",
+        // Search tab
+        TrKey::HeadingSearchMode => "検索モード",
+        TrKey::LabelNormalMode => "通常モード:",
+        TrKey::LabelFolderMode => "フォルダモード:",
+        TrKey::SearchModePrefix => "前方一致",
+        TrKey::SearchModeSubstring => "部分一致",
+        TrKey::SearchModeFuzzy => "あいまい",
+        TrKey::HeadingVisibility => "表示",
+        TrKey::CbShowHiddenSystem => "隠しファイル・システムファイルを表示",
+        TrKey::HeadingHistory => "履歴",
+        TrKey::LabelResultLimit => "最大列挙数:",
+        TrKey::LabelRecentLimit => "最大履歴表示件数:",
+        TrKey::HeadingHistoryScore => "履歴スコア",
+        TrKey::LabelNormalization => "正規化:",
+        TrKey::NormalizationDisabled => "無効",
+        TrKey::NormalizationFuzzyRelativeCap => "Fuzzy 相対キャップ",
+        TrKey::LabelFuzzyCapRatio => "Fuzzy 履歴キャップ比率:",
+        // Index tab
+        TrKey::HeadingScanTargets => "スキャン対象",
+        TrKey::LabelNoScanPaths => "スキャンパスが設定されていません。",
+        TrKey::IndexScanExtensionsWithFolders => "{extensions} (フォルダ含む)",
+        TrKey::BtnEdit => "編集",
+        TrKey::BtnAdd => "追加…",
+        TrKey::ModalEditScanPath => "スキャンパスを編集",
+        TrKey::ModalAddScanPath => "スキャンパスを追加",
+        TrKey::LabelPath => "パス:",
+        TrKey::BtnBrowse => "参照…",
+        TrKey::LabelExtensions => "拡張子 (カンマ区切り):",
+        TrKey::CbIncludeFolders => "フォルダを含む",
+        TrKey::BtnDelete => "削除",
+        TrKey::BtnCancel => "キャンセル",
+        TrKey::DialogSelectFolder => "フォルダを選択",
+        // Visual tab
+        TrKey::HeadingTheme => "テーマ",
+        TrKey::BtnSaveCustomTheme => "カスタムテーマとして保存",
+        TrKey::HeadingColor => "カラー",
+        TrKey::LabelBgColor => "背景色:",
+        TrKey::LabelInputBg => "入力欄背景:",
+        TrKey::LabelTextColor => "テキスト:",
+        TrKey::LabelSelectedRow => "選択行:",
+        TrKey::LabelHintText => "ヒントテキスト:",
+        TrKey::HeadingFont => "フォント",
+        TrKey::LabelFontFamily => "フォントファミリー:",
+        TrKey::LabelFontSize => "フォントサイズ:",
+        TrKey::LabelCustomTheme => "カスタム",
+        // Opener tab - presets
+        TrKey::HeadingPresets => "よく使うツール",
+        TrKey::PresetDescription => "検出されたツールをワンクリックで追加できます。",
+        TrKey::BtnAddPreset => "追加",
+        TrKey::LabelAlreadyAdded => "追加済み",
+        // Opener tab
+        TrKey::HeadingOpenerRules => "オープナールール",
+        TrKey::OpenerDescription => "ファイル種別ごとに起動するアプリケーションを設定します。",
+        TrKey::LabelNoRules => "ルールが設定されていません。",
+        TrKey::LabelNoName => "(名前なし)",
+        TrKey::ModalEditRule => "ルールを編集",
+        TrKey::ModalAddRule => "ルールを追加",
+        TrKey::LabelTarget => "ターゲット:",
+        TrKey::TargetKindFolder => "フォルダ",
+        TrKey::TargetKindExtension => "拡張子",
+        TrKey::LabelExtension => "拡張子:",
+        TrKey::HintExtensionFormat => "カンマ区切り (例: .png, .jpg)",
+        TrKey::LabelPathCondition => "パス条件:",
+        TrKey::HintPathCondition => "空欄 = すべてにマッチ (例: C:\\workspace)",
+        TrKey::LabelAllFolders => "すべてのフォルダ",
+        TrKey::LabelToolName => "ツール名:",
+        TrKey::LabelExecutable => "実行ファイル:",
+        TrKey::LabelArguments => "引数:",
+        TrKey::HintPathPlaceholder => "{path} でファイルパスを埋め込み",
+        TrKey::DialogSelectExe => "実行ファイルを選択",
+        TrKey::FilterExecutables => "実行ファイル",
+        TrKey::FilterAllFiles => "すべてのファイル",
+        // Hotkey input
+        TrKey::HotkeyPressKey => "キーを押してください...",
+        TrKey::HotkeyNotSet => "(未設定)",
+        // Instant command tab
+        TrKey::HeadingInstantPrefix => "プレフィックス",
+        TrKey::LabelInstantPrefix => "プレフィックス:",
+        TrKey::HintInstantPrefix => "検索バーでこの文字を入力するとインスタントコマンドモードになります",
+        TrKey::HeadingInstantCommands => "コマンド一覧",
+        TrKey::InstantDescription => "URL や実行ファイルを登録し、検索バーから即座に実行できます。{query} {clip} {date} {uuid} が変数として展開されます",
+        TrKey::LabelNoInstantCommands => "コマンドが登録されていません",
+        TrKey::LabelInstantName => "名前:",
+        TrKey::HintInstantName => "プレフィックスの後に入力する文字列です（例: \"g\" と設定すると \"@g\" で呼び出し）",
+        TrKey::LabelInstantCommand => "コマンド:",
+        TrKey::HintInstantCommand => "{query} クエリ・{clip} クリップボード・{date:%Y-%m-%d} 日時・{uuid} を埋め込み。literal は {{ }}（{{date}}）。URL は自動エンコード",
+        TrKey::LabelInstantDescription => "説明（任意）:",
+        TrKey::HintInstantDescription => "コマンドの用途を記述します。検索結果リストに表示されます",
+        TrKey::LabelInstantPreview => "プレビュー:",
+        TrKey::BtnDuplicate => "複製",
+        TrKey::ModalAddInstant => "コマンドを追加",
+        TrKey::ModalEditInstant => "コマンドを編集",
+        TrKey::LabelInstantKind => "種別",
+        TrKey::RadioInstantUrl => "URL / 既定アプリで開く",
+        TrKey::RadioInstantProgram => "プログラム（exe + 引数）",
+        TrKey::LabelInstantExe => "実行ファイル (.exe)",
+        TrKey::LabelInstantArgs => "引数",
+        TrKey::HintInstantProgram => ".exe のみ。スクリプトはインタプリタを実行ファイルに指定。{query} / {clip} / {date} / {uuid} と %VAR% が使えます。literal は {{ }}",
+        TrKey::HintInstantMigrate => "引数つきの可能性があります。プログラム種別へ作り直すと正しく起動します",
+        // Backup tab
+        TrKey::TabBackup => "バックアップ",
+        TrKey::HeadingExport => "エクスポート",
+        TrKey::LabelExportDescription => "現在の設定ファイルを別の場所にコピーします。",
+        TrKey::BtnExport => "設定をエクスポート…",
+        TrKey::HeadingImport => "インポート",
+        TrKey::LabelImportDescription => "エクスポートした設定ファイルを読み込みます。現在の設定は上書きされます。",
+        TrKey::BtnImport => "設定をインポート…",
+        TrKey::HeadingDataFolder => "データフォルダ",
+        TrKey::LabelDataFolderDescription => "設定ファイルやキャッシュが保存されているフォルダを開きます。",
+        TrKey::BtnOpenFolder => "設定フォルダを開く",
+        TrKey::StatusExportSuccess => "エクスポートしました",
+        TrKey::StatusExportFailed => "エクスポート失敗: ",
+        TrKey::StatusImportSuccess => "インポートしました",
+        TrKey::StatusImportFailed => "インポート失敗: ",
+        TrKey::StatusImportValidationError => "インポートファイルにエラーがあります: ",
+        TrKey::DialogExportConfig => "設定をエクスポート",
+        TrKey::DialogImportConfig => "設定をインポート",
+        TrKey::FilterToml => "TOML ファイル",
+        TrKey::ErrTomlMissingField => "\"{field}\" が必要です",
+        TrKey::ErrTomlInvalidType => "値の型が違います",
+        TrKey::ErrTomlParseError => "構文エラー",
+        TrKey::HeadingPathEnv => "PATH 実行ファイル",
+        TrKey::CbIncludePathEnv => "PATH の実行ファイルを検索対象に含める",
+        TrKey::ErrMigemoMinCharsZero => "migemo 最小文字数は 1 以上である必要があります",
+        TrKey::HeadingMigemo => "ローマ字検索（Migemo）",
+        TrKey::CbMigemoEnabled => "ローマ字入力で日本語名ファイルを検索する",
+        TrKey::HintMigemo => "例: \"dokyu\" と入力すると \"ドキュメント\" がヒットします。漢字名は対象外",
+        TrKey::LabelMigemoMinChars => "最小文字数:",
+        TrKey::HeadingAutoUpdate => "自動更新",
+        TrKey::AutoUpdateFull => "インストール含む",
+        TrKey::AutoUpdateCheckOnly => "更新チェックのみ",
+        TrKey::AutoUpdateDisabled => "更新チェックしない",
+    }
+}
+
+#[deny(clippy::wildcard_enum_match_arm)]
+fn en(key: TrKey) -> &'static str {
+    match key {
+        // Window title
+        TrKey::WindowTitle => "Snotra Settings",
+        // Tab names
+        TrKey::TabGeneral => "General",
+        TrKey::TabSearch => "Search",
+        TrKey::TabIndex => "Index",
+        TrKey::TabVisual => "Visual",
+        TrKey::TabOpener => "Opener",
+        TrKey::TabInstantCommand => "Instant",
+        // Footer buttons
+        TrKey::BtnSave => "Save",
+        TrKey::BtnDiscard => "Discard",
+        TrKey::BtnResetDefault => "Reset to default",
+        // Status messages
+        TrKey::StatusSaved => "Saved",
+        TrKey::StatusUnsaved => "Unsaved changes",
+        TrKey::StatusValidationError => "Validation error: ",
+        TrKey::StatusSaveFailed => "Save failed: ",
+        // 読み込み失敗（finding C: 一時的 read 失敗で既定値表示中）の保存ガード
+        TrKey::ReadFailedBanner => "⚠ Could not read the settings file. Showing defaults. Saving now may overwrite your existing settings.",
+        TrKey::ReadFailedConfirm => "Save anyway (I understand existing settings may be lost)",
+        TrKey::StatusReadFailedBlocked => "Load failed: check the box above to enable saving",
+        // Config error messages
+        TrKey::ErrHotkeyModifierEmpty => "Hotkey modifier is not set",
+        TrKey::ErrHotkeyKeyEmpty => "Hotkey key is not set",
+        TrKey::ErrHotkeySystemConflict => "{value} conflicts with a system shortcut",
+        TrKey::ErrVisibleRowsZero => "Max results must be at least 1",
+        TrKey::ErrWindowWidthTooSmall => "{value} is too small (min 200)",
+        TrKey::ErrFuzzyCapRatioOutOfRange => "{value} must be between 0.0 and 1.0",
+        TrKey::ErrScanPathEmpty => "{n} path is empty",
+        TrKey::ErrInstantPrefixEmpty => "Instant command prefix is empty",
+        TrKey::ErrInstantPrefixSlash => "Prefix cannot be / (conflicts with slash commands)",
+        TrKey::ErrInstantDuplicateName => "{name} has a duplicate command name",
+        TrKey::ErrInstantUnknownModifier => "{name}: contains unknown modifier \"{modifier}\"",
+        // General tab
+        TrKey::HeadingHotkey => "Hotkey",
+        TrKey::LabelHotkey => "Hotkey:",
+        TrKey::CbHotkeyToggle => "Toggle window visibility with hotkey",
+        TrKey::HeadingAppearance => "Appearance",
+        TrKey::LabelVisibleRows => "Max results:",
+        TrKey::LabelWindowWidth => "Window width:",
+        TrKey::CbShowIcons => "Show icons",
+        TrKey::HeadingBehavior => "Behavior",
+        TrKey::CbShowOnStartup => "Show window on startup",
+        TrKey::CbAutoHide => "Hide on focus lost",
+        TrKey::CbTrayIcon => "Show tray icon",
+        TrKey::CbImeOff => "Turn off IME on show",
+        TrKey::CbFollowCursorMonitor => "Show on monitor with cursor",
+        TrKey::HeadingLanguage => "Language",
+        TrKey::LabelLanguage => "Language:",
+        TrKey::LanguageJa => "日本語",
+        TrKey::LanguageEn => "English",
+        // Search tab
+        TrKey::HeadingSearchMode => "Search mode",
+        TrKey::LabelNormalMode => "Normal mode:",
+        TrKey::LabelFolderMode => "Folder mode:",
+        TrKey::SearchModePrefix => "Prefix",
+        TrKey::SearchModeSubstring => "Substring",
+        TrKey::SearchModeFuzzy => "Fuzzy",
+        TrKey::HeadingVisibility => "Visibility",
+        TrKey::CbShowHiddenSystem => "Show hidden/system files",
+        TrKey::HeadingHistory => "History",
+        TrKey::LabelResultLimit => "Max entries:",
+        TrKey::LabelRecentLimit => "Max history display:",
+        TrKey::HeadingHistoryScore => "History score",
+        TrKey::LabelNormalization => "Normalization:",
+        TrKey::NormalizationDisabled => "Disabled",
+        TrKey::NormalizationFuzzyRelativeCap => "Fuzzy relative cap",
+        TrKey::LabelFuzzyCapRatio => "Fuzzy history cap ratio:",
+        // Index tab
+        TrKey::HeadingScanTargets => "Scan targets",
+        TrKey::LabelNoScanPaths => "No scan paths configured.",
+        TrKey::IndexScanExtensionsWithFolders => "{extensions} (incl. folders)",
+        TrKey::BtnEdit => "Edit",
+        TrKey::BtnAdd => "Add…",
+        TrKey::ModalEditScanPath => "Edit scan path",
+        TrKey::ModalAddScanPath => "Add scan path",
+        TrKey::LabelPath => "Path:",
+        TrKey::BtnBrowse => "Browse…",
+        TrKey::LabelExtensions => "Extensions (comma-separated):",
+        TrKey::CbIncludeFolders => "Include folders",
+        TrKey::BtnDelete => "Delete",
+        TrKey::BtnCancel => "Cancel",
+        TrKey::DialogSelectFolder => "Select folder",
+        // Visual tab
+        TrKey::HeadingTheme => "Theme",
+        TrKey::BtnSaveCustomTheme => "Save as custom theme",
+        TrKey::HeadingColor => "Colors",
+        TrKey::LabelBgColor => "Background:",
+        TrKey::LabelInputBg => "Input background:",
+        TrKey::LabelTextColor => "Text:",
+        TrKey::LabelSelectedRow => "Selected row:",
+        TrKey::LabelHintText => "Hint text:",
+        TrKey::HeadingFont => "Font",
+        TrKey::LabelFontFamily => "Font family:",
+        TrKey::LabelFontSize => "Font size:",
+        TrKey::LabelCustomTheme => "Custom",
+        // Opener tab - presets
+        TrKey::HeadingPresets => "Common tools",
+        TrKey::PresetDescription => "Add detected tools with one click.",
+        TrKey::BtnAddPreset => "Add",
+        TrKey::LabelAlreadyAdded => "Added",
+        // Opener tab
+        TrKey::HeadingOpenerRules => "Opener rules",
+        TrKey::OpenerDescription => "Configure applications to launch by file type.",
+        TrKey::LabelNoRules => "No rules configured.",
+        TrKey::LabelNoName => "(unnamed)",
+        TrKey::ModalEditRule => "Edit rule",
+        TrKey::ModalAddRule => "Add rule",
+        TrKey::LabelTarget => "Target:",
+        TrKey::TargetKindFolder => "Folder",
+        TrKey::TargetKindExtension => "Extension",
+        TrKey::LabelExtension => "Extension:",
+        TrKey::HintExtensionFormat => "Comma-separated (e.g. .png, .jpg)",
+        TrKey::LabelPathCondition => "Path condition:",
+        TrKey::HintPathCondition => "Empty = match all (e.g. C:\\workspace)",
+        TrKey::LabelAllFolders => "All folders",
+        TrKey::LabelToolName => "Tool name:",
+        TrKey::LabelExecutable => "Executable:",
+        TrKey::LabelArguments => "Arguments:",
+        TrKey::HintPathPlaceholder => "Use {path} for file path",
+        TrKey::DialogSelectExe => "Select executable",
+        TrKey::FilterExecutables => "Executables",
+        TrKey::FilterAllFiles => "All files",
+        // Hotkey input
+        TrKey::HotkeyPressKey => "Press a key...",
+        TrKey::HotkeyNotSet => "(not set)",
+        // Instant command tab
+        TrKey::HeadingInstantPrefix => "Prefix",
+        TrKey::LabelInstantPrefix => "Prefix:",
+        TrKey::HintInstantPrefix => "Type this character in the search bar to enter instant command mode",
+        TrKey::HeadingInstantCommands => "Commands",
+        TrKey::InstantDescription => "Register URLs or executables to run instantly from the search bar. {query}, {clip}, {date}, {uuid} are expanded as variables",
+        TrKey::LabelNoInstantCommands => "No commands registered",
+        TrKey::LabelInstantName => "Name:",
+        TrKey::HintInstantName => "Text typed after the prefix to invoke this command (e.g. name \"g\" → type \"@g\")",
+        TrKey::LabelInstantCommand => "Command:",
+        TrKey::HintInstantCommand => "Embed {query}, {clip}, {date:%Y-%m-%d}, {uuid}; literal via {{ }}. URLs are auto-encoded",
+        TrKey::LabelInstantDescription => "Description (optional):",
+        TrKey::HintInstantDescription => "Describe what this command does. Shown in the search results list",
+        TrKey::LabelInstantPreview => "Preview:",
+        TrKey::BtnDuplicate => "Duplicate",
+        TrKey::ModalAddInstant => "Add Command",
+        TrKey::ModalEditInstant => "Edit Command",
+        TrKey::LabelInstantKind => "Kind",
+        TrKey::RadioInstantUrl => "URL / open with default app",
+        TrKey::RadioInstantProgram => "Program (exe + args)",
+        TrKey::LabelInstantExe => "Executable (.exe)",
+        TrKey::LabelInstantArgs => "Arguments",
+        TrKey::HintInstantProgram => ".exe only. For scripts, set the interpreter as the executable. {query} / {clip} / {date} / {uuid} and %VAR% are supported; literal via {{ }}",
+        TrKey::HintInstantMigrate => "This may contain arguments. Recreate it as a Program command to launch correctly",
+        // Backup tab
+        TrKey::TabBackup => "Backup",
+        TrKey::HeadingExport => "Export",
+        TrKey::LabelExportDescription => "Copy the current settings file to another location.",
+        TrKey::BtnExport => "Export settings…",
+        TrKey::HeadingImport => "Import",
+        TrKey::LabelImportDescription => "Load an exported settings file. Current settings will be overwritten.",
+        TrKey::BtnImport => "Import settings…",
+        TrKey::HeadingDataFolder => "Data folder",
+        TrKey::LabelDataFolderDescription => "Open the folder where settings and cache files are stored.",
+        TrKey::BtnOpenFolder => "Open settings folder",
+        TrKey::StatusExportSuccess => "Exported",
+        TrKey::StatusExportFailed => "Export failed: ",
+        TrKey::StatusImportSuccess => "Imported",
+        TrKey::StatusImportFailed => "Import failed: ",
+        TrKey::StatusImportValidationError => "Import file has errors: ",
+        TrKey::DialogExportConfig => "Export settings",
+        TrKey::DialogImportConfig => "Import settings",
+        TrKey::FilterToml => "TOML files",
+        TrKey::ErrTomlMissingField => "missing field \"{field}\"",
+        TrKey::ErrTomlInvalidType => "invalid type",
+        TrKey::ErrTomlParseError => "syntax error",
+        TrKey::HeadingPathEnv => "PATH Executables",
+        TrKey::CbIncludePathEnv => "Include executables from PATH",
+        TrKey::ErrMigemoMinCharsZero => "Migemo min chars must be at least 1",
+        TrKey::HeadingMigemo => "Romaji Search (Migemo)",
+        TrKey::CbMigemoEnabled => "Search Japanese filenames with romaji input",
+        TrKey::HintMigemo => "e.g. type \"dokyu\" to find \"ドキュメント\". Kanji names are not supported",
+        TrKey::LabelMigemoMinChars => "Min chars:",
+        TrKey::HeadingAutoUpdate => "Auto Update",
+        TrKey::AutoUpdateFull => "Check and install",
+        TrKey::AutoUpdateCheckOnly => "Check only (notify)",
+        TrKey::AutoUpdateDisabled => "Disabled",
+    }
+}
+
+impl Tr {
+    pub fn t(&self, key: TrKey) -> &'static str {
         match self.0 {
-            Language::Ja => "バックアップ",
-            Language::En => "Backup",
+            Language::Ja => ja(key),
+            Language::En => en(key),
         }
     }
 
-    pub fn heading_export(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "エクスポート",
-            Language::En => "Export",
+    /// `{param}` 形式のプレースホルダーを `params` の値で置換した完全文を返す。
+    ///
+    /// テンプレートを1回だけ左から右へ走査する。置換後の値は再走査しないため、
+    /// ある param の値が別 param の `{name}` と同じ文字列を含んでいても
+    /// 二重置換は起きない（逐次 `String::replace` の落とし穴を避ける）。
+    pub fn t_params(&self, key: TrKey, params: &[(&str, &str)]) -> String {
+        let template = self.t(key);
+        let mut result = String::with_capacity(template.len());
+        let mut rest = template;
+        while let Some(brace_pos) = rest.find('{') {
+            let (before, after_brace) = rest.split_at(brace_pos);
+            result.push_str(before);
+            let after_brace = &after_brace[1..];
+            match after_brace.find('}') {
+                Some(close_pos) => {
+                    let name = &after_brace[..close_pos];
+                    match params.iter().find(|(n, _)| *n == name) {
+                        Some((_, value)) => result.push_str(value),
+                        None => {
+                            result.push('{');
+                            result.push_str(name);
+                            result.push('}');
+                        }
+                    }
+                    rest = &after_brace[close_pos + 1..];
+                }
+                None => {
+                    result.push('{');
+                    rest = after_brace;
+                }
+            }
         }
+        result.push_str(rest);
+        result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn t_returns_ja_and_en_for_same_key() {
+        assert_eq!(Tr(Language::Ja).t(TrKey::BtnSave), "保存");
+        assert_eq!(Tr(Language::En).t(TrKey::BtnSave), "Save");
     }
 
-    pub fn label_export_description(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "現在の設定ファイルを別の場所にコピーします。",
-            Language::En => "Copy the current settings file to another location.",
-        }
+    #[test]
+    fn t_params_substitutes_single_placeholder() {
+        assert_eq!(
+            Tr(Language::Ja).t_params(TrKey::ErrInstantDuplicateName, &[("name", "g")]),
+            "g はコマンド名が重複しています"
+        );
     }
 
-    pub fn btn_export(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "設定をエクスポート…",
-            Language::En => "Export settings…",
-        }
+    #[test]
+    fn t_params_leaves_unmatched_placeholder_untouched() {
+        assert_eq!(
+            Tr(Language::En).t_params(TrKey::ErrScanPathEmpty, &[("wrong_name", "1")]),
+            "{n} path is empty"
+        );
     }
 
-    pub fn heading_import(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "インポート",
-            Language::En => "Import",
-        }
-    }
-
-    pub fn label_import_description(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "エクスポートした設定ファイルを読み込みます。現在の設定は上書きされます。",
-            Language::En => "Load an exported settings file. Current settings will be overwritten.",
-        }
-    }
-
-    pub fn btn_import(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "設定をインポート…",
-            Language::En => "Import settings…",
-        }
-    }
-
-    pub fn heading_data_folder(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "データフォルダ",
-            Language::En => "Data folder",
-        }
-    }
-
-    pub fn label_data_folder_description(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "設定ファイルやキャッシュが保存されているフォルダを開きます。",
-            Language::En => "Open the folder where settings and cache files are stored.",
-        }
-    }
-
-    pub fn btn_open_folder(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "設定フォルダを開く",
-            Language::En => "Open settings folder",
-        }
-    }
-
-    pub fn status_export_success(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "エクスポートしました",
-            Language::En => "Exported",
-        }
-    }
-
-    pub fn status_export_failed(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "エクスポート失敗: ",
-            Language::En => "Export failed: ",
-        }
-    }
-
-    pub fn status_import_success(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "インポートしました",
-            Language::En => "Imported",
-        }
-    }
-
-    pub fn status_import_failed(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "インポート失敗: ",
-            Language::En => "Import failed: ",
-        }
-    }
-
-    pub fn status_import_validation_error(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "インポートファイルにエラーがあります: ",
-            Language::En => "Import file has errors: ",
-        }
-    }
-
-    pub fn dialog_export_config(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "設定をエクスポート",
-            Language::En => "Export settings",
-        }
-    }
-
-    pub fn dialog_import_config(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "設定をインポート",
-            Language::En => "Import settings",
-        }
-    }
-
-    pub fn filter_toml(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "TOML ファイル",
-            Language::En => "TOML files",
-        }
-    }
-
-    pub fn err_toml_missing_field(&self, field: &str) -> String {
-        match self.0 {
-            Language::Ja => format!("\"{}\" が必要です", field),
-            Language::En => format!("missing field \"{}\"", field),
-        }
-    }
-
-    pub fn err_toml_invalid_type(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "値の型が違います",
-            Language::En => "invalid type",
-        }
-    }
-
-    pub fn err_toml_parse_error(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "構文エラー",
-            Language::En => "syntax error",
-        }
-    }
-
-    pub fn heading_path_env(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "PATH 実行ファイル",
-            Language::En => "PATH Executables",
-        }
-    }
-
-    pub fn cb_include_path_env(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "PATH の実行ファイルを検索対象に含める",
-            Language::En => "Include executables from PATH",
-        }
-    }
-
-    pub fn err_migemo_min_chars_zero(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "migemo 最小文字数は 1 以上である必要があります",
-            Language::En => "Migemo min chars must be at least 1",
-        }
-    }
-
-    pub fn heading_migemo(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "ローマ字検索（Migemo）",
-            Language::En => "Romaji Search (Migemo)",
-        }
-    }
-
-    pub fn cb_migemo_enabled(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "ローマ字入力で日本語名ファイルを検索する",
-            Language::En => "Search Japanese filenames with romaji input",
-        }
-    }
-
-    pub fn hint_migemo(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "例: \"dokyu\" と入力すると \"ドキュメント\" がヒットします。漢字名は対象外",
-            Language::En => "e.g. type \"dokyu\" to find \"ドキュメント\". Kanji names are not supported",
-        }
-    }
-
-    pub fn label_migemo_min_chars(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "最小文字数:",
-            Language::En => "Min chars:",
-        }
-    }
-
-    pub fn heading_auto_update(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "自動更新",
-            Language::En => "Auto Update",
-        }
-    }
-
-    pub fn auto_update_full(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "インストール含む",
-            Language::En => "Check and install",
-        }
-    }
-
-    pub fn auto_update_check_only(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "更新チェックのみ",
-            Language::En => "Check only (notify)",
-        }
-    }
-
-    pub fn auto_update_disabled(&self) -> &'static str {
-        match self.0 {
-            Language::Ja => "更新チェックしない",
-            Language::En => "Disabled",
-        }
+    // 回帰テスト（code-reviewer 指摘）: 逐次 String::replace だと、1番目の param 値が
+    // 2番目の param のプレースホルダ文字列（例 "{modifier}"）を偶然含む場合、
+    // その値の中身まで誤って置換されてしまう。単一パス実装ではテンプレート文字列だけを
+    // 走査し、置換後の値は再走査しないためこの二重置換が起きないことを検証する。
+    #[test]
+    fn t_params_does_not_rescan_substituted_values() {
+        let out = Tr(Language::Ja).t_params(
+            TrKey::ErrInstantUnknownModifier,
+            &[("name", "{modifier}"), ("modifier", "xyz")],
+        );
+        assert_eq!(out, "{modifier}: 不明な修飾子「xyz」が含まれています");
     }
 }

@@ -1,7 +1,7 @@
 use eframe::egui;
 use snotra_core::config::{is_system_shortcut, HotkeyConfig};
 
-use crate::i18n::Tr;
+use crate::i18n::{Tr, TrKey};
 
 /// Hotkey capture widget state
 #[derive(Default)]
@@ -25,9 +25,9 @@ pub fn hotkey_input(
     let mut changed = false;
 
     let display = if state.capturing {
-        tr.hotkey_press_key().to_string()
+        tr.t(TrKey::HotkeyPressKey).to_string()
     } else if config.modifier.is_empty() && config.key.is_empty() {
-        tr.hotkey_not_set().to_string()
+        tr.t(TrKey::HotkeyNotSet).to_string()
     } else if config.modifier.is_empty() {
         config.key.clone()
     } else {

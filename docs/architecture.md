@@ -133,7 +133,7 @@ ui/src/
 
 - フロントエンド: `ui/src/lib/i18n.ts` — SolidJS シグナル + 翻訳テーブル（`t(key, params?)` + `{param}` プレースホルダ置換）
 - バックエンド: `config_watcher.rs` — `language-changed` イベント発火 + `PlatformCommand::SetLanguage` でトレイ切替
-- 設定 GUI: `snotra-settings/src/i18n.rs` — `Tr` 構造体の match ベース翻訳
+- 設定 GUI: `snotra-settings/src/i18n.rs` — `Tr` 構造体 + `TrKey` enum のテーブル駆動翻訳（`t(key)`/`t_params(key, params)` + `{param}` プレースホルダ置換）
 - 初期言語は OS 設定から自動判定（Rust: `sys-locale`、JS: `navigator.language`、同一ロジック: `ja` で始まれば日本語、それ以外は英語）
 
 ### インスタントコマンド（4層）

@@ -1,7 +1,7 @@
 use eframe::egui;
 use snotra_core::config::{Config, InstantAction, InstantCommand};
 
-use crate::i18n::Tr;
+use crate::i18n::{Tr, TrKey};
 use crate::style;
 use crate::tabs::common::{self, ModalState, PickerState};
 
@@ -69,26 +69,26 @@ pub fn ui(
 
     style::tab_scroll_area(ui, |ui| {
         // Prefix setting
-        style::section_heading(ui, tr.heading_instant_prefix());
+        style::section_heading(ui, tr.t(TrKey::HeadingInstantPrefix));
         style::settings_grid("instant_prefix_grid").show(ui, |ui| {
-            ui.label(tr.label_instant_prefix());
+            ui.label(tr.t(TrKey::LabelInstantPrefix));
             ui.add(
                 egui::TextEdit::singleline(&mut config.search.instant_command_prefix)
                     .desired_width(style::FIELD_NUMERIC),
             );
             ui.end_row();
         });
-        style::hint(ui, tr.hint_instant_prefix());
+        style::hint(ui, tr.t(TrKey::HintInstantPrefix));
 
         style::section_gap(ui);
 
         // Command list
-        style::section_heading(ui, tr.heading_instant_commands());
-        style::hint(ui, tr.instant_description());
+        style::section_heading(ui, tr.t(TrKey::HeadingInstantCommands));
+        style::hint(ui, tr.t(TrKey::InstantDescription));
         ui.add_space(style::SPACE_GROUP);
 
         if config.instant_commands.is_empty() {
-            style::hint(ui, tr.label_no_instant_commands());
+            style::hint(ui, tr.t(TrKey::LabelNoInstantCommands));
         }
 
         let mut action: Option<RowAction> = None;
@@ -97,7 +97,7 @@ pub fn ui(
             style::list_item(
                 ui,
                 |ui| {
-                    ui.label(if cmd.name.is_empty() { tr.label_no_name() } else { &cmd.name });
+                    ui.label(if cmd.name.is_empty() { tr.t(TrKey::LabelNoName) } else { &cmd.name });
                     if !cmd.description.is_empty() {
                         style::hint(ui, &cmd.description);
                     }
@@ -126,17 +126,17 @@ pub fn ui(
                     style::hint(ui, &display);
                     if suspect_legacy {
                         ui.label(
-                            egui::RichText::new(format!("⚠ {}", tr.hint_instant_migrate()))
+                            egui::RichText::new(format!("⚠ {}", tr.t(TrKey::HintInstantMigrate)))
                                 .small()
                                 .color(style::STATUS_WARNING),
                         );
                     }
                 },
                 |ui| {
-                    if ui.button(tr.btn_edit()).clicked() {
+                    if ui.button(tr.t(TrKey::BtnEdit)).clicked() {
                         action = Some(RowAction::Edit(i));
                     }
-                    if ui.button(tr.btn_duplicate()).clicked() {
+                    if ui.button(tr.t(TrKey::BtnDuplicate)).clicked() {
                         action = Some(RowAction::Duplicate(i));
                     }
                     match style::reorder_controls(ui, i > 0, i + 1 < len) {
@@ -148,7 +148,7 @@ pub fn ui(
             );
         }
 
-        if ui.button(tr.btn_add()).clicked() {
+        if ui.button(tr.t(TrKey::BtnAdd)).clicked() {
             action = Some(RowAction::OpenCreate);
         }
 
@@ -194,9 +194,9 @@ fn show_modal(
     tr: &Tr,
 ) {
     let title = if state.modal.is_edit() {
-        tr.modal_edit_instant()
+        tr.t(TrKey::ModalEditInstant)
     } else {
-        tr.modal_add_instant()
+        tr.t(TrKey::ModalAddInstant)
     };
 
     let modal = egui::Modal::new(egui::Id::new("instant_modal"));
@@ -205,36 +205,36 @@ fn show_modal(
         style::modal_header(ui, title);
 
         // Name
-        ui.label(tr.label_instant_name());
+        ui.label(tr.t(TrKey::LabelInstantName));
         ui.text_edit_singleline(&mut state.modal.fields.name);
-        style::hint(ui, tr.hint_instant_name());
+        style::hint(ui, tr.t(TrKey::HintInstantName));
 
         ui.add_space(style::SPACE_HINT);
 
         // Description
-        ui.label(tr.label_instant_description());
+        ui.label(tr.t(TrKey::LabelInstantDescription));
         ui.text_edit_singleline(&mut state.modal.fields.description);
-        style::hint(ui, tr.hint_instant_description());
+        style::hint(ui, tr.t(TrKey::HintInstantDescription));
 
         ui.add_space(style::SPACE_HINT);
 
         // Kind
-        ui.label(tr.label_instant_kind());
+        ui.label(tr.t(TrKey::LabelInstantKind));
         ui.horizontal(|ui| {
-            ui.radio_value(&mut state.modal.fields.kind, EditKind::Url, tr.radio_instant_url());
+            ui.radio_value(&mut state.modal.fields.kind, EditKind::Url, tr.t(TrKey::RadioInstantUrl));
             ui.radio_value(
                 &mut state.modal.fields.kind,
                 EditKind::Program,
-                tr.radio_instant_program(),
+                tr.t(TrKey::RadioInstantProgram),
             );
         });
         ui.add_space(style::SPACE_HINT);
 
         match state.modal.fields.kind {
             EditKind::Url => {
-                ui.label(tr.label_instant_command());
+                ui.label(tr.t(TrKey::LabelInstantCommand));
                 ui.text_edit_singleline(&mut state.modal.fields.url);
-                style::hint(ui, tr.hint_instant_command());
+                style::hint(ui, tr.t(TrKey::HintInstantCommand));
                 if !state.modal.fields.url.is_empty() {
                     let preview = snotra_core::instant::expand_instant_command(
                         &state.modal.fields.url,
@@ -242,21 +242,21 @@ fn show_modal(
                         "(clipboard)",
                     );
                     ui.add_space(style::SPACE_HINT);
-                    ui.label(tr.label_instant_preview());
+                    ui.label(tr.t(TrKey::LabelInstantPreview));
                     style::hint(ui, &preview);
                 }
             }
             EditKind::Program => {
-                ui.label(tr.label_instant_exe());
+                ui.label(tr.t(TrKey::LabelInstantExe));
                 ui.horizontal(|ui| {
                     ui.text_edit_singleline(&mut state.modal.fields.exe);
                     if ui
-                        .add_enabled(!state.exe_picker.active, egui::Button::new(tr.btn_browse()))
+                        .add_enabled(!state.exe_picker.active, egui::Button::new(tr.t(TrKey::BtnBrowse)))
                         .clicked()
                     {
-                        let dialog_title = tr.dialog_select_exe().to_string();
-                        let exe_label = tr.filter_executables().to_string();
-                        let all_label = tr.filter_all_files().to_string();
+                        let dialog_title = tr.t(TrKey::DialogSelectExe).to_string();
+                        let exe_label = tr.t(TrKey::FilterExecutables).to_string();
+                        let all_label = tr.t(TrKey::FilterAllFiles).to_string();
                         state.exe_picker.launch(ctx, move || {
                             // exe を既定フィルタで誘導しつつ、全ファイル選択も許す（.com/拡張子なし/cmd.exe 等）。
                             // 最初の add_filter が既定フィルタになる（rfd 0.17 の set_default_extension）。
@@ -268,9 +268,9 @@ fn show_modal(
                         });
                     }
                 });
-                ui.label(tr.label_instant_args());
+                ui.label(tr.t(TrKey::LabelInstantArgs));
                 ui.text_edit_singleline(&mut state.modal.fields.args);
-                style::hint(ui, tr.hint_instant_program());
+                style::hint(ui, tr.t(TrKey::HintInstantProgram));
                 if !state.modal.fields.exe.is_empty() {
                     let tokens = snotra_core::instant::expand_exec_args(
                         &state.modal.fields.args,
@@ -280,7 +280,7 @@ fn show_modal(
                     );
                     let preview = format!("{} {}", state.modal.fields.exe, tokens.join(" "));
                     ui.add_space(style::SPACE_HINT);
-                    ui.label(tr.label_instant_preview());
+                    ui.label(tr.t(TrKey::LabelInstantPreview));
                     style::hint(ui, preview.trim());
                 }
             }
@@ -291,7 +291,7 @@ fn show_modal(
 
         ui.horizontal(|ui| {
             // Delete (edit mode only)
-            if state.modal.is_edit() && style::danger_button(ui, tr.btn_delete()).clicked() {
+            if state.modal.is_edit() && style::danger_button(ui, tr.t(TrKey::BtnDelete)).clicked() {
                 common::delete_entry(&mut config.instant_commands, state.modal.editing);
                 state.modal.close();
             }

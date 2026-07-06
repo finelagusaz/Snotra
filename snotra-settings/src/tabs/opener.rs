@@ -1,7 +1,7 @@
 use eframe::egui;
 use snotra_core::config::{self, extract_path_condition, opener_specificity_order, Config, OpenerRule, OpenerTool};
 
-use crate::i18n::Tr;
+use crate::i18n::{Tr, TrKey};
 use crate::style;
 use crate::tabs::common::{ModalState, PickerState};
 
@@ -68,12 +68,12 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
     }
 
     style::tab_scroll_area(ui, |ui| {
-        style::section_heading(ui, tr.heading_opener_rules());
-        style::hint(ui, tr.opener_description());
+        style::section_heading(ui, tr.t(TrKey::HeadingOpenerRules));
+        style::hint(ui, tr.t(TrKey::OpenerDescription));
         ui.add_space(style::SPACE_GROUP);
 
         if config.openers.is_empty() {
-            style::hint(ui, tr.label_no_rules());
+            style::hint(ui, tr.t(TrKey::LabelNoRules));
         }
 
         // Flatten rules into (rule_idx, tool_idx, target, tool) for display
@@ -97,7 +97,7 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
                         "[{}] {}",
                         target_label,
                         if tool.name.is_empty() {
-                            tr.label_no_name()
+                            tr.t(TrKey::LabelNoName)
                         } else {
                             &tool.name
                         }
@@ -105,7 +105,7 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
                     style::hint(ui, &tool.exe);
                 },
                 |ui| {
-                    if ui.button(tr.btn_edit()).clicked() {
+                    if ui.button(tr.t(TrKey::BtnEdit)).clicked() {
                         action = Some(OpenerAction::Edit(*ri, *ti));
                     }
                     // 同一ルール内のツール並び替えボタン
@@ -125,15 +125,15 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
             );
         }
 
-        if ui.button(tr.btn_add()).clicked() {
+        if ui.button(tr.t(TrKey::BtnAdd)).clicked() {
             action = Some(OpenerAction::OpenCreate);
         }
 
         // Presets section
         if !state.presets.is_empty() {
             style::section_gap(ui);
-            style::section_heading(ui, tr.heading_presets());
-            style::hint(ui, tr.preset_description());
+            style::section_heading(ui, tr.t(TrKey::HeadingPresets));
+            style::hint(ui, tr.t(TrKey::PresetDescription));
             ui.add_space(style::SPACE_HINT);
 
             let mut preset_action: Option<usize> = None;
@@ -143,8 +143,8 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
                     ui.label(preset.name);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if already_added {
-                            ui.add_enabled(false, egui::Button::new(tr.label_already_added()));
-                        } else if ui.button(tr.btn_add_preset()).clicked() {
+                            ui.add_enabled(false, egui::Button::new(tr.t(TrKey::LabelAlreadyAdded)));
+                        } else if ui.button(tr.t(TrKey::BtnAddPreset)).clicked() {
                             preset_action = Some(i);
                         }
                     });
@@ -209,9 +209,9 @@ enum OpenerAction {
 
 fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabState, tr: &Tr) {
     let title = if state.modal.is_edit() {
-        tr.modal_edit_rule()
+        tr.t(TrKey::ModalEditRule)
     } else {
-        tr.modal_add_rule()
+        tr.t(TrKey::ModalAddRule)
     };
 
     let modal = egui::Modal::new(egui::Id::new("opener_modal"));
@@ -220,48 +220,48 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
         style::modal_header(ui, title);
 
         // Target
-        ui.label(tr.label_target());
+        ui.label(tr.t(TrKey::LabelTarget));
         egui::ComboBox::from_id_salt("target_kind")
             .selected_text(match state.modal.fields.target_kind {
-                TargetKind::Folder => tr.target_kind_folder(),
-                TargetKind::Extension => tr.target_kind_extension(),
+                TargetKind::Folder => tr.t(TrKey::TargetKindFolder),
+                TargetKind::Extension => tr.t(TrKey::TargetKindExtension),
             })
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut state.modal.fields.target_kind, TargetKind::Folder, tr.target_kind_folder());
-                ui.selectable_value(&mut state.modal.fields.target_kind, TargetKind::Extension, tr.target_kind_extension());
+                ui.selectable_value(&mut state.modal.fields.target_kind, TargetKind::Folder, tr.t(TrKey::TargetKindFolder));
+                ui.selectable_value(&mut state.modal.fields.target_kind, TargetKind::Extension, tr.t(TrKey::TargetKindExtension));
             });
 
         if state.modal.fields.target_kind == TargetKind::Extension {
-            ui.label(tr.label_extension());
+            ui.label(tr.t(TrKey::LabelExtension));
             ui.text_edit_singleline(&mut state.modal.fields.target_ext);
-            style::hint(ui, tr.hint_extension_format());
+            style::hint(ui, tr.t(TrKey::HintExtensionFormat));
         }
 
         ui.add_space(style::SPACE_HINT);
 
         // Path condition (optional, applies to both folder and extension)
-        ui.label(tr.label_path_condition());
+        ui.label(tr.t(TrKey::LabelPathCondition));
         ui.text_edit_singleline(&mut state.modal.fields.target_path);
-        style::hint(ui, tr.hint_path_condition());
+        style::hint(ui, tr.t(TrKey::HintPathCondition));
 
         ui.add_space(style::SPACE_HINT);
 
         // Tool name
-        ui.label(tr.label_tool_name());
+        ui.label(tr.t(TrKey::LabelToolName));
         ui.text_edit_singleline(&mut state.modal.fields.tool_name);
 
         ui.add_space(style::SPACE_HINT);
 
         // Tool exe + browse
-        ui.label(tr.label_executable());
+        ui.label(tr.t(TrKey::LabelExecutable));
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut state.modal.fields.tool_exe);
             if ui
-                .add_enabled(!state.exe_picker.active, egui::Button::new(tr.btn_browse()))
+                .add_enabled(!state.exe_picker.active, egui::Button::new(tr.t(TrKey::BtnBrowse)))
                 .clicked()
             {
-                let dialog_title = tr.dialog_select_exe().to_string();
-                let filter_label = tr.filter_executables().to_string();
+                let dialog_title = tr.t(TrKey::DialogSelectExe).to_string();
+                let filter_label = tr.t(TrKey::FilterExecutables).to_string();
                 state.exe_picker.launch(ctx, move || {
                     rfd::FileDialog::new()
                         .set_title(&dialog_title)
@@ -274,16 +274,16 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
         ui.add_space(style::SPACE_HINT);
 
         // Tool args
-        ui.label(tr.label_arguments());
+        ui.label(tr.t(TrKey::LabelArguments));
         ui.text_edit_singleline(&mut state.modal.fields.tool_args);
-        style::hint(ui, tr.hint_path_placeholder());
+        style::hint(ui, tr.t(TrKey::HintPathPlaceholder));
 
         ui.add_space(style::SPACE_GROUP);
         ui.separator();
 
         ui.horizontal(|ui| {
             // Delete (edit mode only)
-            if state.modal.is_edit() && style::danger_button(ui, tr.btn_delete()).clicked() {
+            if state.modal.is_edit() && style::danger_button(ui, tr.t(TrKey::BtnDelete)).clicked() {
                 if let Some((ri, ti)) = state.modal.editing
                     && ri < config.openers.len()
                     && ti < config.openers[ri].tools.len()
@@ -376,7 +376,7 @@ fn save_opener(config: &mut Config, modal: &ModalState<OpenerFields, (usize, usi
 fn format_target_label(target: &str, tr: &Tr) -> String {
     let path_cond = extract_path_condition(target);
     if target == "folder" {
-        tr.label_all_folders().to_string()
+        tr.t(TrKey::LabelAllFolders).to_string()
     } else if target.starts_with("folder:") {
         path_cond.unwrap_or("").to_string()
     } else if target.starts_with("ext:") {

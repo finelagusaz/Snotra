@@ -1,7 +1,7 @@
 use eframe::egui;
 use snotra_core::config::{Config, ScanPath};
 
-use crate::i18n::Tr;
+use crate::i18n::{Tr, TrKey};
 use crate::style;
 use crate::tabs::common::{self, ModalState, PickerState};
 
@@ -43,10 +43,10 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
     }
 
     style::tab_scroll_area(ui, |ui| {
-        style::section_heading(ui, tr.heading_scan_targets());
+        style::section_heading(ui, tr.t(TrKey::HeadingScanTargets));
 
         if config.paths.scan.is_empty() {
-            style::hint(ui, tr.label_no_scan_paths());
+            style::hint(ui, tr.t(TrKey::LabelNoScanPaths));
         }
 
         // List scan paths
@@ -57,21 +57,24 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
                 |ui| {
                     ui.label(&scan.path);
                     let meta = if scan.include_folders {
-                        format!("{} {}", scan.extensions.join(", "), tr.label_incl_folders())
+                        tr.t_params(
+                            TrKey::IndexScanExtensionsWithFolders,
+                            &[("extensions", &scan.extensions.join(", "))],
+                        )
                     } else {
                         scan.extensions.join(", ")
                     };
                     style::hint(ui, &meta);
                 },
                 |ui| {
-                    if ui.button(tr.btn_edit()).clicked() {
+                    if ui.button(tr.t(TrKey::BtnEdit)).clicked() {
                         action = Some(ListAction::Edit(i));
                     }
                 },
             );
         }
 
-        if ui.button(tr.btn_add()).clicked() {
+        if ui.button(tr.t(TrKey::BtnAdd)).clicked() {
             action = Some(ListAction::OpenCreate);
         }
 
@@ -99,9 +102,9 @@ enum ListAction {
 
 fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut IndexTabState, tr: &Tr) {
     let title = if state.modal.is_edit() {
-        tr.modal_edit_scan_path()
+        tr.t(TrKey::ModalEditScanPath)
     } else {
-        tr.modal_add_scan_path()
+        tr.t(TrKey::ModalAddScanPath)
     };
 
     let modal = egui::Modal::new(egui::Id::new("index_modal"));
@@ -110,14 +113,14 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut IndexTabStat
         style::modal_header(ui, title);
 
         // Path input + browse button
-        ui.label(tr.label_path());
+        ui.label(tr.t(TrKey::LabelPath));
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut state.modal.fields.path);
             if ui
-                .add_enabled(!state.picker.active, egui::Button::new(tr.btn_browse()))
+                .add_enabled(!state.picker.active, egui::Button::new(tr.t(TrKey::BtnBrowse)))
                 .clicked()
             {
-                let dialog_title = tr.dialog_select_folder().to_string();
+                let dialog_title = tr.t(TrKey::DialogSelectFolder).to_string();
                 state.picker.launch(ctx, move || {
                     rfd::FileDialog::new().set_title(&dialog_title).pick_folder()
                 });
@@ -125,18 +128,18 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut IndexTabStat
         });
 
         ui.add_space(style::SPACE_HINT);
-        ui.label(tr.label_extensions());
+        ui.label(tr.t(TrKey::LabelExtensions));
         ui.text_edit_singleline(&mut state.modal.fields.extensions);
 
         ui.add_space(style::SPACE_HINT);
-        ui.checkbox(&mut state.modal.fields.include_folders, tr.cb_include_folders());
+        ui.checkbox(&mut state.modal.fields.include_folders, tr.t(TrKey::CbIncludeFolders));
 
         ui.add_space(style::SPACE_GROUP);
         ui.separator();
 
         ui.horizontal(|ui| {
             // Delete button (edit mode only)
-            if state.modal.is_edit() && style::danger_button(ui, tr.btn_delete()).clicked() {
+            if state.modal.is_edit() && style::danger_button(ui, tr.t(TrKey::BtnDelete)).clicked() {
                 common::delete_entry(&mut config.paths.scan, state.modal.editing);
                 state.modal.close();
             }

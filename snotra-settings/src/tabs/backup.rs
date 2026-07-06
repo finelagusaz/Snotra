@@ -5,7 +5,7 @@ use eframe::egui;
 use snotra_core::config::Config;
 
 use crate::app::config_error_message;
-use crate::i18n::Tr;
+use crate::i18n::{Tr, TrKey};
 use crate::style;
 
 /// Result type for file picker threads.
@@ -67,11 +67,11 @@ pub fn ui(
 
     style::tab_scroll_area(ui, |ui| {
         // Export section
-        style::section_heading(ui, tr.heading_export());
-        style::hint(ui, tr.label_export_description());
+        style::section_heading(ui, tr.t(TrKey::HeadingExport));
+        style::hint(ui, tr.t(TrKey::LabelExportDescription));
         ui.add_space(style::SPACE_GROUP);
         if ui
-            .add_enabled(!state.export_active, egui::Button::new(tr.btn_export()))
+            .add_enabled(!state.export_active, egui::Button::new(tr.t(TrKey::BtnExport)))
             .clicked()
         {
             state.message.clear();
@@ -81,11 +81,11 @@ pub fn ui(
         style::section_gap(ui);
 
         // Import section
-        style::section_heading(ui, tr.heading_import());
-        style::hint(ui, tr.label_import_description());
+        style::section_heading(ui, tr.t(TrKey::HeadingImport));
+        style::hint(ui, tr.t(TrKey::LabelImportDescription));
         ui.add_space(style::SPACE_GROUP);
         if ui
-            .add_enabled(!state.import_active, egui::Button::new(tr.btn_import()))
+            .add_enabled(!state.import_active, egui::Button::new(tr.t(TrKey::BtnImport)))
             .clicked()
         {
             state.message.clear();
@@ -95,14 +95,14 @@ pub fn ui(
         style::section_gap(ui);
 
         // Open folder section
-        style::section_heading(ui, tr.heading_data_folder());
-        style::hint(ui, tr.label_data_folder_description());
+        style::section_heading(ui, tr.t(TrKey::HeadingDataFolder));
+        style::hint(ui, tr.t(TrKey::LabelDataFolderDescription));
         if let Some(dir) = Config::config_dir() {
             ui.add_space(style::SPACE_HINT);
             style::hint(ui, &dir.display().to_string());
         }
         ui.add_space(style::SPACE_GROUP);
-        if ui.button(tr.btn_open_folder()).clicked()
+        if ui.button(tr.t(TrKey::BtnOpenFolder)).clicked()
             && let Some(dir) = Config::config_dir()
         {
             let _ = open::that(dir);
@@ -135,8 +135,8 @@ fn start_export(ctx: &egui::Context, state: &mut BackupTabState, tr: &Tr) {
     state.export_active = true;
     let result = Arc::clone(&state.export_result);
     let repaint_ctx = ctx.clone();
-    let dialog_title = tr.dialog_export_config().to_string();
-    let filter_label = tr.filter_toml().to_string();
+    let dialog_title = tr.t(TrKey::DialogExportConfig).to_string();
+    let filter_label = tr.t(TrKey::FilterToml).to_string();
     let (y, m, d, h, min) = local_time();
     let default_name = Config::export_filename(y, m, d, h, min);
 
@@ -155,8 +155,8 @@ fn start_import(ctx: &egui::Context, state: &mut BackupTabState, tr: &Tr) {
     state.import_active = true;
     let result = Arc::clone(&state.import_result);
     let repaint_ctx = ctx.clone();
-    let dialog_title = tr.dialog_import_config().to_string();
-    let filter_label = tr.filter_toml().to_string();
+    let dialog_title = tr.t(TrKey::DialogImportConfig).to_string();
+    let filter_label = tr.t(TrKey::FilterToml).to_string();
 
     std::thread::spawn(move || {
         let path = rfd::FileDialog::new()
@@ -203,13 +203,13 @@ fn localize_toml_error(msg: &str, tr: &crate::i18n::Tr) -> String {
 
     let ja_summary: String = if desc.contains("missing field") {
         match extract_backtick(desc) {
-            Some(field) => tr.err_toml_missing_field(field),
-            None => tr.err_toml_parse_error().to_string(),
+            Some(field) => tr.t_params(TrKey::ErrTomlMissingField, &[("field", field)]),
+            None => tr.t(TrKey::ErrTomlParseError).to_string(),
         }
     } else if desc.contains("invalid type") {
-        tr.err_toml_invalid_type().to_string()
+        tr.t(TrKey::ErrTomlInvalidType).to_string()
     } else {
-        tr.err_toml_parse_error().to_string()
+        tr.t(TrKey::ErrTomlParseError).to_string()
     };
 
     match line_num {
@@ -231,11 +231,11 @@ fn handle_export_result(path: Option<PathBuf>, tr: &Tr) -> (Option<String>, bool
         return (None, false); // Cancelled
     };
     let Some(src) = Config::config_path() else {
-        return (Some(format!("{}config dir not found", tr.status_export_failed())), true);
+        return (Some(format!("{}config dir not found", tr.t(TrKey::StatusExportFailed))), true);
     };
     match std::fs::copy(&src, &dest) {
-        Ok(_) => (Some(tr.status_export_success().to_string()), false),
-        Err(e) => (Some(format!("{}{}", tr.status_export_failed(), first_line(&e.to_string()))), true),
+        Ok(_) => (Some(tr.t(TrKey::StatusExportSuccess).to_string()), false),
+        Err(e) => (Some(format!("{}{}", tr.t(TrKey::StatusExportFailed), first_line(&e.to_string()))), true),
     }
 }
 
@@ -247,25 +247,25 @@ fn handle_import_result(path: Option<PathBuf>, tr: &Tr) -> (Option<String>, bool
     let content = match std::fs::read_to_string(&src) {
         Ok(c) => c,
         Err(e) => {
-            return (Some(format!("{}{}", tr.status_import_failed(), first_line(&e.to_string()))), true, None);
+            return (Some(format!("{}{}", tr.t(TrKey::StatusImportFailed), first_line(&e.to_string()))), true, None);
         }
     };
     let mut config = match Config::from_toml_str(&content) {
         Ok(c) => c,
         Err(e) => {
-            return (Some(format!("{}{}", tr.status_import_failed(), localize_toml_error(&e, tr))), true, None);
+            return (Some(format!("{}{}", tr.t(TrKey::StatusImportFailed), localize_toml_error(&e, tr))), true, None);
         }
     };
     // Apply the same migrations as Config::load() (legacy field migration, normalization, etc.)
     config.apply_migrations();
     let errors = config.validate();
     if !errors.is_empty() {
-        return (Some(format!("{}{}", tr.status_import_validation_error(), config_error_message(&errors[0], tr))), true, None);
+        return (Some(format!("{}{}", tr.t(TrKey::StatusImportValidationError), config_error_message(&errors[0], tr))), true, None);
     }
     if let Err(e) = config.save() {
-        return (Some(format!("{}{}", tr.status_import_failed(), first_line(&e))), true, None);
+        return (Some(format!("{}{}", tr.t(TrKey::StatusImportFailed), first_line(&e))), true, None);
     }
-    (Some(tr.status_import_success().to_string()), false, Some(config))
+    (Some(tr.t(TrKey::StatusImportSuccess).to_string()), false, Some(config))
 }
 
 #[cfg(test)]

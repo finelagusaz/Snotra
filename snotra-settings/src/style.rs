@@ -9,7 +9,7 @@
 use eframe::egui;
 use egui::Color32;
 
-use crate::i18n::Tr;
+use crate::i18n::{Tr, TrKey};
 
 // ---- タイポグラフィ（Windows 11 Fluent タイプランプ epx）----
 // 出典: Microsoft Learn「Typography in Windows」。`apply_type_ramp` で TextStyle に登録する。
@@ -205,8 +205,8 @@ pub struct ModalButtons {
 
 pub fn modal_buttons(ui: &mut egui::Ui, tr: &Tr) -> ModalButtons {
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let cancel = ui.button(tr.btn_cancel()).clicked();
-        let save = ui.button(tr.btn_save()).clicked();
+        let cancel = ui.button(tr.t(TrKey::BtnCancel)).clicked();
+        let save = ui.button(tr.t(TrKey::BtnSave)).clicked();
         ModalButtons { cancel, save }
     })
     .inner

@@ -2,34 +2,53 @@
 
 このリポジトリで Claude Code が作業するときの運用ガイド。
 
+- 共通開発プロセス（ワークフロー・事前チェック・環境制約）は `AGENTS.md`（次行で自動読込）
+- モジュール固有の不変条件は各サブディレクトリの `CLAUDE.md`（`snotra-core/` / `src-tauri/` / `ui/` / `snotra-settings/`）
+- 本ファイルの各ルールは「**太字 = 守る指示**、後続 = 理由・過去の事故」の形式。迷ったら太字部分に従えば安全
+
 @AGENTS.md
 
-## 補足（Claude Code 固有）
+## 最重要ルール（常に適用）
 
-- context7 MCP が設定済み。Tauri v2 / SolidJS / Rust クレートの最新 API を調べる際は context7 を使う
+作業種別を問わず適用される4つ。詳細は各セクションを参照。
+
+1. **`main` へ直接コミット・プッシュしない** — 必ず feature ブランチ（`feat/<機能名>` / `fix/<バグ名>` / `chore/<作業名>`）を作成してからコミットする
+2. **`git` コマンドを `&&` でチェーンしない** — 1操作 = 1呼び出し（→「Git/GitHub 運用」）
+3. **bash の HEREDOC（`<<EOF`）を使わない** — 複数行テキストは一時ファイルか PowerShell here-string（→「シェル環境」）
+4. **エージェント設定（スキル・フック・rules）の変更は合意してから** — Claude が単独で判断しない（→「チーム憲章」）
+
+## MCP ツール
+
+- **Tauri v2 / SolidJS / Rust クレートの最新 API 調査には context7 MCP を使う**（設定済み）
 
 ## シェル環境（Windows / PowerShell）
 
 このリポジトリは Windows + PowerShell 環境で運用されている。Bash 系の慣習をそのまま持ち込むと、過去のセッションで複数回踏んだ摩擦を再発させる。
 
-- **bash の HEREDOC（`<<EOF` / `<<'EOF'`）を使わない** — PowerShell では here-string の引用境界が壊れ、終端マーカーがコミットメッセージ本文に漏れる事故が起きている。複数行のコミットメッセージは一時ファイルに書き出して `git commit -F <tmpfile>` を使うか、PowerShell の here-string `@'...'@`（閉じ `'@` は必ず行頭）を使う
-- **パス区切りは `/` を優先** — PowerShell でも Git/Node/Cargo は `/` を受け付ける。`\` を含めるとエスケープが必要になるため、文字列中のパスは `/` で統一する
-- **Bash ツールに `/tmp` は無い（Windows）** — 一時ファイルは `$env:TEMP` 配下に置くか Write ツールで作る。`cat > /tmp/...` は `FileNotFoundError` で失敗する
-- **Python で非 ASCII を標準出力するときは `PYTHONIOENCODING=utf-8` を付ける** — cp932 コンソールで `—`・日本語などを print すると `UnicodeEncodeError` で落ちる（JSON/ログ整形で多用）
+| やらないこと | 代わりにやること | 理由（過去の事故） |
+|---|---|---|
+| bash の HEREDOC（`<<EOF` / `<<'EOF'`） | 一時ファイルに書き出して `git commit -F <tmpfile>`、または PowerShell here-string `@'...'@`（閉じ `'@` は必ず行頭） | here-string の引用境界が壊れ、終端マーカーがコミットメッセージ本文に漏れる事故が起きている |
+| 文字列中のパスに `\` 区切り | `/` で統一する | PowerShell でも Git/Node/Cargo は `/` を受け付ける。`\` はエスケープが必要になり壊れやすい |
+| `/tmp` への書き込み | `$env:TEMP` 配下に置くか Write ツールで作る | Windows の Bash ツールに `/tmp` は無く、`cat > /tmp/...` は `FileNotFoundError` で失敗する |
+| Python で非 ASCII をそのまま標準出力 | `PYTHONIOENCODING=utf-8` を付ける | cp932 コンソールで `—`・日本語などを print すると `UnicodeEncodeError` で落ちる（JSON/ログ整形で多用） |
 
 ## Git/GitHub 運用
 
-- **`git` コマンドをチェーンしない** — `git checkout <branch> && git rebase main` のような連鎖は `block-main-commit` フックを誤発火させた実績がある。`checkout` と `rebase`、`add` と `commit` のように影響範囲の異なる操作はそれぞれ独立した呼び出しに分ける
+- **`git` コマンドをチェーンしない** — `checkout` と `rebase`、`add` と `commit` のように影響範囲の異なる操作はそれぞれ独立した呼び出しに分ける。`git checkout <branch> && git rebase main` のような連鎖は `block-main-commit` フックを誤発火させた実績がある
 - **main の fast-forward 同期は `git pull --ff-only` を使う** — `git merge --ff-only origin/main` はコミットを作らない FF でも `block-main-commit` フックに弾かれる（コマンド文字列一致で判定するため）
-- **複数 issue にまたがる PR を squash マージするとき auto-close を明示制御する** — ブランチ各コミット本文の `Fixes/Closes #N` は squash 時に GitHub が拾い、意図しない issue を閉じうる。一部だけ閉じたい場合（例: 中核 issue は Phase 残しで open、対症療法 issue のみ close）は `gh pr merge --squash --subject "...(#issue) (#PR)" --body-file <tmp>` で最終メッセージを明示し、`Closes`/`Refs` を制御する。マージ後は `gh issue view <N> --json state` で意図どおりか検証する
+- **複数 issue にまたがる PR を squash マージするとき auto-close を明示制御する** — ブランチ各コミット本文の `Fixes/Closes #N` は squash 時に GitHub が拾い、意図しない issue を閉じうる。一部だけ閉じたい場合（例: 中核 issue は Phase 残しで open、対症療法 issue のみ close）の手順:
+  1. `gh pr merge --squash --subject "...(#issue) (#PR)" --body-file <tmp>` で最終メッセージを明示し、`Closes`/`Refs` を制御する
+  2. マージ後に `gh issue view <N> --json state` で意図どおり閉じた/残ったかを検証する
 
 ## フック（.claude/settings.json）
 
 エージェントの操作には以下のフックが介入する。発火条件の正確な定義は `.claude/settings.json` を SSOT とする。
 
-- **`block-main-commit`（PreToolUse）**: main ブランチ上の `git commit` / `merge` / `rebase` を拒否する。feature ブランチを作成してから操作する
-- **PR 作成前 push チェック（PreToolUse）**: 未 push コミットまたは upstream 未設定の状態での `gh pr create` を拒否する（空 PR / `Closes` 誤 close 防止）。`git push -u origin HEAD` してから PR を作る
-- **編集後の自動検証（PostToolUse）**: `.rs` 編集で clippy（`snotra-core` 編集では core テストも）、`.ts`/`.tsx` 編集で typecheck が自動実行される。Edit/Write 後に会話へ流れる clippy / typecheck 出力はこのフック由来であり、手動での再実行は不要
+| フック | 発火条件 | 正しい対応 |
+|---|---|---|
+| `block-main-commit`（PreToolUse） | main ブランチ上の `git commit` / `merge` / `rebase` | feature ブランチを作成してから操作する |
+| PR 作成前 push チェック（PreToolUse） | 未 push コミットまたは upstream 未設定での `gh pr create`（空 PR / `Closes` 誤 close 防止） | `git push -u origin HEAD` してから PR を作る |
+| 編集後の自動検証（PostToolUse） | `.rs` 編集 → clippy（`snotra-core` 編集では core テストも）、`.ts`/`.tsx` 編集 → typecheck | Edit/Write 後に会話へ流れる clippy / typecheck 出力はこのフック由来であり、手動での再実行は不要 |
 
 ## チーム憲章
 
@@ -43,14 +62,21 @@ Claude とユーザーが一緒に作業するときの関係性の原則。
 
 ## コミュニケーション原則
 
-- タスクが真に曖昧でない限り、分析・計画より実行にバイアスをかける
-- ユーザーが具体的な計画や修正指示を既に提示している場合、プランモードへの遷移・事前の全体探索を禁止する。読むファイルは直接関係する最小限（1〜2ファイル）に絞り、最初の Edit/Write から着手する
-- コミット・PR 作成を指示された場合、確認やプランモードなしに即実行する
-- コミットを作成するときは**必ず feature ブランチを作成してから**行う。`main` への直接コミット・プッシュは禁止。ブランチ名は `feat/<機能名>` / `fix/<バグ名>` / `chore/<作業名>` とする
-- ユーザーが計画書・設計書を提示して実装を依頼した場合、内容を忠実に実装する。計画書の要素を省略・統合・削除するのは明示的に指示された場合のみ行う
-- `/simplify` などのコードレビュー系スキルを実行するとき、意図的なリファクタリング（分割・名前変更・責務分離）の結果を元に戻さない。「重複に見えるが意図的に分けた」構造は、ユーザーに確認してから変更する
-- 不明点がある場合は、1つの焦点を絞った質問をしてから実装に移る
-- ユーザーが分析・調査・助言を求めた場合は、調査結果のみを報告する。明示的に指示されない限り、実装計画やコード変更に踏み込まない
+### 着手の判断
+
+- **タスクが真に曖昧でない限り、分析・計画より実行にバイアスをかける**
+- **ユーザーが具体的な計画や修正指示を既に提示している場合、プランモードへの遷移・事前の全体探索を禁止する** — 読むファイルは直接関係する最小限（1〜2ファイル）に絞り、最初の Edit/Write から着手する
+- **コミット・PR 作成を指示された場合、確認やプランモードなしに即実行する** — コミットは必ず feature ブランチで行う（→「最重要ルール」1）
+- **不明点がある場合は、1つの焦点を絞った質問をしてから実装に移る**
+
+### 実装・レビュー時
+
+- **計画書・設計書を提示された実装は、内容を忠実に実装する** — 計画書の要素を省略・統合・削除するのは明示的に指示された場合のみ行う
+- **意図的なリファクタリングの結果を元に戻さない** — `/simplify` などのコードレビュー系スキルを実行するとき、意図的な分割・名前変更・責務分離は維持する。「重複に見えるが意図的に分けた」構造は、ユーザーに確認してから変更する
+
+### 調査・助言の依頼
+
+- **分析・調査・助言を求められたら、調査結果のみを報告する** — 明示的に指示されない限り、実装計画やコード変更に踏み込まない
 
 ## 利用できるスキル
 

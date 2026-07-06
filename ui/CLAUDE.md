@@ -2,6 +2,8 @@
 
 SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バックエンドと通信。
 
+各ルールは「**太字 = 守る指示**、後続 = 理由・経緯」の形式。迷ったら太字部分に従えば安全。
+
 ## モジュール構成
 
 ### エントリポイント（single-page build）
@@ -17,7 +19,11 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 
 ### stores/
 
-- `search.ts`: 検索状態管理（クエリ/結果/選択/モード切替/`shouldShowResults` メモシグナル）の調停役。主要な公開関数: `resetForShow()`（window-shown 時の全状態リセット）、`refreshResults()`（ソースに応じた検索実行）、`initIndexingState()`（起動時のインデックス状態初期化 + `indexing-started` / `indexing-complete` リスナー登録）。`suppressNextQueryEffectRefresh` フラグで query effect の不要な再実行を抑制。横断規約の choke point: `nextGeneration()`（`searchGeneration` 更新の唯一経路）、`withLaunchLifecycle()`（起動フロー三種の共通骨格）、`saveView()`/`restoreView()`（`SavedViewState` の退避/復元）、`allowsFolderNav()`（フォルダ展開・ツール選択遷移の許可述語、`viewKind`/`interpKind` 由来）。`instantCommand.ts`/`launchNotice.ts` を re-export し公開 API を単一箇所に保つ
+- `search.ts`: 検索状態管理（クエリ/結果/選択/モード切替/`shouldShowResults` メモシグナル）の調停役
+  - 主要な公開関数: `resetForShow()`（window-shown 時の全状態リセット）、`refreshResults()`（ソースに応じた検索実行）、`initIndexingState()`（起動時のインデックス状態初期化 + `indexing-started` / `indexing-complete` リスナー登録）
+  - `suppressNextQueryEffectRefresh` フラグで query effect の不要な再実行を抑制
+  - **横断規約の choke point**: `nextGeneration()`（`searchGeneration` 更新の唯一経路）、`withLaunchLifecycle()`（起動フロー三種の共通骨格）、`saveView()`/`restoreView()`（`SavedViewState` の退避/復元）、`allowsFolderNav()`（フォルダ展開・ツール選択遷移の許可述語、`viewKind`/`interpKind` 由来）
+  - `instantCommand.ts`/`launchNotice.ts` を re-export し公開 API を単一箇所に保つ
 - `instantCommand.ts`: インスタントコマンド候補一覧の状態（`instantCommandItems`）と 30ms デバウンス IPC 取得（`scheduleInstantCommandFetch`）。`api`/`lib/types` のみに依存し `search.ts` へ逆依存しない（循環 import 回避）。staleness 判定・世代更新は呼び出し側が hooks（`nextRequestId`/`isStale`）で注入する
 - `launchNotice.ts`: 起動失敗・ホットキー失敗の一時通知（`launchNotice` シグナル + 自動クリアタイマー）。`notifyLaunchFailure`/`setLaunchNoticeWithAutoClear`/`setHotkeyFailureNotice`/`clearLaunchNotice` を提供
 - `folder.ts`: フォルダモードの状態（`FolderFrame` シグナル + `folderFilter`）。`FolderFrame` は `lib/types.ts` の `SavedViewState` を拡張
@@ -28,7 +34,9 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 - `invoke.ts`: 型付き Tauri IPC ラッパー
 - `theme.ts`: CSS 変数によるテーマ適用
 - `types.ts`: TypeScript 型定義の集約先（DRY）
-- `commands.ts`: スラッシュコマンド定義（`/r` `/o` `/s` `/q`）と `SLASH_COMMANDS` 配列・`findCommand()` 関数。`hideMainWindow()` は全 frontend hide（Escape / Enter / Shift+Enter / クリック起動 / フォーカス喪失 / `/s`）の単一チョークポイント。**`await win.hide()` → `notifyMainHidden()` の順を守る**——`notifyMainHidden` 内の `EmptyWorkingSet` trim を hide 完了後に走らせることで、可視中の再 touch による working set 回収の取りこぼしを避ける（hotkey 経路と同順。#361）。MainApp.tsx のフォーカス喪失・クリック起動経路もこの関数に集約する
+- `commands.ts`: スラッシュコマンド定義（`/r` `/o` `/s` `/q`）と `SLASH_COMMANDS` 配列・`findCommand()` 関数
+  - **`hideMainWindow()` は全 frontend hide（Escape / Enter / Shift+Enter / クリック起動 / フォーカス喪失 / `/s`）の単一チョークポイント**。MainApp.tsx のフォーカス喪失・クリック起動経路もこの関数に集約する
+  - **`await win.hide()` → `notifyMainHidden()` の順を守る** — `notifyMainHidden` 内の `EmptyWorkingSet` trim を hide 完了後に走らせることで、可視中の再 touch による working set 回収の取りこぼしを避ける（hotkey 経路と同順。#361）
 - `i18n.ts`: 多言語対応（日本語・英語）。`TranslationKey` 型と `t(key, params?)` 関数。`{param}` 形式プレースホルダー対応。SolidJS シグナルで言語を管理し、`setLanguage()` で切替。初期言語は `navigator.language` から同期的に決定（bootstrap 到着前のフラッシュ防止）
 - `folderNav.ts`: フォルダナビゲーション純粋ロジック（`computeParentDir`・`clampSelectedIndex`）。ドライブルート・UNC パス対応。テスト可能なため `stores/` から分離
 - `iconBatch.ts`: バイナリバッチ形式のアイコンデータをパースし、パスごとの Blob URL に変換する（`parseBinaryBatch`）。ResultsSection で使用

@@ -2,13 +2,34 @@
 
 純ロジック lib crate（13モジュール + `lib.rs`）。Win32 非依存でユニットテスト可能。
 
+- 各ルールは「**太字 = 守る指示**、後続 = 理由・経緯」の形式。迷ったら太字部分に従えば安全
+- 本ファイルの構成: モジュール構成（責務 + モジュール別の不変条件）→ 開発ルール・実装前チェック → クロスモジュール不変条件 → データ永続化 → モジュール別の詳細規約
+
 ## モジュール構成
 
-- `engine.rs`: `Engine` struct（`SearchEngine` + `HistoryStore` + `Config` の facade）。`FolderListContext`（ロック外スナップショット）と `PrebuiltIndex`（インデックス高速スワップ用）を公開。**`IndexInputs`（index 構築入力 scan/show_hidden_system/show_icons/include_path_env/migemo_enabled の単一定義）と `index_stale` ledger**（`mark_index_stale` / `begin_index_drain` → snapshot / `complete_index_drain` → swap + re-diff で stale をクリア / `is_index_stale`）でコヒーレンシ判断を engine Mutex（軸1）に閉じ、config 変更→index 再構築の lost-update を塞ぐ（#347/#348-A）。`complete_index_drain` は「ビルド開始時 snapshot == 現在 IndexInputs」のときだけ stale をクリアする（ビルド中変更を取りこぼさない）
-- `config.rs`: `%APPDATA%\Snotra\config.toml` の読込/保存、既定値補完。`Language` enum（`Ja`/`En`）と `default_language()`（`sys-locale` による OS 言語自動判定、非日本語は英語フォールバック）を定義。**件数パラメータ**（#388 で役割に合わせて改名済み）: `appearance.visible_rows`=可視行数、`search.result_limit`=**検索・フォルダの結果リスト最大長**（`Engine::search`/`capture_folder_list_context` の fetch_limit）、`search.recent_limit`=空クエリ recent 件数（`recent_history`）。旧キー（`max_results`/`top_n_history`/`max_history_display`）は `apply_migrations()` が `skip_serializing` の legacy フィールド経由で後方互換移行する（2層レガシー: `result_limit` ← `[search].top_n_history` ← `[appearance].top_n_history`）。フロント `iconCacheSize` と `Config::icon_cache_cap()` はこれらから派生。実上限は名前でなく `engine.rs` の dispatch で確認する。**`apply_migrations()` は migration 系統ごとの private fn（`migrate_legacy_additional_paths` / `migrate_legacy_count_params` / `resolve_count_param_defaults` / `sanitize_fuzzy_history_cap_ratio` / `migrate_instant_legacy_commands` / `fallback_hotkey_if_system_shortcut`）へ段階分解済み（issue #435）。呼び出し順は元と同一に固定し、`migrate_legacy_additional_paths`（`paths.additional`→`scan` 追加）→ `paths.normalize_scan_paths()`（dedup）の順序だけは真の依存（先に追加されたエントリを後続の正規化がまとめて dedup する）。他のステップは独立だが diff 最小化のため元の並びを保つ**
-- `opener.rs`: opener（外部ツール起動ルール）ターゲットの解析・正規化・マッチングエンジンと、Win 環境のプリセット検出。`OpenerRule` / `OpenerTool` / `OpenerPreset` 型、`find_matching_tools`（パス・フォルダ判定に対する最具体1ルール解決。具体度=パス条件の長さ）、`extract_path_condition` / `extract_ext_part`、`normalize_openers`（ターゲット正規化・具体度順ソート）、`opener_specificity_order`、`detect_opener_presets`（VSCode/Windows Terminal/Explorer の検出）、`is_preset_already_added` を公開。`config.rs` から分離済み（issue #435、旧 `config.rs:88-735`/`1260-1363`）。**依存方向は `config.rs` → `opener.rs`**（`OpenerRule`/`OpenerTool` は `Config.openers` として config.toml に紐づく serde 型のため型定義はこちらに置き、`config.rs` が `pub use crate::opener::{...}` で re-export して `snotra_core::config::...` の既存呼び出し元パスを維持する）。逆方向の依存として `normalize_opener_target` が `config.rs::normalize_scan_path_key` / `normalize_extensions`（`pub(crate)`、`paths.scan` の正規化とも共有する汎用ヘルパー）を使う
-- `search.rs`: 検索順位計算（Prefix/Substring/Kana/Fuzzy/Path）、履歴ブースト、incremental search キャッシュ、空クエリ時履歴候補。`SearchEngine` は並列 Vec レイアウト（`entries` / `lower_names` / `lower_file_names` / `normalized_keys` / `char_masks` / `file_name_char_masks` / `kana_lower_names`）で cache locality を確保。構築は `compute_wave1`（文字列正規化）→ `compute_wave2`（ビットマスク計算）のヘルパー関数で共通化し、`new()`（= `new_with_migemo(.., true)`）/ `new_with_migemo(entries, migemo_enabled)` / `new_with_cached_masks(.., migemo_enabled)` が共有する。**`kana_lower_names` は `migemo_enabled` が true のときのみ構築し、無効時は空 Vec**（migemo 無効ユーザーの死蔵メモリ ~2.1–2.7MB/50k を削る・構築も約 2 倍速、issue #337）。空 Vec のとき検索ループは `kana_available` 空ガードで `kana_lower_names[i]` アクセスを回避する（構築時 migemo OFF→検索時 ON の窓での panic 防止）。migemo トグルの反映は `update_config` が engine を再構築しないため、`config_watcher` が engine の `IndexInputs` 差分で `start_index_build` を kick する再構築に依存する（#347 Phase 2 で `needs_reindex` は `IndexInputs` に統合）。パスマッチング: クエリにパス区切り文字（`\` `/`）を含む場合、`normalized_key`（= `normalize_entry_key(target_path)`）に対して Substring マッチを試みる。スコアは `3000 - min(byte_pos, 500)`。name/file_name/kana 全て不成立時のフォールバック。`has_path_sep` 時は Fuzzy ビットマスク pre-filter をスキップする
-- `history.rs`: 起動履歴・クエリ別履歴・フォルダ展開履歴の管理、バイナリ永続化。**剪定容量 `top_n` は焼き込まず `save`/`save_if_dirty`/`prune` の引数で受け取る（live-read）**。`Engine` が呼び出し時に現在の config（`effective_result_limit()`）を渡すため、`result_limit` 設定変更が再起動なしで反映される（#348）。`HistoryStore` に `top_n` フィールドを再導入しないこと——焼き込むと設定変更が反映されないドリフトが復活する
+- `engine.rs`: `Engine` struct（`SearchEngine` + `HistoryStore` + `Config` の facade）。`FolderListContext`（ロック外スナップショット）と `PrebuiltIndex`（インデックス高速スワップ用）を公開
+  - **`IndexInputs`**: index 構築入力（scan / show_hidden_system / show_icons / include_path_env / migemo_enabled）の単一定義
+  - **`index_stale` ledger**: `mark_index_stale` / `begin_index_drain` → snapshot / `complete_index_drain` → swap + re-diff で stale をクリア / `is_index_stale`。コヒーレンシ判断を engine Mutex（軸1）に閉じ、config 変更→index 再構築の lost-update を塞ぐ（#347/#348-A）
+  - **`complete_index_drain` は「ビルド開始時 snapshot == 現在 IndexInputs」のときだけ stale をクリアする**（ビルド中変更を取りこぼさない）
+- `config.rs`: `%APPDATA%\Snotra\config.toml` の読込/保存、既定値補完。`Language` enum（`Ja`/`En`）と `default_language()`（`sys-locale` による OS 言語自動判定、非日本語は英語フォールバック）を定義
+  - **件数パラメータ**（#388 で役割に合わせて改名済み）: `appearance.visible_rows` = 可視行数 / `search.result_limit` = **検索・フォルダの結果リスト最大長**（`Engine::search`/`capture_folder_list_context` の fetch_limit）/ `search.recent_limit` = 空クエリ recent 件数（`recent_history`）
+  - **旧キーの後方互換移行**: 旧キー（`max_results`/`top_n_history`/`max_history_display`）は `apply_migrations()` が `skip_serializing` の legacy フィールド経由で移行する（2層レガシー: `result_limit` ← `[search].top_n_history` ← `[appearance].top_n_history`）
+  - フロント `iconCacheSize` と `Config::icon_cache_cap()` はこれらから派生。実上限は名前でなく `engine.rs` の dispatch で確認する
+  - **`apply_migrations()` は migration 系統ごとの private fn へ段階分解済み**（issue #435）: `migrate_legacy_additional_paths` / `migrate_legacy_count_params` / `resolve_count_param_defaults` / `sanitize_fuzzy_history_cap_ratio` / `migrate_instant_legacy_commands` / `fallback_hotkey_if_system_shortcut`
+  - **migration の呼び出し順は元と同一に固定する**: `migrate_legacy_additional_paths`（`paths.additional`→`scan` 追加）→ `paths.normalize_scan_paths()`（dedup）の順序だけが真の依存（先に追加されたエントリを後続の正規化がまとめて dedup する）。他のステップは独立だが diff 最小化のため元の並びを保つ
+- `opener.rs`: opener（外部ツール起動ルール）ターゲットの解析・正規化・マッチングエンジンと、Win 環境のプリセット検出。`config.rs` から分離済み（issue #435、旧 `config.rs:88-735`/`1260-1363`）
+  - 公開 API: `OpenerRule` / `OpenerTool` / `OpenerPreset` 型、`find_matching_tools`（パス・フォルダ判定に対する最具体1ルール解決。具体度=パス条件の長さ）、`extract_path_condition` / `extract_ext_part`、`normalize_openers`（ターゲット正規化・具体度順ソート）、`opener_specificity_order`、`detect_opener_presets`（VSCode/Windows Terminal/Explorer の検出）、`is_preset_already_added`
+  - **依存方向は `config.rs` → `opener.rs`**: `OpenerRule`/`OpenerTool` は `Config.openers` として config.toml に紐づく serde 型のため型定義はこちらに置き、`config.rs` が `pub use crate::opener::{...}` で re-export して `snotra_core::config::...` の既存呼び出し元パスを維持する
+  - 逆方向の依存として `normalize_opener_target` が `config.rs::normalize_scan_path_key` / `normalize_extensions`（`pub(crate)`、`paths.scan` の正規化とも共有する汎用ヘルパー）を使う
+- `search.rs`: 検索順位計算（Prefix/Substring/Kana/Fuzzy/Path）、履歴ブースト、incremental search キャッシュ、空クエリ時履歴候補
+  - **並列 Vec レイアウト**: `SearchEngine` は `entries` / `lower_names` / `lower_file_names` / `normalized_keys` / `char_masks` / `file_name_char_masks` / `kana_lower_names` の並列 Vec で cache locality を確保
+  - **構築の共通化**: `compute_wave1`（文字列正規化）→ `compute_wave2`（ビットマスク計算）のヘルパー関数を `new()`（= `new_with_migemo(.., true)`）/ `new_with_migemo(entries, migemo_enabled)` / `new_with_cached_masks(.., migemo_enabled)` が共有する
+  - **`kana_lower_names` は `migemo_enabled` が true のときのみ構築し、無効時は空 Vec**（migemo 無効ユーザーの死蔵メモリ ~2.1–2.7MB/50k を削る・構築も約 2 倍速、issue #337）。空 Vec のとき検索ループは `kana_available` 空ガードで `kana_lower_names[i]` アクセスを回避する（構築時 migemo OFF→検索時 ON の窓での panic 防止）
+  - **migemo トグルの反映は index 再構築経由**: `update_config` は engine を再構築しないため、`config_watcher` が engine の `IndexInputs` 差分で `start_index_build` を kick する再構築に依存する（#347 Phase 2 で `needs_reindex` は `IndexInputs` に統合）
+  - **パスマッチング**: クエリにパス区切り文字（`\` `/`）を含む場合、`normalized_key`（= `normalize_entry_key(target_path)`）に対して Substring マッチを試みる。スコアは `3000 - min(byte_pos, 500)`。name/file_name/kana 全て不成立時のフォールバック。`has_path_sep` 時は Fuzzy ビットマスク pre-filter をスキップする
+- `history.rs`: 起動履歴・クエリ別履歴・フォルダ展開履歴の管理、バイナリ永続化
+  - **剪定容量 `top_n` は焼き込まず `save`/`save_if_dirty`/`prune` の引数で受け取る（live-read）**: `Engine` が呼び出し時に現在の config（`effective_result_limit()`）を渡すため、`result_limit` 設定変更が再起動なしで反映される（#348）
+  - **`HistoryStore` に `top_n` フィールドを再導入しないこと** — 焼き込むと設定変更が反映されないドリフトが復活する
 - `folder.rs`: フォルダ内列挙とフィルタ/ソート
 - `indexer.rs`: スキャン対象列挙と重複排除、インデックスキャッシュ
 - `query.rs`: クエリ正規化（`normalize_query`）、履歴クエリキー正規化（`normalize_history_query_key` — `normalize_query` + パス区切り統一を一元化）、`char_bitmask`（文字存在ビットマスク計算 — `search.rs` と `indexer.rs` の両方が使用）
@@ -16,14 +37,20 @@
 - `error.rs`: `BinError`（バイナリシリアライズ/デシリアライズ失敗）と `ConfigError`（設定バリデーション失敗）の error 型定義
 - `window_data.rs`: ウィンドウ位置（`window.bin`）の保存/復元
 - `instant.rs`: インスタントコマンドの処理。**公開関数**:
-  - `split_args(args: &str) -> Vec<String>`: シェル風クォート対応の引数分割。`"..."` で囲まれた部分はスペースを含んでも1トークンとして扱う。**`{...}` 内のスペースも分割しない**（`{query | trim}` 等の修飾子パイプを1トークンに保つ）。`launch.rs` から移設。
-  - 変数展開は**修飾子パイプ `{name | mod | ...}`**（name = query/clip/date/uuid、v1 修飾子 `lower`/`upper`/`trim`/`default:<text>`/`raw`）に対応する。内部の単一 walker `expand_template`（private）が `{...}` を走査し、変数解決 → 修飾子チェーン（左→右）→ シンク処理（`encode && !raw` のとき URL エンコード）を行う。**エンコードはシンク（種別）の責務**で修飾子は内容変換のみ（`urlencode` 修飾子は提供せず、`raw` が唯一の抑止）。未認識 `{...}`・閉じ `}` 不在はリテラル温存（total）。**`{{X}}` はエスケープで literal `{X}`**（変数名と衝突する literal の唯一の表現＝予約語が増えても opt-out が常に存在。中身は変数/修飾子として解釈しない。`walk_template` の `{`-found 分岐で `{{…}}` をユニット処理）。`parse_placeholder` を runtime 適用と保存時検証で共有する。
-    - **name はオプション引数を `:` で取れる**（`date:<書式>`。name と arg は最初の `:` で分割、arg 内 `:` はリテラル）。query/clip/uuid は引数なし——引数付き `{query:x}` はリテラルに戻し後方互換を保つ。
-    - **date/uuid は実行時に解決する不純な源**: `expand_template` は `now: &DateTime<Local>` を受け取り、`expand_instant_command`/`expand_exec_args` が `Local::now()` を**1回だけ**捕捉して渡す（同一テンプレート内の複数 `{date}` が同一時刻を反映、`{uuid}` は出現ごとに `Uuid::new_v4()` で新規生成し意図的に異なる）。`format_date(now, fmt)` は **panic 安全**: `write!` で Display の Err を値として伝播させ、整形不能な書式（`%!` 等の不正指定子 + `%#z` 等の**パース専用指定子**の両方）を空文字列にフォールバックする（`to_string()` の unwrap-panic ＝ release `panic="abort"` のプロセス abort を回避、#394）。**`Item::Error` の事前走査では不十分**——`%#z` はパース成功・整形失敗のため走査を素通りする（code-reviewer 検出）。
-  - `expand_exec_args(args: &str, query: &str, clipboard: &str, env_expand: fn) -> Vec<String>`: exec 種別の引数列構築。手順: split_args で分割 → 各トークンに env 展開（`%VAR%`）→ 修飾子パイプ付き変数置換（encode なし）。この順序により (1) 外部入力 query/clip は env 展開されない、(2) env 値の空白はトークン内に留まり引数を割らない、(3) 空白入り query は1引数を保つ。修飾子適用後の値も同トークン内に in-place 置換され引数を増やさない。
-  - `expand_instant_command(command: &str, query: &str, clipboard: &str) -> String`: URL/コマンドの変数展開。`http://` / `https://` で始まる場合は各プレースホルダ単位で URL エンコード（`raw` 抑止）。それ以外は生のまま展開。
-  - `collect_unknown_modifiers(template: &str) -> Vec<String>`: テンプレート中の未知修飾子名を収集（`Config::validate` が保存時バリデーションに使用）。`walk_template` を `expand_template` と共有。
-  - `filter_instant_commands(commands: &[InstantCommand], input: &str) -> Vec<&InstantCommand>`: コマンド名を前方一致（大文字小文字区別しない）で絞り込み。空 input は全件返却。
+  - `split_args(args: &str) -> Vec<String>`: シェル風クォート対応の引数分割。`"..."` で囲まれた部分はスペースを含んでも1トークンとして扱う。**`{...}` 内のスペースも分割しない**（`{query | trim}` 等の修飾子パイプを1トークンに保つ）。`launch.rs` から移設
+  - 変数展開は**修飾子パイプ `{name | mod | ...}`**（name = query/clip/date/uuid、v1 修飾子 `lower`/`upper`/`trim`/`default:<text>`/`raw`）に対応する:
+    - 内部の単一 walker `expand_template`（private）が `{...}` を走査し、変数解決 → 修飾子チェーン（左→右）→ シンク処理（`encode && !raw` のとき URL エンコード）を行う
+    - **エンコードはシンク（種別）の責務**で修飾子は内容変換のみ（`urlencode` 修飾子は提供せず、`raw` が唯一の抑止）
+    - 未認識 `{...}`・閉じ `}` 不在はリテラル温存（total）
+    - **`{{X}}` はエスケープで literal `{X}`**（変数名と衝突する literal の唯一の表現＝予約語が増えても opt-out が常に存在。中身は変数/修飾子として解釈しない。`walk_template` の `{`-found 分岐で `{{…}}` をユニット処理）
+    - `parse_placeholder` を runtime 適用と保存時検証で共有する
+    - **name はオプション引数を `:` で取れる**（`date:<書式>`。name と arg は最初の `:` で分割、arg 内 `:` はリテラル）。query/clip/uuid は引数なし——引数付き `{query:x}` はリテラルに戻し後方互換を保つ
+    - **date/uuid は実行時に解決する不純な源**: `expand_template` は `now: &DateTime<Local>` を受け取り、`expand_instant_command`/`expand_exec_args` が `Local::now()` を**1回だけ**捕捉して渡す（同一テンプレート内の複数 `{date}` が同一時刻を反映、`{uuid}` は出現ごとに `Uuid::new_v4()` で新規生成し意図的に異なる）
+    - **`format_date(now, fmt)` は panic 安全**: `write!` で Display の Err を値として伝播させ、整形不能な書式（`%!` 等の不正指定子 + `%#z` 等の**パース専用指定子**の両方）を空文字列にフォールバックする（`to_string()` の unwrap-panic ＝ release `panic="abort"` のプロセス abort を回避、#394）。**`Item::Error` の事前走査では不十分**——`%#z` はパース成功・整形失敗のため走査を素通りする（code-reviewer 検出）
+  - `expand_exec_args(args: &str, query: &str, clipboard: &str, env_expand: fn) -> Vec<String>`: exec 種別の引数列構築。手順: `split_args` で分割 → 各トークンに env 展開（`%VAR%`）→ 修飾子パイプ付き変数置換（encode なし）。この順序により (1) 外部入力 query/clip は env 展開されない、(2) env 値の空白はトークン内に留まり引数を割らない、(3) 空白入り query は1引数を保つ。修飾子適用後の値も同トークン内に in-place 置換され引数を増やさない
+  - `expand_instant_command(command: &str, query: &str, clipboard: &str) -> String`: URL/コマンドの変数展開。`http://` / `https://` で始まる場合は各プレースホルダ単位で URL エンコード（`raw` 抑止）。それ以外は生のまま展開
+  - `collect_unknown_modifiers(template: &str) -> Vec<String>`: テンプレート中の未知修飾子名を収集（`Config::validate` が保存時バリデーションに使用）。`walk_template` を `expand_template` と共有
+  - `filter_instant_commands(commands: &[InstantCommand], input: &str) -> Vec<&InstantCommand>`: コマンド名を前方一致（大文字小文字区別しない）で絞り込み。空 input は全件返却
 - `ui_types.rs`: フロントエンドとの IPC 用データ型
 
 ## 開発ルール
@@ -40,7 +67,11 @@
 - `search.rs` の top-k 更新ロジックを変更する場合は、入力順を変えても結果が不変であるテストを追加または更新する
 - `SearchEngine` にフィールドを追加する前に: 既存の並列 Vec（特に `normalized_keys`）で代替できないか先に検討する。再利用できれば 5 箇所同時更新・IndexCache バージョンバンプが不要になる
 - `SearchEngine` に新しい並列 Vec フィールドを追加するとき: `EntryView` 構造体・`entry_view()` メソッド・`assemble()` 内の `debug_assert!` を同時に更新し、全 Vec 長の同期を保つ。Wave 1 の文字列正規化は `compute_wave1` に、Wave 2 のビットマスク計算は `compute_wave2` に追加する（`new()` / `new_with_migemo()` / `new_with_cached_masks()` が共有）
-- **`kana_lower_names` は条件付き構築（migemo 有効時のみ）で長さ `{0, entries.len()}` の例外**: `assemble` の `debug_assert!` は他 5 Vec を `== entries.len()` で検証するが kana は `is_empty() || == entries.len()` を許す。`kana_lower_names[i]` へアクセスする全箇所は `!kana_lower_names.is_empty()` ガードを通す。条件分岐は `compute_wave1(.., migemo_enabled)` と `new_with_cached_masks` の v4/v3 両パスに**同時に**入れる（片方だけだと migemo ON でも空になる）。migemo は index 構築入力なので、engine の `IndexInputs`（`config_watcher` の kick 判定と `complete_index_drain` の re-diff が共有する**単一定義**）に含める（#347 Phase 2 で `needs_reindex` / in-flight `needs_rebuild` を `IndexInputs` に統合・削除済み）
+- **`kana_lower_names` は条件付き構築（migemo 有効時のみ）で長さ `{0, entries.len()}` の例外**:
+  - `assemble` の `debug_assert!` は他 5 Vec を `== entries.len()` で検証するが、kana は `is_empty() || == entries.len()` を許す
+  - `kana_lower_names[i]` へアクセスする全箇所は `!kana_lower_names.is_empty()` ガードを通す
+  - 条件分岐は `compute_wave1(.., migemo_enabled)` と `new_with_cached_masks` の v4/v3 両パスに**同時に**入れる（片方だけだと migemo ON でも空になる）
+  - migemo は index 構築入力なので、engine の `IndexInputs`（`config_watcher` の kick 判定と `complete_index_drain` の re-diff が共有する**単一定義**）に含める（#347 Phase 2 で `needs_reindex` / in-flight `needs_rebuild` を `IndexInputs` に統合・削除済み）
 - `search.rs` の incremental search キャッシュ（`prev_*` フィールド群）に新しい述語を追加するとき: `use_incremental` の条件式と `prev_*` の更新箇所を同時に変更し、`/cache-check` で単調性を検証する
 - `query.rs` の正規化を変更する場合は、タブ・全角スペース・NBSP を `' '` に統一するテストと冪等性テストを追加または更新する
 - `folder.rs` のソート順変更時: ソート順は「`is_folder` 降順 → `exp_count` 降順 → `lower_name` 昇順」で、先頭要素が最良（最優先）。`select_nth_unstable_by`（O(N) 平均の top-k 選択）＋ `sort_by`（安定ソートで確定順）の2段階を崩さない。入力順に依存しないことを確認するテスト（`score_entries_top_k_order_independent_of_input_order`）を通す
@@ -80,10 +111,21 @@
 - シリアライザを切り替える場合は**必ずバージョン番号をバンプ**し、旧形式のフォールバックデシリアライザを追加する。切り替え前後でバイト列の互換性はほぼ存在しない（例: bincode の u32 は 4バイト LE、postcard は LEB128 varint）
 - **データの意味（セマンティクス）を変更する場合もバージョン番号をバンプする**。バイト列のフォーマットが同一でも、値の解釈が変わればデータ破損と同じ（例: 絶対座標→モニター相対座標。旧データをそのまま新セマンティクスで読むと位置がずれる）
 - `deserialize_failed → save()` パターン（デコード失敗時に空データを即時上書き保存）は HistoryStore など学習データを持つモジュールでデータ喪失を招く。フォールバック読み込みを先に試み、次回の通常 save() で新形式に昇格させること
-- **読み込み失敗は種類で扱いを分ける（`Config::load`）**: 不在（`NotFound`）= 既定値を生成・保存 / 内容破損（TOML parse 失敗・非 UTF-8 `InvalidData`）= `config.toml.bak` へ退避し既定値・**保存しない** / 一時的失敗（権限・ロック等）= 退避も上書きもせず既定値・**保存しない**。`Err(_)` 一括 first-run 扱いは一時的失敗で実データを既定値に潰す。**1分岐だけ直しても同じ `match` の兄弟分岐に同じ破壊的フォールバックが残る**ため、読み込み失敗を直すときは全分岐の保全方針を揃える（#338/#343: アドバーサリアルレビューが兄弟分岐＝read 失敗 arm の漏れと「後続 save で破損元が失われる」非対称を検出した）
+- **読み込み失敗は種類で扱いを分ける（`Config::load`）**:
+  - 不在（`NotFound`）= 既定値を生成・保存
+  - 内容破損（TOML parse 失敗・非 UTF-8 `InvalidData`）= `config.toml.bak` へ退避し既定値・**保存しない**
+  - 一時的失敗（権限・ロック等）= 退避も上書きもせず既定値・**保存しない**
+  - `Err(_)` 一括 first-run 扱いは一時的失敗で実データを既定値に潰す。**1分岐だけ直しても同じ `match` の兄弟分岐に同じ破壊的フォールバックが残る**ため、読み込み失敗を直すときは全分岐の保全方針を揃える（#338/#343: アドバーサリアルレビューが兄弟分岐＝read 失敗 arm の漏れと「後続 save で破損元が失われる」非対称を検出した）
 - **TOML フィールドを別の struct に移動するとき**: 旧フィールドを削除するのではなく `#[serde(default, skip_serializing)] pub field: Option<T>` として残し、`apply_migrations()` で `self.old.field.take()` → 新フィールドへ代入する。`Config::default()` の明示的 struct 初期化に `field: None` を追加するのを忘れない。また、`apply_migrations()` には複数のマイグレーションが存在するため、一部だけをテストする場合でも他の副作用（`additional → scan` 移行等）を踏まえたアサーション順序・内容を設計する
-- **serde 表現（enum variant・`#[serde(untagged/flatten/tag)]`）を変更するときは、旧オンディスク形式が deserialize できるテストを「新形式の往復」とは別に必ず追加する**: 旧形式が新構造体に deserialize 失敗すると `toml::from_str::<Config>` が失敗 → `config.toml.bak` 退避 → **全設定リセット**（`apply_migrations()` は deserialize の後に走るため移行では救えない）＝データ損失。旧形式は untagged の `Legacy { .. }` variant 等で必ず受理し、移行を `apply_migrations()` で行う。新形式の往復テストだけでは parse 失敗を検出できず false-green になる（#394: 多観点レビューが `toml` で実証）
-- **オンディスクのシリアライズ struct をリファクタするとき（「バイト形式不変」を主張する場合も含む）は、後方互換を *旧形式の凍結バイト列* を入力にした load テストで証明する**: 新コードの出力を golden 化しても保証されるのは forward-stability だけで、「新出力＝旧形式」を独立には証明しない（形式が壊れていても新 golden がそれを凍結して素通りする）。正しい向きは「旧形式の凍結バイト列 → 新コードで deserialize できる」の検証。加えて、形式を変える計画は着手前に最小 spike で往復バイト一致を実証してから plan を建てる（前提が崩れれば approach 自体が不成立ゆえ [[feedback_verify_issue_premises]]）。#461: owned/borrowed struct の `Cow` 統合で当初 golden を新コード出力から採取し forward-stability のみになっていたのを code-reviewer が検出、凍結バイト列からの deserialize に修正した
+- **serde 表現（enum variant・`#[serde(untagged/flatten/tag)]`）を変更するときは、旧オンディスク形式が deserialize できるテストを「新形式の往復」とは別に必ず追加する**:
+  - 旧形式が新構造体に deserialize 失敗すると `toml::from_str::<Config>` が失敗 → `config.toml.bak` 退避 → **全設定リセット**（`apply_migrations()` は deserialize の後に走るため移行では救えない）＝データ損失
+  - 旧形式は untagged の `Legacy { .. }` variant 等で必ず受理し、移行を `apply_migrations()` で行う
+  - 新形式の往復テストだけでは parse 失敗を検出できず false-green になる（#394: 多観点レビューが `toml` で実証）
+- **オンディスクのシリアライズ struct をリファクタするとき（「バイト形式不変」を主張する場合も含む）は、後方互換を *旧形式の凍結バイト列* を入力にした load テストで証明する**:
+  - 新コードの出力を golden 化しても保証されるのは forward-stability だけで、「新出力＝旧形式」を独立には証明しない（形式が壊れていても新 golden がそれを凍結して素通りする）
+  - 正しい向きは「旧形式の凍結バイト列 → 新コードで deserialize できる」の検証
+  - 形式を変える計画は着手前に最小 spike で往復バイト一致を実証してから plan を建てる（前提が崩れれば approach 自体が不成立ゆえ [[feedback_verify_issue_premises]]）
+  - #461: owned/borrowed struct の `Cow` 統合で当初 golden を新コード出力から採取し forward-stability のみになっていたのを code-reviewer が検出、凍結バイト列からの deserialize に修正した
 
 ## history.rs のキー正規化に関するチェックリスト
 

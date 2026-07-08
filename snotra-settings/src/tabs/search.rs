@@ -75,8 +75,10 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, tr: &Tr) {
                         .range(0.0..=1.0)
                         .speed(0.05)
                         .min_decimals(2),
-                );
-            });
+                )
+            })
+            .inner
+            .on_disabled_hover_text(tr.t(TrKey::TooltipFuzzyCapDisabled));
             ui.end_row();
         });
 
@@ -96,8 +98,10 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, tr: &Tr) {
                 ui.add_sized(
                     [style::FIELD_NUMERIC, ui.spacing().interact_size.y],
                     egui::DragValue::new(&mut config.search.migemo_min_chars).range(1..=10),
-                );
-            });
+                )
+            })
+            .inner
+            .on_disabled_hover_text(tr.t(TrKey::TooltipMigemoDisabled));
             ui.end_row();
         });
     });

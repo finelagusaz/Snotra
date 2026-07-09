@@ -6,10 +6,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "input=$(cat); if echo \"$input\" | grep -qE 'git\\s+(commit|merge|rebase)' && [ \"$(git branch --show-current)\" = 'main' ]; then echo 'BLOCKED: main ブランチへの直接コミットは禁止です。feature ブランチを作成してください。' >&2; exit 2; fi"
-          },
-          {
-            "type": "command",
             "command": "input=$(cat); if echo \"$input\" | grep -qE 'gh\\s+pr\\s+create'; then up=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null); if [ -z \"$up\" ] || [ -n \"$(git log @{u}..HEAD --oneline 2>/dev/null)\" ]; then echo 'BLOCKED: 未 push のコミット、または upstream 未設定です。git push -u origin HEAD してから gh pr create してください（空 PR / Closes 誤 close 防止）。' >&2; exit 2; fi; fi"
           }
         ]

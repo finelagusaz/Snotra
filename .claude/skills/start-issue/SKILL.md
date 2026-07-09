@@ -35,7 +35,7 @@ issue の内容（タイトル・本文・ラベル・コメント）を把握�
 
 ## Step 2 — main 最新化 & ブランチ作成
 
-以下の git コマンドは**チェーンせず、それぞれ独立した呼び出しで実行する**（CLAUDE.md「Git/GitHub 運用」）:
+以下を順に実行する:
 
 ```bash
 git checkout main
@@ -114,7 +114,7 @@ git checkout -b <branch-name>
 
 ## Step 6 — workspace をコミット & プッシュ
 
-セッション断絶・別マシン継続に備え、`workspace/` を必ずコミットしてプッシュする。以下は**チェーンせず、それぞれ独立した呼び出しで実行する**:
+セッション断絶・別マシン継続に備え、`workspace/` を必ずコミットしてプッシュする。以下を順に実行する:
 
 ```bash
 git add workspace/

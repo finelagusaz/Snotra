@@ -989,9 +989,26 @@ PowerShell ツールから（`block-main-commit` の `matcher` は `"Bash"` な�
 git commit --allow-empty -m "V5 probe"
 ```
 
-Expected: **`BLOCKED: main への直接コミットは禁止です。`**（`.githooks/pre-commit` の出力）
+**⚠️ この Phase の最中、main の作業ツリーには `.githooks/` が存在しない**（本 PR がマージされるまで `.githooks/` は feature ブランチにしか無い）。`core.hooksPath = .githooks` は空を指し、**git は「hook 無し」として commit を通す（fail-open）**。実測で確認済み: 一度目の V5 は `exit 0` で main に空コミットを作った（`git reset --soft HEAD~1` で撤去）。
 
-**これが本 Phase の中心的な証拠である。** 前回の測定ではこのコマンドが素通りした。
+したがって V5 は **マージ後の main を模して測る**。`.githooks` を main の作業ツリーへ untracked で配置してから、同じコマンドを撃つ:
+
+```powershell
+git restore --source=chore/hook-responsibility-layers -- .githooks
+```
+```powershell
+git commit --allow-empty -m "V5 retry"
+```
+
+Expected: `exit 1` と **`BLOCKED: main への直接コミットは禁止です。`**（`.githooks/pre-commit` の出力）
+
+測定後は必ず撤去する（untracked のままだと `git switch` が失敗する）:
+
+```powershell
+Remove-Item -Recurse -Force .githooks
+```
+
+**これが本 Phase の中心的な証拠である。** 前回の測定では、`.githooks` があってもこのコマンドは素通りした（Claude Code の hook が PowerShell に発火しないため）。いまは git 側が止める。
 
 - [ ] **Step 3: V8 — main を宛先とする push を試みる**
 
@@ -1003,6 +1020,8 @@ git push origin HEAD:main
 ```
 
 Expected: `BLOCKED: main への直接 push は禁止です（宛先: refs/heads/main）。`（Layer 1 が先に止める。仮に外しても Layer 0 が止める）
+
+**実測時の注記**: harness の auto mode classifier が main への push を拒否したため、この live probe は実行できなかった。迂回してはならない。命題は二重に測定済みである — `.githooks/githooks.test.mjs` の 3 テスト（`main` 宛て / `HEAD:main` / 削除 push）が client 側を、V1 が server 側を実測している。
 
 - [ ] **Step 4: V9 — 誤爆しないことを確かめる**
 
@@ -1207,7 +1226,8 @@ Refs #471, #473
 
 変更後:
 ```markdown
-- **main 保護は `.githooks/` と GitHub ruleset が担う** — `.githooks/{pre-commit,pre-merge-commit,pre-rebase,pre-push}` が commit / merge / rebase / push を、GitHub ruleset `default` が origin 側の直接 push・force-push・削除を拒否する。git が hook を「操作されるツリーのトップ」を cwd として呼ぶため、PowerShell でも `git -C` でも worktree でも subworktree でも判定は正しい。bootstrap は `npm install`（`prepare` が `core.hooksPath` を設定する）
+- **main 保護は `.githooks/` と GitHub ruleset が担う** — `.githooks/{pre-commit,pre-merge-commit,pre-rebase,pre-push}` が commit / merge / rebase / push を、GitHub ruleset `default` が origin 側の直接 push・force-push・削除を拒否する。git は hook を「操作されるツリーのトップ」を cwd として呼び、相対 `core.hooksPath` もそこを基準に解決する（実測）。ゆえに PowerShell でも `git -C` でも worktree でも `ui/` などのサブディレクトリからでも判定は正しい。bootstrap は `npm install`（`prepare` が `core.hooksPath` を設定する）
+- **`.githooks/` を含まないツリーでは Layer 1 は存在しない** — hook は追跡ファイルなので、`.githooks/` が無いコミットを checkout すると git は「hook 無し」として操作を通す（fail-open）。古いタグや `.githooks/` 導入前のコミットが該当する。**保証は Layer 0（ruleset）が担う** — origin 側は無条件に守られるため、ローカルの取りこぼしは push で止まる。Layer 1 は「手前で親切に止める」best-effort な層であり、その不在を検知する仕組みは意図的に置いていない
 - **`--no-verify` は人間専用** — `.githooks/` を迂回する。Claude は使用してはならない。ローカルの hook を外しても GitHub ruleset が push を拒むため、迂回しても main には届かない
 - **`gh pr create` を他のコマンドとチェーンしない** — PR 前 push チェック hook は `tool_input` 全体を grep したうえで、コマンド実行の**前**に `@{u}` を評価する。`git push -u origin HEAD && gh pr create` は upstream 未設定と判定されて必ずブロックされる（この誤爆の根治は Phase 2）
 ```

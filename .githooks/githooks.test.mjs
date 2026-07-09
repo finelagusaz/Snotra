@@ -7,7 +7,7 @@
 
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { chmodSync, cpSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -238,4 +238,25 @@ describe("相対 core.hooksPath — worktree での解決（V10）", () => {
 
     expectBlocked(() => commitEmpty(wt, "worktree main commit"));
   }, T * 2);
+
+  // 第三の仮説の反証。上のテストは cwd = worktree トップで git を起動しているため、
+  // 「worktree トップに解決される」と「git プロセスの cwd に解決される」を区別できない。
+  // 後者なら ui/ や src-tauri/ の中から commit した瞬間 .githooks は見つからず、
+  // git は hook 無しとして commit を通す（fail-open）。Task 6 は実リポジトリに
+  // 相対パスを設定するので、この命題は Layer 1 が機能するかどうかそのものである。
+  it("サブディレクトリから commit しても相対 .githooks が解決される", () => {
+    const dir = initRepo(); // 既定ブランチ main
+    cpSync(HOOKS_DIR, path.join(dir, ".githooks"), { recursive: true });
+    makeExecutable(path.join(dir, ".githooks"));
+    git(dir, ["add", ".githooks"]);
+    git(dir, ["commit", "-m", "add hooks"]); // hooksPath 未設定なのでまだ通る
+
+    git(dir, ["config", "core.hooksPath", ".githooks"]);
+
+    const sub = path.join(dir, "nested", "deep");
+    mkdirSync(sub, { recursive: true });
+    // cwd 基準で解決されるなら nested/deep/.githooks を探して見つからず、
+    // hook は発火せず commit が通ってしまう。ブロックされれば tree-top 基準である。
+    expectBlocked(() => commitEmpty(sub, "from nested subdir"));
+  }, T);
 });

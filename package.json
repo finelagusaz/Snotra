@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks",
     "dev": "vite",
     "test": "vitest run",
     "smoke:startup": "pwsh -NoProfile -File scripts/smoke-startup.ps1",

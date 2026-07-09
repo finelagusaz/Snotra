@@ -1,0 +1,7 @@
+# git hook は POSIX sh。CRLF で checkout されると、Linux の /bin/sh（dash）は
+# `_lib.sh` の `PROTECTED_BRANCH=main` を `main\r` として読み、ブランチ比較が
+# 永久に偽になる ＝ 静かに fail-open する（実測）。git-for-windows の sh は CR を
+# 落とすため Windows では再現せず、実行 hook の shebang 破損より危険な経路である。
+# 実測: この clone は core.autocrlf=input（global）だが、git-for-windows の
+# system 既定は true。global 設定を持たない新規 clone は CRLF に変換する。
+.githooks/** text eol=lf

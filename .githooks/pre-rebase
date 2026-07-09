@@ -1,0 +1,11 @@
+#!/bin/sh
+# main を rebase 対象とする操作を拒否する。
+# 引数: $1 = upstream, $2 = rebase される側のブランチ（省略時は現在のブランチ）
+. "$(dirname "$0")/_lib.sh"
+
+if [ -n "$2" ]; then
+  [ "$2" = "$PROTECTED_BRANCH" ] && die "main を rebase 対象にする操作は禁止です。"
+else
+  [ "$(current_branch_ref)" = "$PROTECTED_REF" ] && die "main を rebase 対象にする操作は禁止です。"
+fi
+exit 0

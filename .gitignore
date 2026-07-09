@@ -21,6 +21,9 @@ scripts/test-win.sh
 # Agent worktrees (Agent isolation: "worktree") — 変更ありの worktree は手動 cleanup
 .claude/worktrees/
 
+# subagent-driven-development の進捗レジャー・タスクブリーフ（セッション scratch）
+.superpowers/
+
 # Sidecar binaries (built by scripts/prepare-sidecar.ps1)
 src-tauri/binaries/
 

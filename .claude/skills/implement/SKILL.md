@@ -46,7 +46,7 @@ allowed-tools:
 
 ## Step 4 — 検証（最大5サイクル）
 
-`docs/build-commands.md` の「変更後の検証チェックリスト」を SSOT として、変更したファイルの種類に該当するカテゴリ A〜D をすべて実行する。失敗した場合、修正して失敗したステップから再実行する。
+`docs/build-commands.md` の「変更後の検証チェックリスト」を SSOT として、変更したファイルの種類に該当するカテゴリ A〜E をすべて実行する。失敗した場合、修正して失敗したステップから再実行する。
 
 - カテゴリ A（Rust 変更）の clippy・`cargo test -p snotra-core` も SSOT 上「必須」（最初の失敗で停止するチェーン実行を推奨）
 - 具体的なコマンド文字列は `docs/build-commands.md` を参照（二重メンテを避けるためこの SKILL に書かない）

@@ -1,0 +1,234 @@
+# hook の責務を三層に分離し、main 保護を git/GitHub の機構へ移す
+
+- 日付: 2026-07-09
+- ステータス: 設計合意済み（Phase 1 のみ本 spec のスコープ・実装計画 writing-plans へ）
+- 関連: #471（closed）, #473, #474, #475, #476, #477, #479 / `.claude/settings.json`, `.claude/hooks/post-edit.mjs`, `CLAUDE.md`, `AGENTS.md`
+- 由来: hook 関連 issue 群の構造分析。個々の issue を潰すのではなく、共通の根を断つ
+
+## 1. 背景と問題
+
+hook 関連の open issue が 5 件あり、すべて #471 の子である。#471 自身が「根治」を掲げて PostToolUse を作り直したにもかかわらず、同じ根から枝が伸び続けている。
+
+issue 群が共有する根の記述は「**hook が発火の判定に使う情報と、実際に検査する対象がずれている**」。これは正しいが、症状の記述である。
+
+### 実測した抜け道
+
+最重要ルール 1「`main` へ直接コミット・プッシュしない」を守る唯一の自動ガードが `block-main-commit`（`.claude/settings.json`）である。実際に測ると、守られていない。
+
+| 経路 | ルール 1 は守られるか | 測定 |
+|---|---|---|
+| Bash tool + `git commit` + hook の cwd が main | ✅ 止まる | — |
+| **PowerShell tool + `git commit`** | ❌ **素通り** | `matcher` が `"Bash"` のみ。この環境の primary shell は PowerShell |
+| `git -C <tree> commit` | ❌ 素通り | 正規表現 `git\s+(commit\|merge\|rebase)` に当たらない |
+| `git -c user.name=x commit` / `git --no-pager commit` | ❌ 素通り | 同上 |
+| `git push origin HEAD:main` | ❌ 素通り | ガードの語彙は `commit\|merge\|rebase`。**push が無い** |
+| `git pull origin main`（非 FF） | ❌ 素通り | 語彙外。かつ `settings.local.json` で自動承認済み |
+| subagent / worktree | ❌ ずれる | `git branch --show-current` を hook の cwd で評価している |
+| git ネイティブ hook | ❌ 不在 | `core.hooksPath` 未設定、`.git/hooks` に実体ファイル 0 本 |
+| GitHub branch protection | ❌ 不在 | ruleset `default` が `enforcement: "disabled"` のまま |
+
+**ルール 1 を守る機構は、実質的にひとつも存在しない。** PowerShell を選ぶだけで迂回できる。
+
+### 誤爆も実測した
+
+`grep` は payload 全体に当たるため、`tool_input.description` に「git commit」と書いただけで発火する。本設計の調査中、**`git` 操作を一切含まないコマンド**（文字列を `grep` に食わせる probe）が `block-main-commit` にブロックされた。
+
+### 誤爆が文書に転移している
+
+CLAUDE.md には、この誤爆を回避するための運用ルールが 2 つある。
+
+1. **最重要ルール 2「`git` コマンドを `&&` でチェーンしない」** — 理由として「`git checkout <branch> && git rebase main` のような連鎖は `block-main-commit` を誤発火させた実績がある」と明記されている
+2. **「main の fast-forward 同期は `git pull --ff-only` を使う」** — 理由は「`git merge --ff-only origin/main` はコミットを作らない FF でも `block-main-commit` に弾かれる」
+
+つまり **コードのバグが、人間が守るべき文書ルールへ転移している**。しかも 2 の回避先である `git pull` はガードの語彙外であり、非 FF なら main にマージコミットを作れる。**誤検知の回避が、見逃しを生んでいる。**
+
+### PostToolUse 側の問題も、同じ根から出ている
+
+#471 は「沈黙は合格を意味する」という契約を導入し、スクリプト内部の沈黙経路（タイムアウト・出力溢れ・起動失敗・実行時例外）をすべて塞いだ。しかし列挙のスコープがスクリプト内に閉じていた。実測で確認した、外側に残る沈黙経路:
+
+- `matcher` は `Edit|Write` のみ。Bash 経由のファイル変更（`git checkout` / `git pull` / rebase のコンフリクト解決 / `cargo fmt`）は無検査
+- `config-warn` は `additionalContext` を作らない。`tauri.conf.json` を編集したエージェントには**一文字も届かない**（`systemMessage` は人間向け）
+- `post-edit.mjs` 自身の構文エラーは `try { main() } catch` の外側で落ちる。エージェントには沈黙する
+- `tsconfig.json` / `Cargo.toml` / `package.json` の編集は完全な沈黙。**tsconfig ドリフト検出カナリアを置いた当のファイルが、そのカナリアを起動しない**
+
+## 2. 決定 — hook の目的を定義し、そこから責務を分ける
+
+> **Claude Code の hook は、エージェントの「意図」と「認識」を扱う唯一の層である。**
+>
+> - **リポジトリの状態**は git が守る（どの経路でも発火する）
+> - **成果物の正しさ**は CI が守る（走った証跡が残る）
+> - **hook** は「エージェントが今から何をしようとしているか」と「エージェントが今何を知っているか」だけを扱う
+
+現状の誤りはこの一文で説明できる。**hook にリポジトリ状態の保証を負わせた。** それは hook の視界にないものであり、穴を一つずつ塞いでも視界の外にあるものは見えない。
+
+### 責務の三層
+
+| 層 | 守るもの | 発火する経路 | 性質 |
+|---|---|---|---|
+| **Layer 0: GitHub ruleset** | main が **origin** で進むこと | すべて。どの端末・ツール・シェルからでも | **保証**。最終防衛線 |
+| **Layer 1: `.githooks/`（git ネイティブ）** | main が **ローカル**で進むこと | ローカルの全 git 操作。PowerShell も `git -C` も worktree も subagent も | **早期停止**。best-effort |
+| **Layer 2: Claude Code hook** | エージェントの**意図と認識** | ツール呼び出しのみ | (A2) 外部 API の不可逆呼び出し / (B) 編集直後の事実供給 |
+
+### (A) は 2 つに割れる
+
+これまで「禁止・保証」と一括りにしていたものは、性質の違う 2 種の混合だった。
+
+| | 対象 | git 機構で守れるか | hook で守れるか |
+|---|---|---|---|
+| **(A1)** `block-main-commit` | リポジトリの状態（main が進む） | ✅ 守れる | ❌ 視界外の経路が多すぎる |
+| **(A2)** PR 前 push チェック | 外部 API への不可逆呼び出し（`gh pr create` → 空 PR → merge 時の誤 close） | ❌ **守れない**（リポジトリを触らない。push しないので `pre-push` も鳴らない） | ✅ **hook にしか見えない** |
+
+**(A2) は git にも CI にも原理的に観測できず、Claude Code の hook だけが見える領域である。** `gh pr merge --squash` の誤 close も `gh issue close` も同じ。ここが hook の固有価値であり、#473 が求めた「`pre-bash.mjs` を作り `tool_input.command` だけを構造的にパースせよ」という解は、**(A1) にではなく (A2) にこそ必要**だった。
+
+### 非目標（YAGNI）
+
+- **`block-main-commit` を強化しない。** `matcher` に PowerShell を足し `push` を語彙に加えても、守れるのは「エージェントがツール経由で叩いた操作」だけで、あなたの手元の端末や将来のツール追加には原理的に届かない
+- **Layer 1 の不在を検知する仕組みを作らない。** `core.hooksPath` はローカル設定であり外れうるが、外れても Layer 0 が push を拒む。「安全網の不在を検知する安全網」という無限後退から降りる
+- **`required_status_checks`（CI グリーン必須）は今回入れない。** 最終防衛線を立てるという本 Phase の目的から外れる。別判断とする
+- **`post-edit.mjs` を触らない。** (B) の再設計は Phase 3
+
+## 3. Layer 0 — GitHub ruleset
+
+既存の休眠 ruleset（id `12941497`, name `default`, target `~DEFAULT_BRANCH`）を作り直さず、起こして 1 規則足す。repo は PUBLIC のため費用制約は無い。
+
+| 項目 | 現在 | 変更後 |
+|---|---|---|
+| `enforcement` | `disabled` | **`active`** |
+| `deletion` | 定義済み（不活性） | 有効 — main の削除を拒否 |
+| `non_fast_forward` | 定義済み（不活性） | 有効 — main への force-push を拒否 |
+| `pull_request` | なし | **追加**（`required_approving_review_count: 0`） |
+| `bypass_actors` | なし | **なし のまま** |
+
+`pull_request` 規則が「main への直接 push 禁止」の実体である。PR 経由の merge は通るため `gh pr merge --squash` は従来どおり動作し、承認者は不要。`bypass_actors` を置かないため、リポジトリ所有者にも適用される。
+
+**エスケープハッチ**: `enforcement` を `disabled` へ戻す。API または Web UI から、意図的に、監査ログを残して行う。`--no-verify` のような「うっかり通る」経路ではないことが要件である。
+
+## 4. Layer 1 — `.githooks/`
+
+リポジトリ管理下に置き、`core.hooksPath` で有効化する。
+
+```
+.githooks/
+  _lib.sh            共通の判定とメッセージ
+  pre-commit         main 上での commit を拒否
+  pre-merge-commit   main 上での merge commit を拒否（非 FF の git pull を含む）
+  pre-rebase         main を rebase 対象にする操作を拒否
+  pre-push           refs/heads/main を宛先とする push を拒否
+```
+
+4 本あるのは、元の grep が担っていた語彙（`commit|merge|rebase`）に **push** を足した結果である。git は操作ごとに別の hook を呼ぶため 1 本にはまとまらない。判定とメッセージは `_lib.sh` に集約する。
+
+```sh
+# .githooks/pre-commit
+#!/bin/sh
+. "$(dirname "$0")/_lib.sh"
+# detached HEAD（rebase 中など）は判定できない。判定できないものは通す
+branch=$(git symbolic-ref --short -q HEAD) || exit 0
+[ "$branch" = "$PROTECTED_BRANCH" ] && die "main への直接コミットは禁止です。"
+exit 0
+```
+
+```sh
+# .githooks/pre-push — stdin: <local ref> <local sha> <remote ref> <remote sha>
+#!/bin/sh
+. "$(dirname "$0")/_lib.sh"
+while read -r _l _ls remote_ref _rs; do
+  [ "$remote_ref" = "refs/heads/$PROTECTED_BRANCH" ] &&
+    die "main への直接 push は禁止です（$remote_ref）。"
+done
+exit 0
+```
+
+`pre-push` は source ではなく **destination の ref** を見る。ゆえに `git push origin HEAD:main` も `git push origin :main`（削除）も宛先で捉える。これが「リポジトリの状態を守る」語彙である。
+
+### なぜ漏れないのか
+
+git が hook を呼ぶとき、cwd は**コミットされるツリーのトップ**である。したがって `git -C /other/tree commit` はそのツリーの `.githooks/pre-commit` を、そのツリーのブランチで評価する。「cwd と実際のコミット先がずれる」というバグが構造的に発生しない。worktree も同じ理由で守られる。
+
+### bootstrap
+
+`core.hooksPath` はローカル設定（`.git/config`）でリポジトリに乗らない。`package.json` に追加する。
+
+```json
+"scripts": { "prepare": "git config core.hooksPath .githooks" }
+```
+
+npm の `prepare` は `npm install` / `npm ci` の後に走る。worktree は `.git/config` を共有するため、一度で全 worktree に効く。
+
+### エスケープハッチ
+
+`--no-verify` が `pre-commit` / `pre-merge-commit` / `pre-push` を迂回する。**人間専用**であり、エージェントには harness の system prompt と CLAUDE.md が禁じる。`pre-rebase` は `--no-verify` を受け付けないため、迂回するなら `git config --unset core.hooksPath` を一時的に行う。
+
+## 5. Layer 2 — 今回の変更
+
+`block-main-commit` を `.claude/settings.json` から**削除**する。Layer 0/1 が守る以上、残す価値は「より早く止まる」ことだけであり、その対価は漏れ・誤爆・「守られている」という誤った信念である。
+
+PR 前 push チェックは**今回触らない**（Phase 2）。`post-edit.mjs` も触らない（Phase 3）。
+
+### 削除に伴い CLAUDE.md から消えるもの
+
+git ネイティブ hook は実際に実行される瞬間に、実際のツリーで判定する。ゆえに以下 2 ルールの存在理由が消滅する。
+
+- 最重要ルール 2「`git` コマンドを `&&` でチェーンしない」
+- 「main の fast-forward 同期は `git pull --ff-only` を使う」
+
+代わりに記載するもの:
+
+- main 保護は `.githooks/` + GitHub ruleset が担うこと（hook ではない）
+- `--no-verify` は人間専用であり、エージェントは使用してはならないこと
+- `npm install` が `core.hooksPath` を設定すること（bootstrap の所在）
+
+**設計の良し悪しを測る指標のひとつは、ドキュメントが減るかどうかである。** 本変更は CLAUDE.md から 2 ルールを削り、hook を 1 本削り、#473 の半分を消滅させる。何も足さずに。
+
+## 6. 検証（故障注入）
+
+AGENTS.md の要求「安全網が『効いている』ことは、故障注入で一度は実測する」に従う。#471 は、この規律が無かったために「hook の出力が一度もエージェントに届いていなかった」ことを見逃した。
+
+V5 / V6 は、本 spec §1 で測った実在の抜け道をそのまま逆向きに撃つ回帰テストである。
+
+| # | 故障注入 | 期待 | 何を証明するか |
+|---|---|---|---|
+| V1 | 使い捨てブランチから `git push origin tmp:main` | 拒否 | Layer 0 が立った。main は動かない |
+| V2 | `gh pr merge --squash` | **通る** | `pull_request` 規則が既存の運用を壊さない |
+| V3 | main への force-push | 拒否 | `non_fast_forward` |
+| V4 | main 上で commit | 拒否 | `pre-commit` |
+| V5 | **PowerShell ツールから** main 上で commit | 拒否 | 前回素通りした経路が塞がった |
+| V6 | feature ブランチの cwd から `git -C <main ツリー> commit` | 拒否 | cwd 判定バグの構造的消滅 |
+| V7 | main で非 FF の `git pull` | 拒否 | `pre-merge-commit` |
+| V8 | `git push origin HEAD:main` | 拒否 | `pre-push`（destination で判定） |
+| V9 | feature での通常 commit / main で `git pull --ff-only` / `git merge --ff-only origin/main` | **すべて通る** | **誤爆しない**。CLAUDE.md の 2 ルールを消せる根拠 |
+| V10 | worktree 内で commit | 拒否 | 相対 `core.hooksPath` の解決が worktree で成立する |
+
+**V10 を独立させた理由**: 相対 `core.hooksPath` が「working tree のトップを基準に解決される」というのは git のドキュメントから読んだ期待であって、Windows + worktree での測定結果ではない。ここで転けたら絶対パス方式へ切り替える。
+
+**V9 の重要性**: 通ることの確認が、通らないことの確認と同じだけ重要である。V9 が失敗すれば「誤爆しないから doc ルールを消せる」という前提が崩れ、§5 の削除は取り消しになる。
+
+## 7. 実施順序 — 安全網を一瞬も空にしない
+
+1. ruleset を `active` にし `pull_request` を追加 → **V1 で実測**
+2. `.githooks/` 4 本 + `_lib.sh` + `package.json` の `prepare` → **V4〜V10 で実測**
+3. **実測が緑になってから** `block-main-commit` を `settings.json` から削除
+4. CLAUDE.md の最重要ルール 2 と `--ff-only` 運用ルールを削除し、置き換え文言を追加
+
+3 を最後に置く。漏れはあれど存在するガードを、新しい防衛線が実測で立つまで残すため。
+
+## 8. 受け入れ条件
+
+- [ ] V1〜V10 がすべて期待どおり（V2・V9 を含む＝既存の運用を壊さず、誤爆もしないこと）
+- [ ] `block-main-commit` 削除後も V1, V4〜V8 が保たれる
+- [ ] CLAUDE.md から最重要ルール 2 と `--ff-only` 運用ルールが消え、置き換え文言が入っている
+- [ ] `docs/build-commands.md` に bootstrap（`npm install` が `core.hooksPath` を設定する）が記載されている
+- [ ] `post-edit.mjs` と PR 前 push チェックに変更が無い
+
+## 9. issue の処遇
+
+| issue | 本 Phase 後 |
+|---|---|
+| **#473** | 半分が消滅（`block-main-commit` の fail-open は hook の削除とともに消える）。残る半分＝ PR 前 push チェック側（payload 全体 grep・PowerShell 素通り）は **Phase 2 の issue として書き換える** |
+| #474 / #475 / #476 / #477 / #479 | すべて (B) 側。肯定的報告への転換（Phase 3）に依存。今回は触らない |
+| **新規起票** | 「PreToolUse の `matcher: "Bash"` は PowerShell tool に一致しない」— Phase 2 に含める |
+
+## 10. この先（本 spec の範囲外）
+
+- **Phase 2 — (A2)**: `pre-bash.mjs` を作り、`tool_input.command` だけを見て、`matcher` を `Bash|PowerShell` に広げ、判定不能なら fail-closed に倒す。git にも CI にも見えない、hook 固有の領域
+- **Phase 3 — (B)**: 「沈黙 = 合格」を剥がし、走った検査に名乗らせる。沈黙は「何も走らなかった」を意味するようになり、#471 が塞ごうとした沈黙経路（matcher 外の編集・parse error・`config-warn` の envelope 分岐・`tsconfig.json` の無反応）が、塞がなくても無害になる

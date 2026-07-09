@@ -42,13 +42,20 @@
 
 ## フック（.claude/settings.json）
 
-エージェントの操作には以下のフックが介入する。発火条件の正確な定義は `.claude/settings.json` を SSOT とする。
+エージェントの操作には以下のフックが介入する。PreToolUse の発火条件は `.claude/settings.json` を、PostToolUse の発火条件と検査対応表は **`.claude/hooks/post-edit.mjs` の `selectChecks`** を SSOT とする。
 
 | フック | 発火条件 | 正しい対応 |
 |---|---|---|
 | `block-main-commit`（PreToolUse） | main ブランチ上の `git commit` / `merge` / `rebase` | feature ブランチを作成してから操作する |
 | PR 作成前 push チェック（PreToolUse） | 未 push コミットまたは upstream 未設定での `gh pr create`（空 PR / `Closes` 誤 close 防止） | `git push -u origin HEAD` してから PR を作る |
-| 編集後の自動検証（PostToolUse） | `.rs` 編集 → clippy（`snotra-core` 編集では core テストも）、`.ts`/`.tsx` 編集 → typecheck | Edit/Write 後に会話へ流れる clippy / typecheck 出力はこのフック由来であり、手動での再実行は不要 |
+| 編集後の自動検証（PostToolUse） | `tool_input.file_path` が属するツリーからの相対パスで判定。`*.rs` → clippy（`snotra-core` / `snotra-settings` 配下ではその crate のテストも）、`ui/src/**/*.{ts,tsx,mts,cts}`（`*.test.ts(x)` を除く）→ typecheck、`tauri.conf.json` / `config.toml` → WARN、`.claude/settings.json` と `.claude/hooks/**` → hook-selftest | **沈黙は合格を意味する**。失敗時のみ `exit code` と再現コマンドと診断が会話に届く。手動での再実行は不要 |
+
+- **検出は exit code、出力は証拠**（#471）。検査が成功した hook は何も出力しない。失敗したときだけ `--- <検査>: 失敗 (exit N) ---` と再現コマンドが会話に現れる。診断が予算（`head`/`tail` 数行〜数十行）を超えても、再現コマンドで全件を見られるので取りこぼしは無い
+- **沈黙を「合格」と読めるのは、沈黙しうる経路をすべて塞いだから**。タイムアウト（検査ごと 300s で自ら打ち切る）・出力溢れ・起動失敗・スクリプト内部エラーは、いずれも必ず報告される。この契約を壊す変更を `.claude/hooks/` に入れてはならない
+- **`.ts`/`.tsx` を編集したのに何も出ない場合は 2 通りある**: 型検査が通った、または `tsconfig.json` の `include` 対象外（`e2e/`・`*.config.ts`・`*.test.ts(x)`）。後者では `[post-edit] ... は tsconfig の include 対象外です` という一行が出る
+- **hook は worktree でも「そのファイルが属するツリー」を検査する**。root は `file_path`（絶対パス）から最近接の `.git` を遡って導出するため、`CLAUDE_PROJECT_DIR` の意味論に依存しない。ただしスクリプト自身の所在は `settings.json` の `${CLAUDE_PROJECT_DIR:-.}` で解決し、相対 `file_path` を受け取った場合は cwd 基準で `resolve` する
+- **`.claude/settings.json` の編集は file watcher が即座に拾う**（セッション再起動は不要・実測）。壊れたスクリプトを配線するとその瞬間から全検査が沈黙する。そのため `.claude/settings.json` と `.claude/hooks/**` の編集は `hook-selftest`（settings.json の JSON 検証 + `vitest run .claude/hooks`）を自動発火する
+- `config.toml` はリポジトリに実在しない（ランタイムのユーザー領域ファイル）ため、WARN の真陽性は事実上 `tauri.conf.json` のみ
 
 ## チーム憲章
 

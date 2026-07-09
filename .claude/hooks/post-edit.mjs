@@ -239,7 +239,7 @@ function buildCommand(id, root) {
 }
 
 /**
- * `.claude/settings.json` が壊れると、PostToolUse だけでなく block-main-commit を
+ * `.claude/settings.json` が壊れると、PostToolUse だけでなく PR 前 push チェックを
  * 含む全 hook が停止する。パースは実質 0ms なので、hook 系を編集したら必ず見る。
  */
 function validateSettings(root) {

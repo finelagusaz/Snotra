@@ -160,6 +160,18 @@ worktree に `node_modules` は無い（実測 9）。よって:
 
 検証: `npm run typecheck`（cold / warm 2 回）、`npm run build`
 
+**影響する全実行経路（実測で裏取り）**:
+
+| 経路 | 定義 | Phase 3 後の挙動 |
+|---|---|---|
+| `npm run typecheck` | `tsc`（フラグは tsconfig 側） | incremental 化。**warm で高速化** |
+| `npm run prebuild` | `npm run typecheck` | 同上 |
+| `npm run build` | `prebuild` → `vite build` | vite は esbuild を使い tsc の buildinfo を読まない。影響なし |
+| `npm run verify` | `cargo check ...` → `npm run build` | 上記経由で影響なし |
+| CI `frontend-check` | `npm ci` → `npm test` → `npm run build` | **`cache: npm` は npm のグローバルキャッシュ（`~/.npm`）のみを復元し、`node_modules` は復元しない**。`node_modules` は `.gitignore:3` によりチェックアウトにも含まれず、`npm ci` が毎回作り直す。よって **CI の buildinfo は常に cold** |
+
+`★ CI は cold・ローカルのみ warm` という非対称は**安全側**である。CI で incremental の恩恵は無いが、stale buildinfo による偽 green も構造的に起こりえない。
+
 ### Phase 4 — ドキュメント同期
 
 11. `CLAUDE.md` L43 / L45 / **L51（誤記の訂正）** を更新

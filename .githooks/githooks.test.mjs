@@ -210,7 +210,7 @@ function makeExecutable(dir) {
 }
 
 describe("相対 core.hooksPath — worktree での解決（V10）", () => {
-  it("linked worktree でも .githooks が解決され、main 上の commit が拒否される", () => {
+  it("linked worktree では worktree 自身の .githooks が解決される", () => {
     // 既定ブランチを feat/base にして、main を linked worktree として切り出す
     const dir = initRepo("feat/base");
     cpSync(HOOKS_DIR, path.join(dir, ".githooks"), { recursive: true });
@@ -218,16 +218,24 @@ describe("相対 core.hooksPath — worktree での解決（V10）", () => {
     git(dir, ["add", ".githooks"]);
     git(dir, ["commit", "-m", "add hooks"]);
 
-    // ★ 相対パス。main ツリーでも worktree でも同じ設定を共有する
+    // ★ 相対パス。main ツリーと worktree は .git/config を共有する
     git(dir, ["config", "core.hooksPath", ".githooks"]);
 
-    // main ツリー側: feat/base なので通る
+    // main ツリー側は feat/base なので通る（＝誤爆しないことの確認。
+    // ただし hook が一切起動しなくても通るため、これは総沈黙の検知にはならない）
     commitEmpty(dir, "feat/base ok");
 
-    // worktree 側: main なので拒否される
     const wt = `${dir}-wt`;
     scratchDirs.push(wt); // 兄弟ディレクトリなので明示的に片付け対象へ入れる
     git(dir, ["worktree", "add", "-b", "main", wt]);
+
+    // 対立仮説の反証。両ツリーの pre-commit は byte 一致であり、どちらが実行されても
+    // current_branch() は cwd（= worktree）を見て main を返す。ゆえに無害化しないと
+    // 「worktree 側が解決された」と「main ツリー側が解決された」を区別できない。
+    // main ツリー側だけを無害化しておけば、なお拒否されることが worktree 側の
+    // pre-commit が実行された証拠になる。
+    writeFileSync(path.join(dir, ".githooks", "pre-commit"), "#!/bin/sh\nexit 0\n");
+
     expectBlocked(() => commitEmpty(wt, "worktree main commit"));
   }, T * 2);
 });

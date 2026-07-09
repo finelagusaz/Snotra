@@ -1,0 +1,14 @@
+#!/bin/sh
+# 宛先が refs/heads/main の push を拒否する。
+#
+# source ではなく destination を見る。ゆえに `git push origin HEAD:main` も
+# `git push origin :main`（削除）も捕まえる。これが「リポジトリの状態を守る」語彙。
+#
+# stdin: <local ref> <local sha> <remote ref> <remote sha>
+. "$(dirname "$0")/_lib.sh"
+
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  [ "$remote_ref" = "refs/heads/$PROTECTED_BRANCH" ] &&
+    die "main への直接 push は禁止です（宛先: $remote_ref）。"
+done
+exit 0

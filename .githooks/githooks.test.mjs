@@ -159,3 +159,44 @@ describe("pre-rebase", () => {
     expect(commitCount(dir)).toBe("3");
   }, T);
 });
+
+describe("pre-push", () => {
+  it("main を宛先とする push を拒否する", () => {
+    const origin = initBare();
+    const dir = initRepo();
+    git(dir, ["remote", "add", "origin", origin]);
+    enableHooks(dir);
+    expectBlocked(() => git(dir, ["push", "origin", "main"]));
+  }, T);
+
+  it("`HEAD:main` の形でも拒否する（source ではなく宛先で判定する）", () => {
+    const origin = initBare();
+    const dir = initRepo();
+    git(dir, ["remote", "add", "origin", origin]);
+    git(dir, ["switch", "-c", "feat/x"]);
+    commitEmpty(dir, "feat 1");
+    enableHooks(dir);
+    expectBlocked(() => git(dir, ["push", "origin", "HEAD:main"]));
+  }, T);
+
+  it("main の削除 push も拒否する", () => {
+    const origin = initBare();
+    const dir = initRepo();
+    git(dir, ["remote", "add", "origin", origin]);
+    git(dir, ["push", "origin", "main"]); // hook 無効のうちに一度送る
+    git(dir, ["switch", "-c", "feat/x"]);
+    enableHooks(dir);
+    expectBlocked(() => git(dir, ["push", "origin", ":main"]));
+  }, T);
+
+  it("feature ブランチの push は通る（誤爆しない）", () => {
+    const origin = initBare();
+    const dir = initRepo();
+    git(dir, ["remote", "add", "origin", origin]);
+    git(dir, ["switch", "-c", "feat/x"]);
+    commitEmpty(dir, "feat 1");
+    enableHooks(dir);
+    git(dir, ["push", "origin", "feat/x"]);
+    expect(git(dir, ["ls-remote", "origin", "refs/heads/feat/x"])).toContain("refs/heads/feat/x");
+  }, T);
+});

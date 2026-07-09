@@ -120,14 +120,15 @@ CLAUDE.md には、この誤爆を回避するための運用ルールが 2 つ�
 4 本あるのは、元の grep が担っていた語彙（`commit|merge|rebase`）に **push** を足した結果である。git は操作ごとに別の hook を呼ぶため 1 本にはまとまらない。判定とメッセージは `_lib.sh` に集約する。
 
 ```sh
-# .githooks/pre-commit
+# .githooks/pre-commit（as-built）
 #!/bin/sh
 . "$(dirname "$0")/_lib.sh"
-# detached HEAD（rebase 中など）は判定できない。判定できないものは通す
-branch=$(git symbolic-ref --short -q HEAD) || exit 0
-[ "$branch" = "$PROTECTED_BRANCH" ] && die "main への直接コミットは禁止です。"
+# detached HEAD（rebase 中など）は current_branch_ref() が空を返す＝判定不能なので通す
+[ "$(current_branch_ref)" = "$PROTECTED_REF" ] && die "main への直接コミットは禁止です。"
 exit 0
 ```
+
+**`git symbolic-ref --short` を使ってはならない。** `main` という名の tag が存在すると、曖昧性回避のため `refs/heads/main` が `heads/main` に縮み、`main` との比較が偽になって**静かに素通りする**（最終レビューで実測）。削除予定の `block-main-commit` は `git branch --show-current` を使っておりこの曖昧性に免疫があったため、短縮名で比較すると**置き換え対象からの後退**になる。完全 ref（`refs/heads/main`）で比較する。
 
 ```sh
 # .githooks/pre-push — stdin: <local ref> <local sha> <remote ref> <remote sha>
@@ -156,6 +157,18 @@ git が hook を呼ぶとき、cwd は**コミットされるツリーのトッ�
 `.githooks/` は**追跡ファイル**である。したがってそれを含まないコミットを checkout すると、`core.hooksPath` は存在しないディレクトリを指し、**git は「hook 無し」として操作を通す（fail-open）**。
 
 該当するのは、`.githooks/` 導入前のコミット・古いタグ、そして**この変更がマージされるまでの `main` そのもの**である。
+
+### Layer 1 が見ていない操作もある（実測・受容する性質）
+
+git は操作ごとに別の hook を呼ぶ。以下では `pre-commit` が**呼ばれない**——最終レビューが実測し、いずれも main が無警告で進んだ。
+
+`git cherry-pick` / `git revert` / `git am` / `git branch -f main <sha>` / `git update-ref refs/heads/main <sha>`
+
+（`git commit --amend` と `git merge --squash` 後の `commit` は正しく拒否される。）
+
+旧 `block-main-commit` の正規表現 `git\s+(commit|merge|rebase)` もこれらを捕まえていないため**後退ではない**。ただし「拒否する」と書いてはならない。全経路を捕捉するには `reference-transaction` hook が要るが、`git fetch` / `pull --ff-only` による main 更新でも発火するため FF 判定が必要であり、本 spec のスコープ外（follow-up issue）。
+
+### 帰結
 
 これは三層設計を壊さない。Layer 1 は best-effort であり、**保証は Layer 0（ruleset）が担う**。ローカルの main が汚れても push は拒否され、`git reset --soft` で回復できる。
 
@@ -250,17 +263,20 @@ V5 / V6 は、本 spec §1 で測った実在の抜け道をそのまま逆向�
 ### Phase 1a（本 PR）
 
 - [x] **V1 実測**: server が main への直接 push を拒否（`GH013 / Changes must be made through a pull request`）。main は動いていない
-- [x] **V3 未実行**: harness が main への force-push を拒否した。迂回しない。`pull_request` 規則は main へのあらゆる直接 ref 更新を拒むため V1 に包含される
+- [ ] **V3 は実行しない**: harness が main への force-push を拒否した。迂回しない。`pull_request` 規則は main へのあらゆる直接 ref 更新を拒むため V1 に包含される。`non_fast_forward` が `active` であることは read-back で確認済みだが、**実地の force-push・削除は一度も試行していない**
 - [x] **V4 実測**: Bash ツールからの commit は旧 `block-main-commit` が exit 2 で止める
 - [x] **V5 実測**: `.githooks` を置いた main で、PowerShell ツールからの commit が `exit 1 / BLOCKED` で拒否される（前回素通りした経路が塞がった）
 - [x] **V6・V7・V10 自動化**: `.githooks/githooks.test.mjs` の 14 テスト（`git -C`・非 FF マージ・rebase・push・worktree・サブディレクトリ）
-- [x] **V8 未実行**: harness が push を拒否。`pre-push` の 3 テスト（client）と V1（server）で二重に測定済み
+- [ ] **V8 は実行しない**: harness が main への push を拒否。迂回しない。`pre-push` の 3 テスト（client）と V1（server）で二重に測定済み
 - [x] **V9 実測**: `git pull --ff-only` も `git merge --ff-only origin/main` も通る＝誤爆しない
 - [x] `docs/build-commands.md` にカテゴリ E と bootstrap が記載されている
 - [x] `.gitattributes` が `.githooks/**` を `eol=lf` に固定している（`_lib.sh` も含む＝CRLF による静かな guard 無効化を防ぐ）
-- [ ] CLAUDE.md に新しい層（`.githooks/` + ruleset）と §4 の caveat が**追記**されている（既存ルールは削除しない）
-- [ ] `.claude/settings.json` と `.claude/hooks/post-edit.mjs` に変更が無い
+- [x] CLAUDE.md に新しい層（`.githooks/` + ruleset）と §4 の caveat が**追記**されている（既存ルールは削除しない）。主張の確度は測定の等級に合わせる（実測 / read-back のみ / 視界外、を書き分ける）
+- [x] `.claude/settings.json` と `.claude/hooks/post-edit.mjs` に変更が無い
+- [x] `_lib.sh` は完全 ref（`refs/heads/main`）で比較する。`--short` は ref 曖昧性で静かに fail-open する
+- [x] `AGENTS.md` と `.claude/skills/implement/SKILL.md` の「カテゴリ A〜D」が「A〜E」になっている
 - [ ] **V2**: `gh pr merge --squash` が動く（マージ時に確認）
+- [ ] CI グリーン（ubuntu の `npm test` が実行ビットと dash 互換性の検知器になる）
 
 ### Phase 1b（マージ後）
 
@@ -277,6 +293,9 @@ V5 / V6 は、本 spec §1 で測った実在の抜け道をそのまま逆向�
 | #474 / #475 / #476 / #477 / #479 | すべて (B) 側。肯定的報告への転換（Phase 3）に依存。今回は触らない |
 | **新規起票 ①** | 「Phase 1b: `block-main-commit` を削除し CLAUDE.md の 2 ルールを消す」— 本 PR のマージ後に実施 |
 | **新規起票 ②** | 「PreToolUse の `matcher: "Bash"` は PowerShell tool に一致しない」— Phase 2 に含める |
+| **新規起票 ③** | 「`reference-transaction` hook で `cherry-pick` / `revert` / `am` / `branch -f` / `update-ref` を捕捉する」— §4 の視界外経路。`fetch` / `pull --ff-only` による main 更新でも発火するため FF 判定が要る |
+| **新規起票 ④** | 「`selectChecks` に `.githooks/**` を追加する」— `.githooks/` は今日から安全網であり、`.claude/hooks/**` と同じ理由（安全網そのものを編集したら安全網が生きているか確かめる）が適用されるが対象外。Phase 3 と同時が自然 |
+| **新規起票 ⑤** | 「`prepare` の `git config` は `.git` 無し環境で `npm ci` ごと落とす」— 現状すべての `npm ci` は `actions/checkout` の後なので到達不能。Docker のレイヤキャッシュ build を足すと踏む。`\|\| exit 0` は「Layer 1 は best-effort、不在は検知しない」と整合する |
 
 ## 10. この先（本 spec の範囲外）
 

@@ -888,25 +888,7 @@ git config --get core.hooksPath
 
 Expected: `.githooks`
 
-- [ ] **Step 3: 実リポジトリで誤爆しないことを確かめる（V9 の一部）**
-
-**前提**: `git status --short` が空であること。空でなければ中断して報告する。
-
-いま作業中の feature ブランチで、通常のコミットが通ることを確かめる。
-
-```powershell
-git commit --allow-empty -m "probe: feature ブランチの commit は通る"
-```
-
-Expected: 成功（`.githooks/pre-commit` は feature ブランチを通す）。
-
-取り消しは `--soft` を使う。`--hard` は作業ツリーを巻き戻すため、未コミットの変更があると破壊する。空コミットの取り消しに `--hard` は不要である。
-
-```powershell
-git reset --soft HEAD~1
-```
-
-- [ ] **Step 4: `docs/build-commands.md` にカテゴリ E と bootstrap を追記する**
+- [ ] **Step 3: `docs/build-commands.md` にカテゴリ E と bootstrap を追記する**
 
 「変更後の検証チェックリスト」のカテゴリ D の直後に追加する。以下は `docs/build-commands.md` へ**そのまま貼る内容**（外側の 4 連バッククォートは囲みであり、貼らない）。
 
@@ -922,7 +904,7 @@ npm test    # 必須: 使い捨て repo で hook を実測する（.githooks/git
 - この層は best-effort。`core.hooksPath` が外れても **GitHub ruleset（`default`）が main への直接 push を拒否する**ため、外れたことを検知する仕組みは意図的に設けていない
 ````
 
-- [ ] **Step 5: 全テストが通ることを確認する**
+- [ ] **Step 4: 全テストが通ることを確認する**
 
 ```powershell
 npm test
@@ -930,10 +912,12 @@ npm test
 
 Expected: `ui/src` と `.claude/hooks` と `.githooks` のテストがすべて PASS。
 
-- [ ] **Step 6: コミット**
+- [ ] **Step 5: コミット**
+
+`.gitattributes` を忘れないこと。untracked のままでは新規 clone に届かず、Step 0 の目的が消える。
 
 ```powershell
-git add package.json docs/build-commands.md
+git add .gitattributes package.json docs/build-commands.md
 ```
 ```powershell
 git commit -F "<scratchpad>/msg-task6.txt"
@@ -948,6 +932,28 @@ npm install / npm ci が prepare で core.hooksPath を設定する。worktree �
 
 この層が外れても GitHub ruleset が push を拒むため、外れたことを検知する
 仕組みは意図的に作らない（「安全網の不在を検知する安全網」の無限後退を断つ）。
+```
+
+- [ ] **Step 6: 実リポジトリで誤爆しないことを確かめる（V9 の一部）**
+
+**commit の後に行う。** Step 1・3 が作業ツリーを汚すため、コミット前にこの probe を置くと「`git status --short` が空」という前提を満たせない。
+
+```powershell
+git status --short
+```
+
+Expected: 空。
+
+```powershell
+git commit --allow-empty -m "probe: feature ブランチの commit は通る"
+```
+
+Expected: 成功（`.githooks/pre-commit` は feature ブランチを通す）。
+
+取り消しは `--soft` を使う。`--hard` は作業ツリーを巻き戻すため、未コミットの変更があると破壊する。空コミットの取り消しに `--hard` は不要である。
+
+```powershell
+git reset --soft HEAD~1
 ```
 
 ---

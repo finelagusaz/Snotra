@@ -5,9 +5,9 @@
 // 「拒否されること」と同じだけ「通ること」（誤爆しないこと）を確かめる。
 // 誤爆は CLAUDE.md へ運用ルールとして転移する（#473 の教訓）。
 
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,20 @@ const HOOKS_DIR = path.dirname(fileURLToPath(import.meta.url));
 // git config の値に \ を入れない（PowerShell/msys の境界で壊れる）
 const HOOKS_DIR_POSIX = HOOKS_DIR.split(path.sep).join("/");
 const T = 20_000; // git を数回起動するため既定 5s では足りない
+
+// 作った使い捨てディレクトリはここに集め、最後にまとめて消す
+// （`.claude/hooks/post-edit.test.mjs` と同じ作法）。Task 3・4・5 が
+// 足すテストも scratchDir を通す限り自動で片付く。
+const scratchDirs = [];
+afterAll(() => {
+  for (const dir of scratchDirs) rmSync(dir, { recursive: true, force: true });
+});
+
+function scratchDir(prefix) {
+  const dir = mkdtempSync(path.join(tmpdir(), prefix));
+  scratchDirs.push(dir);
+  return dir;
+}
 
 function git(cwd, args) {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: "pipe" });
@@ -32,7 +46,7 @@ function commitCount(dir) {
 
 /** hook を無効のまま初期コミットまで済ませた repo を作る。 */
 function initRepo(defaultBranch = "main") {
-  const dir = mkdtempSync(path.join(tmpdir(), "snotra-githooks-"));
+  const dir = scratchDir("snotra-githooks-");
   git(dir, ["init", "-b", defaultBranch]);
   git(dir, ["config", "user.email", "test@example.com"]);
   git(dir, ["config", "user.name", "githooks test"]);
@@ -44,7 +58,7 @@ function initRepo(defaultBranch = "main") {
 }
 
 function initBare() {
-  const dir = mkdtempSync(path.join(tmpdir(), "snotra-githooks-origin-"));
+  const dir = scratchDir("snotra-githooks-origin-");
   git(dir, ["init", "--bare", "-b", "main"]);
   return dir.split(path.sep).join("/");
 }

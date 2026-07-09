@@ -1,0 +1,8 @@
+#!/bin/sh
+# main 上でマージコミットが作られるのを拒否する（非 FF の `git pull` を含む）。
+# FF マージはマージコミットを作らないため、この hook は呼ばれない＝素通りする。
+. "$(dirname "$0")/_lib.sh"
+
+[ "$(current_branch)" = "$PROTECTED_BRANCH" ] &&
+  die "main へのマージコミットは禁止です（fast-forward なら通ります）。"
+exit 0

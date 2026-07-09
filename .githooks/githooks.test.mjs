@@ -112,3 +112,50 @@ describe("pre-commit", () => {
     expectBlocked(() => git(elsewhere, ["-C", target, "commit", "--allow-empty", "-m", "x"]));
   }, T);
 });
+
+describe("pre-merge-commit", () => {
+  it("main への非 FF マージ（マージコミットが生じる）を拒否する", () => {
+    const dir = initRepo();
+    git(dir, ["switch", "-c", "feat/x"]);
+    commitEmpty(dir, "feat 1");
+    git(dir, ["switch", "main"]);
+    commitEmpty(dir, "main 1"); // ここで分岐させる（まだ hook 無効）
+    enableHooks(dir);
+    expectBlocked(() => git(dir, ["merge", "--no-ff", "feat/x", "-m", "merge"]));
+  }, T);
+
+  it("main への FF マージは通る（マージコミットが生じないので hook は呼ばれない）", () => {
+    const dir = initRepo();
+    git(dir, ["switch", "-c", "feat/x"]);
+    commitEmpty(dir, "feat 1");
+    git(dir, ["switch", "main"]);
+    enableHooks(dir);
+    git(dir, ["merge", "--ff-only", "feat/x"]);
+    expect(commitCount(dir)).toBe("2");
+  }, T);
+});
+
+describe("pre-rebase", () => {
+  it("main そのものを rebase する操作を拒否する", () => {
+    const dir = initRepo();
+    git(dir, ["switch", "-c", "feat/x"]);
+    commitEmpty(dir, "feat 1");
+    git(dir, ["switch", "main"]);
+    commitEmpty(dir, "main 1");
+    enableHooks(dir);
+    // main を feat/x の上に載せ替えようとする（$2 省略 → 対象は現在の main）
+    expectBlocked(() => git(dir, ["rebase", "feat/x"]));
+  }, T);
+
+  it("feature を main の上に rebase するのは通る（誤爆しない）", () => {
+    const dir = initRepo();
+    git(dir, ["switch", "-c", "feat/x"]);
+    commitEmpty(dir, "feat 1");
+    git(dir, ["switch", "main"]);
+    commitEmpty(dir, "main 1");
+    enableHooks(dir);
+    git(dir, ["switch", "feat/x"]);
+    git(dir, ["rebase", "main"]);
+    expect(commitCount(dir)).toBe("3");
+  }, T);
+});

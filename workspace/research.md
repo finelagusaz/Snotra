@@ -29,9 +29,9 @@
 | 1 | `jq` は使えるか | **不在**（`command -v jq` → not found）。JSON 抽出は `node` で行う |
 | 2 | `node` は使えるか | **v26.4.0**（ローカル）。CI は Node 22 |
 | 3 | `CLAUDE_PROJECT_DIR` は通常シェルから見えるか | **UNSET**。hook 実行時のみ設定される |
-| 4 | `tsc` は `tsBuildInfoFile` の親ディレクトリを自動生成するか | **する**。`node_modules/.cache` を `rm -rf` してから実行 → exit 0 で再生成。既存 hook の `mkdir -p` は**不要** |
+| 4 | `tsc` は `tsBuildInfoFile` の親ディレクトリを自動生成するか | **する**。`npm ci` 直後（`.cache` が真に不在）に TS 6.0.3 で実行 → exit 0 で `node_modules/.cache/` を生成。既存 hook の `mkdir -p` は**不要** |
 | 5 | tsconfig の `include` を全 TS に広げると何が起きるか | **既存の型エラー 9 件**が露出（下表） |
-| 6 | `package.json` / `package-lock.json` / 実体の typescript バージョン | 宣言 `^6.0.2` / lock **6.0.3** / 実体 **5.9.3** |
+| 6 | `package.json` / `package-lock.json` / 実体の typescript バージョン | 調査時: 宣言 `^6.0.2` / lock **6.0.3** / 実体 **5.9.3**（ローカルの陳腐化）。**2026-07-09 に `npm ci` 実行済み → 実体も 6.0.3 で CI と一致**。以降の計測はすべて 6.0.3 |
 | 7 | CI と同じ TS 6.0.3 で `noEmit` + `incremental`（tsconfig 記述）は成立するか | **成立**。exit 0、buildinfo 生成 OK |
 | 8 | worktree の `.git` はファイルかディレクトリか | **ファイル**（内容 `gitdir: C:/workspace/Snotra/.git/worktrees/<name>`） |
 | 9 | worktree に `node_modules` はあるか | **無い**（gitignore 対象のため checkout されない）。⚠️ **Phase 3 後はこの事実が失効する**（下記 実測 19） |
@@ -161,7 +161,7 @@ PostToolUse は例外に含まれない。現行 5 hook はすべて `| head` / 
    - 帰結（注意）: 差し替えの瞬間から Phase 3/4 の編集に新 hook が効く。したがって plan の「合成 payload スモーク → settings.json 差し替え」という順序は、望ましさではなく**要件**になる
 3. **worktree には `node_modules` が無い**（実測 9）— 検査対象のツリーへ `cd` するだけでは `tsc` バイナリが見つからない。**コンパイラの解決元（main ツリー）と検査対象のツリー（worktree）を分離**する必要がある（実測 10・11）
 4. **`.git` は worktree ではファイル**（実測 8）— root 検出は「ディレクトリであること」を仮定してはならない
-5. **CI と local で tsc のメジャーバージョンが違う**（実測 6）— CI は `npm ci` で **TS 6.0.3**、ローカル hook は **5.9.3**。今回の tsconfig 変更は TS 6.0.3 で成立を確認済み（実測 7）
+5. ~~**CI と local で tsc のメジャーバージョンが違う**~~ — 調査時はローカル 5.9.3 / CI 6.0.3 だったが、**`npm ci` で解消**（実測 6）。現在は両方 6.0.3。`npm ci` 後のベースライン: `npm run typecheck` exit 0 / `npm test` 14 files・202 tests green / cold 1407ms・warm 878ms（**incremental の利得は約 0.53s**）
 6. **cargo は worktree で target キャッシュを共有しない** — worktree で clippy を走らせると初回フルビルドになる（未実測だが `target/` が worktree に無いことからの帰結）。`CARGO_TARGET_DIR` 共有は最適化の余地だが本 issue のスコープ外
 7. **PostToolUse の exit code 2 は stderr を Claude に差し戻す** — スクリプトが例外で落ちると意図しない差し戻し・ノイズになる。内部エラーは捕捉して exit 0 に正規化する必要がある
 

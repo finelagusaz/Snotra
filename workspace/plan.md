@@ -154,7 +154,9 @@ worktree に `node_modules` は無い（実測 9）。よって:
 
 ### Phase 3 — typecheck 定義の SSOT 化
 
-**目的は SSOT であって速度ではない**。実測: cold 1.96s / warm 1.33s → incremental の利得は約 0.6s。hook は既に npm を経由していないため、issue の「`npm run typecheck` 2802ms」との差は npm 起動分であり、Phase 3 で新たに得られるものではない。
+**目的は SSOT であって速度ではない**。`npm ci` 後（TS 6.0.3・CI と同一）の実測: **cold 1407ms / warm 878ms → incremental の利得は約 0.53s**。hook は既に npm を経由していないため、issue の「`npm run typecheck` 2802ms」との差は npm 起動分であり、Phase 3 で新たに得られるものではない。
+
+**ベースライン（`npm ci` 後・2026-07-09）**: `npm run typecheck` exit 0 / `npm test` 14 files・202 tests green。
 
 8. `tsconfig.json` に `"incremental": true` / `"tsBuildInfoFile": "node_modules/.cache/typecheck.tsbuildinfo"` を追加
 9. `package.json` の `typecheck` を `"tsc"` に変更

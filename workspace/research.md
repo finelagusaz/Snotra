@@ -45,6 +45,25 @@
 | **17** | **`**/` の意味論は git と TypeScript で同じか** | **違う。** git の pathspec では `**/` は **1 段以上**のディレクトリを要求。TypeScript の `exclude` では **0 段にもマッチ**する（下記 実測 17 の詳細） |
 | 18 | tsc は無変更の 2 回目でも同じ診断を再報告するか | **する**（warm replay 成立）。ただし **exit code は 2 → 1 に変わる**（1回目 exit 2 / 2回目 exit 1、エラー件数はどちらも 1） |
 | 19 | Phase 3 後、worktree に `node_modules` が生まれるか | **生まれる**。tsc が `<worktree>/node_modules/.cache/typecheck.tsbuildinfo` を書くとき二段を再帰生成する |
+| **20** | **出力の有無は検査の合否を意味するか** | **意味しない。** 下記「実測 20 の詳細」参照 |
+
+### 実測 20 の詳細 — 検出手段そのものが間違っていた
+
+issue §4 は「`head -N` で切るという設計自体が、エラー件数に対して脆い」と述べる。しかし脆さの正体は**予算ではなく、テキストを検出手段に使っていること**だった。
+
+| 検査 | **成功時**の exit code | **成功時**に予算が見せるもの |
+|---|---|---|
+| `cargo test -p snotra-core --lib` | 0 | `tail -5` が `test result: ok. 459 passed; 0 failed; 9 ignored` ほか **5 行** |
+| `cargo clippy ... --all-targets -- -D warnings` | 0 | `head -20` が `Compiling snotra-settings v0.1.0` / `Finished \`dev\` profile` の **2 行** |
+| `tsc --noEmit` | 0 | 無音 |
+
+そして **exit code は捨てられている**: 現行 5 hook はすべてパイプ終端が `head` / `tail` / `echo` であり、パイプ全体の exit code は終端コマンドのものになる（`false 2>&1 | tail -5; echo $?` → **0**）。
+
+**帰結**: 出力があっても成功でありうる。出力が無くても（予算に収まらず消えて）失敗でありうる。**受け手は合否を判定できない。**
+
+これは issue の根本原因「hook が発火の判定に使う情報と、実際に検査する対象がずれている」の**出力側での再演**である。検出に使うべき信号（exit code）を捨て、証拠にすぎないテキストを検出手段に据えていた。
+
+**帰結（設計）**: 検出は exit code で行う（I9）。成功した検査は無音（I20）。失敗したら失敗の事実・exit code・再現コマンドを必ず全文出し、診断テキストは切り捨て可能な「証拠」に降格する（I21）。切り捨て通知も `error` 件数のカウントも不要になる——後者は検査ごとに診断形式が違い、正規表現が必ずドリフトする。
 
 ### 実測 17 の詳細 — 同じ `**/` が別の意味を持つ
 
@@ -156,7 +175,7 @@ PostToolUse は例外に含まれない。現行 5 hook はすべて `| head` / 
 ## 技術的制約
 
 1. **`jq` 不在** — JSON 抽出は `node` の `JSON.parse` で行う（実測 1）
-2. ~~**hooks は session 起動時にスナップショットされる**~~ — **この記述は誤りの疑いが強い**。`hooks-guide.md:776` は「If you edit settings files directly while Claude Code is running, the file watcher normally picks up hook changes automatically.」と述べる（**ドキュメント根拠のみ・実機未検証**）。
+2. ~~**hooks は session 起動時にスナップショットされる**~~ — **誤り。実機で確定**（2026-07-09）。`.claude/settings.json` を書き換えた直後、セッションを再起動せずに実 Edit を行ったところ、**新しい hook が発火し `additionalContext` が会話に届いた**。file watcher が拾う（`hooks-guide.md:776` の記述と一致）。
    - 帰結（良）: `settings.json` 差し替え後、**本セッション中の実 Edit 一回**で新 hook を検証できる
    - 帰結（注意）: 差し替えの瞬間から Phase 3/4 の編集に新 hook が効く。したがって plan の「合成 payload スモーク → settings.json 差し替え」という順序は、望ましさではなく**要件**になる
 3. **worktree には `node_modules` が無い**（実測 9）— 検査対象のツリーへ `cd` するだけでは `tsc` バイナリが見つからない。**コンパイラの解決元（main ツリー）と検査対象のツリー（worktree）を分離**する必要がある（実測 10・11）
@@ -185,7 +204,7 @@ PostToolUse は例外に含まれない。現行 5 hook はすべて `| head` / 
 
 1. **worktree エージェントの hook 実行時に `CLAUDE_PROJECT_DIR` が何を指すか** — 実測していない。
    → **設計で回避する**: root を `file_path` から最近接 `.git` を遡って導出すれば、この値の意味論に依存しない。issue §2 のチェックボックスは「実測せず、答えを不要にする形で閉じた」と明示して close する
-2. ~~PostToolUse hook の stdout が会話に届く条件~~ → **実測 15 で解決（届かない）**。残る疑問は「案 A（`hookSpecificOutput.additionalContext`）と案 B（exit 2 + stderr）のどちらが実機で機能するか」。**Phase 2 の必須手順として実 Edit 一回で確認する**
+2. ~~PostToolUse hook の stdout が会話に届く条件~~ → **完全に解決**。プレーン stdout は届かない（実測 15）。**exit 0 + JSON `hookSpecificOutput.additionalContext` は届く**（Phase 2 手順 7 の実 Edit で確認: 型エラー注入 → `--- typecheck: 失敗 (exit 2) ---` と再現コマンドと診断が会話に出現。修正 → 無音）
 3. **worktree での cargo clippy の実コスト** — 初回フルビルドの秒数は未計測。correctness を優先し、計測は follow-up
 4. **`cargo` の進捗行（`Compiling ...`）が cold worktree で `head -20` を埋め尽くすか** — 論理的帰結として確実だが秒数・行数は未計測。予算適用前に進捗行を除去する対処が要る
 5. **hooks の file watcher による再読込**（技術的制約 2）— ドキュメント根拠のみ。実機未検証

@@ -101,6 +101,8 @@ worktree に `node_modules` は無い（実測 9）。よって:
 | ケース | 現行 | 変更後 | 根拠 |
 |---|---|---|---|
 | **すべての検査結果** | **エージェントに届かない**（stdout は debug log 行き） | **`additionalContext` で届く** | §6 / 実測 15 |
+| **検査が成功したとき** | `cargo test` は `test result: ok. 459 passed` 等 5 行、clippy は `Compiling`/`Finished` 2 行を出す。**出力の有無が合否を意味しない** | **無音**（沈黙 = 合格） | I9 / I20 |
+| **検査が失敗したとき** | パイプ終端の `head`/`tail` が exit code を握りつぶす。診断が予算に収まらなければ黙って消える | **`--- clippy: 失敗 (exit 101) ---` + 再現コマンド + 証拠（切り捨て可）** | I9 / I21 |
 | `docs/notes.md` を Write、content 末尾が `ui/src/api.ts` | typecheck が発火 | 発火しない | §1 |
 | `src-tauri/src/main.rs` を Edit、`old_string` に `snotra-core` の語 | clippy + **core test** が発火（`.*` は同一行のどこかにマッチ。payload は 1 行 JSON） | **clippy のみ** | §1 |
 | `snotra-core/src/config.rs` を Edit | clippy + core test + **config-warn**（`:40` だけ引用符アンカーが無く、content 中の `config.toml` の語に反応） | **clippy + core test** | §1 |
@@ -212,10 +214,15 @@ npx --yes -p typescript@6.0.3 tsc -p tsconfig.json   # CI と同じ TS 6 で成�
 | I6 | `file_path` がどの `.git` にも属さないなら**何もせず** exit 0 | リポジトリ外のファイル編集でリポジトリの検査が走る |
 | I7 | typecheck の発火条件 ⊆ `tsconfig.json` の `include` − `exclude` | 検査されないファイルで「検査が通った」と誤認（§5） |
 | I8 | スクリプト内部エラーは捕捉し、**`additionalContext` と `systemMessage` の両方**に `HOOK ERROR: ...` を出して exit 0 | 安全網が沈黙して消える（本 issue が最も嫌う失敗様式）。エージェントにも人間にも見せる |
-| I9 | 出力を切り捨てたら、**切り捨てた事実と総行数**を明示する。head なら通知は**末尾**、tail なら**先頭** | 通知を反対側に置くと通知自体が切り捨て領域に落ちて消える |
+| I9 | **検出は exit code で行う。出力テキストは証拠であって信号ではない** | どこで切っても取りこぼすものを検出手段にしてはならない。実測: 成功時も `cargo test \| tail -5` は 5 行、`clippy \| head -20` は 2 行を出す。**出力の有無は合否を意味しない**。しかも唯一の信号である exit code を、パイプ終端の `head`/`tail` が握りつぶしていた（`false \| tail -5` の exit は 0） |
+| I20 | **成功した検査は何も出力しない**（沈黙 = 合格）。ただし `.ts`/`.tsx` で検査 0 件のときは I16 が一行出す | 現行は成功時にもノイズを出しており、受け手が合否を判定できない |
+| I21 | 失敗したら **失敗の事実・exit code・再現コマンド（cwd 込み）を必ず全文出す**。切り捨ては診断テキストにのみ及ぶ | 再現コマンドが必ず添うので、証拠を切り捨てても失われる情報が無い。ゆえに切り捨て通知も件数カウントも不要。`error` 件数を数える案は検査ごとに診断形式が違い（`clippy` は `path:line:col: error:`、`tsc` は `path(l,c): error TS`、`cargo test` は `test result:`）、正規表現が必ずドリフトする |
+| I22 | **検査は `spawnSync` の `timeout`（300s）で自分から打ち切り、タイムアウトを報告する**。hook timeout（900s）に丸投げしない | プロセスごと kill されると stdout は一行も出ない = **完全な沈黙**。I20 により沈黙は「合格」と読まれるため、**同じ沈黙が無害なノイズから積極的な虚偽に変わる**。`ENOBUFS` / `ETIMEDOUT` はいずれも「完走しなかった」であって「起動に失敗した」ではない（分岐を分ける） |
+| I23 | **`.claude/settings.json` と `.claude/hooks/**` を編集したら `hook-selftest` を走らせる** | 全検査の発火を決めるファイルだけが誰にも検査されない、という穴を塞ぐ。`settings.json` の JSON 妥当性検証（実質 0ms）と `vitest run .claude/hooks` の 2 段。**`settings.json` が壊れると `block-main-commit` を含む全 hook が停止する**ため、これは PostToolUse だけの問題ではない |
+| I24 | `main()` は **`resolveTarget()` を通る**。ユニットテストも同じ関数を通る | `checksForPayload` を切り出しても `main()` が同じ配線を手書きで複製していたら、テストは production の通らない経路を固定するだけになる（§1 の回帰が守られない） |
 | I10 | **検査コマンドは現行を一字一句保存する**（`--all-targets` / `--message-format short` / `-- -D warnings` / `--lib` / 予算の行数と head/tail の別） | 本 PR はディスパッチ機構の置換であり検査集合の変更ではない。混ぜると回帰の切り分けが不能 |
 | I11 | 子プロセスは `process.execPath` で起動し、`maxBuffer` を明示的に引き上げる（32MB） | Windows の PATH 依存と、出力 1MB 超での `ENOBUFS` 沈黙を防ぐ |
-| I12 | 出力は `stdout` + `stderr` を連結して予算を適用する（現行 `2>&1` 相当） | clippy は stderr、tsc は stdout に診断を出す。片方だけ見ると診断が消える |
+| I12 | 出力は `stdout` と `stderr` を **予算の向きに応じた順で** 連結して予算を適用する。**単純連結は `2>&1` と等価ではない** | clippy は stderr、tsc は stdout に診断を出す。`cargo test` は `test result:` を stdout、`Running unittests` を stderr に出す（実測）。tail 予算で単純連結すると末尾の stderr が枠を食い、stdout 側の失敗テスト名が枠外へ落ちる → **tail 予算では stderr を先に置く**。各パートの末尾改行を除いてから `\n` で join し、行の接着も防ぐ |
 | I13 | `main()` は**直接起動時のみ**実行する: `if (import.meta.url === pathToFileURL(process.argv[1]).href) main()` | vitest が import しただけで stdin 読み取りが走り、`npm test` が停止する。Phase 1 の green が Phase 2 で壊れる |
 | I14 | 予算適用の**前に** cargo の進捗行を除去する | I4 で worktree（cold build）に移った途端、`Compiling ...` が数十〜数百行流れ `head 20` が進捗行だけで埋まる。**I4 が §4 を悪化させる**相互作用 |
 | I15 | JSON エンベロープは**必ず妥当な JSON** である。診断文字列は `JSON.stringify` に委ねる | 診断に含まれる `"`・改行・パスの `\` が生の連結でエンベロープを壊す |
@@ -329,14 +336,19 @@ I7 は現時点で厳密成立（`tsconfig.json:16-17`、`ui/src` に `.mts`/`.c
 
 `resolveTscBin(root)` — **I17 の回帰テスト**: `root` 直下に**空の `node_modules/` を置いた状態**で、上位ツリーの `node_modules/typescript/bin/tsc` を正しく見つけること。これは 2 回目以降の hook 実行を模す（実測 19）。
 
-`formatOutput(text, budget)` — 対称性が要点:
+`takeLines(text, budget)` — 通知を持たない素朴な切り出し（I9 により通知は不要）:
 
 | ケース | 期待 |
 |---|---|
-| `{lines: 20, from: 'head'}` で 10 行 | そのまま 10 行、**通知なし** |
-| `{lines: 20, from: 'head'}` で 50 行 | 先頭 20 行 + **末尾**に切り捨て通知 |
-| `{lines: 5, from: 'tail'}` で 50 行 | **先頭**に切り捨て通知 + 末尾 5 行 |
-| 空文字列 | 空を返す（通知なし） |
+| `{lines: 20, from: 'head'}` で 10 行 | そのまま 10 行 |
+| `{lines: 20, from: 'head'}` で 50 行 | 先頭 20 行**のみ**（余計な行を足さない） |
+| `{lines: 5, from: 'tail'}` で 50 行 | 末尾 5 行**のみ** |
+| 空文字列 | 空 |
+| 末尾の改行のみ | 1 行と数えない |
+
+`head` / `tail` の別は「証拠がどこにあるか」を表す。clippy / tsc は先頭に、cargo test は末尾（`failures:` と `test result:`）に有用な情報が出る。
+
+`buildSection({ id, status, repro, evidence })` — **I21 の回帰**: `evidence` が空文字列でも、返り値には必ず `id` と `exit code` と `repro` が含まれること。証拠がゼロ行でも失敗は必ず伝わる。
 
 `stripProgressLines(text)` — `Compiling snotra-core v0.1.0` を落とし、`error[E0308]: ...` を残す。
 

@@ -715,7 +715,7 @@ Refs #473
 まず `.githooks/githooks.test.mjs` の冒頭 import を差し替える。このタスクで初めて使う API を、このタスクで足す。
 
 ```js
-import { chmodSync, cpSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 ```
 
 そのうえで末尾に追記する。
@@ -758,6 +758,27 @@ describe("相対 core.hooksPath — worktree での解決（V10）", () => {
 
     expectBlocked(() => commitEmpty(wt, "worktree main commit"));
   }, T * 2);
+
+  // 第三の仮説の反証。上のテストは cwd = worktree トップで git を起動しているため、
+  // 「worktree トップに解決される」と「git プロセスの cwd に解決される」を区別できない。
+  // 後者なら ui/ や src-tauri/ の中から commit した瞬間 .githooks は見つからず、
+  // git は hook 無しとして commit を通す（fail-open）。Task 6 は実リポジトリに
+  // 相対パスを設定するので、この命題は Layer 1 が機能するかどうかそのものである。
+  it("サブディレクトリから commit しても相対 .githooks が解決される", () => {
+    const dir = initRepo(); // 既定ブランチ main
+    cpSync(HOOKS_DIR, path.join(dir, ".githooks"), { recursive: true });
+    makeExecutable(path.join(dir, ".githooks"));
+    git(dir, ["add", ".githooks"]);
+    git(dir, ["commit", "-m", "add hooks"]); // hooksPath 未設定なのでまだ通る
+
+    git(dir, ["config", "core.hooksPath", ".githooks"]);
+
+    const sub = path.join(dir, "nested", "deep");
+    mkdirSync(sub, { recursive: true });
+    // cwd 基準で解決されるなら nested/deep/.githooks を探して見つからず、
+    // hook は発火せず commit が通ってしまう。ブロックされれば tree-top 基準である。
+    expectBlocked(() => commitEmpty(sub, "from nested subdir"));
+  }, T);
 });
 ```
 
@@ -767,11 +788,11 @@ describe("相対 core.hooksPath — worktree での解決（V10）", () => {
 npx vitest run .githooks
 ```
 
-Expected: 13 passed。
+Expected: 14 passed。
 
-このテストは**対立仮説を反証する形**になっていなければならない。無害化を入れずに緑になっても、それは「worktree で hook が起動する」ことしか示さず、「worktree 自身の `.githooks` が解決される」ことは示さない（両ツリーの hook は byte 一致で、判定は cwd 依存だから）。
+このテストは**対立仮説を反証する形**になっていなければならない。無害化を入れずに緑になっても、それは「worktree で hook が起動する」ことしか示さず、「worktree 自身の `.githooks` が解決される」ことは示さない（両ツリーの hook は byte 一致で、判定は cwd 依存だから）。同様に、cwd = tree top でしか git を起動しないなら「tree top 基準」と「プロセス cwd 基準」を区別できない。サブディレクトリからの commit がその区別を与える。
 
-**FAIL した場合**: 相対パスが worktree で解決されていない。Task 6 の `prepare` を絶対パス方式へ切り替える:
+**FAIL した場合**: 相対パスが worktree（あるいは tree top）で解決されていない。Task 6 の `prepare` を絶対パス方式へ切り替える:
 
 ```json
 "prepare": "git config core.hooksPath \"$(git rev-parse --show-toplevel)/.githooks\""
@@ -869,16 +890,20 @@ Expected: `.githooks`
 
 - [ ] **Step 3: 実リポジトリで誤爆しないことを確かめる（V9 の一部）**
 
+**前提**: `git status --short` が空であること。空でなければ中断して報告する。
+
 いま作業中の feature ブランチで、通常のコミットが通ることを確かめる。
 
 ```powershell
 git commit --allow-empty -m "probe: feature ブランチの commit は通る"
 ```
 
-Expected: 成功。
+Expected: 成功（`.githooks/pre-commit` は feature ブランチを通す）。
+
+取り消しは `--soft` を使う。`--hard` は作業ツリーを巻き戻すため、未コミットの変更があると破壊する。空コミットの取り消しに `--hard` は不要である。
 
 ```powershell
-git reset --hard HEAD~1
+git reset --soft HEAD~1
 ```
 
 - [ ] **Step 4: `docs/build-commands.md` にカテゴリ E と bootstrap を追記する**

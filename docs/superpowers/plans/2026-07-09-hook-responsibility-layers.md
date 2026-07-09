@@ -21,6 +21,12 @@
 - 検証コマンドの SSOT は `docs/build-commands.md`
 - `.claude/settings.json` と `.claude/hooks/**` を編集すると `hook-selftest` が自動発火する。**沈黙は合格**
 
+## 実行の分担（Pre-Flight で合意）
+
+- **worktree 隔離は使わない。** Task 6 はリポジトリ共有の `.git/config`（`core.hooksPath`）を書き、Task 1 は GitHub 側を触る。worktree は config を共有するため隔離が成立しない
+- **Task 1・Task 7・Task 8 の測定ステップ（Step 3・4）は main セッションが直接実行する。** サブエージェントのツール呼び出しで PreToolUse hook が発火するかは未実測であり、発火しなければ V4/V5 の対比（Bash では旧 hook が止まる / PowerShell では止まらない）が意味を失う。**発火条件が実測済みの環境で測ることが、この検証の前提**
+- サブエージェントが担うのは Task 2・3・4・5・6・9 と、Task 8 の編集（Step 1・2）・セルフテスト（Step 5）・コミット（Step 6）
+
 ## Spec からの逸脱（計画時に判明・要承認）
 
 **1. 最重要ルール 2 は「削除」ではなく「narrow」する。**
@@ -191,7 +197,7 @@ git branch -D tmp/ruleset-probe
 - Consumes: なし
 - Produces:
   - `_lib.sh` が `PROTECTED_BRANCH`（値 `main`）、`die(message)`（stderr へ `BLOCKED: <message>` を出し exit 1）、`current_branch()`（detached HEAD では空文字列）を提供する
-  - `githooks.test.mjs` が `initRepo(defaultBranch)`, `initBare()`, `enableHooks(dir)`, `expectBlocked(fn)`, `git(cwd, args)`, `commitEmpty(dir, msg)` を持つ。Task 3・4・5 はこれらを再利用する
+  - `githooks.test.mjs` が `git(cwd, args)`, `commitEmpty(dir, msg)`, `commitCount(dir)`, `initRepo(defaultBranch)`, `initBare()`, `enableHooks(dir)`, `expectBlocked(fn)` を持つ。Task 3・4・5 は**同一ファイルに追記する**ため import は不要。`export` を付けてはならない（使われない export になる）
 
 - [ ] **Step 1: 失敗するテストを書く**
 
@@ -207,7 +213,7 @@ git branch -D tmp/ruleset-probe
 
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { chmodSync, cpSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -217,16 +223,21 @@ const HOOKS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const HOOKS_DIR_POSIX = HOOKS_DIR.split(path.sep).join("/");
 const T = 20_000; // git を数回起動するため既定 5s では足りない
 
-export function git(cwd, args) {
+function git(cwd, args) {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: "pipe" });
 }
 
-export function commitEmpty(dir, message) {
+function commitEmpty(dir, message) {
   return git(dir, ["commit", "--allow-empty", "-m", message]);
 }
 
+/** コミット数。「通る」テストが実際に何かを進めたことを表明するために使う。 */
+function commitCount(dir) {
+  return git(dir, ["rev-list", "--count", "HEAD"]).trim();
+}
+
 /** hook を無効のまま初期コミットまで済ませた repo を作る。 */
-export function initRepo(defaultBranch = "main") {
+function initRepo(defaultBranch = "main") {
   const dir = mkdtempSync(path.join(tmpdir(), "snotra-githooks-"));
   git(dir, ["init", "-b", defaultBranch]);
   git(dir, ["config", "user.email", "test@example.com"]);
@@ -238,19 +249,19 @@ export function initRepo(defaultBranch = "main") {
   return dir;
 }
 
-export function initBare() {
+function initBare() {
   const dir = mkdtempSync(path.join(tmpdir(), "snotra-githooks-origin-"));
   git(dir, ["init", "--bare", "-b", "main"]);
   return dir.split(path.sep).join("/");
 }
 
 /** リポジトリの .githooks（実体）を hook として有効にする。 */
-export function enableHooks(dir) {
+function enableHooks(dir) {
   git(dir, ["config", "core.hooksPath", HOOKS_DIR_POSIX]);
 }
 
 /** 操作が BLOCKED で拒否されたことを確かめる。 */
-export function expectBlocked(fn) {
+function expectBlocked(fn) {
   let error;
   try {
     fn();
@@ -273,14 +284,17 @@ describe("pre-commit", () => {
     enableHooks(dir);
     git(dir, ["switch", "-c", "feat/x"]);
     commitEmpty(dir, "ok");
-    expect(git(dir, ["rev-list", "--count", "HEAD"]).trim()).toBe("2");
+    expect(commitCount(dir)).toBe("2");
   }, T);
 
-  it("detached HEAD は判定不能なので通す", () => {
+  it("detached HEAD は判定不能なので通す（それでも main は進まない）", () => {
     const dir = initRepo();
     enableHooks(dir);
     git(dir, ["checkout", "--detach"]);
     commitEmpty(dir, "detached ok");
+    expect(commitCount(dir)).toBe("2");
+    // 通してよい理由の表明: detached の commit は main を動かさない
+    expect(git(dir, ["rev-list", "--count", "main"]).trim()).toBe("1");
   }, T);
 
   it("別ツリーの cwd から `git -C` で main に commit しても拒否する", () => {
@@ -443,7 +457,7 @@ describe("pre-merge-commit", () => {
     git(dir, ["switch", "main"]);
     enableHooks(dir);
     git(dir, ["merge", "--ff-only", "feat/x"]);
-    expect(git(dir, ["rev-list", "--count", "HEAD"]).trim()).toBe("2");
+    expect(commitCount(dir)).toBe("2");
   }, T);
 });
 
@@ -468,7 +482,7 @@ describe("pre-rebase", () => {
     enableHooks(dir);
     git(dir, ["switch", "feat/x"]);
     git(dir, ["rebase", "main"]);
-    expect(git(dir, ["rev-list", "--count", "HEAD"]).trim()).toBe("3");
+    expect(commitCount(dir)).toBe("3");
   }, T);
 });
 ```
@@ -684,7 +698,13 @@ Refs #473
 
 - [ ] **Step 1: 前提を測るテストを追加する**
 
-`.githooks/githooks.test.mjs` の末尾に追記する。冒頭の import に `chmodSync` / `cpSync` / `readdirSync` が含まれていることを確認する（Task 2 で追加済み）。
+まず `.githooks/githooks.test.mjs` の冒頭 import を差し替える。このタスクで初めて使う API を、このタスクで足す。
+
+```js
+import { chmodSync, cpSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+```
+
+そのうえで末尾に追記する。
 
 ```js
 /** コピーした hook に実行ビットを付ける（Windows は shebang で判定されるので不要）。 */
@@ -1273,6 +1293,8 @@ gh pr create --title "refactor(hooks): main 保護を git/GitHub の機構へ移
 
 **逸脱 2 件は「Spec からの逸脱」節に明記済み。**
 
-**型・名前の一貫性:** `PROTECTED_BRANCH` / `die` / `current_branch`（sh）、`initRepo` / `initBare` / `enableHooks` / `expectBlocked` / `git` / `commitEmpty` / `makeExecutable`（js）は Task 2 で定義され、Task 3・4・5 で同名のまま使われる。`HOOKS_DIR` / `HOOKS_DIR_POSIX` / `T` も同様。
+**型・名前の一貫性:** sh 側は `PROTECTED_BRANCH` / `die` / `current_branch`（Task 2 の `_lib.sh` で定義、Task 3・4 が source）。js 側は `git` / `commitEmpty` / `commitCount` / `initRepo` / `initBare` / `enableHooks` / `expectBlocked` / `HOOKS_DIR` / `HOOKS_DIR_POSIX` / `T` が Task 2 で定義され、Task 3・4・5 で同名のまま使われる（同一ファイルへの追記なので import は不要、`export` も付けない）。`makeExecutable` のみ Task 5 で定義される。
+
+**テスト衛生:** 「通る」ことを確かめるテストはすべて `expect` を持つ。`detached HEAD` のテストは `commitCount` に加えて `main` のコミット数が増えないことを表明する（通してよい理由そのものの表明）。
 
 **プレースホルダ:** `<scratchpad>` は実行時のセッション scratchpad ディレクトリを指す。それ以外に TBD / TODO は無い。

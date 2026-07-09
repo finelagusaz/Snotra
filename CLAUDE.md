@@ -34,9 +34,9 @@
 
 ## Git/GitHub 運用
 
-- **main 保護の実体は `.githooks/` と GitHub ruleset である** — `.githooks/{pre-commit,pre-merge-commit,pre-rebase,pre-push}` が commit / merge / rebase / push を、GitHub ruleset `default` が origin 側の直接 push・force-push・削除を拒否する。git は hook を「操作されるツリーのトップ」を cwd として呼び、相対 `core.hooksPath` もそこを基準に解決する（実測）。ゆえに PowerShell でも `git -C` でも worktree でも `ui/` などのサブディレクトリからでも判定は正しい。bootstrap は `npm install`（`prepare` が `core.hooksPath` を設定する）
-- **`.githooks/` を含まないツリーでは Layer 1 は存在しない** — hook は追跡ファイルなので、`.githooks/` が無いコミットを checkout すると git は「hook 無し」として操作を通す（fail-open）。古いタグや導入前のコミットが該当する。**保証は GitHub ruleset が担う** — origin 側は無条件に守られるため、ローカルの取りこぼしは push で止まる。`.githooks/` は「手前で親切に止める」best-effort な層であり、その不在を検知する仕組みは意図的に置いていない
-- **`--no-verify` は人間専用** — `.githooks/` を迂回する。Claude は使用してはならない。迂回しても GitHub ruleset が push を拒むため main には届かない
+- **main 保護の実体は `.githooks/` と GitHub ruleset である** — `.githooks/{pre-commit,pre-merge-commit,pre-rebase,pre-push}` が commit / merge / rebase / push を拒否する（`.githooks/githooks.test.mjs` の 14 テストで実測。`git -C <別ツリー>`・linked worktree・`ui/` 等のサブディレクトリからの起動を含む）。GitHub ruleset `default` は main への直接 push を拒否する（実測）。force-push と削除は `non_fast_forward` / `deletion` 規則が `active`（設定の read-back のみ。実地の試行は未実施）。git は hook を「操作されるツリーのトップ」を cwd として呼び、相対 `core.hooksPath` もそこを基準に解決する（実測）。bootstrap は `npm install`（`prepare` が `core.hooksPath` を設定する）
+- **`.githooks/` を含まないツリーでは Layer 1 は存在しない** — hook は追跡ファイルなので、`.githooks/` が無いコミットを checkout すると git は「hook 無し」として操作を通す（fail-open）。古いタグや導入前のコミットが該当する。**ローカルの取りこぼしは push の時点で GitHub ruleset が捕捉する**（直接 push の拒否は実測済み）。`.githooks/` は「手前で親切に止める」best-effort な層であり、その不在を検知する仕組みは意図的に置いていない
+- **`--no-verify` は人間専用** — `.githooks/` を迂回する。Claude は使用してはならない。迂回しても main への直接 push は GitHub ruleset が拒む（実測）
 - **`git` コマンドをチェーンしない** — `checkout` と `rebase`、`add` と `commit` のように影響範囲の異なる操作はそれぞれ独立した呼び出しに分ける。`git checkout <branch> && git rebase main` のような連鎖は `block-main-commit` フックを誤発火させた実績がある
 - **main の fast-forward 同期は `git pull --ff-only` を使う** — `git merge --ff-only origin/main` はコミットを作らない FF でも `block-main-commit` フックに弾かれる（コマンド文字列一致で判定するため）
 - **複数 issue にまたがる PR を squash マージするとき auto-close を明示制御する** — ブランチ各コミット本文の `Fixes/Closes #N` は squash 時に GitHub が拾い、意図しない issue を閉じうる。一部だけ閉じたい場合（例: 中核 issue は Phase 残しで open、対症療法 issue のみ close）の手順:

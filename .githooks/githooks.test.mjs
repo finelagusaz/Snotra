@@ -7,7 +7,7 @@
 
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -199,4 +199,35 @@ describe("pre-push", () => {
     git(dir, ["push", "origin", "feat/x"]);
     expect(git(dir, ["ls-remote", "origin", "refs/heads/feat/x"])).toContain("refs/heads/feat/x");
   }, T);
+});
+
+/** コピーした hook に実行ビットを付ける（Windows は shebang で判定されるので不要）。 */
+function makeExecutable(dir) {
+  if (process.platform === "win32") return;
+  for (const name of readdirSync(dir)) {
+    chmodSync(path.join(dir, name), 0o755);
+  }
+}
+
+describe("相対 core.hooksPath — worktree での解決（V10）", () => {
+  it("linked worktree でも .githooks が解決され、main 上の commit が拒否される", () => {
+    // 既定ブランチを feat/base にして、main を linked worktree として切り出す
+    const dir = initRepo("feat/base");
+    cpSync(HOOKS_DIR, path.join(dir, ".githooks"), { recursive: true });
+    makeExecutable(path.join(dir, ".githooks"));
+    git(dir, ["add", ".githooks"]);
+    git(dir, ["commit", "-m", "add hooks"]);
+
+    // ★ 相対パス。main ツリーでも worktree でも同じ設定を共有する
+    git(dir, ["config", "core.hooksPath", ".githooks"]);
+
+    // main ツリー側: feat/base なので通る
+    commitEmpty(dir, "feat/base ok");
+
+    // worktree 側: main なので拒否される
+    const wt = `${dir}-wt`;
+    scratchDirs.push(wt); // 兄弟ディレクトリなので明示的に片付け対象へ入れる
+    git(dir, ["worktree", "add", "-b", "main", wt]);
+    expectBlocked(() => commitEmpty(wt, "worktree main commit"));
+  }, T * 2);
 });

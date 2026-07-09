@@ -1124,24 +1124,33 @@ Step 1〜4 の出力を scratchpad に保存し、PR 本文へ貼る。**V5 の�
  */
 ```
 
-- [ ] **Step 3: 削除後も守られていることを再測する**
+- [ ] **Step 3: 削除後も守られていることを再測する**（main セッションが実行）
+
+**main の作業ツリーには `.githooks/` が無い**（マージ前だから）。V5 と同じくマージ後の状態を模倣する。
 
 PowerShell ツールから:
 ```powershell
 git switch main
 ```
 ```powershell
+git restore --source=chore/hook-responsibility-layers -- .githooks
+```
+```powershell
 git commit --allow-empty -m "V4 after removal"
 ```
-Expected: `BLOCKED: main への直接コミットは禁止です。`（`.githooks` が止めている）
+Expected: `exit 1` / `BLOCKED: main への直接コミットは禁止です。`（`.githooks` が止めている）
 
+```powershell
+Remove-Item -Recurse -Force .githooks
+```
 ```powershell
 git switch chore/hook-responsibility-layers
 ```
 
-- [ ] **Step 4: 誤爆が消えたことを測る**
+- [ ] **Step 4: 誤爆が消えたことを測る**（main セッションが実行）
 
-**Bash ツールから**（旧 hook なら誤爆したコマンド）:
+**Bash ツールから**（旧 hook なら誤爆したコマンド）。`.githooks` は不要 — FF マージはマージコミットを作らないため `pre-merge-commit` は呼ばれない。
+
 ```bash
 git switch main
 ```

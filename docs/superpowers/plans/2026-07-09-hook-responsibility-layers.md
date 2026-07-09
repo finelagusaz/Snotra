@@ -794,11 +794,35 @@ worktree 内の .githooks/pre-commit に拒否されることを固定した。
 ## Task 6: bootstrap（`core.hooksPath`）とドキュメント
 
 **Files:**
+- Create: `.gitattributes`
 - Modify: `package.json`, `docs/build-commands.md`
 
 **Interfaces:**
 - Consumes: Task 5 の測定結果（相対パスで良いか）
 - Produces: 実リポジトリで `.githooks` が有効になった状態。以降の全 commit が Layer 1 を通る
+
+- [ ] **Step 0: `.gitattributes` を作り、hook の改行を LF に固定する**
+
+Task 4 のレビューで判明した実測にもとづく。この clone は `core.autocrlf=input`（global）だが、**git-for-windows の system 設定は `core.autocrlf=true`**。global を持たない新規 clone では `.githooks/*` が CRLF で checkout され、`#!/bin/sh\r` を msys の sh が解釈できず hook が起動しない。
+
+`.gitattributes` を新規作成する（リポジトリルート）。
+
+```gitattributes
+# git hook は POSIX sh。CRLF で checkout されると `#!/bin/sh\r` になり、
+# msys / Linux の sh が interpreter を見つけられず hook が起動しない。
+# 実測（Task 4 レビュー時）: この clone は core.autocrlf=input だが、
+# git-for-windows の system 既定は true。global 設定を持たない新規 clone は
+# CRLF に変換してしまう。
+.githooks/** text eol=lf
+```
+
+検証:
+
+```powershell
+git check-attr -a .githooks/pre-commit
+```
+
+Expected: `.githooks/pre-commit: text: set` と `.githooks/pre-commit: eol: lf` の 2 行。
 
 - [ ] **Step 1: `package.json` に `prepare` を追加する**
 

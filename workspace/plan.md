@@ -360,20 +360,21 @@ C3 の 14 ケースを実 payload 形式で。
 
 ---
 
-## スコープ外（YAGNI 境界）— follow-up issue に切る
+## スコープ外（YAGNI 境界）— follow-up issue に起票済み
 
-**`AGENTS.md:87` に従い、PR 作成前に起票し、issue 番号を本表と PR 本文に記入する。**
+**`AGENTS.md:87` に従い、PR 作成前に起票した。PR 本文にも同じ番号を記入すること。**
 
-| 項目 | 理由 | severity |
+| issue | 項目 | severity |
 |---|---|---|
-| **PreToolUse hook 2 本の同根修正** | 本 issue は PostToolUse を対象と明記（issue §1「4 つの PostToolUse hook」、§2「4 つの hook で cwd の扱いを揃える」）。ただし根は同一 | **本 issue より重い可能性。`block-main-commit` は `git branch --show-current` を hook の cwd で評価するため、`git -C <別ツリー> commit` や worktree で判定対象と実際のコミット先がずれ、main への直コミットを通しうる（fail-open）。PostToolUse 側の「偽 green」は fail-closed** |
-| `tsconfig.json` の `include` 拡張（e2e / config / test） | 既存の型エラー 9 件の修正が先行条件（実測 5） | 中。§5 の副作用として `ui/src/**/*.test.ts` が**どの安全網にも掛からなくなる**（実測 5 の 8 件は誰も検知しない） |
-| `cargo test -p snotra`（src-tauri）を hook / CI に追加 | `src-tauri/src/` に `#[test]`/`#[cfg(test)]` が **77 箇所**あるのに、hook（`settings.json:28,32`）にも CI（`ci.yml:66,69` は core と settings のみ）にも無い。本 issue と独立の欠落 | 中 |
-| hook の `cargo test -p snotra-core --lib` と `docs/build-commands.md:16`（`--lib` 無し）の乖離 | §3 と同型の SSOT 分裂が Rust 側にも存在。I10 により本 PR では一字一句保存 | 低 |
-| `/health-check` Check 5 の grep 対象に `.claude/hooks/` を追加 | 本 PR 後、`post-edit.mjs` がコマンド本体を保持する新しい場所になるが、Check 5 は `AGENTS.md` と `.claude/skills/*/SKILL.md` しか見ない。**この乖離に自動検知器が無い**。ただし skill の変更は `CLAUDE.md` 最重要ルール 4 で合意が要る | 低 |
-| `ui/src/lib/cspValidation.test.ts` が `src-tauri/tauri.conf.json` の CSP を検証する**本物の契約テスト**なのに、hook は WARN を echo するだけ | 「判定情報と検査対象のずれ」の 5 例目。なお `cspValidation.ts` は存在せずテストのみだが、#409 の `hotkeyValidation.ts` と違い**死蔵ではない**（誤削除注意） | 低 |
-| `node_modules`（TS 5.9.3）と `package-lock`（TS 6.0.3）の乖離解消 | `/deps-update` の領分 | 低 |
-| worktree で `CARGO_TARGET_DIR` を共有してビルドを速くする | 最適化。correctness 優先 | 低 |
+| **#473** | **PreToolUse hook 2 本の同根修正** — 本 issue は PostToolUse を対象と明記（issue §1「4 つの PostToolUse hook」）。ただし根は同一 | **本 issue より重い。`block-main-commit` は `git branch --show-current` を hook の cwd で評価するため、`git -C <別ツリー> commit` や worktree で判定対象と実際のコミット先がずれ、main への直コミットを通しうる（fail-open）。PostToolUse 側の「偽 green」は fail-closed** |
+| #474 | `tsconfig.json` の `include` 拡張（e2e / config / test）。既存の型エラー 9 件の修正が先行条件（実測 5） | 中。§5 の副作用として `ui/src/**/*.test.{ts,tsx}` 14 本が**どの安全網にも掛からなくなる**（実測 5 の 8 件は誰も検知しない） |
+| #475 | `cargo test -p snotra`（src-tauri の **`#[test]` 68 個**）が hook（`settings.json:28,32`）にも CI（`ci.yml:66,69`）にも無い。加えて `ui/src/lib/cspValidation.test.ts` が `src-tauri/tauri.conf.json` の CSP を検証する**本物の契約テスト**なのに、hook は WARN を echo するだけ（「判定情報と検査対象のずれ」の 5 例目） | 中 |
+| #476 | hook の `cargo test -p snotra-core --lib` と `docs/build-commands.md:16`（`--lib` 無し）の乖離。§3 と同型の SSOT 分裂が Rust 側にも存在。かつ `/health-check` Check 5 は `.claude/hooks/` を見ないため**検知器が無い** | 低 |
+| #477 | worktree での cargo 検査が毎回 cold full build（`target/` が worktree に無い）。I4 の副作用。**まず計測**、次に `CARGO_TARGET_DIR` 共有を検討 | 低 |
+
+**起票しなかったもの**: `node_modules`（TS 5.9.3）と `package-lock`（TS 6.0.3）の乖離は、リポジトリの欠陥ではなく**ローカル `node_modules` の陳腐化**。`npm ci` で解消する。ただしローカル green / CI red の乖離を生みうるため、Phase 3 の検証は CI と同じ TS 6.0.3 でも行う（Phase 3 の検証コマンド参照）。
+
+**誤削除防止（#475 に記載）**: `cspValidation.ts`（実装）は存在せずテストのみだが、#409 で削除した孤児 `hotkeyValidation.ts` と違い**死蔵ではない**。`tauri.conf.json` に対する契約テストである。
 
 ---
 

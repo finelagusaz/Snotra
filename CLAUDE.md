@@ -34,8 +34,9 @@
 
 ## Git/GitHub 運用
 
-- **main 保護の実体は `.githooks/` と GitHub ruleset である** — `.githooks/{pre-commit,pre-merge-commit,pre-rebase,pre-push}` が commit / merge / rebase / push を拒否する（`.githooks/githooks.test.mjs` の 14 テストで実測。`git -C <別ツリー>`・linked worktree・`ui/` 等のサブディレクトリからの起動を含む）。GitHub ruleset `default` は main への直接 push を拒否する（実測）。force-push と削除は `non_fast_forward` / `deletion` 規則が `active`（設定の read-back のみ。実地の試行は未実施）。git は hook を「操作されるツリーのトップ」を cwd として呼び、相対 `core.hooksPath` もそこを基準に解決する（実測）。bootstrap は `npm install`（`prepare` が `core.hooksPath` を設定する）
+- **main 保護の実体は `.githooks/` と GitHub ruleset である** — `.githooks/{pre-commit,pre-merge-commit,pre-rebase,pre-push}` が `git commit` / 非 FF の `git merge` / `git rebase` / `git push` を拒否する（`.githooks/githooks.test.mjs` の回帰テストで実測。`git -C <別ツリー>`・linked worktree・`ui/` 等のサブディレクトリからの起動を含む）。GitHub ruleset `default` は main への直接 push を拒否する（実測）。force-push と削除は `non_fast_forward` / `deletion` 規則が `active`（設定の read-back のみ。実地の試行は未実施）。git は hook を「操作されるツリーのトップ」を cwd として呼び、相対 `core.hooksPath` もそこを基準に解決する（実測）。bootstrap は `npm install`（`prepare` が `core.hooksPath` を設定する）
 - **`.githooks/` を含まないツリーでは Layer 1 は存在しない** — hook は追跡ファイルなので、`.githooks/` が無いコミットを checkout すると git は「hook 無し」として操作を通す（fail-open）。古いタグや導入前のコミットが該当する。**ローカルの取りこぼしは push の時点で GitHub ruleset が捕捉する**（直接 push の拒否は実測済み）。`.githooks/` は「手前で親切に止める」best-effort な層であり、その不在を検知する仕組みは意図的に置いていない
+- **Layer 1 が見ていない操作がある** — git は `cherry-pick` / `revert` / `am` / `branch -f` / `update-ref` で `pre-commit` を呼ばない。main 上でこれらを実行すると **hook は何も出力せず main が進む**（実測）。`commit --amend` と `merge --squash` 後の `commit` は拒否される。取りこぼしは push の時点で GitHub ruleset が捕捉する
 - **`--no-verify` は人間専用** — `.githooks/` を迂回する。Claude は使用してはならない。迂回しても main への直接 push は GitHub ruleset が拒む（実測）
 - **`git` コマンドをチェーンしない** — `checkout` と `rebase`、`add` と `commit` のように影響範囲の異なる操作はそれぞれ独立した呼び出しに分ける。`git checkout <branch> && git rebase main` のような連鎖は `block-main-commit` フックを誤発火させた実績がある
 - **main の fast-forward 同期は `git pull --ff-only` を使う** — `git merge --ff-only origin/main` はコミットを作らない FF でも `block-main-commit` フックに弾かれる（コマンド文字列一致で判定するため）

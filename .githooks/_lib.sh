@@ -10,6 +10,7 @@
 # ゆえに「この層が生きているか」を検知する仕組みは、意図的に作らない。
 
 PROTECTED_BRANCH=main
+PROTECTED_REF="refs/heads/$PROTECTED_BRANCH"
 
 # 拒否して終了する。exit 1 が git に操作を中止させる。
 die() {
@@ -20,7 +21,11 @@ die() {
   exit 1
 }
 
-# 現在のブランチ名。detached HEAD では空文字列を返す（＝判定不能）。
-current_branch() {
-  git symbolic-ref --short -q HEAD || true
+# HEAD が指す完全な ref。detached HEAD では空文字列（＝判定不能）。
+#
+# `git symbolic-ref --short` を使ってはならない。同名の ref が他にあると
+# （例: `git tag main`）曖昧性回避のため `refs/heads/main` が `heads/main` に
+# 縮まり、`main` との比較が偽になって静かに素通りする（実測）。完全 ref で比較する。
+current_branch_ref() {
+  git symbolic-ref -q HEAD || true
 }

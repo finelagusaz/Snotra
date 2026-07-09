@@ -3,6 +3,6 @@
 # FF マージはマージコミットを作らないため、この hook は呼ばれない＝素通りする。
 . "$(dirname "$0")/_lib.sh"
 
-[ "$(current_branch)" = "$PROTECTED_BRANCH" ] &&
+[ "$(current_branch_ref)" = "$PROTECTED_REF" ] &&
   die "main へのマージコミットは禁止です（fast-forward なら通ります）。"
 exit 0

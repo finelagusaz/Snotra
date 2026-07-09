@@ -85,6 +85,15 @@ describe("pre-commit", () => {
     const dir = initRepo();
     enableHooks(dir);
     expectBlocked(() => commitEmpty(dir, "should be blocked"));
+    expect(commitCount(dir)).toBe("1");
+  }, T);
+
+  it("`main` という名の tag があっても main 上の commit を拒否する（ref 曖昧性）", () => {
+    const dir = initRepo();
+    git(dir, ["tag", "main"]); // refs/tags/main。--short が heads/main へ縮む条件
+    enableHooks(dir);
+    expectBlocked(() => commitEmpty(dir, "ambiguous ref"));
+    expect(commitCount(dir)).toBe("1");
   }, T);
 
   it("feature ブランチの commit は通る（誤爆しない）", () => {
@@ -109,7 +118,11 @@ describe("pre-commit", () => {
     const target = initRepo();
     enableHooks(target);
     const elsewhere = initRepo(); // cwd 側は無関係な repo（hook 無効）
+    // cwd 側を main から外す。これをしないと「hook が cwd 側のブランチを見る」
+    // という反証すべき仮説の下でもテストが通ってしまう。
+    git(elsewhere, ["switch", "-c", "feat/elsewhere"]);
     expectBlocked(() => git(elsewhere, ["-C", target, "commit", "--allow-empty", "-m", "x"]));
+    expect(commitCount(target)).toBe("1");
   }, T);
 });
 
@@ -258,5 +271,18 @@ describe("相対 core.hooksPath — worktree での解決（V10）", () => {
     // cwd 基準で解決されるなら nested/deep/.githooks を探して見つからず、
     // hook は発火せず commit が通ってしまう。ブロックされれば tree-top 基準である。
     expectBlocked(() => commitEmpty(sub, "from nested subdir"));
+  }, T);
+
+  it("相対 hooksPath でも、別 repo の cwd から `git -C` した先で発火する", () => {
+    const target = initRepo();
+    cpSync(HOOKS_DIR, path.join(target, ".githooks"), { recursive: true });
+    makeExecutable(path.join(target, ".githooks"));
+    git(target, ["add", ".githooks"]);
+    git(target, ["commit", "-m", "add hooks"]); // hooksPath 未設定なのでまだ通る
+    git(target, ["config", "core.hooksPath", ".githooks"]);
+
+    const elsewhere = initRepo();
+    git(elsewhere, ["switch", "-c", "feat/elsewhere"]);
+    expectBlocked(() => git(elsewhere, ["-C", target, "commit", "--allow-empty", "-m", "x"]));
   }, T);
 });

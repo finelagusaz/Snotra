@@ -4,5 +4,5 @@
 
 # detached HEAD（rebase 中・bisect 中など）は判定できない。判定できないものは通す。
 # その先の push は pre-push と ruleset が捕まえる。
-[ "$(current_branch)" = "$PROTECTED_BRANCH" ] && die "main への直接コミットは禁止です。"
+[ "$(current_branch_ref)" = "$PROTECTED_REF" ] && die "main への直接コミットは禁止です。"
 exit 0

@@ -834,9 +834,9 @@ git reset --hard HEAD~1
 
 - [ ] **Step 4: `docs/build-commands.md` にカテゴリ E と bootstrap を追記する**
 
-「変更後の検証チェックリスト」のカテゴリ D の直後に追加する。
+「変更後の検証チェックリスト」のカテゴリ D の直後に追加する。以下は `docs/build-commands.md` へ**そのまま貼る内容**（外側の 4 連バッククォートは囲みであり、貼らない）。
 
-```markdown
+````markdown
 ### E. git hook（`.githooks/**`）を変更した場合
 
 ```bash
@@ -846,7 +846,7 @@ npm test    # 必須: 使い捨て repo で hook を実測する（.githooks/git
 - `.githooks/` は **main 保護のローカル層**。commit / merge / rebase / push の各操作で git が直接呼ぶため、ツール・シェル・worktree・`git -C` のいずれにも依存しない
 - **bootstrap**: `npm install` / `npm ci` が `prepare` スクリプトで `git config core.hooksPath .githooks` を実行する。worktree は `.git/config` を共有するため一度で全 worktree に効く
 - この層は best-effort。`core.hooksPath` が外れても **GitHub ruleset（`default`）が main への直接 push を拒否する**ため、外れたことを検知する仕組みは意図的に設けていない
-```
+````
 
 - [ ] **Step 5: 全テストが通ることを確認する**
 

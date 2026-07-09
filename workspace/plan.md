@@ -154,11 +154,21 @@ worktree に `node_modules` は無い（実測 9）。よって:
 
 ### Phase 3 — typecheck 定義の SSOT 化
 
+**目的は SSOT であって速度ではない**。実測: cold 1.96s / warm 1.33s → incremental の利得は約 0.6s。hook は既に npm を経由していないため、issue の「`npm run typecheck` 2802ms」との差は npm 起動分であり、Phase 3 で新たに得られるものではない。
+
 8. `tsconfig.json` に `"incremental": true` / `"tsBuildInfoFile": "node_modules/.cache/typecheck.tsbuildinfo"` を追加
 9. `package.json` の `typecheck` を `"tsc"` に変更
 10. 旧 `node_modules/.cache/hook-typecheck.tsbuildinfo` を削除（孤児の掃除。無害だが as-built に合わせる）
 
-検証: `npm run typecheck`（cold / warm 2 回）、`npm run build`
+検証:
+
+```bash
+npm run typecheck        # cold / warm 2 回
+npm run build
+npx --yes -p typescript@6.0.3 tsc -p tsconfig.json   # CI と同じ TS 6 で成立を確認
+```
+
+> `npx typescript@6.0.3 tsc` は `could not determine executable to run` で落ちる（bin 名が `tsc`/`tsserver` のため）。**`-p` でパッケージを指定する**こと。
 
 **影響する全実行経路（実測で裏取り）**:
 
@@ -168,7 +178,14 @@ worktree に `node_modules` は無い（実測 9）。よって:
 | `npm run prebuild` | `npm run typecheck` | 同上 |
 | `npm run build` | `prebuild` → `vite build` | vite は esbuild を使い tsc の buildinfo を読まない。影響なし |
 | `npm run verify` | `cargo check ...` → `npm run build` | 上記経由で影響なし |
-| CI `frontend-check` | `npm ci` → `npm test` → `npm run build` | **`cache: npm` は npm のグローバルキャッシュ（`~/.npm`）のみを復元し、`node_modules` は復元しない**。`node_modules` は `.gitignore:3` によりチェックアウトにも含まれず、`npm ci` が毎回作り直す。よって **CI の buildinfo は常に cold** |
+| CI `frontend-check` | `npm ci` → `npm test` → `npm run build` | **`cache: npm` は npm のグローバルキャッシュ（`~/.npm`）のみを復元し、`node_modules` は復元しない**（actions/setup-node の README に "The action does not cache `node_modules`" と明記）。`node_modules` は `.gitignore:3` によりチェックアウトにも含まれず、`npm ci` が毎回作り直す。よって **CI の buildinfo は常に cold** |
+| `npx tauri build` / `npm run tauri build` | `src-tauri/tauri.conf.json:10` の `beforeBuildCommand: "npm run build"` | typecheck に到達する。**script 名不変のため自動追随** |
+| `npm run e2e:tauri:setup` | 内部で `npx tauri build --no-bundle` | 同上 |
+| CI `e2e.yml`（windows-latest） | 同上 | 同上 |
+| CI `release.yml` | 同上 | 同上 |
+| `npx tsc` 直叩き（`settings.local.json` で許可済み） | — | Phase 3 後は**従来書かなかった buildinfo を書く**。出力先は gitignore 済みで無害 |
+| VS Code の TS server | — | tsc を起動せず buildinfo を読み書きしない。無影響 |
+| `vite build` / `vitest` | esbuild 変換 | `incremental` / `tsBuildInfoFile` は esbuild のオプション集合に無い。型検査を一切しない。無影響 |
 
 `★ CI は cold・ローカルのみ warm` という非対称は**安全側**である。CI で incremental の恩恵は無いが、stale buildinfo による偽 green も構造的に起こりえない。
 
@@ -201,6 +218,9 @@ worktree に `node_modules` は無い（実測 9）。よって:
 | I14 | 予算適用の**前に** cargo の進捗行を除去する | I4 で worktree（cold build）に移った途端、`Compiling ...` が数十〜数百行流れ `head 20` が進捗行だけで埋まる。**I4 が §4 を悪化させる**相互作用 |
 | I15 | JSON エンベロープは**必ず妥当な JSON** である。診断文字列は `JSON.stringify` に委ねる | 診断に含まれる `"`・改行・パスの `\` が生の連結でエンベロープを壊す |
 | I16 | `.ts` / `.tsx` を編集したのに検査が 0 件なら、**「型検査対象外」の一行を出す** | §5 の偽 green が「無言」という別形態で残る。沈黙も誤情報 |
+| I17 | `resolveTscBin` は必ず**フルパス `node_modules/typescript/bin/tsc`** で probe する。`node_modules` ディレクトリの存在で判定してはならない | Phase 3 後、hook 自身が `<worktree>/node_modules/` を作る（実測 19）。`findUp(root,'node_modules')` だと **2 回目以降**その空ディレクトリで探索が止まり tsc が見つからない。しかも `ENOENT` ではなく「候補なし」なので **I8 の HOOK ERROR にも捕捉されず沈黙する**。順序依存かつ無音 = 本 issue が最も憎む失敗様式を、修正自身が作り込む |
+| I18 | typecheck の診断は **warm run でも replay される**ことに依存する | 実測 18: 無変更の 2 回目もエラー 1 件を再報告（exit は 2 → 1 に変わる）。replay されなければ「2 回目以降だけ安全網が沈黙する」失敗様式を新規に作り込むことになる |
+| I19 | `selectChecks` の `ui/src` 判定は**深さ 0 のファイルを含む**こと | `git` の `**/` は 1 段以上を要求するが、TypeScript の `exclude` は 0 段にマッチする（実測 17）。`^ui/src/.+/.+\.test\.tsx?$` のような「1 段以上」正規表現は実在の `ui/src/MainApp.test.tsx` で §5 を再現する |
 
 ### 異常系・順序の想定
 
@@ -275,14 +295,23 @@ I7 は現時点で厳密成立（`tsconfig.json:16-17`、`ui/src` に `.mts`/`.c
 
 → **ドリフト検出カナリア**を一本置く: `tsconfig.json` を読み、`include` / `exclude` が期待リテラルと一致することを検証する。将来 `include` を触った人がこのテストで気づく。
 
+**真実源は `tsc --listFilesOnly` である**（glob の見た目ではない。実測 17）。現在 program の `ui/src` ファイルは 24 件で、git 上の非テスト `.ts`/`.tsx` 24 件と**両方向で差分ゼロ**（`vite-env.d.ts` を含む）。I7 は今日「⊆」ではなく「＝」で成立している。
+
+将来の穴（現状は無害・`⊆` は保たれる）:
+
+| ケース | tsconfig の `include` 展開 | plan の `{ts,tsx}` glob | 帰結 |
+|---|---|---|---|
+| `.mts` / `.cts` | **拾う** | マッチしない | typecheck が発火せず、しかしファイルは検査される（安全側の取りこぼし。`ui/src` に現在 0 件） |
+| `.json`（`resolveJsonModule: true`） | 拾わない | マッチしない | ただし **import されると program に入る**（実測）。編集しても typecheck は走らない |
+
 ### C3 — `selectChecks(rel)` のケース表
 
 | 入力 `rel` | 期待する check id |
 |---|---|
 | `ui/src/api.ts` | `["typecheck"]` |
 | `ui/src/components/SearchWindow.tsx` | `["typecheck"]` |
-| `ui/src/lib/i18n.test.ts` | `[]` ← §5 |
-| `ui/src/MainApp.test.tsx` | `[]` ← §5（`.test.tsx` も。実在ファイル） |
+| `ui/src/lib/i18n.test.ts` | `[]` ← §5（深さ 2） |
+| **`ui/src/MainApp.test.tsx`** | `[]` ← **§5 かつ I19。実在ファイル・深さ 0。「1 段以上」正規表現はここで壊れる** |
 | `e2e/tauri.slash.e2e.ts` | `[]` ← §5 |
 | `vite.config.ts` | `[]` ← §5 |
 | `snotra-core/src/lib.rs` | `["clippy","core-test"]` |
@@ -295,6 +324,8 @@ I7 は現時点で厳密成立（`tsconfig.json:16-17`、`ui/src` に `.mts`/`.c
 | `docs/notes.md` | `[]` |
 
 `resolveRoot(file)` — 一時ディレクトリに `.git`（**ファイル**）を置いて worktree を模し、最近接が選ばれること / ネストで内側が勝つこと / どの `.git` にも属さないパスで `null`（I6）。
+
+`resolveTscBin(root)` — **I17 の回帰テスト**: `root` 直下に**空の `node_modules/` を置いた状態**で、上位ツリーの `node_modules/typescript/bin/tsc` を正しく見つけること。これは 2 回目以降の hook 実行を模す（実測 19）。
 
 `formatOutput(text, budget)` — 対称性が要点:
 

@@ -34,7 +34,7 @@
 | 6 | `package.json` / `package-lock.json` / 実体の typescript バージョン | 宣言 `^6.0.2` / lock **6.0.3** / 実体 **5.9.3** |
 | 7 | CI と同じ TS 6.0.3 で `noEmit` + `incremental`（tsconfig 記述）は成立するか | **成立**。exit 0、buildinfo 生成 OK |
 | 8 | worktree の `.git` はファイルかディレクトリか | **ファイル**（内容 `gitdir: C:/workspace/Snotra/.git/worktrees/<name>`） |
-| 9 | worktree に `node_modules` はあるか | **無い**（gitignore 対象のため checkout されない） |
+| 9 | worktree に `node_modules` はあるか | **無い**（gitignore 対象のため checkout されない）。⚠️ **Phase 3 後はこの事実が失効する**（下記 実測 19） |
 | 10 | main ツリーの `tsc` で worktree の `tsconfig.json` を検査できるか | **できる**。`node node_modules/typescript/bin/tsc -p <worktree>/tsconfig.json --noEmit` → exit 0 |
 | 11 | worktree 内ソースから依存はどう解決されるか | 上位へ遡り **`C:\workspace\Snotra\node_modules`** を発見（worktree が main ツリー内側にあるため） |
 | 12 | root 検出のアンカー適性 | `package.json` はルートに **1 つのみ**。`Cargo.toml` は **4 つ**（ルート + 3 crate）で最近接探索が crate で止まる |
@@ -42,6 +42,32 @@
 | 14 | payload 全体 grep を行う hook の総数 | **7 箇所**（PostToolUse 5 + PreToolUse 2） |
 | **15** | **PostToolUse hook の stdout は Claude（エージェント）に届くか** | **届かない。** 下記「実測 15 の詳細」参照 |
 | 16 | hook は Edit のたびに実行されているか | **されている**。`hook-typecheck.tsbuildinfo` の mtime が Edit ごとに更新される（16:40:55 → 16:41:55） |
+| **17** | **`**/` の意味論は git と TypeScript で同じか** | **違う。** git の pathspec では `**/` は **1 段以上**のディレクトリを要求。TypeScript の `exclude` では **0 段にもマッチ**する（下記 実測 17 の詳細） |
+| 18 | tsc は無変更の 2 回目でも同じ診断を再報告するか | **する**（warm replay 成立）。ただし **exit code は 2 → 1 に変わる**（1回目 exit 2 / 2回目 exit 1、エラー件数はどちらも 1） |
+| 19 | Phase 3 後、worktree に `node_modules` が生まれるか | **生まれる**。tsc が `<worktree>/node_modules/.cache/typecheck.tsbuildinfo` を書くとき二段を再帰生成する |
+
+### 実測 17 の詳細 — 同じ `**/` が別の意味を持つ
+
+**この調査自身が罠を踏んだ。** 初期に `git ls-files 'ui/src/**/*.test.tsx'` でテストファイルを列挙したところ、**`ui/src/MainApp.test.tsx`（実在）が結果に現れなかった**。
+
+| コマンド / 設定 | 結果 |
+|---|---|
+| `ls ui/src/MainApp.test.tsx` | **実在する** |
+| `git ls-files 'ui/src/**/*.test.tsx'` | 3 件（`components/` 配下のみ）。**深さ 0 を落とす** |
+| `git ls-files 'ui/src/*.test.tsx'` | 4 件すべて（git の `*` は `/` を跨ぐ） |
+| `tsc --listFilesOnly -p tsconfig.json` の program 中の `.test.` ファイル | **0 件**。`exclude: ["ui/src/**/*.test.tsx"]` は深さ 0 の `MainApp.test.tsx` を**正しく除外している** |
+
+**帰結**: `selectChecks` を「`ui/src/` の下に 1 段以上のディレクトリ」を要求する正規表現（例 `^ui/src/.+/.+\.test\.tsx?$`）で実装すると、`ui/src/MainApp.test.tsx` の編集で **typecheck が発火し、しかもそのファイルは検査されない**。§5 の失敗様式が、それを葬るはずの実装の中で実ファイルにより再現する。
+
+真実源は **tsc の `--listFilesOnly`**（program に何が入るか）であって、glob の見た目ではない。
+
+### 実測 19 の詳細 — Phase 3 が実測 9 を無効化する
+
+`tsBuildInfoFile` は tsconfig 基準で解決される（実測: `/cache-check`）。したがって Phase 3 後、worktree の tsconfig を検査すると `<worktree>/node_modules/.cache/` が**新規作成**される。実測 9「worktree に `node_modules` は無い」は **hook 初回実行までしか真でない**。
+
+**危険な帰結（順序依存の沈黙）**: `tsc` バイナリを `findUp(root, 'node_modules')` の形で探すと、**2 回目以降は hook 自身が作った空ディレクトリで探索が止まり、tsc が永久に見つからない**。しかもこれは `ENOENT` ではなく「候補なし」判定になるため、`spawnSync` の `error` にも現れず **`HOOK ERROR` にも捕捉されず沈黙する**。
+
+→ 必ず**フルパス `node_modules/typescript/bin/tsc`** で probe すること（plan の I5 / I17）。
 
 ### 実測 15 の詳細 — 安全網は最初からエージェントに不可視だった
 

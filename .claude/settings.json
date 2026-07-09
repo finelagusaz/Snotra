@@ -2,11 +2,12 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "Bash|PowerShell",
         "hooks": [
           {
             "type": "command",
-            "command": "input=$(cat); if echo \"$input\" | grep -qE 'gh\\s+pr\\s+create'; then up=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null); if [ -z \"$up\" ] || [ -n \"$(git log @{u}..HEAD --oneline 2>/dev/null)\" ]; then echo 'BLOCKED: 未 push のコミット、または upstream 未設定です。git push -u origin HEAD してから gh pr create してください（空 PR / Closes 誤 close 防止）。' >&2; exit 2; fi; fi"
+            "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/pre-bash.mjs\"",
+            "timeout": 30
           }
         ]
       }

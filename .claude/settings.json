@@ -33,7 +33,7 @@
           },
           {
             "type": "command",
-            "command": "input=$(cat); if echo \"$input\" | grep -qE '\\.(ts|tsx)\"'; then cd /c/workspace/Snotra && npm run typecheck 2>&1 | head -30; fi"
+            "command": "input=$(cat); if echo \"$input\" | grep -qE '\\.(ts|tsx)\"'; then cd /c/workspace/Snotra && mkdir -p node_modules/.cache && node node_modules/typescript/bin/tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/hook-typecheck.tsbuildinfo 2>&1 | head -30; fi"
           },
           {
             "type": "command",
@@ -42,5 +42,8 @@
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "rust-analyzer-lsp@claude-plugins-official": true
   }
 }

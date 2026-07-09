@@ -10,12 +10,11 @@
 
 ## 最重要ルール（常に適用）
 
-作業種別を問わず適用される4つ。詳細は各セクションを参照。
+作業種別を問わず適用される3つ。詳細は各セクションを参照。
 
 1. **`main` へ直接コミット・プッシュしない** — 必ず feature ブランチ（`feat/<機能名>` / `fix/<バグ名>` / `chore/<作業名>`）を作成してからコミットする
-2. **`gh pr create` を他のコマンドとチェーンしない** — PR 前 push チェック hook はコマンド実行の**前**に upstream を評価するため、`git push -u origin HEAD && gh pr create` は必ずブロックされる（→「Git/GitHub 運用」）
-3. **bash の HEREDOC（`<<EOF`）を使わない** — 複数行テキストは一時ファイルか PowerShell here-string（→「シェル環境」）
-4. **エージェント設定（スキル・フック・rules）の変更は合意してから** — Claude が単独で判断しない（→「チーム憲章」）
+2. **bash の HEREDOC（`<<EOF`）を使わない** — 複数行テキストは一時ファイルか PowerShell here-string（→「シェル環境」）
+3. **エージェント設定（スキル・フック・rules）の変更は合意してから** — Claude が単独で判断しない（→「チーム憲章」）
 
 ## MCP ツール
 
@@ -38,7 +37,7 @@
 - **`.githooks/` を含まないツリーでは Layer 1 は存在しない** — hook は追跡ファイルなので、`.githooks/` が無いコミットを checkout すると git は「hook 無し」として操作を通す（fail-open）。古いタグや導入前のコミットが該当する。**ローカルの取りこぼしは push の時点で GitHub ruleset が捕捉する**（直接 push の拒否は実測済み）。`.githooks/` は「手前で親切に止める」best-effort な層であり、その不在を検知する仕組みは意図的に置いていない
 - **Layer 1 が見ていない操作がある** — git は `cherry-pick` / `revert` / `am` / `branch -f` / `update-ref` で `pre-commit` を呼ばない。main 上でこれらを実行すると **hook は何も出力せず main が進む**（実測）。`commit --amend` と `merge --squash` 後の `commit` は拒否される。取りこぼしは push の時点で GitHub ruleset が捕捉する
 - **`--no-verify` は人間専用** — `.githooks/` を迂回する。Claude は使用してはならない。迂回しても main への直接 push は GitHub ruleset が拒む（実測）
-- **`gh pr create` を他のコマンドとチェーンしない** — PR 前 push チェック hook は `tool_input` 全体を grep したうえで、コマンド実行の**前**に `@{u}` を評価する。`git push -u origin HEAD && gh pr create` は upstream 未設定と判定されて必ずブロックされる（この誤爆の根治は #482）
+- **`gh pr create` は `git push` と `&&` で繋いでよい** — PR 前 push チェック hook（`.claude/hooks/pre-bash.mjs`）は、鎖の中で `git push` が `&&` で先行していれば通す（`&&` が前段の成功を保証するため）。区切りが `;` / `||` / 改行の場合は push 失敗時に PR が作られうるので拒否する。`git -C <別ツリー> push` も安全な鎖とは見なさない（#482 で実測）
 - **main の同期は `git pull --ff-only` を使う** — 非 FF の `git pull` は main にマージコミットを作るため `.githooks/pre-merge-commit` が拒否する。FF ならマージコミットが生じず hook は呼ばれない
 - **複数 issue にまたがる PR を squash マージするとき auto-close を明示制御する** — ブランチ各コミット本文の `Fixes/Closes #N` は squash 時に GitHub が拾い、意図しない issue を閉じうる。一部だけ閉じたい場合（例: 中核 issue は Phase 残しで open、対症療法 issue のみ close）の手順:
   1. `gh pr merge --squash --subject "...(#issue) (#PR)" --body-file <tmp>` で最終メッセージを明示し、`Closes`/`Refs` を制御する
@@ -46,13 +45,16 @@
 
 ## フック（.claude/settings.json）
 
-エージェントの操作には以下のフックが介入する。PreToolUse の発火条件は `.claude/settings.json` を、PostToolUse の発火条件と検査対応表は **`.claude/hooks/post-edit.mjs` の `selectChecks`** を SSOT とする。**main 保護の実体はここではない** — リポジトリの状態は hook の視界の外にあるため、`.githooks/` と GitHub ruleset が担う（→「Git/GitHub 運用」）。
+エージェントの操作には以下のフックが介入する。**どちらのフックも、発火（`matcher`）は `.claude/settings.json` が、判定は各スクリプトが SSOT である** — PreToolUse は `.claude/hooks/pre-bash.mjs` の `decide`、PostToolUse は `.claude/hooks/post-edit.mjs` の `selectChecks`。**main 保護の実体はここではない** — リポジトリの状態は hook の視界の外にあるため、`.githooks/` と GitHub ruleset が担う（→「Git/GitHub 運用」）。
 
 | フック | 発火条件 | 正しい対応 |
 |---|---|---|
-| PR 作成前 push チェック（PreToolUse） | 未 push コミットまたは upstream 未設定での `gh pr create`（空 PR / `Closes` 誤 close 防止） | `git push -u origin HEAD` してから PR を作る |
+| PR 作成前 push チェック（PreToolUse） | `Bash` / `PowerShell` の `tool_input.command` の**コマンド位置**に `gh pr create` があり、かつ安全と確認できないとき（空 PR / `Closes` 誤 close 防止）。`&&` で `git push` が先行するなら通る | `git push -u origin HEAD` してから PR を作る（または `&&` で繋ぐ） |
 | 編集後の自動検証（PostToolUse） | `tool_input.file_path` が属するツリーからの相対パスで判定。`*.rs` → clippy（`snotra-core` / `snotra-settings` 配下ではその crate のテストも）、`ui/src/**/*.{ts,tsx,mts,cts}`（`*.test.ts(x)` を除く）→ typecheck、`tauri.conf.json` / `config.toml` → WARN、`.claude/settings.json` と `.claude/hooks/**` → hook-selftest | **沈黙は合格を意味する**。失敗時のみ `exit code` と再現コマンドと診断が会話に届く。手動での再実行は不要 |
 
+- **PreToolUse は `exit 2` だけがブロックする**（#482 実測）。`exit 0` は許可、それ以外の非ゼロ（Node が未捕捉例外で返す **1** を含む）は「非ブロッキングエラー」でコマンドはそのまま実行される。ゆえに `pre-bash.mjs` は**既定の `process.exitCode` を 2 に置き、許可が確定した経路だけが 0 を書く**。判定不能（payload 破損・`command` が非文字列・git 状態が読めない・鎖の途中で `cd`）はすべて block へ倒す。この fail-closed の骨格を壊してはならない
+- **PreToolUse の判定は `tool_input.command` だけを見る**（#482）。`description` や payload 全体を grep してはならない。判定単位は「コマンド位置に現れる呼び出し」であり、`grep "gh pr create" f` のように引用の内側にあるだけでは発火しない。過剰検出（`echo "&& gh pr create"`）は fail-closed 方向ゆえ許容する
+- **hook が見ないコマンド形がある**（#482・受容する性質）。`sh -c '...'` / `eval` / バッククォート / ラッパ経由（`timeout 5 gh pr create` / `xargs`）は「gh がコマンド位置に現れない」ため検出しない。これは事故モードではなく意図的迂回であり、`--no-verify` と同格に**人間専用**として扱う。検出を shell パーサ相当まで広げると payload 全体 grep の誤爆を作り直すことになる
 - **検出は exit code、出力は証拠**（#471）。検査が成功した hook は何も出力しない。失敗したときだけ `--- <検査>: 失敗 (exit N) ---` と再現コマンドが会話に現れる。診断が予算（`head`/`tail` 数行〜数十行）を超えても、再現コマンドで全件を見られるので取りこぼしは無い
 - **沈黙を「合格」と読めるのは、沈黙しうる経路をすべて塞いだから**。タイムアウト（検査ごと 300s で自ら打ち切る）・出力溢れ・起動失敗・スクリプト内部エラーは、いずれも必ず報告される。この契約を壊す変更を `.claude/hooks/` に入れてはならない
 - **`.ts`/`.tsx` を編集したのに何も出ない場合は 2 通りある**: 型検査が通った、または `tsconfig.json` の `include` 対象外（`e2e/`・`*.config.ts`・`*.test.ts(x)`）。後者では `[post-edit] ... は tsconfig の include 対象外です` という一行が出る

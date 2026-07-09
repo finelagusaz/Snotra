@@ -46,6 +46,16 @@ npm run e2e:tauri        # 必須: Playwright + Tauri Driver E2E
 
 `npm run tauri dev` で起動し、目視で overflow／clipping／フォントレンダリングを確認する。PR 作成前に必須。
 
+### E. git hook（`.githooks/**`）を変更した場合
+
+```bash
+npm test    # 必須: 使い捨て repo で hook を実測する（.githooks/githooks.test.mjs）
+```
+
+- `.githooks/` は **main 保護のローカル層**。commit / merge / rebase / push の各操作で git が直接呼ぶため、ツール・シェル・worktree・`git -C` のいずれにも依存しない
+- **bootstrap**: `npm install` / `npm ci` が `prepare` スクリプトで `git config core.hooksPath .githooks` を実行する。worktree は `.git/config` を共有するため一度で全 worktree に効く
+- この層は best-effort。`core.hooksPath` が外れても **GitHub ruleset（`default`）が main への直接 push を拒否する**ため、外れたことを検知する仕組みは意図的に設けていない
+
 ## Windows/macOS/Linux で実行可能
 
 ```bash

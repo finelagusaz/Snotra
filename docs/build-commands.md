@@ -18,7 +18,8 @@ cargo test -p snotra-settings                                                   
 ```
 
 - **`cargo test` の必須/任意**: 変更した crate のテストはローカル**必須**（`snotra-core` は TDD 重視で PostToolUse フックも自動実行）。変更していない crate のテストはローカル任意（CI の rust-check が PR で `snotra-core`・`snotra-settings` の両テストを常に実行し担保）
-- 上記のコマンドはいずれも CI（`ci.yml` rust-check）で PR 自動実行される（「CI/CD メモ」の対応表参照）。PostToolUse フック（`.claude/settings.json`）も `.rs` 編集で clippy、`snotra-core` 編集で core テストを自動発火する
+- 上記のコマンドはいずれも CI（`ci.yml` rust-check）で PR 自動実行される（「CI/CD メモ」の対応表参照）。PostToolUse フック（`.claude/hooks/post-edit.mjs`）も `*.rs` 編集で clippy、`snotra-core/**` 編集で core テスト、`snotra-settings/**` 編集で settings テストを自動発火する
+- **フックの沈黙は合格を意味する**（#471）。検出は exit code で行い、成功した検査は何も出力しない。失敗時のみ再現コマンド付きで会話に届くため、そのコマンドを実行すれば全診断を見られる
 - `snotra-settings` を含めるのは egui ネイティブウィンドウ側の型壊れも検知するため
 
 ### B. TypeScript／フロントエンドファイル（`ui/src/**/*.{ts,tsx}` 等）を変更した場合

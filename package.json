@@ -10,7 +10,7 @@
     "prepare:sidecar": "pwsh -NoProfile -File scripts/prepare-sidecar.ps1 -Release",
     "e2e:tauri:setup": "cargo install tauri-driver --locked && npm run prepare:sidecar && npx tauri build --no-bundle",
     "e2e:tauri": "playwright test -c playwright.tauri.config.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc",
     "prebuild": "npm run typecheck",
     "build": "vite build",
     "verify": "cargo check -p snotra-core -p snotra -p snotra-settings && npm run build",

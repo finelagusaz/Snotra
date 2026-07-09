@@ -1,7 +1,8 @@
 # hook の責務を三層に分離し、main 保護を git/GitHub の機構へ移す
 
 - 日付: 2026-07-09
-- ステータス: 設計合意済み（Phase 1 のみ本 spec のスコープ・実装計画 writing-plans へ）
+- ステータス: 設計合意済み（Phase 1 実装中）
+- 改訂: 実装中の実測により Phase 1 を **1a / 1b に分割**した。`.githooks/` は追跡ファイルであり、それを含まないツリー（マージ前の `main`）では Layer 1 が存在しない。ゆえに `block-main-commit` の削除をマージ前に行うと、マージまでの間 main 上のローカルガードが空になる。計画自身の不変条件「安全網を一瞬も空にしない」に従い、削除は **マージ後の Phase 1b** へ移した（§5・§7・§8・§9）
 - 関連: #471（closed）, #473, #474, #475, #476, #477, #479 / `.claude/settings.json`, `.claude/hooks/post-edit.mjs`, `CLAUDE.md`, `AGENTS.md`
 - 由来: hook 関連 issue 群の構造分析。個々の issue を潰すのではなく、共通の根を断つ
 
@@ -145,6 +146,24 @@ exit 0
 
 git が hook を呼ぶとき、cwd は**コミットされるツリーのトップ**である。したがって `git -C /other/tree commit` はそのツリーの `.githooks/pre-commit` を、そのツリーのブランチで評価する。「cwd と実際のコミット先がずれる」というバグが構造的に発生しない。worktree も同じ理由で守られる。
 
+実測（`.githooks/githooks.test.mjs`）:
+
+- 相対 `core.hooksPath` は **working tree のトップ**を基準に解決される。プロセスの cwd ではない。ゆえに `ui/` や `src-tauri/` の中から `git commit` しても hook は発火する
+- linked worktree では **worktree 自身の `.githooks`** が解決される（main ツリー側の hook を無害化してもなお拒否されることで反証済み）
+
+### この層が存在しないツリーがある（実測・受容する性質）
+
+`.githooks/` は**追跡ファイル**である。したがってそれを含まないコミットを checkout すると、`core.hooksPath` は存在しないディレクトリを指し、**git は「hook 無し」として操作を通す（fail-open）**。
+
+該当するのは、`.githooks/` 導入前のコミット・古いタグ、そして**この変更がマージされるまでの `main` そのもの**である。
+
+これは三層設計を壊さない。Layer 1 は best-effort であり、**保証は Layer 0（ruleset）が担う**。ローカルの main が汚れても push は拒否され、`git reset --soft` で回復できる。
+
+ただし帰結が 2 つある:
+
+1. **ドキュメントは「`.githooks` が main を守る」と無条件に書いてはならない。** 守るのは `.githooks` を含むツリーにおいてである
+2. **`block-main-commit` の削除は、この変更が main にマージされた後に行う。** マージ前に削除すると、マージまでの間 main 上のローカルガードが空になる（→ §7 Phase 1b）
+
 ### bootstrap
 
 `core.hooksPath` はローカル設定（`.git/config`）でリポジトリに乗らない。`package.json` に追加する。
@@ -159,11 +178,13 @@ npm の `prepare` は `npm install` / `npm ci` の後に走る。worktree は `.
 
 `--no-verify` が `pre-commit` / `pre-merge-commit` / `pre-push` を迂回する。**人間専用**であり、エージェントには harness の system prompt と CLAUDE.md が禁じる。`pre-rebase` は `--no-verify` を受け付けないため、迂回するなら `git config --unset core.hooksPath` を一時的に行う。
 
-## 5. Layer 2 — 今回の変更
+## 5. Layer 2 — `block-main-commit` の削除（Phase 1b）
 
 `block-main-commit` を `.claude/settings.json` から**削除**する。Layer 0/1 が守る以上、残す価値は「より早く止まる」ことだけであり、その対価は漏れ・誤爆・「守られている」という誤った信念である。
 
-PR 前 push チェックは**今回触らない**（Phase 2）。`post-edit.mjs` も触らない（Phase 3）。
+**ただし実行は Phase 1b（Phase 1a のマージ後）**。理由は §4「この層が存在しないツリーがある」を参照。マージ前に削除すると、`.githooks/` を持たない `main` 上でローカルガードが空になる。
+
+PR 前 push チェックは触らない（Phase 2）。`post-edit.mjs` は振る舞いを触らない（Phase 3）。
 
 ### 削除に伴い CLAUDE.md から消えるもの
 
@@ -175,10 +196,13 @@ git ネイティブ hook は実際に実行される瞬間に、実際のツリ�
 代わりに記載するもの:
 
 - main 保護は `.githooks/` + GitHub ruleset が担うこと（hook ではない）
+- `.githooks/` を含まないツリーでは Layer 1 が存在せず、保証は Layer 0 が担うこと（§4）
 - `--no-verify` は人間専用であり、エージェントは使用してはならないこと
 - `npm install` が `core.hooksPath` を設定すること（bootstrap の所在）
 
-**設計の良し悪しを測る指標のひとつは、ドキュメントが減るかどうかである。** 本変更は CLAUDE.md から 2 ルールを削り、hook を 1 本削り、#473 の半分を消滅させる。何も足さずに。
+**Phase 1a では追記のみ**（新しい層と caveat）。**削除は Phase 1b**。
+
+**設計の良し悪しを測る指標のひとつは、ドキュメントが減るかどうかである。** 本変更は最終的に CLAUDE.md から 2 ルールを削り、hook を 1 本削り、#473 の半分を消滅させる。
 
 ## 6. 検証（故障注入）
 
@@ -205,28 +229,54 @@ V5 / V6 は、本 spec §1 で測った実在の抜け道をそのまま逆向�
 
 ## 7. 実施順序 — 安全網を一瞬も空にしない
 
-1. ruleset を `active` にし `pull_request` を追加 → **V1 で実測**
-2. `.githooks/` 4 本 + `_lib.sh` + `package.json` の `prepare` → **V4〜V10 で実測**
-3. **実測が緑になってから** `block-main-commit` を `settings.json` から削除
-4. CLAUDE.md の最重要ルール 2 と `--ff-only` 運用ルールを削除し、置き換え文言を追加
+### Phase 1a（本 PR）
 
-3 を最後に置く。漏れはあれど存在するガードを、新しい防衛線が実測で立つまで残すため。
+1. ruleset を `active` にし `pull_request` を追加 → **V1 で実測**
+2. `.githooks/` 4 本 + `_lib.sh` + `.gitattributes` + `package.json` の `prepare` → **V4〜V10 で実測**
+3. CLAUDE.md と `docs/build-commands.md` に**新しい層を追記**する（既存ルールは消さない）
+4. マージ。この瞬間、`main` のツリーに `.githooks/` が入り、Layer 1 が main を守り始める
+
+### Phase 1b（マージ後の別 PR）
+
+5. `block-main-commit` を `settings.json` から削除
+6. CLAUDE.md の最重要ルール 2 と `--ff-only` 運用ルールを削除し、置き換え文言へ差し替える
+
+削除を Phase 1b に置くのは、`.githooks/` が **マージされるまで `main` のツリーに存在しない**ためである（§4）。Phase 1a の途中で削除すると、漏れはあれど存在する唯一のローカルガードが、新しいガードの届かないツリー（`main`）で失われる。
+
+この分割は実装中の実測（Task 7 の V5）で判明した。当初の計画は「実測が緑になってから削除」としており、`.githooks/` の存在するツリーでしか緑を測っていなかった。
 
 ## 8. 受け入れ条件
 
-- [ ] V1〜V10 がすべて期待どおり（V2・V9 を含む＝既存の運用を壊さず、誤爆もしないこと）
-- [ ] `block-main-commit` 削除後も V1, V4〜V8 が保たれる
+### Phase 1a（本 PR）
+
+- [x] **V1 実測**: server が main への直接 push を拒否（`GH013 / Changes must be made through a pull request`）。main は動いていない
+- [x] **V3 未実行**: harness が main への force-push を拒否した。迂回しない。`pull_request` 規則は main へのあらゆる直接 ref 更新を拒むため V1 に包含される
+- [x] **V4 実測**: Bash ツールからの commit は旧 `block-main-commit` が exit 2 で止める
+- [x] **V5 実測**: `.githooks` を置いた main で、PowerShell ツールからの commit が `exit 1 / BLOCKED` で拒否される（前回素通りした経路が塞がった）
+- [x] **V6・V7・V10 自動化**: `.githooks/githooks.test.mjs` の 14 テスト（`git -C`・非 FF マージ・rebase・push・worktree・サブディレクトリ）
+- [x] **V8 未実行**: harness が push を拒否。`pre-push` の 3 テスト（client）と V1（server）で二重に測定済み
+- [x] **V9 実測**: `git pull --ff-only` も `git merge --ff-only origin/main` も通る＝誤爆しない
+- [x] `docs/build-commands.md` にカテゴリ E と bootstrap が記載されている
+- [x] `.gitattributes` が `.githooks/**` を `eol=lf` に固定している（`_lib.sh` も含む＝CRLF による静かな guard 無効化を防ぐ）
+- [ ] CLAUDE.md に新しい層（`.githooks/` + ruleset）と §4 の caveat が**追記**されている（既存ルールは削除しない）
+- [ ] `.claude/settings.json` と `.claude/hooks/post-edit.mjs` に変更が無い
+- [ ] **V2**: `gh pr merge --squash` が動く（マージ時に確認）
+
+### Phase 1b（マージ後）
+
+- [ ] `block-main-commit` 削除後も、`.githooks/` を含む `main` で commit が拒否される
+- [ ] Bash ツールから `git merge --ff-only origin/main` が通る（誤爆の消滅）
 - [ ] CLAUDE.md から最重要ルール 2 と `--ff-only` 運用ルールが消え、置き換え文言が入っている
-- [ ] `docs/build-commands.md` に bootstrap（`npm install` が `core.hooksPath` を設定する）が記載されている
-- [ ] `post-edit.mjs` と PR 前 push チェックに変更が無い
+- [ ] `post-edit.mjs` のコメントから `block-main-commit` の名前が消える（振る舞いは不変）
 
 ## 9. issue の処遇
 
-| issue | 本 Phase 後 |
+| issue | 処遇 |
 |---|---|
-| **#473** | 半分が消滅（`block-main-commit` の fail-open は hook の削除とともに消える）。残る半分＝ PR 前 push チェック側（payload 全体 grep・PowerShell 素通り）は **Phase 2 の issue として書き換える** |
+| **#473** | Phase 1a では触らない（`block-main-commit` はまだ生きている）。**Phase 1b でその半分が消滅**する。残る半分＝ PR 前 push チェック側（payload 全体 grep・PowerShell 素通り）は Phase 2 の issue として書き換える |
 | #474 / #475 / #476 / #477 / #479 | すべて (B) 側。肯定的報告への転換（Phase 3）に依存。今回は触らない |
-| **新規起票** | 「PreToolUse の `matcher: "Bash"` は PowerShell tool に一致しない」— Phase 2 に含める |
+| **新規起票 ①** | 「Phase 1b: `block-main-commit` を削除し CLAUDE.md の 2 ルールを消す」— 本 PR のマージ後に実施 |
+| **新規起票 ②** | 「PreToolUse の `matcher: "Bash"` は PowerShell tool に一致しない」— Phase 2 に含める |
 
 ## 10. この先（本 spec の範囲外）
 

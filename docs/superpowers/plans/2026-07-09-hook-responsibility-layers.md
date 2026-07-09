@@ -1054,16 +1054,22 @@ Step 1〜4 の出力を scratchpad に保存し、PR 本文へ貼る。**V5 の�
 
 ---
 
-## Task 8: `block-main-commit` を削除する
+## Task 8（Phase 1b・**本 PR の対象外**）: `block-main-commit` を削除する
+
+> **このタスクは本 PR では実行しない。** Task 7 の実測で判明したとおり、`.githooks/` は追跡ファイルであり **マージ前の `main` のツリーには存在しない**。いまここで `block-main-commit` を削除すると、マージまでの間、`main` 上のローカルガードが空になる（origin は ruleset が守るが、計画自身の不変条件「安全網を一瞬も空にしない」に反する）。
+>
+> **本 PR がマージされた瞬間、`main` のツリーに `.githooks/` が入り、Layer 1 が main を守り始める。** 削除はその後、follow-up issue の別 PR で行う。
+>
+> 以下の手順は Phase 1b の仕様としてそのまま使う。
 
 **Files:**
 - Modify: `.claude/settings.json`, `.claude/hooks/post-edit.mjs`
 
 **Interfaces:**
-- Consumes: Task 7 の測定が全て緑であること（**前提条件。落ちていたら着手しない**）
+- Consumes: **本 PR がマージ済みであること**（`main` のツリーに `.githooks/` が存在すること）
 - Produces: PreToolUse に PR 前 push チェックのみが残った状態
 
-**`.claude/settings.json` の変更は CLAUDE.md 最重要ルール 4（エージェント設定の変更は合意してから）の対象。設計文書の承認をもって合意済みとする。**
+**`.claude/settings.json` の変更は CLAUDE.md 最重要ルール 4（エージェント設定の変更は合意してから）の対象。エージェントが書いた計画への承認は、この具体的な操作の許可と同一ではない。着手前にユーザーへ明示的に確認する。**
 
 - [ ] **Step 1: `.claude/settings.json` から `block-main-commit` を削除する**
 
@@ -1200,7 +1206,71 @@ Refs #471, #473
 
 ---
 
-## Task 9: CLAUDE.md を整理する
+## Task 9a（Phase 1a・**本 PR**）: CLAUDE.md に新しい層を追記する
+
+**Files:**
+- Modify: `CLAUDE.md`
+
+**Interfaces:**
+- Consumes: Task 6（`.githooks/` が稼働していること）
+- Produces: なし
+
+**追記のみ。既存のルールは 1 行も削除しない。** `block-main-commit` はまだ生きており、それが根拠となっている運用ルール（`&&` チェーン禁止・`pull --ff-only`）も、まだ正しい。削除は Phase 1b。
+
+- [ ] **Step 1: 「Git/GitHub 運用」の先頭に 3 項目を追加する**
+
+既存の項目はすべて残す。以下を「Git/GitHub 運用」の箇条書きの**先頭**に挿入する。
+
+```markdown
+- **main 保護の実体は `.githooks/` と GitHub ruleset である** — `.githooks/{pre-commit,pre-merge-commit,pre-rebase,pre-push}` が commit / merge / rebase / push を、GitHub ruleset `default` が origin 側の直接 push・force-push・削除を拒否する。git は hook を「操作されるツリーのトップ」を cwd として呼び、相対 `core.hooksPath` もそこを基準に解決する（実測）。ゆえに PowerShell でも `git -C` でも worktree でも `ui/` などのサブディレクトリからでも判定は正しい。bootstrap は `npm install`（`prepare` が `core.hooksPath` を設定する）
+- **`.githooks/` を含まないツリーでは Layer 1 は存在しない** — hook は追跡ファイルなので、`.githooks/` が無いコミットを checkout すると git は「hook 無し」として操作を通す（fail-open）。古いタグや導入前のコミットが該当する。**保証は GitHub ruleset が担う** — origin 側は無条件に守られるため、ローカルの取りこぼしは push で止まる。`.githooks/` は「手前で親切に止める」best-effort な層であり、その不在を検知する仕組みは意図的に置いていない
+- **`--no-verify` は人間専用** — `.githooks/` を迂回する。Claude は使用してはならない。迂回しても GitHub ruleset が push を拒むため main には届かない
+```
+
+- [ ] **Step 2: フック表の直前の説明文に一文を足す（`CLAUDE.md:45`）**
+
+変更前:
+```markdown
+エージェントの操作には以下のフックが介入する。PreToolUse の発火条件は `.claude/settings.json` を、PostToolUse の発火条件と検査対応表は **`.claude/hooks/post-edit.mjs` の `selectChecks`** を SSOT とする。
+```
+
+変更後:
+```markdown
+エージェントの操作には以下のフックが介入する。PreToolUse の発火条件は `.claude/settings.json` を、PostToolUse の発火条件と検査対応表は **`.claude/hooks/post-edit.mjs` の `selectChecks`** を SSOT とする。**main 保護の実体はここではない** — リポジトリの状態は hook の視界の外にあるため、`.githooks/` と GitHub ruleset が担う（→「Git/GitHub 運用」）。`block-main-commit` は漏れがあり（PowerShell tool に発火しない・`git -C` を検出しない・`push` を語彙に持たない）、Phase 1b で削除予定である。
+```
+
+- [ ] **Step 3: 検証**
+
+- 既存の最重要ルール 1〜4 の番号と本文が変わっていないこと
+- 「シェル環境」表・`--ff-only` ルール・`&&` チェーン禁止がそのまま残っていること
+- `git diff CLAUDE.md` が**追加行のみ**であること（削除行が 1 行でもあれば手順違反）
+
+- [ ] **Step 4: コミット**
+
+```powershell
+git add CLAUDE.md
+```
+```powershell
+git commit -F "<scratchpad>/msg-task9a.txt"
+```
+
+メッセージ本文:
+```
+docs(claude-md): main 保護の実体（.githooks + ruleset）を追記する
+
+Phase 1a では追記のみ。block-main-commit はまだ生きており、それを根拠とする
+運用ルール（&& チェーン禁止・pull --ff-only）もまだ正しい。削除は Phase 1b。
+
+.githooks/ は追跡ファイルなので、それを含まないツリー（マージ前の main、
+古いタグ）では hook が存在せず git は操作を通す。この caveat を明記した。
+保証は GitHub ruleset が担う。
+```
+
+---
+
+## Task 9b（Phase 1b・**本 PR の対象外**）: CLAUDE.md からルールを削除する
+
+> **本 PR では実行しない。** `block-main-commit` の削除（Task 8）と同じ follow-up PR で行う。
 
 **Files:**
 - Modify: `CLAUDE.md`
@@ -1349,7 +1419,22 @@ Write ツールで scratchpad に `pr-body.md` を作る。以下を必ず含め
 gh pr create --title "refactor(hooks): main 保護を git/GitHub の機構へ移し block-main-commit を削除する (#473)" --body-file "<scratchpad>/pr-body.md"
 ```
 
-- [ ] **Step 5: #473 を Phase 2 用に書き換える**
+- [ ] **Step 5（Phase 1a では実施しない）: #473 を Phase 2 用に書き換える**
+
+> `block-main-commit` は本 PR では削除しないため、#473 の記述はまだ有効である。書き換えは Phase 1b の PR で行う。代わりに Phase 1b の issue を起票する（Step 5a）。
+
+- [ ] **Step 5a: Phase 1b の issue を起票する**
+
+タイトル: `chore(hooks): Phase 1b — block-main-commit を削除し CLAUDE.md の 2 ルールを消す`
+
+本文に含めること:
+- 前提: 本 PR がマージされ、`main` のツリーに `.githooks/` が入っていること
+- 実測: `.githooks/` は追跡ファイルであり、マージ前の `main` では hook が存在せず git は commit を通した（fail-open）。ゆえに削除をマージ前に行うと安全網が一瞬空になる
+- 手順は `docs/superpowers/plans/2026-07-09-hook-responsibility-layers.md` の Task 8 と Task 9b
+- 受け入れ条件は設計文書 §8「Phase 1b」
+- `Refs #471, #473`
+
+- [ ] **Step 5b（旧 Step 5）: Phase 1b の PR で #473 を書き換える**
 
 `gh issue edit 473` で本文を差し替える。残すのは PR 前 push チェック側のみ:
 

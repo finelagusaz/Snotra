@@ -71,8 +71,13 @@ describe("selectChecks", () => {
     expect(selectChecks("package.json")).toEqual(["hook-selftest"]);
   });
 
-  it("Cargo.toml は cargo-check（ワークスペース定義）", () => {
-    expect(selectChecks("Cargo.toml")).toEqual(["cargo-check"]);
+  // ルートの Cargo.toml だけが hook-selftest を撃つ。crate 追加は必ず members を
+  // 編集するのでそこで捕まる（#500）。メンバーの Cargo.toml は cargo-check のみ。
+  it("ルートの Cargo.toml は cargo-check + hook-selftest", () => {
+    expect(selectChecks("Cargo.toml")).toEqual(["cargo-check", "hook-selftest"]);
+  });
+
+  it("メンバーの Cargo.toml は cargo-check のみ", () => {
     expect(selectChecks("snotra-core/Cargo.toml")).toEqual(["cargo-check"]);
     expect(selectChecks("src-tauri/Cargo.toml")).toEqual(["cargo-check"]);
   });
@@ -409,12 +414,12 @@ describe("buildSection — I21 失敗の事実は決して切り捨てない", (
     const out = buildSection({
       id: "clippy",
       status: "exit 101",
-      repro: "cargo clippy -p snotra-core  (cwd: /repo)",
+      repro: "cargo clippy --workspace  (cwd: /repo)",
       evidence: "snotra-core/src/lib.rs:10:5: error: unused",
     });
     expect(out).toContain("clippy");
     expect(out).toContain("exit 101");
-    expect(out).toContain("cargo clippy -p snotra-core");
+    expect(out).toContain("cargo clippy --workspace");
     expect(out).toContain("cwd: /repo");
     expect(out).toContain("error: unused");
   });
@@ -593,5 +598,27 @@ describe("package.json ドリフト検出カナリア — #497", () => {
     expect(pkg.scripts.prepare).toContain("core.hooksPath .githooks");
     expect(pkg.scripts.test).toBe("vitest run");
     expect(pkg.scripts.typecheck).toBe("tsc");
+  });
+});
+
+describe("Cargo.toml members ドリフト検出カナリア — #500", () => {
+  // check / clippy は --workspace なので members を cargo が読む（写しは消えた）。
+  // しかし `cargo test -p <crate>` は「編集した crate → そのテスト」の写像であり、
+  // selectChecks のディレクトリ接頭辞と buildCommand の case に手書きされている。
+  // 4 つ目の crate が生えると、その .rs を編集してもテストが**静かに走らない**。
+  // ここで落とし、selectChecks / buildCommand / ci.yml / SSOT の更新を強制する。
+  it("workspace members が test 系のルーティングと一致する", () => {
+    const p = fileURLToPath(new URL("../../Cargo.toml", import.meta.url));
+    const src = readFileSync(p, "utf8");
+
+    // 非マッチを握り潰さない。書式が変わったら「読めなかった」と落ちる（fail-closed）。
+    const m = src.match(/^members\s*=\s*\[([^\]]*)\]/m);
+    expect(m, "Cargo.toml の members 行を読めなかった（書式が変わった）").not.toBeNull();
+
+    const members = m[1]
+      .split(",")
+      .map((s) => s.trim().replace(/^"|"$/g, ""))
+      .filter((s) => s.length > 0);
+    expect(members).toEqual(["snotra-core", "src-tauri", "snotra-settings"]);
   });
 });

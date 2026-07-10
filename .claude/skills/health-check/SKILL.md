@@ -57,12 +57,12 @@ allowed-tools:
 ## Check 5 — docs/build-commands.md コマンドの実在性（SSOT）
 
 `docs/build-commands.md` はビルド／検証コマンドの単一の真実源（SSOT）。記載された `npm run XXX` / `npm XXX` コマンドが `package.json` の `scripts` に定義されているか検証する。
-`cargo` コマンドは `Cargo.toml` のワークスペースメンバーと照合する（`-p <crate>` のクレート名が存在するか）。
+`cargo test -p <crate>` のクレート名が `Cargo.toml` のワークスペースメンバーに存在するか照合する（`check` / `clippy` は `--workspace` で cargo 自身が真実源を読むため、照合対象ではない）。
 定義されていないコマンドを報告する。
 
 加えて、SSOT ドリフトの検知として以下も確認する:
 - `AGENTS.md` Step 8 や `.claude/skills/*/SKILL.md` に **コマンド本体**（`cargo XXX` / `npm XXX` / `npx XXX` の具体的な引数を含む実行コマンド）が直書きされていないか grep する。`docs/build-commands.md` の SSOT を迂回している箇所を報告する（コマンド名への言及や参照リンク自体は許容）。
-- `.claude/hooks/*.mjs` が保持する検査コマンド（`post-edit.mjs` の `buildCommand`）を `docs/build-commands.md` と照合する。hook は検査の実行主体なので**直書き自体は正当** — 報告するのは SSOT との**内容乖離**である。判定規則（SSOT 側の整合規約と同一）: cargo コマンドは**カテゴリ A のコードブロック**と照合し、**合否・検査対象を変えるフラグ差**（`--lib` の付与・`-p` の欠落等。#476 の実例）を報告する。**出力整形のみのフラグ**（`--message-format short` 等、exit code を変えないもの）は許容する。node/vitest 系は SSOT コマンド（`npm test` / `npm run typecheck`）の部分集合ラッパーを許容する（対象ファイルが SSOT コマンドの実行対象に含まれることを確認する）。
+- `.claude/hooks/*.mjs` が保持する検査コマンド（`post-edit.mjs` の `buildCommand`）を `docs/build-commands.md` と照合する。hook は検査の実行主体なので**直書き自体は正当** — 報告するのは SSOT との**内容乖離**である。判定規則（SSOT 側の整合規約と同一）: cargo コマンドは**カテゴリ A のコードブロック**と照合し、**合否・検査対象を変えるフラグ差**（`--lib` の付与・`--workspace` や `--all-targets` の欠落・`test -p` のクレート取り違え等。#476 の実例）を報告する。**`check` / `clippy` に `-p` が無いのは正しい状態である**（#500）。**出力整形のみのフラグ**（`--message-format short` 等、exit code を変えないもの）は許容する。node/vitest 系は SSOT コマンド（`npm test` / `npm run typecheck`）の部分集合ラッパーを許容する（対象ファイルが SSOT コマンドの実行対象に含まれることを確認する）。
 
 ## Check 6 — docs/development-principles.md 参照の実在性
 

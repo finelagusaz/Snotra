@@ -60,7 +60,17 @@ const CARGO_MANIFEST = /(^|\/)Cargo\.toml$/;
 // 「検査の定義を変えるファイル」。編集すると hook-selftest が走り、その中の
 // カナリアが「定義と selectChecks の前提が一致しているか」を検証する。
 // カナリアの無いファイルをここに足してはならない — 何も検証しない緑になる。
-const CHECK_DEFINITION = new Set([".claude/settings.json", "tsconfig.json", "package.json", "vitest.config.ts"]);
+//
+// Cargo.toml は**ルートのみ**。crate 追加は必ず members を編集するのでそこで捕まる。
+// メンバーの Cargo.toml（パッケージ名の真実源）は要らない — 改名すれば
+// `cargo test -p snotra` が "package did not match" で落ちる。沈黙する経路だけを守る。
+const CHECK_DEFINITION = new Set([
+  ".claude/settings.json",
+  "tsconfig.json",
+  "package.json",
+  "vitest.config.ts",
+  "Cargo.toml",
+]);
 
 /** 祖先を遡り relTarget を含むディレクトリを返す。見つからなければ null。 */
 export function findUp(startDir, relTarget) {
@@ -254,11 +264,15 @@ function buildCommand(id, root) {
   };
 
   switch (id) {
+    // check / clippy の --workspace は cargo に Cargo.toml の members を読ませる。
+    // crate 名を列挙すると members の写しになり、4 つ目の crate で静かに漏れる（#500）。
     case "clippy":
       return cargoSpec([
-        "clippy", "-p", "snotra-core", "-p", "snotra", "-p", "snotra-settings",
+        "clippy", "--workspace",
         "--all-targets", "--message-format", "short", "--", "-D", "warnings",
       ]);
+    // test の -p は写しではなく「編集した crate → そのテスト」の写像。--workspace に
+    // すると編集していない crate のテストまで走り、hook の即時性が失われる。
     case "core-test":
       return cargoSpec(["test", "-p", "snotra-core"]);
     case "settings-test":
@@ -272,7 +286,7 @@ function buildCommand(id, root) {
       return tsc ? nodeSpec([tsc, "-p", path.join(root, "tsconfig.json")]) : null;
     }
     case "cargo-check":
-      return cargoSpec(["check", "-p", "snotra-core", "-p", "snotra", "-p", "snotra-settings"]);
+      return cargoSpec(["check", "--workspace"]);
     case "csp-test":
       return vitestSpec("ui/src/lib/cspValidation.test.ts");
     case "hook-selftest":

@@ -14,11 +14,13 @@
 cargo check -p snotra-core -p snotra -p snotra-settings                                # 必須: Rust 全 crate 型チェック
 cargo clippy -p snotra-core -p snotra -p snotra-settings --all-targets -- -D warnings  # 必須: lint（全 .rs 変更、テストターゲット含む）
 cargo test -p snotra-core                                                              # 必須（snotra-core を変更した場合）: 純ロジック層 TDD
+cargo test -p snotra                                                                   # 必須（src-tauri を変更した場合）: Tauri 統合層のユニットテスト
 cargo test -p snotra-settings                                                          # 必須（snotra-settings を変更した場合）: 設定 GUI の純ロジックテスト
 ```
 
-- **`cargo test` の必須/任意**: 変更した crate のテストはローカル**必須**（`snotra-core` は TDD 重視で PostToolUse フックも自動実行）。変更していない crate のテストはローカル任意（CI の rust-check が PR で `snotra-core`・`snotra-settings` の両テストを常に実行し担保）
-- 上記のコマンドはいずれも CI（`ci.yml` rust-check）で PR 自動実行される（「CI/CD メモ」の対応表参照）。PostToolUse フック（`.claude/hooks/post-edit.mjs`）も `*.rs` 編集で clippy、`snotra-core/**` 編集で core テスト、`snotra-settings/**` 編集で settings テストを自動発火する
+- **`cargo test` の必須/任意**: 変更した crate のテストはローカル**必須**（PostToolUse フックが自動実行）。変更していない crate のテストはローカル任意（CI の rust-check が PR で全 3 crate のテストを常に実行し担保）
+- 上記のコマンドはいずれも CI（`ci.yml` rust-check）で PR 自動実行される（「CI/CD メモ」の対応表参照）。PostToolUse フック（`.claude/hooks/post-edit.mjs`）も `*.rs` 編集で clippy、`snotra-core/**` / `src-tauri/**` / `snotra-settings/**` 編集でその crate のテストを自動発火する。`src-tauri/tauri.conf.json` の編集では CSP 契約テスト（`ui/src/lib/cspValidation.test.ts`）を自動発火する
+- **フックの検査コマンドと本ファイルの整合規約**: フックの cargo コマンドは本ファイル記載と**一字一句一致**させる。npm 系検査は SSOT コマンド（`npm test` / `npm run typecheck`）の部分集合ラッパー（単一テストファイルの vitest 実行・tsc 直接起動）を許容する。乖離は `/health-check` Check 5 が検知する
 - **フックの沈黙は合格を意味する**（#471）。検出は exit code で行い、成功した検査は何も出力しない。失敗時のみ再現コマンド付きで会話に届くため、そのコマンドを実行すれば全診断を見られる
 - `snotra-settings` を含めるのは egui ネイティブウィンドウ側の型壊れも検知するため
 
@@ -68,6 +70,7 @@ npm run build                    # フロントエンドビルド（typecheck �
 ```bash
 npm ci                           # 依存インストール（初回セットアップ・CI）
 cargo test -p snotra-core        # ユニットテスト（純ロジック層）
+cargo test -p snotra             # ユニットテスト（Tauri 統合層: state/indexing/config_watcher 等）
 cargo test -p snotra-settings    # ユニットテスト（設定 GUI の純ロジック: font face 検証・TOML エラーローカライズ）
 cargo test --release -p snotra-core bench_ -- --ignored --nocapture  # 検索パフォーマンス計測（詳細: PERFORMANCE.md）
 cargo check -p snotra-core -p snotra -p snotra-settings  # Rust 全 crate 型チェック
@@ -106,7 +109,7 @@ npm run tauri build              # リリースビルド（フロント+Rust 一
 |---|---|---|
 | `npm test`（Vitest） | `ci.yml`（frontend-check） | PR 自動（`skip-ci` ラベルで無効化可） |
 | `npm run build` / `npm run typecheck` | `ci.yml`（frontend-check） | PR 自動 |
-| `cargo check` / `cargo test -p snotra-core` / `cargo test -p snotra-settings` / `cargo clippy` | `ci.yml`（rust-check） | PR 自動 |
+| `cargo check` / `cargo test -p snotra-core` / `cargo test -p snotra` / `cargo test -p snotra-settings` / `cargo clippy` | `ci.yml`（rust-check） | PR 自動 |
 | `npm run smoke:startup`（注） | `e2e.yml`（E2E & Smoke） | `e2e` ラベル付き PR / 手動 dispatch |
 | `npm run e2e:tauri` | `e2e.yml`（E2E & Smoke） | `e2e` ラベル付き PR / 手動 dispatch |
 

@@ -611,9 +611,14 @@ describe("Cargo.toml members ドリフト検出カナリア — #500", () => {
     const p = fileURLToPath(new URL("../../Cargo.toml", import.meta.url));
     const src = readFileSync(p, "utf8");
 
-    // 非マッチを握り潰さない。書式が変わったら「読めなかった」と落ちる（fail-closed）。
-    const m = src.match(/^members\s*=\s*\[([^\]]*)\]/m);
-    expect(m, "Cargo.toml の members 行を読めなかった（書式が変わった）").not.toBeNull();
+    // [workspace] セクションにスコープする。他セクション（[workspace.metadata.*] 等）の
+    // members を誤読しないため。非マッチを握り潰さない — 書式が変わったら
+    // 「読めなかった」と落ちる（fail-closed）。
+    const section = src.match(/\[workspace\]\r?\n([\s\S]*?)(?=\r?\n\[|$)/);
+    expect(section, "Cargo.toml の [workspace] セクションを読めなかった").not.toBeNull();
+
+    const m = section[1].match(/^members\s*=\s*\[([^\]]*)\]/m);
+    expect(m, "[workspace] の members 行を読めなかった（書式が変わった）").not.toBeNull();
 
     const members = m[1]
       .split(",")

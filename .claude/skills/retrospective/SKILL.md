@@ -95,6 +95,8 @@ Step 3・Step 4 が完了してから、`RETROSPECTIVE.md` を以下の **2 セ�
 
 サイクルで変更した内容に関連するメモリが `MEMORY.md` に存在するか確認する。
 
+**`MEMORY.md` はリポジトリ外にある**（所在と委譲規約は `.claude/skills/health-check/SKILL.md` の Check 7 を SSOT とする）。
+
 1. `MEMORY.md` を読み、各メモリファイルの説明を確認する
 2. サイクルの変更内容と関連するメモリがあれば、ファイルを読んで内容が現在のコードベースと矛盾していないか検証する
 3. 矛盾するメモリは更新または削除する（MEMORY.md のインデックスも同期）
@@ -104,7 +106,11 @@ Step 3・Step 4 が完了してから、`RETROSPECTIVE.md` を以下の **2 セ�
 
 ## Step 7 — サイクル末の health-check
 
-サイクル末の衛生チェックを実施する（実行責任は `/retrospective` が負う）。`/health-check` は user 起動専用（`disable-model-invocation`）でスキルからは起動できないため、その定義 `.claude/skills/health-check/SKILL.md` の Check 1〜10 を本スキルが直接実施する（Read / Grep / Glob）。health-check は「報告のみ・修正しない」定義のため、発見事項の処理は本スキルが担い、Step 3・Step 4 の方針に従って振り分ける:
+サイクル末の衛生チェックを実施する（実行責任は `/retrospective` が負う）。`/health-check` は user 起動専用（`disable-model-invocation`）でスキルからは起動できないため、その定義 `.claude/skills/health-check/SKILL.md` の Check 1〜10 を**本スキルの責任で実施する**（＝`/health-check` を起動しない、という意味である。実行方式はインライン／サブエージェントへの委譲のいずれでもよい）。
+
+**サブエージェントへ委譲する場合、Check 7 にはメモリ領域の絶対パスをプロンプトへ明示的に渡す**（サブエージェントは system prompt を継承しないため、渡さなければ `MEMORY.md` を見つけられない）。渡さないなら Check 7 は `[Skipped]` であり、**`Skipped` が残るまま「All checks passed」と報告しない**（#489）。
+
+health-check は「報告のみ・修正しない」定義のため、発見事項の処理は本スキルが担い、Step 3・Step 4 の方針に従って振り分ける:
 
 - **doc ドリフト**（CLAUDE.md モジュール構成・参照リンク・SPEC.md 番号・スキル表 等）→ その場で該当ドキュメントを修正する（Step 3 と同じ方針）
 - **実装・大規模対応が要るもの** → GitHub issue を起票する（Step 4 の振り分け）
@@ -117,4 +123,4 @@ Step 3・Step 4 が完了してから、`RETROSPECTIVE.md` を以下の **2 セ�
 2. ドキュメントに反映した教訓（あれば、どのファイルに何を追加したか）
 3. 振り分けたタスク（起票した issue 番号 / 追記した PR 本文チェックリスト）
 4. メモリの更新（あれば、追加/更新/削除したメモリ）
-5. health-check の結果サマリ（発見事項とその処理）
+5. health-check の結果サマリ（発見事項・`Skipped` とその処理）

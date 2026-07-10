@@ -66,7 +66,7 @@
 | フック | 発火条件 | 正しい対応 |
 |---|---|---|
 | PR 作成前 push チェック（PreToolUse） | `Bash` / `PowerShell` の `tool_input.command` の**コマンド位置**に `gh pr create` があり、かつ安全と確認できないとき（空 PR / `Closes` 誤 close 防止）。`&&` で `git push` が先行するなら通る | `git push -u origin HEAD` してから PR を作る（または `&&` で繋ぐ） |
-| 編集後の自動検証（PostToolUse） | `tool_input.file_path` が属するツリーからの相対パスで判定。`*.rs` → clippy（`snotra-core` / `snotra-settings` 配下ではその crate のテストも）、`ui/src/**` / `e2e/**` の `*.{ts,tsx,mts,cts}`（テスト含む）とルートの `vite.config.ts` / `vitest.config.ts` / `playwright.tauri.config.ts` → typecheck、`tauri.conf.json` / `config.toml` → WARN、`.claude/settings.json` と `.claude/hooks/**` → hook-selftest | **沈黙は合格を意味する**。失敗時のみ `exit code` と再現コマンドと診断が会話に届く。手動での再実行は不要 |
+| 編集後の自動検証（PostToolUse） | `tool_input.file_path` が属するツリーからの相対パスで判定。`*.rs` → clippy（`snotra-core` / `src-tauri` / `snotra-settings` 配下ではその crate のテストも）、`ui/src/**` / `e2e/**` の `*.{ts,tsx,mts,cts}`（テスト含む）とルートの `vite.config.ts` / `vitest.config.ts` / `playwright.tauri.config.ts` → typecheck、`tauri.conf.json` / `config.toml` → WARN（`src-tauri/tauri.conf.json` はさらに CSP 契約テスト）、`.claude/settings.json` と `.claude/hooks/**` → hook-selftest | **沈黙は合格を意味する**。失敗時のみ `exit code` と再現コマンドと診断が会話に届く。手動での再実行は不要 |
 
 - **PreToolUse は `exit 2` だけがブロックする**（#482 実測）。`exit 0` は許可、それ以外の非ゼロ（Node が未捕捉例外で返す **1** を含む）は「非ブロッキングエラー」でコマンドはそのまま実行される。ゆえに `pre-bash.mjs` は**既定の `process.exitCode` を 2 に置き、許可が確定した経路だけが 0 を書く**。判定不能（payload 破損・`command` が非文字列・git 状態が読めない・鎖の途中で `cd`）はすべて block へ倒す。この fail-closed の骨格を壊してはならない
 - **PreToolUse の判定は `tool_input.command` だけを見る**（#482）。`description` や payload 全体を grep してはならない。判定単位は「コマンド位置に現れる呼び出し」であり、`grep "gh pr create" f` のように引用の内側にあるだけでは発火しない。過剰検出（`echo "&& gh pr create"`）は fail-closed 方向ゆえ許容する
@@ -82,7 +82,7 @@
 - **`.ts`/`.tsx` を編集したのに何も出ない場合は 2 通りある**: 型検査が通った、または `tsconfig.json` の `include` 対象外（`ui/src`・`e2e`・ルート config 3 ファイル以外の `.ts`。例: `scripts/` 配下）。後者では `[post-edit] ... は tsconfig の include 対象外です` という一行が出る
 - **hook は worktree でも「そのファイルが属するツリー」を検査する**。root は `file_path`（絶対パス）から最近接の `.git` を遡って導出するため、`CLAUDE_PROJECT_DIR` の意味論に依存しない。ただしスクリプト自身の所在は `settings.json` の `${CLAUDE_PROJECT_DIR:-.}` で解決し、相対 `file_path` を受け取った場合は cwd 基準で `resolve` する
 - **`.claude/settings.json` の編集は file watcher が即座に拾う**（セッション再起動は不要・実測）。壊れたスクリプトを配線するとその瞬間から全検査が沈黙する。そのため `.claude/settings.json` と `.claude/hooks/**` の編集は `hook-selftest`（settings.json の JSON 検証 + `vitest run .claude/hooks`）を自動発火する
-- `config.toml` はリポジトリに実在しない（ランタイムのユーザー領域ファイル）ため、WARN の真陽性は事実上 `tauri.conf.json` のみ
+- `config.toml` はリポジトリに実在しない（ランタイムのユーザー領域ファイル）ため、WARN の真陽性は事実上 `tauri.conf.json` のみ。その `src-tauri/tauri.conf.json` では WARN（人間向け・Windows 互換の注意喚起）に加えて `csp-test`（機械検査・CSP 契約）が併走する — 役割が違うため両方残している
 
 ## チーム憲章
 

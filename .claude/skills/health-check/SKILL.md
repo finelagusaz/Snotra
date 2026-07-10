@@ -62,6 +62,7 @@ allowed-tools:
 
 加えて、SSOT ドリフトの検知として以下も確認する:
 - `AGENTS.md` Step 8 や `.claude/skills/*/SKILL.md` に **コマンド本体**（`cargo XXX` / `npm XXX` / `npx XXX` の具体的な引数を含む実行コマンド）が直書きされていないか grep する。`docs/build-commands.md` の SSOT を迂回している箇所を報告する（コマンド名への言及や参照リンク自体は許容）。
+- `.claude/hooks/*.mjs` が保持する検査コマンド（`post-edit.mjs` の `buildCommand`）を `docs/build-commands.md` と照合する。hook は検査の実行主体なので**直書き自体は正当** — 報告するのは SSOT との**内容乖離**である。判定規則（SSOT 側の整合規約と同一）: cargo コマンドは**カテゴリ A のコードブロック**と照合し、**合否・検査対象を変えるフラグ差**（`--lib` の付与・`-p` の欠落等。#476 の実例）を報告する。**出力整形のみのフラグ**（`--message-format short` 等、exit code を変えないもの）は許容する。node/vitest 系は SSOT コマンド（`npm test` / `npm run typecheck`）の部分集合ラッパーを許容する（対象ファイルが SSOT コマンドの実行対象に含まれることを確認する）。
 
 ## Check 6 — docs/development-principles.md 参照の実在性
 

@@ -65,6 +65,9 @@ jobs:
       - name: cargo test (snotra-core)
         run: cargo test -p snotra-core
 
+      - name: cargo test (snotra)
+        run: cargo test -p snotra
+
       - name: cargo test (snotra-settings)
         run: cargo test -p snotra-settings
 

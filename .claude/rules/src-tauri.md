@@ -15,3 +15,5 @@ paths:
 - **`windows` クレート（v0.62）の API を使う前に**: 型・シグネチャの一致と feature フラグの宣言を確認する
 - **ShellExecuteW + シェル拡張 → COM STA 必須**: `std::thread::spawn` + `CoInitializeEx` パターン。EXE は不要
 - **イベント順序**: `language-changed` → `hotkey-registration-failed` の順（フロントエンドが正しい言語でメッセージを組み立てるため）
+- **状態フラグを `true` にしたら `false` に戻す経路とセットで設計する**: 戻す責務を持つ関数は `#[must_use]` を付けて `let _ =` による無視をコンパイル時に検出する（実例 `window.rs::launch_settings_process`。index-build フラグは上記 `try_begin_index_build`/`finish_index_build` 経由）
+- **Win32 依存モジュール（`ime.rs`・`platform/` 内の `hotkey.rs` 等）はユニットテスト前提にしない**

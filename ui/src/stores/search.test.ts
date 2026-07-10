@@ -465,7 +465,7 @@ describe("initIndexingState", () => {
   beforeEach(() => {
     eventCallbacks = new Map();
     vi.mocked(tauriEvent.listen).mockImplementation(
-      async (eventName: string, callback: (...args: unknown[]) => void) => {
+      async (eventName, callback) => {
         eventCallbacks.set(eventName, callback as () => void);
         return () => {};
       },
@@ -492,11 +492,11 @@ describe("initIndexingState", () => {
   });
 
   it("cleanup 関数を呼ぶと indexing-started の unlisten が実行される", async () => {
-    const unlistenStarted = vi.fn();
+    const unlistenStarted = vi.fn<() => void>();
     vi.mocked(tauriEvent.listen).mockImplementation(
-      async (eventName: string, callback: (...args: unknown[]) => void) => {
+      async (eventName, callback) => {
         eventCallbacks.set(eventName, callback as () => void);
-        return eventName === "indexing-started" ? unlistenStarted : vi.fn();
+        return eventName === "indexing-started" ? unlistenStarted : vi.fn<() => void>();
       },
     );
 
@@ -580,7 +580,7 @@ describe("executeInstantCommandSelected", () => {
 
   it("失敗: 候補が復元される", async () => {
     vi.mocked(api.executeInstantCommand).mockResolvedValue({
-      status: "error",
+      status: "failed",
       code: 1,
       message: "command not found",
     });
@@ -644,7 +644,7 @@ describe("shouldShowResults", () => {
     // indexing を true にする
     let setIndexingTrue: (() => void) | undefined;
     vi.mocked(tauriEvent.listen).mockImplementation(
-      async (eventName: string, callback: (...args: unknown[]) => void) => {
+      async (eventName, callback) => {
         if (eventName === "indexing-started") setIndexingTrue = callback as () => void;
         return () => {};
       },
@@ -664,7 +664,7 @@ describe("shouldShowResults", () => {
   it("結果あり + indexing=true + instant → true", async () => {
     let setIndexingTrue: (() => void) | undefined;
     vi.mocked(tauriEvent.listen).mockImplementation(
-      async (eventName: string, callback: (...args: unknown[]) => void) => {
+      async (eventName, callback) => {
         if (eventName === "indexing-started") setIndexingTrue = callback as () => void;
         return () => {};
       },
@@ -685,7 +685,7 @@ describe("shouldShowResults", () => {
   it("結果あり + indexing=true + folderState → true", async () => {
     let setIndexingTrue: (() => void) | undefined;
     vi.mocked(tauriEvent.listen).mockImplementation(
-      async (eventName: string, callback: (...args: unknown[]) => void) => {
+      async (eventName, callback) => {
         if (eventName === "indexing-started") setIndexingTrue = callback as () => void;
         return () => {};
       },
@@ -694,7 +694,7 @@ describe("shouldShowResults", () => {
     setIndexingTrue?.();
 
     // folderState を設定して結果をセット
-    setFolderState({ dir: "C:\\test", parentDir: null });
+    setFolderState(FOLDER_FRAME);
     vi.mocked(api.listFolder).mockResolvedValue([FILE_RESULT]);
     await refreshResults();
     await vi.runAllTimersAsync();
@@ -706,7 +706,7 @@ describe("shouldShowResults", () => {
   it("結果あり + indexing=true + toolSelectionState → true（tool 枝の明示化）", async () => {
     let setIndexingTrue: (() => void) | undefined;
     vi.mocked(tauriEvent.listen).mockImplementation(
-      async (eventName: string, callback: (...args: unknown[]) => void) => {
+      async (eventName, callback) => {
         if (eventName === "indexing-started") setIndexingTrue = callback as () => void;
         return () => {};
       },

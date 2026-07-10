@@ -9,6 +9,7 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 ### エントリポイント（single-page build）
 
 - `../main.html` / `main.tsx` → `MainApp.tsx`: 検索ウィンドウ用エントリ。テーマ適用、ウィンドウ位置復元、イベントリスナー登録、動的ウィンドウ高さ管理
+- `vite-env.d.ts`: Vite client の ambient 型宣言（`/// <reference types="vite/client" />`）。責務を持つモジュールではないが、`tsconfig` の program に含まれるため型検査の対象になる
 
 ### components/
 

@@ -52,6 +52,18 @@ CLAUDE.md には、この誤爆を回避するための運用ルールが 2 つ�
 - `post-edit.mjs` 自身の構文エラーは `try { main() } catch` の外側で落ちる。エージェントには沈黙する
 - `tsconfig.json` / `Cargo.toml` / `package.json` の編集は完全な沈黙。**tsconfig ドリフト検出カナリアを置いた当のファイルが、そのカナリアを起動しない**
 
+> **実測による訂正（2026-07-10・#497 / #484）— 4 経路のうち、閉じたのは 1 つである。**
+>
+> 上の 4 経路のうち、最後の 1 つ（定義ファイルの沈黙）だけを PR-3 で閉じた。`selectChecks` の入力集合を広げ、`tsconfig.json` → typecheck + hook-selftest、`Cargo.toml` → cargo-check、`package.json` / `vitest.config.ts` → hook-selftest、`.githooks/**` → githooks-selftest を発火させた。あわせて **発火の追加とカナリアの追加を対にする**規律を導入した（`package.json` と `vitest.config.ts` にはカナリアが無かったため新設。カナリアの無いファイルに検査を撃っても、vitest が起動することしか証明しない）。
+>
+> **残る 3 経路は塞いでいない**:
+>
+> 1. `matcher` は `Edit|Write` のみ。Bash 経由のファイル変更は依然として無検査
+> 2. `config-warn` は `additionalContext` を作らない。`src-tauri/tauri.conf.json` は `csp-test`（#475）が失敗時に届くようになったが、`config.toml` は依然 WARN のみ
+> 3. `post-edit.mjs` 自身の構文エラーは `try { main() } catch` の外側で落ちる。hook が起動できない以上、hook-selftest も起動できない
+>
+> さらに、**入力集合を広げても「検査を持ちようがないファイル」の沈黙は残る**（`*.md`・`scripts/`・`.github/workflows/`・`Cargo.lock`）。この残余は受容し、`CLAUDE.md` に「沈黙は合格」の前提条件として明記した。
+
 ## 2. 決定 — hook の目的を定義し、そこから責務を分ける
 
 > **Claude Code の hook は、エージェントの「意図」と「認識」を扱う唯一の層である。**
@@ -313,7 +325,27 @@ V5 / V6 は、本 spec §1 で測った実在の抜け道をそのまま逆向�
 | **新規起票 ④** | 「`selectChecks` に `.githooks/**` を追加する」— `.githooks/` は今日から安全網であり、`.claude/hooks/**` と同じ理由（安全網そのものを編集したら安全網が生きているか確かめる）が適用されるが対象外。Phase 3 と同時が自然 |
 | **新規起票 ⑤** | 「`prepare` の `git config` は `.git` 無し環境で `npm ci` ごと落とす」— 現状すべての `npm ci` は `actions/checkout` の後なので到達不能。Docker のレイヤキャッシュ build を足すと踏む。`\|\| exit 0` は「Layer 1 は best-effort、不在は検知しない」と整合する |
 
+> **実測による訂正（2026-07-10）— 処遇そのものが as-built からドリフトしていた。**
+>
+> - **#474 / #475 / #476 は Phase 3 に依存していなかった。** いずれも独立に着手でき、PR #498（#474）・PR #499（#475 / #476）でマージ済み。「すべて (B) 側」という分類は、依存関係の裏取りをせずに書かれていた
+> - **#477 / #479 は前提が崩れて close。** `isolation: "worktree"` は 4 サイクル一度も使われず、計測対象が存在しなかった
+> - **新規起票 ④（`selectChecks` に `.githooks/**`）は #484 として起票され、PR-3 で解決した。** 「Phase 3 と同時が自然」という処遇は不要だった — Phase 3 は起票すらされておらず、④ は単独で成立する
+> - **新規起票 ③ は #483 として起票し、close。** Layer 0 が保証しており、`reference-transaction` は `git pull --ff-only` を壊しうる。**新規起票 ⑤ は #485 として起票し、close** — 到達不能であり、`\|\| exit 0` は bootstrap 失敗を沈黙させる（`docs/development-principles.md` 原則 7 に反する）
+>
+> 教訓: **「Phase N に依存する」と書くときは、その Phase を起票し、依存を裏取りする。** どちらも欠けたまま 5 件を棚上げしていた。
+
 ## 10. この先（本 spec の範囲外）
 
 - **Phase 2 — (A2)**: `pre-bash.mjs` を作り、`tool_input.command` だけを見て、`matcher` を `Bash|PowerShell` に広げ、判定不能なら fail-closed に倒す。git にも CI にも見えない、hook 固有の領域
 - **Phase 3 — (B)**: 「沈黙 = 合格」を剥がし、走った検査に名乗らせる。沈黙は「何も走らなかった」を意味するようになり、#471 が塞ごうとした沈黙経路（matcher 外の編集・parse error・`config-warn` の envelope 分岐・`tsconfig.json` の無反応）が、塞がなくても無害になる
+
+> **実測による訂正（2026-07-10・#497）— Phase 3 は採らず、入力集合の拡張で部分的に置換した。**
+>
+> Phase 3（肯定的報告）は**採用しなかった**。全編集で出力が増える恒久的な対価を払って、上の 4 経路のうち 1 つ（`tsconfig.json` の無反応）と「検査を持ちようがないファイルの沈黙」の曖昧さを解消する、という取引になるからである。代わりに:
+>
+> 1. **入力集合を広げた**（§1 の訂正ブロック参照）。`tsconfig.json` の無反応は閉じた
+> 2. **「沈黙 = 合格」に前提条件を書いた**（`CLAUDE.md`・`docs/build-commands.md`）。全称主張を、成り立つ範囲まで弱めた
+>
+> **残る 3 経路（matcher 外・parse error・`config-warn` の envelope 分岐）は、いま塞がれていない。** 肯定的報告を採ればこれらは「塞がなくても無害」になるが、その判断は先送りした。判断根拠は `CLAUDE.md`「フック」節に記録した。
+>
+> **これは機構ではなく規範による解決である。** 読者が前提条件を忘れれば false green は再発する。Phase 3 を将来採るなら、この一文が動機になる。

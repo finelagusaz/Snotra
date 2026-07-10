@@ -4,9 +4,13 @@
 // そのファイルが属するツリー（最近接の .git）で、そのファイルに対応する
 // 検査だけを走らせ、結果を JSON エンベロープでエージェントへ届ける。
 //
-// 契約: **沈黙は合格を意味する。** 検出は exit code で行い、成功した検査は
-// 何も出力しない。ゆえに「沈黙しうる経路」はすべて塞がねばならない
+// 契約: **検査が走ったなら、沈黙は合格を意味する。** 検出は exit code で行い、
+// 成功した検査は何も出力しない。ゆえに「沈黙しうる経路」はすべて塞がねばならない
 // （タイムアウト・起動失敗・出力溢れは、いずれも必ず報告する）。
+//
+// この契約は「検査が割り当てられたファイル」についてのみ成り立つ。割り当てが
+// 無いファイル（*.md 等）の沈黙は「何も走らなかった」であり、合格ではない。
+// 割り当ての SSOT は selectChecks である（#497）。
 //
 // 詳細と実測の根拠は issue #471。
 
@@ -30,9 +34,11 @@ const BUDGETS = {
   "core-test": { lines: 5, from: "tail" },
   "settings-test": { lines: 8, from: "tail" },
   "tauri-test": { lines: 8, from: "tail" },
+  "cargo-check": { lines: 20, from: "head" },
   typecheck: { lines: 30, from: "head" },
   "csp-test": { lines: 30, from: "head" },
   "hook-selftest": { lines: 30, from: "head" },
+  "githooks-selftest": { lines: 30, from: "head" },
 };
 
 // cargo が stderr に流す進捗行。worktree は target/ を持たないため cold build になり、
@@ -46,6 +52,15 @@ const TS_LIKE = /\.(m|c)?tsx?$/;
 // tsconfig の include はディレクトリ（ui/src・e2e）に加え、ルートの config 3 ファイルを名指しする。
 // ファイル include は完全一致で判定する（endsWith だと sub/vite.config.ts を誤発火する）。
 const ROOT_TS_CONFIG = new Set(["vite.config.ts", "vitest.config.ts", "playwright.tauri.config.ts"]);
+
+// cargo のワークスペース定義。basename でアンカーする — 過小検出は沈黙（false green）
+// になるが、過剰検出は cargo check が走るだけで無害（fail-closed 方向）。
+const CARGO_MANIFEST = /(^|\/)Cargo\.toml$/;
+
+// 「検査の定義を変えるファイル」。編集すると hook-selftest が走り、その中の
+// カナリアが「定義と selectChecks の前提が一致しているか」を検証する。
+// カナリアの無いファイルをここに足してはならない — 何も検証しない緑になる。
+const CHECK_DEFINITION = new Set([".claude/settings.json", "tsconfig.json", "package.json", "vitest.config.ts"]);
 
 /** 祖先を遡り relTarget を含むディレクトリを返す。見つからなければ null。 */
 export function findUp(startDir, relTarget) {
@@ -95,9 +110,12 @@ export function selectChecks(rel) {
   if (isRust && rel.startsWith("snotra-settings/")) checks.push("settings-test");
   if (isRust && rel.startsWith("src-tauri/")) checks.push("tauri-test");
 
+  if (CARGO_MANIFEST.test(rel)) checks.push("cargo-check");
+
   if (
     ((rel.startsWith("ui/src/") || rel.startsWith("e2e/")) && TS_LIKE.test(rel)) ||
-    ROOT_TS_CONFIG.has(rel)
+    ROOT_TS_CONFIG.has(rel) ||
+    rel === "tsconfig.json"
   ) {
     checks.push("typecheck");
   }
@@ -108,11 +126,15 @@ export function selectChecks(rel) {
   // テストが読まないファイルの編集で「検査が通った」と沈黙する（ROOT_TS_CONFIG と同じ理由）。
   if (rel === "src-tauri/tauri.conf.json") checks.push("csp-test");
 
-  // 安全網そのものを編集したときは、安全網が生きているか確かめる。
-  // これが無いと、全検査の発火を決めるファイルだけが誰にも検査されない。
-  if (rel === ".claude/settings.json" || rel.startsWith(".claude/hooks/")) {
+  // 安全網そのものと、検査の定義を変えるファイルを編集したときは、安全網が生きているか
+  // 確かめる。これが無いと、全検査の発火を決めるファイルだけが誰にも検査されない（#497）。
+  if (CHECK_DEFINITION.has(rel) || rel.startsWith(".claude/hooks/")) {
     checks.push("hook-selftest");
   }
+
+  // .githooks/ は #480 以降 main 保護の Layer 1 であり、.claude/hooks/ と同じ理由で
+  // 「安全網そのものを編集したら安全網を検査する」が適用される（#484）。
+  if (rel.startsWith(".githooks/")) checks.push("githooks-selftest");
 
   return checks;
 }
@@ -225,6 +247,12 @@ function buildCommand(id, root) {
   const nodeSpec = (args) => ({ cmd: process.execPath, args, repro: ["node", ...args].join(" ") });
   const cargoSpec = (args) => ({ cmd: "cargo", args, repro: ["cargo", ...args].join(" ") });
 
+  /** vitest を走らせる検査の共通形。見つからなければ null（runCheck が HOOK ERROR にする）。 */
+  const vitestSpec = (target) => {
+    const vitest = resolveBin(root, path.join("node_modules", "vitest", "vitest.mjs"));
+    return vitest ? nodeSpec([vitest, "run", target]) : null;
+  };
+
   switch (id) {
     case "clippy":
       return cargoSpec([
@@ -243,14 +271,14 @@ function buildCommand(id, root) {
       const tsc = resolveTscBin(root);
       return tsc ? nodeSpec([tsc, "-p", path.join(root, "tsconfig.json")]) : null;
     }
-    case "csp-test": {
-      const vitest = resolveBin(root, path.join("node_modules", "vitest", "vitest.mjs"));
-      return vitest ? nodeSpec([vitest, "run", "ui/src/lib/cspValidation.test.ts"]) : null;
-    }
-    case "hook-selftest": {
-      const vitest = resolveBin(root, path.join("node_modules", "vitest", "vitest.mjs"));
-      return vitest ? nodeSpec([vitest, "run", ".claude/hooks"]) : null;
-    }
+    case "cargo-check":
+      return cargoSpec(["check", "-p", "snotra-core", "-p", "snotra", "-p", "snotra-settings"]);
+    case "csp-test":
+      return vitestSpec("ui/src/lib/cspValidation.test.ts");
+    case "hook-selftest":
+      return vitestSpec(".claude/hooks");
+    case "githooks-selftest":
+      return vitestSpec(".githooks");
     default:
       return null;
   }

@@ -54,8 +54,49 @@ describe("selectChecks", () => {
 
   it("ルートの設定 .ts は typecheck（include が名指しする 3 ファイル）", () => {
     expect(selectChecks("vite.config.ts")).toEqual(["typecheck"]);
-    expect(selectChecks("vitest.config.ts")).toEqual(["typecheck"]);
     expect(selectChecks("playwright.tauri.config.ts")).toEqual(["typecheck"]);
+  });
+
+  // #497: 「検査の定義を変えるファイル」も検査集合に載せる。hook-selftest が走ることで、
+  // その定義と selectChecks の前提が一致しているかをカナリアが検証する。
+  it("tsconfig.json は typecheck + hook-selftest（定義とカナリアの両方）", () => {
+    expect(selectChecks("tsconfig.json")).toEqual(["typecheck", "hook-selftest"]);
+  });
+
+  it("vitest.config.ts は typecheck + hook-selftest（検査の実行範囲を定義する）", () => {
+    expect(selectChecks("vitest.config.ts")).toEqual(["typecheck", "hook-selftest"]);
+  });
+
+  it("package.json は hook-selftest（prepare が Layer 1 を bootstrap する）", () => {
+    expect(selectChecks("package.json")).toEqual(["hook-selftest"]);
+  });
+
+  it("Cargo.toml は cargo-check（ワークスペース定義）", () => {
+    expect(selectChecks("Cargo.toml")).toEqual(["cargo-check"]);
+    expect(selectChecks("snotra-core/Cargo.toml")).toEqual(["cargo-check"]);
+    expect(selectChecks("src-tauri/Cargo.toml")).toEqual(["cargo-check"]);
+  });
+
+  // basename アンカーゆえ深い階層も発火する。過小検出は沈黙（false green）だが、
+  // 過剰検出は cargo check が走るだけで無害（fail-closed 方向）。
+  it("深い階層の Cargo.toml も cargo-check（過剰検出は許容する）", () => {
+    expect(selectChecks("a/b/Cargo.toml")).toEqual(["cargo-check"]);
+  });
+
+  it("Cargo.lock / 小文字 cargo.toml は発火しない（負例）", () => {
+    expect(selectChecks("Cargo.lock")).toEqual([]);
+    expect(selectChecks("cargo.toml")).toEqual([]);
+  });
+
+  // #484: .githooks/ は #480 以降 main 保護の Layer 1。.claude/hooks/ と同じ理由。
+  it(".githooks/ は githooks-selftest（安全網そのものの自己検査）", () => {
+    expect(selectChecks(".githooks/pre-commit")).toEqual(["githooks-selftest"]);
+    expect(selectChecks(".githooks/githooks.test.mjs")).toEqual(["githooks-selftest"]);
+  });
+
+  it("ルート以外の package.json / 規範ファイルは発火しない（負例）", () => {
+    expect(selectChecks("ui/package.json")).toEqual([]);
+    expect(selectChecks(".github/workflows/ci.yml")).toEqual([]);
   });
 
   // ルート config は完全一致で判定する。部分一致（endsWith）で書くと sub/vite.config.ts が
@@ -522,5 +563,35 @@ describe("tsconfig ドリフト検出カナリア — C2", () => {
       "playwright.tauri.config.ts",
     ]);
     expect(tsconfig.exclude).toEqual([]);
+  });
+});
+
+// #497: 発火の追加とカナリアの追加は対にする。カナリアが無いファイルに検査を撃っても、
+// そのファイルについては何も検証しない（vitest が起動することしか証明しない）。
+// 以下 2 本は package.json / vitest.config.ts を hook-selftest に載せる根拠である。
+
+describe("vitest.config.ts ドリフト検出カナリア — #497", () => {
+  // include が縮むと、hook-selftest / githooks-selftest / npm test が静かにテストを
+  // 走らせなくなる。`vitest run .claude/hooks` はパス直指定で動くが、`.githooks` の
+  // 収集と CI の npm test はこの include に依存する。
+  it("vitest の include が 3 つの検査対象をすべて含む", () => {
+    const p = fileURLToPath(new URL("../../vitest.config.ts", import.meta.url));
+    const src = readFileSync(p, "utf8");
+    expect(src).toContain('"ui/src/**/*.test.{ts,tsx}"');
+    expect(src).toContain('".claude/hooks/**/*.test.mjs"');
+    expect(src).toContain('".githooks/**/*.test.mjs"');
+  });
+});
+
+describe("package.json ドリフト検出カナリア — #497", () => {
+  // prepare は Layer 1（.githooks/）の唯一の bootstrap である。消えると
+  // core.hooksPath が設定されず、main 保護のローカル層が沈黙して失われる。
+  // test / typecheck は docs/build-commands.md（SSOT）が名指しするコマンド。
+  it("scripts が Layer 1 の bootstrap と SSOT のコマンドを保持する", () => {
+    const p = fileURLToPath(new URL("../../package.json", import.meta.url));
+    const pkg = JSON.parse(readFileSync(p, "utf8"));
+    expect(pkg.scripts.prepare).toContain("core.hooksPath .githooks");
+    expect(pkg.scripts.test).toBe("vitest run");
+    expect(pkg.scripts.typecheck).toBe("tsc");
   });
 });

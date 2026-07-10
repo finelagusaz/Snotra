@@ -66,6 +66,7 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 - `vitest.config.ts` に `vite-plugin-solid({ hot: false })` を設定（`hot: false` は Windows の `@solid-refresh` URL 解決エラー回避。macOS でも無害）
 - テストファイルパターン: `ui/src/**/*.test.{ts,tsx}`
 - デフォルト環境: `node`。コンポーネントテスト（`.test.tsx`）は先頭に `// @vitest-environment jsdom` を付けて個別に jsdom を使用
+- **テストファイルも tsconfig の program に含まれ、typecheck の対象**（#474）。vitest は esbuild 変換で型検査をしないため、テストと実装の型契約のずれは tsc（`npm run typecheck` / PostToolUse hook）が検知する
 
 ### 注意点
 

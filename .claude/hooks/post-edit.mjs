@@ -41,8 +41,9 @@ const PROGRESS_LINE =
 // tsconfig の include はディレクトリ展開で .mts / .cts も program に入れる。
 // 「沈黙 = 合格」の下では、拾い漏らしは安全側ではなく false green になる（I7）。
 const TS_LIKE = /\.(m|c)?tsx?$/;
-// tsconfig の exclude と厳密に一致させる（`ui/src/**/*.test.ts` と `.test.tsx` のみ）。
-const TEST_FILE = /\.test\.tsx?$/;
+// tsconfig の include はディレクトリ（ui/src・e2e）に加え、ルートの config 3 ファイルを名指しする。
+// ファイル include は完全一致で判定する（endsWith だと sub/vite.config.ts を誤発火する）。
+const ROOT_TS_CONFIG = new Set(["vite.config.ts", "vitest.config.ts", "playwright.tauri.config.ts"]);
 
 /** 祖先を遡り relTarget を含むディレクトリを返す。見つからなければ null。 */
 export function findUp(startDir, relTarget) {
@@ -79,8 +80,9 @@ export function extractFilePath(payload) {
  * 相対パスから走らせるべき検査を決める純関数。
  *
  * typecheck の条件は tsconfig の include - exclude と一致していなければならない（I7）。
- * `ui/src/MainApp.test.tsx` は深さ 0 に存在するため、「1 段以上のディレクトリ」を
- * 要求する正規表現で書いてはならない（I19）。
+ * include はテストファイルも含む（#474 で exclude を空にした）。`ui/src/MainApp.test.tsx` の
+ * ような深さ 0 のファイルも program に入るため、「1 段以上のディレクトリ」を要求する
+ * 正規表現で書いてはならない（I19）。
  */
 export function selectChecks(rel) {
   const checks = [];
@@ -90,7 +92,10 @@ export function selectChecks(rel) {
   if (isRust && rel.startsWith("snotra-core/")) checks.push("core-test");
   if (isRust && rel.startsWith("snotra-settings/")) checks.push("settings-test");
 
-  if (rel.startsWith("ui/src/") && TS_LIKE.test(rel) && !TEST_FILE.test(rel)) {
+  if (
+    ((rel.startsWith("ui/src/") || rel.startsWith("e2e/")) && TS_LIKE.test(rel)) ||
+    ROOT_TS_CONFIG.has(rel)
+  ) {
     checks.push("typecheck");
   }
 

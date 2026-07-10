@@ -3,7 +3,7 @@
 - 日付: 2026-07-09
 - ステータス: 設計合意済み（Phase 1 実装中）
 - 改訂: 実装中の実測により Phase 1 を **1a / 1b に分割**した。`.githooks/` は追跡ファイルであり、それを含まないツリー（マージ前の `main`）では Layer 1 が存在しない。ゆえに `block-main-commit` の削除をマージ前に行うと、マージまでの間 main 上のローカルガードが空になる。計画自身の不変条件「安全網を一瞬も空にしない」に従い、削除は **マージ後の Phase 1b** へ移した（§5・§7・§8・§9）
-- 関連: #471（closed）, #473, #474, #475, #476, #477, #479 / `.claude/settings.json`, `.claude/hooks/post-edit.mjs`, `CLAUDE.md`, `AGENTS.md`
+- 関連: #471（closed）, #473, #474, #475, #476, #477, #479, **#488（§2 の (A2) を実測で訂正）** / `.claude/settings.json`, `.claude/hooks/post-edit.mjs`, `CLAUDE.md`, `AGENTS.md`
 - 由来: hook 関連 issue 群の構造分析。個々の issue を潰すのではなく、共通の根を断つ
 
 ## 1. 背景と問題
@@ -80,6 +80,22 @@ CLAUDE.md には、この誤爆を回避するための運用ルールが 2 つ�
 | **(A2)** PR 前 push チェック | 外部 API への不可逆呼び出し（`gh pr create` → 空 PR → merge 時の誤 close） | ❌ **守れない**（リポジトリを触らない。push しないので `pre-push` も鳴らない） | ✅ **hook にしか見えない** |
 
 **(A2) は git にも CI にも原理的に観測できず、Claude Code の hook だけが見える領域である。** `gh pr merge --squash` の誤 close も `gh issue close` も同じ。ここが hook の固有価値であり、#473 が求めた「`pre-bash.mjs` を作り `tool_input.command` だけを構造的にパースせよ」という解は、**(A1) にではなく (A2) にこそ必要**だった。
+
+> **実測による訂正（2026-07-10・#488）— (A2) の内部は一様ではない。**
+>
+> 上の一文のうち「`gh pr merge --squash` の誤 close も `gh issue close` も同じ」は成り立たなかった。実装したのは `gh pr create` のガードだけであり、それは正しい範囲だった。
+>
+> 1. **誤りの定義が観測できるかが分岐点である。** `gh pr create` の誤り（空 PR）は**リポジトリの状態**として定義でき、hook は git に問える。`merge` / `close` の誤りは**人の意図**であり真実源が無い。hook は「何が閉じるか」を計算できても「それが誤りか」を判定できず、`deny` は原理的に書けない
+> 2. **「hook だけが見える」も誤り。** merge の auto-close 対象は GitHub がリンクとして計算し、`gh pr view <N> --json closingIssuesReferences` と PR ページに**公開している**。逆に hook は GitHub Web UI からのマージとユーザー端末の `gh pr merge` を見ない。**視界はむしろ hook の方が狭い**
+> 3. **経路は 2 本あった。** PR 本文由来（上記リンク）と、squash commit 本文由来（既定 = ブランチ全コミット本文の連結）。後者はリポジトリ設定 `squash_merge_commit_message` が生んでおり、**`PR_BODY` へ変えることで Layer 0 から断った**（あらゆるマージ実行経路に効く。実害は 30 PR で 0 件＝予防的措置）
+>
+> ゆえに (A2) に hook を足したのは `gh pr create` のみである。判断根拠は `CLAUDE.md`「フック」節に記録した。
+>
+> **設定の組み合わせ制約（実測・422）**: GitHub が許すのは `PR_TITLE`×{`PR_BODY`, `BLANK`, `COMMIT_MESSAGES`} と `COMMIT_OR_PR_TITLE`×`COMMIT_MESSAGES` の 4 組のみ。`COMMIT_OR_PR_TITLE` は `COMMIT_MESSAGES` としか組めないため、**Channel 2 を断つならタイトル既定も `PR_TITLE` へ動く**。可逆（`gh api -X PATCH` で戻せる）。
+>
+> **塞げない残余（受容する穴）。** マージで閉じる集合は PR 本文から**マージ時点で**計算される。本文を凍結する機構は無く、`closingIssuesReferences` はいつ問い合わせても「その瞬間の本文」を映す。ゆえに: 別のセッション・別の人・Web UI が、(a) 確認とマージの間に本文へ closing keyword を足し、(b) マージ後にそれを消せば、事前確認にも事後確認にも何も映らない。`gh pr merge --auto` は (a) の窓を分単位に広げる（ゆえに使わない）。**唯一の接地した観測点は `gh issue list --state closed --search "closed:>=<mergedAt>"`** — 参照集合ではなく close イベントを数えるため、経路を問わず拾える。これは検知であって防止ではない。
+>
+> この残余は「怠惰な読者」と「規則弁護士」を演じる 2 体のサブエージェントに文面だけを読ませる故障注入を 3 巡行って見つけた（#488）。**新規の抜け道ゼロが 2 巡連続する前に上限へ達したため、塞いだとは書かない。** 規範は機構ではないので、完全性を主張してはならない。
 
 ### 非目標（YAGNI）
 

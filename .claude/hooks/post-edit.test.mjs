@@ -624,6 +624,9 @@ describe("Cargo.toml members ドリフト検出カナリア — #500", () => {
       .split(",")
       .map((s) => s.trim().replace(/^"|"$/g, ""))
       .filter((s) => s.length > 0);
-    expect(members).toEqual(["snotra-core", "src-tauri", "snotra-settings"]);
+    expect(
+      members,
+      "members が変わった。selectChecks の接頭辞・buildCommand の test case・ci.yml・docs/build-commands.md を更新すること",
+    ).toEqual(["snotra-core", "src-tauri", "snotra-settings"]);
   });
 });

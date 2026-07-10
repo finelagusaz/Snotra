@@ -22,7 +22,7 @@ cargo test -p snotra-settings                                                   
 - **フックの沈黙は合格を意味する**（#471）。検出は exit code で行い、成功した検査は何も出力しない。失敗時のみ再現コマンド付きで会話に届くため、そのコマンドを実行すれば全診断を見られる
 - `snotra-settings` を含めるのは egui ネイティブウィンドウ側の型壊れも検知するため
 
-### B. TypeScript／フロントエンドファイル（`ui/src/**/*.{ts,tsx}` 等）を変更した場合
+### B. TypeScript／フロントエンドファイル（`ui/src/**`・`e2e/**`・ルートの config `.ts`）を変更した場合
 
 ```bash
 npm run typecheck    # 必須: TypeScript 型チェック

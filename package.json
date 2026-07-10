@@ -28,6 +28,7 @@
     "@solidjs/testing-library": "^0.8.10",
     "@tauri-apps/cli": "^2.0.0",
     "@types/node": "^26.0.1",
+    "@types/selenium-webdriver": "^4.35.6",
     "edgedriver": "^6.3.0",
     "jsdom": "^29.0.1",
     "selenium-webdriver": "^4.41.0",

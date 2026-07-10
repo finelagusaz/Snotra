@@ -38,23 +38,35 @@ describe("selectChecks", () => {
     expect(selectChecks("ui/src/vite-env.d.ts")).toEqual(["typecheck"]);
   });
 
-  it("ネストしたテストファイルは発火しない", () => {
-    expect(selectChecks("ui/src/lib/i18n.test.ts")).toEqual([]);
+  it("テストファイルも typecheck（#474 で exclude を撤廃）", () => {
+    expect(selectChecks("ui/src/lib/i18n.test.ts")).toEqual(["typecheck"]);
   });
 
-  // I19: git の '**/' は 1 段以上を要求するが TypeScript の exclude は 0 段にもマッチする。
-  // 「1 段以上」を要求する正規表現で書くと、この実在ファイルで §5 が再現する。
-  it("深さ 0 のテストファイルも発火しない（ui/src/MainApp.test.tsx）", () => {
-    expect(selectChecks("ui/src/MainApp.test.tsx")).toEqual([]);
+  // I19: 深さ 0 の実在ファイル。「1 段以上のディレクトリ」を要求する正規表現で書くと
+  // ここだけ発火しなくなり、§5（発火するが検査されない）が再現する。
+  it("深さ 0 のテストファイルも typecheck（ui/src/MainApp.test.tsx）", () => {
+    expect(selectChecks("ui/src/MainApp.test.tsx")).toEqual(["typecheck"]);
   });
 
-  it("e2e の .ts は発火しない（tsconfig の include 対象外）", () => {
-    expect(selectChecks("e2e/tauri.slash.e2e.ts")).toEqual([]);
+  it("e2e の .ts も typecheck（#474 で include に追加）", () => {
+    expect(selectChecks("e2e/tauri.slash.e2e.ts")).toEqual(["typecheck"]);
   });
 
-  it("ルートの設定 .ts は発火しない", () => {
-    expect(selectChecks("vite.config.ts")).toEqual([]);
-    expect(selectChecks("vitest.config.ts")).toEqual([]);
+  it("ルートの設定 .ts は typecheck（include が名指しする 3 ファイル）", () => {
+    expect(selectChecks("vite.config.ts")).toEqual(["typecheck"]);
+    expect(selectChecks("vitest.config.ts")).toEqual(["typecheck"]);
+    expect(selectChecks("playwright.tauri.config.ts")).toEqual(["typecheck"]);
+  });
+
+  // ルート config は完全一致で判定する。部分一致（endsWith）で書くと sub/vite.config.ts が
+  // 誤発火し、program に無いファイルを「検査が通った」と沈黙させる（入力集合の両方向検算）。
+  it("include 外の .ts は発火しない（負例）", () => {
+    expect(selectChecks("scripts/foo.ts")).toEqual([]);
+    expect(selectChecks("ui/vite.config.ts")).toEqual([]);
+  });
+
+  it("e2e/ でも TS_LIKE 外は発火しない（負例）", () => {
+    expect(selectChecks("e2e/README.md")).toEqual([]);
   });
 
   it("snotra-core の .rs は clippy + core-test", () => {
@@ -438,9 +450,13 @@ describe("統合: post-edit.mjs をプロセスとして起動する", () => {
   });
 
   it("§5 tsconfig の include 対象外は「対象外」と言う（沈黙させない・I16）", () => {
+    // scripts/ 配下は program 外（実在は不要 — 判定はパス文字列のみ）。#474 の include 拡張で
+    // 実ソースの .ts はほぼ全て対象になったため、対象外の例はここに残るだけになった。
+    // vite.config.ts 等を使うと typecheck が発火し、統合ブロックの契約
+    // 「cargo も tsc も起動しない payload だけを使う」を破る。
     const res = runHook({
       tool_name: "Edit",
-      tool_input: { file_path: path.join(REPO, "vite.config.ts"), old_string: "a", new_string: "b" },
+      tool_input: { file_path: path.join(REPO, "scripts", "example.ts"), old_string: "a", new_string: "b" },
     });
     expect(res.status).toBe(0);
     const parsed = JSON.parse(res.stdout);
@@ -490,7 +506,13 @@ describe("tsconfig ドリフト検出カナリア — C2", () => {
   it("tsconfig の include / exclude が selectChecks の前提と一致する", () => {
     const tsconfigPath = fileURLToPath(new URL("../../tsconfig.json", import.meta.url));
     const tsconfig = JSON.parse(readFileSync(tsconfigPath, "utf8"));
-    expect(tsconfig.include).toEqual(["ui/src"]);
-    expect(tsconfig.exclude).toEqual(["ui/src/**/*.test.ts", "ui/src/**/*.test.tsx"]);
+    expect(tsconfig.include).toEqual([
+      "ui/src",
+      "e2e",
+      "vite.config.ts",
+      "vitest.config.ts",
+      "playwright.tauri.config.ts",
+    ]);
+    expect(tsconfig.exclude).toEqual([]);
   });
 });

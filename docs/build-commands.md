@@ -76,7 +76,7 @@ cargo test -p snotra             # ユニットテスト（Tauri 統合層: stat
 cargo test -p snotra-settings    # ユニットテスト（設定 GUI の純ロジック: font face 検証・TOML エラーローカライズ）
 cargo test --release -p snotra-core bench_ -- --ignored --nocapture  # 検索パフォーマンス計測（詳細: PERFORMANCE.md）
 cargo check --workspace          # Rust 全 crate 型チェック
-cargo clippy --workspace         # lint チェック
+cargo clippy --workspace --all-targets -- -D warnings  # lint チェック（カテゴリ A と同じ）
 cargo run -p snotra-settings     # snotra-settings（egui ネイティブ設定 GUI）の単独起動
 npm run verify                   # Rust + フロントエンド一括検証（cargo check + npm run build）
 npm run smoke:startup             # 起動時ウィンドウ生成スモーク（trace検証）

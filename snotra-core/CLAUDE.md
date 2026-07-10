@@ -124,7 +124,7 @@
 - **オンディスクのシリアライズ struct をリファクタするとき（「バイト形式不変」を主張する場合も含む）は、後方互換を *旧形式の凍結バイト列* を入力にした load テストで証明する**:
   - 新コードの出力を golden 化しても保証されるのは forward-stability だけで、「新出力＝旧形式」を独立には証明しない（形式が壊れていても新 golden がそれを凍結して素通りする）
   - 正しい向きは「旧形式の凍結バイト列 → 新コードで deserialize できる」の検証
-  - 形式を変える計画は着手前に最小 spike で往復バイト一致を実証してから plan を建てる（前提が崩れれば approach 自体が不成立ゆえ [[feedback_verify_issue_premises]]）
+  - 形式を変える計画は着手前に最小 spike で往復バイト一致を実証してから plan を建てる（前提が崩れれば approach 自体が不成立）
   - #461: owned/borrowed struct の `Cow` 統合で当初 golden を新コード出力から採取し forward-stability のみになっていたのを code-reviewer が検出、凍結バイト列からの deserialize に修正した
 
 ## history.rs のキー正規化に関するチェックリスト

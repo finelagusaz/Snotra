@@ -29,7 +29,9 @@ const BUDGETS = {
   clippy: { lines: 20, from: "head" },
   "core-test": { lines: 5, from: "tail" },
   "settings-test": { lines: 8, from: "tail" },
+  "tauri-test": { lines: 8, from: "tail" },
   typecheck: { lines: 30, from: "head" },
+  "csp-test": { lines: 30, from: "head" },
   "hook-selftest": { lines: 30, from: "head" },
 };
 
@@ -91,6 +93,7 @@ export function selectChecks(rel) {
   if (isRust) checks.push("clippy");
   if (isRust && rel.startsWith("snotra-core/")) checks.push("core-test");
   if (isRust && rel.startsWith("snotra-settings/")) checks.push("settings-test");
+  if (isRust && rel.startsWith("src-tauri/")) checks.push("tauri-test");
 
   if (
     ((rel.startsWith("ui/src/") || rel.startsWith("e2e/")) && TS_LIKE.test(rel)) ||
@@ -100,6 +103,10 @@ export function selectChecks(rel) {
   }
 
   if (/(^|\/)(tauri\.conf\.json|config\.toml)$/.test(rel)) checks.push("config-warn");
+
+  // CSP 契約テスト（cspValidation.test.ts）が読むのはこのパスだけ。任意深度に発火させると
+  // テストが読まないファイルの編集で「検査が通った」と沈黙する（ROOT_TS_CONFIG と同じ理由）。
+  if (rel === "src-tauri/tauri.conf.json") checks.push("csp-test");
 
   // 安全網そのものを編集したときは、安全網が生きているか確かめる。
   // これが無いと、全検査の発火を決めるファイルだけが誰にも検査されない。
@@ -225,14 +232,20 @@ function buildCommand(id, root) {
         "--all-targets", "--message-format", "short", "--", "-D", "warnings",
       ]);
     case "core-test":
-      return cargoSpec(["test", "-p", "snotra-core", "--lib"]);
+      return cargoSpec(["test", "-p", "snotra-core"]);
     case "settings-test":
       return cargoSpec(["test", "-p", "snotra-settings"]);
+    case "tauri-test":
+      return cargoSpec(["test", "-p", "snotra"]);
     case "typecheck": {
       // node は PATH ではなく現在動いているバイナリを使う（I11）。
       // tsc のフラグは tsconfig.json 側に置く（typecheck 定義の SSOT）。
       const tsc = resolveTscBin(root);
       return tsc ? nodeSpec([tsc, "-p", path.join(root, "tsconfig.json")]) : null;
+    }
+    case "csp-test": {
+      const vitest = resolveBin(root, path.join("node_modules", "vitest", "vitest.mjs"));
+      return vitest ? nodeSpec([vitest, "run", "ui/src/lib/cspValidation.test.ts"]) : null;
     }
     case "hook-selftest": {
       const vitest = resolveBin(root, path.join("node_modules", "vitest", "vitest.mjs"));

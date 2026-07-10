@@ -82,13 +82,19 @@ describe("selectChecks", () => {
     expect(selectChecks("snotra-settings/src/main.rs")).toEqual(["clippy", "settings-test"]);
   });
 
-  it("src-tauri の .rs は clippy のみ", () => {
-    expect(selectChecks("src-tauri/src/lib.rs")).toEqual(["clippy"]);
-    expect(selectChecks("src-tauri/build.rs")).toEqual(["clippy"]);
+  it("src-tauri の .rs は clippy + tauri-test", () => {
+    expect(selectChecks("src-tauri/src/lib.rs")).toEqual(["clippy", "tauri-test"]);
+    expect(selectChecks("src-tauri/build.rs")).toEqual(["clippy", "tauri-test"]);
   });
 
-  it("tauri.conf.json は config-warn", () => {
-    expect(selectChecks("src-tauri/tauri.conf.json")).toEqual(["config-warn"]);
+  it("src-tauri/tauri.conf.json は config-warn + csp-test", () => {
+    expect(selectChecks("src-tauri/tauri.conf.json")).toEqual(["config-warn", "csp-test"]);
+  });
+
+  // csp-test は完全一致のみ。CSP 契約テストが読まないファイルの編集で
+  // 「検査が通った」と沈黙させない（入力集合の両方向検算）。
+  it("深い階層の tauri.conf.json は config-warn のみ（負例）", () => {
+    expect(selectChecks("foo/tauri.conf.json")).toEqual(["config-warn"]);
   });
 
   // 安全網そのものを編集したときは、安全網が生きているか確かめる。
@@ -158,7 +164,7 @@ describe("checksForPayload — §1 誤爆の回帰", () => {
         new_string: "x",
       },
     };
-    expect(checksForPayload(payload, fakeResolver)).toEqual(["clippy"]);
+    expect(checksForPayload(payload, fakeResolver)).toEqual(["clippy", "tauri-test"]);
   });
 
   it("file_path が無ければ何もしない（I3）", () => {
@@ -464,9 +470,11 @@ describe("統合: post-edit.mjs をプロセスとして起動する", () => {
   });
 
   it("config-warn は systemMessage に出る", () => {
+    // config.toml はリポジトリ非実在だが判定はパス文字列のみ。実在の src-tauri/tauri.conf.json を
+    // 使うと csp-test が発火して vitest を再帰 spawn し、このブロックの契約を破る。
     const res = runHook({
       tool_name: "Edit",
-      tool_input: { file_path: path.join(REPO, "src-tauri", "tauri.conf.json"), old_string: "a", new_string: "b" },
+      tool_input: { file_path: path.join(REPO, "config.toml"), old_string: "a", new_string: "b" },
     });
     expect(res.status).toBe(0);
     const parsed = JSON.parse(res.stdout);

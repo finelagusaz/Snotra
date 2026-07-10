@@ -14,3 +14,6 @@ paths:
 - **`index.bin` を書く新経路は `INDEX_WRITE_LOCK` 経由**: `with_index_write_lock`（権威的書き手・blocking）/ `try_with_index_write_lock`（背景再スキャン・try_lock）。`save_cache_sorted` 自身はロックを取らない（呼び出し側が保持）
 - **`icons.bin` に触れない**: アイコンキャッシュは `src-tauri` の資源。背景再スキャンは `RescanOutcome` で結果を伝え、無効化は呼び出し側が行う
 - **UI 表示文字列を持たない**: エラーは `is_error: true` フラグで伝え、表示は UI 層の責務
+- **設定・コンフィグ変更は後方互換を確認する**: デフォルト値の変更・キー追加・フォーマット変更は、新規インストールだけでなく既存の `config.toml` でも正しく動作するか確認する（互換性の裏取りは `/persistence-check`）
+- **比較関数 + データ構造は「先頭要素が最良/最悪どちらか」を一文で明示する**（事前調査。`BinaryHeap`/`Ord` 変更時）
+- **挙動を変えない最適化は「意味を変えない不変条件」を箇条書きで定義する**（事前調査）

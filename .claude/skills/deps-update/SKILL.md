@@ -40,7 +40,7 @@ cargo / npm の依存関係を一括更新し、ローカル検証 → PR 作成
 - カテゴリ B: 必須（TypeScript 型チェック・フロントエンドビルド）
 - カテゴリ C: フロントユニットテスト（Vitest）のみ
 
-E2E・スモークテストはローカルで実行せず、PR に **`e2e` ラベルを付与**して `E2E & Smoke` workflow（`e2e.yml`）に委ねる。**通常 PR CI（`ci.yml`）では smoke/E2E は走らない**ため、ラベル付与を忘れると検証されない。具体的なコマンド文字列は `docs/build-commands.md` を参照する（二重メンテを避けるためこの SKILL に書かない）。
+E2E・スモークテストはローカルで実行せず `E2E & Smoke` workflow（`e2e.yml`）に委ねる。依存更新は `Cargo.lock` / `package-lock.json`（+ manifest）を変えるため、これらは `e2e.yml` の paths に該当し **smoke/E2E が自動起動**する（#145 Phase 3。ラベル付与は不要）。**通常 PR CI（`ci.yml`）では smoke/E2E は走らない**。具体的なコマンド文字列は `docs/build-commands.md` を参照する（二重メンテを避けるためこの SKILL に書かない）。
 
 検証が失敗した場合:
 
@@ -61,13 +61,12 @@ E2E・スモークテストはローカルで実行せず、PR に **`e2e` ラ�
 - `chore(deps): ...` の conventional commit を作成する。何を更新したかの簡潔な要約を含める
 - push して `gh pr create` で PR を作成する
 - PR 本文に更新一覧を載せる。**major bump は ⚠ で明示する**
-- 依存更新がカテゴリ C 相当（Tauri 本体・WebView・ウィンドウ/ホットキー関連クレート等）に影響しうる場合は `gh pr edit --add-label e2e` でラベルを付与し、`E2E & Smoke` workflow を起動する
 
 ## Step 5 — CI ポーリング
 
 - `gh pr checks` で CI の完了まで待機する
 - コマンド自体がエラーになる場合（PR がまだ index されていない等）は少し待って再試行する
-- `e2e` ラベルを付与した場合は `E2E & Smoke` workflow の完了も待つ（`ci.yml` とは別 workflow のため `gh pr checks` に両方が現れる）
+- 依存更新は paths 該当ゆえ `E2E & Smoke` workflow が自動起動する。`ci.yml` とは別 workflow だが `gh pr checks` に両方が現れるため、その完了も待つ
 
 ## Step 6 — 報告
 

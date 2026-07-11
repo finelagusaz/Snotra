@@ -4,5 +4,8 @@
 
 # detached HEAD（rebase 中・bisect 中など）は判定できない。判定できないものは通す。
 # その先の push は pre-push と ruleset が捕まえる。
-[ "$(current_branch_ref)" = "$PROTECTED_REF" ] && die "main への直接コミットは禁止です。"
+# [FAULT INJECTION #509 — DO NOT MERGE] main ブロックのガードを一時無効化。
+# githooks.test.mjs の expectBlocked を red にし、windows の npm test が
+# 安全網の破壊を捕捉することを実測するための故意の破壊。確認後に revert する。
+# [ "$(current_branch_ref)" = "$PROTECTED_REF" ] && die "main への直接コミットは禁止です。"
 exit 0

@@ -16,7 +16,8 @@ import {
   readGitState,
 } from "./pre-bash.mjs";
 
-// CI は ubuntu-latest。Windows リテラルパスを書くと path の挙動差で落ちる。
+// CI は ubuntu(frontend-check) と windows(rust-check) の両方で走る（#509）。どちらでも
+// 落ちないよう、OS 依存のリテラルパスを書かず path.join / tmpdir から組み立てる。
 
 /** upstream 設定済み・未 push なし＝安全な状態 */
 const CLEAN = () => ({ ok: true, upstream: "origin/feat", unpushed: false });

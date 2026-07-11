@@ -21,8 +21,8 @@ import {
   buildEnvelope,
 } from "./post-edit.mjs";
 
-// CI は ubuntu-latest。Windows リテラルパスを書くと path.relative の挙動差で落ちる。
-// パスは必ず path.join / tmpdir から組み立てる。
+// CI は ubuntu(frontend-check) と windows(rust-check) の両方で走る（#509）。OS 依存の
+// リテラルパスは path.relative の挙動差で落ちる。パスは必ず path.join / tmpdir から組み立てる。
 
 describe("selectChecks", () => {
   // §5: 発火条件は tsconfig の include - exclude と一致しなければならない

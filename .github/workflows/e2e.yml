@@ -5,9 +5,25 @@ on:
   pull_request:
     branches:
       - main
-    # `labeled` を明示購読する。これが無いとデフォルト（opened/synchronize/reopened）のみで、
-    # PR 作成後に `e2e` ラベルを後付けしても workflow が起動しない（中核目的が破綻する）。
-    types: [opened, synchronize, reopened, labeled]
+    # paths が唯一の自動ゲート。カテゴリ C 相当（ウィンドウ生成・ホットキー・スラッシュコマンド）を
+    # 含みうる変更、および E2E ビルド/実行の入力（sidecar・Playwright 設定・vite・依存 manifest/lockfile）
+    # に触れた PR で自動起動する。手動実行は workflow_dispatch。`e2e` ラベルは廃止済み（#145 Phase 3）。
+    # 拾いすぎ（配下 *.md 等）は過剰実行で安全側ゆえ negation を足さない。
+    paths:
+      - 'src-tauri/**'
+      - 'ui/**'
+      - 'e2e/**'
+      - '.github/workflows/e2e.yml'
+      # E2E workflow の各ステップが直接呼ぶスクリプト/設定（変更で自己検証する）
+      - 'scripts/smoke-startup.ps1'      # "Run startup smoke" ステップ
+      - 'scripts/prepare-sidecar.ps1'    # "Build app and setup E2E"（e2e:tauri:setup → prepare:sidecar）
+      - 'playwright.tauri.config.ts'     # "Run E2E tests"（e2e:tauri = Playwright ランナー）
+      - 'vite.config.ts'                 # tauri build のフロントバンドル入力
+      # 依存 manifest/lockfile（依存更新 PR を E2E 網に載せる）
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - 'package.json'
+      - 'package-lock.json'
 
 concurrency:
   group: e2e-${{ github.ref }}
@@ -15,12 +31,8 @@ concurrency:
 
 jobs:
   e2e:
-    # 手動 dispatch、または `e2e` ラベル付き PR でのみ実行（カテゴリ C 変更時に付与）。
-    # 配列 contains は要素完全一致。dispatch 時は pull_request が null → 後項 false だが
-    # OR 先頭が true で短絡するため手動実行は常に走る。
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      contains(github.event.pull_request.labels.*.name, 'e2e')
+    # job `if` は不要。on は workflow_dispatch と（paths + branches で絞った）pull_request のみで、
+    # 起動した時点で実行してよいことが確定する。将来 on にトリガーを足すなら if の再導入を検討。
     runs-on: windows-latest
     timeout-minutes: 30
 

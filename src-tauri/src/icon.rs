@@ -148,18 +148,28 @@ fn icon_bin_file() -> Option<BinFile> {
 /// 背景再スキャンでエントリ集合が変わったときに呼ぶ。メモリ内 `IconCacheState` を
 /// `None` にし、`icons.bin` を削除する。両方やらないと、ファイルだけ消しても
 /// メモリ内の古いアイコンが終了時の `save_if_dirty` で再永続化される。
+/// 両操作は**単一 lock 内で原子的に**行う（→ `invalidate_icon_cache_with` の doc、#522）。
 pub fn invalidate_icon_cache(icons: &IconCacheState) {
     invalidate_icon_cache_with(icons, icon_bin_file());
 }
 
 /// テスト可能な内部実装。`bin_file` を `None` で渡すとファイル削除をスキップする。
+///
+/// **ファイル削除まで lock 保持中に行う**（#522）。旧実装の「None 化 → unlock →
+/// 削除」では、unlock〜削除の窓で `ensure_icon_cache_loaded_if_enabled`（同じ lock で
+/// None 検知 → `icons.bin` ロード）が削除直前の旧ファイルをメモリへ戻せた
+/// （実測 17/2000 回）。削除 → None 化を同一 critical section に置くことで、
+/// **`remove()` が成功した場合**「None の観測 = `icons.bin` は削除済み」が成立し、
+/// 旧データの再ロード・終了時 `save_if_dirty` での再永続化が構造的に起こらない。
+/// `remove()` 失敗時（AV の sharing violation 等）は次ロードが旧ファイルを読む —
+/// これは修正前から存在する既知の残余で #522 のスコープ外。
+/// `remove()` は `%APPDATA%` へのローカル `remove_file` 1 回で、lock 内 I/O として軽量。
 fn invalidate_icon_cache_with(icons: &IconCacheState, bin_file: Option<BinFile>) {
-    // メモリ内キャッシュをクリア（次の get_icons_batch で icons.bin から再ロードされる）。
-    *icons.lock().unwrap() = None;
-    // ディスク上の icons.bin も削除（再ロード時に古いデータを読まないため）。
+    let mut guard = icons.lock().unwrap();
     if let Some(bf) = bin_file {
         bf.remove();
     }
+    *guard = None;
 }
 
 struct IconData {
@@ -363,6 +373,99 @@ mod tests {
         offset += len;
 
         assert_eq!(offset, buf.len());
+    }
+
+    /// issue #522 の回帰テスト: invalidate（ファイル削除 + メモリ None 化）と
+    /// 並行ロード（None 検知 → icons.bin ロード）を並走させ、「icons.bin 不在なのに
+    /// メモリへ旧データが残存する」interleaving が存在しないことを確認する。
+    /// 修正前は「None 化 → unlock → 削除」の窓で 17/2000 回再現した（issue 実測）。
+    /// loader は ensure_icon_cache_loaded_if_enabled と同手順を temp BinFile 上で
+    /// 再構成する（本物は icon_bin_file() 固定パス依存のため temp 注入が効かない）。
+    #[test]
+    fn invalidate_is_atomic_with_concurrent_load() {
+        use std::sync::Arc;
+
+        // dir 名に process id を含め、並列テスト・過去の残骸との衝突を避ける
+        let dir = std::env::temp_dir().join(format!("snotra_icon_522_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mut hits = 0;
+        const ITERS: usize = 1000;
+        for _ in 0..ITERS {
+            let make_bf = || BinFile::new_in(&dir, ICON_MAGIC, ICON_VERSION, "icons.bin");
+            let mut old = IconCacheData::default();
+            old.png.insert("old.exe".into(), vec![1, 2, 3]);
+            assert!(make_bf().save(&old));
+
+            let state: Arc<IconCacheState> = Arc::new(Mutex::new(Some(IconCache {
+                data: IconCacheData::default(),
+                cap: 100,
+                dirty: false,
+            })));
+            let s2 = Arc::clone(&state);
+            let dir2 = dir.clone();
+            let loader = std::thread::spawn(move || {
+                loop {
+                    let mut g = s2.lock().unwrap();
+                    if g.is_none() {
+                        let bf = BinFile::new_in(&dir2, ICON_MAGIC, ICON_VERSION, "icons.bin");
+                        let data: IconCacheData = bf.load().unwrap_or_default();
+                        *g = Some(IconCache { data, cap: 100, dirty: false });
+                        break;
+                    }
+                    drop(g);
+                    std::hint::spin_loop();
+                }
+            });
+
+            invalidate_icon_cache_with(&state, Some(make_bf()));
+            loader.join().unwrap();
+
+            let file_exists = dir.join("icons.bin").exists();
+            let mem_has_old = state
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|c| c.get("old.exe").is_some());
+            if !file_exists && mem_has_old {
+                hits += 1;
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            hits, 0,
+            "TOCTOU: {}/{} 回、削除済み icons.bin の内容がメモリに残存した（None 観測 = 削除済み の不変条件違反）",
+            hits, ITERS
+        );
+    }
+
+    /// issue #522: 無効化後の事後条件（ファイル不在 かつ メモリ None）の決定論検証。
+    #[test]
+    fn invalidate_removes_file_and_clears_memory() {
+        let dir = std::env::temp_dir()
+            .join(format!("snotra_icon_522_det_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let bf = BinFile::new_in(&dir, ICON_MAGIC, ICON_VERSION, "icons.bin");
+        let mut old = IconCacheData::default();
+        old.png.insert("old.exe".into(), vec![1, 2, 3]);
+        assert!(bf.save(&old));
+
+        let state: IconCacheState = Mutex::new(Some(IconCache {
+            data: IconCacheData::default(),
+            cap: 100,
+            dirty: false,
+        }));
+        invalidate_icon_cache_with(
+            &state,
+            Some(BinFile::new_in(&dir, ICON_MAGIC, ICON_VERSION, "icons.bin")),
+        );
+
+        assert!(!dir.join("icons.bin").exists(), "icons.bin が削除されている");
+        assert!(state.lock().unwrap().is_none(), "メモリキャッシュが None");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -65,6 +65,7 @@ npm test    # 必須: 使い捨て repo で hook を実測する（.githooks/git
 ```bash
 npm test                          # フロントユニットテスト（Vitest）
 npm run build                    # フロントエンドビルド（typecheck → vite build、プロジェクトルートから実行）
+npm run clean:worktrees          # Agent 委譲で残った worktree/ブランチを掃除（dirty はスキップ、-- --force で強制）
 ```
 
 ## Windows のみ実行可能（`windows` クレートや Win32 API・実行バイナリに依存）

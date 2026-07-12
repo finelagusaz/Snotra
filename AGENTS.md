@@ -84,7 +84,7 @@
 
 ## 環境制約
 
-- Agent `isolation: "worktree"` は使用可（worktree は `.claude/worktrees/agent-<id>/` に作られ、`.gitignore` 済み）。**ファイルを変更した worktree は成果保全のため自動削除されない**ため、`git worktree remove --force <path>` + `git branch -D worktree-agent-<id>` で手動 cleanup する
+- Agent `isolation: "worktree"` は使用可（worktree は `.claude/worktrees/agent-<id>/` に作られ、`.gitignore` 済み）。残った worktree は `npm run clean:worktrees` で掃除する（未コミット変更ありはスキップされる。消すなら `-- --force`）
 - **並列エージェント委譲はファイル境界で衝突を予測してから行う**: 同一ファイルに触りうるタスクは直列化するかマージ順を決める。境界は「実装中に踏み込みうる隣接ファイル」まで含めて見積もる。リベース解決はコンテキストを保持した実装エージェント本人に依頼するのが最短（#439, #435）
 - **委譲はコンテキストを継承しない**: メインエージェントの system prompt にしか無い事実（メモリ領域の絶対パス等）はサブエージェントのプロンプトへ明示的に渡す——渡し忘れると見えないものを「無いもの」として報告する。**`allowed-tools` はインライン実行のスキルを拘束しない**（実測）——frontmatter に `Agent` が無いことを根拠に「このスキルは委譲しない」と推論してはならない。また**委譲した検査が対象を読む時刻は制御できない＝検査対象を変更しながら検査を走らせない**（#489）
 - **長時間の委譲タスクは中断を前提に設計する**: セッションリミット・API エラーで途中終了しうる。大きなタスクは Phase 分割し「各 Phase の検証 green 後にコミット」を指示に含める（#431）

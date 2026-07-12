@@ -18,7 +18,7 @@ Desktop.ini
 .claude/settings.local.json
 scripts/test-win.sh
 
-# Agent worktrees (Agent isolation: "worktree") — 変更ありの worktree は手動 cleanup
+# Agent worktrees (Agent isolation: "worktree") — 掃除は `npm run clean:worktrees`
 .claude/worktrees/
 
 # subagent-driven-development の進捗レジャー・タスクブリーフ（セッション scratch）

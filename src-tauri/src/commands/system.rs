@@ -45,9 +45,16 @@ pub fn quit_app(app: AppHandle) {
 
 #[tauri::command]
 pub fn record_folder_expansion(path: String, state: State<AppState>) {
-    let mut engine = state.engine.lock().unwrap();
-    engine.record_folder_expansion(&path);
-    engine.save_history_if_dirty(5);
+    // Keep history snapshot creation atomic with the record update; defer only
+    // the filesystem write so searches are not blocked by storage latency.
+    let save = {
+        let mut engine = state.engine.lock().unwrap();
+        engine.record_folder_expansion(&path);
+        engine.prepare_history_save_if_dirty(5)
+    };
+    if let Some(save) = save {
+        let _ = save.save();
+    }
 }
 
 #[tauri::command]

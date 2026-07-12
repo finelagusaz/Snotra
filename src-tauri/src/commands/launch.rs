@@ -82,9 +82,16 @@ where
 /// (`launch_with_tool`, `launch_item`, `launch_item_with_state`,
 /// `launch_with_tool_with_state`, `launch_default_with_state`).
 fn record_and_save(state: &AppState, path: &str, query: &str) {
-    let mut engine = state.engine.lock().unwrap();
-    engine.record_launch(path, query);
-    engine.save_history_if_dirty(5);
+    // Serialize the consistent snapshot while the Engine is protected, but run
+    // the potentially slow filesystem write only after releasing that lock.
+    let save = {
+        let mut engine = state.engine.lock().unwrap();
+        engine.record_launch(path, query);
+        engine.prepare_history_save_if_dirty(5)
+    };
+    if let Some(save) = save {
+        let _ = save.save();
+    }
 }
 
 /// フロントエンドへ返すオープナーツール情報（serde シリアライズ用）

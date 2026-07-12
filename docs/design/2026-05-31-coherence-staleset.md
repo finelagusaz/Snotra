@@ -213,10 +213,10 @@ pub fn update_config(&mut self, new: Config) {
     }
 }
 
-// history は live-read: save/prune は呼ばれた時点で config から top_n を渡す（焼き込まない＝手1）。
-pub fn save_history_if_dirty(&mut self, threshold: u32) {
+// history は live-read: prepare/prune は呼ばれた時点で config から top_n を渡す（焼き込まない＝手1）。
+pub fn prepare_history_save_if_dirty(&mut self, threshold: u32) -> Option<PreparedHistorySave> {
     let top_n = self.config.search.effective_top_n_history();
-    self.history.save_if_dirty(threshold, top_n);   // 内部 prune(top_n) で容量適用
+    self.history.prepare_save_if_dirty(threshold, top_n) // 内部 prune(top_n) で容量適用
 }
 
 // drain（src-tauri が駆動）。snapshot を返し、なければ None
@@ -327,9 +327,9 @@ history を B のまま外部 reconcile に置いた場合に当たるが、本�
 > 本サイクルでは実装しない。合意後に `/start-issue` 系で着手する際の起点。
 
 - **Phase 1 — history を live-read 化（#348 欠陥 B を構造的に消す）**: `HistoryStore.top_n` フィールドを削除し、
-  `save` / `save_if_dirty` / `prune` が `top_n` を引数で受け取る。`Engine::save_history_if_dirty` / `flush_history` が
+  `save` / `prepare_save_if_dirty` / `prune` が `top_n` を引数で受け取る。`Engine::prepare_history_save_if_dirty` / `prepare_history_flush` が
   `self.config.search.effective_top_n_history()` を渡す（全 history mutation は Engine 経由＝config 保有を確認済み:
-  `commands/launch.rs`・`commands/system.rs`・`main.rs:625`）。`HistoryStore::load(top_n)` も引数不要化。
+  `commands/launch.rs`・`commands/system.rs`・`main.rs`）。`HistoryStore::load(top_n)` も引数不要化。
   TDD: top_n 縮小→prune 容量追従 / 拡大→深さ追従（`history.rs` + `engine.rs`、Win32 非依存）。
   **最小・独立・先行可能。setter も stale も不要**
 - **Phase 2 — index-stale ledger 化（#347 中核 + #348 欠陥 A）**: Engine に `index_stale` + `IndexInputs` snapshot、

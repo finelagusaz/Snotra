@@ -1,6 +1,6 @@
 use crate::config::{Config, ScanPath};
 use crate::folder;
-use crate::history::HistoryStore;
+use crate::history::{HistoryStore, PreparedHistorySave};
 use crate::indexer::{AppEntry, CachedMasks};
 use crate::search::{SearchOptions, SearchEngine, SearchMode};
 use crate::ui_types::SearchResult;
@@ -166,15 +166,18 @@ impl Engine {
         self.history.record_folder_expansion(path);
     }
 
-    pub fn save_history_if_dirty(&mut self, threshold: u32) {
+    pub fn prepare_history_save_if_dirty(
+        &mut self,
+        threshold: u32,
+    ) -> Option<PreparedHistorySave> {
         // top_n は現在の config から live-read で渡す（焼き込まない、issue #348）。
         self.history
-            .save_if_dirty(threshold, self.config.search.effective_result_limit());
+            .prepare_save_if_dirty(threshold, self.config.search.effective_result_limit())
     }
 
-    pub fn flush_history(&mut self) {
+    pub fn prepare_history_flush(&mut self) -> Option<PreparedHistorySave> {
         self.history
-            .save(self.config.search.effective_result_limit());
+            .prepare_save_if_dirty(1, self.config.search.effective_result_limit())
     }
 
     pub fn config(&self) -> &Config {

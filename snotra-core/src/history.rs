@@ -1,9 +1,12 @@
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::binfmt::BinFile;
+use crate::binfmt::{BinFile, try_serialize_with_header};
 use crate::config::Config;
 use crate::indexer::normalize_entry_key;
 use crate::query::normalize_history_query_key;
@@ -32,6 +35,42 @@ pub struct HistoryData {
 pub struct HistoryStore {
     data: HistoryData,
     dirty_count: u32,
+}
+
+static NEXT_SAVE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static HISTORY_WRITE_STATE: OnceLock<Mutex<HashMap<PathBuf, u64>>> = OnceLock::new();
+
+/// A fully serialized history snapshot whose filesystem write can run after the
+/// caller releases the `Engine` lock.
+pub struct PreparedHistorySave {
+    file: BinFile,
+    bytes: Vec<u8>,
+    sequence: u64,
+}
+
+impl PreparedHistorySave {
+    /// Persist this snapshot without allowing an older, delayed snapshot to
+    /// overwrite a newer one for the same history file.
+    #[must_use]
+    pub fn save(self) -> bool {
+        let path = self.file.path().to_path_buf();
+        let mut latest_by_path = HISTORY_WRITE_STATE
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap();
+        if latest_by_path
+            .get(&path)
+            .is_some_and(|latest| *latest > self.sequence)
+        {
+            return true;
+        }
+        if !self.file.save_bytes(&self.bytes) {
+            eprintln!("[history] failed to save {}", path.display());
+            return false;
+        }
+        latest_by_path.insert(path, self.sequence);
+        true
+    }
 }
 
 impl HistoryStore {
@@ -75,11 +114,8 @@ impl HistoryStore {
 
     /// `save()` と同じ剪定+永続化を `dir` 注入で行う（統合テスト用、issue #429）。
     pub fn save_in(&mut self, top_n: usize, dir: &Path) {
-        self.prune(top_n);
-
-        let bf = Self::bin_file_in(dir);
-        if !bf.save(&self.data) {
-            eprintln!("[history] failed to save {}", bf.path().display());
+        if let Some(save) = self.prepare_save_in(top_n, dir) {
+            let _ = save.save();
         }
     }
 
@@ -111,10 +147,52 @@ impl HistoryStore {
     /// Save if dirty_count has reached the given threshold, then reset.
     /// `top_n`（剪定容量）は呼び出し側が現在の config から渡す（live-read、issue #348）。
     pub fn save_if_dirty(&mut self, threshold: u32, top_n: usize) {
-        if self.dirty_count >= threshold {
-            self.save(top_n);
-            self.dirty_count = 0;
+        if let Some(save) = self.prepare_save_if_dirty(threshold, top_n) {
+            let _ = save.save();
         }
+    }
+
+    /// Prepare a thresholded save without performing filesystem I/O.
+    pub fn prepare_save_if_dirty(
+        &mut self,
+        threshold: u32,
+        top_n: usize,
+    ) -> Option<PreparedHistorySave> {
+        if self.dirty_count < threshold {
+            return None;
+        }
+        self.dirty_count = 0;
+        match Config::config_dir() {
+            Some(dir) => self.prepare_save_in(top_n, &dir),
+            None => {
+                self.prune(top_n);
+                None
+            }
+        }
+    }
+
+    /// Testable directory-injected form of `prepare_save_if_dirty`.
+    pub fn prepare_save_if_dirty_in(
+        &mut self,
+        threshold: u32,
+        top_n: usize,
+        dir: &Path,
+    ) -> Option<PreparedHistorySave> {
+        if self.dirty_count < threshold {
+            return None;
+        }
+        self.dirty_count = 0;
+        self.prepare_save_in(top_n, dir)
+    }
+
+    fn prepare_save_in(&mut self, top_n: usize, dir: &Path) -> Option<PreparedHistorySave> {
+        self.prune(top_n);
+        let bytes = try_serialize_with_header(HISTORY_MAGIC, HISTORY_VERSION, &self.data).ok()?;
+        Some(PreparedHistorySave {
+            file: Self::bin_file_in(dir),
+            bytes,
+            sequence: NEXT_SAVE_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+        })
     }
 
     pub fn global_count(&self, path: &str) -> u32 {
@@ -850,6 +928,64 @@ mod tests {
             0,
             "low-count entry should be pruned before persisting to disk"
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn prepare_save_if_dirty_in_defers_file_io_until_job_runs() {
+        let dir = temp_dir("prepare_save_defers_io");
+        let mut store = fresh_store();
+        store.record_launch("C:\\fake\\app.lnk", "app");
+
+        let save = store
+            .prepare_save_if_dirty_in(1, 100, &dir)
+            .expect("threshold reached");
+
+        assert!(
+            !dir.join("history.bin").exists(),
+            "preparing under the Engine lock must not perform file I/O"
+        );
+
+        assert!(save.save());
+        let loaded = HistoryStore::load_in(&dir);
+        assert_eq!(loaded.global_count("C:\\fake\\app.lnk"), 1);
+        assert_eq!(loaded.query_count("app", "C:\\fake\\app.lnk"), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn prepare_save_if_dirty_in_returns_none_below_threshold() {
+        let dir = temp_dir("prepare_save_below_threshold");
+        let mut store = fresh_store();
+        store.record_launch("C:\\fake\\app.lnk", "");
+
+        assert!(store.prepare_save_if_dirty_in(2, 100, &dir).is_none());
+        assert!(!dir.join("history.bin").exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn delayed_older_prepared_save_cannot_overwrite_newer_snapshot() {
+        let dir = temp_dir("prepared_save_order");
+        let mut store = fresh_store();
+        store.record_launch("C:\\fake\\app.lnk", "");
+        let older = store
+            .prepare_save_if_dirty_in(1, 100, &dir)
+            .expect("first snapshot");
+
+        store.record_launch("C:\\fake\\app.lnk", "");
+        let newer = store
+            .prepare_save_if_dirty_in(1, 100, &dir)
+            .expect("second snapshot");
+
+        assert!(newer.save());
+        assert!(older.save());
+
+        let loaded = HistoryStore::load_in(&dir);
+        assert_eq!(loaded.global_count("C:\\fake\\app.lnk"), 2);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

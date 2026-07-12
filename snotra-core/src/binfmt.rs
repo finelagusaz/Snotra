@@ -80,14 +80,23 @@ impl BinFile {
     /// surface it (log/eprintln) rather than silently discard it (issue #428).
     #[must_use]
     pub fn save<T: Serialize>(&self, data: &T) -> bool {
-        if let Some(dir) = self.path.parent() {
-            let _ = fs::create_dir_all(dir);
-        }
         let Ok(bytes) = try_serialize_with_header(self.magic, self.version, data) else {
             return false;
         };
+        self.save_bytes(&bytes)
+    }
+
+    /// Atomically save an already serialized header + payload buffer.
+    ///
+    /// This lets callers serialize while holding a state lock, then perform only
+    /// the filesystem I/O after releasing it.
+    #[must_use]
+    pub(crate) fn save_bytes(&self, bytes: &[u8]) -> bool {
+        if let Some(dir) = self.path.parent() {
+            let _ = fs::create_dir_all(dir);
+        }
         let tmp = self.path.with_extension("bin.tmp");
-        if fs::write(&tmp, &bytes).is_err() {
+        if fs::write(&tmp, bytes).is_err() {
             return false;
         }
         let _ = fs::remove_file(&self.path);

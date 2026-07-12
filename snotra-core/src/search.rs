@@ -525,14 +525,18 @@ impl SearchEngine {
                 },
             );
 
-        // Update incremental cache BEFORE sort so all matching indices are captured.
-        // write は fold/reduce 後・sort 前（read は decide_incremental に集約）。
+        // top_k は self（lower_names / entries）を借用しているため、先に所有 SearchResult へ
+        // 変換して借用を終わらせてから incremental cache を write する
+        // （read は decide_incremental に集約。all_match_indices は owned な Vec<usize> ゆえ
+        // write 順序の入れ替えに意味論上の影響はない）。
+        let results = heap_into_results(&self.entries, top_k);
+
         self.prev_query = plan.norm_query.into_owned();
         self.prev_candidates = all_match_indices;
         self.prev_mode = Some(mode);
         self.prev_kana_query = plan.kana_query;
 
-        heap_into_results(top_k)
+        results
     }
 
     /// incremental search（前回候補の再利用）の可否を判定する。
@@ -574,15 +578,15 @@ impl SearchEngine {
     ///
     /// ホットループから呼ばれるため `#[inline]`、全引数を参照/Copy で受け取り fold 内 codegen を保つ。
     #[inline]
-    fn score_one_entry(
-        &self,
+    fn score_one_entry<'a>(
+        &'a self,
         i: usize,
         plan: &QueryPlan,
         mode: SearchMode,
         kana_available: bool,
         history: &HistoryStore,
         options: SearchOptions,
-    ) -> Option<ScoredEntry> {
+    ) -> Option<ScoredEntry<'a>> {
         // Bitmask pre-filter: skip entries that lack query characters (Fuzzy only).
         // Prefix/Substring use cheap str ops, so the bitmask overhead isn't worth it.
         // has_path_sep 時はスキップ: パスだけでマッチするエントリが
@@ -708,10 +712,9 @@ impl SearchEngine {
         Some(ScoredEntry {
             score: combined,
             last_launched,
-            lower_name: v.lower_name.to_owned(),
-            name: v.entry.name.clone(),
-            path: v.entry.target_path.clone(),
-            is_folder: v.entry.is_folder,
+            lower_name: v.lower_name,
+            path: &v.entry.target_path,
+            index: i,
         })
     }
 
@@ -827,15 +830,19 @@ fn prepare_query_plan<'a>(
 /// top-k ヒープを best-first の [`SearchResult`] 列へ変換する（結果組立フェーズ）。
 /// `into_sorted_vec()` はヒープ内部 Vec を再利用して昇順ソートする。
 /// `ScoredEntry::Ord` は Less = better ゆえ昇順で best が先頭になる（tie-break の意味を保つ）。
-fn heap_into_results(top_k: BinaryHeap<ScoredEntry>) -> Vec<SearchResult> {
+/// 所有 String の clone はここで初めて発生する（top-k 確定後の K 件のみ）。
+fn heap_into_results(entries: &[AppEntry], top_k: BinaryHeap<ScoredEntry>) -> Vec<SearchResult> {
     top_k
         .into_sorted_vec()
         .into_iter()
-        .map(|r| SearchResult {
-            name: r.name,
-            path: r.path,
-            is_folder: r.is_folder,
-            is_error: false,
+        .map(|r| {
+            let entry = &entries[r.index];
+            SearchResult {
+                name: entry.name.clone(),
+                path: entry.target_path.clone(),
+                is_folder: entry.is_folder,
+                is_error: false,
+            }
         })
         .collect()
 }
@@ -856,21 +863,23 @@ fn adjusted_history_boost(
     raw_history_boost.min(cap)
 }
 
-/// Owned scored entry used in the parallel top-k heap.
-/// Clones only strings that make it into the heap (at most `max_results` per rayon task).
-struct ScoredEntry {
+/// Borrowed scored entry used in the parallel top-k heap.
+/// SearchEngine の並列 Vec（`lower_names` / `entries`）から借用するため、ヒープ滞在中は
+/// String clone がゼロ。所有 `SearchResult` への変換（clone）は top-k 確定後に
+/// `heap_into_results` が `index` 経由で K 件だけ行う（マッチ M 件 clone の回避、#436 で
+/// score_one_entry を抽出した際に混入した M 件 clone の是正）。
+struct ScoredEntry<'a> {
     score: i64,
     last_launched: u64,
-    lower_name: String, // tie-breaking key (alphabetical)
-    name: String,       // for SearchResult
-    path: String,       // for SearchResult and tie-breaking (= target_path)
-    is_folder: bool,    // for SearchResult
+    lower_name: &'a str, // tie-breaking key (alphabetical) = &self.lower_names[index]
+    path: &'a str,       // tie-breaking key = &self.entries[index].target_path
+    index: usize,        // SearchResult 組立時に entries[index] から clone する
 }
 
 // Higher score is better; better entries are ordered as `Ordering::Less`.
 // This makes BinaryHeap::peek() point to the current worst (max by Ord = least good).
 // scored.sort() (ascending) then puts the best entry first.
-impl PartialEq for ScoredEntry {
+impl PartialEq for ScoredEntry<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.score == other.score
             && self.last_launched == other.last_launched
@@ -879,22 +888,22 @@ impl PartialEq for ScoredEntry {
     }
 }
 
-impl Eq for ScoredEntry {}
+impl Eq for ScoredEntry<'_> {}
 
-impl PartialOrd for ScoredEntry {
+impl PartialOrd for ScoredEntry<'_> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for ScoredEntry {
+impl Ord for ScoredEntry<'_> {
     fn cmp(&self, other: &Self) -> Ordering {
         other
             .score
             .cmp(&self.score)
             .then_with(|| other.last_launched.cmp(&self.last_launched))
-            .then_with(|| self.lower_name.cmp(&other.lower_name))
-            .then_with(|| self.path.cmp(&other.path))
+            .then_with(|| self.lower_name.cmp(other.lower_name))
+            .then_with(|| self.path.cmp(other.path))
     }
 }
 
@@ -1253,21 +1262,20 @@ mod tests {
 
     #[test]
     fn rank_cmp_breaks_full_tie_with_target_path() {
+        // index は Ord/PartialEq に不参加（tie-break キーは score→last_launched→lower_name→path）
         let ra = ScoredEntry {
             score: 100,
             last_launched: 200,
-            lower_name: "tool".to_string(),
-            name: "Tool".to_string(),
-            path: "C:\\B\\tool.exe".to_string(),
-            is_folder: false,
+            lower_name: "tool",
+            path: "C:\\B\\tool.exe",
+            index: 0,
         };
         let rb = ScoredEntry {
             score: 100,
             last_launched: 200,
-            lower_name: "tool".to_string(),
-            name: "Tool".to_string(),
-            path: "C:\\A\\tool.exe".to_string(),
-            is_folder: false,
+            lower_name: "tool",
+            path: "C:\\A\\tool.exe",
+            index: 1,
         };
         let mut scored = [ra, rb];
         scored.sort();

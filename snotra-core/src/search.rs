@@ -176,8 +176,9 @@ pub struct SearchEngine {
 /// Lightweight view over per-entry fields for index `i` that are used in the scoring loop.
 /// Bundles 4 references (entry / lower_name / lower_file_name / normalized_key) without
 /// changing the underlying SoA layout, so all cache-locality properties are preserved.
-/// `char_masks` / `file_name_char_masks` / `kana_lower_names` are accessed directly from
-/// SearchEngine in the scoring closure (same SoA pattern, intentionally excluded from EntryView).
+/// `char_masks` / `file_name_char_masks` / `kana_lower_names` / `kana_char_masks` are accessed
+/// directly from SearchEngine in the scoring closure (same SoA pattern, intentionally excluded
+/// from EntryView).
 struct EntryView<'a> {
     entry: &'a AppEntry,
     lower_name: &'a str,

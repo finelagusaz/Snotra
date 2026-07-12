@@ -185,6 +185,35 @@ impl HistoryStore {
         self.prepare_save_in(top_n, dir)
     }
 
+    /// Prepare an unconditional final snapshot for application exit.
+    ///
+    /// This must not consult `dirty_count`: a threshold save may already have reset the
+    /// counter while its detached filesystem write is still pending. Issuing a newer
+    /// sequence here makes the exit snapshot authoritative over that in-flight save.
+    pub fn prepare_flush(&mut self, top_n: usize) -> Option<PreparedHistorySave> {
+        match Config::config_dir() {
+            Some(dir) => self.prepare_flush_in(top_n, &dir),
+            None => {
+                self.prune(top_n);
+                self.dirty_count = 0;
+                None
+            }
+        }
+    }
+
+    /// Testable directory-injected form of [`Self::prepare_flush`].
+    pub fn prepare_flush_in(
+        &mut self,
+        top_n: usize,
+        dir: &Path,
+    ) -> Option<PreparedHistorySave> {
+        let save = self.prepare_save_in(top_n, dir);
+        if save.is_some() {
+            self.dirty_count = 0;
+        }
+        save
+    }
+
     fn prepare_save_in(&mut self, top_n: usize, dir: &Path) -> Option<PreparedHistorySave> {
         self.prune(top_n);
         let bytes = try_serialize_with_header(HISTORY_MAGIC, HISTORY_VERSION, &self.data).ok()?;
@@ -986,6 +1015,28 @@ mod tests {
 
         let loaded = HistoryStore::load_in(&dir);
         assert_eq!(loaded.global_count("C:\\fake\\app.lnk"), 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn exit_flush_prepares_latest_snapshot_when_threshold_save_is_in_flight() {
+        let dir = temp_dir("exit_flush_with_in_flight_save");
+        let mut store = fresh_store();
+        store.record_launch("C:\\fake\\app.lnk", "");
+        let older = store
+            .prepare_save_if_dirty_in(1, 100, &dir)
+            .expect("threshold save should be prepared");
+
+        let exit_save = store
+            .prepare_flush_in(100, &dir)
+            .expect("exit must prepare a snapshot even after dirty_count was reset");
+
+        assert!(exit_save.save());
+        assert!(older.save());
+
+        let loaded = HistoryStore::load_in(&dir);
+        assert_eq!(loaded.global_count("C:\\fake\\app.lnk"), 1);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

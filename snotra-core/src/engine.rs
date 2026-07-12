@@ -177,7 +177,7 @@ impl Engine {
 
     pub fn prepare_history_flush(&mut self) -> Option<PreparedHistorySave> {
         self.history
-            .prepare_save_if_dirty(1, self.config.search.effective_result_limit())
+            .prepare_flush(self.config.search.effective_result_limit())
     }
 
     pub fn config(&self) -> &Config {

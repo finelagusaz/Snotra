@@ -166,7 +166,7 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 
 - **`FolderListContext`**: ロック内で `capture_folder_list_context()` してスナップショットを取得 → ロック外で I/O（`read_dir_entries`）→ ロック内で `finalize_folder_list()` でスコアリング。設定変更との微小な不整合は許容する設計判断
 - **`PrebuiltIndex`**: ロック外で `PrebuiltIndex::new(entries)` を構築 → ロック内で `apply_prebuilt_index()` でスワップ。SearchEngine の構築コスト（Wave 1/2 の並列計算）をロック外に追い出す
-- **`PreparedHistorySave`**: ロック内で剪定・シリアライズ済み snapshot を取得 → ロック外で `save()`。process-wide の書き込み mutex と history path ごとの完了 sequence により、並行した古い snapshot が新しい `history.bin` を上書きしない
+- **`PreparedHistorySave`**: ロック内で剪定・シリアライズ済み snapshot を取得 → ロック外で `save()`。process-wide の書き込み mutex と history path ごとの完了 sequence により、並行した古い snapshot が新しい `history.bin` を上書きしない。終了時の `prepare_history_flush` は、通常保存が prepare 済み・未書込の窓を回収するため `dirty_count` に関係なく最終 snapshot を生成する
 
 新しい Engine メソッドを追加するとき、I/O やインデックス構築をロック内で行わないよう注意する。
 

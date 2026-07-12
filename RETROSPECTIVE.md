@@ -12,5 +12,8 @@
 
 ## 伸びしろ
 
+### 「prepare 完了」と「永続化完了」を同じ clean 状態に畳んでいた
+通常保存の snapshot 準備時に `dirty_count` を 0 にしたため、ファイル書込前に終了処理が割り込むと、終了 flush まで「保存不要」と判断して未保存履歴を失う窓があった。敵対的レビューが prepare → guard 解放 → save の境界を具体的な interleave で再導出して検出した。終了 flush は threshold 判定を再利用せず、常に現在状態から新しい sequence の最終 snapshot を作る構造へ分離した。
+
 ### rustfmt の対象指定を module tree 非再帰だと思い込んだ
 `main.rs` を rustfmt に渡すと子 module まで整形され、無関係な差分が一時的に広がった。開始時の clean 状態を根拠に Rust 差分を戻して意図した patch を再適用したが、検証コマンドの作用範囲を実行前に確認すべきだった。全体の format check は既存未整形で失敗するため、今回の合否根拠には `git diff --check`、clippy、変更 crate のテストを用いた。

@@ -696,10 +696,15 @@ fn setup_exit_listener(app_handle: &AppHandle) {
     let handle_for_exit = app_handle.clone();
     app_handle.listen("exit-requested", move |_| {
         // Flush any unsaved data before exit
-        {
+        // Capture a consistent final snapshot under the Engine lock, then flush
+        // it without holding the lock through filesystem I/O.
+        let history_save = {
             let app_state = handle_for_exit.state::<AppState>();
             let mut engine = app_state.engine.lock().unwrap();
-            engine.save_history_if_dirty(1);
+            engine.prepare_history_flush()
+        };
+        if let Some(save) = history_save {
+            let _ = save.save();
         }
         {
             let icon_state = handle_for_exit.state::<IconCacheState>();

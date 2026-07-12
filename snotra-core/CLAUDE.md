@@ -7,7 +7,7 @@
 
 ## モジュール構成
 
-- `engine.rs`: `Engine` struct（`SearchEngine` + `HistoryStore` + `Config` の facade）。`FolderListContext`（ロック外スナップショット）と `PrebuiltIndex`（インデックス高速スワップ用）を公開
+- `engine.rs`: `Engine` struct（`SearchEngine` + `HistoryStore` + `Config` の facade）。`FolderListContext`（ロック外スナップショット）、`PrebuiltIndex`（インデックス高速スワップ用）、`PreparedHistorySave`（履歴ファイル I/O のロック外実行用）を公開
   - **`IndexInputs`**: index 構築入力（scan / show_hidden_system / show_icons / include_path_env / migemo_enabled）の単一定義
   - **`index_stale` ledger**: `mark_index_stale` / `begin_index_drain` → snapshot / `complete_index_drain` → swap + re-diff で stale をクリア / `is_index_stale`。コヒーレンシ判断を engine Mutex（軸1）に閉じ、config 変更→index 再構築の lost-update を塞ぐ（#347/#348-A）
   - **`complete_index_drain` は「ビルド開始時 snapshot == 現在 IndexInputs」のときだけ stale をクリアする**（ビルド中変更を取りこぼさない）
@@ -28,7 +28,7 @@
   - **migemo トグルの反映は index 再構築経由**: `update_config` は engine を再構築しないため、`config_watcher` が engine の `IndexInputs` 差分で `start_index_build` を kick する再構築に依存する（#347 Phase 2 で `needs_reindex` は `IndexInputs` に統合）
   - **パスマッチング**: クエリにパス区切り文字（`\` `/`）を含む場合、`normalized_key`（= `normalize_entry_key(target_path)`）に対して Substring マッチを試みる。スコアは `3000 - min(byte_pos, 500)`。name/file_name/kana 全て不成立時のフォールバック。`has_path_sep` 時は Fuzzy ビットマスク pre-filter をスキップする
 - `history.rs`: 起動履歴・クエリ別履歴・フォルダ展開履歴の管理、バイナリ永続化
-  - **剪定容量 `top_n` は焼き込まず `save`/`save_if_dirty`/`prune` の引数で受け取る（live-read）**: `Engine` が呼び出し時に現在の config（`effective_result_limit()`）を渡すため、`result_limit` 設定変更が再起動なしで反映される（#348）
+  - **剪定容量 `top_n` は焼き込まず `prepare_save_if_dirty`/`prepare_flush`/`prune` の引数で受け取る（live-read）**: `Engine` が呼び出し時に現在の config（`effective_result_limit()`）を渡すため、`result_limit` 設定変更が再起動なしで反映される（#348）
   - **`HistoryStore` に `top_n` フィールドを再導入しないこと** — 焼き込むと設定変更が反映されないドリフトが復活する
 - `folder.rs`: フォルダ内列挙とフィルタ/ソート
 - `indexer.rs`: スキャン対象列挙と重複排除、インデックスキャッシュ
@@ -166,6 +166,7 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 
 - **`FolderListContext`**: ロック内で `capture_folder_list_context()` してスナップショットを取得 → ロック外で I/O（`read_dir_entries`）→ ロック内で `finalize_folder_list()` でスコアリング。設定変更との微小な不整合は許容する設計判断
 - **`PrebuiltIndex`**: ロック外で `PrebuiltIndex::new(entries)` を構築 → ロック内で `apply_prebuilt_index()` でスワップ。SearchEngine の構築コスト（Wave 1/2 の並列計算）をロック外に追い出す
+- **`PreparedHistorySave`**: ロック内で剪定・シリアライズ済み snapshot を取得 → ロック外で `save()`。process-wide の書き込み mutex と history path ごとの完了 sequence により、並行した古い snapshot が新しい `history.bin` を上書きしない。終了時の `prepare_history_flush` は、通常保存が prepare 済み・未書込の窓を回収するため `dirty_count` に関係なく最終 snapshot を生成する
 
 新しい Engine メソッドを追加するとき、I/O やインデックス構築をロック内で行わないよう注意する。
 

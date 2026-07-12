@@ -197,7 +197,7 @@ pub async fn launch_item(
     query: String,
     app: AppHandle,
 ) -> Result<LaunchResult, String> {
-    // まずオープナールールを検索（ロック取得 → 即解放）
+    // まずオープナールールを検索（is_dir はロック外・ロック内は純 CPU。resolve_opener の doc / #524 参照）
     let opener_tool = {
         let state = app.state::<AppState>();
         resolve_opener(&path, &state)
@@ -238,10 +238,16 @@ pub async fn launch_item(
 }
 
 /// パスに対して先頭のオープナーツール (exe, args) を返す。
-/// 0/1 ツール判定の共通ロジック。ロックは即解放される。
+/// 0/1 ツール判定の共通ロジック。
+///
+/// `is_dir()`（FS I/O）は**必ず engine ロックの外**で行う — 死んだ UNC パスでは
+/// SMB タイムアウトまで最大 21 秒ブロックする実測があり、ロック内で呼ぶと
+/// その間 `engine.lock()` を試みる全機能が待たされる（#524）。is_dir は engine
+/// 状態に依存しないためロック前で評価でき、ロック内は純 CPU（`find_matching_tools`
+/// + 小文字列 clone）のみに保つ。呼び出しスレッド自身の is_dir 待ちは仕様上残る。
 fn resolve_opener(path: &str, state: &AppState) -> Option<(String, String)> {
-    let engine = state.engine.lock().unwrap();
     let is_folder = std::path::Path::new(path).is_dir();
+    let engine = state.engine.lock().unwrap();
     let tools = find_matching_tools(path, is_folder, &engine.config().openers);
     tools.first().map(|t| (t.exe.clone(), t.args.clone()))
 }
@@ -282,9 +288,10 @@ pub fn launch_default_with_state(path: &str, state: &AppState) -> LaunchResult {
 }
 
 /// トレイサブメニュー構築用: パスに対するツール一覧を (name, exe, args) で返す。
+/// `is_dir()` は engine ロックの外で行う（`resolve_opener` と対称。理由はそちらの doc 参照、#524）。
 pub fn resolve_all_openers(path: &str, state: &AppState) -> Vec<(String, String, String)> {
-    let engine = state.engine.lock().unwrap();
     let is_folder = std::path::Path::new(path).is_dir();
+    let engine = state.engine.lock().unwrap();
     let tools = find_matching_tools(path, is_folder, &engine.config().openers);
     tools.iter().map(|t| (t.name.clone(), t.exe.clone(), t.args.clone())).collect()
 }

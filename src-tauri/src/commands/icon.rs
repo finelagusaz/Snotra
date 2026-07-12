@@ -62,6 +62,14 @@ pub fn get_icons_batch(
 
     // Step 3: insert extracted → cache, then build binary response in one lock
     // ロック内でスライス参照を使うことで clone を完全に排除する。
+    //
+    // 既知の残余（意図的に許容・#522 adversarial review で指摘）: Step 2 はロック外
+    // なので、抽出中に invalidate → 別リクエストの再ロードが挟まると、ここで
+    // 「旧インデックス由来のパス」のアイコンを新キャッシュへ挿入しうる。ただし
+    // 挿入されるのは extract_png が**現在のディスクから**取った正しい PNG のみ
+    // （消えたファイルは抽出失敗で落ちる）で、旧 icons.bin のデータではない。
+    // インデックス外エントリは要求されず cap で有界、次回ビルドの retain_paths が
+    // 剪定する。世代カウンタでの排除は無害な残余に対する状態追加ゆえ見送り（YAGNI）。
     let mut cache = icons.lock().unwrap();
     if let Some(c) = cache.as_mut() {
         for (_, path, png) in extracted {

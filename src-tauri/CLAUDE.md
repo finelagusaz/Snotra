@@ -11,7 +11,7 @@ Tauri v2 バイナリ crate。Win32 API 統合とフロントエンドとの IPC
   - `Engine` は `snotra-core` の facade で、検索・履歴・設定を単一ロックに統合。`main_visible` は Win32 `is_visible()` の 35ms レイテンシを回避するためのキャッシュ
   - **インデックスビルドの開始/終了は `try_begin_index_build()` / `finish_index_build()` メソッド経由で行う** — `indexing`・`index_build_started` を coherent に更新する
   - **config 変更→index 再構築のコヒーレンシ判断は engine の `index_stale` ledger（軸1）に閉じており、この 2 AtomicBool は二重ビルド防止（CAS）と UI 表示専用に純化されている**（#347/#348-A）
-- `icon.rs`: アイコンのオンデマンド抽出（`SHGetFileInfoW` → PNG バイト列）、検索時に遅延ロードしキャッシュ永続化。`invalidate_icon_cache` はメモリ内 `IconCacheState` と `icons.bin` を**両方**無効化する（片方だけだと終了時の `save_if_dirty` で古いアイコンが復活する）
+- `icon.rs`: アイコンのオンデマンド抽出（`SHGetFileInfoW` → PNG バイト列）、検索時に遅延ロードしキャッシュ永続化。`invalidate_icon_cache` はメモリ内 `IconCacheState` と `icons.bin` を**両方**無効化する（片方だけだと終了時の `save_if_dirty` で古いアイコンが復活する）。**両操作は単一 lock 内で原子的に行う** — lock 外でファイル削除すると、並行ロード（None 検知 → `icons.bin` 再ロード）が削除直前の旧ファイルをメモリへ戻す TOCTOU が起きる（#522、実測 17/2000 回）
 - `indexing.rs`: バックグラウンドインデックス構築
   - **`start_index_build` は `mark_index_stale`（CAS の前）→ CAS → spawn の順**で、**drain ループ**（`begin_index_drain` で現在 config の `IndexInputs` snapshot → ロック外で `rebuild_and_save` / `PrebuiltIndex::new` → `complete_index_drain` で swap + re-diff）を stale が消えるまで回す
   - **ビルド本体は `catch_unwind` で包む（panic 戦略依存）**: unwind ビルド=debug/test では panic を捕捉し `finish_index_build` で flag 固着 wedge を防ぐ。release は Cargo.toml で `panic="abort"` のため build panic はプロセス abort＝ここに来ないが silent wedge にもならず、再起動で fresh build される。どちらでも UI 永久構築中は起きない

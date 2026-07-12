@@ -103,16 +103,8 @@ impl HistoryStore {
         }
     }
 
-    /// `top_n` 件まで剪定してから永続化する。`top_n` は呼び出し側（`Engine`）が
-    /// 現在の config から渡す（live-read）。
-    pub fn save(&mut self, top_n: usize) {
-        match Config::config_dir() {
-            Some(dir) => self.save_in(top_n, &dir),
-            None => self.prune(top_n),
-        }
-    }
-
-    /// `save()` と同じ剪定+永続化を `dir` 注入で行う（統合テスト用、issue #429）。
+    /// 剪定＋永続化を `dir` 注入で行う（統合テスト用、issue #429）。
+    /// 本番経路は `prepare_save_if_dirty` / `prepare_flush` を使う。
     pub fn save_in(&mut self, top_n: usize, dir: &Path) {
         if let Some(save) = self.prepare_save_in(top_n, dir) {
             let _ = save.save();
@@ -142,14 +134,6 @@ impl HistoryStore {
         }
 
         self.dirty_count += 1;
-    }
-
-    /// Save if dirty_count has reached the given threshold, then reset.
-    /// `top_n`（剪定容量）は呼び出し側が現在の config から渡す（live-read、issue #348）。
-    pub fn save_if_dirty(&mut self, threshold: u32, top_n: usize) {
-        if let Some(save) = self.prepare_save_if_dirty(threshold, top_n) {
-            let _ = save.save();
-        }
     }
 
     /// Prepare a thresholded save without performing filesystem I/O.
@@ -216,9 +200,18 @@ impl HistoryStore {
 
     fn prepare_save_in(&mut self, top_n: usize, dir: &Path) -> Option<PreparedHistorySave> {
         self.prune(top_n);
-        let bytes = try_serialize_with_header(HISTORY_MAGIC, HISTORY_VERSION, &self.data).ok()?;
+        let file = Self::bin_file_in(dir);
+        let bytes = match try_serialize_with_header(HISTORY_MAGIC, HISTORY_VERSION, &self.data) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                // #428: シリアライズ失敗を黙って捨てず surface する
+                // （PreparedHistorySave::save の書込失敗 eprintln と対称）。
+                eprintln!("[history] failed to serialize {}", file.path().display());
+                return None;
+            }
+        };
         Some(PreparedHistorySave {
-            file: Self::bin_file_in(dir),
+            file,
             bytes,
             sequence: NEXT_SAVE_SEQUENCE.fetch_add(1, Ordering::Relaxed),
         })

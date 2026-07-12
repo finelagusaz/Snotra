@@ -57,6 +57,9 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
 
+      - name: cargo check
+        run: cargo check --workspace
+
       - name: cargo test (snotra-core)
         run: cargo test -p snotra-core
 

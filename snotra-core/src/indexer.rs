@@ -296,10 +296,9 @@ pub fn load_or_scan_with_stats(
     let hash_ms = hash_started.elapsed().as_millis();
 
     let cache_load_started = Instant::now();
-    // 権威的ビルドが cache load とタスク実行の間に始まった場合も検出できるよう、
-    // load より先に世代を捕捉する。
-    let rescan_generation = snapshot_index_generation();
-    if let Some(result) = load_cache(current_hash) {
+    if let Some((result, rescan_generation)) =
+        load_with_index_generation(|| load_cache(current_hash))
+    {
         let cache_load_ms = cache_load_started.elapsed().as_millis();
         let return_entries = result.entries;
         let cached_masks = result.cached_masks;
@@ -532,6 +531,14 @@ fn current_index_generation() -> u64 {
 fn snapshot_index_generation() -> u64 {
     let _guard = INDEX_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     current_index_generation()
+}
+
+/// キャッシュ読み込み前の世代と読み込み結果を対にする。
+/// この順序により、読み込み後に権威的ビルドが始まった場合、返却する背景タスクは
+/// 必ず古い世代を保持し、新しい `index.bin` を上書きせず `Skipped` になる。
+fn load_with_index_generation<T>(load: impl FnOnce() -> Option<T>) -> Option<(T, u64)> {
+    let generation = snapshot_index_generation();
+    load().map(|value| (value, generation))
 }
 
 /// 書き込みロックを非ブロッキングで取得し、取れたらクロージャを実行して `Some(結果)` を返す。
@@ -1485,6 +1492,21 @@ mod tests {
         assert!(load_cache_in(&dir, new_hash).is_some());
         assert!(load_cache_in(&dir, old_hash).is_none());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rescan_generation_is_snapshotted_before_cache_load() {
+        let _serial = INDEX_LOCK_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let generation_before_load = current_index_generation();
+
+        let (_, task_generation) = load_with_index_generation(|| {
+            with_index_write_lock(|| {});
+            Some(())
+        })
+        .expect("the injected cache load should succeed");
+
+        assert_eq!(task_generation, generation_before_load);
+        assert_ne!(task_generation, current_index_generation());
     }
 
     #[test]

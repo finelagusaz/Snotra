@@ -8,6 +8,7 @@ export default defineConfig({
       "ui/src/**/*.test.{ts,tsx}",
       ".claude/hooks/**/*.test.mjs",
       ".githooks/**/*.test.mjs",
+      "scripts/**/*.test.mjs",
     ],
     environment: "node",
   },

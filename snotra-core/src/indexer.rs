@@ -5,6 +5,7 @@ use std::fs::Metadata;
 use std::hash::{Hash, Hasher};
 use std::os::windows::fs::MetadataExt;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -295,6 +296,9 @@ pub fn load_or_scan_with_stats(
     let hash_ms = hash_started.elapsed().as_millis();
 
     let cache_load_started = Instant::now();
+    // 権威的ビルドが cache load とタスク実行の間に始まった場合も検出できるよう、
+    // load より先に世代を捕捉する。
+    let rescan_generation = snapshot_index_generation();
     if let Some(result) = load_cache(current_hash) {
         let cache_load_ms = cache_load_started.elapsed().as_millis();
         let return_entries = result.entries;
@@ -306,6 +310,7 @@ pub fn load_or_scan_with_stats(
             show_hidden_system,
             config_hash: current_hash,
             cached_entries: return_entries.clone(),
+            generation: rescan_generation,
         };
         let stats = LoadOrScanStats {
             cache_hit: true,
@@ -516,6 +521,18 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
 /// 権威的ビルド（`rebuild_and_save` / cache-miss save）と背景再スキャンが共有する。
 /// `save_cache_sorted` 自体はロックを取らない（呼び出し側が保持する契約）。
 static INDEX_WRITE_LOCK: Mutex<()> = Mutex::new(());
+/// 権威的な index 書き込みの開始ごとに進む世代。
+/// 背景タスクは生成時の値を保持し、ロック取得後に一致を検査する。
+static INDEX_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+fn current_index_generation() -> u64 {
+    INDEX_GENERATION.load(Ordering::Relaxed)
+}
+
+fn snapshot_index_generation() -> u64 {
+    let _guard = INDEX_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    current_index_generation()
+}
 
 /// 書き込みロックを非ブロッキングで取得し、取れたらクロージャを実行して `Some(結果)` を返す。
 /// 取得できなければクロージャを実行せず `None` を返す。背景再スキャン等の日和見的書き手が使う。
@@ -530,6 +547,7 @@ fn with_index_write_lock<R>(f: impl FnOnce() -> R) -> R {
     // Mutex<()> は保持する状態を持たないため、poison しても into_inner で回復して継続する。
     // （`.unwrap()` だと一度の panic 以降、全 index 書き込みが永久に panic する）
     let _guard = INDEX_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    INDEX_GENERATION.fetch_add(1, Ordering::Relaxed);
     f()
 }
 
@@ -554,22 +572,49 @@ fn try_background_rescan(
     show_hidden_system: bool,
     config_hash: u64,
     cached_entries: &[AppEntry],
+    generation: u64,
+) -> RescanOutcome {
+    let Some(dir) = Config::config_dir() else {
+        return RescanOutcome::Skipped;
+    };
+    try_background_rescan_in(
+        &dir,
+        scan,
+        show_hidden_system,
+        config_hash,
+        cached_entries,
+        generation,
+    )
+}
+
+fn try_background_rescan_in(
+    dir: &Path,
+    scan: &[ScanPath],
+    show_hidden_system: bool,
+    config_hash: u64,
+    cached_entries: &[AppEntry],
+    generation: u64,
 ) -> RescanOutcome {
     // 権威的ビルド（rebuild_and_save / cache-miss save）が書き込み中なら Skipped。
     let changed = try_with_index_write_lock(|| {
+        // 世代検査は書き込みロック取得後に行う。検査後に権威的ビルドが割り込む
+        // TOCTOU を防ぎ、古い snapshot が新しい index.bin を巻き戻さないため。
+        if current_index_generation() != generation {
+            return None;
+        }
         let mut scanned = scan_all(scan, show_hidden_system);
         sort_entries_canonical(&mut scanned);
         if entries_equal(cached_entries, &scanned) {
-            false
+            Some(false)
         } else {
-            save_cache_sorted(&scanned, config_hash);
-            true
+            save_cache_sorted_in(dir, &scanned, config_hash);
+            Some(true)
         }
     });
     match changed {
-        None => RescanOutcome::Skipped,
-        Some(false) => RescanOutcome::Unchanged,
-        Some(true) => RescanOutcome::Changed,
+        None | Some(None) => RescanOutcome::Skipped,
+        Some(Some(false)) => RescanOutcome::Unchanged,
+        Some(Some(true)) => RescanOutcome::Changed,
     }
 }
 
@@ -580,6 +625,7 @@ pub struct BackgroundRescanTask {
     show_hidden_system: bool,
     config_hash: u64,
     cached_entries: Vec<AppEntry>,
+    generation: u64,
 }
 
 impl BackgroundRescanTask {
@@ -591,6 +637,7 @@ impl BackgroundRescanTask {
             self.show_hidden_system,
             self.config_hash,
             &self.cached_entries,
+            self.generation,
         )
     }
 }
@@ -1387,7 +1434,7 @@ mod tests {
         let _held = INDEX_WRITE_LOCK.lock().unwrap();
         // 背景再スキャンは書き込みロックを取得できないため、
         // スキャンも保存もせず Skipped を返さねばならない。
-        let outcome = try_background_rescan(&[], false, 0, &[]);
+        let outcome = try_background_rescan(&[], false, 0, &[], current_index_generation());
         assert_eq!(
             outcome,
             RescanOutcome::Skipped,
@@ -1404,8 +1451,40 @@ mod tests {
             show_hidden_system: false,
             config_hash: 0,
             cached_entries: Vec::new(),
+            generation: current_index_generation(),
         };
         assert_eq!(task.run(), RescanOutcome::Unchanged);
+    }
+
+    #[test]
+    fn stale_background_rescan_cannot_overwrite_newer_index_generation() {
+        let _serial = INDEX_LOCK_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = temp_dir("stale_background_rescan");
+        let old_hash = 41;
+        let new_hash = 42;
+        let old_generation = current_index_generation();
+
+        with_index_write_lock(|| {
+            save_cache_sorted_in(&dir, &[], new_hash);
+        });
+
+        let outcome = try_background_rescan_in(
+            &dir,
+            &[],
+            false,
+            old_hash,
+            &[AppEntry {
+                name: "stale".to_string(),
+                target_path: "C:\\stale.exe".to_string(),
+                is_folder: false,
+            }],
+            old_generation,
+        );
+
+        assert_eq!(outcome, RescanOutcome::Skipped);
+        assert!(load_cache_in(&dir, new_hash).is_some());
+        assert!(load_cache_in(&dir, old_hash).is_none());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

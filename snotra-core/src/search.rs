@@ -156,6 +156,9 @@ pub struct SearchEngine {
     /// エントリ名をひらがな正規化した Vec（katakana→hiragana、ASCII はそのまま）。
     /// migemo 検索（ローマ字→かな変換マッチ）で使用。インデックスキャッシュには保存しない。
     kana_lower_names: Vec<Box<str>>,
+    /// kana_lower_names 用の損失あり文字存在マスク。migemo 有効時のみ構築し、kana
+    /// pre-filter の false positive は許すが false negative は起こさない。
+    kana_char_masks: Vec<u64>,
     /// Incremental search cache: normalized query string from the previous call.
     prev_query: String,
     /// Incremental search cache: entry indices that matched on the previous call,
@@ -173,8 +176,9 @@ pub struct SearchEngine {
 /// Lightweight view over per-entry fields for index `i` that are used in the scoring loop.
 /// Bundles 4 references (entry / lower_name / lower_file_name / normalized_key) without
 /// changing the underlying SoA layout, so all cache-locality properties are preserved.
-/// `char_masks` / `file_name_char_masks` / `kana_lower_names` are accessed directly from
-/// SearchEngine in the scoring closure (same SoA pattern, intentionally excluded from EntryView).
+/// `char_masks` / `file_name_char_masks` / `kana_lower_names` / `kana_char_masks` are accessed
+/// directly from SearchEngine in the scoring closure (same SoA pattern, intentionally excluded
+/// from EntryView).
 struct EntryView<'a> {
     entry: &'a AppEntry,
     lower_name: &'a str,
@@ -198,6 +202,8 @@ struct QueryPlan<'a> {
     query_mask: u64,
     /// migemo 用ひらがな変換クエリ（ASCII 残留や条件未達のとき `None`）。
     kana_query: Option<String>,
+    /// kana_query 用の損失あり文字存在マスク。kana_query がないときは `None`。
+    kana_query_mask: Option<u64>,
     /// `norm_query` の UTF-32 事前計算（Fuzzy マッチで全スレッド共有）。
     needle_u32: Utf32String,
     /// パスマッチ用クエリ（生クエリベース・アクセント/連続スペース保持）。`has_path_sep` 時のみ。
@@ -280,6 +286,19 @@ fn compute_wave2(
     )
 }
 
+/// kana の Unicode scalar value を 64 bit に写す損失あり存在マスク。
+/// 同じ文字は必ず同じ bit になるため、mask 不一致なら kana substring は不成立と分かる。
+/// 衝突は候補を余計に通すだけで、kana マッチを棄却しない。
+#[inline]
+fn kana_char_mask(kana: &str) -> u64 {
+    kana.chars().fold(0, |mask, ch| mask | (1u64 << ((ch as u32) & 63)))
+}
+
+/// migemo 有効時の kana pre-filter 用並列 Vec を構築する。kana 未構築時は空 Vec を保つ。
+fn compute_kana_char_masks(kana_lower_names: &[Box<str>]) -> Vec<u64> {
+    kana_lower_names.iter().map(|name| kana_char_mask(name)).collect()
+}
+
 impl SearchEngine {
     /// 全並列 Vec の長さが entries と一致することを検証し、Self を組み立てる。
     fn assemble(
@@ -289,8 +308,9 @@ impl SearchEngine {
         normalized_keys: Vec<Box<str>>,
         char_masks: Vec<u64>,
         file_name_char_masks: Vec<u64>,
-        kana_lower_names: Vec<Box<str>>,
+        kana: (Vec<Box<str>>, Vec<u64>),
     ) -> Self {
+        let (kana_lower_names, kana_char_masks) = kana;
         debug_assert!(
             lower_names.len() == entries.len()
                 && lower_file_names.len() == entries.len()
@@ -299,10 +319,12 @@ impl SearchEngine {
                 && file_name_char_masks.len() == entries.len(),
             "SearchEngine: all parallel Vecs must have the same length as entries"
         );
-        // kana_lower_names のみ {0, entries.len()} を許す（migemo 無効時は空 Vec、issue #337）。
+        // kana 系 Vec は {0, entries.len()} を許す（migemo 無効時は空 Vec、issue #337）。
         debug_assert!(
-            kana_lower_names.is_empty() || kana_lower_names.len() == entries.len(),
-            "SearchEngine: kana_lower_names must be empty or match entries length"
+            (kana_lower_names.is_empty() && kana_char_masks.is_empty())
+                || (kana_lower_names.len() == entries.len()
+                    && kana_char_masks.len() == entries.len()),
+            "SearchEngine: kana parallel Vecs must both be empty or match entries length"
         );
         Self {
             entries,
@@ -312,6 +334,7 @@ impl SearchEngine {
             char_masks,
             file_name_char_masks,
             kana_lower_names,
+            kana_char_masks,
             prev_query: String::new(),
             prev_candidates: Vec::new(),
             prev_mode: None,
@@ -333,6 +356,7 @@ impl SearchEngine {
             compute_wave1(&entries, migemo_enabled);
         let (char_masks, file_name_char_masks) =
             compute_wave2(&lower_names, &lower_file_names);
+        let kana_char_masks = compute_kana_char_masks(&kana_lower_names);
         Self::assemble(
             entries,
             lower_names,
@@ -340,7 +364,7 @@ impl SearchEngine {
             normalized_keys,
             char_masks,
             file_name_char_masks,
-            kana_lower_names,
+            (kana_lower_names, kana_char_masks),
         )
     }
 
@@ -389,6 +413,7 @@ impl SearchEngine {
                 compute_wave1(&entries, migemo_enabled)
             };
 
+        let kana_char_masks = compute_kana_char_masks(&kana_lower_names);
         Self::assemble(
             entries,
             lower_names,
@@ -396,7 +421,7 @@ impl SearchEngine {
             normalized_keys,
             char_masks,
             file_name_char_masks,
-            kana_lower_names,
+            (kana_lower_names, kana_char_masks),
         )
     }
 
@@ -589,15 +614,22 @@ impl SearchEngine {
     ) -> Option<ScoredEntry<'a>> {
         // Bitmask pre-filter: skip entries that lack query characters (Fuzzy only).
         // Prefix/Substring use cheap str ops, so the bitmask overhead isn't worth it.
-        // has_path_sep 時はスキップ: パスだけでマッチするエントリが
-        // name/file_name のビットマスクで落ちる問題を回避する。
+        // name/file_name と kana のいずれのマッチ経路にも候補がない場合だけ棄却する。
+        // kana は専用の損失あり mask を使う。衝突で余分な候補を通すことはあっても、
+        // kana substring が成立する候補を棄却しない。
+        // has_path_sep 時は従来どおりスキップ: パスだけでマッチするエントリが
+        // name/file_name mask で落ちる問題を回避する。
         // **必ず関数先頭**（entry_view / Utf32String 変換より前）。
         if mode == SearchMode::Fuzzy && !plan.has_path_sep {
             let name_mask = self.char_masks[i];
             let fn_mask = self.file_name_char_masks[i];
-            if (plan.query_mask & name_mask) != plan.query_mask
-                && (!plan.has_dot || (plan.query_mask & fn_mask) != plan.query_mask)
-            {
+            let latin_match = (plan.query_mask & name_mask) == plan.query_mask
+                || (plan.has_dot && (plan.query_mask & fn_mask) == plan.query_mask);
+            let kana_match = plan.kana_query_mask.is_some_and(|kana_query_mask| {
+                !self.kana_char_masks.is_empty()
+                    && (kana_query_mask & self.kana_char_masks[i]) == kana_query_mask
+            });
+            if !latin_match && !kana_match {
                 return None;
             }
         }
@@ -777,6 +809,7 @@ fn prepare_query_plan<'a>(
     } else {
         None
     };
+    let kana_query_mask = kana_query.as_deref().map(kana_char_mask);
 
     // Pre-compute needle as UTF-32 once per search call and share it across threads.
     // Reusing the same Utf32String avoids repeated O(|query|) char conversion per entry.
@@ -821,6 +854,7 @@ fn prepare_query_plan<'a>(
         has_path_sep,
         query_mask,
         kana_query,
+        kana_query_mask,
         needle_u32,
         path_query,
         path_history_key,
@@ -1990,6 +2024,40 @@ mod tests {
     }
 
     #[test]
+    fn fuzzy_kana_match_skips_latin_bitmask_prefilter() {
+        // "chatto" と "tyatto" は kana に正規化するとどちらも「ちゃっと」になる。
+        // 直接のラテン文字集合は異なるため、Fuzzy の bitmask pre-filter は
+        // kana_query がある経路を早期棄却してはならない。
+        let mut engine = SearchEngine::new(make_entries(&["tyatto"]));
+        let plan = prepare_query_plan("chatto", SearchMode::Fuzzy, &migemo_config())
+            .expect("非空クエリは QueryPlan を生成する");
+        let kana_query_mask = plan
+            .kana_query_mask
+            .expect("完全に kana へ変換できるクエリは kana mask を持つ");
+
+        assert_ne!(
+            plan.query_mask & engine.char_masks[0],
+            plan.query_mask,
+            "tyatto はラテン文字 mask では chatto を満たさない"
+        );
+        assert_eq!(
+            kana_query_mask & engine.kana_char_masks[0],
+            kana_query_mask,
+            "kana mask は chatto と tyatto の共通 kana を通す"
+        );
+        let results = engine.search_with_options(
+            "chatto",
+            8,
+            &empty_history(),
+            SearchMode::Fuzzy,
+            migemo_config(),
+        );
+
+        assert_eq!(results.len(), 1, "kana 経由で tyatto がヒットするはず");
+        assert_eq!(results[0].name, "tyatto");
+    }
+
+    #[test]
     fn kana_search_no_false_positive_for_ascii_entry() {
         // "dokyu" で "Documents" はヒットしない
         let entries = make_entries(&["ドキュメント", "Documents"]);
@@ -2256,6 +2324,8 @@ mod tests {
         // panic せず、kana マッチは出ない（空ガード）。
         let entries = make_entries(&["ドキュメント", "Documents"]);
         let mut engine = SearchEngine::new_with_migemo(entries, false);
+        assert!(engine.kana_lower_names.is_empty());
+        assert!(engine.kana_char_masks.is_empty());
         let results = engine.search_with_options(
             "dokyu",
             8,
@@ -2275,6 +2345,8 @@ mod tests {
         // migemo ON で構築 → kana 構築済み → ローマ字検索がヒット
         let entries = make_entries(&["ドキュメント", "Documents"]);
         let mut engine = SearchEngine::new_with_migemo(entries, true);
+        assert_eq!(engine.kana_lower_names.len(), engine.entries.len());
+        assert_eq!(engine.kana_char_masks.len(), engine.entries.len());
         let results = engine.search_with_options(
             "dokyu",
             8,

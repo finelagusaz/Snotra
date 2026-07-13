@@ -24,6 +24,12 @@ html, body, #root {
 #root {
   display: flex;
   flex-direction: column;
+  /* clip は「クリップするがスクロールコンテナにしない」。hidden はプログラム的スクロール
+     （scrollIntoView 等）を許すため、動的リサイズ(set_size)の非同期着地までの一瞬に
+     #root が overflow したとき、選択行への scrollIntoView がシェルごとスクロールして
+     検索バーがずれる。clip なら #root は決してスクロールされない。結果リストの
+     スクロールは内側の .result-list-standalone が担うため影響しない。 */
+  overflow: clip;
 }
 
 .search-bar {

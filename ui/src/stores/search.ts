@@ -4,6 +4,7 @@ import type { OpenerTool, SavedViewState, SearchResult } from "../lib/types";
 import * as api from "../lib/invoke";
 import { findCommand } from "../lib/commands";
 import { perfStartSearch, perfMarkSearchDone, perfCancelSearch } from "../lib/perf";
+import { createLatestRun } from "../lib/latestRun";
 import { clampSelectedIndex, computeParentDir } from "../lib/folderNav";
 import { trace } from "../lib/trace";
 import { folderState, setFolderState, folderFilter, setFolderFilter } from "./folder";
@@ -60,17 +61,16 @@ let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 /** leading edge: デバウンス区間の最初の入力で即時発火済みなら true */
 let leadingFired = false;
 let refreshInFlight: Promise<void> | undefined;
-let searchGeneration = 0;
 let activationInFlight = false;
 let suppressNextQueryEffectRefresh = false;
 
-/** 世代カウンタの唯一の更新経路（choke point）。呼ぶたびに `searchGeneration` を +1 して
- *  新しい世代番号を返す。`searchGeneration` への書き込みはここだけを経由すること
- *  ——手書きの `++searchGeneration` を各所に散在させると加算漏れ・重複が stale 表示バグに
- *  直結する（#431）。読み取り（staleness チェック）は引き続き `searchGeneration` を直読してよい。 */
-function nextGeneration(): number {
-  return ++searchGeneration;
-}
+/** 検索/データ lane の supersede 調停 primitive（world 世代 + staleness を所有・choke point）。
+ *  検索・instant fetch の「最新実行だけが結果を適用する」を `run()` が、モード遷移・起動が
+ *  in-flight を無効化する「world 世代の前進」を `invalidate()` が担う（旧 `nextGeneration()`）。
+ *  perf の requestId 源は `searchLane.current()`（旧 `searchGeneration` 直読）。
+ *  flush 追跡（`refreshInFlight`/`flushPendingRefresh`）は refresh lane 固有のため runner に吸収せず
+ *  下の `trackRefresh` に残す（instant/直接 refreshResults を待受対象に載せない現挙動を保つ）。 */
+const searchLane = createLatestRun();
 
 export type ViewKind = "results" | "folder" | "tool";
 export type InterpKind = "plain" | "command" | "instant";
@@ -128,7 +128,7 @@ const shouldShowResults = createMemo(() => {
 });
 
 function clearCommandModeState() {
-  nextGeneration();
+  searchLane.invalidate();
   setQuery("");
   clearResults();
 }
@@ -161,90 +161,92 @@ function debouncedRefresh() {
 // Folder expansion state — signals live in ./folder.ts
 
 async function refreshResults() {
-  // ツール選択中・インスタントコマンドモード中は通常の検索で上書きしない
+  // ツール選択中・インスタントコマンドモード中は通常の検索で上書きしない。
+  // ガードは searchLane.run() の前に置く——早期リターン時に world 世代を進めない現挙動を保つため。
   if (viewKind() === "tool") return;
   if (interpKind() === "instant") return;
 
-  const requestId = nextGeneration();
-  const fs = folderState();
-  const q = query();
-  const trimmed = q.trim();
-  trace("search:refresh:start", {
-    requestId,
-    query: q,
-    trimmed,
-    folderMode: fs !== null,
-    indexing: indexing(),
-  });
-  if (!fs && trimmed === "/r") {
-    trace("search:refresh:branch", { requestId, branch: "slash_r_history" });
-    perfStartSearch(requestId, "history");
-    const items = await api.getHistoryResults();
-    if (requestId !== searchGeneration) {
-      trace("search:refresh:stale", { requestId, stage: "slash_r_history" });
+  return searchLane.run(async ({ isStale, requestId }) => {
+    const fs = folderState();
+    const q = query();
+    const trimmed = q.trim();
+    trace("search:refresh:start", {
+      requestId,
+      query: q,
+      trimmed,
+      folderMode: fs !== null,
+      indexing: indexing(),
+    });
+    if (!fs && trimmed === "/r") {
+      trace("search:refresh:branch", { requestId, branch: "slash_r_history" });
+      perfStartSearch(requestId, "history");
+      const items = await api.getHistoryResults();
+      if (isStale()) {
+        trace("search:refresh:stale", { requestId, stage: "slash_r_history" });
+        perfCancelSearch(requestId);
+        return;
+      }
+      updateResults(items);
+      setSelected(0);
+      trace("search:refresh:done", { requestId, branch: "slash_r_history", count: items.length });
+      perfMarkSearchDone(requestId, items.length);
+      return;
+    }
+    if (!fs && trimmed.startsWith("/")) {
+      // Command mode: no suggestions shown, just wait for exact match (handled by query effect).
+      trace("search:refresh:branch", { requestId, branch: "slash_noop" });
+      clearResults();
+      return;
+    }
+    if (indexing() && !fs) {
+      clearResults();
+      trace("search:refresh:done", { requestId, branch: "indexing_guard", count: 0 });
+      perfMarkSearchDone(requestId, 0);
+      return;
+    }
+
+    const source = trimmed === "/r"
+      ? "history"
+      : fs
+      ? "folder"
+      : "query";
+    perfStartSearch(requestId, source);
+
+    let items: SearchResult[];
+    if (fs) {
+      trace("search:api:call", {
+        requestId,
+        api: "list_folder",
+        dir: fs.currentDir,
+        filter: folderFilter(),
+        mode: "folder_state",
+      });
+      items = await api.listFolder(fs.currentDir, folderFilter());
+    } else if (trimmed === "") {
+      trace("search:refresh:branch", { requestId, branch: "empty_query" });
+      items = [];
+    } else {
+      trace("search:api:call", { requestId, api: "search", query: q });
+      items = await api.search(q);
+    }
+
+    if (isStale()) {
+      trace("search:refresh:stale", { requestId, stage: "post_api" });
       perfCancelSearch(requestId);
       return;
     }
-    updateResults(items);
-    setSelected(0);
-    trace("search:refresh:done", { requestId, branch: "slash_r_history", count: items.length });
-    perfMarkSearchDone(requestId, items.length);
-    return;
-  }
-  if (!fs && trimmed.startsWith("/")) {
-    // Command mode: no suggestions shown, just wait for exact match (handled by query effect).
-    trace("search:refresh:branch", { requestId, branch: "slash_noop" });
-    clearResults();
-    return;
-  }
-  if (indexing() && !fs) {
-    clearResults();
-    trace("search:refresh:done", { requestId, branch: "indexing_guard", count: 0 });
-    perfMarkSearchDone(requestId, 0);
-    return;
-  }
 
-  const source = trimmed === "/r"
-    ? "history"
-    : fs
-    ? "folder"
-    : "query";
-  perfStartSearch(requestId, source);
-
-  let items: SearchResult[];
-  if (fs) {
-    trace("search:api:call", {
+    updateResults(items, source === "query" && trimmed !== "");
+    const nextSelected = clampSelectedIndex(selected(), items.length);
+    setSelected(nextSelected);
+    trace("search:refresh:done", {
       requestId,
-      api: "list_folder",
-      dir: fs.currentDir,
-      filter: folderFilter(),
-      mode: "folder_state",
+      branch: source,
+      count: items.length,
+      selected: nextSelected,
     });
-    items = await api.listFolder(fs.currentDir, folderFilter());
-  } else if (trimmed === "") {
-    trace("search:refresh:branch", { requestId, branch: "empty_query" });
-    items = [];
-  } else {
-    trace("search:api:call", { requestId, api: "search", query: q });
-    items = await api.search(q);
-  }
-
-  if (requestId !== searchGeneration) {
-    trace("search:refresh:stale", { requestId, stage: "post_api" });
-    perfCancelSearch(requestId);
-    return;
-  }
-
-  updateResults(items, source === "query" && trimmed !== "");
-  const nextSelected = clampSelectedIndex(selected(), items.length);
-  setSelected(nextSelected);
-  trace("search:refresh:done", {
-    requestId,
-    branch: source,
-    count: items.length,
-    selected: nextSelected,
+    perfMarkSearchDone(requestId, items.length);
   });
-  perfMarkSearchDone(requestId, items.length);
 }
 
 /** instant コマンド入力のディスパッチ（interpKind()==="instant"）。30ms デバウンス IPC 取得は
@@ -261,8 +263,7 @@ function handleInstantQueryInput(q: string) {
   const filterName = spaceIdx >= 0 ? input.slice(0, spaceIdx) : input;
   trace("search:query_effect:instant_command", { prefix, input, filterName });
   scheduleInstantCommandFetch(filterName, {
-    nextRequestId: nextGeneration,
-    isStale: (requestId) => requestId !== searchGeneration,
+    run: searchLane.run,
     onFetched: (fetchedResults) => {
       updateResults(fetchedResults);
       setSelected(0);
@@ -297,7 +298,7 @@ function handleCommandQueryInput(q: string) {
   // Command mode without exact match: no suggestions, just clear results.
   cancelDebounce();
   trace("search:query_effect:slash_noop", { input: q });
-  nextGeneration();
+  searchLane.invalidate();
   updateResults([]);
   setSelected(0);
 }
@@ -404,7 +405,7 @@ function exitFolderExpansion(): boolean {
   // デバウンスタイマーをクリア（フォルダモード中の入力残り処理を防止）
   cancelDebounce();
 
-  nextGeneration();
+  searchLane.invalidate();
   restoreView(fs);
   setFolderState(null);    // setQuery より先に null にする
   setFolderFilter("");
@@ -490,7 +491,7 @@ async function withLaunchLifecycle(
   clearLaunchNotice();
   setLaunching(true);
   try {
-    nextGeneration();
+    searchLane.invalidate();
     clearResults();
     const launchResult = await launch();
     if (launchResult.status !== "ok") {
@@ -528,7 +529,7 @@ async function launchWithSelectedTool(): Promise<boolean> {
         setFolderState(null);
         setFolderFilter("");
         clearResults();
-        nextGeneration();
+        searchLane.invalidate();
         trace("search:launch_with_tool:done", { path: frame.targetPath });
       },
       (launchResult) => {
@@ -581,7 +582,7 @@ async function enterToolSelection(result: SearchResult): Promise<boolean> {
     isFolder: false,
     isError: false,
   }));
-  nextGeneration();
+  searchLane.invalidate();
   updateResults(toolResults);
   setSelected(0);
   trace("search:enter_tool_selection:ok", { path: result.path, toolCount: tools.length });
@@ -592,7 +593,7 @@ function exitToolSelection(): boolean {
   const frame = toolSelectionState();
   if (!frame) return false;
 
-  nextGeneration();
+  searchLane.invalidate();
   restoreView(frame);
   setToolSelectionState(null);
   // フォルダ展開中だった場合の folderFilter を復帰
@@ -611,7 +612,7 @@ async function launchAndReset(result: SearchResult): Promise<boolean> {
       setFolderState(null);
       setFolderFilter("");
       clearResults();
-      nextGeneration();
+      searchLane.invalidate();
       trace("search:launch:done", { path: result.path, code: launchResult.code });
     },
     (launchResult) => {
@@ -648,7 +649,7 @@ async function executeInstantCommandSelected(): Promise<boolean> {
     const savedSelected = selected();
     const savedItems = [...items];
     // withLaunchLifecycle が世代を+1する直前の値。await 中の追加変化を検知するベースライン。
-    const preGen = searchGeneration;
+    const preGen = searchLane.current();
 
     return await withLaunchLifecycle(
       () => api.executeInstantCommand(cmd.name, instantQuery),
@@ -667,9 +668,10 @@ async function executeInstantCommandSelected(): Promise<boolean> {
           code: launchResult.code,
           message: launchResult.message,
         });
-        // 失敗時: await 中に状態が変わっていなければ候補リストを復元
-        if (searchGeneration === preGen + 1) {
-          nextGeneration();
+        // 失敗時: onFailure 判定時点で world 世代が preGen+1（withLaunchLifecycle の 1 bump のみ）
+        // ＝await 中に他の変化が無かったときだけ候補リストを復元する。
+        if (searchLane.current() === preGen + 1) {
+          searchLane.invalidate();
           setInstantCommandItems(savedItems);
           updateResults(savedResults);
           setSelected(savedSelected);
@@ -794,9 +796,9 @@ async function initIndexingState(): Promise<() => void> {
   };
 }
 
-/** 現在の searchGeneration を返す（perf 計測の requestId として使用） */
+/** 現在の world 世代を返す（perf 計測の requestId として使用）。実体は searchLane が所有する。 */
 function getSearchGeneration(): number {
-  return searchGeneration;
+  return searchLane.current();
 }
 
 export {

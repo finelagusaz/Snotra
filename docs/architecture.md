@@ -185,7 +185,7 @@ sequenceDiagram
 
     SS->>SS: debouncedRefresh()<br/>setTimeout で leading+trailing 50ms
 
-    SS->>SS: refreshResults()<br/>nextGeneration() (stale 検出用)
+    SS->>SS: refreshResults()<br/>searchLane.run() (world 世代 +1・stale 検出用)
     SS->>API: search(query)
     API->>Cmd: invoke("search", { query })
     Cmd->>Eng: engine.search(&query)
@@ -198,7 +198,7 @@ sequenceDiagram
     Cmd-->>API: JSON シリアライズ
     API-->>SS: SearchResult[]
 
-    Note over SS: searchGeneration で stale チェック
+    Note over SS: run ctx の isStale() で stale チェック
 
     SS->>SS: setResults(items), setSelected(0)
 
@@ -212,7 +212,7 @@ sequenceDiagram
 ```
 
 **補足**:
-- `searchGeneration` は検索リクエストごとにインクリメントされるカウンタ。応答が返ったとき現在値と比較し、古いレスポンスを破棄する
+- 検索/データ lane の world 世代は `latestRun` primitive（`searchLane`）が所有する。`run()` が実行ごとに世代を +1 して `isStale()` を渡し、応答が返ったとき最新世代と比較して古いレスポンスを破棄する。モード遷移・起動は `searchLane.invalidate()` で世代を進め in-flight 検索を supersede する（#534）
 - アイコンは `ipc::Response` でバイナリ返却するため、CSP の `connect-src` に `ipc: http://ipc.localhost` が必須（`tauri dev` では不要だがリリースビルドで必要）
 
 ## 状態遷移（概要）

@@ -19,7 +19,7 @@ $ARGUMENTS が空の場合は、会話の直近の変更内容から対象を推
 
 1. **状態保存→ `await` → 無条件復元**: `await` 中にユーザー操作で状態が変わると、復元が新しい状態を上書きする
 2. **入力ガード不足**: `await` 中にユーザーがクエリを変更し、query effect が新しい検索を発火する
-3. **世代カウンタ検証漏れ**: `searchGeneration` による staleness チェックを新コードに適用し忘れる
+3. **世代カウンタ検証漏れ**: `latestRun` の `isStale()`（world 世代カウンタを内包。旧: `searchGeneration` 直読）による staleness チェックを新コードに適用し忘れる
 4. **再入**: 同じ async 関数が `await` 中に再度呼び出される
 
 ## Step 1 — await 地点の列挙
@@ -40,7 +40,7 @@ await 地点 2: <line> — <await 対象の説明>
 | 種類 | 例 |
 |------|-----|
 | SolidJS シグナル | `results()`, `selected()`, `query()`, `launching()` |
-| モジュールスコープ変数 | `searchGeneration`, `instantCommandItems`, `activationInFlight` |
+| モジュールスコープ変数 | `searchLane`（`latestRun`・world 世代 + in-flight を内包）, `instantCommandItems`, `activationInFlight` |
 | 外部ストアのシグナル | `folderState()`, `toolSelectionState()`, `interpKind()` |
 
 ```
@@ -57,11 +57,11 @@ await 地点 1:
 
 | 経路 | トリガー | 影響する状態 |
 |------|---------|------------|
-| `handleInput` → `setQuery` → query effect | ユーザーのキー入力 | `query`, `results`, `selected`, `searchGeneration`, `instantCommandItems` |
+| `handleInput` → `setQuery` → query effect | ユーザーのキー入力 | `query`, `results`, `selected`, `searchLane` 世代（`run`/`invalidate`）, `instantCommandItems` |
 | `handleKeyDown` → `activateSelected` | Enter キー | `activationInFlight`, `results`, `selected` |
-| `handleKeyDown` → `exitFolderExpansion` | Escape キー | `folderState`, `results`, `selected`, `searchGeneration` |
+| `handleKeyDown` → `exitFolderExpansion` | Escape キー | `folderState`, `results`, `selected`, `searchLane` 世代（`invalidate`） |
 | `resetForShow` | `window-shown` イベント | 全状態リセット |
-| `indexing-complete` イベント → `runRefresh` | バックエンド通知 | `indexing`, `results`, `searchGeneration` |
+| `indexing-complete` イベント → `runRefresh` | バックエンド通知 | `indexing`, `results`, `searchLane` 世代（`run`） |
 
 各経路について、`await` 中に実際に到達可能かを判定する（ガードの有無を確認）。
 
@@ -79,10 +79,10 @@ await 地点 1:
 
 ### 4b. staleness チェック
 
-`await` 後に状態を参照・復元する箇所で `searchGeneration` 等の世代チェックがあるか？
+`await` 後に状態を参照・復元する箇所で `latestRun` の `isStale()`（等）による世代チェックがあるか？
 
-- `await` 前に `searchGeneration` をキャプチャしているか
-- `await` 後に `searchGeneration === captured + 1` 等で検証しているか
+- lane タスクが `searchLane.run()` の ctx（`isStale`/`requestId`）を受け取り、`await` 後に `if (isStale()) return;` で適用スキップしているか
+- 保存状態を復元する箇所で `await` 前に `searchLane.current()` をキャプチャし、`await` 後に `searchLane.current() === captured + 1` 等で「他変化なし」を検証しているか（例: `executeInstantCommandSelected` の失敗ロールバック）
 - 検証なしで `setResults` / `setSelected` を呼んでいないか
 
 ### 4c. ローカルキャプチャ
@@ -105,7 +105,7 @@ await 地点 1:
 await 地点 1: <line> — <説明>
   4a 入力ガード:     [OK] launching() で handleInput をブロック
                      [問題] handleInput が launching() を確認していない
-  4b staleness:      [OK] searchGeneration === preGen + 1 で検証済み
+  4b staleness:      [OK] isStale() でスキップ / current() === preGen + 1 で検証済み
                      [問題] 無条件で setResults() を呼んでいる
   4c ローカルキャプチャ: [OK] 全 let 変数をキャプチャ済み
                      [問題] instantCommandItems を await 後に直接参照

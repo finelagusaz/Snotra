@@ -183,7 +183,7 @@ sequenceDiagram
 
     Note over SS: createEffect が query 変更を検知
 
-    SS->>SS: debouncedRefresh()<br/>setTimeout で leading+trailing 50ms
+    SS->>SS: debouncedRefresh()<br/>OwnedTimer(refreshTimer) で leading+trailing 50ms
 
     SS->>SS: refreshResults()<br/>searchLane.run() (world 世代 +1・stale 検出用)
     SS->>API: search(query)

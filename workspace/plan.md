@@ -110,10 +110,13 @@ function dispatchQueryInput(value: string) {
 
 - lib/ 節に `interpretQuery.ts`（純関数・interpret/isInstantPrefix/型）を追記。stores/search.ts 節の `suppressNextQueryEffectRefresh` 記述（L25 付近）を「`dispatchQueryInput`（明示 dispatch・唯一の検索起動起点）」へ書き換え。「インスタントコマンドモード > 検出」の「query effect 内で…先に startsWith(prefix)」を interpret/dispatch 由来へ更新。「状態モデル（2 軸）」の interpKind 記述に interpret 由来を反映。
 
-### 要合意（Claude 単独で変更しない・CLAUDE.md「エージェント設定の変更は合意してから」）
+### 変更: `.claude/skills/race-check/SKILL.md`（ユーザー合意済み・Phase 4 で code と同時適用）
 
-- **`.claude/skills/race-check/SKILL.md:60`** の表が旧フロー「handleInput → setQuery → query effect」を記述（独立再導出が指摘）。本 refactor で不正確になるが、**skill はエージェント設定ゆえ Claude が単独編集しない**。実装前にユーザーへ確認し、合意が得られたら更新する。合意が無ければ本 PR の対象外とする。
-- `docs/development-principles.md:52`（isInstantPrefix SSOT の歴史的記述）は更新任意（二次）。
+- **L60** の Step 3 状態変更経路の表。旧フロー記述を新フローへ更新（独立再導出が指摘）。**エージェント設定の変更ゆえユーザー合意が要る領域だったが、合意取得済み**（本 refactor のスコープに包含）。
+  - before: `| `handleInput` → `setQuery` → query effect | ユーザーのキー入力 | `query`, `results`, `selected`, `searchLane` 世代（`run`/`invalidate`）, `instantCommandItems` |`
+  - after: `| `handleInput` → `dispatchQueryInput` | ユーザーのキー入力 | `query`, `results`, `selected`, `searchLane` 世代（`run`/`invalidate`）, `instantCommandItems` |`
+  - **適用タイミング**: Phase 4（ドキュメント同期）で `search.ts`/`SearchWindow.tsx` の code 変更と **同時に**行い、skill と実コードの同期を保つ（skill を code より先行させない＝「存在しないフローを指す skill」を作らない）。
+- `docs/development-principles.md:52`（isInstantPrefix SSOT の歴史的記述）は更新任意（二次・本 PR 対象外でよい）。
 
 ### 非挙動の縮退（記録のみ）
 
@@ -131,7 +134,7 @@ issue が「検討」と明記した点。**含めない**と決定する。根�
 - **Phase 1 — 純関数抽出（Red→Green）**: `lib/interpretQuery.ts` + `lib/interpretQuery.test.ts` を新規作成。`interpret` の単体テストを先に書き（Red）、実装で緑に。search.ts はまだ触らない（既存緑を保つ）。この時点で `isInstantPrefix`/型は lib と search.ts に **重複**して構わない（Phase 2 で search 側を削除）。
 - **Phase 2 — search.ts の載せ替え（挙動不変）**: interpKind memo を interpret 経由に、query effect → `dispatchQueryInput`、suppress 撤廃、handleInstantQueryInput(filterName)、executeInstant の instantQuery 統一。search.ts の `isInstantPrefix`/型定義を削除し lib import + re-export に。
 - **Phase 3 — テスト移行 + 回帰網追加**: search.test.ts の移行規則適用 + 新規回帰テスト。SearchWindow.tsx の handleInput 差し替え。SearchWindow.test.tsx（L258/269 の setQuery モック検証）への影響確認（下記）。
-- **Phase 4 — ドキュメント同期**: ui/CLAUDE.md 更新。
+- **Phase 4 — ドキュメント同期**: ui/CLAUDE.md 更新 + `.claude/skills/race-check/SKILL.md:60`（handleInput フロー・合意済み）を code 変更と同時に更新。
 - 各 Phase 末で検証（PostToolUse hook の typecheck/clippy は沈黙=合格。手動 `npm run test` を Phase 2/3 で実行）。
 
 ### テスト方針（AC2/AC4）
@@ -184,8 +187,8 @@ issue が「検討」と明記した点。**含めない**と決定する。根�
 - **要対処（反映済み）**: (A) SearchWindow.test.tsx の mockSetQuery アサートは **3 件**（L269/277/258）+ vi.hoisted/vi.mock プラミング → §2 SearchWindow.test.tsx 節を全面改訂。
 - **軽微（反映済み）**: (B) L551/555/562 の over-migration → raw へ移動。(C) `isInstantPrefix` を search.ts へ import しない（dead import 回避）→ item1/2 修正。(E) 件数プロース修正（search.ts 4・test 39）。framing 精緻化（INV1(b)・clearCommandModeState 真因）。interpKind 依存微拡大の明記。
 - **独立導出との差分（Step 2b）**:
-  - 漏れ（導出 ∖ plan）: `MainApp.tsx:325` の interpKind 消費者（無変更確認・列挙追加）、race-check SKILL.md:60 の旧フロー記述（要合意で対応）、SearchWindow.test.tsx L284 の見落とし（= 要対処 A と一致）。
+  - 漏れ（導出 ∖ plan）: `MainApp.tsx:325` の interpKind 消費者（無変更確認・列挙追加）、race-check SKILL.md:60 の旧フロー記述（**ユーザー合意取得済み**・Phase 4 で code と同時更新）、SearchWindow.test.tsx L284 の見落とし（= 要対処 A と一致）。
   - スコープ過剰（plan ∖ 導出）: なし（独立導出も新規ファイル化・instantQuery 統合を支持）。
   - 一致（完全性の証拠）: 変更集合の骨格（新規 interpretQuery.ts + 5 種の search.ts 変更 + SearchWindow.tsx + テスト移行）、**folderFilter 除外**、**SPEC.md 更新不要** が独立に再一致。3 視点収束。
 - **`/state-check`・`/symmetric-check` の扱い**: 専用スキルは起動せず、観点を plan-review エージェントに織り込んで検証した（重複起動回避・チーム憲章「やりすぎでは」）。state-check 領域（tool/folder/instant ガード・reset 経路・2 軸直交性）は不変条件エージェントが INV3 で、symmetric-check 領域（suppress set/consume ペアの撤廃・instant 資源 生成/破棄の INV5）は影響範囲+不変条件エージェントが検証し、いずれも 要対処なし。2 軸モデルの分類（interpret が返す kind）は不変ゆえ直交性・SPEC §8.6 は変わらない。
-- **総評**: completeness **高**。実装着手 **可**（要対処 A は計画へ反映済み。race-check SKILL.md のみ実装前にユーザー合意を要する）。
+- **総評**: completeness **高**。実装着手 **可**（要対処 A は計画へ反映済み。race-check SKILL.md 更新はユーザー合意取得済みで Phase 4 に包含。残る gate なし）。

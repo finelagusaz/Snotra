@@ -128,7 +128,6 @@ Claude とユーザーが一緒に作業するときの関係性の原則。
 
 | スキル               | 使うとき                                                                | 呼び出し例                                                                     |
 |----------------------|-------------------------------------------------------------------------|--------------------------------------------------------------------------------|
-| `/research-review`   | 調査（research.md）完了後: サブエージェントで影響範囲の漏れ・誤認識を並列検証 | `/research-review`                                                        |
 | `/plan-review`       | 計画（plan.md）完了後: サブエージェントで影響範囲・不変条件・スコープを並列検証（横断変更では独立導出+差分も） | `/plan-review`                                                            |
 | `/symmetric-check`   | コードパス変更・バグ発見時に対称ペアの適用漏れを確認                    | `/symmetric-check result-clicked: added emitSelectionUpdate`                   |
 | `/dry-check`         | 関数を新規定義・変更したとき、手書き重複が残っていないか確認            | `/dry-check show_main_and_emit: show() + set_focus() + emit(window-shown)`     |

@@ -40,7 +40,7 @@ await 地点 2: <line> — <await 対象の説明>
 | 種類 | 例 |
 |------|-----|
 | SolidJS シグナル | `results()`, `selected()`, `query()`, `launching()` |
-| モジュールスコープ変数 | `searchLane`（`latestRun`・world 世代 + in-flight を内包）, `instantCommandItems`, `activationInFlight` |
+| モジュールスコープ変数 | `searchLane`（`latestRun`・world 世代を内包）, `activationLane`（`exclusive`・in-flight mutex を内包）, `instantCommandItems` |
 | 外部ストアのシグナル | `folderState()`, `toolSelectionState()`, `interpKind()` |
 
 ```
@@ -58,7 +58,7 @@ await 地点 1:
 | 経路 | トリガー | 影響する状態 |
 |------|---------|------------|
 | `handleInput` → `setQuery` → query effect | ユーザーのキー入力 | `query`, `results`, `selected`, `searchLane` 世代（`run`/`invalidate`）, `instantCommandItems` |
-| `handleKeyDown` → `activateSelected` | Enter キー | `activationInFlight`, `results`, `selected` |
+| `handleKeyDown` → `activateSelected` | Enter キー | `activationLane`（in-flight）, `results`, `selected` |
 | `handleKeyDown` → `exitFolderExpansion` | Escape キー | `folderState`, `results`, `selected`, `searchLane` 世代（`invalidate`） |
 | `resetForShow` | `window-shown` イベント | 全状態リセット |
 | `indexing-complete` イベント → `runRefresh` | バックエンド通知 | `indexing`, `results`, `searchLane` 世代（`run`） |
@@ -96,7 +96,7 @@ await 地点 1:
 
 同じ関数が `await` 中に再度呼び出される経路があるか？
 
-- `activationInFlight` 等のフラグでガードされているか
+- `activationLane`（`exclusive` mutex）等でガードされているか
 - ガードの解除（`finally` ブロック）が確実か
 
 ## Step 5 — 各 await 地点の判定
@@ -109,7 +109,7 @@ await 地点 1: <line> — <説明>
                      [問題] 無条件で setResults() を呼んでいる
   4c ローカルキャプチャ: [OK] 全 let 変数をキャプチャ済み
                      [問題] instantCommandItems を await 後に直接参照
-  4d 再入ガード:     [OK] activationInFlight でガード済み
+  4d 再入ガード:     [OK] activationLane（exclusive）でガード済み
                      [問題] ガードなし
   総合判定: [安全] / [要修正: <具体的な修正内容>]
 ```

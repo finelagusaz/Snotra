@@ -64,7 +64,7 @@
 | trailing ms | 50 | 30 |
 | 付随副作用 | なし | `instantCommandItems = []`（schedule 時に即時クリア） |
 
-タイマー再セット・trailing 発火・cancel（タイマー破棄）のロジックは**完全に同一**。したがって:
+タイマー再セット・trailing 発火・cancel（タイマー破棄）のロジックは、**callback が debouncer を同期再入せず・fn が同期 throw しないという現行 store 利用の前提下で同一**（無条件の「完全に同一」ではない・codex P1）。したがって:
 
 - 差異 (1)(2) は `createDebouncer({ ms, leading })` の**設定パラメータ 2 個**で吸収できる。
 - 差異 (3) は issue 明記のとおり「debounce とは別関心事」。**primitive に含めず**、`scheduleInstantCommandFetch` 側に `instantCommandItems = []` を残す。

@@ -26,7 +26,9 @@ export function createDebouncer(opts: { ms: number; leading: boolean }): Debounc
 - `isPending()`: `timer !== undefined`。
 - `dispose()`: `disposed = true; cancel()`。
 
-**現 2 実装との等価性**: `leading:true, ms:50` は現 `debouncedRefresh`/`cancelDebounce` と字面一致。`leading:false, ms:30` は現 `scheduleInstantCommandFetch` の timer 部と一致（`instantCommandItems = []` の副作用は呼び出し側に残すため primitive 外）。
+**再入契約（codex P0・`exclusive.ts` の作法に倣う）**: `schedule` は leading fn を timer 設定の**前**に同期発火するため、fn が同期的に本 debouncer の `schedule`/`cancel`/`dispose` を**再入呼び出しすると契約が破れる**（例: `d.schedule(() => d.dispose())` は dispose 後も outer の timer が残り「dispose 後 no-op」に反する）。→ **JSDoc に「fn は本 debouncer のメソッドを同期再入してはならない」と明記**する（`exclusive.ts` L17-19「再入は許可しない」と同じ規範で断る。工学的な再入安全化は採らない＝YAGNI）。現行の呼び出し側 `() => void runRefresh()` / `() => void deps.run(...)` はいずれも searchDebounce/instantDebounce に触れず**再入しない**（コード確認済み）ため、この契約下で安全。
+
+**現 2 実装との等価性（前提条件つき・codex P1）**: **callback が本 debouncer を同期再入せず、fn が同期 throw しない**という現行 store 利用の前提下で、`leading:true, ms:50` は現 `debouncedRefresh`/`cancelDebounce` と字面一致、`leading:false, ms:30` は現 `scheduleInstantCommandFetch` の timer 部と一致（`instantCommandItems = []` の副作用は呼び出し側に残すため primitive 外）。前提を外した「完全に同一」という無条件主張は誤り（AGENTS.md「全称表現は前提条件とセットで書く」）。
 
 ## 変更ファイル一覧
 
@@ -72,7 +74,7 @@ export function createDebouncer(opts: { ms: number; leading: boolean }): Debounc
 5. **dispose 後 no-op**: `dispose()` 後の `schedule` は timer を作らない。異常な二重 dispose でも安全（`cancel` は冪等）。
 6. **副作用の分離**: instant の `instantCommandItems = []` は `scheduleInstantCommandFetch` に残す。primitive に混ぜない。
 7. **公開 API 不変**: `hasPendingInstantCommandFetch`/`cancelInstantCommandDebounce`/`scheduleInstantCommandFetch`/`debouncedRefresh`（内部）/`refreshResults`/`resetForShow` 等のシグネチャ・export・呼び出し側は不変。
-8. **単一インスタンス共有**: 検索側は `debouncedRefresh` の 2 呼び出し（`handlePlainQueryInput` L318 / folderFilter effect L375）が現状**同一の** `debounceTimer`/`leadingFired` ペアを共有する。載せ替え後も**単一の `searchDebounce` インスタンス**を両者で共有すること（2 インスタンスに割ると leading/trailing 状態が分裂し、plain 打鍵とフィルタ入力が互いの leading を消す挙動変化になる）。
+8. **単一インスタンス共有**: 検索側は `debouncedRefresh` の 2 呼び出し（`handlePlainQueryInput` L318 / folderFilter effect L375）が現状**同一の** `debounceTimer`/`leadingFired` ペアを共有する。載せ替え後も**単一の `searchDebounce` インスタンス**を両者で共有すること。理由は 2 つ（codex P2 で精緻化）: (a) leading/trailing 状態が 2 インスタンスに分裂すると plain 打鍵とフィルタ入力が互いの leading を消す、(b) **モード遷移をまたぐ pending timer の保存** — `enterFolderExpansion`（L389-406）は `cancelDebounce()` を**呼ばない**ため、plain の trailing 保留中に folder 展開へ入ると、その保留 timer は生き残り後で folder state 下の refresh になる（現挙動）。単一インスタンスがこの跨ぎ挙動を保存する。2 インスタンスに割るとこの pending timer が分断され挙動が変わる。
 
 ### 失敗・異常順序時の振る舞い
 
@@ -94,10 +96,27 @@ export function createDebouncer(opts: { ms: number; leading: boolean }): Debounc
 - **dispose** — dispose 後 schedule は no-op（fn 不呼び出し・isPending false）。dispose は保留タイマーも破棄する。
 - **同期発火** — `let sync=false; d.schedule(()=>{sync=true}); expect(sync).toBe(true)`（leading:true、await/advance なし）。
 
-### 既存テスト（回帰検出＝統合の測定）
+### adapter テスト（codex P1・等価性の**直接**測定）
 
-- `search.test.ts` 全緑を維持（instant モード・executeInstantCommandSelected・flush 経路を含む）。**1 つでも赤なら統合が挙動を変えた証拠** → primitive 設定の見直し or 分離維持へ差し戻す。
-- 既存テストが検索 leading+trailing を**直接**ピン留めしていないため、`debouncer.test.ts` がその不変条件の証明責任を負う（AGENTS.md「改名・転用で失われる不変条件を孤立させない」— ここでは新設だが同趣旨で primitive 側に明示的テストを置く）。
+primitive 単体テスト + `search.test.ts` 緑は**必要条件だが十分条件ではない**（既存テストは `runAllTimersAsync()` で一括 flush し leading/trailing を区別しない。「callback の回数」しか見ないテストは古い closure を trailing に使う実装でも緑になる）。等価性を **store 越しに直接測定**する adapter テストを `search.test.ts`（instant は同ファイルの instant describe）へ追加する:
+
+1. **search leading 即時**: query 変更直後（`advanceTimersByTime` 前）に `api.search` が呼ばれている（leading edge で IPC が即開始）。
+2. **<50ms burst → trailing 1 回・最後の query**: 連続 setQuery 後、50ms 経過で `api.search` が最後の query で 1 回だけ追加発火する。
+3. **flushPendingRefresh の取りこぼし防止**: leading 発火後・trailing 保留中に activation（Enter）を起こすと、timer が消えて refresh が 1 回だけ走る（二重・欠落なし）。
+4. **instant: items クリアが timer 設定より前**: `scheduleInstantCommandFetch` 呼び出し直後（timer 発火前）に `getInstantCommandItems()` が空（IPC 応答前 Enter で古いコマンド誤起動しない前提）。
+5. **instant: 連続 schedule で古い filterName/deps 非実行**: 30ms 内に filterName を変えて再入力すると、`getInstantCommands` が最後の filterName で 1 回だけ呼ばれる。
+6. **cancel 直後の再入力で境界維持**: cancel 後の入力で leading が再発火し、30/50ms の trailing 境界が保たれる。
+
+（既存 `search.test.ts:898` の flush スコープ・instant IPC in-flight テストが 3/4 の一部を既にカバー。実装時に重複を避けつつ未カバー分を足す。）
+
+### 既存テスト（回帰検出・**片方向**の証拠）
+
+- `search.test.ts` 全緑を維持（instant モード・executeInstantCommandSelected・flush 経路を含む）。**1 つでも赤なら統合が挙動を変えた証拠**（十分条件）。ただし**緑は等価の十分条件ではない**（codex P1）——ゆえに上の adapter テストで必要挙動を能動的に固定する。
+- 検索 leading+trailing の直接ピン留めは `debouncer.test.ts`（primitive の不変条件）+ 上記 adapter テスト（store 越しの実挙動）の二段で担保する。
+
+### 再入テストは追加しない（codex P0 への判断）
+
+codex は leading callback からの再入（cancel/dispose/再 schedule）テストを提案したが、**再入は契約で禁止**する方針（`exclusive.ts` と同）のため、未サポート挙動を測るテストは置かない（`exclusive.test.ts` も再入を測らない）。契約違反時の挙動は「未定義」として JSDoc に記す。
 
 ### 検証コマンド
 
@@ -134,6 +153,16 @@ export function createDebouncer(opts: { ms: number; leading: boolean }): Debounc
 7. **シンプル化の挑戦**: 2 実装を 1 primitive × 2 config（leading + ms）に統合するのは issue の明示ゴール。過剰な汎用化ではない（差異は leading/ms の 2 パラメータのみで、構造的等価が測定で裏付く）。「操作が失敗したら」= JS タイマーのみで回復不能状態に固まらない（不変条件「失敗・異常順序時の振る舞い」）。
 8. **破壊不変条件**: primitive は Win32 フック・ホットキー・IPC のような「戻ってこない」系リソースを持たない。最悪ケース＝余分/欠けた refresh で、検知は debouncer.test.ts + search.test.ts + e2e の 50ms タイミング回帰網。
 
+### 5c. codex 敵対的レビュー（反証志向）
+
+`codex exec`（gpt-5.6-terra）に「同意でなく反証」を求めた。結論: 「非再入入力列では search/instant のタイマー挙動は現実装と等価。isPending 置換も単独では取りこぼし・二重 refresh を生まない」。ただし 3 点の実質的指摘を受諾・反映:
+
+- **P0 再入契約**: leading fn を timer 設定前に同期発火するため、fn 内から `cancel`/`dispose`/再 `schedule` を呼ぶと契約が破れる。→ **非再入を JSDoc 契約で断る**（`exclusive.ts` の作法）。現行 callers は非再入（確認済み）ゆえ安全。工学的再入安全化は YAGNI で不採用。
+- **P1 等価性は条件付き**: 「完全に同一」を「非再入 callback・同期 throw なしの前提下で等価」へ修正（research.md も）。AGENTS.md「全称表現は前提条件とセット」の自己適用。
+- **P1 テストの片方向性**: 既存テスト緑は等価の必要条件だが十分条件でない。→ **adapter テスト 6 件**を追加（leading 即時 IPC・trailing 1 回・flush 取りこぼし防止・items 先クリア・古い filterName 非実行・cancel 後境界）。
+- **P2 単一インスタンス根拠**: 「互いの leading を消す」に加え**モード遷移跨ぎの pending timer 保存**を根拠へ追加。
+- **P3 dispose の YAGNI**: issue 一次資料（擬似シグネチャ・テスト方針・受け入れ条件）が `dispose`/`isPending`/単一 `createDebouncer({ms,leading})` を明示要求 → 保持が正、削除は要件逸脱（codex も但し書きで同意）。
+
 ### 総評
 
-計画の completeness: **高**（2 独立経路 + 3 チェックで一致、盲点候補は全て解消または透明に記録）。実装着手可否: **可**。
+計画の completeness: **高**（2 独立経路 + 3 check スキル + codex 反証で一致、盲点候補は全て解消または透明に記録）。codex の指摘は「挙動の反例」ではなく「主張の過剰さ（無条件等価・テストの片方向性）と契約の穴（再入）」で、すべて計画の**表現・テスト・契約の精緻化**として吸収した。実装着手可否: **可**。

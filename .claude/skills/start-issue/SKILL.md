@@ -68,6 +68,8 @@ git checkout -b <branch-name>
 - **技術的制約**: Win32 依存、IPC 境界、リアクティブ制約など。Win32 API を使う場合、`SendInput`/`SetForegroundWindow`/`ShowWindow` 等の入力・ウィンドウ系 API は部分的に非同期な場合がある。計画時に MSDN で同期性を確認し、技術的制約に記録する
 - **未解決の疑問**: 調査で判明しなかった点（あれば）
 
+**列挙の事実確認**: 「関連コード」に挙げたファイル・関数が実在し、説明が正確かを grep で確認してから Step 4 へ進む。研究の前提誤りは plan へ伝播する——`/plan-review` Step 2b の独立再導出が伝播後に拾うが、前提はここで正すのが最も安い。
+
 ## Step 4 — 実装計画（workspace/plan.md）
 
 `workspace/research.md` の分析結果をもとに、`workspace/plan.md` に実装計画を作成する。

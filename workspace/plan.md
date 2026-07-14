@@ -1,215 +1,214 @@
-# plan: issue #539 — preGen+1 baseline 判定を withLaunchLifecycle 側の述語へ引き上げる
+# plan: issue #544 — 残りの component タイマーを OwnedTimer へ流用する
 
 ## 種別判定（AGENTS.md Step 0）
 
-**refactor（挙動保存）**。SPEC.md 記載のフロー・IPC 契約・状態遷移を変えない
-（`disturbed()` は既存 `current() === preGen+1` と厳密に等価 ── research.md 参照）。
-→ SPEC.md 更新は**不要**。ただし内部実装の正規手段を記す 3 docs は同時更新（issue 明記）。
-
-## 設計判断（確定）
-
-`withLaunchLifecycle` が `searchLane.invalidate()` を所有する ＝「自分の launch を超えて world が
-動いたか」を答える述語 `disturbed()` も所有すべき。invalidate 直後に `launchGen` を捕捉し、
-`onSuccess`/`onFailure` の**両方**へ `disturbed: () => boolean` を渡す。
-
-- **両方に渡す根拠**: issue proposal が `onFailure`/`onSuccess` を名指し（CLAUDE.md「計画書の要素を
-  省略・統合・削除するのは明示指示のみ」）。かつ onSuccess/onFailure は対称ペアゆえ署名も対称に保つ。
-- **消費者**: 現状は `executeInstantCommandSelected` の onFailure のみ。onSuccess の `disturbed` は
-  未消費（署名対称性 + issue 忠実性のため配る）。
-- **plan-review 結論**: onSuccess 伝播は YAGNI 寄りだが両監査とも「issue 忠実性・対称署名として許容・実害なし」。
-  ただし ui/CLAUDE.md「実装しない機能のコメントは書かない」との整合のため、**onSuccess の `disturbed` 引数には
-  「現状 consumer ゼロ・対称署名のための供給」を 1 行コメントで明記する**（未使用の理由を証跡化）。
-- **codex 敵対レビュー（実装後・commit 664bb62）**: claim 4 として同じ過剰抽象を再指摘（onFailure だけに絞るべき）。
-  correctness は 6 主張すべて反証不成立（等価性・復元順序・導入バグ・docs 整合すべて堅牢）。
-  **ユーザー判断で「忠実のまま両方に残す」を再確認**（issue proposal の明示 + 対称署名を優先）。設計は据え置き。
+**refactor（挙動保存）**。SPEC.md 記載のフロー・IPC 契約・状態遷移は変えない。`ownedTimer.ts` の公開 API（`OwnedTimer` インターフェース）に後方互換な拡張を1点加える（`arm` に任意の `msOverride` 引数）。
 
 ## 変更ファイル一覧
 
-### 1. `ui/src/stores/search.ts`（実装本体）
+### 1. `ui/src/lib/ownedTimer.ts`（primitive 拡張）
 
-#### (a) `withLaunchLifecycle`（496-517）── 署名変更 + `disturbed` 合成
+`launchNoticeTimer` の delayMs が呼び出し元ごとに可変（2400/3000/5000、research.md 参照）なため、`createOwnedTimer(ms)` の固定 ms だけでは表現できない。`arm` に**任意**の `msOverride` を追加する（後方互換・既存2呼び出し元は無変更で動く）:
 
 ```ts
-async function withLaunchLifecycle(
-  launch: () => Promise<api.LaunchResult>,
-  onSuccess: (result: api.LaunchResult, disturbed: () => boolean) => void,
-  onFailure: (result: api.LaunchResult, disturbed: () => boolean) => void,
-): Promise<boolean> {
-  clearLaunchNotice();
-  setLaunching(true);
-  try {
-    searchLane.invalidate();
-    // この launch が確立した world 世代。await 中に他の invalidate/run が走れば current() が
-    // これを超える＝disturbed。呼び出し側は「1 bump」という内部実装を知らずに staleness を問える。
-    const launchGen = searchLane.current();
-    const disturbed = () => searchLane.current() !== launchGen;
-    clearResults();
-    const launchResult = await launch();
-    if (launchResult.status !== "ok") {
-      notifyLaunchFailure(launchResult);
-      onFailure(launchResult, disturbed);
-      return false;
-    }
-    onSuccess(launchResult, disturbed);
-    return true;
-  } finally {
-    setLaunching(false);
-  }
+export interface OwnedTimer {
+  /** 保留中タイマーを破棄し、`msOverride ?? ms`（生成時の既定値）後に `fn` を1回だけ呼ぶ。 */
+  arm(fn: () => void, msOverride?: number): void;
+  cancel(): void;
+  isPending(): boolean;
+}
+
+export function createOwnedTimer(ms: number): OwnedTimer {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return {
+    arm(fn, msOverride) {
+      if (timer !== undefined) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = undefined;
+        fn();
+      }, msOverride ?? ms);
+    },
+    cancel() { /* 既存のまま */ },
+    isPending() { /* 既存のまま */ },
+  };
 }
 ```
 
-- 関数ドキュメント（490-495）に「world 世代の comparison choke point でもある」旨を 1 行追記。
+JSDoc に「`msOverride` は呼び出し単位で ms を差し替える resource 属性であり、leading 等の policy ではない（設計方針と矛盾しない）」旨を追記する。
 
-#### (b) `executeInstantCommandSelected`（632-681）── preGen 撤去 + `!disturbed()` 判定
+### 2. `ui/src/lib/ownedTimer.test.ts`（テスト追加）
 
-- **削除**: line 650-651 のコメント + `const preGen = searchLane.current();`。
-- onFailure を `(launchResult, disturbed) => { ...; if (!disturbed()) { restore } }` へ。
-- 復元本体（`searchLane.invalidate()` + `setInstantCommandItems` + `updateResults` + `setSelected`）は**不変**。
-  `disturbed()` は `if` 条件で復元前に評価されるため、復元内の `invalidate()` は影響しない（従来同様）。
-- コメント「onFailure 判定時点で world 世代が preGen+1（withLaunchLifecycle の 1 bump のみ）」→
-  「await 中に world が動いていなければ（＝この launch のみ）候補を復元」へ更新（magic number 記述を除去）。
+`msOverride` の挙動を検証するケースを追加（Red→Green で先に書く）:
+- `arm(fn, override)` で override 側の ms が使われる（生成時の ms は無視される）。
+- `msOverride` 省略時は生成時の `ms` が使われる（既存ケースの回帰確認、変更不要）。
+- 同一インスタンスへ異なる `msOverride` で連続 `arm` した場合、前回の保留が破棄され新しい override の ms で発火する（burst 相当）。
+- `msOverride` に `0` を渡した場合も正しく `0` として扱われる（`msOverride ?? ms` は `??` のため `0` はフォールバックしない）。plan-review で指摘された境界値。
 
-#### (c) `launchAndReset`（607-630）・`launchWithSelectedTool`（519-554）── 新署名へ追随
+### 3. `ui/src/stores/launchNotice.ts`
 
-- onSuccess/onFailure は現状 `() => {...}` / `(launchResult) => {...}`。TS はより少ない引数の callback を
-  新署名へ代入可能（関数引数の代入可能性）ゆえ**本文変更不要**。`disturbed` を消費しない。
-- **訂正（plan-review 指摘）**: TS は「引数が少ない callback を多い型へ代入」を**常に許可する**ため、
-  署名変更は呼出し元で**型エラーを出さない＝コンパイラは全呼出し元を炙り出さない**。3 呼出し元の網羅は
-  **grep が根拠**（`withLaunchLifecycle` は未 export の module-private・`grep -rn "withLaunchLifecycle" ui/src`
-  で定義 1 + 呼出し 3＝search.ts:533/611/653 のみ・外部呼出し元なし）。コンパイラを検証根拠に据えない。
-- typecheck は「新署名でも既存 callback が代入可能（本文変更不要）」を確認するために走らせる（署名整合の
-  network は grep、typecheck は「壊していないこと」の確認）。
+```ts
+import { createOwnedTimer } from "../lib/ownedTimer";
 
-### 2. `ui/src/stores/search.test.ts`（テストコメント追随・assertion 不変）
+const [launchNotice, setLaunchNotice] = createSignal<string | null>(null);
+const launchNoticeTimer = createOwnedTimer(2400); // 既定値。実際の ms は arm 側で毎回 override される
 
-- `1030-1062`「world 世代が進んだら復元しない」テスト: assertion は挙動同一ゆえ**不変**。
-  コメント（1030 見出し `preGen+1 判定`、1033 `preGen+1 不成立`、1046 `preGen 捕捉 → +1`、
-  1049 `preGen+1 を超える`、1054 `current() !== preGen+1`）を `disturbed()` 述語ベースの表現へ更新。
-- `614-629`「失敗: 候補が復元される」= 非 disturbed → 復元の正パス: **変更不要**（挙動同一）。
+export function clearLaunchNotice() {
+  launchNoticeTimer.cancel();
+  if (launchNotice() !== null) {
+    setLaunchNotice(null);
+  }
+}
 
-### 3. docs 同時更新（3 ファイル・4 箇所。issue 明記・正規手段の記述）
+export function setLaunchNoticeWithAutoClear(message: string, delayMs?: number) {
+  clearLaunchNotice();
+  setLaunchNotice(message);
+  launchNoticeTimer.arm(() => {
+    setLaunchNotice(null);
+  }, delayMs);
+}
+```
 
-- `ui/CLAUDE.md:109`: 「`current() === preGen + 1`」の例示を
-  「`withLaunchLifecycle` が invalidate 直後に捕捉した `disturbed()` 述語（例: `executeInstantCommandSelected`
-  の失敗ロールバックが `if (!disturbed())`）」へ。lane 外復元の正規手段が「呼出し側の生算術」から
-  「lifecycle 所有の述語」へ移った旨を反映。
-- `.claude/rules/ui.md:10`: 「`await` 前に `searchLane.current()` をキャプチャし `current() === captured + 1`
-  の基準値比較」→「起動フローでは `withLaunchLifecycle` が invalidate 直後に捕捉した世代との差分を
-  `disturbed()` 述語で配り、呼出し側は `if (!disturbed())` で復元判定する」へ。
-  （lane 外一般の captured+1 パターンが起動フローに限っては lifecycle へ集約された、という記述に整える）
-- `.claude/skills/race-check/SKILL.md`: **2 箇所**（plan-review で漏れ検出・両監査が独立収束）。
-  - `:85`（チェックリスト 4b）: 保存状態復元の staleness 検証手段として `withLaunchLifecycle` の
-    `disturbed()` を正規手段に加える（生 `captured+1` 比較の例を述語へ差し替え）。
-  - `:108`（Step 5 出力テンプレート `4b staleness: [OK] ... / current() === preGen + 1 で検証済み`）:
-    `current() === preGen + 1` の見本を `!disturbed()` へ差し替え。**`:85` だけ直すと同一スキルが自己矛盾**
-    （85 行「述語で検証せよ」 vs 108 行「preGen+1 で検証済み＝OK」）＝governance-docs.md の「序数参照が静かに腐る」典型。
+`delayMs` は `= 2400` のデフォルト引数から `?: number`（省略可）へ変える。`launchNoticeTimer.arm(fn, undefined)` は `arm` 内部の `msOverride ?? ms` で生成時の `2400` にフォールバックするため、**2400 という値は `createOwnedTimer(2400)` の1箇所にのみ存在する**（旧実装はデフォルト引数の `2400` と同じ値を2箇所に書く必要はなかったが、今回 `arm` 側に fallback ロジックが移るため、デフォルト引数として重複させず `?:` にするのが素直）。呼び出し形（引数を省略する/3000/5000 を渡す）は不変なので `setHotkeyFailureNotice`/`notifyLaunchFailure`/`lib/commands.ts` の呼び出し元は無変更（`setLaunchNoticeWithAutoClear` の公開シグネチャ・挙動は不変）。
 
-### 4. `preGen` シンボルへの間接参照の是正（plan-review で漏れ検出・別カテゴリ）
+**この変更で意識的に踏み込む決定**: issue 本文は3対象すべてを「そのまま流用できる」と述べているが、`launchNoticeTimer` は可変 `delayMs`（2400/3000/5000）を持つため「そのまま」は成立しない。検討した代替案は「`launchNoticeTimer` は生 `setTimeout` のまま残し、固定 ms の4本（focus retry 2 + blurTimer + moveTimer）だけ移植する」。不採用の理由: issue が `launchNoticeTimer` を対象に明記しており、`arm` への `msOverride` 追加は「ms は resource 属性であり leading 等の policy ではない」という `ownedTimer.ts` の既存設計方針と矛盾しないため。ただし `ownedTimer.ts` は #536 で複数レンズの敵対的レビューを経た primitive のため、この拡張は `/plan-review` で明示的に検証する。
 
-`executeInstantCommandSelected` から `const preGen` が消えるため、それを**同期プレフィックスの例**として
-名指しする 2 コメントが dangling 参照になる（「captured+1 を正規手段と記す doc」とは別カテゴリ・機能無関係）:
+### 4. `ui/src/MainApp.tsx`
 
-- `ui/src/lib/exclusive.ts:13`: JSDoc「同期プレフィックス——例: `executeInstantCommandSelected` の
-  `preGen` 捕捉・`selected()` 読み——が」。refactor 後も同期プレフィックス（`savedResults`/`savedSelected`/
-  `savedItems` 捕捉・`selected()` 読み・`interpret()`）は残るので、`preGen` 例を保存状態捕捉の例へ差し替える。
-- `ui/src/lib/exclusive.test.ts:70`: テストコメント「（`preGen` 捕捉・`selected()` 読みが現行と同 tick で
-  走る不変条件の担保）」。同様に `preGen` を保存状態捕捉の表現へ差し替え（テストロジック・assertion は不変）。
+- `import { createOwnedTimer } from "./lib/ownedTimer";` を追加。
+- `let blurTimer: ReturnType<typeof setTimeout> | undefined;` → `const blurTimer = createOwnedTimer(100);`
+- `let moveTimer: ReturnType<typeof setTimeout> | undefined;` → `const moveTimer = createOwnedTimer(500);`
 
-## 実装順序（フェーズ）
+**発見した非対称性（research.md より）**: 現行コードは `moveTimer` 側は毎回 `clearTimeout(moveTimer)` してから再セットするが、`blurTimer` 側は blur 分岐で **`clearTimeout` を呼ばずに `blurTimer = setTimeout(...)` で上書き**している。連続する2回の blur イベント（間に focus が挟まらない場合）では前回のタイマーハンドルが孤児化し、`blurCancelled` フラグだけが「孤児タイマー発火時に誤って `hideMain()` してしまう」のを防ぐ実働のガードになっている（`blurCancelled` は focus 分岐でのみ true になり、孤児タイマーの発火時点でまだ true のままなら return する）。**`arm()` は呼ぶたびに必ず前回の保留を破棄してから新しいタイマーを張る**ため、blur 分岐を `blurTimer.arm(...)` に置き換えるだけでこの孤児化バグ自体が構造的に消える。これにより移行後は `blurCancelled` が判定不能（到達不能）になる。`moveTimer` 側の `moveEvent !== latestMoveEvent` 比較は、旧実装でも常に `clearTimeout` してから再セットしていたため孤児化の余地が元々無く、**移行前後を問わず常に dead code**（`clearTimeout` が保証する「古い callback は発火しない」の重複チェック）。
 
-署名変更(a)と `executeInstantCommandSelected` の判定(b)は相互依存（`disturbed` を渡す署名が無いと
-`if (!disturbed())` が書けない）ため **1 コミット単位**で編集する。(c) の 2 呼出し元は本文変更なし
-（fewer-params 代入ゆえ型エラーも出ない）が、同一コンパイル単位で typecheck green を確認する。
+**決定**: 両ガード（`blurCancelled` と `moveEvent`/`latestMoveEvent`）は削除する。理由: (1) 移行後は構造的に到達不能なコードであり、残すと「何を守っているのか」を読者に誤解させる、(2) issue 自身が挙げる移行動機（「arm/cancel のペアリングが primitive の構造で保証され...clear 漏れを防ぐ」）を体現する変更であり、スコープ外の追加清掃ではなくこの refactor が正しく primitive を使うことの直接の帰結、(3) `blurTimer` の「100ms 猶予」という**観測可能な**不変条件（ドラッグ中の一時的フォーカス喪失で誤発火しない）は変わらない——むしろ孤児タイマーによる稀な誤 hide の可能性が消える分、厳密には旧実装より正しくなる（動作の後退ではない）。
 
-1. **Phase 1（実装・1 コミット単位）**: search.ts の (a)(b)(c) を同時編集 → `npm run typecheck` green +
-   `search.test.ts` green（挙動保存の実証）。PostToolUse hook が typecheck + vitest を自動発火。
-2. **Phase 2**: search.test.ts のコメント更新（1030/1033/1046/1049/1054 の `preGen+1` 語彙 →
-   `disturbed()` ベース。assertion 不変）+ `exclusive.test.ts:70` の `preGen` 参照差し替え → 再度 green 確認。
-   - `exclusive.ts:13`（JSDoc）と `exclusive.test.ts:70`（コメント）は `.ts` 編集ゆえ typecheck が発火するが、
-     どちらもコメントのみの変更で型に影響しない（沈黙 = 合格）。
-3. **Phase 3**: docs 更新（`ui/CLAUDE.md:109` / `.claude/rules/ui.md:10` / race-check `SKILL.md` の :85 と :108）。
-   - `.claude/rules/ui.md` / `race-check/SKILL.md` の編集は `selectChecks` 対象外（沈黙 = 未実行・合格ではない）
-     ── 目視で「旧例示が新述語へ差し替わり実装と整合」を確認。`ui/CLAUDE.md` も同様。
+**先例との整合**: この削除は #536 で `leadingFired` フラグを `refreshTimer.isPending()` と等価と判断して削除した先例と同じロジック——「手書きの状態フラグが、primitive の構造的保証（`timer !== undefined` 相当の判定）と等価になったら、フラグを primitive の判定に置き換える／不要なら消す」。`moveEvent` は移行前から恒偽（`clearTimeout` が既に保証）、`blurCancelled` は移行によって初めて恒偽になる（blur 分岐に `clearTimeout` が無かったため旧実装では稀な連続 blur ケースで実働していた）という違いはあるが、「primitive の保証で置き換えられるようになったら消す」という判断基準は共通。
+
+`/symmetric-check` と `/plan-review` でこの判断の妥当性を検証する（実施済み・5体のサブエージェント全員が独立に同じ結論に到達。詳細はレビュー結果を参照）。
+
+- `registerAutoHideOnFocusLost` 内:
+  ```ts
+  const unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
+    if (!focused) {
+      blurTimer.arm(() => {
+        void (async () => {
+          try {
+            // 統合後は results ウィンドウが同一ウィンドウ内のため、
+            // is_main_foreground によるプロセス ID 比較は不要。
+            await hideMain();
+          } catch (e) {
+            console.warn("auto-hide focus check failed:", e);
+          }
+        })();
+      });
+    } else {
+      blurTimer.cancel();
+    }
+  });
+  ```
+  （`blurCancelled` 宣言・参照を削除。`try/catch` の中身は不変）
+- `onMoved` ハンドラ内:
+  ```ts
+  const unlistenMainMoved = await win.onMoved(() => {
+    moveTimer.arm(() => {
+      void (async () => {
+        await api.saveSearchPlacement();
+      })();
+    });
+  });
+  ```
+  （`latestMoveEvent`/`moveEvent` 宣言・参照を削除）
+- `onCleanup`:
+  - `clearTimeout(blurTimer); clearTimeout(moveTimer);` → `blurTimer.cancel(); moveTimer.cancel();`
+
+### 5. `ui/src/components/SearchWindow.tsx`
+
+- `import { createOwnedTimer } from "../lib/ownedTimer";` を追加。
+- `const focusRetryTimers: ReturnType<typeof setTimeout>[] = [];` → 2本の固定用途インスタンスに置換:
+  ```ts
+  const focusRetryTimer120 = createOwnedTimer(120);
+  const focusRetryTimer280 = createOwnedTimer(280);
+  ```
+- `clearFocusRetryTimers()`:
+  ```ts
+  function clearFocusRetryTimers() {
+    if (focusRafHandle !== undefined) {
+      cancelAnimationFrame(focusRafHandle);
+      focusRafHandle = undefined;
+    }
+    focusRetryTimer120.cancel();
+    focusRetryTimer280.cancel();
+  }
+  ```
+- `focusInputWithRetries()`:
+  ```ts
+  function focusInputWithRetries() {
+    clearFocusRetryTimers();
+    focusInputSoon();
+    focusRetryTimer120.arm(() => focusInputSoon());
+    focusRetryTimer280.arm(() => focusInputSoon());
+  }
+  ```
+- `focusRafHandle`（rAF 2フレーム defer）は setTimeout ではないため対象外・無変更。
+
+## 実装順序（依存関係）
+
+1. `ownedTimer.ts` の `arm` シグネチャ拡張 + `ownedTimer.test.ts` に override テストを追加（Red→Green）。他3ファイルの前提となる基盤変更のため最初に完了させる。
+2. `launchNotice.ts`（`msOverride` を使う唯一の新規箇所。ownedTimer 拡張の動作確認を兼ねる）。
+3. `MainApp.tsx`（`blurTimer`/`moveTimer`。override 不使用、固定 ms のみ）。
+4. `SearchWindow.tsx`（focus retry の2インスタンス化。override 不使用）。
+
+2〜4 は互いに独立ファイルのため順序に依存関係は無いが、上記順で1ファイルずつ検証しながら進める。
 
 ## 不変条件
 
-1. **挙動保存**: `disturbed()` 判定は `current() === preGen+1` と全入力で一致（research.md の `k===0` 証明）。
-   検知手段 = `search.test.ts:614-629`（復元する）と `1030-1062`（復元しない）が実 `withLaunchLifecycle`
-   経由で両パスを固定。両テストが green のままなら挙動保存が実証される。
-2. **1 bump 不変条件**（codex claim 2 で文言を正確化）: `withLaunchLifecycle` が **`await launch()` 前の
-   本体**で world 世代を進めるのは本体先頭の invalidate の **1 回のみ**（onSuccess/onFailure の callback 側は
-   別途 `invalidate()`/`run()` を呼びうるが、それらは `disturbed` 捕捉後・await 後に走るため等価性に影響しない
-   ── 「withLaunchLifecycle は 1 回だけ bump」という無条件の言い方は避ける）。`disturbed` の `launchGen` は
-   この本体先頭 invalidate の直後に捕捉する。この不変条件が崩れる（例: clearResults が invalidate を呼ぶよう
-   変わる）と `disturbed` の意味も変わるが、**その変更は同一関数内で launchGen 捕捉位置と同居する**ため、
-   旧設計（別関数 executeInstantCommandSelected に散った `+1`）より破綻を局所化・可視化する＝これが issue の
-   狙い（coupling をコンパイラの見える場所へ引き寄せる）。
-3. **復元順序**: `disturbed()` は `if` 条件で復元本文の前に評価。復元内 `searchLane.invalidate()` は
-   評価後に走るため自己汚染しない（従来と同一）。
-4. **署名波及の完全性**: onSuccess/onFailure 署名変更の呼出し元網羅は **grep が根拠**（TS は
-   fewer-params callback を代入許可＝型エラーで炙り出さない・plan-review 訂正）。`withLaunchLifecycle` は
-   未 export の module-private。`grep -rn "withLaunchLifecycle" ui/src` = 定義 1（496）+ 呼出し 3
-   （533/611/653）、外部呼出し元なし。test 側ヒット（1046/1074）はコメント文字列で実呼出しでない。
-
-### 異常系（失敗・異常終了・予期しない順序）
-
-- `disturbed` は plain closure で `searchLane.current()`（= `latestRun` 内 `let generation` の読取）を読む。
-  例外を投げる経路は無い。SolidJS 購読も発生しない（`current()` は追跡なしの plain 関数）。
-- onFailure が `disturbed()` を呼ばない呼出し元（launchAndReset / launchWithSelectedTool）では、
-  `disturbed` closure は生成されるが未評価のまま GC される ── リソースリークなし（タイマー/リスナー等の
-  ライフサイクル資源を握らない純粋 closure）。
-- launch が reject した場合（`await launch()` が throw）: onSuccess/onFailure いずれも呼ばれず
-  `finally` で `setLaunching(false)`。この経路は今回変更しない（従来同様）。`disturbed` 未評価。
+- **`blurTimer` の 100ms 猶予**（ドラッグ中の一時的フォーカス喪失で `auto_hide_on_focus_lost` が誤発火するのを防ぐ・`ui/CLAUDE.md`）は ms 値・発火条件とも不変。`blurCancelled` フラグは削除する（移行後は構造的に到達不能。理由は「変更ファイル一覧 §4」参照）。
+- **`launchNotice` の自動クリアは単一タイマー再利用で競合防止**（`docs/architecture.md`）。`arm` が前回の保留を破棄する点は変わらないため、`msOverride` 導入後も同一挙動（新しい `arm` 呼び出しが前回の保留中クリアをキャンセルして新しい delayMs で張り直す）。
+- **`moveTimer` はウィンドウ移動位置のデバウンス保存**（`SPEC.md`）。500ms 固定・タイミング不変。`latestMoveEvent` 比較は削除する（`clearTimeout`/`arm` いずれでも常に到達不能だった重複チェック）。
+- **focus retry の2本同時保留**: 120ms 用・280ms 用がそれぞれ独立してキャンセル・再張り可能であること（`clearFocusRetryTimers()` が両方を確実に cancel する）。
+- **`arm` の `msOverride` 拡張は既存2呼び出し元（`refreshTimer`/`fetchTimer`）に影響しない**: 両者とも `msOverride` を渡さないため `?? ms` で生成時の値にフォールバックし、既存テスト（`search.test.ts`/instantCommand 関連）は無変更で green のまま。
+- **リソース生成/破棄ペア**: 新設する5インスタンス（`launchNoticeTimer`/`blurTimer`/`moveTimer`/`focusRetryTimer120`/`focusRetryTimer280`）はいずれもモジュール/コンポーネントスコープで1回生成され、対応する `cancel()` 呼び出し箇所（既存の clear 経路）にそのまま置換される。生成箇所と破棄箇所が1:1で対応することを実装時に確認する。
+- **`blurCancelled`/`moveEvent`・`latestMoveEvent` の削除は「別ガードの削除」であり「OwnedTimer の生成/破棄ペア」そのものではない**が、対称性の観点では「`arm()` が cancel-then-set を構造的に保証するようになった結果、手書きの重複ガードが不要になった」という副作用として扱う。`/symmetric-check` でこの2点も明示的にレビュー対象に含める。
 
 ## テスト方針
 
-- **新規テストは追加しない**（挙動保存 refactor ゆえ）。既存の 2 テストが安全網:
-  - `search.test.ts:614-629`（非 disturbed → 復元）
-  - `search.test.ts:1030-1062`（disturbed → 非復元）
-  - 両者は実 `withLaunchLifecycle` を経由し、`+1` の内部実装ではなく**観測可能な挙動**を固定するため、
-    述語への差し替え後も無改変で green を維持する（＝ refactor の正しさをコンパイラ + 既存テストで実証）。
-- **検証コマンド**（`docs/build-commands.md` カテゴリ準拠。PostToolUse hook が自動発火）:
-  - `ui/src/**` の `.ts` 編集 → typecheck（署名整合）+ vitest（`search.test.ts`）。
-  - hook 沈黙 = 合格（`ui/src` は `selectChecks` 対象）。失敗時のみ会話に届く。
-- **手動確認**: docs 3 箇所は目視で「旧例示が新述語へ差し替わり、記述が実装と整合」を確認
-  （`.claude/rules/ui.md` / `race-check/SKILL.md` は hook 対象外）。
+- `ownedTimer.test.ts`: `msOverride` の新規ケース3件を追加（上記「変更ファイル一覧 §2」参照）。fake timer で検証。
+- 既存テスト（`search.test.ts`、`ownedTimer.test.ts` の既存ケース、`MainApp.test.tsx`、`SearchWindow.test.tsx`）はいずれも今回変更する3ファイルのタイマー挙動を直接アサートしていない（research.md で grep 確認済み）ため、回帰確認は既存スイート green で足りる。
+- 検証コマンド: `npm run test -w ui`（または `docs/build-commands.md` の該当コマンド）、`npm run typecheck -w ui`。PostToolUse hook が `.ts`/`.tsx` 編集時に typecheck を自動実行する。
+- 手動 smoke（挙動不変ゆえ既存テスト+手動確認で担保、issue記載通り）:
+  - ウィンドウ表示直後にフォーカスが検索欄に入ること（focus retry）。
+  - ドラッグ中の一時的フォーカス喪失でウィンドウが隠れないこと（blurTimer 100ms 猶予）。
+  - ウィンドウ移動後、位置が保存されること（moveTimer 500ms debounce）。
+  - 起動失敗・ホットキー失敗・indexing 中の /o 実行で通知が出て、それぞれ想定 ms 後に消えること（launchNoticeTimer 可変 ms）。
 
 ## SPEC.md 更新要否
 
-**不要**。挙動保存 refactor であり、SPEC.md 記載のフロー・状態遷移・IPC 契約に変更なし。
+**不要**。挙動不変のリファクタリングであり、SPEC.md に記載されたフロー・IPC契約・状態遷移に変更はない。
 
-## セルフレビュー（Step 5）
+## セルフレビュー
 
-### 5a. check スキル結果
+### 5a. check スキル（実施結果）
 
-- **`/plan-review`**（Explore×2 + Plan×1 独立導出）: 要対処の欠陥なし。核心不変条件（1 bump・捕捉点移動の
-  等価性・復元順序・テスト無改変 green・SPEC 不要・latestRun.ts 不変）を独立に再一致＝**完全性の証拠**。
-  漏れ 3 件を検出し計画へ反映済み（race-check SKILL.md:108 / exclusive.ts:13 / exclusive.test.ts:70）。
-  訂正 1 件（「TS が波及強制」→ grep が根拠）を反映済み。
-- **`/symmetric-check`**: onSuccess/onFailure は署名対称・消費非対称（復元は失敗時のみ＝正しい非対称）。
-  自 grep で production の baseline-delta サイトは search.ts:651/672 のみ＝他コードパスへの適用漏れなし。
-  disturbed は資源を握らない closure＝生成/破棄ペア不要。
-- **`/race-check`**: await 地点は withLaunchLifecycle:506 の 1 つ。4a〜4d 全て [安全]。staleness は等価移設、
-  入力ガード（launching()）・再入ガード（activationLane）は不変。捕捉点移設で新 race 窓は生じない。
+- `/plan-review`: **実施済み**。担当ファイル別 Explore サブエージェント4体 + 独立導出 Plan サブエージェント1体（Step 2b）を並列実行。要対処0件、軽微な懸念4件（`msOverride=0`境界値テストの追加、JSDocの resource/policy 境界明記、`blurCancelled`の「実働ガード」断定根拠がTauri外部挙動依存という留保、`launchNotice.ts`の「シグネチャ変更」という表現の精度）——いずれも plan.md に反映済み。独立導出は計画と完全一致（focus retry 2インスタンス化・`moveEvent`恒偽・`launchNoticeTimer`の`arm`拡張必要性）し、加えて`blurCancelled`削除の理由づけに**#536の`leadingFired`削除の先例**という枠組みを提示（反映済み）。
+- `/symmetric-check`: **実施済み**。5インスタンス全ての生成/arm/cancel箇所を`file:line`根拠付きで検証し全て[適用]（対称成立）。`onCleanup`のteardown順序（unlisten→cancel）も検証済み。`blurCancelled`/`moveEvent`削除もケース別に安全性確認済み。grepで issue 対象外の生タイマーが`ui/src`に残っていないことも確認（テストファイルのrAFスタブのみで無関係）。見落としなし。
+- `/race-check`: 対象外と判断。新規 async 関数を追加しない（`blurTimer`/`moveTimer` の非同期本体は既存の async IIFE をそのまま移植するのみで、await 地点・staleness チェックのロジックは変更しない）。
+- `/cache-check`/`/persistence-check`/`/state-check`: 対象外（キャッシュ・永続化・UI モード遷移に触れない）。
 
 ### 5b. セルフレビューチェックリスト
 
-1. **対称コードパス**: ✓（5a symmetric-check で検証。onSuccess/onFailure 署名対称・消費非対称は正当）
-2. **影響範囲の網羅性**: ✓（`grep withLaunchLifecycle` = 3 呼出し元、`.current()` grep = baseline は 1 サイト、
-   `preGen` grep = exclusive.ts/test + search.test.ts。独立導出が同一集合へ収束）
-3. **境界条件**: ✓（disturbed の分岐＝擾乱あり/なしの 2 ケースを既存テスト 614-629/1030-1062 が固定）
-4. **リソース管理**: ✓（disturbed は純粋 closure・資源なし。launchGen は数値。異常系は plan の該当節に記述）
-5. **既存パターンとの整合**: ✓（lane 向け `isStale()` の launch-lane 版を合成＝既存 primitive パターンの延長。
-   新規状態フラグ・Mutex・子プロセスの導入なし）
-6. **YAGNI 違反**: △→許容（onSuccess の disturbed は未消費。issue 忠実性・対称署名として両監査が許容。
-   未使用理由をコメント明記で証跡化する ── 上「設計判断」参照）
-7. **シンプル化の挑戦**: 新状態の導入ゼロ。むしろ magic number（+1）と別関数への coupling を除去する減算的変更。
-   「この操作が失敗したら」= disturbed は例外を投げず SolidJS 購読も起こさない（plan「異常系」に記述）
-8. **破壊不変条件の明示**: 「壊れたら即アウト」の不変条件 = ①挙動保存（等価性）②1 bump。
-   検知手段 = 既存テスト 2 本（614-629 復元する / 1030-1062 復元しない）が実 withLaunchLifecycle 経由で
-   両パスを固定。typecheck が署名整合を確認。docs 3 種は hook 対象外ゆえ**目視確認**を検知手段とする。
-
-### 総評
-
-計画 completeness: **高**（独立導出が核心判断を再一致 + 漏れ 3 件を検出し反映済み）。
-実装着手可否: **可**（要対処なし。`/implement` へ進める）。
+1. **対称コードパス**: `arm`/`cancel` ペア。5インスタンス全てで生成1箇所・破棄1箇所（既存clear経路）を1:1対応させる。`/symmetric-check` で機械的に確認する。
+2. **影響範囲の網羅性**: `grep` で `focusRetryTimers|focusRafHandle|blurTimer|moveTimer|launchNoticeTimer` の全参照を洗い出し済み（research.md）。3ファイル内に閉じており外部からの直接参照は無い。
+3. **境界条件**: `moveTimer`/`blurTimer` の「クリア直後に再 arm」「cancel 後の再 arm」は OwnedTimer 側で既にテスト済み（burst/cancel ケース、`ownedTimer.test.ts` 既存）。focus retry の「2本同時 arm→片方だけ cancel されない」は目視コードレビューで担保（`clearFocusRetryTimers` が両方 cancel）。
+4. **リソース管理**: 上記「不変条件」参照。生成/破棄ペアを明記済み。
+5. **既存パターンとの整合**: `arm(() => void asyncCall())` の慣習を踏襲。`msOverride` 拡張は「resource 属性（ms）であり policy ではない」ため `ownedTimer.ts` の設計方針（JSDoc）と矛盾しない。
+6. **YAGNI 違反**: `msOverride` は launchNoticeTimer の実需要（3種類の delayMs が実在）に基づく最小拡張。他に汎用化・抽象化は追加しない。
+7. **シンプル化の挑戦**: 検討した代替案
+   - 案A（採用）: `arm(fn, msOverride?)` の後方互換拡張。
+   - 案B: `createOwnedTimer()` を ms 無しにして毎回 `arm(fn, ms)` で必須指定。既存2呼び出し元（`refreshTimer`/`fetchTimer`）の呼び出し箇所を全て書き換える必要があり、diff が不必要に広がる。不採用。
+   - 案C: `launchNoticeTimer` だけ生の `setTimeout` のまま残す。issue が明示的に対象としているため不採用。
+   - 案Aが最小diffで既存契約を壊さない。
+   - `blurCancelled`/`latestMoveEvent` 比較は削除する。`moveEvent` 側は移行前後を問わず常に dead code（`clearTimeout` が既に保証）。`blurCancelled` は移行前は「blur 分岐が `clearTimeout` を呼ばない」ことに起因する孤児タイマー対策として実働していたが、`arm()` へ統一することでその孤児化自体が構造的に起こらなくなり、移行後は同じく到達不能になる（詳細は「変更ファイル一覧 §4」）。残すと「何を守っているか」を読者に誤解させるため削除する。
+8. **破壊不変条件の明示**:
+   - `blurTimer` 誤発火（ドラッグ中フォーカス喪失でウィンドウが消える）は UX 直撃のリスク。検知手段: 手動 smoke（上記）+ 既存 `auto_hide_on_focus_lost` 関連の目視確認。
+   - `focusRetryTimer` の cancel 漏れは起動直後にフォーカスが入らない不具合として顕在化する。検知手段: 手動起動確認（コールドスタート）。
+   - いずれも Win32 フック・ホットキー・プロセス間通信ではなく JS 内 setTimeout の範囲に閉じるため「戻ってこない」系のリスクは無い（最悪ケースでも setTimeout の再発火忘れ程度で、次回ウィンドウ表示/操作で状態はリセットされる）。

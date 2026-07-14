@@ -3,7 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import {
   query,
-  setQuery,
+  dispatchQueryInput,
   results,
   selected,
   folderState,
@@ -240,15 +240,15 @@ const SearchWindow: Component = () => {
     if (viewKind() === "tool") return;
     if (launching()) return;
     const value = (e.target as HTMLInputElement).value;
-    // インデックス構築中も setQuery は常に呼ぶ。IPC をスキップするガードは refreshResults() 側にある。
-    // これにより、構築完了後の runRefresh() が最新の query() 値で即座に検索できる。
+    // インデックス構築中も入力（results 経路は dispatchQueryInput、内部で setQuery）は常に反映する。
+    // IPC をスキップするガードは refreshResults() 側にあり、構築完了後の runRefresh() が最新の query() で検索できる。
     trace("ui:input", { value, folderMode: folderState() !== null });
     perfMarkInput();
     clearLaunchNotice();
     if (viewKind() === "folder") {
       setFolderFilter(value);
     } else {
-      setQuery(value);
+      dispatchQueryInput(value);
     }
   }
 

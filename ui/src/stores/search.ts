@@ -8,6 +8,7 @@ import { createLatestRun } from "../lib/latestRun";
 import { createExclusive } from "../lib/exclusive";
 import { createOwnedTimer } from "../lib/ownedTimer";
 import { clampSelectedIndex, computeParentDir } from "../lib/folderNav";
+import { interpret, type ViewKind, type InterpKind } from "../lib/interpretQuery";
 import { trace } from "../lib/trace";
 import { folderState, setFolderState, folderFilter, setFolderFilter } from "./folder";
 import { toolSelectionState, setToolSelectionState } from "./tool-selection";
@@ -65,7 +66,6 @@ const DEBOUNCE_MS = 50;
  *  共有し、モード遷移を跨ぐ保留 timer を保存する。 */
 const refreshTimer = createOwnedTimer(DEBOUNCE_MS);
 let refreshInFlight: Promise<void> | undefined;
-let suppressNextQueryEffectRefresh = false;
 
 /** 検索/データ lane の supersede 調停 primitive（world 世代 + staleness を所有・choke point）。
  *  検索・instant fetch の「最新実行だけが結果を適用する」を `run()` が、モード遷移・起動が
@@ -82,18 +82,13 @@ const searchLane = createLatestRun();
  *  `tryModalActivate` を `activationLane(...)` の前に置く「呼び出し順」で自己ブロックを回避する（再入は許可しない）。 */
 const activationLane = createExclusive();
 
-export type ViewKind = "results" | "folder" | "tool";
-export type InterpKind = "plain" | "command" | "instant";
+// ViewKind / InterpKind の定義・instant 判定述語（isInstantPrefix）・入力分類（interpret）は
+// lib/interpretQuery.ts（純関数・SSOT）へ移設。公開 API 維持のため型を re-export する。
+export type { ViewKind, InterpKind } from "../lib/interpretQuery";
 
 /** 網羅的 switch の default に置き、モード追加時の分岐漏れをコンパイルエラー化する */
 function assertNever(x: never): never {
   throw new Error(`unhandled mode: ${x}`);
-}
-
-/** instant モード検出述語。`interpKind` と query effect の単一情報源（SSOT）。
- *  空 prefix では false（全入力が instant 化するのを防ぐ）。trim 規則もここに集約する。 */
-function isInstantPrefix(rawQuery: string, prefix: string): boolean {
-  return prefix !== "" && rawQuery.trimStart().startsWith(prefix);
 }
 
 /** 軸1: 結果リストを占める先頭ビュー（tool > folder > results の射影＝SPEC §18.5 優先度）。
@@ -102,14 +97,12 @@ const viewKind = createMemo<ViewKind>(() =>
   toolSelectionState() ? "tool" : folderState() ? "folder" : "results",
 );
 
-/** 軸2: 入力の意味。viewKind=results のときだけ非 plain。query+prefix からの純粋導出（持続ラッチを廃止）。 */
-const interpKind = createMemo<InterpKind>(() => {
-  if (viewKind() !== "results") return "plain";
-  const raw = query();
-  if (isInstantPrefix(raw, instantCommandPrefix())) return "instant";
-  if (raw.trimStart().startsWith("/")) return "command";
-  return "plain";
-});
+/** 軸2: 入力の意味。viewKind=results のときだけ非 plain。query+prefix からの純粋導出（持続ラッチを廃止）。
+ *  分類は interpret（純関数・SSOT）へ委譲し、memo は **プリミティブ（.kind 文字列）を返す**契約を保つ
+ *  （オブジェクト union を下流へ流すと query() 依存の再計算が毎打鍵で走る・ui/CLAUDE.md）。 */
+const interpKind = createMemo<InterpKind>(
+  () => interpret(query(), instantCommandPrefix(), viewKind()).kind,
+);
 
 /** フォルダ展開（ArrowRight/Left）・ツール選択（Shift+Enter）という「新規モーダル遷移」を
  *  許可するかの述語。tool 選択中（viewKind()==="tool"）または instant コマンドモード中
@@ -191,7 +184,7 @@ async function refreshResults() {
       return;
     }
     if (!fs && trimmed.startsWith("/")) {
-      // Command mode: no suggestions shown, just wait for exact match (handled by query effect).
+      // Command mode: no suggestions shown, just wait for exact match (handled by dispatchQueryInput).
       trace("search:refresh:branch", { requestId, branch: "slash_noop" });
       clearResults();
       return;
@@ -250,16 +243,10 @@ async function refreshResults() {
 /** instant コマンド入力のディスパッチ（interpKind()==="instant"）。30ms デバウンス IPC 取得は
  *  stores/instantCommand.ts の choke point（scheduleInstantCommandFetch）に委譲し、ここでは
  *  世代管理（staleness 判定用の hooks）と結果反映のみを担う。 */
-function handleInstantQueryInput(q: string) {
+function handleInstantQueryInput(filterName: string) {
   cancelDebounce();
-  const prefix = instantCommandPrefix();
-  // trimStart() を使用: trailing whitespace はクエリの一部として保持する
-  const trimmedStart = q.trimStart();
-  const input = trimmedStart.slice(prefix.length);
-  // スペースがあればコマンド名部分のみでフィルタ（SPEC §18.5: スペースでマッチング確定）
-  const spaceIdx = input.indexOf(" ");
-  const filterName = spaceIdx >= 0 ? input.slice(0, spaceIdx) : input;
-  trace("search:query_effect:instant_command", { prefix, input, filterName });
+  // filterName（コマンド名）の抽出は interpret（純関数・SSOT）が担う。ここは fetch 委譲のみ。
+  trace("search:query_input:instant_command", { filterName });
   scheduleInstantCommandFetch(filterName, {
     run: searchLane.run,
     onFetched: (fetchedResults) => {
@@ -279,7 +266,7 @@ function handleCommandQueryInput(q: string) {
   if (trimmed === "/r") {
     cancelDebounce();
     setSelected(0);
-    trace("search:query_effect:immediate_refresh", { reason: "slash_r" });
+    trace("search:query_input:immediate_refresh", { reason: "slash_r" });
     void runRefresh();
     return;
   }
@@ -287,7 +274,7 @@ function handleCommandQueryInput(q: string) {
   const cmd = findCommand(q);
   if (cmd && cmd.command !== "/r") {
     cancelDebounce();
-    trace("search:query_effect:run_command", { command: cmd.command });
+    trace("search:query_input:run_command", { command: cmd.command });
     clearCommandModeState();
     cmd.action();
     return;
@@ -295,7 +282,7 @@ function handleCommandQueryInput(q: string) {
 
   // Command mode without exact match: no suggestions, just clear results.
   cancelDebounce();
-  trace("search:query_effect:slash_noop", { input: q });
+  trace("search:query_input:slash_noop", { input: q });
   searchLane.invalidate();
   updateResults([]);
   setSelected(0);
@@ -305,59 +292,58 @@ function handleCommandQueryInput(q: string) {
  *  refreshResults() へ委譲する。 */
 function handlePlainQueryInput(q: string) {
   setSelected(0);
-  trace("search:query_effect:debounced_refresh", { query: q });
+  trace("search:query_input:debounced_refresh", { query: q });
   debouncedRefresh();
 }
 
+/** ユーザー入力の明示 dispatch（唯一の検索起動起点）。setQuery で query を更新し、interpret の
+ *  意図に基づいて instant/command/plain へ振り分ける。プログラム的リセット（resetForShow・
+ *  instant 成功・command 実行後の clearCommandModeState 等）はこの関数を **呼ばない別経路**であり、
+ *  ゆえに「今回だけ effect を黙らせる」ワンショットフラグ（旧 suppressNextQueryEffectRefresh）が不要になった。
+ *  旧 `createEffect(on(query, ...))` の本体をそのまま移設（挙動不変・#537）。 */
+function dispatchQueryInput(value: string) {
+  setQuery(value);
+  const vk = viewKind();
+  // tool/folder ガード（旧 query effect の early return を保存・防御的）。実運用では handleInput が
+  // tool で早期リターン・folder で setFolderFilter に振るため、ここへは vk==="results" 時のみ到達する。
+  if (vk === "tool") {
+    trace("search:query_input:ignored_tool_selection", { query: value });
+    return;
+  }
+  if (vk === "folder") {
+    trace("search:query_input:ignored_folder_mode", { query: value });
+    return;
+  }
+  trace("search:query_input", { query: value, trimmed: value.trim() });
+
+  // ディスパッチは interpret（純関数・SSOT）経由（優先度の再導出はしない・#431 Phase3）。
+  const intent = interpret(value, instantCommandPrefix(), vk);
+  if (intent.kind === "instant") {
+    handleInstantQueryInput(intent.filterName);
+    return;
+  }
+
+  // プレフィックスなし → instant モードの保留 IPC / stale 候補を掃除する。
+  // interpret は query から純粋導出されるため「モード解除」自体は状態更新不要。
+  // 掃除すべき資源（pending fetch / stale items）が現存するときだけ実行する（無ければ no-op）。
+  if (hasPendingInstantCommandFetch() || getInstantCommandItems().length > 0) {
+    cancelInstantCommandDebounce();
+    clearInstantCommandItems();
+  }
+
+  switch (intent.kind) {
+    case "command":
+      handleCommandQueryInput(value);
+      return;
+    case "plain":
+      handlePlainQueryInput(value);
+      return;
+    default:
+      return assertNever(intent);
+  }
+}
+
 createRoot(() => {
-  // Auto-refresh when query changes (non-folder mode)
-  createEffect(
-    on(query, (q) => {
-      if (suppressNextQueryEffectRefresh) {
-        trace("search:query_effect:suppressed", { query: q });
-        suppressNextQueryEffectRefresh = false;
-        return;
-      }
-      const vk = viewKind();
-      if (vk === "tool") {
-        trace("search:query_effect:ignored_tool_selection", { query: q });
-        return;
-      }
-      if (vk === "folder") {
-        trace("search:query_effect:ignored_folder_mode", { query: q });
-        return;
-      }
-      trace("search:query_effect", { query: q, trimmed: q.trim() });
-
-      // ディスパッチは interpKind() 経由（優先度の再導出はしない。development-principles.md
-      // 「優先度・排他律は導出源の一箇所だけに書く」#431 Phase3）。
-      const kind = interpKind();
-      if (kind === "instant") {
-        handleInstantQueryInput(q);
-        return;
-      }
-
-      // プレフィックスなし → instant モードの保留 IPC / stale 候補を掃除する。
-      // interpKind は query から純粋導出されるため「モード解除」自体は状態更新不要。
-      // 掃除すべき資源（pending fetch / stale items）が現存するときだけ実行する（無ければ no-op）。
-      if (hasPendingInstantCommandFetch() || getInstantCommandItems().length > 0) {
-        cancelInstantCommandDebounce();
-        clearInstantCommandItems();
-      }
-
-      switch (kind) {
-        case "command":
-          handleCommandQueryInput(q);
-          return;
-        case "plain":
-          handlePlainQueryInput(q);
-          return;
-        default:
-          return assertNever(kind);
-      }
-    }),
-  );
-
   // Auto-refresh when folder filter changes
   createEffect(
     on(folderFilter, () => {
@@ -628,11 +614,10 @@ async function executeInstantCommandSelected(): Promise<boolean> {
     const cmd = items[idx];
     if (!cmd) return false;
 
-    // クエリ部分を抽出（プレフィックス + コマンド名 + 空白以降）
-    const prefix = instantCommandPrefix();
-    const raw = query().trimStart().slice(prefix.length);
-    const nameEnd = raw.indexOf(" ");
-    const instantQuery = nameEnd >= 0 ? raw.slice(nameEnd + 1) : "";
+    // クエリ部分（プレフィックス + コマンド名 + 空白以降）を interpret（純関数・SSOT）で抽出。
+    // tryModalActivate が interpKind()==="instant" を確認した後の経路ゆえ intent は必ず instant。
+    const intent = interpret(query(), instantCommandPrefix(), viewKind());
+    const instantQuery = intent.kind === "instant" ? intent.instantQuery : "";
 
     trace("search:instant_command:execute", { name: cmd.name, query: instantQuery });
 
@@ -646,10 +631,10 @@ async function executeInstantCommandSelected(): Promise<boolean> {
     return await withLaunchLifecycle(
       () => api.executeInstantCommand(cmd.name, instantQuery),
       () => {
-        // 成功時: モードを完全にクリアする（query="" で interpKind は plain へ純粋導出）
+        // 成功時: モードを完全にクリアする（query="" で interpKind は plain へ純粋導出）。
+        // raw setQuery("") は dispatchQueryInput を経由しない＝検索を起動しないため、旧 suppress は不要。
         cancelInstantCommandDebounce();
         clearInstantCommandItems();
-        suppressNextQueryEffectRefresh = true;
         setQuery("");
         trace("search:instant_command:done", { name: cmd.name });
       },
@@ -732,9 +717,8 @@ function resetForShow() {
   setFolderState(null);
   cancelInstantCommandDebounce();
   clearInstantCommandItems();
-  if (query() !== "") {
-    suppressNextQueryEffectRefresh = true;
-  }
+  // raw setQuery("") は dispatchQueryInput を経由しない＝検索を起動しない。検索は下の明示 runRefresh()
+  // のみが担う（旧 suppressNextQueryEffectRefresh で query effect を黙らせていた役割を経路分離で置換）。
   setQuery("");
   setFolderFilter("");
   setSelected(0);
@@ -787,6 +771,7 @@ function getSearchGeneration(): number {
 export {
   query,
   setQuery,
+  dispatchQueryInput,
   results,
   selected,
   setSelected,

@@ -45,6 +45,7 @@ import {
   selected,
   query,
   setQuery,
+  dispatchQueryInput,
   setSelected,
   setFolderFilter,
   folderFilter,
@@ -421,7 +422,7 @@ describe("selection シグナル更新", () => {
       { name: "b.txt", path: "C:\\b.txt", isFolder: false, isError: false },
     ];
     vi.mocked(api.search).mockResolvedValue(items);
-    setQuery("test");
+    dispatchQueryInput("test");
     await vi.runAllTimersAsync();
 
     expect(selected()).toBe(0);
@@ -528,7 +529,7 @@ describe("instant モード", () => {
   it("@prefix でインスタントコマンドモードに入る", async () => {
     vi.mocked(api.getInstantCommands).mockResolvedValue([CMD_GOOGLE, CMD_CLIP]);
 
-    setQuery("@goo");
+    dispatchQueryInput("@goo");
     await vi.runAllTimersAsync();
 
     expect(interpKind()).toBe("instant");
@@ -539,7 +540,7 @@ describe("instant モード", () => {
   it("コマンド名だけでフィルタリングされる（スペース後はクエリ部分）", async () => {
     vi.mocked(api.getInstantCommands).mockResolvedValue([CMD_GOOGLE]);
 
-    setQuery("@google SolidJS tutorial");
+    dispatchQueryInput("@google SolidJS tutorial");
     await vi.runAllTimersAsync();
 
     // getInstantCommands は "google" でフィルタされる（スペース以降は除外）
@@ -573,7 +574,7 @@ describe("instant モード", () => {
 describe("executeInstantCommandSelected", () => {
   beforeEach(async () => {
     vi.mocked(api.getInstantCommands).mockResolvedValue([CMD_GOOGLE, CMD_CLIP]);
-    setQuery("@google SolidJS");
+    dispatchQueryInput("@google SolidJS");
     await vi.runAllTimersAsync();
     // instant モード（interpKind = "instant"）, results に 2 件入っている状態
   });
@@ -585,12 +586,17 @@ describe("executeInstantCommandSelected", () => {
       message: null,
     });
 
+    vi.mocked(api.search).mockClear();
     const ok = await activateSelected();
 
     expect(ok).toBe(true);
     expect(api.executeInstantCommand).toHaveBeenCalledWith("google", "SolidJS");
     expect(interpKind()).toBe("plain");
     expect(query()).toBe("");
+    // instant 成功で query を空へ戻したとき、余計な検索を発火しない（旧 suppress の意図・#537 回帰ガード）。
+    // raw setQuery("") は dispatchQueryInput を経由しないため plain 検索は起動しない。
+    await vi.runAllTimersAsync();
+    expect(api.search).not.toHaveBeenCalled();
   });
 
   it("失敗: 候補が復元される", async () => {
@@ -652,7 +658,7 @@ describe("shouldShowResults", () => {
 
   it("結果あり + indexing=false → true", async () => {
     vi.mocked(api.search).mockResolvedValue([FILE_RESULT]);
-    setQuery("file");
+    dispatchQueryInput("file");
     await vi.runAllTimersAsync();
 
     expect(shouldShowResults()).toBe(true);
@@ -673,7 +679,7 @@ describe("shouldShowResults", () => {
 
     // 結果を直接セットするために search をモック
     vi.mocked(api.search).mockResolvedValue([FILE_RESULT]);
-    setQuery("file");
+    dispatchQueryInput("file");
     await vi.runAllTimersAsync();
 
     expect(shouldShowResults()).toBe(false);
@@ -691,7 +697,7 @@ describe("shouldShowResults", () => {
     setIndexingTrue?.();
 
     vi.mocked(api.getInstantCommands).mockResolvedValue([CMD_GOOGLE]);
-    setQuery("@goo");
+    dispatchQueryInput("@goo");
     await vi.runAllTimersAsync();
 
     expect(indexing()).toBe(true);
@@ -904,7 +910,7 @@ describe("flush スコープ（instant fetch を activation の待受に載せ�
     );
 
     setInstantCommandPrefix("@");
-    setQuery("@g");
+    dispatchQueryInput("@g");
     await vi.runAllTimersAsync(); // 30ms デバウンス発火 → instant IPC in-flight（never resolve）
     expect(interpKind()).toBe("instant");
 
@@ -912,7 +918,7 @@ describe("flush スコープ（instant fetch を activation の待受に載せ�
     // single-slot の refreshInFlight を上書きしない。instant fetch が誤って flush 追跡に
     // 載っていれば、never-resolve な instant IPC が slot に残り activation がハングする。
     // （plain "x" は後続 refresh が slot を上書き→クリアし回帰を隠すため使わない・code-reviewer 指摘）
-    setQuery("/x");
+    dispatchQueryInput("/x");
     await vi.runAllTimersAsync();
     expect(interpKind()).toBe("command");
 
@@ -942,8 +948,8 @@ describe("debounce adapter（leading/trailing 直接固定）", () => {
   });
 
   it("leading edge: 50ms 経過前に api.search が即発火し、50ms 後に trailing で再発火する", async () => {
-    setQuery("file");
-    await settleEffect(); // query effect + leading の runRefresh（<50ms なので trailing 未発火）
+    dispatchQueryInput("file");
+    await settleEffect(); // dispatch + leading の runRefresh（<50ms なので trailing 未発火）
     expect(api.search).toHaveBeenCalledTimes(1); // leading のみ
     expect(api.search).toHaveBeenLastCalledWith("file");
 
@@ -953,11 +959,11 @@ describe("debounce adapter（leading/trailing 直接固定）", () => {
   });
 
   it("burst（50ms 未満の連続入力）は leading 1 回 + trailing 1 回（最後の query）", async () => {
-    setQuery("f");
+    dispatchQueryInput("f");
     await settleEffect(); // leading "f"、trailing 保留
-    setQuery("fi");
+    dispatchQueryInput("fi");
     await settleEffect(); // isPending() true → leading 発火せず re-arm
-    setQuery("fil");
+    dispatchQueryInput("fil");
     await settleEffect(); // re-arm（timer リセット）
     expect(api.search).toHaveBeenCalledTimes(1); // leading "f" のみ
     expect(api.search).toHaveBeenLastCalledWith("f");
@@ -981,23 +987,23 @@ describe("instant debounce adapter（items クリア副作用と最新 filterNam
   });
 
   it("再入力時、候補一覧は 30ms 前（IPC 応答前）に即クリアされる（arm と別関心事）", async () => {
-    setQuery("@goo");
+    dispatchQueryInput("@goo");
     await vi.runAllTimersAsync(); // 30ms 発火 → 候補取得
     expect(getInstantCommandItems().length).toBeGreaterThan(0);
 
     // 別 filterName で再入力: scheduleInstantCommandFetch が同期で items=[] にし 30ms を arm。
-    setQuery("@cl");
-    await settleEffect(); // effect 実行（<30ms・IPC 未発火）
+    dispatchQueryInput("@cl");
+    await settleEffect(); // dispatch 実行（<30ms・IPC 未発火）
     expect(getInstantCommandItems()).toEqual([]); // 古い候補が残らない（誤起動防止の要）
   });
 
   it("burst（30ms 未満の連続入力）は leading なしで、最後の filterName で 1 回だけ IPC 取得", async () => {
     // 呼び出し履歴はグローバル beforeEach の clearAllMocks() が各テスト前にクリア済み。
-    setQuery("@g");
+    dispatchQueryInput("@g");
     await settleEffect(); // arm "g"（leading なし＝即時 IPC は撃たない）
-    setQuery("@go");
+    dispatchQueryInput("@go");
     await settleEffect(); // re-arm "go"
-    setQuery("@goo");
+    dispatchQueryInput("@goo");
     await settleEffect(); // re-arm "goo"
     expect(api.getInstantCommands).not.toHaveBeenCalled(); // 30ms 前は未発火（leading なし）
 
@@ -1012,7 +1018,7 @@ describe("instant debounce adapter（items クリア副作用と最新 filterNam
 describe("executeInstantCommandSelected rollback（world 世代が進んだら復元しない）", () => {
   it("await 中にモード遷移で world 世代が進むと、失敗しても候補を復元しない（preGen+1 不成立）", async () => {
     vi.mocked(api.getInstantCommands).mockResolvedValue([CMD_GOOGLE, CMD_CLIP]);
-    setQuery("@google X");
+    dispatchQueryInput("@google X");
     await vi.runAllTimersAsync();
     expect(interpKind()).toBe("instant");
     expect(results()).toHaveLength(2); // instant 候補が入っている
@@ -1136,5 +1142,33 @@ describe("perf requestId 相関", () => {
     const lastDoneId = doneCalls.at(-1)![0];
     expect(startQueryCalls.some((c) => c[0] === lastDoneId)).toBe(true);
     expect(getSearchGeneration()).toBe(lastDoneId);
+  });
+});
+
+// ── 経路分離（raw setQuery は検索を起動しない・#537）──────────────────────────
+// suppressNextQueryEffectRefresh 撤廃の直接証明。query effect を廃し dispatchQueryInput を唯一の
+// 検索起動起点にしたため、プログラム的リセット経路（resetForShow・instant 成功等）が使う raw setQuery は
+// 検索を起動しない。ユーザー入力経路（dispatchQueryInput）だけが起動する、という経路分離を固定する。
+
+describe("経路分離（raw setQuery は検索を起動しない・#537）", () => {
+  beforeEach(async () => {
+    // 先行 describe が漏らす indexing=true を false に戻す（indexing 中は refreshResults が search を呼ばない）。
+    vi.mocked(api.getIndexingState).mockResolvedValue(false);
+    await initIndexingState();
+    await vi.runAllTimersAsync();
+    vi.mocked(api.search).mockResolvedValue([]);
+    vi.mocked(api.search).mockClear();
+  });
+
+  it("raw setQuery は dispatch を経由せず api.search を起動しない / dispatchQueryInput は起動する", async () => {
+    // プログラム的リセット経路の代理: raw setQuery（旧 suppress で守っていた「effect を黙らせる」対象）。
+    setQuery("hello");
+    await vi.runAllTimersAsync();
+    expect(api.search).not.toHaveBeenCalled();
+
+    // 対照: ユーザー入力経路は検索を起動する（唯一の起動起点であることの確認）。
+    dispatchQueryInput("hello");
+    await vi.runAllTimersAsync();
+    expect(api.search).toHaveBeenCalledWith("hello");
   });
 });

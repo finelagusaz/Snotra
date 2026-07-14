@@ -10,7 +10,7 @@ const {
   mockNoResults, mockExitToolSelection, mockExitFolderExpansion,
   mockEnterToolSelection, mockActivateSelected, mockEnterFolderExpansion,
   mockNavigateFolderUp, mockMoveSelectionUp, mockMoveSelectionDown,
-  mockSetQuery, mockSetFolderFilter, mockClearLaunchNotice,
+  mockSetQuery, mockDispatchQueryInput, mockSetFolderFilter, mockClearLaunchNotice,
   mockHideMainWindow, mockViewKind, mockInterpKind, mockAllowsFolderNav,
 } = vi.hoisted(() => {
   globalThis.requestAnimationFrame = ((cb: Function) =>
@@ -39,6 +39,7 @@ const {
     mockMoveSelectionUp: vi.fn(),
     mockMoveSelectionDown: vi.fn(),
     mockSetQuery: vi.fn(),
+    mockDispatchQueryInput: vi.fn(),
     mockSetFolderFilter: vi.fn(),
     mockClearLaunchNotice: vi.fn(),
     mockHideMainWindow: vi.fn(),
@@ -65,6 +66,7 @@ const {
 vi.mock("../stores/search", () => ({
   query: mockQuery,
   setQuery: mockSetQuery,
+  dispatchQueryInput: mockDispatchQueryInput,
   results: mockResults,
   selected: mockSelected,
   folderState: mockFolderState,
@@ -255,23 +257,24 @@ describe("SearchWindow キーボードハンドリング", () => {
   // ── ツール選択中の入力無効化 ──
 
   describe("ツール選択中の入力無効化", () => {
-    it("ツール選択中に文字入力しても setQuery が呼ばれない", () => {
+    it("ツール選択中に文字入力しても dispatch が呼ばれない", () => {
       mockToolSelectionState.mockReturnValue({ targetPath: "C:\\file.txt" });
 
       const { container } = renderSearchWindow();
       const input = getInput(container);
       fireEvent.input(input, { target: { value: "abc" } });
 
-      expect(mockSetQuery).not.toHaveBeenCalled();
+      // tool ガードで早期リターン: results 経路（dispatchQueryInput）も folder 経路（setFolderFilter）も不発火。
+      expect(mockDispatchQueryInput).not.toHaveBeenCalled();
       expect(mockSetFolderFilter).not.toHaveBeenCalled();
     });
 
-    it("通常モードで文字入力すると setQuery が呼ばれる", () => {
+    it("通常モードで文字入力すると dispatchQueryInput が呼ばれる", () => {
       const { container } = renderSearchWindow();
       const input = getInput(container);
       fireEvent.input(input, { target: { value: "test" } });
 
-      expect(mockSetQuery).toHaveBeenCalledWith("test");
+      expect(mockDispatchQueryInput).toHaveBeenCalledWith("test");
     });
 
     it("インスタントコマンドモード中も文字入力を受理する（綻び2: 入力可否は軸1のみ依存）", () => {
@@ -281,7 +284,8 @@ describe("SearchWindow キーボードハンドリング", () => {
       const input = getInput(container);
       fireEvent.input(input, { target: { value: "@goo" } });
 
-      expect(mockSetQuery).toHaveBeenCalledWith("@goo");
+      // instant は viewKind()==="results" ゆえ handleInput の else 枝（dispatchQueryInput）を通る。
+      expect(mockDispatchQueryInput).toHaveBeenCalledWith("@goo");
     });
   });
 

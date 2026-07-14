@@ -1027,10 +1027,10 @@ describe("instant debounce adapter（items クリア副作用と最新 filterNam
   });
 });
 
-// ── executeInstantCommandSelected rollback の preGen+1 判定（#534 Step 5c-4）────
+// ── executeInstantCommandSelected rollback の disturbed() 判定（#534 Step 5c-4, #539）────
 
 describe("executeInstantCommandSelected rollback（world 世代が進んだら復元しない）", () => {
-  it("await 中にモード遷移で world 世代が進むと、失敗しても候補を復元しない（preGen+1 不成立）", async () => {
+  it("await 中にモード遷移で world 世代が進むと、失敗しても候補を復元しない（disturbed）", async () => {
     vi.mocked(api.getInstantCommands).mockResolvedValue([CMD_GOOGLE, CMD_CLIP]);
     dispatchQueryInput("@google X");
     await vi.runAllTimersAsync();
@@ -1043,15 +1043,15 @@ describe("executeInstantCommandSelected rollback（world 世代が進んだら�
       () => new Promise((resolve) => (settleExec = resolve)),
     );
 
-    const p = activateSelected(); // preGen 捕捉 → withLaunchLifecycle が +1 → executeInstantCommand 待ち
+    const p = activateSelected(); // withLaunchLifecycle が invalidate 直後に launchGen 捕捉 → executeInstantCommand 待ち
     await Promise.resolve();
 
-    // await 中に world 世代をさらに進める（モード遷移）→ current() が preGen+1 を超える
+    // await 中に world 世代をさらに進める（モード遷移）→ current() が launchGen を超える＝disturbed
     vi.mocked(api.getMatchingTools).mockResolvedValue([TOOL_1, TOOL_2]);
     await enterToolSelection(FILE_RESULT);
     expect(toolSelectionState()).not.toBeNull();
 
-    // 失敗させる → onFailure: current() !== preGen+1 なので候補リストを復元しない
+    // 失敗させる → onFailure: disturbed() が true なので候補リストを復元しない
     settleExec({ status: "failed", code: 1, message: "nope" });
     const ok = await p;
 

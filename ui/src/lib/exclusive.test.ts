@@ -67,7 +67,7 @@ describe("createExclusive", () => {
     });
 
     // await を挟まずに確認: task の同期部が lane() 呼び出しと同一 tick で走っている
-    // （preGen 捕捉・selected() 読みが現行と同 tick で走る不変条件の担保）。
+    // （保存状態捕捉・selected() 読みが現行と同 tick で走る不変条件の担保）。
     expect(syncRan).toBe(true);
 
     release();

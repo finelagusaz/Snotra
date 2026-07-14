@@ -957,6 +957,75 @@ describe("executeInstantCommandSelected rollback（world 世代が進んだら�
   });
 });
 
+// ── 起動レーン mutex（activationLane・二重起動拒否・入れ子非ブロック・#535）──────
+
+describe("起動レーン mutex（activationLane）", () => {
+  it("起動 in-flight 中の 2 回目の activate は false で弾かれる（launch は 1 回）", async () => {
+    // 先行 describe が indexing=true を漏らすため false に戻す
+    vi.mocked(api.getIndexingState).mockResolvedValue(false);
+    await initIndexingState();
+
+    // ツール選択モードで検証する。launchWithSelectedTool は results() ではなく frame.tools
+    // （toolSelectionState）を読むため、withLaunchLifecycle の clearResults() 後も 2 本目が起動
+    // 対象を見つけられる＝mutex の有無を判別できる（通常モードは clearResults() で 2 本目が空 results
+    // により無条件 false になり、mutex が壊れていても launchItem が増えず判別不能）。
+    vi.mocked(api.getMatchingTools).mockResolvedValue([TOOL_1, TOOL_2]);
+    await enterToolSelection(FILE_RESULT);
+    expect(toolSelectionState()).not.toBeNull();
+    setSelected(0);
+
+    // launchWithTool を deferred にして 1 本目を in-flight のまま滞留させる
+    let settleLaunch!: (v: Awaited<ReturnType<typeof api.launchWithTool>>) => void;
+    vi.mocked(api.launchWithTool).mockImplementation(
+      () => new Promise((resolve) => (settleLaunch = resolve)),
+    );
+
+    const p1 = activateSelected(); // tool 起動 in-flight（launchWithTool 待ちで滞留）
+    await vi.runAllTimersAsync(); // 1 本目が launchWithTool の await に到達するまで進める
+    expect(api.launchWithTool).toHaveBeenCalledOnce();
+    expect(toolSelectionState()).not.toBeNull(); // onSuccess 未実行＝frame は生きている
+
+    // 2 本目: activationLane が in-flight を検知して task を起動せず undefined → ?? false
+    const r2 = await activateSelected();
+    expect(r2).toBe(false);
+    expect(api.launchWithTool).toHaveBeenCalledOnce(); // 2 本目は launch を呼ばない（mutex が阻止）
+
+    // 1 本目を解放 → true（解放後は次の起動が可能）
+    settleLaunch({ status: "ok", code: 0, message: null });
+    expect(await p1).toBe(true);
+  });
+
+  it("入れ子経路（modal → tool 起動）が自己ブロックしない", async () => {
+    vi.mocked(api.getIndexingState).mockResolvedValue(false);
+    await initIndexingState();
+
+    // clearAllMocks は実装を復元しないため、先行テストが仕込んだ deferred launchWithTool を
+    // resolved へ戻す（never-resolve のまま待つとタイムアウトする）。
+    vi.mocked(api.launchWithTool).mockResolvedValue({ status: "ok", code: 0, message: null });
+
+    // ツール選択モードへ（tools=2）
+    vi.mocked(api.getMatchingTools).mockResolvedValue([TOOL_1, TOOL_2]);
+    await enterToolSelection(FILE_RESULT);
+    expect(toolSelectionState()).not.toBeNull();
+    expect(results()).toHaveLength(2);
+    setSelected(0); // TOOL_1 を選択
+
+    // activateSelected → tryModalActivate（lane の前）→ launchWithSelectedTool → activationLane。
+    // 外側 activateSelected は modal 非 null で early return するため lane を二重取得せず、
+    // 内側 launchWithSelectedTool が lane を取れる（自己ブロックしない）。
+    const ok = await activateSelected();
+
+    expect(ok).toBe(true);
+    expect(api.launchWithTool).toHaveBeenCalledOnce();
+    expect(api.launchWithTool).toHaveBeenCalledWith(
+      FILE_RESULT.path,
+      "",
+      TOOL_1.exe,
+      TOOL_1.args,
+    );
+  });
+});
+
 // ── perf requestId 相関（#534 Step 5c-5）──────────────────────────────────────
 
 describe("perf requestId 相関", () => {

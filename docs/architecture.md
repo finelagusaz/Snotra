@@ -213,6 +213,7 @@ sequenceDiagram
 
 **補足**:
 - 検索/データ lane の world 世代は `latestRun` primitive（`searchLane`）が所有する。`run()` が実行ごとに世代を +1 して `isStale()` を渡し、応答が返ったとき最新世代と比較して古いレスポンスを破棄する。モード遷移・起動は `searchLane.invalidate()` で世代を進め in-flight 検索を supersede する（#534）
+- 起動（launch/activate）lane は `exclusive` primitive（`activationLane`）が単一の in-flight フラグを所有し、実行中の 2 つ目の起動を `false` で拒否する（single-flight mutex）。検索 lane の supersede と対をなす 2 方針——検索は「新しい実行が古い実行を無効化」、起動は「実行中は 2 つ目を拒否」——を別名 primitive で明示する（#535）
 - アイコンは `ipc::Response` でバイナリ返却するため、CSP の `connect-src` に `ipc: http://ipc.localhost` が必須（`tauri dev` では不要だがリリースビルドで必要）
 
 ## 状態遷移（概要）

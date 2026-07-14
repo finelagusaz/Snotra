@@ -5,6 +5,7 @@ import * as api from "../lib/invoke";
 import { findCommand } from "../lib/commands";
 import { perfStartSearch, perfMarkSearchDone, perfCancelSearch } from "../lib/perf";
 import { createLatestRun } from "../lib/latestRun";
+import { createExclusive } from "../lib/exclusive";
 import { clampSelectedIndex, computeParentDir } from "../lib/folderNav";
 import { trace } from "../lib/trace";
 import { folderState, setFolderState, folderFilter, setFolderFilter } from "./folder";
@@ -61,7 +62,6 @@ let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 /** leading edge: デバウンス区間の最初の入力で即時発火済みなら true */
 let leadingFired = false;
 let refreshInFlight: Promise<void> | undefined;
-let activationInFlight = false;
 let suppressNextQueryEffectRefresh = false;
 
 /** 検索/データ lane の supersede 調停 primitive（world 世代 + staleness を所有・choke point）。
@@ -71,6 +71,13 @@ let suppressNextQueryEffectRefresh = false;
  *  flush 追跡（`refreshInFlight`/`flushPendingRefresh`）は refresh lane 固有のため runner に吸収せず
  *  下の `trackRefresh` に残す（instant/直接 refreshResults を待受対象に載せない現挙動を保つ）。 */
 const searchLane = createLatestRun();
+
+/** 起動（launch/activate）lane の mutex 調停 primitive（in-flight フラグを内部で所有・choke point）。
+ *  「実行中なら 2 つ目を拒否（`undefined`）、完了時に必ず解放」を `createExclusive()` が担う。
+ *  検索 lane の supersede（`searchLane`）と対をなす single-flight の並行方針（#535）。
+ *  入れ子で起動系が呼ばれる経路（`activateSelected` → `tryModalActivate` → `launchWithSelectedTool` 等）は、
+ *  `tryModalActivate` を `activationLane(...)` の前に置く「呼び出し順」で自己ブロックを回避する（再入は許可しない）。 */
+const activationLane = createExclusive();
 
 export type ViewKind = "results" | "folder" | "tool";
 export type InterpKind = "plain" | "command" | "instant";
@@ -481,8 +488,8 @@ async function resolveActivationTarget(
  *  await→成功/失敗分岐→finally で launching 解除」を1箇所に閉じ込め、`launchAndReset` /
  *  `launchWithSelectedTool` / `executeInstantCommandSelected` の三重複を解消する（#431）。
  *  呼び出し側は「起動 API 呼び出し」と「成功/失敗時の後始末（trace・状態復元）」だけを渡す。
- *  `activationInFlight` ガードは呼び出し元ごとに事前条件チェックの粒度が異なる（tool フレーム有無・
- *  instant コマンド解決など）ため、ここでは扱わず各呼び出し元が個別に管理する。 */
+ *  起動レーンの排他（`activationLane`）は呼び出し元ごとに事前条件チェックの粒度が異なる（tool フレーム有無・
+ *  instant コマンド解決など）ため、ここでは扱わず各呼び出し元が `activationLane(...)` で包んで担う。 */
 async function withLaunchLifecycle(
   launch: () => Promise<api.LaunchResult>,
   onSuccess: (result: api.LaunchResult) => void,
@@ -507,12 +514,10 @@ async function withLaunchLifecycle(
 }
 
 async function launchWithSelectedTool(): Promise<boolean> {
-  if (activationInFlight) return false;
   const frame = toolSelectionState();
   if (!frame) return false;
 
-  activationInFlight = true;
-  try {
+  return (await activationLane(async () => {
     const idx = selected();
     const tool = frame.tools[idx];
     if (!tool) return false;
@@ -542,9 +547,7 @@ async function launchWithSelectedTool(): Promise<boolean> {
         void runRefresh();
       },
     );
-  } finally {
-    activationInFlight = false;
-  }
+  })) ?? false;
 }
 
 async function enterToolSelection(result: SearchResult): Promise<boolean> {
@@ -628,9 +631,7 @@ async function launchAndReset(result: SearchResult): Promise<boolean> {
 }
 
 async function executeInstantCommandSelected(): Promise<boolean> {
-  if (activationInFlight) return false;
-  activationInFlight = true;
-  try {
+  return (await activationLane(async () => {
     const items = getInstantCommandItems();
     const idx = clampSelectedIndex(selected(), items.length);
     const cmd = items[idx];
@@ -678,14 +679,13 @@ async function executeInstantCommandSelected(): Promise<boolean> {
         }
       },
     );
-  } finally {
-    activationInFlight = false;
-  }
+  })) ?? false;
 }
 
 /** ツール選択 / インスタントコマンドモードなら対応するディスパッチを返す。通常モードなら null
- *  でフォールスルー。index 指定時は先に選択を移す。activationInFlight ガードより前に呼ぶこと
- *  （ディスパッチ先が各自の並行ガードを持つ。順序は plan-review で固定）。 */
+ *  でフォールスルー。index 指定時は先に選択を移す。`activationLane(...)` に入る前に呼ぶこと
+ *  （modal 経路はディスパッチ先が自前の lane を取るため、外側 lane に入る前に分岐を確定させる。
+ *  順序は plan-review で固定）。 */
 function tryModalActivate(index?: number): Promise<boolean> | null {
   if (viewKind() === "tool") {
     // ツール選択中: インデックスを直接使う（同一 exe の複数ツールを正確に区別）
@@ -702,9 +702,7 @@ function tryModalActivate(index?: number): Promise<boolean> | null {
 async function activateSelected(): Promise<boolean> {
   const modal = tryModalActivate();
   if (modal !== null) return modal;
-  if (activationInFlight) return false;
-  activationInFlight = true;
-  try {
+  return (await activationLane(async () => {
     const target = await resolveActivationTarget();
     if (!target) return false;
     const { idx, result } = target;
@@ -712,17 +710,13 @@ async function activateSelected(): Promise<boolean> {
       setSelected(idx);
     }
     return launchAndReset(result);
-  } finally {
-    activationInFlight = false;
-  }
+  })) ?? false;
 }
 
 async function activateSelectedByIndex(index: number): Promise<boolean> {
   const modal = tryModalActivate(index);
   if (modal !== null) return modal;
-  if (activationInFlight) return false;
-  activationInFlight = true;
-  try {
+  return (await activationLane(async () => {
     await flushPendingRefresh();
     const items = results();
     const idx = clampSelectedIndex(index, items.length);
@@ -732,9 +726,7 @@ async function activateSelectedByIndex(index: number): Promise<boolean> {
       setSelected(idx);
     }
     return launchAndReset(result);
-  } finally {
-    activationInFlight = false;
-  }
+  })) ?? false;
 }
 
 function resetForShow() {

@@ -23,7 +23,7 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 - `search.ts`: 検索状態管理（クエリ/結果/選択/モード切替/`shouldShowResults` メモシグナル）の調停役
   - 主要な公開関数: `resetForShow()`（window-shown 時の全状態リセット）、`refreshResults()`（ソースに応じた検索実行）、`initIndexingState()`（起動時のインデックス状態初期化 + `indexing-started` / `indexing-complete` リスナー登録）
   - `suppressNextQueryEffectRefresh` フラグで query effect の不要な再実行を抑制
-  - **横断規約の choke point**: `searchLane`（`lib/latestRun.ts` の `createLatestRun()` インスタンス。検索/データ lane の world 世代 + staleness を所有。`run()`＝最新実行、`invalidate()`＝モード遷移・起動が in-flight を supersede、`current()`＝perf requestId 源）、`withLaunchLifecycle()`（起動フロー三種の共通骨格）、`saveView()`/`restoreView()`（`SavedViewState` の退避/復元）、`allowsFolderNav()`（フォルダ展開・ツール選択遷移の許可述語、`viewKind`/`interpKind` 由来）
+  - **横断規約の choke point**: `searchLane`（`lib/latestRun.ts` の `createLatestRun()` インスタンス。検索/データ lane の world 世代 + staleness を所有。`run()`＝最新実行、`invalidate()`＝モード遷移・起動が in-flight を supersede、`current()`＝perf requestId 源）、`activationLane`（`lib/exclusive.ts` の `createExclusive()` インスタンス。起動 lane の単一 mutex。実行中の 2 つ目の起動を拒否＝single-flight。`searchLane` の supersede と対をなす並行方針・#535）、`withLaunchLifecycle()`（起動フロー三種の共通骨格）、`saveView()`/`restoreView()`（`SavedViewState` の退避/復元）、`allowsFolderNav()`（フォルダ展開・ツール選択遷移の許可述語、`viewKind`/`interpKind` 由来）
   - flush 追跡（`refreshInFlight`/`trackRefresh`/`flushPendingRefresh`）は refresh lane 固有のため `searchLane` に吸収せず search.ts に残す（instant fetch や直接 `refreshResults()` を activation の待受対象に載せない現挙動を保つ・#534）
   - `launchNotice.ts` を re-export し公開 API を単一箇所に保つ（`instantCommand.ts` は re-export しない・関数を個別 import）
 - `instantCommand.ts`: インスタントコマンド候補一覧の状態（`instantCommandItems`）と 30ms デバウンス IPC 取得（`scheduleInstantCommandFetch`）。`api`/`lib/types` のみに依存し `search.ts` へ逆依存しない（循環 import 回避）。staleness 判定・世代更新は呼び出し側が検索/データ lane と共有する `run`（`searchLane.run`）を注入して担う（旧: `nextRequestId`/`isStale` hooks。#534 で `run` 1 本へ集約）
@@ -46,6 +46,7 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 - `truncatePath.ts`: Canvas API でフォント依存のピクセル幅を計測し、長いパスを中間省略する（`truncatePath`）。結果はキャッシュ済み
 - `windowHeight.ts`: ウィンドウの論理高さ計算（`computeWindowHeight`）。結果表示・トースト有無に応じた高さをピクセルで算出。テスト可能なため `stores/` から分離
 - `latestRun.ts`: latest-wins（supersede）調停 primitive（`createLatestRun()`）。world 世代 + staleness を所有し `run`（最新実行）/`invalidate`（supersede）/`current`（世代読取）を提供。SolidJS/api 非依存の純粋ファクトリ。`stores/search.ts` の `searchLane` が唯一の利用者（#534。flush 追跡は含まない＝search.ts 側の関心）
+- `exclusive.ts`: mutex/single-flight 調停 primitive（`createExclusive()`）。in-flight フラグを内部で所有し「実行中なら拒否（`undefined`）、完了時に必ず解放（try/finally）」を提供する callable を返す。task は同期起動する（呼び出し側の同期プレフィックスのキャプチャタイミングを保つ）。SolidJS/api 非依存の純粋ファクトリ。`stores/search.ts` の `activationLane`（起動 lane）が唯一の利用者。検索 lane の `latestRun`（supersede）と対をなす（#535）
 - `perf.ts`: 開発時専用パフォーマンス計測（`localStorage.snotra_perf=1` で有効化）。入力→検索→描画の3フェーズ時間を計測し P50/P95 を `console.table` 出力
 - `trace.ts`: 開発時専用トレースログ（`localStorage.snotra_trace=1` で有効化）。`trace(event, data)` で `console.debug` 出力
 

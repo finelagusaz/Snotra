@@ -12,7 +12,7 @@ describe("createLatestRun", () => {
   it("current() は 0 から始まり run/invalidate で +1 単調に進む", () => {
     const lane = createLatestRun();
     expect(lane.current()).toBe(0);
-    expect(lane.invalidate()).toBe(1);
+    lane.invalidate();
     expect(lane.current()).toBe(1);
     void lane.run(async () => {});
     expect(lane.current()).toBe(2);

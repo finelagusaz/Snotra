@@ -1,4 +1,5 @@
 import type { InstantCommand, SearchResult } from "../lib/types";
+import type { LatestRun } from "../lib/latestRun";
 import * as api from "../lib/invoke";
 
 /** インスタントコマンド候補の IPC 取得デバウンス（高速タイピング時の不要な IPC を削減）。 */
@@ -45,8 +46,9 @@ export function cancelInstantCommandDebounce() {
 export function scheduleInstantCommandFetch(
   filterName: string,
   deps: {
-    /** 検索/データ lane と共有する `latestRun` の run。最新実行だけが結果を適用する。 */
-    run: <T>(task: (ctx: { isStale: () => boolean }) => Promise<T>) => Promise<T>;
+    /** 検索/データ lane と共有する `latestRun` の run（型契約は latestRun.ts が SSOT）。
+     *  最新実行だけが結果を適用する（task は ctx.isStale のみ参照する）。 */
+    run: LatestRun["run"];
     onFetched: (results: SearchResult[]) => void;
     onError: (error: unknown) => void;
   },

@@ -20,8 +20,9 @@ export interface LatestRun {
    *  task の戻り promise をそのまま返す（in-flight 追跡はしない）。
    *  task が同期 throw しても `run()` 自体は throw せず reject 済み promise を返す。 */
   run: <T>(task: (ctx: LatestRunContext) => Promise<T>) => Promise<T>;
-  /** world 世代を進め、in-flight タスクを supersede する（非 lane コード用）。新しい世代番号を返す。 */
-  invalidate: () => number;
+  /** world 世代を進め、in-flight タスクを supersede する（非 lane コード用）。
+   *  世代の読み取りが要る呼び出し側（perf・baseline 比較）は `current()` を使う。 */
+  invalidate: () => void;
   /** 現在の world 世代番号。 */
   current: () => number;
 }
@@ -44,7 +45,9 @@ export function createLatestRun(): LatestRun {
 
   return {
     run,
-    invalidate: () => ++generation,
+    invalidate: () => {
+      ++generation;
+    },
     current: () => generation,
   };
 }

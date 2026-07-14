@@ -10,8 +10,8 @@
  *  2 つの並行方針を別名 primitive として明示する。
  *
  *  **task は同期起動する**（`await task()` は `task()` を同期呼び出ししてから await するため、task の
- *  同期プレフィックス——例: `executeInstantCommandSelected` の `preGen` 捕捉・`selected()` 読み——が
- *  `Exclusive` 呼び出しと同一同期実行内で走る）。この同期起動を崩す（`Promise.resolve().then(task)` 等で
+ *  同期プレフィックス——例: `executeInstantCommandSelected` の保存状態（savedResults/savedSelected/
+ *  savedItems）捕捉・`selected()` 読み——が `Exclusive` 呼び出しと同一同期実行内で走る）。この同期起動を崩す（`Promise.resolve().then(task)` 等で
  *  遅延させる）と、呼び出し側が同期に読むシグナルのキャプチャタイミングが崩れる。
  *
  *  **再入は許可しない**（トークン/深度カウンタを持たない）。入れ子で起動系が呼ばれる経路は、mutex に

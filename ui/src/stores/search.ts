@@ -491,25 +491,34 @@ async function resolveActivationTarget(
  *  await→成功/失敗分岐→finally で launching 解除」を1箇所に閉じ込め、`launchAndReset` /
  *  `launchWithSelectedTool` / `executeInstantCommandSelected` の三重複を解消する（#431）。
  *  呼び出し側は「起動 API 呼び出し」と「成功/失敗時の後始末（trace・状態復元）」だけを渡す。
+ *  また自身の `invalidate()` 直後に世代を捕捉し、「自分の launch を超えて world が動いたか」を答える
+ *  `disturbed()` 述語を成功/失敗分岐へ配る（world 世代 comparison の choke point。呼び出し側は
+ *  invalidate の bump 数を知らずに `if (!disturbed())` で保存状態の復元可否を判定できる・#539）。
  *  起動レーンの排他（`activationLane`）は呼び出し元ごとに事前条件チェックの粒度が異なる（tool フレーム有無・
  *  instant コマンド解決など）ため、ここでは扱わず各呼び出し元が `activationLane(...)` で包んで担う。 */
 async function withLaunchLifecycle(
   launch: () => Promise<api.LaunchResult>,
-  onSuccess: (result: api.LaunchResult) => void,
-  onFailure: (result: api.LaunchResult) => void,
+  onSuccess: (result: api.LaunchResult, disturbed: () => boolean) => void,
+  onFailure: (result: api.LaunchResult, disturbed: () => boolean) => void,
 ): Promise<boolean> {
   clearLaunchNotice();
   setLaunching(true);
   try {
     searchLane.invalidate();
+    // この launch が確立した world 世代。await 中に他の invalidate/run が走れば current() が
+    // これを超える＝disturbed。呼び出し側は invalidate の bump 数を知らずに staleness を問える。
+    const launchGen = searchLane.current();
+    const disturbed = () => searchLane.current() !== launchGen;
     clearResults();
     const launchResult = await launch();
     if (launchResult.status !== "ok") {
       notifyLaunchFailure(launchResult);
-      onFailure(launchResult);
+      onFailure(launchResult, disturbed);
       return false;
     }
-    onSuccess(launchResult);
+    // disturbed は現状 onSuccess では消費されない（起動成功後の後始末は無条件）。onFailure と
+    // 対称の署名を保つため両分岐へ渡す（consumer が生まれたときに配線済みにしておく意図ではない）。
+    onSuccess(launchResult, disturbed);
     return true;
   } finally {
     setLaunching(false);
@@ -647,8 +656,6 @@ async function executeInstantCommandSelected(): Promise<boolean> {
     const savedResults = results();
     const savedSelected = selected();
     const savedItems = [...items];
-    // withLaunchLifecycle が世代を+1する直前の値。await 中の追加変化を検知するベースライン。
-    const preGen = searchLane.current();
 
     return await withLaunchLifecycle(
       () => api.executeInstantCommand(cmd.name, instantQuery),
@@ -660,16 +667,16 @@ async function executeInstantCommandSelected(): Promise<boolean> {
         setQuery("");
         trace("search:instant_command:done", { name: cmd.name });
       },
-      (launchResult) => {
+      (launchResult, disturbed) => {
         trace("search:instant_command:error", {
           name: cmd.name,
           status: launchResult.status,
           code: launchResult.code,
           message: launchResult.message,
         });
-        // 失敗時: onFailure 判定時点で world 世代が preGen+1（withLaunchLifecycle の 1 bump のみ）
-        // ＝await 中に他の変化が無かったときだけ候補リストを復元する。
-        if (searchLane.current() === preGen + 1) {
+        // 失敗時: await 中に world が動いていなければ（＝この launch のみ）候補リストを復元する。
+        // 世代比較は withLaunchLifecycle が所有する disturbed() 述語に委ねる（生の +1 算術を持たない・#539）。
+        if (!disturbed()) {
           searchLane.invalidate();
           setInstantCommandItems(savedItems);
           updateResults(savedResults);

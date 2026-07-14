@@ -82,7 +82,7 @@ await 地点 1:
 `await` 後に状態を参照・復元する箇所で `latestRun` の `isStale()`（等）による世代チェックがあるか？
 
 - lane タスクが `searchLane.run()` の ctx（`isStale`/`requestId`）を受け取り、`await` 後に `if (isStale()) return;` で適用スキップしているか
-- 保存状態を復元する箇所で `await` 前に `searchLane.current()` をキャプチャし、`await` 後に `searchLane.current() === captured + 1` 等で「他変化なし」を検証しているか（例: `executeInstantCommandSelected` の失敗ロールバック）
+- 保存状態を復元する箇所で「他変化なし」を検証しているか。起動フローなら `withLaunchLifecycle` が配る `disturbed()` 述語（`if (!disturbed())`）で、それ以外は `await` 前に `searchLane.current()` をキャプチャした世代比較で検証する（例: `executeInstantCommandSelected` の失敗ロールバックは `disturbed()` を使う・#539）
 - 検証なしで `setResults` / `setSelected` を呼んでいないか
 
 ### 4c. ローカルキャプチャ
@@ -105,7 +105,7 @@ await 地点 1:
 await 地点 1: <line> — <説明>
   4a 入力ガード:     [OK] launching() で handleInput をブロック
                      [問題] handleInput が launching() を確認していない
-  4b staleness:      [OK] isStale() でスキップ / current() === preGen + 1 で検証済み
+  4b staleness:      [OK] isStale() でスキップ / !disturbed() で検証済み
                      [問題] 無条件で setResults() を呼んでいる
   4c ローカルキャプチャ: [OK] 全 let 変数をキャプチャ済み
                      [問題] instantCommandItems を await 後に直接参照

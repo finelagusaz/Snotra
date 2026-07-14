@@ -18,7 +18,7 @@ $ARGUMENTS が空の場合は、会話の直近の変更内容から対象を推
 このプロダクトのレースコンディションは「`await` の前後で世界が変わりうる」という1点に帰着する。典型的な発生パターン:
 
 1. **状態保存→ `await` → 無条件復元**: `await` 中にユーザー操作で状態が変わると、復元が新しい状態を上書きする
-2. **入力ガード不足**: `await` 中にユーザーがクエリを変更し、query effect が新しい検索を発火する
+2. **入力ガード不足**: `await` 中にユーザーがクエリを変更し、`dispatchQueryInput` が新しい検索を発火する
 3. **世代カウンタ検証漏れ**: `latestRun` の `isStale()`（world 世代カウンタを内包。旧: `searchGeneration` 直読）による staleness チェックを新コードに適用し忘れる
 4. **再入**: 同じ async 関数が `await` 中に再度呼び出される
 
@@ -57,7 +57,7 @@ await 地点 1:
 
 | 経路 | トリガー | 影響する状態 |
 |------|---------|------------|
-| `handleInput` → `setQuery` → query effect | ユーザーのキー入力 | `query`, `results`, `selected`, `searchLane` 世代（`run`/`invalidate`）, `instantCommandItems` |
+| `handleInput` → `dispatchQueryInput` | ユーザーのキー入力 | `query`, `results`, `selected`, `searchLane` 世代（`run`/`invalidate`）, `instantCommandItems` |
 | `handleKeyDown` → `activateSelected` | Enter キー | `activationLane`（in-flight）, `results`, `selected` |
 | `handleKeyDown` → `exitFolderExpansion` | Escape キー | `folderState`, `results`, `selected`, `searchLane` 世代（`invalidate`） |
 | `resetForShow` | `window-shown` イベント | 全状態リセット |

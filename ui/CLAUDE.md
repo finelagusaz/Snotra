@@ -22,7 +22,7 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 
 - `search.ts`: 検索状態管理（クエリ/結果/選択/モード切替/`shouldShowResults` メモシグナル）の調停役
   - 主要な公開関数: `resetForShow()`（window-shown 時の全状態リセット）、`refreshResults()`（ソースに応じた検索実行）、`initIndexingState()`（起動時のインデックス状態初期化 + `indexing-started` / `indexing-complete` リスナー登録）
-  - `suppressNextQueryEffectRefresh` フラグで query effect の不要な再実行を抑制
+  - **検索起動の単一起点**: `dispatchQueryInput(value)`（ユーザー入力ハンドラ `SearchWindow.handleInput` からの明示 dispatch・唯一の検索起動起点）。旧 `createEffect(on(query, ...))` + `suppressNextQueryEffectRefresh` ワンショットフラグを撤廃し、入力解釈を純関数 `interpret`（`lib/interpretQuery.ts`）へ抽出。プログラム的リセット（`resetForShow`・instant 成功時の `setQuery("")` 等）は raw `setQuery` で **dispatch を経由しない別経路**ゆえ検索を起動しない（経路分離＝#537。旧フラグが担っていた「effect を今回だけ黙らせる」役割を構造で置換）
   - **横断規約の choke point**: `searchLane`（`lib/latestRun.ts` の `createLatestRun()` インスタンス。検索/データ lane の world 世代 + staleness を所有。`run()`＝最新実行、`invalidate()`＝モード遷移・起動が in-flight を supersede、`current()`＝perf requestId 源）、`activationLane`（`lib/exclusive.ts` の `createExclusive()` インスタンス。起動 lane の単一 mutex。実行中の 2 つ目の起動を拒否＝single-flight。`searchLane` の supersede と対をなす並行方針・#535）、`withLaunchLifecycle()`（起動フロー三種の共通骨格）、`saveView()`/`restoreView()`（`SavedViewState` の退避/復元）、`allowsFolderNav()`（フォルダ展開・ツール選択遷移の許可述語、`viewKind`/`interpKind` 由来）
   - flush 追跡（`refreshInFlight`/`trackRefresh`/`flushPendingRefresh`）は refresh lane 固有のため `searchLane` に吸収せず search.ts に残す（instant fetch や直接 `refreshResults()` を activation の待受対象に載せない現挙動を保つ・#534）
   - `launchNotice.ts` を re-export し公開 API を単一箇所に保つ（`instantCommand.ts` は re-export しない・関数を個別 import）
@@ -41,6 +41,7 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
   - **`await win.hide()` → `notifyMainHidden()` の順を守る** — `notifyMainHidden` 内の `EmptyWorkingSet` trim を hide 完了後に走らせることで、可視中の再 touch による working set 回収の取りこぼしを避ける（hotkey 経路と同順。#361）
 - `i18n.ts`: 多言語対応（日本語・英語）。`TranslationKey` 型と `t(key, params?)` 関数。`{param}` 形式プレースホルダー対応。SolidJS シグナルで言語を管理し、`setLanguage()` で切替。初期言語は `navigator.language` から同期的に決定（bootstrap 到着前のフラッシュ防止）
 - `folderNav.ts`: フォルダナビゲーション純粋ロジック（`computeParentDir`・`clampSelectedIndex`）。ドライブルート・UNC パス対応。テスト可能なため `stores/` から分離
+- `interpretQuery.ts`: 入力解釈の純関数（`interpret`・`isInstantPrefix`・`ViewKind`/`InterpKind`/`QueryIntent` 型）。「入力（query + prefix + viewKind）→ 意図（plain/command/instant + instant の filterName/instantQuery）」を副作用なしで返す。instant 判定・parse の SSOT。`stores/search.ts` の `interpKind` memo と `dispatchQueryInput` がこれを消費する（SolidJS/api 非依存・テスト可能なため分離・#537）
 - `iconBatch.ts`: バイナリバッチ形式のアイコンデータをパースし、パスごとの Blob URL に変換する（`parseBinaryBatch`）。ResultsSection で使用
 - `lruIconCache.ts`: Blob URL 管理付き LRU アイコンキャッシュ（`LruIconCache` クラス）。ResultsSection で使用
 - `truncatePath.ts`: Canvas API でフォント依存のピクセル幅を計測し、長いパスを中間省略する（`truncatePath`）。結果はキャッシュ済み
@@ -55,7 +56,7 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 
 プレフィックス（デフォルト `@`）で始まる入力はインスタントコマンドモードに入る。`interpKind() === "instant"`（query + prefix からの純粋導出）で判定する。
 
-- **検出**: `query` effect 内でスラッシュコマンド判定より先に `startsWith(prefix)` を評価
+- **検出**: 純関数 `interpret`（`lib/interpretQuery.ts`）が prefix 一致（`isInstantPrefix`）をスラッシュコマンド判定より先に評価。`interpKind` memo と `dispatchQueryInput` の分岐が同一の `interpret` を消費する（分類・parse の SSOT）
 - **結果表示**: `getInstantCommands()` IPC で前方一致フィルタ済みコマンドを取得し `SearchResult[]` に変換
 - **実行**: `executeInstantCommand(name, query)` IPC。クリップボード読み取り・変数展開・ShellExecuteW はバックエンド側
 - **shouldShowResults**: `indexing()` 中でもインスタントコマンドモードなら結果を表示
@@ -135,7 +136,7 @@ vi.mock("../stores/search", () => ({ fn1: mockFn1, fn2: mockFn2 }));
 検索ウィンドウの「モード」は単一の型ではなく、`search.ts` の 2 つの**プリミティブ判別子メモ**で導出する。散在ガードの優先度を一箇所に集約し、生シグナルの直接 if を避ける（SPEC §8.6 状態図 / §18.5 優先度と一対一対応）。
 
 - **軸1 `viewKind()`**（`"results" | "folder" | "tool"`）: 結果リストを占める先頭ビュー。`toolSelectionState() ? "tool" : folderState() ? "folder" : "results"`（tool > folder > results）。tool は folder の上に積まれうる（直交）。
-- **軸2 `interpKind()`**（`"plain" | "command" | "instant"`）: 入力の意味。`viewKind()==="results"` のときだけ非 plain（folder/tool 中は plain）。`query` + `instantCommandPrefix` からの純粋導出（持続ラッチを廃止し、二軸とも真の派生に統一）。
+- **軸2 `interpKind()`**（`"plain" | "command" | "instant"`）: 入力の意味。`viewKind()==="results"` のときだけ非 plain（folder/tool 中は plain）。`query` + `instantCommandPrefix` からの純粋導出（持続ラッチを廃止し、二軸とも真の派生に統一）。分類の実体は純関数 `interpret`（`lib/interpretQuery.ts`）で、memo は `interpret(...).kind`（プリミティブ）を返す。
 - **オーバーレイ**: `indexing()` / `launching()` は軸ではなく boolean。どのモードにも重なる。
 
 実装規約:

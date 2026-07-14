@@ -53,6 +53,8 @@ import {
   activateSelectedByIndex,
   enterToolSelection,
   exitToolSelection,
+  enterFolderExpansion,
+  exitFolderExpansion,
   moveSelectionDown,
   refreshResults,
   resetForShow,
@@ -70,7 +72,7 @@ import {
   getSearchGeneration,
 } from "../stores/search";
 import { setToolSelectionState } from "../stores/tool-selection";
-import { setFolderState } from "../stores/folder";
+import { folderState, setFolderState } from "../stores/folder";
 import { getInstantCommandItems } from "../stores/instantCommand";
 import { perfStartSearch, perfMarkSearchDone } from "../lib/perf";
 
@@ -149,13 +151,13 @@ describe("enterToolSelection", () => {
     expect(selected()).toBe(0);
   });
 
-  it("ツール2件: savedQuery にその時点の query が保存される", async () => {
+  it("ツール2件: launchQuery にその時点の query が保存される", async () => {
     vi.mocked(api.getMatchingTools).mockResolvedValue([TOOL_1, TOOL_2]);
     setQuery("my query");
 
     await enterToolSelection(FILE_RESULT);
 
-    expect(toolSelectionState()!.savedQuery).toBe("my query");
+    expect(toolSelectionState()!.launchQuery).toBe("my query");
   });
 
   it("ツール2件: savedFolderFilter にその時点の folderFilter が保存される", async () => {
@@ -177,12 +179,13 @@ describe("exitToolSelection", () => {
 
   it("toolSelectionState が設定されているとき true を返し toolSelectionState を null にする", () => {
     setToolSelectionState({
+      kind: "tool",
       targetPath: "C:\\foo.txt",
       targetIsFolder: false,
       tools: [TOOL_1, TOOL_2],
       savedResults: [],
       savedSelected: 0,
-      savedQuery: "",
+      launchQuery: "",
       savedFolderFilter: "",
     });
 
@@ -195,12 +198,13 @@ describe("exitToolSelection", () => {
   it("savedResults と savedSelected が復元される", () => {
     const savedResults: SearchResult[] = [FILE_RESULT];
     setToolSelectionState({
+      kind: "tool",
       targetPath: "C:\\foo.txt",
       targetIsFolder: false,
       tools: [TOOL_1, TOOL_2],
       savedResults,
       savedSelected: 0,
-      savedQuery: "",
+      launchQuery: "",
       savedFolderFilter: "",
     });
 
@@ -212,12 +216,13 @@ describe("exitToolSelection", () => {
 
   it("savedFolderFilter が復元される（C1: フォルダ展開中の Escape 復帰）", () => {
     setToolSelectionState({
+      kind: "tool",
       targetPath: "C:\\dir\\sub",
       targetIsFolder: true,
       tools: [TOOL_1, TOOL_2],
       savedResults: [],
       savedSelected: 0,
-      savedQuery: "",
+      launchQuery: "",
       savedFolderFilter: "*.log",
     });
 
@@ -232,12 +237,13 @@ describe("exitToolSelection", () => {
 describe("resetForShow", () => {
   it("ツール選択状態を null にリセットする", () => {
     setToolSelectionState({
+      kind: "tool",
       targetPath: "C:\\foo.txt",
       targetIsFolder: false,
       tools: [TOOL_1, TOOL_2],
       savedResults: [],
       savedSelected: 0,
-      savedQuery: "before",
+      launchQuery: "before",
       savedFolderFilter: "",
     });
 
@@ -260,12 +266,13 @@ describe("resetForShow", () => {
 
   it("ツール選択中の再表示でも同様にリセットされる", () => {
     setToolSelectionState({
+      kind: "tool",
       targetPath: "C:\\bar.exe",
       targetIsFolder: false,
       tools: [TOOL_1, TOOL_2],
       savedResults: [FILE_RESULT],
       savedSelected: 1,
-      savedQuery: "bar",
+      launchQuery: "bar",
       savedFolderFilter: "*.txt",
     });
     setQuery("bar");
@@ -308,12 +315,13 @@ describe("resetForShow", () => {
 describe("activateSelected — ツール選択委譲", () => {
   it("ツール選択中は launchWithTool を呼ぶ", async () => {
     setToolSelectionState({
+      kind: "tool",
       targetPath: "C:\\doc.pdf",
       targetIsFolder: false,
       tools: [TOOL_1],
       savedResults: [],
       savedSelected: 0,
-      savedQuery: "doc",
+      launchQuery: "doc",
       savedFolderFilter: "",
     });
     // selected() === 0 → TOOL_1 が起動対象
@@ -331,12 +339,13 @@ describe("activateSelected — ツール選択委譲", () => {
 
   it("ツール選択中は launchItem を呼ばない", async () => {
     setToolSelectionState({
+      kind: "tool",
       targetPath: "C:\\doc.pdf",
       targetIsFolder: false,
       tools: [TOOL_1],
       savedResults: [],
       savedSelected: 0,
-      savedQuery: "doc",
+      launchQuery: "doc",
       savedFolderFilter: "",
     });
 
@@ -351,12 +360,13 @@ describe("activateSelected — ツール選択委譲", () => {
 describe("launchWithSelectedTool 成功後のクリーンアップ", () => {
   it("toolSelectionState / results / selected / folderFilter がクリアされる", async () => {
     setToolSelectionState({
+      kind: "tool",
       targetPath: "C:\\img.png",
       targetIsFolder: false,
       tools: [TOOL_1, TOOL_2],
       savedResults: [FILE_RESULT],
       savedSelected: 1,
-      savedQuery: "img",
+      launchQuery: "img",
       savedFolderFilter: "*.png",
     });
     setFolderFilter("*.png");
@@ -376,12 +386,13 @@ describe("launchWithSelectedTool 成功後のクリーンアップ", () => {
 describe("refreshResults ガード (C3)", () => {
   it("ツール選択中は api.search を呼ばない", async () => {
     setToolSelectionState({
+      kind: "tool",
       targetPath: "C:\\foo.txt",
       targetIsFolder: false,
       tools: [TOOL_1, TOOL_2],
       savedResults: [],
       savedSelected: 0,
-      savedQuery: "test",
+      launchQuery: "test",
       savedFolderFilter: "",
     });
     // query を "test" にしても refreshResults が早期リターンするはず
@@ -397,12 +408,13 @@ describe("refreshResults ガード (C3)", () => {
 
   it("ツール選択中は api.listFolder も呼ばない（フォルダ展開中の C3）", async () => {
     setToolSelectionState({
+      kind: "tool",
       targetPath: "C:\\dir\\sub",
       targetIsFolder: true,
       tools: [TOOL_1, TOOL_2],
       savedResults: [],
       savedSelected: 0,
-      savedQuery: "",
+      launchQuery: "",
       savedFolderFilter: "",
     });
 
@@ -753,19 +765,21 @@ describe("shouldShowResults", () => {
 // ── viewKind（軸1: ビューフレーム射影） ───────────────────────────────────────
 
 const FOLDER_FRAME = {
+  kind: "folder" as const,
   currentDir: "C:\\test",
   savedResults: [] as SearchResult[],
   savedSelected: 0,
-  savedQuery: "",
+  restoreQuery: "",
 };
 
 const TOOL_FRAME = {
+  kind: "tool" as const,
   targetPath: "C:\\foo.txt",
   targetIsFolder: false,
   tools: [TOOL_1, TOOL_2],
   savedResults: [] as SearchResult[],
   savedSelected: 0,
-  savedQuery: "",
+  launchQuery: "",
   savedFolderFilter: "",
 };
 
@@ -1170,5 +1184,74 @@ describe("経路分離（raw setQuery は検索を起動しない・#537）", ()
     dispatchQueryInput("hello");
     await vi.runAllTimersAsync();
     expect(api.search).toHaveBeenCalledWith("hello");
+  });
+});
+
+// ── ViewStack push/pop（2 段スタック復元・#538）────────────────────────────────
+// results → folder → tool の 2 段スタックを push/pop し、pop 時の復元順序・folderFilter 復帰
+// （tool→folder）・restoreQuery 復帰（folder→results）を公開 API 経由で固定する。exitToolSelection/
+// exitFolderExpansion が委譲する popView の統一規律を特性化する（挙動不変ゆえ常に緑であるべき）。
+
+describe("ViewStack push/pop（2 段スタック復元・#538）", () => {
+  beforeEach(() => {
+    // folder モードの検索（listFolder）と tool 解決（getMatchingTools）を固定
+    vi.mocked(api.listFolder).mockResolvedValue([FILE_RESULT]);
+    vi.mocked(api.getMatchingTools).mockResolvedValue([TOOL_1, TOOL_2]);
+  });
+
+  it("results→folder→tool を push し、pop で folderFilter → restoreQuery の順に復元する", async () => {
+    setQuery("orig");
+
+    // push folder: restoreQuery に離脱時復元用の query を捕捉（enterFolderExpansion は query を変えない）
+    enterFolderExpansion("C:\\dir");
+    await vi.runAllTimersAsync();
+    expect(viewKind()).toBe("folder");
+    expect(folderState()!.restoreQuery).toBe("orig");
+
+    // folder 内でフィルタを設定
+    setFolderFilter("*.log");
+
+    // push tool（folder の上に直交して積む）: savedFolderFilter に下段 folder の filter を、
+    // launchQuery に起動用 query を捕捉する（folder 中 query は不変ゆえ "orig"）
+    await enterToolSelection(FILE_RESULT);
+    expect(viewKind()).toBe("tool");
+    expect(toolSelectionState()!.savedFolderFilter).toBe("*.log");
+    expect(toolSelectionState()!.launchQuery).toBe("orig");
+
+    // pop tool → folder へ戻る: folderFilter 復帰・folderState 残存（下段は残る）
+    expect(exitToolSelection()).toBe(true);
+    expect(viewKind()).toBe("folder");
+    expect(folderFilter()).toBe("*.log");
+    expect(folderState()).not.toBeNull();
+
+    // pop folder → results へ戻る: query 復帰（restoreQuery）・folderState 消滅
+    expect(exitFolderExpansion()).toBe(true);
+    expect(viewKind()).toBe("results");
+    expect(query()).toBe("orig");
+    expect(folderState()).toBeNull();
+  });
+
+  it("pop 順序は tool → folder（Escape 短絡 exitToolSelection() || exitFolderExpansion() で内側優先）", async () => {
+    setQuery("orig");
+    enterFolderExpansion("C:\\dir");
+    await vi.runAllTimersAsync();
+    setFolderFilter("*.log");
+    await enterToolSelection(FILE_RESULT);
+
+    // Escape 相当の短絡: tool が頂点にある間は exitToolSelection が消費し、folder は残る
+    const handledFirst = exitToolSelection() || exitFolderExpansion();
+    expect(handledFirst).toBe(true);
+    expect(viewKind()).toBe("folder"); // tool だけ pop・folder 残存
+
+    // 次の Escape: folder を pop して results へ
+    const handledSecond = exitToolSelection() || exitFolderExpansion();
+    expect(handledSecond).toBe(true);
+    expect(viewKind()).toBe("results");
+  });
+
+  it("exit ガード: スタックが空なら両 exit は false（Escape はウィンドウ非表示へフォールスルー）", () => {
+    // 頂点なし（results）: どちらの exit も自スロット不在で false を返す
+    expect(exitToolSelection()).toBe(false);
+    expect(exitFolderExpansion()).toBe(false);
   });
 });

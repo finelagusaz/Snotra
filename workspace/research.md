@@ -46,11 +46,12 @@
 - `perf.ts` `perfStartSearch(requestId, source)` / `perfMarkSearchDone(requestId, count)` / `perfCancelSearch(requestId)` は `refreshResults` から `requestId` を受け取る。**この requestId は world 世代の値そのもの**。runner 移行後は `run()` の task ctx に `requestId` を渡して供給する。
 - `refreshResults` は **本番コードからは import されていない**（`SearchWindow.tsx` は import しない）。テスト（`search.test.ts`）の直接呼び出し + 内部 `runRefresh` 経由のみ。→ export は維持（テストフック）。
 
-### in-flight 追跡（runner へ吸収）
+### in-flight 追跡（★runner へ吸収しない — v2 決定）
 
 - `search.ts:62` `let refreshInFlight` / `trackRefresh`(428) / `runRefresh`(438) / `flushPendingRefresh`(447)。
-- `trackRefresh` は **catch 済み（エラー握り潰し）promise** を追跡し、`flushPendingRefresh` の `await refreshInFlight` は決して throw しない。→ runner の `inFlight()` も同様に settle-on-both（resolve/reject どちらでも解決）にする。
-- `flushPendingRefresh` は **debounce timer（`debounceTimer`）も見る**。debounce は #536 のスコープ。→ **debounce 部分はそのまま残し**、`refreshInFlight` 部分のみ `searchLane.inFlight()` へ差し替える。
+- `trackRefresh` は **catch 済み（エラー握り潰し）promise** を追跡し、`flushPendingRefresh` の `await refreshInFlight` は決して throw しない。
+- `flushPendingRefresh` は **debounce timer（`debounceTimer`）も見る**（debounce は #536 のスコープ）。
+- **当初は runner の `inFlight()` へ吸収する計画だったが、codex adversarial review が回帰を確定**（plan.md Step 5c-1）: instant fetch や直接 `refreshResults()` まで flush 待受に載せると、instant→非 instant 遷移直後の activation が stale な instant IPC を待つ挙動変化になる。→ **flush 追跡は refresh lane 固有として search.ts に現状のまま残し、runner は staleness/世代のみを担う**（plan.md「設計の要」）。
 
 ### instant 経路と循環 import
 
@@ -73,4 +74,4 @@
 ## 未解決の疑問
 
 - **`createLatestRun` の配置**: `lib/` か `stores/`。純粋ファクトリかつ単体テスト対象のため `lib/` を第一候補とする（folderNav/windowHeight の前例）。#535 の `exclusive`(mutex) も同族 primitive のため、将来的な集約先（例: `lib/concurrency/`）は #535 着手時に判断（YAGNI: 本 issue では 1 ファイル）。
-- **in-flight 共有の広がり**: instant fetch も runner 経由で `inFlight()` に載る（現状は `refreshInFlight` に載らない）。ただし instant モード中の activation は `tryModalActivate` → `executeInstantCommandSelected` へ分岐し `flushPendingRefresh` に到達しないため、実害は無い見込み。→ /race-check・/plan-review で裏取りする。
+- **in-flight 共有の広がり（解決済み）**: 当初「instant fetch も runner 経由で `inFlight()` に載るが、instant モード中の activation は `tryModalActivate` で分岐し到達しないため実害無し」と見立てたが、**codex が遷移ケース（instant→非 instant 変更後の activation）で `flushPendingRefresh` に到達し stale instant IPC を待つ回帰を確定**。→ 設計を v2 へ是正（runner は flush 追跡を持たない。plan.md Step 5c-1・不変条件5）。

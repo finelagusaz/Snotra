@@ -28,13 +28,15 @@ import {
 } from "../stores/search";
 import { hideMainWindow } from "../lib/commands";
 import { computeParentDir } from "../lib/folderNav";
+import { createOwnedTimer } from "../lib/ownedTimer";
 import { perfMarkInput } from "../lib/perf";
 import { trace } from "../lib/trace";
 import { t } from "../lib/i18n";
 
 const SearchWindow: Component = () => {
   let inputRef: HTMLInputElement | undefined;
-  const focusRetryTimers: ReturnType<typeof setTimeout>[] = [];
+  const focusRetryTimer120 = createOwnedTimer(120);
+  const focusRetryTimer280 = createOwnedTimer(280);
   let focusRafHandle: number | undefined;
 
   function focusInputSoon() {
@@ -63,17 +65,15 @@ const SearchWindow: Component = () => {
       cancelAnimationFrame(focusRafHandle);
       focusRafHandle = undefined;
     }
-    for (const timer of focusRetryTimers) {
-      clearTimeout(timer);
-    }
-    focusRetryTimers.length = 0;
+    focusRetryTimer120.cancel();
+    focusRetryTimer280.cancel();
   }
 
   function focusInputWithRetries() {
     clearFocusRetryTimers();
     focusInputSoon();
-    focusRetryTimers.push(setTimeout(() => focusInputSoon(), 120));
-    focusRetryTimers.push(setTimeout(() => focusInputSoon(), 280));
+    focusRetryTimer120.arm(() => focusInputSoon());
+    focusRetryTimer280.arm(() => focusInputSoon());
   }
 
   function setInputRef(el: HTMLInputElement) {

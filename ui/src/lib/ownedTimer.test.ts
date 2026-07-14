@@ -106,4 +106,47 @@ describe("createOwnedTimer", () => {
     vi.advanceTimersByTime(50);
     expect(pendingDuringFire).toBe(false);
   });
+
+  it("msOverride を渡すと生成時の ms ではなく override 側の ms で発火する", () => {
+    const t = createOwnedTimer(50);
+    const fn = vi.fn();
+    t.arm(fn, 200);
+    vi.advanceTimersByTime(50); // 生成時 ms（50）が経過しても発火しない
+    expect(fn).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(150); // override（200）分の経過で発火
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("msOverride 省略時は生成時の ms が使われる", () => {
+    const t = createOwnedTimer(50);
+    const fn = vi.fn();
+    t.arm(fn);
+    vi.advanceTimersByTime(49);
+    expect(fn).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("異なる msOverride で連続 arm すると前回の保留を破棄し新しい override の ms で発火する", () => {
+    const t = createOwnedTimer(50);
+    const a = vi.fn();
+    const b = vi.fn();
+    t.arm(a, 100);
+    vi.advanceTimersByTime(30); // a の override（100ms）未満で再 arm
+    t.arm(b, 10); // 前回タイマーを破棄して張り直す
+    vi.advanceTimersByTime(9);
+    expect(b).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1); // b の arm から 10ms
+    expect(b).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(100);
+    expect(a).not.toHaveBeenCalled(); // 破棄されたので不発
+  });
+
+  it("msOverride に 0 を渡すと 0ms で発火する（?? は 0 をフォールバックしない）", () => {
+    const t = createOwnedTimer(50);
+    const fn = vi.fn();
+    t.arm(fn, 0);
+    vi.advanceTimersByTime(0);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
 });

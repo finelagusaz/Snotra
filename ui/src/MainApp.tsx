@@ -17,6 +17,7 @@ import {
   setInstantCommandPrefix,
 } from "./stores/search";
 import { hideMainWindow } from "./lib/commands";
+import { createOwnedTimer } from "./lib/ownedTimer";
 import { applyTheme } from "./lib/theme";
 import { t, setLanguage, type Lang } from "./lib/i18n";
 import type { BootstrapPayload, UpdateAvailablePayload, VisualConfig } from "./lib/types";
@@ -37,8 +38,8 @@ const MainApp: Component = () => {
   const UPDATE_TOAST_HEIGHT = readLayoutConst("--update-toast-height", 52);
   const win = getCurrentWindow();
   const unlistenFns: Array<() => void> = [];
-  let blurTimer: ReturnType<typeof setTimeout> | undefined;
-  let moveTimer: ReturnType<typeof setTimeout> | undefined;
+  const blurTimer = createOwnedTimer(100);
+  const moveTimer = createOwnedTimer(500);
   const [mainVisible, setMainVisible] = createSignal(false);
   const [maxResults, setMaxResults] = createSignal(8);
   const [showIcons, setShowIcons] = createSignal(true);
@@ -59,24 +60,21 @@ const MainApp: Component = () => {
     };
 
     const registerAutoHideOnFocusLost = async () => {
-      let blurCancelled = false;
       const unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
         if (!focused) {
-          blurCancelled = false;
-          blurTimer = setTimeout(async () => {
-            try {
-              if (blurCancelled) return;
-              // 統合後は results ウィンドウが同一ウィンドウ内のため、
-              // is_main_foreground によるプロセス ID 比較は不要。
-              // blurCancelled debounce はドラッグ移動時の一時的フォーカス喪失対策として維持。
-              await hideMain();
-            } catch (e) {
-              console.warn("auto-hide focus check failed:", e);
-            }
-          }, 100);
+          blurTimer.arm(() => {
+            void (async () => {
+              try {
+                // 統合後は results ウィンドウが同一ウィンドウ内のため、
+                // is_main_foreground によるプロセス ID 比較は不要。
+                await hideMain();
+              } catch (e) {
+                console.warn("auto-hide focus check failed:", e);
+              }
+            })();
+          });
         } else {
-          blurCancelled = true;
-          clearTimeout(blurTimer);
+          blurTimer.cancel();
         }
       });
       unlistenFns.push(unlistenFocus);
@@ -145,16 +143,12 @@ const MainApp: Component = () => {
 
     // Save window position (debounced). Rust side reads position directly
     // from HWND and converts to monitor-relative coordinates.
-    let latestMoveEvent = 0;
     const unlistenMainMoved = await win.onMoved(() => {
-      const moveEvent = ++latestMoveEvent;
-      clearTimeout(moveTimer);
-      moveTimer = setTimeout(() => {
+      moveTimer.arm(() => {
         void (async () => {
-          if (moveEvent !== latestMoveEvent) return;
           await api.saveSearchPlacement();
         })();
-      }, 500);
+      });
     });
     unlistenFns.push(unlistenMainMoved);
 
@@ -266,8 +260,8 @@ const MainApp: Component = () => {
         console.warn("Failed to cleanup listener:", e);
       }
     }
-    clearTimeout(blurTimer);
-    clearTimeout(moveTimer);
+    blurTimer.cancel();
+    moveTimer.cancel();
   });
 
   async function handleUpdateInstall() {

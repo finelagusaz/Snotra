@@ -10,7 +10,7 @@
 
 ## DRY
 
-- 責務の集約先は各サブディレクトリのドキュメント（`snotra-core/CLAUDE.md`, `src-tauri/CLAUDE.md`, `ui/CLAUDE.md`, `snotra-settings/CLAUDE.md`）に記載している
+- 責務の集約先は各サブディレクトリのドキュメント（`snotra-core/CLAUDE.md`, `snotra-egui-runtime/CLAUDE.md`, `snotra-egui-mvp/CLAUDE.md`, `src-tauri/CLAUDE.md`, `ui/CLAUDE.md`, `snotra-settings/CLAUDE.md`）に記載している
 - 同一ロジックの繰り返しは2回まで許容し、3回目で抽出を検討する。無理な抽象化よりも多少の重複を許容する
 - **ドキュメント間でも DRY を守る。** 同じ事実（モジュール一覧・コマンド・契約など）を複数の `.md` に書かない。SSOT を1箇所に決め、他からは参照する。二重管理は片方の更新漏れで必ずドリフトする。「同期を頑張る」のではなく「重複を排除する」のが根治である
 

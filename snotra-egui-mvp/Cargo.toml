@@ -1,0 +1,46 @@
+[package]
+name = "snotra-egui-mvp"
+version.workspace = true
+edition = "2024"
+publish = false
+default-run = "snotra-egui-mvp"
+
+[[bin]]
+name = "snotra-egui-mvp"
+path = "src/main.rs"
+
+[[bin]]
+name = "snotra-egui-glow-mvp"
+path = "src/glow_main.rs"
+
+[[bin]]
+name = "snotra-egui-glow-lifecycle-mvp"
+path = "src/glow_lifecycle_main.rs"
+
+[build-dependencies]
+tauri-build = { version = "=2.6.3", features = [] }
+
+[dependencies]
+egui.workspace = true
+eframe = { version = "=0.35.0", default-features = false, features = ["default_fonts", "glow"] }
+egui_glow = { version = "=0.35.0", features = ["winit"] }
+glutin = "=0.32.3"
+glutin-winit = "=0.5.0"
+raw-window-handle = "=0.6.2"
+snotra-core = { path = "../snotra-core" }
+snotra-egui-runtime = { path = "../snotra-egui-runtime" }
+serde_json = "1"
+tauri.workspace = true
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-updater = "=2.10.1"
+winit = { version = "=0.30.13", default-features = false, features = ["rwh_06"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "=0.61.3", features = [
+    "Win32_Foundation",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+    "Win32_UI_Input_Ime",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }

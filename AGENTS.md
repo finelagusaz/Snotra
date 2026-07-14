@@ -7,7 +7,7 @@
 ## 3層分担（責務分離）
 
 - 第1層（意図管理）: `SPEC.md` と `AGENTS.md`
-- 第2層（実装事実）: `snotra-core/src/*.rs`, `src-tauri/src/*.rs`, `ui/src/**`
+- 第2層（実装事実）: `snotra-core/src/*.rs`, `snotra-egui-runtime/src/*.rs`, `snotra-egui-mvp/src/*.rs`, `src-tauri/src/*.rs`, `ui/src/**`
 - 第3層（整合運用）: 挙動変更を伴う変更では、意図（`SPEC.md`）と実装を同時に整合させる
 
 ## ドキュメント参照
@@ -17,7 +17,7 @@
 - 開発原則・デバッグ指針（汎用）: `docs/development-principles.md`
 - コメント規約（rustdoc / TSDoc の様式・粒度・定型ラベル）: `docs/comment-guidelines.md`
 - ビルド・テストコマンド: `docs/build-commands.md`
-- モジュール固有の不変条件: 各サブディレクトリの `CLAUDE.md`（`snotra-core/`, `src-tauri/`, `ui/`, `snotra-settings/`）
+- モジュール固有の不変条件: 各サブディレクトリの `CLAUDE.md`（`snotra-core/`, `snotra-egui-runtime/`, `snotra-egui-mvp/`, `src-tauri/`, `ui/`, `snotra-settings/`）
 - 設定 UI デザインガイドライン: `snotra-settings/SETTINGS-DESIGN.md`（デザイントークン・Fluent タイポグラフィ・レイアウト規約）
 - 実装前チェック: `.claude/rules/`（該当ファイルの読み取り時に自動配送）
 

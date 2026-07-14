@@ -119,6 +119,18 @@ describe("selectChecks", () => {
     expect(selectChecks("snotra-core/src/lib.rs")).toEqual(["clippy", "core-test"]);
   });
 
+  it("egui MVP の .rs は各 crate のテストへ振り分ける", () => {
+    expect(selectChecks("snotra-egui-runtime/src/lib.rs")).toEqual([
+      "clippy",
+      "egui-runtime-test",
+    ]);
+    expect(selectChecks("snotra-egui-mvp/src/main.rs")).toEqual([
+      "clippy",
+      "egui-mvp-test",
+    ]);
+    expect(selectChecks("snotra-egui-runtime/README.md")).toEqual([]);
+  });
+
   // §1: 現行は content 中の "config.toml" に反応して config-warn が誤発火する
   it("snotra-core/src/config.rs は config-warn を誤発火しない", () => {
     expect(selectChecks("snotra-core/src/config.rs")).toEqual(["clippy", "core-test"]);
@@ -605,7 +617,7 @@ describe("Cargo.toml members ドリフト検出カナリア — #500", () => {
   // check / clippy は --workspace なので members を cargo が読む（写しは消えた）。
   // しかし `cargo test -p <crate>` は「編集した crate → そのテスト」の写像であり、
   // selectChecks のディレクトリ接頭辞と buildCommand の case に手書きされている。
-  // 4 つ目の crate が生えると、その .rs を編集してもテストが**静かに走らない**。
+  // 新しい crate が生えると、その .rs を編集してもテストが**静かに走らない**。
   // ここで落とし、selectChecks / buildCommand / ci.yml / SSOT の更新を強制する。
   it("workspace members が test 系のルーティングと一致する", () => {
     const p = fileURLToPath(new URL("../../Cargo.toml", import.meta.url));
@@ -627,6 +639,12 @@ describe("Cargo.toml members ドリフト検出カナリア — #500", () => {
     expect(
       members,
       "members が変わった。selectChecks の接頭辞・buildCommand の test case・ci.yml・docs/build-commands.md を更新すること",
-    ).toEqual(["snotra-core", "src-tauri", "snotra-settings"]);
+    ).toEqual([
+      "snotra-core",
+      "snotra-egui-mvp",
+      "snotra-egui-runtime",
+      "src-tauri",
+      "snotra-settings",
+    ]);
   });
 });

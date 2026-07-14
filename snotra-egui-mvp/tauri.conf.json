@@ -1,0 +1,26 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicedoc/json-schemas/master/tauri/tauri.conf.json",
+  "productName": "Snotra egui MVP",
+  "version": "0.1.0",
+  "identifier": "com.snotra.app.egui-mvp",
+  "app": {
+    "windows": []
+  },
+  "bundle": {
+    "active": false,
+    "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
+    "icon": ["../src-tauri/icons/icon.ico"]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQwODk3MDc4QjdBNTU1NUQKUldSZFZhVzNlSENKMEZBZ2REdnBnYXdLVCtXNWpnU2lkTXBCcEw1WlBPZjZkQWZiOUQwallyV2sK",
+      "endpoints": [
+        "https://github.com/finelagusaz/Snotra/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

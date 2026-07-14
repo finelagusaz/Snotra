@@ -1,6 +1,20 @@
 [workspace]
-members = ["snotra-core", "src-tauri", "snotra-settings"]
+members = [
+    "snotra-core",
+    "snotra-egui-mvp",
+    "snotra-egui-runtime",
+    "src-tauri",
+    "snotra-settings",
+]
 resolver = "2"
+
+[workspace.dependencies]
+egui = "=0.35.0"
+egui-wgpu = "=0.35.0"
+tauri = { version = "=2.11.4", features = ["unstable"] }
+tauri-runtime = "=2.11.3"
+tauri-runtime-wry = "=2.11.4"
+wgpu = "=29.0.0"
 
 [workspace.package]
 version = "0.1.0"

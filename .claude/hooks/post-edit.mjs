@@ -117,6 +117,8 @@ export function selectChecks(rel) {
 
   if (isRust) checks.push("clippy");
   if (isRust && rel.startsWith("snotra-core/")) checks.push("core-test");
+  if (isRust && rel.startsWith("snotra-egui-mvp/")) checks.push("egui-mvp-test");
+  if (isRust && rel.startsWith("snotra-egui-runtime/")) checks.push("egui-runtime-test");
   if (isRust && rel.startsWith("snotra-settings/")) checks.push("settings-test");
   if (isRust && rel.startsWith("src-tauri/")) checks.push("tauri-test");
 
@@ -265,7 +267,7 @@ function buildCommand(id, root) {
 
   switch (id) {
     // check / clippy の --workspace は cargo に Cargo.toml の members を読ませる。
-    // crate 名を列挙すると members の写しになり、4 つ目の crate で静かに漏れる（#500）。
+    // crate 名を列挙すると members の写しになり、新しい crate で静かに漏れる（#500）。
     case "clippy":
       return cargoSpec([
         "clippy", "--workspace",
@@ -275,6 +277,10 @@ function buildCommand(id, root) {
     // すると編集していない crate のテストまで走り、hook の即時性が失われる。
     case "core-test":
       return cargoSpec(["test", "-p", "snotra-core"]);
+    case "egui-mvp-test":
+      return cargoSpec(["test", "-p", "snotra-egui-mvp"]);
+    case "egui-runtime-test":
+      return cargoSpec(["test", "-p", "snotra-egui-runtime"]);
     case "settings-test":
       return cargoSpec(["test", "-p", "snotra-settings"]);
     case "tauri-test":

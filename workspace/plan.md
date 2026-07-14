@@ -10,7 +10,7 @@
 
 - 痛点＝「leak しうる resource（setTimeout ハンドル）の所有者が曖昧」。`leadingFired` は leak しない policy latch であって痛点ではない。→ primitive は timer だけ所有すれば痛点を解く。
 - **再入問題が構造的に消える**: `arm` は fn を `setTimeout` の中（別マクロタスク）でしか呼ばない＝**同期発火しない**。ゆえに fn からの再入は起こり得ず、「再入禁止」を JSDoc 契約で断る必要がない（＝ *illegal state unrepresentable* > *documented-forbidden*）。`exclusive.ts` の非再入契約は「mutex 自己待ち」という解けない問題への対処であり、debounce の再スケジュール（解ける問題）に借用すべきでない（codex 指摘）。
-- **`leadingFired` が不要**: 現行実装で `leadingFired ≡ (timer === undefined)`（バースト先頭か）が全遷移で成立（検算済み）。leading は search.ts で `!refreshTimer.isPending()` から導出でき、フラグは primitive にも search.ts にも要らない。
+- **`leadingFired` が不要**: 現行実装で `leadingFired ≡ (timer !== undefined)` が全遷移で成立（バースト中は両者 true、アイドル/cancel 後は両者 false・検算済み）。ゆえに leading 発火条件 `!leadingFired ≡ (timer === undefined) ≡ !isPending()`（＝バースト先頭）で、search.ts で導出でき、フラグは primitive にも search.ts にも要らない。
 - **dead code なし**: `dispose()` は現 caller ゼロ（当初計画自身が「将来用」と明記）。OwnedTimer は `cancel()` が teardown を兼ね、dispose を持たない。将来 per-component 流用時に必要なら約4行で足せる（かつスコープ外タイマー focus retry/blur/move は**すべて trailing-only** ＝ OwnedTimer に適合）。
 - **doctrine 整合**: `latestRun`（世代1個）/ `exclusive`（フラグ1個）と同じ「1 resource / 1 owner」。`createDebouncer` は timer + leadingFired + disposed + leading policy の 4 つを抱え姉妹より重い。
 
@@ -83,7 +83,7 @@ export function createOwnedTimer(ms: number): OwnedTimer;
 1. **arm は fn を同期発火しない**: fn は必ず `setTimeout` 内で呼ばれる。→ primitive への再入は構造的に不能（再入契約は不要）。single test で「arm 直後の同期時点で fn 未呼び出し」を固定。
 2. **arm は `timer = undefined` を `fn()` の前**に置く: fn 実行中 `isPending()` は false（flush の二重発火防止・現 `debounceTimer` 挙動一致）。
 3. **cancel は冪等**: timer 破棄のみ。二重 cancel 安全。teardown を兼ねる。
-4. **leading policy は search.ts**: `!refreshTimer.isPending()`（バースト先頭）で導出。`leadingFired` フラグは primitive にも search.ts にも持たない。現行 `leadingFired ≡ (timer === undefined)` の等価性で挙動保存（検算済み）。leading の同期発火（`void runRefresh()`）は search.ts の自コードで、refreshTimer に再入しない。
+4. **leading policy は search.ts**: `!refreshTimer.isPending()`（バースト先頭）で導出。`leadingFired` フラグは primitive にも search.ts にも持たない。現行 `leadingFired ≡ (timer !== undefined)` の等価性（→ 発火条件 `!leadingFired ≡ !isPending()`）で挙動保存（検算済み）。leading の同期発火（`void runRefresh()`）は search.ts の自コードで、refreshTimer に再入しない。
 5. **items クリア副作用の分離**: instant の `instantCommandItems = []` は `scheduleInstantCommandFetch` に残す。primitive（arm）に混ぜない。
 6. **単一インスタンス共有**: `debouncedRefresh` の 2 呼び出し（plain L318 / folderFilter L375）は**単一 `refreshTimer`** を共有。理由: (a) 状態分裂で互いの leading を消さない、(b) モード遷移跨ぎの pending timer 保存（`enterFolderExpansion` は cancel しない＝plain trailing 保留中に folder 展開へ入ると保留 timer が生き残り folder refresh になる現挙動を保つ）。
 7. **公開 API 不変**: `hasPendingInstantCommandFetch`/`cancelInstantCommandDebounce`/`scheduleInstantCommandFetch`/`refreshResults`/`resetForShow` のシグネチャ・export・呼び出し側は不変。`cancelDebounce`（内部）も名前維持。

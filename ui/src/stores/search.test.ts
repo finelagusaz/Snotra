@@ -922,6 +922,51 @@ describe("flush スコープ（instant fetch を activation の待受に載せ�
   });
 });
 
+// ── debounce adapter（#536 Phase 2・OwnedTimer 載せ替えの等価性を store 越しに直接固定）─
+// 既存テストは runAllTimersAsync で一括 flush し leading/trailing を区別しない。ここでは 50ms
+// 境界をまたいで「leading 即時発火」「burst で trailing 1 回・最後の query」を固定する（codex P1）。
+
+describe("debounce adapter（leading/trailing 直接固定）", () => {
+  // effect（microtask）は走らせるが 50ms trailing は進めない flush。
+  const settleEffect = () => vi.advanceTimersByTimeAsync(0);
+
+  beforeEach(async () => {
+    // indexing リークを false に戻す（indexing 中は refreshResults が api.search を呼ばない）。
+    vi.mocked(api.getIndexingState).mockResolvedValue(false);
+    await initIndexingState();
+    // 先行 describe の同期 setQuery が残す保留 timer を排出し、isPending() を false に揃える。
+    await vi.runAllTimersAsync();
+    vi.mocked(api.search).mockResolvedValue([]);
+    vi.mocked(api.search).mockClear();
+  });
+
+  it("leading edge: 50ms 経過前に api.search が即発火し、50ms 後に trailing で再発火する", async () => {
+    setQuery("file");
+    await settleEffect(); // query effect + leading の runRefresh（<50ms なので trailing 未発火）
+    expect(api.search).toHaveBeenCalledTimes(1); // leading のみ
+    expect(api.search).toHaveBeenLastCalledWith("file");
+
+    await vi.advanceTimersByTimeAsync(50); // trailing 発火
+    expect(api.search).toHaveBeenCalledTimes(2);
+    expect(api.search).toHaveBeenLastCalledWith("file");
+  });
+
+  it("burst（50ms 未満の連続入力）は leading 1 回 + trailing 1 回（最後の query）", async () => {
+    setQuery("f");
+    await settleEffect(); // leading "f"、trailing 保留
+    setQuery("fi");
+    await settleEffect(); // isPending() true → leading 発火せず re-arm
+    setQuery("fil");
+    await settleEffect(); // re-arm（timer リセット）
+    expect(api.search).toHaveBeenCalledTimes(1); // leading "f" のみ
+    expect(api.search).toHaveBeenLastCalledWith("f");
+
+    await vi.advanceTimersByTimeAsync(50); // trailing（最後の query）
+    expect(api.search).toHaveBeenCalledTimes(2);
+    expect(api.search).toHaveBeenLastCalledWith("fil");
+  });
+});
+
 // ── executeInstantCommandSelected rollback の preGen+1 判定（#534 Step 5c-4）────
 
 describe("executeInstantCommandSelected rollback（world 世代が進んだら復元しない）", () => {

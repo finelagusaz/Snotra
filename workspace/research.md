@@ -109,4 +109,4 @@
 **当初計画（createDebouncer）から Design C への転換で解消した論点**:
 - `dispose()`: 削除（YAGNI）。OwnedTimer は `cancel()` が teardown を兼ねる。将来 per-component 流用（focus retry/blur/move はすべて trailing-only）でも OwnedTimer が適合。
 - 再入契約: OwnedTimer の `arm` は fn を setTimeout 内でしか呼ばない＝同期発火しないため、再入は構造的に不能。JSDoc 契約は不要（当初計画が背負っていた P0 が消滅）。
-- `leadingFired`: 冗長（`≡ timer === undefined`）ゆえ廃止。leading は `!refreshTimer.isPending()` から導出。当初計画の不変条件 #2/#3 が消滅。
+- `leadingFired`: 冗長（`≡ (timer !== undefined)` ＝ 発火条件 `!leadingFired ≡ !isPending()`）ゆえ廃止。leading は `!refreshTimer.isPending()` から導出。当初計画の不変条件 #2/#3 が消滅。

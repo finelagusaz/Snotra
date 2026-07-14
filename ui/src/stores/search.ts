@@ -6,6 +6,7 @@ import { findCommand } from "../lib/commands";
 import { perfStartSearch, perfMarkSearchDone, perfCancelSearch } from "../lib/perf";
 import { createLatestRun } from "../lib/latestRun";
 import { createExclusive } from "../lib/exclusive";
+import { createOwnedTimer } from "../lib/ownedTimer";
 import { clampSelectedIndex, computeParentDir } from "../lib/folderNav";
 import { trace } from "../lib/trace";
 import { folderState, setFolderState, folderFilter, setFolderFilter } from "./folder";
@@ -58,9 +59,11 @@ function restoreView(saved: SavedViewState) {
 }
 
 const DEBOUNCE_MS = 50;
-let debounceTimer: ReturnType<typeof setTimeout> | undefined;
-/** leading edge: デバウンス区間の最初の入力で即時発火済みなら true */
-let leadingFired = false;
+/** 検索 debounce の所有タイマー（trailing 50ms）。旧 `debounceTimer` + `leadingFired` を統合。
+ *  leading edge は debouncedRefresh が `!isPending()`（＝バースト先頭）から導出する（policy は
+ *  primitive でなく呼び出し側の関心）。plain 打鍵と folderFilter effect の 2 経路が単一インスタンスを
+ *  共有し、モード遷移を跨ぐ保留 timer を保存する。 */
+const refreshTimer = createOwnedTimer(DEBOUNCE_MS);
 let refreshInFlight: Promise<void> | undefined;
 let suppressNextQueryEffectRefresh = false;
 
@@ -141,28 +144,16 @@ function clearCommandModeState() {
 }
 
 function cancelDebounce() {
-  if (debounceTimer !== undefined) {
-    clearTimeout(debounceTimer);
-    debounceTimer = undefined;
-  }
-  leadingFired = false;
+  refreshTimer.cancel();
 }
 
 function debouncedRefresh() {
-  // Leading edge: デバウンス区間の最初の入力で即時発火する。
-  // 以降はタイマーリセットのみ行い、最後の入力から DEBOUNCE_MS 後に trailing 発火する。
-  if (!leadingFired) {
-    leadingFired = true;
-    void runRefresh();
-  }
-  if (debounceTimer !== undefined) {
-    clearTimeout(debounceTimer);
-  }
-  debounceTimer = setTimeout(() => {
-    debounceTimer = undefined;
-    leadingFired = false;
-    void runRefresh();
-  }, DEBOUNCE_MS);
+  // Leading edge: バースト先頭（保留タイマー無し＝!isPending()）でのみ即時発火する。
+  // 旧 leadingFired フラグは refreshTimer.isPending() から導出できるため廃止
+  // （現行実装で leadingFired ≡ (timer !== undefined) が全遷移で成立する）。
+  if (!refreshTimer.isPending()) void runRefresh();
+  // Trailing: 最後の入力から DEBOUNCE_MS 後に発火。arm が前回の保留を破棄して張り直す。
+  refreshTimer.arm(() => void runRefresh());
 }
 
 // Folder expansion state — signals live in ./folder.ts
@@ -453,7 +444,7 @@ function runRefresh(): Promise<void> {
 }
 
 async function flushPendingRefresh() {
-  if (debounceTimer !== undefined) {
+  if (refreshTimer.isPending()) {
     cancelDebounce();
     await runRefresh();
     return;

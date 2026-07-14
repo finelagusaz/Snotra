@@ -10,8 +10,8 @@ import { createOwnedTimer } from "../lib/ownedTimer";
 import { clampSelectedIndex, computeParentDir } from "../lib/folderNav";
 import { interpret, type ViewKind, type InterpKind } from "../lib/interpretQuery";
 import { trace } from "../lib/trace";
-import { folderState, setFolderState, folderFilter, setFolderFilter } from "./folder";
-import { toolSelectionState, setToolSelectionState } from "./tool-selection";
+import { folderState, setFolderState, folderFilter, setFolderFilter, type FolderFrame } from "./folder";
+import { toolSelectionState, setToolSelectionState, type ToolSelectionFrame } from "./tool-selection";
 import { clearLaunchNotice, notifyLaunchFailure } from "./launchNotice";
 import {
   getInstantCommandItems,
@@ -45,15 +45,15 @@ function clearResults() {
 }
 
 /** モーダル的なビュー（フォルダ展開・ツール選択）に入る直前の results/selected を退避する
- *  唯一の生成経路（choke point）。frame 固有の追加フィールド（currentDir・savedQuery 等）は
+ *  唯一の生成経路（choke point）。frame 固有の追加フィールド（currentDir・restoreQuery/launchQuery 等）は
  *  呼び出し側でスプレッドして合成する。 */
 function saveView(): SavedViewState {
   return { savedResults: results(), savedSelected: selected() };
 }
 
-/** saveView() で退避した results/selected を復元する唯一の経路（choke point）。
- *  frame 固有のフィールド（savedQuery 等）の復元は意味が呼び出し側ごとに異なるため含まない
- *  （folder は setQuery で復元、tool は復元せず起動時の元クエリとして使うのみ）。 */
+/** saveView() で退避した results/selected を復元する唯一の経路（choke point）。pop 時に popView が呼ぶ。
+ *  frame 固有のフィールドの復元は意味が frame ごとに異なるため含まず（folder は restoreQuery で query 復元、
+ *  tool は savedFolderFilter で filter 復帰）、popView の kind 別 switch が担う。 */
 function restoreView(saved: SavedViewState) {
   updateResults(saved.savedResults);
   setSelected(saved.savedSelected);
@@ -91,11 +91,20 @@ function assertNever(x: never): never {
   throw new Error(`unhandled mode: ${x}`);
 }
 
-/** 軸1: 結果リストを占める先頭ビュー（tool > folder > results の射影＝SPEC §18.5 優先度）。
- *  プリミティブを返すことで kind 変化時のみ伝播する（オブジェクト union は毎計算で新 identity）。 */
-const viewKind = createMemo<ViewKind>(() =>
-  toolSelectionState() ? "tool" : folderState() ? "folder" : "results",
-);
+/** モーダルビュースタックに積まれうるフレーム（folder/tool）の判別可能 union。`kind` で型が
+ *  分離され、popView の網羅 switch と viewKind の頂点射影が共有する。union は types.ts に置かない
+ *  （folder.ts/tool-selection.ts への逆 import が循環を生むため・#538）。 */
+type ModalFrame = FolderFrame | ToolSelectionFrame;
+
+/** モーダルビュースタックの頂点（tool > folder の順で射影）。null なら results（スタック空）。
+ *  ViewStack の「頂点参照」を一箇所に集約し、viewKind と pop が共有する（#538）。 */
+function stackTop(): ModalFrame | null {
+  return toolSelectionState() ?? folderState();
+}
+
+/** 軸1: 結果リストを占める先頭ビュー（スタック頂点の種類の純関数＝SPEC §18.5 優先度 tool > folder > results）。
+ *  プリミティブ（kind 文字列）を返すことで kind 変化時のみ伝播する（オブジェクト union は毎計算で新 identity）。 */
+const viewKind = createMemo<ViewKind>(() => stackTop()?.kind ?? "results");
 
 /** 軸2: 入力の意味。viewKind=results のときだけ非 plain。query+prefix からの純粋導出（持続ラッチを廃止）。
  *  分類は interpret（純関数・SSOT）へ委譲し、memo は **プリミティブ（.kind 文字列）を返す**契約を保つ
@@ -366,14 +375,15 @@ function moveSelectionDown() {
 function enterFolderExpansion(dir: string) {
   const fs = folderState();
   if (!fs) {
-    // Save current state before entering folder mode
+    // 新規 push: results/selected を snapshot し folder フレームを積む
     setFolderState({
+      kind: "folder",
       currentDir: dir,
       ...saveView(),
-      savedQuery: query(),
+      restoreQuery: query(),
     });
   } else {
-    // Already in folder mode, navigate deeper
+    // Already in folder mode, navigate deeper（push せずフレーム内で currentDir を書き換え・spread が kind/restoreQuery を保持）
     setFolderState({ ...fs, currentDir: dir });
   }
   void api.recordFolderExpansion(dir);
@@ -382,19 +392,35 @@ function enterFolderExpansion(dir: string) {
   void runRefresh();
 }
 
+/** モーダルビュー（folder/tool）を 1 段 pop する統一規律（choke point・#538）。頂点スロットの frame を
+ *  受け取り、共通の「invalidate → restoreView」の後、frame.kind ごとの onExit（folder: query 復元 +
+ *  filter クリア、tool: 元の folderFilter 復帰）を網羅 switch で施しスロットを null 化する。個別 setX 順序を
+ *  ここへ吸収する。cancelDebounce は **folder 経路のみ・invalidate より前**で呼ぶ——tool 中は入力が無効で
+ *  folderFilter effect が保留 timer を張らないため。両経路で cancel すると挙動が変わる（enterToolSelection の
+ *  await 窓で稀に残る timer を抑制してしまう）ので folder 固有にとどめ、現挙動を厳密保存する。 */
+function popView(frame: ModalFrame): boolean {
+  if (frame.kind === "folder") cancelDebounce();
+  searchLane.invalidate();
+  restoreView(frame);
+  switch (frame.kind) {
+    case "folder":
+      setFolderState(null);    // setFolderFilter("") より先（null 後なら folderFilter effect が debouncedRefresh をスキップ）
+      setFolderFilter("");
+      setQuery(frame.restoreQuery);
+      break;
+    case "tool":
+      setToolSelectionState(null);
+      setFolderFilter(frame.savedFolderFilter);    // 2 段スタック復帰（下段 folder の filter を戻す）
+      break;
+    default:
+      return assertNever(frame);
+  }
+  return true;
+}
+
 function exitFolderExpansion(): boolean {
   const fs = folderState();
-  if (!fs) return false;
-
-  // デバウンスタイマーをクリア（フォルダモード中の入力残り処理を防止）
-  cancelDebounce();
-
-  searchLane.invalidate();
-  restoreView(fs);
-  setFolderState(null);    // setQuery より先に null にする
-  setFolderFilter("");
-  setQuery(fs.savedQuery);
-  return true;
+  return fs ? popView(fs) : false;
 }
 
 function navigateFolderUp() {
@@ -502,10 +528,10 @@ async function launchWithSelectedTool(): Promise<boolean> {
     trace("search:launch_with_tool:start", {
       path: frame.targetPath,
       tool: tool.exe,
-      query: frame.savedQuery,
+      query: frame.launchQuery,
     });
     return await withLaunchLifecycle(
-      () => api.launchWithTool(frame.targetPath, frame.savedQuery, tool.exe, tool.args),
+      () => api.launchWithTool(frame.targetPath, frame.launchQuery, tool.exe, tool.args),
       () => {
         setToolSelectionState(null);
         setFolderState(null);
@@ -545,12 +571,13 @@ async function enterToolSelection(result: SearchResult): Promise<boolean> {
     return activateSelected();
   }
 
-  const frame = {
+  const frame: ToolSelectionFrame = {
+    kind: "tool",
     targetPath: result.path,
     targetIsFolder: result.isFolder,
     tools,
     ...saveView(),
-    savedQuery: query(),
+    launchQuery: query(),
     savedFolderFilter: folderFilter(),
   };
   setToolSelectionState(frame);
@@ -573,13 +600,8 @@ function exitToolSelection(): boolean {
   const frame = toolSelectionState();
   if (!frame) return false;
 
-  searchLane.invalidate();
-  restoreView(frame);
-  setToolSelectionState(null);
-  // フォルダ展開中だった場合の folderFilter を復帰
-  setFolderFilter(frame.savedFolderFilter);
   trace("search:exit_tool_selection:ok", { path: frame.targetPath });
-  return true;
+  return popView(frame);
 }
 
 async function launchAndReset(result: SearchResult): Promise<boolean> {

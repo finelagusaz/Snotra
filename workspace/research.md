@@ -11,10 +11,12 @@
 
 ## 関連コード（影響を受けるファイル・関数）
 
-### 新規
+### 新規（Design C 採用後）
 
-- `ui/src/lib/debouncer.ts`（新規）: `createDebouncer({ ms, leading })` 純粋ファクトリ。既存の `lib/latestRun.ts`・`lib/exclusive.ts` と同じ「純粋ファクトリ・SolidJS/api 非依存・構造の理由を注釈」の作法に倣う。
-- `ui/src/lib/debouncer.test.ts`（新規）: 単体テスト。`latestRun.test.ts`・`exclusive.test.ts` が手本。
+- `ui/src/lib/ownedTimer.ts`（新規）: `createOwnedTimer(ms)` 純粋ファクトリ（`arm`/`cancel`/`isPending`）。timer resource **だけ**を所有し leading policy を持たない。既存の `lib/latestRun.ts`・`lib/exclusive.ts` と同じ「純粋ファクトリ・SolidJS/api 非依存・1 resource/1 owner・構造の理由を注釈」の作法に倣う。
+- `ui/src/lib/ownedTimer.test.ts`（新規）: 単体テスト。`latestRun.test.ts`・`exclusive.test.ts` が手本。
+
+> **設計転換**: 当初は `createDebouncer({ ms, leading })`（leading policy を内包）を想定したが、多視点レビューで **OwnedTimer（timer resource だけ所有・leading は search.ts の policy）**へ転換。詳細は `plan.md` 冒頭と末尾「設計探索の要約」。以下の調査事実（コード実測）は設計に依らず有効。
 
 ### `ui/src/stores/search.ts`（検索 debounce の載せ替え）
 
@@ -102,4 +104,9 @@
 
 ## 未解決の疑問
 
-なし。issue が唯一留保した「二層統合の可否」は上記の構造比較 + パラメトリックテストで実装時に決着する（統合可の見込み）。`dispose()` は本 issue のスコープ（search/instant）では呼ばれない — 将来の per-component タイマー流用のための API 契約として primitive に含め、単体テストで担保する（issue のテスト方針「dispose 後 no-op」・位置づけ「将来流用できる設計」に明記済み）。
+なし。issue が留保した「二層統合の可否」は Design C（OwnedTimer）で決着: timer 機構は OwnedTimer に一箇所へ畳み、leading は search 固有の policy として残す（instant に leading は無く二層で重複してすらいない）。
+
+**当初計画（createDebouncer）から Design C への転換で解消した論点**:
+- `dispose()`: 削除（YAGNI）。OwnedTimer は `cancel()` が teardown を兼ねる。将来 per-component 流用（focus retry/blur/move はすべて trailing-only）でも OwnedTimer が適合。
+- 再入契約: OwnedTimer の `arm` は fn を setTimeout 内でしか呼ばない＝同期発火しないため、再入は構造的に不能。JSDoc 契約は不要（当初計画が背負っていた P0 が消滅）。
+- `leadingFired`: 冗長（`≡ timer === undefined`）ゆえ廃止。leading は `!refreshTimer.isPending()` から導出。当初計画の不変条件 #2/#3 が消滅。

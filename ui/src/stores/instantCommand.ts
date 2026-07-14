@@ -1,5 +1,6 @@
 import type { InstantCommand, SearchResult } from "../lib/types";
 import type { LatestRun } from "../lib/latestRun";
+import { createOwnedTimer } from "../lib/ownedTimer";
 import * as api from "../lib/invoke";
 
 /** インスタントコマンド候補の IPC 取得デバウンス（高速タイピング時の不要な IPC を削減）。 */
@@ -9,7 +10,9 @@ const INSTANT_CMD_DEBOUNCE_MS = 30;
  *  参照する）。書き込みは本モジュールの関数（setInstantCommandItems/clearInstantCommandItems/
  *  scheduleInstantCommandFetch 内部）に閉じ、search.ts からは直接代入しない。 */
 let instantCommandItems: InstantCommand[] = [];
-let instantCmdDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+/** instant 候補取得の所有タイマー（trailing 30ms・leading なし）。旧 instantCmdDebounceTimer を統合。
+ *  候補一覧の即時クリアは debounce とは別関心事のため arm に混ぜず scheduleInstantCommandFetch に残す。 */
+const fetchTimer = createOwnedTimer(INSTANT_CMD_DEBOUNCE_MS);
 
 export function getInstantCommandItems(): InstantCommand[] {
   return instantCommandItems;
@@ -25,15 +28,12 @@ export function clearInstantCommandItems() {
 }
 
 export function hasPendingInstantCommandFetch(): boolean {
-  return instantCmdDebounceTimer !== undefined;
+  return fetchTimer.isPending();
 }
 
 /** 保留中の IPC デバウンスタイマーを破棄する（モード離脱・resetForShow 等で呼ぶ）。 */
 export function cancelInstantCommandDebounce() {
-  if (instantCmdDebounceTimer !== undefined) {
-    clearTimeout(instantCmdDebounceTimer);
-    instantCmdDebounceTimer = undefined;
-  }
+  fetchTimer.cancel();
 }
 
 /** インスタントコマンド候補の取得を 30ms デバウンスでスケジュールする唯一の経路（choke point）。
@@ -53,10 +53,11 @@ export function scheduleInstantCommandFetch(
     onError: (error: unknown) => void;
   },
 ): void {
+  // 候補一覧の即時クリアは debounce とは別関心事（IPC 応答前の Enter で古いコマンド誤起動を防ぐ）。
+  // arm() には混ぜず、呼び出し時点で同期実行する。
   instantCommandItems = [];
-  cancelInstantCommandDebounce();
-  instantCmdDebounceTimer = setTimeout(() => {
-    instantCmdDebounceTimer = undefined;
+  // arm が前回の保留タイマーを破棄して張り直す（旧 cancelInstantCommandDebounce() + setTimeout 相当）。
+  fetchTimer.arm(() => {
     void deps.run(async ({ isStale }) => {
       try {
         const commands = await api.getInstantCommands(filterName);
@@ -74,5 +75,5 @@ export function scheduleInstantCommandFetch(
         deps.onError(e);
       }
     });
-  }, INSTANT_CMD_DEBOUNCE_MS);
+  });
 }

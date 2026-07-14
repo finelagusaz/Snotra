@@ -70,6 +70,7 @@ import {
 } from "../stores/search";
 import { setToolSelectionState } from "../stores/tool-selection";
 import { setFolderState } from "../stores/folder";
+import { getInstantCommandItems } from "../stores/instantCommand";
 import { perfStartSearch, perfMarkSearchDone } from "../lib/perf";
 
 // ── テスト定数 ────────────────────────────────────────────────────────────────
@@ -919,6 +920,90 @@ describe("flush スコープ（instant fetch を activation の待受に載せ�
     // 解決すれば「flush が instant を待受対象にしていない」ことの証拠。
     const activated = await activateSelected();
     expect(activated).toBe(false); // 結果空で起動対象なし。だがハングせず false を返す
+  });
+});
+
+// ── debounce adapter（#536 Phase 2・OwnedTimer 載せ替えの等価性を store 越しに直接固定）─
+// 既存テストは runAllTimersAsync で一括 flush し leading/trailing を区別しない。ここでは 50ms
+// 境界をまたいで「leading 即時発火」「burst で trailing 1 回・最後の query」を固定する（codex P1）。
+
+describe("debounce adapter（leading/trailing 直接固定）", () => {
+  // effect（microtask）は走らせるが 50ms trailing は進めない flush。
+  const settleEffect = () => vi.advanceTimersByTimeAsync(0);
+
+  beforeEach(async () => {
+    // indexing リークを false に戻す（indexing 中は refreshResults が api.search を呼ばない）。
+    vi.mocked(api.getIndexingState).mockResolvedValue(false);
+    await initIndexingState();
+    // 先行 describe の同期 setQuery が残す保留 timer を排出し、isPending() を false に揃える。
+    await vi.runAllTimersAsync();
+    vi.mocked(api.search).mockResolvedValue([]);
+    vi.mocked(api.search).mockClear();
+  });
+
+  it("leading edge: 50ms 経過前に api.search が即発火し、50ms 後に trailing で再発火する", async () => {
+    setQuery("file");
+    await settleEffect(); // query effect + leading の runRefresh（<50ms なので trailing 未発火）
+    expect(api.search).toHaveBeenCalledTimes(1); // leading のみ
+    expect(api.search).toHaveBeenLastCalledWith("file");
+
+    await vi.advanceTimersByTimeAsync(50); // trailing 発火
+    expect(api.search).toHaveBeenCalledTimes(2);
+    expect(api.search).toHaveBeenLastCalledWith("file");
+  });
+
+  it("burst（50ms 未満の連続入力）は leading 1 回 + trailing 1 回（最後の query）", async () => {
+    setQuery("f");
+    await settleEffect(); // leading "f"、trailing 保留
+    setQuery("fi");
+    await settleEffect(); // isPending() true → leading 発火せず re-arm
+    setQuery("fil");
+    await settleEffect(); // re-arm（timer リセット）
+    expect(api.search).toHaveBeenCalledTimes(1); // leading "f" のみ
+    expect(api.search).toHaveBeenLastCalledWith("f");
+
+    await vi.advanceTimersByTimeAsync(50); // trailing（最後の query）
+    expect(api.search).toHaveBeenCalledTimes(2);
+    expect(api.search).toHaveBeenLastCalledWith("fil");
+  });
+});
+
+// ── instant debounce adapter（#536 Phase 3・items 即時クリア副作用 + 最新 filterName の直接固定）─
+// instant は leading なし・trailing 30ms。arm に混ぜない「候補一覧の即時クリア」副作用（IPC 応答前の
+// Enter で古いコマンド誤起動を防ぐ）と、burst で最後の filterName だけが 1 回 IPC を撃つことを固定する。
+
+describe("instant debounce adapter（items クリア副作用と最新 filterName）", () => {
+  const settleEffect = () => vi.advanceTimersByTimeAsync(0);
+
+  beforeEach(() => {
+    setInstantCommandPrefix("@");
+    vi.mocked(api.getInstantCommands).mockResolvedValue([CMD_GOOGLE, CMD_CLIP]);
+  });
+
+  it("再入力時、候補一覧は 30ms 前（IPC 応答前）に即クリアされる（arm と別関心事）", async () => {
+    setQuery("@goo");
+    await vi.runAllTimersAsync(); // 30ms 発火 → 候補取得
+    expect(getInstantCommandItems().length).toBeGreaterThan(0);
+
+    // 別 filterName で再入力: scheduleInstantCommandFetch が同期で items=[] にし 30ms を arm。
+    setQuery("@cl");
+    await settleEffect(); // effect 実行（<30ms・IPC 未発火）
+    expect(getInstantCommandItems()).toEqual([]); // 古い候補が残らない（誤起動防止の要）
+  });
+
+  it("burst（30ms 未満の連続入力）は leading なしで、最後の filterName で 1 回だけ IPC 取得", async () => {
+    // 呼び出し履歴はグローバル beforeEach の clearAllMocks() が各テスト前にクリア済み。
+    setQuery("@g");
+    await settleEffect(); // arm "g"（leading なし＝即時 IPC は撃たない）
+    setQuery("@go");
+    await settleEffect(); // re-arm "go"
+    setQuery("@goo");
+    await settleEffect(); // re-arm "goo"
+    expect(api.getInstantCommands).not.toHaveBeenCalled(); // 30ms 前は未発火（leading なし）
+
+    await vi.advanceTimersByTimeAsync(30); // trailing 発火
+    expect(api.getInstantCommands).toHaveBeenCalledTimes(1);
+    expect(api.getInstantCommands).toHaveBeenCalledWith("goo"); // 最後の filterName のみ
   });
 });
 

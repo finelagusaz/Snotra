@@ -26,6 +26,15 @@ vi.mock("../lib/invoke", () => ({
   executeInstantCommand: vi.fn(async () => ({ status: "ok", code: 0, message: null })),
 }));
 
+// perf 計測を spy 化（requestId 相関の検証用。node 環境では実体は no-op だが呼び出し引数は観測できる）
+vi.mock("../lib/perf", () => ({
+  perfMarkInput: vi.fn(),
+  perfStartSearch: vi.fn(),
+  perfMarkSearchDone: vi.fn(),
+  perfCancelSearch: vi.fn(),
+  perfMarkRenderDone: vi.fn(),
+}));
+
 // ── モック確立後にインポート ─────────────────────────────────────────────────
 
 import * as tauriEvent from "@tauri-apps/api/event";
@@ -57,9 +66,11 @@ import {
   indexing,
   initIndexingState,
   setInstantCommandPrefix,
+  getSearchGeneration,
 } from "../stores/search";
 import { setToolSelectionState } from "../stores/tool-selection";
 import { setFolderState } from "../stores/folder";
+import { perfStartSearch, perfMarkSearchDone } from "../lib/perf";
 
 // ── テスト定数 ────────────────────────────────────────────────────────────────
 
@@ -835,5 +846,135 @@ describe("allowsFolderNav", () => {
     setFolderState(FOLDER_FRAME);
     setToolSelectionState(TOOL_FRAME);
     expect(allowsFolderNav()).toBe(false);
+  });
+});
+
+// ── supersede（latestRun primitive への集約・#534）────────────────────────────
+// 検索語は query() から読むが、query effect + debounce のタイミングは他 describe の
+// 同期 setQuery が残す状態に依存して不安定なため、エクスポート済み refreshResults() を
+// 直接呼んで in-flight を作る（世代跨ぎの supersede は latestRun.test.ts が単体で担保済み）。
+
+describe("supersede（world 世代跨ぎ・モード遷移）", () => {
+  it("検索 in-flight 中の enterToolSelection が古い検索結果を無効化する", async () => {
+    // 先行 describe が indexing=true を漏らすため false に戻す（indexing 中は検索がガードされる）
+    vi.mocked(api.getIndexingState).mockResolvedValue(false);
+    await initIndexingState();
+    expect(indexing()).toBe(false);
+
+    const resolvers: Array<(v: SearchResult[]) => void> = [];
+    vi.mocked(api.search).mockImplementation(
+      () => new Promise<SearchResult[]>((r) => resolvers.push(r)),
+    );
+    vi.mocked(api.getMatchingTools).mockResolvedValue([TOOL_1, TOOL_2]);
+
+    setQuery("q");
+    const p = refreshResults(); // 直接 refresh → run(gen=N) → api.search("q") deferred
+    expect(resolvers.length).toBeGreaterThan(0);
+
+    await enterToolSelection(FILE_RESULT); // world 世代を invalidate → results=tools
+    expect(toolSelectionState()).not.toBeNull();
+    expect(results()).toHaveLength(2);
+
+    // 溜まった古い検索を全部解決 → いずれも stale で results を上書きしない
+    resolvers.forEach((r) =>
+      r([{ name: "stale", path: "C:\\s", isFolder: false, isError: false }]),
+    );
+    await p;
+    await vi.runAllTimersAsync();
+
+    expect(results()).toHaveLength(2);
+    expect(results()[0].name).toBe("Tool One");
+  });
+});
+
+// ── flush スコープ（instant を待受対象にしない・#534 Step 5c-1 の回帰網）─────────
+
+describe("flush スコープ（instant fetch を activation の待受に載せない）", () => {
+  it("instant IPC in-flight のまま非 instant へ遷移しても activation は instant IPC を待たない", async () => {
+    // instant fetch を「解決しない」promise にする（待受に載ると activation がハングする）
+    vi.mocked(api.getInstantCommands).mockImplementation(
+      () => new Promise<InstantCommand[]>(() => {}),
+    );
+
+    setInstantCommandPrefix("@");
+    setQuery("@g");
+    await vi.runAllTimersAsync(); // 30ms デバウンス発火 → instant IPC in-flight（never resolve）
+    expect(interpKind()).toBe("instant");
+
+    // 非 instant（command）へ遷移。`/x` は slash_noop で runRefresh を呼ばないため
+    // single-slot の refreshInFlight を上書きしない。instant fetch が誤って flush 追跡に
+    // 載っていれば、never-resolve な instant IPC が slot に残り activation がハングする。
+    // （plain "x" は後続 refresh が slot を上書き→クリアし回帰を隠すため使わない・code-reviewer 指摘）
+    setQuery("/x");
+    await vi.runAllTimersAsync();
+    expect(interpKind()).toBe("command");
+
+    // activation が instant IPC を待つと fake timer 下で解決せずハングする。
+    // 解決すれば「flush が instant を待受対象にしていない」ことの証拠。
+    const activated = await activateSelected();
+    expect(activated).toBe(false); // 結果空で起動対象なし。だがハングせず false を返す
+  });
+});
+
+// ── executeInstantCommandSelected rollback の preGen+1 判定（#534 Step 5c-4）────
+
+describe("executeInstantCommandSelected rollback（world 世代が進んだら復元しない）", () => {
+  it("await 中にモード遷移で world 世代が進むと、失敗しても候補を復元しない（preGen+1 不成立）", async () => {
+    vi.mocked(api.getInstantCommands).mockResolvedValue([CMD_GOOGLE, CMD_CLIP]);
+    setQuery("@google X");
+    await vi.runAllTimersAsync();
+    expect(interpKind()).toBe("instant");
+    expect(results()).toHaveLength(2); // instant 候補が入っている
+
+    // executeInstantCommand を deferred にして await 中に介入できるようにする
+    let settleExec!: (v: Awaited<ReturnType<typeof api.executeInstantCommand>>) => void;
+    vi.mocked(api.executeInstantCommand).mockImplementation(
+      () => new Promise((resolve) => (settleExec = resolve)),
+    );
+
+    const p = activateSelected(); // preGen 捕捉 → withLaunchLifecycle が +1 → executeInstantCommand 待ち
+    await Promise.resolve();
+
+    // await 中に world 世代をさらに進める（モード遷移）→ current() が preGen+1 を超える
+    vi.mocked(api.getMatchingTools).mockResolvedValue([TOOL_1, TOOL_2]);
+    await enterToolSelection(FILE_RESULT);
+    expect(toolSelectionState()).not.toBeNull();
+
+    // 失敗させる → onFailure: current() !== preGen+1 なので候補リストを復元しない
+    settleExec({ status: "failed", code: 1, message: "nope" });
+    const ok = await p;
+
+    expect(ok).toBe(false);
+    // 復元されず、await 中に遷移したツール選択の状態が保たれる（instant 候補に巻き戻らない）
+    expect(toolSelectionState()).not.toBeNull();
+    expect(results()[0].name).toBe("Tool One");
+  });
+});
+
+// ── perf requestId 相関（#534 Step 5c-5）──────────────────────────────────────
+
+describe("perf requestId 相関", () => {
+  it("perfStartSearch と perfMarkSearchDone は同一 requestId、getSearchGeneration() も一致", async () => {
+    // 先行 describe が漏らす indexing=true を false に戻す（indexing 中は perfStartSearch("query") 前で return）
+    vi.mocked(api.getIndexingState).mockResolvedValue(false);
+    await initIndexingState();
+    expect(indexing()).toBe(false);
+
+    vi.mocked(api.search).mockResolvedValue([FILE_RESULT]);
+
+    setQuery("file");
+    await refreshResults(); // 直接 refresh（この位置では query effect が不安定なため）
+    await vi.runAllTimersAsync(); // effect 由来の追随検索も流し切る
+
+    const startQueryCalls = vi.mocked(perfStartSearch).mock.calls.filter((c) => c[1] === "query");
+    const doneCalls = vi.mocked(perfMarkSearchDone).mock.calls;
+    expect(startQueryCalls.length).toBeGreaterThan(0);
+    expect(doneCalls.length).toBeGreaterThan(0);
+
+    // 完了した最新検索の requestId は perfStartSearch にも現れ、getSearchGeneration()（= ResultsSection の
+    // perfMarkRenderDone 源）とも一致する。世代更新位置がずれるとこの相関が崩れる。
+    const lastDoneId = doneCalls.at(-1)![0];
+    expect(startQueryCalls.some((c) => c[0] === lastDoneId)).toBe(true);
+    expect(getSearchGeneration()).toBe(lastDoneId);
   });
 });

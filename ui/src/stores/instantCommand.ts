@@ -36,18 +36,17 @@ export function cancelInstantCommandDebounce() {
 }
 
 /** インスタントコマンド候補の取得を 30ms デバウンスでスケジュールする唯一の経路（choke point）。
- *  world 世代（searchGeneration）は search.ts 側の関心事のため、staleness 判定・世代更新は
- *  呼び出し側が hooks 経由で担う（本モジュールは api/types にのみ依存し、search.ts への
- *  逆依存を持たない——循環 import を避ける設計）。
+ *  world 世代（staleness/supersede）は search.ts 側の関心事のため、検索/データ lane と同じ
+ *  `latestRun` runner の `run` を呼び出し側から注入して調停する（本モジュールは api/types にのみ
+ *  依存し、search.ts への逆依存を持たない——循環 import を避ける設計）。`run` は内部で世代を進め、
+ *  task に `isStale()` を渡す。await 後 stale なら適用をスキップする。
  *  IPC 応答前の Enter/クリックで古いコマンドを誤起動しないよう、呼び出し時点で即座に
  *  候補一覧をクリアする。 */
 export function scheduleInstantCommandFetch(
   filterName: string,
-  hooks: {
-    /** 世代を進めて今回のリクエスト ID を発行する（search.ts の nextGeneration）。 */
-    nextRequestId: () => number;
-    /** 応答到着時に world 世代が変わっていれば true（stale として破棄）。 */
-    isStale: (requestId: number) => boolean;
+  deps: {
+    /** 検索/データ lane と共有する `latestRun` の run。最新実行だけが結果を適用する。 */
+    run: <T>(task: (ctx: { isStale: () => boolean }) => Promise<T>) => Promise<T>;
     onFetched: (results: SearchResult[]) => void;
     onError: (error: unknown) => void;
   },
@@ -56,11 +55,10 @@ export function scheduleInstantCommandFetch(
   cancelInstantCommandDebounce();
   instantCmdDebounceTimer = setTimeout(() => {
     instantCmdDebounceTimer = undefined;
-    void (async () => {
-      const requestId = hooks.nextRequestId();
+    void deps.run(async ({ isStale }) => {
       try {
         const commands = await api.getInstantCommands(filterName);
-        if (hooks.isStale(requestId)) return;
+        if (isStale()) return;
         instantCommandItems = commands;
         const results: SearchResult[] = commands.map((cmd) => ({
           name: cmd.name,
@@ -69,10 +67,10 @@ export function scheduleInstantCommandFetch(
           isError: false,
           description: cmd.description || cmd.display,
         }));
-        hooks.onFetched(results);
+        deps.onFetched(results);
       } catch (e) {
-        hooks.onError(e);
+        deps.onError(e);
       }
-    })();
+    });
   }, INSTANT_CMD_DEBOUNCE_MS);
 }

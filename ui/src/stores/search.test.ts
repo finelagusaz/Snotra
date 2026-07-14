@@ -385,9 +385,12 @@ describe("refreshResults ガード (C3)", () => {
     // query を "test" にしても refreshResults が早期リターンするはず
     setQuery("test");
 
+    // 早期 return（searchLane.run() の前）なので world 世代は進まない（#534 の核心不変条件）
+    const genBefore = getSearchGeneration();
     await refreshResults();
 
     expect(api.search).not.toHaveBeenCalled();
+    expect(getSearchGeneration()).toBe(genBefore);
   });
 
   it("ツール選択中は api.listFolder も呼ばない（フォルダ展開中の C3）", async () => {
@@ -630,9 +633,12 @@ describe("refreshResults ガード — インスタントコマンドモード",
     expect(interpKind()).toBe("instant");
     vi.mocked(api.search).mockClear();
 
+    // 早期 return（searchLane.run() の前）なので world 世代は進まない（#534 の核心不変条件）
+    const genBefore = getSearchGeneration();
     await refreshResults();
 
     expect(api.search).not.toHaveBeenCalled();
+    expect(getSearchGeneration()).toBe(genBefore);
   });
 });
 

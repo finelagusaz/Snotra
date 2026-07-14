@@ -19,6 +19,9 @@
 - **plan-review 結論**: onSuccess 伝播は YAGNI 寄りだが両監査とも「issue 忠実性・対称署名として許容・実害なし」。
   ただし ui/CLAUDE.md「実装しない機能のコメントは書かない」との整合のため、**onSuccess の `disturbed` 引数には
   「現状 consumer ゼロ・対称署名のための供給」を 1 行コメントで明記する**（未使用の理由を証跡化）。
+- **codex 敵対レビュー（実装後・commit 664bb62）**: claim 4 として同じ過剰抽象を再指摘（onFailure だけに絞るべき）。
+  correctness は 6 主張すべて反証不成立（等価性・復元順序・導入バグ・docs 整合すべて堅牢）。
+  **ユーザー判断で「忠実のまま両方に残す」を再確認**（issue proposal の明示 + 対称署名を優先）。設計は据え置き。
 
 ## 変更ファイル一覧
 
@@ -133,11 +136,14 @@ async function withLaunchLifecycle(
 1. **挙動保存**: `disturbed()` 判定は `current() === preGen+1` と全入力で一致（research.md の `k===0` 証明）。
    検知手段 = `search.test.ts:614-629`（復元する）と `1030-1062`（復元しない）が実 `withLaunchLifecycle`
    経由で両パスを固定。両テストが green のままなら挙動保存が実証される。
-2. **1 bump 不変条件**: `withLaunchLifecycle` は world 世代を **line 504 の invalidate ただ 1 回**進める。
-   `disturbed` の `launchGen` はこの直後に捕捉する。この不変条件が崩れる（例: clearResults が invalidate を
-   呼ぶよう変わる）と `disturbed` の意味も変わるが、**その変更は同一関数内で launchGen 捕捉位置と同居する**
-   ため、旧設計（別関数 executeInstantCommandSelected に散った `+1`）より破綻を局所化・可視化する
-   ＝これが issue の狙い（coupling をコンパイラの見える場所へ引き寄せる）。
+2. **1 bump 不変条件**（codex claim 2 で文言を正確化）: `withLaunchLifecycle` が **`await launch()` 前の
+   本体**で world 世代を進めるのは本体先頭の invalidate の **1 回のみ**（onSuccess/onFailure の callback 側は
+   別途 `invalidate()`/`run()` を呼びうるが、それらは `disturbed` 捕捉後・await 後に走るため等価性に影響しない
+   ── 「withLaunchLifecycle は 1 回だけ bump」という無条件の言い方は避ける）。`disturbed` の `launchGen` は
+   この本体先頭 invalidate の直後に捕捉する。この不変条件が崩れる（例: clearResults が invalidate を呼ぶよう
+   変わる）と `disturbed` の意味も変わるが、**その変更は同一関数内で launchGen 捕捉位置と同居する**ため、
+   旧設計（別関数 executeInstantCommandSelected に散った `+1`）より破綻を局所化・可視化する＝これが issue の
+   狙い（coupling をコンパイラの見える場所へ引き寄せる）。
 3. **復元順序**: `disturbed()` は `if` 条件で復元本文の前に評価。復元内 `searchLane.invalidate()` は
    評価後に走るため自己汚染しない（従来と同一）。
 4. **署名波及の完全性**: onSuccess/onFailure 署名変更の呼出し元網羅は **grep が根拠**（TS は

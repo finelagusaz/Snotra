@@ -78,6 +78,7 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 - **Canvas API モック**: `truncatePath.ts` のように遅延初期化（初回呼び出しまで `document.createElement` しない）の場合、`vi.stubGlobal("document", { createElement: ... })` を `beforeAll` で設定すれば jsdom 不要でテスト可能
 - **コンポーネントテストでは `render(() => <Component />)` を使う**: SolidJS の `render` は関数ラッパーが必須（React と異なり直接 JSX を渡さない）
 - `cspValidation.test.ts`: Tauri v2 IPC の CSP 検証（`connect-src` に `ipc:` と `http://ipc.localhost` が必要）
+- **`beforeEach` の `vi.clearAllMocks()` は `.mock.calls` を消すが `mockImplementation`/`mockResolvedValue` の差し替えは復元しない**: あるテストで api モックの実装を差し替える（例: `mockImplementation` で deferred 化）と、次のテストへ漏れる（`vi.mock` の factory 既定には戻らない）。実装を差し替えたテストに依存する後続テストは、そのモックを自前で再設定すること（`beforeEach` が明示的に再設定するのは `api.search` のみ）。漏れは deferred なら timeout で loud に落ちるが、`mockResolvedValue` の漏れは誤った値で緑になる（false green）
 
 ### コンポーネントテスト（.test.tsx）のモックパターン
 

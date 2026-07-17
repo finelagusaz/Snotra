@@ -996,6 +996,13 @@ fn focus_and_release_alt(hwnd: isize) {
             Some(&mut result),
         );
     }
+    // 残留 Alt の解除は、物理 Alt が既に離れているときにしか意味を持たない。
+    // 押下中に注入すると OS の論理修飾状態だけが解放され、Alt を押し直すまで
+    // Alt+Q が発火しない不感帯を作る（タイムアウト show 経路で実測）。
+    if is_alt_pressed() {
+        eprintln!("SNOTRA_SOFT_HOST_HOTKEY=alt_release_skipped_physical_alt_down");
+        return;
+    }
     send_alt_key_up();
 }
 
@@ -1256,8 +1263,11 @@ fn dispatch_hotkey(
             let _ = proxy.send_event(HostCommand::Hide);
             eprintln!("SNOTRA_SOFT_HOST_HOTKEY=hide_dispatched");
         }
+        // Show 経路では visible を先読みで立てない。真実源は UI スレッドの実際の
+        // show/hide である。配送時の楽観 true は「Alt 押下中の再押下」を Hide と
+        // 誤読させ、待機中の Show が世代キャンセルされて何も表示されない（実測）。
+        // 製品版 `src-tauri` も visible を show 完了時に立てる。
         HotkeyPlan::ShowAfterAltRelease => {
-            visible.store(true, Ordering::SeqCst);
             let hotkey_started = Instant::now();
             let proxy = proxy.clone();
             let generation = Arc::clone(generation);
@@ -1274,7 +1284,6 @@ fn dispatch_hotkey(
             });
         }
         HotkeyPlan::ShowNow => {
-            visible.store(true, Ordering::SeqCst);
             let _ = proxy.send_event(HostCommand::Show {
                 hotkey_started: Instant::now(),
             });

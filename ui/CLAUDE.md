@@ -127,7 +127,7 @@ vi.mock("../stores/search", () => ({ fn1: mockFn1, fn2: mockFn2 }));
 
 - アイコンの Blob URL は `LruIconCache`（`lruIconCache.ts`）が一元管理する。`URL.createObjectURL` で生成した URL は必ず `cache.set()` または早期リターン時の明示的 `revokeObjectURL` で回収する
 - `parseBinaryBatch` で Blob URL を生成した後、`cache.set()` に到達する前に早期リターンするパス（stale guard 等）では、`parsed` 内の全 URL を明示的に `revokeObjectURL` すること
-- `ResultsSection` の `visible` prop が `false` になったとき `cache.revokeAll()` + `iconCacheVersion` 更新で Blob URL を一括解放する
+- `ResultsSection` の `visible` prop が `false` になったとき `cache.revokeAll()` + `setIconNotify(reconcile({}))`（per-path 通知の全リセット）で Blob URL を一括解放する
 
 ## 設計上の注意点
 

@@ -1,6 +1,6 @@
 /**
- * Folder navigation pure logic.
- * Extracted from stores/search.ts for testability.
+ * フォルダナビゲーションの純ロジック。
+ * SolidJS/api 非依存でテスト可能なため stores/ から分離している。
  */
 
 /**

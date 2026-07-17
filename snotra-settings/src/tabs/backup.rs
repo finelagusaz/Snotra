@@ -108,7 +108,7 @@ pub fn ui(
             let _ = open::that(dir);
         }
 
-        // Inline message (persists until next operation).
+        // インラインメッセージ（次の操作まで表示を維持する）。
         // 結果領域の境界として水平 separator を残す（セクション間の区切りとは別の用途）。
         if !state.message.is_empty() {
             ui.add_space(style::SPACE_GROUP);

@@ -6,7 +6,7 @@ use crate::icon::{encode_batch_binary, extract_png, IconCache, IconCacheState};
 use crate::state::AppState;
 
 fn ensure_icon_cache_loaded_if_enabled(state: &State<AppState>, icons: &State<IconCacheState>) {
-    // Read config under a single engine lock, then drop it before locking icon cache
+    // config は単一の engine ロック内で読み、icon cache のロックを取る前に解放する
     // (engine ロックを跨いで I/O しない)。cap は `Config::icon_cache_cap()` が表示ワーキングセット
     // から派生する（独立 config キー・検証・floor を持たず「cap ≥ ワーキングセット」が構造的に成立。
     // 詳細は snotra-core の同メソッド doc を参照）。
@@ -53,14 +53,14 @@ pub fn get_icons_batch(
         }
     }
 
-    // Step 2: extract missing icons outside the lock (SHGetFileInfoW + PNG encode)
+    // Step 2: ミスしたアイコンをロック外で抽出する（SHGetFileInfoW + PNG エンコード）
     // rayon で並列化: extract_png は各スレッドで独立した Win32 ハンドルを取得・破棄するためスレッドセーフ
     let extracted: Vec<(usize, String, Vec<u8>)> = misses
         .into_par_iter()
         .filter_map(|(i, path)| extract_png(&path).map(|png| (i, path, png)))
         .collect();
 
-    // Step 3: insert extracted → cache, then build binary response in one lock
+    // Step 3: 抽出結果を cache へ挿入し、同一ロック内でバイナリレスポンスを構築する
     // ロック内でスライス参照を使うことで clone を完全に排除する。
     //
     // 既知の残余（意図的に許容・#522 adversarial review で指摘）: Step 2 はロック外

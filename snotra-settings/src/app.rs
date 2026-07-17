@@ -274,7 +274,7 @@ impl eframe::App for SettingsApp {
     // eframe 0.35: App::update は logic()/ui() に分割された。全レイアウトを ui() が受け取る
     // ルート Ui 上に置き、各 Panel は show(ui) で描画する（旧 Panel::show(ctx) は 0.35 で削除、
     // show_inside は show へ改名）。ctx はルート Ui から取得する。
-    // 本体は `ui_impl` に委譲する（`_frame` 未使用のため挙動不変）。egui_kittest の
+    // 本体は `ui_impl` に委譲する。egui_kittest の
     // `Harness::new_ui_state` は `FnMut(&mut Ui, &mut State)` を取り Frame を渡せないため、
     // Frame 非依存の `ui_impl` を切り出してヘッドレステストから直接呼べるようにしている。
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

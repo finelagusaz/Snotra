@@ -956,7 +956,7 @@ impl Config {
             errors.push(ConfigError::MigemoMinCharsZero);
         }
 
-        // NOTE: アイコンキャッシュ上限は独立 config キーを持たず `Config::icon_cache_cap()` で
+        // 保守注意: アイコンキャッシュ上限は独立 config キーを持たず `Config::icon_cache_cap()` で
         // 表示ワーキングセットから派生する（「上限 ≥ ワーキングセット」が構造的に成立）ため、
         // ここでの検証は不要。
 
@@ -1103,7 +1103,7 @@ mod tests {
             history_normalization = "fuzzy_relative_cap"
             fuzzy_history_cap_ratio = 0.25
         "#;
-        // Verify raw deserialized values before any migration.
+        // migration 適用前の raw デシリアライズ値を検証する。
         // 旧キー max_results / top_n_history / max_history_display は legacy slot（Some(v)）に入る。
         // SearchConfig / visible_rows への migration は migrate_oldest_appearance_legacy_to_new_keys で検証。
         let config: Config = toml::from_str(toml_str).expect("parse");

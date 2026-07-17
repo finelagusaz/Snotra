@@ -7,8 +7,8 @@ use crate::icon;
 use crate::platform::{PlatformBridge, PlatformCommand};
 use crate::state::AppState;
 
-/// Start (or kick) an index build. Returns `true` if a build thread was started,
-/// `false` if one was already running.
+/// インデックスビルドを開始（または kick）する。ビルドスレッドを起動したら `true`、
+/// 既に走行中なら `false` を返す。
 ///
 /// ビルド要求の全経路（config 変更 reindex / first-run / 手動 rebuild / 自己再 kick）が通る単一入口。
 /// 先に `mark_index_stale` で index を stale にし、CAS に失敗（既に in-flight）しても走行中ビルドの

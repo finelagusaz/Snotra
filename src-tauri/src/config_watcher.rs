@@ -192,18 +192,15 @@ fn apply_config_change(app: &AppHandle) {
         let _ = app.emit("show-icons-changed", new_show_icons);
     }
 
-    // Emit visible_rows change.
     // イベント名は IPC 安定のため旧名 "max-results-changed" を維持する（config キーは visible_rows に改名済み、#388）。
     if visible_rows_changed {
         let _ = app.emit("max-results-changed", new_visible_rows);
     }
 
-    // Emit instant command prefix change
     if instant_prefix_changed {
         let _ = app.emit("instant-prefix-changed", new_instant_prefix);
     }
 
-    // Emit result_limit change.
     // イベント名は IPC 安定のため旧名 "top-n-history-changed" を維持する（config キーは result_limit に改名済み、#388）。
     if result_limit_changed {
         let _ = app.emit("top-n-history-changed", new_result_limit);

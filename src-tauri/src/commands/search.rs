@@ -42,10 +42,10 @@ pub fn get_history_results(state: State<AppState>) -> Vec<SearchResult> {
 
 // IPC 返り値契約（src-tauri/CLAUDE.md「IPC コマンドの返り値契約」）の「読み取り・検索系」:
 // 失敗は is_error エントリを含む SearchResult で表現し、素の Vec<SearchResult> を返す。
-// 以前は Result<_, String> だったが、全エラーパスが is_error エントリを Ok() で包んで返し
-// Err 変体を返さない死蔵の型だったため、実装に合わせて素の型へ揃えた（#434）。
+// Result<_, String> にしない理由: 全エラーパスが is_error エントリで表現され、Err 変体が
+// 決して返されない死蔵の型になるため（#434）。
 // wire 互換性: Tauri IPC は Result<T, E>::Ok(v) と v を成功パスで同一シリアライズするため、
-// Err を返したことがないこのコマンドの型変更はフロントエンドから見て無害。
+// Err を返さないこのコマンドではどちらの型でもフロントエンドから見た表現は同一。
 #[tauri::command]
 pub async fn list_folder(dir: String, filter: String, app: AppHandle) -> Vec<SearchResult> {
     trace_command(

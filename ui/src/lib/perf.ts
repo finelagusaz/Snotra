@@ -1,3 +1,20 @@
+/**
+ * 開発時専用の 3 フェーズ（入力→検索→描画）レイテンシ計測。P50/P95 を `console.table` 出力する。
+ *
+ * 呼び出し側の契約:
+ * - **呼び出し順序**: `perfMarkInput()` → `perfStartSearch(requestId, ...)` →
+ *   `perfMarkSearchDone(requestId)` → `perfMarkRenderDone(requestId)` の順。`perfMarkInput` を
+ *   欠くと `perfStartSearch` は計測を黙って捨てる（単一スロット `pendingInputAt` が undefined のため）。
+ * - **解放義務**: stale になった実行は `perfCancelSearch(requestId)` で保留計測を除去すること。
+ *   怠ると保留が滞留し、上限 `MAX_PENDING` 到達で全保留が clear され計測精度が落ちる。
+ * - **requestId の一意性**: `searchLane.current()`（world 世代）由来であることを前提とする。
+ * - 集計対象は `source === "query"` のみ（folder/history/indexing は計測しても集計に載せない）。
+ * - `ENABLED`（DEV ビルドかつ `localStorage.snotra_perf === "1"`。非ブラウザ環境では常に偽）が
+ *   偽なら全関数 no-op。
+ *
+ * @packageDocumentation
+ */
+
 type PhaseSource = "query" | "folder" | "history" | "indexing";
 
 type Sample = {

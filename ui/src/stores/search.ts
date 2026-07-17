@@ -60,7 +60,7 @@ function restoreView(saved: SavedViewState) {
 }
 
 const DEBOUNCE_MS = 50;
-/** 検索 debounce の所有タイマー（trailing 50ms）。旧 `debounceTimer` + `leadingFired` を統合。
+/** 検索 debounce の所有タイマー（trailing 50ms）。
  *  leading edge は debouncedRefresh が `!isPending()`（＝バースト先頭）から導出する（policy は
  *  primitive でなく呼び出し側の関心）。plain 打鍵と folderFilter effect の 2 経路が単一インスタンスを
  *  共有し、モード遷移を跨ぐ保留 timer を保存する。 */
@@ -69,8 +69,8 @@ let refreshInFlight: Promise<void> | undefined;
 
 /** 検索/データ lane の supersede 調停 primitive（world 世代 + staleness を所有・choke point）。
  *  検索・instant fetch の「最新実行だけが結果を適用する」を `run()` が、モード遷移・起動が
- *  in-flight を無効化する「world 世代の前進」を `invalidate()` が担う（旧 `nextGeneration()`）。
- *  perf の requestId 源は `searchLane.current()`（旧 `searchGeneration` 直読）。
+ *  in-flight を無効化する「world 世代の前進」を `invalidate()` が担う。
+ *  perf の requestId 源は `searchLane.current()`。
  *  flush 追跡（`refreshInFlight`/`flushPendingRefresh`）は refresh lane 固有のため runner に吸収せず
  *  下の `trackRefresh` に残す（instant/直接 refreshResults を待受対象に載せない現挙動を保つ）。 */
 const searchLane = createLatestRun();
@@ -151,8 +151,8 @@ function cancelDebounce() {
 
 function debouncedRefresh() {
   // Leading edge: バースト先頭（保留タイマー無し＝!isPending()）でのみ即時発火する。
-  // 旧 leadingFired フラグは refreshTimer.isPending() から導出できるため廃止
-  // （現行実装で leadingFired ≡ (timer !== undefined) が全遷移で成立する）。
+  // 発火済みフラグは別に持たない——`refreshTimer.isPending()` と全遷移で等価になり
+  // 冗長なため、`isPending()` から導出する。
   if (!refreshTimer.isPending()) void runRefresh();
   // Trailing: 最後の入力から DEBOUNCE_MS 後に発火。arm が前回の保留を破棄して張り直す。
   refreshTimer.arm(() => void runRefresh());
@@ -308,12 +308,12 @@ function handlePlainQueryInput(q: string) {
 /** ユーザー入力の明示 dispatch（唯一の検索起動起点）。setQuery で query を更新し、interpret の
  *  意図に基づいて instant/command/plain へ振り分ける。プログラム的リセット（resetForShow・
  *  instant 成功・command 実行後の clearCommandModeState 等）はこの関数を **呼ばない別経路**であり、
- *  ゆえに「今回だけ effect を黙らせる」ワンショットフラグ（旧 suppressNextQueryEffectRefresh）が不要になった。
- *  旧 `createEffect(on(query, ...))` の本体をそのまま移設（挙動不変・#537）。 */
+ *  検索を起動しない。この経路分離により「今回だけ effect を黙らせる」類のワンショット
+ *  フラグを要しない（#537）。 */
 function dispatchQueryInput(value: string) {
   setQuery(value);
   const vk = viewKind();
-  // tool/folder ガード（旧 query effect の early return を保存・防御的）。実運用では handleInput が
+  // tool/folder ガード（防御的）。実運用では handleInput が
   // tool で早期リターン・folder で setFolderFilter に振るため、ここへは vk==="results" 時のみ到達する。
   if (vk === "tool") {
     trace("search:query_input:ignored_tool_selection", { query: value });
@@ -661,7 +661,7 @@ async function executeInstantCommandSelected(): Promise<boolean> {
       () => api.executeInstantCommand(cmd.name, instantQuery),
       () => {
         // 成功時: モードを完全にクリアする（query="" で interpKind は plain へ純粋導出）。
-        // raw setQuery("") は dispatchQueryInput を経由しない＝検索を起動しないため、旧 suppress は不要。
+        // raw setQuery("") は dispatchQueryInput を経由しない＝検索を起動しない。
         cancelInstantCommandDebounce();
         clearInstantCommandItems();
         setQuery("");
@@ -747,7 +747,7 @@ function resetForShow() {
   cancelInstantCommandDebounce();
   clearInstantCommandItems();
   // raw setQuery("") は dispatchQueryInput を経由しない＝検索を起動しない。検索は下の明示 runRefresh()
-  // のみが担う（旧 suppressNextQueryEffectRefresh で query effect を黙らせていた役割を経路分離で置換）。
+  // のみが担う（経路分離）。
   setQuery("");
   setFolderFilter("");
   setSelected(0);
@@ -829,7 +829,7 @@ export {
 
 export { folderState, folderFilter, setFolderFilter } from "./folder";
 export { toolSelectionState } from "./tool-selection";
-// 公開 API は変えず、実装のみ stores/launchNotice.ts へ分割（#431 Phase3・DRY 再 export）
+// launchNotice の公開 API を search.ts に単一化する re-export（実装は stores/launchNotice.ts・#431）
 export {
   launchNotice,
   clearLaunchNotice,

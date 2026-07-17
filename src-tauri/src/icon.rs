@@ -32,7 +32,7 @@ pub struct IconCache {
 }
 
 impl IconCache {
-    /// Try to load persisted cache, or return empty cache. Never blocks on icon extraction.
+    /// 永続化済みキャッシュのロードを試み、失敗時は空キャッシュを返す。アイコン抽出では決してブロックしない。
     /// `cap` 超過の既存 `icons.bin` はロード時点で切り詰め、常駐メモリを即時に頭打ちにする。
     pub fn load(cap: usize) -> Self {
         let data = icon_bin_file()
@@ -48,7 +48,7 @@ impl IconCache {
         cache
     }
 
-    /// Get cached PNG bytes for a path (read-only, no extraction).
+    /// パスに対応するキャッシュ済み PNG バイト列を返す（読み取り専用・抽出はしない）。
     /// **read-only を厳守**: アクセス順を更新しない（更新すると検索 Step1 の read lock が
     /// write lock に変質し性能退行する）。退避は `insert` / `load`（`&mut self`）に限定する。
     pub fn get(&self, path: &str) -> Option<&[u8]> {

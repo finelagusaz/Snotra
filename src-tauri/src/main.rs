@@ -135,15 +135,7 @@ fn send_alt_key_up() {}
 #[cfg(windows)]
 fn suspend_disabled() -> bool {
     static DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *DISABLED.get_or_init(|| {
-        let Ok(v) = std::env::var("SNOTRA_DISABLE_SUSPEND") else {
-            return false;
-        };
-        matches!(
-            v.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        )
-    })
+    *DISABLED.get_or_init(|| trace::env_flag("SNOTRA_DISABLE_SUSPEND"))
 }
 
 /// Suspend the WebView2 renderer to reduce memory/CPU while hidden.

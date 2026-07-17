@@ -15,6 +15,7 @@
 - 意図（仕様）: `SPEC.md`
 - プロダクト知識（アーキテクチャ・横断パターン）: `docs/architecture.md`
 - 開発原則・デバッグ指針（汎用）: `docs/development-principles.md`
+- コメント規約（rustdoc / TSDoc の様式・粒度・定型ラベル）: `docs/comment-guidelines.md`
 - ビルド・テストコマンド: `docs/build-commands.md`
 - モジュール固有の不変条件: 各サブディレクトリの `CLAUDE.md`（`snotra-core/`, `src-tauri/`, `ui/`, `snotra-settings/`）
 - 設定 UI デザインガイドライン: `snotra-settings/SETTINGS-DESIGN.md`（デザイントークン・Fluent タイポグラフィ・レイアウト規約）

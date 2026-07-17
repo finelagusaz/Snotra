@@ -8,6 +8,7 @@ Issue #532の採用判断に使う、WebViewなしの独立MVPバイナリ。
 - `src/glow_main.rs`: eframe/glowのフォント保持、Window／GL contextライフサイクル、Tauri固定費を切り分けるrelease計測プローブ
 - `src/glow_lifecycle_main.rs`: WGLのWindow／Surface／Contextを構成要素別に反復し、メモリ・再表示時間・handleリークを計測するreleaseプローブ
 - `src/glow_park_host_main.rs`: Tauri managed host（updater／global shortcut Alt+Q）と park-surface レンダラーを同一プロセスで統合し、コールドスタート内訳・Alt+Q入力可能時間・反復耐久を計測する統合スパイク
+- `src/soft_main.rs`: WebView2もGPUランタイムも持たず、eguiをCPUラスタライズしてsoftbuffer（GDI転送）で提示する構成の床（private bytes・コールドスタート・warm・raster時間）を測る最小スパイク
 - `tauri.conf.json`: WebView WindowとfrontendDistを持たないMVP専用設定
 
 ## 不変条件
@@ -24,3 +25,4 @@ Issue #532の採用判断に使う、WebViewなしの独立MVPバイナリ。
 - WGL ContextをunbindしてSurfaceを扱うときは、Context → Surface/HDC → Window/HWNDの順でライフサイクルを管理し、消費型Context APIの失敗でHGLRCを失わない
 - 統合スパイクのホットキー分岐（`plan_hotkey`）とUIコマンド適用（`plan_ui_action`）は純関数として保ち、冪等性（Visible+Show／Suspended+Hide）とunpark進行中Hideの繰り延べをテストで固定する
 - warm frame の日次比較はしない——同一ホストでも日によってwarm frameが3倍変わることを実測済み（2026-07-17: standalone 26-30ms vs 7/14の8-10ms）。採用判断の比較は必ず同日・同条件で両構成を測る
+- softbuffer プローブでは `RedrawRequested` を egui_winit の `on_window_event` へ渡さない——repaint 応答が再描画要求を生み、描画が自己永続ループになる（実測: 15秒で約2,000フレーム）

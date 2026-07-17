@@ -21,6 +21,10 @@ path = "src/glow_lifecycle_main.rs"
 name = "snotra-egui-park-host-mvp"
 path = "src/glow_park_host_main.rs"
 
+[[bin]]
+name = "snotra-egui-soft-mvp"
+path = "src/soft_main.rs"
+
 [build-dependencies]
 tauri-build = { version = "=2.6.3", features = [] }
 
@@ -34,6 +38,7 @@ raw-window-handle = "=0.6.2"
 snotra-core = { path = "../snotra-core" }
 snotra-egui-runtime = { path = "../snotra-egui-runtime" }
 serde_json = "1"
+softbuffer = { version = "=0.4.6", default-features = false }
 tauri.workspace = true
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-updater = "=2.10.1"

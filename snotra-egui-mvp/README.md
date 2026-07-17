@@ -26,6 +26,12 @@ park-surface 統合スパイクは、Tauri managed host（updater／global short
 cargo run --release -p snotra-egui-mvp --bin snotra-egui-park-host-mvp
 ```
 
+softbuffer 最小スパイクは、WebView2 も GPU ランタイムも持たない CPU ラスタ + GDI 転送構成の床（private bytes・コールドスタート・warm・raster 時間）を計測します。
+
+```powershell
+cargo run --release -p snotra-egui-mvp --bin snotra-egui-soft-mvp -- --cycles 3
+```
+
 自動反復計測は `--cycles N` で行います。`--focus off` は unpark 時の SetForegroundWindow／WM_NULL／Alt 解除注入を止めます（無人実行向け。Alt+Q 経路の focus 計測は対話モードで行います）。
 
 ```powershell

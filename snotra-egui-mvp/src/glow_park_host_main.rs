@@ -358,6 +358,10 @@ impl HostProbe {
             parked_position: None,
             egui_glow,
         });
+        // visible フラグは「実際の可視性を変えるすべての箇所」（ここ・unpark・park）が
+        // 書く。ウィンドウは可視で生成されるため、ここで true にしないとホスト側の
+        // plan_hotkey が永遠に false を読み、Alt+Q が Hide へ到達しない（実測）。
+        self.visible_flag.store(true, Ordering::SeqCst);
         self.request_redraw();
         Ok(())
     }

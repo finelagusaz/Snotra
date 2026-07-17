@@ -453,6 +453,10 @@ impl SoftHostProbe {
         self.window = Some(Arc::clone(&window));
         self.surface = Some(surface);
         self.egui_winit = Some(egui_winit);
+        // visible フラグは「実際の可視性を変えるすべての箇所」（ここ・show・hide）が
+        // 書く。ウィンドウは可視で生成されるため、ここで true にしないとホスト側の
+        // plan_hotkey が永遠に false を読み、Alt+Q が Hide へ到達しない（実測）。
+        self.visible_flag.store(true, Ordering::SeqCst);
         window.request_redraw();
         Ok(())
     }

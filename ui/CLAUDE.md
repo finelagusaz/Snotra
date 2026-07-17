@@ -38,7 +38,7 @@ SolidJS + TypeScript フロントエンド。Tauri IPC 経由で Rust バック�
 - `types.ts`: TypeScript 型定義の集約先（DRY）
 - `commands.ts`: スラッシュコマンド定義（`/r` `/o` `/s` `/q`）と `SLASH_COMMANDS` 配列・`findCommand()` 関数
   - **`hideMainWindow()` は全 frontend hide（Escape / Enter / Shift+Enter / クリック起動 / フォーカス喪失 / `/s`）の単一チョークポイント**。MainApp.tsx のフォーカス喪失・クリック起動経路もこの関数に集約する
-  - **`await win.hide()` → `notifyMainHidden()` の順を守る** — `notifyMainHidden` 内の `EmptyWorkingSet` trim を hide 完了後に走らせることで、可視中の再 touch による working set 回収の取りこぼしを避ける（hotkey 経路と同順。#361）
+  - **`await win.hide()` → `notifyMainHidden()` の順を守る** — `notifyMainHidden` 内の suspend（TrySuspend）+ `EmptyWorkingSet` trim を hide 完了後に走らせることで、可視中の再 touch による working set 回収の取りこぼしと suspend の前提（非表示）崩れを避ける（hotkey 経路と同じ hide→suspend→trim 順。#361）
 - `i18n.ts`: 多言語対応（日本語・英語）。`TranslationKey` 型と `t(key, params?)` 関数。`{param}` 形式プレースホルダー対応。SolidJS シグナルで言語を管理し、`setLanguage()` で切替。初期言語は `navigator.language` から同期的に決定（bootstrap 到着前のフラッシュ防止）
 - `folderNav.ts`: フォルダナビゲーション純粋ロジック（`computeParentDir`・`clampSelectedIndex`）。ドライブルート・UNC パス対応。テスト可能なため `stores/` から分離
 - `interpretQuery.ts`: 入力解釈の純関数（`interpret`・`isInstantPrefix`・`ViewKind`/`InterpKind`/`QueryIntent` 型）。「入力（query + prefix + viewKind）→ 意図（plain/command/instant + instant の filterName/instantQuery）」を副作用なしで返す。instant 判定・parse の SSOT。`stores/search.ts` の `interpKind` memo と `dispatchQueryInput` がこれを消費する（SolidJS/api 非依存・テスト可能なため分離・#537）

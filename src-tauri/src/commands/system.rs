@@ -1,6 +1,6 @@
 use std::sync::atomic::Ordering;
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::indexing;
 use crate::state::AppState;
@@ -66,10 +66,27 @@ pub fn notify_main_shown(state: State<AppState>) {
 pub fn notify_main_hidden(state: State<AppState>, app: AppHandle) {
     state.main_visible.store(false, Ordering::SeqCst);
     let _ = app.emit("window-hidden", ());
-    // フロントエンド起因の hide（フォーカス喪失/Escape/クリック起動/スラッシュ）も
-    // working set を回収する。EmptyWorkingSet はスレッド非依存ゆえ tokio IPC スレッドから
-    // 安全に呼べる（suspend_webview の with_webview 非同期制約がない）。best-effort。
-    crate::working_set::trim_idle_working_set(std::process::id());
+    // フロントエンド起因の hide（フォーカス喪失/Escape/クリック起動/スラッシュ）でも
+    // hotkey 経路と同じく suspend → trim を行う。with_webview は IPC (tokio) スレッド
+    // からは非同期ディスパッチになるため、run_on_main_thread でメインスレッドの
+    // イベントループへ移す（with_webview / run_on_main_thread のクロージャは同一キューで
+    // FIFO 直列化され、後続 show の resume に追い越されない）。フロントは `await win.hide()`
+    // 完了後に本 IPC を呼ぶ（#361）ため、ここに到達した時点でウィンドウは非表示。
+    // 再表示と競合した稀な逆転は suspend_webview 側の main_visible ガード +
+    // show_main_and_emit 末尾の resume 再適用が是正する。trim は可視中でも無害
+    //（OS が透過 re-fault するだけ）。すべて best-effort。
+    let pid = std::process::id();
+    let app_for_main = app.clone();
+    let scheduled = app.run_on_main_thread(move || {
+        if let Some(w) = app_for_main.get_webview_window("main") {
+            crate::suspend_webview(&w, "notify_main_hidden");
+        }
+        crate::working_set::trim_idle_working_set(pid);
+    });
+    if scheduled.is_err() {
+        // メインスレッドへ移せない場合も working set 回収だけは従来どおり行う。
+        crate::working_set::trim_idle_working_set(pid);
+    }
 }
 
 #[cfg(test)]

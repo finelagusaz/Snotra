@@ -264,8 +264,12 @@ async function spawnTauriDriver(): Promise<ChildProcessWithoutNullStreams> {
     }
   }
   const nativeDriverPath = await downloadEdgeDriver();
+  // WebDriver は非表示中のレンダラーへ executeScript するため hide 時の suspend と
+  // 非互換。suspend のみ無効化して起動する（理由・詳細は src-tauri/CLAUDE.md
+  // 「WebView2 TrySuspend / Resume パターン」節の SNOTRA_DISABLE_SUSPEND の項）。
   const proc = spawn(tauriDriverPath, ["--native-driver", nativeDriverPath], {
     stdio: "pipe",
+    env: { ...process.env, SNOTRA_DISABLE_SUSPEND: "1" },
   });
   proc.on("error", () => {
     // handled by port timeout / session creation errors

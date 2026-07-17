@@ -80,11 +80,30 @@ frontend hide（`hideMainWindow()`）で `notifyMainHidden()`（trim）を `awai
 | frontend(Escape) hide 後 | ~50 MB（3 回 50-61） | **~27 MB**（3 回 27-30） |
 | hotkey hide 後（参照・無変更） | ~10 MB | ~10 MB |
 
-frontend hide の総ツリー WS が**約半減**（frontend↔hotkey 差の ~57% を解消）。残差（~17MB）は frontend 経路が `suspend_webview`（TrySuspend）を行わない設計差に起因（tokio IPC スレッドの `with_webview` 非同期制約のため hotkey 限定。`src-tauri/CLAUDE.md`「TrySuspend / Resume パターン」節）。gap は「trim タイミング」成分（#361 で解消）+「suspend 有無」成分（設計上の意図的な差）の和。
+frontend hide の総ツリー WS が**約半減**（frontend↔hotkey 差の ~57% を解消）。残差（~17MB）は frontend 経路が `suspend_webview`（TrySuspend）を行わない設計差に起因（tokio IPC スレッドの `with_webview` 非同期制約のため hotkey 限定。`src-tauri/CLAUDE.md`「TrySuspend / Resume パターン」節）。gap は「trim タイミング」成分（#361 で解消）+「suspend 有無」成分（設計上の意図的な差）の和。**（2026-07-17 訂正: 下の follow-up のとおり、当時の TrySuspend は両経路とも同期失敗しており、この残差の「suspend 有無」解釈は成り立たない。実体は trim 実行タイミングの揺らぎだった）**
+
+### follow-up: TrySuspend は一度も成立していなかった（2026-07-17 計測）
+
+trace 計装（`suspend:call_returned` / `suspend:completed`）で、`TrySuspend` が hotkey 経路を含む**全 hide で同期 Err（0x8007139F ERROR_INVALID_STATE）を返し、導入以来一度も suspend が成立していなかった**ことを確認した。原因は `TrySuspend` の前提条件が `ICoreWebView2Controller.IsVisible=false`（HWND 非表示とは独立の controller プロパティ）であり、wry が `hide()` でこれを下げないこと。同期 Err では完了ハンドラが呼ばれないため、既存の握りつぶし（`let _ =`）では観測不能だった。
+
+対処: `suspend_webview` で `SetIsVisible(false)` を自前実行してから `TrySuspend`、`resume_webview` で `SetIsVisible(true)` + `Resume` の対称復帰。同時に `notify_main_hidden` へ `run_on_main_thread` 経由の suspend を拡張（frontend hide も hotkey と同一の suspend → trim 順・同一実行文脈）。
+
+計測（release ビルド・テスト index 数百件・プロセスツリー総 WorkingSet64・各 10 サイクル + アイドルプローブ）:
+
+| 変種 | hide 直後(中央値) | idle 30s | idle 60s | idle 120s | show p50 / max |
+|---|---:|---:|---:|---:|---|
+| 修正前 Escape | ~30MB | 85.7 | 86.0 | — | 33.3 / 53.4ms |
+| 修正前 hotkey | ~18MB | 69.9 | 70.5 | — | 33.9 / 52.3ms |
+| 修正後 Escape | ~27MB | **14.0** | **18.9** | 30.7 | 34.6 / 52.3ms |
+| 修正後 hotkey | ~37MB | **11.9** | **17.3** | 29.2 | 35.4 / 56.8ms |
+
+- **本質的な効果は hide 直後ではなく定常アイドル**: suspend が成立しないとレンダラーが動き続け、trim の成果がアイドル 30 秒で ~70-86MB へ巻き戻る。成立後は 12-31MB で低空安定（約 55-70MB 削減）。99% 非表示のランチャーでは定常値が真の指標
+- show レイテンシは劣化なし（suspend 成功率は両経路 10/10、クエリ入力 + アイコン取得を挟む 4 サイクルでも機能劣化なし）
+- #355 の「hotkey hide 9.4MB vs frontend 22.8MB」の差は suspend ではなく trim タイミング差の産物だった
 
 ### 効かなかった/見送った手法
 
-- **TrySuspend / MemoryUsageTargetLevel.Low 単独**: 論理目標を下げるだけで、メモリ圧迫のない実機では OS が物理 working set を回収しない（表示↔非表示・120 秒放置で 110MB 不変）。主効果は CPU 中断。working set 回収には `EmptyWorkingSet` の能動適用が必要（両者は別レイヤーで補完的）
+- **TrySuspend / MemoryUsageTargetLevel.Low 単独**: 当時「論理目標を下げるだけで物理 working set を回収しない（120 秒放置で 110MB 不変）」と結論したが、**2026-07-17 訂正: この時点の TrySuspend は `SetIsVisible(false)` を欠き同期失敗していた**——「効いているが物理を返さない」のではなく「そもそも動いていなかった」。成立後はアイドル再増殖の防止に有効（上の follow-up）。即時回収に `EmptyWorkingSet` が必要という結論自体は不変（両者は別レイヤーで補完的）
 - **tokio / rayon の worker スレッド削減**: Rust 本体は Tauri 既定の multi-thread tokio（worker = CPU コア数）+ rayon プールで ~50 スレッドを抱えるが、スレッドスタックは計 2.17MB（committed 42.8MB の 5%）に過ぎず、worker を絞っても RSS 削減は <1MB で**無意味**。30MB の大半はヒープ/フレームワーク baseline
 - **`--disable-gpu --disable-gpu-compositing`**: GPU プロセスは消えない（in-process ソフト合成に切替）が Private 18→6MB・合計 110→99MB。ただしブラウザフラグは Microsoft 非サポート（ランタイム更新で挙動変化）＋ CPU 合成化で描画レイテンシ未検証。限界効用は `EmptyWorkingSet`（~107MB）に対し桁違いに小さく見送り
 - **アイコン PNG 圧縮強化（issue #335）**: 16×16 アイコンで実測 ~0.06MB と桁違いに小さく却下（詳細は #335）

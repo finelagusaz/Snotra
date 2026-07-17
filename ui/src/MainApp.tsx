@@ -98,6 +98,10 @@ const MainApp: Component = () => {
             trace("app:event:platform_event:initial_hotkey_failed");
             try {
               setMainVisible(true);
+              // 不変条件: suspend 後に到達しうる show 経路は必ず Rust 側の
+              // show_main_and_emit（resume_webview を含む）を通ること。この win.show() は
+              // 起動直後（初回 suspend 発生前）にしか発火しないため resume 不要の例外。
+              // 別のタイミングから再利用する場合は Rust 側の show 経路へ寄せ直すこと。
               await win.show();
               // Sync Rust-side visibility flag so hotkey toggle works correctly.
               api.notifyMainShown().catch(() => {});

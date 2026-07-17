@@ -20,6 +20,18 @@ WGLライフサイクルの詳細プローブは、既定で同じHWND／Surface
 cargo run --release -p snotra-egui-mvp --bin snotra-egui-glow-lifecycle-mvp
 ```
 
+park-surface 統合スパイクは、Tauri managed host（updater／global shortcut）と park-surface レンダラーを同一プロセスで動かします。既定は対話モード（Alt+Q で表示切替、Esc で非表示、ウィンドウを閉じると終了）です。
+
+```powershell
+cargo run --release -p snotra-egui-mvp --bin snotra-egui-park-host-mvp
+```
+
+自動反復計測は `--cycles N` で行います。`--focus off` は unpark 時の SetForegroundWindow／WM_NULL／Alt 解除注入を止めます（無人実行向け。Alt+Q 経路の focus 計測は対話モードで行います）。
+
+```powershell
+cargo run --release -p snotra-egui-mvp --bin snotra-egui-park-host-mvp -- --cycles 3000 --visible-wait-ms 40 --hidden-wait-ms 40 --focus off
+```
+
 主な切り分けオプションは`--context reuse|shared-child|park-window|park-surface`、`--egui-state recreate|reuse|skip`、`--frame full|paint-no-swap|run-only`、`--gpu-drain none|finish`、`--vsync wait|off`です。`park-surface`以外のcontext modeと、`skip`／`paint-no-swap`／`run-only`はボトルネックを再現するnegative probeです。
 
 ## 検証できる範囲

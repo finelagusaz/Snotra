@@ -17,6 +17,10 @@ path = "src/glow_main.rs"
 name = "snotra-egui-glow-lifecycle-mvp"
 path = "src/glow_lifecycle_main.rs"
 
+[[bin]]
+name = "snotra-egui-park-host-mvp"
+path = "src/glow_park_host_main.rs"
+
 [build-dependencies]
 tauri-build = { version = "=2.6.3", features = [] }
 

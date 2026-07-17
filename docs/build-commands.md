@@ -88,6 +88,7 @@ cargo check --workspace          # Rust 全 crate 型チェック
 cargo clippy --workspace --all-targets -- -D warnings  # lint チェック（カテゴリ A と同じ）
 cargo run -p snotra-settings     # snotra-settings（egui ネイティブ設定 GUI）の単独起動
 cargo run -p snotra-egui-mvp     # Issue #532 egui MVP（WebViewなし・非配布）の単独起動
+cargo run --release -p snotra-egui-mvp --bin snotra-egui-park-host-mvp  # Issue #532 park-surface 統合スパイク（Tauri host + park renderer）
 npm run verify                   # Rust + フロントエンド一括検証（cargo check + npm run build）
 npm run smoke:startup             # 起動時ウィンドウ生成スモーク（trace検証）
 npm run e2e:tauri:setup           # Tauri Driver E2E 用セットアップ

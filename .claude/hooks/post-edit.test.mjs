@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
+  BUDGETS,
   findUp,
   resolveRoot,
   toRelative,
@@ -646,5 +647,37 @@ describe("Cargo.toml members ドリフト検出カナリア — #500", () => {
       "src-tauri",
       "snotra-settings",
     ]);
+  });
+});
+
+describe("BUDGETS 完全性カナリア", () => {
+  // 出力予算は検査が**失敗したときだけ**読まれる。エントリ漏れは全検査が緑の間は
+  // 沈黙し、最初の失敗時に hook 自体が TypeError で落ちて診断が届かなくなる
+  // （egui-mvp-test / egui-runtime-test 追加時に実際に起きた）。
+  // selectChecks の全分岐を踏む代表パスで、発行されうる id 全部に予算があることを固定する。
+  const REPRESENTATIVE_EDITS = [
+    "snotra-core/src/lib.rs",
+    "snotra-egui-mvp/src/main.rs",
+    "snotra-egui-runtime/src/lib.rs",
+    "snotra-settings/src/main.rs",
+    "src-tauri/src/main.rs",
+    "Cargo.toml",
+    "ui/src/App.tsx",
+    "src-tauri/tauri.conf.json",
+    ".claude/hooks/post-edit.mjs",
+    ".githooks/pre-commit",
+  ];
+
+  it("selectChecks が発行しうるすべての検査 id が出力予算を持つ", () => {
+    const ids = new Set(REPRESENTATIVE_EDITS.flatMap((rel) => selectChecks(rel)));
+    expect(ids.size).toBeGreaterThan(0);
+    for (const id of ids) {
+      // config-warn は main() がインラインで WARN を出すだけで、runCheck を通らない。
+      if (id === "config-warn") continue;
+      const budget = BUDGETS[id];
+      expect(budget, `検査 id "${id}" が BUDGETS に無い。失敗時に hook が落ちる`).toBeDefined();
+      expect(typeof budget.lines).toBe("number");
+      expect(["head", "tail"]).toContain(budget.from);
+    }
   });
 });

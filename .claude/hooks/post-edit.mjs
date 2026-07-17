@@ -29,9 +29,14 @@ const MAX_BUFFER = 32 * 1024 * 1024;
 const PER_CHECK_TIMEOUT_MS = 300_000;
 
 // 検査ごとの出力予算。現行 hook の head/tail と行数を一字一句保存する（I10）。
-const BUDGETS = {
+// 予算は検査が**失敗したときだけ**読まれる。エントリ漏れは全検査が緑の間は沈黙し、
+// 最初の失敗で hook 自体を TypeError で落とす（診断が届かなくなる）。
+// selectChecks が発行しうる id との完全性は post-edit.test.mjs のカナリアが固定する。
+export const BUDGETS = {
   clippy: { lines: 20, from: "head" },
   "core-test": { lines: 5, from: "tail" },
+  "egui-mvp-test": { lines: 8, from: "tail" },
+  "egui-runtime-test": { lines: 8, from: "tail" },
   "settings-test": { lines: 8, from: "tail" },
   "tauri-test": { lines: 8, from: "tail" },
   "cargo-check": { lines: 20, from: "head" },

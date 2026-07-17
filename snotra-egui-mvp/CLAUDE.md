@@ -9,6 +9,7 @@ Issue #532の採用判断に使う、WebViewなしの独立MVPバイナリ。
 - `src/glow_lifecycle_main.rs`: WGLのWindow／Surface／Contextを構成要素別に反復し、メモリ・再表示時間・handleリークを計測するreleaseプローブ
 - `src/glow_park_host_main.rs`: Tauri managed host（updater／global shortcut Alt+Q）と park-surface レンダラーを同一プロセスで統合し、コールドスタート内訳・Alt+Q入力可能時間・反復耐久を計測する統合スパイク
 - `src/soft_main.rs`: WebView2もGPUランタイムも持たず、eguiをCPUラスタライズしてsoftbuffer（GDI転送）で提示する構成の床（private bytes・コールドスタート・warm・raster時間）を測る最小スパイク
+- `src/soft_host_main.rs`: Tauri managed host（updater／global shortcut Alt+Q）とsoftbuffer CPUレンダラーを同一プロセスで統合した検証bin。GL contextを持たないためhide/showは`set_visible`+trimのみ
 - `tauri.conf.json`: WebView WindowとfrontendDistを持たないMVP専用設定
 
 ## 不変条件

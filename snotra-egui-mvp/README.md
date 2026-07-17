@@ -32,6 +32,12 @@ softbuffer 最小スパイクは、WebView2 も GPU ランタイムも持たな�
 cargo run --release -p snotra-egui-mvp --bin snotra-egui-soft-mvp -- --cycles 3
 ```
 
+softbuffer 統合スパイクは、Tauri managed host（updater／global shortcut Alt+Q）と softbuffer レンダラーを同一プロセスで動かします。既定は対話モード（Alt+Q 表示切替・Esc 非表示）で、`--cycles N` で自動反復計測になります。
+
+```powershell
+cargo run --release -p snotra-egui-mvp --bin snotra-egui-soft-host-mvp
+```
+
 自動反復計測は `--cycles N` で行います。`--focus off` は unpark 時の SetForegroundWindow／WM_NULL／Alt 解除注入を止めます（無人実行向け。Alt+Q 経路の focus 計測は対話モードで行います）。
 
 ```powershell

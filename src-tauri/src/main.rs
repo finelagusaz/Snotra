@@ -244,6 +244,30 @@ fn suspend_webview(_window: &tauri::WebviewWindow, _source: &'static str) {}
 #[cfg(not(windows))]
 fn resume_webview(_window: &tauri::WebviewWindow) {}
 
+/// hide 完了後の共通後処理: WebView2 の suspend → working set trim を
+/// メインスレッドのイベントループへ積む。全 hide 経路（hotkey トグル /
+/// `notify_main_hidden` = フロントエンド起因）が共有する唯一の経路。
+///
+/// 任意スレッドから呼べる。`with_webview` / `run_on_main_thread` のクロージャは
+/// 同一キューで FIFO 直列化されるため、後続 show の resume に追い越されない。
+/// 再表示と競合した稀な逆転は suspend_webview 側の `main_visible` ガード +
+/// `show_main_and_emit` 末尾の resume 再適用が是正する。trim は可視中でも無害
+/// （OS が透過 re-fault するだけ）。すべて best-effort。
+/// イベントループへ積めない場合（終了時など）も trim だけは行う。
+pub(crate) fn suspend_and_trim_after_hide(app: &AppHandle, source: &'static str) {
+    let pid = std::process::id();
+    let app_for_main = app.clone();
+    let scheduled = app.run_on_main_thread(move || {
+        if let Some(w) = app_for_main.get_webview_window("main") {
+            suspend_webview(&w, source);
+        }
+        working_set::trim_idle_working_set(pid);
+    });
+    if scheduled.is_err() {
+        working_set::trim_idle_working_set(pid);
+    }
+}
+
 /// Position the main window on the target monitor using saved relative coordinates.
 ///
 /// Target monitor is determined by `follow_cursor_monitor` config:
@@ -713,15 +737,7 @@ fn setup_hotkey_listener(app_handle: &AppHandle, hotkey_toggle: bool, ime_off: b
             // Must precede suspend so the JS cleanup handler is queued in the
             // renderer before TrySuspend pauses it.
             let _ = handle_for_hotkey.emit("window-hidden", ());
-            // Suspend WebView2 renderer after emit (IsVisible=false from hide above).
-            // TrySuspend is best-effort and async: the renderer finishes processing
-            // the queued emit before actually suspending.
-            if let Some(w) = handle_for_hotkey.get_webview_window("main") {
-                suspend_webview(&w, "hotkey");
-            }
-            // 非表示アイドルの物理 working set を回収（TrySuspend は圧迫なし環境では
-            // 回収しないため能動適用）。best-effort・機能挙動には影響しない。
-            working_set::trim_idle_working_set(std::process::id());
+            suspend_and_trim_after_hide(&handle_for_hotkey, "hotkey");
         } else if is_alt_pressed() {
             trace_main("hotkey:alt_wait_start", json!({}));
             let handle_for_show = handle_for_hotkey.clone();

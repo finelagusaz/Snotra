@@ -166,7 +166,7 @@ mod tests {
     }
 
     // --- BinFile tests ---
-    // NOTE: header roundtrip / magic mismatch / version mismatch coverage lives in
+    // 実装メモ: header roundtrip / magic mismatch / version mismatch coverage lives in
     // the `try_roundtrip_with_header` / `try_deserialize_magic_mismatch` /
     // `try_deserialize_version_mismatch` tests below (Result-based API).
 

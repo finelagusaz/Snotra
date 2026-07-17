@@ -1,5 +1,9 @@
-/** Parse length-prefixed binary batch into per-path Blob URLs.
- *  Format: [count:u32 LE] then per icon: [status:u8] [if 1: png_len:u32 LE, png_bytes] */
+/** 長さプレフィックス付きバイナリバッチを、パスごとの Blob URL へパースする。
+ *  形式: [count:u32 LE]、以降アイコンごとに [status:u8] [status=1 のとき: png_len:u32 LE, png_bytes]。
+ *
+ *  **解放契約**: 返り値 Map の Blob URL の所有権は呼び出し側へ移る。`LruIconCache.set()` へ
+ *  渡して管理を委ねるか、渡さず捨てる経路（stale guard 等の早期リターン）では全 URL を
+ *  `revokeObjectURL` すること。怠ると Blob URL がリークする。 */
 export function parseBinaryBatch(
   buf: ArrayBuffer,
   paths: string[],

@@ -26,8 +26,8 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
   // アイコン取得を試みたが存在しなかったパス（フォールバック絵文字を表示）
   const fetchedNone = new Set<string>();
   // per-path のリアクティブ通知: iconNotify[path] を読むことで、
-  // そのパスのアイコンが変化したときだけ該当行が再評価される。
-  // iconCacheVersion（全行ブロードキャスト）を廃止し O(変更行数) に改善。
+  // そのパスのアイコンが変化したときだけ該当行が再評価される
+  // （単一 version シグナルの全行ブロードキャストと異なり、再評価は O(変更行数) に留まる）。
   const [iconNotify, setIconNotify] = createStore<Record<string, number>>({});
   let iconNotifyCounter = 0;
   const [containerWidth, setContainerWidth] = createSignal(0);
@@ -120,8 +120,9 @@ const ResultsSection: Component<ResultsSectionProps> = (props) => {
 
   // iconCacheSize 変更時: キャッシュを全クリアしてサイズを更新する。
   // setMaxSize だけでは evict されたアイコンの <img src="blob:revoked"> が
-  // 壊れたまま残る（iconCacheVersion が更新されないため）。
-  // revokeAll + version bump で「全アイコン再描画 → 次回検索で再取得」にする。
+  // 壊れたまま残る（per-path 通知 iconNotify は evict を検知しないため）。
+  // revokeAll + setIconNotify(reconcile({})) の全リセットで
+  // 「全アイコン再描画 → 次回検索で再取得」にする。
   createEffect(on(() => props.iconCacheSize, (size) => {
     latestIconRequestId = ++iconRequestId;
     iconCache.setMaxSize(size);

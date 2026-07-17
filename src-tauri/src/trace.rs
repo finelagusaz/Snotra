@@ -1,16 +1,13 @@
 //! Structured trace logging behind the `SNOTRA_TRACE` env var.
 //!
-//! `main.rs` (`trace_main`) and `commands::trace_command` used to each carry
-//! their own near-identical copy of this logic (`OnceLock` env check +
-//! `AtomicU64` sequence counter + JSON formatting, #433). Both now delegate
-//! to `trace()` here.
+//! Single home of the trace logic (`OnceLock` env check + `AtomicU64`
+//! sequence counter + JSON formatting, deduplicated in #433). `main.rs`
+//! (`trace_main`) and `commands::trace_command` are thin wrappers that
+//! delegate to `trace()` here.
 //!
-//! Collapsing the two `AtomicU64` counters into one changes the `seq` values
-//! observed in trace output: main.rs and commands events now interleave on a
-//! single monotonic counter instead of each keeping its own. Trace output is
-//! debug-only (emitted only when `SNOTRA_TRACE` is set) — this is an accepted
-//! behavior change called out in the PR description, not a functional
-//! regression.
+//! The `seq` counter is a single `AtomicU64` shared by both wrappers, so
+//! main.rs and commands events interleave on one monotonic sequence. Trace
+//! output is debug-only (emitted only when `SNOTRA_TRACE` is set).
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};

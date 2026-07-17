@@ -21,14 +21,13 @@ export function isInstantPrefix(rawQuery: string, prefix: string): boolean {
 }
 
 /** 入力 → 意図。副作用なし。viewKind!=="results" は常に plain（folder/tool 中は非 plain 化しない）。
- *  instant の parse（prefix 除去・スペース分割）を一箇所に集約し、旧 handleInstantQueryInput（filterName）と
- *  executeInstantCommandSelected（instantQuery）の二重抽出を DRY 化する。 */
+ *  instant の parse（prefix 除去・スペース分割）を一箇所に集約し、filterName/instantQuery の
+ *  抽出を消費側（表示・実行）で重複させない（DRY）。 */
 export function interpret(rawQuery: string, prefix: string, viewKind: ViewKind): QueryIntent {
   if (viewKind !== "results") return { kind: "plain" };
   if (isInstantPrefix(rawQuery, prefix)) {
     // trimStart() を使用: trailing whitespace はクエリの一部として保持する（SPEC §18.5）。
     const input = rawQuery.trimStart().slice(prefix.length);
-    // スペースがあればコマンド名部分（filterName）とクエリ部分（instantQuery）に分割する。
     const spaceIdx = input.indexOf(" ");
     const filterName = spaceIdx >= 0 ? input.slice(0, spaceIdx) : input;
     const instantQuery = spaceIdx >= 0 ? input.slice(spaceIdx + 1) : "";

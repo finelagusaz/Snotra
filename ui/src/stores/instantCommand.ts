@@ -10,7 +10,7 @@ const INSTANT_CMD_DEBOUNCE_MS = 30;
  *  参照する）。書き込みは本モジュールの関数（setInstantCommandItems/clearInstantCommandItems/
  *  scheduleInstantCommandFetch 内部）に閉じ、search.ts からは直接代入しない。 */
 let instantCommandItems: InstantCommand[] = [];
-/** instant 候補取得の所有タイマー（trailing 30ms・leading なし）。旧 instantCmdDebounceTimer を統合。
+/** instant 候補取得の所有タイマー（trailing 30ms・leading なし）。
  *  候補一覧の即時クリアは debounce とは別関心事のため arm に混ぜず scheduleInstantCommandFetch に残す。 */
 const fetchTimer = createOwnedTimer(INSTANT_CMD_DEBOUNCE_MS);
 
@@ -56,7 +56,6 @@ export function scheduleInstantCommandFetch(
   // 候補一覧の即時クリアは debounce とは別関心事（IPC 応答前の Enter で古いコマンド誤起動を防ぐ）。
   // arm() には混ぜず、呼び出し時点で同期実行する。
   instantCommandItems = [];
-  // arm が前回の保留タイマーを破棄して張り直す（旧 cancelInstantCommandDebounce() + setTimeout 相当）。
   fetchTimer.arm(() => {
     void deps.run(async ({ isStale }) => {
       try {

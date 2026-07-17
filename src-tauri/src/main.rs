@@ -138,18 +138,17 @@ fn suspend_disabled() -> bool {
     *DISABLED.get_or_init(|| trace::env_flag("SNOTRA_DISABLE_SUSPEND"))
 }
 
-/// Suspend the WebView2 renderer to reduce memory/CPU while hidden.
+/// 非表示中の WebView2 レンダラーを中断し、メモリ・CPU を削減する。
 ///
-/// Must be called AFTER the window is hidden (UX: the user should never see a
-/// paused webview). `TrySuspend` requires `ICoreWebView2Controller.IsVisible`
-/// to be false — a controller-level property INDEPENDENT of the HWND
-/// visibility. wry does not lower it on `hide()`, so we lower it here
-/// ourselves; without this, `TrySuspend` fails synchronously with
-/// 0x8007139F (ERROR_INVALID_STATE) and the completion handler never runs
-/// (2026-07-17 実測: 導入以来この失敗が全 hide で起きていた).
-/// `resume_webview` restores it symmetrically (`SetIsVisible(true)` + `Resume`).
+/// 必ずウィンドウの hide 完了**後**に呼ぶこと（UX: 停止した webview をユーザーに見せない）。
+/// `TrySuspend` の前提は `ICoreWebView2Controller.IsVisible` が false であること——
+/// これは HWND の可視性とは**独立**した controller 側のプロパティで、wry は `hide()` で
+/// 下げないため、ここで自前で下げる。これを欠くと `TrySuspend` は
+/// 0x8007139F (ERROR_INVALID_STATE) で同期的に失敗し、完了ハンドラは呼ばれない
+/// （2026-07-17 実測: 導入以来この失敗が全 hide で起きていた）。
+/// `resume_webview` が対称に復元する（`SetIsVisible(true)` + `Resume`）。
 ///
-/// Best-effort: silently ignored if WebView2 runtime is too old (< Edge 88).
+/// best-effort: WebView2 ランタイムが古い場合（Edge 88 未満）は黙って何もしない。
 /// 再表示と競合した場合はクロージャ内の `main_visible` ガードで suspend を放棄し、
 /// `show_main_and_emit` 末尾の resume 再適用が残余ケース（resume 実行後〜可視フラグ
 /// 反映前に滑り込む逆転）を是正する。

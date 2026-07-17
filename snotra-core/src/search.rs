@@ -265,10 +265,10 @@ fn compute_wave1(entries: &[AppEntry], migemo_enabled: bool) -> Wave1Strings {
 }
 
 /// Wave 2: lower_names / lower_file_names からビットマスクを並列構築する。
-/// to_lower_folded already folds most Latin accents to ASCII (é→e),
-/// so non-ASCII names here are typically CJK, Arabic, etc.
-/// u64::MAX ensures (query_mask & u64::MAX) == query_mask for any query_mask,
-/// so these entries always pass the bitmask pre-filter regardless of the query.
+/// to_lower_folded が主要な Latin アクセントを ASCII へ折り畳み済み（é→e）のため、
+/// ここで非 ASCII として残る name は典型的には CJK・アラビア文字など。
+/// u64::MAX は任意の query_mask に対して (query_mask & u64::MAX) == query_mask を
+/// 満たすため、これらのエントリはクエリに依らず bitmask pre-filter を常に通過する。
 fn compute_wave2(
     lower_names: &[Box<str>],
     lower_file_names: &[Option<Box<str>>],
@@ -473,8 +473,8 @@ impl SearchEngine {
             return Vec::new();
         };
 
-        // Phase 4: incremental search – reuse previous match candidates when the query
-        // is a monotonic extension of the previous one and the mode is unchanged.
+        // Phase 4: incremental search — クエリが前回クエリの単調拡張でモードが不変の
+        // とき、前回のマッチ候補を再利用する。
         // 述語（no-dot→dot / kana 単調性 / !has_path_sep）と prev_* の read は
         // decide_incremental に集約する。ここでは write のみを fold 後に行う。
         let use_incremental = self.decide_incremental(&plan, mode);
@@ -612,8 +612,8 @@ impl SearchEngine {
         history: &HistoryStore,
         options: SearchOptions,
     ) -> Option<ScoredEntry<'a>> {
-        // Bitmask pre-filter: skip entries that lack query characters (Fuzzy only).
-        // Prefix/Substring use cheap str ops, so the bitmask overhead isn't worth it.
+        // Bitmask pre-filter: クエリ文字を含まないエントリを棄却する（Fuzzy のみ。
+        // Prefix/Substring は安価な str 操作で足り、bitmask のオーバーヘッドが見合わない）。
         // name/file_name と kana のいずれのマッチ経路にも候補がない場合だけ棄却する。
         // kana は専用の損失あり mask を使う。衝突で余分な候補を通すことはあっても、
         // kana substring が成立する候補を棄却しない。
@@ -660,8 +660,8 @@ impl SearchEngine {
         });
 
         let primary_score = if plan.has_dot {
-            // Skip file_name scoring only on a high-confidence name match
-            // (avoids heavy fuzzy work).
+            // name マッチが高確度のときだけ file_name スコアリングを短絡する
+            // （重い fuzzy 処理の回避）。
             // 注: 9000 は「file_name スコアリングを短絡する閾値」であり
             // score_tier の基準スコアではない（PREFIX_BASE=10000 と混同しないこと）。
             let needs_fn_score = name_score.is_none_or(|s| s <= 9000);
@@ -897,7 +897,7 @@ fn adjusted_history_boost(
     raw_history_boost.min(cap)
 }
 
-/// Borrowed scored entry used in the parallel top-k heap.
+/// 並列 top-k ヒープで使う、借用ベースのスコア済みエントリ。
 /// SearchEngine の並列 Vec（`lower_names` / `entries`）から借用するため、ヒープ滞在中は
 /// String clone がゼロ。所有 `SearchResult` への変換（clone）は top-k 確定後に
 /// `heap_into_results` が `index` 経由で K 件だけ行う（マッチ M 件 clone の回避、#436 で

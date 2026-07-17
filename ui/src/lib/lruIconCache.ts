@@ -1,6 +1,13 @@
 /** Blob URL 追跡付き LRU キャッシュ。
  *  Map の挿入順序を利用: get 時に delete→re-set で末尾に移動。
- *  先頭が最古（LRU）。 */
+ *  先頭が最古（LRU）。
+ *
+ *  呼び出し側の契約:
+ *  - **所有権**: `set(path, url)` で URL の所有権は cache へ移る。上書きされた旧 URL・evict・
+ *    `revokeAll` の revoke は cache が行う——呼び出し側が同じ URL を二重に revoke しないこと。
+ *  - **staleness**: `get`/`peek` が返した URL は以降の `set`/evict/`revokeAll` で失効しうる。
+ *    保持せず即時に使用すること。
+ *  - `get` は LRU 順序を更新する（書き込み相当）。高頻度の render パスでは `peek` を使う。 */
 export class LruIconCache {
   private map = new Map<string, string>();
   private maxSize: number;

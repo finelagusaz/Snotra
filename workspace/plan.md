@@ -38,7 +38,7 @@
 
 | ファイル | 変更 |
 |---|---|
-| `ui/src/lib/perf.ts` | 冒頭に `/** */` を追加（最初の export 宣言直上ではなくファイル冒頭のモジュール概説として置く——単一の代表宣言を持たないため。様式は exclusive.ts 準拠の**太字**契約）: 呼び出し順序（`perfMarkInput`→`perfStartSearch`→`perfMarkSearchDone`→`perfMarkRenderDone`、欠落時は黙ってドロップ）/ stale 実行の `perfCancelSearch` 解放義務（怠ると `MAX_PENDING=256` で全 clear・精度劣化）/ requestId は `searchLane.current()` 由来の一意性前提 / `source==="query"` のみ集計 / `ENABLED` ゲート。**全契約は TS 偵察が実コード照合済み**（perf.ts:17-21,74-81,91-92,104-112 / search.ts:186,235 / ResultsSection.tsx:137-139） |
+| `ui/src/lib/perf.ts` | 冒頭に `/** */` を追加（`@packageDocumentation` タグ付きのモジュール doc としてファイル冒頭に置く——単一の代表宣言を持たず、浮きブロックは将来の docgen（TypeDoc）が捨てるため。#562 と衝突しない配置。様式は exclusive.ts 準拠の**太字**契約）: 呼び出し順序（`perfMarkInput`→`perfStartSearch`→`perfMarkSearchDone`→`perfMarkRenderDone`、欠落時は黙ってドロップ）/ stale 実行の `perfCancelSearch` 解放義務（怠ると `MAX_PENDING=256` で全 clear・精度劣化）/ requestId は `searchLane.current()` 由来の一意性前提 / `source==="query"` のみ集計 / `ENABLED` ゲート。**全契約は TS 偵察が実コード照合済み**（perf.ts:17-21,74-81,91-92,104-112 / search.ts:186,235 / ResultsSection.tsx:137-139） |
 | `ui/src/lib/iconBatch.ts` | 既存 doc（形式説明）に**解放契約**を追記: 返り値 Map の Blob URL 所有権は呼び出し側へ移り、`cache.set()` へ渡すか早期リターン時に全 `revokeObjectURL` しないとリーク（ui/CLAUDE.md の横断規約はそのまま・TSDoc が関数側の正準） |
 | `ui/src/lib/lruIconCache.ts` | クラス doc に**解放・staleness 契約**を追記: `set` で所有権が cache へ移る（revoke 責務の所在は**実装時に evict/set/revokeAll の revoke 挙動を実読して**正確に書く）/ `get` は LRU 更新の書き込み相当・`peek` は非更新（26 行目の既存注記をクラス契約へ昇格） |
 

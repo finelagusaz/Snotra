@@ -128,17 +128,67 @@ fn make_key_input(
 #[cfg(not(windows))]
 fn send_alt_key_up() {}
 
+/// WebDriver 自動化（E2E）は非表示中のレンダラーへの script 実行で成り立つため、
+/// suspend されたレンダラーとは原理的に非互換（`executeScript` が応答せず
+/// タイムアウトする）。E2E ハーネスは `SNOTRA_DISABLE_SUSPEND=1` で suspend を
+/// 無効化して起動する（`EmptyWorkingSet` trim は従来どおり有効のまま）。
+#[cfg(windows)]
+fn suspend_disabled() -> bool {
+    static DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        let Ok(v) = std::env::var("SNOTRA_DISABLE_SUSPEND") else {
+            return false;
+        };
+        matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
 /// Suspend the WebView2 renderer to reduce memory/CPU while hidden.
 ///
-/// Must be called AFTER `hide()` (`IsVisible=false` required by WebView2).
-/// Best-effort: silently ignored if WebView2 runtime is too old (< Edge 88)
-/// or `IsVisible` is still true.
+/// Must be called AFTER the window is hidden (UX: the user should never see a
+/// paused webview). `TrySuspend` requires `ICoreWebView2Controller.IsVisible`
+/// to be false — a controller-level property INDEPENDENT of the HWND
+/// visibility. wry does not lower it on `hide()`, so we lower it here
+/// ourselves; without this, `TrySuspend` fails synchronously with
+/// 0x8007139F (ERROR_INVALID_STATE) and the completion handler never runs
+/// (2026-07-17 実測: 導入以来この失敗が全 hide で起きていた).
+/// `resume_webview` restores it symmetrically (`SetIsVisible(true)` + `Resume`).
+///
+/// Best-effort: silently ignored if WebView2 runtime is too old (< Edge 88).
+/// 再表示と競合した場合はクロージャ内の `main_visible` ガードで suspend を放棄し、
+/// `show_main_and_emit` 末尾の resume 再適用が残余ケース（resume 実行後〜可視フラグ
+/// 反映前に滑り込む逆転）を是正する。
 #[cfg(windows)]
-fn suspend_webview(window: &tauri::WebviewWindow) {
-    let _ = window.with_webview(|platform_webview| {
+fn suspend_webview(window: &tauri::WebviewWindow, source: &'static str) {
+    if suspend_disabled() {
+        return;
+    }
+    let app_handle = window.app_handle().clone();
+    let _ = window.with_webview(move |platform_webview| {
         use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_3;
         use webview2_com::TrySuspendCompletedHandler;
         use windows_core_0_61::Interface;
+
+        // 再表示と競合した場合は suspend を放棄する。旧実装ではこの安全弁を
+        // TrySuspend 自身の前提条件チェック（controller.IsVisible=true → 同期 Err）が
+        // 無償で担っていたが、IsVisible を自前で下げる本実装ではその検査が機構として
+        // 働かないため、メインスレッド実行時点の main_visible で明示的に再設置する。
+        // クロージャの外で読むと、ディスパッチ待ちの間に show が完了して古い値を
+        // 参照する TOCTOU になるため、必ずクロージャ内（実行時点）で読む。
+        let visible = app_handle
+            .try_state::<AppState>()
+            .map(|s| s.main_visible.load(Ordering::SeqCst))
+            .unwrap_or(false);
+        if visible {
+            trace_main(
+                "suspend:skipped",
+                json!({ "source": source, "reason": "visible" }),
+            );
+            return;
+        }
 
         let controller = platform_webview.controller();
         let Ok(webview) = (unsafe { controller.CoreWebView2() }) else {
@@ -148,9 +198,25 @@ fn suspend_webview(window: &tauri::WebviewWindow) {
             return;
         };
 
-        let handler =
-            TrySuspendCompletedHandler::create(Box::new(|_result, _is_successful| Ok(())));
-        let _ = unsafe { webview3.TrySuspend(&handler) };
+        let _ = unsafe { controller.SetIsVisible(false) };
+        let handler = TrySuspendCompletedHandler::create(Box::new(move |result, is_successful| {
+            trace_main(
+                "suspend:completed",
+                json!({
+                    "source": source,
+                    "successful": is_successful,
+                    "hr": format!("{result:?}"),
+                }),
+            );
+            Ok(())
+        }));
+        // 同期 Err（前提条件不成立など）は完了ハンドラが呼ばれず沈黙する故障モード。
+        // SNOTRA_TRACE 有効時は同期戻り値も残し、再発を観測可能にしておく。
+        let call_hr = unsafe { webview3.TrySuspend(&handler) };
+        trace_main(
+            "suspend:call_returned",
+            json!({ "source": source, "hr": format!("{call_hr:?}") }),
+        );
     });
 }
 
@@ -170,12 +236,18 @@ fn resume_webview(window: &tauri::WebviewWindow) {
             return;
         };
 
-        let _ = unsafe { webview3.Resume() };
+        // suspend_webview が下げた controller.IsVisible を戻してから Resume する
+        // （IsVisible=true 自体にも自動 resume の効果があり、両者とも冪等）。
+        let _ = unsafe { controller.SetIsVisible(true) };
+        let call_hr = unsafe { webview3.Resume() };
+        // suspend 側と同型の「同期 Err は沈黙する」故障モードを可観測にしておく
+        // （SNOTRA_TRACE ゲート済み）。
+        trace_main("resume:call_returned", json!({ "hr": format!("{call_hr:?}") }));
     });
 }
 
 #[cfg(not(windows))]
-fn suspend_webview(_window: &tauri::WebviewWindow) {}
+fn suspend_webview(_window: &tauri::WebviewWindow, _source: &'static str) {}
 
 #[cfg(not(windows))]
 fn resume_webview(_window: &tauri::WebviewWindow) {}
@@ -349,6 +421,13 @@ fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
         position_on_target_monitor(app_handle, &main);
 
         show_and_focus_main(app_handle, &main, t0);
+
+        // 逆転是正: notify_main_hidden の suspend クロージャは hide 完了後に非同期で
+        // 積まれるため、直後に show が来ると冒頭の resume より後に実行されうる。
+        // suspend 側の main_visible ガードは「show 完了後に実行される」ケースを捕捉するが、
+        // 「冒頭 resume の実行後〜main_visible=true 反映前」に滑り込むケースは通り抜ける。
+        // show 完了後にもう一度 resume を積む（冪等）ことで、この残余窓も閉じる。
+        resume_webview(&main);
 
         if ime_control {
             apply_ime_control(app_handle, &main, t0);
@@ -646,7 +725,7 @@ fn setup_hotkey_listener(app_handle: &AppHandle, hotkey_toggle: bool, ime_off: b
             // TrySuspend is best-effort and async: the renderer finishes processing
             // the queued emit before actually suspending.
             if let Some(w) = handle_for_hotkey.get_webview_window("main") {
-                suspend_webview(&w);
+                suspend_webview(&w, "hotkey");
             }
             // 非表示アイドルの物理 working set を回収（TrySuspend は圧迫なし環境では
             // 回収しないため能動適用）。best-effort・機能挙動には影響しない。

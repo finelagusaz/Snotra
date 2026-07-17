@@ -81,17 +81,20 @@ NOTIFYICON_VERSION_4 では、キーボード操作（Shift+F10 / Application �
 
 非表示中に WebView2 レンダラーを中断してメモリ・CPU を削減する。`ICoreWebView2_3::TrySuspend` / `Resume`（Edge 88+）を使用。
 
-- **hide 時（ホットキートグルのみ）**: `w.hide()` → `emit("window-hidden")` → `suspend_webview(&w)`。emit を suspend より先に送ることで、JS 側のクリーンアップ（Blob URL 解放等）がレンダラー中断前にキューイングされる。`TrySuspend` は `IsVisible=false` を要求するため hide が先
-- **show 時**: `resume_webview(&main)` → `set_size` → `show` → `emit`。Resume は同期 API で即座に復帰
-- **フロントエンド起因の hide（Escape / クリック起動 / フォーカス喪失）では suspend しない**: `notifyMainHidden` IPC は tokio スレッドで実行されるため `with_webview(TrySuspend)` は非同期ディスパッチになり、`win.hide()` より先にメインスレッドに到達すると IsVisible=true で失敗する。ホットキートグル（メインスレッドで同期実行）に限定することで順序を保証
-- **`with_webview()` の同期性はコンテキスト依存**: setup フェーズ / `app.listen` コールバック → 同期。IPC ハンドラ / `std::thread::spawn` → 非同期（fire-and-forget）
+- **`TrySuspend` の前提は `ICoreWebView2Controller.IsVisible=false` であり、HWND の非表示とは独立**（2026-07-17 実測）。wry は `win.hide()` で controller 側を下げないため、`suspend_webview` が `SetIsVisible(false)` を自前で実行してから `TrySuspend` を呼ぶ。これを欠くと `TrySuspend` は**同期 Err（0x8007139F ERROR_INVALID_STATE）で失敗し、完了ハンドラは呼ばれず沈黙する**——導入以来この失敗が全 hide で起きており、suspend は一度も成立していなかった。`SNOTRA_TRACE=1` で `suspend:call_returned`（同期戻り値）/ `suspend:completed`（成否）を観測できる
+- **hide 時（hotkey トグル）**: `w.hide()` → `emit("window-hidden")` → `suspend_webview(&w, "hotkey")`。emit を suspend より先に送ることで、JS 側のクリーンアップ（Blob URL 解放等）がレンダラー中断前にキューイングされる。ウィンドウ hide が先なのは UX 上の要請（中断は不可視状態でのみ行う）
+- **hide 時（フロントエンド起因: Escape / クリック起動 / フォーカス喪失 / `/s`）**: `notify_main_hidden` が `app.run_on_main_thread` で suspend → trim を実行する。IPC (tokio) スレッドの `with_webview` は非同期ディスパッチだが、`with_webview` / `run_on_main_thread` のクロージャは**メインスレッドのイベントループで FIFO 直列化**されるため、後続 show の resume に追い越されない。フロントは `await win.hide()` 完了後に本 IPC を呼ぶ（#361）
+- **再表示と競合した suspend は 2 段で無害化する**: 旧実装で「競合時は黙って失敗」を担っていたのは TrySuspend 自身の前提条件チェック（IsVisible=true → 同期 Err）だが、IsVisible を自前で下げる現実装ではその検査は機構として働かない。代わりに (1) suspend クロージャ内（メインスレッド実行時点）の `main_visible` ガードが「show 完了後に実行される」ケースを放棄し、(2) `show_main_and_emit` が show 完了後にもう一度 `resume_webview` を積んで「冒頭 resume の後〜可視フラグ反映前に滑り込む」残余窓を是正する。ガードは**必ずクロージャ内で読む**（外で読むとディスパッチ待ち中に show が完了する TOCTOU）
+- **show 時**: `resume_webview(&main)`（`SetIsVisible(true)` + `Resume`。suspend 側が下げた controller 可視フラグと対称）→ `set_size` → `show`（+ 末尾に resume 再適用）→ `emit`。Resume は同期 API で即座に復帰（実測: show p50 33→37ms 帯で劣化なし）
+- **`with_webview()` は呼び出しスレッドによらずクロージャがメインスレッドで実行される**: setup フェーズでは同期的に完了するが、それ以外（IPC ハンドラ / `std::thread::spawn` / イベント listener）では非同期ディスパッチとして扱うこと。順序が要る箇所はクロージャの FIFO 直列化（同一キュー）に依拠する
 - **TrySuspend と MemoryUsageTargetLevel は混用禁止**: TrySuspend が自動で MemoryUsageTargetLevel を Low に設定し、Resume が Normal に戻す
+- **`SNOTRA_DISABLE_SUSPEND=1` で suspend を無効化できる（E2E 専用エスケープハッチ）**: WebDriver は非表示中のレンダラーへの `executeScript` で可視性判定・入力を行うため、suspend されたレンダラーとは原理的に非互換（script が応答せずタイムアウト）。E2E ハーネス（`e2e/tauri.slash.e2e.ts` の `spawnTauriDriver`）がこの変数を立てて起動する。`EmptyWorkingSet` trim は無効化されない
 
 ## WebView2 working set の能動回収（EmptyWorkingSet）
 
-TrySuspend / MemoryUsageTargetLevel.Low は**論理目標**を下げるだけで、メモリ圧迫のない環境では OS が**物理 working set を回収しない**（実測: 非表示アイドル ~110MB が表示↔非表示・120 秒放置でも不変）。`working_set::trim_idle_working_set()` が hide 経路で Win32 `EmptyWorkingSet` をプロセスツリー全体（自プロセス + WebView2 子孫）へ能動適用し、アイドル物理 RSS を数MB まで落とす（再表示は OS の透過 re-fault で ~44ms 維持、UI 正常）。
+`working_set::trim_idle_working_set()` が hide 経路で Win32 `EmptyWorkingSet` をプロセスツリー全体（自プロセス + WebView2 子孫）へ能動適用し、hide 直後の物理 RSS を即時に落とす（再表示は OS の透過 re-fault で ~44ms 維持、UI 正常）。
 
-- **TrySuspend とは別レイヤーで補完的**: TrySuspend=論理目標（圧迫待ち・CPU 中断）、EmptyWorkingSet=物理 working set の即時トリミング。競合しない
+- **TrySuspend とは別レイヤーで補完的**: EmptyWorkingSet=物理 working set の**即時トリミング**、TrySuspend=レンダラー停止によるアイドル中の**再増殖防止**（+ CPU 静止）。suspend が成立しないと trim 後もレンダラーがページを touch し続け、アイドル 30 秒でツリー WS が ~70-86MB へ戻る（2026-07-17 実測。suspend 成立後は 12-31MB で低空安定）。なお旧記述「TrySuspend は物理 WS を回収しない（~110MB 不変）」は、TrySuspend が実は同期失敗していた期間の測定に基づく（→「TrySuspend / Resume パターン」）
 - **全 hide 経路に適用**: hotkey トグル（`main.rs`、`suspend_webview` の後）と `notify_main_hidden`（`commands/system.rs`、全フロントエンド hide の IPC チョークポイント）の両方から呼ぶ。**`EmptyWorkingSet` はスレッド非依存**（`with_webview` のような非同期制約がない）ため、tokio IPC スレッドの `notify_main_hidden` からも安全
 - **show 側に逆操作は不要**: trim されたページは show 時に OS が透過的に re-fault する。明示 untrim API は存在しない。trim が hide 前後どちらで走っても無害（再 fault するだけ）
 - **best-effort・物理 RAM のみ**: Toolhelp / `OpenProcess` / `EmptyWorkingSet` の全失敗は黙ってスキップ（機能影響ゼロ）。HANDLE は RAII ガードで解放。削減対象は working set であって commit ではない

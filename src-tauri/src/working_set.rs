@@ -1,9 +1,10 @@
 //! 非表示アイドル時に WebView2 プロセスツリー全体の working set を回収する。
 //!
-//! `TrySuspend` / `MemoryUsageTargetLevel.Low`（`main.rs`）は論理目標を下げるだけで、
-//! メモリ圧迫のない環境では OS が物理 working set を回収しない（実測: 非表示 120 秒でも
-//! 不変）。ここでは hide 経路で Win32 `EmptyWorkingSet` をプロセスツリー（自プロセス +
-//! WebView2 子孫）へ能動適用し、アイドル常駐の物理 RSS を削減する。
+//! `TrySuspend`（`main.rs`）はレンダラーを停止してアイドル中の working set 再増殖を防ぐが、
+//! 停止済みページの物理 working set を即時には返さない。ここでは hide 経路で Win32
+//! `EmptyWorkingSet` をプロセスツリー（自プロセス + WebView2 子孫）へ能動適用し、
+//! hide 直後の物理 RSS を即時に削減する（suspend とは補完関係。`src-tauri/CLAUDE.md`
+//! 「WebView2 working set の能動回収」節）。
 //!
 //! - show 時は OS がページを透過的に re-fault するため、逆操作（untrim）は不要かつ存在しない。
 //! - best-effort: Toolhelp / `OpenProcess` / `EmptyWorkingSet` の全失敗は黙ってスキップする

@@ -384,7 +384,9 @@ fn reset_search_height(main: &tauri::WebviewWindow) {
 /// flag → `set_focus()` → synchronous `WM_NULL` wait (`SetForegroundWindow` is
 /// partially async per Raymond Chen; this blocks until focus activation
 /// messages are fully processed) → Alt key-up (must follow confirmed focus
-/// transfer, see `send_alt_key_up` doc comment).
+/// transfer, see `send_alt_key_up` doc comment) — but skipped while the
+/// physical Alt is still held (#558), since injecting a key-up then would
+/// desync the OS logical modifier from the physical key and dead-zone Alt+Q.
 fn show_and_focus_main(app_handle: &AppHandle, main: &tauri::WebviewWindow, t0: Instant) {
     trace_main("show_main:show:start", json!({ "ms": elapsed_ms(t0) }));
     let _ = main.show();
@@ -419,7 +421,17 @@ fn show_and_focus_main(app_handle: &AppHandle, main: &tauri::WebviewWindow, t0: 
         }
     }
 
-    // Clear lingering Alt modifier after focus is confirmed.
+    // Clear lingering Alt modifier after focus is confirmed — but only when the
+    // physical Alt is already released. Injecting a key-up while Alt is still
+    // physically held releases only the OS logical modifier state, desyncing it
+    // from the physical key so Alt+Q won't fire until Alt is pressed again
+    // (dead-zone observed on the timeout show path, #558). If Alt is still down,
+    // the key-up arrives naturally when the user releases it, so no injection is
+    // needed. SNOTRA_TRACE makes the skip observable for the manual repro.
+    if is_alt_pressed() {
+        trace_main("show_main:alt_release_skipped", json!({ "ms": elapsed_ms(t0) }));
+        return;
+    }
     send_alt_key_up();
 }
 

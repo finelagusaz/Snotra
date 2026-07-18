@@ -1,29 +1,33 @@
-# Retrospective — verify-premises 原則の repo 移植 + skip-ci スコープ明文化 + #565 実装
+# Retrospective — #558 Alt+Q 不感帯の修正（スパイク f332a83 の製品版移植）
 
-（doc/skill のみ 3 ファイル・+6/-1 のメタサイクル。PR #570 内部前提の恒久化 / #571 skip-ci スコープ / #572 外部前提を start-issue へ = #565 完了）
+（`src-tauri/src/main.rs` 1 ファイル・+14/-2 のバグ修正サイクル。`show_and_focus_main` に「物理 Alt 押下中は残留 Alt 解除注入をスキップ」ガードを追加。実装・論理・ランタイムの三層で検証済み）
 
 ## よかったこと
 
-### 前提の裏取りを、このサイクル自身へ再帰的に当てた
+### 外部ソースの裏取りを最終状態まで行い、移植不要の部分を能動的に切り分けた
 
-サイクル全体が「issue の前提を鵜呑みにしない」の実践だった。①#565 は overkill か → 既存 3 箇所（Step 3 実在確認 / development-principles.md #409 / memory）の被覆を照合し「一般則は三重、外部次元だけ穴」と判定。②「移植は他環境の Claude に届く」か → 配送経路を表で検算し、memory はローカル・パス固定で届かず repo doc で初めて旅すると確認。③「.claude なら全部 skip 可」か → `vitest.config.ts` の `include` を実測し、hooks/githooks/scripts は CI が検査する＝skip 不可と判明。毎回一次資料（grep / gh api / vitest.config / ruleset）に当て、誤った分岐を未然に断った。
+根拠は #532 スパイクブランチ（f332a83）という外部ソースだった。start-issue Step 3 の外部前提確認（#565/#572 で恒久化した規律）に従い、①f332a83 が origin で revert・supersede されていないこと、②同コミットが含む 2 修正のうち fix 1（visible 楽観 true）は**製品版に不要**であること（`main_visible.store(true)` を実 show 時=main.rs:395 に行い、Alt-wait 経路は spawn 前に visible を立てない設計をコードで裏取り）を確認した。「スパイクにあるから全部移植」という早合点を、外部の最終状態と製品版コードの突き合わせで断った。
 
-### 「やりすぎ」を核へ削り、削った理由を残した
+### 単一チョークポイントを完全性の証拠付きで確認した
 
-#565 を受け入れ条件 6→1 に縮小。落とした 3 項目（version 一致・fixed/reverted 状態・research.md 新スキーマ）は #555 の失敗因でないと判定し、issue に「今回スコープ外・理由付き」で明記した。将来の読者が「抜け」と誤読して足し戻す経路を塞いだ。三層（内部=development-principles.md / 外部=start-issue / 選択肢空間=#409）が視界の割れで重複なく立った。
+`send_alt_key_up` は単一呼び出し元で、全 4 show 経路（ホットキー alt-wait / 直接 / second-instance / 起動時）が `show_and_focus_main` を通る——この設計を plan-review Step 2b 独立導出と code-reviewer が独立に裏取りし、1 箇所のガードで全経路に効くこと（同型パッチの散在不要）を確認した。Step 2b は計画と完全一致（漏れ 0・スコープ過剰 0）し、さらに「スキップの安全性（残留クリーンアップの副効果はメニューバー無し・AcceleratorKeyPressed・JS フォールバックの 4 重防御が肩代わり）」「第 2 注入点の不在（全ツリー grep で単一点を確認）」という**完全性の能動的証拠**を追加提示した。「一致の積み上げ」が盲点不在の証拠として機能した好例。
 
-### 文書化した運用を即ドッグフーディングした
+### 自動化不能な Win32 入力バグを、トレースベース協働スモークで実観測検証した
 
-skip-ci の skip-safe 集合を build-commands.md に明文化した直後、その skills-only / doc-only PR（#571・#572）自身に skip-ci を貼り、運用を実地で検証した。close の確認も closingIssuesReferences（派生値）に留めず `gh issue list --search "closed:>=<mergedAt>"`（起きた事実）で #565 単独の close を裏取りした。
+不感帯の解消は `GetAsyncKeyState`（実ハードウェア読取）依存で自動化できず、全 green（check/clippy/test/plan-review/code-reviewer）は compile/logic/regression レベルに留まっていた（advisor が done ゲートで指摘）。そこで **SNOTRA_TRACE=1 + stderr 捕捉 + 人間の実打鍵 + トレース件数照合**の協働スモークを組み、タイムアウト 16 回 = ガード発火 16 回の完全一致、直後の Alt+Q 再発火 17 回で**不感帯の不在を一次証拠化**した。早期解放 2 件では逆にガードが発火せず injection が走り、既存挙動の保持も同時に確認できた。窓が空白でも Rust 側トレースは独立に出るため UI レンダリングに非依存。この手法を再利用可能なパターンとして memory 化した。
 
 ---
 
 ## 伸びしろ
 
-### 汎用の教訓が memory 単独に留まり、版管理で旅していなかった
+### 検証カテゴリをファイル拡張子で決め、コードパスの意味を見落とした
 
-verify-issue-premises は汎用原則にもかかわらず、点在するローカル agent memory にしか無く、協働者・別マシンに届かず、次の retrospective 上書きで失われる経路にあった。「上書き前に教訓を抽出」の規律は機能していたが、抽出先が memory だと不十分——repo doc まで持って初めて届く。今回 development-principles.md へ移し memory はポインタへ縮小したが、「一般則の家は repo であって memory ではない」を早い段階で判断できると、恒久化までの遅延を減らせる。
+`.rs` を変更 → カテゴリ A（clippy/test）だけ、と検証範囲を拡張子で早合点し、変更が触れるコードパスの意味（ホットキー→ウィンドウ表示 = build-commands.md カテゴリ C の smoke/e2e）を見落とした。plan-review も code-reviewer もこの「カテゴリ写像違反」を捕まえず、advisor が done ゲートで拾った。原因は構造的でもある——post-edit hook はカテゴリ A だけを撃つため、「沈黙 = A 合格」が「C も済んだ」という誤読を誘う。ただし機構は既にあった（build-commands.md カテゴリ C 自身がトリガを明示し、e2e.yml が対象 paths で smoke+e2e を PR 自動起動する）ため実害はなく、指摘後にカテゴリ C（npm test 424 passed・smoke:startup 5/5）を手元で回して閉じた。教訓の核は「検証カテゴリはファイル種別でなく、変更が触れるコードパスの意味で選ぶ」——memory に規律として捕捉し、src-tauri を触ると自動配送される `.claude/rules/src-tauri.md` に「ホットキー/ウィンドウ経路変更ならカテゴリ C も」の 1 行を引き金の家として括り付けた。
 
-### issue 番号の取り違えに 1 往復を要した
+### 手動スモークの前提（Alt 修飾ホットキー必須）を計画段階で気づかなかった
 
-ユーザーは #568 と指したが内容は #565 だった。本文と description の矛盾に気づき即座に照合・確認できた（壊れた入力から推論しない、を実践）が、着手前に 1 往復のコストがかかった。既存の global CLAUDE.md rule #2 と verify-premises 原則が覆う範囲であり、新しい構造的教訓の追加は不要——照合の即応が効いた事例として記録に留める。
+不感帯は「ホットキーに Alt 修飾が含まれ、発火時に物理 Alt が押下中」でしか再現しない。実行時のユーザー config が Ctrl+K だったため alt-wait 経路に入らず、そのままでは「無反応 = 修正成功」と誤読しかねなかった。計画の「手動スモーク手順」に**再現に必要な config 状態（Alt 系ホットキーへの一時切替）**を書いておけば、実行時の切り分け往復を減らせた。Alt 系入力バグ再現の前提として memory に手法化（config を一時 Alt+Q → 検証後復元）。
+
+### UI レンダリング（vite dev / dist 構成）で一時的に沼にはまった
+
+窓を目視表示しようと vite dev サーバ起動を試み、dist 未生成・port 未 bind で時間を使った。トレース検証は webview の中身に非依存（Rust 側で独立にトレースが出る）と早い段階で判断できれば、UI レンダリングの寄り道を避けられた。途中で方針を切り替えて沼から出たが、「何の観測が真実源か」を先に確定してから観測ハーネスを組む順序を徹底したい。

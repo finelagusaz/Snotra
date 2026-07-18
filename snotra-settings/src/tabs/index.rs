@@ -1,3 +1,5 @@
+//! インデックス設定タブ（スキャンパスの追加/削除/管理）。
+
 use eframe::egui;
 use snotra_core::config::{Config, ScanPath};
 

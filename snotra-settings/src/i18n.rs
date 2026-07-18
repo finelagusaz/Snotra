@@ -1,3 +1,9 @@
+//! 設定 GUI の翻訳（`Tr(Language)`）。
+//!
+//! `TrKey` enum（キー）＋ 言語別テーブル関数 `ja()` / `en()`（各キーの網羅 match）＋
+//! `Tr::t` / `Tr::t_params`（`{param}` 置換）でテーブル駆動する。新キーは `TrKey` に variant を
+//! 足すだけで、`ja()` / `en()` が非網羅コンパイルエラーになり網羅を強制する。
+
 use snotra_core::config::Language;
 
 pub struct Tr(pub Language);

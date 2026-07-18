@@ -1,3 +1,5 @@
+//! 検索設定タブ（検索モード・履歴・隠しファイル）。
+
 use eframe::egui;
 use snotra_core::config::{Config, SearchHistoryNormalizationConfig, SearchModeConfig};
 

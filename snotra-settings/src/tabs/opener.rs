@@ -1,3 +1,5 @@
+//! オープナー設定タブ（ツール/ルール管理・プリセット検出/追加）。
+
 use eframe::egui;
 use snotra_core::config::{self, extract_path_condition, opener_specificity_order, Config, OpenerRule, OpenerTool};
 

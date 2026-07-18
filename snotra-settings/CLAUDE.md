@@ -12,11 +12,13 @@ egui ベースの設定・about バイナリ crate。本体（`src-tauri`）と�
 
 ## モジュール構成
 
+各モジュールの責務宣言は各ファイルの `//!`（module doc）を正準とする。本節はファイル一覧と、`//!` に収まらない**横断不変条件・チェックリスト**を記す（#562）。
+
 - `main.rs`: エントリポイント、eframe 起動
-- `app.rs`: `eframe::App` 実装、タブ管理（About タブ含む）、保存/破棄/リセットロジック。色は `style` のトークンを参照
-- `font.rs`: 日本語フォント読み込み（Regular の `jp_font` + 見出し用 Semibold ファミリ `SEMIBOLD_FAMILY` を登録。Semibold 不在環境では未登録のまま graceful degrade）+ システムフォント列挙
+- `app.rs` — `eframe::App` 実装・タブ管理（About 含む）・保存/破棄/リセット（責務は `//!`）
+- `font.rs` — 日本語フォント読み込みとシステムフォント列挙（責務は `//!`）
 - `hotkey_input.rs`: ホットキーキャプチャウィジェット
-- `i18n.rs`: 翻訳構造体 `Tr(Language)`。`TrKey` enum（キー） + 言語別テーブル関数 `ja()`/`en()`（各キーの網羅 match）+ `Tr::t(key)`/`Tr::t_params(key, params)`（`{param}` プレースホルダ置換）でテーブル駆動
+- `i18n.rs` — 設定 GUI の翻訳 `Tr(Language)` のテーブル駆動実装（責務は `//!`）。以下は網羅強制とタブ反映:
   - **新キー追加時は `TrKey` に variant を足すだけ** — `ja()`/`en()` が非網羅コンパイルエラーになり網羅を強制する（`#[deny(clippy::wildcard_enum_match_arm)]` でワイルドアームによる回避も禁止）
   - タブ UI 関数は `tr: &Tr` を引数に取り、保存時に `self.tr = Tr(new_language)` で即時反映
 - `style.rs`: デザイントークン（色 / 余白 / フォントサイズ / 幅）と共有スタイルヘルパー（`tab_scroll_area` / `section_heading` / `hint` / `settings_grid` / `list_item` / `reorder_controls` / `modal_header` / `modal_buttons` / `danger_button` / `apply_type_ramp`）。全タブと app.rs がこれ経由で描画する。詳細は `SETTINGS-DESIGN.md`

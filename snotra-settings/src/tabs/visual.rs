@@ -1,3 +1,5 @@
+//! ビジュアル設定タブ（テーマプリセット・カラーピッカー・フォント）。
+
 use eframe::egui;
 use egui::Color32;
 use snotra_core::config::{Config, CustomTheme, ThemePreset};

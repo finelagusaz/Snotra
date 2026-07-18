@@ -47,6 +47,9 @@ pub enum LoadOutcome {
     ReadFailed,
 }
 
+/// OS ロケール（`sys-locale`）から既定言語を判定する。
+/// `ja` で始まるロケールは日本語、それ以外は英語にフォールバックする。
+/// ロケールを取得できないときも英語にフォールバックする。
 fn default_language() -> Language {
     sys_locale::get_locale()
         .map(|l| {

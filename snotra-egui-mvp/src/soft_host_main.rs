@@ -46,7 +46,17 @@ use winit::{
 const ENTRY_COUNT: usize = 10_000;
 const FONT_PATH: &str = "C:/Windows/Fonts/YuGothM.ttc";
 const WINDOW_TITLE: &str = "Snotra softbuffer host MVP";
-const CLEAR_COLOR: u32 = 0x00F5_F5F5;
+// 下地は製品ダークテーマの背景色に合わせる（egui メッシュが覆う前の一瞬の
+// フラッシュを避ける）。以前は明色 0x00F5_F5F5 だった。
+const CLEAR_COLOR: u32 = 0x0028_2828;
+
+// 現行製品（`ui/src/styles/global.css`）のダークランチャー配色トークン。
+// 見た目の再現度検証（#532）用に egui へ薄く当てる。
+const BG: egui::Color32 = egui::Color32::from_rgb(0x28, 0x28, 0x28); // --bg-color #282828
+const TEXT: egui::Color32 = egui::Color32::from_rgb(0xe0, 0xe0, 0xe0); // --text-color #e0e0e0
+const INPUT_BG: egui::Color32 = egui::Color32::from_rgb(0x38, 0x38, 0x38); // --input-bg #383838
+const HINT: egui::Color32 = egui::Color32::from_rgb(0x80, 0x80, 0x80); // --hint-text #808080
+const SELECTED: egui::Color32 = egui::Color32::from_rgb(0x50, 0x50, 0x50); // --selected-row #505050
 const ALT_RELEASE_POLL_MS: u64 = 10;
 const ALT_RELEASE_TIMEOUT_MS: u64 = 350;
 
@@ -439,6 +449,7 @@ impl SoftHostProbe {
             .map_err(|error| format!("failed to create softbuffer surface: {error}"))?;
         log_phase(self.started_at, "softbuffer_ready");
         let font_bytes = configure_static_font(&self.egui_ctx)?;
+        configure_theme(&self.egui_ctx);
         log_phase(self.started_at, "font_configured");
         eprintln!("SNOTRA_SOFT_HOST_INFO font_bytes={font_bytes}");
         let egui_winit = egui_winit::State::new(
@@ -597,13 +608,15 @@ impl SoftHostProbe {
         let focus_search = &mut self.focus_search;
         let full_output = self.egui_ctx.run_ui(raw_input, |ctx| {
             egui::CentralPanel::default()
-                .frame(egui::Frame::new().fill(egui::Color32::from_rgb(245, 245, 245)))
+                .frame(egui::Frame::new().fill(BG).inner_margin(egui::Margin::same(8)))
                 .show(ctx, |ui| {
-                    ui.heading("Snotra softbuffer 統合スパイク");
-                    ui.label("Tauri host（updater / Alt+Q）+ CPU ラスタ + GDI 転送");
-                    let response = ui.add(
+                    // 検索入力（製品: 高さ 36px・内側 padding 8/12・背景 #383838・角丸 4）
+                    let response = ui.add_sized(
+                        [ui.available_width(), 36.0],
                         egui::TextEdit::singleline(query)
-                            .hint_text("アプリ、フォルダー、コマンドを検索"),
+                            .hint_text("アプリ、フォルダー、コマンドを検索")
+                            .vertical_align(egui::Align::Center)
+                            .margin(egui::Margin::symmetric(12, 8)),
                     );
                     if *focus_search {
                         response.request_focus();
@@ -616,14 +629,12 @@ impl SoftHostProbe {
                             engine.search(query)
                         };
                     }
-                    ui.separator();
-                    for result in results.iter().take(8) {
-                        ui.label(&result.name);
+                    ui.add_space(8.0);
+                    // 結果行（製品: アイコン 16px + 名前 + 淡色パス、選択行 #505050・行高 30px）。
+                    // 選択は先頭行固定（矢印ナビは本 spike の狙い＝テキスト AA 比較の対象外）。
+                    for (index, result) in results.iter().take(8).enumerate() {
+                        draw_result_row(ui, result, index == 0);
                     }
-                    ui.small(format!(
-                        "{} results / Engine {ENTRY_COUNT} entries / Alt+Q: 表示切替 / Esc: 非表示",
-                        results.len()
-                    ));
                 });
         });
         egui_winit.handle_platform_output(&window, full_output.platform_output);
@@ -1044,6 +1055,26 @@ fn build_verification_engine(entry_count: usize) -> Engine {
             target_path: "C:/Snotra/Verification/JapaneseInput.exe".to_owned(),
             is_folder: false,
         },
+        // 見た目検証用: 日本語名 + 省略が起きる長いパス（テキスト AA と ellipsis の目視比較）。
+        AppEntry {
+            name: "プロジェクト計画書_2026年度_最終版".to_owned(),
+            target_path:
+                "C:/Users/User/OneDrive/ドキュメント/業務/2026年度/計画/プロジェクト計画書_2026年度_最終版.xlsx"
+                    .to_owned(),
+            is_folder: false,
+        },
+        AppEntry {
+            name: "スクリーンショット 2026-07-18 203045".to_owned(),
+            target_path:
+                "C:/Users/User/Pictures/Screenshots/2026/07/スクリーンショット 2026-07-18 203045.png"
+                    .to_owned(),
+            is_folder: false,
+        },
+        AppEntry {
+            name: "設定".to_owned(),
+            target_path: "C:/Users/User/AppData/Roaming/Snotra/config.toml".to_owned(),
+            is_folder: false,
+        },
     ];
     for index in entries.len()..entry_count {
         entries.push(AppEntry {
@@ -1072,6 +1103,73 @@ fn build_verification_engine(entry_count: usize) -> Engine {
 }
 
 static STATIC_FONT: OnceLock<Box<[u8]>> = OnceLock::new();
+
+/// 現行製品（`ui/src/styles/global.css`）のダークランチャー外観を egui へ薄く当てる。
+/// 色・角丸・間隔・フォントサイズは egui で自明に再現できる（＝可否ではなく労力）。
+/// 本 spike の狙いは「CPU ラスタのグレースケール AA が WebView の ClearType に
+/// どこまで近いか」を、実サイズ・実コンテンツ（日本語 + 長パス）で目視比較させること。
+fn configure_theme(ctx: &egui::Context) {
+    use egui::{FontFamily, FontId, TextStyle};
+    // 製品ダークテーマを（システムテーマに関わらず）全テーマへ当てる。
+    ctx.all_styles_mut(|style| {
+        // 製品: 本文 15px CSS / 副次 0.8em=12px。egui は pt×ppp を物理 px にするため、
+        // 125% では 15pt×1.25=18.75 物理 px となり製品（15px×1.25）と一致する。
+        style
+            .text_styles
+            .insert(TextStyle::Body, FontId::new(15.0, FontFamily::Proportional));
+        style
+            .text_styles
+            .insert(TextStyle::Button, FontId::new(15.0, FontFamily::Proportional));
+        style
+            .text_styles
+            .insert(TextStyle::Small, FontId::new(12.0, FontFamily::Proportional));
+        let mut visuals = egui::Visuals::dark();
+        visuals.panel_fill = BG;
+        visuals.window_fill = BG;
+        visuals.extreme_bg_color = INPUT_BG; // TextEdit の背景
+        visuals.override_text_color = Some(TEXT);
+        visuals.selection.bg_fill = SELECTED;
+        style.visuals = visuals;
+    });
+}
+
+/// 1 行分の結果を製品のダークランチャー行として描く。アイコンは実抽出（#532 の
+/// 別作業）の代わりにプレースホルダ枠、その右に 名前（本文 15）+ 淡色パス（副次 12）。
+fn draw_result_row(ui: &mut egui::Ui, result: &SearchResult, selected: bool) {
+    let fill = if selected {
+        SELECTED
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    egui::Frame::new()
+        .fill(fill)
+        .corner_radius(egui::CornerRadius::same(4))
+        .inner_margin(egui::Margin::symmetric(12, 4))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                // アイコン枠 16px（実アイコン抽出は #532 の別作業）。
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+                ui.painter().rect_filled(
+                    rect,
+                    egui::CornerRadius::same(3),
+                    HINT.gamma_multiply(0.4),
+                );
+                ui.add_space(8.0);
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    let name_color = if result.is_error { HINT } else { TEXT };
+                    ui.label(
+                        egui::RichText::new(&result.name)
+                            .size(15.0)
+                            .color(name_color),
+                    );
+                    ui.label(egui::RichText::new(&result.path).size(12.0).color(HINT));
+                });
+            });
+        });
+}
 
 fn configure_static_font(context: &egui::Context) -> Result<usize, String> {
     if STATIC_FONT.get().is_none() {

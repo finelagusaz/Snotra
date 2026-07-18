@@ -22,7 +22,7 @@
 
 ### 検証カテゴリをファイル拡張子で決め、コードパスの意味を見落とした
 
-`.rs` を変更 → カテゴリ A（clippy/test）だけ、と検証範囲を拡張子で早合点し、変更が触れるコードパスの意味（ホットキー→ウィンドウ表示 = build-commands.md カテゴリ C の smoke/e2e）を見落とした。plan-review も code-reviewer もこの「カテゴリ写像違反」を捕まえず、advisor が done ゲートで拾った。原因は構造的でもある——post-edit hook はカテゴリ A だけを撃つため、「沈黙 = A 合格」が「C も済んだ」という誤読を誘う。ただし機構は既にあった（build-commands.md カテゴリ C 自身がトリガを明示し、e2e.yml が対象 paths で smoke+e2e を PR 自動起動する）ため実害はなく、指摘後にカテゴリ C（npm test 424 passed・smoke:startup 5/5）を手元で回して閉じた。教訓の核は「検証カテゴリはファイル種別でなく、変更が触れるコードパスの意味で選ぶ」——memory に規律として捕捉。
+`.rs` を変更 → カテゴリ A（clippy/test）だけ、と検証範囲を拡張子で早合点し、変更が触れるコードパスの意味（ホットキー→ウィンドウ表示 = build-commands.md カテゴリ C の smoke/e2e）を見落とした。plan-review も code-reviewer もこの「カテゴリ写像違反」を捕まえず、advisor が done ゲートで拾った。原因は構造的でもある——post-edit hook はカテゴリ A だけを撃つため、「沈黙 = A 合格」が「C も済んだ」という誤読を誘う。ただし機構は既にあった（build-commands.md カテゴリ C 自身がトリガを明示し、e2e.yml が対象 paths で smoke+e2e を PR 自動起動する）ため実害はなく、指摘後にカテゴリ C（npm test 424 passed・smoke:startup 5/5）を手元で回して閉じた。教訓の核は「検証カテゴリはファイル種別でなく、変更が触れるコードパスの意味で選ぶ」——memory に規律として捕捉し、src-tauri を触ると自動配送される `.claude/rules/src-tauri.md` に「ホットキー/ウィンドウ経路変更ならカテゴリ C も」の 1 行を引き金の家として括り付けた。
 
 ### 手動スモークの前提（Alt 修飾ホットキー必須）を計画段階で気づかなかった
 

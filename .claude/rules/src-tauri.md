@@ -17,3 +17,4 @@ paths:
 - **イベント順序**: `language-changed` → `hotkey-registration-failed` の順（フロントエンドが正しい言語でメッセージを組み立てるため）
 - **状態フラグを `true` にしたら `false` に戻す経路とセットで設計する**: 戻す責務を持つ関数は `#[must_use]` を付けて `let _ =` による無視をコンパイル時に検出する（実例 `window.rs::launch_settings_process`。index-build フラグは上記 `try_begin_index_build`/`finish_index_build` 経由）
 - **Win32 依存モジュール（`ime.rs`・`platform/` 内の `hotkey.rs` 等）はユニットテスト前提にしない**
+- **ホットキー・ウィンドウ生成/表示順・スラッシュコマンド経路を変更したら、カテゴリ A に加え `docs/build-commands.md` カテゴリ C（`smoke:startup` / `e2e:tauri`）も該当する**: post-edit hook が撃つのはカテゴリ A（clippy/test）だけで、「沈黙 = 合格」は C を含まない。C は手元で回すか、PR で `e2e.yml`（対象 paths で自動起動）に委ねるかを明示的に選ぶ。検証カテゴリは拡張子（`.rs`→A）でなく、変更が触れるコードパスの意味で決める（#558 でこの写像を早合点し C を見落とした）

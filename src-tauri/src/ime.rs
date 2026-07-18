@@ -1,3 +1,8 @@
+//! IME をオフにする Win32 IMM API の薄いラッパー。
+//!
+//! 検索ウィンドウ表示時に `ImmSetOpenStatus(false)` で IME を無効化し、ローマ字を直接
+//! 入力できるようにする。
+
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Input::Ime::{ImmGetContext, ImmReleaseContext, ImmSetOpenStatus};
 

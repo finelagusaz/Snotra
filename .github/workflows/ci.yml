@@ -41,6 +41,12 @@ jobs:
           VITE_APP_VERSION: "ci-build"
           VITE_APP_BUILD_NUMBER: "ci"
 
+      # #562: TypeDoc の {@link} 検査。doc コメント相互参照の切れを機械検査する。
+      # treatValidationWarningsAsErrors で warn を fail 化（typedoc.json）。emit:none ゆえ
+      # 成果物は出さない。現状 {@link} は 0 件で純粋な将来ガード（cargo doc の TS 版）。
+      - name: TypeDoc link check
+        run: npm run docs:check
+
   rust-check:
     if: >-
       github.event_name == 'push' ||

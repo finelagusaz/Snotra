@@ -32,9 +32,11 @@ cargo doc --workspace --no-deps --document-private-items                        
 ```bash
 npm run typecheck    # 必須: TypeScript 型チェック
 npm run build        # 必須: typecheck → vite build（プロジェクトルートから実行）
+npm run docs:check   # 必須（TSDoc {@link} を含む doc コメント編集時）: {@link} 切れ検査（#562・CI 発火／hook 非発火）
 ```
 
 - `npm run build` は内部で `typecheck` を呼びますが、型エラーを早期に切り分けるため別途実行を推奨
+- **`npm run docs:check`（TypeDoc）は CI（frontend-check）でのみ発火し、PostToolUse フックは発火しない**（#562・cargo doc の TS 版）。`treatValidationWarningsAsErrors`（`typedoc.json`）で `{@link}` 切れを fail 化する。現状 `{@link}` は 0 件で純粋な将来ガードだが、TSDoc に `{@link}` を書き始めたらローカルで手動実行して切れを確認する
 
 ### C. ウィンドウ生成／表示順・ホットキー・スラッシュコマンドに触れた場合（A／B に追加）
 
@@ -115,6 +117,7 @@ npm run tauri build              # リリースビルド（フロント+Rust 一
 |---|---|---|
 | `npm test`（Vitest） | `ci.yml`（frontend-check=ubuntu / rust-check=windows） | PR 自動（`skip-ci` は下記ノート参照） |
 | `npm run build` / `npm run typecheck` | `ci.yml`（frontend-check） | PR 自動 |
+| `npm run docs:check`（#562・TSDoc `{@link}` 検査） | `ci.yml`（frontend-check） | PR 自動 |
 | `cargo check` / `cargo test -p snotra-core` / `cargo test -p snotra` / `cargo test -p snotra-settings` / `cargo clippy` | `ci.yml`（rust-check） | PR 自動 |
 | `cargo doc --workspace --no-deps --document-private-items`（#562・intra-doc link 検査） | `ci.yml`（rust-check） | PR 自動 |
 | `npm run smoke:startup`（注） | `e2e.yml`（E2E & Smoke） | 対象 paths を含む PR（自動）/ 手動 dispatch |

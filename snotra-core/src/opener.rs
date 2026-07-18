@@ -200,6 +200,10 @@ fn normalize_opener_target(target: &str) -> String {
     trimmed.to_string()
 }
 
+/// オープナールール列のターゲットを正規化し、具体度の高い順にソートして返す。
+/// 各 `target` を `normalize_opener_target`（拡張子・パス条件の正規化）に通したうえで、
+/// `opener_specificity_order` をキーにソートする——`find_matching_tools` が「最も具体的な
+/// 1ルール」を先頭から解決できるようにするため。重複ターゲットは畳み込む。
 pub fn normalize_openers(openers: &[OpenerRule]) -> Vec<OpenerRule> {
     let mut result: Vec<OpenerRule> = Vec::new();
     let mut targets: Vec<String> = Vec::new();

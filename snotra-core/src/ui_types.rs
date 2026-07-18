@@ -1,3 +1,8 @@
+//! フロントエンドとの IPC 用データ型。
+//!
+//! Rust ↔ SolidJS 間で serde 経由でやり取りする DTO を定義する
+//! （`#[serde(rename_all = "camelCase")]` でフロントの命名規則へ合わせる）。
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

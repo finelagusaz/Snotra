@@ -1,3 +1,8 @@
+//! crate 共通の error 型。
+//!
+//! `BinError`（バイナリのシリアライズ/デシリアライズ失敗）と
+//! `ConfigError`（設定バリデーション失敗）を定義する。
+
 use std::fmt;
 
 /// Errors from binary file serialization/deserialization.

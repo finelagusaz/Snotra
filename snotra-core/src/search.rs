@@ -1,3 +1,10 @@
+//! 検索順位計算エンジン（`SearchEngine`）。
+//!
+//! Prefix / Substring / Kana / Fuzzy / Path のマッチと履歴ブースト、incremental search
+//! キャッシュ、空クエリ時の履歴候補を担う。スコア階層は Prefix > Substring > Kana > Path >
+//! Fuzzy（基準は `mod score_tier`）。cache locality のためエントリ属性は並列 Vec で保持する
+//! （struct 化はベンチ劣化を確認済み——根拠は `SearchEngine` の struct doc を参照）。
+
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;

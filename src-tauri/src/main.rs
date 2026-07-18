@@ -31,6 +31,48 @@ use crate::state::AppState;
 const ALT_RELEASE_POLL_MS: u64 = 10;
 const ALT_RELEASE_TIMEOUT_MS: u64 = 350;
 
+#[cfg(any(test, feature = "e2e-webview-automation"))]
+const E2E_WEBVIEW_DATA_DIR_ENV: &str = "SNOTRA_E2E_WEBVIEW_DATA_DIR";
+#[cfg(any(test, feature = "e2e-webview-automation"))]
+const E2E_WEBVIEW_BROWSER_ARGS: &str = concat!(
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection ",
+    "--remote-debugging-port=0"
+);
+
+/// Configure the test-only WebView2 environment through the trusted application API.
+///
+/// WebView2 150 ignores user-writable `WEBVIEW2_*` channels for elevated hosts, so
+/// msedgedriver cannot supply its remote-debugging port that way. The Cargo feature
+/// keeps this escape hatch out of production builds; the environment value only
+/// selects a per-session relative data directory in the feature-enabled E2E binary.
+#[cfg(any(test, feature = "e2e-webview-automation"))]
+fn configure_e2e_webview(
+    windows: &mut [tauri::utils::config::WindowConfig],
+    data_dir: Option<&std::ffi::OsStr>,
+) -> Result<bool, String> {
+    use std::path::{Component, Path};
+
+    let Some(data_dir) = data_dir else {
+        return Ok(false);
+    };
+    let data_dir = Path::new(data_dir);
+    let mut components = data_dir.components();
+    if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
+        return Err(format!(
+            "{E2E_WEBVIEW_DATA_DIR_ENV} must be one relative path component, got {}",
+            data_dir.display()
+        ));
+    }
+
+    let main = windows
+        .iter_mut()
+        .find(|window| window.label == "main")
+        .ok_or_else(|| "E2E WebView configuration requires the main window".to_string())?;
+    main.additional_browser_args = Some(E2E_WEBVIEW_BROWSER_ARGS.to_string());
+    main.data_directory = Some(data_dir.to_path_buf());
+    Ok(true)
+}
+
 /// Thin wrapper kept so call sites read `trace_main(...)`; logic lives in the
 /// shared `crate::trace` module (deduped with `commands::trace_command`, #433).
 fn trace_main(event: &str, data: serde_json::Value) {
@@ -519,6 +561,19 @@ fn main() {
         main_visible: AtomicBool::new(false),
     };
 
+    let app_context = tauri::generate_context!();
+    #[cfg(feature = "e2e-webview-automation")]
+    let app_context = {
+        let mut app_context = app_context;
+        let data_dir = std::env::var_os(E2E_WEBVIEW_DATA_DIR_ENV);
+        configure_e2e_webview(
+            &mut app_context.config_mut().app.windows,
+            data_dir.as_deref(),
+        )
+        .expect("invalid E2E WebView configuration");
+        app_context
+    };
+
     let ime_off_for_si = ime_off;
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -608,7 +663,7 @@ fn main() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .run(app_context)
         .expect("error while running tauri application");
 }
 
@@ -866,5 +921,60 @@ fn setup_tray(app_handle: &AppHandle, show_tray: bool, load_outcome: LoadOutcome
 fn setup_startup_display(app_handle: &AppHandle, show_on_startup: bool, ime_off: bool) {
     if show_on_startup {
         show_main_and_emit(app_handle, ime_off);
+    }
+}
+
+#[cfg(test)]
+mod e2e_webview_config_tests {
+    use std::ffi::OsStr;
+
+    use super::{E2E_WEBVIEW_BROWSER_ARGS, configure_e2e_webview};
+    use tauri::utils::config::WindowConfig;
+
+    fn main_window() -> WindowConfig {
+        WindowConfig {
+            label: "main".to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn e2e_webview_config_sets_trusted_arguments_and_isolated_data_directory() {
+        let mut windows = [main_window()];
+
+        let configured =
+            configure_e2e_webview(&mut windows, Some(OsStr::new("snotra-e2e-session-1"))).unwrap();
+
+        assert!(configured);
+        assert_eq!(
+            windows[0].additional_browser_args.as_deref(),
+            Some(E2E_WEBVIEW_BROWSER_ARGS)
+        );
+        assert_eq!(
+            windows[0].data_directory.as_deref(),
+            Some(std::path::Path::new("snotra-e2e-session-1"))
+        );
+    }
+
+    #[test]
+    fn e2e_webview_config_without_session_directory_preserves_production_defaults() {
+        let mut windows = [main_window()];
+
+        let configured = configure_e2e_webview(&mut windows, None).unwrap();
+
+        assert!(!configured);
+        assert!(windows[0].additional_browser_args.is_none());
+        assert!(windows[0].data_directory.is_none());
+    }
+
+    #[test]
+    fn e2e_webview_config_rejects_unsafe_session_directories() {
+        for invalid in ["", "..", "../shared", "nested/session", r"C:\absolute"] {
+            let mut windows = [main_window()];
+            assert!(
+                configure_e2e_webview(&mut windows, Some(OsStr::new(invalid))).is_err(),
+                "{invalid} must be rejected"
+            );
+        }
     }
 }

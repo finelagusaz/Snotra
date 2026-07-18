@@ -3,6 +3,9 @@ name = "snotra"
 version.workspace = true
 edition = "2024"
 
+[features]
+e2e-webview-automation = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

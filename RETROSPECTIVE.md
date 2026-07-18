@@ -1,29 +1,25 @@
-# Retrospective — コメント一括スイープ (#561 / PR #563)
-
-`docs/comment-guidelines.md` へ既存コメントを揃える有界スイープ。挙動不変・コメントのみ（24 ソース + doc 2 行、+101/−82）。
+# Retrospective — WebView2 150 High IL E2E 復旧 (#555)
 
 ## よかったこと
 
-### 独立再導出が初期走査の網を約 3 倍に広げた（plan-review Step 2b が再び効いた）
+### 上流 Issue の最終回答と実行コードを照合し、原因を訂正できた
 
-初期 Explore 走査は「混在 1 件・履歴/逐語訳 4 件・TSDoc はほぼ不要」と見立てたが、plan.md を渡さない独立再導出（Plan agent）は混在 13 ブロック・履歴ナラティブ約 15 箇所・契約 TSDoc 2 件（iconBatch/lruIconCache）を拾った。差の原因は**走査語彙・枠組みの設計差**（「以前は/used to」grep vs「旧/かつて」+ コメント行ブロック化スクリプト）。目視系スイープの完全性は検出パターンの設計に従属し、単一枠組みは自身の盲点を継承する——「枠組みの独立」がそれを破った。retrospective 文書の「独立再導出だけが毎回漏れを拾う」がまた実証された。
+#555 と WebView2Feedback#5640 の初期説明は「High IL で DevTools の loopback socket が壊れる」という仮説だったが、Microsoft の最終回答は異なっていた。WebView2 150 は昇格ホストで、ユーザーが書き換え可能な `WEBVIEW2_*` 環境変数と HKCU policy の browser arguments を意図的に無視する。一方、アプリ API の `CoreWebView2EnvironmentOptions.AdditionalBrowserArguments` は有効である。Tauri から Wry、WebView2 API まで値の到達経路を実装で追い、旧回避策が msedgedriver capability にしか届いていなかったことを確認したため、de-elevation や上流待ちをせず根本原因へ直接対応できた。
 
-### 契約記述を実装照合してから書いた（「嘘のコメントは無いより悪い」）
+### production のセキュリティ境界を構造で維持した
 
-perf.ts / lruIconCache.ts / iconBatch.ts の新規契約 TSDoc は、plan.md で「revoke 挙動を実読してから書く」と明記し、code-reviewer が 3 件すべて実装一致を照合。DEV 専用の perf.ts は偵察間で分類が割れた（独立導出「契約なし・副作用自明」vs TS 偵察「契約あり・最有力」）が、実コード照合で呼び出し順序・解放義務の契約ありと確定。「DEV 専用＝契約なし」は早計だった。
+E2E 専用 Cargo feature とセッション環境変数の両方が揃ったときだけ trusted app API へ `--remote-debugging-port=0` と隔離 data directory を設定する構造にした。通常ビルドではユーザーが書き換え可能な環境変数から browser argument を有効化できない。さらに data directory 名を単一の安全な相対 component に制限し、driver とアプリが同一ディレクトリを使い、正常・異常終了の両方で削除する不変条件をテストと E2E ハーネスで固定した。
 
-### スコープの規律（docgen を先送りしつつ 1 点だけ前倒し整合）
+### High IL の真の実行環境で復旧を証明した
 
-サイクル中のユーザーの docgen 相談を #562 として issue 化し、#561 を肥大させなかった。ただし perf.ts の TSDoc 配置だけは `@packageDocumentation` にして将来の docgen（浮きブロックを TypeDoc が捨てる）と衝突しないよう前倒し。#562 を閉じない配慮（closing keyword を付けず・PR 作成直後に closingIssuesReferences を検算）も効いた。
-
----
+ローカルの E2E 16 件を 2 回通したうえで、GitHub-hosted Windows runner の `E2E & Smoke` workflow を手動実行した。startup smoke 5/5 と Playwright E2E 16/16 が成功し、従来の `DevToolsActivePort file doesn't exist` が High IL 環境で解消したことを確認できた。ローカルの sandbox 起因 `EPERM` は権限付き再実行で環境要因と切り分け、コード回帰として扱わなかった。
 
 ## 伸びしろ
 
-### 旧識別子の残存参照を走査で拾えず、review まで残った
+### Issue 本文の「根本原因」を一度は確定情報として扱いかけた
 
-`ResultsSection.tsx:28-31` の `iconCacheVersion` 参照を現在形化したが、90 行下の `:121-124` にあった同一識別子への参照が初期走査・独立再導出の**双方から漏れ**、code-reviewer が拾った（`ui/CLAUDE.md:130` にも同一ドリフト）。
+Issue 本文や上流 Issue の冒頭説明は、その後の maintainer コメントで訂正されうる。今回は実装前に最終コメントまで読み直して是正できたが、初期段階では trusted-origin / loopback 仮説を前提に調査していた。根本原因の証拠は Issue の要約ではなく、上流の最終回答、依存ライブラリの実装、失敗・成功する実行経路の三点で確定する必要がある。この教訓は既存の「issue 前提のコード裏取り」と一致し、今回固有の High IL E2E 境界は `src-tauri/CLAUDE.md` に配置した。
 
-根本原因: 改名は過去 PR で済んでおり「改名 → 呼び出し元 grep」の引き金が発火しない。残存参照はコメント内にしか無く、**当の識別子名の grep でしか到達しない**。1 箇所直したら識別子名で repo 全体を grep すべきだった——`AGENTS.md`「バグ発見時は同一パターン全コードパス検索」の**コメントスイープ版**（既存原則の射程内だが、コメント整理には明示的に当てる意識が要る）。
+### driver 側設定とアプリ側設定を同じ概念として見ない精度が必要だった
 
-対処: 当初 `comment-guidelines.md`「コメントと実装の同期」への 1 段落追加を試みたが、#561 が「ガイドライン本体の変更は別 issue」とスコープ外に置いているため撤回し、PR #563 をコメントのみに保った。教訓は既存 AGENTS.md ルールの射程内であり、ガイドラインへの明示追記は別 issue の候補として `[[comment-guidelines-sweep-pending]]` メモリのフォローアップに記録。code-reviewer が拾ったのは機構が効いた証だが、走査段で拾うのが本筋。
+`tauri:options.webviewOptions.additionalBrowserArguments` という名前だけを見ると、WebView2 アプリ生成時の AdditionalBrowserArguments と同じ経路に見える。しかし実際は前者が msedgedriver capability、後者が Wry 経由のアプリ API であり、WebView2 150 のセキュリティ境界では結果が分かれた。層をまたぐ不具合では、設定名の類似ではなく「どのプロセスが、どの API を、どの整合性レベルで呼ぶか」まで追跡する必要がある。

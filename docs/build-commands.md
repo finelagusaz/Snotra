@@ -92,7 +92,7 @@ npm run tauri build              # リリースビルド（フロント+Rust 一
 - `scripts/smoke-startup.ps1` は `SNOTRA_TRACE=1` で起動し、`*:error` トレースイベントが不在であることを検証する
 - `e2e/tauri.slash.e2e.ts` は Playwright runner 上で `tauri-driver + selenium-webdriver + edgedriver` を使い、起動入力・`/o` の動作を検証する
 - **E2E は `SNOTRA_DISABLE_SUSPEND=1` で app を起動する**（`spawnTauriDriver` が注入）。WebDriver は非表示中のレンダラーに `executeScript` で触り続けるため、hide 時の WebView2 suspend（TrySuspend）とは非互換（suspend されたレンダラーは script に応答せず 30s タイムアウトする）。suspend 経路自体は E2E では検証されない（ホットキー同様、実機計測でカバー）
-- E2E セットアップは `npx tauri build --no-bundle` を使う（`cargo build --release` は `localhost` 向きバイナリになり `ERR_CONNECTION_REFUSED` で失敗する）
+- E2E セットアップは `npx tauri build --no-bundle --features e2e-webview-automation` を使う（`cargo build --release` は `localhost` 向きバイナリになり `ERR_CONNECTION_REFUSED` で失敗する）。feature はテスト用バイナリにだけ WebView2 の trusted application API 経由で `--remote-debugging-port=0` を設定可能にする。実際の有効化にはハーネスが生成する `SNOTRA_E2E_WEBVIEW_DATA_DIR` も必要で、通常配布ビルドや startup smoke に remote debugging を持ち込まない
 - スラッシュコマンドの実行順（`hide -> /r|/o|/s|/q`）は `ui/src/lib/commands.test.ts` で固定し、順序変更時は必ず更新する
 - Tauri Driver E2E の可視判定は `document.visibilityState` を真実源にしない。`plugin:window|is_visible` を優先して判定する
 - **`snotra-settings` は egui ネイティブウィンドウのため WebDriver から完全に不可視**: `waitForVisibleLabel(driver, "settings", ...)` は常にタイムアウトする。`/o` コマンドの副作用（`main.alwaysOnTop → false`）など、Tauri WebView 側で観測可能な状態変化で間接的に検証すること

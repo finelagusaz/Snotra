@@ -305,3 +305,67 @@ describe("MainApp auto_hide_on_focus_lost（#576: 常時リスニング + シグ
     }
   });
 });
+
+describe("MainApp 起動ハイドレーションガード（#578: bootstrap は先着 event を上書きしない）", () => {
+  // bootstrap を deferred にして onMount を await getBootstrapPayload で停止させ、
+  // その隙に config 変更 event を先着させてから stale な bootstrap を解決する。
+  // ハイドレーションガードが無いと bootstrap が event 値を上書きしてしまう（RED）。
+  function deferBootstrap(): (payload: BootstrapPayload) => void {
+    let resolve!: (payload: BootstrapPayload) => void;
+    mockGetBootstrapPayload.mockReturnValue(
+      new Promise<BootstrapPayload>((r) => {
+        resolve = r;
+      }),
+    );
+    return resolve;
+  }
+
+  it("show_icons: bootstrap 解決前に来た event 値が保持される（bootstrap が轢かない）", async () => {
+    const resolveBootstrap = deferBootstrap(); // BOOTSTRAP.show_icons = true
+    render(() => <MainApp />);
+    await tick(); // listener 登録まで進み bootstrap await で停止
+
+    // より新しい event（show_icons=false）が bootstrap 解決前に到着
+    listenHandlers["show-icons-changed"]({ payload: false });
+    expect(capturedProps!.showIcons).toBe(false);
+
+    // 起動時に読んだ stale な bootstrap（show_icons=true）が後から解決
+    resolveBootstrap(BOOTSTRAP);
+    await tick();
+    await tick();
+
+    expect(capturedProps!.showIcons).toBe(false);
+  });
+
+  it("visible_rows: bootstrap 解決前に来た event 値が保持される（bootstrap が轢かない）", async () => {
+    const resolveBootstrap = deferBootstrap(); // BOOTSTRAP.visible_rows = 8
+    render(() => <MainApp />);
+    await tick();
+
+    listenHandlers["max-results-changed"]({ payload: 3 });
+    expect(capturedProps!.maxResults).toBe(3);
+
+    resolveBootstrap(BOOTSTRAP);
+    await tick();
+    await tick();
+
+    expect(capturedProps!.maxResults).toBe(3);
+  });
+
+  it("event 未着なら bootstrap 値が通常どおり適用される（ガードの副作用なし）", async () => {
+    const resolveBootstrap = deferBootstrap();
+    render(() => <MainApp />);
+    await tick();
+
+    // event を発火せずに bootstrap を解決
+    resolveBootstrap({
+      ...BOOTSTRAP,
+      appearance: { show_icons: false, visible_rows: 5 },
+    });
+    await tick();
+    await tick();
+
+    expect(capturedProps!.showIcons).toBe(false);
+    expect(capturedProps!.maxResults).toBe(5);
+  });
+});

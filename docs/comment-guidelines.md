@@ -37,7 +37,7 @@
 ## rustdoc の様式
 
 - **`///` は公開アイテムの契約を書く**: 要約 1 行（何であるか）＋必要なら空行を挟んで詳細（保証・パニック条件・呼び出し前提・ロック規律）。全 pub アイテムへの機械的な付与は求めない——**契約や非自明な前提を持つものに書く**
-- **`//!` はモジュール冒頭の責務宣言**: モジュールの役割と設計方針を数行で。既存の慣習（`snotra-core/src/opener.rs`、`src-tauri/src` の `monitor.rs` / `trace.rs` / `working_set.rs`、`snotra-settings/src` の `style.rs` / `tabs/common.rs`——3 クレートに分散して自然発生している）を追認する
+- **`//!` はモジュール冒頭の責務宣言**: モジュールの役割と設計方針を数行で。**#562 で全モジュールへ展開し、`CLAUDE.md` のモジュール責務は `//!` を正準とする**——`CLAUDE.md` のモジュール構成節はファイル名の索引と、`//!` に収まらない横断不変条件・チェックリストに留める（`//!` はコード側で改名に追従し、`cargo doc` の intra-doc link 検査が相互参照の腐敗を捕まえる）。模範例は `snotra-core/src/search.rs`（`SearchEngine`）/ `opener.rs`、`src-tauri/src` の `working_set.rs` / `state.rs`、`snotra-settings/src` の `style.rs`
 - **設計判断の長文は `# Why ...` 見出しで構造化する**: 模範例は `snotra-core/src/search.rs` の `SearchEngine` struct doc——`# Why parallel Vecs instead of a single Vec<CachedEntry> struct?` 見出しの下に、試作ブランチ・issue 番号・ベンチ結果の表・根本原因・「意図的であり技術的負債ではない」の明言、を置く。**長さ自体は問題ではない**（→「歴史メモの様式」）
 
 ## TSDoc の様式

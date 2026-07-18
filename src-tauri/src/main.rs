@@ -472,7 +472,7 @@ fn emit_window_shown(app_handle: &AppHandle, t0: Instant) {
     );
 }
 
-fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
+fn show_main_and_emit(app_handle: &AppHandle) {
     let t0 = Instant::now();
 
     if let Some(main) = app_handle.get_webview_window("main") {
@@ -505,6 +505,13 @@ fn show_main_and_emit(app_handle: &AppHandle, ime_control: bool) {
         // show 完了後にもう一度 resume を積む（冪等）ことで、この残余窓も閉じる。
         resume_webview(&main);
 
+        // ime_off_on_show を実行中の config から都度読む（follow_cursor_monitor と同じ
+        // 「キャッシュしない」設計）。これにより config_watcher のホットリロードが個別の
+        // diff/event 追加なしにこのフラグへ届く（#576）。
+        let ime_control = app_handle
+            .try_state::<AppState>()
+            .map(|s| s.engine.lock().unwrap().config().general.ime_off_on_show)
+            .unwrap_or(false); // config.rs の既定値と一致
         if ime_control {
             apply_ime_control(app_handle, &main, t0);
         }
@@ -560,8 +567,6 @@ fn main() {
 
     let show_on_startup = config.general.show_on_startup;
     let show_tray = config.general.show_tray_icon;
-    let ime_off = config.general.ime_off_on_show;
-    let hotkey_toggle = config.general.hotkey_toggle;
     let hotkey_config = config.hotkey.clone();
     let initial_language = config.general.language;
     let window_width = config.appearance.window_width;
@@ -593,14 +598,13 @@ fn main() {
         app_context
     };
 
-    let ime_off_for_si = ime_off;
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(move |app, _args, _cwd| {
             // When a second instance tries to start, show the main window
             // via show_main_and_emit to ensure height reset, IME control,
             // and window-shown emit are applied consistently.
-            show_main_and_emit(app, ime_off_for_si);
+            show_main_and_emit(app);
         }))
         .manage(app_state)
         .manage(icon_cache_state)
@@ -655,7 +659,7 @@ fn main() {
             // platform thread. Registering the listener before activating the
             // hotkey ensures no event is emitted before there is a receiver to
             // handle it — this order must not change (src-tauri/CLAUDE.md).
-            setup_hotkey_listener(&app_handle, hotkey_toggle, ime_off);
+            setup_hotkey_listener(&app_handle);
 
             // Listen for open-settings event from tray
             setup_open_settings_listener(&app_handle);
@@ -678,7 +682,7 @@ fn main() {
 
             // Show window on startup if configured. Must run last: relies on the
             // platform bridge (IME control) and listeners registered above.
-            setup_startup_display(&app_handle, show_on_startup, ime_off);
+            setup_startup_display(&app_handle, show_on_startup);
 
             Ok(())
         })
@@ -774,10 +778,8 @@ fn setup_first_run(app_handle: &AppHandle, is_first_run: bool) {
 /// platform thread. **Order must not change**: registering the listener
 /// before sending `RegisterInitialHotkey` ensures no event is emitted before
 /// there is a receiver to handle it (src-tauri/CLAUDE.md).
-fn setup_hotkey_listener(app_handle: &AppHandle, hotkey_toggle: bool, ime_off: bool) {
+fn setup_hotkey_listener(app_handle: &AppHandle) {
     let handle_for_hotkey = app_handle.clone();
-    let toggle = hotkey_toggle;
-    let ime_control = ime_off;
     let hotkey_generation = Arc::new(AtomicU64::new(0));
     let hotkey_generation_for_listener = hotkey_generation;
     app_handle.listen("hotkey-pressed", move |_| {
@@ -798,7 +800,17 @@ fn setup_hotkey_listener(app_handle: &AppHandle, hotkey_toggle: bool, ime_off: b
             .map(|s| s.main_visible.load(Ordering::SeqCst))
             .unwrap_or(false);
         trace_main("hotkey:visible_check", json!({ "visible": visible }));
-        if visible && toggle {
+        // hotkey_toggle を実行中の config から都度読む（follow_cursor_monitor と同じ
+        // 「キャッシュしない」設計）。config_watcher のホットリロードが個別の diff/event
+        // 追加なしにこのフラグへ届く（#576）。
+        // `visible &&` で短絡し、非表示（=show 経路・最も遅延に敏感）では engine ロックを
+        // 取らない（hotkey_toggle は可視時の hide 判定にしか使わないため）。
+        let hide_on_toggle = visible
+            && handle_for_hotkey
+                .try_state::<AppState>()
+                .map(|s| s.engine.lock().unwrap().config().general.hotkey_toggle)
+                .unwrap_or(true); // config.rs の既定値と一致
+        if hide_on_toggle {
             if let Some(w) = handle_for_hotkey.get_webview_window("main") {
                 let _ = w.hide();
             }
@@ -821,11 +833,11 @@ fn setup_hotkey_listener(app_handle: &AppHandle, hotkey_toggle: bool, ime_off: b
                 if hotkey_generation_for_wait.load(Ordering::SeqCst) != current_gen {
                     return;
                 }
-                show_main_and_emit(&handle_for_show, ime_control);
+                show_main_and_emit(&handle_for_show);
             });
         } else {
             trace_main("hotkey:show_direct", json!({}));
-            show_main_and_emit(&handle_for_hotkey, ime_control);
+            show_main_and_emit(&handle_for_hotkey);
         }
     });
 
@@ -937,9 +949,9 @@ fn setup_tray(app_handle: &AppHandle, show_tray: bool, load_outcome: LoadOutcome
 
 /// Show the main window on startup if configured. Must run after tray/listener
 /// setup: `show_main_and_emit` depends on the platform bridge (IME control).
-fn setup_startup_display(app_handle: &AppHandle, show_on_startup: bool, ime_off: bool) {
+fn setup_startup_display(app_handle: &AppHandle, show_on_startup: bool) {
     if show_on_startup {
-        show_main_and_emit(app_handle, ime_off);
+        show_main_and_emit(app_handle);
     }
 }
 

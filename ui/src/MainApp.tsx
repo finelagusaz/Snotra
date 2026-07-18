@@ -41,6 +41,10 @@ const MainApp: Component = () => {
   const blurTimer = createOwnedTimer(100);
   const moveTimer = createOwnedTimer(500);
   const [mainVisible, setMainVisible] = createSignal(false);
+  // フォーカス喪失時自動非表示のゲート（#576）。bootstrap と "auto-hide-focus-lost-changed"
+  // イベントで更新され、常時登録の onFocusChanged ハンドラがこれを参照する。既定 false は
+  // bootstrap 到着前に非表示を走らせない（旧: リスナー未登録＝非表示にならない挙動と等価）。
+  const [autoHideOnFocusLost, setAutoHideOnFocusLost] = createSignal(false);
   const [maxResults, setMaxResults] = createSignal(8);
   const [showIcons, setShowIcons] = createSignal(true);
   const [cachedWidth, setCachedWidth] = createSignal(600);
@@ -57,27 +61,6 @@ const MainApp: Component = () => {
       // hide→notify(trim) の順序は hideMainWindow に集約（#361）。
       setMainVisible(false);
       await hideMainWindow();
-    };
-
-    const registerAutoHideOnFocusLost = async () => {
-      const unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
-        if (!focused) {
-          blurTimer.arm(() => {
-            void (async () => {
-              try {
-                // 統合後は results ウィンドウが同一ウィンドウ内のため、
-                // is_main_foreground によるプロセス ID 比較は不要。
-                await hideMain();
-              } catch (e) {
-                console.warn("auto-hide focus check failed:", e);
-              }
-            })();
-          });
-        } else {
-          blurTimer.cancel();
-        }
-      });
-      unlistenFns.push(unlistenFocus);
     };
 
     // Wait for all critical listeners to be attached before first reset/show.
@@ -156,6 +139,39 @@ const MainApp: Component = () => {
     });
     unlistenFns.push(unlistenMainMoved);
 
+    // フォーカス喪失時の自動非表示リスナーを常時登録し、autoHideOnFocusLost シグナルを
+    // ゲートとして参照する（#576）。登録失敗は局所 catch で隔離し、後続の初期化
+    // （他イベント購読・bootstrap 適用）を巻き添えにしない。
+    try {
+      const unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
+        if (!focused) {
+          if (!autoHideOnFocusLost()) return; // 設定オフなら何もしない
+          blurTimer.arm(() => {
+            void (async () => {
+              try {
+                // 統合後は results ウィンドウが同一ウィンドウ内のため、
+                // is_main_foreground によるプロセス ID 比較は不要。
+                await hideMain();
+              } catch (e) {
+                console.warn("auto-hide focus check failed:", e);
+              }
+            })();
+          });
+        } else {
+          blurTimer.cancel();
+        }
+      });
+      unlistenFns.push(unlistenFocus);
+    } catch (e) {
+      console.warn("auto-hide focus listener registration failed:", e);
+    }
+
+    // Listen for auto_hide_on_focus_lost config changes (#576)
+    const unlistenAutoHideConfig = await listen<boolean>("auto-hide-focus-lost-changed", (event) => {
+      setAutoHideOnFocusLost(event.payload);
+    });
+    unlistenFns.push(unlistenAutoHideConfig);
+
     // Listen for visual config changes
     const unlistenVisual = await listen<VisualConfig>("visual-config-changed", (event) => {
       applyTheme(event.payload);
@@ -208,12 +224,12 @@ const MainApp: Component = () => {
       setShowIcons(bootstrap.appearance.show_icons);
       setInstantCommandPrefix(bootstrap.instant_command_prefix);
       setIconCacheSize(bootstrap.result_limit);
+      // フォーカス喪失時自動非表示の初期値（#576）。以後の変更は
+      // "auto-hide-focus-lost-changed" イベントが追従する。bootstrap 失敗時は
+      // 既定 false のままとし、非表示を走らせない。
+      setAutoHideOnFocusLost(bootstrap.general.auto_hide_on_focus_lost);
     } catch (e) {
       console.error("Failed to load bootstrap payload:", e);
-    }
-
-    if (bootstrap?.general.auto_hide_on_focus_lost) {
-      await registerAutoHideOnFocusLost();
     }
 
     // 起動時に更新チェック（auto_update が disabled 以外の場合）
@@ -254,6 +270,13 @@ const MainApp: Component = () => {
     prevSetHeight = height;
     const width = untrack(cachedWidth);
     void win.setSize(new LogicalSize(width, height));
+  });
+
+  // 設定がオフへ切り替わった瞬間に保留中の非表示タイマーを止める（#576）。
+  // 「フォーカス喪失 → blurTimer.arm 直後に設定オフ」という 100ms 未満の窓でも
+  // pending タイマーを即キャンセルし、意図しない非表示を防ぐ。
+  createEffect(() => {
+    if (!autoHideOnFocusLost()) blurTimer.cancel();
   });
 
   onCleanup(() => {

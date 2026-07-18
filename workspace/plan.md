@@ -135,6 +135,10 @@ typedoc devDep + config → `npm run docs:check` が green を確認（現状 `{
 
 **不要**。挙動変更なし（IPC 契約・状態遷移・スコア計算・設定キー・データフォーマットに変化なし）。ドキュメント配置・ビルド設定のみ。
 
+## 設計判断（相談で確定）
+
+- **生成物（HTML/Markdown）はコミットしない**。「生成 Markdown をリポジトリに置いて参照資料化する」案を検討したが却下: (1) rustdoc は安定版で Markdown 非対応（`--output-format [html]` のみ・rustc 1.94.0 実測）＝移行主体の Rust に効かない、(2) コミットした生成物は再生成しない限りソースから乖離する新たなドリフト面で、正直に保つには CI diff ガードが要る、(3) SSOT はソースの `//!`/`///` でエージェントは直読可能ゆえ集約ビューの限界価値が低い。SSOT はソース、生成物は副産物のまま（issue「ホスティング不要」を追認）。
+
 ## CI コスト注記
 
 - `package.json` / `**/Cargo.toml` の変更は `e2e.yml`（E2E & Smoke workflow）をトリガー。設定のみの docgen 変更でも full E2E が起動する（想定内・skip-ci ラベルは使わない）。

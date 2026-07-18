@@ -3,6 +3,9 @@ name = "snotra-core"
 version.workspace = true
 edition = "2024"
 
+[lints]
+workspace = true
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["alloc"] }

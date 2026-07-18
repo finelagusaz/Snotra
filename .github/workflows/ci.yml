@@ -79,6 +79,14 @@ jobs:
       - name: cargo clippy (e2e-webview-automation feature)
         run: cargo clippy -p snotra --features e2e-webview-automation --all-targets -- -D warnings
 
+      # #562: docgen 検出器。doc コメント内の intra-doc link（散文内シンボル参照）の切れを
+      # 機械検査する。deny 化は各 crate の `[lints] workspace = true`（Cargo.toml）経由で、
+      # 既定 warn の素通りを塞ぐ。--document-private-items は private モジュールの //! link も
+      # 検査対象にするため必須。src-tauri は windows 専用依存ゆえ ubuntu では build 不能＝
+      # この windows ジョブで走らせる。
+      - name: cargo doc (intra-doc link check)
+        run: cargo doc --workspace --no-deps --document-private-items
+
       # #509: main 保護 Layer 1（.githooks）と PreToolUse/PostToolUse フック
       # （.claude/hooks）の selftest は、実運用が Windows でのみ起きる安全網。
       # ubuntu の frontend-check と相補的に、Windows 固有の hook 実行機構

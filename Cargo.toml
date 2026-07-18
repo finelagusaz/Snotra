@@ -5,6 +5,12 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 
+# docgen 検出器（#562）: 散文内シンボル参照（intra-doc link）の切れを cargo doc で機械検査する。
+# warn 既定では CI が素通りするため deny 化。各 crate は `[lints] workspace = true` で opt-in。
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+invalid_html_tags = "deny"
+
 [profile.release]
 opt-level = 3
 lto = true

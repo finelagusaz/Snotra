@@ -3,6 +3,9 @@ name = "snotra-settings"
 version.workspace = true
 edition = "2024"
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "snotra-settings"
 path = "src/main.rs"

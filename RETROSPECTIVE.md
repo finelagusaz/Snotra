@@ -1,25 +1,29 @@
-# Retrospective — WebView2 150 High IL E2E 復旧 (#555)
+# Retrospective — verify-premises 原則の repo 移植 + skip-ci スコープ明文化 + #565 実装
+
+（doc/skill のみ 3 ファイル・+6/-1 のメタサイクル。PR #570 内部前提の恒久化 / #571 skip-ci スコープ / #572 外部前提を start-issue へ = #565 完了）
 
 ## よかったこと
 
-### 上流 Issue の最終回答と実行コードを照合し、原因を訂正できた
+### 前提の裏取りを、このサイクル自身へ再帰的に当てた
 
-#555 と WebView2Feedback#5640 の初期説明は「High IL で DevTools の loopback socket が壊れる」という仮説だったが、Microsoft の最終回答は異なっていた。WebView2 150 は昇格ホストで、ユーザーが書き換え可能な `WEBVIEW2_*` 環境変数と HKCU policy の browser arguments を意図的に無視する。一方、アプリ API の `CoreWebView2EnvironmentOptions.AdditionalBrowserArguments` は有効である。Tauri から Wry、WebView2 API まで値の到達経路を実装で追い、旧回避策が msedgedriver capability にしか届いていなかったことを確認したため、de-elevation や上流待ちをせず根本原因へ直接対応できた。
+サイクル全体が「issue の前提を鵜呑みにしない」の実践だった。①#565 は overkill か → 既存 3 箇所（Step 3 実在確認 / development-principles.md #409 / memory）の被覆を照合し「一般則は三重、外部次元だけ穴」と判定。②「移植は他環境の Claude に届く」か → 配送経路を表で検算し、memory はローカル・パス固定で届かず repo doc で初めて旅すると確認。③「.claude なら全部 skip 可」か → `vitest.config.ts` の `include` を実測し、hooks/githooks/scripts は CI が検査する＝skip 不可と判明。毎回一次資料（grep / gh api / vitest.config / ruleset）に当て、誤った分岐を未然に断った。
 
-### production のセキュリティ境界を構造で維持した
+### 「やりすぎ」を核へ削り、削った理由を残した
 
-E2E 専用 Cargo feature とセッション環境変数の両方が揃ったときだけ trusted app API へ `--remote-debugging-port=0` と隔離 data directory を設定する構造にした。通常ビルドではユーザーが書き換え可能な環境変数から browser argument を有効化できない。さらに data directory 名を単一の安全な相対 component に制限し、driver とアプリが同一ディレクトリを使い、正常・異常終了の両方で削除する不変条件をテストと E2E ハーネスで固定した。
+#565 を受け入れ条件 6→1 に縮小。落とした 3 項目（version 一致・fixed/reverted 状態・research.md 新スキーマ）は #555 の失敗因でないと判定し、issue に「今回スコープ外・理由付き」で明記した。将来の読者が「抜け」と誤読して足し戻す経路を塞いだ。三層（内部=development-principles.md / 外部=start-issue / 選択肢空間=#409）が視界の割れで重複なく立った。
 
-### High IL の真の実行環境で復旧を証明した
+### 文書化した運用を即ドッグフーディングした
 
-ローカルの E2E 16 件を 2 回通したうえで、GitHub-hosted Windows runner の `E2E & Smoke` workflow を手動実行した。startup smoke 5/5 と Playwright E2E 16/16 が成功し、従来の `DevToolsActivePort file doesn't exist` が High IL 環境で解消したことを確認できた。ローカルの sandbox 起因 `EPERM` は権限付き再実行で環境要因と切り分け、コード回帰として扱わなかった。
+skip-ci の skip-safe 集合を build-commands.md に明文化した直後、その skills-only / doc-only PR（#571・#572）自身に skip-ci を貼り、運用を実地で検証した。close の確認も closingIssuesReferences（派生値）に留めず `gh issue list --search "closed:>=<mergedAt>"`（起きた事実）で #565 単独の close を裏取りした。
+
+---
 
 ## 伸びしろ
 
-### Issue 本文の「根本原因」を一度は確定情報として扱いかけた
+### 汎用の教訓が memory 単独に留まり、版管理で旅していなかった
 
-Issue 本文や上流 Issue の冒頭説明は、その後の maintainer コメントで訂正されうる。今回は実装前に最終コメントまで読み直して是正できたが、初期段階では trusted-origin / loopback 仮説を前提に調査していた。根本原因の証拠は Issue の要約ではなく、上流の最終回答、依存ライブラリの実装、失敗・成功する実行経路の三点で確定する必要がある。この教訓は既存の「issue 前提のコード裏取り」と一致し、今回固有の High IL E2E 境界は `src-tauri/CLAUDE.md` に配置した。
+verify-issue-premises は汎用原則にもかかわらず、点在するローカル agent memory にしか無く、協働者・別マシンに届かず、次の retrospective 上書きで失われる経路にあった。「上書き前に教訓を抽出」の規律は機能していたが、抽出先が memory だと不十分——repo doc まで持って初めて届く。今回 development-principles.md へ移し memory はポインタへ縮小したが、「一般則の家は repo であって memory ではない」を早い段階で判断できると、恒久化までの遅延を減らせる。
 
-### driver 側設定とアプリ側設定を同じ概念として見ない精度が必要だった
+### issue 番号の取り違えに 1 往復を要した
 
-`tauri:options.webviewOptions.additionalBrowserArguments` という名前だけを見ると、WebView2 アプリ生成時の AdditionalBrowserArguments と同じ経路に見える。しかし実際は前者が msedgedriver capability、後者が Wry 経由のアプリ API であり、WebView2 150 のセキュリティ境界では結果が分かれた。層をまたぐ不具合では、設定名の類似ではなく「どのプロセスが、どの API を、どの整合性レベルで呼ぶか」まで追跡する必要がある。
+ユーザーは #568 と指したが内容は #565 だった。本文と description の矛盾に気づき即座に照合・確認できた（壊れた入力から推論しない、を実践）が、着手前に 1 往復のコストがかかった。既存の global CLAUDE.md rule #2 と verify-premises 原則が覆う範囲であり、新しい構造的教訓の追加は不要——照合の即応が効いた事例として記録に留める。

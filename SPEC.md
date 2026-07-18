@@ -353,6 +353,8 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 - 見た目設定: 検知時に `visual-config-changed` イベントで全ウィンドウの CSS 変数を即時更新
 - ウィンドウ幅: 検知時に `set_size` で main ウィンドウを即時リサイズ
 - 言語: 検知時に `language-changed` イベントでフロントエンドに通知し、`PlatformCommand::SetLanguage` でトレイメニューを切替。`language-changed` はホットキー失敗通知より先に発火する（フロントエンドが正しい言語でエラー文字列を表示できるようにするため）
+- フォーカス喪失時自動非表示（`auto_hide_on_focus_lost`）: 検知時に `auto-hide-focus-lost-changed` イベントでフロントエンドのシグナルを更新し、次回のフォーカス喪失から新しい設定値が反映される（`onFocusChanged` リスナー自体は常時登録済みで、シグナルがゲートとして働く）
+- ホットキートグル動作（`hotkey_toggle`）・表示時の IME オフ（`ime_off_on_show`）: config_watcher は専用イベントを発火しない。ホットキー押下時・表示時に都度 `AppState` の実行中 config から直接読むため、次回のホットキー押下/表示から新しい設定値が反映される（再起動不要）
 - インデックス条件（スキャンパス・隠しファイル表示・`include_path_env`）・アイコン設定:
   - 検知時に変更を判定し、バックグラウンドで自動再構築
   - ステータスに「インデックスを再構築中…」を表示
@@ -363,7 +365,7 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 ### 7.6 起動時ブートストラップ
 
 - 起動直後のUI初期化は `get_bootstrap_payload` を使い、`visual`・`general.auto_hide_on_focus_lost`・`indexing`・`language` を一括取得する
-- メインウィンドウはこのペイロードで初期テーマ適用、言語設定、フォーカス喪失時自動非表示の有効化可否を決定する
+- メインウィンドウはこのペイロードで初期テーマ適用、言語設定、フォーカス喪失時自動非表示の**初期値**を決定する。`auto_hide_on_focus_lost` は以後 §7.5 の `auto-hide-focus-lost-changed` イベントで追従するため、ここでの取得は起動時の初期値であって固定値ではない
 - フロントエンドは bootstrap 到着前のフラッシュ防止のため、`navigator.language` から同期的に初期言語を決定する（Rust 側の `sys-locale` と同じロジック: `ja` で始まれば日本語、それ以外は英語）
 
 ## 8. ウィンドウ動作

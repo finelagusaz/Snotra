@@ -9,6 +9,7 @@ const {
   mockInitIndexingState, mockSetHotkeyFailureNotice, mockShouldShowResults,
   mockInterpKind, mockSetInstantCommandPrefix, mockHideMainWindow,
   mockGetBootstrapPayload, mockSetSize,
+  listenHandlers, mockOnFocusChanged, mockUnlistenFocus,
 } = vi.hoisted(() => {
   globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
     cb(0);
@@ -28,6 +29,11 @@ const {
     mockHideMainWindow: vi.fn(async () => {}),
     mockGetBootstrapPayload: vi.fn(),
     mockSetSize: vi.fn(async () => {}),
+    // イベント名 → ハンドラ を捕捉し、テストから任意イベントを発火できるようにする
+    listenHandlers: {} as Record<string, (e: { payload: unknown }) => void>,
+    // onFocusChanged の呼び出し回数検証 + コールバック捕捉（focusHandler は calls から取得）
+    mockOnFocusChanged: vi.fn(),
+    mockUnlistenFocus: vi.fn(),
   };
 });
 
@@ -78,7 +84,10 @@ vi.mock("@tauri-apps/api/window", () => ({
     innerSize: async () => ({ toLogical: () => ({ width: 600, height: 52 }) }),
     onResized: async () => () => {},
     onMoved: async () => () => {},
-    onFocusChanged: async () => () => {},
+    onFocusChanged: (cb: (e: { payload: boolean }) => void) => {
+      mockOnFocusChanged(cb);
+      return Promise.resolve(mockUnlistenFocus);
+    },
     setSize: mockSetSize,
     show: vi.fn(async () => {}),
   }),
@@ -89,7 +98,10 @@ vi.mock("@tauri-apps/api/dpi", () => ({
   },
 }));
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async () => () => {}),
+  listen: vi.fn(async (event: string, handler: (e: { payload: unknown }) => void) => {
+    listenHandlers[event] = handler;
+    return () => {};
+  }),
 }));
 
 // ── モック確立後にインポート ──
@@ -130,6 +142,8 @@ async function renderMainApp() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // vi.clearAllMocks() はプレーンオブジェクトの中身を消さないため明示クリア
+  for (const key of Object.keys(listenHandlers)) delete listenHandlers[key];
   capturedProps = undefined;
   mockGetBootstrapPayload.mockResolvedValue(BOOTSTRAP);
   mockActivateSelectedByIndex.mockResolvedValue(true);
@@ -204,5 +218,90 @@ describe("MainApp → ResultsSection props 配線", () => {
     await renderMainApp();
 
     expect(capturedProps!.skipIcons).toBe(true);
+  });
+});
+
+describe("MainApp auto_hide_on_focus_lost（#576: 常時リスニング + シグナルゲート）", () => {
+  // onFocusChanged に渡された最新コールバックを取得する
+  const focusHandler = () =>
+    mockOnFocusChanged.mock.calls.at(-1)![0] as (e: { payload: boolean }) => void;
+  // SolidJS の createEffect（setter で schedule される）を flush する microtask tick
+  const flushEffects = () => Promise.resolve();
+
+  it("bootstrap=false: フォーカス喪失イベントを受けても hide しない（ゲートで停止）", async () => {
+    // BOOTSTRAP は auto_hide_on_focus_lost: false
+    await renderMainApp();
+    // 常時登録: onFocusChanged は起動時に1回だけ呼ばれる
+    expect(mockOnFocusChanged).toHaveBeenCalledTimes(1);
+
+    vi.useFakeTimers();
+    try {
+      focusHandler()({ payload: false });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(mockHideMainWindow).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("イベントで true に切り替えると、フォーカス喪失 100ms 後に hide する", async () => {
+    await renderMainApp();
+
+    vi.useFakeTimers();
+    try {
+      listenHandlers["auto-hide-focus-lost-changed"]({ payload: true });
+      await flushEffects();
+      focusHandler()({ payload: false });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(mockHideMainWindow).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("blurTimer 保留中に false へ切り替えると、保留中の hide がキャンセルされる", async () => {
+    await renderMainApp();
+
+    vi.useFakeTimers();
+    try {
+      listenHandlers["auto-hide-focus-lost-changed"]({ payload: true });
+      await flushEffects();
+      focusHandler()({ payload: false }); // blurTimer arm（100ms）
+      // 100ms 経過前に設定オフ → createEffect が blurTimer.cancel()
+      listenHandlers["auto-hide-focus-lost-changed"]({ payload: false });
+      await flushEffects();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(mockHideMainWindow).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("イベント発火を繰り返しても onFocusChanged は再登録されない（常時1本）", async () => {
+    await renderMainApp();
+
+    listenHandlers["auto-hide-focus-lost-changed"]({ payload: true });
+    listenHandlers["auto-hide-focus-lost-changed"]({ payload: false });
+    listenHandlers["auto-hide-focus-lost-changed"]({ payload: true });
+    await flushEffects();
+
+    expect(mockOnFocusChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it("bootstrap=true（実既定）: 初回フォーカス喪失で 100ms 後に hide する", async () => {
+    mockGetBootstrapPayload.mockResolvedValue({
+      ...BOOTSTRAP,
+      general: { ...BOOTSTRAP.general, auto_hide_on_focus_lost: true },
+    });
+    await renderMainApp();
+
+    vi.useFakeTimers();
+    try {
+      focusHandler()({ payload: false });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(mockHideMainWindow).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

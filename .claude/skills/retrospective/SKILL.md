@@ -132,4 +132,4 @@ health-check は「報告のみ・修正しない」定義のため、発見事�
 2. ドキュメントに反映した教訓（あれば、どのファイルに何を追加したか）
 3. 振り分けたタスク（起票した issue 番号 / 追記した PR 本文チェックリスト）
 4. メモリの更新（あれば、追加/更新/削除したメモリ）
-5. health-check の結果サマリ（発見事項・`Skipped` とその処理）
+5. health-check の結果サマリ（発見事項・`Skipped` とその処理・**根拠**）。カテゴリ定義は health-check の出力形式（`.claude/skills/health-check/SKILL.md`）を SSOT とする——**根拠**は発見事項でも `Skipped` でもない実行の証跡で、Check 1 の照合母集団・Check 7 の実在列挙などが該当する（発見事項カウント・`All checks passed` 判定には算入しない）

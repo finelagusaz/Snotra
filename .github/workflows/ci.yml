@@ -72,6 +72,13 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # #568: feature 限定の main() 配線（configure_e2e_webview の呼び出し）は
+      # 既定 feature の check/clippy/test では cfg で除外され compile されない
+      # （唯一 compile するのは e2e.yml の feature 付き tauri build）。feature 付き
+      # clippy で compile + lint 被覆し、配線の破損を高速検査で loud に落とす。
+      - name: cargo clippy (e2e-webview-automation feature)
+        run: cargo clippy -p snotra --features e2e-webview-automation --all-targets -- -D warnings
+
       # #509: main 保護 Layer 1（.githooks）と PreToolUse/PostToolUse フック
       # （.claude/hooks）の selftest は、実運用が Windows でのみ起きる安全網。
       # ubuntu の frontend-check と相補的に、Windows 固有の hook 実行機構

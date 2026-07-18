@@ -11,12 +11,10 @@
    - **テスト専用 helper/fixture の扱い**を別途規定（前向き・現状 0 件）
    - **手順に証拠要求**を追加（除外種別 + 照合母集団件数）
    - **出力セクション（行 131–153）に「根拠」の置き場を追加**——サマリーに Check 1 照合母集団の根拠行を設け、**根拠は発見事項ではない**（発見事項カウント・「All checks passed」ゲートに影響しない）旨を注記する（advisor 指摘: `Info` は発見事項カテゴリなので clean run でゲートを壊す。証跡は別カテゴリ）
-2. **`.claude/skills/retrospective/SKILL.md`**（Step 2b 独立再導出が拾った漏れ・AC #7 の end-to-end 担保）
-   - `/health-check` は `disable-model-invocation: true`（frontmatter 実測）。サイクル末に Check 1〜10 を実行するのは `/retrospective` Step 7（retrospective:118「本スキルの責任で実施する」）。その出力仕様 **retrospective:135**「health-check の結果サマリ（発見事項・`Skipped` とその処理）」は 2 カテゴリの閉じた列挙で、**Check 1 の照合根拠を持ち上げる義務が書かれていない** → cycle-end 経路で AC #7 が黙って落ちうる
-   - 修正: retrospective:135 の列挙に「**Check 1 の照合根拠（照合母集団件数・除外種別）**」を追記し、証拠を最終報告へ持ち上げる義務を明示（1 行の同期）
-3. `workspace/research.md`, `workspace/plan.md`（本ファイル）
+2. `workspace/research.md`, `workspace/plan.md`（本ファイル）
 
 **変更しない（意図的な非変更）**:
+- **`.claude/skills/retrospective/SKILL.md:135`**（Step 2b で漏れ候補として挙がったが、精査の末**見送り**）: `/health-check` は `disable-model-invocation` で cycle-end の実行は `/retrospective`（retrospective:118「その定義どおり本スキルの責任で実施」）だが、その出力要約行 :135 に Check 1 の根拠を足すのは誤り。**決め手は Check 7 の対称性**——:135 は既に Check 7 の証跡義務（health-check 行 89）を運んでおらず無修正で共存している。ならば :135 は非網羅の人間要約であり、Check 1 の根拠も Check 7 と同じく「定義どおり実施」（:118）で継承される（＝:135 変更不要）。仮に :135 が網羅的契約なら既に Check 7 を運び漏らしており、Check 1 だけ足すのは新たな非対称（Check 9 が弾く）。どちらの枝でも「Check 1 だけ :135 に足す」は不可。→ 証拠要件は health-check/SKILL.md の Check 1 **定義**（手順 + 出力）に置き、:118 が継承する。ユーザー合意の 1 ファイルに収める。（`disable-model-invocation` 経路が実務上の穴かは**別決定**——2 つ目のエージェント設定ファイルゆえ別途合意が要り、直すなら :135 を「health-check の出力契約を総称参照」する形で Check 7 も含め対称に直す。ユーザーへ委ねる）
 - `ui/CLAUDE.md`: 現行「モジュール構成」は既に production 限定で、選択肢 1 では正しい状態（Explore・Plan とも 28 件差分ゼロを実測）
 - Check 1 の他対象行（Rust 3 本）: 独立テストファイルが 0 件（`#[cfg(test)]` インライン規約）ゆえ除外規則は不要
 - **`.claude/rules/ui.md:3`**（`paths: ui/src/**/*.{ts,tsx}`・同一 glob だが別目的＝テスト編集時にも ui ルールを配送**すべき**）: false friend。ここに除外を適用してはならない
@@ -61,9 +59,8 @@ Check 1 節に追加する要素（文面は実装時に簡潔化するが、以
 
 ## 実装順序（フェーズ）
 
-ドキュメント（skill 定義）変更ゆえ最小構成:
-- **Phase 1**: `health-check/SKILL.md` の Check 1 節を更新（目的宣言 + 除外規則 + helper 扱い + 手順の証拠要求）+ 出力セクションに「根拠」の置き場を追加
-- **Phase 1b**: `retrospective/SKILL.md:135` の出力仕様に「Check 1 の照合根拠」を追記（AC #7 の end-to-end 担保）
+ドキュメント（skill 定義）変更ゆえ最小構成——**変更は `health-check/SKILL.md` 1 ファイルのみ**:
+- **Phase 1**: `health-check/SKILL.md` の Check 1 節を更新（目的宣言 + 除外規則 + helper 扱い + 手順の証拠要求）+ 出力セクションに「根拠」の置き場を追加（発見事項でない一般カテゴリとして。Check 1 が現在の唯一の利用者）
 - **Phase 2（検証）**: 現行 `ui/CLAUDE.md` に対し新定義で Check 1 を**実際に手動実行**し（机上の想定で済ませない）、以下を確認:
   - 正常系: production glob（test 除外）と ui/CLAUDE.md「モジュール構成」記載名の差分がゼロ（意図しないテスト警告が出ない）
   - **もし production 側に真の乖離が出たら、それは AC #4 未達ではなく実在の finding**——`ui/CLAUDE.md` を直して解消する。テスト除外で production の乖離を隠してはならない（advisor 指摘）
@@ -105,8 +102,8 @@ Check 1 節に追加する要素（文面は実装時に簡潔化するが、以
 
 ### Step 5a — plan-review 結果（Explore 監査 + Plan 独立再導出）
 
-**要対処（反映済み）**:
-- **retrospective:135 の漏れ**（Plan 独立再導出）: `/health-check` は `disable-model-invocation` で、cycle-end に checks を実行するのは `/retrospective`。その出力仕様（retrospective:135）が「発見事項・Skipped」の 2 カテゴリ閉列挙のため、Check 1 の照合根拠が黙って落ちうる → **Phase 1b で retrospective:135 に照合根拠を追記**。Explore は「ゆるい人間要約ゆえ腐らない」と読んだが、`disable-model-invocation` 実測 + retrospective:118「本スキルの責任で実施」より Plan の読みを採用（severity の最上位は実証）。
+**要対処（検討の末に扱いを変更）**:
+- **retrospective:135 の漏れ候補**（Plan 独立再導出が提起）: 当初は Phase 1b で retrospective:135 に照合根拠を追記する方針としたが、**精査の末に見送り**。決め手は **Check 7 の対称性**——retrospective:135 は既に Check 7 の証跡義務（health-check 行 89）を運ばず無修正で共存している。ゆえに :135 は非網羅の人間要約で、Check 1 の根拠も Check 7 と同じく :118「その定義どおり実施」で継承される（→ :135 変更不要）。仮に網羅的契約なら既に Check 7 を運び漏らしており、Check 1 だけ足すのは新たな非対称（Check 9 が弾く）。`disable-model-invocation` は「retrospective が checks を実行する」ことは示すが「その要約行が検査ごとの根拠を列挙せねばならぬ」ことは示さない——別の小問を解いていた。→ **証拠要件は health-check/SKILL.md の Check 1 定義（手順 + 出力）に置き、:118 が継承する**（ユーザー合意の 1 ファイルに収める・plain な AC に一致・Check 7 と対称）。`disable-model-invocation` 経路の穴は別決定としてユーザーへ委ねる。
 
 **軽微な懸念（実装時に留意・反映済み）**:
 - 除外パターンをテスト SSOT（`vitest.config.ts` / `ui/CLAUDE.md`「テスト基盤」）に揃える → 実装内容に明記済み
@@ -121,8 +118,8 @@ Check 1 節に追加する要素（文面は実装時に簡潔化するが、以
 - チェック総数 10 に依存する参照は在庫改修ゆえ全て有効（チェックを増減しない制約）
 
 **独立導出との差分（Step 2b）**:
-- **漏れ（導出 ∖ plan）**: retrospective:135（上記・反映済み）
-- **スコープ過剰（plan ∖ 導出）**: なし（両者とも「health-check/SKILL.md + retrospective 出力仕様」に収束）
+- **漏れ候補（導出 ∖ plan）**: retrospective:135 が提起されたが、Check 7 対称性の照合により**採らず**（上記・独立導出は「候補」を出し採否はオーケストレーターが裁定する。今回は候補を精査して却下）
+- **スコープ過剰（plan ∖ 導出）**: なし。最終的に両者とも「health-check/SKILL.md 1 ファイル」に収束
 - **一致（完全性の証拠）**: 選択肢 1・ui/CLAUDE.md 非変更・Rust 対称性不要・証拠は発見事項でない第3カテゴリ・現存ファイルのハードコード禁止 → 独立に再一致
 
 ### Step 5b — plan-review が扱わない 3 観点

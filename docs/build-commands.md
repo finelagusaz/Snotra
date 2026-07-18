@@ -111,7 +111,7 @@ npm run tauri build              # リリースビルド（フロント+Rust 一
 
 | 検証コマンド | workflow | トリガー |
 |---|---|---|
-| `npm test`（Vitest） | `ci.yml`（frontend-check=ubuntu / rust-check=windows） | PR 自動（`skip-ci` ラベルで無効化可） |
+| `npm test`（Vitest） | `ci.yml`（frontend-check=ubuntu / rust-check=windows） | PR 自動（`skip-ci` は下記ノート参照） |
 | `npm run build` / `npm run typecheck` | `ci.yml`（frontend-check） | PR 自動 |
 | `cargo check` / `cargo test -p snotra-core` / `cargo test -p snotra` / `cargo test -p snotra-settings` / `cargo clippy` | `ci.yml`（rust-check） | PR 自動 |
 | `npm run smoke:startup`（注） | `e2e.yml`（E2E & Smoke） | 対象 paths を含む PR（自動）/ 手動 dispatch |
@@ -120,6 +120,8 @@ npm run tauri build              # リリースビルド（フロント+Rust 一
 （注）CI では `e2e:tauri:setup` が生成した release バイナリを共有するため、`npm run smoke:startup`（既定 ExePath = debug）ではなく `scripts/smoke-startup.ps1 -ExePath target/release/snotra.exe` を直接実行する。検証する起動経路は同じ（release バイナリの起動 trace に `*:error` が無いこと）。これは E2E 用ビルドの起動健全性検証であり、配布バンドル（`tauri build`）の検証ではない。
 
 - `npm test` は ubuntu（frontend-check）と windows（rust-check）の両方で走る（#509）。`.githooks` / `.claude/hooks` の selftest は実運用が Windows でのみ起きる安全網であり、hook 実行機構（Git-for-Windows の shebang 経由 sh 起動・パス/クォート境界）が本番と一致する OS で回帰検査する。ubuntu 側は実行ビット・POSIX sh 厳密性を相補的に担保する。CRLF 由来の fail-open は `.gitattributes` の `.githooks/** text eol=lf` で両 OS 回避済みで、かつ dash 側の故障モードなので windows 固有ではない。
+- **`skip-ci` ラベルはジョブ単位で効く** — 両ジョブ（frontend-check / rust-check）の `if` が同一のため、貼ると cargo 系を含む**両方まるごと**スキップする（表の各行に個別注記はしない）。CI は required status check ではない（ruleset `default` に `required_status_checks` 規則が無い・実測）ためマージは通り、main への push（マージ後）では `github.event_name == 'push'` により**ラベル無関係に必ず走る**。
+- **`skip-ci` を貼ってよいのは skip-safe な変更のみ** — CI がテスト対象に持たない `.claude/skills/**`・`.claude/rules/**`・`.claude/agents/**`・`docs/**`・`**/*.md` だけ。**貼ってはならない**: `.claude/hooks/**`・`.githooks/**`・`scripts/**`・`.claude/settings.json` — これらは `npm test` が両 OS でセルフテストを回す（`vitest.config.ts` の `include`・上の #509）。「`.claude`-only だから安全」と一括りにしない（同じ表層形 `.claude/` が「Claude が読むだけの設定」と「CI が検査する安全網」の二概念を担うため・#500）。
 - カテゴリ C（ウィンドウ生成・ホットキー・スラッシュコマンド）相当の変更や依存更新を含む PR は、対象 paths（`src-tauri/**`・`ui/**`・`e2e/**`・`**/Cargo.toml`・`Cargo.lock`・`package.json`・`package-lock.json` 等）に該当するため `E2E & Smoke` workflow が自動起動する。paths 外の変更で手動実行するには `workflow_dispatch`。
 - この対応関係のドリフト（必須コマンドに対応 workflow が無い等）は `/health-check` の Check 10 で検出する。
 

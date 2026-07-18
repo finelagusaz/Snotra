@@ -1,0 +1,13 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["ui/src/lib", "ui/src/stores"],
+  "entryPointStrategy": "expand",
+  "tsconfig": "tsconfig.json",
+  "emit": "none",
+  "validation": {
+    "invalidLink": true,
+    "notExported": false,
+    "notDocumented": false
+  },
+  "treatValidationWarningsAsErrors": true
+}

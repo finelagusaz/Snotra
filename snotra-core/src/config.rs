@@ -1,3 +1,9 @@
+//! `%APPDATA%\Snotra\config.toml` の読込・保存と既定値補完。
+//!
+//! `Config` 型と、`Language` enum（`Ja` / `En`）・OS 言語自動判定 `default_language()` を定義。
+//! デシリアライズ後の後処理（レガシーキー移行・正規化）は `apply_migrations()` に集約し、
+//! `Config` を作る全経路が通す前提で書く。
+
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -41,6 +47,9 @@ pub enum LoadOutcome {
     ReadFailed,
 }
 
+/// OS ロケール（`sys-locale`）から既定言語を判定する。
+/// `ja` で始まるロケールは日本語、それ以外は英語にフォールバックする。
+/// ロケールを取得できないときも英語にフォールバックする。
 fn default_language() -> Language {
     sys_locale::get_locale()
         .map(|l| {

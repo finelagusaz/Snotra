@@ -1,3 +1,7 @@
+//! 設定 GUI（`snotra-settings.exe`）のエントリポイント。eframe を起動する。
+//!
+//! 本体（`src-tauri`）とは別プロセスで動作し、連携は `config.toml` ファイル 1 点のみ。
+
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;

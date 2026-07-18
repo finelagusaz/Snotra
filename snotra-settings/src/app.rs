@@ -1,3 +1,7 @@
+//! `eframe::App` 実装。タブ管理（About 含む）と保存/破棄/リセットロジック。
+//!
+//! 色・余白などの描画は `style` のトークン/ヘルパー経由で行い、各タブに直書きしない。
+
 use eframe::egui;
 use egui::{CornerRadius, Stroke};
 use snotra_core::config::{Config, ConfigError, LoadOutcome};

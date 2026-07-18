@@ -1,3 +1,10 @@
+//! アプリケーションのエントリポイント。Tauri のセットアップ・イベントリスナー登録・
+//! トレイ/ホットキー起動を行う。
+//!
+//! 起動時の背景再スキャン（`indexer::load_or_scan_with_stats` が返す `BackgroundRescanTask`）を
+//! setup フェーズで低優先度スレッドに spawn し、`RescanOutcome::Changed` なら
+//! `icon::invalidate_icon_cache` を呼ぶ。hide 時のレンダラー停止（TrySuspend）もここに置く。
+
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;

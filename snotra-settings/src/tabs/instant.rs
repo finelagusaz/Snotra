@@ -1,3 +1,5 @@
+//! インスタントコマンド設定タブ（プレフィックス・コマンドの追加/編集/削除）。
+
 use eframe::egui;
 use snotra_core::config::{Config, InstantAction, InstantCommand};
 

@@ -1,3 +1,12 @@
+//! インスタントコマンド（プレフィックス起動する URL/コマンドテンプレート）の展開処理。
+//!
+//! 変数プレースホルダ `{name | mod | ...}`（name = query/clip/date/uuid、修飾子パイプ）の
+//! 解析・展開と、シェル風の引数分割を提供する。各公開関数の契約は `///` を正とする
+//! （`split_args` / `expand_instant_command` / `expand_exec_args` / `collect_unknown_modifiers`
+//! / `filter_instant_commands`）。変数展開の中核（エンコードはシンクの責務・`{{X}}` エスケープ・
+//! date/uuid の実行時解決）は private の `expand_template` / `walk_template` / `parse_placeholder`
+//! / `format_date` の `///` を参照。
+
 use chrono::{DateTime, Local};
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use uuid::Uuid;

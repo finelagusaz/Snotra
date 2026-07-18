@@ -1,3 +1,8 @@
+//! 起動履歴・クエリ別履歴・フォルダ展開履歴の管理とバイナリ永続化（`HistoryStore`）。
+//!
+//! 剪定容量 `top_n` は `HistoryStore` に焼き込まず、保存/参照時に現在 config から受け取る
+//! （live-read）——`result_limit` 設定変更を再起動なしで反映するため（#348）。
+
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

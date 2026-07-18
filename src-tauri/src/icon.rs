@@ -1,3 +1,10 @@
+//! ファイルアイコンのオンデマンド抽出（`SHGetFileInfoW` → PNG バイト列）とキャッシュ永続化
+//! （`icons.bin`）。
+//!
+//! 検索結果表示時に遅延ロードする。`icons.bin` は src-tauri の資源（snotra-core は触れない）。
+//! `invalidate_icon_cache` はメモリ内キャッシュと `icons.bin` を単一ロック内で原子的に無効化し、
+//! 並行ロードが旧ファイルをメモリへ戻す TOCTOU を防ぐ（#522）。
+
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;

@@ -1,3 +1,8 @@
+//! 日本語フォントの読み込みとシステムフォント列挙。
+//!
+//! Regular（`jp_font`）と見出し用 Semibold ファミリ（`SEMIBOLD_FAMILY`）を登録する。
+//! Semibold が無い環境では未登録のまま graceful degrade する（見出しは Regular にフォールバック）。
+
 use eframe::egui;
 
 /// `FontFamily::Name` key for the Semibold heading family.

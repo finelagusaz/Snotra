@@ -1,3 +1,7 @@
+//! バックアップ設定タブ（エクスポート・インポート・設定フォルダを開く）。
+//!
+//! 他タブと異なり Save/Discard ボタンを表示しない（即時操作のため）。
+
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 

@@ -1,3 +1,9 @@
+//! バックグラウンドでのインデックス構築。
+//!
+//! `start_index_build` は stale マーク → CAS → spawn の順で、drain ループ（現在 config の
+//! `IndexInputs` snapshot → ロック外で再構築 → swap + re-diff）を stale が消えるまで回す。
+//! ビルド本体は `catch_unwind` で包み、panic 時の flag 固着（永久「構築中」）を防ぐ。
+
 use std::sync::Mutex;
 
 use snotra_core::indexer;

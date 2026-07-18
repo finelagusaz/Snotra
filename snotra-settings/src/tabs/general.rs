@@ -1,3 +1,5 @@
+//! 全般設定タブ（起動時表示・トレイ・IME・ホットキー）。
+
 use eframe::egui;
 use snotra_core::config::{Config, Language};
 

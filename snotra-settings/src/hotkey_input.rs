@@ -1,3 +1,8 @@
+//! ホットキーをキャプチャする egui ウィジェット。
+//!
+//! 押下されたキーの組み合わせを `HotkeyConfig` として取得し、システム予約ショートカット
+//! （`is_system_shortcut`）を検出する。
+
 use eframe::egui;
 use snotra_core::config::{is_system_shortcut, HotkeyConfig};
 

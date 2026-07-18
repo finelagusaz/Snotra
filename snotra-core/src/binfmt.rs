@@ -1,3 +1,8 @@
+//! `magic` + `version` 付きバイナリファイル入出力の共通処理（`BinFile`）。
+//!
+//! `index.bin` / `history.bin` / `window.bin` 等の永続形式が共有するヘッダ（magic +
+//! version）検証と、tmp → rename による原子的保存を提供する。
+
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::fs;

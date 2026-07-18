@@ -3,6 +3,9 @@ name = "snotra"
 version.workspace = true
 edition = "2024"
 
+[lints]
+workspace = true
+
 [features]
 e2e-webview-automation = []
 

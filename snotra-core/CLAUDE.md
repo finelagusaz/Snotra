@@ -7,21 +7,22 @@
 
 ## モジュール構成
 
-- `engine.rs`: `Engine` struct（`SearchEngine` + `HistoryStore` + `Config` の facade）。`FolderListContext`（ロック外スナップショット）、`PrebuiltIndex`（インデックス高速スワップ用）、`PreparedHistorySave`（履歴ファイル I/O のロック外実行用）を公開
+各モジュールの責務宣言は各ファイルの `//!`（module doc）を正準とする。本節はファイル一覧と、`//!` に収まらない**横断不変条件・チェックリスト**を記す。`//!` はコード側で改名に追従し、`cargo doc` の intra-doc link 検査が相互参照の腐敗を捕まえる（#562）。
+
+- `engine.rs` — 検索・履歴・設定を単一ロックに統合する facade（責務は `//!`）。以下は engine ロックに閉じる横断コヒーレンシ:
   - **`IndexInputs`**: index 構築入力（scan / show_hidden_system / show_icons / include_path_env / migemo_enabled）の単一定義
   - **`index_stale` ledger**: `mark_index_stale` / `begin_index_drain` → snapshot / `complete_index_drain` → swap + re-diff で stale をクリア / `is_index_stale`。コヒーレンシ判断を engine Mutex（軸1）に閉じ、config 変更→index 再構築の lost-update を塞ぐ（#347/#348-A）
   - **`complete_index_drain` は「ビルド開始時 snapshot == 現在 IndexInputs」のときだけ stale をクリアする**（ビルド中変更を取りこぼさない）
-- `config.rs`: `%APPDATA%\Snotra\config.toml` の読込/保存、既定値補完。`Language` enum（`Ja`/`En`）と `default_language()`（`sys-locale` による OS 言語自動判定、非日本語は英語フォールバック）を定義
+- `config.rs` — `config.toml` の読込/保存・既定値補完、`Language` enum の定義（責務は `//!`）。以下は設定移行・デシリアライズ経路の不変条件:
   - **件数パラメータ**（#388 で役割に合わせて改名済み）: `appearance.visible_rows` = 可視行数 / `search.result_limit` = **検索・フォルダの結果リスト最大長**（`Engine::search`/`capture_folder_list_context` の fetch_limit）/ `search.recent_limit` = 空クエリ recent 件数（`recent_history`）
   - **旧キーの後方互換移行**: 旧キー（`max_results`/`top_n_history`/`max_history_display`）は `apply_migrations()` が `skip_serializing` の legacy フィールド経由で移行する（2層レガシー: `result_limit` ← `[search].top_n_history` ← `[appearance].top_n_history`）
   - フロント `iconCacheSize` と `Config::icon_cache_cap()` はこれらから派生。実上限は名前でなく `engine.rs` の dispatch で確認する
   - **`apply_migrations()` は migration 系統ごとの private fn へ段階分解済み**（issue #435）: `migrate_legacy_additional_paths` / `migrate_legacy_count_params` / `resolve_count_param_defaults` / `sanitize_fuzzy_history_cap_ratio` / `migrate_instant_legacy_commands` / `fallback_hotkey_if_system_shortcut`
   - **migration の呼び出し順は元と同一に固定する**: `migrate_legacy_additional_paths`（`paths.additional`→`scan` 追加）→ `paths.normalize_scan_paths()`（dedup）の順序だけが真の依存（先に追加されたエントリを後続の正規化がまとめて dedup する）。他のステップは独立だが diff 最小化のため元の並びを保つ
-- `opener.rs`: opener（外部ツール起動ルール）ターゲットの解析・正規化・マッチングエンジンと、Win 環境のプリセット検出。`config.rs` から分離済み（issue #435、旧 `config.rs:88-735`/`1260-1363`）
-  - 公開 API: `OpenerRule` / `OpenerTool` / `OpenerPreset` 型、`find_matching_tools`（パス・フォルダ判定に対する最具体1ルール解決。具体度=パス条件の長さ）、`extract_path_condition` / `extract_ext_part`、`normalize_openers`（ターゲット正規化・具体度順ソート）、`opener_specificity_order`、`detect_opener_presets`（VSCode/Windows Terminal/Explorer の検出）、`is_preset_already_added`
+- `opener.rs` — 外部ツール起動ルールの解析・正規化・マッチングと Win プリセット検出（責務は `//!`、公開 API 契約は各 `///` を正とする。`config.rs` から分離・#435）
   - **依存方向は `config.rs` → `opener.rs`**: `OpenerRule`/`OpenerTool` は `Config.openers` として config.toml に紐づく serde 型のため型定義はこちらに置き、`config.rs` が `pub use crate::opener::{...}` で re-export して `snotra_core::config::...` の既存呼び出し元パスを維持する
   - 逆方向の依存として `normalize_opener_target` が `config.rs::normalize_scan_path_key` / `normalize_extensions`（`pub(crate)`、`paths.scan` の正規化とも共有する汎用ヘルパー）を使う
-- `search.rs`: 検索順位計算（Prefix/Substring/Kana/Fuzzy/Path）、履歴ブースト、incremental search キャッシュ、空クエリ時履歴候補
+- `search.rs` — 検索順位計算・履歴ブースト・incremental search キャッシュ・空クエリ時履歴候補（責務・スコア階層は `//!` と `SearchEngine` の struct doc）。以下は並列 Vec レイアウトの不変条件:
   - **並列 Vec レイアウト**: `SearchEngine` は `entries` / `lower_names` / `lower_file_names` / `normalized_keys` / `char_masks` / `file_name_char_masks` / `kana_lower_names` / `kana_char_masks` の並列 Vec で cache locality を確保
   - **構築の共通化**: `compute_wave1`（文字列正規化）→ `compute_wave2`（ビットマスク計算）のヘルパー関数を `new()`（= `new_with_migemo(.., true)`）/ `new_with_migemo(entries, migemo_enabled)` / `new_with_cached_masks(.., migemo_enabled)` が共有する
   - **`kana_lower_names` / `kana_char_masks` は `migemo_enabled` が true のときのみ構築し、無効時は空 Vec**（migemo 無効ユーザーの死蔵メモリ ~2.1–2.7MB/50k を削る・構築も約 2 倍速、issue #337）。2 つの kana 系 Vec は必ず同時に空/同長（`assemble` の debug_assert が検証）。空 Vec のとき検索ループは `kana_available` 空ガードで `kana_lower_names[i]` アクセスを回避し、Fuzzy pre-filter は `kana_char_masks.is_empty()` チェックで kana 経路を棄却する（構築時 migemo OFF→検索時 ON の窓での panic 防止）
@@ -36,21 +37,7 @@
 - `binfmt.rs`: `magic + version` 付きバイナリ入出力共通処理
 - `error.rs`: `BinError`（バイナリシリアライズ/デシリアライズ失敗）と `ConfigError`（設定バリデーション失敗）の error 型定義
 - `window_data.rs`: ウィンドウ位置（`window.bin`）の保存/復元
-- `instant.rs`: インスタントコマンドの処理。**公開関数**:
-  - `split_args(args: &str) -> Vec<String>`: シェル風クォート対応の引数分割。`"..."` で囲まれた部分はスペースを含んでも1トークンとして扱う。**`{...}` 内のスペースも分割しない**（`{query | trim}` 等の修飾子パイプを1トークンに保つ）。`launch.rs` から移設
-  - 変数展開は**修飾子パイプ `{name | mod | ...}`**（name = query/clip/date/uuid、v1 修飾子 `lower`/`upper`/`trim`/`default:<text>`/`raw`）に対応する:
-    - 内部の単一 walker `expand_template`（private）が `{...}` を走査し、変数解決 → 修飾子チェーン（左→右）→ シンク処理（`encode && !raw` のとき URL エンコード）を行う
-    - **エンコードはシンク（種別）の責務**で修飾子は内容変換のみ（`urlencode` 修飾子は提供せず、`raw` が唯一の抑止）
-    - 未認識 `{...}`・閉じ `}` 不在はリテラル温存（total）
-    - **`{{X}}` はエスケープで literal `{X}`**（変数名と衝突する literal の唯一の表現＝予約語が増えても opt-out が常に存在。中身は変数/修飾子として解釈しない。`walk_template` の `{`-found 分岐で `{{…}}` をユニット処理）
-    - `parse_placeholder` を runtime 適用と保存時検証で共有する
-    - **name はオプション引数を `:` で取れる**（`date:<書式>`。name と arg は最初の `:` で分割、arg 内 `:` はリテラル）。query/clip/uuid は引数なし——引数付き `{query:x}` はリテラルに戻し後方互換を保つ
-    - **date/uuid は実行時に解決する不純な源**: `expand_template` は `now: &DateTime<Local>` を受け取り、`expand_instant_command`/`expand_exec_args` が `Local::now()` を**1回だけ**捕捉して渡す（同一テンプレート内の複数 `{date}` が同一時刻を反映、`{uuid}` は出現ごとに `Uuid::new_v4()` で新規生成し意図的に異なる）
-    - **`format_date(now, fmt)` は panic 安全**: `write!` で Display の Err を値として伝播させ、整形不能な書式（`%!` 等の不正指定子 + `%#z` 等の**パース専用指定子**の両方）を空文字列にフォールバックする（`to_string()` の unwrap-panic ＝ release `panic="abort"` のプロセス abort を回避、#394）。**`Item::Error` の事前走査では不十分**——`%#z` はパース成功・整形失敗のため走査を素通りする（code-reviewer 検出）
-  - `expand_exec_args(args: &str, query: &str, clipboard: &str, env_expand: fn) -> Vec<String>`: exec 種別の引数列構築。手順: `split_args` で分割 → 各トークンに env 展開（`%VAR%`）→ 修飾子パイプ付き変数置換（encode なし）。この順序により (1) 外部入力 query/clip は env 展開されない、(2) env 値の空白はトークン内に留まり引数を割らない、(3) 空白入り query は1引数を保つ。修飾子適用後の値も同トークン内に in-place 置換され引数を増やさない
-  - `expand_instant_command(command: &str, query: &str, clipboard: &str) -> String`: URL/コマンドの変数展開。`http://` / `https://` で始まる場合は各プレースホルダ単位で URL エンコード（`raw` 抑止）。それ以外は生のまま展開
-  - `collect_unknown_modifiers(template: &str) -> Vec<String>`: テンプレート中の未知修飾子名を収集（`Config::validate` が保存時バリデーションに使用）。`walk_template` を `expand_template` と共有
-  - `filter_instant_commands(commands: &[InstantCommand], input: &str) -> Vec<&InstantCommand>`: コマンド名を前方一致（大文字小文字区別しない）で絞り込み。空 input は全件返却
+- `instant.rs` — インスタントコマンド（プレフィックス起動の URL/コマンド）の展開。公開関数の署名・契約と変数展開の中核（修飾子パイプ・encoding-as-sink・`{{X}}` エスケープ・date/uuid 純粋性・`format_date` の panic 安全 #394）は `//!` と各 `///` を正とする
 - `ui_types.rs`: フロントエンドとの IPC 用データ型
 
 ## 開発ルール

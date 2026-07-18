@@ -1,3 +1,9 @@
+//! スキャン対象の列挙・重複排除と、インデックスキャッシュ（`index.bin`）の入出力。
+//!
+//! `index.bin` への書き込みは `INDEX_WRITE_LOCK` で単一書き手に直列化し、tmp→rename の
+//! 食い合いによる破損を防ぐ。キャッシュヒット時の背景再スキャンは `BackgroundRescanTask`
+//! として返し、spawn とアイコン無効化は所有者（`src-tauri`）へ委ねる。
+
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;

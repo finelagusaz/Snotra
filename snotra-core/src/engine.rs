@@ -1,3 +1,9 @@
+//! 検索・履歴・設定を単一ロック下に統合する facade（`Engine`）。
+//!
+//! `SearchEngine` + `HistoryStore` + `Config` を1つの `Mutex<Engine>` にまとめ、Tauri 側の
+//! 多重ロックを解消する。ロック保持時間を最小化するため、ロック外で扱うスナップショット/
+//! 構築物 `FolderListContext`・`PrebuiltIndex`・`PreparedHistorySave` を公開する。
+
 use crate::config::{Config, ScanPath};
 use crate::folder;
 use crate::history::{HistoryStore, PreparedHistorySave};

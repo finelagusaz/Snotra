@@ -1,3 +1,10 @@
+//! 検索順位計算エンジン（`SearchEngine`）。
+//!
+//! Prefix / Substring / Kana / Fuzzy / Path のマッチと履歴ブースト、incremental search
+//! キャッシュ、空クエリ時の履歴候補を担う。スコア階層は Prefix > Substring > Kana > Path >
+//! Fuzzy（基準は `mod score_tier`）。cache locality のためエントリ属性は並列 Vec で保持する
+//! （struct 化はベンチ劣化を確認済み——根拠は `SearchEngine` の struct doc を参照）。
+
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -146,7 +153,7 @@ pub struct SearchEngine {
     /// Pre-computed normalized keys for history lookups (one per entry).
     normalized_keys: Vec<Box<str>>,
     /// Character-presence bitmask for lower_name (a-z: bits 0-25, 0-9: bits 26-35).
-    /// Kept as a compact Vec<u64> — 8 entries per cache line — so the pre-filter sweep
+    /// Kept as a compact `Vec<u64>` — 8 entries per cache line — so the pre-filter sweep
     /// that discards non-matching candidates before scoring is L1-cache-friendly.
     /// Merging this into a per-entry struct would inflate the per-entry size ~20× and
     /// cause a measured 35–120% Fuzzy search regression (see struct-level doc comment).
@@ -343,8 +350,8 @@ impl SearchEngine {
     }
 
     /// kana_lower_names を**常に**構築する（migemo 有効相当）。テスト・ベンチ・convenience 用。
-    /// 本番のインデックス構築は config 由来の migemo フラグを渡す [`new_with_migemo`] /
-    /// [`new_with_cached_masks`] を使い、migemo 無効時は kana を構築しない（issue #337）。
+    /// 本番のインデックス構築は config 由来の migemo フラグを渡す [`Self::new_with_migemo`] /
+    /// [`Self::new_with_cached_masks`] を使い、migemo 無効時は kana を構築しない（issue #337）。
     pub fn new(entries: Vec<AppEntry>) -> Self {
         Self::new_with_migemo(entries, true)
     }
@@ -437,7 +444,7 @@ impl SearchEngine {
 
     /// 履歴ブーストとデフォルト設定（migemo 無効）で検索する便宜 API。
     /// migemo（ローマ字→かな変換マッチ）を有効にするには
-    /// [`search_with_options`] に `migemo_enabled = true` の
+    /// [`Self::search_with_options`] に `migemo_enabled = true` の
     /// [`SearchOptions`] を渡すこと。
     pub fn search(
         &mut self,

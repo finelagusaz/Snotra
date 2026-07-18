@@ -1,3 +1,8 @@
+//! ウィンドウ位置（`window.bin`）の保存/復元。
+//!
+//! 座標はモニター相対で永続化する。座標系のセマンティクスを変える（絶対→相対等）ときは
+//! `binfmt` のヘッダ version バンプが必須——旧データを新解釈で読むと位置がずれるため。
+
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 

@@ -1,3 +1,9 @@
+//! `notify` クレートによる `config.toml` の変更監視（100ms debounce）。
+//!
+//! 差分検出後、`apply_config_change()` がホットキー・トレイ・インデックス・テーマ・
+//! ウィンドウ幅・言語を実行中のアプリへ反映する。適用順序・読込失敗時のデータ保全など
+//! 多サブシステムに跨る不変条件は `src-tauri/CLAUDE.md` を正とする。
+
 use std::sync::Mutex;
 use std::time::Duration;
 

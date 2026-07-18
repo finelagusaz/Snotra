@@ -1,3 +1,9 @@
+//! クエリと履歴キーの正規化、および文字存在ビットマスク計算。
+//!
+//! `normalize_query`（小文字化・アクセント折畳み・空白圧縮。ASCII 小文字のみなら `Cow` で
+//! ゼロアロケーション）、履歴クエリキー正規化 `normalize_history_query_key`、検索/インデクサ
+//! 双方が使う `char_bitmask`（bits 0-25 = a-z, 26-35 = 0-9）を一元定義する。正規化は冪等。
+
 use std::borrow::Cow;
 
 use nucleo_matcher::chars::normalize as nucleo_normalize;

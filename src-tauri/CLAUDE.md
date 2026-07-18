@@ -88,6 +88,7 @@ NOTIFYICON_VERSION_4 では、キーボード操作（Shift+F10 / Application �
 - **`with_webview()` は呼び出しスレッドによらずクロージャがメインスレッドで実行される**: setup フェーズでは同期的に完了するが、それ以外（IPC ハンドラ / `std::thread::spawn` / イベント listener）では非同期ディスパッチとして扱うこと。順序が要る箇所はクロージャの FIFO 直列化（同一キュー）に依拠する
 - **TrySuspend と MemoryUsageTargetLevel は混用禁止**: TrySuspend が自動で MemoryUsageTargetLevel を Low に設定し、Resume が Normal に戻す
 - **`SNOTRA_DISABLE_SUSPEND=1` で suspend を無効化できる（E2E 専用エスケープハッチ）**: WebDriver は非表示中のレンダラーへの `executeScript` で可視性判定・入力を行うため、suspend されたレンダラーとは原理的に非互換（script が応答せずタイムアウト）。E2E ハーネス（`e2e/tauri.slash.e2e.ts` の `spawnTauriDriver`）がこの変数を立てて起動する。`EmptyWorkingSet` trim は無効化されない
+- **WebView2 150+ の High IL E2E はアプリ API から remote debugging を有効化する**: WebView2 150 は elevated host でユーザー書き換え可能な `WEBVIEW2_*` 環境変数と HKCU policy のブラウザ引数を無視するため、msedgedriver が通常使う経路では `DevToolsActivePort` が生成されない。`e2e-webview-automation` Cargo feature を有効にしたテスト専用バイナリだけが、`SNOTRA_E2E_WEBVIEW_DATA_DIR`（単一の相対ディレクトリ名）がある起動で `CoreWebView2EnvironmentOptions.AdditionalBrowserArguments` に `--remote-debugging-port=0` を直接設定する。通常ビルドには feature が無く、feature 付きでも環境変数のない startup smoke は現行設定のまま。E2E ハーネスは同じディレクトリを `webviewOptions.userDataFolder` に渡し、app/driver 終了後に削除する
 
 ## WebView2 working set の能動回収（EmptyWorkingSet）
 

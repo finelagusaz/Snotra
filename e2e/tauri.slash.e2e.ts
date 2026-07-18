@@ -1,5 +1,6 @@
 import { test as base, expect } from "@playwright/test";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { access, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import net from "node:net";
@@ -19,6 +20,7 @@ type Harness = {
   tauriDriver: ChildProcessWithoutNullStreams;
   backup: ConfigBackup;
   fixtureDir: string;
+  webviewDataDir: string;
 };
 
 type WindowState = {
@@ -31,6 +33,7 @@ type WindowState = {
 
 const WD_SERVER = "http://127.0.0.1:4444/";
 const E2E_BUILD_HINT = "Run: npm run e2e:tauri:setup (or: npx tauri build --no-bundle)";
+const E2E_WEBVIEW_DATA_DIR_ENV = "SNOTRA_E2E_WEBVIEW_DATA_DIR";
 
 const E2E_FIXTURE_DIR = path.join(os.tmpdir(), "snotra-e2e-fixtures");
 const E2E_FIXTURE_FILENAMES = ["snotra-e2e-alpha.txt", "snotra-e2e-beta.txt", "snotra-e2e-gamma.txt"];
@@ -191,6 +194,33 @@ function getTauriDriverPath(): string {
   return path.join(cargoHome, "bin", binaryName);
 }
 
+function createE2EWebViewDataDir(): { name: string; path: string } {
+  const name = `snotra-e2e-webview2-${process.pid}-${randomUUID()}`;
+  const localAppData =
+    process.env.LOCALAPPDATA ?? path.join(os.homedir(), "AppData", "Local");
+  // Tauri resolves a configured relative dataDirectory beneath
+  // %LOCALAPPDATA%/<window-label>/ on Windows.
+  return { name, path: path.join(localAppData, "main", name) };
+}
+
+async function removeE2EWebViewDataDir(dataDir: string): Promise<void> {
+  await rm(dataDir, {
+    recursive: true,
+    force: true,
+    maxRetries: 5,
+    retryDelay: 200,
+  });
+}
+
+async function stopTauriDriver(proc: ChildProcessWithoutNullStreams): Promise<void> {
+  if (proc.exitCode !== null || proc.signalCode !== null) return;
+  proc.kill();
+  await Promise.race([
+    new Promise<void>((resolve) => proc.once("exit", () => resolve())),
+    sleep(2_000),
+  ]);
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -247,7 +277,9 @@ async function resolveWebView2DriverVersion(): Promise<string | undefined> {
   return undefined;
 }
 
-async function spawnTauriDriver(): Promise<ChildProcessWithoutNullStreams> {
+async function spawnTauriDriver(
+  webviewDataDirName: string,
+): Promise<ChildProcessWithoutNullStreams> {
   const tauriDriverPath = getTauriDriverPath();
   if (!(await fileExists(tauriDriverPath))) {
     throw new Error(
@@ -269,7 +301,11 @@ async function spawnTauriDriver(): Promise<ChildProcessWithoutNullStreams> {
   // 「WebView2 TrySuspend / Resume パターン」節の SNOTRA_DISABLE_SUSPEND の項）。
   const proc = spawn(tauriDriverPath, ["--native-driver", nativeDriverPath], {
     stdio: "pipe",
-    env: { ...process.env, SNOTRA_DISABLE_SUSPEND: "1" },
+    env: {
+      ...process.env,
+      SNOTRA_DISABLE_SUSPEND: "1",
+      [E2E_WEBVIEW_DATA_DIR_ENV]: webviewDataDirName,
+    },
   });
   proc.on("error", () => {
     // handled by port timeout / session creation errors
@@ -278,7 +314,7 @@ async function spawnTauriDriver(): Promise<ChildProcessWithoutNullStreams> {
   return proc;
 }
 
-async function createWebDriverSession(): Promise<WebDriver> {
+async function createWebDriverSession(webviewDataDir: string): Promise<WebDriver> {
   const appBinary = getAppBinaryPath();
   if (!(await fileExists(appBinary))) {
     throw new Error(`App binary not found at ${appBinary}. ${E2E_BUILD_HINT}`);
@@ -290,6 +326,9 @@ async function createWebDriverSession(): Promise<WebDriver> {
       browserName: "wry",
       "tauri:options": {
         application: appBinary,
+        webviewOptions: {
+          userDataFolder: webviewDataDir,
+        },
       },
     })
     .build();
@@ -438,11 +477,13 @@ async function runInstantCommand(
 async function createHarness(): Promise<Harness> {
   const fixtureDir = await setupFixtureDir();
   const backup = await prepareE2EConfig(fixtureDir);
+  const webviewData = createE2EWebViewDataDir();
   let tauriDriver: ChildProcessWithoutNullStreams | undefined;
   let driver: WebDriver | undefined;
   try {
-    tauriDriver = await spawnTauriDriver();
-    driver = await createWebDriverSession();
+    await mkdir(webviewData.path, { recursive: true });
+    tauriDriver = await spawnTauriDriver(webviewData.name);
+    driver = await createWebDriverSession(webviewData.path);
     await waitAndSwitchToLabel(driver, "main", 12_000);
     try {
       await driver.wait(until.elementLocated(By.css(".search-input")), 12_000);
@@ -467,26 +508,32 @@ async function createHarness(): Promise<Harness> {
         `search-input not found.${buildHint} states=${JSON.stringify(states)} snapshots=${JSON.stringify(snapshots)} cause=${String(e)}`,
       );
     }
-    return { driver, tauriDriver, backup, fixtureDir };
+    return {
+      driver,
+      tauriDriver,
+      backup,
+      fixtureDir,
+      webviewDataDir: webviewData.path,
+    };
   } catch (e) {
     if (driver) {
       await driver.quit().catch(() => {});
     }
-    if (tauriDriver && !tauriDriver.killed) {
-      tauriDriver.kill();
+    if (tauriDriver) {
+      await stopTauriDriver(tauriDriver);
     }
     await restoreConfig(backup).catch(() => {});
+    await removeE2EWebViewDataDir(webviewData.path).catch(() => {});
     throw e;
   }
 }
 
 async function disposeHarness(harness: Harness): Promise<void> {
   await harness.driver.quit().catch(() => {});
-  if (!harness.tauriDriver.killed) {
-    harness.tauriDriver.kill();
-  }
+  await stopTauriDriver(harness.tauriDriver);
   await restoreConfig(harness.backup);
   await rm(harness.fixtureDir, { recursive: true, force: true }).catch(() => {});
+  await removeE2EWebViewDataDir(harness.webviewDataDir);
 }
 
 const test = base.extend<{ harness: Harness }>({

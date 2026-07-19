@@ -4,6 +4,7 @@ use super::common::{empty_history, make_entries};
 use crate::config::SearchHistoryNormalizationConfig;
 use crate::indexer::AppEntry;
 use crate::query::char_bitmask;
+use crate::search::scoring::adjusted_history_boost;
 use crate::search::*;
 
 #[test]

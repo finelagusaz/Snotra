@@ -13,7 +13,7 @@
 - コードコメントの書き方（rustdoc / TSDoc の様式・粒度）は [docs/comment-guidelines.md](docs/comment-guidelines.md) を参照
 - PR タイトルは "feat: ...", "fix: ...", "docs: ..." などのプレフィックスを付ける
 - PR には変更内容・影響範囲・テスト結果を記載する
-- レビュー承認後にスカッシュマージまたは通常マージする
+- レビュー承認後にスカッシュマージする（リポジトリ設定で squash のみ有効。運用の詳細はルート `CLAUDE.md`「Git/GitHub 運用」を参照）
 
 ## リリースフロー
 

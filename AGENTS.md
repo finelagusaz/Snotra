@@ -67,7 +67,7 @@
 | 関数を新規定義・改名 | 呼び出し元を grep（作ることと使うことは別判断）＋ `/dry-check`。accessor/型の改名は下流の **compile-fail を「改名検出器」**に（`cargo build -p <下流 crate>`） |
 | async 関数を追加/変更 | `/race-check` |
 | 網羅性が要件（全文監査・全箇所改名・コンパイラを持たない機構の廃止） | `/plan-review` Step 2b（独立再導出。列挙の落とし穴もここに集約） |
-| 安全網（hook・CI・`.githooks/`・`.claude/settings.json`・規範）を新設/変更 | `.claude/rules/safety-nets.md`（対象を触ると自動配送） |
+| 安全網（hook・CI・`.githooks/`・`.claude/settings.json`・rules・skills・規範）を新設/変更 | `.claude/rules/safety-nets.md`（rules・skills までは対象を触ると自動配送。規範文書＝ルート `CLAUDE.md` / `AGENTS.md` 等は自動配送されないため手動参照） |
 | ファイル（`.rs`/`.ts`/`.tsx`）を追加/削除 | モジュールの責務は各ファイルの `//!`（Rust）/ TSDoc（TS）に書く。`CLAUDE.md` のモジュール構成節はファイル名の索引を保つため、追加時にファイル名行を足し削除時に消す（責務散文は `//!` を正準とする・#562） |
 | 機能削除・IPC ルート変更 | `e2e/` を関連キーワードで grep し、テストシナリオの前提が壊れないか確認する |
 | 件数 N・上限パラメータを変更 | IPC シリアライズ・レンダリング・アイコン取得など下流全段に N の影響を追う |

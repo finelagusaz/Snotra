@@ -130,18 +130,78 @@ pub struct SearchEngine {
     /// kana_lower_names 用の損失あり文字存在マスク。migemo 有効時のみ構築し、kana
     /// pre-filter の false positive は許すが false negative は起こさない。
     kana_char_masks: Vec<u64>,
-    /// Incremental search cache: normalized query string from the previous call.
+    /// incremental search の再利用状態（前回クエリ・候補・mode・kana query）。
+    /// read（再利用判定）と write（検索後更新）を [`IncrementalCache`] のメソッドに閉じ、
+    /// 述語や状態を足したときの read/write 対称更新漏れを防ぐ（#601）。
+    incremental_cache: IncrementalCache,
+}
+
+/// incremental search（前回候補の再利用）の状態を集約する private 型（#601）。
+/// ホットパスの並列 `Vec` とは別の小さな状態であり、専用型に閉じても cache locality は不変。
+/// 再利用判定（read）と検索完了後の状態更新（write）を対にしてメソッド化し、述語追加時の
+/// 対称更新漏れを型で防ぐ。全 4 フィールドは `Default`（空 query / 空候補 / mode 未設定 /
+/// kana なし）で初期化し、初回検索は必ず full scan になる。
+#[derive(Default)]
+struct IncrementalCache {
+    /// 正規化済み前回クエリ。
     prev_query: String,
-    /// Incremental search cache: entry indices that matched on the previous call,
-    /// stored BEFORE truncation to `max_results` so every match is captured.
+    /// 前回一致した entry index 群。`max_results` truncation の**前**に全件保存する
+    /// （top-k から落ちた一致も次回の再利用候補に残し、候補集合の縮小を防ぐ）。
     prev_candidates: Vec<usize>,
-    /// Incremental search cache: search mode of the previous call.
+    /// 前回の SearchMode。
     prev_mode: Option<SearchMode>,
-    /// Incremental search cache: 前回の kana_query 文字列。
-    /// incremental を使えるのは今回の kana_query が前回の prefix 拡張のときだけ。
-    /// ローマ字→かな変換は文字列伸長に対して非単調（"kan"→"かん", "kana"→"かな"）なため、
-    /// bool フラグでは不十分で、実際の kana 文字列を比較する必要がある。
+    /// 前回の kana_query 文字列。ローマ字→かな変換は非単調（"kan"→"かん", "kana"→"かな"）
+    /// なため bool では不十分で、実値の prefix 比較が要る。
     prev_kana_query: Option<String>,
+}
+
+impl IncrementalCache {
+    /// incremental search（前回候補の再利用）の可否を判定する（read のみ）。
+    ///
+    /// 全述語は「今回の候補集合 ⊆ 前回の候補集合」を保証する単調条件。
+    ///
+    /// - `!has_dot || prev_query.contains('.')`: "no-dot → dot" 遷移は full scan にフォールバック。
+    ///   prev_candidates が file_name スコアリングなしで構築されており、file_name のみで
+    ///   マッチするエントリが欠落して false negative になるのを防ぐ。
+    /// - kana_monotonic: kana_query の単調性。(None,_)→OK / (Some curr, Some prev) は
+    ///   `curr.starts_with(prev)` のとき候補が狭まる / (Some,None) は新規出現ゆえ full scan。
+    ///   ローマ字→かな変換は非単調（"kan"→"かん", "kana"→"かな"）ゆえ実値比較が必要。
+    /// - `!has_path_sep`: パスクエリは norm_query と path_query で正規化が異なり単調性を
+    ///   保証できないため無条件で無効化する（稀ゆえ性能影響は無視できる）。
+    fn can_reuse(&self, plan: &QueryPlan, mode: SearchMode) -> bool {
+        let kana_monotonic = match (&plan.kana_query, &self.prev_kana_query) {
+            (None, _) => true,
+            (Some(curr), Some(prev)) => curr.starts_with(prev.as_str()),
+            (Some(_), None) => false,
+        };
+        self.prev_mode == Some(mode)
+            && !self.prev_candidates.is_empty()
+            && !self.prev_query.is_empty()
+            && plan.norm_query.starts_with(self.prev_query.as_str())
+            && (!plan.has_dot || self.prev_query.contains('.'))
+            && !plan.has_path_sep
+            && kana_monotonic
+    }
+
+    /// 再利用時に前回候補の所有権を取り出す（`std::mem::take` で `self` から移す）。
+    fn take_candidates(&mut self) -> Vec<usize> {
+        std::mem::take(&mut self.prev_candidates)
+    }
+
+    /// 検索完了後に状態を更新する（write）。`candidates` は truncation 前の全一致 index。
+    /// `can_reuse` が read する全フィールドをここで対にして書き、対称更新漏れを構造で防ぐ。
+    fn update(
+        &mut self,
+        norm_query: String,
+        candidates: Vec<usize>,
+        mode: SearchMode,
+        kana_query: Option<String>,
+    ) {
+        self.prev_query = norm_query;
+        self.prev_candidates = candidates;
+        self.prev_mode = Some(mode);
+        self.prev_kana_query = kana_query;
+    }
 }
 
 /// kana の Unicode scalar value を 64 bit に写す損失あり存在マスク。
@@ -153,7 +213,6 @@ fn kana_char_mask(kana: &str) -> u64 {
 }
 
 impl SearchEngine {
-
     /// 履歴ブーストとデフォルト設定（migemo 無効）で検索する便宜 API。
     /// migemo（ローマ字→かな変換マッチ）を有効にするには
     /// [`Self::search_with_options`] に `migemo_enabled = true` の
@@ -194,12 +253,12 @@ impl SearchEngine {
 
         // Phase 4: incremental search — クエリが前回クエリの単調拡張でモードが不変の
         // とき、前回のマッチ候補を再利用する。
-        // 述語（no-dot→dot / kana 単調性 / !has_path_sep）と prev_* の read は
-        // decide_incremental に集約する。ここでは write のみを fold 後に行う。
-        let use_incremental = self.decide_incremental(&plan, mode);
+        // 述語（no-dot→dot / kana 単調性 / !has_path_sep）と前回状態の read は
+        // IncrementalCache::can_reuse に集約する。ここでは write のみを fold 後に行う。
+        let use_incremental = self.incremental_cache.can_reuse(&plan, mode);
 
         let candidate_indices: Vec<usize> = if use_incremental {
-            std::mem::take(&mut self.prev_candidates)
+            self.incremental_cache.take_candidates()
         } else {
             (0..self.entries.len()).collect()
         };
@@ -275,40 +334,16 @@ impl SearchEngine {
         // write 順序の入れ替えに意味論上の影響はない）。
         let results = heap_into_results(&self.entries, top_k);
 
-        self.prev_query = plan.norm_query.into_owned();
-        self.prev_candidates = all_match_indices;
-        self.prev_mode = Some(mode);
-        self.prev_kana_query = plan.kana_query;
+        // write: can_reuse が read する全状態を IncrementalCache::update で対にして更新する。
+        // all_match_indices は top-k から落ちた一致も含む全件。
+        self.incremental_cache.update(
+            plan.norm_query.into_owned(),
+            all_match_indices,
+            mode,
+            plan.kana_query,
+        );
 
         results
-    }
-
-    /// incremental search（前回候補の再利用）の可否を判定する。
-    ///
-    /// 全述語は「今回の候補集合 ⊆ 前回の候補集合」を保証する単調条件。
-    /// `self.prev_*` を **read のみ**で参照する（write は `search_with_options` が fold 後に行う）。
-    ///
-    /// - `!has_dot || prev_query.contains('.')`: "no-dot → dot" 遷移は full scan にフォールバック。
-    ///   prev_candidates が file_name スコアリングなしで構築されており、file_name のみで
-    ///   マッチするエントリが欠落して false negative になるのを防ぐ。
-    /// - kana_monotonic: kana_query の単調性。(None,_)→OK / (Some curr, Some prev) は
-    ///   `curr.starts_with(prev)` のとき候補が狭まる / (Some,None) は新規出現ゆえ full scan。
-    ///   ローマ字→かな変換は非単調（"kan"→"かん", "kana"→"かな"）ゆえ実値比較が必要。
-    /// - `!has_path_sep`: パスクエリは norm_query と path_query で正規化が異なり単調性を
-    ///   保証できないため無条件で無効化する（稀ゆえ性能影響は無視できる）。
-    fn decide_incremental(&self, plan: &QueryPlan, mode: SearchMode) -> bool {
-        let kana_monotonic = match (&plan.kana_query, &self.prev_kana_query) {
-            (None, _) => true,
-            (Some(curr), Some(prev)) => curr.starts_with(prev.as_str()),
-            (Some(_), None) => false,
-        };
-        self.prev_mode == Some(mode)
-            && !self.prev_candidates.is_empty()
-            && !self.prev_query.is_empty()
-            && plan.norm_query.starts_with(self.prev_query.as_str())
-            && (!plan.has_dot || self.prev_query.contains('.'))
-            && !plan.has_path_sep
-            && kana_monotonic
     }
 
     pub fn recent_history(&self, history: &HistoryStore, max_results: usize) -> Vec<SearchResult> {

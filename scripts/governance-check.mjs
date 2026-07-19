@@ -1,5 +1,7 @@
-#!/usr/bin/env node
 // governance:check — ガバナンス文書の決定的検査（#587）。
+// shebang を置かない — CI の Windows checkout（autocrlf=true）で CRLF 化された
+// shebang 行は vitest の transform を SyntaxError で落とす（PR #592 で実測。
+// 他の *.mjs も同じ理由で shebang なし。起動は常に `node scripts/...` 経由）。
 //
 // PostToolUse hook は `.md`・rules・skills に検査を割り当てない（#497 で受容した残余）。
 // 本スクリプトはその残余のうち決定的に照合できる項目を PR CI（governance-check job）と

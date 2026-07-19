@@ -5,8 +5,7 @@
 //! Fuzzy（基準は `mod score_tier`）。cache locality のためエントリ属性は並列 Vec で保持する
 //! （struct 化はベンチ劣化を確認済み——根拠は `SearchEngine` の struct doc を参照）。
 
-use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::HashMap;
 
 use rayon::prelude::*;
 
@@ -23,7 +22,7 @@ use query_plan::{QueryPlan, prepare_query_plan};
 // スコアリング・順位計算（score_tier・ScoredEntry・score_one_entry・heap_into_results 等）は
 // 子モジュールへ分離（#600）。候補選択・rayon fold/reduce・incremental cache 更新は本ファイル。
 mod scoring;
-use scoring::{ScoredEntry, heap_into_results};
+use scoring::TopK;
 
 const GLOBAL_WEIGHT: i64 = 5;
 const QUERY_WEIGHT: i64 = 20;
@@ -273,66 +272,42 @@ impl SearchEngine {
         // Matcher::new() is O(alloc_zeroed) — lightweight enough to create per task.
         // Each task builds a local top-k BinaryHeap; tasks are merged in reduce().
         //
-        // BinaryHeap<ScoredEntry> is a max-heap where peek() == worst item.
-        // ScoredEntry::Ord mirrors rank_cmp_ranked: better entry has Ordering::Less,
-        // so the worst (Ordering::Greater) stays at the top of the heap.
-        //
-        // The fold state includes a Vec<usize> to collect ALL matching entry indices
-        // (not just top-k) for the incremental search cache.
-        let (top_k, all_match_indices): (BinaryHeap<ScoredEntry>, Vec<usize>) = candidate_indices
+        // top-k 更新規則は TopK 型に一元化する（fold の単一候補挿入・reduce の task 統合が
+        // 同じ push 規則を通す・#602）。fold state の Vec<usize> は top-k とは別に全一致 index を
+        // 集める（incremental search cache 用。top-k から落ちた一致も残す）。
+        let (top_k, all_match_indices): (TopK, Vec<usize>) = candidate_indices
             .into_par_iter()
             .with_min_len(MIN_PAR_CANDIDATES)
             .fold(
-                || {
-                    (
-                        BinaryHeap::<ScoredEntry>::with_capacity(max_results + 1),
-                        Vec::<usize>::new(),
-                    )
-                },
-                |(mut local_heap, mut local_matches), i| {
+                || (TopK::new(max_results), Vec::<usize>::new()),
+                |(mut top_k, mut local_matches), i| {
                     // スコアリング本体は score_one_entry に委譲する（bitmask pre-filter →
                     // name/file_name/kana/path スコア → 履歴ブースト → ScoredEntry 構築）。
-                    // Some ⟺ マッチ成立。local_matches.push(i) は heap 採否より前に無条件で
+                    // Some ⟺ マッチ成立。local_matches.push(i) は top-k 採否より前に無条件で
                     // 行い、top-k から落ちた一致も incremental cache に残す（縮小を防ぐ）。
                     if let Some(scored) =
                         self.score_one_entry(i, &plan, mode, kana_available, history, options)
                     {
                         local_matches.push(i);
-                        if local_heap.len() < max_results {
-                            local_heap.push(scored);
-                        } else if let Some(mut worst) = local_heap.peek_mut() {
-                            // Replace only when the new item is better than the current worst.
-                            if scored.cmp(&worst) == Ordering::Less {
-                                *worst = scored;
-                            }
-                        }
+                        top_k.push(scored);
                     }
 
-                    (local_heap, local_matches)
+                    (top_k, local_matches)
                 },
             )
             .reduce(
-                || (BinaryHeap::new(), Vec::new()),
-                |(mut a_heap, mut a_matches), (b_heap, b_matches)| {
-                    for entry in b_heap {
-                        if a_heap.len() < max_results {
-                            a_heap.push(entry);
-                        } else if let Some(mut worst) = a_heap.peek_mut()
-                            && entry.cmp(&worst) == Ordering::Less
-                        {
-                            *worst = entry;
-                        }
-                    }
+                || (TopK::new(max_results), Vec::new()),
+                |(mut a_top, mut a_matches), (b_top, b_matches)| {
+                    a_top.merge(b_top);
                     a_matches.extend(b_matches);
-                    (a_heap, a_matches)
+                    (a_top, a_matches)
                 },
             );
 
         // top_k は self（lower_names / entries）を借用しているため、先に所有 SearchResult へ
         // 変換して借用を終わらせてから incremental cache を write する
-        // （read は decide_incremental に集約。all_match_indices は owned な Vec<usize> ゆえ
-        // write 順序の入れ替えに意味論上の影響はない）。
-        let results = heap_into_results(&self.entries, top_k);
+        // （all_match_indices は owned な Vec<usize> ゆえ write 順序の入れ替えは意味論に影響しない）。
+        let results = top_k.into_results(&self.entries);
 
         // write: can_reuse が read する全状態を IncrementalCache::update で対にして更新する。
         // all_match_indices は top-k から落ちた一致も含む全件。

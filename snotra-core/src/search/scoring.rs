@@ -182,7 +182,7 @@ pub(super) fn adjusted_history_boost(
 /// `into_sorted_vec()` はヒープ内部 Vec を再利用して昇順ソートする。
 /// `ScoredEntry::Ord` は Less = better ゆえ昇順で best が先頭になる（tie-break の意味を保つ）。
 /// 所有 String の clone はここで初めて発生する（top-k 確定後の K 件のみ）。
-pub(super) fn heap_into_results(entries: &[AppEntry], top_k: BinaryHeap<ScoredEntry>) -> Vec<SearchResult> {
+fn heap_into_results(entries: &[AppEntry], top_k: BinaryHeap<ScoredEntry>) -> Vec<SearchResult> {
     top_k
         .into_sorted_vec()
         .into_iter()
@@ -196,6 +196,53 @@ pub(super) fn heap_into_results(entries: &[AppEntry], top_k: BinaryHeap<ScoredEn
             }
         })
         .collect()
+}
+
+/// 並列 top-k 更新規則を一元化する型（#602）。rayon の fold（単一候補）と reduce
+/// （task 統合）が同じ挿入規則を共有し、片方だけが変更されるドリフトを防ぐ。
+///
+/// 順序契約: `ScoredEntry::Ord` は better = `Ordering::Less`、`BinaryHeap` は max-heap ゆえ
+/// `peek()` = current worst。満杯時は `candidate.cmp(worst) == Ordering::Less` のときだけ置換。
+/// 最終結果は best-first（`into_results`）。tie-break（score / last_launched / lower_name / path）
+/// は `ScoredEntry::Ord` が担う。incremental cache 用の全一致 index は TopK に含めず独立保持する。
+pub(super) struct TopK<'a> {
+    limit: usize,
+    heap: BinaryHeap<ScoredEntry<'a>>,
+}
+
+impl<'a> TopK<'a> {
+    pub(super) fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            heap: BinaryHeap::with_capacity(limit + 1),
+        }
+    }
+
+    /// 単一候補を top-k 規則で挿入する。limit 未満なら push、満杯なら現在の worst
+    /// （`peek_mut` = max by Ord = 最悪）より良い（`Ordering::Less`）ときだけ置換する。
+    pub(super) fn push(&mut self, scored: ScoredEntry<'a>) {
+        if self.heap.len() < self.limit {
+            self.heap.push(scored);
+        } else if let Some(mut worst) = self.heap.peek_mut()
+            && scored.cmp(&worst) == Ordering::Less
+        {
+            *worst = scored;
+        }
+    }
+
+    /// 別 rayon task の TopK を統合する。各候補を同じ `push` 規則へ通すため、
+    /// merge 順を変えても最終集合は同一（task 分割の非決定性に依存しない）。
+    pub(super) fn merge(&mut self, other: TopK<'a>) {
+        for scored in other.heap {
+            self.push(scored);
+        }
+    }
+
+    /// best-first の `SearchResult` 列へ変換する終端操作。所有 String の clone は
+    /// top-k 確定後の K 件だけで `index` 経由で行う。
+    pub(super) fn into_results(self, entries: &[AppEntry]) -> Vec<SearchResult> {
+        heap_into_results(entries, self.heap)
+    }
 }
 
 impl SearchEngine {

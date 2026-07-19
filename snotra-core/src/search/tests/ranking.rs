@@ -4,7 +4,7 @@ use super::common::{empty_history, make_entries};
 use crate::config::SearchHistoryNormalizationConfig;
 use crate::indexer::AppEntry;
 use crate::query::char_bitmask;
-use crate::search::scoring::adjusted_history_boost;
+use crate::search::scoring::{ScoredEntry, TopK, adjusted_history_boost};
 use crate::search::*;
 
 #[test]
@@ -150,4 +150,110 @@ fn bitmask_filter_does_not_skip_accented_entries() {
     let results = engine.search("cafe", 8, &empty_history(), SearchMode::Fuzzy);
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].name, "Café");
+}
+
+// --- TopK 単体テスト（#602: top-k 更新規則の一元化） ---
+
+/// index i を name "e{i}" に対応させる entries（`TopK::into_results` の照合用）。
+fn topk_entries(n: usize) -> Vec<AppEntry> {
+    (0..n)
+        .map(|i| AppEntry {
+            name: format!("e{i}"),
+            target_path: format!("C:\\fake\\e{i}.lnk"),
+            is_folder: false,
+        })
+        .collect()
+}
+
+/// score と index を指定した `ScoredEntry`。lower_name/path は `entries[index]` を借用するため、
+/// entries は TopK より長生きする必要がある。
+fn se(score: i64, index: usize, entries: &[AppEntry]) -> ScoredEntry<'_> {
+    ScoredEntry {
+        score,
+        last_launched: 0,
+        lower_name: &entries[index].name,
+        path: &entries[index].target_path,
+        index,
+    }
+}
+
+/// `(score, index)` 列を limit の TopK に push し、best-first の name 列を返す。
+fn topk_names(limit: usize, scores: &[(i64, usize)], entries: &[AppEntry]) -> Vec<String> {
+    let mut t = TopK::new(limit);
+    for &(score, index) in scores {
+        t.push(se(score, index, entries));
+    }
+    t.into_results(entries).into_iter().map(|r| r.name).collect()
+}
+
+#[test]
+fn topk_replaces_worst_when_better_arrives_late() {
+    // limit 2 が満杯（10,20）後に、worst(10) より良い 30 が来たら置換する。
+    let entries = topk_entries(3);
+    let names = topk_names(2, &[(10, 0), (20, 1), (30, 2)], &entries);
+    assert_eq!(names, vec!["e2", "e1"]); // best-first: 30, 20
+}
+
+#[test]
+fn topk_limit_zero_stays_empty() {
+    let entries = topk_entries(3);
+    let names = topk_names(0, &[(10, 0), (20, 1), (30, 2)], &entries);
+    assert!(names.is_empty());
+}
+
+#[test]
+fn topk_limit_one_keeps_best() {
+    let entries = topk_entries(3);
+    let names = topk_names(1, &[(10, 0), (30, 1), (20, 2)], &entries);
+    assert_eq!(names, vec!["e1"]); // 最高スコア 30 のみ
+}
+
+#[test]
+fn topk_under_capacity_keeps_all_best_first() {
+    // 候補が limit 未満なら全件を best-first で返す。
+    let entries = topk_entries(3);
+    let names = topk_names(5, &[(10, 0), (30, 1), (20, 2)], &entries);
+    assert_eq!(names, vec!["e1", "e2", "e0"]); // 30, 20, 10
+}
+
+#[test]
+fn topk_over_capacity_keeps_top_k() {
+    // 候補が limit 超過なら上位 K 件を best-first で返す。
+    let entries = topk_entries(4);
+    let names = topk_names(2, &[(10, 0), (40, 1), (20, 2), (30, 3)], &entries);
+    assert_eq!(names, vec!["e1", "e3"]); // 40, 30
+}
+
+#[test]
+fn topk_full_tie_keeps_first_inserted_and_does_not_thrash() {
+    // 完全 tie（score/last_launched/lower_name/path すべて同一）では cmp == Equal ゆえ
+    // 満杯後の候補は置換しない（Ordering::Less のときだけ置換）。
+    let entries = topk_entries(1);
+    let names = topk_names(2, &[(100, 0), (100, 0), (100, 0)], &entries);
+    assert_eq!(names.len(), 2); // limit 分だけ保持、3 件目は Equal で不採用
+    assert!(names.iter().all(|n| n == "e0"));
+}
+
+#[test]
+fn topk_merge_is_order_independent() {
+    // task 統合（merge）の順序を変えても最終集合は同一。
+    let entries = topk_entries(4);
+    let build = |seed: &[(i64, usize)]| {
+        let mut t = TopK::new(2);
+        for &(s, i) in seed {
+            t.push(se(s, i, &entries));
+        }
+        t
+    };
+
+    let mut a1 = build(&[(10, 0), (40, 1)]);
+    a1.merge(build(&[(20, 2), (30, 3)]));
+    let names_ab: Vec<String> = a1.into_results(&entries).into_iter().map(|r| r.name).collect();
+
+    let mut b1 = build(&[(20, 2), (30, 3)]);
+    b1.merge(build(&[(10, 0), (40, 1)]));
+    let names_ba: Vec<String> = b1.into_results(&entries).into_iter().map(|r| r.name).collect();
+
+    assert_eq!(names_ab, vec!["e1", "e3"]); // top2 of {10,40,20,30} = 40,30
+    assert_eq!(names_ab, names_ba); // merge 順に依存しない
 }

@@ -3,7 +3,8 @@
 //! 1 回の検索呼び出しについて、正規化クエリ・dot/path 判定・Fuzzy bitmask・migemo かな
 //! クエリ・UTF-32 needle・パス照合クエリ・履歴キーを**純粋に**導出する（エントリ走査も
 //! 履歴更新も行わない自由関数）。正準は `crate::query` の正規化群であり、ここは検索固有の
-//! 組み立て責務のみを持つ。`decide_incremental` / `prev_*` の read/write は親 `search.rs`。
+//! 組み立て責務のみを持つ。incremental 判定と前回状態の read/write は親 `search.rs` の
+//! `IncrementalCache`（`can_reuse` / `update`・#601）。
 
 use std::borrow::Cow;
 
@@ -15,7 +16,7 @@ use super::{SearchMode, SearchOptions, kana_char_mask};
 
 /// 1 回の検索呼び出しでクエリから 1 度だけ導出する、スコアリング共有データ。
 /// `search_with_options` の候補準備フェーズ（`prepare_query_plan`）が構築し、
-/// `decide_incremental` と `score_one_entry` が `&QueryPlan` で共有する。
+/// `IncrementalCache::can_reuse` と `score_one_entry` が `&QueryPlan` で共有する。
 /// `norm_query` のみ入力 `query` を借用しうる（ASCII 小文字クエリはゼロアロケーション）。
 /// `needle_u32` は `norm_query` から生成後は独立（借用しない）。
 pub(super) struct QueryPlan<'a> {

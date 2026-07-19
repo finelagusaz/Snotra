@@ -23,6 +23,6 @@ paths:
 - **状態フラグを true にしたら false に戻す経路とセットで設計する**: 戻す責務の関数に `#[must_use]` を付け `let _ =` 無視を compile-fail 検出（実例 `launch_settings_process`）。一般則は `AGENTS.md`「事前調査」
 - **Win32 依存モジュール（`ime.rs`・`platform/` の `hotkey.rs` 等）はユニットテスト前提にしない**
 
-## 引き金 → 検査
+## トリガー → 検査
 
 - ホットキー・ウィンドウ生成/表示順・スラッシュコマンド経路を変更したら: カテゴリ A に加え `docs/build-commands.md` カテゴリ C（`smoke:startup` / `e2e:tauri`）も該当。post-edit hook は A（clippy/test）だけで「沈黙 = 合格」は C を含まない。検証カテゴリは拡張子でなく変更が触れるコードパスの意味で決める（#558）

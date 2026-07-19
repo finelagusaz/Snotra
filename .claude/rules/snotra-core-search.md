@@ -15,7 +15,7 @@ paths:
 > **位置はファイル名で断定せず、シンボル名で grep して現在地を確認する。** search.rs は責務単位で `search/{build,query_plan,scoring}.rs` へ分割済み（#598〜#600）で、上記シンボルは移動しうる（例: `mod score_tier` / `score_one_entry` / `heap_into_results` は `search/scoring.rs`、`compute_wave1/2` は `search/build.rs`、`prepare_query_plan` は `search/query_plan.rs`）。名前参照は refactor を生き延びるが、`<file> の X` という位置断定は腐る（#600 実測）。
 - 横断不変条件（並列 Vec レイアウト・ビットマスク一元化・has_path_sep 非互換）: `snotra-core/CLAUDE.md` の search.rs 節・「文字ビットマスク」節・「incremental cache とパスクエリの非互換」節
 
-## 引き金 → 検査
+## トリガー → 検査
 
 - **incremental・キャッシュ再利用・前回状態（`IncrementalCache`）・`has_dot`/`has_path_sep` に触れたら**: 正本（`IncrementalCache::can_reuse` の doc）を読み、`/cache-check` で単調性を検証する。述語や状態を足すときは `can_reuse`（read）と `update`（write）を対で変更する
 - **新しいマッチ種別を追加するなら**: bitmask pre-filter との整合を `compute_wave2` の doc（false-negative 不変条件）で確認する

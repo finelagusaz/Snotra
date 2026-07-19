@@ -16,7 +16,7 @@ paths:
 - 背景再スキャン・`icons.bin` に触れる: 「indexer.rs の背景再スキャン」
 - UI 表示文字列（`is_error` フラグ）: 「開発ルール」
 
-## 引き金 → 検査
+## トリガー → 検査
 
 - incremental cache・`prev_*`・キャッシュ再利用: `/cache-check`（単調性）
 - 設定キー・永続形式・識別子/キー形式の変更: `/persistence-check`（後方互換）

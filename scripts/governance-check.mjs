@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 /** 実在検査の対象と見なすソース系拡張子（G3）。ランタイム生成物（.bin/.bak 等）は含めない */
 const REF_EXTENSIONS = /\.(md|rs|ts|tsx|mjs|json|toml|yml|ps1|html|css)$/;
 /** 走査から除外するディレクトリ。名前ベース（任意の深さの生成物）とルート相対プレフィックス
- *  （untracked バッファ）を分ける——`ui/src/workspace/` のような将来の同名ソースを静かに
+ *  （untracked バッファ）を分ける——`ui/src/workspace/` のような将来の同名ソースを気付かれないまま
  *  落とさないため、workspace/worktrees はルート錨止めにする */
 const WALK_EXCLUDE_NAMES = new Set([".git", "node_modules", "target", "dist"]);
 const WALK_EXCLUDE_PREFIXES = ["workspace", ".claude/worktrees"];
@@ -348,7 +348,7 @@ export function globToRegex(pattern) {
   while (i < pattern.length) {
     const c = pattern[i];
     if (c === "{" && pattern.indexOf("}", i) === -1) {
-      re += "\\{"; // 未閉ブレースは literal 扱い（無限ループ防止・0 件マッチの loud な赤に倒れる）
+      re += "\\{"; // 未閉ブレースは literal 扱い（無限ループ防止・0 件マッチの明示的な赤に倒れる）
       i += 1;
     } else if (c === "*") {
       if (pattern.startsWith("**/", i)) {
@@ -429,7 +429,7 @@ export function checkSkillTable(snapshot) {
 // G9 — PostToolUse hook の cargo コマンド ↔ docs/build-commands.md カテゴリ A の照合（#589）。
 // hook は触らない（非 export・import は main 実行の副作用があるため、ソーステキストから
 // `cargoSpec([...])` を抽出する。抽出アンカーが hook のリファクタで腐ったら抽出 0 件 fail で
-// loud に落ちる）。出力整形のみのフラグ（exit code を変えないもの）は arity 付き除去リストで
+// 明示的に失敗する）。出力整形のみのフラグ（exit code を変えないもの）は arity 付き除去リストで
 // 落としてから照合する（build-commands.md の既存整合規約の機械化）。
 // nodeSpec / vitest 系（npm SSOT の部分集合ラッパー）は意味判断を要するため対象外＝
 // /health-check の Check 5 残置部分が受け持つ（受容する範囲）。

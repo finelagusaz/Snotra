@@ -54,7 +54,7 @@ CLAUDE.md には、この誤爆を回避するための運用ルールが 2 つ�
 
 > **実測による訂正（2026-07-10・#497 / #484）— 4 経路のうち、閉じたのは 1 つである。**
 >
-> 上の 4 経路のうち、最後の 1 つ（定義ファイルの沈黙）だけを PR-3 で閉じた。`selectChecks` の入力集合を広げ、`tsconfig.json` → typecheck + hook-selftest、`Cargo.toml` → cargo-check、`package.json` / `vitest.config.ts` → hook-selftest、`.githooks/**` → githooks-selftest を発火させた。あわせて **発火の追加とカナリアの追加を対にする**規律を導入した（`package.json` と `vitest.config.ts` にはカナリアが無かったため新設。カナリアの無いファイルに検査を撃っても、vitest が起動することしか証明しない）。
+> 上の 4 経路のうち、最後の 1 つ（定義ファイルの沈黙）だけを PR-3 で閉じた。`selectChecks` の入力集合を広げ、`tsconfig.json` → typecheck + hook-selftest、`Cargo.toml` → cargo-check、`package.json` / `vitest.config.ts` → hook-selftest、`.githooks/**` → githooks-selftest を発火させた。あわせて **発火の追加とカナリアの追加を対にする**規律を導入した（`package.json` と `vitest.config.ts` にはカナリアが無かったため新設。カナリアの無いファイルに検査を実行しても、vitest が起動することしか証明しない）。
 >
 > **残る 3 経路は塞いでいない**:
 >
@@ -105,9 +105,9 @@ CLAUDE.md には、この誤爆を回避するための運用ルールが 2 つ�
 >
 > **設定の組み合わせ制約（実測・422）**: GitHub が許すのは `PR_TITLE`×{`PR_BODY`, `BLANK`, `COMMIT_MESSAGES`} と `COMMIT_OR_PR_TITLE`×`COMMIT_MESSAGES` の 4 組のみ。`COMMIT_OR_PR_TITLE` は `COMMIT_MESSAGES` としか組めないため、**Channel 2 を断つならタイトル既定も `PR_TITLE` へ動く**。可逆（`gh api -X PATCH` で戻せる）。
 >
-> **塞げない残余（受容する穴）。** マージで閉じる集合は PR 本文から**マージ時点で**計算される。本文を凍結する機構は無く、`closingIssuesReferences` はいつ問い合わせても「その瞬間の本文」を映す。ゆえに: 別のセッション・別の人・Web UI が、(a) 確認とマージの間に本文へ closing keyword を足し、(b) マージ後にそれを消せば、事前確認にも事後確認にも何も映らない。`gh pr merge --auto` は (a) の窓を分単位に広げる（ゆえに使わない）。**唯一の接地した観測点は `gh issue list --state closed --search "closed:>=<mergedAt>"`** — 参照集合ではなく close イベントを数えるため、経路を問わず拾える。これは検知であって防止ではない。
+> **塞げない残余（受容する未対応リスク）。** マージで閉じる集合は PR 本文から**マージ時点で**計算される。本文を凍結する機構は無く、`closingIssuesReferences` はいつ問い合わせても「その瞬間の本文」を映す。ゆえに: 別のセッション・別の人・Web UI が、(a) 確認とマージの間に本文へ closing keyword を足し、(b) マージ後にそれを消せば、事前確認にも事後確認にも何も映らない。`gh pr merge --auto` は (a) の窓を分単位に広げる（ゆえに使わない）。**唯一の接地した観測点は `gh issue list --state closed --search "closed:>=<mergedAt>"`** — 参照集合ではなく close イベントを数えるため、経路を問わず拾える。これは検知であって防止ではない。
 >
-> この残余は「怠惰な読者」と「規則弁護士」を演じる 2 体のサブエージェントに文面だけを読ませるフォールトインジェクションを 3 巡行って見つけた（#488）。**新規の抜け道ゼロが 2 巡連続する前に上限へ達したため、塞いだとは書かない。** 規範は機構ではないので、完全性を主張してはならない。
+> この残余は「怠惰な読者」と「規則弁護士」の観点で検証する 2 体のサブエージェントに文面だけを読ませるフォールトインジェクションを 3 巡行って見つけた（#488）。**新規の抜け道ゼロが 2 巡連続する前に上限へ達したため、塞いだとは書かない。** 規範は機構ではないので、完全性を主張してはならない。
 
 ### 非目標（YAGNI）
 
@@ -156,7 +156,7 @@ CLAUDE.md には、この誤爆を回避するための運用ルールが 2 つ�
 exit 0
 ```
 
-**`git symbolic-ref --short` を使ってはならない。** `main` という名の tag が存在すると、曖昧性回避のため `refs/heads/main` が `heads/main` に縮み、`main` との比較が偽になって**静かに素通りする**（最終レビューで実測）。削除予定の `block-main-commit` は `git branch --show-current` を使っておりこの曖昧性に免疫があったため、短縮名で比較すると**置き換え対象からの後退**になる。完全 ref（`refs/heads/main`）で比較する。
+**`git symbolic-ref --short` を使ってはならない。** `main` という名の tag が存在すると、曖昧性回避のため `refs/heads/main` が `heads/main` に縮み、`main` との比較が偽になって**気付かれないまま素通りする**（最終レビューで実測）。削除予定の `block-main-commit` は `git branch --show-current` を使っておりこの曖昧性に免疫があったため、短縮名で比較すると**置き換え対象からの後退**になる。完全 ref（`refs/heads/main`）で比較する。
 
 ```sh
 # .githooks/pre-push — stdin: <local ref> <local sha> <remote ref> <remote sha>
@@ -249,7 +249,7 @@ git ネイティブ hook は実際に実行される瞬間に、実際のツリ�
 
 AGENTS.md の要求「セーフティネットが『効いている』ことは、フォールトインジェクションで一度は実測する」に従う。#471 は、この規律が無かったために「hook の出力が一度もエージェントに届いていなかった」ことを見逃した。
 
-V5 / V6 は、本 spec §1 で測った実在の抜け道をそのまま逆向きに撃つ回帰テストである。
+V5 / V6 は、本 spec §1 で測った実在の抜け道をそのまま逆向きに実行する回帰テストである。
 
 | # | フォールトインジェクション | 期待 | 何を証明するか |
 |---|---|---|---|
@@ -298,10 +298,10 @@ V5 / V6 は、本 spec §1 で測った実在の抜け道をそのまま逆向�
 - [ ] **V8 は実行しない**: harness が main への push を拒否。迂回しない。`pre-push` の 3 テスト（client）と V1（server）で二重に測定済み
 - [x] **V9 実測**: `git pull --ff-only` も `git merge --ff-only origin/main` も通る＝誤爆しない
 - [x] `docs/build-commands.md` にカテゴリ E と bootstrap が記載されている
-- [x] `.gitattributes` が `.githooks/**` を `eol=lf` に固定している（`_lib.sh` も含む＝CRLF による静かな guard 無効化を防ぐ）
+- [x] `.gitattributes` が `.githooks/**` を `eol=lf` に固定している（`_lib.sh` も含む＝CRLF による気付かれない guard 無効化を防ぐ）
 - [x] CLAUDE.md に新しい層（`.githooks/` + ruleset）と §4 の caveat が**追記**されている（既存ルールは削除しない）。主張の確度は測定の等級に合わせる（実測 / read-back のみ / 視界外、を書き分ける）
 - [x] `.claude/settings.json` と `.claude/hooks/post-edit.mjs` に変更が無い
-- [x] `_lib.sh` は完全 ref（`refs/heads/main`）で比較する。`--short` は ref 曖昧性で静かに fail-open する
+- [x] `_lib.sh` は完全 ref（`refs/heads/main`）で比較する。`--short` は ref 曖昧性で気付かれないまま fail-open する
 - [x] `AGENTS.md` と `.claude/skills/implement/SKILL.md` の「カテゴリ A〜D」が「A〜E」になっている
 - [ ] **V2**: `gh pr merge --squash` が動く（マージ時に確認）
 - [ ] CI グリーン（ubuntu の `npm test` が実行ビットと dash 互換性の検知器になる）

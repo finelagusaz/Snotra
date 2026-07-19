@@ -328,7 +328,7 @@ describe("G9 checkHookCommands", () => {
     const f = checkHookCommands(s);
     expect(f.some((x) => x.message.includes("snotra-core"))).toBe(true);
   });
-  it("赤: cargoSpec 抽出 0 件は母集団欠落として fail（抽出アンカー腐敗の loud 化）", () => {
+  it("赤: cargoSpec 抽出 0 件は母集団欠落として fail（抽出アンカー腐敗の明示的な失敗化）", () => {
     const s = snap({ ...base, ".claude/hooks/post-edit.mjs": "function buildCommand(){}" });
     const f = checkHookCommands(s);
     expect(f.length).toBeGreaterThan(0);

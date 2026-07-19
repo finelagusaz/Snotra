@@ -100,7 +100,7 @@ jobs:
       # #568: feature 限定の main() 配線（configure_e2e_webview の呼び出し）は
       # 既定 feature の check/clippy/test では cfg で除外され compile されない
       # （唯一 compile するのは e2e.yml の feature 付き tauri build）。feature 付き
-      # clippy で compile + lint 被覆し、配線の破損を高速検査で loud に落とす。
+      # clippy で compile + lint 被覆し、配線の破損を高速検査で明示的に失敗させる。
       - name: cargo clippy (e2e-webview-automation feature)
         run: cargo clippy -p snotra --features e2e-webview-automation --all-targets -- -D warnings
 

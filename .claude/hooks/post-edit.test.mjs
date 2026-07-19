@@ -71,7 +71,7 @@ describe("selectChecks", () => {
     expect(selectChecks("package.json")).toEqual(["hook-selftest"]);
   });
 
-  // ルートの Cargo.toml だけが hook-selftest を撃つ。crate 追加は必ず members を
+  // ルートの Cargo.toml だけが hook-selftest を実行する。crate 追加は必ず members を
   // 編集するのでそこで捕まる（#500）。メンバーの Cargo.toml は cargo-check のみ。
   it("ルートの Cargo.toml は cargo-check + hook-selftest", () => {
     expect(selectChecks("Cargo.toml")).toEqual(["cargo-check", "hook-selftest"]);
@@ -571,12 +571,12 @@ describe("tsconfig ドリフト検出カナリア — C2", () => {
   });
 });
 
-// #497: 発火の追加とカナリアの追加は対にする。カナリアが無いファイルに検査を撃っても、
+// #497: 発火の追加とカナリアの追加は対にする。カナリアが無いファイルに検査を実行しても、
 // そのファイルについては何も検証しない（vitest が起動することしか証明しない）。
 // 以下 2 本は package.json / vitest.config.ts を hook-selftest に載せる根拠である。
 
 describe("vitest.config.ts ドリフト検出カナリア — #497", () => {
-  // include が縮むと、hook-selftest / githooks-selftest / npm test が静かにテストを
+  // include が縮むと、hook-selftest / githooks-selftest / npm test が気付かれないままテストを
   // 走らせなくなる。`vitest run .claude/hooks` はパス直指定で動くが、`.githooks` の
   // 収集と CI の npm test はこの include に依存する。
   it("vitest の include が 3 つの検査対象をすべて含む", () => {
@@ -605,7 +605,7 @@ describe("Cargo.toml members ドリフト検出カナリア — #500", () => {
   // check / clippy は --workspace なので members を cargo が読む（写しは消えた）。
   // しかし `cargo test -p <crate>` は「編集した crate → そのテスト」の写像であり、
   // selectChecks のディレクトリ接頭辞と buildCommand の case に手書きされている。
-  // 4 つ目の crate が生えると、その .rs を編集してもテストが**静かに走らない**。
+  // 4 つ目の crate が生えると、その .rs を編集してもテストが**気付かれないまま走らない**。
   // ここで落とし、selectChecks / buildCommand / ci.yml / SSOT の更新を強制する。
   it("workspace members が test 系のルーティングと一致する", () => {
     const p = fileURLToPath(new URL("../../Cargo.toml", import.meta.url));

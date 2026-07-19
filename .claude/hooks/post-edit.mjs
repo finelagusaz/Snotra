@@ -265,7 +265,7 @@ function buildCommand(id, root) {
 
   switch (id) {
     // check / clippy の --workspace は cargo に Cargo.toml の members を読ませる。
-    // crate 名を列挙すると members の写しになり、4 つ目の crate で静かに漏れる（#500）。
+    // crate 名を列挙すると members の写しになり、4 つ目の crate で気付かれないまま漏れる（#500）。
     case "clippy":
       return cargoSpec([
         "clippy", "--workspace",

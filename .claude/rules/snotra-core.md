@@ -5,7 +5,7 @@ paths:
 
 # snotra-core ルール（ルーター）
 
-事実の正本は `snotra-core/CLAUDE.md` とコード。本 rule は「どこを読むか・何を撃つか」だけを示す（要約を置かない）。`search.rs` 固有は `snotra-core-search.md`。位置はファイル名で断定せず**見出し名・シンボル名で grep** して辿る（refactor で移動しうる・#588）。
+事実の正本は `snotra-core/CLAUDE.md` とコード。本 rule は「どこを読むか・何を実行するか」だけを示す（要約を置かない）。`search.rs` 固有は `snotra-core-search.md`。位置はファイル名で断定せず**見出し名・シンボル名で grep** して辿る（refactor で移動しうる・#588）。
 
 ## 読む正本（`snotra-core/CLAUDE.md` の該当節）
 

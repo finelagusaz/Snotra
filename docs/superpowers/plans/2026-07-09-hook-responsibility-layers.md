@@ -40,7 +40,7 @@ input=$(cat); if echo "$input" | grep -qE 'gh\s+pr\s+create'; then
 
 この hook はコマンド実行の**前**に upstream を評価するため、`git push -u origin HEAD && gh pr create` は必ずブロックされる。ゆえに「`gh pr create` を他のコマンドとチェーンしない」という narrow な規則は Phase 2 まで正しい。
 
-副次的な利点として **番号 1〜4 が保たれる**。issue #473 / #475 / #476 / #477 / #479 の本文は「CLAUDE.md 最重要ルール 4」を番号で参照しており、詰めると静かに陳腐化する。
+副次的な利点として **番号 1〜4 が保たれる**。issue #473 / #475 / #476 / #477 / #479 の本文は「CLAUDE.md 最重要ルール 4」を番号で参照しており、詰めると気付かれないまま陳腐化する。
 
 **2. `post-edit.mjs` のコメント 1 行を事実訂正する。**
 
@@ -991,7 +991,7 @@ git commit --allow-empty -m "V5 probe"
 
 **⚠️ この Phase の最中、main の作業ツリーには `.githooks/` が存在しない**（本 PR がマージされるまで `.githooks/` は feature ブランチにしか無い）。`core.hooksPath = .githooks` は空を指し、**git は「hook 無し」として commit を通す（fail-open）**。実測で確認済み: 一度目の V5 は `exit 0` で main に空コミットを作った（`git reset --soft HEAD~1` で撤去）。
 
-したがって V5 は **マージ後の main を模して測る**。`.githooks` を main の作業ツリーへ untracked で配置してから、同じコマンドを撃つ:
+したがって V5 は **マージ後の main を模して測る**。`.githooks` を main の作業ツリーへ untracked で配置してから、同じコマンドを実行する:
 
 ```powershell
 git restore --source=chore/hook-responsibility-layers -- .githooks

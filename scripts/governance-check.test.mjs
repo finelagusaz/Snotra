@@ -330,6 +330,13 @@ describe("G9 checkHookCommands", () => {
     const f = checkHookCommands(s);
     expect(f.length).toBeGreaterThan(0);
   });
+  it("CRLF checkout でも一致する（\\r が行末コメント除去を阻む回帰・PR #595）", () => {
+    const s = snap({
+      ".claude/hooks/post-edit.mjs": hookSrc.replace(/\n/g, "\r\n"),
+      "docs/build-commands.md": docsA.replace(/\n/g, "\r\n"),
+    });
+    expect(checkHookCommands(s)).toEqual([]);
+  });
   it("不混入: nodeSpec / vitest 系のコマンドは照合対象にしない", () => {
     // hookSrc の typecheck（nodeSpec）が docs に無くても緑のまま（対象は cargo 系のみ）
     expect(checkHookCommands(snap(base))).toEqual([]);

@@ -453,8 +453,10 @@ export function checkHookCommands(snapshot) {
   if (docsText == null) return [finding(docsPath, 1, "docs/build-commands.md が読めない（G9）")];
   // カテゴリ A 節の bash フェンス内 cargo 行を母集団にする（行末 # コメントを除去）
   const sectionA = docsText.split(/^### A\. /m)[1]?.split(/^### /m)[0] ?? "";
+  // 行分割は \r?\n — CRLF checkout（Windows CI・autocrlf=true）では `.` が \r に
+  // マッチしないため、\r を残すと行末コメント除去 `#.*$` が発火しない（PR #595 で実測）
   const docsLines = sectionA
-    .split("\n")
+    .split(/\r?\n/)
     .filter((l) => l.trim().startsWith("cargo "))
     .map((l) => l.replace(/\s+#.*$/, "").trim().split(/\s+/).join(" "));
   if (docsLines.length === 0) {

@@ -1,4 +1,4 @@
-// governance-check.mjs の検査関数を、故障注入フィクスチャ（赤）と正常フィクスチャ（緑）の
+// governance-check.mjs の検査関数を、フォールトインジェクションフィクスチャ（赤）と正常フィクスチャ（緑）の
 // 両方向で検証する。各フィクスチャは「守りたい対象 1 件が入力に現れること」と
 // 「判定対象外が入力に混じらないこと」の入力集合検算を兼ねる（.claude/rules/safety-nets.md）。
 import { describe, it, expect } from "vitest";
@@ -328,7 +328,7 @@ describe("G9 checkHookCommands", () => {
     const f = checkHookCommands(s);
     expect(f.some((x) => x.message.includes("snotra-core"))).toBe(true);
   });
-  it("赤: cargoSpec 抽出 0 件は母集団欠落として fail（抽出アンカー腐敗の loud 化）", () => {
+  it("赤: cargoSpec 抽出 0 件は母集団欠落として fail（抽出アンカー腐敗の明示的な失敗化）", () => {
     const s = snap({ ...base, ".claude/hooks/post-edit.mjs": "function buildCommand(){}" });
     const f = checkHookCommands(s);
     expect(f.length).toBeGreaterThan(0);

@@ -14,7 +14,7 @@
 // この領域は hook にしか見えない。`gh pr create` はリポジトリを触らないため git hook は
 // 鳴らず、push もしないので pre-push も鳴らない。GitHub ruleset も空 PR を防げない。
 //
-// 受容する穴（いずれも「gh がコマンド位置に現れない」形。意図的迂回であり事故モードではない。
+// 受容する未対応リスク（いずれも「gh がコマンド位置に現れない」形。意図的迂回であり事故モードではない。
 // `--no-verify` と同格に人間専用として扱う）:
 //   - `sh -c 'gh pr create'` / `eval` / バッククォート / `$(...)` の内側
 //   - ラッパ経由（`timeout 5 gh pr create` / `nohup` / `xargs gh pr create`）
@@ -22,8 +22,8 @@
 //
 // 詳細と実測の根拠は issue #482。
 
-// 実測（#482 Phase 2 の故障注入 V2）: Windows の PowerShell tool の tool_name は
-// 文字列 "PowerShell" である。matcher が取りこぼすと hook は静かに素通りするため
+// 実測（#482 Phase 2 のフォールトインジェクション V2）: Windows の PowerShell tool の tool_name は
+// 文字列 "PowerShell" である。matcher が取りこぼすと hook は気づかれないまま素通りするため
 // （それがこの issue の D1 そのもの）、ここは推測ではなく実測値で固定している。
 
 import { readFileSync } from "node:fs";

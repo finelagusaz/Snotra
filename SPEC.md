@@ -89,7 +89,7 @@
 - その他 -> シェル登録ファイルタイプアイコン
 - フォルダ -> フォルダアイコン
 - 表示/非表示は設定で切替可能
-- フロントエンドへの転送は `tauri::ipc::Response` でバイナリ IPC（`get_icons_batch`）し、パスごとに `URL.createObjectURL(new Blob([bytes], { type: "image/png" }))` で `<img src>` に渡す。バッチのワイヤ形式の正準は `src-tauri/src/icon.rs` の `encode_batch_binary` rustdoc
+- フロントエンドへの転送は `tauri::ipc::Response` でバイナリ IPC（`get_icons_batch`）し、パスごとに `URL.createObjectURL(new Blob([bytes], { type: "image/png" }))` で `<img src>` に渡す。バッチのワイヤ形式の正本は `src-tauri/src/icon.rs` の `encode_batch_binary` rustdoc
 - アイコン非表示設定時・アイコンデータなし時はフォールバック絵文字（📁📄）を表示
 - インデックス再構築時はキャッシュをクリア（次回検索時に再抽出）
 - `icons.bin` は起動時に先読みせず、初回アイコン取得（`get_icons_batch`）時に遅延ロード

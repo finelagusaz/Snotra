@@ -40,7 +40,7 @@ input=$(cat); if echo "$input" | grep -qE 'gh\s+pr\s+create'; then
 
 この hook はコマンド実行の**前**に upstream を評価するため、`git push -u origin HEAD && gh pr create` は必ずブロックされる。ゆえに「`gh pr create` を他のコマンドとチェーンしない」という narrow な規則は Phase 2 まで正しい。
 
-副次的な利点として **番号 1〜4 が保たれる**。issue #473 / #475 / #476 / #477 / #479 の本文は「CLAUDE.md 最重要ルール 4」を番号で参照しており、詰めると静かに陳腐化する。
+副次的な利点として **番号 1〜4 が保たれる**。issue #473 / #475 / #476 / #477 / #479 の本文は「CLAUDE.md 最重要ルール 4」を番号で参照しており、詰めると気づかれないまま陳腐化する。
 
 **2. `post-edit.mjs` のコメント 1 行を事実訂正する。**
 
@@ -146,7 +146,7 @@ non_fast_forward
 pull_request
 ```
 
-- [ ] **Step 5: 故障注入 V1 / V3 — main へ push を試みる**
+- [ ] **Step 5: フォールトインジェクション V1 / V3 — main へ push を試みる**
 
 read-back は「設定が入った」ことしか示さない。**実際に破れないことを測る。**
 
@@ -814,7 +814,7 @@ git commit -F "<scratchpad>/msg-task5.txt"
 test(githooks): 相対 core.hooksPath が worktree で解決されることを実測
 
 git のドキュメントから読んだ期待を、測定に置き換える。#471 の教訓
-（安全網が効いていることは故障注入で一度は実測する）に従う。
+（セーフティネットが効いていることはフォールトインジェクションで一度は実測する）に従う。
 
 linked worktree で main を checkout し、そこでの commit が
 worktree 内の .githooks/pre-commit に拒否されることを固定した。
@@ -931,7 +931,7 @@ npm install / npm ci が prepare で core.hooksPath を設定する。worktree �
 .git/config を共有するため一度で全 worktree に効く。
 
 この層が外れても GitHub ruleset が push を拒むため、外れたことを検知する
-仕組みは意図的に作らない（「安全網の不在を検知する安全網」の無限後退を断つ）。
+仕組みは意図的に作らない（「セーフティネットの不在を検知するセーフティネット」の無限後退を断つ）。
 ```
 
 - [ ] **Step 6: 実リポジトリで誤爆しないことを確かめる（V9 の一部）**
@@ -958,7 +958,7 @@ git reset --soft HEAD~1
 
 ---
 
-## Task 7: 実環境での故障注入（V4 / V5 / V8 / V9）
+## Task 7: 実環境でのフォールトインジェクション（V4 / V5 / V8 / V9）
 
 **Files:** なし（測定のみ）
 
@@ -991,7 +991,7 @@ git commit --allow-empty -m "V5 probe"
 
 **⚠️ この Phase の最中、main の作業ツリーには `.githooks/` が存在しない**（本 PR がマージされるまで `.githooks/` は feature ブランチにしか無い）。`core.hooksPath = .githooks` は空を指し、**git は「hook 無し」として commit を通す（fail-open）**。実測で確認済み: 一度目の V5 は `exit 0` で main に空コミットを作った（`git reset --soft HEAD~1` で撤去）。
 
-したがって V5 は **マージ後の main を模して測る**。`.githooks` を main の作業ツリーへ untracked で配置してから、同じコマンドを撃つ:
+したがって V5 は **マージ後の main を模して測る**。`.githooks` を main の作業ツリーへ untracked で配置してから、同じコマンドを実行する:
 
 ```powershell
 git restore --source=chore/hook-responsibility-layers -- .githooks
@@ -1056,7 +1056,7 @@ Step 1〜4 の出力を scratchpad に保存し、PR 本文へ貼る。**V5 の�
 
 ## Task 8（Phase 1b・**本 PR の対象外**）: `block-main-commit` を削除する
 
-> **このタスクは本 PR では実行しない。** Task 7 の実測で判明したとおり、`.githooks/` は追跡ファイルであり **マージ前の `main` のツリーには存在しない**。いまここで `block-main-commit` を削除すると、マージまでの間、`main` 上のローカルガードが空になる（origin は ruleset が守るが、計画自身の不変条件「安全網を一瞬も空にしない」に反する）。
+> **このタスクは本 PR では実行しない。** Task 7 の実測で判明したとおり、`.githooks/` は追跡ファイルであり **マージ前の `main` のツリーには存在しない**。いまここで `block-main-commit` を削除すると、マージまでの間、`main` 上のローカルガードが空になる（origin は ruleset が守るが、計画自身の不変条件「セーフティネットを一瞬も空にしない」に反する）。
 >
 > **本 PR がマージされた瞬間、`main` のツリーに `.githooks/` が入り、Layer 1 が main を守り始める。** 削除はその後、follow-up issue の別 PR で行う。
 >
@@ -1431,7 +1431,7 @@ gh pr create --title "refactor(hooks): main 保護を git/GitHub の機構へ移
 
 本文に含めること:
 - 前提: 本 PR がマージされ、`main` のツリーに `.githooks/` が入っていること
-- 実測: `.githooks/` は追跡ファイルであり、マージ前の `main` では hook が存在せず git は commit を通した（fail-open）。ゆえに削除をマージ前に行うと安全網が一瞬空になる
+- 実測: `.githooks/` は追跡ファイルであり、マージ前の `main` では hook が存在せず git は commit を通した（fail-open）。ゆえに削除をマージ前に行うとセーフティネットが一瞬空になる
 - 手順は `docs/superpowers/plans/2026-07-09-hook-responsibility-layers.md` の Task 8 と Task 9b
 - 受け入れ条件は設計文書 §8「Phase 1b」
 - `Refs #471, #473`

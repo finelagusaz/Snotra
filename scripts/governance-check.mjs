@@ -14,7 +14,7 @@
 // - findings あり → exit 1 + `file:line` 付き全件列挙。免除注記の機構は設けない
 // - 空母集団（対象文書 0 件・rules 0 件・skills 0 件）は明示 fail（沈黙経路の閉塞）
 // - 各検査はスナップショット注入の純関数（scripts/governance-check.test.mjs がフィクスチャで
-//   故障注入 red / 正常 green / 判定対象外の不混入を検証する）
+//   フォールトインジェクション red / 正常 green / 判定対象外の不混入を検証する）
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 /** 実在検査の対象と見なすソース系拡張子（G3）。ランタイム生成物（.bin/.bak 等）は含めない */
 const REF_EXTENSIONS = /\.(md|rs|ts|tsx|mjs|json|toml|yml|ps1|html|css)$/;
 /** 走査から除外するディレクトリ。名前ベース（任意の深さの生成物）とルート相対プレフィックス
- *  （untracked バッファ）を分ける——`ui/src/workspace/` のような将来の同名ソースを静かに
+ *  （untracked バッファ）を分ける——`ui/src/workspace/` のような将来の同名ソースを気づかれないまま
  *  落とさないため、workspace/worktrees はルート錨止めにする */
 const WALK_EXCLUDE_NAMES = new Set([".git", "node_modules", "target", "dist"]);
 const WALK_EXCLUDE_PREFIXES = ["workspace", ".claude/worktrees"];
@@ -132,7 +132,7 @@ export function checkArchitectureTable(snapshot) {
   if (text == null) return [finding(p, 1, "docs/architecture.md が読めない")];
   for (const [lineNo, line] of linesOutsideFences(text)) {
     if (/^\|\s*`[^`]+\.(rs|ts|tsx|mts|mjs)`\s*\|/.test(line)) {
-      findings.push(finding(p, lineNo, `ファイル単位のモジュール表行が再導入されている: ${line.trim().slice(0, 60)}（責務の正準は //! / TSDoc・#562）`));
+      findings.push(finding(p, lineNo, `ファイル単位のモジュール表行が再導入されている: ${line.trim().slice(0, 60)}（責務の正本は //! / TSDoc・#562）`));
     }
   }
   return findings;
@@ -248,7 +248,7 @@ export function checkSpecSections(snapshot, docs) {
 // ---------------------------------------------------------------------------
 // G5 — docs/build-commands.md の npm script / cargo test -p crate の実在（旧 Check 5 の決定的部分）。
 // crate 名はディレクトリ名でなく各 member Cargo.toml の [package] name（`-p snotra` = src-tauri/）。
-// check/clippy は --workspace で cargo 自身が真実源を読むため照合対象外（#500）。
+// check/clippy は --workspace で cargo 自身が SSOT を読むため照合対象外（#500）。
 // ---------------------------------------------------------------------------
 export function checkBuildCommands(snapshot) {
   const findings = [];
@@ -348,7 +348,7 @@ export function globToRegex(pattern) {
   while (i < pattern.length) {
     const c = pattern[i];
     if (c === "{" && pattern.indexOf("}", i) === -1) {
-      re += "\\{"; // 未閉ブレースは literal 扱い（無限ループ防止・0 件マッチの loud な赤に倒れる）
+      re += "\\{"; // 未閉ブレースは literal 扱い（無限ループ防止・0 件マッチの明示的な赤に倒れる）
       i += 1;
     } else if (c === "*") {
       if (pattern.startsWith("**/", i)) {
@@ -429,7 +429,7 @@ export function checkSkillTable(snapshot) {
 // G9 — PostToolUse hook の cargo コマンド ↔ docs/build-commands.md カテゴリ A の照合（#589）。
 // hook は触らない（非 export・import は main 実行の副作用があるため、ソーステキストから
 // `cargoSpec([...])` を抽出する。抽出アンカーが hook のリファクタで腐ったら抽出 0 件 fail で
-// loud に落ちる）。出力整形のみのフラグ（exit code を変えないもの）は arity 付き除去リストで
+// 明示的に失敗する）。出力整形のみのフラグ（exit code を変えないもの）は arity 付き除去リストで
 // 落としてから照合する（build-commands.md の既存整合規約の機械化）。
 // nodeSpec / vitest 系（npm SSOT の部分集合ラッパー）は意味判断を要するため対象外＝
 // /health-check の Check 5 残置部分が受け持つ（受容する範囲）。
@@ -484,7 +484,7 @@ export function checkHookCommands(snapshot) {
 
 // ---------------------------------------------------------------------------
 // G10 — 恒久規範の面積 ratchet（二面独立）。#593 §2。
-// 恒久規範（毎セッション/引き金時にロード = コンテキスト予算への課税）の面積を単調非増加に保つ。
+// 恒久規範（毎セッション/トリガー時にロード = コンテキスト予算への課税）の面積を単調非増加に保つ。
 // 「常時ロード」と「rules」を独立の上限で見るのは、常時→rules の面替えだけで数字を下げる回避を
 // 塞ぐため（合計 ratchet なら総額不変で通ってしまう）。基準の引き上げは LINE_BUDGET を理由コメント
 // 付きで更新すること（= 明示的な合意の摩擦）。ADR・spec・issue は履歴側ゆえ対象外。

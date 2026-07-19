@@ -20,7 +20,8 @@
   color: "ededed"
   description: 通常 PR CI（frontend-check / rust-check）をスキップする
 # Dependabot が自動付与するラベル（PR / 依存系 issue で使用）。
-# delete-other-labels: true 下でも維持するため SSOT に明示する。色・説明は GitHub 既定と一致。
+# label-sync は skip-delete 省略（既定 false）で SSOT 外ラベルを削除するため、
+# 維持したい dependabot ラベルは SSOT に明示する。色・説明は GitHub 既定と一致。
 - name: dependencies
   color: "0366d6"
   description: Pull requests that update a dependency file

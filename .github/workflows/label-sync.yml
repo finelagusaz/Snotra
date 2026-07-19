@@ -19,11 +19,11 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Sync labels
-        uses: EndBug/label-sync@v2
+        uses: crazy-max/ghaction-github-labeler@v6
         with:
-          config-file: .github/labels.yml
+          yaml-file: .github/labels.yml
           # labels.yml を唯一の真実源（SSOT）にする。ここに無いラベルは同期時に削除される。
           # 新しいラベルを使う前に必ず labels.yml へ定義を追加すること。
-          delete-other-labels: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # crazy-max は skip-delete 既定 false で SSOT 外ラベルを削除する
+          # （EndBug の delete-other-labels: true と同一挙動）ため、明示指定しない。
+          github-token: ${{ secrets.GITHUB_TOKEN }}

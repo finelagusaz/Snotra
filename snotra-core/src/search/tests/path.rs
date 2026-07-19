@@ -98,7 +98,7 @@ fn path_match_incremental_cache_monotonic() {
     assert_eq!(r1[0].name, "app");
 
     // 2回目: "tool\\ed" に拡張 → パス区切りを含むため incremental は無効化される
-    //（decide_incremental の !has_path_sep ガード）。fresh scan と一致することを検証。
+    //（IncrementalCache::can_reuse の !has_path_sep ガード）。fresh scan と一致することを検証。
     let r2 = engine.search("tool\\ed", 8, &h, SearchMode::Substring);
     assert_eq!(r2.len(), 1);
     assert_eq!(r2[0].name, "app");

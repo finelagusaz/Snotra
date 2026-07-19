@@ -494,8 +494,8 @@ export function checkHookCommands(snapshot) {
 /** 常時ロードされる恒久規範ファイル（ルート直下の 2 文書） */
 export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
 
-/** 二面独立の行数上限（2026-07-19 実測を基準に設定・#593/#615）。削減したら下げる（#616） */
-export const LINE_BUDGET = { alwaysLoaded: 233, rules: 173 };
+/** 二面独立の行数上限。削減したら下げる（ratchet）。#616 で常時ロードを写し除去で 233→228 に削減 */
+export const LINE_BUDGET = { alwaysLoaded: 228, rules: 173 };
 
 /** \r?\n の出現数 = wc -l 相当。読めなければ null（母集団欠落を上位で検知） */
 function countLines(text) {

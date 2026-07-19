@@ -10,7 +10,7 @@ use rayon::prelude::*;
 use crate::indexer::{AppEntry, normalize_entry_key};
 use crate::query::{file_char_mask, lower_file_name, name_char_mask, to_kana, to_lower_folded};
 
-use super::{SearchEngine, kana_char_mask};
+use super::{IncrementalCache, SearchEngine, kana_char_mask};
 
 /// Wave 1 の出力: `(lower_names, lower_file_names, normalized_keys, kana_lower_names)`。
 /// いずれも構築後に伸長しないため `Box<str>` で保持する（容量ワード 8B/要素を節約）。
@@ -127,10 +127,9 @@ impl SearchEngine {
             file_name_char_masks,
             kana_lower_names,
             kana_char_masks,
-            prev_query: String::new(),
-            prev_candidates: Vec::new(),
-            prev_mode: None,
-            prev_kana_query: None,
+            // incremental cache は Default（空 query / 空候補 / mode 未設定）で初期化し、
+            // 構築直後の初回検索は必ず full scan になる（#601）。
+            incremental_cache: IncrementalCache::default(),
         }
     }
 

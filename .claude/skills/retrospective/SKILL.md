@@ -115,7 +115,7 @@ Step 3・Step 4 が完了してから、`RETROSPECTIVE.md` を以下の **2 セ�
 
 ## Step 7 — サイクル末の health-check
 
-サイクル末の衛生チェックを実施する（実行責任は `/retrospective` が負う）。`/health-check` は user 起動専用（`disable-model-invocation`）でスキルからは起動できないため、その定義 `.claude/skills/health-check/SKILL.md` の Check 1〜10 を**本スキルの責任で実施する**（＝`/health-check` を起動しない、という意味である。実行方式はインライン／サブエージェントへの委譲のいずれでもよい）。
+サイクル末の衛生チェックを実施する（実行責任は `/retrospective` が負う）。`/health-check` は user 起動専用（`disable-model-invocation`）でスキルからは起動できないため、その定義 `.claude/skills/health-check/SKILL.md` に従い、**`npm run governance:check` の実行（赤は発見事項）と、機械化されていない検査（Check 5 の残置部分・Check 7）を本スキルの責任で実施する**（＝`/health-check` を起動しない、という意味である。実行方式はインライン／サブエージェントへの委譲のいずれでもよい）。
 
 **サブエージェントへ委譲する場合、Check 7 にはメモリ領域の絶対パスをプロンプトへ明示的に渡す**（サブエージェントは system prompt を継承しないため、渡さなければ `MEMORY.md` を見つけられない）。渡さないなら Check 7 は `[Skipped]` であり、**`Skipped` が残るまま「All checks passed」と報告しない**（#489）。
 
@@ -132,4 +132,4 @@ health-check は「報告のみ・修正しない」定義のため、発見事�
 2. ドキュメントに反映した教訓（あれば、どのファイルに何を追加したか）
 3. 振り分けたタスク（起票した issue 番号 / 追記した PR 本文チェックリスト）
 4. メモリの更新（あれば、追加/更新/削除したメモリ）
-5. health-check の結果サマリ（発見事項・`Skipped` とその処理・**根拠**）。カテゴリ定義は health-check の出力形式（`.claude/skills/health-check/SKILL.md`）を SSOT とする——**根拠**は発見事項でも `Skipped` でもない実行の証跡で、Check 1 の照合母集団・Check 7 の実在列挙などが該当する（発見事項カウント・`All checks passed` 判定には算入しない）
+5. health-check の結果サマリ（発見事項・`Skipped` とその処理・**根拠**）。カテゴリ定義は health-check の出力形式（`.claude/skills/health-check/SKILL.md`）を SSOT とする——**根拠**は発見事項でも `Skipped` でもない実行の証跡で、governance:check の出力（照合母集団の件数行）・Check 7 の実在列挙などが該当する（発見事項カウント・`All checks passed` 判定には算入しない）

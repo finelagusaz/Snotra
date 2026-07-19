@@ -4,11 +4,13 @@ paths:
   - ".githooks/**"
   - ".claude/settings.json"
   - ".github/workflows/**"
+  - ".claude/rules/**"
+  - ".claude/skills/**"
 ---
 
 # 安全網（hook / CI / githooks / 規範）を新設・変更するときのルール
 
-このファイルは、安全網そのもの（PreToolUse/PostToolUse hook・`.githooks/`・CI workflow・スキル/ドキュメントの規約）を触ったときに自動配送される。**設計哲学**（検出は構造化信号で行い、fail-closed を既定値に埋める）は `docs/development-principles.md` の §「構造的設計原則と強制の階梯」内の項目 6・7 が SSOT。ここに置くのは、その安全網が**本当に効いているか**を確かめる運用手順である。
+このファイルは、安全網そのもの（PreToolUse/PostToolUse hook・`.claude/settings.json`・`.githooks/`・CI workflow・`.claude/rules/`・`.claude/skills/`）を触ったときに自動配送される（`.claude/rules/**` を含むため、本ファイル自身の編集でも配送される——rules も安全網であり、この手順は自分自身にも適用される）。規範文書（ルート `CLAUDE.md` / `AGENTS.md` 等）も安全網の一種だが `paths` の対象外＝変更時に自動配送されない（頻繁な文書編集への誤配送を避けるため。必要時に手動参照する）。**設計哲学**（検出は構造化信号で行い、fail-closed を既定値に埋める）は `docs/development-principles.md` の §「構造的設計原則と強制の階梯」内の項目 6・7 が SSOT。ここに置くのは、その安全網が**本当に効いているか**を確かめる運用手順である。
 
 ## 効いていることは、故障注入で一度は実測する
 

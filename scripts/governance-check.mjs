@@ -15,11 +15,15 @@
 //   故障注入 red / 正常 green / 判定対象外の不混入を検証する）
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** 実在検査の対象と見なすソース系拡張子（G3）。ランタイム生成物（.bin/.bak 等）は含めない */
 const REF_EXTENSIONS = /\.(md|rs|ts|tsx|mjs|json|toml|yml|ps1|html|css)$/;
-/** 走査から除外するディレクトリ名（生成物・untracked バッファ） */
-const WALK_EXCLUDE = new Set([".git", "node_modules", "target", "dist", "workspace", "worktrees"]);
+/** 走査から除外するディレクトリ。名前ベース（任意の深さの生成物）とルート相対プレフィックス
+ *  （untracked バッファ）を分ける——`ui/src/workspace/` のような将来の同名ソースを静かに
+ *  落とさないため、workspace/worktrees はルート錨止めにする */
+const WALK_EXCLUDE_NAMES = new Set([".git", "node_modules", "target", "dist"]);
+const WALK_EXCLUDE_PREFIXES = ["workspace", ".claude/worktrees"];
 
 /** リポジトリを歩いて snapshot（files: "/" 区切り相対パス一覧, read(rel)）を作る。
  *  列挙は fs 自身に問う（`git ls-files` の pathspec `**` 意味論の罠を避ける・health-check Check 1 注記） */
@@ -27,10 +31,11 @@ export function makeSnapshot(root) {
   const files = [];
   const walk = (dir) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const rel = path.relative(root, path.join(dir, e.name)).replaceAll("\\", "/");
       if (e.isDirectory()) {
-        if (!WALK_EXCLUDE.has(e.name)) walk(path.join(dir, e.name));
+        if (!WALK_EXCLUDE_NAMES.has(e.name) && !WALK_EXCLUDE_PREFIXES.includes(rel)) walk(path.join(dir, e.name));
       } else {
-        files.push(path.relative(root, path.join(dir, e.name)).replaceAll("\\", "/"));
+        files.push(rel);
       }
     }
   };
@@ -141,14 +146,16 @@ export function checkArchitectureTable(snapshot) {
 export function checkReferences(snapshot, docs) {
   const findings = [];
   const fileSet = new Set(snapshot.files);
-  const exists = (doc, ref) => {
+  const exists = (doc, ref, { allowSuffix = false } = {}) => {
     const norm = (p) => path.posix.normalize(p);
     if (fileSet.has(norm(ref))) return true; // リポジトリルート基準
     const rel = norm(path.posix.join(path.posix.dirname(doc), ref)); // 文書ディレクトリ基準
     if (fileSet.has(rel)) return true;
     // crate 内相対参照（`lib/types.ts` = ui/src/lib/types.ts、`commands/launch.rs` =
-    // src-tauri/src/commands/launch.rs 等）はサフィックス一致で解決する。ref は `/` を
-    // 2 セグメント以上含む（述語で保証）ため一致の特異性は保たれる（意図的な近似）
+    // src-tauri/src/commands/launch.rs 等）はサフィックス一致で解決する（意図的な近似）。
+    // バッククォート参照（`/` 必須の述語 = 2 セグメント以上）に限る——Markdown リンクへ
+    // 適用すると、壊れた相対リンクが同 basename の別ファイルで偽陰性になる
+    if (!allowSuffix) return false;
     const suffix = `/${norm(ref)}`;
     return !suffix.includes("..") && snapshot.files.some((f) => f.endsWith(suffix));
   };
@@ -177,7 +184,7 @@ export function checkReferences(snapshot, docs) {
         if (t.includes("://") || t.includes(" ")) continue;
         if (!REF_EXTENSIONS.test(t)) continue;
         if (t.startsWith("workspace/") || t.startsWith("~")) continue;
-        if (!exists(doc, t)) {
+        if (!exists(doc, t, { allowSuffix: true })) {
           findings.push(finding(doc, lineNo, `バッククォート参照のパスが実在しない: ${t}`));
         }
       }
@@ -226,7 +233,7 @@ export function checkSpecSections(snapshot, docs) {
     const text = snapshot.read(doc);
     if (text == null) continue; // 母集団欠落は G3 が報告する
     for (const [lineNo, line] of linesOutsideFences(text)) {
-      for (const m of line.matchAll(/SPEC(?:\.md)?(?: の)? ?§(\d+(?:\.\d+)?)/g)) {
+      for (const m of line.matchAll(/SPEC(?:\.md)?`?(?: の)? ?§(\d+(?:\.\d+)?)/g)) {
         if (!sections.has(m[1])) {
           findings.push(finding(doc, lineNo, `SPEC §${m[1]} が SPEC.md に実在しない`));
         }
@@ -338,7 +345,10 @@ export function globToRegex(pattern) {
   let i = 0;
   while (i < pattern.length) {
     const c = pattern[i];
-    if (c === "*") {
+    if (c === "{" && pattern.indexOf("}", i) === -1) {
+      re += "\\{"; // 未閉ブレースは literal 扱い（無限ループ防止・0 件マッチの loud な赤に倒れる）
+      i += 1;
+    } else if (c === "*") {
       if (pattern.startsWith("**/", i)) {
         re += "(?:.*/)?";
         i += 3;
@@ -373,7 +383,7 @@ export function checkRulesGlobs(snapshot) {
   if (rules.length === 0) return [finding(".claude/rules", 1, "rules ファイルが 0 件（G7 母集団の欠落）")];
   for (const rule of rules) {
     const text = snapshot.read(rule) ?? "";
-    const fm = text.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+    const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? ""; // CRLF checkout 耐性
     const patterns = [...fm.matchAll(/^\s*-\s*"([^"]+)"/gm)].map((m) => m[1]);
     if (patterns.length === 0) {
       findings.push(finding(rule, 1, "frontmatter に paths パターンが 1 件も無い"));
@@ -447,7 +457,9 @@ export function runAll(snapshot) {
   return { findings, evidence };
 }
 
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1").replaceAll("/", path.sep);
+// fileURLToPath を使う — URL.pathname は空白等を percent-encode するため resolve と一致せず、
+// 「検査ゼロ件のまま exit 0」という沈黙経路になる（レビュー H1 で実測）
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   const { findings, evidence } = runAll(makeSnapshot(process.cwd()));
   if (findings.length > 0) {

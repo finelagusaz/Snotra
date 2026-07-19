@@ -38,6 +38,11 @@ describe("globToRegex（G7 の意味論固定・代表入力）", () => {
       expect(re.test(ng)).toBe(false);
     });
   }
+  it("未閉ブレースは literal 扱いで停止する（無限ループ回帰・レビュー H2）", () => {
+    const re = globToRegex("foo{bar.rs");
+    expect(re.test("foo{bar.rs")).toBe(true);
+    expect(re.test("foobar.rs")).toBe(false);
+  });
 });
 
 describe("G1 checkModuleIndex", () => {
@@ -100,6 +105,11 @@ describe("G3 checkReferences", () => {
       "docs/guide.md": "",
     });
     expect(checkReferences(s, ["AGENTS.md"])).toEqual([]);
+  });
+  it("赤: 壊れた相対リンクは同 basename の別ファイルがあっても赤（サフィックス解決はバッククォート参照限定・レビュー M1）", () => {
+    const s = snap({ "docs/a.md": "[x](guide.md)\n" }, ["ui/src/guide.md"]);
+    const f = checkReferences(s, ["docs/a.md"]);
+    expect(f.some((x) => x.message.includes("guide.md"))).toBe(true);
   });
   it("赤: 実在しない Markdown リンク先", () => {
     const s = snap({ "AGENTS.md": "[x](docs/gone.md)\n" });
@@ -169,6 +179,11 @@ describe("G4 checkSpecSections", () => {
   it("コードフェンス内の # 行（TOML コメント等）を見出しと誤認しない", () => {
     const s = snap({ "SPEC.md": "## 1. a\n```toml\n# 旧形式（廃止）\n## 5. ダミー\n```\n## 2. b\n" });
     expect(checkSpecSections(s, [])).toEqual([]);
+  });
+  it("バッククォート隣接形（`SPEC.md` §N）も参照として拾う（レビュー L2）", () => {
+    const s = snap({ "SPEC.md": spec, "docs/a.md": "`SPEC.md` §9.9 を参照\n" });
+    const f = checkSpecSections(s, ["docs/a.md"]);
+    expect(f.some((x) => x.message.includes("9.9"))).toBe(true);
   });
   it("SPEC 前置のない裸の §N は検査対象外（不混入検算）", () => {
     const s = snap({ "SPEC.md": spec, "docs/a.md": "設計文書 §99 を参照\n" });
@@ -278,7 +293,8 @@ describe("runAll（空母集団の明示 fail = 沈黙経路の閉塞）", () =>
 describe("実リポジトリ スモーク（dogfood）", () => {
   it("現在のリポジトリで全検査が緑", async () => {
     const { makeSnapshot } = await import("./governance-check.mjs");
-    const s = makeSnapshot(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
+    const { fileURLToPath } = await import("node:url");
+    const s = makeSnapshot(fileURLToPath(new URL("..", import.meta.url)));
     const { findings } = runAll(s);
     expect(findings).toEqual([]);
   });

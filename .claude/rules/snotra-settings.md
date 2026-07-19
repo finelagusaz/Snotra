@@ -3,12 +3,14 @@ paths:
   - "snotra-settings/**/*.rs"
 ---
 
-# snotra-settings ルール
+# snotra-settings ルール（ルーター）
 
-詳細は `snotra-settings/CLAUDE.md` を参照。
+事実の正準は `snotra-settings/CLAUDE.md`。本 rule は「どこを読むか」だけを示す（要約を置かない）。位置はファイル名で断定せず**見出し名・シンボル名で grep** して辿る（#588）。
 
-- **`saved` は「検証を通った config 全体」に差し替わる時だけ更新する**: `draft` は自由に変更可。`saved` が進む契機は save 成功と完全な config のロード（初期化・import 等）で、いずれも部分編集ではなく全体差し替えである。編集中の `draft` を部分的に `saved` へ写す経路を作ると部分保存バグになる。核心は、バリデーション/IO 失敗時に `saved` を進めないこと
-- **egui API 型注意**: `Key::ALL` は `&[Key]`（`for &key in`）、`color_edit_button_srgba` は永続変数の `&mut Color32` を渡す（一時変数だと変更が消える）
-- **フレームごとに重い処理を呼ばない**: `list_system_fonts()` 等は `new()` で一度だけ取得しキャッシュ
-- **PickerState の `active = false` リセット忘れ**: キャンセル・成功の両パスで必ず。忘れるとボタン永久無効化
-- **Opener ターゲット変更は remove → add**: ルールの `target` を直接書き換えると同じルール内の他ツールも巻き込まれる
+## 読む正準（`snotra-settings/CLAUDE.md` の該当節）
+
+- `saved` / `draft` の更新規律（save 成功・完全ロード時のみ `saved` を進める・部分保存禁止）: 「draft / saved 二重状態モデル」+「保存フロー」
+- egui API の型（`Key::ALL` は `&[Key]`・`color_edit_button_srgba` は永続 `&mut Color32`・`Stroke::new` の版差）: 「API の型に注意」
+- フレームごとの重い処理（`list_system_fonts()` 等は `new()` で 1 度キャッシュ）: 「フレームごとの重い処理を避ける」
+- `PickerState.active = false` の戻し（キャンセル・成功の両パス・`poll()` に集約）: 「非同期ファイルピッカーパターン」
+- opener ターゲット変更は remove → add（`OpenerRule.target` を直接書き換えない）: 「開発ルール」

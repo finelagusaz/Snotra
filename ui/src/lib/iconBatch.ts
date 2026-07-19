@@ -1,5 +1,5 @@
 /** 長さプレフィックス付きバイナリバッチを、パスごとの Blob URL へパースする。
- *  ワイヤ形式の正準は `src-tauri/src/icon.rs` の `encode_batch_binary` rustdoc。
+ *  ワイヤ形式の正本は `src-tauri/src/icon.rs` の `encode_batch_binary` rustdoc。
  *  本デコーダはそれに一致する。デコードは `iconBatch.test.ts` が形式どおりに組み立てた
  *  実バイト列で検証する（Rust エンコーダ出力との言語横断往復ではない）。
  *

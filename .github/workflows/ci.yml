@@ -113,7 +113,7 @@ jobs:
         run: cargo doc --workspace --no-deps --document-private-items
 
       # #509: main 保護 Layer 1（.githooks）と PreToolUse/PostToolUse フック
-      # （.claude/hooks）の selftest は、実運用が Windows でのみ起きる安全網。
+      # （.claude/hooks）の selftest は、実運用が Windows でのみ起きるセーフティネット。
       # ubuntu の frontend-check と相補的に、Windows 固有の hook 実行機構
       # （Git-for-Windows の shebang 経由 sh 起動・パス/クォート境界）を検知する。
       - name: Setup Node.js

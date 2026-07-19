@@ -94,7 +94,7 @@ describe("selectChecks", () => {
   });
 
   // #484: .githooks/ は #480 以降 main 保護の Layer 1。.claude/hooks/ と同じ理由。
-  it(".githooks/ は githooks-selftest（安全網そのものの自己検査）", () => {
+  it(".githooks/ は githooks-selftest（セーフティネットそのものの自己検査）", () => {
     expect(selectChecks(".githooks/pre-commit")).toEqual(["githooks-selftest"]);
     expect(selectChecks(".githooks/githooks.test.mjs")).toEqual(["githooks-selftest"]);
   });
@@ -143,7 +143,7 @@ describe("selectChecks", () => {
     expect(selectChecks("foo/tauri.conf.json")).toEqual(["config-warn"]);
   });
 
-  // 安全網そのものを編集したときは、安全網が生きているか確かめる。
+  // セーフティネットそのものを編集したときは、セーフティネットが生きているか確かめる。
   // これが無いと、全検査の発火を決めるファイルだけが誰にも検査されない。
   // （settings.json を parse するだけの検査に自己参照ループは生じない。
   //   hook は settings.json を読んで発火判断をしていないため）
@@ -555,7 +555,7 @@ describe("統合: post-edit.mjs をプロセスとして起動する", () => {
 
 describe("tsconfig ドリフト検出カナリア — C2", () => {
   // selectChecks の typecheck 条件は tsconfig の include - exclude と一致していなければならない。
-  // tsconfig を触った人がここで気づく。真実源は `tsc --listFilesOnly` の program 内容であり、
+  // tsconfig を触った人がここで気づく。SSOTは `tsc --listFilesOnly` の program 内容であり、
   // glob の見た目ではない（git の '**/' と TypeScript の '**/' は意味が違う）。
   it("tsconfig の include / exclude が selectChecks の前提と一致する", () => {
     const tsconfigPath = fileURLToPath(new URL("../../tsconfig.json", import.meta.url));

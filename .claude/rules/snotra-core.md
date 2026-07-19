@@ -5,9 +5,9 @@ paths:
 
 # snotra-core ルール（ルーター）
 
-事実の正準は `snotra-core/CLAUDE.md` とコード。本 rule は「どこを読むか・何を撃つか」だけを示す（要約を置かない）。`search.rs` 固有は `snotra-core-search.md`。位置はファイル名で断定せず**見出し名・シンボル名で grep** して辿る（refactor で移動しうる・#588）。
+事実の正本は `snotra-core/CLAUDE.md` とコード。本 rule は「どこを読むか・何を撃つか」だけを示す（要約を置かない）。`search.rs` 固有は `snotra-core-search.md`。位置はファイル名で断定せず**見出し名・シンボル名で grep** して辿る（refactor で移動しうる・#588）。
 
-## 読む正準（`snotra-core/CLAUDE.md` の該当節）
+## 読む正本（`snotra-core/CLAUDE.md` の該当節）
 
 - `SearchEngine` に並列 Vec フィールドを追加: 「実装前チェック（必須）」
 - `normalize_entry_key` を変更: 「`normalize_entry_key` の冪等性契約」+「history.rs のキー正規化に関するチェックリスト」

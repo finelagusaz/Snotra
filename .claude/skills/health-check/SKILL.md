@@ -24,7 +24,7 @@ allowed-tools:
 
 ## Check 2 — docs/architecture.md にファイル単位モジュール表が再導入されていないか
 
-→ **`npm run governance:check`（G2・#587）が機械検査する。ここでは実行しない。** 責務宣言の正準は `//!` / TSDoc、CLAUDE.md は索引 + 横断不変条件（#562）という設計の回帰検知。
+→ **`npm run governance:check`（G2・#587）が機械検査する。ここでは実行しない。** 責務宣言の正本は `//!` / TSDoc、CLAUDE.md は索引 + 横断不変条件（#562）という設計の回帰検知。
 
 ## Check 3 — AGENTS.md ドキュメント参照の実在性
 

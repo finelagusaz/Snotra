@@ -29,15 +29,15 @@
 | 層 | 書くもの | 例 |
 |---|---|---|
 | 散文ドキュメント（`SPEC.md` / `docs/` / 各 `CLAUDE.md`） | intent・全体構造・横断パターン | アーキテクチャ、状態遷移の意図 |
-| **doc コメント**（`///` `//!` `/** */`） | 公開アイテムの契約・精密事実の SSOT（正準コメント） | 保証・パニック条件・設計判断 |
+| **doc コメント**（`///` `//!` `/** */`） | 公開アイテムの契約・精密事実の SSOT（正本コメント） | 保証・パニック条件・設計判断 |
 | **インラインコメント**（`//`） | その行・ブロックに局所的な why | 「この順序でないと X が壊れる」 |
 
-散文ドキュメントから精密事実（式・バイト形式・機構名）を参照するときは、参照先の doc コメントを正準コメントとして指名する（詳細は development-principles.md 同節）。
+散文ドキュメントから精密事実（式・バイト形式・機構名）を参照するときは、参照先の doc コメントを正本コメントとして指名する（詳細は development-principles.md 同節）。
 
 ## rustdoc の様式
 
 - **`///` は公開アイテムの契約を書く**: 要約 1 行（何であるか）＋必要なら空行を挟んで詳細（保証・パニック条件・呼び出し前提・ロック規律）。全 pub アイテムへの機械的な付与は求めない——**契約や非自明な前提を持つものに書く**
-- **`//!` はモジュール冒頭の責務宣言**: モジュールの役割と設計方針を数行で。**#562 で責務を持つ個別モジュールへ展開し、`CLAUDE.md` のモジュール責務は原則 `//!` を正準とする**（`src-tauri` の `commands/`・`platform/` のような薄いラッパー集約群や宣言のみの `mod.rs` は責務を `CLAUDE.md` に記す例外）——`CLAUDE.md` のモジュール構成節はファイル名の索引と、`//!` に収まらない横断不変条件・チェックリストに留める（`//!` はコード側で改名に追従し、`cargo doc` の intra-doc link 検査が相互参照の腐敗を捕まえる）。模範例は `snotra-core/src/search.rs`（`SearchEngine`）/ `opener.rs`、`src-tauri/src` の `working_set.rs` / `state.rs`、`snotra-settings/src` の `style.rs`
+- **`//!` はモジュール冒頭の責務宣言**: モジュールの役割と設計方針を数行で。**#562 で責務を持つ個別モジュールへ展開し、`CLAUDE.md` のモジュール責務は原則 `//!` を正本とする**（`src-tauri` の `commands/`・`platform/` のような薄いラッパー集約群や宣言のみの `mod.rs` は責務を `CLAUDE.md` に記す例外）——`CLAUDE.md` のモジュール構成節はファイル名の索引と、`//!` に収まらない横断不変条件・チェックリストに留める（`//!` はコード側で改名に追従し、`cargo doc` の intra-doc link 検査が相互参照の腐敗を捕まえる）。模範例は `snotra-core/src/search.rs`（`SearchEngine`）/ `opener.rs`、`src-tauri/src` の `working_set.rs` / `state.rs`、`snotra-settings/src` の `style.rs`
 - **設計判断の長文は `# Why ...` 見出しで構造化する**: 模範例は `snotra-core/src/search.rs` の `SearchEngine` struct doc——`# Why parallel Vecs instead of a single Vec<CachedEntry> struct?` 見出しの下に、試作ブランチ・issue 番号・ベンチ結果の表・根本原因・「意図的であり技術的負債ではない」の明言、を置く。**長さ自体は問題ではない**（→「歴史メモの様式」）
 
 ## TSDoc の様式

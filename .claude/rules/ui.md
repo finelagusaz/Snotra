@@ -5,9 +5,9 @@ paths:
 
 # ui ルール（ルーター）
 
-事実の正準は `ui/CLAUDE.md` とコード。要約コピーは置かず正準へ指す。位置はファイル名で断定せず**見出し名・シンボル名で grep**（#588）。
+事実の正本は `ui/CLAUDE.md` とコード。要約コピーは置かず正本へ指す。位置はファイル名で断定せず**見出し名・シンボル名で grep**（#588）。
 
-## 読む正準（`ui/CLAUDE.md` の該当節）
+## 読む正本（`ui/CLAUDE.md` の該当節）
 
 - `await` 後に保存状態を復元するなら staleness チェック（lane タスクは `isStale()`・起動フローは `disturbed()`・非 lane は `searchLane.invalidate()` で in-flight を supersede）: 「実装パターン」+ `lib/latestRun.ts` / `lib/exclusive.ts`
 - モード遷移でデバウンスをキャンセル（`OwnedTimer` の `cancel()` を `cancelDebounce()` / `cancelInstantCommandDebounce()` 経由で）: `lib/ownedTimer.ts` +「実装パターン」

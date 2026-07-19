@@ -1,4 +1,4 @@
-// governance-check.mjs の検査関数を、故障注入フィクスチャ（赤）と正常フィクスチャ（緑）の
+// governance-check.mjs の検査関数を、フォールトインジェクションフィクスチャ（赤）と正常フィクスチャ（緑）の
 // 両方向で検証する。各フィクスチャは「守りたい対象 1 件が入力に現れること」と
 // 「判定対象外が入力に混じらないこと」の入力集合検算を兼ねる（.claude/rules/safety-nets.md）。
 import { describe, it, expect } from "vitest";

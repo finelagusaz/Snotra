@@ -39,7 +39,7 @@ const ghPrCreate = (rest = "") => `${GH} ${PR_CREATE}${rest}`;
 
 describe("tokenStart — 区切り文字を消費せずコマンド本体の位置を返す", () => {
   // §2.2: 先頭の区切り文字を食ったまま match.index を使うと `&&` の片方しか
-  // between に入らず、hasSafeChain が正準 allow ケースを block する。
+  // between に入らず、hasSafeChain が正規 allow ケースを block する。
   it("先頭のコマンドは 0 を返す", () => {
     expect(tokenStart(GH_PR_CREATE, ghPrCreate())).toBe(0);
   });

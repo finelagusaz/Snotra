@@ -49,7 +49,7 @@ Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-
 
 ## 各クレート・パッケージの詳細
 
-各モジュールの責務宣言は各ファイルの `//!`（Rust）/ TSDoc（TS）を正準とし、各サブディレクトリの `CLAUDE.md` はファイル名の索引と横断不変条件を持つ（#562。このセクションでは重複させない）。ここでは各クレート・パッケージの位置づけと主要な型のみを記す。
+各モジュールの責務宣言は各ファイルの `//!`（Rust）/ TSDoc（TS）を正本とし、各サブディレクトリの `CLAUDE.md` はファイル名の索引と横断不変条件を持つ（#562。このセクションでは重複させない）。ここでは各クレート・パッケージの位置づけと主要な型のみを記す。
 
 ### snotra-core（純ロジック層）
 
@@ -124,7 +124,7 @@ ui/src/
 
 - `SHGetFileInfoW` → HICON → BGRA → PNG で抽出（base64 エンコードなし）
 - フロントエンドへは `tauri::ipc::Response` でバイナリ IPC（`get_icons_batch`）
-- バッチのワイヤ形式の正準は `src-tauri/src/icon.rs` の `encode_batch_binary` rustdoc（ここでは再記述しない）
+- バッチのワイヤ形式の正本は `src-tauri/src/icon.rs` の `encode_batch_binary` rustdoc（ここでは再記述しない）
 - フロントエンド側は `parseBinaryBatch()` → `URL.createObjectURL(new Blob(...))` で `<img src>` に渡す
 - `LruIconCache` で Blob URL を管理し、自動 `revokeObjectURL` でメモリリーク防止
 - CSP の `connect-src` に `ipc: http://ipc.localhost` が必須（リリースビルドで必要）

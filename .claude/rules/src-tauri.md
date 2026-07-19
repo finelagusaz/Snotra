@@ -5,9 +5,9 @@ paths:
 
 # src-tauri ルール（ルーター）
 
-事実の正準は `src-tauri/CLAUDE.md` とコード。要約コピーは置かず正準へ指す。ただし CLAUDE.md に正準の無い src-tauri 固有の不変条件は「この rule が正準」節に残す。位置はファイル名・行で断定せず**見出し名・シンボル名で grep**（#588）。
+事実の正本は `src-tauri/CLAUDE.md` とコード。要約コピーは置かず正本へ指す。ただし CLAUDE.md に正本の無い src-tauri 固有の不変条件は「この rule が正本」節に残す。位置はファイル名・行で断定せず**見出し名・シンボル名で grep**（#588）。
 
-## 読む正準（`src-tauri/CLAUDE.md` の該当節）
+## 読む正本（`src-tauri/CLAUDE.md` の該当節）
 
 - index-build フラグは `try_begin_index_build` / `finish_index_build` 経由（`indexing` / `index_build_started` を直接 store しない）: 「実装パターン」
 - ランタイムでウィンドウ生成しない（`WebviewWindowBuilder::build()` はメッセージポンプ進行を要求しデッドロック・生成は setup 限定）: 「WebView2 ウィンドウ生成の制約」
@@ -16,7 +16,7 @@ paths:
 - イベント順序 `language-changed` → `hotkey-registration-failed`: 「モジュール構成」の不変条件
 - engine ロックは async/blocking 境界またぎで保持しない（抽出 → 即解放 → 処理）: `snotra-core/CLAUDE.md`「engine.rs のロック最小化パターン」
 
-## この rule が正準（CLAUDE.md に無い src-tauri 固有）
+## この rule が正本（CLAUDE.md に無い src-tauri 固有）
 
 - **子プロセス spawn → exit ハンドラ kill はペア**: `snotra-settings.exe` 等を spawn したら `main.rs` の exit ハンドラで `child.kill()` する（生成/破棄のペア）
 - **Win32 API は `PlatformBridge` 経由**: IPC ハンドラから直接呼ばず `platform::{PlatformBridge, PlatformCommand}` で platform スレッドのメッセージループに実行を委ねる

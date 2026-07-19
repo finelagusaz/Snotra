@@ -7,7 +7,7 @@
 
 ## モジュール構成
 
-各モジュールの責務宣言は各ファイルの `//!`（module doc）を正準とする。本節はファイル一覧と、`//!` に収まらない**横断不変条件・チェックリスト**を記す。`//!` はコード側で改名に追従し、`cargo doc` の intra-doc link 検査が相互参照の腐敗を捕まえる（#562）。
+各モジュールの責務宣言は各ファイルの `//!`（module doc）を正本とする。本節はファイル一覧と、`//!` に収まらない**横断不変条件・チェックリスト**を記す。`//!` はコード側で改名に追従し、`cargo doc` の intra-doc link 検査が相互参照の腐敗を捕まえる（#562）。
 
 - `engine.rs` — 検索・履歴・設定を単一ロックに統合する facade（責務は `//!`）。以下は engine ロックに閉じる横断コヒーレンシ:
   - **`IndexInputs`**: index 構築入力（scan / show_hidden_system / show_icons / include_path_env / migemo_enabled）の単一定義

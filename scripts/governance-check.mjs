@@ -14,7 +14,7 @@
 // - findings あり → exit 1 + `file:line` 付き全件列挙。免除注記の機構は設けない
 // - 空母集団（対象文書 0 件・rules 0 件・skills 0 件）は明示 fail（沈黙経路の閉塞）
 // - 各検査はスナップショット注入の純関数（scripts/governance-check.test.mjs がフィクスチャで
-//   故障注入 red / 正常 green / 判定対象外の不混入を検証する）
+//   フォールトインジェクション red / 正常 green / 判定対象外の不混入を検証する）
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -132,7 +132,7 @@ export function checkArchitectureTable(snapshot) {
   if (text == null) return [finding(p, 1, "docs/architecture.md が読めない")];
   for (const [lineNo, line] of linesOutsideFences(text)) {
     if (/^\|\s*`[^`]+\.(rs|ts|tsx|mts|mjs)`\s*\|/.test(line)) {
-      findings.push(finding(p, lineNo, `ファイル単位のモジュール表行が再導入されている: ${line.trim().slice(0, 60)}（責務の正準は //! / TSDoc・#562）`));
+      findings.push(finding(p, lineNo, `ファイル単位のモジュール表行が再導入されている: ${line.trim().slice(0, 60)}（責務の正本は //! / TSDoc・#562）`));
     }
   }
   return findings;
@@ -248,7 +248,7 @@ export function checkSpecSections(snapshot, docs) {
 // ---------------------------------------------------------------------------
 // G5 — docs/build-commands.md の npm script / cargo test -p crate の実在（旧 Check 5 の決定的部分）。
 // crate 名はディレクトリ名でなく各 member Cargo.toml の [package] name（`-p snotra` = src-tauri/）。
-// check/clippy は --workspace で cargo 自身が真実源を読むため照合対象外（#500）。
+// check/clippy は --workspace で cargo 自身がSSOTを読むため照合対象外（#500）。
 // ---------------------------------------------------------------------------
 export function checkBuildCommands(snapshot) {
   const findings = [];

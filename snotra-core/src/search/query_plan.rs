@@ -2,7 +2,7 @@
 //!
 //! 1 回の検索呼び出しについて、正規化クエリ・dot/path 判定・Fuzzy bitmask・migemo かな
 //! クエリ・UTF-32 needle・パス照合クエリ・履歴キーを**純粋に**導出する（エントリ走査も
-//! 履歴更新も行わない自由関数）。正準は `crate::query` の正規化群であり、ここは検索固有の
+//! 履歴更新も行わない自由関数）。正本は `crate::query` の正規化群であり、ここは検索固有の
 //! 組み立て責務のみを持つ。incremental 判定と前回状態の read/write は親 `search.rs` の
 //! `IncrementalCache`（`can_reuse` / `update`・#601）。
 

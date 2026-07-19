@@ -22,7 +22,7 @@
 //
 // 詳細と実測の根拠は issue #482。
 
-// 実測（#482 Phase 2 の故障注入 V2）: Windows の PowerShell tool の tool_name は
+// 実測（#482 Phase 2 のフォールトインジェクション V2）: Windows の PowerShell tool の tool_name は
 // 文字列 "PowerShell" である。matcher が取りこぼすと hook は静かに素通りするため
 // （それがこの issue の D1 そのもの）、ここは推測ではなく実測値で固定している。
 

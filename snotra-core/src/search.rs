@@ -5,7 +5,6 @@
 //! Fuzzy（基準は `mod score_tier`）。cache locality のためエントリ属性は並列 Vec で保持する
 //! （struct 化はベンチ劣化を確認済み——根拠は `SearchEngine` の struct doc を参照）。
 
-use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
@@ -16,13 +15,13 @@ use rayon::prelude::*;
 use crate::config::{SearchConfig, SearchHistoryNormalizationConfig};
 use crate::history::HistoryStore;
 use crate::indexer::AppEntry;
-use crate::query::{
-    char_bitmask, normalize_history_query_key, normalize_query, to_kana,
-};
 use crate::ui_types::SearchResult;
 
 // 構築処理（Wave 1/2・kana マスク・IndexCache 復元・全コンストラクタ）は子モジュールへ分離（#598）。
 mod build;
+// クエリ計画（QueryPlan・prepare_query_plan の純粋導出）は子モジュールへ分離（#599）。
+mod query_plan;
+use query_plan::{QueryPlan, prepare_query_plan};
 
 const GLOBAL_WEIGHT: i64 = 5;
 const QUERY_WEIGHT: i64 = 20;
@@ -193,32 +192,6 @@ struct EntryView<'a> {
     lower_name: &'a str,
     lower_file_name: Option<&'a str>,
     normalized_key: &'a str,
-}
-
-/// 1 回の検索呼び出しでクエリから 1 度だけ導出する、スコアリング共有データ。
-/// `search_with_options` の候補準備フェーズ（`prepare_query_plan`）が構築し、
-/// `decide_incremental` と `score_one_entry` が `&QueryPlan` で共有する。
-/// `norm_query` のみ入力 `query` を借用しうる（ASCII 小文字クエリはゼロアロケーション）。
-/// `needle_u32` は `norm_query` から生成後は独立（借用しない）。
-struct QueryPlan<'a> {
-    /// 正規化済みクエリ（アクセント折畳み・連続スペース圧縮・小文字化）。
-    norm_query: Cow<'a, str>,
-    /// `norm_query` が `.` を含むか（file_name スコアリングと incremental ガードに連動）。
-    has_dot: bool,
-    /// 生クエリがパス区切り（`\` `/` `¥`）を含むか。
-    has_path_sep: bool,
-    /// Fuzzy モードのビットマスク pre-filter 用クエリマスク（非 Fuzzy では 0）。
-    query_mask: u64,
-    /// migemo 用ひらがな変換クエリ（ASCII 残留や条件未達のとき `None`）。
-    kana_query: Option<String>,
-    /// kana_query 用の損失あり文字存在マスク。kana_query がないときは `None`。
-    kana_query_mask: Option<u64>,
-    /// `norm_query` の UTF-32 事前計算（Fuzzy マッチで全スレッド共有）。
-    needle_u32: Utf32String,
-    /// パスマッチ用クエリ（生クエリベース・アクセント/連続スペース保持）。`has_path_sep` 時のみ。
-    path_query: Option<String>,
-    /// パスクエリの履歴照合キー（`normalize_history_query_key` 由来）。`path_query` とは別。
-    path_history_key: Option<String>,
 }
 
 /// kana の Unicode scalar value を 64 bit に写す損失あり存在マスク。
@@ -581,89 +554,6 @@ impl SearchEngine {
     pub fn entries(&self) -> &[AppEntry] {
         &self.entries
     }
-}
-
-/// 検索呼び出しの候補準備フェーズ。クエリを解析して [`QueryPlan`] を組み立てる。
-/// `norm_query` が空のとき `None`（呼び出し側は空結果を返す）。`self` 非依存の自由 fn。
-fn prepare_query_plan<'a>(
-    query: &'a str,
-    mode: SearchMode,
-    options: &SearchOptions,
-) -> Option<QueryPlan<'a>> {
-    let norm_query = normalize_query(query);
-    if norm_query.is_empty() {
-        return None;
-    }
-
-    let has_dot = norm_query.contains('.');
-    // Bitmask pre-filter is only used in Fuzzy mode; skip the computation for others.
-    let query_mask = if mode == SearchMode::Fuzzy { char_bitmask(&norm_query) } else { 0 };
-
-    // Migemo: ローマ字 ASCII クエリをひらがなに変換した kana_query を生成する。
-    // kana に ASCII アルファベットが残留する場合（"dok" → "どk" 等）は None にする。
-    let kana_query: Option<String> = if options.migemo_enabled
-        && norm_query.is_ascii()
-        && norm_query.chars().count() >= options.migemo_min_chars
-    {
-        let k = to_kana(norm_query.as_ref());
-        if k != norm_query.as_ref() && !k.bytes().any(|b| b.is_ascii_alphabetic()) {
-            Some(k)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-    let kana_query_mask = kana_query.as_deref().map(kana_char_mask);
-
-    // Pre-compute needle as UTF-32 once per search call and share it across threads.
-    // Reusing the same Utf32String avoids repeated O(|query|) char conversion per entry.
-    let needle_u32 = Utf32String::from(norm_query.as_ref());
-
-    // Path matching: クエリにパス区切り文字（\ / ¥）を含む場合、normalized_key（フルパス）
-    // に対して Substring マッチを試みる。
-    // normalize_query() は連続スペースを潰すが normalize_entry_key() は保持するため、
-    // パスマッチ用クエリは生クエリから normalize_entry_key() 相当で正規化する。
-    // これにより "C:\My  Tools\" のような連続スペースを含むパスにもマッチする。
-    // ¥（U+00A5）は日本語 Windows でバックスラッシュとして使われるため対象に含める。
-    let has_path_sep = {
-        let q = query.trim();
-        q.contains('\\') || q.contains('/') || q.contains('\u{00a5}')
-    };
-    let path_query: Option<String> = if has_path_sep {
-        // normalize_entry_key と同じ正規化: 小文字化 + / と ¥ を \ に統一
-        let trimmed = query.trim();
-        let mut pq = String::with_capacity(trimmed.len());
-        for ch in trimmed.chars() {
-            if ch == '/' || ch == '\u{00a5}' {
-                pq.push('\\');
-            } else {
-                pq.extend(ch.to_lowercase());
-            }
-        }
-        Some(pq)
-    } else {
-        None
-    };
-    // 履歴キー: normalize_history_query_key で一元化（normalize_query + パス区切り統一）。
-    // path_query は生クエリベースでスペース/アクセントの扱いが異なるため別途作る。
-    let path_history_key: Option<String> = if has_path_sep {
-        Some(normalize_history_query_key(query).into_owned())
-    } else {
-        None
-    };
-
-    Some(QueryPlan {
-        norm_query,
-        has_dot,
-        has_path_sep,
-        query_mask,
-        kana_query,
-        kana_query_mask,
-        needle_u32,
-        path_query,
-        path_history_key,
-    })
 }
 
 /// top-k ヒープを best-first の [`SearchResult`] 列へ変換する（結果組立フェーズ）。

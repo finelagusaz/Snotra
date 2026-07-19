@@ -135,7 +135,7 @@ Claude とユーザーが一緒に作業するときの関係性の原則。
 | `/cache-check`       | キャッシュロジックの追加・変更時に述語の単調性と状態遷移の安全性を検証  | `/cache-check search_with_options: use_incremental 判定`                       |
 | `/persistence-check` | シリアライズ・on-disk 形式（index.bin/config.toml/history/window.bin）の変更時に version バンプ要否・旧形式の後方互換テスト・デコード失敗時のデータ保全を検証 | `/persistence-check IndexCache: Cow 統合`                       |
 | `/state-check`       | UI モード・ガード条件の追加・変更時に直交性・リセット経路・SPEC §8.6 整合を検証 | `/state-check InstantCommandMode 追加`                                    |
-| `/health-check`      | 定期・サイクル完了後に governance:check の実行 + 意味的整合（hook フラグ照合・メモリ）を検証（報告のみ・修正しない） | `/health-check`                                                           |
+| `/health-check`      | 定期・サイクル完了後に governance:check の実行 + 意味的整合（コマンド直書き grep・メモリ）を検証（報告のみ・修正しない） | `/health-check`                                                           |
 | `/retrospective`     | サイクル終了後に教訓の抽出・残タスクの振り分け・RETROSPECTIVE.md 上書きを実施 | `/retrospective`                                                               |
 | `/start-issue`       | GitHub issue から作業を開始（実装前段階のブランチ作成・調査・計画まで）  | `/start-issue 123`                                                        |
 | `/implement`         | コード変更を伴うタスクの実装（調査からコミットまでのフルサイクル）      | `/implement キーボードショートカットの追加`                                     |

@@ -3,6 +3,7 @@
 // 「判定対象外が入力に混じらないこと」の入力集合検算を兼ねる（.claude/rules/safety-nets.md）。
 import { describe, it, expect } from "vitest";
 import {
+  checkHookCommands,
   checkModuleIndex,
   checkArchitectureTable,
   checkReferences,
@@ -279,6 +280,66 @@ describe("G8 checkSkillTable", () => {
     const s = snap({ "CLAUDE.md": claude("| `/plan-review` | x |"), ".claude/skills/plan-review/SKILL.md": "", ".claude/skills/orphan/SKILL.md": "" });
     const f = checkSkillTable(s);
     expect(f.some((x) => x.message.includes("orphan"))).toBe(true);
+  });
+});
+
+describe("G9 checkHookCommands", () => {
+  // clippy は実物どおり複数行折返し + 行末カンマ（単一行前提の抽出を壊す代表入力）
+  const hookSrc = [
+    "function buildCommand(id, root) {",
+    '  switch (id) {',
+    '    case "clippy":',
+    "      return cargoSpec([",
+    '        "clippy", "--workspace",',
+    '        "--all-targets", "--message-format", "short", "--", "-D", "warnings",',
+    "      ]);",
+    '    case "core-test":',
+    '      return cargoSpec(["test", "-p", "snotra-core"]);',
+    '    case "typecheck":',
+    '      return nodeSpec([tsc, "-p", "tsconfig.json"]);',
+    "  }",
+    "}",
+  ].join("\n");
+  const docsA = [
+    "### A. Rust ファイル（`*.rs`）を変更した場合",
+    "",
+    "```bash",
+    "cargo check --workspace   # 必須",
+    "cargo clippy --workspace --all-targets -- -D warnings   # 必須",
+    "cargo test -p snotra-core",
+    "```",
+    "",
+    "### B. 次節",
+  ].join("\n");
+  const base = { ".claude/hooks/post-edit.mjs": hookSrc, "docs/build-commands.md": docsA };
+  it("緑: 出力整形フラグ（--message-format short）除去後にカテゴリ A と一致する", () => {
+    expect(checkHookCommands(snap(base))).toEqual([]);
+  });
+  it("赤: hook 側のフラグ乖離（--all-targets 欠落）を検出する", () => {
+    const s = snap({ ...base, ".claude/hooks/post-edit.mjs": hookSrc.replace('"--all-targets", ', "") });
+    const f = checkHookCommands(s);
+    expect(f.some((x) => x.message.includes("clippy"))).toBe(true);
+  });
+  it("赤: SSOT 側からコマンド行が消えた乖離を検出する", () => {
+    const s = snap({ ...base, "docs/build-commands.md": docsA.replace("cargo test -p snotra-core\n", "") });
+    const f = checkHookCommands(s);
+    expect(f.some((x) => x.message.includes("snotra-core"))).toBe(true);
+  });
+  it("赤: cargoSpec 抽出 0 件は母集団欠落として fail（抽出アンカー腐敗の loud 化）", () => {
+    const s = snap({ ...base, ".claude/hooks/post-edit.mjs": "function buildCommand(){}" });
+    const f = checkHookCommands(s);
+    expect(f.length).toBeGreaterThan(0);
+  });
+  it("CRLF checkout でも一致する（\\r が行末コメント除去を阻む回帰・PR #595）", () => {
+    const s = snap({
+      ".claude/hooks/post-edit.mjs": hookSrc.replace(/\n/g, "\r\n"),
+      "docs/build-commands.md": docsA.replace(/\n/g, "\r\n"),
+    });
+    expect(checkHookCommands(s)).toEqual([]);
+  });
+  it("不混入: nodeSpec / vitest 系のコマンドは照合対象にしない", () => {
+    // hookSrc の typecheck（nodeSpec）が docs に無くても緑のまま（対象は cargo 系のみ）
+    expect(checkHookCommands(snap(base))).toEqual([]);
   });
 });
 

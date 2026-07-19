@@ -1,6 +1,6 @@
 ---
 name: health-check
-description: "大きなサイクル完了後や定期メンテナンス時に使用。governance:check（決定的検査）を実行し、機械化できない意味的整合（hook フラグ照合・メモリ整合）を検証して報告する（修正はしない）。"
+description: "大きなサイクル完了後や定期メンテナンス時に使用。governance:check（決定的検査）を実行し、機械化できない意味的整合（コマンド直書き grep・npm ラッパー等価・メモリ整合）を検証して報告する（修正はしない）。"
 disable-model-invocation: true
 argument-hint: ""
 allowed-tools:
@@ -16,7 +16,7 @@ allowed-tools:
 **決定的検査の SSOT は `npm run governance:check`（`scripts/governance-check.mjs`・#587）である。** 旧 Check 1・2・3・4・6・8・9・10 はそこへ機械化済み（下の各 stub が対応 G 番号を示す。Check 番号は序数参照の腐敗を避けるため振り直さない）。本スキルで実行するのは:
 
 1. `npm run governance:check` を実行し、赤ならその全件を発見事項（Critical）として報告する
-2. 機械化できない検査 — Check 5 の残置部分（hook フラグの意味論照合）と Check 7（メモリ整合）— を従来どおり実施する
+2. 機械化できない検査 — Check 5 の残置部分（コマンド直書き grep・npm 系ラッパーの等価判断）と Check 7（メモリ整合）— を従来どおり実施する
 
 ## Check 1 — CLAUDE.md モジュール構成の乖離
 
@@ -40,7 +40,8 @@ allowed-tools:
 
 本 Check に残るのは**意味判断を要する部分**のみ:
 - `AGENTS.md` Step 8 や `.claude/skills/*/SKILL.md` に **コマンド本体**（`cargo XXX` / `npm XXX` / `npx XXX` の具体的な引数を含む実行コマンド）が直書きされていないか grep する。`docs/build-commands.md` の SSOT を迂回している箇所を報告する（コマンド名への言及や参照リンク自体は許容）。
-- `.claude/hooks/*.mjs` が保持する検査コマンド（`post-edit.mjs` の `buildCommand`）を `docs/build-commands.md` と照合する。hook は検査の実行主体なので**直書き自体は正当** — 報告するのは SSOT との**内容乖離**である。判定規則（SSOT 側の整合規約と同一）: cargo コマンドは**カテゴリ A のコードブロック**と照合し、**合否・検査対象を変えるフラグ差**（`--lib` の付与・`--workspace` や `--all-targets` の欠落・`test -p` のクレート取り違え等。#476 の実例）を報告する。**`check` / `clippy` に `-p` が無いのは正しい状態である**（#500）。**出力整形のみのフラグ**（`--message-format short` 等、exit code を変えないもの）は許容する。node/vitest 系は SSOT コマンド（`npm test` / `npm run typecheck`）の部分集合ラッパーを許容する（対象ファイルが SSOT コマンドの実行対象に含まれることを確認する）。
+- hook の **cargo コマンド ↔ カテゴリ A の照合は `npm run governance:check`（G9・#589）が機械検査する。ここでは実行しない**（出力整形フラグの許容込み。#476 のフラグドリフト事故クラスを機械が受け持つ）。
+- node/vitest 系のみ本 Check に残る: hook の検査（tsc 直接起動・単一テストファイルの vitest 実行）が SSOT コマンド（`npm test` / `npm run typecheck`）の**部分集合ラッパー**として妥当か（対象ファイルが SSOT コマンドの実行対象に含まれるか）を確認する。
 
 ## Check 6 — docs/development-principles.md 参照の実在性
 

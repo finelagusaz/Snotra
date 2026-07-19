@@ -13,6 +13,9 @@ import {
   checkRulesGlobs,
   checkSkillTable,
   globToRegex,
+  checkNormativeLineBudget,
+  LINE_BUDGET,
+  ALWAYS_LOADED_FILES,
   runAll,
 } from "./governance-check.mjs";
 
@@ -348,6 +351,67 @@ describe("runAll（空母集団の明示 fail = 沈黙経路の閉塞）", () =>
     const s = snap({});
     const { findings } = runAll(s);
     expect(findings.length).toBeGreaterThan(0);
+  });
+});
+
+describe("G10 checkNormativeLineBudget（二面独立 ratchet・#593）", () => {
+  const nl = (n) => "\n".repeat(n); // n 本の \n = n 行（wc -l 相当）
+  const rule = (p, n) => ({ [`.claude/rules/${p}`]: nl(n) });
+
+  it("両面とも基準以内なら findings 無し（緑）", () => {
+    const s = snap({
+      "CLAUDE.md": nl(LINE_BUDGET.alwaysLoaded - 10),
+      "AGENTS.md": nl(10),
+      ...rule("a.md", LINE_BUDGET.rules),
+    });
+    expect(checkNormativeLineBudget(s)).toEqual([]);
+  });
+
+  it("常時ロードが基準超過なら finding（赤）", () => {
+    const s = snap({
+      "CLAUDE.md": nl(LINE_BUDGET.alwaysLoaded + 1),
+      "AGENTS.md": nl(0),
+      ...rule("a.md", 1),
+    });
+    const f = checkNormativeLineBudget(s);
+    expect(f.some((x) => x.message.includes("常時ロード規範") && x.message.includes("> 基準"))).toBe(true);
+  });
+
+  it("常時ロードは 2 面替えでは下がらない（rules へ移しても rules 側が超過する）", () => {
+    // 常時ロードは基準内だが rules を超過させる = 面替え回避を塞ぐことの検算
+    const s = snap({
+      "CLAUDE.md": nl(10),
+      "AGENTS.md": nl(10),
+      ...rule("a.md", LINE_BUDGET.rules + 1),
+    });
+    const f = checkNormativeLineBudget(s);
+    expect(f.some((x) => x.message.includes("rules 合計") && x.message.includes("> 基準"))).toBe(true);
+  });
+
+  it("CRLF でも \\r?\\n で数える（CRLF checkout 沈黙経路の閉塞）", () => {
+    const s = snap({
+      "CLAUDE.md": "x\r\n".repeat(LINE_BUDGET.alwaysLoaded + 1),
+      "AGENTS.md": "",
+      ...rule("a.md", 1),
+    });
+    const f = checkNormativeLineBudget(s);
+    expect(f.some((x) => x.message.includes("常時ロード規範"))).toBe(true);
+  });
+
+  it("常時ロード文書が読めなければ母集団欠落 finding（沈黙経路の閉塞）", () => {
+    const s = snap({ "AGENTS.md": nl(1), ...rule("a.md", 1) }); // CLAUDE.md 欠落
+    const f = checkNormativeLineBudget(s);
+    expect(f.some((x) => x.file === "CLAUDE.md" && x.message.includes("母集団の欠落"))).toBe(true);
+  });
+
+  it("rules が 0 件なら母集団欠落 finding（グロブ破損の沈黙経路の閉塞）", () => {
+    const s = snap({ "CLAUDE.md": nl(1), "AGENTS.md": nl(1) }); // rule ファイル無し
+    const f = checkNormativeLineBudget(s);
+    expect(f.some((x) => x.file === ".claude/rules" && x.message.includes("母集団の欠落"))).toBe(true);
+  });
+
+  it("ALWAYS_LOADED_FILES はルート直下の 2 文書", () => {
+    expect(ALWAYS_LOADED_FILES).toEqual(["CLAUDE.md", "AGENTS.md"]);
   });
 });
 

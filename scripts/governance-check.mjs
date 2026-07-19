@@ -483,6 +483,72 @@ export function checkHookCommands(snapshot) {
 }
 
 // ---------------------------------------------------------------------------
+// G10 — 恒久規範の面積 ratchet（二面独立）。#593 §2。
+// 恒久規範（毎セッション/引き金時にロード = コンテキスト予算への課税）の面積を単調非増加に保つ。
+// 「常時ロード」と「rules」を独立の上限で見るのは、常時→rules の面替えだけで数字を下げる回避を
+// 塞ぐため（合計 ratchet なら総額不変で通ってしまう）。基準の引き上げは LINE_BUDGET を理由コメント
+// 付きで更新すること（= 明示的な合意の摩擦）。ADR・spec・issue は履歴側ゆえ対象外。
+// 行数は \r?\n で数える（CRLF checkout で `.` が \r を落とす沈黙経路を #587/#589 で二度踏んだ）。
+// ---------------------------------------------------------------------------
+
+/** 常時ロードされる恒久規範ファイル（ルート直下の 2 文書） */
+export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
+
+/** 二面独立の行数上限（2026-07-19 実測を基準に設定・#593/#615）。削減したら下げる（#616） */
+export const LINE_BUDGET = { alwaysLoaded: 233, rules: 173 };
+
+/** \r?\n の出現数 = wc -l 相当。読めなければ null（母集団欠落を上位で検知） */
+function countLines(text) {
+  return text == null ? null : (text.match(/\r?\n/g) || []).length;
+}
+
+/** 指定ファイル群の総行数を数える。読めないファイルは finding に積み、行数へは算入しない */
+function sumLines(snapshot, files, gLabel) {
+  let total = 0;
+  const findings = [];
+  for (const f of files) {
+    const c = countLines(snapshot.read(f));
+    if (c == null) findings.push(finding(f, 1, `${f} が読めない（${gLabel} 母集団の欠落）`));
+    else total += c;
+  }
+  return { total, findings };
+}
+
+export function checkNormativeLineBudget(snapshot) {
+  const findings = [];
+
+  const always = sumLines(snapshot, ALWAYS_LOADED_FILES, "G10");
+  findings.push(...always.findings);
+  if (always.total > LINE_BUDGET.alwaysLoaded) {
+    findings.push(
+      finding(
+        "CLAUDE.md",
+        1,
+        `常時ロード規範 ${always.total} 行 > 基準 ${LINE_BUDGET.alwaysLoaded} 行（#593 二面 ratchet）。機構吸収か履歴退去で減らすか、正当なら LINE_BUDGET.alwaysLoaded を理由コメント付きで更新`,
+      ),
+    );
+  }
+
+  const ruleFiles = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f));
+  if (ruleFiles.length === 0) {
+    findings.push(finding(".claude/rules", 1, "rules が 0 件（G10 母集団の欠落）"));
+  } else {
+    const rules = sumLines(snapshot, ruleFiles, "G10");
+    findings.push(...rules.findings);
+    if (rules.total > LINE_BUDGET.rules) {
+      findings.push(
+        finding(
+          ".claude/rules",
+          1,
+          `rules 合計 ${rules.total} 行 > 基準 ${LINE_BUDGET.rules} 行（#593 二面 ratchet）。ルーター化で減らすか、正当なら LINE_BUDGET.rules を理由コメント付きで更新`,
+        ),
+      );
+    }
+  }
+  return findings;
+}
+
+// ---------------------------------------------------------------------------
 // 実行
 // ---------------------------------------------------------------------------
 
@@ -512,8 +578,13 @@ export function runAll(snapshot) {
     ...checkRulesGlobs(snapshot),
     ...checkSkillTable(snapshot),
     ...checkHookCommands(snapshot),
+    ...checkNormativeLineBudget(snapshot),
   );
-  const evidence = `対象文書 ${docs.length} 件 / rules ${snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length} 件 / skills ${snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length} 件`;
+  const always = ALWAYS_LOADED_FILES.reduce((n, f) => n + (countLines(snapshot.read(f)) ?? 0), 0);
+  const ruleLines = snapshot.files
+    .filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f))
+    .reduce((n, f) => n + (countLines(snapshot.read(f)) ?? 0), 0);
+  const evidence = `対象文書 ${docs.length} 件 / rules ${snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length} 件 / skills ${snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length} 件 / 恒久規範 常時ロード ${always}/${LINE_BUDGET.alwaysLoaded} 行・rules ${ruleLines}/${LINE_BUDGET.rules} 行`;
   return { findings, evidence };
 }
 
@@ -527,6 +598,6 @@ if (isMain) {
     for (const f of findings) console.error(`  ${f.file}:${f.line}  ${f.message}`);
     process.exitCode = 1;
   } else {
-    console.log(`governance:check — G1..G9 passed（${evidence}）`);
+    console.log(`governance:check — G1..G10 passed（${evidence}）`);
   }
 }

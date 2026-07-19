@@ -3,15 +3,20 @@ paths:
   - "ui/src/**/*.{ts,tsx}"
 ---
 
-# ui ルール
+# ui ルール（ルーター）
 
-詳細は `ui/CLAUDE.md` を参照。
+事実の正準は `ui/CLAUDE.md` とコード。要約コピーは置かず正準へ指す。位置はファイル名で断定せず**見出し名・シンボル名で grep**（#588）。
 
-- **await 後の状態復元は staleness チェック必須**: `latestRun` primitive の world 世代カウンタで「await 中に状態が変わっていないか」を検証してから復元する。lane タスクは `searchLane.run()` の ctx から受け取る `isStale`/`requestId` で（`await` 後 `if (isStale()) return;`）、起動フローの保存状態復元（例: `executeInstantCommandSelected` の失敗ロールバック）は `withLaunchLifecycle` が invalidate 直後に捕捉した世代との差分を配る `disturbed()` 述語で呼出し側が `if (!disturbed())` で検証する（生の `current() === captured + 1` 算術を持たない・#539）。非 lane コード（モード遷移・起動）は `searchLane.invalidate()` で world を進めて in-flight を supersede する
-- **モード遷移時にデバウンスをキャンセル**: フォルダ離脱・ツール選択離脱・インスタントコマンド実行時に、そのモードが所有する OwnedTimer（`refreshTimer`/`fetchTimer`、`lib/ownedTimer.ts`）を `cancel()` で破棄する（`cancelDebounce()`/`cancelInstantCommandDebounce()` 経由。旧: 生 `setTimeout` の手動 clear）
-- **Blob URL 早期リターン時は全 URL を revoke**: `parseBinaryBatch` → stale guard で抜ける場合、`parsed` 内の URL を個別に `revokeObjectURL` しないとリーク
-- **`set_size()` は `shouldShowResults` の effect だけが呼ぶ**: 他の箇所からウィンドウサイズを変更しない
-- **選択はインデックス（number）で参照**: パス文字列を使わない（ツール選択モードでパスが重複する）
-- **Effect 内で自身が依存するシグナルを set しない**: 無限ループの原因。やむを得ない場合は `untrack()` で切る
-- **モード判定は `viewKind()`/`interpKind()` 経由**: `toolSelectionState()`/`folderState()` を直接 if して優先度を再導出しない（frame 値が要る箇所は storage 直読可）。軸メモはプリミティブを返す（オブジェクト union は毎計算で新 identity となり下流を再発火させる）。`interpKind` は `query`+`prefix` の純粋導出（持続ラッチを持たない）
-- **レイアウト崩れの観点で検証する**: スタイル・レイアウト・テキスト表示に影響する変更では、overflow／clipping／フォントレンダリング／コンテンツサイズが極端に大きい or 小さいケースを検証対象に含める。PR 作成前にビルドして目視確認する
+## 読む正準（`ui/CLAUDE.md` の該当節）
+
+- `await` 後に保存状態を復元するなら staleness チェック（lane タスクは `isStale()`・起動フローは `disturbed()`・非 lane は `searchLane.invalidate()` で in-flight を supersede）: 「実装パターン」+ `lib/latestRun.ts` / `lib/exclusive.ts`
+- モード遷移でデバウンスをキャンセル（`OwnedTimer` の `cancel()` を `cancelDebounce()` / `cancelInstantCommandDebounce()` 経由で）: `lib/ownedTimer.ts` +「実装パターン」
+- Blob URL 早期リターン時は全 URL を revoke（`parseBinaryBatch` の stale guard 等）: 「Blob URL 管理の不変条件」
+- ウィンドウサイズ変更は `shouldShowResults` の effect のみ（`untrack()` で幅を依存から外し `set_size` ループバック回避）: 「単一ウィンドウの高さ管理」+「実装パターン」
+- 選択はリスト行インデックス（`number`）で参照（パス文字列を使わない・ツール選択でパス非一意）: 「マウスイベントハンドラ」
+- Effect 内で自身が依存するシグナルを set しない（無限ループ・やむを得なければ `untrack()`）: 「実装パターン」
+- モード判定は `viewKind()` / `interpKind()` 経由（軸メモはプリミティブを返す・`interpKind` は純粋導出）: 「実装パターン」+「状態モデル（2 軸 + オーバーレイ）」
+
+## 引き金 → 検査
+
+- スタイル・レイアウト・テキスト表示に影響する変更: overflow / clipping / フォントレンダリング / コンテンツサイズの極大・極小を検証対象に含め、PR 作成前にビルドして目視確認する（レンダリング欠陥は自動テストで捕捉しにくい）

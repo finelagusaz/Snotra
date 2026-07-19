@@ -555,7 +555,7 @@ describe("統合: post-edit.mjs をプロセスとして起動する", () => {
 
 describe("tsconfig ドリフト検出カナリア — C2", () => {
   // selectChecks の typecheck 条件は tsconfig の include - exclude と一致していなければならない。
-  // tsconfig を触った人がここで気づく。SSOTは `tsc --listFilesOnly` の program 内容であり、
+  // tsconfig を触った人がここで気づく。SSOT は `tsc --listFilesOnly` の program 内容であり、
   // glob の見た目ではない（git の '**/' と TypeScript の '**/' は意味が違う）。
   it("tsconfig の include / exclude が selectChecks の前提と一致する", () => {
     const tsconfigPath = fileURLToPath(new URL("../../tsconfig.json", import.meta.url));
@@ -576,7 +576,7 @@ describe("tsconfig ドリフト検出カナリア — C2", () => {
 // 以下 2 本は package.json / vitest.config.ts を hook-selftest に載せる根拠である。
 
 describe("vitest.config.ts ドリフト検出カナリア — #497", () => {
-  // include が縮むと、hook-selftest / githooks-selftest / npm test が気付かれないままテストを
+  // include が縮むと、hook-selftest / githooks-selftest / npm test が気づかれないままテストを
   // 走らせなくなる。`vitest run .claude/hooks` はパス直指定で動くが、`.githooks` の
   // 収集と CI の npm test はこの include に依存する。
   it("vitest の include が 3 つの検査対象をすべて含む", () => {
@@ -605,7 +605,7 @@ describe("Cargo.toml members ドリフト検出カナリア — #500", () => {
   // check / clippy は --workspace なので members を cargo が読む（写しは消えた）。
   // しかし `cargo test -p <crate>` は「編集した crate → そのテスト」の写像であり、
   // selectChecks のディレクトリ接頭辞と buildCommand の case に手書きされている。
-  // 4 つ目の crate が生えると、その .rs を編集してもテストが**気付かれないまま走らない**。
+  // 4 つ目の crate が生えると、その .rs を編集してもテストが**気づかれないまま走らない**。
   // ここで落とし、selectChecks / buildCommand / ci.yml / SSOT の更新を強制する。
   it("workspace members が test 系のルーティングと一致する", () => {
     const p = fileURLToPath(new URL("../../Cargo.toml", import.meta.url));

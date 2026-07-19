@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 /** 実在検査の対象と見なすソース系拡張子（G3）。ランタイム生成物（.bin/.bak 等）は含めない */
 const REF_EXTENSIONS = /\.(md|rs|ts|tsx|mjs|json|toml|yml|ps1|html|css)$/;
 /** 走査から除外するディレクトリ。名前ベース（任意の深さの生成物）とルート相対プレフィックス
- *  （untracked バッファ）を分ける——`ui/src/workspace/` のような将来の同名ソースを気付かれないまま
+ *  （untracked バッファ）を分ける——`ui/src/workspace/` のような将来の同名ソースを気づかれないまま
  *  落とさないため、workspace/worktrees はルート錨止めにする */
 const WALK_EXCLUDE_NAMES = new Set([".git", "node_modules", "target", "dist"]);
 const WALK_EXCLUDE_PREFIXES = ["workspace", ".claude/worktrees"];
@@ -248,7 +248,7 @@ export function checkSpecSections(snapshot, docs) {
 // ---------------------------------------------------------------------------
 // G5 — docs/build-commands.md の npm script / cargo test -p crate の実在（旧 Check 5 の決定的部分）。
 // crate 名はディレクトリ名でなく各 member Cargo.toml の [package] name（`-p snotra` = src-tauri/）。
-// check/clippy は --workspace で cargo 自身がSSOTを読むため照合対象外（#500）。
+// check/clippy は --workspace で cargo 自身が SSOT を読むため照合対象外（#500）。
 // ---------------------------------------------------------------------------
 export function checkBuildCommands(snapshot) {
   const findings = [];

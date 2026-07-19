@@ -23,7 +23,7 @@
 // 詳細と実測の根拠は issue #482。
 
 // 実測（#482 Phase 2 のフォールトインジェクション V2）: Windows の PowerShell tool の tool_name は
-// 文字列 "PowerShell" である。matcher が取りこぼすと hook は気付かれないまま素通りするため
+// 文字列 "PowerShell" である。matcher が取りこぼすと hook は気づかれないまま素通りするため
 // （それがこの issue の D1 そのもの）、ここは推測ではなく実測値で固定している。
 
 import { readFileSync } from "node:fs";

@@ -62,7 +62,7 @@ const CARGO_MANIFEST = /(^|\/)Cargo\.toml$/;
 // カナリアの無いファイルをここに足してはならない — 何も検証しない緑になる。
 //
 // Cargo.toml は**ルートのみ**。crate 追加は必ず members を編集するのでそこで捕まる。
-// メンバーの Cargo.toml（パッケージ名のSSOT）は要らない — 改名すれば
+// メンバーの Cargo.toml（パッケージ名の SSOT）は要らない — 改名すれば
 // `cargo test -p snotra` が "package did not match" で落ちる。沈黙する経路だけを守る。
 const CHECK_DEFINITION = new Set([
   ".claude/settings.json",
@@ -265,7 +265,7 @@ function buildCommand(id, root) {
 
   switch (id) {
     // check / clippy の --workspace は cargo に Cargo.toml の members を読ませる。
-    // crate 名を列挙すると members の写しになり、4 つ目の crate で気付かれないまま漏れる（#500）。
+    // crate 名を列挙すると members の写しになり、4 つ目の crate で気づかれないまま漏れる（#500）。
     case "clippy":
       return cargoSpec([
         "clippy", "--workspace",

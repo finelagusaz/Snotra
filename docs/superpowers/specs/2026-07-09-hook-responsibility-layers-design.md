@@ -97,7 +97,7 @@ CLAUDE.md には、この誤爆を回避するための運用ルールが 2 つ�
 >
 > 上の一文のうち「`gh pr merge --squash` の誤 close も `gh issue close` も同じ」は成り立たなかった。実装したのは `gh pr create` のガードだけであり、それは正しい範囲だった。
 >
-> 1. **誤りの定義が観測できるかが分岐点である。** `gh pr create` の誤り（空 PR）は**リポジトリの状態**として定義でき、hook は git に問える。`merge` / `close` の誤りは**人の意図**でありSSOTが無い。hook は「何が閉じるか」を計算できても「それが誤りか」を判定できず、`deny` は原理的に書けない
+> 1. **誤りの定義が観測できるかが分岐点である。** `gh pr create` の誤り（空 PR）は**リポジトリの状態**として定義でき、hook は git に問える。`merge` / `close` の誤りは**人の意図**であり SSOT が無い。hook は「何が閉じるか」を計算できても「それが誤りか」を判定できず、`deny` は原理的に書けない
 > 2. **「hook だけが見える」も誤り。** merge の auto-close 対象は GitHub がリンクとして計算し、`gh pr view <N> --json closingIssuesReferences` と PR ページに**公開している**。逆に hook は GitHub Web UI からのマージとユーザー端末の `gh pr merge` を見ない。**視界はむしろ hook の方が狭い**
 > 3. **経路は 2 本あった。** PR 本文由来（上記リンク）と、squash commit 本文由来（既定 = ブランチ全コミット本文の連結）。後者はリポジトリ設定 `squash_merge_commit_message` が生んでおり、**`PR_BODY` へ変えることで Layer 0 から断った**（あらゆるマージ実行経路に効く。実害は 30 PR で 0 件＝予防的措置）
 >
@@ -156,7 +156,7 @@ CLAUDE.md には、この誤爆を回避するための運用ルールが 2 つ�
 exit 0
 ```
 
-**`git symbolic-ref --short` を使ってはならない。** `main` という名の tag が存在すると、曖昧性回避のため `refs/heads/main` が `heads/main` に縮み、`main` との比較が偽になって**気付かれないまま素通りする**（最終レビューで実測）。削除予定の `block-main-commit` は `git branch --show-current` を使っておりこの曖昧性に免疫があったため、短縮名で比較すると**置き換え対象からの後退**になる。完全 ref（`refs/heads/main`）で比較する。
+**`git symbolic-ref --short` を使ってはならない。** `main` という名の tag が存在すると、曖昧性回避のため `refs/heads/main` が `heads/main` に縮み、`main` との比較が偽になって**気づかれないまま素通りする**（最終レビューで実測）。削除予定の `block-main-commit` は `git branch --show-current` を使っておりこの曖昧性に免疫があったため、短縮名で比較すると**置き換え対象からの後退**になる。完全 ref（`refs/heads/main`）で比較する。
 
 ```sh
 # .githooks/pre-push — stdin: <local ref> <local sha> <remote ref> <remote sha>
@@ -298,10 +298,10 @@ V5 / V6 は、本 spec §1 で測った実在の抜け道をそのまま逆向�
 - [ ] **V8 は実行しない**: harness が main への push を拒否。迂回しない。`pre-push` の 3 テスト（client）と V1（server）で二重に測定済み
 - [x] **V9 実測**: `git pull --ff-only` も `git merge --ff-only origin/main` も通る＝誤爆しない
 - [x] `docs/build-commands.md` にカテゴリ E と bootstrap が記載されている
-- [x] `.gitattributes` が `.githooks/**` を `eol=lf` に固定している（`_lib.sh` も含む＝CRLF による気付かれない guard 無効化を防ぐ）
+- [x] `.gitattributes` が `.githooks/**` を `eol=lf` に固定している（`_lib.sh` も含む＝CRLF による気づかれない guard 無効化を防ぐ）
 - [x] CLAUDE.md に新しい層（`.githooks/` + ruleset）と §4 の caveat が**追記**されている（既存ルールは削除しない）。主張の確度は測定の等級に合わせる（実測 / read-back のみ / 視界外、を書き分ける）
 - [x] `.claude/settings.json` と `.claude/hooks/post-edit.mjs` に変更が無い
-- [x] `_lib.sh` は完全 ref（`refs/heads/main`）で比較する。`--short` は ref 曖昧性で気付かれないまま fail-open する
+- [x] `_lib.sh` は完全 ref（`refs/heads/main`）で比較する。`--short` は ref 曖昧性で気づかれないまま fail-open する
 - [x] `AGENTS.md` と `.claude/skills/implement/SKILL.md` の「カテゴリ A〜D」が「A〜E」になっている
 - [ ] **V2**: `gh pr merge --squash` が動く（マージ時に確認）
 - [ ] CI グリーン（ubuntu の `npm test` が実行ビットと dash 互換性の検知器になる）

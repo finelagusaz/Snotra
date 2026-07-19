@@ -355,7 +355,7 @@ describe("fail-closed の骨格カナリア", () => {
 
 describe("settings.json ドリフト検出カナリア", () => {
   // PreToolUse の発火（matcher）は settings.json、判定は pre-bash.mjs が SSOT。
-  // matcher が後退すると hook は気付かれないまま素通りする（本 issue の D1 そのもの）。
+  // matcher が後退すると hook は気づかれないまま素通りする（本 issue の D1 そのもの）。
   const settings = JSON.parse(readFileSync(fileURLToPath(new URL("../settings.json", import.meta.url)), "utf8"));
   const preToolUse = settings.hooks.PreToolUse;
 

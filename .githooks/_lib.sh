@@ -25,7 +25,7 @@ die() {
 #
 # `git symbolic-ref --short` を使ってはならない。同名の ref が他にあると
 # （例: `git tag main`）曖昧性回避のため `refs/heads/main` が `heads/main` に
-# 縮まり、`main` との比較が偽になって気付かれないまま素通りする（実測）。完全 ref で比較する。
+# 縮まり、`main` との比較が偽になって気づかれないまま素通りする（実測）。完全 ref で比較する。
 current_branch_ref() {
   git symbolic-ref -q HEAD || true
 }

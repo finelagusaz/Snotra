@@ -40,7 +40,7 @@ input=$(cat); if echo "$input" | grep -qE 'gh\s+pr\s+create'; then
 
 この hook はコマンド実行の**前**に upstream を評価するため、`git push -u origin HEAD && gh pr create` は必ずブロックされる。ゆえに「`gh pr create` を他のコマンドとチェーンしない」という narrow な規則は Phase 2 まで正しい。
 
-副次的な利点として **番号 1〜4 が保たれる**。issue #473 / #475 / #476 / #477 / #479 の本文は「CLAUDE.md 最重要ルール 4」を番号で参照しており、詰めると気付かれないまま陳腐化する。
+副次的な利点として **番号 1〜4 が保たれる**。issue #473 / #475 / #476 / #477 / #479 の本文は「CLAUDE.md 最重要ルール 4」を番号で参照しており、詰めると気づかれないまま陳腐化する。
 
 **2. `post-edit.mjs` のコメント 1 行を事実訂正する。**
 

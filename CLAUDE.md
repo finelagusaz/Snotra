@@ -36,11 +36,7 @@
 - **`--no-verify` は人間専用** — `.githooks/` を迂回する。Claude は使用してはならない。迂回しても main への直接 push は GitHub ruleset が拒む（実測）
 - **`gh pr create` は `git push` と `&&` で繋いでよい** — PR 前 push チェック hook（`.claude/hooks/pre-bash.mjs`）は、鎖の中で `git push` が `&&` で先行していれば通す（`&&` が前段の成功を保証するため）。区切りが `;` / `||` / 改行の場合は push 失敗時に PR が作られうるので拒否する。`git -C <別ツリー> push` も安全な鎖とは見なさない（#482 で実測）
 - **main の同期は `git pull --ff-only` を使う** — 非 FF の `git pull` は main にマージコミットを作るため `.githooks/pre-merge-commit` が拒否する。FF ならマージコミットが生じず hook は呼ばれない
-- **マージで閉じる issue を決めるのは PR 本文である。`gh pr merge --body-file` では止まらない**（#488 実測） — auto-close の経路は 2 本あり、制御点が違う。
-  - **PR 本文の closing keyword** → `gh pr view <PR> --json closingIssuesReferences` に現れ、**マージした瞬間に閉じる。`gh pr merge` の `--subject` / `--body-file` では抑止できない**（#488 実測）。PR テンプレートが `Closes` 行を埋めるため、**書いた覚えが無くても残っている**
-  - **squash commit 本文の closing keyword** → main に載った時点で閉じる。本リポジトリは `squash_merge_commit_title=PR_TITLE` / `squash_merge_commit_message=PR_BODY`（#488 で変更。**ブランチのコミット本文は squash 本文へ流入しない**）。ただし `--body-file` に書けば **`closingIssuesReferences` に現れないまま**閉じる
-  - **hook はどちらも見ていない**（→「フック」の (A2) の非対称）。**これは規範であって機構ではない** — 手順を飛ばせば止めるものは無い。**だからこそ下の手順が唯一の防御である**
-  - **マージ方式を変えても逃げられない**: 本リポジトリは squash のみ有効（`allow_merge_commit` / `allow_rebase_merge` はいずれも `false`。`--merge` / `--rebase` は GitHub が拒否する）
+- **マージで閉じる issue を決めるのは PR 本文であり、`gh pr merge` の `--subject` / `--body-file` では抑止できない**（#488 実測）。auto-close は本文の**どこにあっても** `close`/`fix`/`resolve` 系 9 形（大文字小文字問わず・表やチェックリスト内も）でマージ時に走り、PR テンプレートが `Closes` を埋めるため**書いた覚えが無くても残る**。hook も見ていない（→「フック」の (A2)）。**だから下の手順が唯一の防御である**。なぜこの機構になるか（2 経路の可視性の非対称・マージ方式では逃げられない・squash 設定と復元レシピ）は `docs/adr/0002-squash-merge-issue-autoclose.md`
 
   手順（squash マージでは常にこの順。`<PR>` は PR 番号、`<issue>` は issue 番号）:
   1. **マージ直前に** `gh pr view <PR> --json closingIssuesReferences` を**必ず**見る。これが GitHub の計算した「いま閉じる issue」である
@@ -52,9 +48,7 @@
      - `gh issue list --state closed --search "closed:>=<mergedAt>"`（`mergedAt` は `gh pr view <PR> --json mergedAt`）。どちらの一覧にも属さない「知らないうちに閉じた issue」を拾う、唯一の接地した観測点
      誤って閉じていたら `gh issue reopen <issue>`（close イベントは履歴に残り、close を契機に動く下流は巻き戻らない。**reopen は回復であって、事前確認を省く免罪符ではない**）
 
-  **手順 1 の一覧が「閉じる issue のすべて」になるのは、手順 3 を守り、かつ確認からマージまで PR 本文が変わらなかったときだけである。** 本文を凍結する機構は無く、`gh pr merge --auto` は確認とマージを引き離すため**使わない**（残余の詳細は #488）。
-
-  設定の組み合わせは GitHub が制限する（実測 422・#488）。**元に戻す**なら `gh api -X PATCH repos/:owner/:repo -f squash_merge_commit_title=COMMIT_OR_PR_TITLE -f squash_merge_commit_message=COMMIT_MESSAGES`
+  **手順 1 の一覧が「閉じる issue のすべて」になるのは、手順 3 を守り、かつ確認からマージまで PR 本文が変わらなかったときだけである。** 本文を凍結する機構は無く、`gh pr merge --auto` は確認とマージを引き離すため**使わない**。
 
 ## フック（.claude/settings.json）
 

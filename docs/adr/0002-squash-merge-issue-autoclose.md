@@ -19,7 +19,7 @@ auto-close の経路は 2 本あり、可視性が非対称である:
 - **`gh pr merge` の `--subject` / `--body-file` で PR 本文の closing keyword を抑止する**: 却下。PR 本文の closing keyword はマージした瞬間に閉じ、`--subject` / `--body-file` では抑止できない（#488 実測）。
 - **`--body-file` に closing keyword を書いて squash 側で制御する**: 却下。squash 本文に書くと `closingIssuesReferences` に現れないまま閉じ、マージ前確認の一覧（＝唯一の制御点）を信頼できなくする。
 - **マージ方式を変えて逃げる（`--merge` / `--rebase`）**: 却下、というより不可。本リポジトリは squash のみ有効（`allow_merge_commit` / `allow_rebase_merge` はいずれも `false`）で GitHub が `--merge` / `--rebase` を拒否する。
-- **hook で merge / close を守る・設定 read-back の検知器を置く**: 却下。理由は `CLAUDE.md`「フック」(A2) が SSOT（merge/close の誤りは人の意図にあり `deny` が書けない・`ask` は fail-closed 骨格と両立せず・hook の視界が Web UI／ユーザー端末のマージを覆わない・「不在を検知する検知器」の無限後退から降りる）。ここでは繰り返さない。
+- **hook で merge / close を守る・設定 read-back の検知器を置く**: 却下。理由は `CLAUDE.md`「フック」(A2) が SSOT。ここでは繰り返さない（3 理由の詳細はそちら）。
 
 ## 帰結
 

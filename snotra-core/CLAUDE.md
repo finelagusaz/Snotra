@@ -7,7 +7,7 @@
 
 ## モジュール構成
 
-各モジュールの責務宣言は各ファイルの `//!`（module doc）を正準とする。本節はファイル一覧と、`//!` に収まらない**横断不変条件・チェックリスト**を記す。`//!` はコード側で改名に追従し、`cargo doc` の intra-doc link 検査が相互参照の腐敗を捕まえる（#562）。
+各モジュールの責務宣言は各ファイルの `//!`（module doc）を正本とする。本節はファイル一覧と、`//!` に収まらない**横断不変条件・チェックリスト**を記す。`//!` はコード側で改名に追従し、`cargo doc` の intra-doc link 検査が相互参照の腐敗を捕まえる（#562）。
 
 - `engine.rs` — 検索・履歴・設定を単一ロックに統合する facade（責務は `//!`）。以下は engine ロックに閉じる横断コヒーレンシ:
   - **`IndexInputs`**: index 構築入力（scan / show_hidden_system / show_icons / include_path_env / migemo_enabled）の単一定義
@@ -28,6 +28,10 @@
   - **`kana_lower_names` / `kana_char_masks` は `migemo_enabled` が true のときのみ構築し、無効時は空 Vec**（migemo 無効ユーザーの死蔵メモリ ~2.1–2.7MB/50k を削る・構築も約 2 倍速、issue #337）。2 つの kana 系 Vec は必ず同時に空/同長（`assemble` の debug_assert が検証）。空 Vec のとき検索ループは `kana_available` 空ガードで `kana_lower_names[i]` アクセスを回避し、Fuzzy pre-filter は `kana_char_masks.is_empty()` チェックで kana 経路を棄却する（構築時 migemo OFF→検索時 ON の窓での panic 防止）
   - **migemo トグルの反映は index 再構築経由**: `update_config` は engine を再構築しないため、`config_watcher` が engine の `IndexInputs` 差分で `start_index_build` を kick する再構築に依存する（#347 Phase 2 で `needs_reindex` は `IndexInputs` に統合）
   - **パスマッチング**: クエリにパス区切り文字（`\` `/`）を含む場合、`normalized_key`（= `normalize_entry_key(target_path)`）に対して Substring マッチを試みる。スコアは `3000 - min(byte_pos, 500)`。name/file_name/kana 全て不成立時のフォールバック。`has_path_sep` 時は Fuzzy ビットマスク pre-filter をスキップする
+  - **スコアリング・順位計算は `search/scoring.rs` に分離**（#600。責務は `//!`）: `mod score_tier`（+ `const _` 全順序アサーション）・thread-local `MATCHER`・`EntryView` / `entry_view`・`score_one_entry`・`ScoredEntry` と `Ord` 一式・`heap_into_results`・`adjusted_history_boost`・`kana_substring_score`・`match_score_single_cached`・`TopK`（top-k 更新規則の一元化。fold/reduce が同じ `push`/`merge` を共有・#602）。候補選択・rayon fold/reduce の骨格・incremental cache 更新は `search.rs` に残す。子から親の並列 Vec private を直接読み、共有型（`EntryView` / `ScoredEntry` / `score_one_entry` / `adjusted_history_boost` / `TopK` 一式）は `pub(super)`（`heap_into_results` は #602 で `TopK::into_results` 内部に隠蔽され private）
+  - **クエリ計画は `search/query_plan.rs` に分離**（#599。責務は `//!`）: `QueryPlan` と `prepare_query_plan`（正規化クエリ・dot/path 判定・Fuzzy bitmask・migemo かなクエリ・UTF-32 needle・パス照合クエリ・履歴キーの純粋導出）。incremental 判定と前回状態の read/write は `search.rs` の `IncrementalCache`（`can_reuse` / `update`・#601）に残す。`QueryPlan` とフィールドは `pub(super)` で親のみに公開
+  - **構築処理は `search/build.rs` に分離**（#598。責務は `//!`）: Wave 1/2・kana マスクの並列構築、IndexCache 復元（v4 ヒット時 Wave 1 スキップ / v3 fallback）、全コンストラクタ（`new` / `new_with_migemo` / `new_with_cached_masks` / `assemble`）。検索ホットパスは `search.rs` に残す。`kana_char_mask`（query 側と共有しうる純粋関数）は `search.rs` 側に残置
+  - **ユニットテストは `search/tests/` に機能別分割**（#597。責務は各ファイルの `//!`・製品コードは `search.rs` のまま）: 索引 `search/tests/mod.rs`、共通 fixture `search/tests/common.rs`、`search/tests/basic.rs`（基本検索・拡張子・正規化）/ `search/tests/ranking.rs`（top-k・タイブレーク・ビットマスク）/ `search/tests/incremental.rs`（incremental キャッシュ）/ `search/tests/migemo.rs`（かな検索・条件付き構築）/ `search/tests/path.rs`（パスマッチ）/ `search/tests/performance.rs`（`#[ignore]` ベンチ・メモリ計測）
 - `history.rs`: 起動履歴・クエリ別履歴・フォルダ展開履歴の管理、バイナリ永続化
   - **剪定容量 `top_n` は焼き込まず `prepare_save_if_dirty`/`prepare_flush`/`prune` の引数で受け取る（live-read）**: `Engine` が呼び出し時に現在の config（`effective_result_limit()`）を渡すため、`result_limit` 設定変更が再起動なしで反映される（#348）
   - **`HistoryStore` に `top_n` フィールドを再導入しないこと** — 焼き込むと設定変更が反映されないドリフトが復活する
@@ -45,6 +49,7 @@
 - 新規ロジックは可能な限りこの crate に追加してテスト可能性を維持する
 - `#[cfg(test)]` でユニットテストを必ず書く
 - 検索スコア計算は `search.rs`、フォルダ列挙は `folder.rs` に集約（DRY）
+- **UI 表示文字列を持たない**: この crate は Win32 非依存の純ロジック層。エラーは `is_error: true` フラグで呼び出し側へ伝え、ユーザー向け文言の組み立て・表示は UI 層（`ui/`）の責務。ここに表示メッセージを埋め込まない
 - **`#[cfg(windows)]` で Win32 依存コードを追加する場合**: テストも `#[cfg(windows)]` で囲むか、OS リソースが存在しない環境でも安全にスキップできるよう `if let Some(...) =` パターンを使う。`assert!(value.is_some())` のような環境前提アサーションは環境依存テストになる
 
 ## 実装前チェック（必須）
@@ -59,7 +64,7 @@
   - `kana_lower_names[i]` / `kana_char_masks[i]` へアクセスする全箇所は `is_empty()` ガードを通す（`kana_char_masks` は `kana_lower_names` から `compute_kana_char_masks` で導出し、3 コンストラクタ全経路で `assemble` 直前に構築する）
   - 条件分岐は `compute_wave1(.., migemo_enabled)` と `new_with_cached_masks` の v4/v3 両パスに**同時に**入れる（片方だけだと migemo ON でも空になる）
   - migemo は index 構築入力なので、engine の `IndexInputs`（`config_watcher` の kick 判定と `complete_index_drain` の re-diff が共有する**単一定義**）に含める（#347 Phase 2 で `needs_reindex` / in-flight `needs_rebuild` を `IndexInputs` に統合・削除済み）
-- `search.rs` の incremental search キャッシュ（`prev_*` フィールド群）に新しい述語を追加するとき: `use_incremental` の条件式と `prev_*` の更新箇所を同時に変更し、`/cache-check` で単調性を検証する
+- incremental search キャッシュに述語や状態を追加するとき: 状態は `IncrementalCache` 型に集約済み（#601。`prev_query` / `prev_candidates` / `prev_mode` / `prev_kana_query`）。read（`can_reuse`）と write（`update`）を**対で**変更し、`/cache-check` で単調性を検証する。read が参照する全フィールドを `update` が書くこと（型に閉じたので対称更新漏れは起きにくいが、フィールド追加時は両メソッドを同時に触る）
 - `query.rs` の正規化を変更する場合は、タブ・全角スペース・NBSP を `' '` に統一するテストと冪等性テストを追加または更新する
 - `folder.rs` のソート順変更時: ソート順は「`is_folder` 降順 → `exp_count` 降順 → `lower_name` 昇順」で、先頭要素が最良（最優先）。`select_nth_unstable_by`（O(N) 平均の top-k 選択）＋ `sort_by`（安定ソートで確定順）の2段階を崩さない。入力順に依存しないことを確認するテスト（`score_entries_top_k_order_independent_of_input_order`）を通す
 

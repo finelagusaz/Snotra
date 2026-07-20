@@ -39,7 +39,7 @@ const ghPrCreate = (rest = "") => `${GH} ${PR_CREATE}${rest}`;
 
 describe("tokenStart — 区切り文字を消費せずコマンド本体の位置を返す", () => {
   // §2.2: 先頭の区切り文字を食ったまま match.index を使うと `&&` の片方しか
-  // between に入らず、hasSafeChain が正準 allow ケースを block する。
+  // between に入らず、hasSafeChain が正規 allow ケースを block する。
   it("先頭のコマンドは 0 を返す", () => {
     expect(tokenStart(GH_PR_CREATE, ghPrCreate())).toBe(0);
   });
@@ -100,14 +100,14 @@ describe("GH_PR_CREATE — コマンド位置検出（過剰検出は許容・�
     expect(GH_PR_CREATE.test(`FOO=bar BAZ=1 ${ghPrCreate(" --title x")}`)).toBe(true);
   });
 
-  // 受容する穴（意図的迂回であり事故モードではない）。ここで意図を固定し、
+  // 受容する未対応リスク（意図的迂回であり事故モードではない）。ここで意図を固定し、
   // 「過小検出ゼロ」と誤読されないようにする。
   it.each([
     [`timeout 5 ${ghPrCreate()}`],
     [`nohup ${ghPrCreate()}`],
     [`echo x | xargs ${GH} ${PR_CREATE}`],
     [`sh -c '${ghPrCreate()}'`],
-  ])("ラッパ経由は検出しない（受容する穴・人間専用の迂回）: %s", (cmd) => {
+  ])("ラッパ経由は検出しない（受容する未対応リスク・人間専用の迂回）: %s", (cmd) => {
     expect(GH_PR_CREATE.test(cmd)).toBe(false);
   });
 });
@@ -355,7 +355,7 @@ describe("fail-closed の骨格カナリア", () => {
 
 describe("settings.json ドリフト検出カナリア", () => {
   // PreToolUse の発火（matcher）は settings.json、判定は pre-bash.mjs が SSOT。
-  // matcher が後退すると hook は静かに素通りする（本 issue の D1 そのもの）。
+  // matcher が後退すると hook は気づかれないまま素通りする（本 issue の D1 そのもの）。
   const settings = JSON.parse(readFileSync(fileURLToPath(new URL("../settings.json", import.meta.url)), "utf8"));
   const preToolUse = settings.hooks.PreToolUse;
 

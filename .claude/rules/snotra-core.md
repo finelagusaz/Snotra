@@ -3,17 +3,22 @@ paths:
   - "snotra-core/**/*.rs"
 ---
 
-# snotra-core ルール
+# snotra-core ルール（ルーター）
 
-詳細は `snotra-core/CLAUDE.md` を参照。
+事実の正本は `snotra-core/CLAUDE.md` とコード。本 rule は「どこを読むか・何を実行するか」だけを示す（要約を置かない）。`search.rs` 固有は `snotra-core-search.md`。位置はファイル名で断定せず**見出し名・シンボル名で grep** して辿る（refactor で移動しうる・#588）。
 
-- **SearchEngine フィールド追加時は 5 箇所同時更新**: (1) struct (2) `compute_wave1` / `compute_wave2` (3) `new_with_cached_masks()` v4 パス (4) `EntryView` + `entry_view()` (5) `assemble()` 内の `debug_assert!`。並列 Vec レイアウトの struct 化は禁止（ベンチマーク劣化確認済み）
-- **normalize_entry_key を変更したら 3 点確認**: 新規記録（`record_launch` 等）・既存データ移行（`migrate_normalize_keys`）・ルックアップ API の 3 者が揃っているか
-- **ビットマスクは `query.rs::char_bitmask()` に一元化済み**: `search.rs` と `indexer.rs` の両方が import して使用。変更は `query.rs` の1箇所のみ
-- **incremental cache 変更時は `/cache-check`** で単調性を検証する
-- **`index.bin` を書く新経路は `INDEX_WRITE_LOCK` 経由**: `with_index_write_lock`（権威的書き手・blocking）/ `try_with_index_write_lock`（背景再スキャン・try_lock）。`save_cache_sorted` 自身はロックを取らない（呼び出し側が保持）
-- **`icons.bin` に触れない**: アイコンキャッシュは `src-tauri` の資源。背景再スキャンは `RescanOutcome` で結果を伝え、無効化は呼び出し側が行う
-- **UI 表示文字列を持たない**: エラーは `is_error: true` フラグで伝え、表示は UI 層の責務
-- **設定・コンフィグ変更は後方互換を確認する**: デフォルト値の変更・キー追加・フォーマット変更は、新規インストールだけでなく既存の `config.toml` でも正しく動作するか確認する（互換性の裏取りは `/persistence-check`）
-- **比較関数 + データ構造は「先頭要素が最良/最悪どちらか」を一文で明示する**（事前調査。`BinaryHeap`/`Ord` 変更時）
-- **挙動を変えない最適化は「意味を変えない不変条件」を箇条書きで定義する**（事前調査）
+## 読む正本（`snotra-core/CLAUDE.md` の該当節）
+
+- `SearchEngine` に並列 Vec フィールドを追加: 「実装前チェック（必須）」
+- `normalize_entry_key` を変更: 「`normalize_entry_key` の冪等性契約」+「history.rs のキー正規化に関するチェックリスト」
+- 文字ビットマスクの導出を変更: 「`char_bitmask` は `query.rs` に一元化済み」
+- `index.bin` を書く新経路を追加: 「index.bin 書き込みの排他」
+- 背景再スキャン・`icons.bin` に触れる: 「indexer.rs の背景再スキャン」
+- UI 表示文字列（`is_error` フラグ）: 「開発ルール」
+
+## トリガー → 検査
+
+- incremental cache・`prev_*`・キャッシュ再利用: `/cache-check`（単調性）
+- 設定キー・永続形式・識別子/キー形式の変更: `/persistence-check`（後方互換）
+- `Ord` / `Reverse` / `BinaryHeap`: 「先頭が最良/最悪か」を実装前に一文で明示し入力順不変テストを置く（「実装前チェック」）
+- 挙動を変えない最適化: `AGENTS.md`「事前調査」で代表入出力をベースライン差分検証

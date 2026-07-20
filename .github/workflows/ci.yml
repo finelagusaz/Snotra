@@ -47,6 +47,25 @@ jobs:
       - name: TypeDoc link check
         run: npm run docs:check
 
+  # #587: ガバナンス文書の決定的検査。skip-ci ガードを意図的に付けない —
+  # skip-safe と定義された変更（docs/rules/skills/*.md）こそが本検査の対象であり、
+  # ガードを付けると Markdown-only PR が再び未検査に戻る。paths フィルタも付けない
+  # （依存ゼロ・数秒で完了するため常時実行し、「走らなかった」経路を作らない）。
+  governance-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: governance check
+        run: node scripts/governance-check.mjs
+
   rust-check:
     if: >-
       github.event_name == 'push' ||
@@ -87,7 +106,7 @@ jobs:
       # #568: feature 限定の main() 配線（configure_e2e_webview の呼び出し）は
       # 既定 feature の check/clippy/test では cfg で除外され compile されない
       # （唯一 compile するのは e2e.yml の feature 付き tauri build）。feature 付き
-      # clippy で compile + lint 被覆し、配線の破損を高速検査で loud に落とす。
+      # clippy で compile + lint 被覆し、配線の破損を高速検査で明示的に失敗させる。
       - name: cargo clippy (e2e-webview-automation feature)
         run: cargo clippy -p snotra --features e2e-webview-automation --all-targets -- -D warnings
 
@@ -100,7 +119,7 @@ jobs:
         run: cargo doc --workspace --no-deps --document-private-items
 
       # #509: main 保護 Layer 1（.githooks）と PreToolUse/PostToolUse フック
-      # （.claude/hooks）の selftest は、実運用が Windows でのみ起きる安全網。
+      # （.claude/hooks）の selftest は、実運用が Windows でのみ起きるセーフティネット。
       # ubuntu の frontend-check と相補的に、Windows 固有の hook 実行機構
       # （Git-for-Windows の shebang 経由 sh 起動・パス/クォート境界）を検知する。
       - name: Setup Node.js

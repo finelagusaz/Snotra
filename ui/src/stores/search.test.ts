@@ -990,7 +990,7 @@ describe("debounce adapter（leading/trailing 直接固定）", () => {
 
 // ── instant debounce adapter（#536 Phase 3・items 即時クリア副作用 + 最新 filterName の直接固定）─
 // instant は leading なし・trailing 30ms。arm に混ぜない「候補一覧の即時クリア」副作用（IPC 応答前の
-// Enter で古いコマンド誤起動を防ぐ）と、burst で最後の filterName だけが 1 回 IPC を撃つことを固定する。
+// Enter で古いコマンド誤起動を防ぐ）と、burst で最後の filterName だけが 1 回 IPC を発行することを固定する。
 
 describe("instant debounce adapter（items クリア副作用と最新 filterName）", () => {
   const settleEffect = () => vi.advanceTimersByTimeAsync(0);
@@ -1014,7 +1014,7 @@ describe("instant debounce adapter（items クリア副作用と最新 filterNam
   it("burst（30ms 未満の連続入力）は leading なしで、最後の filterName で 1 回だけ IPC 取得", async () => {
     // 呼び出し履歴はグローバル beforeEach の clearAllMocks() が各テスト前にクリア済み。
     dispatchQueryInput("@g");
-    await settleEffect(); // arm "g"（leading なし＝即時 IPC は撃たない）
+    await settleEffect(); // arm "g"（leading なし＝即時 IPC は発行しない）
     dispatchQueryInput("@go");
     await settleEffect(); // re-arm "go"
     dispatchQueryInput("@goo");

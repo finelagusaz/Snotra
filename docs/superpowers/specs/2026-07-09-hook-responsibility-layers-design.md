@@ -2,7 +2,7 @@
 
 - 日付: 2026-07-09
 - ステータス: 設計合意済み（Phase 1 実装中）
-- 改訂: 実装中の実測により Phase 1 を **1a / 1b に分割**した。`.githooks/` は追跡ファイルであり、それを含まないツリー（マージ前の `main`）では Layer 1 が存在しない。ゆえに `block-main-commit` の削除をマージ前に行うと、マージまでの間 main 上のローカルガードが空になる。計画自身の不変条件「安全網を一瞬も空にしない」に従い、削除は **マージ後の Phase 1b** へ移した（§5・§7・§8・§9）
+- 改訂: 実装中の実測により Phase 1 を **1a / 1b に分割**した。`.githooks/` は追跡ファイルであり、それを含まないツリー（マージ前の `main`）では Layer 1 が存在しない。ゆえに `block-main-commit` の削除をマージ前に行うと、マージまでの間 main 上のローカルガードが空になる。計画自身の不変条件「セーフティネットを一瞬も空にしない」に従い、削除は **マージ後の Phase 1b** へ移した（§5・§7・§8・§9）
 - 関連: #471（closed）, #473, #474, #475, #476, #477, #479, **#488（§2 の (A2) を実測で訂正）** / `.claude/settings.json`, `.claude/hooks/post-edit.mjs`, `CLAUDE.md`, `AGENTS.md`
 - 由来: hook 関連 issue 群の構造分析。個々の issue を潰すのではなく、共通の根を断つ
 
@@ -54,7 +54,7 @@ CLAUDE.md には、この誤爆を回避するための運用ルールが 2 つ�
 
 > **実測による訂正（2026-07-10・#497 / #484）— 4 経路のうち、閉じたのは 1 つである。**
 >
-> 上の 4 経路のうち、最後の 1 つ（定義ファイルの沈黙）だけを PR-3 で閉じた。`selectChecks` の入力集合を広げ、`tsconfig.json` → typecheck + hook-selftest、`Cargo.toml` → cargo-check、`package.json` / `vitest.config.ts` → hook-selftest、`.githooks/**` → githooks-selftest を発火させた。あわせて **発火の追加とカナリアの追加を対にする**規律を導入した（`package.json` と `vitest.config.ts` にはカナリアが無かったため新設。カナリアの無いファイルに検査を撃っても、vitest が起動することしか証明しない）。
+> 上の 4 経路のうち、最後の 1 つ（定義ファイルの沈黙）だけを PR-3 で閉じた。`selectChecks` の入力集合を広げ、`tsconfig.json` → typecheck + hook-selftest、`Cargo.toml` → cargo-check、`package.json` / `vitest.config.ts` → hook-selftest、`.githooks/**` → githooks-selftest を発火させた。あわせて **発火の追加とカナリアの追加を対にする**規律を導入した（`package.json` と `vitest.config.ts` にはカナリアが無かったため新設。カナリアの無いファイルに検査を実行しても、vitest が起動することしか証明しない）。
 >
 > **残る 3 経路は塞いでいない**:
 >
@@ -97,7 +97,7 @@ CLAUDE.md には、この誤爆を回避するための運用ルールが 2 つ�
 >
 > 上の一文のうち「`gh pr merge --squash` の誤 close も `gh issue close` も同じ」は成り立たなかった。実装したのは `gh pr create` のガードだけであり、それは正しい範囲だった。
 >
-> 1. **誤りの定義が観測できるかが分岐点である。** `gh pr create` の誤り（空 PR）は**リポジトリの状態**として定義でき、hook は git に問える。`merge` / `close` の誤りは**人の意図**であり真実源が無い。hook は「何が閉じるか」を計算できても「それが誤りか」を判定できず、`deny` は原理的に書けない
+> 1. **誤りの定義が観測できるかが分岐点である。** `gh pr create` の誤り（空 PR）は**リポジトリの状態**として定義でき、hook は git に問える。`merge` / `close` の誤りは**人の意図**であり SSOT が無い。hook は「何が閉じるか」を計算できても「それが誤りか」を判定できず、`deny` は原理的に書けない
 > 2. **「hook だけが見える」も誤り。** merge の auto-close 対象は GitHub がリンクとして計算し、`gh pr view <N> --json closingIssuesReferences` と PR ページに**公開している**。逆に hook は GitHub Web UI からのマージとユーザー端末の `gh pr merge` を見ない。**視界はむしろ hook の方が狭い**
 > 3. **経路は 2 本あった。** PR 本文由来（上記リンク）と、squash commit 本文由来（既定 = ブランチ全コミット本文の連結）。後者はリポジトリ設定 `squash_merge_commit_message` が生んでおり、**`PR_BODY` へ変えることで Layer 0 から断った**（あらゆるマージ実行経路に効く。実害は 30 PR で 0 件＝予防的措置）
 >
@@ -105,14 +105,14 @@ CLAUDE.md には、この誤爆を回避するための運用ルールが 2 つ�
 >
 > **設定の組み合わせ制約（実測・422）**: GitHub が許すのは `PR_TITLE`×{`PR_BODY`, `BLANK`, `COMMIT_MESSAGES`} と `COMMIT_OR_PR_TITLE`×`COMMIT_MESSAGES` の 4 組のみ。`COMMIT_OR_PR_TITLE` は `COMMIT_MESSAGES` としか組めないため、**Channel 2 を断つならタイトル既定も `PR_TITLE` へ動く**。可逆（`gh api -X PATCH` で戻せる）。
 >
-> **塞げない残余（受容する穴）。** マージで閉じる集合は PR 本文から**マージ時点で**計算される。本文を凍結する機構は無く、`closingIssuesReferences` はいつ問い合わせても「その瞬間の本文」を映す。ゆえに: 別のセッション・別の人・Web UI が、(a) 確認とマージの間に本文へ closing keyword を足し、(b) マージ後にそれを消せば、事前確認にも事後確認にも何も映らない。`gh pr merge --auto` は (a) の窓を分単位に広げる（ゆえに使わない）。**唯一の接地した観測点は `gh issue list --state closed --search "closed:>=<mergedAt>"`** — 参照集合ではなく close イベントを数えるため、経路を問わず拾える。これは検知であって防止ではない。
+> **塞げない残余（受容する未対応リスク）。** マージで閉じる集合は PR 本文から**マージ時点で**計算される。本文を凍結する機構は無く、`closingIssuesReferences` はいつ問い合わせても「その瞬間の本文」を映す。ゆえに: 別のセッション・別の人・Web UI が、(a) 確認とマージの間に本文へ closing keyword を足し、(b) マージ後にそれを消せば、事前確認にも事後確認にも何も映らない。`gh pr merge --auto` は (a) の窓を分単位に広げる（ゆえに使わない）。**唯一の接地した観測点は `gh issue list --state closed --search "closed:>=<mergedAt>"`** — 参照集合ではなく close イベントを数えるため、経路を問わず拾える。これは検知であって防止ではない。
 >
-> この残余は「怠惰な読者」と「規則弁護士」を演じる 2 体のサブエージェントに文面だけを読ませる故障注入を 3 巡行って見つけた（#488）。**新規の抜け道ゼロが 2 巡連続する前に上限へ達したため、塞いだとは書かない。** 規範は機構ではないので、完全性を主張してはならない。
+> この残余は「怠惰な読者」と「規則弁護士」の観点で検証する 2 体のサブエージェントに文面だけを読ませるフォールトインジェクションを 3 巡行って見つけた（#488）。**新規の抜け道ゼロが 2 巡連続する前に上限へ達したため、塞いだとは書かない。** 規範は機構ではないので、完全性を主張してはならない。
 
 ### 非目標（YAGNI）
 
 - **`block-main-commit` を強化しない。** `matcher` に PowerShell を足し `push` を語彙に加えても、守れるのは「エージェントがツール経由で叩いた操作」だけで、あなたの手元の端末や将来のツール追加には原理的に届かない
-- **Layer 1 の不在を検知する仕組みを作らない。** `core.hooksPath` はローカル設定であり外れうるが、外れても Layer 0 が push を拒む。「安全網の不在を検知する安全網」という無限後退から降りる
+- **Layer 1 の不在を検知する仕組みを作らない。** `core.hooksPath` はローカル設定であり外れうるが、外れても Layer 0 が push を拒む。「セーフティネットの不在を検知するセーフティネット」という無限後退から降りる
 - **`required_status_checks`（CI グリーン必須）は今回入れない。** 最終防衛線を立てるという本 Phase の目的から外れる。別判断とする
 - **`post-edit.mjs` を触らない。** (B) の再設計は Phase 3
 
@@ -156,7 +156,7 @@ CLAUDE.md には、この誤爆を回避するための運用ルールが 2 つ�
 exit 0
 ```
 
-**`git symbolic-ref --short` を使ってはならない。** `main` という名の tag が存在すると、曖昧性回避のため `refs/heads/main` が `heads/main` に縮み、`main` との比較が偽になって**静かに素通りする**（最終レビューで実測）。削除予定の `block-main-commit` は `git branch --show-current` を使っておりこの曖昧性に免疫があったため、短縮名で比較すると**置き換え対象からの後退**になる。完全 ref（`refs/heads/main`）で比較する。
+**`git symbolic-ref --short` を使ってはならない。** `main` という名の tag が存在すると、曖昧性回避のため `refs/heads/main` が `heads/main` に縮み、`main` との比較が偽になって**気づかれないまま素通りする**（最終レビューで実測）。削除予定の `block-main-commit` は `git branch --show-current` を使っておりこの曖昧性に免疫があったため、短縮名で比較すると**置き換え対象からの後退**になる。完全 ref（`refs/heads/main`）で比較する。
 
 ```sh
 # .githooks/pre-push — stdin: <local ref> <local sha> <remote ref> <remote sha>
@@ -245,13 +245,13 @@ git ネイティブ hook は実際に実行される瞬間に、実際のツリ�
 
 **設計の良し悪しを測る指標のひとつは、ドキュメントが減るかどうかである。** 本変更は最終的に CLAUDE.md から 2 ルールを削り、hook を 1 本削り、#473 の半分を消滅させる。
 
-## 6. 検証（故障注入）
+## 6. 検証（フォールトインジェクション）
 
-AGENTS.md の要求「安全網が『効いている』ことは、故障注入で一度は実測する」に従う。#471 は、この規律が無かったために「hook の出力が一度もエージェントに届いていなかった」ことを見逃した。
+AGENTS.md の要求「セーフティネットが『効いている』ことは、フォールトインジェクションで一度は実測する」に従う。#471 は、この規律が無かったために「hook の出力が一度もエージェントに届いていなかった」ことを見逃した。
 
-V5 / V6 は、本 spec §1 で測った実在の抜け道をそのまま逆向きに撃つ回帰テストである。
+V5 / V6 は、本 spec §1 で測った実在の抜け道をそのまま逆向きに実行する回帰テストである。
 
-| # | 故障注入 | 期待 | 何を証明するか |
+| # | フォールトインジェクション | 期待 | 何を証明するか |
 |---|---|---|---|
 | V1 | 使い捨てブランチから `git push origin tmp:main` | 拒否 | Layer 0 が立った。main は動かない |
 | V2 | `gh pr merge --squash` | **通る** | `pull_request` 規則が既存の運用を壊さない |
@@ -268,7 +268,7 @@ V5 / V6 は、本 spec §1 で測った実在の抜け道をそのまま逆向�
 
 **V9 の重要性**: 通ることの確認が、通らないことの確認と同じだけ重要である。V9 が失敗すれば「誤爆しないから doc ルールを消せる」という前提が崩れ、§5 の削除は取り消しになる。
 
-## 7. 実施順序 — 安全網を一瞬も空にしない
+## 7. 実施順序 — セーフティネットを一瞬も空にしない
 
 ### Phase 1a（本 PR）
 
@@ -298,10 +298,10 @@ V5 / V6 は、本 spec §1 で測った実在の抜け道をそのまま逆向�
 - [ ] **V8 は実行しない**: harness が main への push を拒否。迂回しない。`pre-push` の 3 テスト（client）と V1（server）で二重に測定済み
 - [x] **V9 実測**: `git pull --ff-only` も `git merge --ff-only origin/main` も通る＝誤爆しない
 - [x] `docs/build-commands.md` にカテゴリ E と bootstrap が記載されている
-- [x] `.gitattributes` が `.githooks/**` を `eol=lf` に固定している（`_lib.sh` も含む＝CRLF による静かな guard 無効化を防ぐ）
+- [x] `.gitattributes` が `.githooks/**` を `eol=lf` に固定している（`_lib.sh` も含む＝CRLF による気づかれない guard 無効化を防ぐ）
 - [x] CLAUDE.md に新しい層（`.githooks/` + ruleset）と §4 の caveat が**追記**されている（既存ルールは削除しない）。主張の確度は測定の等級に合わせる（実測 / read-back のみ / 視界外、を書き分ける）
 - [x] `.claude/settings.json` と `.claude/hooks/post-edit.mjs` に変更が無い
-- [x] `_lib.sh` は完全 ref（`refs/heads/main`）で比較する。`--short` は ref 曖昧性で静かに fail-open する
+- [x] `_lib.sh` は完全 ref（`refs/heads/main`）で比較する。`--short` は ref 曖昧性で気づかれないまま fail-open する
 - [x] `AGENTS.md` と `.claude/skills/implement/SKILL.md` の「カテゴリ A〜D」が「A〜E」になっている
 - [ ] **V2**: `gh pr merge --squash` が動く（マージ時に確認）
 - [ ] CI グリーン（ubuntu の `npm test` が実行ビットと dash 互換性の検知器になる）
@@ -322,7 +322,7 @@ V5 / V6 は、本 spec §1 で測った実在の抜け道をそのまま逆向�
 | **新規起票 ①** | 「Phase 1b: `block-main-commit` を削除し CLAUDE.md の 2 ルールを消す」— 本 PR のマージ後に実施 |
 | **新規起票 ②** | 「PreToolUse の `matcher: "Bash"` は PowerShell tool に一致しない」— Phase 2 に含める |
 | **新規起票 ③** | 「`reference-transaction` hook で `cherry-pick` / `revert` / `am` / `branch -f` / `update-ref` を捕捉する」— §4 の視界外経路。`fetch` / `pull --ff-only` による main 更新でも発火するため FF 判定が要る |
-| **新規起票 ④** | 「`selectChecks` に `.githooks/**` を追加する」— `.githooks/` は今日から安全網であり、`.claude/hooks/**` と同じ理由（安全網そのものを編集したら安全網が生きているか確かめる）が適用されるが対象外。Phase 3 と同時が自然 |
+| **新規起票 ④** | 「`selectChecks` に `.githooks/**` を追加する」— `.githooks/` は今日からセーフティネットであり、`.claude/hooks/**` と同じ理由（セーフティネットそのものを編集したらセーフティネットが生きているか確かめる）が適用されるが対象外。Phase 3 と同時が自然 |
 | **新規起票 ⑤** | 「`prepare` の `git config` は `.git` 無し環境で `npm ci` ごと落とす」— 現状すべての `npm ci` は `actions/checkout` の後なので到達不能。Docker のレイヤキャッシュ build を足すと踏む。`\|\| exit 0` は「Layer 1 は best-effort、不在は検知しない」と整合する |
 
 > **実測による訂正（2026-07-10）— 処遇そのものが as-built からドリフトしていた。**

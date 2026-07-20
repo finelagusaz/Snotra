@@ -41,6 +41,10 @@ const MainApp: Component = () => {
   const blurTimer = createOwnedTimer(100);
   const moveTimer = createOwnedTimer(500);
   const [mainVisible, setMainVisible] = createSignal(false);
+  // フォーカス喪失時自動非表示のゲート（#576）。bootstrap と "auto-hide-focus-lost-changed"
+  // イベントで更新され、常時登録の onFocusChanged ハンドラがこれを参照する。既定 false は
+  // bootstrap 到着前に非表示を走らせない（旧: リスナー未登録＝非表示にならない挙動と等価）。
+  const [autoHideOnFocusLost, setAutoHideOnFocusLost] = createSignal(false);
   const [maxResults, setMaxResults] = createSignal(8);
   const [showIcons, setShowIcons] = createSignal(true);
   const [cachedWidth, setCachedWidth] = createSignal(600);
@@ -57,27 +61,6 @@ const MainApp: Component = () => {
       // hide→notify(trim) の順序は hideMainWindow に集約（#361）。
       setMainVisible(false);
       await hideMainWindow();
-    };
-
-    const registerAutoHideOnFocusLost = async () => {
-      const unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
-        if (!focused) {
-          blurTimer.arm(() => {
-            void (async () => {
-              try {
-                // 統合後は results ウィンドウが同一ウィンドウ内のため、
-                // is_main_foreground によるプロセス ID 比較は不要。
-                await hideMain();
-              } catch (e) {
-                console.warn("auto-hide focus check failed:", e);
-              }
-            })();
-          });
-        } else {
-          blurTimer.cancel();
-        }
-      });
-      unlistenFns.push(unlistenFocus);
     };
 
     // Wait for all critical listeners to be attached before first reset/show.
@@ -156,25 +139,87 @@ const MainApp: Component = () => {
     });
     unlistenFns.push(unlistenMainMoved);
 
+    // フォーカス喪失時の自動非表示リスナーを常時登録し、autoHideOnFocusLost シグナルを
+    // ゲートとして参照する（#576）。登録失敗は局所 catch で隔離し、後続の初期化
+    // （他イベント購読・bootstrap 適用）を巻き添えにしない。
+    try {
+      const unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
+        if (!focused) {
+          if (!autoHideOnFocusLost()) return; // 設定オフなら何もしない
+          blurTimer.arm(() => {
+            void (async () => {
+              try {
+                // 統合後は results ウィンドウが同一ウィンドウ内のため、
+                // is_main_foreground によるプロセス ID 比較は不要。
+                await hideMain();
+              } catch (e) {
+                console.warn("auto-hide focus check failed:", e);
+              }
+            })();
+          });
+        } else {
+          blurTimer.cancel();
+        }
+      });
+      unlistenFns.push(unlistenFocus);
+    } catch (e) {
+      console.warn("auto-hide focus listener registration failed:", e);
+    }
+
+    // 起動ハイドレーションガード（#578）。config 変更 event（購読済み）と bootstrap
+    // （後から解決する起動時スナップショット）は同じ signal を書く二重の書き手だが、
+    // bootstrap には世代刻印が無く「どちらが新しいか」を判別できない。snapshot 撮影〜
+    // bootstrap 適用の窓（IPC 境界をまたぐため JS 側でアトミック化できない）に config が
+    // 外部変更されると、後着の stale な bootstrap が先着 event 値を轢きうる。
+    // このガードは「起動中に一度でも event が来たキーは bootstrap より勝つ」という
+    // 初期化専用の調停で、一般の順序保証ではない（純粋な順序解が無いことの受容として
+    // この窓だけを塞ぐ）。受容残余は 2 つ: (1) 1 変更が複数の per-field event を撒くため
+    // 生じるフィールド間の一瞬の世代混在、(2) 起動窓で同一フィールドが二度変わり
+    // e(A)→bootstrap が新しい B を解決→e(B) と届く場合、guard が B を skip して A を
+    // 一瞬見せる（次 event で自己修復。単一変更が支配的なため net では改善）。
+    type ConfigField =
+      | "language"
+      | "visual"
+      | "visible_rows"
+      | "show_icons"
+      | "instant_command_prefix"
+      | "result_limit"
+      | "auto_hide_on_focus_lost";
+    const eventWon = new Set<ConfigField>();
+    const applyBootstrap = (field: ConfigField, apply: () => void) => {
+      if (!eventWon.has(field)) apply();
+    };
+
+    // Listen for auto_hide_on_focus_lost config changes (#576)
+    const unlistenAutoHideConfig = await listen<boolean>("auto-hide-focus-lost-changed", (event) => {
+      eventWon.add("auto_hide_on_focus_lost");
+      setAutoHideOnFocusLost(event.payload);
+    });
+    unlistenFns.push(unlistenAutoHideConfig);
+
     // Listen for visual config changes
     const unlistenVisual = await listen<VisualConfig>("visual-config-changed", (event) => {
+      eventWon.add("visual");
       applyTheme(event.payload);
     });
     unlistenFns.push(unlistenVisual);
 
     // Listen for visible_rows config changes (event name kept as "max-results-changed" for IPC stability, #388)
     const unlistenMaxResults = await listen<number>("max-results-changed", (event) => {
+      eventWon.add("visible_rows");
       setMaxResults(event.payload);
     });
     unlistenFns.push(unlistenMaxResults);
 
     // Listen for show_icons config changes
     const unlistenShowIcons = await listen<boolean>("show-icons-changed", (event) => {
+      eventWon.add("show_icons");
       setShowIcons(event.payload);
     });
     unlistenFns.push(unlistenShowIcons);
 
-    // Listen for hotkey registration failure (config change case)
+    // Listen for hotkey registration failure (config change case).
+    // 一時通知であって config 値 signal ではないため、ハイドレーションガードの対象外。
     const unlistenHotkeyFailed = await listen<string>("hotkey-registration-failed", (event) => {
       setHotkeyFailureNotice(t("notice.hotkey.change_failed", { hotkey: event.payload }));
     });
@@ -182,18 +227,21 @@ const MainApp: Component = () => {
 
     // Listen for language changes
     const unlistenLang = await listen<string>("language-changed", (event) => {
+      eventWon.add("language");
       setLanguage(event.payload as Lang);
     });
     unlistenFns.push(unlistenLang);
 
     // Listen for instant command prefix changes
     const unlistenInstantPrefix = await listen<string>("instant-prefix-changed", (event) => {
+      eventWon.add("instant_command_prefix");
       setInstantCommandPrefix(event.payload);
     });
     unlistenFns.push(unlistenInstantPrefix);
 
     // Listen for result_limit changes (event name kept as "top-n-history-changed" for IPC stability, #388)
     const unlistenTopN = await listen<number>("top-n-history-changed", (event) => {
+      eventWon.add("result_limit");
       setIconCacheSize(event.payload);
     });
     unlistenFns.push(unlistenTopN);
@@ -202,18 +250,23 @@ const MainApp: Component = () => {
     let bootstrap: BootstrapPayload | null = null;
     try {
       bootstrap = await api.getBootstrapPayload();
-      setLanguage(bootstrap.language as Lang);
-      applyTheme(bootstrap.visual);
-      setMaxResults(bootstrap.appearance.visible_rows);
-      setShowIcons(bootstrap.appearance.show_icons);
-      setInstantCommandPrefix(bootstrap.instant_command_prefix);
-      setIconCacheSize(bootstrap.result_limit);
+      // 各適用は applyBootstrap 経由（#578）。await 中に config 変更 event が先着した
+      // キーは skip し、event の新しい値を stale な bootstrap で轢かない。
+      const b = bootstrap;
+      applyBootstrap("language", () => setLanguage(b.language as Lang));
+      applyBootstrap("visual", () => applyTheme(b.visual));
+      applyBootstrap("visible_rows", () => setMaxResults(b.appearance.visible_rows));
+      applyBootstrap("show_icons", () => setShowIcons(b.appearance.show_icons));
+      applyBootstrap("instant_command_prefix", () => setInstantCommandPrefix(b.instant_command_prefix));
+      applyBootstrap("result_limit", () => setIconCacheSize(b.result_limit));
+      // フォーカス喪失時自動非表示の初期値（#576）。以後の変更は
+      // "auto-hide-focus-lost-changed" イベントが追従する。bootstrap 失敗時は
+      // 既定 false のままとし、非表示を走らせない。
+      applyBootstrap("auto_hide_on_focus_lost", () =>
+        setAutoHideOnFocusLost(b.general.auto_hide_on_focus_lost),
+      );
     } catch (e) {
       console.error("Failed to load bootstrap payload:", e);
-    }
-
-    if (bootstrap?.general.auto_hide_on_focus_lost) {
-      await registerAutoHideOnFocusLost();
     }
 
     // 起動時に更新チェック（auto_update が disabled 以外の場合）
@@ -254,6 +307,13 @@ const MainApp: Component = () => {
     prevSetHeight = height;
     const width = untrack(cachedWidth);
     void win.setSize(new LogicalSize(width, height));
+  });
+
+  // 設定がオフへ切り替わった瞬間に保留中の非表示タイマーを止める（#576）。
+  // 「フォーカス喪失 → blurTimer.arm 直後に設定オフ」という 100ms 未満の窓でも
+  // pending タイマーを即キャンセルし、意図しない非表示を防ぐ。
+  createEffect(() => {
+    if (!autoHideOnFocusLost()) blurTimer.cancel();
   });
 
   onCleanup(() => {

@@ -106,6 +106,9 @@ fn apply_config_change(app: &AppHandle) {
     // Detect changes
     let show_icons_changed = new_config.appearance.show_icons != old_config.appearance.show_icons;
     let new_show_icons = new_config.appearance.show_icons;
+    let auto_hide_focus_lost_changed = new_config.general.auto_hide_on_focus_lost
+        != old_config.general.auto_hide_on_focus_lost;
+    let new_auto_hide_focus_lost = new_config.general.auto_hide_on_focus_lost;
     let index_changed =
         IndexInputs::from_config(&old_config) != IndexInputs::from_config(&new_config);
     let language_changed = new_config.general.language != old_config.general.language;
@@ -196,6 +199,12 @@ fn apply_config_change(app: &AppHandle) {
     // Emit show_icons change
     if show_icons_changed {
         let _ = app.emit("show-icons-changed", new_show_icons);
+    }
+
+    // フォーカス喪失時自動非表示の切替をフロントエンドへ通知（#576）。フロントは常時
+    // onFocusChanged を登録済みで、この値をシグナルゲートとして参照する。
+    if auto_hide_focus_lost_changed {
+        let _ = app.emit("auto-hide-focus-lost-changed", new_auto_hide_focus_lost);
     }
 
     // イベント名は IPC 安定のため旧名 "max-results-changed" を維持する（config キーは visible_rows に改名済み、#388）。

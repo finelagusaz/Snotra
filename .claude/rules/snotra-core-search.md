@@ -3,15 +3,21 @@ paths:
   - "snotra-core/src/search.rs"
 ---
 
-# search.rs ルール
+# search.rs ルール（ルーター・#588 試行中）
 
-変更後は `/cache-check` で incremental 単調性を検証する。
+事実の正本はコード側にある。本 rule は「どこを読むか・何を実行するか」だけを示す（要約コピーを置かない）。
 
-- **スコア階層は不変**: Prefix > Substring > Kana > Path > Fuzzy(nucleo)。基準スコアは `mod score_tier`（`PREFIX_BASE`/`SUBSTRING_BASE`/`KANA_BASE`/`PATH_BASE`）に集約済み。基準定数の全順序は直後の `const _` コンパイル時アサーションが全ビルドで強制し、実行時の全順序（位置ペナルティ込み）はテスト `kana_search_direct_match_ranks_above_kana_match` で検証。**`9000`（file_name scoring 短絡閾値）は score_tier ではない**（`PREFIX_BASE` と混同しない）
-- **BinaryHeap の Ord は逆順**: `peek()` = worst（スコア最小）。`into_sorted_vec()` は昇順で best が先頭
-- **新マッチパス追加時**: ビットマスク pre-filter との OR 関係を確認。非 ASCII は `u64::MAX` で常にパスする前提
-- **Wave 1/2 変更 → `compute_wave1` / `compute_wave2` ヘルパーを更新**: `new()` / `new_with_migemo()` / `new_with_cached_masks()` が共有。v4 パスの kana 再計算は `new_with_cached_masks()` 内に残る
-- **`kana_lower_names` / `kana_char_masks` は migemo 有効時のみ構築（issue #337）**: `compute_wave1(.., migemo_enabled)` と `new_with_cached_masks` の v4/v3 両パスで条件化。kana 系 2 Vec は必ず同時に空/同長（`kana_char_masks` は `kana_lower_names` から `compute_kana_char_masks` で導出し、3 コンストラクタ全経路で `assemble` 直前に構築）。空 Vec のとき長さ `{0, entries.len()}`、`assemble` の debug_assert は kana 系のみ緩和、検索ループは `kana_available` 空ガード必須、Fuzzy pre-filter の kana 経路は `kana_char_masks.is_empty()` チェック必須。migemo は index 構築入力なので、engine の `IndexInputs`（`config_watcher` の kick 判定と `complete_index_drain` の re-diff が共有する単一定義）に含める（#347 Phase 2 で `needs_reindex` / in-flight `needs_rebuild` を統合・削除済み）
-- **search_with_options の分割構造（#436）**: 候補準備 `prepare_query_plan`（→ `QueryPlan`）／incremental 可否 `decide_incremental`（`prev_*` は read のみ）／1 エントリ採点 `score_one_entry`（`#[inline]`・bitmask pre-filter を先頭固定）／結果組立 `heap_into_results`（top-k 確定後に K 件だけ所有 clone する。`ScoredEntry<'a>` は SearchEngine から借用）。`prev_*` の write は orchestrator が `heap_into_results` による所有変換の**後**に行う（heap が self を借用しているため）
-- **`has_dot` 変更 → incremental ガードも見直す**: `score_one_entry` の file_name スコアリング条件と `decide_incremental` の `!has_dot || prev_query.contains('.')` は連動している
-- **`has_path_sep` 変更 → incremental ガードも見直す**: `score_one_entry` のパスマッチ条件と `decide_incremental` の `!has_path_sep` ガードは連動している
+## 読む正本
+
+- 責務・スコア階層・全順序の強制: `search.rs` の `//!`、`SearchEngine` の struct doc、`mod score_tier` の doc（直後の `const _` 全順序アサーション含む。位置は下の注記参照）
+- incremental 述語と前回状態の規律: `IncrementalCache`（`can_reuse` の read / `update` の write を対に持つ・#601）・`score_one_entry` / `heap_into_results` の doc と `search_with_options` 本体のコメント
+
+> **位置はファイル名で断定せず、シンボル名で grep して現在地を確認する。** search.rs は責務単位で `search/{build,query_plan,scoring}.rs` へ分割済み（#598〜#600）で、上記シンボルは移動しうる（例: `mod score_tier` / `score_one_entry` / `heap_into_results` は `search/scoring.rs`、`compute_wave1/2` は `search/build.rs`、`prepare_query_plan` は `search/query_plan.rs`）。名前参照は refactor を生き延びるが、`<file> の X` という位置断定は腐る（#600 実測）。
+- 横断不変条件（並列 Vec レイアウト・ビットマスク一元化・has_path_sep 非互換）: `snotra-core/CLAUDE.md` の search.rs 節・「文字ビットマスク」節・「incremental cache とパスクエリの非互換」節
+
+## トリガー → 検査
+
+- **incremental・キャッシュ再利用・前回状態（`IncrementalCache`）・`has_dot`/`has_path_sep` に触れたら**: 正本（`IncrementalCache::can_reuse` の doc）を読み、`/cache-check` で単調性を検証する。述語や状態を足すときは `can_reuse`（read）と `update`（write）を対で変更する
+- **新しいマッチ種別を追加するなら**: bitmask pre-filter との整合を `compute_wave2` の doc（false-negative 不変条件）で確認する
+- **Wave 1/2・kana 構築に触れたら**: `compute_wave1` / `new_with_cached_masks` の doc（#337）を読む
+- **`Ord` / `BinaryHeap` / top-k に触れたら**: `snotra-core/CLAUDE.md` 実装前チェックの規律（先頭が最良/最悪の明記・入力順不変テスト）に従う

@@ -67,7 +67,7 @@ const CARGO_MANIFEST = /(^|\/)Cargo\.toml$/;
 // カナリアの無いファイルをここに足してはならない — 何も検証しない緑になる。
 //
 // Cargo.toml は**ルートのみ**。crate 追加は必ず members を編集するのでそこで捕まる。
-// メンバーの Cargo.toml（パッケージ名の真実源）は要らない — 改名すれば
+// メンバーの Cargo.toml（パッケージ名の SSOT）は要らない — 改名すれば
 // `cargo test -p snotra` が "package did not match" で落ちる。沈黙する経路だけを守る。
 const CHECK_DEFINITION = new Set([
   ".claude/settings.json",
@@ -143,14 +143,14 @@ export function selectChecks(rel) {
   // テストが読まないファイルの編集で「検査が通った」と沈黙する（ROOT_TS_CONFIG と同じ理由）。
   if (rel === "src-tauri/tauri.conf.json") checks.push("csp-test");
 
-  // 安全網そのものと、検査の定義を変えるファイルを編集したときは、安全網が生きているか
+  // セーフティネットそのものと、検査の定義を変えるファイルを編集したときは、セーフティネットが生きているか
   // 確かめる。これが無いと、全検査の発火を決めるファイルだけが誰にも検査されない（#497）。
   if (CHECK_DEFINITION.has(rel) || rel.startsWith(".claude/hooks/")) {
     checks.push("hook-selftest");
   }
 
   // .githooks/ は #480 以降 main 保護の Layer 1 であり、.claude/hooks/ と同じ理由で
-  // 「安全網そのものを編集したら安全網を検査する」が適用される（#484）。
+  // 「セーフティネットそのものを編集したらセーフティネットを検査する」が適用される（#484）。
   if (rel.startsWith(".githooks/")) checks.push("githooks-selftest");
 
   return checks;
@@ -272,7 +272,7 @@ function buildCommand(id, root) {
 
   switch (id) {
     // check / clippy の --workspace は cargo に Cargo.toml の members を読ませる。
-    // crate 名を列挙すると members の写しになり、新しい crate で静かに漏れる（#500）。
+    // crate 名を列挙すると members の写しになり、新しい crate で気づかれないまま漏れる（#500）。
     case "clippy":
       return cargoSpec([
         "clippy", "--workspace",

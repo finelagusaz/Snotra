@@ -79,6 +79,7 @@ allowed-tools:
 
 - **`git branch --show-current` で現在のブランチを確認し、`main` 上にいる場合は feature ブランチ（`feat/` / `fix/` / `chore/` 等）を作成してからコミットする**（`main` 直コミットは禁止・`.githooks/pre-commit` に弾かれる。`/start-issue` を経ていない単体起動時に該当しやすい）
 - このタスクで変更したファイルのみをステージする
+- **`workspace/` を削除する前に、否定の知識を ADR へ回収する**（#593）: `plan.md`・本サイクルの検討に「代替案 B を検討して却下した」判断があれば、削除で失う前に `docs/adr/NNNN-<title>.md` を起こす（形式は `docs/adr/0001-*.md` に倣う）。**トリガーは否定の知識が生じたときだけ** — 自明な実装・一本道の選択では作らない。無ければ何もしない
 - `workspace/` ディレクトリが存在する場合、削除してステージに含める（`/start-issue` の引き継ぎバッファは実装完了で役目を終える。git 履歴から復元可能）
 - conventional commit を作成する（例: `feat:`, `fix:`, `refactor:`）
 - 何を実装し、なぜ実装したかの簡潔な説明を含める

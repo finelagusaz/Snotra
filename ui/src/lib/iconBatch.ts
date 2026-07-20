@@ -1,5 +1,7 @@
 /** 長さプレフィックス付きバイナリバッチを、パスごとの Blob URL へパースする。
- *  形式: [count:u32 LE]、以降アイコンごとに [status:u8] [status=1 のとき: png_len:u32 LE, png_bytes]。
+ *  ワイヤ形式の正本は `src-tauri/src/icon.rs` の `encode_batch_binary` rustdoc。
+ *  本デコーダはそれに一致する。デコードは `iconBatch.test.ts` が形式どおりに組み立てた
+ *  実バイト列で検証する（Rust エンコーダ出力との言語横断往復ではない）。
  *
  *  **解放契約**: 返り値 Map の Blob URL の所有権は呼び出し側へ移る。`LruIconCache.set()` へ
  *  渡して管理を委ねるか、渡さず捨てる経路（stale guard 等の早期リターン）では全 URL を

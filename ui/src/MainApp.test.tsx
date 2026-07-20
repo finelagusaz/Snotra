@@ -9,6 +9,7 @@ const {
   mockInitIndexingState, mockSetHotkeyFailureNotice, mockShouldShowResults,
   mockInterpKind, mockSetInstantCommandPrefix, mockHideMainWindow,
   mockGetBootstrapPayload, mockSetSize,
+  listenHandlers, mockOnFocusChanged, mockUnlistenFocus,
 } = vi.hoisted(() => {
   globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
     cb(0);
@@ -28,6 +29,11 @@ const {
     mockHideMainWindow: vi.fn(async () => {}),
     mockGetBootstrapPayload: vi.fn(),
     mockSetSize: vi.fn(async () => {}),
+    // イベント名 → ハンドラ を捕捉し、テストから任意イベントを発火できるようにする
+    listenHandlers: {} as Record<string, (e: { payload: unknown }) => void>,
+    // onFocusChanged の呼び出し回数検証 + コールバック捕捉（focusHandler は calls から取得）
+    mockOnFocusChanged: vi.fn(),
+    mockUnlistenFocus: vi.fn(),
   };
 });
 
@@ -78,7 +84,10 @@ vi.mock("@tauri-apps/api/window", () => ({
     innerSize: async () => ({ toLogical: () => ({ width: 600, height: 52 }) }),
     onResized: async () => () => {},
     onMoved: async () => () => {},
-    onFocusChanged: async () => () => {},
+    onFocusChanged: (cb: (e: { payload: boolean }) => void) => {
+      mockOnFocusChanged(cb);
+      return Promise.resolve(mockUnlistenFocus);
+    },
     setSize: mockSetSize,
     show: vi.fn(async () => {}),
   }),
@@ -89,7 +98,10 @@ vi.mock("@tauri-apps/api/dpi", () => ({
   },
 }));
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async () => () => {}),
+  listen: vi.fn(async (event: string, handler: (e: { payload: unknown }) => void) => {
+    listenHandlers[event] = handler;
+    return () => {};
+  }),
 }));
 
 // ── モック確立後にインポート ──
@@ -130,6 +142,8 @@ async function renderMainApp() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // vi.clearAllMocks() はプレーンオブジェクトの中身を消さないため明示クリア
+  for (const key of Object.keys(listenHandlers)) delete listenHandlers[key];
   capturedProps = undefined;
   mockGetBootstrapPayload.mockResolvedValue(BOOTSTRAP);
   mockActivateSelectedByIndex.mockResolvedValue(true);
@@ -204,5 +218,154 @@ describe("MainApp → ResultsSection props 配線", () => {
     await renderMainApp();
 
     expect(capturedProps!.skipIcons).toBe(true);
+  });
+});
+
+describe("MainApp auto_hide_on_focus_lost（#576: 常時リスニング + シグナルゲート）", () => {
+  // onFocusChanged に渡された最新コールバックを取得する
+  const focusHandler = () =>
+    mockOnFocusChanged.mock.calls.at(-1)![0] as (e: { payload: boolean }) => void;
+  // SolidJS の createEffect（setter で schedule される）を flush する microtask tick
+  const flushEffects = () => Promise.resolve();
+
+  it("bootstrap=false: フォーカス喪失イベントを受けても hide しない（ゲートで停止）", async () => {
+    // BOOTSTRAP は auto_hide_on_focus_lost: false
+    await renderMainApp();
+    // 常時登録: onFocusChanged は起動時に1回だけ呼ばれる
+    expect(mockOnFocusChanged).toHaveBeenCalledTimes(1);
+
+    vi.useFakeTimers();
+    try {
+      focusHandler()({ payload: false });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(mockHideMainWindow).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("イベントで true に切り替えると、フォーカス喪失 100ms 後に hide する", async () => {
+    await renderMainApp();
+
+    vi.useFakeTimers();
+    try {
+      listenHandlers["auto-hide-focus-lost-changed"]({ payload: true });
+      await flushEffects();
+      focusHandler()({ payload: false });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(mockHideMainWindow).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("blurTimer 保留中に false へ切り替えると、保留中の hide がキャンセルされる", async () => {
+    await renderMainApp();
+
+    vi.useFakeTimers();
+    try {
+      listenHandlers["auto-hide-focus-lost-changed"]({ payload: true });
+      await flushEffects();
+      focusHandler()({ payload: false }); // blurTimer arm（100ms）
+      // 100ms 経過前に設定オフ → createEffect が blurTimer.cancel()
+      listenHandlers["auto-hide-focus-lost-changed"]({ payload: false });
+      await flushEffects();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(mockHideMainWindow).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("イベント発火を繰り返しても onFocusChanged は再登録されない（常時1本）", async () => {
+    await renderMainApp();
+
+    listenHandlers["auto-hide-focus-lost-changed"]({ payload: true });
+    listenHandlers["auto-hide-focus-lost-changed"]({ payload: false });
+    listenHandlers["auto-hide-focus-lost-changed"]({ payload: true });
+    await flushEffects();
+
+    expect(mockOnFocusChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it("bootstrap=true（実既定）: 初回フォーカス喪失で 100ms 後に hide する", async () => {
+    mockGetBootstrapPayload.mockResolvedValue({
+      ...BOOTSTRAP,
+      general: { ...BOOTSTRAP.general, auto_hide_on_focus_lost: true },
+    });
+    await renderMainApp();
+
+    vi.useFakeTimers();
+    try {
+      focusHandler()({ payload: false });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(mockHideMainWindow).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("MainApp 起動ハイドレーションガード（#578: bootstrap は先着 event を上書きしない）", () => {
+  // bootstrap を deferred にして onMount を await getBootstrapPayload で停止させ、
+  // その隙に config 変更 event を先着させてから stale な bootstrap を解決する。
+  // ハイドレーションガードが無いと bootstrap が event 値を上書きしてしまう（RED）。
+  function deferBootstrap(): (payload: BootstrapPayload) => void {
+    let resolve!: (payload: BootstrapPayload) => void;
+    mockGetBootstrapPayload.mockReturnValue(
+      new Promise<BootstrapPayload>((r) => {
+        resolve = r;
+      }),
+    );
+    return resolve;
+  }
+
+  it("show_icons: bootstrap 解決前に来た event 値が保持される（bootstrap が轢かない）", async () => {
+    const resolveBootstrap = deferBootstrap(); // BOOTSTRAP.show_icons = true
+    render(() => <MainApp />);
+    await tick(); // listener 登録まで進み bootstrap await で停止
+
+    // より新しい event（show_icons=false）が bootstrap 解決前に到着
+    listenHandlers["show-icons-changed"]({ payload: false });
+    expect(capturedProps!.showIcons).toBe(false);
+
+    // 起動時に読んだ stale な bootstrap（show_icons=true）が後から解決
+    resolveBootstrap(BOOTSTRAP);
+    await tick();
+    await tick();
+
+    expect(capturedProps!.showIcons).toBe(false);
+  });
+
+  it("visible_rows: bootstrap 解決前に来た event 値が保持される（bootstrap が轢かない）", async () => {
+    const resolveBootstrap = deferBootstrap(); // BOOTSTRAP.visible_rows = 8
+    render(() => <MainApp />);
+    await tick();
+
+    listenHandlers["max-results-changed"]({ payload: 3 });
+    expect(capturedProps!.maxResults).toBe(3);
+
+    resolveBootstrap(BOOTSTRAP);
+    await tick();
+    await tick();
+
+    expect(capturedProps!.maxResults).toBe(3);
+  });
+
+  it("event 未着なら bootstrap 値が通常どおり適用される（ガードの副作用なし）", async () => {
+    const resolveBootstrap = deferBootstrap();
+    render(() => <MainApp />);
+    await tick();
+
+    // event を発火せずに bootstrap を解決
+    resolveBootstrap({
+      ...BOOTSTRAP,
+      appearance: { show_icons: false, visible_rows: 5 },
+    });
+    await tick();
+    await tick();
+
+    expect(capturedProps!.showIcons).toBe(false);
+    expect(capturedProps!.maxResults).toBe(5);
   });
 });

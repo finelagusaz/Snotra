@@ -1,6 +1,6 @@
 ---
 name: health-check
-description: "大きなサイクル完了後や定期メンテナンス時に使用。ドキュメントと実装の整合性を10項目で検証し報告する（修正はしない）。"
+description: "大きなサイクル完了後や定期メンテナンス時に使用。governance:check（決定的検査）を実行し、機械化できない意味的整合（コマンド直書き grep・npm ラッパー等価・メモリ整合）を検証して報告する（修正はしない）。"
 disable-model-invocation: true
 argument-hint: ""
 allowed-tools:
@@ -13,61 +13,39 @@ allowed-tools:
 
 コードベースとドキュメントの衛生状態を検証する。発見事項を報告し、修正は行わない。
 
+**決定的検査の SSOT は `npm run governance:check`（`scripts/governance-check.mjs`・#587）である。** 旧 Check 1・2・3・4・6・8・9・10 はそこへ機械化済み（下の各 stub が対応 G 番号を示す。Check 番号は序数参照の腐敗を避けるため振り直さない）。本スキルで実行するのは:
+
+1. `npm run governance:check` を実行し、赤ならその全件を発見事項（Critical）として報告する
+2. 機械化できない検査 — Check 5 の残置部分（コマンド直書き grep・npm 系ラッパーの等価判断）と Check 7（メモリ整合）— を従来どおり実施する
+
 ## Check 1 — CLAUDE.md モジュール構成の乖離
 
-各サブディレクトリの `CLAUDE.md` に記載されたモジュール構成が、実際のファイル一覧と一致しているか検証する。
-
-対象:
-- `snotra-core/CLAUDE.md` ↔ `snotra-core/src/*.rs`
-- `src-tauri/CLAUDE.md` ↔ `src-tauri/src/**/*.rs`
-- `ui/CLAUDE.md` ↔ `ui/src/**/*.{ts,tsx}`（エントリポイント・components・stores・lib セクション）
-- `snotra-settings/CLAUDE.md` ↔ `snotra-settings/src/**/*.rs`
-
-手順:
-1. 各 `CLAUDE.md` を読み、記載されたファイル名を抽出する
-2. Glob で実際のファイルを列挙する
-3. 差分を報告:
-   - **記載あり・実ファイルなし**: 削除されたのに CLAUDE.md が未更新
-   - **実ファイルあり・記載なし**: 追加されたのに CLAUDE.md が未更新
+→ **`npm run governance:check`（G1・#587）が機械検査する。ここでは実行しない。** テストファイル除外（SSOT: `vitest.config.ts` の include）・basename 照合の意味論はスクリプト（`scripts/governance-check.mjs`）とそのテストが固定する。責務記述の**内容の妥当性**（索引の存在ではなく記述が実態と合っているか）は機械化できず、気づいた乖離があれば発見事項として報告する。
 
 ## Check 2 — docs/architecture.md にファイル単位モジュール表が再導入されていないか
 
-`docs/architecture.md` はファイル単位のモジュール一覧を**持たない**設計。モジュール構成（各ファイルとその責務）の SSOT は各サブディレクトリの `CLAUDE.md` であり、architecture.md は位置づけ・主要な型・横断パターン・データフローのみを記す。二重管理がドリフトの温床になるため、ファイル単位のモジュール表は撤去された経緯がある。
-
-このチェックは、その不変条件の回帰——architecture.md にファイル単位のモジュール表が再導入されていないか——を検証する。
-
-手順:
-1. `docs/architecture.md` を読む
-2. 先頭セルがバッククォート付きファイル名（`*.rs` / `*.ts` / `*.tsx` 等）の Markdown 表行が存在するか検査する（例: `| \`engine.rs\` | ... |`）
-3. 該当行が見つかった場合は **Warning** で報告:
-   - architecture.md にファイル単位のモジュール表が再導入されている。モジュール構成は各サブディレクトリの `CLAUDE.md` に一本化する設計のため、表の内容は該当 `CLAUDE.md` 側へ集約し、architecture.md からは撤去する
+→ **`npm run governance:check`（G2・#587）が機械検査する。ここでは実行しない。** 責務宣言の正本は `//!` / TSDoc、CLAUDE.md は索引 + 横断不変条件（#562）という設計の回帰検知。
 
 ## Check 3 — AGENTS.md ドキュメント参照の実在性
 
-`AGENTS.md` の「ドキュメント参照」セクションに記載されたファイルパスが実在するか検証する。
-存在しないファイルへの参照を報告する。
-
-> **Note:** 検証コマンドの整合性は SSOT である `docs/build-commands.md` を対象とする Check 5 で一括検証する（AGENTS.md は Step 8 で `docs/build-commands.md` を参照する形式に統合済み）。
+→ **`npm run governance:check`（G3・#587）が機械検査する。ここでは実行しない**（対象はガバナンス文書群全体に一般化された。検証コマンドの整合は Check 5 残置部分と G5/G6）。
 
 ## Check 4 — SPEC.md セクション番号の連続性
 
-`SPEC.md` を読み、`## N.` と `### N.x` の番号が連続しているか確認する。
-飛び・重複・親子の不整合があれば報告する。
+→ **`npm run governance:check`（G4・#587）が機械検査する。ここでは実行しない**（番号連続性に加え、リポジトリ内の `SPEC §N.x` 参照の実在も検査対象）。
 
-## Check 5 — docs/build-commands.md コマンドの実在性（SSOT）
+## Check 5 — docs/build-commands.md コマンドの整合（SSOT）
 
-`docs/build-commands.md` はビルド／検証コマンドの単一の真実源（SSOT）。記載された `npm run XXX` / `npm XXX` コマンドが `package.json` の `scripts` に定義されているか検証する。
-`cargo test -p <crate>` のクレート名が `Cargo.toml` のワークスペースメンバーに存在するか照合する（`check` / `clippy` は `--workspace` で cargo 自身が真実源を読むため、照合対象ではない）。
-定義されていないコマンドを報告する。
+コマンドの**実在照合**（`npm run XXX` → `package.json` scripts、`cargo test -p <crate>` → workspace members の package name）は **`npm run governance:check`（G5・#587）が機械検査する。ここでは実行しない。**
 
-加えて、SSOT ドリフトの検知として以下も確認する:
+本 Check に残るのは**意味判断を要する部分**のみ:
 - `AGENTS.md` Step 8 や `.claude/skills/*/SKILL.md` に **コマンド本体**（`cargo XXX` / `npm XXX` / `npx XXX` の具体的な引数を含む実行コマンド）が直書きされていないか grep する。`docs/build-commands.md` の SSOT を迂回している箇所を報告する（コマンド名への言及や参照リンク自体は許容）。
-- `.claude/hooks/*.mjs` が保持する検査コマンド（`post-edit.mjs` の `buildCommand`）を `docs/build-commands.md` と照合する。hook は検査の実行主体なので**直書き自体は正当** — 報告するのは SSOT との**内容乖離**である。判定規則（SSOT 側の整合規約と同一）: cargo コマンドは**カテゴリ A のコードブロック**と照合し、**合否・検査対象を変えるフラグ差**（`--lib` の付与・`--workspace` や `--all-targets` の欠落・`test -p` のクレート取り違え等。#476 の実例）を報告する。**`check` / `clippy` に `-p` が無いのは正しい状態である**（#500）。**出力整形のみのフラグ**（`--message-format short` 等、exit code を変えないもの）は許容する。node/vitest 系は SSOT コマンド（`npm test` / `npm run typecheck`）の部分集合ラッパーを許容する（対象ファイルが SSOT コマンドの実行対象に含まれることを確認する）。
+- hook の **cargo コマンド ↔ カテゴリ A の照合は `npm run governance:check`（G9・#589）が機械検査する。ここでは実行しない**（出力整形フラグの許容込み。#476 のフラグドリフト事故クラスを機械が受け持つ）。
+- node/vitest 系のみ本 Check に残る: hook の検査（tsc 直接起動・単一テストファイルの vitest 実行）が SSOT コマンド（`npm test` / `npm run typecheck`）の**部分集合ラッパー**として妥当か（対象ファイルが SSOT コマンドの実行対象に含まれるか）を確認する。
 
 ## Check 6 — docs/development-principles.md 参照の実在性
 
-`docs/development-principles.md` に記載されたファイルパス参照（バッククォート内の `*.md`, `*.rs` 等）が実在するか検証する。
-存在しないファイルへの参照を報告する。
+→ **`npm run governance:check`（G3・#587）が機械検査する。ここでは実行しない**（Check 3 と同様、ガバナンス文書群全体へ一般化された）。
 
 ## Check 7 — MEMORY.md 参照の実在性
 
@@ -104,29 +82,17 @@ allowed-tools:
 
 ## Check 8 — .claude/rules/ パスパターンの有効性
 
-`.claude/rules/` 内の各ルールファイルを読み、`paths:` フロントマターに記載されたパスパターンが実在するファイルにマッチするか Glob で検証する。
-マッチ 0 件のパターンを報告する。
+→ **`npm run governance:check`（G7・#587）が機械検査する。ここでは実行しない**（マッチ 0 件の検知。glob 意味論は harness の配送判定の近似であることはスクリプト側に明記済み）。
 
 ## Check 9 — スキル定義の整合性
 
-`.claude/skills/*/SKILL.md` の一覧と、`CLAUDE.md` の「利用できるスキル」テーブルを比較する。
-- スキルファイルはあるがテーブルに記載なし
-- テーブルに記載があるがスキルファイルなし
+→ **`npm run governance:check`（G8・#587）が機械検査する。ここでは実行しない。**
 
 ## Check 10 — docs/build-commands.md ↔ .github/workflows/\* の対応
 
-`docs/build-commands.md`「変更後の検証チェックリスト」の**必須コマンド**が、いずれかの GitHub Actions workflow で実際に実行されるか検証する。CI で担保されない検証要件のドリフトを検知する。
+「CI/CD メモ」対応表とワークフローの機械照合（表のコマンド・wrapper スクリプトパスが表記 workflow の `run:` に現れるか・workflow ファイルの実在）は **`npm run governance:check`（G6・#587）が担う。ここでは実行しない。**
 
-手順:
-1. `docs/build-commands.md` のカテゴリ A〜C から「必須」とマークされた `npm` / `cargo` コマンド名を抽出する（特にカテゴリ C の `smoke:startup` / `e2e:tauri`）。
-2. `.github/workflows/*.yml` を grep し、各必須コマンドを実行する `run:` ステップが存在するか確認する。npm script が薄いラッパーの場合（例: `smoke:startup` = `pwsh -File scripts/smoke-startup.ps1`）、その**ラッパーが呼ぶスクリプトパス**（`scripts/smoke-startup.ps1`）が `run:` に現れていれば「実行あり」とみなす（CI では引数を上書きして直接呼ぶことがあるため）。
-3. 「CI/CD メモ」の対応表（検証コマンド ↔ workflow）が実際の workflow 定義と一致するか照合する:
-   - 表に載っているが実行する workflow が無いコマンド
-   - workflow で実行されているが表に無いコマンド
-   - 表の workflow 名・トリガー記述が実ファイル（`name:` / `on:`）とずれている
-4. 対応 workflow が無い必須コマンド、または対応表とのずれを **Warning** で報告する（例: 「`smoke:startup` は必須だが、どの workflow にも対応する run ステップが無い」）。
-
-> **Note:** 必須コマンドが PR で自動実行されるか、`paths` フィルタ等の条件付きかは問わない（条件付き実行は許容）。検知対象は「実行する workflow が存在しない」「対応表が実態とずれている」ことのみ。
+残るのは意味判断のみ: 表の**トリガー記述**（「PR 自動」「対象 paths を含む PR」等）が実際の `on:`/`paths` 設定と合っているか、「workflow で実行されているが表に無いコマンド」の逆方向、および**カテゴリ A〜C の必須コマンドが対応表に漏れていないか**（G6 は表の行駆動なので、表に載っていない必須コマンドは機構の母集団に入らない）。気づいたずれを **Warning** で報告する。
 
 ## 出力
 
@@ -145,9 +111,11 @@ allowed-tools:
 ## サマリー
 - チェック項目数: N（実施: M / Skipped: K）
 - 発見事項: N件（Critical: N / Warning: N / Info: N）
+- 根拠 — governance:check の出力（照合母集団の件数行）と exit code、Check 7 の実在列挙
 ```
 
 - **`Critical` / `Warning` / `Info` は発見事項**（コードベースに乖離がある）。**`[Skipped]` は発見事項ではない**（前提が満たされず、検査そのものが走らなかった）。**「異常なし」と「見ていない」を同じ記号で書かない。**
-- **`[Skipped]` が正当なのは、文書化された前提を満たせない場合に限る。** 現状その前提を持つのは **Check 7 のみ**（メモリ領域の絶対パスが与えられていない）。リポジトリ内のファイルだけを対象とする Check 1〜6・8〜10 は前提が常に満たされるため、**それらが `Skipped` になること自体が発見事項**（検査基盤の異常）として報告する。この限定が無いと「面倒な検査は `Skipped` にしておけば楽」という抜け道になる
+- **`[Skipped]` が正当なのは、文書化された前提を満たせない場合に限る。** 現状その前提を持つのは **Check 7 のみ**（メモリ領域の絶対パスが与えられていない）。`governance:check` の実行と Check 5 残置部分は前提が常に満たされるため、**それらが `Skipped` になること自体が発見事項**（検査基盤の異常）として報告する。この限定が無いと「面倒な検査は `Skipped` にしておけば楽」という抜け道になる
 - **「All checks passed.」と書けるのは、発見事項ゼロ かつ `Skipped` ゼロのときだけである。** `Skipped` が 1 つでもあれば「M passed, K skipped」と書く（M = 実施数）
-- 該当が無いセクション（発見事項ゼロ / `Skipped` ゼロ）は省略してよい。**サマリーは常に出す**
+- **「根拠」行は実行の証跡であって発見事項ではない。** `Critical`/`Warning`/`Info`（乖離あり）でも `[Skipped]`（未実行）でもない**第3のカテゴリ**であり、**発見事項カウントにも「All checks passed」判定にも算入しない**。検査が母集団を絞り込むとき（現状は Check 1 の test 除外）に「何をどれだけ照合したか」を接地させる。省くと「差分ゼロ」が「照合していない」と区別できなくなる（Check 7 の証跡規律・`AGENTS.md`「派生コピー同士の一致を完全性の証拠にしない」の一般化）。将来ほかの検査が根拠を出す余地は塞がない
+- 該当が無いセクション（発見事項ゼロ / `Skipped` ゼロ）は省略してよい。**サマリーは常に出す（根拠行を含む）**

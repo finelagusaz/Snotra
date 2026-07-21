@@ -443,6 +443,8 @@ impl SoftHostProbe {
                 .map_err(|error| format!("failed to create window: {error}"))?,
         );
         log_phase(self.started_at, "window_ready");
+        // #579: 起動時に全モニターの scale/位置を出す。異 DPI クロス試験の地となる。
+        log_monitors(&window);
         let context = softbuffer::Context::new(Arc::clone(&window))
             .map_err(|error| format!("failed to create softbuffer context: {error}"))?;
         let surface = softbuffer::Surface::new(&context, Arc::clone(&window))
@@ -865,6 +867,20 @@ impl ApplicationHandler<HostCommand> for SoftHostProbe {
             match event {
                 WindowEvent::CloseRequested => self.finish(event_loop),
                 WindowEvent::RedrawRequested => self.render(),
+                // #579: 異 DPI モニターへ跨ぐと Windows が WM_DPICHANGED を送り、
+                // winit が ScaleFactorChanged→Resized を発行する。ここは常に記録し、
+                // surface を新物理サイズへ追随させるため再描画を要求する。
+                WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                    let size = window.inner_size();
+                    let monitor = window.current_monitor().and_then(|m| m.name());
+                    eprintln!(
+                        "SNOTRA_SOFT_HOST_DPI event=scale_changed new_scale={scale_factor:.3} \
+                         inner_size={}x{} monitor={monitor:?}",
+                        size.width, size.height
+                    );
+                    window.request_redraw();
+                    Ok(())
+                }
                 WindowEvent::Resized(size)
                     if size.width > 0
                         && size.height > 0
@@ -1191,11 +1207,19 @@ fn configure_static_font(context: &egui::Context) -> Result<usize, String> {
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert("jp_font".to_owned(), font.into());
     for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        // #399/#579: jp_font を fallback（push=末尾）にすると Latin は egui 既定
+        // フォント・CJK は Yu Gothic の 2 フォントに分かれ、vertical metrics 差で
+        // 混在行のベースラインがずれる。glow は分数差を sub-pixel で吸収するが、
+        // 被覆 AA の無い softbuffer ラスタライザは整数 px に丸めて顕在化させる。
+        // Yu Gothic は Latin も持つので、先頭に置いて両スクリプトを単一フォントで
+        // 描き 1 ベースラインに統一する（#399 の「混在は単一フォントで」の原則。
+        // なお snotra-settings は本文では依然 append で、glow の sub-pixel AA が
+        // 分数差を吸収しているため露見しない——単一フォント化は見出しのみ）。
         fonts
             .families
             .entry(family)
             .or_default()
-            .push("jp_font".to_owned());
+            .insert(0, "jp_font".to_owned());
     }
     context.set_fonts(fonts);
     Ok(bytes.len())
@@ -1217,6 +1241,29 @@ fn log_phase(started_at: Instant, name: &str) {
         "SNOTRA_SOFT_HOST_PHASE name={name} elapsed_ms={:.3}",
         started_at.elapsed().as_secs_f64() * 1000.0
     );
+}
+
+/// #579: 起動時に winit が見る全モニターの scale/位置/サイズと、生成直後の
+/// window の所属モニター・scale を出す。異 DPI クロス試験の基準地点。
+fn log_monitors(window: &Window) {
+    let current = window.current_monitor().and_then(|m| m.name());
+    eprintln!(
+        "SNOTRA_SOFT_HOST_DPI event=startup window_scale={:.3} current_monitor={current:?}",
+        window.scale_factor()
+    );
+    for (index, monitor) in window.available_monitors().enumerate() {
+        let pos = monitor.position();
+        let size = monitor.size();
+        eprintln!(
+            "SNOTRA_SOFT_HOST_DPI monitor={index} name={:?} scale={:.3} pos=({},{}) size={}x{}",
+            monitor.name(),
+            monitor.scale_factor(),
+            pos.x,
+            pos.y,
+            size.width,
+            size.height
+        );
+    }
 }
 
 fn log_metric(checkpoint: &str, cycle: usize, elapsed: Option<Duration>) {

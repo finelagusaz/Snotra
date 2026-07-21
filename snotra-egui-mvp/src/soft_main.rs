@@ -721,11 +721,16 @@ fn configure_static_font(context: &egui::Context) -> Result<usize, String> {
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert("jp_font".to_owned(), font.into());
     for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        // #399/#579: jp_font を fallback（push=末尾）にすると Latin は egui 既定
+        // フォント・CJK は Yu Gothic の 2 フォントに分かれ、混在行のベースラインが
+        // ずれる。被覆 AA の無い softbuffer ラスタライザは分数差を整数 px に丸めて
+        // 顕在化させる。Yu Gothic は Latin も持つので先頭に置き、両スクリプトを
+        // 単一フォントで描いて 1 ベースラインに統一する（soft_host と同修正）。
         fonts
             .families
             .entry(family)
             .or_default()
-            .push("jp_font".to_owned());
+            .insert(0, "jp_font".to_owned());
     }
     context.set_fonts(fonts);
     Ok(bytes.len())

@@ -44,12 +44,6 @@ impl RuntimeFrame {
 pub enum RuntimeError {
     #[error("Tauri window error: {0}")]
     Tauri(#[from] tauri::Error),
-    #[error("wgpu initialization failed: {0}")]
-    GpuInitialization(String),
-    #[error("wgpu surface validation failed")]
-    SurfaceValidation,
-    #[error("wgpu reported out of memory")]
-    GpuOutOfMemory,
     #[error("softbuffer surface initialization failed: {0}")]
     SurfaceInit(String),
     #[error("softbuffer present failed: {0}")]

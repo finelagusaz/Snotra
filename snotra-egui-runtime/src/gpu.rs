@@ -1,3 +1,13 @@
+// #532 SU1 Task 4: renderer.rs を softbuffer へ全面置換したことで、旧 wgpu
+// レンダラー専用だった fault 監視・復旧経路（GpuFaultMonitor 一式）の呼び手が
+// crate 内から消えた。gpu.rs 自体は Task 6（gpu.rs 撤去）まで現状維持する対象だが、
+// 呼び手が無い間は -D warnings 下で dead_code が個々の型・関数を潰す
+// （GpuFaultInjection は pub 再エクスポートで対象外・raster.rs の
+// cfg_attr(not(test), expect(...)) パターンは test 側でも未使用な install 等には
+// 転用できない＝expect が test ビルドで不成立になる）。挙動は変えない一時的な
+// allow で、Task 6 の撤去まで運ぶ。
+#![allow(dead_code)]
+
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},

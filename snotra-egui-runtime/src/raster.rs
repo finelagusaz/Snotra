@@ -1,16 +1,7 @@
 //! egui の Mesh を CPU 側でラスタライズする純関数群（softbuffer 提示用の中核）。
 //!
-//! spike `snotra-egui-mvp/src/soft_host_main.rs` から移植。wgpu レンダラーとは独立に
-//! 純関数として存在し、この時点では `renderer.rs` へ未接続（次タスクで配線）。
-
-// SU1 Task 5（renderer.rs の softbuffer 全面置換）で配線されるまでの一時的な expect。
-// non-test ビルドでは pub(crate) API 全体がテストからしか呼ばれず dead_code と
-// 判定される。cfg(test) では対象コードも使われるため lint 自体発生せず対象外にする
-// （さもないと test ターゲットで expectation 不成立エラーになる）。
-// Task 5 で renderer.rs から呼ばれ始めると non-test 側の期待が不成立になり、
-// -D warnings 下で unfulfilled_lint_expectations がこの行の削除を強制する
-// （allow だと消し忘れが残留する）。
-#![cfg_attr(not(test), expect(dead_code))]
+//! spike `snotra-egui-mvp/src/soft_host_main.rs` から移植。`renderer.rs` の
+//! `EguiRenderer::paint` から呼ばれる（#532 SU1 Task 4 で配線）。
 
 use std::collections::HashMap;
 

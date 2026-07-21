@@ -8,27 +8,34 @@ use tauri_runtime_wry::tao::{
 
 pub(crate) struct InputState {
     raw: egui::RawInput,
-    size: PhysicalSize<u32>,
     native_pixels_per_point: f32,
     pointer_pos: egui::Pos2,
     started_at: Instant,
 }
 
 impl InputState {
-    pub(crate) fn new(size: PhysicalSize<u32>, native_pixels_per_point: f32) -> Self {
+    pub(crate) fn new(_size: PhysicalSize<u32>, native_pixels_per_point: f32) -> Self {
         Self {
             raw: egui::RawInput::default(),
-            size,
             native_pixels_per_point,
             pointer_pos: egui::Pos2::ZERO,
             started_at: Instant::now(),
         }
     }
 
-    pub(crate) fn take(&mut self, max_texture_side: usize) -> egui::RawInput {
+    /// live な size/ppp（`Window::inner_size`/`scale_factor`）を毎フレーム受け取る。
+    /// イベント駆動で保持していた値との乖離（#532 SU1）を絶たすため、screen_rect と
+    /// native_pixels_per_point はここで渡された値だけから作る。
+    pub(crate) fn take(
+        &mut self,
+        max_texture_side: usize,
+        size: PhysicalSize<u32>,
+        native_pixels_per_point: f32,
+    ) -> egui::RawInput {
+        self.native_pixels_per_point = native_pixels_per_point;
         let size_points = egui::vec2(
-            self.size.width as f32 / self.native_pixels_per_point,
-            self.size.height as f32 / self.native_pixels_per_point,
+            size.width as f32 / native_pixels_per_point,
+            size.height as f32 / native_pixels_per_point,
         );
         let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, size_points);
 
@@ -41,7 +48,7 @@ impl InputState {
             .viewports
             .entry(egui::ViewportId::ROOT)
             .or_default();
-        viewport.native_pixels_per_point = Some(self.native_pixels_per_point);
+        viewport.native_pixels_per_point = Some(native_pixels_per_point);
         viewport.inner_rect = Some(screen_rect);
         viewport.focused = Some(self.raw.focused);
 
@@ -58,15 +65,12 @@ impl InputState {
 
     pub(crate) fn on_window_event(&mut self, event: &WindowEvent<'_>) -> bool {
         match event {
-            WindowEvent::Resized(size) => {
-                self.size = *size;
-            }
-            WindowEvent::ScaleFactorChanged {
-                scale_factor,
-                new_inner_size,
-            } => {
+            // 実際の size/ppp は render() が毎フレーム window から live に取る
+            // （input.rs Step 1 #532 SU1）。ここでは repaint 要求のトリガーとしてのみ残す。
+            WindowEvent::Resized(_) => {}
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                // ポインタ座標変換（物理px→point）に使うため live 同期は残す。
                 self.native_pixels_per_point = *scale_factor as f32;
-                self.size = **new_inner_size;
             }
             WindowEvent::Focused(focused) => {
                 self.raw.focused = *focused;
@@ -396,5 +400,19 @@ mod tests {
         );
         assert_eq!(committed_text_event("\r"), None);
         assert_eq!(committed_text_event(""), None);
+    }
+
+    #[test]
+    fn take_uses_live_size_and_ppp_not_stored_event_values() {
+        // イベント駆動で古い値を持たせる。
+        let mut input = InputState::new(PhysicalSize::new(100, 100), 1.0);
+        // live に新しい size/ppp を渡すと screen_rect は live 値から作られる。
+        let raw = input.take(4096, PhysicalSize::new(200, 400), 2.0);
+        let rect = raw.screen_rect.expect("screen_rect");
+        // 200x400 physical / ppp 2.0 = 100x200 points。
+        assert_eq!(rect.width(), 100.0);
+        assert_eq!(rect.height(), 200.0);
+        let vp = raw.viewports.get(&egui::ViewportId::ROOT).unwrap();
+        assert_eq!(vp.native_pixels_per_point, Some(2.0));
     }
 }

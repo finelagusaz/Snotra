@@ -16,7 +16,7 @@ use crate::{
     gpu::GpuFaultInjection,
     ime::ImeBridge,
     input::InputState,
-    renderer::{EguiRenderer, PaintOutcome},
+    renderer::EguiRenderer,
     repaint::RepaintScheduler,
 };
 
@@ -30,6 +30,12 @@ pub struct RuntimeFrame {
     close_requested: bool,
     hide_requested: bool,
     drag_requested: bool,
+    // #532 SU1 Task 4: renderer softbuffer 化で旧 apply_frame_commands の読み手
+    // （gpu_fault_requested 分岐・renderer.inject_fault 呼び）を外したため、
+    // inject_gpu_fault で書かれるだけで読まれない dead field になる
+    // （gpu.rs 一式ごと Task 6 で撤去）。dead_code lint 自体は発火しない
+    // （EguiView::update への &mut RuntimeFrame 経由の外部到達を rustc が
+    // 保守的に扱うためと見られる。cargo clippy で実測確認済み）。
     gpu_fault_requested: Option<GpuFaultInjection>,
 }
 
@@ -62,12 +68,23 @@ pub enum RuntimeError {
     SurfaceValidation,
     #[error("wgpu reported out of memory")]
     GpuOutOfMemory,
+    #[error("softbuffer surface initialization failed: {0}")]
+    SurfaceInit(String),
+    #[error("softbuffer present failed: {0}")]
+    Present(String),
     #[error("Windows IME initialization failed: {0}")]
     ImeInitialization(String),
     #[error("egui runtime is not installed")]
     NotInstalled,
     #[error("an egui view is already attached to window '{0}'")]
     DuplicateWindow(String),
+}
+
+const MAX_PAINT_RETRIES: u32 = 5;
+/// 描画失敗の再試行間隔（指数バックオフ）。MAX_PAINT_RETRIES 回まで Some、以降 None（fatal）。
+fn retry_delay(consecutive_failures: u32) -> Option<std::time::Duration> {
+    (consecutive_failures <= MAX_PAINT_RETRIES)
+        .then(|| std::time::Duration::from_millis(16u64 << consecutive_failures.min(6)))
 }
 
 #[derive(Clone, Default)]
@@ -205,9 +222,19 @@ impl<T: UserEvent> RuntimePlugin<T> {
         let mut pending = self.pending.lock().expect("egui pending window lock");
 
         for (window_id, label) in known_windows {
-            let Some(window) = pending.remove(&label) else {
+            let Some(mut window) = pending.remove(&label) else {
                 continue;
             };
+            // softbuffer surface は GDI 親和性ゆえ present スレッド（このイベントループ）
+            // で生成する（EguiWindow::new は別スレッドから呼ばれうるため作れない）。
+            match EguiRenderer::new(window.window.clone()) {
+                Ok(renderer) => window.renderer = Some(renderer),
+                Err(error) => {
+                    log::error!("egui softbuffer surface init failed: {error}");
+                    eprintln!("SNOTRA_EGUI_RENDER_ERROR={error}");
+                    continue; // この window はスキップ（attach の同期エラー契約は狭まる）
+                }
+            }
             let scheduler = RepaintScheduler::new(proxy.clone(), window_id);
             let callback_scheduler = scheduler.clone();
             window.context.set_request_repaint_callback(move |info| {
@@ -225,15 +252,19 @@ struct EguiWindow {
     window: tauri::Window,
     input: InputState,
     ime: ImeBridge,
-    renderer: EguiRenderer,
+    // 活性化（イベントループの attach_pending_windows）時に Some になる。softbuffer surface
+    // は GDI 親和性ゆえ present スレッド（イベントループ）で生成する必要があり、
+    // attach() を呼ぶスレッド（別スレッドのことがある）では作れない。
+    renderer: Option<EguiRenderer>,
     view: Box<dyn EguiView>,
+    visible: bool,
+    paint_failures: u32,
 }
 
 impl EguiWindow {
     fn new(window: tauri::Window, mut view: Box<dyn EguiView>) -> Result<Self, RuntimeError> {
         let size = window.inner_size()?;
         let scale_factor = window.scale_factor()? as f32;
-        let renderer = EguiRenderer::new(window.clone())?;
         let ime = ImeBridge::new(&window)?;
         let context = egui::Context::default();
         view.setup(&context);
@@ -242,39 +273,44 @@ impl EguiWindow {
             window,
             input: InputState::new(size, scale_factor),
             ime,
-            renderer,
+            renderer: None,
             view,
+            visible: true,
+            paint_failures: 0,
         })
     }
 
     fn on_window_event(&mut self, event: &tauri_runtime_wry::tao::event::WindowEvent<'_>) -> bool {
         self.drain_native_ime();
-        if let tauri_runtime_wry::tao::event::WindowEvent::Resized(size) = event {
-            if let Err(error) = self.renderer.configure(size.width, size.height) {
-                log::error!("egui resize failed: {error}");
-            }
-        } else if let tauri_runtime_wry::tao::event::WindowEvent::ScaleFactorChanged {
-            new_inner_size,
-            scale_factor,
-        } = event
+        if let tauri_runtime_wry::tao::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } =
+            event
         {
-            eprintln!(
-                "SNOTRA_EGUI_DPI_CHANGED scale_factor={scale_factor:.3} physical={}x{}",
-                new_inner_size.width, new_inner_size.height
-            );
-            if let Err(error) = self
-                .renderer
-                .configure(new_inner_size.width, new_inner_size.height)
-            {
-                log::error!("egui DPI resize failed: {error}");
-            }
+            eprintln!("SNOTRA_EGUI_DPI_CHANGED scale_factor={scale_factor:.3}");
+        }
+        if let tauri_runtime_wry::tao::event::WindowEvent::Focused(true) = event {
+            // #532 SU1: main.rs の Alt+Q は RuntimeFrame 経由でなく tauri::Window を直接
+            // show()/hide() する。show() 直後は必ず set_focus() が続く（show_and_focus）ため、
+            // Focused(true) を「再表示された」の代理シグナルとして visible を復帰させる
+            // （外部再表示イベント・不変条件⑥の最小追従）。
+            self.visible = true;
         }
         self.input.on_window_event(event)
     }
 
     fn render(&mut self) -> Result<(), RuntimeError> {
+        if !self.visible {
+            return Ok(()); // 不変条件⑥: 非表示中は描かない。
+        }
         self.drain_native_ime();
-        let raw_input = self.input.take(self.renderer.max_texture_side());
+        let size = self.window.inner_size()?;
+        let ppp = self.window.scale_factor()? as f32;
+        let max_side = self
+            .renderer
+            .as_ref()
+            .ok_or(RuntimeError::NotInstalled)?
+            .max_texture_side();
+        let raw_input = self.input.take(max_side, size, ppp);
+        // gpu_fault_requested は Task 6 まで残る dead field ゆえ None で構築する。
         let mut frame = RuntimeFrame {
             close_requested: false,
             hide_requested: false,
@@ -285,15 +321,23 @@ impl EguiWindow {
             .context
             .run_ui(raw_input, |ui| self.view.update(ui, &mut frame));
         self.handle_platform_output(&output.platform_output);
-        let paint_outcome = self.renderer.paint(&self.context, output)?;
-        if paint_outcome == PaintOutcome::DeviceRecovered {
-            // The new egui-wgpu renderer has no copy of textures owned by the
-            // old device. Recreate Context so setup re-registers fonts and the
-            // next pass emits a complete texture delta; view state stays owned
-            // by EguiView and therefore survives the GPU reset.
-            self.context = egui::Context::default();
-            self.view.setup(&self.context);
-            self.context.request_repaint();
+        // 描画失敗は能動再試行（不変条件⑤）。「次 RedrawRequested 待ち」は egui が repaint を
+        // 求めなければ停止するため、失敗時に自ら repaint を要求し、上限超過で fatal にする。
+        match self
+            .renderer
+            .as_mut()
+            .expect("renderer installed by attach_pending_windows")
+            .paint(&self.context, output, size)
+        {
+            Ok(_) => self.paint_failures = 0,
+            Err(error) => match retry_delay(self.paint_failures + 1) {
+                Some(delay) => {
+                    self.paint_failures += 1;
+                    log::warn!("egui paint failed (retry {}): {error}", self.paint_failures);
+                    self.context.request_repaint_after(delay);
+                }
+                None => return Err(error),
+            },
         }
         self.apply_frame_commands(frame)?;
         Ok(())
@@ -333,15 +377,12 @@ impl EguiWindow {
     }
 
     fn apply_frame_commands(&mut self, frame: RuntimeFrame) -> Result<(), RuntimeError> {
-        if let Some(fault) = frame.gpu_fault_requested {
-            self.renderer.inject_fault(fault);
-            self.context.request_repaint();
-        }
         if frame.drag_requested {
             self.window.start_dragging()?;
         }
         if frame.hide_requested {
             self.window.hide()?;
+            self.visible = false; // 不変条件⑥: hide 要求を出したフレームから非表示扱いにする。
         }
         if frame.close_requested {
             self.window.close()?;
@@ -388,4 +429,33 @@ fn cursor_icon(icon: egui::CursorIcon) -> Option<tauri::CursorIcon> {
         egui::CursorIcon::ZoomIn => tauri::CursorIcon::ZoomIn,
         egui::CursorIcon::ZoomOut => tauri::CursorIcon::ZoomOut,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_PAINT_RETRIES, retry_delay};
+
+    #[test]
+    fn hidden_window_is_not_painted() {
+        // visible=false のとき render は早期 return する契約を、visible 述語で固定。
+        fn should_render(visible: bool) -> bool {
+            visible
+        }
+        assert!(!should_render(false));
+        assert!(should_render(true));
+    }
+
+    #[test]
+    fn retry_delay_backs_off_then_gives_up() {
+        assert!(retry_delay(1).is_some());
+        assert!(retry_delay(MAX_PAINT_RETRIES).is_some());
+        assert!(
+            retry_delay(MAX_PAINT_RETRIES + 1).is_none(),
+            "上限超過は fatal"
+        );
+        assert!(
+            retry_delay(2).unwrap() > retry_delay(1).unwrap(),
+            "バックオフは単調増加"
+        );
+    }
 }

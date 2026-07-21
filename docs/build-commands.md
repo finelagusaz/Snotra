@@ -15,7 +15,7 @@ cargo check --workspace                                                         
 cargo clippy --workspace --all-targets -- -D warnings                                 # 必須: lint（全 .rs 変更、テストターゲット含む）
 cargo test -p snotra-core                                                              # 必須（snotra-core を変更した場合）: 純ロジック層 TDD
 cargo test -p snotra-egui-runtime                                                      # 必須（snotra-egui-runtime を変更した場合）: 入力・IME・Surface/Device復旧方針
-cargo test -p snotra-egui-mvp                                                          # 必須（snotra-egui-mvp を変更した場合）: Engine・Updaterモード・障害注入
+cargo test -p snotra-egui-mvp                                                          # 必須（snotra-egui-mvp を変更した場合）: Engine・Updaterモード・jp_fontベースライン
 cargo test -p snotra                                                                   # 必須（src-tauri を変更した場合）: Tauri 統合層のユニットテスト
 cargo test -p snotra-settings                                                          # 必須（snotra-settings を変更した場合）: 設定 GUI の純ロジックテスト
 cargo doc --workspace --no-deps --document-private-items                               # 必須: intra-doc link 切れ検査（#562・CI 発火／hook 非発火）
@@ -89,7 +89,7 @@ npm run clean:worktrees          # Agent 委譲で残った worktree/ブラン�
 npm ci                           # 依存インストール（初回セットアップ・CI）
 cargo test -p snotra-core        # ユニットテスト（純ロジック層）
 cargo test -p snotra-egui-runtime # ユニットテスト（egui入力・IME・Surface/Device復旧方針）
-cargo test -p snotra-egui-mvp    # MVPのEngine・Updaterモード・障害注入
+cargo test -p snotra-egui-mvp    # MVPのEngine・Updaterモード・jp_fontベースライン
 cargo test -p snotra             # ユニットテスト（Tauri 統合層: state/indexing/config_watcher 等）
 cargo test -p snotra-settings    # ユニットテスト（設定 GUI の純ロジック: font face 検証・TOML エラーローカライズ）
 cargo test --release -p snotra-core bench_ -- --ignored --nocapture  # 検索パフォーマンス計測（詳細: PERFORMANCE.md）
@@ -97,8 +97,6 @@ cargo check --workspace          # Rust 全 crate 型チェック
 cargo clippy --workspace --all-targets -- -D warnings  # lint チェック（カテゴリ A と同じ）
 cargo run -p snotra-settings     # snotra-settings（egui ネイティブ設定 GUI）の単独起動
 cargo run -p snotra-egui-mvp     # Issue #532 egui MVP（WebViewなし・非配布）の単独起動
-cargo run --release -p snotra-egui-mvp --bin snotra-egui-park-host-mvp  # Issue #532 park-surface 統合スパイク（Tauri host + park renderer）
-cargo run --release -p snotra-egui-mvp --bin snotra-egui-soft-host-mvp  # Issue #532 softbuffer 統合スパイク（Tauri host + CPU raster）
 npm run verify                   # Rust + フロントエンド一括検証（cargo check + npm run build）
 npm run smoke:startup             # 起動時ウィンドウ生成スモーク（trace検証）
 npm run e2e:tauri:setup           # Tauri Driver E2E 用セットアップ

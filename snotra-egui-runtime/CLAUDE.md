@@ -8,12 +8,11 @@ Tauri管理のネイティブWindowへeguiをsoftbuffer（CPUラスタ）で描�
 - `input.rs`: Taoイベントからegui入力への純粋変換
 - `ime.rs`: IME未確定範囲とDPI座標の純粋変換
 - `windows_ime.rs`: IMM32 preedit取得、候補ウィンドウ位置、subclassの所有/破棄
-- `gpu.rs`: 旧wgpuレンダラー用のGPU障害復旧方針・fault injection型（#532 SU1で呼び手を失った中間状態。Task 6でgpu.rs一式を撤去予定）
 - `raster.rs`: egui Meshを CPU 側でラスタライズする純関数群（`renderer.rs`が消費）
 - `renderer.rs`: softbuffer Surface初期化・`raster.rs`によるCPUラスタ・present
 - `repaint.rs`: 即時／遅延repaintをTauriイベントループへ配送
 - `runtime.rs`: Tauri wry pluginとWindowごとの状態管理（visibleガード・描画失敗リトライを含む）
-- `surface.rs`: `is_renderable_extent`（renderer.rsが消費）と、wgpu Surface状態の復旧方針`surface_action`/`SurfaceAction`（#532 SU1でrenderer.rsのsoftbuffer化に伴い消費者を失った中間状態）
+- `surface.rs`: `is_renderable_extent`（0×0 Surfaceの描画/configureを防ぐガード。renderer.rsが消費）
 
 ## 不変条件
 

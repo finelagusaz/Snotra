@@ -5061,6 +5061,7 @@ dependencies = [
  "egui-wgpu",
  "log",
  "pollster",
+ "softbuffer",
  "tauri",
  "tauri-runtime",
  "tauri-runtime-wry",

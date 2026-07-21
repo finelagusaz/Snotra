@@ -279,3 +279,17 @@ impl EguiRenderer {
         self.configure(width, height)
     }
 }
+
+/// #532 SU1 G1: softbuffer が tao/wry 管理の tauri::Window に rwh 0.6 で束ねられる
+/// ことをコンパイルで確定する。never-called。撤去済み wgpu の代替が成立する一次証拠。
+#[allow(dead_code)]
+fn _softbuffer_bind_check(window: tauri::Window) -> Result<(), softbuffer::SoftBufferError> {
+    use std::num::NonZeroU32;
+    let context = softbuffer::Context::new(window.clone())?;
+    let mut surface = softbuffer::Surface::new(&context, window)?;
+    surface.resize(NonZeroU32::new(1).unwrap(), NonZeroU32::new(1).unwrap())?;
+    let mut buffer = surface.buffer_mut()?;
+    buffer.fill(0x0028_2828);
+    buffer.present()?;
+    Ok(())
+}

@@ -77,6 +77,14 @@ impl EguiRenderer {
                 RuntimeError::GpuInitialization("surface has no supported configuration".to_owned())
             })?;
         config.format = self.render_state.target_format;
+        // #532 SU1 G2: parity 論は egui-wgpu が UNORM 形式（gamma 空間 blend）を選ぶことに
+        // 依存する。softbuffer の gamma 空間 CPU blend が的と一致するかを wgpu 撤去前に確定する。
+        // is_srgb=true なら CPU blend の色空間設計を見直す（撤去は Task 6）。
+        eprintln!(
+            "SNOTRA_EGUI_TARGET_FORMAT format={:?} is_srgb={}",
+            self.render_state.target_format,
+            self.render_state.target_format.is_srgb()
+        );
         config.present_mode = wgpu::PresentMode::AutoVsync;
         config.desired_maximum_frame_latency = 1;
         self.surface.configure(&self.render_state.device, &config);

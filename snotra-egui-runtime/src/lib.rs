@@ -3,6 +3,7 @@
 mod gpu;
 mod ime;
 mod input;
+mod raster;
 mod renderer;
 mod repaint;
 mod runtime;

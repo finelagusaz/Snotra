@@ -12,13 +12,7 @@ use tauri_runtime_wry::{
     tao::{event::Event, event_loop::ControlFlow},
 };
 
-use crate::{
-    gpu::GpuFaultInjection,
-    ime::ImeBridge,
-    input::InputState,
-    renderer::EguiRenderer,
-    repaint::RepaintScheduler,
-};
+use crate::{ime::ImeBridge, input::InputState, renderer::EguiRenderer, repaint::RepaintScheduler};
 
 pub trait EguiView: Send + 'static {
     fn setup(&mut self, _context: &egui::Context) {}
@@ -30,13 +24,6 @@ pub struct RuntimeFrame {
     close_requested: bool,
     hide_requested: bool,
     drag_requested: bool,
-    // #532 SU1 Task 4: renderer softbuffer 化で旧 apply_frame_commands の読み手
-    // （gpu_fault_requested 分岐・renderer.inject_fault 呼び）を外したため、
-    // inject_gpu_fault で書かれるだけで読まれない dead field になる
-    // （gpu.rs 一式ごと Task 6 で撤去）。dead_code lint 自体は発火しない
-    // （EguiView::update への &mut RuntimeFrame 経由の外部到達を rustc が
-    // 保守的に扱うためと見られる。cargo clippy で実測確認済み）。
-    gpu_fault_requested: Option<GpuFaultInjection>,
 }
 
 impl RuntimeFrame {
@@ -50,11 +37,6 @@ impl RuntimeFrame {
 
     pub fn drag_window(&mut self) {
         self.drag_requested = true;
-    }
-
-    /// Issue #532の障害復旧検証専用。製品UIからは呼び出さない。
-    pub fn inject_gpu_fault(&mut self, fault: GpuFaultInjection) {
-        self.gpu_fault_requested = Some(fault);
     }
 }
 
@@ -310,12 +292,10 @@ impl EguiWindow {
             .ok_or(RuntimeError::NotInstalled)?
             .max_texture_side();
         let raw_input = self.input.take(max_side, size, ppp);
-        // gpu_fault_requested は Task 6 まで残る dead field ゆえ None で構築する。
         let mut frame = RuntimeFrame {
             close_requested: false,
             hide_requested: false,
             drag_requested: false,
-            gpu_fault_requested: None,
         };
         let output = self
             .context

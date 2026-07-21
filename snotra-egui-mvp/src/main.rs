@@ -2,7 +2,7 @@
 
 use std::{
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
@@ -15,7 +15,7 @@ use snotra_core::{
     indexer::AppEntry,
     ui_types::SearchResult,
 };
-use snotra_egui_runtime::{EguiRuntime, EguiView, GpuFaultInjection, RuntimeFrame};
+use snotra_egui_runtime::{EguiRuntime, EguiView, RuntimeFrame};
 use tauri::Manager;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_updater::UpdaterExt;
@@ -49,8 +49,6 @@ struct MvpView {
     first_frame_logged: bool,
     updater_mode: AutoUpdateMode,
     updater_download: bool,
-    pending_gpu_fault: Option<GpuFaultInjection>,
-    rendered_frames: u32,
 }
 
 impl MvpView {
@@ -83,8 +81,6 @@ impl MvpView {
                 parse_update_mode(std::env::var("SNOTRA_EGUI_MVP_UPDATE_MODE").ok().as_deref())
             },
             updater_download: env_flag("SNOTRA_EGUI_MVP_UPDATER_DOWNLOAD"),
-            pending_gpu_fault: parse_gpu_fault(std::env::var("SNOTRA_EGUI_MVP_GPU_FAULT").ok()),
-            rendered_frames: 0,
         }
     }
 
@@ -175,14 +171,6 @@ impl EguiView for MvpView {
                 context.pixels_per_point()
             );
         }
-        self.rendered_frames += 1;
-        if self.rendered_frames >= 3
-            && let Some(fault) = self.pending_gpu_fault.take()
-        {
-            eprintln!("SNOTRA_EGUI_GPU_INJECT={fault:?}");
-            frame.inject_gpu_fault(fault);
-        }
-
         let focused = context.input(|input| input.focused);
         if focused && !self.was_focused {
             self.focus_search = true;
@@ -380,15 +368,6 @@ fn build_verification_engine(entry_count: usize) -> Engine {
         engine.record_launch(path, "");
     }
     engine
-}
-
-fn parse_gpu_fault(value: Option<String>) -> Option<GpuFaultInjection> {
-    match value.as_deref() {
-        Some("surface-lost") => Some(GpuFaultInjection::SurfaceLost),
-        Some("device-lost") => Some(GpuFaultInjection::DeviceLost),
-        Some("oom") => Some(GpuFaultInjection::OutOfMemory),
-        _ => None,
-    }
 }
 
 fn parse_update_mode(value: Option<&str>) -> AutoUpdateMode {
@@ -649,8 +628,33 @@ fn run_hide_show_probe(window: tauri::Window, app_handle: tauri::AppHandle, cycl
     });
 }
 
-fn configure_japanese_font(context: &egui::Context) {
+/// `jp_font` を登録し Proportional/Monospace の先頭（`insert(0, ...)`）へ差し込んだ
+/// `FontDefinitions` を組む純粋部分。`push`（末尾）だと Latin=egui既定/CJK=Yu Gothic の
+/// 2フォントに分かれ、softbuffer の被覆AA無しラスタが vertical metrics 差を整数pxへ
+/// 丸めて混在行のベースラインをずらす（#399/#579）。呼び出し側は `ctx.set_fonts` を担う。
+fn japanese_font_definitions(bytes: &'static [u8]) -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
+    let mut font = egui::FontData::from_static(bytes);
+    font.tweak = egui::FontTweak {
+        scale: 1.0,
+        y_offset_factor: 0.3,
+        y_offset: 0.0,
+        ..Default::default()
+    };
+    fonts.font_data.insert("jp_font".to_owned(), font.into());
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .insert(0, "jp_font".to_owned());
+    }
+    fonts
+}
+
+static JP_FONT_BYTES: OnceLock<Box<[u8]>> = OnceLock::new();
+
+fn configure_japanese_font(context: &egui::Context) {
     let candidates = [
         "C:/Windows/Fonts/YuGothM.ttc",
         "C:/Windows/Fonts/yugothic.ttf",
@@ -658,38 +662,28 @@ fn configure_japanese_font(context: &egui::Context) {
         "C:/Windows/Fonts/meiryo.ttc",
     ];
 
-    for path in candidates {
-        let Ok(bytes) = std::fs::read(path) else {
-            continue;
-        };
-        let mut font = egui::FontData::from_owned(bytes);
-        font.tweak = egui::FontTweak {
-            scale: 1.0,
-            y_offset_factor: 0.3,
-            y_offset: 0.0,
-            ..Default::default()
-        };
-        fonts.font_data.insert("jp_font".to_owned(), font.into());
-        fonts
-            .families
-            .entry(egui::FontFamily::Proportional)
-            .or_default()
-            .push("jp_font".to_owned());
-        fonts
-            .families
-            .entry(egui::FontFamily::Monospace)
-            .or_default()
-            .push("jp_font".to_owned());
-        context.set_fonts(fonts);
-        return;
+    if JP_FONT_BYTES.get().is_none() {
+        for path in candidates {
+            let Ok(bytes) = std::fs::read(path) else {
+                continue;
+            };
+            let _ = JP_FONT_BYTES.set(bytes.into_boxed_slice());
+            break;
+        }
     }
 
-    eprintln!("warning: no Japanese font found; MVP Japanese text will use fallback glyphs");
+    let Some(bytes) = JP_FONT_BYTES.get() else {
+        eprintln!("warning: no Japanese font found; MVP Japanese text will use fallback glyphs");
+        return;
+    };
+    context.set_fonts(japanese_font_definitions(bytes));
 }
 
 fn main() {
     let started_at = Instant::now();
-    let start_visible = env_flag("SNOTRA_EGUI_MVP_START_VISIBLE");
+    // SU1: 検証プローブは常に可視起動する（env 既定 false の罠を避ける。
+    // 旧 SNOTRA_EGUI_MVP_START_VISIBLE 依存は撤去 — #532）。
+    let start_visible = true;
     let hide_show_cycles = env_usize("SNOTRA_EGUI_MVP_HIDE_SHOW_CYCLES").unwrap_or(0);
     let runtime = EguiRuntime::new();
     let setup_runtime = runtime.clone();
@@ -802,20 +796,18 @@ mod tests {
     }
 
     #[test]
-    fn gpu_fault_env_values_are_explicit() {
-        assert_eq!(
-            parse_gpu_fault(Some("surface-lost".to_owned())),
-            Some(GpuFaultInjection::SurfaceLost)
-        );
-        assert_eq!(
-            parse_gpu_fault(Some("device-lost".to_owned())),
-            Some(GpuFaultInjection::DeviceLost)
-        );
-        assert_eq!(
-            parse_gpu_fault(Some("oom".to_owned())),
-            Some(GpuFaultInjection::OutOfMemory)
-        );
-        assert_eq!(parse_gpu_fault(Some("unknown".to_owned())), None);
+    fn jp_font_is_registered_at_index_zero_for_both_families() {
+        // families への挿入は font bytes の妥当性に依らないため dummy で構造を検証。
+        let dummy: &'static [u8] = &[0u8; 4];
+        let fonts = japanese_font_definitions(dummy);
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            let list = fonts.families.get(&family).expect("family present");
+            assert_eq!(
+                list.first().map(String::as_str),
+                Some("jp_font"),
+                "jp_font must be index 0 for {family:?}（push=末尾だと #579 のベースラインずれが再発）"
+            );
+        }
     }
 
     #[test]

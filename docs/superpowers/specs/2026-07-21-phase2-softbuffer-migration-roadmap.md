@@ -21,7 +21,7 @@ Phase 1（技術スパイク + 採用ゲート検証）は完了した。スパ�
 
 ## 決定事項
 
-1. **wgpu は却下済み**（#532 採用判断ゲート「起動・待機時メモリが悪化しない」= 不合格、「現行 wgpu 構成の製品採用: No-Go」）。GPU ドライバ固定費（wgpu ~469MiB）が WebView2 固定費（168MiB）と同格でメモリ削減目的に効かず、softbuffer へ転換した根拠そのもの。softbuffer の対 WebView2 メモリ優位は検証済み（PrivWS で hidden+trim ~17×・visible ~4.3×）。**残して比較すべき未実施の計測は無い。** → SU1 で `snotra-egui-runtime` を softbuffer へ置換し、却下済み wgpu/glow の probe bin（`main.rs`・`glow_main.rs`・`glow_lifecycle_main.rs`・`glow_park_host_main.rs`）を撤去する。検証記録は #532 コメント + git 履歴に残る。
+1. **wgpu は却下済み**（#532 採用判断ゲート「起動・待機時メモリが悪化しない」= 不合格、「現行 wgpu 構成の製品採用: No-Go」）。GPU ドライバ固定費（wgpu ~469MiB）が WebView2 固定費（168MiB）と同格でメモリ削減目的に効かず、softbuffer へ転換した根拠そのもの。softbuffer の対 WebView2 メモリ優位は検証済み（PrivWS で hidden+trim ~17×・visible ~4.3×）。**残して比較すべき未実施の計測は無い。** → SU1 で `snotra-egui-runtime` を softbuffer へ置換し、却下済み wgpu/glow の probe bin（`glow_main.rs`・`glow_lifecycle_main.rs`・`glow_park_host_main.rs`）を撤去する。**`main.rs` は当初この撤去対象に含めたが、SU1 spec（`2026-07-21-su1-softbuffer-runtime-design.md`）で「softbuffer runtime 駆動 probe への転用」へ改定した**——素直に撤去すると softbuffer ランタイムを end-to-end で動かす harness が消え、SU1 が AA/IME を自証できなくなるため。検証記録は #532 コメント + git 履歴に残る。
 2. **再変換（IME reconvert）は WANT**（nice-to-have）。egui_winit/winit は `WM_IME_REQUEST`（`IMR_RECONVERTSTRING`）を提供しないため独自 IMM32 実装が要る（#582）。**切替をブロックしない。** SU1/SU5 で低コストに載れば実装、困難なら defer。
 3. **`fill_mesh` の AA 品質**（テキスト主体のランチャー）は SU1 の受け入れ条件で製品規模の文字品質として検証する。#399/#579 のベースライン顕在化はこの被覆 AA 欠如が前触れだった。
 

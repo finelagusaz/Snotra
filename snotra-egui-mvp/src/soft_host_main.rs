@@ -848,6 +848,22 @@ impl ApplicationHandler<HostCommand> for SoftHostProbe {
                 window.request_redraw();
             }
         }
+        // #582: IME 実操作の客観検証。Ime（Enabled/Preedit/Commit/Disabled）と
+        // キー押下の text を出す。Esc キャンセル（変換中は Ime 経路・Esc の
+        // KeyboardInput は来ない想定）と、通常文字が key.text と Ime::Commit の
+        // 両方へ来る二重投入回帰を、実操作のトレースで確かめる。
+        match &event {
+            WindowEvent::Ime(ime) => {
+                eprintln!("SNOTRA_SOFT_HOST_IME kind=ime {ime:?}");
+            }
+            WindowEvent::KeyboardInput { event: key, .. } if key.state.is_pressed() => {
+                eprintln!(
+                    "SNOTRA_SOFT_HOST_IME kind=key logical={:?} text={:?}",
+                    key.logical_key, key.text
+                );
+            }
+            _ => {}
+        }
         let escape_pressed = matches!(
             &event,
             WindowEvent::KeyboardInput { event, .. }

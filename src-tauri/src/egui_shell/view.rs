@@ -5,6 +5,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+use snotra_core::ui_types::SearchResult;
 use snotra_egui_runtime::{EguiView, RuntimeFrame};
 use tauri::{Emitter, Manager};
 
@@ -163,6 +164,48 @@ impl SearchWindowView {
             }
         }
     }
+
+    /// 1 行を描画。selected ならハイライト + scroll_to_me。返り値: single_clicked。
+    /// ダブルクリックは扱わない（ユーザー決定: §4.8 の double-click=選択は as-built でも
+    /// 到達不能ゆえ落とす。単クリック=起動のみ）。self を借りない関連関数（借用衝突回避）。
+    fn draw_result_row(
+        ui: &mut egui::Ui,
+        index: usize,
+        result: &SearchResult,
+        selected: bool,
+    ) -> bool {
+        let row_h = 30.0;
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), row_h),
+            egui::Sense::click(),
+        );
+        if selected {
+            ui.painter().rect_filled(rect, 4.0, ui.visuals().selection.bg_fill);
+            response.scroll_to_me(Some(egui::Align::Center));
+        }
+        // アイコンスロット（SU4 が埋める）: 左に 24px 空ける。
+        let text_x = rect.left() + 28.0;
+        let name_color = ui.visuals().text_color();
+        let path_color = ui.visuals().weak_text_color(); // 淡色パス
+        let painter = ui.painter();
+        painter.text(
+            egui::pos2(text_x, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            &result.name,
+            egui::FontId::proportional(14.0),
+            name_color,
+        );
+        // 名前の右にパスを淡色で（簡易・galley 省略は egui 既定に委ねる）。
+        painter.text(
+            egui::pos2(rect.right() - 8.0, rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            &result.path,
+            egui::FontId::proportional(11.0),
+            path_color,
+        );
+        let _ = index;
+        response.clicked()
+    }
 }
 
 impl EguiView for SearchWindowView {
@@ -225,11 +268,23 @@ impl EguiView for SearchWindowView {
             response.request_focus();
         }
 
-        // 開発時の結果件数 trace（Task 6 でリスト描画に置換）。
-        crate::trace_main(
-            "egui_search:dispatch",
-            serde_json::json!({ "query_len": self.state.query().chars().count(), "results": self.state.results().len() }),
-        );
+        // 結果リスト（shouldShowResults 相当。M1: results 軸・plain のみ。空なら描かない）。
+        let show_results = !self.state.results().is_empty();
+        let mut clicked: Option<usize> = None;
+        if show_results {
+            // 借用衝突回避: results を clone してから描画（draw_result_row は関連関数で self 非借用）。
+            let results = self.state.results().to_vec();
+            let selected = self.state.selected();
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for (i, result) in results.iter().enumerate() {
+                    if Self::draw_result_row(ui, i, result, i == selected) {
+                        clicked = Some(i); // シングルクリック（§4.8 単=起動）。double は扱わない
+                    }
+                }
+            });
+        }
+        // クリック処理は Task 7。ここでは捕捉のみ（未使用警告を避けるため Task 7 まで let _ =）。
+        let _ = clicked;
 
         self.was_focused = focused;
     }

@@ -3,13 +3,13 @@
 mod lifecycle;
 mod view;
 
-pub(crate) use lifecycle::{HotkeyPlan, plan_hotkey};
+pub(crate) use lifecycle::{HotkeyPlan, blur_should_hide, plan_hotkey};
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 
 use snotra_egui_runtime::EguiRuntime;
-use tauri::Manager;
+use tauri::{Listener, Manager};
 
 use crate::egui_shell::view::SearchWindowView;
 
@@ -135,4 +135,13 @@ pub(crate) fn save_placement_relative(window: &tauri::Window) {
         use snotra_core::window_data::{self, WindowPlacement};
         window_data::save_search_placement(WindowPlacement { x: pos.x, y: pos.y });
     }
+}
+
+/// view からの `egui-hide-requested` を受け、hide_egui_main を実行する（全 hide の合流点・codex #7）。
+/// view（イベントループスレッド）→ emit → この listener で hide を 1 経路に集約する。
+pub(crate) fn register_hide_listener(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    app.listen("egui-hide-requested", move |_| {
+        hide_egui_main(&handle);
+    });
 }

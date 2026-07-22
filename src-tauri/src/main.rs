@@ -676,6 +676,8 @@ fn main() {
                 // show/hide を跨ぐ共有状態（世代・emit dedup）。view/hotkey/hide が参照するので窓生成前に管理下へ。
                 app.manage(egui_shell::EguiShellState::default());
                 egui_shell::create(app, window_width as f64)?;
+                // view→emit→listener の合流点。全 hide を hide_egui_main の 1 経路に集約（codex #7）。
+                egui_shell::register_hide_listener(&app_handle);
             }
 
             // First-run: launch snotra-settings directly (bypassing the indexing guard

@@ -24,7 +24,8 @@
 
 ### 実装初手で確定させる検証ゲート（崩れると設計が反転する）
 
-- **G1（フラグ OFF byte-identical）**: WebView2 の `resume`/`suspend`/`emit`/`trim` を backend フックへ逐語で寄せた後、`SNOTRA_EGUI_MAIN` 未設定で `smoke:startup` / `e2e:tauri` が緑を保つ（回帰なし）。**これが最優先ゲート**——整合の代償（既存 WebView2 経路を触る）が回帰を生まないことを最初に接地する。
+- **G0（宣言→programmatic 変換 byte-identical）**: `tauri.conf.json` の `windows` を空にし `build_webview2_window` で宣言窓を逐語再現した直後、`SNOTRA_EGUI_MAIN` 未設定で `smoke:startup` / `e2e:tauri` が緑（宣言時と挙動一致）。**最初に接地するゲート**——窓生成の変換が flag OFF を壊さないことを、show/hide 整合より前に確定する。
+- **G1（フラグ OFF byte-identical・show/hide 整合後）**: WebView2 の `resume`/`suspend`/`emit`/`trim` を backend フックへ逐語で寄せた後、`SNOTRA_EGUI_MAIN` 未設定で `smoke:startup` / `e2e:tauri` が緑を保つ（回帰なし）。整合の代償（既存 WebView2 経路を触る）が回帰を生まないことを接地する。
 - **G2（hotkey → egui show の配線）**: 製品ホットキーは Win32 `RegisterHotKey`（platform スレッド）→ `emit("hotkey-pressed")` → listener。listener は egui 経路では `get_window("main")`（`tauri::Window`）を掴む必要がある（`get_webview_window("main")` は egui ウィンドウに対し `None`）。emit→listener→egui show が実機で 1 回通ることをトレースで確認する（初手スモーク）。
 - **G3（focus-lost 観測の起動）**: probe `main.rs:174` は focus を **refocus** に使うのみで自動非表示は実装していない。SU2 は focus 喪失で猶予タイマを起こす。`Focused(false)` → egui repaint → view が `!focused` を観測 → `request_repaint_after(100ms)` が発火 → 猶予明け判定、の一巡が実機で回ることを確認する。
 - **G4（外部 hide と runtime.visible の両立）**: hotkey トグル hide は listener から `window.hide()`（外部）で行う。隠れたウィンドウには `RedrawRequested` が配送されないため runtime は描かない（SU1 不変条件⑥の paint ゲートと衝突しない）ことを、hide 後のアイドルで present 失敗リトライstorm が起きないことで確認する。
@@ -102,11 +103,14 @@ Escape・focus-lost（view が egui 入力で観測）                    → Ho
 
 ## フラグと生成
 
+**重要な as-built 事実**: 製品の "main" 窓は **`tauri.conf.json` の `windows[]` で宣言的生成**される（`label:"main"`・`url:"main.html"`・600×52・`visible:false`・`decorations:false`・`skipTaskbar:true`・`alwaysOnTop:true`・`resizable:false`・`center:true`）。setup に `WebviewWindowBuilder` は無い。`build.rs` が config をコンパイル時に焼き込むため、実行時 env フラグで宣言窓だけ抑止する手は無い（`src-tauri/CLAUDE.md`「WebView2 ウィンドウ生成の制約」）。ゆえに **egui が WebView2 を置き換える（子孫 0・ラベル `"main"` 共有）には、宣言窓を config から外し、両経路とも setup で programmatic 生成へ寄せる**（2026-07-22 決定・programmatic 統一）。
+
 - **`SNOTRA_EGUI_MAIN=1`**（env・setup フェーズで 1 回読む。`SNOTRA_DISABLE_SUSPEND`/`SNOTRA_TRACE` と同じ流儀）。ユーザー向け config には出さない（移行/ドッグフード用）。
-- **ON**: `EguiRuntime::install(app)` → `tauri::Window::builder(app, "main")`（webview 無し・`decorations(false)`・`visible(false)`・サイズは製品既定）→ `runtime.attach(window, SearchWindowView::new(...))`。WebView2 ウィンドウは**作らない**。
-- **OFF**: 既存 `WebviewWindowBuilder` 経路で不変。
-- **ラベルは `"main"` を踏襲**: `position`/`window.bin`/`monitor.rs` が同ラベルで動く。WebView2 固有経路（`get_webview_window("main")`・resume/suspend・IPC コマンド）は egui ウィンドウを型で掴めず、かつ各入口（hotkey listener・`setup_startup_display`・focus-lost）で backend/flag 分岐するため**到達しない**。
-- **生成は setup 限定**（`src-tauri/CLAUDE.md`「WebView2 ウィンドウ生成の制約」）。egui ウィンドウ（tao）も同様に setup で生成し、ランタイムでは show/hide のみ。
+- **`tauri.conf.json`**: `app.windows` を **`[]`（空）** にする。宣言窓を廃し、両経路とも programmatic 生成にする。CSP・bundle・plugins は不変。
+- **ON**: `EguiRuntime::install(app)` → `tauri::Window::builder(app, "main")`（webview 無し・`decorations(false)`・`visible(false)`・600×52）→ `runtime.attach(window, SearchWindowView::new(...))`。WebView2 ウィンドウは**作らない**。
+- **OFF**: `build_webview2_window(app)`（新規）が `WebviewWindowBuilder::new(app, "main", WebviewUrl::App("main.html"))` で**宣言窓の 10 フィールドを逐語再現**（title/size/visible:false/decorations:false/skipTaskbar/alwaysOnTop:true/resizable:false/center）。挙動を宣言時と一致させる（G0）。
+- **ラベルは `"main"` を踏襲**: `position`/`window.bin`/`monitor.rs`・既存 `get_webview_window("main")` 経路が同ラベルで動く。WebView2 固有経路（resume/suspend・IPC コマンド）は egui ウィンドウを型で掴めず（`get_webview_window` は `None`）、かつ各入口（hotkey listener・`setup_startup_display`・focus-lost）で backend/flag 分岐するため egui 経路では**到達しない**。
+- **生成は setup 限定**（同上制約: `WebviewWindowBuilder::build()` はメッセージポンプ進行を要求。setup フェーズは自前で処理でき正常）。egui ウィンドウ（tao）も同様に setup で生成し、ランタイムでは show/hide のみ。
 
 ## placeholder view と font-first（SU1 申し送りの義務）
 
@@ -120,7 +124,8 @@ Escape・focus-lost（view が egui 入力で観測）                    → Ho
 | `src-tauri/src/egui_shell/mod.rs`（新規） | `MainBackend` enum・生成（`Window::builder`+`install`+`attach`）・`show_main`/`hide_main` 共有オーケストレーション・backend フック（`pre_show`/`post_show`/`post_hide`）・controller（合流点） |
 | `src-tauri/src/egui_shell/lifecycle.rs`（新規・純粋核） | `HotkeyPlan`/`plan_hotkey`・`LifecycleState`/`LifecycleEvent`/`transition`・`HostCommand`/`UiAction`/`plan_ui_action`。Win32 非依存・ユニットテスト対象。spike から移植 |
 | `src-tauri/src/egui_shell/view.rs`（新規） | `SearchWindowView: EguiView`（placeholder）。`setup` で font-first・`update` で focus 観測（自動非表示の起点） |
-| `src-tauri/src/main.rs` | 各 setup 関数に `if egui_main { egui_shell::... } else { 既存 }` の入口分岐を足す（生成・`setup_hotkey_listener`・`setup_startup_display`）。WebView2 の `resume`/`suspend`/`emit`/`trim` を `MainBackend::WebView2` のフックへ**逐語移動**。既存の判定・順序は温存 |
+| `src-tauri/tauri.conf.json` | `app.windows` を `[]` にする（宣言窓廃止）。CSP・bundle・plugins は不変 |
+| `src-tauri/src/main.rs` | setup 本体に **窓生成の flag 分岐**（`if egui_main { egui_shell::create } else { build_webview2_window }`）を足す。`build_webview2_window`（新規）が宣言窓 10 フィールドを `WebviewWindowBuilder` で逐語再現。各 setup 関数（`setup_hotkey_listener`・`setup_startup_display`）に `if egui_main { egui_shell::... } else { 既存 }` の入口分岐。WebView2 の `resume`/`suspend`/`emit`/`trim` を `MainBackend::WebView2` のフックへ**逐語移動**。既存の判定・順序は温存 |
 | WebView2 経路の既存ファイル（`commands/`・`config_watcher.rs` 等） | **触らない**（SU2 の egui view は placeholder ゆえ IPC/config 反映は SU3/SU6）。exit-save の位置保存のみ egui 可視時に追加 |
 | `Cargo.toml`（`src-tauri`） | **`snotra-egui-runtime = { path = "../snotra-egui-runtime" }` を新規追加**（現状 `src-tauri` は未依存＝workspace member だが dep ではない・実測）。`EguiRuntime`/`EguiView`/`RuntimeFrame` を使うため |
 
@@ -142,7 +147,7 @@ Escape・focus-lost（view が egui 入力で観測）                    → Ho
 ## 受け入れ条件（SU2）
 
 1. Alt+Q 表示/非表示・blur 自動非表示・フォーカス列・残留 Alt 解除・位置永続・起動時表示・初回フローが SPEC §8（8.1–8.6）と一致する（egui 経路・trace スモークで実証）。
-2. **フラグ OFF で WebView2 挙動が不変**（G1 緑・回帰なし）。resume/suspend/emit/trim のフック移動が既存の順序制約を温存する。
+2. **フラグ OFF で WebView2 挙動が不変**（G0 + G1 緑・回帰なし）。宣言→programmatic 窓生成の変換（`build_webview2_window` が 10 フィールド逐語再現）と、resume/suspend/emit/trim のフック移動が、既存挙動・順序制約を温存する。`app.windows=[]` で宣言窓が二重生成されない。
 3. **`plan_hotkey`/`plan_ui_action` が純関数**として `egui_shell/lifecycle.rs` に在り、冪等性（表示中+Show / 非表示中+Hide）と show 進行中 Hide の Defer がユニットテストで固定される。
 4. focus-lost 自動非表示の policy（100ms 猶予・`auto_hide_on_focus_lost` ゲート・サイドカーガード）が `src-tauri` の view 側にあり、`snotra-egui-runtime` の公開 API を拡張していない。
 5. `SearchWindowView::setup` の font-first が実 setup 駆動テストで機構化されている。

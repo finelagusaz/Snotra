@@ -436,25 +436,30 @@ show/hide の Win32 骨格を共有関数へ集約し、WebView2 の renderer/fr
 - Consumes: `crate::{resume_webview, suspend_and_trim_after_hide, apply_ime_control, position_on_target_monitor, show_and_focus_window}`（`show_and_focus_window` は本タスクで一般化）。
 - Produces: `enum MainBackend { WebView2, Egui }`・`fn show_main(app: &AppHandle, backend: MainBackend, t0: Instant)`・`fn hide_main(app: &AppHandle, backend: MainBackend)`。Task 5/6 が消費。
 
-- [ ] **Step 1: WebviewWindow から &tauri::Window を得る手段を 1 行で確定（mini-gate）**
+- [ ] **Step 1: `app.get_window("main")` が WebView2 窓を返すことを実行時に確定（mini-gate・G1 の要）**
 
-共有 show 列は `&tauri::Window` で回す（egui/WebView2 両対応）。WebView2 側で `WebviewWindow` から `Window` を得る手段を確定する。`src-tauri/src/main.rs` の任意関数内に一時的に置いてコンパイル確認:
+共有 `show_main`/`hide_main` は実行時に **`app.get_window("main")`** で `tauri::Window` を取る（egui/WebView2 両対応の想定）。だが Tauri v2 では `get_window` と `get_webview_window` は**別レジストリ**で、`WebviewWindowBuilder` 生成窓を `get_window("main")` が返すかは**実行時の事実**（コンパイルでは分からない）。返さなければ flag OFF の `show_main` が早期 return し **G1 が壊れる**。ゆえにコンパイルでなく実行で確認する。
+
+`main.rs` の setup 末尾に一時ログを置く:
 
 ```rust
-// 確認用（このあと削除）: WebviewWindow -> &Window
-if let Some(wv) = app_handle.get_webview_window("main") {
-    let _w: &tauri::Window = wv.as_ref().window();
-}
+// 確認用（このあと削除）: get_window が programmatic WebView2 窓を返すか
+eprintln!("SNOTRA_GET_WINDOW_MAIN some={}", app_handle.get_window("main").is_some());
 ```
 
-Run: `cargo build -p snotra`
-Expected: コンパイル成功。**失敗したら** `wv.as_ref()` / `wv.window()` / `app.get_window("main")` の別手段を試し、通る 1 行を採用してから次へ（確認コードは削除）。以降のステップはこの確定手段を `webview_window_as_window(&wv)` 相当として使う。
+Run（`SNOTRA_EGUI_MAIN` 未設定）: `cargo run -p snotra 2>&1 | Select-String SNOTRA_GET_WINDOW_MAIN`
+Expected: `some=true`。**`some=false` なら** `show_main`/`hide_main` は単一 `get_window` でなく **backend 別取得**にする——`MainBackend` に `fn window(self, app: &AppHandle) -> Option<tauri::Window>`（WV2: `get_webview_window("main").map(|w| w.as_ref().window().clone())`、Egui: `get_window("main")`）を足し、共有列はそれを使う（「共有ハンドル」の物語がわずかに凹むが、アーキは不変）。**この分岐を決めてから Step 2 以降を書く**（確認ログは削除）。
 
-- [ ] **Step 2: `show_and_focus_main` を `&tauri::Window` へ一般化**
+補足: `wv.as_ref().window()` が `WebviewWindow → &Window` の手段として通るかも同時に確認（fallback の window() で使う）。通らなければ `wv.window()` / deref を試す。
 
-`src-tauri/src/main.rs:397` の `show_and_focus_main(app_handle, main: &tauri::WebviewWindow, t0)` を `show_and_focus_window(app_handle: &AppHandle, window: &tauri::Window, t0: Instant)` へ改名し、引数型を `&tauri::Window` に変える。本体（`show()`/`main_visible=true`/`set_focus()`/WM_NULL 同期/残留 Alt: `is_alt_pressed()` skip or `send_alt_key_up()`）はそのまま（すべて `&tauri::Window` で動く）。`.hwnd()` は両型にある。
+- [ ] **Step 2: 共有 Win32 列を `&tauri::Window` へ一般化（2 関数）**
 
-呼び出し元 `show_main_and_emit`（`main.rs:499`）は Step 4 で `show_main` へ移すため一旦保留。
+`src-tauri/src/main.rs` の 2 関数を `&tauri::WebviewWindow` → `&tauri::Window` へ一般化する（両型が持つ `show()`/`set_focus()`/`hwnd()`/`outer_size()`/`set_position()` だけを使うため素直に通る）:
+
+1. `show_and_focus_main(app_handle, main: &tauri::WebviewWindow, t0)`（`main.rs:397`）→ `show_and_focus_window(app_handle: &AppHandle, window: &tauri::Window, t0: Instant)`。本体（`show()`/`main_visible=true`/`set_focus()`/WM_NULL 同期/残留 Alt: `is_alt_pressed()` skip or `send_alt_key_up()`）はそのまま。
+2. `position_on_target_monitor(app_handle, main: &tauri::WebviewWindow)`（`main.rs:329`）→ 引数型を `&tauri::Window` に変える。本体（`main.outer_size()` でクランプ・`window_data::load_search_placement()` で相対座標・`main.set_position()`）はそのまま——`.outer_size()`/`.set_position()` は `tauri::Window` にある。
+
+呼び出し元 `show_main_and_emit`（`main.rs:497,499`）は Step 4 で `show_main` 経由へ移すため一旦保留（一般化した 2 関数は Step 3 の `show_main` が呼ぶ）。`reset_search_height`（`main.rs:379`）は WebView2 専用（高さ折りたたみ）ゆえ一般化せず、WV2 フック内に留める（Step 4）。
 
 - [ ] **Step 3: `MainBackend` とフックを書く**
 
@@ -549,7 +554,20 @@ fn show_main_and_emit(app_handle: &AppHandle) {
 }
 ```
 
-`reset_search_height`（`main.rs:379`）は WebView2 の高さ折りたたみ。SU2 placeholder は固定サイズゆえ egui では不要。WebView2 経路では `show_main` の `pre_show` 前に呼ぶ必要があるため、`MainBackend::WebView2::pre_show` の先頭で `reset_search_height` を呼ぶ（順序: height reset → resume → 位置 → show を温存。`src-tauri/CLAUDE.md`「操作順序制約」）。
+`reset_search_height`（`main.rs:379`）は WebView2 の高さ折りたたみ。SU2 placeholder は固定サイズゆえ egui では不要。**原本 `show_main_and_emit` の順序は resume(486) → reset_height(491) → position(497) → show(499)**。共有 `show_main` は position → show を担うので、WebView2 の `pre_show` は **resume → reset_height の順**にする（原本の前半を逐語温存＝G1 byte-identical）。`MainBackend::WebView2::pre_show` を次にする:
+
+```rust
+    fn pre_show(self, app: &AppHandle) {
+        if self == MainBackend::WebView2
+            && let Some(wv) = app.get_webview_window("main")
+        {
+            crate::resume_webview(&wv);      // 原本 486
+            crate::reset_search_height(&wv); // 原本 491（position より前＝clamp が折りたたみ高さを使う・CLAUDE.md 操作順序制約）
+        }
+    }
+```
+
+（Step 3 に書いた `pre_show` の骨子を、この resume→reset_height 版へ差し替える。egui の `pre_show` は空のまま。）
 
 - [ ] **Step 5: フラグ OFF で回帰が無いことを確認する（G1）**
 
@@ -687,15 +705,15 @@ use std::sync::Mutex;
 use lifecycle::{HostCommand, LifecycleEvent, LifecycleState, UiAction, plan_ui_action, transition};
 
 /// show/hide の合流点。hotkey・Escape・focus-lost の全 Show/Hide 要求がここを通り、
-/// 冪等性と show 進行中 Hide の Defer を一元化する。egui 経路専用（WV2 は従来の直接呼び）。
+/// 冪等性（表示中+Show→Refocus / 非表示中+Hide→Ignore）を一元化する。
+/// egui 経路専用（WV2 は従来の直接呼び）。
 pub(crate) struct LifecycleController {
     state: Mutex<LifecycleState>,
-    deferred_hide: Mutex<bool>,
 }
 
 impl LifecycleController {
     pub(crate) fn new() -> Self {
-        Self { state: Mutex::new(LifecycleState::Suspended), deferred_hide: Mutex::new(false) }
+        Self { state: Mutex::new(LifecycleState::Suspended) }
     }
 
     pub(crate) fn apply(&self, app: &AppHandle, command: HostCommand) {
@@ -705,18 +723,26 @@ impl LifecycleController {
                 if let HostCommand::Show { hotkey_started } = command {
                     show_main(app, MainBackend::Egui, hotkey_started);
                 }
-                self.advance(LifecycleEvent::Show);
-                // FramePresented は runtime の初回 present 後に別途通知（Step 3 注）。
+                // egui 経路は show が同期（window.show() は即・SU1 runtime は surface を
+                // 再生成せず Focused 観測で repaint）。ゆえに「最初のフレーム提示を待つ」
+                // mid-flight race が無い。Show→FramePresented を即座に畳んで Visible へ進め、
+                // 後続の Hide（hotkey トグル / focus-lost）が Recreating で Defer に吸われて
+                // 無限待ちになるデッドロックを断つ。
+                self.advance(LifecycleEvent::Show);          // Suspended → Recreating
+                self.advance(LifecycleEvent::FramePresented); // Recreating → Visible（即畳み）
             }
             UiAction::Hide => {
                 hide_main(app, MainBackend::Egui);
-                self.advance(LifecycleEvent::Hide);
+                self.advance(LifecycleEvent::Hide);           // Visible → Suspended
             }
             UiAction::Refocus => {
                 if let Some(w) = app.get_window("main") { let _ = w.set_focus(); }
             }
-            UiAction::Defer => { *self.deferred_hide.lock().unwrap() = true; }
-            UiAction::Ignore => {}
+            // Defer/Ignore は egui 経路では runtime 到達しない（apply 後の state は常に
+            // Visible|Suspended・Recreating は transient）。plan_ui_action の Defer 純粋契約は
+            // Task 1 のテストで固定するが、live では走らない（roadmap の「Defer をテストで
+            // 固定」＝純粋関数の契約テストで満たす。将来 async show を入れるなら再活性化）。
+            UiAction::Defer | UiAction::Ignore => {}
         }
     }
 
@@ -727,7 +753,7 @@ impl LifecycleController {
 }
 ```
 
-controller を `AppState` の managed state か `egui_shell` の `OnceLock<LifecycleController>` として保持する（threading: hotkey listener はメインスレッド、view は event loop スレッドから `apply` を呼ぶため `Mutex` で保護）。
+controller を `AppState` の managed state か `egui_shell` の `OnceLock<LifecycleController>` として保持する（threading: hotkey listener はメインスレッド、view は event loop スレッドから `apply` を呼ぶため `Mutex` で保護）。**`transition`/`LifecycleEvent` は Show/Hide/FramePresented の 3 event を `advance` が使うため非テストコードで消費される**（dead-code にならない）。
 
 - [ ] **Step 2: `setup_hotkey_listener` を flag 分岐する**
 
@@ -799,6 +825,8 @@ git commit -F <tmpfile>   # "feat(#532): SU2 ホットキー配線 + controller�
 ### Task 7: blur 自動非表示 + Escape（focus 観測 + policy）
 
 view が focus 喪失を観測し、100ms 猶予・`auto_hide_on_focus_lost` ゲート・サイドカーガードを満たすとき controller へ `HostCommand::Hide` を送る。Escape も Hide。policy は view（src-tauri）側に置き runtime API を拡張しない。
+
+**境界注記（黙って落とさない）**: SPEC §8.5 の「`snotra-settings` 起動中はメインの `alwaysOnTop` を一時 `false` にし終了検知で復元」は、現在 `get_webview_window("main")` にキーされた**設定サイドカー共存**の挙動で、ロードマップの **SU6（設定サイドカー共存）** に属す。SU2 が持つのは focus-lost の**非 hide ガード**だけ（設定が focus を奪っても本体を消さない）。egui 窓の `alwaysOnTop` トグルは SU6 で `get_window("main")` 対応にする。SU2 では触らない。
 
 **Files:**
 - Modify: `src-tauri/src/egui_shell/view.rs`（focus 観測 + Escape + policy 判定）
@@ -898,11 +926,11 @@ egui window の位置を SPEC §8.2 どおり復元・保存する。復元は `
 - Consumes: `position_on_target_monitor`（復元・共有列内）・既存の位置保存経路（`commands::save_search_placement` が使う `window.bin` 書き込み。相対座標算出は `monitor.rs`）。
 - Produces: なし（副作用）。
 
-- [ ] **Step 1: 位置保存経路を確認する**
+- [ ] **Step 1: 位置保存経路を確認しヘルパーを作る**
 
-`commands::save_search_placement`（`get_webview_window("main")` を使う・`commands/window.rs`）が呼ぶ `window.bin` 書き込み関数（`snotra-core` 側の placement 保存 or `monitor.rs`）を特定する。egui window（`get_window("main")`）の物理位置 + ターゲットモニター作業領域原点から**相対座標**を出して同じ形式で保存する共有ヘルパー `save_placement_relative(app, &window)` を `egui_shell` に用意する（WebView2 の保存ロジックを `&tauri::Window` で一般化・`monitor.rs` の相対座標算出を再利用）。
+復元と対称の保存経路を確認する。復元は `snotra_core::window_data::load_search_placement()`（`position_on_target_monitor:355` で使用）。保存は対の `window_data::save_search_placement(placement)`（`commands/window.rs` の `commands::save_search_placement` が現在 `get_webview_window("main")` から相対座標を出して呼ぶ）。その相対座標算出（現在の物理位置 − ターゲットモニター作業領域原点。`monitor.rs` のモニター決定 + 原点）を **`&tauri::Window` で一般化**し、`egui_shell` に `pub(crate) fn save_placement_relative(app: &AppHandle, window: &tauri::Window)` を作る（`window.outer_position()`/`monitor.rs` の作業領域原点 → `window_data::save_search_placement` へ）。既存 `commands::save_search_placement` のロジックを共有できるなら関数抽出で DRY 化（`/dry-check`）。
 
-Run: `cargo build -p snotra`（型が合うこと）
+Run: `cargo build -p snotra`（型が合うこと）。`window_data::save_search_placement` のシグネチャ（引数の placement 型）を `commands/window.rs` で確認してから呼ぶ。
 
 - [ ] **Step 2: `hide_main` に save-on-hide を足す**
 

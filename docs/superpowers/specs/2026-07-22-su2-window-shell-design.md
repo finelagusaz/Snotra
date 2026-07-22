@@ -76,6 +76,7 @@ Escape・focus-lost（view が egui 入力で観測）                    → Ho
 ```
 
 - **合流点（controller）は 1 つ**: hotkey・Escape・focus-lost の全 Hide/Show 要求が `plan_ui_action` を通る。冪等性と Defer をここに一元化する（散らさない）。
+- **egui 経路では `Recreating` は transient・`Defer` は runtime 到達不能**: egui の show は同期（`window.show()` は即・SU1 runtime は surface を再生成せず `Focused` 観測で repaint）ゆえ「最初のフレーム提示を待つ」mid-flight race が無い。controller は `Show` 適用時に `Show→FramePresented` を即座に畳んで `Visible` へ進める（さもないと後続 Hide が `Recreating+Hide→Defer` に吸われ、`FramePresented` を誰も emit せずデッドロックする）。**`Defer` の純粋契約は `plan_ui_action` のユニットテストで固定する**（roadmap「Defer をテストで固定」を満たす）が、live では走らない。将来 async show を導入するなら再活性化する。
 - **2 つの `visible` を混同しない**（SU1 申し送り + 助言）: `AppState.main_visible`（policy＝`Standby`/`SearchVisible` 判定・`plan_hotkey` の入力）と `runtime.visible`（SU1 の描画ゲート・不変条件⑥）は**別物**。egui 経路は自前の policy フラグ（`main_visible`）を runtime の描画ゲートと独立に持つ。
 - **hotkey listener の toggle 判定**: `hotkey_toggle` は config live-read（既存の #576 パターン踏襲・キャッシュしない）。`hotkey_toggle && main_visible` で hide、さもなくば show。
 

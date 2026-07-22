@@ -9,6 +9,7 @@
 
 mod commands;
 mod config_watcher;
+mod egui_shell;
 mod icon;
 mod ime;
 mod indexing;

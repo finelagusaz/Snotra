@@ -350,7 +350,11 @@ impl EguiView for SearchWindowView {
         // 結果リスト（shouldShowResults 相当。M1: results 軸・plain のみ。空なら描かない）。
         let show_results = !self.state.results().is_empty();
         let mut clicked: Option<usize> = None;
-        if show_results {
+        if self.indexing() && self.state.query().trim().is_empty() {
+            // 構築中かつ空クエリ: 案内を出す（§4.7）。run_search が indexing 時に plain 検索を
+            // 抑止するため results は空——ここは高さに寄与しない（show_results=false のまま）。
+            ui.label("インデックス構築中…");
+        } else if show_results {
             // 借用衝突回避: results を clone してから描画（draw_result_row は関連関数で self 非借用）。
             let results = self.state.results().to_vec();
             let selected = self.state.selected();

@@ -34,7 +34,7 @@
 - **`SNOTRA_EGUI_MAIN=1`**（env・`main()` で 1 回読む。`crate::trace::env_flag`）。
 - **`tauri.conf.json` は不変**（宣言窓 "main" を残す）。
 - **`main()`**: `generate_context!()` と E2E 注入ブロックの後、フラグ ON なら `app_context.config_mut().app.windows` から `label=="main"` を除去（`.retain(|w| w.label != "main")`）。これで Tauri は WebView2 窓を作らない。
-- **setup（フラグ ON）**: `egui_shell::create(app)`（`&mut App`）が `EguiRuntime::install(app)` → `tauri::Window::builder(app, "main")`（webview 無し・`visible(false)`・`decorations(false)`・600×52）→ `attach(window, SearchWindowView::new(app_handle))`。生成は setup 限定。
+- **setup（フラグ ON）**: `egui_shell::create(app, window_width)`（`&mut App`）が `EguiRuntime::install(app)` → `tauri::Window::builder(app, "main")`（webview 無し・`visible(false)`・`decorations(false)`・**config の `window_width`×52**・**`skip_taskbar(true)`・`always_on_top(true)`**＝宣言窓プロパティ再現・codex #11/(B)#1）→ `attach(window, SearchWindowView::new(app_handle))`。生成は setup 限定で、**`setup_platform_thread` の後**に置く（SPEC §8.5 の「platform thread を窓生成より前に spawn」の並列化順序・codex #12）。
 - **setup（フラグ OFF）**: 変更なし。宣言窓が Tauri により生成され、既存 WebView2 経路がそのまま動く。
 - **ラベルは両方 `"main"`**: egui 経路は `get_window("main")` で掴む。フラグ OFF の `get_webview_window("main")` 依存（幅復元・config 幅反映・位置保存・Settings 制御）は宣言窓が在るので従来どおり動く。フラグ ON でそれらが no-op になる箇所（幅反映は SU3/SU6・幅復元は placeholder 固定 600px で無害）は各所で確認する（codex #9/#11）。
 
@@ -54,7 +54,9 @@ hide_egui_main(app):
     window.hide(); main_visible = false        // 外部 hide（RuntimeFrame::hide_window は使わない・#4）
 ```
 
-- **状態は `AppState.main_visible`（bool）だけ**。controller も 4 状態機械も持たない。ホットキーは `plan_hotkey(main_visible, is_alt_pressed())` で分岐する。
+- **状態は `AppState.main_visible`（bool）+ 共有 `EguiShellState`**（managed）。controller も 4 状態機械も持たない。ホットキーは `plan_hotkey(main_visible, is_alt_pressed())` で分岐する。`EguiShellState { hotkey_generation: AtomicU64, hide_pending: AtomicBool }` が show/hide/view を跨ぐ 2 点を協調させる:
+  - **`hotkey_generation`**: `ShowAfterAltRelease` の spawn スレッドが待機後に世代一致を確認して show する。**hide（`hide_egui_main`）が世代を bump** し、保留中の alt 解放待ち show を無効化する（hide 後の再表示を防ぐ・codex #5/(B)#2）。
+  - **`hide_pending`**: view の `emit("egui-hide-requested")` 多重防止フラグ。**show（`show_egui_main`）がクリア**する（view-local だと hide 後に `Focused(true)` が来ないとき true が残り以後の hide を抑止する・codex #8）。
 - **全 hide は外部 `window.hide()`**（codex #4/#7 の解）。`RuntimeFrame::hide_window`（runtime.visible=false）は使わない。これで (a) 次の show が `Focused(true)` に依存せず確実に描け、(b) hide の副作用所有が一箇所（`hide_egui_main`）に一元化する。
 - **`main_visible` は `AtomicBool`**（`state.rs:17`・既存）。hotkey（メインスレッド）と hide 経路が触るが単一 atomic ゆえ tear しない。plan_hotkey の判定→show/hide は各トリガーが直列に行う（controller の lock 非保持競合＝codex #5 は controller を廃したことで消える）。
 

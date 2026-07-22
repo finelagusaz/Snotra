@@ -179,12 +179,12 @@ pub(crate) struct SearchWindowView {
     app_handle: tauri::AppHandle,
     was_focused: bool,
     unfocus_at: Option<Instant>,
-    hide_sent: bool,
+    // emit dedup は共有 EguiShellState.hide_pending（show がクリア・codex #8）。view-local には持たない。
 }
 
 impl SearchWindowView {
     pub(crate) fn new(app_handle: tauri::AppHandle) -> Self {
-        Self { app_handle, was_focused: false, unfocus_at: None, hide_sent: false }
+        Self { app_handle, was_focused: false, unfocus_at: None }
     }
 }
 
@@ -223,7 +223,7 @@ mod tests {
 - [ ] **Step 2: テスト実行**
 
 Run: `cargo test -p snotra egui_shell::view`
-Expected: `jp_font_is_registered_at_index_zero_for_both_families` PASS。`was_focused`/`unfocus_at`/`hide_sent` は Task 5 まで未使用ゆえ dead-code 警告が出る場合は `#[allow(dead_code)]` を struct に付け Task 5 で除去。
+Expected: `jp_font_is_registered_at_index_zero_for_both_families` PASS。`was_focused`/`unfocus_at` は Task 5 まで未使用ゆえ dead-code 警告が出る場合は `#[allow(dead_code)]` を struct に付け Task 5 で除去。
 
 - [ ] **Step 3: コミット**
 
@@ -270,37 +270,45 @@ use snotra_egui_runtime::EguiRuntime;
 use crate::egui_shell::view::SearchWindowView;
 
 /// フラグ ON の窓生成。EguiRuntime を install し webview 無しの "main" 窓を生成して attach。setup 限定。
-pub(crate) fn create(app: &mut tauri::App) -> Result<(), snotra_egui_runtime::RuntimeError> {
+/// 宣言窓の全プロパティ（600×52 は既定・width は config の window_width・skipTaskbar・
+/// alwaysOnTop・decorations:false・resizable:false・visible:false）を再現する（codex #11・(B)#1）。
+pub(crate) fn create(app: &mut tauri::App, window_width: f64) -> Result<(), snotra_egui_runtime::RuntimeError> {
     let runtime = EguiRuntime::new();
     runtime.install(app); // &mut App を要求（runtime.rs:77）
     let app_handle = app.handle().clone();
     let window = tauri::Window::builder(app, "main")
         .title("Snotra")
-        .inner_size(600.0, 52.0)
+        .inner_size(window_width, 52.0) // 保存幅を尊重（codex #11）
         .decorations(false)
         .resizable(false)
+        .skip_taskbar(true)   // 宣言窓 skipTaskbar:true の再現（(B)#1）
+        .always_on_top(true)  // 宣言窓 alwaysOnTop:true の再現（(B)#1）
         .visible(false)
         .build()
         .map_err(snotra_egui_runtime::RuntimeError::from)?;
-    // skip_taskbar/always_on_top は Window::builder に無ければ setup 後 setter で（mini-gate）。
     runtime.attach(window, SearchWindowView::new(app_handle))
 }
 ```
 
-mini-gate: `Window::builder` の `skip_taskbar`/`always_on_top` メソッド有無、`tauri::Error` → `RuntimeError` の `From`（`RuntimeError::Tauri(#[from] tauri::Error)`＝`runtime.rs:45`）を `cargo build` で確認。無いビルダーメソッドは `build()` 後に `window.set_skip_taskbar(true)`/`window.set_always_on_top(true)`。
+mini-gate: `Window::builder` に `skip_taskbar`/`always_on_top` が無ければ `build()` 後に `window.set_skip_taskbar(true)`/`window.set_always_on_top(true)` で補う（**未確定のままにしない**＝(B)#1）。`tauri::Error` → `RuntimeError` の `From`（`RuntimeError::Tauri(#[from] tauri::Error)`＝`runtime.rs:45`）を `cargo build` で確認。`window_width` は `main()` の既存 `config.appearance.window_width`（`main.rs:572`）を渡す。
 
-- [ ] **Step 3: setup で窓生成を flag 分岐**
+- [ ] **Step 3: setup で窓生成を flag 分岐（platform thread の後・codex #12）**
 
-`src-tauri/src/main.rs` の `.setup(move |app| {` 内、`let app_handle = app.handle().clone();`（`main.rs:633`）の**直後**に:
+`src-tauri/src/main.rs` の setup 内、**`setup_platform_thread(&app_handle, ...)`（`main.rs:652`）の後**に置く。SPEC §8.5「platform thread を窓生成より前に spawn し Win32 初期化と窓生成を並列実行」を満たすため、egui 生成も platform thread の後にする（codex #12）:
 
 ```rust
-    // 窓生成: フラグ ON は egui、OFF は宣言窓が Tauri により既に生成済み（何もしない）。
+    // 窓生成: フラグ ON は egui（platform thread spawn 後・SPEC §8.5 並列化）、
+    // OFF は宣言窓が Tauri により既に生成済み（何もしない）。
     if crate::trace::env_flag("SNOTRA_EGUI_MAIN") {
-        egui_shell::create(app)?; // app: &mut App
+        // show/hide を跨ぐ共有状態（世代・emit dedup）。view/hotkey/hide が参照するので窓生成前に管理下へ。
+        app.manage(egui_shell::EguiShellState::default());
+        egui_shell::create(app, window_width as f64)?; // app: &mut App・保存幅を渡す（codex #11）
     }
 ```
 
-（`?` は setup の戻り `Result<(), Box<dyn Error>>` へ。`RuntimeError` は `thiserror::Error` 派生ゆえ `Box<dyn Error>` に乗る。乗らなければ `.map_err(|e| e.to_string())?`。`cargo build` で確認。）
+（`EguiShellState` は Task 4 Step 2 で定義。`app.manage` は setup の `&mut App`／`&App` どちらでも可＝`Manager` トレイト。`SearchWindowView` は `app_handle` 経由で `try_state::<EguiShellState>()` を読む。）
+
+（`window_width` は既存の `config.appearance.window_width`＝`main.rs:572`。`?` は setup の戻り `Result<(), Box<dyn Error>>` へ。`RuntimeError` は `thiserror::Error` 派生ゆえ乗る。乗らなければ `.map_err(|e| e.to_string())?`。`cargo build` で確認。`setup_first_run`（`main.rs:656`）より前後どちらでもよいが、`setup_hotkey_listener` より前に窓が在ること。）
 
 - [ ] **Step 4: フラグ OFF 不変（G1）とフラグ ON 子孫 0（G4）を確認**
 
@@ -354,8 +362,17 @@ Expected: コンパイル成功。失敗＝呼び出し元で `&WebviewWindow �
 
 ```rust
 use std::time::Instant;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::Manager;
+
+/// egui 経路の show/hide を跨ぐ共有状態（managed state）。
+/// - hotkey_generation: alt 解放待ち show の世代。hide が bump して保留 show を無効化する（codex #5/(B)#2）。
+/// - hide_pending: view の emit dedup。show がクリアして「hide 後に Focused(true) が来ず抑止が残る」を断つ（codex #8）。
+#[derive(Default)]
+pub(crate) struct EguiShellState {
+    pub(crate) hotkey_generation: AtomicU64,
+    pub(crate) hide_pending: AtomicBool,
+}
 
 /// egui 経路の show。共有するのは position_on_target_monitor のみ。全 hide は外部化ゆえ
 /// runtime.visible は false にならず、show は Focused(true) に依存せず確実に描ける（codex #4）。
@@ -363,6 +380,10 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, _t0: Instant) {
     let Some(window) = app.get_window("main") else { return };
     if let Some(state) = app.try_state::<crate::AppState>() {
         state.main_visible.store(true, Ordering::SeqCst);
+    }
+    // show のたびに view の emit dedup をリセット（Focused(true) 非依存・codex #8）。
+    if let Some(sh) = app.try_state::<EguiShellState>() {
+        sh.hide_pending.store(false, Ordering::SeqCst);
     }
     #[cfg(windows)]
     crate::position_on_target_monitor(app, &window);
@@ -387,6 +408,11 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, _t0: Instant) {
 
 /// egui 経路の hide。全 hide の唯一の副作用所有点（codex #7）。外部 window.hide() のみ。
 pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
+    // 保留中の alt 解放待ち show を無効化（codex #5/(B)#2）: 世代を bump し、
+    // spawn 済み show スレッドの gen 一致チェックを外して再表示を防ぐ。
+    if let Some(sh) = app.try_state::<EguiShellState>() {
+        sh.hotkey_generation.fetch_add(1, Ordering::SeqCst);
+    }
     if let Some(window) = app.get_window("main") {
         save_placement_relative(app, &window); // save-on-hide
         let _ = window.hide();
@@ -429,6 +455,10 @@ fn setup_startup_display(app_handle: &AppHandle, show_on_startup: bool) {
 
 ```rust
         if crate::trace::env_flag("SNOTRA_EGUI_MAIN") {
+            // 世代は共有の EguiShellState を使う（hide が bump して保留 show を無効化・codex #5/(B)#2）。
+            let current_gen = handle_for_hotkey.try_state::<egui_shell::EguiShellState>()
+                .map(|sh| sh.hotkey_generation.fetch_add(1, Ordering::SeqCst) + 1)
+                .unwrap_or(0);
             let visible = handle_for_hotkey.try_state::<AppState>()
                 .map(|s| s.main_visible.load(Ordering::SeqCst)).unwrap_or(false);
             let hotkey_toggle = handle_for_hotkey.try_state::<AppState>()
@@ -440,10 +470,12 @@ fn setup_startup_display(app_handle: &AppHandle, show_on_startup: bool) {
                 HotkeyPlan::ShowNow => egui_shell::show_egui_main(&handle_for_hotkey, t0),
                 HotkeyPlan::ShowAfterAltRelease => {
                     let h = handle_for_hotkey.clone();
-                    let gen_for_wait = hotkey_generation_for_listener.clone();
                     std::thread::spawn(move || {
                         wait_alt_release_or_timeout();
-                        if gen_for_wait.load(Ordering::SeqCst) != current_gen { return; }
+                        // 共有世代が変わっていたら（別の press や hide が bump）show を諦める。
+                        let gen_now = h.try_state::<egui_shell::EguiShellState>()
+                            .map(|sh| sh.hotkey_generation.load(Ordering::SeqCst)).unwrap_or(0);
+                        if gen_now != current_gen { return; }
                         egui_shell::show_egui_main(&h, Instant::now());
                     });
                 }
@@ -452,7 +484,7 @@ fn setup_startup_display(app_handle: &AppHandle, show_on_startup: bool) {
         }
 ```
 
-（`HotkeyPlan` は `egui_shell::HotkeyPlan`。`t0`/`current_gen`/`hotkey_generation_for_listener` は listener の既存変数＝`main.rs:786,795,784`。Task 1 で dead-code allow を付けていれば除去。）
+（`HotkeyPlan` は `egui_shell::HotkeyPlan`。`t0` は listener 冒頭の `Instant::now()`＝`main.rs:786`。**egui 分岐は WebView2 の既存 `hotkey_generation_for_listener` を使わず共有 `EguiShellState.hotkey_generation` を使う**——hide 経路（`hide_egui_main`）からも bump できるようにするため。Task 1 で dead-code allow を付けていれば除去。）
 
 - [ ] **Step 5: Alt+Q show/hide/toggle と hide→show 反復（空白窓不在）を確認（G2/G3）**
 
@@ -522,10 +554,10 @@ pub(crate) fn register_hide_listener(app: &tauri::AppHandle) {
         let focused = ctx.input(|i| i.focused);
         let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
 
-        // 再表示直後の stale 猶予をリセット（codex #8）: focused に戻ったら pending 破棄。
+        // 再表示直後の stale 猶予をリセット: focused に戻ったら pending 破棄。
+        // emit dedup（hide_pending）は show_egui_main がクリアするので view では触らない（codex #8）。
         if focused {
             self.unfocus_at = None;
-            self.hide_sent = false;
         }
         // Escape → 即 hide 要求（内側モード優先は SU3）。
         if escape {
@@ -555,8 +587,12 @@ pub(crate) fn register_hide_listener(app: &tauri::AppHandle) {
 
 ```rust
     fn emit_hide(&mut self) {
-        if self.hide_sent { return; } // 多重防止
-        self.hide_sent = true;
+        // 多重防止は共有 EguiShellState.hide_pending（show_egui_main がクリア・codex #8）。
+        // view-local フラグだと hide 後 Focused(true) 非着信で永久 true 化し以後の hide を抑止する。
+        let already = self.app_handle.try_state::<crate::egui_shell::EguiShellState>()
+            .map(|sh| sh.hide_pending.swap(true, std::sync::atomic::Ordering::SeqCst))
+            .unwrap_or(false);
+        if already { return; }
         let _ = self.app_handle.emit("egui-hide-requested", ());
     }
     fn auto_hide_enabled(&self) -> bool {
@@ -650,8 +686,16 @@ git push -u origin HEAD && gh pr create --fill
 - **spec §受け入れ条件 1-6** → 全 Task。flag OFF 完全不変=G1、plan_hotkey 純関数=Task 1、blur policy が view=Task 5、font-first=Task 2、子孫 0=G4。✓
 - **spec 否定の知識（seam/controller/静的空化/RuntimeFrame 直 hide の却下）** → 本計画は簡素化版で seam を持たない。✓
 
+**codex 再レビュー（2026-07-22）で追加修正した箇所:**
+- #12: egui `create` を `setup_platform_thread` の後へ（SPEC §8.5 並列化順序）。Task 3 Step 3。
+- #11: `create` が config の `window_width` を使う（固定 600px でなく保存幅）。Task 3。
+- (B)#1: `create` が `skip_taskbar(true)`/`always_on_top(true)` を明示（宣言窓プロパティ再現・未確定にしない）。Task 3 Step 2。
+- #8: emit dedup を view-local `hide_sent` から共有 `EguiShellState.hide_pending` へ移し `show_egui_main` がクリア（hide 後 Focused(true) 非着信で抑止が残る問題を断つ）。Task 4/5。
+- #5/(B)#2: `hide_egui_main` が共有 `EguiShellState.hotkey_generation` を bump し、保留中の alt 解放待ち show を無効化（hide 後の再表示を防ぐ）。Task 4。
+- #10: デバウンス保存欠落は残余として spec §位置永続に記録（受容）。
+
 **実装時 mini-gate（fabrication を避けた箇所）:**
-- Task 3: `Window::builder` の `skip_taskbar`/`always_on_top` 有無・`RuntimeError` From・`config_mut().app.windows` の label フィールド名。
+- Task 3: `Window::builder` の `skip_taskbar`/`always_on_top` 有無（無ければ setter・未確定にしない）・`RuntimeError` From・`config_mut().app.windows` の label フィールド名。
 - Task 4: `position_on_target_monitor` 一般化での呼び出し元互換（`&WebviewWindow→&Window`）・`save_search_placement` シグネチャ・`get_window("main")` が egui 窓を返す（Task 3 で確認）。
 - Task 5: `auto_hide_on_focus_lost` の config.rs 既定値・`Emitter`/`Manager` トレイト import。
 - Task 6: 既存 alwaysOnTop 制御の実型（WebviewWindow）と egui 分岐の最小差分。

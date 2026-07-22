@@ -11,12 +11,14 @@ use windows::Win32::{
     UI::{
         Input::Ime::{
             CANDIDATEFORM, CFS_EXCLUDE, CFS_POINT, COMPOSITIONFORM, CPS_CANCEL, GCS_COMPATTR,
-            GCS_COMPSTR, GCS_CURSORPOS, HIMC, ImmGetCompositionStringW, ImmGetContext,
-            ImmNotifyIME, ImmReleaseContext, ImmSetCandidateWindow, ImmSetCompositionWindow,
-            NI_COMPOSITIONSTR,
+            GCS_COMPSTR, GCS_CURSORPOS, GCS_RESULTSTR, HIMC, ImmGetCompositionStringW,
+            ImmGetContext, ImmNotifyIME, ImmReleaseContext, ImmSetCandidateWindow,
+            ImmSetCompositionWindow, NI_COMPOSITIONSTR,
         },
         Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
-        WindowsAndMessaging::{WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION},
+        WindowsAndMessaging::{
+            WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION,
+        },
     },
 };
 
@@ -141,6 +143,37 @@ impl Drop for PlatformIme {
     }
 }
 
+/// IME サブクラスメッセージのネイティブ描画方針。egui が preedit を自前描画するため
+/// 既定の変換文字列ウィンドウを抑制しつつ、確定（GCS_RESULTSTR）は Tao の
+/// ReceivedImeText 経路へ通す（#532 の二重表示＝ネイティブ窓 非抑制 の修正）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ImeAction {
+    /// DefSubclassProc を呼ばず `LRESULT(0)`。既定変換窓を作らせない／描かせない。
+    Suppress,
+    /// そのまま Tao へ通す（DefSubclassProc）。確定文字・キー等は Tao が担う。
+    PassThrough,
+}
+
+/// ネイティブ描画を抑制するか Tao へ通すかだけを純粋に判定する（preedit の抽出可否は
+/// 呼び出し側が message で決める）。確定を落とさないため GCS_RESULTSTR を最優先で通す。
+fn classify_ime_message(message: u32, lparam: u32) -> ImeAction {
+    if message == WM_IME_STARTCOMPOSITION {
+        // 既定の変換文字列ウィンドウを作らせない（egui が preedit を描く）。
+        ImeAction::Suppress
+    } else if message == WM_IME_COMPOSITION {
+        if lparam & GCS_RESULTSTR.0 != 0 {
+            // 確定は Tao の ReceivedImeText 確定経路が要るため通す。
+            ImeAction::PassThrough
+        } else {
+            // 未確定のみ（GCS_COMPSTR 等）は egui が描くのでネイティブ描画を抑制。
+            ImeAction::Suppress
+        }
+    } else {
+        // ENDCOMPOSITION・キー等は Tao へ通す（後始末・確定・入力）。
+        ImeAction::PassThrough
+    }
+}
+
 unsafe extern "system" fn ime_subclass_proc(
     hwnd: HWND,
     message: u32,
@@ -149,6 +182,7 @@ unsafe extern "system" fn ime_subclass_proc(
     _subclass_id: usize,
     ref_data: usize,
 ) -> LRESULT {
+    let action = classify_ime_message(message, lparam.0 as u32);
     let _ = catch_unwind(AssertUnwindSafe(|| {
         // SAFETY: ref_data was installed from a live Box<CallbackState>, and
         // Drop removes the subclass before releasing that Box.
@@ -186,9 +220,13 @@ unsafe extern "system" fn ime_subclass_proc(
         }
     }));
 
-    // SAFETY: every observed message must continue through Tao's own subclass,
-    // which remains responsible for key events and committed ReceivedImeText.
-    unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
+    // egui が preedit を自前描画するため、未確定のネイティブ変換窓は描かせない（#532 二重表示）。
+    match action {
+        ImeAction::Suppress => LRESULT(0),
+        // SAFETY: every observed message must continue through Tao's own subclass,
+        // which remains responsible for key events and committed ReceivedImeText.
+        ImeAction::PassThrough => unsafe { DefSubclassProc(hwnd, message, wparam, lparam) },
+    }
 }
 
 fn read_preedit(hwnd: HWND) -> Option<egui::ImeEvent> {
@@ -270,5 +308,44 @@ impl Drop for ImeContext {
         unsafe {
             let _ = ImmReleaseContext(self.hwnd, self.himc);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ImeAction, classify_ime_message};
+    use windows::Win32::UI::Input::Ime::{GCS_COMPSTR, GCS_RESULTSTR};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION,
+    };
+
+    #[test]
+    fn suppresses_native_composition_but_passes_commit_and_end() {
+        // 変換開始: 既定の変換文字列ウィンドウを作らせない（egui が preedit を描く）。
+        assert_eq!(
+            classify_ime_message(WM_IME_STARTCOMPOSITION, 0),
+            ImeAction::Suppress
+        );
+        // 未確定のみ: egui が描くのでネイティブ描画を抑制（＝二重表示の解消）。
+        assert_eq!(
+            classify_ime_message(WM_IME_COMPOSITION, GCS_COMPSTR.0),
+            ImeAction::Suppress
+        );
+        // 確定あり: Tao の ReceivedImeText 確定経路が要るため通す（確定文字を落とさない）。
+        assert_eq!(
+            classify_ime_message(WM_IME_COMPOSITION, GCS_RESULTSTR.0),
+            ImeAction::PassThrough
+        );
+        // 確定 + 未確定が同時に立つ IME でも、確定を優先して通す。
+        assert_eq!(
+            classify_ime_message(WM_IME_COMPOSITION, GCS_RESULTSTR.0 | GCS_COMPSTR.0),
+            ImeAction::PassThrough
+        );
+        // 変換終了・その他のメッセージは Tao へ通す（後始末・キー入力）。
+        assert_eq!(
+            classify_ime_message(WM_IME_ENDCOMPOSITION, 0),
+            ImeAction::PassThrough
+        );
+        assert_eq!(classify_ime_message(0, 0), ImeAction::PassThrough);
     }
 }

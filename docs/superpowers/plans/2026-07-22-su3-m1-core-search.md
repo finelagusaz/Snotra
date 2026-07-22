@@ -45,20 +45,13 @@
 
 - [ ] **Step 1: `mod.rs` に module 宣言を追加**
 
-`src-tauri/src/egui_shell/mod.rs` の先頭付近（既存 `mod lifecycle; mod view;` の隣）に追加:
+`src-tauri/src/egui_shell/mod.rs` の先頭付近（既存 `mod lifecycle; mod view;` の隣）に **`mod search_state;` のみ**追加する（`mod layout;` は `layout.rs` を作る Task 3 で足す——ここで宣言するとファイル不在でコンパイルエラー）:
 
 ```rust
-mod layout;
 mod search_state;
 ```
 
-そして既存の `pub(crate) use lifecycle::{...}` の下に:
-
-```rust
-pub(crate) use search_state::{QueryIntent, SearchState, ViewKind, interpret, is_instant_prefix};
-```
-
-（`layout` の re-export は Task 3/4 で足す。この時点では `SearchState` は未定義だが Task 2 で作る。**Task 1 のコンパイルを通すため、この re-export 行は `interpret`/`is_instant_prefix`/`QueryIntent`/`ViewKind` のみにし、`SearchState` は Task 2 で足す**。よってこの Step では:）
+そして既存の `pub(crate) use lifecycle::{...}` の下に re-export を追加する。**この時点では `SearchState` は未定義（Task 2 で作る）ため、`interpret`/`is_instant_prefix`/`QueryIntent`/`ViewKind` のみを re-export し、`SearchState` は Task 2 で足す**:
 
 ```rust
 pub(crate) use search_state::{QueryIntent, ViewKind, interpret, is_instant_prefix};
@@ -383,7 +376,7 @@ git commit -m "feat(su3): SearchState core（query/選択/結果/ナビ）（M1 
 
 **Files:**
 - Create: `src-tauri/src/egui_shell/layout.rs`
-- Modify: `src-tauri/src/egui_shell/mod.rs`（`mod layout;` は Task1 で宣言済み。re-export 追加）
+- Modify: `src-tauri/src/egui_shell/mod.rs`（`mod layout;` 宣言 + re-export 追加）
 
 **Interfaces:**
 - Produces: `pub struct HeightParams { show_results: bool, max_results: u32, has_update_toast: bool, search_bar_height: f64, result_row_height: f64, results_padding: f64, update_toast_height: f64 }`、`pub fn compute_window_height(p: &HeightParams) -> f64`。
@@ -454,9 +447,9 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: mod.rs に re-export を追加**
+- [ ] **Step 2: mod.rs に `mod layout;` 宣言 + re-export を追加**
 
-`src-tauri/src/egui_shell/mod.rs`:
+`src-tauri/src/egui_shell/mod.rs` に `mod layout;`（`mod search_state;` の隣）を追加し、re-export を足す:
 
 ```rust
 pub(crate) use layout::{HeightParams, compute_window_height};

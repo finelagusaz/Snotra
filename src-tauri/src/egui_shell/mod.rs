@@ -39,6 +39,9 @@ pub(crate) fn create(
         .resizable(false)
         .skip_taskbar(true) // 宣言窓 skipTaskbar:true の再現（(B)#1）
         .always_on_top(true) // 宣言窓 alwaysOnTop:true の再現（(B)#1）
+        // 白フラッシュ回避: show 時、最初の softbuffer present 前にネイティブ背景ブラシが一瞬見える。
+        // softbuffer の CLEAR_COLOR（renderer.rs=0x282828）に合わせて暗色にし、白→暗の点滅を消す。
+        .background_color(tauri::window::Color(0x28, 0x28, 0x28, 0xff))
         .visible(false)
         .build()?; // tauri::Error → RuntimeError（#[from]・runtime.rs:46）
     runtime.attach(window, SearchWindowView::new(app_handle))

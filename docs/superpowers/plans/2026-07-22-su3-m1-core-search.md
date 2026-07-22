@@ -26,8 +26,9 @@
 - **Create `src-tauri/src/egui_shell/search_state.rs`**（純粋核・unit-test）: `ViewKind`・`QueryIntent`・`is_instant_prefix`・`interpret`・`SearchState`（query/selected/results + 遷移）。
 - **Create `src-tauri/src/egui_shell/layout.rs`**（純粋核・unit-test）: `HeightParams`・`compute_window_height`・`Debouncer`。
 - **Modify `src-tauri/src/egui_shell/view.rs`**: `SearchWindowView` に `SearchState` + `Debouncer` を持たせ、TextEdit → 検索 dispatch → 結果リスト描画 → ナビ/起動 → 動的高さ を実装。
-- **Modify `src-tauri/src/egui_shell/mod.rs`**: `search_state`/`layout` を mod 宣言・re-export。`EguiShellState` に `reset_pending: AtomicBool` を追加。`show_egui_main` が `reset_pending` を立てる。
-- **Modify `snotra-egui-runtime/src/runtime.rs`**: `RuntimeFrame` に `set_size(w, h)` を追加（`hide_window` と同じ sanctioned チャネル。`apply_frame_commands` でイベントループスレッド上で `window.set_size` を適用）。**SU1 隣接の最小フック**。
+- **Modify `src-tauri/src/egui_shell/mod.rs`**: `search_state`/`layout` を mod 宣言・re-export。`EguiShellState` に `reset_pending: AtomicBool` を追加。`show_egui_main` が `reset_pending` を立て、show 前に window を 52px へ折り畳む。
+- **Modify `SPEC.md`**: §4.8 の double-click 節を as-built へ訂正（Task 7 Step 5）。
+- **SU1 runtime（`snotra-egui-runtime`）は不変**（ユーザー決定: 動的高さは view の直 `set_size` で行い runtime を触らない）。
 
 ---
 
@@ -733,7 +734,11 @@ $env:SNOTRA_EGUI_MAIN=1; $env:SNOTRA_TRACE=1; cargo run -p snotra
 
 Expected: 検索欄に "firefox" 等を打つと `egui_search:dispatch` trace に `results` > 0 が出る（実インデックスにヒットがあれば）。`msedgewebview2.exe` 子孫 0。確認後アプリ終了。
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: IME スモーク（advisor 指摘・#582 面）**
+
+同じ起動で日本語を IME 変換入力する（例: "kana" → "かな" 確定）。`egui_search:dispatch` trace を観察し、**未確定（preedit）中に search が走らず、確定時のみ発火する**ことを確認する。もし preedit で `response.changed()` が立ち "k"→"か"→"かな" と半端クエリで search が走るなら、`response.changed()` でなく **IME 確定を含む「確定バッファ変化」でのみ search する**よう分岐を足す（egui の `TextEdit` は `ctx.input(|i| i.events)` に `Event::Ime` を持つ・確定は `ImeEvent::Commit`）。SU1 runtime は確定 `GCS_RESULTSTR` のみ egui へ渡す設計（`snotra-egui-runtime/CLAUDE.md` 不変条件）なので preedit は buffer を変えない見込みだが、**実測で確認する**。
+
+- [ ] **Step 8: Commit**
 
 ```bash
 git add src-tauri/src/egui_shell/view.rs
@@ -758,15 +763,15 @@ git commit -m "feat(su3): TextEdit→同期検索 dispatch（leading・M1 Task5�
 `view.rs` に、1 行を描き「クリック種別」を返すヘルパーを追加:
 
 ```rust
-    /// 1 行を描画。selected ならハイライト + scroll_to_me。
-    /// 返り値: (single_clicked, double_clicked)。
+    /// 1 行を描画。selected ならハイライト + scroll_to_me。返り値: single_clicked。
+    /// ダブルクリックは扱わない（ユーザー決定: §4.8 の double-click=選択は as-built でも
+    /// 到達不能ゆえ落とす。単クリック=起動のみ）。self を借りない関連関数（借用衝突回避）。
     fn draw_result_row(
-        &self,
         ui: &mut egui::Ui,
         index: usize,
         result: &SearchResult,
         selected: bool,
-    ) -> (bool, bool) {
+    ) -> bool {
         let row_h = 30.0;
         let (rect, response) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), row_h),
@@ -797,7 +802,7 @@ git commit -m "feat(su3): TextEdit→同期検索 dispatch（leading・M1 Task5�
             path_color,
         );
         let _ = index;
-        (response.clicked(), response.double_clicked())
+        response.clicked()
     }
 ```
 
@@ -811,26 +816,23 @@ Task 5 で入れた trace ブロックを、リスト描画へ置換。TextEdit 
         // 結果リスト（shouldShowResults 相当。M1: results 軸・plain のみ。空なら描かない）。
         let show_results = !self.state.results().is_empty();
         let mut clicked: Option<usize> = None;
-        let mut dbl_clicked: Option<usize> = None;
         if show_results {
+            // 借用衝突回避: results を clone してから描画（draw_result_row は関連関数で self 非借用）。
+            let results = self.state.results().to_vec();
+            let selected = self.state.selected();
             egui::ScrollArea::vertical().show(ui, |ui| {
-                let selected = self.state.selected();
-                for (i, result) in self.state.results().iter().enumerate() {
-                    let (single, double) = self.draw_result_row(ui, i, result, i == selected);
-                    if single {
-                        clicked = Some(i);
-                    }
-                    if double {
-                        dbl_clicked = Some(i);
+                for (i, result) in results.iter().enumerate() {
+                    if Self::draw_result_row(ui, i, result, i == selected) {
+                        clicked = Some(i); // シングルクリック（§4.8 単=起動）。double は扱わない
                     }
                 }
             });
         }
         // クリック処理は Task 7。ここでは捕捉のみ（未使用警告を避けるため Task 7 まで let _ =）。
-        let _ = (clicked, dbl_clicked);
+        let _ = clicked;
 ```
 
-**注**: `self.state.results()` の借用と `self.draw_result_row(&self, ...)` の同時借用に注意。`draw_result_row` は `&self` を取るが、ループ内で `self.state.results()` を借用しつつ `self.draw_result_row` を呼ぶと二重借用になる。回避: 描画前に `let results = self.state.results().to_vec();`（clone）してループする、または `draw_result_row` を `&self` でなく関連関数（`Self::draw_result_row(ui, ...)`）にして `self` 借用を切る。**関連関数化を推奨**（`&self` を使わない描画にする）。
+**注**: `self.state.results()` の借用と `self` メソッド呼びの二重借用を避けるため、`draw_result_row` は `&self` を取らない関連関数（`Self::draw_result_row(ui, ...)`）にし、results は `to_vec()` で clone してループする（M1 の結果は最大 visible_rows 件ゆえ clone コストは無視できる）。
 
 - [ ] **Step 3: build + clippy**
 
@@ -923,38 +925,54 @@ pub(crate) fn record_and_save(state: &AppState, path: &str, query: &str) {
 
 - [ ] **Step 4: Enter / クリックを配線**
 
-Task 6 の `let _ = (clicked, dbl_clicked);` を置換。加えて Enter 処理を追加:
+Task 6 の `let _ = clicked;` を置換。加えて Enter 処理を追加:
 
 ```rust
         // Enter: 選択項目を起動（結果があるとき）。TextEdit の Enter より先に ctx で拾う。
         if ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !self.state.results().is_empty() {
             self.activate(self.state.selected());
         }
+        // シングルクリック＝起動（§4.8 単=起動）。double-click は扱わない（ユーザー決定・
+        // as-built でも double-click=選択は到達不能。SPEC §4.8 を Step 6 で as-built へ同期）。
         if let Some(i) = clicked {
-            self.activate(i); // シングルクリック＝起動（§4.8）
-        }
-        if let Some(i) = dbl_clicked {
-            // ダブルクリック＝選択更新のみ（起動しない）。single と両方立つ環境では
-            // activate が先行しうるが、起動で hide するため実害なし（§4.8 は排他前提）。
-            self.state.move_selection(i as i32 - self.state.selected() as i32);
+            self.activate(i);
         }
 ```
 
-- [ ] **Step 5: build + clippy**
+- [ ] **Step 5: SPEC §4.8 を as-built へ同期（文書化挙動の訂正）**
+
+double-click=選択は WebView2 経路でも到達不能（単クリックが先に起動して hide する）と裏取りした。SPEC §4.8 の double-click 行を as-built へ訂正する（`SPEC.md` の §4.8）。旧:
+
+```
+- シングルクリック: アイテムを起動する（`activateSelectedByIndex` 経由）
+- ダブルクリック: `selected` を更新する（起動しない）
+```
+
+新:
+
+```
+- シングルクリック: アイテムを起動する（起動と同時にウィンドウを非表示にする）
+- ダブルクリック: 独立した挙動は持たない。単クリックが先に起動・非表示にするため、
+  「ダブルクリックで選択のみ」は到達しない（WebView2/egui 両経路の as-built）
+```
+
+**注**: これは WebView2 の挙動を変えない SPEC 訂正（as-built への同期）。§4.8 は両経路共通の意図管理ゆえ、egui 経路の実装（単=起動のみ）と齟齬を残さない。`.claude/rules/spec.md`（セクション番号整合）は §4.8 内の行編集ゆえ番号ずれなし。
+
+- [ ] **Step 6: build + clippy**
 
 Run: `cargo clippy -p snotra --all-targets`
 Expected: 沈黙。
 
-- [ ] **Step 6: trace スモーク**
+- [ ] **Step 7: trace スモーク**
 
 Run: `$env:SNOTRA_EGUI_MAIN=1; $env:SNOTRA_TRACE=1; cargo run -p snotra`
 Expected: 打鍵 → ↑↓ で選択ハイライト移動 → Enter で `egui_launch` trace + アプリ起動 + ウィンドウ hide。クリックでも起動。`msedgewebview2.exe` 子孫 0。
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src-tauri/src/egui_shell/view.rs src-tauri/src/commands/launch.rs
-git commit -m "feat(su3): キーボードナビ + 起動→履歴記録→hide（M1 Task7）"
+git add src-tauri/src/egui_shell/view.rs src-tauri/src/commands/launch.rs SPEC.md
+git commit -m "feat(su3): キーボードナビ + 起動→履歴記録→hide + §4.8 as-built 同期（M1 Task7）"
 ```
 
 ---
@@ -1017,58 +1035,17 @@ git commit -m "feat(su3): debounce trailing 配線（request_repaint_after・M1 
 
 ## Task 9: 動的ウィンドウ高さ + show 順序 + reset-on-show
 
-`compute_window_height` で結果表示可否 × max_results から高さを算出し `RuntimeFrame::set_size` で反映。`show_egui_main` が `EguiShellState.reset_pending` を立て、view が消費して `state.reset()`（resetForShow 相当）。
+`compute_window_height` で結果表示可否 × max_results から高さを算出し、view が `app_handle.get_window("main").set_size()` を**直接**呼んで反映する（ユーザー決定: **SU1 runtime は不変**。set_size は冪等で hide のような副作用調停が不要ゆえ view 直呼びが妥当。`update` はイベントループスレッドで走るので `set_size` は安全な見込み・G-RESIZE で確認）。`show_egui_main` が `EguiShellState.reset_pending` を立て、view が消費して `state.reset()`（resetForShow 相当）。show 前に window を 52px へ折り畳む（SU2 申し送り）。
 
 **Files:**
-- Modify: `snotra-egui-runtime/src/runtime.rs`（`RuntimeFrame::set_size` + `apply_frame_commands`）
-- Modify: `src-tauri/src/egui_shell/mod.rs`（`EguiShellState.reset_pending` + `show_egui_main`）
-- Modify: `src-tauri/src/egui_shell/view.rs`（高さ算出 → `frame.set_size` + reset 消費）
+- Modify: `src-tauri/src/egui_shell/mod.rs`（`EguiShellState.reset_pending` + `show_egui_main` の 52px 折り畳み）
+- Modify: `src-tauri/src/egui_shell/view.rs`（高さ算出 → 直 `set_size` + reset 消費）
 
 **Interfaces:**
-- Produces: `RuntimeFrame::set_size(&mut self, width: f64, height: f64)`（SU1 最小フック・`hide_window` と同じ sanctioned チャネル）。
-- Consumes: `compute_window_height`/`HeightParams`（Task 3）、`EguiShellState`（SU2）。
+- Consumes: `compute_window_height`/`HeightParams`（Task 3）、`EguiShellState`（SU2）、`tauri::Window::set_size`（`tauri::LogicalSize`）。
+- Produces: なし（**SU1 runtime に変更なし**）。
 
-- [ ] **Step 1: runtime に `set_size` フックを追加**
-
-`snotra-egui-runtime/src/runtime.rs` の `RuntimeFrame` を拡張:
-
-```rust
-pub struct RuntimeFrame {
-    close_requested: bool,
-    hide_requested: bool,
-    drag_requested: bool,
-    resize_to: Option<(f64, f64)>,
-}
-```
-
-メソッド追加:
-
-```rust
-    /// 論理サイズへのリサイズを要求する（apply_frame_commands でイベントループ上適用）。
-    /// hide_window と同じ sanctioned チャネル。view から window を直接触らない。
-    pub fn set_size(&mut self, width: f64, height: f64) {
-        self.resize_to = Some((width, height));
-    }
-```
-
-`render()` 内の `RuntimeFrame { ... }` 初期化に `resize_to: None,` を追加。`apply_frame_commands` に適用を追加（`hide` より前に置く＝リサイズしてから hide しない順序は任意だが、drag/hide/close と並べる）:
-
-```rust
-    fn apply_frame_commands(&mut self, frame: RuntimeFrame) -> Result<(), RuntimeError> {
-        if let Some((w, h)) = frame.resize_to {
-            self.window
-                .set_size(tauri::LogicalSize::new(w, h))?;
-        }
-        if frame.drag_requested {
-            self.window.start_dragging()?;
-        }
-        // ...既存 hide/close...
-    }
-```
-
-**注**: `tauri::LogicalSize` の import を追加。`window.set_size` の戻りは `tauri::Result<()>` ＝ `RuntimeError::Tauri`（`#[from]`）で `?` 可。runtime テスト（`runtime.rs` の tests）はこのフックの純粋部分が無いため追加不要（SU2 と同じく view/window は smoke）。
-
-- [ ] **Step 2: `EguiShellState` に reset_pending を追加**
+- [ ] **Step 1: `EguiShellState` に reset_pending を追加**
 
 `src-tauri/src/egui_shell/mod.rs` の `EguiShellState`:
 
@@ -1090,7 +1067,28 @@ pub(crate) struct EguiShellState {
     }
 ```
 
-- [ ] **Step 3: view が reset を消費 + 高さを反映**
+**さらに `show_egui_main` で、`position_on_target_monitor` の前にウィンドウ高さを 52px へ折り畳む**（SU2 申し送りの「高さリセット→位置→show の結合」・advisor 指摘の再発防止）:
+
+```rust
+    // 高さリセット → 位置 → show の順（SU2 の show_main_and_emit と同じ制約）。
+    // reset-on-show でクエリは空 = 結果なし = 52px。前回 hide 時に展開高（例 300px）のまま
+    // だと position クランプが 300px で効き、show 後に view が 52px へ collapse して視覚スナップ +
+    // 位置ずれになる。position の前に 52px へ collapse してこれを断つ。
+    #[cfg(windows)]
+    {
+        let width = window.inner_size().ok()
+            .map(|s| s.to_logical::<f64>(window.scale_factor().unwrap_or(1.0)).width)
+            .unwrap_or(600.0);
+        let _ = window.set_size(tauri::LogicalSize::new(width, 52.0));
+    }
+    #[cfg(windows)]
+    crate::position_on_target_monitor(app, &window);
+    // 既存の window.show() 以降はそのまま。
+```
+
+**注**: これは既存 `show_egui_main` の「高さ 52px は create で固定・位置のみ復元」コメントと、その直後の `position_on_target_monitor` を置換する（SU3 で高さが動的化したためこの前提が崩れる）。view 側の高さ反映（下記 Step 3）は show 後の最初の update で走り、結果があれば展開する。**resizable(false) 窓で programmatic `set_size` が効くことを G-RESIZE で確認**（tao は resizable フラグと独立に inner_size を設定できるはずだが、効かなければ `create` の `resizable(false)` を見直す＝要確認事項）。
+
+- [ ] **Step 2: view が reset を消費 + 高さを反映**
 
 `view.rs` の `update` 冒頭（focus 観測の前後）に reset 消費:
 
@@ -1121,7 +1119,16 @@ pub(crate) struct EguiShellState {
         });
         if (height - self.last_set_height).abs() > 0.5 {
             self.last_set_height = height;
-            _frame.set_size(600.0_f64.max(self.window_width()), height);
+            // view 直呼び（SU1 不変・ユーザー決定）。update はイベントループスレッドゆえ安全。
+            if let Some(window) = self.app_handle.get_window("main") {
+                let _ = window.set_size(tauri::LogicalSize::new(
+                    600.0_f64.max(self.window_width()),
+                    height,
+                ));
+            }
+            // 新サイズでの再描画を即要求し 1 フレームの空きを詰める（背景 0x282828 で
+            // フラッシュは緩和済みだが空き自体が G-RESIZE のちらつき機構・advisor 指摘）。
+            ui.ctx().request_repaint();
         }
 ```
 
@@ -1139,25 +1146,23 @@ struct に `last_set_height: f64` と（幅取得用）を追加。`max_results(
 
 **注**: `window_width()` は現行ウィンドウ幅（`self.app_handle.get_window("main").and_then(|w| w.inner_size().ok())` を論理化、または固定 600.0）。M1 では幅は不変ゆえ `600.0` 固定でも可（SU2 が幅を config から生成済み・変えない）。`_frame` は `update(&mut self, ui, frame)` の frame 引数——現在 `_frame` 名なので `frame` に改名して使う。
 
-- [ ] **Step 4: build + clippy（両 crate）**
+**注**: `view.rs` に `tauri::LogicalSize` の import を追加（`get_window` は既存の `tauri::Manager` import 済み）。SU1 runtime（`snotra-egui-runtime`）は**触らない**。
 
-Run:
-```
-cargo clippy -p snotra-egui-runtime --all-targets
-cargo clippy -p snotra --all-targets
-```
-Expected: 両方沈黙。
+- [ ] **Step 3: build + clippy（snotra のみ・runtime 不変）**
 
-- [ ] **Step 5: G-RESIZE 目視スモーク**
+Run: `cargo clippy -p snotra --all-targets`
+Expected: 沈黙。
+
+- [ ] **Step 4: G-RESIZE 目視スモーク**
 
 Run: `$env:SNOTRA_EGUI_MAIN=1; cargo run -p snotra`
-Expected: 打鍵で結果が出るとウィンドウが下へ伸び、クエリを消すと 52px に戻る。**展開/折りたたみで reflow/ちらつき/位置ずれが目に見えて悪くないこと**（G-RESIZE）。Alt+Q hide → 再 show でクエリが空にリセットされ 52px（reset-on-show）。悪ければ present タイミングを単一ウィンドウ内で調整（2 ウィンドウ化しない）。
+Expected: 打鍵で結果が出るとウィンドウが下へ伸び、クエリを消すと 52px に戻る。**展開/折りたたみで reflow/ちらつき/位置ずれが目に見えて悪くないこと**（G-RESIZE）。Alt+Q hide → 再 show でクエリが空にリセットされ 52px（reset-on-show・前回展開高が残らない）。**resizable(false) 窓で `set_size` が効くこと**を確認（効かなければ `create` の `resizable` を見直す）。悪ければ present タイミングを単一ウィンドウ内で調整（2 ウィンドウ化しない）。
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add snotra-egui-runtime/src/runtime.rs src-tauri/src/egui_shell/mod.rs src-tauri/src/egui_shell/view.rs
-git commit -m "feat(su3): 動的高さ + show順序 + reset-on-show（RuntimeFrame::set_size・M1 Task9）"
+git add src-tauri/src/egui_shell/mod.rs src-tauri/src/egui_shell/view.rs
+git commit -m "feat(su3): 動的高さ + show順序 + reset-on-show（view 直 set_size・M1 Task9）"
 ```
 
 ---
@@ -1271,13 +1276,17 @@ git commit -m "chore(su3): M1 検証ゲート（G-SYNC/G-RESIZE/G1）確認"
 - `LaunchResult.status: LaunchStatus`、成功は `LaunchStatus::Ok`（launch.rs:16,33,56）
 - `launch_item_core` は履歴を記録しない。共通末尾 `record_and_save(state, path, query)`（launch.rs:84）が記録 + 保存。egui 経路も再利用（Task 7 で pub(crate) 化）
 
+**ユーザー決定（brainstorm/plan レビューで確定）:**
+- §4.8 マウス操作: 単クリック=起動のみ実装、double-click-select は落とす。SPEC §4.8 を as-built へ同期（Task 7 Step 5）
+- 動的高さ: view から `app_handle.get_window("main").set_size()` 直呼び。**SU1 runtime は不変**（Task 9）
+
 **実装時に確認が残る箇所（egui/Tauri API の細部・plan 内に注記済み）:**
 - egui の描画 API 細部（`allocate_exact_size`/`painter().text`/`ScrollArea`/`scroll_to_me`）— 使用 egui バージョンで署名確認（Task 6）
-- `RuntimeFrame::set_size` 追加は SU1 隣接の最小フック（**要相談**・Task 9）。runtime を触るため合意してから実装する
-- `window.set_size` の `tauri::LogicalSize` import と `RuntimeError::Tauri` への `?` 変換（Task 9）
+- `window.set_size` の `tauri::LogicalSize` import。resizable(false) 窓で programmatic `set_size` が効くか（Task 9 G-RESIZE）
+- IME 未確定中に `response.changed()` が立たないか（Task 5 Step 7・#582 面）
 
 **Placeholder scan:** 「暫定文字列」は Task 10 で確定文字列を置く指示に置換済み（TODO を残さない）。計測 trace（Task 11）は残置/revert の判断を明示。
 
-**Type consistency:** `SearchState` の API（`set_query`/`set_results`/`move_selection`/`view_kind`/`interp`/`reset`）は Task 2 定義と Task 5–10 の呼び出しで一致。`Debouncer`（`on_input`/`poll`/`interval`）は Task 4 定義と Task 8 呼び出しで一致。`compute_window_height`/`HeightParams` は Task 3 定義と Task 9 で一致。`RuntimeFrame::set_size` は Task 9 で定義即使用。
+**Type consistency:** `SearchState` の API（`set_query`/`set_results`/`move_selection`/`view_kind`/`interp`/`reset`）は Task 2 定義と Task 5–10 の呼び出しで一致。`Debouncer`（`on_input`/`poll`/`interval`）は Task 4 定義と Task 8 呼び出しで一致。`compute_window_height`/`HeightParams` は Task 3 定義と Task 9 で一致。`draw_result_row` は関連関数 `Self::draw_result_row(ui, index, result, selected) -> bool`（Task 6 定義・Task 6 で使用・double 返り値は削除済み）。動的高さは view 直 `set_size`（SU1 不変）。
 
 **Scope:** M1 のみ。folder（M2）/ instant・slash（M3）/ tool（SU3.5）/ アイコン実体（SU4）は含まない。`run_search` の command/instant 分岐は空（M2/M3 で埋める seam）。

@@ -18,7 +18,8 @@ Tauri管理のネイティブWindowへeguiをsoftbuffer（CPUラスタ）で描�
 
 - UI状態は`Send`を要求し、無条件の`unsafe impl Send/Sync`を追加しない
 - 0×0のSurfaceをconfigureまたは描画しない
-- `Lost`はSurface再作成、`Outdated`は再configureとして区別する
 - repaint workerは所有型のDropで停止し、joinする
 - Tauri内部型をUI実装へ公開しない
 - 通常文字とIME確定文字はTaoの`ReceivedImeText`だけをeguiへ渡し、`KeyboardInput.text`と二重配送しない
+- IME未確定文字列はeguiが自前描画し、ネイティブ変換窓は抑制する（`ime_subclass_proc`が`WM_IME_STARTCOMPOSITION`と未確定`WM_IME_COMPOSITION`を`Suppress`）。確定`GCS_RESULTSTR`だけTaoへ通し`ReceivedImeText`で受ける。通すと二重表示が再発する（#532）
+- `RedrawRequested`は`on_event`で`WindowEvent`と別armとして扱い、egui入力（`on_window_event`）へ渡さない。渡すとrepaint応答が再描画要求を生み描画が自己永続ループになる（#579で実測: 15秒で約2,000フレーム）

@@ -14,7 +14,7 @@ pub(crate) struct InputState {
 }
 
 impl InputState {
-    pub(crate) fn new(_size: PhysicalSize<u32>, native_pixels_per_point: f32) -> Self {
+    pub(crate) fn new(native_pixels_per_point: f32) -> Self {
         Self {
             raw: egui::RawInput::default(),
             native_pixels_per_point,
@@ -405,7 +405,7 @@ mod tests {
     #[test]
     fn take_uses_live_size_and_ppp_not_stored_event_values() {
         // イベント駆動で古い値を持たせる。
-        let mut input = InputState::new(PhysicalSize::new(100, 100), 1.0);
+        let mut input = InputState::new(1.0);
         // live に新しい size/ppp を渡すと screen_rect は live 値から作られる。
         let raw = input.take(4096, PhysicalSize::new(200, 400), 2.0);
         let rect = raw.screen_rect.expect("screen_rect");

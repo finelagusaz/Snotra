@@ -239,7 +239,6 @@ struct EguiWindow {
 
 impl EguiWindow {
     fn new(window: tauri::Window, mut view: Box<dyn EguiView>) -> Result<Self, RuntimeError> {
-        let size = window.inner_size()?;
         let scale_factor = window.scale_factor()? as f32;
         let ime = ImeBridge::new(&window)?;
         let context = egui::Context::default();
@@ -247,7 +246,7 @@ impl EguiWindow {
         Ok(Self {
             context,
             window,
-            input: InputState::new(size, scale_factor),
+            input: InputState::new(scale_factor),
             ime,
             renderer: None,
             view,

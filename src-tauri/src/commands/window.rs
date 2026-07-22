@@ -89,7 +89,13 @@ pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> R
     drop(guard);
 
     // Temporarily disable main window alwaysOnTop so snotra-settings can be focused.
-    if let Some(main) = app.get_webview_window("main") {
+    // egui 窓（flag ON）は webview 無しゆえ get_webview_window では取れない。get_window で取る
+    // （codex #3・SPEC §8.5）。WebView2 経路（flag OFF）は既存のまま不変。
+    if crate::trace::env_flag("SNOTRA_EGUI_MAIN") {
+        if let Some(main) = app.get_window("main") {
+            let _ = main.set_always_on_top(false);
+        }
+    } else if let Some(main) = app.get_webview_window("main") {
         let _ = main.set_always_on_top(false);
     }
 
@@ -128,8 +134,12 @@ pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> R
             }
         }
 
-        // Restore main window alwaysOnTop.
-        if let Some(main) = handle_for_monitor.get_webview_window("main") {
+        // Restore main window alwaysOnTop（egui は get_window・codex #3・SPEC §8.5）。flag OFF は不変。
+        if crate::trace::env_flag("SNOTRA_EGUI_MAIN") {
+            if let Some(main) = handle_for_monitor.get_window("main") {
+                let _ = main.set_always_on_top(true);
+            }
+        } else if let Some(main) = handle_for_monitor.get_webview_window("main") {
             let _ = main.set_always_on_top(true);
         }
 

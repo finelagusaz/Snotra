@@ -9,6 +9,7 @@
 
 mod commands;
 mod config_watcher;
+mod egui_shell;
 mod icon;
 mod ime;
 mod indexing;
@@ -328,7 +329,9 @@ pub(crate) fn suspend_and_trim_after_hide(app: &AppHandle, source: &'static str)
 #[cfg(windows)]
 fn position_on_target_monitor(
     app_handle: &AppHandle,
-    main: &tauri::WebviewWindow,
+    // &Window に一般化して egui 経路と共有（#532 SU2）。両経路とも同一の "main" 窓
+    // （get_window/get_webview_window は同じ内部 Window を指す・manager/window.rs:106）。
+    main: &tauri::Window,
 ) {
     use snotra_core::window_data;
 
@@ -493,8 +496,12 @@ fn show_main_and_emit(app_handle: &AppHandle) {
         // Position window on the target monitor (cursor or primary) using
         // saved relative coordinates, clamped to the target work area.
         // Must run after height reset so clamp uses the collapsed size.
+        // 一般化した position_on_target_monitor は &Window を取る。宣言 WebviewWindow の
+        // 内部 Window は get_window("main") で得られる（同一 OS 窓ゆえ挙動不変・#532 SU2 mini-gate）。
         #[cfg(windows)]
-        position_on_target_monitor(app_handle, &main);
+        if let Some(win) = app_handle.get_window("main") {
+            position_on_target_monitor(app_handle, &win);
+        }
 
         show_and_focus_main(app_handle, &main, t0);
 
@@ -598,13 +605,29 @@ fn main() {
         app_context
     };
 
+    // フラグ ON: 宣言窓 "main"（WebView2）を除去して egui が置き換える（#532 SU2・codex #2）。
+    // tauri.conf.json は変えず config を実行時ミューテート（E2E 注入と同じ経路）。flag OFF は不変。
+    #[allow(unused_mut)]
+    let mut app_context = app_context;
+    if crate::trace::env_flag("SNOTRA_EGUI_MAIN") {
+        app_context
+            .config_mut()
+            .app
+            .windows
+            .retain(|w| w.label != "main");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(move |app, _args, _cwd| {
-            // When a second instance tries to start, show the main window
-            // via show_main_and_emit to ensure height reset, IME control,
-            // and window-shown emit are applied consistently.
-            show_main_and_emit(app);
+            // When a second instance tries to start, show the main window.
+            // flag ON は egui 窓（webview 無しゆえ get_webview_window では取れず show_main_and_emit
+            // が no-op になる）を show_egui_main で前面化。OFF は WebView2 の show_main_and_emit。
+            if crate::trace::env_flag("SNOTRA_EGUI_MAIN") {
+                egui_shell::show_egui_main(app, Instant::now());
+            } else {
+                show_main_and_emit(app);
+            }
         }))
         .manage(app_state)
         .manage(icon_cache_state)
@@ -650,6 +673,16 @@ fn main() {
             // Must precede setup_hotkey_listener below, which sends RegisterInitialHotkey
             // through the platform bridge managed here.
             setup_platform_thread(&app_handle, hotkey_config, initial_language);
+
+            // 窓生成: フラグ ON は egui（platform thread spawn 後・SPEC §8.5 で Win32 初期化と並列化）、
+            // OFF は宣言窓が Tauri により既に生成済み（何もしない・flag OFF は不変）。
+            if crate::trace::env_flag("SNOTRA_EGUI_MAIN") {
+                // show/hide を跨ぐ共有状態（世代・emit dedup）。view/hotkey/hide が参照するので窓生成前に管理下へ。
+                app.manage(egui_shell::EguiShellState::default());
+                egui_shell::create(app, window_width as f64)?;
+                // view→emit→listener の合流点。全 hide を hide_egui_main の 1 経路に集約（codex #7）。
+                egui_shell::register_hide_listener(&app_handle);
+            }
 
             // First-run: launch snotra-settings directly (bypassing the indexing guard
             // in open_settings, since initial_indexing=true during first run).
@@ -790,6 +823,49 @@ fn setup_hotkey_listener(app_handle: &AppHandle) {
         if let Some(proc_state) = handle_for_hotkey.try_state::<SettingsProcessState>()
             && proc_state.lock().unwrap().is_some()
         {
+            return;
+        }
+        // egui 経路（flag ON）: 共有 EguiShellState.hotkey_generation を使い（hide が bump して
+        // 保留 show を無効化・codex #5/(B)#2）、純粋核 plan_hotkey で分岐する。WebView2 の
+        // generation は使わず早期 return（二重 bump しない）。
+        if crate::trace::env_flag("SNOTRA_EGUI_MAIN") {
+            let current_gen = handle_for_hotkey
+                .try_state::<egui_shell::EguiShellState>()
+                .map(|sh| sh.hotkey_generation.fetch_add(1, Ordering::SeqCst) + 1)
+                .unwrap_or(0);
+            let visible = handle_for_hotkey
+                .try_state::<AppState>()
+                .map(|s| s.main_visible.load(Ordering::SeqCst))
+                .unwrap_or(false);
+            let hotkey_toggle = handle_for_hotkey
+                .try_state::<AppState>()
+                .map(|s| s.engine.lock().unwrap().config().general.hotkey_toggle)
+                .unwrap_or(true); // config.rs 既定と一致
+            // hotkey_toggle は plan_hotkey に渡す。表示中でも hotkey_toggle=false なら hide せず
+            // show 側（再フォーカス/再配置）へ回る＝WebView2 経路の hide_on_toggle と同じ意味論。
+            match egui_shell::plan_hotkey(visible, is_alt_pressed(), hotkey_toggle) {
+                egui_shell::HotkeyPlan::HideNow => {
+                    egui_shell::hide_egui_main(&handle_for_hotkey);
+                }
+                egui_shell::HotkeyPlan::ShowNow => {
+                    egui_shell::show_egui_main(&handle_for_hotkey, t0);
+                }
+                egui_shell::HotkeyPlan::ShowAfterAltRelease => {
+                    let h = handle_for_hotkey.clone();
+                    std::thread::spawn(move || {
+                        wait_alt_release_or_timeout();
+                        // 共有世代が変わっていたら（別 press や hide が bump）show を諦める。
+                        let gen_now = h
+                            .try_state::<egui_shell::EguiShellState>()
+                            .map(|sh| sh.hotkey_generation.load(Ordering::SeqCst))
+                            .unwrap_or(0);
+                        if gen_now != current_gen {
+                            return;
+                        }
+                        egui_shell::show_egui_main(&h, Instant::now());
+                    });
+                }
+            }
             return;
         }
         let current_gen = hotkey_generation_for_listener.fetch_add(1, Ordering::SeqCst) + 1;
@@ -951,7 +1027,11 @@ fn setup_tray(app_handle: &AppHandle, show_tray: bool, load_outcome: LoadOutcome
 /// setup: `show_main_and_emit` depends on the platform bridge (IME control).
 fn setup_startup_display(app_handle: &AppHandle, show_on_startup: bool) {
     if show_on_startup {
-        show_main_and_emit(app_handle);
+        if crate::trace::env_flag("SNOTRA_EGUI_MAIN") {
+            egui_shell::show_egui_main(app_handle, Instant::now());
+        } else {
+            show_main_and_emit(app_handle);
+        }
     }
 }
 

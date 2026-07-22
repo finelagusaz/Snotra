@@ -4701,6 +4701,7 @@ name = "snotra"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "egui",
  "indexmap 2.14.0",
  "notify",
  "png 0.18.1",
@@ -4708,6 +4709,7 @@ dependencies = [
  "serde",
  "serde_json",
  "snotra-core",
+ "snotra-egui-runtime",
  "tauri",
  "tauri-build",
  "tauri-plugin-single-instance",

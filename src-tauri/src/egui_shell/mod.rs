@@ -5,11 +5,17 @@ mod lifecycle;
 // 本番（非 test）ビルドで未消費のため dead_code になる。消費側が付いたら allow を外す。
 #[allow(dead_code)]
 mod search_state;
+// SU3 M1 Task 9（view.rs）が compute_window_height を消費するまでは
+// 本番（非 test）ビルドで未消費のため dead_code になる。消費側が付いたら allow を外す。
+#[allow(dead_code)]
+mod layout;
 mod view;
 
 pub(crate) use lifecycle::{HotkeyPlan, blur_should_hide, plan_hotkey};
 #[allow(unused_imports)]
 pub(crate) use search_state::{QueryIntent, SearchState, ViewKind, interpret, is_instant_prefix};
+#[allow(unused_imports)]
+pub(crate) use layout::{HeightParams, compute_window_height};
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;

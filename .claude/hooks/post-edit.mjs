@@ -29,9 +29,14 @@ const MAX_BUFFER = 32 * 1024 * 1024;
 const PER_CHECK_TIMEOUT_MS = 300_000;
 
 // 検査ごとの出力予算。現行 hook の head/tail と行数を一字一句保存する（I10）。
-const BUDGETS = {
+// 予算は検査が**失敗したときだけ**読まれる。エントリ漏れは全検査が緑の間は沈黙し、
+// 最初の失敗で hook 自体を TypeError で落とす（診断が届かなくなる）。
+// selectChecks が発行しうる id との完全性は post-edit.test.mjs のカナリアが固定する。
+export const BUDGETS = {
   clippy: { lines: 20, from: "head" },
   "core-test": { lines: 5, from: "tail" },
+  "egui-mvp-test": { lines: 8, from: "tail" },
+  "egui-runtime-test": { lines: 8, from: "tail" },
   "settings-test": { lines: 8, from: "tail" },
   "tauri-test": { lines: 8, from: "tail" },
   "cargo-check": { lines: 20, from: "head" },
@@ -117,6 +122,8 @@ export function selectChecks(rel) {
 
   if (isRust) checks.push("clippy");
   if (isRust && rel.startsWith("snotra-core/")) checks.push("core-test");
+  if (isRust && rel.startsWith("snotra-egui-mvp/")) checks.push("egui-mvp-test");
+  if (isRust && rel.startsWith("snotra-egui-runtime/")) checks.push("egui-runtime-test");
   if (isRust && rel.startsWith("snotra-settings/")) checks.push("settings-test");
   if (isRust && rel.startsWith("src-tauri/")) checks.push("tauri-test");
 
@@ -265,7 +272,7 @@ function buildCommand(id, root) {
 
   switch (id) {
     // check / clippy の --workspace は cargo に Cargo.toml の members を読ませる。
-    // crate 名を列挙すると members の写しになり、4 つ目の crate で気づかれないまま漏れる（#500）。
+    // crate 名を列挙すると members の写しになり、新しい crate で気づかれないまま漏れる（#500）。
     case "clippy":
       return cargoSpec([
         "clippy", "--workspace",
@@ -275,6 +282,10 @@ function buildCommand(id, root) {
     // すると編集していない crate のテストまで走り、hook の即時性が失われる。
     case "core-test":
       return cargoSpec(["test", "-p", "snotra-core"]);
+    case "egui-mvp-test":
+      return cargoSpec(["test", "-p", "snotra-egui-mvp"]);
+    case "egui-runtime-test":
+      return cargoSpec(["test", "-p", "snotra-egui-runtime"]);
     case "settings-test":
       return cargoSpec(["test", "-p", "snotra-settings"]);
     case "tauri-test":

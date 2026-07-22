@@ -1,25 +1,28 @@
-# Retrospective — #593 文書最小化の具体化（設計書 → ADR → G10 機構 → 初回削減・3 PR）
+# Retrospective — #532 SU1（snotra-egui-runtime を wgpu → softbuffer へ置換）
 
 ## よかったこと
 
-### brainstorming-first がフレームの自己一貫性を担保した
-#593 は「規範をなるべく機構へ吸収する」という思想そのものなので、その具体化が思想と矛盾しては本末転倒になる。設計を 1 問ずつ詰める過程で「cap を規範宣言でなく機構で担保」「二面独立 ratchet」を明示的に選び、実装前に **面替えでの回避（常時→rules へ押し込んで数字を下げる穴）** を発見して塞げた。いきなり実装に入れば、合計 ratchet を書いてこの穴を残していた可能性が高い。
+### spec 段階の多レンズ + codex + advisor 敵対レビューが、実装前に設計の穴と偽 blocker を潰した
+brainstorm → spec の直後に 3 レンズ（描画正当性・境界/API・不変条件）+ codex + advisor で反証を試み、実装 1 行前に spec を硬化した。codex の blocker「`softbuffer::Surface` は !Send」は softbuffer 自身の `__assert_send`（Surface は Send・!Sync のみ）で一次証拠反証。size 同一フレーム同期・free の present 非依存・失敗リトライ・surface のスレッド親和性生成を spec に織り込んだ。**設計の反証は一次ソースで裏取りする**（memory [[codex-exec-adversarial-review]]）。
 
-### 目標と手段を一致させた（面積を増やさず漏れを塞ぐ）
-「ADR を書くスキルを用意」という提案に対し、新スキル（＝ agent-config 面積 +1）でなく **既存 `/implement` Step 6 の workspace 削除直前に回収ステップを 1 つ足す**（B 案）を選んだ。否定の知識が生まれて捨てられる一点を機構で塞ぐこの選択自体が、#593 の「面積を増やさず源で吸収」を体現している。手段が目標に反しないかを毎回問うたのが効いた。
+### 「壊れた出力から推論しない」が 3 度機能した
+rust-analyzer が編集途中の中間状態を捉え、T2/T4/T5 で「型が見つからない/フィールド無し」等の首尾一貫した compile 診断を出したが、いずれも `cargo test`/`cargo check` の再実行で緑を確定（規則2）。診断と実測が矛盾するたび、診断を根拠にせず cargo を一次証拠にした。既存機構が near-miss を覆った。
 
-### 前サイクルの教訓を実際に適用した（byte に囚われない）
-#616 の削減で「233→228」の小ささに揺れず、**マージ手順の skill 化（−18 行）を常時視界＝#488 保護の喪失ゆえ見送り**、L69 の selectChecks 写しも immediacy 優先で意図的に保持した。前回 retrospective の「薄化の価値は byte でなく drift-resistance」を判断規準として使い、load-bearing 知識を守った。削減の記録は `LINE_BUDGET` コメントとコミットに残し、履歴側 spec/ADR は起点 233 の記録を書き換えなかった。
+### 計測が仮説を繰り返し反証し、winit 再アーキを回避した
+T8 で「IME 遅延が秒単位」と聞き、私も advisor も「起床経路（InvalidateRect→RedrawRequested）バグ」を仮説にしたが、計装実行が反証（preedit→redraw 2ms・候補位置も正常）。黙って乗り換えず advisor に突き合わせ、advisor は perf の H-A/H-B 判別へ再定位。ユーザーの「英語でも遅い・ウィンドウ移動も鈍い」の一言で **debug ビルド起因**と確定し、release で 8× 改善・許容水準と実測。winit 再アーキ（runtime 全体を tauri-runtime-wry から外す）は計測が不要と証明した。
 
-### 変化する基準に耐えるテスト設計 + フォールトインジェクション
-G10 のテストは `LINE_BUDGET` 定数を import して基準に追従させたため、#616 で 233→228 に下げてもテストが壊れなかった。フォールトインジェクション 7 件（両面超過・面替え・CRLF・母集団欠落）で両方向を実測し、safety-nets の「効いていることは一度はフォールトインジェクションで測る」を満たした。
+### IME 修正を純関数へ抽出して TDD + 実機で二段検証した
+IMM32 の判定ロジックを `classify_ime_message`（純関数）へ抽出し TDD で固定（STARTCOMPOSITION と未確定 COMPOSITION を Suppress・確定 GCS_RESULTSTR は Tao 経路維持）。繊細な Win32 は実機で「二重表示解消・候補位置・確定/Esc/ASCII 非二重」を検証した。回帰防止の不変条件を `snotra-egui-runtime/CLAUDE.md` へ機構化。
 
 ---
 
 ## 伸びしろ
 
-### main 同期の直後、編集前にブランチを切らなかった（#616）
-`git checkout main && pull` で状態確認した流れのまま、ブランチを切らずに CLAUDE.md を 3 箇所編集し、後からブランチを作成した。変更はブランチへ無事移り、commit-on-main も起きず pre-commit hook（機構）が守る境界は侵していない。ただし「ブランチは編集前に」の習慣は崩れた。**多段 PR サイクルでは main 同期と編集が交互に来るため、同期のたびに『次の編集の前にブランチ』を意識する。** これは機構が既にカバーする near-miss ゆえ規範追加はしない（#593 の規律＝機構が覆う失敗に注意書きを足さない）——習慣として持つ。
+### perf の訴えでは debug/release を最初に切り分けるべきだった
+「秒単位のもたつき」を IME 起床経路の問題として深掘り（仮説・計装）してから、正体が **debug ビルドの CPU ラスタ遅さ**（release 8×）だと判明した。未最適化の `fill_mesh` 密ループを `cargo run`（debug）で測り実問題と誤認した。性能調査は release 再測を最初の一手にすべきだった。教訓は `docs/development-principles.md` デバッグ節へ配置。
 
-### ratchet の「行数」と「内容」のズレ
-G10 は行数（`\r?\n`）で数えるため、長い 1 行（テーブルセルや selectChecks 写し）を短い参照に置き換えても行数は減らない。#616 で「写し除去」を計画した時点でこのズレに気づいた。粗い代理指標であることは spec/ADR に明記済みで、実削減は「行そのもの」を減らす操作に限られる。次に burn-down を進めるときは、drift-resistance（写し除去）と行数削減（行の除去）が別操作であることを最初から分けて計画する。
+### 「無改変の経路」を「検証済み」と暗黙に扱った
+spec は IME を「renderer 直交ゆえ動くはず」と前提したが、runtime の IMM32 経路は人間が一度も動かしておらず（#582 は削除済み winit spike を検証）、T8 で二重表示が露見した。差分が触っていなくても、新アーキで未実行の経路は未検証——受け入れで能動的に動かす計画を立てるべきだった。教訓は `docs/development-principles.md` デバッグ節へ配置。
+
+### アーキ判断を未 root-cause の症状で下しかけた
+「秒＝深い問題」の前提で winit vs 自作の Phase 2 アーキ分岐を advisor に諮ろうとし、advisor に「自分の Iron Law（root-cause 先行）違反」と正された。症状を計測で切り分けてから scope を決める。`recommend-native-over-handrolled` memory は「ツールロジックの再発明を避ける」話で、意図的に選んだ統合アーキ（tao/wry プラグイン）の放棄を促すものではない——memory に流されず適用範囲を見極める。

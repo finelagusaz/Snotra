@@ -8,8 +8,10 @@ Snotra は Windows 専用のキーボードランチャー。バックエンド�
 
 ```
 Snotra/
-  Cargo.toml              # workspace (snotra-core, src-tauri, snotra-settings)
+  Cargo.toml              # workspace（製品3 crate + egui検証2 crate）
   snotra-core/            # 純ロジック lib crate
+  snotra-egui-runtime/    # Tauri native Window向けegui/wgpu接着層
+  snotra-egui-mvp/        # Issue #532の独立検証バイナリ（非配布）
   src-tauri/              # Tauri v2 バイナリ crate
   snotra-settings/        # egui 設定バイナリ（版数・About はサイドバー表示）
   ui/                     # SolidJS フロントエンド
@@ -17,7 +19,7 @@ Snotra/
   package.json, vite.config.ts, tsconfig.json
 ```
 
-Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-core`）、Tauri バイナリ（`src-tauri`）、設定 GUI（`snotra-settings`）を分離。検索 UI は SolidJS + CSS 変数ベースのテーマシステムで Tauri IPC 経由で Rust バックエンドと通信。設定は egui ベースの別プロセスで（版数・About 情報はサイドバーに表示）、`config.toml` ファイルを介して本体と連携する。
+Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-core`）、Tauri バイナリ（`src-tauri`）、設定 GUI（`snotra-settings`）を分離。検索 UI は SolidJS + CSS 変数ベースのテーマシステムで Tauri IPC 経由で Rust バックエンドと通信。設定は egui ベースの別プロセスで（版数・About 情報はサイドバーに表示）、`config.toml` ファイルを介して本体と連携する。`snotra-egui-runtime`と`snotra-egui-mvp`はIssue #532の採用判断用で、製品の既定起動経路・設定・配布物には接続しない。
 
 ## レイヤー構成
 
@@ -44,6 +46,12 @@ Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-
 │  snotra-settings/ (egui standalone binary)            │
 │  app.rs (draft/saved model) → tabs/*                  │
 │  通信: config.toml ファイル経由のみ（IPC なし）       │
+└───────────────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────────────┐
+│  Issue #532 egui MVP（非配布）                        │
+│  snotra-egui-mvp → snotra-egui-runtime → Tauri Window │
+│                                      → egui-wgpu/wgpu  │
 └───────────────────────────────────────────────────────┘
 ```
 
@@ -86,6 +94,12 @@ ui/src/
 独立バイナリ。本体との通信は `config.toml` ファイル経由のみ（IPC なし）。`app.rs` の draft/saved 二重状態モデルを核に、`tabs/` のタブ式設定エディタを構成する egui アプリ。
 
 → モジュール構成は `snotra-settings/CLAUDE.md`
+
+### snotra-egui-runtime / snotra-egui-mvp（Issue #532 検証層）
+
+`snotra-egui-runtime`はTauri wry pluginでTaoイベントを受け、egui入力・Win32 IME composition・repaint・wgpu Surface／Device復旧をWindow単位で管理する接着層。`snotra-egui-mvp`は固定10,000件の実`Engine`検索、現行版相当の`Alt+Q`、3更新モードと署名検証付きダウンロードを組み合わせた独立バイナリであり、`app.windows`を空にしてネイティブ`Window`だけを生成する。製品版へ統合する前の技術検証に限定し、release workflowのartifactには含めない。
+
+→ モジュール構成と制約は `snotra-egui-runtime/CLAUDE.md`、`snotra-egui-mvp/CLAUDE.md`
 
 ## 横断的な実装パターン
 

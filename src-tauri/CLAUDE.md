@@ -68,6 +68,8 @@ NOTIFYICON_VERSION_4 では、キーボード操作（Shift+F10 / Application �
 
 ## WebView2 ウィンドウ生成の制約
 
+WebViewを持たないTauriバイナリは、このcrateの別binとして追加しない。`build.rs`が既定の`tauri.conf.json`をコンパイル時に取り込むため、実行時に別configを渡しても既定WebViewが生成される。独立crateに置き、実行時の子プロセスツリーで`msedgewebview2.exe`が0件であることを確認する。
+
 `WebviewWindowBuilder::build()` は WebView2 初期化のために Win32 メッセージポンプの進行を必要とする。**「メインスレッドにいる」と「メッセージポンプが自由に回る」は別物**であり、以下の制約がある:
 
 - **setup フェーズ（イベントループ開始前）**: `build()` が自前でメッセージを処理できるため正常動作する

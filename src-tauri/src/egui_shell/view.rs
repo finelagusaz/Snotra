@@ -62,7 +62,6 @@ pub(crate) struct SearchWindowView {
 }
 
 impl SearchWindowView {
-    #[allow(dead_code)] // Task 3（create）が呼ぶまで未使用。Task 3 で除去する。
     pub(crate) fn new(app_handle: tauri::AppHandle) -> Self {
         Self {
             app_handle,

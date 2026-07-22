@@ -599,6 +599,18 @@ fn main() {
         app_context
     };
 
+    // フラグ ON: 宣言窓 "main"（WebView2）を除去して egui が置き換える（#532 SU2・codex #2）。
+    // tauri.conf.json は変えず config を実行時ミューテート（E2E 注入と同じ経路）。flag OFF は不変。
+    #[allow(unused_mut)]
+    let mut app_context = app_context;
+    if crate::trace::env_flag("SNOTRA_EGUI_MAIN") {
+        app_context
+            .config_mut()
+            .app
+            .windows
+            .retain(|w| w.label != "main");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(move |app, _args, _cwd| {
@@ -651,6 +663,14 @@ fn main() {
             // Must precede setup_hotkey_listener below, which sends RegisterInitialHotkey
             // through the platform bridge managed here.
             setup_platform_thread(&app_handle, hotkey_config, initial_language);
+
+            // 窓生成: フラグ ON は egui（platform thread spawn 後・SPEC §8.5 で Win32 初期化と並列化）、
+            // OFF は宣言窓が Tauri により既に生成済み（何もしない・flag OFF は不変）。
+            if crate::trace::env_flag("SNOTRA_EGUI_MAIN") {
+                // show/hide を跨ぐ共有状態（世代・emit dedup）。view/hotkey/hide が参照するので窓生成前に管理下へ。
+                app.manage(egui_shell::EguiShellState::default());
+                egui_shell::create(app, window_width as f64)?;
+            }
 
             // First-run: launch snotra-settings directly (bypassing the indexing guard
             // in open_settings, since initial_indexing=true during first run).

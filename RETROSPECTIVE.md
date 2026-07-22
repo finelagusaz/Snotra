@@ -1,25 +1,28 @@
-# Retrospective — #532 採用ゲート検証（#579/#580/#581/#582）+ #399 フォントバグ修正
+# Retrospective — #532 SU1（snotra-egui-runtime を wgpu → softbuffer へ置換）
 
 ## よかったこと
 
-### 「一手ずつ提示 → 選択 → 実測 → 記録」の刻みが 4 ゲートで機能した
-コールドスタート内訳・異 DPI・IME・署名更新の各ゲートで、計測手順を提示 → ユーザーが選択 → 実測 → issue コメントへ記録、のリズムを守った。ユーザーの好むテンポ（記憶 [[issue-532-softbuffer-pivot]]）に沿い、破壊的/外向きの操作（GUI 実行・issue close・鍵削除）は必ず着手前に名指しで合意した。
+### spec 段階の多レンズ + codex + advisor 敵対レビューが、実装前に設計の穴と偽 blocker を潰した
+brainstorm → spec の直後に 3 レンズ（描画正当性・境界/API・不変条件）+ codex + advisor で反証を試み、実装 1 行前に spec を硬化した。codex の blocker「`softbuffer::Surface` は !Send」は softbuffer 自身の `__assert_send`（Surface は Send・!Sync のみ）で一次証拠反証。size 同一フレーム同期・free の present 非依存・失敗リトライ・surface のスレッド親和性生成を spec に織り込んだ。**設計の反証は一次ソースで裏取りする**（memory [[codex-exec-adversarial-review]]）。
 
-### トレースベースの客観化が目視を裏取りした
-DPI トレース（`ScaleFactorChanged`/monitor 表）・IME イベントトレース（`Ime`/`KeyboardInput`）・framebuffer PPM ダンプ（→PNG→Read）で、視覚検証を客観信号で補強した。特に #582 は Ime/Key トレースが「Esc は変換中 IME 経路でキャンセル・Escape の KeyboardInput は 0 件」「IME 処理キーは `Process text=None` ＝二重投入なし」を厳密に確定させた。#579 の framebuffer ダンプは修正の before/after を pixel で撮れた。
+### 「壊れた出力から推論しない」が 3 度機能した
+rust-analyzer が編集途中の中間状態を捉え、T2/T4/T5 で「型が見つからない/フィールド無し」等の首尾一貫した compile 診断を出したが、いずれも `cargo test`/`cargo check` の再実行で緑を確定（規則2）。診断と実測が矛盾するたび、診断を根拠にせず cargo を一次証拠にした。既存機構が near-miss を覆った。
 
-### 既知教訓の grep が突破口、advisor が記録を較正した
-#399（`snotra-settings/CLAUDE.md`「混在は単一フォントで」）を grep で発見して root cause を確定（ユーザーの「settings で対処した」という記憶とコード文書が一致）。記録の投稿前には advisor で過剰主張（ppp 丸め機構の断定・「settings と同じ」・p95 の標本数）を是正し、「観測できたことだけを書く」較正を効かせた。
+### 計測が仮説を繰り返し反証し、winit 再アーキを回避した
+T8 で「IME 遅延が秒単位」と聞き、私も advisor も「起床経路（InvalidateRect→RedrawRequested）バグ」を仮説にしたが、計装実行が反証（preedit→redraw 2ms・候補位置も正常）。黙って乗り換えず advisor に突き合わせ、advisor は perf の H-A/H-B 判別へ再定位。ユーザーの「英語でも遅い・ウィンドウ移動も鈍い」の一言で **debug ビルド起因**と確定し、release で 8× 改善・許容水準と実測。winit 再アーキ（runtime 全体を tauri-runtime-wry から外す）は計測が不要と証明した。
 
-### 同一パターン全コードパス検索で波及しつつ「やりすぎ」を回避した
-#399 を `soft_host` で発見後 grep で列挙し、同じ可視バグを負う `soft_main`（softbuffer）へ限定波及。glow/wgpu bin は同 append パターンでも sub-pixel AA で不可視かつ #532 で不採用の旧レンダラゆえ非対象とし、面積を増やさなかった。教訓は使用箇所（`snotra-egui-mvp/CLAUDE.md` 不変条件）へ置いて発見可能性を是正した。
+### IME 修正を純関数へ抽出して TDD + 実機で二段検証した
+IMM32 の判定ロジックを `classify_ime_message`（純関数）へ抽出し TDD で固定（STARTCOMPOSITION と未確定 COMPOSITION を Suppress・確定 GCS_RESULTSTR は Tao 経路維持）。繊細な Win32 は実機で「二重表示解消・候補位置・確定/Esc/ASCII 非二重」を検証した。回帰防止の不変条件を `snotra-egui-runtime/CLAUDE.md` へ機構化。
 
 ---
 
 ## 伸びしろ
 
-### 視覚バグで第一印象に anchor した（#399 デバッグ）
-composing 文字「t」の「太さ」を症状と読み違え、forced-ppp 再現まで走らせたが、太さは active clause の正常な強調だった。ユーザーの「ローマ字のベースラインがずれる」の一言で真の症状（フォント間ベースライン差）が判明した。視覚バグは症状語を先に正確化し（失敗モードを選ばせる）、第一印象で仮説を固めない。教訓はメモリ [[debug-visual-render-precise-symptom]] に記録済み。
+### perf の訴えでは debug/release を最初に切り分けるべきだった
+「秒単位のもたつき」を IME 起床経路の問題として深掘り（仮説・計装）してから、正体が **debug ビルドの CPU ラスタ遅さ**（release 8×）だと判明した。未最適化の `fill_mesh` 密ループを `cargo run`（debug）で測り実問題と誤認した。性能調査は release 再測を最初の一手にすべきだった。教訓は `docs/development-principles.md` デバッグ節へ配置。
 
-### GUI probe を止めずに再ビルドして exe ロック、パイプが exit を隠した
-実行中の検証 probe が exe を掴んだまま `cargo build` してリンク失敗（Windows `os error 5`）、しかも `| tail` が cargo の失敗を exit 0 に見せた。CLAUDE.md「壊れた出力から推論しない」で mtime 矛盾を捕捉し旧バイナリ検証を回避できた（既存機構が機能）。再ビルド前に probe を停止し、ビルド成否はパイプでマスクせず exit code で見る——機構が覆う near-miss ゆえ規範追加はせず習慣として持つ。
+### 「無改変の経路」を「検証済み」と暗黙に扱った
+spec は IME を「renderer 直交ゆえ動くはず」と前提したが、runtime の IMM32 経路は人間が一度も動かしておらず（#582 は削除済み winit spike を検証）、T8 で二重表示が露見した。差分が触っていなくても、新アーキで未実行の経路は未検証——受け入れで能動的に動かす計画を立てるべきだった。教訓は `docs/development-principles.md` デバッグ節へ配置。
+
+### アーキ判断を未 root-cause の症状で下しかけた
+「秒＝深い問題」の前提で winit vs 自作の Phase 2 アーキ分岐を advisor に諮ろうとし、advisor に「自分の Iron Law（root-cause 先行）違反」と正された。症状を計測で切り分けてから scope を決める。`recommend-native-over-handrolled` memory は「ツールロジックの再発明を避ける」話で、意図的に選んだ統合アーキ（tao/wry プラグイン）の放棄を促すものではない——memory に流されず適用範囲を見極める。

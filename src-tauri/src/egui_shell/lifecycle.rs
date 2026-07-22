@@ -7,10 +7,11 @@ pub(crate) enum HotkeyPlan {
     ShowNow,
 }
 
-/// Alt+Q 押下時の分岐。表示中なら即 hide、非表示中は Alt が押されている限り
-/// 解放を待ってから show する（製品 WebView2 経路と同じ意味論）。
-pub(crate) fn plan_hotkey(visible: bool, alt_pressed: bool) -> HotkeyPlan {
-    if visible {
+/// Alt+Q 押下時の分岐（製品 WebView2 経路と同じ意味論）。表示中かつ hotkey_toggle=true なら
+/// 即 hide。それ以外（非表示、または表示中でも hotkey_toggle=false ＝ 既に見えている窓を
+/// 再フォーカス/再配置）は show 側へ回り、Alt が押されている限り解放を待ってから show する。
+pub(crate) fn plan_hotkey(visible: bool, alt_pressed: bool, hotkey_toggle: bool) -> HotkeyPlan {
+    if visible && hotkey_toggle {
         HotkeyPlan::HideNow
     } else if alt_pressed {
         HotkeyPlan::ShowAfterAltRelease
@@ -37,10 +38,17 @@ mod tests {
 
     #[test]
     fn hotkey_branches_match_product_semantics() {
-        assert_eq!(plan_hotkey(true, false), HotkeyPlan::HideNow);
-        assert_eq!(plan_hotkey(true, true), HotkeyPlan::HideNow);
-        assert_eq!(plan_hotkey(false, true), HotkeyPlan::ShowAfterAltRelease);
-        assert_eq!(plan_hotkey(false, false), HotkeyPlan::ShowNow);
+        // (visible, alt_pressed, hotkey_toggle)
+        assert_eq!(plan_hotkey(true, false, true), HotkeyPlan::HideNow); // 表示+toggle → hide
+        assert_eq!(plan_hotkey(true, true, true), HotkeyPlan::HideNow);
+        assert_eq!(plan_hotkey(true, false, false), HotkeyPlan::ShowNow); // 表示+非toggle → 再フォーカス
+        assert_eq!(
+            plan_hotkey(true, true, false),
+            HotkeyPlan::ShowAfterAltRelease // 表示+非toggle+Alt → 解放待ち show
+        );
+        assert_eq!(plan_hotkey(false, true, true), HotkeyPlan::ShowAfterAltRelease);
+        assert_eq!(plan_hotkey(false, false, true), HotkeyPlan::ShowNow);
+        assert_eq!(plan_hotkey(false, false, false), HotkeyPlan::ShowNow);
     }
 
     #[test]

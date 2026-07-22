@@ -159,8 +159,9 @@ impl EguiView for SearchWindowView {
                 .hint_text("検索…")
                 .desired_width(f32::INFINITY),
         );
-        // 窓が focus を得た最初のフレームで入力欄へ focus を移す（Alt+Q 表示直後に打てる）。
-        if focused && !was_focused {
+        // 窓に focus があるのに入力欄が focus を持たないなら移す（Alt+Q 表示直後に打てる）。
+        // was_focused に依存しないので、hide→reshow で was_focused が stale でも確実に戻る。
+        if focused && !response.has_focus() {
             response.request_focus();
         }
 

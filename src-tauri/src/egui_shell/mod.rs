@@ -55,9 +55,6 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
         crate::trace_main("egui_show:no_window", serde_json::json!({}));
         return;
     };
-    if let Some(state) = app.try_state::<crate::AppState>() {
-        state.main_visible.store(true, Ordering::SeqCst);
-    }
     // show のたびに view の emit dedup をリセット（Focused(true) 非依存・codex #8）。
     if let Some(sh) = app.try_state::<EguiShellState>() {
         sh.hide_pending.store(false, Ordering::SeqCst);
@@ -66,6 +63,11 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
     #[cfg(windows)]
     crate::position_on_target_monitor(app, &window);
     let _ = window.show();
+    // main_visible は show() の後に立てる（WebView2 の show_and_focus_main と同じ「順序不変」
+    // 制約）。show 完了前に visible=true を読んだホットキートグルが hide するのを避ける。
+    if let Some(state) = app.try_state::<crate::AppState>() {
+        state.main_visible.store(true, Ordering::SeqCst);
+    }
     let _ = window.set_focus();
     // フォーカス移行の同期待ち（SetForegroundWindow は部分的に非同期・Raymond Chen）。
     #[cfg(windows)]

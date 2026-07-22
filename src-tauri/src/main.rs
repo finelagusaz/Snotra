@@ -620,10 +620,14 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(move |app, _args, _cwd| {
-            // When a second instance tries to start, show the main window
-            // via show_main_and_emit to ensure height reset, IME control,
-            // and window-shown emit are applied consistently.
-            show_main_and_emit(app);
+            // When a second instance tries to start, show the main window.
+            // flag ON は egui 窓（webview 無しゆえ get_webview_window では取れず show_main_and_emit
+            // が no-op になる）を show_egui_main で前面化。OFF は WebView2 の show_main_and_emit。
+            if crate::trace::env_flag("SNOTRA_EGUI_MAIN") {
+                egui_shell::show_egui_main(app, Instant::now());
+            } else {
+                show_main_and_emit(app);
+            }
         }))
         .manage(app_state)
         .manage(icon_cache_state)
@@ -837,11 +841,12 @@ fn setup_hotkey_listener(app_handle: &AppHandle) {
                 .try_state::<AppState>()
                 .map(|s| s.engine.lock().unwrap().config().general.hotkey_toggle)
                 .unwrap_or(true); // config.rs 既定と一致
-            match egui_shell::plan_hotkey(visible, is_alt_pressed()) {
-                egui_shell::HotkeyPlan::HideNow if hotkey_toggle => {
+            // hotkey_toggle は plan_hotkey に渡す。表示中でも hotkey_toggle=false なら hide せず
+            // show 側（再フォーカス/再配置）へ回る＝WebView2 経路の hide_on_toggle と同じ意味論。
+            match egui_shell::plan_hotkey(visible, is_alt_pressed(), hotkey_toggle) {
+                egui_shell::HotkeyPlan::HideNow => {
                     egui_shell::hide_egui_main(&handle_for_hotkey);
                 }
-                egui_shell::HotkeyPlan::HideNow => {} // hotkey_toggle=false は可視のまま
                 egui_shell::HotkeyPlan::ShowNow => {
                     egui_shell::show_egui_main(&handle_for_hotkey, t0);
                 }

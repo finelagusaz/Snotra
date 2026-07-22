@@ -5,7 +5,7 @@
 - 親: `docs/superpowers/specs/2026-07-21-phase2-softbuffer-migration-roadmap.md`（SU3）／#532
 - 前段: SU1（`2026-07-21-su1-softbuffer-runtime-design.md`・完了）／SU2（`2026-07-22-su2-window-shell-design.md`・完了）
 - 主参照: SPEC §4, §4.7, §4.8, §6, §15, §19。flip 基準（roadmap 52–59 行）
-- 履歴: 本設計は brainstorm（2026-07-22）で 6 つの分岐を確定して得た。(1) 1 spec + 段階実装、(2) スコープ= core+folder+instant+slash・tool(§18) は defer、(3) 並行機構は同期直 Engine で崩壊させ移植しない、(4) 状態は src-tauri の純粋 `SearchState`、(5) folder async の staleness token を `SearchState` 内に、(6) 単一ウィンドウ維持（2 ウィンドウは flip 後へ）。各分岐の否定の知識は本 spec 末尾に残す
+- 履歴: 本設計は brainstorm（2026-07-22）で 6 つの分岐を確定して得た。(1) 1 spec + 段階実装、(2) スコープ= core+folder+instant+slash・tool(§18) は defer（独立 SU3.5）、(3) 並行機構は同期直 Engine で崩壊させ移植しない、(4) 状態は src-tauri の純粋 `SearchState`、(5) folder async の staleness token を `SearchState` 内に、(6) 単一ウィンドウ維持（2 ウィンドウは flip 後へ）。spec レビューで (7) debounce を最初から入れる（leading+trailing・決定7）を追加確定。各分岐の否定の知識は本 spec 末尾に残す
 
 ## 目的
 
@@ -39,15 +39,17 @@ SearchState (functional core)  ── egui/Win32 非依存・ユニットテス�
 - `interpret(query, prefix, view_kind) -> QueryIntent`（`plain | command | instant{filter_name, instant_query}`）。instant 判定・parse の SSOT。
 - `compute_parent_dir(path)` / `clamp_selected_index(len, idx)`（ドライブルート・UNC 対応）。
 - `compute_window_height(show_results, max_results, ...)`（結果表示・行数からの論理高さ）。
+- `should_run_search(is_burst_start, elapsed)`（debounce の leading/trailing 判定・決定7。clock は driver が注入）。
 
 ## 決定事項（brainstorm 確定）
 
-1. **並行機構は移植しない。** `engine.search()` は Mutex 下で同期（`commands/search.rs`）。SolidJS が `searchLane`(supersede)/`activationLane`(single-flight)/`latestRun`/`exclusive`/`ownedTimer` を要したのは IPC 往復で out-of-order/in-flight Promise が生じるからだけ。driver の `update()` から直 Engine を呼べば search/instant-filter/slash-parse は毎フレーム同期になり、supersede も single-flight も消える（二重起動は起動時 hide で消える）。→ **これらの primitive は egui 経路に持ち込まない。**
+1. **supersede/single-flight 機構は移植しない。** `engine.search()` は Mutex 下で同期（`commands/search.rs`）。SolidJS が `searchLane`(supersede)/`activationLane`(single-flight)/`latestRun`/`exclusive` を要したのは IPC 往復で out-of-order/in-flight Promise が生じるからだけ。driver の `update()` から直 Engine を呼べば search/instant-filter/slash-parse は毎フレーム同期になり、supersede も single-flight も消える（二重起動は起動時 hide で消える）。→ **これらの primitive は egui 経路に持ち込まない。** ただし **debounce（`ownedTimer`）は別**——打鍵 coalescing であって IPC 往復とは無関係ゆえ残す（決定7）。
 2. **真の async は 2 つだけ。** (a) フォルダ列挙（UNC/ネットワークで遅延・現状 `spawn_blocking`）、(b) SU4 アイコン。egui idiom（thread spawn → `std::sync::mpsc` → 毎フレーム `try_recv` → 到着で `request_repaint`）で扱う。folder は結果集合を**置換**するので staleness token（`folder_gen`）が要る。アイコンは path キーゆえ stale が自然無視される（token 不要）。
 3. **状態と遷移は src-tauri の純粋 `SearchState`。** snotra-core へは押し下げない（selected index・view-stack・Escape ラダーは純然たる UI 関心で、core の責務＝インデックス/検索/履歴 と混ざる）。core に置くのは真に汎用な純関数（`interpret` 等）だけ。
 4. **単一ウィンドウ維持（§4.7 parity）。** 検索バーと結果は 1 ウィンドウ内に共存する。2 ウィンドウ分割は flip 後の別 spec（→「否定の知識」）。
-5. **tool-selection(§18) は defer。** spine の view-stack は `Vec<ViewFrame>` として「後で tool 種を加算できる」構造にするが、SU3 では `tool` frame を建てない（SU2 の「live 到達不能な状態を建てない」を踏襲）。SU3 の `view_kind()` は `results | folder` のみ到達する。
+5. **tool-selection(§18) は defer → 独立 SU3.5。** spine の view-stack は `Vec<ViewFrame>` として「後で tool 種を加算できる」構造にするが、SU3 では `tool` frame を建てない（SU2 の「live 到達不能な状態を建てない」を踏襲）。SU3 の `view_kind()` は `results | folder` のみ到達する。§18 の parity は独立サブユニット **SU3.5**（SU3 完了後・flip 前）で取る。
 6. **IPC コマンドは消さない。** `search`/`get_history_results`/`list_folder`/`get_instant_commands`/`execute_instant_command` 等は flag OFF の WebView2 経路が SU7 まで使う。SU3 は egui view に直 Engine 呼びを**足す**だけ。「IPC 撤去」＝「egui 経路が IPC を通らない」の意。**SU2 の G1（flag OFF 完全不変）を破らない。**
+7. **debounce は最初から入れる（SolidJS 相当）。** 高速連打の coalescing は同期直 Engine でも価値が残る（毎フレームではなく打鍵時のみ search でも、1 打鍵ごとの全走査は無駄）。SolidJS を踏襲し **search = leading edge（バースト先頭で即時）+ trailing 50ms**、**instant fetch = 30ms trailing のみ（leading なし）**。timing は driver 所有で **`request_repaint_after`**（SU2 の blur 100ms 猶予と同じ egui idiom）。leading/trailing の判定述語（`should_run_search(is_burst_start, elapsed)`）は純関数として `SearchState` 隣接に置きユニットテストする（clock は driver が注入）。**query 状態は毎打鍵で更新（表示・interp 導出のため）、search 実行だけを debounce する**——query とresults が一瞬ずれるのは debounce の正常動作（SolidJS と同じ）。
 
 ### 検証済み（この設計の前提・一次証拠）
 
@@ -59,7 +61,7 @@ SearchState (functional core)  ── egui/Win32 非依存・ユニットテス�
 ### 実装初手で確定させる検証ゲート（崩れると設計が反転する）
 
 - **G-RESIZE（単一ウィンドウ動的リサイズの目視品質）**: M1 で softbuffer の CPU present 下、結果の展開/折りたたみ時に reflow/ちらつき/位置ずれが目に見えて悪くないことを実機で目視確認する。**悪ければまず present タイミングを単一ウィンドウ内で直す**（2 ウィンドウ化は最後の手段・flip 後）。SU2 が申し送った「高さリセット→位置→show の結合」がここで初めて動的高さと絡む。
-- **G-SYNC（同期 search のフレーム内コスト）**: 大インデックス（実データ規模）で `engine.search()` が数 ms を超えないことを実測する。超えるなら trailing debounce を足す（egui は打鍵時のみ search＝毎フレームではない点を踏まえ、まず無し（search-on-change）で測る）。
+- **G-SYNC（同期 search のフレーム内コスト）**: debounce（決定7）は最初から入れる前提で、大インデックス（実データ規模）で trailing 発火 1 回の `engine.search()` がフレームを詰まらせないことを実測する。詰まるなら debounce 間隔（50ms）を調整するか、`spawn_blocking` 化を検討（folder と同じ token パターン）。**debounce 導入は G-SYNC の結果待ちではない**——連打 coalescing の価値は独立に確定済み。
 - **G1 再確認（flag OFF 完全不変）**: SU3 の egui 経路の直 Engine 呼び追加が、WebView2 経路・IPC コマンド・E2E 注入を一行も触らないこと（`SNOTRA_EGUI_MAIN` 未設定で既存テスト + `smoke:startup` + `e2e:tauri` 緑）。
 
 ## 状態モデル（背骨）
@@ -98,7 +100,7 @@ driver の `update()` は毎フレーム:
 4. キーボード: ↑↓＝`on_arrow_up/down`（clamp）、→←＝`on_arrow_right/left`（folder・後述）、Enter/クリック＝起動、Escape＝ラダー。
 5. `compute_window_height(should_show_results, max_results, ...)` を算出、前回と異なれば `window.set_size()`。
 
-**search-on-change**（毎フレームではなく打鍵時のみ）。debounce は G-SYNC の実測次第（既定無し）。
+**search は debounce する**（決定7）: query 状態は毎打鍵で更新（描画・`interp()`/`view_kind()` 導出）するが、`engine.search()` 実行は leading（バースト先頭で即時）+ trailing 50ms、instant fetch は 30ms trailing のみ。driver が `last_input_at` を持ち trailing 発火のため `request_repaint_after(50ms)` を積む。判定述語は純関数でユニットテスト。
 
 ### folder の async（唯一の staleness）
 
@@ -128,9 +130,9 @@ driver の `update()` は毎フレーム:
 
 順に積む。背骨（`SearchState` + 2 軸 + view-stack）は M1 で建て、folder/instant/slash が差さる。
 
-- **M1 core**: `SearchState` 骨格（results 軸のみ）+ `interpret`/`compute_window_height` 純関数 + 描画（検索バー・結果リスト・行）+ 同期 search + ↑↓ナビ/選択/scroll 追従 + Enter/クリック起動 + hide + 空クエリ + indexing overlay + 動的高さ/show 順序。**G-RESIZE / G-SYNC / G1 をここで接地。**
+- **M1 core**: `SearchState` 骨格（results 軸のみ）+ `interpret`/`compute_window_height`/`should_run_search` 純関数 + 描画（検索バー・結果リスト・行）+ 同期 search + **debounce（leading+trailing 50ms）** + ↑↓ナビ/選択/scroll 追従 + Enter/クリック起動 + hide + 空クエリ + indexing overlay + 動的高さ/show 順序。**G-RESIZE / G-SYNC / G1 をここで接地。**
 - **M2 folder**: →←/親ナビ（`compute_parent_dir`）+ Escape 復帰（§6.4）+ async folder 読み（`folder_gen` token staleness）+ folder filter（§6.3）+ Enter で explorer + 列挙失敗行（§6.6）。view-stack に `Folder` 種追加。
-- **M3 instant+slash**: `@`instant（filter/exec/skip icon/ガード）+ slash（`/r /o /s /q`）+ Escape ラダー完成（instant/command 解除段）。
+- **M3 instant+slash**: `@`instant（filter/exec/skip icon/ガード・**30ms trailing debounce**）+ slash（`/r /o /s /q`）+ Escape ラダー完成（instant/command 解除段）。
 
 ## テスト計画
 
@@ -138,6 +140,7 @@ driver の `update()` は毎フレーム:
   - `interpret` 表（plain/command/instant・空 prefix で false・trimStart 規則）。
   - `compute_parent_dir`/`clamp_selected_index`（ドライブルート・UNC 終端）。
   - `compute_window_height`（表示/非表示・行数・トースト有無）。
+  - `should_run_search`（debounce 判定・決定7）: バースト先頭で即時（leading）・trailing は elapsed≥50ms で発火・連打中は抑止。
   - `SearchState` 遷移: Escape ラダー 3 段・folder token stale（begin→begin→apply(旧tok)=false）・view_kind/interp 導出・selected clamp・空クエリで結果クリア・instant/command での search 抑止。
 - **trace スモーク**（Win32 依存ゆえユニット前提にしない・SU2 と同型）: `SNOTRA_EGUI_MAIN=1` で search→結果→起動・folder 往復（→展開/←親/Escape 復帰）・instant/slash 実行・動的高さ変化・`msedgewebview2.exe` 子孫 0。
 - **flag OFF 完全不変（G1）**: `SNOTRA_EGUI_MAIN` 未設定で既存テスト + `smoke:startup` + `e2e:tauri` 緑。IPC 追加が WebView2 経路を触らない。
@@ -156,13 +159,13 @@ driver の `update()` は毎フレーム:
 ## リスク
 
 - **被覆 AA テキスト品質**（#399/#579）: 結果リストは製品規模の混在テキスト。font-first(index 0) 維持を実 setup 駆動テストで固定（SU2 継承）。
-- **同期 search のフレーム内コスト**（G-SYNC）: 大インデックスで数 ms 超なら trailing debounce。着手時に実測して判断。
+- **同期 search のフレーム内コスト**（G-SYNC）: debounce（決定7）で連打は束ねるが、trailing 1 回の `engine.search()` が大インデックスでフレームを詰まらせないかは残余リスク。詰まれば間隔調整か `spawn_blocking`（folder と同じ token）へ。
 - **動的高さ × 位置クランプの結合**（G-RESIZE・SU2 申し送り）: 展開/折りたたみで位置ずれ・ちらつきしないよう show 順序を M1 で接地。悪ければ present タイミングを単一ウィンドウ内で直す。
 - **folder async の stale 破棄**: token 照合を誤ると旧フォルダ結果が現ビューを轢く/正当な結果が捨てられる。`SearchState` ユニットテストで begin/apply の世代照合を固定。
 
 ## スコープ外（SU3 では触らない）
 
-- **tool-selection / カスタムオープナー（§18）**: spine の view-stack は加算可能に保つが frame は建てない。別 SU（例: SU3.5 / SU6 近傍）で `tool` 種を追加する。
+- **tool-selection / カスタムオープナー（§18）**: spine の view-stack は加算可能に保つが frame は建てない。**独立サブユニット SU3.5**（SU3 完了後・SU4 と並行しうる）で `tool` 種を view-stack に加算し §18 の parity を取る。flip（SU7）前に SU3.5 を通す。
 - アイコン実体（SU4）・updater（SU5）・config 反映/終了保存（SU6）・切替/配布（SU7）。
 - **IPC コマンドの削除**（SU7）。SU3 は egui 経路で bypass するだけ。
 - ルート `CLAUDE.md`/`AGENTS.md` 等の規範文書。

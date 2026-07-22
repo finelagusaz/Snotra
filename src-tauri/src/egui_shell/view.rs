@@ -96,6 +96,32 @@ impl SearchWindowView {
         let _ = self.app_handle.emit("egui-hide-requested", ());
     }
 
+    /// index 行を起動し、成功なら履歴記録して hide 要求を出す（§4.8 シングルクリック / Enter）。
+    /// launch_item_core は ShellExecuteW（エンジンロック外で呼ぶ・launch.rs:226）。成功時のみ
+    /// record_and_save で履歴を記録（§4.3/§5 の query_count 加点・全起動経路の共通末尾を再利用）。
+    /// エラー行（is_error）は起動しない。
+    fn activate(&self, index: usize) {
+        use crate::commands::launch::{LaunchStatus, launch_item_core, record_and_save};
+        let Some(result) = self.state.results().get(index) else { return };
+        if result.is_error {
+            return;
+        }
+        let path = result.path.clone();
+        let query = self.state.query().to_string();
+        let outcome = launch_item_core(&path); // ロック外・ShellExecuteW
+        crate::trace_main(
+            "egui_launch",
+            serde_json::json!({ "index": index, "status": format!("{:?}", outcome.status) }),
+        );
+        if matches!(outcome.status, LaunchStatus::Ok) {
+            if let Some(state) = self.app_handle.try_state::<crate::AppState>() {
+                record_and_save(&state, &path, &query); // 履歴記録 + 保存（ロックは内部で最小保持）
+            }
+            // 起動成功時のみ hide（SU2 の hide 合流点へ・view から window を直接触らない）。
+            self.emit_hide();
+        }
+    }
+
     /// auto_hide_on_focus_lost を実行中 config から都度読む（キャッシュしない・#576 と同設計）。
     fn auto_hide_enabled(&self) -> bool {
         self.app_handle
@@ -248,6 +274,19 @@ impl EguiView for SearchWindowView {
             }
         }
 
+        // ↑↓ ナビ（結果があるとき）。TextEdit より前に ctx から拾い、入力欄 focus 中も効かせる。
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+            self.state.move_selection(1);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+            self.state.move_selection(-1);
+        }
+
+        // Enter: 選択項目を起動（結果があるとき）。TextEdit の Enter より先に ctx で拾う。
+        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !self.state.results().is_empty() {
+            self.activate(self.state.selected());
+        }
+
         // 検索入力欄。state.query を編集し、変化があれば debounce leading で同期検索。
         let mut buf = self.state.query().to_string();
         let response = ui.add(
@@ -283,8 +322,11 @@ impl EguiView for SearchWindowView {
                 }
             });
         }
-        // クリック処理は Task 7。ここでは捕捉のみ（未使用警告を避けるため Task 7 まで let _ =）。
-        let _ = clicked;
+        // シングルクリック＝起動（§4.8 単=起動）。double-click は扱わない（ユーザー決定・
+        // as-built でも double-click=選択は到達不能。SPEC §4.8 を as-built へ同期済み）。
+        if let Some(i) = clicked {
+            self.activate(i);
+        }
 
         self.was_focused = focused;
     }

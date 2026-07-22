@@ -12,6 +12,7 @@ import {
   toRelative,
   extractFilePath,
   selectChecks,
+  isSourceFileWrite,
   resolveTarget,
   checksForPayload,
   stripProgressLines,
@@ -181,6 +182,38 @@ describe("selectChecks", () => {
   it("ドキュメントは何も発火しない", () => {
     expect(selectChecks("docs/notes.md")).toEqual([]);
     expect(selectChecks("AGENTS.md")).toEqual([]);
+  });
+});
+
+describe("isSourceFileWrite — 新規ソース Write の索引 reminder（#629/#630）", () => {
+  // 真: Write されたソースファイル（.rs はどの crate でも、TS は ui/src・e2e）。
+  it("Write された .rs は真（どの crate でも）", () => {
+    expect(isSourceFileWrite("src-tauri/src/egui_shell/search_state.rs", "Write")).toBe(true);
+    expect(isSourceFileWrite("snotra-core/src/foo.rs", "Write")).toBe(true);
+  });
+
+  it("Write された ui/src・e2e の TS は真", () => {
+    expect(isSourceFileWrite("ui/src/lib/x.ts", "Write")).toBe(true);
+    expect(isSourceFileWrite("ui/src/components/Foo.tsx", "Write")).toBe(true);
+    expect(isSourceFileWrite("e2e/foo.e2e.ts", "Write")).toBe(true);
+  });
+
+  // 偽: Edit は既存ファイル。沈黙=合格を壊さないため Write のみに絞る。
+  it("Edit は偽（新規ではない）", () => {
+    expect(isSourceFileWrite("src-tauri/src/main.rs", "Edit")).toBe(false);
+  });
+
+  it("tool_name が Write でなければ偽（undefined 含む）", () => {
+    expect(isSourceFileWrite("snotra-core/src/foo.rs", undefined)).toBe(false);
+    expect(isSourceFileWrite("snotra-core/src/foo.rs", "Read")).toBe(false);
+  });
+
+  // 偽: 索引を持たない場所・非ソース。ui/ 直下（ui/src/ 外）や scripts/ は対象外。
+  it("非ソース・索引外は偽（負例）", () => {
+    expect(isSourceFileWrite("docs/notes.md", "Write")).toBe(false);
+    expect(isSourceFileWrite("ui/vite.config.ts", "Write")).toBe(false); // ui/src/ 外
+    expect(isSourceFileWrite("scripts/gen.ts", "Write")).toBe(false);
+    expect(isSourceFileWrite("Cargo.toml", "Write")).toBe(false);
   });
 });
 

@@ -329,7 +329,9 @@ pub(crate) fn suspend_and_trim_after_hide(app: &AppHandle, source: &'static str)
 #[cfg(windows)]
 fn position_on_target_monitor(
     app_handle: &AppHandle,
-    main: &tauri::WebviewWindow,
+    // &Window に一般化して egui 経路と共有（#532 SU2）。両経路とも同一の "main" 窓
+    // （get_window/get_webview_window は同じ内部 Window を指す・manager/window.rs:106）。
+    main: &tauri::Window,
 ) {
     use snotra_core::window_data;
 
@@ -494,8 +496,12 @@ fn show_main_and_emit(app_handle: &AppHandle) {
         // Position window on the target monitor (cursor or primary) using
         // saved relative coordinates, clamped to the target work area.
         // Must run after height reset so clamp uses the collapsed size.
+        // 一般化した position_on_target_monitor は &Window を取る。宣言 WebviewWindow の
+        // 内部 Window は get_window("main") で得られる（同一 OS 窓ゆえ挙動不変・#532 SU2 mini-gate）。
         #[cfg(windows)]
-        position_on_target_monitor(app_handle, &main);
+        if let Some(win) = app_handle.get_window("main") {
+            position_on_target_monitor(app_handle, &win);
+        }
 
         show_and_focus_main(app_handle, &main, t0);
 
@@ -813,6 +819,48 @@ fn setup_hotkey_listener(app_handle: &AppHandle) {
         {
             return;
         }
+        // egui 経路（flag ON）: 共有 EguiShellState.hotkey_generation を使い（hide が bump して
+        // 保留 show を無効化・codex #5/(B)#2）、純粋核 plan_hotkey で分岐する。WebView2 の
+        // generation は使わず早期 return（二重 bump しない）。
+        if crate::trace::env_flag("SNOTRA_EGUI_MAIN") {
+            let current_gen = handle_for_hotkey
+                .try_state::<egui_shell::EguiShellState>()
+                .map(|sh| sh.hotkey_generation.fetch_add(1, Ordering::SeqCst) + 1)
+                .unwrap_or(0);
+            let visible = handle_for_hotkey
+                .try_state::<AppState>()
+                .map(|s| s.main_visible.load(Ordering::SeqCst))
+                .unwrap_or(false);
+            let hotkey_toggle = handle_for_hotkey
+                .try_state::<AppState>()
+                .map(|s| s.engine.lock().unwrap().config().general.hotkey_toggle)
+                .unwrap_or(true); // config.rs 既定と一致
+            match egui_shell::plan_hotkey(visible, is_alt_pressed()) {
+                egui_shell::HotkeyPlan::HideNow if hotkey_toggle => {
+                    egui_shell::hide_egui_main(&handle_for_hotkey);
+                }
+                egui_shell::HotkeyPlan::HideNow => {} // hotkey_toggle=false は可視のまま
+                egui_shell::HotkeyPlan::ShowNow => {
+                    egui_shell::show_egui_main(&handle_for_hotkey, t0);
+                }
+                egui_shell::HotkeyPlan::ShowAfterAltRelease => {
+                    let h = handle_for_hotkey.clone();
+                    std::thread::spawn(move || {
+                        wait_alt_release_or_timeout();
+                        // 共有世代が変わっていたら（別 press や hide が bump）show を諦める。
+                        let gen_now = h
+                            .try_state::<egui_shell::EguiShellState>()
+                            .map(|sh| sh.hotkey_generation.load(Ordering::SeqCst))
+                            .unwrap_or(0);
+                        if gen_now != current_gen {
+                            return;
+                        }
+                        egui_shell::show_egui_main(&h, Instant::now());
+                    });
+                }
+            }
+            return;
+        }
         let current_gen = hotkey_generation_for_listener.fetch_add(1, Ordering::SeqCst) + 1;
         // Use tracked AtomicBool instead of Win32 is_visible() to avoid
         // ~35ms cold-call overhead on first hotkey press.
@@ -972,7 +1020,11 @@ fn setup_tray(app_handle: &AppHandle, show_tray: bool, load_outcome: LoadOutcome
 /// setup: `show_main_and_emit` depends on the platform bridge (IME control).
 fn setup_startup_display(app_handle: &AppHandle, show_on_startup: bool) {
     if show_on_startup {
-        show_main_and_emit(app_handle);
+        if crate::trace::env_flag("SNOTRA_EGUI_MAIN") {
+            egui_shell::show_egui_main(app_handle, Instant::now());
+        } else {
+            show_main_and_emit(app_handle);
+        }
     }
 }
 

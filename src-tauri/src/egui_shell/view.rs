@@ -298,13 +298,20 @@ impl EguiView for SearchWindowView {
             self.state.set_query(buf);
             self.last_input_at = Instant::now();
             if self.search_debounce.on_input() {
-                self.run_search(); // leading（Task 8 で trailing を足す）
+                self.run_search(); // leading
             }
+            // trailing 発火のため interval 後に再描画を要求する（SU2 blur と同じ egui idiom）。
+            ctx.request_repaint_after(self.search_debounce.interval());
         }
         // 窓に focus があるのに入力欄が focus を持たないなら移す（Alt+Q 表示直後に打てる）。
         // was_focused に依存しないので、hide→reshow で was_focused が stale でも確実に戻る。
         if focused && !response.has_focus() {
             response.request_focus();
+        }
+
+        // trailing debounce: 連打が収まって interval 経過したら最終クエリで検索し直す。
+        if self.search_debounce.poll(self.last_input_at.elapsed()) {
+            self.run_search();
         }
 
         // 結果リスト（shouldShowResults 相当。M1: results 軸・plain のみ。空なら描かない）。

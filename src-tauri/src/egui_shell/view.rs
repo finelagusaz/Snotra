@@ -218,12 +218,7 @@ impl SearchWindowView {
     /// 1 行を描画。selected ならハイライト + scroll_to_me。返り値: single_clicked。
     /// ダブルクリックは扱わない（ユーザー決定: §4.8 の double-click=選択は as-built でも
     /// 到達不能ゆえ落とす。単クリック=起動のみ）。self を借りない関連関数（借用衝突回避）。
-    fn draw_result_row(
-        ui: &mut egui::Ui,
-        index: usize,
-        result: &SearchResult,
-        selected: bool,
-    ) -> bool {
+    fn draw_result_row(ui: &mut egui::Ui, result: &SearchResult, selected: bool) -> bool {
         let row_h = 30.0;
         let (rect, response) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), row_h),
@@ -253,7 +248,6 @@ impl SearchWindowView {
             egui::FontId::proportional(11.0),
             path_color,
         );
-        let _ = index;
         response.clicked()
     }
 }
@@ -321,10 +315,19 @@ impl EguiView for SearchWindowView {
         }
 
         // 検索入力欄。state.query を編集し、変化があれば debounce leading で同期検索。
+        // 構築中かつ空クエリなら hint を案内文へ差し替える（§4.7）。egui の hint は入力が空の
+        // ときだけ描かれるため、indexing+空クエリの条件と一致する——window は 52px のまま
+        // （show_results=false）で、案内はバー内に収まり見える（旧: 別 label はバー下に描かれ
+        // クリップされ不可視だった）。
+        let hint: &str = if self.indexing() && self.state.query().trim().is_empty() {
+            "インデックス構築中..."
+        } else {
+            "検索…"
+        };
         let mut buf = self.state.query().to_string();
         let response = ui.add(
             egui::TextEdit::singleline(&mut buf)
-                .hint_text("検索…")
+                .hint_text(hint)
                 .desired_width(f32::INFINITY),
         );
         if response.changed() {
@@ -346,21 +349,26 @@ impl EguiView for SearchWindowView {
         if self.search_debounce.poll(self.last_input_at.elapsed()) {
             self.run_search();
         }
+        // armed のまま = trailing 未発火。scheduler の coalescing で +interval の wake が
+        // 消されても deadline で確実に起きるよう毎フレーム残り時間を再要求する。
+        if self.search_debounce.is_armed() {
+            let remaining = self
+                .search_debounce
+                .interval()
+                .saturating_sub(self.last_input_at.elapsed());
+            ctx.request_repaint_after(remaining);
+        }
 
         // 結果リスト（shouldShowResults 相当。M1: results 軸・plain のみ。空なら描かない）。
         let show_results = !self.state.results().is_empty();
         let mut clicked: Option<usize> = None;
-        if self.indexing() && self.state.query().trim().is_empty() {
-            // 構築中かつ空クエリ: 案内を出す（§4.7）。run_search が indexing 時に plain 検索を
-            // 抑止するため results は空——ここは高さに寄与しない（show_results=false のまま）。
-            ui.label("インデックス構築中…");
-        } else if show_results {
+        if show_results {
             // 借用衝突回避: results を clone してから描画（draw_result_row は関連関数で self 非借用）。
             let results = self.state.results().to_vec();
             let selected = self.state.selected();
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for (i, result) in results.iter().enumerate() {
-                    if Self::draw_result_row(ui, i, result, i == selected) {
+                    if Self::draw_result_row(ui, result, i == selected) {
                         clicked = Some(i); // シングルクリック（§4.8 単=起動）。double は扱わない
                     }
                 }

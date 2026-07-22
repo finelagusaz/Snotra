@@ -43,6 +43,12 @@ impl Debouncer {
         self.interval
     }
 
+    /// armed のまま（trailing 未発火）か。呼び出し側が repaint deadline の再要求要否を
+    /// 判定するために使う（coalescing 対策・#532 SU3 M1 レビュー）。
+    pub fn is_armed(&self) -> bool {
+        self.armed
+    }
+
     /// 入力があったフレームで呼ぶ。leading 有効かつバースト先頭なら true（＝今すぐ検索）。
     /// いずれにせよ armed にして trailing を予約する。
     pub fn on_input(&mut self) -> bool {

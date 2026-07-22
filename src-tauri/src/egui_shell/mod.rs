@@ -5,16 +5,12 @@ mod lifecycle;
 // 本番（非 test）ビルドで未消費のため dead_code になる。消費側が付いたら allow を外す。
 #[allow(dead_code)]
 mod search_state;
-// SU3 M1 Task 9（view.rs）が compute_window_height を消費するまでは
-// 本番（非 test）ビルドで未消費のため dead_code になる。消費側が付いたら allow を外す。
-#[allow(dead_code)]
 mod layout;
 mod view;
 
 pub(crate) use lifecycle::{HotkeyPlan, blur_should_hide, plan_hotkey};
 #[allow(unused_imports)]
 pub(crate) use search_state::{QueryIntent, SearchState, ViewKind, interpret, is_instant_prefix};
-#[allow(unused_imports)]
 pub(crate) use layout::{Debouncer, HeightParams, compute_window_height};
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -28,10 +24,12 @@ use crate::egui_shell::view::SearchWindowView;
 /// egui 経路の show/hide を跨ぐ共有状態（managed state）。
 /// - hotkey_generation: alt 解放待ち show の世代。hide が bump して保留 show を無効化する（codex #5/(B)#2）。
 /// - hide_pending: view の emit dedup。show がクリアして「hide 後に Focused(true) が来ず抑止が残る」を断つ（codex #8）。
+/// - reset_pending: show が立て、view が消費して state.reset()（resetForShow 相当・SU3 M1 Task 9）。
 #[derive(Default)]
 pub(crate) struct EguiShellState {
     pub(crate) hotkey_generation: AtomicU64,
     pub(crate) hide_pending: AtomicBool,
+    pub(crate) reset_pending: AtomicBool,
 }
 
 /// フラグ ON の窓生成。EguiRuntime を install し webview 無しの "main" 窓を生成して attach。setup 限定。
@@ -70,8 +68,22 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
     // show のたびに view の emit dedup をリセット（Focused(true) 非依存・codex #8）。
     if let Some(sh) = app.try_state::<EguiShellState>() {
         sh.hide_pending.store(false, Ordering::SeqCst);
+        sh.reset_pending.store(true, Ordering::SeqCst); // resetForShow を view に指示
     }
-    // 高さ 52px は create で固定・resizable(false) ゆえリセット不要。位置のみ復元。
+    // 高さリセット → 位置 → show の順（SU2 の show_main_and_emit と同じ制約）。
+    // reset-on-show でクエリは空 = 結果なし = 52px。前回 hide 時に展開高（例 300px）のまま
+    // だと position クランプが 300px で効き、show 後に view が 52px へ collapse して視覚スナップ +
+    // 位置ずれになる。position の前に 52px へ collapse してこれを断つ（SU3 で高さが動的化した
+    // ため、旧「52px は create で固定・位置のみ復元」前提は崩れている）。
+    #[cfg(windows)]
+    {
+        let width = window
+            .inner_size()
+            .ok()
+            .map(|s| s.to_logical::<f64>(window.scale_factor().unwrap_or(1.0)).width)
+            .unwrap_or(600.0);
+        let _ = window.set_size(tauri::LogicalSize::new(width, 52.0));
+    }
     #[cfg(windows)]
     crate::position_on_target_monitor(app, &window);
     let _ = window.show();

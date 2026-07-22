@@ -9,7 +9,7 @@ use snotra_core::ui_types::SearchResult;
 use snotra_egui_runtime::{EguiView, RuntimeFrame};
 use tauri::{Emitter, Manager};
 
-use crate::egui_shell::{Debouncer, QueryIntent, SearchState};
+use crate::egui_shell::{Debouncer, HeightParams, QueryIntent, SearchState, compute_window_height};
 
 static JP_FONT_BYTES: OnceLock<Box<[u8]>> = OnceLock::new();
 
@@ -65,6 +65,7 @@ pub(crate) struct SearchWindowView {
     state: SearchState,
     search_debounce: Debouncer,
     last_input_at: Instant,
+    last_set_height: f64,
     // query フィールドは SearchState.query へ移譲（削除）。
     // emit dedup は共有 EguiShellState.hide_pending（show がクリア・codex #8）。view-local には持たない。
 }
@@ -78,6 +79,7 @@ impl SearchWindowView {
             state: SearchState::new(),
             search_debounce: Debouncer::new(Duration::from_millis(50), true),
             last_input_at: Instant::now(),
+            last_set_height: 52.0,
         }
     }
 
@@ -162,6 +164,28 @@ impl SearchWindowView {
             .unwrap_or(false)
     }
 
+    /// 動的高さ算出用の max_results（§4.5/§4.7）。visible_rows は Option<usize> のため
+    /// effective_visible_rows() で既定補完する（config.rs:327）。
+    fn max_results(&self) -> u32 {
+        self.app_handle
+            .try_state::<crate::AppState>()
+            .map(|s| s.engine.lock().unwrap().config().appearance.effective_visible_rows() as u32)
+            .unwrap_or(8)
+    }
+
+    /// 現在のウィンドウ論理幅。set_size で高さのみ変え幅を維持するために読む
+    /// （M1 では幅は不変・SU2 が config から生成済み）。読めなければ 600.0 にフォールバック。
+    fn window_width(&self) -> f64 {
+        self.app_handle
+            .get_window("main")
+            .and_then(|w| {
+                w.inner_size()
+                    .ok()
+                    .map(|s| s.to_logical::<f64>(w.scale_factor().unwrap_or(1.0)).width)
+            })
+            .unwrap_or(600.0)
+    }
+
     /// 現在の state.query に対して検索を実行し結果を注入する（同期・直 Engine）。
     /// results + plain + !indexing のみ通常検索。空クエリは結果クリア（§4.6）。
     /// instant/command/folder は M3/M2 で分岐を足す（現状 plain のみ実装）。
@@ -240,6 +264,15 @@ impl EguiView for SearchWindowView {
     }
 
     fn update(&mut self, ui: &mut egui::Ui, _frame: &mut RuntimeFrame) {
+        // show 直後の resetForShow（EguiShellState.reset_pending を消費）。stale な debounce
+        // armed 状態が再表示後に誤発火しないよう、debounce も併せて作り直す。
+        if let Some(sh) = self.app_handle.try_state::<crate::egui_shell::EguiShellState>()
+            && sh.reset_pending.swap(false, Ordering::SeqCst)
+        {
+            self.state.reset();
+            self.search_debounce = Debouncer::new(Duration::from_millis(50), true);
+        }
+
         let ctx = ui.ctx().clone();
         let focused = ctx.input(|i| i.focused);
         let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
@@ -333,6 +366,28 @@ impl EguiView for SearchWindowView {
         // as-built でも double-click=選択は到達不能。SPEC §4.8 を as-built へ同期済み）。
         if let Some(i) = clicked {
             self.activate(i);
+        }
+
+        // 動的ウィンドウ高さ（§4.5/§4.7）。show_results 可否 × max_results から算出し set_size。
+        // view 直呼び（SU1 runtime 不変・ユーザー決定）。update はイベントループスレッドで走る
+        // ので set_size は安全な見込み（G-RESIZE で確認。本タスクではスモークまで到達しない）。
+        let height = compute_window_height(&HeightParams {
+            show_results,
+            max_results: self.max_results(),
+            has_update_toast: false, // SU5
+            search_bar_height: 52.0,
+            result_row_height: 30.0,
+            results_padding: 8.0,
+            update_toast_height: 52.0,
+        });
+        if (height - self.last_set_height).abs() > 0.5 {
+            self.last_set_height = height;
+            if let Some(window) = self.app_handle.get_window("main") {
+                let _ = window.set_size(tauri::LogicalSize::new(self.window_width(), height));
+            }
+            // 新サイズでの再描画を即要求し 1 フレームの空きを詰める（背景 0x282828 で
+            // フラッシュは緩和済みだが空き自体が G-RESIZE のちらつき機構・advisor 指摘）。
+            ui.ctx().request_repaint();
         }
 
         self.was_focused = focused;

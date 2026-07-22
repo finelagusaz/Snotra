@@ -59,6 +59,7 @@ pub(crate) struct SearchWindowView {
     app_handle: tauri::AppHandle,
     was_focused: bool,
     unfocus_at: Option<Instant>,
+    query: String,
     // emit dedup は共有 EguiShellState.hide_pending（show がクリア・codex #8）。view-local には持たない。
 }
 
@@ -68,6 +69,7 @@ impl SearchWindowView {
             app_handle,
             was_focused: false,
             unfocus_at: None,
+            query: String::new(),
         }
     }
 
@@ -120,17 +122,19 @@ impl EguiView for SearchWindowView {
         let focused = ctx.input(|i| i.focused);
         let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
 
+        let was_focused = self.was_focused;
         // 再表示直後の stale 猶予をリセット: focused に戻ったら pending 破棄（codex #8）。
         // emit dedup（hide_pending）は show_egui_main がクリアするので view では触らない。
         if focused {
             self.unfocus_at = None;
         }
-        // Escape → 即 hide 要求（内側モード優先は SU3）。
+        // Escape → 即 hide 要求（内側モード優先は SU3）。TextEdit より前に ctx から拾うので
+        // 入力欄に focus があっても届く。
         if escape {
             self.emit_hide();
         }
         // focus 喪失 → 100ms 猶予を張り、猶予明けに repaint させる。
-        if self.was_focused && !focused {
+        if was_focused && !focused {
             self.unfocus_at = Some(Instant::now());
             ctx.request_repaint_after(Duration::from_millis(100));
         }
@@ -147,10 +151,20 @@ impl EguiView for SearchWindowView {
                 self.emit_hide();
             }
         }
-        self.was_focused = focused;
 
-        // placeholder: SU3 が検索 UI で置き換える。混在行（Latin+CJK）で font-first を視覚検証。
-        ui.label("Snotra — 検索ウィンドウ（C:/Program Files/example）");
+        // 検索入力欄（placeholder）。SU3 が検索ロジックを載せる。混在スクリプト（Latin+CJK）を
+        // 打てば font-first のベースライン整合も視覚検証できる。
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut self.query)
+                .hint_text("検索…")
+                .desired_width(f32::INFINITY),
+        );
+        // 窓が focus を得た最初のフレームで入力欄へ focus を移す（Alt+Q 表示直後に打てる）。
+        if focused && !was_focused {
+            response.request_focus();
+        }
+
+        self.was_focused = focused;
     }
 }
 

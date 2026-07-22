@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 use snotra_egui_runtime::{EguiView, RuntimeFrame};
 use tauri::{Emitter, Manager};
 
+use crate::egui_shell::{Debouncer, QueryIntent, SearchState};
+
 static JP_FONT_BYTES: OnceLock<Box<[u8]>> = OnceLock::new();
 
 fn japanese_font_definitions(bytes: &'static [u8]) -> egui::FontDefinitions {
@@ -59,7 +61,10 @@ pub(crate) struct SearchWindowView {
     app_handle: tauri::AppHandle,
     was_focused: bool,
     unfocus_at: Option<Instant>,
-    query: String,
+    state: SearchState,
+    search_debounce: Debouncer,
+    last_input_at: Instant,
+    // query フィールドは SearchState.query へ移譲（削除）。
     // emit dedup は共有 EguiShellState.hide_pending（show がクリア・codex #8）。view-local には持たない。
 }
 
@@ -69,7 +74,9 @@ impl SearchWindowView {
             app_handle,
             was_focused: false,
             unfocus_at: None,
-            query: String::new(),
+            state: SearchState::new(),
+            search_debounce: Debouncer::new(Duration::from_millis(50), true),
+            last_input_at: Instant::now(),
         }
     }
 
@@ -109,6 +116,52 @@ impl SearchWindowView {
             .try_state::<crate::SettingsProcessState>()
             .map(|p| p.lock().unwrap().is_some())
             .unwrap_or(false)
+    }
+
+    /// instant prefix を実行中 config から都度読む（キャッシュしない・#576 と同設計）。
+    /// フィールドは config.search.instant_command_prefix（config.rs:956 で確認済み）。
+    fn instant_prefix(&self) -> String {
+        self.app_handle
+            .try_state::<crate::AppState>()
+            .map(|s| s.engine.lock().unwrap().config().search.instant_command_prefix.clone())
+            .unwrap_or_else(|| "@".to_string())
+    }
+
+    /// index 構築中か（AppState.indexing: AtomicBool・state.rs:14 で確認済み）。
+    fn indexing(&self) -> bool {
+        self.app_handle
+            .try_state::<crate::AppState>()
+            .map(|s| s.indexing.load(std::sync::atomic::Ordering::Relaxed))
+            .unwrap_or(false)
+    }
+
+    /// 現在の state.query に対して検索を実行し結果を注入する（同期・直 Engine）。
+    /// results + plain + !indexing のみ通常検索。空クエリは結果クリア（§4.6）。
+    /// instant/command/folder は M3/M2 で分岐を足す（現状 plain のみ実装）。
+    fn run_search(&mut self) {
+        let prefix = self.instant_prefix();
+        match self.state.interp(&prefix) {
+            QueryIntent::Plain => {
+                if self.state.query().trim().is_empty() || self.indexing() {
+                    self.state.set_results(Vec::new());
+                    return;
+                }
+                let query = self.state.query().to_string();
+                let results = {
+                    let state = match self.app_handle.try_state::<crate::AppState>() {
+                        Some(s) => s,
+                        None => return,
+                    };
+                    let mut engine = state.engine.lock().unwrap();
+                    engine.search(&query)
+                }; // lock 解放
+                self.state.set_results(results);
+            }
+            // command/instant は M2/M3。M1 では結果を出さない（空維持）。
+            _ => {
+                self.state.set_results(Vec::new());
+            }
+        }
     }
 }
 
@@ -152,18 +205,31 @@ impl EguiView for SearchWindowView {
             }
         }
 
-        // 検索入力欄（placeholder）。SU3 が検索ロジックを載せる。混在スクリプト（Latin+CJK）を
-        // 打てば font-first のベースライン整合も視覚検証できる。
+        // 検索入力欄。state.query を編集し、変化があれば debounce leading で同期検索。
+        let mut buf = self.state.query().to_string();
         let response = ui.add(
-            egui::TextEdit::singleline(&mut self.query)
+            egui::TextEdit::singleline(&mut buf)
                 .hint_text("検索…")
                 .desired_width(f32::INFINITY),
         );
+        if response.changed() {
+            self.state.set_query(buf);
+            self.last_input_at = Instant::now();
+            if self.search_debounce.on_input() {
+                self.run_search(); // leading（Task 8 で trailing を足す）
+            }
+        }
         // 窓に focus があるのに入力欄が focus を持たないなら移す（Alt+Q 表示直後に打てる）。
         // was_focused に依存しないので、hide→reshow で was_focused が stale でも確実に戻る。
         if focused && !response.has_focus() {
             response.request_focus();
         }
+
+        // 開発時の結果件数 trace（Task 6 でリスト描画に置換）。
+        crate::trace_main(
+            "egui_search:dispatch",
+            serde_json::json!({ "query_len": self.state.query().chars().count(), "results": self.state.results().len() }),
+        );
 
         self.was_focused = focused;
     }

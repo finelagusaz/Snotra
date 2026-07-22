@@ -1,14 +1,16 @@
 //! egui/softbuffer メインウィンドウの外殻（#532 SU2）。WebView2 と並行する
 //! egui 専用 window 生成・show/hide・blur 自動非表示・位置永続。WebView2 経路は触らない。
 mod lifecycle;
-// SU3 M1 Task 5（view.rs）が SearchState/interpret/is_instant_prefix を消費するまでは
-// 本番（非 test）ビルドで未消費のため dead_code になる。消費側が付いたら allow を外す。
+// `ViewKind::Folder` は M2（folder frame の構築）まで実行時に構築されないため dead_code 警告が出る。
+// M2 で folder 遷移を実装したら外す（他の項目は view.rs / 内部で消費済み）。
 #[allow(dead_code)]
 mod search_state;
 mod layout;
 mod view;
 
 pub(crate) use lifecycle::{HotkeyPlan, blur_should_hide, plan_hotkey};
+// view.rs は SearchState/QueryIntent のみ使用。ViewKind/interpret/is_instant_prefix は
+// search_state 内部でのみ使われ外部 consumer が無いため未使用 import になる（M2/M3 まで橋渡し）。
 #[allow(unused_imports)]
 pub(crate) use search_state::{QueryIntent, SearchState, ViewKind, interpret, is_instant_prefix};
 pub(crate) use layout::{Debouncer, HeightParams, compute_window_height};
@@ -33,7 +35,7 @@ pub(crate) struct EguiShellState {
 }
 
 /// フラグ ON の窓生成。EguiRuntime を install し webview 無しの "main" 窓を生成して attach。setup 限定。
-/// 宣言窓の全プロパティ（52px 高は固定・width は config の window_width・skipTaskbar・
+/// 宣言窓の全プロパティ（52px 高は初期値〔SU3 で show 前折り畳み + 結果表示時に動的リサイズ・view.rs〕・width は config の window_width・skipTaskbar・
 /// alwaysOnTop・decorations:false・resizable:false・visible:false）を再現する（codex #11・(B)#1）。
 pub(crate) fn create(
     app: &mut tauri::App,

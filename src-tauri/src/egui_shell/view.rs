@@ -164,7 +164,7 @@ impl SearchWindowView {
             .unwrap_or(false)
     }
 
-    /// 動的高さ算出用の max_results（§4.5/§4.7）。visible_rows は Option<usize> のため
+    /// 動的高さ算出用の max_results（§4.5/§4.7）。visible_rows は `Option<usize>` のため
     /// effective_visible_rows() で既定補完する（config.rs:327）。
     fn max_results(&self) -> u32 {
         self.app_handle

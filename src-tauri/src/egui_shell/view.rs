@@ -5,8 +5,11 @@ use std::sync::OnceLock;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+use snotra_core::ui_types::SearchResult;
 use snotra_egui_runtime::{EguiView, RuntimeFrame};
 use tauri::{Emitter, Manager};
+
+use crate::egui_shell::{Debouncer, HeightParams, QueryIntent, SearchState, compute_window_height};
 
 static JP_FONT_BYTES: OnceLock<Box<[u8]>> = OnceLock::new();
 
@@ -59,7 +62,11 @@ pub(crate) struct SearchWindowView {
     app_handle: tauri::AppHandle,
     was_focused: bool,
     unfocus_at: Option<Instant>,
-    query: String,
+    state: SearchState,
+    search_debounce: Debouncer,
+    last_input_at: Instant,
+    last_set_height: f64,
+    // query フィールドは SearchState.query へ移譲（削除）。
     // emit dedup は共有 EguiShellState.hide_pending（show がクリア・codex #8）。view-local には持たない。
 }
 
@@ -69,7 +76,10 @@ impl SearchWindowView {
             app_handle,
             was_focused: false,
             unfocus_at: None,
-            query: String::new(),
+            state: SearchState::new(),
+            search_debounce: Debouncer::new(Duration::from_millis(50), true),
+            last_input_at: Instant::now(),
+            last_set_height: 52.0,
         }
     }
 
@@ -86,6 +96,32 @@ impl SearchWindowView {
             return;
         }
         let _ = self.app_handle.emit("egui-hide-requested", ());
+    }
+
+    /// index 行を起動し、成功なら履歴記録して hide 要求を出す（§4.8 シングルクリック / Enter）。
+    /// launch_item_core は ShellExecuteW（エンジンロック外で呼ぶ・launch.rs:226）。成功時のみ
+    /// record_and_save で履歴を記録（§4.3/§5 の query_count 加点・全起動経路の共通末尾を再利用）。
+    /// エラー行（is_error）は起動しない。
+    fn activate(&self, index: usize) {
+        use crate::commands::launch::{LaunchStatus, launch_item_core, record_and_save};
+        let Some(result) = self.state.results().get(index) else { return };
+        if result.is_error {
+            return;
+        }
+        let path = result.path.clone();
+        let query = self.state.query().to_string();
+        let outcome = launch_item_core(&path); // ロック外・ShellExecuteW
+        crate::trace_main(
+            "egui_launch",
+            serde_json::json!({ "index": index, "status": format!("{:?}", outcome.status) }),
+        );
+        if matches!(outcome.status, LaunchStatus::Ok) {
+            if let Some(state) = self.app_handle.try_state::<crate::AppState>() {
+                record_and_save(&state, &path, &query); // 履歴記録 + 保存（ロックは内部で最小保持）
+            }
+            // 起動成功時のみ hide（SU2 の hide 合流点へ・view から window を直接触らない）。
+            self.emit_hide();
+        }
     }
 
     /// auto_hide_on_focus_lost を実行中 config から都度読む（キャッシュしない・#576 と同設計）。
@@ -110,6 +146,110 @@ impl SearchWindowView {
             .map(|p| p.lock().unwrap().is_some())
             .unwrap_or(false)
     }
+
+    /// instant prefix を実行中 config から都度読む（キャッシュしない・#576 と同設計）。
+    /// フィールドは config.search.instant_command_prefix（config.rs:956 で確認済み）。
+    fn instant_prefix(&self) -> String {
+        self.app_handle
+            .try_state::<crate::AppState>()
+            .map(|s| s.engine.lock().unwrap().config().search.instant_command_prefix.clone())
+            .unwrap_or_else(|| "@".to_string())
+    }
+
+    /// index 構築中か（AppState.indexing: AtomicBool・state.rs:14 で確認済み）。
+    fn indexing(&self) -> bool {
+        self.app_handle
+            .try_state::<crate::AppState>()
+            .map(|s| s.indexing.load(std::sync::atomic::Ordering::Relaxed))
+            .unwrap_or(false)
+    }
+
+    /// 動的高さ算出用の max_results（§4.5/§4.7）。visible_rows は `Option<usize>` のため
+    /// effective_visible_rows() で既定補完する（config.rs:327）。
+    fn max_results(&self) -> u32 {
+        self.app_handle
+            .try_state::<crate::AppState>()
+            .map(|s| s.engine.lock().unwrap().config().appearance.effective_visible_rows() as u32)
+            .unwrap_or(8)
+    }
+
+    /// 現在のウィンドウ論理幅。set_size で高さのみ変え幅を維持するために読む
+    /// （M1 では幅は不変・SU2 が config から生成済み）。読めなければ 600.0 にフォールバック。
+    fn window_width(&self) -> f64 {
+        self.app_handle
+            .get_window("main")
+            .and_then(|w| {
+                w.inner_size()
+                    .ok()
+                    .map(|s| s.to_logical::<f64>(w.scale_factor().unwrap_or(1.0)).width)
+            })
+            .unwrap_or(600.0)
+    }
+
+    /// 現在の state.query に対して検索を実行し結果を注入する（同期・直 Engine）。
+    /// results + plain + !indexing のみ通常検索。空クエリは結果クリア（§4.6）。
+    /// instant/command/folder は M3/M2 で分岐を足す（現状 plain のみ実装）。
+    fn run_search(&mut self) {
+        let prefix = self.instant_prefix();
+        match self.state.interp(&prefix) {
+            QueryIntent::Plain => {
+                if self.state.query().trim().is_empty() || self.indexing() {
+                    self.state.set_results(Vec::new());
+                    return;
+                }
+                let query = self.state.query().to_string();
+                let results = {
+                    let state = match self.app_handle.try_state::<crate::AppState>() {
+                        Some(s) => s,
+                        None => return,
+                    };
+                    let mut engine = state.engine.lock().unwrap();
+                    engine.search(&query)
+                }; // lock 解放
+                self.state.set_results(results);
+            }
+            // command/instant は M2/M3。M1 では結果を出さない（空維持）。
+            _ => {
+                self.state.set_results(Vec::new());
+            }
+        }
+    }
+
+    /// 1 行を描画。selected ならハイライト + scroll_to_me。返り値: single_clicked。
+    /// ダブルクリックは扱わない（ユーザー決定: §4.8 の double-click=選択は as-built でも
+    /// 到達不能ゆえ落とす。単クリック=起動のみ）。self を借りない関連関数（借用衝突回避）。
+    fn draw_result_row(ui: &mut egui::Ui, result: &SearchResult, selected: bool) -> bool {
+        let row_h = 30.0;
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), row_h),
+            egui::Sense::click(),
+        );
+        if selected {
+            ui.painter().rect_filled(rect, 4.0, ui.visuals().selection.bg_fill);
+            response.scroll_to_me(Some(egui::Align::Center));
+        }
+        // アイコンスロット（SU4 が埋める）: 左に 24px 空ける。
+        let text_x = rect.left() + 28.0;
+        let name_color = ui.visuals().text_color();
+        let path_color = ui.visuals().weak_text_color(); // 淡色パス
+        let painter = ui.painter();
+        painter.text(
+            egui::pos2(text_x, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            &result.name,
+            egui::FontId::proportional(14.0),
+            name_color,
+        );
+        // 名前の右にパスを淡色で（簡易・galley 省略は egui 既定に委ねる）。
+        painter.text(
+            egui::pos2(rect.right() - 8.0, rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            &result.path,
+            egui::FontId::proportional(11.0),
+            path_color,
+        );
+        response.clicked()
+    }
 }
 
 impl EguiView for SearchWindowView {
@@ -118,6 +258,15 @@ impl EguiView for SearchWindowView {
     }
 
     fn update(&mut self, ui: &mut egui::Ui, _frame: &mut RuntimeFrame) {
+        // show 直後の resetForShow（EguiShellState.reset_pending を消費）。stale な debounce
+        // armed 状態が再表示後に誤発火しないよう、debounce も併せて作り直す。
+        if let Some(sh) = self.app_handle.try_state::<crate::egui_shell::EguiShellState>()
+            && sh.reset_pending.swap(false, Ordering::SeqCst)
+        {
+            self.state.reset();
+            self.search_debounce = Debouncer::new(Duration::from_millis(50), true);
+        }
+
         let ctx = ui.ctx().clone();
         let focused = ctx.input(|i| i.focused);
         let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
@@ -152,17 +301,105 @@ impl EguiView for SearchWindowView {
             }
         }
 
-        // 検索入力欄（placeholder）。SU3 が検索ロジックを載せる。混在スクリプト（Latin+CJK）を
-        // 打てば font-first のベースライン整合も視覚検証できる。
+        // ↑↓ ナビ（結果があるとき）。TextEdit より前に ctx から拾い、入力欄 focus 中も効かせる。
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+            self.state.move_selection(1);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+            self.state.move_selection(-1);
+        }
+
+        // Enter: 選択項目を起動（結果があるとき）。TextEdit の Enter より先に ctx で拾う。
+        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !self.state.results().is_empty() {
+            self.activate(self.state.selected());
+        }
+
+        // 検索入力欄。state.query を編集し、変化があれば debounce leading で同期検索。
+        // 構築中かつ空クエリなら hint を案内文へ差し替える（§4.7）。egui の hint は入力が空の
+        // ときだけ描かれるため、indexing+空クエリの条件と一致する——window は 52px のまま
+        // （show_results=false）で、案内はバー内に収まり見える（旧: 別 label はバー下に描かれ
+        // クリップされ不可視だった）。
+        let hint: &str = if self.indexing() && self.state.query().trim().is_empty() {
+            "インデックス構築中..."
+        } else {
+            "検索…"
+        };
+        let mut buf = self.state.query().to_string();
         let response = ui.add(
-            egui::TextEdit::singleline(&mut self.query)
-                .hint_text("検索…")
+            egui::TextEdit::singleline(&mut buf)
+                .hint_text(hint)
                 .desired_width(f32::INFINITY),
         );
+        if response.changed() {
+            self.state.set_query(buf);
+            self.last_input_at = Instant::now();
+            if self.search_debounce.on_input() {
+                self.run_search(); // leading
+            }
+            // trailing 発火のため interval 後に再描画を要求する（SU2 blur と同じ egui idiom）。
+            ctx.request_repaint_after(self.search_debounce.interval());
+        }
         // 窓に focus があるのに入力欄が focus を持たないなら移す（Alt+Q 表示直後に打てる）。
         // was_focused に依存しないので、hide→reshow で was_focused が stale でも確実に戻る。
         if focused && !response.has_focus() {
             response.request_focus();
+        }
+
+        // trailing debounce: 連打が収まって interval 経過したら最終クエリで検索し直す。
+        if self.search_debounce.poll(self.last_input_at.elapsed()) {
+            self.run_search();
+        }
+        // armed のまま = trailing 未発火。scheduler の coalescing で +interval の wake が
+        // 消されても deadline で確実に起きるよう毎フレーム残り時間を再要求する。
+        if self.search_debounce.is_armed() {
+            let remaining = self
+                .search_debounce
+                .interval()
+                .saturating_sub(self.last_input_at.elapsed());
+            ctx.request_repaint_after(remaining);
+        }
+
+        // 結果リスト（shouldShowResults 相当。M1: results 軸・plain のみ。空なら描かない）。
+        let show_results = !self.state.results().is_empty();
+        let mut clicked: Option<usize> = None;
+        if show_results {
+            // 借用衝突回避: results を clone してから描画（draw_result_row は関連関数で self 非借用）。
+            let results = self.state.results().to_vec();
+            let selected = self.state.selected();
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for (i, result) in results.iter().enumerate() {
+                    if Self::draw_result_row(ui, result, i == selected) {
+                        clicked = Some(i); // シングルクリック（§4.8 単=起動）。double は扱わない
+                    }
+                }
+            });
+        }
+        // シングルクリック＝起動（§4.8 単=起動）。double-click は扱わない（ユーザー決定・
+        // as-built でも double-click=選択は到達不能。SPEC §4.8 を as-built へ同期済み）。
+        if let Some(i) = clicked {
+            self.activate(i);
+        }
+
+        // 動的ウィンドウ高さ（§4.5/§4.7）。show_results 可否 × max_results から算出し set_size。
+        // view 直呼び（SU1 runtime 不変・ユーザー決定）。update はイベントループスレッドで走る
+        // ので set_size は安全な見込み（G-RESIZE で確認。本タスクではスモークまで到達しない）。
+        let height = compute_window_height(&HeightParams {
+            show_results,
+            max_results: self.max_results(),
+            has_update_toast: false, // SU5
+            search_bar_height: 52.0,
+            result_row_height: 30.0,
+            results_padding: 8.0,
+            update_toast_height: 52.0,
+        });
+        if (height - self.last_set_height).abs() > 0.5 {
+            self.last_set_height = height;
+            if let Some(window) = self.app_handle.get_window("main") {
+                let _ = window.set_size(tauri::LogicalSize::new(self.window_width(), height));
+            }
+            // 新サイズでの再描画を即要求し 1 フレームの空きを詰める（背景 0x282828 で
+            // フラッシュは緩和済みだが空き自体が G-RESIZE のちらつき機構・advisor 指摘）。
+            ui.ctx().request_repaint();
         }
 
         self.was_focused = focused;

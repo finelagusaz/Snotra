@@ -15,7 +15,7 @@ pub(crate) use lifecycle::{HotkeyPlan, blur_should_hide, plan_hotkey};
 #[allow(unused_imports)]
 pub(crate) use search_state::{QueryIntent, SearchState, ViewKind, interpret, is_instant_prefix};
 #[allow(unused_imports)]
-pub(crate) use layout::{HeightParams, compute_window_height};
+pub(crate) use layout::{Debouncer, HeightParams, compute_window_height};
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;

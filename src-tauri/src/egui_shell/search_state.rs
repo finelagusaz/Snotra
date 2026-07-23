@@ -81,10 +81,9 @@ pub struct FolderFrame {
 /// restore_query を持たない——tool 中は入力無効（§18.5）で query 不変ゆえ復元不要
 /// （SolidJS popView の tool 段も query を復元しない）。launch_query は起動 API へ渡す
 /// 元クエリで復元には使わない（SolidJS #538 の launchQuery / restoreQuery 型分離）。
-/// target_path/target_is_folder/tools/launch_query は driver（view.rs）が Task 3 で
-/// tool_frame() 越しに読む（本タスク時点ではテストのみ消費・#532 SU3.5 Task 2/3 分割）。
+/// target_path/target_is_folder/tools/launch_query は driver（view.rs）が
+/// tool_frame() 越しに読む（`shift_activate` / `execute_tool_selected`・#532 SU3.5 Task 3）。
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ToolFrame {
     pub restore_results: Vec<SearchResult>,
     pub restore_selected: usize,
@@ -265,9 +264,8 @@ impl SearchState {
 
     /// ツール選択へ突入（§18.4: 結果リストをツール一覧で置換）。現在ビュー（Results/Folder
     /// どちらでも）の表示状態を frame へ退避する。tools ≥ 2 の判定は driver 側
-    /// （§18.3: ≤1 は通常 Enter と同一のため、そもそも呼ばれない）。driver からの呼び出しは
-    /// Task 3 で配線（本タスク時点ではテストのみ消費・#532 SU3.5 Task 2/3 分割）。
-    #[allow(dead_code)]
+    /// （§18.3: ≤1 は通常 Enter と同一のため、そもそも呼ばれない）。driver からは
+    /// `shift_activate` が呼ぶ（#532 SU3.5 Task 3）。
     pub fn enter_tool(&mut self, target_path: String, target_is_folder: bool, tools: Vec<OpenerTool>) {
         let rows: Vec<SearchResult> = tools
             .iter()
@@ -291,8 +289,7 @@ impl SearchState {
         self.selected = 0;
     }
 
-    /// driver からの呼び出しは Task 3 で配線（本タスク時点ではテストのみ消費）。
-    #[allow(dead_code)]
+    /// driver（`shift_activate` / `execute_tool_selected`）が読む（#532 SU3.5 Task 3）。
     pub fn tool_frame(&self) -> Option<&ToolFrame> {
         self.tool.as_ref()
     }

@@ -45,27 +45,39 @@ pub async fn execute_instant_command(
         .and_then(|mut cb| cb.get_text())
         .unwrap_or_default();
 
-    // 変数展開: URL テンプレートは自動エンコード、それ以外は生展開。
-    // セキュリティモデル: コマンドテンプレートはユーザーが config.toml で
-    // 自身で定義したものであり、信頼済みコンテンツとして扱う。
-    let result = run_launch_blocking(move || {
-        use snotra_core::config::InstantAction;
-        match action {
-            InstantAction::Url { url } => {
-                let expanded = expand_instant_command(&url, &query, &clipboard);
-                super::launch::launch_item_core(&expanded)
-            }
-            InstantAction::Exec { exe, args } => {
-                super::launch::launch_exec_core(&exe, &args, &query, &clipboard)
-            }
-            // load 後は移行済みで到達しないが、防御的に Url 扱い
-            InstantAction::Legacy { command } => {
-                let expanded = expand_instant_command(&command, &query, &clipboard);
-                super::launch::launch_item_core(&expanded)
-            }
-        }
-    })
-    .await;
+    let result =
+        run_launch_blocking(move || execute_instant_action_core(action, &query, &clipboard)).await;
 
     Ok(result)
+}
+
+/// instant action の種別ディスパッチ共有核（IPC 経路 = 上の `execute_instant_command` /
+/// egui 経路 = `egui_shell::view::execute_instant_selected` の両方が呼ぶ・#532 SU3 M3
+/// /code-review）。二重実装だと展開/エンコードや Legacy fallback の将来修正が片側にだけ
+/// 当たり、同じ config に対し WebView2 と egui が別のコマンドを起動する drift を生むため集約。
+/// clipboard は呼び出し側がエンジンロック外で読んで渡す（Win32 がブロックしうるため）。
+///
+/// 変数展開: URL テンプレートは自動エンコード、それ以外は生展開。
+/// セキュリティモデル: コマンドテンプレートはユーザーが config.toml で
+/// 自身で定義したものであり、信頼済みコンテンツとして扱う。
+pub(crate) fn execute_instant_action_core(
+    action: snotra_core::config::InstantAction,
+    query: &str,
+    clipboard: &str,
+) -> super::launch::LaunchResult {
+    use snotra_core::config::InstantAction;
+    match action {
+        InstantAction::Url { url } => {
+            let expanded = expand_instant_command(&url, query, clipboard);
+            super::launch::launch_item_core(&expanded)
+        }
+        InstantAction::Exec { exe, args } => {
+            super::launch::launch_exec_core(&exe, &args, query, clipboard)
+        }
+        // load 後は移行済みで到達しないが、防御的に Url 扱い
+        InstantAction::Legacy { command } => {
+            let expanded = expand_instant_command(&command, query, clipboard);
+            super::launch::launch_item_core(&expanded)
+        }
+    }
 }

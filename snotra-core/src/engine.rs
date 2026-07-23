@@ -27,6 +27,12 @@ impl FolderListContext {
     ) -> std::io::Result<Vec<folder::DirEntryData>> {
         folder::read_dir_entries(dir, filter, self.mode, self.show_hidden_system)
     }
+
+    /// キャッシュ済みソート結果を現フィルタで同期に絞る（#532 SU3 M2）。SearchMode を
+    /// 呼び出し側（src-tauri driver）へ露出させないためのラッパー。
+    pub fn filter_sorted(&self, cached: &[SearchResult], filter: &str) -> Vec<SearchResult> {
+        folder::filter_sorted(cached, filter, self.mode, self.max_results)
+    }
 }
 
 /// `SearchEngine` を Mutex 外で事前構築するためのラッパー型。
@@ -147,6 +153,16 @@ impl Engine {
         // Mutex 保持時間の最小化を優先する設計判断として許容する。
         // history は常に現在の最新状態を使用する（スコアリングのみへの影響）。
         folder::score_entries(entries, &self.history, ctx.max_results)
+    }
+
+    /// folder ナビゲーション時に全件を全順序でソート（上限なし）して返す。driver がキャッシュし、
+    /// 打鍵フィルタは `FolderListContext::filter_sorted` で同期に行う（#532 SU3 M2 B）。
+    /// history は最新状態を使う（`finalize_folder_list` と同様・スコアリングのみへの影響）。
+    pub fn finalize_folder_list_unlimited(
+        &self,
+        entries: Vec<folder::DirEntryData>,
+    ) -> Vec<SearchResult> {
+        folder::sort_entries_unlimited(entries, &self.history)
     }
 
     /// フォルダ内エントリを同期的に列挙してスコアリング済み結果を返す。

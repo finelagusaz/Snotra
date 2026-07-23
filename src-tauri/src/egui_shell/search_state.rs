@@ -83,6 +83,30 @@ pub enum EscapeOutcome {
     Hide,
 }
 
+/// slash コマンドの写像（§15.2）。History(`/r`) だけは結果注入型（履歴を表示して留まる）で、
+/// driver が run_search の Command 分岐へ振る。他 3 つは fire-once の副作用型。
+/// driver（view.rs）が消費する（#532 SU3 M3 Task 2）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlashCmd {
+    History,
+    OpenSettings,
+    RebuildIndex,
+    Quit,
+}
+
+/// trim 後の完全一致で slash コマンドを引く（§15.3 即実行の判定・commands.ts findCommand parity・
+/// 大文字小文字は区別する）。部分入力・引数付きは None（候補表示なし・§15.3）。
+/// driver（view.rs）が消費する（#532 SU3 M3 Task 2）。
+pub fn find_slash_command(query: &str) -> Option<SlashCmd> {
+    match query.trim() {
+        "/r" => Some(SlashCmd::History),
+        "/o" => Some(SlashCmd::OpenSettings),
+        "/s" => Some(SlashCmd::RebuildIndex),
+        "/q" => Some(SlashCmd::Quit),
+        _ => None,
+    }
+}
+
 /// 検索ウィンドウの純粋状態。results 軸に加え folder 軸（folder / folder_filter / folder_gen）を持つ（M2 で追加・#532 SU3 M2）。
 pub struct SearchState {
     query: String,
@@ -125,6 +149,12 @@ impl SearchState {
 
     pub fn selected(&self) -> usize {
         self.selected
+    }
+
+    /// 選択を先頭へ戻す。driver が打鍵（changed エッジ）ごとに呼ぶ（SolidJS の毎打鍵
+    /// setSelected(0) parity・#532 SU3 M3）。
+    pub fn reset_selection(&mut self) {
+        self.selected = 0;
     }
 
     /// 軸1。folder モードなら Folder、それ以外 Results（tool は SU3.5）。
@@ -491,6 +521,35 @@ mod tests {
         // Results モードでは folder cache/error に依らず常に false（前ビュー残存物問題は起きない）。
         assert!(!folder_load_pending(ViewKind::Results, false, false));
         assert!(!folder_load_pending(ViewKind::Results, true, false));
+    }
+
+    #[test]
+    fn find_slash_command_exact_match_with_trim() {
+        assert_eq!(find_slash_command("/r"), Some(SlashCmd::History));
+        assert_eq!(find_slash_command(" /o "), Some(SlashCmd::OpenSettings)); // trim 後一致
+        assert_eq!(find_slash_command("/s"), Some(SlashCmd::RebuildIndex));
+        assert_eq!(find_slash_command("/q"), Some(SlashCmd::Quit));
+    }
+
+    #[test]
+    fn find_slash_command_rejects_partial_case_and_args() {
+        assert_eq!(find_slash_command("/"), None); // 部分入力
+        assert_eq!(find_slash_command("/x"), None); // 未知コマンド
+        assert_eq!(find_slash_command("/O"), None); // 大文字は不一致（findCommand === parity）
+        assert_eq!(find_slash_command("/o extra"), None); // 引数付きは不一致（完全一致のみ）
+        assert_eq!(find_slash_command(""), None);
+    }
+
+    #[test]
+    fn reset_selection_returns_to_top() {
+        // SolidJS parity: 毎打鍵 setSelected(0)（handlePlainQueryInput / instant fetch / slash とも）。
+        // M1 は set_results の clamp のみで、打鍵後も旧 selected が残っていた（M3 で是正）。
+        let mut s = SearchState::new();
+        s.set_results(vec![res("a"), res("b"), res("c")]);
+        s.move_selection(2);
+        assert_eq!(s.selected(), 2);
+        s.reset_selection();
+        assert_eq!(s.selected(), 0);
     }
 
     #[test]

@@ -61,6 +61,19 @@ folder（M2）の実装方針を確定。以下は上の決定 4/5 と §状態�
 - **staleness は全離脱経路で失効。** `begin_folder_request` に加え Escape/hide/reset/親子遷移でも `folder_gen` を進め、`apply_folder_result` は token 一致 ∧ view_kind==Folder のときだけ適用する（遅延到着した旧ナビ結果が通常検索を轢く経路を塞ぐ）。channel は毎フレーム drain して最新 token だけ反映し、列挙完了時は現 `folder_filter` で再フィルタする。
 - **B の非対称を parity 対象外と明記。** キャッシュは folder 滞在中の fs 変化・隠し項目/フォルダ検索方式の config 変更を反映しない（SolidJS は filter ごと再列挙で反映）。巨大 dir の保持は上限 or 明示受容 + 計測を M2 の受け入れ条件に入れる。
 
+### M3 実装確定（brainstorm 2026-07-23・codex 反証レビュー反映）
+
+instant + slash（M3）の実装方針を確定。以下は決定 7 の instant 部分・§Escape ラダーの段 2・§milestone M3 行・§テスト計画の「Escape ラダー 3 段」（→ 2 段）の該当箇所を **supersede** する。細目の実装要件（関数署名・テスト名・手順）は M3 plan を SSOT とする。
+
+- **instant 実行は同期直呼び。** driver が action 抽出（ロック内・即解放）→ clipboard 読み → 種別ディスパッチ（`launch_item_core` / `launch_exec_core`）をイベントループスレッドで同期実行する（M1 の `activate` と同型。IPC の `execute_instant_command` は触らない＝G1）。**SPEC §19.6 の spawn_blocking + 4 秒保護は egui 経路では一時的に満たさない**——ブロックリスク（dead UNC・シェル拡張停留）は #631（通知 UI + single-flight とセットで flip 前に解消）へ instant を追記して defer する（受容済み残余・codex 発見 1）。
+- **instant fetch の 30ms trailing debounce は撤廃**（決定 7 の instant 部分と milestone M3 行の「30ms trailing debounce」を supersede）。debounce が守っていたコスト（IPC 往復の coalescing）は直 Engine で消滅し、`filter_instant_commands`（config 内数件の前方一致）は毎打鍵同期で走らせる。search の 50ms debounce（インデックス全走査の保護）は維持。決定 1 と同じ「IPC 起因の機構は egui 経路へ移植しない」論法。
+- **Escape ラダーの ClearMode 段（段 2）を削除**（§Escape ラダーと milestone M3 行の「Escape ラダー完成（instant/command 解除段）」を supersede）。SolidJS（`SearchWindow.tsx`: `exitToolSelection` → `exitFolderExpansion` → `hideMainWindow`）にも SPEC §8.6（InstantCommandMode/CommandMode に Escape 遷移なし・hide をブロックするのは tool/folder のみ）にも instant/command 中のモード解除は存在せず、ClearMode は本 spec が発明した parity 乖離だった。「移行の内側で仕様変更を折り込まない」原則に従い削除。`EscapeOutcome` は M2 の 2 段（RestoredSearch/Hide）で完成——instant/command は results ビューとして自然に Hide 段へ落ちる（M3 の Escape 作業は本訂正のみ）。
+- **失敗通知は M1 同型（hide しない + trace のみ）。** instant 実行失敗・`/o` の indexing 中 Err に通知 UI を建てず、#631 の通知設計へ一本化する。parity gap（SolidJS の launchNotice 3 秒表示）は明示受容。緩和: `/o` は SolidJS と同順の「クエリクリア → action」ゆえ、失敗後は空クエリの検索バーに M1 の indexing hint（「インデックス構築中...」）が可視で、開けない理由は degraded ながら見える。`/s` の indexing 中無音は SolidJS（#434）と一致。
+- **dispatch を「TextEdit changed 処理 → Enter/クリック判定」の順に再構成**（codex 発見 4）。現 M1 は Enter 処理が TextEdit の changed 処理より前（`view.rs`）にあり、同一フレームに入力確定と Enter が入ると旧 state の interp/選択で起動しうる。M3 で Enter が interp 分岐（activate / instant 実行）の判定点になるため、TextEdit 処理後に Enter/クリックを判定し、そのフレームの最新 state を唯一の判定入力とする。
+- **slash は changed エッジで edge-trigger**（§15.3 の「debounce キャンセル + 即実行」の egui 再現。immediate-mode でも query 変化時のみゆえ毎フレーム再実行は構造的に起きない）。`interp()==Command` かつ trim 完全一致で debounce を迂回して即実行。SolidJS と同順の「クエリクリア（+結果クリア）→ action」。`/r` は `engine.recent_history()` を `set_results` して**留まる**（冪等・選択起動可・クエリは `/r` のまま）。`/o` は `commands::open_settings` 直呼び（`main.rs` の listener 前例と同型）。`/s` は `emit_hide` → `rebuild_index` 直呼び（indexing 中 Err は無音）。`/q` は `emit("exit-requested")`（`quit_app` の実体と同一・history/icon flush 経路を共有）。部分入力は結果クリア（候補表示なし・検索しない）。
+- **instant は dispatch 内で同期フィルタ。** `interp()==Instant{filter_name}` で `filter_instant_commands` → DTO→`SearchResult` 変換（name=コマンド名・path 欄=`description` 優先/無ければ `display`・is_folder=false・is_error=false・§19.5）→ `set_results` + selected=0。indexing を見ない（§19.7・Plain 分岐のみ indexing ガード）。instant 中の ←→ 無効・Shift+Enter=Enter。実行成功でクエリクリア + hide、失敗は据え置き + trace。
+- **selected リセットの parity 確認を M3 受け入れに含める。** SolidJS は毎打鍵 `setSelected(0)`（plain/instant/slash とも）だが、egui は `set_results` の clamp のみの疑いがある（M1 持ち越し）。plan で検証し、gap なら M3 で是正する。
+
 ### 検証済み（この設計の前提・一次証拠）
 
 1. **`engine.search()` は同期。** `commands/search.rs:19` が `state.engine.lock().unwrap().search(&query)` を同期呼びし `Vec<SearchResult>` を即返す。egui view も同じ `AppState.engine` を掴んで同期呼びできる。

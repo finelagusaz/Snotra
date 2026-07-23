@@ -10,10 +10,8 @@ pub(crate) use lifecycle::{HotkeyPlan, blur_should_hide, plan_hotkey};
 pub(crate) use search_state::{
     EscapeOutcome, QueryIntent, SearchState, ViewKind, compute_parent_dir, folder_load_pending,
 };
-// interpret/is_instant_prefix は search_state 内部（interp() 経由）でのみ使われ、view.rs からの
-// 直接呼び出しは無いため re-export としては未使用（M3 の command/instant 分岐まで橋渡し）。
-#[allow(unused_imports)]
-pub(crate) use search_state::{interpret, is_instant_prefix};
+// SlashCmd/find_slash_command は driver（view.rs）が command 分岐・slash 実行で消費する（#532 SU3 M3 Task 2）。
+pub(crate) use search_state::{SlashCmd, find_slash_command};
 pub(crate) use layout::{Debouncer, HeightParams, compute_window_height};
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

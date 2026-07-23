@@ -488,4 +488,19 @@ mod tests {
         // interp は view_kind()==Folder ゆえ Plain（query 相乗りしないので query は空のまま）
         assert_eq!(s.interp("@"), QueryIntent::Plain);
     }
+
+    #[test]
+    fn stale_token_rejected_after_escape_and_reenter_while_folder_is_some() {
+        // enter/escape/re-enter は folder_gen を進めるので、離脱前の token は
+        // 再突入で folder.is_some()==true に戻っても受理されない（staleness の
+        // defense-in-depth: is_some ガードと gen bump の両方が効いていることを固定）。
+        let mut s = SearchState::new();
+        s.set_results(vec![res("a")]);
+        let t1 = s.enter_folder("C:\\a".into());
+        s.on_escape(); // folder=None・gen 進む
+        let t2 = s.enter_folder("C:\\a".into()); // 再突入・folder=Some・gen 進む
+        assert!(!s.accept_folder_result(t1)); // 旧 token は folder Some でも拒否
+        assert!(s.accept_folder_result(t2)); // 最新 token は受理
+        assert_eq!(s.view_kind(), ViewKind::Folder);
+    }
 }

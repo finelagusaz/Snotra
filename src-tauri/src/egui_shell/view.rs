@@ -628,38 +628,79 @@ impl SearchWindowView {
     /// 1 行を描画。selected ならハイライト + scroll_to_me。返り値: single_clicked。
     /// ダブルクリックは扱わない（ユーザー決定: §4.8 の double-click=選択は as-built でも
     /// 到達不能ゆえ落とす。単クリック=起動のみ）。self を借りない関連関数（借用衝突回避）。
-    fn draw_result_row(ui: &mut egui::Ui, result: &SearchResult, selected: bool) -> bool {
+    /// 色/サイズは呼び出し側が都度導出する `RowTheme` から取る（アイコン slot・truncate は
+    /// Task 3/5 で足すため、本行では現行の `painter.text` 配置のまま色/サイズだけ差し替える）。
+    fn draw_result_row(
+        ui: &mut egui::Ui,
+        result: &SearchResult,
+        selected: bool,
+        theme: &RowTheme,
+    ) -> bool {
         let row_h = 30.0;
         let (rect, response) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), row_h),
             egui::Sense::click(),
         );
         if selected {
-            ui.painter().rect_filled(rect, 4.0, ui.visuals().selection.bg_fill);
+            ui.painter().rect_filled(rect, 4.0, theme.selection);
             response.scroll_to_me(Some(egui::Align::Center));
         }
         // アイコンスロット（SU4 が埋める）: 左に 24px 空ける。
         let text_x = rect.left() + 28.0;
-        let name_color = ui.visuals().text_color();
-        let path_color = ui.visuals().weak_text_color(); // 淡色パス
         let painter = ui.painter();
         painter.text(
             egui::pos2(text_x, rect.center().y),
             egui::Align2::LEFT_CENTER,
             &result.name,
-            egui::FontId::proportional(14.0),
-            name_color,
+            egui::FontId::proportional(theme.name_size),
+            theme.name_color,
         );
         // 名前の右にパスを淡色で（簡易・galley 省略は egui 既定に委ねる）。
         painter.text(
             egui::pos2(rect.right() - 8.0, rect.center().y),
             egui::Align2::RIGHT_CENTER,
             &result.path,
-            egui::FontId::proportional(11.0),
-            path_color,
+            egui::FontId::proportional(theme.path_size),
+            theme.path_color,
         );
         response.clicked()
     }
+
+    /// 実行中 config テーマ値から 1 結果行の描画テーマを都度導出する（キャッシュしない・
+    /// #576 と同設計）。config が読めなければ既定値へフォールバック。
+    fn row_theme(&self) -> RowTheme {
+        let (text, hint, sel, size) = self
+            .app_handle
+            .try_state::<crate::AppState>()
+            .map(|s| {
+                let engine = s.engine.lock().unwrap();
+                let v = &engine.config().visual;
+                (v.text_color.clone(), v.hint_text_color.clone(),
+                 v.selected_row_color.clone(), v.font_size)
+            })
+            .unwrap_or_else(|| ("#E0E0E0".into(), "#808080".into(), "#333333".into(), 15));
+        RowTheme {
+            name_color: hex_color(&text, egui::Color32::from_rgb(0xE0, 0xE0, 0xE0)),
+            path_color: hex_color(&hint, egui::Color32::from_rgb(0x80, 0x80, 0x80)),
+            selection: hex_color(&sel, egui::Color32::from_rgb(0x33, 0x33, 0x33)),
+            name_size: size as f32,
+            path_size: (size as f32 * 0.78).max(9.0), // WebView2 の name>path 比を踏襲
+        }
+    }
+}
+
+/// `#RRGGBB` 文字列を Color32 へ。失敗時は fallback（release は panic=abort ゆえ unwrap しない）。
+fn hex_color(s: &str, fallback: egui::Color32) -> egui::Color32 {
+    egui::Color32::from_hex(s).unwrap_or(fallback)
+}
+
+/// 1 結果行の描画テーマ（config テーマ値から都度導出・#576 と同設計でキャッシュしない）。
+struct RowTheme {
+    name_color: egui::Color32,
+    path_color: egui::Color32,
+    selection: egui::Color32,
+    name_size: f32,
+    path_size: f32,
 }
 
 impl EguiView for SearchWindowView {
@@ -686,6 +727,21 @@ impl EguiView for SearchWindowView {
         }
 
         let ctx = ui.ctx().clone();
+
+        // §11: パネル/入力欄/選択色を config テーマから（ハードコード撤廃・runtime CLEAR_COLOR は不変）。
+        if let Some(s) = self.app_handle.try_state::<crate::AppState>() {
+            let (bg, input_bg, sel) = {
+                let engine = s.engine.lock().unwrap();
+                let v = &engine.config().visual;
+                (v.background_color.clone(), v.input_background_color.clone(), v.selected_row_color.clone())
+            };
+            let mut visuals = ctx.style_of(ctx.theme()).visuals.clone();
+            visuals.panel_fill = hex_color(&bg, egui::Color32::from_rgb(0x28, 0x28, 0x28));
+            visuals.window_fill = visuals.panel_fill;
+            visuals.extreme_bg_color = hex_color(&input_bg, egui::Color32::from_rgb(0x38, 0x38, 0x38)); // TextEdit 背景
+            visuals.selection.bg_fill = hex_color(&sel, egui::Color32::from_rgb(0x33, 0x33, 0x33));
+            ctx.set_visuals(visuals);
+        }
 
         // ナビ結果を drain し、現行 folder_gen と一致する最新のものだけ適用する（stale 破棄・滞留 drain）。
         let mut latest: Option<FolderMsg> = None;
@@ -941,9 +997,10 @@ impl EguiView for SearchWindowView {
             // 借用衝突回避: results を clone してから描画（draw_result_row は関連関数で self 非借用）。
             let results = self.state.results().to_vec();
             let selected = self.state.selected();
+            let theme = self.row_theme();
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for (i, result) in results.iter().enumerate() {
-                    if Self::draw_result_row(ui, result, i == selected) {
+                    if Self::draw_result_row(ui, result, i == selected, &theme) {
                         clicked = Some(i); // シングルクリック（§4.8 単=起動）。double は扱わない
                     }
                 }
@@ -984,6 +1041,15 @@ impl EguiView for SearchWindowView {
 #[cfg(test)]
 mod tests {
     use super::font_definitions;
+
+    #[test]
+    fn hex_color_parses_and_falls_back() {
+        use super::hex_color;
+        assert_eq!(hex_color("#E0E0E0", egui::Color32::BLACK),
+            egui::Color32::from_rgb(0xE0, 0xE0, 0xE0));
+        // 不正文字列は fallback（release panic=abort ゆえ unwrap しない）。
+        assert_eq!(hex_color("not-a-color", egui::Color32::RED), egui::Color32::RED);
+    }
 
     #[test]
     fn font_definitions_fallback_is_jp_single_stack() {

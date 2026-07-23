@@ -36,13 +36,19 @@ pub(crate) struct EguiShellState {
 /// フラグ ON の窓生成。EguiRuntime を install し webview 無しの "main" 窓を生成して attach。setup 限定。
 /// 宣言窓の全プロパティ（52px 高は初期値〔SU3 で show 前折り畳み + 結果表示時に動的リサイズ・view.rs〕・width は config の window_width・skipTaskbar・
 /// alwaysOnTop・decorations:false・resizable:false・visible:false）を再現する（codex #11・(B)#1）。
+/// `background_color_hex`: config `visual.background_color`（`#RRGGBB`）。過渡/リサイズ下地の
+/// SU2 ハードコード 0x282828 を config へ差し替える（§11・#532 SU4 Task 2）。パース失敗時は
+/// 従来の 0x282828 へ fallback（`config_watcher::parse_hex_color` を再利用・二重実装回避）。
 pub(crate) fn create(
     app: &mut tauri::App,
     window_width: f64,
+    background_color_hex: &str,
 ) -> Result<(), snotra_egui_runtime::RuntimeError> {
     let runtime = EguiRuntime::new();
     runtime.install(app); // install(&self, &mut App<Wry>)（runtime.rs:77）
     let app_handle = app.handle().clone();
+    let bg_color = crate::config_watcher::parse_hex_color(background_color_hex)
+        .unwrap_or(tauri::window::Color(0x28, 0x28, 0x28, 0xff));
     let window = tauri::Window::builder(app, "main")
         .title("Snotra")
         .inner_size(window_width, 52.0) // 保存幅を尊重（codex #11）
@@ -51,8 +57,9 @@ pub(crate) fn create(
         .skip_taskbar(true) // 宣言窓 skipTaskbar:true の再現（(B)#1）
         .always_on_top(true) // 宣言窓 alwaysOnTop:true の再現（(B)#1）
         // 白フラッシュ回避: show 時、最初の softbuffer present 前にネイティブ背景ブラシが一瞬見える。
-        // softbuffer の CLEAR_COLOR（renderer.rs=0x282828）に合わせて暗色にし、白→暗の点滅を消す。
-        .background_color(tauri::window::Color(0x28, 0x28, 0x28, 0xff))
+        // softbuffer の CLEAR_COLOR（renderer.rs=0x282828）に合わせて config テーマ色にし、
+        // 白→暗の点滅を消す（既定は従来どおり 0x282828）。
+        .background_color(bg_color)
         .visible(false)
         .build()?; // tauri::Error → RuntimeError（#[from]・runtime.rs:46）
     runtime.attach(window, SearchWindowView::new(app_handle))

@@ -96,7 +96,9 @@ SU3（M1–M3・PR #630/#636/#637）で検索体験の機能中核が egui 経�
 - `draw_result_row` の `ui.visuals().text_color()` / `weak_text_color()` / `selection.bg_fill` を config 由来の値へ差し替える。
 - 窓生成 `egui_shell/mod.rs:55` の `.background_color(Color(0x28,0x28,0x28,0xff))` を config `background_color` から構築（過渡/リサイズ時の下地色）。SU2 が窓生成時に config を読める経路は既存（`main.rs:580` の `bg_color` が WebView2 経路で既に background_color を読む）。
 
-**フォントサイズ**: name = config `font_size`、path = 従属的に小さいサイズ（WebView2 `ResultRow` の CSS 比を踏襲・例 `font_size` から一定比）。現行ハードコード 14/11 を置換。TextEdit も font_size に追従。
+**フォントサイズ**: name = config `font_size`、path = 従属的に小さいサイズ（WebView2 `ResultRow` の CSS 比を踏襲・例 `font_size` から一定比）。現行ハードコード 14/11 を置換。~~TextEdit も font_size に追従。~~
+
+> **as-built descope（#643 へ・2026-07-23）**: 結果行の色・サイズは config から描き受け入れ条件 6 を満たすが、**TextEdit（入力欄）の font_size 追従と hint の `hint_text_color` 化は未実装**で残した——検索バー高さが固定 52px（`compute_window_height`）でスケールと相互作用し 3 行では済まないため（最終 whole-branch review 検出・ユーザー判断で follow-up 化）。**#643**（flip 前）で対応。path 色（`hint_text_color`）と結果行の他 4 色は実装済み。
 
 **font_family（fontdb・#579 不変条件の進化）**:
 

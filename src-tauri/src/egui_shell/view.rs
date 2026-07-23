@@ -761,7 +761,10 @@ impl SearchWindowView {
                         egui::Color32::WHITE,
                     );
                 }
-                None => draw_icon_fallback(ui, rect, result, theme),
+                // 通常の欠落のみ placeholder。エラー行（is_error＝フォルダ列挙失敗行等）には
+                // アイコン形の装飾を描かない（エラーメッセージに不要・whole-branch review Minor）。
+                None if !result.is_error => draw_icon_fallback(ui, rect, result, theme),
+                None => {}
             }
         }
         let text_x = rect.left() + slot;

@@ -11,10 +11,10 @@ mod layout;
 mod notify;
 // view.rs（driver）が起動 worker の in-flight 追跡・一時通知で消費する（#532 SU5 Task 4）。
 pub(crate) use notify::{LAUNCH_TIMEOUT, NOTICE_LAUNCH, NoticeSlot};
-// テーブル全 11 関数のうち hint 系 3 つ（search_hint/tool_select_hint/indexing_hint）は本タスクで
-// view.rs の update() に配線済み・消費される。launching/launch_failed/launch_timeout/update_* は
-// notify.rs 経由の起動・更新通知描画（Task 4/6）で消費予定のため、それまでは dead_code が正しく
-// 発生する（notify モジュールと同型の中間状態・#532 SU5）。
+// テーブル全 11 関数のうち hint 系 3 つ（search_hint/tool_select_hint/indexing_hint）・
+// launching/launch_failed/launch_timeout は view.rs の update() に配線済み・消費される。
+// update_* 5 関数は Task 7 で消費されるまで dead_code が正しく発生する
+// （notify モジュールと同型の中間状態・#532 SU5）。
 #[allow(dead_code)]
 pub(crate) mod strings;
 mod view;

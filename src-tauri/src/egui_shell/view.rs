@@ -1344,6 +1344,45 @@ impl EguiView for SearchWindowView {
             response.request_focus();
         }
 
+        // 一時 overlay（#532 SU5）: 「起動中…」/ 失敗・結果不明通知を検索バーに重ね描く。
+        // hint_text は空クエリ時のみ描かれるため使えない（launching/notice 中は query 非空・
+        // 状態機械レビュー）——painted label で TextEdit の rect を塗り潰して上書きする。
+        // 優先順は WebView2 SearchWindow.tsx の Switch 先頭一致 parity: indexing > 起動中 > 通知。
+        // indexing はここでは描かない（egui では空クエリ hint が担う・SU3 as-built）。indexing 中に
+        // launching/notice が重なる窓（instant は indexing 中も実行可）は indexing 表示を優先し
+        // overlay を抑止する（Switch 順 parity・parity レビュー要修正 3）。
+        let overlay_text: Option<String> = if self.indexing() && self.state.view_kind() == ViewKind::Results {
+            None // indexing が最優先（hint が見える・overlay は描かない）
+        } else if self.launching.is_some() {
+            Some(crate::egui_shell::ui_strings::launching(self.lang()).to_string())
+        } else {
+            self.notice.message().map(|m| m.to_string())
+        };
+        if let Some(text) = overlay_text {
+            let rect = response.rect;
+            let (input_bg, hint_color) = self
+                .app_handle
+                .try_state::<crate::AppState>()
+                .map(|s| {
+                    let engine = s.engine.lock().unwrap();
+                    let v = &engine.config().visual;
+                    (v.input_background_color.clone(), v.hint_text_color.clone())
+                })
+                .unwrap_or_else(|| ("#383838".into(), "#808080".into()));
+            ui.painter().rect_filled(
+                rect,
+                4.0,
+                hex_color(&input_bg, egui::Color32::from_rgb(0x38, 0x38, 0x38)),
+            );
+            ui.painter().text(
+                egui::pos2(rect.left() + 8.0, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                &text,
+                egui::FontId::proportional(15.0),
+                hex_color(&hint_color, egui::Color32::from_rgb(0x80, 0x80, 0x80)),
+            );
+        }
+
         // trailing debounce: 連打が収まって interval 経過したら最終クエリで検索し直す。
         if self.search_debounce.poll(self.last_input_at.elapsed()) {
             self.run_search();

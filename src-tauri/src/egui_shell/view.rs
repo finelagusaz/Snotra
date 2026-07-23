@@ -122,6 +122,11 @@ pub(crate) struct SearchWindowView {
     icon_textures: std::collections::HashMap<String, egui::TextureHandle>,
     /// 抽出済みだが PNG 化できなかった/存在しない path（再抽出しない・SU4）。
     icon_missing: std::collections::HashSet<String>,
+    /// worker へ渡し済みだが IconMsg 未 drain の path（in-flight）。request_icons_for_results の
+    /// wanted 収集から除外し、同一 settle に対する repaint 毎の重複 spawn を防ぐ（thread pileup 対策）。
+    /// drain 時（Loaded/Missing）に remove、reset_pending 消費時に clear。retain の対象外
+    /// （in-flight worker の結果が届くまで残す＝可視外へスクロールしても drain until remove）。
+    icon_pending: std::collections::HashSet<String>,
     icon_tx: Sender<crate::egui_shell::IconMsg>,
     icon_rx: Receiver<crate::egui_shell::IconMsg>,
     /// ナビゲーションでロードした (ctx, 全ソート済み) キャッシュ。打鍵フィルタの源（#532 SU3 M2）。
@@ -153,6 +158,7 @@ impl SearchWindowView {
             folder_rx,
             icon_textures: std::collections::HashMap::new(),
             icon_missing: std::collections::HashSet::new(),
+            icon_pending: std::collections::HashSet::new(),
             icon_tx,
             icon_rx,
             folder_cache: None,
@@ -578,8 +584,11 @@ impl SearchWindowView {
     }
 
     /// 現結果の未取得アイコンを worker に積む（settled 相当・描画前に呼ぶ）。連打中は
-    /// debounce armed のため呼ばない（呼び出し側で is_armed ガード）。
-    fn request_icons_for_results(&self, ctx: &egui::Context) {
+    /// debounce armed のため呼ばない（呼び出し側で is_armed ガード）。in-flight（icon_pending）
+    /// の path は除外し、抽出中の repaint（マウス移動・カーソル点滅等）による同一 path 集合への
+    /// 重複 spawn を防ぐ（thread pileup 対策）。spawn した path は icon_pending へ積み、
+    /// drain（Loaded/Missing）で remove する。wanted が空なら insert も spawn もしない。
+    fn request_icons_for_results(&mut self, ctx: &egui::Context) {
         if !self.show_icons() {
             return;
         }
@@ -587,10 +596,17 @@ impl SearchWindowView {
         for r in self.state.results() {
             if !r.is_error
                 && crate::egui_shell::needs_extraction(&r.path, &self.icon_textures, &self.icon_missing)
+                && !self.icon_pending.contains(&r.path)
                 && !wanted.contains(&r.path)
             {
                 wanted.push(r.path.clone());
             }
+        }
+        if wanted.is_empty() {
+            return;
+        }
+        for p in &wanted {
+            self.icon_pending.insert(p.clone());
         }
         self.spawn_icon_load(wanted, ctx.clone());
     }
@@ -871,6 +887,7 @@ impl EguiView for SearchWindowView {
             // hide 中の常駐テクスチャを残さない（メモリ境界・SU4 決定 A）。
             self.icon_textures.clear();
             self.icon_missing.clear();
+            self.icon_pending.clear(); // in-flight 追跡も show 直後に全 clear（thread pileup 対策）
         }
 
         let ctx = ui.ctx().clone();
@@ -922,11 +939,13 @@ impl EguiView for SearchWindowView {
         while let Ok(msg) = self.icon_rx.try_recv() {
             match msg {
                 crate::egui_shell::IconMsg::Loaded(path, img) => {
+                    self.icon_pending.remove(&path); // in-flight 解除（thread pileup 対策）
                     let handle = ctx.load_texture(&path, img, egui::TextureOptions::LINEAR);
                     self.icon_textures.insert(path, handle);
                     icon_arrived = true;
                 }
                 crate::egui_shell::IconMsg::Missing(path) => {
+                    self.icon_pending.remove(&path); // in-flight 解除（thread pileup 対策）
                     self.icon_missing.insert(path);
                 }
             }

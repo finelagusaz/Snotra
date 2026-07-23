@@ -22,29 +22,58 @@ use crate::egui_shell::{
 
 static JP_FONT_BYTES: OnceLock<Box<[u8]>> = OnceLock::new();
 
-fn japanese_font_definitions(bytes: &'static [u8]) -> egui::FontDefinitions {
+fn font_definitions(
+    jp_bytes: &'static [u8],
+    user: Option<(Vec<u8>, u32)>,
+) -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
-    let mut font = egui::FontData::from_static(bytes);
-    font.tweak = egui::FontTweak {
+    let mut jp = egui::FontData::from_static(jp_bytes);
+    jp.tweak = egui::FontTweak {
         scale: 1.0,
         y_offset_factor: 0.3,
         y_offset: 0.0,
         ..Default::default()
     };
-    fonts.font_data.insert("jp_font".to_owned(), font.into());
-    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-        // insert(0)＝先頭。jp_font を最優先にして単一フォント化する。push（末尾 fallback）だと
-        // Latin=egui 既定 / CJK=Yu Gothic に分離し、被覆 AA 無の softbuffer でベースラインずれ（#579/#399）。
-        fonts
-            .families
-            .entry(family)
-            .or_default()
-            .insert(0, "jp_font".to_owned());
+    fonts.font_data.insert("jp_font".to_owned(), jp.into());
+    match user {
+        Some((bytes, face_index)) => {
+            let mut uf = egui::FontData::from_owned(bytes);
+            uf.index = face_index; // TTC face 指定（settings font.rs:138 と同型）
+            fonts.font_data.insert("user_font".to_owned(), uf.into());
+            for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                // user_font 先頭（font_family 優先）+ jp_font fallback（CJK 被覆）= CSS スタック parity。
+                let list = fonts.families.entry(family).or_default();
+                list.insert(0, "jp_font".to_owned());
+                list.insert(0, "user_font".to_owned());
+            }
+        }
+        None => {
+            for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                // 解決失敗時は jp_font 単一・先頭（#579: push=末尾だとベースラインずれ再発）。
+                fonts.families.entry(family).or_default().insert(0, "jp_font".to_owned());
+            }
+        }
     }
     fonts
 }
 
-fn configure_japanese_font(context: &egui::Context) {
+/// config font_family をシステムから解決して (バイト列, face index) を返す。
+/// 見つからなければ None（呼び出し側が jp_font 単一へフォールバック）。Database は
+/// 解決後に drop（非常駐・列挙コストはフォント設定時の一度きり）。
+fn resolve_font_family(name: &str) -> Option<(Vec<u8>, u32)> {
+    let mut db = fontdb::Database::new();
+    db.load_system_fonts();
+    let query = fontdb::Query {
+        families: &[fontdb::Family::Name(name)],
+        weight: fontdb::Weight::NORMAL,
+        stretch: fontdb::Stretch::Normal,
+        style: fontdb::Style::Normal,
+    };
+    let id = db.query(&query)?;
+    db.with_face_data(id, |data, face_index| (data.to_vec(), face_index))
+}
+
+fn configure_japanese_font(context: &egui::Context, font_family: &str) {
     let candidates = [
         "C:/Windows/Fonts/YuGothM.ttc",
         "C:/Windows/Fonts/yugothic.ttf",
@@ -63,7 +92,8 @@ fn configure_japanese_font(context: &egui::Context) {
         // OnceLock の中身は以後不変ゆえ 'static として安全に借用できる。
         let static_bytes: &'static [u8] =
             unsafe { std::mem::transmute::<&[u8], &'static [u8]>(bytes) };
-        context.set_fonts(japanese_font_definitions(static_bytes));
+        let user = resolve_font_family(font_family);
+        context.set_fonts(font_definitions(static_bytes, user));
     }
 }
 
@@ -634,7 +664,12 @@ impl SearchWindowView {
 
 impl EguiView for SearchWindowView {
     fn setup(&mut self, context: &egui::Context) {
-        configure_japanese_font(context);
+        let font_family = self
+            .app_handle
+            .try_state::<crate::AppState>()
+            .map(|s| s.engine.lock().unwrap().config().visual.font_family.clone())
+            .unwrap_or_else(|| "Segoe UI".to_string());
+        configure_japanese_font(context, &font_family);
     }
 
     fn update(&mut self, ui: &mut egui::Ui, _frame: &mut RuntimeFrame) {
@@ -948,19 +983,32 @@ impl EguiView for SearchWindowView {
 
 #[cfg(test)]
 mod tests {
-    use super::japanese_font_definitions;
+    use super::font_definitions;
 
     #[test]
-    fn jp_font_is_registered_at_index_zero_for_both_families() {
+    fn font_definitions_fallback_is_jp_single_stack() {
+        // user=None（font_family 解決失敗）: jp_font 単一・両ファミリ index 0（#579 の元不変条件）。
         let dummy: &'static [u8] = &[0u8; 4];
-        let fonts = japanese_font_definitions(dummy);
+        let fonts = font_definitions(dummy, None);
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
             let list = fonts.families.get(&family).expect("family present");
-            assert_eq!(
-                list.first().map(String::as_str),
-                Some("jp_font"),
-                "jp_font must be index 0 for {family:?}（push=末尾だと #579 再発）"
-            );
+            assert_eq!(list.first().map(String::as_str), Some("jp_font"),
+                "解決失敗時は jp_font 単一・先頭（#579 再発防止）");
+        }
+    }
+
+    #[test]
+    fn font_definitions_honor_puts_user_first_jp_fallback() {
+        // user=Some（honor）: user_font 先頭・jp_font は fallback（index 1）＝WebView2 CSS スタック parity。
+        let dummy: &'static [u8] = &[0u8; 4];
+        let user = vec![0u8; 4];
+        let fonts = font_definitions(dummy, Some((user, 0)));
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            let list = fonts.families.get(&family).expect("family present");
+            assert_eq!(list.first().map(String::as_str), Some("user_font"),
+                "honor 時は user_font 先頭（font_family 優先）");
+            assert_eq!(list.get(1).map(String::as_str), Some("jp_font"),
+                "honor 時も jp_font は fallback として残す（CJK 被覆）");
         }
     }
 }

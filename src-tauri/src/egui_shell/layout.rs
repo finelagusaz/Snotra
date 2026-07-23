@@ -69,7 +69,6 @@ impl Debouncer {
     /// armed を解除し予約済み trailing を取り消す（SolidJS cancelDebounce parity・#532 SU3 M3）。
     /// instant/command モード突入時に driver が呼ぶ——モード外で予約された検索が
     /// モード中に遅延発火する経路を塞ぐ（run_search は再導出ゆえ実害は無いが無駄撃ちを消す）。
-    #[allow(dead_code)]
     pub fn cancel(&mut self) {
         self.armed = false;
     }

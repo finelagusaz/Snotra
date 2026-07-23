@@ -14,9 +14,7 @@ pub(crate) use search_state::{
 // 直接呼び出しは無いため re-export としては未使用（M3 の command/instant 分岐まで橋渡し）。
 #[allow(unused_imports)]
 pub(crate) use search_state::{interpret, is_instant_prefix};
-// SlashCmd/find_slash_command は driver（view.rs）の command 分岐配線待ち（#532 SU3 M3 Task 2）。
-// 純粋核のみ先行追加のため re-export は現時点で未使用。
-#[allow(unused_imports)]
+// SlashCmd/find_slash_command は driver（view.rs）が command 分岐・slash 実行で消費する（#532 SU3 M3 Task 2）。
 pub(crate) use search_state::{SlashCmd, find_slash_command};
 pub(crate) use layout::{Debouncer, HeightParams, compute_window_height};
 

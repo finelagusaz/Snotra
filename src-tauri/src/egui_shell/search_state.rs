@@ -85,8 +85,7 @@ pub enum EscapeOutcome {
 
 /// slash コマンドの写像（§15.2）。History(`/r`) だけは結果注入型（履歴を表示して留まる）で、
 /// driver が run_search の Command 分岐へ振る。他 3 つは fire-once の副作用型。
-/// driver（view.rs）の配線は #532 SU3 M3 Task 2 で行うため、現時点では未消費（純粋核先行追加）。
-#[allow(dead_code)]
+/// driver（view.rs）が消費する（#532 SU3 M3 Task 2）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlashCmd {
     History,
@@ -97,8 +96,7 @@ pub enum SlashCmd {
 
 /// trim 後の完全一致で slash コマンドを引く（§15.3 即実行の判定・commands.ts findCommand parity・
 /// 大文字小文字は区別する）。部分入力・引数付きは None（候補表示なし・§15.3）。
-/// driver の配線は #532 SU3 M3 Task 2 で行うため、現時点では未消費（純粋核先行追加）。
-#[allow(dead_code)]
+/// driver（view.rs）が消費する（#532 SU3 M3 Task 2）。
 pub fn find_slash_command(query: &str) -> Option<SlashCmd> {
     match query.trim() {
         "/r" => Some(SlashCmd::History),
@@ -154,9 +152,7 @@ impl SearchState {
     }
 
     /// 選択を先頭へ戻す。driver が打鍵（changed エッジ）ごとに呼ぶ（SolidJS の毎打鍵
-    /// setSelected(0) parity・#532 SU3 M3）。driver の配線は Task 2 で行うため、現時点では
-    /// テストからのみ呼ばれる（純粋核先行追加）。
-    #[allow(dead_code)]
+    /// setSelected(0) parity・#532 SU3 M3）。
     pub fn reset_selection(&mut self) {
         self.selected = 0;
     }

@@ -12,8 +12,8 @@ use snotra_egui_runtime::{EguiView, RuntimeFrame};
 use tauri::{Emitter, Manager};
 
 use crate::egui_shell::{
-    Debouncer, EscapeOutcome, HeightParams, QueryIntent, SearchState, ViewKind,
-    compute_parent_dir, compute_window_height, folder_load_pending,
+    Debouncer, EscapeOutcome, HeightParams, QueryIntent, SearchState, SlashCmd, ViewKind,
+    compute_parent_dir, compute_window_height, find_slash_command, folder_load_pending,
 };
 
 static JP_FONT_BYTES: OnceLock<Box<[u8]>> = OnceLock::new();
@@ -157,6 +157,107 @@ impl SearchWindowView {
             }
             // 起動成功時のみ hide（SU2 の hide 合流点へ・view から window を直接触らない）。
             self.emit_hide();
+        }
+    }
+
+    /// slash コマンドを実行する（§15.3 即実行・#532 SU3 M3）。SolidJS handleCommandQueryInput と
+    /// 同順: クエリ/結果クリア（clearCommandModeState 相当）→ action。`/r`（History）は結果注入型で
+    /// ここへ来ない（changed ハンドラが run_search へ振る）。失敗通知は建てない（trace のみ・#631 一本化）。
+    fn execute_slash(&mut self, cmd: SlashCmd) {
+        crate::trace_main("egui_slash", serde_json::json!({ "cmd": format!("{cmd:?}") }));
+        self.state.set_query(String::new());
+        self.state.set_results(Vec::new());
+        self.search_debounce.cancel();
+        let app = self.app_handle.clone();
+        match cmd {
+            SlashCmd::History => {} // 到達しない（呼び出し側 match が run_search へ振る）
+            SlashCmd::OpenSettings => {
+                // indexing 中の Err（ERR_INDEXING_IN_PROGRESS）は trace のみ（spec M3 実装確定・
+                // クエリクリア後は検索バーの indexing hint が可視＝degraded な理由提示）。
+                if let Err(e) = crate::commands::open_settings(app.state(), app.clone()) {
+                    crate::trace_main("egui_slash_error", serde_json::json!({ "cmd": "/o", "error": e }));
+                }
+            }
+            SlashCmd::RebuildIndex => {
+                // SolidJS /s parity: hide してから rebuild（hide は emit 合流・順序は視覚のみで
+                // rebuild は backend スレッド）。indexing 中の Err は意図的無音（#434 parity）。
+                self.emit_hide();
+                if let Err(e) = crate::commands::rebuild_index(app.state(), app.clone()) {
+                    crate::trace_main("egui_slash_error", serde_json::json!({ "cmd": "/s", "error": e }));
+                }
+            }
+            SlashCmd::Quit => {
+                // quit_app（commands/system.rs）と同一実体: exit-requested listener が
+                // history/icon flush → exit（main.rs）。egui 経路も同じ合流点を使う。
+                let _ = app.emit("exit-requested", ());
+            }
+        }
+    }
+
+    /// 選択中の instant コマンドを同期実行する（§19.6・#532 SU3 M3）。IPC の
+    /// execute_instant_command（spawn_blocking + 4s）と同じ手順（action 抽出をロック内・
+    /// clipboard 読みをロック外）を、イベントループで同期直呼びに畳む（spec M3 実装確定・
+    /// ブロックリスクは #631 スコープ）。instant は履歴を記録しない（IPC 経路 parity）。
+    /// 成功: クエリ/結果クリア + hide（§19.6）。失敗: 据え置き + trace（M1 起動失敗と同型）。
+    fn execute_instant_selected(&mut self, index: usize, instant_query: &str) {
+        use crate::commands::launch::{LaunchStatus, launch_exec_core, launch_item_core};
+        use snotra_core::config::InstantAction;
+        use snotra_core::instant::expand_instant_command;
+        let Some(sel) = self.state.results().get(index) else { return };
+        if sel.is_error {
+            return;
+        }
+        let name = sel.name.clone();
+        let Some(state) = self.app_handle.try_state::<crate::AppState>() else { return };
+        let Some(action) = ({
+            let engine = state.engine.lock().unwrap();
+            engine
+                .config()
+                .instant_commands
+                .iter()
+                .find(|c| c.name == name)
+                .map(|c| c.action.clone())
+        }) else {
+            return;
+        };
+        // clipboard 読み（Win32）はロック外（commands/instant.rs と同順）。
+        let clipboard = arboard::Clipboard::new()
+            .and_then(|mut cb| cb.get_text())
+            .unwrap_or_default();
+        let outcome = match action {
+            InstantAction::Url { url } => {
+                launch_item_core(&expand_instant_command(&url, instant_query, &clipboard))
+            }
+            InstantAction::Exec { exe, args } => {
+                launch_exec_core(&exe, &args, instant_query, &clipboard)
+            }
+            // load 後は移行済みで到達しないが、防御的に Url 扱い（IPC 経路と同じ）
+            InstantAction::Legacy { command } => {
+                launch_item_core(&expand_instant_command(&command, instant_query, &clipboard))
+            }
+        };
+        crate::trace_main(
+            "egui_instant",
+            serde_json::json!({ "name": name, "status": format!("{:?}", outcome.status) }),
+        );
+        if matches!(outcome.status, LaunchStatus::Ok) {
+            self.state.set_query(String::new());
+            self.state.set_results(Vec::new());
+            self.search_debounce.cancel();
+            self.emit_hide();
+        }
+    }
+
+    /// Enter/クリックの単一 dispatch（§19.6/§4.8・#532 SU3 M3）。instant モード中は選択コマンドを
+    /// 実行、それ以外（plain・/r 履歴・folder）は通常起動（activate）。行 index で参照
+    /// （パス文字列を使わない・ui ルール踏襲）。Shift+Enter も同じ Enter として届くため
+    /// §19.6「Shift+Enter=Enter」は追加コードなしで成立する（tool-selection は SU3.5）。
+    fn activate_or_execute(&mut self, index: usize) {
+        let prefix = self.instant_prefix();
+        if let QueryIntent::Instant { instant_query, .. } = self.state.interp(&prefix) {
+            self.execute_instant_selected(index, &instant_query);
+        } else {
+            self.activate(index);
         }
     }
 
@@ -309,9 +410,50 @@ impl SearchWindowView {
                         }; // lock 解放
                         self.state.set_results(results);
                     }
-                    // command/instant は M3。M1/M2 では結果を出さない（空維持）。
-                    _ => {
-                        self.state.set_results(Vec::new());
+                    QueryIntent::Instant { filter_name, .. } => {
+                        // §19.5: 前方一致フィルタ。毎打鍵同期（30ms debounce 撤廃・spec M3 実装確定）。
+                        // indexing を見ない（§19.7: instant はインデックス非依存ゆえ構築中でも使用可）。
+                        let rows = {
+                            let state = match self.app_handle.try_state::<crate::AppState>() {
+                                Some(s) => s,
+                                None => return,
+                            };
+                            let engine = state.engine.lock().unwrap();
+                            snotra_core::instant::filter_instant_commands(
+                                &engine.config().instant_commands,
+                                &filter_name,
+                            )
+                            .into_iter()
+                            .map(|c| {
+                                let dto = crate::commands::launch::InstantCommandDto::from(c);
+                                SearchResult {
+                                    name: dto.name,
+                                    // §19.5: description 設定時は優先、無ければ display（URL / exe args）
+                                    path: if dto.description.is_empty() { dto.display } else { dto.description },
+                                    is_folder: false,
+                                    is_error: false,
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                        }; // lock 解放
+                        self.state.set_results(rows);
+                    }
+                    QueryIntent::Command => {
+                        // §15.2 /r: 履歴を注入して留まる（冪等ゆえ trailing 再発火も無害）。
+                        // 他（部分入力・実行済み直後）は候補なしクリア（§15.3: command 中は検索しない）。
+                        if matches!(find_slash_command(self.state.query()), Some(SlashCmd::History)) {
+                            let rows = {
+                                let state = match self.app_handle.try_state::<crate::AppState>() {
+                                    Some(s) => s,
+                                    None => return,
+                                };
+                                let engine = state.engine.lock().unwrap();
+                                engine.recent_history()
+                            };
+                            self.state.set_results(rows);
+                        } else {
+                            self.state.set_results(Vec::new());
+                        }
                     }
                 }
             }
@@ -479,7 +621,10 @@ impl EguiView for SearchWindowView {
                     }
                 }
                 ViewKind::Results => {
-                    if let Some(sel) = self.state.results().get(self.state.selected())
+                    // instant/command 中は ← 無効（§19.7）。instant 行の path は description/display
+                    // ゆえ compute_parent_dir が偶然 Some を返して bogus folder 突入しうるのを塞ぐ。
+                    if matches!(self.state.interp(&self.instant_prefix()), QueryIntent::Plain)
+                        && let Some(sel) = self.state.results().get(self.state.selected())
                         && !sel.is_error
                         && let Some(parent) = compute_parent_dir(&sel.path)
                     {
@@ -492,11 +637,6 @@ impl EguiView for SearchWindowView {
                     }
                 }
             }
-        }
-
-        // Enter: 選択項目を起動（結果があるとき）。TextEdit の Enter より先に ctx で拾う。
-        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !self.state.results().is_empty() {
-            self.activate(self.state.selected());
         }
 
         // 検索入力欄。state.query を編集し、変化があれば debounce leading で同期検索。
@@ -526,12 +666,33 @@ impl EguiView for SearchWindowView {
                 self.run_search(); // folder は同期フィルタ（debounce 不要・I/O 無し）
             } else {
                 self.state.set_query(buf);
-                self.last_input_at = Instant::now();
-                if self.search_debounce.on_input() {
-                    self.run_search(); // leading
+                self.state.reset_selection(); // SolidJS parity: 毎打鍵 selected=0（M1 gap 是正）
+                let prefix = self.instant_prefix();
+                match self.state.interp(&prefix) {
+                    QueryIntent::Plain => {
+                        self.last_input_at = Instant::now();
+                        if self.search_debounce.on_input() {
+                            self.run_search(); // leading
+                        }
+                        ctx.request_repaint_after(self.search_debounce.interval());
+                    }
+                    QueryIntent::Instant { .. } => {
+                        // 同期直フィルタ（30ms debounce 撤廃・spec M3 実装確定）。
+                        // plain 由来の armed trailing は掃除（cancelDebounce parity）。
+                        self.search_debounce.cancel();
+                        self.run_search();
+                    }
+                    QueryIntent::Command => {
+                        // §15.3: debounce をキャンセルして即実行（changed エッジ＝query 変化時
+                        // のみゆえ immediate-mode でも fire-once）。/r と部分入力は run_search の
+                        // Command 分岐（冪等: /r=履歴注入・他=結果クリア）。
+                        self.search_debounce.cancel();
+                        match find_slash_command(self.state.query()) {
+                            Some(SlashCmd::History) | None => self.run_search(),
+                            Some(cmd) => self.execute_slash(cmd),
+                        }
+                    }
                 }
-                // trailing 発火のため interval 後に再描画を要求する（SU2 blur と同じ egui idiom）。
-                ctx.request_repaint_after(self.search_debounce.interval());
             }
         }
         // 窓に focus があるのに入力欄が focus を持たないなら移す（Alt+Q 表示直後に打てる）。
@@ -554,6 +715,14 @@ impl EguiView for SearchWindowView {
             ctx.request_repaint_after(remaining);
         }
 
+        // Enter: 選択項目を起動/実行。TextEdit の changed 処理より後で判定する——同一フレームに
+        // 入力確定（貼り付け・IME 確定）と Enter が入ったとき、旧 state の interp/選択で起動
+        // しないため（codex 発見 4・spec M3 実装確定）。egui の input はフレーム内で不変
+        // （読む順序は消費に影響しない）ため後置しても Enter は取りこぼさない。
+        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !self.state.results().is_empty() {
+            self.activate_or_execute(self.state.selected());
+        }
+
         // 結果リスト（shouldShowResults 相当。results 軸〔plain〕と folder 軸を描く。空なら描かない）。
         let show_results = !self.state.results().is_empty();
         let mut clicked: Option<usize> = None;
@@ -572,7 +741,7 @@ impl EguiView for SearchWindowView {
         // シングルクリック＝起動（§4.8 単=起動）。double-click は扱わない（ユーザー決定・
         // as-built でも double-click=選択は到達不能。SPEC §4.8 を as-built へ同期済み）。
         if let Some(i) = clicked {
-            self.activate(i);
+            self.activate_or_execute(i);
         }
 
         // 動的ウィンドウ高さ（§4.5/§4.7）。show_results 可否 × max_results から算出し set_size。

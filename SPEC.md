@@ -90,7 +90,7 @@
 - フォルダ -> フォルダアイコン
 - 表示/非表示は設定で切替可能
 - フロントエンドへの転送は `tauri::ipc::Response` でバイナリ IPC（`get_icons_batch`）し、パスごとに `URL.createObjectURL(new Blob([bytes], { type: "image/png" }))` で `<img src>` に渡す。バッチのワイヤ形式の正本は `src-tauri/src/icon.rs` の `encode_batch_binary` rustdoc
-- アイコン非表示設定時・アイコンデータなし時はフォールバック絵文字（📁📄）を表示
+- アイコン非表示設定時・アイコンデータなし時はフォールバック絵文字（📁📄）を表示（WebView2 経路）。egui 経路（softbuffer・#532 SU4）はアイコン非表示時はスロットを畳み、データなし時は単色の drawn placeholder を描く（softbuffer + 単一 TTF で色 emoji が描けない懸念のため。jp_font が 📁📄 を描けると視覚スモークで確認できたら emoji へ upgrade 検討）
 - インデックス再構築時はキャッシュをクリア（次回検索時に再抽出）
 - `icons.bin` は起動時に先読みせず、初回アイコン取得（`get_icons_batch`）時に遅延ロード
 - 件数上限を超えると挿入順で最古から退避（FIFO）し、常駐メモリと `icons.bin` の両方を頭打ちにする。退避は書き込み経路（挿入・ロード）でのみ行い、取得（`get`）はアクセス順を更新しない。上限は独立した設定キーを持たず、表示ワーキングセット `max(visible_rows, result_limit, recent_limit)`（アイコンを要求しうる結果リストの最大件数＝フロント先読み・`LruIconCache` サイズ）の定数倍（実装は ×5、既定 200×5=1000）として導出する。これにより「上限 ≥ ワーキングセット」を検証なしで構造的に保証し、単一の `get_icons_batch` が自己 evict することはなく、`result_limit` 変更時は上限も自動追従する

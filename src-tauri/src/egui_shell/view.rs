@@ -2,7 +2,8 @@
 //! SearchState（純粋核）を駆動する imperative shell: TextEdit/結果リスト描画・直 Engine 検索
 //! （debounce）・↑↓/→←ナビ・folder 展開（async ロード + staleness）・tool 選択（§18・
 //! Shift+Enter 入場/起動/Escape 復帰）・instant/slash コマンド・起動/実行 dispatch・動的高さ。
-//! font-first（jp_font を index 0）は SU1 申し送りの義務。
+//! フォント登録は #532 SU4 で 2 枝へ進化: config font_family 解決時は user_font 先頭 + jp_font
+//! fallback（WebView2 CSS スタック parity）、解決失敗時のみ jp_font 単一・index 0（#579 の元不変条件）。
 
 use std::sync::OnceLock;
 use std::sync::atomic::Ordering;

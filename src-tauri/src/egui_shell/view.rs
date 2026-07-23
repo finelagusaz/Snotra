@@ -428,6 +428,8 @@ impl SearchWindowView {
                             return;
                         }
                         let query = self.state.query().to_string();
+                        // 計測は lock 取得込み（フレームを塞ぐ全区間・#634 G-SYNC）。
+                        let search_started = std::time::Instant::now();
                         let results = {
                             let state = match self.app_handle.try_state::<crate::AppState>() {
                                 Some(s) => s,
@@ -436,6 +438,14 @@ impl SearchWindowView {
                             let mut engine = state.engine.lock().unwrap();
                             engine.search(&query)
                         }; // lock 解放
+                        crate::trace::trace(
+                            "egui_search:dispatch",
+                            serde_json::json!({
+                                "query_chars": query.chars().count(),
+                                "results": results.len(),
+                                "elapsed_us": search_started.elapsed().as_micros() as u64,
+                            }),
+                        );
                         self.state.set_results(results);
                     }
                     QueryIntent::Instant { filter_name, instant_query } => {

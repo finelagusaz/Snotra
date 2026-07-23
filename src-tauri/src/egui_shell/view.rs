@@ -541,6 +541,10 @@ impl SearchWindowView {
     }
 
     fn run_search_with(&mut self, prefix: &str) {
+        // 結果が総入れ替えされうる箇所ゆえ scroll gate をリセットする。selected index の
+        // みをキーにすると、手動スクロール後の打鍵で結果が置換されても selected=0 のままだと
+        // do_scroll=false になり新結果の選択行が画面外に留まる（#632 reviewer Important 3）。
+        self.last_scrolled_selected = None;
         // 来歴は行と一体で更新する（Instant 分岐だけが Some を立て直す・finding 0）。
         self.instant_rows_query = None;
         match self.state.view_kind() {
@@ -659,24 +663,43 @@ impl SearchWindowView {
         let right = rect.right() - 8.0;
         let cy = rect.center().y;
         // name galley を作り、実幅から path 開始 x を決める（重なり回避）。name が幅の 60%
-        // を超えたら name 側を省略幅にクリップ（egui の layout 側 wrap_width 指定）。
+        // を超えたら単一行 + 末尾 … 省略にクリップする。`Painter::layout`（simple 版）は
+        // wrap_width で折り返す（複数行化）だけなので、30px 固定行をはみ出して隣接行と
+        // 重なる（#632 reviewer Important 1）。`TextWrapping::truncate_at_width` で
+        // max_rows=1 + break_anywhere を明示し、折り返しではなく省略にする。
         let name_max = (right - text_x) * 0.6;
-        let name_galley = ui.painter().layout(
+        let mut name_job = egui::text::LayoutJob::single_section(
             result.name.clone(),
-            egui::FontId::proportional(theme.name_size),
-            theme.name_color,
-            name_max, // wrap width＝この幅で折り返し／省略の目安
+            egui::TextFormat {
+                font_id: egui::FontId::proportional(theme.name_size),
+                color: theme.name_color,
+                ..Default::default()
+            },
         );
+        name_job.wrap = egui::text::TextWrapping::truncate_at_width(name_max);
+        let name_galley = ui.painter().layout_job(name_job);
         ui.painter().galley(
             egui::pos2(text_x, cy - name_galley.size().y / 2.0),
             name_galley.clone(),
             theme.name_color,
         );
-        let path_x = text_x + name_galley.size().x.min(name_max) + 12.0;
+        // truncate_at_width 済みゆえ実幅は既に name_max 以下（.min は不要）。
+        let path_x = text_x + name_galley.size().x + 12.0;
         // path は右寄せ・path_x 以降に収まる幅で中間省略。egui galley は末尾省略のため、
-        // 中間省略は truncate_middle（純関数）で文字列側を縮めてから描く。
+        // 中間省略は truncate_middle（純関数）で文字列側を縮めてから描く。per-char 幅は
+        // 固定係数ではなく実 galley から実測する（CJK 過小評価対策・reviewer Important 2）。
         let path_avail = (right - path_x).max(0.0);
-        let path_str = truncate_middle(&result.path, path_avail, theme.path_size);
+        let path_full = ui.painter().layout_no_wrap(
+            result.path.clone(),
+            egui::FontId::proportional(theme.path_size),
+            theme.path_color,
+        );
+        let path_str = if path_full.size().x <= path_avail {
+            result.path.clone()
+        } else {
+            let per_char_px = path_full.size().x / (result.path.chars().count().max(1) as f32);
+            truncate_middle(&result.path, path_avail, per_char_px)
+        };
         ui.painter().text(
             egui::pos2(right, cy),
             egui::Align2::RIGHT_CENTER,
@@ -715,10 +738,12 @@ fn hex_color(s: &str, fallback: egui::Color32) -> egui::Color32 {
     egui::Color32::from_hex(s).unwrap_or(fallback)
 }
 
-/// path を avail_px におよそ収める中間省略（`C:\a\...\app.exe`）。概算幅（1 文字 ≈ size*0.55px）。
+/// path を avail_px におよそ収める中間省略（`C:\a\...\app.exe`）。`per_char_px` は呼び出し側が
+/// 実 galley（`Painter::layout_no_wrap`）から実測した平均文字幅を渡す（固定係数 size*0.55 は
+/// Latin 想定で CJK グリフ（~1.0-1.8×）を過小評価し under-truncate する・reviewer Important 2）。
 /// release は panic=abort ゆえ、`max_chars < 4` ガードと空文字境界で範囲外アクセスを避ける。
-fn truncate_middle(s: &str, avail_px: f32, size: f32) -> String {
-    let per = (size * 0.55).max(1.0);
+fn truncate_middle(s: &str, avail_px: f32, per_char_px: f32) -> String {
+    let per = per_char_px.max(1.0);
     let max_chars = (avail_px / per).floor() as usize;
     let chars: Vec<char> = s.chars().collect();
     if chars.len() <= max_chars || max_chars < 4 {
@@ -1112,6 +1137,9 @@ mod tests {
     #[test]
     fn truncate_middle_shortens_long_path() {
         use super::truncate_middle;
+        // 第3引数は per_char_px（実測 galley 幅から呼び出し側が導出する平均文字幅）。
+        // size*0.55 概算値だった旧シグネチャの名残で 11.0 を使うが、意味は「1 文字の
+        // 実測幅」に変わった（#632 reviewer Important 2）。
         let long = r"C:\Users\Eoh\AppData\Local\Programs\app\bin\tool.exe";
         let out = truncate_middle(long, 100.0, 11.0);
         assert!(out.chars().count() < long.chars().count(), "省略される");
@@ -1119,6 +1147,8 @@ mod tests {
         // 短い文字列・極小幅は原文（max_chars<4 ガード）。
         assert_eq!(truncate_middle("a.exe", 1.0, 11.0), "a.exe");
         assert_eq!(truncate_middle("short", 1000.0, 11.0), "short");
+        // 空文字列は範囲外アクセスなく原文（空文字）を返す（reviewer Minor）。
+        assert_eq!(truncate_middle("", 50.0, 11.0), "");
     }
 
     #[test]

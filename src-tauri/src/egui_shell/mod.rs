@@ -4,6 +4,11 @@ mod icon_textures;
 mod lifecycle;
 mod search_state;
 mod layout;
+// 純粋核のみ Task 1 で新設・driver 消費（NoticeSlot::set 等の呼び出し）は Task 4/6 で view.rs に
+// 配線する（#532 SU5）。それまでの中間状態では dead_code が正しく発生するため、この module 全体に
+// 一時的に allow する（`notify::` の各シンボル自体は brief どおり実装済みで未消費なだけ）。
+#[allow(dead_code)]
+mod notify;
 mod view;
 
 // view.rs の icon texture driver（worker spawn / load_texture 適用）が消費する（#532 SU4 Task 5）。

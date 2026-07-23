@@ -221,7 +221,13 @@ impl SearchWindowView {
     /// （M1 の event-loop 同期 `ShellExecuteW`-on-dead-UNC と同類のトレードオフ）。正常な dir の read_dir は
     /// ミリ秒オーダーで完了するため高速 →/← でも実質的な pileup は起きない。共有 tokio blocking pool
     /// （`spawn_blocking`）は採らない——dead UNC が pool を飽和させ icon/index 等の他利用者を巻き込むため。
-    fn spawn_folder_load(&self, token: u64, dir: String) {
+    ///
+    /// **egui_ctx（呼び出し側の `ui.ctx().clone()`）を送信毎に `request_repaint()` する**
+    /// （advisor 2026-07-23）: このランタイム（`snotra-egui-runtime`）はイベント駆動（`RedrawRequested`
+    /// 待ち・`repaint.rs`）であり、通常フレームは不要な再描画をしない。channel 送信だけでは次の
+    /// `update()` を誰も起こさないため、無関係な入力（マウス移動等）が来るまで到着済みの FolderMsg が
+    /// drain されず、フォルダ内容が画面に反映されない（→/← 直後に応答が無いように見える）。
+    fn spawn_folder_load(&self, token: u64, dir: String, egui_ctx: egui::Context) {
         let app = self.app_handle.clone();
         let tx = self.folder_tx.clone();
         std::thread::spawn(move || {
@@ -232,11 +238,13 @@ impl SearchWindowView {
                 Err(_) => {
                     let err = snotra_core::folder::error_result(std::path::Path::new(&dir));
                     let _ = tx.send(FolderMsg::Failed(token, err));
+                    egui_ctx.request_repaint();
                     return;
                 }
             };
             let sorted = { state.engine.lock().unwrap().finalize_folder_list_unlimited(entries) };
             let _ = tx.send(FolderMsg::Loaded(token, ctx, sorted));
+            egui_ctx.request_repaint();
         });
     }
 
@@ -424,7 +432,7 @@ impl EguiView for SearchWindowView {
             };
             self.folder_cache = None;
             self.folder_error = None;
-            self.spawn_folder_load(tok, dir);
+            self.spawn_folder_load(tok, dir, ctx.clone());
         }
         // ← : folder 中は親へ、通常検索中は選択項目の親を展開して folder 突入。
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
@@ -434,7 +442,7 @@ impl EguiView for SearchWindowView {
                         let tok = self.state.navigate_folder(parent.clone());
                         self.folder_cache = None;
                         self.folder_error = None;
-                        self.spawn_folder_load(tok, parent);
+                        self.spawn_folder_load(tok, parent, ctx.clone());
                     }
                 }
                 ViewKind::Results => {
@@ -445,7 +453,7 @@ impl EguiView for SearchWindowView {
                         let tok = self.state.enter_folder(parent.clone());
                         self.folder_cache = None;
                         self.folder_error = None;
-                        self.spawn_folder_load(tok, parent);
+                        self.spawn_folder_load(tok, parent, ctx.clone());
                     }
                 }
             }

@@ -157,6 +157,25 @@ export function selectChecks(rel) {
 }
 
 /**
+ * 新規ソースファイル（.rs / ui・e2e の TS）を Write したかの述語。真なら main() が
+ * 「モジュール索引の更新忘れ」を促す WARN を出す。
+ *
+ * 索引整合の判定そのもの（どのファイルが索引に在るべきか）は governance:check が SSOT。
+ * ここで再実装すると drift する（DRY）。ゆえに hook は**索引を検査せず**、「Write された
+ * ソースファイル」という低頻度シグナルで reminder を出すだけに留める（gate ではない）。
+ * Write に絞るのは、既存ファイルの Edit まで拾うと沈黙=合格を壊す頻度になるため——
+ * 新規ファイルは必ず Write で作られる（削除は Edit|Write matcher に届かず、CI の
+ * governance-check が索引の orphan を捕捉する残余）。#629/#630 で src-tauri/CLAUDE.md の
+ * モジュール索引更新漏れが同型再発したことへの、実装中の気づきを増やす手当て。
+ */
+export function isSourceFileWrite(rel, toolName) {
+  if (toolName !== "Write") return false;
+  const isRust = rel.endsWith(".rs");
+  const isUiOrE2eTs = (rel.startsWith("ui/src/") || rel.startsWith("e2e/")) && TS_LIKE.test(rel);
+  return isRust || isUiOrE2eTs;
+}
+
+/**
  * payload から「どのツリーの・どのファイルを・どう検査するか」を一度に決める。
  * main() もテストもここを通ることで、「抽出は正しいが選択へ渡す配線を間違えた」
  * という失敗をユニットテストが捕まえられる（§1 の回帰）。
@@ -381,6 +400,16 @@ function main() {
   const sections = [];
   const warnings = [];
   const errors = [];
+
+  // 新規ソースファイル Write は索引更新の reminder を出す（config-warn と同じインライン WARN・
+  // subprocess は走らせない）。判定は isSourceFileWrite（索引整合の SSOT は governance:check）。
+  if (isSourceFileWrite(rel, payload?.tool_name)) {
+    warnings.push(
+      `WARN: ソースファイル ${rel} を Write しました。新規追加なら該当 CLAUDE.md の` +
+        " モジュール構成節の索引にファイル名を足し、`npm run governance:check` で確認してください" +
+        "（#629/#630 で索引更新漏れが再発）。",
+    );
+  }
 
   for (const id of ids) {
     if (id === "config-warn") {

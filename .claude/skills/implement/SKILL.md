@@ -39,9 +39,10 @@ allowed-tools:
 
 ## Step 3 — 実装
 
-- `snotra-core` の純ロジック変更: 先に失敗する `#[cfg(test)]` テストを書き（Red）、次に実装して通す（Green）
+- **純粋核（crate を問わず egui/Win32 非依存でテスト可能なロジック）の追加・変更: 先に失敗する `#[cfg(test)]` テストを書き（Red）、次に実装して通す（Green）**。`snotra-core` に限らず `src-tauri` 等の純粋モジュール（`lifecycle.rs`・`search_state.rs` 等）も対象（`view`/Win32 依存はテスト前提にしない）
 - 計画に沿って変更を行う
-- 新しい純ロジックには `snotra-core` に `#[cfg(test)]` ユニットテストを追加する
+- 新しい純ロジックには、それが属する crate に `#[cfg(test)]` ユニットテストを追加する
+- **ソースファイル（`.rs`/`.ts`/`.tsx`）を新規追加・削除したら、同じ変更で該当 `CLAUDE.md` のモジュール構成節の索引（ファイル名）を更新する**（責務散文は各ファイルの `//!`/TSDoc が正本・#562。索引漏れは `governance:check` が捕捉するが PR まで漏らさない）
 - `SPEC.md` に記載された挙動に影響する変更の場合、`SPEC.md` も更新する（`AGENTS.md` の3層分担に従う）
 
 ## Step 4 — 検証（最大5サイクル）
@@ -49,6 +50,8 @@ allowed-tools:
 `docs/build-commands.md` の「変更後の検証チェックリスト」を SSOT として、変更したファイルの種類に該当するカテゴリ A〜E をすべて実行する。失敗した場合、修正して失敗したステップから再実行する。
 
 - カテゴリ A（Rust 変更）の clippy・`cargo test -p snotra-core` も SSOT 上「必須」（最初の失敗で停止するチェーン実行を推奨）
+- **ソースファイルを追加/削除した場合、カテゴリ F（`npm run governance:check`）も実行する**（モジュール索引・参照・スキル表の整合。#629/#630 で索引更新漏れが CI まで再発した）
+- 状態でゲートされた挙動（分岐表示・エラー経路・cold path）は build/test が通っても検証済みとは限らない——その状態を実際に発生させて確認する（`docs/development-principles.md` デバッグ節）
 - 具体的なコマンド文字列は `docs/build-commands.md` を参照（二重メンテを避けるためこの SKILL に書かない）
 
 5サイクル後もエラーが残る場合、中止して診断サマリーを書く:
@@ -60,16 +63,7 @@ allowed-tools:
 
 ### 5a. check スキルの実行
 
-変更内容に応じて該当する check スキルを実行する。発見事項があれば修正してから 5b に進む。
-
-| スキル | トリガー条件 |
-|---|---|
-| `/symmetric-check` | コードパスの変更・バグ修正（ほぼ常に該当） |
-| `/dry-check` | 関数を新規定義または変更した |
-| `/race-check` | async 関数を追加・変更した（diff に `async` が含まれる） |
-| `/cache-check` | キャッシュ・インクリメンタル再利用ロジックに触れた |
-| `/persistence-check` | シリアライズ・on-disk 形式（index.bin / config.toml / history / window.bin）を変更した |
-| `/state-check` | UI モード・状態遷移・ガード条件を追加・変更した |
+変更の種類に応じた check スキル（`/symmetric-check`・`/dry-check`・`/race-check`・`/cache-check`・`/persistence-check`・`/state-check`）を、**`AGENTS.md`「条件別チェック（トリガー → 参照先）」表に従って**実行する（トリガー→検査の写像の SSOT はその表。二重管理を避けるためここに再掲しない）。`/symmetric-check` はコードパス変更・バグ修正でほぼ常に該当。発見事項があれば修正してから 5b に進む。
 
 ### 5b. code-reviewer エージェント
 

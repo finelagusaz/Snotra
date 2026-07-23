@@ -26,7 +26,7 @@
 6. **遅着結果の無害化は per-launch channel で行う（世代 token 不要）**。`LaunchInFlight` が rx を所有し、`launching = None` で Receiver ごと drop → 遅着 send は Err で消える
 7. **launch 突入時に results をクリアする**（`withLaunchLifecycle` の await 前 `clearResults()` parity）。クエリは保持。launching 中は 52px collapse・↑↓/クリックは空リストゆえ自然に inert。失敗時は同期 `run_search` で再取得（`runRefresh` parity）+ 失敗通知
 8. **timeout（4 秒）は「失敗」でなく「結果不明」**として通知する。起動という副作用は取り消せない（abandoned が完走する `spawn_blocking` と同じ・parity）。timeout 後の再実行による二重起動可能性も WebView2 と同型の受容済みリスク
-9. **updater の保存順序は plan 工程で決める（未決・両案併記）**。→ B 節
+9. **updater の保存は plugin の `on_before_exit` hook で行う**（plan 工程の一次調査で決着。Windows では `downloadAndInstall` が復帰せず exit(0) するため）。→ B 節
 10. **egui 文言の言語は config `general.language` を起動時に一回読む**静的解決。hot-reload（`language-changed` 追従）は SU6（config 反映の本丸）へ送る
 
 ## A. 通知 primitive（`src-tauri/src/egui_shell/notify.rs` 新設・純粋核)
@@ -62,17 +62,16 @@
 
 - **check**: setup 時（egui フラグ経路）、`auto_update != disabled` なら tauri async runtime で `UpdaterExt::check()` を一回。結果を `UpdaterUiState` へ書き、**完了時に `ctx.request_repaint()` を呼ぶ**（可視中に完了した場合、次の操作まで toast が現れない穴を塞ぐ。スパイク実装と同じ）。check 失敗は trace のみ（`console.warn` parity）
 - **モード gating**: `full` のみ [今すぐ更新]、`check_only` は通知のみ、`disabled` は check しない（`MainApp.tsx` / スパイク parity）。config は起動時一回読み（hot-reload なし・parity）
-- **install**: [今すぐ更新] → `Available → Installing`（原子遷移）→（保存ステップ・下記未決）→ `downloadAndInstall`（async）→ 完了後は既存の exit 合流点（`exit-requested` → history/icon flush → exit(0)。`app.restart()` 不使用・§20.4）。失敗は `InstallFailed` 表示 + Installing 解除（`updaterError` parity）
+- **install**: [今すぐ更新] → `Available → Installing`（原子遷移）→ `downloadAndInstall`（async。内部で download → `on_before_exit`＝保存専用ルーチン → installer 起動 → exit(0)。成功時に制御は戻らない・`app.restart()` 不使用）。`Err` 復帰時のみ `InstallFailed` 表示 + Installing 解除（`updaterError` parity）。詳細は下記「決着済み: 保存順序」
 - **スパイクからの転用範囲は check + モード gating のみ**。スパイク（`snotra-egui-mvp`）は install を実装していない（check + download 検証のみ）。install → 保存 → exit の列は**新規・未検証**であり、実装時スモーク項目とする
 
-### 未決: 保存順序（plan 工程で決定）
+### 決着済み: 保存順序（plan 工程で一次調査・2026-07-24）
 
-ロードマップの「保存優先＝`downloadAndInstall` 復帰後に保存を置かない」（#580/#532 申し送り）と、現行コード + SPEC §20.4（保存は `downloadAndInstall` の**後**、quit_app 経由）は食い違う。決定は **tauri-plugin-updater の `downloadAndInstall` / NSIS の終了挙動を一次資料（context7 / plugin ソース）で調べてから**行う。
+一次資料（ローカル cargo registry の `tauri-plugin-updater-2.10.1/src/updater.rs`）で決着:
 
-- **案 1（前に足して後も残す）**: exit listener から**保存専用ルーチンを切り出し**（exit-requested の flush 列は保存 + exit(0) の不可分列であり、そのままでは保存のみに再利用できない——parity レビューで確認済み）、install 前に先行 flush。完了後は従来どおり exit 合流（再 flush）。二重 flush は `NEXT_SAVE_SEQUENCE` の単調ガードで実測安全（最新 seq 勝ち・テスト実証済み）。SPEC とは追加的ハードニングとして両立
-- **案 2（現行順のまま）**: `downloadAndInstall` → exit 合流のみ。新規切り出し不要で最小。installer が exit listener 完走前にプロセスを終えるリスクは現状同様に受容
-
-plugin が「`downloadAndInstall` 復帰前にプロセスを終わらせうる」なら案 1 必須、「復帰する（現行 WebView2 コードが `quitApp()` へ到達している）」なら案 2 で足りる。
+- **Windows では `downloadAndInstall` は復帰しない**。install は NSIS/MSI installer を起動した直後に `std::process::exit(0)` する（updater.rs:865）。ゆえに現行 WebView2 の「`downloadAndInstall` → `quitApp()`」の quitApp には**到達せず**、exit-requested の終了保存は update 経路では一度も走っていない（直近 threshold 保存以降の履歴を失う既存 gap。SPEC §20.4 step3 の記述は Windows 実挙動と乖離しており SPEC 同期で是正する）
+- **採用: `on_before_exit` hook による構造的保存**。plugin は「installer 実行と exit(0) の前」に呼ばれる `on_before_exit` hook を提供する（updater.rs:288-290）。exit listener から**保存専用ルーチンを切り出し**（exit-requested の flush 列は保存 + exit(0) の不可分列であり、そのままでは保存のみに再利用できない——parity レビューで確認済み）、これを `on_before_exit` に登録する。download 完了後・exit 直前という正しい位置で保存が**構造的に**保証され、「install 前に手動 flush」より時点も適切（download 中の履歴変化も拾う）。二重 flush（通常終了経路との共存）は `NEXT_SAVE_SEQUENCE` の単調ガードで実測安全（最新 seq 勝ち・テスト実証済み）
+- B 節の install フロー訂正: [今すぐ更新] → `Available → Installing`（原子遷移）→ `downloadAndInstall`（内部で download → `on_before_exit`＝保存 → installer 起動 → exit(0)）。**成功時に呼び出し側へ制御は戻らない**。`Err` 復帰時のみ `InstallFailed` 表示 + Installing 解除。exit 合流点の emit は不要（旧 B 節の「③ 完了後 exit 合流」は削除）
 
 ## C. #631 起動 async 化 + single-flight + flush-on-Enter
 

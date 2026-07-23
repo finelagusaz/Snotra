@@ -170,7 +170,10 @@ impl SearchWindowView {
         self.search_debounce.cancel();
         let app = self.app_handle.clone();
         match cmd {
-            SlashCmd::History => {} // 到達しない（呼び出し側 match が run_search へ振る）
+            // 到達しない: 呼び出し側（changed ハンドラ）が History を run_search へ振る。
+            // 将来 execute_slash の呼び出しサイトが増えて誤配線したとき dev/test で loud に
+            // 落とす（release は panic=abort ゆえ unreachable! は採らない）。
+            SlashCmd::History => debug_assert!(false, "History は execute_slash へ来ない（run_search が注入する）"),
             SlashCmd::OpenSettings => {
                 // indexing 中の Err（ERR_INDEXING_IN_PROGRESS）は trace のみ（spec M3 実装確定・
                 // クエリクリア後は検索バーの indexing hint が可視＝degraded な理由提示）。
@@ -621,10 +624,13 @@ impl EguiView for SearchWindowView {
                     }
                 }
                 ViewKind::Results => {
-                    // instant/command 中は ← 無効（§19.7）。instant 行の path は description/display
-                    // ゆえ compute_parent_dir が偶然 Some を返して bogus folder 突入しうるのを塞ぐ。
-                    if matches!(self.state.interp(&self.instant_prefix()), QueryIntent::Plain)
-                        && let Some(sel) = self.state.results().get(self.state.selected())
+                    // instant 中のみ ← 無効（§19.7・SolidJS allowsFolderNav parity）。instant 行の
+                    // path は description/display ゆえ compute_parent_dir が偶然 Some を返して bogus
+                    // folder 突入しうるのを塞ぐ。command（/r 履歴）中は許可＝→ と対称・SolidJS 一致。
+                    if !matches!(
+                        self.state.interp(&self.instant_prefix()),
+                        QueryIntent::Instant { .. }
+                    ) && let Some(sel) = self.state.results().get(self.state.selected())
                         && !sel.is_error
                         && let Some(parent) = compute_parent_dir(&sel.path)
                     {

@@ -2,7 +2,8 @@
 //! SearchState（純粋核）を駆動する imperative shell: TextEdit/結果リスト描画・直 Engine 検索
 //! （debounce）・↑↓/→←ナビ・folder 展開（async ロード + staleness）・tool 選択（§18・
 //! Shift+Enter 入場/起動/Escape 復帰）・instant/slash コマンド・起動/実行 dispatch・動的高さ。
-//! font-first（jp_font を index 0）は SU1 申し送りの義務。
+//! フォント登録は #532 SU4 で 2 枝へ進化: config font_family 解決時は user_font 先頭 + jp_font
+//! fallback（WebView2 CSS スタック parity）、解決失敗時のみ jp_font 単一・index 0（#579 の元不変条件）。
 
 use std::sync::OnceLock;
 use std::sync::atomic::Ordering;
@@ -22,29 +23,58 @@ use crate::egui_shell::{
 
 static JP_FONT_BYTES: OnceLock<Box<[u8]>> = OnceLock::new();
 
-fn japanese_font_definitions(bytes: &'static [u8]) -> egui::FontDefinitions {
+fn font_definitions(
+    jp_bytes: &'static [u8],
+    user: Option<(Vec<u8>, u32)>,
+) -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
-    let mut font = egui::FontData::from_static(bytes);
-    font.tweak = egui::FontTweak {
+    let mut jp = egui::FontData::from_static(jp_bytes);
+    jp.tweak = egui::FontTweak {
         scale: 1.0,
         y_offset_factor: 0.3,
         y_offset: 0.0,
         ..Default::default()
     };
-    fonts.font_data.insert("jp_font".to_owned(), font.into());
-    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-        // insert(0)＝先頭。jp_font を最優先にして単一フォント化する。push（末尾 fallback）だと
-        // Latin=egui 既定 / CJK=Yu Gothic に分離し、被覆 AA 無の softbuffer でベースラインずれ（#579/#399）。
-        fonts
-            .families
-            .entry(family)
-            .or_default()
-            .insert(0, "jp_font".to_owned());
+    fonts.font_data.insert("jp_font".to_owned(), jp.into());
+    match user {
+        Some((bytes, face_index)) => {
+            let mut uf = egui::FontData::from_owned(bytes);
+            uf.index = face_index; // TTC face 指定（settings font.rs:138 と同型）
+            fonts.font_data.insert("user_font".to_owned(), uf.into());
+            for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                // user_font 先頭（font_family 優先）+ jp_font fallback（CJK 被覆）= CSS スタック parity。
+                let list = fonts.families.entry(family).or_default();
+                list.insert(0, "jp_font".to_owned());
+                list.insert(0, "user_font".to_owned());
+            }
+        }
+        None => {
+            for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                // 解決失敗時は jp_font 単一・先頭（#579: push=末尾だとベースラインずれ再発）。
+                fonts.families.entry(family).or_default().insert(0, "jp_font".to_owned());
+            }
+        }
     }
     fonts
 }
 
-fn configure_japanese_font(context: &egui::Context) {
+/// config font_family をシステムから解決して (バイト列, face index) を返す。
+/// 見つからなければ None（呼び出し側が jp_font 単一へフォールバック）。Database は
+/// 解決後に drop（非常駐・列挙コストはフォント設定時の一度きり）。
+fn resolve_font_family(name: &str) -> Option<(Vec<u8>, u32)> {
+    let mut db = fontdb::Database::new();
+    db.load_system_fonts();
+    let query = fontdb::Query {
+        families: &[fontdb::Family::Name(name)],
+        weight: fontdb::Weight::NORMAL,
+        stretch: fontdb::Stretch::Normal,
+        style: fontdb::Style::Normal,
+    };
+    let id = db.query(&query)?;
+    db.with_face_data(id, |data, face_index| (data.to_vec(), face_index))
+}
+
+fn configure_japanese_font(context: &egui::Context, font_family: &str) {
     let candidates = [
         "C:/Windows/Fonts/YuGothM.ttc",
         "C:/Windows/Fonts/yugothic.ttf",
@@ -63,7 +93,8 @@ fn configure_japanese_font(context: &egui::Context) {
         // OnceLock の中身は以後不変ゆえ 'static として安全に借用できる。
         let static_bytes: &'static [u8] =
             unsafe { std::mem::transmute::<&[u8], &'static [u8]>(bytes) };
-        context.set_fonts(japanese_font_definitions(static_bytes));
+        let user = resolve_font_family(font_family);
+        context.set_fonts(font_definitions(static_bytes, user));
     }
 }
 
@@ -88,6 +119,17 @@ pub(crate) struct SearchWindowView {
     // emit dedup は共有 EguiShellState.hide_pending（show がクリア・codex #8）。view-local には持たない。
     folder_tx: Sender<FolderMsg>,
     folder_rx: Receiver<FolderMsg>,
+    /// path→TextureHandle（セッション内保持。可視集合に頭打ち・#532 SU4）。
+    icon_textures: std::collections::HashMap<String, egui::TextureHandle>,
+    /// 抽出済みだが PNG 化できなかった/存在しない path（再抽出しない・SU4）。
+    icon_missing: std::collections::HashSet<String>,
+    /// worker へ渡し済みだが IconMsg 未 drain の path（in-flight）。request_icons_for_results の
+    /// wanted 収集から除外し、同一 settle に対する repaint 毎の重複 spawn を防ぐ（thread pileup 対策）。
+    /// drain 時（Loaded/Missing）に remove、reset_pending 消費時に clear。retain の対象外
+    /// （in-flight worker の結果が届くまで残す＝可視外へスクロールしても drain until remove）。
+    icon_pending: std::collections::HashSet<String>,
+    icon_tx: Sender<crate::egui_shell::IconMsg>,
+    icon_rx: Receiver<crate::egui_shell::IconMsg>,
     /// ナビゲーションでロードした (ctx, 全ソート済み) キャッシュ。打鍵フィルタの源（#532 SU3 M2）。
     folder_cache: Option<(FolderListContext, Vec<SearchResult>)>,
     /// 列挙失敗時の単一エラー行（filter を無視して表示）。
@@ -97,11 +139,14 @@ pub(crate) struct SearchWindowView {
     /// 後に stale instant 行（path=description/display）が activate() へ流れて文字列をパスとして
     /// 起動・履歴汚染するのを防ぐ（/code-review #637 finding 0）。run_search が行と一体で更新する。
     instant_rows_query: Option<String>,
+    /// 直近に scroll_to_me した選択 index。選択変化時のみ scroll するための gate（#632）。
+    last_scrolled_selected: Option<usize>,
 }
 
 impl SearchWindowView {
     pub(crate) fn new(app_handle: tauri::AppHandle) -> Self {
         let (folder_tx, folder_rx) = channel();
+        let (icon_tx, icon_rx) = channel();
         Self {
             app_handle,
             was_focused: false,
@@ -112,9 +157,15 @@ impl SearchWindowView {
             last_set_height: 52.0,
             folder_tx,
             folder_rx,
+            icon_textures: std::collections::HashMap::new(),
+            icon_missing: std::collections::HashSet::new(),
+            icon_pending: std::collections::HashSet::new(),
+            icon_tx,
+            icon_rx,
             folder_cache: None,
             folder_error: None,
             instant_rows_query: None,
+            last_scrolled_selected: None,
         }
     }
 
@@ -193,6 +244,7 @@ impl SearchWindowView {
         self.state.set_results(Vec::new());
         self.search_debounce.cancel();
         self.instant_rows_query = None;
+        self.last_scrolled_selected = None; // 再表示後に確実に一度 scroll し直す（#632）
     }
 
     /// slash コマンドを実行する（§15.3 即実行・#532 SU3 M3）。SolidJS handleCommandQueryInput と
@@ -496,6 +548,70 @@ impl SearchWindowView {
         });
     }
 
+    /// 現結果集合の未取得アイコンを別スレッドで抽出し IconMsg を channel へ送る（SU4）。
+    /// folder の per-nav thread パターン踏襲。token は載せない（staleness は path キーで無害）。
+    /// show_icons=false 時は呼ばない（呼び出し側でガード）。
+    fn spawn_icon_load(&self, paths: Vec<String>, egui_ctx: egui::Context) {
+        if paths.is_empty() {
+            return;
+        }
+        let app = self.app_handle.clone();
+        let tx = self.icon_tx.clone();
+        std::thread::spawn(move || {
+            let (Some(state), Some(icons)) = (
+                app.try_state::<crate::AppState>(),
+                app.try_state::<crate::icon::IconCacheState>(),
+            ) else {
+                return;
+            };
+            let loaded = crate::commands::load_icon_pngs(&state, &icons, paths);
+            for (path, png) in loaded {
+                let msg = match png.and_then(|b| crate::egui_shell::png_to_color_image(&b)) {
+                    Some(img) => crate::egui_shell::IconMsg::Loaded(path, img),
+                    None => crate::egui_shell::IconMsg::Missing(path),
+                };
+                let _ = tx.send(msg);
+            }
+            egui_ctx.request_repaint(); // イベント駆動 runtime を起こす（folder と同理由）
+        });
+    }
+
+    /// show_icons を実行中 config から都度読む（キャッシュしない・#576 と同設計）。
+    fn show_icons(&self) -> bool {
+        self.app_handle
+            .try_state::<crate::AppState>()
+            .map(|s| s.engine.lock().unwrap().config().appearance.show_icons)
+            .unwrap_or(true)
+    }
+
+    /// 現結果の未取得アイコンを worker に積む（settled 相当・描画前に呼ぶ）。連打中は
+    /// debounce armed のため呼ばない（呼び出し側で is_armed ガード）。in-flight（icon_pending）
+    /// の path は除外し、抽出中の repaint（マウス移動・カーソル点滅等）による同一 path 集合への
+    /// 重複 spawn を防ぐ（thread pileup 対策）。spawn した path は icon_pending へ積み、
+    /// drain（Loaded/Missing）で remove する。wanted が空なら insert も spawn もしない。
+    fn request_icons_for_results(&mut self, ctx: &egui::Context) {
+        if !self.show_icons() {
+            return;
+        }
+        let mut wanted: Vec<String> = Vec::new();
+        for r in self.state.results() {
+            if !r.is_error
+                && crate::egui_shell::needs_extraction(&r.path, &self.icon_textures, &self.icon_missing)
+                && !self.icon_pending.contains(&r.path)
+                && !wanted.contains(&r.path)
+            {
+                wanted.push(r.path.clone());
+            }
+        }
+        if wanted.is_empty() {
+            return;
+        }
+        for p in &wanted {
+            self.icon_pending.insert(p.clone());
+        }
+        self.spawn_icon_load(wanted, ctx.clone());
+    }
+
     /// view_kind 先の同期 dispatch（#532 SU3 M2）。folder は cache/error を同期フィルタ、
     /// results は M1 の interp 分岐（plain 検索）。folder 打鍵が engine.search へ漏れない。
     /// prefix を内部で取得する薄いラッパー（trailing poll・folder drain 用）。changed エッジは
@@ -507,6 +623,10 @@ impl SearchWindowView {
     }
 
     fn run_search_with(&mut self, prefix: &str) {
+        // 結果が総入れ替えされうる箇所ゆえ scroll gate をリセットする。selected index の
+        // みをキーにすると、手動スクロール後の打鍵で結果が置換されても selected=0 のままだと
+        // do_scroll=false になり新結果の選択行が画面外に留まる（#632 reviewer Important 3）。
+        self.last_scrolled_selected = None;
         // 来歴は行と一体で更新する（Instant 分岐だけが Some を立て直す・finding 0）。
         self.instant_rows_query = None;
         match self.state.view_kind() {
@@ -595,46 +715,185 @@ impl SearchWindowView {
         }
     }
 
-    /// 1 行を描画。selected ならハイライト + scroll_to_me。返り値: single_clicked。
-    /// ダブルクリックは扱わない（ユーザー決定: §4.8 の double-click=選択は as-built でも
-    /// 到達不能ゆえ落とす。単クリック=起動のみ）。self を借りない関連関数（借用衝突回避）。
-    fn draw_result_row(ui: &mut egui::Ui, result: &SearchResult, selected: bool) -> bool {
+    /// 1 行を描画。selected かつ scroll なら scroll_to_me（選択変化時のみ・#632）。返り値:
+    /// single_clicked。ダブルクリックは扱わない（ユーザー決定: §4.8 の double-click=選択は
+    /// as-built でも到達不能ゆえ落とす。単クリック=起動のみ）。self を借りない関連関数
+    /// （借用衝突回避）。色/サイズは呼び出し側が都度導出する `RowTheme` から取る。
+    /// name/path の重なりは name galley の実幅を測って path 開始 x を決めることで防ぐ
+    /// （#632）。path は中間省略（`truncate_middle`）で利用可能幅に収める。
+    /// `show_icons=false` はアイコン slot 自体を畳む（skip でなくレイアウト変更・#532 SU4 Task 6）
+    /// ——テキストが左端 8px 寄せになり、slot 分の空白が残らない。
+    fn draw_result_row(
+        ui: &mut egui::Ui,
+        result: &SearchResult,
+        selected: bool,
+        scroll: bool,
+        icon: Option<&egui::TextureHandle>,
+        show_icons: bool,
+        theme: &RowTheme,
+    ) -> bool {
         let row_h = 30.0;
         let (rect, response) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), row_h),
             egui::Sense::click(),
         );
         if selected {
-            ui.painter().rect_filled(rect, 4.0, ui.visuals().selection.bg_fill);
-            response.scroll_to_me(Some(egui::Align::Center));
+            ui.painter().rect_filled(rect, 4.0, theme.selection);
+            if scroll {
+                response.scroll_to_me(Some(egui::Align::Center)); // 選択変化時のみ（#632）
+            }
         }
-        // アイコンスロット（SU4 が埋める）: 左に 24px 空ける。
-        let text_x = rect.left() + 28.0;
-        let name_color = ui.visuals().text_color();
-        let path_color = ui.visuals().weak_text_color(); // 淡色パス
-        let painter = ui.painter();
-        painter.text(
-            egui::pos2(text_x, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            &result.name,
-            egui::FontId::proportional(14.0),
-            name_color,
+        // アイコン: show_icons=true のときのみ左 28px slot の中央に 16x16 を描く。欠落
+        // （icon=None）は drawn placeholder（draw_icon_fallback）で埋める。
+        let slot = if show_icons { 28.0 } else { 8.0 };
+        if show_icons {
+            match icon {
+                Some(tex) => {
+                    let icon_size = 16.0;
+                    let icon_rect = egui::Rect::from_center_size(
+                        egui::pos2(rect.left() + 14.0, rect.center().y),
+                        egui::vec2(icon_size, icon_size),
+                    );
+                    ui.painter().image(
+                        tex.id(),
+                        icon_rect,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+                }
+                // 通常の欠落のみ placeholder。エラー行（is_error＝フォルダ列挙失敗行等）には
+                // アイコン形の装飾を描かない（エラーメッセージに不要・whole-branch review Minor）。
+                None if !result.is_error => draw_icon_fallback(ui, rect, result, theme),
+                None => {}
+            }
+        }
+        let text_x = rect.left() + slot;
+        let right = rect.right() - 8.0;
+        let cy = rect.center().y;
+        // name galley を作り、実幅から path 開始 x を決める（重なり回避）。name が幅の 60%
+        // を超えたら単一行 + 末尾 … 省略にクリップする。`Painter::layout`（simple 版）は
+        // wrap_width で折り返す（複数行化）だけなので、30px 固定行をはみ出して隣接行と
+        // 重なる（#632 reviewer Important 1）。`TextWrapping::truncate_at_width` で
+        // max_rows=1 + break_anywhere を明示し、折り返しではなく省略にする。
+        let name_max = (right - text_x) * 0.6;
+        let mut name_job = egui::text::LayoutJob::single_section(
+            result.name.clone(),
+            egui::TextFormat {
+                font_id: egui::FontId::proportional(theme.name_size),
+                color: theme.name_color,
+                ..Default::default()
+            },
         );
-        // 名前の右にパスを淡色で（簡易・galley 省略は egui 既定に委ねる）。
-        painter.text(
-            egui::pos2(rect.right() - 8.0, rect.center().y),
+        name_job.wrap = egui::text::TextWrapping::truncate_at_width(name_max);
+        let name_galley = ui.painter().layout_job(name_job);
+        ui.painter().galley(
+            egui::pos2(text_x, cy - name_galley.size().y / 2.0),
+            name_galley.clone(),
+            theme.name_color,
+        );
+        // truncate_at_width 済みゆえ実幅は既に name_max 以下（.min は不要）。
+        let path_x = text_x + name_galley.size().x + 12.0;
+        // path は右寄せ・path_x 以降に収まる幅で中間省略。egui galley は末尾省略のため、
+        // 中間省略は truncate_middle（純関数）で文字列側を縮めてから描く。per-char 幅は
+        // 固定係数ではなく実 galley から実測する（CJK 過小評価対策・reviewer Important 2）。
+        let path_avail = (right - path_x).max(0.0);
+        let path_full = ui.painter().layout_no_wrap(
+            result.path.clone(),
+            egui::FontId::proportional(theme.path_size),
+            theme.path_color,
+        );
+        let path_str = if path_full.size().x <= path_avail {
+            result.path.clone()
+        } else {
+            let per_char_px = path_full.size().x / (result.path.chars().count().max(1) as f32);
+            truncate_middle(&result.path, path_avail, per_char_px)
+        };
+        ui.painter().text(
+            egui::pos2(right, cy),
             egui::Align2::RIGHT_CENTER,
-            &result.path,
-            egui::FontId::proportional(11.0),
-            path_color,
+            &path_str,
+            egui::FontId::proportional(theme.path_size),
+            theme.path_color,
         );
         response.clicked()
     }
+
+    /// 実行中 config テーマ値から 1 結果行の描画テーマを都度導出する（キャッシュしない・
+    /// #576 と同設計）。config が読めなければ既定値へフォールバック。
+    fn row_theme(&self) -> RowTheme {
+        let (text, hint, sel, size) = self
+            .app_handle
+            .try_state::<crate::AppState>()
+            .map(|s| {
+                let engine = s.engine.lock().unwrap();
+                let v = &engine.config().visual;
+                (v.text_color.clone(), v.hint_text_color.clone(),
+                 v.selected_row_color.clone(), v.font_size)
+            })
+            .unwrap_or_else(|| ("#E0E0E0".into(), "#808080".into(), "#333333".into(), 15));
+        RowTheme {
+            name_color: hex_color(&text, egui::Color32::from_rgb(0xE0, 0xE0, 0xE0)),
+            path_color: hex_color(&hint, egui::Color32::from_rgb(0x80, 0x80, 0x80)),
+            selection: hex_color(&sel, egui::Color32::from_rgb(0x33, 0x33, 0x33)),
+            name_size: size as f32,
+            path_size: (size as f32 * 0.78).max(9.0), // WebView2 の name>path 比を踏襲
+        }
+    }
+}
+
+/// `#RRGGBB` 文字列を Color32 へ。失敗時は fallback（release は panic=abort ゆえ unwrap しない）。
+fn hex_color(s: &str, fallback: egui::Color32) -> egui::Color32 {
+    egui::Color32::from_hex(s).unwrap_or(fallback)
+}
+
+/// アイコン欠落時の fallback（drawn placeholder）。§3.4 は 📁📄 を規定するが softbuffer +
+/// 単一 TTF で色 emoji が描けない懸念があるため単色プレースホルダに倒す（視覚スモークは
+/// Task 7 に集約・コントローラ決定）。Task 7 の視覚スモークで jp_font が 📁📄 を描けると
+/// 確認できたら emoji へ upgrade を検討する。
+fn draw_icon_fallback(ui: &egui::Ui, rect: egui::Rect, result: &SearchResult, theme: &RowTheme) {
+    let center = egui::pos2(rect.left() + 14.0, rect.center().y);
+    let r = egui::Rect::from_center_size(center, egui::vec2(14.0, 14.0));
+    let col = if result.is_folder { theme.name_color } else { theme.path_color };
+    ui.painter().rect_filled(r, 2.0, col.linear_multiply(0.5));
+}
+
+/// path を avail_px におよそ収める中間省略（`C:\a\...\app.exe`）。`per_char_px` は呼び出し側が
+/// 実 galley（`Painter::layout_no_wrap`）から実測した平均文字幅を渡す（固定係数 size*0.55 は
+/// Latin 想定で CJK グリフ（~1.0-1.8×）を過小評価し under-truncate する・reviewer Important 2）。
+/// release は panic=abort ゆえ、`max_chars < 4` ガードと空文字境界で範囲外アクセスを避ける。
+fn truncate_middle(s: &str, avail_px: f32, per_char_px: f32) -> String {
+    let per = per_char_px.max(1.0);
+    let max_chars = (avail_px / per).floor() as usize;
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max_chars || max_chars < 4 {
+        return s.to_string();
+    }
+    let keep = max_chars - 1; // '…' の分
+    let head = keep / 2;
+    let tail = keep - head;
+    let mut out: String = chars[..head].iter().collect();
+    out.push('…');
+    out.extend(&chars[chars.len() - tail..]);
+    out
+}
+
+/// 1 結果行の描画テーマ（config テーマ値から都度導出・#576 と同設計でキャッシュしない）。
+struct RowTheme {
+    name_color: egui::Color32,
+    path_color: egui::Color32,
+    selection: egui::Color32,
+    name_size: f32,
+    path_size: f32,
 }
 
 impl EguiView for SearchWindowView {
     fn setup(&mut self, context: &egui::Context) {
-        configure_japanese_font(context);
+        let font_family = self
+            .app_handle
+            .try_state::<crate::AppState>()
+            .map(|s| s.engine.lock().unwrap().config().visual.font_family.clone())
+            .unwrap_or_else(|| "Segoe UI".to_string());
+        configure_japanese_font(context, &font_family);
     }
 
     fn update(&mut self, ui: &mut egui::Ui, _frame: &mut RuntimeFrame) {
@@ -648,9 +907,29 @@ impl EguiView for SearchWindowView {
             self.folder_error = None;
             self.instant_rows_query = None; // §19.7: resetForShow で instant モード解除
             self.search_debounce = Debouncer::new(Duration::from_millis(50), true);
+            self.last_scrolled_selected = None; // 再表示後に確実に一度 scroll し直す（#632）
+            // hide 中の常駐テクスチャを残さない（メモリ境界・SU4 決定 A）。
+            self.icon_textures.clear();
+            self.icon_missing.clear();
+            self.icon_pending.clear(); // in-flight 追跡も show 直後に全 clear（thread pileup 対策）
         }
 
         let ctx = ui.ctx().clone();
+
+        // §11: パネル/入力欄/選択色を config テーマから（ハードコード撤廃・runtime CLEAR_COLOR は不変）。
+        if let Some(s) = self.app_handle.try_state::<crate::AppState>() {
+            let (bg, input_bg, sel) = {
+                let engine = s.engine.lock().unwrap();
+                let v = &engine.config().visual;
+                (v.background_color.clone(), v.input_background_color.clone(), v.selected_row_color.clone())
+            };
+            let mut visuals = ctx.style_of(ctx.theme()).visuals.clone();
+            visuals.panel_fill = hex_color(&bg, egui::Color32::from_rgb(0x28, 0x28, 0x28));
+            visuals.window_fill = visuals.panel_fill;
+            visuals.extreme_bg_color = hex_color(&input_bg, egui::Color32::from_rgb(0x38, 0x38, 0x38)); // TextEdit 背景
+            visuals.selection.bg_fill = hex_color(&sel, egui::Color32::from_rgb(0x33, 0x33, 0x33));
+            ctx.set_visuals(visuals);
+        }
 
         // ナビ結果を drain し、現行 folder_gen と一致する最新のものだけ適用する（stale 破棄・滞留 drain）。
         let mut latest: Option<FolderMsg> = None;
@@ -675,6 +954,28 @@ impl EguiView for SearchWindowView {
             }
             self.run_search(); // 現 folder_filter で即再フィルタ（ロード中打鍵の消失防止）
             ctx.request_repaint(); // 到着フレームを描く
+        }
+
+        // アイコン drain（token 無し・path キーで適用）。到着したら load_texture して map へ。
+        // load_texture は egui context 必須ゆえ、ここ（メインスレッドの update()）でのみ呼ぶ
+        // ——worker（spawn_icon_load）は ColorImage を送るだけで load_texture は呼ばない。
+        let mut icon_arrived = false;
+        while let Ok(msg) = self.icon_rx.try_recv() {
+            match msg {
+                crate::egui_shell::IconMsg::Loaded(path, img) => {
+                    self.icon_pending.remove(&path); // in-flight 解除（thread pileup 対策）
+                    let handle = ctx.load_texture(&path, img, egui::TextureOptions::LINEAR);
+                    self.icon_textures.insert(path, handle);
+                    icon_arrived = true;
+                }
+                crate::egui_shell::IconMsg::Missing(path) => {
+                    self.icon_pending.remove(&path); // in-flight 解除（thread pileup 対策）
+                    self.icon_missing.insert(path);
+                }
+            }
+        }
+        if icon_arrived {
+            ctx.request_repaint();
         }
 
         let focused = ctx.input(|i| i.focused);
@@ -899,6 +1200,16 @@ impl EguiView for SearchWindowView {
             }
         }
 
+        // アイコン: 可視集合（現結果）に頭打ちして drop（メモリ境界・SU4 決定 A）。連打中
+        // （debounce armed）は積まない——結果が確定してから worker へ回す（呼び出し側ガード）。
+        let visible: std::collections::HashSet<String> =
+            self.state.results().iter().map(|r| r.path.clone()).collect();
+        crate::egui_shell::retain_visible(&mut self.icon_textures, &visible);
+        self.icon_missing.retain(|p| visible.contains(p));
+        if !self.search_debounce.is_armed() {
+            self.request_icons_for_results(&ctx);
+        }
+
         // 結果リスト（shouldShowResults 相当。results 軸〔plain〕と folder 軸を描く。空なら描かない）。
         let show_results = !self.state.results().is_empty();
         let mut clicked: Option<usize> = None;
@@ -906,13 +1217,30 @@ impl EguiView for SearchWindowView {
             // 借用衝突回避: results を clone してから描画（draw_result_row は関連関数で self 非借用）。
             let results = self.state.results().to_vec();
             let selected = self.state.selected();
+            let theme = self.row_theme();
+            let show_icons = self.show_icons(); // ループ前に 1 回読む（#532 SU4 Task 6）
+            // 選択変化時のみ scroll_to_me（毎フレーム発火だと手動スクロールを奪い返す・#632）。
+            let do_scroll = self.last_scrolled_selected != Some(selected);
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for (i, result) in results.iter().enumerate() {
-                    if Self::draw_result_row(ui, result, i == selected) {
+                    let sel = i == selected;
+                    let icon = self.icon_textures.get(&result.path);
+                    if Self::draw_result_row(
+                        ui,
+                        result,
+                        sel,
+                        sel && do_scroll,
+                        icon,
+                        show_icons,
+                        &theme,
+                    ) {
                         clicked = Some(i); // シングルクリック（§4.8 単=起動）。double は扱わない
                     }
                 }
             });
+            if do_scroll {
+                self.last_scrolled_selected = Some(selected);
+            }
         }
         // シングルクリック＝起動（§4.8 単=起動）。double-click は扱わない（ユーザー決定・
         // as-built でも double-click=選択は到達不能。SPEC §4.8 を as-built へ同期済み）。
@@ -948,19 +1276,58 @@ impl EguiView for SearchWindowView {
 
 #[cfg(test)]
 mod tests {
-    use super::japanese_font_definitions;
+    use super::font_definitions;
 
     #[test]
-    fn jp_font_is_registered_at_index_zero_for_both_families() {
+    fn hex_color_parses_and_falls_back() {
+        use super::hex_color;
+        assert_eq!(hex_color("#E0E0E0", egui::Color32::BLACK),
+            egui::Color32::from_rgb(0xE0, 0xE0, 0xE0));
+        // 不正文字列は fallback（release panic=abort ゆえ unwrap しない）。
+        assert_eq!(hex_color("not-a-color", egui::Color32::RED), egui::Color32::RED);
+    }
+
+    #[test]
+    fn font_definitions_fallback_is_jp_single_stack() {
+        // user=None（font_family 解決失敗）: jp_font 単一・両ファミリ index 0（#579 の元不変条件）。
         let dummy: &'static [u8] = &[0u8; 4];
-        let fonts = japanese_font_definitions(dummy);
+        let fonts = font_definitions(dummy, None);
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
             let list = fonts.families.get(&family).expect("family present");
-            assert_eq!(
-                list.first().map(String::as_str),
-                Some("jp_font"),
-                "jp_font must be index 0 for {family:?}（push=末尾だと #579 再発）"
-            );
+            assert_eq!(list.first().map(String::as_str), Some("jp_font"),
+                "解決失敗時は jp_font 単一・先頭（#579 再発防止）");
+        }
+    }
+
+    #[test]
+    fn truncate_middle_shortens_long_path() {
+        use super::truncate_middle;
+        // 第3引数は per_char_px（実測 galley 幅から呼び出し側が導出する平均文字幅）。
+        // size*0.55 概算値だった旧シグネチャの名残で 11.0 を使うが、意味は「1 文字の
+        // 実測幅」に変わった（#632 reviewer Important 2）。
+        let long = r"C:\Users\Eoh\AppData\Local\Programs\app\bin\tool.exe";
+        let out = truncate_middle(long, 100.0, 11.0);
+        assert!(out.chars().count() < long.chars().count(), "省略される");
+        assert!(out.contains('…'), "中間省略記号を含む");
+        // 短い文字列・極小幅は原文（max_chars<4 ガード）。
+        assert_eq!(truncate_middle("a.exe", 1.0, 11.0), "a.exe");
+        assert_eq!(truncate_middle("short", 1000.0, 11.0), "short");
+        // 空文字列は範囲外アクセスなく原文（空文字）を返す（reviewer Minor）。
+        assert_eq!(truncate_middle("", 50.0, 11.0), "");
+    }
+
+    #[test]
+    fn font_definitions_honor_puts_user_first_jp_fallback() {
+        // user=Some（honor）: user_font 先頭・jp_font は fallback（index 1）＝WebView2 CSS スタック parity。
+        let dummy: &'static [u8] = &[0u8; 4];
+        let user = vec![0u8; 4];
+        let fonts = font_definitions(dummy, Some((user, 0)));
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            let list = fonts.families.get(&family).expect("family present");
+            assert_eq!(list.first().map(String::as_str), Some("user_font"),
+                "honor 時は user_font 先頭（font_family 優先）");
+            assert_eq!(list.get(1).map(String::as_str), Some("jp_font"),
+                "honor 時も jp_font は fallback として残す（CJK 被覆）");
         }
     }
 }

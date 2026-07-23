@@ -578,6 +578,90 @@ mod tests {
         assert!(cache.get("b").is_some());
     }
 
+    /// #532 SU4 Probe 1: アイコン抽出（`SHGetFileInfoW`→BGRA→PNG 全区間）の実コスト計測。
+    /// `cargo test -p snotra --release icon_extract_cost_probe -- --ignored --nocapture` で実行。
+    /// 判定: 8 件バッチ warm 合計が 1 フレーム予算 16.7ms に十分収まるなら update() 内同期が
+    /// 候補（worker 不要）。dead-UNC 論（下記 note）はこの数字と別に評価する。
+    #[test]
+    #[ignore = "計測プローブ（実機・release 実行専用）"]
+    fn icon_extract_cost_probe() {
+        use std::time::Instant;
+
+        // 代表パス: exe（大半のヒット）・folder・doc・.lnk（対象解決）。
+        // SHGetFileInfoW はファイルパスにバックスラッシュを要求する（indexer 由来の実パスと同形）。
+        let exes = [
+            r"C:\Windows\System32\notepad.exe",
+            r"C:\Windows\System32\calc.exe",
+            r"C:\Windows\System32\cmd.exe",
+            r"C:\Windows\explorer.exe",
+        ];
+        let folders = [r"C:\Windows", r"C:\Windows\System32"];
+        let doc = r"C:\Windows\System32\drivers\etc\hosts";
+        let lnk = r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\AdGuard.lnk";
+
+        fn pctl(mut v: Vec<u128>, p: f64) -> u128 {
+            if v.is_empty() {
+                return 0;
+            }
+            v.sort_unstable();
+            let idx = ((v.len() as f64 - 1.0) * p).round() as usize;
+            v[idx]
+        }
+
+        // 型別 warm 計測: 各パスを 1 回 prime してから N 回測る（shell キャッシュ warm）。
+        let measure = |label: &str, paths: &[&str]| {
+            for p in paths {
+                let _ = extract_png(p); // prime（cold を除外）
+            }
+            let mut us = Vec::new();
+            for _ in 0..50 {
+                for p in paths {
+                    let t = Instant::now();
+                    let out = extract_png(p);
+                    us.push(t.elapsed().as_micros());
+                    assert!(out.is_some(), "{p} の抽出が None（テスト前提の実在パス）");
+                }
+            }
+            println!(
+                "[{label}] warm per-call  p50={}us p95={}us max={}us  (n={})",
+                pctl(us.clone(), 0.5),
+                pctl(us.clone(), 0.95),
+                pctl(us.clone(), 1.0),
+                us.len(),
+            );
+        };
+
+        measure("exe", &exes);
+        measure("folder", &folders);
+        measure("doc", &[doc]);
+        measure("lnk", &[lnk]);
+
+        // 1 結果集合ぶん（8 件）の cold バッチ: 各パス first-touch の合計（shell 未 prime）。
+        // 注: 一度触れた shell は同プロセス内でキャッシュされ真の cold は初回のみ。参考値。
+        let batch: Vec<&str> = exes
+            .iter()
+            .chain(folders.iter())
+            .chain([doc, lnk].iter())
+            .copied()
+            .collect();
+        // 別プロセス起動での「真 cold」は測れないため、ここでは warm バッチ合計を主指標にする。
+        let mut batch_us = Vec::new();
+        for _ in 0..30 {
+            let t = Instant::now();
+            for p in &batch {
+                let _ = extract_png(p);
+            }
+            batch_us.push(t.elapsed().as_micros());
+        }
+        println!(
+            "[batch x{}] warm total     p50={}us p95={}us max={}us  (frame budget=16700us)",
+            batch.len(),
+            pctl(batch_us.clone(), 0.5),
+            pctl(batch_us.clone(), 0.95),
+            pctl(batch_us.clone(), 1.0),
+        );
+    }
+
     #[test]
     fn wire_compat_hashmap_format_loads() {
         // 受け入れ条件7: 旧 v5 icons.bin（HashMap 書き込み）が IndexMap 化後も読める。

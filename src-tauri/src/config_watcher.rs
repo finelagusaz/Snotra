@@ -18,7 +18,9 @@ use crate::platform::{PlatformBridge, PlatformCommand};
 use crate::state::AppState;
 
 /// Parse a CSS hex color string (e.g. "#282828") into a Tauri `Color`.
-fn parse_hex_color(hex: &str) -> Option<Color> {
+/// `pub(crate)`: egui_shell::create（窓生成の background_color）が config テーマ値の
+/// hex→Color 変換に再利用する（§11・#532 SU4 Task 2・二重実装回避）。
+pub(crate) fn parse_hex_color(hex: &str) -> Option<Color> {
     let hex = hex.strip_prefix('#')?;
     if hex.len() != 6 {
         return None;

@@ -992,6 +992,29 @@ impl SearchWindowView {
             path_size: (size as f32 * 0.78).max(9.0), // WebView2 の name>path 比を踏襲
         }
     }
+
+    /// toast ボタンの処理（#532 SU5）。install は Update を原子取得して async へ（Task 8）。
+    fn handle_toast_action(&mut self, action: ToastAction) {
+        let Some(st) = self.app_handle.try_state::<crate::egui_shell::UpdaterUiState>() else {
+            return;
+        };
+        match action {
+            ToastAction::Dismiss => {
+                let _ = st.0.lock().unwrap().dismiss(); // Installing 中は拒否（false）＝無視
+            }
+            ToastAction::Install => {
+                let taken = st.0.lock().unwrap().try_begin_install();
+                if let Some(update) = taken {
+                    self.spawn_install(update);
+                } else {
+                    crate::trace_main("egui_update_install_noop", serde_json::json!({}));
+                }
+            }
+        }
+    }
+
+    /// install 実行（Task 8 で本実装。ここでは Task 7 のコンパイルを通すための暫定空実装）。
+    fn spawn_install(&self, _update: Box<tauri_plugin_updater::Update>) {}
 }
 
 /// `#RRGGBB` 文字列を Color32 へ。失敗時は fallback（release は panic=abort ゆえ unwrap しない）。
@@ -1037,6 +1060,49 @@ struct RowTheme {
     selection: egui::Color32,
     name_size: f32,
     path_size: f32,
+}
+
+/// toast ボタン種別（クリック結果を borrow 外で処理するための遅延 dispatch）。
+enum ToastAction {
+    Install,
+    Dismiss,
+}
+
+/// 右端から左へ詰める toast ボタン 1 個。クリックされたら true。disabled は淡色 + 無反応。
+///
+/// id は `label` から導出する（`ui.next_auto_id()` は非 mutating getter のため、同一フレーム内で
+/// 中間の widget allocation を挟まず2回呼ぶと dismiss/install 両ボタンが同一 id になり
+/// egui の id クラッシュ検知に触れる——ローカライズ済みラベルは Available 局面で互いに異なるため
+/// これを id salt に使う）。
+fn draw_toast_button(
+    ui: &mut egui::Ui,
+    cursor_x: &mut f32,
+    center_y: f32,
+    label: &str,
+    enabled: bool,
+    theme: &RowTheme,
+) -> bool {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_string(),
+        egui::FontId::proportional(12.0),
+        theme.name_color,
+    );
+    let w = galley.size().x + 16.0;
+    let rect = egui::Rect::from_min_max(
+        egui::pos2(*cursor_x - w, center_y - 11.0),
+        egui::pos2(*cursor_x, center_y + 11.0),
+    );
+    *cursor_x -= w + 8.0;
+    let id = ui.id().with(("toast_btn", label));
+    let response = ui.interact(rect, id, egui::Sense::click());
+    let color = if enabled { theme.name_color } else { theme.path_color };
+    ui.painter().rect_stroke(rect, 4.0, egui::Stroke::new(1.0, color), egui::StrokeKind::Inside);
+    ui.painter().galley(
+        egui::pos2(rect.left() + 8.0, center_y - galley.size().y / 2.0),
+        galley,
+        color,
+    );
+    enabled && response.clicked()
 }
 
 impl EguiView for SearchWindowView {
@@ -1389,6 +1455,57 @@ impl EguiView for SearchWindowView {
             );
         }
 
+        // updater toast（§20.3・#532 SU5）: 検索バー直下の 52px 行・モード非依存
+        //（folder/tool/instant 中も表示・状態機械レビュー項 1）。
+        let toast_row = self
+            .app_handle
+            .try_state::<crate::egui_shell::UpdaterUiState>()
+            .and_then(|st| st.0.lock().unwrap().toast());
+        let has_toast = toast_row.is_some();
+        let mut toast_action: Option<ToastAction> = None;
+        if let Some(row) = toast_row {
+            let l = self.lang();
+            let theme = self.row_theme();
+            let (rect, _) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), 52.0),
+                egui::Sense::hover(),
+            );
+            let line1 = match &row.kind {
+                crate::egui_shell::ToastKind::Available { version } => {
+                    crate::egui_shell::ui_strings::update_available(l, version)
+                }
+                crate::egui_shell::ToastKind::Installing => {
+                    crate::egui_shell::ui_strings::update_installing(l).to_string()
+                }
+                crate::egui_shell::ToastKind::Failed { .. } => {
+                    crate::egui_shell::ui_strings::update_failed(l).to_string()
+                }
+            };
+            ui.painter().text(
+                egui::pos2(rect.left() + 8.0, rect.top() + 13.0),
+                egui::Align2::LEFT_CENTER,
+                &line1,
+                egui::FontId::proportional(13.0),
+                theme.name_color,
+            );
+            // 行2: ボタン（右寄せ・installing 中は disabled・WebView2 UpdateToast parity）。
+            let mut cursor_x = rect.right() - 8.0;
+            let btn_y = rect.top() + 39.0;
+            let dismiss_label = crate::egui_shell::ui_strings::update_dismiss(l);
+            if draw_toast_button(ui, &mut cursor_x, btn_y, dismiss_label, row.buttons_enabled, &theme) {
+                toast_action = Some(ToastAction::Dismiss);
+            }
+            if row.show_install {
+                let install_label = crate::egui_shell::ui_strings::update_install_now(l);
+                if draw_toast_button(ui, &mut cursor_x, btn_y, install_label, row.buttons_enabled, &theme) {
+                    toast_action = Some(ToastAction::Install);
+                }
+            }
+        }
+        if let Some(action) = toast_action {
+            self.handle_toast_action(action);
+        }
+
         // trailing debounce: 連打が収まって interval 経過したら最終クエリで検索し直す。
         if self.search_debounce.poll(self.last_input_at.elapsed()) {
             self.run_search();
@@ -1490,7 +1607,7 @@ impl EguiView for SearchWindowView {
         let height = compute_window_height(&HeightParams {
             show_results,
             max_results: self.max_results(),
-            has_update_toast: false, // SU5
+            has_update_toast: has_toast,
             search_bar_height: 52.0,
             result_row_height: 30.0,
             results_padding: 8.0,

@@ -53,12 +53,16 @@ impl NoticeSlot {
 
 /// updater 持続レーンの局面。`U` は install に使う plugin `Update` の座席
 /// （`Available` だけが持つ＝「install できるのに Update が無い」状態を表現不能にする）。
+/// `update` は `Option<U>`: `SNOTRA_EGUI_FAKE_UPDATE` の fake 注入は実 `Update` を構築できない
+/// ため None を注入し、toast は表示するが install は常に no-op（Available のまま）にする。
 pub enum UpdaterPhase<U> {
     Idle,
     Checking,
     UpToDate,
-    Available { version: String, can_install: bool, update: U },
-    Installing { version: String },
+    Available { version: String, can_install: bool, update: Option<U> },
+    // version は toast() が Installing 局面で表示しない（update_installing は汎用文言・
+    // 消費経路なし）ため保持しない。Available→Installing 遷移時に破棄する。
+    Installing,
     InstallFailed { message: String },
 }
 
@@ -102,9 +106,14 @@ impl<U> UpdaterUi<U> {
         }
         let phase = std::mem::replace(&mut self.phase, UpdaterPhase::Idle);
         match phase {
-            UpdaterPhase::Available { version, can_install: true, update } => {
-                self.phase = UpdaterPhase::Installing { version };
+            UpdaterPhase::Available { can_install: true, update: Some(update), .. } => {
+                self.phase = UpdaterPhase::Installing;
                 Some(update)
+            }
+            UpdaterPhase::Available { version, can_install: true, update: None } => {
+                // fake 注入（SNOTRA_EGUI_FAKE_UPDATE・視覚スモーク専用）: install 実体なし。
+                self.phase = UpdaterPhase::Available { version, can_install: true, update: None };
+                None
             }
             other => {
                 self.phase = other; // 非該当は現状復帰（遷移しない）
@@ -115,7 +124,7 @@ impl<U> UpdaterUi<U> {
 
     /// [閉じる]: Installing 中は拒否（false）。それ以外は dismissed を立て true。
     pub fn dismiss(&mut self) -> bool {
-        if matches!(self.phase, UpdaterPhase::Installing { .. }) {
+        if matches!(self.phase, UpdaterPhase::Installing) {
             return false;
         }
         self.dismissed = true;
@@ -133,7 +142,7 @@ impl<U> UpdaterUi<U> {
                 show_install: *can_install,
                 buttons_enabled: true,
             }),
-            UpdaterPhase::Installing { .. } => Some(ToastRow {
+            UpdaterPhase::Installing => Some(ToastRow {
                 kind: ToastKind::Installing,
                 show_install: true, // disabled で描く（WebView2: installing 中もボタンは見える）
                 buttons_enabled: false,
@@ -192,19 +201,30 @@ mod tests {
     fn install_takes_update_only_from_available_with_can_install() {
         let mut u: UpdaterUi<&'static str> = UpdaterUi::default();
         assert!(u.try_begin_install().is_none(), "Idle からは install 不可");
-        u.phase = UpdaterPhase::Available { version: "1.2.3".into(), can_install: false, update: "U" };
+        u.phase =
+            UpdaterPhase::Available { version: "1.2.3".into(), can_install: false, update: Some("U") };
         assert!(u.try_begin_install().is_none(), "check_only は install 不可");
-        u.phase = UpdaterPhase::Available { version: "1.2.3".into(), can_install: true, update: "U" };
+        u.phase =
+            UpdaterPhase::Available { version: "1.2.3".into(), can_install: true, update: Some("U") };
         assert_eq!(u.try_begin_install(), Some("U"));
-        assert!(matches!(u.phase, UpdaterPhase::Installing { .. }), "原子遷移");
+        assert!(matches!(u.phase, UpdaterPhase::Installing), "原子遷移");
         assert!(u.try_begin_install().is_none(), "二重 install は拒否（Update は一度しか取れない）");
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn fake_available_without_update_cannot_install() {
+        let mut u: UpdaterUi<&'static str> = UpdaterUi::default();
+        u.phase = UpdaterPhase::Available { version: "9.9.9".into(), can_install: true, update: None };
+        assert!(u.try_begin_install().is_none());
+        assert!(matches!(u.phase, UpdaterPhase::Available { .. }), "fake は Available のまま");
     }
 
     #[test]
     #[allow(clippy::field_reassign_with_default)] // brief 記載の verbatim を保持（意味は不変）
     fn dismiss_is_refused_while_installing() {
         let mut u: UpdaterUi<()> = UpdaterUi::default();
-        u.phase = UpdaterPhase::Installing { version: "1.2.3".into() };
+        u.phase = UpdaterPhase::Installing;
         assert!(!u.dismiss(), "Installing 中の dismiss は拒否（WebView2 disabled parity）");
         assert!(u.toast().is_some(), "toast は出たまま");
         u.phase = UpdaterPhase::InstallFailed { message: "e".into() };
@@ -218,7 +238,8 @@ mod tests {
         assert!(u.toast().is_none(), "Idle は非表示");
         u.phase = UpdaterPhase::Checking;
         assert!(u.toast().is_none(), "Checking は非表示（WebView2 は check 中 UI 無し）");
-        u.phase = UpdaterPhase::Available { version: "2.0.0".into(), can_install: true, update: () };
+        u.phase =
+            UpdaterPhase::Available { version: "2.0.0".into(), can_install: true, update: Some(()) };
         let t = u.toast().unwrap();
         assert_eq!(t.kind, ToastKind::Available { version: "2.0.0".into() });
         assert!(t.show_install && t.buttons_enabled);

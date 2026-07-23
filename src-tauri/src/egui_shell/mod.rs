@@ -4,22 +4,12 @@ mod icon_textures;
 mod lifecycle;
 mod search_state;
 mod layout;
-// 一時通知（NoticeSlot/LAUNCH_TIMEOUT/NOTICE_LAUNCH）は Task 4 で view.rs が消費する。
-// UpdaterPhase/UpdaterUi は Task 6（本タスク）で phase 書き込み・Default が消費され始める。
-// toast()/try_begin_install/dismiss/ToastRow 系は Task 7 で消費されるまで未使用のため、
-// この module 全体には引き続き allow を残す。
-#[allow(dead_code)]
 mod notify;
 // view.rs（driver）が起動 worker の in-flight 追跡・一時通知で消費する（#532 SU5 Task 4）。
 pub(crate) use notify::{LAUNCH_TIMEOUT, NOTICE_LAUNCH, NoticeSlot};
 // mod.rs の spawn_update_check が phase 書き込みで、UpdaterUiState が Default で消費する
-// （#532 SU5 Task 6）。toast()/try_begin_install/dismiss/ToastRow 系は Task 7 で消費される。
-pub(crate) use notify::{UpdaterPhase, UpdaterUi};
-// テーブル全 11 関数のうち hint 系 3 つ（search_hint/tool_select_hint/indexing_hint）・
-// launching/launch_failed/launch_timeout は view.rs の update() に配線済み・消費される。
-// update_* 5 関数は Task 7 で消費されるまで dead_code が正しく発生する
-// （notify モジュールと同型の中間状態・#532 SU5）。
-#[allow(dead_code)]
+// （#532 SU5 Task 6）。toast 描画は view.rs が Task 7 で消費する。
+pub(crate) use notify::{ToastKind, UpdaterPhase, UpdaterUi};
 pub(crate) mod strings;
 mod view;
 
@@ -74,6 +64,18 @@ pub(crate) struct UpdaterUiState(pub(crate) Mutex<crate::egui_shell::UpdaterUi<B
 pub(crate) fn spawn_update_check(app: &tauri::AppHandle) {
     use snotra_core::config::AutoUpdateMode;
     use tauri_plugin_updater::UpdaterExt;
+    // 視覚スモーク専用（SNOTRA_DISABLE_SUSPEND と同じ E2E エスケープハッチの流儀）:
+    // 実 release への依存なしに toast を表示する。install 実体は無い（update: None）。
+    if crate::trace::env_flag("SNOTRA_EGUI_FAKE_UPDATE") {
+        if let Some(st) = app.try_state::<UpdaterUiState>() {
+            st.0.lock().unwrap().phase = crate::egui_shell::UpdaterPhase::Available {
+                version: "9.9.9".into(),
+                can_install: true,
+                update: None,
+            };
+        }
+        return;
+    }
     let mode = app
         .try_state::<crate::AppState>()
         .map(|s| s.engine.lock().unwrap().config().general.auto_update)
@@ -97,7 +99,7 @@ pub(crate) fn spawn_update_check(app: &tauri::AppHandle) {
                 Ok(Some(update)) => crate::egui_shell::UpdaterPhase::Available {
                     version: update.version.clone(),
                     can_install,
-                    update: Box::new(update),
+                    update: Some(Box::new(update)),
                 },
                 Ok(None) => crate::egui_shell::UpdaterPhase::UpToDate,
                 Err(e) => {

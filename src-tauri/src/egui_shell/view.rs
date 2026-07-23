@@ -498,6 +498,15 @@ impl SearchWindowView {
             .unwrap_or(8)
     }
 
+    /// UI 文言の言語（config general.language・起動時一回でなく都度読み——lock 1 回/フレームの
+    /// 既存ヘルパー群と同型。SU6 の hot-reload 拡張時もこの読み口のまま動く）。
+    fn lang(&self) -> snotra_core::config::Language {
+        self.app_handle
+            .try_state::<crate::AppState>()
+            .map(|s| s.engine.lock().unwrap().config().general.language)
+            .unwrap_or(snotra_core::config::Language::Ja)
+    }
+
     /// 現在のウィンドウ論理幅。set_size で高さのみ変え幅を維持するために読む
     /// （M1 では幅は不変・SU2 が config から生成済み）。読めなければ 600.0 にフォールバック。
     fn window_width(&self) -> f64 {
@@ -1093,14 +1102,15 @@ impl EguiView for SearchWindowView {
         // クリップされ不可視だった）。
         let in_tool = self.state.view_kind() == ViewKind::Tool;
         let in_folder = self.state.view_kind() == ViewKind::Folder;
+        let l = self.lang();
         let hint: &str = if in_tool {
             // SolidJS placeholder.tool_select parity（egui の hint は buf が空のときだけ描かれる＝
             // HTML placeholder と同条件。表示されるのは対象パスが区切り終端等でファイル名が空のとき）
-            "ツールを選択…"
+            crate::egui_shell::ui_strings::tool_select_hint(l)
         } else if !in_folder && self.indexing() && self.state.query().trim().is_empty() {
-            "インデックス構築中..."
+            crate::egui_shell::ui_strings::indexing_hint(l)
         } else {
-            "検索…"
+            crate::egui_shell::ui_strings::search_hint(l)
         };
         let mut buf = if in_tool {
             // §18.5: 対象の**ファイル名部分のみ**を表示——SolidJS inputValue は targetPath を

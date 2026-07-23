@@ -9,6 +9,12 @@ mod layout;
 // 一時的に allow する（`notify::` の各シンボル自体は brief どおり実装済みで未消費なだけ）。
 #[allow(dead_code)]
 mod notify;
+// テーブル全 11 関数のうち hint 系 3 つ（search_hint/tool_select_hint/indexing_hint）は本タスクで
+// view.rs の update() に配線済み・消費される。launching/launch_failed/launch_timeout/update_* は
+// notify.rs 経由の起動・更新通知描画（Task 4/6）で消費予定のため、それまでは dead_code が正しく
+// 発生する（notify モジュールと同型の中間状態・#532 SU5）。
+#[allow(dead_code)]
+pub(crate) mod strings;
 mod view;
 
 // view.rs の icon texture driver（worker spawn / load_texture 適用）が消費する（#532 SU4 Task 5）。
@@ -21,6 +27,8 @@ pub(crate) use search_state::{
 // SlashCmd/find_slash_command は driver（view.rs）が command 分岐・slash 実行で消費する（#532 SU3 M3 Task 2）。
 pub(crate) use search_state::{SlashCmd, find_slash_command};
 pub(crate) use layout::{Debouncer, HeightParams, compute_window_height};
+// view.rs が UI 文言（hint/overlay/toast）で消費する（#532 SU5・言語は起動時一回読み）。
+pub(crate) use strings as ui_strings;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;

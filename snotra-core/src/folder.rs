@@ -1,6 +1,6 @@
 //! フォルダ内エントリの列挙とフィルタ/ソート。
 //!
-//! ソート順は「`is_folder` 降順 → 展開回数降順 → 小文字名昇順」で先頭が最優先。
+//! ソート順は「`is_folder` 降順 → 展開回数降順 → 小文字名昇順 → path 昇順」で先頭が最優先。
 //! `select_nth_unstable_by`（O(N) 平均の top-k 選択）＋安定ソートの2段階で、入力順に
 //! 依存しない確定順序を保つ。
 
@@ -13,7 +13,7 @@ use crate::query::to_lower_folded;
 use crate::search::SearchMode;
 use crate::ui_types::SearchResult;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DirEntryData {
     path: String,
     name: String,
@@ -89,29 +89,26 @@ pub(crate) fn read_dir_entries(
     Ok(entries)
 }
 
-pub(crate) fn score_entries(
-    entries: Vec<DirEntryData>,
-    history: &HistoryStore,
-    max_results: usize,
-) -> Vec<SearchResult> {
-    let mut entries: Vec<SearchResult> = entries
-        .into_iter()
-        .map(|entry| SearchResult {
-            name: entry.name,
-            path: entry.path,
-            is_folder: entry.is_folder,
-            is_error: false,
-        })
-        .collect();
+/// フォルダ列挙の全順序比較器。is_folder 降順 → 展開回数降順 → 小文字名昇順 → path 昇順。
+/// path を最終 tie-breaker にして全順序化する（同名畳込みの tie が入力順へ漏れるのを防ぐ・#532 SU3 M2）。
+fn folder_entry_cmp(
+    entries: &[SearchResult],
+    a: &(String, u32, usize),
+    b: &(String, u32, usize),
+) -> std::cmp::Ordering {
+    let a_entry = &entries[a.2];
+    let b_entry = &entries[b.2];
+    b_entry
+        .is_folder
+        .cmp(&a_entry.is_folder)
+        .then_with(|| b.1.cmp(&a.1))
+        .then_with(|| a.0.cmp(&b.0))
+        .then_with(|| a_entry.path.cmp(&b_entry.path))
+}
 
-    // k=0 のガード（usize アンダーフロー防止）
-    let k = max_results.min(entries.len());
-    if k == 0 {
-        return vec![];
-    }
-
-    // Schwartzian transform: pre-compute sort keys to avoid repeated to_lowercase()
-    let mut keyed: Vec<(String, u32, usize)> = entries
+/// (lower_name, exp_count, index) の並び替えキーを構築する（score_entries / sort_entries_unlimited 共有）。
+fn build_sort_keys(entries: &[SearchResult], history: &HistoryStore) -> Vec<(String, u32, usize)> {
+    entries
         .iter()
         .enumerate()
         .map(|(i, e)| {
@@ -123,44 +120,78 @@ pub(crate) fn score_entries(
             };
             (lower, exp_count, i)
         })
-        .collect();
+        .collect()
+}
 
-    // ソート順: is_folder 降順 → exp_count 降順 → lower_name 昇順
-    // 先頭要素が最良（最優先）エントリになる。
-    let cmp = |a: &(String, u32, usize), b: &(String, u32, usize)| {
-        let a_entry = &entries[a.2];
-        let b_entry = &entries[b.2];
-        b_entry
-            .is_folder
-            .cmp(&a_entry.is_folder)
-            .then_with(|| b.1.cmp(&a.1))
-            .then_with(|| a.0.cmp(&b.0))
-    };
-
-    if k < keyed.len() {
-        // O(N) 平均の partial select で top-k を前方に集める。
-        // 全件ソート O(N log N) の代わりに O(N) + O(K log K) で済む。
-        keyed.select_nth_unstable_by(k - 1, &cmp);
-        keyed.truncate(k);
-    }
-
-    // top-k のみを安定ソートして確定順にする
-    keyed.sort_by(&cmp);
-
+/// keyed の順序で entries を並べ替えて所有権を取り出す（clone 回避の mem::replace・共有ヘルパー）。
+fn collect_by_keyed(mut entries: Vec<SearchResult>, keyed: Vec<(String, u32, usize)>) -> Vec<SearchResult> {
     keyed
         .into_iter()
         .map(|(_, _, i)| {
-            // Take ownership by swapping with a dummy to avoid clone
             std::mem::replace(
                 &mut entries[i],
-                SearchResult {
-                    name: String::new(),
-                    path: String::new(),
-                    is_folder: false,
-                    is_error: false,
-                },
+                SearchResult { name: String::new(), path: String::new(), is_folder: false, is_error: false },
             )
         })
+        .collect()
+}
+
+/// フィルタ非依存の確定順序で全件をソートする（上限なし）。egui folder 経路がナビゲーション時に
+/// 1 度だけ呼び、driver がキャッシュして打鍵ごとに `filter_sorted` で同期に絞る（#532 SU3 M2 B）。
+pub fn sort_entries_unlimited(
+    entries: Vec<DirEntryData>,
+    history: &HistoryStore,
+) -> Vec<SearchResult> {
+    let entries: Vec<SearchResult> = entries
+        .into_iter()
+        .map(|e| SearchResult { name: e.name, path: e.path, is_folder: e.is_folder, is_error: false })
+        .collect();
+    let mut keyed = build_sort_keys(&entries, history);
+    keyed.sort_by(|a, b| folder_entry_cmp(&entries, a, b));
+    collect_by_keyed(entries, keyed)
+}
+
+pub(crate) fn score_entries(
+    entries: Vec<DirEntryData>,
+    history: &HistoryStore,
+    max_results: usize,
+) -> Vec<SearchResult> {
+    let entries: Vec<SearchResult> = entries
+        .into_iter()
+        .map(|e| SearchResult { name: e.name, path: e.path, is_folder: e.is_folder, is_error: false })
+        .collect();
+    let k = max_results.min(entries.len());
+    if k == 0 {
+        return vec![];
+    }
+    let mut keyed = build_sort_keys(&entries, history);
+    if k < keyed.len() {
+        keyed.select_nth_unstable_by(k - 1, |a, b| folder_entry_cmp(&entries, a, b));
+        keyed.truncate(k);
+    }
+    keyed.sort_by(|a, b| folder_entry_cmp(&entries, a, b));
+    collect_by_keyed(entries, keyed)
+}
+
+/// キャッシュ済みソート結果を表示名でフィルタし先頭 max 件を返す（#532 SU3 M2・同期・I/O 無し）。
+/// egui folder 経路が打鍵ごとに呼ぶ。`read_dir_entries` のフィルタ段（`matches_filter`）を
+/// キャッシュへ再適用する。ソート順はキャッシュ時点で確定済みゆえ再スコア不要(表示名のみ・§6.3)。
+pub fn filter_sorted(
+    cached: &[SearchResult],
+    filter: &str,
+    mode: SearchMode,
+    max: usize,
+) -> Vec<SearchResult> {
+    if filter.is_empty() {
+        return cached.iter().take(max).cloned().collect();
+    }
+    let filter_lower = to_lower_folded(filter);
+    let mut matcher = Matcher::new(MatcherConfig::DEFAULT);
+    cached
+        .iter()
+        .filter(|r| matches_filter(&r.name, &filter_lower, mode, &mut matcher))
+        .take(max)
+        .cloned()
         .collect()
 }
 
@@ -586,6 +617,83 @@ mod tests {
         // 入力順によらず同一の top-3 が同一順で返る
         assert_eq!(names1, vec!["alpha", "bravo", "charlie"]);
         assert_eq!(names1, names2);
+    }
+
+    #[test]
+    fn folder_cmp_is_total_order_by_path() {
+        // "Café" と "Cafe" は to_lower_folded で同キー化する（アクセント畳込み）。
+        // path tie-breaker が無いと select_nth_unstable の境界順が read_dir 順へ漏れる。
+        // empty_history() は既存 folder テストのヘルパー（HistoryStore::load()）。
+        let hist = empty_history();
+        let entries = vec![
+            DirEntryData { path: "C:\\d\\Cafe".into(), name: "Cafe".into(), is_folder: false },
+            DirEntryData { path: "C:\\d\\Café".into(), name: "Café".into(), is_folder: false },
+        ];
+        let a = sort_entries_unlimited(entries.clone(), &hist);
+        // 入力順を反転しても同一順序（path 昇順で確定）
+        let mut rev = entries;
+        rev.reverse();
+        let b = sort_entries_unlimited(rev, &hist);
+        assert_eq!(a.iter().map(|r| r.path.clone()).collect::<Vec<_>>(),
+                   b.iter().map(|r| r.path.clone()).collect::<Vec<_>>());
+        // path 昇順: "Cafe" < "Café"（バイト比較）
+        assert_eq!(a[0].path, "C:\\d\\Cafe");
+    }
+
+    #[test]
+    fn unlimited_filter_take_equals_score_entries() {
+        // B の中核: 「全ソート→filter→take-k」＝「filter→score_entries→take-k」。
+        // 全順序化した今、両者は同一（境界の tie も path で確定）。
+        use crate::search::SearchMode;
+        let hist = empty_history();
+        let entries = vec![
+            DirEntryData { path: "C:\\d\\Café".into(), name: "Café".into(), is_folder: false },
+            DirEntryData { path: "C:\\d\\Cafe".into(), name: "Cafe".into(), is_folder: false },
+            DirEntryData { path: "C:\\d\\dog".into(), name: "dog".into(), is_folder: false },
+        ];
+        // 経路 A: 全ソート → filter("cafe") → take(1)
+        let sorted = sort_entries_unlimited(entries.clone(), &hist);
+        let a = filter_sorted(&sorted, "cafe", SearchMode::Substring, 1);
+        // 経路 B: read_dir 相当の filter を read_dir_entries で（filter="cafe"）→ score_entries(max=1)
+        let filtered = read_dir_entries_for_test(entries, "cafe", SearchMode::Substring);
+        let b = score_entries(filtered, &hist, 1);
+        assert_eq!(a.iter().map(|r| r.path.clone()).collect::<Vec<_>>(),
+                   b.iter().map(|r| r.path.clone()).collect::<Vec<_>>());
+    }
+
+    /// read_dir_entries のフィルタ段だけをテストで再現する（実 I/O を避ける）。matches_filter は
+    /// private だが同一モジュールから呼べる。
+    #[cfg(test)]
+    fn read_dir_entries_for_test(entries: Vec<DirEntryData>, filter: &str, mode: crate::search::SearchMode) -> Vec<DirEntryData> {
+        let filter_lower = to_lower_folded(filter);
+        let mut matcher = Matcher::new(MatcherConfig::DEFAULT);
+        entries
+            .into_iter()
+            .filter(|e| filter.is_empty() || matches_filter(&e.name, &filter_lower, mode, &mut matcher))
+            .collect()
+    }
+
+    #[test]
+    fn filter_sorted_empty_returns_prefix_up_to_max() {
+        use crate::search::SearchMode;
+        let cached = vec![sr("a"), sr("b"), sr("c")];
+        let out = filter_sorted(&cached, "", SearchMode::Substring, 2);
+        assert_eq!(out.iter().map(|r| r.name.clone()).collect::<Vec<_>>(), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn filter_sorted_matches_display_name_not_path() {
+        use crate::search::SearchMode;
+        // path に "zzz" を含むが name には含まない → filter "zzz" は 0 件（表示名のみ・§6.3）
+        let cached = vec![SearchResult { name: "report".into(), path: "C:\\zzz\\report".into(), is_folder: false, is_error: false }];
+        let out = filter_sorted(&cached, "zzz", SearchMode::Substring, 8);
+        assert!(out.is_empty());
+    }
+
+    // テスト用ヘルパー（既存 tests mod にあれば再利用）
+    #[cfg(test)]
+    fn sr(name: &str) -> SearchResult {
+        SearchResult { name: name.into(), path: format!("C:\\d\\{name}"), is_folder: false, is_error: false }
     }
 
     #[test]

@@ -3,13 +3,18 @@
 
 use std::sync::OnceLock;
 use std::sync::atomic::Ordering;
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
+use snotra_core::engine::FolderListContext;
 use snotra_core::ui_types::SearchResult;
 use snotra_egui_runtime::{EguiView, RuntimeFrame};
 use tauri::{Emitter, Manager};
 
-use crate::egui_shell::{Debouncer, HeightParams, QueryIntent, SearchState, compute_window_height};
+use crate::egui_shell::{
+    Debouncer, EscapeOutcome, HeightParams, QueryIntent, SearchState, ViewKind,
+    compute_parent_dir, compute_window_height, folder_load_pending,
+};
 
 static JP_FONT_BYTES: OnceLock<Box<[u8]>> = OnceLock::new();
 
@@ -58,6 +63,15 @@ fn configure_japanese_font(context: &egui::Context) {
     }
 }
 
+/// ナビゲーションスレッド → driver のメッセージ（#532 SU3 M2）。token（= folder_gen）で
+/// staleness 判定する（`SearchState::accept_folder_result`）。
+enum FolderMsg {
+    /// 列挙成功: (token, ctx, 全ソート済み full 集合)。driver がキャッシュし filter_sorted で絞る。
+    Loaded(u64, FolderListContext, Vec<SearchResult>),
+    /// 列挙失敗: (token, 単一エラー行)（§6.6・filter 非適用で常時表示）。
+    Failed(u64, Vec<SearchResult>),
+}
+
 pub(crate) struct SearchWindowView {
     app_handle: tauri::AppHandle,
     was_focused: bool,
@@ -68,10 +82,17 @@ pub(crate) struct SearchWindowView {
     last_set_height: f64,
     // query フィールドは SearchState.query へ移譲（削除）。
     // emit dedup は共有 EguiShellState.hide_pending（show がクリア・codex #8）。view-local には持たない。
+    folder_tx: Sender<FolderMsg>,
+    folder_rx: Receiver<FolderMsg>,
+    /// ナビゲーションでロードした (ctx, 全ソート済み) キャッシュ。打鍵フィルタの源（#532 SU3 M2）。
+    folder_cache: Option<(FolderListContext, Vec<SearchResult>)>,
+    /// 列挙失敗時の単一エラー行（filter を無視して表示）。
+    folder_error: Option<Vec<SearchResult>>,
 }
 
 impl SearchWindowView {
     pub(crate) fn new(app_handle: tauri::AppHandle) -> Self {
+        let (folder_tx, folder_rx) = channel();
         Self {
             app_handle,
             was_focused: false,
@@ -80,6 +101,10 @@ impl SearchWindowView {
             search_debounce: Debouncer::new(Duration::from_millis(50), true),
             last_input_at: Instant::now(),
             last_set_height: 52.0,
+            folder_tx,
+            folder_rx,
+            folder_cache: None,
+            folder_error: None,
         }
     }
 
@@ -101,9 +126,20 @@ impl SearchWindowView {
     /// index 行を起動し、成功なら履歴記録して hide 要求を出す（§4.8 シングルクリック / Enter）。
     /// launch_item_core は ShellExecuteW（エンジンロック外で呼ぶ・launch.rs:226）。成功時のみ
     /// record_and_save で履歴を記録（§4.3/§5 の query_count 加点・全起動経路の共通末尾を再利用）。
-    /// エラー行（is_error）は起動しない。
+    /// エラー行（is_error）／フォルダロード中（cache・error 未着で results が stale）は起動しない。
+    /// Enter とシングルクリックの単一チョークポイント（#636 レビュー Finding A）。
     fn activate(&self, index: usize) {
         use crate::commands::launch::{LaunchStatus, launch_item_core, record_and_save};
+        // フォルダ展開直後、列挙結果も失敗行も未着の窓では results が展開前ビューの残存物ゆえ、
+        // 誤項目の起動を止める（dead/slow UNC でロードが滞留すると Enter/クリックが前ビューの
+        // 項目を起動しうる・#636 レビュー Finding A）。判定核は search_state の純粋述語。
+        if folder_load_pending(
+            self.state.view_kind(),
+            self.folder_cache.is_some(),
+            self.folder_error.is_some(),
+        ) {
+            return;
+        }
         let Some(result) = self.state.results().get(index) else { return };
         if result.is_error {
             return;
@@ -121,6 +157,24 @@ impl SearchWindowView {
             }
             // 起動成功時のみ hide（SU2 の hide 合流点へ・view から window を直接触らない）。
             self.emit_hide();
+        }
+    }
+
+    /// フォルダ展開を履歴に記録する（IPC コマンド `commands/system.rs:record_folder_expansion`
+    /// と同一パターン：lock → record → prepare_history_save_if_dirty → drop → save。egui 経路は
+    /// IPC を経由しないため、driver（本 view）から SolidJS の `enterFolderExpansion` と同じ
+    /// 呼び出しサイトを再現する（→ 展開時のみ・← の折り返し `navigateFolderUp` 相当では呼ばない）。
+    fn record_folder_expansion(&self, dir: &str) {
+        let Some(state) = self.app_handle.try_state::<crate::AppState>() else {
+            return;
+        };
+        let save = {
+            let mut engine = state.engine.lock().unwrap();
+            engine.record_folder_expansion(dir);
+            engine.prepare_history_save_if_dirty(5)
+        };
+        if let Some(save) = save {
+            let _ = save.save();
         }
     }
 
@@ -186,31 +240,80 @@ impl SearchWindowView {
             .unwrap_or(600.0)
     }
 
-    /// 現在の state.query に対して検索を実行し結果を注入する（同期・直 Engine）。
-    /// results + plain + !indexing のみ通常検索。空クエリは結果クリア（§4.6）。
-    /// instant/command/folder は M3/M2 で分岐を足す（現状 plain のみ実装）。
-    fn run_search(&mut self) {
-        let prefix = self.instant_prefix();
-        match self.state.interp(&prefix) {
-            QueryIntent::Plain => {
-                if self.state.query().trim().is_empty() || self.indexing() {
-                    self.state.set_results(Vec::new());
+    /// dir を別スレッドで全列挙・全ソートし FolderMsg を channel へ送る（token 付き）。
+    /// capture（ロック内）→ read_dir_entries（ロック外 I/O・dead UNC でも event-loop を止めない）
+    /// → finalize_folder_list_unlimited（ロック内・history でソート）の 3 段（engine.rs のロック最小化パターン）。
+    ///
+    /// **per-nav `std::thread::spawn` は意図的な選択**（advisor 2026-07-23）: 単一 worker だと 1 つの
+    /// hung `read_dir`（dead UNC）が後続の全フォルダロードを塞ぐ。per-nav spawn は hang を 1 スレッドに
+    /// 隔離し、正常な dir へのナビは動き続ける。dead UNC でのスレッドリークは best-effort として受容する
+    /// （M1 の event-loop 同期 `ShellExecuteW`-on-dead-UNC と同類のトレードオフ）。正常な dir の read_dir は
+    /// ミリ秒オーダーで完了するため高速 →/← でも実質的な pileup は起きない。共有 tokio blocking pool
+    /// （`spawn_blocking`）は採らない——dead UNC が pool を飽和させ icon/index 等の他利用者を巻き込むため。
+    ///
+    /// **egui_ctx（呼び出し側の `ui.ctx().clone()`）を送信毎に `request_repaint()` する**
+    /// （advisor 2026-07-23）: このランタイム（`snotra-egui-runtime`）はイベント駆動（`RedrawRequested`
+    /// 待ち・`repaint.rs`）であり、通常フレームは不要な再描画をしない。channel 送信だけでは次の
+    /// `update()` を誰も起こさないため、無関係な入力（マウス移動等）が来るまで到着済みの FolderMsg が
+    /// drain されず、フォルダ内容が画面に反映されない（→/← 直後に応答が無いように見える）。
+    fn spawn_folder_load(&self, token: u64, dir: String, egui_ctx: egui::Context) {
+        let app = self.app_handle.clone();
+        let tx = self.folder_tx.clone();
+        std::thread::spawn(move || {
+            let Some(state) = app.try_state::<crate::AppState>() else { return };
+            let ctx = { state.engine.lock().unwrap().capture_folder_list_context() };
+            let entries = match ctx.read_dir_entries(std::path::Path::new(&dir), "") {
+                Ok(e) => e,
+                Err(_) => {
+                    let err = snotra_core::folder::error_result(std::path::Path::new(&dir));
+                    let _ = tx.send(FolderMsg::Failed(token, err));
+                    egui_ctx.request_repaint();
                     return;
                 }
-                let query = self.state.query().to_string();
-                let results = {
-                    let state = match self.app_handle.try_state::<crate::AppState>() {
-                        Some(s) => s,
-                        None => return,
-                    };
-                    let mut engine = state.engine.lock().unwrap();
-                    engine.search(&query)
-                }; // lock 解放
-                self.state.set_results(results);
+            };
+            let sorted = { state.engine.lock().unwrap().finalize_folder_list_unlimited(entries) };
+            let _ = tx.send(FolderMsg::Loaded(token, ctx, sorted));
+            egui_ctx.request_repaint();
+        });
+    }
+
+    /// view_kind 先の同期 dispatch（#532 SU3 M2）。folder は cache/error を同期フィルタ、
+    /// results は M1 の interp 分岐（plain 検索）。folder 打鍵が engine.search へ漏れない。
+    fn run_search(&mut self) {
+        match self.state.view_kind() {
+            ViewKind::Folder => {
+                if let Some(err) = &self.folder_error {
+                    self.state.set_results(err.clone()); // 列挙失敗行（filter 非適用）
+                } else if let Some((ctx, sorted)) = &self.folder_cache {
+                    let filtered = ctx.filter_sorted(sorted, self.state.folder_filter());
+                    self.state.set_results(filtered);
+                }
+                // cache 未着（ロード中）は前フレーム結果を保持（フリット無し・set しない）
             }
-            // command/instant は M2/M3。M1 では結果を出さない（空維持）。
-            _ => {
-                self.state.set_results(Vec::new());
+            ViewKind::Results => {
+                let prefix = self.instant_prefix();
+                match self.state.interp(&prefix) {
+                    QueryIntent::Plain => {
+                        if self.state.query().trim().is_empty() || self.indexing() {
+                            self.state.set_results(Vec::new());
+                            return;
+                        }
+                        let query = self.state.query().to_string();
+                        let results = {
+                            let state = match self.app_handle.try_state::<crate::AppState>() {
+                                Some(s) => s,
+                                None => return,
+                            };
+                            let mut engine = state.engine.lock().unwrap();
+                            engine.search(&query)
+                        }; // lock 解放
+                        self.state.set_results(results);
+                    }
+                    // command/instant は M3。M1/M2 では結果を出さない（空維持）。
+                    _ => {
+                        self.state.set_results(Vec::new());
+                    }
+                }
             }
         }
     }
@@ -264,10 +367,38 @@ impl EguiView for SearchWindowView {
             && sh.reset_pending.swap(false, Ordering::SeqCst)
         {
             self.state.reset();
+            self.folder_cache = None;
+            self.folder_error = None;
             self.search_debounce = Debouncer::new(Duration::from_millis(50), true);
         }
 
         let ctx = ui.ctx().clone();
+
+        // ナビ結果を drain し、現行 folder_gen と一致する最新のものだけ適用する（stale 破棄・滞留 drain）。
+        let mut latest: Option<FolderMsg> = None;
+        while let Ok(msg) = self.folder_rx.try_recv() {
+            let tok = match &msg {
+                FolderMsg::Loaded(t, ..) | FolderMsg::Failed(t, ..) => *t,
+            };
+            if self.state.accept_folder_result(tok) {
+                latest = Some(msg); // 後着で上書き＝最新を採る
+            }
+        }
+        if let Some(msg) = latest {
+            match msg {
+                FolderMsg::Loaded(_, folder_ctx, sorted) => {
+                    self.folder_error = None;
+                    self.folder_cache = Some((folder_ctx, sorted));
+                }
+                FolderMsg::Failed(_, err) => {
+                    self.folder_cache = None;
+                    self.folder_error = Some(err);
+                }
+            }
+            self.run_search(); // 現 folder_filter で即再フィルタ（ロード中打鍵の消失防止）
+            ctx.request_repaint(); // 到着フレームを描く
+        }
+
         let focused = ctx.input(|i| i.focused);
         let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
 
@@ -277,10 +408,18 @@ impl EguiView for SearchWindowView {
         if focused {
             self.unfocus_at = None;
         }
-        // Escape → 即 hide 要求（内側モード優先は SU3）。TextEdit より前に ctx から拾うので
-        // 入力欄に focus があっても届く。
+        // Escape ラダー（folder 中は展開前状態へ復帰、top-level は hide 要求・#532 SU3 M2）。
+        // TextEdit より前に ctx から拾うので入力欄に focus があっても届く。
         if escape {
-            self.emit_hide();
+            match self.state.on_escape() {
+                EscapeOutcome::RestoredSearch => {
+                    // folder 離脱 → cache/error 破棄、復帰済み results を描く
+                    self.folder_cache = None;
+                    self.folder_error = None;
+                    ctx.request_repaint();
+                }
+                EscapeOutcome::Hide => self.emit_hide(),
+            }
         }
         // focus 喪失 → 100ms 猶予を張り、猶予明けに repaint させる。
         if was_focused && !focused {
@@ -309,6 +448,52 @@ impl EguiView for SearchWindowView {
             self.state.move_selection(-1);
         }
 
+        // → : 選択中がフォルダなら展開（results 中は enter、folder 中は深掘り）。ファイル/エラー行は無反応。
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight))
+            && let Some(sel) = self.state.results().get(self.state.selected())
+            && sel.is_folder
+            && !sel.is_error
+        {
+            let dir = sel.path.clone();
+            let tok = match self.state.view_kind() {
+                ViewKind::Folder => self.state.navigate_folder(dir.clone()),
+                ViewKind::Results => self.state.enter_folder(dir.clone()),
+            };
+            // → は Folder 中の深掘り・Results からの enter どちらも展開履歴に記録
+            // （SolidJS enterFolderExpansion と同一サイト・#532 SU3 M2 Finding #1）。
+            self.record_folder_expansion(&dir);
+            self.folder_cache = None;
+            self.folder_error = None;
+            self.spawn_folder_load(tok, dir, ctx.clone());
+        }
+        // ← : folder 中は親へ、通常検索中は選択項目の親を展開して folder 突入。
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
+            match self.state.view_kind() {
+                ViewKind::Folder => {
+                    if let Some(parent) = self.state.parent_dir() {
+                        // ← の folder 折り返しは navigateFolderUp 相当・記録しない（Finding #1）。
+                        let tok = self.state.navigate_folder(parent.clone());
+                        self.folder_cache = None;
+                        self.folder_error = None;
+                        self.spawn_folder_load(tok, parent, ctx.clone());
+                    }
+                }
+                ViewKind::Results => {
+                    if let Some(sel) = self.state.results().get(self.state.selected())
+                        && !sel.is_error
+                        && let Some(parent) = compute_parent_dir(&sel.path)
+                    {
+                        let tok = self.state.enter_folder(parent.clone());
+                        // ← from Results は enterFolderExpansion(parent) 相当・記録する。
+                        self.record_folder_expansion(&parent);
+                        self.folder_cache = None;
+                        self.folder_error = None;
+                        self.spawn_folder_load(tok, parent, ctx.clone());
+                    }
+                }
+            }
+        }
+
         // Enter: 選択項目を起動（結果があるとき）。TextEdit の Enter より先に ctx で拾う。
         if ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !self.state.results().is_empty() {
             self.activate(self.state.selected());
@@ -319,25 +504,35 @@ impl EguiView for SearchWindowView {
         // ときだけ描かれるため、indexing+空クエリの条件と一致する——window は 52px のまま
         // （show_results=false）で、案内はバー内に収まり見える（旧: 別 label はバー下に描かれ
         // クリップされ不可視だった）。
-        let hint: &str = if self.indexing() && self.state.query().trim().is_empty() {
+        let in_folder = self.state.view_kind() == ViewKind::Folder;
+        let hint: &str = if !in_folder && self.indexing() && self.state.query().trim().is_empty() {
             "インデックス構築中..."
         } else {
             "検索…"
         };
-        let mut buf = self.state.query().to_string();
+        let mut buf = if in_folder {
+            self.state.folder_filter().to_string()
+        } else {
+            self.state.query().to_string()
+        };
         let response = ui.add(
             egui::TextEdit::singleline(&mut buf)
                 .hint_text(hint)
                 .desired_width(f32::INFINITY),
         );
         if response.changed() {
-            self.state.set_query(buf);
-            self.last_input_at = Instant::now();
-            if self.search_debounce.on_input() {
-                self.run_search(); // leading
+            if in_folder {
+                self.state.set_folder_filter(buf);
+                self.run_search(); // folder は同期フィルタ（debounce 不要・I/O 無し）
+            } else {
+                self.state.set_query(buf);
+                self.last_input_at = Instant::now();
+                if self.search_debounce.on_input() {
+                    self.run_search(); // leading
+                }
+                // trailing 発火のため interval 後に再描画を要求する（SU2 blur と同じ egui idiom）。
+                ctx.request_repaint_after(self.search_debounce.interval());
             }
-            // trailing 発火のため interval 後に再描画を要求する（SU2 blur と同じ egui idiom）。
-            ctx.request_repaint_after(self.search_debounce.interval());
         }
         // 窓に focus があるのに入力欄が focus を持たないなら移す（Alt+Q 表示直後に打てる）。
         // was_focused に依存しないので、hide→reshow で was_focused が stale でも確実に戻る。
@@ -359,7 +554,7 @@ impl EguiView for SearchWindowView {
             ctx.request_repaint_after(remaining);
         }
 
-        // 結果リスト（shouldShowResults 相当。M1: results 軸・plain のみ。空なら描かない）。
+        // 結果リスト（shouldShowResults 相当。results 軸〔plain〕と folder 軸を描く。空なら描かない）。
         let show_results = !self.state.results().is_empty();
         let mut clicked: Option<usize> = None;
         if show_results {

@@ -127,6 +127,8 @@ pub(crate) struct SearchWindowView {
     /// 後に stale instant 行（path=description/display）が activate() へ流れて文字列をパスとして
     /// 起動・履歴汚染するのを防ぐ（/code-review #637 finding 0）。run_search が行と一体で更新する。
     instant_rows_query: Option<String>,
+    /// 直近に scroll_to_me した選択 index。選択変化時のみ scroll するための gate（#632）。
+    last_scrolled_selected: Option<usize>,
 }
 
 impl SearchWindowView {
@@ -145,6 +147,7 @@ impl SearchWindowView {
             folder_cache: None,
             folder_error: None,
             instant_rows_query: None,
+            last_scrolled_selected: None,
         }
     }
 
@@ -223,6 +226,7 @@ impl SearchWindowView {
         self.state.set_results(Vec::new());
         self.search_debounce.cancel();
         self.instant_rows_query = None;
+        self.last_scrolled_selected = None; // 再表示後に確実に一度 scroll し直す（#632）
     }
 
     /// slash コマンドを実行する（§15.3 即実行・#532 SU3 M3）。SolidJS handleCommandQueryInput と
@@ -625,15 +629,18 @@ impl SearchWindowView {
         }
     }
 
-    /// 1 行を描画。selected ならハイライト + scroll_to_me。返り値: single_clicked。
-    /// ダブルクリックは扱わない（ユーザー決定: §4.8 の double-click=選択は as-built でも
-    /// 到達不能ゆえ落とす。単クリック=起動のみ）。self を借りない関連関数（借用衝突回避）。
-    /// 色/サイズは呼び出し側が都度導出する `RowTheme` から取る（アイコン slot・truncate は
-    /// Task 3/5 で足すため、本行では現行の `painter.text` 配置のまま色/サイズだけ差し替える）。
+    /// 1 行を描画。selected かつ scroll なら scroll_to_me（選択変化時のみ・#632）。返り値:
+    /// single_clicked。ダブルクリックは扱わない（ユーザー決定: §4.8 の double-click=選択は
+    /// as-built でも到達不能ゆえ落とす。単クリック=起動のみ）。self を借りない関連関数
+    /// （借用衝突回避）。色/サイズは呼び出し側が都度導出する `RowTheme` から取る（アイコン
+    /// slot は Task 5 で足すため、本行では slot 起点 `text_x` のみ保つ）。
+    /// name/path の重なりは name galley の実幅を測って path 開始 x を決めることで防ぐ
+    /// （#632）。path は中間省略（`truncate_middle`）で利用可能幅に収める。
     fn draw_result_row(
         ui: &mut egui::Ui,
         result: &SearchResult,
         selected: bool,
+        scroll: bool,
         theme: &RowTheme,
     ) -> bool {
         let row_h = 30.0;
@@ -643,23 +650,37 @@ impl SearchWindowView {
         );
         if selected {
             ui.painter().rect_filled(rect, 4.0, theme.selection);
-            response.scroll_to_me(Some(egui::Align::Center));
+            if scroll {
+                response.scroll_to_me(Some(egui::Align::Center)); // 選択変化時のみ（#632）
+            }
         }
         // アイコンスロット（SU4 が埋める）: 左に 24px 空ける。
         let text_x = rect.left() + 28.0;
-        let painter = ui.painter();
-        painter.text(
-            egui::pos2(text_x, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            &result.name,
+        let right = rect.right() - 8.0;
+        let cy = rect.center().y;
+        // name galley を作り、実幅から path 開始 x を決める（重なり回避）。name が幅の 60%
+        // を超えたら name 側を省略幅にクリップ（egui の layout 側 wrap_width 指定）。
+        let name_max = (right - text_x) * 0.6;
+        let name_galley = ui.painter().layout(
+            result.name.clone(),
             egui::FontId::proportional(theme.name_size),
             theme.name_color,
+            name_max, // wrap width＝この幅で折り返し／省略の目安
         );
-        // 名前の右にパスを淡色で（簡易・galley 省略は egui 既定に委ねる）。
-        painter.text(
-            egui::pos2(rect.right() - 8.0, rect.center().y),
+        ui.painter().galley(
+            egui::pos2(text_x, cy - name_galley.size().y / 2.0),
+            name_galley.clone(),
+            theme.name_color,
+        );
+        let path_x = text_x + name_galley.size().x.min(name_max) + 12.0;
+        // path は右寄せ・path_x 以降に収まる幅で中間省略。egui galley は末尾省略のため、
+        // 中間省略は truncate_middle（純関数）で文字列側を縮めてから描く。
+        let path_avail = (right - path_x).max(0.0);
+        let path_str = truncate_middle(&result.path, path_avail, theme.path_size);
+        ui.painter().text(
+            egui::pos2(right, cy),
             egui::Align2::RIGHT_CENTER,
-            &result.path,
+            &path_str,
             egui::FontId::proportional(theme.path_size),
             theme.path_color,
         );
@@ -694,6 +715,24 @@ fn hex_color(s: &str, fallback: egui::Color32) -> egui::Color32 {
     egui::Color32::from_hex(s).unwrap_or(fallback)
 }
 
+/// path を avail_px におよそ収める中間省略（`C:\a\...\app.exe`）。概算幅（1 文字 ≈ size*0.55px）。
+/// release は panic=abort ゆえ、`max_chars < 4` ガードと空文字境界で範囲外アクセスを避ける。
+fn truncate_middle(s: &str, avail_px: f32, size: f32) -> String {
+    let per = (size * 0.55).max(1.0);
+    let max_chars = (avail_px / per).floor() as usize;
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max_chars || max_chars < 4 {
+        return s.to_string();
+    }
+    let keep = max_chars - 1; // '…' の分
+    let head = keep / 2;
+    let tail = keep - head;
+    let mut out: String = chars[..head].iter().collect();
+    out.push('…');
+    out.extend(&chars[chars.len() - tail..]);
+    out
+}
+
 /// 1 結果行の描画テーマ（config テーマ値から都度導出・#576 と同設計でキャッシュしない）。
 struct RowTheme {
     name_color: egui::Color32,
@@ -724,6 +763,7 @@ impl EguiView for SearchWindowView {
             self.folder_error = None;
             self.instant_rows_query = None; // §19.7: resetForShow で instant モード解除
             self.search_debounce = Debouncer::new(Duration::from_millis(50), true);
+            self.last_scrolled_selected = None; // 再表示後に確実に一度 scroll し直す（#632）
         }
 
         let ctx = ui.ctx().clone();
@@ -998,13 +1038,19 @@ impl EguiView for SearchWindowView {
             let results = self.state.results().to_vec();
             let selected = self.state.selected();
             let theme = self.row_theme();
+            // 選択変化時のみ scroll_to_me（毎フレーム発火だと手動スクロールを奪い返す・#632）。
+            let do_scroll = self.last_scrolled_selected != Some(selected);
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for (i, result) in results.iter().enumerate() {
-                    if Self::draw_result_row(ui, result, i == selected, &theme) {
+                    let sel = i == selected;
+                    if Self::draw_result_row(ui, result, sel, sel && do_scroll, &theme) {
                         clicked = Some(i); // シングルクリック（§4.8 単=起動）。double は扱わない
                     }
                 }
             });
+            if do_scroll {
+                self.last_scrolled_selected = Some(selected);
+            }
         }
         // シングルクリック＝起動（§4.8 単=起動）。double-click は扱わない（ユーザー決定・
         // as-built でも double-click=選択は到達不能。SPEC §4.8 を as-built へ同期済み）。
@@ -1061,6 +1107,18 @@ mod tests {
             assert_eq!(list.first().map(String::as_str), Some("jp_font"),
                 "解決失敗時は jp_font 単一・先頭（#579 再発防止）");
         }
+    }
+
+    #[test]
+    fn truncate_middle_shortens_long_path() {
+        use super::truncate_middle;
+        let long = r"C:\Users\Eoh\AppData\Local\Programs\app\bin\tool.exe";
+        let out = truncate_middle(long, 100.0, 11.0);
+        assert!(out.chars().count() < long.chars().count(), "省略される");
+        assert!(out.contains('…'), "中間省略記号を含む");
+        // 短い文字列・極小幅は原文（max_chars<4 ガード）。
+        assert_eq!(truncate_middle("a.exe", 1.0, 11.0), "a.exe");
+        assert_eq!(truncate_middle("short", 1000.0, 11.0), "short");
     }
 
     #[test]

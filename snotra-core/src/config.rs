@@ -695,6 +695,9 @@ impl Config {
     /// **意図的に `changed` へ寄与しない**——`load_from_dir_reporting` は changed=true で
     /// `save_to_dir` するため、寄与させるとユーザーの手編集行（重複定義）をファイルから
     /// 消してしまう（spec 2026-07-23 決定 2: 書き戻し禁止）。
+    /// 前提条件: この非寄与が防ぐのは「dedup が唯一の変更」のときの書き戻しだけ。他の
+    /// レガシー移行が同じロードで changed=true を返す場合、その正当な書き戻しに dedup 済み
+    /// 内容が含まれる（実行される action は先頭定義のまま不変・SPEC §19.2 に明記）。
     fn dedup_instant_command_names(&mut self) {
         let mut seen = std::collections::HashSet::new();
         self.instant_commands.retain(|c| {

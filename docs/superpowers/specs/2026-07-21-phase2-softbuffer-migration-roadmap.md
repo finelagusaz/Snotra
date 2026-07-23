@@ -30,7 +30,10 @@ Phase 1（技術スパイク + 採用ゲート検証）は完了した。スパ�
 - **SU1 完了** — `snotra-egui-runtime` の softbuffer 置換（PR #627）。follow-up: #628（render perf・非ブロッキング → SU6.5 で扱いを判断）
 - **SU2 完了** — ウィンドウシェル + 状態機械（PR #629・main マージ 68b5f41）
 - **SU3 完了** — M1 機能中核（PR #630）/ M2 folder 展開（PR #636）/ M3 instant+slash（PR #637）。いずれも main マージ済。follow-up: #631/#632/#633/#634/#638（下表の各 SU へ割当済）
-- 残り: `#634 実測 → SU3.5 → SU4 → SU5 → SU6 → SU6.5 → SU7`（→「依存順・並行」）
+- **SU3.5 完了** — tool-selection（PR #641）。#638 先勝ち正規化を同時解消
+- **SU4 完了** — アイコン + 視覚 pass + §11 テーマ消費（PR #644）
+- **SU5 実装完了（PR 未マージ）** — updater（3 モード gating・保存優先・relaunch）+ 通知 primitive（一時通知・toast）+ #631（起動 async 化・single-flight・flush-on-Enter）。hidden 中 drain の要石（spec C 節）は実装時スモークで決着——egui_shell 経路では tao が hidden 窓へ update() を配らず（実測: 一時プローブで確認・観測後に除去）、reset-on-show の backstop が launching/一時通知を確実にクリアする。回帰スモーク（通常起動+履歴・起動失敗通知・instant・tool 選択・folder 展開・flush-on-Enter・updater toast 表示/dismiss/高さ・WebView2 G1 不変）は実機で確認済み
+- 残り: `SU6 → SU6.5 → SU7`（→「依存順・並行」）
 
 ## spec 分割（SU1–SU7）
 

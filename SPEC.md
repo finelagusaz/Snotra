@@ -477,6 +477,11 @@ stateDiagram-v2
 - `/o` 実行時に `indexing == true` の場合、`open_settings` は no-op
 - 初回起動（`is_first_run`）では `snotra-settings` を子プロセスとして直接起動する（indexing ガードをバイパス）
 - `snotra-settings` 起動中のホットキー入力は無視する（ホットキー再設定中の誤動作防止）
+- `launching`（起動 in-flight）・一時通知・updater トーストは状態ノードではなく
+  `IndexingMode` と同様の overlay（どのモードにも重なる直交 boolean）。手動 hide
+  （Escape / blur / ホットキー）は launching 中も成立し、成功時の自動 hide のみ
+  起動完了後に行われる。表示時リセットで launching と一時通知はクリアされ、
+  updater トースト（と dismissed）は維持される
 
 ## 9. 実行履歴メニュー
 
@@ -915,6 +920,21 @@ query = "%SYSTEMROOT%"
 - `LaunchResult::succeeded`: 起動成功（ブラウザ・プロセスが spawned）
 - `LaunchResult::failed`: 起動失敗（exe 不在、パーミッション不足等）。エラーメッセージをログに記録
 
+#### egui 経路の起動保護（#532 SU5）
+
+- WebView2 経路の `spawn_blocking` + 4 秒タイムアウトに対応する保護として、egui 経路は
+  per-launch 専用スレッド + フレーム drain で起動を実行する（通常起動・ツール起動・
+  インスタント実行の 3 経路とも）。イベントループスレッドで `ShellExecuteW` / `spawn` を
+  同期実行しない
+- single-flight: in-flight 起動中の新規起動要求（Enter/クリック）は拒否する。打鍵は
+  入力欄の無効化で抑止する。Escape / blur / ホットキーによる手動 hide は launching 中も通す
+  （成功時の自動 hide のみ完了後）
+- 4 秒経過は「起動失敗」ではなく**結果不明**として扱い、一時通知（`notice.launch.timeout`
+  文言）を表示して in-flight 追跡を破棄する。起動という副作用は取り消せない（`spawn_blocking`
+  の abandoned task と同じ意味論）。遅着した結果は破棄する（per-launch channel の drop で構造的に消滅）
+- 履歴記録は worker スレッド側で成功時に行う（ウィンドウ可視性と無関係・WebView2 の
+  backend 記録と parity）
+
 ### 19.7 状態モデル
 
 - `InstantCommandMode` は `NormalMode` `CommandMode` と排他的
@@ -1002,12 +1022,24 @@ Tauri の `tauri-plugin-updater` を用いて GitHub Releases 経由で自動更
 - 行2: [今すぐ更新]（`full` モードのみ）+ [閉じる] ボタン（右寄せ）
 - トーストが表示されている間、ウィンドウ高さに `--update-toast-height` (52px) を加算する
 - [閉じる] で `updateInfo` シグナルを null にし、トーストを非表示にする
+- egui 経路（#532 SU5）: toast は検索バー直下の 52px 行としてモード（フォルダ展開・
+  ツール選択・インスタントコマンド）非依存に描画し、ウィンドウ高さに加算する。
+  インストール中は [今すぐ更新] [閉じる] とも disabled。[閉じる] はセッション中恒久
+  （再表示で復活しない）。show 時は 52px collapse 後に toast 分へ拡張する（1 フレームの
+  高さスナップを受容）
 
 ### 20.4 更新フロー（`full` モード）
 
-1. 起動時フロントエンドが `check()` を呼び出し、`Update` オブジェクトを `pendingUpdate` 変数に保持
-2. トーストの [今すぐ更新] をクリック: `pendingUpdate.downloadAndInstall()` 実行
-3. 完了後 `quit_app` IPC でアプリを終了する。プロセスの終了・再起動は NSIS インストーラに委ねる（`app.restart()` は新プロセスを先に spawn してファイルをロックし、NSIS の上書きを失敗させるため使わない）
+1. 起動時に更新を確認し、`Update` オブジェクトを保持する（WebView2: フロントエンドの
+   `check()` / egui: Rust `UpdaterExt` の check。egui は `on_before_exit` フックに終了保存
+   （履歴 flush + アイコン保存）を登録した builder で check する）
+2. トーストの [今すぐ更新] で `downloadAndInstall()` を実行
+3. **Windows では `downloadAndInstall` は復帰しない**: プラグインが内部で download →
+   `on_before_exit` フック → NSIS installer 起動 → `std::process::exit(0)` する。
+   プロセスの終了・再起動は NSIS インストーラに委ねる（`app.restart()` は新プロセスが
+   ファイルをロックし NSIS の上書きを失敗させるため使わない）。**`downloadAndInstall`
+   復帰後に保存処理を置かない**（到達しないため・保存は `on_before_exit` が正しい合流点）
+4. `Err` 復帰（download 失敗等）時のみトーストをエラー表示にする
 
 ### 20.5 リリース形式
 

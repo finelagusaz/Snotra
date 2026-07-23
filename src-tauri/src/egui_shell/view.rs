@@ -1013,8 +1013,38 @@ impl SearchWindowView {
         }
     }
 
-    /// install 実行（Task 8 で本実装。ここでは Task 7 のコンパイルを通すための暫定空実装）。
-    fn spawn_install(&self, _update: Box<tauri_plugin_updater::Update>) {}
+    /// install 実行（§20.4・spec B 節）。`download_and_install` は Windows では内部で
+    /// download → `on_before_exit`（=flush_persistent_state・Task 6 で builder に登録済み）→
+    /// installer 起動 → `std::process::exit(0)` し**復帰しない**（updater.rs:865）。
+    /// Err 復帰時のみ InstallFailed へ遷移して toast をエラー表示にする（updaterError parity）。
+    fn spawn_install(&self, update: Box<tauri_plugin_updater::Update>) {
+        let handle = self.app_handle.clone();
+        crate::trace_main("egui_update_install_begin", serde_json::json!({ "version": update.version }));
+        tauri::async_runtime::spawn(async move {
+            match update.download_and_install(|_, _| {}, || {}).await {
+                Ok(()) => {
+                    // Windows では到達しない（内部 exit）。他 OS ビルドや将来変更の防波堤として trace。
+                    crate::trace_main("egui_update_install_returned", serde_json::json!({}));
+                }
+                Err(e) => {
+                    crate::trace_main(
+                        "egui_update_install_failed",
+                        serde_json::json!({ "error": e.to_string() }),
+                    );
+                    if let Some(st) = handle.try_state::<crate::egui_shell::UpdaterUiState>() {
+                        st.0.lock().unwrap().phase =
+                            crate::egui_shell::UpdaterPhase::InstallFailed { message: e.to_string() };
+                    }
+                    if let Some(sh) = handle.try_state::<crate::egui_shell::EguiShellState>()
+                        && let Ok(guard) = sh.egui_ctx.lock()
+                        && let Some(ctx) = guard.as_ref()
+                    {
+                        ctx.request_repaint(); // 可視中の失敗を即座に描く
+                    }
+                }
+            }
+        });
+    }
 }
 
 /// `#RRGGBB` 文字列を Color32 へ。失敗時は fallback（release は panic=abort ゆえ unwrap しない）。

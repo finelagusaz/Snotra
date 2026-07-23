@@ -107,6 +107,37 @@ enum FolderMsg {
     Failed(u64, Vec<SearchResult>),
 }
 
+/// 起動 worker への仕事（#631・spec C 節）。worker スレッドが実行し、成功時の履歴記録も
+/// worker 側で行う（spec 決定 5: WebView2 が backend 側で UI 可視性と無関係に記録する parity。
+/// hide 中に完了した起動の記録消失 gap を閉じる）。Instant は記録しない（IPC 経路 parity）。
+enum LaunchWork {
+    /// 通常起動（§4.8）。tools 先頭があれば launch_with_tool_core、無ければ launch_item_core。
+    Normal { path: String, query: String, tools: Vec<OpenerTool> },
+    /// ツール選択起動（§18.4）。
+    Tool { target_path: String, launch_query: String, exe: String, args: String },
+    /// instant 実行（§19.6）。clipboard 読み + 展開 + 実行の全体を worker で行う
+    /// （engine ロック内の action 抽出だけ UI スレッド・spec C 節）。
+    Instant { name: String, action: snotra_core::config::InstantAction, instant_query: String },
+}
+
+/// 起動成功時に drain が行う UI 後処理の種別（M1/M3 の同期版と同じ末尾へ合流させる）。
+#[derive(Clone, Copy)]
+enum LaunchTag {
+    Normal,  // emit_hide のみ（M1 activate parity・クエリは次 show の reset で消える）
+    Tool,    // clear_search + state.reset + emit_hide（execute_tool_selected parity）
+    Instant, // clear_search + emit_hide（execute_instant_selected parity）
+}
+
+/// in-flight 起動（spec C 節 不変条件 1: channel は per-launch）。rx を本構造体が所有し、
+/// `launching = None` で Receiver ごと drop → worker の遅着 send は Err で自然消滅する。
+/// folder の「view 寿命の共有 channel + 世代 token」をコピーしないこと（token が要るのは
+/// 共有 channel だから。per-launch なら不要——並行性レビューで確定）。
+struct LaunchInFlight {
+    started: Instant,
+    rx: Receiver<crate::commands::launch::LaunchResult>,
+    tag: LaunchTag,
+}
+
 pub(crate) struct SearchWindowView {
     app_handle: tauri::AppHandle,
     was_focused: bool,
@@ -141,6 +172,12 @@ pub(crate) struct SearchWindowView {
     instant_rows_query: Option<String>,
     /// 直近に scroll_to_me した選択 index。選択変化時のみ scroll するための gate（#632）。
     last_scrolled_selected: Option<usize>,
+    /// in-flight 起動（single-flight の実体: Some の間は新規起動 dispatch を拒否）。
+    launching: Option<LaunchInFlight>,
+    /// 一時通知（起動失敗/結果不明）。時刻は notice_base からの経過で注入（純粋核）。
+    notice: crate::egui_shell::NoticeSlot,
+    /// notice の単調時刻基準（view 生成時に固定・Instant 差分を Duration で渡す）。
+    notice_base: Instant,
 }
 
 impl SearchWindowView {
@@ -166,6 +203,9 @@ impl SearchWindowView {
             folder_error: None,
             instant_rows_query: None,
             last_scrolled_selected: None,
+            launching: None,
+            notice: crate::egui_shell::NoticeSlot::default(),
+            notice_base: Instant::now(),
         }
     }
 
@@ -184,15 +224,12 @@ impl SearchWindowView {
         let _ = self.app_handle.emit("egui-hide-requested", ());
     }
 
-    /// index 行を起動し、成功なら履歴記録して hide 要求を出す（§4.8 シングルクリック / Enter）。
-    /// launch_item_core は ShellExecuteW（エンジンロック外で呼ぶ・launch.rs:226）。成功時のみ
-    /// record_and_save で履歴を記録（§4.3/§5 の query_count 加点・全起動経路の共通末尾を再利用）。
+    /// index 行の起動を worker へ投げる（§4.8 シングルクリック / Enter・#631 async 化）。
+    /// 実起動（ShellExecuteW）と成功時の履歴記録は `start_launch` の worker スレッド側で行う
+    /// （§4.3/§5 の query_count 加点・全起動経路の共通末尾は `finish_launch` へ合流）。
     /// エラー行（is_error）／フォルダロード中（cache・error 未着で results が stale）は起動しない。
     /// Enter とシングルクリックの単一チョークポイント（#636 レビュー Finding A）。
-    fn activate(&self, index: usize) {
-        use crate::commands::launch::{
-            LaunchStatus, launch_item_core, launch_with_tool_core, record_and_save,
-        };
+    fn activate(&mut self, index: usize, ctx: &egui::Context) {
         // フォルダ展開直後、列挙結果も失敗行も未着の窓では results が展開前ビューの残存物ゆえ、
         // 誤項目の起動を止める（dead/slow UNC でロードが滞留すると Enter/クリックが前ビューの
         // 項目を起動しうる・#636 レビュー Finding A）。判定核は search_state の純粋述語。
@@ -211,27 +248,152 @@ impl SearchWindowView {
         let is_folder = result.is_folder;
         let query = self.state.query().to_string();
         let tools = self.resolve_tools(&path, is_folder);
-        let outcome = if let Some(first) = tools.first() {
-            // §18.3 全起動経路統一: マッチしたルールの先頭ツールで起動（IPC launch_item の
-            // resolve_opener 分岐と同型。M1 はここを素の ShellExecuteW にしていた＝parity gap）
-            launch_with_tool_core(&path, &first.exe, &first.args)
-        } else {
-            launch_item_core(&path) // ルール無し: 従来どおり ShellExecuteW フォールバック
-        };
         crate::trace_main(
             "egui_launch",
-            serde_json::json!({
-                "index": index,
-                "status": format!("{:?}", outcome.status),
-                "opener": !tools.is_empty(),
-            }),
+            serde_json::json!({ "index": index, "opener": !tools.is_empty() }),
         );
-        if matches!(outcome.status, LaunchStatus::Ok) {
-            if let Some(state) = self.app_handle.try_state::<crate::AppState>() {
-                record_and_save(&state, &path, &query); // 履歴記録 + 保存（ロックは内部で最小保持）
+        self.start_launch(LaunchWork::Normal { path, query, tools }, LaunchTag::Normal, ctx);
+    }
+
+    /// 起動を per-launch worker スレッドへ投げる（#631・spec C 節）。single-flight:
+    /// in-flight 中は拒否（WebView2 activationLane parity・二重起動防止）。突入時に results を
+    /// クリアする（withLaunchLifecycle の await 前 clearResults parity・spec 決定 7）——
+    /// launching 中は 52px collapse・↑↓/クリックは空リストゆえ自然に inert。クエリは保持。
+    fn start_launch(&mut self, work: LaunchWork, tag: LaunchTag, ctx: &egui::Context) {
+        if self.launching.is_some() {
+            return; // single-flight 拒否（拒否された Enter が後で再生されるキューは egui に無い）
+        }
+        let (tx, rx) = channel::<crate::commands::launch::LaunchResult>();
+        self.launching = Some(LaunchInFlight { started: Instant::now(), rx, tag });
+        self.state.set_results(Vec::new());
+        self.instant_rows_query = None; // 行が消えるため来歴も一体でクリア（finding 0 の規律）
+        self.last_scrolled_selected = None;
+        let app = self.app_handle.clone();
+        let egui_ctx = ctx.clone();
+        std::thread::spawn(move || {
+            use crate::commands::launch::{LaunchStatus, launch_item_core, launch_with_tool_core, record_and_save};
+            let (outcome, record) = match work {
+                LaunchWork::Normal { path, query, tools } => {
+                    let o = if let Some(first) = tools.first() {
+                        launch_with_tool_core(&path, &first.exe, &first.args)
+                    } else {
+                        launch_item_core(&path)
+                    };
+                    (o, Some((path, query)))
+                }
+                LaunchWork::Tool { target_path, launch_query, exe, args } => {
+                    let o = launch_with_tool_core(&target_path, &exe, &args);
+                    (o, Some((target_path, launch_query)))
+                }
+                LaunchWork::Instant { name, action, instant_query } => {
+                    // clipboard 読み（Win32）はロック外・worker 内（commands/instant.rs と同順）。
+                    let clipboard = arboard::Clipboard::new()
+                        .and_then(|mut cb| cb.get_text())
+                        .unwrap_or_default();
+                    let o = crate::commands::instant::execute_instant_action_core(
+                        action, &instant_query, &clipboard,
+                    );
+                    crate::trace_main(
+                        "egui_instant",
+                        serde_json::json!({ "name": name, "status": format!("{:?}", o.status) }),
+                    );
+                    (o, None) // instant は履歴を記録しない（IPC 経路 parity）
+                }
+            };
+            // 履歴記録は worker 側（spec 決定 5）。timeout で drain が破棄済みでも記録は行われる
+            // ＝「実際に起動したのに履歴が無い」窓を Normal/Tool では作らない。
+            if matches!(outcome.status, LaunchStatus::Ok)
+                && let Some((path, query)) = record
+                && let Some(state) = app.try_state::<crate::AppState>()
+            {
+                record_and_save(&state, &path, &query);
             }
-            // 起動成功時のみ hide（SU2 の hide 合流点へ・view から window を直接触らない）。
-            self.emit_hide();
+            let _ = tx.send(outcome); // 遅着（rx drop 済み）は Err で自然消滅（不変条件 1）
+            egui_ctx.request_repaint(); // イベント駆動 runtime を起こす（folder/icon と同理由）
+        });
+    }
+
+    /// drain が回収した結果の UI 後処理（成功列は M1/M3 同期版と同じ末尾へ合流）。
+    fn finish_launch(&mut self, tag: LaunchTag, outcome: crate::commands::launch::LaunchResult) {
+        use crate::commands::launch::LaunchStatus;
+        crate::trace_main(
+            "egui_launch_done",
+            serde_json::json!({ "status": format!("{:?}", outcome.status) }),
+        );
+        let l = self.lang();
+        match outcome.status {
+            LaunchStatus::Ok => match tag {
+                LaunchTag::Normal => self.emit_hide(),
+                LaunchTag::Tool => {
+                    self.clear_search();
+                    self.state.reset();
+                    self.emit_hide();
+                }
+                LaunchTag::Instant => {
+                    self.clear_search();
+                    self.emit_hide();
+                }
+            },
+            LaunchStatus::Failed | LaunchStatus::Timeout => {
+                // 失敗: hide しない・同期 run_search で結果を再取得（runRefresh parity）+ 一時通知。
+                // Timeout ステータスがここへ来るのは core が同期 Timeout を返す場合のみ
+                // （drain 側の 4 秒は Empty 経路で扱う）。文言は失敗系で扱う。
+                let detail = outcome
+                    .message
+                    .as_deref()
+                    .map(|m| format!(" ({m})"))
+                    .unwrap_or_default();
+                self.notice.set(
+                    crate::egui_shell::ui_strings::launch_failed(l, &detail),
+                    self.notice_base.elapsed(),
+                    crate::egui_shell::NOTICE_LAUNCH,
+                );
+                self.run_search();
+            }
+        }
+    }
+
+    /// フレーム毎の in-flight 回収（spec C 節 不変条件 2: **reset_pending 消費の後**に呼ぶ。
+    /// 前に置くと show 直後フレームで stale Ok が reset より先に処理され再 show 窓を hide で撃つ）。
+    fn drain_launch(&mut self, ctx: &egui::Context) {
+        let Some(inflight) = &self.launching else { return };
+        match inflight.rx.try_recv() {
+            Ok(outcome) => {
+                let tag = inflight.tag;
+                self.launching = None;
+                self.finish_launch(tag, outcome);
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                let elapsed = inflight.started.elapsed();
+                if elapsed >= crate::egui_shell::LAUNCH_TIMEOUT {
+                    // 4 秒経過＝「結果不明」（spec 決定 8）。rx ごと破棄→遅着は自然消滅。
+                    // 起動という副作用は取り消せない（abandoned spawn_blocking parity）。
+                    self.launching = None;
+                    let l = self.lang();
+                    self.notice.set(
+                        crate::egui_shell::ui_strings::launch_timeout(l, ""),
+                        self.notice_base.elapsed(),
+                        crate::egui_shell::NOTICE_LAUNCH,
+                    );
+                    self.run_search(); // WebView2 timeout 分岐（runRefresh）parity
+                } else {
+                    // deadline で確実に起きる（**可視中のみ有効**——hidden 中に update() が
+                    // 走らない場合は次 show まで宙吊りになるが、reset-on-show の launching
+                    // クリアが backstop・spec C 節「hidden 中の drain」）。
+                    ctx.request_repaint_after(crate::egui_shell::LAUNCH_TIMEOUT - elapsed);
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                // worker panic 等の異常終了。失敗扱いで回復（永久 in-flight を防ぐ）。
+                self.launching = None;
+                let l = self.lang();
+                self.notice.set(
+                    crate::egui_shell::ui_strings::launch_failed(l, ""),
+                    self.notice_base.elapsed(),
+                    crate::egui_shell::NOTICE_LAUNCH,
+                );
+                self.run_search();
+            }
         }
     }
 
@@ -282,13 +444,12 @@ impl SearchWindowView {
         }
     }
 
-    /// 選択中の instant コマンドを同期実行する（§19.6・#532 SU3 M3）。IPC の
-    /// execute_instant_command（spawn_blocking + 4s）と同じ手順（action 抽出をロック内・
-    /// clipboard 読みをロック外）を、イベントループで同期直呼びに畳む（spec M3 実装確定・
-    /// ブロックリスクは #631 スコープ）。instant は履歴を記録しない（IPC 経路 parity）。
-    /// 成功: クエリ/結果クリア + hide（§19.6）。失敗: 据え置き + trace（M1 起動失敗と同型）。
-    fn execute_instant_selected(&mut self, index: usize, instant_query: &str) {
-        use crate::commands::launch::LaunchStatus;
+    /// 選択中の instant コマンドの action を抽出し worker へ投げる（§19.6・#631 async 化）。
+    /// action 抽出はここ（UI スレッド・engine ロック内）で行い、clipboard 読み + 実行は
+    /// `start_launch` の worker スレッド側（IPC の execute_instant_command と同じ手順・
+    /// action 抽出をロック内・clipboard 読みをロック外）。instant は履歴を記録しない
+    /// （IPC 経路 parity）。成功/失敗の後処理は `finish_launch` へ合流。
+    fn execute_instant_selected(&mut self, index: usize, instant_query: &str, ctx: &egui::Context) {
         let Some(sel) = self.state.results().get(index) else { return };
         if sel.is_error {
             return;
@@ -313,24 +474,11 @@ impl SearchWindowView {
             );
             return;
         };
-        // clipboard 読み（Win32）はロック外（commands/instant.rs と同順）。
-        let clipboard = arboard::Clipboard::new()
-            .and_then(|mut cb| cb.get_text())
-            .unwrap_or_default();
-        // 種別ディスパッチは IPC 経路と共有の core（二重実装の drift 防止・finding 4）。
-        let outcome = crate::commands::instant::execute_instant_action_core(
-            action,
-            instant_query,
-            &clipboard,
+        self.start_launch(
+            LaunchWork::Instant { name, action, instant_query: instant_query.to_string() },
+            LaunchTag::Instant,
+            ctx,
         );
-        crate::trace_main(
-            "egui_instant",
-            serde_json::json!({ "name": name, "status": format!("{:?}", outcome.status) }),
-        );
-        if matches!(outcome.status, LaunchStatus::Ok) {
-            self.clear_search();
-            self.emit_hide();
-        }
     }
 
     /// Enter/クリックの単一 dispatch（§19.6/§4.8・#532 SU3 M3）。判定は live config の prefix
@@ -340,23 +488,23 @@ impl SearchWindowView {
     /// run_search が同一フレームで一体更新するため常に整合する。行 index で参照（パス文字列を
     /// 使わない・ui ルール踏襲）。tool ビュー中は Shift の有無に依らず `execute_tool_selected` へ
     /// 振る（`shift_activate` が Tool ビューではここへ委譲するため到達点が一致する）。
-    fn activate_or_execute(&mut self, index: usize) {
+    fn activate_or_execute(&mut self, index: usize, ctx: &egui::Context) {
         if self.state.view_kind() == ViewKind::Tool {
-            self.execute_tool_selected(index); // §18.4 Enter/クリック＝選択ツールで起動
+            self.execute_tool_selected(index, ctx); // §18.4 Enter/クリック＝選択ツールで起動
         } else if let Some(iq) = self.instant_rows_query.clone() {
-            self.execute_instant_selected(index, &iq);
+            self.execute_instant_selected(index, &iq, ctx);
         } else {
-            self.activate(index);
+            self.activate(index, ctx);
         }
     }
 
     /// Shift+Enter（§18.3）: 選択行の tools ≥ 2 ならツール選択メニューへ、それ以外
     /// （≤1・instant 行・tool ビュー中）は通常 Enter と同一（hide も同様）。folder ロード
     /// 未確定窓は activate と同じ理由で入場もしない（stale 行からの解決防止・#636 Finding A）。
-    fn shift_activate(&mut self, index: usize) {
+    fn shift_activate(&mut self, index: usize, ctx: &egui::Context) {
         if self.instant_rows_query.is_some() || self.state.view_kind() == ViewKind::Tool {
             // instant 行は §19.6「Shift+Enter=Enter」。tool ビュー中の Shift+Enter も Enter と同一。
-            self.activate_or_execute(index);
+            self.activate_or_execute(index, ctx);
             return;
         }
         if folder_load_pending(
@@ -386,17 +534,15 @@ impl SearchWindowView {
                 );
             }
         } else {
-            self.activate_or_execute(index); // §18.3: 1 件以下は通常 Enter と同じ動作
+            self.activate_or_execute(index, ctx); // §18.3: 1 件以下は通常 Enter と同じ動作
         }
     }
 
     /// ツール選択中の起動（§18.4）。行 index で tools を照合（同一 exe でも引数違いを区別・
-    /// パス文字列照合は禁止＝ui ルールと同根）。起動は launch_with_tool_core の同期直呼び
-    /// （M1 activate と同型の意図的残余・#631 で async 化とセット解消）。成功時は IPC
-    /// `launch_with_tool` と同じく launch_query で履歴記録 → 全クリア + hide（§19.6 instant
-    /// の完了列と同型。reset は tool/folder/gen 込みで in-flight folder ロードも失効させる）。
-    fn execute_tool_selected(&mut self, index: usize) {
-        use crate::commands::launch::{LaunchStatus, launch_with_tool_core, record_and_save};
+    /// パス文字列照合は禁止＝ui ルールと同根）。成功時は IPC `launch_with_tool` と同じく
+    /// launch_query で履歴記録 → 全クリア + hide（§19.6 instant の完了列と同型。reset は
+    /// tool/folder/gen 込みで in-flight folder ロードも失効させる）。
+    fn execute_tool_selected(&mut self, index: usize, ctx: &egui::Context) {
         let Some((target_path, launch_query, tool)) = self.state.tool_frame().and_then(|f| {
             f.tools
                 .get(index)
@@ -404,19 +550,17 @@ impl SearchWindowView {
         }) else {
             return;
         };
-        let outcome = launch_with_tool_core(&target_path, &tool.exe, &tool.args);
-        crate::trace_main(
-            "egui_tool_launch",
-            serde_json::json!({ "index": index, "status": format!("{:?}", outcome.status) }),
+        crate::trace_main("egui_tool_launch", serde_json::json!({ "index": index }));
+        self.start_launch(
+            LaunchWork::Tool {
+                target_path,
+                launch_query,
+                exe: tool.exe.clone(),
+                args: tool.args.clone(),
+            },
+            LaunchTag::Tool,
+            ctx,
         );
-        if matches!(outcome.status, LaunchStatus::Ok) {
-            if let Some(state) = self.app_handle.try_state::<crate::AppState>() {
-                record_and_save(&state, &target_path, &launch_query);
-            }
-            self.clear_search();
-            self.state.reset();
-            self.emit_hide();
-        }
     }
 
     /// フォルダ展開を履歴に記録する（IPC コマンド `commands/system.rs:record_folder_expansion`
@@ -921,6 +1065,12 @@ impl EguiView for SearchWindowView {
             self.icon_textures.clear();
             self.icon_missing.clear();
             self.icon_pending.clear(); // in-flight 追跡も show 直後に全 clear（thread pileup 対策）
+            // SU5: in-flight 起動と一時通知は show を跨がない（resetForShow の
+            // setLaunching(false) + clearLaunchNotice parity）。rx ごと drop するため
+            // hide 中に完了した遅着結果もここで自然消滅する（stale Ok が再 show 窓を
+            // hide で撃つ事故の backstop・並行性レビュー High）。updater toast は触らない。
+            self.launching = None;
+            self.notice.clear();
         }
 
         let ctx = ui.ctx().clone();
@@ -938,6 +1088,16 @@ impl EguiView for SearchWindowView {
             visuals.extreme_bg_color = hex_color(&input_bg, egui::Color32::from_rgb(0x38, 0x38, 0x38)); // TextEdit 背景
             visuals.selection.bg_fill = hex_color(&sel, egui::Color32::from_rgb(0x33, 0x33, 0x33));
             ctx.set_visuals(visuals);
+        }
+
+        // 起動結果の回収（#631）。reset_pending 消費の後に置くこと（spec C 節 不変条件 2）。
+        self.drain_launch(&ctx);
+        // 一時通知の期限管理（期限切れで repaint・表示中は残余で wake 予約）。
+        if self.notice.poll(self.notice_base.elapsed()) {
+            ctx.request_repaint();
+        }
+        if let Some(remaining) = self.notice.remaining(self.notice_base.elapsed()) {
+            ctx.request_repaint_after(remaining);
         }
 
         // ナビ結果を drain し、現行 folder_gen と一致する最新のものだけ適用する（stale 破棄・滞留 drain）。
@@ -1135,7 +1295,9 @@ impl EguiView for SearchWindowView {
             egui::TextEdit::singleline(&mut buf)
                 // §18.5 ツール選択中の入力は無効化。add_enabled（全体グレーアウト）でなく
                 // interactive(false)（通常描画のまま読み取り専用・changed 不発火）——外観維持。
-                .interactive(!in_tool)
+                // launching 中も同様に打鍵を止める（Escape/blur/Alt+Q・↑↓は従来どおり通す・
+                // spec 決定 3・4。↑↓は空リストゆえ自然 no-op）。
+                .interactive(!in_tool && self.launching.is_none())
                 .hint_text(hint)
                 .desired_width(f32::INFINITY),
         );
@@ -1222,9 +1384,9 @@ impl EguiView for SearchWindowView {
             }
             if !self.state.results().is_empty() {
                 if shift_held {
-                    self.shift_activate(self.state.selected());
+                    self.shift_activate(self.state.selected(), &ctx);
                 } else {
-                    self.activate_or_execute(self.state.selected());
+                    self.activate_or_execute(self.state.selected(), &ctx);
                 }
             }
         }
@@ -1274,7 +1436,7 @@ impl EguiView for SearchWindowView {
         // シングルクリック＝起動（§4.8 単=起動）。double-click は扱わない（ユーザー決定・
         // as-built でも double-click=選択は到達不能。SPEC §4.8 を as-built へ同期済み）。
         if let Some(i) = clicked {
-            self.activate_or_execute(i);
+            self.activate_or_execute(i, &ctx);
         }
 
         // 動的ウィンドウ高さ（§4.5/§4.7）。show_results 可否 × max_results から算出し set_size。

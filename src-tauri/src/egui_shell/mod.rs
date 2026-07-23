@@ -4,11 +4,13 @@ mod icon_textures;
 mod lifecycle;
 mod search_state;
 mod layout;
-// 純粋核のみ Task 1 で新設・driver 消費（NoticeSlot::set 等の呼び出し）は Task 4/6 で view.rs に
-// 配線する（#532 SU5）。それまでの中間状態では dead_code が正しく発生するため、この module 全体に
-// 一時的に allow する（`notify::` の各シンボル自体は brief どおり実装済みで未消費なだけ）。
+// 一時通知（NoticeSlot/LAUNCH_TIMEOUT/NOTICE_LAUNCH）は Task 4 で view.rs が消費する。
+// UpdaterUi 系（UpdaterPhase/ToastRow/ToastKind）は Task 6/7 で消費されるまで未使用のため、
+// この module 全体には引き続き allow を残す（`notify::` の各シンボル自体は実装済みで未消費なだけ）。
 #[allow(dead_code)]
 mod notify;
+// view.rs（driver）が起動 worker の in-flight 追跡・一時通知で消費する（#532 SU5 Task 4）。
+pub(crate) use notify::{LAUNCH_TIMEOUT, NOTICE_LAUNCH, NoticeSlot};
 // テーブル全 11 関数のうち hint 系 3 つ（search_hint/tool_select_hint/indexing_hint）は本タスクで
 // view.rs の update() に配線済み・消費される。launching/launch_failed/launch_timeout/update_* は
 // notify.rs 経由の起動・更新通知描画（Task 4/6）で消費予定のため、それまでは dead_code が正しく

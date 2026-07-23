@@ -420,6 +420,9 @@ impl SearchWindowView {
                 }
                 // cache 未着（ロード中）は前フレーム結果を保持（フリット無し・set しない）
             }
+            ViewKind::Tool => {
+                // §18.5: ツール選択中は検索結果を上書きしない（trailing/changed とも no-op）
+            }
             ViewKind::Results => {
                 match self.state.interp(prefix) {
                     QueryIntent::Plain => {
@@ -595,6 +598,11 @@ impl EguiView for SearchWindowView {
                     self.instant_rows_query = None;
                     ctx.request_repaint();
                 }
+                EscapeOutcome::RestoredFromTool => {
+                    // tool 解除 → 直下ビュー（folder/results）を復元描画。folder が下に生きて
+                    // いるため cache/error は破棄しない（RestoredSearch との差・純粋核 doc 参照）
+                    ctx.request_repaint();
+                }
                 EscapeOutcome::Hide => self.emit_hide(),
             }
         }
@@ -627,14 +635,16 @@ impl EguiView for SearchWindowView {
 
         // → : 選択中がフォルダなら展開（results 中は enter、folder 中は深掘り）。ファイル/エラー行は無反応。
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight))
+            && self.state.view_kind() != ViewKind::Tool // §18.5 ←→無効
             && let Some(sel) = self.state.results().get(self.state.selected())
             && sel.is_folder
             && !sel.is_error
         {
             let dir = sel.path.clone();
-            let tok = match self.state.view_kind() {
-                ViewKind::Folder => self.state.navigate_folder(dir.clone()),
-                ViewKind::Results => self.state.enter_folder(dir.clone()),
+            let tok = if self.state.view_kind() == ViewKind::Folder {
+                self.state.navigate_folder(dir.clone())
+            } else {
+                self.state.enter_folder(dir.clone())
             };
             // → は Folder 中の深掘り・Results からの enter どちらも展開履歴に記録
             // （SolidJS enterFolderExpansion と同一サイト・#532 SU3 M2 Finding #1）。
@@ -646,6 +656,7 @@ impl EguiView for SearchWindowView {
         // ← : folder 中は親へ、通常検索中は選択項目の親を展開して folder 突入。
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
             match self.state.view_kind() {
+                ViewKind::Tool => {} // §18.5 ←→無効
                 ViewKind::Folder => {
                     if let Some(parent) = self.state.parent_dir() {
                         // ← の folder 折り返しは navigateFolderUp 相当・記録しない（Finding #1）。

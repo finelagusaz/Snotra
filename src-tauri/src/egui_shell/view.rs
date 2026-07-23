@@ -994,17 +994,26 @@ impl SearchWindowView {
     }
 
     /// toast ボタンの処理（#532 SU5）。install は Update を原子取得して async へ（Task 8）。
-    fn handle_toast_action(&mut self, action: ToastAction) {
+    ///
+    /// **状態を変えたら `ctx.request_repaint()` する**（Task 10 実機スモークで発見・
+    /// `spawn_folder_load` の egui_ctx wake（本ファイル該当箇所のコメント参照）と同じ理由）:
+    /// このランタイムはイベント駆動で、click を処理したこのフレームの描画は toast_action の
+    /// 遅延 dispatch より前に完了している。ここで状態を変えても誰も次のフレームを起こさないため、
+    /// 無関係な入力（マウス移動等）が来るまで旧 toast が画面に残る（dismiss 後の stale 表示）。
+    fn handle_toast_action(&mut self, action: ToastAction, ctx: &egui::Context) {
         let Some(st) = self.app_handle.try_state::<crate::egui_shell::UpdaterUiState>() else {
             return;
         };
         match action {
             ToastAction::Dismiss => {
-                let _ = st.0.lock().unwrap().dismiss(); // Installing 中は拒否（false）＝無視
+                if st.0.lock().unwrap().dismiss() {
+                    ctx.request_repaint(); // Installing 中の拒否（false）は表示不変ゆえ不要
+                }
             }
             ToastAction::Install => {
                 let taken = st.0.lock().unwrap().try_begin_install();
                 if let Some(update) = taken {
+                    ctx.request_repaint(); // Available→Installing の即時反映（disabled ボタン）
                     self.spawn_install(update);
                 } else {
                     crate::trace_main("egui_update_install_noop", serde_json::json!({}));
@@ -1533,7 +1542,7 @@ impl EguiView for SearchWindowView {
             }
         }
         if let Some(action) = toast_action {
-            self.handle_toast_action(action);
+            self.handle_toast_action(action, &ctx);
         }
 
         // trailing debounce: 連打が収まって interval 経過したら最終クエリで検索し直す。

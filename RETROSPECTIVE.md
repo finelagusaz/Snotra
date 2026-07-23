@@ -1,25 +1,28 @@
-# Retrospective — #532 Phase 2 SU4（アイコン + 視覚 pass + §11 テーマ消費）
+# Retrospective — #532 Phase 2 SU5（updater + 通知 primitive + 起動 async 化）
 
 ## よかったこと
 
-### 着手前に 2 プローブで設計フォークを実測確定した
-worker 要否と font_family honor 可否という 2 つの設計の分岐を、実装前に使い捨てプローブで測って閉じた（#634 が SU3.5 前に G-SYNC を測ったのと同じ刻み・ユーザーの「まず測る」流儀）。**両方とも仮説を実測が覆した**: (1) Probe 1 は 8 件アイコンバッチ warm 合計 p50=8ms/max=11.7ms を出し「update() 内同期で足りる」を否定 → worker を数字で正当化。(2) Probe 2 は Segoe+YuGothic でベースラインずれが**出ない**ことを示し「honor は #579 を再発させる」という advisor+自分の仮説を覆した（ずれはフォントの組で決まり、MS システムフォント同士は揃う）。土俵を疑ってから設計に入ったことで、間違ったアーキテクチャを作らずに済んだ。
+### spec 段階のマルチパースペクティブレビューが設計の根幹を 3 回覆した
+brainstorm ドラフトに 3 レンズ subagent（並行性/parity/状態機械）+ codex 敵対探索を当て、実装前に (1)「hide は起動完了待ち」というドラフトの根幹前提が WebView2 実コードで反証され（launching ガードは打鍵のみ）、(2) codex の「世代 token 必要」が per-launch channel の rx 所有で不要と実測反証され、(3)「保存優先」の出所調査が SPEC・コード・issue 申し送りの三者食い違いを暴いた。実装後に発覚していれば作り直しだった 3 件が、spec の文面修正で済んだ。多レンズは「収束点で盲点を暴く」（#536 の教訓）が SU5 でも成立。
 
-### task-scoped review が実バグを捕捉し、whole-branch はほぼ空だった
-subagent-driven の各タスク review が Task 3（name 折り返し・CJK 幅過小評価）と Task 5（per-repaint thread pileup）という**実挙動バグ**を捕まえ、修正 → 再レビュー Approved で閉じた。最終 whole-branch review（opus）の指摘は stale doc 1 行のみ——M2/M3 では whole-branch だけが read-without-write 横断非対称を拾っていたが、今回はそのクラスが task 段階で予防できていた。多段レビューが機能した。
+### 一次資料が reviewer の Important を 2 件取り下げさせた
+Task 3（flush 後 selected=0 の主張）と Task 4（Tool 失敗時の「退行」）で、reviewer の Important に対し実装者が WebView2 実コード・spec 本文という一次資料で反証し、いずれも「コメント是正のみ」「現状維持」で決着した。「reviewer の指摘も実装者の反論も鵜呑みにせず、一次資料で接地させてから裁定する」往復が、誤った fix（parity 逸脱の reset 追加・不要なメニュー復元実装）を 2 回防いだ。
 
-### controller が毎タスク cargo build/test で接地した
-この環境の LSP diagnostics が編集途中の stale を出し、実装者の「DONE・green」報告と矛盾する事象がほぼ全タスクで起きた。報告も diagnostics も鵜呑みにせず、毎回 `cargo build/test` の実行結果で接地したことで、幻の欠陥を追わず・実際の破損も見逃さずに済んだ。
+### plan 工程の plugin 一次調査が「決着不能な未決」を構造的解に変えた
+spec が未決とした保存順序を、実装計画の冒頭で tauri-plugin-updater のローカルソース（`updater.rs:865` の `std::process::exit(0)`）に問うて決着した。副産物として「現行 WebView2 経路は update 時に終了保存が一度も走っていない」既存 gap を発見し、`on_before_exit` hook 登録という「保存が構造的に保証される」解へ到達した。文書間の食い違い（SPEC vs ロードマップ申し送り）は、実装を読むまで裁定しないのが正しかった。
+
+### 検証専任タスクが spec の要石を決着させ、実バグも捕捉した
+Task 10 を検証専任に切り、spec が「実装時スモークで決着」と明記した hidden 中 update() の挙動を一時プローブで実測（走らない・backstop 有効）。さらに回帰スモークが toast dismiss 後の stale 表示（wake 忘れ）という**レビュー 2 段をすり抜けた実バグ**を捕捉した。「テストで書けない項目を実装時スモークとして計画に明記する」→「検証タスクがそれを実行する」の分業が機能した。
 
 ---
 
 ## 伸びしろ
 
-### 視覚スモークの起動対象を誤り、ユーザーに検出された
-視覚スモークのコマンドを `cargo run --release`（`-p` 欠落）で渡し、ワークスペースの別 bin `snotra-egui-mvp`（Phase 1 スパイク・SU 実装を含まない）が起動した。ユーザーの「MVP が対象で良いのか」で発覚。**構造的原因は、`docs/build-commands.md` のカテゴリ D（UI 視覚スモークのトリガー）が `npm run tauri dev`（WebView2 経路）しか書いておらず、egui 経路の起動コマンドを欠いていたこと**。製品 egui 経路 `SNOTRA_EGUI_MAIN=1; cargo run -p snotra` をカテゴリ D と単独起動リストに明記して塞いだ（コマンドの SSOT を接地させる方が、注意書きより効く）。
+### rustdoc の intra-doc link 誤解釈で CI が赤になった（検査カバレッジの隙間）
+doc コメントに UI ラベルを `[今すぐ更新]` と角括弧で書き、rustdoc がリンク構文と解釈して CI rust-check（cargo doc・deny 設定）が赤になった（4 箇所・マージ前に発覚）。**cargo doc は PostToolUse hook にも task review のテスト実行にも含まれず、CI でのみ発火する**——「hook 沈黙=合格」の射程外にある検査の存在を、書く時点の様式で防ぐしかない。`docs/comment-guidelines.md` rustdoc 様式に「非リンク角括弧は backtick で包む」を追記して塞いだ。
 
-### dispatch を narrate しonly で tool 呼び出しを発行し忘れた
-Task 5 で「実装者を起動します」と述べたが Agent 呼び出しを実際に発行せず、ユーザーの「実装者は活動中か」で発覚。行動を述べたら**実際に発行したか確認する**——[[confabulating-tool-results]] の隣接失敗（行動を語ることと行うことの混同）。メモリ `lsp-diagnostics-stale-mid-edit` に addendum として記録。
+### イベント駆動 runtime の wake 忘れが 3 度目の同型で再発した
+toast action（クリックの遅延 dispatch）後に `request_repaint` を呼ばず、dismiss 後の stale 表示が残った。folder ロード（SU3 M2）・icon worker（SU4）で 2 度学び view.rs にコメントまである同型パターンの 3 度目——「状態を変えたら起こす」が**サイトごとの注意**に留まり、横断不変条件として文書化されていなかった。`src-tauri/CLAUDE.md` の egui_shell 節に wake 不変条件（+ hidden 中 update() 非走行の実測）を明記して昇格させた。残余の暗黙 wake 1 箇所（start_launch）は #648 で自己完結化する。
 
-### メモリ本文更新時に索引行を同期し忘れた
-SU4 完了を issue-532 メモリ本文に書いたが `MEMORY.md` の索引行を更新せず、サイクル末 health-check の 7b（索引↔本文一致）が検出。メモリ書き込み規律「本文更新時に一行ポインタも更新」の取りこぼし。retrospective の Step 6 で同期済み。**本文と索引は同じ編集で揃える**。
+### 計画内コードの「わかったつもり」が review 往復を 2 回消費した
+plan の完全コード方式は転写ミスを消す一方、(1) flush 後 selected のコメントが実挙動（clamp）と矛盾、(2) Tool 失敗時の run_search no-op 見落とし、(3) toast ボタンの `next_auto_id` 二重取得と、**計画コード自体の欠陥**が 3 件レビューで出た。いずれも「WebView2 の該当経路を計画時に読んで確認したか」で防げた——**計画に書くコードの parity 主張は、書く時点で該当実装の該当行を読んで裏取りする**（spec の parity 検証と同じ規律を plan のコード片にも適用する）。

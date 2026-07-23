@@ -25,7 +25,7 @@ SearchWindowView (driver / imperative shell)  ── egui/Win32/AppHandle 依存
   ・window.set_size / show / hide、folder 読みの thread spawn + channel poll、request_repaint
 
 SearchState (functional core)  ── egui/Win32 非依存・ユニットテスト
-  ・query / selected / results / stack(folder) / folder_gen を所有
+  ・query / folder_filter / selected / results / folder(Option<FolderFrame>) / folder_gen を所有
   ・view_kind() / interp() を毎フレーム純粋導出（reactive memo は不要＝immediate mode が毎フレーム再計算）
   ・on_escape / on_arrow_{up,down,left,right} / begin_folder_request / apply_folder_result(token) を純関数遷移
 ```
@@ -47,9 +47,19 @@ SearchState (functional core)  ── egui/Win32 非依存・ユニットテス�
 2. **真の async は 2 つだけ。** (a) フォルダ列挙（UNC/ネットワークで遅延・現状 `spawn_blocking`）、(b) SU4 アイコン。egui idiom（thread spawn → `std::sync::mpsc` → 毎フレーム `try_recv` → 到着で `request_repaint`）で扱う。folder は結果集合を**置換**するので staleness token（`folder_gen`）が要る。アイコンは path キーゆえ stale が自然無視される（token 不要）。
 3. **状態と遷移は src-tauri の純粋 `SearchState`。** snotra-core へは押し下げない（selected index・view-stack・Escape ラダーは純然たる UI 関心で、core の責務＝インデックス/検索/履歴 と混ざる）。core に置くのは真に汎用な純関数（`interpret` 等）だけ。
 4. **単一ウィンドウ維持（§4.7 parity）。** 検索バーと結果は 1 ウィンドウ内に共存する。2 ウィンドウ分割は flip 後の別 spec（→「否定の知識」）。
-5. **tool-selection(§18) は defer → 独立 SU3.5。** spine の view-stack は `Vec<ViewFrame>` として「後で tool 種を加算できる」構造にするが、SU3 では `tool` frame を建てない（SU2 の「live 到達不能な状態を建てない」を踏襲）。SU3 の `view_kind()` は `results | folder` のみ到達する。§18 の parity は独立サブユニット **SU3.5**（SU3 完了後・flip 前）で取る。
+5. **tool-selection(§18) は defer → 独立 SU3.5。** M2 の view frame は `Option<FolderFrame>`（M2 brainstorm 2026-07-23 で `Vec<ViewFrame>` から変更・「M2 実装確定」節）。SU3 では `tool` frame を建てない（SU2 の「live 到達不能な状態を建てない」を踏襲）。tool が folder の上へ積まれる SU3.5 で stack へ一般化する。SU3 の `view_kind()` は `results | folder` のみ到達する。§18 の parity は独立サブユニット **SU3.5**（SU3 完了後・flip 前）で取る。
 6. **IPC コマンドは消さない。** `search`/`get_history_results`/`list_folder`/`get_instant_commands`/`execute_instant_command` 等は flag OFF の WebView2 経路が SU7 まで使う。SU3 は egui view に直 Engine 呼びを**足す**だけ。「IPC 撤去」＝「egui 経路が IPC を通らない」の意。**SU2 の G1（flag OFF 完全不変）を破らない。**
 7. **debounce は最初から入れる（SolidJS 相当）。** 高速連打の coalescing は同期直 Engine でも価値が残る（毎フレームではなく打鍵時のみ search でも、1 打鍵ごとの全走査は無駄）。SolidJS を踏襲し **search = leading edge（バースト先頭で即時）+ trailing 50ms**、**instant fetch = 30ms trailing のみ（leading なし）**。timing は driver 所有で **`request_repaint_after`**（SU2 の blur 100ms 猶予と同じ egui idiom）。leading/trailing の判定述語（`should_run_search(is_burst_start, elapsed)`）は純関数として `SearchState` 隣接に置きユニットテストする（clock は driver が注入）。**query 状態は毎打鍵で更新（表示・interp 導出のため）、search 実行だけを debounce する**——query とresults が一瞬ずれるのは debounce の正常動作（SolidJS と同じ）。
+
+### M2 実装確定（brainstorm 2026-07-23・codex 反証レビュー反映）
+
+folder（M2）の実装方針を確定。以下は上の決定 4/5 と §状態モデル・§view-stack の該当箇所を **supersede** する。細目の実装要件（関数署名・テスト名・手順）は M2 plan（`plans/2026-07-23-su3-m2-folder.md`）を SSOT とする。
+
+- **フィルタモデル B（一度読み + 同期フィルタ）。** ナビゲーション（→/←/親）のみ async でディレクトリを全列挙・ソートし driver がキャッシュする。フォルダ内の文字フィルタは新規同期 fn `snotra-core::folder::filter_sorted`（既存 `matches_filter` の再利用）で毎フレーム同期に絞る。前提として `folder::score_entries` の比較器に **path の最終 tie-breaker** を足して total order 化する——`to_lower_folded` のアクセント畳込みで同キー化する `Café`/`Cafe` が `select_nth_unstable` の境界で不定になり「全ソート→フィルタ→take-k ＝ フィルタ→ソート→take-k」が崩れるため（既存の順序独立不変条件も強化される）。
+- **フィルタ文字列は専用 `folder_filter` field。** query は展開前検索語を保持する（SolidJS 構造）。query 相乗りは folder 中の起動が履歴 query に展開前語でなくフィルタを記録し parity を壊す（`launchAndReset` は `query()` を記録・`enterFolderExpansion` は query を書き換えない）。frame は `restore_query`（+ restore_results/selected・current_dir）のみを持ち、旧記述の frame `filter` field は廃す。
+- **view frame は `Option<FolderFrame>`（決定5 の `Vec<ViewFrame>` を撤回）。** M2 は folder 1 枚で足り、深掘りは `current_dir` その場書き換え（push しない）。器の一般化すら「live 到達不能な状態を建てる」YAGNI 違反ゆえ、tool が実際に folder の上へ積まれる SU3.5 で stack へ一般化する。
+- **staleness は全離脱経路で失効。** `begin_folder_request` に加え Escape/hide/reset/親子遷移でも `folder_gen` を進め、`apply_folder_result` は token 一致 ∧ view_kind==Folder のときだけ適用する（遅延到着した旧ナビ結果が通常検索を轢く経路を塞ぐ）。channel は毎フレーム drain して最新 token だけ反映し、列挙完了時は現 `folder_filter` で再フィルタする。
+- **B の非対称を parity 対象外と明記。** キャッシュは folder 滞在中の fs 変化・隠し項目/フォルダ検索方式の config 変更を反映しない（SolidJS は filter ごと再列挙で反映）。巨大 dir の保持は上限 or 明示受容 + 計測を M2 の受け入れ条件に入れる。
 
 ### 検証済み（この設計の前提・一次証拠）
 
@@ -68,7 +78,7 @@ SearchState (functional core)  ── egui/Win32 非依存・ユニットテス�
 
 検索ウィンドウの「モード」は単一 enum ではなく、SolidJS と同じ 2 軸 + overlay を `SearchState` から純粋導出する（SPEC §8.6 状態図と一対一）。immediate-mode では毎フレーム再計算されるため、SolidJS の memo（`createMemo` の等価最適化）は不要——素の関数でよい。
 
-- **軸1 `view_kind() -> ViewKind`**（`results | folder`。将来 `tool` 加算）: モーダルビュースタック頂点の種類。`stack.last().map(kind).unwrap_or(Results)`。
+- **軸1 `view_kind() -> ViewKind`**（`results | folder`。将来 `tool` 加算）: モーダルビュー頂点の種類。M2 は `folder.as_ref().map(|_| Folder).unwrap_or(Results)`（`Option<FolderFrame>`。SU3.5 で stack 頂点射影へ一般化）。
 - **軸2 `interp() -> QueryIntent`**（`plain | command | instant`）: 入力の意味。`interpret(query, prefix, view_kind())` の純粋導出。`view_kind() != results` のときは常に plain（folder 中は非 plain 化しない）。
 - **overlay**: `indexing`（AppState 由来 bool）/ `launching`（起動中 bool）。軸ではなくどのモードにも重なる。
 
@@ -84,7 +94,7 @@ SearchState (functional core)  ── egui/Win32 非依存・ユニットテス�
 
 ### view-stack（モーダルビュー）
 
-`stack: Vec<ViewFrame>` は退避/復元の単位。SU3 では `ViewFrame::Folder{ restore_query, restore_results, restore_selected, current_dir, filter }` の 1 種のみ push される。`save`（展開前状態を frame に退避）→ `restore`（Escape/親ルート到達で復元）→ `pop`（1 段戻す）の規律は SolidJS の ViewStack（`saveView`/`restoreView`/`popView`）を Rust へ移す。**tool 種は SU3 では加えない**（決定5）。
+M2 の退避/復元の単位は `Option<FolderFrame>`（決定5・「M2 実装確定」節で `Vec<ViewFrame>` から変更）。`FolderFrame{ restore_query, restore_results, restore_selected, current_dir }` を 1 つ持つ（フォルダ内フィルタは frame でなく `SearchState.folder_filter` field。深掘りは push でなく `current_dir` その場書き換え）。`save`（展開前状態を frame へ退避）→ `restore`（Escape/親ルート到達で復元）→ 解除（frame を None に）の規律は SolidJS の ViewStack（`saveView`/`restoreView`/`popView`）を Rust へ移す。**tool 種は SU3 では加えない**（決定5）。
 
 ## データフロー（毎フレーム dispatch）
 
@@ -128,10 +138,10 @@ driver の `update()` は毎フレーム:
 
 ## milestone（1 spec・段階実装、各 green でコミット）
 
-順に積む。背骨（`SearchState` + 2 軸 + view-stack）は M1 で建て、folder/instant/slash が差さる。
+順に積む。背骨（`SearchState` + 2 軸）は M1 で建て（folder frame / `folder_gen` は M2 が建てる・as-built）、folder/instant/slash が差さる。
 
 - **M1 core**: `SearchState` 骨格（results 軸のみ）+ `interpret`/`compute_window_height`/`should_run_search` 純関数 + 描画（検索バー・結果リスト・行）+ 同期 search + **debounce（leading+trailing 50ms）** + ↑↓ナビ/選択/scroll 追従 + Enter/クリック起動 + hide + 空クエリ + indexing overlay + 動的高さ/show 順序。**G-RESIZE / G-SYNC / G1 をここで接地。**
-- **M2 folder**: →←/親ナビ（`compute_parent_dir`）+ Escape 復帰（§6.4）+ async folder 読み（`folder_gen` token staleness）+ folder filter（§6.3）+ Enter で explorer + 列挙失敗行（§6.6）。view-stack に `Folder` 種追加。
+- **M2 folder**: →←/親ナビ（`compute_parent_dir`）+ Escape 復帰（§6.4）+ async folder 読み（`folder_gen` token staleness・全離脱経路で失効）+ folder filter（§6.3・`folder_filter` field + `folder::filter_sorted`）+ Enter で explorer + 列挙失敗行（§6.6）。`Option<FolderFrame>` を追加。詳細は「M2 実装確定」節と M2 plan。
 - **M3 instant+slash**: `@`instant（filter/exec/skip icon/ガード・**30ms trailing debounce**）+ slash（`/r /o /s /q`）+ Escape ラダー完成（instant/command 解除段）。
 
 ## テスト計画
@@ -165,7 +175,7 @@ driver の `update()` は毎フレーム:
 
 ## スコープ外（SU3 では触らない）
 
-- **tool-selection / カスタムオープナー（§18）**: spine の view-stack は加算可能に保つが frame は建てない。**独立サブユニット SU3.5**（SU3 完了後・SU4 と並行しうる）で `tool` 種を view-stack に加算し §18 の parity を取る。flip（SU7）前に SU3.5 を通す。
+- **tool-selection / カスタムオープナー（§18）**: M2 は `Option<FolderFrame>` に留め器を一般化しない（「M2 実装確定」節）。**独立サブユニット SU3.5**（SU3 完了後・SU4 と並行しうる）で `Option<FolderFrame>` を `tool` を積める stack へ一般化し §18 の parity を取る。flip（SU7）前に SU3.5 を通す。
 - アイコン実体（SU4）・updater（SU5）・config 反映/終了保存（SU6）・切替/配布（SU7）。
 - **IPC コマンドの削除**（SU7）。SU3 は egui 経路で bypass するだけ。
 - ルート `CLAUDE.md`/`AGENTS.md` 等の規範文書。
@@ -175,4 +185,4 @@ driver の `update()` は毎フレーム:
 - **2 ウィンドウ分割（検索窓 + 結果窓）を SU3 では却下**（brainstorm 2026-07-22）。高さ調整は確かに楽になる（検索窓 52px 固定・結果窓は中身に合わせる）が、(a) 文書化された §4.7（単一ウィンドウ）からの乖離＝移行に仕様変更を折り込む、(b) WebView2 ベースラインと綺麗に diff できず parity 検証の軸が消える、(c) softbuffer は CPU present ゆえ 2 枚の present タイミングずれが継ぎ目/隙間/z-order ちらつきを生み「外観維持」flip 基準を難しくする。**移行の内側でウィンドウ・アーキテクチャを再設計しない**が主因。高さの複雑さは消えず「結果窓を検索窓へ糊付けする責務（move/show/hide/モニター変更追従・同幅・直下・非アクティブ化）」へ移動するだけ、という点も効いた。過去の「統合」先例は根拠として弱い——元の統合理由（`is_main_foreground` のプロセス ID 比較）は WebView2 固有で egui/softbuffer(in-process) では再発しないため。**2 ウィンドウは flip（SU7）後の別 spec で merits で再検討する**——egui が唯一経路になり parity 制約が外れ、かつ元の統合理由も消えている、本来の適所。単一ウィンドウ内で動的リサイズが目視で悪い場合のみ SU3 内で再考が開くが（G-RESIZE）、その第一の修正も present タイミングであって 2 枚目ではない。
 - **並行 primitive（`searchLane`/`activationLane`/`latestRun`/`exclusive`）の移植を却下**。これらは IPC 往復の out-of-order/in-flight Promise 調停のためだけに存在する。直 Engine の同期呼びでは out-of-order も二重 in-flight も生じない（起動時 hide で二重起動も消える）。移植は不要な機構を egui 経路へ持ち込む。→ 同期 search + folder のみ token staleness。
 - **状態を snotra-core へ押し下げるのを却下**。selected index・view-stack・Escape ラダーは純然たる UI 関心で、core の責務（インデックス/検索/履歴）と混ざる。core に置くのは真に汎用な純関数（`interpret` 等）だけ。状態機械は src-tauri の純粋 `SearchState`。
-- **spine に `tool` 軸の実体を今建てるのを却下**（SU2 の否定の知識の踏襲）。SU3 で live 到達しない `tool` frame を建てるのは「live 到達不能な状態を建てる」過剰設計。view-stack を `Vec<ViewFrame>` にして加算可能にだけしておく。
+- **spine に `tool` 軸の実体を今建てるのを却下**（SU2 の否定の知識の踏襲）。SU3 で live 到達しない `tool` frame を建てるのは「live 到達不能な状態を建てる」過剰設計。**M2 brainstorm（2026-07-23・codex 反証）で器の一般化（`Vec<ViewFrame>`）自体も同じ理由で却下し `Option<FolderFrame>` に留めた** — tool が実際に folder の上へ積まれる SU3.5 で stack へ一般化する（第二の事例が現れた時点で一般化する規律）。

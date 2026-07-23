@@ -144,3 +144,4 @@ egui_shell 経路では runtime の visible ガードが効かない構造のた
 - timeout 連打による abandoned worker スレッドの一時蓄積（`spawn_blocking` 版と同型のリスク・ShellExecuteW は OS レベルで最終的に復帰する）
 - toast 表示中 show の 1 フレーム高さスナップ
 - launching 中の in-flight 表示差（WebView2=空リスト + 起動中 / egui も同じへ寄せる・決定 7 で解消済み）
+- Tool 起動失敗時はメニュー行が空のまま復元されない（52px collapse・Escape で tool view から正常復帰可能）。WebView2 実挙動（`launchWithSelectedTool` 失敗腕は `runRefresh` のみ・Tool 中 no-op・`toolSelectionState` は残存）と同型の厳密 parity。Instant だけが失敗時復元を持つ非対称は WebView2 自身の既存非対称であり egui 側で是正しない（Task 4 レビューで一次資料確認・2026-07-24）

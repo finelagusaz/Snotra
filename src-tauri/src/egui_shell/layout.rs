@@ -65,6 +65,14 @@ impl Debouncer {
         }
         false
     }
+
+    /// armed を解除し予約済み trailing を取り消す（SolidJS cancelDebounce parity・#532 SU3 M3）。
+    /// instant/command モード突入時に driver が呼ぶ——モード外で予約された検索が
+    /// モード中に遅延発火する経路を塞ぐ（run_search は再導出ゆえ実害は無いが無駄撃ちを消す）。
+    #[allow(dead_code)]
+    pub fn cancel(&mut self) {
+        self.armed = false;
+    }
 }
 
 #[cfg(test)]
@@ -116,5 +124,17 @@ mod tests {
         let mut d = Debouncer::new(Duration::from_millis(30), false);
         assert!(!d.on_input(), "leading なしは即時発火しない");
         assert!(d.poll(Duration::from_millis(30)), "trailing のみ発火");
+    }
+
+    #[test]
+    fn cancel_disarms_pending_trailing() {
+        let mut d = Debouncer::new(Duration::from_millis(50), true);
+        d.on_input();
+        assert!(d.is_armed());
+        d.cancel();
+        assert!(!d.is_armed());
+        assert!(!d.poll(Duration::from_millis(100)), "cancel 後は trailing 発火しない");
+        // cancel 後の次入力はバースト先頭扱い（leading 再発火）
+        assert!(d.on_input());
     }
 }

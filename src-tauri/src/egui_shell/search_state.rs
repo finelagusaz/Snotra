@@ -3,7 +3,7 @@
 
 use snotra_core::ui_types::SearchResult;
 
-/// 軸1: モーダルビュースタック頂点の種類。M1 は Results のみ到達（Folder は M2、tool は SU3.5）。
+/// 軸1: モーダルビュースタック頂点の種類。Results と Folder が到達可能（Folder は M2 で到達可能化・#532 SU3 M2、tool は SU3.5 予定）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViewKind {
     Results,
@@ -54,6 +54,15 @@ pub fn interpret(raw_query: &str, prefix: &str, view_kind: ViewKind) -> QueryInt
     }
 }
 
+/// フォルダ展開直後、列挙結果（cache）も失敗行（error）も未着の間は true（#636 レビュー Finding A）。
+/// この窓では `results` が展開前ビューの残存物なので、driver は起動（Enter/クリック）を抑止する
+/// ——dead/slow UNC でロードが滞留すると、前ビューの誤項目を起動しうるため。前フレーム結果の保持は
+/// フリッカ回避の意図的設計（view.rs run_search）ゆえ温存し、不可逆な起動だけを止める。Results
+/// モードや列挙完了（cache/error いずれか到着）後は false で、通常どおり起動できる。
+pub fn folder_load_pending(view_kind: ViewKind, has_folder_cache: bool, has_folder_error: bool) -> bool {
+    view_kind == ViewKind::Folder && !has_folder_cache && !has_folder_error
+}
+
 /// フォルダ展開モードの退避/復元単位（`Option<FolderFrame>`・#532 SU3 M2）。深掘りは push でなく
 /// current_dir 書き換え。フォルダ内フィルタは frame でなく SearchState.folder_filter が持つ。
 #[derive(Debug, Clone)]
@@ -74,7 +83,7 @@ pub enum EscapeOutcome {
     Hide,
 }
 
-/// 検索ウィンドウの純粋状態。M1 は results 軸のみ（folder stack は M2）。
+/// 検索ウィンドウの純粋状態。results 軸に加え folder 軸（folder / folder_filter / folder_gen）を持つ（M2 で追加・#532 SU3 M2）。
 pub struct SearchState {
     query: String,
     results: Vec<SearchResult>,
@@ -469,6 +478,19 @@ mod tests {
         s.set_folder_filter("@x".into()); // folder_filter に @ が入っても
         // interp は view_kind()==Folder ゆえ Plain（query 相乗りしないので query は空のまま）
         assert_eq!(s.interp("@"), QueryIntent::Plain);
+    }
+
+    #[test]
+    fn folder_load_pending_blocks_launch_only_before_cache_or_error() {
+        // Folder 突入直後（cache も error も未着）は起動抑止の窓 = true。
+        assert!(folder_load_pending(ViewKind::Folder, false, false));
+        // 列挙成功（cache 到着）後は false → 通常どおり起動できる。
+        assert!(!folder_load_pending(ViewKind::Folder, true, false));
+        // 列挙失敗（error 行到着）後も false（error 行の非起動は activate の is_error ガードが担う）。
+        assert!(!folder_load_pending(ViewKind::Folder, false, true));
+        // Results モードでは folder cache/error に依らず常に false（前ビュー残存物問題は起きない）。
+        assert!(!folder_load_pending(ViewKind::Results, false, false));
+        assert!(!folder_load_pending(ViewKind::Results, true, false));
     }
 
     #[test]

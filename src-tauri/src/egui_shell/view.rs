@@ -13,7 +13,7 @@ use tauri::{Emitter, Manager};
 
 use crate::egui_shell::{
     Debouncer, EscapeOutcome, HeightParams, QueryIntent, SearchState, ViewKind,
-    compute_parent_dir, compute_window_height,
+    compute_parent_dir, compute_window_height, folder_load_pending,
 };
 
 static JP_FONT_BYTES: OnceLock<Box<[u8]>> = OnceLock::new();
@@ -126,9 +126,20 @@ impl SearchWindowView {
     /// index 行を起動し、成功なら履歴記録して hide 要求を出す（§4.8 シングルクリック / Enter）。
     /// launch_item_core は ShellExecuteW（エンジンロック外で呼ぶ・launch.rs:226）。成功時のみ
     /// record_and_save で履歴を記録（§4.3/§5 の query_count 加点・全起動経路の共通末尾を再利用）。
-    /// エラー行（is_error）は起動しない。
+    /// エラー行（is_error）／フォルダロード中（cache・error 未着で results が stale）は起動しない。
+    /// Enter とシングルクリックの単一チョークポイント（#636 レビュー Finding A）。
     fn activate(&self, index: usize) {
         use crate::commands::launch::{LaunchStatus, launch_item_core, record_and_save};
+        // フォルダ展開直後、列挙結果も失敗行も未着の窓では results が展開前ビューの残存物ゆえ、
+        // 誤項目の起動を止める（dead/slow UNC でロードが滞留すると Enter/クリックが前ビューの
+        // 項目を起動しうる・#636 レビュー Finding A）。判定核は search_state の純粋述語。
+        if folder_load_pending(
+            self.state.view_kind(),
+            self.folder_cache.is_some(),
+            self.folder_error.is_some(),
+        ) {
+            return;
+        }
         let Some(result) = self.state.results().get(index) else { return };
         if result.is_error {
             return;
@@ -543,7 +554,7 @@ impl EguiView for SearchWindowView {
             ctx.request_repaint_after(remaining);
         }
 
-        // 結果リスト（shouldShowResults 相当。M1: results 軸・plain のみ。空なら描かない）。
+        // 結果リスト（shouldShowResults 相当。results 軸〔plain〕と folder 軸を描く。空なら描かない）。
         let show_results = !self.state.results().is_empty();
         let mut clicked: Option<usize> = None;
         if show_results {

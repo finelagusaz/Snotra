@@ -56,8 +56,6 @@ pub fn interpret(raw_query: &str, prefix: &str, view_kind: ViewKind) -> QueryInt
 
 /// フォルダ展開モードの退避/復元単位（`Option<FolderFrame>`・#532 SU3 M2）。深掘りは push でなく
 /// current_dir 書き換え。フォルダ内フィルタは frame でなく SearchState.folder_filter が持つ。
-// TODO(SU3 M2 Task 3): view.rs が消費したら除去
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct FolderFrame {
     pub restore_query: String,
@@ -68,8 +66,6 @@ pub struct FolderFrame {
 
 /// Escape ラダーの分岐（driver が side-effect を実行）。M2 は folder 段と top-level のみ
 /// （instant/command 解除段は M3）。
-// TODO(SU3 M2 Task 3): view.rs が消費したら除去
-#[allow(dead_code)]
 #[derive(Debug, PartialEq, Eq)]
 pub enum EscapeOutcome {
     /// folder → 展開前検索状態へ復帰済み（driver は追加操作なし）
@@ -144,8 +140,6 @@ impl SearchState {
     }
 
     /// 通常検索 → folder 突入。展開前状態を frame に退避し gen を進める。token を返す。
-    // TODO(SU3 M2 Task 3): view.rs が消費したら除去
-    #[allow(dead_code)]
     pub fn enter_folder(&mut self, dir: String) -> u64 {
         self.folder = Some(FolderFrame {
             restore_query: self.query.clone(),
@@ -160,8 +154,6 @@ impl SearchState {
     }
 
     /// folder 内で親/子へ遷移（frame の current_dir を書き換え・push しない）。token を返す。
-    // TODO(SU3 M2 Task 3): view.rs が消費したら除去
-    #[allow(dead_code)]
     pub fn navigate_folder(&mut self, dir: String) -> u64 {
         if let Some(f) = self.folder.as_mut() {
             f.current_dir = dir;
@@ -172,40 +164,34 @@ impl SearchState {
         self.folder_gen
     }
 
-    // TODO(SU3 M2 Task 3): view.rs が消費したら除去
+    /// view.rs（driver）は現状 `parent_dir()` 越しに current_dir を使い、生の accessor は直接
+    /// 呼ばない（folder 中の hint 文脈提示は §6 で任意扱い・#532 SU3 M2 Task 3 で見送り）。
     #[allow(dead_code)]
     pub fn folder_current_dir(&self) -> Option<&str> {
         self.folder.as_ref().map(|f| f.current_dir.as_str())
     }
 
     /// folder 中の親ディレクトリ（ルート終端で None）。
-    // TODO(SU3 M2 Task 3): view.rs が消費したら除去
-    #[allow(dead_code)]
     pub fn parent_dir(&self) -> Option<String> {
         self.folder.as_ref().and_then(|f| compute_parent_dir(&f.current_dir))
     }
 
-    // TODO(SU3 M2 Task 3): view.rs が消費したら除去
+    /// driver は token を `enter_folder`/`navigate_folder` の戻り値から直接得るため、独立した
+    /// getter としては未消費（#532 SU3 M2 Task 3）。
     #[allow(dead_code)]
     pub fn folder_gen(&self) -> u64 {
         self.folder_gen
     }
 
     /// 遅延到着したナビ結果を受理してよいか（token 一致 ∧ folder 中）。driver が false なら破棄。
-    // TODO(SU3 M2 Task 3): view.rs が消費したら除去
-    #[allow(dead_code)]
     pub fn accept_folder_result(&self, token: u64) -> bool {
         token == self.folder_gen && self.folder.is_some()
     }
 
-    // TODO(SU3 M2 Task 3): view.rs が消費したら除去
-    #[allow(dead_code)]
     pub fn folder_filter(&self) -> &str {
         &self.folder_filter
     }
 
-    // TODO(SU3 M2 Task 3): view.rs が消費したら除去
-    #[allow(dead_code)]
     pub fn set_folder_filter(&mut self, f: String) {
         self.folder_filter = f;
         self.selected = 0;
@@ -213,8 +199,6 @@ impl SearchState {
 
     /// Escape ラダー（M2）: folder 中は展開前状態へ復帰、top-level は Hide。
     /// folder 離脱時は folder_gen を進めて遅延到着した旧ナビ結果を無効化する。
-    // TODO(SU3 M2 Task 3): view.rs が消費したら除去
-    #[allow(dead_code)]
     pub fn on_escape(&mut self) -> EscapeOutcome {
         if let Some(f) = self.folder.take() {
             self.query = f.restore_query;
@@ -256,8 +240,6 @@ pub(crate) fn clamp_selected(len: usize, idx: usize) -> usize {
 }
 
 /// 親ディレクトリを返す。ルート（`C:\` / `\\server\share\`）で None。folderNav.computeParentDir 相当。
-// TODO(SU3 M2 Task 3): view.rs が消費したら除去
-#[allow(dead_code)]
 pub(crate) fn compute_parent_dir(current_dir: &str) -> Option<String> {
     // 末尾 `\` を剥がす（ただしドライブルート "X:\" は保持しない — 後段で判定）。
     let normalized = if current_dir.len() > 3 && current_dir.ends_with('\\') {

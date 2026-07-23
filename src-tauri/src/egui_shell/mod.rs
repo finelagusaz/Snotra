@@ -1,18 +1,17 @@
 //! egui/softbuffer メインウィンドウの外殻（#532 SU2）。WebView2 と並行する
 //! egui 専用 window 生成・show/hide・blur 自動非表示・位置永続。WebView2 経路は触らない。
 mod lifecycle;
-// `ViewKind::Folder` は M2（folder frame の構築）まで実行時に構築されないため dead_code 警告が出る。
-// M2 で folder 遷移を実装したら外す（他の項目は view.rs / 内部で消費済み）。
-#[allow(dead_code)]
 mod search_state;
 mod layout;
 mod view;
 
 pub(crate) use lifecycle::{HotkeyPlan, blur_should_hide, plan_hotkey};
-// view.rs は SearchState/QueryIntent のみ使用。ViewKind/interpret/is_instant_prefix は
-// search_state 内部でのみ使われ外部 consumer が無いため未使用 import になる（M2/M3 まで橋渡し）。
+// view.rs（driver）が folder 展開（#532 SU3 M2）で消費する。
+pub(crate) use search_state::{EscapeOutcome, QueryIntent, SearchState, ViewKind, compute_parent_dir};
+// interpret/is_instant_prefix は search_state 内部（interp() 経由）でのみ使われ、view.rs からの
+// 直接呼び出しは無いため re-export としては未使用（M3 の command/instant 分岐まで橋渡し）。
 #[allow(unused_imports)]
-pub(crate) use search_state::{QueryIntent, SearchState, ViewKind, interpret, is_instant_prefix};
+pub(crate) use search_state::{interpret, is_instant_prefix};
 pub(crate) use layout::{Debouncer, HeightParams, compute_window_height};
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

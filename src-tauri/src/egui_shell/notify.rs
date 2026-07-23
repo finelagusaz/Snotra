@@ -71,7 +71,7 @@ pub enum UpdaterPhase<U> {
 pub struct ToastRow {
     /// 行1 のテキスト種別: (version, install 可否) or installing or failed。
     pub kind: ToastKind,
-    /// [今すぐ更新] を描くか（can_install かつ Available のときだけ）。
+    /// `[今すぐ更新]` を描くか（can_install かつ Available のときだけ）。
     pub show_install: bool,
     /// ボタンが押せるか（Installing 中は両方 disabled・WebView2 UpdateToast parity）。
     pub buttons_enabled: bool,
@@ -98,7 +98,7 @@ impl<U> Default for UpdaterUi<U> {
 }
 
 impl<U> UpdaterUi<U> {
-    /// [今すぐ更新]: Available{can_install} のときだけ Update を取り出し Installing へ原子遷移。
+    /// `[今すぐ更新]`: Available{can_install} のときだけ Update を取り出し Installing へ原子遷移。
     /// それ以外（二重クリック・Installing 中・dismissed 済）は None。
     pub fn try_begin_install(&mut self) -> Option<U> {
         if self.dismissed {
@@ -122,7 +122,7 @@ impl<U> UpdaterUi<U> {
         }
     }
 
-    /// [閉じる]: Installing 中は拒否（false）。それ以外は dismissed を立て true。
+    /// `[閉じる]`: Installing 中は拒否（false）。それ以外は dismissed を立て true。
     pub fn dismiss(&mut self) -> bool {
         if matches!(self.phase, UpdaterPhase::Installing) {
             return false;

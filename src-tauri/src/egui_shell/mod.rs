@@ -54,7 +54,7 @@ pub(crate) struct EguiShellState {
 /// updater toast の managed 状態（#532 SU5）。view が毎フレーム読む level-triggered
 /// （hidden に頑健・launching の channel edge-trigger との構造的対比は spec C 節）。
 /// dismissed は view-local に置かない——reset-on-show が view-local を一掃した際に
-/// [閉じる] 済み toast が復活するため（状態機械レビュー・spec A 節）。
+/// `[閉じる]` 済み toast が復活するため（状態機械レビュー・spec A 節）。
 pub(crate) struct UpdaterUiState(pub(crate) Mutex<crate::egui_shell::UpdaterUi<Box<tauri_plugin_updater::Update>>>);
 
 /// 起動時 updater check（§20.2・spec B 節）。`auto_update != disabled` で一回だけ呼ぶ。

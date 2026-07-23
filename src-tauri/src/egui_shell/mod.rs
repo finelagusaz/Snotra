@@ -6,8 +6,7 @@ mod search_state;
 mod layout;
 mod view;
 
-// Task 5（view.rs の icon texture driver）が消費する（#532 SU4）。Task 4 単体では未消費。
-#[allow(unused_imports)]
+// view.rs の icon texture driver（worker spawn / load_texture 適用）が消費する（#532 SU4 Task 5）。
 pub(crate) use icon_textures::{IconMsg, needs_extraction, png_to_color_image, retain_visible};
 pub(crate) use lifecycle::{HotkeyPlan, blur_should_hide, plan_hotkey};
 // view.rs（driver）が folder 展開（#532 SU3 M2）で消費する。

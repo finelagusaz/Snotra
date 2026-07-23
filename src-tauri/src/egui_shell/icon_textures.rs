@@ -6,18 +6,15 @@ use std::collections::{HashMap, HashSet};
 
 /// worker → driver のメッセージ。token は載せない——アイコンの staleness は path キー付けで
 /// 構造的に無害（遅延到着 texture は現行行の path でしか引かれない・SU4 決定 2）。
-/// driver（view.rs の worker spawn / load_texture）は Task 5 で導入されるため、Task 4 単体では
-/// 未消費（#532 SU4）。
-#[allow(dead_code)]
+/// driver（view.rs の worker spawn / load_texture）が消費する（#532 SU4 Task 5）。
 pub(crate) enum IconMsg {
     Loaded(String, egui::ColorImage),
     Missing(String),
 }
 
 /// 自前エンコードの RGBA8 PNG（icon.rs bgra_to_png）を ColorImage へ decode する。
-/// 想定外の色種別/深度は None（自前エンコードは常に RGBA8）。driver（view.rs）は Task 5 で消費
-/// するため、Task 4 単体では未消費（#532 SU4）。
-#[allow(dead_code)]
+/// 想定外の色種別/深度は None（自前エンコードは常に RGBA8）。driver（view.rs）が消費する
+/// （#532 SU4 Task 5）。
 pub(crate) fn png_to_color_image(png: &[u8]) -> Option<egui::ColorImage> {
     let decoder = png::Decoder::new(std::io::Cursor::new(png));
     let mut reader = decoder.read_info().ok()?;
@@ -41,9 +38,8 @@ pub(crate) fn png_to_color_image(png: &[u8]) -> Option<egui::ColorImage> {
 /// path が未取得かつ未 missing なら true（抽出 worker に積むべきか）。値型 `V` でジェネリック化
 /// してあるのは呼び出し側の型（`egui::TextureHandle`）に依存させないため——ctx 無しに生成できない
 /// TextureHandle を使わずとも、判定は `have`/`missing` のキー集合演算のみで完結する（ユニットテスト
-/// でダミー値型を使い present/missing/new の全経路を検証できる）。driver（view.rs）は Task 5 で
-/// 消費するため、Task 4 単体では未消費（#532 SU4）。
-#[allow(dead_code)]
+/// でダミー値型を使い present/missing/new の全経路を検証できる）。driver（view.rs）が消費する
+/// （#532 SU4 Task 5）。
 pub(crate) fn needs_extraction<V>(
     path: &str,
     have: &HashMap<String, V>,
@@ -54,8 +50,7 @@ pub(crate) fn needs_extraction<V>(
 
 /// 可視集合に無い path の値を drop（メモリを可視集合に頭打ち・SU4 決定 A メモリ境界）。
 /// `needs_extraction` 同様に値型 `V` でジェネリック化（呼び出し側は `egui::TextureHandle`）。
-/// driver（view.rs）は Task 5 で消費するため、Task 4 単体では未消費（#532 SU4）。
-#[allow(dead_code)]
+/// driver（view.rs）が消費する（#532 SU4 Task 5）。
 pub(crate) fn retain_visible<V>(textures: &mut HashMap<String, V>, visible: &HashSet<String>) {
     textures.retain(|k, _| visible.contains(k));
 }

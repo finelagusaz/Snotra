@@ -23,6 +23,7 @@ pub(crate) use lifecycle::{HotkeyPlan, blur_should_hide, plan_hotkey};
 // view.rs（driver）が folder 展開（#532 SU3 M2）で消費する。
 pub(crate) use search_state::{
     EscapeOutcome, QueryIntent, SearchState, ViewKind, compute_parent_dir, folder_load_pending,
+    should_flush_on_enter,
 };
 // SlashCmd/find_slash_command は driver（view.rs）が command 分岐・slash 実行で消費する（#532 SU3 M3 Task 2）。
 pub(crate) use search_state::{SlashCmd, find_slash_command};

@@ -1202,11 +1202,28 @@ impl EguiView for SearchWindowView {
         // egui の input はフレーム内で不変（読む順序は消費に影響しない）ため後置しても Enter は取りこぼさない。
         let (enter_pressed, shift_held) =
             ctx.input(|i| (i.key_pressed(egui::Key::Enter), i.modifiers.shift));
-        if enter_pressed && !self.state.results().is_empty() {
-            if shift_held {
-                self.shift_activate(self.state.selected());
-            } else {
-                self.activate_or_execute(self.state.selected());
+        if enter_pressed {
+            // #631 flush-on-Enter: trailing 窓内（打鍵後 50ms 以内）の Enter は leading 時点の
+            // 結果で起動しうる。armed な plain クエリは cancel → 同期 run_search で最終クエリの
+            // 結果に置換してから dispatch（SolidJS resolveActivationTarget の flushPendingRefresh 同型）。
+            let prefix = self.instant_prefix();
+            let is_plain = matches!(self.state.interp(&prefix), QueryIntent::Plain);
+            if crate::egui_shell::should_flush_on_enter(
+                self.state.view_kind(),
+                is_plain,
+                self.search_debounce.is_armed(),
+            ) {
+                self.search_debounce.cancel();
+                self.run_search_with(&prefix);
+                // run_search 後の selected は毎打鍵 reset_selection() 済み（changed ハンドラ）ゆえ
+                // 0 のまま＝flush 後の先頭行。SolidJS も flush 経由で clampSelectedIndex される（parity）。
+            }
+            if !self.state.results().is_empty() {
+                if shift_held {
+                    self.shift_activate(self.state.selected());
+                } else {
+                    self.activate_or_execute(self.state.selected());
+                }
             }
         }
 

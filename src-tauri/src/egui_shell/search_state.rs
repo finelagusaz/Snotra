@@ -353,6 +353,13 @@ pub(crate) fn clamp_selected(len: usize, idx: usize) -> usize {
     }
 }
 
+/// Enter 時の trailing flush 要否（#631 flush-on-Enter・SolidJS flushPendingRefresh 同型）。
+/// armed になるのは Results∧Plain 経路のみ（folder=同期・instant/command=cancel 済み）だが、
+/// 将来の armed 経路追加に対して条件を独立に固定する（誤発火の構造的防止・spec C 節）。
+pub fn should_flush_on_enter(view_kind: ViewKind, is_plain: bool, armed: bool) -> bool {
+    view_kind == ViewKind::Results && is_plain && armed
+}
+
 /// 親ディレクトリを返す。ルート（`C:\` / `\\server\share\`）で None。folderNav.computeParentDir 相当。
 pub(crate) fn compute_parent_dir(current_dir: &str) -> Option<String> {
     // 末尾 `\` を剥がす（ただしドライブルート "X:\" は保持しない — 後段で判定）。
@@ -395,6 +402,15 @@ mod tests {
     #[test]
     fn plain_query_is_plain() {
         assert_eq!(interpret("firefox", "@", ViewKind::Results), QueryIntent::Plain);
+    }
+
+    #[test]
+    fn flush_on_enter_only_for_armed_plain_results() {
+        assert!(should_flush_on_enter(ViewKind::Results, true, true));
+        assert!(!should_flush_on_enter(ViewKind::Results, true, false), "armed でなければ flush 不要");
+        assert!(!should_flush_on_enter(ViewKind::Results, false, true), "instant/command では flush しない");
+        assert!(!should_flush_on_enter(ViewKind::Folder, true, true), "folder は同期フィルタ");
+        assert!(!should_flush_on_enter(ViewKind::Tool, true, true), "tool 中は検索自体が凍結");
     }
 
     #[test]

@@ -149,6 +149,24 @@ impl SearchWindowView {
         }
     }
 
+    /// フォルダ展開を履歴に記録する（IPC コマンド `commands/system.rs:record_folder_expansion`
+    /// と同一パターン：lock → record → prepare_history_save_if_dirty → drop → save。egui 経路は
+    /// IPC を経由しないため、driver（本 view）から SolidJS の `enterFolderExpansion` と同じ
+    /// 呼び出しサイトを再現する（→ 展開時のみ・← の折り返し `navigateFolderUp` 相当では呼ばない）。
+    fn record_folder_expansion(&self, dir: &str) {
+        let Some(state) = self.app_handle.try_state::<crate::AppState>() else {
+            return;
+        };
+        let save = {
+            let mut engine = state.engine.lock().unwrap();
+            engine.record_folder_expansion(dir);
+            engine.prepare_history_save_if_dirty(5)
+        };
+        if let Some(save) = save {
+            let _ = save.save();
+        }
+    }
+
     /// auto_hide_on_focus_lost を実行中 config から都度読む（キャッシュしない・#576 と同設計）。
     fn auto_hide_enabled(&self) -> bool {
         self.app_handle
@@ -430,6 +448,9 @@ impl EguiView for SearchWindowView {
                 ViewKind::Folder => self.state.navigate_folder(dir.clone()),
                 ViewKind::Results => self.state.enter_folder(dir.clone()),
             };
+            // → は Folder 中の深掘り・Results からの enter どちらも展開履歴に記録
+            // （SolidJS enterFolderExpansion と同一サイト・#532 SU3 M2 Finding #1）。
+            self.record_folder_expansion(&dir);
             self.folder_cache = None;
             self.folder_error = None;
             self.spawn_folder_load(tok, dir, ctx.clone());
@@ -439,6 +460,7 @@ impl EguiView for SearchWindowView {
             match self.state.view_kind() {
                 ViewKind::Folder => {
                     if let Some(parent) = self.state.parent_dir() {
+                        // ← の folder 折り返しは navigateFolderUp 相当・記録しない（Finding #1）。
                         let tok = self.state.navigate_folder(parent.clone());
                         self.folder_cache = None;
                         self.folder_error = None;
@@ -451,6 +473,8 @@ impl EguiView for SearchWindowView {
                         && let Some(parent) = compute_parent_dir(&sel.path)
                     {
                         let tok = self.state.enter_folder(parent.clone());
+                        // ← from Results は enterFolderExpansion(parent) 相当・記録する。
+                        self.record_folder_expansion(&parent);
                         self.folder_cache = None;
                         self.folder_error = None;
                         self.spawn_folder_load(tok, parent, ctx.clone());

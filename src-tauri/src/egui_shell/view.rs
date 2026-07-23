@@ -1215,8 +1215,10 @@ impl EguiView for SearchWindowView {
             ) {
                 self.search_debounce.cancel();
                 self.run_search_with(&prefix);
-                // run_search 後の selected は毎打鍵 reset_selection() 済み（changed ハンドラ）ゆえ
-                // 0 のまま＝flush 後の先頭行。SolidJS も flush 経由で clampSelectedIndex される（parity）。
+                // flush 後の selected は set_results 内の clamp_selected（min クランプ・0 リセットではない）
+                // に委ねる——SolidJS parity（resolveActivationTarget → clampSelectedIndex(selected, len)）。
+                // trailing 窓内に ↓↑ で動かした非 0 選択は新結果リストへ clamp されたまま引き継がれる
+                //（WebView2 と同挙動。flush 前のリストで確認した行と別物になりうるのは現行製品と同じ受容済み特性）。
             }
             if !self.state.results().is_empty() {
                 if shift_held {

@@ -682,6 +682,8 @@ fn main() {
                 egui_shell::create(app, window_width as f64, &bg_color)?;
                 // view→emit→listener の合流点。全 hide を hide_egui_main の 1 経路に集約（codex #7）。
                 egui_shell::register_hide_listener(&app_handle);
+                app.manage(egui_shell::UpdaterUiState(std::sync::Mutex::new(Default::default())));
+                egui_shell::spawn_update_check(&app_handle);
             }
 
             // First-run: launch snotra-settings directly (bypassing the indexing guard
@@ -938,29 +940,37 @@ fn setup_open_settings_listener(app_handle: &AppHandle) {
     });
 }
 
+/// 終了時と updater install 前（`on_before_exit`）が共有する保存専用ルーチン（#532 SU5）。
+/// exit-requested の flush 列は保存 + exit(0) の不可分列だったため、保存だけを再利用可能に
+/// 切り出した（spec「決着済み: 保存順序」）。二重 flush（install 前 + 通常終了）は
+/// `NEXT_SAVE_SEQUENCE` の単調ガードで安全（最新 seq 勝ち・並行性レビュー実測）。
+pub(crate) fn flush_persistent_state(app_handle: &AppHandle) {
+    // Capture a consistent final snapshot under the Engine lock, then flush
+    // it without holding the lock through filesystem I/O.
+    let history_save = {
+        let app_state = app_handle.state::<AppState>();
+        let mut engine = app_state.engine.lock().unwrap();
+        engine.prepare_history_flush()
+    };
+    if let Some(save) = history_save {
+        let _ = save.save();
+    }
+    {
+        let icon_state = app_handle.state::<IconCacheState>();
+        let mut cache = icon_state.lock().unwrap();
+        if let Some(c) = cache.as_mut() {
+            c.save_if_dirty();
+        }
+    }
+}
+
 /// Listen for the `exit-requested` event emitted by the tray menu: flush
 /// unsaved data, kill the snotra-settings child process if running, and exit.
 fn setup_exit_listener(app_handle: &AppHandle) {
     let handle_for_exit = app_handle.clone();
     app_handle.listen("exit-requested", move |_| {
         // Flush any unsaved data before exit
-        // Capture a consistent final snapshot under the Engine lock, then flush
-        // it without holding the lock through filesystem I/O.
-        let history_save = {
-            let app_state = handle_for_exit.state::<AppState>();
-            let mut engine = app_state.engine.lock().unwrap();
-            engine.prepare_history_flush()
-        };
-        if let Some(save) = history_save {
-            let _ = save.save();
-        }
-        {
-            let icon_state = handle_for_exit.state::<IconCacheState>();
-            let mut cache = icon_state.lock().unwrap();
-            if let Some(c) = cache.as_mut() {
-                c.save_if_dirty();
-            }
-        }
+        flush_persistent_state(&handle_for_exit);
         // Kill snotra-settings child process if running.
         if let Some(proc_state) = handle_for_exit.try_state::<SettingsProcessState>()
             && let Ok(mut guard) = proc_state.lock()

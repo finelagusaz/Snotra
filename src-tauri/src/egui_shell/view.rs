@@ -1047,6 +1047,12 @@ impl EguiView for SearchWindowView {
             .map(|s| s.engine.lock().unwrap().config().visual.font_family.clone())
             .unwrap_or_else(|| "Segoe UI".to_string());
         configure_japanese_font(context, &font_family);
+        // updater check 完了時の wake-up 用（mod.rs spawn_update_check が読む・#532 SU5）。
+        if let Some(sh) = self.app_handle.try_state::<crate::egui_shell::EguiShellState>()
+            && let Ok(mut guard) = sh.egui_ctx.lock()
+        {
+            *guard = Some(context.clone());
+        }
     }
 
     fn update(&mut self, ui: &mut egui::Ui, _frame: &mut RuntimeFrame) {

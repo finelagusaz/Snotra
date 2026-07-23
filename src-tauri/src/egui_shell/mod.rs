@@ -5,12 +5,16 @@ mod lifecycle;
 mod search_state;
 mod layout;
 // 一時通知（NoticeSlot/LAUNCH_TIMEOUT/NOTICE_LAUNCH）は Task 4 で view.rs が消費する。
-// UpdaterUi 系（UpdaterPhase/ToastRow/ToastKind）は Task 6/7 で消費されるまで未使用のため、
-// この module 全体には引き続き allow を残す（`notify::` の各シンボル自体は実装済みで未消費なだけ）。
+// UpdaterPhase/UpdaterUi は Task 6（本タスク）で phase 書き込み・Default が消費され始める。
+// toast()/try_begin_install/dismiss/ToastRow 系は Task 7 で消費されるまで未使用のため、
+// この module 全体には引き続き allow を残す。
 #[allow(dead_code)]
 mod notify;
 // view.rs（driver）が起動 worker の in-flight 追跡・一時通知で消費する（#532 SU5 Task 4）。
 pub(crate) use notify::{LAUNCH_TIMEOUT, NOTICE_LAUNCH, NoticeSlot};
+// mod.rs の spawn_update_check が phase 書き込みで、UpdaterUiState が Default で消費する
+// （#532 SU5 Task 6）。toast()/try_begin_install/dismiss/ToastRow 系は Task 7 で消費される。
+pub(crate) use notify::{UpdaterPhase, UpdaterUi};
 // テーブル全 11 関数のうち hint 系 3 つ（search_hint/tool_select_hint/indexing_hint）・
 // launching/launch_failed/launch_timeout は view.rs の update() に配線済み・消費される。
 // update_* 5 関数は Task 7 で消費されるまで dead_code が正しく発生する
@@ -33,6 +37,7 @@ pub(crate) use layout::{Debouncer, HeightParams, compute_window_height};
 // view.rs が UI 文言（hint/overlay/toast）で消費する（#532 SU5・言語は起動時一回読み）。
 pub(crate) use strings as ui_strings;
 
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 
@@ -50,6 +55,73 @@ pub(crate) struct EguiShellState {
     pub(crate) hotkey_generation: AtomicU64,
     pub(crate) hide_pending: AtomicBool,
     pub(crate) reset_pending: AtomicBool,
+    /// updater check 完了時に可視中の view を起こすための egui Context（view.setup が登録）。
+    /// hidden 中は次 show のフレームで toast が読まれるため repaint は可視中のみ意味を持つ
+    /// （codex レビュー: 「hidden は次 show でよい」と「visible は repaint が要る」は別条件）。
+    pub(crate) egui_ctx: Mutex<Option<egui::Context>>,
+}
+
+/// updater toast の managed 状態（#532 SU5）。view が毎フレーム読む level-triggered
+/// （hidden に頑健・launching の channel edge-trigger との構造的対比は spec C 節）。
+/// dismissed は view-local に置かない——reset-on-show が view-local を一掃した際に
+/// [閉じる] 済み toast が復活するため（状態機械レビュー・spec A 節）。
+pub(crate) struct UpdaterUiState(pub(crate) Mutex<crate::egui_shell::UpdaterUi<Box<tauri_plugin_updater::Update>>>);
+
+/// 起動時 updater check（§20.2・spec B 節）。`auto_update != disabled` で一回だけ呼ぶ。
+/// `on_before_exit` に終了保存を登録した builder で check する——ここで得た `Update` の
+/// install は「download → 保存 → installer 起動 → exit(0)」となり、保存が構造的に保証される
+/// （Windows では downloadAndInstall が復帰しない・updater.rs:865・spec「決着済み: 保存順序」）。
+pub(crate) fn spawn_update_check(app: &tauri::AppHandle) {
+    use snotra_core::config::AutoUpdateMode;
+    use tauri_plugin_updater::UpdaterExt;
+    let mode = app
+        .try_state::<crate::AppState>()
+        .map(|s| s.engine.lock().unwrap().config().general.auto_update)
+        .unwrap_or(AutoUpdateMode::Full);
+    if mode == AutoUpdateMode::Disabled {
+        return;
+    }
+    let can_install = mode == AutoUpdateMode::Full;
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Some(st) = handle.try_state::<UpdaterUiState>() {
+            st.0.lock().unwrap().phase = crate::egui_shell::UpdaterPhase::Checking;
+        }
+        let flush_handle = handle.clone();
+        let updater = handle
+            .updater_builder()
+            .on_before_exit(move || crate::flush_persistent_state(&flush_handle))
+            .build();
+        let next = match updater {
+            Ok(u) => match u.check().await {
+                Ok(Some(update)) => crate::egui_shell::UpdaterPhase::Available {
+                    version: update.version.clone(),
+                    can_install,
+                    update: Box::new(update),
+                },
+                Ok(None) => crate::egui_shell::UpdaterPhase::UpToDate,
+                Err(e) => {
+                    // check 失敗は無音（console.warn parity・trace のみ）。
+                    crate::trace_main("egui_update_check_failed", serde_json::json!({ "error": e.to_string() }));
+                    crate::egui_shell::UpdaterPhase::Idle
+                }
+            },
+            Err(e) => {
+                crate::trace_main("egui_update_check_failed", serde_json::json!({ "error": e.to_string() }));
+                crate::egui_shell::UpdaterPhase::Idle
+            }
+        };
+        if let Some(st) = handle.try_state::<UpdaterUiState>() {
+            st.0.lock().unwrap().phase = next;
+        }
+        // 可視中に check が完了した場合の wake-up(スパイクの request_repaint と同じ・codex レビュー)。
+        if let Some(sh) = handle.try_state::<EguiShellState>()
+            && let Ok(guard) = sh.egui_ctx.lock()
+            && let Some(ctx) = guard.as_ref()
+        {
+            ctx.request_repaint();
+        }
+    });
 }
 
 /// フラグ ON の窓生成。EguiRuntime を install し webview 無しの "main" 窓を生成して attach。setup 限定。

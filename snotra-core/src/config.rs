@@ -684,7 +684,36 @@ impl Config {
         changed |= self.normalize_openers(); // opener ターゲットの正規化・具体度ソート
         changed |= self.migrate_instant_legacy_commands(); // 旧 `command` 単一文字列 → `Url`
         changed |= self.fallback_hotkey_if_system_shortcut(); // system shortcut 検出時のデフォルト復帰
+        self.dedup_instant_command_names(); // #638: 意図的に changed へ寄与しない（下記 doc）
         changed
+    }
+
+    /// #638: 重複名 instant コマンドの先勝ち正規化（in-memory のみ）。実行時解決は
+    /// first-match（`commands/instant.rs` / egui `execute_instant_selected` の `find`）のため、
+    /// 先頭を残せば実行される action は従来と同一で、候補リストの表示だけが実行と一致する。
+    /// 設定 UI は保存時に重複を拒否する（`validate`）ため、ここに来るのは手編集 config のみ。
+    /// **意図的に `changed` へ寄与しない**——`load_from_dir_reporting` は changed=true で
+    /// `save_to_dir` するため、寄与させるとユーザーの手編集行（重複定義）をファイルから
+    /// 消してしまう（spec 2026-07-23 決定 2: 書き戻し禁止）。
+    /// 前提条件: この非寄与が防ぐのは「dedup が唯一の変更」のときの書き戻しだけ。他の
+    /// レガシー移行が同じロードで changed=true を返す場合、その正当な書き戻しに dedup 済み
+    /// 内容が含まれる（実行される action は先頭定義のまま不変・SPEC §19.2 に明記）。
+    fn dedup_instant_command_names(&mut self) {
+        let mut seen = std::collections::HashSet::new();
+        self.instant_commands.retain(|c| {
+            if c.name.is_empty() {
+                return true; // 空名は dedup 対象外（検出=validate / 補正=migration の責務分離。
+                             // validate の !name.is_empty() エラーを migration が隠さない）
+            }
+            let keep = seen.insert(c.name.clone());
+            if !keep {
+                eprintln!(
+                    "[config] duplicate instant command name '{}' ignored (first definition wins)",
+                    c.name
+                );
+            }
+            keep
+        });
     }
 
     /// (1) 旧 `paths.additional` を `paths.scan` へ移行する（`.lnk` 拡張子付き）。
@@ -3171,5 +3200,95 @@ foo = 42
         let cfg: Config = toml::from_str(toml_str).expect("parse");
         assert_eq!(cfg.instant_commands[0].action,
             InstantAction::Exec { exe: "notepad.exe".into(), args: String::new() });
+    }
+
+    #[test]
+    fn dedup_instant_commands_first_wins_and_keeps_order() {
+        // #638: 重複名は先勝ち（実行時 first-match と同じ行が残る＝挙動変化なし）。
+        let mut config = Config::normalized_default();
+        config.instant_commands = vec![
+            InstantCommand {
+                name: "gh".into(),
+                description: String::new(),
+                action: InstantAction::Url { url: "https://github.com/{q}".into() },
+            },
+            InstantCommand {
+                name: "gh".into(),
+                description: String::new(),
+                action: InstantAction::Url { url: "https://example.com/{q}".into() },
+            },
+            InstantCommand {
+                name: "g".into(),
+                description: String::new(),
+                action: InstantAction::Url { url: "https://google.com/{q}".into() },
+            },
+        ];
+        config.apply_migrations();
+        assert_eq!(config.instant_commands.len(), 2);
+        assert_eq!(config.instant_commands[0].name, "gh");
+        assert!(
+            matches!(&config.instant_commands[0].action, InstantAction::Url { url } if url.contains("github")),
+            "先頭定義（github）が残る"
+        );
+        assert_eq!(config.instant_commands[1].name, "g");
+    }
+
+    #[test]
+    fn dedup_instant_commands_does_not_flag_changed() {
+        // 決定 2: dedup は changed に寄与しない（true だと load が config.toml へ書き戻し、
+        // ユーザーの手編集行を消す・config.rs load_from_dir_reporting）。
+        let mut config = Config::normalized_default(); // migration 済み＝以後の changed は新規要因のみ
+        config.instant_commands = vec![
+            InstantCommand {
+                name: "gh".into(),
+                description: String::new(),
+                action: InstantAction::Url { url: "https://github.com/{q}".into() },
+            },
+            InstantCommand {
+                name: "gh".into(),
+                description: String::new(),
+                action: InstantAction::Url { url: "https://example.com/{q}".into() },
+            },
+        ];
+        assert!(!config.apply_migrations());
+        assert_eq!(config.instant_commands.len(), 1);
+    }
+
+    #[test]
+    fn dedup_load_does_not_rewrite_config_file() {
+        // 決定 2 の直接検証: 重複入り TOML を load してもメモリ上のみ dedup され、
+        // config.toml のバイト列は不変(ユーザーの手編集行を消さない)。
+        let dir = std::env::temp_dir().join(format!("snotra-dedup-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        let toml_str = r#"
+[hotkey]
+modifier = "Alt"
+key = "Q"
+
+[appearance]
+window_width = 600
+visible_rows = 10
+
+[paths]
+additional = []
+
+[[instant_commands]]
+name = "gh"
+url = "https://github.com/{q}"
+
+[[instant_commands]]
+name = "gh"
+url = "https://example.com/{q}"
+"#;
+        std::fs::write(&path, toml_str).unwrap();
+        let (config, _) = Config::load_from_dir_reporting(&dir);
+        assert_eq!(config.instant_commands.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            toml_str,
+            "load が config.toml を書き戻していない"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

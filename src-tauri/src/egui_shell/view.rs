@@ -1,6 +1,7 @@
-//! egui メインウィンドウの検索 view（#532 SU2 外殻 + SU3 検索 driver）。SearchState（純粋核）を
-//! 駆動する imperative shell: TextEdit/結果リスト描画・直 Engine 検索（debounce）・↑↓/→←ナビ・
-//! folder 展開（async ロード + staleness）・instant/slash コマンド・起動/実行 dispatch・動的高さ。
+//! egui メインウィンドウの検索 view（#532 SU2 外殻 + SU3 検索 driver + SU3.5 tool 選択）。
+//! SearchState（純粋核）を駆動する imperative shell: TextEdit/結果リスト描画・直 Engine 検索
+//! （debounce）・↑↓/→←ナビ・folder 展開（async ロード + staleness）・tool 選択（§18・
+//! Shift+Enter 入場/起動/Escape 復帰）・instant/slash コマンド・起動/実行 dispatch・動的高さ。
 //! font-first（jp_font を index 0）は SU1 申し送りの義務。
 
 use std::sync::OnceLock;
@@ -8,6 +9,7 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
+use snotra_core::config::{OpenerTool, find_matching_tools};
 use snotra_core::engine::FolderListContext;
 use snotra_core::ui_types::SearchResult;
 use snotra_egui_runtime::{EguiView, RuntimeFrame};
@@ -137,7 +139,9 @@ impl SearchWindowView {
     /// エラー行（is_error）／フォルダロード中（cache・error 未着で results が stale）は起動しない。
     /// Enter とシングルクリックの単一チョークポイント（#636 レビュー Finding A）。
     fn activate(&self, index: usize) {
-        use crate::commands::launch::{LaunchStatus, launch_item_core, record_and_save};
+        use crate::commands::launch::{
+            LaunchStatus, launch_item_core, launch_with_tool_core, record_and_save,
+        };
         // フォルダ展開直後、列挙結果も失敗行も未着の窓では results が展開前ビューの残存物ゆえ、
         // 誤項目の起動を止める（dead/slow UNC でロードが滞留すると Enter/クリックが前ビューの
         // 項目を起動しうる・#636 レビュー Finding A）。判定核は search_state の純粋述語。
@@ -153,11 +157,23 @@ impl SearchWindowView {
             return;
         }
         let path = result.path.clone();
+        let is_folder = result.is_folder;
         let query = self.state.query().to_string();
-        let outcome = launch_item_core(&path); // ロック外・ShellExecuteW
+        let tools = self.resolve_tools(&path, is_folder);
+        let outcome = if let Some(first) = tools.first() {
+            // §18.3 全起動経路統一: マッチしたルールの先頭ツールで起動（IPC launch_item の
+            // resolve_opener 分岐と同型。M1 はここを素の ShellExecuteW にしていた＝parity gap）
+            launch_with_tool_core(&path, &first.exe, &first.args)
+        } else {
+            launch_item_core(&path) // ルール無し: 従来どおり ShellExecuteW フォールバック
+        };
         crate::trace_main(
             "egui_launch",
-            serde_json::json!({ "index": index, "status": format!("{:?}", outcome.status) }),
+            serde_json::json!({
+                "index": index,
+                "status": format!("{:?}", outcome.status),
+                "opener": !tools.is_empty(),
+            }),
         );
         if matches!(outcome.status, LaunchStatus::Ok) {
             if let Some(state) = self.app_handle.try_state::<crate::AppState>() {
@@ -169,7 +185,7 @@ impl SearchWindowView {
     }
 
     /// クエリ/結果/armed trailing/instant 来歴をまとめてクリアする単一チョークポイント
-    /// （execute_slash と instant 成功経路が共有）。第 3 のクリアサイト（SU3.5 tool 等）が
+    /// （execute_slash・instant 成功経路・`execute_tool_selected` が共有）。追加のクリアサイトが
     /// `search_debounce.cancel()` を書き忘れて「クリア後に stale trailing 検索が発火」を
     /// 再発させないための集約（/code-review #637 finding 6）。
     fn clear_search(&mut self) {
@@ -270,13 +286,84 @@ impl SearchWindowView {
     /// prefix の hot-change 後に stale instant 行（path=description/display）を activate() へ流し、
     /// 文字列をパスとして起動・履歴汚染するのを防ぐ（/code-review #637 finding 0）。行と来歴は
     /// run_search が同一フレームで一体更新するため常に整合する。行 index で参照（パス文字列を
-    /// 使わない・ui ルール踏襲）。Shift+Enter も同じ Enter として届くため §19.6
-    /// 「Shift+Enter=Enter」は追加コードなしで成立する（tool-selection は SU3.5）。
+    /// 使わない・ui ルール踏襲）。tool ビュー中は Shift の有無に依らず `execute_tool_selected` へ
+    /// 振る（`shift_activate` が Tool ビューではここへ委譲するため到達点が一致する）。
     fn activate_or_execute(&mut self, index: usize) {
-        if let Some(iq) = self.instant_rows_query.clone() {
+        if self.state.view_kind() == ViewKind::Tool {
+            self.execute_tool_selected(index); // §18.4 Enter/クリック＝選択ツールで起動
+        } else if let Some(iq) = self.instant_rows_query.clone() {
             self.execute_instant_selected(index, &iq);
         } else {
             self.activate(index);
+        }
+    }
+
+    /// Shift+Enter（§18.3）: 選択行の tools ≥ 2 ならツール選択メニューへ、それ以外
+    /// （≤1・instant 行・tool ビュー中）は通常 Enter と同一（hide も同様）。folder ロード
+    /// 未確定窓は activate と同じ理由で入場もしない（stale 行からの解決防止・#636 Finding A）。
+    fn shift_activate(&mut self, index: usize) {
+        if self.instant_rows_query.is_some() || self.state.view_kind() == ViewKind::Tool {
+            // instant 行は §19.6「Shift+Enter=Enter」。tool ビュー中の Shift+Enter も Enter と同一。
+            self.activate_or_execute(index);
+            return;
+        }
+        if folder_load_pending(
+            self.state.view_kind(),
+            self.folder_cache.is_some(),
+            self.folder_error.is_some(),
+        ) {
+            return;
+        }
+        let Some(row) = self.state.results().get(index) else { return };
+        if row.is_error {
+            return;
+        }
+        let (path, is_folder) = (row.path.clone(), row.is_folder);
+        let tools = self.resolve_tools(&path, is_folder);
+        if tools.len() >= 2 {
+            // armed trailing がツール一覧を上書きしないよう掃除（finding 6 と同じ債務）
+            self.search_debounce.cancel();
+            self.state.enter_tool(path, is_folder, tools);
+            if let Some(f) = self.state.tool_frame() {
+                crate::trace_main(
+                    "egui_tool_enter",
+                    serde_json::json!({
+                        "target_is_folder": f.target_is_folder,
+                        "tools": f.tools.len(),
+                    }),
+                );
+            }
+        } else {
+            self.activate_or_execute(index); // §18.3: 1 件以下は通常 Enter と同じ動作
+        }
+    }
+
+    /// ツール選択中の起動（§18.4）。行 index で tools を照合（同一 exe でも引数違いを区別・
+    /// パス文字列照合は禁止＝ui ルールと同根）。起動は launch_with_tool_core の同期直呼び
+    /// （M1 activate と同型の意図的残余・#631 で async 化とセット解消）。成功時は IPC
+    /// `launch_with_tool` と同じく launch_query で履歴記録 → 全クリア + hide（§19.6 instant
+    /// の完了列と同型。reset は tool/folder/gen 込みで in-flight folder ロードも失効させる）。
+    fn execute_tool_selected(&mut self, index: usize) {
+        use crate::commands::launch::{LaunchStatus, launch_with_tool_core, record_and_save};
+        let Some((target_path, launch_query, tool)) = self.state.tool_frame().and_then(|f| {
+            f.tools
+                .get(index)
+                .map(|t| (f.target_path.clone(), f.launch_query.clone(), t.clone()))
+        }) else {
+            return;
+        };
+        let outcome = launch_with_tool_core(&target_path, &tool.exe, &tool.args);
+        crate::trace_main(
+            "egui_tool_launch",
+            serde_json::json!({ "index": index, "status": format!("{:?}", outcome.status) }),
+        );
+        if matches!(outcome.status, LaunchStatus::Ok) {
+            if let Some(state) = self.app_handle.try_state::<crate::AppState>() {
+                record_and_save(&state, &target_path, &launch_query);
+            }
+            self.clear_search();
+            self.state.reset();
+            self.emit_hide();
         }
     }
 
@@ -296,6 +383,18 @@ impl SearchWindowView {
         if let Some(save) = save {
             let _ = save.save();
         }
+    }
+
+    /// 選択行のオープナー解決（§18.3 最具体ルール 1 件の tools）。IPC/トレイと同じ core
+    /// `find_matching_tools` を共有（drift 防止）。is_folder は行（index の真実）から渡し、
+    /// `resolve_all_openers` の `Path::is_dir` 再判定（fs touch・dead UNC で滞留しうる）を
+    /// egui 経路では踏まない。lock は解決の間だけ保持（ロック内純 CPU → clone）。
+    fn resolve_tools(&self, path: &str, is_folder: bool) -> Vec<OpenerTool> {
+        let Some(state) = self.app_handle.try_state::<crate::AppState>() else {
+            return Vec::new();
+        };
+        let engine = state.engine.lock().unwrap();
+        find_matching_tools(path, is_folder, &engine.config().openers).to_vec()
     }
 
     /// auto_hide_on_focus_lost を実行中 config から都度読む（キャッシュしない・#576 と同設計）。
@@ -419,6 +518,9 @@ impl SearchWindowView {
                     self.state.set_results(filtered);
                 }
                 // cache 未着（ロード中）は前フレーム結果を保持（フリット無し・set しない）
+            }
+            ViewKind::Tool => {
+                // §18.5: ツール選択中は検索結果を上書きしない（trailing/changed とも no-op）
             }
             ViewKind::Results => {
                 match self.state.interp(prefix) {
@@ -595,6 +697,11 @@ impl EguiView for SearchWindowView {
                     self.instant_rows_query = None;
                     ctx.request_repaint();
                 }
+                EscapeOutcome::RestoredFromTool => {
+                    // tool 解除 → 直下ビュー（folder/results）を復元描画。folder が下に生きて
+                    // いるため cache/error は破棄しない（RestoredSearch との差・純粋核 doc 参照）
+                    ctx.request_repaint();
+                }
                 EscapeOutcome::Hide => self.emit_hide(),
             }
         }
@@ -627,14 +734,16 @@ impl EguiView for SearchWindowView {
 
         // → : 選択中がフォルダなら展開（results 中は enter、folder 中は深掘り）。ファイル/エラー行は無反応。
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight))
+            && self.state.view_kind() != ViewKind::Tool // §18.5 ←→無効
             && let Some(sel) = self.state.results().get(self.state.selected())
             && sel.is_folder
             && !sel.is_error
         {
             let dir = sel.path.clone();
-            let tok = match self.state.view_kind() {
-                ViewKind::Folder => self.state.navigate_folder(dir.clone()),
-                ViewKind::Results => self.state.enter_folder(dir.clone()),
+            let tok = if self.state.view_kind() == ViewKind::Folder {
+                self.state.navigate_folder(dir.clone())
+            } else {
+                self.state.enter_folder(dir.clone())
             };
             // → は Folder 中の深掘り・Results からの enter どちらも展開履歴に記録
             // （SolidJS enterFolderExpansion と同一サイト・#532 SU3 M2 Finding #1）。
@@ -646,6 +755,7 @@ impl EguiView for SearchWindowView {
         // ← : folder 中は親へ、通常検索中は選択項目の親を展開して folder 突入。
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
             match self.state.view_kind() {
+                ViewKind::Tool => {} // §18.5 ←→無効
                 ViewKind::Folder => {
                     if let Some(parent) = self.state.parent_dir() {
                         // ← の folder 折り返しは navigateFolderUp 相当・記録しない（Finding #1）。
@@ -680,19 +790,41 @@ impl EguiView for SearchWindowView {
         // ときだけ描かれるため、indexing+空クエリの条件と一致する——window は 52px のまま
         // （show_results=false）で、案内はバー内に収まり見える（旧: 別 label はバー下に描かれ
         // クリップされ不可視だった）。
+        let in_tool = self.state.view_kind() == ViewKind::Tool;
         let in_folder = self.state.view_kind() == ViewKind::Folder;
-        let hint: &str = if !in_folder && self.indexing() && self.state.query().trim().is_empty() {
+        let hint: &str = if in_tool {
+            // SolidJS placeholder.tool_select parity（egui の hint は buf が空のときだけ描かれる＝
+            // HTML placeholder と同条件。表示されるのは対象パスが区切り終端等でファイル名が空のとき）
+            "ツールを選択…"
+        } else if !in_folder && self.indexing() && self.state.query().trim().is_empty() {
             "インデックス構築中..."
         } else {
             "検索…"
         };
-        let mut buf = if in_folder {
+        let mut buf = if in_tool {
+            // §18.5: 対象の**ファイル名部分のみ**を表示——SolidJS inputValue は targetPath を
+            // 区切りで split した末尾を返す（SearchWindow.tsx:255-267）。フルパスではない
+            //（plan-review scout-parity 指摘で是正）。
+            self.state
+                .tool_frame()
+                .map(|f| {
+                    f.target_path
+                        .rsplit(['\\', '/'])
+                        .next()
+                        .unwrap_or("")
+                        .to_string()
+                })
+                .unwrap_or_default()
+        } else if in_folder {
             self.state.folder_filter().to_string()
         } else {
             self.state.query().to_string()
         };
         let response = ui.add(
             egui::TextEdit::singleline(&mut buf)
+                // §18.5 ツール選択中の入力は無効化。add_enabled（全体グレーアウト）でなく
+                // interactive(false)（通常描画のまま読み取り専用・changed 不発火）——外観維持。
+                .interactive(!in_tool)
                 .hint_text(hint)
                 .desired_width(f32::INFINITY),
         );
@@ -735,7 +867,7 @@ impl EguiView for SearchWindowView {
         }
         // 窓に focus があるのに入力欄が focus を持たないなら移す（Alt+Q 表示直後に打てる）。
         // was_focused に依存しないので、hide→reshow で was_focused が stale でも確実に戻る。
-        if focused && !response.has_focus() {
+        if focused && !in_tool && !response.has_focus() {
             response.request_focus();
         }
 
@@ -753,12 +885,18 @@ impl EguiView for SearchWindowView {
             ctx.request_repaint_after(remaining);
         }
 
-        // Enter: 選択項目を起動/実行。TextEdit の changed 処理より後で判定する——同一フレームに
-        // 入力確定（貼り付け・IME 確定）と Enter が入ったとき、旧 state の interp/選択で起動
-        // しないため（codex 発見 4・spec M3 実装確定）。egui の input はフレーム内で不変
-        // （読む順序は消費に影響しない）ため後置しても Enter は取りこぼさない。
-        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !self.state.results().is_empty() {
-            self.activate_or_execute(self.state.selected());
+        // Enter: 選択項目を起動/実行（Shift は §18.3 のツール選択入場・後置 dispatch は M3 のまま）。
+        // TextEdit の changed 処理より後で判定する——同一フレームに入力確定（貼り付け・IME 確定）と
+        // Enter が入ったとき、旧 state の interp/選択で起動しないため（codex 発見 4・spec M3 実装確定）。
+        // egui の input はフレーム内で不変（読む順序は消費に影響しない）ため後置しても Enter は取りこぼさない。
+        let (enter_pressed, shift_held) =
+            ctx.input(|i| (i.key_pressed(egui::Key::Enter), i.modifiers.shift));
+        if enter_pressed && !self.state.results().is_empty() {
+            if shift_held {
+                self.shift_activate(self.state.selected());
+            } else {
+                self.activate_or_execute(self.state.selected());
+            }
         }
 
         // 結果リスト（shouldShowResults 相当。results 軸〔plain〕と folder 軸を描く。空なら描かない）。

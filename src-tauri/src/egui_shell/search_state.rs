@@ -1,13 +1,16 @@
 //! egui 検索ウィンドウの純粋状態核（#532 SU3）。query/選択/結果と 2 軸モード導出・遷移を
 //! egui/Win32 非依存で持ち、driver（view.rs）から駆動される。ユニットテスト対象。
 
+use snotra_core::config::OpenerTool;
 use snotra_core::ui_types::SearchResult;
 
-/// 軸1: モーダルビュースタック頂点の種類。Results と Folder が到達可能（Folder は M2 で到達可能化・#532 SU3 M2、tool は SU3.5 予定）。
+/// 軸1: モーダルビュースタック頂点の種類。Results/Folder/Tool の 3 段ラダー（Folder は M2 で
+/// 到達可能化・#532 SU3 M2、Tool は SU3.5 で到達可能化・#532 SU3.5）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViewKind {
     Results,
     Folder,
+    Tool,
 }
 
 /// 軸2: 入力の意味。view_kind != Results のときは常に Plain。instant は parse 済みの
@@ -73,12 +76,33 @@ pub struct FolderFrame {
     pub current_dir: String,
 }
 
-/// Escape ラダーの分岐（driver が side-effect を実行）。M2 は folder 段と top-level のみ
-/// （instant/command 解除段は M3）。
+/// ツール選択モードの退避/復元単位（#532 SU3.5・SolidJS ToolSelectionFrame parity）。
+/// tool は folder の上に積まれうる（§18.5 直交）が、tool-on-tool は Option ゆえ表現不能。
+/// restore_query を持たない——tool 中は入力無効（§18.5）で query 不変ゆえ復元不要
+/// （SolidJS popView の tool 段も query を復元しない）。launch_query は起動 API へ渡す
+/// 元クエリで復元には使わない（SolidJS #538 の launchQuery / restoreQuery 型分離）。
+/// target_path/target_is_folder/tools/launch_query は driver（view.rs）が
+/// tool_frame() 越しに読む（`shift_activate` / `execute_tool_selected`・#532 SU3.5 Task 3）。
+#[derive(Debug, Clone)]
+pub struct ToolFrame {
+    pub restore_results: Vec<SearchResult>,
+    pub restore_selected: usize,
+    pub target_path: String,
+    pub target_is_folder: bool,
+    pub tools: Vec<OpenerTool>,
+    pub launch_query: String,
+    pub saved_folder_filter: String,
+}
+
+/// Escape ラダーの分岐（driver が side-effect を実行）。tool 段・folder 段・top-level の
+/// 3 段ラダー（instant/command 解除段は M3 で確定済み・prefix hot-change は別軸）。
 #[derive(Debug, PartialEq, Eq)]
 pub enum EscapeOutcome {
     /// folder → 展開前検索状態へ復帰済み（driver は追加操作なし）
     RestoredSearch,
+    /// tool → 直下ビュー（folder/results）へ復帰済み（driver は folder cache を保持したまま
+    /// repaint のみ。RestoredSearch と違い cache/error を破棄しない——folder が下に生きている）
+    RestoredFromTool,
     /// top-level → hide 要求（driver が emit）
     Hide,
 }
@@ -107,7 +131,8 @@ pub fn find_slash_command(query: &str) -> Option<SlashCmd> {
     }
 }
 
-/// 検索ウィンドウの純粋状態。results 軸に加え folder 軸（folder / folder_filter / folder_gen）を持つ（M2 で追加・#532 SU3 M2）。
+/// 検索ウィンドウの純粋状態。results 軸に加え folder 軸（folder / folder_filter / folder_gen・
+/// M2 で追加・#532 SU3 M2）と tool 軸（tool・SU3.5 で追加・#532 SU3.5）を持つ。
 pub struct SearchState {
     query: String,
     results: Vec<SearchResult>,
@@ -115,6 +140,7 @@ pub struct SearchState {
     folder: Option<FolderFrame>,
     folder_filter: String,
     folder_gen: u64,
+    tool: Option<ToolFrame>,
 }
 
 impl SearchState {
@@ -126,6 +152,7 @@ impl SearchState {
             folder: None,
             folder_filter: String::new(),
             folder_gen: 0,
+            tool: None,
         }
     }
 
@@ -157,9 +184,15 @@ impl SearchState {
         self.selected = 0;
     }
 
-    /// 軸1。folder モードなら Folder、それ以外 Results（tool は SU3.5）。
+    /// 軸1: モーダルビュー頂点の射影（§18.5 優先度 tool > folder > results と一対一）。
     pub fn view_kind(&self) -> ViewKind {
-        if self.folder.is_some() { ViewKind::Folder } else { ViewKind::Results }
+        if self.tool.is_some() {
+            ViewKind::Tool
+        } else if self.folder.is_some() {
+            ViewKind::Folder
+        } else {
+            ViewKind::Results
+        }
     }
 
     /// 軸2。prefix は driver が config live-read で渡す。
@@ -222,9 +255,43 @@ impl SearchState {
         self.folder_gen
     }
 
-    /// 遅延到着したナビ結果を受理してよいか（token 一致 ∧ folder 中）。driver が false なら破棄。
+    /// 遅延到着したナビ結果を受理してよいか（tool 非表示 ∧ token 一致 ∧ folder 中）。
+    /// tool 中は §18.5「検索結果が上書きされない」ため受理しない（driver は破棄でなく
+    /// 保留せず捨てる——escape で folder へ戻れば次の打鍵/ナビが再ロードする）。
     pub fn accept_folder_result(&self, token: u64) -> bool {
-        token == self.folder_gen && self.folder.is_some()
+        self.tool.is_none() && token == self.folder_gen && self.folder.is_some()
+    }
+
+    /// ツール選択へ突入（§18.4: 結果リストをツール一覧で置換）。現在ビュー（Results/Folder
+    /// どちらでも）の表示状態を frame へ退避する。tools ≥ 2 の判定は driver 側
+    /// （§18.3: ≤1 は通常 Enter と同一のため、そもそも呼ばれない）。driver からは
+    /// `shift_activate` が呼ぶ（#532 SU3.5 Task 3）。
+    pub fn enter_tool(&mut self, target_path: String, target_is_folder: bool, tools: Vec<OpenerTool>) {
+        let rows: Vec<SearchResult> = tools
+            .iter()
+            .map(|t| SearchResult {
+                name: t.name.clone(),
+                path: t.exe.clone(),
+                is_folder: false,
+                is_error: false,
+            })
+            .collect();
+        self.tool = Some(ToolFrame {
+            restore_results: std::mem::take(&mut self.results),
+            restore_selected: self.selected,
+            target_path,
+            target_is_folder,
+            tools,
+            launch_query: self.query.clone(),
+            saved_folder_filter: self.folder_filter.clone(),
+        });
+        self.results = rows;
+        self.selected = 0;
+    }
+
+    /// driver（`shift_activate` / `execute_tool_selected`）が読む（#532 SU3.5 Task 3）。
+    pub fn tool_frame(&self) -> Option<&ToolFrame> {
+        self.tool.as_ref()
     }
 
     pub fn folder_filter(&self) -> &str {
@@ -239,6 +306,13 @@ impl SearchState {
     /// Escape ラダー（M2）: folder 中は展開前状態へ復帰、top-level は Hide。
     /// folder 離脱時は folder_gen を進めて遅延到着した旧ナビ結果を無効化する。
     pub fn on_escape(&mut self) -> EscapeOutcome {
+        if let Some(t) = self.tool.take() {
+            // query は復元しない（tool 中は入力無効で不変・ToolFrame doc 参照）
+            self.results = t.restore_results;
+            self.selected = clamp_selected(self.results.len(), t.restore_selected);
+            self.folder_filter = t.saved_folder_filter;
+            return EscapeOutcome::RestoredFromTool;
+        }
         if let Some(f) = self.folder.take() {
             self.query = f.restore_query;
             self.results = f.restore_results;
@@ -260,6 +334,7 @@ impl SearchState {
         self.folder = None;
         self.folder_filter.clear();
         self.folder_gen += 1;
+        self.tool = None;
     }
 }
 
@@ -550,6 +625,114 @@ mod tests {
         assert_eq!(s.selected(), 2);
         s.reset_selection();
         assert_eq!(s.selected(), 0);
+    }
+
+    fn make_tools() -> Vec<OpenerTool> {
+        vec![
+            OpenerTool { name: "VSCode".into(), exe: "Code.exe".into(), args: String::new() },
+            OpenerTool { name: "Terminal".into(), exe: "wt.exe".into(), args: "-d {path}".into() },
+        ]
+    }
+
+    #[test]
+    fn enter_tool_from_results_saves_and_replaces_rows() {
+        let mut s = SearchState::new();
+        s.set_query("code".into());
+        s.set_results(vec![SearchResult {
+            name: "proj".into(), path: "C:\\proj".into(), is_folder: true, is_error: false,
+        }]);
+        s.enter_tool("C:\\proj".into(), true, make_tools());
+        assert_eq!(s.view_kind(), ViewKind::Tool);
+        // 行はツール一覧（name=表示名・path=exe・§18.4）
+        assert_eq!(s.results().len(), 2);
+        assert_eq!(s.results()[0].name, "VSCode");
+        assert_eq!(s.results()[0].path, "Code.exe");
+        assert!(!s.results()[0].is_folder);
+        assert_eq!(s.selected(), 0);
+        let f = s.tool_frame().expect("frame");
+        assert_eq!(f.target_path, "C:\\proj");
+        assert!(f.target_is_folder);
+        assert_eq!(f.launch_query, "code");
+    }
+
+    #[test]
+    fn escape_from_tool_restores_results_view() {
+        let mut s = SearchState::new();
+        s.set_query("code".into());
+        s.set_results(vec![SearchResult {
+            name: "proj".into(), path: "C:\\proj".into(), is_folder: true, is_error: false,
+        }]);
+        s.enter_tool("C:\\proj".into(), true, make_tools());
+        assert_eq!(s.on_escape(), EscapeOutcome::RestoredFromTool);
+        assert_eq!(s.view_kind(), ViewKind::Results);
+        assert_eq!(s.results()[0].name, "proj");
+        assert_eq!(s.query(), "code");
+    }
+
+    #[test]
+    fn escape_ladder_tool_then_folder_then_hide() {
+        // §18.4: tool → folder 復帰（filter 込み）→ results → hide の全段
+        let mut s = SearchState::new();
+        s.set_query("pre".into());
+        s.set_results(vec![SearchResult {
+            name: "dir".into(), path: "C:\\dir".into(), is_folder: true, is_error: false,
+        }]);
+        s.enter_folder("C:\\dir".into());
+        s.set_folder_filter("fil".into());
+        s.set_results(vec![SearchResult {
+            name: "child".into(), path: "C:\\dir\\child".into(), is_folder: false, is_error: false,
+        }]);
+        s.enter_tool("C:\\dir\\child".into(), false, make_tools());
+        assert_eq!(s.view_kind(), ViewKind::Tool);
+
+        assert_eq!(s.on_escape(), EscapeOutcome::RestoredFromTool);
+        assert_eq!(s.view_kind(), ViewKind::Folder); // folder が下に残っている（§18.5 直交）
+        assert_eq!(s.folder_filter(), "fil"); // saved_folder_filter 復元
+        assert_eq!(s.results()[0].name, "child"); // folder のフィルタ済みビュー復元
+
+        assert_eq!(s.on_escape(), EscapeOutcome::RestoredSearch);
+        assert_eq!(s.view_kind(), ViewKind::Results);
+        assert_eq!(s.query(), "pre");
+
+        assert_eq!(s.on_escape(), EscapeOutcome::Hide);
+    }
+
+    #[test]
+    fn reset_clears_tool_slot() {
+        let mut s = SearchState::new();
+        s.set_results(vec![SearchResult {
+            name: "f".into(), path: "C:\\f".into(), is_folder: false, is_error: false,
+        }]);
+        s.enter_tool("C:\\f".into(), false, make_tools());
+        s.reset(); // §18.5: ホットキー再表示（resetForShow）でツール選択はリセット
+        assert_eq!(s.view_kind(), ViewKind::Results);
+        assert!(s.tool_frame().is_none());
+    }
+
+    #[test]
+    fn interp_during_tool_is_plain() {
+        // §18.5 入力無効の状態面: tool 中はどんな query でも Plain（instant/command 化しない）
+        let mut s = SearchState::new();
+        s.set_results(vec![SearchResult {
+            name: "f".into(), path: "C:\\f".into(), is_folder: false, is_error: false,
+        }]);
+        s.enter_tool("C:\\f".into(), false, make_tools());
+        s.set_query("@gh".into());
+        assert_eq!(s.interp("@"), QueryIntent::Plain);
+        s.set_query("/r".into());
+        assert_eq!(s.interp("@"), QueryIntent::Plain);
+    }
+
+    #[test]
+    fn folder_results_rejected_while_tool_is_open() {
+        // §18.5「ツール選択中の検索結果が上書きされない」: tool 中に遅延到着した folder ナビ
+        // 結果（dead/slow UNC）を drain が受理してツール一覧を潰さない。
+        let mut s = SearchState::new();
+        let tok = s.enter_folder("C:\\slow".into());
+        s.enter_tool("C:\\slow\\x".into(), false, make_tools());
+        assert!(!s.accept_folder_result(tok));
+        s.on_escape(); // tool 解除 → folder 復帰
+        assert!(s.accept_folder_result(tok)); // folder に戻れば同 token は再び有効（gen は進めていない）
     }
 
     #[test]

@@ -1,28 +1,23 @@
-# Retrospective — #532 SU3 M1（egui 検索体験の機能中核）
+# Retrospective — #532 SU3.5（tool-selection + #638）+ ロードマップ改訂 + #634 実測
 
 ## よかったこと
 
-### brainstorm で分岐を先に確定し、並行崩壊の主命題が実装を貫いた
-brainstorm → spec で 6 分岐（+レビューで debounce・SU3.5 の 2）を先に確定し、spec の否定の知識へ接地した。要石は「同期直 `Engine` 呼びが SolidJS の supersede/single-flight を消す」——advisor と opus 最終レビューが独立に「同期モデルで成立」を確認し、実装で並行 primitive を一切持ち込まずに済んだ。分岐を先に潰したことで 10 タスクの実装が迷わなかった。
+### 計測を建設より先に置く順序原理が機能した
+ロードマップ見直しで #634（G-SYNC 実測）を SU3.5 より先に置き、要石命題（同期直 Engine）の最後の未検証部分を先に確定した（10k 最悪 p50 < 1ms・100k でも 5ms 以下）。仮に詰まっていれば view 設計の変更が SU3.5/SU4 の上物に波及していた。「荷重仮定の検証は上に建てる前」の順序判断が、以降の全タスクを迷いなく進めた。
 
-### functional-core/imperative-shell 分離 + 二段レビューが bug を捕捉
-純粋核（interpret/SearchState/layout）を TDD ユニット化し、driver は build+clippy+trace スモークで検証（「view はテスト前提にしない」ルールと整合）。SDD の各タスクレビュー + opus 最終 whole-branch レビューの二段が、warm-index スモークで観測されなかった「indexing 案内が 52px 窓外にクリップ」を捕捉した。
+### plan-review（偵察 3 + 独立導出 1）が実装前に 7 件を捕捉し、横断非対称クラスを初めて予防できた
+EscapeOutcome の 4 つ目の網羅 match（見落とせば Task 2 のコミット時点でビルド断）、入力欄のファイル名表示（フルパスは parity 違反）、SPEC §19.2 同期漏れ、settings 書き戻し経路の意思決定を、すべて実装前に plan へ反映した。独立導出は今回も plan が漏らした SPEC 同期を唯一検出——導入以来の的中が続いている。結果、M2/M3 では最終 whole-branch レビューでしか捕まらなかった read-without-write 型の横断非対称が、今回は **Critical/Important ゼロ**で「予防済み」と肯定的に裏取りされた。教訓の前送り（履歴記録サイトの明示・record_and_save doc の呼び出し元列挙）が効いた。
 
-### 多層レビューの角度が相補的だった
-/code-review の **git 履歴・過去 PR コメント**観点が、SDD の各タスクレビュー（ファイル単位スコープ）と opus 最終レビュー（G1 スコープ）がいずれも取りこぼした「モジュール索引未更新」を拾った——しかも PR #629 と**同型の再発**。レビューは角度が違えば見えるものが違う、を実証した。
-
-### 規則2（壊れた出力から推論しない）を全タスクで貫いた
-rust-analyzer が編集途中を捉えた false-positive 診断（E0609/E0061/dead_code 等）を各タスクで出したが、すべて `cargo build`/`clippy`/`test` の再実行で緑を確定。診断と実測が矛盾するたびに cargo を一次証拠にした。haiku 実装者が Task 4 の RED 転写を捏造した際も、reviewer + controller の test 再実行で健全と確定した。
-
----
+### controller の一次確認と「cargo が一次証拠」の規律が cheap-tier リスクを一貫管理した
+SDD 各タスクで controller が cargo test/clippy を毎回再実行し、rust-analyzer の mid-edit stale 診断（E0004/E0599 の嵐）に 3 回とも惑わされず実測を優先した。ブリーフの不備（統合テスト TOML の `[paths]` 欠落）を実装者が既存テストパターン参照で自己修正し、reviewer が実コードで裏取りする流れも健全だった。
 
 ## 伸びしろ
 
-### モジュール索引更新漏れが #629→#630 で再発した
-新規 `.rs` 追加時に `src-tauri/CLAUDE.md` の索引を更新するトリガーは AGENTS.md 条件別チェック表に在り、`governance:check` が CI で捕捉する機構も在る。にもかかわらず SDD の各ファイル追加タスク（Task 1/3）が索引更新を同梱せず、PR 作成前に `governance:check` も回さなかった。opus 最終レビューも G1 スコープは見たが索引整合は見ていない。**トリガーも機構も在るのに再発した**のは、file-add が逐次実装中に salient でなく、PR 作成前の `governance:check` が習慣化していないため。→ 最上段の機構（PostToolUse hook が新規 src ファイル作成時に索引整合を検査する等）が候補だが agent-config 変更ゆえ合意を要する（本 retrospective 出力で提案）。
+### 計画に書いたテスト fixture を代表入力で検証していなかった
+plan の統合テスト TOML は必須セクション欠落で parse 不能だった（実装者が捕捉・修正）。「計画に書いた判定ロジックは実装前に代表入力で実行して測る」規範は在ったが、**テスト fixture は「判定ロジック」と読まれず適用漏れした**。→ AGENTS.md「検証の作法」の当該項目に fixture を明示的に含めた（本サイクルで反映済み）。
 
-### 状態でゲートされた UI を cold-path 未観測のまま「動く」と扱った
-indexing 案内（構築中のみ表示）は warm index のスモークで一度も発生せず、52px 固定窓に縦積みした label がクリップされる bug が opus 最終レビューまで残った。これは SU1 retrospective の「未実行の経路を検証済みと暗黙に扱った」（`docs/development-principles.md` デバッグ節）の**再発**——状態でゲートされた表示は、その状態を実際に起こして観測するまで検証済みとしない。warm-path スモークは cold-path 分岐を保証しない。
+### 「書き戻さない」の全称 overclaim が spec→plan→実装→タスクレビューを素通りした
+#638 の不変条件は「dedup が唯一の変更のとき」に限って成立する（兄弟 migration が同時に true を返せば、その正当な書き戻しに dedup 済み内容が含まれる）のに、spec 起草時に無前提の絶対として書き、4 段の検査を素通りして最終 whole-branch レビューでようやく捕捉された。「全称表現は前提条件とセットで書く」は常時ロードに既在の規範——**規範の存在と、書く瞬間に発火することは別**である。全称を書いたら、その場で「これが破れる隣接経路（同居する機構・並走する呼び出し元）は何か」を一度問う。
 
-### cheap-tier（haiku）実装者の report は一次証拠にできない
-Task 4 で haiku が RED-phase テスト出力を捏造（`91 passed;2 failed` が `5 tests` と矛盾）。reviewer が検出、controller が test 再実行で健全確認。SDD で cheap tier を使うとき、report の test 証跡は controller/reviewer が cargo 再実行で裏取りする（memory `confabulating-tool-results` の再確認）。build/clippy はコンパイルのみで pass/fail を担保しないため、captured test 出力が疑わしい場合は controller が `cargo test` を回す。
+### name 付きサブエージェントの報告なし idle が 2 回起きた
+plan-review の独立導出と最終レビューが、成果物を SendMessage しないまま idle 通知だけを寄越した（4 体中 2 体・確率的）。SendMessage での催促で 2 回とも回収できたが、往復ぶんの待ちが生じた。→ memory（subagent-must-sendmessage-to-main）へ「name 付き起動時はプロンプトに報告義務を明記・idle だけ来たら催促」を追記した。

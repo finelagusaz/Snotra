@@ -717,16 +717,18 @@ impl SearchWindowView {
     /// 1 行を描画。selected かつ scroll なら scroll_to_me（選択変化時のみ・#632）。返り値:
     /// single_clicked。ダブルクリックは扱わない（ユーザー決定: §4.8 の double-click=選択は
     /// as-built でも到達不能ゆえ落とす。単クリック=起動のみ）。self を借りない関連関数
-    /// （借用衝突回避）。色/サイズは呼び出し側が都度導出する `RowTheme` から取る（アイコン
-    /// slot は Task 5 で足すため、本行では slot 起点 `text_x` のみ保つ）。
+    /// （借用衝突回避）。色/サイズは呼び出し側が都度導出する `RowTheme` から取る。
     /// name/path の重なりは name galley の実幅を測って path 開始 x を決めることで防ぐ
     /// （#632）。path は中間省略（`truncate_middle`）で利用可能幅に収める。
+    /// `show_icons=false` はアイコン slot 自体を畳む（skip でなくレイアウト変更・#532 SU4 Task 6）
+    /// ——テキストが左端 8px 寄せになり、slot 分の空白が残らない。
     fn draw_result_row(
         ui: &mut egui::Ui,
         result: &SearchResult,
         selected: bool,
         scroll: bool,
         icon: Option<&egui::TextureHandle>,
+        show_icons: bool,
         theme: &RowTheme,
     ) -> bool {
         let row_h = 30.0;
@@ -740,21 +742,28 @@ impl SearchWindowView {
                 response.scroll_to_me(Some(egui::Align::Center)); // 選択変化時のみ（#632）
             }
         }
-        // アイコン: 左 28px slot の中央に 16x16 を描く（show_icons=false 時の slot 畳みは Task 6）。
-        if let Some(tex) = icon {
-            let icon_size = 16.0;
-            let icon_rect = egui::Rect::from_center_size(
-                egui::pos2(rect.left() + 14.0, rect.center().y),
-                egui::vec2(icon_size, icon_size),
-            );
-            ui.painter().image(
-                tex.id(),
-                icon_rect,
-                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                egui::Color32::WHITE,
-            );
+        // アイコン: show_icons=true のときのみ左 28px slot の中央に 16x16 を描く。欠落
+        // （icon=None）は drawn placeholder（draw_icon_fallback）で埋める。
+        let slot = if show_icons { 28.0 } else { 8.0 };
+        if show_icons {
+            match icon {
+                Some(tex) => {
+                    let icon_size = 16.0;
+                    let icon_rect = egui::Rect::from_center_size(
+                        egui::pos2(rect.left() + 14.0, rect.center().y),
+                        egui::vec2(icon_size, icon_size),
+                    );
+                    ui.painter().image(
+                        tex.id(),
+                        icon_rect,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+                }
+                None => draw_icon_fallback(ui, rect, result, theme),
+            }
         }
-        let text_x = rect.left() + 28.0;
+        let text_x = rect.left() + slot;
         let right = rect.right() - 8.0;
         let cy = rect.center().y;
         // name galley を作り、実幅から path 開始 x を決める（重なり回避）。name が幅の 60%
@@ -831,6 +840,17 @@ impl SearchWindowView {
 /// `#RRGGBB` 文字列を Color32 へ。失敗時は fallback（release は panic=abort ゆえ unwrap しない）。
 fn hex_color(s: &str, fallback: egui::Color32) -> egui::Color32 {
     egui::Color32::from_hex(s).unwrap_or(fallback)
+}
+
+/// アイコン欠落時の fallback（drawn placeholder）。§3.4 は 📁📄 を規定するが softbuffer +
+/// 単一 TTF で色 emoji が描けない懸念があるため単色プレースホルダに倒す（視覚スモークは
+/// Task 7 に集約・コントローラ決定）。Task 7 の視覚スモークで jp_font が 📁📄 を描けると
+/// 確認できたら emoji へ upgrade を検討する。
+fn draw_icon_fallback(ui: &egui::Ui, rect: egui::Rect, result: &SearchResult, theme: &RowTheme) {
+    let center = egui::pos2(rect.left() + 14.0, rect.center().y);
+    let r = egui::Rect::from_center_size(center, egui::vec2(14.0, 14.0));
+    let col = if result.is_folder { theme.name_color } else { theme.path_color };
+    ui.painter().rect_filled(r, 2.0, col.linear_multiply(0.5));
 }
 
 /// path を avail_px におよそ収める中間省略（`C:\a\...\app.exe`）。`per_char_px` は呼び出し側が
@@ -1194,13 +1214,22 @@ impl EguiView for SearchWindowView {
             let results = self.state.results().to_vec();
             let selected = self.state.selected();
             let theme = self.row_theme();
+            let show_icons = self.show_icons(); // ループ前に 1 回読む（#532 SU4 Task 6）
             // 選択変化時のみ scroll_to_me（毎フレーム発火だと手動スクロールを奪い返す・#632）。
             let do_scroll = self.last_scrolled_selected != Some(selected);
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for (i, result) in results.iter().enumerate() {
                     let sel = i == selected;
                     let icon = self.icon_textures.get(&result.path);
-                    if Self::draw_result_row(ui, result, sel, sel && do_scroll, icon, &theme) {
+                    if Self::draw_result_row(
+                        ui,
+                        result,
+                        sel,
+                        sel && do_scroll,
+                        icon,
+                        show_icons,
+                        &theme,
+                    ) {
                         clicked = Some(i); // シングルクリック（§4.8 単=起動）。double は扱わない
                     }
                 }

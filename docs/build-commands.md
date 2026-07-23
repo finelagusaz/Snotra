@@ -55,6 +55,8 @@ npm run e2e:tauri        # 必須: Playwright + Tauri Driver E2E
 
 `npm run tauri dev` で起動し、目視で overflow／clipping／フォントレンダリングを確認する。PR 作成前に必須。
 
+- **egui 経路（#532・softbuffer メインウィンドウ）の視覚スモークは `cargo run -p snotra`（要 `SNOTRA_EGUI_MAIN=1`）で起動する**——`npm run tauri dev` は WebView2 経路。`snotra-egui-mvp`（下記「その他」の単独起動）は **Phase 1 の技術スパイクで SU 実装を一切含まない**ため、起動しても製品の egui 変更（アイコン・テーマ・行視覚等）は映らない。`cargo run`（`-p` 欠落）はワークスペースの別 bin を起動しうるので必ず `-p snotra` を付ける
+
 ### E. git hook（`.githooks/**`）を変更した場合
 
 ```bash
@@ -96,7 +98,8 @@ cargo test --release -p snotra-core bench_ -- --ignored --nocapture  # 検索パ
 cargo check --workspace          # Rust 全 crate 型チェック
 cargo clippy --workspace --all-targets -- -D warnings  # lint チェック（カテゴリ A と同じ）
 cargo run -p snotra-settings     # snotra-settings（egui ネイティブ設定 GUI）の単独起動
-cargo run -p snotra-egui-mvp     # Issue #532 egui MVP（WebViewなし・非配布）の単独起動
+cargo run -p snotra-egui-mvp     # Issue #532 egui MVP（WebViewなし・非配布の Phase 1 スパイク・SU 実装は含まない）
+cargo run -p snotra              # 製品メインウィンドウの egui 経路（要 SNOTRA_EGUI_MAIN=1・#532・WebView2 と並行。視覚スモークはこれ）
 npm run verify                   # Rust + フロントエンド一括検証（cargo check + npm run build）
 npm run smoke:startup             # 起動時ウィンドウ生成スモーク（trace検証）
 npm run e2e:tauri:setup           # Tauri Driver E2E 用セットアップ

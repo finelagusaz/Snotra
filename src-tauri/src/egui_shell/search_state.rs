@@ -54,16 +54,50 @@ pub fn interpret(raw_query: &str, prefix: &str, view_kind: ViewKind) -> QueryInt
     }
 }
 
+/// フォルダ展開モードの退避/復元単位（`Option<FolderFrame>`・#532 SU3 M2）。深掘りは push でなく
+/// current_dir 書き換え。フォルダ内フィルタは frame でなく SearchState.folder_filter が持つ。
+// TODO(SU3 M2 Task 3): view.rs が消費したら除去
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct FolderFrame {
+    pub restore_query: String,
+    pub restore_results: Vec<SearchResult>,
+    pub restore_selected: usize,
+    pub current_dir: String,
+}
+
+/// Escape ラダーの分岐（driver が side-effect を実行）。M2 は folder 段と top-level のみ
+/// （instant/command 解除段は M3）。
+// TODO(SU3 M2 Task 3): view.rs が消費したら除去
+#[allow(dead_code)]
+#[derive(Debug, PartialEq, Eq)]
+pub enum EscapeOutcome {
+    /// folder → 展開前検索状態へ復帰済み（driver は追加操作なし）
+    RestoredSearch,
+    /// top-level → hide 要求（driver が emit）
+    Hide,
+}
+
 /// 検索ウィンドウの純粋状態。M1 は results 軸のみ（folder stack は M2）。
 pub struct SearchState {
     query: String,
     results: Vec<SearchResult>,
     selected: usize,
+    folder: Option<FolderFrame>,
+    folder_filter: String,
+    folder_gen: u64,
 }
 
 impl SearchState {
     pub fn new() -> Self {
-        Self { query: String::new(), results: Vec::new(), selected: 0 }
+        Self {
+            query: String::new(),
+            results: Vec::new(),
+            selected: 0,
+            folder: None,
+            folder_filter: String::new(),
+            folder_gen: 0,
+        }
     }
 
     pub fn query(&self) -> &str {
@@ -88,9 +122,9 @@ impl SearchState {
         self.selected
     }
 
-    /// 軸1。M1 は常に Results（Folder stack は M2）。
+    /// 軸1。folder モードなら Folder、それ以外 Results（tool は SU3.5）。
     pub fn view_kind(&self) -> ViewKind {
-        ViewKind::Results
+        if self.folder.is_some() { ViewKind::Folder } else { ViewKind::Results }
     }
 
     /// 軸2。prefix は driver が config live-read で渡す。
@@ -109,11 +143,100 @@ impl SearchState {
         self.selected = next as usize;
     }
 
-    /// resetForShow 相当。show のたびに driver が呼ぶ（query/結果/選択を初期化）。
+    /// 通常検索 → folder 突入。展開前状態を frame に退避し gen を進める。token を返す。
+    // TODO(SU3 M2 Task 3): view.rs が消費したら除去
+    #[allow(dead_code)]
+    pub fn enter_folder(&mut self, dir: String) -> u64 {
+        self.folder = Some(FolderFrame {
+            restore_query: self.query.clone(),
+            restore_results: self.results.clone(),
+            restore_selected: self.selected,
+            current_dir: dir,
+        });
+        self.folder_filter.clear();
+        self.selected = 0;
+        self.folder_gen += 1;
+        self.folder_gen
+    }
+
+    /// folder 内で親/子へ遷移（frame の current_dir を書き換え・push しない）。token を返す。
+    // TODO(SU3 M2 Task 3): view.rs が消費したら除去
+    #[allow(dead_code)]
+    pub fn navigate_folder(&mut self, dir: String) -> u64 {
+        if let Some(f) = self.folder.as_mut() {
+            f.current_dir = dir;
+        }
+        self.folder_filter.clear();
+        self.selected = 0;
+        self.folder_gen += 1;
+        self.folder_gen
+    }
+
+    // TODO(SU3 M2 Task 3): view.rs が消費したら除去
+    #[allow(dead_code)]
+    pub fn folder_current_dir(&self) -> Option<&str> {
+        self.folder.as_ref().map(|f| f.current_dir.as_str())
+    }
+
+    /// folder 中の親ディレクトリ（ルート終端で None）。
+    // TODO(SU3 M2 Task 3): view.rs が消費したら除去
+    #[allow(dead_code)]
+    pub fn parent_dir(&self) -> Option<String> {
+        self.folder.as_ref().and_then(|f| compute_parent_dir(&f.current_dir))
+    }
+
+    // TODO(SU3 M2 Task 3): view.rs が消費したら除去
+    #[allow(dead_code)]
+    pub fn folder_gen(&self) -> u64 {
+        self.folder_gen
+    }
+
+    /// 遅延到着したナビ結果を受理してよいか（token 一致 ∧ folder 中）。driver が false なら破棄。
+    // TODO(SU3 M2 Task 3): view.rs が消費したら除去
+    #[allow(dead_code)]
+    pub fn accept_folder_result(&self, token: u64) -> bool {
+        token == self.folder_gen && self.folder.is_some()
+    }
+
+    // TODO(SU3 M2 Task 3): view.rs が消費したら除去
+    #[allow(dead_code)]
+    pub fn folder_filter(&self) -> &str {
+        &self.folder_filter
+    }
+
+    // TODO(SU3 M2 Task 3): view.rs が消費したら除去
+    #[allow(dead_code)]
+    pub fn set_folder_filter(&mut self, f: String) {
+        self.folder_filter = f;
+        self.selected = 0;
+    }
+
+    /// Escape ラダー（M2）: folder 中は展開前状態へ復帰、top-level は Hide。
+    /// folder 離脱時は folder_gen を進めて遅延到着した旧ナビ結果を無効化する。
+    // TODO(SU3 M2 Task 3): view.rs が消費したら除去
+    #[allow(dead_code)]
+    pub fn on_escape(&mut self) -> EscapeOutcome {
+        if let Some(f) = self.folder.take() {
+            self.query = f.restore_query;
+            self.results = f.restore_results;
+            self.selected = clamp_selected(self.results.len(), f.restore_selected);
+            self.folder_filter.clear();
+            self.folder_gen += 1; // 離脱経路でも失効
+            EscapeOutcome::RestoredSearch
+        } else {
+            EscapeOutcome::Hide
+        }
+    }
+
+    /// resetForShow 相当。show のたびに driver が呼ぶ。folder モードも解除し gen を進める
+    /// （hide 前の in-flight ナビ結果を再表示後に轢かせない）。
     pub fn reset(&mut self) {
         self.query.clear();
         self.results.clear();
         self.selected = 0;
+        self.folder = None;
+        self.folder_filter.clear();
+        self.folder_gen += 1;
     }
 }
 
@@ -130,6 +253,43 @@ pub(crate) fn clamp_selected(len: usize, idx: usize) -> usize {
     } else {
         idx.min(len - 1)
     }
+}
+
+/// 親ディレクトリを返す。ルート（`C:\` / `\\server\share\`）で None。folderNav.computeParentDir 相当。
+// TODO(SU3 M2 Task 3): view.rs が消費したら除去
+#[allow(dead_code)]
+pub(crate) fn compute_parent_dir(current_dir: &str) -> Option<String> {
+    // 末尾 `\` を剥がす（ただしドライブルート "X:\" は保持しない — 後段で判定）。
+    let normalized = if current_dir.len() > 3 && current_dir.ends_with('\\') {
+        &current_dir[..current_dir.len() - 1]
+    } else {
+        current_dir
+    };
+    // UNC ルート判定: \\server\share（2 セグメント以下）は終端。
+    if let Some(rest) = normalized.strip_prefix("\\\\") {
+        let parts: Vec<&str> = rest.trim_end_matches('\\').split('\\').filter(|p| !p.is_empty()).collect();
+        if parts.len() <= 2 {
+            return None;
+        }
+    }
+    // 最後の `\segment` を削る。
+    let cut = normalized.rfind('\\')?;
+    let mut parent = normalized[..cut].to_string();
+    // "X:" → "X:\"（ドライブルートは末尾 `\` 必須）。
+    if parent.len() == 2 && parent.as_bytes()[1] == b':' && parent.as_bytes()[0].is_ascii_alphabetic() {
+        parent.push('\\');
+    }
+    if parent.is_empty() || parent == normalized {
+        return None;
+    }
+    // \\server（share 未満）は終端。
+    if let Some(rest) = parent.strip_prefix("\\\\") {
+        let parts: Vec<&str> = rest.trim_end_matches('\\').split('\\').filter(|p| !p.is_empty()).collect();
+        if parts.len() < 2 {
+            return None;
+        }
+    }
+    Some(parent)
 }
 
 #[cfg(test)]
@@ -234,5 +394,98 @@ mod tests {
         let mut s = SearchState::new();
         s.set_query("@g".into());
         assert_eq!(s.interp("@"), QueryIntent::Instant { filter_name: "g".into(), instant_query: String::new() });
+    }
+
+    #[test]
+    fn parent_dir_drive_and_unc_roots() {
+        assert_eq!(compute_parent_dir("C:\\a\\b"), Some("C:\\a".to_string()));
+        assert_eq!(compute_parent_dir("C:\\a"), Some("C:\\".to_string()));
+        assert_eq!(compute_parent_dir("C:\\"), None); // ドライブルート終端
+        assert_eq!(compute_parent_dir("\\\\srv\\share\\x"), Some("\\\\srv\\share".to_string()));
+        assert_eq!(compute_parent_dir("\\\\srv\\share"), None); // UNC 共有ルート終端
+        assert_eq!(compute_parent_dir("\\\\srv"), None); // UNC 不完全
+    }
+
+    #[test]
+    fn enter_folder_saves_view_and_switches_kind() {
+        let mut s = SearchState::new();
+        s.set_query("fire".into());
+        s.set_results(vec![res("a"), res("b")]);
+        s.move_selection(1); // selected=1
+        assert_eq!(s.view_kind(), ViewKind::Results);
+        let tok = s.enter_folder("C:\\proj".into());
+        assert_eq!(s.view_kind(), ViewKind::Folder);
+        assert_eq!(s.folder_current_dir(), Some("C:\\proj"));
+        assert_eq!(s.folder_filter(), "");
+        assert_eq!(s.folder_gen(), tok);
+        // query は展開前語を保持（相乗りしない）
+        assert_eq!(s.query(), "fire");
+    }
+
+    #[test]
+    fn navigate_folder_bumps_gen_and_clears_filter() {
+        let mut s = SearchState::new();
+        let t1 = s.enter_folder("C:\\a".into());
+        s.set_folder_filter("x".into());
+        let t2 = s.navigate_folder("C:\\a\\b".into());
+        assert!(t2 > t1);
+        assert_eq!(s.folder_current_dir(), Some("C:\\a\\b"));
+        assert_eq!(s.folder_filter(), "");
+    }
+
+    #[test]
+    fn escape_folder_restores_then_hides() {
+        let mut s = SearchState::new();
+        s.set_query("fire".into());
+        s.set_results(vec![res("a"), res("b"), res("c")]);
+        s.move_selection(2); // selected=2
+        s.enter_folder("C:\\proj".into());
+        s.set_folder_filter("x".into());
+        // 1 回目の Escape → 展開前状態へ復帰
+        assert_eq!(s.on_escape(), EscapeOutcome::RestoredSearch);
+        assert_eq!(s.view_kind(), ViewKind::Results);
+        assert_eq!(s.query(), "fire");
+        assert_eq!(s.results().len(), 3);
+        assert_eq!(s.selected(), 2);
+        // 2 回目の Escape（results + plain）→ hide
+        assert_eq!(s.on_escape(), EscapeOutcome::Hide);
+    }
+
+    #[test]
+    fn stale_folder_result_is_rejected() {
+        let mut s = SearchState::new();
+        let t1 = s.enter_folder("C:\\a".into());
+        let t2 = s.navigate_folder("C:\\a\\b".into());
+        assert!(!s.accept_folder_result(t1)); // 旧 token は破棄
+        assert!(s.accept_folder_result(t2)); // 最新 token は受理
+    }
+
+    #[test]
+    fn escape_invalidates_gen_so_late_nav_result_is_dropped() {
+        let mut s = SearchState::new();
+        s.set_results(vec![res("a")]);
+        let tok = s.enter_folder("C:\\a".into());
+        s.on_escape(); // folder 離脱 → gen 失効 + folder None
+        assert!(!s.accept_folder_result(tok)); // 離脱後は旧ナビ結果を受理しない
+        assert_eq!(s.view_kind(), ViewKind::Results);
+    }
+
+    #[test]
+    fn reset_invalidates_folder_gen_and_clears_mode() {
+        let mut s = SearchState::new();
+        let tok = s.enter_folder("C:\\a".into());
+        s.reset(); // show 時 reset
+        assert!(!s.accept_folder_result(tok));
+        assert_eq!(s.view_kind(), ViewKind::Results);
+        assert_eq!(s.folder_filter(), "");
+    }
+
+    #[test]
+    fn folder_mode_interp_is_plain_even_with_prefix() {
+        let mut s = SearchState::new();
+        s.enter_folder("C:\\a".into());
+        s.set_folder_filter("@x".into()); // folder_filter に @ が入っても
+        // interp は view_kind()==Folder ゆえ Plain（query 相乗りしないので query は空のまま）
+        assert_eq!(s.interp("@"), QueryIntent::Plain);
     }
 }

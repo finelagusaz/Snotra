@@ -687,6 +687,9 @@ fn main() {
                 // （下の setup_config_watcher）と setup_startup_display より前に登録し、可視窓が
                 // 合図を取りこぼす窓を作らない（位置は spec が pin・並行性レビュー）。
                 egui_shell::register_config_wake_listeners(&app_handle);
+                // hotkey 登録失敗の pending 格納（spec 追補 2）。wake しない listener——
+                // wake は config-applied（言語変更同時発生時の競合窓を閉じる）に委ねる。
+                egui_shell::register_hotkey_failure_listener(&app_handle);
                 app.manage(egui_shell::UpdaterUiState(std::sync::Mutex::new(Default::default())));
                 egui_shell::spawn_update_check(&app_handle);
             }

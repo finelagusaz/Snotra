@@ -49,6 +49,15 @@ pub fn launch_timeout(l: Language, detail: &str) -> String {
     }
 }
 
+/// ホットキー登録失敗通知（i18n.ts `notice.hotkey.change_failed` と一字一句一致・
+/// {hotkey} は書式挿入。英語文言に句点は付かない＝i18n.ts 実物どおり）。
+pub fn hotkey_change_failed(l: Language, hotkey: &str) -> String {
+    match l {
+        Language::Ja => format!("ホットキー ({hotkey}) の登録に失敗しました。元のホットキーを維持します"),
+        Language::En => format!("Failed to register hotkey ({hotkey}). Keeping the previous hotkey"),
+    }
+}
+
 pub fn update_available(l: Language, version: &str) -> String {
     match l {
         Language::Ja => format!("v{version} が利用可能です"),
@@ -100,5 +109,15 @@ mod tests {
         // spec 決定 8: timeout は「失敗」でなく「結果不明」。文言に「失敗」を含めない。
         assert!(!launch_timeout(Language::Ja, "").contains("失敗"));
         assert!(!launch_timeout(Language::En, "").to_lowercase().contains("failed"));
+    }
+
+    #[test]
+    fn hotkey_change_failed_matches_i18n() {
+        // i18n.ts notice.hotkey.change_failed の値と一字一句一致（2026-07-24 実物確認）。
+        assert_eq!(
+            hotkey_change_failed(Language::Ja, "Alt+Q"),
+            "ホットキー (Alt+Q) の登録に失敗しました。元のホットキーを維持します"
+        );
+        assert!(hotkey_change_failed(Language::En, "Alt+Q").contains("Alt+Q"));
     }
 }

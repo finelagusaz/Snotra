@@ -12,6 +12,38 @@ pub const LAUNCH_TIMEOUT: Duration = Duration::from_secs(4);
 /// 起動失敗/結果不明の一時通知 duration（`launchNotice.ts` 既定 2400ms parity）。
 pub const NOTICE_LAUNCH: Duration = Duration::from_millis(2400);
 
+/// hotkey 登録失敗通知の表示時間（SolidJS `setHotkeyFailureNotice` の 5000ms parity・
+/// launchNotice.ts で確認のこと）。
+pub const NOTICE_HOTKEY: Duration = Duration::from_millis(5000);
+
+/// 検索バー overlay の優先ラダー（WebView2 SearchWindow.tsx の Switch 先頭一致 parity）。
+/// `indexing` は「indexing 中かつ Results ビュー」を呼び出し側で評価して渡す。
+/// 空クエリの indexing は TextEdit の hint_text が描くため None（二重描画回避・spec 追補 1）。
+/// 非空クエリの indexing は表示ゲート（§4.7）で結果が消えるため overlay が唯一の案内になる。
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum OverlayKind {
+    Indexing,
+    Launching,
+    Notice,
+}
+
+pub fn overlay_kind(
+    indexing: bool,
+    query_empty: bool,
+    launching: bool,
+    has_notice: bool,
+) -> Option<OverlayKind> {
+    if indexing {
+        if query_empty { None } else { Some(OverlayKind::Indexing) }
+    } else if launching {
+        Some(OverlayKind::Launching)
+    } else if has_notice {
+        Some(OverlayKind::Notice)
+    } else {
+        None
+    }
+}
+
 /// 一時通知の単一スロット。新規 set は旧通知を上書き（`clearLaunchNotice`→set と同型）。
 /// `now` は driver の基準 Instant からの経過（単調）。
 #[derive(Default)]
@@ -230,6 +262,18 @@ mod tests {
         u.phase = UpdaterPhase::InstallFailed { message: "e".into() };
         assert!(u.dismiss());
         assert!(u.toast().is_none(), "dismissed 後は導出も消える");
+    }
+
+    #[test]
+    fn overlay_kind_priority_ladder() {
+        use super::OverlayKind::*;
+        // 優先順 indexing > launching > notice（WebView2 Switch 先頭一致 parity・SU5 確立の不変）
+        assert_eq!(overlay_kind(true, false, true, true), Some(Indexing));
+        // 空クエリの indexing は hint_text が描くため overlay は出さない（二重描画回避・spec 追補 1）
+        assert_eq!(overlay_kind(true, true, true, true), None);
+        assert_eq!(overlay_kind(false, true, true, true), Some(Launching));
+        assert_eq!(overlay_kind(false, true, false, true), Some(Notice));
+        assert_eq!(overlay_kind(false, true, false, false), None);
     }
 
     #[test]

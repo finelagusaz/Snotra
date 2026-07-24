@@ -1209,6 +1209,18 @@ impl EguiView for SearchWindowView {
             }
         }
 
+        // hotkey 登録失敗の pending 消費（spec 追補 2）。reset_pending 消費より後（順序不変条件）。
+        // 整形はここで lang() live-read——config-applied wake のフレームは update_config 後なので
+        // 言語同時変更でも新言語で整形される。hidden 中の失敗は次 show のこの消費で表示される
+        //（WebView2 は hidden 中に期限切れ・改善方向の受容差異・spec 追補 2）。
+        if let Some(sh) = self.app_handle.try_state::<crate::egui_shell::EguiShellState>()
+            && let Some(hk) = sh.pending_hotkey_failure.lock().unwrap().take()
+        {
+            let msg = crate::egui_shell::ui_strings::hotkey_change_failed(self.lang(), &hk);
+            self.notice.set(msg, self.notice_base.elapsed(), crate::egui_shell::NOTICE_HOTKEY);
+            ctx.request_repaint();
+        }
+
         // §11: パネル/入力欄/選択色を config テーマから（ハードコード撤廃・runtime CLEAR_COLOR は不変）。
         // font_family / native 背景ブラシのエッジ検出も同一 lock で読む（SU6 spec 決定 2・lock 1 回/フレーム）。
         if let Some(s) = self.app_handle.try_state::<crate::AppState>() {
@@ -1502,19 +1514,26 @@ impl EguiView for SearchWindowView {
             response.request_focus();
         }
 
-        // 一時 overlay（#532 SU5）: 「起動中…」/ 失敗・結果不明通知を検索バーに重ね描く。
-        // hint_text は空クエリ時のみ描かれるため使えない（launching/notice 中は query 非空・
-        // 状態機械レビュー）——painted label で TextEdit の rect を塗り潰して上書きする。
+        // 一時 overlay（#532 SU5）: 「起動中…」/ 失敗・結果不明通知/非空クエリ indexing 案内を
+        // 検索バーに重ね描く。hint_text は空クエリ時のみ描かれるため launching/notice/非空クエリ
+        // indexing 中（query 非空）は使えない——painted label で TextEdit の rect を塗り潰して上書きする。
         // 優先順は WebView2 SearchWindow.tsx の Switch 先頭一致 parity: indexing > 起動中 > 通知。
-        // indexing はここでは描かない（egui では空クエリ hint が担う・SU3 as-built）。indexing 中に
-        // launching/notice が重なる窓（instant は indexing 中も実行可）は indexing 表示を優先し
-        // overlay を抑止する（Switch 順 parity・parity レビュー要修正 3）。
-        let overlay_text: Option<String> = if self.indexing() && self.state.view_kind() == ViewKind::Results {
-            None // indexing が最優先（hint が見える・overlay は描かない）
-        } else if self.launching.is_some() {
-            Some(crate::egui_shell::ui_strings::launching(self.lang()).to_string())
-        } else {
-            self.notice.message().map(|m| m.to_string())
+        // 空クエリの indexing は hint が描く。非空クエリの indexing は表示ゲート（§4.7）で結果が
+        // 消えるため overlay が唯一の案内（spec 追補 1・ladder は overlay_kind に抽出しテスト固定）。
+        let overlay_text: Option<String> = match crate::egui_shell::overlay_kind(
+            self.indexing() && self.state.view_kind() == ViewKind::Results,
+            self.state.query().trim().is_empty(),
+            self.launching.is_some(),
+            self.notice.message().is_some(),
+        ) {
+            Some(crate::egui_shell::OverlayKind::Indexing) => {
+                Some(crate::egui_shell::ui_strings::indexing_hint(self.lang()).to_string())
+            }
+            Some(crate::egui_shell::OverlayKind::Launching) => {
+                Some(crate::egui_shell::ui_strings::launching(self.lang()).to_string())
+            }
+            Some(crate::egui_shell::OverlayKind::Notice) => self.notice.message().map(|m| m.to_string()),
+            None => None,
         };
         if let Some(text) = overlay_text {
             let rect = response.rect;

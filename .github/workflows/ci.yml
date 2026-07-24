@@ -103,13 +103,6 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      # #568: feature 限定の main() 配線（configure_e2e_webview の呼び出し）は
-      # 既定 feature の check/clippy/test では cfg で除外され compile されない
-      # （唯一 compile するのは e2e.yml の feature 付き tauri build）。feature 付き
-      # clippy で compile + lint 被覆し、配線の破損を高速検査で明示的に失敗させる。
-      - name: cargo clippy (e2e-webview-automation feature)
-        run: cargo clippy -p snotra --features e2e-webview-automation --all-targets -- -D warnings
-
       # #562: docgen 検出器。doc コメント内の intra-doc link（散文内シンボル参照）の切れを
       # 機械検査する。deny 化は各 crate の `[lints] workspace = true`（Cargo.toml）経由で、
       # 既定 warn の素通りを塞ぐ。--document-private-items は private モジュールの //! link も

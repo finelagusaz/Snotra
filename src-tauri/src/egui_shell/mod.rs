@@ -89,7 +89,7 @@ pub(crate) struct UpdaterUiState(pub(crate) Mutex<crate::egui_shell::UpdaterUi<B
 pub(crate) fn spawn_update_check(app: &tauri::AppHandle) {
     use snotra_core::config::AutoUpdateMode;
     use tauri_plugin_updater::UpdaterExt;
-    // 視覚スモーク専用（SNOTRA_DISABLE_SUSPEND と同じ E2E エスケープハッチの流儀）:
+    // 視覚スモーク専用の env エスケープハッチ:
     // 実 release への依存なしに toast を表示する。install 実体は無い（update: None）。
     if crate::trace::env_flag("SNOTRA_EGUI_FAKE_UPDATE") {
         if let Some(st) = app.try_state::<UpdaterUiState>() {

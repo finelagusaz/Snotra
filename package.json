@@ -13,8 +13,6 @@
     "smoke:egui": "pwsh -NoProfile -File scripts/smoke-egui.ps1",
     "measure:memory": "pwsh -NoProfile -File scripts/measure-memory.ps1",
     "prepare:sidecar": "pwsh -NoProfile -File scripts/prepare-sidecar.ps1 -Release",
-    "e2e:tauri:setup": "cargo install tauri-driver --locked && npm run prepare:sidecar && npx tauri build --no-bundle --features e2e-webview-automation",
-    "e2e:tauri": "playwright test -c playwright.tauri.config.ts",
     "typecheck": "tsc",
     "prebuild": "npm run typecheck",
     "build": "vite build",

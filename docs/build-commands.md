@@ -29,7 +29,7 @@ cargo doc --workspace --no-deps --document-private-items                        
 - **検査が割り当てられているファイルでは、フックの沈黙は合格を意味する**（#471・前提条件は #497）。検出は exit code で行い、成功した検査は何も出力しない。失敗時のみ再現コマンド付きで会話に届くため、そのコマンドを実行すれば全診断を見られる。**割り当ての無いファイル**（`*.md`・`scripts/`・`.github/workflows/` 等）の沈黙は「何も走らなかった」であり合格ではない。割り当ての SSOT は `post-edit.mjs` の `selectChecks` である
 - `snotra-settings` を含めるのは egui ネイティブウィンドウ側の型壊れも検知するため
 
-### B. TypeScript／フロントエンドファイル（`ui/src/**`・`e2e/**`・ルートの config `.ts`）を変更した場合
+### B. TypeScript／フロントエンドファイル（`ui/src/**`・ルートの config `.ts`）を変更した場合
 
 ```bash
 npm run typecheck    # 必須: TypeScript 型チェック
@@ -43,20 +43,19 @@ npm run docs:check   # 必須（TSDoc {@link} を含む doc コメント編集�
 ### C. ウィンドウ生成／表示順・ホットキー・スラッシュコマンドに触れた場合（A／B に追加）
 
 ```bash
-npm test                 # 必須: フロントユニットテスト（Vitest）
-npm run smoke:startup    # 必須: 起動時ウィンドウ生成スモーク（trace 検証）
-npm run smoke:egui       # 必須（egui 経路に触れた場合）: egui show/hide スモーク（Alt+Q 注入 + trace 検証・要 SNOTRA_EGUI_MAIN=1）
-npm run e2e:tauri        # 必須: Playwright + Tauri Driver E2E
+npm test                 # 必須: ユニットテスト（Vitest: ui + .claude/hooks + .githooks + scripts）
+npm run smoke:startup    # 必須: 起動時スモーク（trace の *:error 不在検証）
+npm run smoke:egui       # 必須: egui show/hide スモーク（hotkey 注入 + trace 検証・#532 SU7）
 ```
 
-- 初回のみ `npm run e2e:tauri:setup` でセットアップが必要
-- **PR 上の実行責任**: `npm test` は通常 PR CI（`ci.yml`）で自動実行されるが、`smoke:startup` / `e2e:tauri` は**通常 PR CI では走らない**。`src-tauri`・`ui`・`e2e`・依存 manifest/lockfile 等を含む変更は `E2E & Smoke` workflow（`e2e.yml`）が **paths により自動起動**し smoke + e2e を実行する（#145 Phase 3）。paths 外の変更で E2E を回したいときは `workflow_dispatch`（手動実行）。「通常 CI が緑」だけでは smoke/E2E 済みを意味しない
+- WebView2 E2E（Playwright + tauri-driver）は #532 SU7 flip で撤去済み。後継は `smoke:egui`（自動回帰の最低線）+ 手動 GUI smoke（カテゴリ D）
+- **PR 上の実行責任**: `npm test` は通常 PR CI（`ci.yml`）で自動実行されるが、`smoke:startup` / `smoke:egui` は**通常 PR CI では走らない**。`src-tauri`・`ui`・依存 manifest/lockfile 等を含む変更は `E2E & Smoke` workflow（`e2e.yml`）が **paths により自動起動**し両 smoke を実行する。paths 外の変更で回したいときは `workflow_dispatch`（手動実行）。「通常 CI が緑」だけでは smoke 済みを意味しない
 
 ### D. UI のスタイル・レイアウト・テキスト表示に影響する変更（A／B／C に追加）
 
-`npm run tauri dev` で起動し、目視で overflow／clipping／フォントレンダリングを確認する。PR 作成前に必須。
+`cargo run -p snotra` で起動し、目視で overflow／clipping／フォントレンダリングを確認する。PR 作成前に必須。
 
-- **egui 経路（#532・softbuffer メインウィンドウ）の視覚スモークは `cargo run -p snotra`（要 `SNOTRA_EGUI_MAIN=1`）で起動する**——`npm run tauri dev` は WebView2 経路。`snotra-egui-mvp`（下記「その他」の単独起動）は **Phase 1 の技術スパイクで SU 実装を一切含まない**ため、起動しても製品の egui 変更（アイコン・テーマ・行視覚等）は映らない。`cargo run`（`-p` 欠落）はワークスペースの別 bin を起動しうるので必ず `-p snotra` を付ける
+- **既定が egui（#532 SU7 flip 済み・env フラグ不要）**。`snotra-egui-mvp`（下記「その他」の単独起動）は **Phase 1 の技術スパイクで SU 実装を一切含まない**ため、起動しても製品の egui 変更（アイコン・テーマ・行視覚等）は映らない。`cargo run`（`-p` 欠落）はワークスペースの別 bin を起動しうるので必ず `-p snotra` を付ける
 
 ### E. git hook（`.githooks/**`）を変更した場合
 
@@ -100,35 +99,21 @@ cargo check --workspace          # Rust 全 crate 型チェック
 cargo clippy --workspace --all-targets -- -D warnings  # lint チェック（カテゴリ A と同じ）
 cargo run -p snotra-settings     # snotra-settings（egui ネイティブ設定 GUI）の単独起動
 cargo run -p snotra-egui-mvp     # Issue #532 egui MVP（WebViewなし・非配布の Phase 1 スパイク・SU 実装は含まない）
-cargo run -p snotra              # 製品メインウィンドウの egui 経路（要 SNOTRA_EGUI_MAIN=1・#532・WebView2 と並行。視覚スモークはこれ）
+cargo run -p snotra              # 製品メインウィンドウ（egui 既定・#532 SU7 flip 済み。視覚スモークはこれ）
 npm run verify                   # Rust + フロントエンド一括検証（cargo check + npm run build）
-npm run smoke:startup             # 起動時ウィンドウ生成スモーク（trace検証）
+npm run smoke:startup             # 起動時スモーク（trace の *:error 不在検証）
 npm run smoke:egui                # egui 経路の show/hide スモーク（keybd_event 注入 + trace検証・#532 SU7。既定 ExePath = target/release）
 npm run measure:memory            # メモリ実測（PrivWS 軸・ツリー合算・#532 flip 基準 3）
-npm run e2e:tauri:setup           # Tauri Driver E2E 用セットアップ
-npm run e2e:tauri                 # Playwright + Tauri Driver E2E
-npm run tauri dev                # 開発実行（ホットリロード付き）
-npm run tauri build              # リリースビルド（フロント+Rust 一括。cargo build --release 単体は UI が壊れる）
+npm run tauri build              # リリースビルド（NSIS バンドル。`prepare:sidecar` で binaries/ を用意してから）
 ```
 
-## E2E/スモーク運用メモ
+## スモーク運用メモ
 
 - `scripts/smoke-startup.ps1` は `SNOTRA_TRACE=1` で起動し、`*:error` トレースイベントが不在であることを検証する
 - `scripts/smoke-egui.ps1` は egui 経路の自動回帰の最低線（#532 SU7・e2e/ 撤去後の後継）: `SNOTRA_TRACE=1` で起動 → keybd_event で Alt+Q（既定 hotkey・Alt 解放込み）→ `egui_show:done` 観測 → Escape → `egui_hide:done` 観測 → `msedgewebview2` のグローバル増分 0 を検証する。`-SeedConfig` は CI 用（config.toml 不在時のみ最小の有効 TOML を seed して first-run 経路を回避。既存 config は上書きしない。空 TOML は必須セクション欠落で parse 失敗し破損復旧経路を踏むため使わない）。実行中の snotra を kill するためローカル実行時は注意。網羅は担わず、視覚・操作列は手動 GUI smoke（カテゴリ D）が補完する
-- `e2e/tauri.slash.e2e.ts` は Playwright runner 上で `tauri-driver + selenium-webdriver + edgedriver` を使い、起動入力・`/o` の動作を検証する
-- **E2E は `SNOTRA_DISABLE_SUSPEND=1` で app を起動する**（`spawnTauriDriver` が注入）。WebDriver は非表示中のレンダラーに `executeScript` で触り続けるため、hide 時の WebView2 suspend（TrySuspend）とは非互換（suspend されたレンダラーは script に応答せず 30s タイムアウトする）。suspend 経路自体は E2E では検証されない（ホットキー同様、実機計測でカバー）
-- E2E セットアップは `npx tauri build --no-bundle --features e2e-webview-automation` を使う（`cargo build --release` は `localhost` 向きバイナリになり `ERR_CONNECTION_REFUSED` で失敗する）。feature はテスト用バイナリにだけ WebView2 の trusted application API 経由で `--remote-debugging-port=0` を設定可能にする。実際の有効化にはハーネスが生成する `SNOTRA_E2E_WEBVIEW_DATA_DIR` も必要で、通常配布ビルドや startup smoke に remote debugging を持ち込まない
 - スラッシュコマンドの実行順（`hide -> /r|/o|/s|/q`）は `ui/src/lib/commands.test.ts` で固定し、順序変更時は必ず更新する
-- Tauri Driver E2E の可視判定は `document.visibilityState` を SSOT にしない。`plugin:window|is_visible` を優先して判定する
-- **`snotra-settings` は egui ネイティブウィンドウのため WebDriver から完全に不可視**: `waitForVisibleLabel(driver, "settings", ...)` は常にタイムアウトする。`/o` コマンドの副作用（`main.alwaysOnTop → false`）など、Tauri WebView 側で観測可能な状態変化で間接的に検証すること
-- **`waitForVisibleLabel` / `waitForHiddenLabel` 後は必ず `switchToLabel` を呼ぶ**: これらの関数は内部でウィンドウを切り替えるため、返却後のドライバーコンテキストが期待のウィンドウにない場合がある。直後に `findElement` すると `NoSuchElementError` になる
-- **fixture インデックスは `[[paths.scan]]` + `extensions` で指定する**: E2E config の `paths.additional` はレガシーで `.lnk` 専用に migrate される。`.txt` 等の fixture ファイルをインデックスに載せるには `[[paths.scan]]` に `extensions = [".txt"]` を明示すること
-- **E2E ハーネスは msedgedriver を WebView2 Runtime のバージョンに合わせて自動解決する**（`resolveWebView2DriverVersion`）。アプリが automation するのは Edge ブラウザではなく WebView2 Runtime であり、両者はパッチレベルでドリフトする。不一致は全セッションが `session not created: Chrome instance exited` で失敗する。`EDGEDRIVER_VERSION` で明示上書き可能
-- **`edgedriver`の既存キャッシュは要求版数を再検証しない**: `%TEMP%\msedgedriver.exe`が存在すると`EDGEDRIVER_VERSION`より先に再利用される。版数不一致を直す再実行では`EDGEDRIVER_VERSION`に加え、版数を含む新しい`EDGEDRIVER_CACHE_DIR`を指定する。失敗実行を中断した場合は、再実行前に残留`tauri-driver` / `msedgedriver`が4444番ポートを保持していないことも確認する
-- **E2E が生成する `config.toml` は妥当な TOML でなければならない**: parse 失敗時アプリは `Config::default()`（Start Menu / Desktop スキャン）にフォールバックするため、fixture が索引されず検索系テストが全滅する。`buildE2EConfigToml` を編集したら生成 TOML の妥当性を確認する。TOML 文字列に `"` を含む値は JS テンプレートリテラルの `\"` が `"` に潰れて不正になりやすいため、TOML リテラル文字列（シングルクォート）を使う。#338 で parse 失敗時に stderr ログ + `config.toml.bak` 退避を実装済み（黙殺は解消）。ただし default フォールバック自体は不変で、E2E が stderr を拾わなければ症状は同じため、E2E config は依然 valid TOML が必須
 - **ビルド済みバイナリの手動 smoke では「変更が含まれているか」を確認する**: `cargo` は `target/debug/deps/<crate>-<hash>.exe` を `target/debug/<crate>.exe` に hardlink し直すため、ソース変更後でも（fingerprint 上「最新」と判断され再リンクされず）`<crate>.exe` のタイムスタンプが更新されないことがある。タイムスタンプを信用せず、変更固有の文字列でバイナリを grep して目的の変更が入っているか確認する（例: `[Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($exe)).Contains('<変更固有の文字列>')`）。#343 の balloon smoke で実際に踏んだ
 - **debugネイティブGUIの`Process.MainWindowHandle`を画面証拠に使わない**: console subsystemのdebugバイナリは親Windows TerminalのHWNDを返す場合がある。対象PIDのトップレベルウィンドウを列挙し、PIDと期待タイトルの両方でネイティブウィンドウを特定してから可視性・スクリーンショットを検証する
-- **再レンダリングが保留中の文脈で属性をアサートするなら `driver.wait` 内で re-find し、さらに `StaleElementReferenceError` を catch して `return false` する**: `.result-row` を `findElements` で掴んでから `getAttribute` を読むと、検索デバウンス（leading + trailing 50ms）の trailing リフレッシュが結果リストを再レンダリングした瞬間に掴んだハンドルが `StaleElementReferenceError` で flake する（#382）。注意点は **`driver.wait` は throw をリトライしない**こと（`webdriver.js` の poll は `evaluateCondition().then(onFulfilled, reject)` で、コールバックが reject すると即失敗。再ポーリングは falsy `return` のみ）。よって `driver.wait` 内で re-find する*だけ*では `find→getAttribute` 間の stale-throw を救えず、コールバック内で `catch (e) { if (e instanceof error.StaleElementReferenceError) return false; throw e; }` を併用して初めて再レンダリングを待てる。クエリ変更直後のように trailing リフレッシュが保留中の確認が対象。キー入力で行 DOM が作り直されない文脈（↓/↑ 選択移動は SolidJS が class のみ更新）や安定要素（`.search-input`）の掴み置きでは catch 不要
 
 ## CI/CD メモ
 
@@ -144,16 +129,15 @@ npm run tauri build              # リリースビルド（フロント+Rust 一
 | `cargo check` / `cargo test -p snotra-core` / `cargo test -p snotra-egui-runtime` / `cargo test -p snotra-egui-mvp` / `cargo test -p snotra` / `cargo test -p snotra-settings` / `cargo clippy` | `ci.yml`（rust-check） | PR 自動 |
 | `cargo doc --workspace --no-deps --document-private-items`（#562・intra-doc link 検査） | `ci.yml`（rust-check） | PR 自動 |
 | `npm run governance:check`（#587・ガバナンス文書検査） | `ci.yml`（governance-check） | PR 自動（**`skip-ci` 非対象** — if ガードを持たず常時実行） |
-| `npm run smoke:startup`（注） | `e2e.yml`（E2E & Smoke） | 対象 paths を含む PR（自動）/ 手動 dispatch |
-| `npm run e2e:tauri` | `e2e.yml`（E2E & Smoke） | 対象 paths を含む PR（自動）/ 手動 dispatch |
-| `npm run smoke:egui`（#532 SU7・egui 経路の自動回帰） | `e2e.yml`（smoke-egui job・`SNOTRA_EGUI_MAIN=1`） | 対象 paths を含む PR（自動）/ 手動 dispatch |
+| `npm run smoke:startup`（注） | `e2e.yml`（smoke-egui job） | 対象 paths を含む PR（自動）/ 手動 dispatch |
+| `npm run smoke:egui`（#532 SU7・egui 経路の自動回帰） | `e2e.yml`（smoke-egui job） | 対象 paths を含む PR（自動）/ 手動 dispatch |
 
-（注）CI では `e2e:tauri:setup` が生成した release バイナリを共有するため、`npm run smoke:startup`（既定 ExePath = debug）ではなく `scripts/smoke-startup.ps1 -ExePath target/release/snotra.exe` を直接実行する。検証する起動経路は同じ（release バイナリの起動 trace に `*:error` が無いこと）。これは E2E 用ビルドの起動健全性検証であり、配布バンドル（`tauri build`）の検証ではない。
+（注）CI では smoke-egui job がビルドした release バイナリを共有するため、`npm run smoke:startup`（既定 ExePath = debug）ではなく `scripts/smoke-startup.ps1 -ExePath target/release/snotra.exe` を直接実行する。検証する起動経路は同じ（release バイナリの起動 trace に `*:error` が無いこと）。これは smoke 用ビルドの起動健全性検証であり、配布バンドル（`tauri build`）の検証ではない。
 
 - `npm test` は ubuntu（frontend-check）と windows（rust-check）の両方で走る（#509）。`.githooks` / `.claude/hooks` の selftest は実運用が Windows でのみ起きるセーフティネットであり、hook 実行機構（Git-for-Windows の shebang 経由 sh 起動・パス/クォート境界）が本番と一致する OS で回帰検査する。ubuntu 側は実行ビット・POSIX sh 厳密性を相補的に担保する。CRLF 由来の fail-open は `.gitattributes` の `.githooks/** text eol=lf` で両 OS 回避済みで、かつ dash 側の故障モードなので windows 固有ではない。
 - **`skip-ci` ラベルはジョブ単位で効く** — frontend-check / rust-check の `if` が同一のため、貼ると cargo 系を含む**両方まるごと**スキップする（表の各行に個別注記はしない）。**`governance-check` job は `if` ガードを持たず、`skip-ci` を貼っても走る**（#587。skip-safe と定義された Markdown-only 変更こそが検査対象のため、意図的にガードしない）。CI は required status check ではない（ruleset `default` に `required_status_checks` 規則が無い・実測）ためマージは通り、main への push（マージ後）では `github.event_name == 'push'` により**ラベル無関係に必ず走る**。
 - **`skip-ci` を貼ってよいのは skip-safe な変更のみ** — frontend-check / rust-check がテスト対象に持たない `.claude/skills/**`・`.claude/rules/**`・`.claude/agents/**`・`docs/**`・`**/*.md` だけ（これらの決定的検査は skip されない governance-check が担う・#587）。**貼ってはならない**: `.claude/hooks/**`・`.githooks/**`・`scripts/**`・`.claude/settings.json` — これらは `npm test` が両 OS でセルフテストを回す（`vitest.config.ts` の `include`・上の #509）。「`.claude`-only だから安全」と一括りにしない（同じ表層形 `.claude/` が「Claude が読むだけの設定」と「CI が検査するセーフティネット」の二概念を担うため・#500）。
-- カテゴリ C（ウィンドウ生成・ホットキー・スラッシュコマンド）相当の変更や依存更新を含む PR は、対象 paths（`src-tauri/**`・`ui/**`・`e2e/**`・`**/Cargo.toml`・`Cargo.lock`・`package.json`・`package-lock.json` 等）に該当するため `E2E & Smoke` workflow が自動起動する。paths 外の変更で手動実行するには `workflow_dispatch`。
+- カテゴリ C（ウィンドウ生成・ホットキー・スラッシュコマンド）相当の変更や依存更新を含む PR は、対象 paths（`src-tauri/**`・`ui/**`・`**/Cargo.toml`・`Cargo.lock`・`package.json`・`package-lock.json` 等）に該当するため `E2E & Smoke` workflow が自動起動する。paths 外の変更で手動実行するには `workflow_dispatch`。
 - この対応関係のドリフト（必須コマンドに対応 workflow が無い等）は `npm run governance:check`（G6）が検出する（#587。旧 `/health-check` Check 10）。
 
 ### その他

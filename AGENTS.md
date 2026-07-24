@@ -72,7 +72,7 @@
 | ガバナンス文書（`*.md`・スキル表・モジュール索引・rules・workflow）を変更 | `npm run governance:check`（`docs/build-commands.md` カテゴリ F・#587。PR では CI の governance-check job が常時実行） |
 | 文書に事実の写しを増やす変更 | 正本を 1 か所に定め他は参照へ（分担の記録は `docs/superpowers/specs/2026-07-19-doc-governance-design.md` §1） |
 | ファイル（`.rs`/`.ts`/`.tsx`）を追加/削除 | モジュールの責務は各ファイルの `//!`（Rust）/ TSDoc（TS）に書く。`CLAUDE.md` のモジュール構成節はファイル名の索引を保つため、追加時にファイル名行を足し削除時に消す（責務散文は `//!` を正本とする・#562） |
-| 機能削除・IPC ルート変更 | `e2e/` を関連キーワードで grep し、テストシナリオの前提が壊れないか確認する |
+| 機能削除・IPC ルート変更 | `scripts/smoke-egui.ps1` と `docs/build-commands.md` の smoke 前提（trace イベント名・hotkey）が壊れないか確認する（WebView2 e2e は #532 SU7 で撤去済み） |
 | 件数 N・上限パラメータを変更 | IPC シリアライズ・レンダリング・アイコン取得など下流全段に N の影響を追う |
 | アーキ・横断パターン・ビルド・開発原則に影響 | 対応する `docs/` を「触る範囲」に含める |
 | 各言語ファイルを編集 | `.claude/rules/`（読取で自動配送・パス起点の事前調査） |

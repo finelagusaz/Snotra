@@ -227,7 +227,8 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
             .map(|s| s.to_logical::<f64>(window.scale_factor().unwrap_or(1.0)).width)
             .unwrap_or(600.0);
         // 折りたたみ高 = bar_height(#646 決定 2)。52 固定だと font 連動後の実バー高と
-        // ずれ、position クランプが誤った高さで効く(コメント 196-200 行の機構と同じ理由)。
+        // ずれ、position クランプが誤った高さで効く(このブロック冒頭の reset-on-show
+        // コメントの機構と同じ理由。行番号参照は挿入でずれるため名前で指す)。
         let bar_h = read_metrics(app).bar_height;
         let _ = window.set_size(tauri::LogicalSize::new(width, bar_h));
     }

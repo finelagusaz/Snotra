@@ -275,7 +275,7 @@ impl SearchWindowView {
     /// 起動を per-launch worker スレッドへ投げる（#631・spec C 節）。single-flight:
     /// in-flight 中は拒否（WebView2 activationLane parity・二重起動防止）。突入時に results を
     /// クリアする（withLaunchLifecycle の await 前 clearResults parity・spec 決定 7）——
-    /// launching 中は 52px collapse・↑↓/クリックは空リストゆえ自然に inert。クエリは保持。
+    /// launching 中は bar_height へ collapse・↑↓/クリックは空リストゆえ自然に inert。クエリは保持。
     fn start_launch(&mut self, work: LaunchWork, tag: LaunchTag, ctx: &egui::Context) {
         if self.launching.is_some() {
             return; // single-flight 拒否（拒否された Enter が後で再生されるキューは egui に無い）
@@ -1598,7 +1598,7 @@ impl EguiView for SearchWindowView {
             );
         }
 
-        // updater toast（§20.3・#532 SU5）: 検索バー直下の 52px 行・モード非依存
+        // updater toast（§20.3・#532 SU5）: 検索バー直下の toast_height（= bar_height・#646 決定 2）行・モード非依存
         //（folder/tool/instant 中も表示・状態機械レビュー項 1）。
         // Metrics は 1 フレーム 1 回だけ導出し、toast 高・行高・窓高の 3 用途で使い回す
         //(/simplify: フレーム内の重複 lock を 1 回へ。live-read 契約はフレーム間の話で不変・
@@ -1715,7 +1715,7 @@ impl EguiView for SearchWindowView {
         // （instant/folder/tool carve-out・SU6 spec 決定 3）。データと選択は保持——クリアしない
         // （SolidJS parity: setIndexing は結果を触らず派生 memo が非表示を担う）。indexing 中の
         // 案内は空クエリ=hint・非空クエリ=overlay（Task 7・spec 追補 1）が担い、高さは
-        // show_results=false で 52px に折りたたまれる。
+        // show_results=false で bar_height に折りたたまれる。
         let show_results = !self.state.results().is_empty()
             && !crate::egui_shell::plain_results_hidden(
                 self.state.view_kind(),
@@ -1772,7 +1772,7 @@ impl EguiView for SearchWindowView {
             update_toast_height: metrics.toast_height,
         });
         // 幅は config live-read（SU6 spec 決定 2）。hidden 中の幅変更は wake 空振りでも、次 show の
-        // 初フレームでこの差分が検知して是正する（show_egui_main の inner_size 幅 52px collapse とは独立）。
+        // 初フレームでこの差分が検知して是正する（show_egui_main の bar_height collapse とは独立）。
         let width = self.window_width();
         if (height - self.last_set_height).abs() > 0.5 || (width - self.last_set_width).abs() > 0.5 {
             self.last_set_height = height;

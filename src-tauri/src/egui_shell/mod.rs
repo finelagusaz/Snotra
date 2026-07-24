@@ -40,6 +40,20 @@ use tauri::{Listener, Manager};
 
 use crate::egui_shell::view::SearchWindowView;
 
+/// hotkey 登録失敗の種別（#652）。文言キーが別（i18n.ts `notice.hotkey.*`）ゆえ
+/// pending に載せて view 側で整形を分岐する。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HotkeyFailureKind {
+    /// 起動時の初回登録失敗（`platform-event` / `initial-hotkey-failed`）。
+    /// SPEC §10 のとおり窓を能動表示してから通知する。
+    /// listener 配線は Task 4（#652 本体）——この Task 3 は構築先を持たないため未構築
+    /// （`view.rs` の match は既に分岐を持つ・compile-fail 検出器として型は先に揃える）。
+    #[allow(dead_code)]
+    Initial,
+    /// 設定変更による再登録失敗（`hotkey-registration-failed`）。旧ホットキーを維持。
+    Change,
+}
+
 /// egui 経路の show/hide を跨ぐ共有状態（managed state）。
 /// - hotkey_generation: alt 解放待ち show の世代。hide が bump して保留 show を無効化する（codex #5/(B)#2）。
 /// - hide_pending: view の emit dedup。show がクリアして「hide 後に Focused(true) が来ず抑止が残る」を断つ（codex #8）。
@@ -53,11 +67,12 @@ pub(crate) struct EguiShellState {
     /// hidden 中は次 show のフレームで toast が読まれるため repaint は可視中のみ意味を持つ
     /// （codex レビュー: 「hidden は次 show でよい」と「visible は repaint が要る」は別条件）。
     pub(crate) egui_ctx: Mutex<Option<egui::Context>>,
-    /// hotkey 登録失敗の pending payload（spec 追補 2）。config_watcher の
-    /// `hotkey-registration-failed` listener が格納し view が消費時に lang() live-read で整形する。
-    /// **この listener は wake しない**——wake は config-applied（update_config 後）だけにし、
-    /// 言語同時変更時に旧言語で整形する競合窓を閉じる（「language-changed が先」不変条件の egui 版）。
-    pub(crate) pending_hotkey_failure: Mutex<Option<String>>,
+    /// hotkey 登録失敗の pending payload（SU6 spec 追補 2 + #652）。種別ごとに文言が違う
+    /// ため `(kind, hotkey)` を保持し、view が消費時に lang() live-read で整形する。
+    /// **wake の有無は経路で異なる**——Change は wake しない（wake を config-applied に
+    /// 委ね、言語同時変更で旧言語整形になる競合窓を閉じる）。Initial は wake する
+    /// （config 変更が随伴せず config-applied が来ないため・#652・SU6.5 決定 2）。
+    pub(crate) pending_hotkey_failure: Mutex<Option<(HotkeyFailureKind, String)>>,
 }
 
 /// updater toast の managed 状態（#532 SU5）。view が毎フレーム読む level-triggered
@@ -333,7 +348,7 @@ pub(crate) fn register_hotkey_failure_listener(app: &tauri::AppHandle) {
         // emit 側は String を渡すため payload は JSON 文字列（引用符付き）。
         let hotkey: String = serde_json::from_str(event.payload()).unwrap_or_default();
         if let Some(sh) = handle.try_state::<EguiShellState>() {
-            *sh.pending_hotkey_failure.lock().unwrap() = Some(hotkey);
+            *sh.pending_hotkey_failure.lock().unwrap() = Some((HotkeyFailureKind::Change, hotkey));
         }
     });
 }

@@ -61,6 +61,16 @@ pub fn hotkey_change_failed(l: Language, hotkey: &str) -> String {
     }
 }
 
+/// 起動時ホットキー登録失敗通知（i18n.ts `notice.hotkey.initial_failed` と一字一句一致・
+/// {hotkey} は書式挿入。英語文言に句点は付かない＝i18n.ts 実物どおり）。
+/// `change_failed` と別キーなのは意図（旧ホットキー維持ではなく「開く手段が無い」告知）。
+pub fn hotkey_initial_failed(l: Language, hotkey: &str) -> String {
+    match l {
+        Language::Ja => format!("ホットキー ({hotkey}) の登録に失敗しました。他のアプリが使用中の可能性があります"),
+        Language::En => format!("Failed to register hotkey ({hotkey}). Another application may be using it"),
+    }
+}
+
 pub fn update_available(l: Language, version: &str) -> String {
     match l {
         Language::Ja => format!("v{version} が利用可能です"),
@@ -122,5 +132,19 @@ mod tests {
             "ホットキー (Alt+Q) の登録に失敗しました。元のホットキーを維持します"
         );
         assert!(hotkey_change_failed(Language::En, "Alt+Q").contains("Alt+Q"));
+    }
+
+    #[test]
+    fn hotkey_initial_failed_matches_i18n() {
+        // i18n.ts notice.hotkey.initial_failed の値と一字一句一致（2026-07-24 実物確認）。
+        // change_failed と違い「他のアプリが使用中の可能性があります」で終わる。
+        assert_eq!(
+            hotkey_initial_failed(Language::Ja, "Alt+Q"),
+            "ホットキー (Alt+Q) の登録に失敗しました。他のアプリが使用中の可能性があります"
+        );
+        assert_eq!(
+            hotkey_initial_failed(Language::En, "Alt+Q"),
+            "Failed to register hotkey (Alt+Q). Another application may be using it"
+        );
     }
 }

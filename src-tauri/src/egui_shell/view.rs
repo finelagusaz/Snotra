@@ -1218,14 +1218,22 @@ impl EguiView for SearchWindowView {
             }
         }
 
-        // hotkey 登録失敗の pending 消費（spec 追補 2）。reset_pending 消費より後（順序不変条件）。
-        // 整形はここで lang() live-read——config-applied wake のフレームは update_config 後なので
-        // 言語同時変更でも新言語で整形される。hidden 中の失敗は次 show のこの消費で表示される
-        //（WebView2 は hidden 中に期限切れ・改善方向の受容差異・spec 追補 2）。
+        // hotkey 登録失敗の pending 消費（SU6 spec 追補 2 + #652）。reset_pending 消費より後
+        //（順序不変条件——reset の notice.clear() がこの set を消さないため）。整形はここで
+        // lang() live-read: config-applied wake のフレームは update_config 後なので言語同時
+        // 変更でも新言語で整形される。hidden 中の失敗は次 show のこの消費で表示される
+        //（WebView2 は hidden 中に期限切れ・改善方向の受容差異・SU6 spec 追補 2）。
         if let Some(sh) = self.app_handle.try_state::<crate::egui_shell::EguiShellState>()
-            && let Some(hk) = sh.pending_hotkey_failure.lock().unwrap().take()
+            && let Some((kind, hk)) = sh.pending_hotkey_failure.lock().unwrap().take()
         {
-            let msg = crate::egui_shell::ui_strings::hotkey_change_failed(self.lang(), &hk);
+            let msg = match kind {
+                crate::egui_shell::HotkeyFailureKind::Initial => {
+                    crate::egui_shell::ui_strings::hotkey_initial_failed(self.lang(), &hk)
+                }
+                crate::egui_shell::HotkeyFailureKind::Change => {
+                    crate::egui_shell::ui_strings::hotkey_change_failed(self.lang(), &hk)
+                }
+            };
             self.notice.set(msg, self.notice_base.elapsed(), crate::egui_shell::NOTICE_HOTKEY);
             ctx.request_repaint();
         }

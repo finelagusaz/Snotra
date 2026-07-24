@@ -45,6 +45,7 @@ npm run docs:check   # 必須（TSDoc {@link} を含む doc コメント編集�
 ```bash
 npm test                 # 必須: フロントユニットテスト（Vitest）
 npm run smoke:startup    # 必須: 起動時ウィンドウ生成スモーク（trace 検証）
+npm run smoke:egui       # 必須（egui 経路に触れた場合）: egui show/hide スモーク（Alt+Q 注入 + trace 検証・要 SNOTRA_EGUI_MAIN=1）
 npm run e2e:tauri        # 必須: Playwright + Tauri Driver E2E
 ```
 
@@ -102,6 +103,7 @@ cargo run -p snotra-egui-mvp     # Issue #532 egui MVP（WebViewなし・非配�
 cargo run -p snotra              # 製品メインウィンドウの egui 経路（要 SNOTRA_EGUI_MAIN=1・#532・WebView2 と並行。視覚スモークはこれ）
 npm run verify                   # Rust + フロントエンド一括検証（cargo check + npm run build）
 npm run smoke:startup             # 起動時ウィンドウ生成スモーク（trace検証）
+npm run smoke:egui                # egui 経路の show/hide スモーク（keybd_event 注入 + trace検証・#532 SU7。既定 ExePath = target/release）
 npm run measure:memory            # メモリ実測（PrivWS 軸・ツリー合算・#532 flip 基準 3）
 npm run e2e:tauri:setup           # Tauri Driver E2E 用セットアップ
 npm run e2e:tauri                 # Playwright + Tauri Driver E2E
@@ -112,6 +114,7 @@ npm run tauri build              # リリースビルド（フロント+Rust 一
 ## E2E/スモーク運用メモ
 
 - `scripts/smoke-startup.ps1` は `SNOTRA_TRACE=1` で起動し、`*:error` トレースイベントが不在であることを検証する
+- `scripts/smoke-egui.ps1` は egui 経路の自動回帰の最低線（#532 SU7・e2e/ 撤去後の後継）: `SNOTRA_TRACE=1` で起動 → keybd_event で Alt+Q（既定 hotkey・Alt 解放込み）→ `egui_show:done` 観測 → Escape → `egui_hide:done` 観測 → `msedgewebview2` のグローバル増分 0 を検証する。`-SeedConfig` は CI 用（config.toml 不在時のみ空 seed して first-run 経路を回避。既存 config は上書きしない）。実行中の snotra を kill するためローカル実行時は注意。網羅は担わず、視覚・操作列は手動 GUI smoke（カテゴリ D）が補完する
 - `e2e/tauri.slash.e2e.ts` は Playwright runner 上で `tauri-driver + selenium-webdriver + edgedriver` を使い、起動入力・`/o` の動作を検証する
 - **E2E は `SNOTRA_DISABLE_SUSPEND=1` で app を起動する**（`spawnTauriDriver` が注入）。WebDriver は非表示中のレンダラーに `executeScript` で触り続けるため、hide 時の WebView2 suspend（TrySuspend）とは非互換（suspend されたレンダラーは script に応答せず 30s タイムアウトする）。suspend 経路自体は E2E では検証されない（ホットキー同様、実機計測でカバー）
 - E2E セットアップは `npx tauri build --no-bundle --features e2e-webview-automation` を使う（`cargo build --release` は `localhost` 向きバイナリになり `ERR_CONNECTION_REFUSED` で失敗する）。feature はテスト用バイナリにだけ WebView2 の trusted application API 経由で `--remote-debugging-port=0` を設定可能にする。実際の有効化にはハーネスが生成する `SNOTRA_E2E_WEBVIEW_DATA_DIR` も必要で、通常配布ビルドや startup smoke に remote debugging を持ち込まない
@@ -143,6 +146,7 @@ npm run tauri build              # リリースビルド（フロント+Rust 一
 | `npm run governance:check`（#587・ガバナンス文書検査） | `ci.yml`（governance-check） | PR 自動（**`skip-ci` 非対象** — if ガードを持たず常時実行） |
 | `npm run smoke:startup`（注） | `e2e.yml`（E2E & Smoke） | 対象 paths を含む PR（自動）/ 手動 dispatch |
 | `npm run e2e:tauri` | `e2e.yml`（E2E & Smoke） | 対象 paths を含む PR（自動）/ 手動 dispatch |
+| `npm run smoke:egui`（#532 SU7・egui 経路の自動回帰） | `e2e.yml`（smoke-egui job・`SNOTRA_EGUI_MAIN=1`） | 対象 paths を含む PR（自動）/ 手動 dispatch |
 
 （注）CI では `e2e:tauri:setup` が生成した release バイナリを共有するため、`npm run smoke:startup`（既定 ExePath = debug）ではなく `scripts/smoke-startup.ps1 -ExePath target/release/snotra.exe` を直接実行する。検証する起動経路は同じ（release バイナリの起動 trace に `*:error` が無いこと）。これは E2E 用ビルドの起動健全性検証であり、配布バンドル（`tauri build`）の検証ではない。
 

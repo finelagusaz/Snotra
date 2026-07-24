@@ -108,7 +108,8 @@ git commit -m "feat: SU6 純粋核述語（§4.7 表示ゲート + #633 世代�
 
 **Files:**
 - Modify: `src-tauri/src/state.rs`
-- Modify: `src-tauri/src/main.rs`（`AppState { ... }` 構築サイト 1 箇所）
+- Modify: `src-tauri/src/main.rs`（`AppState { ... }` 構築サイト・main.rs:588）
+- Modify: `src-tauri/src/commands/system.rs`（`test_state` ヘルパーの `AppState` 完全リテラル・85-92 行付近。**plan-review scout-glue が検出した 3 箇所目**——漏らすと `cargo test -p snotra` がコンパイル断）
 
 **Interfaces:**
 - Produces: `AppState.index_generation: AtomicU64`（Task 4 の view が `load(Ordering::SeqCst)` で読む）。bump は `finish_index_build()` 内（唯一のチョークポイント）
@@ -159,7 +160,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
         self.index_generation.fetch_add(1, Ordering::SeqCst);
 ```
 
-`test_state()`（state.rs）と `main.rs` の `AppState { ... }` 構築サイト（`app.manage(AppState` を grep して特定）に `index_generation: AtomicU64::new(0),` を追加。main.rs 側は `use` に `AtomicU64` が無ければ追加する。
+`AppState { ... }` 構築サイトは **3 箇所すべて**に `index_generation: AtomicU64::new(0),` を追加する: (1) `state.rs` の `test_state()`、(2) `main.rs:588` の本番構築、(3) `src-tauri/src/commands/system.rs:85-92` の `test_state(indexing: bool)`（`..` 更新構文を使わない完全リテラル）。grep `AppState {` で全列挙してから編集すること。main.rs / system.rs 側は `use` に `AtomicU64` が無ければ追加する。
 
 注: バックグラウンド再スキャン（`setup_background_rescan`・§3.3）も index を swap するが bump しない——WebView2 も rescan 完了で `indexing-complete` を emit せずフロントは refresh しない（parity・意図的 non-goal）。
 
@@ -203,27 +204,35 @@ git commit -m "feat: AppState.index_generation（#633 世代カウンタ・finis
 
 - [ ] **Step 2: mod.rs — listener 関数追加**
 
-`register_hide_listener` の直後に追加:
+`register_hide_listener` の直後に追加。repaint ブロックは既存 2 箇所（`spawn_update_check` 末尾 mod.rs:120-125・view.rs `spawn_install` 内）と同型のため `wake_view` ヘルパーに集約する（/dry-check・plan-review 独立導出の指摘）:
 
 ```rust
+/// 可視中の view を起こす（egui_ctx 未登録＝setup〜初フレーム、hidden 中は無害な no-op）。
+/// WebView2 経路（flag OFF）では EguiShellState が manage されておらず自然に no-op。
+pub(crate) fn wake_view(app: &tauri::AppHandle) {
+    if let Some(sh) = app.try_state::<EguiShellState>()
+        && let Ok(guard) = sh.egui_ctx.lock()
+        && let Some(ctx) = guard.as_ref()
+    {
+        ctx.request_repaint();
+    }
+}
+
 /// config 変更・index 状態変化の wake 合図（#532 SU6 spec 決定 1）。値は運ばず request_repaint
-/// のみ——次フレームの live-read が最新値を拾う。egui_ctx 未登録（setup〜初フレーム）や hidden 中
-/// の空振りは benign（初 show フレームの live-read が最新を描く）。**「値を運ばない」はこの benign
-/// 性の load-bearing 前提**——将来イベントに値を載せる変更はこの前提を壊す（spec 決定 1）。
+/// のみ——次フレームの live-read が最新値を拾う。空振りは benign（初 show フレームの live-read が
+/// 最新を描く）。**「値を運ばない」はこの benign 性の load-bearing 前提**——将来イベントに値を
+/// 載せる変更はこの前提を壊す（spec 決定 1）。
 pub(crate) fn register_config_wake_listeners(app: &tauri::AppHandle) {
     for event in ["config-applied", "indexing-started", "indexing-complete"] {
         let handle = app.clone();
         app.listen(event, move |_| {
-            if let Some(sh) = handle.try_state::<EguiShellState>()
-                && let Ok(guard) = sh.egui_ctx.lock()
-                && let Some(ctx) = guard.as_ref()
-            {
-                ctx.request_repaint();
-            }
+            wake_view(&handle);
         });
     }
 }
 ```
+
+`spawn_update_check` 末尾の同型ブロック（mod.rs:119-126）も `wake_view(&handle);` に置換して重複を消す（view.rs `spawn_install` 側は ctx を直接持つ別形のため対象外）。
 
 - [ ] **Step 3: main.rs — 登録サイト（位置 pin）**
 
@@ -305,8 +314,9 @@ view.rs:1605-1606 の
 ```rust
         // 結果リスト（shouldShowResults 相当）。§4.7: 再インデックス中は plain 結果のみ隠す
         // （instant/folder/tool carve-out・SU6 spec 決定 3）。データと選択は保持——クリアしない
-        // （SolidJS parity: setIndexing は結果を触らず派生 memo が非表示を担う）。indexing 中は
-        // 既存の検索バー hint（M1）が案内し、高さも show_results=false で 52px に折りたたまれる。
+        // （SolidJS parity: setIndexing は結果を触らず派生 memo が非表示を担う）。indexing 中の
+        // 案内は空クエリ=hint・非空クエリ=overlay（Task 7・spec 追補 1）が担い、高さは
+        // show_results=false で 52px に折りたたまれる。
         let show_results = !self.state.results().is_empty()
             && !crate::egui_shell::plain_results_hidden(
                 self.state.view_kind(),
@@ -476,9 +486,13 @@ struct に追加:
             if let Some(window) = self.app_handle.get_window("main") {
                 let _ = window.set_size(tauri::LogicalSize::new(width, height));
             }
+            // 新サイズでの再描画を即要求し 1 フレームの空きを詰める（背景 config 色で
+            // フラッシュは緩和済みだが空き自体が G-RESIZE のちらつき機構・advisor 指摘）。
             ui.ctx().request_repaint();
         }
 ```
+
+（既存の G-RESIZE 経緯コメントは上のとおり保持する——plan-review scout-egui の指摘。）
 
 - [ ] **Step 5: ビルド + 全テスト確認**
 
@@ -525,9 +539,12 @@ git commit -m "feat: SU6 live-read 例外 3 つ（font hot-reload / width view �
             && let Ok(hwnd) = window.hwnd()
         {
             b.send_command(crate::platform::PlatformCommand::TurnOffIme(hwnd.0 as usize));
+            crate::trace_main("egui_show:ime_control", serde_json::json!({}));
         }
     }
 ```
+
+（trace はスモーク（Task 9 Step 3 項目 6）の客観確認点。managed state 型は main.rs:796 で `Mutex<PlatformBridge>`＝`std::sync::Mutex` と確認済み・scout-egui。）
 
 （`PlatformBridge` の managed state 型は main.rs の `apply_ime_control`（main.rs:450-459）と同一形。パスが `crate::platform::` でなく `crate::` 直下 re-export の場合は main.rs の use を確認して合わせる。）
 
@@ -545,7 +562,199 @@ git commit -m "feat: §12 IME parity — egui show 経路で表示時 IME オフ
 
 ---
 
-### Task 7: docs 同期 + stale コメント是正（#648(B)）+ 再変換 defer issue
+### Task 7: 通知 parity — indexing overlay + hotkey 失敗通知（spec 追補 1/2）
+
+**Files:**
+- Modify: `src-tauri/src/egui_shell/notify.rs`（純粋核: `overlay_kind` + `NOTICE_HOTKEY`）
+- Modify: `src-tauri/src/egui_shell/strings.rs`（`hotkey_change_failed`）
+- Modify: `src-tauri/src/egui_shell/mod.rs`（`EguiShellState` フィールド + listener）
+- Modify: `src-tauri/src/egui_shell/view.rs`（overlay 分岐置換 + pending 消費）
+
+**Interfaces:**
+- Consumes: Task 3 の listener 登録パターン・既存 `NoticeSlot`（`set(message, now, duration)`・notify.rs:24）・既存 overlay 描画（view.rs:1458-1495）
+- Produces: `pub enum OverlayKind { Indexing, Launching, Notice }` / `pub fn overlay_kind(indexing: bool, query_empty: bool, launching: bool, has_notice: bool) -> Option<OverlayKind>` / `pub const NOTICE_HOTKEY: Duration` / `pub fn hotkey_change_failed(l: Language, hotkey: &str) -> String` / `EguiShellState.pending_hotkey_failure: Mutex<Option<String>>`
+
+- [ ] **Step 1: 失敗するテストを書く（純粋核 2 つ）**
+
+`notify.rs` の tests に追加:
+
+```rust
+    #[test]
+    fn overlay_kind_priority_ladder() {
+        use super::OverlayKind::*;
+        // 優先順 indexing > launching > notice（WebView2 Switch 先頭一致 parity・SU5 確立の不変）
+        assert_eq!(overlay_kind(true, false, true, true), Some(Indexing));
+        // 空クエリの indexing は hint_text が描くため overlay は出さない（二重描画回避・spec 追補 1）
+        assert_eq!(overlay_kind(true, true, true, true), None);
+        assert_eq!(overlay_kind(false, true, true, true), Some(Launching));
+        assert_eq!(overlay_kind(false, true, false, true), Some(Notice));
+        assert_eq!(overlay_kind(false, true, false, false), None);
+    }
+```
+
+`strings.rs` の tests（既存 parity テスト群と同じ場所）に追加:
+
+```rust
+    #[test]
+    fn hotkey_change_failed_matches_i18n() {
+        // i18n.ts の該当キー値と一字一句一致させる（実装前に ui/src/lib/i18n.ts を読み、
+        // {hotkey} 置換を含む正確な文字列をコピーしてこの期待値を書くこと）
+        assert_eq!(
+            hotkey_change_failed(Language::Ja, "Alt+Q"),
+            "ホットキー (Alt+Q) の登録に失敗しました。元のホットキーを維持します"
+        );
+        assert!(hotkey_change_failed(Language::En, "Alt+Q").contains("Alt+Q"));
+    }
+```
+
+**実装前に `ui/src/lib/i18n.ts` の hotkey 失敗キー（60-61/94-95 行付近）を必ず読み、期待値文字列を実物へ合わせて修正する**（上の日本語文字列は独立導出の引用であり、一字一句の正は i18n.ts）。
+
+- [ ] **Step 2: 落ちることを確認（Red）**
+
+Run: `cargo test -p snotra overlay_kind hotkey_change_failed --no-run 2>&1 | tail -5`
+Expected: コンパイルエラー（未定義シンボル）
+
+- [ ] **Step 3: 純粋核の実装**
+
+`notify.rs`（NoticeSlot の近く）:
+
+```rust
+/// hotkey 登録失敗通知の表示時間（SolidJS `setHotkeyFailureNotice` の 5000ms parity・
+/// launchNotice.ts で確認のこと）。
+pub const NOTICE_HOTKEY: Duration = Duration::from_millis(5000);
+
+/// 検索バー overlay の優先ラダー（WebView2 SearchWindow.tsx の Switch 先頭一致 parity）。
+/// `indexing` は「indexing 中かつ Results ビュー」を呼び出し側で評価して渡す。
+/// 空クエリの indexing は TextEdit の hint_text が描くため None（二重描画回避・spec 追補 1）。
+/// 非空クエリの indexing は表示ゲート（§4.7）で結果が消えるため overlay が唯一の案内になる。
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum OverlayKind {
+    Indexing,
+    Launching,
+    Notice,
+}
+
+pub fn overlay_kind(
+    indexing: bool,
+    query_empty: bool,
+    launching: bool,
+    has_notice: bool,
+) -> Option<OverlayKind> {
+    if indexing {
+        if query_empty { None } else { Some(OverlayKind::Indexing) }
+    } else if launching {
+        Some(OverlayKind::Launching)
+    } else if has_notice {
+        Some(OverlayKind::Notice)
+    } else {
+        None
+    }
+}
+```
+
+`strings.rs`（既存関数群と同形式・i18n.ts 実物から文字列コピー）:
+
+```rust
+/// ホットキー登録失敗通知（i18n.ts の該当キーと一字一句一致・{hotkey} は書式挿入）。
+pub fn hotkey_change_failed(l: Language, hotkey: &str) -> String {
+    match l {
+        Language::Ja => format!("ホットキー ({hotkey}) の登録に失敗しました。元のホットキーを維持します"),
+        Language::En => format!("Failed to register hotkey ({hotkey}). Keeping the previous hotkey."),
+    }
+}
+```
+
+`mod.rs` の re-export に `overlay_kind` / `OverlayKind` / `NOTICE_HOTKEY` を追加（既存 `NoticeSlot` の re-export 行に倣う）。
+
+- [ ] **Step 4: テストが通ることを確認（Green）**
+
+Run: `cargo test -p snotra overlay_kind hotkey_change_failed 2>&1 | tail -5`
+Expected: `test result: ok`
+
+- [ ] **Step 5: driver 配線（mod.rs + view.rs）**
+
+`EguiShellState`（mod.rs:44-52）にフィールド追加:
+
+```rust
+    /// hotkey 登録失敗の pending payload（spec 追補 2）。config_watcher の
+    /// `hotkey-registration-failed` listener が格納し view が消費時に lang() live-read で整形する。
+    /// **この listener は wake しない**——wake は config-applied（update_config 後）だけにし、
+    /// 言語同時変更時に旧言語で整形する競合窓を閉じる（「language-changed が先」不変条件の egui 版）。
+    pub(crate) pending_hotkey_failure: Mutex<Option<String>>,
+```
+
+`register_config_wake_listeners` の直後に listener 追加（同関数内に足してもよいが wake しない listener なので分離する）:
+
+```rust
+/// hotkey 登録失敗の payload 受け口（spec 追補 2・wake は config-applied に委ねる）。
+pub(crate) fn register_hotkey_failure_listener(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    app.listen("hotkey-registration-failed", move |event| {
+        // emit 側は String を渡すため payload は JSON 文字列（引用符付き）。
+        let hotkey: String = serde_json::from_str(event.payload()).unwrap_or_default();
+        if let Some(sh) = handle.try_state::<EguiShellState>() {
+            *sh.pending_hotkey_failure.lock().unwrap() = Some(hotkey);
+        }
+    });
+}
+```
+
+main.rs の egui block（`register_config_wake_listeners` の直後）に `egui_shell::register_hotkey_failure_listener(&app_handle);` を追加。
+
+`view.rs` update() の世代検知ブロック（Task 4 Step 2）の直後に消費を追加:
+
+```rust
+        // hotkey 登録失敗の pending 消費（spec 追補 2）。reset_pending 消費より後（順序不変条件）。
+        // 整形はここで lang() live-read——config-applied wake のフレームは update_config 後なので
+        // 言語同時変更でも新言語で整形される。hidden 中の失敗は次 show のこの消費で表示される
+        //（WebView2 は hidden 中に期限切れ・改善方向の受容差異・spec 追補 2）。
+        if let Some(sh) = self.app_handle.try_state::<crate::egui_shell::EguiShellState>()
+            && let Some(hk) = sh.pending_hotkey_failure.lock().unwrap().take()
+        {
+            let msg = crate::egui_shell::ui_strings::hotkey_change_failed(self.lang(), &hk);
+            self.notice.set(msg, self.notice_base.elapsed(), crate::egui_shell::NOTICE_HOTKEY);
+            ctx.request_repaint();
+        }
+```
+
+`view.rs` の overlay 分岐（view.rs:1465-1471）を純関数消費に置換:
+
+```rust
+        // 優先順は WebView2 SearchWindow.tsx の Switch 先頭一致 parity: indexing > 起動中 > 通知。
+        // 空クエリの indexing は hint が描く。非空クエリの indexing は表示ゲート（§4.7）で結果が
+        // 消えるため overlay が唯一の案内（spec 追補 1・ladder は overlay_kind に抽出しテスト固定）。
+        let overlay_text: Option<String> = match crate::egui_shell::overlay_kind(
+            self.indexing() && self.state.view_kind() == ViewKind::Results,
+            self.state.query().trim().is_empty(),
+            self.launching.is_some(),
+            self.notice.message().is_some(),
+        ) {
+            Some(crate::egui_shell::OverlayKind::Indexing) => {
+                Some(crate::egui_shell::ui_strings::indexing_hint(self.lang()).to_string())
+            }
+            Some(crate::egui_shell::OverlayKind::Launching) => {
+                Some(crate::egui_shell::ui_strings::launching(self.lang()).to_string())
+            }
+            Some(crate::egui_shell::OverlayKind::Notice) => self.notice.message().map(|m| m.to_string()),
+            None => None,
+        };
+```
+
+- [ ] **Step 6: ビルド + 全テスト確認**
+
+Run: `cargo test -p snotra 2>&1 | tail -5`
+Expected: `test result: ok`
+
+- [ ] **Step 7: コミット**
+
+```bash
+git add src-tauri/src/egui_shell/notify.rs src-tauri/src/egui_shell/strings.rs src-tauri/src/egui_shell/mod.rs src-tauri/src/egui_shell/view.rs src-tauri/src/main.rs
+git commit -m "feat: SU6 通知 parity — 非空クエリ indexing overlay + hotkey 失敗通知（spec 追補 1/2）"
+```
+
+---
+
+### Task 8: docs 同期 + stale コメント是正（#648(B)）+ 再変換 defer issue
 
 **Files:**
 - Modify: `src-tauri/src/egui_shell/strings.rs`（`//!` 2-3 行目）
@@ -553,7 +762,7 @@ git commit -m "feat: §12 IME parity — egui show 経路で表示時 IME オフ
 - Modify: `src-tauri/CLAUDE.md`（config_watcher イベント一覧・egui_shell 節の strings.rs 記述）
 - Modify: `SPEC.md`（§7.5 末尾に additive 追記）
 
-**Interfaces:** なし（文書のみ。`*.md` は hook 沈黙 = 未検査であることに注意——Task 8 の governance:check が捕捉）
+**Interfaces:** なし（文書のみ。`*.md` は hook 沈黙 = 未検査であることに注意——Task 9 の governance:check が捕捉）
 
 - [ ] **Step 1: strings.rs の `//!` 是正（#648(B)）**
 
@@ -582,6 +791,10 @@ git commit -m "feat: §12 IME parity — egui show 経路で表示時 IME オフ
 1. `config_watcher.rs` の「発火するイベント」行の末尾に `/ config-applied（egui wake・値なし・SU6）` を追加
 2. egui_shell 節の `strings.rs` 記述 `言語は config 起動時読み` を `言語は view.rs lang() の毎フレーム live-read` に置換。同節の `mod.rs` 責務列挙 `hide listener` を `hide/config-wake listener` に置換
 
+- [ ] **Step 3b: SPEC §7.5 追記文へ通知 2 点を反映 + ロードマップ進捗節**
+
+Step 4 の追記文の末尾に「hotkey 登録失敗は `hotkey-registration-failed` の payload を保持し表示時に整形・通知する（§7.5 ホットキー項の egui parity）」の一文を足す。また `docs/superpowers/specs/2026-07-21-phase2-softbuffer-migration-roadmap.md` の進捗節に SU6 完了行（PR 番号はマージ後に確定するため「PR #NN」placeholder のままにせず、この Step ではロードマップを触らず **Task 9 Step 5 のマージ後確認と同時に 1 行追記**でもよい——実装順はどちらでも可、忘れないことが要点）。
+
 - [ ] **Step 4: SPEC §7.5 に as-built 追記**
 
 §7.5 の末尾（`設定の読み込み失敗時の扱い` 項目の後）に追加:
@@ -607,7 +820,7 @@ git commit -m "docs: SU6 as-built 同期（§7.5 wake 機構・strings 言語 li
 
 ---
 
-### Task 8: 検証（governance + 実機スモーク）+ PR
+### Task 9: 検証（governance + 実機スモーク）+ PR
 
 **Files:** なし（検証と PR のみ）
 
@@ -628,12 +841,13 @@ Expected: ok / 警告なし
 1. テーマ色（背景/選択行/文字色）変更が**本体可視のまま**反映される（wake 実証・従来は打鍵まで stale）
 2. window_width 変更が反映される
 3. font_family 変更が反映される（対象は family + 結果行 font_size。**入力欄 font_size は #643 領分で対象外**）
-4. スキャンパス変更 → 再インデックス中: plain 結果が消え hint 表示・instant（`@`）候補は表示継続 → 完了後: 現クエリの結果が自動復帰
+4. スキャンパス変更 → 再インデックス中: plain 結果が消え、**非空クエリでは overlay の「再構築中…」案内**（空クエリでは hint）・instant（`@`）候補は表示継続 → 完了後: 現クエリの結果が自動復帰
 5. 小さい scan 集合で速い再構築 → stale 結果が残らない（世代カウンタのパルス耐性）
 6. `ime_off_on_show=true` で Alt+Q show 時に IME がオフ
 7. トレイ Exit → trace で flush（history/icon 保存）を確認。**Alt+F4 の挙動を flag ON/OFF 両方で観察**（対称なら受容・非対称なら報告）
 8. `/o` → settings 起動 → alwaysOnTop 解除/復帰 → 保存 → 本体反映の end-to-end
 9. hotkey 変更が次回押下から効く
+10. 無効な hotkey（他アプリと衝突する等・登録に失敗する組合せ）へ変更 → 検索バー overlay に失敗通知が 5 秒表示される（spec 追補 2）
 
 - [ ] **Step 4: push + PR 作成**
 
@@ -641,7 +855,7 @@ Expected: ok / 警告なし
 git push -u origin HEAD && gh pr create --title "SU6: 統合 glue — config 反映 wake + #633 表示ゲート/世代カウンタ + §12 IME parity（#532 Phase 2）" --body-file <スクラッチパッドの PR body ファイル>
 ```
 
-PR body には `Closes #633` を含める（#633 は SU6 で close が正）。**`Part of #532` は closing keyword を使わない**（`Closes #532` と書かない——#532 は継続）。
+PR body には `Closes #633` を含める（#633 は SU6 で close が正）。**`Part of #532` は closing keyword を使わない**（`Closes #532` と書かない——#532 は継続）。また #633 本文は「結果をクリア/再評価」と書くが実装は「クリアせず表示ゲート + 世代カウンタ」——**設計変更の経緯（SolidJS parity・instant carve-out・パルス見逃し）を PR body に 2〜3 行で明記**し、将来 #633 を読む人の誤読を防ぐ（scout-docs 提案）。
 
 - [ ] **Step 5: マージ前 closing 確認（ルート CLAUDE.md の squash 手順 1〜4 を必ず実施）**
 
@@ -649,8 +863,15 @@ PR body には `Closes #633` を含める（#633 は SU6 で close が正）。*
 
 ---
 
-## Self-Review 結果（作成時に実施済み）
+## Self-Review 結果（作成時に実施・plan-review 反映後に更新）
 
-- **Spec coverage**: 決定 1→Task 3、決定 2→Task 5、決定 3→Task 1/2/4、決定 4→Task 6、決定 5→Task 7 Step 5、確認項目→Task 8 Step 3、付随作業→Task 7。全決定に対応タスクあり
-- **Placeholder**: なし（背景ブラシ API 不在時の fallback は具体的手順を記載済み）
-- **型整合**: `plain_results_hidden(ViewKind, bool, bool)` / `needs_index_refresh(u64, u64)` / `index_generation: AtomicU64` は Task 1/2 定義と Task 4 消費で一致
+- **Spec coverage**: 決定 1→Task 3、決定 2→Task 5、決定 3→Task 1/2/4、決定 4→Task 6、決定 5→Task 8 Step 5、追補 1/2→Task 7、確認項目→Task 9 Step 3、付随作業→Task 8。全決定 + 追補に対応タスクあり
+- **Placeholder**: なし（背景ブラシ API は tauri 2.11.4 ソースで実在確認済み・scout-egui。i18n 文言は「実装前に i18n.ts 実物から転記」を Red ステップに組込み済み）
+- **型整合**: `plain_results_hidden(ViewKind, bool, bool)` / `needs_index_refresh(u64, u64)` / `index_generation: AtomicU64` / `overlay_kind(bool, bool, bool, bool) -> Option<OverlayKind>` / `hotkey_change_failed(Language, &str) -> String` は定義タスクと消費タスクで一致
+
+## plan-review 結果の反映記録（2026-07-24）
+
+- 要対処 1（scout-glue）: `commands/system.rs` の `AppState` リテラル 3 箇所目 → Task 2 に反映済み
+- 独立導出の gap 2（一次検証済み）: hotkey 失敗通知の listener ゼロ・非空クエリ indexing の無言化 → spec 追補 1/2 + Task 7 新設
+- 独立導出との不一致 2 件は計画側の根拠で維持: width の watcher 分岐案（cross-thread race・並行性レビュー）/ font の watcher diff + AtomicBool 案（dirty flag 配管を作らない・spec 決定 2）——いずれも導出側は race 分析・spec 却下履歴を持たないため
+- 採用した細部: `wake_view` 集約（/dry-check）・IME trace・G-RESIZE コメント保持・PR body への #633 経緯記載・ロードマップ進捗行

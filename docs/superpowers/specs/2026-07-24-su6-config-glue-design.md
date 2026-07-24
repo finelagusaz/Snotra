@@ -57,6 +57,13 @@ egui の show 経路（`egui_shell/mod.rs` `show_egui_main`）に追加: `ime_of
 
 ロードマップの既存判断（再変換は WANT・切替をブロックしない・困難なら defer）に従い、SU6 では issue 起票のみ行い（ロードマップ決定 2 の記述と紐付ける）、flip 後に判断する。
 
+## plan-review 追補（2026-07-24・独立導出が検出した 2 gap）
+
+plan-review（偵察 3 + 独立導出 1）の独立導出だけが検出した、egui 経路の**ユーザー可視通知の parity 欠落** 2 点を SU6 スコープに追加する（いずれも一次ソースで裏取り済み）:
+
+- **追補 1: 非空クエリ中の再インデックス案内**。egui の indexing 案内（`indexing_hint`）は空クエリ時の TextEdit hint のみ（view.rs:1381 で `query().trim().is_empty()` ガード・egui の hint はバッファ空でしか描かれない）。決定 3 の表示ゲートで結果が消えると**無言**になる。WebView2 は query 内容に関わらず「インデックスを再構築中…」を表示（SearchWindow.tsx Switch 先頭 Match）。→ SU5 overlay 機構（優先順 indexing > launching > notice は不変）で、`indexing && Results && query 非空` のとき `indexing_hint` を overlay 描画する。優先ラダーは純関数 `overlay_kind` に抽出しユニットテスト対象にする
+- **追補 2: hotkey 失敗通知**。`hotkey-registration-failed`（config_watcher.rs:163）は emit のみで egui 側 listener がゼロ（grep 一次確認）——ホットキー変更失敗が egui では無通知。→ `EguiShellState.pending_hotkey_failure: Mutex<Option<String>>` に listener が格納（**この listener は wake しない**——wake は `config-applied`（update_config 後）だけにし、言語同時変更時に旧言語で整形する競合窓を閉じる。「language-changed が先」不変条件の egui 版）、view が消費時に `lang()` live-read で整形して `NoticeSlot`（5000ms・SolidJS `setHotkeyFailureNotice` parity）。文言は `strings.rs` に i18n.ts と一字一句一致で追加。hidden 中の失敗は次 show で表示される（WebView2 は hidden 中に期限切れで見えない——改善方向の受容差異）
+
 ## 確認項目（コード変更なしの見込み・スモークで裏取り）
 
 - 終了保存: トレイ Exit → `exit-requested` → history/icon 保存を flag ON + `SNOTRA_TRACE=1` で実測。**加えて Alt+F4 / OS close 要求の挙動を両経路（flag ON/OFF）で確認する**——`RunEvent` 経由の flush は両経路とも存在せず（`on_before_exit` は updater 専用）、穴があるなら**対称の既存 gap**。対称なら受容し必要に応じ別 issue（SU6 非スコープ）、egui 側だけ挙動が違うなら SU6 で対処判断

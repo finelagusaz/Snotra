@@ -32,6 +32,6 @@ cargo run -p snotra-egui-mvp
 - フォルダー展開、ツール選択、インスタントコマンド等の製品状態機械
 - Updaterのインストール実行と終了前保存
 - 署名鍵を使う配布artifact生成、旧版からの実更新
-- 製品版 `src-tauri` / SolidJS UI の置換
+- 製品版 `src-tauri` の置換（#532 Phase 2 SU1〜SU7 で完了済み——本 crate は Phase 1 の検証記録として残る）
 
 このMVPは採用判断用であり、製品移行では Issue #532 の後続フェーズとして上記を個別に実装・検証します。

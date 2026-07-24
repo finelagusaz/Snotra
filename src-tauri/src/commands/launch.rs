@@ -45,9 +45,9 @@ const PATH_PLACEHOLDER: &str = "{path}";
 
 /// Record a successful launch in history and persist if the pending-write
 /// threshold is reached. Common tail of all launch entry points
-/// (`launch_with_tool`, `launch_item`, `launch_item_with_state`,
-/// `launch_with_tool_with_state`, `launch_default_with_state`, and the egui
-/// path's `egui_shell::view::SearchWindowView::activate` / `execute_tool_selected`).
+/// (`launch_item_with_state` / `launch_with_tool_with_state` /
+/// `launch_default_with_state`（トレイ）, and the egui path's
+/// `egui_shell::view::SearchWindowView::activate` / `execute_tool_selected`).
 pub(crate) fn record_and_save(state: &AppState, path: &str, query: &str) {
     // Serialize the consistent snapshot while the Engine is protected, but run
     // the potentially slow filesystem write only after releasing that lock.

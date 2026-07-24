@@ -5,8 +5,7 @@
     "tamasfe.even-better-toml",
     "dbaeumer.vscode-eslint",
     "esbenp.prettier-vscode",
-    "tauri-apps.tauri-vscode",
-    "solidjs-community.solid-snippets"
+    "tauri-apps.tauri-vscode"
   ],
   "unwantedRecommendations": [
     "rust-lang.rust",

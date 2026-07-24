@@ -38,7 +38,7 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Install frontend dependencies
+      - name: Install dependencies
         run: npm ci
 
       - name: Get Build Date

@@ -104,8 +104,8 @@ fn send_alt_key_up() {
     unsafe {
         let _ = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
     }
-    // Brief pause so WebView2 processes the synthetic key-ups before
-    // receiving actual user keystrokes.
+    // Brief pause so the focused window processes the synthetic key-ups
+    // before receiving actual user keystrokes.
     std::thread::sleep(std::time::Duration::from_millis(5));
 }
 

@@ -8,6 +8,8 @@ allowed-tools:
   - Glob
 ---
 
+> **注記（#532 SU7）**: 本スキルの具体例・Step 表は撤去済みの SolidJS フロント（`ui/src/stores/` の signal）を前提に書かれている。現行の並行性は Rust 側の worker スレッド + channel + フレーム drain（`egui_shell/`: icon/launch/folder worker）にあり、「await 地点」は「worker 送信〜drain 受信の窓」に読み替えて適用する。全面改訂は follow-up issue を参照。
+
 $ARGUMENTS の async 関数について、各 `await` 地点での状態競合リスクを検証する。
 $ARGUMENTS が空の場合は、会話の直近の変更内容から対象を推定する。
 

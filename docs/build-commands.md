@@ -42,7 +42,7 @@ npm run smoke:egui       # 必須: egui show/hide スモーク（hotkey 注入 +
 ```
 
 - WebView2 E2E（Playwright + tauri-driver）は #532 SU7 flip で撤去済み。後継は `smoke:egui`（自動回帰の最低線）+ 手動 GUI smoke（カテゴリ D）
-- **PR 上の実行責任**: `npm test` は通常 PR CI（`ci.yml`）で自動実行されるが、`smoke:startup` / `smoke:egui` は**通常 PR CI では走らない**。`src-tauri`・`ui`・依存 manifest/lockfile 等を含む変更は `E2E & Smoke` workflow（`e2e.yml`）が **paths により自動起動**し両 smoke を実行する。paths 外の変更で回したいときは `workflow_dispatch`（手動実行）。「通常 CI が緑」だけでは smoke 済みを意味しない
+- **PR 上の実行責任**: `npm test` は通常 PR CI（`ci.yml`）で自動実行されるが、`smoke:startup` / `smoke:egui` は**通常 PR CI では走らない**。`src-tauri`・依存 manifest/lockfile 等を含む変更は `Smoke` workflow（`e2e.yml`）が **paths により自動起動**し両 smoke を実行する。paths 外の変更で回したいときは `workflow_dispatch`（手動実行）。「通常 CI が緑」だけでは smoke 済みを意味しない
 
 ### D. UI のスタイル・レイアウト・テキスト表示に影響する変更（A／B／C に追加）
 
@@ -126,7 +126,7 @@ npm run tauri build              # リリースビルド（NSIS バンドル。`
 - `npm test` は ubuntu（node-check）と windows（rust-check）の両方で走る（#509）。`.githooks` / `.claude/hooks` の selftest は実運用が Windows でのみ起きるセーフティネットであり、hook 実行機構（Git-for-Windows の shebang 経由 sh 起動・パス/クォート境界）が本番と一致する OS で回帰検査する。ubuntu 側は実行ビット・POSIX sh 厳密性を相補的に担保する。CRLF 由来の fail-open は `.gitattributes` の `.githooks/** text eol=lf` で両 OS 回避済みで、かつ dash 側の故障モードなので windows 固有ではない。
 - **`skip-ci` ラベルはジョブ単位で効く** — node-check / rust-check の `if` が同一のため、貼ると cargo 系を含む**両方まるごと**スキップする（表の各行に個別注記はしない）。**`governance-check` job は `if` ガードを持たず、`skip-ci` を貼っても走る**（#587。skip-safe と定義された Markdown-only 変更こそが検査対象のため、意図的にガードしない）。CI は required status check ではない（ruleset `default` に `required_status_checks` 規則が無い・実測）ためマージは通り、main への push（マージ後）では `github.event_name == 'push'` により**ラベル無関係に必ず走る**。
 - **`skip-ci` を貼ってよいのは skip-safe な変更のみ** — node-check / rust-check がテスト対象に持たない `.claude/skills/**`・`.claude/rules/**`・`.claude/agents/**`・`docs/**`・`**/*.md` だけ（これらの決定的検査は skip されない governance-check が担う・#587）。**貼ってはならない**: `.claude/hooks/**`・`.githooks/**`・`scripts/**`・`.claude/settings.json` — これらは `npm test` が両 OS でセルフテストを回す（`vitest.config.ts` の `include`・上の #509）。「`.claude`-only だから安全」と一括りにしない（同じ表層形 `.claude/` が「Claude が読むだけの設定」と「CI が検査するセーフティネット」の二概念を担うため・#500）。
-- カテゴリ C（ウィンドウ生成・ホットキー・スラッシュコマンド）相当の変更や依存更新を含む PR は、対象 paths（`src-tauri/**`・`ui/**`・`**/Cargo.toml`・`Cargo.lock`・`package.json`・`package-lock.json` 等）に該当するため `E2E & Smoke` workflow が自動起動する。paths 外の変更で手動実行するには `workflow_dispatch`。
+- カテゴリ C（ウィンドウ生成・ホットキー・スラッシュコマンド）相当の変更や依存更新を含む PR は、対象 paths（`src-tauri/**`・`**/Cargo.toml`・`Cargo.lock`・`package.json`・`package-lock.json` 等）に該当するため `Smoke` workflow が自動起動する。paths 外の変更で手動実行するには `workflow_dispatch`。
 - この対応関係のドリフト（必須コマンドに対応 workflow が無い等）は `npm run governance:check`（G6）が検出する（#587。旧 `/health-check` Check 10）。
 
 ### その他

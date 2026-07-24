@@ -350,10 +350,9 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 - トレイアイコン: 検知時に `PlatformCommand::SetTrayVisible` で切替
 - 検索方式/最大件数: 検知後即時反映
 - 履歴の保持上限（`result_limit`）: 検知後即時反映（検索の取得上限・履歴の剪定容量とも実行時に `config` から参照する live-read のため再起動不要、#348）
-- 見た目設定: 検知時に `visual-config-changed` イベントで全ウィンドウの CSS 変数を即時更新
-- ウィンドウ幅: 検知時に `set_size` で main ウィンドウを即時リサイズ
-- 言語: 検知時に `language-changed` イベントでフロントエンドに通知し、`PlatformCommand::SetLanguage` でトレイメニューを切替。`language-changed` はホットキー失敗通知より先に発火する（フロントエンドが正しい言語でエラー文字列を表示できるようにするため）
-- フォーカス喪失時自動非表示（`auto_hide_on_focus_lost`）: 検知時に `auto-hide-focus-lost-changed` イベントでフロントエンドのシグナルを更新し、次回のフォーカス喪失から新しい設定値が反映される（`onFocusChanged` リスナー自体は常時登録済みで、シグナルがゲートとして働く）
+- 見た目設定・ウィンドウ幅: `config-applied` wake 後の毎フレーム live-read で view が即時反映する（幅は view が唯一の size writer として `set_size`）
+- 言語: `PlatformCommand::SetLanguage` でトレイメニューを切替。UI 文言は毎フレーム live-read で追従する（`config-applied` は engine への適用**後**に発火するため、wake 時の読みは必ず新言語）
+- フォーカス喪失時自動非表示（`auto_hide_on_focus_lost`）: 毎フレーム live-read で次回のフォーカス喪失から新しい設定値が反映される
 - ホットキートグル動作（`hotkey_toggle`）・表示時の IME オフ（`ime_off_on_show`）: config_watcher は専用イベントを発火しない。ホットキー押下時・表示時に都度 `AppState` の実行中 config から直接読むため、次回のホットキー押下/表示から新しい設定値が反映される（再起動不要）
 - インデックス条件（スキャンパス・隠しファイル表示・`include_path_env`）・アイコン設定:
   - 検知時に変更を判定し、バックグラウンドで自動再構築
@@ -361,13 +360,12 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 - 設定の読み込み失敗時の扱い（`config_watcher`）:
   - 内容破損（TOML parse 失敗・非 UTF-8）: 既定値を適用し `config.toml.bak` へ退避、トレイバルーンで通知
   - 一時的・環境的な失敗（権限/ロック/共有違反, `LoadOutcome::ReadFailed`）: まず短いバウンドリトライ（既定 3 回 × 150ms backoff）でロック解除を待ち、解けたら正規の変更を適用する（取りこぼし防止）。予算を使い切っても失敗する場合は **実行中の設定を維持し、何も適用しない**（既定値で上書きせず、再インデックスや履歴剪定も走らせない）。`config.toml` は無傷なので次の保存イベントでも回収される。live-read 化した履歴剪定が既定値で走るとデータ損失になるため（#348）
-- egui 経路（`SNOTRA_EGUI_MAIN`・#532 SU6）: config_watcher は適用完了後に `config-applied` を発火し、egui ウィンドウはこれを再描画の合図としてのみ消費する（値は運ばず、毎フレーム実行中 config を live-read）。`indexing-started` / `indexing-complete` も同様に合図として消費し、index build 完了世代（`index_generation`）の差分で現クエリを再検索する（§4.7・#633）。font_family・ウィンドウ幅・ネイティブ背景ブラシはフレーム内のエッジ検出で追従する。hotkey 登録失敗は 2 経路とも受ける——設定変更時（`hotkey-registration-failed`）は payload を保持し次の表示時に整形・通知し、起動時（`platform-event` の `initial-hotkey-failed`）は §10 のとおり検索 UI を能動表示してから通知する（#652）
+- 反映機構（#532 SU6）: config_watcher は適用完了後に `config-applied` を発火し、egui ウィンドウはこれを再描画の合図としてのみ消費する（値は運ばず、毎フレーム実行中 config を live-read）。`indexing-started` / `indexing-complete` も同様に合図として消費し、index build 完了世代（`index_generation`）の差分で現クエリを再検索する（§4.7・#633）。font_family・ウィンドウ幅・ネイティブ背景ブラシはフレーム内のエッジ検出で追従する。hotkey 登録失敗——設定変更時（`hotkey-registration-failed`）は payload を保持し次の表示時に整形・通知し、起動時（`platform-event` の `initial-hotkey-failed`）は §10 のとおり検索 UI を能動表示してから通知する（#652）
 
-### 7.6 起動時ブートストラップ
+### 7.6 起動時の設定初期化
 
-- 起動直後のUI初期化は `get_bootstrap_payload` を使い、`visual`・`general.auto_hide_on_focus_lost`・`indexing`・`language` を一括取得する
-- メインウィンドウはこのペイロードで初期テーマ適用、言語設定、フォーカス喪失時自動非表示の**初期値**を決定する。`auto_hide_on_focus_lost` は以後 §7.5 の `auto-hide-focus-lost-changed` イベントで追従するため、ここでの取得は起動時の初期値であって固定値ではない
-- フロントエンドは bootstrap 到着前のフラッシュ防止のため、`navigator.language` から同期的に初期言語を決定する（Rust 側の `sys-locale` と同じロジック: `ja` で始まれば日本語、それ以外は英語）
+- 起動時に `Config::load` が読み込んだ設定を `Engine` が保持し、UI（egui view）は毎フレーム live-read するため、起動時の一括取得機構は存在しない（旧 `get_bootstrap_payload` IPC は #532 SU7 のフロント撤去で消滅）
+- 初期言語は OS 設定から自動判定（`sys-locale`・`ja` で始まれば日本語、それ以外は英語）
 
 ## 8. ウィンドウ動作
 
@@ -375,7 +373,7 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 
 - ホットキーで表示
 - `Escape` で非表示（ただしツール選択中→フォルダ展開中の順で内側の復帰が優先）
-- フォーカス喪失時の自動非表示（`onFocusChanged` イベント、設定で切替、100ms 猶予付き）
+- フォーカス喪失時の自動非表示（`blur_should_hide` 純粋核・設定で切替・100ms 猶予付き）
 - ホットキーでのトグル動作（設定で切替）
 
 ### 8.2 ウィンドウ位置

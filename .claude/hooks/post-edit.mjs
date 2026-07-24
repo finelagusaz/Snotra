@@ -40,8 +40,6 @@ export const BUDGETS = {
   "settings-test": { lines: 8, from: "tail" },
   "tauri-test": { lines: 8, from: "tail" },
   "cargo-check": { lines: 20, from: "head" },
-  typecheck: { lines: 30, from: "head" },
-  "csp-test": { lines: 30, from: "head" },
   "hook-selftest": { lines: 30, from: "head" },
   "githooks-selftest": { lines: 30, from: "head" },
 };
@@ -106,11 +104,7 @@ export function extractFilePath(payload) {
 
 /**
  * 相対パスから走らせるべき検査を決める純関数。
- *
- * typecheck の条件は tsconfig の include - exclude と一致していなければならない（I7）。
- * include はテストファイルも含む（#474 で exclude を空にした）。`ui/src/MainApp.test.tsx` の
- * ような深さ 0 のファイルも program に入るため、「1 段以上のディレクトリ」を要求する
- * 正規表現で書いてはならない（I19）。
+ * （TS typecheck / csp-test は #532 SU7 のフロント撤去で消滅——`.ts` は情報行のみ・I16）
  */
 export function selectChecks(rel) {
   const checks = [];

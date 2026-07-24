@@ -111,21 +111,30 @@ try {
   }
 
   # hotkey 注入（押下順 → 逆順で解放。Alt を含む場合、Alt up が最後に来ることで
-  # ShowAfterAltRelease〔Alt 押下中は show を最大 350ms 繰り延べる〕が解決する）
+  # ShowAfterAltRelease〔Alt 押下中は show を最大 350ms 繰り延べる〕が解決する）。
+  # CI runner は起動直後の負荷で初回注入を取りこぼすことがある（PR #662 で flake 実測・
+  # 再走で合格）ため、観測できなければ一度だけ再注入する。
   $vks = @($HotkeyVks -split ',' | ForEach-Object { [byte]([int]$_.Trim()) })
   if ($vks.Count -lt 1) { throw "HotkeyVks must contain at least one VK code" }
-  foreach ($vk in $vks) {
-    Send-Key $vk
-    Start-Sleep -Milliseconds 50
+  $shown = $false
+  foreach ($attempt in 1..2) {
+    foreach ($vk in $vks) {
+      Send-Key $vk
+      Start-Sleep -Milliseconds 50
+    }
+    [array]::Reverse($vks)
+    foreach ($vk in $vks) {
+      Send-Key $vk -Up
+      Start-Sleep -Milliseconds 50
+    }
+    [array]::Reverse($vks)  # 再試行に備えて押下順へ戻す
+    if (Wait-TraceEvent -Path $errPath -EventName "egui_show:done" -TimeoutMs $ObserveTimeoutMs) {
+      $shown = $true
+      break
+    }
   }
-  [array]::Reverse($vks)
-  foreach ($vk in $vks) {
-    Send-Key $vk -Up
-    Start-Sleep -Milliseconds 50
-  }
-
-  if (-not (Wait-TraceEvent -Path $errPath -EventName "egui_show:done" -TimeoutMs $ObserveTimeoutMs)) {
-    $failures += "egui_show:done not observed within ${ObserveTimeoutMs}ms after hotkey ($HotkeyVks)"
+  if (-not $shown) {
+    $failures += "egui_show:done not observed within ${ObserveTimeoutMs}ms x2 after hotkey ($HotkeyVks)"
   }
 
   # 表示中に WebView2 プロセスが増えていないこと（グローバル before/after・SU2 G4 と同じ測り方）

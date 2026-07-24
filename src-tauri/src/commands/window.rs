@@ -10,9 +10,8 @@ use crate::state::AppState;
 
 use super::trace_command;
 
-/// インデックス構築中に設定を開こうとしたときのエラーコード。
-/// フロントエンド側 `ui/src/lib/commands.ts` の `ERR_INDEXING_IN_PROGRESS` と対になる。
-/// 変更するときは両ファイルを同時に更新する。
+/// インデックス構築中に設定を開こうとしたときのエラーコード
+/// （`open_settings` / `rebuild_index` が共有。旧フロント側の対は #532 SU7 で消滅）。
 pub(crate) const ERR_INDEXING_IN_PROGRESS: &str = "indexing_in_progress";
 
 /// Managed state for tracking the snotra-settings child process.

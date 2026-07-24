@@ -150,8 +150,8 @@ Tauri v2 バイナリ crate（パッケージ名 `snotra`）。検索 UI（`egui
 ### その他のパターン
 
 - フォルダ展開は「開始時スナップショットを保持し、`Escape` で一括復帰」モデル
-- テーマは CSS カスタムプロパティで動的に切替（`document.documentElement.style.setProperty()`）
-- `launch_item` は `LaunchResult(status/code/message)` を返す契約。失敗通知の自動クリアは単一タイマーを再利用して競合防止
+- テーマ・行視覚は config テーマ値の毎フレーム live-read で描画（`egui_shell/view.rs`・#532 SU4）
+- 起動系は `LaunchResult(status/code/message)` を返す契約（`launch_item_core` 等）。失敗通知は一時通知 `NoticeSlot` が期限管理する
 - 隣接バイナリ（`snotra-settings.exe`）を追加・変更した場合は `release.yml` のビルドステップと artifact 検証ステップの確認が必要
 
 ## 検索フロー（入力 → 結果表示）
@@ -159,50 +159,28 @@ Tauri v2 バイナリ crate（パッケージ名 `snotra`）。検索 UI（`egui
 ```mermaid
 sequenceDiagram
     participant User
-    participant SW as SearchWindow.tsx
-    participant SS as search.ts (store)
-    participant API as invoke.ts (IPC)
-    participant Cmd as commands/search.rs
+    participant View as egui_shell/view.rs
+    participant State as search_state.rs (純粋核)
     participant Eng as Engine (snotra-core)
     participant SE as SearchEngine
 
-    User->>SW: キー入力
-    SW->>SS: setQuery(value)
-
-    Note over SS: createEffect が query 変更を検知
-
-    SS->>SS: debouncedRefresh()<br/>OwnedTimer(refreshTimer) で leading+trailing 50ms
-
-    SS->>SS: refreshResults()<br/>searchLane.run() (world 世代 +1・stale 検出用)
-    SS->>API: search(query)
-    API->>Cmd: invoke("search", { query })
-    Cmd->>Eng: engine.search(&query)
+    User->>View: キー入力（TextEdit changed）
+    View->>State: interpret(query)（モード判定）
+    View->>View: Debouncer（leading + trailing 50ms）
+    View->>Eng: engine.search(&query)（同期直呼び・IPC なし）
     Eng->>SE: search_with_options()
 
-    Note over SE: rayon 並列スコアリング<br/>1. Bitmask プレフィルタ (Fuzzy)<br/>2. match_score (Prefix/Substring/Fuzzy)<br/>3. 履歴ブースト<br/>4. BinaryHeap top-k
+    Note over SE: rayon 並列スコアリング<br/>1. Bitmask プレフィルタ (Fuzzy)<br/>2. match_score (Prefix/Substring/Fuzzy)<br/>3. 履歴ブースト<br/>4. TopK
 
     SE-->>Eng: Vec<SearchResult>
-    Eng-->>Cmd: Vec<SearchResult>
-    Cmd-->>API: JSON シリアライズ
-    API-->>SS: SearchResult[]
-
-    Note over SS: run ctx の isStale() で stale チェック
-
-    SS->>SS: setResults(items), setSelected(0)
-
-    SS->>API: getIconsBatch(paths)
-    API->>Cmd: invoke("get_icons_batch")
-
-    Note over Cmd: ipc::Response (バイナリ)<br/>custom protocol 経由で ArrayBuffer
-
-    Cmd-->>SS: ArrayBuffer (PNG バッチ)
-    SS->>SS: parseBinaryBatch()<br/>→ Blob URL 生成
+    Eng-->>View: Vec<SearchResult>
+    View->>View: 結果リスト描画・compute_window_height → set_size
+    View->>View: icon worker spawn（load_icon_pngs → ColorImage → load_texture）
 ```
 
 **補足**:
-- 検索/データ lane の world 世代は `latestRun` primitive（`searchLane`）が所有する。`run()` が実行ごとに世代を +1 して `isStale()` を渡し、応答が返ったとき最新世代と比較して古いレスポンスを破棄する。モード遷移・起動は `searchLane.invalidate()` で世代を進め in-flight 検索を supersede する（#534）
-- 起動（launch/activate）lane は `exclusive` primitive（`activationLane`）が単一の in-flight フラグを所有し、実行中の 2 つ目の起動を `false` で拒否する（single-flight mutex）。検索 lane の supersede と対をなす 2 方針——検索は「新しい実行が古い実行を無効化」、起動は「実行中は 2 つ目を拒否」——を別名 primitive で明示する（#535）
-- アイコンは `ipc::Response` でバイナリ返却するため、CSP の `connect-src` に `ipc: http://ipc.localhost` が必須（`tauri dev` では不要だがリリースビルドで必要）
+- 検索は同期直 `Engine` 呼び（フレームコスト実測 p95 3.5ms/100k・#634）で、supersede/single-flight 機構は不要（同期モデルが並行性を消す・#532 SU3 の要石）
+- 非同期が残るのは folder 展開・アイコン抽出・起動の worker スレッドのみ。per-nav/per-launch channel + フレーム drain で最新のみ採用し、遅着は channel drop で構造的に消滅する
 
 ## 状態遷移（概要）
 
@@ -216,7 +194,7 @@ LauncherStopped → Standby → SearchVisible
                               └── IndexingMode (構築中)
 ```
 
-- 上図の括弧内は実装上 **2 軸 + オーバーレイ**に対応: NormalMode/CommandMode/InstantCommandMode は軸2 `interpKind`（plain/command/instant）、FolderExpansionMode/ToolSelectionMode は軸1 `viewKind`（folder/tool）。**IndexingMode は排他モードではなくオーバーレイ**（`indexing` はどのモードにも重なる）
+- 上図の括弧内は実装上 **2 軸 + オーバーレイ**に対応: NormalMode/CommandMode/InstantCommandMode は軸2 = `interpret` の `QueryIntent`（plain/command/instant）、FolderExpansionMode/ToolSelectionMode は軸1 = view 種別（folder/tool の優先度射影・`search_state.rs`）。**IndexingMode は排他モードではなくオーバーレイ**（`indexing` はどのモードにも重なる）
 - `Escape` は内側のモードから順に復帰（ToolSelection → FolderExpansion → NormalMode → Standby）
 - `snotra-settings` は子プロセスとして起動され、本体の状態遷移には影響しない
 - 詳細な遷移ルールは `SPEC.md` §8.6 を参照

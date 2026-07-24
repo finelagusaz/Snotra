@@ -16,7 +16,7 @@ fn ensure_not_indexing(state: &AppState) -> Result<(), String> {
     Ok(())
 }
 
-// IPC 返り値契約（src-tauri/CLAUDE.md「IPC コマンドの返り値契約」）の「失敗しうる操作系」:
+// 返り値契約（src-tauri/CLAUDE.md「共有 core 関数の返り値契約」）の「失敗しうる操作系」:
 // `open_settings` と同じ ERR_INDEXING_IN_PROGRESS 定数で「インデックス構築中」を表現し、
 // 同一条件を同一契約で揃える（#434）。
 pub fn rebuild_index(state: State<AppState>, app: AppHandle) -> Result<(), String> {

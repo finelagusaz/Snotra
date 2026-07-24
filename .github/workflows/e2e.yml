@@ -1,4 +1,4 @@
-name: E2E & Smoke
+name: Smoke
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
     branches:
       - main
     # paths が唯一の自動ゲート。カテゴリ C 相当（ウィンドウ生成・ホットキー・スラッシュコマンド）を
-    # 含みうる変更、およびビルド入力（vite・依存 manifest/lockfile）に触れた PR で自動起動する。
+    # 含みうる変更、および依存 manifest/lockfile に触れた PR で自動起動する。
     # 手動実行は workflow_dispatch。拾いすぎ（配下 *.md 等）は過剰実行で安全側ゆえ negation を足さない。
     # WebView2 e2e（Playwright + tauri-driver）は #532 SU7 flip で撤去済み——後継は smoke-egui job
     # （egui 経路の自動回帰の最低線）+ 手動 GUI smoke 体制（docs/build-commands.md）。

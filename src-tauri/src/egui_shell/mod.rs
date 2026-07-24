@@ -28,7 +28,7 @@ pub(crate) use search_state::{SlashCmd, find_slash_command};
 // driver（view.rs）は Task 4 で表示ゲート・再検索トリガとして消費する（#532 SU6 Task 1）。
 pub(crate) use search_state::{needs_index_refresh, plain_results_hidden};
 pub(crate) use layout::{Debouncer, HeightParams, compute_window_height};
-// view.rs が UI 文言（hint/overlay/toast）で消費する（#532 SU5・言語は起動時一回読み）。
+// view.rs が UI 文言（hint/overlay/toast）で消費する（#532 SU5・言語は lang() が毎フレーム live-read）。
 pub(crate) use strings as ui_strings;
 
 use std::sync::Mutex;

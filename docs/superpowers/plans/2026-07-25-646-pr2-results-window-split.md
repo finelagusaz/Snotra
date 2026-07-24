@@ -179,6 +179,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 //! RowsSnapshot を描くだけの従属 view——検索状態の所有者は main のまま(一方向データフロー・
 //! spec 決定 5)。クリックは ResultsShared.clicked へ積んで main を wake する(遅延 dispatch)。
 //! 窓の可視性・サイズ・位置の driver は main 側(hidden 窓は update() が走らないため)。
+//!
+//! **禁止: この view で `frame.hide_window()` を呼ばない** — results は focusable(false) で
+//! `Focused(true)` が永遠に来ないため、runtime の visible フラグが false に固着し永久非描画
+//! になる(復帰経路は Focused(true) のみ・runtime.rs)。hide は必ず外部(`hide_egui_main` /
+//! main の drive)の `window.hide()` で行う。
 
 use tauri::Manager;
 
@@ -187,7 +192,7 @@ use crate::egui_shell::EguiShellState;
 /// main が毎フレーム発行する描画用スナップショット(spec 決定 5)。
 #[derive(Clone, Default, PartialEq)]
 pub(crate) struct RowsSnapshot {
-    pub rows: Vec<snotra_core::engine::SearchResult>,
+    pub rows: Vec<snotra_core::ui_types::SearchResult>, // ui_types が正(engine ではない)・PartialEq/Eq derive 済み
     pub selected: usize,
     pub show: bool,
 }
@@ -202,11 +207,17 @@ pub(crate) struct ResultsShared {
 
 pub(crate) struct ResultsView {
     app_handle: tauri::AppHandle,
+    /// font_family hot-reload 用(main の applied_font_family と同型・ctx が窓ごとに独立
+    /// なため複製必須 — plan-review rev-egui の指摘)。
+    applied_font_family: String,
 }
 
 impl ResultsView {
     pub(crate) fn new(app_handle: tauri::AppHandle) -> Self {
-        Self { app_handle }
+        Self {
+            app_handle,
+            applied_font_family: String::new(),
+        }
     }
 }
 
@@ -219,6 +230,7 @@ impl snotra_egui_runtime::EguiView for ResultsView {
             .map(|s| s.engine.lock().unwrap().config().visual.font_family.clone())
             .unwrap_or_else(|| "Segoe UI".to_string());
         crate::egui_shell::view::configure_japanese_font(context, &font_family);
+        self.applied_font_family = font_family;
         // 外部 wake 用に ctx を登録(main の egui_ctx と同型・EguiShellState.results_ctx)。
         if let Some(sh) = self.app_handle.try_state::<EguiShellState>()
             && let Ok(mut guard) = sh.results_ctx.lock()
@@ -259,7 +271,7 @@ pub(crate) fn wake_results(app: &tauri::AppHandle) {
 }
 ```
 
-4. `register_config_wake_listeners` 等が呼ぶ `wake_view(&handle)` の各所で `wake_results(&handle);` も併せて呼ぶ(config-applied は両窓の visuals に効くため。呼び出し箇所を `wake_view` の grep で数え上げて全部に併記する)
+4. `wake_results` の呼び出しは Task 4 の `drive_results_window`(可視時・毎フレーム)からのみとする。**`wake_view` 各所への併記はしない** — main が動けば drive が results を起こし、hidden 中の results は描かれないため事前 wake は無意味(plan-review で冗長と判定)。クリック逆流の results→main は既存 `wake_view` を使う
 5. `create()` の main 窓 build 後へ results 窓を生成・attach:
 
 ```rust
@@ -315,7 +327,8 @@ fn apply_rounded_corners(window: &tauri::Window) {
 ```
 
 7. `main.rs`(または manage 集約箇所)で `app.manage(crate::egui_shell::ResultsShared::default());` を既存 `UpdaterUiState` 等の manage の並びへ(場所は `manage(` の grep で確認)
-8. `hide_egui_main` の `window.hide()` 直後(main_visible 更新より前)へ:
+8. `commands/window.rs` の `launch_settings_process`: 設定サイドカー存命中に main の `alwaysOnTop` を一時解除する既存機構(`set_always_on_top(false)` + 監視スレッドでの復元)を **"results" にも対称適用**する(`get_window("main")` の箇所を grep し、同じ操作を results へ。/symmetric-check 対象 — 片方だけ解除すると設定画面の上に結果カードが浮く・plan-review 独立導出の指摘)
+9. `hide_egui_main` の `window.hide()` 直後(main_visible 更新より前)へ:
 
 ```rust
     // #646 PR2: 従属窓も同時に隠す(決定 6)。show 側は main の update() が snapshot の
@@ -352,6 +365,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 - Modify: `src-tauri/src/egui_shell/results_view.rs`(update() 本実装・行描画一式の受け入れ)
 - Modify: `src-tauri/src/egui_shell/view.rs`(行描画の撤去・snapshot 発行・clicked 消費・results 窓 driver・main 高さの分割)
 - Modify: `src-tauri/src/egui_shell/layout.rs`(`HeightParams`/`compute_window_height` と旧テスト 3 件の削除・Task 2 の `#[allow(dead_code)]` 除去)
+- Modify: `src-tauri/src/egui_shell/mod.rs`(**再エクスポート行の trim** — `pub(crate) use layout::{Debouncer, HeightParams, compute_window_height};` から `HeightParams`/`compute_window_height` を外し `Debouncer` のみ残す。外さないと unresolved import でコンパイル失敗する・plan-review rev-runtime の指摘。周辺の re-export コメント〔「view.rs の icon texture driver が消費」等〕も消費者の移動に合わせ更新)
 
 **Interfaces:**
 - Consumes: Task 2 の `main_window_height`/`results_window_height`・Task 3 の `RowsSnapshot`/`ResultsShared`/`wake_results`
@@ -375,6 +389,17 @@ view.rs から以下を results_view.rs へ**移動**(コピーでなく)し、v
         let snapshot = shared.snapshot.lock().unwrap().clone();
         if !snapshot.show {
             return; // 窓は main が hide 済みのはず(backstop で何も描かない)
+        }
+        // font_family hot-reload(view.rs の applied_font_family 比較と同型を複製・
+        // ctx は窓ごとに独立なため main 側の適用はこの窓に効かない)。
+        let font_family = self
+            .app_handle
+            .try_state::<crate::AppState>()
+            .map(|s| s.engine.lock().unwrap().config().visual.font_family.clone())
+            .unwrap_or_else(|| "Segoe UI".to_string());
+        if font_family != self.applied_font_family {
+            crate::egui_shell::view::configure_japanese_font(ui.ctx(), &font_family);
+            self.applied_font_family = font_family;
         }
         let theme = row_theme(&self.app_handle);
         let metrics = crate::egui_shell::read_metrics(&self.app_handle);
@@ -534,7 +559,9 @@ update() の結果リストブロック(`if show_results { ... ScrollArea ... }`
 
 - [ ] **Step 4: layout.rs の旧高さモデルを撤去する**
 
-`HeightParams`・`compute_window_height`・テスト 3 件(`collapsed_is_search_bar_only`/`expanded_is_bar_plus_rows_plus_padding`/`toast_adds_height`)と `params()` ヘルパーを削除。Task 2 の `#[allow(dead_code)]` 2 つを除去(消費配線が入ったため)。view.rs の `use` から `compute_window_height`/`HeightParams` を外す。
+`HeightParams`・`compute_window_height`・テスト 3 件(`collapsed_is_search_bar_only`/`expanded_is_bar_plus_rows_plus_padding`/`toast_adds_height`)と `params()` ヘルパーを削除。Task 2 の `#[allow(dead_code)]` 2 つを除去(消費配線が入ったため)。view.rs の `use` と **mod.rs の再エクスポート行**から `compute_window_height`/`HeightParams` を外す(`Debouncer` は残す)。
+
+あわせて単一窓前提のコメントを更新する(plan-review 独立導出の間接参照指摘): `window_width()` doc の「view が唯一の size writer」表現(2 窓の writer は main view に一意化、の言い直し)・`start_launch` doc の「bar_height へ collapse」(results 窓 hide の表現へ)・view.rs の「暗黙連鎖」警告コメント(結果クリア → snapshot 経由の明示 wake になった旨)。
 
 - [ ] **Step 5: 検証**
 
@@ -576,6 +603,8 @@ worker の wake は `egui_ctx.request_repaint()` のまま(clone するのが re
 
 view.rs 側: reset-on-show ブロックの icon クリア 3 行は削除(results 側は `retain_visible` が空 rows で自然に全クリアする——snapshot.rows が空になれば次フレームで刈られる)。
 
+**挙動変化の申し送り(plan-review rev-egui 指摘・受容)**: 現行は `retain_visible`/`request_icons_for_results` が show_results の真偽に関係なく毎フレーム走る(隠れていても先読み)が、移設後は results 可視中しか走らない。reindexing 明けの再表示でアイコンが一瞬 placeholder → 追いつく体感になりうる。クラッシュ・不整合ではなく、hidden 中の update 停止(SU5 要石)と整合する自然な帰結として受容し、PR 本文に記す。
+
 - [ ] **Step 2: 検証**
 
 Run: `cargo clippy -p snotra --all-targets -- -D warnings` → 警告 0
@@ -598,12 +627,12 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 ### Task 6: メイン窓のドラッグ移動 + 移動中の追従
 
 **Files:**
-- Modify: `src-tauri/src/egui_shell/view.rs`(背景ドラッグ検出)
-- Modify: `snotra-egui-runtime/src/runtime.rs`(`Moved` で repaint 要求)
-- Modify: `snotra-egui-runtime/CLAUDE.md`(不変条件へ Moved 挙動を 1 行追記)
+- Modify: `src-tauri/src/egui_shell/view.rs`(背景ドラッグ検出・`drive_results_window` の位置計算をヘルパーへ委譲)
+- Modify: `src-tauri/src/egui_shell/mod.rs`(位置ヘルパー `position_results_below_main` の抽出 + main の `Moved` リスナー登録)
 
 **Interfaces:**
-- Consumes: runtime 既存の `RuntimeFrame::drag_window()`(→ `tauri::Window::start_dragging()`・runtime.rs 配管済み)
+- Consumes: runtime 既存の `RuntimeFrame::drag_window()`(→ `tauri::Window::start_dragging()`・runtime.rs:352-355 配管済み)。**runtime は無改変**(plan-review 独立導出との不一致を解決: 追従は Snotra 側の policy であり、tauri の `Window::on_window_event(Moved)` リスナーで足りる——resource と policy の分離)
+- Produces: `pub(crate) fn position_results_below_main(app: &tauri::AppHandle)`(drive とリスナーの両方が呼ぶ位置計算の単一点)
 
 - [ ] **Step 1: 背景ドラッグ検出を追加する**
 
@@ -625,35 +654,69 @@ view.rs update() の**先頭付近(TextEdit・toast 描画より前)**へ:
 
 (update のシグネチャが `frame` を受けていることは EguiView trait で保証済み。view.rs の update 実装の引数名を確認して合わせる。)
 
-- [ ] **Step 2: runtime に Moved → repaint を追加する**
+- [ ] **Step 2: 位置ヘルパーの抽出と Moved リスナー登録(mod.rs)**
 
-`snotra-egui-runtime/src/runtime.rs` の `EguiWindow::on_window_event`(`Focused(true)` 分岐の隣)へ:
+Task 4 の `drive_results_window` 内の位置計算(outer_position + outer_size + gap × scale → set_position・デルタガード付き)を mod.rs の自由関数へ抽出:
 
 ```rust
-        if matches!(
-            event,
-            tauri_runtime_wry::tao::event::WindowEvent::Moved(_)
-        ) {
-            // 窓移動フレームで repaint を要求する。移動そのものは egui 入力にならないが、
-            // 従属窓の追従(#646 PR2: main の update() が results を再配置する)を
-            // ネイティブ移動ループ中も駆動するために必要。
-            return true;
-        }
+/// results を main の直下 + window_gap に配置する(#646 PR2 決定 6)。呼び出し元は
+/// 2 つ——main の update()(通常の毎フレーム従属)と main の Moved リスナー
+/// (ネイティブ移動ループ中の追従。ループ中は egui フレームが回らない可能性があるため
+/// イベント駆動で直接動かす)。デルタガードは持たない(set_position は同値でも安価・
+/// ガードは update 側の責務)。
+pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
+    let (Some(main), Some(results)) = (app.get_window("main"), app.get_window("results"))
+    else {
+        return;
+    };
+    let gap = app
+        .try_state::<crate::AppState>()
+        .map(|s| s.engine.lock().unwrap().config().visual.window_gap)
+        .unwrap_or(4) as f64;
+    if let (Ok(pos), Ok(size), Ok(scale)) =
+        (main.outer_position(), main.outer_size(), main.scale_factor())
+    {
+        let _ = results.set_position(tauri::PhysicalPosition::new(
+            pos.x,
+            pos.y + size.height as i32 + (gap * scale).round() as i32,
+        ));
+    }
+}
 ```
 
-`snotra-egui-runtime/CLAUDE.md` の不変条件へ 1 行: 「`Moved` は repaint 要求として扱う(egui 入力へは渡さない)——従属窓の追従を移動中も駆動する(#646 PR2)」
+`create()` の results attach 後へリスナー登録(setup 限定・window は attach で move されるため **attach 前に** `window.on_window_event` を登録するか、`app_handle.get_window("main")` で取り直して登録):
+
+```rust
+    // #646 PR2 決定 10: ドラッグ移動中の追従。ネイティブ移動ループ中は egui フレームが
+    // 回る保証が無いため、tao の Moved イベント(tauri Window リスナー経由)で直接
+    // results を追従させる。通常時の従属は main update() の drive が担う(二重呼びは
+    // set_position の同値上書きで無害)。
+    if let Some(main_win) = app_handle.get_window("main") {
+        let handle = app_handle.clone();
+        main_win.on_window_event(move |event| {
+            if matches!(event, tauri::WindowEvent::Moved(_)) {
+                position_results_below_main(&handle);
+            }
+        });
+    }
+```
+
+Task 4 の `drive_results_window` は位置計算部を `position_results_below_main(&self.app_handle)` 呼び出しへ置換(自前の `last_results_pos` ガードは撤去してよい — ヘルパー側は無ガードで、毎フレームの同値 set_position は Win32 では実害のない no-op 相当。気になる場合のみ view 側ガードを残す)。
 
 - [ ] **Step 3: 検証**
 
-Run: `cargo clippy --workspace --all-targets -- -D warnings` → 警告 0
-Run: `cargo test -p snotra-egui-runtime` → 全 PASS
-実機確認は Task 8 の GUI スモークに委ねる。**もしドラッグ中の追従がカクつく/追従しない場合のフォールバック(spec 決定 10 に明記済み)**: `drive_results_window` の冒頭で「ドラッグ中(`drag_resp.dragged()` を view フィールドへ保存)は results を hide し、drop 後の最初のフレームで再表示」へ切り替える。
+Run: `cargo clippy -p snotra --all-targets -- -D warnings` → 警告 0
+Run: `cargo test -p snotra` → 全 PASS
+実機確認は Task 8 の GUI スモークに委ねる。**確認点(実装者へ)**: `tauri::Window::on_window_event` の存在と `tauri::WindowEvent::Moved` の variant 名は vendored tauri で grep してから書く。**ドラッグ中の追従がカクつく/追従しない場合のフォールバック(spec 決定 10 に明記済み)**: リスナーで `Moved` の代わりに「ドラッグ開始時に results を hide し、`Focused`/次フレームで再表示」へ切り替える。
 
 - [ ] **Step 4: コミット**
 
 ```powershell
-git add src-tauri/src/egui_shell/view.rs snotra-egui-runtime/src/runtime.rs snotra-egui-runtime/CLAUDE.md && git commit -m @'
-feat: メイン窓の背景ドラッグ移動 + Moved repaint(#646 PR2・決定 10)
+git add src-tauri/src/egui_shell/view.rs src-tauri/src/egui_shell/mod.rs && git commit -m @'
+feat: メイン窓の背景ドラッグ移動 + Moved 追従リスナー(#646 PR2・決定 10)
+
+runtime は無改変(start_dragging 配管は既存)。追従は policy 層の
+position_results_below_main に一元化し、update と Moved リスナーが共用する。
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 '@
@@ -670,14 +733,24 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 
 **Interfaces:** なし(文書のみ)
 
-- [ ] **Step 1: 同期する(行番号でなく引用文 grep で特定)**
+- [ ] **Step 1: キーワードスイープで対象を数え上げてから同期する**
 
-1. SPEC の動的高さ節(「show 時に毎回検索バー高さ…リセットしてから結果に応じて拡張する」・PR1 で更新済みの文): main は伸縮せず、結果は独立窓 "results"(実件数フィット `min(件数, max_results) × row_height + 8`・main 直下 + `window_gap`〔既定 4px〕・focusable(false) でフォーカスを取らない・DWM 角丸)である旨へ
-2. SPEC §11(PR1 で入れた `[visual]` キーの文): `window_gap`(既定 4)を追記
-3. SPEC のウィンドウ操作系の節(show/hide を記す §): メイン窓は入力欄以外の全域ドラッグで移動可・hide は両窓同時、を追記
-4. `docs/architecture.md` の egui 窓構成記述(PR1 で bar_height 化した 2 箇所の周辺): 2 窓構成(main = バー + toast / results = 従属カード・main driver 駆動)へ
-5. design spec へ errata 追記(節「決定 5」「決定 6」の末尾): (a) overlay は実物が bar 上描画のため main に残した(結果窓へは移動しない) (b) results の可視性・位置・サイズの driver は results view でなく main の update()(hidden 窓は update() が走らないため)。日付と PR2 実装時の判断であることを 1 行ずつ
-6. `scripts/smoke-egui.ps1` の前提確認(機能削除トリガー・AGENTS.md 条件別チェック): trace イベント名(`egui_show:done`/`egui_hide:done`)と hotkey 前提は本 PR で不変であることを目視確認(変更不要のはず。smoke の実行自体は Task 8)
+**quote 6 項目の点編集ではなく、まず SPEC.md 全体を「単一ウィンドウ」「固定高」「余白部分」「drag-region」「最大表示件数」で grep して全対象を列挙する**(plan-review scout-docs が quote 方式の取りこぼしを 4 件検出済み)。既知の対象(実装時に再 grep で裏取り):
+
+1. **§4.5**「結果ウィンドウの高さは最大表示件数に基づく固定高とする。ヒット数が最大表示件数未満でも高さは維持され…」→ 実件数フィット(`min(件数, max_results) × row_height + 8`・下回れば縮む・超過時スクロール)へ。**決定 7 と正面矛盾する現行文の残置は禁止**
+2. **§4.7 見出し「結果表示制御(単一ウィンドウ)」+ 本文「検索バーと検索結果は単一ウィンドウ内のコンポーネントとして共存する」**→ 2 窓構成へ(見出しは governance G4 が番号連続性のみ検査するため文言変更は安全だが、`SPEC §4.7` を名指しする他文書が無いか grep してから)
+3. **§4.8**: クリック起動に「results はフォーカスを取らない(クリック中も入力継続可)」を追記
+4. **§8.2**「検索ウィンドウは検索バーの余白部分(padding 領域)をドラッグして移動可能」→「入力欄以外の全域」へ(決定 10)
+5. **§8.3** の `data-tauri-drag-region` 言及: WebView2 撤去済みの遺物 → egui 実装(背景 interact + start_dragging)の記述へ
+6. **§8.5**「検索バーと検索結果は単一ウィンドウ内のコンポーネントとして共存する」+ 窓生成記述 → "results" も setup 生成(visible:false・focusable(false))を追記
+7. **§8.6** 状態遷移図: results 窓の可視性が show_results に従属する旨(構造が変わるなら図も)
+8. **§11**: `window_gap`(既定 4)の追記 + 2 窓・DWM 角丸(Windows 11 best-effort・Win10 は角のまま)の記述
+9. **`docs/architecture.md`**: 87 行付近「検索バーと検索結果は単一 egui ウィンドウ内の描画」・89/177 行の `compute_window_height` 言及・**160-179 のシーケンス図は参加者追加(ResultsView・snapshot・click 逆流)を含む構造書き直し**
+10. **`src-tauri/CLAUDE.md`** モジュール構成: `results_view.rs` は Task 3 で追記済み。**同じ行の `layout.rs`(compute_window_height)・`view.rs`(結果リスト・動的高さ)の責務記述が Task 4/5 で嘘になる**ため as-built へ(G1 はファイル名しか検査せず、この意味的整合は機構で検出されない——手動必須)
+11. **`scripts/smoke-startup.ps1`** のコメント「Single-window architecture: no sub-windows to verify.」→ 2 窓化後の事実へ(実行結果への影響は無いがコメントの嘘は残さない)
+12. **`main.rs`/`mod.rs` の単窓前提コメント**(position_on_target_monitor doc・setup コメント)を軽く掃く(コード変更を伴う分は Task 3〜6 内で処理済みの想定・ここは文書スイープの取りこぼし確認)
+13. design spec へ errata 追記(節「決定 5」「決定 6」の末尾): (a) overlay は実物が bar 上描画のため main に残した (b) 可視性・サイズ・位置の driver は main の update()(hidden 窓は update() が走らないため)。日付と PR2 実装時の判断であることを 1 行ずつ
+14. `scripts/smoke-egui.ps1` の前提確認: trace イベント名(`egui_show:done`/`egui_hide:done`)と hotkey 前提は本 PR で不変であることを目視確認(変更不要のはず。実行は Task 8)
 
 - [ ] **Step 2: governance:check**
 
@@ -687,7 +760,7 @@ Expected: PASS
 - [ ] **Step 3: コミット**
 
 ```powershell
-git add SPEC.md docs/architecture.md docs/superpowers/specs/2026-07-24-646-two-window-ui-design.md && git commit -m @'
+git add SPEC.md docs/architecture.md docs/superpowers/specs/2026-07-24-646-two-window-ui-design.md src-tauri/CLAUDE.md scripts/smoke-startup.ps1 && git commit -m @'
 docs: 2 窓構成の as-built 同期 + design spec errata 2 件(#646 PR2)
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
@@ -725,4 +798,15 @@ PR 本文: closing keyword 禁止(`Refs #646` のみ——**#646 を閉じるか
 - **Spec coverage**: 決定 3(toast 同居)= 変更なしで維持 ✓ / 決定 4(NOACTIVATE + DWM)= Task 3(focusable(false)・apply_rounded_corners 両窓)✓ / 決定 5(一方向 snapshot・クリック逆流・icon 移設)= Task 4・5(overlay は errata として Task 7)✓ / 決定 6(位置従属・gap・hide 両窓)= Task 3 Step 3-8 + Task 4 drive_results_window(driver が main である点は errata)✓ / 決定 7(実件数フィット)= Task 2 + Task 4 ✓ / 決定 10(ドラッグ)= Task 6(位置永続の合流は Task 8 (e) で実測)✓ / config `window_gap` = Task 1 ✓ / SPEC 同期 = Task 7 ✓
 - **Placeholder scan**: TBD/TODO なし。Task 4 Step 1 の「移動」は対象シンボルを名指しで列挙済み ✓
 - **Type consistency**: `RowsSnapshot { rows, selected, show }` を Task 3 で定義し Task 4 の発行/消費が同形 ✓ / `results_window_height(usize, u32, f64) -> f64` を Task 2 で定義し Task 4 が消費 ✓ / `wake_results(&AppHandle)` Task 3 定義・Task 4 消費 ✓ / `row_theme(&AppHandle) -> RowTheme` Task 4 で移設・view.rs の 3 呼び出しを同 Task で切替 ✓
-- **既知の実装時確認点**(実装者へ): `SearchResult` の実パスと `PartialEq` の有無(Task 3)/ `configure_japanese_font` の可視性(Task 3)/ egui の背景 interact とウィジェットのヒットテスト優先(Task 6 — 効かなければ「TextEdit rect 外のみ判定」へ縮退)/ tao の `Moved` がネイティブ移動ループ中に配送されるか(Task 6 — 配送されなければフォールバック)
+- **既知の実装時確認点**(実装者へ): `configure_japanese_font` の可視性(Task 3)/ egui の背景 interact とウィジェットのヒットテスト優先は vendored egui 0.35 hit_test.rs:430「In case of a tie, take the last one = the one on top」で裏取り済み(plan-review・Task 6)/ `tauri::Window::on_window_event` と `WindowEvent::Moved` の実在は vendored grep で確認してから書く(Task 6)/ tao の `Moved` がネイティブ移動ループ中に配送されるか(Task 6 — 配送されなければフォールバック)
+
+## plan-review 反映(2026-07-25・偵察 3 + 独立導出 1)
+
+**反映済みの修正**: mod.rs 再エクスポート trim(Task 4)/ 設定サイドカーの always_on_top 対称適用(Task 3)/ ResultsView の font hot-reload 複製(Task 3・4)/ `SearchResult` の正パス `ui_types`(PartialEq derive 済み・Task 3)/ Moved 追従を runtime 改変から tauri リスナー + `position_results_below_main` ヘルパーへ(Task 6・runtime 無改変)/ `wake_view` 併記の削減(Task 3)/ `frame.hide_window()` 禁止の明文化(Task 3 `//!`)/ Task 7 をキーワードスイープ方式へ(§4.5 固定高矛盾・§4.7 見出し・§4.8・§8.2/8.3/8.5/8.6・§11・architecture シーケンス図・CLAUDE.md 責務行・smoke-startup コメント)/ icon prefetch の挙動変化を受容として明記(Task 5)
+
+**受容する残余(PR 本文へ記載)**:
+- results 窓が作業領域下端からはみ出しうる(main のクランプは main 単体サイズ。実用上 max_results=8 でも稀・はみ出してもスクロールで操作可能。将来必要なら results 高の下端クランプ)
+- IME subclass が results 窓にも張られる(runtime が無条件生成・テキスト入力が無いため無害)
+- 非アクティブ窓へのホイールスクロールは Windows 10+ の既定動作に依存(標準で有効)
+- results 窓の native 背景ブラシは生成時 config 固定(hide→show 間の config 変更時に一瞬のフラッシュがありうる・main と同じ hot-reload は YAGNI)
+- icon prefetch が results 非可視中は止まる(Task 5 の申し送り)

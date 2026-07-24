@@ -401,7 +401,6 @@ pub(crate) fn compute_parent_dir(current_dir: &str) -> Option<String> {
 /// `instant_rows` は表示中行の来歴 snapshot（`instant_rows_query.is_some()`）——live interp でなく
 /// 来歴で判定するのは prefix hot-change の stale 行対策（#637 finding 0）と同じ理由。
 /// driver（view.rs）は Task 4 で表示分岐に組み込む（#532 SU6 Task 1）。
-#[allow(dead_code)]
 pub fn plain_results_hidden(view_kind: ViewKind, instant_rows: bool, indexing: bool) -> bool {
     indexing && matches!(view_kind, ViewKind::Results) && !instant_rows
 }
@@ -410,7 +409,6 @@ pub fn plain_results_hidden(view_kind: ViewKind, instant_rows: bool, indexing: b
 /// 異なれば再検索。bool エッジ検出と違い、started/complete の repaint が 1 フレームに合流して
 /// パルスが見えなくても累積カウンタは差分が残るため取りこぼさない。
 /// driver（view.rs）は Task 4 で再検索トリガに組み込む（#532 SU6 Task 1）。
-#[allow(dead_code)]
 pub fn needs_index_refresh(last_seen: u64, current: u64) -> bool {
     last_seen != current
 }

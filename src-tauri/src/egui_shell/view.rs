@@ -174,6 +174,10 @@ pub(crate) struct SearchWindowView {
     last_scrolled_selected: Option<usize>,
     /// in-flight 起動（single-flight の実体: Some の間は新規起動 dispatch を拒否）。
     launching: Option<LaunchInFlight>,
+    /// #633: index build 完了世代の last-seen（AppState.index_generation と比較・SU6 spec 決定 3）。
+    /// 差分で現クエリを再検索（SolidJS `indexing-complete`→runRefresh parity）。bool エッジ検出で
+    /// ないのは started/complete の repaint が 1 フレームに合流するとパルスが見えないため。
+    last_seen_index_generation: u64,
     /// 一時通知（起動失敗/結果不明）。時刻は notice_base からの経過で注入（純粋核）。
     notice: crate::egui_shell::NoticeSlot,
     /// notice の単調時刻基準（view 生成時に固定・Instant 差分を Duration で渡す）。
@@ -204,6 +208,7 @@ impl SearchWindowView {
             instant_rows_query: None,
             last_scrolled_selected: None,
             launching: None,
+            last_seen_index_generation: 0,
             notice: crate::egui_shell::NoticeSlot::default(),
             notice_base: Instant::now(),
         }
@@ -1044,12 +1049,7 @@ impl SearchWindowView {
                         st.0.lock().unwrap().phase =
                             crate::egui_shell::UpdaterPhase::InstallFailed { message: e.to_string() };
                     }
-                    if let Some(sh) = handle.try_state::<crate::egui_shell::EguiShellState>()
-                        && let Ok(guard) = sh.egui_ctx.lock()
-                        && let Some(ctx) = guard.as_ref()
-                    {
-                        ctx.request_repaint(); // 可視中の失敗を即座に描く
-                    }
+                    crate::egui_shell::wake_view(&handle); // 可視中の失敗を即座に描く
                 }
             }
         });
@@ -1185,6 +1185,17 @@ impl EguiView for SearchWindowView {
         }
 
         let ctx = ui.ctx().clone();
+
+        // #633: index build 完了の世代検知 → 現クエリで再検索（runRefresh parity・SU6 spec 決定 3）。
+        // reset_pending 消費の後に置く（show 直後は reset 済み空クエリの no-op になるだけ）。
+        // folder 中は fs 由来 cache の再フィルタ、tool 中は no-op——run_search が view_kind で分岐済み。
+        if let Some(s) = self.app_handle.try_state::<crate::AppState>() {
+            let generation = s.index_generation.load(Ordering::SeqCst);
+            if crate::egui_shell::needs_index_refresh(self.last_seen_index_generation, generation) {
+                self.last_seen_index_generation = generation;
+                self.run_search();
+            }
+        }
 
         // §11: パネル/入力欄/選択色を config テーマから（ハードコード撤廃・runtime CLEAR_COLOR は不変）。
         if let Some(s) = self.app_handle.try_state::<crate::AppState>() {
@@ -1602,8 +1613,17 @@ impl EguiView for SearchWindowView {
             self.request_icons_for_results(&ctx);
         }
 
-        // 結果リスト（shouldShowResults 相当。results 軸〔plain〕と folder 軸を描く。空なら描かない）。
-        let show_results = !self.state.results().is_empty();
+        // 結果リスト（shouldShowResults 相当）。§4.7: 再インデックス中は plain 結果のみ隠す
+        // （instant/folder/tool carve-out・SU6 spec 決定 3）。データと選択は保持——クリアしない
+        // （SolidJS parity: setIndexing は結果を触らず派生 memo が非表示を担う）。indexing 中の
+        // 案内は空クエリ=hint・非空クエリ=overlay（Task 7・spec 追補 1）が担い、高さは
+        // show_results=false で 52px に折りたたまれる。
+        let show_results = !self.state.results().is_empty()
+            && !crate::egui_shell::plain_results_hidden(
+                self.state.view_kind(),
+                self.instant_rows_query.is_some(),
+                self.indexing(),
+            );
         let mut clicked: Option<usize> = None;
         if show_results {
             // 借用衝突回避: results を clone してから描画（draw_result_row は関連関数で self 非借用）。

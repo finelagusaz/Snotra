@@ -166,7 +166,7 @@ pub(crate) fn create(
         .unwrap_or(tauri::window::Color(0x28, 0x28, 0x28, 0xff));
     let window = tauri::Window::builder(app, "main")
         .title("Snotra")
-        .inner_size(window_width, 52.0) // 保存幅を尊重（codex #11）
+        .inner_size(window_width, 52.0) // 保存幅を尊重（codex #11）。高さは初期値。実高は show 時に Metrics で再設定(#646)
         .decorations(false)
         .resizable(false)
         .skip_taskbar(true) // 宣言窓 skipTaskbar:true の再現（(B)#1）
@@ -178,6 +178,26 @@ pub(crate) fn create(
         .visible(false)
         .build()?; // tauri::Error → RuntimeError（#[from]・runtime.rs:46）
     runtime.attach(window, SearchWindowView::new(app_handle))
+}
+
+/// 実行中 config から Metrics を導出する(#646 決定 2)。毎フレーム/毎 show の live-read で
+/// キャッシュしない。view(update)と show 経路の両方がここを通ることで、導出式とフォールバック
+/// を単一点に保つ(/simplify: 独立実装 2 箇所でフォールバックが 52.0/43.0 に乖離していた)。
+/// AppState 不在(setup 完了前の理論経路のみ)は `VisualConfig::default()` から導出——
+/// 既定値の正本(config.rs の default_*)に追従し、リテラル再手打ちを持たない。
+pub(crate) fn read_metrics(app: &tauri::AppHandle) -> layout::Metrics {
+    let (f, rp, bp) = app
+        .try_state::<crate::AppState>()
+        .map(|s| {
+            let engine = s.engine.lock().unwrap();
+            let v = &engine.config().visual;
+            (v.font_size, v.row_padding, v.bar_padding)
+        })
+        .unwrap_or_else(|| {
+            let v = snotra_core::config::VisualConfig::default();
+            (v.font_size, v.row_padding, v.bar_padding)
+        });
+    layout::Metrics::from_config(f, rp, bp)
 }
 
 /// egui 経路の show。共有するのは position_on_target_monitor のみ。全 hide は外部化ゆえ
@@ -194,10 +214,11 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
         sh.reset_pending.store(true, Ordering::SeqCst); // resetForShow を view に指示
     }
     // 高さリセット → 位置 → show の順（SU2 の show_main_and_emit と同じ制約）。
-    // reset-on-show でクエリは空 = 結果なし = 52px。前回 hide 時に展開高（例 300px）のまま
-    // だと position クランプが 300px で効き、show 後に view が 52px へ collapse して視覚スナップ +
-    // 位置ずれになる。position の前に 52px へ collapse してこれを断つ（SU3 で高さが動的化した
-    // ため、旧「52px は create で固定・位置のみ復元」前提は崩れている）。
+    // reset-on-show でクエリは空 = 結果なし = bar_height（既定 43px）。前回 hide 時に展開高
+    // （例 300px）のままだと position クランプが 300px で効き、show 後に view が bar_height へ
+    // collapse して視覚スナップ + 位置ずれになる。position の前に bar_height へ collapse して
+    // これを断つ（SU3 で高さが動的化したため、旧「52px は create で固定・位置のみ復元」前提は
+    // 崩れている）。
     #[cfg(windows)]
     {
         let width = window
@@ -205,7 +226,11 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
             .ok()
             .map(|s| s.to_logical::<f64>(window.scale_factor().unwrap_or(1.0)).width)
             .unwrap_or(600.0);
-        let _ = window.set_size(tauri::LogicalSize::new(width, 52.0));
+        // 折りたたみ高 = bar_height(#646 決定 2)。52 固定だと font 連動後の実バー高と
+        // ずれ、position クランプが誤った高さで効く(このブロック冒頭の reset-on-show
+        // コメントの機構と同じ理由。行番号参照は挿入でずれるため名前で指す)。
+        let bar_h = read_metrics(app).bar_height;
+        let _ = window.set_size(tauri::LogicalSize::new(width, bar_h));
     }
     #[cfg(windows)]
     crate::position_on_target_monitor(app, &window);

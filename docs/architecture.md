@@ -86,7 +86,7 @@ Tauri v2 バイナリ crate（パッケージ名 `snotra`）。検索 UI（`egui
 - 検索ウィンドウは起動時に作成し `visible: false`、ホットキーで表示/非表示を切替
 - 検索バーと検索結果は単一 egui ウィンドウ内の描画（`egui_shell/view.rs`）
 - 結果の表示/非表示は `search_state.rs` の純粋核（view 種別 = tool>folder>results の優先度射影 + indexing 表示ゲート）で制御
-- ウィンドウ高さは view が `compute_window_height` で算出し `set_size` する（view 単独 size writer）。show 時に 52px へリセットしてから結果に応じて拡張する
+- ウィンドウ高さは view が `compute_window_height` で算出し `set_size` する（view 単独 size writer）。show 時に bar_height（`font_size + bar_padding`・既定 43px）へリセットしてから結果に応じて拡張する
 - マルチモニター: モニター作業領域原点からの相対座標（物理ピクセル）で位置を保存。ホットキー押下時にターゲットモニターを決定し絶対座標に変換
 
 ### 起動シーケンスと初期化順序
@@ -144,7 +144,7 @@ Tauri v2 バイナリ crate（パッケージ名 `snotra`）。検索 UI（`egui
 
 - `tauri-plugin-updater` で GitHub Releases 経由
 - 3モード: `full`（トースト + インストールボタン）/ `check_only`（通知のみ）/ `disabled`
-- トースト UI は検索バーと結果リストの間に 52px で表示
+- トースト UI は検索バーと結果リストの間に bar_height と同高で表示
 - リリース形式: ポータブル ZIP + NSIS インストーラー
 
 ### その他のパターン

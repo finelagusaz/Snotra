@@ -158,8 +158,10 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 
 - [ ] **Step 2: 落ちることを確認する(Red)**
 
-Run: `cargo test -p snotra --lib metrics_`
+Run: `cargo test -p snotra metrics_`
 Expected: FAIL(`Metrics` 未定義のコンパイルエラー)
+
+注(pre-flight 是正): `--lib` は使えない — `cargo test -p snotra --lib` は `no library targets found in package 'snotra'` で失敗する(SU6/SU6.5 ledger の環境実測)。positional フィルタのみで絞る。
 
 - [ ] **Step 3: 最小実装**
 
@@ -196,7 +198,7 @@ impl Metrics {
 
 - [ ] **Step 4: 通ることを確認する(Green)**
 
-Run: `cargo test -p snotra --lib`
+Run: `cargo test -p snotra`
 Expected: 全 PASS(`compute_window_height` の既存テストは 52.0/30.0 リテラル注入のため無変更で通る)
 
 - [ ] **Step 5: コミット**
@@ -387,7 +389,7 @@ toast ブロック(1592 付近)— `let m = self.metrics();` を取り:
 - [ ] **Step 5: ビルドとテストが通ることを確認する**
 
 Run: `cargo clippy -p snotra --all-targets -- -D warnings` → 警告 0
-Run: `cargo test -p snotra --lib` → 全 PASS
+Run: `cargo test -p snotra` → 全 PASS
 (PostToolUse hook の沈黙も同じ検査の合格を意味する)
 
 - [ ] **Step 6: コミット**
@@ -446,7 +448,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 - [ ] **Step 2: ビルドとテストを確認する**
 
 Run: `cargo clippy -p snotra --all-targets -- -D warnings` → 警告 0
-Run: `cargo test -p snotra --lib` → 全 PASS
+Run: `cargo test -p snotra` → 全 PASS
 
 - [ ] **Step 3: コミット**
 

@@ -41,7 +41,7 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
 - `AppState` は `Mutex<Engine>` で検索エンジン・履歴・設定を一括管理。Phase 2.3 以前の 3重ロック（`Mutex<SearchEngine>` / `Mutex<HistoryStore>` / `Mutex<Config>`）は Engine facade に統合済み
 - **インデックスビルドのフラグは `AppState` のメソッド経由で更新する**: `try_begin_index_build()`（`index_build_started` を CAS 取得 → `indexing` を立てる）と `finish_index_build()`（両方を戻す）が唯一の正しい経路。`indexing` / `index_build_started` を直接 `store()` しない——外部からの force-reset は走行中ビルドのガードを踏み倒す競合の原因になる。2フラグは別物（`index_build_started` は CAS 専用ガード、`indexing` は first-run 時にビルドスレッド不在でも true になる UI 表示用）
 - Managed state として `IconCacheState`（`Mutex<Option<IconCache>>`、初回アイコン要求で遅延初期化）と `SettingsProcessState`（`Mutex<Option<Child>>`、設定プロセスのハンドル管理）を保持
-- **show の操作順序制約（`egui_shell::show_egui_main`）**: 高さリセット（52px）→ `position_on_target_monitor` → `show()` の順。位置計算はウィンドウサイズでクランプするため、高さリセット前に位置を決めると展開時の高さでクランプされ、折りたたみ時に位置がずれる
+- **show の操作順序制約（`egui_shell::show_egui_main`）**: 高さリセット（bar_height・既定 43px）→ `position_on_target_monitor` → `show()` の順。位置計算はウィンドウサイズでクランプするため、高さリセット前に位置を決めると展開時の高さでクランプされ、折りたたみ時に位置がずれる
 
 ## 共有 core 関数の返り値契約
 

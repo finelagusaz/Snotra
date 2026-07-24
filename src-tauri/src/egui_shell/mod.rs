@@ -494,14 +494,30 @@ pub(crate) fn register_hide_listener(app: &tauri::AppHandle) {
     });
 }
 
-/// 可視中の view を起こす（egui_ctx 未登録＝setup〜初フレーム、hidden 中は無害な no-op）。
-/// WebView2 経路（flag OFF）では EguiShellState が manage されておらず自然に no-op。
-pub(crate) fn wake_view(app: &tauri::AppHandle) {
-    if let Some(sh) = app.try_state::<EguiShellState>()
-        && let Ok(guard) = sh.egui_ctx.lock()
+/// 窓の egui Context スロットを登録する（各 view の `setup` から・#646 PR2 /simplify）。
+/// main と results で手順が同型ゆえスロットを引数に取る 1 実装へ寄せる——窓が増えても
+/// 本体は 1 つのまま。（より深い解＝runtime が持つ窓ごとの Context を label で叩く API は
+/// runtime 越境ゆえ follow-up・/simplify altitude 観点）
+pub(crate) fn register_ctx(slot: &Mutex<Option<egui::Context>>, context: &egui::Context) {
+    if let Ok(mut guard) = slot.lock() {
+        *guard = Some(context.clone());
+    }
+}
+
+/// 登録済みスロットの窓を起こす（未登録＝setup〜初フレームは無害な no-op）。
+fn wake_ctx(slot: &Mutex<Option<egui::Context>>) {
+    if let Ok(guard) = slot.lock()
         && let Some(ctx) = guard.as_ref()
     {
         ctx.request_repaint();
+    }
+}
+
+/// 可視中の view を起こす（egui_ctx 未登録＝setup〜初フレーム、hidden 中は無害な no-op）。
+/// WebView2 経路（flag OFF）では EguiShellState が manage されておらず自然に no-op。
+pub(crate) fn wake_view(app: &tauri::AppHandle) {
+    if let Some(sh) = app.try_state::<EguiShellState>() {
+        wake_ctx(&sh.egui_ctx);
     }
 }
 
@@ -511,11 +527,8 @@ pub(crate) fn wake_view(app: &tauri::AppHandle) {
 /// 描かれないため事前 wake は無意味(plan-review で冗長と判定)。クリック逆流の results→main は
 /// 既存 `wake_view` を使う。
 pub(crate) fn wake_results(app: &tauri::AppHandle) {
-    if let Some(sh) = app.try_state::<EguiShellState>()
-        && let Ok(guard) = sh.results_ctx.lock()
-        && let Some(ctx) = guard.as_ref()
-    {
-        ctx.request_repaint();
+    if let Some(sh) = app.try_state::<EguiShellState>() {
+        wake_ctx(&sh.results_ctx);
     }
 }
 

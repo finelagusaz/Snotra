@@ -988,10 +988,8 @@ impl EguiView for SearchWindowView {
         configure_japanese_font(context, &font_family);
         self.applied_font_family = font_family;
         // updater check 完了時の wake-up 用（mod.rs spawn_update_check が読む・#532 SU5）。
-        if let Some(sh) = self.app_handle.try_state::<crate::egui_shell::EguiShellState>()
-            && let Ok(mut guard) = sh.egui_ctx.lock()
-        {
-            *guard = Some(context.clone());
+        if let Some(sh) = self.app_handle.try_state::<crate::egui_shell::EguiShellState>() {
+            crate::egui_shell::register_ctx(&sh.egui_ctx, context);
         }
     }
 
@@ -1530,21 +1528,26 @@ impl EguiView for SearchWindowView {
             );
         // #646 PR2 決定 5: 結果は snapshot として発行し、描画は results 窓(ResultsView)が担う。
         // 変化があったフレームだけ store + wake(毎フレーム wake だと results が常時回る)。
+        // 判定は Vec を作る前に行う（/simplify・効率）——無変化フレームで行数ぶんの String
+        // 確保を払わないため、`RowsSnapshot::matches` にスライスのまま突き合わせさせる。
         if let Some(shared) = self.app_handle.try_state::<crate::egui_shell::ResultsShared>() {
-            let snapshot = crate::egui_shell::RowsSnapshot {
-                rows: if show_results { self.state.results().to_vec() } else { Vec::new() },
-                selected: self.state.selected(),
-                show: show_results,
-                generation: self.snapshot_generation,
-                // 旧 view.rs の icon request ゲート `!self.search_debounce.is_armed()`（連打中は
-                // icon worker を積まない・perf 最適化）の後継。ResultsView は search_debounce を
-                // 持てないため、live 値を snapshot 経由で運ぶ（Task 5 concern 2 の fix・controller 依頼）。
-                settled: !self.search_debounce.is_armed(),
-            };
+            // 表示すべきでないフレームは空スライスを発行する（rows 空 = results 非表示）。
+            let rows: &[snotra_core::ui_types::SearchResult] =
+                if show_results { self.state.results() } else { &[] };
+            let selected = self.state.selected();
+            // 旧 view.rs の icon request ゲート `!self.search_debounce.is_armed()`（連打中は
+            // icon worker を積まない・perf 最適化）の後継。ResultsView は search_debounce を
+            // 持てないため、live 値を snapshot 経由で運ぶ（Task 5 concern 2 の fix・controller 依頼）。
+            let settled = !self.search_debounce.is_armed();
             {
                 let mut guard = shared.snapshot.lock().unwrap();
-                if *guard != snapshot {
-                    *guard = snapshot;
+                if !guard.matches(rows, selected, self.snapshot_generation, settled) {
+                    *guard = crate::egui_shell::RowsSnapshot {
+                        rows: rows.to_vec(),
+                        selected,
+                        generation: self.snapshot_generation,
+                        settled,
+                    };
                     drop(guard);
                     crate::egui_shell::wake_results(&self.app_handle);
                 }

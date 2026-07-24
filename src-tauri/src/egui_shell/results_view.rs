@@ -19,9 +19,11 @@ use crate::egui_shell::{EguiShellState, IconMsg, needs_extraction, retain_visibl
 /// main が毎フレーム発行する描画用スナップショット（spec 決定 5）。
 #[derive(Clone, Default, PartialEq)]
 pub(crate) struct RowsSnapshot {
+    /// 描画する行。**空 = results 窓は非表示**（別途 `show` フラグは持たない・/simplify）——
+    /// main は「表示すべきでないフレーム」に空 Vec を発行するため、`rows.is_empty()` が
+    /// 可視性そのものを表す。2 つの書き込みを手で同期させる規約を型で消す。
     pub rows: Vec<snotra_core::ui_types::SearchResult>, // ui_types が正（engine ではない）・PartialEq/Eq derive 済み
     pub selected: usize,
-    pub show: bool,
     /// 結果集合が総入れ替えされるたびに main が加算するカウンタ（#632 reviewer Important 3
     /// の後継・Fix 3）。`selected` の値だけでは「打鍵で結果が丸ごと変わったが selected は
     /// 偶然 0 のまま」を検出できないため、この世代番号で ResultsView の scroll gate を
@@ -34,6 +36,32 @@ pub(crate) struct RowsSnapshot {
     /// 入る。armed→settled の遷移だけで snapshot 差分が生まれ wake が 1 回走るのは「打鍵停止後に
     /// アイコン要求を起こす」という意図どおりの信号）。
     pub settled: bool,
+}
+
+impl RowsSnapshot {
+    /// 発行前の差分判定（/simplify・効率）。`Vec` を作ってから `PartialEq` で比べると、
+    /// **無変化フレームでも** 行数ぶんの `String` 確保が走る（入力欄のキャレット点滅だけでも
+    /// main は repaint する）。行はスライスのまま突き合わせ、差があるときだけ `to_vec()` する。
+    ///
+    /// **フィールドを増やしたらここも増やす**——先頭の分解束縛が漏れを compile-fail にする。
+    pub(crate) fn matches(
+        &self,
+        rows: &[SearchResult],
+        selected: usize,
+        generation: u64,
+        settled: bool,
+    ) -> bool {
+        let Self {
+            rows: cur_rows,
+            selected: cur_selected,
+            generation: cur_generation,
+            settled: cur_settled,
+        } = self;
+        cur_rows.as_slice() == rows
+            && *cur_selected == selected
+            && *cur_generation == generation
+            && *cur_settled == settled
+    }
 }
 
 /// main と results が共有する一方向フローの入れ物（managed state）。
@@ -346,10 +374,8 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         crate::egui_shell::view::configure_japanese_font(context, &font_family);
         self.applied_font_family = font_family;
         // 外部 wake 用に ctx を登録（main の egui_ctx と同型・EguiShellState.results_ctx）。
-        if let Some(sh) = self.app_handle.try_state::<EguiShellState>()
-            && let Ok(mut guard) = sh.results_ctx.lock()
-        {
-            *guard = Some(context.clone());
+        if let Some(sh) = self.app_handle.try_state::<EguiShellState>() {
+            crate::egui_shell::register_ctx(&sh.results_ctx, context);
         }
     }
 
@@ -363,7 +389,7 @@ impl snotra_egui_runtime::EguiView for ResultsView {
             return;
         };
         let snapshot = shared.snapshot.lock().unwrap().clone();
-        if !snapshot.show {
+        if snapshot.rows.is_empty() {
             // #632 の不変条件「再表示後に確実に一度 scroll し直す」の実ゲート。旧実装は main
             // 側の resetForShow（reset_pending 消費）でこの gate を直接クリアしていたが、
             // 移設後は本 view が gate の唯一の所有者ゆえここでリセットする——hide/非表示の
@@ -442,7 +468,7 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         }
         // アイコン: 可視集合（このフレームで実際に描画した rows）に頭打ちして drop（メモリ境界・
         // SU4 決定 A）。Task 5 で main（view.rs）から本 view へ移設。この一連の処理は
-        // update() 冒頭の早期 return（!snapshot.show）を通過したフレーム、すなわち results
+        // update() 冒頭の早期 return（rows 空 = 非表示）を通過したフレーム、すなわち results
         // 可視中にしか走らない——旧実装（main 側）は show_results の真偽に関係なく毎フレーム
         // 走っていた（隠れていても先読み）。reindexing 明けの再表示でアイコンが一瞬
         // placeholder → 追いつく体感になりうるが、クラッシュ・不整合ではなく hidden 中の

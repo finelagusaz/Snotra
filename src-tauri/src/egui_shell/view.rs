@@ -1027,21 +1027,6 @@ impl SearchWindowView {
         }
     }
 
-    /// 実行中 config から Metrics を都度導出する(#646 決定 2)。row_theme と同じ
-    /// live-read 方針(キャッシュしない・config-applied wake で次フレームに反映)。
-    fn metrics(&self) -> crate::egui_shell::layout::Metrics {
-        let (f, rp, bp) = self
-            .app_handle
-            .try_state::<crate::AppState>()
-            .map(|s| {
-                let engine = s.engine.lock().unwrap();
-                let v = &engine.config().visual;
-                (v.font_size, v.row_padding, v.bar_padding)
-            })
-            .unwrap_or((15, 6, 28));
-        crate::egui_shell::layout::Metrics::from_config(f, rp, bp)
-    }
-
     /// toast ボタンの処理（#532 SU5）。install は Update を原子取得して async へ（Task 8）。
     ///
     /// **状態を変えたら `ctx.request_repaint()` する**（Task 10 実機スモークで発見・
@@ -1615,6 +1600,10 @@ impl EguiView for SearchWindowView {
 
         // updater toast（§20.3・#532 SU5）: 検索バー直下の 52px 行・モード非依存
         //（folder/tool/instant 中も表示・状態機械レビュー項 1）。
+        // Metrics は 1 フレーム 1 回だけ導出し、toast 高・行高・窓高の 3 用途で使い回す
+        //(/simplify: フレーム内の重複 lock を 1 回へ。live-read 契約はフレーム間の話で不変・
+        // 導出は mod.rs read_metrics に一元化)。
+        let metrics = crate::egui_shell::read_metrics(&self.app_handle);
         let toast_row = self
             .app_handle
             .try_state::<crate::egui_shell::UpdaterUiState>()
@@ -1624,8 +1613,7 @@ impl EguiView for SearchWindowView {
         if let Some(row) = toast_row {
             let l = self.lang();
             let theme = self.row_theme();
-            let m = self.metrics();
-            let toast_h = m.toast_height as f32;
+            let toast_h = metrics.toast_height as f32;
             let (rect, _) = ui.allocate_exact_size(
                 egui::vec2(ui.available_width(), toast_h),
                 egui::Sense::hover(),
@@ -1740,7 +1728,6 @@ impl EguiView for SearchWindowView {
             let results = self.state.results().to_vec();
             let selected = self.state.selected();
             let theme = self.row_theme();
-            let metrics = self.metrics();
             let show_icons = self.show_icons(); // ループ前に 1 回読む（#532 SU4 Task 6）
             // 選択変化時のみ scroll_to_me（毎フレーム発火だと手動スクロールを奪い返す・#632）。
             let do_scroll = self.last_scrolled_selected != Some(selected);
@@ -1775,15 +1762,14 @@ impl EguiView for SearchWindowView {
         // 動的ウィンドウ高さ（§4.5/§4.7）。show_results 可否 × max_results から算出し set_size。
         // view 直呼び（SU1 runtime 不変・ユーザー決定）。update はイベントループスレッドで走る
         // ので set_size は安全な見込み（G-RESIZE で確認。本タスクではスモークまで到達しない）。
-        let m = self.metrics();
         let height = compute_window_height(&HeightParams {
             show_results,
             max_results: self.max_results(),
             has_update_toast: has_toast,
-            search_bar_height: m.bar_height,
-            result_row_height: m.row_height,
+            search_bar_height: metrics.bar_height,
+            result_row_height: metrics.row_height,
             results_padding: 8.0,
-            update_toast_height: m.toast_height,
+            update_toast_height: metrics.toast_height,
         });
         // 幅は config live-read（SU6 spec 決定 2）。hidden 中の幅変更は wake 空振りでも、次 show の
         // 初フレームでこの差分が検知して是正する（show_egui_main の inner_size 幅 52px collapse とは独立）。

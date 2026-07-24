@@ -180,6 +180,26 @@ pub(crate) fn create(
     runtime.attach(window, SearchWindowView::new(app_handle))
 }
 
+/// 実行中 config から Metrics を導出する(#646 決定 2)。毎フレーム/毎 show の live-read で
+/// キャッシュしない。view(update)と show 経路の両方がここを通ることで、導出式とフォールバック
+/// を単一点に保つ(/simplify: 独立実装 2 箇所でフォールバックが 52.0/43.0 に乖離していた)。
+/// AppState 不在(setup 完了前の理論経路のみ)は `VisualConfig::default()` から導出——
+/// 既定値の正本(config.rs の default_*)に追従し、リテラル再手打ちを持たない。
+pub(crate) fn read_metrics(app: &tauri::AppHandle) -> layout::Metrics {
+    let (f, rp, bp) = app
+        .try_state::<crate::AppState>()
+        .map(|s| {
+            let engine = s.engine.lock().unwrap();
+            let v = &engine.config().visual;
+            (v.font_size, v.row_padding, v.bar_padding)
+        })
+        .unwrap_or_else(|| {
+            let v = snotra_core::config::VisualConfig::default();
+            (v.font_size, v.row_padding, v.bar_padding)
+        });
+    layout::Metrics::from_config(f, rp, bp)
+}
+
 /// egui 経路の show。共有するのは position_on_target_monitor のみ。全 hide は外部化ゆえ
 /// runtime.visible は false にならず、show は Focused(true) に依存せず確実に描ける（codex #4）。
 /// show 列は WebView2 の show_and_focus_main を egui 用に自前複製（WebView2 本体を触らないため）。
@@ -208,14 +228,7 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
             .unwrap_or(600.0);
         // 折りたたみ高 = bar_height(#646 決定 2)。52 固定だと font 連動後の実バー高と
         // ずれ、position クランプが誤った高さで効く(コメント 196-200 行の機構と同じ理由)。
-        let bar_h = app
-            .try_state::<crate::AppState>()
-            .map(|s| {
-                let engine = s.engine.lock().unwrap();
-                let v = &engine.config().visual;
-                layout::Metrics::from_config(v.font_size, v.row_padding, v.bar_padding).bar_height
-            })
-            .unwrap_or(52.0);
+        let bar_h = read_metrics(app).bar_height;
         let _ = window.set_size(tauri::LogicalSize::new(width, bar_h));
     }
     #[cfg(windows)]

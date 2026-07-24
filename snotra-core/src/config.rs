@@ -361,6 +361,17 @@ fn default_font_size() -> u32 {
     15
 }
 
+/// #646 PR1: 行高の余白(row_height = font_size + path_size + row_padding + 4)。
+fn default_row_padding() -> u32 {
+    6
+}
+
+/// #646 PR1: バー高の余白(bar_height = font_size + bar_padding)。28 は現行 52px を
+/// 「font_size=24 でのチューニング結果」と読み直した値(24 + 28 = 52)。
+fn default_bar_padding() -> u32 {
+    28
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemePreset {
@@ -398,6 +409,10 @@ pub struct VisualConfig {
     pub font_family: String,
     #[serde(default = "default_font_size")]
     pub font_size: u32,
+    #[serde(default = "default_row_padding")]
+    pub row_padding: u32,
+    #[serde(default = "default_bar_padding")]
+    pub bar_padding: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_theme: Option<CustomTheme>,
 }
@@ -413,6 +428,8 @@ impl Default for VisualConfig {
             hint_text_color: default_hint_text_color(),
             font_family: default_font_family(),
             font_size: default_font_size(),
+            row_padding: default_row_padding(),
+            bar_padding: default_bar_padding(),
             custom_theme: None,
         }
     }
@@ -1117,6 +1134,24 @@ pub fn is_system_shortcut(modifier: &str, key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #646 PR1: 新キー欠落の旧 config は serde default(6/28)で読める(後方互換・移行不要)。
+    #[test]
+    fn visual_padding_defaults_for_missing_keys() {
+        let toml = r#"
+[hotkey]
+modifier = "alt"
+key = "q"
+[appearance]
+window_width = 600
+[paths]
+"#;
+        let config: Config = toml::from_str(toml).expect("parse");
+        assert_eq!(config.visual.row_padding, 6);
+        assert_eq!(config.visual.bar_padding, 28);
+        assert_eq!(VisualConfig::default().row_padding, 6);
+        assert_eq!(VisualConfig::default().bar_padding, 28);
+    }
 
     #[test]
     fn deserialize_full_config() {

@@ -709,7 +709,7 @@ impl SearchWindowView {
         let visible = show_results && res_h > 0.0;
         if !visible {
             if self.last_results_visible {
-                let _ = results.hide();
+                crate::egui_shell::hide_results(&results);
                 self.last_results_visible = false;
             }
             return;
@@ -726,7 +726,8 @@ impl SearchWindowView {
             self.last_results_width = width;
         }
         if !self.last_results_visible {
-            let _ = results.show();
+            // フォーカスを奪わない表示（tauri show() は SW_SHOW で活性化する・#646 PR2）。
+            crate::egui_shell::show_results_no_activate(&results);
             self.last_results_visible = true;
         }
         crate::egui_shell::wake_results(&self.app_handle);

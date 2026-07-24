@@ -244,6 +244,83 @@ fn apply_rounded_corners(window: &tauri::Window) {
     }
 }
 
+/// results 窓を**フォーカスを奪わずに**表示する（#646 PR2・実機スモークで発見）。
+///
+/// `tauri::Window::show()` は tao の `set_visible(true)` を経て `ShowWindow(hwnd, SW_SHOW)` を
+/// 呼ぶが、`SW_SHOW` は**プログラム的に窓を活性化する**。`focusable(false)` が付ける
+/// `WS_EX_NOACTIVATE` が防ぐのはユーザークリックによる活性化だけなので、1 文字目の入力で
+/// results が現れた瞬間に入力欄からフォーカスが奪われ 2 文字目が打てなくなる。
+/// tao 内部で `SW_SHOWNOACTIVATE` に至る唯一の経路（`MARKER_DONT_FOCUS`）は窓生成時に
+/// 1 回だけ立ち初回 show で消費されるため、繰り返し show する用途には使えない。
+///
+/// **hide も対で raw にする**（`hide_results`）: raw show は tao の `WindowFlags::VISIBLE` を
+/// false のまま残すため、`Window::hide()` は「差分なし」と判定して早期 return し窓が隠れない。
+/// 同じ理由で results の TOPMOST 切り替えも tao 経由にできない（`set_results_topmost`）——
+/// 差分適用が「VISIBLE でない窓」と信じて `SW_HIDE` を副作用で撃つ。
+/// **results の可視性は本モジュールの 3 関数が唯一の経路であり、tauri の show/hide/
+/// set_always_on_top を results へ呼んではならない。**
+#[cfg(windows)]
+pub(crate) fn show_results_no_activate(window: &tauri::Window) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{SW_SHOWNOACTIVATE, ShowWindow};
+    let Ok(hwnd) = window.hwnd() else { return };
+    unsafe {
+        let _ = ShowWindow(HWND(hwnd.0), SW_SHOWNOACTIVATE);
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn show_results_no_activate(window: &tauri::Window) {
+    let _ = window.show();
+}
+
+/// results 窓を隠す（`show_results_no_activate` の対）。raw show で tao の VISIBLE フラグが
+/// false のままのため `Window::hide()` では隠れない（同関数の doc 参照）。
+#[cfg(windows)]
+pub(crate) fn hide_results(window: &tauri::Window) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{SW_HIDE, ShowWindow};
+    let Ok(hwnd) = window.hwnd() else { return };
+    unsafe {
+        let _ = ShowWindow(HWND(hwnd.0), SW_HIDE);
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn hide_results(window: &tauri::Window) {
+    let _ = window.hide();
+}
+
+/// results 窓の TOPMOST を切り替える（設定サイドカー起動中の一時解除・#646 PR2）。
+/// `set_always_on_top` は tao のフラグ差分適用を通り、VISIBLE を false と信じている
+/// results 窓に対しては `SW_HIDE` を撃ってしまう（`show_results_no_activate` の doc 参照）。
+/// `SWP_NOACTIVATE` 付きの `SetWindowPos` で Z オーダーだけを動かす。
+#[cfg(windows)]
+pub(crate) fn set_results_topmost(window: &tauri::Window, topmost: bool) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
+    };
+    let Ok(hwnd) = window.hwnd() else { return };
+    let insert_after = if topmost { HWND_TOPMOST } else { HWND_NOTOPMOST };
+    unsafe {
+        let _ = SetWindowPos(
+            HWND(hwnd.0),
+            Some(insert_after),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn set_results_topmost(window: &tauri::Window, topmost: bool) {
+    let _ = window.set_always_on_top(topmost);
+}
+
 /// 実行中 config から Metrics を導出する(#646 決定 2)。毎フレーム/毎 show の live-read で
 /// キャッシュしない。view(update)と show 経路の両方がここを通ることで、導出式とフォールバック
 /// を単一点に保つ(/simplify: 独立実装 2 箇所でフォールバックが 52.0/43.0 に乖離していた)。
@@ -369,7 +446,7 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
     // #646 PR2: 従属窓も同時に隠す（決定 6）。show 側は main の update() が snapshot の
     // show 判定で駆動するため、ここが唯一の外部 hide 経路（対称は main update 内の show）。
     if let Some(results) = app.get_window("results") {
-        let _ = results.hide();
+        hide_results(&results);
     }
     if let Some(state) = app.try_state::<crate::AppState>() {
         state.main_visible.store(false, Ordering::SeqCst);

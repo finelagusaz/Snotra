@@ -17,7 +17,9 @@ if (-not (Test-Path $ExePath)) {
   throw "Executable not found: $ExePath"
 }
 
-# Single-window architecture: no sub-windows to verify.
+# Two-window architecture (main + results, #646 PR2): startup smoke only exercises
+# main show/hide timing; the results window is driven by main's update() and has
+# no independent lifecycle to verify here.
 $summaries = @()
 $failures = @()
 $savedTraceEnv = $env:SNOTRA_TRACE

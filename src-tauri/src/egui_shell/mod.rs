@@ -13,7 +13,13 @@ pub(crate) use notify::{NOTICE_HOTKEY, OverlayKind, overlay_kind};
 // （#532 SU5 Task 6）。toast 描画は view.rs が Task 7 で消費する。
 pub(crate) use notify::{ToastKind, UpdaterPhase, UpdaterUi};
 pub(crate) mod strings;
+mod results_view;
 mod view;
+
+// mod.rs（窓生成・managed state）が消費する。RowsSnapshot は view.rs（main の snapshot 発行）・
+// results_view.rs（update() 描画）が消費する（#646 PR2 Task 4）。
+pub(crate) use results_view::ResultsShared;
+pub(crate) use results_view::RowsSnapshot;
 
 // view.rs の icon texture driver（worker spawn / load_texture 適用）が消費する（#532 SU4 Task 5）。
 pub(crate) use icon_textures::{IconMsg, needs_extraction, png_to_color_image, retain_visible};
@@ -27,7 +33,7 @@ pub(crate) use search_state::{
 pub(crate) use search_state::{SlashCmd, find_slash_command};
 // driver（view.rs）は Task 4 で表示ゲート・再検索トリガとして消費する（#532 SU6 Task 1）。
 pub(crate) use search_state::{needs_index_refresh, plain_results_hidden};
-pub(crate) use layout::{Debouncer, HeightParams, compute_window_height};
+pub(crate) use layout::Debouncer;
 // view.rs が UI 文言（hint/overlay/toast）で消費する（#532 SU5・言語は lang() が毎フレーム live-read）。
 pub(crate) use strings as ui_strings;
 
@@ -65,6 +71,8 @@ pub(crate) struct EguiShellState {
     /// hidden 中は次 show のフレームで toast が読まれるため repaint は可視中のみ意味を持つ
     /// （codex レビュー: 「hidden は次 show でよい」と「visible は repaint が要る」は別条件）。
     pub(crate) egui_ctx: Mutex<Option<egui::Context>>,
+    /// results 窓の egui Context（外部 wake 用・egui_ctx と同型・#646 PR2）。
+    pub(crate) results_ctx: Mutex<Option<egui::Context>>,
     /// hotkey 登録失敗の pending payload（SU6 spec 追補 2 + #652）。種別ごとに文言が違う
     /// ため `(kind, hotkey)` を保持し、view が消費時に lang() live-read で整形する。
     /// **wake の有無は経路で異なる**——Change は wake しない（wake を config-applied に
@@ -177,7 +185,140 @@ pub(crate) fn create(
         .background_color(bg_color)
         .visible(false)
         .build()?; // tauri::Error → RuntimeError（#[from]・runtime.rs:46）
+
+    // #646 PR2: 結果リスト窓。focusable(false) で tao が WS_EX_NOACTIVATE を自動適用し
+    // (tao window_state.rs: !FOCUSABLE → style_ex |= WS_EX_NOACTIVATE)、クリックしても
+    // フォーカスはメインの入力欄から動かない（決定 4）。可視性・サイズ・位置は main の
+    // update() が駆動する（hidden 窓は update() が走らないため自分では show できない）。
+    let results = tauri::Window::builder(app, "results")
+        .title("Snotra Results")
+        .inner_size(window_width, 100.0) // 初期値。実高は main が実件数フィットで設定
+        .decorations(false)
+        .resizable(false)
+        .skip_taskbar(true)
+        .always_on_top(true)
+        .focusable(false)
+        .background_color(bg_color)
+        .visible(false)
+        .build()?;
+    #[cfg(windows)]
+    {
+        apply_rounded_corners(&window); // main にも適用（輪郭言語を揃える・決定 4）
+        apply_rounded_corners(&results);
+    }
+    runtime.attach(results, results_view::ResultsView::new(app_handle.clone()))?;
+    // #646 PR2 決定 10: ドラッグ移動中の追従。ネイティブ移動ループ中は egui フレームが
+    // 回る保証が無いため、tao の Moved イベント(tauri Window リスナー経由)で直接
+    // results を追従させる。通常時の従属は main update() の drive が担う(二重呼びは
+    // set_position の同値上書きで無害)。attach で window が move される前に登録する。
+    {
+        let handle = app_handle.clone();
+        window.on_window_event(move |event| {
+            if matches!(event, tauri::WindowEvent::Moved(_)) {
+                position_results_below_main(&handle);
+            }
+        });
+    }
     runtime.attach(window, SearchWindowView::new(app_handle))
+}
+
+/// DWM に窓の角丸を依頼する（#646 PR2 決定 4）。Windows 11（build 22000+）のみ有効で、
+/// Windows 10 ではエラーを黙って握りつぶす（装飾なしで受容・best-effort）。
+/// softbuffer は AA を持たず自前角丸は品質が出ないため OS 機構に委ねる。
+#[cfg(windows)]
+fn apply_rounded_corners(window: &tauri::Window) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::{
+        DWM_WINDOW_CORNER_PREFERENCE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+        DwmSetWindowAttribute,
+    };
+    let Ok(hwnd) = window.hwnd() else { return };
+    let pref: DWM_WINDOW_CORNER_PREFERENCE = DWMWCP_ROUND;
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            HWND(hwnd.0),
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            &pref as *const _ as *const core::ffi::c_void,
+            std::mem::size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
+        );
+    }
+}
+
+/// results 窓を**フォーカスを奪わずに**表示する（#646 PR2・実機スモークで発見）。
+///
+/// `tauri::Window::show()` は tao の `set_visible(true)` を経て `ShowWindow(hwnd, SW_SHOW)` を
+/// 呼ぶが、`SW_SHOW` は**プログラム的に窓を活性化する**。`focusable(false)` が付ける
+/// `WS_EX_NOACTIVATE` が防ぐのはユーザークリックによる活性化だけなので、1 文字目の入力で
+/// results が現れた瞬間に入力欄からフォーカスが奪われ 2 文字目が打てなくなる。
+/// tao 内部で `SW_SHOWNOACTIVATE` に至る唯一の経路（`MARKER_DONT_FOCUS`）は窓生成時に
+/// 1 回だけ立ち初回 show で消費されるため、繰り返し show する用途には使えない。
+///
+/// **hide も対で raw にする**（`hide_results`）: raw show は tao の `WindowFlags::VISIBLE` を
+/// false のまま残すため、`Window::hide()` は「差分なし」と判定して早期 return し窓が隠れない。
+/// 同じ理由で results の TOPMOST 切り替えも tao 経由にできない（`set_results_topmost`）——
+/// 差分適用が「VISIBLE でない窓」と信じて `SW_HIDE` を副作用で撃つ。
+/// **results の可視性は本モジュールの 3 関数が唯一の経路であり、tauri の show/hide/
+/// set_always_on_top を results へ呼んではならない。**
+#[cfg(windows)]
+pub(crate) fn show_results_no_activate(window: &tauri::Window) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{SW_SHOWNOACTIVATE, ShowWindow};
+    let Ok(hwnd) = window.hwnd() else { return };
+    unsafe {
+        let _ = ShowWindow(HWND(hwnd.0), SW_SHOWNOACTIVATE);
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn show_results_no_activate(window: &tauri::Window) {
+    let _ = window.show();
+}
+
+/// results 窓を隠す（`show_results_no_activate` の対）。raw show で tao の VISIBLE フラグが
+/// false のままのため `Window::hide()` では隠れない（同関数の doc 参照）。
+#[cfg(windows)]
+pub(crate) fn hide_results(window: &tauri::Window) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{SW_HIDE, ShowWindow};
+    let Ok(hwnd) = window.hwnd() else { return };
+    unsafe {
+        let _ = ShowWindow(HWND(hwnd.0), SW_HIDE);
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn hide_results(window: &tauri::Window) {
+    let _ = window.hide();
+}
+
+/// results 窓の TOPMOST を切り替える（設定サイドカー起動中の一時解除・#646 PR2）。
+/// `set_always_on_top` は tao のフラグ差分適用を通り、VISIBLE を false と信じている
+/// results 窓に対しては `SW_HIDE` を撃ってしまう（`show_results_no_activate` の doc 参照）。
+/// `SWP_NOACTIVATE` 付きの `SetWindowPos` で Z オーダーだけを動かす。
+#[cfg(windows)]
+pub(crate) fn set_results_topmost(window: &tauri::Window, topmost: bool) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
+    };
+    let Ok(hwnd) = window.hwnd() else { return };
+    let insert_after = if topmost { HWND_TOPMOST } else { HWND_NOTOPMOST };
+    unsafe {
+        let _ = SetWindowPos(
+            HWND(hwnd.0),
+            Some(insert_after),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn set_results_topmost(window: &tauri::Window, topmost: bool) {
+    let _ = window.set_always_on_top(topmost);
 }
 
 /// 実行中 config から Metrics を導出する(#646 決定 2)。毎フレーム/毎 show の live-read で
@@ -302,6 +443,11 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
         save_placement_relative(&window); // save-on-hide
         let _ = window.hide();
     }
+    // #646 PR2: 従属窓も同時に隠す（決定 6）。show 側は main の update() が snapshot の
+    // show 判定で駆動するため、ここが唯一の外部 hide 経路（対称は main update 内の show）。
+    if let Some(results) = app.get_window("results") {
+        hide_results(&results);
+    }
     if let Some(state) = app.try_state::<crate::AppState>() {
         state.main_visible.store(false, Ordering::SeqCst);
     }
@@ -348,14 +494,64 @@ pub(crate) fn register_hide_listener(app: &tauri::AppHandle) {
     });
 }
 
-/// 可視中の view を起こす（egui_ctx 未登録＝setup〜初フレーム、hidden 中は無害な no-op）。
-/// WebView2 経路（flag OFF）では EguiShellState が manage されておらず自然に no-op。
-pub(crate) fn wake_view(app: &tauri::AppHandle) {
-    if let Some(sh) = app.try_state::<EguiShellState>()
-        && let Ok(guard) = sh.egui_ctx.lock()
+/// 窓の egui Context スロットを登録する（各 view の `setup` から・#646 PR2 /simplify）。
+/// main と results で手順が同型ゆえスロットを引数に取る 1 実装へ寄せる——窓が増えても
+/// 本体は 1 つのまま。（より深い解＝runtime が持つ窓ごとの Context を label で叩く API は
+/// runtime 越境ゆえ follow-up・/simplify altitude 観点）
+pub(crate) fn register_ctx(slot: &Mutex<Option<egui::Context>>, context: &egui::Context) {
+    if let Ok(mut guard) = slot.lock() {
+        *guard = Some(context.clone());
+    }
+}
+
+/// 登録済みスロットの窓を起こす（未登録＝setup〜初フレームは無害な no-op）。
+fn wake_ctx(slot: &Mutex<Option<egui::Context>>) {
+    if let Ok(guard) = slot.lock()
         && let Some(ctx) = guard.as_ref()
     {
         ctx.request_repaint();
+    }
+}
+
+/// 可視中の view を起こす（egui_ctx 未登録＝setup〜初フレーム、hidden 中は無害な no-op）。
+/// WebView2 経路（flag OFF）では EguiShellState が manage されておらず自然に no-op。
+pub(crate) fn wake_view(app: &tauri::AppHandle) {
+    if let Some(sh) = app.try_state::<EguiShellState>() {
+        wake_ctx(&sh.egui_ctx);
+    }
+}
+
+/// results 窓を起こす(#646 PR2)。snapshot 更新・config 変更を反映させる wake。呼び出しは
+/// main の update()（Task 4）内 2 箇所: snapshot 差分検知時（edge-triggered・変化フレームのみ）
+/// と `drive_results_window`（可視時・毎フレーム・level-triggered）。hidden 中の results は
+/// 描かれないため事前 wake は無意味(plan-review で冗長と判定)。クリック逆流の results→main は
+/// 既存 `wake_view` を使う。
+pub(crate) fn wake_results(app: &tauri::AppHandle) {
+    if let Some(sh) = app.try_state::<EguiShellState>() {
+        wake_ctx(&sh.results_ctx);
+    }
+}
+
+/// results を main の直下 + window_gap に配置する(#646 PR2 決定 6)。呼び出し元は
+/// 2 つ——main の update()(通常の毎フレーム従属)と main の Moved リスナー
+/// (ネイティブ移動ループ中の追従。ループ中は egui フレームが回らない可能性があるため
+/// イベント駆動で直接動かす)。デルタガードは持たない(set_position は同値でも安価・
+/// ガードは update 側の責務)。
+pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
+    let (Some(main), Some(results)) = (app.get_window("main"), app.get_window("results")) else {
+        return;
+    };
+    let gap = app
+        .try_state::<crate::AppState>()
+        .map(|s| s.engine.lock().unwrap().config().visual.window_gap)
+        .unwrap_or(4) as f64;
+    if let (Ok(pos), Ok(size), Ok(scale)) =
+        (main.outer_position(), main.outer_size(), main.scale_factor())
+    {
+        let _ = results.set_position(tauri::PhysicalPosition::new(
+            pos.x,
+            pos.y + size.height as i32 + (gap * scale).round() as i32,
+        ));
     }
 }
 

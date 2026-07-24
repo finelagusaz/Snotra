@@ -19,6 +19,11 @@ pub struct Metrics {
     pub row_height: f64,
     /// bar_height と同値(§20.3 の toast 行)。
     pub toast_height: f64,
+    /// バー帯の内側に取る**四辺一様**の余白(#646 PR2・実機目視で追加)。入力欄はこの余白の
+    /// 内側いっぱい(高さ `bar_height - 2*bar_inset`)を占めるため、上下左右の見た目の枠が
+    /// 等しくなる。`bar_padding / 4` は「font_size に対する入力欄の内部余白」も同値に保つ
+    /// 導出(既定 28/4=7 のとき font 15 で欄高 29・font 24 で欄高 38——どちらも文字の上下に 7)。
+    pub bar_inset: f64,
 }
 
 impl Metrics {
@@ -26,30 +31,29 @@ impl Metrics {
         let f = font_size as f64;
         let bar_height = f + bar_padding as f64;
         let row_height = (f + path_size(font_size) + row_padding as f64 + 4.0).max(24.0);
-        Self { bar_height, row_height, toast_height: bar_height }
+        Self {
+            bar_height,
+            row_height,
+            toast_height: bar_height,
+            bar_inset: bar_padding as f64 / 4.0,
+        }
     }
 }
 
-/// compute_window_height の入力。SU5 まで has_update_toast は常に false。
-pub struct HeightParams {
-    pub show_results: bool,
-    pub max_results: u32,
-    pub has_update_toast: bool,
-    pub search_bar_height: f64,
-    pub result_row_height: f64,
-    pub results_padding: f64,
-    pub update_toast_height: f64,
+/// main 窓の高さ(#646 PR2 決定 6)。bar(+toast)のみで結果に伸縮しない。
+pub fn main_window_height(bar_height: f64, toast_height: Option<f64>) -> f64 {
+    bar_height + toast_height.unwrap_or(0.0)
 }
 
-/// ウィンドウ論理高さ。show_results なら bar + max*row + pad、否なら bar。toast は加算。
-/// windowHeight.ts の computeWindowHeight と同一。
-pub fn compute_window_height(p: &HeightParams) -> f64 {
-    let content = if p.show_results {
-        p.search_bar_height + p.max_results as f64 * p.result_row_height + p.results_padding
+/// 結果窓の高さ(#646 PR2 決定 7)。実件数フィット・上限 max_results・padding 8。
+/// 0 件は 0.0(呼び出し側が hide する契約)。
+pub fn results_window_height(result_count: usize, max_results: u32, row_height: f64) -> f64 {
+    let n = result_count.min(max_results as usize);
+    if n == 0 {
+        0.0
     } else {
-        p.search_bar_height
-    };
-    content + if p.has_update_toast { p.update_toast_height } else { 0.0 }
+        n as f64 * row_height + 8.0
+    }
 }
 
 /// 打鍵 debounce（決定7）。時刻は driver が注入する（純粋・テスト可能）。
@@ -104,36 +108,6 @@ impl Debouncer {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn params(show: bool, max: u32) -> HeightParams {
-        HeightParams {
-            show_results: show,
-            max_results: max,
-            has_update_toast: false,
-            search_bar_height: 52.0,
-            result_row_height: 30.0,
-            results_padding: 8.0,
-            update_toast_height: 52.0,
-        }
-    }
-
-    #[test]
-    fn collapsed_is_search_bar_only() {
-        assert_eq!(compute_window_height(&params(false, 8)), 52.0);
-    }
-
-    #[test]
-    fn expanded_is_bar_plus_rows_plus_padding() {
-        // 52 + 8*30 + 8 = 300
-        assert_eq!(compute_window_height(&params(true, 8)), 300.0);
-    }
-
-    #[test]
-    fn toast_adds_height() {
-        let mut p = params(false, 8);
-        p.has_update_toast = true;
-        assert_eq!(compute_window_height(&p), 52.0 + 52.0);
-    }
 
     #[test]
     fn leading_fires_on_burst_start_then_trailing() {
@@ -192,5 +166,34 @@ mod tests {
     fn path_size_matches_row_theme_coefficient() {
         assert_eq!(path_size(8), 9.0);
         assert!((path_size(15) - 11.7).abs() < 1e-9);
+    }
+
+    /// #646 PR2: バー内の一様余白。入力欄は帯の内側いっぱい（bar_height - 2*inset）を占める。
+    #[test]
+    fn bar_inset_leaves_symmetric_room_for_field() {
+        let m = Metrics::from_config(15, 6, 28);
+        assert_eq!(m.bar_inset, 7.0);
+        assert_eq!(m.bar_height - 2.0 * m.bar_inset, 29.0); // 文字 15 + 上下 7 ずつ
+        // font 24（旧 52px バー）でも内部余白は同値に保たれる
+        let big = Metrics::from_config(24, 6, 28);
+        assert_eq!(big.bar_inset, 7.0);
+        assert_eq!(big.bar_height - 2.0 * big.bar_inset, 38.0);
+    }
+
+    /// #646 PR2 決定 6: main 窓は bar(+toast)のみで、結果による伸縮をしない。
+    #[test]
+    fn main_height_is_bar_plus_optional_toast() {
+        assert_eq!(main_window_height(43.0, None), 43.0);
+        assert_eq!(main_window_height(43.0, Some(43.0)), 86.0);
+    }
+
+    /// #646 PR2 決定 7: 結果窓は実件数フィット(上限 max_results)+ padding 8。
+    #[test]
+    fn results_height_fits_actual_count_capped_at_max() {
+        let row = 37.0;
+        assert_eq!(results_window_height(3, 8, row), 3.0 * row + 8.0); // 実件数
+        assert_eq!(results_window_height(8, 8, row), 8.0 * row + 8.0); // ちょうど境界(result_count == max_results)
+        assert_eq!(results_window_height(20, 8, row), 8.0 * row + 8.0); // 上限で頭打ち
+        assert_eq!(results_window_height(0, 8, row), 0.0); // 0 件は非表示(高さ 0 = 呼び出し側で hide)
     }
 }

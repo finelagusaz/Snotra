@@ -372,6 +372,11 @@ fn default_bar_padding() -> u32 {
     28
 }
 
+/// #646 PR2: メイン窓と結果窓の隙間 px(透明ギャップ・決定 6)。
+fn default_window_gap() -> u32 {
+    4
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemePreset {
@@ -413,6 +418,8 @@ pub struct VisualConfig {
     pub row_padding: u32,
     #[serde(default = "default_bar_padding")]
     pub bar_padding: u32,
+    #[serde(default = "default_window_gap")]
+    pub window_gap: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_theme: Option<CustomTheme>,
 }
@@ -430,6 +437,7 @@ impl Default for VisualConfig {
             font_size: default_font_size(),
             row_padding: default_row_padding(),
             bar_padding: default_bar_padding(),
+            window_gap: default_window_gap(),
             custom_theme: None,
         }
     }
@@ -1151,6 +1159,8 @@ window_width = 600
         assert_eq!(config.visual.bar_padding, 28);
         assert_eq!(VisualConfig::default().row_padding, 6);
         assert_eq!(VisualConfig::default().bar_padding, 28);
+        assert_eq!(config.visual.window_gap, 4);
+        assert_eq!(VisualConfig::default().window_gap, 4);
     }
 
     #[test]

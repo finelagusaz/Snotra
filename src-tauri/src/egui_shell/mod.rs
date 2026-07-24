@@ -284,7 +284,8 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
     // egui は WebView2 が無いので suspend は不要で、EmptyWorkingSet trim だけを当てる。EmptyWorkingSet は
     // スレッド非依存ゆえこの context（イベントループ / listener）から直呼び可（src-tauri/CLAUDE.md
     // 「working set の能動回収」）。trim されたページは show 時に OS が透過 re-fault する（逆操作不要・
-    // trim が hide 前後どちらで走っても無害）。単一プロセスゆえ子孫 BFS は snotra 自身のみに当たる。
+    // trim が hide 前後どちらで走っても無害）。egui 経路は WebView2 子孫を持たないが、子孫 BFS は
+    // 設定プロセス（snotra-settings.exe・存命中のみ）も巻き込みうる——trim は best-effort ゆえ無害。
     crate::working_set::trim_idle_working_set(std::process::id());
     crate::trace_main("egui_hide:done", serde_json::json!({}));
 }

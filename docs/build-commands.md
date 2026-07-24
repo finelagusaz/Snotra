@@ -114,7 +114,7 @@ npm run tauri build              # リリースビルド（フロント+Rust 一
 ## E2E/スモーク運用メモ
 
 - `scripts/smoke-startup.ps1` は `SNOTRA_TRACE=1` で起動し、`*:error` トレースイベントが不在であることを検証する
-- `scripts/smoke-egui.ps1` は egui 経路の自動回帰の最低線（#532 SU7・e2e/ 撤去後の後継）: `SNOTRA_TRACE=1` で起動 → keybd_event で Alt+Q（既定 hotkey・Alt 解放込み）→ `egui_show:done` 観測 → Escape → `egui_hide:done` 観測 → `msedgewebview2` のグローバル増分 0 を検証する。`-SeedConfig` は CI 用（config.toml 不在時のみ空 seed して first-run 経路を回避。既存 config は上書きしない）。実行中の snotra を kill するためローカル実行時は注意。網羅は担わず、視覚・操作列は手動 GUI smoke（カテゴリ D）が補完する
+- `scripts/smoke-egui.ps1` は egui 経路の自動回帰の最低線（#532 SU7・e2e/ 撤去後の後継）: `SNOTRA_TRACE=1` で起動 → keybd_event で Alt+Q（既定 hotkey・Alt 解放込み）→ `egui_show:done` 観測 → Escape → `egui_hide:done` 観測 → `msedgewebview2` のグローバル増分 0 を検証する。`-SeedConfig` は CI 用（config.toml 不在時のみ最小の有効 TOML を seed して first-run 経路を回避。既存 config は上書きしない。空 TOML は必須セクション欠落で parse 失敗し破損復旧経路を踏むため使わない）。実行中の snotra を kill するためローカル実行時は注意。網羅は担わず、視覚・操作列は手動 GUI smoke（カテゴリ D）が補完する
 - `e2e/tauri.slash.e2e.ts` は Playwright runner 上で `tauri-driver + selenium-webdriver + edgedriver` を使い、起動入力・`/o` の動作を検証する
 - **E2E は `SNOTRA_DISABLE_SUSPEND=1` で app を起動する**（`spawnTauriDriver` が注入）。WebDriver は非表示中のレンダラーに `executeScript` で触り続けるため、hide 時の WebView2 suspend（TrySuspend）とは非互換（suspend されたレンダラーは script に応答せず 30s タイムアウトする）。suspend 経路自体は E2E では検証されない（ホットキー同様、実機計測でカバー）
 - E2E セットアップは `npx tauri build --no-bundle --features e2e-webview-automation` を使う（`cargo build --release` は `localhost` 向きバイナリになり `ERR_CONNECTION_REFUSED` で失敗する）。feature はテスト用バイナリにだけ WebView2 の trusted application API 経由で `--remote-debugging-port=0` を設定可能にする。実際の有効化にはハーネスが生成する `SNOTRA_E2E_WEBVIEW_DATA_DIR` も必要で、通常配布ビルドや startup smoke に remote debugging を持ち込まない

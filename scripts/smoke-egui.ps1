@@ -13,7 +13,7 @@ param(
 # 起動 → keybd_event で Alt+Q（既定 hotkey）注入 → trace `egui_show:done` 観測 → Escape 注入 →
 # `egui_hide:done` 観測 → msedgewebview2 のグローバル増分 0 確認、で 1 シナリオ。
 # - hotkey は Alt 解放を含めて送る（Alt 押下中は ShowAfterAltRelease で最大 350ms 遅延するため）。
-# - -SeedConfig（CI 用）: config.toml 不在時のみ空ファイルを seed し first-run 経路
+# - -SeedConfig（CI 用）: config.toml 不在時のみ最小の有効 TOML を seed し first-run 経路
 #   （snotra-settings --first-run の spawn がフォーカスを奪う）を回避する。既存 config は決して上書きしない。
 # - egui/WebView2 の経路選択は呼び出し側の env（SNOTRA_EGUI_MAIN）に従う。flip（PR2）後は env なしが既定。
 
@@ -29,9 +29,24 @@ if ($SeedConfig) {
   $cfgPath = Join-Path $cfgDir "config.toml"
   if (-not (Test-Path $cfgPath)) {
     New-Item -ItemType Directory -Force -Path $cfgDir | Out-Null
-    # 空 TOML は全セクション serde default で解釈される（config.rs の既定値補完）
-    Set-Content -Path $cfgPath -Value "" -Encoding utf8
-    Write-Host "Seeded empty config: $cfgPath"
+    # 最小の有効 TOML。[hotkey]/[appearance]/[paths] は #[serde(default)] 無しの必須セクションで、
+    # 空 TOML は parse 失敗し「破損復旧」経路（stderr 診断 + config.toml.bak 退避 + 復旧バルーン）を
+    # 毎回踏んでしまう（PR #659 レビューで検出）。値は config.rs の既定と同一
+    # （hotkey Alt+Q = 本スクリプト既定の -HotkeyVks 18,81 と一致）。scan 空 = インデックス対象なし
+    # （smoke は show/hide のみで索引不要・CI のスキャンを省く）。
+    $seedToml = @'
+[hotkey]
+modifier = "Alt"
+key = "Q"
+
+[appearance]
+window_width = 600
+
+[paths]
+scan = []
+'@
+    Set-Content -Path $cfgPath -Value $seedToml -Encoding utf8
+    Write-Host "Seeded minimal config: $cfgPath"
   } else {
     Write-Host "Config already exists, seed skipped: $cfgPath"
   }

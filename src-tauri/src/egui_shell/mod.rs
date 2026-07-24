@@ -166,7 +166,7 @@ pub(crate) fn create(
         .unwrap_or(tauri::window::Color(0x28, 0x28, 0x28, 0xff));
     let window = tauri::Window::builder(app, "main")
         .title("Snotra")
-        .inner_size(window_width, 52.0) // 保存幅を尊重（codex #11）
+        .inner_size(window_width, 52.0) // 保存幅を尊重（codex #11）。高さは初期値。実高は show 時に Metrics で再設定(#646)
         .decorations(false)
         .resizable(false)
         .skip_taskbar(true) // 宣言窓 skipTaskbar:true の再現（(B)#1）
@@ -194,10 +194,11 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
         sh.reset_pending.store(true, Ordering::SeqCst); // resetForShow を view に指示
     }
     // 高さリセット → 位置 → show の順（SU2 の show_main_and_emit と同じ制約）。
-    // reset-on-show でクエリは空 = 結果なし = 52px。前回 hide 時に展開高（例 300px）のまま
-    // だと position クランプが 300px で効き、show 後に view が 52px へ collapse して視覚スナップ +
-    // 位置ずれになる。position の前に 52px へ collapse してこれを断つ（SU3 で高さが動的化した
-    // ため、旧「52px は create で固定・位置のみ復元」前提は崩れている）。
+    // reset-on-show でクエリは空 = 結果なし = bar_height（既定 43px）。前回 hide 時に展開高
+    // （例 300px）のままだと position クランプが 300px で効き、show 後に view が bar_height へ
+    // collapse して視覚スナップ + 位置ずれになる。position の前に bar_height へ collapse して
+    // これを断つ（SU3 で高さが動的化したため、旧「52px は create で固定・位置のみ復元」前提は
+    // 崩れている）。
     #[cfg(windows)]
     {
         let width = window
@@ -205,7 +206,17 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
             .ok()
             .map(|s| s.to_logical::<f64>(window.scale_factor().unwrap_or(1.0)).width)
             .unwrap_or(600.0);
-        let _ = window.set_size(tauri::LogicalSize::new(width, 52.0));
+        // 折りたたみ高 = bar_height(#646 決定 2)。52 固定だと font 連動後の実バー高と
+        // ずれ、position クランプが誤った高さで効く(コメント 196-200 行の機構と同じ理由)。
+        let bar_h = app
+            .try_state::<crate::AppState>()
+            .map(|s| {
+                let engine = s.engine.lock().unwrap();
+                let v = &engine.config().visual;
+                layout::Metrics::from_config(v.font_size, v.row_padding, v.bar_padding).bar_height
+            })
+            .unwrap_or(52.0);
+        let _ = window.set_size(tauri::LogicalSize::new(width, bar_h));
     }
     #[cfg(windows)]
     crate::position_on_target_monitor(app, &window);

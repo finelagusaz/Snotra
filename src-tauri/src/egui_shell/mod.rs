@@ -45,10 +45,8 @@ use crate::egui_shell::view::SearchWindowView;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HotkeyFailureKind {
     /// 起動時の初回登録失敗（`platform-event` / `initial-hotkey-failed`）。
-    /// SPEC §10 のとおり窓を能動表示してから通知する。
-    /// listener 配線は Task 4（#652 本体）——この Task 3 は構築先を持たないため未構築
-    /// （`view.rs` の match は既に分岐を持つ・compile-fail 検出器として型は先に揃える）。
-    #[allow(dead_code)]
+    /// SPEC §10 のとおり窓を能動表示してから通知する
+    /// （listener は `register_platform_event_listener`・#652 Task 4）。
     Initial,
     /// 設定変更による再登録失敗（`hotkey-registration-failed`）。旧ホットキーを維持。
     Change,
@@ -70,8 +68,11 @@ pub(crate) struct EguiShellState {
     /// hotkey 登録失敗の pending payload（SU6 spec 追補 2 + #652）。種別ごとに文言が違う
     /// ため `(kind, hotkey)` を保持し、view が消費時に lang() live-read で整形する。
     /// **wake の有無は経路で異なる**——Change は wake しない（wake を config-applied に
-    /// 委ね、言語同時変更で旧言語整形になる競合窓を閉じる）。Initial は wake する
-    /// （config 変更が随伴せず config-applied が来ないため・#652・SU6.5 決定 2）。
+    /// 委ね、言語同時変更で旧言語整形になる競合窓を閉じる）。この競合窓が閉じる根拠は
+    /// `language-changed` が `hotkey-registration-failed` より先に発火する不変条件
+    /// （SPEC §7.5・`src-tauri/CLAUDE.md`「モジュール構成」の config_watcher.rs 不変条件・
+    /// egui 版でも順序は同じ）。Initial は wake する（config 変更が随伴せず config-applied
+    /// が来ないため・#652・SU6.5 決定 2）。
     pub(crate) pending_hotkey_failure: Mutex<Option<(HotkeyFailureKind, String)>>,
 }
 
@@ -350,5 +351,41 @@ pub(crate) fn register_hotkey_failure_listener(app: &tauri::AppHandle) {
         if let Some(sh) = handle.try_state::<EguiShellState>() {
             *sh.pending_hotkey_failure.lock().unwrap() = Some((HotkeyFailureKind::Change, hotkey));
         }
+    });
+}
+
+/// 起動時 hotkey 登録失敗の受け口（#652・SU6.5 決定 2）。`platform-event` の
+/// `initial-hotkey-failed` を判別し、**格納 → show → wake** の順で処理する。
+///
+/// - **格納が先**: show が起こすフレームは reset-on-show の `notice.clear()` を通ってから
+///   pending を消費する（view の順序不変条件）。逆順にすると clear と store の間にフレームが
+///   挟まりうるため、通知が消えたまま二度と出ない。
+/// - **show する**: ホットキーが登録できていない＝ユーザーが窓を開く手段がトレイしか無い。
+///   SPEC §10「初回ホットキー登録失敗時は操作不能回避のため検索 UI を表示し」の実装で、
+///   WebView2 では `MainApp.tsx` の `win.show()` が担っている経路の egui 版。
+/// - **wake する**: `show_on_startup=true` で既に可視なら `show()` は再描画を生まない。
+///   `register_hotkey_failure_listener`（変更失敗）が wake しないのと**意図的に逆**——
+///   あちらは必ず `config-applied` が随伴するが、起動時失敗には config 変更が無く
+///   `config-applied` は来ない。ここで起こさないと「hidden 中は update() が走らない」
+///   不変条件（SU5）により通知が永遠に描かれない。
+pub(crate) fn register_platform_event_listener(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    app.listen("platform-event", move |event| {
+        let Ok(payload) = serde_json::from_str::<serde_json::Value>(event.payload()) else {
+            return;
+        };
+        if payload.get("event").and_then(|v| v.as_str()) != Some("initial-hotkey-failed") {
+            return;
+        }
+        let hotkey = payload
+            .get("hotkey")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        if let Some(sh) = handle.try_state::<EguiShellState>() {
+            *sh.pending_hotkey_failure.lock().unwrap() = Some((HotkeyFailureKind::Initial, hotkey));
+        }
+        show_egui_main(&handle, Instant::now());
+        wake_view(&handle);
     });
 }

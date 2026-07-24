@@ -277,7 +277,13 @@ fn process_commands(
                 }
             }
             PlatformCommand::RegisterInitialHotkey => {
-                if !hotkey::register(current_hotkey) {
+                // 視覚スモーク専用のエスケープハッチ（`SNOTRA_EGUI_FAKE_UPDATE` と同じ流儀）。
+                // 実機で RegisterHotKey を失敗させるには他アプリが同じキーを握っている必要が
+                // あり再現性が無いため、**登録は成功させたまま失敗イベントだけを流す**。
+                // ゆえにハッチ使用中もホットキーは動く（#652 の受け口検証用）。
+                let registered = hotkey::register(current_hotkey)
+                    && !crate::trace::env_flag("SNOTRA_FAKE_INITIAL_HOTKEY_FAILURE");
+                if !registered {
                     let hotkey_str =
                         format!("{}+{}", current_hotkey.modifier, current_hotkey.key);
                     let _ = app_handle.emit(

@@ -214,6 +214,26 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
     if !crate::is_alt_pressed() {
         crate::send_alt_key_up();
     }
+    // §12: 表示時 IME オフ（設定有効時・復元なし・SU6 spec 決定 4）。ime_off_on_show は実行中
+    // config から都度読み（キャッシュしない・#576 同型——config_watcher の hot-reload が diff/event
+    // 追加なしに届く）。**focus 同期（上の SendMessageTimeoutW）より後に置く**——前だと IME オフが
+    // 対象窓に効かない（WebView2 apply_ime_control doc の警告条件）。Win32 は PlatformBridge 経由
+    // （rule）。TurnOffIme は生 HWND(usize) を取るため窓型非依存で &Window 一般化は不要。
+    #[cfg(windows)]
+    {
+        let ime_control = app
+            .try_state::<crate::AppState>()
+            .map(|s| s.engine.lock().unwrap().config().general.ime_off_on_show)
+            .unwrap_or(false); // config.rs の既定値と一致
+        if ime_control
+            && let Some(bridge) = app.try_state::<std::sync::Mutex<crate::platform::PlatformBridge>>()
+            && let Ok(b) = bridge.lock()
+            && let Ok(hwnd) = window.hwnd()
+        {
+            b.send_command(crate::platform::PlatformCommand::TurnOffIme(hwnd.0 as usize));
+            crate::trace_main("egui_show:ime_control", serde_json::json!({}));
+        }
+    }
     crate::trace_main(
         "egui_show:done",
         serde_json::json!({ "ms": t0.elapsed().as_secs_f64() * 1000.0 }),

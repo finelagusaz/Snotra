@@ -35,7 +35,7 @@ pub struct Metrics {
 
 - **加算式の意味**: 現行固定値を「font_size=24 でチューニングされた結果」と読み直したもの。既定 `bar_padding=28` / `row_padding=6` のとき font 24 で 52 / 30 となり**現行とピクセル一致**(font 24 利用者には無変化)。既定 font 15 では 43 / 24 に締まる
 - **config キー**(`[visual]`・すべて `#[serde(default = ...)]` で旧 config は既定値のまま読める=移行不要):
-  - `window_gap: u32 = 8` — メイン窓と結果窓の隙間 px(PR2 で使用)
+  - `window_gap: u32 = 4` — メイン窓と結果窓の隙間 px(PR2 で使用。モックアップ確認で 8 → 4 に決定)
   - `row_padding: u32 = 6`
   - `bar_padding: u32 = 28`
 - 3 キーとも `font_size` と同じ**毎フレーム live-read**(`row_theme()` と同じ読み取りで `Metrics` を導出。新しい保持状態は作らない)。config 保存 → `config-applied` wake → 即反映

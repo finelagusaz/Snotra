@@ -136,15 +136,6 @@ fn make_key_input(
 #[cfg(not(windows))]
 fn send_alt_key_up() {}
 
-/// hide 完了後の共通後処理: working set trim。
-///
-/// flip（#532 SU7）で WebView2 suspend は消滅し trim のみが残った（egui 経路の
-/// `hide_egui_main` と同じ操作）。唯一の呼び出し元 `notify_main_hidden`（IPC）は
-/// フロント撤去（PR3）まで契約不変で残置するため、シグネチャを維持する。
-pub(crate) fn suspend_and_trim_after_hide(_app: &AppHandle, _source: &'static str) {
-    working_set::trim_idle_working_set(std::process::id());
-}
-
 /// Position the main window on the target monitor using saved relative coordinates.
 ///
 /// Target monitor is determined by `follow_cursor_monitor` config:
@@ -413,16 +404,19 @@ fn setup_hotkey_listener(app_handle: &AppHandle) {
             .try_state::<egui_shell::EguiShellState>()
             .map(|sh| sh.hotkey_generation.fetch_add(1, Ordering::SeqCst) + 1)
             .unwrap_or(0);
-        let visible = handle_for_hotkey
-            .try_state::<AppState>()
+        let app_state = handle_for_hotkey.try_state::<AppState>();
+        let visible = app_state
+            .as_ref()
             .map(|s| s.main_visible.load(Ordering::SeqCst))
             .unwrap_or(false);
-        let hotkey_toggle = handle_for_hotkey
-            .try_state::<AppState>()
-            .map(|s| s.engine.lock().unwrap().config().general.hotkey_toggle)
-            .unwrap_or(true); // config.rs 既定と一致
-        // hotkey_toggle は plan_hotkey に渡す。表示中でも hotkey_toggle=false なら hide せず
-        // show 側（再フォーカス/再配置）へ回る。
+        // hotkey_toggle は可視時の hide 判定にしか使わない（plan_hotkey）。`visible &&` で
+        // 短絡し、非表示＝show 経路（最も遅延に敏感）では engine ロックを取らない。
+        // 表示中でも hotkey_toggle=false なら hide せず show 側（再フォーカス/再配置）へ回る。
+        let hotkey_toggle = visible
+            && app_state
+                .as_ref()
+                .map(|s| s.engine.lock().unwrap().config().general.hotkey_toggle)
+                .unwrap_or(true); // config.rs 既定と一致
         match egui_shell::plan_hotkey(visible, is_alt_pressed(), hotkey_toggle) {
             egui_shell::HotkeyPlan::HideNow => {
                 egui_shell::hide_egui_main(&handle_for_hotkey);

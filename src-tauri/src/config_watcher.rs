@@ -31,7 +31,6 @@ pub(crate) fn parse_hex_color(hex: &str) -> Option<Color> {
     Some(Color(r, g, b, 255))
 }
 
-
 /// Start watching `config.toml` for external changes (e.g. from snotra-settings).
 ///
 /// Returns the watcher handle which must be kept alive for the duration of the app.

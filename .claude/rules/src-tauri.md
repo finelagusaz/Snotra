@@ -25,4 +25,4 @@ paths:
 
 ## トリガー → 検査
 
-- ホットキー・ウィンドウ生成/表示順・スラッシュコマンド経路を変更したら: カテゴリ A に加え `docs/build-commands.md` カテゴリ C（`smoke:startup` / `e2e:tauri`）も該当。post-edit hook は A（clippy/test）だけで「沈黙 = 合格」は C を含まない。検証カテゴリは拡張子でなく変更が触れるコードパスの意味で決める（#558）
+- ホットキー・ウィンドウ生成/表示順・スラッシュコマンド経路を変更したら: カテゴリ A に加え `docs/build-commands.md` カテゴリ C（`smoke:startup` / `smoke:egui`）も該当。post-edit hook は A（clippy/test）だけで「沈黙 = 合格」は C を含まない。検証カテゴリは拡張子でなく変更が触れるコードパスの意味で決める（#558）

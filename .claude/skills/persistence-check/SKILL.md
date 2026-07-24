@@ -65,6 +65,7 @@ $ARGUMENTS から対象の永続化構造を特定し、ソースコードを読
 - **アンチパターン**: 新コードの出力を golden 化するだけ → forward-stability（今後の形式安定）しか保証せず「新出力＝旧形式」を独立に証明しない。形式が既に壊れていても新 golden がそれを凍結して素通りする（#461）
 - **正しい向き**: 「旧形式の凍結バイト列 → 新コードで load 成功」を検証する。凍結バイト列は旧ビルド or リファクタ前コードから採取するのが最も厳密
 - **serde 表現変更（enum variant / untagged / flatten / tag）**: 旧オンディスク形式が deserialize 失敗すると全設定リセット＝データ損失（#394）。untagged の `Legacy {..}` variant 等で必ず受理し `apply_migrations()` で移行
+- **field-level `#[serde(default = ...)]` を検証するなら、その field が属するセクションを fixture に存在させる**: セクションごと省いた TOML は**親側の** `#[serde(default)]`（例 `Config.visual`）で struct 丸ごと既定値に落ち、**field の属性は一度も実行されない**——属性を消してもテストが通る false-green になる。正しい形は「セクションは書く・新キーだけ書かない」。加えて既存キーを 1 つ sentinel として入れ、その値が反映されること（＝struct 既定に落ちていないこと）を同じテストで示す（#646 PR2 で PR1 由来の穴として検出）
 
 ## Step 4 — デコード失敗時のデータ保全
 

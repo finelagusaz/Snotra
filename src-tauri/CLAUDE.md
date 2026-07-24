@@ -77,6 +77,8 @@ NOTIFYICON_VERSION_4 では、キーボード操作（Shift+F10 / Application �
 - Win32 関連の不具合では、まず `config.toml`（テーマ含む）を確認し、次にウィンドウライフサイクル順序、最後に API 呼び出しを調査する（白画面バグの真因がテーマ設定だった事例あり）
 - Rust クレートをバージョン昇格する際は、対象バージョンが crates.io に実在・正当であることを確認する。大版ジャンプを前提にしない（例: `bincode 3.0.0` は `compile_error!` のみを含むジョークパッケージでコンパイル不能）
 - `windows` クレート（現在 v0.62）はバージョンごとに API シグネチャが変わる（`Result` 型の有無、ハンドル型の変更など）。コードを書く前に、使用中のバージョンで対象 API が利用可能か・型が一致するかを確認する
+- **宣言的なウィンドウ属性（`focusable(false)` 等）で挙動を代替させる判断は、その属性を読む側の「全分岐」を確かめてから確定する。** tao はスタイル計算（`window_state.rs` の `to_window_styles`）で `!FOCUSABLE → WS_EX_NOACTIVATE` を付ける一方、`apply_diff` の `ShowWindow` 分岐は**別の条件**（`MARKER_DONT_FOCUS`・窓生成時に 1 回だけ立ち初回 show で消費）で `SW_SHOW`（活性化する）と `SW_SHOWNOACTIVATE` を選ぶ。前者だけ読んで「この属性で足りる」と結論すると、**クリックでは奪われないのに表示で奪われる**非対称を踏む（#646 PR2・実機スモークでのみ露見）。属性が効く経路と、同じフラグを読む他の経路は別物である
+- **tao の窓状態を迂回して生 Win32 で操作したら、その窓の同種操作はすべて迂回側へ寄せる。** `apply_diff` はフラグ差分がゼロなら早期 return し、`VISIBLE` を持たない窓には `SW_HIDE` を副作用で撃つ。片方だけ raw にすると「`hide()` が何もしない」「`set_always_on_top` で窓が消える」が同時に生まれる（#646 PR2 の `show_results_no_activate` / `hide_results` / `set_results_topmost` はこの理由で 3 点セット・より深い解は #671）
 - `webview2-com` は `windows-core 0.61` に依存するが、プロジェクトの `windows` クレート（v0.62）は `windows-core 0.62` を使う。`Interface::cast()` 等を呼ぶ際は `windows-core_0_61 = { package = "windows-core", version = "0.61" }` のエイリアス依存を使い、`use windows_core_0_61::Interface` とする
 - 必要な feature フラグ（`Win32_UI_WindowsAndMessaging` 等）が `Cargo.toml` に宣言されているか確認してから実装する
 - `UpdateWindow` など一部 API は windows クレートのバージョンによっては未提供。代替 API（`RedrawWindow` 等）の存在を事前に調べる

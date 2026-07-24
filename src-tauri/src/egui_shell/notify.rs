@@ -95,9 +95,12 @@ pub enum UpdaterPhase<U> {
     // version は toast() が Installing 局面で表示しない（update_installing は汎用文言・
     // 消費経路なし）ため保持しない。Available→Installing 遷移時に破棄する。
     Installing,
-    // 失敗の詳細は trace（egui_update_install_failed）だけが持つ。toast の行 1 は常に
-    // generic な update_failed 文言で、message は描画に一度も使われなかった（WebView2 も
-    // generic 表示ゆえ parity 影響なし）。使わない payload は型から落とす（#648 C）。
+    // egui 側の update_failed(l) は引数を取らず、message は描画に使われない dead payload
+    // だったため型から落とす（#648 C）。失敗の詳細は現状 trace（egui_update_install_failed）
+    // だけが持つ。**parity 注記: WebView2 は errorDetail を toast に描く（UpdateToast.tsx +
+    // MainApp.tsx の setUpdaterError）——egui の generic 固定表示はそれに対する既知の縮小差で
+    // あり、詳細表示が要れば strings 拡張になる**（Task 2 レビューが実測で検出・全称「parity
+    // 影響なし」は誤りだった）。
     InstallFailed,
 }
 

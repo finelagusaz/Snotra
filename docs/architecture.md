@@ -83,10 +83,11 @@ Tauri v2 バイナリ crate（パッケージ名 `snotra`）。検索 UI（`egui
 
 ### ウィンドウ管理
 
-- 検索ウィンドウは起動時に作成し `visible: false`、ホットキーで表示/非表示を切替
-- 検索バーと検索結果は単一 egui ウィンドウ内の描画（`egui_shell/view.rs`）
+- 検索ウィンドウ（`main`）と結果ウィンドウ（`results`）は起動時のセットアップで作成し `visible: false`、ホットキーで表示/非表示を切替（#646 PR2 で 2 窓構成へ）
+- 検索バーは `main`、検索結果は `results`（`egui_shell/view.rs` / `egui_shell/results_view.rs`）に分離して描画する。`results` は `focusable(false)` でフォーカスを取らない従属窓
 - 結果の表示/非表示は `search_state.rs` の純粋核（view 種別 = tool>folder>results の優先度射影 + indexing 表示ゲート）で制御
-- ウィンドウ高さは view が `compute_window_height` で算出し `set_size` する（view 単独 size writer）。show 時に bar_height（`font_size + bar_padding`・既定 43px）へリセットしてから結果に応じて拡張する
+- `main` の高さは `bar_height`（+ toast 表示時のみ加算）だけで、結果表示による伸縮はしない。`results` の高さは実件数フィット（`min(件数, max_results) × row_height + 8`）を `main` が算出し `set_size` する（view 単独 size writer・旧 `compute_window_height` は撤去済み）。show 時に bar_height（`font_size + bar_padding`・既定 43px）へリセットする
+- `results` の位置・可視性は `main` の毎フレーム更新（`drive_results_window`）が駆動する（`main` 直下 + `window_gap`・既定 4px）。両窓に DWM 角丸を適用（Windows 11 best-effort・Win10 は角丸なし）
 - マルチモニター: モニター作業領域原点からの相対座標（物理ピクセル）で位置を保存。ホットキー押下時にターゲットモニターを決定し絶対座標に変換
 
 ### 起動シーケンスと初期化順序
@@ -159,10 +160,11 @@ Tauri v2 バイナリ crate（パッケージ名 `snotra`）。検索 UI（`egui
 ```mermaid
 sequenceDiagram
     participant User
-    participant View as egui_shell/view.rs
+    participant View as egui_shell/view.rs (main)
     participant State as search_state.rs (純粋核)
     participant Eng as Engine (snotra-core)
     participant SE as SearchEngine
+    participant Results as egui_shell/results_view.rs (results 窓)
 
     User->>View: キー入力（TextEdit changed）
     View->>State: interpret(query)（モード判定）
@@ -174,13 +176,20 @@ sequenceDiagram
 
     SE-->>Eng: Vec<SearchResult>
     Eng-->>View: Vec<SearchResult>
-    View->>View: 結果リスト描画・compute_window_height → set_size
-    View->>View: icon worker spawn（load_icon_pngs → ColorImage → load_texture）
+    View->>View: results_window_height 算出 → results の位置/サイズ/表示を駆動（drive_results_window）
+    View->>Results: RowsSnapshot 発行（Arc<Mutex>）+ request_repaint
+    Results->>Results: スナップショット描画 + icon worker spawn（load_icon_pngs → ColorImage → load_texture、#646 PR2 で view.rs から移管）
+
+    Note over User,Results: クリックは逆方向フロー（results → main）
+    User->>Results: 行クリック
+    Results->>View: clicked index を共有スロットへ積む + main の egui::Context を request_repaint
+    View->>View: 次フレームで clicked を消費し起動（launch_item_core、起動ロジックは main に一元化）
 ```
 
 **補足**:
 - 検索は同期直 `Engine` 呼び（フレームコスト実測 p95 3.5ms/100k・#634）で、supersede/single-flight 機構は不要（同期モデルが並行性を消す・#532 SU3 の要石）
 - 非同期が残るのは folder 展開・アイコン抽出・起動の worker スレッドのみ。per-nav/per-launch channel + フレーム drain で最新のみ採用し、遅着は channel drop で構造的に消滅する
+- `results` は `focusable(false)` の従属窓のため、可視性・サイズ・位置の driver は常に `main` 側にある（hidden 窓は `update()` が走らないため自分では show できない・#646 PR2）
 
 ## 状態遷移（概要）
 

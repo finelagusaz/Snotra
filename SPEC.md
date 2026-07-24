@@ -168,24 +168,25 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 ### 4.5 最大列挙数
 
 - 設定で候補リストの最大表示件数を指定可能（デフォルト: 8）
-- 結果ウィンドウの高さは最大表示件数に基づく固定高とする。ヒット数が最大表示件数未満でも高さは維持され、超過時はスクロールバーを表示する
+- 結果ウィンドウ（`results`）の高さは実件数にフィットする（`min(表示件数, 最大表示件数) × 行高 + 8px`）。ヒット数が最大表示件数未満なら高さも小さくなり、超過時はスクロールバーを表示する（#646 PR2 決定7）
 
 ### 4.6 空クエリ時
 
 - 検索ボックスが空のときは候補を表示しない
 - 直近履歴は `/r` コマンドで明示的に表示する（§15.2 参照）
 
-### 4.7 結果表示制御（単一ウィンドウ）
+### 4.7 結果表示制御（2 窓構成）
 
-- 検索バーと検索結果は単一ウィンドウ内のコンポーネントとして共存する
-- 結果の表示/非表示は `shouldShowResults` メモシグナルで制御する。`results` が空なら非表示。ツール選択・フォルダ展開ビューはインデックス構築中でも表示し、通常結果ビューはインスタントコマンドモードまたは非インデックス時に表示する（2 軸モデル `viewKind()`/`interpKind()` から導出）
-- ウィンドウ高さは表示すべき結果に応じて view が算出し `set_size()` で動的に変更する（`compute_window_height`・view 単独 size writer）
-- show 時に毎回検索バー高さ（`font_size + bar_padding`・既定 43px）にリセットしてから結果に応じて拡張する（#646）
+- 検索バー窓（`main`）と検索結果窓（`results`）は分離した 2 つのウィンドウで構成する（#646 PR2）。`results` は `main` に従属し、フォーカスを取らない（§8.5 参照）
+- 結果の表示/非表示は `results` が空なら非表示。ツール選択・フォルダ展開ビューはインデックス構築中でも表示し、通常結果ビューはインスタントコマンドモードまたは非インデックス時に表示する（2 軸モデルから導出）
+- `main` の高さは `bar_height`（+ toast 表示時は `toast_height` 加算）のみで、結果表示による伸縮はしない。`results` の高さは実件数フィット（§4.5）で `main` が算出し `set_size()` する（旧 `compute_window_height` は撤去済み・#646 PR2 決定6/7）
+- show 時に毎回検索バー高さ（`font_size + bar_padding`・既定 43px）にリセットする。toast 表示時のみ `toast_height` を加算し、結果件数による `main` の伸縮はしない（#646 PR2 決定6）
 
 ### 4.8 マウス操作
 
 - ホバー: CSS `:hover` による視覚フィードバックのみ。`selected` 状態は変化しない
 - シングルクリック: アイテムを起動する（起動成功時にウィンドウを非表示にする）
+- 結果は `main` に従属する独立ウィンドウ（`results`）に描画され、フォーカスを取らない（`focusable(false)`）。クリック中も入力欄のキーボードフォーカスは継続する（§8.5 参照・#646 PR2 決定4）
 - ダブルクリック: 独立した挙動は持たない。単クリックが先に起動・非表示にするため、
   「ダブルクリックで選択のみ」は到達しない（as-built）
 - キーボードナビゲーション（Arrow ↑↓）とマウス操作は互いに干渉しない
@@ -378,7 +379,7 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 
 ### 8.2 ウィンドウ位置
 
-- 検索ウィンドウは検索バーの余白部分（padding 領域）をドラッグして移動可能
+- 検索ウィンドウ（`main`）は入力欄以外の全域をドラッグして移動可能（#646 PR2 決定10）。結果ウィンドウ（`results`）は `main` の直下に従属し追従する（§8.5 参照）
 - 移動位置をデバウンス保存し次回表示時に復元
 - 検索ウィンドウは位置を記憶（設定ウィンドウは別プロセスのため本体では管理しない）
 - `window.bin` にバイナリ形式で保存
@@ -396,8 +397,8 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 
 ### 8.3 タイトルバー
 
-- タイトルバーは常に非表示（`tauri.conf.json` の `"decorations": false`）
-- `data-tauri-drag-region` による検索バー余白ドラッグで移動
+- タイトルバーは常に非表示（`egui_shell::create` が `Window::builder(...).decorations(false)` を `main`/`results` 両窓に指定）
+- 入力欄以外の全域への `ui.interact` 検出 + `Window::start_dragging()`（tao `drag_window`）で移動（§8.2 参照。旧 WebView2 の `data-tauri-drag-region` は #532 SU7 のフロント撤去で消滅）
 
 ### 8.4 起動時表示制御
 
@@ -406,7 +407,7 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 
 ### 8.5 ウィンドウ生成とプロセス管理
 
-- 検索ウィンドウ（`main`）は起動時のセットアップで生成（`visible: false`）。検索バーと検索結果は単一ウィンドウ内のコンポーネントとして共存する
+- 検索ウィンドウ（`main`）と結果ウィンドウ（`results`）は起動時のセットアップで生成する（いずれも `visible: false`）。`results` は `focusable(false)` でフォーカスを取らない従属窓とし、可視性・サイズ・位置は `main` の毎フレーム更新（`drive_results_window`）が駆動する。`main` の hide 時は `results` も同時に隠す（§4.7・§8.2 参照・#646 PR2）
 - `about` / `settings` は別プロセス（`snotra-settings`）として起動。本体は `SettingsProcessState`（`Mutex<Option<Child>>`）で子プロセスを管理し、二重起動を防止する
 - `snotra-settings` 起動中は本体のメインウィンドウの `alwaysOnTop` を一時的に `false` にし、終了検知時に `true` に復元する
 - `platform/mod.rs` の Win32 メッセージループスレッドはウィンドウ生成より前に spawn し、Win32 初期化とウィンドウ生成を並列実行する（起動時間の短縮）
@@ -480,6 +481,7 @@ stateDiagram-v2
   （Escape / blur / ホットキー）は launching 中も成立し、成功時の自動 hide のみ
   起動完了後に行われる。表示時リセットで launching と一時通知はクリアされ、
   updater トースト（と dismissed）は維持される
+- 結果ウィンドウ（`results`）の表示/非表示は上図の状態ノードではなく、`SearchVisible` 内での結果件数（§4.7 の表示判定）に従属する直交軸である。窓の生成・hide 同期は §8.5 参照（#646 PR2）
 
 ## 9. 実行履歴メニュー
 
@@ -514,6 +516,7 @@ stateDiagram-v2
   - フォルダは末尾 `\` で区別
 - font_family は fontdb 解決で「ユーザーフォント優先 + Yu Gothic フォールバック」。既定 Segoe UI は混在行のベースライン整列を実測確認済み。ただし egui はフォント単位の粗い縦位置補正しか持たないため、非 MS フォント選択時は混在行でベースラインがずれうる（視覚スモークでのみ顕在化する受容残余・#532 SU4）
 - 検索入力欄は `font_size` に追従し hint は `hint_text_color` で描かれる。検索バー高さは `font_size + bar_padding`（既定 15+28=43px）、結果行高は `font_size + path行 + row_padding + 4`（下限 24px）。`row_padding` / `bar_padding` は `[visual]` の config キー（既定 6 / 28・#646）。極端な `font_size` では入力欄がバー内に収まらない（#643・#532 SU6.5）
+- 検索窓（`main`）と結果窓（`results`）は `window_gap`（既定 4px・`[visual]` の config キー・live-read）だけ離して配置し、両窓に DWM 角丸（`DWMWA_WINDOW_CORNER_PREFERENCE` = `DWMWCP_ROUND`）を適用する。Windows 11（build 22000+）でのみ有効な best-effort で、Windows 10 では角丸なしの矩形のまま残る（#646 PR2 決定4）
 
 ## 12. IME制御
 

@@ -60,11 +60,15 @@ pub struct Metrics {
 - `icon_textures` はテクスチャが egui Context(= 窓の renderer)従属のため `ResultsView` へ移管。main はアイコンを描かない
 - indexing 中の案内 overlay・instant/folder 行・`scroll_to_me` は描画ごと results 窓へ移動(挙動不変)
 
+> **errata(2026-07-25・PR2 実装時の判断)**: 上記「indexing 中の案内 overlay は results 窓へ移動」は実装しなかった。overlay の実物は検索バー(`TextEdit` rect)の上に描かれており、`main` に残るのが as-built(`view.rs` の `overlay_text` 節)。理由は overlay が物理的にバー上へ重ねて描く表現だったため、窓を分けると同じ見た目を results 側では再現できない。SPEC 側の記述は Task 7 で as-built(overlay は main に残置)へ同期済み
+
 ### 決定 6: 位置とライフサイクルは main 起点の従属
 
 - results の位置 = `main.outer_position + main 高さ + window_gap`。results view が毎フレーム突き合わせ、ずれたときだけ `set_position`(`last_set_height` と同型のデルタガード)。toast の出没でメインが伸びれば自然に追従する
 - 可視性: `show_results`(結果があり、かつ plain 非表示条件に当たらない)が true なら表示・false なら hide。メイン窓の高さは `bar_height (+ toast_height)` のみで、**結果による伸縮はしなくなる**
 - hide は現行 `hide_egui_main` 合流点で**両窓を隠す**(working set trim も同じ合流点のまま)。show は main のみ能動表示し、results は次フレームの `show_results` 判定に従う(reset-on-show でクエリ空 = 結果なし = 非表示)
+
+> **errata(2026-07-25・PR2 実装時の判断)**: 可視性・サイズ・位置の driver は常に `main` の `update()`(`drive_results_window`)である。理由は **hidden 窓は `update()` が走らない**(SU5 要石)ため、`results` は自分自身では show できない——毎フレーム走る `main` 側からのみ駆動できる。この制約は上記の記述から導出可能だが、明示していなかったため Task 7 で補記
 
 ### 決定 7: 結果窓の高さは実件数フィット(仕様変更・SPEC 同期)
 

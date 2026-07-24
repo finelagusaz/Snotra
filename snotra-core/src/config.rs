@@ -1163,6 +1163,33 @@ window_width = 600
         assert_eq!(VisualConfig::default().window_gap, 4);
     }
 
+    /// #646 PR1/PR2: `[visual]` セクション自体はあるが新キー(row_padding/bar_padding/
+    /// window_gap)が無い旧 config は、フィールド単位の serde default で読める。
+    /// `visual_padding_defaults_for_missing_keys` は `[visual]` セクションごと欠落する
+    /// ケースを検証しており、`Config.visual` の struct 級 `#[serde(default)]` 経由で
+    /// `VisualConfig::default()` に落ちるため、フィールド単位の `#[serde(default = "...")]`
+    /// 属性を検証していない(属性を外してもそちらのテストは通ってしまう)。
+    #[test]
+    fn visual_field_defaults_apply_when_section_present() {
+        let toml = r#"
+[hotkey]
+modifier = "alt"
+key = "q"
+[appearance]
+window_width = 600
+[visual]
+background_color = '#123456'
+[paths]
+"#;
+        let config: Config = toml::from_str(toml).expect("parse");
+        // 記載した既存キーが反映されている(struct 級 default に落ちていない証拠)。
+        assert_eq!(config.visual.background_color, "#123456");
+        // 記載していない新キーはフィールド単位の default が効く。
+        assert_eq!(config.visual.row_padding, 6);
+        assert_eq!(config.visual.bar_padding, 28);
+        assert_eq!(config.visual.window_gap, 4);
+    }
+
     #[test]
     fn deserialize_full_config() {
         let toml_str = r#"

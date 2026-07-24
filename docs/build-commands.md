@@ -102,6 +102,7 @@ cargo run -p snotra-egui-mvp     # Issue #532 egui MVP（WebViewなし・非配�
 cargo run -p snotra              # 製品メインウィンドウの egui 経路（要 SNOTRA_EGUI_MAIN=1・#532・WebView2 と並行。視覚スモークはこれ）
 npm run verify                   # Rust + フロントエンド一括検証（cargo check + npm run build）
 npm run smoke:startup             # 起動時ウィンドウ生成スモーク（trace検証）
+npm run measure:memory            # メモリ実測（PrivWS 軸・ツリー合算・#532 flip 基準 3）
 npm run e2e:tauri:setup           # Tauri Driver E2E 用セットアップ
 npm run e2e:tauri                 # Playwright + Tauri Driver E2E
 npm run tauri dev                # 開発実行（ホットリロード付き）

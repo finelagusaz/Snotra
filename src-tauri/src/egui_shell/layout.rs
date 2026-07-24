@@ -30,6 +30,24 @@ impl Metrics {
     }
 }
 
+/// main 窓の高さ(#646 PR2 決定 6)。bar(+toast)のみで結果に伸縮しない。
+#[allow(dead_code)] // Task 5 で view.rs から配線するまで未消費(ledger 申し送り)
+pub fn main_window_height(bar_height: f64, toast_height: Option<f64>) -> f64 {
+    bar_height + toast_height.unwrap_or(0.0)
+}
+
+/// 結果窓の高さ(#646 PR2 決定 7)。実件数フィット・上限 max_results・padding 8。
+/// 0 件は 0.0(呼び出し側が hide する契約)。
+#[allow(dead_code)] // Task 5 で view.rs から配線するまで未消費(ledger 申し送り)
+pub fn results_window_height(result_count: usize, max_results: u32, row_height: f64) -> f64 {
+    let n = result_count.min(max_results as usize);
+    if n == 0 {
+        0.0
+    } else {
+        n as f64 * row_height + 8.0
+    }
+}
+
 /// compute_window_height の入力。SU5 まで has_update_toast は常に false。
 pub struct HeightParams {
     pub show_results: bool,
@@ -192,5 +210,21 @@ mod tests {
     fn path_size_matches_row_theme_coefficient() {
         assert_eq!(path_size(8), 9.0);
         assert!((path_size(15) - 11.7).abs() < 1e-9);
+    }
+
+    /// #646 PR2 決定 6: main 窓は bar(+toast)のみで、結果による伸縮をしない。
+    #[test]
+    fn main_height_is_bar_plus_optional_toast() {
+        assert_eq!(main_window_height(43.0, None), 43.0);
+        assert_eq!(main_window_height(43.0, Some(43.0)), 86.0);
+    }
+
+    /// #646 PR2 決定 7: 結果窓は実件数フィット(上限 max_results)+ padding 8。
+    #[test]
+    fn results_height_fits_actual_count_capped_at_max() {
+        let row = 37.0;
+        assert_eq!(results_window_height(3, 8, row), 3.0 * row + 8.0); // 実件数
+        assert_eq!(results_window_height(20, 8, row), 8.0 * row + 8.0); // 上限で頭打ち
+        assert_eq!(results_window_height(0, 8, row), 0.0); // 0 件は非表示(高さ 0 = 呼び出し側で hide)
     }
 }

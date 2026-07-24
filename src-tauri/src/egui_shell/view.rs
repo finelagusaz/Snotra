@@ -328,6 +328,12 @@ impl SearchWindowView {
             let _ = tx.send(outcome); // 遅着（rx drop 済み）は Err で自然消滅（不変条件 1）
             egui_ctx.request_repaint(); // イベント駆動 runtime を起こす（folder/icon と同理由）
         });
+        // 状態を変えたら起こす（#648 A）。現状は「results クリア → 高さ collapse →
+        // set_size → Resized → repaint」の暗黙連鎖で初回 overlay と timeout 予約が
+        // 成立している（実測済）。連鎖は今日必ず成立するが、collapse をやめる類の将来変更で
+        // 切れると、可視のまま遅い起動をしたときに overlay も 4 秒通知も次の入力まで出ない。
+        // toast dismiss の同型バグ（SU5・e746826）と同じ規範で自己完結させる 1 行。
+        ctx.request_repaint();
     }
 
     /// drain が回収した結果の UI 後処理（成功列は M1/M3 同期版と同じ末尾へ合流）。
@@ -909,7 +915,9 @@ impl SearchWindowView {
         if selected {
             ui.painter().rect_filled(rect, 4.0, theme.selection);
             if scroll {
-                response.scroll_to_me(Some(egui::Align::Center)); // 選択変化時のみ（#632）
+                // 選択変化時のみ（#632）。None=可視化に必要な最小限だけ（WebView2 の
+                // block:"nearest" parity・Center だと中央維持で早期スクロール・#532 SU6.5）
+                response.scroll_to_me(None);
             }
         }
         // アイコン: show_icons=true のときのみ左 28px slot の中央に 16x16 を描く。欠落
@@ -1057,8 +1065,7 @@ impl SearchWindowView {
                         serde_json::json!({ "error": e.to_string() }),
                     );
                     if let Some(st) = handle.try_state::<crate::egui_shell::UpdaterUiState>() {
-                        st.0.lock().unwrap().phase =
-                            crate::egui_shell::UpdaterPhase::InstallFailed { message: e.to_string() };
+                        st.0.lock().unwrap().phase = crate::egui_shell::UpdaterPhase::InstallFailed;
                     }
                     crate::egui_shell::wake_view(&handle); // 可視中の失敗を即座に描く
                 }
@@ -1213,14 +1220,22 @@ impl EguiView for SearchWindowView {
             }
         }
 
-        // hotkey 登録失敗の pending 消費（spec 追補 2）。reset_pending 消費より後（順序不変条件）。
-        // 整形はここで lang() live-read——config-applied wake のフレームは update_config 後なので
-        // 言語同時変更でも新言語で整形される。hidden 中の失敗は次 show のこの消費で表示される
-        //（WebView2 は hidden 中に期限切れ・改善方向の受容差異・spec 追補 2）。
+        // hotkey 登録失敗の pending 消費（SU6 spec 追補 2 + #652）。reset_pending 消費より後
+        //（順序不変条件——reset の notice.clear() がこの set を消さないため）。整形はここで
+        // lang() live-read: config-applied wake のフレームは update_config 後なので言語同時
+        // 変更でも新言語で整形される。hidden 中の失敗は次 show のこの消費で表示される
+        //（WebView2 は hidden 中に期限切れ・改善方向の受容差異・SU6 spec 追補 2）。
         if let Some(sh) = self.app_handle.try_state::<crate::egui_shell::EguiShellState>()
-            && let Some(hk) = sh.pending_hotkey_failure.lock().unwrap().take()
+            && let Some((kind, hk)) = sh.pending_hotkey_failure.lock().unwrap().take()
         {
-            let msg = crate::egui_shell::ui_strings::hotkey_change_failed(self.lang(), &hk);
+            let msg = match kind {
+                crate::egui_shell::HotkeyFailureKind::Initial => {
+                    crate::egui_shell::ui_strings::hotkey_initial_failed(self.lang(), &hk)
+                }
+                crate::egui_shell::HotkeyFailureKind::Change => {
+                    crate::egui_shell::ui_strings::hotkey_change_failed(self.lang(), &hk)
+                }
+            };
             self.notice.set(msg, self.notice_base.elapsed(), crate::egui_shell::NOTICE_HOTKEY);
             ctx.request_repaint();
         }
@@ -1465,6 +1480,14 @@ impl EguiView for SearchWindowView {
         } else {
             self.state.query().to_string()
         };
+        // §11 Part C（#643）: 入力欄フォントを config `font_size` へ追従させ、hint を
+        // `hint_text_color` で描く。**バー高さ 52px は据え置く**——WebView2 の
+        // `--search-bar-height` も固定値で `--font-size` に連動せず（`global.css`）、
+        // `.search-input` が `font-size: inherit` で body の `--font-size` を受けるだけ。
+        // ゆえに「バー固定 + 入力欄フォントのみ追従」が parity である（SU6.5 決定 3）。
+        // 極端な font_size でバーからはみ出すのは WebView2 も同じ＝同じ壊れ方＝parity。
+        let bar_theme = self.row_theme();
+        let bar_font = egui::FontId::proportional(bar_theme.name_size);
         let response = ui.add(
             egui::TextEdit::singleline(&mut buf)
                 // §18.5 ツール選択中の入力は無効化。add_enabled（全体グレーアウト）でなく
@@ -1472,7 +1495,10 @@ impl EguiView for SearchWindowView {
                 // launching 中も同様に打鍵を止める（Escape/blur/Alt+Q・↑↓は従来どおり通す・
                 // spec 決定 3・4。↑↓は空リストゆえ自然 no-op）。
                 .interactive(!in_tool && self.launching.is_none())
-                .hint_text(hint)
+                .font(bar_font.clone())
+                .hint_text(
+                    egui::RichText::new(hint).font(bar_font).color(bar_theme.path_color),
+                )
                 .desired_width(f32::INFINITY),
         );
         if response.changed() {
@@ -1586,7 +1612,7 @@ impl EguiView for SearchWindowView {
                 crate::egui_shell::ToastKind::Installing => {
                     crate::egui_shell::ui_strings::update_installing(l).to_string()
                 }
-                crate::egui_shell::ToastKind::Failed { .. } => {
+                crate::egui_shell::ToastKind::Failed => {
                     crate::egui_shell::ui_strings::update_failed(l).to_string()
                 }
             };

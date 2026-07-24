@@ -690,6 +690,10 @@ fn main() {
                 // hotkey 登録失敗の pending 格納（spec 追補 2）。wake しない listener——
                 // wake は config-applied（言語変更同時発生時の競合窓を閉じる）に委ねる。
                 egui_shell::register_hotkey_failure_listener(&app_handle);
+                // 起動時 hotkey 登録失敗の受け口（#652）。RegisterInitialHotkey を送る
+                // setup_hotkey_listener より前に登録される位置なので emit を取りこぼさない
+                //（この egui ブロック自体が setup_platform_thread の直後・hotkey listener の前）。
+                egui_shell::register_platform_event_listener(&app_handle);
                 app.manage(egui_shell::UpdaterUiState(std::sync::Mutex::new(Default::default())));
                 egui_shell::spawn_update_check(&app_handle);
             }

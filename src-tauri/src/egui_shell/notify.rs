@@ -95,7 +95,13 @@ pub enum UpdaterPhase<U> {
     // version は toast() が Installing 局面で表示しない（update_installing は汎用文言・
     // 消費経路なし）ため保持しない。Available→Installing 遷移時に破棄する。
     Installing,
-    InstallFailed { message: String },
+    // egui 側の update_failed(l) は引数を取らず、message は描画に使われない dead payload
+    // だったため型から落とす（#648 C）。失敗の詳細は現状 trace（egui_update_install_failed）
+    // だけが持つ。**parity 注記: WebView2 は errorDetail を toast に描く（UpdateToast.tsx +
+    // MainApp.tsx の setUpdaterError）——egui の generic 固定表示はそれに対する既知の縮小差で
+    // あり、詳細表示が要れば strings 拡張になる**（Task 2 レビューが実測で検出・全称「parity
+    // 影響なし」は誤りだった）。
+    InstallFailed,
 }
 
 /// toast 1 行分の表示モデル（描画専用・U 非依存）。
@@ -113,7 +119,7 @@ pub struct ToastRow {
 pub enum ToastKind {
     Available { version: String },
     Installing,
-    Failed { message: String },
+    Failed,
 }
 
 /// updater toast の状態機械。dismiss/install の競合は本型のメソッド内で原子的に解決する
@@ -179,8 +185,8 @@ impl<U> UpdaterUi<U> {
                 show_install: true, // disabled で描く（WebView2: installing 中もボタンは見える）
                 buttons_enabled: false,
             }),
-            UpdaterPhase::InstallFailed { message } => Some(ToastRow {
-                kind: ToastKind::Failed { message: message.clone() },
+            UpdaterPhase::InstallFailed => Some(ToastRow {
+                kind: ToastKind::Failed,
                 show_install: false,
                 buttons_enabled: true,
             }),
@@ -259,7 +265,7 @@ mod tests {
         u.phase = UpdaterPhase::Installing;
         assert!(!u.dismiss(), "Installing 中の dismiss は拒否（WebView2 disabled parity）");
         assert!(u.toast().is_some(), "toast は出たまま");
-        u.phase = UpdaterPhase::InstallFailed { message: "e".into() };
+        u.phase = UpdaterPhase::InstallFailed;
         assert!(u.dismiss());
         assert!(u.toast().is_none(), "dismissed 後は導出も消える");
     }

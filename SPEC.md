@@ -362,7 +362,7 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 - 設定の読み込み失敗時の扱い（`config_watcher`）:
   - 内容破損（TOML parse 失敗・非 UTF-8）: 既定値を適用し `config.toml.bak` へ退避、トレイバルーンで通知
   - 一時的・環境的な失敗（権限/ロック/共有違反, `LoadOutcome::ReadFailed`）: まず短いバウンドリトライ（既定 3 回 × 150ms backoff）でロック解除を待ち、解けたら正規の変更を適用する（取りこぼし防止）。予算を使い切っても失敗する場合は **実行中の設定を維持し、何も適用しない**（既定値で上書きせず、再インデックスや履歴剪定も走らせない）。`config.toml` は無傷なので次の保存イベントでも回収される。live-read 化した履歴剪定が既定値で走るとデータ損失になるため（#348）
-- egui 経路（`SNOTRA_EGUI_MAIN`・#532 SU6）: config_watcher は適用完了後に `config-applied` を発火し、egui ウィンドウはこれを再描画の合図としてのみ消費する（値は運ばず、毎フレーム実行中 config を live-read）。`indexing-started` / `indexing-complete` も同様に合図として消費し、index build 完了世代（`index_generation`）の差分で現クエリを再検索する（§4.7・#633）。font_family・ウィンドウ幅・ネイティブ背景ブラシはフレーム内のエッジ検出で追従する。hotkey 登録失敗は `hotkey-registration-failed` の payload を保持し表示時に整形・通知する（§7.5 ホットキー項の egui parity）
+- egui 経路（`SNOTRA_EGUI_MAIN`・#532 SU6）: config_watcher は適用完了後に `config-applied` を発火し、egui ウィンドウはこれを再描画の合図としてのみ消費する（値は運ばず、毎フレーム実行中 config を live-read）。`indexing-started` / `indexing-complete` も同様に合図として消費し、index build 完了世代（`index_generation`）の差分で現クエリを再検索する（§4.7・#633）。font_family・ウィンドウ幅・ネイティブ背景ブラシはフレーム内のエッジ検出で追従する。hotkey 登録失敗は 2 経路とも受ける——設定変更時（`hotkey-registration-failed`）は payload を保持し次の表示時に整形・通知し、起動時（`platform-event` の `initial-hotkey-failed`）は §10 のとおり検索 UI を能動表示してから通知する（#652）
 
 ### 7.6 起動時ブートストラップ
 
@@ -517,6 +517,7 @@ stateDiagram-v2
   - 長いパスは中間セグメントを `...` で省略し、ウィンドウ幅に応じて自動調整
   - フォルダは末尾 `\` で区別
 - egui 経路（softbuffer）の font_family は fontdb 解決で「ユーザーフォント優先 + Yu Gothic フォールバック」（WebView2 CSS スタック parity）。既定 Segoe UI は混在行のベースライン整列を実測確認済み。ただし egui はフォント単位の粗い縦位置補正しか持たないため、非 MS フォント選択時は混在行でベースラインがずれうる（視覚スモークでのみ顕在化する受容残余・#532 SU4）
+- egui 経路の検索入力欄は `font_size` に追従し hint は `hint_text_color` で描かれる。**検索バー高さは 52px 固定**（WebView2 の `--search-bar-height` も `--font-size` に連動しない as-built の parity）。極端な `font_size` では入力欄がバー内に収まらないが、これは WebView2 経路と同挙動である（#643・#532 SU6.5）
 
 ## 12. IME制御
 

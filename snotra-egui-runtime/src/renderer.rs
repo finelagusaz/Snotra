@@ -50,6 +50,10 @@ impl EguiRenderer {
         if !is_renderable_extent(size.width, size.height) {
             return Ok(PaintOutcome::Skipped);
         }
+        // paint フェーズ計測（#628・#532 SU6.5 G3(b)）。env 未設定なら Instant も取らない
+        // ——常時 2 回の時刻取得を入れないため（計測器が測定対象を汚さない）。
+        let trace = std::env::var_os("SNOTRA_EGUI_PAINT_TRACE").is_some();
+        let t_begin = trace.then(std::time::Instant::now);
         let ppp = output.pixels_per_point;
 
         // texture delta（set）を CPU store へ。free は present 成否に依らず後で確定。
@@ -57,6 +61,7 @@ impl EguiRenderer {
             raster::apply_texture_delta(&mut self.textures, *id, delta);
         }
         let clipped = context.tessellate(output.shapes, ppp);
+        let t_tess = trace.then(std::time::Instant::now);
 
         self.surface
             .resize(
@@ -104,6 +109,7 @@ impl EguiRenderer {
                 ppp,
             );
         }
+        let t_raster = trace.then(std::time::Instant::now);
         // present は buffer を消費する。結果を保持し、free を present 成否に依らず処理する
         // （free は CPU 側 HashMap から除くだけ・不変条件⑤。present 失敗で free を落とさない）。
         let present_result = buffer.present().map_err(|e| RuntimeError::Present(e.to_string()));
@@ -111,6 +117,16 @@ impl EguiRenderer {
             self.textures.remove(id);
         }
         present_result?;
+        if let (Some(b), Some(t), Some(r)) = (t_begin, t_tess, t_raster) {
+            eprintln!(
+                "SNOTRA_EGUI_PAINT tess_ms={:.2} raster_ms={:.2} total_ms={:.2} meshes={} px={}",
+                (t - b).as_secs_f64() * 1000.0,
+                (r - t).as_secs_f64() * 1000.0,
+                b.elapsed().as_secs_f64() * 1000.0,
+                clipped.len(),
+                size.width as u64 * size.height as u64,
+            );
+        }
         Ok(PaintOutcome::Presented)
     }
 }

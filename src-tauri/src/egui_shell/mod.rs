@@ -40,6 +40,18 @@ use tauri::{Listener, Manager};
 
 use crate::egui_shell::view::SearchWindowView;
 
+/// hotkey 登録失敗の種別（#652）。文言キーが別（i18n.ts `notice.hotkey.*`）ゆえ
+/// pending に載せて view 側で整形を分岐する。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HotkeyFailureKind {
+    /// 起動時の初回登録失敗（`platform-event` / `initial-hotkey-failed`）。
+    /// SPEC §10 のとおり窓を能動表示してから通知する
+    /// （listener は `register_platform_event_listener`・#652 Task 4）。
+    Initial,
+    /// 設定変更による再登録失敗（`hotkey-registration-failed`）。旧ホットキーを維持。
+    Change,
+}
+
 /// egui 経路の show/hide を跨ぐ共有状態（managed state）。
 /// - hotkey_generation: alt 解放待ち show の世代。hide が bump して保留 show を無効化する（codex #5/(B)#2）。
 /// - hide_pending: view の emit dedup。show がクリアして「hide 後に Focused(true) が来ず抑止が残る」を断つ（codex #8）。
@@ -53,11 +65,15 @@ pub(crate) struct EguiShellState {
     /// hidden 中は次 show のフレームで toast が読まれるため repaint は可視中のみ意味を持つ
     /// （codex レビュー: 「hidden は次 show でよい」と「visible は repaint が要る」は別条件）。
     pub(crate) egui_ctx: Mutex<Option<egui::Context>>,
-    /// hotkey 登録失敗の pending payload（spec 追補 2）。config_watcher の
-    /// `hotkey-registration-failed` listener が格納し view が消費時に lang() live-read で整形する。
-    /// **この listener は wake しない**——wake は config-applied（update_config 後）だけにし、
-    /// 言語同時変更時に旧言語で整形する競合窓を閉じる（「language-changed が先」不変条件の egui 版）。
-    pub(crate) pending_hotkey_failure: Mutex<Option<String>>,
+    /// hotkey 登録失敗の pending payload（SU6 spec 追補 2 + #652）。種別ごとに文言が違う
+    /// ため `(kind, hotkey)` を保持し、view が消費時に lang() live-read で整形する。
+    /// **wake の有無は経路で異なる**——Change は wake しない（wake を config-applied に
+    /// 委ね、言語同時変更で旧言語整形になる競合窓を閉じる）。この競合窓が閉じる根拠は
+    /// `language-changed` が `hotkey-registration-failed` より先に発火する不変条件
+    /// （SPEC §7.5・`src-tauri/CLAUDE.md`「モジュール構成」の config_watcher.rs 不変条件・
+    /// egui 版でも順序は同じ）。Initial は wake する（config 変更が随伴せず config-applied
+    /// が来ないため・#652・SU6.5 決定 2）。
+    pub(crate) pending_hotkey_failure: Mutex<Option<(HotkeyFailureKind, String)>>,
 }
 
 /// updater toast の managed 状態（#532 SU5）。view が毎フレーム読む level-triggered
@@ -88,7 +104,9 @@ pub(crate) fn spawn_update_check(app: &tauri::AppHandle) {
     let mode = app
         .try_state::<crate::AppState>()
         .map(|s| s.engine.lock().unwrap().config().general.auto_update)
-        .unwrap_or(AutoUpdateMode::Full);
+        // AppState は setup 前に managed されるため実運用では到達不能。到達したら
+        // 「設定を読めていない」状態なので、勝手に更新を始めない Disabled へ倒す（#648 F）。
+        .unwrap_or(AutoUpdateMode::Disabled);
     if mode == AutoUpdateMode::Disabled {
         return;
     }
@@ -262,6 +280,13 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<crate::AppState>() {
         state.main_visible.store(false, Ordering::SeqCst);
     }
+    // hide 後に working set を trim する（WebView2 の suspend_and_trim_after_hide と対称・#532 SU6.5）。
+    // egui は WebView2 が無いので suspend は不要で、EmptyWorkingSet trim だけを当てる。EmptyWorkingSet は
+    // スレッド非依存ゆえこの context（イベントループ / listener）から直呼び可（src-tauri/CLAUDE.md
+    // 「working set の能動回収」）。trim されたページは show 時に OS が透過 re-fault する（逆操作不要・
+    // trim が hide 前後どちらで走っても無害）。egui 経路は WebView2 子孫を持たないが、子孫 BFS は
+    // 設定プロセス（snotra-settings.exe・存命中のみ）も巻き込みうる——trim は best-effort ゆえ無害。
+    crate::working_set::trim_idle_working_set(std::process::id());
     crate::trace_main("egui_hide:done", serde_json::json!({}));
 }
 
@@ -331,7 +356,43 @@ pub(crate) fn register_hotkey_failure_listener(app: &tauri::AppHandle) {
         // emit 側は String を渡すため payload は JSON 文字列（引用符付き）。
         let hotkey: String = serde_json::from_str(event.payload()).unwrap_or_default();
         if let Some(sh) = handle.try_state::<EguiShellState>() {
-            *sh.pending_hotkey_failure.lock().unwrap() = Some(hotkey);
+            *sh.pending_hotkey_failure.lock().unwrap() = Some((HotkeyFailureKind::Change, hotkey));
         }
+    });
+}
+
+/// 起動時 hotkey 登録失敗の受け口（#652・SU6.5 決定 2）。`platform-event` の
+/// `initial-hotkey-failed` を判別し、**格納 → show → wake** の順で処理する。
+///
+/// - **格納が先**: show が起こすフレームは reset-on-show の `notice.clear()` を通ってから
+///   pending を消費する（view の順序不変条件）。逆順にすると clear と store の間にフレームが
+///   挟まりうるため、通知が消えたまま二度と出ない。
+/// - **show する**: ホットキーが登録できていない＝ユーザーが窓を開く手段がトレイしか無い。
+///   SPEC §10「初回ホットキー登録失敗時は操作不能回避のため検索 UI を表示し」の実装で、
+///   WebView2 では `MainApp.tsx` の `win.show()` が担っている経路の egui 版。
+/// - **wake する**: `show_on_startup=true` で既に可視なら `show()` は再描画を生まない。
+///   `register_hotkey_failure_listener`（変更失敗）が wake しないのと**意図的に逆**——
+///   あちらは必ず `config-applied` が随伴するが、起動時失敗には config 変更が無く
+///   `config-applied` は来ない。ここで起こさないと「hidden 中は update() が走らない」
+///   不変条件（SU5）により通知が永遠に描かれない。
+pub(crate) fn register_platform_event_listener(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    app.listen("platform-event", move |event| {
+        let Ok(payload) = serde_json::from_str::<serde_json::Value>(event.payload()) else {
+            return;
+        };
+        if payload.get("event").and_then(|v| v.as_str()) != Some("initial-hotkey-failed") {
+            return;
+        }
+        let hotkey = payload
+            .get("hotkey")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        if let Some(sh) = handle.try_state::<EguiShellState>() {
+            *sh.pending_hotkey_failure.lock().unwrap() = Some((HotkeyFailureKind::Initial, hotkey));
+        }
+        show_egui_main(&handle, Instant::now());
+        wake_view(&handle);
     });
 }

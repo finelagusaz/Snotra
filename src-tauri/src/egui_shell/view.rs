@@ -146,6 +146,15 @@ pub(crate) struct SearchWindowView {
     search_debounce: Debouncer,
     last_input_at: Instant,
     last_set_height: f64,
+    /// SU6 spec 決定 2: 適用済み font_family。config 値と毎フレーム比較し差分で再ロード。
+    /// **解決の成否に依らず config 値へ無条件更新する**——未解決名（typo・未インストール）で
+    /// 毎フレーム load_system_fonts（数十 ms）が走る perf cliff を避ける（並行性レビュー）。
+    applied_font_family: String,
+    /// SU6 spec 決定 2: 適用済み native 背景ブラシ（hex 文字列）。painted panel は live-read だが
+    /// リサイズ時に露出する native surface の色は生成時ブラシ由来のため実行時追従が要る（codex 反証）。
+    applied_background_hex: String,
+    /// SU6 spec 決定 2: 直近 set_size の幅。view が唯一の size writer（幅は config live-read）。
+    last_set_width: f64,
     // query フィールドは SearchState.query へ移譲（削除）。
     // emit dedup は共有 EguiShellState.hide_pending（show がクリア・codex #8）。view-local には持たない。
     folder_tx: Sender<FolderMsg>,
@@ -196,6 +205,9 @@ impl SearchWindowView {
             search_debounce: Debouncer::new(Duration::from_millis(50), true),
             last_input_at: Instant::now(),
             last_set_height: 52.0,
+            applied_font_family: String::new(),
+            applied_background_hex: String::new(),
+            last_set_width: 0.0,
             folder_tx,
             folder_rx,
             icon_textures: std::collections::HashMap::new(),
@@ -656,16 +668,15 @@ impl SearchWindowView {
             .unwrap_or(snotra_core::config::Language::Ja)
     }
 
-    /// 現在のウィンドウ論理幅。set_size で高さのみ変え幅を維持するために読む
-    /// （M1 では幅は不変・SU2 が config から生成済み）。読めなければ 600.0 にフォールバック。
+    /// ウィンドウ論理幅は config live-read（SU6 spec 決定 2: **view が唯一の size writer**）。
+    /// 旧実装の inner_size() 読みは「幅を維持」だったが、config_watcher（notify スレッド）の幅
+    /// set_size と 2 次元 read-modify-write で潰し合う race の片翼だった——config を正本にすれば
+    /// cross-thread writer 自体が消える（初版 spec の watcher flag 分岐案は却下・並行性レビュー）。
+    /// なお flag ON では config_watcher の幅 set_size は get_webview_window=None で元々 no-op。
     fn window_width(&self) -> f64 {
         self.app_handle
-            .get_window("main")
-            .and_then(|w| {
-                w.inner_size()
-                    .ok()
-                    .map(|s| s.to_logical::<f64>(w.scale_factor().unwrap_or(1.0)).width)
-            })
+            .try_state::<crate::AppState>()
+            .map(|s| f64::from(s.engine.lock().unwrap().config().appearance.window_width))
             .unwrap_or(600.0)
     }
 
@@ -1152,6 +1163,7 @@ impl EguiView for SearchWindowView {
             .map(|s| s.engine.lock().unwrap().config().visual.font_family.clone())
             .unwrap_or_else(|| "Segoe UI".to_string());
         configure_japanese_font(context, &font_family);
+        self.applied_font_family = font_family;
         // updater check 完了時の wake-up 用（mod.rs spawn_update_check が読む・#532 SU5）。
         if let Some(sh) = self.app_handle.try_state::<crate::egui_shell::EguiShellState>()
             && let Ok(mut guard) = sh.egui_ctx.lock()
@@ -1198,11 +1210,17 @@ impl EguiView for SearchWindowView {
         }
 
         // §11: パネル/入力欄/選択色を config テーマから（ハードコード撤廃・runtime CLEAR_COLOR は不変）。
+        // font_family / native 背景ブラシのエッジ検出も同一 lock で読む（SU6 spec 決定 2・lock 1 回/フレーム）。
         if let Some(s) = self.app_handle.try_state::<crate::AppState>() {
-            let (bg, input_bg, sel) = {
+            let (bg, input_bg, sel, font_family) = {
                 let engine = s.engine.lock().unwrap();
                 let v = &engine.config().visual;
-                (v.background_color.clone(), v.input_background_color.clone(), v.selected_row_color.clone())
+                (
+                    v.background_color.clone(),
+                    v.input_background_color.clone(),
+                    v.selected_row_color.clone(),
+                    v.font_family.clone(),
+                )
             };
             let mut visuals = ctx.style_of(ctx.theme()).visuals.clone();
             visuals.panel_fill = hex_color(&bg, egui::Color32::from_rgb(0x28, 0x28, 0x28));
@@ -1210,6 +1228,24 @@ impl EguiView for SearchWindowView {
             visuals.extreme_bg_color = hex_color(&input_bg, egui::Color32::from_rgb(0x38, 0x38, 0x38)); // TextEdit 背景
             visuals.selection.bg_fill = hex_color(&sel, egui::Color32::from_rgb(0x33, 0x33, 0x33));
             ctx.set_visuals(visuals);
+
+            // SU6 spec 決定 2: font_family hot-reload（WebView2 の --font-family CSS 変数即時反映 parity）。
+            // applied は解決成否に依らず無条件更新（フィールド doc 参照）。
+            if font_family != self.applied_font_family {
+                self.applied_font_family = font_family.clone();
+                configure_japanese_font(&ctx, &font_family);
+                ctx.request_repaint(); // set_fonts は次フレーム適用——欠くと新フォントが 1 イベント遅れる
+            }
+
+            // SU6 spec 決定 2: native 背景ブラシ追従（生成時一度きり → 実行時変更へ・codex 反証）。
+            if bg != self.applied_background_hex {
+                self.applied_background_hex = bg.clone();
+                if let Some(window) = self.app_handle.get_window("main") {
+                    let color = crate::config_watcher::parse_hex_color(&bg)
+                        .unwrap_or(tauri::window::Color(0x28, 0x28, 0x28, 0xff));
+                    let _ = window.set_background_color(Some(color));
+                }
+            }
         }
 
         // 起動結果の回収（#631）。reset_pending 消費の後に置くこと（spec C 節 不変条件 2）。
@@ -1672,12 +1708,16 @@ impl EguiView for SearchWindowView {
             results_padding: 8.0,
             update_toast_height: 52.0,
         });
-        if (height - self.last_set_height).abs() > 0.5 {
+        // 幅は config live-read（SU6 spec 決定 2）。hidden 中の幅変更は wake 空振りでも、次 show の
+        // 初フレームでこの差分が検知して是正する（show_egui_main の inner_size 幅 52px collapse とは独立）。
+        let width = self.window_width();
+        if (height - self.last_set_height).abs() > 0.5 || (width - self.last_set_width).abs() > 0.5 {
             self.last_set_height = height;
+            self.last_set_width = width;
             if let Some(window) = self.app_handle.get_window("main") {
-                let _ = window.set_size(tauri::LogicalSize::new(self.window_width(), height));
+                let _ = window.set_size(tauri::LogicalSize::new(width, height));
             }
-            // 新サイズでの再描画を即要求し 1 フレームの空きを詰める（背景 0x282828 で
+            // 新サイズでの再描画を即要求し 1 フレームの空きを詰める（背景 config 色で
             // フラッシュは緩和済みだが空き自体が G-RESIZE のちらつき機構・advisor 指摘）。
             ui.ctx().request_repaint();
         }

@@ -1531,6 +1531,10 @@ impl EguiView for SearchWindowView {
                 selected: self.state.selected(),
                 show: show_results,
                 generation: self.snapshot_generation,
+                // 旧 view.rs の icon request ゲート `!self.search_debounce.is_armed()`（連打中は
+                // icon worker を積まない・perf 最適化）の後継。ResultsView は search_debounce を
+                // 持てないため、live 値を snapshot 経由で運ぶ（Task 5 concern 2 の fix・controller 依頼）。
+                settled: !self.search_debounce.is_armed(),
             };
             {
                 let mut guard = shared.snapshot.lock().unwrap();

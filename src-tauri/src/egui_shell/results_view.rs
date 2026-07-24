@@ -27,6 +27,13 @@ pub(crate) struct RowsSnapshot {
     /// 偶然 0 のまま」を検出できないため、この世代番号で ResultsView の scroll gate を
     /// 独立にリセットする。Default=0（PartialEq 比較にも自然に入る）。
     pub generation: u64,
+    /// main の `search_debounce` が非 armed（連打の trailing 窓の外）かどうか。旧実装（Task 5 移設前）
+    /// の `!self.search_debounce.is_armed()` ゲート（連打中は icon worker を積まない・perf 最適化）の
+    /// 後継——`ResultsView` は `search_debounce` を持てないため、main が代わりに live 値を snapshot に
+    /// 載せて運ぶ（#532 SU4 の系譜・controller fix 依頼）。Default=false（PartialEq 比較にも自然に
+    /// 入る。armed→settled の遷移だけで snapshot 差分が生まれ wake が 1 回走るのは「打鍵停止後に
+    /// アイコン要求を起こす」という意図どおりの信号）。
+    pub settled: bool,
 }
 
 /// main と results が共有する一方向フローの入れ物（managed state）。
@@ -444,7 +451,12 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         let visible: HashSet<String> = snapshot.rows.iter().map(|r| r.path.clone()).collect();
         retain_visible(&mut self.icon_textures, &visible);
         self.icon_missing.retain(|p| visible.contains(p));
-        self.request_icons_for_results(&snapshot.rows, &icon_ctx);
+        // snapshot.settled は旧 view.rs の `!self.search_debounce.is_armed()` ゲート（連打中は
+        // icon worker を積まない・perf 最適化）の後継（#532 SU4 の系譜）。main の search_debounce は
+        // ResultsView から参照できないため、live 値を snapshot 経由で運ぶ（Task 5 concern 2 の fix）。
+        if snapshot.settled {
+            self.request_icons_for_results(&snapshot.rows, &icon_ctx);
+        }
         // クリック逆流(決定 5): 共有スロットへ積み、main を起こして起動処理させる。
         // ToastAction と同じ遅延 dispatch 型——起動ロジックは main の一箇所に保つ。
         if let Some(i) = clicked {

@@ -161,17 +161,6 @@ pub(crate) struct SearchWindowView {
     // emit dedup は共有 EguiShellState.hide_pending（show がクリア・codex #8）。view-local には持たない。
     folder_tx: Sender<FolderMsg>,
     folder_rx: Receiver<FolderMsg>,
-    /// path→TextureHandle（セッション内保持。可視集合に頭打ち・#532 SU4）。
-    icon_textures: std::collections::HashMap<String, egui::TextureHandle>,
-    /// 抽出済みだが PNG 化できなかった/存在しない path（再抽出しない・SU4）。
-    icon_missing: std::collections::HashSet<String>,
-    /// worker へ渡し済みだが IconMsg 未 drain の path（in-flight）。request_icons_for_results の
-    /// wanted 収集から除外し、同一 settle に対する repaint 毎の重複 spawn を防ぐ（thread pileup 対策）。
-    /// drain 時（Loaded/Missing）に remove、reset_pending 消費時に clear。retain の対象外
-    /// （in-flight worker の結果が届くまで残す＝可視外へスクロールしても drain until remove）。
-    icon_pending: std::collections::HashSet<String>,
-    icon_tx: Sender<crate::egui_shell::IconMsg>,
-    icon_rx: Receiver<crate::egui_shell::IconMsg>,
     /// ナビゲーションでロードした (ctx, 全ソート済み) キャッシュ。打鍵フィルタの源（#532 SU3 M2）。
     folder_cache: Option<(FolderListContext, Vec<SearchResult>)>,
     /// 列挙失敗時の単一エラー行（filter を無視して表示）。
@@ -211,7 +200,6 @@ pub(crate) struct SearchWindowView {
 impl SearchWindowView {
     pub(crate) fn new(app_handle: tauri::AppHandle) -> Self {
         let (folder_tx, folder_rx) = channel();
-        let (icon_tx, icon_rx) = channel();
         Self {
             app_handle,
             was_focused: false,
@@ -225,11 +213,6 @@ impl SearchWindowView {
             last_set_width: 0.0,
             folder_tx,
             folder_rx,
-            icon_textures: std::collections::HashMap::new(),
-            icon_missing: std::collections::HashSet::new(),
-            icon_pending: std::collections::HashSet::new(),
-            icon_tx,
-            icon_rx,
             folder_cache: None,
             folder_error: None,
             instant_rows_query: None,
@@ -806,70 +789,6 @@ impl SearchWindowView {
         });
     }
 
-    /// 現結果集合の未取得アイコンを別スレッドで抽出し IconMsg を channel へ送る（SU4）。
-    /// folder の per-nav thread パターン踏襲。token は載せない（staleness は path キーで無害）。
-    /// show_icons=false 時は呼ばない（呼び出し側でガード）。
-    fn spawn_icon_load(&self, paths: Vec<String>, egui_ctx: egui::Context) {
-        if paths.is_empty() {
-            return;
-        }
-        let app = self.app_handle.clone();
-        let tx = self.icon_tx.clone();
-        std::thread::spawn(move || {
-            let (Some(state), Some(icons)) = (
-                app.try_state::<crate::AppState>(),
-                app.try_state::<crate::icon::IconCacheState>(),
-            ) else {
-                return;
-            };
-            let loaded = crate::commands::load_icon_pngs(&state, &icons, paths);
-            for (path, png) in loaded {
-                let msg = match png.and_then(|b| crate::egui_shell::png_to_color_image(&b)) {
-                    Some(img) => crate::egui_shell::IconMsg::Loaded(path, img),
-                    None => crate::egui_shell::IconMsg::Missing(path),
-                };
-                let _ = tx.send(msg);
-            }
-            egui_ctx.request_repaint(); // イベント駆動 runtime を起こす（folder と同理由）
-        });
-    }
-
-    /// show_icons を実行中 config から都度読む（キャッシュしない・#576 と同設計）。
-    fn show_icons(&self) -> bool {
-        self.app_handle
-            .try_state::<crate::AppState>()
-            .map(|s| s.engine.lock().unwrap().config().appearance.show_icons)
-            .unwrap_or(true)
-    }
-
-    /// 現結果の未取得アイコンを worker に積む（settled 相当・描画前に呼ぶ）。連打中は
-    /// debounce armed のため呼ばない（呼び出し側で is_armed ガード）。in-flight（icon_pending）
-    /// の path は除外し、抽出中の repaint（マウス移動・カーソル点滅等）による同一 path 集合への
-    /// 重複 spawn を防ぐ（thread pileup 対策）。spawn した path は icon_pending へ積み、
-    /// drain（Loaded/Missing）で remove する。wanted が空なら insert も spawn もしない。
-    fn request_icons_for_results(&mut self, ctx: &egui::Context) {
-        if !self.show_icons() {
-            return;
-        }
-        let mut wanted: Vec<String> = Vec::new();
-        for r in self.state.results() {
-            if !r.is_error
-                && crate::egui_shell::needs_extraction(&r.path, &self.icon_textures, &self.icon_missing)
-                && !self.icon_pending.contains(&r.path)
-                && !wanted.contains(&r.path)
-            {
-                wanted.push(r.path.clone());
-            }
-        }
-        if wanted.is_empty() {
-            return;
-        }
-        for p in &wanted {
-            self.icon_pending.insert(p.clone());
-        }
-        self.spawn_icon_load(wanted, ctx.clone());
-    }
-
     /// view_kind 先の同期 dispatch（#532 SU3 M2）。folder は cache/error を同期フィルタ、
     /// results は M1 の interp 分岐（plain 検索）。folder 打鍵が engine.search へ漏れない。
     /// prefix を内部で取得する薄いラッパー（trailing poll・folder drain 用）。changed エッジは
@@ -1108,10 +1027,9 @@ impl EguiView for SearchWindowView {
             self.search_debounce = Debouncer::new(Duration::from_millis(50), true);
             // scroll gate（#632: 再表示後に確実に一度 scroll し直す）は results 窓の
             // ResultsView::update() 側（実ゲート）に移設済み——main はもう読み書きしない。
-            // hide 中の常駐テクスチャを残さない（メモリ境界・SU4 決定 A）。
-            self.icon_textures.clear();
-            self.icon_missing.clear();
-            self.icon_pending.clear(); // in-flight 追跡も show 直後に全 clear（thread pileup 対策）
+            // icon パイプライン（icon_textures/icon_missing/icon_pending）も Task 5 で
+            // results 窓へ移設済み——main はもう保持しない。hide 中の常駐テクスチャは
+            // results 側の retain_visible が空 rows で自然に全クリアする（Task 5 申し送り）。
             // SU5: in-flight 起動と一時通知は show を跨がない（resetForShow の
             // setLaunching(false) + clearLaunchNotice parity）。rx ごと drop するため
             // hide 中に完了した遅着結果もここで自然消滅する（stale Ok が再 show 窓を
@@ -1237,28 +1155,6 @@ impl EguiView for SearchWindowView {
             }
             self.run_search(); // 現 folder_filter で即再フィルタ（ロード中打鍵の消失防止）
             ctx.request_repaint(); // 到着フレームを描く
-        }
-
-        // アイコン drain（token 無し・path キーで適用）。到着したら load_texture して map へ。
-        // load_texture は egui context 必須ゆえ、ここ（メインスレッドの update()）でのみ呼ぶ
-        // ——worker（spawn_icon_load）は ColorImage を送るだけで load_texture は呼ばない。
-        let mut icon_arrived = false;
-        while let Ok(msg) = self.icon_rx.try_recv() {
-            match msg {
-                crate::egui_shell::IconMsg::Loaded(path, img) => {
-                    self.icon_pending.remove(&path); // in-flight 解除（thread pileup 対策）
-                    let handle = ctx.load_texture(&path, img, egui::TextureOptions::LINEAR);
-                    self.icon_textures.insert(path, handle);
-                    icon_arrived = true;
-                }
-                crate::egui_shell::IconMsg::Missing(path) => {
-                    self.icon_pending.remove(&path); // in-flight 解除（thread pileup 対策）
-                    self.icon_missing.insert(path);
-                }
-            }
-        }
-        if icon_arrived {
-            ctx.request_repaint();
         }
 
         let focused = ctx.input(|i| i.focused);
@@ -1614,16 +1510,6 @@ impl EguiView for SearchWindowView {
                     self.activate_or_execute(self.state.selected(), &ctx);
                 }
             }
-        }
-
-        // アイコン: 可視集合（現結果）に頭打ちして drop（メモリ境界・SU4 決定 A）。連打中
-        // （debounce armed）は積まない——結果が確定してから worker へ回す（呼び出し側ガード）。
-        let visible: std::collections::HashSet<String> =
-            self.state.results().iter().map(|r| r.path.clone()).collect();
-        crate::egui_shell::retain_visible(&mut self.icon_textures, &visible);
-        self.icon_missing.retain(|p| visible.contains(p));
-        if !self.search_debounce.is_armed() {
-            self.request_icons_for_results(&ctx);
         }
 
         // 結果リスト（shouldShowResults 相当）。§4.7: 再インデックス中は plain 結果のみ隠す

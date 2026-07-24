@@ -8,10 +8,13 @@
 //! になる（復帰経路は Focused(true) のみ・runtime.rs）。hide は必ず外部（`hide_egui_main` /
 //! main の drive）の `window.hide()` で行う。
 
+use std::collections::{HashMap, HashSet};
+use std::sync::mpsc::{Receiver, Sender, channel};
+
 use snotra_core::ui_types::SearchResult;
 use tauri::Manager;
 
-use crate::egui_shell::EguiShellState;
+use crate::egui_shell::{EguiShellState, IconMsg, needs_extraction, retain_visible};
 
 /// main が毎フレーム発行する描画用スナップショット（spec 決定 5）。
 #[derive(Clone, Default, PartialEq)]
@@ -45,16 +48,93 @@ pub(crate) struct ResultsView {
     /// `RowsSnapshot.generation` との差分で「結果集合が総入れ替えされた」を検出し、
     /// `selected` の値が変わらない場合でも scroll gate を強制リセットする。
     last_generation: u64,
+    /// path→TextureHandle（セッション内保持。可視集合に頭打ち・#532 SU4。Task 5 で view.rs から
+    /// 本 view へ移設——TextureHandle は窓の Context 従属のため、行描画と同じ窓に置く）。
+    icon_textures: HashMap<String, egui::TextureHandle>,
+    /// 抽出済みだが PNG 化できなかった/存在しない path（再抽出しない・SU4）。
+    icon_missing: HashSet<String>,
+    /// worker へ渡し済みだが IconMsg 未 drain の path（in-flight）。request_icons_for_results の
+    /// wanted 収集から除外し、同一 settle に対する repaint 毎の重複 spawn を防ぐ（thread pileup
+    /// 対策）。drain 時（Loaded/Missing）に remove する。show=false 時の明示 clear は行わない
+    /// ——retain_visible が空 rows で textures/missing を自然に刈るのに合わせ、pending も次の
+    /// request_icons_for_results 呼び出し（wanted 収集）で自然に収束する（Task 5 申し送り）。
+    icon_pending: HashSet<String>,
+    icon_tx: Sender<IconMsg>,
+    icon_rx: Receiver<IconMsg>,
 }
 
 impl ResultsView {
     pub(crate) fn new(app_handle: tauri::AppHandle) -> Self {
+        let (icon_tx, icon_rx) = channel();
         Self {
             app_handle,
             applied_font_family: String::new(),
             last_scrolled_selected: None,
             last_generation: 0,
+            icon_textures: HashMap::new(),
+            icon_missing: HashSet::new(),
+            icon_pending: HashSet::new(),
+            icon_tx,
+            icon_rx,
         }
+    }
+
+    /// 現結果の未取得アイコンを worker に積む（settled 相当・描画前に呼ぶ）。in-flight
+    /// （icon_pending）の path は除外し、抽出中の repaint（マウス移動・カーソル点滅等）による
+    /// 同一 path 集合への重複 spawn を防ぐ（thread pileup 対策）。spawn した path は icon_pending
+    /// へ積み、drain（Loaded/Missing）で remove する。wanted が空なら insert も spawn もしない。
+    /// Task 5 で view.rs から移設し、入力を `self.state.results()` から `snapshot.rows` へ変更した
+    /// （本 view は snapshot を描くだけで検索状態を持たないため）。
+    fn request_icons_for_results(&mut self, rows: &[SearchResult], ctx: &egui::Context) {
+        if !show_icons(&self.app_handle) {
+            return;
+        }
+        let mut wanted: Vec<String> = Vec::new();
+        for r in rows {
+            if !r.is_error
+                && needs_extraction(&r.path, &self.icon_textures, &self.icon_missing)
+                && !self.icon_pending.contains(&r.path)
+                && !wanted.contains(&r.path)
+            {
+                wanted.push(r.path.clone());
+            }
+        }
+        if wanted.is_empty() {
+            return;
+        }
+        for p in &wanted {
+            self.icon_pending.insert(p.clone());
+        }
+        self.spawn_icon_load(wanted, ctx.clone());
+    }
+
+    /// 現結果集合の未取得アイコンを別スレッドで抽出し IconMsg を channel へ送る（SU4）。folder の
+    /// per-nav thread パターン踏襲。token は載せない（staleness は path キーで無害）。
+    /// show_icons=false 時は呼ばない（呼び出し側でガード）。Task 5 で view.rs から移設
+    /// （worker の wake は clone した results の ctx の `request_repaint()`・形は不変）。
+    fn spawn_icon_load(&self, paths: Vec<String>, egui_ctx: egui::Context) {
+        if paths.is_empty() {
+            return;
+        }
+        let app = self.app_handle.clone();
+        let tx = self.icon_tx.clone();
+        std::thread::spawn(move || {
+            let (Some(state), Some(icons)) = (
+                app.try_state::<crate::AppState>(),
+                app.try_state::<crate::icon::IconCacheState>(),
+            ) else {
+                return;
+            };
+            let loaded = crate::commands::load_icon_pngs(&state, &icons, paths);
+            for (path, png) in loaded {
+                let msg = match png.and_then(|b| crate::egui_shell::png_to_color_image(&b)) {
+                    Some(img) => IconMsg::Loaded(path, img),
+                    None => IconMsg::Missing(path),
+                };
+                let _ = tx.send(msg);
+            }
+            egui_ctx.request_repaint(); // イベント駆動 runtime を起こす（folder/main と同理由）
+        });
     }
 }
 
@@ -82,6 +162,14 @@ pub(crate) fn row_theme(app: &tauri::AppHandle) -> RowTheme {
 /// `#RRGGBB` 文字列を Color32 へ。失敗時は fallback（release は panic=abort ゆえ unwrap しない）。
 fn hex_color(s: &str, fallback: egui::Color32) -> egui::Color32 {
     egui::Color32::from_hex(s).unwrap_or(fallback)
+}
+
+/// show_icons を実行中 config から都度読む（キャッシュしない・#576 と同設計）。view.rs のメソッドを
+/// Task 5 で自由関数化して移設（本 view は検索状態を持たず、config live-read だけで完結するため）。
+fn show_icons(app: &tauri::AppHandle) -> bool {
+    app.try_state::<crate::AppState>()
+        .map(|s| s.engine.lock().unwrap().config().appearance.show_icons)
+        .unwrap_or(true)
 }
 
 /// 1 行を描画。selected かつ scroll なら scroll_to_me（選択変化時のみ・#632）。返り値:
@@ -259,7 +347,12 @@ impl snotra_egui_runtime::EguiView for ResultsView {
     }
 
     fn update(&mut self, ui: &mut egui::Ui, _frame: &mut snotra_egui_runtime::RuntimeFrame) {
-        let Some(shared) = self.app_handle.try_state::<ResultsShared>() else {
+        // app_handle を clone してから State を取る: `shared` の借用を `self.app_handle`
+        // （＝self 全体）ではなくこのローカル変数に結び付け、後段の `self.request_icons_for_results`
+        // （&mut self）呼び出しと `shared` の同時生存を両立させる（Task 5 で挿入した icon
+        // パイプライン呼び出しが E0502 を起こしたための整理）。
+        let app_handle = self.app_handle.clone();
+        let Some(shared) = app_handle.try_state::<ResultsShared>() else {
             return;
         };
         let snapshot = shared.snapshot.lock().unwrap().clone();
@@ -284,7 +377,31 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         }
         let theme = row_theme(&self.app_handle);
         let metrics = crate::egui_shell::read_metrics(&self.app_handle);
-        let show_icons = false; // Task 5 でアイコン移設(この Task は placeholder 描画)
+        let show_icons = show_icons(&self.app_handle);
+        // アイコン drain（token 無し・path キーで適用）。到着したら load_texture して map へ。
+        // load_texture は egui context 必須ゆえ、ここ（results の update()・自窓 ctx）でのみ呼ぶ
+        // ——worker（spawn_icon_load）は ColorImage を送るだけで load_texture は呼ばない。Task 5 で
+        // main（view.rs）から本 view へ移設: TextureHandle は窓の Context 従属のため、行描画と
+        // 同じ窓に置く。
+        let icon_ctx = ui.ctx().clone();
+        let mut icon_arrived = false;
+        while let Ok(msg) = self.icon_rx.try_recv() {
+            match msg {
+                IconMsg::Loaded(path, img) => {
+                    self.icon_pending.remove(&path); // in-flight 解除（thread pileup 対策）
+                    let handle = icon_ctx.load_texture(&path, img, egui::TextureOptions::LINEAR);
+                    self.icon_textures.insert(path, handle);
+                    icon_arrived = true;
+                }
+                IconMsg::Missing(path) => {
+                    self.icon_pending.remove(&path); // in-flight 解除（thread pileup 対策）
+                    self.icon_missing.insert(path);
+                }
+            }
+        }
+        if icon_arrived {
+            icon_ctx.request_repaint();
+        }
         // #632 reviewer Important 3 の後継（Fix 3）: 結果集合が総入れ替えされた（main が
         // snapshot_generation を進めた）フレームは、selected の値が変わらなくても scroll gate を
         // 強制リセットする——selected のみの比較では「打鍵で結果が丸ごと変わったが selected は
@@ -304,7 +421,7 @@ impl snotra_egui_runtime::EguiView for ResultsView {
                     result,
                     sel,
                     sel && do_scroll,
-                    None, // icon: Task 5 まで常に placeholder
+                    self.icon_textures.get(&result.path),
                     show_icons,
                     &theme,
                     metrics.row_height as f32,
@@ -316,6 +433,18 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         if do_scroll {
             self.last_scrolled_selected = Some(snapshot.selected);
         }
+        // アイコン: 可視集合（このフレームで実際に描画した rows）に頭打ちして drop（メモリ境界・
+        // SU4 決定 A）。Task 5 で main（view.rs）から本 view へ移設。この一連の処理は
+        // update() 冒頭の早期 return（!snapshot.show）を通過したフレーム、すなわち results
+        // 可視中にしか走らない——旧実装（main 側）は show_results の真偽に関係なく毎フレーム
+        // 走っていた（隠れていても先読み）。reindexing 明けの再表示でアイコンが一瞬
+        // placeholder → 追いつく体感になりうるが、クラッシュ・不整合ではなく hidden 中の
+        // update 停止（SU5 要石）と整合する自然な帰結として受容する（plan-review rev-egui
+        // 指摘・受容）。
+        let visible: HashSet<String> = snapshot.rows.iter().map(|r| r.path.clone()).collect();
+        retain_visible(&mut self.icon_textures, &visible);
+        self.icon_missing.retain(|p| visible.contains(p));
+        self.request_icons_for_results(&snapshot.rows, &icon_ctx);
         // クリック逆流(決定 5): 共有スロットへ積み、main を起こして起動処理させる。
         // ToastAction と同じ遅延 dispatch 型——起動ロジックは main の一箇所に保つ。
         if let Some(i) = clicked {

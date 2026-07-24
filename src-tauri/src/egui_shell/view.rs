@@ -357,10 +357,10 @@ impl SearchWindowView {
                     self.emit_hide();
                 }
             },
-            LaunchStatus::Failed | LaunchStatus::Timeout => {
+            LaunchStatus::Failed => {
                 // 失敗: hide しない・同期 run_search で結果を再取得（runRefresh parity）+ 一時通知。
-                // Timeout ステータスがここへ来るのは core が同期 Timeout を返す場合のみ
-                // （drain 側の 4 秒は Empty 経路で扱う）。文言は失敗系で扱う。
+                // 旧 Timeout ステータスは IPC の run_launch_blocking 専用で #532 SU7 PR3 で消滅
+                // （drain 側の 4 秒 timeout は Empty 経路で扱う）。
                 let detail = outcome
                     .message
                     .as_deref()
@@ -460,8 +460,8 @@ impl SearchWindowView {
                 }
             }
             SlashCmd::Quit => {
-                // quit_app（commands/system.rs）と同一実体: exit-requested listener が
-                // history/icon flush → exit（main.rs）。egui 経路も同じ合流点を使う。
+                // exit-requested listener（main.rs）が history/icon flush → exit する
+                // 唯一の終了合流点。トレイの終了メニューと同じ経路。
                 let _ = app.emit("exit-requested", ());
             }
         }
@@ -469,9 +469,9 @@ impl SearchWindowView {
 
     /// 選択中の instant コマンドの action を抽出し worker へ投げる（§19.6・#631 async 化）。
     /// action 抽出はここ（UI スレッド・engine ロック内）で行い、clipboard 読み + 実行は
-    /// `start_launch` の worker スレッド側（IPC の execute_instant_command と同じ手順・
-    /// action 抽出をロック内・clipboard 読みをロック外）。instant は履歴を記録しない
-    /// （IPC 経路 parity）。成功/失敗の後処理は `finish_launch` へ合流。
+    /// `start_launch` の worker スレッド側（action 抽出をロック内・clipboard 読みをロック外
+    /// ——`execute_instant_action_core` の契約）。instant は履歴を記録しない（§19.6）。
+    /// 成功/失敗の後処理は `finish_launch` へ合流。
     fn execute_instant_selected(&mut self, index: usize, instant_query: &str, ctx: &egui::Context) {
         let Some(sel) = self.state.results().get(index) else { return };
         if sel.is_error {
@@ -562,9 +562,9 @@ impl SearchWindowView {
     }
 
     /// ツール選択中の起動（§18.4）。行 index で tools を照合（同一 exe でも引数違いを区別・
-    /// パス文字列照合は禁止＝ui ルールと同根）。成功時は IPC `launch_with_tool` と同じく
-    /// launch_query で履歴記録 → 全クリア + hide（§19.6 instant の完了列と同型。reset は
-    /// tool/folder/gen 込みで in-flight folder ロードも失効させる）。
+    /// パス文字列照合は禁止）。成功時は launch_query で履歴記録 → 全クリア + hide
+    /// （§19.6 instant の完了列と同型。reset は tool/folder/gen 込みで in-flight folder
+    /// ロードも失効させる）。
     fn execute_tool_selected(&mut self, index: usize, ctx: &egui::Context) {
         let Some((target_path, launch_query, tool)) = self.state.tool_frame().and_then(|f| {
             f.tools
@@ -586,10 +586,9 @@ impl SearchWindowView {
         );
     }
 
-    /// フォルダ展開を履歴に記録する（IPC コマンド `commands/system.rs:record_folder_expansion`
-    /// と同一パターン：lock → record → prepare_history_save_if_dirty → drop → save。egui 経路は
-    /// IPC を経由しないため、driver（本 view）から SolidJS の `enterFolderExpansion` と同じ
-    /// 呼び出しサイトを再現する（→ 展開時のみ・← の折り返し `navigateFolderUp` 相当では呼ばない）。
+    /// フォルダ展開を履歴に記録する（`record_and_save` と同一パターン:
+    /// lock → record → prepare_history_save_if_dirty → drop → save）。
+    /// 呼び出しサイトは → の展開時のみ（← の親フォルダへの折り返しでは呼ばない・§4.6）。
     fn record_folder_expansion(&self, dir: &str) {
         let Some(state) = self.app_handle.try_state::<crate::AppState>() else {
             return;

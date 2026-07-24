@@ -1,5 +1,5 @@
-//! egui/softbuffer メインウィンドウの外殻（#532 SU2）。WebView2 と並行する
-//! egui 専用 window 生成・show/hide・blur 自動非表示・位置永続。WebView2 経路は触らない。
+//! egui/softbuffer メインウィンドウの外殻（#532 SU2〜SU7・唯一の UI 経路）。
+//! window 生成・show/hide・blur 自動非表示・位置永続。
 mod icon_textures;
 mod lifecycle;
 mod search_state;
@@ -69,10 +69,10 @@ pub(crate) struct EguiShellState {
     /// ため `(kind, hotkey)` を保持し、view が消費時に lang() live-read で整形する。
     /// **wake の有無は経路で異なる**——Change は wake しない（wake を config-applied に
     /// 委ね、言語同時変更で旧言語整形になる競合窓を閉じる）。この競合窓が閉じる根拠は
-    /// `language-changed` が `hotkey-registration-failed` より先に発火する不変条件
-    /// （SPEC §7.5・`src-tauri/CLAUDE.md`「モジュール構成」の config_watcher.rs 不変条件・
-    /// egui 版でも順序は同じ）。Initial は wake する（config 変更が随伴せず config-applied
-    /// が来ないため・#652・SU6.5 決定 2）。
+    /// `apply_config_change` が engine への `update_config` 適用**後**に `config-applied` を
+    /// emit する順序——wake 時の lang() live-read は必ず新言語を読む（旧 `language-changed`
+    /// 先行発火の不変条件は #532 SU7 の emit 削除で消滅し、この順序が後継の根拠）。
+    /// Initial は wake する（config 変更が随伴せず config-applied が来ないため・#652・SU6.5 決定 2）。
     pub(crate) pending_hotkey_failure: Mutex<Option<(HotkeyFailureKind, String)>>,
 }
 
@@ -280,7 +280,7 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<crate::AppState>() {
         state.main_visible.store(false, Ordering::SeqCst);
     }
-    // hide 後に working set を trim する（notify_main_hidden 経路と同一操作・#532 SU6.5）。
+    // hide 後に working set を trim する（全 hide 経路の合流点＝ここが唯一の呼び出し元・#532 SU6.5）。
     // EmptyWorkingSet はスレッド非依存ゆえこの context（イベントループ / listener）から直呼び可
     // （src-tauri/CLAUDE.md「working set の能動回収」）。trim されたページは show 時に OS が透過
     // re-fault する（逆操作不要・trim が hide 前後どちらで走っても無害）。子孫 BFS は設定プロセス
@@ -289,9 +289,8 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
     crate::trace_main("egui_hide:done", serde_json::json!({}));
 }
 
-/// 現在の物理位置をターゲットモニター作業領域原点からの相対座標で window.bin に保存。
-/// WebView2 の save_relative_placement（commands/window.rs）と同じ算出を &Window で行う
-/// （別モジュールの private fn は参照できないため複製・WebView2 側は不変）。
+/// 現在の物理位置をターゲットモニター作業領域原点からの相対座標で window.bin に保存
+/// （旧 WebView2 の save_relative_placement と同じ算出・#532 SU7 で唯一の保存経路）。
 pub(crate) fn save_placement_relative(window: &tauri::Window) {
     let Ok(pos) = window.outer_position() else {
         return;

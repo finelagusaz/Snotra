@@ -19,7 +19,6 @@ import {
   combineStreams,
   takeLines,
   buildSection,
-  resolveTscBin,
   buildEnvelope,
 } from "./post-edit.mjs";
 
@@ -27,49 +26,27 @@ import {
 // リテラルパスは path.relative の挙動差で落ちる。パスは必ず path.join / tmpdir から組み立てる。
 
 describe("selectChecks", () => {
-  // §5: 発火条件は tsconfig の include - exclude と一致しなければならない
-  it("ui/src の非テスト .ts は typecheck", () => {
-    expect(selectChecks("ui/src/api.ts")).toEqual(["typecheck"]);
+  // TS 型検査は #532 SU7 のフロント撤去で消滅（tsconfig ごと削除）。.ts/.tsx は
+  // どのパスでも検査を発火しない——発火すると存在しない tsc を探して HOOK ERROR になる。
+  // 「何も走らない」ことは統合テスト §5（情報行）が沈黙と区別する。
+  it("ui/src の .ts/.tsx は何も発火しない（#532 SU7 撤去済み）", () => {
+    expect(selectChecks("ui/src/api.ts")).toEqual([]);
+    expect(selectChecks("ui/src/components/SearchWindow.tsx")).toEqual([]);
+    expect(selectChecks("ui/src/lib/i18n.test.ts")).toEqual([]);
   });
 
-  it("ui/src の非テスト .tsx は typecheck", () => {
-    expect(selectChecks("ui/src/components/SearchWindow.tsx")).toEqual(["typecheck"]);
-  });
-
-  it("ui/src の .d.ts は typecheck（program に含まれる）", () => {
-    expect(selectChecks("ui/src/vite-env.d.ts")).toEqual(["typecheck"]);
-  });
-
-  it("テストファイルも typecheck（#474 で exclude を撤廃）", () => {
-    expect(selectChecks("ui/src/lib/i18n.test.ts")).toEqual(["typecheck"]);
-  });
-
-  // I19: 深さ 0 の実在ファイル。「1 段以上のディレクトリ」を要求する正規表現で書くと
-  // ここだけ発火しなくなり、§5（発火するが検査されない）が再現する。
-  it("深さ 0 のテストファイルも typecheck（ui/src/MainApp.test.tsx）", () => {
-    expect(selectChecks("ui/src/MainApp.test.tsx")).toEqual(["typecheck"]);
-  });
-
-  // #532 SU7 flip: e2e/ と playwright.tauri.config.ts は WebView2 撤去と同時に消滅。
-  // tsconfig include からも外れたため typecheck は発火しない（発火すると program 外の
-  // 編集で「検査が通った」と沈黙する false green になる）。
   it("e2e の .ts は typecheck を発火しない（#532 SU7 で撤去済み）", () => {
     expect(selectChecks("e2e/tauri.slash.e2e.ts")).toEqual([]);
   });
 
-  it("ルートの設定 .ts は typecheck（include が名指しする 2 ファイル）", () => {
-    expect(selectChecks("vite.config.ts")).toEqual(["typecheck"]);
+  it("ルートの設定 .ts / 旧 tsconfig.json は typecheck を発火しない", () => {
+    expect(selectChecks("vite.config.ts")).toEqual([]);
     expect(selectChecks("playwright.tauri.config.ts")).toEqual([]);
+    expect(selectChecks("tsconfig.json")).toEqual([]);
   });
 
-  // #497: 「検査の定義を変えるファイル」も検査集合に載せる。hook-selftest が走ることで、
-  // その定義と selectChecks の前提が一致しているかをカナリアが検証する。
-  it("tsconfig.json は typecheck + hook-selftest（定義とカナリアの両方）", () => {
-    expect(selectChecks("tsconfig.json")).toEqual(["typecheck", "hook-selftest"]);
-  });
-
-  it("vitest.config.ts は typecheck + hook-selftest（検査の実行範囲を定義する）", () => {
-    expect(selectChecks("vitest.config.ts")).toEqual(["typecheck", "hook-selftest"]);
+  it("vitest.config.ts は hook-selftest（検査の実行範囲を定義する）", () => {
+    expect(selectChecks("vitest.config.ts")).toEqual(["hook-selftest"]);
   });
 
   it("package.json は hook-selftest（prepare が Layer 1 を bootstrap する）", () => {
@@ -150,13 +127,11 @@ describe("selectChecks", () => {
     expect(selectChecks("src-tauri/build.rs")).toEqual(["clippy", "tauri-test"]);
   });
 
-  it("src-tauri/tauri.conf.json は config-warn + csp-test", () => {
-    expect(selectChecks("src-tauri/tauri.conf.json")).toEqual(["config-warn", "csp-test"]);
+  it("src-tauri/tauri.conf.json は config-warn のみ（csp-test は #532 SU7 で撤去済み）", () => {
+    expect(selectChecks("src-tauri/tauri.conf.json")).toEqual(["config-warn"]);
   });
 
-  // csp-test は完全一致のみ。CSP 契約テストが読まないファイルの編集で
-  // 「検査が通った」と沈黙させない（入力集合の両方向検算）。
-  it("深い階層の tauri.conf.json は config-warn のみ（負例）", () => {
+  it("深い階層の tauri.conf.json も config-warn のみ", () => {
     expect(selectChecks("foo/tauri.conf.json")).toEqual(["config-warn"]);
   });
 
@@ -175,11 +150,9 @@ describe("selectChecks", () => {
     expect(selectChecks(".claude/settings.local.json")).toEqual([]);
   });
 
-  // tsconfig の include はディレクトリ展開で .mts / .cts も program に入れる。
-  // 「沈黙 = 合格」の下では、拾い漏らしは安全側ではなく false green になる。
-  it("ui/src の .mts / .cts も typecheck 対象", () => {
-    expect(selectChecks("ui/src/lib/x.mts")).toEqual(["typecheck"]);
-    expect(selectChecks("ui/src/lib/x.cts")).toEqual(["typecheck"]);
+  it("ui/src の .mts / .cts も何も発火しない（#532 SU7 撤去済み）", () => {
+    expect(selectChecks("ui/src/lib/x.mts")).toEqual([]);
+    expect(selectChecks("ui/src/lib/x.cts")).toEqual([]);
   });
 
   it("ドキュメントは何も発火しない", () => {
@@ -195,9 +168,8 @@ describe("isSourceFileWrite — 新規ソース Write の索引 reminder（#629/
     expect(isSourceFileWrite("snotra-core/src/foo.rs", "Write")).toBe(true);
   });
 
-  it("Write された ui/src の TS は真（e2e/ は #532 SU7 で撤去済み・偽）", () => {
-    expect(isSourceFileWrite("ui/src/lib/x.ts", "Write")).toBe(true);
-    expect(isSourceFileWrite("ui/src/components/Foo.tsx", "Write")).toBe(true);
+  it("TS の Write は偽（フロントは #532 SU7 で撤去済み・索引 reminder は .rs のみ）", () => {
+    expect(isSourceFileWrite("ui/src/lib/x.ts", "Write")).toBe(false);
     expect(isSourceFileWrite("e2e/foo.e2e.ts", "Write")).toBe(false);
   });
 
@@ -340,37 +312,6 @@ describe("resolveRoot / findUp", () => {
   });
 });
 
-describe("resolveTscBin — I17 順序依存の沈黙", () => {
-  let tmp;
-  const TSC_REL = path.join("node_modules", "typescript", "bin", "tsc");
-
-  beforeAll(() => {
-    tmp = mkdtempSync(path.join(tmpdir(), "post-edit-tsc-"));
-    // 上位ツリーに本物の tsc
-    mkdirSync(path.join(tmp, "outer", "node_modules", "typescript", "bin"), { recursive: true });
-    writeFileSync(path.join(tmp, "outer", TSC_REL), "// tsc");
-    // 内側の worktree。Phase 3 後、tsc 自身が buildinfo を書くときに
-    // <worktree>/node_modules/.cache を作るため、空の node_modules が生える。
-    mkdirSync(path.join(tmp, "outer", "wt", "node_modules", ".cache"), { recursive: true });
-  });
-
-  afterAll(() => rmSync(tmp, { recursive: true, force: true }));
-
-  it("上位ツリーの tsc を見つける", () => {
-    expect(resolveTscBin(path.join(tmp, "outer"))).toBe(path.join(tmp, "outer", TSC_REL));
-  });
-
-  // node_modules ディレクトリの存在で判定すると、2 回目以降は hook 自身が作った
-  // 空ディレクトリで探索が止まる。しかも ENOENT ではなく「候補なし」なので
-  // HOOK ERROR にも捕捉されず沈黙する。必ずフルパスで probe すること。
-  it("root 直下に空の node_modules があっても上位の tsc を見つける", () => {
-    expect(resolveTscBin(path.join(tmp, "outer", "wt"))).toBe(path.join(tmp, "outer", TSC_REL));
-  });
-
-  it("どこにも無ければ null", () => {
-    expect(resolveTscBin(tmp)).toBeNull();
-  });
-});
 
 describe("stripProgressLines — I14", () => {
   it("cargo の進捗行を落とし、診断を残す", () => {
@@ -512,11 +453,11 @@ describe("resolveTarget — main() と同じ配線を通る", () => {
   const fakeResolver = () => root;
 
   it("root / rel / ids を返す", () => {
-    const payload = { tool_input: { file_path: path.join(root, "ui", "src", "api.ts") } };
+    const payload = { tool_input: { file_path: path.join(root, "src-tauri", "src", "main.rs") } };
     expect(resolveTarget(payload, fakeResolver)).toEqual({
       root,
-      rel: "ui/src/api.ts",
-      ids: ["typecheck"],
+      rel: "src-tauri/src/main.rs",
+      ids: ["clippy", "tauri-test"],
     });
   });
 
@@ -550,18 +491,16 @@ describe("統合: post-edit.mjs をプロセスとして起動する", () => {
     expect(res.stdout).toBe("");
   });
 
-  it("§5 tsconfig の include 対象外は「対象外」と言う（沈黙させない・I16）", () => {
-    // scripts/ 配下は program 外（実在は不要 — 判定はパス文字列のみ）。#474 の include 拡張で
-    // 実ソースの .ts はほぼ全て対象になったため、対象外の例はここに残るだけになった。
-    // vite.config.ts 等を使うと typecheck が発火し、統合ブロックの契約
-    // 「cargo も tsc も起動しない payload だけを使う」を破る。
+  it("§5 .ts の編集は「検査なし」と言う（沈黙させない・I16）", () => {
+    // TS 型検査は #532 SU7 で撤去済み。.ts はどのパスでも検査 0 件になるため、
+    // 情報行で「何も走っていない」ことを明示する（実在は不要 — 判定はパス文字列のみ）。
     const res = runHook({
       tool_name: "Edit",
       tool_input: { file_path: path.join(REPO, "scripts", "example.ts"), old_string: "a", new_string: "b" },
     });
     expect(res.status).toBe(0);
     const parsed = JSON.parse(res.stdout);
-    expect(parsed.hookSpecificOutput.additionalContext).toContain("include 対象外");
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("検査はありません");
   });
 
   it("config-warn は systemMessage に出る", () => {
@@ -602,21 +541,6 @@ describe("統合: post-edit.mjs をプロセスとして起動する", () => {
   });
 });
 
-describe("tsconfig ドリフト検出カナリア — C2", () => {
-  // selectChecks の typecheck 条件は tsconfig の include - exclude と一致していなければならない。
-  // tsconfig を触った人がここで気づく。SSOT は `tsc --listFilesOnly` の program 内容であり、
-  // glob の見た目ではない（git の '**/' と TypeScript の '**/' は意味が違う）。
-  it("tsconfig の include / exclude が selectChecks の前提と一致する", () => {
-    const tsconfigPath = fileURLToPath(new URL("../../tsconfig.json", import.meta.url));
-    const tsconfig = JSON.parse(readFileSync(tsconfigPath, "utf8"));
-    expect(tsconfig.include).toEqual([
-      "ui/src",
-      "vite.config.ts",
-      "vitest.config.ts",
-    ]);
-    expect(tsconfig.exclude).toEqual([]);
-  });
-});
 
 // #497: 発火の追加とカナリアの追加は対にする。カナリアが無いファイルに検査を実行しても、
 // そのファイルについては何も検証しない（vitest が起動することしか証明しない）。
@@ -626,25 +550,24 @@ describe("vitest.config.ts ドリフト検出カナリア — #497", () => {
   // include が縮むと、hook-selftest / githooks-selftest / npm test が気づかれないままテストを
   // 走らせなくなる。`vitest run .claude/hooks` はパス直指定で動くが、`.githooks` の
   // 収集と CI の npm test はこの include に依存する。
-  it("vitest の include が 3 つの検査対象をすべて含む", () => {
+  it("vitest の include がセーフティネットの検査対象をすべて含む", () => {
     const p = fileURLToPath(new URL("../../vitest.config.ts", import.meta.url));
     const src = readFileSync(p, "utf8");
-    expect(src).toContain('"ui/src/**/*.test.{ts,tsx}"');
     expect(src).toContain('".claude/hooks/**/*.test.mjs"');
     expect(src).toContain('".githooks/**/*.test.mjs"');
+    expect(src).toContain('"scripts/**/*.test.mjs"');
   });
 });
 
 describe("package.json ドリフト検出カナリア — #497", () => {
   // prepare は Layer 1（.githooks/）の唯一の bootstrap である。消えると
   // core.hooksPath が設定されず、main 保護のローカル層が沈黙して失われる。
-  // test / typecheck は docs/build-commands.md（SSOT）が名指しするコマンド。
+  // test は docs/build-commands.md（SSOT）が名指しするコマンド。
   it("scripts が Layer 1 の bootstrap と SSOT のコマンドを保持する", () => {
     const p = fileURLToPath(new URL("../../package.json", import.meta.url));
     const pkg = JSON.parse(readFileSync(p, "utf8"));
     expect(pkg.scripts.prepare).toContain("core.hooksPath .githooks");
     expect(pkg.scripts.test).toBe("vitest run");
-    expect(pkg.scripts.typecheck).toBe("tsc");
   });
 });
 

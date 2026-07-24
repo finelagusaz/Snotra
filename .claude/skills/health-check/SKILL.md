@@ -41,7 +41,7 @@ allowed-tools:
 本 Check に残るのは**意味判断を要する部分**のみ:
 - `AGENTS.md` Step 8 や `.claude/skills/*/SKILL.md` に **コマンド本体**（`cargo XXX` / `npm XXX` / `npx XXX` の具体的な引数を含む実行コマンド）が直書きされていないか grep する。`docs/build-commands.md` の SSOT を迂回している箇所を報告する（コマンド名への言及や参照リンク自体は許容）。
 - hook の **cargo コマンド ↔ カテゴリ A の照合は `npm run governance:check`（G9・#589）が機械検査する。ここでは実行しない**（出力整形フラグの許容込み。#476 のフラグドリフト事故クラスを機械が受け持つ）。
-- node/vitest 系のみ本 Check に残る: hook の検査（tsc 直接起動・単一テストファイルの vitest 実行）が SSOT コマンド（`npm test` / `npm run typecheck`）の**部分集合ラッパー**として妥当か（対象ファイルが SSOT コマンドの実行対象に含まれるか）を確認する。
+- node/vitest 系のみ本 Check に残る: hook の検査（tsc 直接起動・単一テストファイルの vitest 実行）が SSOT コマンド（`npm test`）の**部分集合ラッパー**として妥当か（対象ファイルが SSOT コマンドの実行対象に含まれるか）を確認する。
 
 ## Check 6 — docs/development-principles.md 参照の実在性
 

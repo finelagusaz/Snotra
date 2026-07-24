@@ -3,7 +3,7 @@
 ## 0. 本書の役割（意図管理）
 
 - 本書（`SPEC.md`）は「何を実現すべきか」を定義する意図管理ドキュメント
-- 実装事実（現在どう動いているか）は `snotra-core/src/*.rs`, `src-tauri/src/*.rs`, `ui/src/**` を参照する
+- 実装事実（現在どう動いているか）は `snotra-core/src/*.rs`, `src-tauri/src/*.rs` を参照する
 - 実装運用ルール（作業手順・判断基準）は `AGENTS.md` を参照する
 
 不一致がある場合の原則:
@@ -32,7 +32,7 @@
 ## 2. 概要
 
 - Windows専用のコマンドライン型キーボードランチャー
-- バックエンドは Rust（Tauri v2）、フロントエンドは SolidJS + TypeScript で構築
+- 全層 Rust（Tauri v2 ランタイム + egui/softbuffer 検索 UI・#532 で WebView2/SolidJS フロントを撤去）
 - Windows 固有機能（ホットキー/トレイ/IME）は `windows` クレートで直接実装
 - システムトレイ常駐型、グローバルホットキーで呼び出し
 - 日本語・英語の2言語対応。OS の言語設定から初期言語を自動判定し、対応言語がない場合は英語をデフォルトとする。設定画面から切替可能
@@ -89,10 +89,10 @@
 - その他 -> シェル登録ファイルタイプアイコン
 - フォルダ -> フォルダアイコン
 - 表示/非表示は設定で切替可能
-- フロントエンドへの転送は `tauri::ipc::Response` でバイナリ IPC（`get_icons_batch`）し、パスごとに `URL.createObjectURL(new Blob([bytes], { type: "image/png" }))` で `<img src>` に渡す。バッチのワイヤ形式の正本は `src-tauri/src/icon.rs` の `encode_batch_binary` rustdoc
-- アイコン非表示設定時・アイコンデータなし時はフォールバック絵文字（📁📄）を表示（WebView2 経路）。egui 経路（softbuffer・#532 SU4）はアイコン非表示時はスロットを畳み、データなし時は単色の drawn placeholder を描く（softbuffer + 単一 TTF で色 emoji が描けない懸念のため。jp_font が 📁📄 を描けると視覚スモークで確認できたら emoji へ upgrade 検討）
+- UI への受け渡しは worker スレッドの `commands::load_icon_pngs` → ColorImage decode → `load_texture`（`egui_shell/icon_textures.rs`・#532 SU4）
+- アイコン非表示時はスロットを畳み、データなし時は単色の drawn placeholder を描く（softbuffer + 単一 TTF で色 emoji が描けない懸念のため。jp_font が 📁📄 を描けると視覚スモークで確認できたら emoji へ upgrade 検討・#532 SU4）
 - インデックス再構築時はキャッシュをクリア（次回検索時に再抽出）
-- `icons.bin` は起動時に先読みせず、初回アイコン取得（`get_icons_batch`）時に遅延ロード
+- `icons.bin` は起動時に先読みせず、初回アイコン取得時に遅延ロード
 - 件数上限を超えると挿入順で最古から退避（FIFO）し、常駐メモリと `icons.bin` の両方を頭打ちにする。退避は書き込み経路（挿入・ロード）でのみ行い、取得（`get`）はアクセス順を更新しない。上限は独立した設定キーを持たず、表示ワーキングセット `max(visible_rows, result_limit, recent_limit)`（アイコンを要求しうる結果リストの最大件数＝フロント先読み・`LruIconCache` サイズ）の定数倍（実装は ×5、既定 200×5=1000）として導出する。これにより「上限 ≥ ワーキングセット」を検証なしで構造的に保証し、単一の `get_icons_batch` が自己 evict することはなく、`result_limit` 変更時は上限も自動追従する
 
 ## 4. 検索システム
@@ -179,16 +179,15 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 
 - 検索バーと検索結果は単一ウィンドウ内のコンポーネントとして共存する
 - 結果の表示/非表示は `shouldShowResults` メモシグナルで制御する。`results` が空なら非表示。ツール選択・フォルダ展開ビューはインデックス構築中でも表示し、通常結果ビューはインスタントコマンドモードまたは非インデックス時に表示する（2 軸モデル `viewKind()`/`interpKind()` から導出）
-- ウィンドウ高さは `shouldShowResults` の値に応じて Tauri `set_size()` で動的に変更する
-- Rust 側の `show_main_and_emit` で毎回検索バー高さ（52px）にリセットしてからフロントエンドが結果に応じて拡張する
-- `results`・`selected` シグナルは `search.ts` で管理し、`ResultsSection` が直接参照する（IPC イベント不要）
+- ウィンドウ高さは表示すべき結果に応じて view が算出し `set_size()` で動的に変更する（`compute_window_height`・view 単独 size writer）
+- show 時に毎回検索バー高さ（52px）にリセットしてから結果に応じて拡張する
 
 ### 4.8 マウス操作
 
 - ホバー: CSS `:hover` による視覚フィードバックのみ。`selected` 状態は変化しない
 - シングルクリック: アイテムを起動する（起動成功時にウィンドウを非表示にする）
 - ダブルクリック: 独立した挙動は持たない。単クリックが先に起動・非表示にするため、
-  「ダブルクリックで選択のみ」は到達しない（WebView2/egui 両経路の as-built）
+  「ダブルクリックで選択のみ」は到達しない（as-built）
 - キーボードナビゲーション（Arrow ↑↓）とマウス操作は互いに干渉しない
 
 ## 5. 履歴・優先度システム
@@ -351,10 +350,9 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 - トレイアイコン: 検知時に `PlatformCommand::SetTrayVisible` で切替
 - 検索方式/最大件数: 検知後即時反映
 - 履歴の保持上限（`result_limit`）: 検知後即時反映（検索の取得上限・履歴の剪定容量とも実行時に `config` から参照する live-read のため再起動不要、#348）
-- 見た目設定: 検知時に `visual-config-changed` イベントで全ウィンドウの CSS 変数を即時更新
-- ウィンドウ幅: 検知時に `set_size` で main ウィンドウを即時リサイズ
-- 言語: 検知時に `language-changed` イベントでフロントエンドに通知し、`PlatformCommand::SetLanguage` でトレイメニューを切替。`language-changed` はホットキー失敗通知より先に発火する（フロントエンドが正しい言語でエラー文字列を表示できるようにするため）
-- フォーカス喪失時自動非表示（`auto_hide_on_focus_lost`）: 検知時に `auto-hide-focus-lost-changed` イベントでフロントエンドのシグナルを更新し、次回のフォーカス喪失から新しい設定値が反映される（`onFocusChanged` リスナー自体は常時登録済みで、シグナルがゲートとして働く）
+- 見た目設定・ウィンドウ幅: `config-applied` wake 後の毎フレーム live-read で view が即時反映する（幅は view が唯一の size writer として `set_size`）
+- 言語: `PlatformCommand::SetLanguage` でトレイメニューを切替。UI 文言は毎フレーム live-read で追従する（`config-applied` は engine への適用**後**に発火するため、wake 時の読みは必ず新言語）
+- フォーカス喪失時自動非表示（`auto_hide_on_focus_lost`）: 毎フレーム live-read で次回のフォーカス喪失から新しい設定値が反映される
 - ホットキートグル動作（`hotkey_toggle`）・表示時の IME オフ（`ime_off_on_show`）: config_watcher は専用イベントを発火しない。ホットキー押下時・表示時に都度 `AppState` の実行中 config から直接読むため、次回のホットキー押下/表示から新しい設定値が反映される（再起動不要）
 - インデックス条件（スキャンパス・隠しファイル表示・`include_path_env`）・アイコン設定:
   - 検知時に変更を判定し、バックグラウンドで自動再構築
@@ -362,13 +360,12 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 - 設定の読み込み失敗時の扱い（`config_watcher`）:
   - 内容破損（TOML parse 失敗・非 UTF-8）: 既定値を適用し `config.toml.bak` へ退避、トレイバルーンで通知
   - 一時的・環境的な失敗（権限/ロック/共有違反, `LoadOutcome::ReadFailed`）: まず短いバウンドリトライ（既定 3 回 × 150ms backoff）でロック解除を待ち、解けたら正規の変更を適用する（取りこぼし防止）。予算を使い切っても失敗する場合は **実行中の設定を維持し、何も適用しない**（既定値で上書きせず、再インデックスや履歴剪定も走らせない）。`config.toml` は無傷なので次の保存イベントでも回収される。live-read 化した履歴剪定が既定値で走るとデータ損失になるため（#348）
-- egui 経路（`SNOTRA_EGUI_MAIN`・#532 SU6）: config_watcher は適用完了後に `config-applied` を発火し、egui ウィンドウはこれを再描画の合図としてのみ消費する（値は運ばず、毎フレーム実行中 config を live-read）。`indexing-started` / `indexing-complete` も同様に合図として消費し、index build 完了世代（`index_generation`）の差分で現クエリを再検索する（§4.7・#633）。font_family・ウィンドウ幅・ネイティブ背景ブラシはフレーム内のエッジ検出で追従する。hotkey 登録失敗は 2 経路とも受ける——設定変更時（`hotkey-registration-failed`）は payload を保持し次の表示時に整形・通知し、起動時（`platform-event` の `initial-hotkey-failed`）は §10 のとおり検索 UI を能動表示してから通知する（#652）
+- 反映機構（#532 SU6）: config_watcher は適用完了後に `config-applied` を発火し、egui ウィンドウはこれを再描画の合図としてのみ消費する（値は運ばず、毎フレーム実行中 config を live-read）。`indexing-started` / `indexing-complete` も同様に合図として消費し、index build 完了世代（`index_generation`）の差分で現クエリを再検索する（§4.7・#633）。font_family・ウィンドウ幅・ネイティブ背景ブラシはフレーム内のエッジ検出で追従する。hotkey 登録失敗——設定変更時（`hotkey-registration-failed`）は payload を保持し次の表示時に整形・通知し、起動時（`platform-event` の `initial-hotkey-failed`）は §10 のとおり検索 UI を能動表示してから通知する（#652）
 
-### 7.6 起動時ブートストラップ
+### 7.6 起動時の設定初期化
 
-- 起動直後のUI初期化は `get_bootstrap_payload` を使い、`visual`・`general.auto_hide_on_focus_lost`・`indexing`・`language` を一括取得する
-- メインウィンドウはこのペイロードで初期テーマ適用、言語設定、フォーカス喪失時自動非表示の**初期値**を決定する。`auto_hide_on_focus_lost` は以後 §7.5 の `auto-hide-focus-lost-changed` イベントで追従するため、ここでの取得は起動時の初期値であって固定値ではない
-- フロントエンドは bootstrap 到着前のフラッシュ防止のため、`navigator.language` から同期的に初期言語を決定する（Rust 側の `sys-locale` と同じロジック: `ja` で始まれば日本語、それ以外は英語）
+- 起動時に `Config::load` が読み込んだ設定を `Engine` が保持し、UI（egui view）は毎フレーム live-read するため、起動時の一括取得機構は存在しない（旧 `get_bootstrap_payload` IPC は #532 SU7 のフロント撤去で消滅）
+- 初期言語は OS 設定から自動判定（`sys-locale`・`ja` で始まれば日本語、それ以外は英語）
 
 ## 8. ウィンドウ動作
 
@@ -376,7 +373,7 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 
 - ホットキーで表示
 - `Escape` で非表示（ただしツール選択中→フォルダ展開中の順で内側の復帰が優先）
-- フォーカス喪失時の自動非表示（`onFocusChanged` イベント、設定で切替、100ms 猶予付き）
+- フォーカス喪失時の自動非表示（`blur_should_hide` 純粋核・設定で切替・100ms 猶予付き）
 - ホットキーでのトグル動作（設定で切替）
 
 ### 8.2 ウィンドウ位置
@@ -395,7 +392,7 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
   - `follow_cursor_monitor = false`: プライマリモニター
 - ターゲットモニターの作業領域にクランプし、ウィンドウが画面外に出ないことを保証する
 - 保存位置がない場合（初回起動等）はターゲットモニターの中央に配置する
-- 高DPI対応は Tauri/WebView2 のデフォルト挙動（Per-Monitor DPI Awareness）に委ねる
+- 高DPI対応は Tauri のデフォルト挙動（Per-Monitor DPI Awareness）に委ねる
 
 ### 8.3 タイトルバー
 
@@ -516,8 +513,8 @@ stateDiagram-v2
 - 検索結果はフルパスの1行表示
   - 長いパスは中間セグメントを `...` で省略し、ウィンドウ幅に応じて自動調整
   - フォルダは末尾 `\` で区別
-- egui 経路（softbuffer）の font_family は fontdb 解決で「ユーザーフォント優先 + Yu Gothic フォールバック」（WebView2 CSS スタック parity）。既定 Segoe UI は混在行のベースライン整列を実測確認済み。ただし egui はフォント単位の粗い縦位置補正しか持たないため、非 MS フォント選択時は混在行でベースラインがずれうる（視覚スモークでのみ顕在化する受容残余・#532 SU4）
-- egui 経路の検索入力欄は `font_size` に追従し hint は `hint_text_color` で描かれる。**検索バー高さは 52px 固定**（WebView2 の `--search-bar-height` も `--font-size` に連動しない as-built の parity）。極端な `font_size` では入力欄がバー内に収まらないが、これは WebView2 経路と同挙動である（#643・#532 SU6.5）
+- font_family は fontdb 解決で「ユーザーフォント優先 + Yu Gothic フォールバック」。既定 Segoe UI は混在行のベースライン整列を実測確認済み。ただし egui はフォント単位の粗い縦位置補正しか持たないため、非 MS フォント選択時は混在行でベースラインがずれうる（視覚スモークでのみ顕在化する受容残余・#532 SU4）
+- 検索入力欄は `font_size` に追従し hint は `hint_text_color` で描かれる。**検索バー高さは 52px 固定**（font_size 非連動の as-built。行高との連動は #646）。極端な `font_size` では入力欄がバー内に収まらない（#643・#532 SU6.5）
 
 ## 12. IME制御
 
@@ -616,9 +613,8 @@ stateDiagram-v2
 
 ## 16. 非機能要件
 
-- ウィンドウ表示開始まで: 500ms未満（通常起動、WebView2 ウォーム起動）
+- ウィンドウ表示開始まで: 500ms未満（通常起動）
 - 通常検索応答: 30ms未満（キー入力から候補更新）
-- Tauri IPC オーバーヘッド: 通常 2ms 未満
 - 初回再構築・手動再構築は進捗表示を持つ
 
 ## 17. データ互換・マイグレーション
@@ -924,18 +920,16 @@ query = "%SYSTEMROOT%"
 
 #### egui 経路の起動保護（#532 SU5）
 
-- WebView2 経路の `spawn_blocking` + 4 秒タイムアウトに対応する保護として、egui 経路は
-  per-launch 専用スレッド + フレーム drain で起動を実行する（通常起動・ツール起動・
+- 起動は per-launch 専用スレッド + フレーム drain で実行する（通常起動・ツール起動・
   インスタント実行の 3 経路とも）。イベントループスレッドで `ShellExecuteW` / `spawn` を
-  同期実行しない
+  同期実行しない（旧 WebView2 経路の `spawn_blocking` + 4 秒タイムアウトに相当する保護）
 - single-flight: in-flight 起動中の新規起動要求（Enter/クリック）は拒否する。打鍵は
   入力欄の無効化で抑止する。Escape / blur / ホットキーによる手動 hide は launching 中も通す
   （成功時の自動 hide のみ完了後）
 - 4 秒経過は「起動失敗」ではなく**結果不明**として扱い、一時通知（`notice.launch.timeout`
   文言）を表示して in-flight 追跡を破棄する。起動という副作用は取り消せない（`spawn_blocking`
   の abandoned task と同じ意味論）。遅着した結果は破棄する（per-launch channel の drop で構造的に消滅）
-- 履歴記録は worker スレッド側で成功時に行う（ウィンドウ可視性と無関係・WebView2 の
-  backend 記録と parity）
+- 履歴記録は worker スレッド側で成功時に行う（ウィンドウ可視性と無関係）
 
 ### 19.7 状態モデル
 
@@ -998,8 +992,7 @@ exec 種別:
 ### 19.9 設定反映
 
 - `instant_command_prefix` の変更は `config_watcher` 経由でホットリロードする
-- プレフィックス変更時は `instant-prefix-changed` イベントを emit し、フロントエンドがプレフィックスシグナルを更新する
-- `instant_commands` 配列は `get_instant_commands` IPC で毎回 config から読むため、キャッシュ無効化は不要
+- `instant_commands` 配列・プレフィックスは毎フレーム config から live-read されるため、キャッシュ無効化は不要
 
 ## 20. 自動更新
 
@@ -1032,9 +1025,8 @@ Tauri の `tauri-plugin-updater` を用いて GitHub Releases 経由で自動更
 
 ### 20.4 更新フロー（`full` モード）
 
-1. 起動時に更新を確認し、`Update` オブジェクトを保持する（WebView2: フロントエンドの
-   `check()` / egui: Rust `UpdaterExt` の check。egui は `on_before_exit` フックに終了保存
-   （履歴 flush + アイコン保存）を登録した builder で check する）
+1. 起動時に更新を確認し、`Update` オブジェクトを保持する（Rust `UpdaterExt` の check。
+   `on_before_exit` フックに終了保存（履歴 flush + アイコン保存）を登録した builder で check する）
 2. トーストの [今すぐ更新] で `downloadAndInstall()` を実行
 3. **Windows では `downloadAndInstall` は復帰しない**: プラグインが内部で download →
    `on_before_exit` フック → NSIS installer 起動 → `std::process::exit(0)` する。

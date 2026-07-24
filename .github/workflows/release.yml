@@ -38,7 +38,7 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Install frontend dependencies
+      - name: Install dependencies
         run: npm ci
 
       - name: Get Build Date
@@ -63,8 +63,6 @@ jobs:
       - name: Build Windows executable and NSIS installer (release)
         run: npx tauri build --bundles nsis
         env:
-          VITE_APP_VERSION: ${{ env.TAG_NAME }}
-          VITE_APP_BUILD_NUMBER: ${{ env.BUILD_DATE }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 

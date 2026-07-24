@@ -15,7 +15,7 @@
 
 ## MCP ツール
 
-- **Tauri v2 / SolidJS / Rust クレートの最新 API 調査には context7 MCP を使う**（設定済み）
+- **Tauri v2 / egui / Rust クレートの最新 API 調査には context7 MCP を使う**（設定済み）
 
 ## シェル環境（Windows / PowerShell）
 
@@ -57,14 +57,13 @@
 | フック | 発火条件 | 正しい対応 |
 |---|---|---|
 | PR 作成前 push チェック（PreToolUse） | `Bash` / `PowerShell` の `tool_input.command` の**コマンド位置**に `gh pr create` があり、かつ安全と確認できないとき（空 PR / `Closes` 誤 close 防止）。`&&` で `git push` が先行するなら通る | `git push -u origin HEAD` してから PR を作る（または `&&` で繋ぐ） |
-| 編集後の自動検証（PostToolUse） | `tool_input.file_path` が属するツリーからの相対パスで判定。`*.rs` → clippy（各 Rust crate 配下ではその crate のテストも）、`ui/src/**` の `*.{ts,tsx,mts,cts}`（テスト含む）とルートの `vite.config.ts` / `vitest.config.ts` / `tsconfig.json` → typecheck、`tauri.conf.json` / `config.toml` → WARN（`src-tauri/tauri.conf.json` はさらに CSP 契約テスト）、`Cargo.toml` → cargo check、`.claude/settings.json` / `.claude/hooks/**` / `tsconfig.json` / `package.json` / `vitest.config.ts` / ルートの `Cargo.toml` → hook-selftest、`.githooks/**` → githooks-selftest | **検査が割り当てられているファイルでは、沈黙は合格を意味する**（割り当ての SSOT は `selectChecks`）。失敗時のみ `exit code` と再現コマンドと診断が会話に届く。手動での再実行は不要 |
+| 編集後の自動検証（PostToolUse） | `tool_input.file_path` が属するツリーからの相対パスで判定。`*.rs` → clippy（各 Rust crate 配下ではその crate のテストも）、`tauri.conf.json` / `config.toml` → WARN、`Cargo.toml` → cargo check、`.claude/settings.json` / `.claude/hooks/**` / `package.json` / `vitest.config.ts` / ルートの `Cargo.toml` → hook-selftest、`.githooks/**` → githooks-selftest（TS 型検査は #532 SU7 のフロント撤去で消滅・`.ts` 編集は「検査はありません」の情報行のみ） | **検査が割り当てられているファイルでは、沈黙は合格を意味する**（割り当ての SSOT は `selectChecks`）。失敗時のみ `exit code` と再現コマンドと診断が会話に届く。手動での再実行は不要 |
 
 - **(A2)「外部 API の不可逆呼び出し」のうち hook が守るのは `gh pr create` だけである**（#488 実測・**意図的な非対称**）。`merge` / `close` の誤りは人の意図にあり SSOT を機構が問えず（`deny` が書けない）、`ask` は fail-closed 骨格と両立せず、hook の視界は Web UI・ユーザー端末のマージを覆わない——3 理由の詳細は #488。代わりに **Layer 0 で断ち**（`squash_merge_commit_message=PR_BODY` でブランチ本文の流入経路を全マージ経路から消した）、`--body-file` への明示記入だけが残余として手順 3 に委ねられる。**設定の read-back を監視する検知器も置かない**（「セーフティネットの不在を検知するセーフティネット」の無限後退から降りる・#488）
 - **検出は exit code、出力は証拠**（#471）。検査が成功した hook は何も出力しない。失敗したときだけ `--- <検査>: 失敗 (exit N) ---` と再現コマンドが会話に現れる。診断が予算（`head`/`tail` 数行〜数十行）を超えても、再現コマンドで全件を見られるので取りこぼしは無い
 - **検査が走ったなら、沈黙を「合格」と読める。沈黙しうる経路をすべて塞いだから**。タイムアウト（検査ごと 300s で自ら打ち切る）・出力溢れ・起動失敗・スクリプト内部エラーは、いずれも必ず報告される。この契約を壊す変更を `.claude/hooks/` に入れてはならない。**ただしこれは「検査が走った」ことを前提とする主張である**（→ 次項）
 - **`selectChecks` に載っていないファイルの沈黙は「何も走らなかった」であり、合格ではない**（#497）。`*.md` 全般・`SPEC.md`・`scripts/` 配下の非 TS ファイル・`.github/workflows/`・`Cargo.lock`・`docs/build-commands.md` 自身がこれに当たる（`scripts/*.ts` は「include 対象外」の一行が出るため沈黙しない）。**エージェントはこの 2 種類の沈黙を区別できない** — 決定的な項目（参照実在・索引・スキル表・SPEC 番号・rules glob・コマンド写像）は PR CI の `governance-check` job（`skip-ci` 非対象・#587）が捕捉する。編集時の即時性は無く、governance:check の検査対象外の記述（責務の妥当性等の意味的整合）は依然**受容する残余**である
 - **沈黙=合格は機構ではなく規範である**（#497）— 「肯定的報告（走った検査に名乗らせる）を採らなかった」判断ゆえ、読者が前提条件（検査が割り当てられ、実際に走った）を忘れれば false green が再発する
-- **`.ts`/`.tsx` を編集したのに何も出ない場合は 2 通りある**: 型検査が通った、または `tsconfig.json` の `include` 対象外（`ui/src`・ルート config 2 ファイル以外の `.ts`。例: `scripts/` 配下）。後者では `[post-edit] ... は tsconfig の include 対象外です` という一行が出る
 - **フックの改修者向けの実装契約・機構・保守**（PreToolUse の fail-closed 骨格と判定不能ケース・判定のコマンド位置化・見ないコマンド形・PostToolUse の worktree 検査・file watcher 自己防護・カナリア運用・`config.toml` WARN）は `docs/hooks.md`（原理は `docs/development-principles.md` §6・§7）。フック改修時は `.claude/rules/safety-nets.md` からも配送される
 
 ## チーム憲章

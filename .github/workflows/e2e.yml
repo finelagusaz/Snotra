@@ -1,4 +1,4 @@
-name: E2E & Smoke
+name: Smoke
 
 on:
   workflow_dispatch:
@@ -6,18 +6,16 @@ on:
     branches:
       - main
     # paths が唯一の自動ゲート。カテゴリ C 相当（ウィンドウ生成・ホットキー・スラッシュコマンド）を
-    # 含みうる変更、およびビルド入力（vite・依存 manifest/lockfile）に触れた PR で自動起動する。
+    # 含みうる変更、および依存 manifest/lockfile に触れた PR で自動起動する。
     # 手動実行は workflow_dispatch。拾いすぎ（配下 *.md 等）は過剰実行で安全側ゆえ negation を足さない。
     # WebView2 e2e（Playwright + tauri-driver）は #532 SU7 flip で撤去済み——後継は smoke-egui job
     # （egui 経路の自動回帰の最低線）+ 手動 GUI smoke 体制（docs/build-commands.md）。
     paths:
       - 'src-tauri/**'
-      - 'ui/**'
       - '.github/workflows/e2e.yml'
       # workflow の各ステップが直接呼ぶスクリプト（変更で自己検証する）
       - 'scripts/smoke-startup.ps1'      # "Run startup smoke" ステップ
       - 'scripts/smoke-egui.ps1'         # "Run egui smoke" ステップ（#532 SU7）
-      - 'vite.config.ts'                 # tauri codegen のフロントバンドル入力（PR3 の frontendDist 撤去まで）
       # 依存 manifest/lockfile（依存更新 PR を smoke 網に載せる）
       - '**/Cargo.toml'
       - 'Cargo.lock'
@@ -30,8 +28,8 @@ concurrency:
 
 jobs:
   # egui 経路の自動回帰 smoke（#532 SU7・e2e/ 撤去後の後継の最低線）。
-  # npm 工程が要るのは tauri の context codegen が frontendDist（dist/）の実在を要求するため
-  # （PR3 の frontendDist 撤去までの過渡）。
+  # npm は smoke:egui の script wrapper（pwsh 起動）にのみ使う——フロント資産は
+  # PR3 で撤去済みで、tauri codegen もフロント入力を要求しない（frontendDist なし）。
   smoke-egui:
     runs-on: windows-latest
     timeout-minutes: 30
@@ -54,11 +52,8 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Install frontend dependencies
+      - name: Install dependencies
         run: npm ci
-
-      - name: Build frontend assets (tauri codegen input)
-        run: npm run build
 
       - name: Build release binary
         run: cargo build --release -p snotra

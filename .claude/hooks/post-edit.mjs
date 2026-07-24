@@ -40,8 +40,6 @@ export const BUDGETS = {
   "settings-test": { lines: 8, from: "tail" },
   "tauri-test": { lines: 8, from: "tail" },
   "cargo-check": { lines: 20, from: "head" },
-  typecheck: { lines: 30, from: "head" },
-  "csp-test": { lines: 30, from: "head" },
   "hook-selftest": { lines: 30, from: "head" },
   "githooks-selftest": { lines: 30, from: "head" },
 };
@@ -51,12 +49,9 @@ export const BUDGETS = {
 const PROGRESS_LINE =
   /^\s*(Compiling|Checking|Finished|Blocking|Updating|Downloading|Downloaded|Locking|Adding|Removing|Fresh|Installing|Running)\b/;
 
-// tsconfig の include はディレクトリ展開で .mts / .cts も program に入れる。
-// 「沈黙 = 合格」の下では、拾い漏らしは安全側ではなく false green になる（I7）。
+// TS 型検査は #532 SU7 のフロント撤去で消滅した（tsconfig ごと削除）。TS_LIKE は
+// 「.ts を編集したのに何も走らない」ことを明示する情報行（I16）のためだけに残る。
 const TS_LIKE = /\.(m|c)?tsx?$/;
-// tsconfig の include はディレクトリ（ui/src）に加え、ルートの config 2 ファイルを名指しする。
-// ファイル include は完全一致で判定する（endsWith だと sub/vite.config.ts を誤発火する）。
-const ROOT_TS_CONFIG = new Set(["vite.config.ts", "vitest.config.ts"]);
 
 // cargo のワークスペース定義。basename でアンカーする — 過小検出は沈黙（false green）
 // になるが、過剰検出は cargo check が走るだけで無害（fail-closed 方向）。
@@ -71,7 +66,6 @@ const CARGO_MANIFEST = /(^|\/)Cargo\.toml$/;
 // `cargo test -p snotra` が "package did not match" で落ちる。沈黙する経路だけを守る。
 const CHECK_DEFINITION = new Set([
   ".claude/settings.json",
-  "tsconfig.json",
   "package.json",
   "vitest.config.ts",
   "Cargo.toml",
@@ -110,11 +104,7 @@ export function extractFilePath(payload) {
 
 /**
  * 相対パスから走らせるべき検査を決める純関数。
- *
- * typecheck の条件は tsconfig の include - exclude と一致していなければならない（I7）。
- * include はテストファイルも含む（#474 で exclude を空にした）。`ui/src/MainApp.test.tsx` の
- * ような深さ 0 のファイルも program に入るため、「1 段以上のディレクトリ」を要求する
- * 正規表現で書いてはならない（I19）。
+ * （TS typecheck / csp-test は #532 SU7 のフロント撤去で消滅——`.ts` は情報行のみ・I16）
  */
 export function selectChecks(rel) {
   const checks = [];
@@ -129,19 +119,7 @@ export function selectChecks(rel) {
 
   if (CARGO_MANIFEST.test(rel)) checks.push("cargo-check");
 
-  if (
-    (rel.startsWith("ui/src/") && TS_LIKE.test(rel)) ||
-    ROOT_TS_CONFIG.has(rel) ||
-    rel === "tsconfig.json"
-  ) {
-    checks.push("typecheck");
-  }
-
   if (/(^|\/)(tauri\.conf\.json|config\.toml)$/.test(rel)) checks.push("config-warn");
-
-  // CSP 契約テスト（cspValidation.test.ts）が読むのはこのパスだけ。任意深度に発火させると
-  // テストが読まないファイルの編集で「検査が通った」と沈黙する（ROOT_TS_CONFIG と同じ理由）。
-  if (rel === "src-tauri/tauri.conf.json") checks.push("csp-test");
 
   // セーフティネットそのものと、検査の定義を変えるファイルを編集したときは、セーフティネットが生きているか
   // 確かめる。これが無いと、全検査の発火を決めるファイルだけが誰にも検査されない（#497）。
@@ -157,7 +135,7 @@ export function selectChecks(rel) {
 }
 
 /**
- * 新規ソースファイル（.rs / ui の TS）を Write したかの述語。真なら main() が
+ * 新規ソースファイル（.rs）を Write したかの述語。真なら main() が
  * 「モジュール索引の更新忘れ」を促す WARN を出す。
  *
  * 索引整合の判定そのもの（どのファイルが索引に在るべきか）は governance:check が SSOT。
@@ -170,9 +148,7 @@ export function selectChecks(rel) {
  */
 export function isSourceFileWrite(rel, toolName) {
   if (toolName !== "Write") return false;
-  const isRust = rel.endsWith(".rs");
-  const isUiTs = rel.startsWith("ui/src/") && TS_LIKE.test(rel);
-  return isRust || isUiTs;
+  return rel.endsWith(".rs");
 }
 
 /**
@@ -244,11 +220,6 @@ export function buildSection({ id, status, repro, evidence }) {
   return [head, how, evidence].filter((s) => s && s.length > 0).join("\n");
 }
 
-/** tsc バイナリの絶対パス。root から上方へ探索する。 */
-export function resolveTscBin(root) {
-  return resolveBin(root, path.join("node_modules", "typescript", "bin", "tsc"));
-}
-
 /**
  * root から上方へ探索して実行ファイルの絶対パスを返す。
  *
@@ -309,16 +280,8 @@ function buildCommand(id, root) {
       return cargoSpec(["test", "-p", "snotra-settings"]);
     case "tauri-test":
       return cargoSpec(["test", "-p", "snotra"]);
-    case "typecheck": {
-      // node は PATH ではなく現在動いているバイナリを使う（I11）。
-      // tsc のフラグは tsconfig.json 側に置く（typecheck 定義の SSOT）。
-      const tsc = resolveTscBin(root);
-      return tsc ? nodeSpec([tsc, "-p", path.join(root, "tsconfig.json")]) : null;
-    }
     case "cargo-check":
       return cargoSpec(["check", "--workspace"]);
-    case "csp-test":
-      return vitestSpec("ui/src/lib/cspValidation.test.ts");
     case "hook-selftest":
       return vitestSpec(".claude/hooks");
     case "githooks-selftest":
@@ -423,10 +386,10 @@ function main() {
     runCheck(id, root, sections, errors);
   }
 
-  // 検査が 0 件でも、TypeScript 系なら「型検査対象外」と言う。
-  // 沈黙は「検査が通った」と読まれる（I16）。
+  // 検査が 0 件でも、TypeScript 系なら「型検査は存在しない」と言う。
+  // 沈黙は「検査が通った」と読まれる（I16）。TS 型検査は #532 SU7 のフロント撤去で消滅した。
   if (ids.length === 0 && TS_LIKE.test(rel)) {
-    sections.push(`[post-edit] ${rel} は tsconfig の include 対象外です。型検査は走っていません。`);
+    sections.push(`[post-edit] ${rel} に検査はありません（TS 型検査は #532 SU7 で撤去済み）。`);
   }
 
   const context = [...errors, ...sections].join("\n\n");

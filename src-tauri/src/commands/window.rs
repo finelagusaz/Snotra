@@ -3,17 +3,15 @@ use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
 use serde_json::json;
-use snotra_core::window_data::{self, WindowPlacement};
-use tauri::{AppHandle, Manager, State, WebviewWindow};
+use tauri::{AppHandle, Manager, State};
 
 use crate::indexing;
 use crate::state::AppState;
 
 use super::trace_command;
 
-/// インデックス構築中に設定を開こうとしたときのエラーコード。
-/// フロントエンド側 `ui/src/lib/commands.ts` の `ERR_INDEXING_IN_PROGRESS` と対になる。
-/// 変更するときは両ファイルを同時に更新する。
+/// インデックス構築中に設定を開こうとしたときのエラーコード
+/// （`open_settings` / `rebuild_index` が共有。旧フロント側の対は #532 SU7 で消滅）。
 pub(crate) const ERR_INDEXING_IN_PROGRESS: &str = "indexing_in_progress";
 
 /// Managed state for tracking the snotra-settings child process.
@@ -147,7 +145,6 @@ pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> R
     Ok(())
 }
 
-#[tauri::command]
 pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), String> {
     trace_command("cmd:open_settings:start", json!({}));
     if state.indexing.load(Ordering::SeqCst) {
@@ -158,41 +155,3 @@ pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), Strin
     launch_settings_process(&app, &[])
 }
 
-/// Save the main window's current position as physical-pixel coordinates
-/// relative to the monitor work area origin.
-///
-/// The Rust side reads the window position directly via HWND, so the
-/// frontend only needs to signal "save now" without passing coordinates.
-#[tauri::command]
-pub fn save_search_placement(app: AppHandle) {
-    if let Some(main) = app.get_webview_window("main") {
-        save_relative_placement(&main);
-    }
-}
-
-/// Convert the window's absolute physical position to monitor-relative
-/// coordinates and persist them.
-fn save_relative_placement(window: &WebviewWindow) {
-    let Ok(pos) = window.outer_position() else {
-        return;
-    };
-
-    #[cfg(windows)]
-    {
-        let Ok(hwnd) = window.hwnd() else { return };
-        let Some(wa) = crate::monitor::window_monitor_work_area(hwnd.0 as isize) else {
-            return;
-        };
-        let relative = WindowPlacement {
-            x: pos.x - wa.left,
-            y: pos.y - wa.top,
-        };
-        window_data::save_search_placement(relative);
-    }
-
-    #[cfg(not(windows))]
-    {
-        // Non-Windows: save absolute position as-is (no monitor API).
-        window_data::save_search_placement(WindowPlacement { x: pos.x, y: pos.y });
-    }
-}

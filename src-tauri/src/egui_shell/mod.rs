@@ -120,12 +120,7 @@ pub(crate) fn spawn_update_check(app: &tauri::AppHandle) {
             st.0.lock().unwrap().phase = next;
         }
         // 可視中に check が完了した場合の wake-up(スパイクの request_repaint と同じ・codex レビュー)。
-        if let Some(sh) = handle.try_state::<EguiShellState>()
-            && let Ok(guard) = sh.egui_ctx.lock()
-            && let Some(ctx) = guard.as_ref()
-        {
-            ctx.request_repaint();
-        }
+        wake_view(&handle);
     });
 }
 
@@ -277,4 +272,28 @@ pub(crate) fn register_hide_listener(app: &tauri::AppHandle) {
     app.listen("egui-hide-requested", move |_| {
         hide_egui_main(&handle);
     });
+}
+
+/// 可視中の view を起こす（egui_ctx 未登録＝setup〜初フレーム、hidden 中は無害な no-op）。
+/// WebView2 経路（flag OFF）では EguiShellState が manage されておらず自然に no-op。
+pub(crate) fn wake_view(app: &tauri::AppHandle) {
+    if let Some(sh) = app.try_state::<EguiShellState>()
+        && let Ok(guard) = sh.egui_ctx.lock()
+        && let Some(ctx) = guard.as_ref()
+    {
+        ctx.request_repaint();
+    }
+}
+
+/// config 変更・index 状態変化の wake 合図（#532 SU6 spec 決定 1）。値は運ばず request_repaint
+/// のみ——次フレームの live-read が最新値を拾う。空振りは benign（初 show フレームの live-read が
+/// 最新を描く）。**「値を運ばない」はこの benign 性の load-bearing 前提**——将来イベントに値を
+/// 載せる変更はこの前提を壊す（spec 決定 1）。
+pub(crate) fn register_config_wake_listeners(app: &tauri::AppHandle) {
+    for event in ["config-applied", "indexing-started", "indexing-complete"] {
+        let handle = app.clone();
+        app.listen(event, move |_| {
+            wake_view(&handle);
+        });
+    }
 }

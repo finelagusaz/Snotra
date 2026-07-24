@@ -683,6 +683,10 @@ fn main() {
                 egui_shell::create(app, window_width as f64, &bg_color)?;
                 // view→emit→listener の合流点。全 hide を hide_egui_main の 1 経路に集約（codex #7）。
                 egui_shell::register_hide_listener(&app_handle);
+                // config 変更・indexing 状態変化の wake（SU6 spec 決定 1）。config_watcher 起動
+                // （下の setup_config_watcher）と setup_startup_display より前に登録し、可視窓が
+                // 合図を取りこぼす窓を作らない（位置は spec が pin・並行性レビュー）。
+                egui_shell::register_config_wake_listeners(&app_handle);
                 app.manage(egui_shell::UpdaterUiState(std::sync::Mutex::new(Default::default())));
                 egui_shell::spawn_update_check(&app_handle);
             }

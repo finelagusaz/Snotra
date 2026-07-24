@@ -31,14 +31,12 @@ impl Metrics {
 }
 
 /// main 窓の高さ(#646 PR2 決定 6)。bar(+toast)のみで結果に伸縮しない。
-#[allow(dead_code)] // Task 5 で view.rs から配線するまで未消費(ledger 申し送り)
 pub fn main_window_height(bar_height: f64, toast_height: Option<f64>) -> f64 {
     bar_height + toast_height.unwrap_or(0.0)
 }
 
 /// 結果窓の高さ(#646 PR2 決定 7)。実件数フィット・上限 max_results・padding 8。
 /// 0 件は 0.0(呼び出し側が hide する契約)。
-#[allow(dead_code)] // Task 5 で view.rs から配線するまで未消費(ledger 申し送り)
 pub fn results_window_height(result_count: usize, max_results: u32, row_height: f64) -> f64 {
     let n = result_count.min(max_results as usize);
     if n == 0 {
@@ -46,28 +44,6 @@ pub fn results_window_height(result_count: usize, max_results: u32, row_height: 
     } else {
         n as f64 * row_height + 8.0
     }
-}
-
-/// compute_window_height の入力。SU5 まで has_update_toast は常に false。
-pub struct HeightParams {
-    pub show_results: bool,
-    pub max_results: u32,
-    pub has_update_toast: bool,
-    pub search_bar_height: f64,
-    pub result_row_height: f64,
-    pub results_padding: f64,
-    pub update_toast_height: f64,
-}
-
-/// ウィンドウ論理高さ。show_results なら bar + max*row + pad、否なら bar。toast は加算。
-/// windowHeight.ts の computeWindowHeight と同一。
-pub fn compute_window_height(p: &HeightParams) -> f64 {
-    let content = if p.show_results {
-        p.search_bar_height + p.max_results as f64 * p.result_row_height + p.results_padding
-    } else {
-        p.search_bar_height
-    };
-    content + if p.has_update_toast { p.update_toast_height } else { 0.0 }
 }
 
 /// 打鍵 debounce（決定7）。時刻は driver が注入する（純粋・テスト可能）。
@@ -122,36 +98,6 @@ impl Debouncer {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn params(show: bool, max: u32) -> HeightParams {
-        HeightParams {
-            show_results: show,
-            max_results: max,
-            has_update_toast: false,
-            search_bar_height: 52.0,
-            result_row_height: 30.0,
-            results_padding: 8.0,
-            update_toast_height: 52.0,
-        }
-    }
-
-    #[test]
-    fn collapsed_is_search_bar_only() {
-        assert_eq!(compute_window_height(&params(false, 8)), 52.0);
-    }
-
-    #[test]
-    fn expanded_is_bar_plus_rows_plus_padding() {
-        // 52 + 8*30 + 8 = 300
-        assert_eq!(compute_window_height(&params(true, 8)), 300.0);
-    }
-
-    #[test]
-    fn toast_adds_height() {
-        let mut p = params(false, 8);
-        p.has_update_toast = true;
-        assert_eq!(compute_window_height(&p), 52.0 + 52.0);
-    }
 
     #[test]
     fn leading_fires_on_burst_start_then_trailing() {
@@ -224,6 +170,7 @@ mod tests {
     fn results_height_fits_actual_count_capped_at_max() {
         let row = 37.0;
         assert_eq!(results_window_height(3, 8, row), 3.0 * row + 8.0); // 実件数
+        assert_eq!(results_window_height(8, 8, row), 8.0 * row + 8.0); // ちょうど境界(result_count == max_results)
         assert_eq!(results_window_height(20, 8, row), 8.0 * row + 8.0); // 上限で頭打ち
         assert_eq!(results_window_height(0, 8, row), 0.0); // 0 件は非表示(高さ 0 = 呼び出し側で hide)
     }

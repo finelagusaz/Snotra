@@ -16,11 +16,9 @@ pub(crate) mod strings;
 mod results_view;
 mod view;
 
-// mod.rs（窓生成・managed state）が消費する。RowsSnapshot は Task 4 で view.rs（main の
-// snapshot 発行）・results_view.rs（update() 描画）が消費する（#646 PR2・骨組みでは re-export
-// のみで未消費）。
+// mod.rs（窓生成・managed state）が消費する。RowsSnapshot は view.rs（main の snapshot 発行）・
+// results_view.rs（update() 描画）が消費する（#646 PR2 Task 4）。
 pub(crate) use results_view::ResultsShared;
-#[allow(unused_imports)] // Task 4 で view.rs の snapshot 発行が消費する
 pub(crate) use results_view::RowsSnapshot;
 
 // view.rs の icon texture driver（worker spawn / load_texture 適用）が消費する（#532 SU4 Task 5）。
@@ -35,7 +33,7 @@ pub(crate) use search_state::{
 pub(crate) use search_state::{SlashCmd, find_slash_command};
 // driver（view.rs）は Task 4 で表示ゲート・再検索トリガとして消費する（#532 SU6 Task 1）。
 pub(crate) use search_state::{needs_index_refresh, plain_results_hidden};
-pub(crate) use layout::{Debouncer, HeightParams, compute_window_height};
+pub(crate) use layout::Debouncer;
 // view.rs が UI 文言（hint/overlay/toast）で消費する（#532 SU5・言語は lang() が毎フレーム live-read）。
 pub(crate) use strings as ui_strings;
 
@@ -418,11 +416,11 @@ pub(crate) fn wake_view(app: &tauri::AppHandle) {
     }
 }
 
-/// results 窓を起こす(#646 PR2)。snapshot 更新・config 変更を反映させる wake。
-/// 呼び出しは Task 4 の `drive_results_window`(可視時・毎フレーム)からのみとする——
-/// main が動けば drive が results を起こし、hidden 中の results は描かれないため事前 wake は
-/// 無意味(plan-review で冗長と判定)。クリック逆流の results→main は既存 `wake_view` を使う。
-#[allow(dead_code)] // Task 4 の drive_results_window（可視時・毎フレーム）が消費する
+/// results 窓を起こす(#646 PR2)。snapshot 更新・config 変更を反映させる wake。呼び出しは
+/// main の update()（Task 4）内 2 箇所: snapshot 差分検知時（edge-triggered・変化フレームのみ）
+/// と `drive_results_window`（可視時・毎フレーム・level-triggered）。hidden 中の results は
+/// 描かれないため事前 wake は無意味(plan-review で冗長と判定)。クリック逆流の results→main は
+/// 既存 `wake_view` を使う。
 pub(crate) fn wake_results(app: &tauri::AppHandle) {
     if let Some(sh) = app.try_state::<EguiShellState>()
         && let Ok(guard) = sh.results_ctx.lock()

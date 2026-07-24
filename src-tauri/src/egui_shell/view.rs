@@ -915,7 +915,9 @@ impl SearchWindowView {
         if selected {
             ui.painter().rect_filled(rect, 4.0, theme.selection);
             if scroll {
-                response.scroll_to_me(Some(egui::Align::Center)); // 選択変化時のみ（#632）
+                // 選択変化時のみ（#632）。None=可視化に必要な最小限だけ（WebView2 の
+                // block:"nearest" parity・Center だと中央維持で早期スクロール・#532 SU6.5）
+                response.scroll_to_me(None);
             }
         }
         // アイコン: show_icons=true のときのみ左 28px slot の中央に 16x16 を描く。欠落

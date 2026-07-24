@@ -181,6 +181,11 @@ pub(crate) struct SearchWindowView {
     /// 後に stale instant 行（path=description/display）が activate() へ流れて文字列をパスとして
     /// 起動・履歴汚染するのを防ぐ（/code-review #637 finding 0）。run_search が行と一体で更新する。
     instant_rows_query: Option<String>,
+    /// 結果集合が総入れ替えされるたびに加算する世代番号（#632 reviewer Important 3 の後継・
+    /// Fix 3）。`run_search_with`/`clear_search`/`start_launch` の「旧 scroll gate reset」が
+    /// 居た地点で加算し、`RowsSnapshot.generation` に載せて ResultsView 側の scroll gate
+    /// リセットを駆動する（selected の値だけでは総入れ替えを検出できないため）。
+    snapshot_generation: u64,
     /// in-flight 起動（single-flight の実体: Some の間は新規起動 dispatch を拒否）。
     launching: Option<LaunchInFlight>,
     /// #633: index build 完了世代の last-seen（AppState.index_generation と比較・SU6 spec 決定 3）。
@@ -228,6 +233,7 @@ impl SearchWindowView {
             folder_cache: None,
             folder_error: None,
             instant_rows_query: None,
+            snapshot_generation: 0,
             launching: None,
             last_seen_index_generation: 0,
             notice: crate::egui_shell::NoticeSlot::default(),
@@ -298,6 +304,7 @@ impl SearchWindowView {
         self.launching = Some(LaunchInFlight { started: Instant::now(), rx, tag });
         self.state.set_results(Vec::new());
         self.instant_rows_query = None; // 行が消えるため来歴も一体でクリア（finding 0 の規律）
+        self.snapshot_generation += 1; // 結果総入れ替え（#632 reviewer Important 3 の後継・Fix 3）
         let app = self.app_handle.clone();
         let egui_ctx = ctx.clone();
         std::thread::spawn(move || {
@@ -443,6 +450,7 @@ impl SearchWindowView {
         self.state.set_results(Vec::new());
         self.search_debounce.cancel();
         self.instant_rows_query = None;
+        self.snapshot_generation += 1; // 結果総入れ替え（#632 reviewer Important 3 の後継・Fix 3）
     }
 
     /// slash コマンドを実行する（§15.3 即実行・#532 SU3 M3）。SolidJS handleCommandQueryInput と
@@ -873,6 +881,10 @@ impl SearchWindowView {
     }
 
     fn run_search_with(&mut self, prefix: &str) {
+        // 結果が総入れ替えされうる箇所（#632 reviewer Important 3 の後継・Fix 3）。selected の
+        // 値だけでは「打鍵で結果が丸ごと変わったが selected は偶然 0 のまま」を検出できないため、
+        // 世代番号を進めて RowsSnapshot 経由で ResultsView 側の scroll gate をリセットさせる。
+        self.snapshot_generation += 1;
         // 来歴は行と一体で更新する（Instant 分岐だけが Some を立て直す・finding 0）。
         self.instant_rows_query = None;
         match self.state.view_kind() {
@@ -1632,6 +1644,7 @@ impl EguiView for SearchWindowView {
                 rows: if show_results { self.state.results().to_vec() } else { Vec::new() },
                 selected: self.state.selected(),
                 show: show_results,
+                generation: self.snapshot_generation,
             };
             {
                 let mut guard = shared.snapshot.lock().unwrap();

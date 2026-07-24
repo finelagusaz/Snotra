@@ -19,6 +19,11 @@ pub(crate) struct RowsSnapshot {
     pub rows: Vec<snotra_core::ui_types::SearchResult>, // ui_types が正（engine ではない）・PartialEq/Eq derive 済み
     pub selected: usize,
     pub show: bool,
+    /// 結果集合が総入れ替えされるたびに main が加算するカウンタ（#632 reviewer Important 3
+    /// の後継・Fix 3）。`selected` の値だけでは「打鍵で結果が丸ごと変わったが selected は
+    /// 偶然 0 のまま」を検出できないため、この世代番号で ResultsView の scroll gate を
+    /// 独立にリセットする。Default=0（PartialEq 比較にも自然に入る）。
+    pub generation: u64,
 }
 
 /// main と results が共有する一方向フローの入れ物（managed state）。
@@ -36,6 +41,10 @@ pub(crate) struct ResultsView {
     applied_font_family: String,
     /// 直近に scroll_to_me した選択 index。選択変化時のみ scroll するための gate（#632・Task 4）。
     last_scrolled_selected: Option<usize>,
+    /// 直近に観測した snapshot の世代番号（#632 reviewer Important 3 の後継・Fix 3）。
+    /// `RowsSnapshot.generation` との差分で「結果集合が総入れ替えされた」を検出し、
+    /// `selected` の値が変わらない場合でも scroll gate を強制リセットする。
+    last_generation: u64,
 }
 
 impl ResultsView {
@@ -44,6 +53,7 @@ impl ResultsView {
             app_handle,
             applied_font_family: String::new(),
             last_scrolled_selected: None,
+            last_generation: 0,
         }
     }
 }
@@ -275,6 +285,14 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         let theme = row_theme(&self.app_handle);
         let metrics = crate::egui_shell::read_metrics(&self.app_handle);
         let show_icons = false; // Task 5 でアイコン移設(この Task は placeholder 描画)
+        // #632 reviewer Important 3 の後継（Fix 3）: 結果集合が総入れ替えされた（main が
+        // snapshot_generation を進めた）フレームは、selected の値が変わらなくても scroll gate を
+        // 強制リセットする——selected のみの比較では「打鍵で結果が丸ごと変わったが selected は
+        // 偶然 0 のまま」を検出できず、選択行への scroll_to_me が発火しないままになるため。
+        if snapshot.generation != self.last_generation {
+            self.last_scrolled_selected = None;
+            self.last_generation = snapshot.generation;
+        }
         // 選択変化時のみ scroll_to_me(#632 のゲートを view 内フィールドで維持)。
         let do_scroll = self.last_scrolled_selected != Some(snapshot.selected);
         let mut clicked: Option<usize> = None;

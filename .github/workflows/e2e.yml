@@ -16,6 +16,7 @@ on:
       - '.github/workflows/e2e.yml'
       # E2E workflow の各ステップが直接呼ぶスクリプト/設定（変更で自己検証する）
       - 'scripts/smoke-startup.ps1'      # "Run startup smoke" ステップ
+      - 'scripts/smoke-egui.ps1'         # smoke-egui job（egui 経路の自動回帰・#532 SU7）
       - 'scripts/prepare-sidecar.ps1'    # "Build app and setup E2E"（e2e:tauri:setup → prepare:sidecar）
       - 'playwright.tauri.config.ts'     # "Run E2E tests"（e2e:tauri = Playwright ランナー）
       - 'vite.config.ts'                 # tauri build のフロントバンドル入力
@@ -67,3 +68,44 @@ jobs:
 
       - name: Run E2E tests
         run: npm run e2e:tauri
+
+  # egui 経路の自動回帰 smoke（#532 SU7 PR1・e2e/ 撤去後の後継の最低線）。
+  # e2e job とは独立にビルドする（e2e:tauri:setup は flip PR2 で消えるため依存しない）。
+  # npm 工程が要るのは tauri の context codegen が frontendDist（dist/）の実在を要求するため
+  # （PR3 の frontendDist 撤去までの過渡）。
+  smoke-egui:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build frontend assets (tauri codegen input)
+        run: npm run build
+
+      - name: Build release binary
+        run: cargo build --release -p snotra
+
+      - name: Run egui smoke
+        run: npm run smoke:egui -- -ExePath target/release/snotra.exe -SeedConfig
+        env:
+          # flip（PR2）でこの env を外し、「既定が egui であること」自体を検証対象へ変える（spec 決定 3）
+          SNOTRA_EGUI_MAIN: "1"

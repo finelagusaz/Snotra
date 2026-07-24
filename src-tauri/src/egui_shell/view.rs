@@ -1201,6 +1201,10 @@ impl EguiView for SearchWindowView {
         // #633: index build 完了の世代検知 → 現クエリで再検索（runRefresh parity・SU6 spec 決定 3）。
         // reset_pending 消費の後に置く（show 直後は reset 済み空クエリの no-op になるだけ）。
         // folder 中は fs 由来 cache の再フィルタ、tool 中は no-op——run_search が view_kind で分岐済み。
+        // 順序不変条件: このブロックが後段の indexing() 読み（run_search 内・show_results ゲート）
+        // より前にあることは、完了フレームをフリッカーなしで新結果にするために効いている
+        // （世代 SeqCst acquire が後続 Relaxed 読みへ happens-before を運ぶ）。後ろへ動かしても
+        // 正しさは壊れないが 1 フレームのフリッカーが出る。
         if let Some(s) = self.app_handle.try_state::<crate::AppState>() {
             let generation = s.index_generation.load(Ordering::SeqCst);
             if crate::egui_shell::needs_index_refresh(self.last_seen_index_generation, generation) {

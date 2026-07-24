@@ -1,8 +1,9 @@
 //! Tauri の managed state（`AppState`）定義。
 //!
 //! `Mutex<Engine>`（検索・履歴・設定を統合した snotra-core facade）と 3 つの `AtomicBool`
-//! （`indexing` / `index_build_started` / `main_visible`）を保持する。`main_visible` は Win32
-//! `is_visible()` の ~35ms レイテンシを回避するキャッシュ。
+//! （`indexing` / `index_build_started` / `main_visible`）、および index build 完了ごとに
+//! 単調増加する `index_generation`（`AtomicU64`・#633 の世代カウンタ）を保持する。
+//! `main_visible` は Win32 `is_visible()` の ~35ms レイテンシを回避するキャッシュ。
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

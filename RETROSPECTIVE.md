@@ -1,28 +1,31 @@
-# Retrospective — #532 Phase 2 SU5（updater + 通知 primitive + 起動 async 化）
+# Retrospective — #532 Phase 2 SU6（統合 glue: config 反映 wake + #633 + §12 IME parity）
 
 ## よかったこと
 
-### spec 段階のマルチパースペクティブレビューが設計の根幹を 3 回覆した
-brainstorm ドラフトに 3 レンズ subagent（並行性/parity/状態機械）+ codex 敵対探索を当て、実装前に (1)「hide は起動完了待ち」というドラフトの根幹前提が WebView2 実コードで反証され（launching ガードは打鍵のみ）、(2) codex の「世代 token 必要」が per-launch channel の rx 所有で不要と実測反証され、(3)「保存優先」の出所調査が SPEC・コード・issue 申し送りの三者食い違いを暴いた。実装後に発覚していれば作り直しだった 3 件が、spec の文面修正で済んだ。多レンズは「収束点で盲点を暴く」（#536 の教訓）が SU5 でも成立。
+### live-read 徹底の複利が SU6 を「イベント 10 種のミラー」から「合図 1 本」へ圧縮した
+SU3〜SU5 が egui 側を毎フレーム live-read で作ってきた結果、config 反映 glue の設計が「`config-applied` 1 イベント + `request_repaint`」に収束した。WebView2 が必要とした値運搬イベント群を egui に複製せず、「値の正本は config・イベントは合図」という SSOT 構造が壊れない。過去 SU の設計判断が後続 SU の実装量を直接減らす複利として観測できた。
 
-### 一次資料が reviewer の Important を 2 件取り下げさせた
-Task 3（flush 後 selected=0 の主張）と Task 4（Tool 失敗時の「退行」）で、reviewer の Important に対し実装者が WebView2 実コード・spec 本文という一次資料で反証し、いずれも「コメント是正のみ」「現状維持」で決着した。「reviewer の指摘も実装者の反論も鵜呑みにせず、一次資料で接地させてから裁定する」往復が、誤った fix（parity 逸脱の reset 追加・不要なメニュー復元実装）を 2 回防いだ。
+### 多レンズレビュー + 独立導出が設計を実装前に 2 度反転させ、手戻りをゼロにした
+spec 段階の 4 レンズ（並行性/parity/スコープ/codex）が「クリア」案を反証し（bool エッジのパルス見逃し・SolidJS 非 parity・instant carve-out 破壊の 3 点が独立に一致）、plan-review の独立導出だけが通知 parity gap 2 件（hotkey 失敗の受け口ゼロ・非空クエリ indexing の無言化）を検出した。結果、実装 9 タスクは全て初回レビュー Approved（要 fix は doc 2 行のみ）で、最終 whole-branch レビューも Critical/Important ゼロ。「レビューを設計段階に前倒すほど修正コストが下がる」の実証。
 
-### plan 工程の plugin 一次調査が「決着不能な未決」を構造的解に変えた
-spec が未決とした保存順序を、実装計画の冒頭で tauri-plugin-updater のローカルソース（`updater.rs:865` の `std::process::exit(0)`）に問うて決着した。副産物として「現行 WebView2 経路は update 時に終了保存が一度も走っていない」既存 gap を発見し、`on_before_exit` hook 登録という「保存が構造的に保証される」解へ到達した。文書間の食い違い（SPEC vs ロードマップ申し送り）は、実装を読むまで裁定しないのが正しかった。
+### 過去サイクルの教訓が「必見点」として機構的に働いた
+SU5 の「wake 忘れ 3 度目」教訓を最終レビューの必見点（wake 全数監査）へ昇格させ、同型ゼロを能動的に確認した。i18n 実物突合の指示（SU5「…」教訓の再適用）は SU6 でも En 末尾ピリオド差を実装時に捕捉した。教訓を「注意」でなく「レビューの検査項目・brief の必須手順」に変換すると再発防止として機能する。
 
-### 検証専任タスクが spec の要石を決着させ、実バグも捕捉した
-Task 10 を検証専任に切り、spec が「実装時スモークで決着」と明記した hidden 中 update() の挙動を一時プローブで実測（走らない・backstop 有効）。さらに回帰スモークが toast dismiss 後の stale 表示（wake 忘れ）という**レビュー 2 段をすり抜けた実バグ**を捕捉した。「テストで書けない項目を実装時スモークとして計画に明記する」→「検証タスクがそれを実行する」の分業が機能した。
+### merge 後コンフリクトの解決が「両側とも正」を即断できた
+並行マージ（#649）との衝突は、双方の変更意図（wake 不変条件の追加 vs strings live-read 是正）を把握済みだったため、両側保持の解決を迷いなく適用できた。ledger と PR 記録が衝突解決の判断材料としてそのまま機能した。
 
 ---
 
 ## 伸びしろ
 
-### rustdoc の intra-doc link 誤解釈で CI が赤になった（検査カバレッジの隙間）
-doc コメントに UI ラベルを `[今すぐ更新]` と角括弧で書き、rustdoc がリンク構文と解釈して CI rust-check（cargo doc・deny 設定）が赤になった（4 箇所・マージ前に発覚）。**cargo doc は PostToolUse hook にも task review のテスト実行にも含まれず、CI でのみ発火する**——「hook 沈黙=合格」の射程外にある検査の存在を、書く時点の様式で防ぐしかない。`docs/comment-guidelines.md` rustdoc 様式に「非リンク角括弧は backtick で包む」を追記して塞いだ。
+### イベント→ポーリングの変換で「パルス合流」を初版設計が見落とした
+brainstorm 初版の #633 案（prev_indexing の bool エッジ検出）は、速い再構築で started/complete の repaint が 1 フレームに合流するとパルスが見えない。イベント駆動（各イベントがハンドラを必ず駆動する）からフレーム観測（合流する）への変換では、**「観測者が見る前に往復しうる状態」をエッジでなくアキュムレータ（単調カウンタ）で運ぶ**のが既定——folder の drain-latest と同じ構造だと、設計時点で気づけたはずだった。
 
-### イベント駆動 runtime の wake 忘れが 3 度目の同型で再発した
-toast action（クリックの遅延 dispatch）後に `request_repaint` を呼ばず、dismiss 後の stale 表示が残った。folder ロード（SU3 M2）・icon worker（SU4）で 2 度学び view.rs にコメントまである同型パターンの 3 度目——「状態を変えたら起こす」が**サイトごとの注意**に留まり、横断不変条件として文書化されていなかった。`src-tauri/CLAUDE.md` の egui_shell 節に wake 不変条件（+ hidden 中 update() 非走行の実測）を明記して昇格させた。残余の暗黙 wake 1 箇所（start_launch）は #648 で自己完結化する。
+### 既存 UI の「表示条件」を検証せず引用して spec の主張が過剰になった
+初版 spec は「indexing 中は既存の検索バー hint が案内する」と書いたが、hint は空クエリ時しか描かれない（egui の hint_text 意味論 + 実装のガード）。表示ゲートで結果が消える #633 の本命シナリオ（非空クエリ）では無言になる——独立導出だけが捕捉した。**既存表示物を頼りにする設計主張は「それがいつ描かれるか」の前提条件ごと検証する**（全称の過剰と同型の書き癖）。
 
-### 計画内コードの「わかったつもり」が review 往復を 2 回消費した
-plan の完全コード方式は転写ミスを消す一方、(1) flush 後 selected のコメントが実挙動（clamp）と矛盾、(2) Tool 失敗時の run_search no-op 見落とし、(3) toast ボタンの `next_auto_id` 二重取得と、**計画コード自体の欠陥**が 3 件レビューで出た。いずれも「WebView2 の該当経路を計画時に読んで確認したか」で防げた——**計画に書くコードの parity 主張は、書く時点で該当実装の該当行を読んで裏取りする**（spec の parity 検証と同じ規律を plan のコード片にも適用する）。
+### parity gap の特定を単一イベント名の grep に依存した
+hotkey 通知の gap 調査を `hotkey-registration-failed` の文字列 grep で確定したため、別イベント名（`platform-event` / `initial-hotkey-failed`）で実装された対の経路（起動時失敗・原型 a06d790 が対で設計）を見逃した。マージ後の /code-review（git 履歴レンズ）が原型コミットのメッセージから発見。**機能の parity 監査はイベント名でなく原型コミット（機能が導入された PR/commit）を遡って対設計を数え上げる**——「同概念・別名」クラスの実例。#652 として SU6.5 で解消する。
+
+### spec の細部を記憶で書いて 1 箇所誤った（/s vs /o）
+サイドカー確認手順に「/s → open_settings」と書いたが、実装は `/o`=OpenSettings・`/s`=RebuildIndex（codex 反証が捕捉）。view.rs の呼び出し行だけ確認して slash テーブルを確認しなかった。**手順書に書くコマンド・操作は、その場で当該テーブル（SSOT）を開いて写す**——i18n 転記と同じ規律を操作手順にも適用する。

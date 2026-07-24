@@ -33,7 +33,8 @@ Phase 1（技術スパイク + 採用ゲート検証）は完了した。スパ�
 - **SU3.5 完了** — tool-selection（PR #641）。#638 先勝ち正規化を同時解消
 - **SU4 完了** — アイコン + 視覚 pass + §11 テーマ消費（PR #644）
 - **SU5 完了** — updater + 通知 primitive + #631（起動 async 化・single-flight・flush-on-Enter）（PR #647・#631 close）。保存は plugin の `on_before_exit` hook で構造化（Windows では `downloadAndInstall` が復帰せず exit(0) する一次確認に基づく——現行 WebView2 経路の「update 時に終了保存が走らない」既存 gap も同時解消）。hidden 中 drain の要石（spec C 節）は実装時スモークで決着——egui_shell 経路では tao が hidden 窓へ update() を配らず（実測）、reset-on-show の backstop が launching/一時通知を確実にクリアする。回帰スモーク 8 項目 + ユーザー視覚スモーク合格。follow-up は #648（wake 恒久化 + doc/dead-field 整理）へ
-- 残り: `SU6 → SU6.5 → SU7`（→「依存順・並行」）
+- **SU6 完了** — 統合 glue（PR #651・#633 close）。config 反映は「単一 wake `config-applied` + 毎フレーム live-read」（値を運ばない・WebView2 イベント群をミラーしない）。#633 は表示ゲート + `index_generation` 世代カウンタ（「クリア」案はレビューで却下——SolidJS 非 parity・instant carve-out 破壊・bool エッジのパルス見逃し）。width は view 単独 size writer 化、IME は `TurnOffIme` 再利用、通知 parity（非空クエリ indexing overlay + hotkey 失敗通知）は plan-review 独立導出の検出分。再変換は #650 へ defer、起動時 hotkey 失敗通知は #652（SU6.5 スコープ）
+- 残り: `SU6.5 → SU7`（→「依存順・並行」）
 
 ## spec 分割（SU1–SU7）
 

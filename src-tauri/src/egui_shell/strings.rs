@@ -1,5 +1,7 @@
 //! egui 経路の UI 文言テーブル（#532 SU5）。`ui/src/lib/i18n.ts` の同キー値と一字一句一致
-//! させる（parity の正本は i18n.ts）。言語は呼び出しごとに引数で受ける——view.rs の `lang()` が
+//! させる（parity の正本は i18n.ts）。**転記は必ず i18n.ts 実物を開いて codepoint 単位で行う**
+//! ——計画書・レビュー引用の文字列を正本にしない（SU5「…」vs「...」・SU6 En 末尾ピリオドの
+//! 差は実物突合だけが捕捉した）。言語は呼び出しごとに引数で受ける——view.rs の `lang()` が
 //! config `general.language` を毎フレーム live-read するため、config-applied wake（SU6）で
 //! 言語切替が次フレームから反映される（起動時一回読みではない・#648(B) で旧記述を是正）。
 //! snotra-core は「UI 表示文字列を持たない」規約のため、文言はこの crate（UI 層）に置く。

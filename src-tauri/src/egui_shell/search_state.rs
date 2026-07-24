@@ -395,6 +395,26 @@ pub(crate) fn compute_parent_dir(current_dir: &str) -> Option<String> {
     Some(parent)
 }
 
+/// §4.7 表示ゲート（#633・SU6 spec 決定 3）: 再インデックス中は plain 結果のみ隠す。
+/// SolidJS `shouldShowResults`（search.ts: `interpKind()==="instant" || !indexing()`）の鏡写しで、
+/// instant/folder/tool は表示継続、データと選択は保持する（クリアしない・選択リセットしない）。
+/// `instant_rows` は表示中行の来歴 snapshot（`instant_rows_query.is_some()`）——live interp でなく
+/// 来歴で判定するのは prefix hot-change の stale 行対策（#637 finding 0）と同じ理由。
+/// driver（view.rs）は Task 4 で表示分岐に組み込む（#532 SU6 Task 1）。
+#[allow(dead_code)]
+pub fn plain_results_hidden(view_kind: ViewKind, instant_rows: bool, indexing: bool) -> bool {
+    indexing && matches!(view_kind, ViewKind::Results) && !instant_rows
+}
+
+/// #633 世代トリガ（SU6 spec 決定 3）: index build 完了で bump される世代が last-seen と
+/// 異なれば再検索。bool エッジ検出と違い、started/complete の repaint が 1 フレームに合流して
+/// パルスが見えなくても累積カウンタは差分が残るため取りこぼさない。
+/// driver（view.rs）は Task 4 で再検索トリガに組み込む（#532 SU6 Task 1）。
+#[allow(dead_code)]
+pub fn needs_index_refresh(last_seen: u64, current: u64) -> bool {
+    last_seen != current
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -764,5 +784,26 @@ mod tests {
         assert!(!s.accept_folder_result(t1)); // 旧 token は folder Some でも拒否
         assert!(s.accept_folder_result(t2)); // 最新 token は受理
         assert_eq!(s.view_kind(), ViewKind::Folder);
+    }
+
+    #[test]
+    fn plain_results_hidden_only_for_plain_results_view() {
+        // §4.7: indexing 中は plain results のみ隠す（SolidJS shouldShowResults 鏡写し）
+        assert!(plain_results_hidden(ViewKind::Results, false, true));
+        // instant 行は表示継続（§4.7 instant carve-out・SPEC §4.7:181）
+        assert!(!plain_results_hidden(ViewKind::Results, true, true));
+        // folder/tool は index 非依存ゆえ表示継続
+        assert!(!plain_results_hidden(ViewKind::Folder, false, true));
+        assert!(!plain_results_hidden(ViewKind::Tool, false, true));
+        // 非 indexing は常に表示
+        assert!(!plain_results_hidden(ViewKind::Results, false, false));
+    }
+
+    #[test]
+    fn needs_index_refresh_only_on_generation_change() {
+        assert!(!needs_index_refresh(0, 0));
+        assert!(needs_index_refresh(0, 1));
+        // 複数回 bump がまとまっても 1 回の比較で拾う（repaint 合流パルス耐性・spec 決定 3）
+        assert!(needs_index_refresh(3, 7));
     }
 }

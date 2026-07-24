@@ -48,7 +48,7 @@ Phase 1（技術スパイク + 採用ゲート検証）は完了した。スパ�
 | **SU4 アイコン + 視覚 pass** | 実アイコン抽出 + LRU キャッシュ + 非同期バッチを Rust へ（IPC icon コマンド + フロント `lruIconCache`/`iconBatch` を置換）。**#632（行 legibility・truncate・scroll 追従 gate）を同一 pass に統合**——同じ `draw_result_row` を二度作り直さない。**テーマ値の消費（§11 parity）もここで作る**——ハードコード色でなく config テーマ（背景/入力欄/テキスト/選択行/ヒント色・フォント）から描く。これが無いと SU6 の「テーマ反映」に書き込む先が無い。非同期バッチは folder 展開の per-nav thread + drain 最新 token パターンを踏襲 | `src-tauri` | SPEC §3.4, §11, #632 |
 | **SU5 updater + 通知** | **汎用通知 primitive（toast 相当）を先に設計**し、updater（check/download/install・保存優先＝`downloadAndInstall` 復帰後に保存を置かない・3 モード full/check_only/disabled・relaunch）と **#631（起動の async 化 + single-flight + 失敗通知）**を同じ primitive に載せる。flush-on-Enter 乖離（M1 起因・Plain の trailing 窓内 Enter が leading 結果で起動しうる・未起票）は #631 へ追記して同時解消。再変換（WANT）はここで可能なら | `src-tauri` | SPEC §20（20.2, 20.4）, §19.6, #631 |
 | **SU6 統合 glue** | `config_watcher` 反映（テーマ/ホットキー/index を egui ウィンドウへ）・**#633（async 再インデックス中の stale 結果クリア・§4.7）**・**§12 IME 制御（設定有効時の表示時 IME オフ）の egui parity**・終了保存（`setup_exit_listener` 整合）・設定サイドカー共存 | `src-tauri` | SPEC §12, §4.7, #633 |
-| **SU6.5 flip 前ハードニング** | flip 基準の実測群を一括実行: メモリゲート製品規模再測（基準 3・同日ペア測定）・外観目視 parity（基準 2）・**#628 の hidden 時挙動確認**（アイドル再描画が hidden で止まるか。止まらないなら flip ブロッカーへ昇格——常駐ランチャーの CPU/電力に直結）・`e2e:tauri` CI 通過確認 | 計測 + 検証 | #628 |
+| **SU6.5 flip 前ハードニング** | flip 基準の実測群を一括実行: メモリゲート製品規模再測（基準 3・同日ペア測定）・外観目視 parity（基準 2）・**#628 の hidden 時挙動確認**（アイドル再描画が hidden で止まるか。止まらないなら flip ブロッカーへ昇格——常駐ランチャーの CPU/電力に直結）・`e2e:tauri` CI 通過確認・**#652 起動時 hotkey 登録失敗通知の egui 受け口**（`platform-event` の `initial-hotkey-failed`——未対応だと egui モードで窓を開く手段が無いのに無通知。PR #651 の code-review が検出・SU6 の pending 受け口と同型で移植、窓強制表示 parity の要否が主論点） | 計測 + 検証 | #628, #652 |
 | **SU7 配布 + 切替** | 署名付き NSIS/updater artifact（#580 の CI/隔離環境）・portable ZIP 判断・**`e2e/` の後継方針決定**（WebView2 撤去で基盤喪失・#567 との順序整理・egui 経路の自動回帰 smoke の定式化）・**既定を egui へ切替 + WebView2 経路撤去** | 設定 + CI | #580, #567 |
 
 ## 依存順・並行
@@ -78,7 +78,7 @@ SU1 → SU2 → SU3 → #634 G-SYNC 実測 → SU3.5 → SU4 → SU5 → SU6 →
 - **SU4**: アイコン抽出/キャッシュ/非同期が現行と同等（欠落時プレースホルダ・N 件上限の下流整合）。行視覚が #632 の症状（name/path 重なり・毎フレーム scroll_to_me）を解消。**色・フォントが config テーマ値から描かれ、ハードコード色が残らない**（§11 parity）。非同期アイコンが stale 描画を起こさない（token drain）。
 - **SU5**: 3 モードの gating が現行フロント（`MainApp.tsx`）と一致。保存優先・relaunch が壊れない。通知 primitive が updater 通知と起動失敗通知（#631）の両方を表示し、起動が UI スレッドを止めず（dead UNC・モーダルダイアログ）、in-flight 窓の二重起動もしない（single-flight）。
 - **SU6**: config 変更の反映（テーマ/ホットキー/index）・終了保存・サイドカーが egui ウィンドウで動く。セッション中の再インデックスで stale 結果が消える（#633・§4.7）。§12 IME 制御が egui 経路で機能する。
-- **SU6.5**: メモリゲート再測が flip 基準 3 を満たす。hidden 時に再描画が止まることを実測確認（止まらないなら #628 を flip ブロッカーへ昇格）。外観目視 parity 合格。
+- **SU6.5**: メモリゲート再測が flip 基準 3 を満たす。hidden 時に再描画が止まることを実測確認（止まらないなら #628 を flip ブロッカーへ昇格）。外観目視 parity 合格。起動時 hotkey 登録失敗が egui 経路でも通知される（#652）。
 - **SU7**: 署名付き実更新・install/uninstall が CI/隔離環境で通り、切替後 WebView2 経路が撤去され回帰がない。**`e2e/` の後継方針が決定済みで、egui 経路の自動回帰 smoke（keybd_event 注入 + `SNOTRA_TRACE` の `egui_show:done`/`egui_hide:done` 観測の定式化等）が最低 1 本 CI で回る**。
 
 ## リスク

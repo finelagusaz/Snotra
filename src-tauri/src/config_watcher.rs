@@ -11,7 +11,7 @@ use notify::{Event, EventKind, RecursiveMode, Watcher};
 use snotra_core::config::{Config, Language, LoadOutcome};
 use snotra_core::engine::IndexInputs;
 use tauri::window::Color;
-use tauri::{AppHandle, Emitter, LogicalSize, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::indexing;
 use crate::platform::{PlatformBridge, PlatformCommand};
@@ -29,16 +29,6 @@ pub(crate) fn parse_hex_color(hex: &str) -> Option<Color> {
     let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
     let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
     Some(Color(r, g, b, 255))
-}
-
-/// Set the native window/WebView2 background color to match the theme.
-/// This prevents a white flash when the window is resized to show results.
-pub(crate) fn sync_webview_background(app: &AppHandle, bg_color_hex: &str) {
-    if let Some(color) = parse_hex_color(bg_color_hex)
-        && let Some(w) = app.get_webview_window("main")
-    {
-        let _ = w.set_background_color(Some(color));
-    }
 }
 
 /// Start watching `config.toml` for external changes (e.g. from snotra-settings).
@@ -123,14 +113,11 @@ fn apply_config_change(app: &AppHandle) {
     let visible_rows_changed = new_visible_rows != old_config.appearance.effective_visible_rows();
     let new_result_limit = new_config.search.effective_result_limit();
     let result_limit_changed = new_result_limit != old_config.search.effective_result_limit();
-    let width_changed =
-        new_config.appearance.window_width != old_config.appearance.window_width;
     let new_visual = if visual_changed {
         Some(new_config.visual.clone())
     } else {
         None
     };
-    let new_width = new_config.appearance.window_width;
 
     // Emit language change BEFORE hotkey failure so the frontend receives
     // the new language before it formats any error notification strings.
@@ -192,9 +179,9 @@ fn apply_config_change(app: &AppHandle) {
         indexing::start_index_build(app);
     }
 
-    // Emit visual config change and sync native background color
+    // Emit visual config change（egui は config-applied wake + live-read で拾う。
+    // この値運搬 emit はフロント受信専用で PR3 のフロント撤去と同時に消す）
     if let Some(visual) = new_visual {
-        sync_webview_background(app, &visual.background_color);
         let _ = app.emit("visual-config-changed", &visual);
     }
 
@@ -223,20 +210,11 @@ fn apply_config_change(app: &AppHandle) {
         let _ = app.emit("top-n-history-changed", new_result_limit);
     }
 
-    // Resize main window if width changed
-    if width_changed
-        && new_width > 0
-        && let Some(w) = app.get_webview_window("main")
-        && let Ok(size) = w.inner_size()
-        && let Ok(sf) = w.scale_factor()
-    {
-        let logical = size.to_logical::<f64>(sf);
-        let _ = w.set_size(LogicalSize::new(f64::from(new_width), logical.height));
-    }
+    // 幅変更の反映は egui view が config-applied wake 後の live-read で自ら set_size する
+    //（SU6: view 単独 size writer——notify スレッドとの 2 次元 read-modify-write race 回避）。
 
     // SU6 spec 決定 1: egui 窓への単一 wake（値は運ばない・受信側は次フレームの live-read が拾う）。
-    // WebView2 側に listener は無く flag OFF では無害なので無条件 emit。update_config（上）より
-    // 後に置く——先に起こすと旧 config を描いてから二度目の wake が要る。
+    // update_config（上）より後に置く——先に起こすと旧 config を描いてから二度目の wake が要る。
     let _ = app.emit("config-applied", ());
 }
 

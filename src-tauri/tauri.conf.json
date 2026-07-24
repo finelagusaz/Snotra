@@ -11,21 +11,7 @@
     "removeUnusedCommands": true
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "url": "main.html",
-        "title": "Snotra",
-        "width": 600,
-        "height": 52,
-        "visible": false,
-        "decorations": false,
-        "skipTaskbar": true,
-        "alwaysOnTop": true,
-        "resizable": false,
-        "center": true
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:"
     }

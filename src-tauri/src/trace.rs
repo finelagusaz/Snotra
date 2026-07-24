@@ -15,8 +15,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde_json::json;
 
 /// 真偽 env フラグの共通解析（受理値: `1`/`true`/`yes`/`on`、trim + ASCII 小文字化）。
-/// `trace_enabled`（`SNOTRA_TRACE`）と `suspend_disabled`（`SNOTRA_DISABLE_SUSPEND`、
-/// `main.rs`）が共有する受理仕様の SSOT。キャッシュは呼び出し側の `OnceLock` が担う。
+/// `trace_enabled`（`SNOTRA_TRACE`）等の env フラグが共有する受理仕様の SSOT。
+/// キャッシュは呼び出し側の `OnceLock` が担う。
 pub(crate) fn env_flag(name: &str) -> bool {
     let Ok(v) = std::env::var(name) else {
         return false;

@@ -6,21 +6,19 @@ on:
     branches:
       - main
     # paths が唯一の自動ゲート。カテゴリ C 相当（ウィンドウ生成・ホットキー・スラッシュコマンド）を
-    # 含みうる変更、および E2E ビルド/実行の入力（sidecar・Playwright 設定・vite・依存 manifest/lockfile）
-    # に触れた PR で自動起動する。手動実行は workflow_dispatch。`e2e` ラベルは廃止済み（#145 Phase 3）。
-    # 拾いすぎ（配下 *.md 等）は過剰実行で安全側ゆえ negation を足さない。
+    # 含みうる変更、およびビルド入力（vite・依存 manifest/lockfile）に触れた PR で自動起動する。
+    # 手動実行は workflow_dispatch。拾いすぎ（配下 *.md 等）は過剰実行で安全側ゆえ negation を足さない。
+    # WebView2 e2e（Playwright + tauri-driver）は #532 SU7 flip で撤去済み——後継は smoke-egui job
+    # （egui 経路の自動回帰の最低線）+ 手動 GUI smoke 体制（docs/build-commands.md）。
     paths:
       - 'src-tauri/**'
       - 'ui/**'
-      - 'e2e/**'
       - '.github/workflows/e2e.yml'
-      # E2E workflow の各ステップが直接呼ぶスクリプト/設定（変更で自己検証する）
+      # workflow の各ステップが直接呼ぶスクリプト（変更で自己検証する）
       - 'scripts/smoke-startup.ps1'      # "Run startup smoke" ステップ
-      - 'scripts/smoke-egui.ps1'         # smoke-egui job（egui 経路の自動回帰・#532 SU7）
-      - 'scripts/prepare-sidecar.ps1'    # "Build app and setup E2E"（e2e:tauri:setup → prepare:sidecar）
-      - 'playwright.tauri.config.ts'     # "Run E2E tests"（e2e:tauri = Playwright ランナー）
-      - 'vite.config.ts'                 # tauri build のフロントバンドル入力
-      # 依存 manifest/lockfile（依存更新 PR を E2E 網に載せる）
+      - 'scripts/smoke-egui.ps1'         # "Run egui smoke" ステップ（#532 SU7）
+      - 'vite.config.ts'                 # tauri codegen のフロントバンドル入力（PR3 の frontendDist 撤去まで）
+      # 依存 manifest/lockfile（依存更新 PR を smoke 網に載せる）
       - '**/Cargo.toml'
       - 'Cargo.lock'
       - 'package.json'
@@ -31,46 +29,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  e2e:
-    # job `if` は不要。on は workflow_dispatch と（paths + branches で絞った）pull_request のみで、
-    # 起動した時点で実行してよいことが確定する。将来 on にトリガーを足すなら if の再導入を検討。
-    runs-on: windows-latest
-    timeout-minutes: 30
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
-      - name: Install frontend dependencies
-        run: npm ci
-
-      - name: Build app and setup E2E
-        run: npm run e2e:tauri:setup
-
-      # e2e:tauri:setup が生成した release バイナリを共有（debug 二重ビルドを避ける）。
-      # smoke-startup.ps1 は ExePath を Test-Path で検証し、不在なら throw する。
-      - name: Run startup smoke
-        run: pwsh -NoProfile -File scripts/smoke-startup.ps1 -ExePath target/release/snotra.exe
-
-      - name: Run E2E tests
-        run: npm run e2e:tauri
-
-  # egui 経路の自動回帰 smoke（#532 SU7 PR1・e2e/ 撤去後の後継の最低線）。
-  # e2e job とは独立にビルドする（e2e:tauri:setup は flip PR2 で消えるため依存しない）。
+  # egui 経路の自動回帰 smoke（#532 SU7・e2e/ 撤去後の後継の最低線）。
   # npm 工程が要るのは tauri の context codegen が frontendDist（dist/）の実在を要求するため
   # （PR3 の frontendDist 撤去までの過渡）。
   smoke-egui:
@@ -104,8 +63,10 @@ jobs:
       - name: Build release binary
         run: cargo build --release -p snotra
 
+      # 起動 trace に *:error が無いことの検証（旧 e2e job から移設・検証内容は同一）
+      - name: Run startup smoke
+        run: pwsh -NoProfile -File scripts/smoke-startup.ps1 -ExePath target/release/snotra.exe
+
+      # flip 済み（#532 SU7 PR2）: env なし＝「既定が egui であること」自体が検証対象（spec 決定 3）
       - name: Run egui smoke
         run: npm run smoke:egui -- -ExePath target/release/snotra.exe -SeedConfig
-        env:
-          # flip（PR2）でこの env を外し、「既定が egui であること」自体を検証対象へ変える（spec 決定 3）
-          SNOTRA_EGUI_MAIN: "1"

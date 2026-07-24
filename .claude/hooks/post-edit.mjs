@@ -54,9 +54,9 @@ const PROGRESS_LINE =
 // tsconfig の include はディレクトリ展開で .mts / .cts も program に入れる。
 // 「沈黙 = 合格」の下では、拾い漏らしは安全側ではなく false green になる（I7）。
 const TS_LIKE = /\.(m|c)?tsx?$/;
-// tsconfig の include はディレクトリ（ui/src・e2e）に加え、ルートの config 3 ファイルを名指しする。
+// tsconfig の include はディレクトリ（ui/src）に加え、ルートの config 2 ファイルを名指しする。
 // ファイル include は完全一致で判定する（endsWith だと sub/vite.config.ts を誤発火する）。
-const ROOT_TS_CONFIG = new Set(["vite.config.ts", "vitest.config.ts", "playwright.tauri.config.ts"]);
+const ROOT_TS_CONFIG = new Set(["vite.config.ts", "vitest.config.ts"]);
 
 // cargo のワークスペース定義。basename でアンカーする — 過小検出は沈黙（false green）
 // になるが、過剰検出は cargo check が走るだけで無害（fail-closed 方向）。
@@ -130,7 +130,7 @@ export function selectChecks(rel) {
   if (CARGO_MANIFEST.test(rel)) checks.push("cargo-check");
 
   if (
-    ((rel.startsWith("ui/src/") || rel.startsWith("e2e/")) && TS_LIKE.test(rel)) ||
+    (rel.startsWith("ui/src/") && TS_LIKE.test(rel)) ||
     ROOT_TS_CONFIG.has(rel) ||
     rel === "tsconfig.json"
   ) {
@@ -157,7 +157,7 @@ export function selectChecks(rel) {
 }
 
 /**
- * 新規ソースファイル（.rs / ui・e2e の TS）を Write したかの述語。真なら main() が
+ * 新規ソースファイル（.rs / ui の TS）を Write したかの述語。真なら main() が
  * 「モジュール索引の更新忘れ」を促す WARN を出す。
  *
  * 索引整合の判定そのもの（どのファイルが索引に在るべきか）は governance:check が SSOT。
@@ -171,8 +171,8 @@ export function selectChecks(rel) {
 export function isSourceFileWrite(rel, toolName) {
   if (toolName !== "Write") return false;
   const isRust = rel.endsWith(".rs");
-  const isUiOrE2eTs = (rel.startsWith("ui/src/") || rel.startsWith("e2e/")) && TS_LIKE.test(rel);
-  return isRust || isUiOrE2eTs;
+  const isUiTs = rel.startsWith("ui/src/") && TS_LIKE.test(rel);
+  return isRust || isUiTs;
 }
 
 /**

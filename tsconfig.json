@@ -15,6 +15,6 @@
     "incremental": true,
     "tsBuildInfoFile": "node_modules/.cache/typecheck.tsbuildinfo"
   },
-  "include": ["ui/src", "e2e", "vite.config.ts", "vitest.config.ts", "playwright.tauri.config.ts"],
+  "include": ["ui/src", "vite.config.ts", "vitest.config.ts"],
   "exclude": []
 }

@@ -66,11 +66,9 @@ pub fn notify_main_shown(state: State<AppState>) {
 pub fn notify_main_hidden(state: State<AppState>, app: AppHandle) {
     state.main_visible.store(false, Ordering::SeqCst);
     let _ = app.emit("window-hidden", ());
-    // フロントエンド起因の hide（フォーカス喪失/Escape/クリック起動/スラッシュ）でも
-    // hotkey 経路と同じ共通後処理（suspend → trim）を行う。フロントは `await win.hide()`
-    // 完了後に本 IPC を呼ぶ（#361）ため、ここに到達した時点でウィンドウは非表示。
-    // 共通の理路（FIFO 直列化・競合時の是正・best-effort 性）はヘルパーの doc を参照。
-    crate::suspend_and_trim_after_hide(&app, "notify_main_hidden");
+    // hide 後の working set trim（egui 経路の hide_egui_main と同一操作・best-effort）。
+    // WebView2 suspend は #532 SU7 flip で消滅した。本 IPC 自体はフロント撤去（PR3）まで残置。
+    crate::working_set::trim_idle_working_set(std::process::id());
 }
 
 #[cfg(test)]

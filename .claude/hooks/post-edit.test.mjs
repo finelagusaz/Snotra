@@ -50,13 +50,16 @@ describe("selectChecks", () => {
     expect(selectChecks("ui/src/MainApp.test.tsx")).toEqual(["typecheck"]);
   });
 
-  it("e2e の .ts も typecheck（#474 で include に追加）", () => {
-    expect(selectChecks("e2e/tauri.slash.e2e.ts")).toEqual(["typecheck"]);
+  // #532 SU7 flip: e2e/ と playwright.tauri.config.ts は WebView2 撤去と同時に消滅。
+  // tsconfig include からも外れたため typecheck は発火しない（発火すると program 外の
+  // 編集で「検査が通った」と沈黙する false green になる）。
+  it("e2e の .ts は typecheck を発火しない（#532 SU7 で撤去済み）", () => {
+    expect(selectChecks("e2e/tauri.slash.e2e.ts")).toEqual([]);
   });
 
-  it("ルートの設定 .ts は typecheck（include が名指しする 3 ファイル）", () => {
+  it("ルートの設定 .ts は typecheck（include が名指しする 2 ファイル）", () => {
     expect(selectChecks("vite.config.ts")).toEqual(["typecheck"]);
-    expect(selectChecks("playwright.tauri.config.ts")).toEqual(["typecheck"]);
+    expect(selectChecks("playwright.tauri.config.ts")).toEqual([]);
   });
 
   // #497: 「検査の定義を変えるファイル」も検査集合に載せる。hook-selftest が走ることで、
@@ -192,10 +195,10 @@ describe("isSourceFileWrite — 新規ソース Write の索引 reminder（#629/
     expect(isSourceFileWrite("snotra-core/src/foo.rs", "Write")).toBe(true);
   });
 
-  it("Write された ui/src・e2e の TS は真", () => {
+  it("Write された ui/src の TS は真（e2e/ は #532 SU7 で撤去済み・偽）", () => {
     expect(isSourceFileWrite("ui/src/lib/x.ts", "Write")).toBe(true);
     expect(isSourceFileWrite("ui/src/components/Foo.tsx", "Write")).toBe(true);
-    expect(isSourceFileWrite("e2e/foo.e2e.ts", "Write")).toBe(true);
+    expect(isSourceFileWrite("e2e/foo.e2e.ts", "Write")).toBe(false);
   });
 
   // 偽: Edit は既存ファイル。沈黙=合格を壊さないため Write のみに絞る。
@@ -608,10 +611,8 @@ describe("tsconfig ドリフト検出カナリア — C2", () => {
     const tsconfig = JSON.parse(readFileSync(tsconfigPath, "utf8"));
     expect(tsconfig.include).toEqual([
       "ui/src",
-      "e2e",
       "vite.config.ts",
       "vitest.config.ts",
-      "playwright.tauri.config.ts",
     ]);
     expect(tsconfig.exclude).toEqual([]);
   });

@@ -207,6 +207,18 @@ pub(crate) fn create(
         apply_rounded_corners(&results);
     }
     runtime.attach(results, results_view::ResultsView::new(app_handle.clone()))?;
+    // #646 PR2 決定 10: ドラッグ移動中の追従。ネイティブ移動ループ中は egui フレームが
+    // 回る保証が無いため、tao の Moved イベント(tauri Window リスナー経由)で直接
+    // results を追従させる。通常時の従属は main update() の drive が担う(二重呼びは
+    // set_position の同値上書きで無害)。attach で window が move される前に登録する。
+    {
+        let handle = app_handle.clone();
+        window.on_window_event(move |event| {
+            if matches!(event, tauri::WindowEvent::Moved(_)) {
+                position_results_below_main(&handle);
+            }
+        });
+    }
     runtime.attach(window, SearchWindowView::new(app_handle))
 }
 
@@ -427,6 +439,29 @@ pub(crate) fn wake_results(app: &tauri::AppHandle) {
         && let Some(ctx) = guard.as_ref()
     {
         ctx.request_repaint();
+    }
+}
+
+/// results を main の直下 + window_gap に配置する(#646 PR2 決定 6)。呼び出し元は
+/// 2 つ——main の update()(通常の毎フレーム従属)と main の Moved リスナー
+/// (ネイティブ移動ループ中の追従。ループ中は egui フレームが回らない可能性があるため
+/// イベント駆動で直接動かす)。デルタガードは持たない(set_position は同値でも安価・
+/// ガードは update 側の責務)。
+pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
+    let (Some(main), Some(results)) = (app.get_window("main"), app.get_window("results")) else {
+        return;
+    };
+    let gap = app
+        .try_state::<crate::AppState>()
+        .map(|s| s.engine.lock().unwrap().config().visual.window_gap)
+        .unwrap_or(4) as f64;
+    if let (Ok(pos), Ok(size), Ok(scale)) =
+        (main.outer_position(), main.outer_size(), main.scale_factor())
+    {
+        let _ = results.set_position(tauri::PhysicalPosition::new(
+            pos.x,
+            pos.y + size.height as i32 + (gap * scale).round() as i32,
+        ));
     }
 }
 

@@ -189,8 +189,6 @@ pub(crate) struct SearchWindowView {
     last_results_visible: bool,
     /// results 窓の直近設定高さ（デルタガード）。
     last_results_height: f64,
-    /// results 窓の直近設定位置（物理座標。デルタガード）。
-    last_results_pos: Option<(i32, i32)>,
     /// results 窓の直近設定幅（デルタガード）。**`last_set_width`（main 用）を流用しない**——
     /// 同一フレーム内で main のブロックが先に `last_set_width` を更新済みのため、それと
     /// 比較すると常に差分 0 になり results が幅の live-reload に追従しなくなる（Important 1）。
@@ -223,7 +221,6 @@ impl SearchWindowView {
             notice_base: Instant::now(),
             last_results_visible: false,
             last_results_height: 0.0,
-            last_results_pos: None,
             last_results_width: 0.0,
         }
     }
@@ -703,9 +700,6 @@ impl SearchWindowView {
         let Some(results) = self.app_handle.get_window("results") else {
             return;
         };
-        let Some(main) = self.app_handle.get_window("main") else {
-            return;
-        };
         let count = self.state.results().len();
         let res_h = crate::egui_shell::layout::results_window_height(
             count,
@@ -720,24 +714,10 @@ impl SearchWindowView {
             }
             return;
         }
-        // 位置: main の外形直下 + gap(物理座標。gap は論理 px を scale で換算)。
-        let gap = self
-            .app_handle
-            .try_state::<crate::AppState>()
-            .map(|s| s.engine.lock().unwrap().config().visual.window_gap)
-            .unwrap_or(4) as f64;
-        if let (Ok(pos), Ok(size), Ok(scale)) =
-            (main.outer_position(), main.outer_size(), main.scale_factor())
-        {
-            let target = tauri::PhysicalPosition::new(
-                pos.x,
-                pos.y + size.height as i32 + (gap * scale).round() as i32,
-            );
-            if self.last_results_pos != Some((target.x, target.y)) {
-                let _ = results.set_position(target);
-                self.last_results_pos = Some((target.x, target.y));
-            }
-        }
+        // 位置: main の外形直下 + gap(物理座標。gap は論理 px を scale で換算)。無ガードの
+        // 単一点(position_results_below_main・mod.rs)へ委譲——Moved リスナーと共用する
+        // ため、デルタガードはヘルパー側に持たない(#646 PR2 決定 10)。
+        crate::egui_shell::position_results_below_main(&self.app_handle);
         if (res_h - self.last_results_height).abs() > 0.5
             || (width - self.last_results_width).abs() > 0.5
         {
@@ -1014,7 +994,19 @@ impl EguiView for SearchWindowView {
         }
     }
 
-    fn update(&mut self, ui: &mut egui::Ui, _frame: &mut RuntimeFrame) {
+    fn update(&mut self, ui: &mut egui::Ui, frame: &mut RuntimeFrame) {
+        // #646 PR2 決定 10: 入力欄以外の全域を掴んでドラッグ移動。背景 interact を先に
+        // 登録し、後続ウィジェット(TextEdit・toast ボタン)はヒットテストで勝つ(egui は
+        // 後着が上位)。start_dragging は runtime の frame コマンド経由(配管済み)。
+        let drag_resp = ui.interact(
+            ui.max_rect(),
+            egui::Id::new("main-window-drag"),
+            egui::Sense::drag(),
+        );
+        if drag_resp.drag_started_by(egui::PointerButton::Primary) {
+            frame.drag_window();
+        }
+
         // show 直後の resetForShow（EguiShellState.reset_pending を消費）。stale な debounce
         // armed 状態が再表示後に誤発火しないよう、debounce も併せて作り直す。
         if let Some(sh) = self.app_handle.try_state::<crate::egui_shell::EguiShellState>()
@@ -1042,7 +1034,6 @@ impl EguiView for SearchWindowView {
             // 「既に visible」と誤認して results.show() をスキップし続ける事故になる。
             self.last_results_visible = false;
             self.last_results_height = 0.0;
-            self.last_results_pos = None;
             self.last_results_width = 0.0;
         }
 

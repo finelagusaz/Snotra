@@ -517,6 +517,7 @@ stateDiagram-v2
   - 長いパスは中間セグメントを `...` で省略し、ウィンドウ幅に応じて自動調整
   - フォルダは末尾 `\` で区別
 - egui 経路（softbuffer）の font_family は fontdb 解決で「ユーザーフォント優先 + Yu Gothic フォールバック」（WebView2 CSS スタック parity）。既定 Segoe UI は混在行のベースライン整列を実測確認済み。ただし egui はフォント単位の粗い縦位置補正しか持たないため、非 MS フォント選択時は混在行でベースラインがずれうる（視覚スモークでのみ顕在化する受容残余・#532 SU4）
+- egui 経路の検索入力欄は `font_size` に追従し hint は `hint_text_color` で描かれる。**検索バー高さは 52px 固定**（WebView2 の `--search-bar-height` も `--font-size` に連動しない as-built の parity）。極端な `font_size` では入力欄がバー内に収まらないが、これは WebView2 経路と同挙動である（#643・#532 SU6.5）
 
 ## 12. IME制御
 

@@ -1465,6 +1465,14 @@ impl EguiView for SearchWindowView {
         } else {
             self.state.query().to_string()
         };
+        // §11 Part C（#643）: 入力欄フォントを config `font_size` へ追従させ、hint を
+        // `hint_text_color` で描く。**バー高さ 52px は据え置く**——WebView2 の
+        // `--search-bar-height` も固定値で `--font-size` に連動せず（`global.css`）、
+        // `.search-input` が `font-size: inherit` で body の `--font-size` を受けるだけ。
+        // ゆえに「バー固定 + 入力欄フォントのみ追従」が parity である（SU6.5 決定 3）。
+        // 極端な font_size でバーからはみ出すのは WebView2 も同じ＝同じ壊れ方＝parity。
+        let bar_theme = self.row_theme();
+        let bar_font = egui::FontId::proportional(bar_theme.name_size);
         let response = ui.add(
             egui::TextEdit::singleline(&mut buf)
                 // §18.5 ツール選択中の入力は無効化。add_enabled（全体グレーアウト）でなく
@@ -1472,7 +1480,10 @@ impl EguiView for SearchWindowView {
                 // launching 中も同様に打鍵を止める（Escape/blur/Alt+Q・↑↓は従来どおり通す・
                 // spec 決定 3・4。↑↓は空リストゆえ自然 no-op）。
                 .interactive(!in_tool && self.launching.is_none())
-                .hint_text(hint)
+                .font(bar_font.clone())
+                .hint_text(
+                    egui::RichText::new(hint).font(bar_font).color(bar_theme.path_color),
+                )
                 .desired_width(f32::INFINITY),
         );
         if response.changed() {

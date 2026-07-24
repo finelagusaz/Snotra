@@ -1,11 +1,12 @@
 //! Tauri の managed state（`AppState`）定義。
 //!
 //! `Mutex<Engine>`（検索・履歴・設定を統合した snotra-core facade）と 3 つの `AtomicBool`
-//! （`indexing` / `index_build_started` / `main_visible`）を保持する。`main_visible` は Win32
-//! `is_visible()` の ~35ms レイテンシを回避するキャッシュ。
+//! （`indexing` / `index_build_started` / `main_visible`）、および index build 完了ごとに
+//! 単調増加する `index_generation`（`AtomicU64`・#633 の世代カウンタ）を保持する。
+//! `main_visible` は Win32 `is_visible()` の ~35ms レイテンシを回避するキャッシュ。
 
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use snotra_core::engine::Engine;
 
@@ -15,6 +16,10 @@ pub struct AppState {
     pub index_build_started: AtomicBool,
     /// Tracks main window visibility to avoid costly Win32 `is_visible()` IPC on hotkey toggle.
     pub main_visible: AtomicBool,
+    /// index build 完了ごとに単調増加する世代（#633・SU6 spec 決定 3）。egui view が
+    /// last-seen と比較して再検索をトリガするアキュムレータ。panic/spawn 失敗経路の finish でも
+    /// bump されるが、無変化 index への再検索は同一結果になるだけで無害（意図的に単純化）。
+    pub index_generation: AtomicU64,
 }
 
 impl AppState {
@@ -38,6 +43,7 @@ impl AppState {
     pub fn finish_index_build(&self) {
         self.indexing.store(false, Ordering::SeqCst);
         self.index_build_started.store(false, Ordering::SeqCst);
+        self.index_generation.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -53,6 +59,7 @@ mod tests {
             indexing: AtomicBool::new(false),
             index_build_started: AtomicBool::new(false),
             main_visible: AtomicBool::new(false),
+            index_generation: AtomicU64::new(0),
         }
     }
 
@@ -106,6 +113,16 @@ mod tests {
             !second,
             "try_begin_index_build must fail (no double-start) while a build is already in progress"
         );
+    }
+
+    #[test]
+    fn finish_index_build_bumps_index_generation() {
+        // #633: 完了ごとに単調増加。egui view の世代比較トリガの根拠（SU6 spec 決定 3）。
+        let state = test_state();
+        let g0 = state.index_generation.load(Ordering::SeqCst);
+        assert!(state.try_begin_index_build());
+        state.finish_index_build();
+        assert_eq!(state.index_generation.load(Ordering::SeqCst), g0 + 1);
     }
 
     #[test]

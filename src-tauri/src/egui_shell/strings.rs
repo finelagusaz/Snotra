@@ -1,6 +1,7 @@
 //! egui 経路の UI 文言テーブル（#532 SU5）。`ui/src/lib/i18n.ts` の同キー値と一字一句一致
-//! させる（parity の正本は i18n.ts）。言語は config `general.language` を起動時に一回読む
-//! 静的解決（hot-reload＝`language-changed` 追従は SU6 の config 反映で拡張・spec 決定 10）。
+//! させる（parity の正本は i18n.ts）。言語は呼び出しごとに引数で受ける——view.rs の `lang()` が
+//! config `general.language` を毎フレーム live-read するため、config-applied wake（SU6）で
+//! 言語切替が次フレームから反映される（起動時一回読みではない・#648(B) で旧記述を是正）。
 //! snotra-core は「UI 表示文字列を持たない」規約のため、文言はこの crate（UI 層）に置く。
 
 use snotra_core::config::Language;
@@ -46,6 +47,15 @@ pub fn launch_timeout(l: Language, detail: &str) -> String {
     match l {
         Language::Ja => format!("起動に時間がかかっています{detail}"),
         Language::En => format!("Launch is taking a while{detail}"),
+    }
+}
+
+/// ホットキー登録失敗通知（i18n.ts `notice.hotkey.change_failed` と一字一句一致・
+/// {hotkey} は書式挿入。英語文言に句点は付かない＝i18n.ts 実物どおり）。
+pub fn hotkey_change_failed(l: Language, hotkey: &str) -> String {
+    match l {
+        Language::Ja => format!("ホットキー ({hotkey}) の登録に失敗しました。元のホットキーを維持します"),
+        Language::En => format!("Failed to register hotkey ({hotkey}). Keeping the previous hotkey"),
     }
 }
 
@@ -100,5 +110,15 @@ mod tests {
         // spec 決定 8: timeout は「失敗」でなく「結果不明」。文言に「失敗」を含めない。
         assert!(!launch_timeout(Language::Ja, "").contains("失敗"));
         assert!(!launch_timeout(Language::En, "").to_lowercase().contains("failed"));
+    }
+
+    #[test]
+    fn hotkey_change_failed_matches_i18n() {
+        // i18n.ts notice.hotkey.change_failed の値と一字一句一致（2026-07-24 実物確認）。
+        assert_eq!(
+            hotkey_change_failed(Language::Ja, "Alt+Q"),
+            "ホットキー (Alt+Q) の登録に失敗しました。元のホットキーを維持します"
+        );
+        assert!(hotkey_change_failed(Language::En, "Alt+Q").contains("Alt+Q"));
     }
 }

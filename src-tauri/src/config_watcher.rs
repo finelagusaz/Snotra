@@ -233,6 +233,11 @@ fn apply_config_change(app: &AppHandle) {
         let logical = size.to_logical::<f64>(sf);
         let _ = w.set_size(LogicalSize::new(f64::from(new_width), logical.height));
     }
+
+    // SU6 spec 決定 1: egui 窓への単一 wake（値は運ばない・受信側は次フレームの live-read が拾う）。
+    // WebView2 側に listener は無く flag OFF では無害なので無条件 emit。update_config（上）より
+    // 後に置く——先に起こすと旧 config を描いてから二度目の wake が要る。
+    let _ = app.emit("config-applied", ());
 }
 
 /// `config.toml` の読込結果を実行中エンジンへ適用してよいかの判定。

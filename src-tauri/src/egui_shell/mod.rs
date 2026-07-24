@@ -7,6 +7,8 @@ mod layout;
 mod notify;
 // view.rs（driver）が起動 worker の in-flight 追跡・一時通知で消費する（#532 SU5 Task 4）。
 pub(crate) use notify::{LAUNCH_TIMEOUT, NOTICE_LAUNCH, NoticeSlot};
+// view.rs（driver）が overlay 優先ラダー・hotkey 失敗通知の duration で消費する（#532 SU6 Task 7）。
+pub(crate) use notify::{NOTICE_HOTKEY, OverlayKind, overlay_kind};
 // mod.rs の spawn_update_check が phase 書き込みで、UpdaterUiState が Default で消費する
 // （#532 SU5 Task 6）。toast 描画は view.rs が Task 7 で消費する。
 pub(crate) use notify::{ToastKind, UpdaterPhase, UpdaterUi};
@@ -23,8 +25,10 @@ pub(crate) use search_state::{
 };
 // SlashCmd/find_slash_command は driver（view.rs）が command 分岐・slash 実行で消費する（#532 SU3 M3 Task 2）。
 pub(crate) use search_state::{SlashCmd, find_slash_command};
+// driver（view.rs）は Task 4 で表示ゲート・再検索トリガとして消費する（#532 SU6 Task 1）。
+pub(crate) use search_state::{needs_index_refresh, plain_results_hidden};
 pub(crate) use layout::{Debouncer, HeightParams, compute_window_height};
-// view.rs が UI 文言（hint/overlay/toast）で消費する（#532 SU5・言語は起動時一回読み）。
+// view.rs が UI 文言（hint/overlay/toast）で消費する（#532 SU5・言語は lang() が毎フレーム live-read）。
 pub(crate) use strings as ui_strings;
 
 use std::sync::Mutex;
@@ -49,6 +53,11 @@ pub(crate) struct EguiShellState {
     /// hidden 中は次 show のフレームで toast が読まれるため repaint は可視中のみ意味を持つ
     /// （codex レビュー: 「hidden は次 show でよい」と「visible は repaint が要る」は別条件）。
     pub(crate) egui_ctx: Mutex<Option<egui::Context>>,
+    /// hotkey 登録失敗の pending payload（spec 追補 2）。config_watcher の
+    /// `hotkey-registration-failed` listener が格納し view が消費時に lang() live-read で整形する。
+    /// **この listener は wake しない**——wake は config-applied（update_config 後）だけにし、
+    /// 言語同時変更時に旧言語で整形する競合窓を閉じる（「language-changed が先」不変条件の egui 版）。
+    pub(crate) pending_hotkey_failure: Mutex<Option<String>>,
 }
 
 /// updater toast の managed 状態（#532 SU5）。view が毎フレーム読む level-triggered
@@ -117,12 +126,7 @@ pub(crate) fn spawn_update_check(app: &tauri::AppHandle) {
             st.0.lock().unwrap().phase = next;
         }
         // 可視中に check が完了した場合の wake-up(スパイクの request_repaint と同じ・codex レビュー)。
-        if let Some(sh) = handle.try_state::<EguiShellState>()
-            && let Ok(guard) = sh.egui_ctx.lock()
-            && let Some(ctx) = guard.as_ref()
-        {
-            ctx.request_repaint();
-        }
+        wake_view(&handle);
     });
 }
 
@@ -217,6 +221,26 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
     if !crate::is_alt_pressed() {
         crate::send_alt_key_up();
     }
+    // §12: 表示時 IME オフ（設定有効時・復元なし・SU6 spec 決定 4）。ime_off_on_show は実行中
+    // config から都度読み（キャッシュしない・#576 同型——config_watcher の hot-reload が diff/event
+    // 追加なしに届く）。**focus 同期（上の SendMessageTimeoutW）より後に置く**——前だと IME オフが
+    // 対象窓に効かない（WebView2 apply_ime_control doc の警告条件）。Win32 は PlatformBridge 経由
+    // （rule）。TurnOffIme は生 HWND(usize) を取るため窓型非依存で &Window 一般化は不要。
+    #[cfg(windows)]
+    {
+        let ime_control = app
+            .try_state::<crate::AppState>()
+            .map(|s| s.engine.lock().unwrap().config().general.ime_off_on_show)
+            .unwrap_or(false); // config.rs の既定値と一致
+        if ime_control
+            && let Some(bridge) = app.try_state::<std::sync::Mutex<crate::platform::PlatformBridge>>()
+            && let Ok(b) = bridge.lock()
+            && let Ok(hwnd) = window.hwnd()
+        {
+            b.send_command(crate::platform::PlatformCommand::TurnOffIme(hwnd.0 as usize));
+            crate::trace_main("egui_show:ime_control", serde_json::json!({}));
+        }
+    }
     crate::trace_main(
         "egui_show:done",
         serde_json::json!({ "ms": t0.elapsed().as_secs_f64() * 1000.0 }),
@@ -273,5 +297,41 @@ pub(crate) fn register_hide_listener(app: &tauri::AppHandle) {
     let handle = app.clone();
     app.listen("egui-hide-requested", move |_| {
         hide_egui_main(&handle);
+    });
+}
+
+/// 可視中の view を起こす（egui_ctx 未登録＝setup〜初フレーム、hidden 中は無害な no-op）。
+/// WebView2 経路（flag OFF）では EguiShellState が manage されておらず自然に no-op。
+pub(crate) fn wake_view(app: &tauri::AppHandle) {
+    if let Some(sh) = app.try_state::<EguiShellState>()
+        && let Ok(guard) = sh.egui_ctx.lock()
+        && let Some(ctx) = guard.as_ref()
+    {
+        ctx.request_repaint();
+    }
+}
+
+/// config 変更・index 状態変化の wake 合図（#532 SU6 spec 決定 1）。値は運ばず request_repaint
+/// のみ——次フレームの live-read が最新値を拾う。空振りは benign（初 show フレームの live-read が
+/// 最新を描く）。**「値を運ばない」はこの benign 性の load-bearing 前提**——将来イベントに値を
+/// 載せる変更はこの前提を壊す（spec 決定 1）。
+pub(crate) fn register_config_wake_listeners(app: &tauri::AppHandle) {
+    for event in ["config-applied", "indexing-started", "indexing-complete"] {
+        let handle = app.clone();
+        app.listen(event, move |_| {
+            wake_view(&handle);
+        });
+    }
+}
+
+/// hotkey 登録失敗の payload 受け口（spec 追補 2・wake は config-applied に委ねる）。
+pub(crate) fn register_hotkey_failure_listener(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    app.listen("hotkey-registration-failed", move |event| {
+        // emit 側は String を渡すため payload は JSON 文字列（引用符付き）。
+        let hotkey: String = serde_json::from_str(event.payload()).unwrap_or_default();
+        if let Some(sh) = handle.try_state::<EguiShellState>() {
+            *sh.pending_hotkey_failure.lock().unwrap() = Some(hotkey);
+        }
     });
 }

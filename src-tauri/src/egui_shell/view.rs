@@ -146,6 +146,15 @@ pub(crate) struct SearchWindowView {
     search_debounce: Debouncer,
     last_input_at: Instant,
     last_set_height: f64,
+    /// SU6 spec 決定 2: 適用済み font_family。config 値と毎フレーム比較し差分で再ロード。
+    /// **解決の成否に依らず config 値へ無条件更新する**——未解決名（typo・未インストール）で
+    /// 毎フレーム load_system_fonts（数十 ms）が走る perf cliff を避ける（並行性レビュー）。
+    applied_font_family: String,
+    /// SU6 spec 決定 2: 適用済み native 背景ブラシ（hex 文字列）。painted panel は live-read だが
+    /// リサイズ時に露出する native surface の色は生成時ブラシ由来のため実行時追従が要る（codex 反証）。
+    applied_background_hex: String,
+    /// SU6 spec 決定 2: 直近 set_size の幅。view が唯一の size writer（幅は config live-read）。
+    last_set_width: f64,
     // query フィールドは SearchState.query へ移譲（削除）。
     // emit dedup は共有 EguiShellState.hide_pending（show がクリア・codex #8）。view-local には持たない。
     folder_tx: Sender<FolderMsg>,
@@ -174,6 +183,10 @@ pub(crate) struct SearchWindowView {
     last_scrolled_selected: Option<usize>,
     /// in-flight 起動（single-flight の実体: Some の間は新規起動 dispatch を拒否）。
     launching: Option<LaunchInFlight>,
+    /// #633: index build 完了世代の last-seen（AppState.index_generation と比較・SU6 spec 決定 3）。
+    /// 差分で現クエリを再検索（SolidJS `indexing-complete`→runRefresh parity）。bool エッジ検出で
+    /// ないのは started/complete の repaint が 1 フレームに合流するとパルスが見えないため。
+    last_seen_index_generation: u64,
     /// 一時通知（起動失敗/結果不明）。時刻は notice_base からの経過で注入（純粋核）。
     notice: crate::egui_shell::NoticeSlot,
     /// notice の単調時刻基準（view 生成時に固定・Instant 差分を Duration で渡す）。
@@ -192,6 +205,9 @@ impl SearchWindowView {
             search_debounce: Debouncer::new(Duration::from_millis(50), true),
             last_input_at: Instant::now(),
             last_set_height: 52.0,
+            applied_font_family: String::new(),
+            applied_background_hex: String::new(),
+            last_set_width: 0.0,
             folder_tx,
             folder_rx,
             icon_textures: std::collections::HashMap::new(),
@@ -204,6 +220,7 @@ impl SearchWindowView {
             instant_rows_query: None,
             last_scrolled_selected: None,
             launching: None,
+            last_seen_index_generation: 0,
             notice: crate::egui_shell::NoticeSlot::default(),
             notice_base: Instant::now(),
         }
@@ -651,16 +668,15 @@ impl SearchWindowView {
             .unwrap_or(snotra_core::config::Language::Ja)
     }
 
-    /// 現在のウィンドウ論理幅。set_size で高さのみ変え幅を維持するために読む
-    /// （M1 では幅は不変・SU2 が config から生成済み）。読めなければ 600.0 にフォールバック。
+    /// ウィンドウ論理幅は config live-read（SU6 spec 決定 2: **view が唯一の size writer**）。
+    /// 旧実装の inner_size() 読みは「幅を維持」だったが、config_watcher（notify スレッド）の幅
+    /// set_size と 2 次元 read-modify-write で潰し合う race の片翼だった——config を正本にすれば
+    /// cross-thread writer 自体が消える（初版 spec の watcher flag 分岐案は却下・並行性レビュー）。
+    /// なお flag ON では config_watcher の幅 set_size は get_webview_window=None で元々 no-op。
     fn window_width(&self) -> f64 {
         self.app_handle
-            .get_window("main")
-            .and_then(|w| {
-                w.inner_size()
-                    .ok()
-                    .map(|s| s.to_logical::<f64>(w.scale_factor().unwrap_or(1.0)).width)
-            })
+            .try_state::<crate::AppState>()
+            .map(|s| f64::from(s.engine.lock().unwrap().config().appearance.window_width))
             .unwrap_or(600.0)
     }
 
@@ -1044,12 +1060,7 @@ impl SearchWindowView {
                         st.0.lock().unwrap().phase =
                             crate::egui_shell::UpdaterPhase::InstallFailed { message: e.to_string() };
                     }
-                    if let Some(sh) = handle.try_state::<crate::egui_shell::EguiShellState>()
-                        && let Ok(guard) = sh.egui_ctx.lock()
-                        && let Some(ctx) = guard.as_ref()
-                    {
-                        ctx.request_repaint(); // 可視中の失敗を即座に描く
-                    }
+                    crate::egui_shell::wake_view(&handle); // 可視中の失敗を即座に描く
                 }
             }
         });
@@ -1152,6 +1163,7 @@ impl EguiView for SearchWindowView {
             .map(|s| s.engine.lock().unwrap().config().visual.font_family.clone())
             .unwrap_or_else(|| "Segoe UI".to_string());
         configure_japanese_font(context, &font_family);
+        self.applied_font_family = font_family;
         // updater check 完了時の wake-up 用（mod.rs spawn_update_check が読む・#532 SU5）。
         if let Some(sh) = self.app_handle.try_state::<crate::egui_shell::EguiShellState>()
             && let Ok(mut guard) = sh.egui_ctx.lock()
@@ -1186,12 +1198,45 @@ impl EguiView for SearchWindowView {
 
         let ctx = ui.ctx().clone();
 
-        // §11: パネル/入力欄/選択色を config テーマから（ハードコード撤廃・runtime CLEAR_COLOR は不変）。
+        // #633: index build 完了の世代検知 → 現クエリで再検索（runRefresh parity・SU6 spec 決定 3）。
+        // reset_pending 消費の後に置く（show 直後は reset 済み空クエリの no-op になるだけ）。
+        // folder 中は fs 由来 cache の再フィルタ、tool 中は no-op——run_search が view_kind で分岐済み。
+        // 順序不変条件: このブロックが後段の indexing() 読み（run_search 内・show_results ゲート）
+        // より前にあることは、完了フレームをフリッカーなしで新結果にするために効いている
+        // （世代 SeqCst acquire が後続 Relaxed 読みへ happens-before を運ぶ）。後ろへ動かしても
+        // 正しさは壊れないが 1 フレームのフリッカーが出る。
         if let Some(s) = self.app_handle.try_state::<crate::AppState>() {
-            let (bg, input_bg, sel) = {
+            let generation = s.index_generation.load(Ordering::SeqCst);
+            if crate::egui_shell::needs_index_refresh(self.last_seen_index_generation, generation) {
+                self.last_seen_index_generation = generation;
+                self.run_search();
+            }
+        }
+
+        // hotkey 登録失敗の pending 消費（spec 追補 2）。reset_pending 消費より後（順序不変条件）。
+        // 整形はここで lang() live-read——config-applied wake のフレームは update_config 後なので
+        // 言語同時変更でも新言語で整形される。hidden 中の失敗は次 show のこの消費で表示される
+        //（WebView2 は hidden 中に期限切れ・改善方向の受容差異・spec 追補 2）。
+        if let Some(sh) = self.app_handle.try_state::<crate::egui_shell::EguiShellState>()
+            && let Some(hk) = sh.pending_hotkey_failure.lock().unwrap().take()
+        {
+            let msg = crate::egui_shell::ui_strings::hotkey_change_failed(self.lang(), &hk);
+            self.notice.set(msg, self.notice_base.elapsed(), crate::egui_shell::NOTICE_HOTKEY);
+            ctx.request_repaint();
+        }
+
+        // §11: パネル/入力欄/選択色を config テーマから（ハードコード撤廃・runtime CLEAR_COLOR は不変）。
+        // font_family / native 背景ブラシのエッジ検出も同一 lock で読む（SU6 spec 決定 2・lock 1 回/フレーム）。
+        if let Some(s) = self.app_handle.try_state::<crate::AppState>() {
+            let (bg, input_bg, sel, font_family) = {
                 let engine = s.engine.lock().unwrap();
                 let v = &engine.config().visual;
-                (v.background_color.clone(), v.input_background_color.clone(), v.selected_row_color.clone())
+                (
+                    v.background_color.clone(),
+                    v.input_background_color.clone(),
+                    v.selected_row_color.clone(),
+                    v.font_family.clone(),
+                )
             };
             let mut visuals = ctx.style_of(ctx.theme()).visuals.clone();
             visuals.panel_fill = hex_color(&bg, egui::Color32::from_rgb(0x28, 0x28, 0x28));
@@ -1199,6 +1244,24 @@ impl EguiView for SearchWindowView {
             visuals.extreme_bg_color = hex_color(&input_bg, egui::Color32::from_rgb(0x38, 0x38, 0x38)); // TextEdit 背景
             visuals.selection.bg_fill = hex_color(&sel, egui::Color32::from_rgb(0x33, 0x33, 0x33));
             ctx.set_visuals(visuals);
+
+            // SU6 spec 決定 2: font_family hot-reload（WebView2 の --font-family CSS 変数即時反映 parity）。
+            // applied は解決成否に依らず無条件更新（フィールド doc 参照）。
+            if font_family != self.applied_font_family {
+                self.applied_font_family = font_family.clone();
+                configure_japanese_font(&ctx, &font_family);
+                ctx.request_repaint(); // set_fonts は次フレーム適用——欠くと新フォントが 1 イベント遅れる
+            }
+
+            // SU6 spec 決定 2: native 背景ブラシ追従（生成時一度きり → 実行時変更へ・codex 反証）。
+            if bg != self.applied_background_hex {
+                self.applied_background_hex = bg.clone();
+                if let Some(window) = self.app_handle.get_window("main") {
+                    let color = crate::config_watcher::parse_hex_color(&bg)
+                        .unwrap_or(tauri::window::Color(0x28, 0x28, 0x28, 0xff));
+                    let _ = window.set_background_color(Some(color));
+                }
+            }
         }
 
         // 起動結果の回収（#631）。reset_pending 消費の後に置くこと（spec C 節 不変条件 2）。
@@ -1455,19 +1518,26 @@ impl EguiView for SearchWindowView {
             response.request_focus();
         }
 
-        // 一時 overlay（#532 SU5）: 「起動中…」/ 失敗・結果不明通知を検索バーに重ね描く。
-        // hint_text は空クエリ時のみ描かれるため使えない（launching/notice 中は query 非空・
-        // 状態機械レビュー）——painted label で TextEdit の rect を塗り潰して上書きする。
+        // 一時 overlay（#532 SU5）: 「起動中…」/ 失敗・結果不明通知/非空クエリ indexing 案内を
+        // 検索バーに重ね描く。hint_text は空クエリ時のみ描かれるため launching/notice/非空クエリ
+        // indexing 中（query 非空）は使えない——painted label で TextEdit の rect を塗り潰して上書きする。
         // 優先順は WebView2 SearchWindow.tsx の Switch 先頭一致 parity: indexing > 起動中 > 通知。
-        // indexing はここでは描かない（egui では空クエリ hint が担う・SU3 as-built）。indexing 中に
-        // launching/notice が重なる窓（instant は indexing 中も実行可）は indexing 表示を優先し
-        // overlay を抑止する（Switch 順 parity・parity レビュー要修正 3）。
-        let overlay_text: Option<String> = if self.indexing() && self.state.view_kind() == ViewKind::Results {
-            None // indexing が最優先（hint が見える・overlay は描かない）
-        } else if self.launching.is_some() {
-            Some(crate::egui_shell::ui_strings::launching(self.lang()).to_string())
-        } else {
-            self.notice.message().map(|m| m.to_string())
+        // 空クエリの indexing は hint が描く。非空クエリの indexing は表示ゲート（§4.7）で結果が
+        // 消えるため overlay が唯一の案内（spec 追補 1・ladder は overlay_kind に抽出しテスト固定）。
+        let overlay_text: Option<String> = match crate::egui_shell::overlay_kind(
+            self.indexing() && self.state.view_kind() == ViewKind::Results,
+            self.state.query().trim().is_empty(),
+            self.launching.is_some(),
+            self.notice.message().is_some(),
+        ) {
+            Some(crate::egui_shell::OverlayKind::Indexing) => {
+                Some(crate::egui_shell::ui_strings::indexing_hint(self.lang()).to_string())
+            }
+            Some(crate::egui_shell::OverlayKind::Launching) => {
+                Some(crate::egui_shell::ui_strings::launching(self.lang()).to_string())
+            }
+            Some(crate::egui_shell::OverlayKind::Notice) => self.notice.message().map(|m| m.to_string()),
+            None => None,
         };
         if let Some(text) = overlay_text {
             let rect = response.rect;
@@ -1602,8 +1672,17 @@ impl EguiView for SearchWindowView {
             self.request_icons_for_results(&ctx);
         }
 
-        // 結果リスト（shouldShowResults 相当。results 軸〔plain〕と folder 軸を描く。空なら描かない）。
-        let show_results = !self.state.results().is_empty();
+        // 結果リスト（shouldShowResults 相当）。§4.7: 再インデックス中は plain 結果のみ隠す
+        // （instant/folder/tool carve-out・SU6 spec 決定 3）。データと選択は保持——クリアしない
+        // （SolidJS parity: setIndexing は結果を触らず派生 memo が非表示を担う）。indexing 中の
+        // 案内は空クエリ=hint・非空クエリ=overlay（Task 7・spec 追補 1）が担い、高さは
+        // show_results=false で 52px に折りたたまれる。
+        let show_results = !self.state.results().is_empty()
+            && !crate::egui_shell::plain_results_hidden(
+                self.state.view_kind(),
+                self.instant_rows_query.is_some(),
+                self.indexing(),
+            );
         let mut clicked: Option<usize> = None;
         if show_results {
             // 借用衝突回避: results を clone してから描画（draw_result_row は関連関数で self 非借用）。
@@ -1652,12 +1731,16 @@ impl EguiView for SearchWindowView {
             results_padding: 8.0,
             update_toast_height: 52.0,
         });
-        if (height - self.last_set_height).abs() > 0.5 {
+        // 幅は config live-read（SU6 spec 決定 2）。hidden 中の幅変更は wake 空振りでも、次 show の
+        // 初フレームでこの差分が検知して是正する（show_egui_main の inner_size 幅 52px collapse とは独立）。
+        let width = self.window_width();
+        if (height - self.last_set_height).abs() > 0.5 || (width - self.last_set_width).abs() > 0.5 {
             self.last_set_height = height;
+            self.last_set_width = width;
             if let Some(window) = self.app_handle.get_window("main") {
-                let _ = window.set_size(tauri::LogicalSize::new(self.window_width(), height));
+                let _ = window.set_size(tauri::LogicalSize::new(width, height));
             }
-            // 新サイズでの再描画を即要求し 1 フレームの空きを詰める（背景 0x282828 で
+            // 新サイズでの再描画を即要求し 1 フレームの空きを詰める（背景 config 色で
             // フラッシュは緩和済みだが空き自体が G-RESIZE のちらつき機構・advisor 指摘）。
             ui.ctx().request_repaint();
         }

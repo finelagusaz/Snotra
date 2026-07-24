@@ -79,7 +79,7 @@ mod tests {
     use snotra_core::config::Config;
     use snotra_core::engine::Engine;
     use snotra_core::history::HistoryStore;
-    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::{AtomicBool, AtomicU64};
     use std::sync::Mutex;
 
     fn test_state(indexing: bool) -> AppState {
@@ -88,6 +88,7 @@ mod tests {
             indexing: AtomicBool::new(indexing),
             index_build_started: AtomicBool::new(false),
             main_visible: AtomicBool::new(false),
+            index_generation: AtomicU64::new(0),
         }
     }
 

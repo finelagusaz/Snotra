@@ -13,7 +13,15 @@ pub(crate) use notify::{NOTICE_HOTKEY, OverlayKind, overlay_kind};
 // （#532 SU5 Task 6）。toast 描画は view.rs が Task 7 で消費する。
 pub(crate) use notify::{ToastKind, UpdaterPhase, UpdaterUi};
 pub(crate) mod strings;
+mod results_view;
 mod view;
+
+// mod.rs（窓生成・managed state）が消費する。RowsSnapshot は Task 4 で view.rs（main の
+// snapshot 発行）・results_view.rs（update() 描画）が消費する（#646 PR2・骨組みでは re-export
+// のみで未消費）。
+pub(crate) use results_view::ResultsShared;
+#[allow(unused_imports)] // Task 4 で view.rs の snapshot 発行が消費する
+pub(crate) use results_view::RowsSnapshot;
 
 // view.rs の icon texture driver（worker spawn / load_texture 適用）が消費する（#532 SU4 Task 5）。
 pub(crate) use icon_textures::{IconMsg, needs_extraction, png_to_color_image, retain_visible};
@@ -65,6 +73,8 @@ pub(crate) struct EguiShellState {
     /// hidden 中は次 show のフレームで toast が読まれるため repaint は可視中のみ意味を持つ
     /// （codex レビュー: 「hidden は次 show でよい」と「visible は repaint が要る」は別条件）。
     pub(crate) egui_ctx: Mutex<Option<egui::Context>>,
+    /// results 窓の egui Context（外部 wake 用・egui_ctx と同型・#646 PR2）。
+    pub(crate) results_ctx: Mutex<Option<egui::Context>>,
     /// hotkey 登録失敗の pending payload（SU6 spec 追補 2 + #652）。種別ごとに文言が違う
     /// ため `(kind, hotkey)` を保持し、view が消費時に lang() live-read で整形する。
     /// **wake の有無は経路で異なる**——Change は wake しない（wake を config-applied に
@@ -177,7 +187,51 @@ pub(crate) fn create(
         .background_color(bg_color)
         .visible(false)
         .build()?; // tauri::Error → RuntimeError（#[from]・runtime.rs:46）
+
+    // #646 PR2: 結果リスト窓。focusable(false) で tao が WS_EX_NOACTIVATE を自動適用し
+    // (tao window_state.rs: !FOCUSABLE → style_ex |= WS_EX_NOACTIVATE)、クリックしても
+    // フォーカスはメインの入力欄から動かない（決定 4）。可視性・サイズ・位置は main の
+    // update() が駆動する（hidden 窓は update() が走らないため自分では show できない）。
+    let results = tauri::Window::builder(app, "results")
+        .title("Snotra Results")
+        .inner_size(window_width, 100.0) // 初期値。実高は main が実件数フィットで設定
+        .decorations(false)
+        .resizable(false)
+        .skip_taskbar(true)
+        .always_on_top(true)
+        .focusable(false)
+        .background_color(bg_color)
+        .visible(false)
+        .build()?;
+    #[cfg(windows)]
+    {
+        apply_rounded_corners(&window); // main にも適用（輪郭言語を揃える・決定 4）
+        apply_rounded_corners(&results);
+    }
+    runtime.attach(results, results_view::ResultsView::new(app_handle.clone()))?;
     runtime.attach(window, SearchWindowView::new(app_handle))
+}
+
+/// DWM に窓の角丸を依頼する（#646 PR2 決定 4）。Windows 11（build 22000+）のみ有効で、
+/// Windows 10 ではエラーを黙って握りつぶす（装飾なしで受容・best-effort）。
+/// softbuffer は AA を持たず自前角丸は品質が出ないため OS 機構に委ねる。
+#[cfg(windows)]
+fn apply_rounded_corners(window: &tauri::Window) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::{
+        DWM_WINDOW_CORNER_PREFERENCE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+        DwmSetWindowAttribute,
+    };
+    let Ok(hwnd) = window.hwnd() else { return };
+    let pref: DWM_WINDOW_CORNER_PREFERENCE = DWMWCP_ROUND;
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            HWND(hwnd.0),
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            &pref as *const _ as *const core::ffi::c_void,
+            std::mem::size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
+        );
+    }
 }
 
 /// 実行中 config から Metrics を導出する(#646 決定 2)。毎フレーム/毎 show の live-read で
@@ -302,6 +356,11 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
         save_placement_relative(&window); // save-on-hide
         let _ = window.hide();
     }
+    // #646 PR2: 従属窓も同時に隠す（決定 6）。show 側は main の update() が snapshot の
+    // show 判定で駆動するため、ここが唯一の外部 hide 経路（対称は main update 内の show）。
+    if let Some(results) = app.get_window("results") {
+        let _ = results.hide();
+    }
     if let Some(state) = app.try_state::<crate::AppState>() {
         state.main_visible.store(false, Ordering::SeqCst);
     }
@@ -353,6 +412,20 @@ pub(crate) fn register_hide_listener(app: &tauri::AppHandle) {
 pub(crate) fn wake_view(app: &tauri::AppHandle) {
     if let Some(sh) = app.try_state::<EguiShellState>()
         && let Ok(guard) = sh.egui_ctx.lock()
+        && let Some(ctx) = guard.as_ref()
+    {
+        ctx.request_repaint();
+    }
+}
+
+/// results 窓を起こす(#646 PR2)。snapshot 更新・config 変更を反映させる wake。
+/// 呼び出しは Task 4 の `drive_results_window`(可視時・毎フレーム)からのみとする——
+/// main が動けば drive が results を起こし、hidden 中の results は描かれないため事前 wake は
+/// 無意味(plan-review で冗長と判定)。クリック逆流の results→main は既存 `wake_view` を使う。
+#[allow(dead_code)] // Task 4 の drive_results_window（可視時・毎フレーム）が消費する
+pub(crate) fn wake_results(app: &tauri::AppHandle) {
+    if let Some(sh) = app.try_state::<EguiShellState>()
+        && let Ok(guard) = sh.results_ctx.lock()
         && let Some(ctx) = guard.as_ref()
     {
         ctx.request_repaint();

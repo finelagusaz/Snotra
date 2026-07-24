@@ -74,7 +74,7 @@ fn resolve_font_family(name: &str) -> Option<(Vec<u8>, u32)> {
     db.with_face_data(id, |data, face_index| (data.to_vec(), face_index))
 }
 
-fn configure_japanese_font(context: &egui::Context, font_family: &str) {
+pub(crate) fn configure_japanese_font(context: &egui::Context, font_family: &str) {
     let candidates = [
         "C:/Windows/Fonts/YuGothM.ttc",
         "C:/Windows/Fonts/yugothic.ttf",

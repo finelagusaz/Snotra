@@ -298,6 +298,8 @@ fn main() {
             //（この egui ブロック自体が setup_platform_thread の直後・hotkey listener の前）。
             egui_shell::register_platform_event_listener(&app_handle);
             app.manage(egui_shell::UpdaterUiState(std::sync::Mutex::new(Default::default())));
+            // main と results 窓が共有する一方向フローの入れ物（#646 PR2）。
+            app.manage(egui_shell::ResultsShared::default());
             egui_shell::spawn_update_check(&app_handle);
 
             // First-run: launch snotra-settings directly (bypassing the indexing guard

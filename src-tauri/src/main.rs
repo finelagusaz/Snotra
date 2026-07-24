@@ -590,6 +590,7 @@ fn main() {
         indexing: AtomicBool::new(initial_indexing),
         index_build_started: AtomicBool::new(false),
         main_visible: AtomicBool::new(false),
+        index_generation: AtomicU64::new(0),
     };
 
     let app_context = tauri::generate_context!();

@@ -1008,6 +1008,11 @@ impl EguiView for SearchWindowView {
             frame.drag_window();
         }
 
+        // Metrics は 1 フレーム 1 回だけ導出し、バー帯・toast 高・行高・窓高で使い回す
+        //(/simplify: フレーム内の重複 lock を 1 回へ。live-read 契約はフレーム間の話で不変・
+        // 導出は mod.rs read_metrics に一元化)。
+        let metrics = crate::egui_shell::read_metrics(&self.app_handle);
+
         // show 直後の resetForShow（EguiShellState.reset_pending を消費）。stale な debounce
         // armed 状態が再表示後に誤発火しないよう、debounce も併せて作り直す。
         if let Some(sh) = self.app_handle.try_state::<crate::egui_shell::EguiShellState>()
@@ -1299,19 +1304,31 @@ impl EguiView for SearchWindowView {
         // により失効した。極端な font_size でバーからはみ出す挙動は変わらず残る。
         let bar_theme = results_view::row_theme(&self.app_handle);
         let bar_font = egui::FontId::proportional(bar_theme.name_size);
-        let response = ui.add(
-            egui::TextEdit::singleline(&mut buf)
-                // §18.5 ツール選択中の入力は無効化。add_enabled（全体グレーアウト）でなく
-                // interactive(false)（通常描画のまま読み取り専用・changed 不発火）——外観維持。
-                // launching 中も同様に打鍵を止める（Escape/blur/Alt+Q・↑↓は従来どおり通す・
-                // spec 決定 3・4。↑↓は空リストゆえ自然 no-op）。
-                .interactive(!in_tool && self.launching.is_none())
-                .font(bar_font.clone())
-                .hint_text(
-                    egui::RichText::new(hint).font(bar_font).color(bar_theme.path_color),
+        // 入力欄はバー帯の内側に四辺一様の余白（`Metrics::bar_inset`）を残して置く
+        //（#646 PR2・実機目視で追加）。egui の既定配置では上と左が詰まり余りが下だけに
+        // 溜まっていた。Frame の inner_margin で四辺の枠を作り、中身の高さを
+        // `bar_height - 2*inset` に固定することで帯をちょうど埋める（窓高は bar_height
+        // ゆえ、下に取り残しも溢れも出ない）。余白部はドラッグ掴み領域になる（決定 10）。
+        let inset = metrics.bar_inset as f32;
+        let field_height = (metrics.bar_height as f32 - 2.0 * inset).max(1.0);
+        let response = egui::Frame::new()
+            .inner_margin(egui::Margin::same(inset.round() as i8))
+            .show(ui, |ui| {
+                ui.add_sized(
+                    egui::vec2(ui.available_width(), field_height),
+                    egui::TextEdit::singleline(&mut buf)
+                        // §18.5 ツール選択中の入力は無効化。add_enabled（全体グレーアウト）でなく
+                        // interactive(false)（通常描画のまま読み取り専用・changed 不発火）——外観維持。
+                        // launching 中も同様に打鍵を止める（Escape/blur/Alt+Q・↑↓は従来どおり通す・
+                        // spec 決定 3・4。↑↓は空リストゆえ自然 no-op）。
+                        .interactive(!in_tool && self.launching.is_none())
+                        .font(bar_font.clone())
+                        .hint_text(
+                            egui::RichText::new(hint).font(bar_font).color(bar_theme.path_color),
+                        ),
                 )
-                .desired_width(f32::INFINITY),
-        );
+            })
+            .inner;
         if response.changed() {
             if in_folder {
                 self.state.set_folder_filter(buf);
@@ -1403,10 +1420,6 @@ impl EguiView for SearchWindowView {
 
         // updater toast（§20.3・#532 SU5）: 検索バー直下の toast_height（= bar_height・#646 決定 2）行・モード非依存
         //（folder/tool/instant 中も表示・状態機械レビュー項 1）。
-        // Metrics は 1 フレーム 1 回だけ導出し、toast 高・行高・窓高の 3 用途で使い回す
-        //(/simplify: フレーム内の重複 lock を 1 回へ。live-read 契約はフレーム間の話で不変・
-        // 導出は mod.rs read_metrics に一元化)。
-        let metrics = crate::egui_shell::read_metrics(&self.app_handle);
         let toast_row = self
             .app_handle
             .try_state::<crate::egui_shell::UpdaterUiState>()

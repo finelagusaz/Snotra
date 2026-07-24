@@ -19,6 +19,11 @@ pub struct Metrics {
     pub row_height: f64,
     /// bar_height と同値(§20.3 の toast 行)。
     pub toast_height: f64,
+    /// バー帯の内側に取る**四辺一様**の余白(#646 PR2・実機目視で追加)。入力欄はこの余白の
+    /// 内側いっぱい(高さ `bar_height - 2*bar_inset`)を占めるため、上下左右の見た目の枠が
+    /// 等しくなる。`bar_padding / 4` は「font_size に対する入力欄の内部余白」も同値に保つ
+    /// 導出(既定 28/4=7 のとき font 15 で欄高 29・font 24 で欄高 38——どちらも文字の上下に 7)。
+    pub bar_inset: f64,
 }
 
 impl Metrics {
@@ -26,7 +31,12 @@ impl Metrics {
         let f = font_size as f64;
         let bar_height = f + bar_padding as f64;
         let row_height = (f + path_size(font_size) + row_padding as f64 + 4.0).max(24.0);
-        Self { bar_height, row_height, toast_height: bar_height }
+        Self {
+            bar_height,
+            row_height,
+            toast_height: bar_height,
+            bar_inset: bar_padding as f64 / 4.0,
+        }
     }
 }
 
@@ -156,6 +166,18 @@ mod tests {
     fn path_size_matches_row_theme_coefficient() {
         assert_eq!(path_size(8), 9.0);
         assert!((path_size(15) - 11.7).abs() < 1e-9);
+    }
+
+    /// #646 PR2: バー内の一様余白。入力欄は帯の内側いっぱい（bar_height - 2*inset）を占める。
+    #[test]
+    fn bar_inset_leaves_symmetric_room_for_field() {
+        let m = Metrics::from_config(15, 6, 28);
+        assert_eq!(m.bar_inset, 7.0);
+        assert_eq!(m.bar_height - 2.0 * m.bar_inset, 29.0); // 文字 15 + 上下 7 ずつ
+        // font 24（旧 52px バー）でも内部余白は同値に保たれる
+        let big = Metrics::from_config(24, 6, 28);
+        assert_eq!(big.bar_inset, 7.0);
+        assert_eq!(big.bar_height - 2.0 * big.bar_inset, 38.0);
     }
 
     /// #646 PR2 決定 6: main 窓は bar(+toast)のみで、結果による伸縮をしない。

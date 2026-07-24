@@ -5,15 +5,13 @@ use std::time::Duration;
 
 /// path 行のフォントサイズ(#646 決定 9)。view.rs `RowTheme::path_size` と同係数——
 /// 正本はここ(layout の Metrics が同じ値で行高を積算するため。二重定義は行高と描画の
-/// 不一致バグになる)。driver(view.rs)からの消費は #646 PR1 Task 3・4 で配線する。
-#[allow(dead_code)]
+/// 不一致バグになる)。driver(view.rs)から Task 3・4 で配線済み。
 pub fn path_size(font_size: u32) -> f64 {
     (font_size as f64 * 0.78).max(9.0)
 }
 
 /// 行高・バー高・toast 高の算出値(#646 決定 2)。config `visual` から毎フレーム導出し
-/// キャッシュしない(font_size と同じ live-read 方針)。driver からの消費は Task 3・4。
-#[allow(dead_code)]
+/// キャッシュしない(font_size と同じ live-read 方針)。driver からの消費は Task 3・4 で配線済み。
 pub struct Metrics {
     /// font_size + bar_padding。既定(15+28)=43、font 24 で現行 52 を再現。
     pub bar_height: f64,
@@ -24,7 +22,6 @@ pub struct Metrics {
 }
 
 impl Metrics {
-    #[allow(dead_code)]
     pub fn from_config(font_size: u32, row_padding: u32, bar_padding: u32) -> Self {
         let f = font_size as f64;
         let bar_height = f + bar_padding as f64;

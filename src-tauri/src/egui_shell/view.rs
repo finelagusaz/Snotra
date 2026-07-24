@@ -893,10 +893,10 @@ impl SearchWindowView {
     /// single_clicked。ダブルクリックは扱わない（ユーザー決定: §4.8 の double-click=選択は
     /// as-built でも到達不能ゆえ落とす。単クリック=起動のみ）。self を借りない関連関数
     /// （借用衝突回避）。色/サイズは呼び出し側が都度導出する `RowTheme` から取る。
-    /// name/path の重なりは name galley の実幅を測って path 開始 x を決めることで防ぐ
-    /// （#632）。path は中間省略（`truncate_middle`）で利用可能幅に収める。
+    /// 2 行表示(#646 決定 9): 上段名前・下段パス。行高は Metrics::row_height(呼び出し側注入)。
     /// `show_icons=false` はアイコン slot 自体を畳む（skip でなくレイアウト変更・#532 SU4 Task 6）
     /// ——テキストが左端 8px 寄せになり、slot 分の空白が残らない。
+    #[allow(clippy::too_many_arguments)] // raster.rs::fill_mesh と同型（描画関数は座標/テーマ引数が集中する）
     fn draw_result_row(
         ui: &mut egui::Ui,
         result: &SearchResult,
@@ -905,8 +905,8 @@ impl SearchWindowView {
         icon: Option<&egui::TextureHandle>,
         show_icons: bool,
         theme: &RowTheme,
+        row_h: f32,
     ) -> bool {
-        let row_h = 30.0;
         let (rect, response) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), row_h),
             egui::Sense::click(),
@@ -943,15 +943,11 @@ impl SearchWindowView {
                 None => {}
             }
         }
+        // 2 行表示(#646 決定 9): 上段 = 名前(全幅・末尾省略)、下段 = パス(全幅・左寄せ・
+        // 幅超過時のみ中間省略)。#632 の「name 60% 制限 + path 右寄せ + 実測幅の重なり回避」は
+        // 2 行化で name と path が幅を取り合わなくなったため廃止。
         let text_x = rect.left() + slot;
-        let right = rect.right() - 8.0;
-        let cy = rect.center().y;
-        // name galley を作り、実幅から path 開始 x を決める（重なり回避）。name が幅の 60%
-        // を超えたら単一行 + 末尾 … 省略にクリップする。`Painter::layout`（simple 版）は
-        // wrap_width で折り返す（複数行化）だけなので、30px 固定行をはみ出して隣接行と
-        // 重なる（#632 reviewer Important 1）。`TextWrapping::truncate_at_width` で
-        // max_rows=1 + break_anywhere を明示し、折り返しではなく省略にする。
-        let name_max = (right - text_x) * 0.6;
+        let avail = (rect.right() - 8.0 - text_x).max(0.0);
         let mut name_job = egui::text::LayoutJob::single_section(
             result.name.clone(),
             egui::TextFormat {
@@ -960,35 +956,50 @@ impl SearchWindowView {
                 ..Default::default()
             },
         );
-        name_job.wrap = egui::text::TextWrapping::truncate_at_width(name_max);
+        name_job.wrap = egui::text::TextWrapping::truncate_at_width(avail);
         let name_galley = ui.painter().layout_job(name_job);
-        ui.painter().galley(
-            egui::pos2(text_x, cy - name_galley.size().y / 2.0),
-            name_galley.clone(),
-            theme.name_color,
-        );
-        // truncate_at_width 済みゆえ実幅は既に name_max 以下（.min は不要）。
-        let path_x = text_x + name_galley.size().x + 12.0;
-        // path は右寄せ・path_x 以降に収まる幅で中間省略。egui galley は末尾省略のため、
-        // 中間省略は truncate_middle（純関数）で文字列側を縮めてから描く。per-char 幅は
-        // 固定係数ではなく実 galley から実測する（CJK 過小評価対策・reviewer Important 2）。
-        let path_avail = (right - path_x).max(0.0);
+        // path 空(エラー行等)は名前 1 行を縦中央に単独描画
+        if result.path.is_empty() {
+            ui.painter().galley(
+                egui::pos2(text_x, rect.center().y - name_galley.size().y / 2.0),
+                name_galley,
+                theme.name_color,
+            );
+            return response.clicked();
+        }
+        let path_font = egui::FontId::proportional(theme.path_size);
         let path_full = ui.painter().layout_no_wrap(
             result.path.clone(),
-            egui::FontId::proportional(theme.path_size),
+            path_font.clone(),
             theme.path_color,
         );
-        let path_str = if path_full.size().x <= path_avail {
+        let path_str = if path_full.size().x <= avail {
             result.path.clone()
         } else {
+            // per-char 幅は実 galley から実測(CJK 過小評価対策・#632 の方針を継承)
             let per_char_px = path_full.size().x / (result.path.chars().count().max(1) as f32);
-            truncate_middle(&result.path, path_avail, per_char_px)
+            truncate_middle(&result.path, avail, per_char_px)
         };
-        ui.painter().text(
-            egui::pos2(right, cy),
-            egui::Align2::RIGHT_CENTER,
-            &path_str,
-            egui::FontId::proportional(theme.path_size),
+        let path_galley = ui.painter().layout_no_wrap(path_str, path_font, theme.path_color);
+        // 鏡像ケース(folder 列挙エラー行・snotra-core/src/folder.rs の error_result は
+        // name 空・path 非空): 上段を空白にせず path 1 行を縦中央に単独描画
+        //(上の path 空分岐と対称・plan-review scout-egui 指摘)。
+        if result.name.is_empty() {
+            ui.painter().galley(
+                egui::pos2(text_x, rect.center().y - path_galley.size().y / 2.0),
+                path_galley,
+                theme.path_color,
+            );
+            return response.clicked();
+        }
+        // 2 行ブロックを rect 縦中央へ(行間 4.0 は Metrics::row_height の +4.0 と対)
+        let total_h = name_galley.size().y + 4.0 + path_galley.size().y;
+        let top = rect.center().y - total_h / 2.0;
+        let name_h = name_galley.size().y;
+        ui.painter().galley(egui::pos2(text_x, top), name_galley, theme.name_color);
+        ui.painter().galley(
+            egui::pos2(text_x, top + name_h + 4.0),
+            path_galley,
             theme.path_color,
         );
         response.clicked()
@@ -1012,8 +1023,23 @@ impl SearchWindowView {
             path_color: hex_color(&hint, egui::Color32::from_rgb(0x80, 0x80, 0x80)),
             selection: hex_color(&sel, egui::Color32::from_rgb(0x33, 0x33, 0x33)),
             name_size: size as f32,
-            path_size: (size as f32 * 0.78).max(9.0), // WebView2 の name>path 比を踏襲
+            path_size: crate::egui_shell::layout::path_size(size) as f32, // 正本は layout(#646)
         }
+    }
+
+    /// 実行中 config から Metrics を都度導出する(#646 決定 2)。row_theme と同じ
+    /// live-read 方針(キャッシュしない・config-applied wake で次フレームに反映)。
+    fn metrics(&self) -> crate::egui_shell::layout::Metrics {
+        let (f, rp, bp) = self
+            .app_handle
+            .try_state::<crate::AppState>()
+            .map(|s| {
+                let engine = s.engine.lock().unwrap();
+                let v = &engine.config().visual;
+                (v.font_size, v.row_padding, v.bar_padding)
+            })
+            .unwrap_or((15, 6, 28));
+        crate::egui_shell::layout::Metrics::from_config(f, rp, bp)
     }
 
     /// toast ボタンの処理（#532 SU5）。install は Update を原子取得して async へ（Task 8）。
@@ -1445,7 +1471,7 @@ impl EguiView for SearchWindowView {
 
         // 検索入力欄。state.query を編集し、変化があれば debounce leading で同期検索。
         // 構築中かつ空クエリなら hint を案内文へ差し替える（§4.7）。egui の hint は入力が空の
-        // ときだけ描かれるため、indexing+空クエリの条件と一致する——window は 52px のまま
+        // ときだけ描かれるため、indexing+空クエリの条件と一致する——window は bar_height のまま
         // （show_results=false）で、案内はバー内に収まり見える（旧: 別 label はバー下に描かれ
         // クリップされ不可視だった）。
         let in_tool = self.state.view_kind() == ViewKind::Tool;
@@ -1480,11 +1506,9 @@ impl EguiView for SearchWindowView {
             self.state.query().to_string()
         };
         // §11 Part C（#643）: 入力欄フォントを config `font_size` へ追従させ、hint を
-        // `hint_text_color` で描く。**バー高さ 52px は据え置く**——WebView2 の
-        // `--search-bar-height` も固定値で `--font-size` に連動せず（`global.css`）、
-        // `.search-input` が `font-size: inherit` で body の `--font-size` を受けるだけ。
-        // ゆえに「バー固定 + 入力欄フォントのみ追従」が parity である（SU6.5 決定 3）。
-        // 極端な font_size でバーからはみ出すのは WebView2 も同じ＝同じ壊れ方＝parity。
+        // `hint_text_color` で描く。#646 決定 2: バー高は `font_size + bar_padding`（Metrics）。
+        // SU6.5 決定 3 の 52px 据え置きは WebView2 parity 制約下の判断で、SU7 の WebView2 撤去
+        // により失効した。極端な font_size でバーからはみ出す挙動は変わらず残る。
         let bar_theme = self.row_theme();
         let bar_font = egui::FontId::proportional(bar_theme.name_size);
         let response = ui.add(
@@ -1600,8 +1624,10 @@ impl EguiView for SearchWindowView {
         if let Some(row) = toast_row {
             let l = self.lang();
             let theme = self.row_theme();
+            let m = self.metrics();
+            let toast_h = m.toast_height as f32;
             let (rect, _) = ui.allocate_exact_size(
-                egui::vec2(ui.available_width(), 52.0),
+                egui::vec2(ui.available_width(), toast_h),
                 egui::Sense::hover(),
             );
             let line1 = match &row.kind {
@@ -1616,7 +1642,7 @@ impl EguiView for SearchWindowView {
                 }
             };
             ui.painter().text(
-                egui::pos2(rect.left() + 8.0, rect.top() + 13.0),
+                egui::pos2(rect.left() + 8.0, rect.top() + toast_h * 0.25),
                 egui::Align2::LEFT_CENTER,
                 &line1,
                 egui::FontId::proportional(13.0),
@@ -1624,7 +1650,7 @@ impl EguiView for SearchWindowView {
             );
             // 行2: ボタン（右寄せ・installing 中は disabled・WebView2 UpdateToast parity）。
             let mut cursor_x = rect.right() - 8.0;
-            let btn_y = rect.top() + 39.0;
+            let btn_y = rect.top() + toast_h * 0.75;
             let dismiss_label = crate::egui_shell::ui_strings::update_dismiss(l);
             if draw_toast_button(ui, &mut cursor_x, btn_y, dismiss_label, row.buttons_enabled, &theme) {
                 toast_action = Some(ToastAction::Dismiss);
@@ -1714,6 +1740,7 @@ impl EguiView for SearchWindowView {
             let results = self.state.results().to_vec();
             let selected = self.state.selected();
             let theme = self.row_theme();
+            let metrics = self.metrics();
             let show_icons = self.show_icons(); // ループ前に 1 回読む（#532 SU4 Task 6）
             // 選択変化時のみ scroll_to_me（毎フレーム発火だと手動スクロールを奪い返す・#632）。
             let do_scroll = self.last_scrolled_selected != Some(selected);
@@ -1729,6 +1756,7 @@ impl EguiView for SearchWindowView {
                         icon,
                         show_icons,
                         &theme,
+                        metrics.row_height as f32,
                     ) {
                         clicked = Some(i); // シングルクリック（§4.8 単=起動）。double は扱わない
                     }
@@ -1747,14 +1775,15 @@ impl EguiView for SearchWindowView {
         // 動的ウィンドウ高さ（§4.5/§4.7）。show_results 可否 × max_results から算出し set_size。
         // view 直呼び（SU1 runtime 不変・ユーザー決定）。update はイベントループスレッドで走る
         // ので set_size は安全な見込み（G-RESIZE で確認。本タスクではスモークまで到達しない）。
+        let m = self.metrics();
         let height = compute_window_height(&HeightParams {
             show_results,
             max_results: self.max_results(),
             has_update_toast: has_toast,
-            search_bar_height: 52.0,
-            result_row_height: 30.0,
+            search_bar_height: m.bar_height,
+            result_row_height: m.row_height,
             results_padding: 8.0,
-            update_toast_height: 52.0,
+            update_toast_height: m.toast_height,
         });
         // 幅は config live-read（SU6 spec 決定 2）。hidden 中の幅変更は wake 空振りでも、次 show の
         // 初フレームでこの差分が検知して是正する（show_egui_main の inner_size 幅 52px collapse とは独立）。

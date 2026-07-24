@@ -3,6 +3,36 @@
 
 use std::time::Duration;
 
+/// path 行のフォントサイズ(#646 決定 9)。view.rs `RowTheme::path_size` と同係数——
+/// 正本はここ(layout の Metrics が同じ値で行高を積算するため。二重定義は行高と描画の
+/// 不一致バグになる)。driver(view.rs)からの消費は #646 PR1 Task 3・4 で配線する。
+#[allow(dead_code)]
+pub fn path_size(font_size: u32) -> f64 {
+    (font_size as f64 * 0.78).max(9.0)
+}
+
+/// 行高・バー高・toast 高の算出値(#646 決定 2)。config `visual` から毎フレーム導出し
+/// キャッシュしない(font_size と同じ live-read 方針)。driver からの消費は Task 3・4。
+#[allow(dead_code)]
+pub struct Metrics {
+    /// font_size + bar_padding。既定(15+28)=43、font 24 で現行 52 を再現。
+    pub bar_height: f64,
+    /// 2 行表示(決定 9)の積算: font_size + path_size + row_padding + 行間 4。下限 24。
+    pub row_height: f64,
+    /// bar_height と同値(§20.3 の toast 行)。
+    pub toast_height: f64,
+}
+
+impl Metrics {
+    #[allow(dead_code)]
+    pub fn from_config(font_size: u32, row_padding: u32, bar_padding: u32) -> Self {
+        let f = font_size as f64;
+        let bar_height = f + bar_padding as f64;
+        let row_height = (f + path_size(font_size) + row_padding as f64 + 4.0).max(24.0);
+        Self { bar_height, row_height, toast_height: bar_height }
+    }
+}
+
 /// compute_window_height の入力。SU5 まで has_update_toast は常に false。
 pub struct HeightParams {
     pub show_results: bool,
@@ -135,5 +165,35 @@ mod tests {
         assert!(!d.poll(Duration::from_millis(100)), "cancel 後は trailing 発火しない");
         // cancel 後の次入力はバースト先頭扱い（leading 再発火）
         assert!(d.on_input());
+    }
+
+    /// #646 決定 2: bar_padding=28 は font 24 で現行 52px をピクセル再現する(後方互換の要)。
+    #[test]
+    fn metrics_bar_reproduces_current_at_font24() {
+        let m = Metrics::from_config(24, 6, 28);
+        assert_eq!(m.bar_height, 52.0);
+        assert_eq!(m.toast_height, 52.0);
+    }
+
+    /// #646 決定 2・9: row_height は 2 行積算(name 行 + path 行 + 行間 4 + row_padding)。
+    #[test]
+    fn metrics_row_is_two_line_sum() {
+        let m = Metrics::from_config(15, 6, 28);
+        assert_eq!(m.bar_height, 43.0);
+        // path_size = max(15*0.78, 9) = 11.7 → 15 + 11.7 + 6 + 4 = 36.7
+        assert!((m.row_height - 36.7).abs() < 1e-9, "row={}", m.row_height);
+    }
+
+    /// #646 決定 2: 下限 24(アイコン 16px + 余白)。8 + 9 + 0 + 4 = 21 → 24 へ床上げ。
+    #[test]
+    fn metrics_row_floor_is_24() {
+        assert_eq!(Metrics::from_config(8, 0, 28).row_height, 24.0);
+    }
+
+    /// path_size は RowTheme と同係数(0.78・下限 9)。
+    #[test]
+    fn path_size_matches_row_theme_coefficient() {
+        assert_eq!(path_size(8), 9.0);
+        assert!((path_size(15) - 11.7).abs() < 1e-9);
     }
 }

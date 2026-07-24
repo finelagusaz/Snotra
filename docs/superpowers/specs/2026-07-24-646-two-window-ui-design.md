@@ -11,7 +11,7 @@ brainstorm で issue 本文の「3 ウィンドウ構成」を **2 窓構成に�
 
 ## スコープ
 
-**含む**: メトリクス(行高・バー高・toast 高)の font_size 連動化 + 結果行の 2 行表示化(名前 + パス・決定 9)(PR1)/ 結果リストの独立窓化・透明ギャップ・DWM 角丸と影・実件数フィット(PR2)/ 新 config キー 3 つ(`window_gap` / `row_padding` / `bar_padding`)。
+**含む**: メトリクス(行高・バー高・toast 高)の font_size 連動化 + 結果行の 2 行表示化(名前 + パス・決定 9)(PR1)/ 結果リストの独立窓化・透明ギャップ・DWM 角丸と影・実件数フィット・メイン窓のドラッグ移動(決定 10)(PR2)/ 新 config キー 3 つ(`window_gap` / `row_padding` / `bar_padding`)。
 
 **含まない**: トーストの別窓化(メイン同一窓を維持)/ 新キーの設定 UI(`snotra-settings`)露出(config.toml 直編集で調整・露出は後続 issue)/ 角丸半径の config 化(DWM 管理ゆえ指定不可)/ テーマ・配色の変更。
 
@@ -86,12 +86,22 @@ pub struct Metrics {
 - 1 行モードは設けない(config キー化しない・YAGNI。要望が出たら後続 issue)
 - 行高は決定 2 の式(`font_size + path_size + row_padding + 4`)。実装は PR1(`draw_result_row` と `Metrics` は同じ変更単位)
 
+### 決定 10: メイン窓は入力欄以外の全域でドラッグ移動できる
+
+`decorations: false` ゆえ OS の掴める枠が無い。tauri `Window::start_dragging()`(tao `drag_window` → ネイティブ移動ループ)で移動を実装する。
+
+- **掴み領域 = メイン窓の「ウィジェットでない」全域**: バーの余白(左右パディング・上下の隙間)と toast の背景部。入力欄(クリック = キャレット・ドラッグ = テキスト選択)・toast ボタン・結果行は従来の操作を保つ。egui 側は「pointer press がどのウィジェットにも hit していない + ドラッグ開始」を検出して `start_dragging()` を呼ぶ
+- **結果窓の追従**: ドラッグ中はネイティブ移動ループが回り egui フレームが止まるため、results の毎フレーム突き合わせ(決定 6)は効かない。tao の `Moved` イベントで results の位置更新を wake する(イベント駆動 wake 規範の適用)。それでも追従が視覚的に許容できない場合のフォールバックは「ドラッグ中 results を hide し、drop で再表示」
+- **位置永続との整合**: 手動移動後の位置が既存の位置永続(`window.bin`)・`position_on_target_monitor`(show 時の配置)とどう合流するかを計画時に確認する——移動先を記憶するか、次回 show で従来配置に戻るかを既存機構の実装に合わせて決める
+- 実装は PR2(結果窓の追従と同じ変更単位で検証するため)
+
 ## リスク・実装時に実測で確定する点
 
 1. tauri `Window::builder` に `WS_EX_NOACTIVATE` を直接指定する API が無い場合、生成後に `SetWindowLongPtrW(GWL_EXSTYLE)` で付与する(windows クレート v0.62 での API 形状・feature フラグ `Win32_Graphics_Dwm` / `Win32_UI_WindowsAndMessaging` を実装前に確認——`src-tauri/CLAUDE.md` の規律)
 2. tauri `show()` が活性化を伴う場合の非活性表示(決定 4 の SW_SHOWNOACTIVATE フォールバック)
 3. DWM 角丸は Windows 11 専用(`DWMWA_WINDOW_CORNER_PREFERENCE` は build 22000+)。Windows 10 では角のまま=装飾なしで受容(機能影響なし)
 4. 2 窓とも同一イベントループスレッドで `update()` が走る(runtime は窓ごと状態を `HashMap` 管理・`runtime.rs`)。スナップショットの `Mutex` は同一スレッド内の順次アクセスが基本で競合は薄いが、`/race-check` で worker スレッド(icon/folder load)からの wake 経路を検証する
+5. `start_dragging()` のネイティブ移動ループがイベントループを占有する間の挙動(ドラッグ中の再描画停止・`Moved` イベントの配送粒度・blur 誤発火の有無)。「メッセージポンプが 1 イテレーション内で停止」系のデッドロック不変条件(`src-tauri/CLAUDE.md`)に抵触しないかを実測で確定する
 
 ## SPEC 同期対象
 
@@ -99,3 +109,4 @@ pub struct Metrics {
 - §11(視覚): 固定 30px/52px の記載箇所を計画時に grep で数え上げ、連動式(`font_size + padding`)へ同期・`window_gap` / `row_padding` / `bar_padding` キーの追加
 - §20.3(updater toast): toast 高が `bar_height` 連動になる旨(位置・挙動は不変)
 - 結果行レイアウトの記載箇所(name/path の 1 行併記・右寄せを記す §): 2 行表示へ(該当 § は計画時に grep で確定)
+- ウィンドウ操作の節(表示・非表示・位置を記す §): ドラッグ移動(決定 10)を追記(仕様追加。該当 § は計画時に grep で確定)

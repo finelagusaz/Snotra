@@ -181,8 +181,6 @@ pub(crate) struct SearchWindowView {
     /// 後に stale instant 行（path=description/display）が activate() へ流れて文字列をパスとして
     /// 起動・履歴汚染するのを防ぐ（/code-review #637 finding 0）。run_search が行と一体で更新する。
     instant_rows_query: Option<String>,
-    /// 直近に scroll_to_me した選択 index。選択変化時のみ scroll するための gate（#632）。
-    last_scrolled_selected: Option<usize>,
     /// in-flight 起動（single-flight の実体: Some の間は新規起動 dispatch を拒否）。
     launching: Option<LaunchInFlight>,
     /// #633: index build 完了世代の last-seen（AppState.index_generation と比較・SU6 spec 決定 3）。
@@ -199,6 +197,10 @@ pub(crate) struct SearchWindowView {
     last_results_height: f64,
     /// results 窓の直近設定位置（物理座標。デルタガード）。
     last_results_pos: Option<(i32, i32)>,
+    /// results 窓の直近設定幅（デルタガード）。**`last_set_width`（main 用）を流用しない**——
+    /// 同一フレーム内で main のブロックが先に `last_set_width` を更新済みのため、それと
+    /// 比較すると常に差分 0 になり results が幅の live-reload に追従しなくなる（Important 1）。
+    last_results_width: f64,
 }
 
 impl SearchWindowView {
@@ -226,7 +228,6 @@ impl SearchWindowView {
             folder_cache: None,
             folder_error: None,
             instant_rows_query: None,
-            last_scrolled_selected: None,
             launching: None,
             last_seen_index_generation: 0,
             notice: crate::egui_shell::NoticeSlot::default(),
@@ -234,6 +235,7 @@ impl SearchWindowView {
             last_results_visible: false,
             last_results_height: 0.0,
             last_results_pos: None,
+            last_results_width: 0.0,
         }
     }
 
@@ -296,7 +298,6 @@ impl SearchWindowView {
         self.launching = Some(LaunchInFlight { started: Instant::now(), rx, tag });
         self.state.set_results(Vec::new());
         self.instant_rows_query = None; // 行が消えるため来歴も一体でクリア（finding 0 の規律）
-        self.last_scrolled_selected = None;
         let app = self.app_handle.clone();
         let egui_ctx = ctx.clone();
         std::thread::spawn(move || {
@@ -442,7 +443,6 @@ impl SearchWindowView {
         self.state.set_results(Vec::new());
         self.search_debounce.cancel();
         self.instant_rows_query = None;
-        self.last_scrolled_selected = None; // 再表示後に確実に一度 scroll し直す（#632）
     }
 
     /// slash コマンドを実行する（§15.3 即実行・#532 SU3 M3）。SolidJS handleCommandQueryInput と
@@ -748,10 +748,11 @@ impl SearchWindowView {
             }
         }
         if (res_h - self.last_results_height).abs() > 0.5
-            || (width - self.last_set_width).abs() > 0.5
+            || (width - self.last_results_width).abs() > 0.5
         {
             let _ = results.set_size(tauri::LogicalSize::new(width, res_h));
             self.last_results_height = res_h;
+            self.last_results_width = width;
         }
         if !self.last_results_visible {
             let _ = results.show();
@@ -872,10 +873,6 @@ impl SearchWindowView {
     }
 
     fn run_search_with(&mut self, prefix: &str) {
-        // 結果が総入れ替えされうる箇所ゆえ scroll gate をリセットする。selected index の
-        // みをキーにすると、手動スクロール後の打鍵で結果が置換されても selected=0 のままだと
-        // do_scroll=false になり新結果の選択行が画面外に留まる（#632 reviewer Important 3）。
-        self.last_scrolled_selected = None;
         // 来歴は行と一体で更新する（Instant 分岐だけが Some を立て直す・finding 0）。
         self.instant_rows_query = None;
         match self.state.view_kind() {
@@ -1097,7 +1094,8 @@ impl EguiView for SearchWindowView {
             self.folder_error = None;
             self.instant_rows_query = None; // §19.7: resetForShow で instant モード解除
             self.search_debounce = Debouncer::new(Duration::from_millis(50), true);
-            self.last_scrolled_selected = None; // 再表示後に確実に一度 scroll し直す（#632）
+            // scroll gate（#632: 再表示後に確実に一度 scroll し直す）は results 窓の
+            // ResultsView::update() 側（実ゲート）に移設済み——main はもう読み書きしない。
             // hide 中の常駐テクスチャを残さない（メモリ境界・SU4 決定 A）。
             self.icon_textures.clear();
             self.icon_missing.clear();
@@ -1115,6 +1113,7 @@ impl EguiView for SearchWindowView {
             self.last_results_visible = false;
             self.last_results_height = 0.0;
             self.last_results_pos = None;
+            self.last_results_width = 0.0;
         }
 
         let ctx = ui.ctx().clone();

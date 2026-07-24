@@ -254,6 +254,11 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         };
         let snapshot = shared.snapshot.lock().unwrap().clone();
         if !snapshot.show {
+            // #632 の不変条件「再表示後に確実に一度 scroll し直す」の実ゲート。旧実装は main
+            // 側の resetForShow（reset_pending 消費）でこの gate を直接クリアしていたが、
+            // 移設後は本 view が gate の唯一の所有者ゆえここでリセットする——hide/非表示の
+            // たびに戻し、次に見えるフレームで選択行への scroll_to_me を再度発火させる。
+            self.last_scrolled_selected = None;
             return; // 窓は main が hide 済みのはず(backstop で何も描かない)
         }
         // font_family hot-reload(view.rs の applied_font_family 比較と同型を複製・

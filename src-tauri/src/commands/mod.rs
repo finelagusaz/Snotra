@@ -1,15 +1,11 @@
-mod config;
 mod icon;
 pub(crate) mod instant;
 pub(crate) mod launch;
-mod search;
 mod system;
 mod window;
 
-pub use config::*;
-pub use icon::*;
+pub(crate) use icon::*;
 pub use launch::*;
-pub use search::*;
 pub use system::*;
 pub use window::*;
 

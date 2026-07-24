@@ -1,6 +1,6 @@
 use std::sync::atomic::Ordering;
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, State};
 
 use crate::indexing;
 use crate::state::AppState;
@@ -19,7 +19,6 @@ fn ensure_not_indexing(state: &AppState) -> Result<(), String> {
 // IPC 返り値契約（src-tauri/CLAUDE.md「IPC コマンドの返り値契約」）の「失敗しうる操作系」:
 // `open_settings` と同じ ERR_INDEXING_IN_PROGRESS 定数で「インデックス構築中」を表現し、
 // 同一条件を同一契約で揃える（#434）。
-#[tauri::command]
 pub fn rebuild_index(state: State<AppState>, app: AppHandle) -> Result<(), String> {
     ensure_not_indexing(&state)?;
     if indexing::start_index_build(&app) {
@@ -29,46 +28,6 @@ pub fn rebuild_index(state: State<AppState>, app: AppHandle) -> Result<(), Strin
         // 同一のエラーコードで表現する。
         Err(ERR_INDEXING_IN_PROGRESS.to_string())
     }
-}
-
-#[tauri::command]
-pub fn get_indexing_state(state: State<AppState>) -> bool {
-    state.indexing.load(Ordering::SeqCst)
-}
-
-#[tauri::command]
-pub fn quit_app(app: AppHandle) {
-    // Reuse the existing exit-requested listener (main.rs)
-    // which flushes history/icons, notifies platform, and exits
-    let _ = app.emit("exit-requested", ());
-}
-
-#[tauri::command]
-pub fn record_folder_expansion(path: String, state: State<AppState>) {
-    // Keep history snapshot creation atomic with the record update; defer only
-    // the filesystem write so searches are not blocked by storage latency.
-    let save = {
-        let mut engine = state.engine.lock().unwrap();
-        engine.record_folder_expansion(&path);
-        engine.prepare_history_save_if_dirty(5)
-    };
-    if let Some(save) = save {
-        let _ = save.save();
-    }
-}
-
-#[tauri::command]
-pub fn notify_main_shown(state: State<AppState>) {
-    state.main_visible.store(true, Ordering::SeqCst);
-}
-
-#[tauri::command]
-pub fn notify_main_hidden(state: State<AppState>, app: AppHandle) {
-    state.main_visible.store(false, Ordering::SeqCst);
-    let _ = app.emit("window-hidden", ());
-    // hide 後の working set trim（egui 経路の hide_egui_main と同一操作・best-effort）。
-    // WebView2 suspend は #532 SU7 flip で消滅した。本 IPC 自体はフロント撤去（PR3）まで残置。
-    crate::working_set::trim_idle_working_set(std::process::id());
 }
 
 #[cfg(test)]

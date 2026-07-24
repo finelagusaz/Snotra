@@ -357,10 +357,10 @@ impl SearchWindowView {
                     self.emit_hide();
                 }
             },
-            LaunchStatus::Failed | LaunchStatus::Timeout => {
+            LaunchStatus::Failed => {
                 // 失敗: hide しない・同期 run_search で結果を再取得（runRefresh parity）+ 一時通知。
-                // Timeout ステータスがここへ来るのは core が同期 Timeout を返す場合のみ
-                // （drain 側の 4 秒は Empty 経路で扱う）。文言は失敗系で扱う。
+                // 旧 Timeout ステータスは IPC の run_launch_blocking 専用で #532 SU7 PR3 で消滅
+                // （drain 側の 4 秒 timeout は Empty 経路で扱う）。
                 let detail = outcome
                     .message
                     .as_deref()

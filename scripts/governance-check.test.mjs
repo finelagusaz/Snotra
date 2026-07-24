@@ -69,13 +69,6 @@ describe("G1 checkModuleIndex", () => {
     const f = checkModuleIndex(s, ["snotra-core"]);
     expect(f.some((x) => x.message.includes("orphan.rs"))).toBe(true);
   });
-  it("ui はテストファイルを逆方向の母集団から除外する（vitest include と一致）", () => {
-    const s = snap({
-      "ui/CLAUDE.md": "## モジュール構成\n- `main.tsx` — エントリ\n## 次節\n",
-      "ui/src/main.tsx": "",
-    }, ["ui/src/main.test.tsx", "ui/src/lib/x.test.ts"]);
-    expect(checkModuleIndex(s, ["ui"])).toEqual([]);
-  });
   it("集約行のベア名列挙（`mod.rs` 等）は basename 照合で誤検出しない", () => {
     const s = snap({
       "src-tauri/CLAUDE.md": "## モジュール構成\n- `commands/`: 分割（`mod.rs` + `search.rs`）\n## 次節\n",

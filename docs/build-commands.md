@@ -22,28 +22,21 @@ cargo doc --workspace --no-deps --document-private-items                        
 ```
 
 - **`cargo test` の必須/任意**: 変更した crate のテストはローカル**必須**（PostToolUse フックが自動実行）。変更していない crate のテストはローカル任意（CI の rust-check が PR で全 5 crate のテストを常に実行し担保）
-- 上記のコマンドはいずれも CI（`ci.yml` rust-check）で PR 自動実行される（「CI/CD メモ」の対応表参照）。PostToolUse フック（`.claude/hooks/post-edit.mjs`）も `*.rs` 編集で clippy、`snotra-core/**` / `snotra-egui-runtime/**` / `snotra-egui-mvp/**` / `src-tauri/**` / `snotra-settings/**` 編集でその crate のテストを自動発火する。`src-tauri/tauri.conf.json` の編集では CSP 契約テスト（`ui/src/lib/cspValidation.test.ts`）を、`Cargo.toml` の編集では `cargo check` を自動発火する（ルートの `Cargo.toml` ではさらに hook-selftest = members カナリア）
+- 上記のコマンドはいずれも CI（`ci.yml` rust-check）で PR 自動実行される（「CI/CD メモ」の対応表参照）。PostToolUse フック（`.claude/hooks/post-edit.mjs`）も `*.rs` 編集で clippy、`snotra-core/**` / `snotra-egui-runtime/**` / `snotra-egui-mvp/**` / `src-tauri/**` / `snotra-settings/**` 編集でその crate のテストを自動発火する。`Cargo.toml` の編集では `cargo check` を自動発火する（ルートの `Cargo.toml` ではさらに hook-selftest = members カナリア）
 - **`check` / `clippy` は `--workspace` を使う**（#500）。crate 名を `-p` で列挙すると `Cargo.toml` の `members` の写しになり、6 つ目の crate を追加したとき hook・CI・本ファイルが同じ誤りを共有して気づかれないまま漏れる。`--workspace` は cargo に SSOT を読ませる。一方 `cargo test -p <crate>` は「編集した crate → そのテスト」の写像なので `-p` のまま残す（`--workspace` にすると編集していない crate のテストまで走る）
 - **`cargo doc` は CI（rust-check）でのみ発火し、PostToolUse フックは発火しない**（#562・編集レイテンシ回避の設計判断）。deny 化は各 crate の `[lints] workspace = true`（`Cargo.toml`）→ root `[workspace.lints.rustdoc]`（`broken_intra_doc_links` / `invalid_html_tags`）で、既定 warn の素通りを塞ぐ。**沈黙は合格を意味しない**（hook 対象外）ため、doc コメント（`///` / `//!`）を触ったらローカルで上記コマンドを手動実行してリンク切れを確認する
-- **フックの検査コマンドと本ファイルの整合規約**: フックの cargo コマンドは、**カテゴリ A のコードブロック**の記載と**合否・検査対象を変えるフラグにおいて一致**させる（`--lib` の付与・`-p` の欠落等を乖離とする）。**出力整形のみのフラグ**（`--message-format short` 等、exit code を変えないもの）は hook 側の証拠予算のための追加として許容する。npm 系検査は SSOT コマンド（`npm test` / `npm run typecheck`）の部分集合ラッパー（単一テストファイルの vitest 実行・tsc 直接起動）を許容する。コマンドの実在は `npm run governance:check`（G5）が、cargo フラグの乖離は同（G9・#589）が検知する。npm 系ラッパーの等価判断のみ `/health-check`（Check 5 残置部分）に残る
+- **フックの検査コマンドと本ファイルの整合規約**: フックの cargo コマンドは、**カテゴリ A のコードブロック**の記載と**合否・検査対象を変えるフラグにおいて一致**させる（`--lib` の付与・`-p` の欠落等を乖離とする）。**出力整形のみのフラグ**（`--message-format short` 等、exit code を変えないもの）は hook 側の証拠予算のための追加として許容する。npm 系検査は SSOT コマンド（`npm test`）の部分集合ラッパー（対象ディレクトリ限定の vitest 実行）を許容する。コマンドの実在は `npm run governance:check`（G5）が、cargo フラグの乖離は同（G9・#589）が検知する。npm 系ラッパーの等価判断のみ `/health-check`（Check 5 残置部分）に残る
 - **検査が割り当てられているファイルでは、フックの沈黙は合格を意味する**（#471・前提条件は #497）。検出は exit code で行い、成功した検査は何も出力しない。失敗時のみ再現コマンド付きで会話に届くため、そのコマンドを実行すれば全診断を見られる。**割り当ての無いファイル**（`*.md`・`scripts/`・`.github/workflows/` 等）の沈黙は「何も走らなかった」であり合格ではない。割り当ての SSOT は `post-edit.mjs` の `selectChecks` である
 - `snotra-settings` を含めるのは egui ネイティブウィンドウ側の型壊れも検知するため
 
-### B. TypeScript／フロントエンドファイル（`ui/src/**`・ルートの config `.ts`）を変更した場合
+### B. TypeScript ファイル（`vitest.config.ts` 等）を変更した場合
 
-```bash
-npm run typecheck    # 必須: TypeScript 型チェック
-npm run build        # 必須: typecheck → vite build（プロジェクトルートから実行）
-npm run docs:check   # 必須（TSDoc {@link} を含む doc コメント編集時）: {@link} 切れ検査（#562・CI 発火／hook 非発火）
-```
-
-- `npm run build` は内部で `typecheck` を呼びますが、型エラーを早期に切り分けるため別途実行を推奨
-- **`npm run docs:check`（TypeDoc）は CI（frontend-check）でのみ発火し、PostToolUse フックは発火しない**（#562・cargo doc の TS 版）。`treatValidationWarningsAsErrors`（`typedoc.json`）で `{@link}` 切れを fail 化する。現状 `{@link}` は 0 件で純粋な将来ガードだが、TSDoc に `{@link}` を書き始めたらローカルで手動実行して切れを確認する
+TS の型検査は #532 SU7 のフロント撤去で消滅した（`tsconfig.json` ごと削除・`.ts` 編集時は PostToolUse フックが「検査はありません」の情報行を出す）。残る `.ts` は `vitest.config.ts` のみで、その変更は hook-selftest（PostToolUse 自動発火）と `npm test` が検証する。
 
 ### C. ウィンドウ生成／表示順・ホットキー・スラッシュコマンドに触れた場合（A／B に追加）
 
 ```bash
-npm test                 # 必須: ユニットテスト（Vitest: ui + .claude/hooks + .githooks + scripts）
+npm test                 # 必須: ユニットテスト（Vitest: .claude/hooks + .githooks + scripts）
 npm run smoke:startup    # 必須: 起動時スモーク（trace の *:error 不在検証）
 npm run smoke:egui       # 必須: egui show/hide スモーク（hotkey 注入 + trace 検証・#532 SU7）
 ```
@@ -80,8 +73,7 @@ npm run governance:check    # 必須: ガバナンス文書の決定的検査（
 ## Windows/macOS/Linux で実行可能
 
 ```bash
-npm test                          # フロントユニットテスト（Vitest）
-npm run build                    # フロントエンドビルド（typecheck → vite build、プロジェクトルートから実行）
+npm test                          # ユニットテスト（Vitest: .claude/hooks + .githooks + scripts）
 npm run clean:worktrees          # Agent 委譲で残った worktree/ブランチを掃除（dirty はスキップ、-- --force で強制）
 ```
 
@@ -100,7 +92,7 @@ cargo clippy --workspace --all-targets -- -D warnings  # lint チェック（カ
 cargo run -p snotra-settings     # snotra-settings（egui ネイティブ設定 GUI）の単独起動
 cargo run -p snotra-egui-mvp     # Issue #532 egui MVP（WebViewなし・非配布の Phase 1 スパイク・SU 実装は含まない）
 cargo run -p snotra              # 製品メインウィンドウ（egui 既定・#532 SU7 flip 済み。視覚スモークはこれ）
-npm run verify                   # Rust + フロントエンド一括検証（cargo check + npm run build）
+npm run verify                   # Rust + node 一括検証（cargo check --workspace + npm test）
 npm run smoke:startup             # 起動時スモーク（trace の *:error 不在検証）
 npm run smoke:egui                # egui 経路の show/hide スモーク（keybd_event 注入 + trace検証・#532 SU7。既定 ExePath = target/release）
 npm run measure:memory            # メモリ実測（PrivWS 軸・ツリー合算・#532 flip 基準 3）
@@ -111,7 +103,6 @@ npm run tauri build              # リリースビルド（NSIS バンドル。`
 
 - `scripts/smoke-startup.ps1` は `SNOTRA_TRACE=1` で起動し、`*:error` トレースイベントが不在であることを検証する
 - `scripts/smoke-egui.ps1` は egui 経路の自動回帰の最低線（#532 SU7・e2e/ 撤去後の後継）: `SNOTRA_TRACE=1` で起動 → keybd_event で Alt+Q（既定 hotkey・Alt 解放込み）→ `egui_show:done` 観測 → Escape → `egui_hide:done` 観測 → `msedgewebview2` のグローバル増分 0 を検証する。`-SeedConfig` は CI 用（config.toml 不在時のみ最小の有効 TOML を seed して first-run 経路を回避。既存 config は上書きしない。空 TOML は必須セクション欠落で parse 失敗し破損復旧経路を踏むため使わない）。実行中の snotra を kill するためローカル実行時は注意。網羅は担わず、視覚・操作列は手動 GUI smoke（カテゴリ D）が補完する
-- スラッシュコマンドの実行順（`hide -> /r|/o|/s|/q`）は `ui/src/lib/commands.test.ts` で固定し、順序変更時は必ず更新する
 - **ビルド済みバイナリの手動 smoke では「変更が含まれているか」を確認する**: `cargo` は `target/debug/deps/<crate>-<hash>.exe` を `target/debug/<crate>.exe` に hardlink し直すため、ソース変更後でも（fingerprint 上「最新」と判断され再リンクされず）`<crate>.exe` のタイムスタンプが更新されないことがある。タイムスタンプを信用せず、変更固有の文字列でバイナリを grep して目的の変更が入っているか確認する（例: `[Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($exe)).Contains('<変更固有の文字列>')`）。#343 の balloon smoke で実際に踏んだ
 - **debugネイティブGUIの`Process.MainWindowHandle`を画面証拠に使わない**: console subsystemのdebugバイナリは親Windows TerminalのHWNDを返す場合がある。対象PIDのトップレベルウィンドウを列挙し、PIDと期待タイトルの両方でネイティブウィンドウを特定してから可視性・スクリーンショットを検証する
 
@@ -123,9 +114,7 @@ npm run tauri build              # リリースビルド（NSIS バンドル。`
 
 | 検証コマンド | workflow | トリガー |
 |---|---|---|
-| `npm test`（Vitest） | `ci.yml`（frontend-check=ubuntu / rust-check=windows） | PR 自動（`skip-ci` は下記ノート参照） |
-| `npm run build` / `npm run typecheck` | `ci.yml`（frontend-check） | PR 自動 |
-| `npm run docs:check`（#562・TSDoc `{@link}` 検査） | `ci.yml`（frontend-check） | PR 自動 |
+| `npm test`（Vitest: hooks/githooks/scripts） | `ci.yml`（node-check=ubuntu / rust-check=windows） | PR 自動（`skip-ci` は下記ノート参照） |
 | `cargo check` / `cargo test -p snotra-core` / `cargo test -p snotra-egui-runtime` / `cargo test -p snotra-egui-mvp` / `cargo test -p snotra` / `cargo test -p snotra-settings` / `cargo clippy` | `ci.yml`（rust-check） | PR 自動 |
 | `cargo doc --workspace --no-deps --document-private-items`（#562・intra-doc link 検査） | `ci.yml`（rust-check） | PR 自動 |
 | `npm run governance:check`（#587・ガバナンス文書検査） | `ci.yml`（governance-check） | PR 自動（**`skip-ci` 非対象** — if ガードを持たず常時実行） |
@@ -134,9 +123,9 @@ npm run tauri build              # リリースビルド（NSIS バンドル。`
 
 （注）CI では smoke-egui job がビルドした release バイナリを共有するため、`npm run smoke:startup`（既定 ExePath = debug）ではなく `scripts/smoke-startup.ps1 -ExePath target/release/snotra.exe` を直接実行する。検証する起動経路は同じ（release バイナリの起動 trace に `*:error` が無いこと）。これは smoke 用ビルドの起動健全性検証であり、配布バンドル（`tauri build`）の検証ではない。
 
-- `npm test` は ubuntu（frontend-check）と windows（rust-check）の両方で走る（#509）。`.githooks` / `.claude/hooks` の selftest は実運用が Windows でのみ起きるセーフティネットであり、hook 実行機構（Git-for-Windows の shebang 経由 sh 起動・パス/クォート境界）が本番と一致する OS で回帰検査する。ubuntu 側は実行ビット・POSIX sh 厳密性を相補的に担保する。CRLF 由来の fail-open は `.gitattributes` の `.githooks/** text eol=lf` で両 OS 回避済みで、かつ dash 側の故障モードなので windows 固有ではない。
-- **`skip-ci` ラベルはジョブ単位で効く** — frontend-check / rust-check の `if` が同一のため、貼ると cargo 系を含む**両方まるごと**スキップする（表の各行に個別注記はしない）。**`governance-check` job は `if` ガードを持たず、`skip-ci` を貼っても走る**（#587。skip-safe と定義された Markdown-only 変更こそが検査対象のため、意図的にガードしない）。CI は required status check ではない（ruleset `default` に `required_status_checks` 規則が無い・実測）ためマージは通り、main への push（マージ後）では `github.event_name == 'push'` により**ラベル無関係に必ず走る**。
-- **`skip-ci` を貼ってよいのは skip-safe な変更のみ** — frontend-check / rust-check がテスト対象に持たない `.claude/skills/**`・`.claude/rules/**`・`.claude/agents/**`・`docs/**`・`**/*.md` だけ（これらの決定的検査は skip されない governance-check が担う・#587）。**貼ってはならない**: `.claude/hooks/**`・`.githooks/**`・`scripts/**`・`.claude/settings.json` — これらは `npm test` が両 OS でセルフテストを回す（`vitest.config.ts` の `include`・上の #509）。「`.claude`-only だから安全」と一括りにしない（同じ表層形 `.claude/` が「Claude が読むだけの設定」と「CI が検査するセーフティネット」の二概念を担うため・#500）。
+- `npm test` は ubuntu（node-check）と windows（rust-check）の両方で走る（#509）。`.githooks` / `.claude/hooks` の selftest は実運用が Windows でのみ起きるセーフティネットであり、hook 実行機構（Git-for-Windows の shebang 経由 sh 起動・パス/クォート境界）が本番と一致する OS で回帰検査する。ubuntu 側は実行ビット・POSIX sh 厳密性を相補的に担保する。CRLF 由来の fail-open は `.gitattributes` の `.githooks/** text eol=lf` で両 OS 回避済みで、かつ dash 側の故障モードなので windows 固有ではない。
+- **`skip-ci` ラベルはジョブ単位で効く** — node-check / rust-check の `if` が同一のため、貼ると cargo 系を含む**両方まるごと**スキップする（表の各行に個別注記はしない）。**`governance-check` job は `if` ガードを持たず、`skip-ci` を貼っても走る**（#587。skip-safe と定義された Markdown-only 変更こそが検査対象のため、意図的にガードしない）。CI は required status check ではない（ruleset `default` に `required_status_checks` 規則が無い・実測）ためマージは通り、main への push（マージ後）では `github.event_name == 'push'` により**ラベル無関係に必ず走る**。
+- **`skip-ci` を貼ってよいのは skip-safe な変更のみ** — node-check / rust-check がテスト対象に持たない `.claude/skills/**`・`.claude/rules/**`・`.claude/agents/**`・`docs/**`・`**/*.md` だけ（これらの決定的検査は skip されない governance-check が担う・#587）。**貼ってはならない**: `.claude/hooks/**`・`.githooks/**`・`scripts/**`・`.claude/settings.json` — これらは `npm test` が両 OS でセルフテストを回す（`vitest.config.ts` の `include`・上の #509）。「`.claude`-only だから安全」と一括りにしない（同じ表層形 `.claude/` が「Claude が読むだけの設定」と「CI が検査するセーフティネット」の二概念を担うため・#500）。
 - カテゴリ C（ウィンドウ生成・ホットキー・スラッシュコマンド）相当の変更や依存更新を含む PR は、対象 paths（`src-tauri/**`・`ui/**`・`**/Cargo.toml`・`Cargo.lock`・`package.json`・`package-lock.json` 等）に該当するため `E2E & Smoke` workflow が自動起動する。paths 外の変更で手動実行するには `workflow_dispatch`。
 - この対応関係のドリフト（必須コマンドに対応 workflow が無い等）は `npm run governance:check`（G6）が検出する（#587。旧 `/health-check` Check 10）。
 

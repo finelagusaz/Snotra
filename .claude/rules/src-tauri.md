@@ -10,7 +10,7 @@ paths:
 ## 読む正本（`src-tauri/CLAUDE.md` の該当節）
 
 - index-build フラグは `try_begin_index_build` / `finish_index_build` 経由（`indexing` / `index_build_started` を直接 store しない）: 「実装パターン」
-- ランタイムでウィンドウ生成しない（`WebviewWindowBuilder::build()` はメッセージポンプ進行を要求しデッドロック・生成は setup 限定）: 「WebView2 ウィンドウ生成の制約」
+- ランタイムでウィンドウ生成しない（メッセージポンプ進行を要求しデッドロック・生成は setup 限定）: 「ウィンドウ生成の制約」
 - `windows` クレート（v0.62）の API 型・feature フラグを使用前に確認: 「Win32 / Tauri 注意事項」
 - `ShellExecuteW` + シェル拡張は COM STA 必須（`std::thread::spawn` + `CoInitializeEx`・EXE は不要）: 「Win32 / Tauri 注意事項」
 - イベント順序 `language-changed` → `hotkey-registration-failed`: 「モジュール構成」の不変条件

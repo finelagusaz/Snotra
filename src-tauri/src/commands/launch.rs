@@ -1,22 +1,14 @@
-use std::time::Duration;
-
-use serde_json::json;
-use snotra_core::config::{find_matching_tools, InstantAction, InstantCommand, OpenerTool};
+use snotra_core::config::{find_matching_tools, InstantAction, InstantCommand};
 use snotra_core::instant::{expand_exec_args, split_args};
 use std::process::Stdio;
-use tauri::{AppHandle, Manager};
-use tokio::time::timeout;
 
 use crate::state::AppState;
-
-use super::trace_command;
 
 #[derive(Debug, serde::Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LaunchStatus {
     Ok,
     Failed,
-    Timeout,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -44,38 +36,12 @@ impl LaunchResult {
         }
     }
 
-    pub(crate) fn timeout(timeout_ms: u64) -> Self {
-        Self {
-            status: LaunchStatus::Timeout,
-            code: -1,
-            message: Some(format!("launch_timeout_{}ms", timeout_ms)),
-        }
-    }
-
     fn is_ok(&self) -> bool {
         self.status == LaunchStatus::Ok
     }
 }
 
-const LAUNCH_TIMEOUT_MS: u64 = 4_000;
 const PATH_PLACEHOLDER: &str = "{path}";
-
-/// Run a blocking launch closure on the blocking pool, bounded by
-/// `LAUNCH_TIMEOUT_MS`. Common wrapper for the three launch entry points
-/// (`launch_with_tool`, `launch_item`, `commands::instant::execute_instant_command`),
-/// all of which spawn a blocking Win32/process call that must not stall the
-/// async runtime forever.
-pub(crate) async fn run_launch_blocking<F>(f: F) -> LaunchResult
-where
-    F: FnOnce() -> LaunchResult + Send + 'static,
-{
-    let join = tauri::async_runtime::spawn_blocking(f);
-    match timeout(Duration::from_millis(LAUNCH_TIMEOUT_MS), join).await {
-        Ok(Ok(v)) => v,
-        Ok(Err(e)) => LaunchResult::failed(-1, format!("launch_worker_join_error: {e}")),
-        Err(_) => LaunchResult::timeout(LAUNCH_TIMEOUT_MS),
-    }
-}
 
 /// Record a successful launch in history and persist if the pending-write
 /// threshold is reached. Common tail of all launch entry points
@@ -93,79 +59,6 @@ pub(crate) fn record_and_save(state: &AppState, path: &str, query: &str) {
     if let Some(save) = save {
         let _ = save.save();
     }
-}
-
-/// フロントエンドへ返すオープナーツール情報（serde シリアライズ用）
-#[derive(serde::Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct OpenerToolDto {
-    pub name: String,
-    pub exe: String,
-    pub args: String,
-}
-
-impl From<&OpenerTool> for OpenerToolDto {
-    fn from(t: &OpenerTool) -> Self {
-        Self {
-            name: t.name.clone(),
-            exe: t.exe.clone(),
-            args: t.args.clone(),
-        }
-    }
-}
-
-/// パスとフォルダフラグに対してマッチするオープナーツール一覧を返す。
-#[tauri::command]
-pub fn get_matching_tools(
-    path: String,
-    is_folder: bool,
-    app: AppHandle,
-) -> Result<Vec<OpenerToolDto>, String> {
-    let state = app.state::<AppState>();
-    let engine = state.engine.lock().unwrap();
-    let tools = find_matching_tools(&path, is_folder, &engine.config().openers);
-    Ok(tools.iter().map(OpenerToolDto::from).collect())
-}
-
-/// 指定ツール（exe + args）でパスを起動し、成功時に履歴を記録する。
-#[tauri::command]
-pub async fn launch_with_tool(
-    path: String,
-    query: String,
-    tool_exe: String,
-    tool_args: String,
-    app: AppHandle,
-) -> Result<LaunchResult, String> {
-    trace_command(
-        "cmd:launch_with_tool:start",
-        json!({
-            "path": path,
-            "tool_exe": tool_exe,
-            "query_len": query.chars().count(),
-            "timeout_ms": LAUNCH_TIMEOUT_MS,
-        }),
-    );
-    let launch_path = path.clone();
-    let exe = tool_exe.clone();
-    let args = tool_args.clone();
-    let result = run_launch_blocking(move || launch_with_tool_core(&launch_path, &exe, &args)).await;
-
-    if result.is_ok() {
-        let state = app.state::<AppState>();
-        record_and_save(&state, &path, &query);
-    }
-
-    trace_command(
-        "cmd:launch_with_tool:done",
-        json!({
-            "path": path,
-            "tool_exe": tool_exe,
-            "status": result.status,
-            "code": result.code,
-            "message": result.message,
-        }),
-    );
-    Ok(result)
 }
 
 pub(crate) fn launch_with_tool_core(path: &str, exe: &str, args: &str) -> LaunchResult {
@@ -197,52 +90,6 @@ fn build_launch_args(args: &str, path: &str) -> Vec<String> {
     }
 
     expanded
-}
-
-#[tauri::command]
-pub async fn launch_item(
-    path: String,
-    query: String,
-    app: AppHandle,
-) -> Result<LaunchResult, String> {
-    // まずオープナールールを検索（is_dir はロック外・ロック内は純 CPU。resolve_opener の doc / #524 参照）
-    let opener_tool = {
-        let state = app.state::<AppState>();
-        resolve_opener(&path, &state)
-    };
-
-    if let Some((exe, args)) = opener_tool {
-        // オープナーが設定されていれば launch_with_tool で起動
-        return launch_with_tool(path, query, exe, args, app).await;
-    }
-
-    trace_command(
-        "cmd:launch_item:start",
-        json!({
-            "path": path,
-            "query_len": query.chars().count(),
-            "timeout_ms": LAUNCH_TIMEOUT_MS,
-        }),
-    );
-    // launch_item_core does ShellExecuteW — must NOT hold the engine lock
-    let launch_path = path.clone();
-    let result = run_launch_blocking(move || launch_item_core(&launch_path)).await;
-
-    if result.is_ok() {
-        let state = app.state::<AppState>();
-        record_and_save(&state, &path, &query);
-    }
-
-    trace_command(
-        "cmd:launch_item:done",
-        json!({
-            "path": path,
-            "status": result.status,
-            "code": result.code,
-            "message": result.message,
-        }),
-    );
-    Ok(result)
 }
 
 /// パスに対して先頭のオープナーツール (exe, args) を返す。

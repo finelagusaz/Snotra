@@ -1,10 +1,9 @@
-//! 非表示アイドル時に WebView2 プロセスツリー全体の working set を回収する。
+//! 非表示アイドル時にプロセスツリーの working set を回収する。
 //!
-//! `TrySuspend`（`main.rs`）はレンダラーを停止してアイドル中の working set 再増殖を防ぐが、
-//! 停止済みページの物理 working set を即時には返さない。ここでは hide 経路で Win32
-//! `EmptyWorkingSet` をプロセスツリー（自プロセス + WebView2 子孫）へ能動適用し、
-//! hide 直後の物理 RSS を即時に削減する（suspend とは補完関係。`src-tauri/CLAUDE.md`
-//! 「WebView2 working set の能動回収」節）。
+//! hide 経路（`egui_shell::hide_egui_main` 合流点）で Win32 `EmptyWorkingSet` を
+//! プロセスツリー（自プロセス + 子孫。設定サイドカー存命中はそれも含む）へ能動適用し、
+//! hide 直後の物理 RSS を即時に削減する（`src-tauri/CLAUDE.md`
+//! 「working set の能動回収」節。旧 WebView2 suspend 層は #532 SU7 で消滅）。
 //!
 //! - show 時は OS がページを透過的に re-fault するため、逆操作（untrim）は不要かつ存在しない。
 //! - best-effort: Toolhelp / `OpenProcess` / `EmptyWorkingSet` の全失敗は黙ってスキップする
@@ -90,7 +89,7 @@ pub(crate) fn trim_idle_working_set(root_pid: u32) {
             }
         }
 
-        // 2. 自プロセス + WebView2 子孫の PID を収集。
+        // 2. 自プロセス + 子孫の PID を収集。
         let pids = collect_descendant_pids(&pairs, root_pid);
 
         // 3. 各プロセスの working set をトリミング（best-effort）。

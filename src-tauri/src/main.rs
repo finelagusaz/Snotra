@@ -3,7 +3,7 @@
 //!
 //! 起動時の背景再スキャン（`indexer::load_or_scan_with_stats` が返す `BackgroundRescanTask`）を
 //! setup フェーズで低優先度スレッドに spawn し、`RescanOutcome::Changed` なら
-//! `icon::invalidate_icon_cache` を呼ぶ。hide 時のレンダラー停止（TrySuspend）もここに置く。
+//! `icon::invalidate_icon_cache` を呼ぶ。
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -268,26 +268,8 @@ fn main() {
         .manage(app_state)
         .manage(icon_cache_state)
         .manage(SettingsProcessState::default())
-        .invoke_handler(tauri::generate_handler![
-            commands::search,
-            commands::get_history_results,
-            commands::launch_item,
-            commands::get_matching_tools,
-            commands::launch_with_tool,
-            commands::list_folder,
-            commands::open_settings,
-            commands::get_icons_batch,
-            commands::save_search_placement,
-            commands::notify_main_shown,
-            commands::notify_main_hidden,
-            commands::get_indexing_state,
-            commands::rebuild_index,
-            commands::quit_app,
-            commands::record_folder_expansion,
-            commands::get_bootstrap_payload,
-            commands::instant::get_instant_commands,
-            commands::instant::execute_instant_command,
-        ])
+        // invoke_handler は無い（#532 SU7 PR3・フロント撤去で IPC は消滅。egui は
+        // commands/ の _core 関数・engine を直呼びする）
         .setup(move |app| {
             let app_handle = app.handle().clone();
 

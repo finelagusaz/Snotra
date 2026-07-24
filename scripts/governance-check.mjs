@@ -75,12 +75,11 @@ const finding = (file, line, message) => ({ file, line, message });
 // basename 包含方式: ディレクトリ集約行（`commands/` のベア名列挙）・`tabs/` プレフィックス省略・
 // 1 行複数バッククォートをパースせずに済ませる意図的な弱化（wrong-directory 検出は放棄）。
 // ---------------------------------------------------------------------------
+// ui は #532 SU7 のフロント撤去で消滅（ui/CLAUDE.md ごと削除）
 const G1_CRATES = {
   "snotra-core": { src: "snotra-core/src/", exts: /\.rs$/ },
   "src-tauri": { src: "src-tauri/src/", exts: /\.rs$/ },
   "snotra-settings": { src: "snotra-settings/src/", exts: /\.rs$/ },
-  // ui のテスト除外は vitest.config.ts の include（ui/src/**/*.test.{ts,tsx}）と一致させる
-  ui: { src: "ui/src/", exts: /\.(ts|tsx)$/, excludeTest: /\.test\.(ts|tsx)$/ },
 };
 
 export function checkModuleIndex(snapshot, crates = Object.keys(G1_CRATES)) {
@@ -558,7 +557,7 @@ export function governanceDocs(snapshot) {
     (f) =>
       ["CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md", "SPEC.md"].includes(f) ||
       (f.startsWith("docs/") && f.endsWith(".md") && !f.startsWith("docs/superpowers/")) ||
-      /^(snotra-core|src-tauri|ui|snotra-settings)\/CLAUDE\.md$/.test(f) ||
+      /^(snotra-core|src-tauri|snotra-settings)\/CLAUDE\.md$/.test(f) ||
       /^\.claude\/rules\/[^/]+\.md$/.test(f) ||
       /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f),
   );

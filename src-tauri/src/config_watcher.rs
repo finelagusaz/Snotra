@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use notify::{Event, EventKind, RecursiveMode, Watcher};
-use snotra_core::config::{Config, Language, LoadOutcome};
+use snotra_core::config::{Config, LoadOutcome};
 use snotra_core::engine::IndexInputs;
 use tauri::window::Color;
 use tauri::{AppHandle, Emitter, Manager};
@@ -95,39 +95,14 @@ fn apply_config_change(app: &AppHandle) {
     let state = app.state::<AppState>();
     let old_config = state.engine.lock().unwrap().config().clone();
 
-    // Detect changes
-    let show_icons_changed = new_config.appearance.show_icons != old_config.appearance.show_icons;
-    let new_show_icons = new_config.appearance.show_icons;
-    let auto_hide_focus_lost_changed = new_config.general.auto_hide_on_focus_lost
-        != old_config.general.auto_hide_on_focus_lost;
-    let new_auto_hide_focus_lost = new_config.general.auto_hide_on_focus_lost;
+    // Detect changes（egui は config-applied wake + 毎フレーム live-read で値を拾うため、
+    // 検出が要るのは「副作用を伴う変更」だけ: index 再構築・hotkey 再登録・トレイ・言語）。
+    // 旧 WebView2 フロント向けの値運搬 emit 群（language-changed / visual-config-changed 等
+    // 7 本）は #532 SU7 PR3 のフロント撤去と同時に削除した。
     let index_changed =
         IndexInputs::from_config(&old_config) != IndexInputs::from_config(&new_config);
     let language_changed = new_config.general.language != old_config.general.language;
     let new_language = new_config.general.language;
-    let instant_prefix_changed = new_config.search.instant_command_prefix
-        != old_config.search.instant_command_prefix;
-    let new_instant_prefix = new_config.search.instant_command_prefix.clone();
-    let visual_changed = new_config.visual != old_config.visual;
-    let new_visible_rows = new_config.appearance.effective_visible_rows();
-    let visible_rows_changed = new_visible_rows != old_config.appearance.effective_visible_rows();
-    let new_result_limit = new_config.search.effective_result_limit();
-    let result_limit_changed = new_result_limit != old_config.search.effective_result_limit();
-    let new_visual = if visual_changed {
-        Some(new_config.visual.clone())
-    } else {
-        None
-    };
-
-    // Emit language change BEFORE hotkey failure so the frontend receives
-    // the new language before it formats any error notification strings.
-    if language_changed {
-        let lang_str = match new_language {
-            Language::Ja => "ja",
-            Language::En => "en",
-        };
-        let _ = app.emit("language-changed", lang_str);
-    }
 
     // Hotkey change — best-effort, log on failure (don't block)
     if let Some(bridge) = app.try_state::<Mutex<PlatformBridge>>()
@@ -177,37 +152,6 @@ fn apply_config_change(app: &AppHandle) {
     // finish 後の再チェックが取りこぼしを拾う。CAS が二重起動を防ぐ。
     if index_changed {
         indexing::start_index_build(app);
-    }
-
-    // Emit visual config change（egui は config-applied wake + live-read で拾う。
-    // この値運搬 emit はフロント受信専用で PR3 のフロント撤去と同時に消す）
-    if let Some(visual) = new_visual {
-        let _ = app.emit("visual-config-changed", &visual);
-    }
-
-    // Emit show_icons change
-    if show_icons_changed {
-        let _ = app.emit("show-icons-changed", new_show_icons);
-    }
-
-    // フォーカス喪失時自動非表示の切替をフロントエンドへ通知（#576）。フロントは常時
-    // onFocusChanged を登録済みで、この値をシグナルゲートとして参照する。
-    if auto_hide_focus_lost_changed {
-        let _ = app.emit("auto-hide-focus-lost-changed", new_auto_hide_focus_lost);
-    }
-
-    // イベント名は IPC 安定のため旧名 "max-results-changed" を維持する（config キーは visible_rows に改名済み、#388）。
-    if visible_rows_changed {
-        let _ = app.emit("max-results-changed", new_visible_rows);
-    }
-
-    if instant_prefix_changed {
-        let _ = app.emit("instant-prefix-changed", new_instant_prefix);
-    }
-
-    // イベント名は IPC 安定のため旧名 "top-n-history-changed" を維持する（config キーは result_limit に改名済み、#388）。
-    if result_limit_changed {
-        let _ = app.emit("top-n-history-changed", new_result_limit);
     }
 
     // 幅変更の反映は egui view が config-applied wake 後の live-read で自ら set_size する

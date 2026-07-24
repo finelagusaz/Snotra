@@ -4,17 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.snotra.app",
   "build": {
-    "frontendDist": "../dist",
-    "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build",
     "removeUnusedCommands": true
   },
   "app": {
-    "windows": [],
-    "security": {
-      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:"
-    }
+    "windows": []
   },
   "bundle": {
     "targets": ["nsis"],

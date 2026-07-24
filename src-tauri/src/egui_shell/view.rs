@@ -328,6 +328,12 @@ impl SearchWindowView {
             let _ = tx.send(outcome); // 遅着（rx drop 済み）は Err で自然消滅（不変条件 1）
             egui_ctx.request_repaint(); // イベント駆動 runtime を起こす（folder/icon と同理由）
         });
+        // 状態を変えたら起こす（#648 A）。現状は「results クリア → 高さ collapse →
+        // set_size → Resized → repaint」の暗黙連鎖で初回 overlay と timeout 予約が
+        // 成立している（実測済）。連鎖は今日必ず成立するが、collapse をやめる類の将来変更で
+        // 切れると、可視のまま遅い起動をしたときに overlay も 4 秒通知も次の入力まで出ない。
+        // toast dismiss の同型バグ（SU5・e746826）と同じ規範で自己完結させる 1 行。
+        ctx.request_repaint();
     }
 
     /// drain が回収した結果の UI 後処理（成功列は M1/M3 同期版と同じ末尾へ合流）。
@@ -1057,8 +1063,7 @@ impl SearchWindowView {
                         serde_json::json!({ "error": e.to_string() }),
                     );
                     if let Some(st) = handle.try_state::<crate::egui_shell::UpdaterUiState>() {
-                        st.0.lock().unwrap().phase =
-                            crate::egui_shell::UpdaterPhase::InstallFailed { message: e.to_string() };
+                        st.0.lock().unwrap().phase = crate::egui_shell::UpdaterPhase::InstallFailed;
                     }
                     crate::egui_shell::wake_view(&handle); // 可視中の失敗を即座に描く
                 }
@@ -1597,7 +1602,7 @@ impl EguiView for SearchWindowView {
                 crate::egui_shell::ToastKind::Installing => {
                     crate::egui_shell::ui_strings::update_installing(l).to_string()
                 }
-                crate::egui_shell::ToastKind::Failed { .. } => {
+                crate::egui_shell::ToastKind::Failed => {
                     crate::egui_shell::ui_strings::update_failed(l).to_string()
                 }
             };

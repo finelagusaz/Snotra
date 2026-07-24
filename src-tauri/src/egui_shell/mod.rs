@@ -88,7 +88,9 @@ pub(crate) fn spawn_update_check(app: &tauri::AppHandle) {
     let mode = app
         .try_state::<crate::AppState>()
         .map(|s| s.engine.lock().unwrap().config().general.auto_update)
-        .unwrap_or(AutoUpdateMode::Full);
+        // AppState は setup 前に managed されるため実運用では到達不能。到達したら
+        // 「設定を読めていない」状態なので、勝手に更新を始めない Disabled へ倒す（#648 F）。
+        .unwrap_or(AutoUpdateMode::Disabled);
     if mode == AutoUpdateMode::Disabled {
         return;
     }

@@ -11,7 +11,7 @@ brainstorm で issue 本文の「3 ウィンドウ構成」を **2 窓構成に�
 
 ## スコープ
 
-**含む**: メトリクス(行高・バー高・toast 高)の font_size 連動化(PR1)/ 結果リストの独立窓化・透明ギャップ・DWM 角丸と影・実件数フィット(PR2)/ 新 config キー 3 つ(`window_gap` / `row_padding` / `bar_padding`)。
+**含む**: メトリクス(行高・バー高・toast 高)の font_size 連動化 + 結果行の 2 行表示化(名前 + パス・決定 9)(PR1)/ 結果リストの独立窓化・透明ギャップ・DWM 角丸と影・実件数フィット(PR2)/ 新 config キー 3 つ(`window_gap` / `row_padding` / `bar_padding`)。
 
 **含まない**: トーストの別窓化(メイン同一窓を維持)/ 新キーの設定 UI(`snotra-settings`)露出(config.toml 直編集で調整・露出は後続 issue)/ 角丸半径の config 化(DWM 管理ゆえ指定不可)/ テーマ・配色の変更。
 
@@ -28,12 +28,12 @@ PR1 は 1 窓のまま固定値を連動式へ置き換える。目に見える�
 ```rust
 pub struct Metrics {
     pub bar_height: f64,    // font_size + bar_padding
-    pub row_height: f64,    // max(font_size + row_padding, 24.0)  下限はアイコン 16px + 余白
+    pub row_height: f64,    // max(font_size + path_size + row_padding + 4.0, 24.0)  2 行表示(決定 9)
     pub toast_height: f64,  // bar_height と同値
 }
 ```
 
-- **加算式の意味**: 現行固定値を「font_size=24 でチューニングされた結果」と読み直したもの。既定 `bar_padding=28` / `row_padding=6` のとき font 24 で 52 / 30 となり**現行とピクセル一致**(font 24 利用者には無変化)。既定 font 15 では 43 / 24 に締まる
+- **加算式の意味**: `bar_padding` は現行バー高を「font_size=24 でチューニングされた結果」と読み直したもの——既定 28 のとき font 24 で 52 となり**現行とピクセル一致**。`row_height` は 2 行表示(決定 9)の積算: name 行(`font_size`)+ path 行(`path_size = max(font_size × 0.78, 9)`・`RowTheme` と同係数)+ 行間 4 + `row_padding`。既定(font 15・row_padding 6)で約 37px。下限 24 はアイコン 16px + 余白の安全床
 - **config キー**(`[visual]`・すべて `#[serde(default = ...)]` で旧 config は既定値のまま読める=移行不要):
   - `window_gap: u32 = 4` — メイン窓と結果窓の隙間 px(PR2 で使用。モックアップ確認で 8 → 4 に決定)
   - `row_padding: u32 = 6`
@@ -75,7 +75,16 @@ pub struct Metrics {
 - **ユニット**: `Metrics` の式・下限・config 反映(layout.rs)/ 実件数フィットの高さ算出 / スナップショット述語
 - **skill**: `/plan-review`(計画後)・`/state-check`(results 可視性という新ガード条件・reset-on-show との相互作用)・`/race-check`(スナップショット共有・クリック逆流の await/フレーム間競合)・`/persistence-check`(config 3 キーの後方互換)
 - **smoke**: `scripts/smoke-egui.ps1` の前提(trace イベント名・hotkey)が壊れないか確認。実機 GUI smoke で 2 窓の従属(位置・ギャップ・フォーカス非奪取・toast 出没時の追従)と DWM 角丸を目視
-- **PR1 の後方互換の要**: font_size=24 でスクリーンショット比較(ピクセル一致が受け入れ条件)
+- **PR1 の後方互換の要**: バーと toast は font_size=24 のスクリーンショット比較でピクセル一致(`bar_height` の式が現行を再現する証拠)。結果行は 2 行化(決定 9)で**意図的に変わる**ため一致比較の対象外——目視で新レイアウト(上段名前・下段パス・全幅)を確認する
+
+### 決定 9: 結果行は 2 行表示(名前 + パス)を既定にする
+
+モックアップの 2 行トグルを目視して決定(2026-07-24)。
+
+- 上段 = 名前(`font_size`・`text_color`)、下段 = パス(`path_size`・`hint_text_color`・**左寄せ**)。アイコン 16px は 2 行ぶんの左に縦中央
+- パスが行の全幅を使えるため、中間省略(`truncate_middle`)は幅超過時のフォールバックに退く。#632 で入れた「name 60% 制限 + path 右寄せ + 実測幅による重なり回避」の座標計算は**廃止**——2 行化で name と path が幅を取り合わなくなり、描画コードは単純になる
+- 1 行モードは設けない(config キー化しない・YAGNI。要望が出たら後続 issue)
+- 行高は決定 2 の式(`font_size + path_size + row_padding + 4`)。実装は PR1(`draw_result_row` と `Metrics` は同じ変更単位)
 
 ## リスク・実装時に実測で確定する点
 
@@ -89,3 +98,4 @@ pub struct Metrics {
 - §4.5(動的ウィンドウ高さ): 実件数フィット + 2 窓構成へ
 - §11(視覚): 固定 30px/52px の記載箇所を計画時に grep で数え上げ、連動式(`font_size + padding`)へ同期・`window_gap` / `row_padding` / `bar_padding` キーの追加
 - §20.3(updater toast): toast 高が `bar_height` 連動になる旨(位置・挙動は不変)
+- 結果行レイアウトの記載箇所(name/path の 1 行併記・右寄せを記す §): 2 行表示へ(該当 § は計画時に grep で確定)

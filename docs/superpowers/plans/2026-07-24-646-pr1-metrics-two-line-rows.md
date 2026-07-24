@@ -38,11 +38,11 @@
     fn visual_padding_defaults_for_missing_keys() {
         let toml = r#"
 [hotkey]
-modifiers = ["alt"]
+modifier = "alt"
 key = "q"
 [appearance]
+window_width = 600
 [paths]
-scan_paths = []
 "#;
         let config: Config = toml::from_str(toml).expect("parse");
         assert_eq!(config.visual.row_padding, 6);
@@ -52,7 +52,7 @@ scan_paths = []
     }
 ```
 
-注: 上の TOML fixture が「必須セクション欠落で parse 不能」にならないことを Step 2 の実行が同時に検証する(AGENTS.md 検証の作法: fixture は実行して測る)。既存テストに最小 TOML の先例があればそれを流用し、`[visual]` セクション**なし**を維持すること。
+注: 必須フィールドは plan-review で実測済み — `hotkey.modifier`(**単数形**・serde default 無し・config.rs:104-107)と `appearance.window_width`(config.rs:308)。`[paths]` は空セクションでよい(`scan`/`additional` とも serde default 持ち)。先例は `deserialize_full_config`(config.rs:1122)。`[visual]` セクション**なし**を維持すること(このテストの主眼)。
 
 - [ ] **Step 2: 落ちることを確認する(Red)**
 
@@ -317,6 +317,17 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
             truncate_middle(&result.path, avail, per_char_px)
         };
         let path_galley = ui.painter().layout_no_wrap(path_str, path_font, theme.path_color);
+        // 鏡像ケース(folder 列挙エラー行・snotra-core/src/folder.rs の error_result は
+        // name 空・path 非空): 上段を空白にせず path 1 行を縦中央に単独描画
+        //(上の path 空分岐と対称・plan-review scout-egui 指摘)。
+        if result.name.is_empty() {
+            ui.painter().galley(
+                egui::pos2(text_x, rect.center().y - path_galley.size().y / 2.0),
+                path_galley,
+                theme.path_color,
+            );
+            return response.clicked();
+        }
         // 2 行ブロックを rect 縦中央へ(行間 4.0 は Metrics::row_height の +4.0 と対)
         let total_h = name_galley.size().y + 4.0 + path_galley.size().y;
         let top = rect.center().y - total_h / 2.0;
@@ -365,6 +376,13 @@ toast ブロック(1592 付近)— `let m = self.metrics();` を取り:
 ```
 
 (toast ブロックの `m` とスコープが切れているため再取得。engine lock は毎フレーム複数回取得が既存パターン——`row_theme` / `show_icons` と同じ。)
+
+さらに**虚偽化するコメント 2 箇所を同時更新する**(plan-review scout-egui / 独立導出の一致指摘):
+
+- `view.rs:1482-1487`「**バー高さ 52px は据え置く**…(SU6.5 決定 3)」→「#646 決定 2: バー高は `font_size + bar_padding`(Metrics)。SU6.5 決定 3 の 52px 据え置きは WebView2 parity 制約下の判断で、SU7 の WebView2 撤去により失効」の旨へ書き換え
+- `view.rs:1448` 付近「window は 52px のまま」→「window は bar_height のまま」へ
+
+**注意(独立導出の警告)**: `bar_padding` 既定 28 とアイコン slot 幅 `28.0`(view.rs:924)は**無関係な偶然の一致**。grep 置換の対象にしないこと。`view.rs:207` の `last_set_height: 52.0` 初期値は据え置き(初回フレームの diff 検知で是正される設計・view.rs:1759-1760 コメントに明記)。indexing overlay の `FontId 15.0`(view.rs:1587)は pre-existing の別軸でスコープ外(PR 本文に follow-up 候補として記す)。
 
 - [ ] **Step 5: ビルドとテストが通ることを確認する**
 
@@ -447,7 +465,9 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 ### Task 5: SPEC.md 同期(仕様変更の文書化)
 
 **Files:**
-- Modify: `SPEC.md:183`(show 時リセット)・`SPEC.md:513`(結果行 1 行表示)・`SPEC.md:517`(バー高 52px 固定)・`SPEC.md:1015-1023`(§20.3 toast 高)
+- Modify: `SPEC.md:183`(show 時リセット)・`SPEC.md:513-514`(結果行 1 行表示 + 中間省略の子 bullet)・`SPEC.md:517`(バー高 52px 固定)・`SPEC.md:1015-1023`(§20.3 toast 高)
+- Modify: `docs/architecture.md:89`(show 時 52px リセット)・`docs/architecture.md:147`(トースト 52px)— plan-review で scout-docs と独立導出が独立に一致した漏れ
+- Modify: `src-tauri/CLAUDE.md`「show の操作順序制約」節(「高さリセット(52px)」の具体値)— 規範文書は自動配送されないため見出し語で grep して特定する
 
 **Interfaces:** なし(文書のみ)
 
@@ -456,9 +476,12 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 行番号はドリフトしうるため**引用文で grep してから**編集する:
 
 1. 「show 時に毎回検索バー高さ(52px)にリセット」→「show 時に毎回検索バー高さ(`font_size + bar_padding`・既定 43px)にリセットしてから結果に応じて拡張する(#646)」
-2. 「検索結果はフルパスの1行表示」→「検索結果は 2 行表示: 上段 = 表示名(`font_size`・末尾省略)、下段 = フルパス(`font_size × 0.78`・左寄せ・幅超過時のみ中間省略)(#646)」
+2. 「検索結果はフルパスの1行表示」→「検索結果は 2 行表示: 上段 = 表示名(`font_size`・末尾省略)、下段 = フルパス(`font_size × 0.78`・左寄せ・幅超過時のみ中間省略)(#646)」。**直下の子 bullet(SPEC.md:514「長いパスは中間セグメント省略…」)は置換文と内容重複するため統合し、515(フォルダ末尾 `\` 区別)は残す**(scout-docs 指摘)
 3. 「**検索バー高さは 52px 固定**(font_size 非連動の as-built。行高との連動は #646)」→「検索バー高さは `font_size + bar_padding`(既定 15+28=43px)、結果行高は `font_size + path行 + row_padding + 4`(下限 24px)。`row_padding` / `bar_padding` は `[visual]` の config キー(既定 6 / 28・#646)」
 4. §20.3 の「高さ 52px(2行 × 26px)」および「`--update-toast-height` (52px) を加算」「検索バー直下の 52px 行」→ toast 高は `bar_height` と同値(既定 43px)に連動する旨へ(3 文とも。行内の y 配置は高さ比 0.25 / 0.75)
+5. `docs/architecture.md`: 「show 時に 52px へリセット」(89 行付近)→「show 時に bar_height(`font_size + bar_padding`・既定 43px)へリセット」、「トースト UI は…52px で表示」(147 行付近)→「bar_height と同高で表示」
+6. `src-tauri/CLAUDE.md`「show の操作順序制約」: 「高さリセット(52px)」→「高さリセット(bar_height・既定 43px)」(順序制約自体は不変)
+7. SPEC §11 の管理項目列挙(509-511 行)への `row_padding` / `bar_padding` 追記は**しない** — あの列挙は GUI 設定タブの項目一覧であり、新キーは GUI 非露出(scout-docs の裏取りで確定)
 
 - [ ] **Step 2: governance:check を実行する**
 
@@ -468,8 +491,8 @@ Expected: PASS(SPEC § 参照の整合。`*.md` は hook 検査対象外——�
 - [ ] **Step 3: コミット**
 
 ```powershell
-git add SPEC.md && git commit -m @'
-docs: SPEC を Metrics 連動 + 2 行表示の as-built へ同期(#646 PR1)
+git add SPEC.md docs/architecture.md src-tauri/CLAUDE.md && git commit -m @'
+docs: SPEC/architecture/CLAUDE.md を Metrics 連動 + 2 行表示の as-built へ同期(#646 PR1)
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 '@

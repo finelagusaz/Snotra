@@ -11,6 +11,7 @@
     "smoke:startup": "pwsh -NoProfile -File scripts/smoke-startup.ps1",
     "smoke:egui": "pwsh -NoProfile -File scripts/smoke-egui.ps1",
     "measure:memory": "pwsh -NoProfile -File scripts/measure-memory.ps1",
+    "measure:memory:stages": "pwsh -NoProfile -File scripts/measure-memory-stages.ps1",
     "prepare:sidecar": "pwsh -NoProfile -File scripts/prepare-sidecar.ps1 -Release",
     "verify": "cargo check --workspace && npm test",
     "tauri": "tauri"

@@ -11,7 +11,7 @@ model: inherit
 1. `git diff HEAD` で変更差分を取得
 2. 変更ファイルの全文を読んでコンテキストを把握
 3. `workspace/plan.md` が存在すれば読み、不変条件・テスト方針を把握する
-4. 変更ファイルが属するディレクトリの `CLAUDE.md`（例: `ui/CLAUDE.md`、`snotra-core/CLAUDE.md`）を読み、そのモジュール固有の不変条件・過去のバグパターンを把握する
+4. 変更ファイルが属するディレクトリの `CLAUDE.md`（例: `src-tauri/CLAUDE.md`、`snotra-core/CLAUDE.md`）を読み、そのモジュール固有の不変条件・過去のバグパターンを把握する
 5. Phase 1 → Phase 2 → Phase 3 の順でレビュー実施
 
 ---

@@ -14,6 +14,7 @@ use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC,
     DeleteObject, GetDIBits, SelectObject,
 };
+use windows::Win32::Foundation::GetLastError;
 use windows::Win32::Storage::FileSystem::{FILE_FLAGS_AND_ATTRIBUTES, SearchPathW};
 use windows::Win32::UI::Shell::{SHFILEINFOW, SHGFI_ICON, SHGFI_SMALLICON, SHGetFileInfoW};
 use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, ICONINFO};
@@ -105,10 +106,47 @@ impl IconCache {
     }
 }
 
+/// アイコン抽出が失敗した段階（#692）。**`None` に潰すと「アイコンが無い」と
+/// 「一時的に取れなかった」が区別できず、呼び出し側が恒久的な欠落として latch する。**
+/// 失敗の 3 分類は `is_transient` が担う（呼び出し側が再試行の可否を決める材料）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IconFailure {
+    /// `SHGetFileInfoW` が 0 を返した（パス不在・アクセス不可を含む）。
+    ShellQueryFailed(u32),
+    /// 戻り値は非 0 だが HICON が無効。
+    NoIconHandle,
+    /// `GetIconInfo` 失敗。
+    IconInfoFailed(u32),
+    /// `CreateCompatibleDC` 失敗（GDI リソース枯渇の疑い）。
+    CreateDcFailed(u32),
+    /// カラービットマップが無い（モノクロアイコン）。
+    NoColorBitmap,
+    /// `GetDIBits` が 0 行を返した（**従来は戻り値を捨てていた**）。
+    GetDiBitsFailed(u32),
+    /// 取得できたが全画素ゼロ。
+    AllPixelsZero,
+    /// PNG エンコード失敗。
+    PngEncodeFailed,
+}
+
+impl IconFailure {
+    /// 再試行で解消しうるか。`false` は「このパスにアイコンは無い」に近い恒久的失敗。
+    pub fn is_transient(self) -> bool {
+        match self {
+            // GDI/DC 系は資源枯渇で一時的に落ちうる。shell 問い合わせも同様（不在は
+            // 呼び出し側が Path::exists() で切り分ける）。
+            Self::CreateDcFailed(_) | Self::GetDiBitsFailed(_) | Self::IconInfoFailed(_) => true,
+            Self::ShellQueryFailed(_) | Self::NoIconHandle => true,
+            // モノクロ・全ゼロ・エンコード失敗はそのアイコン固有で、再試行しても同じ。
+            Self::NoColorBitmap | Self::AllPixelsZero | Self::PngEncodeFailed => false,
+        }
+    }
+}
+
 /// Extract PNG bytes for a path without holding any lock.
-pub fn extract_png(path: &str) -> Option<Vec<u8>> {
+pub fn extract_png(path: &str) -> Result<Vec<u8>, IconFailure> {
     let icon_data = extract_icon(path)?;
-    bgra_to_png(&icon_data)
+    bgra_to_png(&icon_data).ok_or(IconFailure::PngEncodeFailed)
 }
 
 /// Managed state for icon cache
@@ -176,7 +214,36 @@ fn resolve_to_full_path(path: &str) -> String {
     }
 }
 
-fn extract_icon(path: &str) -> Option<IconData> {
+/// アイコンを抽出する。**`NoIconHandle` は 1 回だけ即時リトライする**（#692）。
+///
+/// `SHGetFileInfoW` は**成功（非 0）を返しながら HICON を返さない**ことがある——プロセス
+/// ごとに冷えたシェルのアイコンキャッシュに対する初回要求で起きる。実測（#692）:
+///
+/// - 実機 1 セッションで 17 件が `NoIconHandle`（いずれも `exists=true`）
+/// - 396 パス × 6 周のうち**失敗するのは周 1 だけ**（16 件 → 以降 0 件）。新しいプロセスで
+///   再び周 1 が失敗する＝**キャッシュはプロセスごと**
+/// - **0ms の即時リトライで 15/15 回復**（待ち時間は不要。回復しない残り 2 件はパスが実在
+///   しないもので、これは恒久的失敗として正しい）
+///
+/// リトライしないと呼び出し側が「アイコンが無い」と解釈して恒久的に latch し、その行は
+/// グレーのプレースホルダのままになる（本 issue の症状）。
+fn extract_icon(path: &str) -> Result<IconData, IconFailure> {
+    // 3 回まで（= リトライ 2 回）。実測では 2 回目でほぼ全て成功するが、並列負荷下の
+    // run によっては 1 リトライ後も数件残ったため 1 回ぶん余裕を持たせる。**待ち時間は
+    // 置かない**（0ms リトライで回復することを実測済み・待っても回復率は変わらない）。
+    // リトライするのは `NoIconHandle` だけ——`ShellQueryFailed`（パス不在）は何度呼んでも
+    // 同じで、無駄なシェル問い合わせを増やすだけである（実測: 6 回試しても回復しない）。
+    let mut last = extract_icon_once(path);
+    for _ in 0..2 {
+        if !matches!(last, Err(IconFailure::NoIconHandle)) {
+            break;
+        }
+        last = extract_icon_once(path);
+    }
+    last
+}
+
+fn extract_icon_once(path: &str) -> Result<IconData, IconFailure> {
     let resolved = resolve_to_full_path(path);
     unsafe {
         let wide_path: Vec<u16> = resolved.encode_utf16().chain(std::iter::once(0)).collect();
@@ -190,8 +257,11 @@ fn extract_icon(path: &str) -> Option<IconData> {
             SHGFI_ICON | SHGFI_SMALLICON,
         );
 
-        if result == 0 || shfi.hIcon.is_invalid() {
-            return None;
+        if result == 0 {
+            return Err(IconFailure::ShellQueryFailed(GetLastError().0));
+        }
+        if shfi.hIcon.is_invalid() {
+            return Err(IconFailure::NoIconHandle);
         }
 
         let icon_data = hicon_to_bgra(shfi.hIcon);
@@ -200,18 +270,18 @@ fn extract_icon(path: &str) -> Option<IconData> {
     }
 }
 
-fn hicon_to_bgra(hicon: HICON) -> Option<IconData> {
+fn hicon_to_bgra(hicon: HICON) -> Result<IconData, IconFailure> {
     unsafe {
         let mut icon_info = ICONINFO::default();
         if GetIconInfo(hicon, &mut icon_info).is_err() {
-            return None;
+            return Err(IconFailure::IconInfoFailed(GetLastError().0));
         }
 
         let _cleanup = BitmapCleanup(&icon_info);
 
         let hdc_screen = CreateCompatibleDC(None);
         if hdc_screen.is_invalid() {
-            return None;
+            return Err(IconFailure::CreateDcFailed(GetLastError().0));
         }
 
         let width = ICON_SIZE as u32;
@@ -232,28 +302,41 @@ fn hicon_to_bgra(hicon: HICON) -> Option<IconData> {
 
         let mut pixels = vec![0u8; (width * height * 4) as usize];
 
-        if !icon_info.hbmColor.is_invalid() {
-            let old = SelectObject(hdc_screen, icon_info.hbmColor.into());
-            GetDIBits(
-                hdc_screen,
-                icon_info.hbmColor,
-                0,
-                height,
-                Some(pixels.as_mut_ptr() as *mut _),
-                &mut bmi,
-                DIB_RGB_COLORS,
-            );
-            SelectObject(hdc_screen, old);
+        if icon_info.hbmColor.is_invalid() {
+            let _ = DeleteDC(hdc_screen);
+            return Err(IconFailure::NoColorBitmap);
         }
+        let old = SelectObject(hdc_screen, icon_info.hbmColor.into());
+        // **戻り値（コピーできた走査行数）を捨てない**（#692）。0 は失敗であり、
+        // 捨てると pixels が初期値ゼロのまま「全画素ゼロ」に化けて理由が消える。
+        let scanlines = GetDIBits(
+            hdc_screen,
+            icon_info.hbmColor,
+            0,
+            height,
+            Some(pixels.as_mut_ptr() as *mut _),
+            &mut bmi,
+            DIB_RGB_COLORS,
+        );
+        let dib_error = if scanlines == 0 {
+            Some(GetLastError().0)
+        } else {
+            None
+        };
+        SelectObject(hdc_screen, old);
 
         let _ = DeleteDC(hdc_screen);
 
-        let has_data = pixels.iter().any(|&b| b != 0);
-        if !has_data {
-            return None;
+        if let Some(code) = dib_error {
+            return Err(IconFailure::GetDiBitsFailed(code));
         }
 
-        Some(IconData {
+        let has_data = pixels.iter().any(|&b| b != 0);
+        if !has_data {
+            return Err(IconFailure::AllPixelsZero);
+        }
+
+        Ok(IconData {
             width,
             height,
             bgra: pixels,
@@ -307,6 +390,62 @@ fn bgra_to_png(data: &IconData) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #692 の再現ハーネス（`#[ignore]`・環境依存ゆえ CI では走らせない）。
+    ///
+    /// シェルのアイコンキャッシュは**プロセスごとに冷えており**、初回要求で
+    /// `SHGetFileInfoW` が成功を返しながら HICON を返さないことがある（`NoIconHandle`）。
+    /// 修正（`extract_icon` の即時リトライ）が効いていることは、**冷えたプロセスで
+    /// 1 周目に `NoIconHandle` が出ないこと**で確かめる——温まった後では区別が付かない。
+    ///
+    /// ```text
+    /// $env:SNOTRA_ICON_DIAG_PATHS = "C:\path\a;C:\path\b"   # 省略時は既定の 5 件
+    /// cargo test -p snotra diagnose_icon_cold_start -- --ignored --nocapture
+    /// ```
+    ///
+    /// 実測（2026-07-26・396 パス）: 修正前は 1 周目に 16〜18 件の `NoIconHandle`、
+    /// 修正後は 0 件（残る `ShellQueryFailed` はパス不在で、恒久的失敗として正しい）。
+    #[test]
+    #[ignore]
+    fn diagnose_icon_cold_start() {
+        use rayon::prelude::*;
+        use std::collections::BTreeMap;
+
+        let default = [
+            r"C:\Windows\explorer.exe",
+            r"C:\Windows\notepad.exe",
+            r"C:\Windows\System32\cmd.exe",
+            r"C:\Windows",
+            r"C:\Program Files",
+        ]
+        .join(";");
+        let paths: Vec<String> = std::env::var("SNOTRA_ICON_DIAG_PATHS")
+            .unwrap_or(default)
+            .split(';')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_owned())
+            .collect();
+        println!("対象 {} 件", paths.len());
+
+        // **最初に測る**——先に別の pass を走らせるとシェルのキャッシュが温まり、
+        // 「冷えた初回」の観測ができなくなる（計測順序そのものが観測対象を変える）。
+        for round in 1..=2 {
+            let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
+            let failures: Vec<(String, IconFailure)> = paths
+                .par_iter()
+                .filter_map(|p| extract_png(p).err().map(|e| (p.clone(), e)))
+                .collect();
+            for (_, e) in &failures {
+                let label = format!("{e:?}");
+                let kind = label.split('(').next().unwrap_or(&label).to_owned();
+                *kinds.entry(kind).or_default() += 1;
+            }
+            println!("  周 {round}: 失敗 {} 件 {kinds:?}", failures.len());
+            for (p, e) in failures.iter().take(5) {
+                println!("    {e:?} exists={} {p}", std::path::Path::new(p).exists());
+            }
+        }
+    }
 
     /// issue #522 の回帰テスト: invalidate（ファイル削除 + メモリ None 化）と
     /// 並行ロード（None 検知 → icons.bin ロード）を並走させ、「icons.bin 不在なのに
@@ -545,7 +684,7 @@ mod tests {
                     let t = Instant::now();
                     let out = extract_png(p);
                     us.push(t.elapsed().as_micros());
-                    assert!(out.is_some(), "{p} の抽出が None（テスト前提の実在パス）");
+                    assert!(out.is_ok(), "{p} の抽出が失敗（テスト前提の実在パス）: {out:?}");
                 }
             }
             println!(

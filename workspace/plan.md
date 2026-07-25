@@ -20,7 +20,7 @@
    - 移すのは**因果と再発史**: softbuffer ラスタ（`fill_mesh`）はカバレッジ AA を持たず vertical metrics の分数差を整数 px へ丸めて顕在化させる（glow/wgpu は sub-pixel AA で吸収して隠す）／新規 bin を作るたび `push`（末尾 fallback）を再導入して再発した／型検査・clippy・単体テストを素通りし視覚スモークでのみ顕在化する
    - **#399 の原型は地の文で語り直さず `snotra-settings/CLAUDE.md` への参照に留める**（同じ事実を複数の `.md` に書かない・`docs/development-principles.md` の DRY）。受容残余は `SPEC.md` §フォントを参照
 
-**不変条件**: 移設後、`warm frame` と「カバレッジ AA」の語が新しい場所で grep に掛かる（＝着地の確認）。Phase 2 の削除はこの確認後に行う。
+**不変条件（検査の位置に注意）**: 着地確認は **Phase 2 の `git rm` の後**に行う。Phase 1 直後に `warm frame` / 「カバレッジ AA」を grep しても `snotra-egui-mvp/CLAUDE.md` が健在なので**移設が不完全でも 2 箇所ヒットして通ってしまう**（落ちえない検査＝空振りの合格）。削除後に grep して、ヒットが `PERFORMANCE.md` と `src-tauri/CLAUDE.md` の**新しい位置だけ**であることを確認する。移設の作業自体は削除より前（消してから思い出すことはできない）。
 
 ### Phase 2 — crate 本体の削除とワークスペース整合
 
@@ -34,7 +34,7 @@
 
 6. **`snotra-egui-runtime/src/runtime.rs`**
    - `RuntimeFrame::close_window()`(:34-36) と `close_requested` フィールド(:29) と `apply_frame_commands` の `if frame.close_requested { self.window.close()? }`(:391-393) を削除。構築リテラルは `:324-327` の 1 箇所のみ（`Default` 実装なし）で、そこも追随する。**根拠**: 呼び出し元は mvp の 1 件のみ（`close_requested` の全参照は `:29,35,325,391` に閉じる。`snotra-settings/src/app.rs:375` の `close_requested()` は egui の別 API で無関係）。`docs/superpowers/specs/2026-07-25-egui-window-ownership-and-event-delivery-design.md:162` が「#660 の削除まで温存する」と予定地を当 issue に置いている。`RuntimeFrame` は `drag_requested` 単独フィールドになる（構造体は残す——`drag_window` が `view.rs:1118` のタイトルバードラッグで現役）
-   - `WindowWaker` の doc コメント(:91-93): 「`#[must_use]` は付けない」の**方針は維持**し、mvp を名指す理由節だけを落として「wake が不要な窓では戻り値を捨ててよい」を理由に据え直す。**削除後は「捨てる呼び出し元」が実在しなくなる**（`src-tauri` は `mod.rs:256,269` で必ず束縛する）ため、理由を実例に依存させない書き方にする。属性の追加は API 契約の変更ゆえ範囲外
+   - `WindowWaker` の doc コメント(:91-93): 「`#[must_use]` は付けない」の**方針は維持**し、mvp を名指す理由節だけを落とす。**ここは diff の中で唯一「消す」ではなく「新しく書く」箇所ゆえ、書ける以上の主張をしない**——削除後は戻り値を捨てる呼び出し元が実在しなくなる（`src-tauri` は `mod.rs:256,269` で必ず束縛する）。ゆえに「wake が不要な窓では落とせる設計である（＝作者の意図）」と「現在の呼び出し元はいずれも束縛している（＝実測）」を**区別して**書き、コードが示していない根拠を意図に見せない。属性の追加は API 契約の変更ゆえ範囲外
 7. **`snotra-egui-runtime/src/raster.rs:3`**: `spike snotra-egui-mvp/src/soft_host_main.rs から移植` → 既に存在しないファイルを指す stale。「#532 Phase 1 スパイクから移植」へ書き換え（死んだパスを残さない）
 8. **`snotra-core/tests/search_frame_cost.rs:10-13`**: 合成索引の由来を「スパイク（`snotra-egui-mvp` の `build_verification_engine`）と同系」→ crate 名とパスを外し「#532 Phase 1 スパイクの検証 Engine と同系」へ。生成規則の記述自体（固定 6 件 + 連番 + 履歴ブースト 5 件）はこのファイルが単独で説明しているので保持
 
@@ -61,10 +61,10 @@
 12. **`AGENTS.md`**: :10 の第2層列挙から `snotra-egui-mvp/src/*.rs` を削除／:20 の CLAUDE.md 列挙から `snotra-egui-mvp/` を削除。**どちらも行内編集に留める（行数を変えない）**——G10 の常時ロード予算は **216/216 行で余白ゼロ**（実測）。1 行を 2 行に割るだけで即 red になる
 13. **`docs/architecture.md`**:
     - :11 のコメント「workspace（製品3 crate + egui検証2 crate）」→ 製品 4 crate へ（**件数の写し**）／:13「Tauri native Window向けegui/**wgpu**接着層」→ softbuffer（同じツリー図内で、削除する :14 の隣。SU1 以降 wgpu は不使用・`snotra-egui-runtime/Cargo.toml:11` は `softbuffer` のみ）／:14 の `snotra-egui-mvp/` 行を削除
-    - :20 の散文末尾「`snotra-egui-mvp` は Issue #532 の採用判断に使った検証バイナリで…」の 1 文を削除（段落はその前の文で完結する）
+    - :20 の散文末尾「`snotra-egui-mvp` は Issue #532 の採用判断に使った検証バイナリで…」の 1 文を削除（段落はその前の文で完結する）。**冒頭の 3 crate 列挙（「純ロジックライブラリ・Tauri バイナリ・設定 GUI を分離」）に runtime を足す必要はない**——同じ文の次節が「egui + `snotra-egui-runtime` の softbuffer CPU ラスタ」として既に挙げており、かつ **:20 は softbuffer と正しく書いている**（＝ wgpu 表記は :13 と :78 に取り残された局所ドリフトであることの裏付け・実測して確認）
     - :45-49 のレイヤー図「Issue #532 egui MVP（非配布）」ボックスを削除（`→ egui-wgpu/wgpu` の行も同時に消える）
     - :76 見出し「snotra-egui-runtime / snotra-egui-mvp（Issue #532 検証層）」→ `snotra-egui-runtime`（egui/softbuffer 接着層）へ改題（**見出し名・アンカーでの外部参照は 0 件**を実測済み）。:78 の散文から mvp 説明文と「**製品版へ統合する前の技術検証に限定し、release workflow の artifact には含めない**」を削除——runtime は `snotra.exe` に組み込まれて配布されるため、主語が runtime へ滑ると嘘になる。**同時に、書き換える当の文の `wgpu Surface／Device 復旧` を実装どおりに直す**: 再生成処理は存在せず（`recreate`/`reinit` は 0 件）、実体は「softbuffer Surface の描画失敗リトライ（指数バックオフ・上限 5 回=`MAX_PAINT_RETRIES`）」。:80 の参照先から `snotra-egui-mvp/CLAUDE.md` を削除（**G3 が拾う行**）
-14. **`docs/build-commands.md`**（**7 箇所**）: :18 カテゴリ A のテスト行（**G5**）／:24「全 5 crate」→ 4／:25 の hook 発火パス列挙から `snotra-egui-mvp/**`／**:26「6 つ目の crate を追加したとき」→「5 つ目」**（件数の写し・plan-review の独立再導出が拾った漏れ）／:52 カテゴリ D の mvp 注記（`cargo run` に `-p` を付ける警告自体は**残す**——削除後も bin は `snotra` / `snotra-settings` の 2 本あり主張は真）／:87（**G5**）と :95（`cargo run -p` は G5 の対象外＝手で消す）／:128 CI/CD 対応表（**G5** +（11 を先にやれば）**G6**）
+14. **`docs/build-commands.md`**（**7 箇所**）: :18 カテゴリ A のテスト行（**G5**）／:24「全 5 crate」→ 4／:25 の hook 発火パス列挙から `snotra-egui-mvp/**`／**:26「6 つ目の crate を追加したとき」→「5 つ目」**（件数の写し・plan-review の独立再導出が拾った漏れ。**全文を読んで算術を確認済み**——この行は「`-p` 列挙は `members` の写しになる」という議論ゆえ基準は member 数であり、4 members の次は 5 つ目で正しい）／:52 カテゴリ D の mvp 注記（`cargo run` に `-p` を付ける警告自体は**残す**——削除後も bin は `snotra` / `snotra-settings` の 2 本あり主張は真）／:87（**G5**）と :95（`cargo run -p` は G5 の対象外＝手で消す）／:128 CI/CD 対応表（**G5** +（11 を先にやれば）**G6**）
 15. **`docs/development-principles.md:13`**: 責務集約先の列挙から `snotra-egui-mvp/CLAUDE.md` を削除（**G3 が拾う行**）
 16. **`.claude/skills/retrospective/SKILL.md:65`**: 振り分け先 CLAUDE.md 列挙から `snotra-egui-mvp/` を削除
 
@@ -141,6 +141,8 @@ PR 本文には (a) crate 削除、(b) **MVP 専用 API（`close_window`）の�
 **一致（盲点が無いことの能動的証拠）**: 参照の全数（B〜E 表）・G1 編集不要・`governanceDocs` が mvp CLAUDE.md を含まない・G3 述語の限界（`.md` 拡張子のみ）・不変条件 9 件の帰着（孤立は warm frame の 1 件のみ）・テスト 3 件の帰着・`.claude/rules` の glob に mvp 対象なし（G7 無影響）・`.github/workflows` は ci.yml のみ・`scripts/` は 0 件・`SPEC.md` / `README*` / `CONTRIBUTING.md` / `RETROSPECTIVE.md` / `docs/adr` / `docs/hooks.md` は 0 件——いずれも 3 体が独立に再確認して一致した。
 
 **要対処なし**と 3 体が結論（Rust 層・セーフティネット層・文書層）。
+
+**出所の扱い（PR 本文で引用するときの注意）**: 独立再導出の報告は git メタデータを誤っていた（SU7 のマージを `47ee1dd` / `de79fd4`、現 HEAD を「#696」と述べたが、実測は `d8d1430` / 直近 PR は #690）。**`file:line` の証拠は自分の抜き取り確認で全件持ちこたえたが、git メタデータは持たなかった**——引用するのは前者だけにする。
 
 ### Step 5b — plan-review が扱わない 3 観点
 

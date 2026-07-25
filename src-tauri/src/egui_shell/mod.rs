@@ -59,9 +59,9 @@ use crate::egui_shell::view::SearchWindowView;
 /// pending に載せて view 側で整形を分岐する。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HotkeyFailureKind {
-    /// 起動時の初回登録失敗（`platform-event` / `initial-hotkey-failed`）。
+    /// 起動時の初回登録失敗（`initial-hotkey-failed`）。
     /// SPEC §10 のとおり窓を能動表示してから通知する
-    /// （listener は `register_platform_event_listener`・#652 Task 4）。
+    /// （listener は `register_initial_hotkey_failure_listener`・#652 Task 4）。
     Initial,
     /// 設定変更による再登録失敗（`hotkey-registration-failed`）。旧ホットキーを維持。
     Change,
@@ -470,7 +470,7 @@ pub(crate) fn save_placement_relative(window: &tauri::Window) {
 /// view（イベントループスレッド）→ emit → この listener で hide を 1 経路に集約する。
 pub(crate) fn register_hide_listener(app: &tauri::AppHandle) {
     let handle = app.clone();
-    app.listen("egui-hide-requested", move |_| {
+    app.listen(crate::events::EGUI_HIDE_REQUESTED, move |_| {
         hide_egui_main(&handle);
     });
 }
@@ -542,7 +542,11 @@ pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
 /// 最新を描く）。**「値を運ばない」はこの benign 性の load-bearing 前提**——将来イベントに値を
 /// 載せる変更はこの前提を壊す（spec 決定 1）。
 pub(crate) fn register_config_wake_listeners(app: &tauri::AppHandle) {
-    for event in ["config-applied", "indexing-started", "indexing-complete"] {
+    for event in [
+        crate::events::CONFIG_APPLIED,
+        crate::events::INDEXING_STARTED,
+        crate::events::INDEXING_COMPLETE,
+    ] {
         let handle = app.clone();
         app.listen(event, move |_| {
             wake_view(&handle);
@@ -553,7 +557,7 @@ pub(crate) fn register_config_wake_listeners(app: &tauri::AppHandle) {
 /// hotkey 登録失敗の payload 受け口（spec 追補 2・wake は config-applied に委ねる）。
 pub(crate) fn register_hotkey_failure_listener(app: &tauri::AppHandle) {
     let handle = app.clone();
-    app.listen("hotkey-registration-failed", move |event| {
+    app.listen(crate::events::HOTKEY_REGISTRATION_FAILED, move |event| {
         // emit 側は String を渡すため payload は JSON 文字列（引用符付き）。
         let hotkey: String = serde_json::from_str(event.payload()).unwrap_or_default();
         if let Some(sh) = handle.try_state::<EguiShellState>() {
@@ -562,34 +566,26 @@ pub(crate) fn register_hotkey_failure_listener(app: &tauri::AppHandle) {
     });
 }
 
-/// 起動時 hotkey 登録失敗の受け口（#652・SU6.5 決定 2）。`platform-event` の
-/// `initial-hotkey-failed` を判別し、**格納 → show → wake** の順で処理する。
+/// 起動時 hotkey 登録失敗の受け口（#652・SU6.5 決定 2）。**格納 → show → wake** の順で処理する。
 ///
 /// - **格納が先**: show が起こすフレームは reset-on-show の `notice.clear()` を通ってから
 ///   pending を消費する（view の順序不変条件）。逆順にすると clear と store の間にフレームが
 ///   挟まりうるため、通知が消えたまま二度と出ない。
 /// - **show する**: ホットキーが登録できていない＝ユーザーが窓を開く手段がトレイしか無い。
 ///   SPEC §10「初回ホットキー登録失敗時は操作不能回避のため検索 UI を表示し」の実装で、
-///   WebView2 では `MainApp.tsx` の `win.show()` が担っている経路の egui 版。
+///   旧 TS フロントが担っていた経路の egui 版（当該フロントは #532 SU7 で撤去済み）。
 /// - **wake する**: `show_on_startup=true` で既に可視なら `show()` は再描画を生まない。
 ///   `register_hotkey_failure_listener`（変更失敗）が wake しないのと**意図的に逆**——
 ///   あちらは必ず `config-applied` が随伴するが、起動時失敗には config 変更が無く
 ///   `config-applied` は来ない。ここで起こさないと「hidden 中は update() が走らない」
-///   不変条件（SU5）により通知が永遠に描かれない。
-pub(crate) fn register_platform_event_listener(app: &tauri::AppHandle) {
+///   不変条件（SU5）により通知が永遠に描かれない。**この非対称ゆえ 2 つの listener を
+///   統合してはならない**（`/simplify` 対象外）。
+pub(crate) fn register_initial_hotkey_failure_listener(app: &tauri::AppHandle) {
     let handle = app.clone();
-    app.listen("platform-event", move |event| {
-        let Ok(payload) = serde_json::from_str::<serde_json::Value>(event.payload()) else {
-            return;
-        };
-        if payload.get("event").and_then(|v| v.as_str()) != Some("initial-hotkey-failed") {
-            return;
-        }
-        let hotkey = payload
-            .get("hotkey")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string();
+    app.listen(crate::events::INITIAL_HOTKEY_FAILED, move |event| {
+        // emit 側は String を渡すため payload は JSON 文字列（引用符付き）。
+        // `register_hotkey_failure_listener` と同じ流儀（#673 spec 決定 3 で袋を解体）。
+        let hotkey: String = serde_json::from_str(event.payload()).unwrap_or_default();
         if let Some(sh) = handle.try_state::<EguiShellState>() {
             *sh.pending_hotkey_failure.lock().unwrap() = Some((HotkeyFailureKind::Initial, hotkey));
         }

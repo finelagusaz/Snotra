@@ -147,7 +147,7 @@ fn notify_indexing_started(app: &AppHandle) {
         b.send_command(PlatformCommand::SetIndexing(true));
     }
     // Notify frontend that indexing has started
-    let _ = app.emit("indexing-started", ());
+    let _ = app.emit(crate::events::INDEXING_STARTED, ());
 }
 
 fn notify_indexing_complete(app: &AppHandle) {
@@ -158,5 +158,5 @@ fn notify_indexing_complete(app: &AppHandle) {
         b.send_command(PlatformCommand::SetIndexing(false));
     }
     // Notify frontend
-    let _ = app.emit("indexing-complete", ());
+    let _ = app.emit(crate::events::INDEXING_COMPLETE, ());
 }

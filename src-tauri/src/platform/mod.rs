@@ -188,7 +188,7 @@ fn platform_thread_loop(
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
             match msg.message {
                 WM_HOTKEY => {
-                    let _ = app_handle.emit("hotkey-pressed", ());
+                    let _ = app_handle.emit(crate::events::HOTKEY_PRESSED, ());
                 }
                 WM_TRAY_ICON => {
                     handle_tray_message(
@@ -286,13 +286,12 @@ fn process_commands(
                 if !registered {
                     let hotkey_str =
                         format!("{}+{}", current_hotkey.modifier, current_hotkey.key);
-                    let _ = app_handle.emit(
-                        "platform-event",
-                        serde_json::json!({
-                            "event": "initial-hotkey-failed",
-                            "hotkey": hotkey_str,
-                        }),
-                    );
+                    // 独立イベント名で emit する（#673 spec 決定 3）。旧実装は汎用チャネル
+                    // 1 本に `{event, hotkey}` を詰めており、内側種別は最後までこの 1 種
+                    // だけだった——袋の中身は grep に映らず、受け口の有無を機構で問えない
+                    // （#652 の gap 特定が構造的に不可能だった原因）。payload は
+                    // `hotkey-registration-failed` と同じ素の String に揃える。
+                    let _ = app_handle.emit(crate::events::INITIAL_HOTKEY_FAILED, hotkey_str);
                 }
             }
             PlatformCommand::ShowConfigRecoveryBalloon => {

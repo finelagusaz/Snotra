@@ -234,7 +234,9 @@ impl SearchWindowView {
         if already {
             return;
         }
-        let _ = self.app_handle.emit("egui-hide-requested", ());
+        let _ = self
+            .app_handle
+            .emit(crate::events::EGUI_HIDE_REQUESTED, ());
     }
 
     /// index 行の起動を worker へ投げる（§4.8 シングルクリック / Enter・#631 async 化）。
@@ -460,7 +462,7 @@ impl SearchWindowView {
             SlashCmd::Quit => {
                 // exit-requested listener（main.rs）が history/icon flush → exit する
                 // 唯一の終了合流点。トレイの終了メニューと同じ経路。
-                let _ = app.emit("exit-requested", ());
+                let _ = app.emit(crate::events::EXIT_REQUESTED, ());
             }
         }
     }

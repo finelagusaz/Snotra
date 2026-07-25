@@ -122,7 +122,7 @@ fn apply_config_change(app: &AppHandle) {
                     );
                     let hotkey_str =
                         format!("{}+{}", new_config.hotkey.modifier, new_config.hotkey.key);
-                    let _ = app.emit("hotkey-registration-failed", hotkey_str);
+                    let _ = app.emit(crate::events::HOTKEY_REGISTRATION_FAILED, hotkey_str);
                 }
                 Ok(true) => {}
             }
@@ -159,7 +159,7 @@ fn apply_config_change(app: &AppHandle) {
 
     // SU6 spec 決定 1: egui 窓への単一 wake（値は運ばない・受信側は次フレームの live-read が拾う）。
     // update_config（上）より後に置く——先に起こすと旧 config を描いてから二度目の wake が要る。
-    let _ = app.emit("config-applied", ());
+    let _ = app.emit(crate::events::CONFIG_APPLIED, ());
 }
 
 /// `config.toml` の読込結果を実行中エンジンへ適用してよいかの判定。

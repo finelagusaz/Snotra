@@ -10,6 +10,7 @@
 mod commands;
 mod config_watcher;
 mod egui_shell;
+mod events;
 mod icon;
 mod ime;
 mod indexing;
@@ -302,7 +303,7 @@ fn main() {
             // 起動時 hotkey 登録失敗の受け口（#652）。RegisterInitialHotkey を送る
             // setup_hotkey_listener より前に登録される位置なので emit を取りこぼさない
             //（この egui ブロック自体が setup_platform_thread の直後・hotkey listener の前）。
-            egui_shell::register_platform_event_listener(&app_handle);
+            egui_shell::register_initial_hotkey_failure_listener(&app_handle);
             app.manage(egui_shell::UpdaterUiState(std::sync::Mutex::new(Default::default())));
             // main と results 窓が共有する一方向フローの入れ物（#646 PR2）。
             app.manage(egui_shell::ResultsShared::default());
@@ -378,7 +379,7 @@ fn setup_first_run(app_handle: &AppHandle, is_first_run: bool) {
 /// there is a receiver to handle it (src-tauri/CLAUDE.md).
 fn setup_hotkey_listener(app_handle: &AppHandle) {
     let handle_for_hotkey = app_handle.clone();
-    app_handle.listen("hotkey-pressed", move |_| {
+    app_handle.listen(crate::events::HOTKEY_PRESSED, move |_| {
         let t0 = Instant::now();
         trace_main("hotkey:listener_enter", json!({}));
         // Ignore the hotkey while snotra-settings is running: the user may be
@@ -445,7 +446,7 @@ fn setup_hotkey_listener(app_handle: &AppHandle) {
 /// Listen for the `open-settings` event emitted by the tray menu.
 fn setup_open_settings_listener(app_handle: &AppHandle) {
     let handle_for_settings = app_handle.clone();
-    app_handle.listen("open-settings", move |_| {
+    app_handle.listen(crate::events::OPEN_SETTINGS, move |_| {
         let _ = commands::open_settings(
             handle_for_settings.state::<AppState>(),
             handle_for_settings.clone(),
@@ -481,7 +482,7 @@ pub(crate) fn flush_persistent_state(app_handle: &AppHandle) {
 /// unsaved data, kill the snotra-settings child process if running, and exit.
 fn setup_exit_listener(app_handle: &AppHandle) {
     let handle_for_exit = app_handle.clone();
-    app_handle.listen("exit-requested", move |_| {
+    app_handle.listen(crate::events::EXIT_REQUESTED, move |_| {
         // Flush any unsaved data before exit
         flush_persistent_state(&handle_for_exit);
         // Kill snotra-settings child process if running.

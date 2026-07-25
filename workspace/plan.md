@@ -56,8 +56,9 @@ if std::env::var_os("SNOTRA_EGUI_REPAINT_TRACE").is_some() {
         .map(|prev| (now - prev).as_secs_f64() * 1000.0)
         .unwrap_or(f64::NAN);
     eprintln!(
-        "SNOTRA_EGUI_REPAINT window={} since_prev_ms={since:.1} causes={}",
+        "SNOTRA_EGUI_REPAINT window={} focused={} since_prev_ms={since:.1} causes={}",
         self.window.label(),
+        self.context.input(|i| i.focused),
         crate::repaint::format_repaint_causes(&self.context.repaint_causes()),
     );
 }
@@ -69,6 +70,7 @@ if std::env::var_os("SNOTRA_EGUI_REPAINT_TRACE").is_some() {
 
 - `repaint_causes()` が返すのは `prev_causes`——`begin_pass_repaint_logic` が pass 冒頭で `causes` と swap するため（egui 0.35 `context.rs:98-105`）、`run_ui` 直後に読む値は**1 つ前の pass で積まれた原因**である。定常アイドルでは同じ源が繰り返すので判別には足りるが、**読み手が 1 フレームずれを知っている必要がある**（コメントにも書く）
 - **遅延ゼロの `request_repaint()` は 2 フレーム生む**（`request_repaint_after` が `outstanding = 1` を立て、次 pass 冒頭の `begin_pass_repaint_logic` が callback をもう 1 回撃つ・`context.rs:110-146`）。件数照合で「1 要求 = 1 フレーム」を前提にしない
+- **`focused=` は Phase 2 の false-negative を塞ぐための必須項目である**——egui はフォーカスがあるときだけ点滅 repaint を出す（`builder.rs:864-869`）。Phase 2 は測定のため `auto_hide_on_focus_lost=false` にして**製品には存在しない「可視かつ非フォーカス」状態を作る**ので、観測中に窓がフォーカスを失うと、疑っている当の源が黙り、ログは「眠っている」ように見える。フィールドが無いと判定 (a) を誤って引く
 - **`request_repaint_after(d)` は実際には `d - predicted_dt` で起きる**（`context.rs:148-151`）。本 runtime は `RawInput::predicted_dt` を一度も書かない（`input.rs:29` の `take` が screen_rect / time / viewport しか埋めない・確認済み）ため既定 1/60 秒のままで、**予約はつねに約 16.7ms 早く発火する**。観測した cadence が「予約値ちょうど」でなくても異常ではない
 
 **計器を置かない場所と、その理由**（A-4「`RedrawRequested` 到着」と A-6「実描画」の差分）:
@@ -114,11 +116,17 @@ $rows | Group-Object Window, Causes | Sort-Object Count -Descending | Select-Obj
 $rows | Where-Object { $_.Ms -ne 'NaN' } | ForEach-Object { [double]$_.Ms } | Measure-Object -Average -Minimum -Maximum
 ```
 
+**ログの読み方（誤帰属がこの作業の唯一の失敗様式である）**:
+
+- **`focused=false` の行が観測窓に混じった run は無効**とし、測り直す。上記のとおり、その状態では疑っている源が黙る。判定 (a) は**すべての行が `focused=true` の run からしか引けない**
+- **`window=results` で `causes=-` の行は egui の repaint 源ではない**——`position_results_below_main` が毎フレーム `SetWindowPos` を撃つ（`view.rs:837` → `mod.rs:549-568`）ため、OS 由来の再描画が egui の要求なしで届く。周期源の判定には数えない（数えると増幅器を源と取り違える）
+- `since_prev_ms` の巨大値は hide またぎ・観測窓の境界であり、cadence の集計から除く
+
 **判定（この分岐が Phase 3 を決める）**:
 
 | 観測 | 結論 | 次 |
 |---|---|---|
-| (a) 条件 1・2 とも数フレームで収束（周期発火なし） | 現象は `MvpView` 撤去（#702）とともに消滅 | Phase 4-a: 実測を issue へ記録して close |
+| (a) 条件 1・2 とも数フレームで収束（周期発火なし・**全行 `focused=true`**） | 現象は `MvpView` 撤去（#702）とともに消滅 | Phase 4-a: 実測を issue へ記録して close |
 | (b) ~500ms 周期・causes が `text_selection/visuals.rs:313` | **キャレット点滅**が源と確定 | Phase 3（ユーザー判断・下記） |
 | (c) 条件 2 だけ frames が倍（results 窓が main に追随） | `wake_results` の level-triggered が増幅器 | 源（= main 側の周期要因）を先に決着させてから、増幅の是非を別途判断 |
 | (d) 上記以外の周期源（別の `file:line`） | 名指しされた箇所を個別に判断 | 計画を更新してから着手 |
@@ -145,6 +153,7 @@ $rows | Where-Object { $_.Ms -ne 'NaN' } | ForEach-Object { [double]$_.Ms } | Me
 - **再オープン条件**（issue に 1 行で残す・独立導出の発見）: `visible_rows` / `window_width` に上限が無く（`snotra-core/src/config.rs:989,992-993` は下限・0 のみ検証）、`font_size` は行高にも効く（`layout.rs` の `Metrics::from_config`）。SU6.5 の 3680 フレームは**既定 config 1 点**の測定である。極端 config で `raster_ms` p95 が 16.7ms を超えたら再オープンし、まず `inv_area` の乗算化だけを入れて再測する
 - **ロードマップ**: `docs/superpowers/specs/2026-07-21-phase2-softbuffer-migration-roadmap.md:30` の SU1 行 follow-up 表記を「#628（→ 2026-07 実測で決着・項目 1 は不要／項目 2 は \<結論\>）」へ更新
 - **`PERFORMANCE.md`**: 計測節（244 行付近「ランタイムの計測は `SNOTRA_TRACE=1`」）へ、egui 計器 env 2 つ（`SNOTRA_EGUI_PAINT_TRACE` / `SNOTRA_EGUI_REPAINT_TRACE`）と本サイクルの可視アイドル実測値を記す。**`docs/build-commands.md` には書かない**（同じ事実を 2 か所に置かない・AGENTS.md「文書に事実の写しを増やす変更は正本を 1 か所に」。perf 計器の正本は `PERFORMANCE.md`）。governance:check は env を検査対象にしない（`scripts/governance-check.mjs` の G5/G9 は npm script と cargo コマンドの照合のみ）ため、この追記は自動検査に守られない記述である
+- **PR マージ直前の auto-close 確認（手順として書く。周辺知識に委ねない）**: 分岐 (b)/(c)/(d) では **#628 は open のまま残す**。PR テンプレートが `Closes` を埋めるため、`gh pr view <PR> --json closingIssuesReferences` を**マージ直前に取り直し**、意図しない issue が入っていないことを確認する（入っていれば本文を編集して一覧から消えるまで繰り返す）。マージ後は `gh issue view 628 --json state` が `OPEN` であることも確認する（ルート `CLAUDE.md`「Git/GitHub 運用」の手順 1・2・4）
 - **計器の去就**: `SNOTRA_EGUI_REPAINT_TRACE` は残す。理由は `SNOTRA_EGUI_PAINT_TRACE`（SU6.5）・`SNOTRA_EGUI_IME_TRACE` と同じ——env 未設定時のコストが 0 で、次に「なぜ再描画が止まらない」を問うときに再実装が要らない。**恒久計器として扱い**、コメントに #628 の由来を書く
 
 ## 不変条件

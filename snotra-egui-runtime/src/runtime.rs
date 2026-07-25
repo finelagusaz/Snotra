@@ -262,6 +262,9 @@ struct EguiWindow {
     /// 直前フレームの時刻（`SNOTRA_EGUI_REPAINT_TRACE` 専用・#628）。表示にも制御にも
     /// 影響しない。env 未設定なら一度も書かれず `None` のまま。
     repaint_trace_prev: Option<std::time::Instant>,
+    /// 最後に OS へ適用したカーソル（`handle_platform_output` の変化検出用）。
+    /// `SetCursor` はスレッド共通ゆえ毎フレーム撃つと 2 窓が上書きし合う（同関数のコメント）。
+    applied_cursor: Option<egui::CursorIcon>,
 }
 
 impl EguiWindow {
@@ -280,6 +283,7 @@ impl EguiWindow {
             visible: true,
             paint_failures: 0,
             repaint_trace_prev: None,
+            applied_cursor: None,
         })
     }
 
@@ -375,7 +379,7 @@ impl EguiWindow {
         Ok(())
     }
 
-    fn handle_platform_output(&self, output: &egui::PlatformOutput) {
+    fn handle_platform_output(&mut self, output: &egui::PlatformOutput) {
         for command in &output.commands {
             match command {
                 egui::OutputCommand::CopyText(text) => {
@@ -395,8 +399,21 @@ impl EguiWindow {
             }
         }
 
-        if let Some(cursor) = cursor_icon(output.cursor_icon) {
-            let _ = self.window.set_cursor_icon(cursor);
+        // **値が変わったときだけ OS へ書く。** tao の `set_cursor_icon` は窓に紐づかない
+        // `SetCursor` を直接撃つ（tao 0.35.3 `platform_impl/windows/window.rs:460-466`）——
+        // 最後に呼んだ者が勝ち、マウス静止中は `WM_SETCURSOR` が来ないので OS の復元も
+        // 入らない。毎フレーム無条件に撃つと、ポインタを持つ窓（Text）と持たない窓
+        // （Default）が交互に上書きし合ってカーソルが点滅する（#628 の計測中に実機で
+        // 発見。main 1194 / results 1339 フレームが撃ち合っていた）。
+        //
+        // 変化検出は egui 側の値で行う（`tauri::CursorIcon` の等値性に依存しない）。
+        // 残余: 別窓のアイコンが実際に変わった瞬間だけ、静止中のポインタ下のカーソルが
+        // 一度ずれうる。マウスを動かせば `WM_SETCURSOR` で窓ごとの値へ復帰する。
+        if self.applied_cursor != Some(output.cursor_icon) {
+            self.applied_cursor = Some(output.cursor_icon);
+            if let Some(cursor) = cursor_icon(output.cursor_icon) {
+                let _ = self.window.set_cursor_icon(cursor);
+            }
         }
         self.ime
             .update(output.ime, self.input.native_pixels_per_point());

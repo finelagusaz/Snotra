@@ -17,13 +17,19 @@ param(
   [string]$ResultsQuery = ""
 )
 
-# egui 経路の自動回帰 smoke（#532 SU7 PR1・spec: docs/superpowers/specs/2026-07-24-su7-flip-implementation-design.md 決定 3）。
-# 起動 → keybd_event で Alt+Q（既定 hotkey）注入 → trace `egui_show:done` 観測 → Escape 注入 →
-# `egui_hide:done` 観測 → msedgewebview2 のグローバル増分 0 確認、で 1 シナリオ。
-# - hotkey は Alt 解放を含めて送る（Alt 押下中は ShowAfterAltRelease で最大 350ms 遅延するため）。
+# egui 経路の自動回帰 smoke（#532 SU7 PR1・spec: docs/superpowers/specs/2026-07-24-su7-flip-implementation-design.md 決定 3。
+# results 窓の被覆は #671/#673 サイクル PR A で追加）。
+# 起動 → keybd_event で hotkey 注入（既定は起動時の `hotkey:registered` trace から導出した VK 列。
+# 明示 -HotkeyVks 指定時のみそちらを使う） → trace `egui_show:done` 観測 →
+# （索引内容を制御できるとき）1 文字クエリを注入して `egui_results:show` 観測 → Escape 注入 →
+# `egui_hide:done`（+ results 検査時は `egui_results:hide`）観測 → msedgewebview2 の
+# グローバル増分 0 確認、で 1 シナリオ。
+# - hotkey の修飾に Alt を含む場合、Alt 解放を含めて送る（Alt 押下中は ShowAfterAltRelease で
+#   最大 350ms 遅延するため）。Alt を含まない hotkey（例 Ctrl+K）では無関係。
 # - -SeedConfig（CI 用）: config.toml 不在時のみ最小の有効 TOML を seed し first-run 経路
 #   （snotra-settings --first-run の spawn がフォーカスを奪う）を回避する。既存 config は決して上書きしない。
-# - egui/WebView2 の経路選択は呼び出し側の env（SNOTRA_EGUI_MAIN）に従う。flip（PR2）後は env なしが既定。
+#   seed できたときは results 被覆用の索引対象も 1 件同梱する（-ResultsQuery 既定の導出元）。
+# - WebView2/フロントエンドは #532 SU7 で撤去済みで、egui が唯一の UI 経路（env による経路選択は無い）。
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -182,10 +188,15 @@ try {
   # 押すキーは**アプリが実際に登録した値**から採る（scripts が config を読み解いて
   # VK へ変換すると、hotkey.rs の parse_modifier / parse_vk / 修飾ビット→VK の 3 表が
   # PowerShell 側に写り、ドリフトする）。-HotkeyVks が明示指定されたときだけそちらを使う。
+  # $hotkeySource / $vksLabel は「実際に注入する VK 列」を失敗メッセージへも一致させるための
+  # 単一の出所（#671 サイクル PR A レビュー指摘 2）。$HotkeyVks（既定値・未指定でも常に非空）を
+  # そのままメッセージへ出すと、trace 由来の VK で失敗したときに実際と異なる値を報告してしまう。
   if ($PSBoundParameters.ContainsKey('HotkeyVks')) {
+    $hotkeySource = "explicit"
     $vks = @($HotkeyVks -split ',' | ForEach-Object { [byte]([int]$_.Trim()) })
     Write-Host "Hotkey VKs (explicit): $($vks -join ',')"
   } else {
+    $hotkeySource = "from trace"
     $hk = Get-TraceEventData -Path $errPath -EventName "hotkey:registered" -TimeoutMs $ObserveTimeoutMs
     if ($null -eq $hk) {
       throw "hotkey:registered trace not observed within ${ObserveTimeoutMs}ms — cannot determine which keys to inject"
@@ -196,7 +207,14 @@ try {
     $vks = @($hk.vks | ForEach-Object { [byte][int]$_ })
     Write-Host "Hotkey VKs (from trace): $($vks -join ',') (modifier=$($hk.modifier) key=$($hk.key))"
   }
-  if ($vks.Count -lt 1) { throw "HotkeyVks must contain at least one VK code" }
+  $vksLabel = ($vks -join ',')
+  if ($vks.Count -lt 1) {
+    if ($hotkeySource -eq "explicit") {
+      throw "HotkeyVks must contain at least one VK code"
+    } else {
+      throw "hotkey:registered trace reported an empty VK list — cannot determine which keys to inject"
+    }
+  }
   $shown = $false
   foreach ($attempt in 1..2) {
     foreach ($vk in $vks) {
@@ -215,7 +233,7 @@ try {
     }
   }
   if (-not $shown) {
-    $failures += "egui_show:done not observed within ${ObserveTimeoutMs}ms x2 after hotkey ($HotkeyVks)"
+    $failures += "egui_show:done not observed within ${ObserveTimeoutMs}ms x2 after hotkey ($vksLabel, $hotkeySource)"
   }
 
   # results 窓の被覆（#671/#673 サイクル PR A）。索引内容を制御できるときだけ実行する。

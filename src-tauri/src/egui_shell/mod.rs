@@ -449,7 +449,10 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
         let _ = window.hide();
     }
     // #646 PR2: 従属窓も同時に隠す（決定 6）。show 側は main の update() が snapshot の
-    // show 判定で駆動するため、ここが唯一の外部 hide 経路（対称は main update 内の show）。
+    // show 判定で駆動するため、`update()` の外から results を hide する経路はここだけ
+    // （対称は main update 内の show）。`view.rs` の `drive_results_window` は update **内**
+    // で動く対の経路であり、直前の doc comment が言う「results の hide は 2 経路ある」は
+    // この 2 つ（update 外＝ここ／update 内＝drive_results_window）を指す——矛盾ではない。
     if let Some(results) = app.get_window("results") {
         hide_results(&results);
         // 呼び出し側に置く（spec 決定 7）。results の hide は 2 経路あり

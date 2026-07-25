@@ -2,10 +2,13 @@
 //! SearchState（純粋核）を駆動する imperative shell: TextEdit/結果リスト描画・直 Engine 検索
 //! （debounce）・↑↓/→←ナビ・folder 展開（async ロード + staleness）・tool 選択（§18・
 //! Shift+Enter 入場/起動/Escape 復帰）・instant/slash コマンド・起動/実行 dispatch・動的高さ。
-//! フォント登録は #532 SU4 で 2 枝へ進化: config font_family 解決時は user_font 先頭 + jp_font
-//! fallback（WebView2 CSS スタック parity）、解決失敗時のみ jp_font 単一・index 0（#579 の元不変条件）。
+//! フォント登録は **3 枝**（#532 SU4 の 2 枝に #689 が 1 枝を足した）: config font_family が
+//! 解決し CJK 非被覆なら user_font 先頭 + jp_font fallback（WebView2 CSS スタック parity）、
+//! 解決し**被覆するなら user_font 単一**（jp_font を積まない・#689）、解決失敗時は jp_font
+//! 単一。いずれも index 0 へ `insert` する（#579 の元不変条件）。判定は `font_covers_cjk`。
 
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
@@ -53,9 +56,16 @@ fn font_covers_cjk(bytes: &[u8], face_index: u32) -> bool {
 /// `jp_bytes = None` は「user_font が CJK をカバーするので jp_font を積まない」を表す。
 /// user・jp とも None なら egui 既定フォントのままの `FontDefinitions` を返す
 /// （呼び出し側が `set_fonts` 自体を避ける）。
+///
+/// **両フォントとも `&'static [u8]` で受け取り [`egui::FontData::from_static`] で積む。**
+/// epaint の `blob_from_font_data` は `data.clone().font` を match の**前**に評価するため、
+/// `Cow::Owned`（= `from_owned`）ではフォント全体が深くコピーされ、`FontDefinitions` 側と
+/// Blob 側の 2 本が常駐する。`Cow::Borrowed` なら複製されるのは参照だけである。
+/// 実測がこれを二重に裏づける: user_font は `from_owned` で 20.6 MiB ≒ 2 × ファイル 10.21 MiB、
+/// jp_font は `from_static` で 12.9 MiB ≒ 1 × ファイル 13.26 MiB だった（#689）。
 fn font_definitions(
     jp_bytes: Option<&'static [u8]>,
-    user: Option<(Vec<u8>, u32)>,
+    user: Option<(&'static [u8], u32)>,
 ) -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
     let has_jp = jp_bytes.is_some();
@@ -71,7 +81,7 @@ fn font_definitions(
     }
     match user {
         Some((bytes, face_index)) => {
-            let mut uf = egui::FontData::from_owned(bytes);
+            let mut uf = egui::FontData::from_static(bytes);
             uf.index = face_index; // TTC face 指定（settings font.rs:138 と同型）
             fonts.font_data.insert("user_font".to_owned(), uf.into());
             for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
@@ -96,10 +106,41 @@ fn font_definitions(
     fonts
 }
 
-/// config font_family をシステムから解決して (バイト列, face index) を返す。
+/// 解決済み user_font の (`'static` バイト列, face index)。[`USER_FONTS`] の値型。
+type ResolvedFont = (&'static [u8], u32);
+
+/// 解決済み user_font の family 名 → `'static` バイト列。**成功したものだけ**を保持する。
+///
+/// `Box::leak` を素で置くと 1 回の font_family 変更で 2 回漏れる——
+/// `configure_japanese_font` は main と results の 2 Context から別々に呼ばれるため。
+/// family 名をキーにして両者と再切替に 1 本の leak を共有させる（漏れはセッション中に
+/// 使われた **distinct family 数**で頭打ち）。`JP_FONT_BYTES` と同じく解放されない。
+///
+/// ただし never-clear を要求する理由は `JP_FONT_BYTES` とは別である。あちらは
+/// `transmute` による `'static` 化の**健全性**が OnceLock の不変性に依存する。こちらの
+/// `Box::leak` はそれ自体が `'static` を生むため、never-clear は leak の重複を避ける
+/// 一意性の要請であって memory safety の要請ではない。
+///
+/// **失敗（None）はキャッシュしない。** するとフォントを後から導入して同じ名前に
+/// 戻したとき、解決できるのに拒み続ける。再解決のコストは `applied_font_family` ゲートに
+/// より font_family 変更時の一度きりで、現行挙動と同じである。
+static USER_FONTS: OnceLock<Mutex<HashMap<String, ResolvedFont>>> = OnceLock::new();
+
+/// config font_family をシステムから解決して (`'static` バイト列, face index) を返す。
 /// 見つからなければ None（呼び出し側が jp_font 単一へフォールバック）。Database は
 /// 解決後に drop（非常駐・列挙コストはフォント設定時の一度きり）。
-fn resolve_font_family(name: &str) -> Option<(Vec<u8>, u32)> {
+///
+/// バイト列を `'static` へ leak するのは [`font_definitions`] が `from_static` で積むため。
+/// `from_owned` だと epaint が Blob 生成時にフォント全体を深くコピーし、常駐が 2 倍になる。
+fn resolve_font_family(name: &str) -> Option<(&'static [u8], u32)> {
+    let cache = USER_FONTS.get_or_init(|| Mutex::new(HashMap::new()));
+    // poison からは回復する（release は panic=abort ゆえ実際には起きないが、
+    // ここで panic すると起動経路ごと落ちるため中身を取り出して続行する）。
+    let mut map = cache.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(hit) = map.get(name) {
+        return Some(*hit);
+    }
+
     let mut db = fontdb::Database::new();
     db.load_system_fonts();
     let query = fontdb::Query {
@@ -109,7 +150,12 @@ fn resolve_font_family(name: &str) -> Option<(Vec<u8>, u32)> {
         style: fontdb::Style::Normal,
     };
     let id = db.query(&query)?;
-    db.with_face_data(id, |data, face_index| (data.to_vec(), face_index))
+    let resolved: (&'static [u8], u32) =
+        db.with_face_data(id, |data, face_index| {
+            (&*Box::leak(data.to_vec().into_boxed_slice()), face_index)
+        })?;
+    map.insert(name.to_owned(), resolved);
+    Some(resolved)
 }
 
 /// jp_font（CJK fallback）のバイト列を遅延ロードして `'static` 借用を返す。
@@ -1664,7 +1710,7 @@ mod tests {
         // user=Some かつ **CJK をカバーしていない**（jp=Some）: user_font 先頭・jp_font は fallback（index 1）
         // ＝ WebView2 CSS スタック parity。カバー判定を入れても、この経路の不変条件は不変である。
         let dummy: &'static [u8] = &[0u8; 4];
-        let user = vec![0u8; 4];
+        let user: &'static [u8] = &[0u8; 4];
         let fonts = font_definitions(Some(dummy), Some((user, 0)));
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
             let list = fonts.families.get(&family).expect("family present");
@@ -1679,7 +1725,7 @@ mod tests {
     fn font_definitions_covered_user_font_omits_jp_entirely() {
         // user が CJK をカバー（jp=None）: jp_font は**スタックにもデータにも現れない**。
         // font_data に残ると egui が eager parse してメモリを食うため、両方を検査する。
-        let user = vec![0u8; 4];
+        let user: &'static [u8] = &[0u8; 4];
         let fonts = font_definitions(None, Some((user, 0)));
         assert!(!fonts.font_data.contains_key("jp_font"),
             "カバー済みなら jp_font のバイト列自体を積まない（削減の実体）");
@@ -1689,6 +1735,24 @@ mod tests {
                 "カバー済みでも user_font 先頭（#579 のベースラインずれ防止）");
             assert!(!list.iter().any(|n| n == "jp_font"),
                 "カバー済みなら jp_font をスタックに残さない");
+        }
+    }
+
+    #[test]
+    fn font_definitions_registers_both_fonts_as_borrowed() {
+        // **常駐 2 倍化に対する退行テスト。** epaint の `blob_from_font_data` は
+        // `data.clone().font` を match の前に評価するため、`Cow::Owned`（= `from_owned`）
+        // だとフォント全体が深くコピーされ FontDefinitions 側と Blob 側の 2 本が残る。
+        // `from_static` → `Cow::Borrowed` なら複製されるのは参照だけ。
+        // ここが Owned に戻ると**数値でしか気づけない**（描画も型検査も通る）ので型で縛る。
+        use std::borrow::Cow;
+        let jp: &'static [u8] = &[0u8; 4];
+        let user: &'static [u8] = &[0u8; 4];
+        let fonts = font_definitions(Some(jp), Some((user, 0)));
+        for key in ["jp_font", "user_font"] {
+            let data = fonts.font_data.get(key).expect("font registered");
+            assert!(matches!(data.font, Cow::Borrowed(_)),
+                "{key} が Cow::Owned で積まれている（from_owned だと epaint が全体を複製し常駐が 2 倍になる）");
         }
     }
 

@@ -17,7 +17,7 @@
 - 開発原則・デバッグ指針（汎用）: `docs/development-principles.md`
 - コメント規約（rustdoc / TSDoc の様式・粒度・定型ラベル）: `docs/comment-guidelines.md`
 - ビルド・テストコマンド: `docs/build-commands.md`
-- モジュール固有の不変条件: 各サブディレクトリの `CLAUDE.md`（`snotra-core/`, `snotra-egui-runtime/`, `snotra-egui-mvp/`, `src-tauri/`, `ui/`, `snotra-settings/`）
+- モジュール固有の不変条件: 各サブディレクトリの `CLAUDE.md`（`snotra-core/`, `snotra-egui-runtime/`, `snotra-egui-mvp/`, `src-tauri/`, `snotra-settings/`）
 - 設定 UI デザインガイドライン: `snotra-settings/SETTINGS-DESIGN.md`（デザイントークン・Fluent タイポグラフィ・レイアウト規約）
 - 実装前チェック: `.claude/rules/`（該当ファイルの読み取り時に自動配送）
 - 意思決定記録（否定の知識＝なぜ B を却下したか）: `docs/adr/NNNN-*.md`（否定の知識が生じた決定のみ・#593）

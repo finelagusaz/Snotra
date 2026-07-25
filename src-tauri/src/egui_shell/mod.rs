@@ -573,7 +573,7 @@ pub(crate) fn register_hotkey_failure_listener(app: &tauri::AppHandle) {
 ///   挟まりうるため、通知が消えたまま二度と出ない。
 /// - **show する**: ホットキーが登録できていない＝ユーザーが窓を開く手段がトレイしか無い。
 ///   SPEC §10「初回ホットキー登録失敗時は操作不能回避のため検索 UI を表示し」の実装で、
-///   WebView2 では `MainApp.tsx` の `win.show()` が担っている経路の egui 版。
+///   旧 TS フロントが担っていた経路の egui 版（当該フロントは #532 SU7 で撤去済み）。
 /// - **wake する**: `show_on_startup=true` で既に可視なら `show()` は再描画を生まない。
 ///   `register_hotkey_failure_listener`（変更失敗）が wake しないのと**意図的に逆**——
 ///   あちらは必ず `config-applied` が随伴するが、起動時失敗には config 変更が無く

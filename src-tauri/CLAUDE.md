@@ -68,6 +68,11 @@ NOTIFYICON_VERSION_4 では、キーボード操作（Shift+F10 / Application �
 
 ウィンドウの生成は必ず setup フェーズで行い、ランタイムでは show/hide のみで制御する（メイン窓は `egui_shell::create`・setup 限定）。イベントループ中のコールバック（`run_on_main_thread` / `listen` / `RunEvent` 等）はメッセージポンプが 1 イテレーション内で停止しており、ポンプ進行を要する操作（ウィンドウ生成・COM STA 初期化・モーダルダイアログ等）はデッドロックする——「メインスレッドにいる」と「メッセージポンプが自由に回る」は別物（旧 WebView2 期に実測した不変条件・egui 窓でも生成は setup 限定を維持）。メインウィンドウは `decorations: false` で閉じるボタンを持たないため `CloseRequested` ハンドラは不要。
 
+**setup フック自身もイベントループの中で走る**（#671 PR D で一次資料を確認・tauri 2.11.4 `src/app.rs` の `make_run_event_loop_callback` が `RuntimeRunEvent::Ready` の arm で setup を呼ぶ）。**「setup はイベントループより前」ではない。** 帰結が 2 つある:
+
+- setup ブロックの実行中は wry plugin の `on_event` が回らないため、**egui フレームは 1 枚も走らない**。ゆえに窓生成（`egui_shell::create`）より**後**に managed state を載せてよい（`EguiShellState` の manage 位置がこれに依る）
+- 上段のポンプ停止の話は setup にも当てはまる。setup 内で「ポンプが回ること」を期待する操作（`run_on_main_thread` の完了待ち等）を足してはならない
+
 ## working set の能動回収（EmptyWorkingSet）
 
 `working_set::trim_idle_working_set()` が hide 経路（`egui_shell::hide_egui_main` 合流点）で Win32 `EmptyWorkingSet` をプロセスツリー（自プロセス + 子孫。設定サイドカー存命中はそれも含む）へ能動適用し、hide 直後の物理 RSS を即時に落とす（egui-hidden の PrivWS ~1MiB・#532 SU6.5 実測。旧 WebView2 suspend 層は SU7 で消滅）。

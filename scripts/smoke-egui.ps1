@@ -195,6 +195,48 @@ if ($null -eq $savedTraceEnv) {
   $env:SNOTRA_TRACE = $savedTraceEnv
 }
 
+# 失敗時の証拠出力（#690 の follow-up）。
+#
+# **失敗チャネルは 2 本ある**——`throw`（前提が崩れて続行不能）と `$failures` への
+# 蓄積（検査項目の不合格）。証拠の出力は後者の中にしか無かったため、`throw` は
+# `finally`（プロセス kill だけ）を通って**何の手掛かりも残さずに**スクリプトを終えていた。
+# 実際 CI で `hotkey:registered` 未観測が出たとき、ログには seed から例外までの 18 秒の
+# 空白しか無く、「アプリが遅れた」のか「起動せず死んだ」のかを**区別できなかった**。
+# ゆえに両チャネルをこの 1 関数へ合流させる。
+#
+# プロセスの生死を先に出すのが要点である: trace 0 行のとき「観測できなかった」と
+# 「イベントが出なかった」は別物で、前者ならプロセス状態が切り分ける。
+function Show-FailureEvidence {
+  param(
+    [string]$Path,
+    [System.Diagnostics.Process]$Proc,
+    [string]$Context
+  )
+  Write-Host ""
+  Write-Host "--- 失敗時の証拠（$Context）---" -ForegroundColor Yellow
+  if ($null -ne $Proc) {
+    if ($Proc.HasExited) {
+      Write-Host ("プロセス: 既に終了 (exit code $($Proc.ExitCode)) — 起動途中で落ちた疑い") -ForegroundColor Red
+    } else {
+      Write-Host "プロセス: 生存中 — 起動はしている（クラッシュではなく未到達/遅延）"
+    }
+  } else {
+    Write-Host "プロセス: 本スクリプトが既に終了させた後（生死は判定材料にならない）"
+  }
+  if (-not (Test-Path $Path)) {
+    Write-Host "trace ファイルが存在しない: $Path" -ForegroundColor Red
+    return
+  }
+  $all = @(Get-Content -Path $Path -ErrorAction SilentlyContinue)
+  Write-Host ("trace 行数: {0}" -f $all.Count)
+  if ($all.Count -eq 0) {
+    Write-Host "**0 行** — アプリが 1 行も出していない。起動前に落ちたか SNOTRA_TRACE が効いていない。" -ForegroundColor Red
+    return
+  }
+  Write-Host "--- trace tail ---"
+  $all | Select-Object -Last 40
+}
+
 $failures = @()
 $resultsChecked = $false
 try {
@@ -338,6 +380,11 @@ try {
       }
     }
   }
+} catch {
+  # **`finally` より前に走る**ので、ここではまだプロセスが生きている＝生死を証拠にできる。
+  # 出したら握り潰さずに再送出する（exit code は従来どおり非 0 のまま）。
+  Show-FailureEvidence -Path $errPath -Proc $proc -Context "throw: $($_.Exception.Message)"
+  throw
 } finally {
   if (-not $proc.HasExited) {
     Stop-Process -Id $proc.Id -Force
@@ -350,11 +397,10 @@ if ($failures.Count -gt 0) {
   foreach ($f in $failures) {
     Write-Host " - $f" -ForegroundColor Red
   }
-  if (Test-Path $errPath) {
-    Write-Host ""
-    Write-Host "--- trace tail ---"
-    Get-Content $errPath -Tail 40
-  }
+  # 証拠の出力は throw 経路と同じ関数へ寄せる（片方だけ計装される状態に戻さないため）。
+  # ここへ来る時点で finally が既にプロセスを終了させているので、生死は判定材料にならない
+  # ——$null を渡してその旨を明示する（誤った手掛かりを出さない）。
+  Show-FailureEvidence -Path $errPath -Proc $null -Context "検査項目の不合格"
   exit 1
 }
 

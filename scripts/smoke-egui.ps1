@@ -87,6 +87,7 @@ public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPt
 
 $KEYEVENTF_KEYUP = 0x2
 $VK_ESCAPE = 0x1B
+$VK_BACK = 0x08
 
 # 1 文字クエリの VK は英字のみを想定（VK_A..VK_Z = 0x41..0x5A = ASCII 大文字と同値）。
 function Get-LetterVk {
@@ -182,9 +183,20 @@ try {
     $resultsChecked = $true
     $queryVk = Get-LetterVk $ResultsQuery
     # 索引構築中は plain 検索が抑止される（SPEC §4.7）。起動直後の負荷で 1 回目の打鍵が
-    # 抑止側に落ちることがあるため、hotkey 注入と同じく一度だけ再注入する。
+    # 抑止側に落ちることがあるため、hotkey 注入と同じく一度だけ再注入する。入力欄は
+    # 打鍵間でクリアされないため、2 回目の前に Backspace を 1 回送って先行入力を消してから
+    # 再注入する（送らないと 2 回目は実質 "zz" になり、単一文字マッチ前提の索引とは
+    # 原理的に一致しえない）。打鍵が落ちていたケースでは Backspace も同様に落ちるだけで
+    # 2 回目の単独入力は無害、抑止で 1 回目が吸収されたケースでは Backspace が残存文字を
+    # 消して単一文字クエリを再成立させる。
     $resultsShown = $false
     foreach ($attempt in 1..2) {
+      if ($attempt -gt 1) {
+        Send-Key $VK_BACK
+        Start-Sleep -Milliseconds 50
+        Send-Key $VK_BACK -Up
+        Start-Sleep -Milliseconds 50
+      }
       Send-Key $queryVk
       Start-Sleep -Milliseconds 50
       Send-Key $queryVk -Up

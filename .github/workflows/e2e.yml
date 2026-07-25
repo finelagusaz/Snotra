@@ -12,6 +12,10 @@ on:
     # （egui 経路の自動回帰の最低線）+ 手動 GUI smoke 体制（docs/build-commands.md）。
     paths:
       - 'src-tauri/**'
+      # 描画ループ・入力・IME・repaint を所有する接着層（#701）。src-tauri だけを列挙していた頃は、
+      # runtime の *.rs だけを触る PR で smoke が回らなかった（#660 の PR は manifest 経由で
+      # 偶然発火していた＝「緑」が「検査が走った」を意味しない形の一種・#686 と同族）
+      - 'snotra-egui-runtime/**'
       - '.github/workflows/e2e.yml'
       # workflow の各ステップが直接呼ぶスクリプト（変更で自己検証する）
       - 'scripts/smoke-startup.ps1'      # "Run startup smoke" ステップ

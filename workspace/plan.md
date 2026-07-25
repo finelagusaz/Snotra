@@ -91,7 +91,7 @@ commit: `chore(egui-runtime): repaint 原因トレースを追加（#628 可視�
 ```powershell
 cargo build --release -p snotra
 $env:SNOTRA_EGUI_REPAINT_TRACE=1; $env:SNOTRA_EGUI_PAINT_TRACE=1; $env:SNOTRA_TRACE=1
-.\src-tauri\target\release\snotra.exe 2>&1 | Tee-Object -FilePath $env:TEMP\628-idle.log
+.\target\release\snotra.exe 2>&1 | Tee-Object -FilePath $env:TEMP\628-idle.log
 ```
 
 **観測条件（3 つ・順に実施）**:

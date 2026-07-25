@@ -23,6 +23,7 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
     - ただし早期 return の前に短いバウンドリトライ（`load_with_read_failed_retry`、既定 3 回 × 150ms）で一時的ロック解除を待ち、解ければ正規の変更を取りこぼさず適用する（予算超過時のみ skip。リトライ中は適用しないのでデータ損失安全は不変）
   - **不変条件: index 再構築の要否は `IndexInputs::from_config(old) != IndexInputs::from_config(new)` で判定し、ビルド進行中（`indexing`）でも `!indexing` ゲートなしで常に `start_index_build` を kick する**（`start_index_build` が `mark_index_stale` で stale を立て、in-flight ビルドの drain / finish 後再チェックが取りこぼしを拾う。CAS が二重起動を防ぐ。#347/#348-A）
   - 発火するイベント: `hotkey-registration-failed` / `indexing-started`（indexing.rs から）/ `indexing-complete`（indexing.rs から）/ `config-applied`（egui wake・値なし・SU6）。旧フロント向けの値運搬 emit 群（language-changed 等 7 本）は #532 SU7 で削除——egui は config-applied wake + 毎フレーム live-read で値を拾う
+- `events.rs`: アプリ内 Tauri イベント名の定数（#673）。emit / listen の両端が同一 path を参照する（**文字列リテラルで emit / listen しない**）。防げるのは綴り不一致だけで、新経路を並走させたときの受け口の複製漏れ（#652 の実形）はこれでは防げない
 - `ime.rs`: IME オフ操作（`ImmSetOpenStatus(false)`）。Win32 IMM API の薄いラッパー
 - **trace の presence 検査は状態の検査ではない**（#671 PR A′）: 「操作を要求した」ログは、その操作が効いたことを意味しない。`egui_results:hide` は出るのに窓は残る、という回帰を `smoke:egui` が緑のまま通した。trace で不変条件を守るなら「何が起きたか」ではなく**「起きてはならないことが起きていないか」**（区間内に事象が現れないこと等）を書く
 - `trace.rs`: `SNOTRA_TRACE` 環境変数ゲートの構造化トレースログ（`trace_enabled` + `trace`）。`main.rs` の `trace_main` と `commands::trace_command` が薄いラッパーとしてここへ委譲する（#433 で重複を集約）。seq カウンタは単一の `AtomicU64` を共有するため、両者のトレース行は1本の単調増加列で interleave する（旧実装は 2 カウンタに分裂していた。トレースはデバッグ出力専用のため許容される挙動変更）

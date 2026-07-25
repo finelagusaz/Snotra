@@ -10,15 +10,15 @@ param(
   # pwsh -File / npm 経由で配列引数が壊れないよう文字列で受けて内部で分割する。
   [string]$HotkeyVks = "18,81"
   ,
-  # results 窓の被覆に使う検索クエリ（1 文字想定）。既定 "" のとき:
+  # results 窓の検証に使う検索クエリ（1 文字想定）。既定 "" のとき:
   #   -SeedConfig で実際に seed できた場合のみ "z"（seed した zsnotrasmoke.exe に一致）を使う。
   #   seed しなかった場合（既存 config あり / -SeedConfig なし）は results 検査を skip する。
   # 既存 config を持つ開発機で検査したいときは、その索引に一致する文字を明示的に渡す。
   [string]$ResultsQuery = ""
   ,
-  # results 被覆の skip を**失敗**として扱う（CI 用・#686）。既定（未指定）では skip は
+  # results 検証の skip を**失敗**として扱う（CI 用・#686）。既定（未指定）では skip は
   # 黄色 NOTE で報告して exit 0——ローカルでは索引を制御できないのが普通だからである。
-  # CI は被覆が走ることを要求するため常に渡す。**判定は起動前に確定する**（下の guard）。
+  # CI は検証が走ることを要求するため常に渡す。**判定は起動前に確定する**（下の guard）。
   [switch]$RequireResults
   ,
   # 失敗して trace が 0 行だったときだけ、追加でこの時間まで「最初の 1 行」を待つ（#690 follow-up）。
@@ -41,7 +41,7 @@ param(
 )
 
 # egui 経路の自動回帰 smoke（#532 SU7 PR1・spec: docs/superpowers/specs/2026-07-24-su7-flip-implementation-design.md 決定 3。
-# results 窓の被覆は #671/#673 サイクル PR A で追加）。
+# results 窓の検証は #671/#673 サイクル PR A で追加）。
 # 起動 → keybd_event で hotkey 注入（既定は起動時の `hotkey:registered` trace から導出した VK 列。
 # 明示 -HotkeyVks 指定時のみそちらを使う） → trace `egui_show:done` 観測 →
 # （索引内容を制御できるとき）1 文字クエリを注入して `egui_results:show` 観測 → Escape 注入 →
@@ -51,7 +51,7 @@ param(
 #   最大 350ms 遅延するため）。Alt を含まない hotkey（例 Ctrl+K）では無関係。
 # - -SeedConfig（CI 用）: config.toml 不在時のみ最小の有効 TOML を seed し first-run 経路
 #   （snotra-settings --first-run の spawn がフォーカスを奪う）を回避する。既存 config は決して上書きしない。
-#   seed できたときは results 被覆用の索引対象も 1 件同梱する（-ResultsQuery 既定の導出元）。
+#   seed できたときは results 検証用の索引対象も 1 件同梱する（-ResultsQuery 既定の導出元）。
 # - WebView2/フロントエンドは #532 SU7 で撤去済みで、egui が唯一の UI 経路（env による経路選択は無い）。
 
 Set-StrictMode -Version Latest
@@ -67,7 +67,7 @@ if ($SeedConfig) {
   $cfgPath = Join-Path $cfgDir "config.toml"
   if (-not (Test-Path $cfgPath)) {
     New-Item -ItemType Directory -Force -Path $cfgDir | Out-Null
-    # results 窓の被覆用に、索引に必ず 1 件載るダミーを置く（中身は問わない——indexer は
+    # results 窓の検証用に、索引に必ず 1 件載るダミーを置く（中身は問わない——indexer は
     # 拡張子だけで判定する: snotra-core/src/indexer.rs の matches_extension）。
     # 名前は既存の索引と衝突しにくい接頭辞にし、-ResultsQuery 既定の "z" で引けるようにする。
     $scanDir = Join-Path $env:TEMP "snotra_smoke_scan"
@@ -111,7 +111,7 @@ if ([string]::IsNullOrEmpty($ResultsQuery) -and $seededNow) {
   $ResultsQuery = "z"
 }
 
-# results 被覆が skip されるなら、ここで落とす（#686）。
+# results の検証が skip されるなら、ここで落とす（#686）。
 #
 # **skip へ至る経路のうち沈黙するのはこの 1 本だけである**——他は必ず exit≠0 で鳴る:
 # 実行ファイル不在 / `hotkey:registered` 未観測 / `egui_show:done` 未観測 / `egui_results:show`
@@ -364,7 +364,7 @@ try {
     $failures += "egui_show:done not observed within ${ObserveTimeoutMs}ms x2 after hotkey ($vksLabel, $hotkeySource)"
   }
 
-  # results 窓の被覆（#671/#673 サイクル PR A）。索引内容を制御できるときだけ実行する。
+  # results 窓の検証（#671/#673 サイクル PR A）。索引内容を制御できるときだけ実行する。
   $resultsChecked = $false
   if ($failures.Count -eq 0 -and -not [string]::IsNullOrEmpty($ResultsQuery)) {
     $resultsChecked = $true

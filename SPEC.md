@@ -90,7 +90,8 @@
 - フォルダ -> フォルダアイコン
 - 表示/非表示は設定で切替可能
 - UI への受け渡しは worker スレッドの `commands::load_icon_pngs` → ColorImage decode → `load_texture`（`egui_shell/icon_textures.rs`・#532 SU4）
-- アイコン非表示時はスロットを畳み、データなし時は単色の drawn placeholder を描く（softbuffer + 単一 TTF で色 emoji が描けない懸念のため。jp_font が 📁📄 を描けると視覚スモークで確認できたら emoji へ upgrade 検討・#532 SU4）
+- アイコン非表示時はスロットを畳み、データなし時は単色の drawn placeholder を描く（softbuffer + 単一 TTF で色 emoji が描けない懸念のため・#532 SU4）
+  - emoji への upgrade を検討する場合、**「jp_font が 📁📄 を描けるか」を前提にできない**（#689）: Yu Gothic フォールバックは条件付きになり、ユーザーフォントが CJK を被覆する構成では積まれない。判定に使うのは実際にその環境で先頭に来るフォントであって、jp_font ではない
 - インデックス再構築時はキャッシュをクリア（次回検索時に再抽出）
 - `icons.bin` は起動時に先読みせず、初回アイコン取得時に遅延ロード
 - 件数上限を超えると挿入順で最古から退避（FIFO）し、常駐メモリと `icons.bin` の両方を頭打ちにする。退避は書き込み経路（挿入・ロード）でのみ行い、取得（`get`）はアクセス順を更新しない。上限は独立した設定キーを持たず、表示ワーキングセット `max(visible_rows, result_limit, recent_limit)`（アイコンを要求しうる結果リストの最大件数＝フロント先読み・`LruIconCache` サイズ）の定数倍（実装は ×5、既定 200×5=1000）として導出する。これにより「上限 ≥ ワーキングセット」を検証なしで構造的に保証し、単一の `get_icons_batch` が自己 evict することはなく、`result_limit` 変更時は上限も自動追従する
@@ -514,7 +515,8 @@ stateDiagram-v2
 - 設定保存時に `document.documentElement.style.setProperty()` で即時反映
 - 検索結果は 2 行表示: 上段 = 表示名（`font_size`・末尾省略）、下段 = フルパス（`font_size × 0.78`・左寄せ・幅超過時のみ中間省略）（#646）
   - フォルダは末尾 `\` で区別
-- font_family は fontdb 解決で「ユーザーフォント優先 + Yu Gothic フォールバック」。既定 Segoe UI は混在行のベースライン整列を実測確認済み。ただし egui はフォント単位の粗い縦位置補正しか持たないため、非 MS フォント選択時は混在行でベースラインがずれうる（視覚スモークでのみ顕在化する受容残余・#532 SU4）
+- font_family は fontdb 解決で「ユーザーフォント優先 + Yu Gothic フォールバック」。ただし**フォールバックは条件付き**で、ユーザーフォント自身が CJK を被覆するなら Yu Gothic を積まない（#689）。被覆判定は cmap 実測（かな + JIS 第1・第2水準の標本）で、**UI 言語とは独立**である——検索結果はファイル名ゆえ、English UI でも日本語を含みうるため。標本外の文字が被覆漏れなら豆腐（□）になるのが受容残余（判定は「厳しすぎて Yu Gothic を残す」安全側へ倒してある）。被覆する場合の描画は不変（egui は family 先頭から glyph を持つフォントを選ぶため、元から Yu Gothic は使われていない）
+- 既定 Segoe UI は混在行のベースライン整列を実測確認済み。ただし egui はフォント単位の粗い縦位置補正しか持たないため、非 MS フォント選択時は混在行でベースラインがずれうる（視覚スモークでのみ顕在化する受容残余・#532 SU4）
 - 検索入力欄は `font_size` に追従し hint は `hint_text_color` で描かれる。検索バー高さは `font_size + bar_padding`（既定 15+28=43px）、結果行高は `font_size + path行 + row_padding + 4`（下限 24px）。`row_padding` / `bar_padding` は `[visual]` の config キー（既定 6 / 28・#646）。極端な `font_size` では入力欄がバー内に収まらない（#643・#532 SU6.5）
 - 検索窓（`main`）と結果窓（`results`）は `window_gap`（既定 4px・`[visual]` の config キー・live-read）だけ離して配置し、両窓に DWM 角丸（`DWMWA_WINDOW_CORNER_PREFERENCE` = `DWMWCP_ROUND`）を適用する。Windows 11（build 22000+）でのみ有効な best-effort で、Windows 10 では角丸なしの矩形のまま残る（#646 PR2 決定4）
 

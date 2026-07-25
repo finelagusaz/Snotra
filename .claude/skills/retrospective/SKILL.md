@@ -62,7 +62,7 @@ Step 2 で抽出した構造的パターンのうち、今後のサイクルで�
 2. **特定ファイル/パスを触ると効くか** → `.claude/rules/<X>.md`（対象を読むと自動配送される）。既存 rule の `paths:` に該当するなら本文へ追記、しなければ新設（新設時はカナリア要否を判断）
 3. **特定の局面・作業で効くか** → 該当スキル（`/symmetric-check`・`/plan-review`・`/state-check`・`/cache-check`・`/persistence-check`・`/dry-check`・`/race-check` 等）の本文へ。`AGENTS.md` には「条件別チェック」表に「トリガー → 参照先」の 1 行だけ足す（本文の SSOT は skill 側）
 4. **汎用の設計・デバッグ原則か** → `docs/development-principles.md`
-5. **モジュール固有** → 各サブディレクトリ `CLAUDE.md`（`src-tauri/`・`snotra-core/`・`snotra-settings/`・`snotra-egui-runtime/`・`snotra-egui-mvp/`）／**Claude Code 固有**（コミュニケーション原則・スキル表・委譲/worktree 運用） → ルート `CLAUDE.md`
+5. **モジュール固有** → 各サブディレクトリ `CLAUDE.md`（`src-tauri/`・`snotra-core/`・`snotra-settings/`・`snotra-egui-runtime/`）／**Claude Code 固有**（コミュニケーション原則・スキル表・委譲/worktree 運用） → ルート `CLAUDE.md`
 6. **どのトリガーにも紐付かない、書く・判断するたびに効く横断原則だけ** → `AGENTS.md`「検証の作法」コア。**ここだけが常時ロードに値する**
 
 **検収条件**: `AGENTS.md` が重くなる方向の変更は smell として扱う。**ドキュメントが軽くなることを設計改善の検収条件とする**（構造が規則を吸収したら対応するチェックリストは削除する）。既存ルール・既存のトリガーで包含できるなら追記しない。同じ教訓の本文を 2 箇所に書かない——`AGENTS.md` はポインタ、本文はトリガーに紐づく文書に 1 つ（ドリフト防止）。

@@ -246,6 +246,7 @@ jp_font は元から `from_static` だったが user_font だけ `from_owned` �
 - フォルダ列挙のホットパス確認には bench フィルタを絞る: `cargo test -p snotra-core bench_folder_ -- --ignored --nocapture`（SSOT の bench コマンドに対するフィルタ違いとして個別記載）
 - `bench_folder_narrow_filter` は「大量エントリ + 狭いフィルタ」で、非一致エントリに不要な文字列化や属性判定をしていないかを確認する
 - `bench_folder_hidden_filter_all` は `show_hidden_system = false` 相当で、`metadata()` を伴う属性判定コスト込みの回帰を確認する
+- **warm frame は日をまたいで比較しない**——同一ホスト・同一バイナリでも日によって 3 倍変わる。構成 A / B の比較は必ず**同日・同条件で両方を測る**（#532 Phase 1 の検証バイナリで実測: 2026-07-17 に 26-30ms、7/14 は 8-10ms。変動の原因は未解明ゆえ、日をまたいだ数値の差を改善・退行と読んではならない）
 
 ## 計測ベースライン（2026-03-06）
 

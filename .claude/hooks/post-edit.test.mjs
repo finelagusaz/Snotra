@@ -101,14 +101,10 @@ describe("selectChecks", () => {
     expect(selectChecks("snotra-core/src/lib.rs")).toEqual(["clippy", "core-test"]);
   });
 
-  it("egui MVP の .rs は各 crate のテストへ振り分ける", () => {
+  it("egui 接着層の .rs は egui-runtime-test へ振り分ける", () => {
     expect(selectChecks("snotra-egui-runtime/src/lib.rs")).toEqual([
       "clippy",
       "egui-runtime-test",
-    ]);
-    expect(selectChecks("snotra-egui-mvp/src/main.rs")).toEqual([
-      "clippy",
-      "egui-mvp-test",
     ]);
     expect(selectChecks("snotra-egui-runtime/README.md")).toEqual([]);
   });
@@ -599,7 +595,6 @@ describe("Cargo.toml members ドリフト検出カナリア — #500", () => {
       "members が変わった。selectChecks の接頭辞・buildCommand の test case・ci.yml・docs/build-commands.md を更新すること",
     ).toEqual([
       "snotra-core",
-      "snotra-egui-mvp",
       "snotra-egui-runtime",
       "src-tauri",
       "snotra-settings",
@@ -610,11 +605,11 @@ describe("Cargo.toml members ドリフト検出カナリア — #500", () => {
 describe("BUDGETS 完全性カナリア", () => {
   // 出力予算は検査が**失敗したときだけ**読まれる。エントリ漏れは全検査が緑の間は
   // 沈黙し、最初の失敗時に hook 自体が TypeError で落ちて診断が届かなくなる
-  // （egui-mvp-test / egui-runtime-test 追加時に実際に起きた）。
+  // （egui-mvp-test / egui-runtime-test 追加時に実際に起きた。前者の id は #660 の
+  // snotra-egui-mvp 撤去で消滅したが、事故の記録として残す）。
   // selectChecks の全分岐を踏む代表パスで、発行されうる id 全部に予算があることを固定する。
   const REPRESENTATIVE_EDITS = [
     "snotra-core/src/lib.rs",
-    "snotra-egui-mvp/src/main.rs",
     "snotra-egui-runtime/src/lib.rs",
     "snotra-settings/src/main.rs",
     "src-tauri/src/main.rs",

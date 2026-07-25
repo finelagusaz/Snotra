@@ -35,7 +35,6 @@ const PER_CHECK_TIMEOUT_MS = 300_000;
 export const BUDGETS = {
   clippy: { lines: 20, from: "head" },
   "core-test": { lines: 5, from: "tail" },
-  "egui-mvp-test": { lines: 8, from: "tail" },
   "egui-runtime-test": { lines: 8, from: "tail" },
   "settings-test": { lines: 8, from: "tail" },
   "tauri-test": { lines: 8, from: "tail" },
@@ -112,7 +111,6 @@ export function selectChecks(rel) {
 
   if (isRust) checks.push("clippy");
   if (isRust && rel.startsWith("snotra-core/")) checks.push("core-test");
-  if (isRust && rel.startsWith("snotra-egui-mvp/")) checks.push("egui-mvp-test");
   if (isRust && rel.startsWith("snotra-egui-runtime/")) checks.push("egui-runtime-test");
   if (isRust && rel.startsWith("snotra-settings/")) checks.push("settings-test");
   if (isRust && rel.startsWith("src-tauri/")) checks.push("tauri-test");
@@ -272,8 +270,6 @@ function buildCommand(id, root) {
     // すると編集していない crate のテストまで走り、hook の即時性が失われる。
     case "core-test":
       return cargoSpec(["test", "-p", "snotra-core"]);
-    case "egui-mvp-test":
-      return cargoSpec(["test", "-p", "snotra-egui-mvp"]);
     case "egui-runtime-test":
       return cargoSpec(["test", "-p", "snotra-egui-runtime"]);
     case "settings-test":

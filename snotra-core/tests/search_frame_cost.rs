@@ -7,10 +7,9 @@
 //! タイミング測定は CI 共有ランナーで不安定なため `#[ignore]`。手元で release 実行する:
 //! `cargo test -p snotra-core --release --test search_frame_cost -- --ignored --nocapture`
 //!
-//! 合成インデックスの生成規則はスパイク（`snotra-egui-mvp` の
-//! `build_verification_engine`）と同系: 実在風の固定 6 件 + 連番エントリ + 履歴
-//! ブースト 5 件。CJK クエリも規模に比例させるため、連番の 1/8 を日本語名にする
-//! （スパイクからの意図的拡張）。
+//! 合成インデックスの生成規則は #532 Phase 1 スパイクの検証 Engine（#660 で撤去）と
+//! 同系: 実在風の固定 6 件 + 連番エントリ + 履歴ブースト 5 件。CJK クエリも規模に
+//! 比例させるため、連番の 1/8 を日本語名にする（スパイクからの意図的拡張）。
 //!
 //! `src/search/tests/performance.rs` の `bench_search` とは測る層が異なる（重複でない）:
 //! あちらは `SearchEngine::search`（下層 API・固定 limit 10・空履歴・Fuzzy 固定）の

@@ -3,7 +3,8 @@
 //! spec 決定 5）。クリックは ResultsShared.clicked へ積んで main を wake する（遅延 dispatch）。
 //! 窓の可視性・サイズ・位置の driver は main 側（hidden 窓は update() が走らないため）。
 //! hide は外部（`hide_egui_main` / main の `drive_results_window`）が所有する。runtime に
-//! view 側から hide する API は無い（`RuntimeFrame::hide_window` は #671 サイクル PR A で削除）。
+//! view 側から hide する API は無い（`RuntimeFrame::hide_window` は #671 サイクル PR A で削除。
+//! 対称の `close_window` も #660 の `snotra-egui-mvp` 撤去に伴い削除）。
 
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, Sender, channel};

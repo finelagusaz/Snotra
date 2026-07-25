@@ -14,16 +14,15 @@
 cargo check --workspace                                                                # 必須: Rust 全 crate 型チェック
 cargo clippy --workspace --all-targets -- -D warnings                                 # 必須: lint（全 .rs 変更、テストターゲット含む）
 cargo test -p snotra-core                                                              # 必須（snotra-core を変更した場合）: 純ロジック層 TDD
-cargo test -p snotra-egui-runtime                                                      # 必須（snotra-egui-runtime を変更した場合）: 入力・IME・Surface/Device復旧方針
-cargo test -p snotra-egui-mvp                                                          # 必須（snotra-egui-mvp を変更した場合）: Engine・Updaterモード・jp_fontベースライン
+cargo test -p snotra-egui-runtime                                                      # 必須（snotra-egui-runtime を変更した場合）: 入力・IME・Surface の描画失敗リトライ方針
 cargo test -p snotra                                                                   # 必須（src-tauri を変更した場合）: Tauri 統合層のユニットテスト
 cargo test -p snotra-settings                                                          # 必須（snotra-settings を変更した場合）: 設定 GUI の純ロジックテスト
 cargo doc --workspace --no-deps --document-private-items                               # 必須: intra-doc link 切れ検査（#562・CI 発火／hook 非発火）
 ```
 
-- **`cargo test` の必須/任意**: 変更した crate のテストはローカル**必須**（PostToolUse フックが自動実行）。変更していない crate のテストはローカル任意（CI の rust-check が PR で全 5 crate のテストを常に実行し担保）
-- 上記のコマンドはいずれも CI（`ci.yml` rust-check）で PR 自動実行される（「CI/CD メモ」の対応表参照）。PostToolUse フック（`.claude/hooks/post-edit.mjs`）も `*.rs` 編集で clippy、`snotra-core/**` / `snotra-egui-runtime/**` / `snotra-egui-mvp/**` / `src-tauri/**` / `snotra-settings/**` 編集でその crate のテストを自動発火する。`Cargo.toml` の編集では `cargo check` を自動発火する（ルートの `Cargo.toml` ではさらに hook-selftest = members カナリア）
-- **`check` / `clippy` は `--workspace` を使う**（#500）。crate 名を `-p` で列挙すると `Cargo.toml` の `members` の写しになり、6 つ目の crate を追加したとき hook・CI・本ファイルが同じ誤りを共有して気づかれないまま漏れる。`--workspace` は cargo に SSOT を読ませる。一方 `cargo test -p <crate>` は「編集した crate → そのテスト」の写像なので `-p` のまま残す（`--workspace` にすると編集していない crate のテストまで走る）
+- **`cargo test` の必須/任意**: 変更した crate のテストはローカル**必須**（PostToolUse フックが自動実行）。変更していない crate のテストはローカル任意（CI の rust-check が PR で全 4 crate のテストを常に実行し担保）
+- 上記のコマンドはいずれも CI（`ci.yml` rust-check）で PR 自動実行される（「CI/CD メモ」の対応表参照）。PostToolUse フック（`.claude/hooks/post-edit.mjs`）も `*.rs` 編集で clippy、`snotra-core/**` / `snotra-egui-runtime/**` / `src-tauri/**` / `snotra-settings/**` 編集でその crate のテストを自動発火する。`Cargo.toml` の編集では `cargo check` を自動発火する（ルートの `Cargo.toml` ではさらに hook-selftest = members カナリア）
+- **`check` / `clippy` は `--workspace` を使う**（#500）。crate 名を `-p` で列挙すると `Cargo.toml` の `members` の写しになり、5 つ目の crate を追加したとき hook・CI・本ファイルが同じ誤りを共有して気づかれないまま漏れる。`--workspace` は cargo に SSOT を読ませる。一方 `cargo test -p <crate>` は「編集した crate → そのテスト」の写像なので `-p` のまま残す（`--workspace` にすると編集していない crate のテストまで走る）
 - **`cargo doc` は CI（rust-check）でのみ発火し、PostToolUse フックは発火しない**（#562・編集レイテンシ回避の設計判断）。deny 化は各 crate の `[lints] workspace = true`（`Cargo.toml`）→ root `[workspace.lints.rustdoc]`（`broken_intra_doc_links` / `invalid_html_tags`）で、既定 warn の素通りを塞ぐ。**沈黙は合格を意味しない**（hook 対象外）ため、doc コメント（`///` / `//!`）を触ったらローカルで上記コマンドを手動実行してリンク切れを確認する
 - **フックの検査コマンドと本ファイルの整合規約**: フックの cargo コマンドは、**カテゴリ A のコードブロック**の記載と**合否・検査対象を変えるフラグにおいて一致**させる（`--lib` の付与・`-p` の欠落等を乖離とする）。**出力整形のみのフラグ**（`--message-format short` 等、exit code を変えないもの）は hook 側の証拠予算のための追加として許容する。npm 系検査は SSOT コマンド（`npm test`）の部分集合ラッパー（対象ディレクトリ限定の vitest 実行）を許容する。コマンドの実在は `npm run governance:check`（G5）が、cargo フラグの乖離は同（G9・#589）が検知する。npm 系ラッパーの等価判断のみ `/health-check`（Check 5 残置部分）に残る
 - **検査が割り当てられているファイルでは、フックの沈黙は合格を意味する**（#471・前提条件は #497）。検出は exit code で行い、成功した検査は何も出力しない。失敗時のみ再現コマンド付きで会話に届くため、そのコマンドを実行すれば全診断を見られる。**割り当ての無いファイル**（`*.md`・`scripts/`・`.github/workflows/` 等）の沈黙は「何も走らなかった」であり合格ではない。割り当ての SSOT は `post-edit.mjs` の `selectChecks` である
@@ -49,7 +48,7 @@ npm run smoke:egui       # 必須: egui show/hide スモーク（hotkey 注入 +
 
 `cargo run -p snotra` で起動し、目視で overflow／clipping／フォントレンダリングを確認する。PR 作成前に必須。
 
-- **既定が egui（#532 SU7 flip 済み・env フラグ不要）**。`snotra-egui-mvp`（下記「その他」の単独起動）は **Phase 1 の技術スパイクで SU 実装を一切含まない**ため、起動しても製品の egui 変更（アイコン・テーマ・行視覚等）は映らない。`cargo run`（`-p` 欠落）はワークスペースの別 bin を起動しうるので必ず `-p snotra` を付ける
+- **既定が egui（#532 SU7 flip 済み・env フラグ不要）**。`cargo run`（`-p` 欠落）は**ルートでは bin を決められずエラーになり**（`snotra` / `snotra-settings` の 2 本。実測: `error: cargo run could not determine which binary to run`）、cwd が crate 配下ならその crate の bin が起動する。必ず `-p snotra` を付ける
 
 ### E. git hook（`.githooks/**`）を変更した場合
 
@@ -83,8 +82,7 @@ npm run clean:worktrees          # Agent 委譲で残った worktree/ブラン�
 ```bash
 npm ci                           # 依存インストール（初回セットアップ・CI）
 cargo test -p snotra-core        # ユニットテスト（純ロジック層）
-cargo test -p snotra-egui-runtime # ユニットテスト（egui入力・IME・Surface/Device復旧方針）
-cargo test -p snotra-egui-mvp    # MVPのEngine・Updaterモード・jp_fontベースライン
+cargo test -p snotra-egui-runtime # ユニットテスト（egui入力・IME・Surface の描画失敗リトライ方針）
 cargo test -p snotra             # ユニットテスト（Tauri 統合層: state/indexing/config_watcher 等）
 cargo test -p snotra-settings    # ユニットテスト（設定 GUI の純ロジック: font face 検証・TOML エラーローカライズ）
 cargo test --release -p snotra-core bench_ -- --ignored --nocapture  # 検索パフォーマンス計測（詳細: PERFORMANCE.md）
@@ -92,7 +90,6 @@ cargo test --release -p snotra-core --test memory_footprint -- --ignored --nocap
 cargo check --workspace          # Rust 全 crate 型チェック
 cargo clippy --workspace --all-targets -- -D warnings  # lint チェック（カテゴリ A と同じ）
 cargo run -p snotra-settings     # snotra-settings（egui ネイティブ設定 GUI）の単独起動
-cargo run -p snotra-egui-mvp     # Issue #532 egui MVP（WebViewなし・非配布の Phase 1 スパイク・SU 実装は含まない）
 cargo run -p snotra              # 製品メインウィンドウ（egui 既定・#532 SU7 flip 済み。視覚スモークはこれ）
 npm run verify                   # Rust + node 一括検証（cargo check --workspace + npm test）
 npm run smoke:startup             # 起動時スモーク（trace の *:error 不在検証）
@@ -125,7 +122,7 @@ npm run tauri build              # リリースビルド（NSIS バンドル。`
 | 検証コマンド | workflow | トリガー |
 |---|---|---|
 | `npm test`（Vitest: hooks/githooks/scripts） | `ci.yml`（node-check=ubuntu / rust-check=windows） | PR 自動（`skip-ci` は下記ノート参照） |
-| `cargo check` / `cargo test -p snotra-core` / `cargo test -p snotra-egui-runtime` / `cargo test -p snotra-egui-mvp` / `cargo test -p snotra` / `cargo test -p snotra-settings` / `cargo clippy` | `ci.yml`（rust-check） | PR 自動 |
+| `cargo check` / `cargo test -p snotra-core` / `cargo test -p snotra-egui-runtime` / `cargo test -p snotra` / `cargo test -p snotra-settings` / `cargo clippy` | `ci.yml`（rust-check） | PR 自動 |
 | `cargo doc --workspace --no-deps --document-private-items`（#562・intra-doc link 検査） | `ci.yml`（rust-check） | PR 自動 |
 | `npm run governance:check`（#587・ガバナンス文書検査） | `ci.yml`（governance-check） | PR 自動（**`skip-ci` 非対象** — if ガードを持たず常時実行） |
 | `npm run smoke:startup`（注） | `e2e.yml`（smoke-egui job） | 対象 paths を含む PR（自動）/ 手動 dispatch |

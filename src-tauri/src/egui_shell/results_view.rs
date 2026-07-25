@@ -117,8 +117,17 @@ impl ResultsView {
     /// へ積み、drain（Loaded/Missing）で remove する。wanted が空なら insert も spawn もしない。
     /// Task 5 で view.rs から移設し、入力を `self.state.results()` から `snapshot.rows` へ変更した
     /// （本 view は snapshot を描くだけで検索状態を持たないため）。
-    fn request_icons_for_results(&mut self, rows: &[SearchResult], ctx: &egui::Context) {
-        if !show_icons(&self.app_handle) {
+    fn request_icons_for_results(
+        &mut self,
+        rows: &[SearchResult],
+        show_icons: bool,
+        ctx: &egui::Context,
+    ) {
+        // #673 spec 決定 4: **ここで config を読み直さない。** 呼び出し側（update()）が
+        // フレーム冒頭で読んだ値を渡す——同一フレーム内で 2 度読むと、間に config_watcher の
+        // 適用が挟まったとき「アイコンを積むかどうか」と「アイコン枠を描くかどうか」が
+        // 食い違う（枠は描いたのに抽出は走らない、の 1 フレーム）。
+        if !show_icons {
             return;
         }
         let mut wanted: Vec<String> = Vec::new();
@@ -478,7 +487,7 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         // icon worker を積まない・perf 最適化）の後継（#532 SU4 の系譜）。main の search_debounce は
         // ResultsView から参照できないため、live 値を snapshot 経由で運ぶ（Task 5 concern 2 の fix）。
         if snapshot.settled {
-            self.request_icons_for_results(&snapshot.rows, &icon_ctx);
+            self.request_icons_for_results(&snapshot.rows, show_icons, &icon_ctx);
         }
         // クリック逆流(決定 5): 共有スロットへ積み、main を起こして起動処理させる。
         // ToastAction と同じ遅延 dispatch 型——起動ロジックは main の一箇所に保つ。

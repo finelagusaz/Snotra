@@ -49,6 +49,10 @@ opt-level = "s"
 
 ## アイドルメモリ（working set）の削減（2026-06-01〜02 計測）
 
+> **この節は WebView2 期の記録である（#532 SU7 でフロント撤去済み）。** 現行構成のプロセスツリーは
+> **1 件**（webview2 子孫はゼロ）で、数値・内訳とも現行には当てはまらない。現行の実測は
+> 「egui 期のメモリ実測」節を参照。`EmptyWorkingSet` の採用判断（下記）だけは現行でも生きている。
+
 ランチャーは 99% 非表示常駐のため、アイドル時の物理メモリ（working set / private RSS）の最小化が重要。installed release ビルド（32GB/SSD 機）で WebView2 プロセスツリー（main + webview2 子孫 計 7 プロセス）を実機計測した。
 
 ### 実態（Private Working Set = プロセス固有の物理 RAM）
@@ -107,6 +111,55 @@ trace 計装（`suspend:call_returned` / `suspend:completed`）で、`TrySuspend
 - **tokio / rayon の worker スレッド削減**: Rust 本体は Tauri 既定の multi-thread tokio（worker = CPU コア数）+ rayon プールで ~50 スレッドを抱えるが、スレッドスタックは計 2.17MB（committed 42.8MB の 5%）に過ぎず、worker を絞っても RSS 削減は <1MB で**無意味**。30MB の大半はヒープ/フレームワーク baseline
 - **`--disable-gpu --disable-gpu-compositing`**: GPU プロセスは消えない（in-process ソフト合成に切替）が Private 18→6MB・合計 110→99MB。ただしブラウザフラグは Microsoft 非サポート（ランタイム更新で挙動変化）＋ CPU 合成化で描画レイテンシ未検証。限界効用は `EmptyWorkingSet`（~107MB）に対し桁違いに小さく見送り
 - **アイコン PNG 圧縮強化（issue #335）**: 16×16 アイコンで実測 ~0.06MB と桁違いに小さく却下（詳細は #335）
+
+## egui 期のメモリ実測（2026-07-25 計測）
+
+`#532 SU7` 後の構成（単一プロセス・WebView2 なし）を release ビルドで実機計測した。
+計測ハーネスは `snotra-core/tests/memory_footprint.rs`（アロケータ計数・実行コマンドは
+`docs/build-commands.md`）と `scripts/measure-memory.ps1`。
+
+### 軸の取り違えに注意 — PrivWS は trim 後の値である
+
+hide 経路の `EmptyWorkingSet`（`src-tauri/src/working_set.rs`）は物理ページをほぼ完全に返す。
+**非表示アイドルの PrivWS は 2.3 MiB** で、ここに削る余地は無い。一方 PrivComm は trim で
+**動かない**（97.1 → 97.1）。ゆえに**ヒープ調律の軸は PrivComm のみ**であり、PrivWS の
+小ささを「メモリを使っていない」と読んではならない。
+
+### font_family A/B（前景計測・`auto_hide_on_focus_lost = false`）
+
+実運用 config（38,847 エントリ・migemo 有効）での PrivComm。B は `font_family` を
+解決不能名にして user_font 経路だけを落とした変種。
+
+| 段階 | A: `font_family = "HackGen Console"` | B: 解決不能（jp_font 単一） | 差 |
+|---|---:|---:|---:|
+| アイドル（一度も表示せず） | 61.9 MiB | 41.3 MiB | **20.6** |
+| 表示（空クエリ） | 75.1 MiB | 43.8 MiB | **31.3** |
+| 検索実行後 | 97.1 MiB | 56.2 MiB | **40.9** |
+
+- **user_font 経路が最大の単一項目**。窓を一度も出していないアイドル時点で既に 20.6 MiB 効いており、
+  フォント解決が表示より前に走ることを示す
+- 差はファイルサイズ（`HackGenConsole-Regular.ttf` = 10.21 MiB）の約 2 倍。`resolve_font_family` の
+  `data.to_vec()` による複製に加え、egui 側の解析・グリフ実体化が上乗せされる。**内訳は未分離**
+- `JP_FONT_BYTES: OnceLock<Box<[u8]>>` は `YuGothM.ttc`（**13.26 MiB**）を丸ごと保持し**解放経路が無い**。
+  user_font が CJK を被覆する場合（HackGen 等）でも fallback として常駐し続ける
+- 実行間のばらつきは ~4 MiB（別実行のアイドルは 65.9 MiB）。背景再スキャンの進行差による。
+  **1 MiB 単位の差を有意と読まない**
+
+### 索引の常駐（アロケータ実測・38,847 エントリ）
+
+| 指標 | 値 |
+|---|---:|
+| 定常 live | **14.96 MiB**（404 B/entry） |
+| ロード時ピーク | 19.97 MiB（定常の 1.33 倍） |
+| live ブロック数 | 233,430（6.0 blocks/entry） |
+
+- `index.bin` は **6.80 MiB / 38,847 件**。「index は極小（数百 bytes）」という旧記述は
+  WebView2 期の別環境の値で、実運用点とは 4 桁ずれる
+- **`normalized_keys` が 3.05 MiB**（索引の 22%）。`normalize_entry_key` = 小文字化 + `/`→`\` の
+  長さ保存変換ゆえ、on-disk バイト数は `target_path` と完全一致する——原文パスと二重に持っている
+- migemo の限界費用は 10k/38.8k/100k で一貫して **+28.6%**（133 → 171 B/entry）
+- アロケータ実測は `layout.size()` の集計であり、Windows ヒープのブロックヘッダ・
+  サイズクラス丸めを**含まない**。233,430 ブロックゆえ実 RSS はこれより大きい
 
 ## 試みたが機能しない手法
 

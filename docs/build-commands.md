@@ -97,6 +97,7 @@ npm run verify                   # Rust + node 一括検証（cargo check --work
 npm run smoke:startup             # 起動時スモーク（trace の *:error 不在検証）
 npm run smoke:egui                # egui 経路の show/hide スモーク（keybd_event 注入 + trace検証・#532 SU7。既定 ExePath = target/release）
 npm run measure:memory            # メモリ実測（PrivWS 軸・ツリー合算・#532 flip 基準 3）
+npm run measure:memory:stages     # メモリ実測（起動→表示→検索→hide の段階別・前景計測。実行中の snotra を kill する）
 npm run tauri build              # リリースビルド（NSIS バンドル。`prepare:sidecar` で binaries/ を用意してから）
 ```
 

@@ -4759,6 +4759,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "ttf-parser",
  "windows 0.62.2",
 ]
 

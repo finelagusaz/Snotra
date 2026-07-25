@@ -1398,10 +1398,12 @@ impl EguiView for SearchWindowView {
         }
 
         // 検索入力欄。state.query を編集し、変化があれば debounce leading で同期検索。
-        // 構築中かつ空クエリなら hint を案内文へ差し替える（§4.7）。egui の hint は入力が空の
-        // ときだけ描かれるため、indexing+空クエリの条件と一致する——window は bar_height のまま
-        // （show_results=false）で、案内はバー内に収まり見える（旧: 別 label はバー下に描かれ
-        // クリップされ不可視だった）。
+        //
+        // **hint は indexing で差し替えない**（#700）。かつては「構築中かつ空クエリなら hint を
+        // 案内文へ差し替える」形で、非空クエリのときだけ別の描画面（重ね描き overlay）が担って
+        // いた。#700 発見 C で overlay を status 行へ移した結果、この 2 面構成が「1 文字目で案内が
+        // 入力欄から下の行へ飛ぶ」動きとして可視化された（実機で観測）。案内の描画面は status 行に
+        // 一本化し、hint は本来のプレースホルダへ戻す——**同じ情報に描画面を 2 つ持たない**。
         let in_tool = self.state.view_kind() == ViewKind::Tool;
         let in_folder = self.state.view_kind() == ViewKind::Folder;
         // 入力欄が編集可能か（§18.5 ツール選択中・spec 決定 3/4 の launching 中は無効）。
@@ -1416,8 +1418,6 @@ impl EguiView for SearchWindowView {
             // SolidJS placeholder.tool_select parity（egui の hint は buf が空のときだけ描かれる＝
             // HTML placeholder と同条件。表示されるのは対象パスが区切り終端等でファイル名が空のとき）
             crate::egui_shell::ui_strings::tool_select_hint(l)
-        } else if !in_folder && self.indexing() && self.state.query().trim().is_empty() {
-            crate::egui_shell::ui_strings::indexing_hint(l)
         } else {
             crate::egui_shell::ui_strings::search_hint(l)
         };
@@ -1524,7 +1524,6 @@ impl EguiView for SearchWindowView {
         // 消えるため overlay が唯一の案内（spec 追補 1・ladder は overlay_kind に抽出しテスト固定）。
         let overlay_text: Option<String> = match crate::egui_shell::overlay_kind(
             self.indexing() && self.state.view_kind() == ViewKind::Results,
-            self.state.query().trim().is_empty(),
             self.launching.is_some(),
             self.notice.message().is_some(),
         ) {

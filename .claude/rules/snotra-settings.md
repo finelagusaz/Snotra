@@ -14,3 +14,7 @@ paths:
 - フレームごとの重い処理（`list_system_fonts()` 等は `new()` で 1 度キャッシュ）: 「フレームごとの重い処理を避ける」
 - `PickerState.active = false` の戻し（キャンセル・成功の両パス・`poll()` に集約）: 「非同期ファイルピッカーパターン」
 - opener ターゲット変更は remove → add（`OpenerRule.target` を直接書き換えない）: 「開発ルール」
+
+## トリガー → 検査
+
+- worker spawn・共有スロット（`PickerState` 等）・フレーム内 live-read を追加/変更したら: `/race-check`（述語の SSOT は `AGENTS.md`「条件別チェック」表）

@@ -185,9 +185,8 @@ pub(crate) struct SearchWindowView {
     notice: crate::egui_shell::NoticeSlot,
     /// notice の単調時刻基準（view 生成時に固定・Instant 差分を Duration で渡す）。
     notice_base: Instant,
-    /// results 窓の直近可視状態（drive_results_window のデルタガード・#646 PR2 決定 6）。
-    last_results_visible: bool,
-    /// results 窓の直近設定高さ（デルタガード）。
+    /// results 窓の直近設定高さ（デルタガード）。**可視フラグは `ResultsWindow` が持つ**——
+    /// こちらは冗長な `set_size` を避ける性能上のガードであり概念が別（#671 spec 決定 2）。
     last_results_height: f64,
     /// results 窓の直近設定幅（デルタガード）。**`last_set_width`（main 用）を流用しない**——
     /// 同一フレーム内で main のブロックが先に `last_set_width` を更新済みのため、それと
@@ -219,7 +218,6 @@ impl SearchWindowView {
             last_seen_index_generation: 0,
             notice: crate::egui_shell::NoticeSlot::default(),
             notice_base: Instant::now(),
-            last_results_visible: false,
             last_results_height: 0.0,
             last_results_width: 0.0,
         }
@@ -697,7 +695,10 @@ impl SearchWindowView {
         width: f64,
         metrics: &crate::egui_shell::layout::Metrics,
     ) {
-        let Some(results) = self.app_handle.get_window("results") else {
+        let Some(results) = self
+            .app_handle
+            .try_state::<crate::egui_shell::ResultsWindow>()
+        else {
             return;
         };
         let count = self.state.results().len();
@@ -708,13 +709,11 @@ impl SearchWindowView {
         );
         let visible = show_results && res_h > 0.0;
         if !visible {
-            if self.last_results_visible {
-                crate::egui_shell::hide_results(&results);
-                // trace は 3 つの生 Win32 関数の**内側ではなく呼び出し側**に置く（spec 決定 7）——
-                // PR A′ がその 3 関数を ResultsWindow の method へ移すため、内側に書くと
-                // smoke が「1 PR 後に消える関数」から出る event 名を pin することになる。
+            // 可視フラグは ResultsWindow が持つ（#671 PR A′ spec 決定 2）。hide() は遷移した
+            // ときだけ true を返すため、trace は 1 回だけ出る（毎フレーム撃たない）。
+            // trace を型の内側でなく呼び出し側に置く理由は spec 決定 7。
+            if results.hide() {
                 crate::trace_main("egui_results:hide", serde_json::json!({ "from": "drive" }));
-                self.last_results_visible = false;
             }
             return;
         }
@@ -725,16 +724,14 @@ impl SearchWindowView {
         if (res_h - self.last_results_height).abs() > 0.5
             || (width - self.last_results_width).abs() > 0.5
         {
-            let _ = results.set_size(tauri::LogicalSize::new(width, res_h));
+            results.set_size(width, res_h);
             self.last_results_height = res_h;
             self.last_results_width = width;
         }
-        if !self.last_results_visible {
-            // フォーカスを奪わない表示（tauri show() は SW_SHOW で活性化する・#646 PR2）。
-            crate::egui_shell::show_results_no_activate(&results);
-            // 置き場の理由は上の hide 側コメントと同じ（spec 決定 7）。
+        // フォーカスを奪わない表示（tauri show() は SW_SHOW で活性化する・#646 PR2）。
+        // 置き場の理由は上の hide 側コメントと同じ（spec 決定 7）。
+        if results.show() {
             crate::trace_main("egui_results:show", serde_json::json!({ "rows": count }));
-            self.last_results_visible = true;
         }
         crate::egui_shell::wake_results(&self.app_handle);
     }
@@ -1038,11 +1035,12 @@ impl EguiView for SearchWindowView {
             // hide で撃つ事故の backstop・並行性レビュー High）。updater toast は触らない。
             self.launching = None;
             self.notice.clear();
-            // results 窓の drive デルタガードを初期値へ戻す（#646 PR2 決定 6）。hide_egui_main は
-            // results.hide() を直接呼びこのガードを経由しないため、stale なまま（例:
-            // last_results_visible=true）残ると再 show 後の drive_results_window が
-            // 「既に visible」と誤認して results.show() をスキップし続ける事故になる。
-            self.last_results_visible = false;
+            // results 窓の drive **サイズ**デルタガードを初期値へ戻す（#646 PR2 決定 6）。
+            // これは冗長な set_size を避ける性能上のガードであり、可視性のような
+            // correctness のフラグではない（#671 spec 決定 2 の意図的な分割）。0 へ戻すことで
+            // 再 show 後に必ず 1 度は現行 metrics で set_size させる。
+            // 可視フラグはここに無い——`ResultsWindow` が所有し、hide_egui_main と
+            // drive_results_window の 2 経路が同じ型を通るため後始末が要らない（PR A′）。
             self.last_results_height = 0.0;
             self.last_results_width = 0.0;
         }

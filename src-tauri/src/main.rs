@@ -283,7 +283,13 @@ fn main() {
             // 幅の復元は create が window_width で行う（#532 SU7 flip で唯一の経路）。
             // show/hide を跨ぐ共有状態（世代・emit dedup）。view/hotkey/hide が参照するので窓生成前に管理下へ。
             app.manage(egui_shell::EguiShellState::default());
-            egui_shell::create(app, window_width as f64, &bg_color)?;
+            let results_window = egui_shell::create(app, window_width as f64, &bg_color)?;
+            // #671 PR A′: results 窓の所有型を managed state へ（spec 決定 8「A′ の中間形」）。
+            // **listener 登録より前**に置く——hide_egui_main が try_state で引くため、hide が
+            // 起こりうる時点より前に manage されている必要がある。`EguiShellState` の manage
+            // 位置は動かさない（create() の後へ移すのは PR D の担当。register_ctx の撤去と
+            // セットでなければ Option スロットが残る）。
+            app.manage(results_window);
             // view→emit→listener の合流点。**main の** hide を hide_egui_main の 1 経路に集約（codex #7）。
             egui_shell::register_hide_listener(&app_handle);
             // config 変更・indexing 状態変化の wake（SU6 spec 決定 1）。config_watcher 起動

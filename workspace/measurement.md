@@ -59,3 +59,41 @@
 | **C** | `input.rs::take` で `predicted_dt` を設定し、スピンを消す | **2 fps 前後**（点滅そのものは残る） | 点滅・parity は維持。egui 内の `predicted_dt` 利用箇所（アニメーション補間）への影響を要確認 |
 
 C は「点滅を維持したまま増幅だけを消す」ため、A と B の双方を支配しうる。ただし `predicted_dt` は egui のアニメーション補間にも使われるため、**値を決める前に利用箇所を洗う必要がある**（0 が正しいのか、実測フレーム時間が正しいのか）。
+
+## 決定と実装（2026-07-26・C 採用）
+
+`predicted_dt` の利用箇所を egui 0.35 で洗った結果、**0 を渡して安全**と判断した:
+
+| 利用箇所 | 用途 | 0 のときの挙動 |
+|---|---|---|
+| `context.rs:148-151` | `request_repaint_after` の切り詰め | **切り詰めなし＝スピンが消える**（狙い） |
+| `animation_manager.rs:91` / `area.rs:634` | アニメーションの半フレーム先読み（`+ predicted_dt / 2.0`） | 先読みなし。乗算のみ・除算なし |
+| `input_state/mod.rs:379-385` | sleep 明けフレームの `stable_dt` フォールバック | その 1 フレームだけ経過 0。以降はアニメ中＝即時 repaint 要求ゆえ実測 dt が使われる。消費側は `at_most(0.1)` 付きの乗算のみ |
+| `input_state/mod.rs:376` | `time` 未指定時の補完 | 本 runtime は `time` を毎フレーム渡すため不使用 |
+
+実装（いずれも `snotra-egui-runtime`・コミットは分離）:
+
+1. `input.rs::take` で `self.raw.predicted_dt = 0.0`（+ 回帰テスト `take_reports_zero_predicted_dt_so_repaint_delays_are_not_truncated`）
+2. `runtime.rs::handle_platform_output` のカーソル適用を変化検出化（**別欠陥**・下記）
+
+**副作用として全ての遅延予約が最大 16.7ms 遅くなる**（これまでが早すぎた）。影響が読める箇所:
+
+- `view.rs:1305-1321` の blur 猶予 100ms は、これまで実質 83.3ms で起きて `grace_elapsed` が false になりえた。0 にすると 100ms 以降に起きるため**判定が素直に通る**（plan-review が「再要求経路が無い」と指摘した脆さの緩和方向）
+- 検索 debounce 50ms・通知期限・launch timeout 4s はいずれも 16.7ms の遅れが体感・論理に影響しない
+
+## 併発して発見した別欠陥: カーソル形状の点滅（同ブランチで修正）
+
+計測中、**入力欄にマウスを乗せるとカーソルが矢印とビームで高速に切り替わる**とユーザーが報告。原因は #628 とは別:
+
+- tao の `set_cursor_icon` は窓に紐づかない `SetCursor` を直接撃つ（tao 0.35.3 `platform_impl/windows/window.rs:460-466`）。最後に呼んだ者が勝ち、マウス静止中は `WM_SETCURSOR` が来ないので OS の復元も入らない
+- `handle_platform_output` はこれを**毎フレーム無条件**に呼んでいた。ポインタを持つ main（`Text`）と持たない results（`Default`）が交互に上書きし合う
+
+**症状の激しさは #628 のフレームレートに比例するが、根は独立**（C だけでは 2Hz の点滅として残る）。窓ごとに最後に適用した `egui::CursorIcon` を保持し、変化時だけ呼ぶ修正を入れた。
+
+## 再測（Phase 2′）で確認すること
+
+1. main の可視アイドルが **11.5fps → 2fps 前後**（バーストが消え、間隔が 500ms 前後に揃う）
+2. results のフレームが main に比例して減る（`wake_results` 経由）
+3. CPU 5.1% → 1% 前後
+4. **カーソル点滅が止まる**（目視）
+5. 回帰が無いこと: blur→hide が効く・検索の応答・IME 変換・hidden で 0 フレーム

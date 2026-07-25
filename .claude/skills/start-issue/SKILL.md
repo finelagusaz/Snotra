@@ -99,7 +99,7 @@ git checkout -b <branch-name>
 | `/cache-check` | 計画がキャッシュ・インクリメンタル再利用ロジックに触れる |
 | `/persistence-check` | 計画がシリアライズ・on-disk 形式（index.bin / config.toml / history / window.bin）に触れる |
 | `/state-check` | 計画が UI モード・状態遷移・ガード条件に触れる |
-| `/race-check` | 計画が async 関数の追加・変更を含む |
+| `/race-check` | 計画が worker spawn・channel・フレーム drain・Tauri listener・窓をまたぐ共有状態（または async 関数）の追加・変更を含む |
 
 ### 5b. セルフレビュー（plan-review 固有の補完）
 

@@ -70,25 +70,54 @@ function Send-Keys {
     Start-Sleep -Seconds $WaitSeconds
 }
 
+Add-Type -Namespace SnotraMeasure -Name Win32 -MemberDefinition @'
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern int GetWindowThreadProcessId(IntPtr hWnd, out int lpdwProcessId);
+'@
+
+# SendKeys は「前景ウィンドウ」へ届く。Snotra が前景でないまま打鍵すると、キーは
+# 別窓へ流れ、段階 C が「検索していないのに成長ゼロの標本」として**無言で**残る
+# （2 回踏んだ）。打つ前に前景の PID を確かめ、違えば止める——
+# 「測れなかった」と「増えなかった」を区別できない測定器は使えない。
+function Assert-SnotraForeground {
+    param([string]$Stage)
+    $hwnd = [SnotraMeasure.Win32]::GetForegroundWindow()
+    $fgPid = 0
+    [void][SnotraMeasure.Win32]::GetWindowThreadProcessId($hwnd, [ref]$fgPid)
+    $ours = @(Get-Process -Name snotra -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+    if ($ours -notcontains $fgPid) {
+        $who = (Get-Process -Id $fgPid -ErrorAction SilentlyContinue).ProcessName
+        throw "[$Stage] 前景が Snotra ではない（PID $fgPid = $who）。この状態の打鍵は別窓へ流れ、標本が無言で無効になる。"
+    }
+}
+
 Write-Host ''
 Write-Host "########## 段階別メモリ実測: $Label ##########" -ForegroundColor Cyan
 
 Stop-Process -Name snotra -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 
-Start-Process -FilePath $ExePath
-Start-Sleep -Seconds 14      # 索引ロード + 背景再スキャンの収束待ち
-Invoke-Stage 'A. アイドル（一度も表示せず）'
+# **finally で必ず落とす**。段階の途中で throw すると（実際に踏んだ）計測対象が起動したまま
+# 残り、次の `cargo build` が exe を掴まれて「アクセスが拒否されました」で落ちる。
+# 起動したものを片付ける責務は、成功経路だけに置いてはならない。
+try {
+    Start-Process -FilePath $ExePath
+    Start-Sleep -Seconds 14      # 索引ロード + 背景再スキャンの収束待ち
+    Invoke-Stage 'A. アイドル（一度も表示せず）'
 
-Send-Keys '^k' 4             # ホットキーで表示（config の [hotkey] に合わせて要調整）
-Invoke-Stage 'B. 表示（空クエリ）'
+    Send-Keys '^k' 4             # ホットキーで表示（config の [hotkey] に合わせて要調整）
+    Assert-SnotraForeground 'B'  # ここで前景を取れていないと以後の打鍵が全部無駄になる
+    Invoke-Stage 'B. 表示（空クエリ）'
 
-Send-Keys $Query 6           # 検索 + アイコン抽出・テクスチャ化の収束待ち
-Invoke-Stage "C. 検索実行後（query=$Query）"
+    Assert-SnotraForeground 'C'
+    Send-Keys $Query 6           # 検索 + アイコン抽出・テクスチャ化の収束待ち
+    Invoke-Stage "C. 検索実行後（query=$Query）"
 
-Send-Keys '{ESC}' 5          # hide → EmptyWorkingSet trim
-Invoke-Stage 'D. hide 後（trim 済み）'
-
-Stop-Process -Name snotra -Force -ErrorAction SilentlyContinue
+    Send-Keys '{ESC}' 5          # hide → EmptyWorkingSet trim
+    Invoke-Stage 'D. hide 後（trim 済み）'
+}
+finally {
+    Stop-Process -Name snotra -Force -ErrorAction SilentlyContinue
+}
 Write-Host "########## 終了: $Label ##########" -ForegroundColor Cyan
 Write-Host '注: PrivWS は trim 後の値になりうる。確保需要は PrivComm を見ること。' -ForegroundColor DarkGray

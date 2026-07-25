@@ -2,11 +2,8 @@
 //! RowsSnapshot を描くだけの従属 view——検索状態の所有者は main のまま（一方向データフロー・
 //! spec 決定 5）。クリックは ResultsShared.clicked へ積んで main を wake する（遅延 dispatch）。
 //! 窓の可視性・サイズ・位置の driver は main 側（hidden 窓は update() が走らないため）。
-//!
-//! **禁止: この view で `frame.hide_window()` を呼ばない** — results は focusable(false) で
-//! `Focused(true)` が永遠に来ないため、runtime の visible フラグが false に固着し永久非描画
-//! になる（復帰経路は Focused(true) のみ・runtime.rs）。hide は必ず外部（`hide_egui_main` /
-//! main の drive）の `window.hide()` で行う。
+//! hide は外部（`hide_egui_main` / main の `drive_results_window`）が所有する。runtime に
+//! view 側から hide する API は無い（`RuntimeFrame::hide_window` は #671 サイクル PR A で削除）。
 
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, Sender, channel};

@@ -22,17 +22,12 @@ pub trait EguiView: Send + 'static {
 
 pub struct RuntimeFrame {
     close_requested: bool,
-    hide_requested: bool,
     drag_requested: bool,
 }
 
 impl RuntimeFrame {
     pub fn close_window(&mut self) {
         self.close_requested = true;
-    }
-
-    pub fn hide_window(&mut self) {
-        self.hide_requested = true;
     }
 
     pub fn drag_window(&mut self) {
@@ -287,7 +282,6 @@ impl EguiWindow {
         let raw_input = self.input.take(max_side, size, ppp);
         let mut frame = RuntimeFrame {
             close_requested: false,
-            hide_requested: false,
             drag_requested: false,
         };
         let output = self
@@ -352,10 +346,6 @@ impl EguiWindow {
     fn apply_frame_commands(&mut self, frame: RuntimeFrame) -> Result<(), RuntimeError> {
         if frame.drag_requested {
             self.window.start_dragging()?;
-        }
-        if frame.hide_requested {
-            self.window.hide()?;
-            self.visible = false; // 不変条件⑥: hide 要求を出したフレームから非表示扱いにする。
         }
         if frame.close_requested {
             self.window.close()?;

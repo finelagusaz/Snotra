@@ -1,125 +1,158 @@
 ---
 name: race-check
-description: "async 関数を新規追加・変更したとき、または計画レビュー時に使用。各 await 地点の状態競合リスクを検証する。"
-argument-hint: "[関数名: await 対象, 例: 'executeInstantCommandSelected: await api.executeInstantCommand()']"
+description: "worker スレッド・channel・フレーム drain・Tauri listener・窓をまたぐ共有状態を追加/変更したとき、または async 関数を追加/変更したとき、あるいは計画レビュー時に使用。送信から適用までの窓での状態競合リスクを検証する。"
+argument-hint: "[対象: 境界の説明, 例: 'spawn_folder_load: FolderMsg を共有 channel へ送り update() が drain']"
 allowed-tools:
   - Read
   - Grep
   - Glob
 ---
 
-> **注記（#532 SU7）**: 本スキルの具体例・Step 表は撤去済みの SolidJS フロント（`ui/src/stores/` の signal）を前提に書かれている。現行の並行性は Rust 側の worker スレッド + channel + フレーム drain（`egui_shell/`: icon/launch/folder worker）にあり、「await 地点」は「worker 送信〜drain 受信の窓」に読み替えて適用する。全面改訂は follow-up issue を参照。
-
-$ARGUMENTS の async 関数について、各 `await` 地点での状態競合リスクを検証する。
+$ARGUMENTS の変更について、**並行境界**（別スレッド・別フレーム・別窓へ渡る地点）での状態競合リスクを検証する。
 $ARGUMENTS が空の場合は、会話の直近の変更内容から対象を推定する。
 
-実装後のコードレビューだけでなく、`workspace/plan.md` の計画レビューにも使える。計画段階で「この `await` は安全か？」を検証し、見落としがあれば計画を更新してから実装に進む。
+実装後のコードレビューだけでなく、`workspace/plan.md` の計画レビューにも使える。計画段階で「この境界は安全か？」を検証し、見落としがあれば計画を更新してから実装に進む。
 
 ## 背景
 
-このプロダクトのレースコンディションは「`await` の前後で世界が変わりうる」という1点に帰着する。典型的な発生パターン:
+このプロダクトのレースコンディションは「**送信してから適用されるまでの間に世界が変わりうる**」という1点に帰着する。`await` を数える検査は当たらない——UI 層の並行性は worker スレッド + channel + フレーム drain にあり、`.await` はごく少数の経路にしか無い。
 
-1. **状態保存→ `await` → 無条件復元**: `await` 中にユーザー操作で状態が変わると、復元が新しい状態を上書きする
-2. **入力ガード不足**: `await` 中にユーザーがクエリを変更し、`dispatchQueryInput` が新しい検索を発火する
-3. **世代カウンタ検証漏れ**: `latestRun` の `isStale()`（world 世代カウンタを内包。旧: `searchGeneration` 直読）による staleness チェックを新コードに適用し忘れる
-4. **再入**: 同じ async 関数が `await` 中に再度呼び出される
+前提となる土台が 3 つある（事実の正本は `src-tauri/CLAUDE.md`「イベント駆動 wake の不変条件」節と `snotra-egui-runtime/CLAUDE.md` の不変条件。ここには写さない）:
 
-## Step 1 — await 地点の列挙
+1. **UI 状態を直接触ってよいのはイベントループスレッドだけ**である。両窓の `update()` は同一スレッドで走る。
+2. **フレームは勝手に回らない**（イベント駆動ランタイム）。状態を変えても、誰かが次フレームを起こさなければ画面に出ない。
+3. **`listen` のコールバックは emit した呼び出し元スレッド上で同期実行される**——別スレッドへ dispatch されない。ゆえに listener の追加は、**emit 元のスレッド（Win32 メッセージループ・config 監視・index build）から UI 状態を触るコードの追加**と同義である。これは反直観であり、最も見落とされる境界である。
 
-$ARGUMENTS から対象の async 関数を特定し、ソースコードを読む。
+典型的な発生パターン:
 
-関数内の各 `await` 地点を列挙する:
+1. **wake 忘れ**: 状態を変えたが次フレームを起こす者がおらず、無関係な入力が来るまで stale 表示が残る
+2. **staleness 機構の取り違え**: 共有 channel に世代 token を付け忘れる／per-request channel に不要な token を足す
+3. **窓の間に届く操作の無防備**: ロード中・in-flight 中の古い行に対する操作を受け付ける
+4. **hide を跨いだ in-flight**: hidden 中は `update()` が走らないため時限処理が止まり、遅着結果が次の show を撃つ
+5. **フレーム内の順序破り**: 消費と初期化の前後を入れ替えると壊れる箇所を動かす
 
-```
-await 地点 1: <line> — <await 対象の説明>
-await 地点 2: <line> — <await 対象の説明>
-```
+## Step 1 — 並行境界の列挙
 
-## Step 2 — 共有状態の特定
+$ARGUMENTS から対象を特定し、ソースを読む。次の 7 種を列挙する（**grep はシンボル名で行う。行番号で位置を断定しない**）:
 
-各 `await` の前後で読み書きする共有状態を特定する。対象:
+| # | 境界 | grep の手がかり |
+|---|---|---|
+| ① | worker の spawn | `thread::spawn`, `async_runtime::spawn` |
+| ② | channel への send | `\.send\(`, `Sender`, `channel\(` |
+| ③ | フレームでの drain | `try_recv`, `Receiver` |
+| ④ | managed state の読み書き | `try_state`, `Mutex`, `Atomic`, `\.lock\(` |
+| ⑤ | **Tauri listener / emit** | `\.listen\(`, `\.emit\(`, `events::` |
+| ⑥ | **channel を経由しない worker**（managed state や窓 API を直接叩く監視・再スキャン系スレッド） | ① のうち送信を持たないもの |
+| ⑦ | `.await` 地点（少数だが実在する） | `\.await` |
 
-| 種類 | 例 |
-|------|-----|
-| SolidJS シグナル | `results()`, `selected()`, `query()`, `launching()` |
-| モジュールスコープ変数 | `searchLane`（`latestRun`・world 世代を内包）, `activationLane`（`exclusive`・in-flight mutex を内包）, `instantCommandItems` |
-| 外部ストアのシグナル | `folderState()`, `toolSelectionState()`, `interpKind()` |
-
-```
-await 地点 1:
-  読み取り（前）: <変数リスト>
-  書き込み（前）: <変数リスト>
-  読み取り（後）: <変数リスト>
-  書き込み（後）: <変数リスト>
-```
-
-## Step 3 — 状態変更経路の検索
-
-各 `await` 地点について、`await` 中に共有状態を変更しうる経路を grep で検索する。主な経路:
-
-| 経路 | トリガー | 影響する状態 |
-|------|---------|------------|
-| `handleInput` → `dispatchQueryInput` | ユーザーのキー入力 | `query`, `results`, `selected`, `searchLane` 世代（`run`/`invalidate`）, `instantCommandItems` |
-| `handleKeyDown` → `activateSelected` | Enter キー | `activationLane`（in-flight）, `results`, `selected` |
-| `handleKeyDown` → `exitFolderExpansion` | Escape キー | `folderState`, `results`, `selected`, `searchLane` 世代（`invalidate`） |
-| `resetForShow` | `window-shown` イベント | 全状態リセット |
-| `indexing-complete` イベント → `runRefresh` | バックエンド通知 | `indexing`, `results`, `searchLane` 世代（`run`） |
-
-各経路について、`await` 中に実際に到達可能かを判定する（ガードの有無を確認）。
-
-## Step 4 — 4観点での検証
-
-各 `await` 地点を以下の4観点で検証する:
-
-### 4a. 入力ガード
-
-`await` 中にユーザー入力で状態が変わる経路にガードがあるか？
-
-- `handleInput` に `launching()` / `toolSelectionState()` 等のガードがあるか
-- `handleKeyDown` の各分岐に該当するガードがあるか
-- ガードがない場合: **入力経路が開いている** → リスクあり
-
-### 4b. staleness チェック
-
-`await` 後に状態を参照・復元する箇所で `latestRun` の `isStale()`（等）による世代チェックがあるか？
-
-- lane タスクが `searchLane.run()` の ctx（`isStale`/`requestId`）を受け取り、`await` 後に `if (isStale()) return;` で適用スキップしているか
-- 保存状態を復元する箇所で「他変化なし」を検証しているか。起動フローなら `withLaunchLifecycle` が配る `disturbed()` 述語（`if (!disturbed())`）で、それ以外は `await` 前に `searchLane.current()` をキャプチャした世代比較で検証する（例: `executeInstantCommandSelected` の失敗ロールバックは `disturbed()` を使う・#539）
-- 検証なしで `setResults` / `setSelected` を呼んでいないか
-
-### 4c. ローカルキャプチャ
-
-`await` をまたいで参照するモジュールスコープの `let` 変数を `const` にキャプチャしているか？
-
-- `await` 後に直接参照している `let` 変数がないか
-- シグナルの `.call()` は都度最新値なので問題なし（ただし「保存した値を復元」する場合は 4b の対象）
-
-### 4d. 再入ガード
-
-同じ関数が `await` 中に再度呼び出される経路があるか？
-
-- `activationLane`（`exclusive` mutex）等でガードされているか
-- ガードの解除（`finally` ブロック）が確実か
-
-## Step 5 — 各 await 地点の判定
+**paint より後に走るもの**も境界である（遅延 dispatch・クリックハンドラ・`request_repaint_after` の期限処理）。同一フレーム内でも「描いた後に状態が変わる」なら次フレームの問題になる。
 
 ```
-await 地点 1: <line> — <説明>
-  4a 入力ガード:     [OK] launching() で handleInput をブロック
-                     [問題] handleInput が launching() を確認していない
-  4b staleness:      [OK] isStale() でスキップ / !disturbed() で検証済み
-                     [問題] 無条件で setResults() を呼んでいる
-  4c ローカルキャプチャ: [OK] 全 let 変数をキャプチャ済み
-                     [問題] instantCommandItems を await 後に直接参照
-  4d 再入ガード:     [OK] activationLane（exclusive）でガード済み
-                     [問題] ガードなし
+境界 1: <種別> — <シンボル> — <何が誰へ渡るか>
+境界 2: ...
+```
+
+`spawn` も `channel` も `listen` も `Mutex` も無いなら、**この検査は非該当**である（純粋核の変更等）。空を返して終えてよい。
+
+## Step 2 — 各境界の staleness 機構の同定
+
+送信と適用の間に世界が変わったとき、**古い結果をどう落とすか**。現行の代表的な 4 型（**網羅ではない。5 型目以降を見つけたらそう報告する**）:
+
+| 型 | 成立条件 | 例（2026-07 時点） |
+|---|---|---|
+| **世代 token** | channel が **view 寿命の共有**。メッセージに token を載せ、drain で現行世代と照合して捨てる | folder ナビ（`SearchState::folder_gen` / `accept_folder_result`） |
+| **チャネル所有権** | channel が **per-request**。受信側の構造体が `Receiver` を所有し、破棄すると遅着 send は `Err` で自然消滅する | 起動（`LaunchInFlight`） |
+| **重複 spawn ガード** | 結果がキーで冪等。staleness は無害で、代わりに in-flight 集合で同一対象の多重 spawn を防ぐ | アイコン抽出（`icon_pending`） |
+| **level-triggered 状態** | 値を共有スロットへ直書きし、読み側が毎フレーム現在値を読む | updater の phase |
+
+**判定軸は「channel が共有か per-request か」である。** 共有なら token が要り、per-request なら所有権の破棄で足りる。**この 2 つを混ぜてはならない**（per-request に token を足すのは冗長、共有から token を落とすのは破れ）。
+
+**世代カウンタを使うなら、読み側の照合より書き側の網羅を先に見る**——「対象が総入れ替えされるすべての地点が世代を進めたか」。読み側だけ見ると「進め忘れた 1 箇所」が永遠に見えない。
+
+**窓をまたぐ共有スロットは、運ぶ値が世代を持つかを個別に問う**——同じ構造体の中でも、世代を運ぶフィールドと運ばないフィールドが同居しうる。裸の index・裸の添字は「受け側フレームで対象集合が入れ替わっていない」ことを暗黙に仮定している。境界チェック（`.get()`）は**存在の確認であって同一性の確認ではない**。
+
+## Step 3 — 窓の間に到達しうる事象の列挙
+
+各境界について、**送信〜適用の間に**共有状態を変えうる経路を grep で探す。主な経路:
+
+| 経路 | トリガー | 影響 |
+|---|---|---|
+| 打鍵 → 検索/フィルタ | ユーザー入力（毎フレーム受け付ける） | クエリ・結果・選択・世代 |
+| Enter / クリック → 起動 | ユーザー操作（クリックは別窓から遅延 dispatch で戻る） | in-flight 状態・結果クリア |
+| Escape / ← → モード離脱 | ユーザー操作 | view 種別・世代の失効 |
+| hide / show | ホットキー・blur・起動完了（**emit 元は別スレッドでありうる**） | reset-on-show による全 view-local の一掃 |
+| config 適用 | ファイル監視スレッド | テーマ・フォント・言語・幅・index 再構築 |
+| index build 完了 | build スレッド | 世代 bump → 再検索 |
+| 他 worker の到着 | 別の spawn | 結果の総入れ替え |
+
+各経路が**その窓の間に実際に到達可能か**を判定する（ガードの有無を確認する）。到達不能と結論するなら、何が塞いでいるかを名指しする。
+
+## Step 4 — 5観点での検証
+
+### 4a. wake 義務
+
+状態を変えた後、**次フレームを起こす者がいるか**（回数ではなく到達性を問う。1 回の送信ループに対し repaint 1 回で足りる）。
+
+- 自窓の `egui::Context` を持つ場所（`update()` 内・worker へ渡した clone）は `ctx.request_repaint()`
+- 外部スレッド・別窓・listener からは wake handle（`WindowWaker`）を使う
+- **managed state や外部へ渡すハンドルに `egui::Context` の clone を置いていないか**——clone は repaint callback ごと複製し、worker の停止・join を妨げる（`snotra-egui-runtime/CLAUDE.md` の不変条件）
+- hidden 窓への wake は実効 no-op でよい（次の show で live-read が拾う）が、**それを前提にしてよいのは値を運ばない wake だけ**である
+
+### 4b. staleness 適用
+
+Step 2 で同定した機構が、実際に適用されているか。
+
+- 共有 channel: drain で token を照合して捨てているか。滞留を全部 drain して最新を採っているか
+- per-request channel: 受信側の破棄が「捨てる」全経路（成功・timeout・異常終了・リセット）に置かれているか。**enum の全アームを尽くしたか**
+- 世代カウンタ: **書き側の全サイト**が進めているか
+- 重複 spawn ガード: in-flight への insert と、全終端での remove が対になっているか
+- single-flight（再入拒否）: 拒否のフラグを**戻す経路が全終端にあるか**——1 つ欠けると永久に拒否し続ける
+
+### 4c. 窓の間に届く事象への耐性
+
+Step 3 で到達可能とした事象それぞれについて。
+
+- **ユーザー操作**: ロード未確定・in-flight 中の古い対象に対する操作を弾いているか（弾かないなら、古い対象に作用しても無害である根拠を示す）
+- **hide / show を跨ぐか**: hidden 中は `update()` が走らないため、期限つき再描画による時限処理は**可視中しか効かない**。hide を跨ぐ in-flight 状態は reset-on-show の backstop とセットで設計する
+- 判定は「**クリアされるか**」ではなく「**クリアされるか、されない理由が書かれているか**」である——意図的に show を跨がせる状態（hidden 中に起きた通知を次の show で見せる等）が実在するため、クリアを一律の要件にすると誤検出になる
+- **クリア対象の列挙は view-local だけで閉じない**——managed state 側に置かれた共有スロットは reset の視野に入っていないことがある
+
+### 4d. 順序不変条件
+
+**この処理を `update()` の別の位置へ動かすと壊れるか。** 壊れるなら、その順序はコメントで明文化されているか。
+
+既知の型（正本は各コメント）: 消費は初期化・リセットの後／格納は表示・wake の前／可視フラグは窓操作に対して show と hide で逆向き。
+
+新しい処理を足すときは、**リセット・消費・描画のどれとの前後が意味を持つか**を明示する。
+
+### 4e. 同一フレーム内の live-read 規律
+
+- 同じ設定値をフレーム冒頭で読んだら、**後段で読み直さない**（間に適用が挟まると同一フレーム内で新旧が混ざる）
+- 読み取り結果を `self.` へ保持しない（毎フレーム live-read が設定変更の反映経路そのもの）
+- **逆に、フレームを跨いでキャッシュして hot-reload を殺していないか**も見る
+
+## Step 5 — 各境界の判定
+
+```
+境界 1: <種別> — <シンボル> — <説明>
+  4a wake 義務:     [OK] worker が送信後に ctx.request_repaint()
+                    [問題] listener が状態を書くだけで誰も起こさない
+  4b staleness:     [OK] 共有 channel + token を drain で照合
+                    [問題] per-request なのに token を足している / 世代の書き側が 1 箇所抜けている
+  4c 窓の間の事象:  [OK] ロード未確定はガードで弾く・reset-on-show でクリア
+                    [問題] hide を跨いだ in-flight のクリア経路が無い
+  4d 順序:          [OK] リセット消費の後に置き、理由をコメント済み
+                    [問題] 位置に依存するが明文化が無い
+  4e live-read:     [OK] フレーム冒頭で 1 回だけ読む
+                    [問題] 同じ設定を後段で読み直している
   総合判定: [安全] / [要修正: <具体的な修正内容>]
 ```
 
 ## 出力
 
-**根拠の規律**: 全判定に根拠（`file:line` または grep 結果）を付ける。コードを確認せずに下した判定は [OK] とせず [要確認] として報告する。
+**根拠の規律**: 全判定に根拠（`file:シンボル` または grep 結果）を付ける。コードを確認せずに下した判定は [OK] とせず [要確認] として報告する。**行番号で位置を断定しない**——挿入でずれる。
 
-全 `await` 地点の判定をマトリクス形式でまとめる。
+全境界の判定をマトリクス形式でまとめる。
 問題が見つかった場合は修正案を提示する。
-全地点が安全な場合は「全 await 地点で状態競合リスクなし」と明示する。
+全境界が安全な場合は「全境界で状態競合リスクなし」と明示する。
+**Step 1 が空だった場合は「並行境界なし（非該当）」と明示する**——検査を実行したことと、検査対象があったことは別である。

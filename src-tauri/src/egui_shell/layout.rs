@@ -61,7 +61,7 @@ pub fn results_window_height(result_count: usize, max_results: u32, row_height: 
 /// **`main_visible` を条件に含めるのが要石である。** main を hide しても `state.results()` は
 /// 消えない（reset は show 側の `reset_pending` 消費でしか起きない）ため、`show_results` は
 /// hidden 中も true のまま残る。hidden 中に main の update() が 1 フレームでも走ると
-/// （`config-applied` / `indexing-*` / updater 完了の `wake_view` は main の可視性に関係なく
+/// （`config-applied` / `indexing-*` / updater 完了の `wake_main` は main の可視性に関係なく
 /// 発火する）、results だけが最前面に取り残される。
 ///
 /// PR A′ 以前はこの事故を `SearchWindowView` の view-local な可視フラグが偶然に防いでいた

@@ -295,7 +295,7 @@ try {
     # #671 PR A′: hide 後に results だけが最前面に取り残されないこと（orphan 検出）。
     # **presence 検査ではこの事故を素通りする**——orphan でも egui_results:hide は出るため。
     # orphan は必ず「hide 以降の余分な egui_results:show」として現れる（main が hidden でも
-    # repaint 要求は飛ぶ: config-applied / indexing-* / updater 完了の wake_view）。
+    # repaint 要求は飛ぶ: config-applied / indexing-* / updater 完了の wake_main）。
     # 静定を待ってから、最後の egui_hide:done より後ろの行だけを見る。
     if ($resultsChecked -and $failures.Count -eq 0) {
       Start-Sleep -Milliseconds 1500

@@ -229,8 +229,8 @@ PR D は副次的に既存の不変条件違反を解消する: `register_ctx` �
 
 レビューで検出された、実装と食い違う記述:
 
-1. **`src-tauri/CLAUDE.md` の `hide_egui_main` = 「全 hide の唯一の副作用所有点（codex #7）」は現在偽。** `view.rs:712` の results hide はこれを経由しない。`mod.rs:447` のコメント自身は「唯一の**外部** hide 経路」と限定しており、`CLAUDE.md` 側の無限定な記述が #646 PR2 以降**実装より強い全称主張**になっている。限定を付ける（AGENTS.md「全称表現は前提条件とセットで書く」）。
-2. **`platform/mod.rs:270` のコメントが stale。** 名指しされている `show_main_and_emit` は #532 SU7 で削除済みの関数であり、「どのスレッドで走るか」の根拠にならない。
+1. **`hide_egui_main` = 「全 hide の唯一の副作用所有点（codex #7）」は現在偽。** `view.rs:712` の results hide はこれを経由しない。所在は**コードコメント 4 箇所**——`mod.rs:434`（`hide_egui_main` の doc）・`mod.rs:454`（trim の唯一の呼び出し元）・`mod.rs:488`（`register_hide_listener` の doc）・`main.rs:287`。`mod.rs:447` のコメントだけは「唯一の**外部** hide 経路」と正しく限定している。`src-tauri/CLAUDE.md` には該当する全称記述は**無い**（grep 済み・当初 CLAUDE.md と誤記していたのを訂正）。4 箇所に「main の」という限定を付ける（AGENTS.md「全称表現は前提条件とセットで書く」）。
+2. **削除済み関数 `show_main_and_emit` への参照が 2 箇所残る。** `platform/mod.rs:270` は「`show_main_and_emit()` が main thread で `show()`/`set_focus()` を呼んだ**後**にこのコマンドが配送される」という**機構の説明**に使っており、根拠として成立しない（#532 SU7 で削除済み）。しかも現行 `show_egui_main`（`mod.rs:410-426`）は IME オフを focus 同期の**後**に置くことを意図的な順序制約としているため、コメントが述べる「focus が先に来る narrow timing window」は残存レースではなく設計どおりの順序である。実態に合わせて書き直す。`mod.rs:357` は歴史的経緯の参照（「SU2 の `show_main_and_emit` と同じ制約」）ゆえ、現行の関数名へ言い換える。
 
 ## 6. 検証
 

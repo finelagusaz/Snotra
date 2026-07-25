@@ -16,10 +16,13 @@ pub const NOTICE_LAUNCH: Duration = Duration::from_millis(2400);
 /// launchNotice.ts で確認のこと）。
 pub const NOTICE_HOTKEY: Duration = Duration::from_millis(5000);
 
-/// 検索バー overlay の優先ラダー（WebView2 SearchWindow.tsx の Switch 先頭一致 parity）。
+/// status 行の優先ラダー（WebView2 SearchWindow.tsx の Switch 先頭一致 parity）。
 /// `indexing` は「indexing 中かつ Results ビュー」を呼び出し側で評価して渡す。
-/// 空クエリの indexing は TextEdit の hint_text が描くため None（二重描画回避・spec 追補 1）。
-/// 非空クエリの indexing は表示ゲート（§4.7）で結果が消えるため overlay が唯一の案内になる。
+///
+/// **クエリの空/非空では分岐しない**（#700）。旧実装は空クエリのとき `None` を返して
+/// TextEdit の `hint_text` に描かせていた（二重描画回避・spec 追補 1）が、status 行が
+/// 入力欄と別の場所になった（#700 発見 C）ことで「1 文字目で案内が入力欄から下の行へ飛ぶ」
+/// 動きになった。**描画面を 1 つに畳む**のが是正であり、hint 側の indexing 分岐を落とす。
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum OverlayKind {
     Indexing,
@@ -27,14 +30,9 @@ pub enum OverlayKind {
     Notice,
 }
 
-pub fn overlay_kind(
-    indexing: bool,
-    query_empty: bool,
-    launching: bool,
-    has_notice: bool,
-) -> Option<OverlayKind> {
+pub fn overlay_kind(indexing: bool, launching: bool, has_notice: bool) -> Option<OverlayKind> {
     if indexing {
-        if query_empty { None } else { Some(OverlayKind::Indexing) }
+        Some(OverlayKind::Indexing)
     } else if launching {
         Some(OverlayKind::Launching)
     } else if has_notice {
@@ -274,12 +272,22 @@ mod tests {
     fn overlay_kind_priority_ladder() {
         use super::OverlayKind::*;
         // 優先順 indexing > launching > notice（WebView2 Switch 先頭一致 parity・SU5 確立の不変）
-        assert_eq!(overlay_kind(true, false, true, true), Some(Indexing));
-        // 空クエリの indexing は hint_text が描くため overlay は出さない（二重描画回避・spec 追補 1）
-        assert_eq!(overlay_kind(true, true, true, true), None);
-        assert_eq!(overlay_kind(false, true, true, true), Some(Launching));
-        assert_eq!(overlay_kind(false, true, false, true), Some(Notice));
-        assert_eq!(overlay_kind(false, true, false, false), None);
+        assert_eq!(overlay_kind(true, true, true), Some(Indexing));
+        assert_eq!(overlay_kind(false, true, true), Some(Launching));
+        assert_eq!(overlay_kind(false, false, true), Some(Notice));
+        assert_eq!(overlay_kind(false, false, false), None);
+    }
+
+    /// #700: indexing 案内はクエリの空/非空に依らず status 行が描く。
+    ///
+    /// 旧実装は空クエリのとき `None` を返し、TextEdit の `hint_text` に描かせていた
+    /// （二重描画回避・spec 追補 1）。status 行が入力欄と別の場所になった（#700 発見 C）
+    /// ことで、この分岐は「1 文字目で案内が入力欄から下の行へ飛ぶ」動きとして可視化された
+    /// ——**描画面が 2 つある**ことが原因ゆえ、hint 側の indexing 分岐を落として 1 つにする。
+    #[test]
+    fn indexing_overlay_does_not_depend_on_query_emptiness() {
+        use super::OverlayKind::*;
+        assert_eq!(overlay_kind(true, false, false), Some(Indexing));
     }
 
     #[test]

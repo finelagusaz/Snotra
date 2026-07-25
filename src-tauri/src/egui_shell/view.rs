@@ -1059,6 +1059,13 @@ enum ToastAction {
 /// 中間の widget allocation を挟まず2回呼ぶと dismiss/install 両ボタンが同一 id になり
 /// egui の id クラッシュ検知に触れる——ローカライズ済みラベルは Available 局面で互いに異なるため
 /// これを id salt に使う）。
+/// status 行（indexing 案内・起動中・一時通知）と toast 行の本文フォントサイズ。
+///
+/// **両者は同じ「バー直下の 1 行」であり、字が揃っていないと別種の UI に見える**——実機で
+/// status 行だけ大きい（15.0 対 13.0）ことが指摘され、定数に括って構造的に揃えた（#700）。
+/// ボタンのみ 12.0 と小さいのは意図的（本文とボタンの区別）。
+const ROW_TEXT_SIZE: f32 = 13.0;
+
 fn draw_toast_button(
     ui: &mut egui::Ui,
     cursor_x: &mut f32,
@@ -1314,10 +1321,33 @@ impl EguiView for SearchWindowView {
         }
 
         // ↑↓ ナビ（結果があるとき）。TextEdit より前に ctx から拾い、入力欄 focus 中も効かせる。
-        if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+        //
+        // **キーイベントは入力欄へ渡さず消費する**（#700）。読むだけ（`ctx.input`）では
+        // イベントが残り、focus を保持したままの TextEdit も同じ ↑↓ を処理する——単一行の
+        // galley では ↑ が `CCursor::default()`（クエリ先頭）、↓ が `galley.end()`（末尾）へ
+        // キャレットを飛ばす（epaint 0.35 の `cursor_up_one_row` / `cursor_down_one_row` の
+        // 行外分岐）。結果を ↑ で選び直した直後の打鍵がクエリ**先頭**へ挿入され、
+        // 「検索ワードが編集できない」として観測された（`abc` → ↑ → `x` が `xabc` になる・実測）。
+        // 消費は無条件に行う: 単一行入力欄で ↑↓ にキャレット移動の用途は無く（SPEC §4.8）、
+        // ツール選択中・launching 中は入力欄が非対話ゆえ元から影響が無い。
+        let (nav_down, nav_up) = ctx.input_mut(|i| {
+            let down = i.key_pressed(egui::Key::ArrowDown);
+            let up = i.key_pressed(egui::Key::ArrowUp);
+            i.events.retain(|e| {
+                !matches!(
+                    e,
+                    egui::Event::Key {
+                        key: egui::Key::ArrowUp | egui::Key::ArrowDown,
+                        ..
+                    }
+                )
+            });
+            (down, up)
+        });
+        if nav_down {
             self.state.move_selection(1);
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+        if nav_up {
             self.state.move_selection(-1);
         }
 
@@ -1375,19 +1405,26 @@ impl EguiView for SearchWindowView {
         }
 
         // 検索入力欄。state.query を編集し、変化があれば debounce leading で同期検索。
-        // 構築中かつ空クエリなら hint を案内文へ差し替える（§4.7）。egui の hint は入力が空の
-        // ときだけ描かれるため、indexing+空クエリの条件と一致する——window は bar_height のまま
-        // （show_results=false）で、案内はバー内に収まり見える（旧: 別 label はバー下に描かれ
-        // クリップされ不可視だった）。
+        //
+        // **hint は indexing で差し替えない**（#700）。かつては「構築中かつ空クエリなら hint を
+        // 案内文へ差し替える」形で、非空クエリのときだけ別の描画面（重ね描き overlay）が担って
+        // いた。#700 発見 C で overlay を status 行へ移した結果、この 2 面構成が「1 文字目で案内が
+        // 入力欄から下の行へ飛ぶ」動きとして可視化された（実機で観測）。案内の描画面は status 行に
+        // 一本化し、hint は本来のプレースホルダへ戻す——**同じ情報に描画面を 2 つ持たない**。
         let in_tool = self.state.view_kind() == ViewKind::Tool;
         let in_folder = self.state.view_kind() == ViewKind::Folder;
+        // 入力欄が編集可能か（§18.5 ツール選択中・spec 決定 3/4 の launching 中は無効）。
+        // **`interactive` と再フォーカスの両方がこの 1 つを読む**（#700 state-check 発見 B）。
+        // 以前は `interactive` が 2 項・再フォーカスが `in_tool` の 1 項で、launching 中は
+        // 「非対話ゆえ focus を持てない widget へ毎フレーム `request_focus()` を撃つ」状態だった。
+        // 同じ「入力欄を無効化する条件」が 2 箇所で別々に書かれると、片方だけ足した条件が
+        // 黙って食い違う——束ねることで構造的に消す。
+        let input_editable = !in_tool && self.launching.is_none();
         let l = self.lang();
         let hint: &str = if in_tool {
             // SolidJS placeholder.tool_select parity（egui の hint は buf が空のときだけ描かれる＝
             // HTML placeholder と同条件。表示されるのは対象パスが区切り終端等でファイル名が空のとき）
             crate::egui_shell::ui_strings::tool_select_hint(l)
-        } else if !in_folder && self.indexing() && self.state.query().trim().is_empty() {
-            crate::egui_shell::ui_strings::indexing_hint(l)
         } else {
             crate::egui_shell::ui_strings::search_hint(l)
         };
@@ -1433,7 +1470,7 @@ impl EguiView for SearchWindowView {
                         // interactive(false)（通常描画のまま読み取り専用・changed 不発火）——外観維持。
                         // launching 中も同様に打鍵を止める（Escape/blur/Alt+Q・↑↓は従来どおり通す・
                         // spec 決定 3・4。↑↓は空リストゆえ自然 no-op）。
-                        .interactive(!in_tool && self.launching.is_none())
+                        .interactive(input_editable)
                         .font(bar_font.clone())
                         .hint_text(
                             egui::RichText::new(hint).font(bar_font).color(bar_theme.path_color),
@@ -1480,19 +1517,20 @@ impl EguiView for SearchWindowView {
         }
         // 窓に focus があるのに入力欄が focus を持たないなら移す（Alt+Q 表示直後に打てる）。
         // was_focused に依存しないので、hide→reshow で was_focused が stale でも確実に戻る。
-        if focused && !in_tool && !response.has_focus() {
+        // 条件は `interactive` と同じ `input_editable` を読む（非対称の解消は同変数の doc 参照）。
+        if focused && input_editable && !response.has_focus() {
             response.request_focus();
         }
 
-        // 一時 overlay（#532 SU5）: 「起動中…」/ 失敗・結果不明通知/非空クエリ indexing 案内を
-        // 検索バーに重ね描く。hint_text は空クエリ時のみ描かれるため launching/notice/非空クエリ
-        // indexing 中（query 非空）は使えない——painted label で TextEdit の rect を塗り潰して上書きする。
+        // status 行（#532 SU5 の一時 overlay・#700 で位置を変更）: 「起動中…」/ 失敗・結果不明通知/
+        // 非空クエリ indexing 案内を**検索バーの直下に独立した行として**描く。hint_text は空クエリ時
+        // のみ描かれるため launching/notice/非空クエリ indexing（query 非空）では使えず、別の描画面が要る
+        // ——かつてはそれを TextEdit の rect への重ね描きで賄っていた（#700 で撤回・下のブロック参照）。
         // 優先順は WebView2 SearchWindow.tsx の Switch 先頭一致 parity: indexing > 起動中 > 通知。
         // 空クエリの indexing は hint が描く。非空クエリの indexing は表示ゲート（§4.7）で結果が
         // 消えるため overlay が唯一の案内（spec 追補 1・ladder は overlay_kind に抽出しテスト固定）。
         let overlay_text: Option<String> = match crate::egui_shell::overlay_kind(
             self.indexing() && self.state.view_kind() == ViewKind::Results,
-            self.state.query().trim().is_empty(),
             self.launching.is_some(),
             self.notice.message().is_some(),
         ) {
@@ -1505,8 +1543,20 @@ impl EguiView for SearchWindowView {
             Some(crate::egui_shell::OverlayKind::Notice) => self.notice.message().map(|m| m.to_string()),
             None => None,
         };
+        // #700 発見 C: **入力欄に重ねず、バー直下の独立した行へ描く。** 以前は
+        // `response.rect` を不透明に塗り潰していたため、入力欄は編集可能なまま
+        // 「打った文字が見えない」状態になり、実際に「検索ワードを編集できない」と
+        // 報告された。launching 中は入力欄が非対話（`input_editable`）で整合していたが、
+        // indexing（数分に及びうる）と notice（数秒）は編集可能なまま覆われていた。
+        // 行の高さは toast と同じ `metrics.toast_height`（= bar_height・#646 決定 2）で、
+        // 窓高は `main_window_height` の `status_height` が積む。
+        let has_status = overlay_text.is_some();
         if let Some(text) = overlay_text {
-            let rect = response.rect;
+            let status_h = metrics.toast_height as f32;
+            let (rect, _) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), status_h),
+                egui::Sense::hover(),
+            );
             // 色はフレーム冒頭の `visual` から（#673）。ここは ctx のスタイルではなく config を
             // 直接読んでいた箇所ゆえ、`set_visuals` より後という位置に意味は無い（監査 #4）。
             ui.painter().rect_filled(rect, 4.0, visual.input_bg);
@@ -1514,7 +1564,7 @@ impl EguiView for SearchWindowView {
                 egui::pos2(rect.left() + 8.0, rect.center().y),
                 egui::Align2::LEFT_CENTER,
                 &text,
-                egui::FontId::proportional(15.0),
+                egui::FontId::proportional(ROW_TEXT_SIZE),
                 visual.hint,
             );
         }
@@ -1546,16 +1596,18 @@ impl EguiView for SearchWindowView {
                     crate::egui_shell::ui_strings::update_failed(l).to_string()
                 }
             };
-            ui.painter().text(
-                egui::pos2(rect.left() + 8.0, rect.top() + toast_h * 0.25),
-                egui::Align2::LEFT_CENTER,
-                &line1,
-                egui::FontId::proportional(13.0),
-                theme.name_color,
-            );
-            // 行2: ボタン（右寄せ・installing 中は disabled・WebView2 UpdateToast parity）。
+            // メッセージとボタンは**同じ行の中央**に揃える（#700 実機指摘）。旧実装は
+            // メッセージを行の 25%・ボタンを 75% に置く 2 行構成（WebView2 UpdateToast の
+            // 縦積み parity）だったが、行高は toast_height（= bar_height・既定 43px）しか
+            // 無く、2 行ぶんの間隔が取れずに「左上のテキストと右下のボタン」という
+            // ちぐはぐな配置になっていた。
+            //
+            // **ボタンを先に描く**——右寄せの `cursor_x` がボタン群の左端を返すので、
+            // それをメッセージの clip 境界に使える。1 行に寄せたことで、行が別だった
+            // ときには起きなかった「長いメッセージがボタンへ潜り込む」衝突が生じうる
+            // （ボタンは stroke だけで塗り潰さないため、下のテキストが透けて重なる）。
             let mut cursor_x = rect.right() - 8.0;
-            let btn_y = rect.top() + toast_h * 0.75;
+            let btn_y = rect.center().y;
             let dismiss_label = crate::egui_shell::ui_strings::update_dismiss(l);
             if draw_toast_button(ui, &mut cursor_x, btn_y, dismiss_label, row.buttons_enabled, theme) {
                 toast_action = Some(ToastAction::Dismiss);
@@ -1566,6 +1618,19 @@ impl EguiView for SearchWindowView {
                     toast_action = Some(ToastAction::Install);
                 }
             }
+            // メッセージはボタン群の左端で切る（衝突回避）。`cursor_x` は最後のボタンぶん
+            // 進んだ位置ゆえ、間隔の 8.0 を戻して境界にする。
+            let text_clip = egui::Rect::from_min_max(
+                rect.left_top(),
+                egui::pos2((cursor_x + 8.0).max(rect.left()), rect.bottom()),
+            );
+            ui.painter().with_clip_rect(text_clip).text(
+                egui::pos2(rect.left() + 8.0, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                &line1,
+                egui::FontId::proportional(ROW_TEXT_SIZE),
+                theme.name_color,
+            );
         }
         if let Some(action) = toast_action {
             self.handle_toast_action(action, &ctx);
@@ -1667,6 +1732,7 @@ impl EguiView for SearchWindowView {
         // show できない(SU5 要石)。位置 → サイズ → show の順(main の show と同じ制約)。
         let height = crate::egui_shell::layout::main_window_height(
             metrics.bar_height,
+            has_status.then_some(metrics.toast_height),
             has_toast.then_some(metrics.toast_height),
         );
         let width = self.window_width();

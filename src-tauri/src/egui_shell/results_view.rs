@@ -12,6 +12,8 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use snotra_core::ui_types::SearchResult;
 use tauri::Manager;
 
+use crate::commands::IconOutcome;
+use crate::egui_shell::icon_textures::ICON_MAX_ATTEMPTS;
 use crate::egui_shell::{IconMsg, RowTheme, needs_extraction, retain_visible};
 
 /// main が毎フレーム発行する描画用スナップショット（spec 決定 5）。
@@ -84,8 +86,11 @@ pub(crate) struct ResultsView {
     /// path→TextureHandle（セッション内保持。可視集合に頭打ち・#532 SU4。Task 5 で view.rs から
     /// 本 view へ移設——TextureHandle は窓の Context 従属のため、行描画と同じ窓に置く）。
     icon_textures: HashMap<String, egui::TextureHandle>,
-    /// 抽出済みだが PNG 化できなかった/存在しない path（再抽出しない・SU4）。
-    icon_missing: HashSet<String>,
+    /// path→抽出の失敗回数（#692）。**「失敗したか」ではなく「何回失敗したか」を持つ**
+    /// ——一過性の失敗（冷えたシェルのアイコンキャッシュ等）を 1 度で恒久的な欠落として
+    /// latch すると、その行は可視である限りグレーのプレースホルダのまま戻らない。
+    /// 恒久的な失敗（パス不在・decode 不能）は `ICON_MAX_ATTEMPTS` を直接入れて即打ち切る。
+    icon_attempts: HashMap<String, u8>,
     /// worker へ渡し済みだが IconMsg 未 drain の path（in-flight）。request_icons_for_results の
     /// wanted 収集から除外し、同一 settle に対する repaint 毎の重複 spawn を防ぐ（thread pileup
     /// 対策）。drain 時（Loaded/Missing）に remove する。show=false 時の明示 clear は行わない
@@ -105,7 +110,7 @@ impl ResultsView {
             last_scrolled_selected: None,
             last_generation: 0,
             icon_textures: HashMap::new(),
-            icon_missing: HashSet::new(),
+            icon_attempts: HashMap::new(),
             icon_pending: HashSet::new(),
             icon_tx,
             icon_rx,
@@ -134,7 +139,7 @@ impl ResultsView {
         let mut wanted: Vec<String> = Vec::new();
         for r in rows {
             if !r.is_error
-                && needs_extraction(&r.path, &self.icon_textures, &self.icon_missing)
+                && needs_extraction(&r.path, &self.icon_textures, &self.icon_attempts)
                 && !self.icon_pending.contains(&r.path)
                 && !wanted.contains(&r.path)
             {
@@ -168,10 +173,27 @@ impl ResultsView {
                 return;
             };
             let loaded = crate::commands::load_icon_pngs(&state, &icons, paths);
-            for (path, png) in loaded {
-                let msg = match png.and_then(|b| crate::egui_shell::png_to_color_image(&b)) {
-                    Some(img) => IconMsg::Loaded(path, img),
-                    None => IconMsg::Missing(path),
+            for (path, outcome) in loaded {
+                // **「取れなかった」を 1 つに潰さない**（#692）。`retryable=false` は
+                // 「このパスにアイコンは無い」に近い恒久的失敗で、driver は即座に打ち切る。
+                let msg = match outcome {
+                    IconOutcome::Png(bytes) => {
+                        match crate::egui_shell::png_to_color_image(&bytes) {
+                            Some(img) => IconMsg::Loaded(path, img),
+                            // decode 失敗は保存済みバイト列の問題であり、再試行しても同じ。
+                            None => {
+                                crate::trace_main(
+                                    "egui_icon:decode_failed",
+                                    serde_json::json!({ "path": path, "bytes": bytes.len() }),
+                                );
+                                IconMsg::Missing(path, false)
+                            }
+                        }
+                    }
+                    IconOutcome::Failed(reason) => IconMsg::Missing(path, reason.is_transient()),
+                    // キャッシュ自体が使えなかった（show_icons=false / 無効化と競合）。
+                    // パス固有の失敗ではないので再試行してよい。
+                    IconOutcome::Unavailable => IconMsg::Missing(path, true),
                 };
                 let _ = tx.send(msg);
             }
@@ -392,9 +414,16 @@ impl snotra_egui_runtime::EguiView for ResultsView {
                     self.icon_textures.insert(path, handle);
                     icon_arrived = true;
                 }
-                IconMsg::Missing(path) => {
+                IconMsg::Missing(path, retryable) => {
                     self.icon_pending.remove(&path); // in-flight 解除（thread pileup 対策）
-                    self.icon_missing.insert(path);
+                    // 一過性なら 1 回ぶん加算して次の要求で再試行、恒久なら上限を直接入れて
+                    // 打ち切る（#692）。`retain_visible` で可視集合外は自然に忘れる。
+                    let entry = self.icon_attempts.entry(path).or_insert(0);
+                    *entry = if retryable {
+                        entry.saturating_add(1)
+                    } else {
+                        ICON_MAX_ATTEMPTS
+                    };
                 }
             }
         }
@@ -442,7 +471,11 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         // 指摘・受容）。
         let visible: HashSet<String> = snapshot.rows.iter().map(|r| r.path.clone()).collect();
         retain_visible(&mut self.icon_textures, &visible);
-        self.icon_missing.retain(|p| visible.contains(p));
+        self.icon_attempts.retain(|p, _| visible.contains(p));
+        // **pending も可視集合で刈る**（#692）。worker が 1 通も送らずに終わる経路
+        // （managed state 不在で早期 return）があり、刈らないと path が永久に in-flight
+        // 扱いのまま `needs_extraction` を素通りできず、その行のアイコンは戻らない。
+        self.icon_pending.retain(|p| visible.contains(p));
         // snapshot.settled は旧 view.rs の `!self.search_debounce.is_armed()` ゲート（連打中は
         // icon worker を積まない・perf 最適化）の後継（#532 SU4 の系譜）。main の search_debounce は
         // ResultsView から参照できないため、live 値を snapshot 経由で運ぶ（Task 5 concern 2 の fix）。

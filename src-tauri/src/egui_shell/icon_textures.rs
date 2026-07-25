@@ -9,7 +9,10 @@ use std::collections::{HashMap, HashSet};
 /// driver（view.rs の worker spawn / load_texture）が消費する（#532 SU4 Task 5）。
 pub(crate) enum IconMsg {
     Loaded(String, egui::ColorImage),
-    Missing(String),
+    /// 取得できなかった。**第 2 引数は「再試行してよいか」**（#692）——一過性の失敗
+    /// （冷えたシェルのアイコンキャッシュ等）を恒久的な欠落と同じ扱いにすると、その行は
+    /// 可視である限りグレーのプレースホルダのまま戻らない。
+    Missing(String, bool),
 }
 
 /// 自前エンコードの RGBA8 PNG（icon.rs bgra_to_png）を ColorImage へ decode する。
@@ -35,17 +38,26 @@ pub(crate) fn png_to_color_image(png: &[u8]) -> Option<egui::ColorImage> {
     Some(egui::ColorImage::new([w, h], pixels))
 }
 
-/// path が未取得かつ未 missing なら true（抽出 worker に積むべきか）。値型 `V` でジェネリック化
-/// してあるのは呼び出し側の型（`egui::TextureHandle`）に依存させないため——ctx 無しに生成できない
-/// TextureHandle を使わずとも、判定は `have`/`missing` のキー集合演算のみで完結する（ユニットテスト
-/// でダミー値型を使い present/missing/new の全経路を検証できる）。driver（view.rs）が消費する
-/// （#532 SU4 Task 5）。
+/// 抽出を諦めるまでの試行回数（#692）。`extract_icon` 内のリトライ（シェルの冷えた
+/// キャッシュ対策）とは別の層で、**worker 往復を含む再試行**の上限である。
+pub(crate) const ICON_MAX_ATTEMPTS: u8 = 3;
+
+/// path が未取得かつ試行上限に達していないなら true（抽出 worker に積むべきか）。
+///
+/// **失敗を「有無」ではなく「回数」で持つ**（#692）。一過性の失敗（シェルのアイコン
+/// キャッシュが冷えている等）を 1 度で恒久的な欠落として latch すると、その行は可視で
+/// ある限りグレーのプレースホルダのまま戻らない。恒久的な失敗（パス不在等）は
+/// 呼び出し側が `ICON_MAX_ATTEMPTS` を直接入れて即座に打ち切る。
+///
+/// 値型 `V` でジェネリック化してあるのは呼び出し側の型（`egui::TextureHandle`）に依存
+/// させないため——ctx 無しに生成できない TextureHandle を使わずとも、判定はキー集合と
+/// 回数の演算のみで完結する（#532 SU4 Task 5）。
 pub(crate) fn needs_extraction<V>(
     path: &str,
     have: &HashMap<String, V>,
-    missing: &HashSet<String>,
+    attempts: &HashMap<String, u8>,
 ) -> bool {
-    !have.contains_key(path) && !missing.contains(path)
+    !have.contains_key(path) && attempts.get(path).copied().unwrap_or(0) < ICON_MAX_ATTEMPTS
 }
 
 /// 可視集合に無い path の値を drop（メモリを可視集合に頭打ち・SU4 決定 A メモリ境界）。
@@ -85,16 +97,24 @@ mod tests {
     // HashMap<String, u32> で present→skip / missing→skip / new→needs、retain の drop/keep を実際に検証する。
 
     #[test]
-    fn needs_extraction_skips_present_and_missing() {
+    fn needs_extraction_retries_until_attempt_cap() {
         let mut have: HashMap<String, u32> = HashMap::new();
         have.insert("present.exe".into(), 1);
-        let mut missing: HashSet<String> = HashSet::new();
-        missing.insert("m.exe".into());
+        let mut attempts: HashMap<String, u8> = HashMap::new();
+        attempts.insert("once.exe".into(), 1);
+        attempts.insert("capped.exe".into(), ICON_MAX_ATTEMPTS);
 
-        assert!(super::needs_extraction("new.exe", &have, &missing), "未知は要抽出");
-        assert!(!super::needs_extraction("m.exe", &have, &missing), "missing は再抽出しない");
+        assert!(super::needs_extraction("new.exe", &have, &attempts), "未知は要抽出");
         assert!(
-            !super::needs_extraction("present.exe", &have, &missing),
+            super::needs_extraction("once.exe", &have, &attempts),
+            "1 度失敗しただけでは諦めない（#692: 一過性の失敗を恒久扱いしない）"
+        );
+        assert!(
+            !super::needs_extraction("capped.exe", &have, &attempts),
+            "上限に達したら再抽出しない（無限リトライを作らない）"
+        );
+        assert!(
+            !super::needs_extraction("present.exe", &have, &attempts),
             "既取得は再抽出しない"
         );
     }

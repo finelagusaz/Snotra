@@ -93,10 +93,10 @@ pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> R
     if let Some(main) = app.get_window("main") {
         let _ = main.set_always_on_top(false);
     }
-    if let Some(results) = app.get_window("results") {
+    if let Some(results) = app.try_state::<crate::egui_shell::ResultsWindow>() {
         // results は tauri の set_always_on_top を使えない（tao の差分適用が VISIBLE を
         // false と信じて SW_HIDE を撃つ・#646 PR2）。Z オーダーのみ動かす専用経路を通す。
-        crate::egui_shell::set_results_topmost(&results, false);
+        results.set_topmost(false);
     }
 
     // Spawn a monitoring thread to restore alwaysOnTop when the process exits.
@@ -139,8 +139,10 @@ pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> R
         if let Some(main) = handle_for_monitor.get_window("main") {
             let _ = main.set_always_on_top(true);
         }
-        if let Some(results) = handle_for_monitor.get_window("results") {
-            crate::egui_shell::set_results_topmost(&results, true);
+        if let Some(results) =
+            handle_for_monitor.try_state::<crate::egui_shell::ResultsWindow>()
+        {
+            results.set_topmost(true);
         }
 
         // First-run: if indexing is pending and not started, kick off index build.

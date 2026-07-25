@@ -56,6 +56,23 @@ pub fn results_window_height(result_count: usize, max_results: u32, row_height: 
     }
 }
 
+/// results 窓を表示してよいか（#671 PR A′・レビュー Important 1）。
+///
+/// **`main_visible` を条件に含めるのが要石である。** main を hide しても `state.results()` は
+/// 消えない（reset は show 側の `reset_pending` 消費でしか起きない）ため、`show_results` は
+/// hidden 中も true のまま残る。hidden 中に main の update() が 1 フレームでも走ると
+/// （`config-applied` / `indexing-*` / updater 完了の `wake_view` は main の可視性に関係なく
+/// 発火する）、results だけが最前面に取り残される。
+///
+/// PR A′ 以前はこの事故を `SearchWindowView` の view-local な可視フラグが偶然に防いでいた
+/// ——`hide_egui_main` から到達できず stale な true のまま残るため show を skip していた。
+/// 可視フラグを `ResultsWindow` へ移して正直に false にした結果、その防波堤が消えた。
+/// **「hidden 中は update() が走らない」という命題には依存しない**（機構は未同定・未測定・
+/// spec §7-2 が「既定事実として引用しない」と定めている）。
+pub fn results_should_show(main_visible: bool, show_results: bool, results_height: f64) -> bool {
+    main_visible && show_results && results_height > 0.0
+}
+
 /// 打鍵 debounce（決定7）。時刻は driver が注入する（純粋・テスト可能）。
 /// - on_input: 入力フレーム。leading（バースト先頭）なら true を返し、以後 armed。
 /// - poll: 各フレーム。armed かつ elapsed>=interval で trailing 発火し disarm。
@@ -195,5 +212,15 @@ mod tests {
         assert_eq!(results_window_height(8, 8, row), 8.0 * row + 8.0); // ちょうど境界(result_count == max_results)
         assert_eq!(results_window_height(20, 8, row), 8.0 * row + 8.0); // 上限で頭打ち
         assert_eq!(results_window_height(0, 8, row), 0.0); // 0 件は非表示(高さ 0 = 呼び出し側で hide)
+    }
+
+    /// #671 PR A′: main が hidden の間は、結果が残っていても results を出さない。
+    /// これを落とすと「main は隠れたまま results だけが最前面に残る」（レビュー Important 1）。
+    #[test]
+    fn results_hidden_while_main_is_hidden_even_with_rows() {
+        assert!(!results_should_show(false, true, 120.0)); // 要石: main hidden なら常に false
+        assert!(results_should_show(true, true, 120.0)); // 通常の表示条件
+        assert!(!results_should_show(true, false, 120.0)); // 表示ゲート（plain_results_hidden 等）
+        assert!(!results_should_show(true, true, 0.0)); // 0 件（高さ 0）
     }
 }

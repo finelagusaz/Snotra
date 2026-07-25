@@ -291,6 +291,29 @@ try {
         -not (Wait-TraceEvent -Path $errPath -EventName "egui_results:hide" -TimeoutMs $ObserveTimeoutMs)) {
       $failures += "egui_results:hide not observed within ${ObserveTimeoutMs}ms after Escape"
     }
+
+    # #671 PR A′: hide 後に results だけが最前面に取り残されないこと（orphan 検出）。
+    # **presence 検査ではこの事故を素通りする**——orphan でも egui_results:hide は出るため。
+    # orphan は必ず「hide 以降の余分な egui_results:show」として現れる（main が hidden でも
+    # repaint 要求は飛ぶ: config-applied / indexing-* / updater 完了の wake_view）。
+    # 静定を待ってから、最後の egui_hide:done より後ろの行だけを見る。
+    if ($resultsChecked -and $failures.Count -eq 0) {
+      Start-Sleep -Milliseconds 1500
+      $lines = @(Get-Content -Path $errPath)
+      $hideIdx = -1
+      for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+        if ($lines[$i] -match '"event":"egui_hide:done"') { $hideIdx = $i; break }
+      }
+      # $hideIdx が最終行なら「後ろ」は空。PowerShell の範囲演算子は降順にも回るため、
+      # 空区間を範囲式で書くと逆走して誤検出する——先に件数で弾く。
+      if ($hideIdx -ge 0 -and $hideIdx -lt ($lines.Count - 1)) {
+        $after = $lines[($hideIdx + 1)..($lines.Count - 1)]
+        $orphan = @($after | Where-Object { $_ -match '"event":"egui_results:show"' })
+        if ($orphan.Count -gt 0) {
+          $failures += "results window re-shown after egui_hide:done ($($orphan.Count) x egui_results:show); main is hidden but results is left on top"
+        }
+      }
+    }
   }
 } finally {
   if (-not $proc.HasExited) {

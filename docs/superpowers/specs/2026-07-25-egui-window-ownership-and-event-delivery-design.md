@@ -102,6 +102,24 @@ pub(crate) struct ResultsWindow {
 
 **得られないもの**: §2.6 のとおり `app.get_window("results").hide()` は依然書ける。本決定は表現不能化ではなく、**正しい経路を 1 つにし、誤った経路を書く動機を消す**ことを目的とする。
 
+#### 追補（PR A′ 実装後・実機目視で発見）: 消した非対称は荷重を持っていた
+
+上の「この非対称は構造的に消える」は**代償を伴った**。PR A′ を入れた実機で「Escape で main を閉じても results が残る」が再現した（実装者のセルフレビューでも独立レビューでも同じ機構を指摘・後者は Important 1）。
+
+機構: main を hide しても `state.results()` は消えない（reset は show 側の `reset_pending` 消費でしか起きない）ため `show_results` は hidden 中も true のまま残る。hidden 中でも repaint 要求は飛ぶ（`config-applied` / `indexing-*` / updater 完了の `wake_view` は main の可視性を見ない）。その 1 フレームが `drive_results_window` を通ると results だけが最前面に取り残される。
+
+**PR A′ 以前にこれを防いでいたのは、まさに本決定が「非対称」と呼んだ当のもの**である——view-local の可視フラグは `hide_egui_main` から到達できず stale な true のまま残り、結果として show を skip していた。**意図されない保護だったが、実効的な保護だった。**
+
+したがって本決定の主張は次に訂正する:
+
+> `ResultsWindow` は「**誰が** raw 操作を撃つか」を一点に集める。「**撃ってよい状況か**」は判定しない。後者は show 述語側のゲート（`layout::results_should_show` が `AppState.main_visible` を合流させる）が担う。
+
+`hide()` の無条件化ではこの穴は閉じない（フラグが false になった後に drive が `show()` を撃つ構図が変わらないため）。`hide_egui_main` は `main_visible = false` を `results.hide()` の**前**に置く（後ろだと隙間のフレームが素通りする）。
+
+**残余（狭めただけで閉じていない）**: `hide_egui_main` は `hotkey-pressed` listener 経由で platform スレッドから走るため、イベントループ側が `results_should_show` の判定を通過した後・`show()` の前に hide が挟まると、`SW_SHOWNOACTIVATE` が hide の後に撃たれうる。閉じるには show 経路をイベントループへ marshalling する必要があり、§7-5 の未決事項と同根である。
+
+**教訓（機構の側）**: この回帰を `smoke:egui` の presence 検査は**素通りさせた**——orphan でも `egui_results:hide` は出るためである。trace の presence は窓の状態ではない。PR A′ で「最後の `egui_hide:done` より後ろに `egui_results:show` が出ないこと」を smoke に追加した。
+
 ### 決定 3: `platform-event` 袋の解体（PR C）
 
 `platform-event`（`platform/mod.rs:290` で emit・payload 内 `event` フィールドで種別分岐）の内側種別は**今日 `initial-hotkey-failed` の 1 種のみ**。この袋詰めは TS フロントが汎用チャネルを 1 本持っていた時代の遺物である。

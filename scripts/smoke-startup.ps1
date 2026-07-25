@@ -63,13 +63,24 @@ for ($run = 1; $run -le $Iterations; $run++) {
     }
   }
 
+  # **trace が 0 件なら「*:error が無い」は自明に成立する**——空振りの合格である。
+  # #690 の調査で、冷えた CI runner の初回起動が 20 秒間 trace を 1 行も出さない状態を
+  # 実測した。その状態でも本 smoke は緑を返していた（アサーションが不在の検査だけゆえ）。
+  # SNOTRA_TRACE=1 の起動は最低でも `hotkey:registered` を出すため、0 件は異常である。
+  if ($events.Count -eq 0) {
+    $failures += "run=$run trace が 0 件（アプリが 1 行も出していない）。この状態では「*:error 不在」は何も証明しない"
+  }
+
   $errorEvents = @($events | Where-Object { $_.event -like "*:error" })
   foreach ($errEvt in $errorEvents) {
     $failures += "run=$run error event=$($errEvt.event)"
   }
 
+  # event_count は成功時にも出す（**検査が実際に何かを見た**ことを読み手に示すため。
+  # 沈黙を合格と読ませないための肯定的報告）。
   $summaries += [pscustomobject]@{
     run = $run
+    event_count = $events.Count
     error_count = $errorEvents.Count
   }
 }

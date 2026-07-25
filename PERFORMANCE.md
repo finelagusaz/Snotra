@@ -175,9 +175,9 @@ user_font 自身が CJK をカバーするなら jp_font（`YuGothM.ttc` 13.26 M
 
 ### 採用: user_font も `from_static` で積む（epaint の全体複製を止める）
 
-epaint の `blob_from_font_data` は `data.clone().font` を match の**前**に評価する。
-`Cow::Owned`（= `FontData::from_owned`）ではフォント全体が深くコピーされ、`FontDefinitions`
-側と Blob 側の 2 本が常駐する。`Cow::Borrowed`（= `from_static`）なら複製は参照だけ。
+`from_owned` で積んだフォントが epaint 側で丸ごと複製される。**機構の正本は
+`egui_shell/view.rs` の `font_definitions` の doc コメント**（epaint のどの関数がどう
+複製するかはそこに書く。ここで再記述すると epaint の更新時に二重メンテになる）。
 jp_font は元から `from_static` だったが user_font だけ `from_owned` のままで、
 上の A/B はこの非対称をそのまま映していた（user 20.6 ≒ **2×** 10.21 / jp 12.9 ≒ **1×** 13.26）。
 

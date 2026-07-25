@@ -2,8 +2,10 @@
 //! SearchState（純粋核）を駆動する imperative shell: TextEdit/結果リスト描画・直 Engine 検索
 //! （debounce）・↑↓/→←ナビ・folder 展開（async ロード + staleness）・tool 選択（§18・
 //! Shift+Enter 入場/起動/Escape 復帰）・instant/slash コマンド・起動/実行 dispatch・動的高さ。
-//! フォント登録は #532 SU4 で 2 枝へ進化: config font_family 解決時は user_font 先頭 + jp_font
-//! fallback（WebView2 CSS スタック parity）、解決失敗時のみ jp_font 単一・index 0（#579 の元不変条件）。
+//! フォント登録は **3 枝**（#532 SU4 の 2 枝に #689 が 1 枝を足した）: config font_family が
+//! 解決し CJK 非被覆なら user_font 先頭 + jp_font fallback（WebView2 CSS スタック parity）、
+//! 解決し**被覆するなら user_font 単一**（jp_font を積まない・#689）、解決失敗時は jp_font
+//! 単一。いずれも index 0 へ `insert` する（#579 の元不変条件）。判定は `font_covers_cjk`。
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -104,6 +106,9 @@ fn font_definitions(
     fonts
 }
 
+/// 解決済み user_font の (`'static` バイト列, face index)。[`USER_FONTS`] の値型。
+type ResolvedFont = (&'static [u8], u32);
+
 /// 解決済み user_font の family 名 → `'static` バイト列。**成功したものだけ**を保持する。
 ///
 /// `Box::leak` を素で置くと 1 回の font_family 変更で 2 回漏れる——
@@ -111,11 +116,14 @@ fn font_definitions(
 /// family 名をキーにして両者と再切替に 1 本の leak を共有させる（漏れはセッション中に
 /// 使われた **distinct family 数**で頭打ち）。`JP_FONT_BYTES` と同じく解放されない。
 ///
+/// ただし never-clear を要求する理由は `JP_FONT_BYTES` とは別である。あちらは
+/// `transmute` による `'static` 化の**健全性**が OnceLock の不変性に依存する。こちらの
+/// `Box::leak` はそれ自体が `'static` を生むため、never-clear は leak の重複を避ける
+/// 一意性の要請であって memory safety の要請ではない。
+///
 /// **失敗（None）はキャッシュしない。** するとフォントを後から導入して同じ名前に
 /// 戻したとき、解決できるのに拒み続ける。再解決のコストは `applied_font_family` ゲートに
 /// より font_family 変更時の一度きりで、現行挙動と同じである。
-type ResolvedFont = (&'static [u8], u32);
-
 static USER_FONTS: OnceLock<Mutex<HashMap<String, ResolvedFont>>> = OnceLock::new();
 
 /// config font_family をシステムから解決して (`'static` バイト列, face index) を返す。

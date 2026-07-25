@@ -1,4 +1,4 @@
-# Retrospective — #671/#673 egui 窓所有と配送経路（PR A: smoke 被覆 / A′: ResultsWindow / B: read_visual / C: platform-event 解体 / D: ctx 複製の解消）
+# Retrospective — #671/#673 egui 窓所有と配送経路（PR A: smoke カバレッジ / A′: ResultsWindow / B: read_visual / C: platform-event 解体 / D: ctx 複製の解消）
 
 ## よかったこと
 
@@ -30,7 +30,7 @@ PR D は managed state の manage 位置を窓生成の後へ移す。その根�
 
 ### spec が「他のすべての前提条件」と宣言した網が、CI では一度も走っていなかった
 
-PR A は「results 窓の自動被覆はゼロ」を出発点に smoke を拡張し、spec §4 は「**A は他のすべての前提条件である**」と明記して A を先頭に置いた。しかし CI ログを遡ると、A・B・C・D の **4 run すべてで results 被覆が skip されていた**（`NOTE: results window coverage was SKIPPED`）。同じ job の前段（startup smoke の 5 起動）がランナーに `config.toml` を作り、後段の `-SeedConfig` が「既存 config は上書きしない」設計ゆえ seed を諦める——**job が自分で自分の前提を壊していた。**
+PR A は「results 窓の自動検証はゼロ」を出発点に smoke を拡張し、spec §4 は「**A は他のすべての前提条件である**」と明記して A を先頭に置いた。しかし CI ログを遡ると、A・B・C・D の **4 run すべてで results の検証が skip されていた**（`NOTE: results window coverage was SKIPPED`）。同じ job の前段（startup smoke の 5 起動）がランナーに `config.toml` を作り、後段の `-SeedConfig` が「既存 config は上書きしない」設計ゆえ seed を諦める——**job が自分で自分の前提を壊していた。**
 
 どちらのスクリプトにもバグは無い。順序の組み合わせだけで網が消え、しかも `Smoke` job は success で、skip は緑のログに埋もれる。**「緑」は「検査が走った」の証拠ではない**という #497 の教訓（`selectChecks` に載っていないファイルの沈黙は合格ではない）が、CI 側に同じ形で再発していた。
 

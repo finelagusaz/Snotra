@@ -23,7 +23,7 @@ use crate::egui_shell::{
 
 static JP_FONT_BYTES: OnceLock<Box<[u8]>> = OnceLock::new();
 
-/// user_font の CJK 被覆を判定するプローブ文字。**全点に glyph が無ければ被覆とみなさない**。
+/// user_font が CJK をカバーするかを判定するプローブ文字。**全点に glyph が無ければカバーしているとみなさない**。
 ///
 /// かな + JIS 第1水準に加え、**第2水準を混ぜているのが要点**——かなと常用漢字だけ持つ
 /// 中途半端な和文フォントを弾くため。判定が緩いと jp_font を落としたあとで第2水準が
@@ -50,7 +50,7 @@ fn font_covers_cjk(bytes: &[u8], face_index: u32) -> bool {
     CJK_PROBE.iter().all(|&ch| face.glyph_index(ch).is_some())
 }
 
-/// `jp_bytes = None` は「user_font が CJK を被覆するので jp_font を積まない」を表す。
+/// `jp_bytes = None` は「user_font が CJK をカバーするので jp_font を積まない」を表す。
 /// user・jp とも None なら egui 既定フォントのままの `FontDefinitions` を返す
 /// （呼び出し側が `set_fonts` 自体を避ける）。
 fn font_definitions(
@@ -75,8 +75,8 @@ fn font_definitions(
             uf.index = face_index; // TTC face 指定（settings font.rs:138 と同型）
             fonts.font_data.insert("user_font".to_owned(), uf.into());
             for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-                // user_font 先頭（font_family 優先）+ jp_font fallback（CJK 被覆）= CSS スタック parity。
-                // 被覆済みなら jp_font は積まれず user_font 単一・先頭になる。
+                // user_font 先頭（font_family 優先）+ jp_font fallback（CJK をカバー）= CSS スタック parity。
+                // カバー済みなら jp_font は積まれず user_font 単一・先頭になる。
                 let list = fonts.families.entry(family).or_default();
                 if has_jp {
                     list.insert(0, "jp_font".to_owned());
@@ -116,7 +116,7 @@ fn resolve_font_family(name: &str) -> Option<(Vec<u8>, u32)> {
 ///
 /// **`OnceLock` は set-once・never-clear を厳守する**——下の `transmute` による `'static`
 /// 化はその不変条件だけを根拠に健全である。再 set・クリアの経路を足してはならない。
-/// 被覆済みフォントを使う限りこの関数は呼ばれず、13.26 MiB は確保されない。
+/// CJK をカバーするフォントを使う限りこの関数は呼ばれず、13.26 MiB は確保されない。
 fn jp_font_bytes() -> Option<&'static [u8]> {
     let candidates = [
         "C:/Windows/Fonts/YuGothM.ttc",
@@ -139,8 +139,8 @@ fn jp_font_bytes() -> Option<&'static [u8]> {
 }
 
 pub(crate) fn configure_japanese_font(context: &egui::Context, font_family: &str) {
-    // **user を先に解決し、被覆判定が済むまで jp_font のファイルを読まない**（順序が要点）。
-    // 旧実装は無条件に jp を読んでから user を解決していたため、被覆済みフォントでも
+    // **user を先に解決し、カバー判定が済むまで jp_font のファイルを読まない**（順序が要点）。
+    // 旧実装は無条件に jp を読んでから user を解決していたため、CJK をカバーするフォントでも
     // 13.26 MiB が常駐した。ここを逆にすることが削減の実体である。
     let user = resolve_font_family(font_family);
     let need_jp = match &user {
@@ -1661,8 +1661,8 @@ mod tests {
 
     #[test]
     fn font_definitions_honor_puts_user_first_jp_fallback() {
-        // user=Some かつ **被覆していない**（jp=Some）: user_font 先頭・jp_font は fallback（index 1）
-        // ＝ WebView2 CSS スタック parity。被覆判定を入れても、この経路の不変条件は不変である。
+        // user=Some かつ **CJK をカバーしていない**（jp=Some）: user_font 先頭・jp_font は fallback（index 1）
+        // ＝ WebView2 CSS スタック parity。カバー判定を入れても、この経路の不変条件は不変である。
         let dummy: &'static [u8] = &[0u8; 4];
         let user = vec![0u8; 4];
         let fonts = font_definitions(Some(dummy), Some((user, 0)));
@@ -1671,30 +1671,30 @@ mod tests {
             assert_eq!(list.first().map(String::as_str), Some("user_font"),
                 "honor 時は user_font 先頭（font_family 優先）");
             assert_eq!(list.get(1).map(String::as_str), Some("jp_font"),
-                "honor 時も jp_font は fallback として残す（CJK 被覆）");
+                "honor 時も jp_font は fallback として残す（CJK をカバー）");
         }
     }
 
     #[test]
     fn font_definitions_covered_user_font_omits_jp_entirely() {
-        // user が CJK を被覆（jp=None）: jp_font は**スタックにもデータにも現れない**。
+        // user が CJK をカバー（jp=None）: jp_font は**スタックにもデータにも現れない**。
         // font_data に残ると egui が eager parse してメモリを食うため、両方を検査する。
         let user = vec![0u8; 4];
         let fonts = font_definitions(None, Some((user, 0)));
         assert!(!fonts.font_data.contains_key("jp_font"),
-            "被覆時は jp_font のバイト列自体を積まない（削減の実体）");
+            "カバー済みなら jp_font のバイト列自体を積まない（削減の実体）");
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
             let list = fonts.families.get(&family).expect("family present");
             assert_eq!(list.first().map(String::as_str), Some("user_font"),
-                "被覆時も user_font 先頭（#579 のベースラインずれ防止）");
+                "カバー済みでも user_font 先頭（#579 のベースラインずれ防止）");
             assert!(!list.iter().any(|n| n == "jp_font"),
-                "被覆時は jp_font をスタックに残さない");
+                "カバー済みなら jp_font をスタックに残さない");
         }
     }
 
     #[test]
     fn font_covers_cjk_rejects_unparsable_bytes() {
-        // パース不能は「被覆していない」＝ jp_font を積む安全側へ倒す。
+        // パース不能は「カバーしていない」＝ jp_font を積む安全側へ倒す。
         assert!(!super::font_covers_cjk(&[], 0));
         assert!(!super::font_covers_cjk(&[0u8; 64], 0));
     }
@@ -1706,7 +1706,7 @@ mod tests {
         let mut checked = 0usize;
         for (name, data) in &defaults.font_data {
             assert!(!super::font_covers_cjk(&data.font, data.index),
-                "egui 同梱フォント {name} が CJK 被覆と誤判定された（判定が緩すぎる）");
+                "egui 同梱フォント {name} が CJK をカバーすると誤判定された（判定が緩すぎる）");
             checked += 1;
         }
         assert!(checked > 0, "egui 既定フォントが 0 件では negative を検査できていない");
@@ -1722,6 +1722,6 @@ mod tests {
             return;
         };
         assert!(super::font_covers_cjk(&bytes, 0),
-            "和文フォント YuGothM が非被覆と判定された（判定が厳しすぎる）");
+            "和文フォント YuGothM が CJK をカバーしないと判定された（判定が厳しすぎる）");
     }
 }

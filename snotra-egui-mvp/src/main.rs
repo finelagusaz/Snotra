@@ -630,7 +630,7 @@ fn run_hide_show_probe(window: tauri::Window, app_handle: tauri::AppHandle, cycl
 
 /// `jp_font` を登録し Proportional/Monospace の先頭（`insert(0, ...)`）へ差し込んだ
 /// `FontDefinitions` を組む純粋部分。`push`（末尾）だと Latin=egui既定/CJK=Yu Gothic の
-/// 2フォントに分かれ、softbuffer の被覆AA無しラスタが vertical metrics 差を整数pxへ
+/// 2フォントに分かれ、softbuffer のカバレッジ AA 無しラスタが vertical metrics 差を整数pxへ
 /// 丸めて混在行のベースラインをずらす（#399/#579）。呼び出し側は `ctx.set_fonts` を担う。
 fn japanese_font_definitions(bytes: &'static [u8]) -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();

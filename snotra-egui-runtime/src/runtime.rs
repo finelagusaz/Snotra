@@ -355,11 +355,11 @@ impl EguiWindow {
                     }
                 }
                 egui::OutputCommand::CopyImage(_) => {
-                    log::warn!("copying egui images is not implemented in the MVP runtime");
+                    log::warn!("copying egui images is not implemented in this runtime");
                 }
                 egui::OutputCommand::OpenUrl(url) => {
                     log::warn!(
-                        "opening URL is not implemented in the MVP runtime: {}",
+                        "opening URL is not implemented in this runtime: {}",
                         url.url
                     );
                 }

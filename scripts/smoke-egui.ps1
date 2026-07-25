@@ -3,8 +3,10 @@ param(
   [int]$StartupWaitMs = 4000,
   [int]$ObserveTimeoutMs = 8000,
   [switch]$SeedConfig,
-  # hotkey の仮想キーコード列（カンマ区切り・押下順・解放は逆順）。既定は Alt(18)+Q(81) = config.rs の既定 hotkey。
-  # hotkey は config.toml 依存のため、実 config を持つ実機ではその値を渡す（例: Ctrl+K は "17,75"）。
+  # hotkey の仮想キーコード列（カンマ区切り・押下順・解放は逆順）。
+  # **通常は指定不要**——既定では起動時の `hotkey:registered` trace から、アプリが実際に
+  # 登録した VK 列を読む（対応表の SSOT は src-tauri/src/platform/hotkey.rs の injection_vks）。
+  # 明示指定したときだけ trace より優先される（trace が出ない旧バイナリの検証など）。
   # pwsh -File / npm 経由で配列引数が壊れないよう文字列で受けて内部で分割する。
   [string]$HotkeyVks = "18,81"
   ,
@@ -122,6 +124,29 @@ function Wait-TraceEvent {
   return $false
 }
 
+function Get-TraceEventData {
+  param([string]$Path, [string]$EventName, [int]$TimeoutMs)
+  # trace の行形式: `[trace] {"seq":N,"ts_ms":M,"event":"...","data":{...}}`（src-tauri/src/trace.rs）
+  $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
+  $pattern = '"event":"' + $EventName + '"'
+  while ([DateTime]::UtcNow -lt $deadline) {
+    try {
+      if (Test-Path $Path) {
+        $line = Select-String -Path $Path -Pattern $pattern -SimpleMatch |
+                Select-Object -Last 1
+        if ($null -ne $line) {
+          $json = $line.Line -replace '^\[trace\]\s*', ''
+          return ($json | ConvertFrom-Json).data
+        }
+      }
+    } catch {
+      # 書き込み中のファイル読取り競合は無視して再試行
+    }
+    Start-Sleep -Milliseconds 200
+  }
+  return $null
+}
+
 # 既存インスタンスは single-instance 転送で smoke を汚すため停止（smoke-startup.ps1 と同じ前提）
 Get-Process snotra -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 300
@@ -154,7 +179,23 @@ try {
   # ShowAfterAltRelease〔Alt 押下中は show を最大 350ms 繰り延べる〕が解決する）。
   # CI runner は起動直後の負荷で初回注入を取りこぼすことがある（PR #662 で flake 実測・
   # 再走で合格）ため、観測できなければ一度だけ再注入する。
-  $vks = @($HotkeyVks -split ',' | ForEach-Object { [byte]([int]$_.Trim()) })
+  # 押すキーは**アプリが実際に登録した値**から採る（scripts が config を読み解いて
+  # VK へ変換すると、hotkey.rs の parse_modifier / parse_vk / 修飾ビット→VK の 3 表が
+  # PowerShell 側に写り、ドリフトする）。-HotkeyVks が明示指定されたときだけそちらを使う。
+  if ($PSBoundParameters.ContainsKey('HotkeyVks')) {
+    $vks = @($HotkeyVks -split ',' | ForEach-Object { [byte]([int]$_.Trim()) })
+    Write-Host "Hotkey VKs (explicit): $($vks -join ',')"
+  } else {
+    $hk = Get-TraceEventData -Path $errPath -EventName "hotkey:registered" -TimeoutMs $ObserveTimeoutMs
+    if ($null -eq $hk) {
+      throw "hotkey:registered trace not observed within ${ObserveTimeoutMs}ms — cannot determine which keys to inject"
+    }
+    if (-not $hk.ok) {
+      throw "hotkey registration failed in the app (modifier=$($hk.modifier) key=$($hk.key)) — smoke cannot proceed"
+    }
+    $vks = @($hk.vks | ForEach-Object { [byte][int]$_ })
+    Write-Host "Hotkey VKs (from trace): $($vks -join ',') (modifier=$($hk.modifier) key=$($hk.key))"
+  }
   if ($vks.Count -lt 1) { throw "HotkeyVks must contain at least one VK code" }
   $shown = $false
   foreach ($attempt in 1..2) {

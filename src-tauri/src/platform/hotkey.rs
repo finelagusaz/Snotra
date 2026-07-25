@@ -43,10 +43,56 @@ pub fn parse_vk(s: &str) -> u32 {
     }
 }
 
+/// 注入用（`keybd_event`）の VK 列を押下順で返す。**解放は逆順**で行うこと。
+///
+/// `RegisterHotKey` の修飾ビット（`MOD_ALT` 等）と注入用 VK（`VK_MENU` 等）は別の値で
+/// あり、その対応はここが唯一の場所である。smoke（`scripts/smoke-egui.ps1`）は
+/// `hotkey:registered` trace 経由でこの列を受け取り、**自前の対応表を持たない**。
+/// 修飾の解析は `parse_modifier` を、キーの解決は `parse_vk` を再利用する（表を 2 つにしない）。
+pub fn injection_vks(config: &HotkeyConfig) -> Vec<u32> {
+    const VK_SHIFT: u32 = 0x10;
+    const VK_CONTROL: u32 = 0x11;
+    const VK_MENU: u32 = 0x12; // Alt
+    const VK_LWIN: u32 = 0x5B;
+    let mods = parse_modifier(&config.modifier);
+    let has = |m: HOT_KEY_MODIFIERS| (mods.0 & m.0) != 0;
+    let mut vks = Vec::new();
+    if has(MOD_CONTROL) {
+        vks.push(VK_CONTROL);
+    }
+    if has(MOD_SHIFT) {
+        vks.push(VK_SHIFT);
+    }
+    if has(MOD_ALT) {
+        vks.push(VK_MENU);
+    }
+    if has(MOD_WIN) {
+        vks.push(VK_LWIN);
+    }
+    let key = parse_vk(&config.key);
+    if key != 0 {
+        vks.push(key);
+    }
+    vks
+}
+
 pub fn register(config: &HotkeyConfig) -> bool {
     let modifiers = parse_modifier(&config.modifier);
     let vk = parse_vk(&config.key);
-    unsafe { RegisterHotKey(Some(HWND::default()), HOTKEY_ID, modifiers, vk) }.is_ok()
+    let ok = unsafe { RegisterHotKey(Some(HWND::default()), HOTKEY_ID, modifiers, vk) }.is_ok();
+    // 実際に登録した内容を 1 行残す（初回登録・設定変更の再登録の双方がここを通る）。
+    // smoke はこの `vks` をそのまま注入するため、対応表を持たずに済む。
+    // ユーザーの「ホットキーが効かない」報告に対する一次情報でもある。
+    crate::trace::trace(
+        "hotkey:registered",
+        serde_json::json!({
+            "modifier": config.modifier,
+            "key": config.key,
+            "vks": injection_vks(config),
+            "ok": ok,
+        }),
+    );
+    ok
 }
 
 pub fn unregister() {
@@ -74,5 +120,38 @@ mod tests {
         assert_eq!(parse_vk("enter"), 0x0D);
         assert_eq!(parse_vk("pageup"), 0x21);
         assert_eq!(parse_vk("delete"), 0x2E);
+    }
+
+    #[test]
+    fn injection_vks_alt_q() {
+        let c = HotkeyConfig { modifier: "Alt".into(), key: "Q".into() };
+        assert_eq!(injection_vks(&c), vec![0x12, b'Q' as u32]);
+    }
+
+    #[test]
+    fn injection_vks_ctrl_k() {
+        let c = HotkeyConfig { modifier: "Ctrl".into(), key: "K".into() };
+        assert_eq!(injection_vks(&c), vec![0x11, b'K' as u32]);
+    }
+
+    #[test]
+    fn injection_vks_compound_modifier_is_press_ordered() {
+        // 押下順の契約: Ctrl → Shift → Alt → Win → キー（解放は逆順）。
+        let c = HotkeyConfig { modifier: "Shift+Ctrl".into(), key: "A".into() };
+        assert_eq!(injection_vks(&c), vec![0x11, 0x10, b'A' as u32]);
+    }
+
+    #[test]
+    fn injection_vks_named_key_reuses_parse_vk_table() {
+        // 要石: 名前付きキーの表は parse_vk の 1 か所だけに存在する。
+        let c = HotkeyConfig { modifier: "Alt".into(), key: "F12".into() };
+        assert_eq!(injection_vks(&c), vec![0x12, 0x7B]);
+    }
+
+    #[test]
+    fn injection_vks_unknown_key_is_omitted() {
+        // parse_vk が 0 を返すキーは列から落ちる（RegisterHotKey も同じ理由で失敗する）。
+        let c = HotkeyConfig { modifier: "Alt".into(), key: "f13".into() };
+        assert_eq!(injection_vks(&c), vec![0x12]);
     }
 }

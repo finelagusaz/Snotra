@@ -25,6 +25,14 @@ param(
   # **観測窓を広げる前に遅延を測るため**の予算であって、合否には影響しない（失敗は失敗のまま）。
   # 0 を渡すと事後観測を行わない。
   [int]$PostMortemWaitMs = 30000
+  ,
+  # `hotkey:registered`（起動後**最初**の観測）専用の予算（#690 follow-up）。
+  # ここだけ cold start を含む: 冷えた CI runner の初回起動で **11.7s** を実測しており、
+  # 旧予算（StartupWaitMs 4000 + ObserveTimeoutMs 8000 = 12,000ms）に対し余裕 0.3s しか
+  # 無かった。3 回赤 → 1 回緑という間欠は、間欠性ではなく**境界に乗っていた**だけである。
+  # 以降の観測（show/hide/results）はアプリが温まった後ゆえ `ObserveTimeoutMs` のまま。
+  # 広げた分の盲目化は、成功時のレイテンシ表示（下）が補う。
+  [int]$StartupObserveTimeoutMs = 25000
 )
 
 # egui 経路の自動回帰 smoke（#532 SU7 PR1・spec: docs/superpowers/specs/2026-07-24-su7-flip-implementation-design.md 決定 3。
@@ -300,15 +308,27 @@ try {
     Write-Host "Hotkey VKs (explicit): $($vks -join ',')"
   } else {
     $hotkeySource = "from trace"
-    $hk = Get-TraceEventData -Path $errPath -EventName "hotkey:registered" -TimeoutMs $ObserveTimeoutMs
+    # **この 1 件だけ別予算を使う**（$StartupObserveTimeoutMs）。cold start を含むのはここだけで、
+    # 以降の観測（show/hide/results）はアプリが温まった後だから ObserveTimeoutMs のままでよい。
+    # 一律に広げると、本来速いはずの検査の失敗検出まで鈍る。
+    $hk = Get-TraceEventData -Path $errPath -EventName "hotkey:registered" -TimeoutMs $StartupObserveTimeoutMs
     if ($null -eq $hk) {
-      throw "hotkey:registered trace not observed within ${ObserveTimeoutMs}ms — cannot determine which keys to inject"
+      throw "hotkey:registered trace not observed within ${StartupObserveTimeoutMs}ms — cannot determine which keys to inject"
     }
     if (-not $hk.ok) {
       throw "hotkey registration failed in the app (modifier=$($hk.modifier) key=$($hk.key)) — smoke cannot proceed"
     }
     $vks = @($hk.vks | ForEach-Object { [byte][int]$_ })
-    Write-Host "Hotkey VKs (from trace): $($vks -join ',') (modifier=$($hk.modifier) key=$($hk.key))"
+    # **成功時にもレイテンシを出す**（#690 follow-up）。予算を広げただけだと、アプリの起動が
+    # 遅くなっても予算内に収まる限り緑のままで**気づけない**。数字を毎回出せば、退行は
+    # 予算に触れる前に人が読める（`event_count` を成功時に出すのと同じ考え方）。
+    $startupMs = ((Get-Date) - $launchedAt).TotalMilliseconds
+    Write-Host ("Hotkey VKs (from trace): $($vks -join ',') (modifier=$($hk.modifier) key=$($hk.key))")
+    # **固定待機を併記する**——この値は「アプリが何 ms で準備できたか」ではなく
+    # 「観測できたのが何 ms 後か」であり、下限が StartupWaitMs で頭打ちになっている。
+    # 併記しないと 4,052ms を「起動に 4 秒かかった」と読まれる（実際の trace は 118ms）。
+    Write-Host ("起動→hotkey:registered 観測: {0:N0} ms（うち固定待機 {1:N0} ms・予算 {2:N0} ms）" -f `
+      $startupMs, $StartupWaitMs, $StartupObserveTimeoutMs)
   }
   $vksLabel = ($vks -join ',')
   if ($vks.Count -lt 1) {

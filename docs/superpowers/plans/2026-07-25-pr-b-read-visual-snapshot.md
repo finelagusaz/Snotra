@@ -17,7 +17,7 @@
 - **`read_metrics` は独立した projection として残す。** `show_egui_main` が show 経路で呼ぶため、show が不要な色 parse を払う形にしてはならない。
 - **導出式を複製しない。** 行高は `layout::Metrics::from_config`、path 文字サイズは `layout::path_size` が唯一の正本であり、guard 内からそれを呼ぶ（式を書き写さない）。
 - **`egui::Color32::from_hex` と `config_watcher::parse_hex_color` を統合しない**（下記「2 つのパーサを残す理由」）。
-- 対象は**テーマ（`[visual]` 全体 + `appearance.show_icons`）に限る**。`max_results()`（`effective_visible_rows`）・`window_width()`・`lang()` は寸法/地域化であってテーマではないため**スコープ外**（現状のまま個別 lock を残す）。`ResultsView::setup()` の 1 回きり font 読みもスコープ外。
+- 対象は**テーマ（`[visual]` の色・font・padding + `appearance.show_icons`）に限る**。**`[visual]` 全体ではない**——`window_gap` は `position_results_below_main` が `Moved` リスナーと共用して読むためフレームに閉じず、除外する（レビュー Important 2 で計画の記述を訂正）。`max_results()`（`effective_visible_rows`）・`window_width()`・`lang()` は寸法/地域化であってテーマではないため**スコープ外**（現状のまま個別 lock を残す）。`ResultsView::setup()` の 1 回きり font 読みもスコープ外。
 
 ### 2 つのパーサを残す理由（実測済み・この PR では統合しない）
 

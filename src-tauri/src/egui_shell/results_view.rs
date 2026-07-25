@@ -179,7 +179,6 @@ impl ResultsView {
     }
 }
 
-
 /// 1 行を描画。selected かつ scroll なら scroll_to_me（選択変化時のみ・#632）。返り値:
 /// single_clicked。ダブルクリックは扱わない（ユーザー決定: §4.8 の double-click=選択は
 /// as-built でも到達不能ゆえ落とす。単クリック=起動のみ）。self を借りない関連関数
@@ -326,7 +325,6 @@ pub(crate) fn truncate_middle(s: &str, avail_px: f32, per_char_px: f32) -> Strin
     out.extend(&chars[chars.len() - tail..]);
     out
 }
-
 
 impl snotra_egui_runtime::EguiView for ResultsView {
     fn setup(&mut self, context: &egui::Context) {

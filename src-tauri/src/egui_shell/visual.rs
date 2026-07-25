@@ -1,5 +1,11 @@
-//! テーマ（config `[visual]` + `appearance.show_icons`）の 1 フレーム分の読み取り値と、
-//! その純粋な導出（#673 spec 決定 4）。
+//! テーマ（config `[visual]` のうち**色・font・padding** + `appearance.show_icons`）の
+//! 1 フレーム分の読み取り値と、その純粋な導出（#673 spec 決定 4）。
+//!
+//! **`[visual]` 全体ではない。`window_gap` は含まない**——results 窓の配置
+//! （`mod.rs::position_results_below_main`）は main の `update()` と `Moved` リスナーの
+//! 両方から呼ばれ、**フレームに閉じない**読みだからである。ゆえに `window_gap` だけは
+//! 1 フレーム内で別 lock から読まれうる（`window_gap` と `font_size` を同時に変更した
+//! 1 フレームだけ新 gap × 旧行高になりうるが、次フレームで自然に直る cosmetic）。
 //!
 //! **なぜ束ねるか**: 従来は 1 フレームの中でテーマ色（文字色・font_size）と `read_metrics`
 //! （font_size・padding）が別々に lock を取っていた。その間に `config_watcher` の
@@ -15,9 +21,24 @@
 //! 一本化するとテストの無い白フラッシュ回避経路の挙動が黙って変わるため、本モジュールは
 //! main 向けに**変化したときだけ hex 文字列**を返し、パーサの選択は呼び出し側に残す。
 
+use std::sync::LazyLock;
+
 use snotra_core::config::VisualConfig;
 
 use crate::egui_shell::layout::{self, Metrics};
+
+/// フォールバックの正本（`config.rs` の `default_*`）を **1 度だけ**構築して使い回す。
+///
+/// `VisualConfig::default()` は色 5 本 + font_family の `String` を毎回ヒープ確保する。
+/// `visual_snapshot` は engine の guard 内で呼ばれるため、呼び出しごとに作ると
+/// **mutex を握ったまま毎フレーム 6 本確保する**——「guard 内は parse と算術と `&str` 比較
+/// まで」という本 PR 自身の制約に反する（レビュー Important 1）。
+static DEFAULT_VISUAL: LazyLock<VisualConfig> = LazyLock::new(VisualConfig::default);
+
+/// AppState 不在時に渡す既定 config（確保ゼロ・`DEFAULT_VISUAL` の doc 参照）。
+pub(crate) fn default_visual() -> &'static VisualConfig {
+    &DEFAULT_VISUAL
+}
 
 /// 1 結果行の描画テーマ。main のバー行・toast 行も同じ型を使う（#646 PR2 で results 側に
 /// あったものを #673 で純粋核へ移設）。
@@ -73,7 +94,7 @@ pub(crate) fn visual_snapshot(
     show_icons: bool,
     applied: VisualApplied<'_>,
 ) -> VisualSnapshot {
-    let d = VisualConfig::default();
+    let d = &*DEFAULT_VISUAL;
     let text = hex_or(&v.text_color, &d.text_color);
     let hint = hex_or(&v.hint_text_color, &d.hint_text_color);
     let selection = hex_or(&v.selected_row_color, &d.selected_row_color);

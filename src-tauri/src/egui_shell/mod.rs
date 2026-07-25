@@ -296,11 +296,7 @@ pub(crate) fn read_visual(app: &tauri::AppHandle, applied: VisualApplied<'_>) ->
         // AppState 不在（setup 完了前の理論経路のみ）。`AppearanceConfig` には `Default` 実装が
         // 無いため show_icons だけは型から導けずリテラルになる——SSOT は snotra-core の
         // `default_show_icons`（= true）で、撤去前の `.unwrap_or(true)` と同値。
-        None => visual::visual_snapshot(
-            &snotra_core::config::VisualConfig::default(),
-            true,
-            applied,
-        ),
+        None => visual::visual_snapshot(visual::default_visual(), true, applied),
     }
 }
 

@@ -1314,10 +1314,33 @@ impl EguiView for SearchWindowView {
         }
 
         // ↑↓ ナビ（結果があるとき）。TextEdit より前に ctx から拾い、入力欄 focus 中も効かせる。
-        if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+        //
+        // **キーイベントは入力欄へ渡さず消費する**（#700）。読むだけ（`ctx.input`）では
+        // イベントが残り、focus を保持したままの TextEdit も同じ ↑↓ を処理する——単一行の
+        // galley では ↑ が `CCursor::default()`（クエリ先頭）、↓ が `galley.end()`（末尾）へ
+        // キャレットを飛ばす（epaint 0.35 の `cursor_up_one_row` / `cursor_down_one_row` の
+        // 行外分岐）。結果を ↑ で選び直した直後の打鍵がクエリ**先頭**へ挿入され、
+        // 「検索ワードが編集できない」として観測された（`abc` → ↑ → `x` が `xabc` になる・実測）。
+        // 消費は無条件に行う: 単一行入力欄で ↑↓ にキャレット移動の用途は無く（SPEC §4.8）、
+        // ツール選択中・launching 中は入力欄が非対話ゆえ元から影響が無い。
+        let (nav_down, nav_up) = ctx.input_mut(|i| {
+            let down = i.key_pressed(egui::Key::ArrowDown);
+            let up = i.key_pressed(egui::Key::ArrowUp);
+            i.events.retain(|e| {
+                !matches!(
+                    e,
+                    egui::Event::Key {
+                        key: egui::Key::ArrowUp | egui::Key::ArrowDown,
+                        ..
+                    }
+                )
+            });
+            (down, up)
+        });
+        if nav_down {
             self.state.move_selection(1);
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+        if nav_up {
             self.state.move_selection(-1);
         }
 
@@ -1381,6 +1404,13 @@ impl EguiView for SearchWindowView {
         // クリップされ不可視だった）。
         let in_tool = self.state.view_kind() == ViewKind::Tool;
         let in_folder = self.state.view_kind() == ViewKind::Folder;
+        // 入力欄が編集可能か（§18.5 ツール選択中・spec 決定 3/4 の launching 中は無効）。
+        // **`interactive` と再フォーカスの両方がこの 1 つを読む**（#700 state-check 発見 B）。
+        // 以前は `interactive` が 2 項・再フォーカスが `in_tool` の 1 項で、launching 中は
+        // 「非対話ゆえ focus を持てない widget へ毎フレーム `request_focus()` を撃つ」状態だった。
+        // 同じ「入力欄を無効化する条件」が 2 箇所で別々に書かれると、片方だけ足した条件が
+        // 黙って食い違う——束ねることで構造的に消す。
+        let input_editable = !in_tool && self.launching.is_none();
         let l = self.lang();
         let hint: &str = if in_tool {
             // SolidJS placeholder.tool_select parity（egui の hint は buf が空のときだけ描かれる＝
@@ -1433,7 +1463,7 @@ impl EguiView for SearchWindowView {
                         // interactive(false)（通常描画のまま読み取り専用・changed 不発火）——外観維持。
                         // launching 中も同様に打鍵を止める（Escape/blur/Alt+Q・↑↓は従来どおり通す・
                         // spec 決定 3・4。↑↓は空リストゆえ自然 no-op）。
-                        .interactive(!in_tool && self.launching.is_none())
+                        .interactive(input_editable)
                         .font(bar_font.clone())
                         .hint_text(
                             egui::RichText::new(hint).font(bar_font).color(bar_theme.path_color),
@@ -1480,7 +1510,8 @@ impl EguiView for SearchWindowView {
         }
         // 窓に focus があるのに入力欄が focus を持たないなら移す（Alt+Q 表示直後に打てる）。
         // was_focused に依存しないので、hide→reshow で was_focused が stale でも確実に戻る。
-        if focused && !in_tool && !response.has_focus() {
+        // 条件は `interactive` と同じ `input_editable` を読む（非対称の解消は同変数の doc 参照）。
+        if focused && input_editable && !response.has_focus() {
             response.request_focus();
         }
 

@@ -56,7 +56,7 @@
 
 | フック | 発火条件 | 正しい対応 |
 |---|---|---|
-| PR 作成前 push チェック（PreToolUse） | `Bash` / `PowerShell` の `tool_input.command` の**コマンド位置**に `gh pr create` があり、かつ安全と確認できないとき（空 PR / `Closes` 誤 close 防止）。`&&` で `git push` が先行するなら通る | `git push -u origin HEAD` してから PR を作る（または `&&` で繋ぐ） |
+| PR 作成前 push チェック（PreToolUse） | `Bash` / `PowerShell` の `tool_input.command` の**コマンド位置**に `gh pr create` があり、かつ安全と確認できないとき（空 PR / `Closes` 誤 close 防止）。`&&` で `git push` が先行するなら通る | `git push -u origin HEAD` してから PR を作る（または `&&` で繋ぐ）。**鎖に `cd` を含めない**——作業ディレクトリを変えると対象リポジトリを判定できず拒否される（実測） |
 | 編集後の自動検証（PostToolUse） | `tool_input.file_path` が属するツリーからの相対パスで判定。`*.rs` → clippy（各 Rust crate 配下ではその crate のテストも）、`tauri.conf.json` / `config.toml` → WARN、`Cargo.toml` → cargo check、`.claude/settings.json` / `.claude/hooks/**` / `package.json` / `vitest.config.ts` / ルートの `Cargo.toml` → hook-selftest、`.githooks/**` → githooks-selftest（TS 型検査は #532 SU7 のフロント撤去で消滅・`.ts` 編集は「検査はありません」の情報行のみ） | **検査が割り当てられているファイルでは、沈黙は合格を意味する**（割り当ての SSOT は `selectChecks`）。失敗時のみ `exit code` と再現コマンドと診断が会話に届く。手動での再実行は不要 |
 
 - **(A2)「外部 API の不可逆呼び出し」のうち hook が守るのは `gh pr create` だけである**（#488 実測・**意図的な非対称**）。`merge` / `close` の誤りは人の意図にあり SSOT を機構が問えず（`deny` が書けない）、`ask` は fail-closed 骨格と両立せず、hook の視界は Web UI・ユーザー端末のマージを覆わない——3 理由の詳細は #488。代わりに **Layer 0 で断ち**（`squash_merge_commit_message=PR_BODY` でブランチ本文の流入経路を全マージ経路から消した）、`--body-file` への明示記入だけが残余として手順 3 に委ねられる。**設定の read-back を監視する検知器も置かない**（「セーフティネットの不在を検知するセーフティネット」の無限後退から降りる・#488）

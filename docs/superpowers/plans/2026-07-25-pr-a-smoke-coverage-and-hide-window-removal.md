@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** results 窓の show / hide を `smoke:egui` の自動被覆に載せ、`visible` を false に固着させうる未使用 API を削除し、実装と食い違う 6 箇所のコメントを訂正する。
+**Goal:** results 窓の show / hide を `smoke:egui` の自動被覆に載せ、`visible` を false に固着させうる未使用 API を削除し、実装と食い違う 6 箇所のコメントを訂正し、smoke が注入するホットキーを**アプリが実際に登録した値**から導出する（運用者が `-HotkeyVks` を手渡す規範を消す）。
 
 **Architecture:** results 窓の可視性は現在**自動テストに一切かかっていない**（`smoke-egui.ps1` は Alt+Q と Escape のみを注入し文字を打たないため、results は全行程で一度も表示されない）。本 PR は後続 PR（A′ / B / C / D）が触る経路に先に網を張る。trace は `ResultsWindow` newtype（PR A′）が吸収する 3 関数の**内側ではなく呼び出し側**に置き、A′ で書き直しにならないようにする。
 
@@ -34,6 +34,7 @@
 | `src-tauri/src/egui_shell/results_view.rs` | Modify: `//!`（6-9） | 削除された API を指す家訓の撤去 |
 | `src-tauri/src/platform/mod.rs` | Modify: 268-273 | 削除済み関数を根拠にした stale コメントの書き直し |
 | `src-tauri/src/main.rs` | Modify: 287 | 全称主張の限定 |
+| `src-tauri/src/platform/hotkey.rs` | Modify: `register` + テスト追加 | 修飾ビット→注入 VK の対応表の**唯一の置き場**。登録結果を trace する |
 
 ## 実行前に知っておくべき事実（実測済み）
 
@@ -700,12 +701,253 @@ git commit -m "docs: #671 hide 経路の全称主張を限定し削除済み関�
 
 ---
 
+### Task 5: smoke のホットキーを「アプリが実際に登録した値」から導出する
+
+**Files:**
+- Modify: `src-tauri/src/platform/hotkey.rs`（`injection_vks` の追加 + `register` からの trace + テスト）
+- Modify: `scripts/smoke-egui.ps1`（`param()` のコメント / `Get-TraceEventData` の追加 / hotkey 導出）
+
+**Interfaces:**
+- Produces: trace イベント `hotkey:registered`。`data` は `{"modifier": String, "key": String, "vks": [u32], "ok": bool}`。`vks` は**注入用の押下順 VK 列**（解放は逆順）
+- Produces: `pub fn injection_vks(config: &HotkeyConfig) -> Vec<u32>`（`src-tauri/src/platform/hotkey.rs`）
+
+**なぜ config.toml を PowerShell で読まないのか（設計の要点）**
+
+`hotkey.rs` の変換は 2 段あり、どちらも表を持つ: `parse_modifier`（`+` 区切りの複合修飾・`ctrl`/`control`・`win`/`super` の別名）と `parse_vk`（`space`/`enter`/F1〜F12/`home` など約 30 の名前付きキー）。さらに `RegisterHotKey` 用の修飾ビット（`MOD_ALT` 等）と `keybd_event` 用の VK（`VK_MENU`=0x12 等）は**別の値**である。PowerShell 側で config を読むと、この 3 種類の対応表の写しが生まれ、Rust 側とドリフトする（AGENTS.md「派生コピー同士の一致を完全性の証拠にしない」）。
+
+**アプリが登録結果を trace し、smoke がそれを読む**形にすれば、対応表は `hotkey.rs` の 1 か所に留まる。加えてこれは「何を要求したか」ではなく「**実際に何が効いているか**」を読むため、config の parse 失敗で既定値へフォールバックした場合や `RegisterHotKey` が失敗した場合にも正しい。trace はユーザーの「ホットキーが効かない」報告に対する一次情報でもあり、テスト専用の足場ではない。
+
+- [ ] **Step 1: 失敗するテストを書く**
+
+`src-tauri/src/platform/hotkey.rs` の `mod tests` へ追記する（`HotkeyConfig` は `modifier` / `key` の 2 フィールドのみ）:
+
+```rust
+    #[test]
+    fn injection_vks_alt_q() {
+        let c = HotkeyConfig { modifier: "Alt".into(), key: "Q".into() };
+        assert_eq!(injection_vks(&c), vec![0x12, b'Q' as u32]);
+    }
+
+    #[test]
+    fn injection_vks_ctrl_k() {
+        let c = HotkeyConfig { modifier: "Ctrl".into(), key: "K".into() };
+        assert_eq!(injection_vks(&c), vec![0x11, b'K' as u32]);
+    }
+
+    #[test]
+    fn injection_vks_compound_modifier_is_press_ordered() {
+        // 押下順の契約: Ctrl → Shift → Alt → Win → キー（解放は逆順）。
+        let c = HotkeyConfig { modifier: "Shift+Ctrl".into(), key: "A".into() };
+        assert_eq!(injection_vks(&c), vec![0x11, 0x10, b'A' as u32]);
+    }
+
+    #[test]
+    fn injection_vks_named_key_reuses_parse_vk_table() {
+        // 要石: 名前付きキーの表は parse_vk の 1 か所だけに存在する。
+        let c = HotkeyConfig { modifier: "Alt".into(), key: "F12".into() };
+        assert_eq!(injection_vks(&c), vec![0x12, 0x7B]);
+    }
+
+    #[test]
+    fn injection_vks_unknown_key_is_omitted() {
+        // parse_vk が 0 を返すキーは列から落ちる（RegisterHotKey も同じ理由で失敗する）。
+        let c = HotkeyConfig { modifier: "Alt".into(), key: "f13".into() };
+        assert_eq!(injection_vks(&c), vec![0x12]);
+    }
+```
+
+- [ ] **Step 2: 落ちることを確認する**
+
+Run: `cargo test -p snotra injection_vks`
+Expected: FAIL（`cannot find function injection_vks`）
+
+- [ ] **Step 3: `injection_vks` を実装する**
+
+`src-tauri/src/platform/hotkey.rs` の `parse_vk` の直後へ追加する:
+
+```rust
+/// 注入用（`keybd_event`）の VK 列を押下順で返す。**解放は逆順**で行うこと。
+///
+/// `RegisterHotKey` の修飾ビット（`MOD_ALT` 等）と注入用 VK（`VK_MENU` 等）は別の値で
+/// あり、その対応はここが唯一の場所である。smoke（`scripts/smoke-egui.ps1`）は
+/// `hotkey:registered` trace 経由でこの列を受け取り、**自前の対応表を持たない**。
+/// 修飾の解析は `parse_modifier` を、キーの解決は `parse_vk` を再利用する（表を 2 つにしない）。
+pub fn injection_vks(config: &HotkeyConfig) -> Vec<u32> {
+    const VK_SHIFT: u32 = 0x10;
+    const VK_CONTROL: u32 = 0x11;
+    const VK_MENU: u32 = 0x12; // Alt
+    const VK_LWIN: u32 = 0x5B;
+    let mods = parse_modifier(&config.modifier);
+    let has = |m: HOT_KEY_MODIFIERS| (mods.0 & m.0) != 0;
+    let mut vks = Vec::new();
+    if has(MOD_CONTROL) {
+        vks.push(VK_CONTROL);
+    }
+    if has(MOD_SHIFT) {
+        vks.push(VK_SHIFT);
+    }
+    if has(MOD_ALT) {
+        vks.push(VK_MENU);
+    }
+    if has(MOD_WIN) {
+        vks.push(VK_LWIN);
+    }
+    let key = parse_vk(&config.key);
+    if key != 0 {
+        vks.push(key);
+    }
+    vks
+}
+```
+
+**`mods.0` でコンパイルが通らない場合**（`windows` クレート 0.62 の `HOT_KEY_MODIFIERS` の表現が異なる場合）は、同じビットを別の書き方（`mods & MOD_CONTROL == MOD_CONTROL` 等）で判定してよい。**ただし修飾文字列を 2 度目に parse する実装にしてはならない**——`parse_modifier` の結果からのみ導くこと。
+
+- [ ] **Step 4: 通ることを確認する**
+
+Run: `cargo test -p snotra injection_vks`
+Expected: PASS（5 テスト）
+
+- [ ] **Step 5: `register` から trace を出す**
+
+`src-tauri/src/platform/hotkey.rs` の現行:
+
+```rust
+pub fn register(config: &HotkeyConfig) -> bool {
+    let modifiers = parse_modifier(&config.modifier);
+    let vk = parse_vk(&config.key);
+    unsafe { RegisterHotKey(Some(HWND::default()), HOTKEY_ID, modifiers, vk) }.is_ok()
+}
+```
+
+を次で置き換える:
+
+```rust
+pub fn register(config: &HotkeyConfig) -> bool {
+    let modifiers = parse_modifier(&config.modifier);
+    let vk = parse_vk(&config.key);
+    let ok = unsafe { RegisterHotKey(Some(HWND::default()), HOTKEY_ID, modifiers, vk) }.is_ok();
+    // 実際に登録した内容を 1 行残す（初回登録・設定変更の再登録の双方がここを通る）。
+    // smoke はこの `vks` をそのまま注入するため、対応表を持たずに済む。
+    // ユーザーの「ホットキーが効かない」報告に対する一次情報でもある。
+    crate::trace::trace(
+        "hotkey:registered",
+        serde_json::json!({
+            "modifier": config.modifier,
+            "key": config.key,
+            "vks": injection_vks(config),
+            "ok": ok,
+        }),
+    );
+    ok
+}
+```
+
+- [ ] **Step 6: 現状が Red であることを確認する（実機・重要）**
+
+**このステップは実機 config（hotkey = 実際の設定値）のまま実行する。** `-SeedConfig` も `-HotkeyVks` も付けない。
+
+Run: `cargo build --release -p snotra` してから `npm run smoke:egui -- -ExePath target/release/snotra.exe`
+Expected: このマシンの hotkey が既定の Alt+Q **でない**なら **FAIL**（`egui_show:done not observed ...`）。既定 `-HotkeyVks "18,81"` が実機の hotkey と一致しないため。
+
+**hotkey が既定の Alt+Q のマシンでは Red にならない。** その場合はこの Step を skip し、report にその旨を書くこと（偽の Red を作らない）。
+
+- [ ] **Step 7: smoke に trace 由来の hotkey 導出を入れる**
+
+`scripts/smoke-egui.ps1` の `Wait-TraceEvent` 関数の直後へ、trace 行を 1 件読んで `data` を返すヘルパーを足す:
+
+```powershell
+function Get-TraceEventData {
+  param([string]$Path, [string]$EventName, [int]$TimeoutMs)
+  # trace の行形式: `[trace] {"seq":N,"ts_ms":M,"event":"...","data":{...}}`（src-tauri/src/trace.rs）
+  $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
+  $pattern = '"event":"' + $EventName + '"'
+  while ([DateTime]::UtcNow -lt $deadline) {
+    try {
+      if (Test-Path $Path) {
+        $line = Select-String -Path $Path -Pattern $pattern -SimpleMatch |
+                Select-Object -Last 1
+        if ($null -ne $line) {
+          $json = $line.Line -replace '^\[trace\]\s*', ''
+          return ($json | ConvertFrom-Json).data
+        }
+      }
+    } catch {
+      # 書き込み中のファイル読取り競合は無視して再試行
+    }
+    Start-Sleep -Milliseconds 200
+  }
+  return $null
+}
+```
+
+続いて、hotkey 注入の直前（`$vks = @($HotkeyVks -split ...)` の行）を次で置き換える:
+
+```powershell
+  # 押すキーは**アプリが実際に登録した値**から採る（scripts が config を読み解いて
+  # VK へ変換すると、hotkey.rs の parse_modifier / parse_vk / 修飾ビット→VK の 3 表が
+  # PowerShell 側に写り、ドリフトする）。-HotkeyVks が明示指定されたときだけそちらを使う。
+  if ($PSBoundParameters.ContainsKey('HotkeyVks')) {
+    $vks = @($HotkeyVks -split ',' | ForEach-Object { [byte]([int]$_.Trim()) })
+    Write-Host "Hotkey VKs (explicit): $($vks -join ',')"
+  } else {
+    $hk = Get-TraceEventData -Path $errPath -EventName "hotkey:registered" -TimeoutMs $ObserveTimeoutMs
+    if ($null -eq $hk) {
+      throw "hotkey:registered trace not observed within ${ObserveTimeoutMs}ms — cannot determine which keys to inject"
+    }
+    if (-not $hk.ok) {
+      throw "hotkey registration failed in the app (modifier=$($hk.modifier) key=$($hk.key)) — smoke cannot proceed"
+    }
+    $vks = @($hk.vks | ForEach-Object { [byte][int]$_ })
+    Write-Host "Hotkey VKs (from trace): $($vks -join ',') (modifier=$($hk.modifier) key=$($hk.key))"
+  }
+```
+
+- [ ] **Step 8: `param()` のコメントを実態へ直す**
+
+`scripts/smoke-egui.ps1` の `$HotkeyVks` の説明（現行は「hotkey は config.toml 依存のため、実 config を持つ実機ではその値を渡す（例: Ctrl+K は "17,75"）」）を次で置き換える:
+
+```powershell
+  # hotkey の仮想キーコード列（カンマ区切り・押下順・解放は逆順）。
+  # **通常は指定不要**——既定では起動時の `hotkey:registered` trace から、アプリが実際に
+  # 登録した VK 列を読む（対応表の SSOT は src-tauri/src/platform/hotkey.rs の injection_vks）。
+  # 明示指定したときだけ trace より優先される（trace が出ない旧バイナリの検証など）。
+  [string]$HotkeyVks = "18,81"
+```
+
+- [ ] **Step 9: Green を確認する（実機・`-HotkeyVks` なし）**
+
+Run: `cargo build --release -p snotra` してから `npm run smoke:egui -- -ExePath target/release/snotra.exe`
+Expected: **PASS**。出力に `Hotkey VKs (from trace): ...` が実機の hotkey として現れること（Step 6 で Red を観測したマシンなら、同じコマンドが通るようになる）
+
+- [ ] **Step 10: seed 経路も壊れていないことを確認する**
+
+Run（config 退避 → 実行 → 復元。Task 2 Step 6 と同じ手順）: `npm run smoke:egui -- -ExePath target/release/snotra.exe -SeedConfig`
+Expected: PASS。seed した config は Alt+Q ゆえ `Hotkey VKs (from trace): 18,81` が出ること
+
+- [ ] **Step 11: 検査**
+
+Run: `cargo clippy --workspace --all-targets -- -D warnings`
+Expected: PASS
+
+Run: `cargo test -p snotra`
+Expected: PASS
+
+- [ ] **Step 12: コミット**
+
+```bash
+git add src-tauri/src/platform/hotkey.rs scripts/smoke-egui.ps1
+git commit -m "test(smoke): #671 注入する hotkey をアプリの登録結果から導出する"
+```
+
+---
+
 ## 完了時の検証（PR 作成前・スキップ不可）
 
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings` — PASS
 - [ ] `cargo test -p snotra` / `-p snotra-egui-runtime` / `-p snotra-egui-mvp` — PASS
 - [ ] `npm run governance:check` — G1..G10 passed
 - [ ] `npm run smoke:egui -- -ExePath target/release/snotra.exe -SeedConfig`（config を退避した状態）— **results 被覆込みで PASS**
+- [ ] `npm run smoke:egui -- -ExePath target/release/snotra.exe`（実機 config・**`-HotkeyVks` を付けずに**）— PASS。出力に `Hotkey VKs (from trace): ...` が出ること
 - [ ] `npm run smoke:startup -- -ExePath target/release/snotra.exe` — PASS
 - [ ] `git push -u origin HEAD` してから `gh pr create`（PreToolUse hook が push 先行を要求する。`&&` で繋ぐのは可）
 - [ ] PR 本文の closing keyword を確認する。**本 PR は #671 を close しない**（PR A は #671 の一部でしかない）。`gh pr view <PR> --json closingIssuesReferences` が空であることをマージ直前に確認する

@@ -201,6 +201,20 @@ register_* listeners
 - **`ResultsWindow` は hide が起こりうる時点より前に manage されている必要がある。** 現行 `hide_egui_main` は `app.get_window("results")` で到達しており順序依存が無いが、A′ では managed state 経由になるため制約が生じる。listener 登録より前に置くことでこれを満たす。
 - したがって **PR A′ は PR D と同じ setup 順序改訂を共有する。** A′ を先に入れる場合は `EguiShellState` の移動を伴わない形（`ResultsWindow` の manage だけを `create()` 直後に追加）に留め、D が残りを行う。
 
+### 決定 10: smoke の注入ホットキーは「アプリが実際に登録した値」から導出する（PR A）
+
+`scripts/smoke-egui.ps1` は現在、注入する仮想キーコードを `-HotkeyVks`（既定 `"18,81"` = Alt+Q）で受け取り、コメントで「実 config を持つ実機ではその値を渡す」と**運用者の知識に依存する規範**を置いている。実際 PR A の Task 1+2 の実行で、実機 hotkey が Ctrl+K であることに気づくまで一度躓いた。
+
+**PowerShell 側で `config.toml` を読む案は採らない。** `src-tauri/src/platform/hotkey.rs` の変換は 2 段あり、どちらも表を持つ——`parse_modifier`（`+` 区切りの複合修飾・`ctrl`/`control`・`win`/`super` の別名）と `parse_vk`（`space` / `enter` / F1〜F12 / `home` 等 約 30 の名前付きキー）。さらに `RegisterHotKey` 用の修飾ビット（`MOD_ALT` 等）と `keybd_event` 用の VK（`VK_MENU` = 0x12 等）は**別の値**である。config を読む案は、この 3 種類の対応表の写しを PowerShell 側に作り、Rust 側とドリフトする（AGENTS.md「派生コピー同士の一致を完全性の証拠にしない」）。
+
+代わりに **`hotkey::register` が登録結果を trace し、smoke がそれを読む**。
+
+- trace: `hotkey:registered` / `data = {"modifier", "key", "vks": [注入用 VK の押下順], "ok"}`
+- 対応表の SSOT は `hotkey.rs` の新設 `injection_vks` 1 か所に留まる（smoke は表を持たない）
+- **「何を要求したか」ではなく「実際に何が効いているか」を読む**ため、config の parse 失敗で既定値へフォールバックした場合や `RegisterHotKey` が失敗した場合にも正しい
+- この trace はユーザーの「ホットキーが効かない」報告に対する一次情報でもあり、テスト専用の足場ではない
+- `-HotkeyVks` は明示指定の override として残す（trace を出さない旧バイナリの検証用）
+
 ### 決定 9: `Primary`（main）は現行のまま tao 経由を維持する
 
 決定 1 の帰結。ただし次の規則を `src-tauri/CLAUDE.md` に**窓単位の層の選択**として明記する（既存の「tao の窓状態を迂回したら同種操作はすべて迂回側へ寄せる」を、窓種の性質として書き直す）:
@@ -215,7 +229,7 @@ register_* listeners
 
 | PR | 内容 | 単独 green | 検証 |
 |---|---|---|---|
-| **A** | smoke 拡張（決定 7 の trace + `smoke-egui.ps1` に 1 文字注入 → `egui_results:show` 観測 → Escape → `egui_results:hide` 観測）／ `RuntimeFrame::hide_window()` 削除（決定 6）／ 文書訂正（§5） | ○ | `smoke:egui` 自身。**後続の網** |
+| **A** | smoke 拡張（決定 7 の trace + `smoke-egui.ps1` に 1 文字注入 → `egui_results:show` 観測 → Escape → `egui_results:hide` 観測）／ `RuntimeFrame::hide_window()` 削除（決定 6）／ 文書訂正（§5）／ 注入 hotkey を登録結果から導出（決定 10） | ○ | `smoke:egui` 自身。**後続の網** |
 | **A′** | `ResultsWindow` newtype（決定 2）。results の 5 呼び出し点（`view.rs:712` / `:730`、`mod.rs:449`、`commands/window.rs:99` / `:143`）と `get_window("results")` の 5 箇所（`view.rs:700`、`mod.rs:448` / `:541`、`commands/window.rs:96` / `:142`）を移行 | ○ | cargo + A 拡張後の `smoke:egui` + 実機目視 |
 | **B** | `read_visual`（決定 4） | ○ | cargo test（純関数部分）+ clippy |
 | **C** | `platform-event` 解体 + イベント名定数化（決定 3） | ○ | cargo（compile-fail）+ `smoke:startup` |

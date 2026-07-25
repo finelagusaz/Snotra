@@ -40,9 +40,19 @@ impl Metrics {
     }
 }
 
-/// main 窓の高さ(#646 PR2 決定 6)。bar(+toast)のみで結果に伸縮しない。
-pub fn main_window_height(bar_height: f64, toast_height: Option<f64>) -> f64 {
-    bar_height + toast_height.unwrap_or(0.0)
+/// main 窓の高さ(#646 PR2 決定 6)。bar(+status/toast)のみで結果に伸縮しない。
+///
+/// `status_height`: indexing 案内・起動中・一時通知の行(#700)。**入力欄に重ねず独立した行を
+/// 占める**——重ね描きは「編集できるのに文字が見えない」状態を作り、実際に編集不能と報告された
+/// (#700 発見 C)。`toast_height`: updater toast の行(§20.3)。
+///
+/// 両者は独立に積む。同時成立時にどちらかを畳むと、畳んだ側の情報が黙って消える。
+pub fn main_window_height(
+    bar_height: f64,
+    status_height: Option<f64>,
+    toast_height: Option<f64>,
+) -> f64 {
+    bar_height + status_height.unwrap_or(0.0) + toast_height.unwrap_or(0.0)
 }
 
 /// 結果窓の高さ(#646 PR2 決定 7)。実件数フィット・上限 max_results・padding 8。
@@ -197,11 +207,16 @@ mod tests {
         assert_eq!(big.bar_height - 2.0 * big.bar_inset, 38.0);
     }
 
-    /// #646 PR2 決定 6: main 窓は bar(+toast)のみで、結果による伸縮をしない。
+    /// #646 PR2 決定 6: main 窓は bar(+status/toast)のみで、結果による伸縮をしない。
+    /// #700: status 行（indexing 案内・一時通知）は入力欄を覆わず独立した行を占める。
     #[test]
-    fn main_height_is_bar_plus_optional_toast() {
-        assert_eq!(main_window_height(43.0, None), 43.0);
-        assert_eq!(main_window_height(43.0, Some(43.0)), 86.0);
+    fn main_height_is_bar_plus_optional_status_and_toast() {
+        assert_eq!(main_window_height(43.0, None, None), 43.0);
+        assert_eq!(main_window_height(43.0, None, Some(43.0)), 86.0);
+        // status 行だけ（indexing 中・updater toast 無し）。
+        assert_eq!(main_window_height(43.0, Some(43.0), None), 86.0);
+        // 両方（indexing 中に更新 toast が出た）: 独立に積む——どちらも隠さない。
+        assert_eq!(main_window_height(43.0, Some(43.0), Some(43.0)), 129.0);
     }
 
     /// #646 PR2 決定 7: 結果窓は実件数フィット(上限 max_results)+ padding 8。

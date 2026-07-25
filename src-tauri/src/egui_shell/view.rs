@@ -1515,9 +1515,10 @@ impl EguiView for SearchWindowView {
             response.request_focus();
         }
 
-        // 一時 overlay（#532 SU5）: 「起動中…」/ 失敗・結果不明通知/非空クエリ indexing 案内を
-        // 検索バーに重ね描く。hint_text は空クエリ時のみ描かれるため launching/notice/非空クエリ
-        // indexing 中（query 非空）は使えない——painted label で TextEdit の rect を塗り潰して上書きする。
+        // status 行（#532 SU5 の一時 overlay・#700 で位置を変更）: 「起動中…」/ 失敗・結果不明通知/
+        // 非空クエリ indexing 案内を**検索バーの直下に独立した行として**描く。hint_text は空クエリ時
+        // のみ描かれるため launching/notice/非空クエリ indexing（query 非空）では使えず、別の描画面が要る
+        // ——かつてはそれを TextEdit の rect への重ね描きで賄っていた（#700 で撤回・下のブロック参照）。
         // 優先順は WebView2 SearchWindow.tsx の Switch 先頭一致 parity: indexing > 起動中 > 通知。
         // 空クエリの indexing は hint が描く。非空クエリの indexing は表示ゲート（§4.7）で結果が
         // 消えるため overlay が唯一の案内（spec 追補 1・ladder は overlay_kind に抽出しテスト固定）。
@@ -1536,8 +1537,20 @@ impl EguiView for SearchWindowView {
             Some(crate::egui_shell::OverlayKind::Notice) => self.notice.message().map(|m| m.to_string()),
             None => None,
         };
+        // #700 発見 C: **入力欄に重ねず、バー直下の独立した行へ描く。** 以前は
+        // `response.rect` を不透明に塗り潰していたため、入力欄は編集可能なまま
+        // 「打った文字が見えない」状態になり、実際に「検索ワードを編集できない」と
+        // 報告された。launching 中は入力欄が非対話（`input_editable`）で整合していたが、
+        // indexing（数分に及びうる）と notice（数秒）は編集可能なまま覆われていた。
+        // 行の高さは toast と同じ `metrics.toast_height`（= bar_height・#646 決定 2）で、
+        // 窓高は `main_window_height` の `status_height` が積む。
+        let has_status = overlay_text.is_some();
         if let Some(text) = overlay_text {
-            let rect = response.rect;
+            let status_h = metrics.toast_height as f32;
+            let (rect, _) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), status_h),
+                egui::Sense::hover(),
+            );
             // 色はフレーム冒頭の `visual` から（#673）。ここは ctx のスタイルではなく config を
             // 直接読んでいた箇所ゆえ、`set_visuals` より後という位置に意味は無い（監査 #4）。
             ui.painter().rect_filled(rect, 4.0, visual.input_bg);
@@ -1698,6 +1711,7 @@ impl EguiView for SearchWindowView {
         // show できない(SU5 要石)。位置 → サイズ → show の順(main の show と同じ制約)。
         let height = crate::egui_shell::layout::main_window_height(
             metrics.bar_height,
+            has_status.then_some(metrics.toast_height),
             has_toast.then_some(metrics.toast_height),
         );
         let width = self.window_width();

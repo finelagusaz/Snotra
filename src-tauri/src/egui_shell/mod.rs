@@ -470,7 +470,7 @@ pub(crate) fn save_placement_relative(window: &tauri::Window) {
 /// view（イベントループスレッド）→ emit → この listener で hide を 1 経路に集約する。
 pub(crate) fn register_hide_listener(app: &tauri::AppHandle) {
     let handle = app.clone();
-    app.listen("egui-hide-requested", move |_| {
+    app.listen(crate::events::EGUI_HIDE_REQUESTED, move |_| {
         hide_egui_main(&handle);
     });
 }
@@ -542,7 +542,11 @@ pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
 /// 最新を描く）。**「値を運ばない」はこの benign 性の load-bearing 前提**——将来イベントに値を
 /// 載せる変更はこの前提を壊す（spec 決定 1）。
 pub(crate) fn register_config_wake_listeners(app: &tauri::AppHandle) {
-    for event in ["config-applied", "indexing-started", "indexing-complete"] {
+    for event in [
+        crate::events::CONFIG_APPLIED,
+        crate::events::INDEXING_STARTED,
+        crate::events::INDEXING_COMPLETE,
+    ] {
         let handle = app.clone();
         app.listen(event, move |_| {
             wake_view(&handle);
@@ -553,7 +557,7 @@ pub(crate) fn register_config_wake_listeners(app: &tauri::AppHandle) {
 /// hotkey 登録失敗の payload 受け口（spec 追補 2・wake は config-applied に委ねる）。
 pub(crate) fn register_hotkey_failure_listener(app: &tauri::AppHandle) {
     let handle = app.clone();
-    app.listen("hotkey-registration-failed", move |event| {
+    app.listen(crate::events::HOTKEY_REGISTRATION_FAILED, move |event| {
         // emit 側は String を渡すため payload は JSON 文字列（引用符付き）。
         let hotkey: String = serde_json::from_str(event.payload()).unwrap_or_default();
         if let Some(sh) = handle.try_state::<EguiShellState>() {
@@ -578,7 +582,7 @@ pub(crate) fn register_hotkey_failure_listener(app: &tauri::AppHandle) {
 ///   統合してはならない**（`/simplify` 対象外）。
 pub(crate) fn register_initial_hotkey_failure_listener(app: &tauri::AppHandle) {
     let handle = app.clone();
-    app.listen("initial-hotkey-failed", move |event| {
+    app.listen(crate::events::INITIAL_HOTKEY_FAILED, move |event| {
         // emit 側は String を渡すため payload は JSON 文字列（引用符付き）。
         // `register_hotkey_failure_listener` と同じ流儀（#673 spec 決定 3 で袋を解体）。
         let hotkey: String = serde_json::from_str(event.payload()).unwrap_or_default();

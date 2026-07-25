@@ -188,7 +188,7 @@ fn platform_thread_loop(
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
             match msg.message {
                 WM_HOTKEY => {
-                    let _ = app_handle.emit("hotkey-pressed", ());
+                    let _ = app_handle.emit(crate::events::HOTKEY_PRESSED, ());
                 }
                 WM_TRAY_ICON => {
                     handle_tray_message(
@@ -291,7 +291,7 @@ fn process_commands(
                     // だけだった——袋の中身は grep に映らず、受け口の有無を機構で問えない
                     // （#652 の gap 特定が構造的に不可能だった原因）。payload は
                     // `hotkey-registration-failed` と同じ素の String に揃える。
-                    let _ = app_handle.emit("initial-hotkey-failed", hotkey_str);
+                    let _ = app_handle.emit(crate::events::INITIAL_HOTKEY_FAILED, hotkey_str);
                 }
             }
             PlatformCommand::ShowConfigRecoveryBalloon => {

@@ -56,10 +56,10 @@ pub(super) fn handle_menu_command(
     let id = wparam.0 & 0xFFFF;
     match id {
         ID_MENU_SETTINGS => {
-            let _ = app_handle.emit("open-settings", ());
+            let _ = app_handle.emit(crate::events::OPEN_SETTINGS, ());
         }
         ID_MENU_EXIT => {
-            let _ = app_handle.emit("exit-requested", ());
+            let _ = app_handle.emit(crate::events::EXIT_REQUESTED, ());
         }
         // ID_MENU_TOOL_BASE > ID_MENU_RECENT_BASE のため先に評価する
         id if id >= ID_MENU_TOOL_BASE => {

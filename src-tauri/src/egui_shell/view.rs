@@ -937,7 +937,7 @@ impl SearchWindowView {
                     if let Some(st) = handle.try_state::<crate::egui_shell::UpdaterUiState>() {
                         st.0.lock().unwrap().phase = crate::egui_shell::UpdaterPhase::InstallFailed;
                     }
-                    crate::egui_shell::wake_view(&handle); // 可視中の失敗を即座に描く
+                    crate::egui_shell::wake_main(&handle); // 可視中の失敗を即座に描く
                 }
             }
         });
@@ -996,10 +996,10 @@ impl EguiView for SearchWindowView {
             .unwrap_or_else(|| "Segoe UI".to_string());
         configure_japanese_font(context, &font_family);
         self.applied_font_family = font_family;
-        // updater check 完了時の wake-up 用（mod.rs spawn_update_check が読む・#532 SU5）。
-        if let Some(sh) = self.app_handle.try_state::<crate::egui_shell::EguiShellState>() {
-            crate::egui_shell::register_ctx(&sh.egui_ctx, context);
-        }
+        // 外部 wake 用の ctx 登録はここに無い（#671 PR D）——wake handle は `attach` が
+        // 返し、`create()` から `EguiShellState` へ直接渡る。**この setup が
+        // `EguiShellState` を読まなくなったことが、その manage を `create()` の後へ
+        // 移せる根拠である**（spec 決定 8）。
     }
 
     fn update(&mut self, ui: &mut egui::Ui, frame: &mut RuntimeFrame) {

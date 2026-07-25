@@ -282,15 +282,31 @@ fn main() {
 
             // 窓生成（egui・platform thread spawn 後・SPEC §8.5 で Win32 初期化と並列化）。
             // 幅の復元は create が window_width で行う（#532 SU7 flip で唯一の経路）。
-            // show/hide を跨ぐ共有状態（世代・emit dedup）。view/hotkey/hide が参照するので窓生成前に管理下へ。
-            app.manage(egui_shell::EguiShellState::default());
-            let results_window = egui_shell::create(app, window_width as f64, &bg_color)?;
-            // #671 PR A′: results 窓の所有型を managed state へ（spec 決定 8「A′ の中間形」）。
-            // **listener 登録より前**に置く——hide_egui_main が try_state で引くため、hide が
-            // 起こりうる時点より前に manage されている必要がある。`EguiShellState` の manage
-            // 位置は動かさない（create() の後へ移すのは PR D の担当。register_ctx の撤去と
-            // セットでなければ Option スロットが残る）。
-            app.manage(results_window);
+            let handles = egui_shell::create(app, window_width as f64, &bg_color)?;
+            // #671 PR D（spec 決定 8 の終端形）: show/hide を跨ぐ共有状態（世代・emit dedup）と
+            // 両窓の wake handle。**`create()` の後**に manage する——handle は attach の戻り値
+            // ゆえ窓の生成より前には存在しない。各 view の `setup()` はもう `EguiShellState` を
+            // 読まないので（PR D で `register_ctx` を撤去した）、この順序で問題が無い。
+            //
+            // この順序が安全である根拠は 2 つある（`EguiShellState` の読み手はすべて
+            // `if let Some(..)` ゆえ、manage 前にフレームが走ると消費が**沈黙して skip される**）:
+            //
+            // 1. **この setup ブロック自体がイベントループの 1 イテレーション内で走る。**
+            //    tauri は setup フックを `RuntimeRunEvent::Ready` の処理中に呼ぶ
+            //    （tauri 2.11.4 `src/app.rs` の `make_run_event_loop_callback`）。この間
+            //    メッセージポンプは停止しており（「ウィンドウ生成の制約」と同じ機構）、
+            //    wry plugin の `on_event`＝`attach_pending_windows` は setup の復帰後にしか
+            //    走らない。**「setup はイベントループより前」ではない**——同じ 1 イベントの
+            //    処理中である。
+            // 2. **仮にフレームが走っても、この時点で pending なものは無い。**
+            //    reset_pending は `show_egui_main` が、pending_hotkey_failure は下の 2 つの
+            //    listener が、hotkey_generation は hide と hotkey listener が立てる——
+            //    setter はすべてこの manage より後にしか動かない。
+            app.manage(egui_shell::EguiShellState::new(&handles));
+            // #671 PR A′: results 窓の所有型を managed state へ。**listener 登録より前**に置く
+            // ——hide_egui_main が try_state で引くため、hide が起こりうる時点より前に manage
+            // されている必要がある。
+            app.manage(handles.results_window);
             // view→emit→listener の合流点。**main の** hide を hide_egui_main の 1 経路に集約（codex #7）。
             egui_shell::register_hide_listener(&app_handle);
             // config 変更・indexing 状態変化の wake（SU6 spec 決定 1）。config_watcher 起動

@@ -11,7 +11,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use snotra_core::ui_types::SearchResult;
 use tauri::Manager;
 
-use crate::egui_shell::{EguiShellState, IconMsg, RowTheme, needs_extraction, retain_visible};
+use crate::egui_shell::{IconMsg, RowTheme, needs_extraction, retain_visible};
 
 /// main が毎フレーム発行する描画用スナップショット（spec 決定 5）。
 #[derive(Clone, Default, PartialEq)]
@@ -336,10 +336,7 @@ impl snotra_egui_runtime::EguiView for ResultsView {
             .unwrap_or_else(|| "Segoe UI".to_string());
         crate::egui_shell::view::configure_japanese_font(context, &font_family);
         self.applied_font_family = font_family;
-        // 外部 wake 用に ctx を登録（main の egui_ctx と同型・EguiShellState.results_ctx）。
-        if let Some(sh) = self.app_handle.try_state::<EguiShellState>() {
-            crate::egui_shell::register_ctx(&sh.results_ctx, context);
-        }
+        // 外部 wake 用の ctx 登録はここに無い（#671 PR D・main の setup と同じ理由）。
     }
 
     fn update(&mut self, ui: &mut egui::Ui, _frame: &mut snotra_egui_runtime::RuntimeFrame) {
@@ -455,7 +452,7 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         // ToastAction と同じ遅延 dispatch 型——起動ロジックは main の一箇所に保つ。
         if let Some(i) = clicked {
             *shared.clicked.lock().unwrap() = Some(i);
-            crate::egui_shell::wake_view(&self.app_handle);
+            crate::egui_shell::wake_main(&self.app_handle);
         }
     }
 }

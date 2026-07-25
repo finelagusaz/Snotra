@@ -71,17 +71,19 @@ pub(crate) enum HotkeyFailureKind {
 /// - hotkey_generation: alt 解放待ち show の世代。hide が bump して保留 show を無効化する（codex #5/(B)#2）。
 /// - hide_pending: view の emit dedup。show がクリアして「hide 後に Focused(true) が来ず抑止が残る」を断つ（codex #8）。
 /// - reset_pending: show が立て、view が消費して state.reset()（resetForShow 相当・SU3 M1 Task 9）。
-#[derive(Default)]
 pub(crate) struct EguiShellState {
     pub(crate) hotkey_generation: AtomicU64,
     pub(crate) hide_pending: AtomicBool,
     pub(crate) reset_pending: AtomicBool,
-    /// updater check 完了時に可視中の view を起こすための egui Context（view.setup が登録）。
-    /// hidden 中は次 show のフレームで toast が読まれるため repaint は可視中のみ意味を持つ
+    /// main 窓を外部から起こすハンドル（`create()` = `attach` の戻り値・#671 PR D）。
+    /// hidden 中は次 show のフレームで toast 等が読まれるため、wake は可視中のみ意味を持つ
     /// （codex レビュー: 「hidden は次 show でよい」と「visible は repaint が要る」は別条件）。
-    pub(crate) egui_ctx: Mutex<Option<egui::Context>>,
-    /// results 窓の egui Context（外部 wake 用・egui_ctx と同型・#646 PR2）。
-    pub(crate) results_ctx: Mutex<Option<egui::Context>>,
+    /// 旧実装は各 view の `setup` が `egui::Context` の clone を登録する
+    /// `Mutex<Option<egui::Context>>` スロットだった——**登録前の窓を「未登録＝no-op」で
+    /// 扱う段が消え、この型は窓の存在と同時に有効になる**。
+    main_waker: snotra_egui_runtime::WindowWaker,
+    /// results 窓を外部から起こすハンドル（main と同型・#646 PR2 の `results_ctx` の後継）。
+    results_waker: snotra_egui_runtime::WindowWaker,
     /// hotkey 登録失敗の pending payload（SU6 spec 追補 2 + #652）。種別ごとに文言が違う
     /// ため `(kind, hotkey)` を保持し、view が消費時に lang() live-read で整形する。
     /// **wake の有無は経路で異なる**——Change は wake しない（wake を config-applied に
@@ -91,6 +93,21 @@ pub(crate) struct EguiShellState {
     /// 先行発火の不変条件は #532 SU7 の emit 削除で消滅し、この順序が後継の根拠）。
     /// Initial は wake する（config 変更が随伴せず config-applied が来ないため・#652・SU6.5 決定 2）。
     pub(crate) pending_hotkey_failure: Mutex<Option<(HotkeyFailureKind, String)>>,
+}
+
+impl EguiShellState {
+    /// wake handle は `create()` が返すものだけを受け取る（`Default` は持たない——窓が
+    /// 無いのに wake できる状態を作らないため）。他フィールドは従来の既定値。
+    pub(crate) fn new(handles: &EguiShellHandles) -> Self {
+        Self {
+            hotkey_generation: AtomicU64::new(0),
+            hide_pending: AtomicBool::new(false),
+            reset_pending: AtomicBool::new(false),
+            main_waker: handles.main_waker.clone(),
+            results_waker: handles.results_waker.clone(),
+            pending_hotkey_failure: Mutex::new(None),
+        }
+    }
 }
 
 /// updater toast の managed 状態（#532 SU5）。view が毎フレーム読む level-triggered
@@ -161,8 +178,22 @@ pub(crate) fn spawn_update_check(app: &tauri::AppHandle) {
             st.0.lock().unwrap().phase = next;
         }
         // 可視中に check が完了した場合の wake-up(スパイクの request_repaint と同じ・codex レビュー)。
-        wake_view(&handle);
+        wake_main(&handle);
     });
+}
+
+/// `create()` が setup へ引き渡す所有物（#671 PR D・spec 決定 8 の終端形）。
+///
+/// **窓の生成（`create`）と managed state への載せ替え（`main.rs`）を分ける**ため、間に立つ
+/// 型が要る。`create` の中で `app.manage` しないのは、setup の順序制約（どの listener より
+/// 前に何が載っているか）を `main.rs` の 1 画面に残すため（spec 決定 8）。
+pub(crate) struct EguiShellHandles {
+    /// results 窓の所有型（生 Win32 の show/hide/topmost・#671 PR A′）。
+    pub(crate) results_window: ResultsWindow,
+    /// main 窓の wake handle（`EguiShellState` が保持する）。
+    pub(crate) main_waker: snotra_egui_runtime::WindowWaker,
+    /// results 窓の wake handle（同上）。
+    pub(crate) results_waker: snotra_egui_runtime::WindowWaker,
 }
 
 /// フラグ ON の窓生成。EguiRuntime を install し webview 無しの "main" 窓を生成して attach。setup 限定。
@@ -175,7 +206,7 @@ pub(crate) fn create(
     app: &mut tauri::App,
     window_width: f64,
     background_color_hex: &str,
-) -> Result<ResultsWindow, snotra_egui_runtime::RuntimeError> {
+) -> Result<EguiShellHandles, snotra_egui_runtime::RuntimeError> {
     let runtime = EguiRuntime::new();
     runtime.install(app); // install(&self, &mut App<Wry>)（runtime.rs:77）
     let app_handle = app.handle().clone();
@@ -219,7 +250,10 @@ pub(crate) fn create(
     // `tauri::Window` は Arc ベースのハンドルで、clone は同一窓を指す（tauri 2.11 の
     // `impl Clone for Window` を実測）。
     let results_window = ResultsWindow::new(results.clone());
-    runtime.attach(results, results_view::ResultsView::new(app_handle.clone()))?;
+    // attach は窓ごとの wake handle を返す（#671 PR D）。**results を先に attach する順序は
+    // 変えない**——`ResultsWindow::new` は attach の move より前でなければならず（PR A′）、
+    // main の Moved リスナー登録もこの間に入る。
+    let results_waker = runtime.attach(results, results_view::ResultsView::new(app_handle.clone()))?;
     // #646 PR2 決定 10: ドラッグ移動中の追従。ネイティブ移動ループ中は egui フレームが
     // 回る保証が無いため、tao の Moved イベント(tauri Window リスナー経由)で直接
     // results を追従させる。通常時の従属は main update() の drive が担う(二重呼びは
@@ -232,8 +266,12 @@ pub(crate) fn create(
             }
         });
     }
-    runtime.attach(window, SearchWindowView::new(app_handle))?;
-    Ok(results_window)
+    let main_waker = runtime.attach(window, SearchWindowView::new(app_handle))?;
+    Ok(EguiShellHandles {
+        results_window,
+        main_waker,
+        results_waker,
+    })
 }
 
 /// DWM に窓の角丸を依頼する（#646 PR2 決定 4）。Windows 11（build 22000+）のみ有効で、
@@ -475,41 +513,32 @@ pub(crate) fn register_hide_listener(app: &tauri::AppHandle) {
     });
 }
 
-/// 窓の egui Context スロットを登録する（各 view の `setup` から・#646 PR2 /simplify）。
-/// main と results で手順が同型ゆえスロットを引数に取る 1 実装へ寄せる——窓が増えても
-/// 本体は 1 つのまま。（より深い解＝runtime が持つ窓ごとの Context を label で叩く API は
-/// runtime 越境ゆえ follow-up・/simplify altitude 観点）
-pub(crate) fn register_ctx(slot: &Mutex<Option<egui::Context>>, context: &egui::Context) {
-    if let Ok(mut guard) = slot.lock() {
-        *guard = Some(context.clone());
-    }
-}
-
-/// 登録済みスロットの窓を起こす（未登録＝setup〜初フレームは無害な no-op）。
-fn wake_ctx(slot: &Mutex<Option<egui::Context>>) {
-    if let Ok(guard) = slot.lock()
-        && let Some(ctx) = guard.as_ref()
-    {
-        ctx.request_repaint();
-    }
-}
-
-/// 可視中の view を起こす（egui_ctx 未登録＝setup〜初フレーム、hidden 中は無害な no-op）。
-/// WebView2 経路（flag OFF）では EguiShellState が manage されておらず自然に no-op。
-pub(crate) fn wake_view(app: &tauri::AppHandle) {
+/// 可視中の main 窓を起こす（#671 PR D。旧実装＝窓ごとの Context clone を登録するスロットの後継）。
+///
+/// hidden 中は実効的な no-op である——ただし**その抑止は wake 経路ではなく OS/tao 層に
+/// あると推測されており未測定**（`RequestRedraw` は hidden 窓に `WM_PAINT` を生まない・
+/// spec §7 残余 2）。旧実装（Context の clone に `request_repaint()`）と同じ経路
+/// （`RepaintScheduler` → proxy → `RequestRedraw`）を通るため、この性質は変わらない。
+///
+/// **`try_state` が返す `Option` は残る**（Tauri managed state の性質）。消えたのは
+/// 「Context が登録済みか」という 2 段目の Option である。
+pub(crate) fn wake_main(app: &tauri::AppHandle) {
     if let Some(sh) = app.try_state::<EguiShellState>() {
-        wake_ctx(&sh.egui_ctx);
+        sh.main_waker.wake();
     }
 }
 
 /// results 窓を起こす(#646 PR2)。snapshot 更新・config 変更を反映させる wake。呼び出しは
-/// main の update()（Task 4）内 2 箇所: snapshot 差分検知時（edge-triggered・変化フレームのみ）
+/// main の update() 内 2 箇所: snapshot 差分検知時（edge-triggered・変化フレームのみ）
 /// と `drive_results_window`（可視時・毎フレーム・level-triggered）。hidden 中の results は
 /// 描かれないため事前 wake は無意味(plan-review で冗長と判定)。クリック逆流の results→main は
-/// 既存 `wake_view` を使う。
+/// `wake_main` を使う。
+///
+/// **`wake_main` と 1 関数に束ねない**——窓を引数で選ぶ形は、呼び出し側の「どちらの窓を
+/// 起こすか」という判断を型から引数へ落とすだけで、配線の総量は減らない。
 pub(crate) fn wake_results(app: &tauri::AppHandle) {
     if let Some(sh) = app.try_state::<EguiShellState>() {
-        wake_ctx(&sh.results_ctx);
+        sh.results_waker.wake();
     }
 }
 
@@ -549,7 +578,7 @@ pub(crate) fn register_config_wake_listeners(app: &tauri::AppHandle) {
     ] {
         let handle = app.clone();
         app.listen(event, move |_| {
-            wake_view(&handle);
+            wake_main(&handle);
         });
     }
 }
@@ -590,6 +619,6 @@ pub(crate) fn register_initial_hotkey_failure_listener(app: &tauri::AppHandle) {
             *sh.pending_hotkey_failure.lock().unwrap() = Some((HotkeyFailureKind::Initial, hotkey));
         }
         show_egui_main(&handle, Instant::now());
-        wake_view(&handle);
+        wake_main(&handle);
     });
 }

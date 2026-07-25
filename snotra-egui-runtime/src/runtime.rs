@@ -12,7 +12,12 @@ use tauri_runtime_wry::{
     tao::{event::Event, event_loop::ControlFlow},
 };
 
-use crate::{ime::ImeBridge, input::InputState, renderer::EguiRenderer, repaint::RepaintScheduler};
+use crate::{
+    ime::ImeBridge,
+    input::InputState,
+    renderer::EguiRenderer,
+    repaint::{RepaintScheduler, WakeReceiver, WindowWaker, wake_channel},
+};
 
 pub trait EguiView: Send + 'static {
     fn setup(&mut self, _context: &egui::Context) {}
@@ -60,8 +65,15 @@ fn retry_delay(consecutive_failures: u32) -> Option<std::time::Duration> {
 
 #[derive(Clone, Default)]
 pub struct EguiRuntime {
-    pending: Arc<Mutex<HashMap<String, EguiWindow>>>,
+    pending: Arc<Mutex<HashMap<String, PendingWindow>>>,
     installed: Arc<AtomicBool>,
+}
+
+/// 活性化待ちの窓。`wake_rx` は活性化時に `RepaintScheduler` へ渡して消えるため、
+/// 「活性化後は存在しない」ことを型で表す（`Option` + `take()` にしない）。
+struct PendingWindow {
+    window: EguiWindow,
+    wake_rx: WakeReceiver,
 }
 
 impl EguiRuntime {
@@ -76,7 +88,16 @@ impl EguiRuntime {
         self.installed.store(true, Ordering::Release);
     }
 
-    pub fn attach<V: EguiView>(&self, window: tauri::Window, view: V) -> Result<(), RuntimeError> {
+    /// 窓に view を結び付け、その窓を外部から起こす [`WindowWaker`] を返す（#671 PR D）。
+    /// 戻り値を捨ててよい（wake が不要な窓では単に落とす）。**`#[must_use]` は付けない**
+    /// ——`snotra-egui-mvp` が `attach(..)?;` と捨てており、`-D warnings` で落ちるため。
+    ///
+    /// エラー（未 install / ラベル重複）では waker と受信側の両方が落ちる。
+    pub fn attach<V: EguiView>(
+        &self,
+        window: tauri::Window,
+        view: V,
+    ) -> Result<WindowWaker, RuntimeError> {
         if !self.installed.load(Ordering::Acquire) {
             return Err(RuntimeError::NotInstalled);
         }
@@ -90,11 +111,16 @@ impl EguiRuntime {
         }
 
         let egui_window = EguiWindow::new(window, Box::new(view))?;
+        // wake 経路はこの窓の活性化を待たずに作る（要求は queue され、活性化直後に届く）。
+        let (waker, wake_rx) = wake_channel();
         let mut pending = self.pending.lock().expect("egui pending window lock");
         match pending.entry(label.clone()) {
             std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(egui_window);
-                Ok(())
+                entry.insert(PendingWindow {
+                    window: egui_window,
+                    wake_rx,
+                });
+                Ok(waker)
             }
             std::collections::hash_map::Entry::Occupied(_) => {
                 Err(RuntimeError::DuplicateWindow(label))
@@ -104,7 +130,7 @@ impl EguiRuntime {
 }
 
 struct RuntimePluginBuilder {
-    pending: Arc<Mutex<HashMap<String, EguiWindow>>>,
+    pending: Arc<Mutex<HashMap<String, PendingWindow>>>,
 }
 
 impl<T: UserEvent> PluginBuilder<T> for RuntimePluginBuilder {
@@ -120,7 +146,7 @@ impl<T: UserEvent> PluginBuilder<T> for RuntimePluginBuilder {
 }
 
 struct RuntimePlugin<T: UserEvent> {
-    pending: Arc<Mutex<HashMap<String, EguiWindow>>>,
+    pending: Arc<Mutex<HashMap<String, PendingWindow>>>,
     active: HashMap<WindowId, ActiveWindow>,
     event_type: std::marker::PhantomData<T>,
 }
@@ -193,7 +219,11 @@ impl<T: UserEvent> RuntimePlugin<T> {
         let mut pending = self.pending.lock().expect("egui pending window lock");
 
         for (window_id, label) in known_windows {
-            let Some(mut window) = pending.remove(&label) else {
+            let Some(PendingWindow {
+                mut window,
+                wake_rx,
+            }) = pending.remove(&label)
+            else {
                 continue;
             };
             // softbuffer surface は GDI 親和性ゆえ present スレッド（このイベントループ）
@@ -203,10 +233,13 @@ impl<T: UserEvent> RuntimePlugin<T> {
                 Err(error) => {
                     log::error!("egui softbuffer surface init failed: {error}");
                     eprintln!("SNOTRA_EGUI_RENDER_ERROR={error}");
-                    continue; // この window はスキップ（attach の同期エラー契約は狭まる）
+                    // この window はスキップ（attach の同期エラー契約は狭まる）。wake_rx も
+                    // ここで落ちるため、以降この窓宛の `WindowWaker::wake()` は no-op になる。
+                    continue;
                 }
             }
-            let scheduler = RepaintScheduler::new(proxy.clone(), window_id);
+            // 受信側を worker へ渡す（送信側は attach が呼び出し元へ返した WindowWaker）。
+            let scheduler = RepaintScheduler::new(proxy.clone(), window_id, wake_rx);
             let callback_scheduler = scheduler.clone();
             window.context.set_request_repaint_callback(move |info| {
                 callback_scheduler.request(info.delay);

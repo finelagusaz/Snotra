@@ -431,10 +431,12 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
     );
 }
 
-/// egui 経路の hide。**main の** hide の唯一の副作用所有点（codex #7）——世代 bump・位置保存・
-/// main_visible・working set trim はここにしか無い。**results の hide はここを通らない経路が
-/// ある**（`view.rs` の `drive_results_window`）ため、両窓を合わせた合流点ではない（#646 PR2
-/// 以降・全称主張の訂正は #671 サイクル PR A）。
+/// egui 経路の hide。**main の** hide の唯一の副作用所有点（codex #7）——位置保存・
+/// main_visible=false・working set trim はここにしか無い。**世代 bump（hotkey_generation）
+/// だけは 2 箇所ある**——ここは「保留中の alt 解放待ち show を無効化する」ため、
+/// hotkey listener（main.rs）は「押下ごとに採番する」ため（用途が別）。
+/// **results の hide はここを通らない経路がある**（`view.rs` の `drive_results_window`）ため、
+/// 両窓を合わせた合流点ではない（#646 PR2 以降・全称主張の訂正は #671 サイクル PR A）。
 /// 外部 window.hide() のみで runtime.visible を false にしない（空白窓回避・codex #4）。
 pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
     // 保留中の alt 解放待ち show を無効化（codex #5/(B)#2）: 世代を bump し、spawn 済み show

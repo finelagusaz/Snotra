@@ -16,10 +16,9 @@ use snotra_core::ui_types::SearchResult;
 use snotra_egui_runtime::{EguiView, RuntimeFrame};
 use tauri::{Emitter, Manager};
 
-use crate::egui_shell::results_view::{self, RowTheme};
 use crate::egui_shell::{
-    Debouncer, EscapeOutcome, QueryIntent, SearchState, SlashCmd, ViewKind, compute_parent_dir,
-    find_slash_command, folder_load_pending,
+    Debouncer, EscapeOutcome, QueryIntent, RowTheme, SearchState, SlashCmd, ViewKind,
+    compute_parent_dir, find_slash_command, folder_load_pending,
 };
 
 static JP_FONT_BYTES: OnceLock<Box<[u8]>> = OnceLock::new();
@@ -943,11 +942,6 @@ impl SearchWindowView {
     }
 }
 
-/// `#RRGGBB` 文字列を Color32 へ。失敗時は fallback（release は panic=abort ゆえ unwrap しない）。
-fn hex_color(s: &str, fallback: egui::Color32) -> egui::Color32 {
-    egui::Color32::from_hex(s).unwrap_or(fallback)
-}
-
 /// toast ボタン種別（クリック結果を borrow 外で処理するための遅延 dispatch）。
 enum ToastAction {
     Install,
@@ -1019,10 +1013,19 @@ impl EguiView for SearchWindowView {
             frame.drag_window();
         }
 
-        // Metrics は 1 フレーム 1 回だけ導出し、バー帯・toast 高・行高・窓高で使い回す
-        //(/simplify: フレーム内の重複 lock を 1 回へ。live-read 契約はフレーム間の話で不変・
-        // 導出は mod.rs read_metrics に一元化)。
-        let metrics = crate::egui_shell::read_metrics(&self.app_handle);
+        // テーマ値（色・font・Metrics・show_icons）は 1 フレーム 1 lock で読み切る
+        //(#673 spec 決定 4)。live-read 契約はフレーム間の話で不変——**`self.` へ保持しないこと**。
+        // 導出は純粋核 visual::visual_snapshot、行高の正本は layout::Metrics::from_config。
+        // **ここで読むのは値だけである**: `ctx.set_visuals` / `configure_japanese_font` /
+        // ネイティブ背景ブラシの**適用**は従来の位置に残す（描画順の制約があるため）。
+        let visual = crate::egui_shell::read_visual(
+            &self.app_handle,
+            crate::egui_shell::VisualApplied {
+                font_family: &self.applied_font_family,
+                background_hex: Some(&self.applied_background_hex),
+            },
+        );
+        let metrics = &visual.metrics;
 
         // show 直後の resetForShow（EguiShellState.reset_pending を消費）。stale な debounce
         // armed 状態が再表示後に誤発火しないよう、debounce も併せて作り直す。
@@ -1094,40 +1097,32 @@ impl EguiView for SearchWindowView {
 
         // §11: パネル/入力欄/選択色を config テーマから（ハードコード撤廃・runtime CLEAR_COLOR は不変）。
         // font_family / native 背景ブラシのエッジ検出も同一 lock で読む（SU6 spec 決定 2・lock 1 回/フレーム）。
-        if let Some(s) = self.app_handle.try_state::<crate::AppState>() {
-            let (bg, input_bg, sel, font_family) = {
-                let engine = s.engine.lock().unwrap();
-                let v = &engine.config().visual;
-                (
-                    v.background_color.clone(),
-                    v.input_background_color.clone(),
-                    v.selected_row_color.clone(),
-                    v.font_family.clone(),
-                )
-            };
-            let mut visuals = ctx.style_of(ctx.theme()).visuals.clone();
-            visuals.panel_fill = hex_color(&bg, egui::Color32::from_rgb(0x28, 0x28, 0x28));
-            visuals.window_fill = visuals.panel_fill;
-            visuals.extreme_bg_color = hex_color(&input_bg, egui::Color32::from_rgb(0x38, 0x38, 0x38)); // TextEdit 背景
-            visuals.selection.bg_fill = hex_color(&sel, egui::Color32::from_rgb(0x33, 0x33, 0x33));
-            ctx.set_visuals(visuals);
+        // 値はフレーム冒頭の `visual` から取る（#673）。**適用はこの位置のまま**——
+        // `set_visuals` はウィジェット描画より前である必要がある。
+        let mut visuals = ctx.style_of(ctx.theme()).visuals.clone();
+        visuals.panel_fill = visual.background;
+        visuals.window_fill = visuals.panel_fill;
+        visuals.extreme_bg_color = visual.input_bg; // TextEdit 背景
+        visuals.selection.bg_fill = visual.selection;
+        ctx.set_visuals(visuals);
 
-            // SU6 spec 決定 2: font_family hot-reload（WebView2 の --font-family CSS 変数即時反映 parity）。
-            // applied は解決成否に依らず無条件更新（フィールド doc 参照）。
-            if font_family != self.applied_font_family {
-                self.applied_font_family = font_family.clone();
-                configure_japanese_font(&ctx, &font_family);
-                ctx.request_repaint(); // set_fonts は次フレーム適用——欠くと新フォントが 1 イベント遅れる
-            }
+        // SU6 spec 決定 2: font_family hot-reload（WebView2 の --font-family CSS 変数即時反映 parity）。
+        // applied は解決成否に依らず無条件更新（フィールド doc 参照）。
+        if let Some(name) = &visual.font_family_changed {
+            self.applied_font_family = name.clone();
+            configure_japanese_font(&ctx, name);
+            ctx.request_repaint(); // set_fonts は次フレーム適用——欠くと新フォントが 1 イベント遅れる
+        }
 
-            // SU6 spec 決定 2: native 背景ブラシ追従（生成時一度きり → 実行時変更へ・codex 反証）。
-            if bg != self.applied_background_hex {
-                self.applied_background_hex = bg.clone();
-                if let Some(window) = self.app_handle.get_window("main") {
-                    let color = crate::config_watcher::parse_hex_color(&bg)
-                        .unwrap_or(tauri::window::Color(0x28, 0x28, 0x28, 0xff));
-                    let _ = window.set_background_color(Some(color));
-                }
+        // SU6 spec 決定 2: native 背景ブラシ追従（生成時一度きり → 実行時変更へ・codex 反証）。
+        // **描画色とは別のパーサを使う**（`parse_hex_color` は `#RRGGBB` 厳格。統合すると
+        // `#FFF` 等でこの経路の挙動が黙って変わる・#673 spec / visual.rs の `//!`）。
+        if let Some(hex) = &visual.background_hex_changed {
+            self.applied_background_hex = hex.clone();
+            if let Some(window) = self.app_handle.get_window("main") {
+                let color = crate::config_watcher::parse_hex_color(hex)
+                    .unwrap_or(tauri::window::Color(0x28, 0x28, 0x28, 0xff));
+                let _ = window.set_background_color(Some(color));
             }
         }
 
@@ -1314,7 +1309,7 @@ impl EguiView for SearchWindowView {
         // `hint_text_color` で描く。#646 決定 2: バー高は `font_size + bar_padding`（Metrics）。
         // SU6.5 決定 3 の 52px 据え置きは WebView2 parity 制約下の判断で、SU7 の WebView2 撤去
         // により失効した。極端な font_size でバーからはみ出す挙動は変わらず残る。
-        let bar_theme = results_view::row_theme(&self.app_handle);
+        let bar_theme = &visual.row;
         let bar_font = egui::FontId::proportional(bar_theme.name_size);
         // 入力欄はバー帯の内側に四辺一様の余白（`Metrics::bar_inset`）を残して置く
         //（#646 PR2・実機目視で追加）。egui の既定配置では上と左が詰まり余りが下だけに
@@ -1407,26 +1402,15 @@ impl EguiView for SearchWindowView {
         };
         if let Some(text) = overlay_text {
             let rect = response.rect;
-            let (input_bg, hint_color) = self
-                .app_handle
-                .try_state::<crate::AppState>()
-                .map(|s| {
-                    let engine = s.engine.lock().unwrap();
-                    let v = &engine.config().visual;
-                    (v.input_background_color.clone(), v.hint_text_color.clone())
-                })
-                .unwrap_or_else(|| ("#383838".into(), "#808080".into()));
-            ui.painter().rect_filled(
-                rect,
-                4.0,
-                hex_color(&input_bg, egui::Color32::from_rgb(0x38, 0x38, 0x38)),
-            );
+            // 色はフレーム冒頭の `visual` から（#673）。ここは ctx のスタイルではなく config を
+            // 直接読んでいた箇所ゆえ、`set_visuals` より後という位置に意味は無い（監査 #4）。
+            ui.painter().rect_filled(rect, 4.0, visual.input_bg);
             ui.painter().text(
                 egui::pos2(rect.left() + 8.0, rect.center().y),
                 egui::Align2::LEFT_CENTER,
                 &text,
                 egui::FontId::proportional(15.0),
-                hex_color(&hint_color, egui::Color32::from_rgb(0x80, 0x80, 0x80)),
+                visual.hint,
             );
         }
 
@@ -1440,7 +1424,7 @@ impl EguiView for SearchWindowView {
         let mut toast_action: Option<ToastAction> = None;
         if let Some(row) = toast_row {
             let l = self.lang();
-            let theme = results_view::row_theme(&self.app_handle);
+            let theme = &visual.row;
             let toast_h = metrics.toast_height as f32;
             let (rect, _) = ui.allocate_exact_size(
                 egui::vec2(ui.available_width(), toast_h),
@@ -1468,12 +1452,12 @@ impl EguiView for SearchWindowView {
             let mut cursor_x = rect.right() - 8.0;
             let btn_y = rect.top() + toast_h * 0.75;
             let dismiss_label = crate::egui_shell::ui_strings::update_dismiss(l);
-            if draw_toast_button(ui, &mut cursor_x, btn_y, dismiss_label, row.buttons_enabled, &theme) {
+            if draw_toast_button(ui, &mut cursor_x, btn_y, dismiss_label, row.buttons_enabled, theme) {
                 toast_action = Some(ToastAction::Dismiss);
             }
             if row.show_install {
                 let install_label = crate::egui_shell::ui_strings::update_install_now(l);
-                if draw_toast_button(ui, &mut cursor_x, btn_y, install_label, row.buttons_enabled, &theme) {
+                if draw_toast_button(ui, &mut cursor_x, btn_y, install_label, row.buttons_enabled, theme) {
                     toast_action = Some(ToastAction::Install);
                 }
             }
@@ -1589,7 +1573,7 @@ impl EguiView for SearchWindowView {
             }
             ui.ctx().request_repaint();
         }
-        self.drive_results_window(show_results, width, &metrics);
+        self.drive_results_window(show_results, width, metrics);
 
         self.was_focused = focused;
     }
@@ -1599,14 +1583,10 @@ impl EguiView for SearchWindowView {
 mod tests {
     use super::font_definitions;
 
-    #[test]
-    fn hex_color_parses_and_falls_back() {
-        use super::hex_color;
-        assert_eq!(hex_color("#E0E0E0", egui::Color32::BLACK),
-            egui::Color32::from_rgb(0xE0, 0xE0, 0xE0));
-        // 不正文字列は fallback（release panic=abort ゆえ unwrap しない）。
-        assert_eq!(hex_color("not-a-color", egui::Color32::RED), egui::Color32::RED);
-    }
+    // `hex_color_parses_and_falls_back` は #673 で `visual.rs` の
+    // `hex_parses_valid_and_falls_back_to_config_default` へ移した（hex→Color32 の変換が
+    // view から純粋核へ移ったため）。**証明していた命題は 2 つとも移設先で保たれている**
+    // ——妥当な hex が期待どおりの色になること、不正文字列が fallback へ落ちること。
 
     #[test]
     fn font_definitions_fallback_is_jp_single_stack() {

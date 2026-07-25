@@ -131,19 +131,21 @@ spec 決定 4 が read_visual の必須条件として名指しした箇所—�
 
 **PR A′ の教訓を明示的に 1 度走らせる。** A′ は「冗長に見えた読みが、**いつ読むか**によって荷重を持っていた」ために壊れた。本 PR は 1 フレーム内の読みを時間方向に束ねる。移行する 9 箇所それぞれについて、「この読みが**後で**行われることに依存しているものがあるか」を 1 行で答え、答えを計画のこの欄に書き込んでから実装に移る。
 
+**監査の前提（実測）**: `update()` 経路から config を書く箇所は無い（`view.rs` / `results_view.rs` / `commands/instant.rs` に `update_config` / `set_config` / `save_config` の呼び出しゼロ）。したがってフレーム内で config が変わりうる経路は **`config_watcher` スレッドの `apply_config_change` だけ**である。「読む時刻」の差が生む違いは、その適用がフレームのどこに刺さるかに限られる。
+
 | # | 箇所 | 読む値 | 後で読むことへの依存 |
 |---|---|---|---|
-| 1 | `view.rs:1025` `read_metrics` | font_size / row_padding / bar_padding | （記入する） |
-| 2 | `view.rs:1097-1132` | background / input_bg / selection / font_family | （記入する） |
-| 3 | `view.rs:1317` `row_theme` | text / hint / selection / font_size | （記入する） |
-| 4 | `view.rs:1410-1418`（**条件付き**: overlay 表示時のみ） | input_bg / hint | （記入する） |
-| 5 | `view.rs:1443` `row_theme`（**条件付き**: toast 表示時のみ） | 同 3 | （記入する） |
-| 6 | `results_view.rs:399-407` | font_family | （記入する） |
-| 7 | `results_view.rs:408` `row_theme` | 同 3 | （記入する） |
-| 8 | `results_view.rs:409` `read_metrics` | 同 1 | （記入する） |
-| 9 | `results_view.rs:410` `show_icons` | show_icons | （記入する） |
+| 1 | `view.rs:1025` `read_metrics` | font_size / row_padding / bar_padding | **無し**。ここが hoist 先そのもので、時刻は動かない |
+| 2 | `view.rs:1097-1132` | background / input_bg / selection / font_family | **無し（ただし条件付き）**。**移すのは「読み」だけで「適用」は動かさない**——`ctx.set_visuals` はウィジェット描画より前である必要があり、`configure_japanese_font` + `request_repaint` もこの位置に残す。読みだけを前へ出す |
+| 3 | `view.rs:1317` `row_theme` | text / hint / selection / font_size | **無し**。読んだ直後に `FontId` を作るだけで、config の純粋な読み |
+| 4 | `view.rs:1410-1418`（**条件付き**: overlay 表示時のみ） | input_bg / hint | **無し**。`ctx.set_visuals`（`:1113`）より後に読んでいるが、この 2 色は ctx のスタイルではなく **config から直接**読まれ `ui.painter()` に直接渡る。`set_visuals` はこの読みに影響しない |
+| 5 | `view.rs:1443` `row_theme`（**条件付き**: toast 表示時のみ） | 同 3 | **無し**。4 と同じ理由。条件付きでなくなる（毎フレーム snapshot に含まれる）が、lock は増えないので費用は増えない |
+| 6 | `results_view.rs:399-407` | font_family | **無し**。ただし **snapshot は「空 rows の早期 return」（`:389-396`）より後**で取ること——前に出すと描かないフレームで lock を取る |
+| 7 | `results_view.rs:408` `row_theme` | 同 3 | **無し**。6 の位置へ束ねる。間に config を触るものは無い |
+| 8 | `results_view.rs:409` `read_metrics` | 同 1 | **無し**。同上 |
+| 9 | `results_view.rs:410` `show_icons` | show_icons | **無し**。同上（`:121` の 2 度読みは Task 1 で解消済み） |
 
-**とくに 4 と 5 を疑う**——現在は overlay / toast が存在するときだけ、しかも `ctx.set_visuals`（`:1113`）より**後**で読まれている。「先に読むと何かが変わるか」を確かめること。全部 clear だと予想するが、**予想を根拠にしない。**
+**副次的な発見（2 に付随）**: 現行 `:1097` のブロック全体が `if let Some(s) = try_state::<AppState>()` の内側にあり、AppState 不在では `ctx.set_visuals` すら呼ばれない。snapshot 化するとフォールバック値で常に適用されるようになる。`AppState` は builder（`.manage(...)`・setup より前）で登録されるためフレーム実行時は常に存在し、**実挙動は変わらない**。
 
 - [ ] **Step 2: `visual.rs` を新規作成する（型と純関数写像）**
 

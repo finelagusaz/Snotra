@@ -11,7 +11,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use snotra_core::ui_types::SearchResult;
 use tauri::Manager;
 
-use crate::egui_shell::{EguiShellState, IconMsg, needs_extraction, retain_visible};
+use crate::egui_shell::{EguiShellState, IconMsg, RowTheme, needs_extraction, retain_visible};
 
 /// main が毎フレーム発行する描画用スナップショット（spec 決定 5）。
 #[derive(Clone, Default, PartialEq)]
@@ -179,39 +179,6 @@ impl ResultsView {
     }
 }
 
-/// 実行中 config テーマ値から 1 結果行の描画テーマを都度導出する（キャッシュしない・
-/// #576 と同設計）。config が読めなければ既定値へフォールバック（view.rs から移設・Task 4）。
-pub(crate) fn row_theme(app: &tauri::AppHandle) -> RowTheme {
-    let (text, hint, sel, size) = app
-        .try_state::<crate::AppState>()
-        .map(|s| {
-            let engine = s.engine.lock().unwrap();
-            let v = &engine.config().visual;
-            (v.text_color.clone(), v.hint_text_color.clone(),
-             v.selected_row_color.clone(), v.font_size)
-        })
-        .unwrap_or_else(|| ("#E0E0E0".into(), "#808080".into(), "#333333".into(), 15));
-    RowTheme {
-        name_color: hex_color(&text, egui::Color32::from_rgb(0xE0, 0xE0, 0xE0)),
-        path_color: hex_color(&hint, egui::Color32::from_rgb(0x80, 0x80, 0x80)),
-        selection: hex_color(&sel, egui::Color32::from_rgb(0x33, 0x33, 0x33)),
-        name_size: size as f32,
-        path_size: crate::egui_shell::layout::path_size(size) as f32, // 正本は layout(#646)
-    }
-}
-
-/// `#RRGGBB` 文字列を Color32 へ。失敗時は fallback（release は panic=abort ゆえ unwrap しない）。
-fn hex_color(s: &str, fallback: egui::Color32) -> egui::Color32 {
-    egui::Color32::from_hex(s).unwrap_or(fallback)
-}
-
-/// show_icons を実行中 config から都度読む（キャッシュしない・#576 と同設計）。view.rs のメソッドを
-/// Task 5 で自由関数化して移設（本 view は検索状態を持たず、config live-read だけで完結するため）。
-fn show_icons(app: &tauri::AppHandle) -> bool {
-    app.try_state::<crate::AppState>()
-        .map(|s| s.engine.lock().unwrap().config().appearance.show_icons)
-        .unwrap_or(true)
-}
 
 /// 1 行を描画。selected かつ scroll なら scroll_to_me（選択変化時のみ・#632）。返り値:
 /// single_clicked。ダブルクリックは扱わない（ユーザー決定: §4.8 の double-click=選択は
@@ -360,14 +327,6 @@ pub(crate) fn truncate_middle(s: &str, avail_px: f32, per_char_px: f32) -> Strin
     out
 }
 
-/// 1 結果行の描画テーマ（config テーマ値から都度導出・#576 と同設計でキャッシュしない）。
-pub(crate) struct RowTheme {
-    pub name_color: egui::Color32,
-    pub path_color: egui::Color32,
-    pub selection: egui::Color32,
-    pub name_size: f32,
-    pub path_size: f32,
-}
 
 impl snotra_egui_runtime::EguiView for ResultsView {
     fn setup(&mut self, context: &egui::Context) {
@@ -403,20 +362,25 @@ impl snotra_egui_runtime::EguiView for ResultsView {
             self.last_scrolled_selected = None;
             return; // 窓は main が hide 済みのはず(backstop で何も描かない)
         }
+        // テーマ値は 1 フレーム 1 lock（#673 spec 決定 4）。**空 rows の早期 return より後**で
+        // 取る——前へ出すと、描かないフレームでも lock を取ることになる。
+        let visual = crate::egui_shell::read_visual(
+            &self.app_handle,
+            crate::egui_shell::VisualApplied {
+                font_family: &self.applied_font_family,
+                // ネイティブ背景ブラシの追従は main の責務——results は比較しない。
+                background_hex: None,
+            },
+        );
         // font_family hot-reload(view.rs の applied_font_family 比較と同型を複製・
         // ctx は窓ごとに独立なため main 側の適用はこの窓に効かない)。
-        let font_family = self
-            .app_handle
-            .try_state::<crate::AppState>()
-            .map(|s| s.engine.lock().unwrap().config().visual.font_family.clone())
-            .unwrap_or_else(|| "Segoe UI".to_string());
-        if font_family != self.applied_font_family {
-            crate::egui_shell::view::configure_japanese_font(ui.ctx(), &font_family);
-            self.applied_font_family = font_family;
+        if let Some(name) = &visual.font_family_changed {
+            crate::egui_shell::view::configure_japanese_font(ui.ctx(), name);
+            self.applied_font_family = name.clone();
         }
-        let theme = row_theme(&self.app_handle);
-        let metrics = crate::egui_shell::read_metrics(&self.app_handle);
-        let show_icons = show_icons(&self.app_handle);
+        let theme = &visual.row;
+        let metrics = &visual.metrics;
+        let show_icons = visual.show_icons;
         // アイコン drain（token 無し・path キーで適用）。到着したら load_texture して map へ。
         // load_texture は egui context 必須ゆえ、ここ（results の update()・自窓 ctx）でのみ呼ぶ
         // ——worker（spawn_icon_load）は ColorImage を送るだけで load_texture は呼ばない。Task 5 で
@@ -462,7 +426,7 @@ impl snotra_egui_runtime::EguiView for ResultsView {
                     sel && do_scroll,
                     self.icon_textures.get(&result.path),
                     show_icons,
-                    &theme,
+                    theme,
                     metrics.row_height as f32,
                 ) {
                     clicked = Some(i);

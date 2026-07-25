@@ -447,6 +447,10 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
     // show 判定で駆動するため、ここが唯一の外部 hide 経路（対称は main update 内の show）。
     if let Some(results) = app.get_window("results") {
         hide_results(&results);
+        // 呼び出し側に置く（spec 決定 7）。results の hide は 2 経路あり
+        // （ここと view.rs の drive_results_window）、trace は要求レベルゆえ
+        // 既に隠れていても出る——smoke は presence のみを assert する。
+        crate::trace_main("egui_results:hide", serde_json::json!({ "from": "hide_main" }));
     }
     if let Some(state) = app.try_state::<crate::AppState>() {
         state.main_visible.store(false, Ordering::SeqCst);

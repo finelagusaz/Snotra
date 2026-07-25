@@ -710,6 +710,10 @@ impl SearchWindowView {
         if !visible {
             if self.last_results_visible {
                 crate::egui_shell::hide_results(&results);
+                // trace は 3 つの生 Win32 関数の**内側ではなく呼び出し側**に置く（spec 決定 7）——
+                // PR A′ がその 3 関数を ResultsWindow の method へ移すため、内側に書くと
+                // smoke が「1 PR 後に消える関数」から出る event 名を pin することになる。
+                crate::trace_main("egui_results:hide", serde_json::json!({ "from": "drive" }));
                 self.last_results_visible = false;
             }
             return;
@@ -728,6 +732,8 @@ impl SearchWindowView {
         if !self.last_results_visible {
             // フォーカスを奪わない表示（tauri show() は SW_SHOW で活性化する・#646 PR2）。
             crate::egui_shell::show_results_no_activate(&results);
+            // 置き場の理由は上の hide 側コメントと同じ（spec 決定 7）。
+            crate::trace_main("egui_results:show", serde_json::json!({ "rows": count }));
             self.last_results_visible = true;
         }
         crate::egui_shell::wake_results(&self.app_handle);

@@ -7,6 +7,12 @@ param(
   # hotkey は config.toml 依存のため、実 config を持つ実機ではその値を渡す（例: Ctrl+K は "17,75"）。
   # pwsh -File / npm 経由で配列引数が壊れないよう文字列で受けて内部で分割する。
   [string]$HotkeyVks = "18,81"
+  ,
+  # results 窓の被覆に使う検索クエリ（1 文字想定）。既定 "" のとき:
+  #   -SeedConfig で実際に seed できた場合のみ "z"（seed した zsnotrasmoke.exe に一致）を使う。
+  #   seed しなかった場合（既存 config あり / -SeedConfig なし）は results 検査を skip する。
+  # 既存 config を持つ開発機で検査したいときは、その索引に一致する文字を明示的に渡す。
+  [string]$ResultsQuery = ""
 )
 
 # egui 経路の自動回帰 smoke（#532 SU7 PR1・spec: docs/superpowers/specs/2026-07-24-su7-flip-implementation-design.md 決定 3）。
@@ -24,17 +30,29 @@ if (-not (Test-Path $ExePath)) {
   throw "Executable not found: $ExePath"
 }
 
+$seededNow = $false
 if ($SeedConfig) {
   $cfgDir = Join-Path $env:APPDATA "Snotra"
   $cfgPath = Join-Path $cfgDir "config.toml"
   if (-not (Test-Path $cfgPath)) {
     New-Item -ItemType Directory -Force -Path $cfgDir | Out-Null
+    # results 窓の被覆用に、索引に必ず 1 件載るダミーを置く（中身は問わない——indexer は
+    # 拡張子だけで判定する: snotra-core/src/indexer.rs の matches_extension）。
+    # 名前は既存の索引と衝突しにくい接頭辞にし、-ResultsQuery 既定の "z" で引けるようにする。
+    $scanDir = Join-Path $env:TEMP "snotra_smoke_scan"
+    New-Item -ItemType Directory -Force -Path $scanDir | Out-Null
+    $dummy = Join-Path $scanDir "zsnotrasmoke.exe"
+    if (-not (Test-Path $dummy)) { New-Item -ItemType File -Path $dummy | Out-Null }
+    $scanDirToml = $scanDir -replace '\\', '/'
     # 最小の有効 TOML。[hotkey]/[appearance]/[paths] は #[serde(default)] 無しの必須セクションで、
     # 空 TOML は parse 失敗し「破損復旧」経路（stderr 診断 + config.toml.bak 退避 + 復旧バルーン）を
     # 毎回踏んでしまう（PR #659 レビューで検出）。値は config.rs の既定と同一
-    # （hotkey Alt+Q = 本スクリプト既定の -HotkeyVks 18,81 と一致）。scan 空 = インデックス対象なし
-    # （smoke は show/hide のみで索引不要・CI のスキャンを省く）。
-    $seedToml = @'
+    # （hotkey Alt+Q = 本スクリプト既定の -HotkeyVks 18,81 と一致）。
+    # scan は上の 1 ファイルだけを対象にする（索引は 1 件・ビルドは即座に終わる）。
+    # **`scan = []` と `[[paths.scan]]` を併記してはならない**——同一キーの再定義で TOML の
+    # parse が落ち、config 破損復旧経路へ落ちる。`[paths]` を空ヘッダで置き、その下に
+    # array-of-tables を続ける（`PathsConfig.scan` は #[serde(default)] ゆえ空でも可）。
+    $seedToml = @"
 [hotkey]
 modifier = "Alt"
 key = "Q"
@@ -43,13 +61,23 @@ key = "Q"
 window_width = 600
 
 [paths]
-scan = []
-'@
+
+[[paths.scan]]
+path = "$scanDirToml"
+extensions = [".exe"]
+include_folders = false
+"@
     Set-Content -Path $cfgPath -Value $seedToml -Encoding utf8
-    Write-Host "Seeded minimal config: $cfgPath"
+    $seededNow = $true
+    Write-Host "Seeded minimal config: $cfgPath (scan: $scanDir)"
   } else {
     Write-Host "Config already exists, seed skipped: $cfgPath"
   }
+}
+
+# results 検査に使うクエリを決める。空文字なら検査を skip する。
+if ([string]::IsNullOrEmpty($ResultsQuery) -and $seededNow) {
+  $ResultsQuery = "z"
 }
 
 Add-Type -Namespace SmokeInput -Name Native -MemberDefinition @'
@@ -59,6 +87,16 @@ public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPt
 
 $KEYEVENTF_KEYUP = 0x2
 $VK_ESCAPE = 0x1B
+
+# 1 文字クエリの VK は英字のみを想定（VK_A..VK_Z = 0x41..0x5A = ASCII 大文字と同値）。
+function Get-LetterVk {
+  param([string]$Ch)
+  $u = $Ch.ToUpperInvariant()
+  if ($u.Length -ne 1 -or $u[0] -lt 'A' -or $u[0] -gt 'Z') {
+    throw "ResultsQuery must be a single A-Z letter, got: '$Ch'"
+  }
+  return [byte][int][char]$u[0]
+}
 
 function Send-Key {
   param([byte]$Vk, [switch]$Up)
@@ -103,6 +141,7 @@ if ($null -eq $savedTraceEnv) {
 }
 
 $failures = @()
+$resultsChecked = $false
 try {
   # 起動完了（hotkey 登録含む）待ち。既定は hidden 起動（show_on_startup=false）。
   Start-Sleep -Milliseconds $StartupWaitMs
@@ -137,6 +176,28 @@ try {
     $failures += "egui_show:done not observed within ${ObserveTimeoutMs}ms x2 after hotkey ($HotkeyVks)"
   }
 
+  # results 窓の被覆（#671/#673 サイクル PR A）。索引内容を制御できるときだけ実行する。
+  $resultsChecked = $false
+  if ($failures.Count -eq 0 -and -not [string]::IsNullOrEmpty($ResultsQuery)) {
+    $resultsChecked = $true
+    $queryVk = Get-LetterVk $ResultsQuery
+    # 索引構築中は plain 検索が抑止される（SPEC §4.7）。起動直後の負荷で 1 回目の打鍵が
+    # 抑止側に落ちることがあるため、hotkey 注入と同じく一度だけ再注入する。
+    $resultsShown = $false
+    foreach ($attempt in 1..2) {
+      Send-Key $queryVk
+      Start-Sleep -Milliseconds 50
+      Send-Key $queryVk -Up
+      if (Wait-TraceEvent -Path $errPath -EventName "egui_results:show" -TimeoutMs $ObserveTimeoutMs) {
+        $resultsShown = $true
+        break
+      }
+    }
+    if (-not $resultsShown) {
+      $failures += "egui_results:show not observed within ${ObserveTimeoutMs}ms x2 after typing '$ResultsQuery'"
+    }
+  }
+
   # 表示中に WebView2 プロセスが増えていないこと（グローバル before/after・SU2 G4 と同じ測り方）
   $webviewAfter = @(Get-Process msedgewebview2 -ErrorAction SilentlyContinue).Count
   if ($webviewAfter -gt $webviewBefore) {
@@ -151,6 +212,13 @@ try {
 
     if (-not (Wait-TraceEvent -Path $errPath -EventName "egui_hide:done" -TimeoutMs $ObserveTimeoutMs)) {
       $failures += "egui_hide:done not observed within ${ObserveTimeoutMs}ms after Escape"
+    }
+
+    # main の hide は hide_egui_main が results も同時に隠す（#646 PR2 決定 6）。
+    # show 側を検査したときだけ対で検査する（対称ペア・/symmetric-check）。
+    if ($resultsChecked -and
+        -not (Wait-TraceEvent -Path $errPath -EventName "egui_results:hide" -TimeoutMs $ObserveTimeoutMs)) {
+      $failures += "egui_results:hide not observed within ${ObserveTimeoutMs}ms after Escape"
     }
   }
 } finally {
@@ -174,4 +242,9 @@ if ($failures.Count -gt 0) {
 }
 
 Write-Host ""
-Write-Host "egui smoke passed (show/hide observed, webview delta 0)." -ForegroundColor Green
+if ($resultsChecked) {
+  Write-Host "egui smoke passed (show/hide + results show/hide observed, webview delta 0)." -ForegroundColor Green
+} else {
+  Write-Host "egui smoke passed (show/hide observed, webview delta 0)." -ForegroundColor Green
+  Write-Host "NOTE: results window coverage was SKIPPED (no controlled index). Pass -SeedConfig on a machine without %APPDATA%/Snotra/config.toml, or pass -ResultsQuery <letter> matching your index." -ForegroundColor Yellow
+}

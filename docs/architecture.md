@@ -8,16 +8,15 @@ Snotra は Windows 専用のキーボードランチャー。全層 Rust（Tauri
 
 ```
 Snotra/
-  Cargo.toml              # workspace（製品3 crate + egui検証2 crate）
+  Cargo.toml              # workspace（製品 4 crate）
   snotra-core/            # 純ロジック lib crate
-  snotra-egui-runtime/    # Tauri native Window向けegui/wgpu接着層
-  snotra-egui-mvp/        # Issue #532の独立検証バイナリ（非配布）
+  snotra-egui-runtime/    # Tauri native Window向けegui/softbuffer接着層
   src-tauri/              # Tauri v2 バイナリ crate（egui_shell = 検索 UI）
   snotra-settings/        # egui 設定バイナリ（版数・About はサイドバー表示）
   package.json            # node（セーフティネット vitest + @tauri-apps/cli）
 ```
 
-Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-core`）、Tauri バイナリ（`src-tauri`）、設定 GUI（`snotra-settings`）を分離。検索 UI は `src-tauri/src/egui_shell/`（egui + `snotra-egui-runtime` の softbuffer CPU ラスタ）で、`Engine` を直接呼ぶ——IPC・TypeScript DTO は #532 SU7 で消滅した。設定は egui ベースの別プロセスで（版数・About 情報はサイドバーに表示）、`config.toml` ファイルを介して本体と連携する。`snotra-egui-mvp` は Issue #532 の採用判断に使った検証バイナリで、製品の既定起動経路・設定・配布物には接続しない。
+Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-core`）、Tauri バイナリ（`src-tauri`）、設定 GUI（`snotra-settings`）を分離。検索 UI は `src-tauri/src/egui_shell/`（egui + `snotra-egui-runtime` の softbuffer CPU ラスタ）で、`Engine` を直接呼ぶ——IPC・TypeScript DTO は #532 SU7 で消滅した。設定は egui ベースの別プロセスで（版数・About 情報はサイドバーに表示）、`config.toml` ファイルを介して本体と連携する。
 
 ## レイヤー構成
 
@@ -40,12 +39,6 @@ Cargo ワークスペース構成で、純ロジックライブラリ（`snotra-
 │  snotra-settings/ (egui standalone binary)            │
 │  app.rs (draft/saved model) → tabs/*                  │
 │  通信: config.toml ファイル経由のみ（IPC なし）       │
-└───────────────────────────────────────────────────────┘
-
-┌───────────────────────────────────────────────────────┐
-│  Issue #532 egui MVP（非配布）                        │
-│  snotra-egui-mvp → snotra-egui-runtime → Tauri Window │
-│                                      → egui-wgpu/wgpu  │
 └───────────────────────────────────────────────────────┘
 ```
 
@@ -73,11 +66,11 @@ Tauri v2 バイナリ crate（パッケージ名 `snotra`）。検索 UI（`egui
 
 → モジュール構成は `snotra-settings/CLAUDE.md`
 
-### snotra-egui-runtime / snotra-egui-mvp（Issue #532 検証層）
+### snotra-egui-runtime（egui/softbuffer 接着層）
 
-`snotra-egui-runtime`はTauri wry pluginでTaoイベントを受け、egui入力・Win32 IME composition・repaint・wgpu Surface／Device復旧をWindow単位で管理する接着層。`snotra-egui-mvp`は固定10,000件の実`Engine`検索、現行版相当の`Alt+Q`、3更新モードと署名検証付きダウンロードを組み合わせた独立バイナリであり、`app.windows`を空にしてネイティブ`Window`だけを生成する。製品版へ統合する前の技術検証に限定し、release workflowのartifactには含めない。
+Tauri wry plugin で Tao イベントを受け、egui 入力・Win32 IME composition・repaint・softbuffer Surface の描画失敗リトライ（指数バックオフ・上限 5 回）を Window 単位で管理する接着層。`src-tauri` が唯一の消費者で、製品バイナリ `snotra.exe` に組み込まれて配布される（Issue #532 の採用判断に使った独立検証バイナリ `snotra-egui-mvp` は #660 で撤去済み）。
 
-→ モジュール構成と制約は `snotra-egui-runtime/CLAUDE.md`、`snotra-egui-mvp/CLAUDE.md`
+→ モジュール構成と制約は `snotra-egui-runtime/CLAUDE.md`
 
 ## 横断的な実装パターン
 

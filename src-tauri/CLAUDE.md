@@ -81,6 +81,15 @@ NOTIFYICON_VERSION_4 では、キーボード操作（Shift+F10 / Application �
 - **show 側に逆操作は不要**: trim されたページは show 時に OS が透過的に re-fault する。明示 untrim API は存在しない。trim が hide 前後どちらで走っても無害（再 fault するだけ）
 - **best-effort・物理 RAM のみ**: Toolhelp / `OpenProcess` / `EmptyWorkingSet` の全失敗は黙ってスキップ（機能影響ゼロ）。HANDLE は RAII ガードで解放。削減対象は working set であって commit ではない。`EmptyWorkingSet` はスレッド非依存で任意スレッドから呼べる
 
+## フォント登録（混在スクリプトのベースライン）
+
+Latin と CJK が混在する行のベースラインずれは、**softbuffer 期に固有の顕在化条件**を持つ。規則自体は `egui_shell/view.rs` の `font_definitions_*` テスト群が固定しているので、ここには**なぜ壊れるか**だけを置く（規則の正本はテストと `view.rs` の `//!`）。
+
+- **前提**（混在を 2 フォントで積むとずれること自体）は `snotra-settings/CLAUDE.md`（#399）が正本
+- **softbuffer 固有の増幅**: `raster.rs` の `fill_mesh` は**カバレッジ AA を持たない**ため、2 フォント間の分数 px のベースライン差を整数 px へ丸めて**目に見える段差**にする。glow / wgpu 期は sub-pixel AA が同じ差を吸収して隠していた——**描画バックエンドを替えたことで顕在化した**類のバグである
+- **再発の経路**: フォント登録を書くたびに「末尾 fallback（`push`）で足す」形へ戻り、#399 → #579 と繰り返した。**新しく bin や窓を足すときに再導入されやすい**
+- **ゆえにフォント登録に触る変更では `cargo run -p snotra` の目視（`docs/build-commands.md` カテゴリ D）を省略してはならない**（検知手段が視覚スモークだけであること・受容残余は `snotra-settings/CLAUDE.md` と `SPEC.md` のフォント節が正本）
+
 ## Win32 / Tauri 注意事項
 
 - Win32 関連の不具合では、まず `config.toml`（テーマ含む）を確認し、次にウィンドウライフサイクル順序、最後に API 呼び出しを調査する（白画面バグの真因がテーマ設定だった事例あり）

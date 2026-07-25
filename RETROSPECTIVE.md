@@ -4,7 +4,7 @@
 
 ### 当初案を実装 0 行で取り下げ、否定の知識を spec に残した
 
-サイクルの入口では「runtime に `WindowKind{Primary, Subordinate}` と `EguiWindowHandle{show, hide, set_topmost, wake}` を入れて両窓の可視性を runtime 管理下へ移す」案（I-1）で進めるつもりだった。5 レンズのレビューと実測がこれを覆した——`EguiWindow.visible` は製品コードで**恒真 true**（`hide_window()` / `close_window()` の製品呼び出し元がゼロ）ゆえ、I-1 が「構造的に閉じる」と称した空白窓は今日発生しない。さらに `window.hide()` の今日の安全性は**それが private な 1 行であること**に由来しており、`hide()` を public API にすると括り付いた 4 副作用（世代 bump・位置保存・`main_visible=false`・working set trim）が付いてこない。
+サイクルの入口では「runtime に `WindowKind{Primary, Subordinate}` と `EguiWindowHandle{show, hide, set_topmost, wake}` を入れて両窓の可視性を runtime 管理下へ移す」案（I-1）で進めるつもりだった。5 レンズのレビューと実測がこれを覆した——`EguiWindow.visible` は製品コードで**恒真 true**（`hide_window()` / `close_window()` の製品呼び出し元がゼロ——両 API はこの観測を根拠に PR A と #660 で撤去済みゆえ、今 grep しても見つからない）ゆえ、I-1 が「構造的に閉じる」と称した空白窓は今日発生しない。さらに `window.hide()` の今日の安全性は**それが private な 1 行であること**に由来しており、`hide()` を public API にすると括り付いた 4 副作用（世代 bump・位置保存・`main_visible=false`・working set trim）が付いてこない。
 
 **「構造で守る」を掲げた案が、実際には既にある構造的保証を規約へ格下げしていた。** 撤回の判断と根拠を spec §2 に否定の知識として置いたので、次に同じ案を思いついた人は同じ道を辿らない。
 

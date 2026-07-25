@@ -26,15 +26,10 @@ pub trait EguiView: Send + 'static {
 }
 
 pub struct RuntimeFrame {
-    close_requested: bool,
     drag_requested: bool,
 }
 
 impl RuntimeFrame {
-    pub fn close_window(&mut self) {
-        self.close_requested = true;
-    }
-
     pub fn drag_window(&mut self) {
         self.drag_requested = true;
     }
@@ -89,8 +84,9 @@ impl EguiRuntime {
     }
 
     /// 窓に view を結び付け、その窓を外部から起こす [`WindowWaker`] を返す（#671 PR D）。
-    /// 戻り値を捨ててよい（wake が不要な窓では単に落とす）。**`#[must_use]` は付けない**
-    /// ——`snotra-egui-mvp` が `attach(..)?;` と捨てており、`-D warnings` で落ちるため。
+    /// **`#[must_use]` は付けない**——wake を要さない窓では戻り値を落とせる設計にしてある
+    /// （意図）。ただし現在の呼び出し元はいずれも束縛しており、捨てる実例は無い（実測）。
+    /// 属性を足すなら「落とせる」という設計判断ごと見直すことになる。
     ///
     /// エラー（未 install / ラベル重複）では waker と受信側の両方が落ちる。
     pub fn attach<V: EguiView>(
@@ -322,7 +318,6 @@ impl EguiWindow {
             .max_texture_side();
         let raw_input = self.input.take(max_side, size, ppp);
         let mut frame = RuntimeFrame {
-            close_requested: false,
             drag_requested: false,
         };
         let output = self
@@ -360,11 +355,11 @@ impl EguiWindow {
                     }
                 }
                 egui::OutputCommand::CopyImage(_) => {
-                    log::warn!("copying egui images is not implemented in the MVP runtime");
+                    log::warn!("copying egui images is not implemented in this runtime");
                 }
                 egui::OutputCommand::OpenUrl(url) => {
                     log::warn!(
-                        "opening URL is not implemented in the MVP runtime: {}",
+                        "opening URL is not implemented in this runtime: {}",
                         url.url
                     );
                 }
@@ -387,9 +382,6 @@ impl EguiWindow {
     fn apply_frame_commands(&mut self, frame: RuntimeFrame) -> Result<(), RuntimeError> {
         if frame.drag_requested {
             self.window.start_dragging()?;
-        }
-        if frame.close_requested {
-            self.window.close()?;
         }
         Ok(())
     }

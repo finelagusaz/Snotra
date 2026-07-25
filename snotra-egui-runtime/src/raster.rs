@@ -1,6 +1,6 @@
 //! egui の Mesh を CPU 側でラスタライズする純関数群（softbuffer 提示用の中核）。
 //!
-//! spike `snotra-egui-mvp/src/soft_host_main.rs` から移植。`renderer.rs` の
+//! #532 Phase 1 の技術スパイク（採用判断用の検証バイナリ・#660 で撤去）から移植。`renderer.rs` の
 //! `EguiRenderer::paint` から呼ばれる（#532 SU1 Task 4 で配線）。
 
 use std::collections::HashMap;

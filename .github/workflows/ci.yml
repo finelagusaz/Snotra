@@ -82,9 +82,6 @@ jobs:
       - name: cargo test (snotra-egui-runtime)
         run: cargo test -p snotra-egui-runtime
 
-      - name: cargo test (snotra-egui-mvp)
-        run: cargo test -p snotra-egui-mvp
-
       - name: cargo test (snotra)
         run: cargo test -p snotra
 

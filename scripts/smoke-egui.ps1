@@ -15,6 +15,11 @@ param(
   #   seed しなかった場合（既存 config あり / -SeedConfig なし）は results 検査を skip する。
   # 既存 config を持つ開発機で検査したいときは、その索引に一致する文字を明示的に渡す。
   [string]$ResultsQuery = ""
+  ,
+  # results 被覆の skip を**失敗**として扱う（CI 用・#686）。既定（未指定）では skip は
+  # 黄色 NOTE で報告して exit 0——ローカルでは索引を制御できないのが普通だからである。
+  # CI は被覆が走ることを要求するため常に渡す。**判定は起動前に確定する**（下の guard）。
+  [switch]$RequireResults
 )
 
 # egui 経路の自動回帰 smoke（#532 SU7 PR1・spec: docs/superpowers/specs/2026-07-24-su7-flip-implementation-design.md 決定 3。
@@ -86,6 +91,24 @@ include_folders = false
 # results 検査に使うクエリを決める。空文字なら検査を skip する。
 if ([string]::IsNullOrEmpty($ResultsQuery) -and $seededNow) {
   $ResultsQuery = "z"
+}
+
+# results 被覆が skip されるなら、ここで落とす（#686）。
+#
+# **skip へ至る経路のうち沈黙するのはこの 1 本だけである**——他は必ず exit≠0 で鳴る:
+# 実行ファイル不在 / `hotkey:registered` 未観測 / `egui_show:done` 未観測 / `egui_results:show`
+# 未観測 / `ResultsQuery` が A-Z 単字でない（`Get-LetterVk` が throw）。ゆえにこの 1 箇所で
+# 沈黙経路を塞げる。**アプリ起動前に判定が確定している**ので、この guard はプロセスを
+# 起こさずに落ちる（フォールトインジェクションが実機を触らずに済む）。
+if ($RequireResults -and [string]::IsNullOrEmpty($ResultsQuery)) {
+  throw @"
+results window coverage would be SKIPPED but -RequireResults was passed.
+  seeded now : $seededNow (-SeedConfig は config.toml **不在時のみ** seed する)
+  config path: $(Join-Path $env:APPDATA 'Snotra\config.toml')
+索引を制御できる状態で走らせること。CI では、この smoke を config.toml を作る他のステップ
+（例: startup smoke のアプリ起動）より**前**に置けば seed が成立する。開発機では
+-ResultsQuery <letter> に既存索引と一致する文字を渡す。
+"@
 }
 
 Add-Type -Namespace SmokeInput -Name Native -MemberDefinition @'

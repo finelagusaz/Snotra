@@ -50,7 +50,7 @@
 
 - **(A2)「外部 API の不可逆呼び出し」のうち hook が守るのは `gh pr create` だけである**（#488 実測・**意図的な非対称**）。`merge` / `close` を hook で守らない 3 理由・Layer 0（`squash_merge_commit_message=PR_BODY`）での遮断・設定 read-back の検知器を置かない判断は `docs/adr/0002-squash-merge-issue-autoclose.md` が SSOT。残余は上の手順 3 に委ねられる
 - **検出は exit code、出力は証拠**（#471）。成功した検査は何も出力せず、失敗したときだけ `--- <検査>: 失敗 (exit N) ---` と再現コマンドが会話に現れる（診断が予算を超えても再現コマンドで全件を見られる）。タイムアウト（検査ごと 300s）・出力溢れ・起動失敗・スクリプト内部エラーはいずれも必ず報告される——**この沈黙経路の閉塞を壊す変更を `.claude/hooks/` に入れてはならない**
-- **沈黙が「合格」なのは `selectChecks` に検査が割り当てられたファイルだけである**（#497・機構ではなく規範ゆえ前提を忘れれば false green が再発する）。`*.md` 全般・`SPEC.md`・`scripts/` 配下の非 TS ファイル・`.github/workflows/`・`Cargo.lock` の沈黙は「何も走らなかった」である。決定的な項目（参照実在・索引・スキル表・SPEC 番号・rules glob・コマンド写像）は PR CI の `governance-check` job（`skip-ci` 非対象・#587）が事後に捕捉し、その検査対象外（責務の妥当性等の意味的整合）は**受容する残余**である
+- **沈黙が「合格」なのは `selectChecks` に検査が割り当てられたファイルだけである**（#497・機構ではなく規範ゆえ前提を忘れれば false green が再発する）。`*.md` 全般・`SPEC.md`・`scripts/` 配下の非 TS ファイル・`.github/workflows/`・`Cargo.lock` の沈黙は「何も走らなかった」である（`scripts/*.ts` は「include 対象外」の一行が出るため沈黙しない）。決定的な項目（参照実在・索引・スキル表・SPEC 番号・rules glob・コマンド写像）は PR CI の `governance-check` job（`skip-ci` 非対象・#587）が事後に捕捉し、その検査対象外（責務の妥当性等の意味的整合）は**受容する残余**である
 - **フックの改修者向けの実装契約・機構・保守**は `docs/hooks.md`（原理は `docs/development-principles.md` §6・§7）。フック改修時は `.claude/rules/safety-nets.md` からも配送される
 
 ## チーム憲章

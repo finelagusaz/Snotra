@@ -140,6 +140,11 @@ hide 経路の `EmptyWorkingSet`（`src-tauri/src/working_set.rs`）は物理ペ
   フォント解決が表示より前に走ることを示す
 - 差はファイルサイズ（`HackGenConsole-Regular.ttf` = 10.21 MiB）の約 2 倍。`resolve_font_family` の
   `data.to_vec()` による複製に加え、egui 側の解析・グリフ実体化が上乗せされる。**内訳は未分離**
+- **差が段階とともに広がる（20.6 → 31.3 → 40.9）のが要点**。一度きりのバイト複製なら差は一定のはずで、
+  広がるということはグリフ実体化の分が乗っているということ。同じクエリ 1 回の検索で A は +22.0 MiB、
+  B は +12.4 MiB しか増えない——検索時の増分もアイコンではなく**主にフォント由来**である。
+  ゆえに「user_font が CJK を被覆するなら冗長な jp_font を積まない」が具体的な削減候補になる
+  （被覆判定の述語が要る）
 - `JP_FONT_BYTES: OnceLock<Box<[u8]>>` は `YuGothM.ttc`（**13.26 MiB**）を丸ごと保持し**解放経路が無い**。
   user_font が CJK を被覆する場合（HackGen 等）でも fallback として常駐し続ける
 - 実行間のばらつきは ~4 MiB（別実行のアイドルは 65.9 MiB）。背景再スキャンの進行差による。

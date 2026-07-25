@@ -43,6 +43,7 @@ npm run smoke:egui       # 必須: egui show/hide スモーク（hotkey 注入 +
 
 - WebView2 E2E（Playwright + tauri-driver）は #532 SU7 flip で撤去済み。後継は `smoke:egui`（自動回帰の最低線）+ 手動 GUI smoke（カテゴリ D）
 - **PR 上の実行責任**: `npm test` は通常 PR CI（`ci.yml`）で自動実行されるが、`smoke:startup` / `smoke:egui` は**通常 PR CI では走らない**。`src-tauri`・依存 manifest/lockfile 等を含む変更は `Smoke` workflow（`e2e.yml`）が **paths により自動起動**し両 smoke を実行する。paths 外の変更で回したいときは `workflow_dispatch`（手動実行）。「通常 CI が緑」だけでは smoke 済みを意味しない
+  - **`Smoke` が緑でも、その中で被覆が skip されていることがある**（#671 サイクルで実測）。`smoke-egui.ps1` の results 検査は seed / `-ResultsQuery` が成立しないと**黄色 NOTE を出して自動 skip** し、job は success のまま緑になる。**CI に検証を委ねるなら、その job が実際に何を実行したかをログで確かめる**——`gh run view <id> --log` から `SKIPPED` を grep する（全行にジョブ名が付くので、ジョブ名を grep パターンに入れると素通りする）。CI 側で skip を失敗にする機構化は **#686**
 
 ### D. UI のスタイル・レイアウト・テキスト表示に影響する変更（A／B／C に追加）
 

@@ -17,4 +17,4 @@ paths:
 
 ## トリガー → 検査
 
-- worker spawn・共有スロット（`PickerState` 等）・フレーム内 live-read を追加/変更したら: `/race-check`（述語の SSOT は `AGENTS.md`「条件別チェック」表）
+- 並行境界（worker・共有スロット（`PickerState` 等）・live-read 等）を追加/変更したら: `/race-check`（**述語の全文は常時ロードの `AGENTS.md`「条件別チェック」表が SSOT**——ここに写しは置かない）

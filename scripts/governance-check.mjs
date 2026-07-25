@@ -496,8 +496,8 @@ export function checkHookCommands(snapshot) {
 /** 常時ロードされる恒久規範ファイル（ルート直下の 2 文書） */
 export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
 
-/** 二面独立の行数上限。削減したら下げる（ratchet）。#616 で常時ロードを写し除去で 233→228、#488 マージ節を ADR-0002 へ退去し 228→222、フック節の改修者向け実装契約を docs/hooks.md へ退去し 222→216 に削減 */
-export const LINE_BUDGET = { alwaysLoaded: 216, rules: 173 };
+/** 二面独立の行数上限。削減したら下げる（ratchet）。#616 で常時ロードを写し除去で 233→228、#488 マージ節を ADR-0002 へ退去し 228→222、フック節の改修者向け実装契約を docs/hooks.md へ退去し 222→216 に削減。2026-07-26 に (A2) の 3 理由を ADR-0002 へ退去・コミュニケーション原則を判断ベースへ圧縮・重複規則（HEREDOC / 合意ルール）とスキル表の呼び出し例欄を除去し 216→191、rules は実測 155 へ追従 */
+export const LINE_BUDGET = { alwaysLoaded: 191, rules: 155 };
 
 /** \r?\n の出現数 = wc -l 相当。読めなければ null（母集団欠落を上位で検知） */
 function countLines(text) {

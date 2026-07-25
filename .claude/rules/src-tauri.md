@@ -24,5 +24,5 @@ paths:
 
 ## トリガー → 検査
 
-- worker spawn・channel・フレーム drain・Tauri listener・スレッド/窓をまたぐ共有状態・フレーム内 live-read、または async 関数を追加/変更したら: `/race-check`（述語の SSOT は `AGENTS.md`「条件別チェック」表。`.await` は `egui_shell/` の updater 経路に実在する）
+- 並行境界（worker・channel・drain・listener・共有状態・live-read・async）を追加/変更したら: `/race-check`（**述語の全文は常時ロードの `AGENTS.md`「条件別チェック」表が SSOT**——ここに写しは置かない。`.await` は `egui_shell/` の updater 経路に実在する）
 - ホットキー・ウィンドウ生成/表示順・スラッシュコマンド経路を変更したら: カテゴリ A に加え `docs/build-commands.md` カテゴリ C（`smoke:startup` / `smoke:egui`）も該当。post-edit hook は A（clippy/test）だけで「沈黙 = 合格」は C を含まない。検証カテゴリは拡張子でなく変更が触れるコードパスの意味で決める（#558）

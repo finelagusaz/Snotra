@@ -92,14 +92,8 @@ git checkout -b <branch-name>
 
 計画の内容に応じて該当する check スキルを実行し、計画の見落としを検出する。発見事項があれば計画を更新する。
 
-| スキル | トリガー条件 |
-|---|---|
-| `/plan-review` | 常に実行（サブエージェントで影響範囲・不変条件・スコープを並列検証） |
-| `/symmetric-check` | 計画が対称ペアを持つコードパスに触れる |
-| `/cache-check` | 計画がキャッシュ・インクリメンタル再利用ロジックに触れる |
-| `/persistence-check` | 計画がシリアライズ・on-disk 形式（index.bin / config.toml / history / window.bin）に触れる |
-| `/state-check` | 計画が UI モード・状態遷移・ガード条件に触れる |
-| `/race-check` | 計画が worker spawn・channel・フレーム drain・Tauri listener・スレッド/窓をまたぐ共有状態・フレーム内 live-read（または async 関数）の追加・変更を含む |
+- `/plan-review` は**常に実行**する（サブエージェントで影響範囲・不変条件・スコープを並列検証）。
+- ほかの check スキルは、**`AGENTS.md`「条件別チェック（トリガー → 参照先）」表に従って**選ぶ（トリガー→検査の写像の SSOT はその表。二重管理を避けるためここに再掲しない）。判定対象は**計画が記述する設計上の操作**であって、既存コードの grep 結果ではない。
 
 ### 5b. セルフレビュー（plan-review 固有の補完）
 

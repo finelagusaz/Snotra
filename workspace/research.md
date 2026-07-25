@@ -98,10 +98,19 @@ SU5 の要石（実測）。帰結:
 | ルート `CLAUDE.md`「利用できるスキル」表（`/race-check` 行） | 同上（説明文 + 呼び出し例） |
 | `.claude/skills/start-issue/SKILL.md` Step 5a の表 | 同上（`計画が async 関数の追加・変更を含む`） |
 | `.claude/skills/retrospective/SKILL.md` | スキル名の列挙のみ（述語を書いていない → **変更不要**） |
+| `.claude/skills/implement/SKILL.md` | `AGENTS.md` の表へ委譲（述語を複製していない → **変更不要**） |
+| `.claude/rules/src-tauri.md`「トリガー → 検査」節 | race-check の行が**無い**（`snotra-core.md` には `/cache-check` の行がある）。rules は自動配送される唯一の機構的起動経路 → 決定 4 |
+| `.claude/agents/code-reviewer.md`（2d・Phase 3） | 同種の SolidJS 残骸（`await` / `.then()` / `onCleanup` / `createMemo`）。スキル名を含まず概念でしか拾えない → **スコープ外・follow-up** |
 | `src-tauri/src/egui_shell/view.rs` | folder / launch worker・drain・snapshot 発行（例示の出典） |
 | `src-tauri/src/egui_shell/results_view.rs` | icon worker・`ResultsShared`・クリック逆流 |
 | `src-tauri/src/egui_shell/mod.rs` | wake 経路・show/hide 順序・updater async |
-| `src-tauri/src/egui_shell/search_state.rs` | `folder_gen` / `accept_folder_result`（純粋核） |
+| `src-tauri/src/egui_shell/search_state.rs` | `folder_gen` / `accept_folder_result` / `needs_index_refresh`（純粋核） |
+| `src-tauri/src/egui_shell/results_window.rs` | `visible` が `AtomicBool`（cross-thread 前提の証拠） |
+| `src-tauri/src/main.rs` | `hotkey-pressed` listener（Win32 スレッドから show/hide を直接呼ぶ）・背景再スキャンスレッド |
+| `src-tauri/src/platform/mod.rs` | hotkey / initial-hotkey-failed の emit 元（Win32 メッセージループスレッド） |
+| `src-tauri/src/config_watcher.rs` | `hotkey-registration-failed` / `config-applied` の emit 元（notify スレッド） |
+| `src-tauri/src/commands/window.rs` | 設定サイドカー監視スレッド（`set_always_on_top` / `set_topmost` を直接呼ぶ） |
+| `src-tauri/src/state.rs` | `index_generation`（5 型目の staleness 機構） |
 | `snotra-egui-runtime/{CLAUDE.md,src/repaint.rs}` | `WindowWaker` と repaint 配送の不変条件 |
 | `src-tauri/CLAUDE.md`「イベント駆動 wake の不変条件」節 | wake 義務・hidden 中 `update()` 不走行の正本 |
 | `.claude/rules/safety-nets.md` | 本改訂に適用される検証手順（規範のフォールトインジェクション） |
@@ -139,4 +148,14 @@ grep -rn "\.await" src-tauri/src --include=*.rs | wc -l   → 2
 1. **トリガー述語をどこまで広げるか**（要合意・最大の設計判断）。現行 `async 関数を追加/変更` は発火しない述語である。候補は (A)「worker spawn・channel・共有状態を追加/変更したとき」へ全面置換、(B) A に加えて async/await も明示的に列挙して残す。→ plan.md で推奨とともに提示
 2. **適用範囲を `src-tauri/egui_shell` に限るか、`snotra-settings` の worker も含めるか**
 3. **例示の耐久性**: 現行シンボル（`folder_rx` / `icon_pending` / `LaunchInFlight` / `snapshot_generation`）を表に書くと、旧スキルと同じ「識別子が消えたら死ぬ」脆さを再生産する。→ 機構カテゴリを名前にし、例示は 1 カテゴリ 1 件・**例示と明示ラベル付き**にする方針を plan.md で確定する
+4. **`.claude/rules/src-tauri.md` にトリガー行を足すか**（plan-review Step 2b の指摘・plan.md 決定 4）。rules は**対象ファイル編集で自動配送される唯一の機構的起動経路**であり、行が無い限りスキルは「思い出したときだけ」起動する
+
+### 面積 ratchet の実測（決定の制約条件・`npm run governance:check` の evidence 行）
+
+```
+恒久規範 常時ロード 216/216 行・rules 150/173 行
+（常時ロード = ルート CLAUDE.md + AGENTS.md の合計行数）
+```
+
+→ **常時ロードは余裕ゼロ**。`AGENTS.md` / ルート `CLAUDE.md` は**行数を増やさない置換**（既存行の文言差し替え）に限る。1 行でも増やすなら他所を削るか `LINE_BUDGET` を理由コメント付きで更新する必要がある。**rules は 23 行の余裕があり、決定 4 の 1 行追加は通る**（実測）。
 </content>

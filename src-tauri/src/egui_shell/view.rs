@@ -1059,6 +1059,13 @@ enum ToastAction {
 /// 中間の widget allocation を挟まず2回呼ぶと dismiss/install 両ボタンが同一 id になり
 /// egui の id クラッシュ検知に触れる——ローカライズ済みラベルは Available 局面で互いに異なるため
 /// これを id salt に使う）。
+/// status 行（indexing 案内・起動中・一時通知）と toast 行の本文フォントサイズ。
+///
+/// **両者は同じ「バー直下の 1 行」であり、字が揃っていないと別種の UI に見える**——実機で
+/// status 行だけ大きい（15.0 対 13.0）ことが指摘され、定数に括って構造的に揃えた（#700）。
+/// ボタンのみ 12.0 と小さいのは意図的（本文とボタンの区別）。
+const ROW_TEXT_SIZE: f32 = 13.0;
+
 fn draw_toast_button(
     ui: &mut egui::Ui,
     cursor_x: &mut f32,
@@ -1557,7 +1564,7 @@ impl EguiView for SearchWindowView {
                 egui::pos2(rect.left() + 8.0, rect.center().y),
                 egui::Align2::LEFT_CENTER,
                 &text,
-                egui::FontId::proportional(15.0),
+                egui::FontId::proportional(ROW_TEXT_SIZE),
                 visual.hint,
             );
         }
@@ -1589,16 +1596,18 @@ impl EguiView for SearchWindowView {
                     crate::egui_shell::ui_strings::update_failed(l).to_string()
                 }
             };
-            ui.painter().text(
-                egui::pos2(rect.left() + 8.0, rect.top() + toast_h * 0.25),
-                egui::Align2::LEFT_CENTER,
-                &line1,
-                egui::FontId::proportional(13.0),
-                theme.name_color,
-            );
-            // 行2: ボタン（右寄せ・installing 中は disabled・WebView2 UpdateToast parity）。
+            // メッセージとボタンは**同じ行の中央**に揃える（#700 実機指摘）。旧実装は
+            // メッセージを行の 25%・ボタンを 75% に置く 2 行構成（WebView2 UpdateToast の
+            // 縦積み parity）だったが、行高は toast_height（= bar_height・既定 43px）しか
+            // 無く、2 行ぶんの間隔が取れずに「左上のテキストと右下のボタン」という
+            // ちぐはぐな配置になっていた。
+            //
+            // **ボタンを先に描く**——右寄せの `cursor_x` がボタン群の左端を返すので、
+            // それをメッセージの clip 境界に使える。1 行に寄せたことで、行が別だった
+            // ときには起きなかった「長いメッセージがボタンへ潜り込む」衝突が生じうる
+            // （ボタンは stroke だけで塗り潰さないため、下のテキストが透けて重なる）。
             let mut cursor_x = rect.right() - 8.0;
-            let btn_y = rect.top() + toast_h * 0.75;
+            let btn_y = rect.center().y;
             let dismiss_label = crate::egui_shell::ui_strings::update_dismiss(l);
             if draw_toast_button(ui, &mut cursor_x, btn_y, dismiss_label, row.buttons_enabled, theme) {
                 toast_action = Some(ToastAction::Dismiss);
@@ -1609,6 +1618,19 @@ impl EguiView for SearchWindowView {
                     toast_action = Some(ToastAction::Install);
                 }
             }
+            // メッセージはボタン群の左端で切る（衝突回避）。`cursor_x` は最後のボタンぶん
+            // 進んだ位置ゆえ、間隔の 8.0 を戻して境界にする。
+            let text_clip = egui::Rect::from_min_max(
+                rect.left_top(),
+                egui::pos2((cursor_x + 8.0).max(rect.left()), rect.bottom()),
+            );
+            ui.painter().with_clip_rect(text_clip).text(
+                egui::pos2(rect.left() + 8.0, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                &line1,
+                egui::FontId::proportional(ROW_TEXT_SIZE),
+                theme.name_color,
+            );
         }
         if let Some(action) = toast_action {
             self.handle_toast_action(action, &ctx);

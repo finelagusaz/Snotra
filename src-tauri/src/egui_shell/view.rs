@@ -707,7 +707,17 @@ impl SearchWindowView {
             self.max_results(),
             metrics.row_height,
         );
-        let visible = show_results && res_h > 0.0;
+        // main が hidden の間は results を出さない（#671 PR A′ レビュー Important 1）。
+        // main_visible は hide_egui_main が results.hide() の**前**に false へ落とすため、
+        // その後に走ったフレームはここで確実に hide 側へ倒れる。判定式と根拠は
+        // layout::results_should_show（純粋核・ユニットテスト対象）。
+        let main_visible = self
+            .app_handle
+            .try_state::<crate::AppState>()
+            .map(|s| s.main_visible.load(Ordering::SeqCst))
+            .unwrap_or(false);
+        let visible =
+            crate::egui_shell::layout::results_should_show(main_visible, show_results, res_h);
         if !visible {
             // 可視フラグは ResultsWindow が持つ（#671 PR A′ spec 決定 2）。hide() は遷移した
             // ときだけ true を返すため、trace は 1 回だけ出る（毎フレーム撃たない）。

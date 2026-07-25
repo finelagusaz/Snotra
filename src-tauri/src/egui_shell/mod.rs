@@ -381,6 +381,15 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
         save_placement_relative(&window); // save-on-hide
         let _ = window.hide();
     }
+    // main_visible は **results.hide() より前**に落とす（#671 PR A′ レビュー Important 1）。
+    // これは `drive_results_window` の show ゲート（layout::results_should_show）が読む値で
+    // あり、後ろに置くと「results.hide() 済み・main_visible=true」の隙間に走ったフレームが
+    // results を再表示し、main が隠れたまま results だけ最前面に残る。
+    // show 側の「show() の後に true を立てる」（順序不変制約）とは対称である——どちらも
+    // 「main が可視でない期間に visible=true と読ませない」向きに倒している。
+    if let Some(state) = app.try_state::<crate::AppState>() {
+        state.main_visible.store(false, Ordering::SeqCst);
+    }
     // #646 PR2: 従属窓も同時に隠す（決定 6）。show 側は main の update() が snapshot の
     // show 判定で駆動するため、`update()` の外から results を hide する経路はここだけ
     // （対称は main update 内の show）。`view.rs` の `drive_results_window` は update **内**
@@ -394,9 +403,6 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
         // （ここと view.rs の drive_results_window）、trace は要求レベルゆえ
         // 既に隠れていても出る——smoke は presence のみを assert する。
         crate::trace_main("egui_results:hide", serde_json::json!({ "from": "hide_main" }));
-    }
-    if let Some(state) = app.try_state::<crate::AppState>() {
-        state.main_visible.store(false, Ordering::SeqCst);
     }
     // hide 後に working set を trim する（**main の** hide 経路の合流点＝ここが唯一の呼び出し元・
     // #532 SU6.5）。results 単独 hide（view.rs の drive）では main が可視のままゆえ trim しないのが正しい。

@@ -80,9 +80,10 @@ NOTIFYICON_VERSION_4 では、キーボード操作（Shift+F10 / Application �
 - **宣言的なウィンドウ属性（`focusable(false)` 等）で挙動を代替させる判断は、その属性を読む側の「全分岐」を確かめてから確定する。** tao はスタイル計算（`window_state.rs` の `to_window_styles`）で `!FOCUSABLE → WS_EX_NOACTIVATE` を付ける一方、`apply_diff` の `ShowWindow` 分岐は**別の条件**（`MARKER_DONT_FOCUS`・窓生成時に 1 回だけ立ち初回 show で消費）で `SW_SHOW`（活性化する）と `SW_SHOWNOACTIVATE` を選ぶ。前者だけ読んで「この属性で足りる」と結論すると、**クリックでは奪われないのに表示で奪われる**非対称を踏む（#646 PR2・実機スモークでのみ露見）。属性が効く経路と、同じフラグを読む他の経路は別物である
 - **ある窓の show / hide / topmost のいずれか 1 つが tao を迂回したら、残り 2 つも必ず迂回側へ寄せる。混在は許されない。** `apply_diff` はフラグ差分がゼロなら早期 return し、`VISIBLE` を持たない窓には `SW_HIDE` を副作用で撃つ。片方だけ raw にすると「`hide()` が何もしない」「`set_always_on_top` で窓が消える」が同時に生まれる（#646 PR2）。窓ごとの層は次で固定する:
   - main（主窓）= 3 操作すべて tao 経由（tauri `show` / `hide` / `set_always_on_top`）
-  - results（従属窓）= 3 操作すべて raw（`SW_SHOWNOACTIVATE` / `SW_HIDE` / `SetWindowPos`）。実装は `egui_shell::ResultsWindow` が唯一の所有点（#671 PR A′）
+  - results（従属窓）= 3 操作すべて raw（`SW_SHOWNOACTIVATE` / `SW_HIDE` / `SetWindowPos`）。実装は `egui_shell::ResultsWindow` に集約する（#671 PR A′）。**ただし表現不能化ではない**——`Manager` から results の生ハンドルを引いて `.hide()` を呼ぶ書き方は依然コンパイルが通り、黙って no-op する（正しい経路を 1 つにしただけ・spec §7-1）
   - **「main の show だけ raw にして統一する」は禁止。** main の tao `VISIBLE` が stale 化し、`set_always_on_top` が main を消す（`commands/window.rs` の topmost 対称がその瞬間に凶器になる）
-  - **対象は `ShowWindow` 系の 3 操作だけである。** `set_size` / `set_position` は `VISIBLE` の差分適用を通らないため、results でも tao 経由のままにする（raw へ広げない）
+  - **新しい操作を raw へ寄せるかの判定基準は「`apply_diff` を通るか」ではなく「フラグ差分が生じるか」である。** `set_size` / `set_position` も `set_window_flags(MAXIMIZED=false)` 経由で `apply_diff` に**入る**が、results では MAXIMIZED が元から false ゆえ差分が空になり冒頭 return で助かる（tao 0.35.3 で実測）。ゆえに tao 経由のままでよい。一方**差分を生む操作**（`set_resizable` 等）は `apply_diff` 末尾の `if !new.contains(VISIBLE) { ShowWindow(SW_HIDE) }` に到達し results 窓を消す
+  - **可視性は「誰が撃つか」だけでは閉じない。** main が hidden の間に results が出る事故は show 述語側のゲート（`egui_shell::layout::results_should_show` が `AppState.main_visible` を合流させる）が塞ぐ。`ResultsWindow` は raw 操作の所有点であって、撃ってよい状況かは判定しない（#671 PR A′ で実機発見）
 - `webview2-com` は `windows-core 0.61` に依存するが、プロジェクトの `windows` クレート（v0.62）は `windows-core 0.62` を使う。`Interface::cast()` 等を呼ぶ際は `windows-core_0_61 = { package = "windows-core", version = "0.61" }` のエイリアス依存を使い、`use windows_core_0_61::Interface` とする
 - 必要な feature フラグ（`Win32_UI_WindowsAndMessaging` 等）が `Cargo.toml` に宣言されているか確認してから実装する
 - `UpdateWindow` など一部 API は windows クレートのバージョンによっては未提供。代替 API（`RedrawWindow` 等）の存在を事前に調べる

@@ -7,11 +7,15 @@
 //! 後始末することで閉じていたが、**窓とフラグを同じ物として持てば 2 経路が同じ
 //! オブジェクトを通る**ため、この非対称は構造的に消える。
 //!
-//! **得られないもの**: `app.get_window("results").hide()` は依然コンパイルが通り、実行時に
-//! 黙って no-op する（tao の `WindowFlags::VISIBLE` が raw show 後も false のままであるため）。
-//! `tauri::Manager::get_window` は `AppHandle` を持つ誰からでも呼べるため footgun は
-//! 表現不能にできない。本型の目的は**正しい経路を 1 つにし、誤った経路を書く動機を消す**
-//! ことであって、表現不能化ではない（spec §2.6 / §7-1）。
+//! **得られないもの**: `Manager` から results の生ハンドルを引いて `.hide()` を呼ぶ書き方は
+//! 依然コンパイルが通り、実行時に黙って no-op する（tao の `WindowFlags::VISIBLE` が raw show
+//! 後も false のままであるため）。ハンドルの取得は `AppHandle` を持つ誰からでもできるため
+//! footgun は表現不能にできない。本型の目的は**正しい経路を 1 つにし、誤った経路を書く動機を
+//! 消す**ことであって、表現不能化ではない（spec §2.6 / §7-1）。
+//!
+//! **可視性の全体像はこの型だけでは閉じない。** main が hidden の間に results が出る事故は
+//! show 述語側のゲート（`layout::results_should_show`）が塞ぐ——本型は「誰が raw 操作を
+//! 撃つか」を一点に集めるだけで、「撃ってよい状況か」は判定しない。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -53,8 +57,11 @@ impl ResultsWindow {
     /// 1 回だけ立ち初回 show で消費されるため、繰り返し show する用途には使えない。
     pub(crate) fn show(&self) -> bool {
         // 先に flag を swap して test-and-set を原子にする（別スレッドの hide と競っても
-        // raw 操作が二重に撃たれない）。raw 側の失敗（hwnd 取得不能）は今日も黙って
-        // 握り潰す best-effort ゆえ、順序による観測差は無い。
+        // raw 操作が二重に撃たれない）。**保証するのはそこまでである**——swap と `raw_show()`
+        // の間に他スレッドの `hide()` が挟まると「フラグ=false・窓=可視」の不一致が残りうる
+        // （回収は次の show 遷移）。フラグと窓の同時性は保証しない。
+        // この型が閉じられないぶんは、show 述語側の `main_visible` ゲート
+        // （`layout::results_should_show`）が main hidden 中の再表示を塞ぐ。
         if self.visible.swap(true, Ordering::SeqCst) {
             return false;
         }
@@ -105,9 +112,17 @@ impl ResultsWindow {
         let _ = self.window.set_always_on_top(topmost);
     }
 
-    /// 論理サイズを設定する。**tao 経由のままにする**——raw へ寄せるのは
-    /// `ShowWindow` 系の 3 操作（show / hide / topmost）だけであり、`set_size` は
-    /// `WindowFlags::VISIBLE` の差分適用を通らない。
+    /// 論理サイズを設定する。**tao 経由のままにする。**
+    ///
+    /// 理由は「差分適用を通らないから」では**ない**——tao 0.35.3 の `set_inner_size` /
+    /// `set_outer_position` はどちらも `set_window_flags(|f| f.set(MAXIMIZED, false))` を呼び
+    /// `apply_diff` に**入る**。results では MAXIMIZED が元から false ゆえ**フラグ差分が空**に
+    /// なり、`apply_diff` 冒頭の `if diff == empty { return }` で助かっている。
+    ///
+    /// **判定基準は「apply_diff を通るか」ではなく「フラグ差分が生じるか」である。**
+    /// 差分を生む操作（`set_resizable` 等）は `apply_diff` 末尾の
+    /// `if !new.contains(VISIBLE) { ShowWindow(SW_HIDE) }` に到達し、results 窓を消す
+    /// （`set_always_on_top` が #646 PR2 で窓を消したのと同一機構）。
     pub(crate) fn set_size(&self, width: f64, height: f64) {
         let _ = self.window.set_size(tauri::LogicalSize::new(width, height));
     }

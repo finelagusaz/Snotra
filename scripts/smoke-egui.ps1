@@ -27,9 +27,14 @@ param(
   [int]$PostMortemWaitMs = 30000
   ,
   # `hotkey:registered`（起動後**最初**の観測）専用の予算（#690 follow-up）。
-  # ここだけ cold start を含む: 冷えた CI runner の初回起動で **11.7s** を実測しており、
-  # 旧予算（StartupWaitMs 4000 + ObserveTimeoutMs 8000 = 12,000ms）に対し余裕 0.3s しか
-  # 無かった。3 回赤 → 1 回緑という間欠は、間欠性ではなく**境界に乗っていた**だけである。
+  # ここだけ cold start を含む。CI で「起動後 12,000ms 経っても trace 0 行」を 3 回実測した
+  # （プロセスは生存＝クラッシュではない）一方、成功時は起動から 0.6s で出ている。
+  # **この二極の原因は未解明**であり、この予算は原因究明までの緩和にすぎない。
+  #
+  # **壁時計から起動レイテンシを推定してはならない**（一度誤った）: seed の print から
+  # hotkey 観測までの壁時計には、下の `Add-Type`（実行時 C# コンパイル・冷えた runner で
+  # 7〜25s 変動）を含む**起動前**の時間が乗る。起動起点の計測（$launchedAt）だけが
+  # アプリの遅延を表す。
   # 以降の観測（show/hide/results）はアプリが温まった後ゆえ `ObserveTimeoutMs` のまま。
   # 広げた分の盲目化は、成功時のレイテンシ表示（下）が補う。
   [int]$StartupObserveTimeoutMs = 25000

@@ -16,6 +16,7 @@ pub(crate) mod strings;
 mod results_view;
 mod results_window;
 mod view;
+mod visual;
 
 // mod.rs（窓生成・managed state）が消費する。RowsSnapshot は view.rs（main の snapshot 発行）・
 // results_view.rs（update() 描画）が消費する（#646 PR2 Task 4）。
@@ -25,6 +26,9 @@ pub(crate) use results_view::RowsSnapshot;
 // main.rs（managed state 化）・view.rs（drive）・commands/window.rs（topmost）が消費する
 // （#671 PR A′ spec 決定 2）。
 pub(crate) use results_window::ResultsWindow;
+
+// view.rs / results_view.rs が毎フレームの描画で消費する（#673 spec 決定 4）。
+pub(crate) use visual::{RowTheme, VisualApplied, VisualSnapshot};
 
 // view.rs の icon texture driver（worker spawn / load_texture 適用）が消費する（#532 SU4 Task 5）。
 pub(crate) use icon_textures::{IconMsg, needs_extraction, png_to_color_image, retain_visible};
@@ -272,6 +276,28 @@ pub(crate) fn read_metrics(app: &tauri::AppHandle) -> layout::Metrics {
             (v.font_size, v.row_padding, v.bar_padding)
         });
     layout::Metrics::from_config(f, rp, bp)
+}
+
+/// 1 フレーム分のテーマ値を **lock 1 回**で読み切る（#673 spec 決定 4）。導出は純関数
+/// `visual::visual_snapshot` が持ち、この関数は lock と AppState 不在の面倒だけを見る。
+///
+/// **`read_metrics` は残す**（統合しない）——`show_egui_main` が show 経路で高さだけを要り、
+/// 色 parse を払わせないため。両者とも `Metrics::from_config` を正本とするので導出は 1 つ。
+///
+/// **戻り値を `self.` へ保持しないこと**（寿命は 1 フレーム・`visual.rs` の `//!`）。
+pub(crate) fn read_visual(app: &tauri::AppHandle, applied: VisualApplied<'_>) -> VisualSnapshot {
+    match app.try_state::<crate::AppState>() {
+        Some(s) => {
+            let engine = s.engine.lock().unwrap();
+            let config = engine.config();
+            // guard 内で行うのは hex parse と算術と &str 比較まで。I/O や重い確保を足さない。
+            visual::visual_snapshot(&config.visual, config.appearance.show_icons, applied)
+        }
+        // AppState 不在（setup 完了前の理論経路のみ）。`AppearanceConfig` には `Default` 実装が
+        // 無いため show_icons だけは型から導けずリテラルになる——SSOT は snotra-core の
+        // `default_show_icons`（= true）で、撤去前の `.unwrap_or(true)` と同値。
+        None => visual::visual_snapshot(visual::default_visual(), true, applied),
+    }
 }
 
 /// egui 経路の show。共有するのは position_on_target_monitor のみ。全 hide は外部化ゆえ

@@ -10,7 +10,7 @@ pub(crate) fn edge(ax: f32, ay: f32, bx: f32, by: f32, px: f32, py: f32) -> f32 
     (bx - ax) * (py - ay) - (by - ay) * (px - ax)
 }
 
-/// premultiplied sRGB 同士の over 合成。dst は 0x00RRGGBB、src は [r,g,b,a]。
+/// premultiplied sRGB 同士の over 合成。dst は 0x00RRGGBB、src は `[r, g, b, a]`。
 pub(crate) fn blend_premultiplied(dst: u32, src: [u8; 4]) -> u32 {
     let inverse = 255 - src[3] as u32;
     let dst_r = (dst >> 16) & 0xFF;

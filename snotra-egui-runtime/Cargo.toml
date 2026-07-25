@@ -4,6 +4,11 @@ version.workspace = true
 edition = "2024"
 publish = false
 
+# docgen 検出器（#562）の opt-in。他 3 crate は当初から持っており、当 crate だけが
+# 漏れていた（#701）——ルート [workspace.lints.rustdoc] の deny がここで初めて効く。
+[lints]
+workspace = true
+
 [dependencies]
 arboard = "3"
 egui.workspace = true

@@ -76,8 +76,11 @@ const finding = (file, line, message) => ({ file, line, message });
 // 1 行複数バッククォートをパースせずに済ませる意図的な弱化（wrong-directory 検出は放棄）。
 // ---------------------------------------------------------------------------
 // ui は #532 SU7 のフロント撤去で消滅（ui/CLAUDE.md ごと削除）
-const G1_CRATES = {
+// snotra-egui-runtime は #701 で追加。「#532 の検証層」として作られたまま母集団から漏れており、
+// SU7 で製品の描画層になった後も更新されていなかった（G3 の governanceDocs も同時に是正）
+export const G1_CRATES = {
   "snotra-core": { src: "snotra-core/src/", exts: /\.rs$/ },
+  "snotra-egui-runtime": { src: "snotra-egui-runtime/src/", exts: /\.rs$/ },
   "src-tauri": { src: "src-tauri/src/", exts: /\.rs$/ },
   "snotra-settings": { src: "snotra-settings/src/", exts: /\.rs$/ },
 };
@@ -557,7 +560,7 @@ export function governanceDocs(snapshot) {
     (f) =>
       ["CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md", "SPEC.md"].includes(f) ||
       (f.startsWith("docs/") && f.endsWith(".md") && !f.startsWith("docs/superpowers/")) ||
-      /^(snotra-core|src-tauri|snotra-settings)\/CLAUDE\.md$/.test(f) ||
+      /^(snotra-core|snotra-egui-runtime|src-tauri|snotra-settings)\/CLAUDE\.md$/.test(f) ||
       /^\.claude\/rules\/[^/]+\.md$/.test(f) ||
       /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f),
   );

@@ -1,8 +1,13 @@
 // governance-check.mjs の検査関数を、フォールトインジェクションフィクスチャ（赤）と正常フィクスチャ（緑）の
 // 両方向で検証する。各フィクスチャは「守りたい対象 1 件が入力に現れること」と
 // 「判定対象外が入力に混じらないこと」の入力集合検算を兼ねる（.claude/rules/safety-nets.md）。
+import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 import {
+  G1_CRATES,
+  governanceDocs,
+  makeSnapshot,
   checkHookCommands,
   checkModuleIndex,
   checkArchitectureTable,
@@ -46,6 +51,43 @@ describe("globToRegex（G7 の意味論固定・代表入力）", () => {
     const re = globToRegex("foo{bar.rs");
     expect(re.test("foo{bar.rs")).toBe(true);
     expect(re.test("foobar.rs")).toBe(false);
+  });
+});
+
+// G1/G3 の母集団は手で列挙する定数であり、**crate を足しても何も鳴らない**（沈黙する経路）。
+// `snotra-egui-runtime` は「#532 の検証層」として作られたまま両方から漏れ、SU7 で製品の
+// 描画層になった後も索引ドリフト・参照切れが検知されない状態が続いていた（#701）。
+// 実 `Cargo.toml` を読み、CLAUDE.md を持つ member が両母集団に載っていることを固定する。
+describe("G1/G3 母集団カナリア — #701", () => {
+  it("CLAUDE.md を持つ workspace member は G1_CRATES と governanceDocs の両方に載る", () => {
+    const root = fileURLToPath(new URL("..", import.meta.url));
+    const src = readFileSync(fileURLToPath(new URL("../Cargo.toml", import.meta.url)), "utf8");
+
+    // 書式が変わったら「読めなかった」と落ちる（fail-closed・post-edit.test.mjs の members カナリアと同型）
+    const section = src.match(/\[workspace\]\r?\n([\s\S]*?)(?=\r?\n\[|$)/);
+    expect(section, "Cargo.toml の [workspace] セクションを読めなかった").not.toBeNull();
+    const m = section[1].match(/^members\s*=\s*\[([^\]]*)\]/m);
+    expect(m, "[workspace] の members 行を読めなかった（書式が変わった）").not.toBeNull();
+    const members = m[1]
+      .split(",")
+      .map((s) => s.trim().replace(/^"|"$/g, ""))
+      .filter((s) => s.length > 0);
+
+    const docs = governanceDocs(makeSnapshot(root));
+    const withClaudeMd = members.filter((c) => existsSync(fileURLToPath(new URL(`../${c}/CLAUDE.md`, import.meta.url))));
+    // 母集団が空になる形（members 読み違い・全 crate が CLAUDE.md 無し）を合格に見せない
+    expect(withClaudeMd.length, "CLAUDE.md を持つ member が 0 件（母集団の欠落）").toBeGreaterThan(0);
+
+    for (const crate of withClaudeMd) {
+      expect(
+        Object.keys(G1_CRATES),
+        `${crate} が G1_CRATES に無い。src/exts を添えて追加すること（索引ドリフトが沈黙で通る）`,
+      ).toContain(crate);
+      expect(
+        docs,
+        `${crate}/CLAUDE.md が G3 母集団に無い。governanceDocs の正規表現を更新すること（参照切れが沈黙で通る）`,
+      ).toContain(`${crate}/CLAUDE.md`);
+    }
   });
 });
 

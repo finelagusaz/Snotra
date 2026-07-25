@@ -20,6 +20,11 @@ param(
   # 黄色 NOTE で報告して exit 0——ローカルでは索引を制御できないのが普通だからである。
   # CI は被覆が走ることを要求するため常に渡す。**判定は起動前に確定する**（下の guard）。
   [switch]$RequireResults
+  ,
+  # 失敗して trace が 0 行だったときだけ、追加でこの時間まで「最初の 1 行」を待つ（#690 follow-up）。
+  # **観測窓を広げる前に遅延を測るため**の予算であって、合否には影響しない（失敗は失敗のまま）。
+  # 0 を渡すと事後観測を行わない。
+  [int]$PostMortemWaitMs = 30000
 )
 
 # egui 経路の自動回帰 smoke（#532 SU7 PR1・spec: docs/superpowers/specs/2026-07-24-su7-flip-implementation-design.md 決定 3。
@@ -189,6 +194,7 @@ Remove-Item $errPath, $outPath -Force -ErrorAction SilentlyContinue
 $savedTraceEnv = $env:SNOTRA_TRACE
 $env:SNOTRA_TRACE = "1"
 $proc = Start-Process -FilePath $ExePath -PassThru -RedirectStandardError $errPath -RedirectStandardOutput $outPath
+$launchedAt = Get-Date
 if ($null -eq $savedTraceEnv) {
   Remove-Item Env:SNOTRA_TRACE -ErrorAction SilentlyContinue
 } else {
@@ -210,14 +216,21 @@ function Show-FailureEvidence {
   param(
     [string]$Path,
     [System.Diagnostics.Process]$Proc,
-    [string]$Context
+    [string]$Context,
+    [datetime]$LaunchedAt,
+    [int]$PostMortemWaitMs = 0
   )
   Write-Host ""
   Write-Host "--- 失敗時の証拠（$Context）---" -ForegroundColor Yellow
+  if ($PSBoundParameters.ContainsKey('LaunchedAt')) {
+    Write-Host ("起動からの経過: {0:N0} ms" -f ((Get-Date) - $LaunchedAt).TotalMilliseconds)
+  }
+  $alive = $false
   if ($null -ne $Proc) {
     if ($Proc.HasExited) {
       Write-Host ("プロセス: 既に終了 (exit code $($Proc.ExitCode)) — 起動途中で落ちた疑い") -ForegroundColor Red
     } else {
+      $alive = $true
       Write-Host "プロセス: 生存中 — 起動はしている（クラッシュではなく未到達/遅延）"
     }
   } else {
@@ -229,6 +242,31 @@ function Show-FailureEvidence {
   }
   $all = @(Get-Content -Path $Path -ErrorAction SilentlyContinue)
   Write-Host ("trace 行数: {0}" -f $all.Count)
+
+  # **窓を広げる前に、まず遅延を測る。**「なぜか通った」で終わらせないため。
+  # 0 行かつプロセス生存のときだけ、追加で待って最初の 1 行が出るかを見る。
+  # 出れば「遅延」（何 ms かが分かる＝観測窓を決める根拠になる）、出なければ
+  # 「未到達/ハング」で、両者は対処が違う。失敗時だけ走るので通常時間には効かない。
+  if ($all.Count -eq 0 -and $alive -and $PostMortemWaitMs -gt 0) {
+    Write-Host ("0 行。事後観測に入る（最大 {0:N0} ms・最初の 1 行が出るかを測る）..." -f $PostMortemWaitMs)
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($sw.Elapsed.TotalMilliseconds -lt $PostMortemWaitMs) {
+      Start-Sleep -Milliseconds 250
+      $all = @(Get-Content -Path $Path -ErrorAction SilentlyContinue)
+      if ($all.Count -gt 0) { break }
+      if ($Proc.HasExited) {
+        Write-Host ("事後観測中にプロセスが終了 (exit code $($Proc.ExitCode))") -ForegroundColor Red
+        break
+      }
+    }
+    if ($all.Count -gt 0) {
+      $total = ((Get-Date) - $LaunchedAt).TotalMilliseconds
+      Write-Host ("**遅延**: 最初の trace は起動から約 {0:N0} ms 後に出た（ハングではない）。観測窓の根拠にできる。" -f $total) -ForegroundColor Yellow
+    } else {
+      Write-Host ("**未到達**: 追加 {0:N0} ms 待っても 1 行も出ない。窓を広げても解決しない。" -f $PostMortemWaitMs) -ForegroundColor Red
+    }
+  }
+
   if ($all.Count -eq 0) {
     Write-Host "**0 行** — アプリが 1 行も出していない。起動前に落ちたか SNOTRA_TRACE が効いていない。" -ForegroundColor Red
     return
@@ -383,7 +421,8 @@ try {
 } catch {
   # **`finally` より前に走る**ので、ここではまだプロセスが生きている＝生死を証拠にできる。
   # 出したら握り潰さずに再送出する（exit code は従来どおり非 0 のまま）。
-  Show-FailureEvidence -Path $errPath -Proc $proc -Context "throw: $($_.Exception.Message)"
+  Show-FailureEvidence -Path $errPath -Proc $proc -Context "throw: $($_.Exception.Message)" `
+    -LaunchedAt $launchedAt -PostMortemWaitMs $PostMortemWaitMs
   throw
 } finally {
   if (-not $proc.HasExited) {
@@ -400,7 +439,8 @@ if ($failures.Count -gt 0) {
   # 証拠の出力は throw 経路と同じ関数へ寄せる（片方だけ計装される状態に戻さないため）。
   # ここへ来る時点で finally が既にプロセスを終了させているので、生死は判定材料にならない
   # ——$null を渡してその旨を明示する（誤った手掛かりを出さない）。
-  Show-FailureEvidence -Path $errPath -Proc $null -Context "検査項目の不合格"
+  # ここへ来る時点でプロセスは終了済みゆえ事後観測はしない（生存が前提の測定である）。
+  Show-FailureEvidence -Path $errPath -Proc $null -Context "検査項目の不合格" -LaunchedAt $launchedAt
   exit 1
 }
 

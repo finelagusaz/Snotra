@@ -266,11 +266,11 @@ fn process_commands(
                 }
             }
             PlatformCommand::TurnOffIme(hwnd_raw) => {
-                // Known: this command is dispatched from the platform thread after
-                // show_main_and_emit() calls show()/set_focus() on the main thread.
-                // A narrow timing window exists where the window receives focus before
-                // IME is disabled. Mitigated by passing HWND directly to avoid an extra
-                // lookup. Residual race is theoretical and not observed in practice.
+                // 送信元は egui_shell::show_egui_main（旧 show_main_and_emit は #532 SU7 で削除）。
+                // 呼び出し順は set_focus() → SendMessageTimeoutW によるフォーカス同期待ち →
+                // 本コマンド送信であり、「focus より先に IME を切る」ことは意図的に避けている
+                // （前に置くと IME オフが対象窓に効かない）。HWND を直接渡すのは再 lookup を
+                // 避けるため。
                 let hwnd = windows::Win32::Foundation::HWND(hwnd_raw as *mut core::ffi::c_void);
                 if !hwnd.is_invalid() {
                     ime::turn_off_ime(hwnd);

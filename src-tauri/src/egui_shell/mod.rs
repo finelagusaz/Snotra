@@ -354,7 +354,7 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
         sh.hide_pending.store(false, Ordering::SeqCst);
         sh.reset_pending.store(true, Ordering::SeqCst); // resetForShow を view に指示
     }
-    // 高さリセット → 位置 → show の順（SU2 の show_main_and_emit と同じ制約）。
+    // 高さリセット → 位置 → show の順（旧 WebView2 経路から引き継いだ順序制約）。
     // reset-on-show でクエリは空 = 結果なし = bar_height（既定 43px）。前回 hide 時に展開高
     // （例 300px）のままだと position クランプが 300px で効き、show 後に view が bar_height へ
     // collapse して視覚スナップ + 位置ずれになる。position の前に bar_height へ collapse して
@@ -431,8 +431,11 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
     );
 }
 
-/// egui 経路の hide。全 hide の唯一の副作用所有点（codex #7）。外部 window.hide() のみで
-/// runtime.visible を false にしない（空白窓回避・codex #4）。
+/// egui 経路の hide。**main の** hide の唯一の副作用所有点（codex #7）——世代 bump・位置保存・
+/// main_visible・working set trim はここにしか無い。**results の hide はここを通らない経路が
+/// ある**（`view.rs` の `drive_results_window`）ため、両窓を合わせた合流点ではない（#646 PR2
+/// 以降・全称主張の訂正は #671 サイクル PR A）。
+/// 外部 window.hide() のみで runtime.visible を false にしない（空白窓回避・codex #4）。
 pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
     // 保留中の alt 解放待ち show を無効化（codex #5/(B)#2）: 世代を bump し、spawn 済み show
     // スレッドの gen 一致チェックを外す。
@@ -455,7 +458,8 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<crate::AppState>() {
         state.main_visible.store(false, Ordering::SeqCst);
     }
-    // hide 後に working set を trim する（全 hide 経路の合流点＝ここが唯一の呼び出し元・#532 SU6.5）。
+    // hide 後に working set を trim する（**main の** hide 経路の合流点＝ここが唯一の呼び出し元・
+    // #532 SU6.5）。results 単独 hide（view.rs の drive）では main が可視のままゆえ trim しないのが正しい。
     // EmptyWorkingSet はスレッド非依存ゆえこの context（イベントループ / listener）から直呼び可
     // （src-tauri/CLAUDE.md「working set の能動回収」）。trim されたページは show 時に OS が透過
     // re-fault する（逆操作不要・trim が hide 前後どちらで走っても無害）。子孫 BFS は設定プロセス
@@ -489,7 +493,8 @@ pub(crate) fn save_placement_relative(window: &tauri::Window) {
     }
 }
 
-/// view からの `egui-hide-requested` を受け、hide_egui_main を実行する（全 hide の合流点・codex #7）。
+/// view からの `egui-hide-requested` を受け、hide_egui_main を実行する（**main の** hide の
+/// 合流点・codex #7）。
 /// view（イベントループスレッド）→ emit → この listener で hide を 1 経路に集約する。
 pub(crate) fn register_hide_listener(app: &tauri::AppHandle) {
     let handle = app.clone();

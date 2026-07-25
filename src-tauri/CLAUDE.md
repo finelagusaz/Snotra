@@ -61,6 +61,8 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
 
 Shell のトレイコールバック (`uCallbackMessage`) は `SendMessage` で配送される場合があり、`GetMessageW` ループに到達しない。カスタムメッセージ (`WM_APP + N`) をウィンドウプロシージャ (`DefWindowProcW`) だけで処理すると消滅するため、`platform_default_wnd_proc` で検出して `PostThreadMessageW` でスレッドキューに再投入する設計にしている。
 
+**`app.listen` のコールバックは emit した呼び出し元スレッド上で同期実行される**（tauri 2.11.4 の `event/listener.rs::emit_filter` が別スレッドへ dispatch せず直接呼ぶ・実測）。ゆえに listener の中身は「emit 元のスレッドで走るコード」である——Win32 メッセージループスレッド（hotkey）・config 監視スレッド・index build スレッドが、そのまま managed state や窓 API を触る。**listener を足すことは worker を足すことと同じ**であり、並行境界として扱う（→ `/race-check`）。
+
 NOTIFYICON_VERSION_4 では、キーボード操作（Shift+F10 / Application キー）によるコンテキストメニュー要求は `uCallbackMessage` を経由せずウィンドウプロシージャに直接 `WM_CONTEXTMENU` として届く。`platform_default_wnd_proc` で同様に再投入することで `handle_tray_message` に統一している。
 
 **Win32 メッセージハンドラを削除・変更する前に「そのメッセージが届く全経路」を列挙すること。** 同一メッセージでも発火源が複数ある場合がある（例: `WM_CONTEXTMENU` はマウス右クリック環境とキーボード操作の両経路で届く）。「問題の原因になっている経路」だけを削除しようとすると、問題でない別の経路も同時に消える。

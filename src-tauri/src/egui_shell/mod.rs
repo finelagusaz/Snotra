@@ -354,7 +354,7 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
         sh.hide_pending.store(false, Ordering::SeqCst);
         sh.reset_pending.store(true, Ordering::SeqCst); // resetForShow を view に指示
     }
-    // 高さリセット → 位置 → show の順（SU2 の show_main_and_emit と同じ制約）。
+    // 高さリセット → 位置 → show の順（旧 WebView2 経路から引き継いだ順序制約）。
     // reset-on-show でクエリは空 = 結果なし = bar_height（既定 43px）。前回 hide 時に展開高
     // （例 300px）のままだと position クランプが 300px で効き、show 後に view が bar_height へ
     // collapse して視覚スナップ + 位置ずれになる。position の前に bar_height へ collapse して
@@ -431,8 +431,13 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
     );
 }
 
-/// egui 経路の hide。全 hide の唯一の副作用所有点（codex #7）。外部 window.hide() のみで
-/// runtime.visible を false にしない（空白窓回避・codex #4）。
+/// egui 経路の hide。**main の** hide の唯一の副作用所有点（codex #7）——位置保存・
+/// main_visible=false・working set trim はここにしか無い。**世代 bump（hotkey_generation）
+/// だけは 2 箇所ある**——ここは「保留中の alt 解放待ち show を無効化する」ため、
+/// hotkey listener（main.rs）は「押下ごとに採番する」ため（用途が別）。
+/// **results の hide はここを通らない経路がある**（`view.rs` の `drive_results_window`）ため、
+/// 両窓を合わせた合流点ではない（#646 PR2 以降・全称主張の訂正は #671 サイクル PR A）。
+/// 外部 window.hide() のみで runtime.visible を false にしない（空白窓回避・codex #4）。
 pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
     // 保留中の alt 解放待ち show を無効化（codex #5/(B)#2）: 世代を bump し、spawn 済み show
     // スレッドの gen 一致チェックを外す。
@@ -444,14 +449,22 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
         let _ = window.hide();
     }
     // #646 PR2: 従属窓も同時に隠す（決定 6）。show 側は main の update() が snapshot の
-    // show 判定で駆動するため、ここが唯一の外部 hide 経路（対称は main update 内の show）。
+    // show 判定で駆動するため、`update()` の外から results を hide する経路はここだけ
+    // （対称は main update 内の show）。`view.rs` の `drive_results_window` は update **内**
+    // で動く対の経路であり、直前の doc comment が言う「results の hide は 2 経路ある」は
+    // この 2 つ（update 外＝ここ／update 内＝drive_results_window）を指す——矛盾ではない。
     if let Some(results) = app.get_window("results") {
         hide_results(&results);
+        // 呼び出し側に置く（spec 決定 7）。results の hide は 2 経路あり
+        // （ここと view.rs の drive_results_window）、trace は要求レベルゆえ
+        // 既に隠れていても出る——smoke は presence のみを assert する。
+        crate::trace_main("egui_results:hide", serde_json::json!({ "from": "hide_main" }));
     }
     if let Some(state) = app.try_state::<crate::AppState>() {
         state.main_visible.store(false, Ordering::SeqCst);
     }
-    // hide 後に working set を trim する（全 hide 経路の合流点＝ここが唯一の呼び出し元・#532 SU6.5）。
+    // hide 後に working set を trim する（**main の** hide 経路の合流点＝ここが唯一の呼び出し元・
+    // #532 SU6.5）。results 単独 hide（view.rs の drive）では main が可視のままゆえ trim しないのが正しい。
     // EmptyWorkingSet はスレッド非依存ゆえこの context（イベントループ / listener）から直呼び可
     // （src-tauri/CLAUDE.md「working set の能動回収」）。trim されたページは show 時に OS が透過
     // re-fault する（逆操作不要・trim が hide 前後どちらで走っても無害）。子孫 BFS は設定プロセス
@@ -485,7 +498,8 @@ pub(crate) fn save_placement_relative(window: &tauri::Window) {
     }
 }
 
-/// view からの `egui-hide-requested` を受け、hide_egui_main を実行する（全 hide の合流点・codex #7）。
+/// view からの `egui-hide-requested` を受け、hide_egui_main を実行する（**main の** hide の
+/// 合流点・codex #7）。
 /// view（イベントループスレッド）→ emit → この listener で hide を 1 経路に集約する。
 pub(crate) fn register_hide_listener(app: &tauri::AppHandle) {
     let handle = app.clone();

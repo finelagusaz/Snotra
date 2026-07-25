@@ -284,7 +284,7 @@ fn main() {
             // show/hide を跨ぐ共有状態（世代・emit dedup）。view/hotkey/hide が参照するので窓生成前に管理下へ。
             app.manage(egui_shell::EguiShellState::default());
             egui_shell::create(app, window_width as f64, &bg_color)?;
-            // view→emit→listener の合流点。全 hide を hide_egui_main の 1 経路に集約（codex #7）。
+            // view→emit→listener の合流点。**main の** hide を hide_egui_main の 1 経路に集約（codex #7）。
             egui_shell::register_hide_listener(&app_handle);
             // config 変更・indexing 状態変化の wake（SU6 spec 決定 1）。config_watcher 起動
             // （下の setup_config_watcher）と setup_startup_display より前に登録し、可視窓が

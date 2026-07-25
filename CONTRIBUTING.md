@@ -89,4 +89,4 @@ Visual Studio の「Desktop development with C++」ワークロードと Windows
 
 ### 自動回帰 smoke が失敗する
 
-`npm run smoke:egui`（egui show/hide の trace 観測）と `npm run smoke:startup` が自動回帰の最低線です（WebView2 e2e は #532 SU7 で撤去済み）。hotkey は config 依存のため、実 config を持つ環境では `-HotkeyVks` で実際のキーを渡してください（詳細は `docs/build-commands.md` スモーク運用メモ）。
+`npm run smoke:egui`（egui show/hide + results 窓 show/hide の trace 観測）と `npm run smoke:startup` が自動回帰の最低線です（WebView2 e2e は #532 SU7 で撤去済み）。**注入する hotkey は指定不要です**——起動時の `hotkey:registered` trace から、アプリが実際に登録した VK 列を読みます（対応表の SSOT は `src-tauri/src/platform/hotkey.rs` の `injection_vks`）。`-HotkeyVks` は明示指定の override として残っています（trace を出さない旧バイナリの検証など）。詳細は `docs/build-commands.md` スモーク運用メモ。

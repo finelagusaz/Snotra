@@ -22,17 +22,12 @@ pub trait EguiView: Send + 'static {
 
 pub struct RuntimeFrame {
     close_requested: bool,
-    hide_requested: bool,
     drag_requested: bool,
 }
 
 impl RuntimeFrame {
     pub fn close_window(&mut self) {
         self.close_requested = true;
-    }
-
-    pub fn hide_window(&mut self) {
-        self.hide_requested = true;
     }
 
     pub fn drag_window(&mut self) {
@@ -274,6 +269,14 @@ impl EguiWindow {
 
     fn render(&mut self) -> Result<(), RuntimeError> {
         if !self.visible {
+            // 到達可能性の注記（#671 サイクル PR A）: `RuntimeFrame::hide_window()` 削除
+            // （本ブランチ b9a9caf）により、crate 内で visible を false にする経路は現在
+            // 無い（true にするのは new() の初期値と Focused(true) ハンドラのみ）。よって
+            // このガードは現在到達不能。それでも残すのは、「hidden 中は update() が走ら
+            // ない」という #532 SU5 の不変条件がどの機構に依るか未測定（OS/tao が hidden
+            // 窓へ WM_PAINT を送らないためと推定）であり、将来 runtime 側での抑止が必要
+            // になったときの受け口として置いているため。参照:
+            // docs/superpowers/specs/2026-07-25-egui-window-ownership-and-event-delivery-design.md §7 残余 2・3
             return Ok(()); // 不変条件⑥: 非表示中は描かない。
         }
         self.drain_native_ime();
@@ -287,7 +290,6 @@ impl EguiWindow {
         let raw_input = self.input.take(max_side, size, ppp);
         let mut frame = RuntimeFrame {
             close_requested: false,
-            hide_requested: false,
             drag_requested: false,
         };
         let output = self
@@ -352,10 +354,6 @@ impl EguiWindow {
     fn apply_frame_commands(&mut self, frame: RuntimeFrame) -> Result<(), RuntimeError> {
         if frame.drag_requested {
             self.window.start_dragging()?;
-        }
-        if frame.hide_requested {
-            self.window.hide()?;
-            self.visible = false; // 不変条件⑥: hide 要求を出したフレームから非表示扱いにする。
         }
         if frame.close_requested {
             self.window.close()?;

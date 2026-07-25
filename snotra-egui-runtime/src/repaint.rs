@@ -71,6 +71,21 @@ pub(crate) fn wake_channel() -> (WindowWaker, WakeReceiver) {
     )
 }
 
+/// repaint 原因列を 1 行の trace 文字列へ（`file:line reason` を `; ` 区切り）。
+///
+/// 空列は `-` を返す——「原因が無い（入力イベント起因のフレーム）」と「トレースが
+/// 壊れた」を出力で区別するため。`RepaintCause` の `Display` は `{file}:{line} {reason}`。
+pub(crate) fn format_repaint_causes(causes: &[egui::RepaintCause]) -> String {
+    if causes.is_empty() {
+        return "-".to_owned();
+    }
+    causes
+        .iter()
+        .map(|cause| cause.to_string())
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 #[derive(Clone)]
 pub(crate) struct RepaintScheduler {
     inner: Arc<SchedulerInner>,
@@ -166,7 +181,35 @@ impl Drop for SchedulerInner {
 
 #[cfg(test)]
 mod tests {
-    use super::{SchedulerMessage, wake_channel};
+    use super::{SchedulerMessage, format_repaint_causes, wake_channel};
+
+    #[test]
+    fn empty_repaint_causes_render_as_dash() {
+        // 「原因が無い（入力イベント起因のフレーム）」を空文字にしない——ログの読み手が
+        // 「トレースが壊れた」と区別できなくなるため。
+        assert_eq!(format_repaint_causes(&[]), "-");
+    }
+
+    #[test]
+    fn repaint_causes_join_with_file_and_line() {
+        // 1 パスで複数の原因が積まれることがある（点滅 + 状態変化等）。先頭だけ出すと
+        // 源を取り違えるため全件を `; ` で連結する。各要素は `file:line reason`。
+        let causes = [
+            egui::RepaintCause {
+                file: "text_selection/visuals.rs",
+                line: 313,
+                reason: "".into(),
+            },
+            egui::RepaintCause {
+                file: "view.rs",
+                line: 439,
+                reason: "state changed".into(),
+            },
+        ];
+        let rendered = format_repaint_causes(&causes);
+        assert_eq!(rendered, "text_selection/visuals.rs:313 ; view.rs:439 state changed");
+        assert_eq!(rendered.split("; ").count(), 2, "件数ぶん連結される");
+    }
 
     #[test]
     fn wake_before_activation_is_queued() {

@@ -27,7 +27,7 @@ Phase 1（技術スパイク + 採用ゲート検証）は完了した。スパ�
 
 ## 進捗（2026-07-23 改訂時点）
 
-- **SU1 完了** — `snotra-egui-runtime` の softbuffer 置換（PR #627）。follow-up: #628（render perf・非ブロッキング → SU6.5 で扱いを判断）
+- **SU1 完了** — `snotra-egui-runtime` の softbuffer 置換（PR #627）。follow-up: #628（render perf・非ブロッキング → SU6.5 で扱いを判断 → **2026-07-26 に決着**: 項目 1 の `fill_mesh` 最適化は G3(b) 実測により不要。項目 2 の可視アイドルは `predicted_dt` 既定値によるスピンが真因で、11.9 → 2.0 fps・CPU 5.1% → 0.59% へ。基準値は `PERFORMANCE.md`）
 - **SU2 完了** — ウィンドウシェル + 状態機械（PR #629・main マージ 68b5f41）
 - **SU3 完了** — M1 機能中核（PR #630）/ M2 folder 展開（PR #636）/ M3 instant+slash（PR #637）。いずれも main マージ済。follow-up: #631/#632/#633/#634/#638（下表の各 SU へ割当済）
 - **SU3.5 完了** — tool-selection（PR #641）。#638 先勝ち正規化を同時解消

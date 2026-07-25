@@ -259,6 +259,12 @@ struct EguiWindow {
     view: Box<dyn EguiView>,
     visible: bool,
     paint_failures: u32,
+    /// 直前フレームの時刻（`SNOTRA_EGUI_REPAINT_TRACE` 専用・#628）。表示にも制御にも
+    /// 影響しない。env 未設定なら一度も書かれず `None` のまま。
+    repaint_trace_prev: Option<std::time::Instant>,
+    /// 最後に OS へ適用したカーソル（`handle_platform_output` の変化検出用）。
+    /// `SetCursor` はスレッド共通ゆえ毎フレーム撃つと 2 窓が上書きし合う（同関数のコメント）。
+    applied_cursor: Option<egui::CursorIcon>,
 }
 
 impl EguiWindow {
@@ -276,6 +282,8 @@ impl EguiWindow {
             view,
             visible: true,
             paint_failures: 0,
+            repaint_trace_prev: None,
+            applied_cursor: None,
         })
     }
 
@@ -323,6 +331,31 @@ impl EguiWindow {
         let output = self
             .context
             .run_ui(raw_input, |ui| self.view.update(ui, &mut frame));
+        // 可視アイドルの周期 repaint 源を名指しする計器（#628）。env 未設定なら Instant も
+        // causes の clone も取らない——計測器が測定対象を汚さないため（renderer.rs と同規範）。
+        //
+        // 読むときの 3 点:
+        // - `repaint_causes()` が返すのは `prev_causes`（egui 0.35 `context.rs:98-105` の
+        //   pass 冒頭 swap）。ゆえに **1 パス前**に積まれた原因である
+        // - 遅延ゼロの `request_repaint()` は 2 フレーム生む（`outstanding` の記帳）。
+        //   「1 要求 = 1 フレーム」で件数を照合しない
+        // - `focused` は必須項目である。egui はフォーカスがあるときだけキャレット点滅の
+        //   repaint を出すため、非フォーカスの行を混ぜると「眠っている」に見える
+        if std::env::var_os("SNOTRA_EGUI_REPAINT_TRACE").is_some() {
+            let now = std::time::Instant::now();
+            // 初回は None ゆえ NaN（0 と紛れない）。hide をまたぐと巨大値になる（眠っていた証拠）。
+            let since = self
+                .repaint_trace_prev
+                .replace(now)
+                .map(|prev| (now - prev).as_secs_f64() * 1000.0)
+                .unwrap_or(f64::NAN);
+            eprintln!(
+                "SNOTRA_EGUI_REPAINT window={} focused={} since_prev_ms={since:.1} causes={}",
+                self.window.label(),
+                self.context.input(|i| i.focused),
+                crate::repaint::format_repaint_causes(&self.context.repaint_causes()),
+            );
+        }
         self.handle_platform_output(&output.platform_output);
         // 描画失敗は能動再試行（不変条件⑤）。「次 RedrawRequested 待ち」は egui が repaint を
         // 求めなければ停止するため、失敗時に自ら repaint を要求し、上限超過で fatal にする。
@@ -346,7 +379,7 @@ impl EguiWindow {
         Ok(())
     }
 
-    fn handle_platform_output(&self, output: &egui::PlatformOutput) {
+    fn handle_platform_output(&mut self, output: &egui::PlatformOutput) {
         for command in &output.commands {
             match command {
                 egui::OutputCommand::CopyText(text) => {
@@ -366,8 +399,21 @@ impl EguiWindow {
             }
         }
 
-        if let Some(cursor) = cursor_icon(output.cursor_icon) {
-            let _ = self.window.set_cursor_icon(cursor);
+        // **値が変わったときだけ OS へ書く。** tao の `set_cursor_icon` は窓に紐づかない
+        // `SetCursor` を直接撃つ（tao 0.35.3 `platform_impl/windows/window.rs:460-466`）——
+        // 最後に呼んだ者が勝ち、マウス静止中は `WM_SETCURSOR` が来ないので OS の復元も
+        // 入らない。毎フレーム無条件に撃つと、ポインタを持つ窓（Text）と持たない窓
+        // （Default）が交互に上書きし合ってカーソルが点滅する（#628 の計測中に実機で
+        // 発見。main 1194 / results 1339 フレームが撃ち合っていた）。
+        //
+        // 変化検出は egui 側の値で行う（`tauri::CursorIcon` の等値性に依存しない）。
+        // 残余: 別窓のアイコンが実際に変わった瞬間だけ、静止中のポインタ下のカーソルが
+        // 一度ずれうる。マウスを動かせば `WM_SETCURSOR` で窓ごとの値へ復帰する。
+        if self.applied_cursor != Some(output.cursor_icon) {
+            self.applied_cursor = Some(output.cursor_icon);
+            if let Some(cursor) = cursor_icon(output.cursor_icon) {
+                let _ = self.window.set_cursor_icon(cursor);
+            }
         }
         self.ime
             .update(output.ime, self.input.native_pixels_per_point());

@@ -42,6 +42,17 @@ impl InputState {
         self.raw.screen_rect = Some(screen_rect);
         self.raw.max_texture_side = Some(max_texture_side);
         self.raw.time = Some(self.started_at.elapsed().as_secs_f64());
+        // **イベント駆動ゆえ「次フレームは vsync 後に来る」前提を持たない**（#628）。
+        // egui は `request_repaint_after(d)` を `d - predicted_dt` へ切り詰める
+        // （`context.rs:148-151`）。既定値 1/60 秒のままだと、`d < 16.7ms` の要求が
+        // ZERO へ飽和して「即時再描画」に化け、次パスがさらに小さい `d` を要求して
+        // 再び飽和する——キャレット点滅の遷移ごとに約 26ms スピンする（#628 実測:
+        // 遷移 1 回につき平均 7.8 フレーム・可視アイドルが 2fps ではなく 11.5fps）。
+        // 0 を渡して要求どおりの時刻に起こす（本 runtime は先取りせず、起きてから
+        // 約 1.4ms で描く）。egui 側の他の用途はアニメーションの半フレーム先読みと
+        // sleep 明けの `stable_dt` フォールバックのみで、いずれも `at_most()` 付きの
+        // 乗算ゆえ 0 で壊れない（除算は無い）。
+        self.raw.predicted_dt = 0.0;
 
         let viewport = self
             .raw
@@ -414,5 +425,18 @@ mod tests {
         assert_eq!(rect.height(), 200.0);
         let vp = raw.viewports.get(&egui::ViewportId::ROOT).unwrap();
         assert_eq!(vp.native_pixels_per_point, Some(2.0));
+    }
+
+    #[test]
+    fn take_reports_zero_predicted_dt_so_repaint_delays_are_not_truncated() {
+        // 既定値（1/60 秒）に戻ると egui が短い repaint 予約を ZERO へ飽和させ、
+        // 即時再描画のスピンになる（#628: キャレット点滅の遷移ごとに約 26ms・
+        // 可視アイドルが 2fps → 11.5fps）。値そのものを固定して回帰を検出する。
+        let mut input = InputState::new(1.0);
+        let raw = input.take(4096, PhysicalSize::new(100, 100), 1.0);
+        assert_eq!(raw.predicted_dt, 0.0, "先取りしない（要求どおりの時刻に起きる）");
+        // 2 フレーム目以降も持ち越しで戻らないこと（RawInput::take は値を保持する）。
+        let raw2 = input.take(4096, PhysicalSize::new(100, 100), 1.0);
+        assert_eq!(raw2.predicted_dt, 0.0);
     }
 }

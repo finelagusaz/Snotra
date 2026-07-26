@@ -56,7 +56,7 @@ git checkout -b <branch-name>
 
 ## Step 3 — 調査と分析（workspace/research.md）
 
-`workspace/research.md`・`workspace/plan.md`・`workspace/plan-review-2b.md`（`/plan-review`「Step 2b — 独立導出 + 差分（常に実施・盲点クラスの漏れ検出）」の成果物）が既に存在する場合は上書きする（前回の作業成果物）。**このサイクルで書き直すファイルはここに列挙されたものだけである**——列挙から漏れたものは前サイクルの内容のまま残り、次に読む人が今回の成果物と誤読する（`workspace/measurement.md` が #628 のまま取り残されている実例がある）。
+`workspace/research.md`・`workspace/plan.md`・`workspace/plan-review/`（ディレクトリごと。`/plan-review`「Step 2 — 並列サブエージェントで検証」のスカウトと「Step 2b — 独立導出 + 差分（常に実施・盲点クラスの漏れ検出）」の成果物。ファイル名が毎回変わるため列挙せず、**新鮮性は「上書き」ではなく `/plan-review` Step 2 が起動前に行う削除が保証する**——上書きは書き手が落ちた回には起きない）が既に存在する場合は上書きする（前回の作業成果物）。**このサイクルで書き直すファイルはここに列挙されたものだけである**——列挙から漏れたものは前サイクルの内容のまま残り、次に読む人が今回の成果物と誤読する（`workspace/measurement.md` が #628 のまま取り残されている実例がある）。
 
 `SPEC.md`、関連する `CLAUDE.md`、ソースコードを読み、issue の要求を分析する。
 
@@ -98,6 +98,8 @@ git checkout -b <branch-name>
 ### 5b. セルフレビュー（plan-review 固有の補完）
 
 Step 5a の `/plan-review` が **①対称コードパス ②影響範囲の網羅性（呼び出し元 grep）③リソース管理（生成/破棄ペア・`false` に戻さない `AtomicBool`／`unlisten` の無い `listen()`／`kill` の無い子プロセス）④既存パターンとの整合 ⑤YAGNI** を検証済みである（`/plan-review`「Step 2」の観点＋ `/plan-review`「Step 2b」の独立再導出）。**5b でこれらを再実行しない**——同一 plan.md への二度手間を避ける。plan-review の「要対処」を確認し、あれば `workspace/plan.md` を更新する。
+
+**ただしこの免除は、plan-review が「独立レビュー不成立」と報告したエントリには及ばない**——そのレイヤーの ①〜⑤ は検証されていない。5b で自ら確認する（**`/plan-review` の再実行は `workspace/plan-review/` を作り直すため、届いていた他エントリの成果物も消える**——当該レイヤーだけを 5b で見る方が安い）。**不成立が残るならその事実と代替検証を `workspace/plan.md` 末尾の「セルフレビュー」セクションに記す**（本ファイル末尾の引き渡し契約「レビュー済みの計画」が偽になるのを防ぐ）。
 
 5b では **plan-review が扱わない次の3観点だけ**を追加で確認し、問題があれば計画を修正する:
 

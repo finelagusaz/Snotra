@@ -475,8 +475,8 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         if icon_arrived {
             icon_ctx.request_repaint();
         }
-        // #632 reviewer Important 3 の後継（Fix 3）: 結果集合が総入れ替えされた（main が
-        // snapshot_generation を進めた）フレームは、selected の値が変わらなくても scroll gate を
+        // #632 reviewer Important 3 の後継（Fix 3）: 結果集合が総入れ替えされた
+        // （`SearchState::rows_generation` が進んだ）フレームは、selected の値が変わらなくても scroll gate を
         // 強制リセットする——selected のみの比較では「打鍵で結果が丸ごと変わったが selected は
         // 偶然 0 のまま」を検出できず、選択行への scroll_to_me が発火しないままになるため。
         if snapshot.generation != self.last_generation {

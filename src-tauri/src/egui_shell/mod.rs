@@ -19,7 +19,8 @@ mod view;
 mod visual;
 
 // mod.rs（窓生成・managed state）が消費する。RowsSnapshot は view.rs（main の snapshot 発行）・
-// results_view.rs（update() 描画）が消費する（#646 PR2 Task 4）。
+// results_view.rs（update() 描画）が消費する（#646 PR2 Task 4）。ClickTake は view.rs
+// （クリック逆流の消費・世代照合の結果で分岐する）が消費する（#699）。
 pub(crate) use results_view::ClickTake;
 pub(crate) use results_view::ResultsShared;
 pub(crate) use results_view::RowsSnapshot;

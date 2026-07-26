@@ -1212,6 +1212,11 @@ impl EguiView for SearchWindowView {
         visuals.window_fill = visuals.panel_fill;
         visuals.extreme_bg_color = visual.input_bg; // TextEdit 背景
         visuals.selection.bg_fill = visual.selection;
+        // TextEdit の hint 色はここだけが効く（#654・詳細は TextEdit 構築部のコメント）。
+        // **他の描画を巻き込まない**: この view が使う egui ウィジェットは TextEdit 1 つだけで
+        //（`ui.label` / `ui.button` の類は 0 件・残りは raw painter に色を明示渡し）、
+        // weak text を読むのはその hint のみ。results 窓は別 Context ゆえ影響外。
+        visuals.weak_text_color = Some(visual.hint);
         ctx.set_visuals(visuals);
 
         // SU6 spec 決定 2: font_family hot-reload（WebView2 の --font-family CSS 変数即時反映 parity）。
@@ -1443,10 +1448,23 @@ impl EguiView for SearchWindowView {
         } else {
             self.state.query().to_string()
         };
-        // §11 Part C（#643）: 入力欄フォントを config `font_size` へ追従させ、hint を
-        // `hint_text_color` で描く。#646 決定 2: バー高は `font_size + bar_padding`（Metrics）。
+        // §11 Part C（#643）: 入力欄フォントを config `font_size` へ追従させる。
+        // #646 決定 2: バー高は `font_size + bar_padding`（Metrics）。
         // SU6.5 決定 3 の 52px 据え置きは WebView2 parity 制約下の判断で、SU7 の WebView2 撤去
         // により失効した。極端な font_size でバーからはみ出す挙動は変わらず残る。
+        //
+        // **入力欄は 2 つの文字列を持ち、色の受け取り機構が別である**（#654）:
+        // - 入力テキスト本体 → `.text_color()`。egui は `self.text_color` を最優先で見る
+        //   （builder.rs `text_color.or_else(override_text_color).unwrap_or(widgets.inactive)`）。
+        //   **これを欠くと config を見ずに egui 既定 gray(180) へ落ちる**——#643 は hint だけを
+        //   直したため、既定設定のまま入力文字が結果行の表示名より暗い状態が残っていた
+        // - hint → **`Visuals::weak_text_color` だけが効く**。egui 0.35 の TextEdit は
+        //   `hint_text.map_texts(|t| t.color(visuals.weak_text_color()))` で**無条件に上書き**し、
+        //   egui 自身が "users won't be able to override it" と注記している。ゆえに
+        //   `RichText::color()` は届かない（#643 の指定は dead だった）。適用は `set_visuals` 側
+        //
+        // **どちらも「色リテラルを書かない」だけでは守れない**（SPEC §11 の規範はこの 2 様態を
+        // 名指しするよう #654 で拡張した）。片方を直してもう片方を放置しない。
         let bar_theme = &visual.row;
         let bar_font = egui::FontId::proportional(bar_theme.name_size);
         // 入力欄はバー帯の内側に四辺一様の余白（`Metrics::bar_inset`）を残して置く
@@ -1468,9 +1486,10 @@ impl EguiView for SearchWindowView {
                         // spec 決定 3・4。↑↓は空リストゆえ自然 no-op）。
                         .interactive(input_editable)
                         .font(bar_font.clone())
-                        .hint_text(
-                            egui::RichText::new(hint).font(bar_font).color(bar_theme.path_color),
-                        ),
+                        .text_color(bar_theme.name_color)
+                        // 色を付けない——付けても egui が weak_text_color で上書きする（上の
+                        // コメント）。hint の色は `set_visuals` の `weak_text_color` が正本。
+                        .hint_text(egui::RichText::new(hint).font(bar_font)),
                 )
             })
             .inner;

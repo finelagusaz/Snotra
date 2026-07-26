@@ -48,6 +48,11 @@ pub(crate) struct RowTheme {
     pub selection: egui::Color32,
     pub name_size: f32,
     pub path_size: f32,
+    /// status 行・updater トーストの本文サイズ（#672）。**両者は同じ「バー直下の 1 行」で
+    /// あり、揃っていないと別種の UI に見える**（#700）——1 つの値を両方が読むことで揃え続ける。
+    pub status_size: f32,
+    /// トーストのボタンサイズ。本文より一回り小さい（#700 の意図を比率で保つ）。
+    pub button_size: f32,
 }
 
 /// 呼び出し側が既に適用済みの値。**guard 内で比較し、変化したときだけ clone する**ための入力。
@@ -110,6 +115,8 @@ pub(crate) fn visual_snapshot(
             name_size: v.font_size as f32,
             // 正本は layout（行高が同じ係数で積算するため。二重定義は行高と描画の不一致）。
             path_size: layout::path_size(v.font_size) as f32,
+            status_size: layout::status_size(v.font_size) as f32,
+            button_size: (layout::status_size(v.font_size) as f32 * 0.92).max(10.0),
         },
         // 導出式を書き写さない——行高の正本は Metrics::from_config である。
         metrics: Metrics::from_config(v.font_size, v.row_padding, v.bar_padding),
@@ -153,6 +160,7 @@ mod tests {
         let s = visual_snapshot(&v, true, applied_none(&v.font_family));
         assert_eq!(s.row.name_size, 24.0);
         assert_eq!(s.row.path_size, layout::path_size(24) as f32);
+        assert_eq!(s.row.status_size, layout::status_size(24) as f32);
         let m = Metrics::from_config(24, v.row_padding, v.bar_padding);
         assert_eq!(s.metrics.row_height, m.row_height);
         assert_eq!(s.metrics.bar_height, m.bar_height);

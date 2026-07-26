@@ -1059,13 +1059,9 @@ enum ToastAction {
 /// 中間の widget allocation を挟まず2回呼ぶと dismiss/install 両ボタンが同一 id になり
 /// egui の id クラッシュ検知に触れる——ローカライズ済みラベルは Available 局面で互いに異なるため
 /// これを id salt に使う）。
-/// status 行（indexing 案内・起動中・一時通知）と toast 行の本文フォントサイズ。
 ///
-/// **両者は同じ「バー直下の 1 行」であり、字が揃っていないと別種の UI に見える**——実機で
-/// status 行だけ大きい（15.0 対 13.0）ことが指摘され、定数に括って構造的に揃えた（#700）。
-/// ボタンのみ 12.0 と小さいのは意図的（本文とボタンの区別）。
-const ROW_TEXT_SIZE: f32 = 13.0;
-
+/// 文字サイズは `theme.button_size`（正本は `layout::status_size` × 0.92）。固定値を
+/// 置かない（SPEC §11「文字サイズに固定値を書かない」・#672）。
 fn draw_toast_button(
     ui: &mut egui::Ui,
     cursor_x: &mut f32,
@@ -1076,7 +1072,7 @@ fn draw_toast_button(
 ) -> bool {
     let galley = ui.painter().layout_no_wrap(
         label.to_string(),
-        egui::FontId::proportional(12.0),
+        egui::FontId::proportional(theme.button_size),
         theme.name_color,
     );
     let w = galley.size().x + 16.0;
@@ -1564,7 +1560,7 @@ impl EguiView for SearchWindowView {
                 egui::pos2(rect.left() + 8.0, rect.center().y),
                 egui::Align2::LEFT_CENTER,
                 &text,
-                egui::FontId::proportional(ROW_TEXT_SIZE),
+                egui::FontId::proportional(visual.row.status_size),
                 visual.hint,
             );
         }
@@ -1628,7 +1624,7 @@ impl EguiView for SearchWindowView {
                 egui::pos2(rect.left() + 8.0, rect.center().y),
                 egui::Align2::LEFT_CENTER,
                 &line1,
-                egui::FontId::proportional(ROW_TEXT_SIZE),
+                egui::FontId::proportional(theme.status_size),
                 theme.name_color,
             );
         }

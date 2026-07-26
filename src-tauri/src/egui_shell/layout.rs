@@ -10,6 +10,17 @@ pub fn path_size(font_size: u32) -> f64 {
     (font_size as f64 * 0.78).max(9.0)
 }
 
+/// status 行・updater トーストの文字サイズ（#672）。SPEC §11 の規範「文字サイズに固定値を
+/// 書かない・補助要素は `font_size` からの比率で導く」の適用。
+///
+/// **係数がパス行（0.78）と違うのは意図である。** パスは行の副次情報だが、status 行と
+/// トーストは**その行の主メッセージ**であり、読ませる必要がある。0.87 は既定
+/// `font_size = 15` で 13.05px となり、固定値だった 13px と実質同じ見た目を保つ——
+/// この変更は「連動するようになった」だけで、既定設定の利用者の見た目は変えない。
+pub fn status_size(font_size: u32) -> f64 {
+    (font_size as f64 * 0.87).max(11.0)
+}
+
 /// 行高・バー高・toast 高の算出値(#646 決定 2)。config `visual` から毎フレーム導出し
 /// キャッシュしない(font_size と同じ live-read 方針)。driver からの消費は Task 3・4 で配線済み。
 pub struct Metrics {
@@ -135,6 +146,22 @@ impl Debouncer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #672: **文字サイズが font_size に連動する**こと自体を固定する（SPEC §11 の規範
+    /// 「文字サイズに固定値を書かない」）。固定値へ戻す変更はここで落ちる。
+    #[test]
+    fn aux_text_sizes_scale_with_font_size() {
+        // 既定 font_size=15 で従来の固定値 13px と実質同じ（この変更は見た目を変えない）。
+        assert!((status_size(15) - 13.05).abs() < 0.01, "既定で 13px 相当を保つ");
+        // font_size を上げれば追従する（固定値なら 15 と 24 で同値になり、ここが落ちる）。
+        assert!(status_size(24) > status_size(15), "font_size に連動する");
+        assert!((status_size(24) - 20.88).abs() < 0.01);
+        // 補助要素どうしの序列: パス行 < status 行 < 主要素（font_size 等倍）。
+        assert!(path_size(15) < status_size(15), "パス行より大きい（行の主メッセージゆえ）");
+        assert!(status_size(15) < 15.0, "主要素より小さい");
+        // 極小 font_size でも読める下限を持つ（path_size の 9.0 と同型の防御）。
+        assert_eq!(status_size(1), 11.0);
+    }
 
     #[test]
     fn leading_fires_on_burst_start_then_trailing() {

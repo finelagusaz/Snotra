@@ -463,7 +463,6 @@ stateDiagram-v2
     state "FolderExpansionMode\n(フォルダ展開モード)" as FolderExpansionMode
     state "ToolSelectionMode\n(ツール選択モード)" as ToolSelectionMode
     state "InstantCommandMode\n(インスタントコマンドモード)" as InstantCommandMode
-    state "IndexingMode\n(インデックス中)" as IndexingMode
     [*] --> NormalMode
     NormalMode --> CommandMode: Input [query startsWith '/']
     CommandMode --> NormalMode: Input [query not startsWith '/']
@@ -479,8 +478,6 @@ stateDiagram-v2
     ToolSelectionMode --> NormalMode: Escape [!folderState]
     ToolSelectionMode --> FolderExpansionMode: Escape [folderState]
     ToolSelectionMode --> NormalMode: Enter/Click [launch success && !folderState]
-    NormalMode --> IndexingMode: indexing_start
-    IndexingMode --> NormalMode: indexing-complete
   }
 ```
 
@@ -496,8 +493,11 @@ stateDiagram-v2
 - `/o` 実行時に `indexing == true` の場合、`open_settings` は no-op
 - 初回起動（`is_first_run`）では `snotra-settings` を子プロセスとして直接起動する（indexing ガードをバイパス）
 - `snotra-settings` 起動中のホットキー入力は無視する（ホットキー再設定中の誤動作防止）
-- `launching`（起動 in-flight）・一時通知・updater トーストは状態ノードではなく
-  `IndexingMode` と同様の overlay（どのモードにも重なる直交 boolean）。手動 hide
+- **`indexing`（インデックス構築中）・`launching`（起動 in-flight）・一時通知・updater トーストは
+  状態ノードではなく、どのモードにも重なる直交 boolean（overlay）である。** `indexing` を上図の
+  ノードとして描いてはならない——§4.7 の表示判定は `indexing` を軸1（ビュースタック）・軸2（入力の
+  意味）と**独立した第 3 の入力**として扱っており、ツール選択・フォルダ展開は構築中でも表示される。
+  排他ノードとして描くと、この carve-out が表現できない。手動 hide
   （Escape / blur / ホットキー）は launching 中も成立し、成功時の自動 hide のみ
   起動完了後に行われる。表示時リセットで launching と一時通知はクリアされ、
   updater トースト（と dismissed）は維持される

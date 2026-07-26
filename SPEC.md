@@ -427,7 +427,7 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 
 ### 8.5 ウィンドウ生成とプロセス管理
 
-- メインウィンドウ（`main`）と検索結果ウィンドウ（`results`）は起動時のセットアップで生成する（いずれも `visible: false`）。`results` は `focusable(false)` でフォーカスを取らない従属窓とし、可視性・サイズ・位置は `main` の毎フレーム更新（`drive_results_window`）が駆動する。`main` の hide 時は `results` も同時に隠す（§4.7・§8.2 参照・#646 PR2）
+- メインウィンドウ（`main`）と検索結果ウィンドウ（`results`）は起動時のセットアップで生成する（いずれも `visible: false`）。`results` は `focusable(false)` でフォーカスを取らない従属窓とし、可視性・サイズ・位置は `main` の毎フレーム更新（`drive_results_window`）が駆動する。`main` の hide 時は `results` も同時に隠す（§4.7・§8.2 参照・#646 PR2）。**この hide 同期と対になる show 側のゲートは §8.6「検索結果ウィンドウの可視性」にある**——片方では閉じない
 - `about` / `settings` は別プロセス（`snotra-settings`）として起動。本体は `SettingsProcessState`（`Mutex<Option<Child>>`）で子プロセスを管理し、二重起動を防止する
 - `snotra-settings` 起動中は本体のメインウィンドウの `alwaysOnTop` を一時的に `false` にし、終了検知時に `true` に復元する
 - `platform/mod.rs` の Win32 メッセージループスレッドはウィンドウ生成より前に spawn し、Win32 初期化とウィンドウ生成を並列実行する（起動時間の短縮）
@@ -463,7 +463,6 @@ stateDiagram-v2
     state "FolderExpansionMode\n(フォルダ展開モード)" as FolderExpansionMode
     state "ToolSelectionMode\n(ツール選択モード)" as ToolSelectionMode
     state "InstantCommandMode\n(インスタントコマンドモード)" as InstantCommandMode
-    state "IndexingMode\n(インデックス中)" as IndexingMode
     [*] --> NormalMode
     NormalMode --> CommandMode: Input [query startsWith '/']
     CommandMode --> NormalMode: Input [query not startsWith '/']
@@ -479,8 +478,6 @@ stateDiagram-v2
     ToolSelectionMode --> NormalMode: Escape [!folderState]
     ToolSelectionMode --> FolderExpansionMode: Escape [folderState]
     ToolSelectionMode --> NormalMode: Enter/Click [launch success && !folderState]
-    NormalMode --> IndexingMode: indexing_start
-    IndexingMode --> NormalMode: indexing-complete
   }
 ```
 
@@ -496,12 +493,31 @@ stateDiagram-v2
 - `/o` 実行時に `indexing == true` の場合、`open_settings` は no-op
 - 初回起動（`is_first_run`）では `snotra-settings` を子プロセスとして直接起動する（indexing ガードをバイパス）
 - `snotra-settings` 起動中のホットキー入力は無視する（ホットキー再設定中の誤動作防止）
-- `launching`（起動 in-flight）・一時通知・updater トーストは状態ノードではなく
-  `IndexingMode` と同様の overlay（どのモードにも重なる直交 boolean）。手動 hide
+- **`indexing`（インデックス構築中）・`launching`（起動 in-flight）・一時通知・updater トーストは
+  状態ノードではなく、どのモードにも重なる直交 boolean（overlay）である。** `indexing` を上図の
+  ノードとして描いてはならない——§4.7 の表示判定は `indexing` を軸1（ビュースタック）・軸2（入力の
+  意味）と**独立した第 3 の入力**として扱っており、ツール選択・フォルダ展開は構築中でも表示される。
+  排他ノードとして描くと、この carve-out が表現できない。手動 hide
   （Escape / blur / ホットキー）は launching 中も成立し、成功時の自動 hide のみ
   起動完了後に行われる。表示時リセットで launching と一時通知はクリアされ、
   updater トースト（と dismissed）は維持される
-- 検索結果ウィンドウ（`results`）の表示/非表示は上図の状態ノードではなく、`SearchVisible` 内での結果件数（§4.7 の表示判定）に従属する直交軸である。窓の生成・hide 同期は §8.5 参照（#646 PR2）
+- 検索結果ウィンドウ（`results`）の表示/非表示は上図の状態ノードではなく、`SearchVisible` に従属する直交軸である（下記「検索結果ウィンドウの可視性」）。窓の生成・hide 同期は §8.5 参照（#646 PR2）
+
+#### 検索結果ウィンドウの可視性（従属軸）
+
+検索結果ウィンドウ（`results`）は状態ノードではなく、`SearchVisible` 中に**毎フレーム再評価される述語**である。遷移イベントを持たない——上図の辺に相当するものは無い。
+
+```
+results 可視 ⇔ main 可視 ∧ 結果が空でない ∧ 通常結果を隠していない ∧ 窓高さ > 0
+```
+
+| 連言項 | 正本 |
+|---|---|
+| 結果が空でない / 通常結果を隠していない（インデックス構築中の carve-out） | §4.7 |
+| 窓高さ > 0（実件数フィット・0 件は高さ 0 = 非表示） | §4.5 |
+| main 可視 | 下記 |
+
+**`main 可視` は §8.5 の「`main` の hide 時に `results` も隠す」とは別に必要である。** hide しても結果データは残る（リセットは show 時）ため、hidden 中に `main` のフレームが 1 枚でも走ると `results` だけが最前面に取り残される（設定適用・インデックス通知の wake 自体は `main` の可視性を見ない）。**hide 側の同期と show 側のゲートは対であり、片方では閉じない**（#671 PR A′）。
 
 ### 8.7 ウィンドウのライフサイクル
 

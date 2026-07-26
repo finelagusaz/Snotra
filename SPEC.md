@@ -427,7 +427,7 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 
 ### 8.5 ウィンドウ生成とプロセス管理
 
-- メインウィンドウ（`main`）と検索結果ウィンドウ（`results`）は起動時のセットアップで生成する（いずれも `visible: false`）。`results` は `focusable(false)` でフォーカスを取らない従属窓とし、可視性・サイズ・位置は `main` の毎フレーム更新（`drive_results_window`）が駆動する。`main` の hide 時は `results` も同時に隠す（§4.7・§8.2 参照・#646 PR2）
+- メインウィンドウ（`main`）と検索結果ウィンドウ（`results`）は起動時のセットアップで生成する（いずれも `visible: false`）。`results` は `focusable(false)` でフォーカスを取らない従属窓とし、可視性・サイズ・位置は `main` の毎フレーム更新（`drive_results_window`）が駆動する。`main` の hide 時は `results` も同時に隠す（§4.7・§8.2 参照・#646 PR2）。**この hide 同期と対になる show 側のゲートは §8.6「検索結果ウィンドウの可視性」にある**——片方では閉じない
 - `about` / `settings` は別プロセス（`snotra-settings`）として起動。本体は `SettingsProcessState`（`Mutex<Option<Child>>`）で子プロセスを管理し、二重起動を防止する
 - `snotra-settings` 起動中は本体のメインウィンドウの `alwaysOnTop` を一時的に `false` にし、終了検知時に `true` に復元する
 - `platform/mod.rs` の Win32 メッセージループスレッドはウィンドウ生成より前に spawn し、Win32 初期化とウィンドウ生成を並列実行する（起動時間の短縮）
@@ -517,7 +517,7 @@ results 可視 ⇔ main 可視 ∧ 結果が空でない ∧ 通常結果を隠�
 | 窓高さ > 0（実件数フィット・0 件は高さ 0 = 非表示） | §4.5 |
 | main 可視 | 下記 |
 
-**`main 可視` は §8.5 の「`main` の hide 時に `results` も隠す」とは別に必要である。** hide しても結果データは残る（リセットは show 時）ため、hidden 中に `main` のフレームが 1 枚でも走ると（設定適用・インデックス通知の wake は `main` の可視性に関係なく発火する）`results` だけが最前面に取り残される。**hide 側の同期と show 側のゲートは対であり、片方では閉じない**（#671 PR A′）。
+**`main 可視` は §8.5 の「`main` の hide 時に `results` も隠す」とは別に必要である。** hide しても結果データは残る（リセットは show 時）ため、hidden 中に `main` のフレームが 1 枚でも走ると `results` だけが最前面に取り残される（設定適用・インデックス通知の wake 自体は `main` の可視性を見ない）。**hide 側の同期と show 側のゲートは対であり、片方では閉じない**（#671 PR A′）。
 
 ### 8.7 ウィンドウのライフサイクル
 

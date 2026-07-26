@@ -572,9 +572,10 @@ pub(crate) fn wake_results(app: &tauri::AppHandle) {
 /// イベント駆動で直接動かす)。デルタガードは持たない(set_position は同値でも安価・
 /// ガードは update 側の責務)。
 /// **設定した results 上端の物理 y を返す**（#675）。高さのクランプに上端が要るが、上端の
-/// 算出式（`main.outer_position().y + outer_size().height + gap*scale`）はここが唯一の場所で
-/// ある。呼び出し側で再計算すると `outer_position` / `outer_size` / `window_gap` の 2 度読みに
-/// なり、フレーム内で値が食い違いうる（`AGENTS.md`「条件別チェック」の「重複した読み」）。
+/// 算出式の正本は `layout::results_top_y`（純粋核・#752 C1）で、**Win32 を読んでそれを適用
+/// する場所はここだけ**である。呼び出し側で再計算すると `outer_position` / `outer_size` /
+/// `window_gap` の 2 度読みになり、フレーム内で値が食い違いうる（`AGENTS.md`「条件別チェック」
+/// の「重複した読み」）。
 /// **計算した値を捨てる関数は、次の利用者に写しを書かせる。**
 pub(crate) fn position_results_below_main(app: &tauri::AppHandle) -> Option<i32> {
     let (Some(main), Some(results)) = (app.get_window("main"), app.try_state::<ResultsWindow>())
@@ -584,13 +585,14 @@ pub(crate) fn position_results_below_main(app: &tauri::AppHandle) -> Option<i32>
     let gap = app
         .try_state::<crate::AppState>()
         .map(|s| s.engine.lock().unwrap().config().visual.window_gap)
-        .unwrap_or(4) as f64;
+        .unwrap_or(4);
     let (Ok(pos), Ok(size), Ok(scale)) =
         (main.outer_position(), main.outer_size(), main.scale_factor())
     else {
         return None;
     };
-    let top = pos.y + size.height as i32 + (gap * scale).round() as i32;
+    // 算術は layout::results_top_y（純粋核・#752 C1）。Win32 の読みはここで 1 回だけ行う。
+    let top = layout::results_top_y(pos.y, size.height, gap, scale);
     results.set_position(pos.x, top);
     Some(top)
 }
@@ -612,7 +614,8 @@ pub(crate) fn results_available_height(app: &tauri::AppHandle, top_y: i32) -> Op
     let hwnd = main.hwnd().ok()?;
     let area = crate::monitor::window_monitor_work_area(hwnd.0 as isize)?;
     let scale = app.try_state::<ResultsWindow>()?.scale_factor()?;
-    Some((f64::from(area.bottom - top_y) / scale).max(0.0))
+    // 算術は layout::available_below（純粋核・cfg の外・#752 C1）。
+    Some(layout::available_below(area.bottom, top_y, scale))
 }
 
 #[cfg(not(windows))]

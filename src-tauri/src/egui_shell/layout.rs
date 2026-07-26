@@ -1,5 +1,6 @@
-//! egui 検索ウィンドウの純粋レイアウト/タイミングヘルパー（#532 SU3）。ウィンドウ高さ算出と
-//! 検索 debounce の判定を egui/Win32 非依存で持つ。ユニットテスト対象。
+//! egui 検索ウィンドウの純粋レイアウト/タイミングヘルパー（#532 SU3）。ウィンドウ高さ算出・
+//! results 窓の幾何（上端 y・作業領域の残り）・検索 debounce の判定を egui/Win32 非依存で持つ。
+//! ユニットテスト対象。
 
 use std::time::Duration;
 
@@ -96,6 +97,36 @@ pub fn clamp_results_height(desired: f64, available: Option<f64>, row_height: f6
         return desired;
     }
     desired.min(avail.max(row_height + 8.0))
+}
+
+/// results 窓の上端の**物理** y（#752 C1）。`mod.rs::position_results_below_main` の算術部。
+///
+/// **算出と適用（`set_position`）を分けるために出したのではない**——融合は #675 の判断として
+/// 保つ（計算した値を捨てる関数は、次の利用者に写しを書かせる）。ここへ出すのは**式を
+/// テスト可能にするため**であり、`mod.rs` 側は Win32 を 1 回だけ読んでこの式を呼ぶ薄い
+/// ラッパーのままである。消費者は 2 つ（毎フレームの drive と `Moved` リスナー）で、
+/// どちらも同じラッパーを通る。
+///
+/// `main_scale` は **main 窓の** scale である（`available_below` が取る results 窓の scale とは
+/// 別・#675）。**型では区別できない**——取り違えの検出器は無く、守るのはラッパーの単一性と
+/// この doc だけである（計画 §7 の受容残余）。
+pub fn results_top_y(main_y: i32, main_height_phys: u32, gap_logical: u32, main_scale: f64) -> i32 {
+    main_y + main_height_phys as i32 + (f64::from(gap_logical) * main_scale).round() as i32
+}
+
+/// results 上端から作業領域の下端までの高さ（**論理 px**・#752 C1）。
+/// `mod.rs::results_available_height` の算術部。
+///
+/// **`.max(0.0)` の床を落とさない**——main が作業領域の外にあると差が負になる。
+///
+/// `results_scale` は **results 窓の** scale である。tao は `set_inner_size` に渡した
+/// `LogicalSize` を**その窓の** `scale_factor()` で物理へ戻すため、main の scale を流用すると
+/// 混在 DPI 環境で高さが食い違う（#675）。
+///
+/// **`#[cfg]` の外に置く**——cfg の内側に置くと「純粋だからテストできる」が構造的に
+/// 成り立たなくなる（非 Windows でテストが到達しない）。
+pub fn available_below(work_area_bottom_phys: i32, top_y_phys: i32, results_scale: f64) -> f64 {
+    (f64::from(work_area_bottom_phys - top_y_phys) / results_scale).max(0.0)
 }
 
 /// results 窓を表示してよいか（#671 PR A′・レビュー Important 1）。
@@ -307,5 +338,42 @@ mod tests {
         assert!(results_should_show(true, true, 120.0)); // 通常の表示条件
         assert!(!results_should_show(true, false, 120.0)); // 表示ゲート（plain_results_hidden 等）
         assert!(!results_should_show(true, true, 0.0)); // 0 件（高さ 0）
+    }
+
+    /// #752 C1: 上端 = main の下端 + gap（論理 → 物理へ換算して四捨五入）。
+    ///
+    /// **`.round()` の境界を通す入力を必ず含める。** `gap × scale` が整数になる組み合わせ
+    /// （gap ∈ {0,4,16} × scale ∈ {1.0,1.5,2.0} など）だけでは、丸めを**一度も検査しない**
+    /// テストになる。Rust の `f64::round` は half を 0 から遠い側へ倒す。
+    #[test]
+    fn results_top_y_rounds_gap_at_half_boundary() {
+        // scale 1.0: 換算なし
+        assert_eq!(results_top_y(100, 43, 4, 1.0), 147);
+        // 積がちょうど x.5（丸めの境界）
+        assert_eq!(results_top_y(0, 0, 3, 1.5), 5); // 4.5 → 5
+        assert_eq!(results_top_y(0, 0, 1, 1.5), 2); // 1.5 → 2
+        assert_eq!(results_top_y(0, 0, 3, 0.5), 2); // 1.5 → 2
+        // x.5 未満は切り捨て側へ
+        assert_eq!(results_top_y(0, 0, 2, 1.2), 2); // 2.4 → 2
+        // 高 DPI
+        assert_eq!(results_top_y(100, 43, 4, 2.0), 151);
+        // main が負座標のモニターにいる（マルチモニターで左/上に並べた配置）
+        assert_eq!(results_top_y(-1080, 43, 4, 1.0), -1033);
+    }
+
+    /// #752 C1: results 上端から作業領域下端までの論理高さ。
+    ///
+    /// **0 床を落とさない**——main が作業領域の外にあると差が負になる。負値をそのまま
+    /// `clamp_results_height` へ渡すと `avail.max(row+8)` が床へ倒れて意味が変わる。
+    #[test]
+    fn available_below_divides_by_results_scale_and_floors_at_zero() {
+        assert_eq!(available_below(1000, 400, 1.0), 600.0);
+        assert_eq!(available_below(1000, 400, 2.0), 300.0); // 物理 600 → 論理 300
+        assert_eq!(available_below(1000, 400, 1.5), 400.0);
+        // 上端が作業領域の下端より下（main が画面外）→ 負にせず 0
+        assert_eq!(available_below(1000, 1200, 1.0), 0.0);
+        assert_eq!(available_below(1000, 1200, 2.0), 0.0);
+        // ちょうど 0
+        assert_eq!(available_below(1000, 1000, 1.0), 0.0);
     }
 }

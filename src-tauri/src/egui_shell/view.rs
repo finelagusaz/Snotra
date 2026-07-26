@@ -854,6 +854,10 @@ impl SearchWindowView {
         if results.show() {
             crate::trace_main("egui_results:show", serde_json::json!({ "rows": count }));
         }
+        // 決定 5（#673 spec・#697）: この無条件 wake を edge 化してはならない。results は
+        // config 系イベントを一切 listen せず（register_config_wake_listeners は wake_main のみ）、
+        // visual-only の config 変更では RowsSnapshot が不変ゆえ snapshot 差分 wake も発火しない。
+        // results が新しい色・フォント・行高を描く唯一の経路がこの level-triggered wake である。
         crate::egui_shell::wake_results(&self.app_handle);
     }
 

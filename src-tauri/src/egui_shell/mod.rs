@@ -551,7 +551,8 @@ pub(crate) fn wake_main(app: &tauri::AppHandle) {
 
 /// results 窓を起こす(#646 PR2)。snapshot 更新・config 変更を反映させる wake。呼び出しは
 /// main の update() 内 2 箇所: snapshot 差分検知時（edge-triggered・変化フレームのみ）
-/// と `drive_results_window`（可視時・毎フレーム・level-triggered）。hidden 中の results は
+/// と `drive_results_window`（可視時・毎フレーム・level-triggered。**削ると壊れる理由は
+/// 呼び出し点のコメントを参照**——決定 5・#697）。hidden 中の results は
 /// 描かれないため事前 wake は無意味(plan-review で冗長と判定)。クリック逆流の results→main は
 /// `wake_main` を使う。
 ///

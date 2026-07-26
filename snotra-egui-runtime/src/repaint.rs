@@ -140,6 +140,12 @@ impl RepaintScheduler {
                             let Some(_) = pending.take() else {
                                 continue;
                             };
+                            // hidden 中の抑止点の切り分け計器（#697）。受信側は runtime.rs の
+                            // RedrawRequested arm。ここが出て受信側が出なければ、落とした
+                            // のは proxy 以降（tao/OS 層）である。
+                            if std::env::var_os("SNOTRA_EGUI_WAKE_TRACE").is_some() {
+                                eprintln!("SNOTRA_EGUI_WAKE_SEND window_id={window_id:?}");
+                            }
                             if proxy
                                 .send_event(Message::Window(
                                     window_id,

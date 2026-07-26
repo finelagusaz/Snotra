@@ -14,7 +14,7 @@ issue 項目 1（`fill_mesh` 最適化）は、SU6.5 の G3(b) が「`raster_ms`
 
 ### 独立導出が、grep で到達できない参照を拾った
 
-`/plan-review` Step 2b（plan/research を読ませない独立再導出）が `wake_results`（`view.rs:850`）を検出した。これは「repaint を要求する」概念を `wake_*` という**別名**で書いた箇所であり、`grep request_repaint` では原理的に到達しない。research.md の「アイドルでは発火しない」という前提はこれで訂正され、測定条件が 2 つに分かれた。
+`/plan-review`「Step 2b」（plan/research を読ませない独立再導出）が `wake_results`（`view.rs:850`）を検出した。これは「repaint を要求する」概念を `wake_*` という**別名**で書いた箇所であり、`grep request_repaint` では原理的に到達しない。research.md の「アイドルでは発火しない」という前提はこれで訂正され、測定条件が 2 つに分かれた。
 
 ### 観測条件が汚染された run から、プロトコル非依存の指標で結論を出した
 

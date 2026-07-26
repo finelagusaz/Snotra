@@ -141,6 +141,16 @@ pub struct SearchState {
     folder_filter: String,
     folder_gen: u64,
     tool: Option<ToolFrame>,
+    /// `results` が総入れ替えされるたびに進む世代（#699。旧 `view.rs` の
+    /// `snapshot_generation` をここへ移した）。
+    ///
+    /// **この型の中で `self.results` へ代入・`clear` するメソッドは、必ずここを進める。**
+    /// 全称の射程はこの型の内側に限る——外から `results` を差し替える経路は無い
+    /// （フィールドは private で、`set_results` / `enter_tool` / `on_escape` / `reset` だけが触る）。
+    ///
+    /// 進めるのは**行の差し替え**だけであって選択の移動ではない。`move_selection` /
+    /// `reset_selection` で進めると、消費側（#699 のクリック照合）が全クリックを捨てる。
+    rows_generation: u64,
 }
 
 impl SearchState {
@@ -153,7 +163,15 @@ impl SearchState {
             folder_filter: String::new(),
             folder_gen: 0,
             tool: None,
+            rows_generation: 0,
         }
+    }
+
+    /// `results` の世代（#699 / #632 Fix 3）。**行が差し替わったかの唯一の判定材料**である
+    /// ——`selected` の値だけでは「打鍵で結果が丸ごと変わったが selected は偶然 0 のまま」を
+    /// 検出できない。`RowsSnapshot.generation` と results 窓からのクリック照合が消費する。
+    pub fn rows_generation(&self) -> u64 {
+        self.rows_generation
     }
 
     pub fn query(&self) -> &str {
@@ -168,10 +186,11 @@ impl SearchState {
         &self.results
     }
 
-    /// 結果を差し替える。選択は範囲内へクランプ（空なら 0）。
+    /// 結果を差し替える。選択は範囲内へクランプ（空なら 0）。世代を進める（#699）。
     pub fn set_results(&mut self, results: Vec<SearchResult>) {
         self.results = results;
         self.selected = clamp_selected(self.results.len(), self.selected);
+        self.rows_generation += 1;
     }
 
     pub fn selected(&self) -> usize {
@@ -287,6 +306,7 @@ impl SearchState {
         });
         self.results = rows;
         self.selected = 0;
+        self.rows_generation += 1; // ツール行への総入れ替え（#699）
     }
 
     /// driver（`shift_activate` / `execute_tool_selected`）が読む（#532 SU3.5 Task 3）。
@@ -311,6 +331,7 @@ impl SearchState {
             self.results = t.restore_results;
             self.selected = clamp_selected(self.results.len(), t.restore_selected);
             self.folder_filter = t.saved_folder_filter;
+            self.rows_generation += 1; // 退避行への総入れ替え（#699）
             return EscapeOutcome::RestoredFromTool;
         }
         if let Some(f) = self.folder.take() {
@@ -319,8 +340,10 @@ impl SearchState {
             self.selected = clamp_selected(self.results.len(), f.restore_selected);
             self.folder_filter.clear();
             self.folder_gen += 1; // 離脱経路でも失効
+            self.rows_generation += 1; // 退避行への総入れ替え（#699）
             EscapeOutcome::RestoredSearch
         } else {
+            // Hide 経路は results を触らないので世代も進めない
             EscapeOutcome::Hide
         }
     }
@@ -335,6 +358,7 @@ impl SearchState {
         self.folder_filter.clear();
         self.folder_gen += 1;
         self.tool = None;
+        self.rows_generation += 1; // 空行への総入れ替え（#699）——hide を跨いだ stale クリックはこれで失効する
     }
 }
 
@@ -476,6 +500,94 @@ mod tests {
 
     fn res(name: &str) -> SearchResult {
         SearchResult { name: name.into(), path: format!("C:/{name}.exe"), is_folder: false, is_error: false }
+    }
+
+    // ---- rows_generation（#699）----
+    //
+    // **両方向を固定する。** 進まないと stale クリックが誤った行を起動し、進めすぎると
+    // 正当なクリックが全部落ちる。「行の差し替えで進む」「選択の移動では進まない」の
+    // 対で初めて意味を持つ。
+
+    #[test]
+    fn rows_generation_advances_on_set_results() {
+        let mut s = SearchState::new();
+        let g0 = s.rows_generation();
+        s.set_results(vec![res("a")]);
+        assert_eq!(s.rows_generation(), g0 + 1);
+    }
+
+    /// #699 で当初の計画が落としていた経路（issue 本文も挙げていない）。
+    #[test]
+    fn rows_generation_advances_on_enter_tool() {
+        let mut s = SearchState::new();
+        s.set_results(vec![res("a"), res("b")]);
+        let g = s.rows_generation();
+        s.enter_tool("C:/t.txt".into(), false, make_tools());
+        assert_eq!(s.rows_generation(), g + 1, "ツール行への総入れ替えで進むこと");
+    }
+
+    /// `on_escape` は **2 分岐とも** 行を差し替える。片方だけ直すと穴が残る。
+    #[test]
+    fn rows_generation_advances_on_escape_from_tool() {
+        let mut s = SearchState::new();
+        s.set_results(vec![res("a"), res("b"), res("c")]);
+        s.enter_tool("C:/t.txt".into(), false, make_tools());
+        let g = s.rows_generation();
+        assert_eq!(s.on_escape(), EscapeOutcome::RestoredFromTool);
+        assert_eq!(s.rows_generation(), g + 1, "退避行への復帰で進むこと");
+    }
+
+    #[test]
+    fn rows_generation_advances_on_escape_from_folder() {
+        let mut s = SearchState::new();
+        s.set_results(vec![res("a"), res("b")]);
+        s.enter_folder("C:/dir".into()); // 退避のみ（results は差し替えない）
+        s.set_results(vec![res("in-dir")]); // folder の列挙結果
+        let g = s.rows_generation();
+        assert_eq!(s.on_escape(), EscapeOutcome::RestoredSearch);
+        assert_eq!(s.rows_generation(), g + 1, "展開前の行への復帰で進むこと");
+    }
+
+    /// `enter_folder` は `results` を frame へ退避するだけで差し替えない——**進めないのが正しい**。
+    /// 進めると、フォルダ展開の瞬間に飛んでいた正当なクリックまで落ちる。
+    #[test]
+    fn rows_generation_is_stable_on_enter_folder() {
+        let mut s = SearchState::new();
+        s.set_results(vec![res("a"), res("b")]);
+        let g = s.rows_generation();
+        s.enter_folder("C:/dir".into());
+        assert_eq!(s.rows_generation(), g);
+    }
+
+    /// top-level の Escape（Hide）は `results` を触らない。
+    #[test]
+    fn rows_generation_is_stable_on_escape_to_hide() {
+        let mut s = SearchState::new();
+        s.set_results(vec![res("a")]);
+        let g = s.rows_generation();
+        assert_eq!(s.on_escape(), EscapeOutcome::Hide);
+        assert_eq!(s.rows_generation(), g);
+    }
+
+    #[test]
+    fn rows_generation_advances_on_reset() {
+        let mut s = SearchState::new();
+        s.set_results(vec![res("a")]);
+        let g = s.rows_generation();
+        s.reset();
+        assert_eq!(s.rows_generation(), g + 1, "reset は hide を跨いだ stale クリックを失効させる");
+    }
+
+    /// **進めすぎの側**。選択の移動は行の差し替えではない——ここで進めると #699 の
+    /// 照合が正当なクリックまで捨てる。
+    #[test]
+    fn rows_generation_is_stable_on_selection_change() {
+        let mut s = SearchState::new();
+        s.set_results(vec![res("a"), res("b"), res("c")]);
+        let g = s.rows_generation();
+        s.move_selection(2);
+        s.reset_selection();
+        assert_eq!(s.rows_generation(), g, "選択の移動では進まないこと");
     }
 
     #[test]

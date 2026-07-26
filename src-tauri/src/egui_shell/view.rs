@@ -272,11 +272,6 @@ pub(crate) struct SearchWindowView {
     /// 後に stale instant 行（path=description/display）が activate() へ流れて文字列をパスとして
     /// 起動・履歴汚染するのを防ぐ（/code-review #637 finding 0）。run_search が行と一体で更新する。
     instant_rows_query: Option<String>,
-    /// 結果集合が総入れ替えされるたびに加算する世代番号（#632 reviewer Important 3 の後継・
-    /// Fix 3）。`run_search_with`/`clear_search`/`start_launch` の「旧 scroll gate reset」が
-    /// 居た地点で加算し、`RowsSnapshot.generation` に載せて ResultsView 側の scroll gate
-    /// リセットを駆動する（selected の値だけでは総入れ替えを検出できないため）。
-    snapshot_generation: u64,
     /// in-flight 起動（single-flight の実体: Some の間は新規起動 dispatch を拒否）。
     launching: Option<LaunchInFlight>,
     /// #633: index build 完了世代の last-seen（AppState.index_generation と比較・SU6 spec 決定 3）。
@@ -315,7 +310,6 @@ impl SearchWindowView {
             folder_cache: None,
             folder_error: None,
             instant_rows_query: None,
-            snapshot_generation: 0,
             launching: None,
             last_seen_index_generation: 0,
             notice: crate::egui_shell::NoticeSlot::default(),
@@ -386,7 +380,6 @@ impl SearchWindowView {
         self.launching = Some(LaunchInFlight { started: Instant::now(), rx, tag });
         self.state.set_results(Vec::new());
         self.instant_rows_query = None; // 行が消えるため来歴も一体でクリア（finding 0 の規律）
-        self.snapshot_generation += 1; // 結果総入れ替え（#632 reviewer Important 3 の後継・Fix 3）
         let app = self.app_handle.clone();
         let egui_ctx = ctx.clone();
         std::thread::spawn(move || {
@@ -532,7 +525,6 @@ impl SearchWindowView {
         self.state.set_results(Vec::new());
         self.search_debounce.cancel();
         self.instant_rows_query = None;
-        self.snapshot_generation += 1; // 結果総入れ替え（#632 reviewer Important 3 の後継・Fix 3）
     }
 
     /// slash コマンドを実行する（§15.3 即実行・#532 SU3 M3）。SolidJS handleCommandQueryInput と
@@ -834,7 +826,22 @@ impl SearchWindowView {
         // 位置: main の外形直下 + gap(物理座標。gap は論理 px を scale で換算)。無ガードの
         // 単一点(position_results_below_main・mod.rs)へ委譲——Moved リスナーと共用する
         // ため、デルタガードはヘルパー側に持たない(#646 PR2 決定 10)。
-        crate::egui_shell::position_results_below_main(&self.app_handle);
+        let top_y = crate::egui_shell::position_results_below_main(&self.app_handle);
+        // 作業領域の下端でクランプする（#675）。あふれた行は既存の ScrollArea が拾う。
+        //
+        // **可視判定（上の `results_should_show`）には素の `res_h` を渡したままにする。**
+        // クランプには上端が要り、上端は直上の位置決めが決めるが、位置決めは可視判定の
+        // **後**にある（不可視なら早期 return する）。判定にクランプ後の値を使おうとすると
+        // 位置決めを判定より前へ動かすことになり、不可視フレームでも `SetWindowPos` を
+        // 撃つ——#646 PR2 決定 10 の設計を変えてしまう。クランプは `set_size` に渡す値だけに
+        // 効かせ、「0 件 ⇔ 高さ 0 ⇔ hide」の契約を判定側で無傷に保つ。
+        let res_h = crate::egui_shell::layout::clamp_results_height(
+            res_h,
+            top_y.and_then(|y| crate::egui_shell::results_available_height(&self.app_handle, y)),
+            metrics.row_height,
+        );
+        // デルタガードの照合対象は `set_size` の実引数と同じでなければならない
+        // （素の値を覚えると、毎フレーム撃つか必要な再サイズを撃たないかのどちらかになる）。
         if (res_h - self.last_results_height).abs() > 0.5
             || (width - self.last_results_width).abs() > 0.5
         {
@@ -898,10 +905,10 @@ impl SearchWindowView {
     }
 
     fn run_search_with(&mut self, prefix: &str) {
-        // 結果が総入れ替えされうる箇所（#632 reviewer Important 3 の後継・Fix 3）。selected の
-        // 値だけでは「打鍵で結果が丸ごと変わったが selected は偶然 0 のまま」を検出できないため、
-        // 世代番号を進めて RowsSnapshot 経由で ResultsView 側の scroll gate をリセットさせる。
-        self.snapshot_generation += 1;
+        // 世代の加算はここには無い（#699）——`SearchState::set_results` が持つ。この関数は
+        // folder cache 未着などで `set_results` を呼ばずに返る経路があり、ここで無条件に
+        // 進めると「行は変わっていないのに世代だけ進む」空撃ちになる。世代の意味を
+        // 「行が差し替わった」と一致させるため、加算は差し替えと同じ場所に置く。
         // 来歴は行と一体で更新する（Instant 分岐だけが Some を立て直す・finding 0）。
         self.instant_rows_query = None;
         match self.state.view_kind() {
@@ -1748,11 +1755,11 @@ impl EguiView for SearchWindowView {
             let settled = !self.search_debounce.is_armed();
             {
                 let mut guard = shared.snapshot.lock().unwrap();
-                if !guard.matches(rows, selected, self.snapshot_generation, settled) {
+                if !guard.matches(rows, selected, self.state.rows_generation(), settled) {
                     *guard = crate::egui_shell::RowsSnapshot {
                         rows: rows.to_vec(),
                         selected,
-                        generation: self.snapshot_generation,
+                        generation: self.state.rows_generation(),
                         settled,
                     };
                     drop(guard);
@@ -1760,9 +1767,19 @@ impl EguiView for SearchWindowView {
                 }
             }
             // クリック逆流の消費(決定 5): 起動ロジックは main の一箇所に保つ。
-            let clicked = shared.clicked.lock().unwrap().take();
-            if let Some(i) = clicked {
-                self.activate_or_execute(i, &ctx);
+            // **この消費が snapshot publish の後にある順序は不変条件である**（#699）。
+            // 照合に使う世代は、そのフレームで行を差し替えうる全ハンドラ——Escape・
+            // index 世代検知・folder drain・launch 完了——より**後**の値でなければ、
+            // 「積んだ後・消費する前に総入れ替えが起きた」窓を塞げない。
+            match shared.take_clicked_for(self.state.rows_generation()) {
+                crate::egui_shell::ClickTake::Current(i) => self.activate_or_execute(i, &ctx),
+                // 破棄は目に見えず手で再現もできないので観測点を残す。**診断用であって
+                // 不変条件の担保ではない**（担保は search_state / results_view のユニットテスト）。
+                crate::egui_shell::ClickTake::Stale { stamped } => crate::trace_main(
+                    "egui_results:click_stale",
+                    serde_json::json!({ "stamped": stamped, "current": self.state.rows_generation() }),
+                ),
+                crate::egui_shell::ClickTake::None => {}
             }
         }
 

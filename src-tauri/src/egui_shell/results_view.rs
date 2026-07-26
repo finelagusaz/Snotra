@@ -68,8 +68,53 @@ impl RowsSnapshot {
 #[derive(Default)]
 pub(crate) struct ResultsShared {
     pub snapshot: std::sync::Mutex<RowsSnapshot>,
-    /// クリックされた行 index（last-wins）。main の update() が take して起動処理する。
-    pub clicked: std::sync::Mutex<Option<usize>>,
+    /// クリックされた行（last-wins）。**世代を同梱する**（#699）——裸の index は、積んだ
+    /// フレームと消費するフレームの間に行集合が総入れ替えされると**別の行を指す**。
+    /// `activate` の `.get(index)` は境界チェックであって行の同一性チェックではないので、
+    /// index が生きていれば別の行が起動してしまう。
+    ///
+    /// **取り出しは `take_clicked_for` だけを使う**（フィールドが private なので、世代照合を
+    /// 迂回して index を得る経路が型から消えている）。`docs/development-principles.md`
+    /// 「構造的設計原則と強制の階梯」の 2（不変条件は単一の通過点に閉じ込める）。
+    ///
+    /// **reset-on-show 用の専用クリアは置かない**——`SearchState::reset` が世代を進めるため、
+    /// hide を跨いだ stale クリックは同じ照合で失効する。専用クリアを足すと「クリアする経路」と
+    /// 「世代で弾く経路」の 2 本立てになり、どちらが正本か読めなくなる。
+    ///
+    /// `snapshot` は世代を運び `clicked` は運ばない、という非対称は**見落としであった**
+    /// （#699 備考が「意図的か見落としかコードから読めない」と問うていた点の結論）。
+    clicked: std::sync::Mutex<Option<(u64, usize)>>,
+}
+
+/// `take_clicked_for` の結果（#699）。`Option<usize>` にしないのは、**「クリックが無かった」と
+/// 「世代不一致で捨てた」を呼び出し側が区別できるようにする**ため——破棄は目に見えない経路で、
+/// 手で再現もできないので、trace を出せる形にしておく。
+pub(crate) enum ClickTake {
+    /// 世代が一致した。起動してよい。
+    Current(usize),
+    /// 世代が食い違った。**破棄した**（スロットは空になっている）。
+    Stale { stamped: u64 },
+    /// クリックは積まれていなかった。
+    None,
+}
+
+impl ResultsShared {
+    /// results 側が積んだクリックを、**世代が一致するときだけ**取り出す（#699）。
+    ///
+    /// 不一致でも `take` する——残すと次フレーム以降に同じ stale クリックが再評価される。
+    pub(crate) fn take_clicked_for(&self, generation: u64) -> ClickTake {
+        match self.clicked.lock().unwrap().take() {
+            Some((g, i)) if g == generation => ClickTake::Current(i),
+            Some((g, _)) => ClickTake::Stale { stamped: g },
+            None => ClickTake::None,
+        }
+    }
+
+    /// results 側からクリックを積む。`generation` は**そのフレームで実際に描いた**
+    /// `RowsSnapshot.generation` を渡すこと（別の値を渡すと照合が意味を失う）。
+    pub(crate) fn push_clicked(&self, generation: u64, index: usize) {
+        *self.clicked.lock().unwrap() = Some((generation, index));
+    }
 }
 
 pub(crate) struct ResultsView {
@@ -430,8 +475,8 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         if icon_arrived {
             icon_ctx.request_repaint();
         }
-        // #632 reviewer Important 3 の後継（Fix 3）: 結果集合が総入れ替えされた（main が
-        // snapshot_generation を進めた）フレームは、selected の値が変わらなくても scroll gate を
+        // #632 reviewer Important 3 の後継（Fix 3）: 結果集合が総入れ替えされた
+        // （`SearchState::rows_generation` が進んだ）フレームは、selected の値が変わらなくても scroll gate を
         // 強制リセットする——selected のみの比較では「打鍵で結果が丸ごと変わったが selected は
         // 偶然 0 のまま」を検出できず、選択行への scroll_to_me が発火しないままになるため。
         if snapshot.generation != self.last_generation {
@@ -485,7 +530,9 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         // クリック逆流(決定 5): 共有スロットへ積み、main を起こして起動処理させる。
         // ToastAction と同じ遅延 dispatch 型——起動ロジックは main の一箇所に保つ。
         if let Some(i) = clicked {
-            *shared.clicked.lock().unwrap() = Some(i);
+            // 世代は**このフレームで実際に描いた** snapshot のものを添える（#699）。
+            // main が同フレームで行を差し替えていれば、消費側が照合で破棄する。
+            shared.push_clicked(snapshot.generation, i);
             crate::egui_shell::wake_main(&self.app_handle);
         }
     }
@@ -494,6 +541,48 @@ impl snotra_egui_runtime::EguiView for ResultsView {
 #[cfg(test)]
 mod tests {
     use super::truncate_middle;
+    use super::{ClickTake, ResultsShared};
+
+    // ---- クリック逆流の世代照合（#699）----
+    //
+    // 実機の競合窓（results がクリックを積んでから main が消費するまでに行が総入れ替え
+    // される）は**手で再現できない**。純粋核をここで固定するのが唯一の担保である。
+
+    #[test]
+    fn clicked_survives_matching_generation() {
+        let shared = ResultsShared::default();
+        shared.push_clicked(7, 2);
+        assert!(matches!(shared.take_clicked_for(7), ClickTake::Current(2)));
+    }
+
+    /// 世代が食い違えば破棄する。**かつスロットが空く**——残すと次フレーム以降に
+    /// 同じ stale クリックが再評価される。
+    #[test]
+    fn clicked_is_discarded_on_generation_mismatch() {
+        let shared = ResultsShared::default();
+        shared.push_clicked(7, 2);
+        assert!(matches!(shared.take_clicked_for(8), ClickTake::Stale { stamped: 7 }));
+        assert!(
+            matches!(shared.take_clicked_for(7), ClickTake::None),
+            "破棄後は空であること（元の世代で引いても戻らない）"
+        );
+    }
+
+    /// 積まれていなければ `None`。`Stale` と区別できることが trace の前提。
+    #[test]
+    fn clicked_is_none_when_never_pushed() {
+        let shared = ResultsShared::default();
+        assert!(matches!(shared.take_clicked_for(0), ClickTake::None));
+    }
+
+    /// last-wins（既存契約の回帰）。世代同梱で壊れていないこと。
+    #[test]
+    fn clicked_is_last_wins() {
+        let shared = ResultsShared::default();
+        shared.push_clicked(3, 0);
+        shared.push_clicked(3, 5);
+        assert!(matches!(shared.take_clicked_for(3), ClickTake::Current(5)));
+    }
 
     #[test]
     fn truncate_middle_shortens_long_path() {

@@ -127,6 +127,15 @@ impl ResultsWindow {
         let _ = self.window.set_size(tauri::LogicalSize::new(width, height));
     }
 
+    /// 物理 ↔ 論理の換算係数（#675）。
+    ///
+    /// **`set_size` が渡す `LogicalSize` を tao が物理へ戻すときと同じ factor でなければ
+    /// ならない**——tao の `set_inner_size` は**この窓の** `scale_factor()` で `to_physical`
+    /// する。main の scale を流用すると混在 DPI 環境で高さが食い違う。
+    pub(crate) fn scale_factor(&self) -> Option<f64> {
+        self.window.scale_factor().ok()
+    }
+
     /// 物理座標で位置を設定する（`set_size` と同じ理由で tao 経由）。
     pub(crate) fn set_position(&self, x: i32, y: i32) {
         let _ = self.window.set_position(tauri::PhysicalPosition::new(x, y));

@@ -11,11 +11,21 @@ Tauri管理のネイティブWindowへeguiをsoftbuffer（CPUラスタ）で描�
 - `raster.rs`: egui Meshを CPU 側でラスタライズする純関数群（`renderer.rs`が消費）
 - `renderer.rs`: softbuffer Surface初期化・`raster.rs`によるCPUラスタ・present
 - `monitor.rs`: 窓が載っているモニターのリフレッシュレート取得（現在モード→OS既定→Noneのカスケード・#737。`runtime.rs`が消費）
-- `repaint.rs`: 即時／遅延repaintをTauriイベントループへ配送。**配送には下限間隔がある**（フレーム上限＝モニターのリフレッシュレート・取得失敗時60Hz・contract-design spec 契約②・#737）。窓を外部（別スレッド・別窓・Tauriイベントリスナー）から起こす公開ハンドル`WindowWaker`（`EguiRuntime::attach`の戻り値）もここが所有する
+- `repaint.rs`: 即時／遅延repaintをTauriイベントループへ配送（配送規律は「不変条件」を参照）。窓を外部（別スレッド・別窓・Tauriイベントリスナー）から起こす公開ハンドル`WindowWaker`（`EguiRuntime::attach`の戻り値）もここが所有する
 - `runtime.rs`: Tauri wry pluginとWindowごとの状態管理（visibleガード・描画失敗リトライを含む）
 - `surface.rs`: `is_renderable_extent`（0×0 Surfaceの描画/configureを防ぐガード。renderer.rsが消費）
 
 ## 不変条件
+
+### 配送の規律（フレームスケジューリング契約）
+
+この crate が消費側（`src-tauri/egui_shell/`）へ与える保証は次の 2 つで、**消費側の規範（armed の間は毎フレーム再要求する）はこの 2 つから導かれる**——`src-tauri/CLAUDE.md`「イベント駆動 wake の不変条件」。導出の経緯・却下案・errata は `docs/superpowers/specs/2026-07-26-frame-scheduling-contract-design.md`（**日付付き設計書ゆえ歴史記録であり、規範の正本はここ**）。
+
+- **配送には下限間隔がある**（フレーム上限＝窓が載っているモニターのリフレッシュレート・取得失敗時 60Hz・#737）。gate は要求 deadline を**早めも取りこぼしもしない**（遅らせるだけ）。**`min_interval` の変更は次の dispatch から完全反映される**——リフレッシュレートが下がった直後の 1 回だけ旧値の下限で配送されうる（自己回復するため是正しない）
+- **予約は「フレームが来ること」を約束しない**（#711）。worker は最も早い deadline だけを**単一スロット**で保持し、dispatch 時に `pending.take()` で**予約全体を空にする**——より早い要求（入力・外部 wake・アニメーション）が 1 つ割り込むと、両者は 1 回の dispatch へ畳まれ、**後の deadline は黙って消える**。`request_repaint_after(d)` を「d 後に 1 枚は来る」と要約してはならない
+- **要求しても永久に描かれない窓がある**: 活性化時の softbuffer surface 初期化に失敗した窓は `active` へ入らず、`attach()` が既に返した `WindowWaker` は恒久 no-op になる（`Destroyed`・proxy 切断・hidden も同様に「要求は消えないが何も起きない」経路）
+
+### 一般
 
 - UI状態は`Send`を要求し、無条件の`unsafe impl Send/Sync`を追加しない
 - 0×0のSurfaceをconfigureまたは描画しない

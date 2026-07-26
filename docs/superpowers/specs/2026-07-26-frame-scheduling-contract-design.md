@@ -27,6 +27,8 @@ worker（`repaint.rs`）は窓ごとに 1 スレッドで、`pending: Option<Ins
 
 expose・リサイズ等で tao が直接 `RedrawRequested` を配送する。頻度は低く、描き直しの必要が実在するため、制御の対象にしない。
 
+- **errata（2026-07-26・#737 独立導出）**: 系統 B には第 3 の経路がある——IME preedit 更新時の `InvalidateRect`（`windows_ime.rs`）→ `WM_PAINT` → OS 由来 `RedrawRequested`。IME 打鍵レートに有界で、上限（契約②）の対象外として受容する。
+
 **現状の帰結**: 系統 A に流量制御が無い。egui はポインタ移動中 `Some(Duration::ZERO)` を返し続け（egui 0.35 `input_state/mod.rs:652`・設計として正しい）、worker は言われるままに配送する → 448fps / 1 コア 84.7%（#737 実測）。
 
 ## 2. 消費側の時限処理 — 現在 3 つの流儀が混在

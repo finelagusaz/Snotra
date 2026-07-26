@@ -10,7 +10,8 @@ Tauri管理のネイティブWindowへeguiをsoftbuffer（CPUラスタ）で描�
 - `windows_ime.rs`: IMM32 preedit取得、候補ウィンドウ位置、subclassの所有/破棄
 - `raster.rs`: egui Meshを CPU 側でラスタライズする純関数群（`renderer.rs`が消費）
 - `renderer.rs`: softbuffer Surface初期化・`raster.rs`によるCPUラスタ・present
-- `repaint.rs`: 即時／遅延repaintをTauriイベントループへ配送。窓を外部（別スレッド・別窓・Tauriイベントリスナー）から起こす公開ハンドル`WindowWaker`（`EguiRuntime::attach`の戻り値）もここが所有する
+- `monitor.rs`: 窓が載っているモニターのリフレッシュレート取得（現在モード→OS既定→Noneのカスケード・#737。`runtime.rs`が消費）
+- `repaint.rs`: 即時／遅延repaintをTauriイベントループへ配送。**配送には下限間隔がある**（フレーム上限＝モニターのリフレッシュレート・取得失敗時60Hz・contract-design spec 契約②・#737）。窓を外部（別スレッド・別窓・Tauriイベントリスナー）から起こす公開ハンドル`WindowWaker`（`EguiRuntime::attach`の戻り値）もここが所有する
 - `runtime.rs`: Tauri wry pluginとWindowごとの状態管理（visibleガード・描画失敗リトライを含む）
 - `surface.rs`: `is_renderable_extent`（0×0 Surfaceの描画/configureを防ぐガード。renderer.rsが消費）
 

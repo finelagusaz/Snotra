@@ -71,7 +71,9 @@ pub(crate) fn blur_grace_action(
 /// blur（focus 喪失）猶予明けに hide 要求を出すべきかの純粋判定。焦点が戻っておらず、
 /// 100ms 猶予が明け、auto_hide が有効で、設定サイドカーが非起動のときだけ hide する。
 /// 猶予タイマの発火・repaint 予約という状態は view 側（update）に残す。
-pub(crate) fn blur_should_hide(
+/// **このモジュールの外へ出さない**（#711）——消費点は `blur_grace_action` に一本化してあり、
+/// 判定と再要求を別々に呼ぶ 2 経路が生まれるのを型で塞ぐ。
+fn blur_should_hide(
     focused: bool,
     grace_elapsed: bool,
     auto_hide: bool,

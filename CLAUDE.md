@@ -93,4 +93,4 @@
 | `/implement`         | コード変更を伴うタスクの実装（調査からコミットまで） |
 | `/deps-update`       | cargo/npm 依存の一括更新と PR 作成・CI 確認（マージは手動） |
 
-サブエージェント: `code-reviewer`（`.claude/agents/`）— 実装後・コミット前の3フェーズレビュー（実装検証 / 計画判断・SPEC.md 同期 / パフォーマンス）。`/implement` Step 5b が自動で起動する。
+サブエージェント: `code-reviewer`（`.claude/agents/`）— 実装後・コミット前の3フェーズレビュー（実装検証 / 計画判断・SPEC.md 同期 / パフォーマンス）。`/implement`「5b. code-reviewer エージェント」が自動で起動する。

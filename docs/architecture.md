@@ -79,7 +79,7 @@ Tauri wry plugin で Tao イベントを受け、egui 入力・Win32 IME composi
 - 検索ウィンドウ（`main`）と結果ウィンドウ（`results`）は起動時のセットアップで作成し `visible: false`、ホットキーで表示/非表示を切替（#646 PR2 で 2 窓構成へ）
 - 検索バーは `main`、検索結果は `results`（`egui_shell/view.rs` / `egui_shell/results_view.rs`）に分離して描画する。`results` は `focusable(false)` でフォーカスを取らない従属窓
 - 結果の表示/非表示は `search_state.rs` の純粋核（view 種別 = tool>folder>results の優先度射影 + indexing 表示ゲート）で制御
-- `main` の高さは `bar_height`（+ toast 表示時のみ加算）だけで、結果表示による伸縮はしない。`results` の高さは実件数フィット（`min(件数, max_results) × row_height + 8`）を `main` が算出し `set_size` する（view 単独 size writer・旧 `compute_window_height` は撤去済み）。show 時に bar_height（`font_size + bar_padding`・既定 43px）へリセットする
+- `main` の高さは `bar_height`（+ toast 表示時のみ加算）だけで、結果表示による伸縮はしない。`results` の高さは実件数フィット（`min(件数, max_results) × row_height + 8`）を `main` のフレームが算出し、`egui_shell/window_coordinator.rs` の driver が `ResultsWindow::set_size` で適用する（両窓とも writer は `main` のフレーム 1 本・旧 `compute_window_height` は撤去済み）。show 時に bar_height（`font_size + bar_padding`・既定 43px）へリセットする
 - `results` の位置・可視性は `main` の毎フレーム更新（`drive_results_window`）が駆動する（`main` 直下 + `window_gap`・既定 4px）。両窓に DWM 角丸を適用（Windows 11 best-effort・Win10 は角丸なし）
 - マルチモニター: モニター作業領域原点からの相対座標（物理ピクセル）で位置を保存。ホットキー押下時にターゲットモニターを決定し絶対座標に変換
 
@@ -169,7 +169,7 @@ sequenceDiagram
 
     SE-->>Eng: Vec<SearchResult>
     Eng-->>View: Vec<SearchResult>
-    View->>View: results_window_height 算出 → results の位置/サイズ/表示を駆動（drive_results_window）
+    View->>View: results の位置/サイズ/表示を駆動（window_coordinator::drive_results_window を呼ぶ）
     View->>Results: RowsSnapshot 発行（Arc<Mutex>）+ request_repaint
     Results->>Results: スナップショット描画 + icon worker spawn（load_icon_pngs → ColorImage → load_texture、#646 PR2 で view.rs から移管）
 

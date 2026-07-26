@@ -189,37 +189,38 @@ impl<T: UserEvent> Plugin<T> for RuntimePlugin<T> {
                     self.active.remove(&runtime_id);
                     return false;
                 }
+                use tauri_runtime_wry::tao::event::WindowEvent as TaoWindowEvent;
+                // 契約②（#737）: 配送の下限間隔の backstop。窓が静止したまま OS 設定で
+                // リフレッシュレートが変わる・モニターが抜き差しされる経路は Moved でも
+                // ScaleFactorChanged でも捕まらないため、show のたびに必ず来る Focused(true)
+                // で再取得する（頻度は低い）。**全窓**に適用するのは、従属窓（results）が
+                // focusable(false) + SW_SHOWNOACTIVATE で Focused を一度も受けないため
+                // ——両窓は設計上同じモニターに載る（results は main 直下へ追従・/symmetric-check #737）。
+                if matches!(event, TaoWindowEvent::Focused(true)) {
+                    for active in self.active.values_mut() {
+                        active.last_monitor =
+                            refresh_min_interval(&active.window.window, &active.scheduler);
+                    }
+                }
                 if let Some(active) = self.active.get_mut(&runtime_id) {
-                    // 契約②（#737）: 配送の下限間隔の追従。Moved/ScaleFactorChanged は
-                    // モニターが変わったときだけ再取得（Moved はドラッグ中に連発するため、
-                    // 安価な window_monitor の比較を挟む）。Focused(true) は無条件で再取得
-                    // ——窓が静止したまま OS 設定でリフレッシュレートが変わる・モニターが
-                    // 抜き差しされる経路は Moved でも ScaleFactorChanged でも捕まらないため、
-                    // show のたびに必ず来る Focused(true) を backstop にする（頻度は低い）。
-                    use tauri_runtime_wry::tao::event::WindowEvent as TaoWindowEvent;
-                    match event {
-                        TaoWindowEvent::Moved(_)
-                        | TaoWindowEvent::ScaleFactorChanged { .. } => {
-                            let monitor = active
-                                .window
-                                .window
-                                .hwnd()
-                                .ok()
-                                .and_then(|h| crate::monitor::window_monitor(h.0 as isize));
-                            if monitor != active.last_monitor {
-                                active.last_monitor = refresh_min_interval(
-                                    &active.window.window,
-                                    &active.scheduler,
-                                );
-                            }
-                        }
-                        TaoWindowEvent::Focused(true) => {
+                    // 契約②（#737）: モニター跨ぎの追従。Moved はドラッグ中に連発するため、
+                    // 安価な window_monitor の比較を挟み、変わったときだけ再取得する。
+                    if matches!(
+                        event,
+                        TaoWindowEvent::Moved(_) | TaoWindowEvent::ScaleFactorChanged { .. }
+                    ) {
+                        let monitor = active
+                            .window
+                            .window
+                            .hwnd()
+                            .ok()
+                            .and_then(|h| crate::monitor::window_monitor(h.0 as isize));
+                        if monitor != active.last_monitor {
                             active.last_monitor = refresh_min_interval(
                                 &active.window.window,
                                 &active.scheduler,
                             );
                         }
-                        _ => {}
                     }
                     if active.window.on_window_event(event) {
                         active.scheduler.request(std::time::Duration::ZERO);

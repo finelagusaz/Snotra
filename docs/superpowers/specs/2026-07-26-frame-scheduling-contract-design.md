@@ -144,7 +144,9 @@ if let Some(at) = self.unfocus_at {
 
 ## 7. #714 の位置づけ（契約⑤の view 側実装）
 
-runtime には触れない。`results_view.rs` の世代検知（`last_scrolled_selected` リセットと同じ箇所）で、そのフレームに限り `ScrollArea::vertical_scroll_offset(0.0)` を明示指定し、アニメーション経路（`scroll_to_me`）を通さない。↑↓ ナビの `scroll_to_me` は不変。
+runtime には触れない。`results_view.rs` の世代検知（`last_scrolled_selected` リセットと同じ箇所）の真偽で、世代交代フレームの選択行だけ `scroll_to_me_animation(None, ScrollAnimation::none())`（per-call のアニメーション無効化・egui 0.35 で `scroll_to_me` の糖衣元）を使い、瞬時に選択行を可視化する。↑↓ ナビ（世代不変）の `scroll_to_me` は不変。
+
+**errata（2026-07-26・#714 plan-review）**: 本節の初版は「`ScrollArea::vertical_scroll_offset(0.0)` を明示指定」だったが、実装前レビューで却下した——(1) `on_escape` の folder/tool 復帰と index 再構築後の再検索は selected≠0 のまま世代を進めるため、先頭 0 固定は選択行を見失わせる (2) バックグラウンド reindex の再検索は内容同一でも世代を加算し（`set_results` は比較せず無条件）、閲覧中の無操作先頭スナップを作る (3) builder offset は in-flight の `offset_target` を消さない。正しい目標は「先頭」ではなく「選択行が瞬時に見えていること」であり、契約⑤の意図はこの形でも満たされる。
 
 ## 8. 実施順序（測定干渉を踏まえる）
 

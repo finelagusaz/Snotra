@@ -11,12 +11,16 @@
 //! **z-order は本モジュールに無い**——main は `commands/window.rs` が `set_always_on_top` を
 //! 直接叩き、results は `ResultsWindow::set_topmost` が持つ（tao の差分適用が results を消す
 //! ため層が違う・#646 PR2）。どちらも設定サイドカー監視のポーリングスレッドから来るため、
-//! ここを通らない。同じく **main 窓のサイズ適用は `view.rs` にある**——main の高さは
-//! `show_egui_main` の bar_height collapse と `main_window_height` の意図的な 2 導出であり
-//! （ADR-0007 却下 1）、段 1 でそれを巻き戻さない。
+//! ここを通らない。
 //!
-//! listener の**登録**は `mod.rs` に残す（setup 配線の一覧性を `main.rs` の 1 画面に保つ・
-//! spec 決定 8）。ここにあるのは登録先の実体だけである。
+//! **main 窓のサイズは 2 か所に分かれたままである**（ADR-0007 却下 1 の「意図的な 2 導出」を
+//! 段 1 で巻き戻さないため）——show 経路の bar_height collapse は `show_egui_main` の中、
+//! すなわちここにあり、毎フレームの動的高さ（`layout::main_window_height` の適用）は
+//! `view.rs` にある。前者は位置クランプが展開時の高さで効くのを防ぐための折り畳みであり、
+//! 後者は status / toast 行の増減に追従するものなので、目的が違う。
+//!
+//! listener の**登録**は `mod.rs` に残す（setup の順序制約を `main.rs` の 1 画面に残す設計・
+//! `EguiShellHandles` の doc を参照）。ここにあるのは登録先の実体だけである。
 
 use std::sync::atomic::Ordering;
 use std::time::Instant;
@@ -56,9 +60,9 @@ pub(crate) fn read_metrics(app: &tauri::AppHandle) -> layout::Metrics {
 /// are applied and clamped to the target work area. If no saved position exists,
 /// the window is centered on the target monitor.
 ///
-/// **保存側 `save_placement_relative` と同じモジュールに置く**（#749）——位置の save / restore
-/// が 2 モジュールへ割れていると「位置を 1 つの責務へ集めた」が偽になる。呼び出し元は
-/// `show_egui_main` の 1 か所だけである。
+/// Moved here from `main.rs` alongside its counterpart `save_placement_relative` (#749):
+/// keeping save and restore in separate modules would falsify the claim that placement is
+/// owned by one responsibility. `show_egui_main` is the only caller.
 #[cfg(windows)]
 fn position_on_target_monitor(
     app_handle: &tauri::AppHandle,

@@ -1,8 +1,10 @@
 //! egui/softbuffer メインウィンドウの外殻（#532 SU2〜SU7・唯一の UI 経路）。
 //! window 生成（main/results 両窓）・共有状態（`EguiShellState`）・config の 1 フレーム読み・
 //! listener の登録・起動時 updater check。
-//! **窓を操作する実体（show/hide・位置・サイズ・wake）は `window_coordinator` にある**
-//! （#749 段 1）——ここに残るのは登録と生成であって、駆動ではない。
+//! **窓を操作する実体（show/hide・位置・results のサイズ・wake）は `window_coordinator` に
+//! ある**（#749 段 1）——ここに残るのは登録と生成であって、駆動ではない。
+//! main のサイズだけは 2 か所に分かれている（`window_coordinator` の show 経路と `view.rs` の
+//! 毎フレーム。理由は `window_coordinator` の `//!`）。
 mod icon_textures;
 mod lifecycle;
 mod search_state;

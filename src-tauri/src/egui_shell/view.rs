@@ -1087,7 +1087,7 @@ impl EguiView for SearchWindowView {
             //
             // **呼び出し点をここに保つ**（#749）: この reset は同一フレームの
             // `drive_results_window`（update 末尾）より**前**でなければならない。show 経路
-            // （`show_egui_main`）は Win32 メッセージループスレッドから走るため、そちらへ
+            // （`show_egui_main`）は egui のイベントループとは別のスレッドから走りうるため、そちらへ
             // 移すと「同一スレッド・同一フレーム」というこの前提が消える。
             if let Some(results) = self
                 .app_handle

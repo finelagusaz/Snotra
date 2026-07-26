@@ -165,8 +165,9 @@ impl ResultsWindow {
     /// 再 show 後に必ず一度は現行 metrics で `set_size` させるためのもので、**呼ぶのは view の
     /// reset-on-show（`reset_pending` の消費）である**。呼び出し点をそこに保つのは順序の
     /// ためである——同一フレームの `drive_results_window` より**前**でなければ、再 show 後の
-    /// 1 フレーム目が旧 metrics のサイズで描かれる。`show_egui_main`（Win32 メッセージループ
-    /// スレッド）へ移すと、この「同一スレッド・同一フレーム」の前提が消える。
+    /// 1 フレーム目が旧 metrics のサイズで描かれる。`show_egui_main` へ移すと、この
+    /// 「同一スレッド・同一フレーム」の前提が消える——あちらは egui のイベントループとは
+    /// **別のスレッドから走りうる**（hotkey listener・setup・alt 解放待ちの spawn 等・実測 5 経路）。
     pub(crate) fn reset_size_guard(&self) {
         *self.last_size.lock().unwrap() = (0.0, 0.0);
     }

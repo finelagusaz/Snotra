@@ -99,7 +99,8 @@ pub fn clamp_results_height(desired: f64, available: Option<f64>, row_height: f6
     desired.min(avail.max(row_height + 8.0))
 }
 
-/// results 窓の上端の**物理** y（#752 C1）。`mod.rs::position_results_below_main` の算術部。
+/// results 窓の上端の**物理** y（#752 C1）。`window_coordinator::position_results_below_main`
+/// の算術部（#749 で `mod.rs` から移設）。
 ///
 /// **算出と適用（`set_position`）を分けるために出したのではない**——融合は #675 の判断として
 /// 保つ（計算した値を捨てる関数は、次の利用者に写しを書かせる）。ここへ出すのは**式を
@@ -115,7 +116,7 @@ pub fn results_top_y(main_y: i32, main_height_phys: u32, gap_logical: u32, main_
 }
 
 /// results 上端から作業領域の下端までの高さ（**論理 px**・#752 C1）。
-/// `mod.rs::results_available_height` の算術部。
+/// `window_coordinator::results_available_height` の算術部（#749 で `mod.rs` から移設）。
 ///
 /// **`.max(0.0)` の床を落とさない**——main が作業領域の外にあると差が負になる。
 ///

@@ -2,7 +2,7 @@
 //! 1 フレーム分の読み取り値と、その純粋な導出（#673 spec 決定 4）。
 //!
 //! **`[visual]` 全体ではない。`window_gap` は含まない**——results 窓の配置
-//! （`mod.rs::position_results_below_main`）は main の `update()` と `Moved` リスナーの
+//! （`window_coordinator::position_results_below_main`）は main の `update()` と `Moved` リスナーの
 //! 両方から呼ばれ、**フレームに閉じない**読みだからである。ゆえに `window_gap` だけは
 //! 1 フレーム内で別 lock から読まれうる（`window_gap` と `font_size` を同時に変更した
 //! 1 フレームだけ新 gap × 旧行高になりうるが、次フレームで自然に直る cosmetic）。

@@ -141,8 +141,9 @@ impl RepaintScheduler {
                                 continue;
                             };
                             // hidden 中の抑止点の切り分け計器（#697）。受信側は runtime.rs の
-                            // RedrawRequested arm。ここが出て受信側が出なければ、落とした
-                            // のは proxy 以降（tao/OS 層）である。
+                            // RedrawRequested arm。ここが出て受信側が出なければ、落としたのは
+                            // proxy 以降である（wry の user-message 処理は無条件に
+                            // request_redraw() へ渡すため、実体は tao/OS 層）。
                             if std::env::var_os("SNOTRA_EGUI_WAKE_TRACE").is_some() {
                                 eprintln!("SNOTRA_EGUI_WAKE_SEND window_id={window_id:?}");
                             }

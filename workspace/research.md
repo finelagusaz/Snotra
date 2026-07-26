@@ -1,107 +1,163 @@
-# research: #654 egui 経路の視覚 parity 残余（入力欄 text_color + updater 失敗詳細）
+# research — 束C: 文書・コメントの残骸掃除（#674 + #698）
 
-調査日: 2026-07-26 / ブランチ: `fix/654-input-text-color-updater-detail` / HEAD: `f938a0b`
+調査日: 2026-07-26 / ブランチ: `chore/bundle-c-doc-cleanup` / HEAD: `4f5a7ce`
+
+対象 issue: **#674**（SPEC §4.8 の CSS `:hover` / `show_egui_main` の stale 例示 / `hex_color` 重複）、**#698**（`code-reviewer.md` の SolidJS 前提）。
+`#674` にはサイクル前段でコメント項目を 1 つ追加済み（**SPEC §20.3 の WebView2 残骸**・[issuecomment-5081413580](https://github.com/finelagusaz/Snotra/issues/674#issuecomment-5081413580)）。
+
+いずれも「文書とコメントが現状と食い違う」類で、**動作は変えない**。
+
+---
 
 ## issue の要約
 
-egui 経路に残る 2 件の視覚差を「実装する / 受容する」判断とともに解消する。
-
-- **項目 1**: updater の install 失敗トーストが generic 文言固定で、失敗理由が `SNOTRA_TRACE` にしか残らない
-- **項目 2**: 検索入力欄の**テキスト本体**が `.text_color()` 未指定で egui 既定色にフォールバックする
-
-**2026-07-26 のユーザー判断: 両方実装する。**
-
-## 前提の訂正（issue 本文と実測の食い違い）
-
-issue は 2 件とも「WebView2 parity の縮小差」「flip（SU7）前に判断」という枠組みで書かれているが、**SU7 は完了済みで WebView2 経路は存在しない**（`src-tauri/CLAUDE.md` 冒頭）。比較対象が消えたため、両項目は parity ではなく**それ自体の価値**で判断する必要がある。以下は実測で覆った 2 点。
-
-### 訂正 A: 項目 2 は「カスタムテーマで乖離しうる」ではなく**既定設定で既に間違っている**
-
-issue は「ダークテーマ既定では egui 既定色（≈`#E0E0E0`）と config `text_color` 既定が近く、目視で差が出にくい」とする。実測は違う:
-
-| 経路 | 値 |
-|---|---|
-| `TextEdit` の色決定（egui 0.35 `widgets/text_edit/builder.rs:463-466`） | `self.text_color` → `visuals.override_text_color` → `visuals.widgets.inactive.text_color()` |
-| `WidgetVisuals::text_color()`（`style.rs:1318`） | `self.fg_stroke.color` |
-| Dark の `inactive.fg_stroke`（`style.rs:1687`） | `Color32::from_gray(180)` = **`#B4B4B4`** |
-| config 既定 `visual.text_color`（`snotra-core/src/config.rs:1586`） | **`#E0E0E0`** = gray(224) |
-
-テーマ解決も Dark で確定する: `snotra-egui-runtime/src/input.rs` は `RawInput.system_theme` を**一度も埋めない**（grep で 0 件）→ egui `Options::theme()`（`memory/mod.rs:350-356`）が `theme_preference = System` → `system_theme = None` → `fallback_theme = Dark`（`memory/mod.rs:319`）へ落ちる。`view.rs` の `set_visuals` は `panel_fill` / `window_fill` / `extreme_bg_color` / `selection.bg_fill` の 4 つだけを上書きし、`override_text_color` も `widgets.*` も触らない（`view.rs:1210-1215`）。
-
-**ゆえに既定設定のまま、入力欄の文字だけが gray(180) で描かれ、結果行の表示名（`#E0E0E0`）より暗い。** カスタムテーマ限定の理論上の差ではなく、既定で見える不整合である。
-
-### 訂正 B: 項目 1 の詳細はトーストにほぼ収まる（「1 行だから無理」ではない）
-
-トーストは 1 行（高さ = `bar_height`・既定 43px）で、メッセージはボタン群の左端でクリップされる（`view.rs:1617-1629`）。ここから「詳細を足しても見えない」と推測しかけたが、headless egui の galley 実測（一時プローブ・撤去済み）で否定された。
-
-`InstallFailed` では `show_install: false`（`notify.rs:186-190`）ゆえ、描かれるボタンは `[閉じる]` 1 個だけで可用幅が広い。
-
-| 対象 | 実測幅 |
-|---|---|
-| `閉じる` ボタン（`button_size` = 12.006px） | galley 36.0px → 枠込み 52.0px |
-| `Dismiss` ボタン | galley 39.8px → 枠込み 55.8px |
-| 可用メッセージ幅（`window_width` = 600・`閉じる` のみ） | **約 532px** |
-| `更新に失敗しました`（`status_size` = 13.05px） | 117.4px |
-| `更新に失敗しました: io error: アクセスが拒否されました。 (os error 5)` | 409.3px → **全部収まる** |
-| `更新に失敗しました: Network Error: error sending request for url (https://example.com/releases/latest.json)` | 617.0px → **超過**（末尾が切れる） |
-
-可用幅の導出: `cursor_x` は `rect.right() - 8.0` から始まり、ボタン 1 個で `-(52.0 + 8.0)`。`text_clip` の右端は `cursor_x + 8.0`、テキスト開始は `rect.left() + 8.0`。600 − 8 − 60 ≒ 532px。
-
-**結論**: 詳細のために使える幅は約 415px（`status_size` で Latin 60 文字強）。短い失敗理由は全文表示でき、長い URL 付きエラーは末尾が欠ける。**現状のクリップは省略記号を出さない**ため、超過時は文字の途中でぶつ切りになる → 末尾省略（`TextWrapping::truncate_at_width`）へ変えるのが妥当。
-
-## 関連コード
-
-| ファイル | 位置（見出し・シンボル） | 役割 |
+| 項目 | 出所 | 内容 |
 |---|---|---|
-| `src-tauri/src/egui_shell/view.rs` | `EguiView::update` 内の `TextEdit::singleline`（1464 行付近） | 検索入力欄。`.interactive()` / `.font()` / `.hint_text(...color(path_color))` はあるが `.text_color()` が無い（**項目 2 の修正点**） |
-| 同 | updater toast 描画（`toast_row` を消費するブロック・1570-1630 行付近） | `ToastKind` → 文言 → クリップ描画。`line1` の生成と `with_clip_rect(...).text(...)`（**項目 1 の描画点**） |
-| 同 | `spawn_install`（1026 行付近） | `download_and_install` の `Err(e)` で `trace_main("egui_update_install_failed", {error})` を出したうえで `phase = InstallFailed` を代入（**項目 1 の詳細の入手点**。`e.to_string()` は既にここにある） |
-| 同 | `draw_toast_button`（1065 行付近） | 右詰めボタン。`cursor_x` を進めるので、これが可用幅の右端を決める |
-| `src-tauri/src/egui_shell/notify.rs` | `UpdaterPhase`（88-103 行）・`ToastKind`（116-121 行）・`UpdaterUi::toast`（171-193 行） | `InstallFailed` / `ToastKind::Failed` は #648(C) で payload を落とした unit variant（**項目 1 で message を復活させる**） |
-| `src-tauri/src/egui_shell/strings.rs` | `update_failed`（103-108 行） | 引数なしの generic 文言（**項目 1 で detail 併記へ**） |
-| 同 | `launch_failed` / `launch_timeout`（41-54 行） | **既存パターン**: `(l: Language, detail: &str) -> String` で detail は**呼び出し側が整形済み**（`" ({m})"` or `""`） |
-| `src-tauri/src/egui_shell/visual.rs` | `RowTheme`（46-47 行）・導出（103-113 行） | `name_color` ← config `text_color`、`path_color` ← config `hint_text_color`。**項目 2 が使うのは `name_color`** |
-| `src-tauri/src/egui_shell/results_view.rs` | 行描画（272 行付近） | `TextWrapping::truncate_at_width(avail)` + `layout_job` の**既存の末尾省略パターン**（項目 1 の描画で流用） |
-| `SPEC.md` §11「見た目の規範」 | 559 行 | 「**色は config `[visual]` から取る。** 描画コードに色リテラルを書かない」（項目 2 の根拠） |
-| `SPEC.md` §11「as-built」 | 571 行 | 「検索入力欄は `font_size` に追従し hint は `hint_text_color` で描かれる」（項目 2 で入力テキスト色を追記する箇所） |
+| 1 | #674 | SPEC §4.8 のホバー記述が CSS `:hover` を根拠にしている |
+| 2 | #674 | `show_egui_main` のコメントに stale な「展開高 例 300px」が残る |
+| 3 | #674 | `hex_color` の 1 行 wrapper が `view.rs` / `results_view.rs` に重複 |
+| 4 | #674 コメント | SPEC §20.3 に WebView2 期の記述（2 行構成 / `--update-toast-height` / `updateInfo`）が残る |
+| 5 | #698 | `.claude/agents/code-reviewer.md` の 2 箇所が SolidJS 前提 |
 
-### 列挙の事実確認
+---
 
-上記のファイル・関数はすべて grep で実在と行位置を確認済み。加えて:
+## 各項目の現状（実測）
 
-- **`TextEdit::text_color` は egui 0.35 に実在する**（`widgets/text_edit/builder.rs:250` — `pub fn text_color(mut self, text_color: Color32) -> Self`）。issue 本文の記述を鵜呑みにせず API を確認した
-- **`TextWrapping::truncate_at_width` は epaint 0.35 に実在する**（`text/text_layout_types.rs:701` — `max_rows: 1, break_anywhere: true`。`overflow_character` は Default の `Some('…')` を継承）
+### 項目 3 — **既に解決済み。作業不要**
 
-## 同一パターン全コードパス検索（AGENTS.md「バグ発見時」）
+`fn hex_color` は `src-tauri/` 全体で **0 件**（Grep 実測）。git で経緯が取れる:
 
-項目 2 の根本パターン＝「描画テキストに色を明示せず egui 既定へ落ちる箇所」を `view.rs` / `results_view.rs` 全体で列挙した。
+| commit | 出来事 |
+|---|---|
+| `8459023`（#532 SU4 / PR #644） | 導入 |
+| `a9cb6ef`（#646 PR2 / PR #669） | `results_view.rs` へ複製（= issue が指す重複） |
+| **`22dd61b`（#673 PR B / PR #679）** | **`read_visual` への集約で消滅** |
 
-| 描画点 | 色 | 判定 |
+`results_view.rs` に `hex` を含む識別子は 0 件（`background_hex: None` の 1 件はテスト fixture のフィールド名）。**issue 起票後に別 PR が副作用として片付けた**形。
+
+→ **本 PR では触らず、#674 のクローズ時にその旨を書く。**
+
+### 項目 1 — SPEC §4.8 は**二重に**現状と食い違う
+
+`SPEC.md:190`:
+
+> - ホバー: CSS `:hover` による視覚フィードバックのみ。`selected` 状態は変化しない
+
+食い違いは 2 つある。
+
+1. **CSS が存在しない**（#532 SU7 / PR #662 でフロント撤去）— issue が指摘している側
+2. **ホバーの視覚フィードバック自体が存在しない** — issue が指摘していない側
+
+行を描くのは `results_view.rs::draw_result_row`（`:213-319`）ただ 1 つで、視覚の分岐は `selected` のみ:
+
+```rust
+let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), row_h), egui::Sense::click());
+if selected {
+    ui.painter().rect_filled(rect, 4.0, theme.selection);
+    ...
+}
+```
+
+`response` の用途は `scroll_to_me` と `.clicked()` の 2 つだけで、**`hovered()` はファイル全体で 0 件**（Grep 実測）。`Sense::click()` は当たり判定を作るだけで描画も cursor 変更も伴わない。
+
+設計意図の側には記述がある——`docs/superpowers/specs/2026-07-22-su3-search-experience-design.md:141`:
+
+> **結果行**（§4.8・`ResultRow.tsx` 相当）: …ホバーは視覚のみ（selected 不変）…
+
+つまり **SU3 は「ホバー視覚を保つ」と書いたが、egui 実装には入らなかった**。SPEC の記述が保っていたのは意図であって as-built ではない。
+
+> ⚠️ **要求判断**: 「as-built を書き取る」だけなら「ホバーの視覚フィードバックは無い」と書く。だが SU3 の意図を復活させるなら別の実装タスクになる。→ 下の「未解決の疑問」。
+
+なお `ScrollArea` のフローティングスクロールバーはホバーでフェードイン（egui 内蔵・`scroll_area.rs:1473` の `animate_bool_responsive`）するが、これは**行のホバーではない**。#710 が fps の原因欄で見ているのがこれで、§4.8 の対象外。
+
+### 項目 2 — `show_egui_main` の「例 300px」
+
+`src-tauri/src/egui_shell/mod.rs:373-377`:
+
+> 前回 hide 時に展開高（例 300px）のままだと position クランプが 300px で効き、show 後に view が bar_height へ collapse して視覚スナップ + 位置ずれになる。
+
+**機構は依然有効**（同関数が `bar_height` へ collapse してから `position_on_target_monitor` を呼ぶ順序制約は生きている）。嘘なのは**数値だけ**。
+
+#646 PR2 決定 6 以降、main の高さは `bar_height`(+ `status_height` + `toast_height`) のみで結果件数では伸縮しない（`SPEC.md` §4.7）。既定 43px × 最大 3 行 = **129px** が上限で、300px には至らない。
+
+### 項目 4 — SPEC §20.3 の WebView2 残骸
+
+`SPEC.md:1068-1086`。前半 5 行が WebView2 期の記述、後半 2 ブロックが egui as-built という**二層構造**になっており、前半が後半と矛盾する。
+
+| 行 | 記述 | 現状 |
 |---|---|---|
-| `view.rs:1088` `draw_toast_button` の galley | `theme.name_color` / `theme.path_color`（enabled で分岐） | OK |
-| `view.rs:1472` 入力欄 `hint_text` | `bar_theme.path_color` | OK（#643） |
-| `view.rs:1559` status 行 | `visual.hint` | OK |
-| `view.rs:1623` toast メッセージ | `theme.name_color` | OK |
-| `results_view.rs:276 / 301 / 312 / 313` 行の name / path | `theme.name_color` / `theme.path_color` | OK |
-| **`view.rs:1464` 入力欄の TextEdit 本体** | **未指定 → egui 既定 gray(180)** | **NG（唯一の該当）** |
+| 高さ = `bar_height` 連動 | 生きている（egui ブロックが同内容を再掲） | 重複 |
+| **行1: y = 高さ × 0.25** | **stale** | #700 で 1 行中央揃えへ（`view.rs:1620-1624` に経緯コメント） |
+| **行2: y = 高さ × 0.75** | **stale**（`[今すぐ更新]`/`[閉じる]` の右寄せ自体は生存） | 同上・`btn_y = rect.center().y`（`view.rs:1631`） |
+| **`--update-toast-height` を加算** | **stale**（CSS 変数は不在） | 「ウィンドウ高さに加算」は egui ブロックが記述済み |
+| **`updateInfo` シグナルを null** | **stale**（SolidJS シグナルは不在） | `UpdaterUi` 状態機械・「セッション中恒久」を egui ブロックが記述済み |
 
-**色未指定はこの 1 箇所のみ**。ゆえに項目 2 は一箇所の修正で「§11 テーマ消費の完全化」を達成でき、全称表現（「すべての描画テキストが config 由来になる」）を嘘なく書ける。
+as-built の正本は `view.rs:1591-1672`:
 
-## 既存パターン（再利用できるもの）
+- `allocate_exact_size(width, toast_height)` の**単一行**
+- ボタンを先に右から詰め（`cursor_x = rect.right() - 8.0`）、`btn_y = rect.center().y`
+- 本文は `text_x = rect.left() + 8.0` から、`cursor_x + 8.0` を右境界に `truncate_at_width` で末尾省略、`rect.center().y` で縦中央
 
-- **detail 併記の文言**: `launch_failed(l, detail)` / `launch_timeout(l, detail)` が確立済み。`update_failed` も同型へ揃える
-- **末尾省略**: `results_view.rs` の `TextWrapping::truncate_at_width(avail)` + `painter().layout_job()`
-- **1 フレーム 1 lock のテーマ読み**: `visual.row`（`RowTheme`）は既にトーストと入力欄の両方で使われており、新たな読みは増えない
+**stale な 4 点は削除し、生存部分は既存の egui ブロックへ寄せる**（`AGENTS.md`「条件別チェック」の「文書に事実の写しを増やす変更 → 正本を 1 か所に定め他は参照へ」）。
+
+### 項目 5 — `code-reviewer.md` の SolidJS 2 箇所
+
+`.claude/agents/code-reviewer.md`:
+
+- **`:78`**（Phase 2 / 2d. リソースライフサイクルチェック）
+  > クリーンアップが `await` / `.then()` の**前**に同期的に登録されているか（SolidJS: `onCleanup` は同期リアクティブコンテキストで呼ぶ）
+- **`:122`**（Phase 3 チェックリスト）
+  > **SolidJS 固有**: 不要な再レンダリング、`createMemo` にすべき高コスト計算
+
+差し替え先は issue の対応案どおり:
+
+- `:78` → Rust のリソースライフサイクル（生成/破棄ペア・`Receiver` 所有権 drop・`AtomicBool` の戻し経路・子プロセス `kill`）。**正本は `.claude/rules/src-tauri.md`「この rule が正本」節**（実在確認済み）
+- `:122` → egui immediate-mode 固有（毎フレームの確保・`lock()` 回数・1 フレーム 1 回の live-read）。**live-read の正本は `src-tauri/CLAUDE.md`「モジュール構成」の `read_visual` 項**（#673）
+
+**ユーザーの合意取得済み**（ルート `CLAUDE.md` 最重要ルール 2）。
+
+---
+
+## 関連コード・文書（実在確認済み）
+
+| パス | 役割 | 本 PR で触るか |
+|---|---|---|
+| `SPEC.md:190` | §4.8 ホバー記述 | **触る** |
+| `SPEC.md:1068-1086` | §20.3 トースト UI | **触る** |
+| `src-tauri/src/egui_shell/mod.rs:373-377` | `show_egui_main` の collapse-before-position コメント | **触る** |
+| `.claude/agents/code-reviewer.md:78, :122` | SolidJS 前提の 2 箇所 | **触る** |
+| `src-tauri/src/egui_shell/results_view.rs:213-319` | `draw_result_row`（as-built の正本・項目1） | 読むだけ |
+| `src-tauri/src/egui_shell/view.rs:1591-1672` | toast 描画（as-built の正本・項目4） | 読むだけ |
+| `docs/superpowers/specs/2026-07-22-su3-search-experience-design.md:141` | SU3 のホバー意図（履歴文書） | **触らない**（設計書は当時の記録） |
+| `.claude/rules/src-tauri.md` | 項目5 の差し替え先が指す正本 | 読むだけ |
+
+---
+
+## 既存パターン
+
+- **stale な例示の直し方**: `mod.rs:386-388` に先例がある——「行番号参照は挿入でずれるため名前で指す」と明記して名前参照へ倒している。項目 2 も同じ倒し方（生の数値ではなく上限の導出根拠を書く）が取れる
+- **二層構造の畳み方**: §11 は #654 でスコープ宣言を先頭に置いて射程を明示した。§20.3 も「WebView2 期の記述 + egui as-built」の二層だが、**両層が同じ対象を語っている**ため、スコープ宣言ではなく**古い層の削除**で解ける
+
+---
 
 ## 技術的制約
 
-- **Win32 依存なし**。両項目とも egui 描画層に閉じる（`SendInput` 等の非同期 API は関与しない）
-- **`spawn_install` は async タスク**（`tauri::async_runtime::spawn`）で、`Err(e)` の枝は worker スレッドから `UpdaterUiState` の Mutex を取り `phase` を代入し `wake_main` する。**`message` を足しても並行境界の形は変わらない**（同じ lock 内で同じ 1 代入。フィールドが増えるだけ）
-- **hidden 中は `update()` が走らない**（`src-tauri/CLAUDE.md`「イベント駆動 wake の不変条件」）。`InstallFailed` は既に `wake_main` を伴っており、message 追加でこの契約は変わらない
-- **`UpdaterPhase` に derive は無い**（`notify.rs:88`）ため String フィールド追加でトレイト境界の問題は生じない。`ToastKind` は `#[derive(Debug, PartialEq)]` を持つので `Failed { message: String }` でも問題ない（`Available { version: String }` が先例）
-- **可用幅は `window_width`（config・既定 600）依存**。ユーザーが窓幅を狭めれば詳細の可視量は減る——末尾省略にすることで「切れている」ことが読者に伝わる形にする
+- **Win32 依存なし・挙動変更なし。** 触る `.rs` はコメント 1 箇所のみ（`mod.rs`）
+- **PostToolUse hook**: `mod.rs` の編集で clippy + `src-tauri` のテストが自動実行される（沈黙 = 合格）。`SPEC.md` / `.claude/agents/**` は **`selectChecks` に割り当てが無く沈黙は「何も走らなかった」**（#497・#698 自身が備考で指摘）
+- **`governance:check`**: `SPEC.md` はガバナンス文書。カテゴリ F を手動で回す（PR CI の `governance-check` job も常時実行）。面積 ratchet の余白は実測で **常時ロード 100 字 / rules 10 字**——本 PR は `AGENTS.md` にも `.claude/rules/` にも足さないので抵触しない見込みだが、**コミット前に再測する**
+- **`.claude/agents/**` の扱いは、検査ごとに違う**（#698 備考の「内容検査対象外」は G11 には当たらない・実測で訂正）:
+  - `selectChecks`（PostToolUse hook）には割り当てが無い → **編集しても何も走らない**
+  - **G11（見出し参照の実在）は `.claude/agents/` を母集団に含む**（`scripts/governance-check.mjs:719` にその旨が明記）。ゆえに項目 5 の差し替え文で**正準形** `` `<path>.md`「<見出し>」 `` を使えば、参照先の実在は**機械照合される**
+  - 着地確認（`collectAnchors` はATX 見出し / 番号付きリスト項目 / 太字リードの 3 種・照合は正規化後の前方一致）:
+    - `.claude/rules/src-tauri.md` の `## この rule が正本（CLAUDE.md に無い src-tauri 固有）` → 「この rule が正本」で前方一致・着地する
+    - `src-tauri/CLAUDE.md` の `- **テーマ色・font・行高の読みは 1 フレーム 1 回（#673 spec 決定 4）**` → 太字リード・同上
 
-## 未解決の疑問
+---
 
-- **`update_failed` の detail 引数の契約をどちらに寄せるか**（呼び出し側整形 `": {msg}"` / 関数側でセパレータ生成）。`launch_failed` は前者。同名引数で契約が違うと罠になるため**前者へ揃える**方針とするが、plan で確定させる
-- **トーストの `[閉じる]` ラベルは言語で幅が違う**（`閉じる` 52.0px / `Dismiss` 55.8px）。可用幅の差は 3.8px で、末尾省略にすれば挙動差は「省略位置が数 px 動く」だけ。追加の対処は不要と判断した
+## 未解決の疑問（ユーザー確認事項）
+
+**項目 1: SPEC §4.8 のホバーを、どちらの向きで直すか。**
+
+- (A) **as-built を書き取る**: 「ホバーによる視覚フィードバックは無い（描き分けは `selected` のみ）」。#674 の「現状の実装に合わせて書き換える」に忠実。ただし SU3 の意図が落ちた事実が SPEC からも消える
+- (B) **as-built を書き取り、意図の欠落を別 issue へ送る**: SPEC は (A) と同じ文にしつつ、「ホバー視覚を戻すか」を新規 issue で起票する。**送り先を名指しできる**（RETROSPECTIVE「受け皿を確認せずに『別の束が拾う』と書いた」の教訓に適合）
+- (C) **本 PR でホバー視覚を実装する**: `draw_result_row` に `response.hovered()` の分岐を足す。**挙動変更**であり #674 の「動作には影響しない」というスコープを破る

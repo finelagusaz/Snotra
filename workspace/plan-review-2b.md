@@ -1,148 +1,129 @@
-# plan-review-2b（#699 / #675 の独立再導出）
+# plan-review Step 2b: issue #697 独立再導出
 
-> **受け渡しの注記（主エージェントによる追記）**: このファイルは独立導出エージェント本人が書けなかった。
-> `/plan-review`「Step 2b — 独立導出 + 差分（常に実施・盲点クラスの漏れ検出）」が指定する `Plan` タイプは
-> **Write / Edit ツールを持たない**（agent type の定義が `Edit, Write` を除外している）。
-> エージェントは `SendMessage` で本文を返し、主エージェントがそのまま保存した。
-> **#733 で明文化した「成果物は `workspace/plan-review-2b.md` へ書かせる」は `Plan` タイプでは実行不能である**——
-> 追随の修正が要る（下記「主エージェントによる検証」の末尾）。
+- 日付: 2026-07-26
+- 対象 issue: #697（#671/#673 サイクルの残余: hidden 中の paint 抑止機構の実測 + トートロジーテスト + 決定 5 の記録欠落）
+- 導出者: 独立レビュアー（`workspace/plan.md` / `research.md` / `frame-scheduling-design.md` は読んでいない。根拠は issue 本文・コメントの実測データ・コードのみ）
 
----
+## 1. 要件の理解（3 項目の WHAT）
 
-## 0. 結論サマリ
+### 項目 1: 「hidden 中は update() が走らない」の抑止機構の同定（実測）
 
-- **#699 の対応案 1（`clicked` に世代を同梱）は、そのままでは成立しない。** `snapshot_generation` を進めずに行集合を総入れ替えする経路が **3 本**ある（`SearchState::reset` / `enter_tool` / `on_escape`）。特に `on_escape` は**同一フレームで消費より前**に走る（view.rs:1293 → publish view.rs:1750 → take view.rs:1763）ため、世代が一致したまま別の行集合に対して古い index が適用される——issue が塞ごうとした穴がそのまま残る。#699 は「clicked に世代を積む」+「世代 bump 漏れ 3 本を塞ぐ」の 2 点セットでなければ効かない。
-- **#675 の対応案 1 は成立する。** ただし (a) 物理／論理の換算が要る（`set_size` は `LogicalSize`、work area と main 位置は物理 px）、(b) 換算に使う scale factor は **results 窓自身のもの**（tao 0.35.3 の `set_inner_size` が `self.scale_factor()` を使う）、(c) クランプ結果が 0 になると `results_should_show` の「高さ 0 = hide」契約に化けるため 1 行分の床が要る。issue が「`monitor.rs` の作業領域取得が既にある」と書いた前提は現存する（`window_monitor_work_area` は `save_placement_relative` が実使用中）。
-- `wake_results`（view.rs:850）には触らない（#710 実測の結論どおり）。私の #675 の編集はその数行上（view.rs:837-844）に落ちる。
+WHAT: #532 SU5 以来の設計前提でありながら「何が抑止しているのか」を測っていない不変条件について、抑止点を **送信側（scheduler worker が proxy へ撃ったか）/ 受信側（`RedrawRequested` が届いたか）** の 2 計器で切り分ける。issue コメントの #628 副産物実測により「受信側には来ていない（`render()` は呼ばれていない）」までは確定済み。残る二択は:
 
----
+- (A) worker は `proxy.send_event(Message::Window(id, RequestRedraw))` を撃ったが、tao/OS の経路が hidden HWND 宛を落とした
+- (B) そもそも撃たれていない（deadline 管理側で消えた）
 
-## 1. 変更が必要なファイル・行（全列挙）
+### 項目 2: `hidden_window_is_not_painted` の処分（トートロジーテスト）
 
-### A 群: #699 本体（clicked に世代を積む）
+WHAT: `snotra-egui-runtime/src/runtime.rs` のテスト `hidden_window_is_not_painted` はテスト内ローカル定義の `fn should_render(visible: bool) -> bool { visible }`（恒等関数）を検査しており、実 `render()` の早期 return を何も守っていない。選択肢は **「削る」か「接地したコメント付きで残す」の 2 つだけ**（実 `render()` を検査する形は不可能——`EguiWindow::new` が実 `tauri::Window` + 実 HWND 上の `ImeBridge` を要求し、crate は dev-dependencies ゼロ・mock runtime 無し）。**どちらを採るかは項目 1 の測定結果を見てから決める**（順序依存）。あわせて `render()` 内の到達可能性注記の「（本ブランチ b9a9caf）」というマージ後に宛先を失う参照を PR #677 へ言い換える。
 
-**A-1 `src-tauri/src/egui_shell/results_view.rs:71-72`** — `Mutex<Option<usize>>` → `Mutex<Option<(u64, usize)>>`（`(描画時の generation, 行 index)`）。doc comment に「**index は世代とセットでしか意味を持たない**」と「`snapshot` は世代を運び `clicked` は運ばない非対称は見落としであり、本変更で解消した」を書く（issue「備考」が要求している結論の明文化）。
+### 項目 3: spec 決定 5 が要求した記録の欠落（`src-tauri/`・独立着手可）
 
-**A-2 `src-tauri/src/egui_shell/results_view.rs:487-489`** — `Some((snapshot.generation, i))`。`snapshot` は同 update() 冒頭で clone 済みなので、**実際に描いた行集合の世代**をそのまま添えられる。
+WHAT: `drive_results_window` 末尾の無条件 `wake_results`（level-triggered・毎フレーム）に「削ると壊れる理由」のコメントが無い。理由（実装で今も成立していることを確認した）:
 
-**A-3 `src-tauri/src/egui_shell/view.rs:1763-1766`** — 消費側で世代照合。
+1. `register_config_wake_listeners` は `CONFIG_APPLIED` / `INDEXING_STARTED` / `INDEXING_COMPLETE` で `wake_main` **のみ**を呼ぶ——results は config 系イベントを一切 listen していない
+2. results 可視中に visual-only の config 変更（`font_size` / `row_padding` / 各色 / `show_icons`）が入っても `RowsSnapshot`（rows / selected / generation / settled）は不変ゆえ、差分 wake（snapshot publish 側の edge-trigger）も発火しない
+3. したがって **results が新しい visual 値を描く唯一の経路がこの無条件 wake である**。「毎フレーム wake は無駄」という一見正しい最適化で消すと静かに壊れる
 
-- **`take()` は不一致でも行う**（＝破棄）。残すと次フレーム以降に同じ stale クリックが再評価される。
-- **消費位置（publish の後）を動かさない**という順序不変条件を doc comment にする。理由は「guard が比較する世代は、そのフレームで行を差し替えうる全ハンドラ（escape=view.rs:1293 / index 世代検知=1184 / folder drain / launch 完了）の**後**の値でなければ、issue の窓を塞げないから」。
-- stale 破棄時の trace（`egui_results:click_stale`）を出す。`scripts/smoke-egui.ps1` は `egui_results:show` / `:hide` しか見ないので影響なし。
+これを呼び出し点に 1〜4 行で記録する。
 
-**A-4 `src-tauri/src/egui_shell/layout.rs`** — 判定を純粋核へ出す（`click_is_current(stamped, current) -> bool`）。**推奨であって必須ではない**（inline の `==` でも動作は同じ）。
+## 2. 必要な変更集合（ファイル + シンボル + 1 行説明）
 
-### B 群: #699 の**成立条件**（世代 bump 漏れ 3 本）— ここが本 issue の核心
+### 項目 1（計器 2 つ + 計器正本の更新）
 
-現状 `snapshot_generation` を進めるのは **3 箇所だけ**（view.rs:389 / 535 / 904）。一方 `results` を差し替える経路は:
+| # | ファイル | シンボル | 変更 |
+|---|---|---|---|
+| 1-1 | `snotra-egui-runtime/src/repaint.rs` | `RepaintScheduler::new` の worker クロージャ、`None`（deadline 満期）arm の `proxy.send_event(...)` **直前** | env ゲート（例 `SNOTRA_EGUI_WAKE_TRACE`）の `eprintln!` 1 行（`window_id` を含める）。#628 の計器と同じ流儀（未設定なら var_os 判定のみでコスト 0） |
+| 1-2 | `snotra-egui-runtime/src/runtime.rs` | `RuntimePlugin::on_event` の `Event::RedrawRequested(window_id)` arm **冒頭**（`context.window_id_map.get` **より前**） | 同じ env ゲートの `eprintln!` 1 行（tao 側 `window_id` を含める）。lookup より前に置く（未知窓宛も数えるため） |
+| 1-3 | `PERFORMANCE.md` | 「計測と受け入れ基準」の egui 計器一覧（**このリストが計器の正本**と自己宣言している） | 新 env 変数を 1 行追加（出す項目・目的・#697） |
 
-| 経路 | 実装 | 世代 bump |
+計器は測定後も削除せず env ゲート付きで残す（#628 `SNOTRA_EGUI_REPAINT_TRACE` / `SNOTRA_EGUI_PAINT_TRACE` と同じ扱い）。測定結果の記録先は issue #697 コメント（アイドル基準値は変わらないため `PERFORMANCE.md` の基準値節は不変）。
+
+### 項目 1 の測定結果を文書へ反映する変更（測定後・機構が同定できた場合）
+
+| # | ファイル | シンボル | 変更 |
+|---|---|---|---|
+| 1-4 | `snotra-egui-runtime/src/runtime.rs` | `EguiWindow::render` 冒頭の到達可能性注記 | 「未測定（OS/tao が…と推定）」を実測結果（(A) or (B)）+ 測定ログの所在へ書き換え |
+| 1-5 | `src-tauri/src/egui_shell/mod.rs` | `wake_main` の doc | 「その抑止は wake 経路ではなく OS/tao 層にあると推測されており未測定」の限定並記を実測結果へ書き換え |
+| 1-6 | `src-tauri/src/egui_shell/layout.rs` | `results_should_show` の doc | 「機構は未同定・未測定・spec §7-2 が…」を実測済み（#697）へ書き換え（「命題に依存しない」という主張自体は不変） |
+| 1-7 | `src-tauri/CLAUDE.md` | 「イベント駆動 wake の不変条件（#532 SU5）」節の「**hidden 中は `update()` が走らない**（実測・SU5 要石）」 | 同定した機構と #697 を括弧内に追記（挙動主張は不変・小変更） |
+| 1-8 | `docs/superpowers/specs/2026-07-25-egui-window-ownership-and-event-delivery-design.md` | §7 残余 2・残余 3 | errata 1〜2 行ずつ（「#697 で測定済み/処分済み」）。日付付き spec は歴史記録ゆえ本文は書き換えず errata **追記**（646 spec の errata 前例に倣う）。任意だが、§7 の自己目的（「次のサイクルが誤認しないため」）に照らし推奨 |
+
+### 項目 2（測定後に確定）
+
+| # | ファイル | シンボル | 変更 |
+|---|---|---|---|
+| 2-1 | `snotra-egui-runtime/src/runtime.rs` | `tests::hidden_window_is_not_painted` | **削除を推奨**（恒等関数の検査は何も証明せず、残せば「守られている根拠」として再引用されるリスク——spec §7-3 が警告した失敗様式そのもの。接地した知識は 1-4 の `render()` コメントに置く方が co-location として正しい）。残す場合は「意図的に残した到達不能ガードの述語の形だけを固定する・実挙動の証明ではない・#697」とコメントを書き換える |
+| 2-2 | `snotra-egui-runtime/src/runtime.rs` | `render()` 注記の「`RuntimeFrame::hide_window()` 削除（本ブランチ b9a9caf）により」 | 「（PR #677）」へ言い換え（**測定と独立・即着手可**） |
+
+判断基準: (A)（tao/OS 経路で落ちる）でも (B)（送信側で消える）でも、テストが実挙動を守れない事実は変わらないため削除の結論は同じ。測定結果の分岐が効くのは 1-4 のコメントに何を書くか（「受け口として残す `visible` ガード」の必要性の説明）だけである。
+
+### 項目 3（独立着手可）
+
+| # | ファイル | シンボル | 変更 |
+|---|---|---|---|
+| 3-1 | `src-tauri/src/egui_shell/view.rs` | `drive_results_window` 末尾の `crate::egui_shell::wake_results(&self.app_handle);`（現行 :857。issue 記載の :850 は #675 クランプ追加で下方シフト） | 直前に 1〜4 行のコメント: 「results は config 系イベントを listen せず（`register_config_wake_listeners` は `wake_main` のみ）、visual-only 変更では `RowsSnapshot` 不変ゆえ差分 wake も発火しない。results が新しい config 値を描く唯一の経路がこの無条件 wake である。削ると visual 反映が静かに壊れる（spec 決定 5・#697）」 |
+| 3-2（任意） | `src-tauri/src/egui_shell/mod.rs` | `wake_results` の doc | 「level-triggered」ラベルの後に「削ると壊れる理由は `drive_results_window` 側コメント」の 1 行ポインタ（理由の本文は 3-1 に一元化・写しを作らない） |
+
+## 3. 測定手順（項目 1）
+
+- **前提**: release ビルド。`predicted_dt` は #628/PR #709 で既定 0 に変更済み——**この変更後のコードで測る**ことを結果の前提として明記する
+- **env**: `SNOTRA_EGUI_WAKE_TRACE=1`（新設・送受信 2 計器）+ `SNOTRA_EGUI_REPAINT_TRACE=1`（フレーム到着の照合）+ `SNOTRA_TRACE=1`（hide の trace 時刻同期）。stderr をファイルへ捕捉
+- **刺激**:
+  1. 可視・フォーカスありでアイドル（TextEdit のキャレット点滅が毎パス `request_repaint_after(≤0.5s)` を撃つ——hide の瞬間に満期前 deadline が scheduler に必ず 1 つ載る「自然な刺激」）
+  2. Alt+Q（実打鍵・人間が必要。ホットキーは `GetAsyncKeyState` 依存で自動化不能）で hide し 30 秒放置
+  3. **強い刺激**: hidden のまま `config.toml` を書き換えて `config-applied` を発火させる（`register_config_wake_listeners` は可視性を見ずに `wake_main` を撃つため送信要求が確実に発生する）。**visual-only キー（`font_size` 等）を変える**——`IndexInputs` に効くキーを触ると `indexing-*` イベントが混ざりノイズになる。watcher の debounce は 100ms ゆえ書き換えは 1 回でよい
+- **観測点**: `egui_hide:done`（SNOTRA_TRACE）以降の観測時間内の、(i) 送信計器行数、(ii) 受信計器行数、(iii) `SNOTRA_EGUI_REPAINT` 行数（0 のはず・既測の再確認）
+- **判定基準**:
+  - 送信 ≥1 かつ 受信 0 → **(A) 確定**（tao/OS 経路が hidden HWND 宛を落とす。キャレット deadline と config 刺激の両方で送信が出れば確度が上がる）
+  - 送信 0 → **(B) 確定**（deadline 管理側で消えている——`repaint.rs` worker 内のさらなる切り分けへ進む）
+  - 送信 ≥1 かつ 受信 ≥1（かつ REPAINT も出る）→ **不変条件そのものが偽**。文書反映（1-4〜1-8）には進まず、いったん停止して issue へ報告する
+
+## 4. 間接参照の列挙（「hidden 中は update() が走らない」を引用している全箇所と処分判断）
+
+概念で分類する。**(a) 機構を主張している箇所**（「未測定」「OS/tao と推測」を並記——測定後に書き換え対象）、**(b) 挙動だけを引用している箇所**（不変条件は測定後も真のまま——書き換え不要）、**(c) 日付付き歴史文書**（凍結——書き換えない）。
+
+### (a) 機構に言及・測定結果で書き換えるべき（5 箇所）
+
+| 箇所 | 現状の記述 | 判断 |
 |---|---|---|
-| `run_search_with` | view.rs:904（先頭で +1）→ set_results 910/913/924/946/969/983/985 | ✅ |
-| `start_launch` | view.rs:387 set_results + 389 bump | ✅ |
-| `clear_search` | view.rs:532 set_results + 535 bump | ✅ |
-| **`SearchState::reset()`** | search_state.rs:330-338（`self.results.clear()`）呼び出し元 view.rs:1145 付近 | ❌ |
-| **`SearchState::enter_tool()`** | search_state.rs:269-290（`self.results = rows`）呼び出し元 view.rs:652 | ❌ |
-| **`SearchState::on_escape()`** | search_state.rs:308-326（`self.results = t.restore_results` / `= f.restore_results`）呼び出し元 view.rs:1293 | ❌ |
+| `snotra-egui-runtime/src/runtime.rs` `render()` 注記 | 「どの機構に依るか未測定（OS/tao が…と推定）」+「本ブランチ b9a9caf」 | **書き換える**（1-4・2-2） |
+| `src-tauri/src/egui_shell/mod.rs` `wake_main` doc | 「抑止は wake 経路ではなく OS/tao 層にあると推測されており未測定」 | **書き換える**（1-5） |
+| `src-tauri/src/egui_shell/layout.rs` `results_should_show` doc | 「機構は未同定・未測定・spec §7-2」 | **書き換える**（1-6）。「命題に依存しない」は保持 |
+| `src-tauri/CLAUDE.md` イベント駆動 wake 節 | 「hidden 中は `update()` が走らない（実測・SU5 要石）」 | **追記推奨**（1-7）。挙動主張は真のまま・機構の出典 #697 を足すだけ |
+| spec 2026-07-25 §7 残余 2・3 | 「未同定・未測定」「恒真テストである」 | **errata 追記を推奨**（1-8）。本文改変はしない（歴史記録） |
 
-- **`on_escape` が最も鋭い**: Escape 処理は view.rs:1293（publish=1750 / take=1763 より前）。results がツール行 3 件を描いて index 2 をクリック → 同フレームで main が Escape を処理して plain 結果へ復帰 → 世代は同じ → guard を通過 → `.get(2)` が None で助かる**か**、復帰結果が 3 件以上なら**別の行が起動する**。issue が言う「実害が薄い理由（reset 直後は空）」はこの経路を覆っていない。
-- **`enter_tool` も同型**（ツール一覧へ総入れ替えなのに世代据え置き）。
-- **これは #632 Fix 3（scroll gate）自体のバグでもある**: `RowsSnapshot.generation` が進まないので、Escape 復帰／ツール突入で行が総入れ替えされても results 側の scroll gate がリセットされない。
+### (b) 挙動だけを引用・書き換え不要（不変条件は測定後も成立）
 
-**推奨（案 A）: 世代を `SearchState` が所有する。**
-
-- `search_state.rs` の `struct SearchState` に `rows_generation: u64` を追加、`new()` で 0 初期化
-- `set_results` / `enter_tool` / `on_escape` の復帰 2 分岐 / `reset` で `self.rows_generation += 1`
-- `pub fn rows_generation(&self) -> u64` を追加。doc に「**`results` を差し替える全メソッドがここを進める**」と、対象を「この型の中の `self.results` への代入」に限定して書く
-- view.rs の手動 bump（279/318/389/535/904）を削除し、参照（1751/1755）を `self.state.rows_generation()` へ置換
-- 効果: bump 漏れが構造的に起こらない。加えて view.rs:904 の**空撃ち**（`set_results` を呼ばないフレームでも +1）が消え、世代の意味が「行が差し替わった」と一致する
-
-**代替（案 B）: view.rs 側の手動 bump のまま 3 箇所を足す** — 差分は小さいが、**bump 漏れを 3 回やった経路をもう一度手作業に委ねる**ため非推奨。
-
-### C 群: #675（results 窓の高さを作業領域下端でクランプ）
-
-**C-1 `layout.rs` に純粋核** — `clamp_results_height(desired, available: Option<f64>, row_height) -> f64`。`desired == 0.0` は素通し（`results_should_show` の「高さ 0 = hide」契約値ゆえクランプで 0 を作ってはならない）。`available` が 1 行未満でも **1 行 + padding 8 を床**にする。
-
-**C-2 `mod.rs:568-585` `position_results_below_main` を `-> Option<i32>`** に変更（設定した results 上端の**物理** y を返す）。view.rs 側で再計算すると `outer_position` / `outer_size` / `window_gap` の 2 度読みになり、フレーム内 live-read の食い違いを作る。呼び出し元は mod.rs:283（戻り値無視）と view.rs:837（使用）。
-
-**C-3 `results_window.rs` に `scale_factor()` アクセサ** — **`set_size` が渡す `LogicalSize` を tao が物理へ戻すときと同じ factor でなければならない**（tao 0.35.3 `platform_impl/windows/window.rs:273-276` の `set_inner_size` は **この窓の** `self.scale_factor()` で `to_physical` する）。main の scale を流用すると混在 DPI 環境で高さが食い違う。
-
-**C-4 `mod.rs` に `results_available_height(app, top_y_physical) -> Option<f64>`** — 作業領域は **main の HWND** で決める（既に誤配置された results から引くと別モニターを掴みうる）。`#[cfg(windows)]` / `#[cfg(not(windows))]` の本体分割は `save_placement_relative`（mod.rs:501-522）に倣う——`monitor.rs` の関数群は**全て `#[cfg(windows)]` で非 Windows 版が無い**ため、cfg を跨いだ直呼びはコンパイルを壊す。
-
-**C-5 `view.rs:837-844`** — 位置 → クランプ → サイズの順。**可視判定（`results_should_show`）は素の `res_h` のまま**にし、クランプは `set_size` に渡す値だけに効かせる。**`self.last_results_height` にはクランプ後の値を入れる**（素の値だとデルタガードの照合対象がずれる）。
-
-**C-6 テスト（layout.rs）** — 取得不能 / 余裕あり / 下端で切る / 床 / 0 件は 0 の 5 ケース。
-
-### D 群: 文書同期
-
-**D-1 `SPEC.md:172`（results 高さの SSOT）** に「作業領域の下端でクランプし、あふれた行はスクロールで到達する。作業領域が 1 行に満たない場合でも 1 行分は表示する」を追記。`docs/superpowers/specs/2026-07-24-646-two-window-ui-design.md` は派生コピーなので SSOT を直したうえで参照を保つ。
-
-**D-2 `SPEC.md:413`** の全称主張の限定（下記 3-③）。
-
-**D-3** `src-tauri/CLAUDE.md` のモジュール構成節は新規ファイルが無いので変更不要。
-
----
-
-## 2. 変更不要と判断した候補（と理由）
-
-1. **`wake_results`（view.rs:850）** — 触らない。#710 実測で正常、かつ config hot-reload の唯一経路。C-5 の編集はこの直前に落ちるので、**削らないこと**を PR 本文に明記する
-2. **`clicked` の reset-on-show クリア（issue が「クリア対象に入っていない」と指摘）** — **追加不要**。B 群で `reset()` が世代を進めれば hide→show を跨いだ stale クリックは自動的に破棄される。専用 clear を足すと「クリアする経路」と「世代で弾く経路」の 2 本立てになり、どちらが正本か読めなくなる
-3. **issue の案 2（path 等の行同一性を運ぶ）** — 採らない。(a) 同一 path が複数行に出る経路があり view.rs:667-670 が「パス文字列照合は禁止」と明記、(b) `activate_or_execute` は index を取る 3 分岐で、path→index の逆引きは分岐ごとに規則が要る
-4. **issue の案 3（doc comment で不変条件化し実害無しと判定）** — 採らない。B 群で実経路（`on_escape`）を特定したので「確率が低い」の前提が崩れている
-5. **issue #675 の案 2（main のクランプに結果窓の想定高を含める）** — 採らない（issue の判断に同意）。`main_window_height` は status/toast で伸縮するため、結果高まで足すと入力中の縦揺れが 2 要因になる
-6. **`set_size` を `PhysicalSize` 化** — 採らない。幅が config の**論理** px なので物理化すると幅の換算が新たに要り、単位の混在点が減らない。なお同関数 doc の「tao 経由のままにする」根拠（フラグ差分が空）は `PhysicalSize` でも同じで、**単位の話ではない**——採否の理由を取り違えないこと
-7. **`monitor.rs`** — 変更不要。`clamp()` は「窓全体を作業領域に収める」x/y 補正で、今回要るのは「上端固定で高さを削る」なので流用しない
-8. **`results_window_height`** — 変更不要。0 件 → 0.0 の契約を維持し、クランプは別関数で外掛け（既存テストが無傷 = その不変条件を孤立させない）
-9. **`RowsSnapshot` / `matches`** — 変更不要。`clicked` の型変更は等値判定に触れない
-10. **`scripts/smoke-egui.ps1`** — 変更不要
-
----
-
-## 3. issue に無いが同クラスの発見事項
-
-**① `enter_tool` / `on_escape` / `reset` の世代据え置きは #632 Fix 3（scroll gate）のバグでもある**（B 群参照）。#699 の修正で副次的に直る。
-
-**② main 窓自身が作業領域の下端をはみ出しうる**（#675 と同クラス・issue 未記載）。`show_egui_main` は **bar 高へ畳んでから** `position_on_target_monitor` でクランプする（mod.rs:378-392）が、その後 view が status 行 + toast 行を積んで伸ばす（view.rs:1775-1785）際に**再クランプが無い**。既定 `bar_height=43` に対し status + toast で最大 +86 論理 px。下端付近で「indexing 中に updater トーストが出る」と main の下部が作業領域外へ出る。**確信度**: コードで裏取り済み・実機未観測。
-
-**③ `SPEC.md:413` の全称主張が as-built と食い違う。**
-> ターゲットモニターの作業領域にクランプし、**ウィンドウが画面外に出ないことを保証する**
-
-#646 PR2 決定 10 のドラッグ移動（view.rs:1117-1126 `frame.drag_window()`）は OS の move loop に委ね、`Moved` リスナーも results の追従だけで main のクランプをしない。主張は「**ホットキー表示時の配置について**保証する」に限定すべき。**確信度**: 高。
-
-**④ 並行境界: `clicked` の消費と `snapshot` の publish は別ロック**で、間に results 窓のフレームが挟まりうる。世代を積む修正はこのケースでも安全側。**新規のロック順序を作らない**こと（snapshot → clicked の順は現状維持）。**確信度**: 中（イベントループ単一スレッド性は未検証）。
-
-**⑤ ドラッグ中は結果窓の高さが再クランプされない（#675 の受容残余）。** `Moved` リスナーは位置だけを追従させ、C-2 の戻り値を無視する。リスナー側で高さを直すと「main が唯一の size writer」の不変条件を壊す。→ **受容残余として明記する**（是正はしない）。
-
-**⑥ 混在 DPI の残余。** `set_position` 直後の tao 側 scale factor がまだ旧モニターのものである可能性がある。実害は「モニター跨ぎの瞬間の 1 フレーム」に限られる見込み。**確信度**: 低（未測定）。
-
-**⑦ 影の有無（単位の落とし穴の確認）。** `WindowBuilderWrapper::new()` は `shadow()` を呼ばないため tao の `MARKER_UNDECORATED_SHADOW` は立たず、`set_inner_size` の影オフセット加算に入らない = **`outer_size` と `inner_size` が一致する**。C 群の計算で client/window 矩形の差を考慮しなくてよい根拠。**確信度**: 高（一次ソース読解・実測なし）。
-
----
-
-## 4. 確信度
-
-| 項目 | 確信度 |
+| 箇所 | 引用の形 |
 |---|---|
-| `clicked` が裸の index | **コードで確認** |
-| 世代 bump が 3 箇所だけ／`reset`・`enter_tool`・`on_escape` に無い | **コードで確認** |
-| `on_escape` が消費より前のフレーム内に走る | **コードで確認** |
-| `results_should_show` の「高さ 0 = hide」契約 | **コードで確認** |
-| `set_size` が論理 px・位置が物理 px | **コードで確認** |
-| 換算に使うのは results 窓の scale factor | 一次ソース読解（未実測） |
-| 影オフセットが乗らない | 一次ソース読解（未実測） |
-| main 自身の下端はみ出し（②） | コードで確認・実機未観測 |
-| SPEC:413 の全称主張の破れ（③） | 高 |
-| クリック取りこぼし（false negative）の頻度 | **読解のみ・未測定**。受容として明記すること |
-| 混在 DPI 残余（⑥） | 未検証 |
+| `SPEC.md`（フレームスケジューリング節「非表示中はフレームが走らない」） | 挙動仕様。機構主張なし |
+| `docs/architecture.md`（「hidden 窓は `update()` が走らないため自分では show できない」） | 設計根拠としての挙動引用 |
+| `src-tauri/src/egui_shell/results_view.rs` `//!`（driver は main 側） | 同上 |
+| `src-tauri/src/egui_shell/mod.rs` `create()` 内コメント（「hidden 窓は update() が走らないため自分では show できない」） | 同上 |
+| `src-tauri/src/egui_shell/mod.rs` `EguiShellState` フィールド doc（「wake は可視中のみ意味を持つ」） | 同上 |
+| `src-tauri/src/egui_shell/mod.rs` `wake_results` doc（「hidden 中の results は描かれないため事前 wake は無意味」） | 同上（3-2 の任意ポインタ追記のみ） |
+| `src-tauri/src/egui_shell/mod.rs` `register_initial_hotkey_failure_listener` doc（「ここで起こさないと…通知が永遠に描かれない」・統合禁止の非対称根拠） | 同上 |
+| `src-tauri/src/egui_shell/view.rs` タイムアウト系コメント（「可視中のみ有効…reset-on-show が backstop」）と `drive_results_window` 呼び出し前コメント（「毎フレーム走る main が駆動」） | 同上 |
+| `src-tauri/src/egui_shell/results_window.rs`（show 述語ゲートへの参照） | 同上 |
+| `.claude/skills/race-check/SKILL.md`（「hide / show を跨ぐか」項） | 正本（`src-tauri/CLAUDE.md`）へのポインタ。**変更不要**。かつスキル変更は合意が要る（最重要ルール 2）——触らない |
+| `docs/adr/0003`（「事実…はスキルに写さず `src-tauri/CLAUDE.md` の節名で参照」） | 参照方式の記録。変更不要 |
 
----
+### (c) 日付付き歴史文書・凍結（書き換えない）
 
-## 5. 実装順序と検証（導出側の提案）
+`docs/superpowers/specs/2026-07-24-su5-updater-notification-design.md`（hidden 中の drain・要石スモーク）/ `2026-07-24-su6-config-glue-design.md`（wake 空振り無害・SU5 実測）/ `2026-07-24-646-two-window-ui-design.md`（errata・SU5 要石）/ `2026-07-21-su1-softbuffer-runtime-design.md`（不変条件⑥）/ `docs/superpowers/plans/` 配下の各計画（pr-a・pr-c・pr-d・su5・su6・su6.5・646-pr2）。いずれも当時の判断記録であり書き換えない（唯一の例外が (a) の 2026-07-25 spec への errata **追記**）。
 
-1. **B 群（世代の所有権移動）を単独で入れる**。`rows_generation` の前進テスト（`set_results` / `enter_tool` / `on_escape` 両分岐 / `reset` で +1、`move_selection` では不変）を追加。**ここが緑にならない限り A 群は意味を持たない**
-2. **A 群（clicked の世代同梱）**。型変更で両端が compile-fail する（移行漏れ検出器）
-3. **C 群（#675）**。純粋核テストを先に赤で書く
-4. **D 群（SPEC 同期）**
-5. 検証: カテゴリ A + **カテゴリ C**（`smoke:startup` / `smoke:egui`）+ **カテゴリ D**（main を画面下端へドラッグ → 8 件以上ヒット → 下端がタスクバー上端で止まる／スクロールで最終行に到達）+ `governance:check`
-6. 該当スキル: `/race-check`・`/state-check`・`/symmetric-check`
+**同名・別概念の注意**: grep「走らない」は `.claude/hooks/`（「import しただけでは main() が走らない」）・`.claude/rules/governance-docs.md`（「PostToolUse hook 検査は走らない」）・`src-tauri/CLAUDE.md` setup 節（「egui フレームは 1 枚も走らない」——setup 中のポンプ停止の話で別概念）にも当たる。これらは本不変条件と無関係——変更対象に含めない。
+
+## 5. 落とし穴・注意点
+
+1. **行番号は既にずれている**: issue 記載の `view.rs:733` / `view.rs:850` / `mod.rs:531-538` / `runtime.rs:306` は現行では `view.rs:857`（無条件 wake）/ `mod.rs:551-563`（`wake_results` doc）/ `runtime.rs:309-316`（注記）。シンボル名で位置決めする（`.claude/rules/src-tauri.md` の #588 規範）
+2. **送信側と受信側の window_id は型が違う**: 送信側は `tauri_runtime::window::WindowId`、受信側 arm は tao の `WindowId`。字面は一致しない。切り分けは件数（0 か ≥1 か）で足りるため相関付けは不要だが、ログを読むときに「同じ id が出ない」ことに驚かないこと。窓は main / results の 2 つで scheduler worker も 2 本ある——送信行には必ず id を含める
+3. **受信計器は可視中も毎フレーム出る**: 可視アイドル 2fps（`PERFORMANCE.md` 基準値）でログが伸びる。観測は `egui_hide:done` 以降の区間で数える。「trace の presence 検査は状態の検査ではない」（`src-tauri/CLAUDE.md`）——ここでは「区間内に受信が現れない」という不在の観測が判定の主役であり、規範が許す形（区間内に事象が現れないこと）に整合する
+4. **`Focused(true)` で `visible` は恒真に戻る**: `render()` の早期 return は現在到達不能なので、「受信したのに REPAINT 行が出ない」という紛れは起きない（受信すれば必ず REPAINT 行が伴う）。受信計器と `SNOTRA_EGUI_REPAINT` 行数の一致はクロスチェックに使える
+5. **config 刺激は visual-only キーで**: `IndexInputs::from_config` に効くキー（scan 対象等）を触ると `start_index_build` → `indexing-*` が発火してログが濁る。`font_size` 等の visual キーが安全
+6. **計器を足す編集自体が hook を回す**: `*.rs` 編集で clippy + crate テストが走る（沈黙=合格）。`PERFORMANCE.md` / `CLAUDE.md` / spec への追記は hook 検査対象外（沈黙は「何も走らなかった」）——ガバナンス文書に触れるため `npm run governance:check`（カテゴリ F）を手で回す
+7. **項目 2 で「実 render() を検査する形」を提案しない**: issue が明示的に選択肢から除外している（dev-dependencies ゼロ・mock runtime 無し・実 HWND 要求）。レビューで「テストを強くする」方向の提案が出たら本 issue の制約を引く
+8. **測定は人間との協働が必須**: Alt+Q 実打鍵（`GetAsyncKeyState` 依存で自動化不能）+ 30 秒待ち + hidden 中の config 書き換え。自動 smoke には載らない。実測ログの保存名・保存先を決めてから始める（issue コメントの `628-idle-clean.log` の流儀）。また**検査対象を変更しながら測らない**——計器追加のコミットを固めてから測る
+9. **順序依存**: 項目 2 の処分（2-1）と文書反映（1-4〜1-8）は測定後。項目 3（3-1/3-2）・b9a9caf 言い換え（2-2）・計器追加（1-1〜1-3）は測定前に着手可能
+10. **「送信 ≥1 かつ 受信 ≥1」への備え**: この結果は不変条件の反証であり、(b) 群の全箇所が誤りになる大事故。判定基準に明記し、その場合は文書反映へ進まず issue へ差し戻す

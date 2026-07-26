@@ -370,9 +370,9 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
         sh.reset_pending.store(true, Ordering::SeqCst); // resetForShow を view に指示
     }
     // 高さリセット → 位置 → show の順（旧 WebView2 経路から引き継いだ順序制約）。
-    // reset-on-show でクエリは空 = 結果なし = bar_height（既定 43px）。前回 hide 時に展開高
-    // （例 300px）のままだと position クランプが 300px で効き、show 後に view が bar_height へ
-    // collapse して視覚スナップ + 位置ずれになる。position の前に bar_height へ collapse して
+    // reset-on-show でクエリは空 = 結果なし = bar_height（既定 43px）。前回 hide 時に status /
+    // toast 行の分だけ伸びた高さのままだと position クランプがその高さで効き、show 後に view が
+    // bar_height へ collapse して視覚スナップ + 位置ずれになる。position の前に bar_height へ collapse して
     // これを断つ（SU3 で高さが動的化したため、旧「52px は create で固定・位置のみ復元」前提は
     // 崩れている）。
     #[cfg(windows)]

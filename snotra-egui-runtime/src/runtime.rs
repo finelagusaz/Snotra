@@ -150,6 +150,20 @@ struct RuntimePlugin<T: UserEvent> {
 struct ActiveWindow {
     window: EguiWindow,
     scheduler: RepaintScheduler,
+    /// 窓が載っている HMONITOR（isize・#737）。`Moved` はドラッグ中に連発するため、
+    /// 変化検知（安価な `window_monitor`）を挟んでからリフレッシュレート再取得
+    /// （`EnumDisplaySettingsW` 込み・安くない）へ進むためのキャッシュ。
+    last_monitor: Option<isize>,
+}
+
+/// モニターのリフレッシュレートを取得して配送の下限間隔へ供給する（契約②・#737）。
+/// 返り値は現在の HMONITOR（変化検知キャッシュの更新用）。取得できない環境では
+/// `set_min_interval(None)` が 60Hz フォールバックへ倒す。
+fn refresh_min_interval(window: &tauri::Window, scheduler: &RepaintScheduler) -> Option<isize> {
+    let hwnd = window.hwnd().ok().map(|h| h.0 as isize);
+    let monitor = hwnd.and_then(crate::monitor::window_monitor);
+    scheduler.set_min_interval(hwnd.and_then(crate::monitor::monitor_refresh_hz));
+    monitor
 }
 
 impl<T: UserEvent> Plugin<T> for RuntimePlugin<T> {
@@ -175,10 +189,42 @@ impl<T: UserEvent> Plugin<T> for RuntimePlugin<T> {
                     self.active.remove(&runtime_id);
                     return false;
                 }
-                if let Some(active) = self.active.get_mut(&runtime_id)
-                    && active.window.on_window_event(event)
-                {
-                    active.scheduler.request(std::time::Duration::ZERO);
+                use tauri_runtime_wry::tao::event::WindowEvent as TaoWindowEvent;
+                // 契約②（#737）: 配送の下限間隔の backstop。窓が静止したまま OS 設定で
+                // リフレッシュレートが変わる・モニターが抜き差しされる経路は Moved でも
+                // ScaleFactorChanged でも捕まらないため、show のたびに必ず来る Focused(true)
+                // で再取得する（頻度は低い）。**全窓**に適用するのは、従属窓（results）が
+                // focusable(false) + SW_SHOWNOACTIVATE で Focused を一度も受けないため
+                // ——両窓は設計上同じモニターに載る（results は main 直下へ追従・/symmetric-check #737）。
+                if matches!(event, TaoWindowEvent::Focused(true)) {
+                    for active in self.active.values_mut() {
+                        active.last_monitor =
+                            refresh_min_interval(&active.window.window, &active.scheduler);
+                    }
+                }
+                if let Some(active) = self.active.get_mut(&runtime_id) {
+                    // 契約②（#737）: モニター跨ぎの追従。Moved はドラッグ中に連発するため、
+                    // 安価な window_monitor の比較を挟み、変わったときだけ再取得する。
+                    if matches!(
+                        event,
+                        TaoWindowEvent::Moved(_) | TaoWindowEvent::ScaleFactorChanged { .. }
+                    ) {
+                        let monitor = active
+                            .window
+                            .window
+                            .hwnd()
+                            .ok()
+                            .and_then(|h| crate::monitor::window_monitor(h.0 as isize));
+                        if monitor != active.last_monitor {
+                            active.last_monitor = refresh_min_interval(
+                                &active.window.window,
+                                &active.scheduler,
+                            );
+                        }
+                    }
+                    if active.window.on_window_event(event) {
+                        active.scheduler.request(std::time::Duration::ZERO);
+                    }
                 }
             }
             Event::RedrawRequested(window_id) => {
@@ -250,8 +296,16 @@ impl<T: UserEvent> RuntimePlugin<T> {
                 callback_scheduler.request(info.delay);
             });
             scheduler.request(std::time::Duration::ZERO);
-            self.active
-                .insert(window_id, ActiveWindow { window, scheduler });
+            // 契約②（#737）: 活性化時にモニターのリフレッシュレートを配送の下限間隔へ供給する。
+            let last_monitor = refresh_min_interval(&window.window, &scheduler);
+            self.active.insert(
+                window_id,
+                ActiveWindow {
+                    window,
+                    scheduler,
+                    last_monitor,
+                },
+            );
         }
     }
 }

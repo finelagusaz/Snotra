@@ -246,6 +246,7 @@ jp_font は元から `from_static` だったが user_font だけ `from_owned` �
   - `SNOTRA_EGUI_PAINT_TRACE`: paint フェーズ（`tess_ms` / `raster_ms` / `total_ms` / `meshes` / `px`）。#532 SU6.5 の flip ゲート G3(b) の主判定に使った
   - `SNOTRA_EGUI_REPAINT_TRACE`: フレームの到着（`window` / `focused` / `since_prev_ms` / egui の repaint 原因 `file:line`）。**「なぜ再描画が止まらないか」を推測せず原因に名乗らせる**ための計器（#628）
   - `SNOTRA_EGUI_WAKE_TRACE`: `RequestRedraw` の送信（repaint worker・`SEND`）と受信（イベントループの `RedrawRequested` arm・`RECV`・引き当て結果付き）。hidden 中にどの層が配送を抑止しているかの切り分けに使う（#697）
+- **操作中の上限（2026-07-26・release・#737 実測）**: `RequestRedraw` の配送は窓が載るモニターのリフレッシュレートで頭打ち（取得失敗時 60Hz・contract-design spec 契約②）。144Hz 機の A/B でポインタ移動中の results 間隔 p50 が 3.5ms → **7.1ms（≈141fps）**、>200fps 相当の間隔（<5ms）が 4,829 → 170（−96%・残余は event queue のジッタとみられる——`SNOTRA_EGUI_WAKE_TRACE` の送信間隔での裏取りは未実施）、paint 占有 17.6% → 8.9%。**ポインタ移動中の p50 がリフレッシュレートの逆数を大きく下回ったら回帰を疑う**
 - **可視アイドルの基準値（2026-07-26・release・#628 実測）**: main 2.0 fps / results 2.0 fps（＝ egui のキャレット点滅の下限）・paint 平均 0.96ms・**CPU 0.59%（1 コア比）**。修正前は 11.9 / 19.8 fps・5.1% だった。差は `RawInput::predicted_dt` の既定値（1/60 秒）が短い repaint 予約を「即時再描画」へ飽和させ、点滅の遷移ごとに約 26ms スピンしていたことによる（`snotra-egui-runtime/src/input.rs` の `take` を参照）。**アイドルで 2 fps を超えていたら回帰を疑う**
 - コアロジックのマイクロベンチは `ignored` テストとして保持する。実行コマンドは [docs/build-commands.md](docs/build-commands.md) の「検索パフォーマンス計測」を SSOT として参照
 - フォルダ列挙のホットパス確認には bench フィルタを絞る: `cargo test -p snotra-core bench_folder_ -- --ignored --nocapture`（SSOT の bench コマンドに対するフィルタ違いとして個別記載）

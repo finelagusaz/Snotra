@@ -2,7 +2,7 @@
 
 対象 issue: #737（フレームレート上限なし・448fps）/ #711（blur 猶予の 1 回きり予約）/ #714（再検索時のスクロールアニメーション）/ #697 項目 1（hidden 中の paint 抑止機構が未測定）。
 
-**進捗**: §8 の 1 番（#697 項目 1 の実測）は 2026-07-26 完了——結果は **(A) tao/OS 層の配送抑止で確定**（issue #697 のコメント・§6 の分岐は「OS/tao 層で止まる」側で解決済み）。残りは 2〜5 番（#714 → #737 → #711 → 契約の CLAUDE.md 転記）。
+**進捗**: §8 の 1 番（#697・実測 (A) 確定）・2 番（#714・PR #742）・3 番（#737・契約②の実装 + A/B 実測で上限を確認）は 2026-07-26 完了。残りは 4〜5 番（#711 → 契約 5 か条の CLAUDE.md 転記）。
 
 これらは独立の欠陥ではなく、「**再描画を誰が・いつ要求し、どこで打ち切り、来なかったらどうするのか**」という runtime の設計契約が未文書のまま、呼び出し点ごとに場当たりで決まっていることの断片である。本書はその契約を 5 か条に固定し、各 issue をその実装として位置づける。
 
@@ -26,6 +26,8 @@ worker（`repaint.rs`）は窓ごとに 1 スレッドで、`pending: Option<Ins
 **系統 B: OS 由来（合流点を通らない）**
 
 expose・リサイズ等で tao が直接 `RedrawRequested` を配送する。頻度は低く、描き直しの必要が実在するため、制御の対象にしない。
+
+- **errata（2026-07-26・#737 独立導出）**: 系統 B には第 3 の経路がある——IME preedit 更新時の `InvalidateRect`（`windows_ime.rs`）→ `WM_PAINT` → OS 由来 `RedrawRequested`。IME 打鍵レートに有界で、上限（契約②）の対象外として受容する。
 
 **現状の帰結**: 系統 A に流量制御が無い。egui はポインタ移動中 `Some(Duration::ZERO)` を返し続け（egui 0.35 `input_state/mod.rs:652`・設計として正しい）、worker は言われるままに配送する → 448fps / 1 コア 84.7%（#737 実測）。
 
@@ -92,10 +94,12 @@ let mut next_allowed: Instant = Instant::now();      // 前回 dispatch + min_in
 
 現行の coalescing（早い方を採る）と直交し、既存テスト（`wake_before_activation_is_queued` 等）の契約を壊さない。
 
+- **errata（2026-07-26・#737 実装）**: 上のスケッチの「`pending = dispatch_at` として待ち直す」は採らなかった——後着の早い Request が pending を引き戻すたび早発 wake が生じる（plan-review の独立導出）。実装は `pending` の意味論を変えず、**待ち時間計算（`recv_timeout` の目標時刻）に max を閉じた**。理由の恒久記録は `repaint.rs` の worker コメント。
+
 ### `min_interval` の供給
 
 - `RepaintScheduler` に `Arc<AtomicU64>`（interval ナノ秒）を持たせ、worker は dispatch のたびに読む
-- 値の更新は plugin（`runtime.rs`）が行う: 活性化時に 1 回 + `Moved` / `ScaleFactorChanged` 受信時に再取得（モニター跨ぎ追従）
+- 値の更新は plugin（`runtime.rs`）が行う: 活性化時に 1 回 + `Moved` / `ScaleFactorChanged` 受信時に再取得（モニター跨ぎ追従）+ `Focused(true)` 受信時に**全窓**再取得（静止中の OS 設定変更・抜き差しの backstop。results は focusable(false) で Focused を受けないため全窓に適用する——実装時の /symmetric-check で追加）
 - 取得は窓 HWND → `MonitorFromWindow` → `EnumDisplaySettingsW(ENUM_CURRENT_SETTINGS)` の `dmDisplayFrequency`。crate は既に IMM32（`windows_ime.rs`）で Win32 依存を持つため、依存の性格は変わらない
 - 失敗時（0 / 1 が返る・API 失敗）は 60Hz へフォールバック。VRR パネルは最大値が返るが、上限の趣旨（表示されないフレームを描かない）に反しない
 

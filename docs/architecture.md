@@ -68,7 +68,7 @@ Tauri v2 バイナリ crate（パッケージ名 `snotra`）。検索 UI（`egui
 
 ### snotra-egui-runtime（egui/softbuffer 接着層）
 
-Tauri wry plugin で Tao イベントを受け、egui 入力・Win32 IME composition・repaint・softbuffer Surface の描画失敗リトライ（指数バックオフ・上限 5 回）を Window 単位で管理する接着層。`src-tauri` が唯一の消費者で、製品バイナリ `snotra.exe` に組み込まれて配布される（Issue #532 の採用判断に使った独立検証バイナリ `snotra-egui-mvp` は #660 で撤去済み）。
+Tauri wry plugin で Tao イベントを受け、egui 入力・Win32 IME composition・repaint（`RequestRedraw` 配送の下限間隔＝フレーム上限。モニターのリフレッシュレート・取得失敗時 60Hz・#737）・softbuffer Surface の描画失敗リトライ（指数バックオフ・上限 5 回）を Window 単位で管理する接着層。`src-tauri` が唯一の消費者で、製品バイナリ `snotra.exe` に組み込まれて配布される（Issue #532 の採用判断に使った独立検証バイナリ `snotra-egui-mvp` は #660 で撤去済み）。
 
 → モジュール構成と制約は `snotra-egui-runtime/CLAUDE.md`
 

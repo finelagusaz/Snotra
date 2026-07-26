@@ -1,6 +1,12 @@
+//! 即時／遅延 repaint を Tauri イベントループへ配送する worker（窓ごと 1 スレッド）。
+//! 配送には下限間隔がある（フレーム上限＝モニターのリフレッシュレート・取得失敗時 60Hz・
+//! contract-design spec 契約②・#737）——deadline は落とさず遅らせるだけ（契約③）。
+//! 外部から窓を起こす公開ハンドル `WindowWaker`（`EguiRuntime::attach` の戻り値）もここが所有する。
+
 use std::{
     sync::{
         Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError, Sender},
     },
     thread::{self, JoinHandle},
@@ -86,6 +92,25 @@ pub(crate) fn format_repaint_causes(causes: &[egui::RepaintCause]) -> String {
         .join("; ")
 }
 
+/// 60Hz の配送間隔（ナノ秒）。取得失敗時のフォールバック（#737・ユーザー合意 2026-07-26）。
+const FALLBACK_INTERVAL_NANOS: u64 = 1_000_000_000 / 60;
+
+/// リフレッシュレート(Hz)から配送の下限間隔へ（契約②・#737）。
+/// 0/1 は DEVMODE の慣習で「取得できていない」を意味する番兵値なので None
+/// （呼び出し側 `set_min_interval` が 60Hz フォールバックへ倒す）。
+fn interval_from_hz(hz: u32) -> Option<Duration> {
+    // 上限 1000Hz: 異常値（間隔 0ns で gate が無効化する類）を防ぐ現実的な天井（レビュー L4）。
+    (2..=1_000).contains(&hz).then(|| Duration::from_nanos(1_000_000_000u64 / u64::from(hz)))
+}
+
+/// 次の dispatch 予定時刻（契約②・#737）: 要求 deadline と gate（前回 dispatch +
+/// min_interval）の遅い方。deadline を**落とさず遅らせるだけ**——契約③「予約はフレーム
+/// 1 枚以上を約束する」を保つ。gate は「要求より早く配送しすぎない」制御であって、
+/// gate より遅い予約（点滅・タイムアウト等）を早める機構ではない。
+fn pace(deadline: Instant, gate: Instant) -> Instant {
+    deadline.max(gate)
+}
+
 #[derive(Clone)]
 pub(crate) struct RepaintScheduler {
     inner: Arc<SchedulerInner>,
@@ -94,6 +119,11 @@ pub(crate) struct RepaintScheduler {
 struct SchedulerInner {
     waker: WindowWaker,
     worker: Mutex<Option<JoinHandle<()>>>,
+    /// 配送の下限間隔（ナノ秒・契約②・#737）。worker が dispatch のたび読む level-triggered 値。
+    /// 書き手は plugin（活性化時 + モニター変化時 + `Focused(true)`・`runtime.rs`）。
+    /// clone は worker スレッド生成**前**に作って closure へ渡してある（`wake_channel` と同じ順序制約
+    /// ——`SchedulerInner` は spawn 後に構築されるため、ここ経由では worker から読めない）。
+    min_interval_nanos: Arc<AtomicU64>,
 }
 
 impl RepaintScheduler {
@@ -104,16 +134,29 @@ impl RepaintScheduler {
         wake: WakeReceiver,
     ) -> Self {
         let WakeReceiver { sender, receiver } = wake;
+        let min_interval_nanos = Arc::new(AtomicU64::new(FALLBACK_INTERVAL_NANOS));
+        let min_interval_for_worker = Arc::clone(&min_interval_nanos);
 
         let worker = thread::Builder::new()
             .name("snotra-egui-repaint".to_owned())
             .spawn(move || {
                 let mut pending: Option<Instant> = None;
+                // 前回 dispatch + min_interval（契約②の gate）。初期値は起動時刻——活性化直後の
+                // 初回フレーム（ウォームアップ）は遅らせない。
+                let mut next_allowed: Instant = Instant::now();
 
                 loop {
                     let message = match pending {
                         Some(deadline) => {
-                            let timeout = deadline.saturating_duration_since(Instant::now());
+                            // 待ち先は pace(deadline, gate)。pending の意味論（最も早い要求
+                            // deadline）は変えない——gate へ書き戻すと、後着の早い Request が
+                            // pending を引き戻すたび早発 wake が生じる。Timeout 到達 = gate 通過。
+                            //
+                            // Request 洪水（マウス移動 ≤~1kHz）でも満期 arm は飢餓しない:
+                            // メッセージ処理は ns 級で queue は生産より速く枯れ、空 queue の
+                            // recv_timeout が Timeout を返してここへ戻る（/race-check #737）。
+                            let target = pace(deadline, next_allowed);
+                            let timeout = target.saturating_duration_since(Instant::now());
                             match receiver.recv_timeout(timeout) {
                                 Ok(message) => Some(message),
                                 Err(RecvTimeoutError::Timeout) => None,
@@ -157,6 +200,11 @@ impl RepaintScheduler {
                             {
                                 break;
                             }
+                            // 契約②: 次の dispatch は min_interval 以上あける（gate 更新）。
+                            next_allowed = Instant::now()
+                                + Duration::from_nanos(
+                                    min_interval_for_worker.load(Ordering::Relaxed),
+                                );
                         }
                     }
                 }
@@ -167,12 +215,23 @@ impl RepaintScheduler {
             inner: Arc::new(SchedulerInner {
                 waker: WindowWaker { sender },
                 worker: Mutex::new(Some(worker)),
+                min_interval_nanos,
             }),
         }
     }
 
     pub(crate) fn request(&self, delay: Duration) {
         self.inner.waker.request(delay);
+    }
+
+    /// 配送の下限間隔をリフレッシュレートで設定する（契約②・#737）。
+    /// `None` と番兵値（0/1）は 60Hz フォールバックへ倒す。反映は次の dispatch から
+    /// （遅れて効いても最大 1 dispatch の誤差で自己回復する level-triggered 値）。
+    pub(crate) fn set_min_interval(&self, hz: Option<u32>) {
+        let interval = hz
+            .and_then(interval_from_hz)
+            .map_or(FALLBACK_INTERVAL_NANOS, |d| d.as_nanos() as u64);
+        self.inner.min_interval_nanos.store(interval, Ordering::Relaxed);
     }
 }
 
@@ -190,6 +249,32 @@ impl Drop for SchedulerInner {
 #[cfg(test)]
 mod tests {
     use super::{SchedulerMessage, format_repaint_causes, wake_channel};
+    use super::{interval_from_hz, pace};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn interval_from_hz_rejects_sentinel_and_converts() {
+        // 0/1 は DEVMODE の「取得できていない」番兵値——間隔にせず None（60Hz へ倒すのは呼び出し側）。
+        assert_eq!(interval_from_hz(0), None);
+        assert_eq!(interval_from_hz(1), None);
+        // 60Hz ≈ 16.67ms / 144Hz ≈ 6.94ms（µs 精度で確認）。
+        assert_eq!(interval_from_hz(60).unwrap().as_micros(), 16_666);
+        assert_eq!(interval_from_hz(144).unwrap().as_micros(), 6_944);
+        // 異常な巨大値も弾く（間隔 0ns で gate が無効化する類・現実的な天井 1000Hz）。
+        assert_eq!(interval_from_hz(1_001), None);
+        assert_eq!(interval_from_hz(u32::MAX), None);
+    }
+
+    #[test]
+    fn pace_takes_the_later_of_deadline_and_gate() {
+        let base = Instant::now();
+        let later = base + Duration::from_millis(10);
+        // gate が未来なら gate まで遅らせる（上限が効く）。
+        assert_eq!(pace(base, later), later);
+        // deadline が gate より遅ければ deadline のまま（遅い予約を早めない）。
+        assert_eq!(pace(later, base), later);
+        assert_eq!(pace(base, base), base);
+    }
 
     #[test]
     fn empty_repaint_causes_render_as_dash() {

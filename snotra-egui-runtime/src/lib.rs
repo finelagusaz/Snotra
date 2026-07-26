@@ -2,6 +2,7 @@
 
 mod ime;
 mod input;
+mod monitor;
 mod raster;
 mod renderer;
 mod repaint;

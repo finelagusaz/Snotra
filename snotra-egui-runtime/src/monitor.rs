@@ -45,7 +45,10 @@ pub(crate) fn monitor_refresh_hz(hwnd: isize) -> Option<u32> {
         // サイズを入れて MONITORINFO* へキャストする Win32 の定石（windows 0.61.3 で実確認）。
         let mut info = MONITORINFOEXW::default();
         info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
-        if !GetMonitorInfoW(monitor, &mut info.monitorInfo as *mut MONITORINFO).as_bool() {
+        // ポインタは構造体**全体**から導出する——`&mut info.monitorInfo` 起点だと provenance が
+        // 先頭 40 バイトに閉じ、Win32 が cbSize に従って書く szDevice への書き込みが
+        // 別名規則上の範囲外になる（レビュー M1・現行 codegen では動くが Miri 相当で検出される形）。
+        if !GetMonitorInfoW(monitor, (&raw mut info).cast::<MONITORINFO>()).as_bool() {
             return None;
         }
         for mode in [ENUM_CURRENT_SETTINGS, ENUM_REGISTRY_SETTINGS] {

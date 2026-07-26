@@ -1,3 +1,8 @@
+//! 即時／遅延 repaint を Tauri イベントループへ配送する worker（窓ごと 1 スレッド）。
+//! 配送には下限間隔がある（フレーム上限＝モニターのリフレッシュレート・取得失敗時 60Hz・
+//! contract-design spec 契約②・#737）——deadline は落とさず遅らせるだけ（契約③）。
+//! 外部から窓を起こす公開ハンドル `WindowWaker`（`EguiRuntime::attach` の戻り値）もここが所有する。
+
 use std::{
     sync::{
         Arc, Mutex,
@@ -94,7 +99,8 @@ const FALLBACK_INTERVAL_NANOS: u64 = 1_000_000_000 / 60;
 /// 0/1 は DEVMODE の慣習で「取得できていない」を意味する番兵値なので None
 /// （呼び出し側 `set_min_interval` が 60Hz フォールバックへ倒す）。
 fn interval_from_hz(hz: u32) -> Option<Duration> {
-    (hz > 1).then(|| Duration::from_nanos(1_000_000_000u64 / u64::from(hz)))
+    // 上限 1000Hz: 異常値（間隔 0ns で gate が無効化する類）を防ぐ現実的な天井（レビュー L4）。
+    (2..=1_000).contains(&hz).then(|| Duration::from_nanos(1_000_000_000u64 / u64::from(hz)))
 }
 
 /// 次の dispatch 予定時刻（契約②・#737）: 要求 deadline と gate（前回 dispatch +
@@ -254,6 +260,9 @@ mod tests {
         // 60Hz ≈ 16.67ms / 144Hz ≈ 6.94ms（µs 精度で確認）。
         assert_eq!(interval_from_hz(60).unwrap().as_micros(), 16_666);
         assert_eq!(interval_from_hz(144).unwrap().as_micros(), 6_944);
+        // 異常な巨大値も弾く（間隔 0ns で gate が無効化する類・現実的な天井 1000Hz）。
+        assert_eq!(interval_from_hz(1_001), None);
+        assert_eq!(interval_from_hz(u32::MAX), None);
     }
 
     #[test]

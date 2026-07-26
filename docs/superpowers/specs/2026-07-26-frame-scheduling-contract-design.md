@@ -94,6 +94,8 @@ let mut next_allowed: Instant = Instant::now();      // 前回 dispatch + min_in
 
 現行の coalescing（早い方を採る）と直交し、既存テスト（`wake_before_activation_is_queued` 等）の契約を壊さない。
 
+- **errata（2026-07-26・#737 実装）**: 上のスケッチの「`pending = dispatch_at` として待ち直す」は採らなかった——後着の早い Request が pending を引き戻すたび早発 wake が生じる（plan-review の独立導出）。実装は `pending` の意味論を変えず、**待ち時間計算（`recv_timeout` の目標時刻）に max を閉じた**。理由の恒久記録は `repaint.rs` の worker コメント。
+
 ### `min_interval` の供給
 
 - `RepaintScheduler` に `Arc<AtomicU64>`（interval ナノ秒）を持たせ、worker は dispatch のたびに読む

@@ -23,9 +23,11 @@ import { fileURLToPath } from "node:url";
 const REF_EXTENSIONS = /\.(md|rs|ts|tsx|mjs|json|toml|yml|ps1|html|css)$/;
 /** 走査から除外するディレクトリ。名前ベース（任意の深さの生成物）とルート相対プレフィックス
  *  （untracked バッファ）を分ける——`ui/src/workspace/` のような将来の同名ソースを気づかれないまま
- *  落とさないため、workspace/worktrees はルート錨止めにする */
+ *  落とさないため、workspace/worktrees はルート錨止めにする
+ *  `.superpowers/` は SDD（subagent-driven-development）の作業バッファで、gitignore 済みゆえ CI の
+ *  チェックアウトには存在しない——走査に含めると同じコマンドが手元と CI で別の母集団を見る（#722）。 */
 const WALK_EXCLUDE_NAMES = new Set([".git", "node_modules", "target", "dist"]);
-const WALK_EXCLUDE_PREFIXES = ["workspace", ".claude/worktrees"];
+const WALK_EXCLUDE_PREFIXES = ["workspace", ".claude/worktrees", ".superpowers"];
 
 /** リポジトリを歩いて snapshot（files: "/" 区切り相対パス一覧, read(rel)）を作る。
  *  列挙は fs 自身に問う（`git ls-files` の pathspec `**` 意味論の罠を避ける・health-check Check 1 注記） */

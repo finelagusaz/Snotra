@@ -97,7 +97,7 @@ git checkout -b <branch-name>
 
 ### 5b. セルフレビュー（plan-review 固有の補完）
 
-Step 5a の `/plan-review` が **①対称コードパス ②影響範囲の網羅性（呼び出し元 grep）③リソース管理（生成/破棄ペア・`false` に戻さない `AtomicBool`／`unlisten` の無い `listen()`／`kill` の無い子プロセス）④既存パターンとの整合 ⑤YAGNI** を検証済みである（Step 2 の観点＋ Step 2b の独立再導出）。**5b でこれらを再実行しない**——同一 plan.md への二度手間を避ける。plan-review の「要対処」を確認し、あれば `workspace/plan.md` を更新する。
+Step 5a の `/plan-review` が **①対称コードパス ②影響範囲の網羅性（呼び出し元 grep）③リソース管理（生成/破棄ペア・`false` に戻さない `AtomicBool`／`unlisten` の無い `listen()`／`kill` の無い子プロセス）④既存パターンとの整合 ⑤YAGNI** を検証済みである（`/plan-review`「Step 2」の観点＋ `/plan-review`「Step 2b」の独立再導出）。**5b でこれらを再実行しない**——同一 plan.md への二度手間を避ける。plan-review の「要対処」を確認し、あれば `workspace/plan.md` を更新する。
 
 5b では **plan-review が扱わない次の3観点だけ**を追加で確認し、問題があれば計画を修正する:
 
@@ -132,3 +132,5 @@ git push -u origin HEAD
 3. 計画の概要（変更ファイル数・フェーズ数）
 4. セルフレビューで修正した点（あれば）
 5. 次のアクション: `/implement` で実装に進めること
+
+**引き渡し契約**: ここで渡す `workspace/plan.md` は `/plan-review` を通した**レビュー済みの計画**である。`/implement` はこの前提で計画を読み、調査をやり直さない。計画を検証せずに渡してはならない——検証水準が入口によって変わると、`/implement` 側が前提を立てられなくなる。

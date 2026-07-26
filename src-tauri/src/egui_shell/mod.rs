@@ -535,10 +535,11 @@ pub(crate) fn register_hide_listener(app: &tauri::AppHandle) {
 
 /// 可視中の main 窓を起こす（#671 PR D。旧実装＝窓ごとの Context clone を登録するスロットの後継）。
 ///
-/// hidden 中は実効的な no-op である——ただし**その抑止は wake 経路ではなく OS/tao 層に
-/// あると推測されており未測定**（`RequestRedraw` は hidden 窓に `WM_PAINT` を生まない・
-/// spec §7 残余 2）。旧実装（Context の clone に `request_repaint()`）と同じ経路
-/// （`RepaintScheduler` → proxy → `RequestRedraw`）を通るため、この性質は変わらない。
+/// hidden 中は実効的な no-op である——抑止は wake 経路ではなく **tao/OS 層**にある
+/// （2026-07-26 実測・#697: worker は `RequestRedraw` を送信するが、hidden な窓には
+/// `RedrawRequested` が配送されない。spec §7 残余 2 は errata で解消済み）。旧実装
+/// （Context の clone に `request_repaint()`）と同じ経路（`RepaintScheduler` → proxy →
+/// `RequestRedraw`）を通るため、この性質は変わらない。
 ///
 /// **`try_state` が返す `Option` は残る**（Tauri managed state の性質）。消えたのは
 /// 「Context が登録済みか」という 2 段目の Option である。

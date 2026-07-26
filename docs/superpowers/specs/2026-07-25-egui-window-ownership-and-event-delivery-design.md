@@ -292,7 +292,9 @@ PR D は副次的に既存の不変条件違反を解消する: `register_ctx` �
 
 1. **`app.get_window("results").hide()` は依然書けて黙って no-op する。** §2.6。表現不能化は I-1 でも A′ でも達成できない。A′ は正しい経路を 1 つにするに留まる。
 2. **「hidden 中は `update()` が走らない」（#532 SU5 の要石）の機構は未同定・未測定である。** §2.1 より `visible` は恒真であるから、runtime のガードではありえない。`register_config_wake_listeners` は可視性に関係なく main を wake するため、hidden 中の `config-applied` は `RepaintScheduler` → proxy → `RequestRedraw` まで届くはずである。抑止しているのは OS / tao 層（hidden HWND に `WM_PAINT` が来ない）と**推測**されるが未確認。**本 spec はこの命題を既定事実として引用しない。** 測るなら `render()` に trace 1 行を足し、hidden 中に `wake_view` を起こして観測する。
+   - **errata（2026-07-26・#697 実測）**: 解消済み。送受信 2 計器（`SNOTRA_EGUI_WAKE_TRACE`）で、hidden 中の `config-applied` 刺激に対し worker の送信（SEND=2）・イベントループの受信（RECV=0）を観測——worker は `RequestRedraw` を送信するが、hidden な窓には `RedrawRequested` が配送されない。**抑止は tao/OS 層で確定**（可視区間では SEND=RECV=REPAINT の 1:1 を陽性対照として確認）。
 3. **`runtime.rs:411-419` の `hidden_window_is_not_painted` は恒真テストである。** テスト内でローカル定義した `fn should_render(visible: bool) -> bool { visible }` を検査しており、実際の `render()` 早期 return を一切守っていない。本 spec は runtime の `visible` に触れないため修正対象にしないが、**このテストを「守られている根拠」として引用してはならない。**
+   - **errata（2026-07-26・#697）**: 同テストは削除した。実 `render()` を検査する形は dev-dependencies ゼロ・実 HWND 要求ゆえ不可能で、接地は残余 2 の実測と `render()` の到達可能性注記が担う（行番号 411-419 は記録当時の値）。
 4. **`egui_shell` にヘッドレステスト基盤が無い。** `egui_kittest` は `snotra-settings` のみ（#440 で導入済み・#456 で回転実績あり）。最も複雑な egui サーフェスが最も検証されていない状態は本 spec で解消しない。
 5. **handle メソッドの marshalling（どのスレッドで OS 呼びを実行するか）は決めない。** `mod.rs:449` と `commands/window.rs:143`（spawn したポーリングスレッド）は既にイベントループ外から raw Win32 を呼んでおり、`.claude/rules/src-tauri.md`「Win32 API は `PlatformBridge` 経由」とは既に不整合。A′ はこの不整合を**移設するだけで解消しない**。
 6. **#673 項目 2 は永続的に「やらない」ではない。** 決定 5 の理由（results が config 系イベントを listen していない）が解消されれば——例えば results 自身に config wake の受け口を足せば——edge 化は再び選択肢になる。本 spec はその設計を行わない。

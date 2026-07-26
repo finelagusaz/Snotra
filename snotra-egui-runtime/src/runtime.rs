@@ -319,10 +319,11 @@ impl EguiWindow {
             // （PR #677）により、crate 内で visible を false にする経路は現在
             // 無い（true にするのは new() の初期値と Focused(true) ハンドラのみ）。よって
             // このガードは現在到達不能。それでも残すのは、「hidden 中は update() が走ら
-            // ない」という #532 SU5 の不変条件がどの機構に依るか未測定（OS/tao が hidden
-            // 窓へ WM_PAINT を送らないためと推定）であり、将来 runtime 側での抑止が必要
+            // ない」という #532 SU5 の不変条件が runtime の外＝tao/OS 層に依っており
+            // （2026-07-26 実測・#697: worker は RequestRedraw を送信するが、hidden な
+            // 窓には RedrawRequested が配送されない）、将来 runtime 側での抑止が必要
             // になったときの受け口として置いているため。参照:
-            // docs/superpowers/specs/2026-07-25-egui-window-ownership-and-event-delivery-design.md §7 残余 2・3
+            // docs/superpowers/specs/2026-07-25-egui-window-ownership-and-event-delivery-design.md §7 残余 2・3（#697 の errata で解消）
             return Ok(()); // 不変条件⑥: 非表示中は描かない。
         }
         self.drain_native_ime();
@@ -485,16 +486,6 @@ fn cursor_icon(icon: egui::CursorIcon) -> Option<tauri::CursorIcon> {
 #[cfg(test)]
 mod tests {
     use super::{MAX_PAINT_RETRIES, retry_delay};
-
-    #[test]
-    fn hidden_window_is_not_painted() {
-        // visible=false のとき render は早期 return する契約を、visible 述語で固定。
-        fn should_render(visible: bool) -> bool {
-            visible
-        }
-        assert!(!should_render(false));
-        assert!(should_render(true));
-    }
 
     #[test]
     fn retry_delay_backs_off_then_gives_up() {

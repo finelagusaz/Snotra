@@ -137,61 +137,6 @@ fn make_key_input(
 #[cfg(not(windows))]
 fn send_alt_key_up() {}
 
-/// Position the main window on the target monitor using saved relative coordinates.
-///
-/// Target monitor is determined by `follow_cursor_monitor` config:
-/// - true: monitor containing the mouse cursor
-/// - false: primary monitor
-///
-/// Saved relative coordinates (physical pixels from monitor work area origin)
-/// are applied and clamped to the target work area. If no saved position exists,
-/// the window is centered on the target monitor.
-#[cfg(windows)]
-fn position_on_target_monitor(
-    app_handle: &AppHandle,
-    // &Window に一般化して egui 経路と共有（#532 SU2）。両経路とも同一の "main" 窓
-    // （get_window/get_webview_window は同じ内部 Window を指す・manager/window.rs:106）。
-    main: &tauri::Window,
-) {
-    use snotra_core::window_data;
-
-    // Read follow_cursor_monitor from Engine config (refreshed on every show).
-    let follow_cursor = app_handle
-        .try_state::<AppState>()
-        .map(|s| s.engine.lock().unwrap().config().general.follow_cursor_monitor)
-        .unwrap_or(true);
-
-    // Determine target monitor work area.
-    let target_wa = if follow_cursor {
-        monitor::cursor_monitor_work_area()
-    } else {
-        monitor::primary_monitor_work_area()
-    };
-    let Some(target_wa) = target_wa else { return };
-
-    // Get current window size (physical) for centering/clamping.
-    let Ok(win_size) = main.outer_size() else { return };
-    let win_w = win_size.width as i32;
-    let win_h = win_size.height as i32;
-
-    // Load saved relative placement and convert to absolute on target monitor.
-    let (abs_x, abs_y) = if let Some(placement) = window_data::load_search_placement() {
-        // Saved coordinates are physical pixels relative to monitor work area origin.
-        let x = target_wa.left + placement.x;
-        let y = target_wa.top + placement.y;
-        // Clamp to ensure the window stays within the target work area
-        // (handles different-sized monitors).
-        target_wa.clamp(x, y, win_w, win_h)
-    } else {
-        // No saved position — center on target monitor.
-        target_wa.center(win_w, win_h)
-    };
-
-    let _ = main.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
-        abs_x, abs_y,
-    )));
-}
-
 fn main() {
     let is_first_run = Config::is_first_run();
     let (config, load_outcome) = Config::load_reporting();

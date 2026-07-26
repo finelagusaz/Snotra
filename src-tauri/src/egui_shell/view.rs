@@ -745,15 +745,6 @@ impl SearchWindowView {
             .unwrap_or(false)
     }
 
-    /// 動的高さ算出用の max_results（§4.5/§4.7）。visible_rows は `Option<usize>` のため
-    /// effective_visible_rows() で既定補完する（config.rs:327）。
-    fn max_results(&self) -> u32 {
-        self.app_handle
-            .try_state::<crate::AppState>()
-            .map(|s| s.engine.lock().unwrap().config().appearance.effective_visible_rows() as u32)
-            .unwrap_or(8)
-    }
-
     /// UI 文言の言語（config general.language・起動時一回でなく都度読み——lock 1 回/フレームの
     /// 既存ヘルパー群と同型。SU6 の hot-reload 拡張時もこの読み口のまま動く）。
     fn lang(&self) -> snotra_core::config::Language {
@@ -775,95 +766,6 @@ impl SearchWindowView {
             .try_state::<crate::AppState>()
             .map(|s| f64::from(s.engine.lock().unwrap().config().appearance.window_width))
             .unwrap_or(600.0)
-    }
-
-    /// results 窓の可視性・サイズ・位置を main から駆動する(#646 PR2 決定 6)。
-    /// 位置 = main の直下 + window_gap(従属)。デルタガードで無変化フレームは no-op。
-    /// show は focusable(false) 窓ゆえフォーカスを奪わない(決定 4)。
-    fn drive_results_window(
-        &mut self,
-        plain_hidden: bool,
-        width: f64,
-        metrics: &crate::egui_shell::layout::Metrics,
-    ) {
-        let Some(results) = self
-            .app_handle
-            .try_state::<crate::egui_shell::ResultsWindow>()
-        else {
-            return;
-        };
-        // 連言②の材料（件数）は**クリック逆流の消費後**に読む。③ `plain_hidden` は消費**前**に
-        // 読んだ値を受け取る（#752 F2）。**この非対称は意図である**——読み点を揃えて前へ寄せる
-        // と、行クリック起動フレームで古い行が 1 フレーム描かれる（`cargo test` では落ちない）。
-        let count = self.state.results().len();
-        // main が hidden の間は results を出さない（#671 PR A′ レビュー Important 1）。
-        // main_visible は hide_egui_main が results.hide() の**前**に false へ落とすため、
-        // その後に走ったフレームはここで確実に hide 側へ倒れる。判定式と根拠は
-        // layout::present_results（純粋核・ユニットテスト対象）。
-        let main_visible = self
-            .app_handle
-            .try_state::<crate::AppState>()
-            .map(|s| s.main_visible.load(Ordering::SeqCst))
-            .unwrap_or(false);
-        let desired_height = match crate::egui_shell::layout::present_results(
-            crate::egui_shell::layout::ResultsInputs {
-                main_visible,
-                plain_hidden,
-                result_count: count,
-                max_results: self.max_results(),
-                row_height: metrics.row_height,
-            },
-        ) {
-            crate::egui_shell::layout::ResultsPresentation::Hidden => {
-                // 可視フラグは ResultsWindow が持つ（#671 PR A′ spec 決定 2）。hide() は遷移した
-                // ときだけ true を返すため、trace は 1 回だけ出る（毎フレーム撃たない）。
-                // trace を型の内側でなく呼び出し側に置く理由は spec 決定 7。
-                if results.hide() {
-                    crate::trace_main("egui_results:hide", serde_json::json!({ "from": "drive" }));
-                }
-                return;
-            }
-            crate::egui_shell::layout::ResultsPresentation::Visible { desired_height } => {
-                desired_height
-            }
-        };
-        // 位置: main の外形直下 + gap(物理座標。gap は論理 px を scale で換算)。無ガードの
-        // 単一点(position_results_below_main・mod.rs)へ委譲——Moved リスナーと共用する
-        // ため、デルタガードはヘルパー側に持たない(#646 PR2 決定 10)。
-        let top_y = crate::egui_shell::position_results_below_main(&self.app_handle);
-        // 作業領域の下端でクランプする（#675）。あふれた行は既存の ScrollArea が拾う。
-        //
-        // **可視判定（上の `present_results`）には `desired_height`（クランプ前）を使う。**
-        // クランプには上端が要り、上端は直上の位置決めが決めるが、位置決めは可視判定の
-        // **後**にある（不可視なら早期 return する）。判定にクランプ後の値を使おうとすると
-        // 位置決めを判定より前へ動かすことになり、不可視フレームでも `SetWindowPos` を
-        // 撃つ——#646 PR2 決定 10 の設計を変えてしまう。クランプは `set_size` に渡す値だけに
-        // 効かせ、「0 件 ⇔ 高さ 0 ⇔ hide」の契約を判定側で無傷に保つ。
-        //
-        // **`desired_height` と `applied_height` は別名にしてある**（#752 F5）。旧実装は同一
-        // 関数内で `res_h` を 2 度束縛しており、デルタガードがどちらを覚えるべきかが名前から
-        // 読めなかった。覚えるのは**クランプ後**である。
-        let applied_height = crate::egui_shell::layout::clamp_results_height(
-            desired_height,
-            top_y.and_then(|y| crate::egui_shell::results_available_height(&self.app_handle, y)),
-            metrics.row_height,
-        );
-        // デルタガードは `ResultsWindow::set_size` が内蔵する（#749 で移設）。**照合対象が
-        // `set_size` の実引数と同じであること**——素の値を覚えると、毎フレーム撃つか必要な
-        // 再サイズを撃たないかのどちらかになる——は、memo を撃つ側の内側へ入れたことで
-        // 構造的に保たれる（渡した値がそのまま memo になる）。
-        results.set_size(width, applied_height);
-        // フォーカスを奪わない表示（tauri show() は SW_SHOW で活性化する・#646 PR2）。
-        // 置き場の理由は上の hide 側コメントと同じ（spec 決定 7）。
-        if results.show() {
-            crate::trace_main("egui_results:show", serde_json::json!({ "rows": count }));
-        }
-        // 決定 5（#673 spec・#697）: この無条件 wake を edge 化してはならない。results は
-        // config 系イベントを一切 listen せず（register_config_wake_listeners は wake_main のみ）、
-        // visual-only の config 変更では RowsSnapshot が不変ゆえ snapshot 差分 wake も発火しない。
-        // results が新しい色・フォント・行高を描くことを**保証する**唯一の経路がこの
-        // level-triggered wake である（入力起因の偶発 wake でも描かれるが、それに依れない）。
-        crate::egui_shell::wake_results(&self.app_handle);
     }
 
     /// dir を別スレッドで全列挙・全ソートし FolderMsg を channel へ送る（token 付き）。
@@ -1842,7 +1744,19 @@ impl EguiView for SearchWindowView {
             }
             ui.ctx().request_repaint();
         }
-        self.drive_results_window(plain_hidden, width, metrics);
+        // **`result_count` はここで読む**（#749）——`take_clicked_for`（クリック逆流の消費・
+        // 上のブロック）より**後**でなければならない（#752 F2 / ADR-0007）。この式を
+        // `plain_hidden` の算出（`show_results` の直前）へ動かすと、行クリック起動フレームで
+        // 古い行が 1 フレーム描かれる。`cargo test` では落ちない種類の回帰である。
+        crate::egui_shell::drive_results_window(
+            &self.app_handle,
+            crate::egui_shell::DriveResultsInputs {
+                plain_hidden,
+                result_count: self.state.results().len(),
+                width,
+                row_height: metrics.row_height,
+            },
+        );
 
         self.was_focused = focused;
     }

@@ -1,5 +1,8 @@
 //! egui/softbuffer メインウィンドウの外殻（#532 SU2〜SU7・唯一の UI 経路）。
-//! window 生成・show/hide・blur 自動非表示・位置永続。
+//! window 生成（main/results 両窓）・共有状態（`EguiShellState`）・config の 1 フレーム読み・
+//! listener の登録・起動時 updater check。
+//! **窓を操作する実体（show/hide・位置・サイズ・wake）は `window_coordinator` にある**
+//! （#749 段 1）——ここに残るのは登録と生成であって、駆動ではない。
 mod icon_textures;
 mod lifecycle;
 mod search_state;
@@ -17,6 +20,18 @@ mod results_view;
 mod results_window;
 mod view;
 mod visual;
+mod window_coordinator;
+
+// main.rs（hotkey / tray / setup）・view.rs（driver）・results_view.rs（クリック逆流）が
+// 消費する。窓操作の実体は window_coordinator.rs へ移した（#749 段 1）。**モジュール外に
+// 消費者があるものだけを re-export する**——`save_placement_relative` / `read_metrics` /
+// `results_available_height` / `max_results` / `position_on_target_monitor` は同モジュール内
+// からしか呼ばれず、`position_results_below_main` は親である本ファイルが
+// `window_coordinator::` で直に呼ぶ。
+pub(crate) use window_coordinator::{
+    DriveResultsInputs, drive_results_window, hide_egui_main, show_egui_main, wake_main,
+    wake_results,
+};
 
 // mod.rs（窓生成・managed state）が消費する。RowsSnapshot は view.rs（main の snapshot 発行）・
 // results_view.rs（update() 描画）が消費する（#646 PR2 Task 4）。ClickTake は view.rs
@@ -25,8 +40,8 @@ pub(crate) use results_view::ClickTake;
 pub(crate) use results_view::ResultsShared;
 pub(crate) use results_view::RowsSnapshot;
 
-// main.rs（managed state 化）・view.rs（drive）・commands/window.rs（topmost）が消費する
-// （#671 PR A′ spec 決定 2）。
+// main.rs（managed state 化）・window_coordinator.rs（drive / hide）・commands/window.rs
+// （topmost）が消費する（#671 PR A′ spec 決定 2。drive は #749 で view.rs から移設）。
 pub(crate) use results_window::ResultsWindow;
 
 // view.rs / results_view.rs が毎フレームの描画で消費する（#673 spec 決定 4）。
@@ -51,7 +66,7 @@ pub(crate) use layout::Debouncer;
 pub(crate) use strings as ui_strings;
 
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::time::Instant;
 
 use snotra_egui_runtime::EguiRuntime;
@@ -284,7 +299,7 @@ pub(crate) fn create(
         let handle = app_handle.clone();
         window.on_window_event(move |event| {
             if matches!(event, tauri::WindowEvent::Moved(_)) {
-                position_results_below_main(&handle);
+                window_coordinator::position_results_below_main(&handle);
             }
         });
     }
@@ -318,26 +333,6 @@ fn apply_rounded_corners(window: &tauri::Window) {
     }
 }
 
-/// 実行中 config から Metrics を導出する(#646 決定 2)。毎フレーム/毎 show の live-read で
-/// キャッシュしない。view(update)と show 経路の両方がここを通ることで、導出式とフォールバック
-/// を単一点に保つ(/simplify: 独立実装 2 箇所でフォールバックが 52.0/43.0 に乖離していた)。
-/// AppState 不在(setup 完了前の理論経路のみ)は `VisualConfig::default()` から導出——
-/// 既定値の正本(config.rs の default_*)に追従し、リテラル再手打ちを持たない。
-pub(crate) fn read_metrics(app: &tauri::AppHandle) -> layout::Metrics {
-    let (f, rp, bp) = app
-        .try_state::<crate::AppState>()
-        .map(|s| {
-            let engine = s.engine.lock().unwrap();
-            let v = &engine.config().visual;
-            (v.font_size, v.row_padding, v.bar_padding)
-        })
-        .unwrap_or_else(|| {
-            let v = snotra_core::config::VisualConfig::default();
-            (v.font_size, v.row_padding, v.bar_padding)
-        });
-    layout::Metrics::from_config(f, rp, bp)
-}
-
 /// 1 フレーム分のテーマ値を **lock 1 回**で読み切る（#673 spec 決定 4）。導出は純関数
 /// `visual::visual_snapshot` が持ち、この関数は lock と AppState 不在の面倒だけを見る。
 ///
@@ -360,171 +355,6 @@ pub(crate) fn read_visual(app: &tauri::AppHandle, applied: VisualApplied<'_>) ->
     }
 }
 
-/// egui 経路の show。共有するのは position_on_target_monitor のみ。全 hide は外部化ゆえ
-/// runtime.visible は false にならず、show は Focused(true) に依存せず確実に描ける（codex #4）。
-/// show 列は WebView2 の show_and_focus_main を egui 用に自前複製（WebView2 本体を触らないため）。
-pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
-    let Some(window) = app.get_window("main") else {
-        crate::trace_main("egui_show:no_window", serde_json::json!({}));
-        return;
-    };
-    // show のたびに view の emit dedup をリセット（Focused(true) 非依存・codex #8）。
-    if let Some(sh) = app.try_state::<EguiShellState>() {
-        sh.hide_pending.store(false, Ordering::SeqCst);
-        sh.reset_pending.store(true, Ordering::SeqCst); // resetForShow を view に指示
-    }
-    // 高さリセット → 位置 → show の順（旧 WebView2 経路から引き継いだ順序制約）。
-    // reset-on-show でクエリは空 = 結果なし = bar_height（既定 43px）。前回 hide 時に status /
-    // toast 行の分だけ伸びた高さのままだと position クランプがその高さで効き、show 後に view が
-    // bar_height へ collapse して視覚スナップ + 位置ずれになる。position の前に bar_height へ collapse して
-    // これを断つ（SU3 で高さが動的化したため、旧「52px は create で固定・位置のみ復元」前提は
-    // 崩れている）。
-    #[cfg(windows)]
-    {
-        let width = window
-            .inner_size()
-            .ok()
-            .map(|s| s.to_logical::<f64>(window.scale_factor().unwrap_or(1.0)).width)
-            .unwrap_or(600.0);
-        // 折りたたみ高 = bar_height(#646 決定 2)。52 固定だと font 連動後の実バー高と
-        // ずれ、position クランプが誤った高さで効く(このブロック冒頭の reset-on-show
-        // コメントの機構と同じ理由。行番号参照は挿入でずれるため名前で指す)。
-        let bar_h = read_metrics(app).bar_height;
-        let _ = window.set_size(tauri::LogicalSize::new(width, bar_h));
-    }
-    #[cfg(windows)]
-    crate::position_on_target_monitor(app, &window);
-    let _ = window.show();
-    // main_visible は show() の後に立てる（WebView2 の show_and_focus_main と同じ「順序不変」
-    // 制約）。show 完了前に visible=true を読んだホットキートグルが hide するのを避ける。
-    if let Some(state) = app.try_state::<crate::AppState>() {
-        state.main_visible.store(true, Ordering::SeqCst);
-    }
-    let _ = window.set_focus();
-    // フォーカス移行の同期待ち（SetForegroundWindow は部分的に非同期・Raymond Chen）。
-    #[cfg(windows)]
-    if let Ok(hwnd) = window.hwnd() {
-        use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-        use windows::Win32::UI::WindowsAndMessaging::{SMTO_NORMAL, SendMessageTimeoutW, WM_NULL};
-        let hwnd = HWND(hwnd.0);
-        let mut result = 0usize;
-        unsafe {
-            let _ = SendMessageTimeoutW(
-                hwnd,
-                WM_NULL,
-                WPARAM(0),
-                LPARAM(0),
-                SMTO_NORMAL,
-                100,
-                Some(&mut result),
-            );
-        }
-    }
-    // 残留 Alt 解除: focus 確定後かつ物理 Alt 解放後のみ（#558）。
-    if !crate::is_alt_pressed() {
-        crate::send_alt_key_up();
-    }
-    // §12: 表示時 IME オフ（設定有効時・復元なし・SU6 spec 決定 4）。ime_off_on_show は実行中
-    // config から都度読み（キャッシュしない・#576 同型——config_watcher の hot-reload が diff/event
-    // 追加なしに届く）。**focus 同期（上の SendMessageTimeoutW）より後に置く**——前だと IME オフが
-    // 対象窓に効かない（WebView2 apply_ime_control doc の警告条件）。Win32 は PlatformBridge 経由
-    // （rule）。TurnOffIme は生 HWND(usize) を取るため窓型非依存で &Window 一般化は不要。
-    #[cfg(windows)]
-    {
-        let ime_control = app
-            .try_state::<crate::AppState>()
-            .map(|s| s.engine.lock().unwrap().config().general.ime_off_on_show)
-            .unwrap_or(false); // config.rs の既定値と一致
-        if ime_control
-            && let Some(bridge) = app.try_state::<std::sync::Mutex<crate::platform::PlatformBridge>>()
-            && let Ok(b) = bridge.lock()
-            && let Ok(hwnd) = window.hwnd()
-        {
-            b.send_command(crate::platform::PlatformCommand::TurnOffIme(hwnd.0 as usize));
-            crate::trace_main("egui_show:ime_control", serde_json::json!({}));
-        }
-    }
-    crate::trace_main(
-        "egui_show:done",
-        serde_json::json!({ "ms": t0.elapsed().as_secs_f64() * 1000.0 }),
-    );
-}
-
-/// egui 経路の hide。**main の** hide の唯一の副作用所有点（codex #7）——位置保存・
-/// main_visible=false・working set trim はここにしか無い。**世代 bump（hotkey_generation）
-/// だけは 2 箇所ある**——ここは「保留中の alt 解放待ち show を無効化する」ため、
-/// hotkey listener（main.rs）は「押下ごとに採番する」ため（用途が別）。
-/// **results の hide はここを通らない経路がある**（`view.rs` の `drive_results_window`）ため、
-/// 両窓を合わせた合流点ではない（#646 PR2 以降・全称主張の訂正は #671 サイクル PR A）。
-/// 外部 window.hide() のみで runtime.visible を false にしない（空白窓回避・codex #4）。
-pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
-    // 保留中の alt 解放待ち show を無効化（codex #5/(B)#2）: 世代を bump し、spawn 済み show
-    // スレッドの gen 一致チェックを外す。
-    if let Some(sh) = app.try_state::<EguiShellState>() {
-        sh.hotkey_generation.fetch_add(1, Ordering::SeqCst);
-    }
-    if let Some(window) = app.get_window("main") {
-        save_placement_relative(&window); // save-on-hide
-        let _ = window.hide();
-    }
-    // main_visible は **results.hide() より前**に落とす（#671 PR A′ レビュー Important 1）。
-    // これは `drive_results_window` の show ゲート（layout::present_results）が読む値で
-    // あり、後ろに置くと「results.hide() 済み・main_visible=true」の隙間に走ったフレームが
-    // results を再表示し、main が隠れたまま results だけ最前面に残る。
-    // show 側の「show() の後に true を立てる」（順序不変制約）とは対称である——どちらも
-    // 「main が可視でない期間に visible=true と読ませない」向きに倒している。
-    if let Some(state) = app.try_state::<crate::AppState>() {
-        state.main_visible.store(false, Ordering::SeqCst);
-    }
-    // #646 PR2: 従属窓も同時に隠す（決定 6）。show 側は main の update() が snapshot の
-    // show 判定で駆動するため、`update()` の外から results を hide する経路はここだけ
-    // （対称は main update 内の show）。`view.rs` の `drive_results_window` は update **内**
-    // で動く対の経路であり、直前の doc comment が言う「results の hide は 2 経路ある」は
-    // この 2 つ（update 外＝ここ／update 内＝drive_results_window）を指す——矛盾ではない。
-    if let Some(results) = app.try_state::<ResultsWindow>() {
-        // 戻り値（遷移したか）を無視するのは意図的である——ここの trace は**要求レベル**で
-        // あり、既に隠れていても出す（spec 決定 7・PR A の smoke は presence のみを assert）。
-        results.hide();
-        // 呼び出し側に置く（spec 決定 7）。results の hide は 2 経路あり
-        // （ここと view.rs の drive_results_window）、trace は要求レベルゆえ
-        // 既に隠れていても出る——smoke は presence のみを assert する。
-        crate::trace_main("egui_results:hide", serde_json::json!({ "from": "hide_main" }));
-    }
-    // hide 後に working set を trim する（**main の** hide 経路の合流点＝ここが唯一の呼び出し元・
-    // #532 SU6.5）。results 単独 hide（view.rs の drive）では main が可視のままゆえ trim しないのが正しい。
-    // EmptyWorkingSet はスレッド非依存ゆえこの context（イベントループ / listener）から直呼び可
-    // （src-tauri/CLAUDE.md「working set の能動回収」）。trim されたページは show 時に OS が透過
-    // re-fault する（逆操作不要・trim が hide 前後どちらで走っても無害）。子孫 BFS は設定プロセス
-    // （snotra-settings.exe・存命中のみ）も巻き込みうる——trim は best-effort ゆえ無害。
-    crate::working_set::trim_idle_working_set(std::process::id());
-    crate::trace_main("egui_hide:done", serde_json::json!({}));
-}
-
-/// 現在の物理位置をターゲットモニター作業領域原点からの相対座標で window.bin に保存
-/// （旧 WebView2 の save_relative_placement と同じ算出・#532 SU7 で唯一の保存経路）。
-pub(crate) fn save_placement_relative(window: &tauri::Window) {
-    let Ok(pos) = window.outer_position() else {
-        return;
-    };
-    #[cfg(windows)]
-    {
-        use snotra_core::window_data::{self, WindowPlacement};
-        let Ok(hwnd) = window.hwnd() else { return };
-        let Some(wa) = crate::monitor::window_monitor_work_area(hwnd.0 as isize) else {
-            return;
-        };
-        window_data::save_search_placement(WindowPlacement {
-            x: pos.x - wa.left,
-            y: pos.y - wa.top,
-        });
-    }
-    #[cfg(not(windows))]
-    {
-        use snotra_core::window_data::{self, WindowPlacement};
-        window_data::save_search_placement(WindowPlacement { x: pos.x, y: pos.y });
-    }
-}
-
 /// view からの `egui-hide-requested` を受け、hide_egui_main を実行する（**main の** hide の
 /// 合流点・codex #7）。
 /// view（イベントループスレッド）→ emit → この listener で hide を 1 経路に集約する。
@@ -533,94 +363,6 @@ pub(crate) fn register_hide_listener(app: &tauri::AppHandle) {
     app.listen(crate::events::EGUI_HIDE_REQUESTED, move |_| {
         hide_egui_main(&handle);
     });
-}
-
-/// 可視中の main 窓を起こす（#671 PR D。旧実装＝窓ごとの Context clone を登録するスロットの後継）。
-///
-/// hidden 中は実効的な no-op である——抑止は wake 経路ではなく **tao/OS 層**にある
-/// （2026-07-26 実測・#697: worker は `RequestRedraw` を送信するが、hidden な窓には
-/// `RedrawRequested` が配送されない。spec §7 残余 2 は errata で解消済み）。旧実装
-/// （Context の clone に `request_repaint()`）と同じ経路（`RepaintScheduler` → proxy →
-/// `RequestRedraw`）を通るため、この性質は変わらない。
-///
-/// **`try_state` が返す `Option` は残る**（Tauri managed state の性質）。消えたのは
-/// 「Context が登録済みか」という 2 段目の Option である。
-pub(crate) fn wake_main(app: &tauri::AppHandle) {
-    if let Some(sh) = app.try_state::<EguiShellState>() {
-        sh.main_waker.wake();
-    }
-}
-
-/// results 窓を起こす(#646 PR2)。snapshot 更新・config 変更を反映させる wake。呼び出しは
-/// main の update() 内 2 箇所: snapshot 差分検知時（edge-triggered・変化フレームのみ）
-/// と `drive_results_window`（可視時・毎フレーム・level-triggered。**削ると壊れる理由は
-/// 呼び出し点のコメントを参照**——決定 5・#697）。hidden 中の results は
-/// 描かれないため事前 wake は無意味(plan-review で冗長と判定)。クリック逆流の results→main は
-/// `wake_main` を使う。
-///
-/// **`wake_main` と 1 関数に束ねない**——窓を引数で選ぶ形は、呼び出し側の「どちらの窓を
-/// 起こすか」という判断を型から引数へ落とすだけで、配線の総量は減らない。
-pub(crate) fn wake_results(app: &tauri::AppHandle) {
-    if let Some(sh) = app.try_state::<EguiShellState>() {
-        sh.results_waker.wake();
-    }
-}
-
-/// results を main の直下 + window_gap に配置する(#646 PR2 決定 6)。呼び出し元は
-/// 2 つ——main の update()(通常の毎フレーム従属)と main の Moved リスナー
-/// (ネイティブ移動ループ中の追従。ループ中は egui フレームが回らない可能性があるため
-/// イベント駆動で直接動かす)。デルタガードは持たない(set_position は同値でも安価・
-/// ガードは update 側の責務)。
-/// **設定した results 上端の物理 y を返す**（#675）。高さのクランプに上端が要るが、上端の
-/// 算出式の正本は `layout::results_top_y`（純粋核・#752 C1）で、**Win32 を読んでそれを適用
-/// する場所はここだけ**である。呼び出し側で再計算すると `outer_position` / `outer_size` /
-/// `window_gap` の 2 度読みになり、フレーム内で値が食い違いうる（`AGENTS.md`「条件別チェック」
-/// の「重複した読み」）。
-/// **計算した値を捨てる関数は、次の利用者に写しを書かせる。**
-pub(crate) fn position_results_below_main(app: &tauri::AppHandle) -> Option<i32> {
-    let (Some(main), Some(results)) = (app.get_window("main"), app.try_state::<ResultsWindow>())
-    else {
-        return None;
-    };
-    let gap = app
-        .try_state::<crate::AppState>()
-        .map(|s| s.engine.lock().unwrap().config().visual.window_gap)
-        .unwrap_or(4);
-    let (Ok(pos), Ok(size), Ok(scale)) =
-        (main.outer_position(), main.outer_size(), main.scale_factor())
-    else {
-        return None;
-    };
-    // 算術は layout::results_top_y（純粋核・#752 C1）。Win32 の読みはここで 1 回だけ行う。
-    let top = layout::results_top_y(pos.y, size.height, gap, scale);
-    results.set_position(pos.x, top);
-    Some(top)
-}
-
-/// results 上端から作業領域の下端までの高さ（**論理 px**・#675）。取得できなければ `None`
-/// （呼び出し側がクランプしない側へ倒す）。
-///
-/// 作業領域は **main の HWND** から引く——results は既に誤った位置へ置かれている可能性があり、
-/// そこから引くと別モニターの作業領域を掴みうる。
-///
-/// 換算に使うのは **results 窓の scale factor** である。tao は `set_inner_size` に渡した
-/// `LogicalSize` を**その窓の** `scale_factor()` で物理へ戻すため、main の scale を流用すると
-/// 混在 DPI 環境で高さが食い違う。**受容する残余**: `set_position` 直後は tao 側の scale が
-/// まだ旧モニターのものでありうる（Windows は移動後に `WM_DPICHANGED` を送る）。実害は
-/// モニター跨ぎの 1 フレームに限られる見込みで、是正しない。
-#[cfg(windows)]
-pub(crate) fn results_available_height(app: &tauri::AppHandle, top_y: i32) -> Option<f64> {
-    let main = app.get_window("main")?;
-    let hwnd = main.hwnd().ok()?;
-    let area = crate::monitor::window_monitor_work_area(hwnd.0 as isize)?;
-    let scale = app.try_state::<ResultsWindow>()?.scale_factor()?;
-    // 算術は layout::available_below（純粋核・cfg の外・#752 C1）。
-    Some(layout::available_below(area.bottom, top_y, scale))
-}
-
-#[cfg(not(windows))]
-pub(crate) fn results_available_height(_app: &tauri::AppHandle, _top_y: i32) -> Option<f64> {
-    None
 }
 
 /// config 変更・index 状態変化の wake 合図（#532 SU6 spec 決定 1）。値は運ばず request_repaint

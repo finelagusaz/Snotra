@@ -1,7 +1,9 @@
 // governance-check.mjs の検査関数を、フォールトインジェクションフィクスチャ（赤）と正常フィクスチャ（緑）の
 // 両方向で検証する。各フィクスチャは「守りたい対象 1 件が入力に現れること」と
 // 「判定対象外が入力に混じらないこと」の入力集合検算を兼ねる（.claude/rules/safety-nets.md）。
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 import {
@@ -535,6 +537,25 @@ describe("G11 checkHeadingRefs（見出し参照の実在）", () => {
       "src/main.rs": "",
     });
     expect(headingRefDocs(s).sort()).toEqual([".claude/agents/code-reviewer.md", "PERFORMANCE.md"]);
+  });
+});
+
+describe("makeSnapshot の走査除外（#722）", () => {
+  // 守りたい対象 = SDD 作業バッファ。実リポジトリではなく一時ディレクトリの複製に当てる
+  // （.claude/rules/safety-nets.md「稼働中のガードを弱めない——複製に変異を当てる」）
+  it(".superpowers/ 配下は母集団に入らない（gitignore 済みで CI には存在しない＝手元だけ赤くなる）", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "gov-walk-"));
+    try {
+      mkdirSync(path.join(root, "docs"), { recursive: true });
+      mkdirSync(path.join(root, ".superpowers/sdd/p"), { recursive: true });
+      writeFileSync(path.join(root, "docs/a.md"), "# a\n");
+      writeFileSync(path.join(root, ".superpowers/sdd/p/brief.md"), "# brief\n");
+      const s = makeSnapshot(root);
+      expect(s.files).toContain("docs/a.md");
+      expect(s.files.filter((f) => f.startsWith(".superpowers/"))).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

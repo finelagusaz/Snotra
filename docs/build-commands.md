@@ -50,6 +50,21 @@ npm run smoke:egui       # 必須: egui show/hide スモーク（hotkey 注入 +
 
 - **既定が egui（#532 SU7 flip 済み・env フラグ不要）**。`cargo run`（`-p` 欠落）は**ルートでは bin を決められずエラーになり**（`snotra` / `snotra-settings` の 2 本。実測: `error: cargo run could not determine which binary to run`）、cwd が crate 配下ならその crate の bin が起動する。必ず `-p snotra` を付ける
 
+#### updater トーストを出すための env ハッチ
+
+実 release への到達を要さずに updater トーストを描かせる（`egui_shell/mod.rs` の `spawn_update_check` 冒頭・**`auto_update` の設定に依らず効く**——判定より前に置いてある）。
+
+| フラグ | 出る局面 | 何を見るためのものか |
+|---|---|---|
+| `SNOTRA_EGUI_FAKE_UPDATE` | `Available`（v9.9.9・[今すぐ更新] 付き） | 通常のトースト表示。install 実体は無く押しても no-op |
+| `SNOTRA_EGUI_FAKE_UPDATE_FAILED` | `InstallFailed`（長い理由を注入） | **失敗理由の併記と末尾省略（`…`）の唯一の観測点**（#654）。実 install 失敗は再現できない |
+
+```powershell
+$env:SNOTRA_EGUI_FAKE_UPDATE_FAILED = "1"; cargo run -p snotra
+```
+
+両方立てたときは `FAILED` が勝つ（先に `return` する）。
+
 ### E. git hook（`.githooks/**`）を変更した場合
 
 ```bash

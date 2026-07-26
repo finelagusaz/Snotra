@@ -1033,12 +1033,16 @@ impl SearchWindowView {
                     crate::trace_main("egui_update_install_returned", serde_json::json!({}));
                 }
                 Err(e) => {
+                    // trace と toast の両方が同じ文字列を要る（#654）。**lock を取る前に**
+                    // 作る——確保を lock 保持区間へ入れない。
+                    let reason = e.to_string();
                     crate::trace_main(
                         "egui_update_install_failed",
-                        serde_json::json!({ "error": e.to_string() }),
+                        serde_json::json!({ "error": reason }),
                     );
                     if let Some(st) = handle.try_state::<crate::egui_shell::UpdaterUiState>() {
-                        st.0.lock().unwrap().phase = crate::egui_shell::UpdaterPhase::InstallFailed;
+                        st.0.lock().unwrap().phase =
+                            crate::egui_shell::UpdaterPhase::InstallFailed { message: reason };
                     }
                     crate::egui_shell::wake_main(&handle); // 可視中の失敗を即座に描く
                 }
@@ -1607,8 +1611,10 @@ impl EguiView for SearchWindowView {
                 crate::egui_shell::ToastKind::Installing => {
                     crate::egui_shell::ui_strings::update_installing(l).to_string()
                 }
-                crate::egui_shell::ToastKind::Failed => {
-                    crate::egui_shell::ui_strings::update_failed(l).to_string()
+                // `..` で受けない（#654）——payload を足して描き忘れる経路を compile-fail に
+                // 残すため。整形（空理由でコロンを残さない）は `update_failed` の責務。
+                crate::egui_shell::ToastKind::Failed { message } => {
+                    crate::egui_shell::ui_strings::update_failed(l, message)
                 }
             };
             // メッセージとボタンは**同じ行の中央**に揃える（#700 実機指摘）。旧実装は
@@ -1633,17 +1639,35 @@ impl EguiView for SearchWindowView {
                     toast_action = Some(ToastAction::Install);
                 }
             }
-            // メッセージはボタン群の左端で切る（衝突回避）。`cursor_x` は最後のボタンぶん
-            // 進んだ位置ゆえ、間隔の 8.0 を戻して境界にする。
-            let text_clip = egui::Rect::from_min_max(
-                rect.left_top(),
-                egui::pos2((cursor_x + 8.0).max(rect.left()), rect.bottom()),
+            // メッセージはボタン群の左端で**末尾省略**する（衝突回避）。`cursor_x` は最後の
+            // ボタンぶん進んだ位置ゆえ、間隔の 8.0 を戻して境界にする。
+            //
+            // クリップではなく省略にするのは、失敗理由（#654）が幅を超えたときに「続きがある」
+            // ことを読者へ伝えるため——クリップは文字の途中でぶつ切りにし、切れたことを示さない。
+            // `…` は epaint の既定（`TextWrapping` の `overflow_character`）が付ける。
+            //
+            // **3 variant 共通の描画点である**: Available / Installing の溢れ表現も同時に
+            // 省略へ変わる（既定幅では両者 117px 以下で可用幅 532px に収まるため見た目は不変）。
+            // 「Failed だけ省略」は分岐を足さないと書けず、その分岐に価値が無い。
+            let text_x = rect.left() + 8.0;
+            let avail = ((cursor_x + 8.0) - text_x).max(0.0);
+            let mut job = egui::text::LayoutJob::single_section(
+                line1,
+                egui::TextFormat {
+                    font_id: egui::FontId::proportional(theme.status_size),
+                    color: theme.name_color,
+                    ..Default::default()
+                },
             );
-            ui.painter().with_clip_rect(text_clip).text(
-                egui::pos2(rect.left() + 8.0, rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                &line1,
-                egui::FontId::proportional(theme.status_size),
+            job.wrap = egui::text::TextWrapping::truncate_at_width(avail);
+            // `single_section` の既定は `break_on_newline: true` だが、置換前の
+            // `painter().text()` が使う `simple_singleline` は false。`max_rows: 1` と組むと、
+            // 改行を含む失敗理由が**幅と無関係に**そこで切れて `…` になる。挙動を保つため戻す。
+            job.break_on_newline = false;
+            let galley = ui.painter().layout_job(job);
+            ui.painter().galley(
+                egui::pos2(text_x, rect.center().y - galley.size().y / 2.0),
+                galley,
                 theme.name_color,
             );
         }

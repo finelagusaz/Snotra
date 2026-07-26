@@ -93,13 +93,13 @@ pub enum UpdaterPhase<U> {
     // version は toast() が Installing 局面で表示しない（update_installing は汎用文言・
     // 消費経路なし）ため保持しない。Available→Installing 遷移時に破棄する。
     Installing,
-    // egui 側の update_failed(l) は引数を取らず、message は描画に使われない dead payload
-    // だったため型から落とす（#648 C）。失敗の詳細は現状 trace（egui_update_install_failed）
-    // だけが持つ。**parity 注記: WebView2 は errorDetail を toast に描く（UpdateToast.tsx +
-    // MainApp.tsx の setUpdaterError）——egui の generic 固定表示はそれに対する既知の縮小差で
-    // あり、詳細表示が要れば strings 拡張になる**（Task 2 レビューが実測で検出・全称「parity
-    // 影響なし」は誤りだった）。
-    InstallFailed,
+    // `message` は失敗理由を toast に併記するために持つ（#654）。#648(C) で一度「描画に
+    // 使われない dead payload」として型から落としたが、描画側が消費するようになったので
+    // 戻した——**「描かないなら型に持たない」という当時の判断は今も正しい**。ゆえに消費側
+    // （`toast()` と view の描画）は `..` で受けず**フィールドを明示束縛する**こと。`..` は
+    // `-D warnings` でも「payload を足したが描いていない」を通し、dead payload を作った当の
+    // 経路を再生産する。詳細は表示に出ない場合も trace（`egui_update_install_failed`）に残る。
+    InstallFailed { message: String },
 }
 
 /// toast 1 行分の表示モデル（描画専用・U 非依存）。
@@ -117,7 +117,8 @@ pub struct ToastRow {
 pub enum ToastKind {
     Available { version: String },
     Installing,
-    Failed,
+    /// `message` は失敗理由（空なら generic 文言のみ）。描画は `ui_strings::update_failed`。
+    Failed { message: String },
 }
 
 /// updater toast の状態機械。dismiss/install の競合は本型のメソッド内で原子的に解決する
@@ -183,8 +184,8 @@ impl<U> UpdaterUi<U> {
                 show_install: true, // disabled で描く（WebView2: installing 中もボタンは見える）
                 buttons_enabled: false,
             }),
-            UpdaterPhase::InstallFailed => Some(ToastRow {
-                kind: ToastKind::Failed,
+            UpdaterPhase::InstallFailed { message } => Some(ToastRow {
+                kind: ToastKind::Failed { message: message.clone() },
                 show_install: false,
                 buttons_enabled: true,
             }),
@@ -263,7 +264,7 @@ mod tests {
         u.phase = UpdaterPhase::Installing;
         assert!(!u.dismiss(), "Installing 中の dismiss は拒否（WebView2 disabled parity）");
         assert!(u.toast().is_some(), "toast は出たまま");
-        u.phase = UpdaterPhase::InstallFailed;
+        u.phase = UpdaterPhase::InstallFailed { message: "e".into() };
         assert!(u.dismiss());
         assert!(u.toast().is_none(), "dismissed 後は導出も消える");
     }
@@ -288,6 +289,19 @@ mod tests {
     fn indexing_overlay_does_not_depend_on_query_emptiness() {
         use super::OverlayKind::*;
         assert_eq!(overlay_kind(true, false, false), Some(Indexing));
+    }
+
+    /// #654: 失敗理由が phase から toast へ運ばれる。**#648(C) が payload を落として
+    /// 断線させた当の経路**であり、再び dead payload に戻ったらここが落ちる。
+    #[test]
+    #[allow(clippy::field_reassign_with_default)] // 他のテストと同じ verbatim 形を保つ
+    fn install_failure_reason_reaches_toast() {
+        let mut u: UpdaterUi<()> = UpdaterUi::default();
+        u.phase = UpdaterPhase::InstallFailed { message: "boom".into() };
+        let t = u.toast().expect("失敗局面では toast が出る");
+        assert_eq!(t.kind, ToastKind::Failed { message: "boom".into() });
+        assert!(!t.show_install, "失敗時に [今すぐ更新] は出さない");
+        assert!(t.buttons_enabled, "[閉じる] は押せる");
     }
 
     #[test]

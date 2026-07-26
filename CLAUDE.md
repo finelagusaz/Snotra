@@ -90,7 +90,7 @@
 | `/health-check`      | 定期・サイクル完了後の governance:check + 意味的整合（報告のみ・修正しない） |
 | `/retrospective`     | サイクル終了後の教訓抽出・残タスク振り分け・RETROSPECTIVE.md 上書き |
 | `/start-issue`       | GitHub issue から作業開始（ブランチ作成・調査・計画まで） |
-| `/implement`         | コード変更を伴うタスクの実装（調査からコミットまで） |
+| `/implement`         | 実装〜コミット（計画が要る変更は `/start-issue` へ） |
 | `/deps-update`       | cargo/npm 依存の一括更新と PR 作成・CI 確認（マージは手動） |
 
-サブエージェント: `code-reviewer`（`.claude/agents/`）— 実装後・コミット前の3フェーズレビュー（実装検証 / 計画判断・SPEC.md 同期 / パフォーマンス）。`/implement`「5b. code-reviewer エージェント」が自動で起動する。
+サブエージェント: `code-reviewer`（`.claude/agents/`）— 実装後・コミット前の3フェーズレビュー（実装検証 / 計画判断・SPEC.md 同期 / パフォーマンス）。`/implement`「4b. code-reviewer エージェント」が自動で起動する。

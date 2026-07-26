@@ -20,6 +20,7 @@ mod visual;
 
 // mod.rs（窓生成・managed state）が消費する。RowsSnapshot は view.rs（main の snapshot 発行）・
 // results_view.rs（update() 描画）が消費する（#646 PR2 Task 4）。
+pub(crate) use results_view::ClickTake;
 pub(crate) use results_view::ResultsShared;
 pub(crate) use results_view::RowsSnapshot;
 
@@ -565,23 +566,53 @@ pub(crate) fn wake_results(app: &tauri::AppHandle) {
 /// (ネイティブ移動ループ中の追従。ループ中は egui フレームが回らない可能性があるため
 /// イベント駆動で直接動かす)。デルタガードは持たない(set_position は同値でも安価・
 /// ガードは update 側の責務)。
-pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
+/// **設定した results 上端の物理 y を返す**（#675）。高さのクランプに上端が要るが、上端の
+/// 算出式（`main.outer_position().y + outer_size().height + gap*scale`）はここが唯一の場所で
+/// ある。呼び出し側で再計算すると `outer_position` / `outer_size` / `window_gap` の 2 度読みに
+/// なり、フレーム内で値が食い違いうる（`AGENTS.md`「条件別チェック」の「重複した読み」）。
+/// **計算した値を捨てる関数は、次の利用者に写しを書かせる。**
+pub(crate) fn position_results_below_main(app: &tauri::AppHandle) -> Option<i32> {
     let (Some(main), Some(results)) = (app.get_window("main"), app.try_state::<ResultsWindow>())
     else {
-        return;
+        return None;
     };
     let gap = app
         .try_state::<crate::AppState>()
         .map(|s| s.engine.lock().unwrap().config().visual.window_gap)
         .unwrap_or(4) as f64;
-    if let (Ok(pos), Ok(size), Ok(scale)) =
+    let (Ok(pos), Ok(size), Ok(scale)) =
         (main.outer_position(), main.outer_size(), main.scale_factor())
-    {
-        results.set_position(
-            pos.x,
-            pos.y + size.height as i32 + (gap * scale).round() as i32,
-        );
-    }
+    else {
+        return None;
+    };
+    let top = pos.y + size.height as i32 + (gap * scale).round() as i32;
+    results.set_position(pos.x, top);
+    Some(top)
+}
+
+/// results 上端から作業領域の下端までの高さ（**論理 px**・#675）。取得できなければ `None`
+/// （呼び出し側がクランプしない側へ倒す）。
+///
+/// 作業領域は **main の HWND** から引く——results は既に誤った位置へ置かれている可能性があり、
+/// そこから引くと別モニターの作業領域を掴みうる。
+///
+/// 換算に使うのは **results 窓の scale factor** である。tao は `set_inner_size` に渡した
+/// `LogicalSize` を**その窓の** `scale_factor()` で物理へ戻すため、main の scale を流用すると
+/// 混在 DPI 環境で高さが食い違う。**受容する残余**: `set_position` 直後は tao 側の scale が
+/// まだ旧モニターのものでありうる（Windows は移動後に `WM_DPICHANGED` を送る）。実害は
+/// モニター跨ぎの 1 フレームに限られる見込みで、是正しない。
+#[cfg(windows)]
+pub(crate) fn results_available_height(app: &tauri::AppHandle, top_y: i32) -> Option<f64> {
+    let main = app.get_window("main")?;
+    let hwnd = main.hwnd().ok()?;
+    let area = crate::monitor::window_monitor_work_area(hwnd.0 as isize)?;
+    let scale = app.try_state::<ResultsWindow>()?.scale_factor()?;
+    Some((f64::from(area.bottom - top_y) / scale).max(0.0))
+}
+
+#[cfg(not(windows))]
+pub(crate) fn results_available_height(_app: &tauri::AppHandle, _top_y: i32) -> Option<f64> {
+    None
 }
 
 /// config 変更・index 状態変化の wake 合図（#532 SU6 spec 決定 1）。値は運ばず request_repaint

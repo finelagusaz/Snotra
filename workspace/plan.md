@@ -1,11 +1,10 @@
-# plan — 束C: 文書・コメントの残骸掃除（#674 + #698）
+# plan — 束B 残り: #699（clicked の世代）+ #675（結果窓の下端クランプ）
 
-前提は `workspace/research.md`。要旨: **文書・コメントのみを直し、コードの挙動は 1 バイトも変えない。**
+前提は `workspace/research.md`、#710 の実測は `workspace/measurement.md`。
 
-ユーザー判断（2026-07-26）:
+**#710 は「正常」として閉じた**（2026-07-26・[issuecomment-5082153261](https://github.com/finelagusaz/Snotra/issues/710#issuecomment-5082153261)）。level-triggered `wake_results` の実額は 1 コアの 2.7% で、かつその 1 行が config hot-reload の唯一経路であるため触らない。見つかった別の欠陥（移動中 448fps / 84.7%）は **#737** へ分離済み。
 
-- **#698 の実施に合意済み**（ルート `CLAUDE.md`「最重要ルール」2）
-- **§4.8 のホバーは (A) as-built を書き取り + 新規 issue へ意図の欠落を送る**
+→ **本計画は `wake_results` に手を触れない。** #675 は同じ関数（`drive_results_window`）を触るが、wake の条件は変えない。
 
 ---
 
@@ -13,269 +12,316 @@
 
 | # | 不変条件 | 検知手段 |
 |---|---|---|
-| I1 | **`.rs` の変更はコメント行のみ**（挙動不変） | **機械的に判定する**（下記コマンドの出力が空であること）。目視は使わない——Phase 2 はコメントを行境界をまたいで折り返すため、diff には `//` で始まる行の追加・削除が並ぶ。「全部 `//` で始まる」を目で確かめるのは、まさに非コメント行が紛れていないかという問いに答えていない。加えて PostToolUse hook の clippy + `src-tauri` テストが緑 |
-| I2 | **SPEC から消す記述は、消してよい根拠（as-built の `file:line`）を PR 本文に列挙する** | PR 本文のレビュー。根拠を書けない行は消さない |
-| I3 | **新設する見出し参照は正準形で書き、G11 に着地させる** | `npm run governance:check`（G11 が `.claude/agents/` も母集団に含む・`scripts/governance-check.mjs:719`） |
-| I4 | **面積 ratchet を超えない** | 同上（余白は実測で常時ロード 100 字 / rules 10 字。本 PR は `AGENTS.md` にも `.claude/rules/` にも足さない） |
-| I5 | **deferred には名指しの受け皿がある** | ホバー視覚 → 新規 issue（Phase 0 で番号を確定させてから SPEC に書く） |
+| I1 | **`wake_results`（`view.rs:850`）の呼び出し条件を変えない** | `git diff` で当該行が無変更であること。変えると config hot-reload が results へ届かなくなる（#710 実測） |
+| I2 | **`results_window_height` の「0 件は 0.0（呼び出し側が hide する契約）」を壊さない** | `layout.rs` の既存テスト 4 件 + 新規テスト（クランプしても 0 は 0） |
+| I3 | **クリックの消費側が世代照合を迂回できない** | 型で担保する（`ResultsShared` に世代を要求するメソッドを置き、`clicked` フィールドを直接 take させない） |
+| I4 | **論理 px と物理 px を混ぜない** | `set_size` は論理・`set_position` と `WorkArea` は物理（実装で確認済み）。変換点を 1 箇所に閉じ、単体テストは論理 px だけで書く |
+| I5 | 挙動変更を伴うため **SPEC を同期する** | `SPEC.md` §4.5 の高さ算出式（#675 で条件が付く） |
 
 ---
 
-## Phase 0 — 新規 issue の起票（ホバー視覚）
+## Phase 0 — #699 の**成立条件**: 世代の所有を `SearchState` へ移す
 
-SPEC §4.8 の as-built 文が参照する番号を先に確定させる（I5）。
+> **この Phase は当初の計画に無かった。** `/plan-review`「Step 2b」の独立再導出が「世代を同梱しても穴は塞がらない」と指摘し、**主エージェントが自分で裏を取って確認した**（下記「セルフレビュー」）。これが無ければ**効かない修正を出荷していた**。
 
-- タイトル: 結果行のホバー視覚フィードバックを戻すか決める（SU3 の意図が egui 移植で落ちた）
-- 本文に含める:
-  - 現状: `draw_result_row`（`results_view.rs`）の視覚分岐は `selected` のみ、`hovered()` は 0 件
-  - 意図: `docs/superpowers/specs/2026-07-22-su3-search-experience-design.md:141` が「ホバーは視覚のみ（selected 不変）」と規定
-  - 発見経路: #674 項目 1 の調査中（SPEC §4.8 が CSS だけでなく**視覚フィードバックの存在**についても嘘だった）
-  - **決めること**: 戻すか / 戻さないと決めるか。戻すなら色の出所（config `[visual]` に新キー / `selection` の淡色 / `weak_text_color` 系）も同時に決める
-  - **#710 との干渉**: egui のホバーはフェードアニメーションを伴うため、行にホバー視覚を足すと**操作中フレームレートの測定条件が変わる**。#710（操作中 fps の A/B）より**後**に着手する
-- ラベル: `type:feature` 相当（既存ラベルを `gh label list` で確認してから付ける）
+### 0-1. 何が壊れているか（実測）
 
-**出力**: issue 番号 `#<H>`（以降 `#<H>` と表記）
+`snapshot_generation` を進めるのは **`view.rs:389` / `:535` / `:904` の 3 箇所だけ**。一方 `SearchState` が `self.results` を差し替える箇所は 5 つあり、**3 経路が bump されない**:
 
-## Phase 1 — `SPEC.md`（項目 1・項目 4）
+| `SearchState` の差し替え点 | 呼び出し元 | bump |
+|---|---|---|
+| `search_state.rs:173`（`set_results`） | view.rs:387 / 532 / 910-985 | ✅（呼び出し側が bump） |
+| **`search_state.rs:288`（`enter_tool`）** | **view.rs:652** | **❌** |
+| **`search_state.rs:311`（`on_escape` / tool 復帰）** | **view.rs:1293** | **❌** |
+| **`search_state.rs:318`（`on_escape` / folder 復帰）** | **view.rs:1293** | **❌** |
+| **`search_state.rs:332`（`reset`）** | **view.rs:455 / :1147** | **❌** |
 
-### 1a. §4.8 ホバー記述（`SPEC.md:190`）
+`search_state.rs` に `generation` フィールドは**存在しない**（grep で確認・`:801` のヒットは index 世代のテスト名で無関係）。
 
-```diff
--- ホバー: CSS `:hover` による視覚フィードバックのみ。`selected` 状態は変化しない
-++ ホバー: 視覚フィードバックは無い（行の描き分けは `selected` のみ）。ホバーで `selected` 状態は
-++  変化しない（as-built・#674。SU3 設計書は「ホバーは視覚のみ」と意図したが egui 実装には
-++  入らなかった——戻すかの判断は #<H>）
-```
+**順序が決定的である**: `on_escape` は **`view.rs:1293`**、snapshot publish は **`:1751`**、`clicked` の take は **`:1763`**——**同一フレームで、消費より前**。
 
-根拠（I2）: `results_view.rs::draw_result_row` の視覚分岐は `selected` のみ・`hovered()` 0 件。
+> results がツール行 3 件を描いて index 2 をクリック → 同フレームで main が Escape を処理して plain 結果へ復帰 → **世代は同じまま** → 世代ガードを素通り → 復帰後の行が 3 件以上なら**別の行が起動する**。
 
-### 1b. §20.3 トースト UI（`SPEC.md:1068-1086`）
+issue #699 が列挙した総入れ替え経路（folder drain / index 世代検知 / 起動 drain）は**すべて `run_search_with` を通る＝bump される側**だった。**issue の著者も当初の計画も、同じ盲点を継承していた。**
 
-WebView2 期の 5 行のうち **stale な 4 点を削除**し、生存部分は既存の egui ブロックへ寄せる。
+### 0-2. 設計: 世代を `SearchState` が所有する
 
-| 削除する行 | 根拠（as-built） |
+手動 bump を 3 箇所足す案（代替 B）は採らない——**同じ手作業で 3 回漏らした経路を、もう一度手に委ねることになる**。`docs/development-principles.md`「構造的設計原則と強制の階梯」の 2（不変条件は単一の通過点に閉じ込める）を適用する。
+
+- `search_state.rs` の `SearchState` に `rows_generation: u64` を追加（`new()` で 0）
+- **`self.results` を差し替える 5 箇所すべて**で `self.rows_generation += 1`
+- `pub fn rows_generation(&self) -> u64` を公開
+- doc に「**この型の中で `self.results` へ代入・`clear` するメソッドは、必ずここを進める**」と書く（全称の射程を型の内側に限定する——`AGENTS.md`「検証の作法」の全称表現の規律）
+- `view.rs` の手動 bump（`:279` フィールド・`:318` 初期化・`:389` / `:535` / `:904`）を**削除**し、参照（`:1751` / `:1755`）を `self.state.rows_generation()` へ置換
+
+**副次的な改善**: `view.rs:904` は `run_search_with` の先頭で無条件に bump しており、**folder cache 未着で `set_results` を呼ばずに返るフレームでも世代が進んでいた**（空撃ち）。所有を移すと世代の意味が「行が差し替わった」と一致する。
+
+### 0-3. 偽陰性のリスクを測った（自分で）
+
+`set_results` が bump するなら「毎フレーム `set_results` が呼ばれる経路」があると世代が毎フレーム進み、**すべてのクリックが破棄される**。実測で確認した:
+
+- 製品コードの `set_results` 呼び出しは **view.rs の 9 箇所のみ**（他は `search_state.rs` のテスト内）
+- その 9 箇所は `start_launch` / `clear_search` / `run_search_with` の中にあり、
+- **`run_search*` の呼び出し 12 箇所はすべて事象駆動**（打鍵 `response.changed()` / launch drain / folder drain 到着 / `needs_index_refresh` / `search_debounce.poll` の発火）で、**毎フレーム走るものは無い**
+
+→ **偽陰性は「描画と消費の間に行が実際に変わった」場合に限られる**。それは破棄が**正しい**ケースである。
+
+**受容する残余**: trailing 検索の発火とクリックが同一フレームに当たると、そのクリックは落ちる（再クリックで復帰する）。**誤った行を起動するより落とすほうが安全**という非対称に基づく判断であり、`docs/adr/0006-plan-ownership-boundary.md` が「誤りの代償の非対称で倒す向きを決める」と述べたのと同型。
+
+### 0-4. テスト（`search_state.rs` の `mod tests`）
+
+| テスト名 | 固定する不変条件 |
 |---|---|
-| 行1: y = 高さ × 0.25 | `view.rs` の toast 描画は単一行・`rect.center().y` 中央揃え（#700 の経緯コメント同梱） |
-| 行2: y = 高さ × 0.75 | 同上（`btn_y = rect.center().y`）。**ボタンの右寄せと種別は生存**ゆえ egui ブロックへ残す |
-| `--update-toast-height` を加算 | CSS 変数は #532 SU7 で不在。「ウィンドウ高さに加算」は egui ブロックが既に記述 |
-| `updateInfo` シグナルを null | SolidJS シグナルは不在。`UpdaterUi` 状態機械 +「[閉じる] はセッション中恒久」を egui ブロックが既に記述 |
+| `rows_generation_advances_on_set_results` | `set_results` で +1 |
+| `rows_generation_advances_on_enter_tool` | `enter_tool` で +1（**当初計画が落としていた経路**） |
+| `rows_generation_advances_on_escape_both_branches` | `on_escape` の tool 復帰・folder 復帰の**両方**で +1 |
+| `rows_generation_advances_on_reset` | `reset` で +1 |
+| `rows_generation_is_stable_on_selection_change` | `move_selection` / `reset_selection` では**進まない**（選択は行の差し替えではない） |
 
-**残す 1 行**（高さ = `bar_height` 連動・検索バーと検索結果リストの間）は egui ブロックと重複するため、**egui ブロック側へ一本化**する（`AGENTS.md`「条件別チェック」の「文書に事実の写しを増やす変更 → 正本を 1 か所に定め他は参照へ」）。
+最後の 1 件が重要である——**進めすぎも欠陥**（全クリックが落ちる）なので、両方向を固定する。
 
-**書き足す as-built**（現状 SPEC のどこにも無い・#700 と #654 の結果）:
+---
 
-- メッセージとボタンは**同じ行の中央**に揃える（左からメッセージ・右からボタン）
-- ボタン群の左端でメッセージを**末尾省略**する（既存の #654 ブロックが「本文がボタン群の左端を超えるときは末尾省略」と述べており、**この行は既にある**——重複させない）
+## Phase 1 — #699: `clicked` に世代を同梱する
 
-→ 実質は「2 行構成」を「1 行構成」へ直し、CSS/シグナルの 2 行を消す編集。
+### 1-1. 型（`results_view.rs`）
 
-## Phase 2 — `src-tauri/src/egui_shell/mod.rs`（項目 2）
-
-`show_egui_main` の collapse-before-position コメントの **stale な数値だけ**を直す。機構の説明は残す（#674 が明示）。
-
-```diff
-- // （例 300px）のままだと position クランプが 300px で効き、show 後に view が bar_height へ
-+ // のままだと position クランプがその高さで効き、show 後に view が bar_height へ
+```rust
+pub(crate) struct ResultsShared {
+    pub snapshot: std::sync::Mutex<RowsSnapshot>,
+    /// クリックされた行（last-wins）。**世代を同梱する**（#699）——裸の index は、
+    /// 積んだフレームと消費するフレームの間に結果集合が総入れ替えされると別の行を指す。
+    /// 取り出しは `take_clicked_for` だけを使う（フィールドを直接読まない）。
+    clicked: std::sync::Mutex<Option<(u64, usize)>>,
+}
 ```
 
-**数値を別の数値へ置き換えない**（`mod.rs` の既存コメント「行番号参照は挿入でずれるため名前で指す」と同じ倒し方——具体値は #646 決定 6 の変更でまた腐る）。高さの上限が `bar_height (+ status + toast)` であることは §4.7 と同ファイル内の `bar_h` 導出が既に述べているので、**ここでは数を書かない**。
+**`clicked` を `pub` から private へ落とす**（同一 crate 内 `pub(crate)` 構造体のフィールドなので `mod` 外から触れなくなる）。
 
-**I1 の確認**: この Phase の diff はコメント行のみ。
+### 1-2. 単一の通過点（I3）
 
-## Phase 3 — `.claude/agents/code-reviewer.md`（項目 5・**参照化**）
+```rust
+impl ResultsShared {
+    /// results 側が積んだクリックを、**世代が一致するときだけ**取り出す（#699）。
+    /// 不一致なら破棄する——積んだ後に結果集合が総入れ替えされており、その index は
+    /// 別の行を指すため。`.get(index)` の境界チェックは行の同一性を見ないので代わりにならない。
+    ///
+    /// **消費側がこの関数を通らずに index を得る経路は無い**（フィールドは private）。
+    /// `docs/development-principles.md`「構造的設計原則と強制の階梯」の 2（不変条件は
+    /// 単一の通過点に閉じ込める）。
+    pub(crate) fn take_clicked_for(&self, generation: u64) -> Option<usize> {
+        match self.clicked.lock().unwrap().take() {
+            Some((g, i)) if g == generation => Some(i),
+            _ => None,
+        }
+    }
 
-**ユーザー合意済み**（2026-07-26・形の合意を含む）。#698 は「名指しの 2 箇所を egui/Rust の内容へ書き換える」を求めているが、**より広く「事実の写しを正本への参照へ畳む」形を採る**（ユーザー提案）。
-
-### 3-0. なぜ写しを参照へ変えるか（この変更の根拠）
-
-インライン Step 2 の実測: `code-reviewer.md` を「事実の写し」と「レビュー動作・様式」に分けると、**腐っていた 6 箇所はすべて写しの側**だった。
-
-| 種別 | 該当箇所 | 腐ったか |
-|---|---|---|
-| **写し**（事実の列挙・例示） | `:54` 対称ペアの例、`:57` mount↔unmount、`:75` リソース種別、`:78` `onCleanup`、`:87` IPC 契約、`:122` SolidJS 性能 | **6/6** |
-| **動作・様式** | Phase 構成、`不変条件照合:` 等の記録ブロック、「理由なしの『不要』判定はレッドフラグ」、優先度分類、出力フォーマット | 0 |
-
-決め手は**検知器の有無**である。`#[tauri::command]` が 0 件になっても `:87` は黙っていた。**正準形の参照にしてあれば、見出しが消えた時点で G11 が落とす**（`scripts/governance-check.mjs:719` が `.claude/agents/` を母集団に含む）。
-
-この形は**同ファイルに既に前例がある**——`:83` が `AGENTS.md`「バグか仕様変更かを判定する」を参照し、`:14` が「変更ファイルが属するディレクトリの `CLAUDE.md` を読む」と指示している。**混在を揃える**変更である。
-
-**受容する限界（正直に書く）**: G11 が見るのは**見出しが実在するか**だけで、的の**中身**が意味を変えても落ちない。参照化は沈黙経路を減らすが消しはしない。
-
-### 3-1. 起動時手順（`:10-15`）に参照先の読み込みを足す
-
-**委譲はコンテキストを継承しない**（ルート `CLAUDE.md`「サブエージェント委譲と worktree」）。`.claude/rules/` は対象ファイルの読み取りで自動配送されるが、**`AGENTS.md` がサブエージェントへ届くかは確認できていない**。参照だけにして届かなければ観点が丸ごと失われるので、読み込みを明示する。
-
-現行 4 の後に 1 項を挿入（既存 5 は 6 へ繰り下がる）:
-
-```
-5. 本文が正本として名指しした文書（`AGENTS.md`「条件別チェック（トリガー → 参照先）」等）を読む。
-   観点の実体はそちらにあり、この文書は「何を見て何を出すか」だけを持つ
+    /// results 側からクリックを積む（世代は描画中の `RowsSnapshot.generation`）。
+    pub(crate) fn push_clicked(&self, generation: u64, index: usize) {
+        *self.clicked.lock().unwrap() = Some((generation, index));
+    }
+}
 ```
 
-### 3-2. 2b 対称コードパスチェック（`:53-57`）— 例示 4 種を参照へ
+`take()` を使うので**不一致でもスロットは空く**（stale が残り続けない）。
 
-```diff
-- よくある対称ペア:
-- - イベントハンドラ: `result-clicked` ↔ `result-double-clicked`
-- - 表示制御: `show` ↔ `hide`、`open` ↔ `close`
-- - 状態遷移: `enter*` ↔ `exit*`、`expand` ↔ `collapse`
-- - ライフサイクル: mount ↔ unmount、setup ↔ teardown
-+ 対称ペアの類型は `AGENTS.md`「条件別チェック（トリガー → 参照先）」が持つ。
-+ 検査そのものは `/symmetric-check`。
+### 1-3. 積む側（`results_view.rs:487-490`）
+
+```rust
+if let Some(i) = clicked {
+    // 世代は**描画中の snapshot のもの**を添える（#699）。この行は snapshot.rows の i 番目
+    // であり、main が総入れ替えしていれば消費側で破棄される。
+    shared.push_clicked(snapshot.generation, i);
+    crate::egui_shell::wake_main(&self.app_handle);
+}
 ```
 
-根拠: `result-clicked` / `result-double-clicked` はコードに **0 件**（WebView2 期の IPC イベント名。double-click は `SPEC.md` §4.8 で「独立した挙動を持たない」as-built）。`mount ↔ unmount` はフロントのコンポーネント寿命。
+### 1-4. 消費側（`view.rs:1763-1766`）
 
-### 3-3. 2d リソースライフサイクルチェック（`:73-79`）— 種別の列挙を参照へ
-
-```diff
-- クリーンアップが必要なリソース（イベントリスナー、オブザーバー、タイマー、サブスクリプション）について:
--
-- - 生成と破棄がペアになっているか
-- - クリーンアップが `await` / `.then()` の**前**に同期的に登録されているか（SolidJS: `onCleanup` は同期リアクティブコンテキストで呼ぶ）
-- - 各リソースが**独立したクリーンアップ**を持ち、無関係な条件で束ねられていないか
-+ 生成したリソースに破棄の対がそろっているか。**対象と規則の正本は
-+ `.claude/rules/src-tauri.md`「この rule が正本」**。
-+
-+ - 各リソースが**独立したクリーンアップ**を持ち、無関係な条件で束ねられていないか
-+
-+ 各リソースについて記録:
-+ (記録ブロック: リソース / 破棄 / 判定 [ペア成立 | 欠落 — High])
+```rust
+// クリック逆流の消費(決定 5): 起動ロジックは main の一箇所に保つ。
+// 世代照合は `take_clicked_for` の中（#699）——ここで書くと迂回できてしまう。
+match shared.take_clicked_for(self.state.rows_generation()) {
+    ClickTake::Current(i) => self.activate_or_execute(i, &ctx),
+    // 破棄は目に見えない経路なので trace を出す（手で再現できないため）。
+    ClickTake::Stale { stamped } => crate::trace_main(
+        "egui_results:click_stale",
+        serde_json::json!({ "stamped": stamped, "current": self.state.rows_generation() }),
+    ),
+    ClickTake::None => {}
+}
 ```
 
-「独立したクリーンアップを持つか」は**判定基準（動作）であって事実の写しではない**ため残す。記録ブロックは同ファイルの 2b / 2e / 2f と様式を揃える。
+**消費が snapshot publish の後にあるという既存の順序を変えない。** この順序が不変条件である——ガードが比較する世代は、**そのフレームで行を差し替えうる全ハンドラ**（Escape `:1293` / index 世代検知 `:1186` / folder drain `:1277` / launch 完了 `:477`）**より後**の値でなければ、#699 の窓を塞げない。doc comment に理由ごと書く。
 
-### 3-4. 2e SPEC 同期チェック（`:87`）— IPC の枠だけを差し替える
+`ClickTake` を導入するのは trace のためである（`Option<usize>` だと「無かった」と「捨てた」が区別できない）。**破棄は手で再現できない経路**なので、観測点を作っておく——`src-tauri/CLAUDE.md`「モジュール構成」が言う「trace の presence 検査は状態の検査ではない」に留意し、**これは診断用であって不変条件の担保には使わない**（担保はユニットテスト）。
 
-```diff
-- - IPC 契約・コマンドの戻り値 DTO（§14.2 等）
-+ - 共有 core 関数の返り値契約（正本: `src-tauri/CLAUDE.md`「共有 core 関数の返り値契約」）
+### 1-5. テスト（`results_view.rs` の `mod tests`）
+
+| テスト名 | 固定する不変条件 |
+|---|---|
+| `clicked_survives_matching_generation` | 世代一致なら index が取り出せる |
+| `clicked_is_discarded_on_generation_mismatch` | 世代不一致なら `None`。**かつスロットが空く**（2 度目も `None`） |
+| `clicked_is_last_wins` | 2 回積むと後勝ち（既存の last-wins 契約） |
+
+---
+
+## Phase 2 — #675: 結果窓の高さを作業領域の下端でクランプ
+
+### 2-1. 純粋核（`layout.rs`）
+
+```rust
+/// 結果窓の高さを作業領域の下端でクランプする（#675）。単位はすべて**論理 px**。
+///
+/// - `desired`: `results_window_height` の値
+/// - `available`: 結果窓の上端から作業領域下端までの高さ
+/// - `row_height`: 1 行の高さ
+///
+/// **0 件（`desired == 0.0`）は 0.0 のまま返す**——`results_should_show` が hide 側へ倒れる
+/// 契約（`results_window_height` の doc）を壊さないため。
+///
+/// `available` が 1 行に満たなくても **1 行 + padding は返す**。潰すと窓が無意味になるので、
+/// その場合のはみ出しは受容する（行はスクロールで到達できる）。main を画面下端ぎりぎりへ
+/// 動かした場合の縮退であり、常用の経路ではない。
+pub fn clamp_results_height(desired: f64, available: f64, row_height: f64) -> f64 {
+    if desired <= 0.0 {
+        return 0.0;
+    }
+    desired.min(available).max(row_height + 8.0)
+}
 ```
 
-**この 1 行だけを触る。** `#[tauri::command]` は 0 件だが **§14.2「起動API契約（launch_item）」自体は生存**しており、嘘なのは「IPC・コマンド」という枠だけ。同じリストの他の §番号（§8.6 / §4.3 / §7 / §13 / §17）は生きているので触らない。
+テスト:
 
-### 3-5. Phase 3 パフォーマンス（`:122`）
+| ケース | 期待 |
+|---|---|
+| `desired == 0.0` | `0.0`（hide 契約・I2） |
+| `desired < available` | `desired`（無変更＝既存挙動） |
+| `desired > available` | `available` |
+| `available < row_height + 8.0` | `row_height + 8.0`（下限） |
+| `available` が負（main が作業領域外） | `row_height + 8.0` |
 
-```diff
-- - **SolidJS 固有**: 不要な再レンダリング、`createMemo` にすべき高コスト計算
-+ - **egui immediate-mode 固有**: 毎フレーム走る `update()` 内の確保・`lock()` の回数・
-+   1 フレーム 1 回の live-read（正本: `src-tauri/CLAUDE.md`「テーマ色・font・行高の読みは 1 フレーム 1 回」）
+### 2-2. 結果窓の上端を単一点から得る（`mod.rs`）
+
+`position_results_below_main` は `pos.y + size.height + (gap * scale).round()` を計算しているが**返さない**。同じ式を `drive_results_window` に書くと**写しが 2 つになる**（このサイクルで繰り返し見た形）。
+
+```rust
+/// results の上端 y（**物理 px**）と scale を返す。`position_results_below_main` と
+/// `drive_results_window` の両方が要るため、式の正本をここに 1 つだけ置く（#675）。
+pub(crate) fn results_top(app: &tauri::AppHandle) -> Option<(i32, f64)> { ... }
 ```
 
-### 3-6. 参照の着地確認（I3）
+`position_results_below_main` はこれを呼ぶ形へ書き換える（**外部から見た挙動は不変**）。
 
-すべて正準形 `` `<path>.md`「<見出し>」 `` で書く。着地は実測済み（`collectAnchors` は ATX 見出し / 番号付きリスト項目 / 太字リードの 3 種・照合は正規化後の前方一致）:
+### 2-2b. 換算に使う scale は **results 窓自身のもの**（独立導出の指摘）
 
-| 参照 | 的 | 種別 |
-|---|---|---|
-| `AGENTS.md`「条件別チェック（トリガー → 参照先）」 | `AGENTS.md:51` の ATX 見出し（同名） | ATX |
-| `.claude/rules/src-tauri.md`「この rule が正本」 | `## この rule が正本（CLAUDE.md に無い src-tauri 固有）` | ATX・前方一致 |
-| `src-tauri/CLAUDE.md`「共有 core 関数の返り値契約」 | `src-tauri/CLAUDE.md:50` の ATX 見出し（同名） | ATX |
-| `src-tauri/CLAUDE.md`「テーマ色・font・行高の読みは 1 フレーム 1 回」 | `- **テーマ色・font・行高の読みは 1 フレーム 1 回（#673 spec 決定 4）**` | 太字リード・前方一致 |
-| `/symmetric-check` | `.claude/skills/symmetric-check/SKILL.md` | skill 形式 |
+`ResultsWindow` に `scale_factor()` を足す。理由: tao 0.35.3 の `set_inner_size` は **その窓の** `self.scale_factor()` で `LogicalSize` を物理へ戻す。main の scale を流用すると**混在 DPI 環境で高さが食い違う**。
 
-### 3-7. スコープ外として明示するもの
+**受容する残余（未測定）**: `set_position` 直後は tao 側の scale factor がまだ旧モニターのものである可能性がある（Windows は移動後に `WM_DPICHANGED` を送る）。実害はモニター跨ぎの 1 フレームに限られる見込み。**「main の scale で割らない理由」をコメントに残し、残余は受容する**。
 
-- **`.claude/skills/symmetric-check/SKILL.md:4` の `argument-hint`** に `result-clicked` の同型が残る。#698 の名指し範囲（`code-reviewer.md`）の外であり、**スキルの変更は別の合意を要する**。→ **#698 へコメントで項目を追加する**（受け皿を名指しする・RETROSPECTIVE「受け皿を確認せずに『別の束が拾う』と書いた」の教訓）
-- `:86-90` の他の §番号を名前参照へ倒すこと（`/plan-review`「列挙の落とし穴」の「直すときは番号ではなく名前で参照し直す」に沿う改善だが、**腐っていない箇所への変更**でありスコープ過剰）
+### 2-3. 呼び出し側（`view.rs::drive_results_window`）
 
-### 3c. 規範としての検証（`.claude/rules/safety-nets.md`）と停止条件
+```rust
+let desired = crate::egui_shell::layout::results_window_height(count, self.max_results(), metrics.row_height);
+// 作業領域の下端でクランプする（#675）。**物理 → 論理の変換はここ 1 箇所**（I4）。
+let res_h = match crate::egui_shell::results_top(&self.app_handle)
+    .zip(crate::egui_shell::work_area_for_main(&self.app_handle))
+{
+    Some(((top, scale), area)) => crate::egui_shell::layout::clamp_results_height(
+        desired,
+        (area.bottom - top) as f64 / scale,
+        metrics.row_height,
+    ),
+    // 作業領域が取れない環境（非 Windows・API 失敗）は従来どおりクランプしない
+    None => desired,
+};
+```
 
-`code-reviewer.md` は `AGENTS.md`「条件別チェック」の**セーフティネット（規範）**に当たる（`.claude/agents/**` は `safety-nets.md` の `paths` に無く自動配送されないため、手動で参照した）。同 rule は規範のフォールトインジェクション＝「回避しようとする読者」を求め、**停止条件を先に決めよ**と述べる。以下を先に決める。
+`work_area_for_main` は `monitor::window_monitor_work_area(main.hwnd())` の薄いラッパー（`#[cfg(windows)]` の面倒をここで吸収し、非 Windows では `None`）。
 
-**通してはならないシナリオ（合格条件）**——差し替え後の 2 項目が、次のいずれかに当たったら不合格:
+**可視判定（`results_should_show`・`view.rs:823-824`）は素の `res_h` のままにする**（独立導出の指摘で当初案から変更）。理由は 2 つ:
 
-1. **手を抜く読者**が「該当なし」と言って素通りできる。例: 「生成/破棄の対」を*非同期コードだけ*の話と読み、`std::thread::spawn` の無い変更で無条件に skip する
-2. **規則を全部守る読者**が、書かれたとおり従って誤る。例: 正本（`.claude/rules/src-tauri.md`）へ飛ぶと**別の**判断基準が書いてあり、チェックリストの文と食い違う
-3. 参照が着地しない（G11 が拾う・I3）
+1. **順序**: クランプには `position_results_below_main` が決めた上端が要るが、位置決めは可視判定の**後**にある（不可視なら早期 return する）。クランプ後の値で判定しようとすると**位置決めを判定より前へ動かす再構成が要る**——不可視フレームでも `SetWindowPos` を撃つことになり、#646 PR2 決定 10 の設計を変えてしまう
+2. **契約**: 「0 件 ⇔ 高さ 0 ⇔ hide」を判定側で無傷に保てる。クランプは `set_size` に渡す値だけに効かせる
 
-**上限巡数: 1 巡。** 理由——本 PR は新しい強制を**足していない**。既存 2 項目が「撤去済みフレームワークを名指しするため常に該当なしになる」（= シナリオ 1 の最悪形が**既に起きている**）状態を、現行スタックを名指しする文へ戻すだけである。改善の向きが単調ゆえ、逃げ道が隣へ移る余地が小さい。
-
-**上限時点で受容する残余**: 差し替え後の 2 項目が**レビュー実務で実際に発火するか**は本 PR では測れない（`code-reviewer` は `/implement` の 5b で起動するため、次にコード変更を伴うサイクル＝**束B**で初めて実地に回る）。ここは検知器を置かず、束B の retrospective で「差し替えた 2 項目が所見を生んだか」を見る。
-
-## Phase 4 — 項目 3 の決着（コード変更なし）
-
-`hex_color` の重複は `22dd61b`（#673 PR B / PR #679）で消滅済み。**本 PR では何も変更しない。**
-
-- PR 本文に「項目 3 は起票後に別 PR が解決済み」と根拠 commit を書く
-- `#674` をクローズするのは PR マージ時（本文の `Closes #674`）
+**`self.last_results_height` にはクランプ後の値を入れる**——素の値を入れるとデルタガードの照合対象が `set_size` の実引数とずれ、毎フレーム撃つか必要な再サイズを撃たなくなる。
 
 ---
 
 ## 実装順序
 
-Phase 0 → 1 → 2 → 3 → 4。Phase 0 が Phase 1a の参照番号を供給する以外に依存は無い。
+Phase 1 → Phase 2。依存は無いが、**Phase 1 のほうが小さく、テストで閉じる**ので先に緑にする。
 
 ---
 
 ## テスト方針
 
-**新規テストは追加しない。** 本 PR は文書・コメントのみで、固定すべき挙動の不変条件を導入しないため（`.claude/rules/safety-nets.md`「カナリアで守るのは『沈黙する経路』だけでよい」——検知器を足す前にその失敗が実行時に明示的に失敗するかを問う。ここでは**そもそも挙動を足していない**）。
+| 追加/更新 | 場所 | 不変条件 |
+|---|---|---|
+| `clicked_survives_matching_generation` | `results_view.rs` | 世代一致で取り出せる |
+| `clicked_is_discarded_on_generation_mismatch` | 同上 | 不一致で破棄・スロットが空く |
+| `clicked_is_last_wins` | 同上 | 既存の last-wins 契約（回帰） |
+| `clamp_results_height_*`（5 ケース） | `layout.rs` | 上表のとおり |
+| 既存 `results_window_height` テスト 4 件 | `layout.rs` | **無変更で通ること**（I2 の回帰） |
 
 検証（`docs/build-commands.md`）:
 
-| 対象 | 検証 | カテゴリ |
-|---|---|---|
-| `mod.rs`（コメント） | PostToolUse hook の clippy + `src-tauri` テスト（沈黙 = 合格） | A |
-| `SPEC.md` / `.claude/agents/**` | `npm run governance:check`（**手動**——`selectChecks` に割り当てが無く沈黙は「何も走らなかった」） | F |
-| 全体 | I1 のゲート（下記）が空であること | — |
-
-**I1 のゲート**（コミット前に実行し、**出力が空**であることを確認する）:
-
-```bash
-git diff -U0 -- '*.rs' | grep -E '^[+-]' | grep -v '^[+-][+-]' | grep -vE '^[+-]\s*//'
-```
-
-diff のハンク行から `+++`/`---` のヘッダを除き、残りに**コメント以外の追加・削除行が 1 本も無い**ことを示す。1 行でも出たら挙動を変えている疑いがあるので止まる。
-
-`smoke:egui` は不要（挙動を変えないため。`.claude/rules/src-tauri.md`「トリガー → 検査」のホットキー・ウィンドウ生成/表示順・スラッシュコマンド経路のいずれにも当たらない）。
+- **カテゴリ A**: clippy + `cargo test`（PostToolUse hook が `.rs` 編集で自動実行・沈黙 = 合格）
+- **カテゴリ C**: `npm run smoke:egui`（ウィンドウ表示順に触れるため。`.claude/rules/src-tauri.md`「トリガー → 検査」）
+- **カテゴリ D（目視）**: **#675 は目視でしか確かめられない**——main を画面下端付近へドラッグしてから検索し、結果窓がタスクバーの下へ潜らないこと。#699 は総入れ替えとクリックの競合窓が狭く、**手で再現する手段が無い**（受容する残余。ユニットテストで純粋核を固定する）
 
 ---
 
-## SPEC.md 更新要否
+## SPEC.md 更新要否 — **更新する**
 
-**更新する**（Phase 1）。ただし性格は「仕様変更」ではなく **as-built との乖離の是正**である:
+`SPEC.md:172`（§4.5）:
 
-- §4.8: 実装が SPEC に追いついていなかった（ホバー視覚が入らなかった）ことを SPEC 側で認め、**意図の回復は #<H> へ送る**
-- §20.3: #700 / #654 で既に変わっていた as-built に SPEC を追従させる
+> 検索結果ウィンドウ（`results`）の高さは実件数にフィットする（`min(表示件数, 最大表示件数) × 行高 + 8px`）。ヒット数が最大表示件数未満なら高さも小さくなり、超過時はスクロールバーを表示する（#646 PR2 決定7）
 
-`AGENTS.md`「開発ワークフロー」1 の「バグ / 仕様変更」判定では、**§4.8 はバグ（実装が意図に届いていない）だが、本 PR ではコードを直さず記録だけを是正し、修正判断を #<H> へ送る**——この非対称を PR 本文に明記する。
+→ **作業領域の下端でクランプする条件を追記する**（#675）。式が無条件でなくなるため、書かないと嘘になる（`AGENTS.md`「開発ワークフロー」1 の「fix でも文書化された挙動を変えたら仕様変更」）。
+
+§4.8 のクリック記述は**変更しない**——「シングルクリック: アイテムを起動する」は真のままで、世代不一致の破棄は**誤った行を起動しないための内部保護**であり、正常系の観測可能な挙動を変えない。
 
 ---
 
 ## セルフレビュー
 
-### Step 2（影響範囲・不変条件・スコープ）— インラインで代行
+### Step 2b（独立再導出）— 委譲
 
-ユーザー判断（2026-07-26）により Step 2 の Explore 委譲は行わず、主エージェントが直接確認した。理由: 触るのが 3 ファイル・挙動不変で、影響範囲は grep で追い切れる規模。**Step 2b（独立再導出）は委譲した**——RETROSPECTIVE の実測が「独立再導出だけが毎回漏れを拾った」（2 サイクル連続）と示すため、こちらは省略しない。
+**`name:` を渡さず**（#731 の機序）、成果物は **`workspace/plan-review-2b.md`** へ書かせる（#733 で明文化した手順の初回適用）。全文は同ファイル。
 
-**影響範囲（削除する SPEC 記述の参照元を全件）**:
+**配送は成功した**——ただし**ファイルへは書けなかった**。詳細は下記「機構の欠陥」。
 
-| 参照元 | 参照内容 | 判定 |
-|---|---|---|
-| `src-tauri/src/egui_shell/layout.rs:31, :58` | 「§20.3 の toast 行」 | **無影響**（節番号を指すだけ・番号は変えない） |
-| `src-tauri/src/egui_shell/view.rs:1591` | 「updater toast（§20.3・#532 SU5）」 | 同上 |
-| `src-tauri/src/egui_shell/results_view.rs:206`、`view.rs:217, :345, :610, :1336` | §4.8 のクリック/↑↓ 記述 | **無影響**（ホバー行を参照していない） |
-| `docs/superpowers/specs/`・`plans/` の 15 箇所 | §4.8 / §20.3 / `updateInfo` | **触らない**（当時の記録である履歴文書。`AGENTS.md` の 3 層分担では第 1 層の意図は `SPEC.md` が正本） |
+#### 導出 ∖ plan（＝当初計画の漏れ）— **1 件が致命的**
 
-**`--update-toast-height` が残った経緯**（I2 の根拠として PR 本文へ書く）: #646 PR1 は §20.3 を「52px → `bar_height` 連動」へ直したが、**数値だけを直して CSS 変数名と `y = 0.25 / 0.75` の枠を残した**（`docs/superpowers/plans/2026-07-24-646-pr1-metrics-two-line-rows.md:483` に「行内の y 配置は高さ比 0.25 / 0.75」と明記されている）。その後 #700 が 1 行構成へ変えたが SPEC は追従しなかった。**部分編集の残りかす**である。
+| # | 指摘 | 主エージェントによる検証 | 反映 |
+|---|---|---|---|
+| **1** | **世代 bump 漏れ 3 本**（`enter_tool` / `on_escape` ×2 / `reset`）。`on_escape` は消費より前の同一フレームゆえ、世代を同梱しても穴が塞がらない | **裏取り済み**: `search_state.rs:288/311/318/332` が `self.results` を差し替え、`generation` フィールドは不在。呼び出しは `view.rs:652/1293/455/1147`、bump は `:389/535/904` のみ。順序は `on_escape:1293` < `publish:1751` < `take:1763` | **Phase 0 を新設**（世代の所有を `SearchState` へ） |
+| 2 | 換算の scale は **results 窓自身**のもの（tao が `self.scale_factor()` で戻す） | 一次ソース読解を採用（未実測） | 2-2b に追加 + 受容残余を明記 |
+| 3 | 可視判定は**素の `res_h`** のままにすべき | **自分で検証**: クランプは位置決め後にしか計算できず、位置決めは可視判定の後——当初案は再構成を強いる | 2-3 を変更 |
+| 4 | `last_results_height` にはクランプ後の値を入れる | デルタガードの照合対象の整合として妥当 | 2-3 に明記 |
+| 5 | 作業領域は **main の HWND** から引く（誤配置済み results から引くと別モニターを掴む） | 妥当 | 2-3 に反映 |
+| 6 | `monitor.rs` は全関数 `#[cfg(windows)]`。cfg 分割は `save_placement_relative` に倣う | **裏取り済み**（`monitor.rs` 冒頭） | 2-3 に反映 |
+| 7 | 破棄経路の trace（手で再現できないため） | 妥当。ただし **trace は診断用で不変条件の担保ではない** と限定 | 1-4 に追加 |
 
-**スコープ**: `git grep` で `--update-toast-height` / `updateInfo` の生きた消費者は 0 件（`docs/superpowers/` の履歴文書のみ）。削除で壊れるものは無い。
+**同クラスの発見（本 PR のスコープ外）**: main 窓自身も status/toast で伸びた後に再クランプが無く下端をはみ出しうる（`mod.rs:378-392` → `view.rs:1775-1785`）／`SPEC.md:413`「ウィンドウが画面外に出ないことを保証する」がドラッグ移動経路で偽。→ **受け皿を名指しして issue 化する**（束A の教訓）。
 
-### Step 2b（独立再導出）— **未達（機構の失敗）**
+#### plan ∖ 導出（スコープ過剰候補）
 
-**省略ではなく未達である。** この区別を残す——`/plan-review`「Step 2b — 独立導出 + 差分（常に実施・盲点クラスの漏れ検出）」は「省略するなら理由を書く」を求めるが、それは**判断による省略**を想定した規定であり、ここで起きたのは**判断ではなく機構の故障**である。将来この記録を読む者が「局所的だから省いた」と誤読しないように書き分ける。
+- **`take_clicked_for` による通過点化**: 導出側は `layout.rs` に純粋述語 `click_is_current` を置く案（消費側が呼び忘れられる）。**当方の案を維持する**——フィールドを private にすれば**照合を迂回する経路が型から消える**（階梯 1 段上）。導出側も「推奨であって必須ではない」と留保しており矛盾しない
 
-**起きたこと**: `Plan` タイプのサブエージェントを 2 体（背景実行 1・別プロンプトで再試行 1）起動したが、**どちらも中身のない idle 通知だけを返し、計 5 回の問い合わせに成果が返らなかった**。プロンプトを変えても同じ失敗様態ゆえ、プロンプトではなくセッションの委譲経路の問題と判断した。
+#### 一致（盲点が無いことの能動的証拠）
 
-**代償の見積もり**: 本 PR は文書・コメントのみで挙動を変えず、変更集合は 4 ファイル。**盲点の代償が小さい局面**である。加えて、独立導出を待たずに**インライン Step 2 が同クラスの残骸 4 件（`:54` `:57` `:75` `:87`）と、参照化という構造的な処方に到達している**——Step 2b が拾うはずだった種類の発見が、別経路で 1 度は起きている。
+`wake_results` に触らない判断 / `results_window_height` を変えず外掛けする判断 / issue 案 2（path で同一性）を採らない判断 / issue #675 案 2 を採らない判断 / 0 件 = hide 契約の床 / 実装順序（世代 → clicked → クランプ → SPEC）。**独立に再一致した。**
 
-**繰り越し**: **束B（#710 / #699 / #675）では Step 2b を必ず回す。** 束B は results 窓のフレーム間プロトコル＝競合の束であり、盲点の代償が文書と比べものにならない。委譲が同じ失敗をするなら、そこでは**実装に着手する前に**ユーザーへ判断を仰ぐ。
+#### 機構の欠陥（#733 の追随修正が要る）
 
-**受容する残余**: 本 PR について、「issue とコードだけから独立に導出したら別の変更集合になった」可能性は**検証されていない**。
+**`/plan-review`「Step 2b」が指定する `Plan` タイプは Write / Edit ツールを持たない**（agent type の定義が両者を除外）。#733 で明文化した「成果物は `workspace/plan-review-2b.md` へ書かせる」は**そのままでは実行不能**である。今回はエージェントが `SendMessage` で全文を返し、主エージェントが保存した。
+
+→ **受け皿を用意する**（本 PR には含めない）。選択肢: (a) Step 2b の agent type を書ける型へ変える、(b) 手順を「`SendMessage` で返させ、主エージェントが指定パスへ保存する」に直す。**(b) は「返り値に依存させない」という #731 の規範と衝突する**ので、(a) が筋に見える。
 
 ### 5b の 3 観点
 
-1. **境界条件**: 本 PR は分岐を足さないため入力の境界が無い。代わりに**編集の境界**を置く——「消してよい行」と「残す行」の境界が §20.3 に 1 本あり（`[今すぐ更新]`/`[閉じる]` の**右寄せと種別は生存**・`y = 0.75` だけが stale）、ここを一括削除すると生きた仕様を落とす。Phase 1b の表で行ごとに判定を書いた
-2. **シンプル化の挑戦**: 新しい状態・インターフェース・暗黙の前提を 1 つも導入しない。Phase 2 は「数値を別の数値へ置き換える」誘惑があるが、**数を書かない**方へ倒した（置き換えれば #646 決定 6 の次の変更でまた腐る）
-3. **破壊不変条件 + 検知手段**: 本 PR が壊しうる「即アウト」は **I1（挙動を変えない）**ただ 1 つ。検知手段は上の機械ゲート + PostToolUse hook の clippy/テスト。`.claude/agents/**` の編集には検査の割り当てが無い（沈黙は「何も走らなかった」）が、**G11 が見出し参照の実在だけは機械照合する**（`scripts/governance-check.mjs:719`）——それ以外の意味的妥当性は 3c の「受容する残余」に置いた
+1. **境界条件**: 0 件（hide 契約）/ available が 1 行未満・負 / 世代が一致・不一致 / `on_escape` の 2 分岐——いずれもテストで 1 件ずつ用意した。**進めすぎ**（全クリック落下）の側も `rows_generation_is_stable_on_selection_change` で固定する
+2. **シンプル化の挑戦**: 新しい状態は `rows_generation: u64` **1 つだけ**で、しかも既存の `snapshot_generation` を**移設**するので純増はゼロ。`ClickTake` は enum 1 つだが、`Option` では「無かった」と「捨てた」を区別できず trace が書けない。**手動 bump 3 箇所追加（代替 B）のほうが差分は小さいが、漏らした経路を手に戻すので採らない**
+3. **破壊不変条件 + 検知手段**: 「誤った行を起動しない」が壊れたら即アウト。検知は (a) `search_state.rs` の世代テスト 5 件、(b) `results_view.rs` のクリック 3 件、(c) `layout.rs` のクランプ 5 件、(d) `egui_results:click_stale` trace（診断のみ）。**#699 の競合窓は手で再現できない**——ユニットテストで純粋核を固定するのが唯一の担保であり、これは受容する残余ではなく**設計上の到達点**である

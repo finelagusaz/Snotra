@@ -77,6 +77,27 @@ pub fn results_window_height(result_count: usize, max_results: u32, row_height: 
     }
 }
 
+/// 結果窓の高さを作業領域の下端で抑える（#675）。単位はすべて**論理 px**。
+///
+/// - `desired`: `results_window_height` の値
+/// - `available`: 結果窓の上端から作業領域下端まで。**`None` はクランプしない**
+///   （非 Windows・作業領域の取得失敗。従来どおりの挙動へ倒す）
+/// - `row_height`: 1 行の高さ
+///
+/// **`desired == 0.0` は素通しする。** 0.0 は `results_should_show` が「hide」と読む契約値で
+/// あり（同関数）、クランプの結果として 0 を**作ってはならない**し、0 を**消してもならない**。
+///
+/// `available` が 1 行に満たなくても **1 行 + padding 8 を床**にする。ここで 0 まで潰すと
+/// 「main を画面下端へ置くと結果が一切出ない」という別の欠陥になる。床を割ったぶんの
+/// はみ出しは受容する（行はスクロールで到達できる）。
+pub fn clamp_results_height(desired: f64, available: Option<f64>, row_height: f64) -> f64 {
+    let Some(avail) = available else { return desired };
+    if desired <= 0.0 {
+        return desired;
+    }
+    desired.min(avail.max(row_height + 8.0))
+}
+
 /// results 窓を表示してよいか（#671 PR A′・レビュー Important 1）。
 ///
 /// **`main_visible` を条件に含めるのが要石である。** main を hide しても `state.results()` は
@@ -254,6 +275,28 @@ mod tests {
         assert_eq!(results_window_height(8, 8, row), 8.0 * row + 8.0); // ちょうど境界(result_count == max_results)
         assert_eq!(results_window_height(20, 8, row), 8.0 * row + 8.0); // 上限で頭打ち
         assert_eq!(results_window_height(0, 8, row), 0.0); // 0 件は非表示(高さ 0 = 呼び出し側で hide)
+    }
+
+    /// #675: 作業領域の下端で抑える。**両端を固定する**——抑えすぎると「下端に置くと結果が
+    /// 一切出ない」、抑えなさすぎると元の欠陥（タスクバーの下へ潜る）に戻る。
+    #[test]
+    fn results_height_is_clamped_at_work_area_bottom() {
+        let row = 37.0;
+        let floor = row + 8.0; // 1 行 + padding
+        // 取得できないときは従来どおり（非 Windows・API 失敗）
+        assert_eq!(clamp_results_height(300.0, None, row), 300.0);
+        // 余裕があれば素通し（既存挙動と同一）
+        assert_eq!(clamp_results_height(300.0, Some(500.0), row), 300.0);
+        // 下端で切る
+        assert_eq!(clamp_results_height(300.0, Some(120.0), row), 120.0);
+        // 1 行に満たなくても 1 行は出す（0 まで潰さない）
+        assert_eq!(clamp_results_height(300.0, Some(20.0), row), floor);
+        // main が作業領域の外にある（available が負）
+        assert_eq!(clamp_results_height(300.0, Some(-50.0), row), floor);
+        // **0 件は 0 のまま**——0.0 は results_should_show が hide と読む契約値で、
+        // クランプが床を当てて作り替えてはならない
+        assert_eq!(clamp_results_height(0.0, Some(0.0), row), 0.0);
+        assert_eq!(clamp_results_height(0.0, Some(500.0), row), 0.0);
     }
 
     /// #671 PR A′: main が hidden の間は、結果が残っていても results を出さない。

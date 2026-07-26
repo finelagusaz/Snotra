@@ -20,10 +20,60 @@ pub(crate) fn plan_hotkey(visible: bool, alt_pressed: bool, hotkey_toggle: bool)
     }
 }
 
+/// blur（focus 喪失）から hide 判定までの猶予（#532 SU2）。
+/// **予約と判定の両方がこの値を使う**——片方だけ変えると「予約は 100ms 後・判定は別の閾値」
+/// という静かな不整合になる。
+pub(crate) const BLUR_GRACE: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// blur 猶予のこのフレームでの処置（#711・契約③）。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BlurAction {
+    /// 猶予明け + 条件成立 → hide を要求する。
+    Hide,
+    /// 猶予中 → 残余で再要求する（armed の間は毎フレーム）。
+    Rearm(std::time::Duration),
+    /// 猶予明けだが条件不成立（auto_hide off / 設定サイドカー起動中）→ 何もしない。
+    Idle,
+}
+
+/// blur 猶予のこのフレームでの処置を決める純粋核（#711・契約③）。
+///
+/// **`elapsed` は呼び出し側が 1 回だけ読んで渡すこと。** 関数内で時刻を読み直す形にすると、
+/// 判定（`>= BLUR_GRACE`）と減算（`BLUR_GRACE - elapsed`）の間に時計が進んだとき
+/// `Duration` 減算が underflow して panic する（release は `panic = "abort"` ゆえプロセスが
+/// 落ちる）。**このフレームは猶予境界に着弾するよう予約されており `elapsed ≈ BLUR_GRACE` が
+/// 典型ケースなので、確率は低くない。** 減算を `elapsed < BLUR_GRACE` の分岐内へ閉じるのと
+/// 併せて、この 1 回読みが安全性を担っている（設計 spec §5 の errata）。
+///
+/// **再要求するのは「時間経過で解消する不成立」だけ**である。`focused` / `auto_hide` /
+/// `settings_running` は時計と無関係な入力で、時間を進めても変わらない——再要求すると
+/// `request_repaint_after(ZERO)` の永久スピンになり、契約②で潰した消費を別の扉から
+/// 再導入する。それらの変化は変えた側が wake する責務を負う（契約①）。
+///
+/// **既知の例外**: 設定サイドカーの終了はその責務を負っていない（`commands/window.rs` の
+/// 監視スレッドが `settings_running` を false へ倒すのに wake しない）。是正は #746
+/// （`settings_running` の項自体が SPEC に無い逸脱であり、外せばこの経路ごと消える）。
+pub(crate) fn blur_grace_action(
+    elapsed: std::time::Duration,
+    focused: bool,
+    auto_hide: bool,
+    settings_running: bool,
+) -> BlurAction {
+    if blur_should_hide(focused, elapsed >= BLUR_GRACE, auto_hide, settings_running) {
+        BlurAction::Hide
+    } else if elapsed < BLUR_GRACE {
+        BlurAction::Rearm(BLUR_GRACE - elapsed)
+    } else {
+        BlurAction::Idle
+    }
+}
+
 /// blur（focus 喪失）猶予明けに hide 要求を出すべきかの純粋判定。焦点が戻っておらず、
 /// 100ms 猶予が明け、auto_hide が有効で、設定サイドカーが非起動のときだけ hide する。
 /// 猶予タイマの発火・repaint 予約という状態は view 側（update）に残す。
-pub(crate) fn blur_should_hide(
+/// **このモジュールの外へ出さない**（#711）——消費点は `blur_grace_action` に一本化してあり、
+/// 判定と再要求を別々に呼ぶ 2 経路が生まれるのを型で塞ぐ。
+fn blur_should_hide(
     focused: bool,
     grace_elapsed: bool,
     auto_hide: bool,
@@ -34,7 +84,38 @@ pub(crate) fn blur_should_hide(
 
 #[cfg(test)]
 mod tests {
-    use super::{HotkeyPlan, plan_hotkey};
+    use super::{BLUR_GRACE, BlurAction, HotkeyPlan, blur_grace_action, plan_hotkey};
+    use std::time::Duration;
+
+    #[test]
+    fn blur_grace_rearms_while_armed_and_hides_after() {
+        let ms = Duration::from_millis;
+        // 猶予中は残余で再要求する（契約③: 予約はフレームの到来を約束しない）。
+        assert_eq!(blur_grace_action(ms(0), false, true, false), BlurAction::Rearm(ms(100)));
+        assert_eq!(blur_grace_action(ms(99), false, true, false), BlurAction::Rearm(ms(1)));
+        // 境界ちょうどは Hide 側（`>=`）——減算に落ちないことも兼ねて固定する。
+        assert_eq!(blur_grace_action(BLUR_GRACE, false, true, false), BlurAction::Hide);
+        assert_eq!(blur_grace_action(ms(150), false, true, false), BlurAction::Hide);
+    }
+
+    #[test]
+    fn blur_grace_stays_idle_when_time_cannot_resolve_it() {
+        let ms = Duration::from_millis;
+        // 猶予明けだが時計と無関係な条件で不成立 → **再要求しない**（永久スピンを作らない）。
+        assert_eq!(blur_grace_action(ms(150), false, false, false), BlurAction::Idle); // auto_hide off
+        assert_eq!(blur_grace_action(ms(150), false, true, true), BlurAction::Idle); // 設定起動中
+        assert_eq!(blur_grace_action(ms(150), true, true, false), BlurAction::Idle); // focus 復帰
+    }
+
+    #[test]
+    fn blur_grace_does_not_underflow_far_past_the_deadline() {
+        // 猶予を大きく超えた経過でも減算に落ちない（設計 spec §5 errata の回帰検出器——
+        // release は panic = "abort" ゆえ underflow はプロセス停止になる）。
+        assert_eq!(
+            blur_grace_action(Duration::from_secs(10), false, false, false),
+            BlurAction::Idle
+        );
+    }
 
     #[test]
     fn hotkey_branches_match_product_semantics() {

@@ -2,7 +2,7 @@
 
 対象 issue: #737（フレームレート上限なし・448fps）/ #711（blur 猶予の 1 回きり予約）/ #714（再検索時のスクロールアニメーション）/ #697 項目 1（hidden 中の paint 抑止機構が未測定）。
 
-**進捗**: §8 の 1 番（#697・実測 (A) 確定）・2 番（#714・PR #742）・3 番（#737・契約②の実装 + A/B 実測で上限を確認）は 2026-07-26 完了。残りは 4〜5 番（#711 → 契約 5 か条の CLAUDE.md 転記）。
+**進捗**: §8 の 1 番（#697・実測 (A) 確定）・2 番（#714・PR #742）・3 番（#737・契約②の実装 + A/B 実測で上限を確認）・**4 番（#711・契約③の実装）**は 2026-07-26 完了。残りは 5 番（契約 5 か条の CLAUDE.md 転記）。
 
 これらは独立の欠陥ではなく、「**再描画を誰が・いつ要求し、どこで打ち切り、来なかったらどうするのか**」という runtime の設計契約が未文書のまま、呼び出し点ごとに場当たりで決まっていることの断片である。本書はその契約を 5 か条に固定し、各 issue をその実装として位置づける。
 
@@ -29,18 +29,33 @@ expose・リサイズ等で tao が直接 `RedrawRequested` を配送する。�
 
 - **errata（2026-07-26・#737 独立導出）**: 系統 B には第 3 の経路がある——IME preedit 更新時の `InvalidateRect`（`windows_ime.rs`）→ `WM_PAINT` → OS 由来 `RedrawRequested`。IME 打鍵レートに有界で、上限（契約②）の対象外として受容する。
 
+**抑止・終端経路（フレームが生まれない側）**
+
+上の 2 系統は「**renderer 初期化済み・非破棄・イベントループ稼働中**の窓」を前提にしている。前提が崩れる経路は次のとおりで、いずれも**要求が消えるのではなく、要求しても永久に何も起きない**（errata 2026-07-26・Codex 敵対的レビュー）:
+
+| 経路 | 何が起きるか |
+|---|---|
+| 活性化時の softbuffer surface 初期化失敗（`runtime.rs` の `attach_pending_windows`） | その窓は `active` へ入らず scheduler も初回要求も作られない。**`attach()` が既に返した `WindowWaker` は恒久的に no-op** になる（受信側が落ちるため） |
+| `Destroyed`（`runtime.rs` の `WindowEvent` arm） | `active` から除去。以後の wake は no-op |
+| proxy 切断（`send_event` が `Err`） | worker が `break` して停止 |
+| hidden（契約④） | 要求は proxy まで届くが tao/OS 層が配送しない（#697 実測） |
+
+**最初の 1 つは「初期化に失敗した窓は、生きた handle を持ったまま二度と描かない」**という形であり、呼び出し側からは wake が効かないことと区別できない。今日の製品は窓 2 つとも起動時に活性化するため実害の報告は無いが、**§1 の表だけを読んで「wake すれば描かれる」と結論してはならない**。
+
 **現状の帰結**: 系統 A に流量制御が無い。egui はポインタ移動中 `Some(Duration::ZERO)` を返し続け（egui 0.35 `input_state/mod.rs:652`・設計として正しい）、worker は言われるままに配送する → 448fps / 1 コア 84.7%（#737 実測）。
 
-## 2. 消費側の時限処理 — 現在 3 つの流儀が混在
+## 2. 消費側の時限処理 — 「毎フレーム再要求」へ統一済み（#711 以前は blur だけが非対称）
 
 | 箇所 | 流儀 | 脆さ |
 |---|---|---|
 | 検索 debounce（`view.rs` の `is_armed` 節） | **armed の間、毎フレーム残余を再要求** | なし（coalescing 耐性あり、とコメントで明記済み） |
 | 一時通知期限（`view.rs` の `notice.poll` / `notice.remaining`） | poll + 表示中は残余を再要求 | なし（debounce と同型） |
-| blur 猶予 100ms（`view.rs` の `unfocus_at`） | **1 回きりの予約**（`request_repaint_after(100ms)` を張るだけ） | 予約フレームが早着・消失すると hide が次の無関係な入力まで宙吊り（#711） |
+| blur 猶予（`view.rs` の `unfocus_at` → `lifecycle::blur_grace_action`） | **armed の間、毎フレーム残余を再要求**（`BlurAction::Rearm`・#711 で是正） | なし（#711 以前は「1 回きりの予約」で、割り込みで予約が消えると hide が次の無関係な入力まで宙吊りだった） |
 | 起動タイムアウト（`drain_launch` → `LAUNCH_TIMEOUT - elapsed`） | launching 中に毎フレーム残余を再要求 | なし |
 
-4 箇所中 3 箇所が既に「毎フレーム再要求」であり、blur 猶予だけが対称性を欠く。**新しい機構を発明する必要はなく、既にある多数派の流儀を契約へ昇格させれば足りる。**
+**4 箇所すべてが「毎フレーム再要求」で揃った**（#711 で blur が合流）。契約③はこの多数派の流儀を昇格させたものであり、新しい機構は発明していない。
+
+**armed 期限はこの 4 つで全数である**（`src-tauri/src/egui_shell/` で「`Instant` を `self.` に持ち期限を判定するもの」を走査・#711 の `/symmetric-check`）。他の `Instant` は計測トレース用で期限を持たない。
 
 ## 3. 契約（5 か条）
 
@@ -57,20 +72,29 @@ worker は dispatch の間隔に `min_interval` の下限を守る。dispatch �
 - `min_interval` = 窓が載っているモニターのリフレッシュレートの逆数。取得失敗時は 1/60 秒
 - **入力起因のフレームにも一律に効く**。追加される応答遅延の上限は `min_interval`（144Hz なら ≤ 7ms）であり、体感を損なわない
 - 系統 B（OS 由来）は対象外。paint 失敗リトライは既に 16ms 以上で、実質影響なし
+- **`min_interval` の変更は次の dispatch から完全反映される**。gate は dispatch 時点の値で「前回 dispatch + `min_interval`」を固定するため、**リフレッシュレートが下がった直後の 1 回だけ旧値（短い側）の下限で配送されうる**（144Hz → 60Hz のモニター跨ぎ等）。次の dispatch で自己回復するため是正しない（errata 2026-07-26・Codex 敵対的レビュー。「下限を常に守る」と読めた初版への限定）
 
-### ③ 予約は「フレーム 1 枚以上」を約束し、「条件成立」を約束しない
+### ③ 予約は「フレームが来ること」を約束しない
 
-`request_repaint_after(d)` は d 経過後にフレームが**少なくとも 1 枚**来ることだけを約束する（可視中に限る・④）。そのフレームで条件（猶予経過・debounce 満了）が成立している保証は無い——deadline は coalescing で早着しうるし、フレームは別の理由でも来る。
+`request_repaint_after(d)` が約束するのは**要求を 1 つ登録すること**だけであり、**d 経過後にフレームが来ることではない**。worker は最も早い deadline だけを単一スロット `pending` で保持し（`repaint.rs` の coalescing）、dispatch 時に `pending.take()` で**予約全体を空にする**。ゆえに、より早い要求（入力・外部 wake・アニメーション）が 1 つでも割り込むと、**両者は 1 回の dispatch へ畳まれ、後の deadline は黙って消える**。
 
-**ゆえに、条件待ち（armed）の消費側は、条件が成立するか解除されるまで毎フレーム残余を再要求する。** 検索 debounce・通知期限・起動タイムアウトは既にこの形。blur 猶予をこれへ揃える（#711 案 A）。
+具体例: t=0 に 100ms 後を予約し、t=10ms に `config-applied` の `wake_main`（ZERO 遅延・可視性を見ない）が入ると、10ms のフレームで予約が消費され、**100ms 時点のフレームは来ない**。
+
+**ゆえに、条件待ち（armed）の消費側は、条件が成立するか解除されるまで毎フレーム残余を再要求する。** 検索 debounce・通知期限・起動タイムアウトは既にこの形。blur 猶予をこれへ揃える（#711）。
+
+**再要求してよいのは「時間経過で解消する不成立」だけである**（`grace_elapsed == false` 等）。時計と無関係な入力（フォーカス・設定値・他プロセスの生死）による不成立で再要求すると `request_repaint_after(ZERO)` の永久スピンになり、②で潰した消費を別の扉から再導入する。**それらの変化は、変えた側が wake する責務を負う**（契約①）——負っていない経路は契約①の違反であって、③で埋め合わせてはならない。
+
+- **errata（2026-07-26・#711 の plan-review + Codex 敵対的レビュー）**: 本条項の初版は「d 経過後にフレームが**少なくとも 1 枚**来ることだけを約束する」「deadline は coalescing で**早着しうる**」と書いていた。**前者は偽**（上記のとおり予約は消えうる）、後者は機構の取り違え（早着ではなく消失）。**規範（毎フレーム再要求）は変わらないが、その根拠はまるごと差し替わっている**——初版の根拠だけを読んだ実装者は「早く来るだけなら 1 回の予約でも足りる」と誤読しうる。
 
 ### ④ hidden 中のフレームは約束されない
 
-hide を跨ぐ時限状態は reset-on-show を backstop にする（既存規範の再掲・`src-tauri/CLAUDE.md`）。ただし現在「hidden 中は `update()` が走らない」の抑止機構は**推測のまま**であり（`runtime.rs` の `visible` ガードは到達不能・OS/tao 層の抑止と推定・#697 項目 1）、本契約の採択前に測って接地する（§6）。
+hide を跨ぐ時限状態は reset-on-show を backstop にする（既存規範の再掲・`src-tauri/CLAUDE.md`）。「hidden 中は `update()` が走らない」の抑止機構は **#697 で実測済み**——worker は `RequestRedraw` を送るが hidden な窓には `RedrawRequested` が配送されない（抑止は tao/OS 層。`runtime.rs` の `visible` ガードは到達不能のまま受け口として残る）。§6 は実施済みの測定手順の記録として残す。
 
-### ⑤ 連続アニメーションは上限の下で有限時間に収束する。不連続遷移にアニメーション経路を使わない
+**backstop の既知の穴**: `unfocus_at` / `was_focused`（blur 猶予）は reset-on-show でクリアされておらず、この条項の対象でありながら backstop の外にいる（#745）。
 
-egui のアニメーション（scroll・フェード）は ZERO 遅延要求を出し続けるため、②の上限がその消費の天井になる。一方、**内容が総入れ替えになる不連続遷移**（再検索による結果集合の世代交代）に「現在位置から寄せる」アニメーション経路を流用しない——別のリストへの切り替えに、前のリストの位置は持ち越さない（#714。選択移動 ↑↓ のアニメーションは維持）。
+### ⑤ 連続アニメーションの消費には②が天井を与える。不連続遷移にアニメーション経路を使わない
+
+egui のアニメーション（scroll・フェード）は ZERO 遅延要求を出し続けるため、②の上限がその消費の天井になる。**収束そのものは egui 側の性質であって本契約は保証しない**——#710 の実測では観測した 482 バーストすべてが終端した（最長 1.97 秒）が、これは実測であり全称の保証ではない（errata 2026-07-26・Codex 敵対的レビュー。初版の見出しは「有限時間に収束する」と保証の形で書いていた）。一方、**内容が総入れ替えになる不連続遷移**（再検索による結果集合の世代交代）に「現在位置から寄せる」アニメーション経路を流用しない——別のリストへの切り替えに、前のリストの位置は持ち越さない（#714。選択移動 ↑↓ のアニメーションは維持）。
 
 ## 4. 設計: フレーム上限（契約②）の実装
 
@@ -116,16 +140,27 @@ let mut next_allowed: Instant = Instant::now();      // 前回 dispatch + min_in
 
 `view.rs` の `unfocus_at` 節を debounce と同型へ:
 
+**出荷形**（#711 実装。初版スケッチとの差は下の errata）:
+
 ```rust
+// lifecycle.rs（純粋核・elapsed は呼び出し側が 1 回だけ読んで渡す）
+fn blur_grace_action(elapsed, focused, auto_hide, settings_running) -> BlurAction {
+    if blur_should_hide(focused, elapsed >= BLUR_GRACE, auto_hide, settings_running) {
+        BlurAction::Hide
+    } else if elapsed < BLUR_GRACE {
+        BlurAction::Rearm(BLUR_GRACE - elapsed)   // 減算はこの分岐内だけ（underflow 不能）
+    } else {
+        BlurAction::Idle                          // 時間では解消しない → 再要求しない
+    }
+}
+
+// view.rs
 if let Some(at) = self.unfocus_at {
-    let grace = Duration::from_millis(100);
-    let grace_elapsed = at.elapsed() >= grace;
-    if blur_should_hide(focused, grace_elapsed, ...) {
-        self.unfocus_at = None;
-        self.emit_hide();
-    } else if !grace_elapsed {
-        // 契約③: armed の間は毎フレーム残余を再要求（coalescing・早着への耐性）
-        ctx.request_repaint_after(grace - at.elapsed());
+    match blur_grace_action(at.elapsed(), focused, self.auto_hide_enabled(), self.settings_running()) {
+        BlurAction::Hide => { self.unfocus_at = None; self.emit_hide(); }
+        // 契約③: 予約はフレームの到来を約束しない（単一スロット + take() で消えうる）
+        BlurAction::Rearm(remaining) => ctx.request_repaint_after(remaining),
+        BlurAction::Idle => {}
     }
 }
 ```
@@ -135,6 +170,9 @@ if let Some(at) = self.unfocus_at {
 - 純粋核 `blur_should_hide` は不変。追試は「grace_elapsed=false のフレームで再要求が出ること」を view 層でどう固定するかが実装時の論点（view は実機依存ゆえ、猶予残余の算出を純関数へ切り出してテストする形が既存の型に合う）
 
 #711 案 B（状態遷移化）・案 C（コメントで受容）は、案 A が 3 行で済み多数派の流儀と揃う以上、複雑さ・非対称の残存に見合わない。
+
+- **errata（2026-07-26・#711 の plan-review 独立導出）**: 上のスケッチは `at.elapsed()` を **3 回**読んでいる（判定・`blur_should_hide` の引数・減算）。判定（`>= grace`）と減算（`grace - at.elapsed()`）の間に時計が進むと **`Duration` 減算が underflow して panic** し、release は `panic = "abort"`（ルート `Cargo.toml`）ゆえ**プロセスが落ちる**。**このフレームは猶予境界に着弾するよう予約されているため、`elapsed ≈ grace` はまさに典型のケースであり確率は低くない。** 実装は `elapsed` を**呼び出し側で 1 回だけ読んで純関数へ渡し**、減算を `elapsed < grace` の分岐内に閉じること（この「1 回読み」は load-bearing である）。
+- **errata（同・Codex 敵対的レビューが指摘）**: スケッチの `else if !grace_elapsed` は、猶予明けで条件不成立（`auto_hide` off・設定サイドカー起動中）のとき何もしない形だが、**その判断の正しさは「それらの変化を起こす側が wake する」ことに依存している**（契約③の追記を参照）。**設定サイドカーの終了はこの責務を負っていない**——監視スレッド（`commands/window.rs`）は `settings_running` を false へ倒すのに wake しない。ゆえに `Idle` の根拠には現在 1 つ例外がある。**是正は #746**（`!settings_running` の項自体が SPEC に無い逸脱であり、項を外すとこの経路ごと消える）。#711 はこの例外を残したまま契約③の本体だけを実装する。
 
 ## 6. 設計: hidden 抑止の接地（契約④・#697 項目 1）
 
@@ -177,4 +215,4 @@ runtime には触れない。`results_view.rs` の世代検知（`last_scrolled_
 2. ポインタ移動中 fps ≤ モニターリフレッシュレート、1 コア占有の有意減（#737 AC1・`measurement.md` プロトコル）
 3. 打鍵・ホバー応答の体感悪化なし（#737 AC2・`egui_search:dispatch` trace + 目視）
 4. 再検索時に結果窓が瞬時に先頭表示（#714）
-5. hidden 抑止の機構が実測で接地され、doc の「推測」限定が解消（#697 項目 1）
+5. hidden 抑止の機構が実測で接地され、doc の「推測」限定が解消（#697 項目 1）— **達成済み**（2026-07-26・contract ④ を実測結果へ改稿）

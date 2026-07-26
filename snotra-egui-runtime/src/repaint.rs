@@ -1,6 +1,6 @@
 //! 即時／遅延 repaint を Tauri イベントループへ配送する worker（窓ごと 1 スレッド）。
 //! 配送には下限間隔がある（フレーム上限＝モニターのリフレッシュレート・取得失敗時 60Hz・
-//! contract-design spec 契約②・#737）——deadline は落とさず遅らせるだけ（契約③）。
+//! contract-design spec 契約②・#737）——gate は要求 deadline を**早めも取りこぼしもしない**。
 //! 外部から窓を起こす公開ハンドル `WindowWaker`（`EguiRuntime::attach` の戻り値）もここが所有する。
 
 use std::{
@@ -104,9 +104,13 @@ fn interval_from_hz(hz: u32) -> Option<Duration> {
 }
 
 /// 次の dispatch 予定時刻（契約②・#737）: 要求 deadline と gate（前回 dispatch +
-/// min_interval）の遅い方。deadline を**落とさず遅らせるだけ**——契約③「予約はフレーム
-/// 1 枚以上を約束する」を保つ。gate は「要求より早く配送しすぎない」制御であって、
-/// gate より遅い予約（点滅・タイムアウト等）を早める機構ではない。
+/// min_interval）の遅い方。gate は「要求より早く配送しすぎない」制御であって、
+/// **要求 deadline を早めも取りこぼしもしない**——契約②が契約③の「armed の間は毎フレーム
+/// 再要求する」規範と両立する根拠がこれである（gate より遅い予約を早める機構でもない）。
+///
+/// **契約③を「予約はフレーム 1 枚以上を約束する」と要約してはならない**——その表現は
+/// #711 で偽と判明して撤回された（`pending` は単一スロットで、より早い要求が割り込むと
+/// 後の deadline は `take()` ごと消える）。gate の性質と予約の消失は別の話である。
 fn pace(deadline: Instant, gate: Instant) -> Instant {
     deadline.max(gate)
 }

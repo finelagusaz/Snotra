@@ -1033,12 +1033,16 @@ impl SearchWindowView {
                     crate::trace_main("egui_update_install_returned", serde_json::json!({}));
                 }
                 Err(e) => {
+                    // trace と toast の両方が同じ文字列を要る（#654）。**lock を取る前に**
+                    // 作る——確保を lock 保持区間へ入れない。
+                    let reason = e.to_string();
                     crate::trace_main(
                         "egui_update_install_failed",
-                        serde_json::json!({ "error": e.to_string() }),
+                        serde_json::json!({ "error": reason }),
                     );
                     if let Some(st) = handle.try_state::<crate::egui_shell::UpdaterUiState>() {
-                        st.0.lock().unwrap().phase = crate::egui_shell::UpdaterPhase::InstallFailed;
+                        st.0.lock().unwrap().phase =
+                            crate::egui_shell::UpdaterPhase::InstallFailed { message: reason };
                     }
                     crate::egui_shell::wake_main(&handle); // 可視中の失敗を即座に描く
                 }
@@ -1212,6 +1216,11 @@ impl EguiView for SearchWindowView {
         visuals.window_fill = visuals.panel_fill;
         visuals.extreme_bg_color = visual.input_bg; // TextEdit 背景
         visuals.selection.bg_fill = visual.selection;
+        // TextEdit の hint 色はここだけが効く（#654・詳細は TextEdit 構築部のコメント）。
+        // **他の描画を巻き込まない**: この view が使う egui ウィジェットは TextEdit 1 つだけで
+        //（`ui.label` / `ui.button` の類は 0 件・残りは raw painter に色を明示渡し）、
+        // weak text を読むのはその hint のみ。results 窓は別 Context ゆえ影響外。
+        visuals.weak_text_color = Some(visual.hint);
         ctx.set_visuals(visuals);
 
         // SU6 spec 決定 2: font_family hot-reload（WebView2 の --font-family CSS 変数即時反映 parity）。
@@ -1443,10 +1452,23 @@ impl EguiView for SearchWindowView {
         } else {
             self.state.query().to_string()
         };
-        // §11 Part C（#643）: 入力欄フォントを config `font_size` へ追従させ、hint を
-        // `hint_text_color` で描く。#646 決定 2: バー高は `font_size + bar_padding`（Metrics）。
+        // §11 Part C（#643）: 入力欄フォントを config `font_size` へ追従させる。
+        // #646 決定 2: バー高は `font_size + bar_padding`（Metrics）。
         // SU6.5 決定 3 の 52px 据え置きは WebView2 parity 制約下の判断で、SU7 の WebView2 撤去
         // により失効した。極端な font_size でバーからはみ出す挙動は変わらず残る。
+        //
+        // **入力欄は 2 つの文字列を持ち、色の受け取り機構が別である**（#654）:
+        // - 入力テキスト本体 → `.text_color()`。egui は `self.text_color` を最優先で見る
+        //   （builder.rs `text_color.or_else(override_text_color).unwrap_or(widgets.inactive)`）。
+        //   **これを欠くと config を見ずに egui 既定 gray(180) へ落ちる**——#643 は hint だけを
+        //   直したため、既定設定のまま入力文字が結果行の表示名より暗い状態が残っていた
+        // - hint → **`Visuals::weak_text_color` だけが効く**。egui 0.35 の TextEdit は
+        //   `hint_text.map_texts(|t| t.color(visuals.weak_text_color()))` で**無条件に上書き**し、
+        //   egui 自身が "users won't be able to override it" と注記している。ゆえに
+        //   `RichText::color()` は届かない（#643 の指定は dead だった）。適用は `set_visuals` 側
+        //
+        // **どちらも「色リテラルを書かない」だけでは守れない**（SPEC §11 の規範はこの 2 様態を
+        // 名指しするよう #654 で拡張した）。片方を直してもう片方を放置しない。
         let bar_theme = &visual.row;
         let bar_font = egui::FontId::proportional(bar_theme.name_size);
         // 入力欄はバー帯の内側に四辺一様の余白（`Metrics::bar_inset`）を残して置く
@@ -1468,9 +1490,10 @@ impl EguiView for SearchWindowView {
                         // spec 決定 3・4。↑↓は空リストゆえ自然 no-op）。
                         .interactive(input_editable)
                         .font(bar_font.clone())
-                        .hint_text(
-                            egui::RichText::new(hint).font(bar_font).color(bar_theme.path_color),
-                        ),
+                        .text_color(bar_theme.name_color)
+                        // 色を付けない——付けても egui が weak_text_color で上書きする（上の
+                        // コメント）。hint の色は `set_visuals` の `weak_text_color` が正本。
+                        .hint_text(egui::RichText::new(hint).font(bar_font)),
                 )
             })
             .inner;
@@ -1588,8 +1611,10 @@ impl EguiView for SearchWindowView {
                 crate::egui_shell::ToastKind::Installing => {
                     crate::egui_shell::ui_strings::update_installing(l).to_string()
                 }
-                crate::egui_shell::ToastKind::Failed => {
-                    crate::egui_shell::ui_strings::update_failed(l).to_string()
+                // `..` で受けない（#654）——payload を足して描き忘れる経路を compile-fail に
+                // 残すため。整形（空理由でコロンを残さない）は `update_failed` の責務。
+                crate::egui_shell::ToastKind::Failed { message } => {
+                    crate::egui_shell::ui_strings::update_failed(l, message)
                 }
             };
             // メッセージとボタンは**同じ行の中央**に揃える（#700 実機指摘）。旧実装は
@@ -1614,17 +1639,35 @@ impl EguiView for SearchWindowView {
                     toast_action = Some(ToastAction::Install);
                 }
             }
-            // メッセージはボタン群の左端で切る（衝突回避）。`cursor_x` は最後のボタンぶん
-            // 進んだ位置ゆえ、間隔の 8.0 を戻して境界にする。
-            let text_clip = egui::Rect::from_min_max(
-                rect.left_top(),
-                egui::pos2((cursor_x + 8.0).max(rect.left()), rect.bottom()),
+            // メッセージはボタン群の左端で**末尾省略**する（衝突回避）。`cursor_x` は最後の
+            // ボタンぶん進んだ位置ゆえ、間隔の 8.0 を戻して境界にする。
+            //
+            // クリップではなく省略にするのは、失敗理由（#654）が幅を超えたときに「続きがある」
+            // ことを読者へ伝えるため——クリップは文字の途中でぶつ切りにし、切れたことを示さない。
+            // `…` は epaint の既定（`TextWrapping` の `overflow_character`）が付ける。
+            //
+            // **3 variant 共通の描画点である**: Available / Installing の溢れ表現も同時に
+            // 省略へ変わる（既定幅では両者 117px 以下で可用幅 532px に収まるため見た目は不変）。
+            // 「Failed だけ省略」は分岐を足さないと書けず、その分岐に価値が無い。
+            let text_x = rect.left() + 8.0;
+            let avail = ((cursor_x + 8.0) - text_x).max(0.0);
+            let mut job = egui::text::LayoutJob::single_section(
+                line1,
+                egui::TextFormat {
+                    font_id: egui::FontId::proportional(theme.status_size),
+                    color: theme.name_color,
+                    ..Default::default()
+                },
             );
-            ui.painter().with_clip_rect(text_clip).text(
-                egui::pos2(rect.left() + 8.0, rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                &line1,
-                egui::FontId::proportional(theme.status_size),
+            job.wrap = egui::text::TextWrapping::truncate_at_width(avail);
+            // `single_section` の既定は `break_on_newline: true` だが、置換前の
+            // `painter().text()` が使う `simple_singleline` は false。`max_rows: 1` と組むと、
+            // 改行を含む失敗理由が**幅と無関係に**そこで切れて `…` になる。挙動を保つため戻す。
+            job.break_on_newline = false;
+            let galley = ui.painter().layout_job(job);
+            ui.painter().galley(
+                egui::pos2(text_x, rect.center().y - galley.size().y / 2.0),
+                galley,
                 theme.name_color,
             );
         }

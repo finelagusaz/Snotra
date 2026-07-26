@@ -100,16 +100,40 @@ pub fn update_installing(l: Language) -> &'static str {
     }
 }
 
-pub fn update_failed(l: Language) -> &'static str {
-    match l {
+/// `reason` は**整形前の生の失敗理由**（`tauri_plugin_updater` のエラー文字列）。空なら
+/// generic 文言のまま返す。
+///
+/// **`launch_failed` / `launch_timeout` の `detail`（呼び出し側が `" (msg)"` まで整形して渡す）
+/// とは契約が違うため引数名を変えてある。** 区切りをこちら側に置くのは、「理由が空のとき
+/// コロンだけ残る」という失敗様態をこのファイルのユニットテストで固定できるようにするため
+/// ——呼び出し側で整形すると `view.rs` のインライン処理になり、検知手段が視覚スモークだけに
+/// なる。区切り文字は元から 2 系統で違う（`" (msg)"` vs `": msg"`）ので、契約を揃える利得は
+/// 元々無い（#654）。
+pub fn update_failed(l: Language, reason: &str) -> String {
+    let base = match l {
         Language::Ja => "更新に失敗しました",
         Language::En => "Update failed",
-    }
+    };
+    if reason.is_empty() { base.to_string() } else { format!("{base}: {reason}") }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #654: 失敗理由の併記。**空理由でコロンだけが残らない**ことがこのテストの要点で、
+    /// 区切りを `strings.rs` 側に置いた理由そのものである（呼び出し側で整形すると
+    /// `view.rs` のインライン処理になり、検知手段が視覚スモークだけになる）。
+    #[test]
+    fn update_failed_appends_reason_in_both_languages() {
+        assert_eq!(update_failed(Language::Ja, ""), "更新に失敗しました");
+        assert_eq!(update_failed(Language::En, ""), "Update failed");
+        assert_eq!(
+            update_failed(Language::Ja, "io error (os error 5)"),
+            "更新に失敗しました: io error (os error 5)"
+        );
+        assert_eq!(update_failed(Language::En, "boom"), "Update failed: boom");
+    }
 
     #[test]
     fn params_are_interpolated_in_both_languages() {

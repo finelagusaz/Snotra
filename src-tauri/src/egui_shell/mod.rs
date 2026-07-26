@@ -116,14 +116,32 @@ impl EguiShellState {
 /// `[閉じる]` 済み toast が復活するため（状態機械レビュー・spec A 節）。
 pub(crate) struct UpdaterUiState(pub(crate) Mutex<crate::egui_shell::UpdaterUi<Box<tauri_plugin_updater::Update>>>);
 
-/// 起動時 updater check（§20.2・spec B 節）。`auto_update != disabled` で一回だけ呼ぶ。
+/// 起動時 updater check（§20.2・spec B 節）。`main.rs` の setup が**無条件で一回だけ**呼び、
+/// `auto_update` の判定はこの関数の中で行う（呼び出し側では絞っていない——下の視覚スモーク
+/// hatch がその判定より前に置けるのはこのため）。
 /// `on_before_exit` に終了保存を登録した builder で check する——ここで得た `Update` の
 /// install は「download → 保存 → installer 起動 → exit(0)」となり、保存が構造的に保証される
 /// （Windows では downloadAndInstall が復帰しない・updater.rs:865・spec「決着済み: 保存順序」）。
 pub(crate) fn spawn_update_check(app: &tauri::AppHandle) {
     use snotra_core::config::AutoUpdateMode;
     use tauri_plugin_updater::UpdaterExt;
-    // 視覚スモーク専用の env エスケープハッチ:
+    // 視覚スモーク専用の env エスケープハッチ（2 本・`docs/build-commands.md` に手順）:
+    // どちらも `auto_update` の判定より**前**にあるため、設定に依らず効く。
+    //
+    // 失敗トーストの描画（理由の併記 + 末尾省略）を観測する（#654）。実 install 失敗は
+    // 実 release への到達 + download 失敗が要り再現できないため、**これが唯一の観測点**である。
+    // 理由は既定幅（window_width 600）で省略が起きる長さにしてある——短い理由では `…` が
+    // 出ず、省略経路を目視できない。
+    if crate::trace::env_flag("SNOTRA_EGUI_FAKE_UPDATE_FAILED") {
+        if let Some(st) = app.try_state::<UpdaterUiState>() {
+            st.0.lock().unwrap().phase = crate::egui_shell::UpdaterPhase::InstallFailed {
+                message: "Network Error: error sending request for url \
+                          (https://example.invalid/releases/latest.json)"
+                    .into(),
+            };
+        }
+        return;
+    }
     // 実 release への依存なしに toast を表示する。install 実体は無い（update: None）。
     if crate::trace::env_flag("SNOTRA_EGUI_FAKE_UPDATE") {
         if let Some(st) = app.try_state::<UpdaterUiState>() {

@@ -1,221 +1,459 @@
-# plan: #628 — 可視アイドル再描画の源を計器で名指し、扱いを決める
+# plan: #654 — 入力欄 text_color の config 化 + updater 失敗詳細の表示
 
-前提は `workspace/research.md`。要旨: **項目 1（`fill_mesh` 最適化）は SU6.5 の実測（`raster_ms` p95 4.68ms）により実施しない**。本計画は**項目 2（可視アイドル再描画）だけ**を対象とし、SU6.5 決定 6 と同じ「測ってから決める」刻みで進む。
+前提は `workspace/research.md`。要旨: **2 項目とも実装する**（2026-07-26 ユーザー判断）。issue の「WebView2 parity」という当初の根拠は SU7 完了で失効しており、根拠は差し替わっている——項目 2 は「§11 規範『色は config `[visual]` から取る』の唯一の違反であり、**既定設定で既に見える不整合**」、項目 1 は「失敗理由が `SNOTRA_TRACE` にしか残らず、実測で幅は足りる」。
 
-**plan-review 後の訂正**（詳細は末尾セルフレビュー）: research.md の「アイドルでは `request_repaint` が発火しない」は**結果表示中には成立しない**——`view.rs:850` の `wake_results` が `drive_results_window` 末尾で毎フレーム無条件に results 窓を起こす（`grep request_repaint` に出ない同概念・別名）。ゆえに測定は**空クエリと結果表示中の 2 条件**で行う。
+2 つの Phase は**互いに独立**（触るファイルは `view.rs` と `SPEC.md` で重なるが、行が離れている）。Phase 1 を先に置くのは、1 行で既定設定のバグが直り、視覚スモークの A/B が単純だから。
 
-## 変更ファイル一覧
+---
 
-| ファイル | 変更 | Phase |
-|---|---|---|
-| `snotra-egui-runtime/src/runtime.rs` | `EguiWindow::render` に repaint 原因トレース（`SNOTRA_EGUI_REPAINT_TRACE`）。`EguiWindow` に `repaint_trace_prev: Option<Instant>` | 1 |
-| `snotra-egui-runtime/src/repaint.rs` | 原因列の整形を純関数 `format_repaint_causes` として置き、単体テストを付ける | 1 |
-| （実測結果次第）`src-tauri/src/egui_shell/view.rs` | `set_visuals` 直前に `visuals.text_cursor.blink = false` | 3-A |
-| （実測結果次第）`SPEC.md` §11（523 行付近） | キャレット非点滅を parity gap として明記 | 3-A |
-| `PERFORMANCE.md` | 計測節へ egui 計器 env（`SNOTRA_EGUI_PAINT_TRACE` / `SNOTRA_EGUI_REPAINT_TRACE`）と可視アイドル実測値を記録 | 4 |
-| `docs/superpowers/specs/2026-07-21-phase2-softbuffer-migration-roadmap.md:30` | SU1 行の follow-up 表記へ #628 の決着を反映 | 4 |
+## Phase 1 — 検索入力欄の 2 色（入力テキスト + hint）を config から取る（項目 2 + Step 2b ★）
 
-**触らない**（測る前に配線を変えない）: `raster.rs` 全体・`repaint.rs` の worker 本体 / `RepaintScheduler` / `WindowWaker`・`runtime.rs` の `RedrawRequested` arm・`renderer.rs`（既存 `SNOTRA_EGUI_PAINT_TRACE` をそのまま使う）・`view.rs:850` の `wake_results`（level-triggered だが**実測が名指しするまで触らない**）・`mod.rs` の `position_results_below_main`。
+**当初は項目 2（入力テキスト）だけの Phase だったが、Step 2b の独立再導出が同一ウィジェットに 2 件目の欠陥を見つけたため拡張した**（2026-07-26 ユーザー判断で本 PR に含める）。どちらも「config テーマが消費されていない」という同一の欠陥クラスで、`SPEC.md:571` は**両方について偽**である。
 
-## 実装順序
+### 変更ファイル
 
-### Phase 1 — 計器を入れる（コード変更はここだけが確定分）
+| ファイル | 変更内容 |
+|---|---|
+| `src-tauri/src/egui_shell/view.rs` | `TextEdit::singleline` のビルダ鎖（1464 行付近）に `.text_color(bar_theme.name_color)` を追加。`.font()` と `.hint_text()` の間に置く |
+| 同 | `set_visuals` ブロック（1210-1215 行）へ `visuals.weak_text_color = Some(visual.hint);` を追加（**hint の実効経路**） |
+| 同 | `hint_text` の `.color(bar_theme.path_color)`（1472 行）を**削除**する——egui 0.35 が無条件上書きするため dead であり、残すと「効いている」と読める |
+| 同 | コメントブロック（1446-1449 行の「§11 Part C（#643）: …」）を更新し、2 色それぞれが**なぜその経路なのか**（入力テキストはウィジェット単位の明示指定、hint は `weak_text_color` 経由でしか届かない）を記す |
+| `SPEC.md` §11 as-built（571 行） | 入力テキスト = `text_color`、hint = `hint_text_color`（**実際に効くようになった**）を書く |
+| `SPEC.md` §11 見た目の規範（554 行） | **スコープ宣言**を 1 文追加（本節が律するのは検索 UI で、設定画面は `SETTINGS-DESIGN.md` が正本）。これが無いと次行の追記が `snotra-settings` に対して嘘になる |
+| `SPEC.md` §11 見た目の規範（559 行） | 「色の指定を省いて UI ライブラリの既定色に委ねない」＋「指定したつもりで届かない経路もある」を追記（**規範の変更**・下記セルフレビュー「規範の穴を塞ぐ」が根拠） |
 
-**1a. `repaint.rs` に純関数を足す**
+### 実装
+
+**(a) 入力テキスト本体** — ウィジェット単位の明示指定が最優先で効く（`egui-0.35.0/src/widgets/text_edit/builder.rs:463-466` で確認）:
 
 ```rust
-/// repaint 原因列を 1 行の trace 文字列へ（`file:line reason` を `; ` 区切り）。
-/// 空列は `-`（「原因が無い」と「トレースが壊れた」を出力で区別するため）。
-pub(crate) fn format_repaint_causes(causes: &[egui::RepaintCause]) -> String {
-    if causes.is_empty() {
-        return "-".to_owned();
+    .interactive(input_editable)
+    .font(bar_font.clone())
+    .text_color(bar_theme.name_color)   // ← 追加
+    .hint_text(egui::RichText::new(hint).font(bar_font)),  // ← .color() を削除
+```
+
+**(b) hint** — `set_visuals` 経由でしか届かない:
+
+```rust
+    visuals.extreme_bg_color = visual.input_bg; // TextEdit 背景
+    visuals.selection.bg_fill = visual.selection;
+    visuals.weak_text_color = Some(visual.hint); // ← 追加: TextEdit の hint はここだけが効く
+    ctx.set_visuals(visuals);
+```
+
+**なぜ (a) と (b) で経路が違うのか**（コメントに残す）: `builder.rs:589-591` が hint を `hint_text.map_texts(|t| t.color(ui.style().visuals.weak_text_color()))` で**無条件に上書き**する。egui 自身のコメントが "Sucks, since it means users won't be able to override it" と述べており、`RichText::color()` は届かない。入力テキスト本体は逆に `self.text_color` が最優先で、`override_text_color` より前に見られる。**同じウィジェットの 2 つの文字列が、別の機構で色を受け取る。**
+
+`bar_theme` は既に `let bar_theme = &visual.row;`（1450 行）で、`visual.hint` は同じ `visual` から取れるため、**新たな lock も新たな読みも増やさない**（`src-tauri/CLAUDE.md`「テーマ色・font・行高の読みは 1 フレーム 1 回」を満たす）。
+
+### 不変条件
+
+- **入力テキストと hint は別の色であり続ける**: `name_color`（config `text_color`）と `hint`（config `hint_text_color`）。#643 が意図して分けた 2 色で、同色にしてはならない
+- **`weak_text_color` の差し替えが他の描画へ及ばない**（前提付きの全称主張）。前提は**ウィジェット棚卸し**である: `view.rs` / `results_view.rs` が使う egui のウィジェットは `ui.add_sized`（TextEdit）**1 箇所だけ**で、`ui.label` / `ui.button` / `ui.heading` / `ui.checkbox` は **0 件**（grep 実測）。残りはすべて `ui.interact` / `allocate_exact_size` / `Frame` / raw painter であり、painter 呼び出しは全件が色を明示渡ししている（research の同一パターン検索の表）。**`Visuals` の既定色を読む egui 内部経路を通るのは TextEdit だけ**であり、その TextEdit で weak text を使うのは hint のみ。**results 窓は別 Context** ゆえ `set_visuals` の影響外
+- **入力テキストに `visuals.override_text_color` を使う代替を採らない**: `override_text_color` は `Visuals::text_color()` の起点であり、`weak_text_color()` の導出元（`text_color().gamma_multiply(weak_text_alpha)`）でもある。ここを差し替えると **hint の色が入力テキスト色から派生してしまい**、(b) で明示指定する意図と衝突する。入力テキストは**ウィジェット単位の `.text_color()` に限定する**
+- **失敗しない変更である**: `text_color` は `Color32` を取る純粋なビルダ設定で、異常系を持たない。config の hex が不正なときの fallback は `visual.rs` の `hex_or` が既に処理済み（不正値 → 既定色。`visual.rs` のテストが固定）
+
+### テスト方針
+
+- **ユニットテストは書けない**（imperative shell の配線であり、`RowTheme` の導出テストは「config → 色」を証明するだけで「TextEdit がそれを消費する」ことは証明しない）
+- **検知手段は視覚スモーク（`docs/build-commands.md` カテゴリ D）に限られる**。これは受容する残余であり、plan に明記して隠さない
+  1. `%APPDATA%\Snotra\config.toml` の `[visual]` に `text_color = "#FF00FF"`（マゼンタ）と `hint_text_color = "#00FF00"`（緑）を置く。**2 色を別々の目立つ色にする**——同じ色にすると、どちらの経路が効いたのか区別できない
+  2. `cargo run -p snotra` → ホットキーで表示
+  3. **未入力時の hint「検索...」が緑**であることを確認する（(b) の検証）
+  4. 文字を打ち、**入力した文字がマゼンタ**であることを確認する（(a) の検証）
+  5. **副作用の確認**: status 行・トーストのボタン・結果行の色が変わっていないこと（`weak_text_color` の差し替えが他へ及んでいないこと）
+  6. A/B: 変更前の `main` でも同じ config で走らせ、**入力文字が灰（`#B4B4B4`）・hint が暗い灰（`#545454`）のまま**であることを確認する（`feedback_ai_review_practices`: GUI 挙動の由来切り分けは A/B が最速）
+- **PostToolUse hook の沈黙はこの検証を含まない**（`.claude/rules/src-tauri.md`: カテゴリ A は C/D を含まない）。「hook が黙ったから検証済み」と報告しない
+
+### SPEC.md 更新
+
+§11 as-built 571 行を次の形へ:
+
+> 検索入力欄は `font_size` に追従し、**入力テキストは `text_color`・hint は `hint_text_color`** で描かれる。（以下現行のまま）
+
+**この行は変更前の時点で 2 つの意味で偽だった**——入力テキストは config を見ておらず（項目 2）、hint も egui の `weak_text_color` へ落ちていた（Step 2b ★）。「hint は `hint_text_color` で描かれる」という記述自体は #643 の意図どおりだが、egui 0.35 の TextEdit atoms 化で失効していた。
+
+規範側（559 行）は**当初「変更しない・実装が追いついていなかっただけ」と判断したが、plan-review 指摘 D を受けて撤回した**——現行の文言は「色リテラルを書かない」しか禁じておらず、**今回のバグの様態（指定を省いてライブラリ既定へ委ねる）を捕まえない**。詳細と追記文は下記セルフレビュー「規範の穴を塞ぐ」。
+
+---
+
+## Phase 2 — updater 失敗トーストに失敗理由を併記する（項目 1）
+
+### 変更ファイル
+
+| ファイル | 変更内容 |
+|---|---|
+| `src-tauri/src/egui_shell/strings.rs` | `update_failed(l: Language) -> &'static str` を `update_failed(l: Language, reason: &str) -> String` へ。**セパレータは関数側で作る**（`launch_failed` の `detail` とは契約が違うため引数名を変える・plan-review 指摘 B） |
+| `src-tauri/src/egui_shell/notify.rs` | `UpdaterPhase::InstallFailed` → `InstallFailed { message: String }`。`ToastKind::Failed` → `Failed { message: String }`。`toast()` の対応 arm で clone |
+| 同 | `InstallFailed` の doc コメントを書き換える（#648(C) の「dead payload ゆえ削除」という経緯注記が現状と食い違うため。**削除ではなく更新**——なぜ一度落として戻したかを 1 行残す）。**`UpdateToast.tsx` / `MainApp.tsx` への parity 参照は不在ファイルを指すので消す** |
+| `src-tauri/src/egui_shell/mod.rs` | `spawn_update_check` に `SNOTRA_EGUI_FAKE_UPDATE_FAILED` の視覚スモーク hatch を追加（**Phase 2 の描画を観測する唯一の手段**・Step 2b 発見 4） |
+| `src-tauri/src/egui_shell/view.rs` | `spawn_install` の `Err(e)` 枝で `let detail = e.to_string();` を束ね、trace と `InstallFailed { message: detail }` の両方へ渡す（**`e` は trace で消費されるのでコンパイラが強制する**） |
+| 同 | toast 描画の `ToastKind::Failed { message }` arm で `update_failed(l, message)` を呼ぶ。**`..` で受けない**（Step 2b 発見 3） |
+| 同 | メッセージ描画をクリップから**末尾省略**へ（`TextWrapping::truncate_at_width` + `break_on_newline = false`） |
+| `SPEC.md` §20.3 | updater トーストが失敗理由を併記し、幅超過時は末尾省略することを 1 行追記（**§11 ではない**・plan-review 指摘 A） |
+
+### 実装順序（依存関係）
+
+`strings.rs` → `notify.rs` → `view.rs` の順。**新 API の導入と呼び出し点の移行は 1 コミットに束ねる**（`AGENTS.md`「条件別チェック」: `-D warnings` 下で未使用の新 API は `dead_code` で落ち、旧 API を残せば導出が 2 箇所になる）。`update_failed` は**シグネチャを変える**ので、下流の compile-fail がそのまま移行漏れ検出器になる。
+
+### 1. `strings.rs`
+
+```rust
+/// `reason` は**整形前の生の失敗理由**（`tauri_plugin_updater` のエラー文字列）。
+/// 空なら generic 文言へ戻る。
+///
+/// **`launch_failed` / `launch_timeout` の `detail`（呼び出し側が `" (msg)"` まで
+/// 整形済み）とは契約が違うため、引数名を変えてある。** セパレータをこちら側に
+/// 置くのは、「理由が空のときコロンだけ残る」という失敗様態を
+/// `strings.rs` のユニットテストで固定できるようにするため——呼び出し側で
+/// 整形すると view.rs のインライン処理になり、検知手段が視覚スモークだけになる
+/// （plan-review 指摘 B）。区切り文字は元から 2 関数で違う（`" (msg)"` vs `": msg"`）
+/// ので、契約を揃える利得は元々無い。
+pub fn update_failed(l: Language, reason: &str) -> String {
+    let base = match l {
+        Language::Ja => "更新に失敗しました",
+        Language::En => "Update failed",
+    };
+    if reason.is_empty() { base.to_string() } else { format!("{base}: {reason}") }
+}
+```
+
+**既存の文言は 1 文字も変えない**（`strings.rs` の `//!`: 文言は計画書の写しではなく実物のソースを見る。上の 2 文字列は現行 103-108 行から逐語で写した）。
+
+### 2. `notify.rs`
+
+```rust
+    // 失敗理由を toast に併記するため message を持つ（#654）。#648(C) で一度
+    // dead payload として落としたが、描画側が消費するようになったので戻した
+    // ——「描かないなら型に持たない」という当時の判断は今も正しい。
+    InstallFailed { message: String },
+```
+
+```rust
+pub enum ToastKind {
+    Available { version: String },
+    Installing,
+    Failed { message: String },
+}
+```
+
+```rust
+            UpdaterPhase::InstallFailed { message } => Some(ToastRow {
+                kind: ToastKind::Failed { message: message.clone() },
+                show_install: false,
+                buttons_enabled: true,
+            }),
+```
+
+### 3. `view.rs` — `spawn_install`
+
+```rust
+                    if let Some(st) = handle.try_state::<crate::egui_shell::UpdaterUiState>() {
+                        st.0.lock().unwrap().phase =
+                            crate::egui_shell::UpdaterPhase::InstallFailed { message: e.to_string() };
+                    }
+```
+
+`e.to_string()` は**既に 1 行上の trace で作っている**ので、`let detail = e.to_string();` へ括り出して両方で使う（`/dry-check`: 同じ式を 2 回書かない）。
+
+### 4. `view.rs` — toast 文言
+
+```rust
+                crate::egui_shell::ToastKind::Failed { message } => {
+                    // 整形（空理由でコロンだけ残さない）は update_failed 側の責務。
+                    // ここは生の理由を渡すだけにする（plan-review 指摘 B）。
+                    crate::egui_shell::ui_strings::update_failed(l, message)
+                }
+```
+
+### 5. `view.rs` — 末尾省略へ
+
+現行（クリップ・省略記号なし）:
+
+```rust
+            let text_clip = egui::Rect::from_min_max(
+                rect.left_top(),
+                egui::pos2((cursor_x + 8.0).max(rect.left()), rect.bottom()),
+            );
+            ui.painter().with_clip_rect(text_clip).text(...);
+```
+
+置換後（`results_view.rs:264-273` と同じ形）:
+
+```rust
+            // メッセージはボタン群の左端で**末尾省略**する（衝突回避）。`cursor_x` は
+            // 最後のボタンぶん進んだ位置ゆえ、間隔の 8.0 を戻して境界にする。
+            // クリップではなく省略にするのは、失敗理由（#654）が幅を超えたときに
+            // 「切れている」ことが読者に伝わるようにするため——クリップは文字の
+            // 途中でぶつ切りにし、続きがあることを示さない。
+            let text_x = rect.left() + 8.0;
+            let avail = ((cursor_x + 8.0) - text_x).max(0.0);
+            let mut job = egui::text::LayoutJob::single_section(
+                line1,
+                egui::TextFormat {
+                    font_id: egui::FontId::proportional(theme.status_size),
+                    color: theme.name_color,
+                    ..Default::default()
+                },
+            );
+            job.wrap = egui::text::TextWrapping::truncate_at_width(avail);
+            // `single_section` の既定は `break_on_newline: true`（epaint 0.35
+            // `text_layout_types.rs:177`）だが、現行の `painter().text()` が使う
+            // `simple_singleline` は false（同 162）。`max_rows: 1` と組むと、改行入りの
+            // 失敗理由が**幅と無関係に**そこで切れて `…` になる。挙動を変えないために戻す。
+            job.break_on_newline = false;
+            let galley = ui.painter().layout_job(job);
+            ui.painter().galley(
+                egui::pos2(text_x, rect.center().y - galley.size().y / 2.0),
+                galley,
+                theme.name_color,
+            );
+```
+
+`line1` は `String` なので `single_section` へ move できる（`clone` 不要）。`Align2::LEFT_CENTER` の等価は `y - size.y / 2.0`（`results_view.rs` の同パターンと一致）。
+
+**この置換は 3 variant 共通の描画点である**（`view.rs:1623-1629` の 1 箇所）。ゆえに `Available` / `Installing` の溢れ表現も hard clip → `…` に変わる。**副作用ではなく意図した挙動変更**として PR 本文と SPEC に書く（「Failed だけ省略」は分岐を足さないと書けず、その分岐に価値が無い）。
+
+### 6. `mod.rs` — 失敗局面の視覚スモーク hatch
+
+**これが無いと Phase 2 の描画は一度も観測できない**（実 install 失敗の再現には実 release への到達 + download 失敗が要る）。既存の `SNOTRA_EGUI_FAKE_UPDATE`（`mod.rs:126-137`）と同じ形で 2 本目を足す（`trace::env_flag` は bool 専用ゆえ、既存フラグの値で分岐できない）:
+
+```rust
+    // 視覚スモーク専用: 失敗トーストの描画（理由の併記 + 末尾省略）を観測する。
+    // 実 install 失敗は実 release への到達 + download 失敗が要り再現できないため、
+    // **これが Phase 2 の唯一の観測点である**（#654）。理由は既定幅で省略が起きる
+    // 長さにしてある——短い理由では `…` が出ず、省略経路を目視できない。
+    if crate::trace::env_flag("SNOTRA_EGUI_FAKE_UPDATE_FAILED") {
+        if let Some(st) = app.try_state::<UpdaterUiState>() {
+            st.0.lock().unwrap().phase = crate::egui_shell::UpdaterPhase::InstallFailed {
+                message: "Network Error: error sending request for url \
+                          (https://example.invalid/releases/latest.json)"
+                    .into(),
+            };
+        }
+        return;
     }
-    causes.iter().map(|c| c.to_string()).collect::<Vec<_>>().join("; ")
-}
 ```
 
-`RepaintCause` は `egui` の公開 re-export（`egui-0.35.0/src/lib.rs:465`）で、`Display` は `{file}:{line} {reason}`（`context.rs:267-270`）。全フィールド `pub`・`#[non_exhaustive]` なしゆえテストから構築できる。
+既存 hatch の直前に置く（どちらも `return` するので順序が意味を持つ——**失敗の注入を先に見る**）。`docs/build-commands.md` の視覚スモーク節へ 2 本とも記載する（**既存 hatch は `docs/` にも `scripts/` にも記載が無い**——Step 2b が実測。ここで documented にする）。
 
-テスト（`repaint.rs` の `mod tests`）:
-- `format_repaint_causes(&[])` == `"-"`
-- 2 件で `; ` 区切り・各要素が `file:line` を含む
+**前提条件は無い**（実測で確認）: `main.rs:326` が `spawn_update_check` を**無条件で**呼び、`auto_update` の判定は関数内（`mod.rs:144`）にある。hatch はその**前**（`mod.rs:128`）に置かれるため、`auto_update = disabled` でも hatch は効く。`docs/build-commands.md` にもこの旨を書く——「設定を変えないと出ない」と誤解されると、出ないことがコードのバグに見える。
 
-**1b. `runtime.rs::render()` に計器を配線**
+なお `mod.rs:119` の doc コメント「`auto_update != disabled` で一回だけ呼ぶ」は**呼び出し側の実態と食い違っている**（呼び出し側は無条件で、判定は関数内）。1 行の記述ずれで本 PR の対象ではないが、hatch を足すときに読む位置なので**同じ hunk のついでに正す**。
 
-`let output = self.context.run_ui(...)` の**直後**に、env ゲートの内側で:
+### 不変条件
 
-```rust
-// 可視アイドルの周期 repaint 源を名指しする計器（#628）。env 未設定なら Instant も
-// causes の clone も取らない（計測器が測定対象を汚さない・renderer.rs と同規範）。
-// window= は #646 PR2 の 2 窓（main/results）を区別するため。since_prev_ms の初回は NaN。
-if std::env::var_os("SNOTRA_EGUI_REPAINT_TRACE").is_some() {
-    let now = std::time::Instant::now();
-    let since = self
-        .repaint_trace_prev
-        .replace(now)
-        .map(|prev| (now - prev).as_secs_f64() * 1000.0)
-        .unwrap_or(f64::NAN);
-    eprintln!(
-        "SNOTRA_EGUI_REPAINT window={} focused={} since_prev_ms={since:.1} causes={}",
-        self.window.label(),
-        self.context.input(|i| i.focused),
-        crate::repaint::format_repaint_causes(&self.context.repaint_causes()),
-    );
-}
-```
+- **`Failed` 以外の 2 局面の見た目を変えない**: `Available` / `Installing` も同じ描画コードを通るため、末尾省略化はこの 2 つにも及ぶ。両者は短い定型文言（実測 117px 以下）で 532px の可用幅を超えないので、**表示は変わらない**。境界条件として「窓幅を極端に狭めると Available も省略される」——これは以前は無言のぶつ切りだったものが `…` になるだけで、退行ではない
+- **`show_install` は `false` のまま**: 失敗時に `[今すぐ更新]` を出さない現行挙動を変えない（幅の前提でもある——install ボタンが出ると可用幅が約 100px 減る）
+- **`dismiss()` の挙動を変えない**: `InstallFailed` は dismiss 可能（`notify.rs:162-168` の `Installing` のみ拒否）。message 追加はこの分岐に触れない
+- **並行境界を増やさない**: `spawn_install` の `Err` 枝は従来どおり「lock 取得 → `phase` 代入 → lock 解放 → `wake_main`」の 1 往復。String の move が 1 つ増えるだけで、lock の保持区間も `.await` との位置関係も変わらない（`/race-check` 対象だが、**送信から適用までの窓は新設されない**）
+- **hidden 中に失敗しても失われない**: `phase` は状態として残り、次の show でフレームが回ったときに描かれる（`wake_main` は可視中の即描画のため。`InstallFailed` は時限ではないので reset-on-show の backstop 対象外——現行と同じ）
+- **異常な message でも壊れない**: 極端に長い文字列は `truncate_at_width` が 1 行へ畳む（`max_rows: 1`）。改行を含む文字列は `single_section` + `max_rows: 1` で 1 行に収まる（`LayoutJob` の `break_on_newline` は既定 false）
 
-`EguiWindow` に `repaint_trace_prev: Option<std::time::Instant>` を足す（`new()` で `None`。構築点は `runtime.rs:265` の 1 箇所のみ）。
+### テスト方針
 
-**計器の 3 つの注意（読み違えると原因を取り違える）**:
-
-- `repaint_causes()` が返すのは `prev_causes`——`begin_pass_repaint_logic` が pass 冒頭で `causes` と swap するため（egui 0.35 `context.rs:98-105`）、`run_ui` 直後に読む値は**1 つ前の pass で積まれた原因**である。定常アイドルでは同じ源が繰り返すので判別には足りるが、**読み手が 1 フレームずれを知っている必要がある**（コメントにも書く）
-- **遅延ゼロの `request_repaint()` は 2 フレーム生む**（`request_repaint_after` が `outstanding = 1` を立て、次 pass 冒頭の `begin_pass_repaint_logic` が callback をもう 1 回撃つ・`context.rs:110-146`）。件数照合で「1 要求 = 1 フレーム」を前提にしない
-- **`focused=` は Phase 2 の false-negative を塞ぐための必須項目である**——egui はフォーカスがあるときだけ点滅 repaint を出す（`builder.rs:864-869`）。Phase 2 は測定のため `auto_hide_on_focus_lost=false` にして**製品には存在しない「可視かつ非フォーカス」状態を作る**ので、観測中に窓がフォーカスを失うと、疑っている当の源が黙り、ログは「眠っている」ように見える。フィールドが無いと判定 (a) を誤って引く
-- **`request_repaint_after(d)` は実際には `d - predicted_dt` で起きる**（`context.rs:148-151`）。本 runtime は `RawInput::predicted_dt` を一度も書かない（`input.rs:29` の `take` が screen_rect / time / viewport しか埋めない・確認済み）ため既定 1/60 秒のままで、**予約はつねに約 16.7ms 早く発火する**。観測した cadence が「予約値ちょうど」でなくても異常ではない
-
-**計器を置かない場所と、その理由**（A-4「`RedrawRequested` 到着」と A-6「実描画」の差分）:
-`render()` 冒頭の `if !self.visible` 早期 return（`runtime.rs:300-310`）は、**crate 内に `visible` を false にする経路が無く現在到達不能**であることがコード自身に記録されている。かつ hidden 窓では `render()` 自体が呼ばれない（SU5 実測の不変条件）。ゆえに「到着したが描かなかったフレーム」は現状存在せず、`RedrawRequested` arm 側への計器追加は**行わない**（YAGNI）。この前提が崩れる変更（runtime 側で描画抑止を入れる等）を将来入れるなら、そのとき arm 側の計数を足す。
-
-Run: `cargo test -p snotra-egui-runtime && cargo clippy -p snotra-egui-runtime --all-targets -- -D warnings`（PostToolUse hook が自動実行。沈黙 = 合格）
-
-commit: `chore(egui-runtime): repaint 原因トレースを追加（#628 可視アイドルの計測）`
-
-### Phase 2 — 実測（人手スモーク・ユーザーへ依頼）
-
-**準備（欠くと測定が成立しない）**:
-
-1. `config.toml` の `auto_hide_on_focus_lost` を一時的に `false` にする（放置中に窓が消えると 60 秒の可視アイドルが取れない。SU6.5 の G1 手順が同じ理由で同じ退避をしている）。**測定後に必ず戻す**
-2. インデックス構築の完了を待ってから観測窓に入る（構築完了は世代検知経由で単発の repaint を生む・`view.rs:1182-1188`）
-3. マウスカーソルを窓の上に置いたまま静止させない（hover 由来のフレームが混じる）
-
-```powershell
-cargo build --release -p snotra
-$env:SNOTRA_EGUI_REPAINT_TRACE=1; $env:SNOTRA_EGUI_PAINT_TRACE=1; $env:SNOTRA_TRACE=1
-.\target\release\snotra.exe 2>&1 | Tee-Object -FilePath $env:TEMP\628-idle.log
-```
-
-**観測条件（3 つ・順に実施）**:
-
-| # | 状態 | 見たいもの |
+| 追加/更新するテスト | 固定する不変条件 | 場所 |
 |---|---|---|
-| 1 | 表示 → **空クエリ**のまま 60 秒放置（results 窓は `results_should_show` で hidden） | main 単独のアイドル cadence |
-| 2 | 結果が出るクエリを打鍵 → 打鍵完了後 **60 秒放置**（results 窓 visible） | `wake_results`（`view.rs:850`）の毎フレーム連鎖で 2 窓ぶんになるか |
-| 3 | Alt+Q で非表示 → **30 秒放置** | hidden 停止の裏取り（SU6.5 G3(a) の再確認） |
+| `update_failed_appends_reason_in_both_languages`（新規） | 理由併記の書式が両言語で正しい。**空理由でコロンだけが残らない**（plan-review 指摘 B を検知可能にした当のテスト） | `strings.rs` tests |
+| `params_are_interpolated_in_both_languages`（既存・更新） | 既存の launch/available の主張は保つ。`update_failed` の行を足すのではなく**上の新規テストで独立に書く**（既存テストが証明していた命題を薄めない・`AGENTS.md` Step 4） | `strings.rs` tests |
+| `toast_projection_carries_failure_message`（新規） | `InstallFailed { message }` → `ToastKind::Failed { message }` が値を運ぶ（#648(C) で消えた経路の復活を固定する） | `notify.rs` tests |
+| `dismiss_is_refused_while_installing`（既存・更新） | 266 行の `u.phase = UpdaterPhase::InstallFailed;` が compile-fail になるので `InstallFailed { message: "e".into() }` へ。**証明している命題（Installing は dismiss 拒否・InstallFailed は許可）は不変** | `notify.rs` tests |
 
-集計:
+検証コマンド: `cargo test -p snotra`（PostToolUse hook が自動実行・カテゴリ A）。**末尾省略の見た目はユニットテストで固定できない**ため、下の視覚スモークが唯一の検知手段。
 
-```powershell
-$re = 'SNOTRA_EGUI_REPAINT window=(\S+) since_prev_ms=(\S+) causes=(.*)'
-$rows = Select-String -Path $env:TEMP\628-idle.log -Pattern $re | ForEach-Object {
-    [pscustomobject]@{ Window = $_.Matches[0].Groups[1].Value
-                       Ms     = $_.Matches[0].Groups[2].Value
-                       Causes = $_.Matches[0].Groups[3].Value }
-}
-$rows | Group-Object Window | ForEach-Object { "{0}: frames={1}" -f $_.Name, $_.Count }
-$rows | Group-Object Window, Causes | Sort-Object Count -Descending | Select-Object -First 8 Count, Name
-$rows | Where-Object { $_.Ms -ne 'NaN' } | ForEach-Object { [double]$_.Ms } | Measure-Object -Average -Minimum -Maximum
-```
+### 破壊不変条件 + 検知手段
 
-**ログの読み方（誤帰属がこの作業の唯一の失敗様式である）**:
+| 壊れたら即アウト | 検知手段 |
+|---|---|
+| updater トーストが**描かれなくなる**（layout_job 化のミス） | `SNOTRA_EGUI_FAKE_UPDATE` による fake 注入で `Available` トーストを出す視覚スモーク（既存の仕組み） |
+| 失敗トーストの詳細が**描かれない / 省略記号が出ない** | `SNOTRA_EGUI_FAKE_UPDATE_FAILED`（本 PR で新設）による fake 注入の視覚スモーク。**これが無ければ観測手段はゼロだった** |
+| 失敗トーストにコロンだけが残る（理由が空） | `strings.rs::update_failed_appends_reason_in_both_languages`。**セパレータ生成を `strings.rs` へ寄せたのは、この失敗様態をユニットテストで捕まえるため**（呼び出し側整形だと view.rs のインライン処理になり検知手段が視覚スモークだけになる・plan-review 指摘 B） |
+| 失敗理由が toast へ運ばれない（payload の断線） | `notify.rs::toast_projection_carries_failure_message` |
+| 実際の install 失敗時に詳細が出ない（`spawn_install` の配線ミス。fake hatch は `spawn_update_check` 経由で `spawn_install` を通らない） | **受容残余**——実 install 失敗の再現手段が無い。ただし `SNOTRA_TRACE` の `egui_update_install_failed` は従来どおり残るため、**詳細を失う経路は無い**（表示に出ないだけで trace には残る） |
+| `Available` / `Installing` の見た目が変わる | 視覚スモーク（fake 注入）で 2 局面を目視 |
 
-- **`focused=false` の行が観測窓に混じった run は無効**とし、測り直す。上記のとおり、その状態では疑っている源が黙る。判定 (a) は**すべての行が `focused=true` の run からしか引けない**
-- **`window=results` で `causes=-` の行は egui の repaint 源ではない**——`position_results_below_main` が毎フレーム `SetWindowPos` を撃つ（`view.rs:837` → `mod.rs:549-568`）ため、OS 由来の再描画が egui の要求なしで届く。周期源の判定には数えない（数えると増幅器を源と取り違える）
-- `since_prev_ms` の巨大値は hide またぎ・観測窓の境界であり、cadence の集計から除く
+### SPEC.md 更新
 
-**判定（この分岐が Phase 3 を決める）**:
+**追記先は §20.3「トースト UI」であって §11 ではない**（plan-review 指摘 A で確定した。保留にしていた判断をここで解く）。理由: §11 は文字サイズ・色・面の**規範**を置く場所で、§20.3 が「トーストが何を表示するか」の正本である。両方に書くと正本が 2 箇所へ分散する。
 
-| 観測 | 結論 | 次 |
+§20.3 の egui 経路の項（1075-1079 行）へ追記:
+
+> 失敗時は理由を併記する（`更新に失敗しました: {理由}`）。理由が幅を超えるときは末尾省略（`…`）し、`SNOTRA_TRACE` の `egui_update_install_failed` には全文が残る（#654）
+
+§11 側は Phase 1 の入力欄 `text_color` の追記だけに留める。
+
+**スコープ外として触らないもの**: §20.3 の 1071-1074 行（`行1: … y = 高さ × 0.25` / `行2: … y = 高さ × 0.75` / `--update-toast-height` CSS 変数 / `updateInfo` シグナル）は、#700 の 1 行化と SU7 のフロント撤去で既に腐っている記述で、**#654 が新たに生む不整合ではない**。
+
+**ただし「束 C へ送る」という当初の記述は誤りだった**（advisor 指摘で `gh issue view` して発覚）。#674 は SPEC §4.8 の CSS `:hover` / `show_egui_main` のコメント / `hex_color` 重複の 3 項目、#698 は `code-reviewer.md` の SolidJS 記述であり、**どちらも §20.3 やトーストを名指ししていない**。行き先を確認せずに「別の束が拾う」と書けば、**#654 が起票された当の失敗様態**（「コードコメントだけの deferred は flip 後に消えやすいため issue 化する」）を再生産する。
+
+→ **#674 へコメントで項目を追加する**（issue という受け皿に、名指しで載せる）。本 PR では触らない。
+
+---
+
+## 変更後の検証（`AGENTS.md` Step 8・コマンド本体の SSOT は `docs/build-commands.md`）
+
+| カテゴリ | 実行するもの | 備考 |
 |---|---|---|
-| (a) 条件 1・2 とも数フレームで収束（周期発火なし・**全行 `focused=true`**） | 現象は `MvpView` 撤去（#702）とともに消滅 | Phase 4-a: 実測を issue へ記録して close |
-| (b) ~500ms 周期・causes が `text_selection/visuals.rs:313` | **キャレット点滅**が源と確定 | Phase 3（ユーザー判断・下記） |
-| (c) 条件 2 だけ frames が倍（results 窓が main に追随） | `wake_results` の level-triggered が増幅器 | 源（= main 側の周期要因）を先に決着させてから、増幅の是非を別途判断 |
-| (d) 上記以外の周期源（別の `file:line`） | 名指しされた箇所を個別に判断 | 計画を更新してから着手 |
+| A（Rust） | `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test -p snotra` | PostToolUse hook が `*.rs` 編集で自動実行する（**沈黙 = 合格**） |
+| D（視覚スモーク） | `cargo run -p snotra` の目視 | **両 Phase の主要な検知手段**。hook の沈黙はこれを含まない |
+| F（ガバナンス） | `npm run governance:check` | `SPEC.md`（`*.md`）を編集するため該当（plan-review 指摘 C）。**`*.md` 編集では PostToolUse hook は何も走らない**——沈黙は「合格」ではなく「何も走らなかった」 |
 
-**条件 3 の合否**: `SNOTRA_EGUI_REPAINT` と `SNOTRA_EGUI_PAINT` の行が**ともに 0**。0 でなければ SU6.5 G3(a) の回帰であり、#628 の扱いを flip 後の回帰として昇格させる。
+カテゴリ C（`smoke:startup` / `smoke:egui`）は非該当。ウィンドウ生成・表示順・ホットキー・スラッシュコマンド経路のいずれにも触れない（`.claude/rules/src-tauri.md`「検証カテゴリは拡張子でなく変更が触れるコードパスの意味で決める」）。ただし `src-tauri/**` の変更ゆえ CI の Smoke workflow は paths 一致で自動起動する。
 
-### Phase 3 — (b) だった場合のみ・**ユーザー判断は済んでいる: B（受容）**
-
-**2026-07-26 決定: 分岐 B。** 実測が (b)（源はキャレット点滅）を示したら、**コード変更はせず**に受容し、issue へ「源 = キャレット点滅・2fps・CPU 1% 未満・parity 維持のため受容」と記録して閉じる。A（点滅停止）は parity を捨てる見返りが「将来の検知器」であり、いま必要なものではない（YAGNI）。以下 A/B の記述は判断の根拠として残す。
-
-
-キャレットが点滅する限りアイドル休眠はできない（点滅 = 定期再描画）。両立しないため、どちらを採るかは UX の判断であり実装からは決まらない。
-
-- **分岐 A「眠らせる」**: `view.rs` の `ctx.set_visuals(visuals)`（1219 行）直前へ `visuals.text_cursor.blink = false;`。可視アイドルの repaint は数フレームで 0 へ収束する（`set_visuals` は次フレームから効くため「即時 0」ではない）。**副作用の範囲**: Windows では `Visuals::ime_composition.legacy_visuals` が既定 true（`egui-0.35.0/src/style.rs:1659-1663`）で、Snotra はこれを触っていない。ゆえに IME 変換中のキャレットも同じ `paint_text_cursor` 経路を通り、**変換中キャレットも非点滅になる**（変換範囲の下線描画は別経路ゆえ不変）。旧 WebView2 の `<input>` は OS 既定で点滅していたため、これは flip 後に生じる意図的な parity gap であり `SPEC.md` **§11（523 行付近・ビジュアル節）** へ明記する（挙動変更 ⇒ 仕様変更扱い・AGENTS.md ステップ 0）。§4.8（196 行）はキャレット**位置**の話であり追記先ではない
-- **分岐 B「受容する」**: 2fps の repaint を受容し、issue のチェックボックス 2 を「源はキャレット点滅・受容」として close。根拠は実測 CPU（`raster_ms` 4.68ms × 2fps ≒ 1% 未満）と、点滅キャレットが標準的な入力欄の挙動であること
-
-**既定の推奨は B**（YAGNI・parity 維持・変更ゼロ）。A を採るなら SPEC 同期 + 目視スモーク（`cargo run -p snotra` でキャレットが実線で出る・入力できる・IME 変換中も破綻しない）をセットで行う。
-
-**blur→hide への影響は無い**（plan-review で挙がった懸念の反証）: egui は viewport がフォーカスを持つときだけキャレットを描き点滅 repaint を出す（`text_edit/builder.rs:864-869` の `if viewport_has_focus`）。blur 後は点滅由来のフレームがそもそも供給されていないため、点滅停止が `view.rs:1305-1321` の 100ms 猶予経路を変えることはない。ただし**その猶予経路が「次のフレームが来ること」に依存し再要求を持たない**という脆さ自体は実在する（`request_repaint_after(100ms)` は predicted_dt 分だけ早く起きるため `grace_elapsed` が false になりうる）。**#628 の対象外**とし、Phase 2 のログで blur→hide 間のフレーム間隔が観測できたら別 issue として起票する。
-
-### Phase 4 — 決着の記録
-
-- **issue #628**: 実測値（窓別 frames / cadence / causes・hidden 0 件）と、項目 1 を実施しない根拠をコメント。チェックボックスは**未チェックのまま理由付きで**扱う。項目 1 の根拠は 3 点:
-  1. SU6.5 G3(b) の実測（3680 フレームで `raster_ms` p95 4.68ms・予算超過 0 件）
-  2. issue が前提にした「900×588 の全画面 CentralPanel 背景」は #646 PR2 の 2 窓分割で消滅（main は bar 高固定・`layout.rs` の `main_window_height`）
-  3. 単色 fast path は**挙動非保存**である——現行は単色三角形でも重心 `b0+b1+b2`（浮動小数で 1.0 にならない）で色を再構成して `as u8` 切り捨てするため、fast path 化は一部ピクセルの値を黙って変える。`raster.rs` の固定は 2 ピクセルのみでこの差分を検出しない。測定上の必要が無いのに全ピクセルのベースライン差分検証を要する変更は入れない
-- **再オープン条件**（issue に 1 行で残す・独立導出の発見）: `visible_rows` / `window_width` に上限が無く（`snotra-core/src/config.rs:989,992-993` は下限・0 のみ検証）、`font_size` は行高にも効く（`layout.rs` の `Metrics::from_config`）。SU6.5 の 3680 フレームは**既定 config 1 点**の測定である。極端 config で `raster_ms` p95 が 16.7ms を超えたら再オープンし、まず `inv_area` の乗算化だけを入れて再測する
-- **ロードマップ**: `docs/superpowers/specs/2026-07-21-phase2-softbuffer-migration-roadmap.md:30` の SU1 行 follow-up 表記を「#628（→ 2026-07 実測で決着・項目 1 は不要／項目 2 は \<結論\>）」へ更新
-- **`PERFORMANCE.md`**: 計測節（244 行付近「ランタイムの計測は `SNOTRA_TRACE=1`」）へ、egui 計器 env 2 つ（`SNOTRA_EGUI_PAINT_TRACE` / `SNOTRA_EGUI_REPAINT_TRACE`）と本サイクルの可視アイドル実測値を記す。**`docs/build-commands.md` には書かない**（同じ事実を 2 か所に置かない・AGENTS.md「文書に事実の写しを増やす変更は正本を 1 か所に」。perf 計器の正本は `PERFORMANCE.md`）。governance:check は env を検査対象にしない（`scripts/governance-check.mjs` の G5/G9 は npm script と cargo コマンドの照合のみ）ため、この追記は自動検査に守られない記述である
-- **PR マージ直前の auto-close 確認（手順として書く。周辺知識に委ねない）**: 分岐 (b)/(c)/(d) では **#628 は open のまま残す**。PR テンプレートが `Closes` を埋めるため、`gh pr view <PR> --json closingIssuesReferences` を**マージ直前に取り直し**、意図しない issue が入っていないことを確認する（入っていれば本文を編集して一覧から消えるまで繰り返す）。マージ後は `gh issue view 628 --json state` が `OPEN` であることも確認する（ルート `CLAUDE.md`「Git/GitHub 運用」の手順 1・2・4）
-- **計器の去就**: `SNOTRA_EGUI_REPAINT_TRACE` は残す。理由は `SNOTRA_EGUI_PAINT_TRACE`（SU6.5）・`SNOTRA_EGUI_IME_TRACE` と同じ——env 未設定時のコストが 0 で、次に「なぜ再描画が止まらない」を問うときに再実装が要らない。**恒久計器として扱い**、コメントに #628 の由来を書く
-
-## 不変条件
-
-| # | 不変条件 | 失敗・異常時の挙動 | 検知手段 |
-|---|---|---|---|
-| 1 | `RedrawRequested` は `on_event` で `WindowEvent` と別 arm のまま（egui 入力へ渡さない） | 渡すと再描画が自己永続する（#579 実測: 15 秒 2,000 フレーム） | Phase 2 の窓別 `frames` 件数（60s で数千行なら即座に露見）。arm 自体は本計画で触らない |
-| 2 | hidden 中は paint 0 回（SU6.5 G3(a)・flip 基準の既取得分） | 眠らなければ電力回帰 | Phase 2 条件 3（30s で両 trace が 0 行） |
-| 3 | 計器は env 未設定時に一切の追加コストを持たない（`Instant` も `Vec::clone` も `label()` も取らない） | 常時 clone すると計測器が測定対象を汚す | `var_os` ゲートの内側にすべてを置く（コードレビュー）+ `SNOTRA_EGUI_PAINT_TRACE` の `raster_ms` が SU6.5 実測（p95 4.68ms）から悪化しないこと |
-| 4 | repaint worker は Drop で `Stop` 送信 → join（外部 `WindowWaker` 保持でも停止する） | 破れると窓破棄でスレッドが残る | `repaint.rs` の既存テスト。本計画は worker に触らない（純関数追加のみ） |
-| 5 | `repaint_trace_prev` は状態を持つが**表示にも制御にも影響しない**（trace 専用） | 異常値（NaN・hide をまたぐ巨大値）でもログの数字が乱れるだけ | 初回 `NaN`・hide またぎは巨大値という規約をコメントに明記 |
-| 6 | `results` 窓の可視判定（`layout::results_should_show`）と `wake_results` の連鎖は無変更 | 触ると測定対象そのものが変わる | Phase 2 の条件 2 が increment を数字で示す。実測前に触らない |
-
-## テスト方針
-
-- **追加**: `format_repaint_causes` の単体テスト 2 件（空列 → `"-"`、複数件 → `; ` 区切りで `file:line` を含む）
-- **既存**: `cargo test -p snotra-egui-runtime`（repaint worker の 2 テストを含む）・`cargo clippy -p snotra-egui-runtime --all-targets -- -D warnings`
-- **CI**: `snotra-egui-runtime/**` は `e2e.yml` の paths 対象（`docs/build-commands.md:44`）ゆえ PR で `smoke:startup` / `smoke:egui` が自動起動する。計器は `eprintln!` の別チャンネル（スモークは `[trace] {...}` JSON のみ解析・`scripts/smoke-egui.ps1:176-185`）ゆえ前提を壊さない
-- **人手スモーク**: Phase 2（3 条件）。Phase 3-A を採る場合は追加で `cargo run -p snotra` の目視（実線キャレット・入力・IME 変換）
-- **非対象**: `raster.rs` は無変更ゆえ既存テストのまま
-
-## SPEC.md 更新要否
-
-- Phase 1・2・4 のみで終わるなら**不要**（挙動不変・トレース追加のみ）
-- Phase 3-A（点滅停止）を採るなら**必要**——`SPEC.md` §11（523 行付近・ビジュアル節）へ、キャレット非点滅（IME 変換中も含む）を WebView2 からの意図的な parity gap として明記する
+---
 
 ## セルフレビュー
 
-### plan-review（Step 5a）
+### `/race-check`（計画レビューモード・インライン実施）
 
-**Rust runtime 層（Explore）**: 要対処なし。`EguiWindow` の構築点は 1 箇所（`runtime.rs:265`）・`crate::repaint::` パスと `pub(crate)` 可視性・`RepaintCause` の公開性と `Display` 形式・`repaint_causes()` が `&self` で足りること・borrow 衝突なし・env ゲート内にコストが収まることをいずれも一次資料で確認。軽微 2 件（NaN 規約をコード片のコメントへ / 引用行番号の微差）は本版で反映済み。
+**計画は spawn / channel / listener / 共有スロットを一つも新設しない。** 既存の level-triggered 共有スロット `UpdaterUiState.phase` の payload を変えるだけであり、境界は既存の 2 端。
 
-**src-tauri・文書層（Explore）**: 要対処 2 件をいずれも反映。
-- SPEC 追記先の誤り（§4.8:196 はキャレット**位置**の話 → 正しくは §11:523 付近）→ 訂正済み
-- Windows 既定 `legacy_visuals = true` ゆえ **IME 変換中キャレットも非点滅になる** → Phase 3-A の副作用として明記
-- 軽微: index build 完了待ち・窓識別子・「即時 0 ではなく収束」→ すべて反映済み
-- 付随発見（本計画のスコープ外）: `SPEC.md` §11 に WebView2 時代の記述（CSS カスタムプロパティ）が残存
+| # | 境界 | 判定 |
+|---|---|---|
+| 1 | ① worker spawn + ⑦ `.await` + ④ managed state 書き — `view.rs::spawn_install` の `Err` 枝 | **安全** |
+| 2 | ④ managed state 読み（4e live-read） — `view.rs::update` の toast 描画 | **安全** |
 
-**独立導出（Step 2b・Plan タイプ / plan.md と research.md を読ませず issue とコードだけから再導出）**:
+- **4a wake 義務 [OK]**: `wake_main(&handle)` は既存で、message 追加は送信バーストの形を変えない
+- **4b staleness [OK]**: staleness 機構は**level-triggered 状態**（スキルの型表が名指しで「updater の phase」を例示する型）。`phase` の書き手は全 6 箇所（`mod.rs` の `spawn_update_check` に 3・`notify.rs::try_begin_install` に 3・`view.rs::spawn_install` に 1）。`spawn_update_check` は起動時 1 回で、その最後の書き込みが `Available` を置いてからでないと `try_begin_install` は `Installing` へ遷移できない（`Available` からのみ遷移）。**後着の check が失敗表示を巻き戻す経路は無い**
+- **4c hide/show [OK・意図的に跨ぐ]**: `UpdaterUi` が view-local でなく managed state にあるのは reset-on-show に一掃させないため（`egui_shell/mod.rs` の `UpdaterUiState` 直前のコメントが理由を明記）。クリアされないことに理由が書かれている＝スキルの判定条件を満たす
+- **4d 順序 [OK]**: `Err` 枝の順序（trace → lock → 代入 → 解放 → wake）は不変。`let detail = e.to_string();` の括り出しは **lock の前**に置く（lock 保持区間を伸ばさない）
+- **4e live-read [軽微な懸念]**: `message` は上流 `tauri_plugin_updater` の生エラー文字列で**ロケール非依存**。言語を切り替えると前半だけ追従し詳細は英語のまま残る。翻訳手段が無いため**受容する**
 
-- **漏れ（導出 ∖ plan）— 反映したもの**:
-  1. `wake_results`（`view.rs:850`）が結果表示中は毎フレーム無条件 → 「アイドルでは発火しない」という research の前提を条件付きへ訂正し、測定条件を 2 つに分割（**`grep request_repaint` では到達しない同概念・別名**。本レビュー最大の収穫）
-  2. trace に窓識別子が無い（2 窓時代）→ `window=` を追加
-  3. 測定手順の `auto_hide_on_focus_lost` 退避が抜けていた → Phase 2 準備へ
-  4. `predicted_dt` を runtime が書かないため予約は約 16.7ms 早く発火する（`input.rs:29` の `take` を実地確認）→ 読解上の注意へ
-  5. 項目 1 を閉じる根拠として「fast path は挙動非保存」「再オープン条件（`visible_rows` / `window_width` に上限なし）」→ Phase 4 へ
-  6. 計測 env がどの文書にも無い → `PERFORMANCE.md` へ 1 か所だけ記す（build-commands.md には書かない）
-- **反証したもの**: 「点滅停止で blur→hide が壊れる」は成立しない——egui はフォーカスがあるときだけ点滅 repaint を出す（`builder.rs:864-869`）ため、blur 後のフレーム供給に点滅は寄与していない。猶予経路の脆さ自体は実在するが #628 の対象外（別 issue 候補として記録）
-- **スコープ過剰（plan ∖ 導出）**: なし。むしろ導出側が挙げた `RedrawRequested` arm への計数追加を、`!visible` ガードが到達不能（`runtime.rs:300-310` のコード内記録）を根拠に**採らない**と判断した（YAGNI・理由を Phase 1 に明記）
-- **一致（完全性の証拠）**: 項目 1 不実施の結論と根拠（SU6.5 G3(b) 実測）・項目 2 は「計器 + 実測 + 記録」であり最適化ではないこと・`repaint_causes()` が源特定の本体であること・off-by-one・「1 要求 = 2 フレーム」・触らない対象の集合・issue を close せず受け入れ条件を書き換えること——いずれも独立に再一致した
+### `/plan-review` の結果
+
+サブエージェント 3 体（Explore ×2 + 独立再導出 Plan ×1）。
+
+**要対処 → 全件反映済み**
+
+- **A（scout-docs）**: 「§20.3 に触れるか実装時に確認」の保留を解いた。**追記先は §20.3**（トーストが何を表示するかの正本）、§11 は入力欄 `text_color` のみ。両方に書くと正本が分散する
+- **B（scout-docs）**: 「コロンだけ残る」の検知手段がユニットテストだという主張は**成立していなかった**（整形が `view.rs` インラインのため）。**訂正ではなく設計を変えて解決**——セパレータ生成を `update_failed` 側へ寄せ、引数を `detail`（整形済み）から `reason`（生の理由）へ変えた。これで失敗様態が `strings.rs` のユニットテストで固定できる。`launch_failed` との契約差は引数名で示し、doc に理由を書く
+- **C（scout-docs）**: `npm run governance:check`（カテゴリ F）を検証コマンドへ追加した
+
+**軽微な懸念（対応方針）**
+
+- **scout-rust**: `Available` / `Installing` が可用幅を超えないという主張は research.md の一時プローブ実測に依拠しており、scout は独立再現していない。**実測はオーケストレーター自身が行ったもの**（`AGENTS.md`「判定の中核は自分で測る」）で、サブエージェントの報告を一次証拠にしていない
+- **scout-docs D**: §11 の規範文「色は config `[visual]` から取る。描画コードに色リテラルを書かない」は、今回のバグの様態（**指定を省いてライブラリ既定へ委ねる**）を名指していない。規範を忠実に守る読者でも同じバグを書けるため、**1 節を追記する**（下記「規範の穴を塞ぐ」）
+- **scout-docs スコープ外付記 / オーケストレーター確認**: §20.3 の 1071-1074 行の腐り（2 行構成・CSS 変数・signal）は束 C へ送る
+
+### 規範の穴を塞ぐ（§11 見た目の規範）
+
+**新設した規約は既存の全事例に当てて検算してから書く**（`AGENTS.md`「検証の作法」）。当初案は検算を `view.rs` / `results_view.rs` にしか当てておらず、**そのまま書けば嘘になるところだった**（advisor 指摘）:
+
+- `snotra-settings/src/style.rs` は `TEXT_SECONDARY` / `STATUS_ERROR` 等の**色リテラルをデザイントークンとして定義**している
+- `snotra-settings` の各タブは `ui.label` / `ui.button` / `ui.checkbox` を計 60 件以上、**色を明示せず** egui 既定で描いている（`snotra-settings/src/tabs/*.rs`）
+
+つまり **§11 の現行文言「描画コードに色リテラルを書かない」は、既に `snotra-settings` に対して偽である**。§11 にスコープ宣言が無いのが根本原因で、私の追記はその偽を 1 つ増やすだけになる。
+
+ゆえに **2 つ書く**:
+
+**(1) スコープ宣言**（`SPEC.md:554` の「何に揃えるかを先に決める」段落へ 1 文追加）:
+
+> 本節が律するのは**検索 UI（main / results 窓）**である。設定画面（`snotra-settings`）は独立したデザイン体系を持ち、`snotra-settings/SETTINGS-DESIGN.md` が正本である。
+
+**(2) 穴を塞ぐ追記**（`SPEC.md:559`）:
+
+> - **色は config `[visual]` から取る。** 描画コードに色リテラルを書かないこと、および**色の指定を省いて UI ライブラリの既定色に委ねないこと**。egui の既定はコード上に現れない色リテラルであり、省略は「書かない」を満たしても規範を破る。**指定したつもりで届かない経路もある**——TextEdit の hint は `RichText::color()` を無視し `Visuals::weak_text_color` だけを見る（#654）
+
+**根拠**: 今回のバグ 2 件はどちらも色リテラルを書いたのではなく、**指定を省いた**（入力テキスト）か**指定が無視された**（hint）ものである。現行の文言はどちらも捕まえない。`.claude/rules/safety-nets.md`「規範のフォールトインジェクションとは回避しようとする読者である」「**忠実に従う読者が誤る経路は、手を抜く読者からは見えない**」の実例が 2 件出た以上、穴は塞ぐ。
+
+**(1) は既存の偽を消す変更でもある**——追記の副産物として、現行文言が `snotra-settings` について嘘をついている状態が解消される。
+
+### 独立導出との差分（Step 2b）
+
+`plan.md` / `research.md` を読ませない Plan エージェントに、issue とコードだけから変更集合を再導出させた。
+
+#### 漏れ（導出 ∖ plan）— **すべてオーケストレーターが一次資料で裏取り済み**
+
+1. **★ hint の色指定が egui 0.35 で死んでいる**（最も重い発見・スコープ判断が要る）
+
+   `egui-0.35.0/src/widgets/text_edit/builder.rs:589-591`:
+   ```rust
+   // Since we can't set a fallback color per atom, we have to override it here.
+   // Sucks, since it means users won't be able to override it.
+   hint_text.map_texts(|t| t.color(ui.style().visuals.weak_text_color()));
+   ```
+   **無条件の上書き**である（egui 自身のコメントが「ユーザーは上書きできない」と述べる）。帰結:
+   - `view.rs:1472` の `.color(bar_theme.path_color)` は **dead code**
+   - 実際の hint 色 = `Visuals::weak_text_color()`（`style.rs:1135-1138`）= `text_color().gamma_multiply(weak_text_alpha)` = gray(140)（`style.rs:1679`）× 0.6（`style.rs:1498`）≒ **`#545454`**。config 既定 `hint_text_color = "#808080"` より暗い
+   - **`SPEC.md:571`「hint は `hint_text_color` で描かれる」は既に偽**。Phase 1 が編集する当の行である
+   - 修正は 1 行: `view.rs:1210-1215` の `set_visuals` ブロックへ `visuals.weak_text_color = Some(visual.hint);`（`Visuals::weak_text_color: Option<Color32>` は `style.rs:1023` の pub フィールド）
+   - 影響範囲は main 窓の Context のみ。weak text を使う他の描画は存在しない（status 行・toast 本文・`draw_toast_button` はいずれも `theme` の色を明示指定）
+
+   **なぜ私の同一パターン検索が捕らえられなかったか**: 「色を**渡していない**箇所」を探したが、これは「渡したが**無視されている**箇所」である。呼び出し側だけを見て callee が尊重するかを確かめなかった。**枠組みが違えば見えるものが違う**という Step 2b の前提そのものの実例。
+
+2. **`LayoutJob` 化で改行の扱いが変わる**（挙動変化・裏取り済み）
+
+   `LayoutJob::single_section` は `break_on_newline: true`（`epaint-0.35.0/src/text/text_layout_types.rs:177`）だが、現行の `painter().text()` が内部で使う `simple_singleline` は `false`（同 162）。`max_rows: 1` と組み合わさるため、**素直に置換すると改行入りエラーが幅と無関係にそこで切れる**。
+
+   → **`job.break_on_newline = false;` の 1 行で現行挙動を保つ**。導出が提案した `sanitize_failure_detail` 純関数は不要（新関数を足さずに済む＝より単純）。
+
+3. **`ToastKind::Failed { .. }` を `..` で受けない**（採用）
+
+   `..` で受けると「payload を足したが描いていない」が `-D warnings` でも通り、#648(C) が dead payload を作った経路を再生産する。**フィールドを明示束縛する**ことで、消費し忘れが compile-fail になる。
+
+4. **`SNOTRA_EGUI_FAKE_UPDATE_FAILED` の視覚スモーク hatch**（採用）
+
+   これが無いと **Phase 2 の描画は一度も観測できない**（実 install 失敗の再現には実 release への到達 + download 失敗が要る）。既存の `SNOTRA_EGUI_FAKE_UPDATE`（`mod.rs:126-137`）と同じ形で、`trace::env_flag` は bool 専用ゆえ 2 本目のフラグを足す。**省略が起きる長さの理由を注入する**（短い理由では `…` が目視できない）。
+
+   これはスコープ拡大ではなく**検知手段の確保**である（`AGENTS.md` 事前調査「破壊不変条件は検知手段とセットで」）。
+
+5. **`e.to_string()` の二重消費**（既に plan にあり・裏取りで確認）
+
+   `view.rs:1038` の trace が `e` を消費するため、`let detail = e.to_string();` の束ね出しは**コンパイルが強制する**（plan は DRY 上の選択として書いていたが、実際には必須である）。
+
+#### スコープ過剰（plan ∖ 導出）
+
+なし。導出は plan と同じ 2 項目に収束した。
+
+#### 不一致（判断が割れた点と決着）
+
+| 論点 | plan | 導出 | 決着 |
+|---|---|---|---|
+| 区切り文字の置き場所 | 当初は呼び出し側（後に `strings.rs` へ変更） | `strings.rs` 側 | **一致**（plan-review 指摘 B の反映後） |
+| detail の長さ上限 | 設けない | 捕捉時に文字数上限 | **設けない**（YAGNI）。`toast()` は既に `Available` で `version.clone()` を毎フレーム行っており形は同じ。イベント駆動でトースト静止中はフレームが回らないため、毎フレーム確保という前提自体が成り立たない |
+| 改行の扱い | 言及なし | sanitize 関数を新設 | **`break_on_newline = false` の 1 行**（新関数不要・現行挙動を保つ） |
+| `LayoutJob` の 2 箇所重複 | 言及なし | 許容（別窓・別 Context） | **許容**。共通化すると幅・font・色だけの薄いラッパーになる（`/dry-check` の判断として明記） |
+
+#### 一致（盲点が無いことの能動的証拠）
+
+独立に再導出しても同じ結論に達した主要判断:
+
+- 変更ファイル集合（`strings.rs` / `notify.rs` / `view.rs` / `SPEC.md`）と、各ファイルのシンボル
+- `TextEdit::text_color` の優先順位（明示指定が最優先・`builder.rs:463-466`）
+- `interactive(false)` は色の選択に関与しない → `/state-check` 案件ではない
+- SPEC の追記先は **§20.3**（トーストの正本）で §11 へ写しを作らない（scout-docs 指摘 A と独立に一致）
+- 既存テスト `dismiss_is_refused_while_installing`（`notify.rs:266`）が compile-fail による移行漏れ検出器になる
+- カテゴリ C は非該当・カテゴリ D が唯一の接地した観測点
+- `docs/superpowers/` の SU5・SU6.5 設計書は日付付きの決定記録ゆえ retro-edit しない
+- `SPEC.md:1071-1072` の 2 行構成の記述は既存の腐り（束 C 送り）
+- `ToastKind::Failed` と `LaunchStatus::Failed` は同名別概念・`snotra-settings` の TextEdit は対象外
+
+#### 決着（2026-07-26 ユーザー判断）
+
+**★ の hint 修正は本 PR に含める。** Phase 1 を「入力欄の 2 色を config から取る」へ拡張した。理由: 同一ウィジェット・同一欠陥クラスであり、Phase 1 が編集する `SPEC.md:571` は**両方について偽**だったため、片方だけ直すと偽の記述を隣に残すことになる。検証も同じ視覚スモークの A/B に相乗りする（2 色を別々の目立つ色にして区別する）。
 
 ### 5b の 3 観点
 
-1. **境界条件**:
-   - 計器の**初回フレーム**（`repaint_trace_prev` が `None`）→ `since_prev_ms=NaN`（0 と紛れない）
-   - **原因列が空**（`prev_causes` 空 = 直前 pass で誰も要求しなかった → 入力イベント起因のフレーム）→ `-` を出す
-   - **hide → show をまたぐ `since_prev_ms`** → 非表示中の空白が巨大値として出る（正しい。眠っていた証拠になる）
-   - **1 パス複数原因** → `; ` 区切りで全件出す（先頭だけ出すと源を取り違える）
-   - **多パス（multipass）フレーム** → `repaint_causes()` は最後の pass の 1 つ前を返す。定常アイドルの判別には影響しないが件数照合は厳密にしない
-   - **2 窓が同時に吐く** → `window=` で分離（条件 2 の判定はこれに依存する）
-2. **シンプル化の挑戦**: 新しい状態は `Option<Instant>` 1 つ・trace 専用・読み手 1 か所。**「計器なしで仮説（キャレット点滅）を実装して様子を見る」は採らない**——観測 200-300ms と点滅の 500ms が合わず、源が別にある可能性が残る。`RepaintCause` を scheduler まで運ぶ拡張も採らない（callback は cause を運ばず、運ばせるには egui の型を跨ぐ改造が要る・YAGNI）
-3. **破壊不変条件 + 検知手段**: 上表 1〜6。#579 の自己永続ループ（不変条件 1）は**この計器自身が最良の検知器**になる——アイドル 60s のフレーム数がそのまま指標である。Win32 フック・ホットキー・IPC には触れない
+1. **境界条件**
+
+| 境界 | 検証 |
+|---|---|
+| `message` が空文字 | `update_failed` がコロンを出さない。**`strings.rs` のユニットテストが固定する**（plan-review 指摘 B の反映後） |
+| `message` が可用幅を超える | `truncate_at_width` が `…` で畳む。実測 617px vs 可用 532px の例が research にある |
+| `message` に改行が含まれる | `break_on_newline = false` で現行挙動（1 行に流す）を保つ。放置すると幅と無関係にそこで切れる（Step 2b 発見 2） |
+| `avail` が 0 以下（窓を極端に狭める） | `.max(0.0)` で負を潰す（`results_view.rs:263` と同じ防御） |
+| config `text_color` / `hint_text_color` が不正 hex | `visual.rs` の `hex_or` が既定色へ fallback（既存テストが固定）。**hint も同じ経路**（`visual.hint` は同じ `hex_or` を通る） |
+| 入力欄が空（hint 表示）↔ 非空（入力テキスト表示） | 2 色が別経路（`weak_text_color` / `.text_color()`）で届くため、切り替わりで色が入れ替わらないこと。視覚スモーク手順 3・4 が両方を見る |
+| 言語が En（ボタン幅が 3.8px 広い） | 省略位置が数 px 動くだけ。追加対処なし（research の判断） |
+| `Available` / `Installing`（省略化の巻き添え） | 実測 117px 以下で可用幅内。表示は変わらない（不変条件節） |
+
+2. **シンプル化の挑戦**
+
+- **新しい状態を導入していない**: `AtomicBool` も `Mutex` も子プロセスも増えない。`UpdaterPhase` に String フィールドが 1 つ戻るだけで、状態機械の**局面数も遷移も不変**
+- **より単純な代替を検討した結果**:
+  - 項目 2 で `visuals.override_text_color` を使う案 → **却下**（副作用が対象外の描画に及ぶ。不変条件節に理由を記載）
+  - 項目 1 で「詳細をトーストに出さず trace のみ」→ ユーザー判断で却下（受容案は選ばれなかった）
+  - 項目 1 で「2 行トーストにして詳細を下段へ」→ **却下**。#700 が 2 行構成をやめた直後であり、行高（= `bar_height`）が 2 行を収められないことは実測済み。1 行 + 末尾省略が最小
+- **「この操作が失敗したらどうなるか」**: 両 Phase とも失敗しうる操作を導入しない（純粋なビルダ設定とレイアウト計算のみ）
+
+3. **破壊不変条件 + 検知手段** — Phase ごとの節に記載済み。**両 Phase とも主要な検知手段は視覚スモーク（カテゴリ D）であり、ユニットテストと PostToolUse hook では捕まらない**ことを明記した。これは隠された前提ではなく、記録された残余である

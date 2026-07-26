@@ -247,7 +247,31 @@ impl ResultsView {
     }
 }
 
-/// 1 行を描画。selected かつ scroll なら scroll_to_me（選択変化時のみ・#632）。返り値:
+/// 行スクロールの指示（#714）。世代交代（結果集合の総入れ替え）は前のリストの位置を
+/// 持ち越さず瞬時に選択行へ、選択移動（世代不変・↑↓）は従来のアニメーションで寄せる。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum RowScroll {
+    None,
+    Animated,
+    Instant,
+}
+
+/// scroll gate（#632・選択変化時のみ）と世代検知（#714）から行スクロールの指示を導く純粋核。
+/// 「先頭へ」ではなく「選択行へ」が正しい目標である——`on_escape` の folder/tool 復帰と
+/// index 再構築後の再検索は selected≠0 のまま世代を進める（offset=0 直置き案を却下した理由。
+/// plan-review 2026-07-26）。
+fn scroll_directive(selected: bool, do_scroll: bool, generation_changed: bool) -> RowScroll {
+    if !(selected && do_scroll) {
+        RowScroll::None
+    } else if generation_changed {
+        RowScroll::Instant
+    } else {
+        RowScroll::Animated
+    }
+}
+
+/// 1 行を描画。scroll の指示に従い選択行へ寄せる（gate は呼び出し側 `scroll_directive`・#632/#714）。
+/// 返り値:
 /// single_clicked。ダブルクリックは扱わない（ユーザー決定: §4.8 の double-click=選択は
 /// as-built でも到達不能ゆえ落とす。単クリック=起動のみ）。self を借りない関連関数
 /// （借用衝突回避）。色/サイズは呼び出し側が都度導出する `RowTheme` から取る。
@@ -259,7 +283,7 @@ pub(crate) fn draw_result_row(
     ui: &mut egui::Ui,
     result: &SearchResult,
     selected: bool,
-    scroll: bool,
+    scroll: RowScroll,
     icon: Option<&egui::TextureHandle>,
     show_icons: bool,
     theme: &RowTheme,
@@ -271,10 +295,23 @@ pub(crate) fn draw_result_row(
     );
     if selected {
         ui.painter().rect_filled(rect, 4.0, theme.selection);
-        if scroll {
-            // 選択変化時のみ（#632）。None=可視化に必要な最小限だけ（WebView2 の
-            // block:"nearest" parity・Center だと中央維持で早期スクロール・#532 SU6.5）
-            response.scroll_to_me(None);
+        match scroll {
+            RowScroll::None => {}
+            RowScroll::Animated => {
+                // 選択変化時のみ（#632）。None=可視化に必要な最小限だけ（WebView2 の
+                // block:"nearest" parity・Center だと中央維持で早期スクロール・#532 SU6.5）
+                response.scroll_to_me(None);
+            }
+            RowScroll::Instant => {
+                // 世代交代フレーム（#714）: 別のリストへの切り替えに前のリストの
+                // スクロール位置は持ち越さない。アニメーション経路（0.1〜0.3s の連続描画）を
+                // 通さず、次の repaint で offset を中間フレームなしに target へ置く。
+                // 受容する残余（plan-review 2026-07-26）: (a) ↑↓ 直後の in-flight
+                // アニメーション中に世代が来ると target 置換までの残り時間が食い込みうる
+                // （目標位置は正しい）。(b) 内容同一の reindex 再検索でも世代は進むため
+                // 「アニメーション付きで選択行へ戻る」が「瞬時に戻る」へ変わる（頻度稀・目標は同じ）。
+                response.scroll_to_me_animation(None, egui::style::ScrollAnimation::none());
+            }
         }
     }
     // アイコン: show_icons=true のときのみ左 28px slot の中央に 16x16 を描く。欠落
@@ -479,11 +516,13 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         // （`SearchState::rows_generation` が進んだ）フレームは、selected の値が変わらなくても scroll gate を
         // 強制リセットする——selected のみの比較では「打鍵で結果が丸ごと変わったが selected は
         // 偶然 0 のまま」を検出できず、選択行への scroll_to_me が発火しないままになるため。
-        if snapshot.generation != self.last_generation {
+        let generation_changed = snapshot.generation != self.last_generation;
+        if generation_changed {
             self.last_scrolled_selected = None;
             self.last_generation = snapshot.generation;
         }
         // 選択変化時のみ scroll_to_me(#632 のゲートを view 内フィールドで維持)。
+        // 世代交代フレームはアニメーションなし（#714・指示の導出は scroll_directive）。
         let do_scroll = self.last_scrolled_selected != Some(snapshot.selected);
         let mut clicked: Option<usize> = None;
         egui::ScrollArea::vertical().show(ui, |ui| {
@@ -493,7 +532,7 @@ impl snotra_egui_runtime::EguiView for ResultsView {
                     ui,
                     result,
                     sel,
-                    sel && do_scroll,
+                    scroll_directive(sel, do_scroll, generation_changed),
                     self.icon_textures.get(&result.path),
                     show_icons,
                     theme,
@@ -542,6 +581,18 @@ impl snotra_egui_runtime::EguiView for ResultsView {
 mod tests {
     use super::truncate_middle;
     use super::{ClickTake, ResultsShared};
+    use super::{RowScroll, scroll_directive};
+
+    #[test]
+    fn scroll_directive_maps_gate_and_generation() {
+        // 非選択・gate 閉はスクロールしない（選択行以外が寄せを撃つと毎行スクロールになる）。
+        assert_eq!(scroll_directive(false, true, true), RowScroll::None);
+        assert_eq!(scroll_directive(true, false, false), RowScroll::None);
+        // 世代不変の選択移動（↑↓）はアニメーション維持（#714 issue 要件）。
+        assert_eq!(scroll_directive(true, true, false), RowScroll::Animated);
+        // 世代交代（結果集合の総入れ替え）は瞬時——前のリストの位置を持ち越さない（#714）。
+        assert_eq!(scroll_directive(true, true, true), RowScroll::Instant);
+    }
 
     // ---- クリック逆流の世代照合（#699）----
     //

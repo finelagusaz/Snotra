@@ -99,7 +99,7 @@ let mut next_allowed: Instant = Instant::now();      // 前回 dispatch + min_in
 ### `min_interval` の供給
 
 - `RepaintScheduler` に `Arc<AtomicU64>`（interval ナノ秒）を持たせ、worker は dispatch のたびに読む
-- 値の更新は plugin（`runtime.rs`）が行う: 活性化時に 1 回 + `Moved` / `ScaleFactorChanged` 受信時に再取得（モニター跨ぎ追従）
+- 値の更新は plugin（`runtime.rs`）が行う: 活性化時に 1 回 + `Moved` / `ScaleFactorChanged` 受信時に再取得（モニター跨ぎ追従）+ `Focused(true)` 受信時に**全窓**再取得（静止中の OS 設定変更・抜き差しの backstop。results は focusable(false) で Focused を受けないため全窓に適用する——実装時の /symmetric-check で追加）
 - 取得は窓 HWND → `MonitorFromWindow` → `EnumDisplaySettingsW(ENUM_CURRENT_SETTINGS)` の `dmDisplayFrequency`。crate は既に IMM32（`windows_ime.rs`）で Win32 依存を持つため、依存の性格は変わらない
 - 失敗時（0 / 1 が返る・API 失敗）は 60Hz へフォールバック。VRR パネルは最大値が返るが、上限の趣旨（表示されないフレームを描かない）に反しない
 

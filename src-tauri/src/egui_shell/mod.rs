@@ -34,7 +34,9 @@ pub(crate) use visual::{RowTheme, VisualApplied, VisualSnapshot};
 
 // view.rs の icon texture driver（worker spawn / load_texture 適用）が消費する（#532 SU4 Task 5）。
 pub(crate) use icon_textures::{IconMsg, needs_extraction, png_to_color_image, retain_visible};
-pub(crate) use lifecycle::{HotkeyPlan, blur_should_hide, plan_hotkey};
+// `blur_should_hide` は re-export しない——view の消費点は `blur_grace_action` に一本化され、
+// 判定そのものは純粋核の内部で生きている（#711）。2 経路を並走させないための意図的な非公開。
+pub(crate) use lifecycle::{BLUR_GRACE, BlurAction, HotkeyPlan, blur_grace_action, plan_hotkey};
 // view.rs（driver）が folder 展開（#532 SU3 M2）で消費する。
 pub(crate) use search_state::{
     EscapeOutcome, QueryIntent, SearchState, ViewKind, compute_parent_dir, folder_load_pending,

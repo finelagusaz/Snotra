@@ -1318,22 +1318,34 @@ impl EguiView for SearchWindowView {
                 EscapeOutcome::Hide => self.emit_hide(),
             }
         }
-        // focus 喪失 → 100ms 猶予を張り、猶予明けに repaint させる。
+        // focus 喪失 → 猶予を張り、猶予明けに repaint させる。
         if was_focused && !focused {
             self.unfocus_at = Some(Instant::now());
-            ctx.request_repaint_after(Duration::from_millis(100));
+            ctx.request_repaint_after(crate::egui_shell::BLUR_GRACE);
         }
-        // 猶予明け判定は純粋核 blur_should_hide に委ねる（focus 復帰・auto_hide・設定起動を AND）。
+        // 猶予中の処置は純粋核 blur_grace_action に委ねる（判定は blur_should_hide が正本）。
+        // **`elapsed` はここで 1 回だけ読む**——純粋核の中で読み直すと、判定と残余の減算の間に
+        // 時計が進んで underflow しうる（release は panic="abort"・設計 spec §5 errata）。
         if let Some(at) = self.unfocus_at {
-            let grace_elapsed = at.elapsed() >= Duration::from_millis(100);
-            if crate::egui_shell::blur_should_hide(
+            match crate::egui_shell::blur_grace_action(
+                at.elapsed(),
                 focused,
-                grace_elapsed,
                 self.auto_hide_enabled(),
                 self.settings_running(),
             ) {
-                self.unfocus_at = None;
-                self.emit_hide();
+                crate::egui_shell::BlurAction::Hide => {
+                    self.unfocus_at = None;
+                    self.emit_hide();
+                }
+                // 契約③: 予約はフレームの到来を約束しない（worker は最も早い deadline だけを
+                // 単一スロットで持ち、dispatch で take() するため、より早い要求が 1 つ割り込むと
+                // 猶予の deadline は黙って消える）。armed の間は毎フレーム残余を要求し直す
+                // ——検索 debounce・通知期限・起動タイムアウトと同じ流儀（#711）。
+                crate::egui_shell::BlurAction::Rearm(remaining) => {
+                    ctx.request_repaint_after(remaining)
+                }
+                // 時間経過では解消しない不成立。再要求すると永久スピンになる（純粋核の doc）。
+                crate::egui_shell::BlurAction::Idle => {}
             }
         }
 

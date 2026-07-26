@@ -39,7 +39,7 @@ allowed-tools:
 コマンドの**実在照合**（`npm run XXX` → `package.json` scripts、`cargo test -p <crate>` → workspace members の package name）は **`npm run governance:check`（G5・#587）が機械検査する。ここでは実行しない。**
 
 本 Check に残るのは**意味判断を要する部分**のみ:
-- `AGENTS.md` Step 8 や `.claude/skills/*/SKILL.md` に **コマンド本体**（`cargo XXX` / `npm XXX` / `npx XXX` の具体的な引数を含む実行コマンド）が直書きされていないか grep する。`docs/build-commands.md` の SSOT を迂回している箇所を報告する（コマンド名への言及や参照リンク自体は許容）。
+- `AGENTS.md`「変更後の検証を実行する」や `.claude/skills/*/SKILL.md` に **コマンド本体**（`cargo XXX` / `npm XXX` / `npx XXX` の具体的な引数を含む実行コマンド）が直書きされていないか grep する。`docs/build-commands.md` の SSOT を迂回している箇所を報告する（コマンド名への言及や参照リンク自体は許容）。
 - hook の **cargo コマンド ↔ カテゴリ A の照合は `npm run governance:check`（G9・#589）が機械検査する。ここでは実行しない**（出力整形フラグの許容込み。#476 のフラグドリフト事故クラスを機械が受け持つ）。
 - node/vitest 系のみ本 Check に残る: hook の検査（tsc 直接起動・単一テストファイルの vitest 実行）が SSOT コマンド（`npm test`）の**部分集合ラッパー**として妥当か（対象ファイルが SSOT コマンドの実行対象に含まれるか）を確認する。
 
@@ -117,5 +117,5 @@ allowed-tools:
 - **`Critical` / `Warning` / `Info` は発見事項**（コードベースに乖離がある）。**`[Skipped]` は発見事項ではない**（前提が満たされず、検査そのものが走らなかった）。**「異常なし」と「見ていない」を同じ記号で書かない。**
 - **`[Skipped]` が正当なのは、文書化された前提を満たせない場合に限る。** 現状その前提を持つのは **Check 7 のみ**（メモリ領域の絶対パスが与えられていない）。`governance:check` の実行と Check 5 残置部分は前提が常に満たされるため、**それらが `Skipped` になること自体が発見事項**（検査基盤の異常）として報告する。この限定が無いと「面倒な検査は `Skipped` にしておけば楽」という抜け道になる
 - **「All checks passed.」と書けるのは、発見事項ゼロ かつ `Skipped` ゼロのときだけである。** `Skipped` が 1 つでもあれば「M passed, K skipped」と書く（M = 実施数）
-- **「根拠」行は実行の証跡であって発見事項ではない。** `Critical`/`Warning`/`Info`（乖離あり）でも `[Skipped]`（未実行）でもない**第3のカテゴリ**であり、**発見事項カウントにも「All checks passed」判定にも算入しない**。検査が母集団を絞り込むとき（現状は Check 1 の test 除外）に「何をどれだけ照合したか」を接地させる。省くと「差分ゼロ」が「照合していない」と区別できなくなる（Check 7 の証跡規律・`AGENTS.md`「派生コピー同士の一致を完全性の証拠にしない」の一般化）。将来ほかの検査が根拠を出す余地は塞がない
+- **「根拠」行は実行の証跡であって発見事項ではない。** `Critical`/`Warning`/`Info`（乖離あり）でも `[Skipped]`（未実行）でもない**第3のカテゴリ**であり、**発見事項カウントにも「All checks passed」判定にも算入しない**。検査が母集団を絞り込むとき（現状は Check 1 の test 除外）に「何をどれだけ照合したか」を接地させる。省くと「差分ゼロ」が「照合していない」と区別できなくなる（Check 7 の証跡規律・`AGENTS.md`「照合は SSOT に対して行う」の一般化）。将来ほかの検査が根拠を出す余地は塞がない
 - 該当が無いセクション（発見事項ゼロ / `Skipped` ゼロ）は省略してよい。**サマリーは常に出す（根拠行を含む）**

@@ -485,48 +485,88 @@ export function checkHookCommands(snapshot) {
 }
 
 // ---------------------------------------------------------------------------
-// G10 — 恒久規範の面積 ratchet（二面独立）。#593 §2。
-// 恒久規範（毎セッション/トリガー時にロード = コンテキスト予算への課税）の面積を単調非増加に保つ。
+// G10 — 恒久規範の面積 ratchet（二面独立）。#593 §2 ・ADR-0001 ・ADR-0005。
+// 恒久規範（読むかを選べずロードされる = コンテキスト予算への課税）の面積を単調非増加に保つ。
 // 「常時ロード」と「rules」を独立の上限で見るのは、常時→rules の面替えだけで数字を下げる回避を
-// 塞ぐため（合計 ratchet なら総額不変で通ってしまう）。基準の引き上げは LINE_BUDGET を理由コメント
-// 付きで更新すること（= 明示的な合意の摩擦）。ADR・spec・issue は履歴側ゆえ対象外。
-// 行数は \r?\n で数える（CRLF checkout で `.` が \r を落とす沈黙経路を #587/#589 で二度踏んだ）。
+// 塞ぐため（合計 ratchet なら総額不変で通ってしまう）。基準の引き上げは AREA_BUDGET を理由コメント
+// 付きで更新すること（= 明示的な合意の摩擦）。
+// 指標は**文字数（コードポイント・CR 除く）**である。行数だと「改行を消す」が最も安い削減手段になり、
+// 読む量を 1 文字も減らさずに数字だけ下げられた（ADR-0005 に実測）。CR を除くのは CRLF checkout が
+// 面積を膨らませないため（\r の取り扱いは #587/#589 で二度踏んでいる）。
+// 常時ロード面には skill の description を含める——毎セッション注入されるのに、どの ratchet からも
+// 見えていなかった（表から description へ字を移すだけで数字が下がる抜け道になる）。
+// 対象外は意図的である: skills 本文・モジュール CLAUDE.md・docs・ADR はいずれも「その作業に入った
+// 者だけが読む面」であり、常時ロードからそこへ退去させることは #593 が推奨する経路そのものである。
+// 課税すれば、登ってほしい階梯を登る側が罰せられる。
 // ---------------------------------------------------------------------------
 
-/** 常時ロードされる恒久規範ファイル（ルート直下の 2 文書） */
+/** 常時ロードされる恒久規範ファイル（ルート直下の 2 文書。ほかに skill description が同じ面に載る） */
 export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
 
-/** 二面独立の行数上限。削減したら下げる（ratchet）。#616 で常時ロードを写し除去で 233→228、#488 マージ節を ADR-0002 へ退去し 228→222、フック節の改修者向け実装契約を docs/hooks.md へ退去し 222→216 に削減。2026-07-26 に (A2) の 3 理由を ADR-0002 へ退去・コミュニケーション原則を判断ベースへ圧縮・重複規則（HEREDOC / 合意ルール）とスキル表の呼び出し例欄を除去し 216→191（rules は述語の写しをポインタへ置換しただけで行数が動かないため据え置く） */
-export const LINE_BUDGET = { alwaysLoaded: 191, rules: 173 };
+/**
+ * 二面独立の**文字数**上限。削減したら下げる（ratchet）。
+ * 行数時代の推移: #616 で 233→228、#488 マージ節を ADR-0002 へ退去し 228→222、フック節の実装契約を
+ * `docs/hooks.md` へ退去し 222→216、2026-07-26 に (A2) の 3 理由退去・コミュニケーション原則の圧縮・
+ * 重複規則の除去で 216→191 行。ADR-0005 で指標を文字数へ切り替え、実測値を初期基準に据えた。
+ */
+export const AREA_BUDGET = { alwaysLoaded: 15685, rules: 8318 };
 
-/** \r?\n の出現数 = wc -l 相当。読めなければ null（母集団欠落を上位で検知） */
-function countLines(text) {
-  return text == null ? null : (text.match(/\r?\n/g) || []).length;
+/** コードポイント数（CR は除く）。読めなければ null（母集団欠落を上位で検知） */
+function countChars(text) {
+  return text == null ? null : [...text.replace(/\r/g, "")].length;
 }
 
-/** 指定ファイル群の総行数を数える。読めないファイルは finding に積み、行数へは算入しない */
-function sumLines(snapshot, files, gLabel) {
+/** 指定ファイル群の総文字数。読めないファイルは finding に積み、面積へは算入しない */
+function sumChars(snapshot, files, gLabel) {
   let total = 0;
   const findings = [];
   for (const f of files) {
-    const c = countLines(snapshot.read(f));
+    const c = countChars(snapshot.read(f));
     if (c == null) findings.push(finding(f, 1, `${f} が読めない（${gLabel} 母集団の欠落）`));
     else total += c;
   }
   return { total, findings };
 }
 
-export function checkNormativeLineBudget(snapshot) {
+/**
+ * 毎セッション注入される skill の `description` の総文字数。
+ * 複数行スカラー（`|` / `>`）と欠落は数えられないので finding に倒す（沈黙経路の閉塞）。
+ */
+export function skillDescriptionArea(snapshot) {
+  const files = snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f));
+  let total = 0;
+  const findings = [];
+  for (const f of files) {
+    const text = snapshot.read(f);
+    if (text == null) {
+      findings.push(finding(f, 1, `${f} が読めない（G10 母集団の欠落）`));
+      continue;
+    }
+    const m = text.match(/^description:[ \t]*(.*)$/m);
+    const v = m ? m[1].trim() : "";
+    if (!m || v === "" || v.startsWith("|") || v.startsWith(">")) {
+      findings.push(finding(f, 1, "description が 1 行スカラーでない（G10 が面積を数えられない）"));
+      continue;
+    }
+    total += [...v.replace(/^["']/, "").replace(/["']$/, "")].length;
+  }
+  return { total, findings, count: files.length };
+}
+
+export function checkNormativeAreaBudget(snapshot) {
   const findings = [];
 
-  const always = sumLines(snapshot, ALWAYS_LOADED_FILES, "G10");
-  findings.push(...always.findings);
-  if (always.total > LINE_BUDGET.alwaysLoaded) {
+  const docs = sumChars(snapshot, ALWAYS_LOADED_FILES, "G10");
+  const desc = skillDescriptionArea(snapshot);
+  findings.push(...docs.findings, ...desc.findings);
+  if (desc.count === 0) findings.push(finding(".claude/skills", 1, "skills が 0 件（G10 母集団の欠落）"));
+  const alwaysTotal = docs.total + desc.total;
+  if (alwaysTotal > AREA_BUDGET.alwaysLoaded) {
     findings.push(
       finding(
         "CLAUDE.md",
         1,
-        `常時ロード規範 ${always.total} 行 > 基準 ${LINE_BUDGET.alwaysLoaded} 行（#593 二面 ratchet）。機構吸収か履歴退去で減らすか、正当なら LINE_BUDGET.alwaysLoaded を理由コメント付きで更新`,
+        `常時ロード規範 ${alwaysTotal} 字 > 基準 ${AREA_BUDGET.alwaysLoaded} 字（#593 二面 ratchet）。機構吸収か履歴退去で減らすか、正当なら AREA_BUDGET.alwaysLoaded を理由コメント付きで更新`,
       ),
     );
   }
@@ -535,19 +575,31 @@ export function checkNormativeLineBudget(snapshot) {
   if (ruleFiles.length === 0) {
     findings.push(finding(".claude/rules", 1, "rules が 0 件（G10 母集団の欠落）"));
   } else {
-    const rules = sumLines(snapshot, ruleFiles, "G10");
+    const rules = sumChars(snapshot, ruleFiles, "G10");
     findings.push(...rules.findings);
-    if (rules.total > LINE_BUDGET.rules) {
+    if (rules.total > AREA_BUDGET.rules) {
       findings.push(
         finding(
           ".claude/rules",
           1,
-          `rules 合計 ${rules.total} 行 > 基準 ${LINE_BUDGET.rules} 行（#593 二面 ratchet）。ルーター化で減らすか、正当なら LINE_BUDGET.rules を理由コメント付きで更新`,
+          `rules 合計 ${rules.total} 字 > 基準 ${AREA_BUDGET.rules} 字（#593 二面 ratchet）。ルーター化で減らすか、正当なら AREA_BUDGET.rules を理由コメント付きで更新`,
         ),
       );
     }
   }
   return findings;
+}
+
+/** evidence 用の実測（検査と同じ母集団・同じ数え方であることを型で担保するための共有関数） */
+export function normativeArea(snapshot) {
+  const always =
+    (sumChars(snapshot, ALWAYS_LOADED_FILES, "G10").total ?? 0) + skillDescriptionArea(snapshot).total;
+  const rules = sumChars(
+    snapshot,
+    snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)),
+    "G10",
+  ).total;
+  return { always, rules };
 }
 
 // ---------------------------------------------------------------------------
@@ -684,15 +736,12 @@ export function runAll(snapshot) {
     ...checkRulesGlobs(snapshot),
     ...checkSkillTable(snapshot),
     ...checkHookCommands(snapshot),
-    ...checkNormativeLineBudget(snapshot),
+    ...checkNormativeAreaBudget(snapshot),
   );
   const headingRefs = scanHeadingRefs(snapshot, refDocs);
   findings.push(...headingRefs.findings);
-  const always = ALWAYS_LOADED_FILES.reduce((n, f) => n + (countLines(snapshot.read(f)) ?? 0), 0);
-  const ruleLines = snapshot.files
-    .filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f))
-    .reduce((n, f) => n + (countLines(snapshot.read(f)) ?? 0), 0);
-  const evidence = `対象文書 ${docs.length} 件 / rules ${snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length} 件 / skills ${snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length} 件 / 恒久規範 常時ロード ${always}/${LINE_BUDGET.alwaysLoaded} 行・rules ${ruleLines}/${LINE_BUDGET.rules} 行 / 見出し参照 ${headingRefs.checked} 件を ${refDocs.length} 文書から照合`;
+  const area = normativeArea(snapshot);
+  const evidence = `対象文書 ${docs.length} 件 / rules ${snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length} 件 / skills ${snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length} 件 / 恒久規範 常時ロード ${area.always}/${AREA_BUDGET.alwaysLoaded} 字・rules ${area.rules}/${AREA_BUDGET.rules} 字 / 見出し参照 ${headingRefs.checked} 件を ${refDocs.length} 文書から照合`;
   return { findings, evidence };
 }
 

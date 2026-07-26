@@ -18,8 +18,9 @@ import {
   checkRulesGlobs,
   checkSkillTable,
   globToRegex,
-  checkNormativeLineBudget,
-  LINE_BUDGET,
+  checkNormativeAreaBudget,
+  normativeArea,
+  AREA_BUDGET,
   ALWAYS_LOADED_FILES,
   checkHeadingRefs,
   collectAnchors,
@@ -392,60 +393,73 @@ describe("runAll（空母集団の明示 fail = 沈黙経路の閉塞）", () =>
   });
 });
 
-describe("G10 checkNormativeLineBudget（二面独立 ratchet・#593）", () => {
-  const nl = (n) => "\n".repeat(n); // n 本の \n = n 行（wc -l 相当）
-  const rule = (p, n) => ({ [`.claude/rules/${p}`]: nl(n) });
+describe("G10 checkNormativeAreaBudget（二面独立 ratchet・文字数指標・#593 / ADR-0005）", () => {
+  const x = (n) => "x".repeat(n);
+  const rule = (p, n) => ({ [`.claude/rules/${p}`]: x(n) });
+  const skill = (name, desc) => ({
+    [`.claude/skills/${name}/SKILL.md`]: `---\nname: ${name}\ndescription: "${desc}"\n---\n本文\n`,
+  });
+  const base = { ...rule("a.md", 1), ...skill("s", "d") };
 
   it("両面とも基準以内なら findings 無し（緑）", () => {
-    const s = snap({
-      "CLAUDE.md": nl(LINE_BUDGET.alwaysLoaded - 10),
-      "AGENTS.md": nl(10),
-      ...rule("a.md", LINE_BUDGET.rules),
-    });
-    expect(checkNormativeLineBudget(s)).toEqual([]);
+    const s = snap({ "CLAUDE.md": x(100), "AGENTS.md": x(100), ...base });
+    expect(checkNormativeAreaBudget(s)).toEqual([]);
   });
 
   it("常時ロードが基準超過なら finding（赤）", () => {
-    const s = snap({
-      "CLAUDE.md": nl(LINE_BUDGET.alwaysLoaded + 1),
-      "AGENTS.md": nl(0),
-      ...rule("a.md", 1),
-    });
-    const f = checkNormativeLineBudget(s);
-    expect(f.some((x) => x.message.includes("常時ロード規範") && x.message.includes("> 基準"))).toBe(true);
+    const s = snap({ "CLAUDE.md": x(AREA_BUDGET.alwaysLoaded + 1), "AGENTS.md": "", ...base });
+    const f = checkNormativeAreaBudget(s);
+    expect(f.some((v) => v.message.includes("常時ロード規範") && v.message.includes("> 基準"))).toBe(true);
   });
 
-  it("常時ロードは 2 面替えでは下がらない（rules へ移しても rules 側が超過する）", () => {
-    // 常時ロードは基準内だが rules を超過させる = 面替え回避を塞ぐことの検算
-    const s = snap({
-      "CLAUDE.md": nl(10),
-      "AGENTS.md": nl(10),
-      ...rule("a.md", LINE_BUDGET.rules + 1),
-    });
-    const f = checkNormativeLineBudget(s);
-    expect(f.some((x) => x.message.includes("rules 合計") && x.message.includes("> 基準"))).toBe(true);
+  it("面替えでは下がらない（rules へ移せば rules 側が超過する）", () => {
+    const s = snap({ "CLAUDE.md": x(10), "AGENTS.md": x(10), ...skill("s", "d"), ...rule("a.md", AREA_BUDGET.rules + 1) });
+    const f = checkNormativeAreaBudget(s);
+    expect(f.some((v) => v.message.includes("rules 合計") && v.message.includes("> 基準"))).toBe(true);
   });
 
-  it("CRLF でも \\r?\\n で数える（CRLF checkout 沈黙経路の閉塞）", () => {
+  it("改行を畳んでも面積は改行のぶんしか下がらない（行数指標の誤った勾配を絶つ・ADR-0005 の核心）", () => {
+    const areaOf = (t) => normativeArea(snap({ "CLAUDE.md": t, "AGENTS.md": "", ...base })).always;
+    const spread = "あ\n".repeat(100); // 100 行 200 字
+    const folded = "あ".repeat(100); // 1 行 100 字（内容は 1 字も減っていない）
+    // 行数指標なら 100 → 1 で 99% の「削減」に見えた。文字数指標では改行 100 字ぶんだけ
+    expect(areaOf(spread) - areaOf(folded)).toBe(100);
+  });
+
+  it("CR は数えない（CRLF checkout で面積が膨らむ沈黙経路の閉塞）", () => {
+    const lf = snap({ "CLAUDE.md": "あ\n".repeat(10), "AGENTS.md": "", ...base });
+    const crlf = snap({ "CLAUDE.md": "あ\r\n".repeat(10), "AGENTS.md": "", ...base });
+    expect(normativeArea(lf).always).toBe(normativeArea(crlf).always);
+  });
+
+  it("skill description は常時ロード面に算入される（表→description の面替えを塞ぐ）", () => {
+    const withShort = snap({ "CLAUDE.md": "", "AGENTS.md": "", ...rule("a.md", 1), ...skill("s", "d") });
+    const withLong = snap({ "CLAUDE.md": "", "AGENTS.md": "", ...rule("a.md", 1), ...skill("s", "d".repeat(50)) });
+    expect(normativeArea(withLong).always - normativeArea(withShort).always).toBe(49);
+  });
+
+  it("description が 1 行スカラーでなければ finding（数えられない沈黙経路の閉塞）", () => {
     const s = snap({
-      "CLAUDE.md": "x\r\n".repeat(LINE_BUDGET.alwaysLoaded + 1),
+      "CLAUDE.md": "",
       "AGENTS.md": "",
       ...rule("a.md", 1),
+      ".claude/skills/s/SKILL.md": "---\nname: s\ndescription: |\n  複数行\n---\n",
     });
-    const f = checkNormativeLineBudget(s);
-    expect(f.some((x) => x.message.includes("常時ロード規範"))).toBe(true);
+    const f = checkNormativeAreaBudget(s);
+    expect(f.some((v) => v.message.includes("1 行スカラーでない"))).toBe(true);
   });
 
   it("常時ロード文書が読めなければ母集団欠落 finding（沈黙経路の閉塞）", () => {
-    const s = snap({ "AGENTS.md": nl(1), ...rule("a.md", 1) }); // CLAUDE.md 欠落
-    const f = checkNormativeLineBudget(s);
-    expect(f.some((x) => x.file === "CLAUDE.md" && x.message.includes("母集団の欠落"))).toBe(true);
+    const s = snap({ "AGENTS.md": x(1), ...base }); // CLAUDE.md 欠落
+    const f = checkNormativeAreaBudget(s);
+    expect(f.some((v) => v.file === "CLAUDE.md" && v.message.includes("母集団の欠落"))).toBe(true);
   });
 
-  it("rules が 0 件なら母集団欠落 finding（グロブ破損の沈黙経路の閉塞）", () => {
-    const s = snap({ "CLAUDE.md": nl(1), "AGENTS.md": nl(1) }); // rule ファイル無し
-    const f = checkNormativeLineBudget(s);
-    expect(f.some((x) => x.file === ".claude/rules" && x.message.includes("母集団の欠落"))).toBe(true);
+  it("rules / skills が 0 件なら母集団欠落 finding（グロブ破損の沈黙経路の閉塞）", () => {
+    const noRules = snap({ "CLAUDE.md": x(1), "AGENTS.md": x(1), ...skill("s", "d") });
+    expect(checkNormativeAreaBudget(noRules).some((v) => v.file === ".claude/rules")).toBe(true);
+    const noSkills = snap({ "CLAUDE.md": x(1), "AGENTS.md": x(1), ...rule("a.md", 1) });
+    expect(checkNormativeAreaBudget(noSkills).some((v) => v.file === ".claude/skills")).toBe(true);
   });
 
   it("ALWAYS_LOADED_FILES はルート直下の 2 文書", () => {

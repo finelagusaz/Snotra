@@ -282,13 +282,10 @@ pub(crate) struct SearchWindowView {
     notice: crate::egui_shell::NoticeSlot,
     /// notice の単調時刻基準（view 生成時に固定・Instant 差分を Duration で渡す）。
     notice_base: Instant,
-    /// results 窓の直近設定高さ（デルタガード）。**可視フラグは `ResultsWindow` が持つ**——
-    /// こちらは冗長な `set_size` を避ける性能上のガードであり概念が別（#671 spec 決定 2）。
-    last_results_height: f64,
-    /// results 窓の直近設定幅（デルタガード）。**`last_set_width`（main 用）を流用しない**——
-    /// 同一フレーム内で main のブロックが先に `last_set_width` を更新済みのため、それと
-    /// 比較すると常に差分 0 になり results が幅の live-reload に追従しなくなる（Important 1）。
-    last_results_width: f64,
+    // results 窓のサイズデルタガードは `ResultsWindow` が持つ（#749 で移設）。**`last_set_*`
+    // （main 用）を流用してはならない**という当時の不変条件（Important 1）は、memo が別の型に
+    // 分かれたことで構造的に保たれる——同一フレーム内で main のブロックが先に
+    // `last_set_width` を更新するため、共有すると results が幅の live-reload に追従しなくなる。
 }
 
 impl SearchWindowView {
@@ -314,8 +311,6 @@ impl SearchWindowView {
             last_seen_index_generation: 0,
             notice: crate::egui_shell::NoticeSlot::default(),
             notice_base: Instant::now(),
-            last_results_height: 0.0,
-            last_results_width: 0.0,
         }
     }
 
@@ -853,15 +848,11 @@ impl SearchWindowView {
             top_y.and_then(|y| crate::egui_shell::results_available_height(&self.app_handle, y)),
             metrics.row_height,
         );
-        // デルタガードの照合対象は `set_size` の実引数と同じでなければならない
-        // （素の値を覚えると、毎フレーム撃つか必要な再サイズを撃たないかのどちらかになる）。
-        if (applied_height - self.last_results_height).abs() > 0.5
-            || (width - self.last_results_width).abs() > 0.5
-        {
-            results.set_size(width, applied_height);
-            self.last_results_height = applied_height;
-            self.last_results_width = width;
-        }
+        // デルタガードは `ResultsWindow::set_size` が内蔵する（#749 で移設）。**照合対象が
+        // `set_size` の実引数と同じであること**——素の値を覚えると、毎フレーム撃つか必要な
+        // 再サイズを撃たないかのどちらかになる——は、memo を撃つ側の内側へ入れたことで
+        // 構造的に保たれる（渡した値がそのまま memo になる）。
+        results.set_size(width, applied_height);
         // フォーカスを奪わない表示（tauri show() は SW_SHOW で活性化する・#646 PR2）。
         // 置き場の理由は上の hide 側コメントと同じ（spec 決定 7）。
         if results.show() {
@@ -1185,14 +1176,23 @@ impl EguiView for SearchWindowView {
             // hide で撃つ事故の backstop・並行性レビュー High）。updater toast は触らない。
             self.launching = None;
             self.notice.clear();
-            // results 窓の drive **サイズ**デルタガードを初期値へ戻す（#646 PR2 決定 6）。
-            // これは冗長な set_size を避ける性能上のガードであり、可視性のような
-            // correctness のフラグではない（#671 spec 決定 2 の意図的な分割）。0 へ戻すことで
-            // 再 show 後に必ず 1 度は現行 metrics で set_size させる。
+            // results 窓の **サイズ**デルタガードを初期値へ戻す（#646 PR2 決定 6・memo 自体は
+            // #749 で `ResultsWindow` へ移設）。これは冗長な set_size を避ける性能上のガードで
+            // あり、可視性のような correctness のフラグではない（#671 spec 決定 2 の意図的な分割）。
+            // 0 へ戻すことで再 show 後に必ず 1 度は現行 metrics で set_size させる。
             // 可視フラグはここに無い——`ResultsWindow` が所有し、hide_egui_main と
             // drive_results_window の 2 経路が同じ型を通るため後始末が要らない（PR A′）。
-            self.last_results_height = 0.0;
-            self.last_results_width = 0.0;
+            //
+            // **呼び出し点をここに保つ**（#749）: この reset は同一フレームの
+            // `drive_results_window`（update 末尾）より**前**でなければならない。show 経路
+            // （`show_egui_main`）は Win32 メッセージループスレッドから走るため、そちらへ
+            // 移すと「同一スレッド・同一フレーム」というこの前提が消える。
+            if let Some(results) = self
+                .app_handle
+                .try_state::<crate::egui_shell::ResultsWindow>()
+            {
+                results.reset_size_guard();
+            }
         }
 
         let ctx = ui.ctx().clone();
@@ -1827,7 +1827,14 @@ impl EguiView for SearchWindowView {
             has_toast.then_some(metrics.toast_height),
         );
         let width = self.window_width();
-        if (height - self.last_set_height).abs() > 0.5 || (width - self.last_set_width).abs() > 0.5 {
+        // 判定式の正本は `layout::size_delta_exceeds`（#749）。results 側と**式だけを共有し、
+        // memo は共有しない**——main の高さは show 経路の bar_height collapse と
+        // `main_window_height` の意図的な 2 導出であり（ADR-0007 却下 1）、その状態を窓の
+        // 所有型へ寄せない。
+        if crate::egui_shell::layout::size_delta_exceeds(
+            (self.last_set_width, self.last_set_height),
+            (width, height),
+        ) {
             self.last_set_height = height;
             self.last_set_width = width;
             if let Some(window) = self.app_handle.get_window("main") {

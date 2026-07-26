@@ -1,7 +1,9 @@
 //! results 窓の所有型（#671 spec 決定 2）。
 //!
-//! 生 Win32 の 3 点セット（`SW_SHOWNOACTIVATE` / `SW_HIDE` / `SetWindowPos`）と可視フラグを
-//! 1 つの型が同時に所有する。#646 PR2 では 3 関数が自由関数で、可視フラグは
+//! 生 Win32 の 3 点セット（`SW_SHOWNOACTIVATE` / `SW_HIDE` / `SetWindowPos`）と可視フラグ、
+//! および直近に適用したサイズ（#749 で `view.rs` から移設）を 1 つの型が同時に所有する。
+//! **可視フラグとサイズ memo は概念が別である**——前者は correctness、後者は冗長な Win32
+//! 呼び出しを避ける性能上のガードで、誤っても窓は消えない（#671 spec 決定 2 の意図的な分割）。#646 PR2 では 3 関数が自由関数で、可視フラグは
 //! `SearchWindowView` 側の view-local な bool であり、片方の hide 経路（`drive_results_window`）
 //! だけが更新し、もう片方（`hide_egui_main`）は更新しない非対称があった。reset-on-show が
 //! 後始末することで閉じていたが、**窓とフラグを同じ物として持てば 2 経路が同じ
@@ -17,6 +19,7 @@
 //! show 述語側のゲート（`layout::present_results`）が塞ぐ——本型は「誰が raw 操作を
 //! 撃つか」を一点に集めるだけで、「撃ってよい状況か」は判定しない。
 
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// results 窓（`focusable(false)` の従属窓）とその可視状態。
@@ -31,15 +34,29 @@ pub(crate) struct ResultsWindow {
     /// spawn したポーリングスレッドから来る——可視性の読み書きはイベントループスレッドに
     /// 閉じない。`Ordering` は同居する `main_visible` / `hotkey_generation` に合わせ `SeqCst`。
     visible: AtomicBool,
+    /// 直近 `set_size` の (幅, 高さ)（論理 px・#749 で `view.rs` の `last_results_width` /
+    /// `last_results_height` から移設）。**`visible` とは概念が別**——冗長な Win32 呼び出しを
+    /// 避ける性能上のガードであり、correctness のフラグではない。
+    ///
+    /// `Cell` ではなく `Mutex` である理由は `visible` が `AtomicBool` である理由と同じ
+    /// （managed state は `Send + Sync` を要求する）。f64 の組は atomic で表せない。
+    /// **書き手はイベントループスレッドの 2 経路だけである**（`window_coordinator` の
+    /// `drive_results_window` と、view の reset-on-show が呼ぶ `reset_size_guard`）——
+    /// `commands/window.rs` のポーリングスレッドが触るのは `set_topmost` だけで、
+    /// この memo を読まない。
+    last_size: Mutex<(f64, f64)>,
 }
 
 impl ResultsWindow {
     /// 窓ハンドルを取り込む。**`create()` が `.visible(false)` で生成した直後に呼ぶ**前提で
     /// 初期値は false（builder の宣言と一致させる。`mod.rs` の `create` を参照）。
+    /// `last_size` の初期値 `(0.0, 0.0)` は「まだ一度も適用していない」を表し、最初の
+    /// `set_size` が必ず撃たれるようにする（旧 `SearchWindowView::new` と同値）。
     pub(crate) fn new(window: tauri::Window) -> Self {
         Self {
             window,
             visible: AtomicBool::new(false),
+            last_size: Mutex::new((0.0, 0.0)),
         }
     }
 
@@ -123,8 +140,35 @@ impl ResultsWindow {
     /// 差分を生む操作（`set_resizable` 等）は `apply_diff` 末尾の
     /// `if !new.contains(VISIBLE) { ShowWindow(SW_HIDE) }` に到達し、results 窓を消す
     /// （`set_always_on_top` が #646 PR2 で窓を消したのと同一機構）。
+    ///
+    /// **デルタガードを内蔵する**（#749）——同値のフレームでは Win32 を撃たない。判定式の
+    /// 正本は `layout::size_delta_exceeds`（純粋核・ユニットテスト対象）で、ここに手書きしない。
+    /// `show()` / `hide()` が「遷移したときだけ raw 操作を撃つ」のと同型である。
+    ///
+    /// **lock は Win32 呼び出しの前に手放す。** `std::sync::Mutex` は再入不可であり、tao の
+    /// `set_inner_size` は `set_window_flags` → `apply_diff` を経て窓プロシージャに至りうる
+    /// ——guard を握ったまま呼ぶ形は、将来その経路が再入したときにデッドロックする。
+    /// 手放すことによる TOCTOU は生じない（書き手は `last_size` の doc のとおり単一スレッド）。
     pub(crate) fn set_size(&self, width: f64, height: f64) {
+        {
+            let mut last = self.last_size.lock().unwrap();
+            if !crate::egui_shell::layout::size_delta_exceeds(*last, (width, height)) {
+                return;
+            }
+            *last = (width, height);
+        }
         let _ = self.window.set_size(tauri::LogicalSize::new(width, height));
+    }
+
+    /// サイズ memo を「まだ適用していない」へ戻す（#749・旧 `view.rs` の reset-on-show 2 行）。
+    ///
+    /// 再 show 後に必ず一度は現行 metrics で `set_size` させるためのもので、**呼ぶのは view の
+    /// reset-on-show（`reset_pending` の消費）である**。呼び出し点をそこに保つのは順序の
+    /// ためである——同一フレームの `drive_results_window` より**前**でなければ、再 show 後の
+    /// 1 フレーム目が旧 metrics のサイズで描かれる。`show_egui_main`（Win32 メッセージループ
+    /// スレッド）へ移すと、この「同一スレッド・同一フレーム」の前提が消える。
+    pub(crate) fn reset_size_guard(&self) {
+        *self.last_size.lock().unwrap() = (0.0, 0.0);
     }
 
     /// 物理 ↔ 論理の換算係数（#675）。

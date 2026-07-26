@@ -14,7 +14,7 @@
 //! 消す**ことであって、表現不能化ではない（spec §2.6 / §7-1）。
 //!
 //! **可視性の全体像はこの型だけでは閉じない。** main が hidden の間に results が出る事故は
-//! show 述語側のゲート（`layout::results_should_show`）が塞ぐ——本型は「誰が raw 操作を
+//! show 述語側のゲート（`layout::present_results`）が塞ぐ——本型は「誰が raw 操作を
 //! 撃つか」を一点に集めるだけで、「撃ってよい状況か」は判定しない。
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -61,7 +61,7 @@ impl ResultsWindow {
         // の間に他スレッドの `hide()` が挟まると「フラグ=false・窓=可視」の不一致が残りうる
         // （回収は次の show 遷移）。フラグと窓の同時性は保証しない。
         // この型が閉じられないぶんは、show 述語側の `main_visible` ゲート
-        // （`layout::results_should_show`）が main hidden 中の再表示を塞ぐ。
+        // （`layout::present_results`）が main hidden 中の再表示を塞ぐ。
         if self.visible.swap(true, Ordering::SeqCst) {
             return false;
         }

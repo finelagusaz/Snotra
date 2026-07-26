@@ -787,7 +787,7 @@ impl SearchWindowView {
     /// show は focusable(false) 窓ゆえフォーカスを奪わない(決定 4)。
     fn drive_results_window(
         &mut self,
-        show_results: bool,
+        plain_hidden: bool,
         width: f64,
         metrics: &crate::egui_shell::layout::Metrics,
     ) {
@@ -797,56 +797,69 @@ impl SearchWindowView {
         else {
             return;
         };
+        // 連言②の材料（件数）は**クリック逆流の消費後**に読む。③ `plain_hidden` は消費**前**に
+        // 読んだ値を受け取る（#752 F2）。**この非対称は意図である**——読み点を揃えて前へ寄せる
+        // と、行クリック起動フレームで古い行が 1 フレーム描かれる（`cargo test` では落ちない）。
         let count = self.state.results().len();
-        let res_h = crate::egui_shell::layout::results_window_height(
-            count,
-            self.max_results(),
-            metrics.row_height,
-        );
         // main が hidden の間は results を出さない（#671 PR A′ レビュー Important 1）。
         // main_visible は hide_egui_main が results.hide() の**前**に false へ落とすため、
         // その後に走ったフレームはここで確実に hide 側へ倒れる。判定式と根拠は
-        // layout::results_should_show（純粋核・ユニットテスト対象）。
+        // layout::present_results（純粋核・ユニットテスト対象）。
         let main_visible = self
             .app_handle
             .try_state::<crate::AppState>()
             .map(|s| s.main_visible.load(Ordering::SeqCst))
             .unwrap_or(false);
-        let visible =
-            crate::egui_shell::layout::results_should_show(main_visible, show_results, res_h);
-        if !visible {
-            // 可視フラグは ResultsWindow が持つ（#671 PR A′ spec 決定 2）。hide() は遷移した
-            // ときだけ true を返すため、trace は 1 回だけ出る（毎フレーム撃たない）。
-            // trace を型の内側でなく呼び出し側に置く理由は spec 決定 7。
-            if results.hide() {
-                crate::trace_main("egui_results:hide", serde_json::json!({ "from": "drive" }));
+        let desired_height = match crate::egui_shell::layout::present_results(
+            crate::egui_shell::layout::ResultsInputs {
+                main_visible,
+                plain_hidden,
+                result_count: count,
+                max_results: self.max_results(),
+                row_height: metrics.row_height,
+            },
+        ) {
+            crate::egui_shell::layout::ResultsPresentation::Hidden => {
+                // 可視フラグは ResultsWindow が持つ（#671 PR A′ spec 決定 2）。hide() は遷移した
+                // ときだけ true を返すため、trace は 1 回だけ出る（毎フレーム撃たない）。
+                // trace を型の内側でなく呼び出し側に置く理由は spec 決定 7。
+                if results.hide() {
+                    crate::trace_main("egui_results:hide", serde_json::json!({ "from": "drive" }));
+                }
+                return;
             }
-            return;
-        }
+            crate::egui_shell::layout::ResultsPresentation::Visible { desired_height } => {
+                desired_height
+            }
+        };
         // 位置: main の外形直下 + gap(物理座標。gap は論理 px を scale で換算)。無ガードの
         // 単一点(position_results_below_main・mod.rs)へ委譲——Moved リスナーと共用する
         // ため、デルタガードはヘルパー側に持たない(#646 PR2 決定 10)。
         let top_y = crate::egui_shell::position_results_below_main(&self.app_handle);
         // 作業領域の下端でクランプする（#675）。あふれた行は既存の ScrollArea が拾う。
         //
-        // **可視判定（上の `results_should_show`）には素の `res_h` を渡したままにする。**
+        // **可視判定（上の `present_results`）には `desired_height`（クランプ前）を使う。**
         // クランプには上端が要り、上端は直上の位置決めが決めるが、位置決めは可視判定の
         // **後**にある（不可視なら早期 return する）。判定にクランプ後の値を使おうとすると
         // 位置決めを判定より前へ動かすことになり、不可視フレームでも `SetWindowPos` を
         // 撃つ——#646 PR2 決定 10 の設計を変えてしまう。クランプは `set_size` に渡す値だけに
         // 効かせ、「0 件 ⇔ 高さ 0 ⇔ hide」の契約を判定側で無傷に保つ。
-        let res_h = crate::egui_shell::layout::clamp_results_height(
-            res_h,
+        //
+        // **`desired_height` と `applied_height` は別名にしてある**（#752 F5）。旧実装は同一
+        // 関数内で `res_h` を 2 度束縛しており、デルタガードがどちらを覚えるべきかが名前から
+        // 読めなかった。覚えるのは**クランプ後**である。
+        let applied_height = crate::egui_shell::layout::clamp_results_height(
+            desired_height,
             top_y.and_then(|y| crate::egui_shell::results_available_height(&self.app_handle, y)),
             metrics.row_height,
         );
         // デルタガードの照合対象は `set_size` の実引数と同じでなければならない
         // （素の値を覚えると、毎フレーム撃つか必要な再サイズを撃たないかのどちらかになる）。
-        if (res_h - self.last_results_height).abs() > 0.5
+        if (applied_height - self.last_results_height).abs() > 0.5
             || (width - self.last_results_width).abs() > 0.5
         {
-            results.set_size(width, res_h);
-            self.last_results_height = res_h;
+            results.set_size(width, applied_height);
+            self.last_results_height = applied_height;
             self.last_results_width = width;
         }
         // フォーカスを奪わない表示（tauri show() は SW_SHOW で活性化する・#646 PR2）。
@@ -1751,12 +1764,17 @@ impl EguiView for SearchWindowView {
         // （SolidJS parity: setIndexing は結果を触らず派生 memo が非表示を担う）。indexing 中の
         // 案内は空クエリ=hint・非空クエリ=overlay（Task 7・spec 追補 1）が担い、show_results=false
         // では results 窓が hide される（main は bar(+toast)固定高で伸縮しない・#646 PR2 決定 6）。
-        let show_results = !self.state.results().is_empty()
-            && !crate::egui_shell::plain_results_hidden(
-                self.state.view_kind(),
-                self.instant_rows_query.is_some(),
-                self.indexing(),
-            );
+        // 連言③は**1 フレーム 1 回だけ**読む（#752 F2）。`indexing` は `AtomicBool` の live-read で
+        // 同一フレーム内でも変わりうるため、pre/post で 2 回読むと連言③がフレーム内で食い違う。
+        // ここで得た値を snapshot 用と `drive_results_window` の両方へ配る。
+        let plain_hidden = crate::egui_shell::plain_results_hidden(
+            self.state.view_kind(),
+            self.instant_rows_query.is_some(),
+            self.indexing(),
+        );
+        // snapshot publish 用は**クリック逆流の消費より前**の値である（#699: publish → 消費の順序）。
+        // 一方 `drive_results_window` は件数を消費**後**に読む——この非対称が #752 F2 の要点。
+        let show_results = !self.state.results().is_empty() && !plain_hidden;
         // #646 PR2 決定 5: 結果は snapshot として発行し、描画は results 窓(ResultsView)が担う。
         // 変化があったフレームだけ store + wake(毎フレーム wake だと results が常時回る)。
         // 判定は Vec を作る前に行う（/simplify・効率）——無変化フレームで行数ぶんの String
@@ -1817,7 +1835,7 @@ impl EguiView for SearchWindowView {
             }
             ui.ctx().request_repaint();
         }
-        self.drive_results_window(show_results, width, metrics);
+        self.drive_results_window(plain_hidden, width, metrics);
 
         self.was_focused = focused;
     }

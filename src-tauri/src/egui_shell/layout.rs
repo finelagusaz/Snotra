@@ -1,6 +1,6 @@
 //! egui 検索ウィンドウの純粋レイアウト/タイミングヘルパー（#532 SU3）。ウィンドウ高さ算出・
-//! results 窓の幾何（上端 y・作業領域の残り）・検索 debounce の判定を egui/Win32 非依存で持つ。
-//! ユニットテスト対象。
+//! results 窓の可視性の導出（SPEC §8.6 の 4 連言）・幾何（上端 y・作業領域の残り）・
+//! 検索 debounce の判定を egui/Win32 非依存で持つ。ユニットテスト対象。
 
 use std::time::Duration;
 
@@ -85,7 +85,7 @@ pub fn results_window_height(result_count: usize, max_results: u32, row_height: 
 ///   （非 Windows・作業領域の取得失敗。従来どおりの挙動へ倒す）
 /// - `row_height`: 1 行の高さ
 ///
-/// **`desired == 0.0` は素通しする。** 0.0 は `results_should_show` が「hide」と読む契約値で
+/// **`desired == 0.0` は素通しする。** 0.0 は `present_results` が「hide」と読む契約値で
 /// あり（同関数）、クランプの結果として 0 を**作ってはならない**し、0 を**消してもならない**。
 ///
 /// `available` が 1 行に満たなくても **1 行 + padding 8 を床**にする。ここで 0 まで潰すと
@@ -129,21 +129,67 @@ pub fn available_below(work_area_bottom_phys: i32, top_y_phys: i32, results_scal
     (f64::from(work_area_bottom_phys - top_y_phys) / results_scale).max(0.0)
 }
 
-/// results 窓を表示してよいか（#671 PR A′・レビュー Important 1）。
+/// SPEC §8.6「検索結果ウィンドウの可視性（従属軸）」の 4 連言を、**生の入力から**受け取る
+/// （#752 C2）。
 ///
-/// **`main_visible` を条件に含めるのが要石である。** main を hide しても `state.results()` は
-/// 消えない（reset は show 側の `reset_pending` 消費でしか起きない）ため、`show_results` は
-/// hidden 中も true のまま残る。hidden 中に main の update() が 1 フレームでも走ると
-/// （`config-applied` / `indexing-*` / updater 完了の `wake_main` は main の可視性に関係なく
-/// 発火する）、results だけが最前面に取り残される。
+/// **融合した bool を受け取らない。** 旧 `results_should_show` は連言②「結果が空でない」と
+/// ③「通常結果を隠していない」を `show_results` という 1 つの bool へ潰した 3 引数であり、
+/// テストが「0 件だから隠れた」と「carve-out だから隠れた」を**区別できなかった**。
+/// それを解くことが #752 の実質である。
+#[derive(Debug, Clone, Copy)]
+pub struct ResultsInputs {
+    /// 連言①: main が可視か（`AppState.main_visible`）。
+    pub main_visible: bool,
+    /// 連言③: 通常結果を隠すか（`search_state::plain_results_hidden` の結果）。
+    /// **クリック逆流の消費より前に読んだ値**を渡す（`present_results` の doc）。
+    pub plain_hidden: bool,
+    /// 連言②の材料: 現在の結果件数。**クリック逆流の消費より後に読む**（同上）。
+    pub result_count: usize,
+    /// 連言④を②から独立させる唯一の入力（`appearance.effective_visible_rows()`）。
+    /// **0 は到達可能である**——本体の config 適用経路は `Config::validate()` を通らず、
+    /// 設定 UI の `1..=50` clamp は `config.toml` の手編集を止めない。
+    pub max_results: u32,
+    pub row_height: f64,
+}
+
+/// results 窓の見せ方の決定（#752 C2）。**クランプ前**の値であり、最終的な表示状態ではない
+/// ——作業領域による調整は driver が `clamp_results_height` で行う。
 ///
-/// PR A′ 以前はこの事故を `SearchWindowView` の view-local な可視フラグが偶然に防いでいた
-/// ——`hide_egui_main` から到達できず stale な true のまま残るため show を skip していた。
-/// 可視フラグを `ResultsWindow` へ移して正直に false にした結果、その防波堤が消えた。
-/// **「hidden 中は update() が走らない」という命題には依存しない**（機構は tao/OS 層の
-/// 配送抑止と #697 で実測済みだが、この判定はそれに依存せず成立する）。
-pub fn results_should_show(main_visible: bool, show_results: bool, results_height: f64) -> bool {
-    main_visible && show_results && results_height > 0.0
+/// `{ visible: bool, height: f64 }` の struct にはしない。`visible: true, height: 0.0` という
+/// 不正状態が構築でき、「高さ 0 は hide」という契約（`clamp_results_height` の doc）と
+/// 矛盾するためである。先例は `search_state::EscapeOutcome` と `lifecycle::BlurAction::Rearm`。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ResultsPresentation {
+    Hidden,
+    Visible { desired_height: f64 },
+}
+
+/// 4 連言を導く（#752 C2）。判定式の正本はここ 1 か所である。
+///
+/// **`main_visible` を条件に含めるのが要石である**（#671 PR A′）。main を hide しても
+/// `state.results()` は消えない（reset は show 側の `reset_pending` 消費でしか起きない）ため、
+/// 結果は hidden 中も残る。hidden 中に main の update() が 1 フレームでも走ると
+/// （`config-applied` / `indexing-*` / updater 完了の `wake_main` 自体は main の可視性を
+/// 見ない）、results だけが最前面に取り残される。hide 側の同期（`hide_egui_main`）と
+/// この show 側のゲートは**対**であり、片方では閉じない。
+/// **「hidden 中は update() が走らない」という命題には依存しない**（機構は tao/OS 層の配送
+/// 抑止と #697 で実測済みだが、この判定はそれに依存せず成立する）。
+///
+/// **読み点の非対称は呼び出し側の責務である**（#752 F2）。同一フレーム内で、③ `plain_hidden`
+/// はクリック逆流の消費**前**に、②の材料 `result_count` は消費**後**に読む。間に挟まる
+/// `start_launch` が `set_results(Vec::new())` を撃つため、行クリック起動フレームでは②が
+/// false になって窓が隠れる（旧構造は②を消費前に読んでいたので隠していたのは④だった——
+/// **帰結は同じ**）。**読み点を前へ寄せてはならない**——起動直後に古い行が 1 フレーム
+/// 描かれる。`cargo test` では落ちない種類の回帰である。
+/// **`plain_results_hidden` を前後で 2 回読んでもならない**——`indexing` は `AtomicBool` の
+/// live-read で、同一フレーム内でも値が変わりうる。
+pub fn present_results(i: ResultsInputs) -> ResultsPresentation {
+    let desired_height = results_window_height(i.result_count, i.max_results, i.row_height);
+    if i.main_visible && !i.plain_hidden && desired_height > 0.0 {
+        ResultsPresentation::Visible { desired_height }
+    } else {
+        ResultsPresentation::Hidden
+    }
 }
 
 /// 打鍵 debounce（決定7）。時刻は driver が注入する（純粋・テスト可能）。
@@ -324,20 +370,115 @@ mod tests {
         assert_eq!(clamp_results_height(300.0, Some(20.0), row), floor);
         // main が作業領域の外にある（available が負）
         assert_eq!(clamp_results_height(300.0, Some(-50.0), row), floor);
-        // **0 件は 0 のまま**——0.0 は results_should_show が hide と読む契約値で、
+        // **0 件は 0 のまま**——0.0 は present_results が hide と読む契約値で、
         // クランプが床を当てて作り替えてはならない
         assert_eq!(clamp_results_height(0.0, Some(0.0), row), 0.0);
         assert_eq!(clamp_results_height(0.0, Some(500.0), row), 0.0);
     }
 
+    /// 真理値表を読みやすくするための入力組み立て。`row_height` は固定でよい
+    /// （連言④の真偽を動かすのは `result_count` と `max_results` である）。
+    fn inputs(main_visible: bool, plain_hidden: bool, count: usize, max: u32) -> ResultsInputs {
+        ResultsInputs {
+            main_visible,
+            plain_hidden,
+            result_count: count,
+            max_results: max,
+            row_height: 37.0,
+        }
+    }
+
+    /// #752 AC1: SPEC §8.6「検索結果ウィンドウの可視性（従属軸）」の 4 連言の真理値表。
+    ///
+    /// 連言は ①`main_visible` ②結果が空でない ③通常結果を隠していない ④窓高さ > 0。
+    /// **②と③を区別できることが #752 の眼目である**——旧 `results_should_show` は両者を
+    /// `show_results` へ潰しており、「0 件で隠れた」と「carve-out で隠れた」を固定できなかった。
+    ///
+    /// ④を②から独立に false にできる唯一の入力は `max_results = 0`（到達可能・
+    /// `ResultsInputs::max_results` の doc）。
+    ///
+    /// **16 行のうち 4 行は到達不能である。** 「②false ∧ ④true」は生の入力から構成できない
+    /// （`result_count = 0` なら高さも 0 になる）。到達不能な行を assert で「検出器」に
+    /// 見せかけないため、**構成不能である事実を記述に留める**（#697「トートロジーテスト削除」）。
+    #[test]
+    fn present_results_truth_table_distinguishes_all_four_conjuncts() {
+        use ResultsPresentation::{Hidden, Visible};
+        let h = 3.0 * 37.0 + 8.0; // results_window_height(3, 8, 37.0)
+
+        // ①true ③true（plain_hidden = false）
+        assert_eq!(present_results(inputs(true, false, 3, 8)), Visible { desired_height: h }); // ②t ④t: 唯一の可視
+        assert_eq!(present_results(inputs(true, false, 3, 0)), Hidden); // ②t ④f（max_results=0）
+        assert_eq!(present_results(inputs(true, false, 0, 8)), Hidden); // ②f ④f
+        // ①true ③false（carve-out で隠す）
+        assert_eq!(present_results(inputs(true, true, 3, 8)), Hidden); // ②t ④t だが③で隠れる
+        assert_eq!(present_results(inputs(true, true, 3, 0)), Hidden);
+        assert_eq!(present_results(inputs(true, true, 0, 8)), Hidden);
+        // ①false ③true — 要石: main hidden なら行があっても出さない
+        assert_eq!(present_results(inputs(false, false, 3, 8)), Hidden);
+        assert_eq!(present_results(inputs(false, false, 3, 0)), Hidden);
+        assert_eq!(present_results(inputs(false, false, 0, 8)), Hidden);
+        // ①false ③false
+        assert_eq!(present_results(inputs(false, true, 3, 8)), Hidden);
+        assert_eq!(present_results(inputs(false, true, 3, 0)), Hidden);
+        assert_eq!(present_results(inputs(false, true, 0, 8)), Hidden);
+    }
+
     /// #671 PR A′: main が hidden の間は、結果が残っていても results を出さない。
     /// これを落とすと「main は隠れたまま results だけが最前面に残る」（レビュー Important 1）。
+    ///
+    /// **命題は `results_should_show` 時代から不変**（#752 C2 で `present_results` へ移設）。
+    /// 上の真理値表にも同じ行があるが、**この命題は名前で追跡する価値がある**ため独立に残す
+    /// ——表から 1 行落ちても、名前付きのこれが落ちる。
     #[test]
     fn results_hidden_while_main_is_hidden_even_with_rows() {
-        assert!(!results_should_show(false, true, 120.0)); // 要石: main hidden なら常に false
-        assert!(results_should_show(true, true, 120.0)); // 通常の表示条件
-        assert!(!results_should_show(true, false, 120.0)); // 表示ゲート（plain_results_hidden 等）
-        assert!(!results_should_show(true, true, 0.0)); // 0 件（高さ 0）
+        assert_eq!(present_results(inputs(false, false, 3, 8)), ResultsPresentation::Hidden);
+        // 対照: main が可視なら同じ入力で出る（要石が効いているのは①だけだと示す）
+        assert!(matches!(
+            present_results(inputs(true, false, 3, 8)),
+            ResultsPresentation::Visible { .. }
+        ));
+    }
+
+    /// #752 AC4: 旧実装との等価グリッド。
+    ///
+    /// 旧式（`results_should_show` + `results_window_height`）を**テストローカルのクロージャ**
+    /// として再現し、直積で新実装と突き合わせる。production に旧関数を残す形にはしない
+    /// ——`-D warnings` の `dead_code` で落ちるうえ、導出が 2 か所になる（`AGENTS.md`）。
+    /// クロージャならこのコミットの中に閉じる。**期待値を手計算で literal に書き写さない**
+    /// （直積の転記ミスがそこに湧く）。
+    ///
+    /// **このグリッドが固定するのは「pre-click 件数 == post-click 件数」のフレームに限られる。**
+    /// 行クリック起動フレーム（`start_launch` が結果を空にするため pre ≠ post）の等価性は
+    /// グリッドでは表現できず、`present_results` の doc に書いた論証が担う（#752 F2 / AC5）。
+    #[test]
+    fn present_results_matches_legacy_predicate_over_input_grid() {
+        // 削除前の `results_should_show` を逐語で再現する。
+        let legacy = |main_visible: bool, show_results: bool, results_height: f64| -> bool {
+            main_visible && show_results && results_height > 0.0
+        };
+        let row = 37.0;
+        for &main_visible in &[false, true] {
+            for &plain_hidden in &[false, true] {
+                for &count in &[0usize, 1, 3, 20] {
+                    for &max in &[0u32, 1, 8] {
+                        let i = inputs(main_visible, plain_hidden, count, max);
+                        let desired = results_window_height(count, max, row);
+                        // 旧経路の `show_results` は「件数 > 0 ∧ carve-out でない」の融合だった。
+                        let show_results = count > 0 && !plain_hidden;
+                        let expected_visible = legacy(main_visible, show_results, desired);
+                        match present_results(i) {
+                            ResultsPresentation::Visible { desired_height } => {
+                                assert!(expected_visible, "新は可視・旧は不可視: {i:?}");
+                                assert_eq!(desired_height, desired, "高さが旧と違う: {i:?}");
+                            }
+                            ResultsPresentation::Hidden => {
+                                assert!(!expected_visible, "新は不可視・旧は可視: {i:?}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// #752 C1: 上端 = main の下端 + gap（論理 → 物理へ換算して四捨五入）。

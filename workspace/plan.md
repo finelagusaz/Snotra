@@ -14,10 +14,10 @@
 | `src-tauri/src/egui_shell/mod.rs` | Modify | 上記 9 関数を削除し `mod window_coordinator;` + `pub(crate) use` の re-export を足す。**`//!` から移した責務を落とす** |
 | `src-tauri/src/main.rs` | Modify | `position_on_target_monitor`（150-193）を移設。未使用になる `use` はコンパイラが検出する |
 | `src-tauri/src/egui_shell/view.rs` | Modify | `drive_results_window` / `max_results` / results 用デルタガード 2 フィールドを撤去、呼び出しを 1 か所へ。**main 窓ガード（1830）の手書き式を `size_delta_exceeds` へ**（`/dry-check`） |
-| `src-tauri/src/egui_shell/results_window.rs` | Modify | デルタガードを内包（`last_size: Mutex<(f64, f64)>`・`set_size` を `layout::size_delta_exceeds` で自己ガード化・`reset_size_guard`） |
+| `src-tauri/src/egui_shell/results_window.rs` | Modify | デルタガードを内包（`last_size: Mutex<(f64, f64)>`・`set_size` を `layout::size_delta_exceeds` で自己ガード化・`reset_size_guard`）。**`//!` の「3 点セットと可視フラグ」に `last_size` を足す** |
 | `src-tauri/src/egui_shell/layout.rs` | Modify | 純粋述語 `size_delta_exceeds` を追加（+ 境界テスト）。doc 内の `mod.rs::` 名指し 2 か所（102 / 118）を訂正 |
 | `src-tauri/src/egui_shell/visual.rs` | Modify | doc コメント内の `mod.rs::position_results_below_main` を新モジュール名へ |
-| `src-tauri/CLAUDE.md` | Modify | 「モジュール構成」に新規ファイル行を追加し、**`view.rs` の責務散文から「results 窓 driver」を落とす**・`mod.rs` の散文を更新 |
+| `src-tauri/CLAUDE.md` | Modify | 「モジュール構成」の 5 行（新規 `window_coordinator.rs` / `mod.rs` / `view.rs` / `results_window.rs` / `layout.rs`）。判定表は Phase 5 |
 | `docs/architecture.md` | Modify | 83 行の駆動主体、172 行のシーケンス図の宛先 |
 
 **変更しないと決めたもの**（根拠を伴う）:
@@ -105,7 +105,7 @@ last_size: Mutex<(f64, f64)>,
 
 `show_egui_main` / `hide_egui_main` / `save_placement_relative` / `register_hide_listener` / `wake_main` / `wake_results` / `position_results_below_main` / `results_available_height` / **`position_on_target_monitor`**（`main.rs:150-193`）
 
-**`position_on_target_monitor` を含める理由**: 保存側 `save_placement_relative` が移るのに復元側だけ `main.rs` に残ると、位置の save / restore が 2 モジュールへ割れる（`/symmetric-check` の対象）。呼び出し元は `show_egui_main`（`mod.rs:396`）の 1 か所だけで（grep 実測）、それも同時に移る。`#[cfg(windows)]` のみで非 Windows の双子は無く、呼び出し側も `#[cfg(windows)]` ブロック内にある——**この非対称を移設で崩さない**。`main.rs` 側で未使用になる `use`（`monitor` / `window_data`）はコンパイラが検出する。
+**`position_on_target_monitor` を含めるのは、issue の責務表を超える意図的なスコープ拡大である**（PR 本文にもこの 1 行を書く）。issue の表はこの関数を挙げておらず、`main.rs` は当初「変更しない」に置いていた。それでも含めるのは、保存側 `save_placement_relative` が移るのに復元側だけ `main.rs` に残ると**「位置を 1 つの責務へ集めた」が偽になる**からである（`AGENTS.md`「全称表現は前提条件とセットで書く。書けないなら書かない」）。含めない場合の代替は「位置は集約しきっていない」と明記することであり、独立導出はどちらでもよいがどちらかの条件を満たせと述べた——**集約する側を採る**。呼び出し元は `show_egui_main`（`mod.rs:396`）の 1 か所だけで（grep 実測）、それも同時に移る。`#[cfg(windows)]` のみで非 Windows の双子は無く、呼び出し側も `#[cfg(windows)]` ブロック内にある——**この非対称を移設で崩さない**。`main.rs` 側で未使用になる `use`（`monitor` / `window_data`）はコンパイラが検出する。
 
 **`#[cfg(not(windows))]` の双子 arm を落とさない（検出器が無い）。** CI の rust-check は Windows のみで走るため、非 Windows の arm を移設で落としても**誰も一度もコンパイルせず永久に気づかない**。移設対象に含まれるのは 2 か所である（実測）:
 
@@ -203,7 +203,20 @@ crate::egui_shell::drive_results_window(
 
 ### Phase 5 — 文書同期と検査
 
-`src-tauri/CLAUDE.md`「モジュール構成」の `egui_shell/` 段落を 3 か所直す。**責務散文の正本は各ファイルの `//!` だが（#562）、この段落は「ファイル名 + 一言の責務要約」を添える書式である**（既存行と段 2 の PR #756 の実差分で確認）——字面どおり「索引だから名前だけ」と読んで要約を省かない:
+**責務記述の drift はサイトではなくクラスとして潰す。** 責務が変わるファイルは 6 つ（`mod.rs` / `view.rs` / `results_window.rs` / `layout.rs` / `main.rs` / 新規 `window_coordinator.rs`）である。**各ファイルについて `//!` と `src-tauri/CLAUDE.md` の該当行の両方を読んで判定する**（`governance:check` は `//!` の文言も CLAUDE.md の散文の妥当性も検査しない）。実測済みの判定:
+
+| ファイル | `//!` | `src-tauri/CLAUDE.md` の行 |
+|---|---|---|
+| `mod.rs` | **要更新**（show/hide・位置永続が偽になる） | **要更新** |
+| `view.rs` | 不要（results 窓 driver を名指ししていない・1-8 行で確認） | **要更新**（「results 窓 driver」を落とす） |
+| `results_window.rs` | **要更新**——「生 Win32 の 3 点セットと**可視フラグ**を 1 つの型が同時に所有する」に `last_size` が加わる | **要更新**（同文言） |
+| `layout.rs` | 要確認（純粋核の列挙に `size_delta_exceeds` を足すか） | **要更新**——**シンボルを明示列挙している行**（`Metrics` / `results_window_height` / `present_results` / `results_top_y` / `available_below` / `Debouncer`）に `size_delta_exceeds` が欠ける |
+| `main.rs` | 不要（1-6 行は「エントリポイント・setup・listener 登録・トレイ/ホットキー・背景再スキャン」で、位置復元を名指ししていない——**実測**） | 不要（`//!` へ委譲する 1 行） |
+| `window_coordinator.rs` | 新規（Phase 3 の草稿） | 新規行 |
+
+真のまま据え置くもの（実測）: `src-tauri/CLAUDE.md:49`「show の操作順序制約」は `position_on_target_monitor` を名指しするが**所在ではなく順序**を述べており移設後も真。`SPEC.md:412-415`（`follow_cursor_monitor` / 中央フォールバック）は関数名を持たない。`docs/superpowers/` の 20 件超のヒットは歴史記録。
+
+そのうえで `src-tauri/CLAUDE.md`「モジュール構成」の `egui_shell/` 段落を直す。**責務散文の正本は各ファイルの `//!` だが（#562）、この段落は「ファイル名 + 一言の責務要約」を添える書式である**（既存行と段 2 の PR #756 の実差分で確認）——字面どおり「索引だから名前だけ」と読んで要約を省かない:
 
 1. `window_coordinator.rs` の行を追加（一言要約 + `//!` が正本である旨は段落冒頭の既存規約が担う）
 2. **`view.rs` の要約から「results 窓 driver」を落とす**（driver 本体が出ていくため偽になる）
@@ -249,7 +262,9 @@ crate::egui_shell::drive_results_window(
 
 **素の `npm run smoke:egui` を使わない。** 引数なしの npm script は `-SeedConfig` も `-ResultsQuery` も渡さないため、**results 窓の検査が自動的に skip される**（`docs/build-commands.md`「スモーク運用メモ」・skip は黄色 NOTE で報告されるだけで exit 0）。本 PR の対象は当の results 窓であり、skip されたら**変更点が一切検証されない**。`-ResultsQuery` に開発機の索引に一致する 1 文字（A-Z 単字）を渡して `egui_results:show` / `egui_results:hide` の観測まで走らせる。
 
-**追加テスト**: `layout::size_delta_exceeds` の 2 本（Phase 1）。これが本 PR で増える唯一の自動カバレッジである。既存の `cargo test -p snotra` は **174 passed / 0 failed / 2 ignored**（`a98312c` で実測）で、移設によって**移動するテストは 0 件**である（`view.rs` のテストは font 系のみ）——受け入れ条件は「件数が 174 + 2 になり全緑」。
+**追加テスト**: `layout::size_delta_exceeds` の 2 本（Phase 1）。これが本 PR で増える唯一の自動カバレッジである。ベースラインは `cargo test -p snotra` = **174 passed / 0 failed / 2 ignored**（`chore/window-coordinator` の `2cc5271` で**自分で実測**・`finished in 1.55s`）。移設によって**移動するテストは 0 件**である（`view.rs` のテストは font 系のみ）——受け入れ条件は「**176 passed / 0 failed / 2 ignored**」。
+
+**段 3（#666）とのマージ順**: 段 1 が先である。#666 は同じ `view.rs` の分割で、段 1 は同ファイルから `drive_results_window` と 2 フィールドを抜く。段 3 は未着手のため衝突は生じない（着手済みなら順序の取り決めが要った）。
 
 **既存テストの役割**: `layout.rs` の `present_results` テスト群（真理値表・legacy 等価グリッド・main hidden）は無変更で通ることが移設の回帰検出器になる。**改名・転用はしない**（`AGENTS.md`「既存テストを改名・転用するとき」）。
 

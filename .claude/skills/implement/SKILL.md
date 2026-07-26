@@ -86,7 +86,7 @@ allowed-tools:
 
 `docs/build-commands.md` の「変更後の検証チェックリスト」を SSOT として、変更したファイルの種類に該当するカテゴリ A〜E をすべて実行する。失敗した場合、修正して失敗したステップから再実行する。
 
-- カテゴリ A（Rust 変更）の clippy・`cargo test -p snotra-core` も SSOT 上「必須」（最初の失敗で停止するチェーン実行を推奨）
+- カテゴリ A（Rust 変更）の clippy・`snotra-core` のテストも SSOT 上「必須」（最初の失敗で停止するチェーン実行を推奨）
 - **ソースファイルを追加/削除した場合、カテゴリ F（`npm run governance:check`）も実行する**（モジュール索引・参照・スキル表の整合。#629/#630 で索引更新漏れが CI まで再発した）
 - 状態でゲートされた挙動（分岐表示・エラー経路・cold path）は build/test が通っても検証済みとは限らない——その状態を実際に発生させて確認する（`docs/development-principles.md` デバッグ節）
 - 具体的なコマンド文字列は `docs/build-commands.md` を参照（二重メンテを避けるためこの SKILL に書かない）

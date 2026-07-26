@@ -19,6 +19,99 @@
 
 ---
 
+### Task 0: 検査の走査から `.superpowers/` を除外する（実行中に挿入・#722）
+
+**挿入の経緯**: Task 1 の完了後、実装者レポート（`.superpowers/sdd/**/task-1-report.md`・gitignore 済み）が旧参照 `` `/implement`「5b. …」 `` を地の文で 3 箇所引用していたため、G11 がそれを dangling と判定し `governance:check` が 3 件の赤、`npm test` の dogfood テストが 1 件の赤になった。**Task 2 以降の完了ゲート（`npm test` が通ること）が無関係な理由で満たせない**ため、#722 の修正を本計画へ取り込む。`.superpowers/` は gitignore 済みゆえ CI は緑であり、壊れているのは手元の検査母集団だけである。
+
+**Files:**
+- Modify: `scripts/governance-check.mjs`（`WALK_EXCLUDE_PREFIXES` とその直上コメント）
+- Test: `scripts/governance-check.test.mjs`（新規 describe を 1 つ）
+
+**Interfaces:**
+- Consumes: なし
+- Produces: `makeSnapshot` が `.superpowers/` 配下を列挙しなくなる。以降の全タスクはこれを前提に `npm test` の全件 PASS をゲートに使える
+
+- [ ] **Step 1: 失敗するテストを書く**
+
+`scripts/governance-check.test.mjs` の import に fs / os / path を足す（既存の `import { existsSync, readFileSync } from "node:fs";` を置き換える）:
+
+```javascript
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+```
+
+ファイル末尾（`describe("実リポジトリ スモーク（dogfood）"...)` の直前）に次を追加する:
+
+```javascript
+describe("makeSnapshot の走査除外（#722）", () => {
+  // 守りたい対象 = SDD 作業バッファ。実リポジトリではなく一時ディレクトリの複製に当てる
+  // （.claude/rules/safety-nets.md「稼働中のガードを弱めない——複製に変異を当てる」）
+  it(".superpowers/ 配下は母集団に入らない（gitignore 済みで CI には存在しない＝手元だけ赤くなる）", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "gov-walk-"));
+    try {
+      mkdirSync(path.join(root, "docs"), { recursive: true });
+      mkdirSync(path.join(root, ".superpowers/sdd/p"), { recursive: true });
+      writeFileSync(path.join(root, "docs/a.md"), "# a\n");
+      writeFileSync(path.join(root, ".superpowers/sdd/p/brief.md"), "# brief\n");
+      const s = makeSnapshot(root);
+      expect(s.files).toContain("docs/a.md");
+      expect(s.files.filter((f) => f.startsWith(".superpowers/"))).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+```
+
+- [ ] **Step 2: テストが落ちることを確認する（Red）**
+
+Run: `npx vitest run scripts/governance-check.test.mjs -t "走査除外"`
+Expected: FAIL。`.superpowers/sdd/p/brief.md` が `s.files` に現れるため、`toEqual([])` が落ちる。
+**この赤が出ないなら止まって報告する**（除外が既に効いていることになり、この Task の前提が崩れる）。
+
+- [ ] **Step 3: 最小の実装で通す（Green）**
+
+`scripts/governance-check.mjs` の定数を書き換える:
+
+変更前:
+```javascript
+const WALK_EXCLUDE_PREFIXES = ["workspace", ".claude/worktrees"];
+```
+変更後:
+```javascript
+const WALK_EXCLUDE_PREFIXES = ["workspace", ".claude/worktrees", ".superpowers"];
+```
+
+直上のコメントの末尾（`workspace/worktrees はルート錨止めにする` の後）に次を足す:
+```
+ *  `.superpowers/` は SDD（subagent-driven-development）の作業バッファで、gitignore 済みゆえ CI の
+ *  チェックアウトには存在しない——走査に含めると同じコマンドが手元と CI で別の母集団を見る（#722）。
+```
+
+- [ ] **Step 4: テストが通ることを確認する（Green）**
+
+Run: `npx vitest run scripts/governance-check.test.mjs -t "走査除外"`
+Expected: PASS
+
+- [ ] **Step 5: ゲートが回復したことを確認する**
+
+Run: `node scripts/governance-check.mjs && npm test`
+Expected: `G1..G11 passed` と全件 PASS（dogfood テストを含む。テスト数は 229 → 230 に増える）
+
+- [ ] **Step 6: コミット**
+
+```bash
+git add scripts/governance-check.mjs scripts/governance-check.test.mjs
+```
+コミットメッセージは一時ファイルへ Write して `git commit -F <tmpfile>`（HEREDOC を使わない）。件名:
+```
+fix(governance): 走査から .superpowers/ を除外する（#722）
+```
+本文に含めること: 実際に踏んだ経路（SDD のレポートが旧参照を地の文で引用 → dangling 判定 → dogfood テストまで赤）・gitignore 済みゆえ CI と手元で母集団が食い違うこと・`docs/superpowers/` は別物で既に除外済みであること。
+
+---
+
 ### Task 1: `/implement` の入口を作り替える
 
 **Files:**

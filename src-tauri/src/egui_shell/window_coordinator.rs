@@ -31,8 +31,14 @@ use super::layout;
 use super::{EguiShellState, ResultsWindow};
 
 /// 実行中 config から Metrics を導出する(#646 決定 2)。毎フレーム/毎 show の live-read で
-/// キャッシュしない。view(update)と show 経路の両方がここを通ることで、導出式とフォールバック
-/// を単一点に保つ(/simplify: 独立実装 2 箇所でフォールバックが 52.0/43.0 に乖離していた)。
+/// キャッシュしない。
+///
+/// **呼び出し元は `show_egui_main` だけである**（#749 で実測）。view は `read_visual` →
+/// `visual::visual_snapshot` 経由で同じ `layout::Metrics::from_config` に到達するため、
+/// **導出式とフォールバックの単一点は `Metrics::from_config` であって本関数ではない**
+/// (/simplify: 独立実装 2 箇所でフォールバックが 52.0/43.0 に乖離していた)。
+/// 本関数が `read_visual` と別に在るのは、show 経路が高さだけを要り色 parse を払わないため
+/// （`mod.rs` の `read_visual` の doc と対）。
 /// AppState 不在(setup 完了前の理論経路のみ)は `VisualConfig::default()` から導出——
 /// 既定値の正本(config.rs の default_*)に追従し、リテラル再手打ちを持たない。
 pub(crate) fn read_metrics(app: &tauri::AppHandle) -> layout::Metrics {

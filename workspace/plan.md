@@ -19,7 +19,8 @@
 | 同 | `hint_text` の `.color(bar_theme.path_color)`（1472 行）を**削除**する——egui 0.35 が無条件上書きするため dead であり、残すと「効いている」と読める |
 | 同 | コメントブロック（1446-1449 行の「§11 Part C（#643）: …」）を更新し、2 色それぞれが**なぜその経路なのか**（入力テキストはウィジェット単位の明示指定、hint は `weak_text_color` 経由でしか届かない）を記す |
 | `SPEC.md` §11 as-built（571 行） | 入力テキスト = `text_color`、hint = `hint_text_color`（**実際に効くようになった**）を書く |
-| `SPEC.md` §11 見た目の規範（559 行） | 「色の指定を省いて UI ライブラリの既定色に委ねない」を追記（**規範の変更**・下記セルフレビュー「規範の穴を塞ぐ」が根拠） |
+| `SPEC.md` §11 見た目の規範（554 行） | **スコープ宣言**を 1 文追加（本節が律するのは検索 UI で、設定画面は `SETTINGS-DESIGN.md` が正本）。これが無いと次行の追記が `snotra-settings` に対して嘘になる |
+| `SPEC.md` §11 見た目の規範（559 行） | 「色の指定を省いて UI ライブラリの既定色に委ねない」＋「指定したつもりで届かない経路もある」を追記（**規範の変更**・下記セルフレビュー「規範の穴を塞ぐ」が根拠） |
 
 ### 実装
 
@@ -48,7 +49,7 @@
 ### 不変条件
 
 - **入力テキストと hint は別の色であり続ける**: `name_color`（config `text_color`）と `hint`（config `hint_text_color`）。#643 が意図して分けた 2 色で、同色にしてはならない
-- **`weak_text_color` の差し替えが他の描画へ及ばない**: main 窓の Context で weak text を使う描画は TextEdit の hint だけである。status 行（`view.rs:1563` の `visual.hint`）・toast 本文（`theme.name_color`）・`draw_toast_button`（`theme.name_color` / `path_color`）はいずれも色を明示指定しており、`Visuals` の既定色経路を通らない。**results 窓は別 Context** ゆえ影響を受けない
+- **`weak_text_color` の差し替えが他の描画へ及ばない**（前提付きの全称主張）。前提は**ウィジェット棚卸し**である: `view.rs` / `results_view.rs` が使う egui のウィジェットは `ui.add_sized`（TextEdit）**1 箇所だけ**で、`ui.label` / `ui.button` / `ui.heading` / `ui.checkbox` は **0 件**（grep 実測）。残りはすべて `ui.interact` / `allocate_exact_size` / `Frame` / raw painter であり、painter 呼び出しは全件が色を明示渡ししている（research の同一パターン検索の表）。**`Visuals` の既定色を読む egui 内部経路を通るのは TextEdit だけ**であり、その TextEdit で weak text を使うのは hint のみ。**results 窓は別 Context** ゆえ `set_visuals` の影響外
 - **入力テキストに `visuals.override_text_color` を使う代替を採らない**: `override_text_color` は `Visuals::text_color()` の起点であり、`weak_text_color()` の導出元（`text_color().gamma_multiply(weak_text_alpha)`）でもある。ここを差し替えると **hint の色が入力テキスト色から派生してしまい**、(b) で明示指定する意図と衝突する。入力テキストは**ウィジェット単位の `.text_color()` に限定する**
 - **失敗しない変更である**: `text_color` は `Color32` を取る純粋なビルダ設定で、異常系を持たない。config の hex が不正なときの fallback は `visual.rs` の `hex_or` が既に処理済み（不正値 → 既定色。`visual.rs` のテストが固定）
 
@@ -236,6 +237,10 @@ pub enum ToastKind {
 
 既存 hatch の直前に置く（どちらも `return` するので順序が意味を持つ——**失敗の注入を先に見る**）。`docs/build-commands.md` の視覚スモーク節へ 2 本とも記載する（**既存 hatch は `docs/` にも `scripts/` にも記載が無い**——Step 2b が実測。ここで documented にする）。
 
+**前提条件は無い**（実測で確認）: `main.rs:326` が `spawn_update_check` を**無条件で**呼び、`auto_update` の判定は関数内（`mod.rs:144`）にある。hatch はその**前**（`mod.rs:128`）に置かれるため、`auto_update = disabled` でも hatch は効く。`docs/build-commands.md` にもこの旨を書く——「設定を変えないと出ない」と誤解されると、出ないことがコードのバグに見える。
+
+なお `mod.rs:119` の doc コメント「`auto_update != disabled` で一回だけ呼ぶ」は**呼び出し側の実態と食い違っている**（呼び出し側は無条件で、判定は関数内）。1 行の記述ずれで本 PR の対象ではないが、hatch を足すときに読む位置なので**同じ hunk のついでに正す**。
+
 ### 不変条件
 
 - **`Failed` 以外の 2 局面の見た目を変えない**: `Available` / `Installing` も同じ描画コードを通るため、末尾省略化はこの 2 つにも及ぶ。両者は短い定型文言（実測 117px 以下）で 532px の可用幅を超えないので、**表示は変わらない**。境界条件として「窓幅を極端に狭めると Available も省略される」——これは以前は無言のぶつ切りだったものが `…` になるだけで、退行ではない
@@ -277,7 +282,11 @@ pub enum ToastKind {
 
 §11 側は Phase 1 の入力欄 `text_color` の追記だけに留める。
 
-**スコープ外として触らないもの**: §20.3 の 1071-1074 行（`行1: … y = 高さ × 0.25` / `行2: … y = 高さ × 0.75` / `--update-toast-height` CSS 変数 / `updateInfo` シグナル）は、#700 の 1 行化と SU7 のフロント撤去で既に腐っている記述で、**#654 が新たに生む不整合ではない**。束 C（#674 + #698「WebView2/SolidJS 時代の残骸掃除」）の対象として残す。
+**スコープ外として触らないもの**: §20.3 の 1071-1074 行（`行1: … y = 高さ × 0.25` / `行2: … y = 高さ × 0.75` / `--update-toast-height` CSS 変数 / `updateInfo` シグナル）は、#700 の 1 行化と SU7 のフロント撤去で既に腐っている記述で、**#654 が新たに生む不整合ではない**。
+
+**ただし「束 C へ送る」という当初の記述は誤りだった**（advisor 指摘で `gh issue view` して発覚）。#674 は SPEC §4.8 の CSS `:hover` / `show_egui_main` のコメント / `hex_color` 重複の 3 項目、#698 は `code-reviewer.md` の SolidJS 記述であり、**どちらも §20.3 やトーストを名指ししていない**。行き先を確認せずに「別の束が拾う」と書けば、**#654 が起票された当の失敗様態**（「コードコメントだけの deferred は flip 後に消えやすいため issue 化する」）を再生産する。
+
+→ **#674 へコメントで項目を追加する**（issue という受け皿に、名指しで載せる）。本 PR では触らない。
 
 ---
 
@@ -328,11 +337,26 @@ pub enum ToastKind {
 
 ### 規範の穴を塞ぐ（§11 見た目の規範）
 
-`SPEC.md:559` を次へ拡張する（**規範の変更なので report で明示する**）:
+**新設した規約は既存の全事例に当てて検算してから書く**（`AGENTS.md`「検証の作法」）。当初案は検算を `view.rs` / `results_view.rs` にしか当てておらず、**そのまま書けば嘘になるところだった**（advisor 指摘）:
 
-> - **色は config `[visual]` から取る。** 描画コードに色リテラルを書かないこと、および**色の指定を省いて UI ライブラリの既定色に委ねないこと**。egui の既定はコード上に現れない色リテラルであり、省略は「書かない」を満たしても規範を破る（#654）
+- `snotra-settings/src/style.rs` は `TEXT_SECONDARY` / `STATUS_ERROR` 等の**色リテラルをデザイントークンとして定義**している
+- `snotra-settings` の各タブは `ui.label` / `ui.button` / `ui.checkbox` を計 60 件以上、**色を明示せず** egui 既定で描いている（`snotra-settings/src/tabs/*.rs`）
 
-**根拠**: 今回のバグは色リテラルを書いたのではなく指定を省いたもので、現行の文言では捕まらない。`.claude/rules/safety-nets.md`「規範のフォールトインジェクションとは回避しようとする読者である」「**忠実に従う読者が誤る経路は、手を抜く読者からは見えない**」に該当する実例が出た以上、穴は塞ぐ。
+つまり **§11 の現行文言「描画コードに色リテラルを書かない」は、既に `snotra-settings` に対して偽である**。§11 にスコープ宣言が無いのが根本原因で、私の追記はその偽を 1 つ増やすだけになる。
+
+ゆえに **2 つ書く**:
+
+**(1) スコープ宣言**（`SPEC.md:554` の「何に揃えるかを先に決める」段落へ 1 文追加）:
+
+> 本節が律するのは**検索 UI（main / results 窓）**である。設定画面（`snotra-settings`）は独立したデザイン体系を持ち、`snotra-settings/SETTINGS-DESIGN.md` が正本である。
+
+**(2) 穴を塞ぐ追記**（`SPEC.md:559`）:
+
+> - **色は config `[visual]` から取る。** 描画コードに色リテラルを書かないこと、および**色の指定を省いて UI ライブラリの既定色に委ねないこと**。egui の既定はコード上に現れない色リテラルであり、省略は「書かない」を満たしても規範を破る。**指定したつもりで届かない経路もある**——TextEdit の hint は `RichText::color()` を無視し `Visuals::weak_text_color` だけを見る（#654）
+
+**根拠**: 今回のバグ 2 件はどちらも色リテラルを書いたのではなく、**指定を省いた**（入力テキスト）か**指定が無視された**（hint）ものである。現行の文言はどちらも捕まえない。`.claude/rules/safety-nets.md`「規範のフォールトインジェクションとは回避しようとする読者である」「**忠実に従う読者が誤る経路は、手を抜く読者からは見えない**」の実例が 2 件出た以上、穴は塞ぐ。
+
+**(1) は既存の偽を消す変更でもある**——追記の副産物として、現行文言が `snotra-settings` について嘘をついている状態が解消される。
 
 ### 独立導出との差分（Step 2b）
 

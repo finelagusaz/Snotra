@@ -109,8 +109,8 @@ pub fn clamp_results_height(desired: f64, available: Option<f64>, row_height: f6
 /// PR A′ 以前はこの事故を `SearchWindowView` の view-local な可視フラグが偶然に防いでいた
 /// ——`hide_egui_main` から到達できず stale な true のまま残るため show を skip していた。
 /// 可視フラグを `ResultsWindow` へ移して正直に false にした結果、その防波堤が消えた。
-/// **「hidden 中は update() が走らない」という命題には依存しない**（機構は未同定・未測定・
-/// spec §7-2 が「既定事実として引用しない」と定めている）。
+/// **「hidden 中は update() が走らない」という命題には依存しない**（機構は tao/OS 層の
+/// 配送抑止と #697 で実測済みだが、この判定はそれに依存せず成立する）。
 pub fn results_should_show(main_visible: bool, show_results: bool, results_height: f64) -> bool {
     main_visible && show_results && results_height > 0.0
 }

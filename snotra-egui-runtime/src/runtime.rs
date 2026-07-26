@@ -182,6 +182,15 @@ impl<T: UserEvent> Plugin<T> for RuntimePlugin<T> {
                 }
             }
             Event::RedrawRequested(window_id) => {
+                // hidden 中の抑止点の切り分け計器（#697）。送信側は repaint.rs の worker。
+                // 引き当て前に置く——引き当て失敗で握りつぶされる経路も観測対象。
+                // runtime_id は送信側の window_id と同じ ID 空間ゆえ、窓の帰属を直接照合できる。
+                if std::env::var_os("SNOTRA_EGUI_WAKE_TRACE").is_some() {
+                    eprintln!(
+                        "SNOTRA_EGUI_WAKE_RECV window_id={window_id:?} runtime_id={:?}",
+                        context.window_id_map.get(window_id)
+                    );
+                }
                 let Some(runtime_id) = context.window_id_map.get(window_id) else {
                     return false;
                 };
@@ -307,13 +316,14 @@ impl EguiWindow {
     fn render(&mut self) -> Result<(), RuntimeError> {
         if !self.visible {
             // 到達可能性の注記（#671 サイクル PR A）: `RuntimeFrame::hide_window()` 削除
-            // （本ブランチ b9a9caf）により、crate 内で visible を false にする経路は現在
+            // （PR #677）により、crate 内で visible を false にする経路は現在
             // 無い（true にするのは new() の初期値と Focused(true) ハンドラのみ）。よって
             // このガードは現在到達不能。それでも残すのは、「hidden 中は update() が走ら
-            // ない」という #532 SU5 の不変条件がどの機構に依るか未測定（OS/tao が hidden
-            // 窓へ WM_PAINT を送らないためと推定）であり、将来 runtime 側での抑止が必要
+            // ない」という #532 SU5 の不変条件が runtime の外＝tao/OS 層に依っており
+            // （2026-07-26 実測・#697: worker は RequestRedraw を送信するが、hidden な
+            // 窓には RedrawRequested が配送されない）、将来 runtime 側での抑止が必要
             // になったときの受け口として置いているため。参照:
-            // docs/superpowers/specs/2026-07-25-egui-window-ownership-and-event-delivery-design.md §7 残余 2・3
+            // docs/superpowers/specs/2026-07-25-egui-window-ownership-and-event-delivery-design.md §7 残余 2・3（#697 の errata で解消）
             return Ok(()); // 不変条件⑥: 非表示中は描かない。
         }
         self.drain_native_ime();
@@ -476,16 +486,6 @@ fn cursor_icon(icon: egui::CursorIcon) -> Option<tauri::CursorIcon> {
 #[cfg(test)]
 mod tests {
     use super::{MAX_PAINT_RETRIES, retry_delay};
-
-    #[test]
-    fn hidden_window_is_not_painted() {
-        // visible=false のとき render は早期 return する契約を、visible 述語で固定。
-        fn should_render(visible: bool) -> bool {
-            visible
-        }
-        assert!(!should_render(false));
-        assert!(should_render(true));
-    }
 
     #[test]
     fn retry_delay_backs_off_then_gives_up() {

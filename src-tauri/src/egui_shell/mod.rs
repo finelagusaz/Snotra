@@ -535,10 +535,11 @@ pub(crate) fn register_hide_listener(app: &tauri::AppHandle) {
 
 /// 可視中の main 窓を起こす（#671 PR D。旧実装＝窓ごとの Context clone を登録するスロットの後継）。
 ///
-/// hidden 中は実効的な no-op である——ただし**その抑止は wake 経路ではなく OS/tao 層に
-/// あると推測されており未測定**（`RequestRedraw` は hidden 窓に `WM_PAINT` を生まない・
-/// spec §7 残余 2）。旧実装（Context の clone に `request_repaint()`）と同じ経路
-/// （`RepaintScheduler` → proxy → `RequestRedraw`）を通るため、この性質は変わらない。
+/// hidden 中は実効的な no-op である——抑止は wake 経路ではなく **tao/OS 層**にある
+/// （2026-07-26 実測・#697: worker は `RequestRedraw` を送信するが、hidden な窓には
+/// `RedrawRequested` が配送されない。spec §7 残余 2 は errata で解消済み）。旧実装
+/// （Context の clone に `request_repaint()`）と同じ経路（`RepaintScheduler` → proxy →
+/// `RequestRedraw`）を通るため、この性質は変わらない。
 ///
 /// **`try_state` が返す `Option` は残る**（Tauri managed state の性質）。消えたのは
 /// 「Context が登録済みか」という 2 段目の Option である。
@@ -550,7 +551,8 @@ pub(crate) fn wake_main(app: &tauri::AppHandle) {
 
 /// results 窓を起こす(#646 PR2)。snapshot 更新・config 変更を反映させる wake。呼び出しは
 /// main の update() 内 2 箇所: snapshot 差分検知時（edge-triggered・変化フレームのみ）
-/// と `drive_results_window`（可視時・毎フレーム・level-triggered）。hidden 中の results は
+/// と `drive_results_window`（可視時・毎フレーム・level-triggered。**削ると壊れる理由は
+/// 呼び出し点のコメントを参照**——決定 5・#697）。hidden 中の results は
 /// 描かれないため事前 wake は無意味(plan-review で冗長と判定)。クリック逆流の results→main は
 /// `wake_main` を使う。
 ///

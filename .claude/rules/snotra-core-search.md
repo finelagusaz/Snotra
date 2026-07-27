@@ -12,7 +12,7 @@ paths:
 - 責務・スコア階層・全順序の強制: `search.rs` の `//!`、`SearchEngine` の struct doc、`mod score_tier` の doc（直後の `const _` 全順序アサーション含む。位置は下の注記参照）
 - incremental 述語と前回状態の規律: `IncrementalCache`（`can_reuse` の read / `update` の write を対に持つ・#601）・`score_one_entry` / `heap_into_results` の doc と `search_with_options` 本体のコメント
 
-> **位置はファイル名で断定せず、シンボル名で grep して現在地を確認する。** search.rs は責務単位で `search/{build,query_plan,scoring}.rs` へ分割済み（#598〜#600）で、上記シンボルは移動しうる（例: `mod score_tier` / `score_one_entry` / `heap_into_results` は `search/scoring.rs`、`compute_wave1/2` は `search/build.rs`、`prepare_query_plan` は `search/query_plan.rs`）。名前参照は refactor を生き延びるが、`<file> の X` という位置断定は腐る（#600 実測）。
+> **上記シンボルの現在地**（位置をファイル名で断定しない規律そのものは、search.rs の編集で同時に配送される `snotra-core.md` が持つ）: search.rs は責務単位で `search/{build,query_plan,scoring}.rs` へ分割済み（#598〜#600）——`mod score_tier` / `score_one_entry` / `heap_into_results` は `search/scoring.rs`、`compute_wave1/2` は `search/build.rs`、`prepare_query_plan` は `search/query_plan.rs`（#600 実測）。
 - 横断不変条件（並列 Vec レイアウト・ビットマスク一元化・has_path_sep 非互換）: `snotra-core/CLAUDE.md` の search.rs 節・「文字ビットマスク」節・「incremental cache とパスクエリの非互換」節
 
 ## トリガー → 検査

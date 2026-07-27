@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-このリポジトリで Claude Code が作業するときの運用ガイド。共通開発プロセス（ワークフロー・事前チェック）は `AGENTS.md`（次行で自動読込）、モジュール固有の不変条件は各サブディレクトリの `CLAUDE.md`（→ `AGENTS.md`「ドキュメント参照」）。Tauri v2 / egui / Rust クレートの最新 API 調査には context7 MCP を使う（設定済み）。
+このリポジトリで Claude Code が作業するときの運用ガイド。共通開発プロセス（ワークフロー・事前チェック）は `AGENTS.md`（次行で自動読込）、モジュール固有の不変条件は各サブディレクトリの `CLAUDE.md`（→ `AGENTS.md`「ドキュメント参照」）。
 
 @AGENTS.md
 
@@ -15,7 +15,6 @@
 |---|---|---|
 | bash の HEREDOC（`<<EOF` / `<<'EOF'`） | 一時ファイルに書き出して `git commit -F <tmpfile>`、または PowerShell here-string `@'...'@`（閉じ `'@` は必ず行頭） | here-string の引用境界が壊れ、終端マーカーがコミットメッセージ本文に漏れる事故が起きている |
 | 文字列中のパスに `\` 区切り | `/` で統一する | PowerShell でも Git/Node/Cargo は `/` を受け付ける。`\` はエスケープが必要になり壊れやすい |
-| `/tmp` への書き込み | `$env:TEMP` 配下に置くか Write ツールで作る | Windows の Bash ツールに `/tmp` は無く、`cat > /tmp/...` は `FileNotFoundError` で失敗する |
 | Python で非 ASCII をそのまま標準出力 | `PYTHONIOENCODING=utf-8` を付ける | cp932 コンソールで `—`・日本語などを print すると `UnicodeEncodeError` で落ちる（JSON/ログ整形で多用） |
 
 ## Git/GitHub 運用
@@ -23,7 +22,6 @@
 - **main 保護の実体は `.githooks/` と GitHub ruleset である** — `.githooks/` の 4 hook が commit / 非 FF merge / rebase / push を拒み（`githooks.test.mjs` で実測）、GitHub ruleset `default` が main への直接 push を拒む（実測）。bootstrap は `npm install`（`prepare` が `core.hooksPath` を設定）
 - **Layer 1（`.githooks/`）は best-effort である** — hook は追跡ファイルゆえ、含まないコミットの checkout は fail-open。`cherry-pick` / `revert` / `am` / `branch -f` / `update-ref` も `pre-commit` を呼ばず**沈黙で main が進む**（実測）。**取りこぼしは push 時に GitHub ruleset が捕捉する**（不在検知は意図的に置かない）
 - **`--no-verify` は人間専用** — `.githooks/` を迂回する。Claude は使用してはならない。迂回しても main への直接 push は GitHub ruleset が拒む（実測）
-- **`gh pr create` は `git push` と `&&` で繋いでよい** — PR 前 push チェック hook（`.claude/hooks/pre-bash.mjs`）は、鎖の中で `git push` が `&&` で先行していれば通す（`&&` が前段の成功を保証するため）。区切りが `;` / `||` / 改行の場合は push 失敗時に PR が作られうるので拒否する。`git -C <別ツリー> push` も安全な鎖とは見なさない（#482 で実測）。`workspace/plan.md` の未チェック項目は独立に判定する（→「フック」表）
 - **main の同期は `git pull --ff-only` を使う** — 非 FF の `git pull` は main にマージコミットを作るため `.githooks/pre-merge-commit` が拒否する。FF ならマージコミットが生じず hook は呼ばれない
 - **マージで閉じる issue を決めるのは PR 本文であり、`gh pr merge` の `--subject` / `--body-file` では抑止できない**（#488 実測）。auto-close は本文の**どこにあっても** `close`/`fix`/`resolve` 系 9 形（大文字小文字問わず・表やチェックリスト内も）でマージ時に走り、PR テンプレートが `Closes` を埋めるため**書いた覚えが無くても残る**。hook も見ていない（→「フック」の (A2)）。**だから下の手順が唯一の防御である**。なぜこの機構になるか（2 経路の可視性の非対称・マージ方式では逃げられない・squash 設定と復元レシピ）は `docs/adr/0002-squash-merge-issue-autoclose.md`
 
@@ -65,7 +63,6 @@
 - **並列エージェント委譲はファイル境界で衝突を予測してから行う** — 同一ファイルに触りうるタスクは直列化するかマージ順を決める。境界は「実装中に踏み込みうる隣接ファイル」まで含めて見積もる。リベース解決はコンテキストを保持した実装エージェント本人に依頼するのが最短（#439, #435）
 - **委譲はコンテキストを継承しない** — メインエージェントの system prompt にしか無い事実（メモリ領域の絶対パス等）はサブエージェントのプロンプトへ明示的に渡す——渡し忘れると見えないものを「無いもの」として報告する。**`allowed-tools` はインライン実行のスキルを拘束しない**（実測）——frontmatter に `Agent` が無いことを根拠に「このスキルは委譲しない」と推論してはならない。また**委譲した検査が対象を読む時刻は制御できない＝検査対象を変更しながら検査を走らせない**（#489）——**起動したことを相手は知らないので、「以降この範囲を触るな」と伝えるのは委譲側の責務である**。**委譲した検査の成果物は、呼び出し側が指定したパスへ書かせる**（返り値に依存させない）：実装の成果は git に残るので報告が落ちても検知できるが、レビュー・判定は会話にしか無く、届かなければ実施の有無すら区別できない（#725 で 6 回中 5 回・束C で 2 回中 2 回。落ちる機序は `docs/development-principles.md`「デバッグ・バグ修正」）
 - **長時間の委譲タスクは中断を前提に設計する** — セッションリミット・API エラーで途中終了しうる。大きなタスクは Phase 分割し「各 Phase の検証 green 後にコミット」を指示に含める（#431）
-- Agent `isolation: "worktree"` は使用可（worktree は `.claude/worktrees/agent-<id>/` に作られ、`.gitignore` 済み）。残った worktree は `npm run clean:worktrees` で掃除する（→ `docs/build-commands.md`）
 
 ## コミュニケーション原則
 
@@ -76,21 +73,12 @@
 
 ## 利用できるスキル
 
-トリガー（どの変更でどの検査に振るか）の SSOT は `AGENTS.md`「条件別チェック」表、引数の形は各 `SKILL.md` の `argument-hint`。この表は索引である。
+トリガー（どの変更でどの検査に振るか）の SSOT は `AGENTS.md`「条件別チェック」表、引数の形は各 `SKILL.md` の `argument-hint`。**この表が索引するのは `disable-model-invocation: true` の user 起動専用スキルだけである** — 残りは harness が skill roster を `description` ごと毎セッション注入するため、書き写すと同じ面に二重で課税される（射程は G8 が双方向で固定する）。
 
-| スキル | 使うとき |
+| スキル（user 起動専用） | 使うとき |
 |---|---|
-| `/plan-review`       | 計画（plan.md）完成後、実装着手前の検証（横断変更では独立導出+差分も） |
-| `/symmetric-check`   | 対称ペア（clicked/double-clicked・show/hide・生成/破棄・フラグ真偽）の適用漏れ |
-| `/dry-check`         | 関数の新規定義・変更時、手書き重複の残存 |
-| `/race-check`        | 並行境界（worker・channel・drain・listener・共有状態・live-read・async）の状態競合 |
-| `/cache-check`       | キャッシュ再利用の述語の単調性と状態遷移 |
-| `/persistence-check` | 永続形式（index.bin/config.toml/history/window.bin）の version・後方互換・データ保全 |
-| `/state-check`       | UI モード・ガード条件の直交性・リセット経路・SPEC §8.6 整合 |
 | `/health-check`      | 定期・サイクル完了後の governance:check + 意味的整合（報告のみ・修正しない） |
 | `/retrospective`     | サイクル終了後の教訓抽出・残タスク振り分け・RETROSPECTIVE.md 上書き |
-| `/start-issue`       | GitHub issue から作業開始（ブランチ作成・調査・計画まで） |
-| `/implement`         | 実装〜コミット（計画が要る変更は `/start-issue` へ） |
 | `/deps-update`       | cargo/npm 依存の一括更新と PR 作成・CI 確認（マージは手動） |
 
 サブエージェント: `code-reviewer`（`.claude/agents/`）— 実装後・コミット前の3フェーズレビュー（実装検証 / 計画判断・SPEC.md 同期 / パフォーマンス）。`/implement`「4b. code-reviewer エージェント」が自動で起動する。

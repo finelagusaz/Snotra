@@ -405,8 +405,42 @@ export function checkRulesGlobs(snapshot) {
   return findings;
 }
 
+const SKILL_FILE_RE = /^\.claude\/skills\/[^/]+\/SKILL\.md$/;
+
+/** `.claude/skills/<name>/SKILL.md` の一覧（G8・G10 の共通母集団） */
+function skillFiles(snapshot) {
+  return snapshot.files.filter((f) => SKILL_FILE_RE.test(f));
+}
+
+/**
+ * `disable-model-invocation: true` の skill 名の集合 = **harness の roster に注入されない skill**。
+ * G8（表が索引すべき対象）と G10（常時ロード面に載る description）の両方がこの集合で決まるため、
+ * 導出は 1 箇所に閉じる。判定は frontmatter ブロックの中だけを見る——本文が同じキー名に言及する
+ * 実例がある（`/retrospective` が `/health-check` の起動方法を説明している）。
+ *
+ * **判定不能はすべて「隠しでない」へ倒す。** 同じ状態へ入る経路は 4 本ある——値が `true` でない /
+ * キーが無い / frontmatter が壊れている・無い / ファイルが読めない。この向きなら、判定できなかった
+ * skill は「roster が覆う側」に残り、表に行が無くても緑になる（静かな方の失敗）。逆へ倒すと、
+ * 存在しない表の行を要求して赤になる。
+ */
+export function modelHiddenSkills(snapshot) {
+  const hidden = new Set();
+  for (const f of skillFiles(snapshot)) {
+    const text = snapshot.read(f);
+    if (text == null) continue;
+    const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    if (!fm) continue;
+    if (/^disable-model-invocation:[ \t]*true[ \t]*$/m.test(fm[1])) hidden.add(f.split("/")[2]);
+  }
+  return hidden;
+}
+
 // ---------------------------------------------------------------------------
-// G8 — ルート CLAUDE.md「利用できるスキル」表 ↔ .claude/skills/*/SKILL.md（旧 Check 9）
+// G8 — ルート CLAUDE.md「利用できるスキル」表 ↔ roster に載らない skill（旧 Check 9）
+// harness は毎セッション skill roster を description 付きで注入するため、注入される skill を
+// 表へ書き写すことは同じ面での二重課税である（ADR-0005 が description を常時ロード面に算入した
+// のと同じ理由）。ゆえに表が索引すべき対象は `disable-model-invocation: true` の skill だけであり、
+// G8 はその集合と表の**双方向**一致を見る。「表の射程」を規範ではなくこの判定で固定する。
 // ---------------------------------------------------------------------------
 export function checkSkillTable(snapshot) {
   const findings = [];
@@ -414,17 +448,19 @@ export function checkSkillTable(snapshot) {
   if (text == null) return [finding("CLAUDE.md", 1, "ルート CLAUDE.md が読めない")];
   const section = text.split(/^## 利用できるスキル$/m)[1]?.split(/^## /m)[0] ?? "";
   const inTable = new Set([...section.matchAll(/^\|\s*`\/([a-z0-9-]+)`/gm)].map((m) => m[1]));
-  const inDirs = new Set(
-    snapshot.files
-      .filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f))
-      .map((f) => f.split("/")[2]),
-  );
+  const inDirs = new Set(skillFiles(snapshot).map((f) => f.split("/")[2]));
+  const hidden = modelHiddenSkills(snapshot);
   if (inDirs.size === 0) findings.push(finding(".claude/skills", 1, "SKILL.md が 0 件（G8 母集団の欠落）"));
   for (const s of inTable) {
     if (!inDirs.has(s)) findings.push(finding("CLAUDE.md", 1, `スキル表の /${s} に SKILL.md が無い（.claude/skills/${s}/）`));
+    else if (!hidden.has(s)) {
+      findings.push(
+        finding("CLAUDE.md", 1, `スキル表の /${s} は harness の roster に載る（表の対象は disable-model-invocation: true の skill だけ）`),
+      );
+    }
   }
-  for (const s of inDirs) {
-    if (!inTable.has(s)) findings.push(finding("CLAUDE.md", 1, `.claude/skills/${s}/ がスキル表に載っていない`));
+  for (const s of hidden) {
+    if (!inTable.has(s)) findings.push(finding("CLAUDE.md", 1, `.claude/skills/${s}/ は roster に載らないのにスキル表に無い`));
   }
   return findings;
 }
@@ -524,8 +560,18 @@ export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
  * **2026-07-27 引き上げ 15823→16028**（実測 15798→15928・+130 字）: #749 の plan.md ゲート機構を
  * `docs/hooks.md` へ実装契約として、CLAUDE.md フック表へ発火条件・正しい対応を同期した（#749 の plan.md ゲート案内追記）。
  * ゲートの案内追記により常時ロード規範が旧予算 15823 を超過したため、実測 15928 + 100 字バッファで 16028 へ引き上げた。
+ * **2026-07-27 引き下げ 16028→14712 / 8418→8328**（実測 常時ロード 15974→14612・rules 8408→8228）:
+ * Claude 5 世代のコンテキスト監査。内訳は 3 種で、いずれも「読む量が実際に減った」ものである。
+ *   (1) 重複の削除（CLAUDE.md）— スキル表の 9 行は harness の roster と同じ面で二重、`&&` 鎖の bullet は
+ *       同ファイルのフック表と `pre-bash.mjs` の REMEDY と三重だった。
+ *   (2) 導出可能の削除（CLAUDE.md）— context7 の一文・`/tmp` 行・worktree の所在は、いずれも harness の
+ *       指示か `.gitignore` / `docs/build-commands.md` が同じことを言う。計 CLAUDE.md で -1119 字。
+ *   (3) 計測の是正（-243 字）— `disable-model-invocation: true` の 3 件は roster に注入されないのに
+ *       description を算入していた。ADR-0005 の算入根拠（毎セッション注入される）を満たさない。
+ *   rules 面 -180 字は `safety-nets.md` の「カナリア」節を `docs/hooks.md` の正本へ寄せ、
+ *   `snotra-core-search.md` の一般則を同時配送される `snotra-core.md` へ一本化したもの。
  */
-export const AREA_BUDGET = { alwaysLoaded: 16028, rules: 8418 };
+export const AREA_BUDGET = { alwaysLoaded: 14712, rules: 8328 };
 
 /** コードポイント数（CR は除く）。読めなければ null（母集団欠落を上位で検知） */
 function countChars(text) {
@@ -547,9 +593,15 @@ function sumChars(snapshot, files, gLabel) {
 /**
  * 毎セッション注入される skill の `description` の総文字数。
  * 複数行スカラー（`|` / `>`）と欠落は数えられないので finding に倒す（沈黙経路の閉塞）。
+ * **`disable-model-invocation: true` の skill は除く** — ADR-0005 が description を常時ロード面へ
+ * 算入した根拠は「毎セッション注入されるのに ratchet から見えていない」であり、roster に載らない
+ * skill はその前提を満たさない（載らないものを数えれば、実際には注入されていない字に課税する）。
+ * `count` は母集団の存在確認用なので、除外前の全 skill 数を返す。
  */
 export function skillDescriptionArea(snapshot) {
-  const files = snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f));
+  const all = skillFiles(snapshot);
+  const hidden = modelHiddenSkills(snapshot);
+  const files = all.filter((f) => !hidden.has(f.split("/")[2]));
   let total = 0;
   const findings = [];
   for (const f of files) {
@@ -566,7 +618,7 @@ export function skillDescriptionArea(snapshot) {
     }
     total += [...v.replace(/^["']/, "").replace(/["']$/, "")].length;
   }
-  return { total, findings, count: files.length };
+  return { total, findings, count: all.length };
 }
 
 export function checkNormativeAreaBudget(snapshot) {

@@ -21,7 +21,7 @@
 | 判定 | 発火する形 | platform |
 |---|---|---|
 | `usesHeredoc` | bash の heredoc 演算子（`<<EOF` / `<<-'EOF'`）。`<<<` とシフト演算子は除く | win32 のみ |
-| `usesBackslashPath` | `C:\` / `$env:X\` / `%X%\` の 3 形。正規表現エスケープ（`\d`）や `find -exec \;` は巻き込まない | win32 のみ |
+| `usesBackslashPath` | `C:\` / `$env:X\` / `%X%\` の 3 形。ドライブレターは語頭かつ `\` の後に 2 字以上を要求する（`rg "version:\s+"` を巻き込まないため。代償で `cd C:\` は見ない） | win32 のみ |
 | `needsPyEncoding` | コマンド位置の `python` かつ非 ASCII を含み、`PYTHONIOENCODING=` / `PYTHONUTF8=` / `-X utf8` のいずれも無い | win32 のみ |
 | `usesNoVerify` | `git` セグメントの `--no-verify`（commit セグメントの短縮 `-n` / `-nm` も同義。`git push -n` は `--dry-run` なので無傷） | 非依存 |
 | `pullWithoutFfOnly` | `--ff-only` を持たない `git pull` | 非依存 |
@@ -31,9 +31,9 @@
 - **爆発半径が (1)(2) と違う。** この 5 判定は**全 Bash/PowerShell コマンド**で走る（`gh pr create` 系は検出後のみ）。ゆえに**全域関数でなければならない** — throw すれば `main()` の catch が exit 2 を書いてセッションの全コマンドが止まり、hang すれば hook の timeout まで全コマンドが待つ。`usesHeredoc` は全候補を走査するが、終端行の索引を 1 パスで作ることで線形に保つ（候補ごとに全文走査する素朴形は候補 2 万件で 1812ms・実測）。
 - **フック間契約**: `post-edit.mjs` が会話へ出す再現コマンド（`repro`）は、`\` 判定が通す形でなければならない。Windows では `resolveBin` が `path.join` で `\` 区切りの絶対パスを作るため、`repro` だけを `/` に正規化している（実行に使う `cmd`/`args` は正規化しない）。**片方の hook が指示するコマンドをもう片方が拒む状態**は、規範を機構へ移した設計の信頼を直に壊す——`pre-bash.test.mjs` の相互契約カナリアが `decide` を直に呼んで固定する。
 - **受容する未対応リスク**（いずれも fail-closed の設計方針の下で意図的に残す。**「検出されないなら使ってよい」ではない** — 検出されない形も規範に反するなら人間専用の意図的迂回であり、上の `sh -c` 項と同格に扱う）:
-  - **引用内の区切りでセグメントが切れる**（`git commit -m "a;b" --no-verify`）。引用認識の分割は shell パーサ相当になり、payload 全体 grep の誤爆を作り直す。
+  - **区切りの走査はシェルの構文を理解しない**ので、区切り文字が構文の内側にあるとセグメントが早く切れて見落とす: 引用内（`git commit -m "a;b" --no-verify`）と**行継続をまたぐ形**（`git commit \` + 改行 + `--no-verify`。PowerShell のバッククォート継続も同型）。引用・継続を解釈する分割は shell パーサ相当になり、payload 全体 grep の誤爆を作り直す。`segmentEnd` は `hasSafeChain` と共有されているため、継続の扱いを変えると `gh pr create` ゲートの意味も動く。
   - **コマンド文字列に現れない非 ASCII は見えない**（`python foo.py` でスクリプト側が出す形）。コマンドの形からは判定材料が無い。
-  - **`.\` / `..\` を `\` 判定に含めない。** `.\scripts\x.ps1` は PowerShell で正しく動く形であり、止める理由が弱い。
+  - **`\` 判定は上表の 3 形しか見ない**ので、`.\scripts\x.ps1` のような相対形も接頭辞を持たない `docs\hooks.md` も検出されない（`.\` は PowerShell では動くため誤爆の代償が大きく、形を絞ったことの代償でもある）——**検出しないだけで、規範としてはコマンドに書くパスの区切りを `/` にする**。
   - **`pull` はブランチを見ない**ので `git pull --rebase` も feature ブランチでの pull も止まる（過剰検出）。ブランチ判定は `readGitState` の責務を広げるため採らない。
   - **`.githooks/_lib.sh` は拒否メッセージで `--no-verify` による迂回を案内する。** 明示的に「人間専用。エージェントは使用禁止」と書いてあるため矛盾ではない（この hook が拒むのはエージェントの実行であり、人間の判断を妨げない）。
 

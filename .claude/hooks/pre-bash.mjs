@@ -46,7 +46,14 @@ const GIT_TIMEOUT_MS = 10_000;
 const AT_CMD_POS = String.raw`(?:^|[;&|\n\r(){}])\s*`;
 
 // フラグはサブコマンドの前後どちらにも来うる。値がスペース区切り（`--repo o/r`）でも読み飛ばす。
-const FLAG = String.raw`(?:-{1,2}\S+(?:\s+[^-\s]\S*)?\s+)*`;
+//
+// **ダッシュの終わりは一意でなければならない。** 素朴な `-{1,2}\S+` は `--x` を「`-` + `-x`」とも
+// 「`--` + `x`」とも解釈でき、どちらも同じ位置で終わる。この曖昧さが `*` の下に入ると、
+// 全体が失敗するときに 2^n 通りを探索する——`git --f0=v0 … --f23=v23 x` の 225 字で **747ms**
+// かかった（実測）。#768 でこの FLAG が `git` セグメント判定経由で**全コマンド**に乗ったため、
+// hook の timeout（exit≠2 = 非ブロッキング）で fail-open する経路になっていた。
+// `--?[^-\s]` はダッシュの直後に非ダッシュを要求するので分割は 1 通りに決まる（`--` 単独は別枝）。
+const FLAG = String.raw`(?:(?:--?[^-\s]\S*|--)(?:\s+[^-\s]\S*)?\s+)*`;
 
 // `GH_TOKEN=x gh pr create` のような環境変数の前置もコマンド位置と見なす。
 const ENV_PREFIX = String.raw`(?:[A-Za-z_]\w*=\S*\s+)*`;
@@ -129,7 +136,10 @@ const block = (reason) => ({ action: "block", reason });
 const HEREDOC_OP = /(?<![<>])<<(?!<)-?[ \t]*(['"]?)([A-Za-z_]\w*)\1/g;
 // 演算子と区切り語の直後に来てよいもの: 区切り・リダイレクト・改行・文末。
 // **引用の閉じ（`"` / `'`）は入っていない** — これが `grep "x << y" f | head` を誤検出から守る。
-const HEREDOC_FOLLOW = /^[ \t]*(?:[<>|&;)]|\r?\n|$)/;
+// **`)` も入れない** — `node -e "console.log(1<<n)"` のようなシフト演算子を誤爆する（実測）。
+// 代償として `(cat <<EOF)` のようなサブシェル内の heredoc はこの枝で拾えないが、終端行の
+// 索引が拾うので取りこぼしにはならない。
+const HEREDOC_FOLLOW = /^[ \t]*(?:[<>|&;]|\r?\n|$)/;
 // 語だけの行 = heredoc 終端行の候補。
 const LONE_WORD_LINE = /^[\t ]*([A-Za-z_]\w*)[\t ]*$/gm;
 
@@ -162,7 +172,13 @@ export function usesHeredoc(command) {
 // `\` をパス区切りに使った形。**広く `\` を見ない** — 正規表現エスケープ（`grep -E "\d+"`）や
 // `find . -exec rm {} \;` を巻き込むためである。ドライブレター絶対パスと、環境変数展開に
 // 続く区切りの 3 形に絞る。散文中の `C:\path` も止まるが fail-closed 方向ゆえ受容する。
-const BACKSLASH_PATH = [/[A-Za-z]:\\/, /\$env:\w+\\/i, /%\w+%\\/];
+//
+// ドライブレターの形には**前後の条件が要る**。素の `[A-Za-z]:\\` は「語の末尾 1 文字 + `:` +
+// 正規表現エスケープ」と区別できず、`rg "version:\s+" src` を止めた（実測）——拒否文言は
+// 「`/` で統一せよ」なので、**復帰手順が適用できない拒否**になっていた。
+// `(?<!\w)` が語の途中を落とし、`{2,}` が `a:\s` のような 1 文字続きを落とす。
+// 代償: `cd C:\`（ドライブルート）と `C:\a` は検出しない（過小検出・受容する）。
+const BACKSLASH_PATH = [/(?<!\w)[A-Za-z]:\\[\w.$%~-]{2,}/, /\$env:\w+\\/i, /%\w+%\\/];
 
 /** パス区切りに `\` を使っているか。 */
 export function usesBackslashPath(command) {
@@ -236,8 +252,9 @@ export function pullWithoutFfOnly(command) {
 const SHAPE_REMEDY = Object.freeze({
   heredoc:
     "bash の HEREDOC は Windows で引用境界が壊れ、終端マーカーがコミットメッセージ本文へ漏れる事故が起きています。" +
-    "複数行テキストは Write ツールで一時ファイル（`$env:TEMP` 配下）へ書いて `git commit -F <tmpfile>` や `--body-file` で渡すか、" +
-    "PowerShell の here-string `@'...'@`（閉じ `'@` は必ず行頭）を使ってください。",
+    "複数行テキストは Write ツールで一時ファイルへ書いて `git commit -F <path>` / `--body-file <path>` で渡すか、" +
+    "PowerShell の here-string `@'...'@`（閉じ `'@` は必ず行頭）を使ってください。" +
+    "**コマンドに書くパスは、先頭から末尾まで区切りを `/` にしてください**（絶対パスなら `C:/Users/...` の形）。",
   backslashPath:
     "パス区切りの `\\` はエスケープが要るため壊れやすく、Bash では黙って食われて**エラーではなく誤った結果**になります。" +
     "`/` で統一してください — PowerShell でも Git / Node / Cargo は `/` を受け付けます。",
@@ -248,8 +265,10 @@ const SHAPE_REMEDY = Object.freeze({
     "`--no-verify`（commit では `-n` も同義）は `.githooks/` の main 保護を迂回します。**人間専用であり、エージェントは使用してはなりません**。" +
     "hook が拒んだなら、迂回せずその理由を解消してください。main へ入れたい変更は feature ブランチと PR を経由します。",
   pull:
-    "非 FF の `git pull` は main にマージコミットを作り、`.githooks/pre-merge-commit` が拒否します。" +
-    "`git pull --ff-only` を使ってください（FF ならマージコミットが生じず hook は呼ばれません）。",
+    "非 FF の `git pull` はマージコミットを作り、main では `.githooks/pre-merge-commit` が拒否します。" +
+    "`git pull --ff-only` を使ってください（**この判定はブランチを問わず発火します**。FF できないほど発散しているなら、" +
+    "feature ブランチでは `git fetch` してから `git rebase` を明示的に打ち、" +
+    "main では `.githooks/` が rebase も非 FF merge も拒むので、想定外のコミットが local main に入っていないかを先に確認してください）。",
 });
 
 /**

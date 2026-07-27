@@ -567,6 +567,14 @@ describe("usesHeredoc", () => {
     expect(usesHeredoc(cmd)).toBe(false);
   });
 
+  // code-reviewer M1 の回帰: 追従集合に `)` を入れるとシフト演算子を誤爆した
+  it.each([['node -e "console.log(1<<n)"'], ['node -e "x = (a << b)"']])(
+    "閉じ括弧が続くシフト演算子は検出しない: %s",
+    (cmd) => {
+      expect(usesHeredoc(cmd)).toBe(false);
+    },
+  );
+
   // 候補ごとに終端行を全文走査する実装は 20000 候補で 1800ms 超（実測）。
   // 単独行を 1 パスで索引する形は数 ms で終わる。桁が違うので閾値は緩くてよい。
   it("候補が多数同居しても線形で終わる（no-hang）", () => {
@@ -600,6 +608,22 @@ describe("usesBackslashPath", () => {
   // 受容する過剰検出。fail-closed 方向で回復は自明（`/` にする）ゆえ意図として固定する
   it("散文中の `C:\\path` も検出する（過剰検出を意図として固定）", () => {
     expect(usesBackslashPath('git commit -m "fix: C:\\path handling"')).toBe(true);
+  });
+
+  // code-reviewer H2 の回帰: 素の `[A-Za-z]:\\` は「語末 1 文字 + `:` + 正規表現エスケープ」と
+  // 区別できず、これらを block していた。拒否文言は「`/` で統一せよ」なので**復帰手順が
+  // 適用できない拒否**になる——誤爆の中でも最も害が大きい形である。
+  it.each([
+    ['rg "version:\\s+" src'],
+    ['grep -E "error:\\s" log.txt'],
+    ['rg "name:\\w+" src'],
+  ])("`:\\` を含む正規表現は検出しない: %s", (cmd) => {
+    expect(usesBackslashPath(cmd)).toBe(false);
+  });
+
+  // 上の誤爆を落とすために付けた `{2,}` の代償（過小検出・意図として固定）
+  it.each([["cd C:\\"], ["node C:\\a"]])("ドライブルート・1 文字続きは検出しない: %s", (cmd) => {
+    expect(usesBackslashPath(cmd)).toBe(false);
   });
 });
 
@@ -725,7 +749,7 @@ describe("judgeCommandShape — platform ゲート", () => {
   // I6: 規範を降ろした設計は、この文言がその場で教えることに賭けている
   it("拒否文言は代わりの手段を含む", () => {
     expect(judgeCommandShape("cat <<EOF", "win32").reason).toContain("git commit -F");
-    expect(judgeCommandShape("echo C:\\x", "win32").reason).toContain("`/` で統一");
+    expect(judgeCommandShape("echo C:\\workspace", "win32").reason).toContain("`/` で統一");
     expect(judgeCommandShape('python -c "日本語"', "win32").reason).toContain("PYTHONIOENCODING");
     expect(judgeCommandShape("git commit --no-verify", "darwin").reason).toContain("人間専用");
     expect(judgeCommandShape("git pull", "darwin").reason).toContain("--ff-only");
@@ -734,6 +758,32 @@ describe("judgeCommandShape — platform ゲート", () => {
   it("無害なコマンドは null（管轄外）", () => {
     expect(judgeCommandShape("npm test 2>&1 | tail -30", "win32")).toBeNull();
     expect(judgeCommandShape("git push -u origin HEAD", "win32")).toBeNull();
+  });
+
+  // #768 `/norm-review` 1 巡目が暴いた欠陥の機構化。
+  // heredoc の拒否文言は代替として `$env:TEMP` 配下の一時ファイルを挙げていたが、区切りを
+  // 示していなかった。忠実な読者は `$env:TEMP\msg.txt` と書き、**同じ hook の `\` 判定に落ちる** —
+  // 「代わりにこうせよ」が別の拒否を招く状態だった。文書で戒めるのではなくここで縛る。
+  const ALL_REASONS = [
+    "cat <<EOF",
+    "echo C:\\workspace",
+    'python -c "日本語"',
+    "git commit --no-verify",
+    "git pull",
+  ].map((cmd) => judgeCommandShape(cmd, "win32").reason);
+
+  // `\b` が要る: `\w+` は貪欲でもバックトラックするので、これが無いと `$env:TEM` で
+  // 一致してから「次は `/` でない（`P`）」が成立し、正しい文言でも赤になる（この形で一度踏んだ）。
+  it("拒否文言が示す `$env:` パスの区切りは必ず `/` である", () => {
+    for (const reason of ALL_REASONS) {
+      expect(reason, reason).not.toMatch(/\$env:\w+\b(?![/])/);
+    }
+  });
+
+  it("拒否文言はドライブレター絶対パスを示さない", () => {
+    for (const reason of ALL_REASONS) {
+      expect(reason, reason).not.toMatch(/[A-Za-z]:\\/);
+    }
   });
 });
 
@@ -794,6 +844,19 @@ describe("5 述語は全域関数である（I2・no-throw）", () => {
         expect(() => fn(input), `${fn.name}(${JSON.stringify(input.slice(0, 20))})`).not.toThrow();
       }
     }
+  });
+
+  // code-reviewer H1 の回帰。`FLAG` の `-{1,2}\S+` は `--x` の分割が 2 通りあり、
+  // 全体が失敗するとき 2^n 通りを探索した（`git --f0=v0 … --f23=v23 x` の 225 字で 747ms・実測）。
+  // **これは throw でも hang でもなく「遅い」という形の fail-open** である——hook が timeout すると
+  // exit≠2 = 非ブロッキングになり、コマンドはそのまま実行される。時間でしか捕まらないので時間で縛る。
+  it("`git` の直後にフラグが並ぶ入力が指数爆発しない", () => {
+    const flags = Array.from({ length: 2000 }, (_, i) => `--f${i}=v${i}`).join(" ");
+    const cmd = `git ${flags} x`;
+    const t0 = process.hrtime.bigint();
+    expect(usesNoVerify(cmd)).toBe(false);
+    expect(pullWithoutFfOnly(cmd)).toBe(false);
+    expect(Number(process.hrtime.bigint() - t0) / 1e6).toBeLessThan(500);
   });
 
   it("judgeCommandShape も病的入力で throw しない", () => {

@@ -383,11 +383,15 @@ pub(crate) fn register_hide_listener(app: &tauri::AppHandle) {
 /// 最新を描く）。**「値を運ばない」はこの benign 性の load-bearing 前提**——将来イベントに値を
 /// 載せる変更はこの前提を壊す（spec 決定 1）。
 pub(crate) fn register_config_wake_listeners(app: &tauri::AppHandle) {
-    for event in [
-        crate::events::CONFIG_APPLIED,
-        crate::events::INDEXING_STARTED,
-        crate::events::INDEXING_COMPLETE,
-    ] {
+    {
+        let handle = app.clone();
+        app.listen(crate::events::CONFIG_APPLIED, move |_| {
+            // update_config 後、両 Context を同じイベントで直接起こす。
+            wake_main(&handle);
+            wake_results(&handle);
+        });
+    }
+    for event in [crate::events::INDEXING_STARTED, crate::events::INDEXING_COMPLETE] {
         let handle = app.clone();
         app.listen(event, move |_| {
             wake_main(&handle);

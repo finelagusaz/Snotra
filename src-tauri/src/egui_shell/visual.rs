@@ -129,6 +129,21 @@ pub(crate) fn visual_snapshot(
     }
 }
 
+/// main の `Visuals` へ snapshot を適用し、style の次 pass が必要なら `true` を返す。
+pub(crate) fn apply_main_visuals(visuals: &mut egui::Visuals, snapshot: &VisualSnapshot) -> bool {
+    let changed = visuals.panel_fill != snapshot.background
+        || visuals.window_fill != snapshot.background
+        || visuals.extreme_bg_color != snapshot.input_bg
+        || visuals.selection.bg_fill != snapshot.selection
+        || visuals.weak_text_color != Some(snapshot.hint);
+    visuals.panel_fill = snapshot.background;
+    visuals.window_fill = snapshot.background;
+    visuals.extreme_bg_color = snapshot.input_bg;
+    visuals.selection.bg_fill = snapshot.selection;
+    visuals.weak_text_color = Some(snapshot.hint);
+    changed
+}
+
 /// `#RRGGBB` 等を `Color32` へ。parse 失敗時は既定値（の parse 結果）へ落ちる。
 /// 既定値まで parse に失敗することは無い（`config.rs` の `default_*` は妥当な 6 桁 hex）が、
 /// release は `panic="abort"` ゆえ unwrap しない——最後は黒へ落とす。
@@ -213,5 +228,23 @@ mod tests {
             changed.background_hex_changed.as_deref(),
             Some(v.background_color.as_str())
         );
+    }
+
+    #[test]
+    fn main_visuals_report_every_config_color_change_once() {
+        let mut v = cfg();
+        v.background_color = "#123456".into();
+        v.input_background_color = "#234567".into();
+        v.selected_row_color = "#345678".into();
+        v.hint_text_color = "#456789".into();
+        let snapshot = visual_snapshot(&v, true, applied_none(&v.font_family));
+        let mut visuals = egui::Visuals::dark();
+        assert!(apply_main_visuals(&mut visuals, &snapshot));
+        assert!(!apply_main_visuals(&mut visuals, &snapshot));
+        assert_eq!(visuals.panel_fill, snapshot.background);
+        assert_eq!(visuals.window_fill, snapshot.background);
+        assert_eq!(visuals.extreme_bg_color, snapshot.input_bg);
+        assert_eq!(visuals.selection.bg_fill, snapshot.selection);
+        assert_eq!(visuals.weak_text_color, Some(snapshot.hint));
     }
 }

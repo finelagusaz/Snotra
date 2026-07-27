@@ -273,18 +273,18 @@ impl EguiView for SearchWindowView {
         // 値はフレーム冒頭の `visual` から取る（#673）。**適用はこの位置のまま**（呼び出し
         // 位置は本段では動かさない）——egui 0.35.0 では root `Ui` が pass 冒頭で
         // `ctx.global_style()` を `Arc` snapshot するため、ここで呼ぶ `ctx.set_visuals` は
-        // 現在の pass の `Ui` に届かない。この潜在バグは #751 であり、**本段では直さない**。
+        // 現在の pass の `Ui` に届かないため、下の差分判定で次 pass を 1 回だけ要求する。
         let mut visuals = ctx.style_of(ctx.theme()).visuals.clone();
-        visuals.panel_fill = visual.background;
-        visuals.window_fill = visuals.panel_fill;
-        visuals.extreme_bg_color = visual.input_bg; // TextEdit 背景
-        visuals.selection.bg_fill = visual.selection;
         // TextEdit の hint 色はここだけが効く（#654・詳細は TextEdit 構築部のコメント）。
         // **他の描画を巻き込まない**: この view が使う egui ウィジェットは TextEdit 1 つだけで
         //（`ui.label` / `ui.button` の類は 0 件・残りは raw painter に色を明示渡し）、
         // weak text を読むのはその hint のみ。results 窓は別 Context ゆえ影響外。
-        visuals.weak_text_color = Some(visual.hint);
+        let visual_refresh_needed = super::visual::apply_main_visuals(&mut visuals, &visual);
         ctx.set_visuals(visuals);
+        if visual_refresh_needed {
+            // root Ui は pass 冒頭の style snapshot を持つため、変更色を次 pass で描く。
+            ctx.request_repaint();
+        }
 
         // SU6 spec 決定 2: font_family hot-reload（WebView2 の --font-family CSS 変数即時反映 parity）。
         // applied は解決成否に依らず無条件更新（フィールド doc 参照）。
@@ -299,10 +299,13 @@ impl EguiView for SearchWindowView {
         // `#FFF` 等でこの経路の挙動が黙って変わる・#673 spec / visual.rs の `//!`）。
         if let Some(hex) = &visual.background_hex_changed {
             self.applied_background_hex = hex.clone();
-            if let Some(window) = app.get_window("main") {
-                let color = crate::config_watcher::parse_hex_color(hex)
-                    .unwrap_or(tauri::window::Color(0x28, 0x28, 0x28, 0xff));
-                let _ = window.set_background_color(Some(color));
+            let color = crate::config_watcher::parse_hex_color(hex)
+                .unwrap_or(tauri::window::Color(0x28, 0x28, 0x28, 0xff));
+            // softbuffer present 前に露出する下地は各窓のネイティブブラシである。
+            for label in ["main", "results"] {
+                if let Some(window) = app.get_window(label) {
+                    let _ = window.set_background_color(Some(color));
+                }
             }
         }
 

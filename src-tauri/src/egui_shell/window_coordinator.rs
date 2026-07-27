@@ -470,10 +470,7 @@ pub(crate) fn drive_results_window(app: &tauri::AppHandle, i: DriveResultsInputs
     if results.show() {
         crate::trace_main("egui_results:show", serde_json::json!({ "rows": count }));
     }
-    // 決定 5（#673 spec・#697）: この無条件 wake を edge 化してはならない。results は
-    // config 系イベントを一切 listen せず（register_config_wake_listeners は wake_main のみ）、
-    // visual-only の config 変更では RowsSnapshot が不変ゆえ snapshot 差分 wake も発火しない。
-    // results が新しい色・フォント・行高を描くことを**保証する**唯一の経路がこの
-    // level-triggered wake である（入力起因の偶発 wake でも描かれるが、それに依れない）。
+    // 決定 5（#673 spec・#697）: config-applied は results も直接起こすが、入力・検索・
+    // サイズ変更にも results を追従させるため、この level-triggered wake は維持する。
     wake_results(app);
 }

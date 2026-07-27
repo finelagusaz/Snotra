@@ -1,9 +1,7 @@
 //! egui メインウィンドウの main 窓 1 フレーム（入力の読みと描画・OS 窓への適用）。
-//! 検索セッションの状態と遷移（結果・選択・起動・履歴・期限・↑↓/→←ナビの処置・
-//! folder 展開（async ロード + staleness）・tool 選択（§18・Shift+Enter 入場/起動/Escape
-//! 復帰）・instant/slash コマンド・起動/実行 dispatch）は `launcher_controller`
-//! （`LauncherController`）が持つ（#666 段 3。依存は一方向——`launcher_controller` は
-//! この型を見ない）。
+//! 検索セッションの状態と遷移は `launcher_controller`（`LauncherController`。責務詳細は
+//! そちらの `//!`）が持つ（#666 段 3。依存は一方向——`launcher_controller` はこの型を
+//! 見ない）。
 //!
 //! **入力変換は pre/post の 2 段**（`read_pre_widget_input` / `read_post_widget_input`）
 //! で 1 段にまとめられない: Escape/↑↓/→← は TextEdit 構築より前に消費まで含めて読み切る

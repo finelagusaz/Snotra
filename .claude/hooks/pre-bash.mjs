@@ -1,4 +1,5 @@
-// PreToolUse (Bash|PowerShell) ガード。`gh pr create` が空 PR を作るのを防ぐ。
+// PreToolUse (Bash|PowerShell) ガード。`gh pr create` が (1) 空 PR を作るのを防ぎ、
+// (2) workspace/plan.md に未チェックの作業項目を残したまま PR になるのを防ぐ（#749）。
 //
 // 設計: payload 全体を grep するのではなく tool_input.command **だけ**を読み、
 // 「コマンド位置」に現れる `gh pr create` を検出して、それが走る瞬間にコミットが
@@ -26,9 +27,10 @@
 // 文字列 "PowerShell" である。matcher が取りこぼすと hook は気づかれないまま素通りするため
 // （それがこの issue の D1 そのもの）、ここは推測ではなく実測値で固定している。
 
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
+import path from "node:path";
 
 /** この hook が管轄するツール。matcher が部分一致しても、ここが最終的な境界になる。 */
 export const TARGET_TOOLS = Object.freeze(["Bash", "PowerShell"]);
@@ -106,7 +108,7 @@ const block = (reason) => ({ action: "block", reason });
  * 「管轄外」と「判定不能」を混同しない。前者は allow（対象ツール以外・`gh pr create` 以外）、
  * 後者は block（見えないものは通さない）。
  */
-export function decide(payload, readGitState) {
+export function decide(payload, readGitState, readPlanState) {
   const tool = payload?.tool_name;
   if (!TARGET_TOOLS.includes(tool)) return ALLOW; // 管轄外
 
@@ -121,6 +123,15 @@ export function decide(payload, readGitState) {
   const cwdAt = tokenStart(CWD_CHANGE, command);
   if (cwdAt >= 0 && cwdAt < ghAt) {
     return block("PR 作成の前に作業ディレクトリを変更しています。どのリポジトリに PR が作られるか判定できません。");
+  }
+
+  const plan = readPlanState();
+  if (!plan.ok) return block(`${plan.reason}。計画の完了状態を判定できません。`);
+  if (plan.exists && plan.unchecked > 0) {
+    return block(
+      `workspace/plan.md に未チェックの作業項目が ${plan.unchecked} 件残っています。` +
+        `項目を完了させて [x] にするか、やらないと決めた項目は計画から外して理由を記録してから、PR を作成してください。`,
+    );
   }
 
   if (hasSafeChain(command)) return ALLOW; // push が `&&` で先行する
@@ -154,6 +165,22 @@ export function readGitState(cwd) {
   return { ok: true, upstream: upstream.stdout.trim(), unpushed: log.stdout.trim().length > 0 };
 }
 
+/** 行頭（インデント許容）の未チェック項目。plan.md のコードブロック内の一致は過剰検出として受容する。 */
+export function countUnchecked(text) {
+  return (text.match(/^\s*[-*]\s+\[ \]/gm) ?? []).length;
+}
+
+/** `<cwd>/workspace/plan.md` の完了状態。無ければ管轄外、存在するのに読めなければ判定不能。 */
+export function readPlanState(cwd) {
+  const file = path.join(cwd, "workspace", "plan.md");
+  if (!existsSync(file)) return { ok: true, exists: false, unchecked: 0 };
+  try {
+    return { ok: true, exists: true, unchecked: countUnchecked(readFileSync(file, "utf8")) };
+  } catch (e) {
+    return { ok: false, reason: `workspace/plan.md を読めません: ${e.code ?? e.message}` };
+  }
+}
+
 /** stderr は exit 2 のときだけ Claude に届く。allow は無出力（沈黙 = 許可）。 */
 function emitBlock(reason, toolName) {
   const who = toolName ? ` (tool_name=${toolName})` : "";
@@ -172,7 +199,7 @@ function main() {
   // hook プロセスの cwd ではなく、セッションの作業ディレクトリで git を評価する。
   const cwd = typeof payload?.cwd === "string" && payload.cwd.length > 0 ? payload.cwd : process.cwd();
 
-  const result = decide(payload, () => readGitState(cwd));
+  const result = decide(payload, () => readGitState(cwd), () => readPlanState(cwd));
   if (result.action === "allow") {
     process.exitCode = 0;
     return;

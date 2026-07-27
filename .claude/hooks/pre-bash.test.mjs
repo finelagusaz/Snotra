@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -14,6 +14,8 @@ import {
   hasSafeChain,
   decide,
   readGitState,
+  countUnchecked,
+  readPlanState,
 } from "./pre-bash.mjs";
 
 // CI は ubuntu(frontend-check) と windows(rust-check) の両方で走る（#509）。どちらでも
@@ -27,6 +29,15 @@ const NO_UPSTREAM = () => ({ ok: true, upstream: null, unpushed: false });
 const UNPUSHED = () => ({ ok: true, upstream: "origin/feat", unpushed: true });
 /** git の状態を確認できない */
 const UNKNOWN = () => ({ ok: false, reason: "git が見つかりません" });
+
+/** plan.md が無い（計画なしタスク・他リポジトリ） */
+const NO_PLAN = () => ({ ok: true, exists: false, unchecked: 0 });
+/** 全項目チェック済み */
+const PLAN_DONE = () => ({ ok: true, exists: true, unchecked: 0 });
+/** 未チェック n 件 */
+const PLAN_OPEN = (n = 1) => () => ({ ok: true, exists: true, unchecked: n });
+/** 存在するのに読めない */
+const PLAN_UNREADABLE = () => ({ ok: false, reason: "EACCES" });
 
 const bash = (command, extra = {}) => ({ tool_name: "Bash", tool_input: { command, ...extra } });
 const pwsh = (command) => ({ tool_name: "PowerShell", tool_input: { command } });
@@ -181,74 +192,125 @@ describe("hasSafeChain — `gh pr create` の前に `git push` が `&&` で走�
 
 describe("decide — 分岐表", () => {
   it("管轄外ツールは allow（判定不能ではない）", () => {
-    expect(decide({ tool_name: "Edit", tool_input: { file_path: "a.ts" } }, UNKNOWN).action).toBe("allow");
+    expect(decide({ tool_name: "Edit", tool_input: { file_path: "a.ts" } }, UNKNOWN, NO_PLAN).action).toBe("allow");
   });
 
   // matcher が部分一致した場合の二重防御。BashOutput の tool_input に command は無い
   it("BashOutput は allow（command が無くてもブロックしない）", () => {
-    expect(decide({ tool_name: "BashOutput", tool_input: { bash_id: "x" } }, UNKNOWN).action).toBe("allow");
+    expect(decide({ tool_name: "BashOutput", tool_input: { bash_id: "x" } }, UNKNOWN, NO_PLAN).action).toBe("allow");
   });
 
   it("対象ツールで command が文字列でなければ block（判定不能）", () => {
-    expect(decide({ tool_name: "Bash", tool_input: {} }, UNKNOWN).action).toBe("block");
-    expect(decide({ tool_name: "Bash", tool_input: null }, UNKNOWN).action).toBe("block");
+    expect(decide({ tool_name: "Bash", tool_input: {} }, UNKNOWN, NO_PLAN).action).toBe("block");
+    expect(decide({ tool_name: "Bash", tool_input: null }, UNKNOWN, NO_PLAN).action).toBe("block");
   });
 
   // I2: description は判定に使わない
   it("description に該当語があっても command が無害なら allow", () => {
     const payload = bash("ls -la", { description: `${ghPrCreate()} を実行する` });
-    expect(decide(payload, UNKNOWN).action).toBe("allow");
+    expect(decide(payload, UNKNOWN, NO_PLAN).action).toBe("allow");
   });
 
   it("検出しなければ git 状態を読まない", () => {
     const spy = vi.fn(CLEAN);
-    expect(decide(bash("echo hi"), spy).action).toBe("allow");
+    expect(decide(bash("echo hi"), spy, NO_PLAN).action).toBe("allow");
     expect(spy).not.toHaveBeenCalled();
   });
 
   it("upstream 未設定なら block", () => {
-    expect(decide(bash(ghPrCreate()), NO_UPSTREAM).action).toBe("block");
+    expect(decide(bash(ghPrCreate()), NO_UPSTREAM, NO_PLAN).action).toBe("block");
   });
 
   it("未 push コミットがあれば block", () => {
-    expect(decide(bash(ghPrCreate()), UNPUSHED).action).toBe("block");
+    expect(decide(bash(ghPrCreate()), UNPUSHED, NO_PLAN).action).toBe("block");
   });
 
   it("upstream 設定済み・未 push なしなら allow", () => {
-    expect(decide(bash(ghPrCreate()), CLEAN).action).toBe("allow");
+    expect(decide(bash(ghPrCreate()), CLEAN, NO_PLAN).action).toBe("allow");
   });
 
   it("git の状態を確認できなければ block（fail-closed）", () => {
-    expect(decide(bash(ghPrCreate()), UNKNOWN).action).toBe("block");
+    expect(decide(bash(ghPrCreate()), UNKNOWN, NO_PLAN).action).toBe("block");
   });
 
   // D3: upstream 未設定でも、鎖が push を先に走らせるなら allow
   it("`git push … && gh pr create` は upstream 未設定でも allow", () => {
     const spy = vi.fn(NO_UPSTREAM);
-    expect(decide(bash(`git push -u origin HEAD && ${ghPrCreate()}`), spy).action).toBe("allow");
+    expect(decide(bash(`git push -u origin HEAD && ${ghPrCreate()}`), spy, NO_PLAN).action).toBe("allow");
     expect(spy).not.toHaveBeenCalled();
   });
 
   // D1: PowerShell tool も同じ判定を受ける
   it("PowerShell tool でも block する", () => {
-    expect(decide(pwsh(ghPrCreate()), NO_UPSTREAM).action).toBe("block");
+    expect(decide(pwsh(ghPrCreate()), NO_UPSTREAM, NO_PLAN).action).toBe("block");
   });
 
   it("PowerShell tool でも安全な鎖は allow", () => {
-    expect(decide(pwsh(`git push -u origin HEAD && ${ghPrCreate()}`), NO_UPSTREAM).action).toBe("allow");
+    expect(decide(pwsh(`git push -u origin HEAD && ${ghPrCreate()}`), NO_UPSTREAM, NO_PLAN).action).toBe("allow");
   });
 
   it("cwd を変える鎖は block（どのリポジトリか判定不能）", () => {
-    expect(decide(bash(`cd ../other && ${ghPrCreate()}`), CLEAN).action).toBe("block");
-    expect(decide(pwsh(`Set-Location ../other && ${ghPrCreate()}`), CLEAN).action).toBe("block");
+    expect(decide(bash(`cd ../other && ${ghPrCreate()}`), CLEAN, NO_PLAN).action).toBe("block");
+    expect(decide(pwsh(`Set-Location ../other && ${ghPrCreate()}`), CLEAN, NO_PLAN).action).toBe("block");
   });
 
   it("cwd 変更が後ろにあるだけなら判定に影響しない", () => {
-    expect(decide(bash(`${ghPrCreate()} && cd ..`), CLEAN).action).toBe("allow");
+    expect(decide(bash(`${ghPrCreate()} && cd ..`), CLEAN, NO_PLAN).action).toBe("allow");
   });
 
   it("TARGET_TOOLS は Bash と PowerShell", () => {
     expect([...TARGET_TOOLS].sort()).toEqual(["Bash", "PowerShell"]);
+  });
+});
+
+describe("countUnchecked — 未チェック行の数え上げ", () => {
+  it("`- [ ]` / `* [ ]`（インデント許容）を数える", () => {
+    expect(countUnchecked("- [ ] a\n  - [ ] b\n* [ ] c")).toBe(3);
+  });
+  it("チェック済み・チェックボックス以外の行は数えない", () => {
+    expect(countUnchecked("- [x] done\n- [X] done\n- plain\ntext [ ] inline")).toBe(0);
+  });
+  it("空文字列は 0", () => {
+    expect(countUnchecked("")).toBe(0);
+  });
+});
+
+describe("decide — plan.md ゲート", () => {
+  it("未チェック項目が残っていれば block（push の鎖が安全でも）", () => {
+    const cmd = `git push -u origin HEAD && ${ghPrCreate()}`;
+    const r = decide(bash(cmd), CLEAN, PLAN_OPEN(3));
+    expect(r.action).toBe("block");
+    expect(r.reason).toContain("3 件");
+  });
+  it("全項目チェック済みなら push 判定へ進み allow", () => {
+    expect(decide(bash(ghPrCreate()), CLEAN, PLAN_DONE).action).toBe("allow");
+  });
+  it("plan.md が無ければこの検査は管轄外（push 判定のみで allow）", () => {
+    expect(decide(bash(ghPrCreate()), CLEAN, NO_PLAN).action).toBe("allow");
+  });
+  it("plan.md が存在するのに読めなければ block（fail-closed）", () => {
+    expect(decide(bash(ghPrCreate()), CLEAN, PLAN_UNREADABLE).action).toBe("block");
+  });
+  it("gh pr create を検出しなければ plan.md を読まない", () => {
+    const spy = vi.fn(NO_PLAN);
+    expect(decide(bash("echo hi"), CLEAN, spy).action).toBe("allow");
+    expect(spy).not.toHaveBeenCalled();
+  });
+  it("PowerShell tool でも未チェック項目で block する", () => {
+    expect(decide(pwsh(ghPrCreate()), CLEAN, PLAN_OPEN()).action).toBe("block");
+  });
+});
+
+describe("readPlanState — 実ファイル読み取り", () => {
+  it("workspace/plan.md が無いディレクトリは exists:false", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "pre-bash-plan-"));
+    expect(readPlanState(dir)).toEqual({ ok: true, exists: false, unchecked: 0 });
+  });
+  it("未チェック 2 件・チェック済み 1 件の plan.md を正しく数える", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "pre-bash-plan-"));
+    mkdirSync(path.join(dir, "workspace"));
+    writeFileSync(path.join(dir, "workspace", "plan.md"), "- [x] a\n- [ ] b\n- [ ] c\n", "utf8");
+    expect(readPlanState(dir)).toEqual({ ok: true, exists: true, unchecked: 2 });
   });
 });
 
@@ -312,6 +374,29 @@ describe("プロセス起動 — exit code の契約", () => {
         tool_input: { command: `git push -u origin HEAD && ${ghPrCreate()}` },
         cwd: dir,
       },
+      dir,
+    );
+    expect(res.status).toBe(0);
+  });
+
+  it("未チェックの plan.md がある repo での gh pr create は exit 2（安全な鎖でも）", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "pre-bash-e2e-plan-"));
+    mkdirSync(path.join(dir, "workspace"));
+    writeFileSync(path.join(dir, "workspace", "plan.md"), "- [ ] 残タスク\n", "utf8");
+    const res = runHook(
+      { tool_name: "Bash", tool_input: { command: `git push -u origin HEAD && ${ghPrCreate()}` }, cwd: dir },
+      dir,
+    );
+    expect(res.status).toBe(2);
+    expect(res.stderr).toContain("plan.md");
+  });
+
+  it("全項目チェック済みの plan.md なら安全な鎖は exit 0", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "pre-bash-e2e-plan-"));
+    mkdirSync(path.join(dir, "workspace"));
+    writeFileSync(path.join(dir, "workspace", "plan.md"), "- [x] 済\n", "utf8");
+    const res = runHook(
+      { tool_name: "Bash", tool_input: { command: `git push -u origin HEAD && ${ghPrCreate()}` }, cwd: dir },
       dir,
     );
     expect(res.status).toBe(0);

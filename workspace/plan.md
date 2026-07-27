@@ -336,7 +336,7 @@ crate::egui_shell::drive_results_window(
 | 4 | main をドラッグ移動 → results が追従する | I13 |
 | 5 | results 可視中に設定で色 / `font_size` を変更 → results が**新しい見た目で再描画される** | I5 |
 | 6 | 設定画面を開く → 両窓の最前面が解除され、閉じると復帰する | I7 |
-| 7 | 画面下端近くで多件数を出す → results が作業領域の下端でクランプされ、はみ出しは ScrollArea で辿れる | I6 |
+| 7 | 画面下端の**手前**で多件数 → results の高さが下端で切られる。下端ぎりぎりでは **1 行 + padding のはみ出しは仕様**（`SPEC.md` §8 の受容残余・#675）——それを超えて沈むなら FAIL | I6 |
 | 8 | main を動かして hide → 再 show で**同じ位置に戻る** | 保存 / 復元の両方が移設される確認 |
 | 9 | 別モニターへカーソルを置いて hotkey → そのモニターに出る | `position_on_target_monitor` の移設確認 |
 | 10 | **hide 中に `font_size` を変更 → 再 show** で results が新しい行高で出る（1 フレーム目から） | I11 |

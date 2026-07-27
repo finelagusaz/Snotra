@@ -23,7 +23,7 @@
 - **main 保護の実体は `.githooks/` と GitHub ruleset である** — `.githooks/` の 4 hook が commit / 非 FF merge / rebase / push を拒み（`githooks.test.mjs` で実測）、GitHub ruleset `default` が main への直接 push を拒む（実測）。bootstrap は `npm install`（`prepare` が `core.hooksPath` を設定）
 - **Layer 1（`.githooks/`）は best-effort である** — hook は追跡ファイルゆえ、含まないコミットの checkout は fail-open。`cherry-pick` / `revert` / `am` / `branch -f` / `update-ref` も `pre-commit` を呼ばず**沈黙で main が進む**（実測）。**取りこぼしは push 時に GitHub ruleset が捕捉する**（不在検知は意図的に置かない）
 - **`--no-verify` は人間専用** — `.githooks/` を迂回する。Claude は使用してはならない。迂回しても main への直接 push は GitHub ruleset が拒む（実測）
-- **`gh pr create` は `git push` と `&&` で繋いでよい** — PR 前 push チェック hook（`.claude/hooks/pre-bash.mjs`）は、鎖の中で `git push` が `&&` で先行していれば通す（`&&` が前段の成功を保証するため）。区切りが `;` / `||` / 改行の場合は push 失敗時に PR が作られうるので拒否する。`git -C <別ツリー> push` も安全な鎖とは見なさない（#482 で実測）
+- **`gh pr create` は `git push` と `&&` で繋いでよい** — PR 前 push チェック hook（`.claude/hooks/pre-bash.mjs`）は、鎖の中で `git push` が `&&` で先行していれば通す（`&&` が前段の成功を保証するため）。区切りが `;` / `||` / 改行の場合は push 失敗時に PR が作られうるので拒否する。`git -C <別ツリー> push` も安全な鎖とは見なさない（#482 で実測）。`workspace/plan.md` の未チェック項目は独立に判定する（→「フック」表）
 - **main の同期は `git pull --ff-only` を使う** — 非 FF の `git pull` は main にマージコミットを作るため `.githooks/pre-merge-commit` が拒否する。FF ならマージコミットが生じず hook は呼ばれない
 - **マージで閉じる issue を決めるのは PR 本文であり、`gh pr merge` の `--subject` / `--body-file` では抑止できない**（#488 実測）。auto-close は本文の**どこにあっても** `close`/`fix`/`resolve` 系 9 形（大文字小文字問わず・表やチェックリスト内も）でマージ時に走り、PR テンプレートが `Closes` を埋めるため**書いた覚えが無くても残る**。hook も見ていない（→「フック」の (A2)）。**だから下の手順が唯一の防御である**。なぜこの機構になるか（2 経路の可視性の非対称・マージ方式では逃げられない・squash 設定と復元レシピ）は `docs/adr/0002-squash-merge-issue-autoclose.md`
 

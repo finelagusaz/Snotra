@@ -11,7 +11,7 @@
 - **fail-closed 骨格** — `exit 2` だけがツールをブロックする（#482 実測）。`exit 0` は許可、それ以外の非ゼロ（Node が未捕捉例外で返す **1** を含む）は「非ブロッキングエラー」でコマンドはそのまま実行される。ゆえに**既定の `process.exitCode` を 2 に置き、許可が確定した経路だけが 0 を書く**。原理は development-principles §7。**判定不能はすべて block へ倒す** — payload 破損・`command` が非文字列・git 状態が読めない・鎖の途中で `cd`。この fail-closed の骨格を壊してはならない。
 - **判定は `tool_input.command` のコマンド位置だけを見る**（#482）。`description` や payload 全体を grep してはならない（「言及」と「実行」を区別しない検出器は誤爆する）。原理は development-principles §6。判定単位は「コマンド位置に現れる呼び出し」であり、`grep "gh pr create" f` のように引用の内側にあるだけでは発火しない。過剰検出（`echo "&& gh pr create"`）は fail-closed 方向ゆえ許容する。
 - **見ないコマンド形がある**（#482・受容する性質）。`sh -c '...'` / `eval` / バッククォート / ラッパ経由（`timeout 5 gh pr create` / `xargs`）は「gh がコマンド位置に現れない」ため検出しない。これは事故モードではなく意図的迂回であり、`--no-verify` と同格に**人間専用**として扱う。検出を shell パーサ相当まで広げると payload 全体 grep の誤爆を作り直すことになる。
-- **plan.md ゲート** — `gh pr create` 検出時、`<cwd>/workspace/plan.md` に未チェックの `- [ ]` が残っていれば block する（#749: 計画に書いた作業の実行漏れを PR 前に捕捉する）。判定点は push 検査と同じコマンド位置検出であり、新しい発火点を作らない。fail-closed の倒し方: 存在するのに読めない → block、存在しない → 管轄外（計画なしタスク・他リポジトリを塞がない）。`decide(payload, readGitState, readPlanState)` の注入でファイルシステム無しにテストできる。plan.md のコードブロック内の `- [ ]` への過剰検出は受容する（fail-closed 方向）。
+- **plan.md ゲート** — `gh pr create` 検出時、リポジトリルート（cwd から最近接 `.git` へ遡って導出）の `workspace/plan.md` に未チェックの `- [ ]`（`* [ ]` も数える）が残っていれば block する（#749: 計画に書いた作業の実行漏れを PR 前に捕捉する）。判定点は push 検査と同じコマンド位置検出であり、新しい発火点を作らない。fail-closed の倒し方: 存在するのに読めない → block、存在しない → 管轄外（計画なしタスク・他リポジトリを塞がない）、`.git` が見つからない → cwd を root とみなす（従来挙動）。`decide(payload, readGitState, readPlanState)` の注入でファイルシステム無しにテストできる。plan.md のコードブロック内の `- [ ]` への過剰検出は受容する（fail-closed 方向）。
 
 ## PostToolUse（post-edit.mjs）の機構と保守
 

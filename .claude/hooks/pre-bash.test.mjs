@@ -312,6 +312,26 @@ describe("readPlanState — 実ファイル読み取り", () => {
     writeFileSync(path.join(dir, "workspace", "plan.md"), "- [x] a\n- [ ] b\n- [ ] c\n", "utf8");
     expect(readPlanState(dir)).toEqual({ ok: true, exists: true, unchecked: 2 });
   });
+
+  // I2: session cwd がリポジトリのサブディレクトリ（例: src-tauri/）だと、素朴な
+  // path.join(cwd, "workspace/plan.md") は永遠に見つからずゲートだけが沈黙で外れる。
+  // post-edit.mjs の resolveRoot と同じ「最近接の .git へ遡る」で揃える。
+  it("cwd がリポジトリのサブディレクトリでも、最近接の .git を遡ってリポジトリルートの plan.md を見る", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "pre-bash-plan-root-"));
+    mkdirSync(path.join(dir, ".git"));
+    mkdirSync(path.join(dir, "workspace"));
+    writeFileSync(path.join(dir, "workspace", "plan.md"), "- [ ] 残タスク\n", "utf8");
+    const sub = path.join(dir, "sub", "inner");
+    mkdirSync(sub, { recursive: true });
+    expect(readPlanState(sub)).toEqual({ ok: true, exists: true, unchecked: 1 });
+  });
+
+  it(".git が無い temp dir のサブディレクトリでは従来どおりそのサブディレクトリ基準（exists:false）", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "pre-bash-plan-noroot-"));
+    const sub = path.join(dir, "sub", "inner");
+    mkdirSync(sub, { recursive: true });
+    expect(readPlanState(sub)).toEqual({ ok: true, exists: false, unchecked: 0 });
+  });
 });
 
 describe("readGitState", () => {

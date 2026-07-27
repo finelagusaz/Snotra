@@ -170,9 +170,29 @@ export function countUnchecked(text) {
   return (text.match(/^\s*[-*]\s+\[ \]/gm) ?? []).length;
 }
 
-/** `<cwd>/workspace/plan.md` の完了状態。無ければ管轄外、存在するのに読めなければ判定不能。 */
+/**
+ * 祖先を遡り relTarget を含むディレクトリを返す。見つからなければ null。
+ * post-edit.mjs の findUp と同じ実装（重複だが 2 hook 間の import は結合を増やすため許容）。
+ */
+function findUp(startDir, relTarget) {
+  let dir = path.resolve(startDir);
+  for (;;) {
+    if (existsSync(path.join(dir, relTarget))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+/**
+ * リポジトリルート（cwd から最近接の `.git` へ遡って導出）の `workspace/plan.md` の完了状態。
+ * cwd がサブディレクトリ（例: src-tauri/）でもゲートが沈黙で外れないようにする（I2）。
+ * `.git` が見つからなければ cwd 自身を root とみなす（リポジトリ外での誤爆を作らない）。
+ * plan.md が無ければ管轄外、存在するのに読めなければ判定不能。
+ */
 export function readPlanState(cwd) {
-  const file = path.join(cwd, "workspace", "plan.md");
+  const root = findUp(cwd, ".git") ?? cwd;
+  const file = path.join(root, "workspace", "plan.md");
   if (!existsSync(file)) return { ok: true, exists: false, unchecked: 0 };
   try {
     return { ok: true, exists: true, unchecked: countUnchecked(readFileSync(file, "utf8")) };

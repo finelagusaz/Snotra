@@ -42,8 +42,8 @@ disable-model-invocation: true
 
 - [ ] **Step 3: 削除の確認**
 
-Run: `grep -rn "disable-model-invocation" .claude/skills/`
-Expected: 出力 0 件（exit 1）
+Run: `grep -l disable-model-invocation .claude/skills/implement/SKILL.md .claude/skills/start-issue/SKILL.md`
+Expected: 出力 0 件（対象 2 スキルから消滅していること。他スキルに残存があっても spec スコープ外）
 
 - [ ] **Step 4: governance:check**
 
@@ -376,5 +376,5 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 - [ ] `npx vitest run .claude/hooks` — 全件 PASS
 - [ ] `npm run governance:check` — G1..G11 passed
-- [ ] `grep -rn "disable-model-invocation" .claude/` — 0 件
+- [ ] `grep -l disable-model-invocation .claude/skills/implement/SKILL.md .claude/skills/start-issue/SKILL.md` — 0 件（対象 2 スキルから消滅していること。他スキルに残存があっても spec スコープ外）
 - [ ] フォールトインジェクションの実測（`.claude/rules/safety-nets.md`）: Task 3 の e2e テスト（未チェック plan.md → exit 2）が「故意に壊して検知される」ことの実測に当たる。ライブの hook は弱めない（temp ディレクトリの複製に対する検証のみ）

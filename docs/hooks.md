@@ -2,7 +2,7 @@
 
 このリポジトリの Claude Code フック（PreToolUse = `.claude/hooks/pre-bash.mjs`、PostToolUse = `.claude/hooks/post-edit.mjs`）を**改修**するときの実装契約・機構・保守規律。
 
-- エージェントが日常操作でフックにどう**応答するか**・沈黙をどう**読むか**は、常時ロードの `CLAUDE.md`「フック」節が SSOT（本ファイルは改修者向け）。
+- エージェントが日常操作でフックにどう**応答するか**・沈黙をどう**読むか**は、常時ロードの `CLAUDE.md`「フック」節が SSOT。本ファイルはそこから退去させた**一覧と内訳**（どのファイルに何が発火するか・沈黙しうる経路は何か）も併せ持つ——常時ロードに写しを置くとコードとの二重管理になり、実際にドリフトした（#474〜#497）。
 - 設計哲学（検出は構造化信号で行い、fail-closed を既定値に埋める）は `docs/development-principles.md` §「構造的設計原則と強制の階梯」の項目 6・7 が SSOT。本ファイルはそのフック具体化＝運用 specifics を持つ。
 - セーフティネットが**効いているか**の検証手順（フォールトインジェクション等）は `.claude/rules/safety-nets.md`（フック改修時に自動配送される）。
 
@@ -12,6 +12,23 @@
 - **判定は `tool_input.command` のコマンド位置だけを見る**（#482）。`description` や payload 全体を grep してはならない（「言及」と「実行」を区別しない検出器は誤爆する）。原理は development-principles §6。判定単位は「コマンド位置に現れる呼び出し」であり、`grep "gh pr create" f` のように引用の内側にあるだけでは発火しない。過剰検出（`echo "&& gh pr create"`）は fail-closed 方向ゆえ許容する。
 - **見ないコマンド形がある**（#482・受容する性質）。`sh -c '...'` / `eval` / バッククォート / ラッパ経由（`timeout 5 gh pr create` / `xargs`）は「gh がコマンド位置に現れない」ため検出しない。これは事故モードではなく意図的迂回であり、`--no-verify` と同格に**人間専用**として扱う。検出を shell パーサ相当まで広げると payload 全体 grep の誤爆を作り直すことになる。
 - **plan.md ゲート** — `gh pr create` 検出時、リポジトリルート（cwd から最近接 `.git` へ遡って導出）の `workspace/plan.md` に未チェックの `- [ ]`（`* [ ]` も数える）が残っていれば block する（#749: 計画に書いた作業の実行漏れを PR 前に捕捉する）。判定点は push 検査と同じコマンド位置検出であり、新しい発火点を作らない。fail-closed の倒し方: 存在するのに読めない → block、存在しない → 管轄外（計画なしタスク・他リポジトリを塞がない）、`.git` が見つからない → cwd を root とみなす（従来挙動）。`decide(payload, readGitState, readPlanState)` の注入でファイルシステム無しにテストできる。plan.md のコードブロック内の `- [ ]` への過剰検出は受容する（fail-closed 方向）。
+
+## PostToolUse（post-edit.mjs）の発火一覧
+
+**正本は `selectChecks` である。** 下は現在の割り当てを読むための索引であり、判断はコードに問う。
+
+| 編集したファイル（ツリー相対） | 走る検査 |
+|---|---|
+| `*.rs` | clippy（各 Rust crate 配下ではその crate のテストも） |
+| `tauri.conf.json` / `config.toml` | WARN（人間向け・Windows 互換の注意喚起） |
+| `Cargo.toml` | cargo check |
+| `.claude/settings.json` / `.claude/hooks/**` / `package.json` / `vitest.config.ts` / ルートの `Cargo.toml` | hook-selftest |
+| `.githooks/**` | githooks-selftest |
+| 上記以外（`*.md`・`.claude/rules/**`・`.claude/skills/**`・`scripts/**` 等） | **何も走らない**——沈黙は「合格」ではない |
+
+TS 型検査は #532 SU7 のフロント撤去で消滅した（`.ts` 編集は「検査はありません」の情報行のみ）。
+
+**沈黙しうる経路は塞いである**（#471）。タイムアウト（検査ごと 300s）・出力溢れ・起動失敗・スクリプト内部エラーはいずれも必ず報告される（診断が予算を超えても、再現コマンドで全件を見られる）。**この閉塞を壊す変更を入れてはならない**——「沈黙 = 合格」という意味づけが成り立たなくなる。
 
 ## PostToolUse（post-edit.mjs）の機構と保守
 

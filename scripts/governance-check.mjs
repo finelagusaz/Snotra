@@ -570,8 +570,14 @@ export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
  *       description を算入していた。ADR-0005 の算入根拠（毎セッション注入される）を満たさない。
  *   rules 面 -180 字は `safety-nets.md` の「カナリア」節を `docs/hooks.md` の正本へ寄せ、
  *   `snotra-core-search.md` の一般則を同時配送される `snotra-core.md` へ一本化したもの。
+ * **2026-07-27 引き下げ 14712→14261**（実測 常時ロード 14612→14161）: 監査の続き。
+ *   `AGENTS.md`「RETROSPECTIVE.md の運用」のタイミング・上書き・2 セクション構成は `/retrospective` の
+ *   description と Step 5 に逐語で在り、常時ロード側は重複だった。`CLAUDE.md`「フック」表の PostToolUse
+ *   発火条件は `selectChecks` の写しで、実際にドリフトした履歴がある（#474〜#497）——一覧を
+ *   `docs/hooks.md` へ退去させ、常時ロードには「沈黙 = 合格」とその限定だけを残した。
+ *   `.githooks/` の bootstrap 手順は `package.json` の `prepare` と `CONTRIBUTING.md` が持つ。
  */
-export const AREA_BUDGET = { alwaysLoaded: 14712, rules: 8328 };
+export const AREA_BUDGET = { alwaysLoaded: 14261, rules: 8328 };
 
 /** コードポイント数（CR は除く）。読めなければ null（母集団欠落を上位で検知） */
 function countChars(text) {

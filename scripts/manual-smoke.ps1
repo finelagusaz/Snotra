@@ -36,6 +36,13 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# 対話入力が無い環境（エージェント・CI・パイプ）では**アプリを起動する前に**落ちる。
+# ここが無いと `Read-Host` が EOF で空文字を返し続け、下の再入力ループが無限に回りながら
+# 起動済みの snotra を残す（実測）。**判定を人間が入れられないなら、走らせる意味が無い。**
+if ([Console]::IsInputRedirected) {
+  throw "manual-smoke は対話入力を要する。stdin がリダイレクトされた環境（エージェント / CI / パイプ）では実行できない——人間の端末で直接実行すること。"
+}
+
 # --- 項目定義（SSOT は PR 本文の目視表。ここはその実行可能な写しである） ---
 # 写しである以上ドリフトしうる。**項目を増減したら PR 本文（と plan.md の目視表）も直す。**
 $items = @(

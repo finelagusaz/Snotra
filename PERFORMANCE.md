@@ -154,7 +154,7 @@ hide 経路の `EmptyWorkingSet`（`src-tauri/src/working_set.rs`）は物理ペ
 
 user_font 自身が CJK をカバーするなら jp_font（`YuGothM.ttc` 13.26 MiB）は一度も glyph を
 出さないまま常駐する。**user を先に解決 → cmap 実測でカバー判定 → 必要なときだけ jp を読む**
-という順序へ入れ替えた（実装は `egui_shell/view.rs` の `font_covers_cjk` /
+という順序へ入れ替えた（実装は `egui_shell/font_stack.rs` の `font_covers_cjk` /
 `configure_japanese_font`）。判定はかな + JIS 第1水準 + **第2水準・互換漢字**を引き、
 かなと常用漢字だけの中途半端な和文フォントを弾く。パース不能は「カバーしていない」＝ jp を積む安全側。
 
@@ -176,7 +176,7 @@ user_font 自身が CJK をカバーするなら jp_font（`YuGothM.ttc` 13.26 M
 ### 採用: user_font も `from_static` で積む（epaint の全体複製を止める）
 
 `from_owned` で積んだフォントが epaint 側で丸ごと複製される。**機構の正本は
-`egui_shell/view.rs` の `font_definitions` の doc コメント**（epaint のどの関数がどう
+`egui_shell/font_stack.rs` の `font_definitions` の doc コメント**（epaint のどの関数がどう
 複製するかはそこに書く。ここで再記述すると epaint の更新時に二重メンテになる）。
 jp_font は元から `from_static` だったが user_font だけ `from_owned` のままで、
 上の A/B はこの非対称をそのまま映していた（user 20.6 ≒ **2×** 10.21 / jp 12.9 ≒ **1×** 13.26）。

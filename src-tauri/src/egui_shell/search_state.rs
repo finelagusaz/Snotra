@@ -1,5 +1,5 @@
 //! egui 検索ウィンドウの純粋状態核（#532 SU3）。query/選択/結果と 2 軸モード導出・遷移を
-//! egui/Win32 非依存で持ち、driver（view.rs）から駆動される。ユニットテスト対象。
+//! egui/Win32 非依存で持ち、driver（launcher_controller.rs）から駆動される。ユニットテスト対象。
 
 use snotra_core::config::OpenerTool;
 use snotra_core::ui_types::SearchResult;
@@ -60,7 +60,7 @@ pub fn interpret(raw_query: &str, prefix: &str, view_kind: ViewKind) -> QueryInt
 /// フォルダ展開直後、列挙結果（cache）も失敗行（error）も未着の間は true（#636 レビュー Finding A）。
 /// この窓では `results` が展開前ビューの残存物なので、driver は起動（Enter/クリック）を抑止する
 /// ——dead/slow UNC でロードが滞留すると、前ビューの誤項目を起動しうるため。前フレーム結果の保持は
-/// フリッカ回避の意図的設計（view.rs run_search）ゆえ温存し、不可逆な起動だけを止める。Results
+/// フリッカ回避の意図的設計（launcher_controller.rs run_search）ゆえ温存し、不可逆な起動だけを止める。Results
 /// モードや列挙完了（cache/error いずれか到着）後は false で、通常どおり起動できる。
 pub fn folder_load_pending(view_kind: ViewKind, has_folder_cache: bool, has_folder_error: bool) -> bool {
     view_kind == ViewKind::Folder && !has_folder_cache && !has_folder_error
@@ -81,7 +81,7 @@ pub struct FolderFrame {
 /// restore_query を持たない——tool 中は入力無効（§18.5）で query 不変ゆえ復元不要
 /// （SolidJS popView の tool 段も query を復元しない）。launch_query は起動 API へ渡す
 /// 元クエリで復元には使わない（SolidJS #538 の launchQuery / restoreQuery 型分離）。
-/// target_path/target_is_folder/tools/launch_query は driver（view.rs）が
+/// target_path/target_is_folder/tools/launch_query は driver（launcher_controller.rs）が
 /// tool_frame() 越しに読む（`shift_activate` / `execute_tool_selected`・#532 SU3.5 Task 3）。
 #[derive(Debug, Clone)]
 pub struct ToolFrame {
@@ -109,7 +109,7 @@ pub enum EscapeOutcome {
 
 /// slash コマンドの写像（§15.2）。History(`/r`) だけは結果注入型（履歴を表示して留まる）で、
 /// driver が run_search の Command 分岐へ振る。他 3 つは fire-once の副作用型。
-/// driver（view.rs）が消費する（#532 SU3 M3 Task 2）。
+/// driver（launcher_controller.rs）が消費する（#532 SU3 M3 Task 2）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlashCmd {
     History,
@@ -120,7 +120,7 @@ pub enum SlashCmd {
 
 /// trim 後の完全一致で slash コマンドを引く（§15.3 即実行の判定・commands.ts findCommand parity・
 /// 大文字小文字は区別する）。部分入力・引数付きは None（候補表示なし・§15.3）。
-/// driver（view.rs）が消費する（#532 SU3 M3 Task 2）。
+/// driver（launcher_controller.rs）が消費する（#532 SU3 M3 Task 2）。
 pub fn find_slash_command(query: &str) -> Option<SlashCmd> {
     match query.trim() {
         "/r" => Some(SlashCmd::History),
@@ -257,7 +257,7 @@ impl SearchState {
         self.folder_gen
     }
 
-    /// view.rs（driver）は現状 `parent_dir()` 越しに current_dir を使い、生の accessor は直接
+    /// launcher_controller.rs（driver）は現状 `parent_dir()` 越しに current_dir を使い、生の accessor は直接
     /// 呼ばない（folder 中の hint 文脈提示は §6 で任意扱い・#532 SU3 M2 Task 3 で見送り）。
     #[allow(dead_code)]
     pub fn folder_current_dir(&self) -> Option<&str> {
@@ -434,7 +434,7 @@ pub fn plain_results_hidden(view_kind: ViewKind, instant_rows: bool, indexing: b
 /// #633 世代トリガ（SU6 spec 決定 3）: index build 完了で bump される世代が last-seen と
 /// 異なれば再検索。bool エッジ検出と違い、started/complete の repaint が 1 フレームに合流して
 /// パルスが見えなくても累積カウンタは差分が残るため取りこぼさない。
-/// driver（view.rs）は Task 4 で再検索トリガに組み込む（#532 SU6 Task 1）。
+/// driver（launcher_controller.rs）は Task 4 で再検索トリガに組み込む（#532 SU6 Task 1）。
 pub fn needs_index_refresh(last_seen: u64, current: u64) -> bool {
     last_seen != current
 }

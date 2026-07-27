@@ -6,7 +6,7 @@
 //!
 //! **wake は primitive として公開する**（#711）——「いつ起こすか」を本モジュールが決めた
 //! 瞬間に「armed 期限は保持者が毎フレーム再要求する」契約が壊れる。期限の所有者
-//! （`SearchWindowView`）が呼び、ここは実行するだけにする。
+//! （`LauncherController`）が呼び、ここは実行するだけにする。
 //!
 //! **z-order は本モジュールに無い**——main は `commands/window.rs` が `set_always_on_top` を
 //! 直接叩き、results は `ResultsWindow::set_topmost` が持つ（tao の差分適用が results を消す

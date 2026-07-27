@@ -3,14 +3,14 @@ param(
   [string]$ExePath = "target/debug/snotra.exe",
   # 記録の出力先。既定は `$env:TEMP` 配下（リポジトリを汚さない。PR へ貼るのは -PostToPr）。
   [string]$OutFile = "",
-  # 実施する項目番号（省略時は全 10 項目）。例: -Only 2,5,10
+  # 実施する項目番号（省略時は全 13 項目）。例: -Only 2,5,10
   [int[]]$Only = @(),
   # 記録を PR コメントとして投稿する（`gh pr comment`）。番号省略時は現ブランチの PR。
   [switch]$PostToPr,
   [int]$Pr = 0,
   # 変更が入ったバイナリかの確認に使う目印文字列（`docs/build-commands.md`「スモーク運用メモ」）。
   # 一致しなくても続行はする（**警告のみ**）——目印はビルド構成に依存するため。
-  [string]$BinaryMarker = "window_coordinator",
+  [string]$BinaryMarker = "launcher_controller",
   # アプリを起動しない（既に手で起動している場合）。trace の収集も行わない。
   [switch]$NoLaunch
 )
@@ -102,11 +102,51 @@ $items = @(
      steps = @("検索窓を隠す", "隠したまま設定画面で font_size を変える", "ホットキーで出して 1 文字打つ")
      expect = "results が**最初のフレームから**新しい行高で出る（一瞬だけ旧行高で出て直る、が無い）"
      trace = @("egui_show:done", "egui_results:show") }
+  # --- #666 段 3（view.rs の責務分割）で追加した 3 項目 ---
+  # 既存の 3 と 10 が「クリック起動で古い行がちらつかない」（#699）と「reset-on-show と
+  # results driver の順序」を既にカバーするため、重複させていない。
+  @{ id = 11; title = "結果を ↑ で選び直した直後の打鍵が末尾に入る"
+     inv = "↑↓ の消費（events.retain）は TextEdit の構築より前（#700）"
+     steps = @("複数件ヒットするクエリ（例: `abc`）を打つ", "↑ を 1 回押して選択を動かす", "続けて 1 文字打つ（例: `x`）")
+     expect = @"
+打った文字が**キャレット位置（末尾）**に入る（`abc` → ↑ → `x` で `abcx`）。
+**先頭に入ったら FAIL**（`xabc` になる）——#700 の再発である。分割で消費が TextEdit の後ろへ落ちると、
+focus を保持したままの TextEdit が同じ ↑ を処理してキャレットをクエリ先頭へ飛ばす。
+"@
+     trace = @() }
+  @{ id = 12; title = "Latin と CJK が混在する行のベースラインが揃う"
+     inv = "フォント登録は index 0 への insert（push = 末尾ではない・#399 / #579）"
+     steps = @("Latin と日本語が 1 行に混ざるクエリを打つ（例: `README` と `設定` が同居するパス）",
+               "検索バーの入力欄と、results の行（名前・パスの 2 行とも）を見る",
+               "config の `visual.font_family` を CJK をカバーしないフォント（例: `Segoe UI`）にして繰り返す")
+     expect = @"
+Latin の文字と日本語の文字の**下端が同じ高さに揃う**。片方だけ数 px 上下していたら FAIL。
+softbuffer はカバレッジ AA を持たないため、2 フォント間の分数 px の差が整数 px へ丸められて
+**目に見える段差**になる（glow / wgpu 期は sub-pixel AA が同じ差を隠していた）。
+**この項目の検出器は目視だけである**——`font_definitions_*` テスト 4 件は index 0 への insert を
+固定するが、実際のベースラインは測っていない。
+"@
+     trace = @() }
+  @{ id = 13; title = "起動失敗の通知が数秒で自然に消える"
+     inv = "通知の期限を張る唯一の主体は notice.remaining() ブロック（分割で drain_launch と別モジュールへ割れた）"
+     steps = @("存在しないパス、または起動に失敗する項目を Enter で起動する（削除済みのショートカット等）",
+               "検索バー直下に赤系の失敗通知が出ることを確認する",
+               "**何も操作せずに**放置する")
+     expect = @"
+通知が**数秒で自然に消える**（マウスを動かしたり打鍵したりしなくても）。
+消えずに残り、無関係な入力を与えて初めて消えるなら FAIL——`drain_launch` の 3 分岐は自前の
+`request_repaint` を持たず、deadline を張っているのは `notice.remaining()` の 1 か所だけである。
+分割でこの 2 つが同じフレームで呼ばれなくなると、この形で壊れる。
+"@
+     trace = @("egui_launch_done") }
 )
+
+# 有効な id は `$items` から導く（件数をリテラルで書くと項目の増減で嘘になる）。
+$allIds = @($items | ForEach-Object { $_.id })
 
 if ($Only.Count -gt 0) {
   $items = @($items | Where-Object { $Only -contains $_.id })
-  if ($items.Count -eq 0) { throw "-Only に一致する項目がありません（1..10 を指定してください）" }
+  if ($items.Count -eq 0) { throw "-Only に一致する項目がありません（$($allIds -join ', ') のいずれかを指定してください）" }
 }
 
 # --- 出所の記録（何を検証したのか後から辿れるようにする） ---

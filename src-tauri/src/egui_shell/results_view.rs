@@ -434,12 +434,8 @@ pub(crate) fn truncate_middle(s: &str, avail_px: f32, per_char_px: f32) -> Strin
 impl snotra_egui_runtime::EguiView for ResultsView {
     fn setup(&mut self, context: &egui::Context) {
         // 日本語フォント: main と同じ config font_family を適用（ctx は窓ごとに独立）。
-        let font_family = self
-            .app_handle
-            .try_state::<crate::AppState>()
-            .map(|s| s.engine.lock().unwrap().config().visual.font_family.clone())
-            .unwrap_or_else(|| "Segoe UI".to_string());
-        crate::egui_shell::view::configure_japanese_font(context, &font_family);
+        let font_family = crate::egui_shell::font_stack::font_family_from_config(&self.app_handle);
+        crate::egui_shell::font_stack::configure_japanese_font(context, &font_family);
         self.applied_font_family = font_family;
         // 外部 wake 用の ctx 登録はここに無い（#671 PR D・main の setup と同じ理由）。
     }
@@ -475,7 +471,7 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         // font_family hot-reload(view.rs の applied_font_family 比較と同型を複製・
         // ctx は窓ごとに独立なため main 側の適用はこの窓に効かない)。
         if let Some(name) = &visual.font_family_changed {
-            crate::egui_shell::view::configure_japanese_font(ui.ctx(), name);
+            crate::egui_shell::font_stack::configure_japanese_font(ui.ctx(), name);
             self.applied_font_family = name.clone();
         }
         let theme = &visual.row;

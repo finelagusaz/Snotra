@@ -10,21 +10,27 @@ mod lifecycle;
 mod search_state;
 mod layout;
 mod notify;
-// view.rs（driver）が起動 worker の in-flight 追跡・一時通知で消費する（#532 SU5 Task 4）。
+// launcher_controller.rs が起動 worker の in-flight 追跡・一時通知で消費する（#532 SU5 Task 4）。
 pub(crate) use notify::{LAUNCH_TIMEOUT, NOTICE_LAUNCH, NoticeSlot};
-// view.rs（driver）が overlay 優先ラダー・hotkey 失敗通知の duration で消費する（#532 SU6 Task 7）。
+// NOTICE_HOTKEY は launcher_controller.rs（hotkey 失敗通知の duration）が、OverlayKind /
+// overlay_kind は view.rs（status 行の優先ラダー）が消費する（#532 SU6 Task 7・#666 段 3 で
+// 消費者が 2 モジュールへ割れた）。
 pub(crate) use notify::{NOTICE_HOTKEY, OverlayKind, overlay_kind};
 // mod.rs の spawn_update_check が phase 書き込みで、UpdaterUiState が Default で消費する
-// （#532 SU5 Task 6）。toast 描画は view.rs が Task 7 で消費する。
+// （#532 SU5 Task 6）。toast 描画は view.rs が、UpdaterPhase の遷移（install 失敗）は
+// launcher_controller.rs が消費する。
 pub(crate) use notify::{ToastKind, UpdaterPhase, UpdaterUi};
 pub(crate) mod strings;
 mod results_view;
 mod results_window;
+mod font_stack;
+mod launcher_controller;
 mod view;
 mod visual;
 mod window_coordinator;
 
-// main.rs（hotkey / tray / setup）・view.rs（driver）・results_view.rs（クリック逆流）が
+// main.rs（hotkey / tray / setup）・view.rs（結果窓の駆動と wake）・launcher_controller.rs
+// （updater install 失敗の wake_main）・results_view.rs（クリック逆流）が
 // 消費する。窓操作の実体は window_coordinator.rs へ移した（#749 段 1）。**モジュール外に
 // 消費者があるものだけを re-export する**——`save_placement_relative` / `read_metrics` /
 // `results_available_height` / `max_results` / `position_on_target_monitor` は同モジュール内
@@ -51,20 +57,25 @@ pub(crate) use visual::{RowTheme, VisualApplied, VisualSnapshot};
 
 // view.rs の icon texture driver（worker spawn / load_texture 適用）が消費する（#532 SU4 Task 5）。
 pub(crate) use icon_textures::{IconMsg, needs_extraction, png_to_color_image, retain_visible};
-// `blur_should_hide` は re-export しない——view の消費点は `blur_grace_action` に一本化され、
+// `blur_should_hide` は re-export しない——消費点は `blur_grace_action` に一本化され、
 // 判定そのものは純粋核の内部で生きている（#711）。2 経路を並走させないための意図的な非公開。
+// blur 猶予の 3 件は launcher_controller.rs が、plan_hotkey は main.rs 側が消費する。
 pub(crate) use lifecycle::{BLUR_GRACE, BlurAction, HotkeyPlan, blur_grace_action, plan_hotkey};
-// view.rs（driver）が folder 展開（#532 SU3 M2）で消費する。
+// launcher_controller.rs が folder 展開（#532 SU3 M2）・Escape ラダー・Enter flush で消費する。
+// ViewKind だけは view.rs も読む（入力欄の編集可否と status 行の分岐・#666 段 3）。
 pub(crate) use search_state::{
     EscapeOutcome, QueryIntent, SearchState, ViewKind, compute_parent_dir, folder_load_pending,
     should_flush_on_enter,
 };
-// SlashCmd/find_slash_command は driver（view.rs）が command 分岐・slash 実行で消費する（#532 SU3 M3 Task 2）。
+// SlashCmd/find_slash_command は launcher_controller.rs が command 分岐・slash 実行で消費する（#532 SU3 M3 Task 2）。
 pub(crate) use search_state::{SlashCmd, find_slash_command};
-// driver（view.rs）は Task 4 で表示ゲート・再検索トリガとして消費する（#532 SU6 Task 1）。
+// needs_index_refresh は launcher_controller.rs（世代検知 → 再検索）が、plain_results_hidden は
+// view.rs（表示ゲート）が消費する（#532 SU6 Task 1・#666 段 3 で消費者が割れた）。
 pub(crate) use search_state::{needs_index_refresh, plain_results_hidden};
+// launcher_controller.rs が検索 debounce（leading + trailing）で消費する。
 pub(crate) use layout::Debouncer;
-// view.rs が UI 文言（hint/overlay/toast）で消費する（#532 SU5・言語は lang() が毎フレーム live-read）。
+// view.rs が UI 文言（hint/overlay/toast）で、launcher_controller.rs が通知文言（起動失敗・
+// 結果不明・hotkey 登録失敗）で消費する（#532 SU5・言語は lang() が毎フレーム live-read）。
 pub(crate) use strings as ui_strings;
 
 use std::sync::Mutex;

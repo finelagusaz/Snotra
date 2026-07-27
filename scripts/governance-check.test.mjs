@@ -309,21 +309,42 @@ describe("G7 checkRulesGlobs", () => {
   });
 });
 
-describe("G8 checkSkillTable", () => {
+describe("G8 checkSkillTable（表の対象は roster に載らない skill だけ）", () => {
   const claude = (rows) => `# x\n## 利用できるスキル\n\n| スキル | 使うとき |\n|---|---|\n${rows}\n\n## 次節\n`;
-  it("緑: 表とディレクトリが双方向で一致", () => {
-    const s = snap({ "CLAUDE.md": claude("| `/plan-review` | 計画後 |"), ".claude/skills/plan-review/SKILL.md": "" });
+  /** roster に載る skill（harness が description ごと注入する） */
+  const shown = (name) => ({ [`.claude/skills/${name}/SKILL.md`]: `---\nname: ${name}\ndescription: "d"\n---\n本文\n` });
+  /** roster に載らない skill（user 起動専用） */
+  const hidden = (name) => ({
+    [`.claude/skills/${name}/SKILL.md`]: `---\nname: ${name}\ndescription: "d"\ndisable-model-invocation: true\n---\n本文\n`,
+  });
+
+  it("緑: 隠しスキルだけが表に載り、roster に載るスキルは載っていない", () => {
+    const s = snap({ "CLAUDE.md": claude("| `/health-check` | 定期 |"), ...hidden("health-check"), ...shown("plan-review") });
     expect(checkSkillTable(s)).toEqual([]);
   });
   it("赤: 表にあるがディレクトリに無い", () => {
-    const s = snap({ "CLAUDE.md": claude("| `/gone-skill` | x |"), ".claude/skills/plan-review/SKILL.md": "" });
+    const s = snap({ "CLAUDE.md": claude("| `/gone-skill` | x |"), ...hidden("health-check") });
     const f = checkSkillTable(s);
-    expect(f.some((x) => x.message.includes("gone-skill"))).toBe(true);
+    expect(f.some((x) => x.message.includes("gone-skill") && x.message.includes("SKILL.md が無い"))).toBe(true);
   });
-  it("赤: ディレクトリにあるが表に無い", () => {
-    const s = snap({ "CLAUDE.md": claude("| `/plan-review` | x |"), ".claude/skills/plan-review/SKILL.md": "", ".claude/skills/orphan/SKILL.md": "" });
+  it("赤: 隠しスキルが表に無い（索引としての意味が消える）", () => {
+    const s = snap({ "CLAUDE.md": claude("| `/health-check` | x |"), ...hidden("health-check"), ...hidden("orphan") });
     const f = checkSkillTable(s);
-    expect(f.some((x) => x.message.includes("orphan"))).toBe(true);
+    expect(f.some((x) => x.message.includes("orphan") && x.message.includes("roster に載らないのに"))).toBe(true);
+  });
+  it("赤: roster に載るスキルが表にある（同じ面での二重課税）", () => {
+    const s = snap({ "CLAUDE.md": claude("| `/plan-review` | x |"), ...shown("plan-review"), ...hidden("health-check") });
+    const f = checkSkillTable(s);
+    expect(f.some((x) => x.message.includes("plan-review") && x.message.includes("roster に載る"))).toBe(true);
+  });
+  it("緑: frontmatter が壊れた skill は「隠しでない」へ倒れる（表に無くても赤にしない）", () => {
+    // 判定不能を「隠し」へ倒すと、書きようのない表の行を要求して赤が意味を失う
+    const s = snap({
+      "CLAUDE.md": claude("| `/health-check` | x |"),
+      ...hidden("health-check"),
+      ".claude/skills/broken/SKILL.md": "disable-model-invocation: true\n本文だけで frontmatter の区切りが無い\n",
+    });
+    expect(checkSkillTable(s)).toEqual([]);
   });
 });
 
@@ -438,6 +459,17 @@ describe("G10 checkNormativeAreaBudget（二面独立 ratchet・文字数指標�
     const withShort = snap({ "CLAUDE.md": "", "AGENTS.md": "", ...rule("a.md", 1), ...skill("s", "d") });
     const withLong = snap({ "CLAUDE.md": "", "AGENTS.md": "", ...rule("a.md", 1), ...skill("s", "d".repeat(50)) });
     expect(normativeArea(withLong).always - normativeArea(withShort).always).toBe(49);
+  });
+
+  it("disable-model-invocation の skill の description は算入されない（注入されない字に課税しない）", () => {
+    const hiddenSkill = (name, desc) => ({
+      [`.claude/skills/${name}/SKILL.md`]: `---\nname: ${name}\ndescription: "${desc}"\ndisable-model-invocation: true\n---\n本文\n`,
+    });
+    const shortDesc = snap({ "CLAUDE.md": "", "AGENTS.md": "", ...rule("a.md", 1), ...hiddenSkill("h", "d") });
+    const longDesc = snap({ "CLAUDE.md": "", "AGENTS.md": "", ...rule("a.md", 1), ...hiddenSkill("h", "d".repeat(50)) });
+    expect(normativeArea(longDesc).always).toBe(normativeArea(shortDesc).always);
+    // それでも母集団としては数える（skills 0 件の誤検知を出さない）
+    expect(checkNormativeAreaBudget(shortDesc).some((v) => v.file === ".claude/skills")).toBe(false);
   });
 
   it("description が 1 行スカラーでなければ finding（数えられない沈黙経路の閉塞）", () => {

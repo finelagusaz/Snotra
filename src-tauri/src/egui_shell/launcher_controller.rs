@@ -1002,33 +1002,20 @@ impl LauncherController {
         }
     }
 
-    /// 段 18–20: ↑↓（**消費込み**）と →← のナビゲーション。**TextEdit の構築（段 21）より
-    /// 前に呼ぶこと**——↑↓ を `events` から取り除く責務がここにあり、破ると #700 が再発する。
-    pub(super) fn on_nav_keys(&mut self, ctx: &egui::Context) {
-        // ↑↓ ナビ（結果があるとき）。TextEdit より前に ctx から拾い、入力欄 focus 中も効かせる。
-        //
-        // **キーイベントは入力欄へ渡さず消費する**（#700）。読むだけ（`ctx.input`）では
-        // イベントが残り、focus を保持したままの TextEdit も同じ ↑↓ を処理する——単一行の
-        // galley では ↑ が `CCursor::default()`（クエリ先頭）、↓ が `galley.end()`（末尾）へ
-        // キャレットを飛ばす（epaint 0.35 の `cursor_up_one_row` / `cursor_down_one_row` の
-        // 行外分岐）。結果を ↑ で選び直した直後の打鍵がクエリ**先頭**へ挿入され、
-        // 「検索ワードが編集できない」として観測された（`abc` → ↑ → `x` が `xabc` になる・実測）。
-        // 消費は無条件に行う: 単一行入力欄で ↑↓ にキャレット移動の用途は無く（SPEC §4.8）、
-        // ツール選択中・launching 中は入力欄が非対話ゆえ元から影響が無い。
-        let (nav_down, nav_up) = ctx.input_mut(|i| {
-            let down = i.key_pressed(egui::Key::ArrowDown);
-            let up = i.key_pressed(egui::Key::ArrowUp);
-            i.events.retain(|e| {
-                !matches!(
-                    e,
-                    egui::Event::Key {
-                        key: egui::Key::ArrowUp | egui::Key::ArrowDown,
-                        ..
-                    }
-                )
-            });
-            (down, up)
-        });
+    /// 段 18–20: ↑↓・→← の処置（`move_selection` / folder 展開）。**読み（↑↓ の
+    /// `events.retain` 消費込み・→← の非破壊 `key_pressed`）は本メソッドの責務ではない**——
+    /// `view.rs` の `read_pre_widget_input`（段 13）が先に読み切り、結果を `nav_down` /
+    /// `nav_up` / `right` / `left` の bool で受け取る（#666 段 3）。↑↓ を `events` から
+    /// 取り除く責務・#700 の経緯は `read_pre_widget_input` の doc を参照。呼び出し位置
+    /// （`view.rs` の TextEdit 構築＝段 21 より前）は本フェーズで動かしていない。
+    pub(super) fn on_nav_keys(
+        &mut self,
+        nav_down: bool,
+        nav_up: bool,
+        right: bool,
+        left: bool,
+        ctx: &egui::Context,
+    ) {
         if nav_down {
             self.state.move_selection(1);
         }
@@ -1037,7 +1024,7 @@ impl LauncherController {
         }
 
         // → : 選択中がフォルダなら展開（results 中は enter、folder 中は深掘り）。ファイル/エラー行は無反応。
-        if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight))
+        if right
             && self.state.view_kind() != ViewKind::Tool // §18.5 ←→無効
             && let Some(sel) = self.state.results().get(self.state.selected())
             && sel.is_folder
@@ -1057,7 +1044,7 @@ impl LauncherController {
             self.spawn_folder_load(tok, dir, ctx.clone());
         }
         // ← : folder 中は親へ、通常検索中は選択項目の親を展開して folder 突入。
-        if ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
+        if left {
             match self.state.view_kind() {
                 ViewKind::Tool => {} // §18.5 ←→無効
                 ViewKind::Folder => {

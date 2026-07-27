@@ -1,7 +1,19 @@
-//! egui メインウィンドウの検索 view（#532 SU2 外殻 + SU3 検索 driver + SU3.5 tool 選択）。
-//! SearchState（純粋核）を駆動する imperative shell: TextEdit/結果リスト描画・直 Engine 検索
-//! （debounce）・↑↓/→←ナビ・folder 展開（async ロード + staleness）・tool 選択（§18・
-//! Shift+Enter 入場/起動/Escape 復帰）・instant/slash コマンド・起動/実行 dispatch・動的高さ。
+//! egui メインウィンドウの main 窓 1 フレーム（入力の読みと描画・OS 窓への適用）。
+//! 検索セッションの状態と遷移（結果・選択・起動・履歴・期限・↑↓/→←ナビの処置・
+//! folder 展開（async ロード + staleness）・tool 選択（§18・Shift+Enter 入場/起動/Escape
+//! 復帰）・instant/slash コマンド・起動/実行 dispatch）は `launcher_controller`
+//! （`LauncherController`）が持つ（#666 段 3。依存は一方向——`launcher_controller` は
+//! この型を見ない）。
+//!
+//! **入力変換は pre/post の 2 段**（`read_pre_widget_input` / `read_post_widget_input`）
+//! で 1 段にまとめられない: Escape/↑↓/→← は TextEdit 構築より前に消費まで含めて読み切る
+//! 必要があり（#700）、Enter/Shift は `response.changed()` の後でなければ同一フレームの
+//! IME 確定・paste を見落とす（codex 発見 4）ため、前後関係が逆である。
+//!
+//! **反映境界は 4 つ（`ui.visuals_mut()` / `ctx.set_visuals` / `ctx.set_fonts` /
+//! `window.set_background_color`）あり、1 つの名前に畳んでいない**——本ファイルが
+//! 個別に持つのはそのうち 3 つ（`ui.visuals_mut()` は本ファイルに 0 件）。
+//!
 //! フォント解決と登録は `font_stack`（独立モジュールへ切り出した理由は `font_stack.rs` の
 //! `//!`・#666 段 3 タスク 1）。
 
@@ -100,6 +112,89 @@ fn draw_toast_button(
     enabled && response.clicked()
 }
 
+/// pre-widget 入力（段 13 で読み切る値）。Escape・↑↓・→← は TextEdit 構築（段 21）より前に
+/// **消費まで含めて**読み終える必要がある——`retain` は #700 の再発を防ぐ唯一の場所であり、
+/// TextEdit の後に回すとキー入力が TextEdit へ二重に効く／キャレットが飛ぶ症状が戻る。
+/// Enter/Shift はここに含まない（`response.changed()` に依存するため後段・
+/// `read_post_widget_input` 参照）。1 段にまとめられない理由はこの前後関係の非対称にある。
+///
+/// **この関数より後で `ctx.input(|i| i.key_pressed(egui::Key::ArrowUp))` /
+/// `ArrowDown` を読んでも常に `false` である。** `nav_down` / `nav_up` の読み出しと同時に
+/// `events.retain` で ↑↓ の `Event::Key` を `events` から取り除くため、
+/// `InputState::key_pressed()`（`num_presses()` 経由で `self.events` を走査する・
+/// `egui-0.35.0/src/input_state/mod.rs:743,750-760`・一次資料で確認済み）は以後この 2 キー
+/// について沈黙して `false` を返す。**将来 ↑↓ を読む文をこの関数と `on_nav_keys` 呼び出しの
+/// 間（旧・段 14〜20 相当の位置）に足す編集者が踏む罠であり、構造では塞げない。**
+///
+/// 読みを本関数の位置（段 13）へ前寄せしてよい根拠は次の 2 つの**局所的な事実**に限る
+/// （「egui の入力はフレーム内で不変だから読む順序は関係ない」という一般命題は**偽**であり、
+/// 根拠にしてはならない）: (i) `retain` が `events` から取り除くのは ↑↓ の `Event::Key` だけ
+/// である (ii) 本関数の呼び出し位置と、↑↓/→← の**処置**（`move_selection` / folder 展開）を
+/// 行う `on_nav_keys` 呼び出しの間にある文（focus 判定・Escape ラダー・blur 猶予）は、
+/// ↑↓ イベントを 1 度も読まない（実測）。
+fn read_pre_widget_input(ctx: &egui::Context) -> PreWidgetInput {
+    let focused = ctx.input(|i| i.focused);
+    let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+
+    // ↑↓ ナビ（結果があるとき）。TextEdit より前に ctx から拾い、入力欄 focus 中も効かせる。
+    //
+    // **キーイベントは入力欄へ渡さず消費する**（#700）。読むだけ（`ctx.input`）では
+    // イベントが残り、focus を保持したままの TextEdit も同じ ↑↓ を処理する——単一行の
+    // galley では ↑ が `CCursor::default()`（クエリ先頭）、↓ が `galley.end()`（末尾）へ
+    // キャレットを飛ばす（epaint 0.35 の `cursor_up_one_row` / `cursor_down_one_row` の
+    // 行外分岐）。結果を ↑ で選び直した直後の打鍵がクエリ**先頭**へ挿入され、
+    // 「検索ワードが編集できない」として観測された（`abc` → ↑ → `x` が `xabc` になる・実測）。
+    // 消費は無条件に行う: 単一行入力欄で ↑↓ にキャレット移動の用途は無く（SPEC §4.8）、
+    // ツール選択中・launching 中は入力欄が非対話ゆえ元から影響が無い。
+    let (nav_down, nav_up) = ctx.input_mut(|i| {
+        let down = i.key_pressed(egui::Key::ArrowDown);
+        let up = i.key_pressed(egui::Key::ArrowUp);
+        i.events.retain(|e| {
+            !matches!(
+                e,
+                egui::Event::Key {
+                    key: egui::Key::ArrowUp | egui::Key::ArrowDown,
+                    ..
+                }
+            )
+        });
+        (down, up)
+    });
+
+    let right = ctx.input(|i| i.key_pressed(egui::Key::ArrowRight));
+    let left = ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft));
+
+    PreWidgetInput { focused, escape, nav_down, nav_up, right, left }
+}
+
+/// pre-widget 入力の読み取り値（段 13）。`nav_down`/`nav_up`/`right`/`left` は
+/// `on_nav_keys` の処置（`move_selection` / folder 展開）へそのまま渡す——**処置は
+/// 1 つもここへ移していない**（#666 段 3）。
+struct PreWidgetInput {
+    focused: bool,
+    escape: bool,
+    nav_down: bool,
+    nav_up: bool,
+    right: bool,
+    left: bool,
+}
+
+/// post-widget 入力（TextEdit 構築後・段 22 の `changed()` 処理より後で読む値）。Enter/Shift
+/// の判定は **`response.changed()` の後**でなければならない——先に読むと同一フレームの
+/// 入力確定（貼り付け・IME 確定）と Enter が同時に入ったとき、旧 state の interp/選択で
+/// 起動してしまう（codex 発見 4・spec M3 実装確定）。`read_pre_widget_input` とは逆に
+/// TextEdit の描画結果に依存するため、1 段にまとめられない。
+fn read_post_widget_input(ctx: &egui::Context) -> PostWidgetInput {
+    let (enter, shift) = ctx.input(|i| (i.key_pressed(egui::Key::Enter), i.modifiers.shift));
+    PostWidgetInput { enter, shift }
+}
+
+/// post-widget 入力の読み取り値（段 28）。
+struct PostWidgetInput {
+    enter: bool,
+    shift: bool,
+}
+
 impl EguiView for SearchWindowView {
     fn setup(&mut self, context: &egui::Context) {
         // `AppHandle` は controller が単独所有する（不変条件 13）。ここで 1 回 clone して
@@ -174,8 +269,10 @@ impl EguiView for SearchWindowView {
 
         // §11: パネル/入力欄/選択色を config テーマから（ハードコード撤廃・runtime CLEAR_COLOR は不変）。
         // font_family / native 背景ブラシのエッジ検出も同一 lock で読む（SU6 spec 決定 2・lock 1 回/フレーム）。
-        // 値はフレーム冒頭の `visual` から取る（#673）。**適用はこの位置のまま**——
-        // `set_visuals` はウィジェット描画より前である必要がある。
+        // 値はフレーム冒頭の `visual` から取る（#673）。**適用はこの位置のまま**（呼び出し
+        // 位置は本段では動かさない）——egui 0.35.0 では root `Ui` が pass 冒頭で
+        // `ctx.global_style()` を `Arc` snapshot するため、ここで呼ぶ `ctx.set_visuals` は
+        // 現在の pass の `Ui` に届かない。この潜在バグは #751 であり、**本段では直さない**。
         let mut visuals = ctx.style_of(ctx.theme()).visuals.clone();
         visuals.panel_fill = visual.background;
         visuals.window_fill = visuals.panel_fill;
@@ -212,17 +309,19 @@ impl EguiView for SearchWindowView {
         // に置くこと（spec C 節 不変条件 2）。3 者が同一フレームで走ることも不変条件である。
         self.controller.poll_async(&ctx);
 
-        let focused = ctx.input(|i| i.focused);
-        let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+        let pre = read_pre_widget_input(&ctx);
 
-        self.controller.clear_blur_grace_if_focused(focused);
-        if escape {
+        self.controller.clear_blur_grace_if_focused(pre.focused);
+        if pre.escape {
             self.controller.on_escape_pressed(&ctx);
         }
-        self.controller.on_focus_changed(focused, &ctx);
+        self.controller.on_focus_changed(pre.focused, &ctx);
 
-        // ↑↓（**消費込み**）と →←。**TextEdit の構築より前**であることが #700 の不変条件。
-        self.controller.on_nav_keys(&ctx);
+        // ↑↓・→← の処置（`move_selection` / folder 展開）。消費込みの読みは
+        // `read_pre_widget_input` が段 13 で既に終えている。**TextEdit の構築より前**で
+        // あることが #700 の不変条件。
+        self.controller
+            .on_nav_keys(pre.nav_down, pre.nav_up, pre.right, pre.left, &ctx);
 
         // 検索入力欄。state.query を編集し、変化があれば debounce leading で同期検索。
         //
@@ -319,7 +418,7 @@ impl EguiView for SearchWindowView {
         // 窓に focus があるのに入力欄が focus を持たないなら移す（Alt+Q 表示直後に打てる）。
         // was_focused に依存しないので、hide→reshow で was_focused が stale でも確実に戻る。
         // 条件は `interactive` と同じ `input_editable` を読む（非対称の解消は同変数の doc 参照）。
-        if focused && input_editable && !response.has_focus() {
+        if pre.focused && input_editable && !response.has_focus() {
             response.request_focus();
         }
 
@@ -462,13 +561,10 @@ impl EguiView for SearchWindowView {
         self.controller.poll_search_debounce(&ctx);
 
         // Enter: 選択項目を起動/実行（Shift は §18.3 のツール選択入場・後置 dispatch は M3 のまま）。
-        // TextEdit の changed 処理より後で判定する——同一フレームに入力確定（貼り付け・IME 確定）と
-        // Enter が入ったとき、旧 state の interp/選択で起動しないため（codex 発見 4・spec M3 実装確定）。
-        // egui の input はフレーム内で不変（読む順序は消費に影響しない）ため後置しても Enter は取りこぼさない。
-        let (enter_pressed, shift_held) =
-            ctx.input(|i| (i.key_pressed(egui::Key::Enter), i.modifiers.shift));
-        if enter_pressed {
-            self.controller.on_enter(shift_held, &ctx);
+        // TextEdit の changed 処理より後で読む理由は `read_post_widget_input` の doc 参照。
+        let post = read_post_widget_input(&ctx);
+        if post.enter {
+            self.controller.on_enter(post.shift, &ctx);
         }
 
         // 結果リスト（shouldShowResults 相当）。§4.7: 再インデックス中は plain 結果のみ隠す
@@ -581,7 +677,7 @@ impl EguiView for SearchWindowView {
             },
         );
 
-        self.controller.set_focused(focused);
+        self.controller.set_focused(pre.focused);
     }
 }
 

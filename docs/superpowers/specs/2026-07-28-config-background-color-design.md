@@ -10,7 +10,7 @@
 
 `config.toml` の `[visual].background_color` を変えても、main / results の背景は変わらない。
 
-値の行き先は `view.rs` のテーマ適用ブロックにある `visuals.panel_fill` / `visuals.window_fill` への代入 2 本だけであり、これを読む `egui::CentralPanel` / `egui::Window` は `src-tauri/` にも `snotra-egui-runtime/` にも**存在しない**（grep 0 件・2026-07-28 実測）。実際の背景は `snotra-egui-runtime/src/renderer.rs` の定数 `CLEAR_COLOR`（`0x0028_2828`）を `buffer.fill` が毎フレーム塗ったものである。
+値の行き先は `view.rs` のテーマ適用ブロックにある `visuals.panel_fill` / `visuals.window_fill` への代入 2 本だけである。この 2 値を読む egui ウィジェット——`CentralPanel` / `SidePanel` / `TopBottomPanel` / `egui::Window` / popup / menu / `ComboBox`——は `src-tauri/src/` にも `snotra-egui-runtime/src/` にも**1 つも無い**（2026-07-28 grep 実測）。`view.rs` が使う `egui::Frame::new()` は fill を持たない構築子であり、`Frame::window()` とは違って `window_fill` を読まない。実際の背景は `snotra-egui-runtime/src/renderer.rs` の定数 `CLEAR_COLOR`（`0x0028_2828`）を `buffer.fill` が毎フレーム塗ったものである。
 
 `config.rs` の `default_background_color()` が `#282828` で `CLEAR_COLOR` と一致しているため、**既定のままではこの乖離は観測できない**。非既定色を設定して初めて、「show の一瞬だけ設定色が見え、softbuffer が present した瞬間に `#282828` へ落ちる」という形で現れる。白フラッシュを消すために置いたネイティブ背景ブラシが、設定によっては白フラッシュを作る側に回る。
 
@@ -53,8 +53,10 @@ hidden 中の config 変更を即座にブラシへ反映できる。
 `snotra-egui-runtime` に次を足す。
 
 - `RuntimeFrame` に `clear_color: Option<egui::Color32>` フィールドと `pub fn set_clear_color(&mut self, color: egui::Color32)`
-- `EguiWindow::render()` が `run_ui` の**後**に `frame.clear_color` を読み、renderer の paint へ渡す
-- `EguiRenderer` の `buffer.fill` が受け取った色を使う。`None` のときは現行の `CLEAR_COLOR` へ落ちる
+- `EguiWindow::render()` が `run_ui` の**後**に `frame.clear_color` を読み、`EguiRenderer::paint` へ引数として渡す
+- `EguiRenderer::paint` 内の `buffer.fill` が受け取った色を使う。`None` のときは現行の `CLEAR_COLOR` へ落ちる
+
+**paint だけが `run_ui` 抜きで走る経路は無い**（2026-07-28 実測）。`render()` は `run_ui` → `handle_platform_output` → `paint` → `apply_frame_commands` の一本道で、paint 失敗時の再試行は `request_repaint_after(delay)` により**次フレームの `render()` 全体**をやり直す（不変条件⑤）。ゆえに `clear_color` をフレームローカルの `RuntimeFrame` に置いても、再試行フレームで失われることはない。
 
 `src-tauri` 側は、両 view の `update()` が `frame.set_clear_color(visual.background)` を 1 行呼ぶだけである（`SearchWindowView` と `ResultsView`）。
 
@@ -89,7 +91,7 @@ hidden 中の config 変更を即座にブラシへ反映できる。
 ブラシ色を `VisualSnapshot::background`（`egui::Color32`）から `tauri::window::Color` へ変換して得る。これにより `config_watcher::parse_hex_color` の製品コード上の消費者が 0 になるため、関数ごと撤去し、既存のテスト群は変換関数側の等価なテストへ移す。
 
 - 受理形が `Color32::from_hex` に揃い、`#RGB` / `#RGBA` も通る（**#680 の 1 が閉じる**）
-- alpha は両経路とも捨てる。softbuffer は `0x00RRGGBB` で持てず、tao ブラシは alpha 255 固定であるため、**背景色に関しては alpha を表現する先が存在しない**。`#RRGGBBAA` を書いた場合 alpha は無視される
+- alpha は両経路とも捨てる。根拠は softbuffer 側で、buffer が `0x00RRGGBB` である以上**定常の背景に alpha を表現する先が無い**。ブラシ側（tao の `Color` は alpha 成分を持つ）で単独に alpha を効かせると定常と食い違うため、一致させる目的で捨てる。`#RRGGBBAA` を書いた場合 alpha は無視される（撤去する `parse_hex_color` が alpha 255 固定だったのと同じ実効挙動）
 - `egui_shell::create` が受け取る `background_color_hex: &str` も同じ変換を通す（窓生成時の初期ブラシ）
 
 ## 4. 触らないもの

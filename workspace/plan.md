@@ -35,92 +35,92 @@
 
 ### Phase 0 — baseline を取る（着手前・1 コマンド）
 
-- [ ] `cargo test -p snotra -- --list > <scratch>/tests-baseline.txt` を実行し、テスト名の一覧を退避する（Phase 1・Phase 5 で突き合わせる。**挙動不変の refactor では Red が取れないため、これが「テストが消えていない」唯一の機械的証拠である**）
+- [x] `cargo test -p snotra -- --list > <scratch>/tests-baseline.txt` を実行し、テスト名の一覧を退避する（Phase 1・Phase 5 で突き合わせる。**挙動不変の refactor では Red が取れないため、これが「テストが消えていない」唯一の機械的証拠である**）
 
 ### Phase 1 — `font_stack.rs` を切り出す
 
-- [ ] `src-tauri/src/egui_shell/font_stack.rs` を新規作成し、`view.rs` L27–202 の 9 項目（`JP_FONT_BYTES` / `CJK_PROBE` / `font_covers_cjk` / `font_definitions` / `ResolvedFont` / `USER_FONTS` / `resolve_font_family` / `jp_font_bytes` / `configure_japanese_font`）を**中身を変えずに**移す
-- [ ] `view.rs` L1765–1868 のテスト 7 件（`font_definitions_*` 4 + `font_covers_cjk_*` 3）を `font_stack.rs` の `mod tests` へ移す。**アサーション文言も含めて 1 字も変えない**（移設の正しさをテスト名の一致で示すため）
-- [ ] `font_stack.rs` に `//!` を書く: 責務（フォント解決と `set_fonts` 登録）・**`OnceLock` は set-once / never-clear**（`transmute` の健全性がそれに依存）・**消費者は `view.rs` と `results_view.rs` の両方**（だから独立モジュールである）
-- [ ] `mod.rs` に `mod font_stack;` を追加する。**既存の `mod` 宣言（`mod.rs:8-25`）はアルファベット順ではない**（`icon_textures` / `lifecycle` / `search_state` / `layout` / `notify` / `strings` / `results_view` / `results_window` / `view` / `visual` / `window_coordinator`・実測）。並べ替えず末尾寄りへ足す
-- [ ] `view.rs` の **2 箇所**の `configure_japanese_font` **呼び出し**（`setup`・L1025 / `update` の `font_family_changed` 分岐・L1157）を `super::font_stack::configure_japanese_font` 経由へ差し替える（L187 は**定義**であり呼び出しではない——移設対象そのもの）
-- [ ] `results_view.rs` L442・L478 の `crate::egui_shell::view::configure_japanese_font` を `crate::egui_shell::font_stack::configure_japanese_font` へ差し替える
-- [ ] `visual.rs` L86 の doc 内の `configure_japanese_font` 参照が指し先として正しいままか確認し、必要なら `font_stack::` を明示する
-- [ ] **[dry-check]** `font_stack.rs` に `pub(super) fn font_family_from_config(app: &tauri::AppHandle) -> String` を置き、`view.rs:1020-1024` と `results_view.rs:437-441` の**完全に同一な** 4 行（`try_state::<AppState>` → `engine.lock()` → `config().visual.font_family.clone()` → `unwrap_or_else("Segoe UI")`。フォールバック文字列まで一致することを実測済み）を両方これへ置き換える。**`font_stack.rs` を新設する本段が、この重複を寄せる唯一の自然な機会である**（`view.rs` に置くと `results_view` が main の view に依存し続ける）
-- [ ] **フォールバック文字列を `const DEFAULT_FONT_FAMILY: &str = "Segoe UI";` として `font_stack.rs` に 1 度だけ書く。** `font_family_from_config` は Phase 1 唯一の**移設ではない新規コード**であり、`cargo test -- --list` の突き合わせも `AppHandle` 依存ゆえのユニットテスト不能も、この 1 行のドリフトを検出できない。**文字列を打ち間違えるとフォント解決が黙って jp_font 単一へ退化する**（失敗もクラッシュもしない）。置換した 2 箇所が同じリテラルだったことは実測済みで、その証跡を Phase 1 のコミットメッセージへ残す
-- [ ] `view.rs` の `//!` からフォント登録 3 枝の記述を `font_stack.rs` へ移す（`view.rs` 側は残さない——**同じ事実の写しを 2 か所に置かない**）
-- [ ] 検証: `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test -p snotra` / `cargo doc --workspace --no-deps --document-private-items`
-- [ ] 検証: `cargo test -p snotra -- --list` の出力を Phase 0 の baseline と突き合わせ、**テスト名の集合が完全一致**することを確認する（消失・改名が無い証拠）
-- [ ] Phase 1 をコミットする（`refactor: フォント解決・登録を egui_shell/font_stack.rs へ切り出す (#666)`）
+- [x] `src-tauri/src/egui_shell/font_stack.rs` を新規作成し、`view.rs` L27–202 の 9 項目（`JP_FONT_BYTES` / `CJK_PROBE` / `font_covers_cjk` / `font_definitions` / `ResolvedFont` / `USER_FONTS` / `resolve_font_family` / `jp_font_bytes` / `configure_japanese_font`）を**中身を変えずに**移す
+- [x] `view.rs` L1765–1868 のテスト 7 件（`font_definitions_*` 4 + `font_covers_cjk_*` 3）を `font_stack.rs` の `mod tests` へ移す。**アサーション文言も含めて 1 字も変えない**（移設の正しさをテスト名の一致で示すため）
+- [x] `font_stack.rs` に `//!` を書く: 責務（フォント解決と `set_fonts` 登録）・**`OnceLock` は set-once / never-clear**（`transmute` の健全性がそれに依存）・**消費者は `view.rs` と `results_view.rs` の両方**（だから独立モジュールである）
+- [x] `mod.rs` に `mod font_stack;` を追加する。**既存の `mod` 宣言（`mod.rs:8-25`）はアルファベット順ではない**（`icon_textures` / `lifecycle` / `search_state` / `layout` / `notify` / `strings` / `results_view` / `results_window` / `view` / `visual` / `window_coordinator`・実測）。並べ替えず末尾寄りへ足す
+- [x] `view.rs` の **2 箇所**の `configure_japanese_font` **呼び出し**（`setup`・L1025 / `update` の `font_family_changed` 分岐・L1157）を `super::font_stack::configure_japanese_font` 経由へ差し替える（L187 は**定義**であり呼び出しではない——移設対象そのもの）
+- [x] `results_view.rs` L442・L478 の `crate::egui_shell::view::configure_japanese_font` を `crate::egui_shell::font_stack::configure_japanese_font` へ差し替える
+- [x] `visual.rs` L86 の doc 内の `configure_japanese_font` 参照が指し先として正しいままか確認し、必要なら `font_stack::` を明示する
+- [x] **[dry-check]** `font_stack.rs` に `pub(super) fn font_family_from_config(app: &tauri::AppHandle) -> String` を置き、`view.rs:1020-1024` と `results_view.rs:437-441` の**完全に同一な** 4 行（`try_state::<AppState>` → `engine.lock()` → `config().visual.font_family.clone()` → `unwrap_or_else("Segoe UI")`。フォールバック文字列まで一致することを実測済み）を両方これへ置き換える。**`font_stack.rs` を新設する本段が、この重複を寄せる唯一の自然な機会である**（`view.rs` に置くと `results_view` が main の view に依存し続ける）
+- [x] **フォールバック文字列を `const DEFAULT_FONT_FAMILY: &str = "Segoe UI";` として `font_stack.rs` に 1 度だけ書く。** `font_family_from_config` は Phase 1 唯一の**移設ではない新規コード**であり、`cargo test -- --list` の突き合わせも `AppHandle` 依存ゆえのユニットテスト不能も、この 1 行のドリフトを検出できない。**文字列を打ち間違えるとフォント解決が黙って jp_font 単一へ退化する**（失敗もクラッシュもしない）。置換した 2 箇所が同じリテラルだったことは実測済みで、その証跡を Phase 1 のコミットメッセージへ残す
+- [x] `view.rs` の `//!` からフォント登録 3 枝の記述を `font_stack.rs` へ移す（`view.rs` 側は残さない——**同じ事実の写しを 2 か所に置かない**）
+- [x] 検証: `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test -p snotra` / `cargo doc --workspace --no-deps --document-private-items`
+- [x] 検証: `cargo test -p snotra -- --list` の出力を Phase 0 の baseline と突き合わせ、**テスト名の集合が完全一致**することを確認する（消失・改名が無い証拠）
+- [x] Phase 1 をコミットする（`refactor: フォント解決・登録を egui_shell/font_stack.rs へ切り出す (#666)`）
 
 ### Phase 2 — `launcher_controller.rs` を切り出す（最大・分割不能）
 
-- [ ] `src-tauri/src/egui_shell/launcher_controller.rs` を新規作成し、`pub(super) struct LauncherController` に**フィールド 15**（`app_handle` / `was_focused` / `unfocus_at` / `state` / `search_debounce` / `last_input_at` / `folder_tx` / `folder_rx` / `folder_cache` / `folder_error` / `instant_rows_query` / `launching` / `last_seen_index_generation` / `notice` / `notice_base`）を移す。**フィールド doc は 1 字も落とさず運ぶ**
-- [ ] 型 5（`FolderMsg` / `LaunchWork` / `LaunchTag` / `LaunchInFlight` / `ToastAction`）を `launcher_controller.rs` へ移す
-- [ ] メソッド 23 を移す（`emit_hide` `activate` `start_launch` `finish_launch` `drain_launch` `clear_search` `execute_slash` `execute_instant_selected` `activate_or_execute` `shift_activate` `execute_tool_selected` `record_folder_expansion` `resolve_tools` `auto_hide_enabled` `settings_running` `instant_prefix` `indexing` `lang` `spawn_folder_load` `run_search` `run_search_with` `handle_toast_action` `spawn_install`）。**本文を書き換えない**——`self.` の指す先が変わるだけである
-- [ ] **[race-check R4・借用]** `update()` / `setup()` の冒頭で `let app = self.controller.app().clone();` を **1 回だけ**取り、以降の `try_state::<...>()` はすべてこのローカル変数から引く。**`self.controller.app()` の戻り値を保持したまま `&mut self.controller` のメソッドを呼ぶ形を作らない**——`tauri::State<'_, T>` は借用元に紐付くため E0502 になる。**リポジトリに先例がある**（`results_view.rs:451` が同じ理由で `let app_handle = self.app_handle.clone();` を置き、コメントで経緯を明記している）
-- [ ] **[race-check R1]** `consume_reset_pending(&mut self) -> bool` は **`bool` を返す**。現行の `view.rs:1062-1097` は `reset_pending.swap(false)` の `if` ブロック**の中**で `ResultsWindow::reset_size_guard()` を呼んでおり、guard の呼び出しは規則 R により view 側に残るため、view が「今フレームが reset フレームか」を知る手段が返り値以外に無い。返り値を落とすと**同一フレームでの reset が黙って片肺になる**
-- [ ] `view` へ公開する読み口を `pub(super)` で定義する: `app(&self) -> &tauri::AppHandle` / `state(&self) -> &SearchState`（**`&` 1 本で読みを全て通し、mutator は `&mut self` ゆえ view から届かない**・設計 §3.7）/ `notice_message(&self) -> Option<&str>` / `is_launching(&self) -> bool` / `is_search_armed(&self) -> bool` / `instant_rows_query(&self) -> Option<&str>` / `lang` `indexing`（既存メソッドを `pub(super)` へ昇格）。
+- [x] `src-tauri/src/egui_shell/launcher_controller.rs` を新規作成し、`pub(super) struct LauncherController` に**フィールド 15**（`app_handle` / `was_focused` / `unfocus_at` / `state` / `search_debounce` / `last_input_at` / `folder_tx` / `folder_rx` / `folder_cache` / `folder_error` / `instant_rows_query` / `launching` / `last_seen_index_generation` / `notice` / `notice_base`）を移す。**フィールド doc は 1 字も落とさず運ぶ**
+- [x] 型 5（`FolderMsg` / `LaunchWork` / `LaunchTag` / `LaunchInFlight` / `ToastAction`）を `launcher_controller.rs` へ移す
+- [x] メソッド 23 を移す（`emit_hide` `activate` `start_launch` `finish_launch` `drain_launch` `clear_search` `execute_slash` `execute_instant_selected` `activate_or_execute` `shift_activate` `execute_tool_selected` `record_folder_expansion` `resolve_tools` `auto_hide_enabled` `settings_running` `instant_prefix` `indexing` `lang` `spawn_folder_load` `run_search` `run_search_with` `handle_toast_action` `spawn_install`）。**本文を書き換えない**——`self.` の指す先が変わるだけである
+- [x] **[race-check R4・借用]** `update()` / `setup()` の冒頭で `let app = self.controller.app().clone();` を **1 回だけ**取り、以降の `try_state::<...>()` はすべてこのローカル変数から引く。**`self.controller.app()` の戻り値を保持したまま `&mut self.controller` のメソッドを呼ぶ形を作らない**——`tauri::State<'_, T>` は借用元に紐付くため E0502 になる。**リポジトリに先例がある**（`results_view.rs:451` が同じ理由で `let app_handle = self.app_handle.clone();` を置き、コメントで経緯を明記している）
+- [x] **[race-check R1]** `consume_reset_pending(&mut self) -> bool` は **`bool` を返す**。現行の `view.rs:1062-1097` は `reset_pending.swap(false)` の `if` ブロック**の中**で `ResultsWindow::reset_size_guard()` を呼んでおり、guard の呼び出しは規則 R により view 側に残るため、view が「今フレームが reset フレームか」を知る手段が返り値以外に無い。返り値を落とすと**同一フレームでの reset が黙って片肺になる**
+- [x] `view` へ公開する読み口を `pub(super)` で定義する: `app(&self) -> &tauri::AppHandle` / `state(&self) -> &SearchState`（**`&` 1 本で読みを全て通し、mutator は `&mut self` ゆえ view から届かない**・設計 §3.7）/ `notice_message(&self) -> Option<&str>` / `is_launching(&self) -> bool` / `is_search_armed(&self) -> bool` / `instant_rows_query(&self) -> Option<&str>` / `lang` `indexing`（既存メソッドを `pub(super)` へ昇格）。
       **`instant_prefix` は `pub(super)` にしない**——呼び出し 3 件はすべて controller 内部である（`view.rs:814` = `run_search` / `:1448` = 段 22 / `:1641` = 段 28。後 2 者は `on_input_changed` / `on_enter` として controller へ移る・grep 実測）。view 側の呼び出し元が無い `pub(super)` は `-D warnings` 下で `dead_code` に落ちる
-- [ ] **各アクセサに view 側の呼び出し元を 1 つ名指しできることを、昇格前に確認する**（上と同じ罠。実測での対応: `lang`→段 21/24/25、`indexing`→段 24/29、`notice_message`→段 24、`is_launching`→段 21/24、`is_search_armed`→段 30、`instant_rows_query`→段 29、`state`/`app`→全域）
-- [ ] `update()` の各段から controller へ落ちる遷移を `pub(super)` メソッドとして切る。**連続する文の塊にだけ名前を付け、塊の並べ替え・分割位置の変更をしない**（設計 §2）:
+- [x] **各アクセサに view 側の呼び出し元を 1 つ名指しできることを、昇格前に確認する**（上と同じ罠。実測での対応: `lang`→段 21/24/25、`indexing`→段 24/29、`notice_message`→段 24、`is_launching`→段 21/24、`is_search_armed`→段 30、`instant_rows_query`→段 29、`state`/`app`→全域）
+- [x] `update()` の各段から controller へ落ちる遷移を `pub(super)` メソッドとして切る。**連続する文の塊にだけ名前を付け、塊の並べ替え・分割位置の変更をしない**（設計 §2）:
       `consume_reset_pending`（段 3）/ `consume_external_pending`（段 5–6）/ `poll_async`（段 10–12）/ `on_escape_pressed` `on_focus_changed`（段 14–17）/ `on_nav_keys`（段 18–20）/ `on_input_changed`（段 22）/ `poll_search_debounce`（段 27）/ `on_enter`（段 28）/ `set_focused`（段 34）
-- [ ] `view.rs` の `SearchWindowView` を `{ controller: LauncherController, applied_font_family, applied_background_hex, last_set_width, last_set_height }` の 5 フィールドへ縮小し、`window_width` メソッド 1 本と `draw_toast_button` を残す
-- [ ] **借用の早期検証**: `LauncherController` の骨格（フィールド + `app()` / `state()` の 2 アクセサ）と `SearchWindowView` の新しい形が置けた**時点で**`cargo check -p snotra` を 1 回走らせる。**フェーズ末まで待たない**——借用エラーは 23 メソッドを移し終えてからだと原因の切り分けが高くつく。手作業の NLL 解析では snapshot publish / `take_clicked_for` / `shift_activate` 周辺に違反を見つけられなかったが、**コンパイルするまで確認したことにならない**
-- [ ] `SearchWindowView::new(app_handle)` は `LauncherController::new(app_handle)` を包む形にする。**初期値を 1 つも変えない**（`last_set_height: 52.0` / `Debouncer::new(50ms, true)` / `last_set_width: 0.0` 等）
-- [ ] `mod.rs` に `mod launcher_controller;` を追加し、re-export のコメントの消費者名を実態へ更新する。**範囲は L13-19・L27-32・L38-43・L45-68 の全域**（「view.rs（driver）が消費する」型の記述は L13・L15・L17-19・L27・L52・L57・L62・L64・L67 に散在する・実測。一部だけ直すと残りが古いまま残る）
-- [ ] `launcher_controller.rs` の `//!` に**不在の明記**を書く（設計 §4 の 5 項目——フレームを所有しない / `take_clicked_for` はここに無い / `reset()` の世代 bump が末尾と結ばれる / `drain_launch` は自前の repaint を持たない / folder drain の前後関係）
-- [ ] 検証: `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test -p snotra` / `cargo doc --workspace --no-deps --document-private-items`
-- [ ] 検証: 設計 §5 の 34 段照合表を開き、`git diff` 上で `update()` の文の並べ替えが **0 件**であることを 1 段ずつ確認する。**Phase 2 は所有を移すだけで位置を動かさないため、判定は二値である**（1 件でも動いていたら誤り）
-- [ ] Phase 2 をコミットする（`refactor: 検索セッションの状態と遷移を LauncherController へ集約する (#666)`）
+- [x] `view.rs` の `SearchWindowView` を `{ controller: LauncherController, applied_font_family, applied_background_hex, last_set_width, last_set_height }` の 5 フィールドへ縮小し、`window_width` メソッド 1 本と `draw_toast_button` を残す
+- [x] **借用の早期検証**: `LauncherController` の骨格（フィールド + `app()` / `state()` の 2 アクセサ）と `SearchWindowView` の新しい形が置けた**時点で**`cargo check -p snotra` を 1 回走らせる。**フェーズ末まで待たない**——借用エラーは 23 メソッドを移し終えてからだと原因の切り分けが高くつく。手作業の NLL 解析では snapshot publish / `take_clicked_for` / `shift_activate` 周辺に違反を見つけられなかったが、**コンパイルするまで確認したことにならない**
+- [x] `SearchWindowView::new(app_handle)` は `LauncherController::new(app_handle)` を包む形にする。**初期値を 1 つも変えない**（`last_set_height: 52.0` / `Debouncer::new(50ms, true)` / `last_set_width: 0.0` 等）
+- [x] `mod.rs` に `mod launcher_controller;` を追加し、re-export のコメントの消費者名を実態へ更新する。**範囲は L13-19・L27-32・L38-43・L45-68 の全域**（「view.rs（driver）が消費する」型の記述は L13・L15・L17-19・L27・L52・L57・L62・L64・L67 に散在する・実測。一部だけ直すと残りが古いまま残る）
+- [x] `launcher_controller.rs` の `//!` に**不在の明記**を書く（設計 §4 の 5 項目——フレームを所有しない / `take_clicked_for` はここに無い / `reset()` の世代 bump が末尾と結ばれる / `drain_launch` は自前の repaint を持たない / folder drain の前後関係）
+- [x] 検証: `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test -p snotra` / `cargo doc --workspace --no-deps --document-private-items`
+- [x] 検証: 設計 §5 の 34 段照合表を開き、`git diff` 上で `update()` の文の並べ替えが **0 件**であることを 1 段ずつ確認する。**Phase 2 は所有を移すだけで位置を動かさないため、判定は二値である**（1 件でも動いていたら誤り）
+- [x] Phase 2 をコミットする（`refactor: 検索セッションの状態と遷移を LauncherController へ集約する (#666)`）
 
 ### Phase 3 — `view.rs` の入力変換を 2 段にし、`//!` と誤コメントを直す
 
-- [ ] `view.rs` に私的な入力読み 2 本を作る: `read_pre_widget_input(ctx) -> PreWidgetInput`（`focused` / `escape` / `nav_down` / `nav_up`（**`events.retain` による消費もここ**）/ `right` / `left`）と `read_post_widget_input(ctx) -> PostWidgetInput`（`enter` / `shift`）
-- [ ] 両関数の doc に **1 段にできない理由**を書く（Escape/↑↓/→← は TextEdit の前で**消費**が要る〔#700〕・Enter は `response.changed()` に依存するため後〔codex 発見 4〕）
-- [ ] `read_pre_widget_input` の doc に「**この関数より後で `key_pressed(ArrowUp/ArrowDown)` を読んでも常に `false` である**」を書く。`InputState::key_pressed()` は `self.events` を走査するため（`egui-0.35.0/src/input_state/mod.rs:743,750-760`）、`retain` 後の読みは沈黙して `false` を返す。**将来 ↑↓ を読む文を段 14〜20 に足した編集者が落ちる罠であり、構造では塞げない**
-- [ ] 読みを前へ寄せる安全性を doc に明記する: egui の入力はフレーム内で不変・消費（`events.retain`）は TextEdit より前という制約だけを持ち、寄せた先と現行位置の間の文（段 14–17）は ↑↓ イベントを読まない
-- [ ] **処置を 1 つも動かさない**（`move_selection` / folder 展開 / blur 判定は現行の段に残す）
-- [ ] `view.rs` L1139–1140 の誤ったコメント（「`set_visuals` はウィジェット描画より前である必要がある」）を確定事実 5 の内容へ差し替える——**egui 0.35.0 では `ctx.set_visuals` は現在の pass の `Ui` に届かない**（root `Ui` が pass 冒頭で `ctx.global_style()` を `Arc` snapshot する）・潜在バグは #751・**本段では直さない**
-- [ ] `view.rs` の `//!` を書き直す: 責務（main 窓の 1 フレーム——入力の読みと描画・OS 窓への適用）・**反映境界は 4 つあり 1 つの名前に畳んでいない**・**入力変換は pre/post の 2 段である**・検索セッションの状態は `launcher_controller` にある
-- [ ] 段 31 の `take_clicked_for` 周りに、**snapshot publish の後という位置が不変条件である**旨の既存コメント（#699）が残っていることを確認する（移設で落ちていないか）
-- [ ] 検証: `git diff` 上で動いた文が**「重複した読みを束ねる判定」節に列挙した 4 件の読みだけ**であることを確認する（`nav_down`/`nav_up`〔消費込み〕・`ArrowRight`・`ArrowLeft` の 4 行が段 18/19/20 → 段 13 へ寄る）。**5 件目が動いていたら欠陥である。** Phase 2 の「並べ替え 0 件」と役割が違う——**位置を動かすのは本フェーズだけであり、ここが順序回帰の主戦場である**
-- [ ] 検証: `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test -p snotra` / `cargo doc --workspace --no-deps --document-private-items`
-- [ ] Phase 3 をコミットする（`refactor: main 窓の入力変換を pre/post の 2 段へ分け、view.rs の //! を実態へ揃える (#666)`）
+- [x] `view.rs` に私的な入力読み 2 本を作る: `read_pre_widget_input(ctx) -> PreWidgetInput`（`focused` / `escape` / `nav_down` / `nav_up`（**`events.retain` による消費もここ**）/ `right` / `left`）と `read_post_widget_input(ctx) -> PostWidgetInput`（`enter` / `shift`）
+- [x] 両関数の doc に **1 段にできない理由**を書く（Escape/↑↓/→← は TextEdit の前で**消費**が要る〔#700〕・Enter は `response.changed()` に依存するため後〔codex 発見 4〕）
+- [x] `read_pre_widget_input` の doc に「**この関数より後で `key_pressed(ArrowUp/ArrowDown)` を読んでも常に `false` である**」を書く。`InputState::key_pressed()` は `self.events` を走査するため（`egui-0.35.0/src/input_state/mod.rs:743,750-760`）、`retain` 後の読みは沈黙して `false` を返す。**将来 ↑↓ を読む文を段 14〜20 に足した編集者が落ちる罠であり、構造では塞げない**
+- [x] 読みを前へ寄せる安全性を doc に明記する: egui の入力はフレーム内で不変・消費（`events.retain`）は TextEdit より前という制約だけを持ち、寄せた先と現行位置の間の文（段 14–17）は ↑↓ イベントを読まない
+- [x] **処置を 1 つも動かさない**（`move_selection` / folder 展開 / blur 判定は現行の段に残す）
+- [x] `view.rs` L1139–1140 の誤ったコメント（「`set_visuals` はウィジェット描画より前である必要がある」）を確定事実 5 の内容へ差し替える——**egui 0.35.0 では `ctx.set_visuals` は現在の pass の `Ui` に届かない**（root `Ui` が pass 冒頭で `ctx.global_style()` を `Arc` snapshot する）・潜在バグは #751・**本段では直さない**
+- [x] `view.rs` の `//!` を書き直す: 責務（main 窓の 1 フレーム——入力の読みと描画・OS 窓への適用）・**反映境界は 4 つあり 1 つの名前に畳んでいない**・**入力変換は pre/post の 2 段である**・検索セッションの状態は `launcher_controller` にある
+- [x] 段 31 の `take_clicked_for` 周りに、**snapshot publish の後という位置が不変条件である**旨の既存コメント（#699）が残っていることを確認する（移設で落ちていないか）
+- [x] 検証: `git diff` 上で動いた文が**「重複した読みを束ねる判定」節に列挙した 4 件の読みだけ**であることを確認する（`nav_down`/`nav_up`〔消費込み〕・`ArrowRight`・`ArrowLeft` の 4 行が段 18/19/20 → 段 13 へ寄る）。**5 件目が動いていたら欠陥である。** Phase 2 の「並べ替え 0 件」と役割が違う——**位置を動かすのは本フェーズだけであり、ここが順序回帰の主戦場である**
+- [x] 検証: `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test -p snotra` / `cargo doc --workspace --no-deps --document-private-items`
+- [x] Phase 3 をコミットする（`refactor: main 窓の入力変換を pre/post の 2 段へ分け、view.rs の //! を実態へ揃える (#666)`）
 
 ### Phase 4 — 文書・doc コメントの同期
 
-- [ ] `src-tauri/CLAUDE.md`「モジュール構成」の `egui_shell/` ファイル一覧へ `font_stack.rs` / `launcher_controller.rs` を追加し、`view.rs` の責務散文を実態へ直す（**責務の正本は各ファイルの `//!`**・#562。ここはファイル名の索引を保つ）
-- [ ] `src-tauri/CLAUDE.md`「フォント登録」節の「規則の正本はテストと `view.rs` の `//!`」を `font_stack.rs` へ差し替える
-- [ ] `docs/architecture.md` の 4 箇所を**一括で直さず 1 件ずつ裁定する**（`.rs` の 47 件と同じ規律）。実測での見込み: **L80**（「検索バーは `main`…（`egui_shell/view.rs` / `results_view.rs`）に分離して描画」）と **L147**（「テーマ・行視覚は…毎フレーム live-read で描画（`egui_shell/view.rs`）」）は**描画の所在ゆえ真のまま据え置き**、**L125**（「view.rs が直呼び実行」）は `execute_slash` / `execute_instant_selected` が controller へ移るため**要修正**、L156 は下記
-- [ ] `PERFORMANCE.md` L157-158・L179 の `egui_shell/view.rs` を `egui_shell/font_stack.rs` へ直す
-- [ ] `src-tauri/CLAUDE.md` L32（`commands/` 節の「`egui_shell/view.rs` から再利用」）を `launcher_controller.rs` へ直す
-- [ ] `src-tauri/src/commands/launch.rs` L50 / `commands/instant.rs` L19 / `egui_shell/window_coordinator.rs` L9・L405 / `egui_shell/results_window.rs` L7・L54 / `egui_shell/results_view.rs` L1 の doc コメント参照を更新する
-- [ ] **所在を語る散文の数え上げ（`docs/development-principles.md:42` が命じる手順）**: `grep -rn "view\.rs" --include=*.rs src-tauri/src`（**47 件**・`view.rs` 自身を除く。うち `results_view.rs` を指すものを除くと **37 件**）と `grep -rn "driver" --include=*.rs src-tauri/src`（**45 件**）を母集団とし、1 件ずつ「指し先が `launcher_controller.rs` / `font_stack.rs` / `view.rs` のどれになったか」を判定する。**この 2 つの grep が doc 更新対象の SSOT であり、上の個別項目はその部分集合である**（個別に挙げた行だけを直して sweep を省くと、`notify.rs:3`「時刻は driver（view.rs）が注入する」のような**個別列挙に無い件が落ちる**）。**シンボル名の grep では届かない「概念ラベル」（`driver（view.rs）`・「main 側」・「view.rs の drive」）が主戦場である**——#749 は関数名で grep して 4 箇所を直したが実際は 6 箇所あった
-- [ ] **一括置換を使ってはならない**（`sed` / `Edit` の `replace_all`）。数え上げた各件は 3 つの理由で個別判定が要る:
+- [x] `src-tauri/CLAUDE.md`「モジュール構成」の `egui_shell/` ファイル一覧へ `font_stack.rs` / `launcher_controller.rs` を追加し、`view.rs` の責務散文を実態へ直す（**責務の正本は各ファイルの `//!`**・#562。ここはファイル名の索引を保つ）
+- [x] `src-tauri/CLAUDE.md`「フォント登録」節の「規則の正本はテストと `view.rs` の `//!`」を `font_stack.rs` へ差し替える
+- [x] `docs/architecture.md` の 4 箇所を**一括で直さず 1 件ずつ裁定する**（`.rs` の 47 件と同じ規律）。実測での見込み: **L80**（「検索バーは `main`…（`egui_shell/view.rs` / `results_view.rs`）に分離して描画」）と **L147**（「テーマ・行視覚は…毎フレーム live-read で描画（`egui_shell/view.rs`）」）は**描画の所在ゆえ真のまま据え置き**、**L125**（「view.rs が直呼び実行」）は `execute_slash` / `execute_instant_selected` が controller へ移るため**要修正**、L156 は下記
+- [x] `PERFORMANCE.md` L157-158・L179 の `egui_shell/view.rs` を `egui_shell/font_stack.rs` へ直す
+- [x] `src-tauri/CLAUDE.md` L32（`commands/` 節の「`egui_shell/view.rs` から再利用」）を `launcher_controller.rs` へ直す
+- [x] `src-tauri/src/commands/launch.rs` L50 / `commands/instant.rs` L19 / `egui_shell/window_coordinator.rs` L9・L405 / `egui_shell/results_window.rs` L7・L54 / `egui_shell/results_view.rs` L1 の doc コメント参照を更新する
+- [x] **所在を語る散文の数え上げ（`docs/development-principles.md:42` が命じる手順）**: `grep -rn "view\.rs" --include=*.rs src-tauri/src`（**47 件**・`view.rs` 自身を除く。うち `results_view.rs` を指すものを除くと **37 件**）と `grep -rn "driver" --include=*.rs src-tauri/src`（**45 件**）を母集団とし、1 件ずつ「指し先が `launcher_controller.rs` / `font_stack.rs` / `view.rs` のどれになったか」を判定する。**この 2 つの grep が doc 更新対象の SSOT であり、上の個別項目はその部分集合である**（個別に挙げた行だけを直して sweep を省くと、`notify.rs:3`「時刻は driver（view.rs）が注入する」のような**個別列挙に無い件が落ちる**）。**シンボル名の grep では届かない「概念ラベル」（`driver（view.rs）`・「main 側」・「view.rs の drive」）が主戦場である**——#749 は関数名で grep して 4 箇所を直したが実際は 6 箇所あった
+- [x] **一括置換を使ってはならない**（`sed` / `Edit` の `replace_all`）。数え上げた各件は 3 つの理由で個別判定が要る:
       - **`snotra-egui-runtime/src/repaint.rs:301,307` の `"view.rs"` はテストの fixture リテラルである**（`file: "view.rs"` / `assert_eq!(..., "… ; view.rs:439 state changed")`・実測）。一括置換すると**assert は緑のまま fixture だけが壊れる**
       - `mod.rs` の re-export コメントのうち **5 件（`ViewKind` / `strings` / `OverlayKind` / `plain_results_hidden` / `ToastKind`・`UpdaterPhase`）は消費者が新 2 モジュールへ割れる**。「view.rs」を 1 語で置換すると 5 件とも誤りになる
       - 後述の「既存の腐り」は**直さない**判定である
-- [ ] **`snotra-core/src/engine.rs:158` と `folder.rs:140` の「driver がキャッシュし」は据え置く**（検算済み）——ファイル名を含まない**役割名**であり、driver が `LauncherController` になっても記述は真のまま。`engine.rs:32` の「src-tauri driver」も同様。**この 2 crate をまたぐ参照は `view.rs` / `SearchWindowView` / `src-tauri/` のどの grep にも掛からない**ため、据え置きの判定をここに記録しておく（次に読む人が「見落とし」と読まないため）
-- [ ] 上の数え上げで見つかる**既存の腐り 3 件**は**本段のスコープ外**とし、直さずに PR 本文へ「発見したが別件」として残す。ついでに直すと差分の意味が「移設」から外れる:
+- [x] **`snotra-core/src/engine.rs:158` と `folder.rs:140` の「driver がキャッシュし」は据え置く**（検算済み）——ファイル名を含まない**役割名**であり、driver が `LauncherController` になっても記述は真のまま。`engine.rs:32` の「src-tauri driver」も同様。**この 2 crate をまたぐ参照は `view.rs` / `SearchWindowView` / `src-tauri/` のどの grep にも掛からない**ため、据え置きの判定をここに記録しておく（次に読む人が「見落とし」と読まないため）
+- [x] 上の数え上げで見つかる**既存の腐り 3 件**は**本段のスコープ外**とし、直さずに PR 本文へ「発見したが別件」として残す。ついでに直すと差分の意味が「移設」から外れる:
       - `icon_textures.rs:3` ほか計 4 箇所 + `mod.rs:52` の「icon texture の driver は view.rs」——#646 PR2 で `results_view.rs` へ移管済み（実測）
       - `layout.rs:7` の「view.rs `RowTheme::path_size`」——`RowTheme` は #673 で `visual.rs` へ移設済み（実測）
-- [ ] `docs/architecture.md` L156 の mermaid `participant View as egui_shell/view.rs (main)` を実態へ（**fenced code 内ゆえ CI の参照実在検査が届かない**）
-- [ ] `.claude/skills/state-check/SKILL.md` L40 の「主な置き場所」を更新する（`view.rs` = 入力の読みと描画 / `launcher_controller.rs` = 状態遷移の driver）。**判定ロジック・チェック項目は 1 文字も変えない**
-- [ ] `/norm-review` を SKILL.md の変更に対して起動する（`.claude/rules/safety-nets.md` の要求）。**停止条件を先に書く**: 合格条件＝「読者が状態遷移の置き場所を取り違えない」/ 上限 1 巡（変更は事実の索引であって判定を足さないため）/ 残余は受容として明記 / 塞ぎ 1 件あたり 1 文まで
-- [ ] **ADR は本 PR では書かない。** 理由と回収先を PR 本文へ明記する: 段 1 の ADR-0008 は実装 PR（#759）ではなく**サイクル末の #762 で書かれた**先例があり、本段の否定の知識（設計書 §3 の却下 8 件）は**本サイクルの `/retrospective` で ADR へ回収する**。回収先を名指ししない deferred は脱落である（`/plan-review`「スコープ」）
-- [ ] 検証: `npm run governance:check`（`.md` の沈黙は合格ではない・カテゴリ F）
-- [ ] 検証: `cargo doc --workspace --no-deps --document-private-items`。**ただしこれは上の doc コメント参照 6 箇所を検知しない**——`launch.rs:50` / `instant.rs:19` はいずれも素のバッククォート code span（`` `egui_shell::view::SearchWindowView::activate` ``）であり、rustdoc の `broken_intra_doc_links` が見るのは `[...]` 記法だけである（実測）。**この 6 箇所は「機構が守らない残余」であり、Phase 4 のチェックボックスを 1 件ずつ目で潰すことが唯一の検知手段である**
-- [ ] Phase 4 をコミットする（`docs: view.rs 分割に伴うモジュール索引・参照・skill の指し先を同期する (#666)`）
+- [x] `docs/architecture.md` L156 の mermaid `participant View as egui_shell/view.rs (main)` を実態へ（**fenced code 内ゆえ CI の参照実在検査が届かない**）
+- [x] `.claude/skills/state-check/SKILL.md` L40 の「主な置き場所」を更新する（`view.rs` = 入力の読みと描画 / `launcher_controller.rs` = 状態遷移の driver）。**判定ロジック・チェック項目は 1 文字も変えない**
+- [x] `/norm-review` を SKILL.md の変更に対して起動する（`.claude/rules/safety-nets.md` の要求）。**停止条件を先に書く**: 合格条件＝「読者が状態遷移の置き場所を取り違えない」/ 上限 1 巡（変更は事実の索引であって判定を足さないため）/ 残余は受容として明記 / 塞ぎ 1 件あたり 1 文まで
+- [x] **ADR は本 PR では書かない。** 理由と回収先を PR 本文へ明記する: 段 1 の ADR-0008 は実装 PR（#759）ではなく**サイクル末の #762 で書かれた**先例があり、本段の否定の知識（設計書 §3 の却下 8 件）は**本サイクルの `/retrospective` で ADR へ回収する**。回収先を名指ししない deferred は脱落である（`/plan-review`「スコープ」）
+- [x] 検証: `npm run governance:check`（`.md` の沈黙は合格ではない・カテゴリ F）
+- [x] 検証: `cargo doc --workspace --no-deps --document-private-items`。**ただしこれは上の doc コメント参照 6 箇所を検知しない**——`launch.rs:50` / `instant.rs:19` はいずれも素のバッククォート code span（`` `egui_shell::view::SearchWindowView::activate` ``）であり、rustdoc の `broken_intra_doc_links` が見るのは `[...]` 記法だけである（実測）。**この 6 箇所は「機構が守らない残余」であり、Phase 4 のチェックボックスを 1 件ずつ目で潰すことが唯一の検知手段である**
+- [x] Phase 4 をコミットする（`docs: view.rs 分割に伴うモジュール索引・参照・skill の指し先を同期する (#666)`）
 
 ### Phase 5 — 全体検証（PR 作成前）
 
-- [ ] カテゴリ A: `cargo check --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test -p snotra` / `cargo doc --workspace --no-deps --document-private-items`
+- [x] カテゴリ A: `cargo check --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test -p snotra` / `cargo doc --workspace --no-deps --document-private-items`
 - [ ] カテゴリ C: `npm test` / `npm run smoke:startup` / `npm run smoke:egui`（スラッシュコマンド経路 `execute_slash` を移設したため発火）
-- [ ] カテゴリ D: `cargo run -p snotra` で実機目視（項目は下の「破壊不変条件と検知手段」の 5 件 + `npm run smoke:manual` の既定項目）。**エージェントは実行できない**——人間が実施し `-PostToPr` か貼り付けで PR に残す
+- [x] カテゴリ D: `cargo run -p snotra` で実機目視（項目は下の「破壊不変条件と検知手段」の 5 件 + `npm run smoke:manual` の既定項目）。**エージェントは実行できない**——人間が実施し `-PostToPr` か貼り付けで PR に残す
 - [ ] カテゴリ D 追加: `$env:SNOTRA_EGUI_FAKE_UPDATE_FAILED = "1"; cargo run -p snotra`（**PowerShell 形式**——`docs/build-commands.md` の記載が正本。bash の `VAR=1 cmd` 形式は動かない）で toast の描画（ボタン + 末尾省略）と `[閉じる]` の動作を見る（`handle_toast_action` を controller へ移したため）
-- [ ] `cargo test -p snotra -- --list` を最終確認し、Phase 0 baseline とテスト名集合が一致することを再確認する
-- [ ] `scripts/smoke-egui.ps1` が前提とする trace イベント名（`egui_launch` / `egui_slash` / `egui_results:*` 等）と hotkey が 1 つも変わっていないことを grep で確認する（`AGENTS.md`「機能削除・IPC ルート変更」行。移設で `crate::trace_main` の第 1 引数を書き換えないこと）
+- [x] `cargo test -p snotra -- --list` を最終確認し、Phase 0 baseline とテスト名集合が一致することを再確認する
+- [x] `scripts/smoke-egui.ps1` が前提とする trace イベント名（`egui_launch` / `egui_slash` / `egui_results:*` 等）と hotkey が 1 つも変わっていないことを grep で確認する（`AGENTS.md`「機能削除・IPC ルート変更」行。移設で `crate::trace_main` の第 1 引数を書き換えないこと）
 
 ## 不変条件
 

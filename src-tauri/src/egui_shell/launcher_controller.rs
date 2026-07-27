@@ -141,7 +141,7 @@ impl LauncherController {
     }
 
     // ---- view へ公開する読み口（すべて `&self`）------------------------------------------
-    // **mutator は `&mut self` を要るため、この 1 群を通して view から状態を変える経路は無い**
+    // **mutator は `&mut self` を要するため、この 1 群を通して view から状態を変える経路は無い**
     // （設計 §3.7）。`app_handle` の clone を view 側にもう 1 本持たないための `app()` も含む。
 
     /// managed state を引くための `AppHandle`（唯一の所有者はここ・不変条件 13）。
@@ -803,7 +803,7 @@ impl LauncherController {
                     crate::trace_main("egui_update_install_returned", serde_json::json!({}));
                 }
                 Err(e) => {
-                    // trace と toast の両方が同じ文字列を要る（#654）。**lock を取る前に**
+                    // trace と toast の両方が同じ文字列を要する（#654）。**lock を取る前に**
                     // 作る——確保を lock 保持区間へ入れない。
                     let reason = e.to_string();
                     crate::trace_main(

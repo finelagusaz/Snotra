@@ -143,7 +143,7 @@ issue のたたき台は `MainView` と書く。却下した。
 
 却下した。アクセサを 10 本以上書く手間を避けられるが、view が `&mut` を得られる形になり「遷移は controller だけが起こす」が規約に落ちる。
 
-**代わりに `pub(super) fn state(&self) -> &SearchState` の 1 本にする**——`SearchState` の read メソッド（`view_kind` / `results` / `selected` / `query` / `folder_filter` / `tool_frame` / `rows_generation`）は全て `&self` で、mutator は `&mut self` を要る。共有参照 1 本で読みを全て通し、変更を型で不能にできる。
+**代わりに `pub(super) fn state(&self) -> &SearchState` の 1 本にする**——`SearchState` の read メソッド（`view_kind` / `results` / `selected` / `query` / `folder_filter` / `tool_frame` / `rows_generation`）は全て `&self` で、mutator は `&mut self` を要する。共有参照 1 本で読みを全て通し、変更を型で不能にできる。
 
 ### 3.8 #751（`ctx.set_visuals` が現在の pass に届かない）をこの段で直す
 

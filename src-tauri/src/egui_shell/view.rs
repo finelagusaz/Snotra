@@ -3,14 +3,16 @@
 //! そちらの `//!`）が持つ（#666 段 3。依存は一方向——`launcher_controller` はこの型を
 //! 見ない）。
 //!
-//! **入力変換は pre/post の 2 段**（`read_pre_widget_input` / `read_post_widget_input`）
-//! で 1 段にまとめられない: Escape/↑↓/→← は TextEdit 構築より前に消費まで含めて読み切る
-//! 必要があり（#700）、Enter/Shift は `response.changed()` の後でなければ同一フレームの
-//! IME 確定・paste を見落とす（codex 発見 4）ため、前後関係が逆である。
+//! **入力変換は pre/post の 2 段である**（`read_pre_widget_input` / `read_post_widget_input`）。
+//! 1 段にまとめられない理由は各関数の doc にあり、正本は `read_pre_widget_input` の doc。
 //!
 //! **反映境界は 4 つ（`ui.visuals_mut()` / `ctx.set_visuals` / `ctx.set_fonts` /
-//! `window.set_background_color`）あり、1 つの名前に畳んでいない**——本ファイルが
-//! 個別に持つのはそのうち 3 つ（`ui.visuals_mut()` は本ファイルに 0 件）。
+//! `window.set_background_color`）あり、1 つの名前に畳んでいない**——このうち本ファイルが
+//! 直接呼ぶのは `ctx.set_visuals` と `window.set_background_color` の 2 つで、フォント登録は
+//! `font_stack::configure_japanese_font` の**呼び出し点** 2 箇所（`setup` と `update` の
+//! font_family 差分の分岐）として持つ。**`ctx.set_fonts` 自体の呼び出しは `font_stack.rs` に
+//! あり本ファイルには無い**（#666 段 3 タスク 1 で移設）。`ui.visuals_mut()` は
+//! `--include=*.rs` の全域 grep で 0 件である（2026-07-28 実測）。
 //!
 //! フォント解決と登録は `font_stack`（独立モジュールへ切り出した理由は `font_stack.rs` の
 //! `//!`・#666 段 3 タスク 1）。
@@ -110,9 +112,10 @@ fn draw_toast_button(
     enabled && response.clicked()
 }
 
-/// pre-widget 入力（段 13 で読み切る値）。Escape・↑↓・→← は TextEdit 構築（段 21）より前に
-/// **消費まで含めて**読み終える必要がある——`retain` は #700 の再発を防ぐ唯一の場所であり、
-/// TextEdit の後に回すとキー入力が TextEdit へ二重に効く／キャレットが飛ぶ症状が戻る。
+/// pre-widget 入力（段 13 で読み切る値）。Escape・↑↓・→← の**読み**は TextEdit 構築（段 21）
+/// より前に終える必要があり、うち **↑↓ は消費（`events.retain`）まで含む**——この `retain` は
+/// #700 の再発を防ぐ唯一の場所であり、TextEdit の後に回すと ↑↓ が TextEdit へも効いて
+/// キャレットが飛ぶ症状が戻る。**Escape・→← のイベントは 1 つも除かない**（読むだけである）。
 /// Enter/Shift はここに含まない（`response.changed()` に依存するため後段・
 /// `read_post_widget_input` 参照）。1 段にまとめられない理由はこの前後関係の非対称にある。
 ///

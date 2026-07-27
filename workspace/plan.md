@@ -116,7 +116,7 @@
 ### Phase 5 — 全体検証（PR 作成前）
 
 - [x] カテゴリ A: `cargo check --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test -p snotra` / `cargo doc --workspace --no-deps --document-private-items`
-- [ ] カテゴリ C: `npm test` / `npm run smoke:startup` / `npm run smoke:egui`（スラッシュコマンド経路 `execute_slash` を移設したため発火）
+- [x] カテゴリ C: `npm test`（373 passed）/ `npm run smoke:startup`（**`-WaitMs 5000` で 3/3 PASS**）/ `npm run smoke:egui -- -ResultsQuery "e"`（**show/hide + results show/hide 観測で PASS**）——スラッシュコマンド経路 `execute_slash` を移設したため発火。**`smoke:startup` は既定の `-WaitMs 1800` では 5/5 失敗する**が、分割前 `5d4b81e` のバイナリでも 5/5 同じ失敗であり**本変更の回帰ではない**（A/B 実測）。原因は #690 が入れた「最初の trace を待ってから観測窓を開く」ガードが、待機ループで行の中身を見ず `[trace]` でない `[index-load]` 行に満たされて空振りすること（`scripts/smoke-startup.ps1`）。この機体では `hotkey:registered` が「最初の行 + 1800ms」に間に合わない（実測 4.1〜4.3 秒）。**既存の欠陥ゆえ本 PR では直さず issue 化する**
 - [x] カテゴリ D: `cargo run -p snotra` で実機目視（項目は下の「破壊不変条件と検知手段」の 5 件 + `npm run smoke:manual` の既定項目）。**エージェントは実行できない**——人間が実施し `-PostToPr` か貼り付けで PR に残す
 - [ ] カテゴリ D 追加: `$env:SNOTRA_EGUI_FAKE_UPDATE_FAILED = "1"; cargo run -p snotra`（**PowerShell 形式**——`docs/build-commands.md` の記載が正本。bash の `VAR=1 cmd` 形式は動かない）で toast の描画（ボタン + 末尾省略）と `[閉じる]` の動作を見る（`handle_toast_action` を controller へ移したため）
 - [x] `cargo test -p snotra -- --list` を最終確認し、Phase 0 baseline とテスト名集合が一致することを再確認する

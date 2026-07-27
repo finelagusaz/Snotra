@@ -83,7 +83,7 @@ pub(crate) struct VisualSnapshot {
     /// アイコン枠を描くか（results のみ使用）。
     pub show_icons: bool,
     /// `applied.font_family` と異なるときだけ `Some`。呼び出し側は Some のときだけ
-    /// `configure_japanese_font` を呼び、`applied` を更新する。
+    /// `font_stack::configure_japanese_font` を呼び、`applied` を更新する。
     pub font_family_changed: Option<String>,
     /// `applied.background_hex` と異なるときだけ `Some`（`None` を渡したときは常に `None`）。
     /// main はこの hex を `config_watcher::parse_hex_color` に食わせる（`//!` のパーサ節）。

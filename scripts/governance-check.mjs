@@ -522,7 +522,8 @@ export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
  * 赤にしないための許容差である——規範を 1 本足せば通常は超える。ゼロ余裕で据えると、あらゆる編集が
  * 定数の書き換えを要求して摩擦が日常化し、赤の意味が失われる（ADR-0005）。
  */
-export const AREA_BUDGET = { alwaysLoaded: 15823, rules: 8418 };
+// #749 plan.md ゲートの docs/hooks.md・CLAUDE.md フック表への写し同期（Task 4）
+export const AREA_BUDGET = { alwaysLoaded: 16000, rules: 8418 };
 
 /** コードポイント数（CR は除く）。読めなければ null（母集団欠落を上位で検知） */
 function countChars(text) {

@@ -45,7 +45,7 @@
 
 | フック | 発火条件 | 正しい対応 |
 |---|---|---|
-| PR 作成前 push チェック（PreToolUse） | `Bash` / `PowerShell` の `tool_input.command` の**コマンド位置**に `gh pr create` があり、かつ安全と確認できないとき（空 PR / `Closes` 誤 close 防止）。`&&` で `git push` が先行するなら通る | `git push -u origin HEAD` してから PR を作る（または `&&` で繋ぐ）。**鎖に `cd` を含めない**——作業ディレクトリを変えると対象リポジトリを判定できず拒否される（実測） |
+| PR 作成前 push チェック（PreToolUse） | `Bash` / `PowerShell` の `tool_input.command` の**コマンド位置**に `gh pr create` があり、かつ安全と確認できないとき（空 PR / `Closes` 誤 close 防止）。`&&` で `git push` が先行するなら通る。また `workspace/plan.md` に未チェックの `- [ ]` が残っているときも拒む（計画の実行漏れ防止・#749。鎖の安全とは独立に判定） | `git push -u origin HEAD` してから PR を作る（または `&&` で繋ぐ）。**鎖に `cd` を含めない**——作業ディレクトリを変えると対象リポジトリを判定できず拒否される（実測）。未チェック項目は完了させて `[x]` にするか、やらないと決めた項目は計画から外して理由を記録する |
 | 編集後の自動検証（PostToolUse） | `tool_input.file_path` が属するツリーからの相対パスで判定。`*.rs` → clippy（各 Rust crate 配下ではその crate のテストも）、`tauri.conf.json` / `config.toml` → WARN、`Cargo.toml` → cargo check、`.claude/settings.json` / `.claude/hooks/**` / `package.json` / `vitest.config.ts` / ルートの `Cargo.toml` → hook-selftest、`.githooks/**` → githooks-selftest（TS 型検査は #532 SU7 のフロント撤去で消滅・`.ts` 編集は「検査はありません」の情報行のみ） | **検査が割り当てられているファイルでは、沈黙は合格を意味する**（割り当ての SSOT は `selectChecks`）。失敗時のみ `exit code` と再現コマンドと診断が会話に届く。手動での再実行は不要 |
 
 - **(A2)「外部 API の不可逆呼び出し」のうち hook が守るのは `gh pr create` だけである**（#488 実測・**意図的な非対称**）。`merge` / `close` を hook で守らない 3 理由・Layer 0（`squash_merge_commit_message=PR_BODY`）での遮断・設定 read-back の検知器を置かない判断は `docs/adr/0002-squash-merge-issue-autoclose.md` が SSOT。残余は上の手順 3 に委ねられる

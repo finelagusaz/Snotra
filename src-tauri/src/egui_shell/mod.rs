@@ -10,7 +10,6 @@ mod lifecycle;
 mod search_state;
 mod layout;
 mod notify;
-mod font_stack;
 // view.rs（driver）が起動 worker の in-flight 追跡・一時通知で消費する（#532 SU5 Task 4）。
 pub(crate) use notify::{LAUNCH_TIMEOUT, NOTICE_LAUNCH, NoticeSlot};
 // view.rs（driver）が overlay 優先ラダー・hotkey 失敗通知の duration で消費する（#532 SU6 Task 7）。
@@ -21,6 +20,7 @@ pub(crate) use notify::{ToastKind, UpdaterPhase, UpdaterUi};
 pub(crate) mod strings;
 mod results_view;
 mod results_window;
+mod font_stack;
 mod view;
 mod visual;
 mod window_coordinator;

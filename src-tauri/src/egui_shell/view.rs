@@ -2,8 +2,8 @@
 //! SearchState（純粋核）を駆動する imperative shell: TextEdit/結果リスト描画・直 Engine 検索
 //! （debounce）・↑↓/→←ナビ・folder 展開（async ロード + staleness）・tool 選択（§18・
 //! Shift+Enter 入場/起動/Escape 復帰）・instant/slash コマンド・起動/実行 dispatch・動的高さ。
-//! フォント解決と登録の実体は `font_stack`（消費者が本モジュールと `results_view` の両方に
-//! あるため独立モジュールへ切り出した・#666 段 3 タスク 1）。
+//! フォント解決と登録は `font_stack`（独立モジュールへ切り出した理由は `font_stack.rs` の
+//! `//!`・#666 段 3 タスク 1）。
 
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{Receiver, Sender, channel};

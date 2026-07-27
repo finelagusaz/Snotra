@@ -1,4 +1,4 @@
-# ADR-0011: 段 3 の分割規則は ADR-0008 を継承し、新モジュールを `font_stack.rs` と命名する
+# ADR-0014: 段 3 の分割規則は ADR-0008 を継承し、新モジュールを `font_stack.rs` と命名する
 
 #666（段 3）で `egui_shell/view.rs`（1869 行）を `launcher_controller.rs` / `view.rs` / `font_stack.rs` の 3 つへ分けた。ここに残すのは、その過程で却下した選択肢である。決定の全文と分類表は `docs/superpowers/specs/2026-07-27-666-launcher-controller-main-view-design.md`。
 

@@ -521,8 +521,11 @@ export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
  * 無いため実測に据えるほかなく、rules は今回 1 字も減らしていない）。+100 は誤字修正や語順直しで
  * 赤にしないための許容差である——規範を 1 本足せば通常は超える。ゼロ余裕で据えると、あらゆる編集が
  * 定数の書き換えを要求して摩擦が日常化し、赤の意味が失われる（ADR-0005）。
+ * **2026-07-27 引き上げ 15823→16028**（実測 15798→15928・+130 字）: #749 の plan.md ゲート機構を
+ * `docs/hooks.md` へ実装契約として、CLAUDE.md フック表へ発火条件・正しい対応を同期した（#749 の plan.md ゲート案内追記）。
+ * ゲートの案内追記により常時ロード規範が旧予算 15823 を超過したため、実測 15928 + 100 字バッファで 16028 へ引き上げた。
  */
-export const AREA_BUDGET = { alwaysLoaded: 15823, rules: 8418 };
+export const AREA_BUDGET = { alwaysLoaded: 16028, rules: 8418 };
 
 /** コードポイント数（CR は除く）。読めなければ null（母集団欠落を上位で検知） */
 function countChars(text) {

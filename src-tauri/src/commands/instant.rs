@@ -16,7 +16,7 @@ pub fn get_instant_commands(
         .collect())
 }
 
-/// instant action の種別ディスパッチ核（egui 経路 = `egui_shell::view::execute_instant_selected`
+/// instant action の種別ディスパッチ核（egui 経路 = `egui_shell::launcher_controller::LauncherController::execute_instant_selected`
 /// が呼ぶ・#532 SU3 M3。IPC 経路は SU7 PR3 のフロント撤去で消滅）。
 /// clipboard は呼び出し側がエンジンロック外で読んで渡す（Win32 がブロックしうるため）。
 ///

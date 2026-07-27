@@ -1,6 +1,6 @@
 //! #634 G-SYNC: egui 直 `Engine` 同期 search のフレームコスト実測ハーネス。
 //!
-//! egui 経路（`src-tauri/src/egui_shell/view.rs` の `run_search_with`）は trailing
+//! egui 経路（`src-tauri/src/egui_shell/launcher_controller.rs` の `run_search_with`）は trailing
 //! debounce 1 回の `engine.search` を UI スレッド同期で呼ぶ。本ハーネスはその
 //! フレーム占有の支配項 `Engine::search` を、合成インデックスの規模別に実測する。
 //!

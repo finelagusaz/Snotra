@@ -37,7 +37,7 @@ $ARGUMENTS から以下を抽出する:
 - 追加・変更されるモード / シグナル / ガード条件
 - 変更の種類（モード新設、遷移条件の変更、ガードの追加・削除）
 
-対象コードを読む。主な置き場所: `src-tauri/src/egui_shell/search_state.rs`（モード・view stack・reset-on-show の純粋核）、`src-tauri/src/egui_shell/view.rs`（キー入力分岐・driver）、`src-tauri/src/egui_shell/lifecycle.rs`（show/hide・blur 判定）。
+対象コードを読む。主な置き場所: `src-tauri/src/egui_shell/search_state.rs`（モード・view stack・reset-on-show の純粋核）、`src-tauri/src/egui_shell/launcher_controller.rs`（状態遷移の driver）、`src-tauri/src/egui_shell/view.rs`（入力の読みと描画）、`src-tauri/src/egui_shell/lifecycle.rs`（show/hide・blur 判定）。
 
 ## Step 2 — 直交性マトリクス
 

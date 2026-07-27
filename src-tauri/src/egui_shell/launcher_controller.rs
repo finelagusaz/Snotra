@@ -1008,6 +1008,13 @@ impl LauncherController {
     /// `nav_up` / `right` / `left` の bool で受け取る（#666 段 3）。↑↓ を `events` から
     /// 取り除く責務・#700 の経緯は `read_pre_widget_input` の doc を参照。呼び出し位置
     /// （`view.rs` の TextEdit 構築＝段 21 より前）は本フェーズで動かしていない。
+    ///
+    /// **別の順序制約が今も本メソッドの呼び出し位置を縛っている**（#700 とは無関係・本
+    /// diff 以前から不記載のまま存在）: `move_selection` は `view.rs` の RowsSnapshot
+    /// publish（`self.controller.state().selected()` を読み snapshot へ積む段・#699）より
+    /// **前**に呼ばれている必要がある——選択直後のフレームで新しい選択値を results 窓へ
+    /// 配るためで、現状 `update()` 内の呼び出し順序（本メソッド → snapshot publish）が
+    /// それを満たしている。
     pub(super) fn on_nav_keys(
         &mut self,
         nav_down: bool,

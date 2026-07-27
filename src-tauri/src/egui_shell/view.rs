@@ -316,8 +316,10 @@ impl EguiView for SearchWindowView {
         self.controller.on_focus_changed(pre.focused, &ctx);
 
         // ↑↓・→← の処置（`move_selection` / folder 展開）。消費込みの読みは
-        // `read_pre_widget_input` が段 13 で既に終えている。**TextEdit の構築より前**で
-        // あることが #700 の不変条件。
+        // `read_pre_widget_input` が段 13 で既に終えている。**この読み（段 13 の
+        // `read_pre_widget_input`）が TextEdit 構築より前にあることが #700 の不変条件**
+        // ——`on_nav_keys` 自体の呼び出し位置には #700 由来の制約は無い（消費は既に
+        // 完了済みのため）。
         self.controller
             .on_nav_keys(pre.nav_down, pre.nav_up, pre.right, pre.left, &ctx);
 

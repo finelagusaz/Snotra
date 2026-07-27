@@ -90,9 +90,19 @@ export function resolveRoot(filePath) {
   return findUp(path.dirname(path.resolve(filePath)), ".git");
 }
 
+/**
+ * パス区切りを常に `/` へ正規化する。
+ *
+ * `replaceAll("\\", "/")` は使わない — POSIX では `\` はファイル名に使える普通の文字なので、
+ * 正当な名前を潰す。`path.sep` は POSIX で `"/"` ゆえ、下の split/join はそこでは no-op になる。
+ */
+export function toPosixPath(p) {
+  return p.split(path.sep).join("/");
+}
+
 /** root からの相対パス。区切りは常に / に正規化する。 */
 export function toRelative(root, filePath) {
-  return path.relative(root, filePath).split(path.sep).join("/");
+  return toPosixPath(path.relative(root, filePath));
 }
 
 /** payload から file_path を取り出す。無ければ null（I3）。 */
@@ -248,8 +258,23 @@ export function buildEnvelope({ context, systemMessage } = {}) {
   return JSON.stringify(envelope);
 }
 
-function buildCommand(id, root) {
-  const nodeSpec = (args) => ({ cmd: process.execPath, args, repro: ["node", ...args].join(" ") });
+/**
+ * 検査 id → 実行する spec（`cmd`/`args`）と、エージェントへ見せる再現コマンド（`repro`）。
+ *
+ * **`repro` の区切りは `/` に正規化する（#768）。** Windows では `resolveBin` が `path.join` で
+ * `\` 区切りの絶対パスを作るため、素で出すと `node C:\...\vitest.mjs run .claude/hooks` になり、
+ * **PreToolUse の `\` パス判定が拒む形**になる。片方の hook が指示するコマンドをもう片方が拒む
+ * 状態は、規範を機構へ移した設計の信頼を直に壊す（`pre-bash.test.mjs` の相互契約カナリアが固定）。
+ * 実行に使う `cmd`/`args` は正規化しない — spawnSync は `\` をそのまま受けるうえ、
+ * `governance:check` の G9 が `cargoSpec` の引数リテラルをソースから読むためである
+ * （G9 の抽出は散文中の呼び出し形にも一致するので、ここでその形を書かない）。
+ */
+export function buildCommand(id, root) {
+  const nodeSpec = (args) => ({
+    cmd: process.execPath,
+    args,
+    repro: ["node", ...args.map(toPosixPath)].join(" "),
+  });
   const cargoSpec = (args) => ({ cmd: "cargo", args, repro: ["cargo", ...args].join(" ") });
 
   /** vitest を走らせる検査の共通形。見つからなければ null（runCheck が HOOK ERROR にする）。 */
@@ -341,7 +366,9 @@ function runCheck(id, root, sections, errors) {
       ? `検査を完走できませんでした（出力が maxBuffer ${MAX_BUFFER} bytes を超過）`
       : `exit ${res.status ?? `signal ${res.signal}`}`;
 
-  sections.push(buildSection({ id, status, repro: `${spec.repro}  (cwd: ${root})`, evidence }));
+  sections.push(
+    buildSection({ id, status, repro: `${spec.repro}  (cwd: ${toPosixPath(root)})`, evidence }),
+  );
 }
 
 function main() {

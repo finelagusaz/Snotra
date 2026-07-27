@@ -61,81 +61,101 @@
 それが失敗したとき出る再現コマンドは `node C:\workspace\Snotra\node_modules\vitest\vitest.mjs run .claude/hooks` で、
 **再現コマンドが最も要る局面でそのまま打てない**。この Phase は述語と独立なので、先に置けば窓が消える。
 
-- [ ] `buildCommand` / `runCheck` の `repro` 文字列を POSIX 区切りへ正規化する（D10。実行に使う `spec.cmd`/`spec.args` は変えない＝`governance-check.mjs`:485 の G9 に無影響）
-- [ ] 正規化は **`toRelative`（`post-edit.mjs`:95）と同じ `.split(path.sep).join("/")`** を共有ヘルパへ束ねて使う（`replaceAll("\\","/")` は POSIX でファイル名中の `\` を潰すため使わない・`/dry-check` 候補 2）
-- [ ] `post-edit.test.mjs` にカナリアを足す（`pre-bash.mjs` の `decide` を直に呼び、hook-selftest / githooks-selftest / clippy / cargo の再現文字列がすべて allow されることを照合する。I8）
-- [ ] 既存の post-edit テストが緑であることを確認する
+- [x] `buildCommand` / `runCheck` の `repro` 文字列を POSIX 区切りへ正規化する（D10。実行に使う `spec.cmd`/`spec.args` は変えない＝`governance-check.mjs`:485 の G9 に無影響）
+- [x] 正規化は **`toRelative`（`post-edit.mjs`:95）と同じ `.split(path.sep).join("/")`** を共有ヘルパへ束ねて使う（`replaceAll("\\","/")` は POSIX でファイル名中の `\` を潰すため使わない・`/dry-check` 候補 2）
+- [x] `post-edit.test.mjs` に post-edit 側の義務のカナリアを足す（`repro` に `\` を出さない・`args` は正規化しない）。**相互契約カナリア（`decide` を直に呼ぶ側）は述語が存在してから置くため Phase 3 へ移した** — Phase 1 の目的は「窓を閉じる」ことであり、判定に依存させると Phase 1 が red のまま進むことになる
+- [x] 既存の post-edit テストが緑であることを確認する
 
 ### Phase 2 — 判定の実装（`.claude/hooks/pre-bash.mjs`）
 
-- [ ] `segmentEnd(command, at)` を抽出し、`hasSafeChain` のインライン計算を載せ替える（D4・挙動不変）
-- [ ] 区切り文字集合 `[;&|\n\r]` を定数へ寄せる（現在 `:91` と `:98` に別リテラル。`:98` は区切り列の列挙で関数は共有できないため定数だけ共有する・`/dry-check` 候補 3）
-- [ ] `gitSegments(command)` を追加（コマンド位置の `git` ごとに `segmentEnd` までを切り出す）
-- [ ] `usesHeredoc` を D8 の形で実装する（全候補 + 単独行 `Map` の 1 パス。**囮の `<<` が先行しても取り落とさない**）
-- [ ] `usesBackslashPath` / `needsPyEncoding` を追加する（`\` は `C:\` / `$env:X\` / `%X%\` の 3 形に限る・D7）
-- [ ] `usesNoVerify` / `pullWithoutFfOnly` を追加し、subcommand 判定に既存 `FLAG` 定数を使う（D9）
-- [ ] 5 件の拒否文言を定数で置く（I6。事故の理由 + 代わりの手段を各 1 文で。`CLAUDE.md` から降ろす知識の受け皿はここである）
-- [ ] `decide(payload, readGitState, readPlanState, platform)` へ第 4 引数を足し、**`command` 取得の直後・`gh pr create` 検出の前**に 5 判定を置く（I/O 不要な文字列判定を先に走らせる）
-- [ ] Windows 専用 3 件を `platform === "win32"` ゲートの内側に入れる（D3 の倒し方をコード注釈に書く）
-- [ ] `main()` の `decide` 呼び出しへ `process.platform` を渡す
-- [ ] `usesHeredoc` の `new RegExp` 補間が安全な理由と、線形であることの理由を注釈する（I2）
+- [x] `segmentEnd(command, at)` を抽出し、`hasSafeChain` のインライン計算を載せ替える（D4・挙動不変）
+- [x] 区切り文字集合 `[;&|\n\r]` を定数へ寄せる（現在 `:91` と `:98` に別リテラル。`:98` は区切り列の列挙で関数は共有できないため定数だけ共有する・`/dry-check` 候補 3）
+- [x] `gitSegments(command)` を追加（コマンド位置の `git` ごとに `segmentEnd` までを切り出す）
+- [x] `usesHeredoc` を D8 の形で実装する（全候補 + 単独行 `Map` の 1 パス。**囮の `<<` が先行しても取り落とさない**）
+- [x] `usesBackslashPath` / `needsPyEncoding` を追加する（`\` は `C:\` / `$env:X\` / `%X%\` の 3 形に限る・D7）
+- [x] `usesNoVerify` / `pullWithoutFfOnly` を追加し、subcommand 判定に既存 `FLAG` 定数を使う（D9）
+- [x] 5 件の拒否文言を定数で置く（I6。事故の理由 + 代わりの手段を各 1 文で。`CLAUDE.md` から降ろす知識の受け皿はここである）
+- [x] `decide(payload, readGitState, readPlanState, platform)` へ第 4 引数を足し、**`command` 取得の直後・`gh pr create` 検出の前**に 5 判定を置く（I/O 不要な文字列判定を先に走らせる）
+- [x] Windows 専用 3 件を `platform === "win32"` ゲートの内側に入れる（D3 の倒し方をコード注釈に書く）
+- [x] `main()` の `decide` 呼び出しへ `process.platform` を渡す
+- [x] `usesHeredoc` の `new RegExp` 補間が安全な理由と、線形であることの理由を注釈する（I2）
 
 ### Phase 3 — テスト（`.claude/hooks/pre-bash.test.mjs`）
 
-- [ ] 述語ごとの代表入力を移植する（research.md の実測ケース。真/偽の両方向）
-- [ ] 囮が先行する heredoc（`grep -rn "x << y" src && cat <<EOF\nbody\nEOF`）が block されることを固定する（D8 の回帰）
-- [ ] `git -C /x commit -n` / `git -C /x pull` が block されることを固定する（D9 の回帰）
-- [ ] 結合短フラグ（`-nm`）と、`git log -n 5` / `git push -n` を block しないことを固定する（D5 の射程）
-- [ ] 意図として固定する過剰検出をテストに残す（`git commit -m "fix: C:\path handling"` が block・`git pull --rebase` が block）
-- [ ] 意図として残す過小検出をテストで明示する（`git commit -m "a;b" --no-verify` が allow・D6）
-- [ ] `decide` の platform 注入テスト（`"win32"` で block・`"darwin"` で allow・省略時は allow = I5）
-- [ ] 非依存 2 件が platform を問わず block することを両値で固定する
-- [ ] 病的入力の no-throw テスト（空文字列・`<<` 単独・不一致引用・20 万字・`$env:TEMP\` 反復。I2）
-- [ ] **候補 2 万件の heredoc 入力に時間上限を課すテスト**（no-hang。素朴実装なら 1800 ms・採る形なら 5 ms 程度ゆえ十分な余裕で分離できる）
-- [ ] process 級 e2e: heredoc payload が `process.platform === "win32"` なら exit 2、他なら exit 0（両 OS CI がライブカナリアになる）
-- [ ] process 級 e2e: `--no-verify` payload はどの OS でも exit 2
-- [ ] ソースカナリア: `main()` が `decide` へ `process.platform` を渡していること（I5）
-- [ ] 既存 23 呼び出しが 3 引数のまま緑であることを確認する（I7・書き換えない）
-- [ ] `npx vitest run .claude/hooks` を実行して緑を確認する
+- [x] 述語ごとの代表入力を移植する（research.md の実測ケース。真/偽の両方向）
+- [x] 囮が先行する heredoc（`grep -rn "x << y" src && cat <<EOF\nbody\nEOF`）が block されることを固定する（D8 の回帰）
+- [x] `git -C /x commit -n` / `git -C /x pull` が block されることを固定する（D9 の回帰）
+- [x] 結合短フラグ（`-nm`）と、`git log -n 5` / `git push -n` を block しないことを固定する（D5 の射程）
+- [x] 意図として固定する過剰検出をテストに残す（`git commit -m "fix: C:\path handling"` が block・`git pull --rebase` が block）
+- [x] 意図として残す過小検出をテストで明示する（`git commit -m "a;b" --no-verify` が allow・D6）
+- [x] `decide` の platform 注入テスト（`"win32"` で block・`"darwin"` で allow・省略時は allow = I5）
+- [x] 非依存 2 件が platform を問わず block することを両値で固定する
+- [x] 病的入力の no-throw テスト（空文字列・`<<` 単独・不一致引用・20 万字・`$env:TEMP\` 反復。I2）
+- [x] **候補 2 万件の heredoc 入力に時間上限を課すテスト**（no-hang。素朴実装なら 1800 ms・採る形なら 5 ms 程度ゆえ十分な余裕で分離できる）
+- [x] process 級 e2e: heredoc payload が `process.platform === "win32"` なら exit 2、他なら exit 0（両 OS CI がライブカナリアになる）
+- [x] process 級 e2e: `--no-verify` payload はどの OS でも exit 2
+- [x] ソースカナリア: `main()` が `decide` へ `process.platform` を渡していること（I5）
+- [x] 既存 23 呼び出しが 3 引数のまま緑であることを確認する（I7・書き換えない）
+- [x] `npx vitest run .claude/hooks` を実行して緑を確認する
 
 ### Phase 4 — ライブ フォールトインジェクション（Windows 機・1 度）
 
 `.claude/rules/safety-nets.md`: これはガードの**行使**であり弱化ではないため、稼働中の hook に対して直接打ってよい。
 **滑っても無害な形で打つ**（block されなければ何も起きないコマンドを選ぶ）。結果は PR 本文へ残す。
 
-- [ ] #1 heredoc: `cat <<EOF`（本体なし）→ exit 2 を確認
-- [ ] #2 `\` パス: `echo C:\workspace` → exit 2 を確認
-- [ ] #3 Python: `python -c "print('日本語')"` → exit 2 を確認
-- [ ] #4 `--no-verify`: `git commit --no-verify --dry-run -m x` → exit 2 を確認（滑っても `--dry-run` ゆえコミットは生じない）
-- [ ] #5 `git pull`: `git pull no-such-remote-768` → exit 2 を確認（滑っても remote 不在で失敗するだけ）
-- [ ] 逆方向: 無害なコマンド（`git status --short` / `npm run governance:check`）が通ることを確認する（誤爆していない証拠）
-- [ ] 5 件の block メッセージ全文を PR 本文用に記録する（I6 の確認も兼ねる）
+- [x] #1 heredoc: `cat <<EOF`（本体なし）→ exit 2 を確認
+- [x] #2 `\` パス: `echo C:\workspace` → exit 2 を確認
+- [x] #3 Python: `python -c "print('日本語')"` → exit 2 を確認
+- [x] #4 `--no-verify`: `git commit --no-verify --dry-run -m x` → exit 2 を確認（滑っても `--dry-run` ゆえコミットは生じない）
+- [x] #5 `git pull`: `git pull no-such-remote-768` → exit 2 を確認（滑っても remote 不在で失敗するだけ）
+- [x] 逆方向: 無害なコマンド（`git status --short` / `npm run governance:check`）が通ることを確認する（誤爆していない証拠）
+- [x] 5 件の block メッセージ全文を PR 本文用に記録する（I6 の確認も兼ねる）
+
+#### Phase 4 の実測結果（Windows 11 / win32・稼働中の hook を行使・PR 本文へ転記する）
+
+5 件すべてが `exit 2` で拒否され、**5/5 が復帰手順を含んでいた**（I6 の確認）。滑っても無害な形を選んだため、
+拒否されなかった場合も副作用は生じない設計だった（`--dry-run` 併記・存在しない remote 名）。
+
+| # | 打ったコマンド | 結果 | 拒否メッセージ（全文） |
+|---|---|---|---|
+| 1 | `cat <<EOF` | exit 2 | bash の HEREDOC は Windows で引用境界が壊れ、終端マーカーがコミットメッセージ本文へ漏れる事故が起きています。複数行テキストは Write ツールで一時ファイル（`$env:TEMP` 配下）へ書いて `git commit -F <tmpfile>` や `--body-file` で渡すか、PowerShell の here-string `@'...'@`（閉じ `'@` は必ず行頭）を使ってください。 |
+| 2 | `echo C:\workspace` | exit 2 | パス区切りの `\` はエスケープが要るため壊れやすく、Bash では黙って食われて**エラーではなく誤った結果**になります。`/` で統一してください — PowerShell でも Git / Node / Cargo は `/` を受け付けます。 |
+| 3 | `python -c "print('日本語')"` | exit 2 | cp932 コンソールで非 ASCII（`—`・日本語など）を print すると `UnicodeEncodeError` で落ちます。`PYTHONIOENCODING=utf-8` を前置してください（`PYTHONUTF8=1` か `python -X utf8` でも同じです）。 |
+| 4 | `git commit --no-verify --dry-run -m x` | exit 2 | `--no-verify`（commit では `-n` も同義）は `.githooks/` の main 保護を迂回します。**人間専用であり、エージェントは使用してはなりません**。hook が拒んだなら、迂回せずその理由を解消してください。main へ入れたい変更は feature ブランチと PR を経由します。 |
+| 5 | `git pull no-such-remote-768` | exit 2 | 非 FF の `git pull` は main にマージコミットを作り、`.githooks/pre-merge-commit` が拒否します。`git pull --ff-only` を使ってください（FF ならマージコミットが生じず hook は呼ばれません）。 |
+
+**逆方向（誤爆していない証拠）**: `git status --short && git pull --ff-only --dry-run | tail -2` が通った
+（`--ff-only` 付きの pull が allow されることを含む）。
+
+**副次的な実測**: Phase 1 の効果が Phase 2 の途中で観測された。`ALLOW` の重複宣言で `hook-selftest` が
+落ちたとき、会話へ届いた再現コマンドは `node C:/workspace/Snotra/node_modules/vitest/vitest.mjs run .claude/hooks`
+（`/` 区切り）だった。Phase 1 を後回しにしていれば、この行はそのまま打てない形で届いていた。
 
 ### Phase 5 — 文書（規範を降ろす / 受け皿を作る）
 
-- [ ] `CLAUDE.md`「シェル環境（Windows / PowerShell）」節を削除する（見出し + 表 3 行）
-- [ ] `CLAUDE.md`「Git/GitHub 運用」から `--no-verify` と `git pull --ff-only` の 2 bullet を削除する
-- [ ] `CLAUDE.md`「フック」表の PreToolUse 行を**ラベルごと**一般化する（現ラベル「PR 作成前 push チェック」は push 専用の名前。**5 件を書き写さない**——写せば降ろした意味が消える。正準形で `docs/hooks.md`「PreToolUse（pre-bash.mjs）の実装契約」を指し、「拒否メッセージが復帰手順を持つ」だけを残す）
-- [ ] `docs/hooks.md`:12 の全称表現を是正する（「コマンド位置だけを見る」は 3 述語で偽になる。I3 の形へ・D11）
-- [ ] `docs/hooks.md` へ 5 判定・platform 注入（D1/D3）・爆発半径（I2）・フック間契約（I8）を追記する
-- [ ] `docs/hooks.md` の受容する未対応リスクへ D6・D7 と過小検出 2 件・過剰検出 2 件を列挙する（**「検出されないなら使ってよい」と読めない書きぶりにする**——既存の `sh -c` 項が採る「人間専用の意図的迂回」の形を踏襲する）
-- [ ] 同じ箇所に、`.githooks/_lib.sh`:20 が `--no-verify` での迂回を案内すること（**明示的に人間専用と書いてあるため欠陥ではない**）を 1 文で書き添える（次の読者が矛盾として再発見しないため）
-- [ ] `docs/adr/0009-*.md` を新規作成する（D1・D2・D3 の否定の知識に限る。D6・D7 は `docs/hooks.md` の既存リストが受け皿）
-- [ ] 削除した節を正準形で指す文書が無いことを `npm run governance:check` で裏取りする（G11 の母集団は `docs/superpowers/` を除外することを実測済み）
+- [x] `CLAUDE.md`「シェル環境（Windows / PowerShell）」節を削除する（見出し + 表 3 行）
+- [x] `CLAUDE.md`「Git/GitHub 運用」から `--no-verify` と `git pull --ff-only` の 2 bullet を削除する
+- [x] `CLAUDE.md`「フック」表の PreToolUse 行を**ラベルごと**一般化する（現ラベル「PR 作成前 push チェック」は push 専用の名前。**5 件を書き写さない**——写せば降ろした意味が消える。正準形で `docs/hooks.md`「PreToolUse（pre-bash.mjs）の実装契約」を指し、「拒否メッセージが復帰手順を持つ」だけを残す）
+- [x] `docs/hooks.md`:12 の全称表現を是正する（「コマンド位置だけを見る」は 3 述語で偽になる。I3 の形へ・D11）
+- [x] `docs/hooks.md` へ 5 判定・platform 注入（D1/D3）・爆発半径（I2）・フック間契約（I8）を追記する
+- [x] `docs/hooks.md` の受容する未対応リスクへ D6・D7 と過小検出 2 件・過剰検出 2 件を列挙する（**「検出されないなら使ってよい」と読めない書きぶりにする**——既存の `sh -c` 項が採る「人間専用の意図的迂回」の形を踏襲する）
+- [x] 同じ箇所に、`.githooks/_lib.sh`:20 が `--no-verify` での迂回を案内すること（**明示的に人間専用と書いてあるため欠陥ではない**）を 1 文で書き添える（次の読者が矛盾として再発見しないため）
+- [x] `docs/adr/0009-*.md` を新規作成する（D1・D2・D3 の否定の知識に限る。D6・D7 は `docs/hooks.md` の既存リストが受け皿）
+- [x] 削除した節を正準形で指す文書が無いことを `npm run governance:check` で裏取りする（G11 の母集団は `docs/superpowers/` を除外することを実測済み）
 
 ### Phase 6 — 面積 ratchet
 
-- [ ] Phase 5 の文書編集をすべて確定させた**後で** `npm run governance:check` を実行し、常時ロードの実測値を得る
-- [ ] `AREA_BUDGET.alwaysLoaded` を「実測 + 100 字」へ引き下げる（`rules` は本 PR で `.claude/rules/**` を触らないため据え置き）
-- [ ] 由来コメントへ日付 + **#768** 入りの項目を既存 6 件と同じ様式で追加する（引き下げ幅・実測値・理由 = 5 件の機構吸収）
-- [ ] `npm run governance:check` が G1..G11 緑であることを確認する
+- [x] Phase 5 の文書編集をすべて確定させた**後で** `npm run governance:check` を実行し、常時ロードの実測値を得る
+- [x] `AREA_BUDGET.alwaysLoaded` を「実測 + 100 字」へ引き下げる（`rules` は本 PR で `.claude/rules/**` を触らないため据え置き）
+- [x] 由来コメントへ日付 + **#768** 入りの項目を既存 6 件と同じ様式で追加する（引き下げ幅・実測値・理由 = 5 件の機構吸収）
+- [x] `npm run governance:check` が G1..G11 緑であることを確認する
 
 ### Phase 7 — 規範レビューと最終検証
 
 - [ ] `/norm-review` を起動する（対象: **5 件の拒否メッセージ文言 + `docs/hooks.md` の追記**。停止条件は下記）
 - [ ] `/norm-review` の成立指摘を塞ぐ（1 件 1 文の予算内）。残余は PR 本文へ書く
-- [ ] `npm test` 緑（全ファイル）
-- [ ] `npm run governance:check` 緑
+- [x] `npm test` 緑（全ファイル）
+- [x] `npm run governance:check` 緑
 - [ ] コミット（`chore:` / メッセージは一時ファイル経由）・push・PR 作成（本文に Windows ライブ実測 5 件の結果と block メッセージ全文を載せる）
 
 **`/norm-review` の停止条件**（起動前に決める・SKILL Step 1）:

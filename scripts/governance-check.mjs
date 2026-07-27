@@ -586,8 +586,16 @@ export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
  *   **面替え**である——手順の本体は非課税の skill 本文へ、skill の `description` 78 字は常時ロード面へ載る。
  *   ADR-0001 が二面独立にしたのはまさにこの移動を可視にするためなので、**常時ロードの基準は上げない**。
  *   結果として常時ロード面の余裕は 22 字しか残っていない——次に規範を 1 本足すときは明示的な引き上げが要る。
+ * **2026-07-27 引き下げ 14058→13374（#768）**（実測 常時ロード 14036→13274・**-762 字**）:
+ *   コマンドの形で判定できる規範 5 件（bash HEREDOC・`\` パス区切り・Python の `PYTHONIOENCODING`・
+ *   `--no-verify` 人間専用・`git pull --ff-only`）を `.claude/hooks/pre-bash.mjs` の判定へ吸収した。
+ *   これは面替えではなく**機構への吸収**である（#593 の階梯）——「シェル環境」節と git の 2 bullet が消え、
+ *   事故の理由と代替手段は拒否文言（`SHAPE_REMEDY`）が実行時に運ぶ。Windows 機で 5 件のライブ実測を行い、
+ *   5/5 が復帰手順付きで `exit 2` になることを確認した。判定の詳細は `docs/hooks.md`、
+ *   注入面の否定の知識は `docs/adr/0009-command-shape-norms-in-hook.md`。
+ *   rules 面は本 PR で `.claude/rules/**` を触らないため据え置き。
  */
-export const AREA_BUDGET = { alwaysLoaded: 14058, rules: 8056 };
+export const AREA_BUDGET = { alwaysLoaded: 13374, rules: 8056 };
 
 /** コードポイント数（CR は除く）。読めなければ null（母集団欠落を上位で検知） */
 function countChars(text) {

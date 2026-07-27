@@ -1,7 +1,6 @@
 ---
 name: implement
 description: "コード変更を伴うタスク（機能追加・バグ修正・リファクタリング）の実装時に使用。実装からコミット作成まで自律的に行う（計画が要る変更は /start-issue へ）。"
-disable-model-invocation: true
 argument-hint: "[機能の説明]"
 allowed-tools:
   - Bash(cargo *)

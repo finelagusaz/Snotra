@@ -1,7 +1,6 @@
 ---
 name: start-issue
 description: "GitHub issue から作業を開始するときに使用。実装の前段階（ブランチ作成・調査・計画・計画レビュー）までを行う。"
-disable-model-invocation: true
 argument-hint: "<issue-number>"
 allowed-tools:
   - Bash(git *)

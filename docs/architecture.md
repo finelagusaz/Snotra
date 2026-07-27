@@ -153,7 +153,7 @@ Tauri wry plugin で Tao イベントを受け、egui 入力・Win32 IME composi
 ```mermaid
 sequenceDiagram
     participant User
-    participant View as egui_shell/view.rs + launcher_controller.rs (main)
+    participant View as egui_shell/view.rs・launcher_controller.rs (main)
     participant State as search_state.rs (純粋核)
     participant Eng as Engine (snotra-core)
     participant SE as SearchEngine

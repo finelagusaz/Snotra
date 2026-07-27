@@ -808,6 +808,19 @@ describe("decide — 第 4 引数 platform の配線", () => {
     expect(decide(pwsh("git pull origin main"), CLEAN, NO_PLAN, "win32").action).toBe("block");
   });
 
+  // #772 の検証で「手を抜く読者」が突いた自己分類の余地: 拒否文言[2]は事故の根拠を
+  // 「Bash では黙って食われて」と書くので、「PowerShell ツールを使えば適用外」と読める。
+  // **判定は `decide` の入口で両ツールを覆う**——読んだ理由でツールを替えても降りられない。
+  // 文言側もその射程を明記したので、機構と文言の両方をここで縛る。
+  it("`\\` パスは PowerShell tool でも block し、文言が両ツール発火を明記する", () => {
+    const winPath = `Get-Content C:${"\\"}workspace${"\\"}x.md`;
+    for (const payload of [bash(winPath), pwsh(winPath)]) {
+      const r = decide(payload, CLEAN, NO_PLAN, "win32");
+      expect(r.action).toBe("block");
+      expect(r.reason).toContain("Bash / PowerShell の両方");
+    }
+  });
+
   // 形の判定は plan.md ゲートより前にある（I/O を要さない判定を先に走らせる）
   it("形の判定は plan.md を読む前に決まる", () => {
     const plan = vi.fn(PLAN_OPEN(3));

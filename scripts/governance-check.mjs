@@ -581,8 +581,13 @@ export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
  *   `/start-issue` と `/implement` へ移した。**移せたのは 3 件だけである**——「事前調査」「変更後の検証」は
  *   G11 のアンカーで、`.claude/rules/src-tauri.md` や `/health-check` が中身を当てにして指しており、
  *   見出しを残して中身だけ移すと G11 は緑のまま参照先が空洞になる（`.claude/rules/governance-docs.md`）。
+ * **2026-07-27 rules のみ引き下げ 8328→8056**（実測 rules 8228→7956・常時ロードは 13958→14036 で**上昇**）:
+ *   `.claude/rules/safety-nets.md` の敵対的読者節を `/norm-review` skill へ移した。これは削減ではなく
+ *   **面替え**である——手順の本体は非課税の skill 本文へ、skill の `description` 78 字は常時ロード面へ載る。
+ *   ADR-0001 が二面独立にしたのはまさにこの移動を可視にするためなので、**常時ロードの基準は上げない**。
+ *   結果として常時ロード面の余裕は 22 字しか残っていない——次に規範を 1 本足すときは明示的な引き上げが要る。
  */
-export const AREA_BUDGET = { alwaysLoaded: 14058, rules: 8328 };
+export const AREA_BUDGET = { alwaysLoaded: 14058, rules: 8056 };
 
 /** コードポイント数（CR は除く）。読めなければ null（母集団欠落を上位で検知） */
 function countChars(text) {

@@ -40,7 +40,7 @@ cargo / npm の依存関係を一括更新し、ローカル検証 → PR 作成
 - カテゴリ B: 必須（TypeScript 型チェック・フロントエンドビルド）
 - カテゴリ C: フロントユニットテスト（Vitest）のみ
 
-E2E・スモークテストはローカルで実行せず `E2E & Smoke` workflow（`e2e.yml`）に委ねる。依存更新は `Cargo.lock` / `package-lock.json`（+ manifest）を変えるため、これらは `e2e.yml` の paths に該当し **smoke/E2E が自動起動**する（#145 Phase 3。ラベル付与は不要）。**通常 PR CI（`ci.yml`）では smoke/E2E は走らない**。具体的なコマンド文字列は `docs/build-commands.md` を参照する（二重メンテを避けるためこの SKILL に書かない）。
+E2E・スモークテストはローカルで実行せず `E2E & Smoke` workflow（`e2e.yml`）に委ねる。依存更新は `Cargo.lock` / `package-lock.json`（+ manifest）を変えるため、これらは `e2e.yml` の paths に該当し **smoke/E2E が自動起動**する（#145 Phase 3。ラベル付与は不要）。**通常 PR CI（`ci.yml`）では smoke/E2E は走らない**。**検証コマンドの文字列**は `docs/build-commands.md` を参照する（二重メンテを避けるためこの SKILL に書かない）。Step 2 の `cargo update` / `npm update` は検証ではなく本スキル固有の操作であり、SSOT の対象外である。
 
 検証が失敗した場合:
 

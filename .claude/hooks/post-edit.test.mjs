@@ -20,6 +20,8 @@ import {
   takeLines,
   buildSection,
   buildEnvelope,
+  toPosixPath,
+  buildCommand,
 } from "./post-edit.mjs";
 
 // CI は ubuntu(frontend-check) と windows(rust-check) の両方で走る（#509）。OS 依存の
@@ -463,6 +465,43 @@ describe("resolveTarget — main() と同じ配線を通る", () => {
 
   it("どの .git にも属さなければ null（I6）", () => {
     expect(resolveTarget({ tool_input: { file_path: "x.rs" } }, () => null)).toBeNull();
+  });
+});
+
+// #768: この hook がエージェントへ渡す再現コマンドは、PreToolUse の `\` パス判定が
+// 通す形でなければならない。片方の hook が指示するコマンドをもう片方が拒む状態を作らない。
+// **判定そのものとの相互契約は `pre-bash.test.mjs` が `decide` を直に呼んで固定する。**
+// ここは post-edit 側の義務（`repro` に `\` を出さない）だけを、その判定と独立に縛る。
+describe("repro の区切り正規化（フック間契約・#768）", () => {
+  const REPO = fileURLToPath(new URL("../../", import.meta.url));
+
+  it("toPosixPath は path.sep を / に置き換える", () => {
+    expect(toPosixPath(path.join("a", "b", "c"))).toBe("a/b/c");
+  });
+
+  // `replaceAll("\\","/")` との差。POSIX では `\` は普通のファイル名文字であり潰してはならない。
+  // Windows では path.sep が `\` なのでこの入力自体が現実には現れない（分岐の意図を固定する）。
+  it("POSIX では `\\` を含む名前を壊さない", () => {
+    if (path.sep === "/") expect(toPosixPath("a\\b")).toBe("a\\b");
+    else expect(toPosixPath("a\\b")).toBe("a/b");
+  });
+
+  // vitest 系は resolveBin が絶対パスを埋めるため、Windows で唯一 `\` が混じりうる経路である
+  it.each([["hook-selftest"], ["githooks-selftest"]])("%s の repro に `\\` が無い", (id) => {
+    const spec = buildCommand(id, REPO);
+    expect(spec).not.toBeNull();
+    expect(spec.repro).not.toContain("\\");
+    expect(spec.repro).toContain("vitest.mjs");
+  });
+
+  it.each([["clippy"], ["core-test"], ["cargo-check"]])("%s の repro に `\\` が無い", (id) => {
+    expect(buildCommand(id, REPO).repro).not.toContain("\\");
+  });
+
+  // 実行に使う args は正規化しない（spawnSync は `\` を受け、G9 が引数リテラルを読む）
+  it("実行に使う args は正規化しない", () => {
+    expect(buildCommand("clippy", REPO).args).toContain("--workspace");
+    expect(buildCommand("core-test", REPO).args).toEqual(["test", "-p", "snotra-core"]);
   });
 });
 

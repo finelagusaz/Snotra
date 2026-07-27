@@ -9,20 +9,10 @@
 1. **`main` へ直接コミット・プッシュしない** — 必ず feature ブランチ（`feat/<機能名>` / `fix/<バグ名>` / `chore/<作業名>`）を作成してからコミットする
 2. **エージェント設定（スキル・フック・rules）の変更は合意してから** — エージェントの行動やワークフローを制約する設定はチームの共有物であり、Claude が単独で判断しない
 
-## シェル環境（Windows / PowerShell）
-
-| やらないこと | 代わりにやること | 理由（過去の事故） |
-|---|---|---|
-| bash の HEREDOC（`<<EOF` / `<<'EOF'`） | 一時ファイルに書き出して `git commit -F <tmpfile>`、または PowerShell here-string `@'...'@`（閉じ `'@` は必ず行頭） | here-string の引用境界が壊れ、終端マーカーがコミットメッセージ本文に漏れる事故が起きている |
-| 文字列中のパスに `\` 区切り | `/` で統一する | PowerShell でも Git/Node/Cargo は `/` を受け付ける。`\` はエスケープが必要になり壊れやすい |
-| Python で非 ASCII をそのまま標準出力 | `PYTHONIOENCODING=utf-8` を付ける | cp932 コンソールで `—`・日本語などを print すると `UnicodeEncodeError` で落ちる（JSON/ログ整形で多用） |
-
 ## Git/GitHub 運用
 
 - **main 保護の実体は `.githooks/` と GitHub ruleset である** — `.githooks/` の 4 hook が commit / 非 FF merge / rebase / push を拒み（`githooks.test.mjs` で実測）、GitHub ruleset `default` が main への直接 push を拒む（実測）
 - **Layer 1（`.githooks/`）は best-effort である** — hook は追跡ファイルゆえ、含まないコミットの checkout は fail-open。`cherry-pick` / `revert` / `am` / `branch -f` / `update-ref` も `pre-commit` を呼ばず**沈黙で main が進む**（実測）。**取りこぼしは push 時に GitHub ruleset が捕捉する**（不在検知は意図的に置かない）
-- **`--no-verify` は人間専用** — `.githooks/` を迂回する。Claude は使用してはならない。迂回しても main への直接 push は GitHub ruleset が拒む（実測）
-- **main の同期は `git pull --ff-only` を使う** — 非 FF の `git pull` は main にマージコミットを作るため `.githooks/pre-merge-commit` が拒否する。FF ならマージコミットが生じず hook は呼ばれない
 - **マージで閉じる issue を決めるのは PR 本文であり、`gh pr merge` の `--subject` / `--body-file` では抑止できない**（#488 実測）。auto-close は本文の**どこにあっても** `close`/`fix`/`resolve` 系 9 形（大文字小文字問わず・表やチェックリスト内も）でマージ時に走り、PR テンプレートが `Closes` を埋めるため**書いた覚えが無くても残る**。hook も見ていない（→「フック」の (A2)）。**だから下の手順が唯一の防御である**。なぜこの機構になるか（2 経路の可視性の非対称・マージ方式では逃げられない・squash 設定と復元レシピ）は `docs/adr/0002-squash-merge-issue-autoclose.md`
 
   手順（squash マージでは常にこの順。`<PR>` は PR 番号、`<issue>` は issue 番号）:
@@ -43,7 +33,7 @@
 
 | フック | 発火条件（一覧は `docs/hooks.md`） | 正しい対応 |
 |---|---|---|
-| PR 作成前 push チェック（PreToolUse） | `gh pr create` が**コマンド位置**にあり、安全と確認できないとき（未 push＝空 PR / `Closes` 誤 close 防止）。`&&` で `git push` が先行するなら通る。`workspace/plan.md` に未チェックの `- [ ]` が残るときも拒む（#749・鎖の安全とは独立に判定） | `git push -u origin HEAD` してから PR を作る（または `&&` で繋ぐ）。**鎖に `cd` を含めない**——作業ディレクトリを変えると対象リポジトリを判定できず拒否される（実測）。未チェック項目は完了させて `[x]` にするか、やらないと決めた項目は計画から外して理由を記録する |
+| コマンドの形のガード（PreToolUse） | `tool_input.command` の形で決まる（判定と一覧の SSOT は `docs/hooks.md`「PreToolUse（pre-bash.mjs）の実装契約」）。`gh pr create` は未 push＝空 PR と `workspace/plan.md` の未チェック `- [ ]` でも拒む（#749） | **拒否メッセージが復帰手順を持つ。それに従う**（規範を機構へ吸収した設計ゆえ、代わりの手段は必ず文言に入っている・#768）。`gh pr create` は `git push -u origin HEAD` を先に打つか `&&` で繋ぐ。**鎖に `cd` を含めない**——対象リポジトリを判定できず拒否される（実測） |
 | 編集後の自動検証（PostToolUse） | 編集した `file_path` の種類で決まる（写像の SSOT は `post-edit.mjs` の `selectChecks`） | **検査が割り当てられているファイルでは、沈黙は合格を意味する**（割り当ての SSOT は `selectChecks`）。失敗時のみ `exit code` と再現コマンドと診断が会話に届く。手動での再実行は不要 |
 
 - **(A2)「外部 API の不可逆呼び出し」のうち hook が守るのは `gh pr create` だけである**（#488 実測・**意図的な非対称**）。`merge` / `close` を hook で守らない 3 理由・Layer 0（`squash_merge_commit_message=PR_BODY`）での遮断・設定 read-back の検知器を置かない判断は `docs/adr/0002-squash-merge-issue-autoclose.md` が SSOT。残余は上の手順 3 に委ねられる

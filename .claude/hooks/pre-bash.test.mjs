@@ -16,7 +16,16 @@ import {
   readGitState,
   countUnchecked,
   readPlanState,
+  segmentEnd,
+  gitSegments,
+  usesHeredoc,
+  usesBackslashPath,
+  needsPyEncoding,
+  usesNoVerify,
+  pullWithoutFfOnly,
+  judgeCommandShape,
 } from "./pre-bash.mjs";
+import { buildCommand } from "./post-edit.mjs";
 
 // CI は ubuntu(frontend-check) と windows(rust-check) の両方で走る（#509）。どちらでも
 // 落ちないよう、OS 依存のリテラルパスを書かず path.join / tmpdir から組み立てる。
@@ -422,6 +431,32 @@ describe("プロセス起動 — exit code の契約", () => {
     expect(res.status).toBe(0);
   });
 
+  // #768: 配線（main() が process.platform を渡すこと）を**実行で**固定する。
+  // `npm test` は ubuntu と windows の両方で走るため（ci.yml）、この 1 本で両分岐が
+  // それぞれの OS で一度は実行される——注入テストだけでは通らない経路が残る。
+  it("heredoc は win32 で exit 2・他 OS で exit 0（platform 分岐のライブ実測）", () => {
+    const res = runHook({ tool_name: "Bash", tool_input: { command: "cat <<EOF" } });
+    if (process.platform === "win32") {
+      expect(res.status).toBe(2);
+      expect(res.stderr).toContain("HEREDOC");
+    } else {
+      expect(res.status).toBe(0);
+      expect(res.stderr).toBe("");
+    }
+  });
+
+  it("`--no-verify` はどの OS でも exit 2", () => {
+    const res = runHook({ tool_name: "Bash", tool_input: { command: "git commit --no-verify -m x" } });
+    expect(res.status).toBe(2);
+    expect(res.stderr).toContain("人間専用");
+  });
+
+  it("`--ff-only` の無い pull はどの OS でも exit 2", () => {
+    const res = runHook({ tool_name: "PowerShell", tool_input: { command: "git pull origin main" } });
+    expect(res.status).toBe(2);
+    expect(res.stderr).toContain("--ff-only");
+  });
+
   // I13 と同型: import しただけで stdin 読み取りが走ると npm test が停止する
   it("import しただけでは main() が走らない", () => {
     const res = spawnSync(
@@ -455,6 +490,416 @@ describe("fail-closed の骨格カナリア", () => {
 
   it("process.exit() を使わない（未 flush 出力の切り捨て防止）", () => {
     expect(code).not.toMatch(/process\.exit\(/);
+  });
+
+  // #768 I5: platform 省略時は Windows 専用判定が発火しない。その倒し方が安全なのは
+  // main() が必ず process.platform を渡すからである。この 1 行が抜けると Windows で
+  // 3 判定が沈黙で外れる——振る舞いテストからは「非 Windows での正常動作」と見分けがつかない。
+  it("main() は decide へ process.platform を渡す", () => {
+    expect(code).toMatch(/decide\(\s*payload,[\s\S]*?process\.platform\s*\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #768 コマンドの形で判定する規範 5 件。
+// ---------------------------------------------------------------------------
+
+describe("segmentEnd / gitSegments — 区切りまでの切り出し", () => {
+  it("区切りが無ければ文末", () => {
+    expect(segmentEnd("git status", 0)).toBe("git status".length);
+  });
+
+  it("次の区切り文字で閉じる", () => {
+    const cmd = "git status && npm test";
+    expect(segmentEnd(cmd, 0)).toBe(cmd.indexOf(" &&") + 1);
+  });
+
+  it("コマンド位置の git ごとにセグメントを返す", () => {
+    expect(gitSegments("git switch main && git pull --ff-only")).toEqual([
+      "git switch main ",
+      "git pull --ff-only",
+    ]);
+  });
+
+  // `git -C <tree> push` を外す GIT_PUSH とは違い、こちらは -C 付きも拾う
+  it("`git -C <tree>` も拾う（--no-verify はツリーを問わず人間専用）", () => {
+    expect(gitSegments("git -C /x commit")).toEqual(["git -C /x commit"]);
+  });
+
+  it("引数文字列の中の git は拾わない（言及と実行の区別）", () => {
+    expect(gitSegments('grep -n "git pull" AGENTS.md')).toEqual([]);
+  });
+});
+
+describe("usesHeredoc", () => {
+  it.each([
+    ["cat > f.txt <<'EOF'\nhello\nEOF"],
+    ["git commit -F- <<EOF\nmsg body\nEOF"],
+    ["cat <<-EOF > out\n\tbody\n\tEOF"],
+    ["python - <<PY\nprint(1)\nPY"],
+    ["cat <<EOF > out.txt\nbody\nEOF"],
+    ["cat <<EOF"],
+    ["cat <<EOF | tee f"],
+    ["cat <<EOF > out 2>&1"],
+    ["cat <<'EOF' && echo done"],
+  ])("heredoc を検出する: %s", (cmd) => {
+    expect(usesHeredoc(cmd)).toBe(true);
+  });
+
+  // 最初の候補だけを見る実装では取り落とした形（fail-open の回帰）。
+  // 囮のシフト演算子が先行しても本物の heredoc を見つけねばならない。
+  it.each([
+    ['grep -rn "x << y" src && cat <<EOF\nbody\nEOF'],
+    ['echo "1 << 3" && git commit -F- <<MSG\nm\nMSG'],
+  ])("囮の `<<` が先行しても検出する: %s", (cmd) => {
+    expect(usesHeredoc(cmd)).toBe(true);
+  });
+
+  it.each([
+    ['grep -rn "1 << 3" src/'],
+    ['grep -rn "x << y" src | head'],
+    ['echo "shift: a << b" && ls'],
+    ["echo x <<< y"],
+    ["sort < file.txt"],
+    ["git log --oneline -5"],
+    ["npm test 2>&1 | tail -30"],
+  ])("shift 演算子・herestring・単純リダイレクトは検出しない: %s", (cmd) => {
+    expect(usesHeredoc(cmd)).toBe(false);
+  });
+
+  // code-reviewer M1 の回帰: 追従集合に `)` を入れるとシフト演算子を誤爆した
+  it.each([['node -e "console.log(1<<n)"'], ['node -e "x = (a << b)"']])(
+    "閉じ括弧が続くシフト演算子は検出しない: %s",
+    (cmd) => {
+      expect(usesHeredoc(cmd)).toBe(false);
+    },
+  );
+
+  // 候補ごとに終端行を全文走査する実装は 20000 候補で 1800ms 超（実測）。
+  // 単独行を 1 パスで索引する形は数 ms で終わる。桁が違うので閾値は緩くてよい。
+  it("候補が多数同居しても線形で終わる（no-hang）", () => {
+    const adversarial = "cat <<AAA ".repeat(20_000) + "x".repeat(10_000);
+    const t0 = process.hrtime.bigint();
+    expect(usesHeredoc(adversarial)).toBe(false);
+    expect(Number(process.hrtime.bigint() - t0) / 1e6).toBeLessThan(500);
+  });
+});
+
+describe("usesBackslashPath", () => {
+  it.each([
+    ["node C:\\workspace\\Snotra\\x.mjs"],
+    ["git commit -F $env:TEMP\\msg.txt"],
+    ["type %TEMP%\\msg.txt"],
+  ])("`\\` パス区切りを検出する: %s", (cmd) => {
+    expect(usesBackslashPath(cmd)).toBe(true);
+  });
+
+  // 広く `\` を見ると正規表現エスケープや find -exec を巻き込む（意図的に narrow）
+  it.each([
+    ['grep -E "\\d+" f.txt'],
+    ['rg "\\s+$" src'],
+    ["find . -exec rm {} \\;"],
+    ['git commit -F "$env:TEMP/msg.txt"'],
+    ["node C:/workspace/Snotra/x.mjs"],
+  ])("エスケープ・POSIX 区切りは検出しない: %s", (cmd) => {
+    expect(usesBackslashPath(cmd)).toBe(false);
+  });
+
+  // 受容する過剰検出。fail-closed 方向で回復は自明（`/` にする）ゆえ意図として固定する
+  it("散文中の `C:\\path` も検出する（過剰検出を意図として固定）", () => {
+    expect(usesBackslashPath('git commit -m "fix: C:\\path handling"')).toBe(true);
+  });
+
+  // code-reviewer H2 の回帰: 素の `[A-Za-z]:\\` は「語末 1 文字 + `:` + 正規表現エスケープ」と
+  // 区別できず、これらを block していた。拒否文言は「`/` で統一せよ」なので**復帰手順が
+  // 適用できない拒否**になる——誤爆の中でも最も害が大きい形である。
+  it.each([
+    ['rg "version:\\s+" src'],
+    ['grep -E "error:\\s" log.txt'],
+    ['rg "name:\\w+" src'],
+  ])("`:\\` を含む正規表現は検出しない: %s", (cmd) => {
+    expect(usesBackslashPath(cmd)).toBe(false);
+  });
+
+  // 上の誤爆を落とすために付けた `{2,}` の代償（過小検出・意図として固定）
+  it.each([["cd C:\\"], ["node C:\\a"]])("ドライブルート・1 文字続きは検出しない: %s", (cmd) => {
+    expect(usesBackslashPath(cmd)).toBe(false);
+  });
+});
+
+describe("needsPyEncoding", () => {
+  it.each([['python -c "print(\'日本語\')"'], ["python3 scripts/x.py --名前 a"]])(
+    "非 ASCII を含む python 起動を検出する: %s",
+    (cmd) => {
+      expect(needsPyEncoding(cmd)).toBe(true);
+    },
+  );
+
+  it.each([
+    ['PYTHONIOENCODING=utf-8 python -c "print(\'日本語\')"'],
+    ['PYTHONUTF8=1 python -c "print(\'日本語\')"'],
+    ['python -X utf8 -c "print(\'日本語\')"'],
+    ['python -c "print(1)"'],
+    ["echo 日本語"],
+    ['grep -n "python" 日本語.md'],
+  ])("設定済み・非 ASCII 無し・python でない形は検出しない: %s", (cmd) => {
+    expect(needsPyEncoding(cmd)).toBe(false);
+  });
+});
+
+describe("usesNoVerify", () => {
+  it.each([
+    ["git commit --no-verify -m x"],
+    ["git push --no-verify"],
+    ["npm test && git commit -n -m x"],
+    ["git commit -nm x"],
+    // `(?:-\S+\s+)*` ではスペース区切りのフラグ値を飛ばせず取りこぼした（fail-open の回帰）
+    ["git -C /x commit -n"],
+    ["git --git-dir=/x commit -nm y"],
+  ])("迂回を検出する: %s", (cmd) => {
+    expect(usesNoVerify(cmd)).toBe(true);
+  });
+
+  it.each([
+    // 「言及」で発火しない（#482 の根治を新判定でも保つ）
+    ['grep -n "--no-verify" CLAUDE.md'],
+    ["git commit -m x"],
+    ["git commit --amend --no-edit"],
+    ["git commit -F- x"],
+    // push の `-n` は --dry-run。短縮形の判定は commit セグメント限定である
+    ["git push -n origin HEAD"],
+    ["git log -n 5"],
+    ["git -C /x log -n 5"],
+  ])("迂回でない形は検出しない: %s", (cmd) => {
+    expect(usesNoVerify(cmd)).toBe(false);
+  });
+
+  // 引用内の区切りでセグメントが切れる過小検出。`sh -c` と同格の意図的迂回として受容する
+  it("引用内の `;` でセグメントが切れる形は検出しない（受容する過小検出）", () => {
+    expect(usesNoVerify('git commit -m "a;b" --no-verify')).toBe(false);
+  });
+});
+
+describe("pullWithoutFfOnly", () => {
+  it.each([
+    ["git pull"],
+    ["git pull origin main"],
+    ["git switch main && git pull"],
+    ["git -C /x pull"],
+    // --rebase も止める。ブランチを見ないので過剰検出だが fail-closed 方向である
+    ["git pull --rebase"],
+  ])("`--ff-only` の無い pull を検出する: %s", (cmd) => {
+    expect(pullWithoutFfOnly(cmd)).toBe(true);
+  });
+
+  it.each([
+    ["git pull --ff-only"],
+    ["git pull --ff-only origin main"],
+    ["git checkout main && git pull --ff-only"],
+    ["git --no-pager pull --ff-only origin main"],
+    ['grep -n "git pull" AGENTS.md'],
+    ["git fetch origin"],
+  ])("`--ff-only` 付き・pull でない形は検出しない: %s", (cmd) => {
+    expect(pullWithoutFfOnly(cmd)).toBe(false);
+  });
+});
+
+describe("judgeCommandShape — platform ゲート", () => {
+  const WIN_ONLY = [
+    ["heredoc", "cat <<EOF"],
+    ["`\\` パス", "echo C:\\workspace"],
+    ["python 非 ASCII", 'python -c "print(\'日本語\')"'],
+  ];
+
+  it.each(WIN_ONLY)("%s は win32 で block", (_label, cmd) => {
+    expect(judgeCommandShape(cmd, "win32")?.action).toBe("block");
+  });
+
+  it.each(WIN_ONLY)("%s は darwin で allow（規範の射程外）", (_label, cmd) => {
+    expect(judgeCommandShape(cmd, "darwin")).toBeNull();
+  });
+
+  it.each(WIN_ONLY)("%s は linux で allow", (_label, cmd) => {
+    expect(judgeCommandShape(cmd, "linux")).toBeNull();
+  });
+
+  // I5: platform 省略は「判定不能」ではなく「射程外」。block へ倒すと非 Windows で false block になる。
+  // この状態へ至る経路は「呼び出し側の渡し忘れ」1 本だけで、下のソースカナリアと e2e が配線を固定する。
+  it.each(WIN_ONLY)("%s は platform 省略時 allow（I5）", (_label, cmd) => {
+    expect(judgeCommandShape(cmd)).toBeNull();
+  });
+
+  const PLATFORM_FREE = [
+    ["--no-verify", "git commit --no-verify -m x"],
+    ["pull", "git pull origin main"],
+  ];
+
+  it.each(PLATFORM_FREE)("%s は platform を問わず block（win32）", (_label, cmd) => {
+    expect(judgeCommandShape(cmd, "win32")?.action).toBe("block");
+  });
+
+  it.each(PLATFORM_FREE)("%s は platform を問わず block（darwin）", (_label, cmd) => {
+    expect(judgeCommandShape(cmd, "darwin")?.action).toBe("block");
+  });
+
+  it.each(PLATFORM_FREE)("%s は platform を問わず block（省略）", (_label, cmd) => {
+    expect(judgeCommandShape(cmd)?.action).toBe("block");
+  });
+
+  // I6: 規範を降ろした設計は、この文言がその場で教えることに賭けている
+  it("拒否文言は代わりの手段を含む", () => {
+    expect(judgeCommandShape("cat <<EOF", "win32").reason).toContain("git commit -F");
+    expect(judgeCommandShape("echo C:\\workspace", "win32").reason).toContain("`/` で統一");
+    expect(judgeCommandShape('python -c "日本語"', "win32").reason).toContain("PYTHONIOENCODING");
+    expect(judgeCommandShape("git commit --no-verify", "darwin").reason).toContain("人間専用");
+    expect(judgeCommandShape("git pull", "darwin").reason).toContain("--ff-only");
+  });
+
+  it("無害なコマンドは null（管轄外）", () => {
+    expect(judgeCommandShape("npm test 2>&1 | tail -30", "win32")).toBeNull();
+    expect(judgeCommandShape("git push -u origin HEAD", "win32")).toBeNull();
+  });
+
+  // #768 `/norm-review` 1 巡目が暴いた欠陥の機構化。
+  // heredoc の拒否文言は代替として `$env:TEMP` 配下の一時ファイルを挙げていたが、区切りを
+  // 示していなかった。忠実な読者は `$env:TEMP\msg.txt` と書き、**同じ hook の `\` 判定に落ちる** —
+  // 「代わりにこうせよ」が別の拒否を招く状態だった。文書で戒めるのではなくここで縛る。
+  const ALL_REASONS = [
+    "cat <<EOF",
+    "echo C:\\workspace",
+    'python -c "日本語"',
+    "git commit --no-verify",
+    "git pull",
+  ].map((cmd) => judgeCommandShape(cmd, "win32").reason);
+
+  // `\b` が要る: `\w+` は貪欲でもバックトラックするので、これが無いと `$env:TEM` で
+  // 一致してから「次は `/` でない（`P`）」が成立し、正しい文言でも赤になる（この形で一度踏んだ）。
+  it("拒否文言が示す `$env:` パスの区切りは必ず `/` である", () => {
+    for (const reason of ALL_REASONS) {
+      expect(reason, reason).not.toMatch(/\$env:\w+\b(?![/])/);
+    }
+  });
+
+  it("拒否文言はドライブレター絶対パスを示さない", () => {
+    for (const reason of ALL_REASONS) {
+      expect(reason, reason).not.toMatch(/[A-Za-z]:\\/);
+    }
+  });
+});
+
+describe("decide — 第 4 引数 platform の配線", () => {
+  it("win32 なら Windows 専用判定で block し、git も plan.md も読まない", () => {
+    const git = vi.fn(CLEAN);
+    const plan = vi.fn(NO_PLAN);
+    expect(decide(bash("cat <<EOF"), git, plan, "win32").action).toBe("block");
+    expect(git).not.toHaveBeenCalled();
+    expect(plan).not.toHaveBeenCalled();
+  });
+
+  it("darwin なら同じコマンドが allow", () => {
+    expect(decide(bash("cat <<EOF"), CLEAN, NO_PLAN, "darwin").action).toBe("allow");
+  });
+
+  it("既存の 3 引数呼び出しは Windows 専用判定に触れない（I7）", () => {
+    expect(decide(bash("cat <<EOF"), CLEAN, NO_PLAN).action).toBe("allow");
+  });
+
+  it("PowerShell tool でも同じ判定を受ける", () => {
+    expect(decide(pwsh("git pull origin main"), CLEAN, NO_PLAN, "win32").action).toBe("block");
+  });
+
+  // #772 の検証で「手を抜く読者」が突いた自己分類の余地: 拒否文言[2]は事故の根拠を
+  // 「Bash では黙って食われて」と書くので、「PowerShell ツールを使えば適用外」と読める。
+  // **判定は `decide` の入口で両ツールを覆う**——読んだ理由でツールを替えても降りられない。
+  // 文言側もその射程を明記したので、機構と文言の両方をここで縛る。
+  it("`\\` パスは PowerShell tool でも block し、文言が両ツール発火を明記する", () => {
+    const winPath = `Get-Content C:${"\\"}workspace${"\\"}x.md`;
+    for (const payload of [bash(winPath), pwsh(winPath)]) {
+      const r = decide(payload, CLEAN, NO_PLAN, "win32");
+      expect(r.action).toBe("block");
+      expect(r.reason).toContain("Bash / PowerShell の両方");
+    }
+  });
+
+  // 形の判定は plan.md ゲートより前にある（I/O を要さない判定を先に走らせる）
+  it("形の判定は plan.md を読む前に決まる", () => {
+    const plan = vi.fn(PLAN_OPEN(3));
+    expect(decide(bash("git pull"), CLEAN, plan, "win32").action).toBe("block");
+    expect(plan).not.toHaveBeenCalled();
+  });
+
+  it("description に該当語があっても command が無害なら allow", () => {
+    const payload = bash("ls -la", { description: "git pull して cat <<EOF する" });
+    expect(decide(payload, CLEAN, NO_PLAN, "win32").action).toBe("allow");
+  });
+});
+
+describe("5 述語は全域関数である（I2・no-throw）", () => {
+  const PREDICATES = [
+    usesHeredoc,
+    usesBackslashPath,
+    needsPyEncoding,
+    usesNoVerify,
+    pullWithoutFfOnly,
+  ];
+  const PATHOLOGICAL = [
+    "", "<", "<<", "<<<", "<<-", "<<'", '<<"', "$env:", "%", "C:", ":\\", "git", "git ", "python",
+    "'", '"', 'unmatched " quote && git commit', "\n\n\n", "\r\n", "\t<<EOF\t",
+    "a".repeat(200_000), "<<".repeat(20_000), "git pull; ".repeat(5_000), "日本語".repeat(10_000),
+    "$env:TEMP\\".repeat(5_000), `python ${"非ASCII".repeat(5_000)}`,
+  ];
+
+  // 全コマンドで走るため、1 つでも throw すると main() の catch が exit 2 を書き、
+  // セッションの全コマンドがブロックされる。
+  it("病的入力でも throw しない", () => {
+    for (const fn of PREDICATES) {
+      for (const input of PATHOLOGICAL) {
+        expect(() => fn(input), `${fn.name}(${JSON.stringify(input.slice(0, 20))})`).not.toThrow();
+      }
+    }
+  });
+
+  // code-reviewer H1 の回帰。`FLAG` の `-{1,2}\S+` は `--x` の分割が 2 通りあり、
+  // 全体が失敗するとき 2^n 通りを探索した（`git --f0=v0 … --f23=v23 x` の 225 字で 747ms・実測）。
+  // **これは throw でも hang でもなく「遅い」という形の fail-open** である——hook が timeout すると
+  // exit≠2 = 非ブロッキングになり、コマンドはそのまま実行される。時間でしか捕まらないので時間で縛る。
+  it("`git` の直後にフラグが並ぶ入力が指数爆発しない", () => {
+    const flags = Array.from({ length: 2000 }, (_, i) => `--f${i}=v${i}`).join(" ");
+    const cmd = `git ${flags} x`;
+    const t0 = process.hrtime.bigint();
+    expect(usesNoVerify(cmd)).toBe(false);
+    expect(pullWithoutFfOnly(cmd)).toBe(false);
+    expect(Number(process.hrtime.bigint() - t0) / 1e6).toBeLessThan(500);
+  });
+
+  it("judgeCommandShape も病的入力で throw しない", () => {
+    for (const input of PATHOLOGICAL) {
+      for (const platform of ["win32", "darwin", undefined]) {
+        expect(() => judgeCommandShape(input, platform)).not.toThrow();
+      }
+    }
+  });
+});
+
+describe("フック間契約 — post-edit が出す再現コマンドを pre-bash が拒まない（I8・#768）", () => {
+  const REPO = fileURLToPath(new URL("../../", import.meta.url));
+
+  // post-edit.mjs の repro が `\` 区切りを出すと、この hook の `\` 判定が拒む。
+  // 片方の hook が指示するコマンドをもう片方が拒む状態を、判定そのもので固定する。
+  it.each([
+    ["hook-selftest"],
+    ["githooks-selftest"],
+    ["clippy"],
+    ["core-test"],
+    ["egui-runtime-test"],
+    ["settings-test"],
+    ["tauri-test"],
+    ["cargo-check"],
+  ])("%s の再現コマンドは win32 でも allow", (id) => {
+    const spec = buildCommand(id, REPO);
+    expect(spec, `${id} の spec が null`).not.toBeNull();
+    const r = decide(bash(spec.repro), CLEAN, NO_PLAN, "win32");
+    expect(r.action, `${id}: ${spec.repro} — ${r.reason ?? ""}`).toBe("allow");
   });
 });
 

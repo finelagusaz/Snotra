@@ -30,12 +30,12 @@
 - Consumes: `docs/check-skill-skeleton-design.md`「検討した代替案と却下理由」節（却下 1〜4）
 - Produces: Task 2 のポインタ行が指す先ではない（ポインタは設計書を指す）。Task 4 が「帰結」節へ `/norm-review` の結果を追記する
 
-- [ ] **Step 1: ADR 番号を確定する**
+- [x] **Step 1: ADR 番号を確定する**
 
 Run: `ls docs/adr/`
 Expected: `0010-implement-step4-report-slot.md` が最後 → 次番は `0011`。0011 が既に存在するなら次の空き番号を使い、以降の手順のファイル名を読み替える。
 
-- [ ] **Step 2: ADR を書く**
+- [x] **Step 2: ADR を書く**
 
 Create `docs/adr/0011-check-skill-skeleton.md`:
 
@@ -93,12 +93,12 @@ status: Accepted
 関連: #781 ・`docs/check-skill-skeleton-design.md` ・ADR-0003（却下 4「義務を足すときは母集団を絞る」の一般化元）・ADR-0005（面積 ratchet の引き上げ規律）・ADR-0010（skills 本文が面積の母集団外であること）・#593（否定の知識の ADR 回収）
 ```
 
-- [ ] **Step 3: governance:check を走らせる**
+- [x] **Step 3: governance:check を走らせる**
 
 Run: `npm run governance:check`
 Expected: `G1..G11 passed`。ADR 内の見出し参照（`AGENTS.md`「条件別チェック（トリガー → 参照先）」・`/implement`「4a. check スキルの実行」・`docs/development-principles.md`「構造的設計原則と強制の階梯」）が実在照合を通ること。**赤なら参照先の見出し文言を実ファイルから copy して直す**（推測で直さない）。
 
-- [ ] **Step 4: コミット**
+- [x] **Step 4: コミット**
 
 コミットメッセージを Write ツールで一時ファイルへ書き、`git commit -F <path>` で渡す（パス区切りは `/`）。
 
@@ -134,12 +134,12 @@ Run: `git add docs/adr/0011-check-skill-skeleton.md && git commit -F <path>`
 - Consumes: Task 1 の ADR（参照はしない。ポインタが指すのは設計書）
 - Produces: 骨格が「スキルを触ったときに配送される」状態。PR 2・PR 3 の作業者はこの行から設計書へ到達する
 
-- [ ] **Step 1: 追加前の面積を実測する**
+- [x] **Step 1: 追加前の面積を実測する**
 
 Run: `npm run governance:check`
 Expected: 出力に `rules 7956/8056 字` が含まれる。**この 7956 を記録する**（以降の引き上げ幅の根拠になる）。値が違っていたら並行セッションが rules を変えているので、実測値を採用して以降の計算をやり直す。
 
-- [ ] **Step 2: ポインタ行を足す**
+- [x] **Step 2: ポインタ行を足す**
 
 `.claude/rules/safety-nets.md` の「規範は機構ではないので実行して測れない——…パスに属する規範（`.claude/rules/` `.claude/skills/` および規範文書）を新設・変更したら起動する。」の**直後**へ、次の 1 行を足す:
 
@@ -147,14 +147,14 @@ Expected: 出力に `rules 7956/8056 字` が含まれる。**この 7956 を記
 - **check 系スキル（`*-check`）は 4 スロット（母集団・証拠・停止・接続）と費用対称性を満たす**——定義は `docs/check-skill-skeleton-design.md`
 ```
 
-- [ ] **Step 3: 追加後の面積を実測し、引き上げ幅を確定する**
+- [x] **Step 3: 追加後の面積を実測し、引き上げ幅を確定する**
 
 Run: `npm run governance:check`
 Expected: **G10 が赤**になり `rules <新しい実測値>/8056 字` が出る。その実測値を記録する。
 
 （見積もりは約 8070。ポインタ行は約 114 字で、余白 100 字を超えるため。**見積もりではなく出力の実測値を使う**。）
 
-- [ ] **Step 4: AREA_BUDGET.rules を実測値へ引き上げ、理由を書く**
+- [x] **Step 4: AREA_BUDGET.rules を実測値へ引き上げ、理由を書く**
 
 `scripts/governance-check.mjs:604` を **実測値 + 100** へ更新する。**`+100` を省いてはならない**——同ファイルの `AREA_BUDGET` 直前のコメントが「**ゼロ余裕で据えると、あらゆる編集が定数の書き換えを要求して摩擦が日常化し、赤の意味が失われる（ADR-0005）**」と明記しており、過去 4 回の引き上げもすべてこの形である。
 
@@ -172,12 +172,12 @@ export const AREA_BUDGET = { alwaysLoaded: 13374, rules: <Step 3 の実測値 + 
  * いない。骨格そのものは面積対象外の設計書に置き、rules へは到達経路だけを置いた（ADR-0011 却下 4）。
 ```
 
-- [ ] **Step 5: governance:check が緑に戻ることを確認する**
+- [x] **Step 5: governance:check が緑に戻ることを確認する**
 
 Run: `npm run governance:check`
 Expected: `G1..G11 passed`。参照した設計書のパスが実在照合を通ること。
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
 コミットメッセージを一時ファイルへ書いて `git commit -F <path>`:
 
@@ -210,7 +210,7 @@ Run: `git add .claude/rules/safety-nets.md scripts/governance-check.mjs && git c
 
 **この Task が PR 1 の本体である。** 骨格は規範であり、`.claude/rules/safety-nets.md` 自身が「パスに属する規範を新設・変更したら `/norm-review` を起動する」と要求している。骨格が骨格の要求を免れることはない。
 
-- [ ] **Step 1: 停止条件を書き出す**
+- [x] **Step 1: 停止条件を書き出す**
 
 着手前に次を確定し、Task 4 で報告する形で記録する:
 
@@ -224,7 +224,7 @@ Run: `git add .claude/rules/safety-nets.md scripts/governance-check.mjs && git c
 - **塞ぎ 1 件あたり 1 文**（超えるものは受容する残余へ）
 - **上限時点で残るものは受容する未対応リスクとして明記する**
 
-- [ ] **Step 2: 1 巡目の 2 クラス読者を起動する**
+- [x] **Step 2: 1 巡目の 2 クラス読者を起動する**
 
 各読者へ渡すもの: **対象の文言だけ**（設計書「骨格 — 4 スロット」節 + 「貫く性質 — 費用対称性」節 + Task 2 のポインタ行を本文へ貼る。実装コードもスキル本文も読ませない）、Step 1 の合格条件、**書かせる絶対パス**。
 
@@ -234,12 +234,12 @@ Run: `git add .claude/rules/safety-nets.md scripts/governance-check.mjs && git c
 
 指示に含めるもの: **抜け道は 1 件 1 番号の箇条**で書かせる（出力の等式は番号を数え直して立てるため）。`name:` パラメータは渡さない——teammate 化して最終テキストが届かなくなる（実測）。
 
-- [ ] **Step 3: 件数をファイルから数え直す**
+- [x] **Step 3: 件数をファイルから数え直す**
 
 Run: `grep -cE '^ *[0-9]+\. ' <各ファイル>`
 Expected: N（lazy）と M（strict）が得られる。**会話へ写した件数で左辺を立ててはならない**（`/norm-review`「出力」）。不着・様式違反のクラスは件数ではなく「不成立」と書き、等式はそのクラスを除いて立てる。
 
-- [ ] **Step 4: 各指摘の成立を自分で確認し、成立したものだけを塞ぐ**
+- [x] **Step 4: 各指摘の成立を自分で確認し、成立したものだけを塞ぐ**
 
 各指摘について、引用された文言を**自分で開いて**成立を確認する。成立しないものは降格し、**降格した事実も記録に残す**。塞ぎは 1 件 1 文。
 
@@ -251,11 +251,11 @@ Step 2 と同じ手順。パスは `skel-r2-lazy.md` / `skel-r2-strict.md`（**�
 
 **1 巡目の修正自身が新しい抜け道を作る**（#764 実測・本サイクルでも `/race-check` で実測）。特に「実行不能を作っていないか」を見る——義務を足す方向の塞ぎは `ADR-0003` 却下 4 の失敗様態を再現する。
 
-- [ ] **Step 6: 2 巡目を Step 3・Step 4 と同じ規律で処理する**
+- [x] **Step 6: 2 巡目を Step 3・Step 4 と同じ規律で処理する**
 
 上限 2 巡に達したら止める。**最終巡の塞ぎは検証されないまま残る**——受容する残余に書く。
 
-- [ ] **Step 7: 塞ぎがあった場合のみ governance:check とコミット**
+- [x] **Step 7: 塞ぎがあった場合のみ governance:check とコミット**
 
 Run: `npm run governance:check`
 Expected: `G1..G11 passed`。**塞ぎで rules の面積が増えていたら、Task 2 Step 3〜5 と同じ手順で予算を再調整する**（理由コメントを追記する。既存の 1 行を書き換えない）。
@@ -274,7 +274,7 @@ Expected: `G1..G11 passed`。**塞ぎで rules の面積が増えていたら、
 - Consumes: Task 3 の巡ごとの件数・等式・降格・残余
 - Produces: PR。PR 2（`/race-check` を骨格へ寄せる）の入口
 
-- [ ] **Step 1: ADR「帰結」へレビュー結果を追記する**
+- [x] **Step 1: ADR「帰結」へレビュー結果を追記する**
 
 `docs/adr/0011-check-skill-skeleton.md` の「帰結」節へ次の形で足す（`<>` は Task 3 の実測値で埋める）:
 
@@ -282,7 +282,7 @@ Expected: `G1..G11 passed`。**塞ぎで rules の面積が増えていたら、
 - `/norm-review` を <巡数> 巡回した。1 巡目 <N>+<M> = 塞いだ <K> + 降格 <L> + 残余 <R>、2 巡目 <同形>。件数は読者が書いたファイルの番号を数え直して立てた。<2 巡目に 1 巡目の塞ぎ由来の指摘があればその件数と、縮める方向だったか広げる方向だったかを 1 文で>
 ```
 
-- [ ] **Step 2: 受容する残余を ADR へ書く**
+- [x] **Step 2: 受容する残余を ADR へ書く**
 
 Task 3 で塞がなかった指摘を、**番号ごとに理由を付けて**「帰結」節へ足す。最終巡の塞ぎが未検証であることも書く。
 
@@ -338,6 +338,20 @@ Run: `gh issue view 781 --json state`
 Expected: `OPEN`。
 
 ---
+
+## 実施との差分（計画からの逸脱・実行時に確定）
+
+計画は 4 Task・26 ステップだったが、実施は 9 タスクになった。増えた分と、計画の記述が実態と食い違った箇所を記録する。
+
+- **Task 2b（追加）**: 骨格の正本を `docs/superpowers/specs/` から `docs/` 直下へ移設した。`docs/superpowers/` は superpowers スキルが管理する領域であり、かつ `scripts/governance-check.mjs` が同ディレクトリを G3/G4/G11 の母集団から除外している——**正本が検査対象外に置かれていた**
+- **Task 3b（追加）**: 2 クラス読者の判別力を 4 文書で計測し、`docs/adr/0012-two-class-reader-discrimination.md` として記録した。**計画が前提していた「突破件数の前後比較」は成立しない**
+- **Task 3c・3d（追加）**: `/norm-review` へ計測の帰結 2 行と、合格条件・分量予算の論理衝突を塞ぐ 1 行を足した
+- **Task 3e（追加）**: 骨格の要石を項目 4（空の禁止）から項目 2（手順の決定性）へ移した。却下の経緯は ADR-0011 却下 5
+- **Task 3f（追加）**: 2 巡目の指摘 4 件を塞いだ（未検証・上限巡数に達したため）
+- **Task 3 の実行者**: 計画は実装エージェントへの委譲を想定していたが、入れ子委譲では配送の成否がコントローラから見えないため、**コントローラが直接実行した**（ユーザー裁定）
+- **Task 3 Step 2 の成果物パス**: 計画は scratchpad を指定していたが、**`workspace/norm-review/` へ変更した**——scratchpad はセッション終了で消え、設計書自身が「基準は削除されない面へ残す」と定めているため
+- **Task 3 Step 5（未実施）**: 計画は 2 巡目も手を抜く読者・規則を全部守る読者の両方（`skel-r2-lazy.md` / `skel-r2-strict.md`）を起動する想定だったが、**規則を全部守る読者だけを再実行した**（`skel-r2-lazy.md` は作成していない）。ADR-0012 の判別力計測に基づく較正——件数ではなく「忠実に実行すると詰まる箇所」だけを探させる方針への転換
+- **Task 4**: PR 本文・push・`gh pr create` は本ファイル削除後にコントローラが実行する
 
 ## セルフレビュー
 

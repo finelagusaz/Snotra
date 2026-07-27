@@ -4,7 +4,7 @@
 
 **Goal:** check 系スキルが満たすべき 4 スロット + 費用対称性を規範として確定し、骨格自体を敵対的読者レビューで検証する。
 
-**Architecture:** 骨格の定義は設計書（`docs/superpowers/specs/2026-07-27-check-skill-skeleton-design.md`・コミット済み）が正本として既に持つ。本 PR が足すのは (a) 却下した統廃合案を記録する ADR、(b) 執筆時に配送されるポインタ 1 行、(c) 骨格自体への `/norm-review` の結果である。**スキル本文（`race-check` / `symmetric-check`）は本 PR では触らない**——PR 2・PR 3 の範囲。
+**Architecture:** 骨格の定義は設計書（`docs/check-skill-skeleton-design.md`・コミット済み）が正本として既に持つ。本 PR が足すのは (a) 却下した統廃合案を記録する ADR、(b) 執筆時に配送されるポインタ 1 行、(c) 骨格自体への `/norm-review` の結果である。**スキル本文（`race-check` / `symmetric-check`）は本 PR では触らない**——PR 2・PR 3 の範囲。
 
 **Tech Stack:** Markdown 規範文書、`scripts/governance-check.mjs`（G1..G11）、`/norm-review` スキル、`gh` CLI。
 
@@ -27,7 +27,7 @@
 - Create: `docs/adr/0011-check-skill-skeleton.md`
 
 **Interfaces:**
-- Consumes: `docs/superpowers/specs/2026-07-27-check-skill-skeleton-design.md`「検討した代替案と却下理由」節（却下 1〜4）
+- Consumes: `docs/check-skill-skeleton-design.md`「検討した代替案と却下理由」節（却下 1〜4）
 - Produces: Task 2 のポインタ行が指す先ではない（ポインタは設計書を指す）。Task 4 が「帰結」節へ `/norm-review` の結果を追記する
 
 - [ ] **Step 1: ADR 番号を確定する**
@@ -42,7 +42,7 @@ Create `docs/adr/0011-check-skill-skeleton.md`:
 ```markdown
 # ADR-0011: check 系スキルの共通骨格を定めるとき、統廃合とランタイム配置を却下した
 
-`/race-check` と `/symmetric-check` へ敵対的読者レビューを当てて計 102 件の指摘を得た結果、check 系スキル（6 本）の欠陥がすべて 4 スロット（母集団・証拠・停止・接続）のいずれかに落ちることが分かった。**この ADR が残すのは、そのとき却下した案である**——採った形（4 スロット + 費用対称性）は `docs/superpowers/specs/2026-07-27-check-skill-skeleton-design.md` が持つ。
+`/race-check` と `/symmetric-check` へ敵対的読者レビューを当てて計 102 件の指摘を得た結果、check 系スキル（6 本）の欠陥がすべて 4 スロット（母集団・証拠・停止・接続）のいずれかに落ちることが分かった。**この ADR が残すのは、そのとき却下した案である**——採った形（4 スロット + 費用対称性）は `docs/check-skill-skeleton-design.md` が持つ。
 
 ## 文脈
 
@@ -90,7 +90,7 @@ Create `docs/adr/0011-check-skill-skeleton.md`:
 ---
 
 status: Accepted
-関連: #781 ・`docs/superpowers/specs/2026-07-27-check-skill-skeleton-design.md` ・ADR-0003（却下 4「義務を足すときは母集団を絞る」の一般化元）・ADR-0005（面積 ratchet の引き上げ規律）・ADR-0010（skills 本文が面積の母集団外であること）・#593（否定の知識の ADR 回収）
+関連: #781 ・`docs/check-skill-skeleton-design.md` ・ADR-0003（却下 4「義務を足すときは母集団を絞る」の一般化元）・ADR-0005（面積 ratchet の引き上げ規律）・ADR-0010（skills 本文が面積の母集団外であること）・#593（否定の知識の ADR 回収）
 ```
 
 - [ ] **Step 3: governance:check を走らせる**
@@ -144,7 +144,7 @@ Expected: 出力に `rules 7956/8056 字` が含まれる。**この 7956 を記
 `.claude/rules/safety-nets.md` の「規範は機構ではないので実行して測れない——…パスに属する規範（`.claude/rules/` `.claude/skills/` および規範文書）を新設・変更したら起動する。」の**直後**へ、次の 1 行を足す:
 
 ```markdown
-- **check 系スキル（`*-check`）は 4 スロット（母集団・証拠・停止・接続）と費用対称性を満たす**——定義は `docs/superpowers/specs/2026-07-27-check-skill-skeleton-design.md`
+- **check 系スキル（`*-check`）は 4 スロット（母集団・証拠・停止・接続）と費用対称性を満たす**——定義は `docs/check-skill-skeleton-design.md`
 ```
 
 - [ ] **Step 3: 追加後の面積を実測し、引き上げ幅を確定する**
@@ -166,7 +166,7 @@ export const AREA_BUDGET = { alwaysLoaded: 13374, rules: <Step 3 の実測値 + 
 
 ```
  * 2026-07-27: rules を 8056 → <実測値> へ引き上げた（+<差分> 字）。check 系スキルの骨格
- * （4 スロット + 費用対称性・docs/superpowers/specs/2026-07-27-check-skill-skeleton-design.md）
+ * （4 スロット + 費用対称性・docs/check-skill-skeleton-design.md）
  * へのポインタ 1 行を safety-nets.md へ足したため。ADR-0005 が警告する反射的な引き上げに
  * 当たらない根拠は、引き上げ幅がその 1 行の実測値ちょうどであること——本文は 1 文字も増えて
  * いない。骨格そのものは面積対象外の設計書に置き、rules へは到達経路だけを置いた（ADR-0011 却下 4）。
@@ -200,7 +200,7 @@ Run: `git add .claude/rules/safety-nets.md scripts/governance-check.mjs && git c
 ### Task 3: 骨格自体に 2 クラス読者を当てる
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-07-27-check-skill-skeleton-design.md`（成立した指摘を塞ぐ場合）
+- Modify: `docs/check-skill-skeleton-design.md`（成立した指摘を塞ぐ場合）
 - Modify: `docs/adr/0011-check-skill-skeleton.md`（同上）
 - Modify: `.claude/rules/safety-nets.md`（同上）
 

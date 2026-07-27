@@ -1,6 +1,6 @@
 # ADR-0011: check 系スキルの共通骨格を定めるとき、統廃合とランタイム配置を却下した
 
-`/race-check` と `/symmetric-check` へ敵対的読者レビューを当てて計 102 件の指摘を得た結果、check 系スキル（6 本）の欠陥がすべて 4 スロット（母集団・証拠・停止・接続）のいずれかに落ちることが分かった。**この ADR が残すのは、そのとき却下した案である**——採った形（4 スロット + 費用対称性）は `docs/superpowers/specs/2026-07-27-check-skill-skeleton-design.md` が持つ。
+`/race-check` と `/symmetric-check` へ敵対的読者レビューを当てて計 102 件の指摘を得た結果、check 系スキル（6 本）の欠陥がすべて 4 スロット（母集団・証拠・停止・接続）のいずれかに落ちることが分かった。**この ADR が残すのは、そのとき却下した案である**——採った形（4 スロット + 費用対称性）は `docs/check-skill-skeleton-design.md` が持つ。
 
 ## 文脈
 
@@ -48,4 +48,4 @@
 ---
 
 status: Accepted
-関連: #781 ・`docs/superpowers/specs/2026-07-27-check-skill-skeleton-design.md` ・ADR-0003（却下 4「義務を足すときは母集団を絞る」の一般化元）・ADR-0005（面積 ratchet の引き上げ規律）・ADR-0010（skills 本文が面積の母集団外であること）・#593（否定の知識の ADR 回収）
+関連: #781 ・`docs/check-skill-skeleton-design.md` ・ADR-0003（却下 4「義務を足すときは母集団を絞る」の一般化元）・ADR-0005（面積 ratchet の引き上げ規律）・ADR-0010（skills 本文が面積の母集団外であること）・#593（否定の知識の ADR 回収）

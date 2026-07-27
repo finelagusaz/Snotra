@@ -43,7 +43,7 @@
 - [ ] `view.rs` L1765–1868 のテスト 7 件（`font_definitions_*` 4 + `font_covers_cjk_*` 3）を `font_stack.rs` の `mod tests` へ移す。**アサーション文言も含めて 1 字も変えない**（移設の正しさをテスト名の一致で示すため）
 - [ ] `font_stack.rs` に `//!` を書く: 責務（フォント解決と `set_fonts` 登録）・**`OnceLock` は set-once / never-clear**（`transmute` の健全性がそれに依存）・**消費者は `view.rs` と `results_view.rs` の両方**（だから独立モジュールである）
 - [ ] `mod.rs` に `mod font_stack;` を追加する。**既存の `mod` 宣言（`mod.rs:8-25`）はアルファベット順ではない**（`icon_textures` / `lifecycle` / `search_state` / `layout` / `notify` / `strings` / `results_view` / `results_window` / `view` / `visual` / `window_coordinator`・実測）。並べ替えず末尾寄りへ足す
-- [ ] `view.rs` の 3 箇所の `configure_japanese_font` 呼び出し（`setup` / `update` の `font_family_changed` 分岐）を `super::font_stack::configure_japanese_font` 経由へ差し替える
+- [ ] `view.rs` の **2 箇所**の `configure_japanese_font` **呼び出し**（`setup`・L1025 / `update` の `font_family_changed` 分岐・L1157）を `super::font_stack::configure_japanese_font` 経由へ差し替える（L187 は**定義**であり呼び出しではない——移設対象そのもの）
 - [ ] `results_view.rs` L442・L478 の `crate::egui_shell::view::configure_japanese_font` を `crate::egui_shell::font_stack::configure_japanese_font` へ差し替える
 - [ ] `visual.rs` L86 の doc 内の `configure_japanese_font` 参照が指し先として正しいままか確認し、必要なら `font_stack::` を明示する
 - [ ] **[dry-check]** `font_stack.rs` に `pub(super) fn font_family_from_config(app: &tauri::AppHandle) -> String` を置き、`view.rs:1020-1024` と `results_view.rs:437-441` の**完全に同一な** 4 行（`try_state::<AppState>` → `engine.lock()` → `config().visual.font_family.clone()` → `unwrap_or_else("Segoe UI")`。フォールバック文字列まで一致することを実測済み）を両方これへ置き換える。**`font_stack.rs` を新設する本段が、この重複を寄せる唯一の自然な機会である**（`view.rs` に置くと `results_view` が main の view に依存し続ける）
@@ -78,6 +78,7 @@
 
 - [ ] `view.rs` に私的な入力読み 2 本を作る: `read_pre_widget_input(ctx) -> PreWidgetInput`（`focused` / `escape` / `nav_down` / `nav_up`（**`events.retain` による消費もここ**）/ `right` / `left`）と `read_post_widget_input(ctx) -> PostWidgetInput`（`enter` / `shift`）
 - [ ] 両関数の doc に **1 段にできない理由**を書く（Escape/↑↓/→← は TextEdit の前で**消費**が要る〔#700〕・Enter は `response.changed()` に依存するため後〔codex 発見 4〕）
+- [ ] `read_pre_widget_input` の doc に「**この関数より後で `key_pressed(ArrowUp/ArrowDown)` を読んでも常に `false` である**」を書く。`InputState::key_pressed()` は `self.events` を走査するため（`egui-0.35.0/src/input_state/mod.rs:743,750-760`）、`retain` 後の読みは沈黙して `false` を返す。**将来 ↑↓ を読む文を段 14〜20 に足した編集者が落ちる罠であり、構造では塞げない**
 - [ ] 読みを前へ寄せる安全性を doc に明記する: egui の入力はフレーム内で不変・消費（`events.retain`）は TextEdit より前という制約だけを持ち、寄せた先と現行位置の間の文（段 14–17）は ↑↓ イベントを読まない
 - [ ] **処置を 1 つも動かさない**（`move_selection` / folder 展開 / blur 判定は現行の段に残す）
 - [ ] `view.rs` L1139–1140 の誤ったコメント（「`set_visuals` はウィジェット描画より前である必要がある」）を確定事実 5 の内容へ差し替える——**egui 0.35.0 では `ctx.set_visuals` は現在の pass の `Ui` に届かない**（root `Ui` が pass 冒頭で `ctx.global_style()` を `Arc` snapshot する）・潜在バグは #751・**本段では直さない**
@@ -95,7 +96,7 @@
 - [ ] `PERFORMANCE.md` L157-158・L179 の `egui_shell/view.rs` を `egui_shell/font_stack.rs` へ直す
 - [ ] `src-tauri/CLAUDE.md` L32（`commands/` 節の「`egui_shell/view.rs` から再利用」）を `launcher_controller.rs` へ直す
 - [ ] `src-tauri/src/commands/launch.rs` L50 / `commands/instant.rs` L19 / `egui_shell/window_coordinator.rs` L9・L405 / `egui_shell/results_window.rs` L7・L54 / `egui_shell/results_view.rs` L1 の doc コメント参照を更新する
-- [ ] **所在を語る散文の数え上げ（`docs/development-principles.md:42` が命じる手順）**: `grep -rn "view\.rs" --include=*.rs src-tauri/src`（**47 件**・`view.rs` 自身を除く。うち `results_view.rs` を指すものを除くと **37 件**）と `grep -rn "driver" --include=*.rs src-tauri/src`（**45 件**）を母集団とし、1 件ずつ「指し先が `launcher_controller.rs` / `font_stack.rs` / `view.rs` のどれになったか」を判定する。**シンボル名の grep では届かない「概念ラベル」（`driver（view.rs）`・「main 側」・「view.rs の drive」）が主戦場である**——#749 は関数名で grep して 4 箇所を直したが実際は 6 箇所あった
+- [ ] **所在を語る散文の数え上げ（`docs/development-principles.md:42` が命じる手順）**: `grep -rn "view\.rs" --include=*.rs src-tauri/src`（**47 件**・`view.rs` 自身を除く。うち `results_view.rs` を指すものを除くと **37 件**）と `grep -rn "driver" --include=*.rs src-tauri/src`（**45 件**）を母集団とし、1 件ずつ「指し先が `launcher_controller.rs` / `font_stack.rs` / `view.rs` のどれになったか」を判定する。**この 2 つの grep が doc 更新対象の SSOT であり、上の個別項目はその部分集合である**（個別に挙げた行だけを直して sweep を省くと、`notify.rs:3`「時刻は driver（view.rs）が注入する」のような**個別列挙に無い件が落ちる**）。**シンボル名の grep では届かない「概念ラベル」（`driver（view.rs）`・「main 側」・「view.rs の drive」）が主戦場である**——#749 は関数名で grep して 4 箇所を直したが実際は 6 箇所あった
 - [ ] **一括置換を使ってはならない**（`sed` / `Edit` の `replace_all`）。数え上げた各件は 3 つの理由で個別判定が要る:
       - **`snotra-egui-runtime/src/repaint.rs:301,307` の `"view.rs"` はテストの fixture リテラルである**（`file: "view.rs"` / `assert_eq!(..., "… ; view.rs:439 state changed")`・実測）。一括置換すると**assert は緑のまま fixture だけが壊れる**
       - `mod.rs` の re-export コメントのうち **5 件（`ViewKind` / `strings` / `OverlayKind` / `plain_results_hidden` / `ToastKind`・`UpdaterPhase`）は消費者が新 2 モジュールへ割れる**。「view.rs」を 1 語で置換すると 5 件とも誤りになる
@@ -177,7 +178,7 @@
 
 - `focused`（段 13）— 現行位置のまま。移動しない
 - `escape`（段 13）— 現行位置のまま。移動しない
-- `nav_down` / `nav_up`（段 18 → 13）— 読みと**消費**（`events.retain`）が同時に前へ寄る。間の段 14–17（focus / Escape ラダー / blur 猶予）は ↑↓ イベントを 1 度も読まない（実測）。消費の唯一の制約は「TextEdit より前」であり保たれる
+- `nav_down` / `nav_up`（段 18 → 13）— 読みと**消費**（`events.retain`）が同時に前へ寄る。間の段 14–17（focus / Escape ラダー / blur 猶予）は ↑↓ イベントを 1 度も読まない（実測）。消費の唯一の制約は「TextEdit より前」であり保たれる。**`retain` は後続の `key_pressed()` に効く**——`InputState::key_pressed()` は `num_presses()` 経由で `self.events` を走査する（`egui-0.35.0/src/input_state/mod.rs:743,750-760`・一次資料で確認）。「入力はフレーム内で不変だから読む順序は関係ない」は**偽**であり、根拠にしてはならない（設計 §2.2）
 - `ArrowRight`（段 19 → 13）— 読みのみ前へ寄る。処置（folder 展開）は段 19 に残す。`ctx.input` は非破壊で、段 13–18 の誰も ArrowRight を消費しない
 - `ArrowLeft`（段 20 → 13）— 同上
 - `enter` / `shift`（段 28）— **前へ寄せない。** `response.changed()` の後でなければ同一フレームの IME 確定・paste を見落とす（確定事実 1）
@@ -243,6 +244,22 @@
 - **一致（完全性の証拠）**: 新規ファイル 2 という結論、`update()` を 1 関数のまま残す判断（確定事実 3）、入力の pre/post 2 段化（確定事実 1）、`smoke:egui` がこの変更を検出しないこと（trace 名が交わらない）——4 点が独立に再一致した
 
 **総評** — completeness: **高**（台帳 4/4 実在・不着ゼロ・要対処 6 件すべて反映済み）。ただし D の汚染自己申告により、一致 4 点の証拠力は「完全な独立確認」ではなく「弱い独立確認」として扱う。実装着手可否: **可**。
+
+### Step 5a-3 — codex exec による敵対的裏どり（同意ではなく反証を求めた）
+
+`codex exec --sandbox read-only` に、計画の中核 3 主張の**反例を探させた**（プロンプトは「褒めるな・反証できないときだけそう明記しろ」）。
+
+| 主張 | 結果 |
+|---|---|
+| ① 入力の読みを前へ寄せても安全（設計 §2.2） | **根拠の一方が偽と判明**（下記）。結論（安全であること）自体は反証されず |
+| ② 規則 R(段 3) は例外ゼロで 68 項目を分類できる | 反証できず（条項衝突・行き先不定の具体例は挙がらなかった） |
+| ③ 各フェーズが `-D warnings` 下で単独 green になる | 反証できず（E0502 になる現行行は特定できなかった。**実コンパイルは未実施**と明記された） |
+
+**①の反証は成立し、一次資料で自ら確認した。** `InputState::key_pressed()` は `num_presses()` を経て **`self.events` を走査する**（`egui-0.35.0/src/input_state/mod.rs:743,750-760`）。ゆえに「egui の入力はフレーム内で不変だから読む順序は消費に影響しない」は**一般命題として偽**であり、設計 §2.2 の根拠 (a) をこれに置いていたのは誤りだった。`view.rs` の Enter 後置ブロックのコメントも同じ一般化を書いているが、それが成り立つのは **Enter を retain する箇所が無い**からである。
+
+→ 設計 §2.2 を「局所的な 2 事実」（retain が除くのは ↑↓ だけ／段 13〜21 の間に ↑↓ を読む箇所が無い）へ書き直し、**2 つ目が構造保証ではないこと**と、`read_pre_widget_input` の doc へ「以後の `key_pressed(ArrowUp/Down)` は常に `false`」を書く項目を追加した。
+
+**他に指摘 3 件**: (a) 設計 §2 の見出し「文の実行順序を 1 行も動かさない」が §2.2 と自己矛盾する全称表現 → 「**副作用**の実行順序」へ限定（`AGENTS.md`「書けないなら書かない」）。(b) Phase 1 の「`view.rs` の 3 箇所の呼び出し」は実際は 2 箇所（L187 は定義）→ 訂正。(c) doc 更新の個別列挙と grep sweep の関係が不明瞭 → **sweep を SSOT と明記**（`notify.rs:3` のような個別列挙に無い件が落ちるため）。
 
 ### Step 5b — plan-review が扱わない 3 観点
 

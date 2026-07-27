@@ -55,9 +55,21 @@
 
 ## 実装順序
 
-### Phase 1 — 判定の実装（`.claude/hooks/pre-bash.mjs`）
+### Phase 1 — フック間の矛盾を先に解消する（`post-edit.mjs`・独立導出が発見）
+
+**述語を配線する前に置く。** Phase 2 以降は `.claude/hooks/**` を編集して `hook-selftest` を自動発火させるが、
+それが失敗したとき出る再現コマンドは `node C:\workspace\Snotra\node_modules\vitest\vitest.mjs run .claude/hooks` で、
+**再現コマンドが最も要る局面でそのまま打てない**。この Phase は述語と独立なので、先に置けば窓が消える。
+
+- [ ] `buildCommand` / `runCheck` の `repro` 文字列を POSIX 区切りへ正規化する（D10。実行に使う `spec.cmd`/`spec.args` は変えない＝`governance-check.mjs`:485 の G9 に無影響）
+- [ ] 正規化は **`toRelative`（`post-edit.mjs`:95）と同じ `.split(path.sep).join("/")`** を共有ヘルパへ束ねて使う（`replaceAll("\\","/")` は POSIX でファイル名中の `\` を潰すため使わない・`/dry-check` 候補 2）
+- [ ] `post-edit.test.mjs` にカナリアを足す（`pre-bash.mjs` の `decide` を直に呼び、hook-selftest / githooks-selftest / clippy / cargo の再現文字列がすべて allow されることを照合する。I8）
+- [ ] 既存の post-edit テストが緑であることを確認する
+
+### Phase 2 — 判定の実装（`.claude/hooks/pre-bash.mjs`）
 
 - [ ] `segmentEnd(command, at)` を抽出し、`hasSafeChain` のインライン計算を載せ替える（D4・挙動不変）
+- [ ] 区切り文字集合 `[;&|\n\r]` を定数へ寄せる（現在 `:91` と `:98` に別リテラル。`:98` は区切り列の列挙で関数は共有できないため定数だけ共有する・`/dry-check` 候補 3）
 - [ ] `gitSegments(command)` を追加（コマンド位置の `git` ごとに `segmentEnd` までを切り出す）
 - [ ] `usesHeredoc` を D8 の形で実装する（全候補 + 単独行 `Map` の 1 パス。**囮の `<<` が先行しても取り落とさない**）
 - [ ] `usesBackslashPath` / `needsPyEncoding` を追加する（`\` は `C:\` / `$env:X\` / `%X%\` の 3 形に限る・D7）
@@ -68,7 +80,7 @@
 - [ ] `main()` の `decide` 呼び出しへ `process.platform` を渡す
 - [ ] `usesHeredoc` の `new RegExp` 補間が安全な理由と、線形であることの理由を注釈する（I2）
 
-### Phase 2 — テスト（`.claude/hooks/pre-bash.test.mjs`）
+### Phase 3 — テスト（`.claude/hooks/pre-bash.test.mjs`）
 
 - [ ] 述語ごとの代表入力を移植する（research.md の実測ケース。真/偽の両方向）
 - [ ] 囮が先行する heredoc（`grep -rn "x << y" src && cat <<EOF\nbody\nEOF`）が block されることを固定する（D8 の回帰）
@@ -85,12 +97,6 @@
 - [ ] ソースカナリア: `main()` が `decide` へ `process.platform` を渡していること（I5）
 - [ ] 既存 23 呼び出しが 3 引数のまま緑であることを確認する（I7・書き換えない）
 - [ ] `npx vitest run .claude/hooks` を実行して緑を確認する
-
-### Phase 3 — フック間の矛盾の解消（`post-edit.mjs`・独立導出が発見）
-
-- [ ] `buildCommand` / `runCheck` の `repro` 文字列を POSIX 区切りへ正規化する（D10。実行に使う `spec.cmd`/`spec.args` は変えない）
-- [ ] `post-edit.test.mjs` にカナリアを足す（`pre-bash.mjs` の `decide` を直に呼び、hook-selftest / githooks-selftest / clippy / cargo の再現文字列がすべて allow されることを照合する。I8）
-- [ ] 既存の post-edit テストが緑であることを確認する
 
 ### Phase 4 — ライブ フォールトインジェクション（Windows 機・1 度）
 
@@ -113,6 +119,7 @@
 - [ ] `docs/hooks.md`:12 の全称表現を是正する（「コマンド位置だけを見る」は 3 述語で偽になる。I3 の形へ・D11）
 - [ ] `docs/hooks.md` へ 5 判定・platform 注入（D1/D3）・爆発半径（I2）・フック間契約（I8）を追記する
 - [ ] `docs/hooks.md` の受容する未対応リスクへ D6・D7 と過小検出 2 件・過剰検出 2 件を列挙する（**「検出されないなら使ってよい」と読めない書きぶりにする**——既存の `sh -c` 項が採る「人間専用の意図的迂回」の形を踏襲する）
+- [ ] 同じ箇所に、`.githooks/_lib.sh`:20 が `--no-verify` での迂回を案内すること（**明示的に人間専用と書いてあるため欠陥ではない**）を 1 文で書き添える（次の読者が矛盾として再発見しないため）
 - [ ] `docs/adr/0009-*.md` を新規作成する（D1・D2・D3 の否定の知識に限る。D6・D7 は `docs/hooks.md` の既存リストが受け皿）
 - [ ] 削除した節を正準形で指す文書が無いことを `npm run governance:check` で裏取りする（G11 の母集団は `docs/superpowers/` を除外することを実測済み）
 
@@ -150,7 +157,7 @@
 | `post-edit.test.mjs` のフック間カナリア | I8（片方が指示し片方が拒む状態を作らない） |
 | 既存カナリア 2 群（無変更で緑） | I1（fail-closed 骨格）・I4（matcher ドリフト） |
 
-検証コマンド: `npx vitest run .claude/hooks`（Phase 2・3 の反復用）→ `npm test`（全件）→ `npm run governance:check`。
+検証コマンド: `npx vitest run .claude/hooks`（Phase 1〜3 の反復用）→ `npm test`（全件）→ `npm run governance:check`。
 `.claude/hooks/**` の編集では PostToolUse が `hook-selftest` を自動発火するため、**沈黙 = 合格**（手動再実行は不要）。
 `CLAUDE.md` / `docs/**` / `scripts/*.mjs` / ADR の編集には検査が割り当てられていない（`selectChecks` を実測）——沈黙は
 「何も走らなかった」であり、Phase 6 の `governance:check` を手で実行するまで何も測られていない。
@@ -188,6 +195,42 @@
 - **スコープ過剰（plan ∖ 導出）**: なし。
 - **一致（完全性の証拠）**: 第 4 位置引数による platform 注入・`git commit -n` の検出・`\` 判定を narrow に留めること・`.claude/settings.json` を変えないこと・`.githooks/_lib.sh` と `.claude/rules/safety-nets.md` を変えないことは独立に再一致した。
 - **`docs/development-principles.md` の変更**は導出が挙げたが採らない（D11・理由付きで却下）。
+
+### `\` 判定と衝突する「指示面」の自前走査（独立導出の corpus 報告を一次証拠にしない）
+
+独立導出は「repo コマンド corpus 128 件中 6 ヒット（すべて説明済み）」と報告したが、**`post-edit.mjs` の衝突と同じクラス**
+（文書がエージェントへ、新判定が拒むコマンドを打たせる）なので自分で走査し直した。`[A-Za-z]:\\` / `\$env:\w+\\` / `%\w+%\\`
+を指示面（`docs/*.md`・`docs/adr/`・`.claude/**`・ルートと各モジュールの `CLAUDE.md`・`AGENTS.md`・`CONTRIBUTING.md`・`README.md`・`package.json`）へ当てた結果:
+
+- **`docs/build-commands.md`（コマンドの SSOT）は 0 ヒット** — 文書化された呼び出しはすべて相対パス（`scripts/*.ps1` の
+  `-ExePath` 既定値は script 内の default であってエージェントが打つ文字列ではない）
+- `docs/architecture.md`:104（`%APPDATA%\Snotra\`）・`src-tauri/CLAUDE.md`:111（`C:` と `C:\` の違い）は**散文の説明**で命令ではない
+- `.claude/hooks/post-edit.test.mjs` の 3 件はテスト fixture の文字列
+
+**新たな変更対象は増えなかった**（`post-edit.mjs` が唯一の I8 サイト）。**受容する残余**: `src-tauri/src/icon.rs`:402 の
+rustdoc が `$env:SNOTRA_ICON_DIAG_PATHS = "C:\path\a;C:\path\b"` という診断レシピを載せている。値はプレースホルダで
+置換して使う形であり、#768 のスコープ外ゆえ変更しない。
+
+### `/dry-check`（`AGENTS.md`「条件別チェック」の「関数・型を新規定義／導入」トリガー）
+
+7 個の新規純関数の主要操作を grep（`search(/`・`[;&|`・`matchAll`・`-\S+\s+`・`x00-\x7F`・`no-verify`・`ff-only`・
+`replaceAll(`・`path.sep`・`posix`）で `.claude/hooks/*.mjs` / `scripts/*.mjs` / `.githooks/*` へ当て、候補 7 件を判定した。
+**[置換] 3 件・[維持] 4 件。D4 は唯一のヒットではなかった**:
+
+1. **[置換]** `pre-bash.mjs`:91 → `segmentEnd`（D4・既知）
+2. **[置換] `post-edit.mjs`:95 `toRelative` が既に `.split(path.sep).join("/")` を持つ（docstring:「区切りは常に / に正規化する」）。**
+   D10 の実装で `replaceAll("\\", "/")` を新設してはならない——**POSIX では `path.sep === "/"` ゆえ `split/join` 版は
+   no-op だが、`replaceAll` 版はファイル名中の正当な `\` を潰す。`npm test` は ubuntu でも走るため後者は誤りである**。
+   → D10 は `toRelative` と同じイディオムを共有ヘルパへ束ねて使う（**probe で書いた形の訂正**）
+3. **[置換]** 区切り文字集合 `[;&|\n\r]` が `pre-bash.mjs`:91 と :98 に別々のリテラルで在り、`gitSegments` が 3 つ目を作る
+   → 文字クラスを定数へ寄せる（:98 は区切り**列の列挙**で `segmentEnd` では表現できないため、関数ではなく定数だけ共有する）
+4. **[維持]** `governance-check.mjs`:38 / `clean-worktrees.mjs`:34 の `replaceAll("\\","/")` — 別ツリーの既存コード。
+   `pre-bash.mjs`:176 が明文化する「2 hook 間の import は結合を増やすため許容」と同じ理由で hooks ↔ scripts も束ねない
+5. **[維持]** `githooks.test.mjs`:17,63 の同イディオム 2 重 — #768 は `.githooks/` を触らないためスコープ外
+6. **[維持]** `.githooks/_lib.sh`:20 の `--no-verify` / `githooks.test.mjs`:146 の `--ff-only` — 判定ロジックではなく
+   メッセージ文字列と実行。前者は Phase 5 で 1 文書き添える扱い
+7. **[維持]**（DRY 違反ではないが影響範囲の発見）`governance-check.mjs`:485 の G9 は `cargoSpec` の**引数配列**を読む。
+   D10 が `repro` 文字列だけを変え `spec.cmd`/`spec.args` を変えない方針は **G9 に無影響**である
 
 ### 5b の 3 観点
 

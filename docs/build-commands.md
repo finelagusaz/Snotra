@@ -48,6 +48,16 @@ npm run smoke:egui       # 必須: egui show/hide スモーク（hotkey 注入 +
 
 `cargo run -p snotra` で起動し、目視で overflow／clipping／フォントレンダリングを確認する。PR 作成前に必須。
 
+```powershell
+npm run smoke:manual              # 項目の読み上げ・判定の記録・trace の並置（#749）
+npm run smoke:manual -- -Only 2,5 # 一部だけ再実施
+npm run smoke:manual -- -PostToPr # 記録を PR コメントへ投稿する
+```
+
+- **記録を残すためのものであって、判定を自動化するものではない。** 合否は常に目視であり、スクリプトが並べる trace は**診断**である（#671 PR A′: `egui_results:hide` は出たのに窓は残り、presence を見る smoke は緑のまま通した）
+- **エージェントは実行できない**（対話入力を要する）。人間が自分の端末で走らせる。実施の有無が会話にしか残らないと「検証されていない」と「問題が無かった」が区別できなくなるため、`-PostToPr` か出力ファイルの貼り付けで PR に残す
+- 項目の SSOT は PR 本文の目視表であり、スクリプト内の `$items` はその**写し**である。項目を増減したら両方を直す
+
 - **既定が egui（#532 SU7 flip 済み・env フラグ不要）**。`cargo run`（`-p` 欠落）は**ルートでは bin を決められずエラーになり**（`snotra` / `snotra-settings` の 2 本。実測: `error: cargo run could not determine which binary to run`）、cwd が crate 配下ならその crate の bin が起動する。必ず `-p snotra` を付ける
 
 #### updater トーストを出すための env ハッチ

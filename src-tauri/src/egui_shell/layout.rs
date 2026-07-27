@@ -99,7 +99,8 @@ pub fn clamp_results_height(desired: f64, available: Option<f64>, row_height: f6
     desired.min(avail.max(row_height + 8.0))
 }
 
-/// results 窓の上端の**物理** y（#752 C1）。`mod.rs::position_results_below_main` の算術部。
+/// results 窓の上端の**物理** y（#752 C1）。`window_coordinator::position_results_below_main`
+/// の算術部（#749 で `mod.rs` から移設）。
 ///
 /// **算出と適用（`set_position`）を分けるために出したのではない**——融合は #675 の判断として
 /// 保つ（計算した値を捨てる関数は、次の利用者に写しを書かせる）。ここへ出すのは**式を
@@ -115,7 +116,7 @@ pub fn results_top_y(main_y: i32, main_height_phys: u32, gap_logical: u32, main_
 }
 
 /// results 上端から作業領域の下端までの高さ（**論理 px**・#752 C1）。
-/// `mod.rs::results_available_height` の算術部。
+/// `window_coordinator::results_available_height` の算術部（#749 で `mod.rs` から移設）。
 ///
 /// **`.max(0.0)` の床を落とさない**——main が作業領域の外にあると差が負になる。
 ///
@@ -127,6 +128,23 @@ pub fn results_top_y(main_y: i32, main_height_phys: u32, gap_logical: u32, main_
 /// 成り立たなくなる（非 Windows でテストが到達しない）。
 pub fn available_below(work_area_bottom_phys: i32, top_y_phys: i32, results_scale: f64) -> f64 {
     (f64::from(work_area_bottom_phys - top_y_phys) / results_scale).max(0.0)
+}
+
+/// 窓の再サイズが要るか（#749）。`set_size` は Win32 呼び出しゆえ、同値のフレームで撃たない
+/// ためのデルタガードである。
+///
+/// **correctness のフラグではない**——results の可視性は `ResultsWindow` の `visible` が持つ
+/// （#671 spec 決定 2 の意図的な分割）。ここが誤って `false` を返しても窓が消えることはなく、
+/// 直近に適用したサイズのまま残るだけである。
+///
+/// 許容 `0.5` は論理 px の丸め差を吸収する値で、#646 PR2 から手書きされていた式をそのまま
+/// 移した。引数は `(幅, 高さ)`——`set_size(width, height)` の引数順と揃える。
+///
+/// 消費者は 2 つある（**状態は共有しない。式だけを共有する**）: `ResultsWindow::set_size`
+/// （memo は窓の所有型が持つ）と `view.rs` の main 窓ガード（memo は view が持つ・main の
+/// 高さは意図的な 2 導出ゆえ窓の所有型へ寄せない・ADR-0007 却下 1）。
+pub fn size_delta_exceeds(prev: (f64, f64), next: (f64, f64)) -> bool {
+    (next.0 - prev.0).abs() > 0.5 || (next.1 - prev.1).abs() > 0.5
 }
 
 /// SPEC §8.6「検索結果ウィンドウの可視性（従属軸）」の 4 連言を、**生の入力から**受け取る
@@ -374,6 +392,25 @@ mod tests {
         // クランプが床を当てて作り替えてはならない
         assert_eq!(clamp_results_height(0.0, Some(0.0), row), 0.0);
         assert_eq!(clamp_results_height(0.0, Some(500.0), row), 0.0);
+    }
+
+    /// #749: 許容 0.5 の境界。**ちょうど 0.5 は撃たない**（`>` であって `>=` ではない）。
+    #[test]
+    fn size_delta_exceeds_only_past_half_pixel() {
+        assert!(!size_delta_exceeds((600.0, 300.0), (600.0, 300.0))); // 同値
+        assert!(!size_delta_exceeds((600.0, 300.0), (600.0, 300.5))); // ちょうど境界
+        assert!(size_delta_exceeds((600.0, 300.0), (600.0, 300.51))); // 境界の外
+        // 負方向も同じ閾値で撃つ（`abs()` を落とすとここが落ちる）。
+        assert!(size_delta_exceeds((600.0, 300.0), (600.0, 299.4)));
+        assert!(!size_delta_exceeds((600.0, 300.0), (600.0, 299.5)));
+    }
+
+    /// #749: 幅と高さの**両方**を見る。片軸を落とすと、幅の live-reload か
+    /// 行高の追従のどちらかが黙って効かなくなる。
+    #[test]
+    fn size_delta_exceeds_watches_both_axes() {
+        assert!(size_delta_exceeds((600.0, 300.0), (700.0, 300.0))); // 幅だけ
+        assert!(size_delta_exceeds((600.0, 300.0), (600.0, 400.0))); // 高さだけ
     }
 
     /// 真理値表を読みやすくするための入力組み立て。`row_height` は固定でよい

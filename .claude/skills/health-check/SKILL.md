@@ -13,7 +13,7 @@ allowed-tools:
 
 コードベースとドキュメントの衛生状態を検証する。発見事項を報告し、修正は行わない。
 
-**決定的検査の SSOT は `npm run governance:check`（`scripts/governance-check.mjs`・#587）である。** 旧 Check 1・2・3・4・6・8・9・10 はそこへ機械化済み（下の各 stub が対応 G 番号を示す。Check 番号は序数参照の腐敗を避けるため振り直さない）。本スキルで実行するのは:
+**決定的検査の SSOT は `npm run governance:check`（`scripts/governance-check.mjs`・#587）である。** 旧 Check 2・3・4・6・8・9 は全面的にそこへ機械化済みで、対応表は `references/mechanized-checks.md` にある（**Check 番号は序数参照の腐敗を避けるため振り直さない**——下の欠番はその表が説明する）。Check 1・5・10 は一部だけが機械化されており、意味判断の残置部分が下にある。本スキルで実行するのは:
 
 1. `npm run governance:check` を実行し、赤ならその全件を発見事項（Critical）として報告する
 2. 機械化できない検査 — Check 5 の残置部分（コマンド直書き grep・npm 系ラッパーの等価判断）と Check 7（メモリ整合）— を従来どおり実施する
@@ -21,18 +21,6 @@ allowed-tools:
 ## Check 1 — CLAUDE.md モジュール構成の乖離
 
 → **`npm run governance:check`（G1・#587）が機械検査する。ここでは実行しない。** テストファイル除外（SSOT: `vitest.config.ts` の include）・basename 照合の意味論はスクリプト（`scripts/governance-check.mjs`）とそのテストが固定する。責務記述の**内容の妥当性**（索引の存在ではなく記述が実態と合っているか）は機械化できず、気づいた乖離があれば発見事項として報告する。
-
-## Check 2 — docs/architecture.md にファイル単位モジュール表が再導入されていないか
-
-→ **`npm run governance:check`（G2・#587）が機械検査する。ここでは実行しない。** 責務宣言の正本は `//!` / TSDoc、CLAUDE.md は索引 + 横断不変条件（#562）という設計の回帰検知。
-
-## Check 3 — AGENTS.md ドキュメント参照の実在性
-
-→ **`npm run governance:check`（G3・#587）が機械検査する。ここでは実行しない**（対象はガバナンス文書群全体に一般化された。検証コマンドの整合は Check 5 残置部分と G5/G6）。
-
-## Check 4 — SPEC.md セクション番号の連続性
-
-→ **`npm run governance:check`（G4・#587）が機械検査する。ここでは実行しない**（番号連続性に加え、リポジトリ内の `SPEC §N.x` 参照の実在も検査対象）。
 
 ## Check 5 — docs/build-commands.md コマンドの整合（SSOT）
 
@@ -42,10 +30,6 @@ allowed-tools:
 - `AGENTS.md`「変更後の検証を実行する」や `.claude/skills/*/SKILL.md` に **コマンド本体**（`cargo XXX` / `npm XXX` / `npx XXX` の具体的な引数を含む実行コマンド）が直書きされていないか grep する。`docs/build-commands.md` の SSOT を迂回している箇所を報告する（コマンド名への言及や参照リンク自体は許容）。
 - hook の **cargo コマンド ↔ カテゴリ A の照合は `npm run governance:check`（G9・#589）が機械検査する。ここでは実行しない**（出力整形フラグの許容込み。#476 のフラグドリフト事故クラスを機械が受け持つ）。
 - node/vitest 系のみ本 Check に残る: hook の検査（tsc 直接起動・単一テストファイルの vitest 実行）が SSOT コマンド（`npm test`）の**部分集合ラッパー**として妥当か（対象ファイルが SSOT コマンドの実行対象に含まれるか）を確認する。
-
-## Check 6 — docs/development-principles.md 参照の実在性
-
-→ **`npm run governance:check`（G3・#587）が機械検査する。ここでは実行しない**（Check 3 と同様、ガバナンス文書群全体へ一般化された）。
 
 ## Check 7 — MEMORY.md 参照の実在性
 
@@ -79,14 +63,6 @@ allowed-tools:
 - ゆえに最終報告に Check 7 の `[Skipped]` が残るのは、**実行環境そのものにメモリ領域が与えられていない場合だけ**である
 
 **これは規範であって機構ではない**（受容する性質）。実行者が「パスを持たない」「読んだが整合していた」と偽ることを、文書は反証できない。防御は 2 つだけ — **根拠を要求すること**（偽るコストを上げる）と、**`Skipped` を可視化すること**（黙って消えられなくする）。`--no-verify` と同格の best-effort として扱う。
-
-## Check 8 — .claude/rules/ パスパターンの有効性
-
-→ **`npm run governance:check`（G7・#587）が機械検査する。ここでは実行しない**（マッチ 0 件の検知。glob 意味論は harness の配送判定の近似であることはスクリプト側に明記済み）。
-
-## Check 9 — スキル定義の整合性
-
-→ **`npm run governance:check`（G8・#587）が機械検査する。ここでは実行しない。**
 
 ## Check 10 — docs/build-commands.md ↔ .github/workflows/\* の対応
 

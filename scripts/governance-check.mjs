@@ -576,8 +576,13 @@ export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
  *   発火条件は `selectChecks` の写しで、実際にドリフトした履歴がある（#474〜#497）——一覧を
  *   `docs/hooks.md` へ退去させ、常時ロードには「沈黙 = 合格」とその限定だけを残した。
  *   `.githooks/` の bootstrap 手順は `package.json` の `prepare` と `CONTRIBUTING.md` が持つ。
+ * **2026-07-27 引き下げ 14261→14058**（実測 常時ロード 14161→13958）: `AGENTS.md` 開発ワークフローから、
+ *   外部参照を背負っていない 3 件（サンプルコードの理由付記・テスト転用時の不変条件・報告の様式）を
+ *   `/start-issue` と `/implement` へ移した。**移せたのは 3 件だけである**——「事前調査」「変更後の検証」は
+ *   G11 のアンカーで、`.claude/rules/src-tauri.md` や `/health-check` が中身を当てにして指しており、
+ *   見出しを残して中身だけ移すと G11 は緑のまま参照先が空洞になる（`.claude/rules/governance-docs.md`）。
  */
-export const AREA_BUDGET = { alwaysLoaded: 14261, rules: 8328 };
+export const AREA_BUDGET = { alwaysLoaded: 14058, rules: 8328 };
 
 /** コードポイント数（CR は除く）。読めなければ null（母集団欠落を上位で検知） */
 function countChars(text) {

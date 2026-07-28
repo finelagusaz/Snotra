@@ -58,7 +58,7 @@
 | 永続形式・識別子/キー形式を変更 | `/persistence-check`。history キーは `snotra-core/CLAUDE.md`、config キーは `/plan-review` の 4点セット（新規記録・既存移行・外部参照 API を同時に揃える） |
 | 関数・型を新規定義／改名／導入 | 呼び出し元を grep（作ることと使うことは別判断）＋ `/dry-check`。改名・**旧 API の削除**は下流の **compile-fail を「移行漏れ検出器」**に（`cargo build -p <下流 crate>`）。新 API の導入と呼び出し点の移行は **1 タスクに束ねる**——`-D warnings` 下で未使用の新 API は `dead_code` で落ち、旧 API を残せば導出が 2 箇所になる |
 | worker spawn・channel・フレーム drain・Tauri listener・スレッド/窓をまたぐ共有状態・フレーム内 live-read・paint 後の遅延処理を追加/変更、または async 関数を追加/変更 | `/race-check` |
-| 網羅性が要件（全文監査・全箇所改名・コンパイラを持たない機構の廃止） | `/plan-review`「Step 2b」（独立再導出。列挙の落とし穴もここに集約） |
+| 網羅性が要件（全文監査・全箇所改名・コンパイラを持たない機構の廃止） | `docs/development-principles.md`「列挙の完全性」＋ `/plan-review`「Step 2b」（独立再導出） |
 | セーフティネット（hook・CI・`.githooks/`・`.claude/settings.json`・rules・skills・規範）を新設/変更 | `.claude/rules/safety-nets.md`（rules・skills までは対象を触ると自動配送。規範文書＝ルート `CLAUDE.md` / `AGENTS.md` 等は自動配送されないため手動参照） |
 | ガバナンス文書（`*.md`・スキル表・モジュール索引・rules・workflow）を変更 | `npm run governance:check`（`docs/build-commands.md` カテゴリ F・#587。PR では CI の governance-check job が常時実行） |
 | 文書に事実の写しを増やす変更 | 正本を 1 か所に定め他は参照へ（分担の記録は `docs/superpowers/specs/2026-07-19-doc-governance-design.md` §1） |
@@ -74,7 +74,7 @@
 特定のファイルにも局面にも紐付かず、**書く・判断するたびに**効く横断原則。抱える山ではなく、常に頭に置く数点。
 
 - **全称表現は前提条件とセットで書く**（「唯一の」「すべての」「全経路」など）。**書けないなら書かない**——実装より強い主張になった瞬間に嘘になり、規範を忠実に守る読者を誤りへ導く。新設した規約は、既存の全事例に当てて検算してから書く（#488, #476）
-- **照合は SSOT に対して行う。派生コピー同士の一致を完全性の証拠にしない**——SSOT を変えるときは写しを grep で数え上げてから直す。列挙も SSOT のツール自身に問う（glob の意味論はツールごとに違う。詳細と完全性検証は `/plan-review`「Step 2b」）（#500, #471）
+- **照合は SSOT に対して行う。派生コピー同士の一致を完全性の証拠にしない**——SSOT を変えるときは写しを grep で数え上げてから直す。列挙も SSOT のツール自身に問う（glob の意味論はツールごとに違う。詳細は `docs/development-principles.md`「列挙の完全性」）（#500, #471）
 - **消す/共通化する前に「同じ表層形が複数の概念を担っていないか」を分類する**——重複排除の対象は文字列ではなく概念である（#500）
 - **計画に書いた判定ロジック（正規表現・位置計算・述語）とテスト fixture（parse される入力データ）は、実装前に代表入力で実行して測る**——サブエージェントの実測も一次証拠にしない。判定の中核は自分で測る（#482, #471。fixture の例: 計画に書いた TOML が必須セクション欠落で parse 不能だった・SU3.5）
 

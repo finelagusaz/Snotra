@@ -82,7 +82,7 @@ impl SearchWindowView {
             .app()
             .try_state::<crate::AppState>()
             .map(|s| f64::from(s.engine.lock().unwrap().config().appearance.window_width))
-            .unwrap_or(f64::from(AppearanceConfig::default().window_width))
+            .unwrap_or_else(|| f64::from(AppearanceConfig::default().window_width))
     }
 }
 

@@ -190,11 +190,9 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
             .inner_size()
             .ok()
             .map(|s| s.to_logical::<f64>(window.scale_factor().unwrap_or(1.0)).width)
-            // **ここは `appearance.window_width` の消費者ではない**（#795 で置換しかけて戻した）。
-            // 読み元は OS の `inner_size()` であり、この値は「問い合わせが失敗したときの便宜値」
-            // にすぎない——既定幅 600 と一致しているのは偶然である。参照へ寄せると存在しない結合を
-            // 主張することになり、本当の欠陥（window_width=900 のユーザーで失敗すると 600 へ縮む）
-            // が「対応済み」に見えて隠れる。読み元を live config へ寄せるかは #824 で決める。
+            // **ここは `appearance.window_width` の消費者ではない**——読み元は OS の
+            // `inner_size()` で、既定幅 600 と一致しているのは偶然である。参照へ寄せない理由は
+            // `docs/adr/ADR-config-default-fallback-references.md`。読み元自体は #824 で決める。
             .unwrap_or(600.0);
         // 折りたたみ高 = bar_height(#646 決定 2)。52 固定だと font 連動後の実バー高と
         // ずれ、position クランプが誤った高さで効く(このブロック冒頭の reset-on-show
@@ -390,7 +388,7 @@ pub(crate) fn position_results_below_main(app: &tauri::AppHandle) -> Option<i32>
     let gap = app
         .try_state::<crate::AppState>()
         .map(|s| s.engine.lock().unwrap().config().visual.window_gap)
-        .unwrap_or(super::visual::default_visual().window_gap);
+        .unwrap_or_else(|| super::visual::default_visual().window_gap);
     let (Ok(pos), Ok(size), Ok(scale)) =
         (main.outer_position(), main.outer_size(), main.scale_factor())
     else {
@@ -436,7 +434,7 @@ fn results_available_height(_app: &tauri::AppHandle, _top_y: i32) -> Option<f64>
 fn max_results(app: &tauri::AppHandle) -> u32 {
     app.try_state::<crate::AppState>()
         .map(|s| s.engine.lock().unwrap().config().appearance.effective_visible_rows() as u32)
-        .unwrap_or(AppearanceConfig::default().effective_visible_rows() as u32)
+        .unwrap_or_else(|| AppearanceConfig::default().effective_visible_rows() as u32)
 }
 
 /// `drive_results_window` の 1 フレーム分の入力（#749 段 1）。

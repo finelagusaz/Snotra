@@ -142,7 +142,7 @@ OpenerRule のターゲットは文字列プレフィックスで種別を表現
 - ユニットテストは書かない方針（egui UI コードはモック困難）。ロジックのテストは `snotra-core` 側で行う
   - 例外1: 純粋な非 egui ヘルパー（例 `font.rs` の `face_index_valid`）の境界テストはインラインで置いてよい。egui モック困難の理由が当たらず、かつ degrade パスが視覚スモークで再現できない（dev 機には対象フェイスが在る）ため、テストが唯一の検証手段になる
   - 例外2: **UI 操作 + 状態観測**は `egui_kittest`（AccessKit）でヘッドレステストできる（下記「ヘッドレス UI テスト」）。「egui モック困難」は描画のモックを指し、AccessKit ツリー経由の操作には当たらない
-  - 例外3: **UI が持つ定数と `snotra-core` の既定値の一致**は、その UI と同じ述語を通してインラインで固定する（例 `tabs/visual.rs` の `default_config_matches_obsidian_preset`）。`PRESETS` は `&'static str` の `const` で、`String` を返す `VisualConfig::default()` から**導けない**ため置換で消せず、テストが唯一の検知手段になる（#795）。**述語は UI が使うもの（`preset_matches`）をそのまま呼ぶ**——自前で比較を書くと UI が守る不変条件より厳しい主張になる
+  - 例外3: **UI が持つ定数と `snotra-core` の既定値の一致**は、その UI と同じ述語を通してインラインで固定する（例 `tabs/visual.rs` の `default_config_matches_obsidian_preset`）。`PRESETS` の型を変えない判断（`docs/adr/ADR-config-default-fallback-references.md`）ゆえ置換で消せず、テストが唯一の検知手段になる（#795）。**述語は UI が使うもの（`preset_matches`）をそのまま呼ぶ**——自前で比較を書くと UI が守る不変条件より厳しい主張になる
 
 ## ヘッドレス UI テスト（egui_kittest）
 

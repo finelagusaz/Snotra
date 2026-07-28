@@ -320,13 +320,13 @@ fn theme_card(ui: &mut egui::Ui, label: &str, colors: &[&str; 5], active: bool) 
 
 #[cfg(test)]
 mod tests {
-    use super::{PRESETS, preset_matches};
+    use super::{PRESETS, PresetDef, preset_matches};
     use snotra_core::config::{Config, ThemePreset};
 
     /// 既定 config は Obsidian プリセットと一致していなければならない（#795 群 10）。
     ///
-    /// **置換では消せない写しである**——`PRESETS` は `&'static str` の `const` であり、
-    /// `String` を返す `VisualConfig::default()` から導けない。ゆえにテストで固定する。
+    /// **置換では消せない写しなのでテストで固定する**（型を変えない判断の理由は
+    /// `docs/adr/ADR-config-default-fallback-references.md`）。
     ///
     /// **UI と同じ述語（`preset_matches`）を通すのが要点である。** カードの強調は
     /// `preset_matches` の結果そのもの（`is_active`）で決まり、色 5 本を
@@ -348,30 +348,36 @@ mod tests {
              本ファイルの PRESETS）"
         );
 
+        // **網羅性ガード**（`..` を使わないこと・`app.rs` の `field_mutations` と同型）:
+        // `PresetDef` にフィールドが増えるとここがコンパイルエラーになり、下の変異を
+        // 足すまで検出が続く。これが無いと、6 色目を足しても変異が当たらないまま緑になる。
+        let PresetDef {
+            preset: _,
+            label: _,
+            bg: _,
+            input_bg: _,
+            text: _,
+            selected: _,
+            hint: _,
+        } = obsidian;
+
         // 上の assert が空虚に真でないことを、**複製に変異を当てて**確かめる
         // （`.claude/rules/safety-nets.md`「稼働中のガードを弱めず複製に変異を当てる」）。
         // **5 色すべてに当てる**——1 本だけだと、残り 4 本が述語の `&&` から抜け落ちても緑を通る。
-        for name in [
-            "background_color",
-            "input_background_color",
-            "text_color",
-            "selected_row_color",
-            "hint_text_color",
-        ] {
+        let drifts = |name: &str, set: fn(&mut Config)| {
             let mut drifted = Config::default();
-            let v = &mut drifted.visual;
-            let slot = match name {
-                "background_color" => &mut v.background_color,
-                "input_background_color" => &mut v.input_background_color,
-                "text_color" => &mut v.text_color,
-                "selected_row_color" => &mut v.selected_row_color,
-                _ => &mut v.hint_text_color,
-            };
-            *slot = "#123456".to_string();
+            set(&mut drifted);
             assert!(
                 !preset_matches(&drifted, obsidian),
                 "{name} を変えても一致してしまう——preset_matches がその色を見ていない"
             );
-        }
+        };
+        drifts("background_color", |c| c.visual.background_color = "#123456".to_string());
+        drifts("input_background_color", |c| {
+            c.visual.input_background_color = "#123456".to_string()
+        });
+        drifts("text_color", |c| c.visual.text_color = "#123456".to_string());
+        drifts("selected_row_color", |c| c.visual.selected_row_color = "#123456".to_string());
+        drifts("hint_text_color", |c| c.visual.hint_text_color = "#123456".to_string());
     }
 }

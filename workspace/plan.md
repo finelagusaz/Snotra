@@ -21,12 +21,12 @@
 
 ### Phase 1 — `snotra-core` の env seam（Red → Green）
 
-- [ ] `config.rs` に失敗するテストを 4 本先に書く（Red を確認する）
-- [ ] `const ENV_CONFIG_DIR: &str = "SNOTRA_CONFIG_DIR";` を追加する（**private**。読む消費者は `config_dir()` 1 つだけで、外部 crate から名前で参照する予定は無い）
-- [ ] 純粋関数 `fn config_dir_from(override_dir: Option<OsString>, base: Option<PathBuf>) -> Option<PathBuf>` を追加する
-- [ ] `config_dir()` を `Self::config_dir_from(std::env::var_os(ENV_CONFIG_DIR), dirs::config_dir())` の 1 行へ書き換える
-- [ ] `config_dir` / `config_dir_from` の `///` に「上書きは**そのまま**使い、`Snotra` を付けない」「空は未設定扱い」「**展開も絶対化もしない**（`%VAR%` は展開されず、相対パスは CWD 起点になる）」を書く
-- [ ] `cargo test -p snotra-core` が緑（Green）
+- [x] `config.rs` に失敗するテストを 4 本先に書く（Red を確認する）
+- [x] `const ENV_CONFIG_DIR: &str = "SNOTRA_CONFIG_DIR";` を追加する（**private**。読む消費者は `config_dir()` 1 つだけで、外部 crate から名前で参照する予定は無い）
+- [x] 純粋関数 `fn config_dir_from(override_dir: Option<OsString>, base: Option<PathBuf>) -> Option<PathBuf>` を追加する
+- [x] `config_dir()` を `Self::config_dir_from(std::env::var_os(ENV_CONFIG_DIR), dirs::config_dir())` の 1 行へ書き換える
+- [x] `config_dir` / `config_dir_from` の `///` に「上書きは**そのまま**使い、`Snotra` を付けない」「空は未設定扱い」「**展開も絶対化もしない**（`%VAR%` は展開されず、相対パスは CWD 起点になる）」を書く
+- [x] `cargo test -p snotra-core` が緑（Green）
 
 形（`config.rs`）:
 
@@ -57,18 +57,19 @@ fn config_dir_from(override_dir: Option<OsString>, base: Option<PathBuf>) -> Opt
 
 ### Phase 2 — `scripts/visual-check-colors.ps1` の書き換え
 
-- [ ] `-Restore` パラメータ（`:55`）・早期 return（`:73-76`）・`Restore-SnotraConfig` 関数（`:64-71`）を削除する
-- [ ] 退避（`:105` `Copy-Item`）・`$backupPath`（`:61`）・二重退避エラー（`:91-94`）・`finally` の復元（`:235`）を削除する
-- [ ] `$configPath`（`:60`・`$env:APPDATA` を組む唯一の行）と、実 config の存在ガード（`:88-90`）を削除する
-- [ ] `Set-TomlKey`（`:114-131`）を削除する（既存 TOML を書き換える関数。完全な TOML を新規に書くので不要）
-- [ ] プロファイル **`target/visual-check/profile`** を作り、そこへ最小の有効 TOML を seed する
-- [ ] seed 前にプロファイル配下の `config.toml.bak` **と `*.bin` を削除する**（プロファイルは実行間で再利用するため、**前回の残骸が残っていると下の 2 つの判定がどちらも空振りで合格する**）
-- [ ] `$env:SNOTRA_CONFIG_DIR` を設定してから `cargo run -p snotra` する（`-Interactive` / 自動判定の両経路）
-- [ ] **seed の健全性を判定に組み込む**: 本体の stderr を `-RedirectStandardError` でファイルへ取り、`[config] ` で始まる行が 1 つも無いことを確認する（現れたら赤）。**`config.toml.bak` の不在では証明にならない**——`backup_invalid` の `fs::rename` が失敗すると `.bak` は作られないまま `RecoveredFromCorrupt` を返す（`config.rs:938`・codex の敵対レビューが指摘し実測で確認）。`[config] ` の eprintln は**失敗 4 arm すべてに在り、成功時には出ない**（`config.rs:892`, `:908`, `:918`, `:934-941`）ので、これが唯一の健全な観測点である
-- [ ] **env が効いたことの肯定的証拠を取る**: 実行後にプロファイル配下へ `*.bin` が生成されていることを確認する。**どのファイルが確実に出るかは実装時に実測して決める**——本体は `Stop-Process -Force` で殺すので、正常終了で書かれるもの（`window.bin` の `on_exit`・履歴 flush）は出ない。`[paths]` が空で索引 0 件のとき `index.bin` が書かれるかも自明でない。**どれも確実に出ないなら、この判定は置かずにその事実をスクリプトのコメントへ書く**（在るとは限らないファイルに賭けない）
-- [ ] 単一インスタンスの起動前チェック（`:99-102`）は**残し**、コメントに「プロファイルを分けても single-instance の識別子は変わらない」理由を書く
-- [ ] `finally` は本体プロセスの kill だけを残す
-- [ ] `.SYNOPSIS` / `.DESCRIPTION` / `.PARAMETER Restore`（`:36-37`）/ `.EXAMPLE -Restore`（`:48-49`）を新しい形へ更新する
+- [x] `-Restore` パラメータ（`:55`）・早期 return（`:73-76`）・`Restore-SnotraConfig` 関数（`:64-71`）を削除する
+- [x] 退避（`:105` `Copy-Item`）・`$backupPath`（`:61`）・二重退避エラー（`:91-94`）・`finally` の復元（`:235`）を削除する
+- [x] `$configPath`（`:60`・`$env:APPDATA` を組む唯一の行）と、実 config の存在ガード（`:88-90`）を削除する
+- [x] `Set-TomlKey`（`:114-131`）を削除する（既存 TOML を書き換える関数。完全な TOML を新規に書くので不要）
+- [x] プロファイル **`target/visual-check/profile`** を作り、そこへ最小の有効 TOML を seed する
+- [x] seed 前にプロファイル配下の `config.toml.bak` **と `*.bin` を削除する**（プロファイルは実行間で再利用するため、**前回の残骸が残っていると下の 2 つの判定がどちらも空振りで合格する**）
+- [x] `$env:SNOTRA_CONFIG_DIR` を設定してから `cargo run -p snotra` する（`-Interactive` / 自動判定の両経路）
+- [x] **seed の健全性を判定に組み込む**: 本体の stderr を `-RedirectStandardError` でファイルへ取り、`[config] ` で始まる行が 1 つも無いことを確認する（現れたら赤）。**`config.toml.bak` の不在では証明にならない**——`backup_invalid` の `fs::rename` が失敗すると `.bak` は作られないまま `RecoveredFromCorrupt` を返す（`config.rs:938`・codex の敵対レビューが指摘し実測で確認）。`[config] ` の eprintln は**失敗 4 arm すべてに在り、成功時には出ない**（`config.rs:892`, `:908`, `:918`, `:934-941`）ので、これが唯一の健全な観測点である
+- [x] **env が効いたことの肯定的証拠を取る**: 実行後にプロファイル配下へ `*.bin` が生成されていることを確認する。**どのファイルが確実に出るかは実装時に実測して決める**——本体は `Stop-Process -Force` で殺すので、正常終了で書かれるもの（`window.bin` の `on_exit`・履歴 flush）は出ない。`[paths]` が空で索引 0 件のとき `index.bin` が書かれるかも自明でない。**どれも確実に出ないなら、この判定は置かずにその事実をスクリプトのコメントへ書く**（在るとは限らないファイルに賭けない）
+- [x] 単一インスタンスの起動前チェック（`:99-102`）は**残し**、コメントに「プロファイルを分けても single-instance の識別子は変わらない」理由を書く
+- [x] `finally` は本体プロセスの kill だけを残す
+- [x] `.SYNOPSIS` / `.DESCRIPTION` / `.PARAMETER Restore`（`:36-37`）/ `.EXAMPLE -Restore`（`:48-49`）を新しい形へ更新する
+- [x] **【実装中に発見・計画外】`FindWindowW($null, ...)` を `[NullString]::Value` へ直す**。PowerShell は `$null` を `[string]` 引数へ渡すとき**空文字へ変換する**ため `FindWindowW("", "Snotra")` になり、クラス名 `""` に一致せず常に 0 を返していた。**PR #802 で追加されて以来、自動判定は一度も動いていない**（毎回 300 秒待って throw していた。前サイクルの緑は `-Interactive` の目視によるもの）。実測: 同一プロセス・同一時刻に `$null` → `0` / `[NullString]::Value` → `1509320`
 
 seed する TOML（`smoke-egui.ps1:86-100` と同型・必須 3 セクションを含む）:
 
@@ -121,16 +122,16 @@ issue が「正直なコスト 2（新プロファイルは index を作り直�
 
 ### Phase 3 — 文書の同期
 
-- [ ] `SPEC.md` §13 の冒頭に**文書全体へのスコープ宣言**を 1 つ置く（下記「SPEC.md 更新要否」）
-- [ ] `docs/architecture.md:104` に SPEC §13 への参照を足す（別文書ゆえスコープ宣言が届かない）
-- [ ] `src-tauri/src/icon.rs:178` の `///`「`%APPDATA%` への**ローカル**」に「既定では」を足す
-- [ ] `src-tauri/src/commands/window.rs` の `launch_settings_process` の `///` に env 継承の依存を 1 行足す
-- [ ] `docs/build-commands.md` の `check:colors` ブロックから `-Restore` の行を削除する
-- [ ] `docs/build-commands.md` の「実 config を退避して書き換える」bullet を、プロファイル分離の説明へ差し替える
-- [ ] `docs/build-commands.md` に `SNOTRA_CONFIG_DIR` の説明を置く（env ハッチとして）
-- [ ] `snotra-core/CLAUDE.md` の `config.rs` 節に、上書きの非対称（`Snotra` を付けない）と空文字の扱いを 1 行足す
-- [ ] `scripts/smoke-egui.ps1` の seed に、`visual-check-colors.ps1` への相互参照コメントを 1 行足す
-- [ ] `docs/build-commands.md:147` の順序制約が**引き続き有効である**ことを残余として明記する（下の「触らないと決めたもの」の送り先を文書に接地させる）
+- [x] `SPEC.md` §13 の冒頭に**文書全体へのスコープ宣言**を 1 つ置く（下記「SPEC.md 更新要否」）
+- [x] `docs/architecture.md:104` に SPEC §13 への参照を足す（別文書ゆえスコープ宣言が届かない）
+- [x] `src-tauri/src/icon.rs:178` の `///`「`%APPDATA%` への**ローカル**」に「既定では」を足す
+- [x] `src-tauri/src/commands/window.rs` の `launch_settings_process` の `///` に env 継承の依存を 1 行足す
+- [x] `docs/build-commands.md` の `check:colors` ブロックから `-Restore` の行を削除する
+- [x] `docs/build-commands.md` の「実 config を退避して書き換える」bullet を、プロファイル分離の説明へ差し替える
+- [x] `docs/build-commands.md` に `SNOTRA_CONFIG_DIR` の説明を置く（env ハッチとして）
+- [x] `snotra-core/CLAUDE.md` の `config.rs` 節に、上書きの非対称（`Snotra` を付けない）と空文字の扱いを 1 行足す
+- [x] `scripts/smoke-egui.ps1` の seed に、`visual-check-colors.ps1` への相互参照コメントを 1 行足す
+- [x] `docs/build-commands.md:147` の順序制約が**引き続き有効である**ことを残余として明記する（下の「触らないと決めたもの」の送り先を文書に接地させる）
 
 **触らないと決めたもの（根拠つき）**:
 
@@ -146,18 +147,18 @@ issue が「正直なコスト 2（新プロファイルは index を作り直�
 
 ### Phase 4 — 検証
 
-- [ ] `cargo test -p snotra-core`（カテゴリ A）
-- [ ] `cargo test -p snotra`（カテゴリ A・`src-tauri` の `///` を触るため）
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings`（カテゴリ A）
-- [ ] `cargo check --workspace`（カテゴリ A）
-- [ ] `cargo doc --workspace --no-deps --document-private-items`（カテゴリ A・**必須**。`///` を触るのに **hook は発火しない**＝沈黙は合格ではない）
-- [ ] `npm run governance:check`（カテゴリ F・`*.md` を変更するため）
-- [ ] `npm test`（`scripts/` 配下を変更するため。既存の vitest が緑であること）
-- [ ] `npm run check:colors`（本 PR の対象そのもの。緑 = 紫が届いている）
-- [ ] `npm run check:colors -- -Color '#FFF'`（3 桁 hex の受理・#680 の 1 の回帰）
-- [ ] 実行後に**ユーザーの実 config が変更されていないこと**を確認する（`%APPDATA%\Snotra\config.toml` の更新時刻）
-- [ ] **env を設定せずに `cargo run -p snotra` を起動し、既存の設定・履歴・索引がそのまま見えることを確認する**（破壊不変条件の検知手段。下記セルフレビュー 3）
-- [ ] `npm run smoke:egui`（seed のコメントを触るため。`-SeedConfig` 経路が壊れていないこと）
+- [x] `cargo test -p snotra-core`（カテゴリ A）
+- [x] `cargo test -p snotra`（カテゴリ A・`src-tauri` の `///` を触るため）
+- [x] `cargo clippy --workspace --all-targets -- -D warnings`（カテゴリ A）
+- [x] `cargo check --workspace`（カテゴリ A）
+- [x] `cargo doc --workspace --no-deps --document-private-items`（カテゴリ A・**必須**。`///` を触るのに **hook は発火しない**＝沈黙は合格ではない）
+- [x] `npm run governance:check`（カテゴリ F・`*.md` を変更するため）
+- [x] `npm test`（`scripts/` 配下を変更するため。既存の vitest が緑であること）
+- [x] `npm run check:colors`（本 PR の対象そのもの。緑 = 紫が届いている）
+- [x] `npm run check:colors -- -Color '#FFF'`（3 桁 hex の受理・#680 の 1 の回帰）
+- [x] 実行後に**ユーザーの実 config が変更されていないこと**を確認する（`%APPDATA%\Snotra\config.toml` の更新時刻）
+- [x] **env を設定せずに `cargo run -p snotra` を起動し、既存の設定・履歴・索引がそのまま見えることを確認する**（破壊不変条件の検知手段。下記セルフレビュー 3）
+- [x] `npm run smoke:egui`（seed のコメントを触るため。`-SeedConfig` 経路が壊れていないこと）
 
 ## 不変条件
 
@@ -298,6 +299,6 @@ env 上書きの導入でこれらが一斉に偽になる（`AGENTS.md`「全�
 
 | 壊れたら即アウト | 検知手段 |
 |---|---|
-| **既定の保存先が変わる**（全ユーザーの config / 履歴 / 索引が黙って別の場所へ移り、データ喪失に見える） | **env なしで起動して既存データが見えることの目視**（Phase 4）が唯一の検出器である。ユニットテスト 4 本は**これを検出できない**——`config_dir_from(None, Some(base))` は `base` を**注入**するので、`config_dir()` が `dirs::config_dir()` を呼んでいること自体を誰も見ていない（`dirs::data_dir()` に変えても 4 本とも緑）。**純粋関数へ割ると、測れない部分は消えずに seam の外側へ移動する。** `check:colors` も上書き経路しか通らず既定を検査しない。ゆえにこの目視は「あれば良い」ではなく**ゲート**である |
+| **既定の保存先が変わる**（全ユーザーの config / 履歴 / 索引が黙って別の場所へ移り、データ喪失に見える） | **env なしで起動して既存データが見えることの目視**（Phase 4）が唯一の検出器である。ユニットテスト 4 本は**これを検出できない**——`config_dir_from(None, Some(base))` は `base` を**注入**するので、`config_dir()` が `dirs::config_dir()` を呼んでいること自体を誰も見ていない。**純粋関数へ割ると、測れない部分は消えずに seam の外側へ移動する。** → code-reviewer の High 2 を受けて **`config_dir_is_wired_to_dirs_config_dir_with_snotra_suffix` を追加**（env を読むだけで結線を pin する）。目視ゲートはその上の追加確認として残す。**なお `dirs::data_dir()` に変えても検出できないのは正しい**——Windows では `config_dir()` と同一（RoamingAppData・`dirs-6.0.0/src/win.rs` 実測）。危険な取り違えは `data_local_dir()` 系である |
 | **検証スクリプトが実 config を書く**（この issue が消そうとしている当のもの） | 実 config の更新時刻確認（Phase 4）。加えて、退避コードが**存在しない**こと自体が構造的な保証になる |
 | **seed が parse されず既定色で起動し、原因を誤読する** | `config.toml.bak` の不在チェック（Phase 2）。plan の seed が parse できることは実測済み |

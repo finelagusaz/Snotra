@@ -175,7 +175,8 @@ pub fn invalidate_icon_cache(icons: &IconCacheState) {
 /// 旧データの再ロード・終了時 `save_if_dirty` での再永続化が構造的に起こらない。
 /// `remove()` 失敗時（AV の sharing violation 等）は次ロードが旧ファイルを読む —
 /// これは修正前から存在する既知の残余で #522 のスコープ外。
-/// `remove()` は `%APPDATA%` へのローカル `remove_file` 1 回で、lock 内 I/O として軽量。
+/// `remove()` は既定では `%APPDATA%` へのローカル `remove_file` 1 回で、lock 内 I/O として軽量
+/// （`SNOTRA_CONFIG_DIR` で保存先を遠い場所へ向けた場合はこの前提が崩れる・`SPEC.md` §13）。
 fn invalidate_icon_cache_with(icons: &IconCacheState, bin_file: Option<BinFile>) {
     let mut guard = icons.lock().unwrap();
     if let Some(bf) = bin_file {

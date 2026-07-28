@@ -66,14 +66,28 @@ npm run smoke:manual -- -PostToPr # 記録を PR コメントへ投稿する
 npm run check:colors                      # 自動判定: main の背景ピクセルを実測し exit code で返す
 npm run check:colors -- -Color '#FFF'     # 3 桁 hex の受理（#680 の 1・パーサ統合の回帰）
 npm run check:colors -- -Interactive      # 判定せず起動し、目視項目を読み上げる
-npm run check:colors -- -Restore          # 異常終了でバックアップが残ったときの回収
 ```
 
 - **既定色での確認はこの検証にならない。** config の既定 `#282828` は `snotra-egui-runtime` の `CLEAR_COLOR` と一致するため、色が届いていなくても正常に見える（原理は `docs/development-principles.md`「config の値は到達性の検出器を持たない」）
 - **自動判定できるのは main の定常背景だけである。** 残る 2 点は目視（`-Interactive`）に留まる——**show の一瞬のフラッシュ**は present 前の 1 フレーム未満で連写しても捉えられず、**results の背景**は窓を出すのに文字入力（`SendInput`）が要るため
 - **trace は判定に使わない。** 「`set_clear_color` を呼んだ」というログは、その色が画面へ出たことを意味しない（`src-tauri/CLAUDE.md`「trace の presence 検査は状態の検査ではない」）。判定の根拠は描かれたピクセルだけである
-- **実 config を退避して書き換える。** 終了時に自動で戻すが、異常終了時は `config.toml.visualcheck-bak` が残るので `-Restore` で回収する（二重退避は明示エラーで止める）。自動判定では `show_on_startup = true` も一時的に書く（hotkey 注入機構を複製しないため）
+- **ユーザーの実 config は読みも書きもしない。** `SNOTRA_CONFIG_DIR`（下記）で `target/visual-check/profile` を指し、そこへ検証用の config を 1 枚書いて起動する。退避も復元も無いので、異常終了しても実 config が検証色のまま残る経路が**構造的に無い**（#803）。残るのは使い捨てプロファイルだけで、`cargo clean` が掃く（`CARGO_TARGET_DIR` を設定している環境では対象外）
+- **seed が読めたかは本体の stderr で確かめる。** `[config] ` で始まる行が出たら赤にする。**`config.toml.bak` の不在では証明にならない**——退避は best-effort で、`fs::rename` が失敗すれば parse 失敗でも `.bak` は現れない（`snotra-core/src/config.rs` の `backup_invalid`）。seed が読めていないと既定色で起動するため、「色が届いていない」と誤読される
+- **`SNOTRA_CONFIG_DIR` が効いたことは肯定的に確かめる。** 実行後にプロファイル配下へ `*.bin` が生成されていることを見る。効いていなければ本体は実 config を読むため、ピクセルが赤いときに「色が届いていない」と「env が効いていない」を切り分けられない
 - 判定が赤のとき（`-KeepShot` なら緑でも）`target/visual-check/` へスクリーンショットを残す。観測点が背景でない場所を指していないかは、この画像で確認する
+
+#### 別プロファイルで起動するための env ハッチ（`SNOTRA_CONFIG_DIR`）
+
+保存先ディレクトリを差し替える（#803。契約の正本は `SPEC.md` §13 と `Config::config_dir` の rustdoc）。`config.toml` / `history.bin` / `index.bin` / `icons.bin` / `window.bin` の**すべて**がこの 1 点から導かれるので、検証が実ユーザーのデータに触れずに済む。
+
+```powershell
+$env:SNOTRA_CONFIG_DIR = "C:/tmp/snotra-profile"; cargo run -p snotra
+```
+
+- 値は**そのまま**保存先になる（`Snotra` を付け足さない）。空文字は未設定と同じ
+- **展開も絶対化もしない。** `%TEMP%\Snotra` のような値は展開されず、相対パスは CWD 起点になる。不正な値を既定へ落とさないのは意図的で、書き損じたときに**実 config を触らせない**ため（フォールバックの向きは「安全そうな方」ではなく「壊れたときに何を守るか」で決める）
+- 子プロセスの `snotra-settings` は env を継承するので同じプロファイルを見る。`cargo run -p snotra-settings` の単独起動には効かない
+- **単一インスタンス制御には影響しない。** プロファイルを分けても同時起動はできない
 
 #### updater トーストを出すための env ハッチ
 
@@ -144,7 +158,7 @@ npm run tauri build              # リリースビルド（NSIS バンドル。`
 - `scripts/smoke-startup.ps1` は `SNOTRA_TRACE=1` で起動し、`*:error` トレースイベントが不在であることを検証する。**併せて trace が 1 件以上出ていることも要求する**（#690 follow-up）——0 件なら「`*:error` 不在」は自明に成立し**空振りの合格**になるため。実際に冷えた CI runner の初回起動で trace 0 行を実測しており、その状態でも本 smoke は緑を返していた。サマリ表の `event_count` は成功時にも出す（検査が実際に何かを見たことを示す肯定的報告）。**待ち方は「最初の trace を待ってから観測時間 `WaitMs` を開始する」**（`-FirstTraceTimeoutMs`・既定 12s）——固定待機だけだと遅い側に振れた起動が丸ごと無音になる（実測: 同一 runner・同一バイナリで最初の trace までが 0.6s〜8s 超とばらつき、5 回中 3 回が無音だった）。固定待機を一律に伸ばす案を採らないのは、速い起動まで毎回待つことになるため。`first_trace_ms` も成功時に出す（**分散の原因は未解明**ゆえ、予算に触れる前に悪化を読めるようにする。`n/a` は予算内に 1 行も出なかったことを表す）
 - `scripts/smoke-egui.ps1` は egui 経路の自動回帰の最低線（#532 SU7・e2e/ 撤去後の後継）: `SNOTRA_TRACE=1` で起動 → keybd_event で hotkey（起動時の `hotkey:registered` trace から導出した VK 列を注入。対応表の SSOT は `src-tauri/src/platform/hotkey.rs` の `injection_vks`。押下順で押し、解放込み）→ `egui_show:done` 観測 → Escape → `egui_hide:done` 観測 → `msedgewebview2` のグローバル増分 0 を検証する。`-HotkeyVks` を明示指定すると trace より優先される（trace を出さない旧バイナリの検証など）。`-SeedConfig` は CI 用（config.toml 不在時のみ最小の有効 TOML を seed して first-run 経路を回避。既存 config は上書きしない。空 TOML は必須セクション欠落で parse 失敗し破損復旧経路を踏むため使わない）。実行中の snotra を kill するためローカル実行時は注意。網羅は担わず、視覚・操作列は手動 GUI smoke（カテゴリ D）が補完する
 - `scripts/smoke-egui.ps1` は results 窓の表示も検査する（#671/#673 サイクル PR A）: `egui_show:done` の後、索引内容を制御できるときだけ 1 文字クエリを注入して `egui_results:show` を観測し、Escape 後の `egui_hide:done` に続けて `egui_results:hide` も観測する。「索引内容を制御できるとき」は `-SeedConfig` で実際に config.toml を新規 seed できた場合（既定クエリ `"z"` が seed した索引 1 件に一致する）、または `-ResultsQuery <letter>` で開発機の既存索引に一致する文字を明示した場合。どちらも無ければ results 検査は自動的に skip され、黄色 NOTE（`results window coverage was SKIPPED`）で理由を報告する（CONTRIBUTING.md の「results 窓 show/hide の trace 観測」と対応）
-- **`-RequireResults` は skip を失敗に変える（CI 専用・#686）**: 既定の skip は「ローカルでは索引を制御できないのが普通」ゆえの緩和であり、CI では検証が走ることを要求する。**判定はアプリ起動前に確定する**ため、この guard はプロセスを起こさずに落ちる（`pwsh -File scripts/smoke-egui.ps1 -RequireResults -ExePath <任意の既存ファイル>` でフォールトインジェクション可能・実機に触らない）。skip へ至る経路のうち**沈黙するのは「seed 不成立かつ `-ResultsQuery` 未指定」の 1 本だけ**で、他（実行ファイル不在・`hotkey:registered` 未観測・`egui_show:done` 未観測・`egui_results:show` 未観測・クエリが A-Z 単字でない）はいずれも exit≠0 で鳴る。**`e2e.yml` では egui smoke を startup smoke より前に置くこと**——後者の 5 起動が `config.toml` を作り seed を不成立にする（順序制約を守らせているのは規約ではなくこの flag である）
+- **`-RequireResults` は skip を失敗に変える（CI 専用・#686）**: 既定の skip は「ローカルでは索引を制御できないのが普通」ゆえの緩和であり、CI では検証が走ることを要求する。**判定はアプリ起動前に確定する**ため、この guard はプロセスを起こさずに落ちる（`pwsh -File scripts/smoke-egui.ps1 -RequireResults -ExePath <任意の既存ファイル>` でフォールトインジェクション可能・実機に触らない）。skip へ至る経路のうち**沈黙するのは「seed 不成立かつ `-ResultsQuery` 未指定」の 1 本だけ**で、他（実行ファイル不在・`hotkey:registered` 未観測・`egui_show:done` 未観測・`egui_results:show` 未観測・クエリが A-Z 単字でない）はいずれも exit≠0 で鳴る。**`e2e.yml` では egui smoke を startup smoke より前に置くこと**——後者の 5 起動が `config.toml` を作り seed を不成立にする（順序制約を守らせているのは規約ではなくこの flag である）。**#803 で `SNOTRA_CONFIG_DIR` が入った後もこの順序制約は有効である**——smoke スクリプトは依然 `$env:APPDATA\Snotra` を直接見ており、env 化は #804 のスコープ（env 化すれば `-SeedConfig` の「既存を上書きしない」制約・`-RequireResults`・この順序制約がまとめて不要になる）
 - **smoke が赤いときは `--- 失敗時の証拠 ---` ブロックを先に読む**（#690 follow-up）: **プロセスの生死**（既に終了 = 起動途中で落ちた / 生存中 = 起動はしたが未到達・遅延）と **trace 行数**が出る。`trace 行数: 0` は単体では「起動していない」とも「イベントが出ていない」とも読めるため、**必ず生死と併せて読む**。失敗チャネルは `throw`（前提崩壊）と検査項目の不合格の 2 本あり**どちらも同じ証拠を出す**——以前は後者にしか証拠が無く、`throw` は手掛かりを残さず終了していた（`-StartupWaitMs 0 -ObserveTimeoutMs 1` でフォールトインジェクション可能）
 - **`hotkey:registered` だけ別予算**（`-StartupObserveTimeoutMs`・既定 25s）: 起動後最初の観測だけが cold start を含む。以降（show/hide/results）はアプリが温まった後ゆえ `ObserveTimeoutMs` のまま（一律に広げると本来速い検査の失敗検出まで鈍る）。CI では「起動後 12,000ms 経っても trace 0 行・プロセスは生存」を 3 回、「起動から 0.6s で観測」を 2 回実測しており、**この二極の原因は未解明**。この予算は原因究明までの緩和であって修正ではない
 - **壁時計から起動レイテンシを推定してはならない**（実際に一度誤った）: seed の print から hotkey 観測までの壁時計には、`Add-Type -MemberDefinition`（**実行時 C# コンパイル**。冷えた runner で 7〜25s 変動）を含む**起動前**の時間が乗る。アプリの遅延を表すのは起動起点の計測だけで、両者を混同すると「境界に乗っていた」のような誤った結論に達する

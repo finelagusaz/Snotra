@@ -608,8 +608,15 @@ export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
  * ADR-0005 が警告する反射的な引き上げに当たらない根拠は、引き上げ幅がポインタ 1 行ぶん
  * （102 字 + 改行 1 字 = 103 字）に一致すること——本文は 1 文字も増えていない。骨格そのものは
  * 面積対象外の文書に置き、rules へは到達経路だけを置いた（ADR-0011 却下 4）。
+ * **2026-07-28 引き下げ 13374→13338**（実測 常時ロード 13286→13250・-36 字）: `/norm-review` の
+ * `description` から workflow の要約（「抜け道を探す 2 クラスの読者で検証し、停止条件と分量予算の
+ * もとで塞ぐ」）を落とし、トリガーだけにした。description が workflow を要約すると、エージェントが
+ * skill 本文を読まずに description の方に従う実測がある（`superpowers:writing-skills`）——
+ * **削減は副産物であって、目的は誤ったルーティングの除去である**。余白 88 字は維持している。
+ * rules 面は種蒔きへの書き換えで 8084→8123（+39 字）と増えたが、予算 8159 内につき据え置き
+ * （ADR-0015）。
  */
-export const AREA_BUDGET = { alwaysLoaded: 13374, rules: 8159 };
+export const AREA_BUDGET = { alwaysLoaded: 13338, rules: 8159 };
 
 /** コードポイント数（CR は除く）。読めなければ null（母集団欠落を上位で検知） */
 function countChars(text) {

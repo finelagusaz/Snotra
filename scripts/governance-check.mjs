@@ -438,7 +438,7 @@ export function modelHiddenSkills(snapshot) {
 // ---------------------------------------------------------------------------
 // G-skill-table — ルート CLAUDE.md「利用できるスキル」表 ↔ roster に載らない skill（旧 Check 9）
 // harness は毎セッション skill roster を description 付きで注入するため、注入される skill を
-// 表へ書き写すことは同じ面での二重課税である（ADR-0005 が description を常時ロード面に算入した
+// 表へ書き写すことは同じ面での二重課税である（ADR-area-metric-characters が description を常時ロード面に算入した
 // のと同じ理由）。ゆえに表が索引すべき対象は `disable-model-invocation: true` の skill だけであり、
 // G-skill-table はその集合と表の**双方向**一致を見る。「表の射程」を規範ではなくこの判定で固定する。
 // ---------------------------------------------------------------------------
@@ -523,13 +523,13 @@ export function checkHookCommands(snapshot) {
 }
 
 // ---------------------------------------------------------------------------
-// G-area-budget — 恒久規範の面積 ratchet（二面独立）。#593 §2 ・ADR-0001 ・ADR-0005。
+// G-area-budget — 恒久規範の面積 ratchet（二面独立）。#593 §2 ・ADR-doc-minimization-cap-enforcement ・ADR-area-metric-characters。
 // 恒久規範（読むかを選べずロードされる = コンテキスト予算への課税）の面積を単調非増加に保つ。
 // 「常時ロード」と「rules」を独立の上限で見るのは、常時→rules の面替えだけで数字を下げる回避を
 // 塞ぐため（合計 ratchet なら総額不変で通ってしまう）。基準の引き上げは AREA_BUDGET を理由コメント
 // 付きで更新すること（= 明示的な合意の摩擦）。
 // 指標は**文字数（コードポイント・CR 除く）**である。行数だと「改行を消す」が最も安い削減手段になり、
-// 読む量を 1 文字も減らさずに数字だけ下げられた（ADR-0005 に実測）。CR を除くのは CRLF checkout が
+// 読む量を 1 文字も減らさずに数字だけ下げられた（ADR-area-metric-characters に実測）。CR を除くのは CRLF checkout が
 // 面積を膨らませないため（\r の取り扱いは #587/#589 で二度踏んでいる）。
 // 常時ロード面には skill の description を含める——毎セッション注入されるのに、どの ratchet からも
 // 見えていなかった（表から description へ字を移すだけで数字が下がる抜け道になる）。
@@ -543,9 +543,9 @@ export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
 
 /**
  * 二面独立の**文字数**上限。削減したら下げる（ratchet）。
- * 行数時代の推移: #616 で 233→228、#488 マージ節を ADR-0002 へ退去し 228→222、フック節の実装契約を
+ * 行数時代の推移: #616 で 233→228、#488 マージ節を ADR-squash-merge-issue-autoclose へ退去し 228→222、フック節の実装契約を
  * `docs/hooks.md` へ退去し 222→216、2026-07-26 に (A2) の 3 理由退去・コミュニケーション原則の圧縮・
- * 重複規則の除去で 216→191 行。ADR-0005 で指標を文字数へ切り替えた。
+ * 重複規則の除去で 216→191 行。ADR-area-metric-characters で指標を文字数へ切り替えた。
  * 文字数移行後の推移: 開発ワークフローの Red/Green 4 項目を 1 項目へ畳み、3層分担を 1 行にして
  * 実測 15685→15521（基準は許容差込みで 15785→15621）。
  * **2026-07-26 引き上げ 15621→15823**（実測 15554→15723・+169 字）: #725 のサイクルで「委譲した検査の
@@ -556,7 +556,7 @@ export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
  * **初期値は「切り替え時点の実測 + 100 字」であり、削減して得た数字ではない**（行数からの換算元が
  * 無いため実測に据えるほかなく、rules は今回 1 字も減らしていない）。+100 は誤字修正や語順直しで
  * 赤にしないための許容差である——規範を 1 本足せば通常は超える。ゼロ余裕で据えると、あらゆる編集が
- * 定数の書き換えを要求して摩擦が日常化し、赤の意味が失われる（ADR-0005）。
+ * 定数の書き換えを要求して摩擦が日常化し、赤の意味が失われる（ADR-area-metric-characters）。
  * **2026-07-27 引き上げ 15823→16028**（実測 15798→15928・+130 字）: #749 の plan.md ゲート機構を
  * `docs/hooks.md` へ実装契約として、CLAUDE.md フック表へ発火条件・正しい対応を同期した（#749 の plan.md ゲート案内追記）。
  * ゲートの案内追記により常時ロード規範が旧予算 15823 を超過したため、実測 15928 + 100 字バッファで 16028 へ引き上げた。
@@ -567,7 +567,7 @@ export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
  *   (2) 導出可能の削除（CLAUDE.md）— context7 の一文・`/tmp` 行・worktree の所在は、いずれも harness の
  *       指示か `.gitignore` / `docs/build-commands.md` が同じことを言う。計 CLAUDE.md で -1119 字。
  *   (3) 計測の是正（-243 字）— `disable-model-invocation: true` の 3 件は roster に注入されないのに
- *       description を算入していた。ADR-0005 の算入根拠（毎セッション注入される）を満たさない。
+ *       description を算入していた。ADR-area-metric-characters の算入根拠（毎セッション注入される）を満たさない。
  *   rules 面 -180 字は `safety-nets.md` の「カナリア」節を `docs/hooks.md` の正本へ寄せ、
  *   `snotra-core-search.md` の一般則を同時配送される `snotra-core.md` へ一本化したもの。
  * **2026-07-27 引き下げ 14712→14261**（実測 常時ロード 14612→14161）: 監査の続き。
@@ -584,7 +584,7 @@ export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
  * **2026-07-27 rules のみ引き下げ 8328→8056**（実測 rules 8228→7956・常時ロードは 13958→14036 で**上昇**）:
  *   `.claude/rules/safety-nets.md` の敵対的読者節を `/norm-review` skill へ移した。これは削減ではなく
  *   **面替え**である——手順の本体は非課税の skill 本文へ、skill の `description` 78 字は常時ロード面へ載る。
- *   ADR-0001 が二面独立にしたのはまさにこの移動を可視にするためなので、**常時ロードの基準は上げない**。
+ *   ADR-doc-minimization-cap-enforcement が二面独立にしたのはまさにこの移動を可視にするためなので、**常時ロードの基準は上げない**。
  *   結果として常時ロード面の余裕は 22 字しか残っていない——次に規範を 1 本足すときは明示的な引き上げが要る。
  * **2026-07-27 引き下げ 14058→13374（#768）**（実測 常時ロード 14036→13274・**-762 字**）:
  *   コマンドの形で判定できる規範 5 件（bash HEREDOC・`\` パス区切り・Python の `PYTHONIOENCODING`・
@@ -592,12 +592,12 @@ export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
  *   これは面替えではなく**機構への吸収**である（#593 の階梯）——「シェル環境」節と git の 2 bullet が消え、
  *   事故の理由と代替手段は拒否文言（`SHAPE_REMEDY`）が実行時に運ぶ。Windows 機で 5 件のライブ実測を行い、
  *   5/5 が復帰手順付きで `exit 2` になることを確認した。判定の詳細は `docs/hooks.md`、
- *   注入面の否定の知識は `docs/adr/0009-command-shape-norms-in-hook.md`。
+ *   注入面の否定の知識は `docs/adr/ADR-command-shape-norms-in-hook.md`。
  *   rules 面は本 PR で `.claude/rules/**` を触らないため据え置き。
  *
  * **引き上げは失敗ではない。** この定数は「意図が適切な分量で伝わること」を守るための道具であって、
- * 数字を小さく保つこと自体が目的ではない。ADR-0001 が「ratchet は精密なメーターではなく**方向を守る道具**」
- * と述べ、ADR-0005 が「摩擦が日常化した ratchet は反射的に引き上げられ、赤が意味を失う」と警告するとおり、
+ * 数字を小さく保つこと自体が目的ではない。ADR-doc-minimization-cap-enforcement が「ratchet は精密なメーターではなく**方向を守る道具**」
+ * と述べ、ADR-area-metric-characters が「摩擦が日常化した ratchet は反射的に引き上げられ、赤が意味を失う」と警告するとおり、
  * **必要な規範を天井のせいで書かない**のは、この機構が防ごうとしている状態より悪い。上げるときに要るのは
  * 我慢ではなく理由であり、その理由をここへ書き足す摩擦が、合意の場を作るための設計である。
  * 2026-07-27: rules を 8056 → 8159 へ引き上げた（純増 +103 字）。check 系スキルの骨格
@@ -605,22 +605,22 @@ export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
  * へのポインタ 1 行を safety-nets.md へ足したため、まず 8056 → 8188（+132 字＝旧ポインタ行
  * 131 字 + 改行 1 字）へ引き上げた。その後、骨格の正本を `docs/superpowers/specs/` から
  * `docs/` 直下へ移設しポインタ行のパス表記が 29 字縮んだため 8188 → 8159 へ引き下げた。
- * ADR-0005 が警告する反射的な引き上げに当たらない根拠は、引き上げ幅がポインタ 1 行ぶん
+ * ADR-area-metric-characters が警告する反射的な引き上げに当たらない根拠は、引き上げ幅がポインタ 1 行ぶん
  * （102 字 + 改行 1 字 = 103 字）に一致すること——本文は 1 文字も増えていない。骨格そのものは
- * 面積対象外の文書に置き、rules へは到達経路だけを置いた（ADR-0011 却下 4）。
+ * 面積対象外の文書に置き、rules へは到達経路だけを置いた（ADR-check-skill-skeleton 却下 4）。
  * **2026-07-28 引き下げ 13374→13338**（実測 常時ロード 13286→13250・-36 字）: `/norm-review` の
  * `description` から workflow の要約（「抜け道を探す 2 クラスの読者で検証し、停止条件と分量予算の
  * もとで塞ぐ」）を落とし、トリガーだけにした。description が workflow を要約すると、エージェントが
  * skill 本文を読まずに description の方に従う実測がある（`superpowers:writing-skills`）——
  * **削減は副産物であって、目的は誤ったルーティングの除去である**。余白 88 字は維持している。
  * rules 面は種蒔きへの書き換えで 8084→8123（+39 字）と増えたが、予算 8159 内につき据え置き
- * （ADR-0015）。
+ * （ADR-norm-review-seeding）。
  * **2026-07-28 引き上げ 8159→8678**（実測 rules 8120→8578・+458 字）: `governance-docs.md` の
  * 「序数で指すな」の射程を見出しからファイル名・検査 ID・引用される識別子すべてへ広げ、
  * 「名前はテーマが決まった時点で意味のある形で付ける」を足した（#812 の C）。併せて `paths` へ
  * `docs/adr/**` と `scripts/governance-check.mjs` を加えた——**規範の射程だけ広げても、ADR を書く人と
  * 検査を足す人へ配送されなければ #778 と同じ「義務が行為者の視界の外」になる**。
- * ADR-0005 が警告する反射的な引き上げに当たらない根拠: 連番の衝突は `0014` `0016` `0017` で 3 回
+ * ADR-area-metric-characters が警告する反射的な引き上げに当たらない根拠: 連番の衝突は `0014` `0016` `0017` で 3 回
  * 実測されており、3 回目は衝突を直す PR（#810）自身が 1 つ隣で作った。**規範を狭いまま置くことの
  * 費用が、面積の費用を上回ると判断した。**（#812）
  */
@@ -646,7 +646,7 @@ function sumChars(snapshot, files, gLabel) {
 /**
  * 毎セッション注入される skill の `description` の総文字数。
  * 複数行スカラー（`|` / `>`）と欠落は数えられないので finding に倒す（沈黙経路の閉塞）。
- * **`disable-model-invocation: true` の skill は除く** — ADR-0005 が description を常時ロード面へ
+ * **`disable-model-invocation: true` の skill は除く** — ADR-area-metric-characters が description を常時ロード面へ
  * 算入した根拠は「毎セッション注入されるのに ratchet から見えていない」であり、roster に載らない
  * skill はその前提を満たさない（載らないものを数えれば、実際には注入されていない字に課税する）。
  * `count` は母集団の存在確認用なので、除外前の全 skill 数を返す。
@@ -1233,6 +1233,60 @@ export function checkCheckSkillEnumeration(snapshot) {
   return findings;
 }
 
+// ---------------------------------------------------------------------------
+// G-adr-citations — `ADR-<slug>` の短縮引用が実在の ADR を指すか（#812 の A）。
+//
+// **連番だった頃、この検査は書けなかった。** `ADR-0007` はファイル名の一部でしかなく、
+// 引用文字列とファイル名 stem が別物だったためである（`0007-results-presentation-two-stage.md`）。
+// `ADR-<slug>.md` へ移して stem = 引用文字列にしたことで、初めて機械照合できるようになった
+// ——`docs/adr/ADR-canonical-heading-references.md` が見出し参照に正準形を与えて照合可能にしたのと同じ手。
+//
+// **母集団はコードコメントを含む。** 製品コードの 5 箇所（`view.rs` ほか）が ADR を短縮名で呼んでおり、
+// そこは今日まで検出器を 1 つも持っていなかった。
+// **テストファイル（`*.test.mjs`）は母集団外である**——フィクスチャは赤経路を測るために
+// 意図的に実在しない名前を持つ（実測: 本検査の初回実行で 5 件すべてが自分のフィクスチャだった）。
+// md のコードフェンスを見ないのと同じ理由で、構造的に外す。
+// **受容する残余**: `docs/superpowers/` は歴史資料（#589 で非規範化）ゆえ母集団外である。
+// 旧番号のパスが残るが、その時点の事実の記録であり、書き換えると当時を偽ることになる。
+// ---------------------------------------------------------------------------
+
+/** 短縮引用の形。`ADR-` + kebab slug */
+const ADR_CITATION = /\bADR-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\b/g;
+
+/** G-adr-citations の母集団: ガバナンス文書 + skills + 製品ソース（コメントに引用が在る） */
+export function adrCitationDocs(snapshot, docs) {
+  return [
+    ...docs,
+    ...snapshot.files.filter((f) => /^\.claude\/skills\/.*\.md$/.test(f)),
+    ...snapshot.files.filter((f) => /\.(rs|mjs)$/.test(f) && !f.startsWith("docs/") && !f.endsWith(".test.mjs")),
+  ];
+}
+
+export function scanAdrCitations(snapshot, docs) {
+  const findings = [];
+  let checked = 0;
+  const exists = (slug) => snapshot.files.includes(`docs/adr/ADR-${slug}.md`);
+  for (const doc of docs) {
+    const text = snapshot.read(doc);
+    if (text == null) continue;
+    const isMd = doc.endsWith(".md");
+    const lines = isMd ? linesOutsideFences(text) : text.split("\n").map((l, i) => [i + 1, l]);
+    for (const [lineNo, line] of lines) {
+      for (const m of line.matchAll(ADR_CITATION)) {
+        checked += 1;
+        if (!exists(m[1])) {
+          findings.push(finding(doc, lineNo, `ADR の短縮引用が実在しない: \`${m[0]}\`（docs/adr/ADR-${m[1]}.md が無い）`));
+        }
+      }
+    }
+  }
+  return { findings, checked };
+}
+
+export function checkAdrCitations(snapshot, docs) {
+  return scanAdrCitations(snapshot, docs).findings;
+}
+
 /** 検査の登録表。**ここが検査 ID の SSOT である**——サマリ行の件数もこの配列から計算するので、
  *  「G1..G15 passed」のような範囲を手で書く面が存在しない（範囲は黙って腐る。実例が
  *  `docs/build-commands.md` に「G1〜G12」と残っていた・#812）。
@@ -1263,6 +1317,7 @@ export function buildChecks(snapshot, sink = {}) {
     { id: "G-area-budget", run: () => checkNormativeAreaBudget(snapshot) },
     { id: "G-config-reachability", run: () => checkConfigFieldReachability(snapshot) },
     { id: "G-check-skill-enumeration", run: () => checkCheckSkillEnumeration(snapshot) },
+    { id: "G-adr-citations", run: () => record("adrCitations", scanAdrCitations(snapshot, adrCitationDocs(snapshot, docs))) },
     { id: "G-heading-refs", run: () => record("headingRefs", scanHeadingRefs(snapshot, refDocs)) },
     { id: "G-stale-identifiers", run: () => record("stale", scanStaleIdentifiers(snapshot, staleDocs)) },
     { id: "G-near-heading-refs", run: () => record("nearRefs", scanNearHeadingRefs(snapshot, refDocs)) },
@@ -1281,7 +1336,7 @@ export function runAll(snapshot) {
   const rules = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length;
   const skills = snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length;
   const configFieldCount = CONFIG_SOURCE_PATHS.flatMap((p) => configFields(snapshot.read(p) ?? "")).length;
-  const evidence = `検査 ${checks.length} 件 / 対象文書 ${ctx.docs.length} 件 / rules ${rules} 件 / skills ${skills} 件 / 恒久規範 常時ロード ${area.always}/${AREA_BUDGET.alwaysLoaded} 字・rules ${area.rules}/${AREA_BUDGET.rules} 字 / 見出し参照 ${ctx.headingRefs} 件を ${ctx.refDocs.length} 文書から照合 / config フィールド ${configFieldCount} 件の到達性 / 規範の識別子 ${ctx.stale} 件を ${ctx.staleDocs.length} 文書から照合 / 近傍の見出し参照 ${ctx.nearRefs} 件`;
+  const evidence = `検査 ${checks.length} 件 / 対象文書 ${ctx.docs.length} 件 / rules ${rules} 件 / skills ${skills} 件 / 恒久規範 常時ロード ${area.always}/${AREA_BUDGET.alwaysLoaded} 字・rules ${area.rules}/${AREA_BUDGET.rules} 字 / 見出し参照 ${ctx.headingRefs} 件を ${ctx.refDocs.length} 文書から照合 / config フィールド ${configFieldCount} 件の到達性 / 規範の識別子 ${ctx.stale} 件を ${ctx.staleDocs.length} 文書から照合 / 近傍の見出し参照 ${ctx.nearRefs} 件 / ADR の短縮引用 ${ctx.adrCitations} 件`;
   return { findings, evidence };
 }
 

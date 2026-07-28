@@ -1,4 +1,4 @@
-# ADR-0018: G-near-heading-refs / G-check-skill-enumeration を置いたとき、窓幅だけで判定する案と規範側へ義務を足す案を却下した
+# ADR-near-heading-refs-and-4a-sync: G-near-heading-refs / G-check-skill-enumeration を置いたとき、窓幅だけで判定する案と規範側へ義務を足す案を却下した
 
 `governance:check` に **G-near-heading-refs**（正準形に見えて隣接していない見出し参照・#727）と **G-check-skill-enumeration**（`/implement`「4a. check スキルの実行」の列挙 ↔ `AGENTS.md`「条件別チェック」表・#778）を置いた。**この ADR が残すのは、そのとき却下した案である**——採った述語と理由は `scripts/governance-check.mjs` の G-near-heading-refs / G-check-skill-enumeration 節が持つ。
 
@@ -15,13 +15,13 @@
 | 8 | 36 | **8** |
 | 12 | 42 | 8 |
 
-窓幅を絞っても、参照でない散文（「`SPEC.md`（…）は「何を実現すべきか」を記す」「`docs/adr/0005-*.md`（…）。「承知の上で受容した」」）が混じり続ける。**分ける軸は距離ではなく「引用が実際に見出しへ着地するか」だった。**
+窓幅を絞っても、参照でない散文（「`SPEC.md`（…）は「何を実現すべきか」を記す」「`docs/adr/ADR-area-metric-characters.md`（…）。「承知の上で受容した」」）が混じり続ける。**分ける軸は距離ではなく「引用が実際に見出しへ着地するか」だった。**
 
 着地条件を課すと、窓を広げても真の参照は 8 件で頭打ちになり、増えるのは無視する側だけになる。ゆえに**窓幅 8・着地必須**とした。窓幅は「頭打ちになる値」であって、誤爆を絞るための値ではない。
 
 ### 却下 2: 着地しない非隣接参照も finding にする
 
-腐った参照（消滅した節を指す散文形）を拾えるように見えるが、**歴史記述と区別できない**。`docs/check-skill-skeleton-design.md` は「`/race-check` の「非該当と結論してよい条件」節を書き換える試みを行い」と書いており、この節は `docs/adr/0013-race-check-simplification.md` で実際に消滅している——**正しい歴史記述である**。
+腐った参照（消滅した節を指す散文形）を拾えるように見えるが、**歴史記述と区別できない**。`docs/check-skill-skeleton-design.md` は「`/race-check` の「非該当と結論してよい条件」節を書き換える試みを行い」と書いており、この節は `docs/adr/ADR-race-check-simplification.md` で実際に消滅している——**正しい歴史記述である**。
 
 `.claude/rules/governance-docs.md`「既に消滅した節の名前を正準形で書かない」（歴史を書くならバッククォートを外して散文にする、と定める）が規範として担う領域であり、機構では分けられない。**受容する残余**とする。
 
@@ -59,7 +59,7 @@ G-heading-refs の `HEADING_REF` を `§\s*[\d.]*\s*` へ広げた。#727 の射
 
 - **`SPEC.md` §11 のような節番号つき参照が G-heading-refs の照合対象になった**（照合件数 175 → 183 件）
 - **#778 の (a) は不要になった。** `AGENTS.md` の面積を消費せずに済んだ
-- 非正準形だった 7 件を正準形へ直した。うち 1 件（`docs/adr/0005-*.md`）は ADR だが、**参照の書式を整えることは記録された決定を書き換えることではない**（`docs/adr/0015-norm-review-seeding.md` 却下 3 が禁じたのは、参照先の**名前**が変わって過去の事実が消えることである）
+- 非正準形だった 7 件を正準形へ直した。うち 1 件（`docs/adr/ADR-area-metric-characters.md`）は ADR だが、**参照の書式を整えることは記録された決定を書き換えることではない**（`docs/adr/ADR-norm-review-seeding.md` 却下 3 が禁じたのは、参照先の**名前**が変わって過去の事実が消えることである）
 
 ## 受容する残余
 
@@ -70,4 +70,4 @@ G-heading-refs の `HEADING_REF` を `§\s*[\d.]*\s*` へ広げた。#727 の射
 ---
 
 status: Accepted
-関連: `docs/adr/0004-canonical-heading-references.md` ・`docs/adr/0010-implement-step4-report-slot.md` ・`docs/adr/0017-stale-identifier-detector-scope.md` ・#727 ・#778 ・#725 ・#765
+関連: `docs/adr/ADR-canonical-heading-references.md` ・`docs/adr/ADR-implement-step4-report-slot.md` ・`docs/adr/ADR-stale-identifier-detector-scope.md` ・#727 ・#778 ・#725 ・#765

@@ -657,7 +657,7 @@ impl EguiView for SearchWindowView {
         let width = self.window_width();
         // 判定式の正本は `layout::size_delta_exceeds`（#749）。results 側と**式だけを共有し、
         // memo は共有しない**——main の高さは show 経路の bar_height collapse と
-        // `main_window_height` の意図的な 2 導出であり（ADR-0007 却下 1）、その状態を窓の
+        // `main_window_height` の意図的な 2 導出であり（ADR-results-presentation-two-stage 却下 1）、その状態を窓の
         // 所有型へ寄せない。
         if crate::egui_shell::layout::size_delta_exceeds(
             (self.last_set_width, self.last_set_height),
@@ -680,7 +680,7 @@ impl EguiView for SearchWindowView {
             ui.ctx().request_repaint();
         }
         // **`result_count` はここで読む**（#749）——`take_clicked_for`（クリック逆流の消費・
-        // 上のブロック）より**後**でなければならない（#752 F2 / ADR-0007）。この式を
+        // 上のブロック）より**後**でなければならない（#752 F2 / ADR-results-presentation-two-stage）。この式を
         // `plain_hidden` の算出（`show_results` の直前）へ動かすと、行クリック起動フレームで
         // 古い行が 1 フレーム描かれる。`cargo test` では落ちない種類の回帰である。
         crate::egui_shell::drive_results_window(

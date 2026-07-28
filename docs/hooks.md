@@ -27,7 +27,7 @@
 | `pullWithoutFfOnly` | `--ff-only` を持たない `git pull` | 非依存 |
 
 - **拒否文言が規範の受け皿である。** 5 件それぞれが「何が起きるか」と「代わりに何をするか」を持つ（`SHAPE_REMEDY`）。常時ロードから降ろす設計はこの文言がその場で教えることに賭けているので、**ここが痩せると規範は機構へ移らずに消える**。
-- **platform は第 4 位置引数で値として注入する。** `process.platform` は失敗しないので `readGitState` のような `{ ok: false }` を持つ reader 形にはしない。**渡されないときは Windows 専用判定を発火させない** — これは「判定不能」ではなく「規範の射程外」であり、block へ倒すと非 Windows で false block になる。この状態への到達経路は「呼び出し側の渡し忘れ」1 本だけで、ソースカナリアと process 級 e2e（`npm test` は ubuntu と windows の双方で走る）が `main()` の配線を固定する。却下した代替（options オブジェクト化・`undefined` を Windows へ倒す案）は `docs/adr/0009-command-shape-norms-in-hook.md`。
+- **platform は第 4 位置引数で値として注入する。** `process.platform` は失敗しないので `readGitState` のような `{ ok: false }` を持つ reader 形にはしない。**渡されないときは Windows 専用判定を発火させない** — これは「判定不能」ではなく「規範の射程外」であり、block へ倒すと非 Windows で false block になる。この状態への到達経路は「呼び出し側の渡し忘れ」1 本だけで、ソースカナリアと process 級 e2e（`npm test` は ubuntu と windows の双方で走る）が `main()` の配線を固定する。却下した代替（options オブジェクト化・`undefined` を Windows へ倒す案）は `docs/adr/ADR-command-shape-norms-in-hook.md`。
 - **爆発半径が (1)(2) と違う。** この 5 判定は**全 Bash/PowerShell コマンド**で走る（`gh pr create` 系は検出後のみ）。ゆえに**全域関数でなければならない** — throw すれば `main()` の catch が exit 2 を書いてセッションの全コマンドが止まり、hang すれば hook の timeout まで全コマンドが待つ。`usesHeredoc` は全候補を走査するが、終端行の索引を 1 パスで作ることで線形に保つ（候補ごとに全文走査する素朴形は候補 2 万件で 1812ms・実測）。
 - **フック間契約**: `post-edit.mjs` が会話へ出す再現コマンド（`repro`）は、`\` 判定が通す形でなければならない。Windows では `resolveBin` が `path.join` で `\` 区切りの絶対パスを作るため、`repro` だけを `/` に正規化している（実行に使う `cmd`/`args` は正規化しない）。**片方の hook が指示するコマンドをもう片方が拒む状態**は、規範を機構へ移した設計の信頼を直に壊す——`pre-bash.test.mjs` の相互契約カナリアが `decide` を直に呼んで固定する。
 - **受容する未対応リスク**（いずれも fail-closed の設計方針の下で意図的に残す。**「検出されないなら使ってよい」ではない** — 検出されない形も規範に反するなら人間専用の意図的迂回であり、上の `sh -c` 項と同格に扱う）:

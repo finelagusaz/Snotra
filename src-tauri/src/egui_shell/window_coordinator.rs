@@ -13,7 +13,7 @@
 //! ため層が違う・#646 PR2）。どちらも設定サイドカー監視のポーリングスレッドから来るため、
 //! ここを通らない。
 //!
-//! **main 窓のサイズは 2 か所に分かれたままである**（ADR-0007 却下 1 の「意図的な 2 導出」を
+//! **main 窓のサイズは 2 か所に分かれたままである**（ADR-results-presentation-two-stage 却下 1 の「意図的な 2 導出」を
 //! 段 1 で巻き戻さないため）——show 経路の bar_height collapse は `show_egui_main` の中、
 //! すなわちここにあり、毎フレームの動的高さ（`layout::main_window_height` の適用）は
 //! `view.rs` にある。前者は位置クランプが展開時の高さで効くのを防ぐための折り畳みであり、
@@ -432,7 +432,7 @@ fn max_results(app: &tauri::AppHandle) -> u32 {
 
 /// `drive_results_window` の 1 フレーム分の入力（#749 段 1）。
 ///
-/// **`result_count` の読み点は呼び出し側の責務である**（#752 F2 / ADR-0007）。同一フレーム内で
+/// **`result_count` の読み点は呼び出し側の責務である**（#752 F2 / ADR-results-presentation-two-stage）。同一フレーム内で
 /// `plain_hidden` はクリック逆流の消費**前**、`result_count` は消費**後**に読む。
 /// **この構造体を作る式を `plain_hidden` の算出の隣へ動かしてはならない**——行クリック起動
 /// フレームで古い行が 1 フレーム描かれる。`cargo test` では落ちない種類の回帰である。

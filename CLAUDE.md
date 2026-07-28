@@ -13,7 +13,7 @@
 
 - **main 保護の実体は `.githooks/` と GitHub ruleset である** — `.githooks/` の 4 hook が commit / 非 FF merge / rebase / push を拒み（`githooks.test.mjs` で実測）、GitHub ruleset `default` が main への直接 push を拒む（実測）
 - **Layer 1（`.githooks/`）は best-effort である** — hook は追跡ファイルゆえ、含まないコミットの checkout は fail-open。`cherry-pick` / `revert` / `am` / `branch -f` / `update-ref` も `pre-commit` を呼ばず**沈黙で main が進む**（実測）。**取りこぼしは push 時に GitHub ruleset が捕捉する**（不在検知は意図的に置かない）
-- **マージで閉じる issue を決めるのは PR 本文であり、`gh pr merge` の `--subject` / `--body-file` では抑止できない**（#488 実測）。auto-close は本文の**どこにあっても** `close`/`fix`/`resolve` 系 9 形（大文字小文字問わず・表やチェックリスト内も）でマージ時に走り、PR テンプレートが `Closes` を埋めるため**書いた覚えが無くても残る**。hook も見ていない（→「フック」の (A2)）。**だから下の手順が唯一の防御である**。なぜこの機構になるか（2 経路の可視性の非対称・マージ方式では逃げられない・squash 設定と復元レシピ）は `docs/adr/0002-squash-merge-issue-autoclose.md`
+- **マージで閉じる issue を決めるのは PR 本文であり、`gh pr merge` の `--subject` / `--body-file` では抑止できない**（#488 実測）。auto-close は本文の**どこにあっても** `close`/`fix`/`resolve` 系 9 形（大文字小文字問わず・表やチェックリスト内も）でマージ時に走り、PR テンプレートが `Closes` を埋めるため**書いた覚えが無くても残る**。hook も見ていない（→「フック」の (A2)）。**だから下の手順が唯一の防御である**。なぜこの機構になるか（2 経路の可視性の非対称・マージ方式では逃げられない・squash 設定と復元レシピ）は `docs/adr/ADR-squash-merge-issue-autoclose.md`
 
   手順（squash マージでは常にこの順。`<PR>` は PR 番号、`<issue>` は issue 番号）:
   1. **マージ直前に** `gh pr view <PR> --json closingIssuesReferences` を**必ず**見る。これが GitHub の計算した「いま閉じる issue」である
@@ -36,7 +36,7 @@
 | コマンドの形のガード（PreToolUse） | `tool_input.command` の形で決まる（判定と一覧の SSOT は `docs/hooks.md`「PreToolUse（pre-bash.mjs）の実装契約」）。`gh pr create` は未 push＝空 PR と `workspace/plan.md` の未チェック `- [ ]` でも拒む（#749） | **拒否メッセージが復帰手順を持つ。それに従う**（規範を機構へ吸収した設計ゆえ、代わりの手段は必ず文言に入っている・#768）。`gh pr create` は `git push -u origin HEAD` を先に打つか `&&` で繋ぐ。**鎖に `cd` を含めない**——対象リポジトリを判定できず拒否される（実測） |
 | 編集後の自動検証（PostToolUse） | 編集した `file_path` の種類で決まる（写像の SSOT は `post-edit.mjs` の `selectChecks`） | **検査が割り当てられているファイルでは、沈黙は合格を意味する**（割り当ての SSOT は `selectChecks`）。失敗時のみ `exit code` と再現コマンドと診断が会話に届く。手動での再実行は不要 |
 
-- **(A2)「外部 API の不可逆呼び出し」のうち hook が守るのは `gh pr create` だけである**（#488 実測・**意図的な非対称**）。`merge` / `close` を hook で守らない 3 理由・Layer 0（`squash_merge_commit_message=PR_BODY`）での遮断・設定 read-back の検知器を置かない判断は `docs/adr/0002-squash-merge-issue-autoclose.md` が SSOT。残余は上の手順 3 に委ねられる
+- **(A2)「外部 API の不可逆呼び出し」のうち hook が守るのは `gh pr create` だけである**（#488 実測・**意図的な非対称**）。`merge` / `close` を hook で守らない 3 理由・Layer 0（`squash_merge_commit_message=PR_BODY`）での遮断・設定 read-back の検知器を置かない判断は `docs/adr/ADR-squash-merge-issue-autoclose.md` が SSOT。残余は上の手順 3 に委ねられる
 - **検出は exit code、出力は証拠**（#471）。成功した検査は何も出力せず、失敗したときだけ `--- <検査>: 失敗 (exit N) ---` と再現コマンドが会話に現れる。**沈黙しうる経路はすべて塞いであり、その閉塞を壊す変更を `.claude/hooks/` に入れてはならない**（経路の内訳は `docs/hooks.md`）
 - **沈黙が「合格」なのは `selectChecks` に検査が割り当てられたファイルだけである**（#497・機構ではなく規範ゆえ前提を忘れれば false green が再発する）。`*.md` 全般・`SPEC.md`・`scripts/` 配下の非 TS ファイル・`.github/workflows/`・`Cargo.lock` の沈黙は「何も走らなかった」である（`scripts/*.ts` は「include 対象外」の一行が出るため沈黙しない）。決定的な項目（参照実在・索引・スキル表・SPEC 番号・rules glob・コマンド写像）は PR CI の `governance-check` job（`skip-ci` 非対象・#587）が事後に捕捉し、その検査対象外（責務の妥当性等の意味的整合）は**受容する残余**である
 - **フックの改修者向けの実装契約・機構・保守**は `docs/hooks.md`（原理は `docs/development-principles.md` §6・§7）。フック改修時は `.claude/rules/safety-nets.md` からも配送される

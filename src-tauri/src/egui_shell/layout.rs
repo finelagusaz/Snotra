@@ -142,7 +142,7 @@ pub fn available_below(work_area_bottom_phys: i32, top_y_phys: i32, results_scal
 ///
 /// 消費者は 2 つある（**状態は共有しない。式だけを共有する**）: `ResultsWindow::set_size`
 /// （memo は窓の所有型が持つ）と `view.rs` の main 窓ガード（memo は view が持つ・main の
-/// 高さは意図的な 2 導出ゆえ窓の所有型へ寄せない・ADR-0007 却下 1）。
+/// 高さは意図的な 2 導出ゆえ窓の所有型へ寄せない・ADR-results-presentation-two-stage 却下 1）。
 pub fn size_delta_exceeds(prev: (f64, f64), next: (f64, f64)) -> bool {
     (next.0 - prev.0).abs() > 0.5 || (next.1 - prev.1).abs() > 0.5
 }

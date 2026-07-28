@@ -1,4 +1,4 @@
-# ADR-0004: 文書間の参照に正準形を与えて機械照合し、序数参照をやめる
+# ADR-canonical-heading-references: 文書間の参照に正準形を与えて機械照合し、序数参照をやめる
 
 ## 文脈
 
@@ -34,4 +34,4 @@
 ---
 
 status: Accepted
-関連: `.claude/rules/governance-docs.md` ・`docs/adr/0001-doc-minimization-cap-enforcement.md` ・`.claude/rules/safety-nets.md`
+関連: `.claude/rules/governance-docs.md` ・`docs/adr/ADR-doc-minimization-cap-enforcement.md` ・`.claude/rules/safety-nets.md`

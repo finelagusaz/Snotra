@@ -128,4 +128,4 @@ live-read は 3 点: 同じ設定値をフレーム冒頭で読んだら**後段
 
 ---
 
-**本スキルの述語・打ち切り規則がなぜこの形かは `docs/adr/0003-race-check-predicate-and-norm-hardening.md`**、簡素化の判断は `docs/adr/0013-race-check-simplification.md`。どちらも**改修するとき**に読む——検査で従うのは本文である。
+**本スキルの述語・打ち切り規則がなぜこの形かは `docs/adr/ADR-race-check-predicate-and-norm-hardening.md`**、簡素化の判断は `docs/adr/ADR-race-check-simplification.md`。どちらも**改修するとき**に読む——検査で従うのは本文である。

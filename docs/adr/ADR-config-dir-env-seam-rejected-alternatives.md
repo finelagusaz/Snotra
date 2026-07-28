@@ -1,4 +1,4 @@
-# ADR-0017: `SNOTRA_CONFIG_DIR` の seam で却下した代替案
+# ADR-config-dir-env-seam-rejected-alternatives: `SNOTRA_CONFIG_DIR` の seam で却下した代替案
 
 - 状態: 採択（2026-07-28・#803）
 - 文脈: 検証・デバッグのために「実 config を壊さず別プロファイルで起動する」手段を入れるにあたり、

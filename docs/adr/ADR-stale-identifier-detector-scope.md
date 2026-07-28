@@ -1,4 +1,4 @@
-# ADR-0017: 腐り検出器 G-stale-identifiers の射程を決めたとき、#736 を閉じる案と除外リスト案を却下した
+# ADR-stale-identifier-detector-scope: 腐り検出器 G-stale-identifiers の射程を決めたとき、#736 を閉じる案と除外リスト案を却下した
 
 `.claude/**` の散文に残る「現行語彙に無い識別子」を検出する G-stale-identifiers を置いた（#736 の同クラスの再発防止）。**この ADR が残すのは、そのとき却下した案である**——採った述語と理由は `scripts/governance-check.mjs` の G-stale-identifiers 節が持つ。
 
@@ -61,4 +61,4 @@ camelCase 限定でも `closingIssuesReferences`（GitHub API のフィールド
 ---
 
 status: Accepted
-関連: `docs/adr/0016-race-check-population-tooling.md` ・#736 ・#698 ・#735 ・#593
+関連: `docs/adr/ADR-race-check-population-tooling.md` ・#736 ・#698 ・#735 ・#593

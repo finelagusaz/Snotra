@@ -1,4 +1,4 @@
-# ADR-0010: `/implement`「出力」へ Step 4 の報告項目を新設するとき、母集団を閉じる形以外を却下した
+# ADR-implement-step4-report-slot: `/implement`「出力」へ Step 4 の報告項目を新設するとき、母集団を閉じる形以外を却下した
 
 `/implement`「出力」に Step 4（4a の check スキル・4b の `code-reviewer`）の受け口が無く、レビューを実施した回と素通りした回が報告から区別できなかった（#765）。**この ADR が残すのは、そのとき却下した案である**——採った形（三値 + 閉じた母集団）は `/implement`「出力」自身とコミットが持つ。
 

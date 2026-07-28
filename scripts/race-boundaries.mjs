@@ -20,16 +20,16 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 
 /** 種別表。序数・名称は `.claude/skills/race-check/SKILL.md`「2. 渡っているものを挙げる」と対応する。
- *  **序数 ①〜⑧ は書き換えない** — `docs/adr/0003-*` `docs/adr/0011-*`
+ *  **序数 ①〜⑧ は書き換えない** — `docs/adr/ADR-race-check-predicate-and-norm-hardening.md` `docs/adr/ADR-check-skill-skeleton.md`
  *  `docs/check-skill-skeleton-design.md` から参照され、うち 2 つは status: Accepted の ADR である
- *  （`docs/adr/0013-race-check-simplification.md` 却下 4）。 */
+ *  （`docs/adr/ADR-race-check-simplification.md` 却下 4）。 */
 export const KINDS = [
   { ord: "①", name: "worker の spawn", patterns: ["thread::spawn", "async_runtime::spawn"] },
   { ord: "②", name: "channel への send", patterns: ["\\.send\\(", "Sender", "channel\\("] },
   { ord: "③", name: "フレームでの drain", patterns: ["try_recv", "Receiver"] },
   { ord: "④", name: "managed state の読み書き", patterns: ["try_state", "Mutex", "Atomic", "\\.lock\\("] },
   { ord: "⑤", name: "Tauri listener / emit", patterns: ["\\.listen\\(", "\\.emit\\(", "events::"] },
-  // ⑥ は定義上 ① の部分集合で、独立した grep を原理的に書けない（ADR-0013 却下 4）。
+  // ⑥ は定義上 ① の部分集合で、独立した grep を原理的に書けない（ADR-race-check-simplification 却下 4）。
   // 行を落とさず「① のヒットを送信の有無で分類する」ことを出力へ明示する。
   { ord: "⑥", name: "channel を経由しない worker", patterns: null },
   { ord: "⑦", name: ".await 地点", patterns: ["\\.await"] },

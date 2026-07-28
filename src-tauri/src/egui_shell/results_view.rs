@@ -440,7 +440,21 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         // 外部 wake 用の ctx 登録はここに無い（#671 PR D・main の setup と同じ理由）。
     }
 
-    fn update(&mut self, ui: &mut egui::Ui, _frame: &mut snotra_egui_runtime::RuntimeFrame) {
+    fn update(&mut self, ui: &mut egui::Ui, frame: &mut snotra_egui_runtime::RuntimeFrame) {
+        // テーマ値は 1 フレーム 1 lock（#673 spec 決定 4）。**早期 return より前**で取る——
+        // 背景（clear color）は rows が空でも塗られるからである。旧実装はここが空 rows の
+        // early return より後にあり「描かないフレームで lock を取らない」ことを理由にしていたが、
+        // clear color を view が決めるようになって「空 rows でも描く」へ変わった。
+        let visual = crate::egui_shell::read_visual(
+            &self.app_handle,
+            crate::egui_shell::VisualApplied {
+                font_family: &self.applied_font_family,
+                // ネイティブ背景ブラシの追従は show 経路が担う——results は比較しない。
+                background_hex: None,
+            },
+        );
+        frame.set_clear_color(visual.background);
+
         // app_handle を clone してから State を取る: `shared` の借用を `self.app_handle`
         // （＝self 全体）ではなくこのローカル変数に結び付け、後段の `self.request_icons_for_results`
         // （&mut self）呼び出しと `shared` の同時生存を両立させる（Task 5 で挿入した icon
@@ -458,16 +472,6 @@ impl snotra_egui_runtime::EguiView for ResultsView {
             self.last_scrolled_selected = None;
             return; // 窓は main が hide 済みのはず(backstop で何も描かない)
         }
-        // テーマ値は 1 フレーム 1 lock（#673 spec 決定 4）。**空 rows の早期 return より後**で
-        // 取る——前へ出すと、描かないフレームでも lock を取ることになる。
-        let visual = crate::egui_shell::read_visual(
-            &self.app_handle,
-            crate::egui_shell::VisualApplied {
-                font_family: &self.applied_font_family,
-                // ネイティブ背景ブラシの追従は main の責務——results は比較しない。
-                background_hex: None,
-            },
-        );
         // font_family hot-reload(view.rs の applied_font_family 比較と同型を複製・
         // ctx は窓ごとに独立なため main 側の適用はこの窓に効かない)。
         if let Some(name) = &visual.font_family_changed {

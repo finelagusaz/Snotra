@@ -268,15 +268,20 @@ impl EguiView for SearchWindowView {
         // どちらも reset_pending 消費の後でなければならない（順序の理由は controller 側の本文）。
         self.controller.consume_external_pending(&ctx);
 
-        // §11: パネル/入力欄/選択色を config テーマから（ハードコード撤廃・runtime CLEAR_COLOR は不変）。
-        // font_family / native 背景ブラシのエッジ検出も同一 lock で読む（SU6 spec 決定 2・lock 1 回/フレーム）。
+        // 背景色は **style を経由しない**（spec 決定 1）。`render()` が `run_ui` → `paint` の順に
+        // 進むため、ここで決めた色は同じフレームの `buffer.fill` に届く——下の `set_visuals` が
+        // 抱える「pass 冒頭の style snapshot に間に合わない」制約（#751）とは無縁の経路である。
+        frame.set_clear_color(visual.background);
+
+        // §11: 入力欄/選択色を config テーマから（ハードコード撤廃）。
+        // font_family のエッジ検出も同一 lock で読む（SU6 spec 決定 2・lock 1 回/フレーム）。
         // 値はフレーム冒頭の `visual` から取る（#673）。**適用はこの位置のまま**（呼び出し
         // 位置は本段では動かさない）——egui 0.35.0 では root `Ui` が pass 冒頭で
         // `ctx.global_style()` を `Arc` snapshot するため、ここで呼ぶ `ctx.set_visuals` は
         // 現在の pass の `Ui` に届かない。この潜在バグは #751 であり、**本段では直さない**。
+        // **`panel_fill` / `window_fill` はここに無い**——読む egui コンテナ（`CentralPanel` /
+        // `egui::Window` 等）がリポジトリに 1 つも無く、消費者ゼロの死んだ書き込みだった（spec 決定 2）。
         let mut visuals = ctx.style_of(ctx.theme()).visuals.clone();
-        visuals.panel_fill = visual.background;
-        visuals.window_fill = visuals.panel_fill;
         visuals.extreme_bg_color = visual.input_bg; // TextEdit 背景
         visuals.selection.bg_fill = visual.selection;
         // TextEdit の hint 色はここだけが効く（#654・詳細は TextEdit 構築部のコメント）。

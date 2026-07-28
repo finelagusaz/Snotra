@@ -7,7 +7,21 @@ use crate::{
     raster::{self, CpuTexture},
 };
 
+/// view が色を決める前（起動直後の 1 枚目）と `set_clear_color` 呼び忘れのフォールバック。
+/// **`snotra-core` の `default_background_color()` と同値だが、この crate は同 crate に依存しない**
+/// ——一致は機構ではなく規約であり、乖離したときに落ちる検査は無い（受容する残余）。
 const CLEAR_COLOR: u32 = 0x0028_2828;
+
+/// フレームの背景色を softbuffer の `0x00RRGGBB` へ畳む純関数。
+///
+/// **alpha は捨てる**——buffer が持てないためで、`#RRGGBBAA` を config へ書いたときの実効挙動が
+/// これである。`None`（view が `set_clear_color` を呼ぶ前・呼び忘れ）は `CLEAR_COLOR` へ落ちる。
+fn clear_color_u32(color: Option<egui::Color32>) -> u32 {
+    match color {
+        Some(c) => ((c.r() as u32) << 16) | ((c.g() as u32) << 8) | c.b() as u32,
+        None => CLEAR_COLOR,
+    }
+}
 /// CPU ラスタゆえ GPU device limit は無い。フォントアトラス需要を下回らず
 /// CPU メモリを律速しない固定値（ランチャー用途）。
 const MAX_TEXTURE_SIDE: usize = 4096;
@@ -41,11 +55,14 @@ impl EguiRenderer {
         MAX_TEXTURE_SIDE
     }
 
+    /// `clear_color` は**そのフレームの view が決めた背景色**（`RuntimeFrame::set_clear_color`）。
+    /// `run_ui` → `paint` の順に進むため、view が決めた色は同じフレームの `buffer.fill` に間に合う。
     pub(crate) fn paint(
         &mut self,
         context: &egui::Context,
         output: egui::FullOutput,
         size: PhysicalSize<u32>,
+        clear_color: Option<egui::Color32>,
     ) -> Result<PaintOutcome, RuntimeError> {
         if !is_renderable_extent(size.width, size.height) {
             return Ok(PaintOutcome::Skipped);
@@ -74,7 +91,7 @@ impl EguiRenderer {
             .buffer_mut()
             .map_err(|e| RuntimeError::Present(e.to_string()))?;
         let (width, height) = (size.width as usize, size.height as usize);
-        buffer.fill(CLEAR_COLOR);
+        buffer.fill(clear_color_u32(clear_color));
 
         let white = CpuTexture {
             width: 0,
@@ -128,5 +145,27 @@ impl EguiRenderer {
             );
         }
         Ok(PaintOutcome::Presented)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `None` は従来の既定へ落ちる（view が色を決める前の 1 枚目・呼び忘れの安全網）。
+    #[test]
+    fn clear_color_falls_back_to_default_when_unset() {
+        assert_eq!(clear_color_u32(None), CLEAR_COLOR);
+    }
+
+    /// softbuffer の buffer は `0x00RRGGBB` ゆえ **alpha を持てない**。`#RRGGBBAA` を config へ
+    /// 書いたときの実効挙動がこれである（spec 決定 4）。
+    #[test]
+    fn clear_color_packs_rgb_and_drops_alpha() {
+        assert_eq!(clear_color_u32(Some(egui::Color32::from_rgb(0x4A, 0x2B, 0x5C))), 0x004A_2B5C);
+        assert_eq!(
+            clear_color_u32(Some(egui::Color32::from_rgba_premultiplied(0x12, 0x34, 0x56, 0x80))),
+            0x0012_3456
+        );
     }
 }

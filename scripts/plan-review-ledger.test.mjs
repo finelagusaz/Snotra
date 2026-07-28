@@ -6,6 +6,11 @@
 // 未生成・空・スタブ・命名逸脱の 4 つは、いずれも「N 件中 N 件実在のまま照合を通る」形として
 // SKILL 本文が実測付きで記録していたものを、そのまま入力へ写した。
 import { describe, it, expect } from "vitest";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   SLUG_RE,
   MIN_CHARS,
@@ -13,33 +18,105 @@ import {
   MISSING,
   REASON,
   LEDGER_DIR,
+  LEDGER_FILE,
   parseArgs,
   validateSlugs,
   classifyEntries,
   formatReport,
   readLedgerDir,
+  readLedger,
+  writeLedger,
 } from "./plan-review-ledger.mjs";
 
 /** 実在を名乗れる長さの成果物（`MIN_CHARS` を確実に超える）。 */
 const ok = (name) => ({ name, chars: MIN_CHARS + 40 });
 
 describe("parseArgs", () => {
-  it("サブコマンドと --slug の繰り返しを受ける", () => {
-    expect(parseArgs(["verify", "--slug", "rust", "--slug", "docs"])).toEqual({
-      command: "verify",
+  it("init はサブコマンドと --slug の繰り返しを受ける", () => {
+    expect(parseArgs(["init", "--slug", "rust", "--slug", "docs"])).toEqual({
+      command: "init",
       slugs: ["rust", "docs"],
     });
+  });
+
+  it("【赤】verify は --slug を拒否する — 無視すると穴が『引数が効かないだけ』の形で残る", () => {
+    // #831 の本体。verify の母集団は init が書いた台帳であって argv ではない。
+    expect(parseArgs(["verify", "--slug", "rust"]).error).toBeTruthy();
+    expect(parseArgs(["verify", "--slug", "rust", "--slug", "docs"]).error).toBeTruthy();
+    // サブコマンドが --slug より後に来た形も拾う。
+    expect(parseArgs(["--slug", "rust", "verify"]).error).toBeTruthy();
+  });
+
+  it("verify は引数なしで通る", () => {
+    expect(parseArgs(["verify"])).toEqual({ command: "verify", slugs: [] });
   });
 
   it("サブコマンドが無ければエラー", () => {
     expect(parseArgs(["--slug", "rust"]).error).toBeTruthy();
   });
 
-  it("内容を受け取る口を持たない（契約: 呼び出し側の内容を書かない）", () => {
+  it("内容を受け取る口を持たない（契約: 識別子は書くが、呼び出し側の内容は書かない）", () => {
     // --write / --report-to のような書き込み口は「未知の引数」として拒否されること。
     // これが通ると /plan-review のオーケストレーターが自作自演で照合を通せるようになる。
-    expect(parseArgs(["verify", "--write", "x"]).error).toBeTruthy();
-    expect(parseArgs(["verify", "--report-to", "x"]).error).toBeTruthy();
+    expect(parseArgs(["init", "--write", "x"]).error).toBeTruthy();
+    expect(parseArgs(["init", "--report-to", "x"]).error).toBeTruthy();
+  });
+});
+
+describe("readLedger / writeLedger（母集団の永続化・#831）", () => {
+  const io = (files) => ({
+    writeFileSync: (p, data) => {
+      const name = p.split(/[\\/]/).pop();
+      if (files[name] != null) throw Object.assign(new Error("EEXIST"), { code: "EEXIST" });
+      files[name] = data;
+    },
+    readFileSync: (p) => {
+      const name = p.split(/[\\/]/).pop();
+      if (files[name] == null) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      return files[name];
+    },
+  });
+
+  it("【緑】ラウンドトリップで集合が保存される", () => {
+    const files = {};
+    writeLedger("d", ["rust", "docs"], io(files));
+    expect(readLedger("d", io(files))).toEqual({ slugs: ["rust", "docs"] });
+  });
+
+  it("【赤】台帳が不在 — 空配列へ倒さない（0 件中 0 件実在で緑になる経路を塞ぐ）", () => {
+    const r = readLedger("d", io({}));
+    expect(r.slugs).toBeUndefined();
+    expect(r.error).toMatch(/読めない/);
+  });
+
+  it("【赤】JSON として parse 不能", () => {
+    const r = readLedger("d", io({ [LEDGER_FILE]: "{ not json" }));
+    expect(r.slugs).toBeUndefined();
+    expect(r.error).toBeTruthy();
+  });
+
+  it("【赤】shape 不正 — slugs が配列でない", () => {
+    const r = readLedger("d", io({ [LEDGER_FILE]: '{"slugs":"rust"}' }));
+    expect(r.slugs).toBeUndefined();
+    expect(r.error).toMatch(/形が不正/);
+  });
+
+  it("【赤】shape 不正 — 要素が文字列でない", () => {
+    const r = readLedger("d", io({ [LEDGER_FILE]: '{"slugs":["rust",3]}' }));
+    expect(r.slugs).toBeUndefined();
+    expect(r.error).toMatch(/形が不正/);
+  });
+
+  it("【赤】空配列は読めるが、validateSlugs が母集団の欠落として弾く", () => {
+    // readLedger の責務は「形」まで。0 件の拒否は validateSlugs が担う（担当の分離）。
+    const r = readLedger("d", io({ [LEDGER_FILE]: '{"slugs":[]}' }));
+    expect(r).toEqual({ slugs: [] });
+    expect(validateSlugs(r.slugs).length).toBe(1);
+  });
+
+  it("writeLedger は既存ファイルを上書きしない（意図の表明・flag wx）", () => {
+    const files = { [LEDGER_FILE]: "old" };
+    expect(() => writeLedger("d", ["rust"], io(files))).toThrow();
   });
 });
 
@@ -151,4 +228,118 @@ describe("readLedgerDir", () => {
     expect(got).toEqual([]);
     expect(classifyEntries(["a"], got)[0].reason).toBe(REASON.absent);
   });
+
+  it("【回帰固定】台帳ファイルは成果物の母集団に現れない", () => {
+    // ledger.json が `.md` フィルタを通ると classifyEntries が毎回「命名逸脱」で不着 1 件を
+    // 立て、verify が常に赤になる。台帳を `.md` にしてはならない理由でもある。
+    const got = readLedgerDir("d", io({ [LEDGER_FILE]: '{"slugs":["a"]}', "a.md": "x".repeat(MIN_CHARS) }));
+    expect(got.map((f) => f.name)).toEqual(["a.md"]);
+    expect(classifyEntries(["a"], got).every((r) => r.status === PRESENT)).toBe(true);
+  });
+});
+
+describe("CLI（プロセス級 e2e・#831）", () => {
+  const SCRIPT = fileURLToPath(new URL("./plan-review-ledger.mjs", import.meta.url));
+
+  /**
+   * cwd は**必ず一時ディレクトリ**にする。LEDGER_DIR は process.cwd() 基準で、init は
+   * rmSync(recursive) を打つため、リポジトリルートで走らせると進行中の /plan-review
+   * ラウンドの成果物を消す（`npm test` が誰かの作業を壊す）。
+   */
+  function run(cwd, args) {
+    try {
+      const stdout = execFileSync(process.execPath, [SCRIPT, ...args], { cwd, encoding: "utf8", stdio: "pipe" });
+      return { code: 0, stdout };
+    } catch (e) {
+      return { code: e.status, stdout: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+    }
+  }
+
+  const withTmp = (fn) => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "plan-ledger-"));
+    try {
+      return fn(cwd);
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  };
+
+  const artifact = (cwd, slug) =>
+    fs.writeFileSync(path.join(cwd, LEDGER_DIR, `${slug}.md`), "x".repeat(MIN_CHARS + 10));
+
+  it("【緑】init → 全件書く → verify（引数なし）が exit 0", () =>
+    withTmp((cwd) => {
+      expect(run(cwd, ["init", "--slug", "a", "--slug", "b"]).code).toBe(0);
+      expect(fs.existsSync(path.join(cwd, LEDGER_DIR, LEDGER_FILE))).toBe(true);
+      artifact(cwd, "a");
+      artifact(cwd, "b");
+      expect(run(cwd, ["verify"]).code).toBe(0);
+    }));
+
+  it("【赤・#831 の種】init 2 件・成果物 1 件なら verify は exit 1（打ち直す口が無い）", () =>
+    withTmp((cwd) => {
+      run(cwd, ["init", "--slug", "a", "--slug", "b"]);
+      artifact(cwd, "a");
+      const r = run(cwd, ["verify"]);
+      expect(r.code).toBe(1);
+      expect(r.stdout).toContain("不着");
+    }));
+
+  it("【赤・#831 の種】verify --slug は exit 2 で拒否される", () =>
+    withTmp((cwd) => {
+      run(cwd, ["init", "--slug", "a", "--slug", "b"]);
+      artifact(cwd, "a");
+      artifact(cwd, "b");
+      // 母集団を縮めようとする操作そのもの。無視されて緑になってはならない。
+      expect(run(cwd, ["verify", "--slug", "a"]).code).toBe(2);
+    }));
+
+  it("【赤】init なしの verify は exit 2（母集団の欠落・不着ではない）", () =>
+    withTmp((cwd) => {
+      const r = run(cwd, ["verify"]);
+      expect(r.code).toBe(2);
+      expect(r.stdout).toContain("init");
+    }));
+
+  it("【赤】台帳が壊れていれば exit 2", () =>
+    withTmp((cwd) => {
+      run(cwd, ["init", "--slug", "a"]);
+      artifact(cwd, "a");
+      fs.writeFileSync(path.join(cwd, LEDGER_DIR, LEDGER_FILE), "{ not json");
+      expect(run(cwd, ["verify"]).code).toBe(2);
+    }));
+
+  it("init を 2 度走らせると台帳が入れ替わり、前ラウンドの成果物は残らない（I3 の順序を固定）", () =>
+    withTmp((cwd) => {
+      expect(run(cwd, ["init", "--slug", "a"]).code).toBe(0);
+      artifact(cwd, "a");
+      expect(run(cwd, ["init", "--slug", "b"]).code).toBe(0);
+      const led = JSON.parse(fs.readFileSync(path.join(cwd, LEDGER_DIR, LEDGER_FILE), "utf8"));
+      // writeLedger が mkdirSync の後にあることの帰結（前ラウンドの台帳が残らない）。
+      expect(led.slugs).toEqual(["b"]);
+      // rmSync が効いていることの帰結。
+      expect(fs.existsSync(path.join(cwd, LEDGER_DIR, "a.md"))).toBe(false);
+    }));
+
+  it("【赤】サブコマンドを 2 つ渡すと exit 2（読み取りのつもりが消去へ落ちる口を塞ぐ）", () =>
+    withTmp((cwd) => {
+      run(cwd, ["init", "--slug", "a"]);
+      artifact(cwd, "a");
+      expect(run(cwd, ["verify", "init", "--slug", "a"]).code).toBe(2);
+      // 破壊分岐へ入っていない＝成果物が残っている。
+      expect(fs.existsSync(path.join(cwd, LEDGER_DIR, "a.md"))).toBe(true);
+    }));
+
+  it("【赤】台帳を縮めても、残った成果物が命名逸脱で不着になる（I6）", () =>
+    withTmp((cwd) => {
+      run(cwd, ["init", "--slug", "a", "--slug", "b"]);
+      artifact(cwd, "a");
+      artifact(cwd, "b");
+      fs.writeFileSync(path.join(cwd, LEDGER_DIR, LEDGER_FILE), JSON.stringify({ slugs: ["a"] }));
+      const r = run(cwd, ["verify"]);
+      expect(r.code).toBe(1);
+      expect(r.stdout).toContain("命名逸脱");
+      // 見出しの「台帳 N 件」に命名逸脱の行を混ぜない（母集団の件数を誤って名乗らない）。
+      expect(r.stdout).toContain("台帳 1 件中 1 件が実在 / 台帳に無いファイル 1 件");
+    }));
 });

@@ -82,7 +82,7 @@ let hint: String = if in_tool {
       (d) **現在地の描画面はこのプレースホルダただ 1 つである**（結果行のパスは項目ごとのデータであって現在地のラベルではない。#700 の「同じ情報に描画面を 2 つ持たない」の適用）
       (e) 受容残余: フォルダ内の絞り込み文字列を 1 文字でも打つと消える（`←` / `→` は絞り込みをクリアするので、階層移動の直後は必ず見える）
       (f) 受容残余: 幅を超えるパスは末尾が `…` になる
-- [ ] `SPEC.md` §4.7 の #700 の箇条（現 186 行）末尾へ、**案内（indexing / 起動中 / 一時通知）と文脈（フォルダ展開中の現在地）を区別する一文**と §6.7 への参照を足す。実体は §6.7 に置き、写しを作らない。**この一文が無いと本変更が既存規範に違反しているように読める**
+- [ ] `SPEC.md` §4.7 の #700 の箇条（現 186 行）末尾へ、**案内（indexing / 起動中 / 一時通知）と文脈（フォルダ展開中の現在地）を区別する一文**と §6.7 への参照を足す。**参照は G-heading-refs の正準形で書く**——`` `SPEC.md` §6.7「フォルダ展開中の現在地表示」 ``（`scripts/governance-check.mjs` の `HEADING_REF` = `` `<path>` §<番号>「<見出し>」 `` に一致させる。散文形で書くと機械照合されず、`G-near-heading-refs` が直せない指摘を出し続ける）。実体は §6.7 に置き、写しを作らない。**この一文が無いと本変更が既存規範に違反しているように読める**
 - [ ] セクション番号は §6.7 の追記のみで、既存番号を 1 つも動かさない（`.claude/rules/spec.md`「セクション番号整合」）
 
 ### フェーズ 5 — 検証
@@ -104,7 +104,7 @@ let hint: String = if in_tool {
 4. **tool-on-folder では tool の hint が出る。** `view_kind()` の優先順 tool > folder と、上のコード形（`in_tool` を先に見る）が一致する。Escape で folder へ戻ると `saved_folder_filter` が復元され、それが非空なら hint は出ない（不変条件 1 の帰結であって特例ではない。既存テスト `escape_ladder_tool_then_folder_then_hide` が状態側を固定している）
 5. **新しい状態・フラグ・リソースを 1 つも導入しない。** 追加するのは純関数 1 本と既存 accessor の読み出しだけ。ゆえに「失敗・異常終了・予期しない順序」で壊れる状態が無く、`AtomicBool` / `thread::spawn` / 子プロセスの生成も無い
 6. **色の指定を書かない。** hint の色は `Visuals::weak_text_color`（`view.rs:299` で `visual.hint` を設定済み）だけが効き、`RichText::color()` は egui が無条件に上書きする（#654）。新しい文言も自動で同じ色になる（SPEC §11）
-7. **hint を決める位置を `on_nav_keys` より後から動かさない。** `update()` の冒頭からこの位置までに `view_kind()` / `current_dir` を変えうる `&mut self.controller` 呼び出しが **4 本**ある——`consume_reset_pending`（256 行 → `launcher_controller.rs:838` の `self.state.reset()` が `folder` を `None` にする）・`poll_async`（316 行 → `drain_launch` → `finish_launch` の `LaunchTag::Tool` × `LaunchStatus::Ok` 分岐が `self.state.reset()` を呼ぶ・`launcher_controller.rs:305-311`。**同関数の folder drain 部〔914-933 行〕ではない**——そちらは `folder_cache` / `folder_error` しか触らず `view_kind()` を変えない）・`on_escape_pressed`（322 行）・`on_nav_keys`（332 行・`enter_folder` / `navigate_folder`。**`enter_tool` はここではない**——`on_enter` → `shift_activate`〔`launcher_controller.rs:505`〕から呼ばれ、それは hint より後の 573 行で走るので今フレームの hint には影響しない）。前寄せすると hint は**遷移前**のディレクトリを描き、不変条件 3（＝AC1 の論拠）が壊れて #743 の症状がより見つけにくい形で再現する。
+7. **hint を決める位置を `on_nav_keys` より後から動かさない。** `update()` の冒頭からこの位置までに `view_kind()` / `current_dir` を変えうる `&mut self.controller` 呼び出しが **4 本**ある——`consume_reset_pending`（256 行 → `launcher_controller.rs:838` の `self.state.reset()` が `folder` を `None` にする）・`poll_async`（316 行 → `drain_launch` → `finish_launch` の `LaunchTag::Tool` × `LaunchStatus::Ok` 分岐が `self.state.reset()` を呼ぶ・`launcher_controller.rs:305-311`。**同関数の folder drain 部〔914-933 行〕ではない**——そちらは `folder_cache` / `folder_error` しか触らず `view_kind()` を変えない）・`on_escape_pressed`（322 行）・`on_nav_keys`（332 行・`enter_folder` / `navigate_folder`。**`enter_tool` はここではない**——`shift_activate`〔`launcher_controller.rs:505`〕から呼ばれ、その唯一の呼び出し元は `on_enter` 内の `launcher_controller.rs:1171` である〔`grep -rn "shift_activate(" src-tauri/src/` = 定義 1 + 呼び出し 1〕。`on_enter` は hint より後の `view.rs:575` で走るので今フレームの hint には影響しない。行クリック経路〔`activate_or_execute`・`view.rs:635`〕も hint より後である）。前寄せすると hint は**遷移前**のディレクトリを描き、不変条件 3（＝AC1 の論拠）が壊れて #743 の症状がより見つけにくい形で再現する。
    **件数を断定して書かない。** この「4 本」はラウンド 2 で 3 本から訂正された数であり（`self.controller.` の全呼び出しを列挙して初めて `consume_reset_pending` が出た）、**次の編集でまた変わりうる**。コードコメントには件数ではなく**検算の手続き**を書く: 選んだ位置から TextEdit 構築までの間に `&mut self.controller` を取る呼び出しが 1 本も無いことを、`self.controller.` の grep から列挙して確かめる（現在の位置ではこのリストは空である）
 8. **AC2（通常検索・ツール選択・インスタントコマンドの表示を壊さない）は構造で閉じる。** 理由は 2 つあり、どちらか一方でも十分: (i) instant / slash コマンドは軸 2（`QueryIntent`）であって軸 1（`ViewKind`）ではなく、どちらも `ViewKind::Results` に落ちて `search_hint` のまま——**既存 2 腕の値を 1 文字も変えない** (ii) instant モードの成立条件は「バッファが prefix で始まる」＝非空であり、そのとき egui は hint を描かない（不変条件 1）
 
@@ -126,7 +126,7 @@ let hint: String = if in_tool {
 4. `←` で親へ上がる — hint のパスが**行の入れ替わりより先に**親へ変わる（**#743 の誤読が起きた局面**）
 5. `←` を連打してドライブルート `C:\` まで上がる — 無反応になっても hint は `C:\ 内を検索...` のまま
 6. 空フォルダ／アクセス拒否フォルダ（§6.6）へ入る — results が消える／エラー行 1 行になっても hint に現在地が出ている
-7. 深いパス（幅を超えるもの）で展開 — 末尾が `…` になる。**見え方が受容できるかを記録する**（受容できなければ follow-up issue を立てる。この PR は広げない）
+7. 深いパス（幅を超えるもの）で展開 — 末尾が `…` になる。**見え方が受容できるかを記録する**（受容できなければ follow-up issue を立てる。この PR は広げない）。**項目 10（En）を先に見る**——省略が leaf に当たるのは En の方が早いため（受容残余 (b)）
 8. Shift+Enter でツール選択へ入る — hint が「ツールを選択...」になる。Escape で folder へ戻ると、絞り込みが空なら再びパスが出る
 9. 通常検索モード・インスタントコマンド（`@`）・`/` コマンド — hint は「検索...」のまま（回帰なし）
 10. `general.language = "en"` で 1・4・7 を再確認 — `Search in <path>...`
@@ -142,6 +142,7 @@ let hint: String = if in_tool {
 - [x] **(e) `scripts/smoke-egui.ps1` が hint 文字列に依存していないか** — **裏取りした**: `hint` / `placeholder` / `検索` / `Search` を grep して 0 件（該当は検索クエリと SPEC §4.7 への言及コメントのみ）。governance-docs スカウトが `smoke-startup` 側でも独立に再現。smoke の前提は壊れない
 - [x] **(b) 省略の向き（末尾 / 先頭 / 中央）** — **裁定: egui 既定の末尾省略をそのまま使い、自前の省略機構を書かない。**
       **却下した代替案**: `results_view::truncate_middle`（`results_view.rs:418`・`pub(crate)`・テスト済みであることを実測確認）を書式へ埋める前の `dir` へ当てる案。却下理由は 3 つ——(i) この関数は `per_char_px`（呼び出し側が渡す推定値）で幅を測る API で、CJK を過小評価する既知の粗さを持つ。接尾辞「 内を検索...」の実幅も別途推定が要る (ii) 既定幅 600px でのパス予算は概ね ASCII 55〜60 字で、**実運用のパスはたいてい収まる**（溢れは端の事例） (iii) WebView2 版は CSS クリップで `…` すら無く、egui 既定は parity より既に良い。
+      **削られる位置は Ja と En で非対称である**（`RichText::new(hint)` は**単一の text atom** ゆえ、省略は組み立て後の文字列の末尾に当たる・`builder.rs:584-600` の `atom_shrink(true)` を受けるのがその 1 個）: Ja `<path> 内を検索...` は**接尾辞「 内を検索...」が先に食われ**、パス単体が幅を超えて初めて leaf が削れる。En `Search in <path>...` は**末尾が leaf そのもの**で、しかも接頭辞 `Search in ` が予算を先食いするため早く削れる。→ **目視は En から見る**（目視項目 10 を 7 より先に行う）。
       **受容する残余**: 深い階層では末尾（＝いま居るフォルダ名）が削られる。**観測点はカテゴリ D の目視項目 7・10** で、そこで受容できないと判明したときの逃げ道が上の却下案である（follow-up issue を立て、この PR は広げない）
 - [x] **(c) 3 分岐の hint 選択を純粋核へ出すか** — **裁定: 出さない。** hint の分岐は `view_kind()` の優先度ラダー（tool > folder > results）そのものであり、純粋核へ切り出すと `view_kind()` の **2 重導出**になる（`overlay_kind` は `view_kind` と独立な 3 入力を畳む関数であって、この形とは違う）。加えて `strings.rs` の依存が `Language` だけで済まなくなる。
       **なお `view_kind()==Folder ⟺ folder.is_some()` という同値は偽である**（tool-on-folder が反例。ラウンド 2 で訂正）。成り立つのは `⟹` の片側だけで、実装が正しいのは `in_tool` を先に見るからである（不変条件 4・フェーズ 2 のコードコメント）。
@@ -157,7 +158,7 @@ let hint: String = if in_tool {
       **裁定の出所**: ユーザーコメント（#836, 2026-07-28）「WebView2版はフォルダ展開すると **メインウィンドウに「（フォルダ名）内を検索…」と表示する**」＋添付スクリーンショット、およびユーザー指示「コメントに WebView2 版の挙動をメモしておいた。**参考にして**丁寧に plan.md を策定してほしい」（2026-07-29）。
       **却下した代替案 B（status 行）**: `overlay_kind` は排他ラダー（indexing > launching > notice）なので、folder 文脈をそこへ入れると indexing 中などに**やはり消える**——#700 が是正した失敗様態そのものになる。加えて folder 中ずっと `main_window_height` が 1 行伸び、フォルダの出入りのたびに main が伸縮する。
       **却下した代替案 C（results 窓のヘッダ行）**: 0 件・空フォルダでは `present_results` が非表示を返して results 窓ごと消えるため、**いちばん現在地を知りたい局面で出ない**。
-      **受容する理由**: 無条件に AC1 を満たす候補は存在しない。そして `enter_folder` / `navigate_folder` は**どちらも `folder_filter.clear()` する**（`search_state.rs:243,254`）ので、`←` / `→` の直後は必ずバッファが空＝hint が描かれる。#743 の誤読が起きた瞬間をちょうど覆う。
+      **受容する理由**: **検討した 3 案（hint / status 行 / results ヘッダ）のいずれも無条件には AC1 を満たさない**（全案についての主張ではない——たとえば「バー帯の中に常設ラベルを置き入力欄の幅を削る」案は評価していない。描画点が増えユーザーが指した parity からも外れるため採らないが、その存在は「候補は存在しない」という全称を偽にする）。そして `enter_folder` / `navigate_folder` は**どちらも `folder_filter.clear()` する**（`search_state.rs:243,254`）ので、`←` / `→` の直後は必ずバッファが空＝hint が描かれる。#743 の誤読が起きた瞬間をちょうど覆う。
 - [x] **散文とスクリーンショットの食い違い（フォルダ名 vs フルパス）はフルパスを採る** — **裁定の出所**: 一次証拠 2 つ（添付スクリーンショットの `C:\Toolbox\ghost-launcher 内を検索...`、および `git show 15933af^:ui/src/components/SearchWindow.tsx:277` が `fs.currentDir` をそのまま渡していたこと）が一致するため。散文の「（フォルダ名）」は値の略記と解する。ラウンド 1・2 の独立再導出も同じ結論へ独立到達した。
       **ラウンド 3 の独立再導出だけが「フォルダ名（leaf）を採るべき」と反対した。その根拠は採らない**——同エージェントは「散文が SSOT だから」と述べているが、**サブエージェントは issue 添付のスクリーンショットを読めない**（画像であり `gh issue view` には現れない。本計画の作成者は画像を取得して直接確認した）。つまり反対意見は**一次証拠 2 つのうち 1 つを見ないまま出された**ものである。ただし同エージェントが挙げた副次的な論拠（末尾省略で leaf が失われうる）は妥当であり、未確定 (b) の受容残余として既に記録済み。
 - [x] **末尾 `\` の揺れは正規化しない** — `compute_parent_dir` はドライブルートで `C:\`（末尾 `\` あり）を返し、フォルダ列挙は `C:\d\Cafe`（なし）を返すため、hint に `C:\ 内を検索...` と `C:\d\Cafe 内を検索...` が混ざる。**WebView2 も同じ値を出していたので parity としては正しい。** 正規化は #836 の要求外ゆえ射程に入れない（気になるなら別 issue）。
@@ -176,7 +177,7 @@ let hint: String = if in_tool {
 - **配送（独立レビューの成立）: 3 ラウンドすべてで 4/4 実在。** 不成立エントリは 1 つも無い（`plan:ledger verify` の出力）
 - **ラウンド 3 の「要対処」はすべて自分で根拠を開いて再照合した**（`launcher_controller.rs:297-311, 903-933, 483-505` / `scripts/manual-smoke.ps1` の `$items` / `SPEC.md:185`）。降格した項目は無い
 - **5b の 3 観点**:
-  1. **境界条件** — ドライブルート `C:\`・UNC `\\srv\share`（ユニットテスト）、空フォルダ・列挙失敗・tool-on-folder・非空フィルタ・幅超過・En/Ja（目視項目 5〜10）で網羅。**`dir` が非空であるという前提は書かない**（`format!` は total ゆえ空でも panic しない。到達可能性が未確認の入力に対して「検出器」めいたテストを足さない）
+  1. **境界条件** — ドライブルート `C:\`・UNC `\\srv\share`（ユニットテスト）、非空フィルタ（目視項目 2・3）、空フォルダ・列挙失敗・tool-on-folder・幅超過・En/Ja（同 5〜10）で網羅。**`dir` が非空であるという前提は書かない**（`format!` は total ゆえ空でも panic しない。到達可能性が未確認の入力に対して「検出器」めいたテストを足さない）
   2. **シンプル化の挑戦** — 新しい状態・フラグ・スレッド・子プロセスを 1 つも導入せず、追加は純関数 1 本と分岐 1 本。文言を `view.rs` へ直書きすればさらに 1 ファイル減るが、i18n の正本が `strings.rs` である規約と、codepoint 一致テストの継ぎ目を失う。**これ以上は削れない**
   3. **破壊不変条件と検知手段** — 「描画面は 1 つ」（不変条件 2）は**壊れてもコンパイルもテストも通る**唯一の破壊不変条件であり、検知手段としてフェーズ 5 に**diff の 4 条件チェック**を置いた。「hint の読み点」（不変条件 7）の検知手段は同条の grep 手続きと目視項目 4、「#700 の再発（打った文字が見えない）」は目視項目 2
 - **判断が割れた点**: ラウンド 3 の独立再導出のみ「フルパスではなくフォルダ名（leaf）」と反対した。**サブエージェントは issue 添付のスクリーンショットを読めない**（画像）という非対称が原因で、一次証拠 2 つのうち 1 つを見ずに出された意見ゆえ採らない（詳細は受容残余の該当項）

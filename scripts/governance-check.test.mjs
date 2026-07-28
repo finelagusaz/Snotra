@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 import {
-  G1_CRATES,
+  MODULE_INDEX_CRATES,
   governanceDocs,
   makeSnapshot,
   checkHookCommands,
@@ -28,7 +28,7 @@ import {
   collectAnchors,
   headingRefDocs,
   checkConfigFieldReachability,
-  G12_NO_LAUNCHER_READ,
+  NO_LAUNCHER_READ,
   checkNearHeadingRefs,
   scanNearHeadingRefs,
   checkCheckSkillEnumeration,
@@ -37,6 +37,7 @@ import {
   staleIdentifierDocs,
   currentVocabulary,
   runAll,
+  buildChecks,
 } from "./governance-check.mjs";
 
 /** 最小スナップショット: files はリポジトリ相対（"/" 区切り）、contents は path → 本文 */
@@ -45,7 +46,7 @@ function snap(contents, extraFiles = []) {
   return { files, read: (p) => contents[p] ?? null };
 }
 
-describe("globToRegex（G7 の意味論固定・代表入力）", () => {
+describe("globToRegex（G-rules-globs の意味論固定・代表入力）", () => {
   const cases = [
     // [pattern, 一致する例, 一致しない例]
     ["AGENTS.md", "AGENTS.md", "docs/AGENTS.md"], // bare 名はルート直下のみ
@@ -69,12 +70,12 @@ describe("globToRegex（G7 の意味論固定・代表入力）", () => {
   });
 });
 
-// G1/G3 の母集団は手で列挙する定数であり、**crate を足しても何も鳴らない**（沈黙する経路）。
+// G-module-index/G-references の母集団は手で列挙する定数であり、**crate を足しても何も鳴らない**（沈黙する経路）。
 // `snotra-egui-runtime` は「#532 の検証層」として作られたまま両方から漏れ、SU7 で製品の
 // 描画層になった後も索引ドリフト・参照切れが検知されない状態が続いていた（#701）。
 // 実 `Cargo.toml` を読み、CLAUDE.md を持つ member が両母集団に載っていることを固定する。
-describe("G1/G3 母集団カナリア — #701", () => {
-  it("CLAUDE.md を持つ workspace member は G1_CRATES と governanceDocs の両方に載る", () => {
+describe("G-module-index/G-references 母集団カナリア — #701", () => {
+  it("CLAUDE.md を持つ workspace member は MODULE_INDEX_CRATES と governanceDocs の両方に載る", () => {
     const root = fileURLToPath(new URL("..", import.meta.url));
     const src = readFileSync(fileURLToPath(new URL("../Cargo.toml", import.meta.url)), "utf8");
 
@@ -95,18 +96,18 @@ describe("G1/G3 母集団カナリア — #701", () => {
 
     for (const crate of withClaudeMd) {
       expect(
-        Object.keys(G1_CRATES),
-        `${crate} が G1_CRATES に無い。src/exts を添えて追加すること（索引ドリフトが沈黙で通る）`,
+        Object.keys(MODULE_INDEX_CRATES),
+        `${crate} が MODULE_INDEX_CRATES に無い。src/exts を添えて追加すること（索引ドリフトが沈黙で通る）`,
       ).toContain(crate);
       expect(
         docs,
-        `${crate}/CLAUDE.md が G3 母集団に無い。governanceDocs の正規表現を更新すること（参照切れが沈黙で通る）`,
+        `${crate}/CLAUDE.md が G-references 母集団に無い。governanceDocs の正規表現を更新すること（参照切れが沈黙で通る）`,
       ).toContain(`${crate}/CLAUDE.md`);
     }
   });
 });
 
-describe("G1 checkModuleIndex", () => {
+describe("G-module-index checkModuleIndex", () => {
   const base = {
     "snotra-core/CLAUDE.md": "# x\n## モジュール構成\n- `lib.rs` — エントリ\n- `search.rs` — 検索\n\n## 次節\n",
     "snotra-core/src/lib.rs": "",
@@ -136,7 +137,7 @@ describe("G1 checkModuleIndex", () => {
   });
 });
 
-describe("G2 checkArchitectureTable", () => {
+describe("G-architecture-table checkArchitectureTable", () => {
   it("緑: ファイル単位のモジュール表が無い", () => {
     const s = snap({ "docs/architecture.md": "# a\n| 型 | 役割 |\n|---|---|\n| `Engine` | 入口 |\n" });
     expect(checkArchitectureTable(s)).toEqual([]);
@@ -152,7 +153,7 @@ describe("G2 checkArchitectureTable", () => {
   });
 });
 
-describe("G3 checkReferences", () => {
+describe("G-references checkReferences", () => {
   it("緑: 実在するリンクとパス参照", () => {
     const s = snap({
       "AGENTS.md": "[規約](docs/guide.md) と `docs/guide.md` を参照\n",
@@ -214,7 +215,7 @@ describe("G3 checkReferences", () => {
   });
 });
 
-describe("G4 checkSpecSections", () => {
+describe("G-spec-sections checkSpecSections", () => {
   const spec = "## 1. 概要\n### 1.1 目的\n### 1.2 範囲\n## 2. 検索\n";
   it("緑: 連続した番号と実在する SPEC § 参照", () => {
     const s = snap({ "SPEC.md": spec, "docs/a.md": "SPEC §1.2 と SPEC.md §2 を参照\n" });
@@ -245,7 +246,7 @@ describe("G4 checkSpecSections", () => {
   });
 });
 
-describe("G5 checkBuildCommands", () => {
+describe("G-build-commands checkBuildCommands", () => {
   const pkg = JSON.stringify({ scripts: { test: "vitest run", typecheck: "tsc", "governance:check": "node scripts/governance-check.mjs" } });
   const cargoRoot = '[workspace]\nmembers = ["snotra-core", "src-tauri"]\n';
   const cargoCore = '[package]\nname = "snotra-core"\n';
@@ -272,7 +273,7 @@ describe("G5 checkBuildCommands", () => {
   });
 });
 
-describe("G6 checkCiTable", () => {
+describe("G-ci-table checkCiTable", () => {
   const base = {
     "package.json": JSON.stringify({ scripts: { test: "vitest run", "smoke:startup": "pwsh -NoProfile -File scripts/smoke-startup.ps1" } }),
     ".github/workflows/ci.yml": "jobs:\n  a:\n    steps:\n      - run: npm test\n",
@@ -306,7 +307,7 @@ describe("G6 checkCiTable", () => {
   });
 });
 
-describe("G7 checkRulesGlobs", () => {
+describe("G-rules-globs checkRulesGlobs", () => {
   it("緑: 全 glob が 1 件以上にマッチする", () => {
     const s = snap({ ".claude/rules/a.md": '---\npaths:\n  - "AGENTS.md"\n  - "ui/src/**/*.{ts,tsx}"\n---\n本文\n' }, ["AGENTS.md", "ui/src/main.tsx"]);
     expect(checkRulesGlobs(s)).toEqual([]);
@@ -318,7 +319,7 @@ describe("G7 checkRulesGlobs", () => {
   });
 });
 
-describe("G8 checkSkillTable（表の対象は roster に載らない skill だけ）", () => {
+describe("G-skill-table checkSkillTable（表の対象は roster に載らない skill だけ）", () => {
   const claude = (rows) => `# x\n## 利用できるスキル\n\n| スキル | 使うとき |\n|---|---|\n${rows}\n\n## 次節\n`;
   /** roster に載る skill（harness が description ごと注入する） */
   const shown = (name) => ({ [`.claude/skills/${name}/SKILL.md`]: `---\nname: ${name}\ndescription: "d"\n---\n本文\n` });
@@ -357,7 +358,7 @@ describe("G8 checkSkillTable（表の対象は roster に載らない skill だ�
   });
 });
 
-describe("G9 checkHookCommands", () => {
+describe("G-hook-commands checkHookCommands", () => {
   // clippy は実物どおり複数行折返し + 行末カンマ（単一行前提の抽出を壊す代表入力）
   const hookSrc = [
     "function buildCommand(id, root) {",
@@ -425,7 +426,7 @@ describe("runAll（空母集団の明示 fail = 沈黙経路の閉塞）", () =>
   });
 });
 
-describe("G10 checkNormativeAreaBudget（二面独立 ratchet・文字数指標・#593 / ADR-0005）", () => {
+describe("G-area-budget checkNormativeAreaBudget（二面独立 ratchet・文字数指標・#593 / ADR-0005）", () => {
   const x = (n) => "x".repeat(n);
   const rule = (p, n) => ({ [`.claude/rules/${p}`]: x(n) });
   const skill = (name, desc) => ({
@@ -510,7 +511,7 @@ describe("G10 checkNormativeAreaBudget（二面独立 ratchet・文字数指標�
   });
 });
 
-describe("G11 checkHeadingRefs（見出し参照の実在）", () => {
+describe("G-heading-refs checkHeadingRefs（見出し参照の実在）", () => {
   // 守りたい対象 = 「参照先の見出しが改名・消滅したのに参照側が残る」ドリフト。
   // 同一フィクスチャの複製に変異を当てて赤を実測する（ライブの検査は弱めない）。
   const TARGET = "## Git/GitHub 運用\n\n本文\n";
@@ -581,7 +582,7 @@ describe("G11 checkHeadingRefs（見出し参照の実在）", () => {
   });
 });
 
-describe("G13 checkStaleIdentifiers（規範の散文に残る、現行語彙に無い識別子）", () => {
+describe("G-stale-identifiers checkStaleIdentifiers（規範の散文に残る、現行語彙に無い識別子）", () => {
   // 守りたい対象 = #736 の同クラス。UI スタックを入れ替えた後、スキルの散文だけが旧 API 名を
   // 現行 API として指し続ける形。赤フィクスチャは実際に検出された `createObjectURL`（WebView2 期）。
   const DOC = ".claude/skills/x/SKILL.md";
@@ -644,9 +645,9 @@ describe("G13 checkStaleIdentifiers（規範の散文に残る、現行語彙に
   });
 });
 
-describe("G14 checkNearHeadingRefs（正準形に見えて隣接していない見出し参照・#727）", () => {
+describe("G-near-heading-refs checkNearHeadingRefs（正準形に見えて隣接していない見出し参照・#727）", () => {
   // 守りたい対象 = #725 で実際に書かれた `/start-issue` は「Step 6 — …」の形。
-  // 人の目には正準形に見え、G11 の視界外で、参照先が改番されれば黙って壊れる。
+  // 人の目には正準形に見え、G-heading-refs の視界外で、参照先が改番されれば黙って壊れる。
   const TARGET = { "CLAUDE.md": "## Git/GitHub 運用\n\n本文\n" };
   const run = (prose, extra = {}) => checkNearHeadingRefs(snap({ ...TARGET, ...extra, "docs/x.md": prose }), ["docs/x.md"]);
 
@@ -656,11 +657,11 @@ describe("G14 checkNearHeadingRefs（正準形に見えて隣接していない�
     expect(f[0].message).toContain("`CLAUDE.md`「Git/GitHub 運用」と書く");
   });
 
-  it("隣接形は G11 の担当なので見ない（二重報告しない）", () => {
+  it("隣接形は G-heading-refs の担当なので見ない（二重報告しない）", () => {
     expect(run("詳細は `CLAUDE.md`「Git/GitHub 運用」を見よ\n")).toEqual([]);
   });
 
-  it("節番号つきの隣接形も G11 の担当（#727 実測: 番号を許さないと直せない指摘が残る）", () => {
+  it("節番号つきの隣接形も G-heading-refs の担当（#727 実測: 番号を許さないと直せない指摘が残る）", () => {
     const s = { "SPEC.md": "### 見た目の規範\n" };
     expect(checkNearHeadingRefs(snap({ ...s, "docs/x.md": "`SPEC.md` §11「見た目の規範」\n" }), ["docs/x.md"])).toEqual([]);
   });
@@ -692,7 +693,7 @@ describe("G14 checkNearHeadingRefs（正準形に見えて隣接していない�
   });
 });
 
-describe("G15 checkCheckSkillEnumeration（4a の列挙 ↔ AGENTS.md 表・#778）", () => {
+describe("G-check-skill-enumeration checkCheckSkillEnumeration（4a の列挙 ↔ AGENTS.md 表・#778）", () => {
   // 守りたい対象 = 表へ check スキルを足した人が /implement 4a を直さず、
   // 新しいスキルが報告母集団から沈黙して落ちる形。
   const mk = (tableSkills, step4aSkills, files = []) =>
@@ -760,7 +761,7 @@ describe("makeSnapshot の走査除外（#722）", () => {
   });
 });
 
-describe("G12 checkConfigFieldReachability", () => {
+describe("G-config-reachability checkConfigFieldReachability", () => {
   const config = [
     "#[derive(Deserialize)]",
     "pub struct VisualConfig {",
@@ -830,13 +831,31 @@ describe("G12 checkConfigFieldReachability", () => {
 
 // safety-nets.md「検査の入力集合を、具体対象で検算する」— 守りたい対象 1 件が実リポジトリの
 // 入力に現れることを固定する。フィクスチャだけでは「実リポジトリでは何も見ていない検査」が緑で通る。
-describe("G12 カナリア — 守りたい対象が実リポジトリの入力に現れる", () => {
+describe("G-config-reachability カナリア — 守りたい対象が実リポジトリの入力に現れる", () => {
   it("`VisualConfig.preset` を表から外すと実リポジトリで赤になる", () => {
     const s = makeSnapshot(fileURLToPath(new URL("..", import.meta.url)));
-    const without = { ...G12_NO_LAUNCHER_READ };
+    const without = { ...NO_LAUNCHER_READ };
     delete without["VisualConfig.preset"];
     const f = checkConfigFieldReachability(s, without);
     expect(f.some((x) => x.message.includes("VisualConfig.preset"))).toBe(true);
+  });
+});
+
+describe("検査 ID の形（#812 — 序数を引用の語彙から外す）", () => {
+  const ids = buildChecks(snap({}), {}).map((c) => c.id);
+
+  it("すべて `G-<kebab>` 形で、数字を含まない", () => {
+    for (const id of ids) expect(id, `${id} が G-<name> 形でない`).toMatch(/^G-[a-z][a-z0-9]*(-[a-z0-9]+)*$/);
+  });
+
+  it("重複しない（連番なら並行 PR が同じ値を見る形が、名前では起きないことの固定）", () => {
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("サマリの件数は登録表から計算される（範囲の手書きが存在しない）", () => {
+    // 「G1..G15 passed」のような範囲表記は、検査を足しても黙って古くなる（#812 実測）
+    const { evidence } = runAll(makeSnapshot(fileURLToPath(new URL("..", import.meta.url))));
+    expect(evidence).toContain(`検査 ${ids.length} 件`);
   });
 });
 

@@ -26,7 +26,7 @@ ADR-0008 の規則 R（「移設する項目がその中でしか使わないヘ
 
 ### 2. 新モジュールを `font.rs` と命名する
 
-却下した。`snotra-settings/src/font.rs` が既に存在する（`git ls-files` 実測）。`governance:check` の G1 は **basename 包含方式で wrong-directory 検出を意図的に放棄している**（`scripts/governance-check.mjs` の当該コメント）ため、同じ basename を 2 crate へ置くと、**索引から落ちても別 crate の同名ファイルで検査が満たされる**——この変更に対する唯一の機構的ゲートが両 crate で盲になる。
+却下した。`snotra-settings/src/font.rs` が既に存在する（`git ls-files` 実測）。`governance:check` の G-module-index は **basename 包含方式で wrong-directory 検出を意図的に放棄している**（`scripts/governance-check.mjs` の当該コメント）ため、同じ basename を 2 crate へ置くと、**索引から落ちても別 crate の同名ファイルで検査が満たされる**——この変更に対する唯一の機構的ゲートが両 crate で盲になる。
 
 `font_stack.rs` は責務（user_font 先頭 + jp_font fallback という**スタックの組み立て**）をより正確に言い当ててもいる。
 
@@ -65,5 +65,5 @@ issue が確定事実 6・7 で却下済み。順序制約が `Vec<Effect>` の�
 ## 帰結
 
 - **規則 R(段 3) は 3 段すべてを ADR-0008 と同じ論法で説明する。** 次に `egui_shell` へ線を引くときはこの 4 条項に当てる
-- **`font_stack.rs` の命名は機構の弱点（G1 の basename 方式）を避けた結果である。** 「なぜ `font.rs` でないのか」を将来問われたらここを引く
+- **`font_stack.rs` の命名は機構の弱点（G-module-index の basename 方式）を避けた結果である。** 「なぜ `font.rs` でないのか」を将来問われたらここを引く
 - 却下 2 の一般則（機構が弱いと明記している箇所を踏む名前を選ばない）は、`governance-check.mjs` が同種の弱化を他にも持つ場合に再利用できる

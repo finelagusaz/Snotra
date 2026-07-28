@@ -20,15 +20,15 @@ allowed-tools:
 
 ## Check 1 — CLAUDE.md モジュール構成の乖離
 
-→ **`npm run governance:check`（G1・#587）が機械検査する。ここでは実行しない。** テストファイル除外（SSOT: `vitest.config.ts` の include）・basename 照合の意味論はスクリプト（`scripts/governance-check.mjs`）とそのテストが固定する。責務記述の**内容の妥当性**（索引の存在ではなく記述が実態と合っているか）は機械化できず、気づいた乖離があれば発見事項として報告する。
+→ **`npm run governance:check`（G-module-index・#587）が機械検査する。ここでは実行しない。** テストファイル除外（SSOT: `vitest.config.ts` の include）・basename 照合の意味論はスクリプト（`scripts/governance-check.mjs`）とそのテストが固定する。責務記述の**内容の妥当性**（索引の存在ではなく記述が実態と合っているか）は機械化できず、気づいた乖離があれば発見事項として報告する。
 
 ## Check 5 — docs/build-commands.md コマンドの整合（SSOT）
 
-コマンドの**実在照合**（`npm run XXX` → `package.json` scripts、`cargo test -p <crate>` → workspace members の package name）は **`npm run governance:check`（G5・#587）が機械検査する。ここでは実行しない。**
+コマンドの**実在照合**（`npm run XXX` → `package.json` scripts、`cargo test -p <crate>` → workspace members の package name）は **`npm run governance:check`（G-build-commands・#587）が機械検査する。ここでは実行しない。**
 
 本 Check に残るのは**意味判断を要する部分**のみ:
 - `AGENTS.md`「変更後の検証を実行する」や `.claude/skills/*/SKILL.md` に **コマンド本体**（`cargo XXX` / `npm XXX` / `npx XXX` の具体的な引数を含む実行コマンド）が直書きされていないか grep する。`docs/build-commands.md` の SSOT を迂回している箇所を報告する（コマンド名への言及や参照リンク自体は許容）。
-- hook の **cargo コマンド ↔ カテゴリ A の照合は `npm run governance:check`（G9・#589）が機械検査する。ここでは実行しない**（出力整形フラグの許容込み。#476 のフラグドリフト事故クラスを機械が受け持つ）。
+- hook の **cargo コマンド ↔ カテゴリ A の照合は `npm run governance:check`（G-hook-commands・#589）が機械検査する。ここでは実行しない**（出力整形フラグの許容込み。#476 のフラグドリフト事故クラスを機械が受け持つ）。
 - node/vitest 系のみ本 Check に残る: hook の検査（tsc 直接起動・単一テストファイルの vitest 実行）が SSOT コマンド（`npm test`）の**部分集合ラッパー**として妥当か（対象ファイルが SSOT コマンドの実行対象に含まれるか）を確認する。
 
 ## Check 7 — MEMORY.md 参照の実在性
@@ -66,9 +66,9 @@ allowed-tools:
 
 ## Check 10 — docs/build-commands.md ↔ .github/workflows/\* の対応
 
-「CI/CD メモ」対応表とワークフローの機械照合（表のコマンド・wrapper スクリプトパスが表記 workflow の `run:` に現れるか・workflow ファイルの実在）は **`npm run governance:check`（G6・#587）が担う。ここでは実行しない。**
+「CI/CD メモ」対応表とワークフローの機械照合（表のコマンド・wrapper スクリプトパスが表記 workflow の `run:` に現れるか・workflow ファイルの実在）は **`npm run governance:check`（G-ci-table・#587）が担う。ここでは実行しない。**
 
-残るのは意味判断のみ: 表の**トリガー記述**（「PR 自動」「対象 paths を含む PR」等）が実際の `on:`/`paths` 設定と合っているか、「workflow で実行されているが表に無いコマンド」の逆方向、および**カテゴリ A〜C の必須コマンドが対応表に漏れていないか**（G6 は表の行駆動なので、表に載っていない必須コマンドは機構の母集団に入らない）。気づいたずれを **Warning** で報告する。
+残るのは意味判断のみ: 表の**トリガー記述**（「PR 自動」「対象 paths を含む PR」等）が実際の `on:`/`paths` 設定と合っているか、「workflow で実行されているが表に無いコマンド」の逆方向、および**カテゴリ A〜C の必須コマンドが対応表に漏れていないか**（G-ci-table は表の行駆動なので、表に載っていない必須コマンドは機構の母集団に入らない）。気づいたずれを **Warning** で報告する。
 
 ## 出力
 

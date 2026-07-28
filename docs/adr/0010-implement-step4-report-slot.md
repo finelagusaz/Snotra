@@ -20,7 +20,7 @@
 
 ## 帰結
 
-- 「出力」は 3 項目から 4 項目になった。**面積 ratchet（G10）は掛からない**——skills 本文は `AREA_BUDGET.alwaysLoaded` の母集団外であり（`scripts/governance-check.mjs`）、課税されるのは frontmatter の `description` だけである。「出力を軽くしたばかりで項目を足してよいか」という #765 の懸念は、**面積予算の問題ではなかった**。
+- 「出力」は 3 項目から 4 項目になった。**面積 ratchet（G-area-budget）は掛からない**——skills 本文は `AREA_BUDGET.alwaysLoaded` の母集団外であり（`scripts/governance-check.mjs`）、課税されるのは frontmatter の `description` だけである。「出力を軽くしたばかりで項目を足してよいか」という #765 の懸念は、**面積予算の問題ではなかった**。
 - `/norm-review` を 2 巡回し、8 件を 1 文ずつで塞いだ。**2 巡目の 3 件のうち 1 件は 1 巡目の塞ぎ自身が作った過剰な全称表現**であり、修正は縮める方向だった（分量予算が塞ぎの膨張を止めた実例）。
 - **`/norm-review` 自身は新設した項目 3 の母集団の外にある**——`AGENTS.md` 表 → `.claude/rules/safety-nets.md` の 2 段間接で到達し、4a が名指しする 6 スキルに含まれない。本変更自身がその実例であり、名前を挙げた残余として残した。
 

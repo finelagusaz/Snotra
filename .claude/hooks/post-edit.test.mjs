@@ -498,7 +498,7 @@ describe("repro の区切り正規化（フック間契約・#768）", () => {
     expect(buildCommand(id, REPO).repro).not.toContain("\\");
   });
 
-  // 実行に使う args は正規化しない（spawnSync は `\` を受け、G9 が引数リテラルを読む）
+  // 実行に使う args は正規化しない（spawnSync は `\` を受け、G-hook-commands が引数リテラルを読む）
   it("実行に使う args は正規化しない", () => {
     expect(buildCommand("clippy", REPO).args).toContain("--workspace");
     expect(buildCommand("core-test", REPO).args).toEqual(["test", "-p", "snotra-core"]);

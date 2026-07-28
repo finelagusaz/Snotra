@@ -63,7 +63,7 @@
 
 ## 利用できるスキル
 
-トリガー（どの変更でどの検査に振るか）の SSOT は `AGENTS.md`「条件別チェック」表、引数の形は各 `SKILL.md` の `argument-hint`。**この表が索引するのは `disable-model-invocation: true` の user 起動専用スキルだけである** — 残りは harness が skill roster を `description` ごと毎セッション注入するため、書き写すと同じ面に二重で課税される（射程は G8 が双方向で固定する）。
+トリガー（どの変更でどの検査に振るか）の SSOT は `AGENTS.md`「条件別チェック」表、引数の形は各 `SKILL.md` の `argument-hint`。**この表が索引するのは `disable-model-invocation: true` の user 起動専用スキルだけである** — 残りは harness が skill roster を `description` ごと毎セッション注入するため、書き写すと同じ面に二重で課税される（射程は G-skill-table が双方向で固定する）。
 
 | スキル（user 起動専用） | 使うとき |
 |---|---|

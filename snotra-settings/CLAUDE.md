@@ -39,7 +39,7 @@ egui ベースの設定・about バイナリ crate。本体（`src-tauri`）と�
 
 - **不変条件**: 色 / 余白 / ScrollArea / フォントサイズを各タブに**直書きしない**。`style` のトークン・ヘルパーを使う（`Color32::from_rgb` 直書きは visual の色編集機能を除き禁止）。
 - タイポグラフィは `style::apply_type_ramp(ctx, heading_semibold)` が Fluent タイプランプ（見出し18 / 本文14 / 副文12）と見出しの Semibold を一括登録する。見出し（`section_heading` / `modal_header`）は Semibold、本文・副文は Regular。`heading_semibold` は `configure_fonts` の戻り値で、Semibold フォント不在時は Regular にフォールバック。`run()` で `apply_win11_theme` の後に呼ぶ。
-- 新タブ・新パーツの追加時は `SETTINGS-DESIGN.md` の「新タブ追加チェックリスト」に従い、逸脱が要る場合は先に同書を更新する。
+- 新タブ・新パーツの追加時は `SETTINGS-DESIGN.md`「新タブ追加チェックリスト」に従い、逸脱が要る場合は先に同書を更新する。
 
 ## egui 実装の注意点
 

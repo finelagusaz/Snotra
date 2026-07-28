@@ -59,7 +59,7 @@ $ARGUMENTS から対象のキャッシュ再利用ロジックを特定し、ソ
 | prefix 拡張 | "do" → "dok" | 通常は単調（安全）— 候補が狭まる方向 |
 | バックスペース | "dok" → "do" | 候補が広がる → full scan 必須 |
 | モード切替 | 通常検索 → slash command / instant command | 別モードの候補は無関係 → full scan 必須 |
-| ライフサイクルリセット | window-shown / Escape | キャッシュ全クリアが必要 |
+| ライフサイクルリセット | ホットキー再表示（`reset_pending`）/ Escape | キャッシュ全クリアが必要 |
 
 ## Step 3 — 状態遷移マトリクス
 

@@ -46,7 +46,7 @@ allowed-tools:
    **不変条件**
    - plan.md に記載の不変条件が実際のコードで成立するか
    - 新規に導入する状態フラグ・プロセス・リソースについて「失敗・異常終了時にどうなるか」が記述されているか
-   - `false` に戻す経路のない `AtomicBool`、`unlisten` のない `listen()`、`kill` のない子プロセスが生まれないか
+   - `false` に戻す経路のない `AtomicBool`、`join()` のない `thread::spawn`、`kill(` のない子プロセスが生まれないか
 
    **スコープ**
    - plan.md の変更範囲が issue の要求に対して過不足ないか（YAGNI 違反・要求未達の両方を確認）

@@ -25,3 +25,5 @@ PR を squash マージする。マージで閉じる issue を決めるのは P
    誤って閉じていたら `gh issue reopen <issue>`（close イベントは履歴に残り、close を契機に動く下流は巻き戻らない。**reopen は回復であって、事前確認を省く免罪符ではない**）
 
 **手順 1 の一覧が「閉じる issue のすべて」になるのは、手順 3 を守り、かつ確認からマージまで PR 本文が変わらなかったときだけである。** 本文を凍結する機構は無く、`gh pr merge --auto` は確認とマージを引き離すため**使わない**。
+
+**`--delete-branch` を付ける前に、そのブランチを base にする open PR が無いことを確認する**（`gh pr list --state open --base <branch> --json number`）。base ブランチを消された PR は GitHub が自動で `CLOSED` にし、**reopen できない**（`Cannot change the base branch of a closed pull request`・実測）。復旧には下流を main の上へ rebase して PR を取り直すことになる（#830 が #829 の取り直しである）。stacked PR では**下流を先にマージするか retarget してから**消す。

@@ -29,6 +29,9 @@ import {
   headingRefDocs,
   checkConfigFieldReachability,
   G12_NO_LAUNCHER_READ,
+  checkNearHeadingRefs,
+  scanNearHeadingRefs,
+  checkCheckSkillEnumeration,
   checkStaleIdentifiers,
   scanStaleIdentifiers,
   staleIdentifierDocs,
@@ -638,6 +641,103 @@ describe("G13 checkStaleIdentifiers（規範の散文に残る、現行語彙に
     expect(v).toContain("specWord");
     expect(v).toContain("codeWord");
     expect(v).not.toContain("docWord"); // 一般の docs は語彙の正本ではない
+  });
+});
+
+describe("G14 checkNearHeadingRefs（正準形に見えて隣接していない見出し参照・#727）", () => {
+  // 守りたい対象 = #725 で実際に書かれた `/start-issue` は「Step 6 — …」の形。
+  // 人の目には正準形に見え、G11 の視界外で、参照先が改番されれば黙って壊れる。
+  const TARGET = { "CLAUDE.md": "## Git/GitHub 運用\n\n本文\n" };
+  const run = (prose, extra = {}) => checkNearHeadingRefs(snap({ ...TARGET, ...extra, "docs/x.md": prose }), ["docs/x.md"]);
+
+  it("助詞が 1 つ挟まった参照は finding（赤）", () => {
+    const f = run("詳細は `CLAUDE.md` の「Git/GitHub 運用」を見よ\n");
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("`CLAUDE.md`「Git/GitHub 運用」と書く");
+  });
+
+  it("隣接形は G11 の担当なので見ない（二重報告しない）", () => {
+    expect(run("詳細は `CLAUDE.md`「Git/GitHub 運用」を見よ\n")).toEqual([]);
+  });
+
+  it("節番号つきの隣接形も G11 の担当（#727 実測: 番号を許さないと直せない指摘が残る）", () => {
+    const s = { "SPEC.md": "### 見た目の規範\n" };
+    expect(checkNearHeadingRefs(snap({ ...s, "docs/x.md": "`SPEC.md` §11「見た目の規範」\n" }), ["docs/x.md"])).toEqual([]);
+  });
+
+  it("節番号 + 助詞は finding で、直し方が節番号を落とさない", () => {
+    const s = { "SPEC.md": "### 見た目の規範\n" };
+    const f = checkNearHeadingRefs(snap({ ...s, "docs/x.md": "`SPEC.md` §11 の「見た目の規範」\n" }), ["docs/x.md"]);
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("`SPEC.md` §11「見た目の規範」と書く");
+  });
+
+  it("着地しない引用は見ない（散文と参照を分ける要）", () => {
+    expect(run("`CLAUDE.md`（ルート）は「何を実現すべきか」を記す\n")).toEqual([]);
+  });
+
+  it("窓幅を超えて離れたものは見ない", () => {
+    expect(run("`CLAUDE.md` はとても長い説明を挟んでから「Git/GitHub 運用」\n")).toEqual([]);
+  });
+
+  it("判定対象外の不混入: 参照でないバッククォート・コードフェンス内", () => {
+    expect(run("`someVar` の「Git/GitHub 運用」\n")).toEqual([]);
+    expect(run("```\n`CLAUDE.md` の「Git/GitHub 運用」\n```\n")).toEqual([]);
+  });
+
+  it("照合件数を返す（「差分ゼロ」と「照合していない」の区別・#497）", () => {
+    const r = scanNearHeadingRefs(snap({ ...TARGET, "docs/x.md": "`CLAUDE.md` の「Git/GitHub 運用」と `CLAUDE.md` の「無い見出し」\n" }), ["docs/x.md"]);
+    expect(r.checked).toBe(2);
+    expect(r.findings).toHaveLength(1);
+  });
+});
+
+describe("G15 checkCheckSkillEnumeration（4a の列挙 ↔ AGENTS.md 表・#778）", () => {
+  // 守りたい対象 = 表へ check スキルを足した人が /implement 4a を直さず、
+  // 新しいスキルが報告母集団から沈黙して落ちる形。
+  const mk = (tableSkills, step4aSkills, files = []) =>
+    snap(
+      {
+        "AGENTS.md": `## 条件別チェック（トリガー → 参照先）\n\n| t | ${tableSkills.join(" ")} |\n\n## 次節\n`,
+        ".claude/skills/implement/SKILL.md": `## Step 4\n\n### 4a. check スキルの実行\n\n変更に応じて ${step4aSkills.join("・")} を実行する。\n\n### 4b. x\n`,
+      },
+      files,
+    );
+  const SKILLS = ["/dry-check", "/race-check"].map((s) => `.claude/skills/${s.slice(1)}/SKILL.md`);
+
+  it("集合が一致すれば findings 無し（緑）", () => {
+    expect(checkCheckSkillEnumeration(mk(["`/dry-check`", "`/race-check`"], ["`/race-check`", "`/dry-check`"], SKILLS))).toEqual([]);
+  });
+
+  it("赤: 表に在って 4a に無い（報告母集団から沈黙して落ちる）", () => {
+    const f = checkCheckSkillEnumeration(mk(["`/dry-check`", "`/race-check`"], ["`/dry-check`"], SKILLS));
+    expect(f.some((x) => x.message.includes("/race-check") && x.message.includes("4a の列挙に無い"))).toBe(true);
+  });
+
+  it("赤: 4a に在って表に無い（起動条件を持たない検査）", () => {
+    const f = checkCheckSkillEnumeration(mk(["`/dry-check`"], ["`/dry-check`", "`/race-check`"], SKILLS));
+    expect(f.some((x) => x.message.includes("/race-check") && x.message.includes("表に無い"))).toBe(true);
+  });
+
+  it("赤: 列挙されたスキルが実在しない（誤記）", () => {
+    const f = checkCheckSkillEnumeration(mk(["`/typo-check`"], ["`/typo-check`"], []));
+    expect(f.some((x) => x.message.includes("実在しない"))).toBe(true);
+  });
+
+  it("判定対象外の不混入: `-check` で終わらないスキルは母集団に入らない", () => {
+    // 表にだけ /plan-review が在っても、4a に無いことを咎めない
+    const s = mk(["`/dry-check`", "`/plan-review`"], ["`/dry-check`"], SKILLS);
+    expect(checkCheckSkillEnumeration(s)).toEqual([]);
+  });
+
+  it("赤: 見出しが変わって節を切り出せない（沈黙で通さない）", () => {
+    const s = snap({ "AGENTS.md": "## 別の見出し\n", ".claude/skills/implement/SKILL.md": "### 4a. x\n`/dry-check`\n" });
+    expect(checkCheckSkillEnumeration(s).some((x) => x.message.includes("見つからない"))).toBe(true);
+  });
+
+  it("赤: 空母集団は明示 fail（沈黙経路の閉塞）", () => {
+    const f = checkCheckSkillEnumeration(mk([], [], []));
+    expect(f.some((x) => x.message.includes("母集団の欠落"))).toBe(true);
   });
 });
 

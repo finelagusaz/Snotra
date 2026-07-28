@@ -41,14 +41,14 @@
 
 **この Phase を先にやる理由**: 消費者を `*Config::default()` へ向ける前に、その `*Config::default()` が既定関数を呼ぶ形になっていなければ、**写しである SSOT へ消費者を向けることになる**。serde の 2 経路（セクション欠落 → `Section::default()` / キー欠落 → `#[serde(default = "…")]`）が食い違ったままになる。
 
-- [ ] `impl Default for GeneralConfig`（`config.rs:158`）の手書き 7 フィールドを、対応する `default_*()` の呼び出しへ置換する。**値は 1 つも変えない**
-- [ ] `impl Default for SearchConfig`（`:274`）の手書きフィールドのうち、**対応する `default_*()` が存在する 4 つ**（`normal_mode` / `folder_mode` / `show_hidden_system` / `history_normalization`）を置換する。**`migemo_enabled` と `include_path_env` には対応する既定関数が無いので、そのまま残す**——無いものを新設しない（同 impl 内で既に 3 フィールドだけ関数を呼んでおり、流儀が割れているのがこの群の症状）
-- [ ] `impl Default for VisualConfig`（`:432`）の `preset: ThemePreset::Obsidian`（`:435`）を `default_theme_preset()` へ置換する
-- [ ] `impl Default for AppearanceConfig` を追加し、`Config::default()` の `appearance:` ブロック（`config.rs:555-562`）を `AppearanceConfig::default()` へ置換する。**legacy な `Option` 3 本（`max_results` / `top_n_history` / `max_history_display`）が `None` のままであることを 1 行ずつ目視で突き合わせる**——誤って `Some(v)` を入れると `migrate_legacy_count_params`（`:785-814`）が黙って `visible_rows` へ昇格させる
-- [ ] `impl Default for HotkeyConfig` を追加し、`Config::default():551-552` と `fallback_hotkey_if_system_shortcut`（`:854-869`）の `"Alt"` / `"Q"` を参照へ置換する
-- [ ] `impl Default for SearchOptions`（`search.rs:66-75`）を `Self::from(&SearchConfig::default())` へ書き換える
-- [ ] **2 経路の一致を固定するテストを追加する**: `toml::from_str::<GeneralConfig>("")` / `<SearchConfig>("")` / `<VisualConfig>("")` が、それぞれ `Section::default()` と等しいこと。**これがフィールド単位の serde 経路を初めて覆う**（既存の `deserialize_minimal_config_uses_defaults` はセクションを丸ごと省略する形で、この経路を通らない）
-- [ ] `cargo test -p snotra-core` が緑であることを確認する
+- [x] `impl Default for GeneralConfig`（`config.rs:158`）の手書き 7 フィールドを、対応する `default_*()` の呼び出しへ置換する。**値は 1 つも変えない**
+- [x] `impl Default for SearchConfig`（`:274`）の手書きフィールドのうち、**対応する `default_*()` が存在する 4 つ**（`normal_mode` / `folder_mode` / `show_hidden_system` / `history_normalization`）を置換する。**`migemo_enabled` と `include_path_env` には対応する既定関数が無いので、そのまま残す**——無いものを新設しない（同 impl 内で既に 3 フィールドだけ関数を呼んでおり、流儀が割れているのがこの群の症状）
+- [x] `impl Default for VisualConfig`（`:432`）の `preset: ThemePreset::Obsidian`（`:435`）を `default_theme_preset()` へ置換する
+- [x] `impl Default for AppearanceConfig` を追加し、`Config::default()` の `appearance:` ブロック（`config.rs:555-562`）を `AppearanceConfig::default()` へ置換する。**legacy な `Option` 3 本（`max_results` / `top_n_history` / `max_history_display`）が `None` のままであることを 1 行ずつ目視で突き合わせる**——誤って `Some(v)` を入れると `migrate_legacy_count_params`（`:785-814`）が黙って `visible_rows` へ昇格させる
+- [x] `impl Default for HotkeyConfig` を追加し、`Config::default():551-552` と `fallback_hotkey_if_system_shortcut`（`:854-869`）の `"Alt"` / `"Q"` を参照へ置換する
+- [x] `impl Default for SearchOptions`（`search.rs:66-75`）を `Self::from(&SearchConfig::default())` へ書き換える
+- [x] **2 経路の一致を固定するテストを追加する**: `toml::from_str::<GeneralConfig>("")` / `<SearchConfig>("")` / `<VisualConfig>("")` が、それぞれ `Section::default()` と等しいこと。**これがフィールド単位の serde 経路を初めて覆う**（既存の `deserialize_minimal_config_uses_defaults` はセクションを丸ごと省略する形で、この経路を通らない）
+- [x] `cargo test -p snotra-core` が緑であることを確認する
 
 ### Phase 2 — src-tauri（fallback の置換 10 箇所）
 

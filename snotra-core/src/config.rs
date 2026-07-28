@@ -111,6 +111,18 @@ pub struct HotkeyConfig {
     pub key: String,
 }
 
+impl Default for HotkeyConfig {
+    /// **既定ホットキーのリテラルはここ 1 か所だけである**（#795）。`modifier` / `key` は必須
+    /// フィールド（serde の既定関数を持たない）ため、`Config::default()` と
+    /// `fallback_hotkey_if_system_shortcut` はどちらもこの実装を経由して読む。
+    fn default() -> Self {
+        Self {
+            modifier: "Alt".to_string(),
+            key: "Q".to_string(),
+        }
+    }
+}
+
 fn default_hotkey_toggle() -> bool {
     true
 }
@@ -159,13 +171,15 @@ impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
             language: default_language(),
-            hotkey_toggle: true,
-            show_on_startup: false,
-            auto_hide_on_focus_lost: true,
-            show_tray_icon: true,
-            ime_off_on_show: false,
-            follow_cursor_monitor: true,
-            auto_update: AutoUpdateMode::Full,
+            hotkey_toggle: default_hotkey_toggle(),
+            show_on_startup: default_show_on_startup(),
+            auto_hide_on_focus_lost: default_auto_hide_on_focus_lost(),
+            show_tray_icon: default_show_tray_icon(),
+            ime_off_on_show: default_ime_off_on_show(),
+            follow_cursor_monitor: default_follow_cursor_monitor(),
+            // `auto_update` だけは名前つき既定関数を持たず `#[serde(default)]` ——
+            // serde が使うのと同じ `AutoUpdateMode::default()`（= `#[default]` の Full）を通す
+            auto_update: AutoUpdateMode::default(),
         }
     }
 }
@@ -274,12 +288,14 @@ pub struct SearchConfig {
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
-            normal_mode: SearchModeConfig::Fuzzy,
-            folder_mode: SearchModeConfig::Fuzzy,
-            show_hidden_system: false,
-            history_normalization: SearchHistoryNormalizationConfig::Disabled,
+            normal_mode: default_search_mode(),
+            folder_mode: default_search_mode(),
+            show_hidden_system: default_show_hidden_system(),
+            history_normalization: default_history_normalization(),
             fuzzy_history_cap_ratio: default_fuzzy_history_cap_ratio(),
             instant_command_prefix: default_instant_command_prefix(),
+            // `migemo_enabled` / `include_path_env` は名前つき既定関数を持たず `#[serde(default)]`
+            // ——serde が使うのと同じ `bool::default()`（= false）であり、無い関数を新設しない
             migemo_enabled: false,
             migemo_min_chars: default_migemo_min_chars(),
             result_limit: None,
@@ -325,6 +341,25 @@ pub struct AppearanceConfig {
     /// `SearchConfig.recent_limit` へ移行し、書き戻さない（`skip_serializing`）。
     #[serde(default, skip_serializing)]
     pub max_history_display: Option<usize>,
+}
+
+impl Default for AppearanceConfig {
+    /// **`window_width` の既定リテラルはここ 1 か所だけである**（#795）。同フィールドは serde の
+    /// 既定関数を持たない（`[appearance]` に無い TOML は parse 失敗 →`.bak` 退避経路へ落ちる。
+    /// `#[serde(default)]` を足すと受理する入力集合が変わるため、意図的に足していない）。
+    ///
+    /// legacy な `Option` 3 本は **`None` でなければならない**——`Some(v)` にすると
+    /// `migrate_legacy_count_params` が黙って `visible_rows` へ昇格させる。
+    fn default() -> Self {
+        Self {
+            visible_rows: None,
+            window_width: 600,
+            show_icons: default_show_icons(),
+            max_results: None,
+            top_n_history: None,
+            max_history_display: None,
+        }
+    }
 }
 
 impl AppearanceConfig {
@@ -432,7 +467,7 @@ pub struct VisualConfig {
 impl Default for VisualConfig {
     fn default() -> Self {
         Self {
-            preset: ThemePreset::Obsidian,
+            preset: default_theme_preset(),
             background_color: default_background_color(),
             input_background_color: default_input_background_color(),
             text_color: default_text_color(),
@@ -547,19 +582,9 @@ impl PathsConfig {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            hotkey: HotkeyConfig {
-                modifier: "Alt".to_string(),
-                key: "Q".to_string(),
-            },
+            hotkey: HotkeyConfig::default(),
             general: GeneralConfig::default(),
-            appearance: AppearanceConfig {
-                visible_rows: None,
-                window_width: 600,
-                show_icons: true,
-                max_results: None,
-                top_n_history: None,
-                max_history_display: None,
-            },
+            appearance: AppearanceConfig::default(),
             visual: VisualConfig::default(),
             paths: PathsConfig {
                 additional: Vec::new(),
@@ -855,10 +880,7 @@ impl Config {
         if !is_system_shortcut(&self.hotkey.modifier, &self.hotkey.key) {
             return false;
         }
-        let default_hotkey = HotkeyConfig {
-            modifier: "Alt".to_string(),
-            key: "Q".to_string(),
-        };
+        let default_hotkey = HotkeyConfig::default();
         eprintln!(
             "[config] system shortcut detected ({}+{}), falling back to default ({}+{})",
             self.hotkey.modifier, self.hotkey.key,
@@ -1665,6 +1687,34 @@ background_color = '#123456'
         assert!(!config.general.ime_off_on_show);
         assert_eq!(config.visual.preset, ThemePreset::Obsidian);
         assert_eq!(config.visual.background_color, "#282828");
+    }
+
+    /// serde は既定を **2 経路**で解決する——「セクションごと欠落 → `Section::default()`」と
+    /// 「キーだけ欠落 → `#[serde(default = "default_X")]`」。この 2 つが食い違うと、**同じ既定が
+    /// TOML の書き方によって変わる**（#795）。空セクションのデシリアライズ結果と `Default` 実装を
+    /// 突き合わせて、フィールド単位でその乖離クラスを塞ぐ。
+    ///
+    /// `deserialize_minimal_config_uses_defaults` はセクションを**丸ごと省略**する形なので
+    /// キー欠落の経路を通らず、この乖離は見えない。
+    ///
+    /// `AppearanceConfig` / `HotkeyConfig` は必須フィールド（`window_width` / `modifier` / `key`）を
+    /// 持ち空文字列から parse できないため、ここでは対象にできない（`Config` 経由でのみ検証可能）。
+    #[test]
+    fn empty_section_deserializes_to_default_general() {
+        let parsed: GeneralConfig = toml::from_str("").expect("空の [general] は既定で埋まる");
+        assert_eq!(parsed, GeneralConfig::default());
+    }
+
+    #[test]
+    fn empty_section_deserializes_to_default_search() {
+        let parsed: SearchConfig = toml::from_str("").expect("空の [search] は既定で埋まる");
+        assert_eq!(parsed, SearchConfig::default());
+    }
+
+    #[test]
+    fn empty_section_deserializes_to_default_visual() {
+        let parsed: VisualConfig = toml::from_str("").expect("空の [visual] は既定で埋まる");
+        assert_eq!(parsed, VisualConfig::default());
     }
 
     #[test]

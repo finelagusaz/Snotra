@@ -134,8 +134,8 @@ issue が「正直なコスト 2（新プロファイルは index を作り直�
   `.github/workflows/e2e.yml` のステップ順序制約——env 化すれば `-SeedConfig` の制約も
   `-RequireResults`（#686）も順序制約も丸ごと不要になるが、**#803 のスコープ外**
   （issue 本文は「副次的な用途」に置いている）。CI ゲートを本 PR の爆風半径に入れない。
-  → **`docs/build-commands.md:147` の順序制約が引き続き有効であることを残余として明記し、
-  follow-up issue を起票する**
+  → **送り先は #804**（起票済み。`docs/build-commands.md:147` の順序制約が引き続き有効である
+  ことは上のチェックリスト項目で文書へ明記する）
 
 ### Phase 4 — 検証
 
@@ -151,7 +151,6 @@ issue が「正直なコスト 2（新プロファイルは index を作り直�
 - [ ] 実行後に**ユーザーの実 config が変更されていないこと**を確認する（`%APPDATA%\Snotra\config.toml` の更新時刻）
 - [ ] **env を設定せずに `cargo run -p snotra` を起動し、既存の設定・履歴・索引がそのまま見えることを確認する**（破壊不変条件の検知手段。下記セルフレビュー 3）
 - [ ] `npm run smoke:egui`（seed のコメントを触るため。`-SeedConfig` 経路が壊れていないこと）
-- [ ] follow-up issue を起票する（`smoke-egui.ps1` / `smoke-startup.ps1` / `e2e.yml` の順序制約を env 化で解消する。Phase 3「触らないと決めたもの」の送り先）
 
 ## 不変条件
 

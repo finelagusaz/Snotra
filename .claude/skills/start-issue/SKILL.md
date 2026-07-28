@@ -55,7 +55,7 @@ git checkout -b <branch-name>
 
 ## Step 3 — 調査と分析（workspace/research.md）
 
-`workspace/research.md`・`workspace/plan.md`・`workspace/plan-snapshot.md`（`/start-issue`「5a. check スキルによる計画検証」がラウンドごとに取る `plan.md` の複製）・`workspace/plan-review/`（ディレクトリごと。`/plan-review`「Step 2 — 並列サブエージェントで検証」のスカウトと「Step 2b — 独立導出 + 差分（常に実施・盲点クラスの漏れ検出）」の成果物。ファイル名が毎回変わるため列挙せず、**新鮮性は「上書き」ではなく `/plan-review` Step 2 が起動前に行う削除が保証する**——上書きは書き手が落ちた回には起きない）が既に存在する場合は上書きする（前回の作業成果物）。**このサイクルで書き直すファイルはここに列挙されたものだけである**——列挙から漏れたものは前サイクルの内容のまま残り、次に読む人が今回の成果物と誤読する（`workspace/measurement.md` が #628 のまま取り残されている実例がある）。
+`workspace/research.md`・`workspace/plan.md`・`workspace/plan-snapshot.md`（`/start-issue`「5a. check スキルによる計画検証」がラウンドごとに取る `plan.md` の複製）・`workspace/plan-review/`（ディレクトリごと。`/plan-review`「Step 2 — 並列サブエージェントで検証」のスカウトと「Step 2b — 独立導出 + 差分（常に実施・盲点クラスの漏れ検出）」の成果物。スカウトの成果物はファイル名が毎回変わるため列挙せず、**新鮮性は「上書き」ではなく `/plan-review` Step 2 が起動前に行う削除が保証する**——上書きは書き手が落ちた回には起きない。同ディレクトリの `ledger.json` だけは名前が固定で、これは成果物ではなく**照合の母集団**である・#831）が既に存在する場合は上書きする（前回の作業成果物）。**このサイクルで書き直すファイルはここに列挙されたものだけである**——列挙から漏れたものは前サイクルの内容のまま残り、次に読む人が今回の成果物と誤読する（`workspace/measurement.md` が #628 のまま取り残されている実例がある）。
 
 `SPEC.md`、関連する `CLAUDE.md`、ソースコードを読み、issue の要求を分析する。
 

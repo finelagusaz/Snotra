@@ -346,7 +346,7 @@ history を B のまま外部 reconcile に置いた場合に当たるが、本�
     ④ 単一定義は `IndexInputs`（config_watcher の kick 判定 + `complete_index_drain` の re-diff で共有）。`needs_reindex` と in-flight `needs_rebuild` を削除
 - **Phase 3 — ドキュメント同期**: `snotra-core/CLAUDE.md`（migemo 二重メンテ記述の更新）/ `src-tauri/CLAUDE.md`（drain 機構）/
   `.claude/rules/*` / **`SPEC.md`（設定の即時反映に関する記述。特に top_n_history 変更が再起動不要になる挙動変更を同期）** /
-  `docs/architecture.md`（「設定管理」節に StaleSet 契約を追記）。`docs/architecture.md` に本設計メモへの参照を追加
+  `docs/architecture.md`「設定管理」節に StaleSet 契約を追記。`docs/architecture.md` に本設計メモへの参照を追加
 
 **検証**: 各 Phase で `docs/build-commands.md` の該当カテゴリ（A: snotra-core test/clippy、B: src-tauri test）を実行。
 

@@ -727,8 +727,10 @@ export function normativeArea(snapshot) {
 // 検査されるのは正準形に書かれたものだけであり、**この検査は規範の完全な代替ではない**。
 // ---------------------------------------------------------------------------
 
-/** 見出し参照の正準形。対象は `<path>.md` か `/skill-name` */
-const HEADING_REF = /`([^`\n]+)`\s*(?:§\s*)?「([^「」\n]+)」/g;
+/** 見出し参照の正準形。対象は `<path>.md` か `/skill-name`。
+ *  `§` には節番号を伴ってよい（`SPEC.md` §11「見た目の規範」）——番号を許さないと、
+ *  節番号つきの参照は正準形へ直しても照合されず、G14 が「直せない指摘」を出し続ける（#727 で実測）。 */
+const HEADING_REF = /`([^`\n]+)`\s*(?:§\s*[\d.]*\s*)?「([^「」\n]+)」/g;
 
 /** 参照先になりうる位置（ATX 見出し / 番号付きリスト項目 / 太字リード） */
 export function collectAnchors(text) {
@@ -742,7 +744,7 @@ export function collectAnchors(text) {
 const normAnchor = (s) => s.replace(/[`*「」\s]/g, "");
 
 /** 参照文字列 → リポジトリ内パス。解決できなければ null */
-function resolveRefTarget(snapshot, doc, target) {
+export function resolveRefTarget(snapshot, doc, target) {
   if (/^\/[a-z0-9-]+$/.test(target)) {
     const p = `.claude/skills/${target.slice(1)}/SKILL.md`;
     return snapshot.files.includes(p) ? p : null;
@@ -804,6 +806,84 @@ export function scanHeadingRefs(snapshot, docs) {
 
 export function checkHeadingRefs(snapshot, docs) {
   return scanHeadingRefs(snapshot, docs).findings;
+}
+
+// ---------------------------------------------------------------------------
+// G14 — 正準形に見えて隣接していない見出し参照（#727）。
+//
+// G11 が見るのはバッククォートを閉じた直後（`§` と空白のみを挟む）に `「` が続く形だけで、
+// **助詞が 1 つ挟まると検査対象から外れる**。人の目には同じ参照に見える:
+//   `/start-issue`「Step 6 — …」      ← G11 が見る
+//   `/start-issue` は「Step 6 — …」   ← 見ない
+// #725 では Claude 自身が書いた 3 件がこの形で、しかも `/implement` の入口判定の中核推論を
+// 支えていた（`/start-issue` が改番されれば黙って壊れる）。
+//
+// **判定の要は窓幅ではなく「引用が実際に着地するか」である。** 近傍に `「…」` があるだけでは
+// 参照と散文の引用（「`SPEC.md`（…）は「何を実現すべきか」を記す」）を分けられない。実測:
+//
+// | 窓幅 | 着地する（＝正準形へ直せる真の参照） | 着地しない（＝散文の引用） |
+// |---|---|---|
+// | 2 | 5 | 8 |
+// | 4 | 7 | 12 |
+// | 8 | **8** | 28 |
+// | 12 | 8 | 34 |
+//
+// 着地条件を課すと、窓を広げても真の参照は 8 件で頭打ちになり、増えるのは無視する側だけである。
+// ゆえに**窓幅 8・着地必須**とした。この形なら誤爆の代償は「散文の引用がたまたま見出しと同名」
+// に限られ、そのときは正準形へ直すのが正しい（G11 の保護下へ入る）。
+//
+// **受容する残余**: 着地しない非隣接参照は見ない。腐った参照（消滅した節を指す散文形）は
+// この検査では捕まらない——歴史記述と区別できないためである（`.claude/rules/governance-docs.md`
+// 「既に消滅した節の名前を正準形で書かない」が規範として担う）。
+// ---------------------------------------------------------------------------
+
+/** 閉じバッククォートから `「` までに挟まってよい最大文字数（実測で頭打ちになる値） */
+const G14_GAP = 8;
+/** 非隣接の近傍参照。gap は最短一致で取る */
+const G14_NEAR_REF = new RegExp("`([^`\\n]+)`([^`\\n]{1," + G14_GAP + "}?)「([^「」\\n]+)」", "g");
+/** G11 が既に見ている隣接形（`§` + 節番号と空白のみを挟む）。HEADING_REF と同じ前提を持つ */
+const G14_ADJACENT = /`[^`\n]+`\s*(?:§\s*[\d.]*\s*)?「/;
+
+export function scanNearHeadingRefs(snapshot, docs) {
+  const findings = [];
+  let checked = 0;
+  const anchorCache = new Map();
+  const anchorsOf = (p) => {
+    if (!anchorCache.has(p)) {
+      const t = snapshot.read(p);
+      anchorCache.set(p, t == null ? null : collectAnchors(t).map(normAnchor));
+    }
+    return anchorCache.get(p);
+  };
+  for (const doc of docs) {
+    const text = snapshot.read(doc);
+    if (text == null) continue; // 読めない文書は G11 が母集団の欠落として報告済み
+    for (const [lineNo, line] of linesOutsideFences(text)) {
+      for (const m of line.matchAll(G14_NEAR_REF)) {
+        const [, target, gap, label] = m;
+        if (!target.endsWith(".md") && !/^\/[a-z0-9-]+$/.test(target)) continue;
+        if (G14_ADJACENT.test(m[0])) continue;
+        const p = resolveRefTarget(snapshot, doc, target);
+        if (p == null) continue;
+        const anchors = anchorsOf(p);
+        if (anchors == null) continue;
+        checked += 1;
+        if (anchors.some((a) => a.startsWith(normAnchor(label)))) {
+          // 節番号は正準形が許すので、直し方の提示から落とさない
+          const section = (gap.match(/§\s*[\d.]+/) ?? [""])[0];
+          const canonical = `\`${target}\`${section ? ` ${section}` : ""}「${label}」`;
+          findings.push(
+            finding(doc, lineNo, `見出し参照が正準形でない（G11 の視界外）: \`${target}\`【${gap}】「${label}」— ${canonical}と書く`),
+          );
+        }
+      }
+    }
+  }
+  return { findings, checked };
+}
+
+export function checkNearHeadingRefs(snapshot, docs) {
+  return scanNearHeadingRefs(snapshot, docs).findings;
 }
 
 // ---------------------------------------------------------------------------
@@ -1072,6 +1152,79 @@ export function checkStaleIdentifiers(snapshot, docs) {
   return scanStaleIdentifiers(snapshot, docs).findings;
 }
 
+// ---------------------------------------------------------------------------
+// G15 — `/implement`「4a. check スキルの実行」の列挙 ↔ `AGENTS.md`「条件別チェック」表（#778）。
+//
+// `/implement`「出力」項目 3 は報告の母集団を 4a の列挙で閉じており、それは表の**写し**である。
+// 乖離すると、表に増えた check スキルが報告母集団から**沈黙して落ちる**。
+//
+// **問題は義務が行為者の視界の外にあることだった。** 同期義務は 4a の括弧書きに書いてあるが、
+// それを実行するのは `AGENTS.md` の表を編集する人であり、その人が `/implement`「出力」を読む
+// 必然性は無い。#765 が塞いだ「実施の有無が報告から消える」より一段手前で、報告を読んでも気づけない。
+//
+// **述語は着手前に現行コーパスへ当てて実測した**（#778 が明示的に要求している。表は rules 参照・
+// grep 指示を含む混成表で、`/plan-review` のような非 check スキルも現れるため）:
+// - 表の `/…-check` = {cache, dry, persistence, race, state, symmetric}（6 件）
+// - 4a の `/…-check` = 同じ 6 件
+// `/plan-review` `/norm-review` は `-check` で終わらないため**構造的に外れる**。`/health-check` は
+// 表に現れない（ルート `CLAUDE.md` のスキル表に在り、そちらは G8 が見る）。
+//
+// これで #778 の (a)（表側へ同期義務を 1 行置く）が不要になった——`AGENTS.md` は G10 の常時ロード面で
+// 余裕が小さいため、機構で吸収できるならそちらが安い。
+// ---------------------------------------------------------------------------
+
+const G15_CHECK_SKILL = /\/[a-z][a-z0-9-]*-check\b/g;
+/** 節を見出しで切り出す（次の同レベル以上の見出しまで）。見つからなければ null */
+function sectionOf(text, headingRe) {
+  const lines = text.split("\n");
+  const start = lines.findIndex((l) => headingRe.test(l));
+  if (start < 0) return null;
+  const level = (lines[start].match(/^#+/) ?? ["#"])[0].length;
+  const rest = lines.slice(start + 1);
+  const end = rest.findIndex((l) => /^#+\s/.test(l) && (l.match(/^#+/) ?? [""])[0].length <= level);
+  return rest.slice(0, end < 0 ? rest.length : end).join("\n");
+}
+
+export function checkCheckSkillEnumeration(snapshot) {
+  const findings = [];
+  const agents = snapshot.read("AGENTS.md");
+  const impl = snapshot.read(".claude/skills/implement/SKILL.md");
+  if (agents == null || impl == null) {
+    return [finding("AGENTS.md", 1, "G15 の母集団が読めない（AGENTS.md か /implement の SKILL.md）")];
+  }
+  const table = sectionOf(agents, /^##\s+条件別チェック/);
+  const step4a = sectionOf(impl, /^###\s+4a\./);
+  if (table == null) findings.push(finding("AGENTS.md", 1, "G15: 「条件別チェック」節が見つからない（見出しが変わった）"));
+  if (step4a == null) findings.push(finding(".claude/skills/implement/SKILL.md", 1, "G15: 「4a.」節が見つからない（見出しが変わった）"));
+  if (findings.length > 0) return findings;
+
+  const setOf = (t) => new Set((t.match(G15_CHECK_SKILL) ?? []).map((s) => s.trim()));
+  const inTable = setOf(table);
+  const in4a = setOf(step4a);
+  // 空母集団は明示 fail（沈黙経路の閉塞）
+  if (inTable.size === 0) findings.push(finding("AGENTS.md", 1, "G15: 表に check スキルが 0 件（母集団の欠落）"));
+  if (in4a.size === 0) findings.push(finding(".claude/skills/implement/SKILL.md", 1, "G15: 4a に check スキルが 0 件（母集団の欠落）"));
+
+  for (const s of inTable) {
+    if (!in4a.has(s)) {
+      findings.push(
+        finding(".claude/skills/implement/SKILL.md", 1, `G15: \`${s}\` が AGENTS.md の表に在るが 4a の列挙に無い（報告母集団から沈黙して落ちる）`),
+      );
+    }
+  }
+  for (const s of in4a) {
+    if (!inTable.has(s)) {
+      findings.push(finding("AGENTS.md", 1, `G15: \`${s}\` が 4a の列挙に在るが AGENTS.md の表に無い（起動条件を持たない検査）`));
+    }
+  }
+  // 列挙されたスキルが実在するか（誤記の検出）
+  for (const s of new Set([...inTable, ...in4a])) {
+    const p = `.claude/skills/${s.slice(1)}/SKILL.md`;
+    if (!snapshot.files.includes(p)) findings.push(finding("AGENTS.md", 1, `G15: \`${s}\` に対応する ${p} が実在しない`));
+  }
+  return findings;
+}
+
 export function runAll(snapshot) {
   const docs = governanceDocs(snapshot);
   const refDocs = headingRefDocs(snapshot);
@@ -1092,13 +1245,16 @@ export function runAll(snapshot) {
     ...checkHookCommands(snapshot),
     ...checkNormativeAreaBudget(snapshot),
     ...checkConfigFieldReachability(snapshot),
+    ...checkCheckSkillEnumeration(snapshot),
   );
   const headingRefs = scanHeadingRefs(snapshot, refDocs);
   findings.push(...headingRefs.findings);
   const stale = scanStaleIdentifiers(snapshot, staleDocs);
   findings.push(...stale.findings);
+  const nearRefs = scanNearHeadingRefs(snapshot, refDocs);
+  findings.push(...nearRefs.findings);
   const area = normativeArea(snapshot);
-  const evidence = `対象文書 ${docs.length} 件 / rules ${snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length} 件 / skills ${snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length} 件 / 恒久規範 常時ロード ${area.always}/${AREA_BUDGET.alwaysLoaded} 字・rules ${area.rules}/${AREA_BUDGET.rules} 字 / 見出し参照 ${headingRefs.checked} 件を ${refDocs.length} 文書から照合 / config フィールド ${G12_CONFIG_PATHS.flatMap((p) => configFields(snapshot.read(p) ?? "")).length} 件の到達性 / 規範の識別子 ${stale.checked} 件を ${staleDocs.length} 文書から照合`;
+  const evidence = `対象文書 ${docs.length} 件 / rules ${snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length} 件 / skills ${snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length} 件 / 恒久規範 常時ロード ${area.always}/${AREA_BUDGET.alwaysLoaded} 字・rules ${area.rules}/${AREA_BUDGET.rules} 字 / 見出し参照 ${headingRefs.checked} 件を ${refDocs.length} 文書から照合 / config フィールド ${G12_CONFIG_PATHS.flatMap((p) => configFields(snapshot.read(p) ?? "")).length} 件の到達性 / 規範の識別子 ${stale.checked} 件を ${staleDocs.length} 文書から照合 / 近傍の見出し参照 ${nearRefs.checked} 件`;
   return { findings, evidence };
 }
 
@@ -1112,6 +1268,6 @@ if (isMain) {
     for (const f of findings) console.error(`  ${f.file}:${f.line}  ${f.message}`);
     process.exitCode = 1;
   } else {
-    console.log(`governance:check — G1..G13 passed（${evidence}）`);
+    console.log(`governance:check — G1..G15 passed（${evidence}）`);
   }
 }

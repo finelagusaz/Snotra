@@ -65,7 +65,7 @@ npm run smoke:manual -- -PostToPr # 記録を PR コメントへ投稿する
 ```powershell
 npm run check:colors                      # 自動判定: main の背景ピクセルを実測し exit code で返す
 npm run check:colors -- -Color '#FFF'     # 3 桁 hex の受理（#680 の 1・パーサ統合の回帰）
-npm run check:colors -- -Interactive      # 判定せず起動し、目視 3 点を読み上げる
+npm run check:colors -- -Interactive      # 判定せず起動し、目視項目を読み上げる
 npm run check:colors -- -Restore          # 異常終了でバックアップが残ったときの回収
 ```
 

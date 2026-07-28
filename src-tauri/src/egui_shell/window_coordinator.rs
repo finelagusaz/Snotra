@@ -56,11 +56,36 @@ pub(crate) fn read_metrics(app: &tauri::AppHandle) -> layout::Metrics {
     layout::Metrics::from_config(f, rp, bp)
 }
 
-/// main の下地（softbuffer の present 前に一瞬見えるネイティブブラシ）を config 色へ合わせる。
-/// **`ResultsWindow::apply_native_background` の main 版**であり、撃つ条件も同じ——show 遷移時と
-/// サイズ変更時だけである（理由と受容した残余は results 側の doc を正本とする）。
-pub(crate) fn apply_main_background(window: &tauri::Window, color: egui::Color32) {
-    let _ = window.set_background_color(Some(super::visual::native_brush_color(color)));
+/// `Color32` を tao のネイティブ背景ブラシ色へ（spec 決定 4）。
+///
+/// **ブラシ側の alpha は 255 に固定する**——softbuffer の clear color が `0x00RRGGBB` で alpha を
+/// 持てず、下地と定常の背景が食い違うと show の一瞬だけ色が変わって見えるためである。両者は
+/// 同じ `Color32` から導くので**必ず一致する**。
+///
+/// **`#RRGGBBAA` の alpha は「無視」されない**——`Color32::from_hex` が RGB を alpha で
+/// premultiply する。命題を測っているのは `visual.rs` の
+/// `background_color_premultiplies_alpha_rather_than_ignoring_it` である（正本はそのテスト）。
+/// ここへ来る時点で RGB は既に減衰済みで、この関数が落とすのは alpha 成分だけである。
+///
+/// **`visual.rs` ではなくここに居る理由**: `visual.rs` は「1 フレーム分のテーマ値と純粋な導出」を
+/// 宣言する module だが、この変換の消費者は**すべてフレームの外**（窓生成・show・リサイズ）に居る。
+/// `egui::Color32` → `tauri::window::Color` は窓の関心であってテーマ導出の関心ではない。
+pub(crate) fn native_brush_color(color: egui::Color32) -> tauri::window::Color {
+    tauri::window::Color(color.r(), color.g(), color.b(), 0xff)
+}
+
+/// 窓の下地（softbuffer の present 前に一瞬見えるネイティブブラシ）を config 色へ合わせる。
+///
+/// **両窓が同じ本体を通る。** main（`show_egui_main` とリサイズ）と results
+/// （`ResultsWindow` が委譲する）で別実装にすると、一手増えたときに片方だけ直る——そして
+/// 乖離の症状は「main と results で下地の色が食い違う」で、**この変更が消したはずのバグと同型**に
+/// なる。文書の相互参照ではなくコードで結ぶ。
+///
+/// **撃つのは下地が露出しうる経路のうち show 遷移時とサイズ変更時である**（全経路ではない——
+/// DPI 変化に伴う物理リサイズは論理サイズが不変ゆえ `size_delta_exceeds` を通らず、撃たれない。
+/// 「main 可視のまま色を変更 → DPI の違うモニターへ移動」の一瞬だけ旧色が出うる・受容する残余）。
+pub(crate) fn apply_native_background(window: &tauri::Window, color: egui::Color32) {
+    let _ = window.set_background_color(Some(native_brush_color(color)));
 }
 
 /// show 経路が**背景色だけ**を読む（`read_metrics` と同方針——色 5 本の parse と font 比較を
@@ -174,7 +199,7 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
     // **show のたびに無条件で撃つ**（spec 決定 3）——エッジ検出は「変化の瞬間に居合わせる」
     // ことを要求するが、hidden 中は update() が走らないため居合わせられない。同値の再設定は
     // 安価であり、show は頻繁な操作でもない。
-    apply_main_background(&window, read_background(app));
+    apply_native_background(&window, read_background(app));
     let _ = window.show();
     // main_visible は show() の後に立てる（WebView2 の show_and_focus_main と同じ「順序不変」
     // 制約）。show 完了前に visible=true を読んだホットキートグルが hide するのを避ける。
@@ -506,4 +531,30 @@ pub(crate) fn drive_results_window(app: &tauri::AppHandle, i: DriveResultsInputs
     // results が新しい色・フォント・行高を描くことを**保証する**唯一の経路がこの
     // level-triggered wake である（入力起因の偶発 wake でも描かれるが、それに依れない）。
     wake_results(app);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ネイティブブラシは alpha を 255 へ固定する。softbuffer の clear color が alpha を
+    /// 持てないため、**下地と定常の背景が食い違わないよう不透明側へ揃える**（spec 決定 4）。
+    /// hex から入る側の premultiply は `visual.rs` の
+    /// `background_color_premultiplies_alpha_rather_than_ignoring_it` が測る（そちらが正本）。
+    #[test]
+    fn native_brush_forces_opaque_alpha() {
+        let c = native_brush_color(egui::Color32::from_rgba_premultiplied(0x12, 0x34, 0x56, 0x80));
+        assert_eq!((c.0, c.1, c.2, c.3), (0x12, 0x34, 0x56, 0xff));
+    }
+
+    /// runtime のフォールバック（`set_clear_color` を呼ばなかったフレームの色）が config の
+    /// 既定背景色と一致することを**機構で**固定する。両 crate に依存するのはこの crate だけで、
+    /// 一致は今まで規約でしかなかった（`snotra-egui-runtime/CLAUDE.md` が受容した残余）。
+    #[test]
+    fn runtime_fallback_matches_config_default_background() {
+        let d = snotra_core::config::VisualConfig::default().background_color;
+        let c = egui::Color32::from_hex(&d).unwrap();
+        let packed = ((c.r() as u32) << 16) | ((c.g() as u32) << 8) | c.b() as u32;
+        assert_eq!(packed, snotra_egui_runtime::CLEAR_COLOR);
+    }
 }

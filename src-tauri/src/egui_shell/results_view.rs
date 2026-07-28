@@ -445,12 +445,7 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         // 背景（clear color）は rows が空でも塗られるからである。旧実装はここが空 rows の
         // early return より後にあり「描かないフレームで lock を取らない」ことを理由にしていたが、
         // clear color を view が決めるようになって「空 rows でも描く」へ変わった。
-        let visual = crate::egui_shell::read_visual(
-            &self.app_handle,
-            crate::egui_shell::VisualApplied {
-                font_family: &self.applied_font_family,
-            },
-        );
+        let visual = crate::egui_shell::read_visual(&self.app_handle, &self.applied_font_family);
         frame.set_clear_color(visual.background);
 
         // app_handle を clone してから State を取る: `shared` の借用を `self.app_handle`

@@ -39,6 +39,15 @@ pub(crate) struct SearchWindowView {
     /// **解決の成否に依らず config 値へ無条件更新する**——未解決名（typo・未インストール）で
     /// 毎フレーム load_system_fonts（数十 ms）が走る perf cliff を避ける（並行性レビュー）。
     applied_font_family: String,
+    /// 直近に適用した下地の色。**`ResultsWindow::last_background` の main 版**（理由はそちらの doc）。
+    ///
+    /// **撤去した `applied_background_hex` とは別物である**——あちらは「config の hex と比較して
+    /// 変化を検出する」エッジ検出で、hidden 中の変化に居合わせられず取りこぼした。これは
+    /// 「実際に Win32 へ撃った色」の memo であり、いつ比較しても差分が正しく出る。
+    ///
+    /// **リサイズ経路だけが持つ**: show 経路（`show_egui_main`）は状態を持たない関数で、頻度も
+    /// ホットキーのトグル程度ゆえ無条件で撃つ。打鍵ごとに走るのはこちらだけである。
+    applied_background: Option<egui::Color32>,
     /// SU6 spec 決定 2: 直近 set_size の幅。main（本 view）が両窓（main・results）の唯一の
     /// size writer に一意化されている（幅は config live-read・#646 PR2 決定 6）。
     last_set_width: f64,
@@ -54,6 +63,7 @@ impl SearchWindowView {
         Self {
             controller: LauncherController::new(app_handle),
             applied_font_family: String::new(),
+            applied_background: None,
             last_set_width: 0.0,
             last_set_height: 52.0,
         }
@@ -238,12 +248,7 @@ impl EguiView for SearchWindowView {
         // 導出は純粋核 visual::visual_snapshot、行高の正本は layout::Metrics::from_config。
         // **ここで読むのは値だけである**: `ctx.set_visuals` / `configure_japanese_font` /
         // ネイティブ背景ブラシの**適用**は従来の位置に残す（描画順の制約があるため）。
-        let visual = crate::egui_shell::read_visual(
-            &app,
-            crate::egui_shell::VisualApplied {
-                font_family: &self.applied_font_family,
-            },
-        );
+        let visual = crate::egui_shell::read_visual(&app, &self.applied_font_family);
         let metrics = &visual.metrics;
 
         // show 直後の resetForShow の消費（検索セッション側のクリアは controller が行う）。
@@ -664,8 +669,13 @@ impl EguiView for SearchWindowView {
                 let _ = window.set_size(tauri::LogicalSize::new(width, height));
                 // **リサイズでも下地が露出する**（SU6 spec 決定 2 の codex 反証。show の一瞬だけ
                 // ではない）。ゆえに show 直前（spec 決定 3）に加えてここでも合わせる。
-                // デルタガードの内側なので毎フレームの Win32 呼び出しにはならない。
-                super::window_coordinator::apply_main_background(&window, visual.background);
+                // **色が変わったときだけ撃つ**——サイズのデルタガードの内側ではあるが、それは
+                // 件数変化のたび＝ほぼ打鍵ごとに開く。同じ色を撃ち直しても得るものは無く、
+                // `InvalidateRect(erase=true)` + `UpdateWindow` の代価だけがかかる。
+                if self.applied_background != Some(visual.background) {
+                    self.applied_background = Some(visual.background);
+                    super::window_coordinator::apply_native_background(&window, visual.background);
+                }
             }
             ui.ctx().request_repaint();
         }

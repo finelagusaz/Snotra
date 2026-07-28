@@ -16,8 +16,9 @@
 //! 反映されなくなる（毎フレーム live-read 方針・#576 / #646 決定 2）。
 //!
 //! **色のパーサは 1 本である**（spec 決定 4 で統合）: `egui::Color32::from_hex`（`#RGB` / `#RGBA` /
-//! `#RRGGBB` / `#RRGGBBAA` を受理）。tao のネイティブ背景ブラシへは `native_brush_color` が
-//! `Color32` から変換する——**alpha は捨てる**（softbuffer の clear color が持てないため）。
+//! `#RRGGBB` / `#RRGGBBAA` を受理）。tao のネイティブ背景ブラシへの変換は
+//! `window_coordinator::native_brush_color` が持つ——**窓の関心であってテーマ導出の関心ではない**
+//! ため、消費者がフレームの外にあるものはここに置かない。
 //! 旧 `config_watcher::parse_hex_color`（`#RRGGBB` 厳格）と 2 本立てだった頃は、`#FFF` を書くと
 //! 描画色だけが白になり下地は既定色へ落ちていた（#680 の 1）。統合で消えたのはこの非対称である。
 
@@ -55,16 +56,12 @@ pub(crate) struct RowTheme {
     pub button_size: f32,
 }
 
-/// 呼び出し側が既に適用済みの値。**guard 内で比較し、変化したときだけ clone する**ための入力。
-pub(crate) struct VisualApplied<'a> {
-    /// 各窓の `applied_font_family`（ctx は窓ごとに独立ゆえ main と results で別々に持つ）。
-    pub font_family: &'a str,
-}
-
 /// 1 フレーム分のテーマ値。main と results の要求の**和集合**である（窓ごとの projection に
 /// 分けない——分けると導出式が再び 2 箇所になる・spec 決定 4）。
 pub(crate) struct VisualSnapshot {
-    /// パネル背景（main のみ使用）。
+    /// **両窓**の背景（softbuffer の clear color）と、その下地であるネイティブブラシ。
+    /// **main 専用ではない**——results も `set_clear_color` に使い、`DriveResultsInputs` を経て
+    /// results 窓のブラシにもなる。`panel_fill` を指す値ではない（決定 2 でその代入は撤去した）。
     pub background: egui::Color32,
     /// TextEdit / overlay 背景（main のみ使用）。
     pub input_bg: egui::Color32,
@@ -78,8 +75,8 @@ pub(crate) struct VisualSnapshot {
     pub metrics: Metrics,
     /// アイコン枠を描くか（results のみ使用）。
     pub show_icons: bool,
-    /// `applied.font_family` と異なるときだけ `Some`。呼び出し側は Some のときだけ
-    /// `font_stack::configure_japanese_font` を呼び、`applied` を更新する。
+    /// 引数の `applied_font_family` と異なるときだけ `Some`。呼び出し側は Some のときだけ
+    /// `font_stack::configure_japanese_font` を呼び、自身の `applied_font_family` を更新する。
     pub font_family_changed: Option<String>,
 }
 
@@ -90,7 +87,7 @@ pub(crate) struct VisualSnapshot {
 pub(crate) fn visual_snapshot(
     v: &VisualConfig,
     show_icons: bool,
-    applied: VisualApplied<'_>,
+    applied_font_family: &str,
 ) -> VisualSnapshot {
     let d = &*DEFAULT_VISUAL;
     let text = hex_or(&v.text_color, &d.text_color);
@@ -114,7 +111,7 @@ pub(crate) fn visual_snapshot(
         // 導出式を書き写さない——行高の正本は Metrics::from_config である。
         metrics: Metrics::from_config(v.font_size, v.row_padding, v.bar_padding),
         show_icons,
-        font_family_changed: (v.font_family != applied.font_family).then(|| v.font_family.clone()),
+        font_family_changed: (v.font_family != applied_font_family).then(|| v.font_family.clone()),
     }
 }
 
@@ -122,23 +119,6 @@ pub(crate) fn visual_snapshot(
 /// `#282828` のリテラルをここへ再手打ちしない（`hex_or` の doc と同方針）。
 pub(crate) fn background_color(hex: &str) -> egui::Color32 {
     hex_or(hex, &DEFAULT_VISUAL.background_color)
-}
-
-/// `Color32` を tao のネイティブ背景ブラシ色へ（spec 決定 4）。
-///
-/// **ブラシ側の alpha は 255 に固定する**——softbuffer の clear color が `0x00RRGGBB` で alpha を
-/// 持てず、下地と定常の背景が食い違うと show の一瞬だけ色が変わって見えるためである。両者は
-/// 同じ `Color32` から導くので**必ず一致する**。
-///
-/// **`#RRGGBBAA` / `#RGBA` の alpha は「無視」されない。** `Color32::from_hex` は 8 桁 / 4 桁を
-/// `from_rgba_unmultiplied` へ通し、そこで **RGB が alpha で premultiply される**（実測:
-/// `#FF000080` → `#80_00_00_80` = 暗い赤、`#FF000000` → 透明 = **黒**）。ここへ来る時点で RGB は
-/// 既に減衰済みであり、この関数が落とすのは alpha 成分だけである。
-///
-/// **パーサは `Color32::from_hex` の 1 本だけ**になった（旧 `config_watcher::parse_hex_color` は
-/// `#RRGGBB` 厳格で、`#FFF` を書くと下地だけ既定色へ落ちていた・#680 の 1）。
-pub(crate) fn native_brush_color(color: egui::Color32) -> tauri::window::Color {
-    tauri::window::Color(color.r(), color.g(), color.b(), 0xff)
 }
 
 /// `#RRGGBB` 等を `Color32` へ。parse 失敗時は既定値（の parse 結果）へ落ちる。
@@ -158,9 +138,6 @@ mod tests {
         VisualConfig::default()
     }
 
-    fn applied_none(font_family: &str) -> VisualApplied<'_> {
-        VisualApplied { font_family }
-    }
 
     /// **本 PR が存在する理由の不変条件**（spec 決定 4 の効果）: 1 つの snapshot の中で、
     /// 行高（metrics）と文字サイズ（row）が**同じ font_size** から導かれる。別々に lock を
@@ -169,7 +146,7 @@ mod tests {
     fn metrics_and_row_sizes_derive_from_the_same_font_size() {
         let mut v = cfg();
         v.font_size = 24;
-        let s = visual_snapshot(&v, true, applied_none(&v.font_family));
+        let s = visual_snapshot(&v, true, &v.font_family);
         assert_eq!(s.row.name_size, 24.0);
         assert_eq!(s.row.path_size, layout::path_size(24) as f32);
         assert_eq!(s.row.status_size, layout::status_size(24) as f32);
@@ -185,11 +162,11 @@ mod tests {
     fn hex_parses_valid_and_falls_back_to_config_default() {
         let mut v = cfg();
         v.text_color = "#E0E0E0".into();
-        let ok = visual_snapshot(&v, true, applied_none(""));
+        let ok = visual_snapshot(&v, true, "");
         assert_eq!(ok.row.name_color, egui::Color32::from_rgb(0xE0, 0xE0, 0xE0));
 
         v.text_color = "not-a-color".into();
-        let bad = visual_snapshot(&v, true, applied_none(""));
+        let bad = visual_snapshot(&v, true, "");
         let d = VisualConfig::default();
         assert_eq!(bad.row.name_color, egui::Color32::from_hex(&d.text_color).unwrap());
     }
@@ -198,9 +175,9 @@ mod tests {
     #[test]
     fn font_family_reported_only_when_changed() {
         let v = cfg();
-        let same = visual_snapshot(&v, true, applied_none(&v.font_family));
+        let same = visual_snapshot(&v, true, &v.font_family);
         assert!(same.font_family_changed.is_none());
-        let diff = visual_snapshot(&v, true, applied_none("Other"));
+        let diff = visual_snapshot(&v, true, "Other");
         assert_eq!(diff.font_family_changed.as_deref(), Some(v.font_family.as_str()));
     }
 
@@ -235,16 +212,5 @@ mod tests {
         );
         // alpha 0 は RGB ごと 0 へ潰れる——`#FF000000` は赤ではなく**黒**になる
         assert_eq!(background_color("#FF000000"), egui::Color32::TRANSPARENT);
-        // 下地と定常は同じ `Color32` から導くので**食い違わない**（設計目標は保たれている）
-        let c = background_color("#FF000080");
-        assert_eq!(native_brush_color(c), tauri::window::Color(0x80, 0x00, 0x00, 0xff));
-    }
-
-    /// ネイティブブラシは alpha を 255 に固定する。softbuffer の clear color が alpha を
-    /// 持てないため、**下地と定常の背景が食い違わないよう不透明側へ揃える**（spec 決定 4）。
-    #[test]
-    fn native_brush_forces_opaque_alpha() {
-        let c = native_brush_color(egui::Color32::from_rgba_premultiplied(0x12, 0x34, 0x56, 0x80));
-        assert_eq!((c.0, c.1, c.2, c.3), (0x12, 0x34, 0x56, 0xff));
     }
 }

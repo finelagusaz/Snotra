@@ -16,6 +16,7 @@
 - [x] **消費者を向ける先（`*Config::default()`）自身が写しではないか** — **写しだった**（ラウンド 2 の独立導出）。`GeneralConfig::default()` は 7 フィールド、`SearchConfig::default()` は 5 フィールド、`VisualConfig::default()` は `preset`、`Config::default()` は hotkey / window_width / show_icons を、`default_*()` を呼ばずに手書きしている。**serde は 2 経路を持つ**——「セクション欠落 → `Section::default()`」と「キー欠落 → `#[serde(default = "default_X")]`」——ので、両者が食い違えば**同じ既定が経路によって変わる**。`SearchConfig::default()` が同一 impl 内で 3 フィールドだけ関数を呼んでいるのが、流儀が割れている証拠。**先にこれを直さないと、写しである SSOT へ消費者を向けることになる**。Phase 1 の先頭へ入れる
 - [x] **2 経路の一致をどう固定するか** — **`toml::from_str::<Section>("") == Section::default()` を General / Search / Visual の 3 型で書く**（ラウンド 2 の独立導出）。既存の `deserialize_minimal_config_uses_defaults` は**セクションを丸ごと省略する**形であり、フィールド単位の serde 経路は現在 1 つもテストされていない。この 1 本が「serde の既定関数 ↔ `Default` 実装」の一致を全フィールド分まとめて固定する
 - [x] **`PRESETS[0]` の位置依存** — **`find(|p| p.preset == ThemePreset::Obsidian)` にする**（ラウンド 2 の settings 層）。配列順への依存は「Obsidian と一致すること」という意図から乖離しうる
+- [x] **収束条件 (ii) を満たさないまま実装へ進むか** — **受容して進む**（裁定の出所: ユーザー発言「受容して進む（推奨）」・2026-07-28）。3 ラウンド（上限）とも (i) 未確定ゼロは成立したが、(ii)「そのラウンドで `plan.md` が動かなかった」が 3 回とも不成立だった。**ラウンド 3 で動いた 6 行は、レビュアーが直し方まで指定した修正（`SearchConfig` の対象を 5 → 4 フィールドへ訂正・`CLAUDE.md` の例外は「3 件目」）と Phase 4 の後始末（`expect()` の明記・`use` の追加・`development-principles.md:71` の例示訂正・#680 の closing 判断）であり、新しい設計判断を含まない。** ゆえに**この 6 行はどのレビューも受けていない**——それを承知で進む
 - [x] **`config.rs:435` の `preset: ThemePreset::Obsidian` を放置するか** — **直す**。`default_theme_preset()`（`:337`）との二重定義であり、`HotkeyConfig` に対して採る修正と同型。ラウンド 1 で指摘されたのにテストの述語だけ直して本体を放置していた（ラウンド 2 の settings 層）
 
 ## 変更ファイル一覧
@@ -110,4 +111,26 @@
 
 ## セルフレビュー
 
-（収束後に 1 度だけ記録する）
+### ループの結果（`/start-issue`「5a. check スキルによる計画検証」）
+
+**3 ラウンド回して打ち切り**（上限）。台帳は全ラウンド 4 エントリで、**12/12 が実在・不着ゼロ**。未確定欄は 3 ラウンドとも 0 件で終えた。**収束条件 (ii) は 3 回とも不成立**で、ユーザー裁定により受容して進む（上記の未確定欄末尾に出所を記録）。
+
+| ラウンド | 計画がどう動いたか |
+|---|---|
+| 1 | 実装形の全面変更（`default_*()` の `pub` 化 → `Default` 実装。`docs/development-principles.md:58`「lib crate の `pub` 項目に `dead_code` は出ない」ゆえ、公開面を増やすことは検出器を失うこと）。対象 8 → 12 箇所 |
+| 2 | **消費者を向ける先（`*Config::default()`）自身が写しだった**。serde の 2 経路が食い違えば同じ既定が経路で変わる。Phase 1 の先頭へ「SSOT 自身を直す」を追加し、2 経路の一致を固定するテストを新設 |
+| 3 | 対象フィールド数の訂正・`CLAUDE.md` 例外の番号・`development-principles.md:71` の例示が偽になる件・#680 が完全に閉じる件 |
+
+**独立導出だけが拾ったもの**: 群 8 の現存（私は確認 grep を `| head -6` で切って「消滅」と誤断定していた——`/plan-review`「列挙の落とし穴（独立再導出が繰り返し拾った 3 クラス）」が名指しする誤りそのもの）、`*Config::default()` 内部の写し、`HotkeyConfig` の二重手書き、`toml::from_str::<Section>("")` の実測。
+
+### 5b の 3 観点
+
+1. **境界条件**: 空 TOML のデシリアライズ（3 型で成功・Appearance/Hotkey は必須フィールドゆえ不可と実測）、legacy な `Option` 3 本が `None` のまま、`String` を返す既定の遅延評価、`&'static` からの `.clone()` の要否——いずれも列挙して検証ケースを Phase 1〜3 へ配置した
+2. **シンプル化の挑戦**: 新しい状態・静的・公開関数を 1 つも導入しない形へ寄せた（`LazyLock<Config>` 静的も `pub` 化も却下）。追加するのは `Default` 実装 2 本とテスト 2 種だけである
+3. **破壊不変条件 + 検知手段**: 4 件を検知手段とセットで表に記した。**最大のリスクは「fallback 値の取り違え」**で、これは型で守れない——12 箇所を 1 行ずつ突き合わせる手順を Phase 2 のチェック項目に落とした
+
+### 受容する残余
+
+- ラウンド 3 で動いた 6 行は未レビューである（上記の裁定）
+- `window_coordinator.rs:189` の読み元の非対称、`launcher_controller.rs:620` の `Language::Ja` の取り違え、`window_width` に serde default が無い不整合は、いずれも Phase 4 で follow-up issue へ送る
+- `scripts/governance-check.mjs:1067` の stale な記述は、セーフティネット変更の regime を引き込むため本 PR では触らない

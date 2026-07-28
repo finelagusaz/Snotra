@@ -30,7 +30,7 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
-use snotra_core::config::{OpenerTool, find_matching_tools};
+use snotra_core::config::{GeneralConfig, OpenerTool, SearchConfig, find_matching_tools};
 use snotra_core::engine::FolderListContext;
 use snotra_core::ui_types::SearchResult;
 use tauri::{Emitter, Manager};
@@ -583,7 +583,7 @@ impl LauncherController {
                     .general
                     .auto_hide_on_focus_lost
             })
-            .unwrap_or(true) // config.rs 既定と一致
+            .unwrap_or_else(|| GeneralConfig::default().auto_hide_on_focus_lost)
     }
 
     /// 設定サイドカー起動中は blur で hide しない（設定が focus を奪っても本体を消さない）。
@@ -595,12 +595,12 @@ impl LauncherController {
     }
 
     /// instant prefix を実行中 config から都度読む（キャッシュしない・#576 と同設計）。
-    /// フィールドは config.search.instant_command_prefix（config.rs:956 で確認済み）。
+    /// フィールドは `SearchConfig::instant_command_prefix`（既定は同 struct の `Default` 実装）。
     fn instant_prefix(&self) -> String {
         self.app_handle
             .try_state::<crate::AppState>()
             .map(|s| s.engine.lock().unwrap().config().search.instant_command_prefix.clone())
-            .unwrap_or_else(|| "@".to_string())
+            .unwrap_or_else(|| SearchConfig::default().instant_command_prefix)
     }
 
     /// index 構築中か（AppState.indexing: AtomicBool・state.rs:14 で確認済み）。

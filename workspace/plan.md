@@ -52,19 +52,19 @@
 
 ### Phase 2 — src-tauri（fallback の置換 10 箇所）
 
-- [ ] `view.rs:84` — `.unwrap_or(f64::from(AppearanceConfig::default().window_width))`
-- [ ] `window_coordinator.rs:189` — 同上（**読み元の非対称は触らない**・下記 Phase 4 で follow-up 起票）
-- [ ] `window_coordinator.rs:430` — `.unwrap_or(AppearanceConfig::default().effective_visible_rows() as u32)`
-- [ ] `window_coordinator.rs:131` — `.unwrap_or_else(|| GeneralConfig::default().follow_cursor_monitor)`
-- [ ] `window_coordinator.rs:243` — `.unwrap_or_else(|| GeneralConfig::default().ime_off_on_show)`
-- [ ] `window_coordinator.rs:384` — `.unwrap_or(default_visual().window_gap)`（群 11）
-- [ ] `window_coordinator.rs:52-55,101` — `VisualConfig::default()` の毎回構築を `default_visual()` へ寄せる。**`:101`（`read_background`）は `default_visual().background_color.clone()` と `.clone()` が要る**（`&'static` から所有値を返すため）
-- [ ] `launcher_controller.rs:586` — `.unwrap_or_else(|| GeneralConfig::default().auto_hide_on_focus_lost)`
-- [ ] `launcher_controller.rs:603` — `.unwrap_or_else(|| default_visual_search_prefix())` 相当（`SearchConfig::default().instant_command_prefix`。**`String` ゆえ `unwrap_or_else` が必須**）
-- [ ] `font_stack.rs:197,205` — `const DEFAULT_FONT_FAMILY` を削除し `default_visual().font_family.clone()` 由来へ（群 8）
-- [ ] `mod.rs:375` — `true` を `AppearanceConfig::default().show_icons` へ。`:372-375` の doc から「`Default` 実装が無いため型から導けず」の記述を消す（**この変更で前提が偽になる**）
-- [ ] `main.rs:371` — `.unwrap_or_else(|| GeneralConfig::default().hotkey_toggle)`
-- [ ] 「`config.rs` 既定と一致」系のコメント 3 箇所（`launcher_controller.rs:586`・`window_coordinator.rs:243`・`main.rs:371`）を削除する——**参照になった以上、一致を主張する注記は無意味であり、残すと「規範で守っている」という誤読を生む**
+- [x] `view.rs:84` — `.unwrap_or(f64::from(AppearanceConfig::default().window_width))`
+- [x] `window_coordinator.rs:189` — 同上（**読み元の非対称は触らない**・下記 Phase 4 で follow-up 起票）
+- [x] `window_coordinator.rs:430` — `.unwrap_or(AppearanceConfig::default().effective_visible_rows() as u32)`
+- [x] `window_coordinator.rs:131` — `.unwrap_or_else(|| GeneralConfig::default().follow_cursor_monitor)`
+- [x] `window_coordinator.rs:243` — `.unwrap_or_else(|| GeneralConfig::default().ime_off_on_show)`
+- [x] `window_coordinator.rs:384` — `.unwrap_or(default_visual().window_gap)`（群 11）
+- [x] `window_coordinator.rs:52-55,101` — `VisualConfig::default()` の毎回構築を `default_visual()` へ寄せる。**`:101`（`read_background`）は `default_visual().background_color.clone()` と `.clone()` が要る**（`&'static` から所有値を返すため）
+- [x] `launcher_controller.rs:586` — `.unwrap_or_else(|| GeneralConfig::default().auto_hide_on_focus_lost)`
+- [x] `launcher_controller.rs:603` — `.unwrap_or_else(|| default_visual_search_prefix())` 相当（`SearchConfig::default().instant_command_prefix`。**`String` ゆえ `unwrap_or_else` が必須**）
+- [x] `font_stack.rs:197,205` — `const DEFAULT_FONT_FAMILY` を削除し `default_visual().font_family.clone()` 由来へ（群 8）
+- [x] `mod.rs:375` — `true` を `AppearanceConfig::default().show_icons` へ。`:372-375` の doc から「`Default` 実装が無いため型から導けず」の記述を消す（**この変更で前提が偽になる**）
+- [x] `main.rs:371` — `.unwrap_or_else(|| GeneralConfig::default().hotkey_toggle)`
+- [x] 「`config.rs` 既定と一致」系のコメント 3 箇所（`launcher_controller.rs:586`・`window_coordinator.rs:243`・`main.rs:371`）を削除する——**参照になった以上、一致を主張する注記は無意味であり、残すと「規範で守っている」という誤読を生む**
 
 ### Phase 3 — 不変条件のテスト（置換で消せない群 10）
 

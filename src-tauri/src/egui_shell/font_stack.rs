@@ -192,17 +192,17 @@ pub(super) fn configure_japanese_font(context: &egui::Context, font_family: &str
 }
 
 /// config font_family が未設定・`AppState` 未 manage のときのフォールバック値。
-/// `view.rs` と `results_view.rs` の両方が同一リテラルを使っていた重複を 1 箇所へ寄せる
-/// （#666 段 3 タスク 1・dry-check）。
-const DEFAULT_FONT_FAMILY: &str = "Segoe UI";
-
 /// `AppState` から現在の config font_family を読む。`AppState` が未 manage（起動極初期）
-/// なら [`DEFAULT_FONT_FAMILY`] へ落ちる。`view.rs` の `setup` と `results_view.rs` の
-/// `setup` が同一の 4 行を持っていた重複をここへ寄せる（#666 段 3 タスク 1・dry-check）。
+/// なら既定の font_family（正本は `visual::default_visual()`）へ落ちる。`view.rs` の `setup` と
+/// `results_view.rs` の `setup` が同一の 4 行を持っていた重複をここへ寄せる
+/// （#666 段 3 タスク 1・dry-check）。
+///
+/// **既定値のリテラルをここへ再手打ちしない**（#795）——`"Segoe UI"` を書くと `config.rs` の
+/// `default_font_family()` と乖離しうる 2 つ目の表現になる。
 pub(super) fn font_family_from_config(app: &tauri::AppHandle) -> String {
     app.try_state::<crate::AppState>()
         .map(|s| s.engine.lock().unwrap().config().visual.font_family.clone())
-        .unwrap_or_else(|| DEFAULT_FONT_FAMILY.to_string())
+        .unwrap_or_else(|| super::visual::default_visual().font_family.clone())
 }
 
 #[cfg(test)]

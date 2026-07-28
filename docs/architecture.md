@@ -101,7 +101,7 @@ Tauri wry plugin で Tao イベントを受け、egui 入力・Win32 IME composi
 ### データ永続化
 
 - 履歴/インデックス/アイコン/ウィンドウ位置は `.tmp` を使った原子的書き込み
-- `%APPDATA%\Snotra\` にファイル分割保存: `index.bin`, `icons.bin`, `history.bin`, `window.bin`, `config.toml`
+- `%APPDATA%\Snotra\` にファイル分割保存: `index.bin`, `icons.bin`, `history.bin`, `window.bin`, `config.toml`（既定。`SNOTRA_CONFIG_DIR` による上書きは `SPEC.md` §13 が正本）
 - バイナリファイルは先頭に `magic + u32 version` ヘッダ。読み込みはバージョンフォールバック
 - アイコンは検索時にオンデマンドで抽出し PNG バイト列としてキャッシュ。`icons.bin` は初回アイコン取得時に遅延ロード
 

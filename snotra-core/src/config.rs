@@ -5,8 +5,13 @@
 //! `Config` を作る全経路が通す前提で書く。
 
 use serde::{Deserialize, Serialize};
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+/// 保存先ディレクトリを上書きする環境変数（#803）。
+/// 検証・デバッグで実 config を壊さずに別プロファイルで起動するための開発向けハッチ。
+const ENV_CONFIG_DIR: &str = "SNOTRA_CONFIG_DIR";
 
 pub use crate::error::ConfigError;
 // opener マッチングエンジン・プリセット検出は `opener.rs` に分離済み（issue #435）。
@@ -653,8 +658,32 @@ impl Config {
         }
     }
 
+    /// 設定・履歴・索引・アイコン・ウィンドウ位置を置くディレクトリ。
+    ///
+    /// 既定は `dirs::config_dir()/Snotra`（Windows では `%APPDATA%\Snotra`）で、
+    /// 環境変数 `SNOTRA_CONFIG_DIR` を設定するとその値が**そのまま**保存先になる。
+    /// **この crate で保存先を導く経路はここ 1 つだけ**であり、`config.toml` /
+    /// `history.bin` / `index.bin` / `icons.bin` / `window.bin` のすべてがここから派生する。
     pub fn config_dir() -> Option<PathBuf> {
-        dirs::config_dir().map(|p| p.join("Snotra"))
+        Self::config_dir_from(std::env::var_os(ENV_CONFIG_DIR), dirs::config_dir())
+    }
+
+    /// `config_dir()` の判定核（env を読まないので並列テストから安全に測れる）。
+    ///
+    /// - 上書きは**そのまま**使い、`Snotra` を付け足さない。既定側だけが付ける
+    ///   この非対称は意図的である——検証スクリプトが渡したパスの下に更に階層を作らせないため。
+    /// - **空文字は「未設定」として扱う。** `PathBuf::from("")` は相対パスであり、
+    ///   そのまま使うと `config.toml` がカレントディレクトリへ落ちる。
+    /// - **展開も絶対化もしない。** Windows は `var_os` の `%VAR%` を展開せず、相対パスは
+    ///   CWD 起点になる。**不正な値を既定へ落とす設計にはしない**——書き損じたときに既定へ
+    ///   落ちると検証がユーザーの実 config を触ってしまい、この env ハッチの目的が裏返る。
+    fn config_dir_from(override_dir: Option<OsString>, base: Option<PathBuf>) -> Option<PathBuf> {
+        if let Some(dir) = override_dir
+            && !dir.is_empty()
+        {
+            return Some(PathBuf::from(dir));
+        }
+        base.map(|p| p.join("Snotra"))
     }
 
     pub fn config_path() -> Option<PathBuf> {
@@ -1142,6 +1171,90 @@ pub fn is_system_shortcut(modifier: &str, key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -- config_dir_from: 保存先の導出（#803。env に触れず純粋関数で全分岐を測る） --
+
+    /// 上書きは**そのまま**使い、`Snotra` を付け足さない（既定側だけが足す非対称）。
+    /// 壊れると検証スクリプトが渡した temp パスの下に更に階層ができ、seed が読まれない。
+    #[test]
+    fn config_dir_from_uses_override_verbatim() {
+        let got = Config::config_dir_from(
+            Some(OsString::from(r"C:\tmp\snotra-profile")),
+            Some(PathBuf::from(r"C:\Users\x\AppData\Roaming")),
+        );
+        assert_eq!(got, Some(PathBuf::from(r"C:\tmp\snotra-profile")));
+    }
+
+    /// env 未設定なら既定（`<base>/Snotra`）。既存ユーザーのデータが動かないことの中核。
+    #[test]
+    fn config_dir_from_falls_back_to_base_when_env_absent() {
+        let got = Config::config_dir_from(None, Some(PathBuf::from(r"C:\Users\x\AppData\Roaming")));
+        assert_eq!(
+            got,
+            Some(PathBuf::from(r"C:\Users\x\AppData\Roaming\Snotra"))
+        );
+    }
+
+    /// 空文字は「未設定」。`PathBuf::from("")` は相対パスなので、そのまま使うと
+    /// `config.toml` がカレントディレクトリへ落ちる（CWD 流出の防止）。
+    #[test]
+    fn config_dir_from_falls_back_to_base_when_env_is_empty() {
+        let got = Config::config_dir_from(
+            Some(OsString::new()),
+            Some(PathBuf::from(r"C:\Users\x\AppData\Roaming")),
+        );
+        assert_eq!(
+            got,
+            Some(PathBuf::from(r"C:\Users\x\AppData\Roaming\Snotra"))
+        );
+    }
+
+    /// `dirs::config_dir()` が解決できない極端な環境では `None`。
+    /// `load_reporting` / `save` の early-return 契約を保つ。
+    #[test]
+    fn config_dir_from_is_none_without_override_or_base() {
+        assert_eq!(Config::config_dir_from(None, None), None);
+    }
+
+    /// 上書きは**展開も絶対化もしない**。Windows は `var_os` の `%VAR%` を展開せず、
+    /// 相対パスは CWD 起点になる。**拒否して既定へ落とす設計にはしない**——書き損じたときに
+    /// 既定へ落ちると、検証がユーザーの実 config を触る（この issue が消そうとしている当のもの）。
+    /// そのまま使えば変な場所へ隔離されるだけで実データには届かない。
+    #[test]
+    fn config_dir_from_does_not_expand_or_absolutize_override() {
+        let base = Some(PathBuf::from(r"C:\Users\x\AppData\Roaming"));
+        assert_eq!(
+            Config::config_dir_from(Some(OsString::from("profile")), base.clone()),
+            Some(PathBuf::from("profile")),
+            "相対パスはそのまま返す（既定へ落とさない）"
+        );
+        assert_eq!(
+            Config::config_dir_from(Some(OsString::from(r"%TEMP%\Snotra")), base),
+            Some(PathBuf::from(r"%TEMP%\Snotra")),
+            "%VAR% は展開しない"
+        );
+    }
+
+    /// `config_dir()` の**結線**を pin する。`config_dir_from` は `base` を注入するので、
+    /// 「既定側が `dirs::config_dir()` であること」は純粋関数のテストからは見えない——
+    /// そこを `dirs::config_local_dir()`（Windows では LocalAppData）へ書き換えても
+    /// 他の 5 本は緑のままである（実測でフォールトインジェクション済み）。
+    /// 全ユーザーのデータが黙って別の場所へ移る回帰の検出器。
+    ///
+    /// env を**読むだけ**（`set_var` しない）ので並列実行から安全。周囲の env がどちらでも
+    /// 対応する分岐を assert するため、**skip して黙る経路を持たない**。
+    #[test]
+    fn config_dir_is_wired_to_dirs_config_dir_with_snotra_suffix() {
+        match std::env::var_os(ENV_CONFIG_DIR) {
+            Some(v) if !v.is_empty() => {
+                assert_eq!(Config::config_dir(), Some(PathBuf::from(v)));
+            }
+            _ => assert_eq!(
+                Config::config_dir(),
+                dirs::config_dir().map(|p| p.join("Snotra"))
+            ),
+        }
+    }
 
     /// #646 PR1: 新キー欠落の旧 config は serde default(6/28)で読める(後方互換・移行不要)。
     #[test]

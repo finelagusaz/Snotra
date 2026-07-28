@@ -75,7 +75,11 @@ if ($SeedConfig) {
     $dummy = Join-Path $scanDir "zsnotrasmoke.exe"
     if (-not (Test-Path $dummy)) { New-Item -ItemType File -Path $dummy | Out-Null }
     $scanDirToml = $scanDir -replace '\\', '/'
-    # 最小の有効 TOML。[hotkey]/[appearance]/[paths] は #[serde(default)] 無しの必須セクションで、
+    # 最小の有効 TOML。**scripts/visual-check-colors.ps1 が同型の seed を持つ**（必須セクションの
+    # 根拠は共通なので、片方だけ直さないこと）。あちらは検証用プロファイルへ書くので既存 config を
+    # 気にせず、results 窓を出さないため [[paths.scan]] を持たない。共通ヘルパーにしないのは、
+    # この smoke が e2e.yml の -RequireResults ゲートに載る CI 経路だからである（#803 で分離を判断）。
+    # [hotkey]/[appearance]/[paths] は #[serde(default)] 無しの必須セクションで、
     # 空 TOML は parse 失敗し「破損復旧」経路（stderr 診断 + config.toml.bak 退避 + 復旧バルーン）を
     # 毎回踏んでしまう（PR #659 レビューで検出）。値は config.rs の既定と同一
     # （hotkey Alt+Q = 本スクリプト既定の -HotkeyVks 18,81 と一致）。

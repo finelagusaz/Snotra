@@ -23,6 +23,11 @@ pub type SettingsProcessState = Mutex<Option<Child>>;
 /// Temporarily disables main window alwaysOnTop while the child is alive
 /// and restores it when the child exits.
 ///
+/// **子は親の環境変数を継承する**（`Command` の既定）。`snotra-settings` が本体と同じ
+/// `config.toml` を見るのはこれに依存しており、`SNOTRA_CONFIG_DIR`（`SPEC.md` §13）で
+/// プロファイルを切り替えたときも同じ場所を見る。**`.env_clear()` / `.env_remove()` を
+/// 足すと、この一致が沈黙して壊れる。**
+///
 /// # Errors
 /// Returns `Err` if the executable is not found or spawning fails.
 /// On first-run, failure leaves `indexing=true` permanently unless the caller

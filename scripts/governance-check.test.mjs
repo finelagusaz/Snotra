@@ -638,6 +638,12 @@ describe("G12 checkConfigFieldReachability", () => {
     const withPlain = `${config}\n\n/// 検出結果であって config のキーではない\npub struct OpenerPreset {\n    pub never_read: u8,\n}\n`;
     expect(check({ ...base, "snotra-core/src/config.rs": withPlain })).toEqual([]);
   });
+  it("CRLF でも derive 判定のブロック切り出しが壊れない（CI の Windows checkout・autocrlf=true で実測）", () => {
+    const crlf = (s) => s.replaceAll("\n", "\r\n");
+    // Deserialize を持たない struct が後ろに続く形。空行分割が壊れると母集団へ混じって赤になる
+    const withPlain = crlf(`${config}\n\n/// config のキーではない\npub struct OpenerPreset {\n    pub never_read: u8,\n}\n`);
+    expect(check({ ...base, "snotra-core/src/config.rs": withPlain })).toEqual([]);
+  });
   it("赤: 期待する struct が抽出できない（抽出アンカーの部分腐敗）", () => {
     const f = checkConfigFieldReachability(snap(base), table, ["VisualConfig", "GoneConfig"]);
     expect(f.some((x) => x.message.includes("部分腐敗"))).toBe(true);

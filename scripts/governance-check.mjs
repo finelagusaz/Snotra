@@ -916,9 +916,11 @@ export function configFields(text) {
   const production = productionOnly(text);
   const out = [];
   for (const m of production.matchAll(/pub struct (\w+)\s*\{([\s\S]*?)\n\}/g)) {
-    const before = production.slice(0, m.index);
-    // 直前の空行区切りブロック（derive + 属性 + doc コメント）に Deserialize があるか
-    if (!/#\[derive\([^\]]*\bDeserialize\b/.test(before.slice(before.lastIndexOf("\n\n") + 1))) continue;
+    // 直前の空行区切りブロック（derive + 属性 + doc コメント）に Deserialize があるか。
+    // **空行の分割は CRLF 対応で行う**——`lastIndexOf("\n\n")` は CI の Windows checkout
+    // （autocrlf=true）で見つからず、ブロックが全文へ広がって母集団が壊れる（PR #793 の CI で実測）
+    const attrs = production.slice(0, m.index).split(/\r?\n[ \t]*\r?\n/).pop() ?? "";
+    if (!/#\[derive\([^\]]*\bDeserialize\b/.test(attrs)) continue;
     for (const f of m[2].matchAll(/^\s*pub (\w+):/gm)) out.push({ struct: m[1], field: f[1] });
   }
   return out;

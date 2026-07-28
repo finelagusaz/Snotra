@@ -25,7 +25,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use serde_json::json;
-use snotra_core::config::{Config, HotkeyConfig, Language, LoadOutcome};
+use snotra_core::config::{Config, GeneralConfig, HotkeyConfig, Language, LoadOutcome};
 use snotra_core::engine::Engine;
 use snotra_core::history::HistoryStore;
 use snotra_core::indexer;
@@ -368,7 +368,7 @@ fn setup_hotkey_listener(app_handle: &AppHandle) {
             && app_state
                 .as_ref()
                 .map(|s| s.engine.lock().unwrap().config().general.hotkey_toggle)
-                .unwrap_or(true); // config.rs 既定と一致
+                .unwrap_or_else(|| GeneralConfig::default().hotkey_toggle);
         match egui_shell::plan_hotkey(visible, is_alt_pressed(), hotkey_toggle) {
             egui_shell::HotkeyPlan::HideNow => {
                 egui_shell::hide_egui_main(&handle_for_hotkey);

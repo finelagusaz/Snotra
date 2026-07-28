@@ -64,13 +64,10 @@ pub struct SearchOptions {
 }
 
 impl Default for SearchOptions {
+    /// `SearchConfig` の既定から導く——4 値を再手打ちすると `config.rs` と乖離しうる（#795）。
+    /// 本番経路は `SearchOptions::from(&config.search)` を直接使い、この `Default` はテストが使う。
     fn default() -> Self {
-        Self {
-            normalization: SearchHistoryNormalizationConfig::Disabled,
-            fuzzy_history_cap_ratio: 0.30,
-            migemo_enabled: false,
-            migemo_min_chars: 2,
-        }
+        Self::from(&SearchConfig::default())
     }
 }
 

@@ -82,6 +82,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::time::Instant;
 
+use snotra_core::config::AppearanceConfig;
 use snotra_egui_runtime::EguiRuntime;
 use tauri::{Listener, Manager};
 
@@ -369,10 +370,13 @@ pub(crate) fn read_visual(app: &tauri::AppHandle, applied_font_family: &str) -> 
             // guard 内で行うのは hex parse と算術と &str 比較まで。I/O や重い確保を足さない。
             visual::visual_snapshot(&config.visual, config.appearance.show_icons, applied_font_family)
         }
-        // AppState 不在（setup 完了前の理論経路のみ）。`AppearanceConfig` には `Default` 実装が
-        // 無いため show_icons だけは型から導けずリテラルになる——SSOT は snotra-core の
-        // `default_show_icons`（= true）で、撤去前の `.unwrap_or(true)` と同値。
-        None => visual::visual_snapshot(visual::default_visual(), true, applied_font_family),
+        // AppState 不在（setup 完了前の理論経路のみ）。既定は型から導く——`AppearanceConfig` に
+        // `Default` 実装を与えたことで show_icons のリテラルが不要になった（#795）。
+        None => visual::visual_snapshot(
+            visual::default_visual(),
+            AppearanceConfig::default().show_icons,
+            applied_font_family,
+        ),
     }
 }
 

@@ -317,3 +317,67 @@ fn theme_card(ui: &mut egui::Ui, label: &str, colors: &[&str; 5], active: bool) 
 
     response
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{PRESETS, PresetDef, preset_matches};
+    use snotra_core::config::{Config, ThemePreset};
+
+    /// 既定 config は Obsidian プリセットと一致していなければならない（#795 群 10）。
+    ///
+    /// **置換では消せない写しなのでテストで固定する**（型を変えない判断の理由は
+    /// `docs/adr/ADR-config-default-fallback-references.md`）。
+    ///
+    /// **UI と同じ述語（`preset_matches`）を通すのが要点である。** カードの強調は
+    /// `preset_matches` の結果そのもの（`is_active`）で決まり、色 5 本を
+    /// `eq_ignore_ascii_case` で比べる。`assert_eq!` で 1 本ずつ比較すると
+    /// **UI が守っている不変条件より厳しい主張**になる（大文字小文字の違いだけで落ちる）。
+    ///
+    /// 壊れると: まっさらな初回起動で**どのプリセットカードも強調されず**、かつ
+    /// 「カスタムテーマとして保存」ボタンが最初から出る。
+    #[test]
+    fn default_config_matches_obsidian_preset() {
+        let obsidian = PRESETS
+            .iter()
+            .find(|p| p.preset == ThemePreset::Obsidian)
+            .expect("Obsidian プリセットが PRESETS から消えた");
+        assert!(
+            preset_matches(&Config::default(), obsidian),
+            "既定 config が Obsidian プリセットと一致しない。既定色を変えるなら Obsidian \
+             プリセットも同じ変更で直すこと（snotra-core の VisualConfig::default() と \
+             本ファイルの PRESETS）"
+        );
+
+        // **網羅性ガード**（`..` を使わないこと・`app.rs` の `field_mutations` と同型）:
+        // `PresetDef` にフィールドが増えるとここがコンパイルエラーになり、下の変異を
+        // 足すまで検出が続く。これが無いと、6 色目を足しても変異が当たらないまま緑になる。
+        let PresetDef {
+            preset: _,
+            label: _,
+            bg: _,
+            input_bg: _,
+            text: _,
+            selected: _,
+            hint: _,
+        } = obsidian;
+
+        // 上の assert が空虚に真でないことを、**複製に変異を当てて**確かめる
+        // （`.claude/rules/safety-nets.md`「稼働中のガードを弱めず複製に変異を当てる」）。
+        // **5 色すべてに当てる**——1 本だけだと、残り 4 本が述語の `&&` から抜け落ちても緑を通る。
+        let drifts = |name: &str, set: fn(&mut Config)| {
+            let mut drifted = Config::default();
+            set(&mut drifted);
+            assert!(
+                !preset_matches(&drifted, obsidian),
+                "{name} を変えても一致してしまう——preset_matches がその色を見ていない"
+            );
+        };
+        drifts("background_color", |c| c.visual.background_color = "#123456".to_string());
+        drifts("input_background_color", |c| {
+            c.visual.input_background_color = "#123456".to_string()
+        });
+        drifts("text_color", |c| c.visual.text_color = "#123456".to_string());
+        drifts("selected_row_color", |c| c.visual.selected_row_color = "#123456".to_string());
+        drifts("hint_text_color", |c| c.visual.hint_text_color = "#123456".to_string());
+    }
+}

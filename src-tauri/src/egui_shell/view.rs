@@ -24,6 +24,7 @@
 //! フォント解決と登録は `font_stack`（独立モジュールへ切り出した理由は `font_stack.rs` の
 //! `//!`・#666 段 3 タスク 1）。
 
+use snotra_core::config::AppearanceConfig;
 use snotra_egui_runtime::{EguiView, RuntimeFrame};
 use tauri::Manager;
 
@@ -81,7 +82,7 @@ impl SearchWindowView {
             .app()
             .try_state::<crate::AppState>()
             .map(|s| f64::from(s.engine.lock().unwrap().config().appearance.window_width))
-            .unwrap_or(600.0)
+            .unwrap_or_else(|| f64::from(AppearanceConfig::default().window_width))
     }
 }
 

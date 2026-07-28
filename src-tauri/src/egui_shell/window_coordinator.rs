@@ -25,6 +25,8 @@
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
+use snotra_core::config::{AppearanceConfig, GeneralConfig};
+
 use tauri::Manager;
 
 use super::layout;
@@ -39,8 +41,8 @@ use super::{EguiShellState, ResultsWindow};
 /// (/simplify: 独立実装 2 箇所でフォールバックが 52.0/43.0 に乖離していた)。
 /// 本関数が `read_visual` と別に在るのは、show 経路が高さだけを要り色 parse を払わないため
 /// （`mod.rs` の `read_visual` の doc と対）。
-/// AppState 不在(setup 完了前の理論経路のみ)は `VisualConfig::default()` から導出——
-/// 既定値の正本(config.rs の default_*)に追従し、リテラル再手打ちを持たない。
+/// AppState 不在(setup 完了前の理論経路のみ)は `visual::default_visual()` から導出——
+/// 理由は本体のコメントに置く。
 pub(crate) fn read_metrics(app: &tauri::AppHandle) -> layout::Metrics {
     let (f, rp, bp) = app
         .try_state::<crate::AppState>()
@@ -50,7 +52,9 @@ pub(crate) fn read_metrics(app: &tauri::AppHandle) -> layout::Metrics {
             (v.font_size, v.row_padding, v.bar_padding)
         })
         .unwrap_or_else(|| {
-            let v = snotra_core::config::VisualConfig::default();
+            // 既定 VisualConfig の正本は `visual::default_visual()`（`LazyLock` 静的）である——
+            // ここで `VisualConfig::default()` を組むと String 6 本を毎回確保し、既定源も 2 つになる
+            let v = super::visual::default_visual();
             (v.font_size, v.row_padding, v.bar_padding)
         });
     layout::Metrics::from_config(f, rp, bp)
@@ -98,7 +102,7 @@ pub(crate) fn read_background(app: &tauri::AppHandle) -> egui::Color32 {
     let hex = app
         .try_state::<crate::AppState>()
         .map(|s| s.engine.lock().unwrap().config().visual.background_color.clone())
-        .unwrap_or_else(|| snotra_core::config::VisualConfig::default().background_color);
+        .unwrap_or_else(|| super::visual::default_visual().background_color.clone());
     super::visual::background_color(&hex)
 }
 
@@ -128,7 +132,7 @@ fn position_on_target_monitor(
     let follow_cursor = app_handle
         .try_state::<crate::AppState>()
         .map(|s| s.engine.lock().unwrap().config().general.follow_cursor_monitor)
-        .unwrap_or(true);
+        .unwrap_or_else(|| GeneralConfig::default().follow_cursor_monitor);
 
     // Determine target monitor work area.
     let target_wa = if follow_cursor {
@@ -186,6 +190,9 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
             .inner_size()
             .ok()
             .map(|s| s.to_logical::<f64>(window.scale_factor().unwrap_or(1.0)).width)
+            // **ここは `appearance.window_width` の消費者ではない**——読み元は OS の
+            // `inner_size()` で、既定幅 600 と一致しているのは偶然である。参照へ寄せない理由は
+            // `docs/adr/ADR-config-default-fallback-references.md`。読み元自体は #824 で決める。
             .unwrap_or(600.0);
         // 折りたたみ高 = bar_height(#646 決定 2)。52 固定だと font 連動後の実バー高と
         // ずれ、position クランプが誤った高さで効く(このブロック冒頭の reset-on-show
@@ -240,7 +247,7 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
         let ime_control = app
             .try_state::<crate::AppState>()
             .map(|s| s.engine.lock().unwrap().config().general.ime_off_on_show)
-            .unwrap_or(false); // config.rs の既定値と一致
+            .unwrap_or_else(|| GeneralConfig::default().ime_off_on_show);
         if ime_control
             && let Some(bridge) = app.try_state::<std::sync::Mutex<crate::platform::PlatformBridge>>()
             && let Ok(b) = bridge.lock()
@@ -381,7 +388,7 @@ pub(crate) fn position_results_below_main(app: &tauri::AppHandle) -> Option<i32>
     let gap = app
         .try_state::<crate::AppState>()
         .map(|s| s.engine.lock().unwrap().config().visual.window_gap)
-        .unwrap_or(4);
+        .unwrap_or_else(|| super::visual::default_visual().window_gap);
     let (Ok(pos), Ok(size), Ok(scale)) =
         (main.outer_position(), main.outer_size(), main.scale_factor())
     else {
@@ -427,7 +434,7 @@ fn results_available_height(_app: &tauri::AppHandle, _top_y: i32) -> Option<f64>
 fn max_results(app: &tauri::AppHandle) -> u32 {
     app.try_state::<crate::AppState>()
         .map(|s| s.engine.lock().unwrap().config().appearance.effective_visible_rows() as u32)
-        .unwrap_or(8)
+        .unwrap_or_else(|| AppearanceConfig::default().effective_visible_rows() as u32)
 }
 
 /// `drive_results_window` の 1 フレーム分の入力（#749 段 1）。

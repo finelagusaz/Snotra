@@ -858,6 +858,11 @@ export function headingRefDocs(snapshot) {
 // **同名のフィールドアクセスがランチャ側に別の意味で在ると、読まれていなくても 0 件集合に入らない**。
 // フィールド名が `path` / `name` / `key` / `search` のようにありふれた語である全フィールドが
 // この分解能を持たない（`AppearanceConfig.max_results` はその一例）。
+// **この残余は表を静かに過小申告させる**——実例が `OpenerRule.tools` で、実体は `target` と同じく
+// `find_matching_tools()` 経由でしか読まれないのに、`ToolFrame.tools`（`search_state.rs`・別の型）への
+// `.tools` 一致で「読まれている」側に落ちる。**表に載せると今度は「表の記載が古い」で赤になるため、
+// 載せることもできない**。同じ struct の `target` だけが表に在るのはこの分解能の帰結であって、
+// 分類の判断が割れているのではない。
 //
 // **母集団の範囲**: `Deserialize` を derive する struct のフィールドだけである（= config.toml から
 // 読まれる型）。**enum variant のフィールド**（`InstantAction::Url` の `url` 等）と

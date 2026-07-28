@@ -45,6 +45,15 @@ pub(crate) struct ResultsWindow {
     /// `commands/window.rs` のポーリングスレッドが触るのは `set_topmost` だけで、
     /// この memo を読まない。
     last_size: Mutex<(f64, f64)>,
+    /// 直近に適用した下地の色。**`last_size` と同じ「性能上のガード」層**であり correctness の
+    /// フラグではない——`set_background_color` は値については冪等だが**副作用については冪等でない**
+    /// （tao は無条件に `InvalidateRect(erase=true)` + `UpdateWindow` を撃つ）。同じ色を撃ち直すと
+    /// クライアント領域全体の消去を毎回誘発するだけで、得るものが無い。
+    ///
+    /// **決定 3 の論拠を壊さない**: 「hidden 中は `update()` が走らず変化の瞬間に居合わせられない」
+    /// が要求するのは「変化後の**最初の**呼び出しで撃つ」ことであって、変化していない呼び出しでも
+    /// 撃つことではない。hidden 中に色が変わっても、次の show / リサイズでこの比較が差分を検出する。
+    last_background: Mutex<Option<egui::Color32>>,
 }
 
 impl ResultsWindow {
@@ -57,6 +66,9 @@ impl ResultsWindow {
             window,
             visible: AtomicBool::new(false),
             last_size: Mutex::new((0.0, 0.0)),
+            // `create` が builder の `.background_color` で同じ色を入れているが、**それを初期値に
+            // しない**——一致を仮定すると、生成時と show 直前で config が変わった場合に撃たなくなる。
+            last_background: Mutex::new(None),
         }
     }
 
@@ -72,7 +84,11 @@ impl ResultsWindow {
     /// results が現れた瞬間に入力欄からフォーカスが奪われ 2 文字目が打てなくなる。
     /// tao 内部で `SW_SHOWNOACTIVATE` に至る唯一の経路（`MARKER_DONT_FOCUS`）は窓生成時に
     /// 1 回だけ立ち初回 show で消費されるため、繰り返し show する用途には使えない。
-    pub(crate) fn show(&self) -> bool {
+    ///
+    /// `background` は下地（softbuffer が present するまでの一瞬に見えるネイティブブラシ）へ
+    /// 適用する。**show 遷移のときだけ撃つ**（下の早期 return の後に置く理由）——可視のまま
+    /// 毎フレーム撃つと `InvalidateRect` + `UpdateWindow` を送り続けることになる。
+    pub(crate) fn show(&self, background: egui::Color32) -> bool {
         // 先に flag を swap して test-and-set を原子にする（別スレッドの hide と競っても
         // raw 操作が二重に撃たれない）。**保証するのはそこまでである**——swap と `raw_show()`
         // の間に他スレッドの `hide()` が挟まると「フラグ=false・窓=可視」の不一致が残りうる
@@ -82,8 +98,33 @@ impl ResultsWindow {
         if self.visible.swap(true, Ordering::SeqCst) {
             return false;
         }
+        self.apply_native_background(background);
         self.raw_show();
         true
+    }
+
+    /// 下地を config 色へ合わせる（本体は `window_coordinator::apply_native_background`——
+    /// main と同じ経路を通す理由はそちらの doc）。**リサイズでも下地が露出する**ため
+    /// show 遷移時とサイズ変更時の両方で撃つ（SU6 spec 決定 2 の codex 反証）。
+    ///
+    /// **private である**: 呼ぶのは `show` / `set_size` という遷移判定・デルタガードの内側だけで、
+    /// 外から撃てると「ガードの内側でだけ撃つ」不変条件が型の外で破れる。`ResultsWindow` は
+    /// raw 操作の所有点であり、外へ出す面を増やすことがこの型の値打ちを削る。
+    ///
+    /// tao の `set_background_color` は `window_state` への代入と `InvalidateRect` だけで
+    /// `apply_diff` を通らない（tao 0.35.3 実測）。ゆえに「results の 3 操作は raw へ寄せる」
+    /// 規約（`src-tauri/CLAUDE.md`「Win32 / Tauri 注意事項」）の対象外であり、tao 経由でよい。
+    fn apply_native_background(&self, color: egui::Color32) {
+        {
+            // lock は Win32 呼び出しの前に手放す（`set_size` と同じ理由——再入不可の Mutex を
+            // 握ったまま tao の窓プロシージャへ至りうる経路を作らない）
+            let mut last = self.last_background.lock().unwrap();
+            if *last == Some(color) {
+                return;
+            }
+            *last = Some(color);
+        }
+        super::window_coordinator::apply_native_background(&self.window, color);
     }
 
     /// results 窓を隠す（`show` の対）。既に不可視なら raw 操作を撃たず `false` を返す。
@@ -149,7 +190,9 @@ impl ResultsWindow {
     /// `set_inner_size` は `set_window_flags` → `apply_diff` を経て窓プロシージャに至りうる
     /// ——guard を握ったまま呼ぶ形は、将来その経路が再入したときにデッドロックする。
     /// 手放すことによる TOCTOU は生じない（書き手は `last_size` の doc のとおり単一スレッド）。
-    pub(crate) fn set_size(&self, width: f64, height: f64) {
+    /// `background` は**リサイズで露出する下地**へ適用する（`apply_native_background` の doc）。
+    /// デルタガードの内側で撃つため、同値のフレームでは Win32 を呼ばない。
+    pub(crate) fn set_size(&self, width: f64, height: f64, background: egui::Color32) {
         {
             let mut last = self.last_size.lock().unwrap();
             if !crate::egui_shell::layout::size_delta_exceeds(*last, (width, height)) {
@@ -158,6 +201,7 @@ impl ResultsWindow {
             *last = (width, height);
         }
         let _ = self.window.set_size(tauri::LogicalSize::new(width, height));
+        self.apply_native_background(background);
     }
 
     /// サイズ memo を「まだ適用していない」へ戻す（#749・旧 `view.rs` の reset-on-show 2 行）。

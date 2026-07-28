@@ -10,26 +10,15 @@ use std::time::Duration;
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use snotra_core::config::{Config, LoadOutcome};
 use snotra_core::engine::IndexInputs;
-use tauri::window::Color;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::indexing;
 use crate::platform::{PlatformBridge, PlatformCommand};
 use crate::state::AppState;
 
-/// Parse a CSS hex color string (e.g. "#282828") into a Tauri `Color`.
-/// `pub(crate)`: egui_shell::create（窓生成の background_color）が config テーマ値の
-/// hex→Color 変換に再利用する（§11・#532 SU4 Task 2・二重実装回避）。
-pub(crate) fn parse_hex_color(hex: &str) -> Option<Color> {
-    let hex = hex.strip_prefix('#')?;
-    if hex.len() != 6 {
-        return None;
-    }
-    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-    Some(Color(r, g, b, 255))
-}
+// `parse_hex_color` はここに無い（spec 決定 4 で撤去）。背景色の parse は描画色と同じ
+// `egui::Color32::from_hex` 1 本になり、`Color` への変換は `egui_shell::visual::native_brush_color`
+// が持つ。2 本立てだった頃は `#FFF` が描画色だけ通り、下地は既定色へ落ちていた（#680 の 1）。
 
 /// Start watching `config.toml` for external changes (e.g. from snotra-settings).
 ///
@@ -209,37 +198,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tauri::window::Color;
 
-    #[test]
-    fn parse_hex_color_valid() {
-        assert_eq!(parse_hex_color("#282828"), Some(Color(0x28, 0x28, 0x28, 255)));
-        assert_eq!(parse_hex_color("#FF00AA"), Some(Color(0xFF, 0x00, 0xAA, 255)));
-        assert_eq!(parse_hex_color("#000000"), Some(Color(0, 0, 0, 255)));
-        assert_eq!(parse_hex_color("#ffffff"), Some(Color(0xFF, 0xFF, 0xFF, 255)));
-    }
-
-    #[test]
-    fn parse_hex_color_no_hash() {
-        assert_eq!(parse_hex_color("282828"), None);
-    }
-
-    #[test]
-    fn parse_hex_color_wrong_length() {
-        assert_eq!(parse_hex_color("#28282"), None);
-        assert_eq!(parse_hex_color("#2828288"), None);
-    }
-
-    #[test]
-    fn parse_hex_color_invalid_hex() {
-        assert_eq!(parse_hex_color("#gggggg"), None);
-    }
-
-    #[test]
-    fn parse_hex_color_empty() {
-        assert_eq!(parse_hex_color(""), None);
-        assert_eq!(parse_hex_color("#"), None);
-    }
+    // `parse_hex_color_*` の 5 本は `egui_shell::visual` の
+    // `background_color_accepts_short_hex_and_falls_back_to_config_default` へ移設した
+    // （関数ごと撤去したため・spec 決定 4）。証明していた命題「不正形は既定色へ落ちる」は
+    // 同テストが受け持ち、`#RGB` を受理する側の変化も同テストが固定する。
 
     #[test]
     fn should_apply_config_change_skips_read_failed() {

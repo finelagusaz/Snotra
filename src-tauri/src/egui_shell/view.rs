@@ -6,13 +6,20 @@
 //! **入力変換は pre/post の 2 段である**（`read_pre_widget_input` / `read_post_widget_input`）。
 //! 1 段にまとめられない理由は各関数の doc にあり、正本は `read_pre_widget_input` の doc。
 //!
-//! **反映境界は 4 つ（`ui.visuals_mut()` / `ctx.set_visuals` / `ctx.set_fonts` /
-//! `window.set_background_color`）あり、1 つの名前に畳んでいない**——このうち本ファイルが
-//! 直接呼ぶのは `ctx.set_visuals` と `window.set_background_color` の 2 つで、フォント登録は
+//! **反映境界は 5 つ（`ui.visuals_mut()` / `ctx.set_visuals` / `ctx.set_fonts` /
+//! `frame.set_clear_color` / `window.set_background_color`）あり、1 つの名前に畳んでいない**
+//! ——このうち本ファイルが直接呼ぶのは `ctx.set_visuals` と `frame.set_clear_color` の 2 つ。
+//! `window.set_background_color` は**リサイズ時に間接呼び出し**である
+//! （`window_coordinator::apply_main_background` 経由）。フォント登録は
 //! `font_stack::configure_japanese_font` の**呼び出し点** 2 箇所（`setup` と `update` の
 //! font_family 差分の分岐）として持つ。**`ctx.set_fonts` 自体の呼び出しは `font_stack.rs` に
 //! あり本ファイルには無い**（#666 段 3 タスク 1 で移設）。`ui.visuals_mut()` は
 //! `--include=*.rs` の全域 grep で 0 件である（2026-07-28 実測）。
+//!
+//! **背景色だけは style を経由しない**（spec 決定 1）——`frame.set_clear_color` は
+//! `run_ui` → `paint` の順序に乗るため同じフレームに届く。style 経由の 3 値（`extreme_bg_color` /
+//! `selection.bg_fill` / `weak_text_color`）が抱える「pass 冒頭の snapshot に間に合わない」制約
+//! （#751）とは別の経路である。
 //!
 //! フォント解決と登録は `font_stack`（独立モジュールへ切り出した理由は `font_stack.rs` の
 //! `//!`・#666 段 3 タスク 1）。
@@ -32,9 +39,15 @@ pub(crate) struct SearchWindowView {
     /// **解決の成否に依らず config 値へ無条件更新する**——未解決名（typo・未インストール）で
     /// 毎フレーム load_system_fonts（数十 ms）が走る perf cliff を避ける（並行性レビュー）。
     applied_font_family: String,
-    /// SU6 spec 決定 2: 適用済み native 背景ブラシ（hex 文字列）。painted panel は live-read だが
-    /// リサイズ時に露出する native surface の色は生成時ブラシ由来のため実行時追従が要る（codex 反証）。
-    applied_background_hex: String,
+    /// 直近に適用した下地の色。**`ResultsWindow::last_background` の main 版**（理由はそちらの doc）。
+    ///
+    /// **撤去した `applied_background_hex` とは別物である**——あちらは「config の hex と比較して
+    /// 変化を検出する」エッジ検出で、hidden 中の変化に居合わせられず取りこぼした。これは
+    /// 「実際に Win32 へ撃った色」の memo であり、いつ比較しても差分が正しく出る。
+    ///
+    /// **リサイズ経路だけが持つ**: show 経路（`show_egui_main`）は状態を持たない関数で、頻度も
+    /// ホットキーのトグル程度ゆえ無条件で撃つ。打鍵ごとに走るのはこちらだけである。
+    applied_background: Option<egui::Color32>,
     /// SU6 spec 決定 2: 直近 set_size の幅。main（本 view）が両窓（main・results）の唯一の
     /// size writer に一意化されている（幅は config live-read・#646 PR2 決定 6）。
     last_set_width: f64,
@@ -50,7 +63,7 @@ impl SearchWindowView {
         Self {
             controller: LauncherController::new(app_handle),
             applied_font_family: String::new(),
-            applied_background_hex: String::new(),
+            applied_background: None,
             last_set_width: 0.0,
             last_set_height: 52.0,
         }
@@ -235,13 +248,7 @@ impl EguiView for SearchWindowView {
         // 導出は純粋核 visual::visual_snapshot、行高の正本は layout::Metrics::from_config。
         // **ここで読むのは値だけである**: `ctx.set_visuals` / `configure_japanese_font` /
         // ネイティブ背景ブラシの**適用**は従来の位置に残す（描画順の制約があるため）。
-        let visual = crate::egui_shell::read_visual(
-            &app,
-            crate::egui_shell::VisualApplied {
-                font_family: &self.applied_font_family,
-                background_hex: Some(&self.applied_background_hex),
-            },
-        );
+        let visual = crate::egui_shell::read_visual(&app, &self.applied_font_family);
         let metrics = &visual.metrics;
 
         // show 直後の resetForShow の消費（検索セッション側のクリアは controller が行う）。
@@ -268,15 +275,20 @@ impl EguiView for SearchWindowView {
         // どちらも reset_pending 消費の後でなければならない（順序の理由は controller 側の本文）。
         self.controller.consume_external_pending(&ctx);
 
-        // §11: パネル/入力欄/選択色を config テーマから（ハードコード撤廃・runtime CLEAR_COLOR は不変）。
-        // font_family / native 背景ブラシのエッジ検出も同一 lock で読む（SU6 spec 決定 2・lock 1 回/フレーム）。
+        // 背景色は **style を経由しない**（spec 決定 1）。`render()` が `run_ui` → `paint` の順に
+        // 進むため、ここで決めた色は同じフレームの `buffer.fill` に届く——下の `set_visuals` が
+        // 抱える「pass 冒頭の style snapshot に間に合わない」制約（#751）とは無縁の経路である。
+        frame.set_clear_color(visual.background);
+
+        // §11: 入力欄/選択色を config テーマから（ハードコード撤廃）。
+        // font_family のエッジ検出も同一 lock で読む（SU6 spec 決定 2・lock 1 回/フレーム）。
         // 値はフレーム冒頭の `visual` から取る（#673）。**適用はこの位置のまま**（呼び出し
         // 位置は本段では動かさない）——egui 0.35.0 では root `Ui` が pass 冒頭で
         // `ctx.global_style()` を `Arc` snapshot するため、ここで呼ぶ `ctx.set_visuals` は
         // 現在の pass の `Ui` に届かない。この潜在バグは #751 であり、**本段では直さない**。
+        // **`panel_fill` / `window_fill` はここに無い**——読む egui コンテナ（`CentralPanel` /
+        // `egui::Window` 等）がリポジトリに 1 つも無く、消費者ゼロの死んだ書き込みだった（spec 決定 2）。
         let mut visuals = ctx.style_of(ctx.theme()).visuals.clone();
-        visuals.panel_fill = visual.background;
-        visuals.window_fill = visuals.panel_fill;
         visuals.extreme_bg_color = visual.input_bg; // TextEdit 背景
         visuals.selection.bg_fill = visual.selection;
         // TextEdit の hint 色はここだけが効く（#654・詳細は TextEdit 構築部のコメント）。
@@ -294,17 +306,9 @@ impl EguiView for SearchWindowView {
             ctx.request_repaint(); // set_fonts は次フレーム適用——欠くと新フォントが 1 イベント遅れる
         }
 
-        // SU6 spec 決定 2: native 背景ブラシ追従（生成時一度きり → 実行時変更へ・codex 反証）。
-        // **描画色とは別のパーサを使う**（`parse_hex_color` は `#RRGGBB` 厳格。統合すると
-        // `#FFF` 等でこの経路の挙動が黙って変わる・#673 spec / visual.rs の `//!`）。
-        if let Some(hex) = &visual.background_hex_changed {
-            self.applied_background_hex = hex.clone();
-            if let Some(window) = app.get_window("main") {
-                let color = crate::config_watcher::parse_hex_color(hex)
-                    .unwrap_or(tauri::window::Color(0x28, 0x28, 0x28, 0xff));
-                let _ = window.set_background_color(Some(color));
-            }
-        }
+        // ネイティブ背景ブラシの追従はここに無い（spec 決定 3 で撤去）——エッジ検出は変化の
+        // 瞬間に居合わせることを要求するが、hidden 中は update() が走らないため居合わせられない。
+        // 適用点は show 直前（`show_egui_main` / `ResultsWindow::show`）とサイズ変更時へ移した。
 
         // 非同期の到着物の回収（起動結果 → 通知期限 → folder 列挙）。**reset_pending 消費の後**
         // に置くこと（spec C 節 不変条件 2）。3 者が同一フレームで走ることも不変条件である。
@@ -663,6 +667,15 @@ impl EguiView for SearchWindowView {
             self.last_set_width = width;
             if let Some(window) = app.get_window("main") {
                 let _ = window.set_size(tauri::LogicalSize::new(width, height));
+                // **リサイズでも下地が露出する**（SU6 spec 決定 2 の codex 反証。show の一瞬だけ
+                // ではない）。ゆえに show 直前（spec 決定 3）に加えてここでも合わせる。
+                // **色が変わったときだけ撃つ**——サイズのデルタガードの内側ではあるが、それは
+                // 件数変化のたび＝ほぼ打鍵ごとに開く。同じ色を撃ち直しても得るものは無く、
+                // `InvalidateRect(erase=true)` + `UpdateWindow` の代価だけがかかる。
+                if self.applied_background != Some(visual.background) {
+                    self.applied_background = Some(visual.background);
+                    super::window_coordinator::apply_native_background(&window, visual.background);
+                }
             }
             ui.ctx().request_repaint();
         }
@@ -677,6 +690,8 @@ impl EguiView for SearchWindowView {
                 result_count: self.controller.state().results().len(),
                 width,
                 row_height: metrics.row_height,
+                // `row_height` と同じフレーム冒頭の snapshot から取る（別 lock にしない）
+                background: visual.background,
             },
         );
 

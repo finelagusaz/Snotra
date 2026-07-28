@@ -27,11 +27,22 @@ pub trait EguiView: Send + 'static {
 
 pub struct RuntimeFrame {
     drag_requested: bool,
+    clear_color: Option<egui::Color32>,
 }
 
 impl RuntimeFrame {
     pub fn drag_window(&mut self) {
         self.drag_requested = true;
+    }
+
+    /// このフレームの背景色（softbuffer が present 前に塗る下地）。
+    ///
+    /// **毎フレーム呼ぶこと。** `render()` は `run_ui` → `paint` の順に進むため、`update()` の中で
+    /// 決めた色は**同じフレームの `buffer.fill` に間に合う**（遅れは原理的に生じない）。
+    /// 呼ばなかったフレームは runtime 既定の暗色へ落ちる——検知はビルドでも検査でもなく
+    /// 目視のみである（`docs/superpowers/specs/2026-07-28-config-background-color-design.md` §7）。
+    pub fn set_clear_color(&mut self, color: egui::Color32) {
+        self.clear_color = Some(color);
     }
 }
 
@@ -391,6 +402,7 @@ impl EguiWindow {
         let raw_input = self.input.take(max_side, size, ppp);
         let mut frame = RuntimeFrame {
             drag_requested: false,
+            clear_color: None,
         };
         let output = self
             .context
@@ -427,7 +439,7 @@ impl EguiWindow {
             .renderer
             .as_mut()
             .expect("renderer installed by attach_pending_windows")
-            .paint(&self.context, output, size)
+            .paint(&self.context, output, size, frame.clear_color)
         {
             Ok(_) => self.paint_failures = 0,
             Err(error) => match retry_delay(self.paint_failures + 1) {

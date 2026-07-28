@@ -53,7 +53,7 @@ pub(crate) use results_view::RowsSnapshot;
 pub(crate) use results_window::ResultsWindow;
 
 // view.rs / results_view.rs が毎フレームの描画で消費する（#673 spec 決定 4）。
-pub(crate) use visual::{RowTheme, VisualApplied, VisualSnapshot};
+pub(crate) use visual::{RowTheme, VisualSnapshot};
 
 // view.rs の icon texture driver（worker spawn / load_texture 適用）が消費する（#532 SU4 Task 5）。
 pub(crate) use icon_textures::{IconMsg, needs_extraction, png_to_color_image, retain_visible};
@@ -251,7 +251,13 @@ pub(crate) struct EguiShellHandles {
 /// alwaysOnTop・decorations:false・resizable:false・visible:false）を再現する（codex #11・(B)#1）。
 /// `background_color_hex`: config `visual.background_color`（`#RRGGBB`）。過渡/リサイズ下地の
 /// SU2 ハードコード 0x282828 を config へ差し替える（§11・#532 SU4 Task 2）。パース失敗時は
-/// 従来の 0x282828 へ fallback（`config_watcher::parse_hex_color` を再利用・二重実装回避）。
+/// パース失敗時は `VisualConfig::default()` の背景色へ fallback（`visual::background_color` =
+/// `Color32::from_hex` 1 本・spec 決定 4。リテラルを再手打ちしない）。
+///
+/// **この初期ブラシが画面に出る機会は無い**——両窓とも `.visible(false)` で生成され、可視化の
+/// 直前（`show_egui_main` / `ResultsWindow::show`）が無条件で上書きするためである。**残すのは
+/// 安全網としてであり**、show 経路を迂回する窓表示が将来足されたときに白い窓を出さないための
+/// もの。config 値を届ける経路としては働いていない。
 pub(crate) fn create(
     app: &mut tauri::App,
     window_width: f64,
@@ -260,8 +266,10 @@ pub(crate) fn create(
     let runtime = EguiRuntime::new();
     runtime.install(app); // install(&self, &mut App<Wry>)（runtime.rs:77）
     let app_handle = app.handle().clone();
-    let bg_color = crate::config_watcher::parse_hex_color(background_color_hex)
-        .unwrap_or(tauri::window::Color(0x28, 0x28, 0x28, 0xff));
+    // parse は描画色と同じ 1 本（`Color32::from_hex`）で、フォールバックの正本は
+    // `VisualConfig::default()` である——`#282828` のリテラルをここへ再手打ちしない（spec 決定 4）。
+    let bg_color =
+        window_coordinator::native_brush_color(visual::background_color(background_color_hex));
     let window = tauri::Window::builder(app, "main")
         .title("Snotra")
         .inner_size(window_width, 52.0) // 保存幅を尊重（codex #11）。高さは初期値。実高は show 時に Metrics で再設定(#646)
@@ -353,18 +361,18 @@ fn apply_rounded_corners(window: &tauri::Window) {
 /// 色 parse を払わせないため。両者とも `Metrics::from_config` を正本とするので導出は 1 つ。
 ///
 /// **戻り値を `self.` へ保持しないこと**（寿命は 1 フレーム・`visual.rs` の `//!`）。
-pub(crate) fn read_visual(app: &tauri::AppHandle, applied: VisualApplied<'_>) -> VisualSnapshot {
+pub(crate) fn read_visual(app: &tauri::AppHandle, applied_font_family: &str) -> VisualSnapshot {
     match app.try_state::<crate::AppState>() {
         Some(s) => {
             let engine = s.engine.lock().unwrap();
             let config = engine.config();
             // guard 内で行うのは hex parse と算術と &str 比較まで。I/O や重い確保を足さない。
-            visual::visual_snapshot(&config.visual, config.appearance.show_icons, applied)
+            visual::visual_snapshot(&config.visual, config.appearance.show_icons, applied_font_family)
         }
         // AppState 不在（setup 完了前の理論経路のみ）。`AppearanceConfig` には `Default` 実装が
         // 無いため show_icons だけは型から導けずリテラルになる——SSOT は snotra-core の
         // `default_show_icons`（= true）で、撤去前の `.unwrap_or(true)` と同値。
-        None => visual::visual_snapshot(visual::default_visual(), true, applied),
+        None => visual::visual_snapshot(visual::default_visual(), true, applied_font_family),
     }
 }
 

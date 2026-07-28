@@ -60,6 +60,21 @@ npm run smoke:manual -- -PostToPr # 記録を PR コメントへ投稿する
 
 - **既定が egui（#532 SU7 flip 済み・env フラグ不要）**。`cargo run`（`-p` 欠落）は**ルートでは bin を決められずエラーになり**（`snotra` / `snotra-settings` の 2 本。実測: `error: cargo run could not determine which binary to run`）、cwd が crate 配下ならその crate の bin が起動する。必ず `-p snotra` を付ける
 
+#### `[visual]` の色を変える変更は、**非既定色で**目視する
+
+```powershell
+npm run check:colors                      # 自動判定: main の背景ピクセルを実測し exit code で返す
+npm run check:colors -- -Color '#FFF'     # 3 桁 hex の受理（#680 の 1・パーサ統合の回帰）
+npm run check:colors -- -Interactive      # 判定せず起動し、目視項目を読み上げる
+npm run check:colors -- -Restore          # 異常終了でバックアップが残ったときの回収
+```
+
+- **既定色での確認はこの検証にならない。** config の既定 `#282828` は `snotra-egui-runtime` の `CLEAR_COLOR` と一致するため、色が届いていなくても正常に見える（原理は `docs/development-principles.md`「config の値は到達性の検出器を持たない」）
+- **自動判定できるのは main の定常背景だけである。** 残る 2 点は目視（`-Interactive`）に留まる——**show の一瞬のフラッシュ**は present 前の 1 フレーム未満で連写しても捉えられず、**results の背景**は窓を出すのに文字入力（`SendInput`）が要るため
+- **trace は判定に使わない。** 「`set_clear_color` を呼んだ」というログは、その色が画面へ出たことを意味しない（`src-tauri/CLAUDE.md`「trace の presence 検査は状態の検査ではない」）。判定の根拠は描かれたピクセルだけである
+- **実 config を退避して書き換える。** 終了時に自動で戻すが、異常終了時は `config.toml.visualcheck-bak` が残るので `-Restore` で回収する（二重退避は明示エラーで止める）。自動判定では `show_on_startup = true` も一時的に書く（hotkey 注入機構を複製しないため）
+- 判定が赤のとき（`-KeepShot` なら緑でも）`target/visual-check/` へスクリーンショットを残す。観測点が背景でない場所を指していないかは、この画像で確認する
+
 #### updater トーストを出すための env ハッチ
 
 実 release への到達を要さずに updater トーストを描かせる（`egui_shell/mod.rs` の `spawn_update_check` 冒頭・**`auto_update` の設定に依らず効く**——判定より前に置いてある）。

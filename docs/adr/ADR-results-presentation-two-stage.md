@@ -1,4 +1,4 @@
-# ADR-0007: results 窓の導出は 2 段に割り、`main_size` と `results_origin` を導出の外に置く
+# ADR-results-presentation-two-stage: results 窓の導出は 2 段に割り、`main_size` と `results_origin` を導出の外に置く
 
 #752（段 2）で「窓をどう見せるか」を決める純粋関数群を 1 つの導出へ束ねた。issue が素描した単一の `WindowPresentation { main_size, results_visible, results_size, results_origin }` は**構成可能だったが採らなかった**。ここに残すのは、その却下理由である。
 

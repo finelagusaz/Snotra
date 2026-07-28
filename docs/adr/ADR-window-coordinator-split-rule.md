@@ -1,4 +1,4 @@
-# ADR-0008: 段 1 の分割規則を 1 本に絞り、managed struct 化・listener 移設・z-order 集約を却下する
+# ADR-window-coordinator-split-rule: 段 1 の分割規則を 1 本に絞り、managed struct 化・listener 移設・z-order 集約を却下する
 
 #749（段 1）で `egui_shell/window_coordinator.rs` を新設し、窓を駆動する 11 関数を集めた。移設そのものは機械的だったが、**実質は「線をどこに引くか」の判断**だった。ここに残すのは、その過程で却下した選択肢である。
 
@@ -41,7 +41,7 @@ issue の責務表は z-order を挙げている。却下した。main の最前
 
 ### 5. main 窓のサイズ適用を引き取る
 
-却下した。ADR-0007 却下 1 の第 3 理由（main の高さは `show_egui_main` の bar_height collapse と `main_window_height` の**意図的な 2 導出**）を段 1 が巻き戻すことになる。前者は位置クランプが展開時の高さで効くのを防ぐ折り畳み、後者は status / toast 行の増減への追従であり、目的が違う。
+却下した。ADR-results-presentation-two-stage 却下 1 の第 3 理由（main の高さは `show_egui_main` の bar_height collapse と `main_window_height` の**意図的な 2 導出**）を段 1 が巻き戻すことになる。前者は位置クランプが展開時の高さで効くのを防ぐ折り畳み、後者は status / toast 行の増減への追従であり、目的が違う。
 
 **当初この判断を `//!` へ「main のサイズ適用は `view.rs` にある」と書き、誤りだった。** show 経路の折り畳みは `show_egui_main` の中にあり、その関数はこの段で coordinator へ移っている。**自らの説明が自らの主張を反証する形**になっていた（コードレビューで検出）。正しい記述は「2 か所に分かれたまま」である。
 

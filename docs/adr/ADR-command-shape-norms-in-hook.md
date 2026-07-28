@@ -1,4 +1,4 @@
-# ADR-0009: コマンドの形で判定する規範を PreToolUse へ吸収し、platform は第 4 位置引数で注入する
+# ADR-command-shape-norms-in-hook: コマンドの形で判定する規範を PreToolUse へ吸収し、platform は第 4 位置引数で注入する
 
 ルート `CLAUDE.md` の常時ロード面に置いていた規範 5 件（bash HEREDOC 禁止・`\` パス区切り・Python の `PYTHONIOENCODING`・`--no-verify` 人間専用・`git pull --ff-only`）を `.claude/hooks/pre-bash.mjs` の判定へ移した（#768）。**この ADR が残すのは、そのとき `decide` の注入面をどう広げるかで却下した案である**——採った形とその理由は `docs/hooks.md`「PreToolUse（pre-bash.mjs）の実装契約」とコードが持つ。
 

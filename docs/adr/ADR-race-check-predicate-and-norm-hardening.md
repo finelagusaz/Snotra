@@ -1,4 +1,4 @@
-# ADR-0003: race-check のトリガー述語を機構カテゴリで書き、規範の硬化には母集団の限定を伴わせる
+# ADR-race-check-predicate-and-norm-hardening: race-check のトリガー述語を機構カテゴリで書き、規範の硬化には母集団の限定を伴わせる
 
 ## 文脈
 
@@ -48,5 +48,5 @@
 
 - 述語は 5 箇所（SKILL.md frontmatter / `AGENTS.md` / ルート `CLAUDE.md` / `start-issue` / `.claude/rules/{src-tauri,snotra-settings}.md`）で同期する。**`governance:check` はこの一致を検査しない**（G-skill-table は存在照合のみ）ため、人手照合が唯一の防御である。
   - **2026-07-26 追記**: 写しを **2 箇所**（`/race-check` の frontmatter = harness のルーティング面 / `AGENTS.md`「条件別チェック」表 = 述語の SSOT）に絞り、ルート `CLAUDE.md`・`start-issue`・`.claude/rules/{src-tauri,snotra-settings}.md` は SSOT へのポインタへ置換した。**ポインタで足りる根拠は `AGENTS.md` が常時ロードだからである**——参照先が視界に無い文書へのポインタなら、この置換は成立しない。人手照合の対象は 2 箇所になった。
-- 常時ロード規範（ルート `CLAUDE.md` + `AGENTS.md` + skill description）は余裕ゼロで運用する（`AREA_BUDGET` は削減のたびに実測値へ下げる ratchet・ADR-0001 / ADR-0005）。述語の更新は**面積を増やさない置換**に限られる。
+- 常時ロード規範（ルート `CLAUDE.md` + `AGENTS.md` + skill description）は余裕ゼロで運用する（`AREA_BUDGET` は削減のたびに実測値へ下げる ratchet・ADR-doc-minimization-cap-enforcement / ADR-area-metric-characters）。述語の更新は**面積を増やさない置換**に限られる。
 - 受容する残余: 呼び出し元の遡行を 1 ホップで打ち切るため、2 ホップ以上先でゲート述語に効く純粋関数の変更は捕捉されない（実測: `layout::path_size` → `results_should_show` は 3 ホップ）。無限遡行と恣意的打ち切りを避けるための意図的な射程外である。

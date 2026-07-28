@@ -1,4 +1,4 @@
-# ADR-0012: 2 クラス読者の突破件数を規範の品質指標にする案を、実測で却下した
+# ADR-two-class-reader-discrimination: 2 クラス読者の突破件数を規範の品質指標にする案を、実測で却下した
 
 `/norm-review` の 2 クラス読者（手を抜く読者 / 規則を全部守る読者）を 4 文書へ当てて計測した。**この ADR が残すのは、そのとき却下した案である**——採った運用は `/norm-review` 自身が持つ。
 
@@ -33,7 +33,7 @@ check 系スキルの共通骨格（`docs/check-skill-skeleton-design.md`）は�
 | `/race-check` | 0.5 |
 | `/symmetric-check` | 0.0 |
 | `AGENTS.md` | 0.0 |
-| `docs/adr/0003-race-check-predicate-and-norm-hardening.md`（**非規範**） | 0.9 |
+| `docs/adr/ADR-race-check-predicate-and-norm-hardening.md`（**非規範**） | 0.9 |
 
 手を抜く読者は骨格について「義務文が一つも無い」と指摘したが、これは**このリポジトリの規範すべてについて真**であり、しかも最も義務形が濃いのは規範ではない ADR だった。**指摘は正しいが、判別していない。**
 
@@ -57,12 +57,12 @@ check 系スキルの共通骨格（`docs/check-skill-skeleton-design.md`）は�
 
 | 記録 | 何が起きたか |
 |---|---|
-| `docs/adr/0003-race-check-predicate-and-norm-hardening.md` 却下 4 | 1 巡目の指摘を義務追加で塞いだ結果、2 巡目が実行不能（1 関数の変更で 70 件の裁定義務）を実測した |
+| `docs/adr/ADR-race-check-predicate-and-norm-hardening.md` 却下 4 | 1 巡目の指摘を義務追加で塞いだ結果、2 巡目が実行不能（1 関数の変更で 70 件の裁定義務）を実測した |
 | `#764` | 2 巡目の指摘 4 件が**すべて** 1 巡目の塞ぎ由来だった |
 | `#779` | 2 巡目の 3 件のうち 1 件が 1 巡目の塞ぎ自身が作った過剰な全称表現だった |
 | 本サイクル（`/race-check` の肯定形書き換え） | 1 巡目の塞ぎが循環参照と実行不能を生み、変更全体を破棄した |
 
-**4 回中 4 回**である。義務を足す方向の塞ぎは、忠実な読者の実行可能性を削る。`ADR-0003` 却下 4 の「義務を足すときは母集団を絞る」は総費用の規則だったが、ここで分かるのはより強い形——**手を抜く読者の指摘に対して、義務追加は正しい修理ではない。** 曖昧さの除去・機構への吸収・受容する残余のいずれかへ倒す。
+**4 回中 4 回**である。義務を足す方向の塞ぎは、忠実な読者の実行可能性を削る。`ADR-race-check-predicate-and-norm-hardening` 却下 4 の「義務を足すときは母集団を絞る」は総費用の規則だったが、ここで分かるのはより強い形——**手を抜く読者の指摘に対して、義務追加は正しい修理ではない。** 曖昧さの除去・機構への吸収・受容する残余のいずれかへ倒す。
 
 ### 却下 4: 2 クラス読者そのものを廃止する
 
@@ -81,4 +81,4 @@ check 系スキルの共通骨格（`docs/check-skill-skeleton-design.md`）は�
 ---
 
 status: Accepted
-関連: `docs/check-skill-skeleton-design.md` ・ADR-0011（骨格の統廃合の却下）・ADR-0003 却下 4（義務を足すときは母集団を絞る＝本 ADR 却下 3 の一般化元）・#764 ・#779 ・#781
+関連: `docs/check-skill-skeleton-design.md` ・ADR-check-skill-skeleton（骨格の統廃合の却下）・ADR-race-check-predicate-and-norm-hardening 却下 4（義務を足すときは母集団を絞る＝本 ADR 却下 3 の一般化元）・#764 ・#779 ・#781

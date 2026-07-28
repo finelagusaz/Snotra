@@ -1,4 +1,4 @@
-# ADR-0002: squash マージでの issue 意図せぬ auto-close を、Layer 0 遮断＋手順で防ぐ
+# ADR-squash-merge-issue-autoclose: squash マージでの issue 意図せぬ auto-close を、Layer 0 遮断＋手順で防ぐ
 
 ## 文脈
 

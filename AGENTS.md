@@ -18,7 +18,7 @@
 - モジュール固有の不変条件: 各サブディレクトリの `CLAUDE.md`（`snotra-core/`, `snotra-egui-runtime/`, `src-tauri/`, `snotra-settings/`）
 - 設定 UI デザインガイドライン: `snotra-settings/SETTINGS-DESIGN.md`（デザイントークン・Fluent タイポグラフィ・レイアウト規約）
 - 実装前チェック: `.claude/rules/`（該当ファイルの読み取り時に自動配送）
-- 意思決定記録（否定の知識＝なぜ B を却下したか）: `docs/adr/NNNN-*.md`（否定の知識が生じた決定のみ・#593）
+- 意思決定記録（否定の知識＝なぜ B を却下したか）: `docs/adr/ADR-<slug>.md`（否定の知識が生じた決定のみ・#593。連番を振らない・#812）
 
 ## 開発ワークフロー
 

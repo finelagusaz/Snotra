@@ -55,10 +55,10 @@ fn config_dir_from(override_dir: Option<OsString>, base: Option<PathBuf>) -> Opt
 - [ ] `$configPath`（`:60`・`$env:APPDATA` を組む唯一の行）と、実 config の存在ガード（`:88-90`）を削除する
 - [ ] `Set-TomlKey`（`:114-131`）を削除する（既存 TOML を書き換える関数。完全な TOML を新規に書くので不要）
 - [ ] プロファイル **`target/visual-check/profile`** を作り、そこへ最小の有効 TOML を seed する
-- [ ] seed 前に前回の `config.toml.bak` を削除する（後段の判定を前回の残骸で汚さないため）
+- [ ] seed 前にプロファイル配下の `config.toml.bak` **と `*.bin` を削除する**（プロファイルは実行間で再利用するため、**前回の残骸が残っていると下の 2 つの判定がどちらも空振りで合格する**）
 - [ ] `$env:SNOTRA_CONFIG_DIR` を設定してから `cargo run -p snotra` する（`-Interactive` / 自動判定の両経路）
 - [ ] **seed の健全性を判定に組み込む**: 終了後に `config.toml.bak` が現れていないことを確認し、現れていたら赤にする
-- [ ] **env が効いたことの肯定的証拠を取る**: 実行後にプロファイル配下へ `*.bin` が生成されていることを確認する（どのファイルが確実に出るかは実装時に実測して決める）
+- [ ] **env が効いたことの肯定的証拠を取る**: 実行後にプロファイル配下へ `*.bin` が生成されていることを確認する。**どのファイルが確実に出るかは実装時に実測して決める**——本体は `Stop-Process -Force` で殺すので、正常終了で書かれるもの（`window.bin` の `on_exit`・履歴 flush）は出ない。`[paths]` が空で索引 0 件のとき `index.bin` が書かれるかも自明でない。**どれも確実に出ないなら、この判定は置かずにその事実をスクリプトのコメントへ書く**（在るとは限らないファイルに賭けない）
 - [ ] 単一インスタンスの起動前チェック（`:99-102`）は**残し**、コメントに「プロファイルを分けても single-instance の識別子は変わらない」理由を書く
 - [ ] `finally` は本体プロセスの kill だけを残す
 - [ ] `.SYNOPSIS` / `.DESCRIPTION` / `.PARAMETER Restore`（`:36-37`）/ `.EXAMPLE -Restore`（`:48-49`）を新しい形へ更新する
@@ -123,6 +123,7 @@ issue が「正直なコスト 2（新プロファイルは index を作り直�
 - [ ] `docs/build-commands.md` に `SNOTRA_CONFIG_DIR` の説明を置く（env ハッチとして）
 - [ ] `snotra-core/CLAUDE.md` の `config.rs` 節に、上書きの非対称（`Snotra` を付けない）と空文字の扱いを 1 行足す
 - [ ] `scripts/smoke-egui.ps1` の seed に、`visual-check-colors.ps1` への相互参照コメントを 1 行足す
+- [ ] `docs/build-commands.md:147` の順序制約が**引き続き有効である**ことを残余として明記する（下の「触らないと決めたもの」の送り先を文書に接地させる）
 
 **触らないと決めたもの（根拠つき）**:
 

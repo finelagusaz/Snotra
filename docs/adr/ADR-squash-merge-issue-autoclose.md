@@ -24,10 +24,10 @@ auto-close の経路は 2 本あり、可視性が非対称である:
 
 ## 帰結
 
-- 母集団は**派生した参照集合ではなく起きた事実**から取る — 2 経路の可視性が非対称ゆえ、確認は `closingIssuesReferences` だけでなく `gh issue list --search "closed:>=<mergedAt>"` で裏取りする（この一般形は `.claude/rules/safety-nets.md` が持つ）。手順の全文は `CLAUDE.md`「Git/GitHub 運用」。
+- 母集団は**派生した参照集合ではなく起きた事実**から取る — 2 経路の可視性が非対称ゆえ、確認は `closingIssuesReferences` だけでなく `gh issue list --search "closed:>=<mergedAt>"` で裏取りする（この一般形は `.claude/rules/safety-nets.md` が持つ）。手順の全文は `/merge-pr`。
 - squash 設定は `squash_merge_commit_title=PR_TITLE` / `squash_merge_commit_message=PR_BODY`。設定の組み合わせは GitHub が制限する（実測 422）。**元に戻す**なら `gh api -X PATCH repos/:owner/:repo -f squash_merge_commit_title=COMMIT_OR_PR_TITLE -f squash_merge_commit_message=COMMIT_MESSAGES`。
 
 ---
 
 status: Accepted
-関連: #488 ・`CLAUDE.md`「Git/GitHub 運用」「フック」(A2) ・`.claude/rules/safety-nets.md`
+関連: #488 ・`CLAUDE.md`「Git/GitHub 運用」「フック」(A2) ・`.claude/rules/safety-nets.md` ・`/merge-pr`

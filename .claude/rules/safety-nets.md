@@ -6,7 +6,7 @@ paths:
   - ".github/workflows/**"
   - ".claude/rules/**"
   - ".claude/skills/**"
-  - "scripts/governance-check.mjs"
+  - "scripts/*.mjs"
 ---
 
 # セーフティネット（hook / CI / githooks / 規範）を新設・変更するときのルール

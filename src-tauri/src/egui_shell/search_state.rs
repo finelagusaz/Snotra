@@ -677,6 +677,94 @@ mod tests {
         assert_eq!(s.folder_filter(), "");
     }
 
+    // ---- 階層移動と選択（#743・SPEC §6.1 の as-built）----
+    //
+    // **この 5 本が固定するのは状態核の合成である**——`parent_dir` → `navigate_folder` の連鎖と、
+    // 行の差し替えが選択に与える影響。**キー割り当て（`view.rs` の読み）と driver の分岐
+    // （`launcher_controller.rs` の `on_nav_keys`）は射程外**であり、`←` の分岐を丸ごと殺しても
+    // この 5 本は緑のままである（実測）。分岐が正しく Folder 側へ落ちることの証拠は実機トレース
+    // 計測であってこのテストではない——「緑だから ← の分岐も守られている」と読まないこと。
+    //
+    // なお `navigate_folder` は `folder` が `None` でも黙って通る。**各テストは必ず
+    // `enter_folder` を先に通す**——突入を忘れたテストは何も検証しないまま緑になる。
+
+    /// `←` の連続で 2 段上がる（#743 の報告が「起きない」と述べた挙動そのもの）。
+    #[test]
+    fn left_twice_climbs_two_levels() {
+        let mut s = SearchState::new();
+        let t0 = s.enter_folder("C:\\a\\b\\c".into());
+        let p1 = s.parent_dir().expect("孫フォルダからは親が取れる");
+        assert_eq!(p1, "C:\\a\\b");
+        let t1 = s.navigate_folder(p1);
+        assert_eq!(s.view_kind(), ViewKind::Folder, "上昇しても folder のままである");
+        assert_eq!(s.folder_current_dir(), Some("C:\\a\\b"));
+        let p2 = s.parent_dir().expect("さらに親が取れる");
+        assert_eq!(p2, "C:\\a");
+        let t2 = s.navigate_folder(p2);
+        assert_eq!(s.folder_current_dir(), Some("C:\\a"));
+        assert!(t0 < t1 && t1 < t2, "遷移ごとに token が進む（遅着の旧結果を失効させる）");
+    }
+
+    /// ルート終端では親が無い（§6.2）。driver の `if let Some(parent)` がここで無反応に落ちる。
+    #[test]
+    fn left_at_root_has_no_parent() {
+        let mut drive = SearchState::new();
+        drive.enter_folder("C:\\".into());
+        assert_eq!(drive.parent_dir(), None, "ドライブルートは終端");
+        let mut unc = SearchState::new();
+        unc.enter_folder("\\\\srv\\share".into());
+        assert_eq!(unc.parent_dir(), None, "UNC 共有ルートは終端");
+    }
+
+    /// 前進方向の遷移は選択を先頭へ戻す（§6.1 の 1 段目）。**非ゼロから始める**——0 から
+    /// 始めると `enter_folder` の初期値と区別が付かず、何も実証しない。突入と上昇の両方を測る。
+    #[test]
+    fn folder_navigation_resets_selection_to_first_row() {
+        let mut s = SearchState::new();
+        s.set_results(vec![res("a"), res("b"), res("c")]);
+        s.move_selection(2);
+        assert_eq!(s.selected(), 2);
+        s.enter_folder("C:\\a\\b".into());
+        assert_eq!(s.selected(), 0, "通常検索からの突入で先頭へ");
+        s.set_results(vec![res("x"), res("y"), res("z")]);
+        s.move_selection(2);
+        assert_eq!(s.selected(), 2);
+        s.navigate_folder("C:\\a".into());
+        assert_eq!(s.selected(), 0, "folder 中の遷移でも先頭へ");
+    }
+
+    /// 到着した行は選択を**先頭へ戻さず**、件数の範囲へ収めるだけである（§6.1 の 2 段目）。
+    /// **数値は非退化のものを使う**——3 件 → 1 件では `2.min(0) == 0` となり、無条件リセットと
+    /// 区別が付かないため何も証明しない。ロード中に上下カーソルキーで動かした選択が到着後も
+    /// 残るのはこの性質による。
+    #[test]
+    fn arriving_rows_clamp_selection_without_resetting_it() {
+        let mut s = SearchState::new();
+        s.enter_folder("C:\\a".into());
+        s.set_results(vec![res("a"), res("b"), res("c"), res("d"), res("e")]); // 置換前の候補
+        s.navigate_folder("C:\\a\\b".into()); // ← / → の打鍵: 選択は 0 へ・行はまだ古いまま
+        s.move_selection(3); // ロード窓で ↑↓ が入る
+        assert_eq!(s.selected(), 3);
+        s.set_results(vec![res("a"), res("b"), res("c"), res("d")]);
+        assert_eq!(s.selected(), 3, "範囲内なら保たれる（先頭へは戻さない）");
+        s.set_results(vec![res("a"), res("b")]);
+        assert_eq!(s.selected(), 1, "範囲外は末尾へクランプされる（0 ではない）");
+    }
+
+    /// 0 件が到着したときは選択の指す行が無い（§6.1 の 2 段目の末尾）。**上の「先頭へ戻さない」
+    /// とは別の 0 である**——方針としてのリセットではなく、有効な index が存在しないための 0。
+    #[test]
+    fn arriving_empty_rows_leaves_no_selectable_row() {
+        let mut s = SearchState::new();
+        s.enter_folder("C:\\empty".into());
+        s.set_results(vec![res("a"), res("b"), res("c")]);
+        s.move_selection(2);
+        assert_eq!(s.selected(), 2);
+        s.set_results(vec![]); // 空フォルダの列挙結果が到着
+        assert_eq!(s.selected(), 0);
+        assert!(s.results().is_empty(), "選択が 0 でも、それが指す行は無い");
+    }
+
     #[test]
     fn escape_folder_restores_then_hides() {
         let mut s = SearchState::new();

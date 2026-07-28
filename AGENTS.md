@@ -37,7 +37,7 @@
 4. 事前調査（レビュー未然防止）を実施する
    - 挙動変更なし前提は代表入力/出力をベースライン化して差分検証する
    - 境界条件を列挙し最低1件ずつ検証ケースを用意する
-   - **リソース管理・状態フラグは生成/破棄・真偽のペアで計画する**: `listen()`・`ResizeObserver`・`Child` プロセス・`AtomicBool` など「戻り値や状態がライフサイクルを持つもの」は、破棄・`false` 復帰の「場所・構造・理由」まで同時に記述する（戻す経路が無いと失敗時に回復不能な状態に固まる。Rust の具体則は `.claude/rules/src-tauri.md`、検証は `/symmetric-check`）
+   - **リソース管理・状態フラグは生成/破棄・真偽のペアで計画する**: `listen()`・`Child` プロセス・`AtomicBool` など「戻り値や状態がライフサイクルを持つもの」は、破棄・`false` 復帰の「場所・構造・理由」まで同時に記述する（戻す経路が無いと失敗時に回復不能な状態に固まる。Rust の具体則は `.claude/rules/src-tauri.md`、検証は `/symmetric-check`）
    - 変更の種類に応じた事前調査は下の**条件別チェック**表と `.claude/rules/`（対象ファイルを触ると自動配送）が示す
 5. 失敗するテスト（または最小再現）から実装する — 落ちることを確認し（Red）、最小実装で通し（Green）、通るまで反復する
 6. 変更後の検証を実行する（スキップ不可）
@@ -62,8 +62,8 @@
 | セーフティネット（hook・CI・`.githooks/`・`.claude/settings.json`・rules・skills・規範）を新設/変更 | `.claude/rules/safety-nets.md`（rules・skills までは対象を触ると自動配送。規範文書＝ルート `CLAUDE.md` / `AGENTS.md` 等は自動配送されないため手動参照） |
 | ガバナンス文書（`*.md`・スキル表・モジュール索引・rules・workflow）を変更 | `npm run governance:check`（`docs/build-commands.md` カテゴリ F・#587。PR では CI の governance-check job が常時実行） |
 | 文書に事実の写しを増やす変更 | 正本を 1 か所に定め他は参照へ（分担の記録は `docs/superpowers/specs/2026-07-19-doc-governance-design.md` §1） |
-| ファイル（`.rs`/`.ts`/`.tsx`）を追加/削除 | モジュールの責務は各ファイルの `//!`（Rust）/ TSDoc（TS）に書く。`CLAUDE.md` のモジュール構成節はファイル名の索引を保つため、追加時にファイル名行を足し削除時に消す（責務散文は `//!` を正本とする・#562） |
-| 機能削除・IPC ルート変更 | `scripts/smoke-egui.ps1` と `docs/build-commands.md` の smoke 前提（trace イベント名・hotkey）が壊れないか確認する（WebView2 e2e は #532 SU7 で撤去済み） |
+| ファイル（`.rs`）を追加/削除 | モジュールの責務は各ファイルの `//!` に書く。`CLAUDE.md` のモジュール構成節はファイル名の索引を保つため、追加時にファイル名行を足し削除時に消す（責務散文は `//!` を正本とする・#562） |
+| 機能削除・trace イベント名／hotkey 登録・表示経路の変更 | `scripts/smoke-egui.ps1` と `docs/build-commands.md` の smoke 前提（trace イベント名・hotkey）が壊れないか確認する（WebView2 e2e は #532 SU7 で撤去済み） |
 | 件数 N・上限パラメータを変更 | レンダリング・アイコン取得など下流全段に N の影響を追う |
 | アーキ・横断パターン・ビルド・開発原則に影響 | 対応する `docs/` を「触る範囲」に含める |
 | 各言語ファイルを編集 | `.claude/rules/`（読取で自動配送・パス起点の事前調査） |

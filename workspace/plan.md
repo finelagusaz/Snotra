@@ -92,10 +92,10 @@ let hint: String = if in_tool {
 
 **ユーザー裁定（2026-07-29）により #836 の射程に入れた。** 元は `/dry-check` が付随的に検出した別件で、計画は当初「触らない」としていた。
 
-- [ ] `FolderExpansionState`（17-24 行）とその derive 属性を削除する。**`use serde::{Deserialize, Serialize};` は残す**（`SearchResult` が使い続ける）
-- [ ] 削除の安全性はコンパイラが証明する——リポジトリ全体での出現は定義の 1 件のみ（`grep -rn FolderExpansionState . --include=*.rs --include=*.md --include=*.toml` = 1 件）。**lib crate の `pub` ゆえ `dead_code` は発火せず、消し忘れても警告は出ない**（これが 15933af から今日まで残った理由でもある）
-- [ ] `cargo check --workspace` と `cargo test -p snotra-core` で、他 crate から参照されていないことを実測で確かめる（grep は「文字列として現れない」ことしか言わない）
-- [ ] **この撤去は #836 の機能とは独立である。** 同じ PR に入るが、レビュアーが分けて読めるよう**コミットを分ける**
+- [x] `FolderExpansionState`（17-24 行）とその derive 属性を削除する。**`use serde::{Deserialize, Serialize};` は残す**（`SearchResult` が使い続ける）
+- [x] 削除の安全性はコンパイラが証明する——リポジトリ全体での出現は定義の 1 件のみ（`grep -rn FolderExpansionState . --include=*.rs --include=*.md --include=*.toml` = 1 件）。**lib crate の `pub` ゆえ `dead_code` は発火せず、消し忘れても警告は出ない**（これが 15933af から今日まで残った理由でもある）
+- [x] `cargo check --workspace` と `cargo test -p snotra-core` で、他 crate から参照されていないことを実測で確かめる（grep は「文字列として現れない」ことしか言わない）
+- [x] **この撤去は #836 の機能とは独立である。** 同じ PR に入るが、レビュアーが分けて読めるよう**コミットを分ける**
 
 ### フェーズ 6 — 検証
 

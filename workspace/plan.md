@@ -25,7 +25,7 @@
 - [ ] `const ENV_CONFIG_DIR: &str = "SNOTRA_CONFIG_DIR";` を追加する（**private**。読む消費者は `config_dir()` 1 つだけで、外部 crate から名前で参照する予定は無い）
 - [ ] 純粋関数 `fn config_dir_from(override_dir: Option<OsString>, base: Option<PathBuf>) -> Option<PathBuf>` を追加する
 - [ ] `config_dir()` を `Self::config_dir_from(std::env::var_os(ENV_CONFIG_DIR), dirs::config_dir())` の 1 行へ書き換える
-- [ ] `config_dir` / `config_dir_from` の `///` に「上書きは**そのまま**使い、`Snotra` を付けない」「空は未設定扱い」を書く
+- [ ] `config_dir` / `config_dir_from` の `///` に「上書きは**そのまま**使い、`Snotra` を付けない」「空は未設定扱い」「**展開も絶対化もしない**（`%VAR%` は展開されず、相対パスは CWD 起点になる）」を書く
 - [ ] `cargo test -p snotra-core` が緑（Green）
 
 形（`config.rs`）:
@@ -44,6 +44,13 @@ fn config_dir_from(override_dir: Option<OsString>, base: Option<PathBuf>) -> Opt
 }
 ```
 
+**なぜ相対パス・未展開 `%VAR%` を拒否しないか（却下した代替案）**: 「絶対パスでなければ既定へ
+落とす」は fail-safe に見えて**この用途では危険な向き**である——検証スクリプトがパスを書き損じた
+とき、既定へ落ちれば**ユーザーの実 config を触る**。それはこの issue が消そうとしている当のものだ。
+そのまま使えば、書き損じても CWD 配下の変な場所へ隔離されるだけで実データには届かない。
+**フォールバックの向きは「安全そうな方」ではなく「壊れたときに何を守るか」で決める。**
+（上の `config_dir_from_does_not_expand_or_absolutize_override` がこの選択を固定する）
+
 **なぜ純粋関数へ割るか**: env は プロセス全域の可変状態で、`cargo test` は同一プロセスの複数
 スレッドで並列実行する。`set_var` するテストは他のテストへ漏れる（Rust 2024 では `unsafe` でもある）。
 判定そのものを引数で受ければ、env に触れずに全分岐を測れる（research C4）。
@@ -57,7 +64,7 @@ fn config_dir_from(override_dir: Option<OsString>, base: Option<PathBuf>) -> Opt
 - [ ] プロファイル **`target/visual-check/profile`** を作り、そこへ最小の有効 TOML を seed する
 - [ ] seed 前にプロファイル配下の `config.toml.bak` **と `*.bin` を削除する**（プロファイルは実行間で再利用するため、**前回の残骸が残っていると下の 2 つの判定がどちらも空振りで合格する**）
 - [ ] `$env:SNOTRA_CONFIG_DIR` を設定してから `cargo run -p snotra` する（`-Interactive` / 自動判定の両経路）
-- [ ] **seed の健全性を判定に組み込む**: 終了後に `config.toml.bak` が現れていないことを確認し、現れていたら赤にする
+- [ ] **seed の健全性を判定に組み込む**: 本体の stderr を `-RedirectStandardError` でファイルへ取り、`[config] ` で始まる行が 1 つも無いことを確認する（現れたら赤）。**`config.toml.bak` の不在では証明にならない**——`backup_invalid` の `fs::rename` が失敗すると `.bak` は作られないまま `RecoveredFromCorrupt` を返す（`config.rs:938`・codex の敵対レビューが指摘し実測で確認）。`[config] ` の eprintln は**失敗 4 arm すべてに在り、成功時には出ない**（`config.rs:892`, `:908`, `:918`, `:934-941`）ので、これが唯一の健全な観測点である
 - [ ] **env が効いたことの肯定的証拠を取る**: 実行後にプロファイル配下へ `*.bin` が生成されていることを確認する。**どのファイルが確実に出るかは実装時に実測して決める**——本体は `Stop-Process -Force` で殺すので、正常終了で書かれるもの（`window.bin` の `on_exit`・履歴 flush）は出ない。`[paths]` が空で索引 0 件のとき `index.bin` が書かれるかも自明でない。**どれも確実に出ないなら、この判定は置かずにその事実をスクリプトのコメントへ書く**（在るとは限らないファイルに賭けない）
 - [ ] 単一インスタンスの起動前チェック（`:99-102`）は**残し**、コメントに「プロファイルを分けても single-instance の識別子は変わらない」理由を書く
 - [ ] `finally` は本体プロセスの kill だけを残す
@@ -168,12 +175,17 @@ issue が「正直なコスト 2（新プロファイルは index を作り直�
    （検知: Phase 4 の「実 config の更新時刻」確認）
 5. **seed が parse される。** seed が必須セクションを欠くと破損復旧経路へ落ち、既定色（`#282828`）で
    起動する——`background_color` が届いていても**赤**になる向きなので沈黙はしないが、原因が
-   「色が届いていない」と誤読される。**判定を `config.toml.bak` の不在と併せる**ことで、
-   この 2 つを区別する（検知: Phase 2 の bak チェック）
+   「色が届いていない」と誤読される。**判定を本体 stderr の `[config] ` 行の不在と併せる**ことで
+   この 2 つを区別する（検知: Phase 2 の stderr チェック）。
+   **`.bak` の不在を使ってはならない**——退避は best-effort で、`fs::rename` が失敗すれば
+   parse 失敗でも `.bak` は現れない（`config.rs:938`）
 6. **単一インスタンス衝突は依然として沈黙する。** プロファイル分離では解消しない（research C6）。
    起動前チェックを消してはならない（検知: 起動前チェックの存置とコメント）
 7. **異常終了時に残るのは使い捨てプロファイルだけである。** `target/visual-check/profile` は
-   次回実行で上書きされ、`cargo clean` が掃く。回収コマンド（旧 `-Restore`）は不要になる。
+   次回実行で上書きされる。**`CARGO_TARGET_DIR` を設定していない既定の構成なら** `cargo clean` が
+   掃く（設定している環境では対象外。実測: `CARGO_TARGET_DIR` を渡すと `cargo metadata` の
+   `target_directory` がそちらへ移る）。既存の `$shotDir` も同じ前提の上に在るので、置き場所を
+   揃えるのが一貫している。回収コマンド（旧 `-Restore`）は不要になる。
    **ただし「後始末がゼロになる」は偽である**——retire する 5 つに対し **setup が 1 つ増え**、
    `config.toml` + `*.bin` の残余が（ユーザー資産ではない場所に）残る。PR 本文・docs では
    「5 つが全部消える」ではなく「**5 つ retire / setup 1 / 残余は `cargo clean` が掃く**」と書く
@@ -194,6 +206,7 @@ issue が「正直なコスト 2（新プロファイルは index を作り直�
 | `config_dir_from_falls_back_to_base_when_env_absent` | 不変条件 1（既定の保存先） |
 | `config_dir_from_falls_back_to_base_when_env_is_empty` | 不変条件 1 + 境界条件 C5（空文字 → CWD 流出の防止） |
 | `config_dir_from_is_none_without_override_or_base` | `base` が解決できない極端な環境で `None` を返す（`load_reporting` の early-return 契約を保つ） |
+| `config_dir_from_does_not_expand_or_absolutize_override` | 相対パス・未展開の `%VAR%` を**そのまま返す**（codex の指摘。挙動を明文化して固定する。実測: `%TEMP%\Snotra` は展開されず `GetFullPath` すると CWD 起点になる） |
 
 スクリプト側は自動テストを持たない（実機 GUI が対象）。**接地は Phase 4 の実行**であり、
 `config.toml.bak` の不在（seed の健全性）と実 config の更新時刻（不変条件 4）が観測点である。
@@ -234,6 +247,23 @@ env 上書きの導入でこれらが一斉に偽になる（`AGENTS.md`「全�
 `/plan-review` Step 2 が ①対称コードパス ②影響範囲 ③リソース管理 ④既存パターン整合 ⑤YAGNI を
 検証済みのため 5b では再実行しない。**「独立レビュー不成立」のエントリは無い**（4/4 実在・内容も充実）。
 
+### codex の敵対レビューを反映した点（`workspace/plan-review/codex-adversarial.md`）
+
+`codex exec --sandbox read-only` で「同意ではなく反証」を求めた。4 件のうち **serious 2 件は
+自分の実測で再照合して成立**を確認し、計画を直した:
+
+8. **`.bak` の不在は seed の parse 成功を証明しない**（serious）——`backup_invalid` の `fs::rename` が
+   失敗すれば `.bak` は現れないまま `RecoveredFromCorrupt` になる（`config.rs:938`）。
+   → **判定を stderr の `[config] ` 行の不在へ差し替えた**（失敗 4 arm すべてに eprintln があり、
+   成功時には出ない）。**「副作用の不在」で「処理の成功」を測っていた**のが誤りだった
+9. **`cargo clean` が掃くとは限らない**（minor→計画の全称表現の誤り）——`CARGO_TARGET_DIR` を
+   設定した環境では対象外（自分でも実測: `target_directory` が移る）。→ 前提条件を付けた
+10. **相対パス・未展開 `%VAR%` の境界が空文字しか見えていなかった**（serious）——
+    → 挙動を固定するテストを 1 本足し、**拒否しない理由**（フォールバックの向き）を明文化した
+11. **上書きが既存ファイルを指す場合**（minor）→ 境界表に足した（8 の stderr チェックが捕まえる）
+
+**codex が反証できなかったもの**（7 claim 中 4 つ）は、その旨が成果物の末尾に記録されている。
+
 **受容した残余（`/plan-review` の設計上の既知残余が顕在化した）**: scripts スカウトが契約に反して
 `snotra-core/src/config.rs` へ検証用テストを書き込んだ（`general-purpose` 型は `Write`/`Edit` を持ち、
 プロンプト契約でしか縛れない）。`git checkout --` で復元済み。**同じ測定は自分で実行して一次証拠を取った**。
@@ -249,8 +279,11 @@ env 上書きの導入でこれらが一斉に偽になる（`AGENTS.md`「全�
 | env あり（通常） | `config_dir_from_uses_override_verbatim` |
 | `dirs::config_dir()` が `None` | `config_dir_from_is_none_without_override_or_base` |
 | 上書き先が存在しない | `save_to_dir` の `create_dir_all` が作る（`config.rs:952`）。Phase 2 の実行で通る |
-| seed が parse 不能 | Phase 2 の `config.toml.bak` 不在チェック |
-| 前回実行の `.bak` 残骸 | seed 前に削除する（Phase 2） |
+| seed が parse 不能 | Phase 2 の stderr `[config] ` 不在チェック |
+| 前回実行の `.bak` / `*.bin` 残骸 | seed 前に削除する（Phase 2） |
+| 上書きが相対パス | `config_dir_from_does_not_expand_or_absolutize_override`（そのまま使う＝実データに届かない） |
+| 上書きが未展開の `%VAR%` | 同上（Windows は `var_os` の `%VAR%` を展開しない・実測） |
+| 上書きが既存**ファイル**を指す | `create_dir_all` が失敗 → `save` がエラー → 既定値で起動。stderr に `[config] ` が出るので Phase 2 のチェックが捕まえる |
 | single-instance 衝突 | 起動前チェック（存置・不変条件 6） |
 | env が効かず実 config を読む | プロファイル配下の `*.bin` 生成チェック（Phase 2） |
 
@@ -265,6 +298,6 @@ env 上書きの導入でこれらが一斉に偽になる（`AGENTS.md`「全�
 
 | 壊れたら即アウト | 検知手段 |
 |---|---|
-| **既定の保存先が変わる**（全ユーザーの config / 履歴 / 索引が黙って別の場所へ移り、データ喪失に見える） | ユニットテスト 2 本（env 未設定・空文字）**＋ env なしで起動して既存データが見えることの目視**（Phase 4）。`check:colors` は上書き経路しか通らないので**既定を検査しない**——ここが自動検査の穴で、目視で塞ぐ |
+| **既定の保存先が変わる**（全ユーザーの config / 履歴 / 索引が黙って別の場所へ移り、データ喪失に見える） | **env なしで起動して既存データが見えることの目視**（Phase 4）が唯一の検出器である。ユニットテスト 4 本は**これを検出できない**——`config_dir_from(None, Some(base))` は `base` を**注入**するので、`config_dir()` が `dirs::config_dir()` を呼んでいること自体を誰も見ていない（`dirs::data_dir()` に変えても 4 本とも緑）。**純粋関数へ割ると、測れない部分は消えずに seam の外側へ移動する。** `check:colors` も上書き経路しか通らず既定を検査しない。ゆえにこの目視は「あれば良い」ではなく**ゲート**である |
 | **検証スクリプトが実 config を書く**（この issue が消そうとしている当のもの） | 実 config の更新時刻確認（Phase 4）。加えて、退避コードが**存在しない**こと自体が構造的な保証になる |
 | **seed が parse されず既定色で起動し、原因を誤読する** | `config.toml.bak` の不在チェック（Phase 2）。plan の seed が parse できることは実測済み |

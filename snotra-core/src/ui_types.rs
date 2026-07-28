@@ -1,7 +1,7 @@
-//! フロントエンドとの IPC 用データ型。
+//! 検索結果・ツール一覧など、UI 層へ渡すデータ型。
 //!
-//! Rust ↔ SolidJS 間で serde 経由でやり取りする DTO を定義する
-//! （`#[serde(rename_all = "camelCase")]` でフロントの命名規則へ合わせる）。
+//! `snotra-core` の内部表現とは別に、UI が読む形として serde 派生を持つ DTO を定義する
+//! （`#[serde(rename_all = "camelCase")]` は永続・IPC 形式に触れるため変更しない）。
 
 use serde::{Deserialize, Serialize};
 

@@ -1,7 +1,7 @@
 ---
 name: dry-check
 description: "関数を新規定義・変更したときに使用。同等ロジックを手書きしている重複箇所を検出する。"
-argument-hint: "[関数名と主要操作, 例: 'show_main_and_emit: show() + set_focus() + emit(window-shown)']"
+argument-hint: "[関数名と主要操作, 例: 'show_egui_main: show() + set_focus() + reset_pending.store(true)']"
 allowed-tools:
   - Read
   - Grep
@@ -23,11 +23,11 @@ $ARGUMENTS から以下を抽出する:
 
 例:
 ```
-関数: show_main_and_emit
+関数: show_egui_main
 主要操作:
   - .show()
   - .set_focus()
-  - emit("window-shown")
+  - reset_pending.store(true, ..)
 ```
 
 $ARGUMENTS に操作が明示されていない場合は、先に関数本体を読む。

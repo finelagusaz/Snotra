@@ -978,12 +978,108 @@ export function checkConfigFieldReachability(snapshot, table = G12_NO_LAUNCHER_R
   return findings;
 }
 
+// ---------------------------------------------------------------------------
+// G13 — 規範の散文に残る、現行語彙に無い識別子（腐り）の検出（#736 の同クラス）。
+//
+// #698 が述べた「述語だけが書かれた間接参照」は概念での再導出でしか拾えなかったが、
+// **識別子として書かれた腐りは機械で拾える**。G3 が見るのはパスの実在までで、
+// 識別子の実在は誰も見ていなかった。
+//
+// **自称スコープは狭い。** 見るのは `.claude/**` の散文中の**バッククォート内 camelCase 識別子**
+// だけである。frontmatter の文字列・素の表テキスト・日本語散文（「リアクティブ制約」等）は
+// 構造的に対象外で、#736 が挙げた 10 件のうちこの述語が届くのは 0 件である（実測）。
+// **この検査は #736 の代替ではない**——同 issue は手作業で閉じ、G13 が引き受けるのは再発防止だけである。
+//
+// 判定: 識別子が「現行語彙」に 1 度も現れないなら finding。現行語彙は 2 つの正本からなる:
+// - **ソースの非コメント本文**（`stripRustComments`）。コメントを含めると `resetForShow` のような
+//   由来注記（「〜相当」「parity」）が語彙に化け、腐りが検出できない（実測 11 件）
+// - **`SPEC.md`**。SPEC は意図の正本であり、その語彙を写した規範は腐っていない
+//   ——SPEC 自身の stale は `#735` の射程である（`folderState` 8 件・`toolSelectionState` 4 件・
+//   `resetForShow` 2 件が実際に SPEC 側に在る）。**この 1 行が無いと、写しを SSOT より先に直す**
+//
+// **外部ツールの語彙を構造的に外す**: `gh` / `npm` / `cargo` 等のコマンドが同じ行に在るなら、
+// その行の識別子はコマンドの引数（`--json closingIssuesReferences` 等）である。免除注記の機構を
+// 設けない契約（本ファイル冒頭）を守るため、除外リストではなく行の形で外す。
+// これで実測の偽陽性 1 件が構造的に消え、真の腐り 6 件は残った（両方向で確認）。
+//
+// **受容する残余**: 単語 1 つの識別子（`Glob` `expand` `plain`）は対象外である。こぶを 1 つ以上
+// 要求しないと、harness のツール名と散文の語彙が大量に混じる（実測 53 件中 40 件弱）。
+// ---------------------------------------------------------------------------
+
+/** 現行語彙の正本になるソース拡張子 */
+const G13_SOURCE = /\.(rs|ts|tsx|mjs|ps1|toml)$/;
+/** 現行語彙の正本になる文書（意図の SSOT） */
+export const G13_VOCAB_DOCS = ["SPEC.md"];
+/** バッククォート内で腐りを問う形: camelCase（こぶ 1 つ以上）・末尾 `()` は任意 */
+const G13_IDENT = /^([a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+)(\(\))?$/;
+/** 同じ行に在れば、その行の識別子は外部ツールの引数と見なす */
+const G13_EXTERNAL_CMD = /`(gh|npm|cargo|git|node|pwsh|npx) /;
+
+/** 規範の散文（G13 の母集団）。skills / rules / agents の md */
+export function staleIdentifierDocs(snapshot) {
+  return snapshot.files.filter((f) => /^\.claude\/(skills\/.*|rules\/[^/]+|agents\/[^/]+)\.md$/.test(f));
+}
+
+/** 現行語彙。ソースはコメントを落とす（`#` コメントの言語は行頭・行中とも落とす） */
+export function currentVocabulary(snapshot) {
+  const parts = [];
+  for (const f of snapshot.files) {
+    if (!G13_SOURCE.test(f)) continue;
+    const src = snapshot.read(f);
+    if (src == null) continue;
+    parts.push(/\.(ps1|toml)$/.test(f) ? src.replace(/#.*$/gm, " ") : stripRustComments(src));
+  }
+  for (const d of G13_VOCAB_DOCS) parts.push(snapshot.read(d) ?? "");
+  return parts.join("\n");
+}
+
+/** findings に加えて照合件数を返す（「腐りゼロ」と「照合していない」を区別する証跡・#497） */
+export function scanStaleIdentifiers(snapshot, docs) {
+  const findings = [];
+  let checked = 0;
+  const vocab = currentVocabulary(snapshot);
+  const seen = new Map();
+  const inVocab = (id) => {
+    if (!seen.has(id)) seen.set(id, new RegExp(`\\b${id}\\b`).test(vocab));
+    return seen.get(id);
+  };
+  for (const doc of docs) {
+    const text = snapshot.read(doc);
+    if (text == null) {
+      findings.push(finding(doc, 1, "対象文書が読めない（G13 母集団の欠落）"));
+      continue;
+    }
+    for (const [lineNo, line] of linesOutsideFences(text)) {
+      if (G13_EXTERNAL_CMD.test(line)) continue;
+      for (const m of line.matchAll(/`([^`\n]+)`/g)) {
+        const raw = m[1];
+        if (raw.includes("/") || raw.includes(" ") || raw.includes(".")) continue;
+        const im = raw.match(G13_IDENT);
+        if (!im) continue;
+        checked += 1;
+        if (!inVocab(im[1])) {
+          findings.push(
+            finding(doc, lineNo, `規範の散文に、現行語彙に無い識別子が残っている: \`${raw}\`（ソースの非コメント本文と SPEC.md のどちらにも無い）`),
+          );
+        }
+      }
+    }
+  }
+  return { findings, checked };
+}
+
+export function checkStaleIdentifiers(snapshot, docs) {
+  return scanStaleIdentifiers(snapshot, docs).findings;
+}
+
 export function runAll(snapshot) {
   const docs = governanceDocs(snapshot);
   const refDocs = headingRefDocs(snapshot);
   const findings = [];
   if (docs.length === 0) findings.push(finding(".", 1, "ガバナンス文書が 0 件（母集団の欠落）"));
   if (refDocs.length === 0) findings.push(finding(".", 1, "G11 の対象 md が 0 件（母集団の欠落）"));
+  const staleDocs = staleIdentifierDocs(snapshot);
+  if (staleDocs.length === 0) findings.push(finding(".", 1, "G13 の対象 md が 0 件（母集団の欠落）"));
   findings.push(
     ...checkModuleIndex(snapshot),
     ...checkArchitectureTable(snapshot),
@@ -999,8 +1095,10 @@ export function runAll(snapshot) {
   );
   const headingRefs = scanHeadingRefs(snapshot, refDocs);
   findings.push(...headingRefs.findings);
+  const stale = scanStaleIdentifiers(snapshot, staleDocs);
+  findings.push(...stale.findings);
   const area = normativeArea(snapshot);
-  const evidence = `対象文書 ${docs.length} 件 / rules ${snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length} 件 / skills ${snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length} 件 / 恒久規範 常時ロード ${area.always}/${AREA_BUDGET.alwaysLoaded} 字・rules ${area.rules}/${AREA_BUDGET.rules} 字 / 見出し参照 ${headingRefs.checked} 件を ${refDocs.length} 文書から照合 / config フィールド ${G12_CONFIG_PATHS.flatMap((p) => configFields(snapshot.read(p) ?? "")).length} 件の到達性`;
+  const evidence = `対象文書 ${docs.length} 件 / rules ${snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length} 件 / skills ${snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length} 件 / 恒久規範 常時ロード ${area.always}/${AREA_BUDGET.alwaysLoaded} 字・rules ${area.rules}/${AREA_BUDGET.rules} 字 / 見出し参照 ${headingRefs.checked} 件を ${refDocs.length} 文書から照合 / config フィールド ${G12_CONFIG_PATHS.flatMap((p) => configFields(snapshot.read(p) ?? "")).length} 件の到達性 / 規範の識別子 ${stale.checked} 件を ${staleDocs.length} 文書から照合`;
   return { findings, evidence };
 }
 
@@ -1014,6 +1112,6 @@ if (isMain) {
     for (const f of findings) console.error(`  ${f.file}:${f.line}  ${f.message}`);
     process.exitCode = 1;
   } else {
-    console.log(`governance:check — G1..G12 passed（${evidence}）`);
+    console.log(`governance:check — G1..G13 passed（${evidence}）`);
   }
 }

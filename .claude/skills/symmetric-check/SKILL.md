@@ -1,7 +1,7 @@
 ---
 name: symmetric-check
 description: "コードパスの変更・バグ修正時、または計画レビュー時に使用。対称ペア（show/hide 等）とリソース生成/破棄の適用漏れを検証する。"
-argument-hint: "[変更内容やキーワード, 例: 'result-clicked: emitSelectionUpdate を追加' / 'iconUrls Set を廃止して LruIconCache に移行']"
+argument-hint: "[変更内容やキーワード, 例: 'enter_folder に世代 bump を足した' / 'icon_pending の insert を追加']"
 allowed-tools:
   - Read
   - Grep
@@ -33,7 +33,6 @@ $ARGUMENTS から以下を抽出する:
 
 | 変更対象 | 確認対象 |
 |---------|---------|
-| `*clicked*` | `*double-clicked*` |
 | `show` / `open` | `hide` / `close` |
 | `enter*` | `exit*` |
 | `expand` | `collapse` |
@@ -44,13 +43,13 @@ $ARGUMENTS から以下を抽出する:
 
 ## Step 2b — リソースライフサイクルの対称性検索
 
-変更がリソース管理に関わる場合（Blob URL、listen、Child プロセス、タイマー等）、以下を検索する:
+変更がリソース管理に関わる場合（worker スレッド、listener、Child プロセス、状態フラグ等）、以下を検索する:
 
 | 確認項目 | 検索方法 |
 |---------|---------|
-| **生成箇所** | `createObjectURL` / `listen(` / `spawn` / `setTimeout` 等を grep |
-| **登録箇所** | `.add(` / `.set(` / 変数への代入 |
-| **破棄箇所** | `revokeObjectURL` / `unlisten` / `kill` / `clearTimeout` 等を grep |
+| **生成箇所** | `thread::spawn` / `listen(` / `Command::new` / `request_repaint_after` 等を grep |
+| **登録箇所** | `.insert(` / 変数への代入 / `store(true` |
+| **破棄箇所** | `join()` / `kill(` / `store(false` / 受信側の drop 等を grep |
 
 特に以下のパターンに注意:
 - **生成→登録の間に早期リターン**: 生成した後、登録する前に `if (...) return` があるパスで、生成済みリソースが破棄されない

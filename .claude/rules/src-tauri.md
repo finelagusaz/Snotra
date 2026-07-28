@@ -18,7 +18,7 @@ paths:
 ## この rule が正本（CLAUDE.md に無い src-tauri 固有）
 
 - **子プロセス spawn → exit ハンドラ kill はペア**: `snotra-settings.exe` 等を spawn したら `main.rs` の exit ハンドラで `child.kill()` する（生成/破棄のペア）
-- **Win32 API は `PlatformBridge` 経由**: IPC ハンドラから直接呼ばず `platform::{PlatformBridge, PlatformCommand}` で platform スレッドのメッセージループに実行を委ねる
+- **Win32 API は `PlatformBridge` 経由**: どの経路からも直接呼ばず `platform::{PlatformBridge, PlatformCommand}` で platform スレッドのメッセージループに実行を委ねる
 - **状態フラグを true にしたら false に戻す経路とセットで設計する**: 戻す責務の関数に `#[must_use]` を付け `let _ =` 無視を compile-fail 検出（実例 `launch_settings_process`）。一般則は `AGENTS.md`「事前調査」
 - **Win32 依存モジュール（`ime.rs`・`platform/` の `hotkey.rs` 等）はユニットテスト前提にしない**
 

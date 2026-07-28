@@ -29,6 +29,10 @@ import {
   headingRefDocs,
   checkConfigFieldReachability,
   G12_NO_LAUNCHER_READ,
+  checkStaleIdentifiers,
+  scanStaleIdentifiers,
+  staleIdentifierDocs,
+  currentVocabulary,
   runAll,
 } from "./governance-check.mjs";
 
@@ -571,6 +575,69 @@ describe("G11 checkHeadingRefs（見出し参照の実在）", () => {
       "src/main.rs": "",
     });
     expect(headingRefDocs(s).sort()).toEqual([".claude/agents/code-reviewer.md", "PERFORMANCE.md"]);
+  });
+});
+
+describe("G13 checkStaleIdentifiers（規範の散文に残る、現行語彙に無い識別子）", () => {
+  // 守りたい対象 = #736 の同クラス。UI スタックを入れ替えた後、スキルの散文だけが旧 API 名を
+  // 現行 API として指し続ける形。赤フィクスチャは実際に検出された `createObjectURL`（WebView2 期）。
+  const DOC = ".claude/skills/x/SKILL.md";
+  const base = { "SPEC.md": "# 仕様\n\n本文\n", "src-tauri/src/a.rs": "fn f() { let x = AtomicBool::new(true); }\n" };
+  const run = (prose, extra = {}) => checkStaleIdentifiers(snap({ ...base, ...extra, [DOC]: prose }), [DOC]);
+
+  it("現行語彙に無い識別子は finding（赤）", () => {
+    const f = run("Blob は `createObjectURL` で作る\n");
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("createObjectURL");
+  });
+
+  it("ソースの非コメント本文に在れば finding 無し（緑）", () => {
+    expect(run("フラグは `newValue` を見る\n", { "src-tauri/src/a.rs": "let newValue = 1;\n" })).toEqual([]);
+  });
+
+  it("ソースのコメントにしか無いものは finding（由来注記を語彙に化けさせない・#736 実測 11 件）", () => {
+    const f = run("`resetForShow()` でクリアする\n", { "src-tauri/src/a.rs": "// resetForShow 相当\nlet x = 1;\n" });
+    expect(f).toHaveLength(1);
+  });
+
+  it("SPEC.md の語彙は腐りではない（写しを SSOT より先に直させない・#735）", () => {
+    expect(run("`folderState` を確認する\n", { "SPEC.md": "- `folderState` は直交する\n" })).toEqual([]);
+  });
+
+  it("外部ツールのコマンドが同じ行に在れば、その行は見ない（除外リストを置かない）", () => {
+    expect(run("母集団は `closingIssuesReferences` ではなく `gh issue list --search x` から取る\n")).toEqual([]);
+  });
+
+  it("判定対象外の不混入: 単語 1 つ・パス・空白入り・コードフェンス内", () => {
+    expect(run("`Glob` と `expand` と `docs/a.md` と `git diff main`\n")).toEqual([]);
+    expect(run("```\n`createObjectURL`\n```\n")).toEqual([]);
+  });
+
+  it("末尾 () の有無で判定が変わらない", () => {
+    expect(run("`interpKind()` を見る\n")).toHaveLength(1);
+    expect(run("`interpKind` を見る\n")).toHaveLength(1);
+  });
+
+  it("照合件数を返す（「腐りゼロ」と「照合していない」の区別・#497）", () => {
+    const r = scanStaleIdentifiers(snap({ ...base, [DOC]: "`someName` と `otherName`\n" }), [DOC]);
+    expect(r.checked).toBe(2);
+    expect(r.findings).toHaveLength(2);
+  });
+
+  it("読めない文書は母集団の欠落として finding", () => {
+    expect(checkStaleIdentifiers(snap(base), ["missing.md"])[0].message).toContain("母集団の欠落");
+  });
+
+  it("母集団は skills / rules / agents の md に限る", () => {
+    const s = snap({ ".claude/skills/a/SKILL.md": "", ".claude/rules/b.md": "", ".claude/agents/c.md": "", "docs/d.md": "", ".claude/hooks/e.mjs": "" });
+    expect(staleIdentifierDocs(s).sort()).toEqual([".claude/agents/c.md", ".claude/rules/b.md", ".claude/skills/a/SKILL.md"]);
+  });
+
+  it("語彙は SPEC.md とソースの両方から作られる", () => {
+    const v = currentVocabulary(snap({ "SPEC.md": "specWord", "src-tauri/src/a.rs": "let codeWord = 1;", "docs/x.md": "docWord" }));
+    expect(v).toContain("specWord");
+    expect(v).toContain("codeWord");
+    expect(v).not.toContain("docWord"); // 一般の docs は語彙の正本ではない
   });
 });
 

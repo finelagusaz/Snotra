@@ -449,8 +449,6 @@ impl snotra_egui_runtime::EguiView for ResultsView {
             &self.app_handle,
             crate::egui_shell::VisualApplied {
                 font_family: &self.applied_font_family,
-                // ネイティブ背景ブラシの追従は show 経路が担う——results は比較しない。
-                background_hex: None,
             },
         );
         frame.set_clear_color(visual.background);

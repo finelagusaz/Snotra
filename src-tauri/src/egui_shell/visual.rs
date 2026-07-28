@@ -15,11 +15,11 @@
 //! **保持しないこと**: `VisualSnapshot` の寿命は 1 フレームである。`self.` へ持つと config 変更が
 //! 反映されなくなる（毎フレーム live-read 方針・#576 / #646 決定 2）。
 //!
-//! **色のパーサは 2 つあり、統合しない**: 描画色は `egui::Color32::from_hex`（`#RGB` / `#RGBA` /
-//! `#RRGGBB` / `#RRGGBBAA` を受理）、tao のネイティブ背景ブラシは
-//! `config_watcher::parse_hex_color`（`#RRGGBB` 厳格・alpha 255 固定）。`#FFF` は前者だけが通る。
-//! 一本化するとテストの無い白フラッシュ回避経路の挙動が黙って変わるため、本モジュールは
-//! main 向けに**変化したときだけ hex 文字列**を返し、パーサの選択は呼び出し側に残す。
+//! **色のパーサは 1 本である**（spec 決定 4 で統合）: `egui::Color32::from_hex`（`#RGB` / `#RGBA` /
+//! `#RRGGBB` / `#RRGGBBAA` を受理）。tao のネイティブ背景ブラシへは `native_brush_color` が
+//! `Color32` から変換する——**alpha は捨てる**（softbuffer の clear color が持てないため）。
+//! 旧 `config_watcher::parse_hex_color`（`#RRGGBB` 厳格）と 2 本立てだった頃は、`#FFF` を書くと
+//! 描画色だけが白になり下地は既定色へ落ちていた（#680 の 1）。統合で消えたのはこの非対称である。
 
 use std::sync::LazyLock;
 
@@ -59,10 +59,6 @@ pub(crate) struct RowTheme {
 pub(crate) struct VisualApplied<'a> {
     /// 各窓の `applied_font_family`（ctx は窓ごとに独立ゆえ main と results で別々に持つ）。
     pub font_family: &'a str,
-    /// main の `applied_background_hex`。**results は `None` を渡す**——ネイティブ背景ブラシの
-    /// 追従は main だけが行うため、比較そのものを行わない（`Some("")` を渡すと毎フレーム
-    /// 「変化した」と誤報する。比較しない意図を型で表す）。
-    pub background_hex: Option<&'a str>,
 }
 
 /// 1 フレーム分のテーマ値。main と results の要求の**和集合**である（窓ごとの projection に
@@ -85,9 +81,6 @@ pub(crate) struct VisualSnapshot {
     /// `applied.font_family` と異なるときだけ `Some`。呼び出し側は Some のときだけ
     /// `font_stack::configure_japanese_font` を呼び、`applied` を更新する。
     pub font_family_changed: Option<String>,
-    /// `applied.background_hex` と異なるときだけ `Some`（`None` を渡したときは常に `None`）。
-    /// main はこの hex を `config_watcher::parse_hex_color` に食わせる（`//!` のパーサ節）。
-    pub background_hex_changed: Option<String>,
 }
 
 /// `VisualConfig` から 1 フレーム分の値を導く**純関数**（lock を持たない・テスト対象）。
@@ -122,11 +115,23 @@ pub(crate) fn visual_snapshot(
         metrics: Metrics::from_config(v.font_size, v.row_padding, v.bar_padding),
         show_icons,
         font_family_changed: (v.font_family != applied.font_family).then(|| v.font_family.clone()),
-        background_hex_changed: applied
-            .background_hex
-            .filter(|a| *a != v.background_color)
-            .map(|_| v.background_color.clone()),
     }
+}
+
+/// 背景色 hex を `Color32` へ。**フォールバックの正本は `VisualConfig::default()`** であり、
+/// `#282828` のリテラルをここへ再手打ちしない（`hex_or` の doc と同方針）。
+pub(crate) fn background_color(hex: &str) -> egui::Color32 {
+    hex_or(hex, &DEFAULT_VISUAL.background_color)
+}
+
+/// `Color32` を tao のネイティブ背景ブラシ色へ（spec 決定 4）。
+///
+/// **alpha は捨てて 255 にする**——softbuffer の clear color が `0x00RRGGBB` で alpha を持てず、
+/// 下地と定常の背景が食い違うと show の一瞬だけ色が変わって見えるためである。
+/// **パーサは `Color32::from_hex` の 1 本だけ**になった（旧 `config_watcher::parse_hex_color` は
+/// `#RRGGBB` 厳格で、`#FFF` を書くと下地だけ既定色へ落ちていた・#680 の 1）。
+pub(crate) fn native_brush_color(color: egui::Color32) -> tauri::window::Color {
+    tauri::window::Color(color.r(), color.g(), color.b(), 0xff)
 }
 
 /// `#RRGGBB` 等を `Color32` へ。parse 失敗時は既定値（の parse 結果）へ落ちる。
@@ -146,8 +151,8 @@ mod tests {
         VisualConfig::default()
     }
 
-    fn applied_none<'a>(font_family: &'a str) -> VisualApplied<'a> {
-        VisualApplied { font_family, background_hex: None }
+    fn applied_none(font_family: &str) -> VisualApplied<'_> {
+        VisualApplied { font_family }
     }
 
     /// **本 PR が存在する理由の不変条件**（spec 決定 4 の効果）: 1 つの snapshot の中で、
@@ -192,26 +197,27 @@ mod tests {
         assert_eq!(diff.font_family_changed.as_deref(), Some(v.font_family.as_str()));
     }
 
-    /// 背景 hex は main だけが比較する。results は None を渡し、常に None が返る。
+    /// 背景色の parse は **1 本**（`Color32::from_hex`）になり、`#RGB` も通る（#680 の 1）。
+    /// 旧 `config_watcher::parse_hex_color` は `#RRGGBB` 厳格で、`#FFF` を書くと下地だけ
+    /// 既定色へ落ちていた——その非対称がここで消える。
     #[test]
-    fn background_hex_change_is_opt_in() {
-        let v = cfg();
-        let opt_out = visual_snapshot(&v, true, applied_none(""));
-        assert!(opt_out.background_hex_changed.is_none());
-        let unchanged = visual_snapshot(
-            &v,
-            true,
-            VisualApplied { font_family: "", background_hex: Some(&v.background_color) },
-        );
-        assert!(unchanged.background_hex_changed.is_none());
-        let changed = visual_snapshot(
-            &v,
-            true,
-            VisualApplied { font_family: "", background_hex: Some("#000000") },
-        );
-        assert_eq!(
-            changed.background_hex_changed.as_deref(),
-            Some(v.background_color.as_str())
-        );
+    fn background_color_accepts_short_hex_and_falls_back_to_config_default() {
+        assert_eq!(background_color("#FFF"), egui::Color32::WHITE);
+        assert_eq!(background_color("#4A2B5C"), egui::Color32::from_rgb(0x4A, 0x2B, 0x5C));
+        assert_eq!(background_color("#ffffff"), egui::Color32::WHITE);
+        // 旧 `config_watcher::parse_hex_color` の 5 テストが固定していた命題（撤去に伴い移設）:
+        // 不正形はいずれも既定色へ落ちる。**リテラルを再手打ちせず既定から導く**。
+        let fallback = egui::Color32::from_hex(&VisualConfig::default().background_color).unwrap();
+        for bad in ["282828", "#28282", "#gggggg", "", "#", "not-a-color"] {
+            assert_eq!(background_color(bad), fallback, "input: {bad:?}");
+        }
+    }
+
+    /// ネイティブブラシは alpha を 255 に固定する。softbuffer の clear color が alpha を
+    /// 持てないため、**下地と定常の背景が食い違わないよう捨てる側へ揃える**（spec 決定 4）。
+    #[test]
+    fn native_brush_forces_opaque_alpha() {
+        let c = native_brush_color(egui::Color32::from_rgba_premultiplied(0x12, 0x34, 0x56, 0x80));
+        assert_eq!((c.0, c.1, c.2, c.3), (0x12, 0x34, 0x56, 0xff));
     }
 }

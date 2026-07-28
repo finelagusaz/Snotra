@@ -72,7 +72,11 @@ impl ResultsWindow {
     /// results が現れた瞬間に入力欄からフォーカスが奪われ 2 文字目が打てなくなる。
     /// tao 内部で `SW_SHOWNOACTIVATE` に至る唯一の経路（`MARKER_DONT_FOCUS`）は窓生成時に
     /// 1 回だけ立ち初回 show で消費されるため、繰り返し show する用途には使えない。
-    pub(crate) fn show(&self) -> bool {
+    ///
+    /// `background` は下地（softbuffer が present するまでの一瞬に見えるネイティブブラシ）へ
+    /// 適用する。**show 遷移のときだけ撃つ**（下の早期 return の後に置く理由）——可視のまま
+    /// 毎フレーム撃つと `InvalidateRect` + `UpdateWindow` を送り続けることになる。
+    pub(crate) fn show(&self, background: egui::Color32) -> bool {
         // 先に flag を swap して test-and-set を原子にする（別スレッドの hide と競っても
         // raw 操作が二重に撃たれない）。**保証するのはそこまでである**——swap と `raw_show()`
         // の間に他スレッドの `hide()` が挟まると「フラグ=false・窓=可視」の不一致が残りうる
@@ -82,8 +86,25 @@ impl ResultsWindow {
         if self.visible.swap(true, Ordering::SeqCst) {
             return false;
         }
+        self.apply_native_background(background);
         self.raw_show();
         true
+    }
+
+    /// 下地（softbuffer が present するまでの一瞬に見えるネイティブブラシ）を config 色へ合わせる。
+    ///
+    /// **show 遷移時とサイズ変更時の両方で撃つ**——`show` の一瞬だけでなく、**リサイズでも
+    /// 下地が露出する**ためである（SU6 spec 決定 2 の codex 反証。件数変化のたびに results は
+    /// リサイズする）。可視中の毎フレームには撃たない（`InvalidateRect` + `UpdateWindow` を
+    /// 送り続けることになる）——呼び出し点はどちらもデルタガード／遷移判定の内側にある。
+    ///
+    /// tao の `set_background_color` は `window_state` への代入と `InvalidateRect` だけで
+    /// `apply_diff` を通らない（tao 0.35.3 実測）。ゆえに「results の 3 操作は raw へ寄せる」
+    /// 規約（`src-tauri/CLAUDE.md`「Win32 / Tauri 注意事項」）の対象外であり、tao 経由でよい。
+    pub(crate) fn apply_native_background(&self, color: egui::Color32) {
+        let _ = self
+            .window
+            .set_background_color(Some(super::visual::native_brush_color(color)));
     }
 
     /// results 窓を隠す（`show` の対）。既に不可視なら raw 操作を撃たず `false` を返す。
@@ -149,7 +170,9 @@ impl ResultsWindow {
     /// `set_inner_size` は `set_window_flags` → `apply_diff` を経て窓プロシージャに至りうる
     /// ——guard を握ったまま呼ぶ形は、将来その経路が再入したときにデッドロックする。
     /// 手放すことによる TOCTOU は生じない（書き手は `last_size` の doc のとおり単一スレッド）。
-    pub(crate) fn set_size(&self, width: f64, height: f64) {
+    /// `background` は**リサイズで露出する下地**へ適用する（`apply_native_background` の doc）。
+    /// デルタガードの内側で撃つため、同値のフレームでは Win32 を呼ばない。
+    pub(crate) fn set_size(&self, width: f64, height: f64, background: egui::Color32) {
         {
             let mut last = self.last_size.lock().unwrap();
             if !crate::egui_shell::layout::size_delta_exceeds(*last, (width, height)) {
@@ -158,6 +181,7 @@ impl ResultsWindow {
             *last = (width, height);
         }
         let _ = self.window.set_size(tauri::LogicalSize::new(width, height));
+        self.apply_native_background(background);
     }
 
     /// サイズ memo を「まだ適用していない」へ戻す（#749・旧 `view.rs` の reset-on-show 2 行）。

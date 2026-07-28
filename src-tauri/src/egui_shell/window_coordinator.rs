@@ -56,6 +56,19 @@ pub(crate) fn read_metrics(app: &tauri::AppHandle) -> layout::Metrics {
     layout::Metrics::from_config(f, rp, bp)
 }
 
+/// show 経路が**背景色だけ**を読む（`read_metrics` と同方針——色 5 本の parse と font 比較を
+/// 払わせない）。ネイティブ背景ブラシ用であり、フレーム内の描画は `read_visual` を使う。
+///
+/// **`read_visual` と統合しない**: こちらは show 経路（フレーム外・別スレッドからも走る）の
+/// 読みで、1 フレーム 1 lock の規律（#673 決定 4）が掛かる面には居ない。
+pub(crate) fn read_background(app: &tauri::AppHandle) -> egui::Color32 {
+    let hex = app
+        .try_state::<crate::AppState>()
+        .map(|s| s.engine.lock().unwrap().config().visual.background_color.clone())
+        .unwrap_or_else(|| snotra_core::config::VisualConfig::default().background_color);
+    super::visual::background_color(&hex)
+}
+
 /// Position the main window on the target monitor using saved relative coordinates.
 ///
 /// Target monitor is determined by `follow_cursor_monitor` config:
@@ -149,6 +162,11 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
     }
     #[cfg(windows)]
     position_on_target_monitor(app, &window);
+    // 下地（softbuffer が present するまでの一瞬に見える）を config の背景色へ合わせる。
+    // **show のたびに無条件で撃つ**（spec 決定 3）——エッジ検出は「変化の瞬間に居合わせる」
+    // ことを要求するが、hidden 中は update() が走らないため居合わせられない。同値の再設定は
+    // 安価であり、show は頻繁な操作でもない。
+    let _ = window.set_background_color(Some(super::visual::native_brush_color(read_background(app))));
     let _ = window.show();
     // main_visible は show() の後に立てる（WebView2 の show_and_focus_main と同じ「順序不変」
     // 制約）。show 完了前に visible=true を読んだホットキートグルが hide するのを避ける。
@@ -395,6 +413,10 @@ pub(crate) struct DriveResultsInputs {
     pub(crate) result_count: usize,
     pub(crate) width: f64,
     pub(crate) row_height: f64,
+    /// results の下地（ネイティブ背景ブラシ）に使う背景色。**フレーム冒頭の `VisualSnapshot`
+    /// 由来でなければならない**——ここで別に読むと `row_height` と別の lock になり、同じ
+    /// フレームで新旧が混ざる（#673 決定 4・`row_height` と同じ理由）。
+    pub(crate) background: egui::Color32,
 }
 
 /// results 窓の可視性・サイズ・位置を main から駆動する(#646 PR2 決定 6)。
@@ -464,10 +486,10 @@ pub(crate) fn drive_results_window(app: &tauri::AppHandle, i: DriveResultsInputs
     // `set_size` の実引数と同じであること**——素の値を覚えると、毎フレーム撃つか必要な
     // 再サイズを撃たないかのどちらかになる——は、memo を撃つ側の内側へ入れたことで
     // 構造的に保たれる（渡した値がそのまま memo になる）。
-    results.set_size(i.width, applied_height);
+    results.set_size(i.width, applied_height, i.background);
     // フォーカスを奪わない表示（tauri show() は SW_SHOW で活性化する・#646 PR2）。
     // 置き場の理由は上の hide 側コメントと同じ（spec 決定 7）。
-    if results.show() {
+    if results.show(i.background) {
         crate::trace_main("egui_results:show", serde_json::json!({ "rows": count }));
     }
     // 決定 5（#673 spec・#697）: この無条件 wake を edge 化してはならない。results は

@@ -260,8 +260,9 @@ pub(crate) fn create(
     let runtime = EguiRuntime::new();
     runtime.install(app); // install(&self, &mut App<Wry>)（runtime.rs:77）
     let app_handle = app.handle().clone();
-    let bg_color = crate::config_watcher::parse_hex_color(background_color_hex)
-        .unwrap_or(tauri::window::Color(0x28, 0x28, 0x28, 0xff));
+    // parse は描画色と同じ 1 本（`Color32::from_hex`）で、フォールバックの正本は
+    // `VisualConfig::default()` である——`#282828` のリテラルをここへ再手打ちしない（spec 決定 4）。
+    let bg_color = visual::native_brush_color(visual::background_color(background_color_hex));
     let window = tauri::Window::builder(app, "main")
         .title("Snotra")
         .inner_size(window_width, 52.0) // 保存幅を尊重（codex #11）。高さは初期値。実高は show 時に Metrics で再設定(#646)

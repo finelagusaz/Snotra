@@ -617,6 +617,9 @@ impl LauncherController {
         self.app_handle
             .try_state::<crate::AppState>()
             .map(|s| s.engine.lock().unwrap().config().general.language)
+            // 既定関数（`default_language()`）は OS ロケール依存なので、ここへ寄せると
+            // 非 ja 環境で挙動が変わる（#795 の射程外・同ファイルの他 2 箇所は参照へ寄せた）。
+            // 読み元ごと #824 で決める。
             .unwrap_or(snotra_core::config::Language::Ja)
     }
 

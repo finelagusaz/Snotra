@@ -317,3 +317,61 @@ fn theme_card(ui: &mut egui::Ui, label: &str, colors: &[&str; 5], active: bool) 
 
     response
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{PRESETS, preset_matches};
+    use snotra_core::config::{Config, ThemePreset};
+
+    /// 既定 config は Obsidian プリセットと一致していなければならない（#795 群 10）。
+    ///
+    /// **置換では消せない写しである**——`PRESETS` は `&'static str` の `const` であり、
+    /// `String` を返す `VisualConfig::default()` から導けない。ゆえにテストで固定する。
+    ///
+    /// **UI と同じ述語（`preset_matches`）を通すのが要点である。** カードの強調は
+    /// `preset_matches` の結果そのもの（`is_active`）で決まり、色 5 本を
+    /// `eq_ignore_ascii_case` で比べる。`assert_eq!` で 1 本ずつ比較すると
+    /// **UI が守っている不変条件より厳しい主張**になる（大文字小文字の違いだけで落ちる）。
+    ///
+    /// 壊れると: まっさらな初回起動で**どのプリセットカードも強調されず**、かつ
+    /// 「カスタムテーマとして保存」ボタンが最初から出る。
+    #[test]
+    fn default_config_matches_obsidian_preset() {
+        let obsidian = PRESETS
+            .iter()
+            .find(|p| p.preset == ThemePreset::Obsidian)
+            .expect("Obsidian プリセットが PRESETS から消えた");
+        assert!(
+            preset_matches(&Config::default(), obsidian),
+            "既定 config が Obsidian プリセットと一致しない。既定色を変えるなら Obsidian \
+             プリセットも同じ変更で直すこと（snotra-core の VisualConfig::default() と \
+             本ファイルの PRESETS）"
+        );
+
+        // 上の assert が空虚に真でないことを、**複製に変異を当てて**確かめる
+        // （`.claude/rules/safety-nets.md`「稼働中のガードを弱めず複製に変異を当てる」）。
+        // **5 色すべてに当てる**——1 本だけだと、残り 4 本が述語の `&&` から抜け落ちても緑を通る。
+        for name in [
+            "background_color",
+            "input_background_color",
+            "text_color",
+            "selected_row_color",
+            "hint_text_color",
+        ] {
+            let mut drifted = Config::default();
+            let v = &mut drifted.visual;
+            let slot = match name {
+                "background_color" => &mut v.background_color,
+                "input_background_color" => &mut v.input_background_color,
+                "text_color" => &mut v.text_color,
+                "selected_row_color" => &mut v.selected_row_color,
+                _ => &mut v.hint_text_color,
+            };
+            *slot = "#123456".to_string();
+            assert!(
+                !preset_matches(&drifted, obsidian),
+                "{name} を変えても一致してしまう——preset_matches がその色を見ていない"
+            );
+        }
+    }
+}

@@ -41,8 +41,8 @@ use super::{EguiShellState, ResultsWindow};
 /// (/simplify: 独立実装 2 箇所でフォールバックが 52.0/43.0 に乖離していた)。
 /// 本関数が `read_visual` と別に在るのは、show 経路が高さだけを要り色 parse を払わないため
 /// （`mod.rs` の `read_visual` の doc と対）。
-/// AppState 不在(setup 完了前の理論経路のみ)は `VisualConfig::default()` から導出——
-/// 既定値の正本(config.rs の default_*)に追従し、リテラル再手打ちを持たない。
+/// AppState 不在(setup 完了前の理論経路のみ)は `visual::default_visual()` から導出——
+/// 理由は本体のコメントに置く。
 pub(crate) fn read_metrics(app: &tauri::AppHandle) -> layout::Metrics {
     let (f, rp, bp) = app
         .try_state::<crate::AppState>()
@@ -190,7 +190,12 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
             .inner_size()
             .ok()
             .map(|s| s.to_logical::<f64>(window.scale_factor().unwrap_or(1.0)).width)
-            .unwrap_or(f64::from(AppearanceConfig::default().window_width));
+            // **ここは `appearance.window_width` の消費者ではない**（#795 で置換しかけて戻した）。
+            // 読み元は OS の `inner_size()` であり、この値は「問い合わせが失敗したときの便宜値」
+            // にすぎない——既定幅 600 と一致しているのは偶然である。参照へ寄せると存在しない結合を
+            // 主張することになり、本当の欠陥（window_width=900 のユーザーで失敗すると 600 へ縮む）
+            // が「対応済み」に見えて隠れる。読み元を live config へ寄せるかは #824 で決める。
+            .unwrap_or(600.0);
         // 折りたたみ高 = bar_height(#646 決定 2)。52 固定だと font 連動後の実バー高と
         // ずれ、position クランプが誤った高さで効く(このブロック冒頭の reset-on-show
         // コメントの機構と同じ理由。行番号参照は挿入でずれるため名前で指す)。

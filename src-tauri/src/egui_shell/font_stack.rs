@@ -191,7 +191,6 @@ pub(super) fn configure_japanese_font(context: &egui::Context, font_family: &str
     context.set_fonts(font_definitions(jp, user));
 }
 
-/// config font_family が未設定・`AppState` 未 manage のときのフォールバック値。
 /// `AppState` から現在の config font_family を読む。`AppState` が未 manage（起動極初期）
 /// なら既定の font_family（正本は `visual::default_visual()`）へ落ちる。`view.rs` の `setup` と
 /// `results_view.rs` の `setup` が同一の 4 行を持っていた重複をここへ寄せる

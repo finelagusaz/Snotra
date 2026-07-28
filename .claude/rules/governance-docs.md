@@ -3,7 +3,7 @@ paths:
   - "AGENTS.md"
   - "CLAUDE.md"
   - "docs/adr/**"
-  - "scripts/governance-check.mjs"
+  - "scripts/*.mjs"
 ---
 
 # ガバナンス文書の参照と命名のルール

@@ -56,18 +56,19 @@ pub(crate) fn read_metrics(app: &tauri::AppHandle) -> layout::Metrics {
     layout::Metrics::from_config(f, rp, bp)
 }
 
-/// show 経路が**背景色だけ**を読む（`read_metrics` と同方針——色 5 本の parse と font 比較を
-/// 払わせない）。ネイティブ背景ブラシ用であり、フレーム内の描画は `read_visual` を使う。
-///
-/// **`read_visual` と統合しない**: こちらは show 経路（フレーム外・別スレッドからも走る）の
-/// 読みで、1 フレーム 1 lock の規律（#673 決定 4）が掛かる面には居ない。
 /// main の下地（softbuffer の present 前に一瞬見えるネイティブブラシ）を config 色へ合わせる。
 /// **`ResultsWindow::apply_native_background` の main 版**であり、撃つ条件も同じ——show 遷移時と
-/// サイズ変更時だけである（理由は results 側の doc を正本とする）。
+/// サイズ変更時だけである（理由と受容した残余は results 側の doc を正本とする）。
 pub(crate) fn apply_main_background(window: &tauri::Window, color: egui::Color32) {
     let _ = window.set_background_color(Some(super::visual::native_brush_color(color)));
 }
 
+/// show 経路が**背景色だけ**を読む（`read_metrics` と同方針——色 5 本の parse と font 比較を
+/// 払わせない）。ネイティブ背景ブラシ用であり、フレーム内の描画は `read_visual` を使う。
+///
+/// **`read_visual` と統合しない**: こちらは show 経路（フレーム外・別スレッドからも走る）の
+/// 読みで、**1 フレーム 1 lock の規律（#673 決定 4）が掛かる面には居ない**——同じ関数内の
+/// `read_metrics` や `follow_cursor_monitor` / `ime_off_on_show` の読みと同じ層である。
 pub(crate) fn read_background(app: &tauri::AppHandle) -> egui::Color32 {
     let hex = app
         .try_state::<crate::AppState>()

@@ -251,7 +251,8 @@ pub(crate) struct EguiShellHandles {
 /// alwaysOnTop・decorations:false・resizable:false・visible:false）を再現する（codex #11・(B)#1）。
 /// `background_color_hex`: config `visual.background_color`（`#RRGGBB`）。過渡/リサイズ下地の
 /// SU2 ハードコード 0x282828 を config へ差し替える（§11・#532 SU4 Task 2）。パース失敗時は
-/// 従来の 0x282828 へ fallback（`config_watcher::parse_hex_color` を再利用・二重実装回避）。
+/// パース失敗時は `VisualConfig::default()` の背景色へ fallback（`visual::background_color` =
+/// `Color32::from_hex` 1 本・spec 決定 4。リテラルを再手打ちしない）。
 pub(crate) fn create(
     app: &mut tauri::App,
     window_width: f64,

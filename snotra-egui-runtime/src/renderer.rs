@@ -14,8 +14,10 @@ const CLEAR_COLOR: u32 = 0x0028_2828;
 
 /// フレームの背景色を softbuffer の `0x00RRGGBB` へ畳む純関数。
 ///
-/// **alpha は捨てる**——buffer が持てないためで、`#RRGGBBAA` を config へ書いたときの実効挙動が
-/// これである。`None`（view が `set_clear_color` を呼ぶ前・呼び忘れ）は `CLEAR_COLOR` へ落ちる。
+/// **alpha 成分は載せない**——buffer が持てないためである。**ここへ来る `Color32` の RGB は
+/// premultiply 済みでありうる**（消費側が `Color32::from_hex` の 8 桁 / 4 桁を通した場合。
+/// 減衰はこの関数より上流で起きるので、ここが落とすのは alpha 成分だけである）。
+/// `None`（view が `set_clear_color` を呼ぶ前・呼び忘れ）は `CLEAR_COLOR` へ落ちる。
 fn clear_color_u32(color: Option<egui::Color32>) -> u32 {
     match color {
         Some(c) => ((c.r() as u32) << 16) | ((c.g() as u32) << 8) | c.b() as u32,
@@ -158,8 +160,10 @@ mod tests {
         assert_eq!(clear_color_u32(None), CLEAR_COLOR);
     }
 
-    /// softbuffer の buffer は `0x00RRGGBB` ゆえ **alpha を持てない**。`#RRGGBBAA` を config へ
-    /// 書いたときの実効挙動がこれである（spec 決定 4）。
+    /// softbuffer の buffer は `0x00RRGGBB` ゆえ **alpha 成分を載せられない**。
+    /// **この層は premultiply を行わない**——config の `#RRGGBBAA` が減衰するのは消費側の
+    /// `Color32::from_hex` であり、その命題は `src-tauri` の
+    /// `background_color_premultiplies_alpha_rather_than_ignoring_it` が測る。
     #[test]
     fn clear_color_packs_rgb_and_drops_alpha() {
         assert_eq!(clear_color_u32(Some(egui::Color32::from_rgb(0x4A, 0x2B, 0x5C))), 0x004A_2B5C);

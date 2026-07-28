@@ -126,8 +126,15 @@ pub(crate) fn background_color(hex: &str) -> egui::Color32 {
 
 /// `Color32` を tao のネイティブ背景ブラシ色へ（spec 決定 4）。
 ///
-/// **alpha は捨てて 255 にする**——softbuffer の clear color が `0x00RRGGBB` で alpha を持てず、
-/// 下地と定常の背景が食い違うと show の一瞬だけ色が変わって見えるためである。
+/// **ブラシ側の alpha は 255 に固定する**——softbuffer の clear color が `0x00RRGGBB` で alpha を
+/// 持てず、下地と定常の背景が食い違うと show の一瞬だけ色が変わって見えるためである。両者は
+/// 同じ `Color32` から導くので**必ず一致する**。
+///
+/// **`#RRGGBBAA` / `#RGBA` の alpha は「無視」されない。** `Color32::from_hex` は 8 桁 / 4 桁を
+/// `from_rgba_unmultiplied` へ通し、そこで **RGB が alpha で premultiply される**（実測:
+/// `#FF000080` → `#80_00_00_80` = 暗い赤、`#FF000000` → 透明 = **黒**）。ここへ来る時点で RGB は
+/// 既に減衰済みであり、この関数が落とすのは alpha 成分だけである。
+///
 /// **パーサは `Color32::from_hex` の 1 本だけ**になった（旧 `config_watcher::parse_hex_color` は
 /// `#RRGGBB` 厳格で、`#FFF` を書くと下地だけ既定色へ落ちていた・#680 の 1）。
 pub(crate) fn native_brush_color(color: egui::Color32) -> tauri::window::Color {
@@ -213,8 +220,28 @@ mod tests {
         }
     }
 
+    /// **`#RRGGBBAA` の alpha は「無視」されない**——`Color32::from_hex` は 8 桁 / 4 桁を
+    /// `from_rgba_unmultiplied` へ通し、そこで **RGB が alpha で premultiply される**（実測:
+    /// `#FF000080` → `#80_00_00_80`。alpha 自体は保持される）。
+    ///
+    /// **入力は必ず config 経路（hex 文字列）から与える。** `from_rgba_premultiplied` で
+    /// fixture を作ると premultiply 段を素通りし、この命題を検証できない
+    /// （`AGENTS.md`「検証の作法」・#482 / #471）。
+    #[test]
+    fn background_color_premultiplies_alpha_rather_than_ignoring_it() {
+        assert_eq!(
+            background_color("#FF000080"),
+            egui::Color32::from_rgba_premultiplied(0x80, 0x00, 0x00, 0x80)
+        );
+        // alpha 0 は RGB ごと 0 へ潰れる——`#FF000000` は赤ではなく**黒**になる
+        assert_eq!(background_color("#FF000000"), egui::Color32::TRANSPARENT);
+        // 下地と定常は同じ `Color32` から導くので**食い違わない**（設計目標は保たれている）
+        let c = background_color("#FF000080");
+        assert_eq!(native_brush_color(c), tauri::window::Color(0x80, 0x00, 0x00, 0xff));
+    }
+
     /// ネイティブブラシは alpha を 255 に固定する。softbuffer の clear color が alpha を
-    /// 持てないため、**下地と定常の背景が食い違わないよう捨てる側へ揃える**（spec 決定 4）。
+    /// 持てないため、**下地と定常の背景が食い違わないよう不透明側へ揃える**（spec 決定 4）。
     #[test]
     fn native_brush_forces_opaque_alpha() {
         let c = native_brush_color(egui::Color32::from_rgba_premultiplied(0x12, 0x34, 0x56, 0x80));

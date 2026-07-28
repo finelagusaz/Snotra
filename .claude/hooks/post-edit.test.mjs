@@ -631,7 +631,7 @@ describe("Cargo.toml members ドリフト検出カナリア — #500", () => {
       .filter((s) => s.length > 0);
     expect(
       members,
-      "members が変わった。selectChecks の接頭辞・buildCommand の test case・ci.yml・docs/build-commands.md を更新すること",
+      "members が変わった。selectChecks の接頭辞・buildCommand の test case・ci.yml・docs/build-commands.md を更新すること。新 crate には `[lints] workspace = true` を入れること（欠けると rustdoc の deny がその crate だけ黙って無効になる・#713。governance:check の G-workspace-lints が捕まえる）",
     ).toEqual([
       "snotra-core",
       "snotra-egui-runtime",

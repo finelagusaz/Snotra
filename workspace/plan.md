@@ -32,16 +32,16 @@
 
 ### フェーズ 1 — 文言（`strings.rs`）
 
-- [ ] `folder_hint(l: Language, dir: &str) -> String` を追加する。Ja `format!("{dir} 内を検索...")` / En `format!("Search in {dir}...")`
-- [ ] **文字列は実物のソースを自分で開いて写す**——`git show 15933af^:ui/src/lib/i18n.ts` の 42 行目・76 行目。**この計画書の文字列は引用であって正本ではない**（`strings.rs` の `//!` が「計画書・レビュー引用の文字列を写さず実物を開け」と要求している。過去に「…」vs「...」・末尾ピリオドの差が実物突合だけで捕まった）。確認済みの事実: 三点は ASCII ピリオド 3 個・Ja は `{dir}` の直後に半角スペース 1 個・En は `{dir}` の直後に空白なし
-- [ ] doc コメントに「`{dir}` はフルパスである（フォルダ名ではない）」と一次証拠（復元した `SearchWindow.tsx:277` が `fs.currentDir` を渡していた）を書く
-- [ ] `strings.rs` の `//!` へ **「この表の文言は描画面ごとに 3 系統へ分かれる」**旨を 1 文足す——(1) 入力欄のプレースホルダ（`search_hint` / `tool_select_hint` / `folder_hint`） (2) status 行（`indexing_hint` / `launching` / `launch_failed` / `launch_timeout` / `hotkey_*`） (3) toast 行（`update_*`）。**`indexing_hint` は名前に `hint` を持つが status 行の文言である**（#700 で移設された際に関数名が残った）。この一文が無いと、`hint` で grep した実装者が現在地を status 行へ配線する（ラウンド 1・2 の独立再導出が共に「最も踏みやすい罠」と名指しした経路）。
+- [x] `folder_hint(l: Language, dir: &str) -> String` を追加する。Ja `format!("{dir} 内を検索...")` / En `format!("Search in {dir}...")`
+- [x] **文字列は実物のソースを自分で開いて写す**——`git show 15933af^:ui/src/lib/i18n.ts` の 42 行目・76 行目。**この計画書の文字列は引用であって正本ではない**（`strings.rs` の `//!` が「計画書・レビュー引用の文字列を写さず実物を開け」と要求している。過去に「…」vs「...」・末尾ピリオドの差が実物突合だけで捕まった）。確認済みの事実: 三点は ASCII ピリオド 3 個・Ja は `{dir}` の直後に半角スペース 1 個・En は `{dir}` の直後に空白なし
+- [x] doc コメントに「`{dir}` はフルパスである（フォルダ名ではない）」と一次証拠（復元した `SearchWindow.tsx:277` が `fs.currentDir` を渡していた）を書く
+- [x] `strings.rs` の `//!` へ **「この表の文言は描画面ごとに 3 系統へ分かれる」**旨を 1 文足す——(1) 入力欄のプレースホルダ（`search_hint` / `tool_select_hint` / `folder_hint`） (2) status 行（`indexing_hint` / `launching` / `launch_failed` / `launch_timeout` / `hotkey_*`） (3) toast 行（`update_*`）。**`indexing_hint` は名前に `hint` を持つが status 行の文言である**（#700 で移設された際に関数名が残った）。この一文が無いと、`hint` で grep した実装者が現在地を status 行へ配線する（ラウンド 1・2 の独立再導出が共に「最も踏みやすい罠」と名指しした経路）。
       **「2 系統」と書かない**（ラウンド 3 の訂正）——status 行と toast 行は独立に同時描画されうる別の面である（`SPEC.md:185`「status 行と toast 行は独立に積む（同時成立時にどちらも隠さない）」・`view.rs` が別々に `allocate_exact_size` する）。2 系統と書くと、将来 toast の文言を status 行のラダーへ配線する誤りを誘う
-- [ ] ユニットテスト `folder_hint_matches_webview2_parity` を追加し、Ja / En の**完全一致**を固定する（`hotkey_change_failed_matches_i18n` と同じ様式）。入力は通常のパスに加えドライブルート `C:\` と UNC `\\srv\share` を含める
+- [x] ユニットテスト `folder_hint_matches_webview2_parity` を追加し、Ja / En の**完全一致**を固定する（`hotkey_change_failed_matches_i18n` と同じ様式）。入力は通常のパスに加えドライブルート `C:\` と UNC `\\srv\share` を含める
 
 ### フェーズ 2 — 表示（`view.rs`）
 
-- [ ] `let hint: &str = if in_tool { … } else { … }`（現行 341-357 行）を次の形へ置き換える:
+- [x] `let hint: &str = if in_tool { … } else { … }`（現行 341-357 行）を次の形へ置き換える:
 
 ```rust
 let hint: String = if in_tool {
@@ -64,28 +64,29 @@ let hint: String = if in_tool {
 };
 ```
 
-- [ ] `hint` は**所有する `String` にする**。`&str` のまま `self.controller.state()` の借用を跨がせると、後段の `&mut self.controller` 呼び出し（`on_input_changed`）で E0502 になる（`update()` 冒頭のコメントが同型の罠を既に記録している）
-- [ ] 直上のコメント（「**hint は indexing で差し替えない**（#700）」）を残したまま、フォルダ文脈がなぜ #700 に抵触しないかを 1 段落足す。**`indexing_hint()` は名前に反して status 行の文言である**ことも書く（`hint` で grep した実装者が現在地を status 行へ配線する罠・本変更で最も踏みやすい）
-- [ ] **hint を決める位置を動かさない**（不変条件 7）。`in_tool` / `in_folder` の算出位置（現 341-342 行）は `on_nav_keys` より後でなければならない
+- [x] `hint` は**所有する `String` にする**。`&str` のまま `self.controller.state()` の借用を跨がせると、後段の `&mut self.controller` 呼び出し（`on_input_changed`）で E0502 になる（`update()` 冒頭のコメントが同型の罠を既に記録している）
+- [x] 直上のコメント（「**hint は indexing で差し替えない**（#700）」）を残したまま、フォルダ文脈がなぜ #700 に抵触しないかを 1 段落足す。**`indexing_hint()` は名前に反して status 行の文言である**ことも書く（`hint` で grep した実装者が現在地を status 行へ配線する罠・本変更で最も踏みやすい）
+- [x] **hint を決める位置を動かさない**（不変条件 7）。`in_tool` / `in_folder` の算出位置（現 341-342 行）は `on_nav_keys` より後でなければならない
 
 ### フェーズ 3 — 死んだ accessor の解除（`search_state.rs`）
 
-- [ ] `folder_current_dir()` から `#[allow(dead_code)]` を外す（`folder_gen()` 側の allow は**外さない**——消費者は増えない）
-- [ ] doc を書き換える。現行の「driver は …生の accessor は直接呼ばない（… §6 で任意扱い・#532 SU3 M2 Task 3 で見送り）」は**この変更で偽になる**（コンパイラが検出しない種類の腐り）。新 doc に書くこと: (i) `view.rs` の hint が唯一の消費者であること（#836・SPEC §6.7） (ii) `enter_folder` / `navigate_folder` が書いた直後の値＝**列挙の到着を待たない**こと (iii) `view_kind() == Folder` のとき必ず `Some` であること
-- [ ] doc の書き方は既存様式（バッククォートのコードスパン）に揃える。rustdoc の `[...]` リンクを新たに導入しない（`broken_intra_doc_links` が deny・`cargo doc` は hook 非発火ゆえ手で回す）
+- [x] `folder_current_dir()` から `#[allow(dead_code)]` を外す（`folder_gen()` 側の allow は**外さない**——消費者は増えない）
+- [x] doc を書き換える。現行の「driver は …生の accessor は直接呼ばない（… §6 で任意扱い・#532 SU3 M2 Task 3 で見送り）」は**この変更で偽になる**（コンパイラが検出しない種類の腐り）。新 doc に書くこと: (i) `view.rs` の hint が唯一の消費者であること（#836・SPEC §6.7） (ii) `enter_folder` / `navigate_folder` が書いた直後の値＝**列挙の到着を待たない**こと (iii) `view_kind() == Folder` のとき必ず `Some` であること
+- [x] doc の書き方は既存様式（バッククォートのコードスパン）に揃える。rustdoc の `[...]` リンクを新たに導入しない（`broken_intra_doc_links` が deny・`cargo doc` は hook 非発火ゆえ手で回す）
 
 ### フェーズ 4 — SPEC 同期
 
-- [ ] `SPEC.md` §6 の**末尾に `### 6.7 フォルダ展開中の現在地表示` を追記**する。**挿入ではなく追記である**——§6.1 は `docs/adr/ADR-folder-nav-selection-first-row.md:13,25` から、§6.3 / §6.6 は `docs/superpowers/plans/2026-07-23-su3-m2-folder.md:224,259,697,976` と `docs/superpowers/specs/2026-07-22-su3-search-experience-design.md:121,132,133,157` から**序数で参照されている**（grep 実測）。番号をずらすとこれらが黙って腐る（序数参照は `governance:check` の検出対象外）
-- [ ] §6.7 に書く内容（**すべて条件つきで書く**・不変条件 1）:
+- [x] `SPEC.md` §6 の**末尾に `### 6.7 フォルダ展開中の現在地表示` を追記**する。**挿入ではなく追記である**——§6.1 は `docs/adr/ADR-folder-nav-selection-first-row.md:13,25` から、§6.3 / §6.6 は `docs/superpowers/plans/2026-07-23-su3-m2-folder.md:224,259,697,976` と `docs/superpowers/specs/2026-07-22-su3-search-experience-design.md:121,132,133,157` から**序数で参照されている**（grep 実測）。番号をずらすとこれらが黙って腐る（序数参照は `governance:check` の検出対象外）
+- [x] §6.7 に書く内容（**すべて条件つきで書く**・不変条件 1）:
       (a) フォルダ展開中は検索入力欄のプレースホルダを「`<現在のディレクトリのフルパス>` 内を検索...」に差し替える
       (b) ツール選択が上に積まれている間は tool のプレースホルダが勝つ（優先度 tool > folder > results＝§18.5 と一対一）
       (c) ラベルは打鍵フレームで同期に更新され、**行の到着より先に**変わる（列挙未着・列挙失敗〔§6.6〕でも遷移先を示し続ける）
       (d) **現在地の描画面はこのプレースホルダただ 1 つである**（結果行のパスは項目ごとのデータであって現在地のラベルではない。#700 の「同じ情報に描画面を 2 つ持たない」の適用）
       (e) 受容残余: フォルダ内の絞り込み文字列を 1 文字でも打つと消える（`←` / `→` は絞り込みをクリアするので、階層移動の直後は必ず見える）
       (f) 受容残余: 幅を超えるパスは末尾が `…` になる
-- [ ] `SPEC.md` §4.7 の #700 の箇条（現 186 行）末尾へ、**案内（indexing / 起動中 / 一時通知）と文脈（フォルダ展開中の現在地）を区別する一文**と §6.7 への参照を足す。**参照は G-heading-refs の正準形で書く**——`` `SPEC.md` §6.7「フォルダ展開中の現在地表示」 ``（`scripts/governance-check.mjs` の `HEADING_REF` = `` `<path>` §<番号>「<見出し>」 `` に一致させる。散文形で書くと機械照合されず、`G-near-heading-refs` が直せない指摘を出し続ける）。実体は §6.7 に置き、写しを作らない。**この一文が無いと本変更が既存規範に違反しているように読める**
-- [ ] セクション番号は §6.7 の追記のみで、既存番号を 1 つも動かさない（`.claude/rules/spec.md`「セクション番号整合」）
+- [x] `SPEC.md` §4.7 の #700 の箇条（現 186 行）末尾へ、**案内（indexing / 起動中 / 一時通知）と文脈（フォルダ展開中の現在地）を区別する一文**と §6.7 への参照を足す。**参照は G-heading-refs の正準形で書く**——`` `SPEC.md` §6.7「フォルダ展開中の現在地表示」 ``（`scripts/governance-check.mjs` の `HEADING_REF` = `` `<path>` §<番号>「<見出し>」 `` に一致させる。散文形で書くと機械照合されず、`G-near-heading-refs` が直せない指摘を出し続ける）。実体は §6.7 に置き、写しを作らない。**この一文が無いと本変更が既存規範に違反しているように読める**
+- [x] セクション番号は §6.7 の追記のみで、既存番号を 1 つも動かさない（`.claude/rules/spec.md`「セクション番号整合」）
+- [x] **【実装中に判明・計画の前提の訂正】正準形は `` `SPEC.md` §6.7「…」 `` ではなく `` `SPEC.md`「6.7 …」 `` である。** 計画が写した先例（`docs/adr/ADR-near-heading-refs-and-4a-sync.md:34` の `` `SPEC.md` §11「見た目の規範」 ``）が通るのは、**§11 の小見出しが番号を持たない**（`### 見た目の規範`）からである。§6 の小見出しは `### 6.1 基本動作` のように番号込みで、`HEADING_REF` の照合は 「」 の中身と見出しの**前方一致**ゆえ、番号を落とすと着地しない。計画どおりに書いて `governance:check` が 1 件の不整合を出し（`SPEC.md:187 見出し参照が着地しない`）、番号を 「」 の中へ入れて緑にした。**§ 記法は正規表現上 optional なので省いてよい**
 
 ### フェーズ 5 — SU7 残滓の撤去（`snotra-core/src/ui_types.rs`）
 

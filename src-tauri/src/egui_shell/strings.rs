@@ -6,6 +6,21 @@
 //! config `general.language` を毎フレーム live-read するため、config-applied wake（SU6）で
 //! 言語切替が次フレームから反映される（起動時一回読みではない・#648(B) で旧記述を是正）。
 //! snotra-core は「UI 表示文字列を持たない」規約のため、文言はこの crate（UI 層）に置く。
+//!
+//! **この表の文言は描画面ごとに 3 系統へ分かれる。** 関数名では見分けられないので、足すとき・
+//! 配線するときはここを見る:
+//!
+//! 1. **入力欄のプレースホルダ**（`search_hint` / `tool_select_hint` / `folder_hint`）——egui の
+//!    `hint_text` は入力バッファが空のときだけ描く
+//! 2. **status 行**（`indexing_hint` / `launching` / `launch_failed` / `launch_timeout` /
+//!    `hotkey_change_failed` / `hotkey_initial_failed`）——検索バー直下の 1 行。優先順は
+//!    `notify::overlay_kind` の**排他ラダー**
+//! 3. **toast 行**（`update_available` / `update_install_now` / `update_dismiss` /
+//!    `update_installing` / `update_failed`）——status 行とは**独立に積まれ、同時に出うる**
+//!    （`SPEC.md` §4.7「結果表示制御（2 窓構成）」）。2 と 3 を「同じお知らせの面」と畳まないこと
+//!
+//! **`indexing_hint` は名前に `hint` を持つが 1 ではなく 2 である**（#700 で status 行へ移した際に
+//! 関数名だけが残った）。`hint` で grep して 1 のつもりで触ると描画面を取り違える。
 
 use snotra_core::config::Language;
 
@@ -20,6 +35,27 @@ pub fn tool_select_hint(l: Language) -> &'static str {
     match l {
         Language::Ja => "ツールを選択...",
         Language::En => "Select a tool...",
+    }
+}
+
+/// フォルダ展開中の入力欄プレースホルダ（#836・SPEC §6.7「フォルダ展開中の現在地表示」）。
+///
+/// **`dir` はフルパスであってフォルダ名ではない。** 撤去済み WebView2 の
+/// `SearchWindow.tsx:277`（`git show 15933af^:` で復元）が `t("search.placeholder.folder",
+/// { dir: fs.currentDir })` と `currentDir` をそのまま渡していた——issue #836 本文の
+/// 「（フォルダ名）内を検索…」は値の略記である（添付スクリーンショットは
+/// `C:\Toolbox\ghost-launcher 内を検索...` を示す）。`C:\a\b` と `C:\x\b` を区別できるのは
+/// フルパスだけで、#743（`←` が階層を上げていないという誤読）の用途はそれを要求する。
+///
+/// **末尾に `\` が付く場合と付かない場合が両方来る**（正規化しない・parity）: ドライブルートは
+/// `compute_parent_dir` が `C:\` を返し、フォルダ列挙は `C:\d\Cafe` を返す。
+///
+/// 幅を超えたときの省略は呼び出し側で組まない——egui の singleline `hint_text` が
+/// `TextWrapMode::Truncate` で**末尾を `…` に**する（`view.rs` の hint 構築部を参照）。
+pub fn folder_hint(l: Language, dir: &str) -> String {
+    match l {
+        Language::Ja => format!("{dir} 内を検索..."),
+        Language::En => format!("Search in {dir}..."),
     }
 }
 
@@ -147,6 +183,38 @@ mod tests {
         // spec 決定 8: timeout は「失敗」でなく「結果不明」。文言に「失敗」を含めない。
         assert!(!launch_timeout(Language::Ja, "").contains("失敗"));
         assert!(!launch_timeout(Language::En, "").to_lowercase().contains("failed"));
+    }
+
+    /// #836: フォルダ展開中のプレースホルダ。撤去済み WebView2 の
+    /// `search.placeholder.folder` と**一字一句一致**する（`git show 15933af^:ui/src/lib/i18n.ts`
+    /// の 42 行目・76 行目を `od -c` で確認・2026-07-29）。
+    ///
+    /// 固定しているのは 3 点: (i) 三点が**全角「…」ではなく ASCII ピリオド 3 個**であること
+    /// (ii) Ja は `{dir}` の直後に半角スペースが 1 個あり、En には無いこと (iii) `{dir}` に入るのが
+    /// **フルパスであってフォルダ名ではない**こと（当時の `SearchWindow.tsx:277` が `fs.currentDir`
+    /// をそのまま渡していた）。ドライブルートと UNC 共有ルートも入力に含める——`compute_parent_dir`
+    /// が末尾 `\` 付きの `C:\` を返す一方でフォルダ列挙は末尾 `\` 無しを返すため、両方が実際に来る。
+    #[test]
+    fn folder_hint_matches_webview2_parity() {
+        assert_eq!(folder_hint(Language::Ja, "C:\\Toolbox\\ghost-launcher"), "C:\\Toolbox\\ghost-launcher 内を検索...");
+        assert_eq!(folder_hint(Language::En, "C:\\Toolbox\\ghost-launcher"), "Search in C:\\Toolbox\\ghost-launcher...");
+        // ドライブルート（`compute_parent_dir` が末尾 `\` を付けて返す形）
+        assert_eq!(folder_hint(Language::Ja, "C:\\"), "C:\\ 内を検索...");
+        assert_eq!(folder_hint(Language::En, "C:\\"), "Search in C:\\...");
+        // UNC 共有ルート（`compute_parent_dir` の終端）
+        assert_eq!(folder_hint(Language::Ja, "\\\\srv\\share"), "\\\\srv\\share 内を検索...");
+        assert_eq!(folder_hint(Language::En, "\\\\srv\\share"), "Search in \\\\srv\\share...");
+    }
+
+    /// 三点が ASCII であることを、上のリテラル比較とは**独立に**測る（リテラルどうしの比較は、
+    /// 期待値側にも同じ誤りを書いてしまえば緑のまま通る——`strings.rs` の `//!` が警告する様態）。
+    #[test]
+    fn folder_hint_uses_ascii_ellipsis_not_u2026() {
+        for l in [Language::Ja, Language::En] {
+            let s = folder_hint(l, "C:\\x");
+            assert!(s.ends_with("..."), "ASCII ピリオド 3 個で終わる: {s}");
+            assert!(!s.contains('…'), "全角の三点リーダを含まない: {s}");
+        }
     }
 
     #[test]

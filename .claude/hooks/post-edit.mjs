@@ -266,8 +266,8 @@ export function buildEnvelope({ context, systemMessage } = {}) {
  * **PreToolUse の `\` パス判定が拒む形**になる。片方の hook が指示するコマンドをもう片方が拒む
  * 状態は、規範を機構へ移した設計の信頼を直に壊す（`pre-bash.test.mjs` の相互契約カナリアが固定）。
  * 実行に使う `cmd`/`args` は正規化しない — spawnSync は `\` をそのまま受けるうえ、
- * `governance:check` の G9 が `cargoSpec` の引数リテラルをソースから読むためである
- * （G9 の抽出は散文中の呼び出し形にも一致するので、ここでその形を書かない）。
+ * `governance:check` の G-hook-commands が `cargoSpec` の引数リテラルをソースから読むためである
+ * （G-hook-commands の抽出は散文中の呼び出し形にも一致するので、ここでその形を書かない）。
  */
 export function buildCommand(id, root) {
   const nodeSpec = (args) => ({

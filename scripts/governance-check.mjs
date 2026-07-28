@@ -6,7 +6,7 @@
 // PostToolUse hook は `.md`・rules・skills に検査を割り当てない（#497 で受容した残余）。
 // 本スクリプトはその残余のうち決定的に照合できる項目を PR CI（governance-check job）と
 // `npm run governance:check` で引き取る。意味判断（責務の妥当性・npm 系ラッパーの等価判断・
-// メモリ整合）は `/health-check` に残る（cargo フラグ照合は G9 が機械化済み・#589）。
+// メモリ整合）は `/health-check` に残る（cargo フラグ照合は G-hook-commands が機械化済み・#589）。
 //
 // 契約:
 // - 依存ゼロ（Node 標準のみ）・決定的（ネットワーク・時刻・環境変数に非依存）
@@ -19,7 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** 実在検査の対象と見なすソース系拡張子（G3）。ランタイム生成物（.bin/.bak 等）は含めない */
+/** 実在検査の対象と見なすソース系拡張子（G-references）。ランタイム生成物（.bin/.bak 等）は含めない */
 const REF_EXTENSIONS = /\.(md|rs|ts|tsx|mjs|json|toml|yml|ps1|html|css)$/;
 /** 走査から除外するディレクトリ。名前ベース（任意の深さの生成物）とルート相対プレフィックス
  *  （untracked バッファ）を分ける——`ui/src/workspace/` のような将来の同名ソースを気づかれないまま
@@ -73,29 +73,29 @@ function linesOutsideFences(text) {
 const finding = (file, line, message) => ({ file, line, message });
 
 // ---------------------------------------------------------------------------
-// G1 — 各サブディレクトリ CLAUDE.md「モジュール構成」↔ 実ファイルの双方向照合。
+// G-module-index — 各サブディレクトリ CLAUDE.md「モジュール構成」↔ 実ファイルの双方向照合。
 // basename 包含方式: ディレクトリ集約行（`commands/` のベア名列挙）・`tabs/` プレフィックス省略・
 // 1 行複数バッククォートをパースせずに済ませる意図的な弱化（wrong-directory 検出は放棄）。
 // ---------------------------------------------------------------------------
 // ui は #532 SU7 のフロント撤去で消滅（ui/CLAUDE.md ごと削除）
 // snotra-egui-runtime は #701 で追加。「#532 の検証層」として作られたまま母集団から漏れており、
-// SU7 で製品の描画層になった後も更新されていなかった（G3 の governanceDocs も同時に是正）
-export const G1_CRATES = {
+// SU7 で製品の描画層になった後も更新されていなかった（G-references の governanceDocs も同時に是正）
+export const MODULE_INDEX_CRATES = {
   "snotra-core": { src: "snotra-core/src/", exts: /\.rs$/ },
   "snotra-egui-runtime": { src: "snotra-egui-runtime/src/", exts: /\.rs$/ },
   "src-tauri": { src: "src-tauri/src/", exts: /\.rs$/ },
   "snotra-settings": { src: "snotra-settings/src/", exts: /\.rs$/ },
 };
 
-export function checkModuleIndex(snapshot, crates = Object.keys(G1_CRATES)) {
+export function checkModuleIndex(snapshot, crates = Object.keys(MODULE_INDEX_CRATES)) {
   const findings = [];
   const allBasenames = new Set(snapshot.files.map((f) => f.split("/").pop()));
   for (const crate of crates) {
-    const cfg = G1_CRATES[crate];
+    const cfg = MODULE_INDEX_CRATES[crate];
     const mdPath = `${crate}/CLAUDE.md`;
     const text = snapshot.read(mdPath);
     if (text == null) {
-      findings.push(finding(mdPath, 1, "CLAUDE.md が読めない（G1 母集団の欠落）"));
+      findings.push(finding(mdPath, 1, "CLAUDE.md が読めない（G-module-index 母集団の欠落）"));
       continue;
     }
     const section = text.split(/^## モジュール構成$/m)[1]?.split(/^## /m)[0];
@@ -127,7 +127,7 @@ export function checkModuleIndex(snapshot, crates = Object.keys(G1_CRATES)) {
 }
 
 // ---------------------------------------------------------------------------
-// G2 — docs/architecture.md にファイル単位モジュール表が再導入されていないか（旧 Check 2）
+// G-architecture-table — docs/architecture.md にファイル単位モジュール表が再導入されていないか（旧 Check 2）
 // ---------------------------------------------------------------------------
 export function checkArchitectureTable(snapshot) {
   const findings = [];
@@ -143,7 +143,7 @@ export function checkArchitectureTable(snapshot) {
 }
 
 // ---------------------------------------------------------------------------
-// G3 — ガバナンス文書群の参照実在（Markdown リンク + バッククォート内パス様参照）。
+// G-references — ガバナンス文書群の参照実在（Markdown リンク + バッククォート内パス様参照）。
 // バッククォート参照の検査述語（受容する偽陰性はスクリプトコメントとテストで固定）:
 //   `/` を含む・glob（* ? {）なし・<> なし・% なし・URL なし・拡張子が REF_EXTENSIONS・
 //   workspace/ 配下でない・`\` を含まない。
@@ -168,7 +168,7 @@ export function checkReferences(snapshot, docs) {
   for (const doc of docs) {
     const text = snapshot.read(doc);
     if (text == null) {
-      findings.push(finding(doc, 1, "対象文書が読めない（G3 母集団の欠落）"));
+      findings.push(finding(doc, 1, "対象文書が読めない（G-references 母集団の欠落）"));
       continue;
     }
     for (const [lineNo, line] of linesOutsideFences(text)) {
@@ -200,7 +200,7 @@ export function checkReferences(snapshot, docs) {
 }
 
 // ---------------------------------------------------------------------------
-// G4 — SPEC.md 番号連続性 + SPEC 前置の §N(.x) 参照の実在（旧 Check 4 + #587 新規）。
+// G-spec-sections — SPEC.md 番号連続性 + SPEC 前置の §N(.x) 参照の実在（旧 Check 4 + #587 新規）。
 // 裸の `§N` は各文書自身の節参照でありうるため対象外（不混入はテストで固定）。
 // ---------------------------------------------------------------------------
 export function checkSpecSections(snapshot, docs) {
@@ -234,10 +234,10 @@ export function checkSpecSections(snapshot, docs) {
       sections.add(`${n}.${x}`);
     }
   }
-  if (sections.size === 0) findings.push(finding("SPEC.md", 1, "セクション見出し（## N.）が 1 件も無い（G4 母集団の欠落）"));
+  if (sections.size === 0) findings.push(finding("SPEC.md", 1, "セクション見出し（## N.）が 1 件も無い（G-spec-sections 母集団の欠落）"));
   for (const doc of docs) {
     const text = snapshot.read(doc);
-    if (text == null) continue; // 母集団欠落は G3 が報告する
+    if (text == null) continue; // 母集団欠落は G-references が報告する
     for (const [lineNo, line] of linesOutsideFences(text)) {
       for (const m of line.matchAll(/SPEC(?:\.md)?`?(?: の)? ?§(\d+(?:\.\d+)?)/g)) {
         if (!sections.has(m[1])) {
@@ -250,7 +250,7 @@ export function checkSpecSections(snapshot, docs) {
 }
 
 // ---------------------------------------------------------------------------
-// G5 — docs/build-commands.md の npm script / cargo test -p crate の実在（旧 Check 5 の決定的部分）。
+// G-build-commands — docs/build-commands.md の npm script / cargo test -p crate の実在（旧 Check 5 の決定的部分）。
 // crate 名はディレクトリ名でなく各 member Cargo.toml の [package] name（`-p snotra` = src-tauri/）。
 // check/clippy は --workspace で cargo 自身が SSOT を読むため照合対象外（#500）。
 // ---------------------------------------------------------------------------
@@ -286,7 +286,7 @@ export function checkBuildCommands(snapshot) {
 }
 
 // ---------------------------------------------------------------------------
-// G6 — 「CI/CD メモ」対応表 ↔ .github/workflows/*.yml（旧 Check 10 の機械部分）。
+// G-ci-table — 「CI/CD メモ」対応表 ↔ .github/workflows/*.yml（旧 Check 10 の機械部分）。
 // wrapper 等価: `npm run X` が verbatim に無くても、scripts[X] の値のパス様トークンが
 // workflow に現れれば「実行あり」（CI は引数を上書きしてスクリプトを直接呼ぶことがある）。
 // ---------------------------------------------------------------------------
@@ -299,7 +299,7 @@ export function checkCiTable(snapshot) {
   try {
     scripts = JSON.parse(snapshot.read("package.json") ?? "{}").scripts ?? {};
   } catch {
-    /* G5 が報告する */
+    /* G-build-commands が報告する */
   }
   const lines = text.split("\n");
   const start = lines.findIndex((l) => /^\| 検証コマンド \| workflow \|/.test(l));
@@ -342,7 +342,7 @@ export function checkCiTable(snapshot) {
 }
 
 // ---------------------------------------------------------------------------
-// G7 — .claude/rules/*.md の paths glob が実在ファイルに 1 件以上マッチ（旧 Check 8）。
+// G-rules-globs — .claude/rules/*.md の paths glob が実在ファイルに 1 件以上マッチ（旧 Check 8）。
 // documented 意味論（bare 名 = ルート直下のみ・`**` = 階層横断・{a,b} ブレース）の自前変換。
 // harness の配送判定の再現ではなく「マッチ 0 件の検知」に限定した近似。
 // ---------------------------------------------------------------------------
@@ -386,7 +386,7 @@ export function globToRegex(pattern) {
 export function checkRulesGlobs(snapshot) {
   const findings = [];
   const rules = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f));
-  if (rules.length === 0) return [finding(".claude/rules", 1, "rules ファイルが 0 件（G7 母集団の欠落）")];
+  if (rules.length === 0) return [finding(".claude/rules", 1, "rules ファイルが 0 件（G-rules-globs 母集団の欠落）")];
   for (const rule of rules) {
     const text = snapshot.read(rule) ?? "";
     const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? ""; // CRLF checkout 耐性
@@ -407,14 +407,14 @@ export function checkRulesGlobs(snapshot) {
 
 const SKILL_FILE_RE = /^\.claude\/skills\/[^/]+\/SKILL\.md$/;
 
-/** `.claude/skills/<name>/SKILL.md` の一覧（G8・G10 の共通母集団） */
+/** `.claude/skills/<name>/SKILL.md` の一覧（G-skill-table・G-area-budget の共通母集団） */
 function skillFiles(snapshot) {
   return snapshot.files.filter((f) => SKILL_FILE_RE.test(f));
 }
 
 /**
  * `disable-model-invocation: true` の skill 名の集合 = **harness の roster に注入されない skill**。
- * G8（表が索引すべき対象）と G10（常時ロード面に載る description）の両方がこの集合で決まるため、
+ * G-skill-table（表が索引すべき対象）と G-area-budget（常時ロード面に載る description）の両方がこの集合で決まるため、
  * 導出は 1 箇所に閉じる。判定は frontmatter ブロックの中だけを見る——本文が同じキー名に言及する
  * 実例がある（`/retrospective` が `/health-check` の起動方法を説明している）。
  *
@@ -436,11 +436,11 @@ export function modelHiddenSkills(snapshot) {
 }
 
 // ---------------------------------------------------------------------------
-// G8 — ルート CLAUDE.md「利用できるスキル」表 ↔ roster に載らない skill（旧 Check 9）
+// G-skill-table — ルート CLAUDE.md「利用できるスキル」表 ↔ roster に載らない skill（旧 Check 9）
 // harness は毎セッション skill roster を description 付きで注入するため、注入される skill を
 // 表へ書き写すことは同じ面での二重課税である（ADR-0005 が description を常時ロード面に算入した
 // のと同じ理由）。ゆえに表が索引すべき対象は `disable-model-invocation: true` の skill だけであり、
-// G8 はその集合と表の**双方向**一致を見る。「表の射程」を規範ではなくこの判定で固定する。
+// G-skill-table はその集合と表の**双方向**一致を見る。「表の射程」を規範ではなくこの判定で固定する。
 // ---------------------------------------------------------------------------
 export function checkSkillTable(snapshot) {
   const findings = [];
@@ -450,7 +450,7 @@ export function checkSkillTable(snapshot) {
   const inTable = new Set([...section.matchAll(/^\|\s*`\/([a-z0-9-]+)`/gm)].map((m) => m[1]));
   const inDirs = new Set(skillFiles(snapshot).map((f) => f.split("/")[2]));
   const hidden = modelHiddenSkills(snapshot);
-  if (inDirs.size === 0) findings.push(finding(".claude/skills", 1, "SKILL.md が 0 件（G8 母集団の欠落）"));
+  if (inDirs.size === 0) findings.push(finding(".claude/skills", 1, "SKILL.md が 0 件（G-skill-table 母集団の欠落）"));
   for (const s of inTable) {
     if (!inDirs.has(s)) findings.push(finding("CLAUDE.md", 1, `スキル表の /${s} に SKILL.md が無い（.claude/skills/${s}/）`));
     else if (!hidden.has(s)) {
@@ -466,7 +466,7 @@ export function checkSkillTable(snapshot) {
 }
 
 // ---------------------------------------------------------------------------
-// G9 — PostToolUse hook の cargo コマンド ↔ docs/build-commands.md カテゴリ A の照合（#589）。
+// G-hook-commands — PostToolUse hook の cargo コマンド ↔ docs/build-commands.md カテゴリ A の照合（#589）。
 // hook は触らない（非 export・import は main 実行の副作用があるため、ソーステキストから
 // `cargoSpec([...])` を抽出する。抽出アンカーが hook のリファクタで腐ったら抽出 0 件 fail で
 // 明示的に失敗する）。出力整形のみのフラグ（exit code を変えないもの）は arity 付き除去リストで
@@ -480,17 +480,17 @@ export function checkHookCommands(snapshot) {
   const findings = [];
   const hookPath = ".claude/hooks/post-edit.mjs";
   const hookSrc = snapshot.read(hookPath);
-  if (hookSrc == null) return [finding(hookPath, 1, "post-edit.mjs が読めない（G9 母集団の欠落）")];
+  if (hookSrc == null) return [finding(hookPath, 1, "post-edit.mjs が読めない（G-hook-commands 母集団の欠落）")];
   // cargoSpec([...]) の引数配列を抽出（clippy は複数行折返しのため dotall 必須）
   const hookCommands = [...hookSrc.matchAll(/cargoSpec\(\[([\s\S]*?)\]\)/g)].map((m) =>
     [...m[1].matchAll(/"([^"]*)"/g)].map((t) => t[1]),
   );
   if (hookCommands.length === 0) {
-    return [finding(hookPath, 1, "cargoSpec([...]) が 1 件も抽出できない（G9 母集団の欠落。抽出アンカーの腐敗か buildCommand のリファクタ）")];
+    return [finding(hookPath, 1, "cargoSpec([...]) が 1 件も抽出できない（G-hook-commands 母集団の欠落。抽出アンカーの腐敗か buildCommand のリファクタ）")];
   }
   const docsPath = "docs/build-commands.md";
   const docsText = snapshot.read(docsPath);
-  if (docsText == null) return [finding(docsPath, 1, "docs/build-commands.md が読めない（G9）")];
+  if (docsText == null) return [finding(docsPath, 1, "docs/build-commands.md が読めない（G-hook-commands）")];
   // カテゴリ A 節の bash フェンス内 cargo 行を母集団にする（行末 # コメントを除去）
   const sectionA = docsText.split(/^### A\. /m)[1]?.split(/^### /m)[0] ?? "";
   // 行分割は \r?\n — CRLF checkout（Windows CI・autocrlf=true）では `.` が \r に
@@ -500,7 +500,7 @@ export function checkHookCommands(snapshot) {
     .filter((l) => l.trim().startsWith("cargo "))
     .map((l) => l.replace(/\s+#.*$/, "").trim().split(/\s+/).join(" "));
   if (docsLines.length === 0) {
-    return [finding(docsPath, 1, "カテゴリ A の cargo コマンド行が 0 件（G9 母集団の欠落）")];
+    return [finding(docsPath, 1, "カテゴリ A の cargo コマンド行が 0 件（G-hook-commands 母集団の欠落）")];
   }
   for (const args of hookCommands) {
     // 出力整形フラグを arity 込みで除去し、"cargo" を前置してトークン列を正規化
@@ -523,7 +523,7 @@ export function checkHookCommands(snapshot) {
 }
 
 // ---------------------------------------------------------------------------
-// G10 — 恒久規範の面積 ratchet（二面独立）。#593 §2 ・ADR-0001 ・ADR-0005。
+// G-area-budget — 恒久規範の面積 ratchet（二面独立）。#593 §2 ・ADR-0001 ・ADR-0005。
 // 恒久規範（読むかを選べずロードされる = コンテキスト予算への課税）の面積を単調非増加に保つ。
 // 「常時ロード」と「rules」を独立の上限で見るのは、常時→rules の面替えだけで数字を下げる回避を
 // 塞ぐため（合計 ratchet なら総額不変で通ってしまう）。基準の引き上げは AREA_BUDGET を理由コメント
@@ -579,8 +579,8 @@ export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
  * **2026-07-27 引き下げ 14261→14058**（実測 常時ロード 14161→13958）: `AGENTS.md` 開発ワークフローから、
  *   外部参照を背負っていない 3 件（サンプルコードの理由付記・テスト転用時の不変条件・報告の様式）を
  *   `/start-issue` と `/implement` へ移した。**移せたのは 3 件だけである**——「事前調査」「変更後の検証」は
- *   G11 のアンカーで、`.claude/rules/src-tauri.md` や `/health-check` が中身を当てにして指しており、
- *   見出しを残して中身だけ移すと G11 は緑のまま参照先が空洞になる（`.claude/rules/governance-docs.md`）。
+ *   G-heading-refs のアンカーで、`.claude/rules/src-tauri.md` や `/health-check` が中身を当てにして指しており、
+ *   見出しを残して中身だけ移すと G-heading-refs は緑のまま参照先が空洞になる（`.claude/rules/governance-docs.md`）。
  * **2026-07-27 rules のみ引き下げ 8328→8056**（実測 rules 8228→7956・常時ロードは 13958→14036 で**上昇**）:
  *   `.claude/rules/safety-nets.md` の敵対的読者節を `/norm-review` skill へ移した。これは削減ではなく
  *   **面替え**である——手順の本体は非課税の skill 本文へ、skill の `description` 78 字は常時ロード面へ載る。
@@ -660,13 +660,13 @@ export function skillDescriptionArea(snapshot) {
   for (const f of files) {
     const text = snapshot.read(f);
     if (text == null) {
-      findings.push(finding(f, 1, `${f} が読めない（G10 母集団の欠落）`));
+      findings.push(finding(f, 1, `${f} が読めない（G-area-budget 母集団の欠落）`));
       continue;
     }
     const m = text.match(/^description:[ \t]*(.*)$/m);
     const v = m ? m[1].trim() : "";
     if (!m || v === "" || v.startsWith("|") || v.startsWith(">")) {
-      findings.push(finding(f, 1, "description が 1 行スカラーでない（G10 が面積を数えられない）"));
+      findings.push(finding(f, 1, "description が 1 行スカラーでない（G-area-budget が面積を数えられない）"));
       continue;
     }
     total += [...v.replace(/^["']/, "").replace(/["']$/, "")].length;
@@ -677,10 +677,10 @@ export function skillDescriptionArea(snapshot) {
 export function checkNormativeAreaBudget(snapshot) {
   const findings = [];
 
-  const docs = sumChars(snapshot, ALWAYS_LOADED_FILES, "G10");
+  const docs = sumChars(snapshot, ALWAYS_LOADED_FILES, "G-area-budget");
   const desc = skillDescriptionArea(snapshot);
   findings.push(...docs.findings, ...desc.findings);
-  if (desc.count === 0) findings.push(finding(".claude/skills", 1, "skills が 0 件（G10 母集団の欠落）"));
+  if (desc.count === 0) findings.push(finding(".claude/skills", 1, "skills が 0 件（G-area-budget 母集団の欠落）"));
   const alwaysTotal = docs.total + desc.total;
   if (alwaysTotal > AREA_BUDGET.alwaysLoaded) {
     findings.push(
@@ -694,9 +694,9 @@ export function checkNormativeAreaBudget(snapshot) {
 
   const ruleFiles = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f));
   if (ruleFiles.length === 0) {
-    findings.push(finding(".claude/rules", 1, "rules が 0 件（G10 母集団の欠落）"));
+    findings.push(finding(".claude/rules", 1, "rules が 0 件（G-area-budget 母集団の欠落）"));
   } else {
-    const rules = sumChars(snapshot, ruleFiles, "G10");
+    const rules = sumChars(snapshot, ruleFiles, "G-area-budget");
     findings.push(...rules.findings);
     if (rules.total > AREA_BUDGET.rules) {
       findings.push(
@@ -714,17 +714,17 @@ export function checkNormativeAreaBudget(snapshot) {
 /** evidence 用の実測（検査と同じ母集団・同じ数え方であることを型で担保するための共有関数） */
 export function normativeArea(snapshot) {
   const always =
-    (sumChars(snapshot, ALWAYS_LOADED_FILES, "G10").total ?? 0) + skillDescriptionArea(snapshot).total;
+    (sumChars(snapshot, ALWAYS_LOADED_FILES, "G-area-budget").total ?? 0) + skillDescriptionArea(snapshot).total;
   const rules = sumChars(
     snapshot,
     snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)),
-    "G10",
+    "G-area-budget",
   ).total;
   return { always, rules };
 }
 
 // ---------------------------------------------------------------------------
-// G11 — 見出し参照の実在（正準形 `<対象>`「<見出し>」）。
+// G-heading-refs — 見出し参照の実在（正準形 `<対象>`「<見出し>」）。
 // 参照に構文を与えて機械照合可能にする。これが `.claude/rules/governance-docs.md` の
 // 「改変前に参照側を名前と序数で数え上げる」手作業を置き換える機構である。
 // アンカーは ATX 見出し・番号付きリスト項目・太字リードの 3 種（この repo の参照実態に合わせた。
@@ -737,7 +737,7 @@ export function normativeArea(snapshot) {
 
 /** 見出し参照の正準形。対象は `<path>.md` か `/skill-name`。
  *  `§` には節番号を伴ってよい（`SPEC.md` §11「見た目の規範」）——番号を許さないと、
- *  節番号つきの参照は正準形へ直しても照合されず、G14 が「直せない指摘」を出し続ける（#727 で実測）。 */
+ *  節番号つきの参照は正準形へ直しても照合されず、G-near-heading-refs が「直せない指摘」を出し続ける（#727 で実測）。 */
 const HEADING_REF = /`([^`\n]+)`\s*(?:§\s*[\d.]*\s*)?「([^「」\n]+)」/g;
 
 /** 参照先になりうる位置（ATX 見出し / 番号付きリスト項目 / 太字リード） */
@@ -783,7 +783,7 @@ export function scanHeadingRefs(snapshot, docs) {
   for (const doc of docs) {
     const text = snapshot.read(doc);
     if (text == null) {
-      findings.push(finding(doc, 1, "対象文書が読めない（G11 母集団の欠落）"));
+      findings.push(finding(doc, 1, "対象文書が読めない（G-heading-refs 母集団の欠落）"));
       continue;
     }
     for (const [lineNo, line] of linesOutsideFences(text)) {
@@ -817,11 +817,11 @@ export function checkHeadingRefs(snapshot, docs) {
 }
 
 // ---------------------------------------------------------------------------
-// G14 — 正準形に見えて隣接していない見出し参照（#727）。
+// G-near-heading-refs — 正準形に見えて隣接していない見出し参照（#727）。
 //
-// G11 が見るのはバッククォートを閉じた直後（`§` と空白のみを挟む）に `「` が続く形だけで、
+// G-heading-refs が見るのはバッククォートを閉じた直後（`§` と空白のみを挟む）に `「` が続く形だけで、
 // **助詞が 1 つ挟まると検査対象から外れる**。人の目には同じ参照に見える:
-//   `/start-issue`「Step 6 — …」      ← G11 が見る
+//   `/start-issue`「Step 6 — …」      ← G-heading-refs が見る
 //   `/start-issue` は「Step 6 — …」   ← 見ない
 // #725 では Claude 自身が書いた 3 件がこの形で、しかも `/implement` の入口判定の中核推論を
 // 支えていた（`/start-issue` が改番されれば黙って壊れる）。
@@ -838,7 +838,7 @@ export function checkHeadingRefs(snapshot, docs) {
 //
 // 着地条件を課すと、窓を広げても真の参照は 8 件で頭打ちになり、増えるのは無視する側だけである。
 // ゆえに**窓幅 8・着地必須**とした。この形なら誤爆の代償は「散文の引用がたまたま見出しと同名」
-// に限られ、そのときは正準形へ直すのが正しい（G11 の保護下へ入る）。
+// に限られ、そのときは正準形へ直すのが正しい（G-heading-refs の保護下へ入る）。
 //
 // **受容する残余**: 着地しない非隣接参照は見ない。腐った参照（消滅した節を指す散文形）は
 // この検査では捕まらない——歴史記述と区別できないためである（`.claude/rules/governance-docs.md`
@@ -846,11 +846,11 @@ export function checkHeadingRefs(snapshot, docs) {
 // ---------------------------------------------------------------------------
 
 /** 閉じバッククォートから `「` までに挟まってよい最大文字数（実測で頭打ちになる値） */
-const G14_GAP = 8;
+const NEAR_REF_GAP = 8;
 /** 非隣接の近傍参照。gap は最短一致で取る */
-const G14_NEAR_REF = new RegExp("`([^`\\n]+)`([^`\\n]{1," + G14_GAP + "}?)「([^「」\\n]+)」", "g");
-/** G11 が既に見ている隣接形（`§` + 節番号と空白のみを挟む）。HEADING_REF と同じ前提を持つ */
-const G14_ADJACENT = /`[^`\n]+`\s*(?:§\s*[\d.]*\s*)?「/;
+const NEAR_REF = new RegExp("`([^`\\n]+)`([^`\\n]{1," + NEAR_REF_GAP + "}?)「([^「」\\n]+)」", "g");
+/** G-heading-refs が既に見ている隣接形（`§` + 節番号と空白のみを挟む）。HEADING_REF と同じ前提を持つ */
+const ADJACENT_REF = /`[^`\n]+`\s*(?:§\s*[\d.]*\s*)?「/;
 
 export function scanNearHeadingRefs(snapshot, docs) {
   const findings = [];
@@ -865,12 +865,12 @@ export function scanNearHeadingRefs(snapshot, docs) {
   };
   for (const doc of docs) {
     const text = snapshot.read(doc);
-    if (text == null) continue; // 読めない文書は G11 が母集団の欠落として報告済み
+    if (text == null) continue; // 読めない文書は G-heading-refs が母集団の欠落として報告済み
     for (const [lineNo, line] of linesOutsideFences(text)) {
-      for (const m of line.matchAll(G14_NEAR_REF)) {
+      for (const m of line.matchAll(NEAR_REF)) {
         const [, target, gap, label] = m;
         if (!target.endsWith(".md") && !/^\/[a-z0-9-]+$/.test(target)) continue;
-        if (G14_ADJACENT.test(m[0])) continue;
+        if (ADJACENT_REF.test(m[0])) continue;
         const p = resolveRefTarget(snapshot, doc, target);
         if (p == null) continue;
         const anchors = anchorsOf(p);
@@ -881,7 +881,7 @@ export function scanNearHeadingRefs(snapshot, docs) {
           const section = (gap.match(/§\s*[\d.]+/) ?? [""])[0];
           const canonical = `\`${target}\`${section ? ` ${section}` : ""}「${label}」`;
           findings.push(
-            finding(doc, lineNo, `見出し参照が正準形でない（G11 の視界外）: \`${target}\`【${gap}】「${label}」— ${canonical}と書く`),
+            finding(doc, lineNo, `見出し参照が正準形でない（G-heading-refs の視界外）: \`${target}\`【${gap}】「${label}」— ${canonical}と書く`),
           );
         }
       }
@@ -898,7 +898,7 @@ export function checkNearHeadingRefs(snapshot, docs) {
 // 実行
 // ---------------------------------------------------------------------------
 
-/** G3/G4 の対象文書（ガバナンス文書群）。docs/superpowers/ は歴史資料（#589 で非規範化）ゆえ除外 */
+/** G-references/G-spec-sections の対象文書（ガバナンス文書群）。docs/superpowers/ は歴史資料（#589 で非規範化）ゆえ除外 */
 export function governanceDocs(snapshot) {
   return snapshot.files.filter(
     (f) =>
@@ -911,7 +911,7 @@ export function governanceDocs(snapshot) {
 }
 
 /**
- * G11 の対象。見出し参照はガバナンス文書の外（`PERFORMANCE.md`・`.claude/agents/`）にも書かれ、
+ * G-heading-refs の対象。見出し参照はガバナンス文書の外（`PERFORMANCE.md`・`.claude/agents/`）にも書かれ、
  * 実際にそこで腐っていた（`src-tauri/CLAUDE.md`「TrySuspend / Resume パターン」）ため母集団を広く取る。
  * 除外は履歴資料（`docs/superpowers/`）と作業バッファ（`workspace/`・`/implement` が削除する）のみ。
  */
@@ -922,10 +922,10 @@ export function headingRefDocs(snapshot) {
 }
 
 // ---------------------------------------------------------------------------
-// G12 — config フィールドの到達性（ランチャが読むか）の双方向照合。
+// G-config-reachability — config フィールドの到達性（ランチャが読むか）の双方向照合。
 //
 // config は到達性の検出器を持たない面である——private / `pub(crate)` の関数は呼ばなければ
-// `dead_code`、型は変えれば下流が compile-fail、モジュール索引は G1、文書参照は G3 が捕まえる
+// `dead_code`、型は変えれば下流が compile-fail、モジュール索引は G-module-index、文書参照は G-references が捕まえる
 // （lib crate の `pub` 項目は `dead_code` の対象外なので、この検出器は関数にも穴を持つ）。
 // config のフィールドは `#[serde(default)]` を付ければ誰も読まなくてもコンパイルが通り、
 // **届いたかを誰も検査しない**。原理は `docs/development-principles.md`「config の値は到達性の検出器を持たない」。
@@ -961,16 +961,16 @@ export function headingRefDocs(snapshot) {
 //
 // **母集団の範囲**: `Deserialize` を derive する struct のフィールドだけである（= config.toml から
 // 読まれる型）。**enum variant のフィールド**（`InstantAction::Url` の `url` 等）と
-// **generics 形の struct 定義**（`pub struct Foo<T>`）は入らない——増えたときに G12 は止めない。
+// **generics 形の struct 定義**（`pub struct Foo<T>`）は入らない——増えたときに G-config-reachability は止めない。
 // ---------------------------------------------------------------------------
 /** 母集団のソース。`[[openers]]` は `config.rs` が re-export するだけで実体は `opener.rs` に在る */
-export const G12_CONFIG_PATHS = ["snotra-core/src/config.rs", "snotra-core/src/opener.rs"];
+export const CONFIG_SOURCE_PATHS = ["snotra-core/src/config.rs", "snotra-core/src/opener.rs"];
 /** 読み手として数えるソース。`snotra-settings/` は入れない（上のコメント参照）。
  *  `snotra-egui-runtime/` も入れない——`snotra-core` に依存せず config を読めないため（実測）。
- *  将来依存が入って config を直接読んだ場合、G12 は赤へ振れる（安全側） */
-export const G12_LAUNCHER_PREFIXES = ["src-tauri/src/", "snotra-core/src/"];
+ *  将来依存が入って config を直接読んだ場合、G-config-reachability は赤へ振れる（安全側） */
+export const LAUNCHER_PREFIXES = ["src-tauri/src/", "snotra-core/src/"];
 /** 抽出アンカーの**部分**腐敗を検知する（0 件だけを見ると、途中で切れた母集団が沈黙する） */
-export const G12_EXPECTED_STRUCTS = [
+export const CONFIG_EXPECTED_STRUCTS = [
   "Config", "HotkeyConfig", "GeneralConfig", "SearchConfig", "AppearanceConfig",
   "VisualConfig", "CustomTheme", "ScanPath", "PathsConfig", "InstantCommand",
   "OpenerTool", "OpenerRule",
@@ -979,7 +979,7 @@ export const G12_EXPECTED_STRUCTS = [
 /** ランチャが読まないフィールドと、その理由。**表のキーが `Struct.field` なのは理由を struct ごとに
  *  書き分けるためであって、判定の粒度ではない**——read 判定はフィールド名だけで行うので、
  *  同名フィールド（`SearchConfig.top_n_history` と `AppearanceConfig.top_n_history` 等）は必ず同じ判定になる */
-export const G12_NO_LAUNCHER_READ = {
+export const NO_LAUNCHER_READ = {
   "SearchConfig.result_limit": "実効値は `effective_result_limit()` が畳む（未設定を既定へ）。ランチャはメソッドを呼ぶ",
   "SearchConfig.recent_limit": "実効値は `effective_recent_limit()` が畳む（同上）",
   "AppearanceConfig.visible_rows": "実効値は `effective_visible_rows()` が畳む（同上）",
@@ -1021,26 +1021,26 @@ export function configFields(text) {
   return out;
 }
 
-export function checkConfigFieldReachability(snapshot, table = G12_NO_LAUNCHER_READ, expectedStructs = G12_EXPECTED_STRUCTS) {
+export function checkConfigFieldReachability(snapshot, table = NO_LAUNCHER_READ, expectedStructs = CONFIG_EXPECTED_STRUCTS) {
   const fields = [];
-  for (const p of G12_CONFIG_PATHS) {
+  for (const p of CONFIG_SOURCE_PATHS) {
     const text = snapshot.read(p);
-    if (text == null) return [finding(p, 1, `${p} が読めない（G12 母集団の欠落）`)];
+    if (text == null) return [finding(p, 1, `${p} が読めない（G-config-reachability 母集団の欠落）`)];
     fields.push(...configFields(text));
   }
   if (fields.length === 0) {
-    return [finding(G12_CONFIG_PATHS[0], 1, "`pub struct` のフィールドが 1 件も抽出できない（G12 母集団の欠落。抽出アンカーの腐敗）")];
+    return [finding(CONFIG_SOURCE_PATHS[0], 1, "`pub struct` のフィールドが 1 件も抽出できない（G-config-reachability 母集団の欠落。抽出アンカーの腐敗）")];
   }
   // 部分腐敗の検知: 0 件だけを見ると、途中で切れた母集団が沈黙する
   const structs = new Set(fields.map((f) => f.struct));
   const missing = expectedStructs.filter((s) => !structs.has(s));
   if (missing.length > 0) {
-    return [finding(G12_CONFIG_PATHS[0], 1, `期待する struct が抽出できない: ${missing.join(", ")}（G12 抽出アンカーの部分腐敗）`)];
+    return [finding(CONFIG_SOURCE_PATHS[0], 1, `期待する struct が抽出できない: ${missing.join(", ")}（G-config-reachability 抽出アンカーの部分腐敗）`)];
   }
   const launcher = snapshot.files.filter(
-    (f) => f.endsWith(".rs") && !G12_CONFIG_PATHS.includes(f) && G12_LAUNCHER_PREFIXES.some((p) => f.startsWith(p)),
+    (f) => f.endsWith(".rs") && !CONFIG_SOURCE_PATHS.includes(f) && LAUNCHER_PREFIXES.some((p) => f.startsWith(p)),
   );
-  if (launcher.length === 0) return [finding(G12_CONFIG_PATHS[0], 1, "ランチャ側ソースが 0 件（G12 母集団の欠落）")];
+  if (launcher.length === 0) return [finding(CONFIG_SOURCE_PATHS[0], 1, "ランチャ側ソースが 0 件（G-config-reachability 母集団の欠落）")];
   const blob = launcher.map((f) => stripRustComments(productionOnly(snapshot.read(f) ?? ""))).join("\n");
 
   const all = new Set(fields.map((f) => `${f.struct}.${f.field}`));
@@ -1051,15 +1051,15 @@ export function checkConfigFieldReachability(snapshot, table = G12_NO_LAUNCHER_R
   const findings = [];
   for (const key of Object.keys(table)) {
     if (!all.has(key)) {
-      findings.push(finding(G12_CONFIG_PATHS[0], 1, `表の \`${key}\` に対応するフィールドが config.rs に無い（表の腐敗）`));
+      findings.push(finding(CONFIG_SOURCE_PATHS[0], 1, `表の \`${key}\` に対応するフィールドが config.rs に無い（表の腐敗）`));
     } else if (!unread.has(key)) {
-      findings.push(finding(G12_CONFIG_PATHS[0], 1, `\`${key}\` はランチャ側から読まれている。表の記載が古い（G12_NO_LAUNCHER_READ から外す）`));
+      findings.push(finding(CONFIG_SOURCE_PATHS[0], 1, `\`${key}\` はランチャ側から読まれている。表の記載が古い（NO_LAUNCHER_READ から外す）`));
     }
   }
   for (const key of unread) {
     if (!(key in table)) {
       findings.push(
-        finding(G12_CONFIG_PATHS[0], 1, `\`${key}\` をランチャ側が読んでいない。消費者を与えるか、読まない理由を G12_NO_LAUNCHER_READ へ載せる`),
+        finding(CONFIG_SOURCE_PATHS[0], 1, `\`${key}\` をランチャ側が読んでいない。消費者を与えるか、読まない理由を NO_LAUNCHER_READ へ載せる`),
       );
     }
   }
@@ -1067,16 +1067,16 @@ export function checkConfigFieldReachability(snapshot, table = G12_NO_LAUNCHER_R
 }
 
 // ---------------------------------------------------------------------------
-// G13 — 規範の散文に残る、現行語彙に無い識別子（腐り）の検出（#736 の同クラス）。
+// G-stale-identifiers — 規範の散文に残る、現行語彙に無い識別子（腐り）の検出（#736 の同クラス）。
 //
 // #698 が述べた「述語だけが書かれた間接参照」は概念での再導出でしか拾えなかったが、
-// **識別子として書かれた腐りは機械で拾える**。G3 が見るのはパスの実在までで、
+// **識別子として書かれた腐りは機械で拾える**。G-references が見るのはパスの実在までで、
 // 識別子の実在は誰も見ていなかった。
 //
 // **自称スコープは狭い。** 見るのは `.claude/**` の散文中の**バッククォート内 camelCase 識別子**
 // だけである。frontmatter の文字列・素の表テキスト・日本語散文（「リアクティブ制約」等）は
 // 構造的に対象外で、#736 が挙げた 10 件のうちこの述語が届くのは 0 件である（実測）。
-// **この検査は #736 の代替ではない**——同 issue は手作業で閉じ、G13 が引き受けるのは再発防止だけである。
+// **この検査は #736 の代替ではない**——同 issue は手作業で閉じ、G-stale-identifiers が引き受けるのは再発防止だけである。
 //
 // 判定: 識別子が「現行語彙」に 1 度も現れないなら finding。現行語彙は 2 つの正本からなる:
 // - **ソースの非コメント本文**（`stripRustComments`）。コメントを含めると `resetForShow` のような
@@ -1095,15 +1095,15 @@ export function checkConfigFieldReachability(snapshot, table = G12_NO_LAUNCHER_R
 // ---------------------------------------------------------------------------
 
 /** 現行語彙の正本になるソース拡張子 */
-const G13_SOURCE = /\.(rs|ts|tsx|mjs|ps1|toml)$/;
+const VOCAB_SOURCE_EXT = /\.(rs|ts|tsx|mjs|ps1|toml)$/;
 /** 現行語彙の正本になる文書（意図の SSOT） */
-export const G13_VOCAB_DOCS = ["SPEC.md"];
+export const VOCAB_DOCS = ["SPEC.md"];
 /** バッククォート内で腐りを問う形: camelCase（こぶ 1 つ以上）・末尾 `()` は任意 */
-const G13_IDENT = /^([a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+)(\(\))?$/;
+const STALE_IDENT = /^([a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+)(\(\))?$/;
 /** 同じ行に在れば、その行の識別子は外部ツールの引数と見なす */
-const G13_EXTERNAL_CMD = /`(gh|npm|cargo|git|node|pwsh|npx) /;
+const EXTERNAL_CMD_LINE = /`(gh|npm|cargo|git|node|pwsh|npx) /;
 
-/** 規範の散文（G13 の母集団）。skills / rules / agents の md */
+/** 規範の散文（G-stale-identifiers の母集団）。skills / rules / agents の md */
 export function staleIdentifierDocs(snapshot) {
   return snapshot.files.filter((f) => /^\.claude\/(skills\/.*|rules\/[^/]+|agents\/[^/]+)\.md$/.test(f));
 }
@@ -1112,12 +1112,12 @@ export function staleIdentifierDocs(snapshot) {
 export function currentVocabulary(snapshot) {
   const parts = [];
   for (const f of snapshot.files) {
-    if (!G13_SOURCE.test(f)) continue;
+    if (!VOCAB_SOURCE_EXT.test(f)) continue;
     const src = snapshot.read(f);
     if (src == null) continue;
     parts.push(/\.(ps1|toml)$/.test(f) ? src.replace(/#.*$/gm, " ") : stripRustComments(src));
   }
-  for (const d of G13_VOCAB_DOCS) parts.push(snapshot.read(d) ?? "");
+  for (const d of VOCAB_DOCS) parts.push(snapshot.read(d) ?? "");
   return parts.join("\n");
 }
 
@@ -1134,15 +1134,15 @@ export function scanStaleIdentifiers(snapshot, docs) {
   for (const doc of docs) {
     const text = snapshot.read(doc);
     if (text == null) {
-      findings.push(finding(doc, 1, "対象文書が読めない（G13 母集団の欠落）"));
+      findings.push(finding(doc, 1, "対象文書が読めない（G-stale-identifiers 母集団の欠落）"));
       continue;
     }
     for (const [lineNo, line] of linesOutsideFences(text)) {
-      if (G13_EXTERNAL_CMD.test(line)) continue;
+      if (EXTERNAL_CMD_LINE.test(line)) continue;
       for (const m of line.matchAll(/`([^`\n]+)`/g)) {
         const raw = m[1];
         if (raw.includes("/") || raw.includes(" ") || raw.includes(".")) continue;
-        const im = raw.match(G13_IDENT);
+        const im = raw.match(STALE_IDENT);
         if (!im) continue;
         checked += 1;
         if (!inVocab(im[1])) {
@@ -1161,7 +1161,7 @@ export function checkStaleIdentifiers(snapshot, docs) {
 }
 
 // ---------------------------------------------------------------------------
-// G15 — `/implement`「4a. check スキルの実行」の列挙 ↔ `AGENTS.md`「条件別チェック」表（#778）。
+// G-check-skill-enumeration — `/implement`「4a. check スキルの実行」の列挙 ↔ `AGENTS.md`「条件別チェック」表（#778）。
 //
 // `/implement`「出力」項目 3 は報告の母集団を 4a の列挙で閉じており、それは表の**写し**である。
 // 乖離すると、表に増えた check スキルが報告母集団から**沈黙して落ちる**。
@@ -1175,13 +1175,13 @@ export function checkStaleIdentifiers(snapshot, docs) {
 // - 表の `/…-check` = {cache, dry, persistence, race, state, symmetric}（6 件）
 // - 4a の `/…-check` = 同じ 6 件
 // `/plan-review` `/norm-review` は `-check` で終わらないため**構造的に外れる**。`/health-check` は
-// 表に現れない（ルート `CLAUDE.md` のスキル表に在り、そちらは G8 が見る）。
+// 表に現れない（ルート `CLAUDE.md` のスキル表に在り、そちらは G-skill-table が見る）。
 //
-// これで #778 の (a)（表側へ同期義務を 1 行置く）が不要になった——`AGENTS.md` は G10 の常時ロード面で
+// これで #778 の (a)（表側へ同期義務を 1 行置く）が不要になった——`AGENTS.md` は G-area-budget の常時ロード面で
 // 余裕が小さいため、機構で吸収できるならそちらが安い。
 // ---------------------------------------------------------------------------
 
-const G15_CHECK_SKILL = /\/[a-z][a-z0-9-]*-check\b/g;
+const CHECK_SKILL_REF = /\/[a-z][a-z0-9-]*-check\b/g;
 /** 節を見出しで切り出す（次の同レベル以上の見出しまで）。見つからなければ null */
 function sectionOf(text, headingRe) {
   const lines = text.split("\n");
@@ -1198,71 +1198,90 @@ export function checkCheckSkillEnumeration(snapshot) {
   const agents = snapshot.read("AGENTS.md");
   const impl = snapshot.read(".claude/skills/implement/SKILL.md");
   if (agents == null || impl == null) {
-    return [finding("AGENTS.md", 1, "G15 の母集団が読めない（AGENTS.md か /implement の SKILL.md）")];
+    return [finding("AGENTS.md", 1, "G-check-skill-enumeration の母集団が読めない（AGENTS.md か /implement の SKILL.md）")];
   }
   const table = sectionOf(agents, /^##\s+条件別チェック/);
   const step4a = sectionOf(impl, /^###\s+4a\./);
-  if (table == null) findings.push(finding("AGENTS.md", 1, "G15: 「条件別チェック」節が見つからない（見出しが変わった）"));
-  if (step4a == null) findings.push(finding(".claude/skills/implement/SKILL.md", 1, "G15: 「4a.」節が見つからない（見出しが変わった）"));
+  if (table == null) findings.push(finding("AGENTS.md", 1, "G-check-skill-enumeration: 「条件別チェック」節が見つからない（見出しが変わった）"));
+  if (step4a == null) findings.push(finding(".claude/skills/implement/SKILL.md", 1, "G-check-skill-enumeration: 「4a.」節が見つからない（見出しが変わった）"));
   if (findings.length > 0) return findings;
 
-  const setOf = (t) => new Set((t.match(G15_CHECK_SKILL) ?? []).map((s) => s.trim()));
+  const setOf = (t) => new Set((t.match(CHECK_SKILL_REF) ?? []).map((s) => s.trim()));
   const inTable = setOf(table);
   const in4a = setOf(step4a);
   // 空母集団は明示 fail（沈黙経路の閉塞）
-  if (inTable.size === 0) findings.push(finding("AGENTS.md", 1, "G15: 表に check スキルが 0 件（母集団の欠落）"));
-  if (in4a.size === 0) findings.push(finding(".claude/skills/implement/SKILL.md", 1, "G15: 4a に check スキルが 0 件（母集団の欠落）"));
+  if (inTable.size === 0) findings.push(finding("AGENTS.md", 1, "G-check-skill-enumeration: 表に check スキルが 0 件（母集団の欠落）"));
+  if (in4a.size === 0) findings.push(finding(".claude/skills/implement/SKILL.md", 1, "G-check-skill-enumeration: 4a に check スキルが 0 件（母集団の欠落）"));
 
   for (const s of inTable) {
     if (!in4a.has(s)) {
       findings.push(
-        finding(".claude/skills/implement/SKILL.md", 1, `G15: \`${s}\` が AGENTS.md の表に在るが 4a の列挙に無い（報告母集団から沈黙して落ちる）`),
+        finding(".claude/skills/implement/SKILL.md", 1, `G-check-skill-enumeration: \`${s}\` が AGENTS.md の表に在るが 4a の列挙に無い（報告母集団から沈黙して落ちる）`),
       );
     }
   }
   for (const s of in4a) {
     if (!inTable.has(s)) {
-      findings.push(finding("AGENTS.md", 1, `G15: \`${s}\` が 4a の列挙に在るが AGENTS.md の表に無い（起動条件を持たない検査）`));
+      findings.push(finding("AGENTS.md", 1, `G-check-skill-enumeration: \`${s}\` が 4a の列挙に在るが AGENTS.md の表に無い（起動条件を持たない検査）`));
     }
   }
   // 列挙されたスキルが実在するか（誤記の検出）
   for (const s of new Set([...inTable, ...in4a])) {
     const p = `.claude/skills/${s.slice(1)}/SKILL.md`;
-    if (!snapshot.files.includes(p)) findings.push(finding("AGENTS.md", 1, `G15: \`${s}\` に対応する ${p} が実在しない`));
+    if (!snapshot.files.includes(p)) findings.push(finding("AGENTS.md", 1, `G-check-skill-enumeration: \`${s}\` に対応する ${p} が実在しない`));
   }
   return findings;
 }
 
-export function runAll(snapshot) {
+/** 検査の登録表。**ここが検査 ID の SSOT である**——サマリ行の件数もこの配列から計算するので、
+ *  「G1..G15 passed」のような範囲を手で書く面が存在しない（範囲は黙って腐る。実例が
+ *  `docs/build-commands.md` に「G1〜G12」と残っていた・#812）。
+ *  ID は `G-<name>` 形で連番を持たない——連番は「いま空いている最大値 + 1」をマージの瞬間に
+ *  確定させるため、並行する 2 本の PR が同じ値を見る（`.claude/rules/governance-docs.md`
+ *  「序数で他を指してはならない」）。 */
+export function buildChecks(snapshot, sink = {}) {
   const docs = governanceDocs(snapshot);
   const refDocs = headingRefDocs(snapshot);
-  const findings = [];
-  if (docs.length === 0) findings.push(finding(".", 1, "ガバナンス文書が 0 件（母集団の欠落）"));
-  if (refDocs.length === 0) findings.push(finding(".", 1, "G11 の対象 md が 0 件（母集団の欠落）"));
   const staleDocs = staleIdentifierDocs(snapshot);
-  if (staleDocs.length === 0) findings.push(finding(".", 1, "G13 の対象 md が 0 件（母集団の欠落）"));
-  findings.push(
-    ...checkModuleIndex(snapshot),
-    ...checkArchitectureTable(snapshot),
-    ...checkReferences(snapshot, docs),
-    ...checkSpecSections(snapshot, docs),
-    ...checkBuildCommands(snapshot),
-    ...checkCiTable(snapshot),
-    ...checkRulesGlobs(snapshot),
-    ...checkSkillTable(snapshot),
-    ...checkHookCommands(snapshot),
-    ...checkNormativeAreaBudget(snapshot),
-    ...checkConfigFieldReachability(snapshot),
-    ...checkCheckSkillEnumeration(snapshot),
-  );
-  const headingRefs = scanHeadingRefs(snapshot, refDocs);
-  findings.push(...headingRefs.findings);
-  const stale = scanStaleIdentifiers(snapshot, staleDocs);
-  findings.push(...stale.findings);
-  const nearRefs = scanNearHeadingRefs(snapshot, refDocs);
-  findings.push(...nearRefs.findings);
+  sink.docs = docs;
+  sink.refDocs = refDocs;
+  sink.staleDocs = staleDocs;
+  const record = (key, r) => {
+    sink[key] = r.checked;
+    return r.findings;
+  };
+  return [
+    { id: "G-module-index", run: () => checkModuleIndex(snapshot) },
+    { id: "G-architecture-table", run: () => checkArchitectureTable(snapshot) },
+    { id: "G-references", run: () => checkReferences(snapshot, docs) },
+    { id: "G-spec-sections", run: () => checkSpecSections(snapshot, docs) },
+    { id: "G-build-commands", run: () => checkBuildCommands(snapshot) },
+    { id: "G-ci-table", run: () => checkCiTable(snapshot) },
+    { id: "G-rules-globs", run: () => checkRulesGlobs(snapshot) },
+    { id: "G-skill-table", run: () => checkSkillTable(snapshot) },
+    { id: "G-hook-commands", run: () => checkHookCommands(snapshot) },
+    { id: "G-area-budget", run: () => checkNormativeAreaBudget(snapshot) },
+    { id: "G-config-reachability", run: () => checkConfigFieldReachability(snapshot) },
+    { id: "G-check-skill-enumeration", run: () => checkCheckSkillEnumeration(snapshot) },
+    { id: "G-heading-refs", run: () => record("headingRefs", scanHeadingRefs(snapshot, refDocs)) },
+    { id: "G-stale-identifiers", run: () => record("stale", scanStaleIdentifiers(snapshot, staleDocs)) },
+    { id: "G-near-heading-refs", run: () => record("nearRefs", scanNearHeadingRefs(snapshot, refDocs)) },
+  ];
+}
+
+export function runAll(snapshot) {
+  const ctx = {};
+  const checks = buildChecks(snapshot, ctx);
+  const findings = [];
+  if (ctx.docs.length === 0) findings.push(finding(".", 1, "ガバナンス文書が 0 件（母集団の欠落）"));
+  if (ctx.refDocs.length === 0) findings.push(finding(".", 1, "G-heading-refs の対象 md が 0 件（母集団の欠落）"));
+  if (ctx.staleDocs.length === 0) findings.push(finding(".", 1, "G-stale-identifiers の対象 md が 0 件（母集団の欠落）"));
+  for (const c of checks) findings.push(...c.run());
   const area = normativeArea(snapshot);
-  const evidence = `対象文書 ${docs.length} 件 / rules ${snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length} 件 / skills ${snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length} 件 / 恒久規範 常時ロード ${area.always}/${AREA_BUDGET.alwaysLoaded} 字・rules ${area.rules}/${AREA_BUDGET.rules} 字 / 見出し参照 ${headingRefs.checked} 件を ${refDocs.length} 文書から照合 / config フィールド ${G12_CONFIG_PATHS.flatMap((p) => configFields(snapshot.read(p) ?? "")).length} 件の到達性 / 規範の識別子 ${stale.checked} 件を ${staleDocs.length} 文書から照合 / 近傍の見出し参照 ${nearRefs.checked} 件`;
+  const rules = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length;
+  const skills = snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length;
+  const configFieldCount = CONFIG_SOURCE_PATHS.flatMap((p) => configFields(snapshot.read(p) ?? "")).length;
+  const evidence = `検査 ${checks.length} 件 / 対象文書 ${ctx.docs.length} 件 / rules ${rules} 件 / skills ${skills} 件 / 恒久規範 常時ロード ${area.always}/${AREA_BUDGET.alwaysLoaded} 字・rules ${area.rules}/${AREA_BUDGET.rules} 字 / 見出し参照 ${ctx.headingRefs} 件を ${ctx.refDocs.length} 文書から照合 / config フィールド ${configFieldCount} 件の到達性 / 規範の識別子 ${ctx.stale} 件を ${ctx.staleDocs.length} 文書から照合 / 近傍の見出し参照 ${ctx.nearRefs} 件`;
   return { findings, evidence };
 }
 
@@ -1276,6 +1295,6 @@ if (isMain) {
     for (const f of findings) console.error(`  ${f.file}:${f.line}  ${f.message}`);
     process.exitCode = 1;
   } else {
-    console.log(`governance:check — G1..G15 passed（${evidence}）`);
+    console.log(`governance:check — 全検査 passed（${evidence}）`);
   }
 }

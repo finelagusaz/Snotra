@@ -12,7 +12,7 @@ auto-close の経路は 2 本あり、可視性が非対称である:
 ## 決定
 
 1. **Layer 0 で断つ** — `squash_merge_commit_message=PR_BODY` にし、ブランチのコミット本文が squash 本文へ流入する経路を全マージ経路から消した（#488 で設定変更）。なぜ hook では守らないかは下記「検討した代替案と却下理由」が SSOT（`CLAUDE.md`「フック」(A2) はここへのポインタ）。
-2. **残余（PR 本文の closing keyword）は手順で守る** — マージ前に `closingIssuesReferences` を見て意図どおりになるまで PR 本文を編集し、マージ後に接地した観測点で確認する。**手順の実体は `CLAUDE.md`「Git/GitHub 運用」に常時ロードで置く** — 手順が視界に無いと #488 保護を失うため（マージ手順の skill 化＝常時視界からの退去は `RETROSPECTIVE.md` で却下済み）。ADR は「なぜ」だけを持つ。
+2. **残余（PR 本文の closing keyword）は手順で守る** — マージ前に `closingIssuesReferences` を見て意図どおりになるまで PR 本文を編集し、マージ後に接地した観測点で確認する。**手順の本文は `/merge-pr` が持ち、`CLAUDE.md`「Git/GitHub 運用」には「`/merge-pr` に従う・`--auto` 不使用・#488 の核心」を 1 行で常時ロードに残す**（2026-07-28 改訂: 当初は「手順が視界に無いと #488 保護を失う」を理由に skill 化を却下し全文を常時ロードに置いていたが、常時ロード面の不変条件「手順本文を置かない」の新設に伴い移設した。旧懸念へはポインタの常時視界と、user 起動スキルが起動時に手順全文を注入することで応える。`/merge-pr` は user 起動専用ゆえモデルは自発起動できず、指示されたマージではポインタから `.claude/skills/merge-pr/SKILL.md` を読む）。ADR は「なぜ」だけを持つ。
 
 ## 検討した代替案と却下理由
 
@@ -24,10 +24,10 @@ auto-close の経路は 2 本あり、可視性が非対称である:
 
 ## 帰結
 
-- 母集団は**派生した参照集合ではなく起きた事実**から取る — 2 経路の可視性が非対称ゆえ、確認は `closingIssuesReferences` だけでなく `gh issue list --search "closed:>=<mergedAt>"` で裏取りする（この一般形は `.claude/rules/safety-nets.md` が持つ）。手順の全文は `CLAUDE.md`「Git/GitHub 運用」。
+- 母集団は**派生した参照集合ではなく起きた事実**から取る — 2 経路の可視性が非対称ゆえ、確認は `closingIssuesReferences` だけでなく `gh issue list --search "closed:>=<mergedAt>"` で裏取りする（この一般形は `.claude/rules/safety-nets.md` が持つ）。手順の全文は `/merge-pr`。
 - squash 設定は `squash_merge_commit_title=PR_TITLE` / `squash_merge_commit_message=PR_BODY`。設定の組み合わせは GitHub が制限する（実測 422）。**元に戻す**なら `gh api -X PATCH repos/:owner/:repo -f squash_merge_commit_title=COMMIT_OR_PR_TITLE -f squash_merge_commit_message=COMMIT_MESSAGES`。
 
 ---
 
 status: Accepted
-関連: #488 ・`CLAUDE.md`「Git/GitHub 運用」「フック」(A2) ・`.claude/rules/safety-nets.md`
+関連: #488 ・`CLAUDE.md`「Git/GitHub 運用」「フック」(A2) ・`.claude/rules/safety-nets.md` ・`/merge-pr`

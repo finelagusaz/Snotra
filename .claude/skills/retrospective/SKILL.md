@@ -59,11 +59,14 @@ Step 2 で抽出した構造的パターンのうち、今後のサイクルで�
 上の段から順に検討する（`docs/development-principles.md`「構造的設計原則と強制の階梯」と `AGENTS.md` 冒頭の組織原理に対応）:
 
 1. **機構が吸収できるか（最上段）**: compile-fail・`#[must_use]`・hook・テストで違反を検出、または構造で不能にできるなら、教訓は「注意書きの追加」ではなく**「機構の追加・強化」**にする。`AGENTS.md`・各 `CLAUDE.md` に専用チェックリストや注意書きが要る箇所は「構造が規則を吸収できていない」診断信号である。カナリアで守るのは沈黙する経路だけでよい（放っておいても明示的に失敗するものに見張りは要らない）
-2. **特定ファイル/パスを触ると効くか** → `.claude/rules/<X>.md`（対象を読むと自動配送される）。既存 rule の `paths:` に該当するなら本文へ追記、しなければ新設（新設時はカナリア要否を判断）
-3. **特定の局面・作業で効くか** → 該当スキル（`/symmetric-check`・`/plan-review`・`/state-check`・`/cache-check`・`/persistence-check`・`/dry-check`・`/race-check` 等）の本文へ。`AGENTS.md`「条件別チェック」表には「トリガー → 参照先」の 1 行だけ足す（本文の SSOT は skill 側）
-4. **汎用の設計・デバッグ原則か** → `docs/development-principles.md`
-5. **モジュール固有** → 各サブディレクトリ `CLAUDE.md`（`src-tauri/`・`snotra-core/`・`snotra-settings/`・`snotra-egui-runtime/`）／**Claude Code 固有**（コミュニケーション原則・スキル表・委譲/worktree 運用） → ルート `CLAUDE.md`
-6. **どのトリガーにも紐付かない、書く・判断するたびに効く横断原則だけ** → `AGENTS.md`「検証の作法」コア。**ここだけが常時ロードに値する**
+2. **内容の種別で器が決まるものを先に振り分ける（第二軸）**: **手順**（ステップ列として実行できる）→ スキル（規範文書に手順本文を書かない）。**否定の知識**（なぜ B を却下したか）→ `docs/adr/ADR-<slug>.md`。**失敗の一次証跡**（何が起きたか）→ GitHub issue（`RETROSPECTIVE.md` は揮発でよい）。**意図（仕様）** → `SPEC.md`
+3. **特定ファイル/パスを触ると効くか** → `.claude/rules/<X>.md`（対象を読むと自動配送される）。既存 rule の `paths:` に該当するなら本文へ追記、しなければ新設（新設時はカナリア要否を判断）
+4. **特定の局面・作業で効くか** → 該当スキル（`/symmetric-check`・`/plan-review`・`/state-check`・`/cache-check`・`/persistence-check`・`/dry-check`・`/race-check` 等）の本文へ。`AGENTS.md`「条件別チェック」表には「トリガー → 参照先」の 1 行だけ足す（本文の SSOT は skill 側）
+5. **汎用の設計・デバッグ原則か** → `docs/development-principles.md`
+6. **モジュール固有** → 各サブディレクトリ `CLAUDE.md`（`src-tauri/`・`snotra-core/`・`snotra-settings/`・`snotra-egui-runtime/`）／**Claude Code 固有**（コミュニケーション原則・スキル表・委譲/worktree 運用） → ルート `CLAUDE.md`
+7. **どのトリガーにも紐付かない、書く・判断するたびに効く横断原則だけ** → `AGENTS.md`「検証の作法」コア。**ここだけが常時ロードに値する**
+
+**不変条件**: 常時ロード面（ルート `CLAUDE.md` / `AGENTS.md`）に置いてよいのは「トリガー＋参照＋根拠 issue 番号」まで。手順の本文を置いてはならない（手順はスキルへ・#488 の 4 手順を `/merge-pr` へ移設した検算が先例）。
 
 **検収条件**: `AGENTS.md` が重くなる方向の変更は smell として扱う。**ドキュメントが軽くなることを設計改善の検収条件とする**（構造が規則を吸収したら対応するチェックリストは削除する）。既存ルール・既存のトリガーで包含できるなら追記しない。同じ教訓の本文を 2 箇所に書かない——`AGENTS.md` はポインタ、本文はトリガーに紐づく文書に 1 つ（ドリフト防止）。
 

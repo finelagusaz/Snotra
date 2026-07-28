@@ -12,6 +12,7 @@
 | `src-tauri/src/egui_shell/view.rs` | `hint` の束縛を `&str` → `String` にし、3 分岐へ（tool / folder / それ以外） |
 | `src-tauri/src/egui_shell/search_state.rs` | `folder_current_dir()` の `#[allow(dead_code)]` を外し、doc の「driver は生の accessor を直接呼ばない」という**偽になる断定**を書き換える |
 | `SPEC.md` | §6 の**末尾へ `### 6.7 フォルダ展開中の現在地表示` を追記**（挿入ではない・理由は下記）。§4.7 の #700 の箇条へ §6.7 への参照を 1 つ足す |
+| `snotra-core/src/ui_types.rs` | `FolderExpansionState`（17-24 行）を**削除**する。#532 SU7 で撤去された WebView2 フロントへの IPC DTO の残滓で、`FolderFrame` と同概念・別名（ユーザー裁定・下記） |
 
 **触らない（根拠つき）**:
 
@@ -24,7 +25,8 @@
 - `docs/architecture.md` / `src-tauri/CLAUDE.md` のモジュール構成節 — ファイルの追加・削除が無く、`strings.rs` の責務宣言（「UI 文言テーブル」）は不変
 - `docs/superpowers/plans/2026-07-23-su3-m2-folder.md`（当時「hint も folder 中は現在地を出す（任意）」と書いた計画書）— **歴史文書であり書き換えない**
 - `scripts/manual-smoke.ps1` の `$items`（常設の目視項目） — **ラウンド 1 でいったん「項目 14 を追加」としたが、ラウンド 2 の独立再導出が YAGNI と名指ししたので撤回した。** 既存 13 項目を実読すると、いずれも**横断不変条件**（フォーカス奪取・hide の順序・クリック逆流の読み点・位置復元・フォント hot-reload・キャレット・ベースライン・通知期限）＝**どの変更でも壊れうるもの**であり、機能単位の受け入れ確認ではない。新機能のために先回りで常設項目を足すと、以後すべての PR に恒久コストが乗る。#836 の目視は**この PR 限りの目視表**（PR 本文・下記「カテゴリ D の目視項目」）で足りる。**副次的な利得**: `manual-smoke.ps1:6` の「省略時は全 13 項目」という件数リテラル（自動検知が無く、`governance:check` も PostToolUse も `.ps1` を見ない）を腐らせずに済む
-- `snotra-core/src/ui_types.rs:19` の `FolderExpansionState` — **#532 SU7 で撤去された WebView2 フロントへの IPC DTO の残滓**（`#[serde(rename_all = "camelCase")]` がその出自を示す）。`current_dir` / `saved_results` / `saved_selected` / `saved_query` は `search_state.rs:72` の `FolderFrame` と**同概念・別名**で、リポジトリ全体での出現は定義の 1 件のみ（`grep -rn FolderExpansionState . --include=*.rs --include=*.md --include=*.toml` = 1 件・`/dry-check` 実測）。lib crate の `pub` ゆえ `dead_code` は発火しない。**撤去は #833 と同種の別作業ゆえ #836 では触らない**が、「現在のディレクトリ」を担う型が 2 つあることは本 issue の実装者が踏みうる罠なので記録する（処遇は下記「裁定によって受容した残余」の最終項）
+- `snotra-core/src/ui_types.rs` の `//!` — `FolderExpansionState` を名指ししておらず、削除後も残る `SearchResult` について述べた内容（「UI が読む形として serde 派生を持つ DTO」）は**削除によって偽にならない**。「検索結果・ツール一覧など」の「ツール一覧」は元から `opener.rs` にあり本 PR 以前からの齟齬ゆえ、直すなら別作業（**削除が原因で腐るものだけを直す**）
+- `snotra-core/CLAUDE.md` のモジュール構成節 — `ui_types.rs` を**ファイル名だけ**で索引しており（責務散文を持たない）、ファイル自体は残るので更新不要（実読で確認）
 
 ## 実装順序
 
@@ -85,9 +87,18 @@ let hint: String = if in_tool {
 - [ ] `SPEC.md` §4.7 の #700 の箇条（現 186 行）末尾へ、**案内（indexing / 起動中 / 一時通知）と文脈（フォルダ展開中の現在地）を区別する一文**と §6.7 への参照を足す。**参照は G-heading-refs の正準形で書く**——`` `SPEC.md` §6.7「フォルダ展開中の現在地表示」 ``（`scripts/governance-check.mjs` の `HEADING_REF` = `` `<path>` §<番号>「<見出し>」 `` に一致させる。散文形で書くと機械照合されず、`G-near-heading-refs` が直せない指摘を出し続ける）。実体は §6.7 に置き、写しを作らない。**この一文が無いと本変更が既存規範に違反しているように読める**
 - [ ] セクション番号は §6.7 の追記のみで、既存番号を 1 つも動かさない（`.claude/rules/spec.md`「セクション番号整合」）
 
-### フェーズ 5 — 検証
+### フェーズ 5 — SU7 残滓の撤去（`snotra-core/src/ui_types.rs`）
 
-- [ ] カテゴリ A: `cargo check --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test -p snotra` / `cargo doc --workspace --no-deps --document-private-items`（doc コメントを触るため `cargo doc` は手動実行が要る——hook は発火しない＝沈黙は合格ではない）
+**ユーザー裁定（2026-07-29）により #836 の射程に入れた。** 元は `/dry-check` が付随的に検出した別件で、計画は当初「触らない」としていた。
+
+- [ ] `FolderExpansionState`（17-24 行）とその derive 属性を削除する。**`use serde::{Deserialize, Serialize};` は残す**（`SearchResult` が使い続ける）
+- [ ] 削除の安全性はコンパイラが証明する——リポジトリ全体での出現は定義の 1 件のみ（`grep -rn FolderExpansionState . --include=*.rs --include=*.md --include=*.toml` = 1 件）。**lib crate の `pub` ゆえ `dead_code` は発火せず、消し忘れても警告は出ない**（これが 15933af から今日まで残った理由でもある）
+- [ ] `cargo check --workspace` と `cargo test -p snotra-core` で、他 crate から参照されていないことを実測で確かめる（grep は「文字列として現れない」ことしか言わない）
+- [ ] **この撤去は #836 の機能とは独立である。** 同じ PR に入るが、レビュアーが分けて読めるよう**コミットを分ける**
+
+### フェーズ 6 — 検証
+
+- [ ] カテゴリ A: `cargo check --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test -p snotra` / **`cargo test -p snotra-core`**（フェーズ 5 で `snotra-core` を変更するため必須） / `cargo doc --workspace --no-deps --document-private-items`（doc コメントを触るため `cargo doc` は手動実行が要る——hook は発火しない＝沈黙は合格ではない）
 - [ ] カテゴリ F: `npm run governance:check`（`SPEC.md` を編集するため。**`*.md` の編集で PostToolUse は沈黙する＝「何も走らなかった」**）
 - [ ] `/dry-check`（新規関数 `folder_hint` の定義に対する `AGENTS.md` 条件別チェック表のトリガー。呼び出し元 grep はレビュー済み）
 - [ ] カテゴリ D（人間が実施・エージェントは実行できない）: `cargo run -p snotra` で起動し、下の**「カテゴリ D の目視項目」11 件**を確認して**判定を PR 本文の目視表へ手で書く**。
@@ -161,8 +172,11 @@ let hint: String = if in_tool {
       **受容する理由**: **検討した 3 案（hint / status 行 / results ヘッダ）のいずれも無条件には AC1 を満たさない**（全案についての主張ではない——たとえば「バー帯の中に常設ラベルを置き入力欄の幅を削る」案は評価していない。描画点が増えユーザーが指した parity からも外れるため採らないが、その存在は「候補は存在しない」という全称を偽にする）。そして `enter_folder` / `navigate_folder` は**どちらも `folder_filter.clear()` する**（`search_state.rs:243,254`）ので、`←` / `→` の直後は必ずバッファが空＝hint が描かれる。#743 の誤読が起きた瞬間をちょうど覆う。
 - [x] **散文とスクリーンショットの食い違い（フォルダ名 vs フルパス）はフルパスを採る** — **裁定の出所**: 一次証拠 2 つ（添付スクリーンショットの `C:\Toolbox\ghost-launcher 内を検索...`、および `git show 15933af^:ui/src/components/SearchWindow.tsx:277` が `fs.currentDir` をそのまま渡していたこと）が一致するため。散文の「（フォルダ名）」は値の略記と解する。ラウンド 1・2 の独立再導出も同じ結論へ独立到達した。
       **ラウンド 3 の独立再導出だけが「フォルダ名（leaf）を採るべき」と反対した。その根拠は採らない**——同エージェントは「散文が SSOT だから」と述べているが、**サブエージェントは issue 添付のスクリーンショットを読めない**（画像であり `gh issue view` には現れない。本計画の作成者は画像を取得して直接確認した）。つまり反対意見は**一次証拠 2 つのうち 1 つを見ないまま出された**ものである。ただし同エージェントが挙げた副次的な論拠（末尾省略で leaf が失われうる）は妥当であり、未確定 (b) の受容残余として既に記録済み。
+      **ユーザーが追認した**: 「1 フルパス表示で」（2026-07-29・`/start-issue` 完了報告への回答）。leaf 案は却下で確定。
 - [x] **末尾 `\` の揺れは正規化しない** — `compute_parent_dir` はドライブルートで `C:\`（末尾 `\` あり）を返し、フォルダ列挙は `C:\d\Cafe`（なし）を返すため、hint に `C:\ 内を検索...` と `C:\d\Cafe 内を検索...` が混ざる。**WebView2 も同じ値を出していたので parity としては正しい。** 正規化は #836 の要求外ゆえ射程に入れない（気になるなら別 issue）。
-- [x] **`FolderExpansionState`（`snotra-core/src/ui_types.rs:19`）の撤去は #836 では行わない** — `/dry-check` が検出した SU7 残滓（消費者ゼロ・詳細は「触らない」節）。**送り先**: `/start-issue` の完了報告でユーザーへ提示し、「本 PR で消す / 別 issue を立てる / 放置する」の裁定を仰ぐ。**issue の起票は外向きの操作ゆえ Claude が独断で行わない**（`CLAUDE.md`「最重要ルール」2 と同種の判断）。**この項目は実装を止めない**——#836 の変更集合とは独立である。
+- [x] **`FolderExpansionState`（`snotra-core/src/ui_types.rs`）は本 PR で撤去する** — `/dry-check` が検出した SU7 残滓（消費者ゼロ・`FolderFrame` と同概念・別名）。計画は当初「#836 の射程外」として「触らない」節へ置き、送り先を完了報告での裁定要請としていた。
+      **裁定の出所**: ユーザー発言「2 このPRで消す」（2026-07-29・`/start-issue` 完了報告への回答）。**却下した代替案**: 別 issue を立てる／放置する。
+      **射程を広げたことの明示**: これは #836 の受け入れ条件に含まれない変更である。フェーズ 5 として独立させ、**コミットも分ける**ことでレビュー時に切り離して読めるようにする。
 
 ## セルフレビュー
 
@@ -173,11 +187,14 @@ let hint: String = if in_tool {
   1. 不変条件 7 の `poll_async` の説明（「folder drain」→ 実際は `drain_launch` → `finish_launch` の Tool 成功分岐。**folder drain 部は `view_kind()` を変えない**）
   2. 同・`enter_tool` の呼び出し元の誤り（`on_nav_keys` ではなく `on_enter` → `shift_activate`）
   3. `strings.rs` の `//!` に足す文言の系統数（2 → **3**。status 行と toast 行は独立に同時描画されうる別の面）
-  4. フェーズ 5 のカテゴリ D の記録経路（`smoke:manual -- -PostToPr` は #836 の 11 項目を記録しない。**PR 本文へ手で書く**のが AC1 の唯一の証跡）
+  4. 検証フェーズのカテゴリ D の記録経路（`smoke:manual -- -PostToPr` は #836 の 11 項目を記録しない。**PR 本文へ手で書く**のが AC1 の唯一の証跡）
 - **配送（独立レビューの成立）: 3 ラウンドすべてで 4/4 実在。** 不成立エントリは 1 つも無い（`plan:ledger verify` の出力）
 - **ラウンド 3 の「要対処」はすべて自分で根拠を開いて再照合した**（`launcher_controller.rs:297-311, 903-933, 483-505` / `scripts/manual-smoke.ps1` の `$items` / `SPEC.md:185`）。降格した項目は無い
 - **5b の 3 観点**:
   1. **境界条件** — ドライブルート `C:\`・UNC `\\srv\share`（ユニットテスト）、非空フィルタ（目視項目 2・3）、空フォルダ・列挙失敗・tool-on-folder・幅超過・En/Ja（同 5〜10）で網羅。**`dir` が非空であるという前提は書かない**（`format!` は total ゆえ空でも panic しない。到達可能性が未確認の入力に対して「検出器」めいたテストを足さない）
   2. **シンプル化の挑戦** — 新しい状態・フラグ・スレッド・子プロセスを 1 つも導入せず、追加は純関数 1 本と分岐 1 本。文言を `view.rs` へ直書きすればさらに 1 ファイル減るが、i18n の正本が `strings.rs` である規約と、codepoint 一致テストの継ぎ目を失う。**これ以上は削れない**
-  3. **破壊不変条件と検知手段** — 「描画面は 1 つ」（不変条件 2）は**壊れてもコンパイルもテストも通る**唯一の破壊不変条件であり、検知手段としてフェーズ 5 に**diff の 4 条件チェック**を置いた。「hint の読み点」（不変条件 7）の検知手段は同条の grep 手続きと目視項目 4、「#700 の再発（打った文字が見えない）」は目視項目 2
+  3. **破壊不変条件と検知手段** — 「描画面は 1 つ」（不変条件 2）は**壊れてもコンパイルもテストも通る**唯一の破壊不変条件であり、検知手段として検証フェーズに**diff の 4 条件チェック**を置いた。「hint の読み点」（不変条件 7）の検知手段は同条の grep 手続きと目視項目 4、「#700 の再発（打った文字が見えない）」は目視項目 2
+- **打ち切り後のユーザー裁定（2026-07-29）で計画が 2 点動いた**（この 2 点も同じくレビューを受けていない）:
+  1. 表示はフルパスで確定（計画の判断を追認。変更なし）
+  2. `FolderExpansionState` の撤去を**本 PR の射程に入れた**（当初「触らない」→ **フェーズ 5 を新設**・変更ファイルが 4 → 5 へ）。**#836 の受け入れ条件に含まれない変更**ゆえフェーズとコミットを分ける。検証は `cargo test -p snotra-core` の追加で覆う
 - **判断が割れた点**: ラウンド 3 の独立再導出のみ「フルパスではなくフォルダ名（leaf）」と反対した。**サブエージェントは issue 添付のスクリーンショットを読めない**（画像）という非対称が原因で、一次証拠 2 つのうち 1 つを見ずに出された意見ゆえ採らない（詳細は受容残余の該当項）

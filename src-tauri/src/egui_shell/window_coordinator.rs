@@ -61,6 +61,13 @@ pub(crate) fn read_metrics(app: &tauri::AppHandle) -> layout::Metrics {
 ///
 /// **`read_visual` と統合しない**: こちらは show 経路（フレーム外・別スレッドからも走る）の
 /// 読みで、1 フレーム 1 lock の規律（#673 決定 4）が掛かる面には居ない。
+/// main の下地（softbuffer の present 前に一瞬見えるネイティブブラシ）を config 色へ合わせる。
+/// **`ResultsWindow::apply_native_background` の main 版**であり、撃つ条件も同じ——show 遷移時と
+/// サイズ変更時だけである（理由は results 側の doc を正本とする）。
+pub(crate) fn apply_main_background(window: &tauri::Window, color: egui::Color32) {
+    let _ = window.set_background_color(Some(super::visual::native_brush_color(color)));
+}
+
 pub(crate) fn read_background(app: &tauri::AppHandle) -> egui::Color32 {
     let hex = app
         .try_state::<crate::AppState>()
@@ -166,7 +173,7 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
     // **show のたびに無条件で撃つ**（spec 決定 3）——エッジ検出は「変化の瞬間に居合わせる」
     // ことを要求するが、hidden 中は update() が走らないため居合わせられない。同値の再設定は
     // 安価であり、show は頻繁な操作でもない。
-    let _ = window.set_background_color(Some(super::visual::native_brush_color(read_background(app))));
+    apply_main_background(&window, read_background(app));
     let _ = window.show();
     // main_visible は show() の後に立てる（WebView2 の show_and_focus_main と同じ「順序不変」
     // 制約）。show 完了前に visible=true を読んだホットキートグルが hide するのを避ける。

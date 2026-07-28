@@ -664,8 +664,7 @@ impl EguiView for SearchWindowView {
                 // **リサイズでも下地が露出する**（SU6 spec 決定 2 の codex 反証。show の一瞬だけ
                 // ではない）。ゆえに show 直前（spec 決定 3）に加えてここでも合わせる。
                 // デルタガードの内側なので毎フレームの Win32 呼び出しにはならない。
-                let _ = window
-                    .set_background_color(Some(super::visual::native_brush_color(visual.background)));
+                super::window_coordinator::apply_main_background(&window, visual.background);
             }
             ui.ctx().request_repaint();
         }

@@ -18,7 +18,8 @@
 | C | member が `[lints.rustdoc]` だけを持つ（継承しない） | 0 | 1 |
 | E | member の `[package]` 配下に `lints.workspace = true`（cargo が黙って無視） | 0 | 1 |
 | N | root の `broken_intra_doc_links` が `"deny"` → `"warn"` へ降格 | 0 | 2 |
-| R/R2 | root の `[workspace.lints]` が空 / `[workspace.lints.rustdoc]` から lint 行が消える | 0 | 2 |
+| R | root の `[workspace.lints]` が空（`[workspace.lints.rustdoc]` が無い） | 0 | 2 |
+| R2 | `[workspace.lints.rustdoc]` は在るが `broken_intra_doc_links` の**行だけ**消える | 0 | 2 |
 
 **射程外（沈黙しないので検査しない）**: root に `[workspace.lints]` が無い（cargo が manifest エラー・実測 A/K）、member の `workspace = false`（同）、`[lints]` に他 lint を併記（同）。
 
@@ -46,17 +47,22 @@
   - それ以外は非 opt-in。特に `[package]` 配下の `lints.workspace = true`（実測 E）
   - **セクション見出し行・キー行の双方で、行末コメント（`#` 以降）を落としてから trim して比較する** — `[lints]  # opt-in` はどちらも有効な TOML であり、厳密文字列比較は false negative を生む（plan-review 実装レイヤー）
   - この構造の理由をコメントに書く: `version.workspace = true`・`egui.workspace = true` が同じ字面で全 member に現れるため、**字面ではなく構文的位置で判定する**（`docs/development-principles.md` §6）
-- [ ] `rustdocLintsAreDenied(rootText)`（クラス 2 の述語）を追加する
-  - ルート `Cargo.toml` の `[workspace.lints.rustdoc]` セクションを切り、**非空**かつ**全エントリの level が `deny` / `forbid`** なら true
+- [ ] `rustdocLintsAreDenied(rootText)`（クラス 2 の述語）を追加する。判定は 3 条件の **AND**:
+  1. `[workspace.lints.rustdoc]` セクションが存在し、**非空**である
+  2. **`REQUIRED_RUSTDOC_LINTS = ["broken_intra_doc_links", "invalid_html_tags"]` の 2 件が在る**
+  3. **全エントリの level が `deny` / `forbid`** である
   - 値は 2 形を受ける: 文字列（`= "deny"`）と**テーブル形**（`= { level = "deny", priority = 1 }`・実測 P で有効）。テーブル形は `level = "..."` を読む
-  - **lint 名を名指ししない**（`broken_intra_doc_links` 等を書くとルート `Cargo.toml` の写しになる）。カテゴリ `rustdoc` の指定だけなら写しにならず、rustdoc lint を足すときに script を触らずに済む
+  - **条件 2（lint 名の名指し）は必須である**。名指しを避けて 1+3 だけにすると、**R2（`broken_intra_doc_links` の行だけが消え、`invalid_html_tags = "deny"` だけが残る形）が緑になる** — 実測で確認した（案 A は R2 で `true` を返す）。「写しを増やさない」原則は SSOT の**内容**の写しに掛かるのであって、**カナリアが「消えたら困る識別子」そのものを持つのは正しい形**である（先例: `.claude/hooks/post-edit.test.mjs:635-640` が 4 member 名をハードコードして、意識的な更新を強制している）
+  - 条件 3 を残すのは、**将来 rustdoc lint を `"warn"` で足したときに赤にする**ため（意図的な摩擦。`AREA_BUDGET` と同種で、次の人に明示的な合意を求める）
   - **`rustdoc` サブテーブルだけを見る**。`[workspace.lints.clippy] all = "warn"` はごく普通の設定であり、このリポジトリは clippy をコマンドライン側（`cargo clippy ... -- -D warnings`）で昇格させている（`.claude/hooks/post-edit.mjs:290-293`）。`[workspace.lints.*]` 全般へ広げると正当な設定が赤になり、**次の人の最も安い直し方が「検査を緩める」になる**
+  - **述語は実装前に実ルート `Cargo.toml` へ当てて測った**（9 ケース中 9 件が期待どおり・実ルートは緑・CRLF 化しても緑）。実装後に同じ 9 ケースを実コードで再実行する
 
 ### Phase 2 — 検査本体と登録
 
 - [ ] `checkWorkspaceLints(snapshot)` を追加する。**クラス 2 → クラス 1 の順**で見る（root が壊れていれば member 側の合否に意味が無いため、両方報告する）
-  - クラス 2: ルート `Cargo.toml` が読めない → 「母集団の欠落」。`rustdocLintsAreDenied` が false → finding「`[workspace.lints.rustdoc]` が空か、deny/forbid でない level を含む（全 member が opt-in していても intra-doc の検出が黙って無効になる・#713）」
-  - クラス 1: `workspaceMembers` の `error` があれば「母集団の欠落」の finding を返して終わる。各 member の `<dir>/Cargo.toml` を読み、読めなければ「母集団の欠落」、`hasWorkspaceLintsOptIn` が false なら finding「`[lints] workspace = true` が無い（ルート `[workspace.lints]` の deny がこの crate だけ黙って無効になる・#713）」
+  - **ルート `Cargo.toml` の読み取りは検査の先頭で 1 回だけ行い、`null` なら「母集団の欠落」1 件を返して終わる**（`workspaceMembers` も同じファイルを読むため、素直に書くと同じ欠落が 2 件の finding になる。G-build-commands で避けたのと同じ重複をこの検査の内側で作らない）
+  - クラス 2: `rustdocLintsAreDenied` が false → finding「`[workspace.lints.rustdoc]` に `broken_intra_doc_links` / `invalid_html_tags` が deny/forbid で揃っていない（全 member が opt-in していても intra-doc の検出が黙って無効になる・#713）」
+  - クラス 1: `workspaceMembers` の `error` があれば「母集団の欠落」の finding を足して終わる。各 member の `<dir>/Cargo.toml` を読み、読めなければ「母集団の欠落」、`hasWorkspaceLintsOptIn` が false なら finding「`[lints] workspace = true` が無い（ルート `[workspace.lints]` の deny がこの crate だけ黙って無効になる・#713）」
 - [ ] 検査関数の直前に、**なぜこの検査が要るか**と**受容する残余**をコメントで書く（他の検査と同じ様式）。含める事実:
   - #706 の実例（`snotra-egui-runtime` が #627 から #700 の検証中まで素通りした）
   - 塞ぐ 5 経路（B/C/E/N/R）と、**射程外にした 3 経路**（root テーブルの消失・`workspace = false`・lint 併記 — いずれも cargo が manifest エラーにする＝沈黙しない）
@@ -85,11 +91,13 @@
 
 クラス 2（root 側）:
 
-- [ ] 緑: `[workspace.lints.rustdoc]` に `= "deny"` が 2 件（現状の形）
+- [ ] 緑: `[workspace.lints.rustdoc]` に必須 2 件が `= "deny"`（現状の形）
 - [ ] 緑: テーブル形 `= { level = "deny", priority = 1 }`（実測 P）と `= "forbid"`（実測 Q）
 - [ ] 赤: `broken_intra_doc_links = "warn"`（実測 N・降格）
-- [ ] 赤: `[workspace.lints]` は在るが `[workspace.lints.rustdoc]` が無い（実測 R/R2）
+- [ ] 赤: `[workspace.lints]` は在るが `[workspace.lints.rustdoc]` が無い（実測 R）
+- [ ] 赤: **`[workspace.lints.rustdoc]` は在るが `broken_intra_doc_links` の行だけ無い**（実測 R2。**条件 2 を落とした述語はここで緑になる** — この 1 件が名指しの必要性そのものを固定する）
 - [ ] 赤: `[workspace.lints.rustdoc]` が空テーブル
+- [ ] 赤: 必須 2 件は deny だが、**別の rustdoc lint が `"warn"` で足された**（条件 3・意図的な摩擦の固定）
 - [ ] 不混入: `[workspace.lints.clippy] all = "warn"` が在っても、rustdoc が deny なら**緑**（他カテゴリを射程に入れないことの固定）
 
 母集団の欠落（`workspaceMembers` の 5 分岐を 1 つずつ踏む）:
@@ -131,6 +139,7 @@
 | 壊れたら即アウトな不変条件 | 検知手段 |
 |---|---|
 | **「G-workspace-lints が緑 ⇒ 全 member で rustdoc の deny が実効している」** — 偽なら #706 が再発し、しかも「検査した」という誤った安心が上乗せされる（検査を置く前より悪い） | Phase 3 の赤フィクスチャが、**実測で cargo が沈黙した入力そのもの**（B/C/E/N/R）を 1 対 1 で写していること。緑側は実リポジトリのカナリアが担保する |
+| **クラス 2 の述語が R2（lint 行だけ消える形）を緑で通す** — 実測で当初仕様がこれを踏んだ。「rustdoc の deny が実効している」という命題が最も安く壊れる形（表を編集して 1 行消すだけ） | Phase 3 クラス 2 の R2 赤フィクスチャ（条件 2 を落とすと緑になるので、述語の弱体化がこの 1 件で必ず鳴る） |
 | **検査が母集団 0 件を舐めて緑になる** | Phase 3 の「母集団の欠落」赤フィクスチャ 6 形（`workspaceMembers` の 5 分岐 + member 不読）。特に「`members` 行が無い」は他の分岐では踏めない |
 | **G-build-commands が載せ替えで壊れる** | 既存テストの無改変緑 + glob 混入フィクスチャ + `npm run governance:check` の実リポジトリ dogfood |
 | **`.claude/hooks/` の変更が hook を壊す** | Phase 4 の hook テスト実行（判定は変えず文言のみの変更だが、実行して確かめる） |
@@ -139,7 +148,7 @@
 
 ## テスト方針
 
-- 追加: `scripts/governance-check.test.mjs` に `describe("G-workspace-lints …")` 1 ブロック（クラス 1: 緑 3 / 赤 4 / 不混入 2、クラス 2: 緑 2 / 赤 3 / 不混入 1、母集団の欠落 6、回帰・カナリア 4）
+- 追加: `scripts/governance-check.test.mjs` に `describe("G-workspace-lints …")` 1 ブロック（クラス 1: 緑 3 / 赤 4 / 不混入 2、クラス 2: 緑 2 / 赤 4 / 不混入 1、母集団の欠落 6、回帰・カナリア 4）
 - 検証コマンド: `npm test`（`docs/build-commands.md` カテゴリ B）と `npm run governance:check`（同カテゴリ F）、および hook テスト
 - `.rs` を触らないので cargo 系の検証は不要。`scripts/*.mjs`・`.claude/hooks/*.mjs` の編集では PostToolUse hook が vitest を走らせる（沈黙 = 合格）
 
@@ -153,6 +162,16 @@
 - **独立性の汚染の開示**: 独立導出は grep 出力経由で `plan.md` / `research.md` の行（検査 ID・関数名・述語の骨格）を目に入れており、それらの一致は独立収束の証拠に数えていない。**汚染されていない節（cargo の再実測・§7 の間接参照・§8 の同期面）から出た指摘だけを上の「一致」に数えた**
 - **`/norm-review` は起動しない**: 本変更の主体は `scripts/governance-check.mjs`（コード＝機構）であり、`docs/build-commands.md` への一句は「検知経路が存在する」という事実の追記であって読者に新しい判断基準を課さない（`.claude/rules/safety-nets.md` の条項は規範へ**判定を足す変更**で起動する）。加えて `/norm-review` の指摘は採用率が低いという裁定が 2026-07-27 に出ている
 - **`/dry-check`**: `checkBuildCommands:269` の members 導出は [置換]（Phase 2 で実施）。`governance-check.test.mjs:88-95` と `post-edit.test.mjs:622-631` のカナリア 2 本は [維持] — カナリアは本体の導出が壊れていないことを**独立に**測る装置であり、本体ヘルパへ寄せると検査対象と検査手段が同一になって共倒れする
+
+### レビュー後に足した部分（保証の水準が違う）
+
+**クラス 2 一式（`rustdocLintsAreDenied`・Phase 3 のクラス 2 テスト 8 件・`.claude/hooks/post-edit.test.mjs` の 1 行）は `/plan-review` の後に追加した。** 4 レイヤーのレビューが読んだのは member 側だけの計画である。`/plan-review` の再実行は `workspace/plan-review/` を作り直して着地済みの 4 成果物を消すため行わず、代わりに**自分で検証した**:
+
+- 述語 2 案を実装前に書いて**実ルート `Cargo.toml` と 9 ケースへ当てて実行した**。当初の仕様（案 A・非空 + 全エントリ deny）は **R2 で緑になる欠陥**を持ち、必須 lint 名を要求する案 B が 9/9 で期待どおりだった。この 1 件がなければ「5 経路を塞ぐ」という上の表は**実装より強い主張**になっていた（`AGENTS.md`「全称表現は前提条件とセットで書く」）
+- クラス 2 が**実ルート `Cargo.toml` で緑になること**を実行で確認済み（未確認のまま入れると dogfood テスト `governance-check.test.mjs:960` がマージ時に赤くなる）
+- 同一ファイルの二重読みによる finding の重複を、検査の先頭で 1 回読む形に潰した
+
+`/implement` はこの節を、member 側（外部レビュー済み）とクラス 2（自己検証のみ）で**保証の水準が違う**という前提で読むこと。
 
 ### 5b の 3 観点
 

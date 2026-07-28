@@ -93,7 +93,7 @@ npm run governance:check    # 必須: ガバナンス文書の決定的検査（
 ```
 
 - PostToolUse フックは `.md` に検査を割り当てない（#497 の受容を維持）ため、**編集時の沈黙は「何も走らなかった」である**。ローカルで本コマンドを実行するか、PR CI の `governance-check` job（skip-ci 非対象・常時実行）に委ねる
-- 検査の実体は `scripts/governance-check.mjs`（G1〜G11。G10 = 恒久規範の面積 ratchet・文字数指標は `docs/adr/0005-area-metric-characters.md`。G11 = 見出し参照の着地・`docs/adr/0004-canonical-heading-references.md`）。意味判断（責務の妥当性・npm ラッパー等価・メモリ整合）は `/health-check` に残る
+- 検査の実体は `scripts/governance-check.mjs`（G1〜G12。G10 = 恒久規範の面積 ratchet・文字数指標は `docs/adr/0005-area-metric-characters.md`。G11 = 見出し参照の着地・`docs/adr/0004-canonical-heading-references.md`。G12 = config フィールドの到達性——ランチャが読まないフィールドの集合と `G12_NO_LAUNCHER_READ` の双方向一致。`docs/development-principles.md`「config の値は到達性の検出器を持たない」）。意味判断（責務の妥当性・npm ラッパー等価・メモリ整合）は `/health-check` に残る
 
 ## Windows/macOS/Linux で実行可能
 

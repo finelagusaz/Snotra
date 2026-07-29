@@ -338,6 +338,15 @@ impl EguiView for SearchWindowView {
         // いた。#700 発見 C で overlay を status 行へ移した結果、この 2 面構成が「1 文字目で案内が
         // 入力欄から下の行へ飛ぶ」動きとして可視化された（実機で観測）。案内の描画面は status 行に
         // 一本化し、hint は本来のプレースホルダへ戻す——**同じ情報に描画面を 2 つ持たない**。
+        // **ここから下（TextEdit 構築まで）の検索状態の読みを、この位置より前へ寄せてはならない**
+        // （#836）。`update()` の冒頭からここまでには `&mut self.controller` を取る呼び出しが
+        // 挟まっており、そのいくつかは `view_kind()` と folder の現在地を書き換える。前寄せすると
+        // hint が**遷移前**のディレクトリを描き、「`←` を打った瞬間にラベルが変わる」という
+        // #836 の要件（#743 の誤読を防ぐ当のもの）が 1 フレーム遅れて壊れる。
+        //
+        // **件数は書かない**（数えるたびに変わり、古い数が読者を安心させるため）。**検算は
+        // 手続きで行う**: 選んだ位置から TextEdit 構築までの間に `self.controller.` の
+        // `&mut` メソッド呼び出しが 1 本も無いことを grep で列挙して確かめる（現在位置では空）。
         let in_tool = self.controller.state().view_kind() == ViewKind::Tool;
         let in_folder = self.controller.state().view_kind() == ViewKind::Folder;
         // 入力欄が編集可能か（§18.5 ツール選択中・spec 決定 3/4 の launching 中は無効）。
@@ -348,12 +357,39 @@ impl EguiView for SearchWindowView {
         // 黙って食い違う——束ねることで構造的に消す。
         let input_editable = !in_tool && !self.controller.is_launching();
         let l = self.controller.lang();
-        let hint: &str = if in_tool {
+        // **フォルダ展開中の現在地は「案内」ではなくプレースホルダである**（#836・SPEC §6.7）。
+        // 上の #700 の規範（案内の描画面は status 行ただ 1 つ）に抵触しない——status 行が担うのは
+        // 「いま何が起きているか」の**お知らせ**（indexing / 起動中 / 一時通知）で、こちらは
+        // 「いま入力するとどこが絞り込まれるか」という**入力欄本来の説明**である。現在地の
+        // 描画面はこの hint ただ 1 つで、status 行にも results 窓にも出さない。
+        //
+        // **`indexing_hint()` は名前に反して status 行の文言である**（#700 で移設された際に
+        // 関数名だけが残った）。`hint` で grep してここへ辿り着いた編集者が、現在地を
+        // `overlay_kind` のラダーへ配線しないこと——それは却下した代替案 B であり、排他ラダー
+        // ゆえ indexing 中に現在地が黙って消える（#700 が是正した失敗様態そのもの）。
+        let hint: String = if in_tool {
             // SolidJS placeholder.tool_select parity（egui の hint は buf が空のときだけ描かれる＝
             // HTML placeholder と同条件。表示されるのは対象パスが区切り終端等でファイル名が空のとき）
-            crate::egui_shell::ui_strings::tool_select_hint(l)
+            crate::egui_shell::ui_strings::tool_select_hint(l).to_string()
+        } else if let Some(dir) = self.controller.state().folder_current_dir() {
+            // **`in_folder` ではなく `Option` を直接分岐させる。** `in_folder`（= `view_kind()`
+            // == `Folder`）で分岐すると「Folder なのに dir が無い」到達不能な else 側を
+            // `unwrap_or` 等で埋めることになる。`Option` で分岐すればその腕が**構造的に存在せず**、
+            // 到達不能な行を「検出器」に見せかけずに済む。
+            //
+            // **同値は片側だけである**: `view_kind() == Folder ⟹ folder.is_some()` は成り立つが
+            // 逆は成り立たない——tool が folder の上に積まれた状態（`enter_tool` は folder frame を
+            // 残す）では `folder.is_some()` かつ `view_kind() == Tool` である（`search_state.rs` の
+            // `view_kind` が tool を先に見る。`escape_ladder_tool_then_folder_then_hide` がその
+            // 状態を実際に構成している）。**この分岐が正しいのは `in_tool` を先に見ているから
+            // であって、同値だからではない。**
+            //
+            // 溢れたパスの省略はここで組まない——egui の singleline `hint_text` が
+            // `TextWrapMode::Truncate` を掛けて**末尾を `…` に**する（`RichText::new` は単一の
+            // text atom ゆえ、省略は組み立て後の文字列の末尾に当たる）。
+            crate::egui_shell::ui_strings::folder_hint(l, dir)
         } else {
-            crate::egui_shell::ui_strings::search_hint(l)
+            crate::egui_shell::ui_strings::search_hint(l).to_string()
         };
         let mut buf = if in_tool {
             // §18.5: 対象の**ファイル名部分のみ**を表示——SolidJS inputValue は targetPath を
@@ -431,12 +467,15 @@ impl EguiView for SearchWindowView {
         }
 
         // status 行（#532 SU5 の一時 overlay・#700 で位置を変更）: 「起動中…」/ 失敗・結果不明通知/
-        // 非空クエリ indexing 案内を**検索バーの直下に独立した行として**描く。hint_text は空クエリ時
-        // のみ描かれるため launching/notice/非空クエリ indexing（query 非空）では使えず、別の描画面が要る
-        // ——かつてはそれを TextEdit の rect への重ね描きで賄っていた（#700 で撤回・下のブロック参照）。
+        // indexing 案内を**検索バーの直下に独立した行として**描く。かつてはこれを TextEdit の
+        // rect への重ね描きで賄っていた（#700 で撤回・下のブロック参照）。
         // 優先順は WebView2 SearchWindow.tsx の Switch 先頭一致 parity: indexing > 起動中 > 通知。
-        // 空クエリの indexing は hint が描く。非空クエリの indexing は表示ゲート（§4.7）で結果が
-        // 消えるため overlay が唯一の案内（spec 追補 1・ladder は overlay_kind に抽出しテスト固定）。
+        //
+        // **クエリの空/非空では切り替えない**（#700）。「空クエリのときは hint が描く」という
+        // 2 面構成は撤回済みであり、`notify::overlay_kind` は空/非空を入力に取らない
+        // （`indexing_overlay_does_not_depend_on_query_emptiness` が固定）。**`indexing_hint()` は
+        // 名前に反してこの status 行の文言であって、TextEdit の hint_text へは一度も渡らない**
+        // （上の hint 構築部を参照）。
         let overlay_text: Option<String> = match crate::egui_shell::overlay_kind(
             self.controller.indexing() && self.controller.state().view_kind() == ViewKind::Results,
             self.controller.is_launching(),
@@ -578,7 +617,7 @@ impl EguiView for SearchWindowView {
         // 結果リスト（shouldShowResults 相当）。§4.7: 再インデックス中は plain 結果のみ隠す
         // （instant/folder/tool carve-out・SU6 spec 決定 3）。データと選択は保持——クリアしない
         // （SolidJS parity: setIndexing は結果を触らず派生 memo が非表示を担う）。indexing 中の
-        // 案内は空クエリ=hint・非空クエリ=overlay（Task 7・spec 追補 1）が担い、show_results=false
+        // 案内は status 行が担い（#700 で一本化・空/非空で切り替えない）、show_results=false
         // では results 窓が hide される（main は bar(+toast)固定高で伸縮しない・#646 PR2 決定 6）。
         // 連言③は**1 フレーム 1 回だけ**読む（#752 F2）。`indexing` は `AtomicBool` の live-read で
         // 同一フレーム内でも変わりうるため、pre/post で 2 回読むと連言③がフレーム内で食い違う。

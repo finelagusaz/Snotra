@@ -257,9 +257,23 @@ impl SearchState {
         self.folder_gen
     }
 
-    /// launcher_controller.rs（driver）は現状 `parent_dir()` 越しに current_dir を使い、生の accessor は直接
-    /// 呼ばない（folder 中の hint 文脈提示は §6 で任意扱い・#532 SU3 M2 Task 3 で見送り）。
-    #[allow(dead_code)]
+    /// folder 中の現在ディレクトリ（フルパス）。消費者は `view.rs` の入力欄プレースホルダで、
+    /// フォルダ展開中の現在地を示す（#836・`SPEC.md`「6.7 フォルダ展開中の現在地表示」）。
+    /// driver（`launcher_controller.rs`）は別途 `parent_dir()` 越しにも current_dir を使う。
+    ///
+    /// **「消費者はこれ 1 つ」とは書かない。** `#[allow(dead_code)]` を外したことでコンパイラが
+    /// 証明するのは**消費者が 1 つ以上ある**ことだけで、2 つ目が増えても何も落ちない。
+    ///
+    /// **返るのは「遷移先」であって「列挙が完了した」ディレクトリではない。** `enter_folder` /
+    /// `navigate_folder` がこの値を**同期で**書き、フォルダ列挙は後から非同期に届く。ゆえに列挙が
+    /// 未着の間も、列挙に失敗した場合（`SPEC.md`「6.6 列挙失敗時」）も、0 件のときも、ここは
+    /// 遷移先を返し続ける。**これは意図した挙動である**——「どこへ移ったか」を行の入れ替わりより
+    /// 先に示すことが #836 の目的そのもの（#743 の誤読はこの窓で起きた）。
+    ///
+    /// **`view_kind() == ViewKind::Folder` なら必ず `Some` である。逆は成り立たない**——tool が
+    /// folder の上に積まれた状態（`enter_tool` は folder frame を残す）では `Some` を返しつつ
+    /// `view_kind()` は `Tool` になる。呼び出し側が「`Some` なら folder ビュー」と読むと、
+    /// ツール選択中に folder の文言を描く。
     pub fn folder_current_dir(&self) -> Option<&str> {
         self.folder.as_ref().map(|f| f.current_dir.as_str())
     }

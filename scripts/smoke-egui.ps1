@@ -328,39 +328,6 @@ try {
     throw "Process exited during startup (exit code $($proc.ExitCode))"
   }
 
-  # **seed が読めたことを肯定的に確かめる**（#804・不変条件 4）。seed が parse に失敗すると
-  # 既定 config で起動し、索引が空になって `egui_results:show` が出ない——**症状は「results
-  # 検査の失敗」と同じだが原因が違う**。ここで先に落とすことで赤の理由が正確になる。
-  # **config.toml.bak の不在を根拠にしない**——退避は best-effort で、fs::rename が失敗すれば
-  # parse 失敗でも .bak は現れない（config.rs の backup_invalid）。`[config] ` 付きの eprintln は
-  # 読み込み失敗の全 arm に在るので、これが健全な観測点である。**ただし「成功時には出ない」は
-  # 無条件には真でない**——duplicate instant command（config.rs:790）と system shortcut fallback
-  # （:885）は parse 成功後に出る。この seed は instant_commands 無し・Alt+Q ゆえどちらも踏まないが、
-  # **seed を変えるときはこの前提を確かめること**。
-  # **ログ自体が無い場合も赤にする**——「観測できなかった」を合格と読ませない。
-  # visual-check-colors.ps1:143-159 の Test-SeedHealth と同型だが、共有ヘルパーにはしない（#843）。
-  if (-not (Test-Path $errPath)) {
-    throw "本体の stderr ログが在りません（$errPath）。seed が読めたかを確かめられません。"
-  }
-  $configDiag = @(Select-String -Path $errPath -SimpleMatch '[config] ')
-  if ($configDiag.Count -gt 0) {
-    throw ("seed した config が読めていません（results 検査の失敗ではありません）:`n" +
-      (($configDiag | ForEach-Object { "  " + $_.Line }) -join "`n"))
-  }
-
-  # **first-run 経路を踏んでいないことを肯定的に確かめる**（#804・不変条件 6）。
-  # 使い捨てプロファイルを使う以上、config.toml が無ければ `setup_first_run` が
-  # `launch_settings_process(--first-run)` を呼び、設定 GUI がフォーカスを奪う。
-  # **上の `[config] ` 検査ではこれを捕まえられない**——config.toml が「存在しない」分岐では
-  # 読み込み失敗の eprintln が出ないからである（だから別の検査が要る）。
-  # **`*:error` フィルタでも見えない**——実際のイベント名は :not_found / :spawned /
-  # :already_running / :exited で（commands/window.rs:53,74,87,123）どれも :error で終わらない。
-  $firstRunEvents = @(Select-String -Path $errPath -SimpleMatch 'cmd:launch_settings_process:')
-  if ($firstRunEvents.Count -gt 0) {
-    throw ("first-run 経路を踏みました（seed が起動より前に置かれていない）:`n" +
-      (($firstRunEvents | ForEach-Object { "  " + $_.Line }) -join "`n"))
-  }
-
   # hotkey 注入（押下順 → 逆順で解放。Alt を含む場合、Alt up が最後に来ることで
   # ShowAfterAltRelease〔Alt 押下中は show を最大 350ms 繰り延べる〕が解決する）。
   # CI runner は起動直後の負荷で初回注入を取りこぼすことがある（PR #662 で flake 実測・
@@ -426,6 +393,51 @@ try {
   }
   if (-not $shown) {
     $failures += "egui_show:done not observed within ${ObserveTimeoutMs}ms x2 after hotkey ($vksLabel, $hotkeySource)"
+  }
+
+  # **seed 健全性と first-run の判定はここで行う**（#804）。
+  #
+  # **`Start-Sleep $StartupWaitMs` の直後では早すぎる**（実測）: `-RedirectStandardError` は
+  # プロセス起動時に**空のファイルを作る**ので `Test-Path` は真になり、本体がまだ 1 行も
+  # 書いていない段階では `Select-String` が 0 件を返して**沈黙のまま合格する**。CI では
+  # 「起動後 12,000ms 経っても trace 0 行」を 3 回実測しており、固定待機 4,000ms はその保証に
+  # ならない。上の hotkey 観測（予算 $StartupObserveTimeoutMs）と `egui_show:done` 観測を
+  # 通過した時点なら本体は必ず出力しているので、**ここが最も早い健全な観測点である**。
+  # **results 検査より前**であることは保つ——不変条件 4 が要求するのはその順序であって、
+  # 位置そのものではない。
+  #
+  # **ログが空なら赤にする**——「観測できなかった」を合格と読ませない。
+  if (@(Get-Content $errPath -ErrorAction SilentlyContinue).Count -eq 0) {
+    throw "本体が stderr へ 1 行も出していません（$errPath）。seed が読めたかを確かめられません。"
+  }
+
+  # **seed が読めたことを肯定的に確かめる**（不変条件 4）。seed が parse に失敗すると既定 config で
+  # 起動し、索引が空になって `egui_results:show` が出ない——**症状は「results 検査の失敗」と同じだが
+  # 原因が違う**。ここで先に落とすことで赤の理由が正確になる。
+  # **config.toml.bak の不在を根拠にしない**——退避は best-effort で、fs::rename が失敗すれば parse
+  # 失敗でも .bak は現れない（config.rs の backup_invalid）。`[config] ` 付きの eprintln は読み込み
+  # 失敗の全 arm に在るので、これが健全な観測点である。**ただし「成功時には出ない」は無条件には
+  # 真でない**——duplicate instant command（config.rs:790）と system shortcut fallback（:885）は
+  # parse 成功後に出る。この seed は instant_commands 無し・Alt+Q ゆえどちらも踏まないが、
+  # **seed を変えるときはこの前提を確かめること**。
+  # visual-check-colors.ps1:143-159 の Test-SeedHealth と同型だが、共有ヘルパーにはしない（#843）。
+  $configDiag = @(Select-String -Path $errPath -SimpleMatch '[config] ')
+  if ($configDiag.Count -gt 0) {
+    throw ("seed した config が読めていません（results 検査の失敗ではありません）:`n" +
+      (($configDiag | ForEach-Object { "  " + $_.Line }) -join "`n"))
+  }
+
+  # **first-run 経路を踏んでいないことを肯定的に確かめる**（不変条件 6）。使い捨てプロファイルを
+  # 使う以上、config.toml が無ければ `setup_first_run` が `launch_settings_process(--first-run)` を
+  # 呼び、設定 GUI がフォーカスを奪う。
+  # **上の `[config] ` 検査ではこれを捕まえられない**——config.toml が「存在しない」分岐では読み込み
+  # 失敗の eprintln が出ないからである（だから別の検査が要る）。
+  # **`*:error` フィルタでも見えない**——実際のイベント名は :not_found / :spawned /
+  # :already_running / :exited で（commands/window.rs:53,74,87,123）どれも :error で終わらない。
+  $firstRunEvents = @(Select-String -Path $errPath -SimpleMatch 'cmd:launch_settings_process:')
+  if ($firstRunEvents.Count -gt 0) {
+    throw ("first-run 経路を踏みました（seed が起動より前に置かれていない）:`n" +
+      (($firstRunEvents | ForEach-Object { "  " + $_.Line }) -join "`n"))
   }
 
   # results 窓の検証（#671/#673 サイクル PR A）。**#804 以降は常に走る**——検証用プロファイルを

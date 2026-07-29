@@ -2,7 +2,6 @@ param(
   [string]$ExePath = "target/release/snotra.exe",
   [int]$StartupWaitMs = 4000,
   [int]$ObserveTimeoutMs = 8000,
-  [switch]$SeedConfig,
   # hotkey の仮想キーコード列（カンマ区切り・押下順・解放は逆順）。
   # **通常は指定不要**——既定では起動時の `hotkey:registered` trace から、アプリが実際に
   # 登録した VK 列を読む（対応表の SSOT は src-tauri/src/platform/hotkey.rs の injection_vks）。
@@ -10,16 +9,12 @@ param(
   # pwsh -File / npm 経由で配列引数が壊れないよう文字列で受けて内部で分割する。
   [string]$HotkeyVks = "18,81"
   ,
-  # results 窓の検証に使う検索クエリ（1 文字想定）。既定 "" のとき:
-  #   -SeedConfig で実際に seed できた場合のみ "z"（seed した zsnotrasmoke.exe に一致）を使う。
-  #   seed しなかった場合（既存 config あり / -SeedConfig なし）は results 検査を skip する。
-  # 既存 config を持つ開発機で検査したいときは、その索引に一致する文字を明示的に渡す。
-  [string]$ResultsQuery = ""
-  ,
-  # results 検証の skip を**失敗**として扱う（CI 用・#686）。既定（未指定）では skip は
-  # 黄色 NOTE で報告して exit 0——ローカルでは索引を制御できないのが普通だからである。
-  # CI は検証が走ることを要求するため常に渡す。**判定は起動前に確定する**（下の guard）。
-  [switch]$RequireResults
+  # results 窓の検証に使う検索クエリ（1 文字想定）。既定 "z" は seed が置くダミー
+  # zsnotrasmoke.exe に一致する（#804: 検証用プロファイルを**常に** seed するので、
+  # 既定が空振りすることはない）。
+  # **空文字を明示的に渡すと下の guard でアプリを起こさずに落ちる**——これが
+  # フォールトインジェクションの注入口である（旧 -RequireResults の後継・docs/build-commands.md）。
+  [string]$ResultsQuery = "z"
   ,
   # 失敗して trace が 0 行だったときだけ、追加でこの時間まで「最初の 1 行」を待つ（#690 follow-up）。
   # **観測窓を広げる前に遅延を測るため**の予算であって、合否には影響しない（失敗は失敗のまま）。
@@ -49,9 +44,13 @@ param(
 # グローバル増分 0 確認、で 1 シナリオ。
 # - hotkey の修飾に Alt を含む場合、Alt 解放を含めて送る（Alt 押下中は ShowAfterAltRelease で
 #   最大 350ms 遅延するため）。Alt を含まない hotkey（例 Ctrl+K）では無関係。
-# - -SeedConfig（CI 用）: config.toml 不在時のみ最小の有効 TOML を seed し first-run 経路
-#   （snotra-settings --first-run の spawn がフォーカスを奪う）を回避する。既存 config は決して上書きしない。
-#   seed できたときは results 検証用の索引対象も 1 件同梱する（-ResultsQuery 既定の導出元）。
+# - 検証用プロファイル（#804）: SNOTRA_CONFIG_DIR で target/smoke-egui/profile を指し、そこへ
+#   最小の有効 TOML を**常に** seed する。**実ユーザーの %APPDATA%\Snotra は読みも書きもしない**
+#   ——退避も復元も持たないことが、異常終了しても実 config が壊れない構造的な保証である。
+#   seed は results 検証用の索引対象を 1 件だけ含む（-ResultsQuery 既定 "z" の導出元）。
+#   seed を起動より前に置くことで first-run 経路（snotra-settings --first-run の spawn が
+#   フォーカスを奪う）も踏まない——下の 3 判定（seed 健全性 / first-run 不発 / env 到達性）で
+#   それぞれを肯定的に検査する。
 # - WebView2/フロントエンドは #532 SU7 で撤去済みで、egui が唯一の UI 経路（env による経路選択は無い）。
 
 Set-StrictMode -Version Latest
@@ -61,33 +60,65 @@ if (-not (Test-Path $ExePath)) {
   throw "Executable not found: $ExePath"
 }
 
-$seededNow = $false
-if ($SeedConfig) {
-  $cfgDir = Join-Path $env:APPDATA "Snotra"
-  $cfgPath = Join-Path $cfgDir "config.toml"
-  if (-not (Test-Path $cfgPath)) {
-    New-Item -ItemType Directory -Force -Path $cfgDir | Out-Null
-    # results 窓の検証用に、索引に必ず 1 件載るダミーを置く（中身は問わない——indexer は
-    # 拡張子だけで判定する: snotra-core/src/indexer.rs の matches_extension）。
-    # 名前は既存の索引と衝突しにくい接頭辞にし、-ResultsQuery 既定の "z" で引けるようにする。
-    $scanDir = Join-Path $env:TEMP "snotra_smoke_scan"
-    New-Item -ItemType Directory -Force -Path $scanDir | Out-Null
-    $dummy = Join-Path $scanDir "zsnotrasmoke.exe"
-    if (-not (Test-Path $dummy)) { New-Item -ItemType File -Path $dummy | Out-Null }
-    $scanDirToml = $scanDir -replace '\\', '/'
-    # 最小の有効 TOML。**scripts/visual-check-colors.ps1 が同型の seed を持つ**（必須セクションの
-    # 根拠は共通なので、片方だけ直さないこと）。あちらは検証用プロファイルへ書くので既存 config を
-    # 気にせず、results 窓を出さないため [[paths.scan]] を持たない。共通ヘルパーにしないのは、
-    # この smoke が e2e.yml の -RequireResults ゲートに載る CI 経路だからである（#803 で分離を判断）。
-    # [hotkey]/[appearance]/[paths] は #[serde(default)] 無しの必須セクションで、
-    # 空 TOML は parse 失敗し「破損復旧」経路（stderr 診断 + config.toml.bak 退避 + 復旧バルーン）を
-    # 毎回踏んでしまう（PR #659 レビューで検出）。値は config.rs の既定と同一
-    # （hotkey Alt+Q = 本スクリプト既定の -HotkeyVks 18,81 と一致）。
-    # scan は上の 1 ファイルだけを対象にする（索引は 1 件・ビルドは即座に終わる）。
-    # **`scan = []` と `[[paths.scan]]` を併記してはならない**——同一キーの再定義で TOML の
-    # parse が落ち、config 破損復旧経路へ落ちる。`[paths]` を空ヘッダで置き、その下に
-    # array-of-tables を続ける（`PathsConfig.scan` は #[serde(default)] ゆえ空でも可）。
-    $seedToml = @"
+# 検証用プロファイル（#804）。**target/ の下に置く**（visual-check-colors.ps1:54-58 と同じ理由
+# ——cargo clean が掃くので新しい後始末機構を足さない。CARGO_TARGET_DIR を設定している環境では
+# cargo の掃除対象から外れるが、それは受容する残余である
+# ——ADR-config-dir-env-seam-rejected-alternatives.md §4）。
+# パスの計算に副作用は無いので guard より前に置いてよい（下の throw が指し先を示せる）。
+$profileDir = Join-Path $PSScriptRoot '..\target\smoke-egui\profile'
+
+# results の検証が skip されるなら、ここで落とす（#686 → #804 で**無条件の要求へ格上げ**）。
+#
+# **skip へ至る経路のうち沈黙するのはこの 1 本だけである**——他は必ず exit≠0 で鳴る:
+# 実行ファイル不在 / `hotkey:registered` 未観測 / `egui_show:done` 未観測 / `egui_results:show`
+# 未観測 / `ResultsQuery` が A-Z 単字でない（`Get-LetterVk` が throw）。ゆえにこの 1 箇所で
+# 沈黙経路を塞げる。**アプリ起動前に判定が確定している**ので、この guard はプロセスを
+# 起こさずに落ちる（フォールトインジェクションが実機を触らずに済む）。
+#
+# **旧 -RequireResults の opt-in を撤去したのは、その前提が偽になったからである**——「ローカルでは
+# 索引を制御できないのが普通」を根拠に既定 skip にしていたが、検証用プロファイルを常に seed する
+# 以上、索引は常に制御下にある。**これは検出器の削除ではなく格上げである**（ローカルでも赤くなる）。
+if ([string]::IsNullOrEmpty($ResultsQuery)) {
+  throw @"
+results window coverage would be SKIPPED: -ResultsQuery が空である。
+  profile: $profileDir
+検証用プロファイルは常に seed されるので、既定（"z"）のままなら必ず results 検査が走る。
+空文字を明示的に渡したのなら、それは**フォールトインジェクションの注入口**であり、
+この throw が期待される結果である（docs/build-commands.md「スモーク運用メモ」）。
+"@
+}
+
+New-Item -ItemType Directory -Force -Path $profileDir | Out-Null
+
+# **前回の残骸を消す**（visual-check-colors.ps1:85-87 と同じ）。残すと下の 2 判定
+# ——seed 健全性（config.toml.bak を根拠にしないので直接は効かないが、診断を誤らせる）と
+# env 到達性（*.bin の ∃）——のうち後者が**古いファイルで空振り合格する**。
+Remove-Item (Join-Path $profileDir 'config.toml.bak') -Force -ErrorAction SilentlyContinue
+Get-ChildItem -Path $profileDir -Filter '*.bin' -ErrorAction SilentlyContinue | Remove-Item -Force
+
+$cfgPath = Join-Path $profileDir "config.toml"
+# results 窓の検証用に、索引に必ず 1 件載るダミーを置く（中身は問わない——indexer は
+# 拡張子だけで判定する: snotra-core/src/indexer.rs の matches_extension）。
+# 名前は既存の索引と衝突しにくい接頭辞にし、-ResultsQuery 既定の "z" で引けるようにする。
+$scanDir = Join-Path $env:TEMP "snotra_smoke_scan"
+New-Item -ItemType Directory -Force -Path $scanDir | Out-Null
+$dummy = Join-Path $scanDir "zsnotrasmoke.exe"
+if (-not (Test-Path $dummy)) { New-Item -ItemType File -Path $dummy | Out-Null }
+$scanDirToml = $scanDir -replace '\\', '/'
+# 最小の有効 TOML。**scripts/visual-check-colors.ps1 と scripts/smoke-startup.ps1 が同型の seed を
+# 持つ**（必須セクションの
+# 根拠は共通なので、片方だけ直さないこと）。**ただし同型ではない**——あちらは results 窓を
+# 出さないため [[paths.scan]] を持たない。**共通ヘルパーにしないのはそのためであり**、
+# 共有化するかどうかの判断は #843 が引き取る（#804 は書き先を変えるだけ）。
+# [hotkey]/[appearance]/[paths] は #[serde(default)] 無しの必須セクションで、
+# 空 TOML は parse 失敗し「破損復旧」経路（stderr 診断 + config.toml.bak 退避 + 復旧バルーン）を
+# 毎回踏んでしまう（PR #659 レビューで検出）。値は config.rs の既定と同一
+# （hotkey Alt+Q = 本スクリプト既定の -HotkeyVks 18,81 と一致）。
+# scan は上の 1 ファイルだけを対象にする（索引は 1 件・ビルドは即座に終わる）。
+# **`scan = []` と `[[paths.scan]]` を併記してはならない**——同一キーの再定義で TOML の
+# parse が落ち、config 破損復旧経路へ落ちる。`[paths]` を空ヘッダで置き、その下に
+# array-of-tables を続ける（`PathsConfig.scan` は #[serde(default)] ゆえ空でも可）。
+$seedToml = @"
 [hotkey]
 modifier = "Alt"
 key = "Q"
@@ -102,36 +133,13 @@ path = "$scanDirToml"
 extensions = [".exe"]
 include_folders = false
 "@
-    Set-Content -Path $cfgPath -Value $seedToml -Encoding utf8
-    $seededNow = $true
-    Write-Host "Seeded minimal config: $cfgPath (scan: $scanDir)"
-  } else {
-    Write-Host "Config already exists, seed skipped: $cfgPath"
-  }
-}
+Set-Content -Path $cfgPath -Value $seedToml -Encoding utf8
 
-# results 検査に使うクエリを決める。空文字なら検査を skip する。
-if ([string]::IsNullOrEmpty($ResultsQuery) -and $seededNow) {
-  $ResultsQuery = "z"
-}
-
-# results の検証が skip されるなら、ここで落とす（#686）。
-#
-# **skip へ至る経路のうち沈黙するのはこの 1 本だけである**——他は必ず exit≠0 で鳴る:
-# 実行ファイル不在 / `hotkey:registered` 未観測 / `egui_show:done` 未観測 / `egui_results:show`
-# 未観測 / `ResultsQuery` が A-Z 単字でない（`Get-LetterVk` が throw）。ゆえにこの 1 箇所で
-# 沈黙経路を塞げる。**アプリ起動前に判定が確定している**ので、この guard はプロセスを
-# 起こさずに落ちる（フォールトインジェクションが実機を触らずに済む）。
-if ($RequireResults -and [string]::IsNullOrEmpty($ResultsQuery)) {
-  throw @"
-results window coverage would be SKIPPED but -RequireResults was passed.
-  seeded now : $seededNow (-SeedConfig は config.toml **不在時のみ** seed する)
-  config path: $(Join-Path $env:APPDATA 'Snotra\config.toml')
-索引を制御できる状態で走らせること。CI では、この smoke を config.toml を作る他のステップ
-（例: startup smoke のアプリ起動）より**前**に置けば seed が成立する。開発機では
--ResultsQuery <letter> に既存索引と一致する文字を渡す。
-"@
-}
+# **env へ渡す値は絶対化する**——config.rs の `config_dir_from` は環境変数の値を**そのまま**
+# 保存先にするので、`..` を含んだ断片を渡さない（visual-check-colors.ps1:132-133 と同じ順序:
+# ディレクトリ作成 → Resolve-Path → env 設定）。
+$profileFull = (Resolve-Path $profileDir).Path
+Write-Host "Seeded verification profile: $cfgPath (scan: $scanDir)"
 
 Add-Type -Namespace SmokeInput -Name Native -MemberDefinition @'
 [DllImport("user32.dll")]
@@ -208,9 +216,28 @@ $errPath = Join-Path $env:TEMP "snotra_smoke_egui.err"
 $outPath = Join-Path $env:TEMP "snotra_smoke_egui.out"
 Remove-Item $errPath, $outPath -Force -ErrorAction SilentlyContinue
 
+# env は 2 つとも「子プロセスは生成時に環境を写す」性質に依存する——`Start-Process` を跨げば
+# 十分で、親側は直後に戻してよい（本体は自分の写しを読む）。
+# **SNOTRA_CONFIG_DIR にだけ try/finally を持たせる**のは `Start-Process` 自体が throw しうる
+# ためで、漏らすと同じシェルの後続操作（`cargo run -p snotra` 等）が使い捨てプロファイルを見る。
+# **消すのではなく元の値へ戻す**——呼び出し元が既に SNOTRA_CONFIG_DIR を持っていることがある
+# （visual-check-colors.ps1:179 が案内する手動ワークフロー）。無条件に消すとその値を壊す。
 $savedTraceEnv = $env:SNOTRA_TRACE
+$savedConfigDirEnv = $env:SNOTRA_CONFIG_DIR
 $env:SNOTRA_TRACE = "1"
-$proc = Start-Process -FilePath $ExePath -PassThru -RedirectStandardError $errPath -RedirectStandardOutput $outPath
+$env:SNOTRA_CONFIG_DIR = $profileFull
+try {
+  $proc = Start-Process -FilePath $ExePath -PassThru -RedirectStandardError $errPath -RedirectStandardOutput $outPath
+} finally {
+  # `-ErrorAction SilentlyContinue` を省いてはならない——未設定の Env: ドライブ項目の削除は
+  # ItemNotFoundException を投げ、$ErrorActionPreference = "Stop" の下では finally が
+  # 元の例外を覆い隠す。
+  if ($null -eq $savedConfigDirEnv) {
+    Remove-Item Env:SNOTRA_CONFIG_DIR -ErrorAction SilentlyContinue
+  } else {
+    $env:SNOTRA_CONFIG_DIR = $savedConfigDirEnv
+  }
+}
 $launchedAt = Get-Date
 if ($null -eq $savedTraceEnv) {
   Remove-Item Env:SNOTRA_TRACE -ErrorAction SilentlyContinue
@@ -368,7 +395,54 @@ try {
     $failures += "egui_show:done not observed within ${ObserveTimeoutMs}ms x2 after hotkey ($vksLabel, $hotkeySource)"
   }
 
-  # results 窓の検証（#671/#673 サイクル PR A）。索引内容を制御できるときだけ実行する。
+  # **seed 健全性と first-run の判定はここで行う**（#804）。
+  #
+  # **`Start-Sleep $StartupWaitMs` の直後では早すぎる**（実測）: `-RedirectStandardError` は
+  # プロセス起動時に**空のファイルを作る**ので `Test-Path` は真になり、本体がまだ 1 行も
+  # 書いていない段階では `Select-String` が 0 件を返して**沈黙のまま合格する**。CI では
+  # 「起動後 12,000ms 経っても trace 0 行」を 3 回実測しており、固定待機 4,000ms はその保証に
+  # ならない。上の hotkey 観測（予算 $StartupObserveTimeoutMs）と `egui_show:done` 観測を
+  # 通過した時点なら本体は必ず出力しているので、**ここが最も早い健全な観測点である**。
+  # **results 検査より前**であることは保つ——不変条件 4 が要求するのはその順序であって、
+  # 位置そのものではない。
+  #
+  # **ログが空なら赤にする**——「観測できなかった」を合格と読ませない。
+  if (@(Get-Content $errPath -ErrorAction SilentlyContinue).Count -eq 0) {
+    throw "本体が stderr へ 1 行も出していません（$errPath）。seed が読めたかを確かめられません。"
+  }
+
+  # **seed が読めたことを肯定的に確かめる**（不変条件 4）。seed が parse に失敗すると既定 config で
+  # 起動し、索引が空になって `egui_results:show` が出ない——**症状は「results 検査の失敗」と同じだが
+  # 原因が違う**。ここで先に落とすことで赤の理由が正確になる。
+  # **config.toml.bak の不在を根拠にしない**——退避は best-effort で、fs::rename が失敗すれば parse
+  # 失敗でも .bak は現れない（config.rs の backup_invalid）。`[config] ` 付きの eprintln は読み込み
+  # 失敗の全 arm に在るので、これが健全な観測点である。**ただし「成功時には出ない」は無条件には
+  # 真でない**——duplicate instant command（config.rs:790）と system shortcut fallback（:885）は
+  # parse 成功後に出る。この seed は instant_commands 無し・Alt+Q ゆえどちらも踏まないが、
+  # **seed を変えるときはこの前提を確かめること**。
+  # visual-check-colors.ps1:143-159 の Test-SeedHealth と同型だが、共有ヘルパーにはしない（#843）。
+  $configDiag = @(Select-String -Path $errPath -SimpleMatch '[config] ')
+  if ($configDiag.Count -gt 0) {
+    throw ("seed した config が読めていません（results 検査の失敗ではありません）:`n" +
+      (($configDiag | ForEach-Object { "  " + $_.Line }) -join "`n"))
+  }
+
+  # **first-run 経路を踏んでいないことを肯定的に確かめる**（不変条件 6）。使い捨てプロファイルを
+  # 使う以上、config.toml が無ければ `setup_first_run` が `launch_settings_process(--first-run)` を
+  # 呼び、設定 GUI がフォーカスを奪う。
+  # **上の `[config] ` 検査ではこれを捕まえられない**——config.toml が「存在しない」分岐では読み込み
+  # 失敗の eprintln が出ないからである（だから別の検査が要る）。
+  # **`*:error` フィルタでも見えない**——実際のイベント名は :not_found / :spawned /
+  # :already_running / :exited で（commands/window.rs:53,74,87,123）どれも :error で終わらない。
+  $firstRunEvents = @(Select-String -Path $errPath -SimpleMatch 'cmd:launch_settings_process:')
+  if ($firstRunEvents.Count -gt 0) {
+    throw ("first-run 経路を踏みました（seed が起動より前に置かれていない）:`n" +
+      (($firstRunEvents | ForEach-Object { "  " + $_.Line }) -join "`n"))
+  }
+
+  # results 窓の検証（#671/#673 サイクル PR A）。**#804 以降は常に走る**——検証用プロファイルを
+  # 常に seed するので `$ResultsQuery` は起動前の guard で非空が保証されている。下の条件に
+  # `IsNullOrEmpty` が残っているのは防御であって、skip の経路が生きているという意味ではない。
   $resultsChecked = $false
   if ($failures.Count -eq 0 -and -not [string]::IsNullOrEmpty($ResultsQuery)) {
     $resultsChecked = $true
@@ -459,6 +533,17 @@ try {
   }
 }
 
+# **env が効いたことの肯定的証拠**（#804・不変条件 1）。効いていなければ本体は実 config を読み、
+# 実プロファイルへ書くので、ここには seed した config.toml しか残らない。「env が届いていない」と
+# 「検査対象が出なかった」を切り分けるのはこの 1 行である
+# （visual-check-colors.ps1:292-304 と同型。実測で出るのは index.bin で、索引 0 件でも書かれる）。
+$generated = @(Get-ChildItem -Path $profileDir -Filter '*.bin' -ErrorAction SilentlyContinue)
+if ($generated.Count -eq 0) {
+  $failures += "SNOTRA_CONFIG_DIR が効いていない: 検証用プロファイルに *.bin が 1 件も生成されていません ($profileFull)"
+} else {
+  Write-Host "プロファイルへの書き込みを確認: $($generated.Name -join ', ')（SNOTRA_CONFIG_DIR は効いています）"
+}
+
 if ($failures.Count -gt 0) {
   Write-Host ""
   Write-Host "egui smoke failed:" -ForegroundColor Red
@@ -474,9 +559,11 @@ if ($failures.Count -gt 0) {
 }
 
 Write-Host ""
-if ($resultsChecked) {
-  Write-Host "egui smoke passed (show/hide + results show/hide observed, webview delta 0)." -ForegroundColor Green
-} else {
-  Write-Host "egui smoke passed (show/hide observed, webview delta 0)." -ForegroundColor Green
-  Write-Host "NOTE: results window coverage was SKIPPED (no controlled index). Pass -SeedConfig on a machine without %APPDATA%/Snotra/config.toml, or pass -ResultsQuery <letter> matching your index." -ForegroundColor Yellow
+if (-not $resultsChecked) {
+  # **到達不能な経路である**（#804）——`$ResultsQuery` は起動前の guard で非空が保証され、
+  # 失敗 0 件でここまで来たなら results 検査は走っている。それでも到達したら「検査が走らない
+  # まま緑」であり、それは #686 が塞いだ当の沈黙経路なので、黄色い NOTE ではなく赤で落とす。
+  Write-Host "egui smoke failed: results 検査が走らないまま合格しかけました（到達不能なはずの経路）。" -ForegroundColor Red
+  exit 1
 }
+Write-Host "egui smoke passed (show/hide + results show/hide observed, webview delta 0)." -ForegroundColor Green

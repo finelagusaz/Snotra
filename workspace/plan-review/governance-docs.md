@@ -1,22 +1,22 @@
 ## 問題なし
 
-- `e2e.yml` の行範囲はバイト単位で実測と一致する: 順序制約コメントは実際に 9 行（`.github/workflows/e2e.yml:65-73`）、first-run 受容の注記は実際に 4 行（`:77-80`）。plan.md の行番号引用は正確。
-- `-SeedConfig` / `-RequireResults` / 「順序制約」をリポジトリ全体で grep した結果、非 workspace ファイルでの出現は `scripts/smoke-egui.ps1`・`.github/workflows/e2e.yml`・`docs/build-commands.md`・`docs/adr/ADR-config-dir-env-seam-rejected-alternatives.md`・`scripts/visual-check-colors.ps1`（後述）・`docs/superpowers/plans/2026-07-25-pr-a-smoke-coverage-and-hide-window-removal.md` 等の日付付き過去 PR 設計文書のみ。後者は #671/#673 サイクルで `-SeedConfig` を導入した時点の記録であり、他の `docs/superpowers/{specs,plans}/*` 同様に日付固定の過去スナップショットとして扱われている（撤去済み WebView2/e2e の記述を残す先例と同型）。本 issue のスコープ外として計画が触れていないのは妥当。
-- ADR §3 の**決定そのもの**（seed 共有ヘルパー化を却下）は #804 で覆らない、という計画の判断は正しい——#804 は seed の書き先（APPDATA→プロファイル）を変えるだけで、2 つの seed（`[[paths.scan]]` の有無）を統合しない。ADR §3 が挙げる「2 つの seed は同型ではない」という却下理由は今も真のまま。
-- `CONTRIBUTING.md:92` は実在し（「results 窓 show/hide の trace 観測」というフレーズを含む）、内容は #804 後も偽にならない——results 窓の観測自体は無条件化されるだけで削除されないため。ただし `docs/build-commands.md:160` の参照はバッククォート無しの散文形（`` CONTRIBUTING.md の「...」 ``、正準形は `` `CONTRIBUTING.md`「...」``）で、そもそも `governance-check.mjs` の `HEADING_REF`（G-heading-refs）に照合されない。この行自体が phase 4 で全面書き換え対象なので実害なし。
-- `-SeedConfig`/`-RequireResults` 撤去は `G-ci-table`（`checkCiTable`）・`G-build-commands`・`G-stale-identifiers` のいずれも壊さないことをロジックで確認した: `G-ci-table` は `npm run smoke:egui` という部分文字列が workflow に現れるかしか見ず引数は無関係、`G-stale-identifiers` の母集団は `.claude/{skills,rules,agents}/*.md` に限られどのファイルもこれらのフラグ名を参照していない。
+- `scripts/visual-check-colors.ps1` 内で `-SeedConfig` に言及する行は `:93` の 1 箇所のみ（grep 実測）。`:21`（「results 窓の背景」の目視理由説明で `smoke-egui.ps1` の入力注入機構に触れる）も `smoke-egui.ps1` を名指すが `-SeedConfig` とは無関係（`SendInput` の話）で、`-SeedConfig` 撤去後も文意は壊れない。ゆえに計画の「`:93` の 1 行のみ」という範囲設定は正確。
+- `docs/build-commands.md` の「スモーク運用メモ」節で `-SeedConfig` に言及するのは `:159`（`smoke-egui.ps1` の説明）`:160`（results 検査の skip 条件）`:161`（`-RequireResults`・順序制約）の 3 bullet で全て（grep 実測）。計画フェーズ 4 の 3 bullet 指定はこの構造と一致する。
+- `docs/superpowers/**` を母集団から除外する根拠は明確に存在する: `scripts/governance-check.mjs:1036`「`docs/superpowers/` は歴史資料（#589 で非規範化）ゆえ除外」、`:1041,1051,1055` で G-references/G-spec-sections/その他 md 母集団から `!f.startsWith("docs/superpowers/")` を明示除外、`:1435` に同様の受容コメントあり。実際 `-SeedConfig` へ言及する `docs/superpowers/plans/2026-07-25-*.md` 2 本はこの母集団外であり、計画が触れなくても governance:check には現れない。
+- `.claude/rules/safety-nets.md` の `paths` に `.github/workflows/**` が含まれる（`:6`）ため、`e2e.yml` を編集すれば同 rule が自動配送される。計画のフェーズ 5 は同 rule「効いていることは、フォールトインジェクションで一度は実測する」に沿ってフォールトインジェクション A/B と「CI 自身の緑を鵜呑みにせずログを読む」を明記しており、この観点は満たされている。
+- `CONTRIBUTING.md:92` の「results 窓 show/hide の trace 観測」という句は `docs/build-commands.md:160` の対応注記と一致しており、計画が触れなくても現状は整合している（`-SeedConfig`/`-RequireResults` 固有の記述は含まないため今回の撤去でも壊れない）。
+- `G-stale-identifiers`（`scripts/governance-check.mjs:1242` の母集団定義）は `.claude/skills/**` `.claude/rules/[^/]+.md` `.claude/agents/[^/]+.md` に限定され、`docs/*.md` や `docs/adr/**` を見ない。よって下記「要対処」で挙げる 2 件の取りこぼしは governance:check では機械的に検出されない。
 
 ## 軽微な懸念
 
-- `docs/build-commands.md:160`（results 検査の bullet）はチェックリストが指示する以上の書き換えが要る。plan.md フェーズ4の項目は末尾の「どちらも無ければ…skip…」文の削除だけを指示するが、同じ bullet の前半「索引内容を制御できるときだけ 1 文字クエリを注入して」と、「「索引内容を制御できるとき」は `-SeedConfig` で…または `-ResultsQuery` で…」という条件説明も、seed が無条件化される以上そのままでは偽になる。チェックリストを字面通り実行すると、条件節だけ残って説明が欠落した文章が残りうる。
-- `scripts/smoke-egui.ps1` 冒頭のヘッダコメント（`:43-55`、特に `:47` の「（索引内容を制御できるとき）」、`:52-54` の「-SeedConfig（CI 用）: …既存 config は決して上書きしない」）が phase 1 のチェックリストに明示されていない。同ファイルは大きく書き換え対象なので実装時に気づく可能性は高いが、`-SeedConfig` パラメータ撤去の項目とは別立てのチェック項目になっていないため、レビュー観点としては見落とし得る。
-- `docs/adr/ADR-config-dir-env-seam-rejected-alternatives.md` §3 の却下理由の一節「`smoke-egui.ps1` は `e2e.yml` の `-RequireResults` ゲートに載る CI 経路であり」は、`-RequireResults` 撤去後は事実として古くなる（フラグが無くなる）。ADR は決定時点の記録であり継続同期の対象ではない、という扱いなら問題ないが、その判断を計画側は明示していない（「ADR §3 は #804 では覆らない」＝決定は覆らない、という主張のみで、理由文中の識別子が古くなる点には触れていない）。
+- 計画（`workspace/plan.md`）自体が「触らない」節と「フェーズ 1」節の両方で `smoke-egui.ps1:78-81` の相互参照コメントに触れており（`:22` と `:42`）、内容は矛盾しないが同じ編集意図を 2 箇所に書いていて計画の肥大に寄与している。ラウンド 1 の指摘を吸収した結果、「触らない（根拠つき）」節が実質「軽く触る」項目まで抱えるようになっており、節の名前と中身がややずれている。
 
 ## 要対処
 
-- `scripts/visual-check-colors.ps1:93` に、ADR §3 が導入した相互参照コメント対のもう半分が残っている: `` `scripts/smoke-egui.ps1` の `-SeedConfig` が同型の seed を持つ（必須セクションの根拠は共通・片方だけ直さないこと）``。plan.md はこのファイルを「触らない（根拠つき）」に分類し、理由を「既に分離済み（#803）。本issueで触る理由が無い」としているが、この理由は line 93 の内容には当てはまらない。#804 で smoke-egui.ps1 側は `-SeedConfig` パラメータ自体を撤去する（phase 1）ため、`visual-check-colors.ps1:93` は存在しない識別子を指す stale reference になる。これはまさに ADR §3 が相互参照コメントを置いた動機（「片方だけ直る事故を防ぐ」）が名指しする失敗パターンそのもの。**対処**: `visual-check-colors.ps1:93` 付近の 1 行を「`-SeedConfig`」ではなく新しい無条件 seed の実態を指すよう更新する（ADR §3 の「共有ヘルパーにしない」という決定自体は変えずに、識別子の呼称だけ直す）。ファイル全体を触らない方針は維持してよいが、この 1 コメントは例外として扱う必要がある。
+- **`docs/build-commands.md:45`（カテゴリ C 節）に `-RequireResults` への言及があるが、計画のフェーズ 4 編集箇所（`:159`〜`:161` の 3 bullet）に含まれていない。** 該当文: 「この 1 事例は `-RequireResults` が機構化した（#686・下記）が、『緑』が『検査が走った』を意味しない形は他にも作れる」。`-RequireResults` パラメータを撤去すると、この文は存在しない識別子を指したまま残る——ラウンド 1 で `visual-check-colors.ps1:93` について指摘したのと同じ種類の腐りが、計画の grep 範囲（「スモーク運用メモ」節）の外で再発する。`G-stale-identifiers` は `docs/*.md` を母集団に持たないため governance:check でも捕捉されない。フェーズ 4 に「`:45` の文言を、無条件化後の呼称に合わせて書き換える」タスクを追加する必要がある。
+- **`docs/adr/ADR-config-dir-env-seam-rejected-alternatives.md` §3（`:33`）が「`-RequireResults` ゲート」を却下理由の一部として名指ししているが、計画はこのファイルを「変更ファイル一覧」にも「触らない（根拠つき）」にも一切挙げていない。** 計画本文（`plan.md:5`）は「ADR §3 の却下理由のうち『2 つの seed は同型ではない』は今も真」と**1 つの理由だけ**を検算しているが、§3 にはもう 1 つの理由（「`smoke-egui.ps1` は `e2e.yml` の `-RequireResults` ゲートに載る CI 経路であり…リスクを負う」）があり、この PR で `-RequireResults` フラグそのものが消える。決定（seed 共有はしない）自体は他方の理由で支持されるため覆らないが、**この文が名指す機構は本 PR で消滅する**。ADR は今後も #843 等から参照される規範であり、消えたフラグ名を理由文に残したままにするかどうかは未確定のまま計画に落ちていない。最低限、計画の「触らない」節に ADR ファイルを明示的に追加し、「§3 の `-RequireResults` への言及は更新するか、歴史的記述として残すか」を未確定欄で裁定すべき。
 
 ## 未検証
 
-- `npm run governance:check` を実際に編集後の状態で走らせた確認はしていない（ロジック読解のみ）。plan.md phase 5 で実行予定なので、そこで実測されることを前提とする。
-- `docs/superpowers/plans/` `docs/superpowers/specs/` 配下の `-SeedConfig`/`-RequireResults` 言及ファイル群を全件は開いていない（1 件のみ確認）。日付付き過去設計文書という repo の慣行（既に撤去済みの WebView2/e2e 記述を残したまま放置されている先例が多数ある）から見て非同期でよいと判断したが、全件の目視はしていない。
+- `docs/build-commands.md:45` の書き換え方（具体的な代替表現）とそれによる周辺文（「#686・下記」の「下記」がどのバレットを指すか）の整合 — 実際に編集を書き下していないため、書き換え後に文意が破綻しないかは未検証。
+- ADR §3 を編集する場合の `governance-docs.md`（`.claude/rules/governance-docs.md`）の正準形ルール適合——ADR は同 rule の `paths`（`docs/adr/**`）に含まれるため、編集すれば自動配送される。実際に編集が入った場合、他ドキュメントへの参照が正準形 `` `<file>.md`「<見出し>」 `` を満たすかは、その時点の diff を見ないと判定できない。

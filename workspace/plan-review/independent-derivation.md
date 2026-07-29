@@ -1,363 +1,320 @@
-# 独立再導出: #804 smoke スクリプトの `SNOTRA_CONFIG_DIR` 化
+# #804 独立再導出 — smoke スクリプトの `SNOTRA_CONFIG_DIR` 化
 
-対象: `gh issue view 804`（+ コメント 1 件）とコードのみを根拠に、必要な変更集合を独立に導出した。
-
----
-
-## 0. 汚染の開示（先に読むこと）
-
-**独立性は部分的に破れている。** `SeedConfig|RequireResults|ResultsQuery` を Grep tool でリポジトリ全体に当てたところ、除外指示のあった `workspace/plan.md` / `workspace/plan-snapshot.md` の**本文行がマッチ結果として返った**（ファイルは開いていないが、内容は目に入った）。具体的に見えたのは:
-
-- 未解決点 (a) の裁定「`-SeedConfig` / `-RequireResults` を**両方撤去**し、results 検査の要求を**無条件へ格上げ**する」と、その根拠（`docs/build-commands.md` の予告文・opt-in の前提が偽になること）
-- 却下した代替案 (i)「flag を残して既定 ON」(ii)「`-RequireResults` だけ残す」
-- 触る面の表（`target/smoke-egui/profile` へ移す・常に seed する・skip NOTE 撤去・`e2e.yml` のコメント 9 行撤去）
-- 実装チェックリストの過半と、検証項目の一部（引数なしで両 smoke が緑になること）
-
-**帰結**: 本書のうち「計画と一致した」ことは、独立の裏付けにならない。**読む価値があるのは、上の行に現れなかった事柄だけ**である。よって以下は、一致点を淡々と書き、**差分・追加・反証を前に出す**構成にした。§2 の間接参照、§3 の分岐（smoke-startup を触るか）、§6 の沈黙経路、§7 の罠は、いずれも上の行に無かった内容である。
-
-`workspace/plan-review/ci-workflow.md`（別レビュアの出力と思われる）は**意図的に読んでいない**。本書と併読する側で重複・矛盾を突き合わせること。
+**担当**: 独立再導出（変更集合を issue とコードだけから導く）
+**日付**: 2026-07-29
+**根拠**: `gh issue view 804` / `gh issue view 804 --comments`、および以下の一次読解のみ
 
 ---
 
-## 1. 変更集合
+## 0. 独立性の開示
 
-### 1.0 独立の再枠付け: これは「1 つの変更」ではなく**独立した 2 つ**である
+- `workspace/plan.md` / `workspace/research.md` / `workspace/plan-snapshot.md` / `workspace/plan-review/` の他ファイルは**一切読んでいない**。
+- grep は `--include` とディレクトリ明示で行い、`workspace/` を明示除外した。ripgrep 側でも `!workspace/**` を指定した。**`workspace/` 配下の行は 1 行も観測していない**。
+- ただし `.superpowers/sdd/2026-07-25-pr-a-…/`（#671 サイクル PR A の実装記録）と `docs/superpowers/plans/…` の行は grep 結果に混ざった。これらは**過去サイクルのリポジトリ内成果物**であって本レビューの他レビュア出力ではない。内容は「現行実装がどう作られたか」の裏取りにのみ使い、変更集合の導出は現行ファイルの通読に基づく。
+- **本レビューは静的読解のみである。スクリプトを 1 度も実行していない**（§9 に未検証項目を列挙）。
 
-issue は 4 つの制約が 1 本の根から生えていると書き、触る面に両 smoke を挙げる。しかし導出すると:
+読んだ一次資料: `scripts/smoke-egui.ps1`（全文）/ `scripts/smoke-startup.ps1`（全文）/ `scripts/visual-check-colors.ps1`（全文）/ `.github/workflows/e2e.yml`（全文）/ `.github/workflows/release.yml`（該当部）/ `docs/build-commands.md`（カテゴリ C・D・F・スモーク運用メモ・CI/CD メモ）/ `docs/adr/ADR-config-dir-env-seam-rejected-alternatives.md`（全文）/ `docs/development-principles.md`（撤去の作法・列挙の完全性）/ `.claude/rules/safety-nets.md`（全文）/ `AGENTS.md` / `CLAUDE.md` / `snotra-core/src/config.rs`（`config_dir` / `load_from_dir_reporting` / `Default` 群）/ `src-tauri/src/main.rs`（`main` / `setup_first_run`）/ `src-tauri/src/commands/window.rs`（`launch_settings_process`）/ `src-tauri/src/platform/hotkey.rs`（`hotkey:registered`）/ `scripts/governance-check.mjs`（検査見出し・G-stale-identifiers）/ `package.json` / `vitest.config.ts` / `.gitignore`
 
-> **順序制約を殺すのに必要なのは `smoke-egui.ps1` だけである。**
-> smoke-egui が自分のプロファイルを所有した瞬間、smoke-startup が `%APPDATA%\Snotra` に何を書こうと seed の成否に影響しない。`e2e.yml` の順序制約・`-SeedConfig` の条件分岐・`-RequireResults` の 3 つは、**smoke-egui 単独の変更で全部落ちる**。
+---
 
-`smoke-startup.ps1` の env 化は**それとは独立した第 2 の便益**（検証がユーザーの実データを触らない・実行の再現性）で、**独立した費用**（カバレッジが実 config/実索引から自明な seed へ縮む・§3.2 の first-run 問題を新たに背負う）を持つ。
+## 1. 変更集合（ファイル → 箇所 → 何をするか）
 
-**推奨: 両方やる。ただし別の理由で正当化し、レビュアが片方だけ却下できる形で提示する。** 以下の表は決定 A（smoke-egui・順序制約の解消）と決定 B（smoke-startup・実データ非接触）を分けて並べる。
+### A. `scripts/smoke-egui.ps1` — 主戦場
 
-### 1.1 決定 A: `scripts/smoke-egui.ps1`（順序制約の根を断つ・必須）
-
-**消えるものと、その裏で生き残るものを対で書く。**（過剰削除に対する構造的防御。§6 の沈黙経路はここから導かれる）
-
-| 消える | 生き残る（消してはならない） |
+| 箇所（シンボル / 現行行） | 何をするか |
 |---|---|
-| `param()` の `[switch]$SeedConfig` | **seed する行為そのもの**（無条件化される）。TOML 本文・`[hotkey]`/`[appearance]`/`[paths]` が必須である根拠コメント・`scan = []` と `[[paths.scan]]` を併記してはならない注記は**全部残す**（ADR-config-dir-env-seam-rejected-alternatives の 2 が製品側で緩めない決定を固定している） |
-| `param()` の `[switch]$RequireResults` と `if ($RequireResults -and ...)` の guard | **「results 検査は必ず走る」という要求**。guard は削除ではなく**無条件 throw へ格上げ**する（§6-B） |
-| `$seededNow` 変数と `if (-not (Test-Path $cfgPath))` / `else { "Config already exists, seed skipped" }` の分岐 | seed の**健全性検査**（新規・§1.1.4） |
-| `$ResultsQuery` の条件付き既定（`if (... -and $seededNow) { "z" }`） | `$ResultsQuery` パラメータ本体（開発者が別の文字を渡す口は残ってよい。ただし空は不可） |
-| 末尾の `else { NOTE: results window coverage was SKIPPED ... }` ブロックと、それを選ぶ `if ($resultsChecked)` | 成功メッセージ（`egui smoke passed (show/hide + results show/hide observed, webview delta 0).` を**唯一の**成功出力にする） |
-| `$resultsChecked` 変数と、それを読む 3 箇所（`egui_results:hide` の対検査・orphan 検査の前段・成功メッセージの分岐） | `egui_results:hide` の対検査と orphan 検査**そのもの**（無条件化する。/symmetric-check の対象） |
-| 冒頭ヘッダコメントの `- -SeedConfig（CI 用）: config.toml 不在時のみ…既存 config は決して上書きしない。` | ヘッダの残り。`SNOTRA_CONFIG_DIR` で使い捨てプロファイルを使う旨に**差し替える**（新規記述＝検算対象・`docs/development-principles.md`「撤去（消す変更）の作法」） |
-| seed 先を組む `Join-Path $env:APPDATA "Snotra"` | `$env:TEMP` に置く trace の `.err`/`.out`（**移してはならない**・§2.1） |
-| `-RequireResults` の throw メッセージ本文（`config path: $(Join-Path $env:APPDATA 'Snotra\config.toml')` と「CI では…**前**に置けば seed が成立する」の指示） | — （この文言は順序制約の唯一の散文表現。**丸ごと消す**） |
-| `:78-81` のコメント「共通ヘルパーにしないのは、この smoke が e2e.yml の **-RequireResults ゲート**に載る CI 経路だからである（#803 で分離を判断）」 | visual-check との**相互参照そのもの**（片方だけ直す事故の防止は生き続ける）。理由の記述だけ書き換える（#843 が共通化を引き取る予定である旨に） |
+| `param()` `[switch]$SeedConfig`（:5） | **削除**。プロファイルを所有する以上「seed するかどうか」の選択肢が無くなる |
+| `param()` `[string]$ResultsQuery = ""`（:13-17） | **削除**（推奨。§5 O4 に代案）。索引は常にこちらが作るので、外部から当てる文字を渡す動機が消える |
+| `param()` `[switch]$RequireResults`（:19-22） | **削除**。守っていた性質（results 検査が走る）は分岐の不在で構造的に保証される |
+| 冒頭の説明コメント（:43-55、特に :52-54 の `-SeedConfig` 説明） | **書き直し**。「使い捨てプロファイルを毎回作って seed し、実 config は読みも書きもしない」へ。first-run 回避の理由（`snotra-settings --first-run` の spawn がフォーカスを奪う）は**残す**——seed し続ける理由そのものだから |
+| `$seededNow = $false` / `if ($SeedConfig) { … } else { … }`（:64-111） | **無条件 seed へ置換**。`$env:APPDATA` の組み立て（:66-67）を消し、`$profileDir` へ書く。`$seededNow` は削除 |
+| seed 先ディレクトリの新設 | `$smokeRoot = Join-Path $PSScriptRoot '..\target\smoke\egui'`、`$profileDir = Join-Path $smokeRoot 'profile'`、`$scanDir = Join-Path $smokeRoot 'scan'`。**起動前に `$smokeRoot` を丸ごと `Remove-Item -Recurse -Force`**（§8 罠 2） |
+| `$scanDir = Join-Path $env:TEMP "snotra_smoke_scan"`（:73-76） | `$smokeRoot` の**兄弟**へ移す（プロファイル配下に入れない・§5 O1 注記）。ダミー名は `"${ResultsQuery}snotrasmoke.exe"` の形で 1 か所から導き、クエリ文字とファイル名のドリフトを消す |
+| seed TOML（:90-104）と :78-89 のコメント | TOML 本体は**そのまま**（`[hotkey]` / `[appearance]` / `[paths]` の必須セクション根拠は不変）。:78-81 の相互参照コメントのうち「共通ヘルパーにしないのは、この smoke が e2e.yml の `-RequireResults` ゲートに載る CI 経路だからである」は**偽になる**ので #843 を指す文へ差し替える |
+| `$env:SNOTRA_CONFIG_DIR` の設定 | `$profileFull = (Resolve-Path $profileDir).Path`（**`New-Item` の後**）→ `$savedCfgDirEnv = $env:SNOTRA_CONFIG_DIR` を退避 → 代入 → **`finally` で復元**（`Remove-Item Env:… -ErrorAction SilentlyContinue` は未設定時のため必須）。既存の `SNOTRA_TRACE` の退避・復元イディオム（:211-219）に合わせる |
+| `$ResultsQuery` の既定導出（:113-116） | **削除**（クエリは定数化） |
+| `-RequireResults` ガード（:118-134・throw ブロック） | **全削除**。`$env:APPDATA` を含む throw 文言（:129-130）ごと消える |
+| `Get-LetterVk`（:145-153） | 呼び出しが定数 1 つだけになるので throw 分岐が到達不能になる。**関数を消して `[byte][int][char]'Z'` を直接使う**（推奨）。消すなら `docs/build-commands.md` の「クエリが A-Z 単字でない」＝鳴る経路の記述も同時に消す |
+| `$resultsChecked`（:296, :372, :374, :422, :432, :477） | **6 か所すべて削除**し、results 検査・`egui_results:hide` 検査・orphan 検査を**無条件**にする |
+| results 検査の条件（:373 `-not [string]::IsNullOrEmpty($ResultsQuery)`） | `if ($failures.Count -eq 0) { … }` へ |
+| **新規**: seed 健全性検査 | `visual-check-colors.ps1` の `Test-SeedHealth` と同型。`$errPath` に `[config] ` で始まる行があれば失敗。**stderr と trace は同じ `$errPath` に落ちている**ので追加の配管は不要。根拠: `load_from_dir_reporting` の `[config] ` eprintln は parse 失敗 / 非 UTF-8 / read 失敗の**全 arm に在り、NotFound（first-run）arm と成功 arm には無い**。常時 seed する以上、`[config] ` の出現は「seed が読まれなかった」と同値 |
+| **新規**: env が効いた肯定的証拠 | 実行後に `$profileDir` 配下へ `*.bin`（実際は `index.bin`）が**生成されている**こと。プロファイルを起動前に wipe しているので「存在＝今回生成された」が成立する。非フレーク性の根拠: `main()` の索引ロード／保存は `tauri::Builder…run()` **より前**に走り、`hotkey:registered` はその後の setup で出る。よって「trace が 1 行でも出た ⇒ index.bin は書かれ済み」で、`Stop-Process -Force` の打ち切りとは競合しない |
+| 末尾の成功メッセージ（:476-482） | 2 分岐を 1 本に。`NOTE: results window coverage was SKIPPED …`（`%APPDATA%` と `-SeedConfig` を含む）を**削除** |
 
-**追加するもの（新規記述＝すべて検算対象）**
+### B. `scripts/smoke-startup.ps1`
 
-1. **プロファイルの決定**: `$profileDir = Join-Path $PSScriptRoot '..\target\smoke-egui\profile'`。`target/` 配下に置く根拠（`cargo clean` が掃く／`CARGO_TARGET_DIR` 設定時は対象外という受容済み残余）は `visual-check-colors.ps1` と ADR-config-dir-env-seam-rejected-alternatives の 4 が既に持つので**参照で済ませる**（写経しない）。
-2. **前回残骸の削除**: `config.toml.bak` と `*.bin` を実行前に削除する。**これは掃除ではなく検査の前提**である（§6-A）。`visual-check-colors.ps1` が同じ理由で同じことをしている。
-3. **絶対パス化**: `New-Item -ItemType Directory -Force` → `(Resolve-Path $profileDir).Path` の順で絶対パスにしてから `$env:SNOTRA_CONFIG_DIR` へ入れる。相対値は `SPEC.md`「13. データ保存」の契約により**展開も絶対化もされず**、子プロセスの CWD 起点になる（`Start-Process` の作業ディレクトリは PowerShell の Location と一致するとは限らない）。
-4. **seed 健全性の検査**（新規・費用ゼロ）: 本体の stderr は既に `$errPath` へリダイレクトされており、`[config] ` で始まる行が出れば読み込み失敗である。`Select-String -Path $errPath -SimpleMatch '[config] '` が 1 件でもあれば `$failures` に積む。根拠と「`.bak` の不在では証明にならない」理由は ADR-config-dir-env-seam-rejected-alternatives の 5 が持つ。
-5. **env が効いたことの肯定的証拠**（新規）: 実行後にプロファイル配下へ `*.bin` が生成されていること。`visual-check-colors.ps1` の実測（索引 0 件でも `index.bin` は書かれる／`Stop-Process -Force` ゆえ `window.bin`・履歴は出ない）がそのまま使える。**smoke-egui は seed で `[[paths.scan]]` を 1 件持つので、index.bin は確実に出る。**
-6. **scan ダミーの置き場**: 現行 `$env:TEMP\snotra_smoke_scan\zsnotrasmoke.exe`。`target/smoke-egui/scan/` へ移すと `cargo clean` が掃く対象に揃う（**プロファイル直下には置かない**——索引対象と保存先を同じディレクトリにすると、後で `*.bin` を数える検査 5 の母集団が濁る）。これは必須ではない（§5 で YAGNI 判定を書く）。
-7. **env の後始末**: `$savedTraceEnv` と同じ形で退避・復元する。**`SNOTRA_TRACE` と同様に `Start-Process` の直後に戻せる**——env が要るのは子プロセス生成の瞬間だけである。`finally` で戻す形より窓が短く、throw 経路でも漏れない。
-
-### 1.2 決定 B: `scripts/smoke-startup.ps1`（実データ非接触・推奨だが分離可能）
-
-- `$profileDir = Join-Path $PSScriptRoot '..\target\smoke-startup\profile'`（**smoke-egui とは別ディレクトリ**。共有すると順序依存が別の形で復活する）。
-- ループの**外**で 1 回作り、残骸を消し、**最小 TOML を seed する**。seed が必須である理由は §3.2（first-run が `snotra-settings` を spawn する）。この smoke は results 窓を出さないので `[[paths.scan]]` は**置かない**（`visual-check-colors.ps1` の seed に近いが `[visual]`/`[general]` も要らない＝**3 つ目の seed 亜種**が生まれる。§3.3 と §5 で扱う）。
-- `$env:SNOTRA_CONFIG_DIR` の設定と復元は、**既存の `Restore-TraceEnv` と同じ形**で書ける（このスクリプトは既に env 退避・復元のパターンを持つ）。ループ内で毎回 set → `Restore-TraceEnv` の隣で戻す。
-- `-ExePath` の既定が絶対パス `C:\workspace\Snotra\target\debug\snotra.exe` である点は本 issue の対象外だが、プロファイルを `$PSScriptRoot` 起点にすると**同一ファイル内で 2 つのパス導出流儀が並ぶ**。触らない判断でよいが、意識して残すこと。
-
-### 1.3 `.github/workflows/e2e.yml`
-
-| 消える | 生き残る |
+| 箇所 | 何をするか |
 |---|---|
-| `Run egui smoke` の引数 `-SeedConfig -RequireResults` | `-ExePath target/release/snotra.exe` |
-| 「**startup smoke より前に置く**（#686）」のコメント段落（`:65-73` 相当・9 行） | 「flip 済み（#532 SU7 PR2）: env なし＝既定が egui であること自体が検証対象」の 1 行（順序制約とは無関係） |
-| — | **`:77-80` の first-run カバレッジ受容の注記**（→ §6-D。**理由が変わるだけで受容は生き残る**。丸ごと消すのは過剰削除） |
+| ヘッダ（`param()` の下・:25-28 付近） | **新規コメント**: 使い捨てプロファイルを使う理由と、**空のままにせず seed する理由**（§4 の first-run 連鎖）を書く |
+| ループ前 | `$smokeRoot = Join-Path $PSScriptRoot '..\target\smoke\startup'` を wipe → `profile` / `scan` を作成 → 最小 TOML を seed。**`smoke-egui` の seed をそのまま（逐語で）使ってよい**——`[[paths.scan]]` のダミー 1 件は §9-3 の未実測（scan 0 件で `index.bin` が出るか）を避けるために要り、`[general]` を足す必要は**無い**: startup smoke のアサーションは「trace ≥ 1 件」と「`*:error` 不在」だけで**窓の可視性に依存しない**ので、既定の `show_on_startup = false`（hidden 起動）のままでよい |
+| ループ前 | `$env:SNOTRA_CONFIG_DIR` を退避 → 代入 |
+| **全体を `try { … } finally { … }` で包む** | 現行は try/finally が無く、途中で throw すると env が呼び出し元セッションに残る（`npm run` 経由なら子プロセスだが、`pwsh -File` 直叩きでは漏れる）。`finally` で `SNOTRA_CONFIG_DIR` と `SNOTRA_TRACE` を復元 |
+| 各 run の判定 | `[config] ` 行の不在を検査（seed 健全性・A と同型） |
+| ループ後 | `$profileDir` に `*.bin` が生成されていることを検査（env の肯定的証拠） |
+| **`param()` は増やさない** | `release.yml` が `-ExePath` のみで呼ぶ。必須パラメータを足すとリリースパイプラインがタグを切るまで沈黙して壊れる（§8 罠 10） |
 
-- **ステップの順序自体は入れ替えなくてよい**（入れ替える理由がもう無い＝入れ替えないことにも理由が無い。触らないのが最小）。
-- **paths の検討**: この変更で smoke は `snotra-core/src/config.rs` の env seam に**機能依存**するようになるが、`e2e.yml` の `paths:` に `snotra-core/**` は無い（`**/Cargo.toml` 経由で偶発的に発火することはある）。#701 で `snotra-egui-runtime/**` を足したのと同型の穴である。→ §3.4 と §5 で判定。
+### C. `.github/workflows/e2e.yml`
 
-### 1.4 `docs/build-commands.md`（散文・コンパイラ無し）
+| 箇所 | 何をするか |
+|---|---|
+| `Run egui smoke`（:74-75） | 引数から `-SeedConfig -RequireResults` を**削除** → `npm run smoke:egui -- -ExePath target/release/snotra.exe` |
+| :65-73 のコメント | **順序制約の段落（:67-73）を全削除**。残すのは「flip 済み＝既定が egui であること自体が検証対象」（:65）だけ。順序が自由になった理由（各 smoke が自分の使い捨てプロファイルを持つ）を 1 文で置く |
+| :77-80 のコメント | 「上の egui smoke が seed した config.toml が既に在るため…」は**偽になる**。「自分のプロファイルを seed するので first-run 経路は通らない」へ差し替え。first-run が本 job の検証対象でないことの受容は**残す** |
+| `paths:`（:13-27） | **変更不要**（`scripts/smoke-*.ps1` が既に載っている） |
+| ステップの順序 | **入れ替えない**（§5 O7）。順不同であることは手元の逆順実行で測る |
 
-正確な着地点を**行番号ではなく節と主語**で挙げる:
+### D. `docs/build-commands.md`
 
-1. 「変更後の検証チェックリスト」C 節の bullet「CI に検証を委ねるなら…」——**`-RequireResults` が機構化した**という引用が偽になる。**#671 の教訓（緑 ≠ 検査が走った）は生き続ける**ので、引用先を新機構（results 検査の無条件化＋ seed 健全性＋ env 有効性の 3 検査）へ**指し直す**。削除は誤り。
-2. 「スモーク運用メモ」の `smoke-egui` の bullet（`-SeedConfig` の説明を含む文）——「config.toml 不在時のみ／既存 config は上書きしない」を削り、「`SNOTRA_CONFIG_DIR` で `target/smoke-egui/profile` を指す使い捨てプロファイル」へ差し替える。**空 TOML が破損復旧経路を踏むから使わない**という理由は残す。
-3. 同 results 窓の bullet——「索引内容を制御できるときだけ」「どちらも無ければ自動的に skip」「黄色 NOTE」を削る。**CONTRIBUTING.md との対応を述べた括弧書きは残す**（CONTRIBUTING 側は今も真）。
-4. `-RequireResults` の bullet（順序制約・沈黙経路の列挙・フォールトインジェクション手順を含む長い 1 本）——**構成要素ごとに仕分ける**:
-   - 順序制約の記述・`#803 後もこの順序制約は有効`・`env 化は #804 のスコープ` → 削除（現在形の主張が偽になる）
-   - 「skip へ至る経路のうち沈黙するのは 1 本だけ」の**列挙そのもの** → 更新して残す。無条件化で沈黙経路は **0 本**になる、と書けるようにする（§6 が満たされていれば）
-   - **「フォールトインジェクションはアプリを起こさずにできる」という性質 → 失われる**。代替手順（§4.3）を書く。**書かずに消すと、safety-nets.md の要求を満たす手順がリポジトリから消える。**
-5. 「別プロファイルで起動するための env ハッチ」節——消費者が visual-check だけでなく両 smoke になる。**1 行足すか、あるいは何も足さない**（§5 で判定）。
-6. 「CI/CD メモ」対応表——変更不要（コマンド名は変わらない）。ただし表下の（注）は smoke-startup を `-ExePath` 付きで直接呼ぶ旨を書いており、引数を増やさない限り真のまま。**G-ci-table は wrapper パス一致で判定するので、`npm run smoke:egui` の引数変更では落ちない**（＝検査は守ってくれない）。
+| 箇所（内容で同定） | 何をするか |
+|---|---|
+| カテゴリ C の入れ子バレット「**CI に検証を委ねるなら…**」（#671 の 5 run 空振り事例） | **事例は残し、帰属だけ差し替える**。「この 1 事例は `-RequireResults` が機構化した（#686・下記）」→「この 1 事例は検証プロファイルの分離が構造的に解消した（#804・skip 分岐そのものが無い）」。事例を消すと、この事例より長生きする一般則（「緑」≠「検査が走った」）から根拠が抜ける |
+| スモーク運用メモ「`scripts/smoke-startup.ps1` は…」バレット | 使い捨てプロファイル（seed 込み）で走ることを 1 文追加 |
+| スモーク運用メモ「`scripts/smoke-egui.ps1` は egui 経路の…」バレット中の `-SeedConfig` 説明 | 「毎回プロファイルを作り直して seed する」へ書き換え。「既存 config は上書きしない」は消える |
+| スモーク運用メモ「results 窓の表示も検査する」バレットの「索引内容を制御できるとき**だけ**」「どちらも無ければ自動的に skip」 | **skip の記述を全削除**。常に走る旨と、seed した索引 1 件に当たる固定クエリであることへ |
+| スモーク運用メモ「**`-RequireResults` は skip を失敗に変える…**」バレット全体 | **削除**し、短い後継を置く: プロファイル分離により skip 経路が存在しないこと／新しい 2 つの検査（`[config] ` 行の不在・プロファイルへの `*.bin` 生成）／それぞれのフォールトインジェクション手順（§6 FI-1/2/3）。**「`e2e.yml` では egui smoke を startup smoke より前に置くこと」と「#803 の後もこの順序制約は有効である」は消える** |
+| 「別プロファイルで起動するための env ハッチ（`SNOTRA_CONFIG_DIR`）」節 | 消費者の列挙に smoke 2 本を足す（現状 `check:colors` だけが言及されている） |
+| カテゴリ D「`[visual]` の色を変える変更…」の `SNOTRA_CONFIG_DIR` 関連バレット | **変更不要**（`check:colors` 固有の記述） |
 
-### 1.5 `docs/adr/ADR-config-dir-env-seam-rejected-alternatives.md`
+面積 ratchet（G-area-budget）は「常時ロード規範」と「rules 合計」の二面で、`docs/**` は母集団外。差し引きは純減なのでどちらにせよ問題にならない。
 
-却下 3 が `-RequireResults` ゲートの存在を根拠にしており、末尾に「smoke 側の env 化は #804 のスコープ」という**生きた前方参照**を持つ。
+### E. `scripts/visual-check-colors.ps1`
 
-- **却下理由の本文は書き換えない**（当時の決定文脈＝歴史。`docs/development-principles.md`「撤去（消す変更）の作法」の「ADR と設計書は当時の決定文脈ゆえ旧名のままでよい」）。
-- **前方参照だけが偽になる**ので、状態行か末尾に 1〜2 行の追記を置く: 「#804 で smoke 側の env 化は完了し、`-RequireResults` は撤去された。共有ヘルパー化の再検討は #843 が引き取る」。
-- G-adr-citations は ADR ファイルの**実在**しか見ないので、この腐りは検出されない。
+- `:93`「`scripts/smoke-egui.ps1` の `-SeedConfig` が同型の seed を持つ」 → **`-SeedConfig` という名前が消える**ので参照が空振りする。「`scripts/smoke-egui.ps1` の seed」等へ。
+- `:94-95`「あちらは `[[paths.scan]]` にダミーを 1 件置くが、こちらは置かない」は**真のまま**（残す）。
+- `:71-79` の single-instance 注記は真のまま。
 
-### 1.6 触らないもの（明示）
+### F. 触らない（歴史的記述として真のまま）
 
-- `docs/superpowers/plans/*.md`・`specs/*.md`（`-SeedConfig` を多数含む）——**機構的裏付けあり**: `governanceDocs()` と `headingRefDocs()` がどちらも `docs/superpowers/` を除外している（`scripts/governance-check.mjs`）。かつ歴史資料である。
-- `CONTRIBUTING.md`「自動回帰 smoke が失敗する」——フラグを名指ししておらず、results 窓の trace 観測は今も真。
-- `docs/architecture.md`（`%APPDATA%\Snotra` と env 上書きの記述）・`SPEC.md`「13. データ保存」——契約は変わらない。
-- `AGENTS.md`「条件別チェック」の smoke 行——trace イベント名と hotkey の前提を言っており、本変更で偽にならない。
-- `.claude/rules/src-tauri.md` のカテゴリ C 誘導——変わらない。
+- `docs/adr/ADR-config-dir-env-seam-rejected-alternatives.md`（却下 3 が `-RequireResults` を名指すが、2026-07-28 時点の決定文脈）
+- `docs/superpowers/plans/2026-07-25-*.md`（3 本）・`.superpowers/sdd/2026-07-25-pr-a-…/`（当時の計画・実装記録）
+- `CONTRIBUTING.md:92`（フラグを名指していない。results 被覆の記述はむしろ**より真になる**）
+- `.claude/rules/src-tauri.md:28`・`docs/architecture.md:104`・`SPEC.md` §13（フラグに依存しない）
+
+> `docs/development-principles.md`「撤去（消す変更）の作法」の仕分けに従った: **ADR と設計書は当時の決定文脈ゆえ旧名のままでよく、生きた文書（`docs/build-commands.md` / `e2e.yml` のコメント / 相互参照コメント）は現在形の主張が偽になるので直す。**
 
 ---
 
 ## 2. 間接参照の洗い出し
 
-### 2.1 同名・別概念（同じ語が別のものを指す）
+### 同名・別概念
 
-| 表層形 | 概念 1 | 概念 2 | 概念 3 |
+| 表層形 | 概念 1 | 概念 2 |
+|---|---|---|
+| 「seed」 | `smoke-egui` の seed（`[[paths.scan]]` あり・results 窓を出す） | `visual-check-colors` の seed（scan あり・**色**用。`[visual]` / `[general]` を持つ） |
+| 「プロファイル」 | `target/visual-check/profile`（既存） | 本 PR で作る `target/smoke/*/profile` |
+| `config.toml` | 実ユーザーの `%APPDATA%\Snotra\config.toml` | プロファイル内の seed |
+| `*.bin` | 実プロファイルのユーザーデータ | 検証プロファイルの「env が効いた証拠」 |
+| `.claude/`（既知の二概念・#500） | 本 PR とは無関係だが、`scripts/` にも同型がある: `scripts/*.mjs`（`npm test` が検査する）と `scripts/*.ps1`（**どの自動検査も見ない**）。§8 罠 6 |
+
+### 同概念・別名（当の識別子を grep しても届かない）
+
+- **順序制約**: `e2e.yml:67-73` は「startup smoke より前に置く」という**日本語の散文**で書かれており、`-RequireResults` の grep では :72 しか当たらない。`docs/build-commands.md` の該当バレットも同様。
+- **skip 条件**: 「索引内容を制御できるとき」「no controlled index」「seed が不成立」「開発機では通常 config が存在する」——いずれも `-SeedConfig` を名指さずに同じ条件を指す。
+- **first-run 回避の理由**: 「`snotra-settings --first-run` の spawn がフォーカスを奪う」。`-SeedConfig` を消しても**この理由は消えない**（seed し続ける根拠）。消し過ぎに注意。
+- **実 config を直接見る形**: `$env:APPDATA` は `smoke-egui.ps1` に **2 か所**（:66 の seed 先、:129 の throw 文言）＋ 末尾 NOTE の `%APPDATA%/Snotra/config.toml` 文字列で計 3 か所。
+- **後始末の第 2 の場所**: `$env:TEMP\snotra_smoke_scan`（ダミー exe）と `$env:TEMP\snotra_smoke_egui.{err,out}`。前者を `target/` へ移すなら、旧ディレクトリは誰も掃除しない（無害だが列挙に入れる）。
+- **`-RequireResults` が「順序制約を守らせている」という主張**: `e2e.yml:72-73` と `docs/build-commands.md` の 2 か所に**同じ主張が二重に**書かれている（`AGENTS.md`「派生コピー同士の一致を完全性の証拠にしない」）。片方だけ直す事故が起きやすい。
+
+### 機械検査の射程外（＝ドリフトが沈黙する）
+
+- `governance-check.mjs` の **G-stale-identifiers** の母集団は `.claude/{skills,rules,agents}/**.md` に限られ、判定対象は**バッククォート内の camelCase 識別子**のみ。`-SeedConfig` / `-RequireResults` は camelCase でなく、`docs/**` は母集団外。**docs に残った腐りを捕まえる検査は存在しない。**
+- **G-references** はパスの実在しか見ない（`scripts/smoke-egui.ps1` は存在し続けるので緑）。
+- **G-build-commands** は npm script 名と `cargo test -p <crate>` の実在のみ。フラグは見ない。
+- `.claude/rules/safety-nets.md` の `paths` は `scripts/*.mjs` までで **`scripts/*.ps1` を含まない** → 本 PR では rules が自動配送されない（#843 のスコープ・§7）。
+- PostToolUse hook は `scripts/` 配下の非 TS ファイルに検査を割り当てない → **`.ps1` 編集時の沈黙は「何も走らなかった」**。
+
+---
+
+## 3. 消し忘れると沈黙する箇所（名指し）
+
+「沈黙する」＝ 消し忘れても赤くならず、誤情報／死んだ分岐として残るもの。
+
+1. **`$resultsChecked` の 6 か所**（:296, :372, :374, :422, :432, :477）。1 つでも残ると「results を検査しない場合がある」という前提が構造に残り、後の編集者がその分岐を復活させうる。特に :422（`egui_results:hide` の対検査）と :432（orphan 検出）は**検査を条件付きにしている当の場所**である。
+2. **末尾の skip NOTE**（:476-482）。到達不能になるだけで実行時は無音。残ると「`-SeedConfig` を渡せ」「`%APPDATA%/Snotra/config.toml` を消せ」という**存在しない手順**を利用者へ配り続ける。
+3. **`docs/build-commands.md` の 4 か所**（カテゴリ C の入れ子バレット／smoke-egui バレット／results 被覆バレット／`-RequireResults` バレット）。**どの機械検査にも掛からない**（§2）。ここが本 PR で最も沈黙しやすい。
+4. **`e2e.yml:67-73` と `:77-80` のコメント**。引数（`:75`）の消し忘れは pwsh が未知パラメータで**エラーになって鳴る**が、コメントの消し忘れは鳴らない。**この非対称を実装者に明示すること**——「CI が緑だから消し忘れは無い」は成立しない。
+5. **`scripts/visual-check-colors.ps1:93` の相互参照**。「片方だけ直さないこと」を担保しているのが**コメントによる相互参照だけ**なので、片側の名前が消えた瞬間にリンクが切れる（次に seed を直す人が対を見つけられない）。
+6. **`Get-LetterVk`**（:146-153）。呼び出しを定数化して関数を残すと、PowerShell は未使用関数を咎めない。同時に `docs/build-commands.md` の「クエリが A-Z 単字でない（`Get-LetterVk` が throw）」という**鳴る経路の列挙**も腐る。
+7. **`$env:TEMP\snotra_smoke_scan`**。scan dir を移すなら、旧パスに触れる記述（`smoke-egui.ps1` :73-76 のコメント）を残さない。
+8. **最大**: `-RequireResults` が守っていた性質（「results 検査が必ず走る」）を、**別の何かが守っていることを確かめずに削除すること**。後継は「分岐が存在しない」という構造であり、その成立条件は「seed が常に成功し、索引が常に 1 件以上ある」である。したがって **§1 の 2 つの新規検査（`[config] ` 行の不在・`*.bin` の生成）を同じ変更で入れないと、ガードだけが消えた状態になる。** `.claude/rules/safety-nets.md`「これまで無意味だった状態に意味を与える変更は、その状態に到達する全経路を列挙する」の逆向き（意味を与えていた状態を消す）に当たる。
+
+---
+
+## 4. この変更で新たに踏みうる製品側の経路（コードで確認）
+
+### 4.1 「検証プロファイルを空にして起動する」と何が起きるか（＝ seed を省く案の検算）
+
+`src-tauri/src/main.rs` の `main()` を上から追った実測（読解）:
+
+1. `Config::is_first_run()` → `config_path()` が `SNOTRA_CONFIG_DIR/config.toml` を返し、不在なので **true**。
+2. `Config::load_reporting()` → `load_from_dir_reporting` の `NotFound` arm → `Config::default()` を `save_to_dir(dir)`。**`save_to_dir` は `fs::create_dir_all` を先に呼ぶ**ので、ディレクトリを作らずに env を渡しても config.toml は作られる。
+3. **書かれる既定は空ではない**。`impl Default for Config` は `paths: PathsConfig { scan: Self::default_scan_paths() }` で、`default_scan_paths()` は共通/ユーザーのスタートメニューと**デスクトップ（`.lnk`）**を返す。
+   - **紛らわしい非対称を明記する**: `PathsConfig.scan` フィールドには `#[serde(default)]` が付いているので、seed TOML に空の `[paths]` ヘッダだけを書いた場合は `Vec::new()`（＝ scan 0 件）になる。`visual-check-colors.ps1:96-97` のコメント（「`default_scan_paths()` には落ちない」）はこの**デシリアライズ経路**の話であって、`Default` impl の話ではない。**両者は別物**であり、first-run はデシリアライズを通らない（`Default` impl を直接使う）ので**スタートメニューが入る**。
+4. `is_first_run` ゆえ索引は作らず `initial_indexing = true`、`entries` は空。
+5. setup の中で `setup_first_run(&app_handle, true)` → `commands::launch_settings_process(app, &["--first-run"])`。ここで**分岐が 2 本**:
+   - **分岐 A: `snotra-settings.exe` が `snotra.exe` の隣にある** → `Command::spawn` → trace `cmd:launch_settings_process:spawned` → main / results 窓の `alwaysOnTop` を一時解除 → **設定 GUI が前面に出てフォーカスを奪う**。**smoke スクリプトが kill するのは `Get-Process snotra` だけ**なので、**この子プロセスは残る**。`smoke-startup.ps1` は 5 回起動するので **5 個残る**。
+     - 該当する実行環境: 開発機（`target/debug/snotra-settings.exe` はワークスペースビルドでほぼ確実に存在）と、**`.github/workflows/release.yml`**（`snotra-settings.exe` を明示的にビルドして `src-tauri/binaries` へコピーした後で `smoke-startup.ps1` を走らせる）。**リリースパイプラインが最悪のケースである。**
+   - **分岐 B: 隣に無い** → trace `cmd:launch_settings_process:not_found` → `Err` → `indexing::start_index_build(app_handle)` → **既定 scan（スタートメニュー全体＋デスクトップ）を索引**。
+     - 該当: `e2e.yml`（`cargo build --release -p snotra` のみで、`snotra-settings` をビルドしない）。索引時間と `index.bin` の肥大を CI に持ち込む。
+6. **どちらの分岐も `smoke-startup.ps1` を赤くしない**。アサーションは「trace が 1 件以上」と「`*:error` が無い」だけで、`cmd:launch_settings_process:not_found` は `*:error` に一致しない。
+
+**結論: 検証プロファイルを空のままにする案は採らない。両スクリプトとも seed する。** 最も強い根拠は開発機ではなく **release.yml**（残存 GUI プロセス 5 個）である。
+
+### 4.2 seed した場合に踏む経路（＝推奨案）
+
+- first-run に**ならない**（config.toml が在る）。現行 CI（egui smoke が seed した後に startup smoke が走る形）と同じ経路。
+- `[general]` を書かないので `show_on_startup = false`（hidden 起動）／`show_tray_icon = true`（トレイが出る）。**現行と同一**。
+- 索引は seed した 1 ファイルのみ。`index.bin` はキャッシュミス時に書かれ、これが env の肯定的証拠になる。
+- `window.bin` / `history.bin` は不在 → 既定位置・履歴なしで起動。**現行の CI と同じ**（開発機での実行だけが「実ユーザーの窓位置・履歴を使わなくなる」という差分を持つ）。
+
+### 4.3 **新しい沈黙経路**（seed が壊れた場合）— 対策必須
+
+`load_from_dir_reporting` の parse 失敗 arm は `.bak` 退避 + **in-memory の `Config::default()`** で続行する（保存はしない）。ここで:
+
+- 既定 hotkey は **Alt+Q** で、seed TOML の hotkey と**同一**。よって `hotkey:registered` も `egui_show:done` も**普通に出る**（ここまでは確実に素通りする）。
+- 既定 scan は**スタートメニュー**であり、seed が指すダミー（`target/smoke/egui/scan/zsnotrasmoke.exe`）は**索引に入らない**。したがって `z` の打鍵が `egui_results:show` を出すかどうかは、**その機械のスタートメニューに `z*` の項目が在るかに依存する**。
+- つまり結果は緑とも赤とも決まらず、**操作者の環境で判定が変わる非決定な検査**になる。これは安定した赤より悪い——CI で通って手元で落ちる（あるいはその逆）ので、原因が seed の破損だと誰も気づかない。
+- **`*.bin` の生成検査はこの経路を捕まえない**（`index.bin` はどちらの経路でも書かれる）。
+
+→ したがって **`[config] ` 行の不在検査（`visual-check-colors.ps1` の `Test-SeedHealth` と同型）を同じ変更で入れる**。前提は確認済み: `[config] ` の eprintln は parse 失敗 / 非 UTF-8 / read 失敗の全 arm に在り、**NotFound（first-run）arm と成功 arm には無い**。常時 seed する構成では「`[config] ` が出た ⇒ seed が読まれなかった」が成立する。
+
+### 4.4 変わらないもの
+
+- **単一インスタンス**: `tauri_plugin_single_instance` の識別子は app identity であって config dir ではない（`SPEC.md` §13・`visual-check-colors.ps1:71-79`）。プロファイルを分けても**同時起動はできない**。CI は逐次なので影響なし。**「プロファイルごとに並行 smoke」は不可能**（issue の「残る費用」と一致）。
+- 両 smoke が冒頭で `Get-Process snotra | Stop-Process -Force` する点（開発機では利用者の常駐インスタンスを落とす）は不変。
+
+### 4.5 副次的に良くなること（記録しておく価値がある）
+
+- 開発機で `-HotkeyVks "17,75"` のような**実機 hotkey の明示指定が不要になる**（seed の Alt+Q を `hotkey:registered` から読むため）。`CONTRIBUTING.md:92` と `docs/build-commands.md` の「`-HotkeyVks` は override として残す」記述は真のまま。
+- 開発機でも **results 被覆が常に走る**ようになる（今までは常に skip）。CI だけが持っていた被覆がローカルに広がる。
+- `smoke-startup.ps1` が実ユーザーの `%APPDATA%\Snotra\config.toml` を**作らなくなる**（現状、config を持たない機械で 5 起動すると実 config が生える）。
+
+---
+
+## 5. 設計上の選択肢と推奨
+
+| # | 選択肢 | 推奨 | 理由 |
 |---|---|---|---|
-| `paths` | `e2e.yml` の CI 発火トリガー | config TOML の `[paths]` / `[[paths.scan]]` セクション | `.claude/rules/*.md` frontmatter の配送 glob |
-| config dir | ユーザーの実プロファイル `%APPDATA%\Snotra` | smoke-egui の使い捨てプロファイル | visual-check の使い捨てプロファイル（**別物・共有しない**） |
-| seed | smoke-egui の seed（`[[paths.scan]]` 1 件あり） | visual-check の seed（scan 無し・`[visual]`/`[general]` あり） | smoke-startup の seed（**新設・両者と異なる第 3 の形**） |
-| temp | trace の `.err`/`.out`（`$env:TEMP`・**移さない**） | scan ダミーの置き場（移してよい） | プロファイル（`target/` へ） |
-| skip | results 検査の skip（本変更で**消す**） | `skip-ci` ラベル（無関係） | `Select-Object -Skip`（無関係） |
-| `-SeedConfig` | スイッチ（消える） | seed する行為（残る・無条件化） |  |
-| `-RequireResults` | スイッチ（消える） | 「results 検査が必ず走る」という要求（残る・格上げ） |  |
-| 「順序」 | `e2e.yml` のステップ順（消える制約） | hotkey VK の押下順／解放逆順（無関係・触らない） | `setup_hotkey_listener` の登録順（無関係） |
-
-**この分類の実用的帰結**: 表の各行で「概念 1 を消して概念 2 を残す」ことが変更の本体である。**表層形で grep して一括削除すると、必ず概念 2 まで消える。**
-
-### 2.2 同概念・別名（grep に掛からない間接参照）— **本変更の主戦場**
-
-1. **`scripts/smoke-startup.ps1` は `APPDATA` を 1 文字も含まない。** それでも実 config dir に**完全に依存**している（アプリの既定保存先を暗黙に使う）。issue が挙げる「`$env:APPDATA\Snotra` を直接見ている」という記述は smoke-egui にしか当たらず、**smoke-startup の依存は grep では発見できない**。
-2. **`e2e.yml` のステップ順序制約には文字列表現が無い。** 制約はコメントで説明されているが、制約そのものは「2 つの `- name:` の並び順」という**構造**である。順序を守らせる機構が `-RequireResults` だと `e2e.yml` 自身が書いているので、**flag を消すと同時に順序も自由になる**——このカップリングは、どちらのファイルを grep しても出てこない。
-3. **`snotra-core/src/config.rs` の `Config::config_dir()` / `is_first_run()`** — smoke スクリプトはこの関数名を書かないが、**変更後は機能的に依存する**。`e2e.yml` の `paths:` に `snotra-core/**` が無いことと合わせて、「依存はあるが CI トリガーには現れない」形になる（§3.4）。
-4. **`launch_settings_process` の存在**（`src-tauri/src/commands/window.rs`）— smoke のどこにも現れないが、プロファイルを空にした瞬間に**新しい実行経路として現れる**（§3.2・§7）。issue にも一切書かれていない。
-5. **`Get-Process snotra` は `snotra-settings` にマッチしない**（`-Name` の完全一致・ワイルドカード無し）。両 smoke の「既存インスタンスを止める」前提は、**子プロセスを射程に持たない**。これも grep 対象語（`snotra-settings`）が smoke に存在しないので見えない。
-6. **`smoke-egui.ps1:78-81` ⇄ `visual-check-colors.ps1:93` の相互参照コメント**は互いの**引数名**（`-SeedConfig`）と**ゲート名**（`-RequireResults`）で相手を指している。片方の引数を消すと**もう片方のコメントが偽になる**が、visual-check 側は本変更の触る面リストに載らない。
-7. **`docs/build-commands.md` C 節の #671 教訓の引用**は `-RequireResults` を「その事例を機構化したもの」として引く。flag 名の grep では当たるが、**教訓の側を残して引用先だけ差し替える**という操作は、grep 結果を機械的に処理すると出てこない。
-8. **`e2e.yml:77-80` の first-run 受容**は「上の egui smoke が seed した config.toml が既に在るため」という**順序への依存として書かれている**。順序制約の削除に巻き込まれて消えやすいが、受容の中身（first-run はこの job の検証対象ではない）は生き残る（§6-D）。
-9. **`ADR-config-dir-env-seam-rejected-alternatives` の却下 3** が `-RequireResults` の存在を前提に「共有ヘルパー化を却下」している。ADR は `governanceDocs` の対象だが、**この種の意味的陳腐化を検出する検査は無い**。
-
-### 2.3 概念は同じだが**意図的に対象外**とするもの
-
-`scripts/measure-memory.ps1` / `measure-memory-stages.ps1` / `bench-startup.ps1` / `manual-smoke.ps1` は、いずれも実 config・実索引でアプリを起動する。**同じ「検証が実データに触れる」概念だが、切り離す理由がある**:
-
-- メモリ実測とベンチは**現実的な索引規模が測定の前提**である（seed した索引 1 件で測っても意味がない）。`visual-check-colors.ps1` の `finally` コメントが既にこの点を認めている（env を戻さないと memory_footprint の「実運用点」が使い捨てプロファイルを指す）。
-- `manual-smoke.ps1` は人間が実 config で操作する記録ツールである。
-
-**列挙して除外した**ことを書き残す（除外の記録が無いと、次の担当者が同じ列挙をやり直す）。
-
-### 2.4 コンパイラの射程（task の前提への訂正）
-
-task は「この変更にはコンパイラが 1 つも無い」と述べるが、**検出器は 1 つだけ在る**:
-
-- `governance-check.mjs` の **G-stale-identifiers** は、`currentVocabulary()` に **`.ps1` を含む**ソース全文を入れ、`.claude/{skills,rules,agents}/*.md` に現れる識別子がそこに無ければ「腐り」として落とす。つまり `.claude/**` の規範文書が `-SeedConfig` / `-RequireResults` を名指ししていれば、**スクリプトから消した時点で赤くなる**。
-- 実測: `.claude/**` にこの 2 語は無い（Grep で 0 件）。**よってこの検査は本変更では何も鳴らさない**——が、「鳴らなかった」ことと「検査が無い」ことは違う。
-- **正確な言い方**: コンパイラを持たない面は **`docs/**`・`CONTRIBUTING.md`・`AGENTS.md`・`*.yml`・`*.ps1` 同士の相互参照コメント**である。`G-build-commands` / `G-ci-table` はコマンド名と workflow の存在しか見ないので、**引数の削除は検出しない**。
+| O1 | プロファイル置き場: (a) `target/smoke/…` / (b) `$env:TEMP` / (c) 毎回 GUID 付き一時ディレクトリ | **(a)** | #803 の前例（`target/visual-check/profile`）に揃う・`cargo clean` が掃く・`/target` は `.gitignore` 済み。残余は ADR 却下 4 と同じ（`CARGO_TARGET_DIR` 環境では掃除対象外）。**(c) の「毎回まっさら」という利点は、(a) + 起動前 wipe で得られる**（rust-cache が `target/` を復元しうるので wipe は必須・§9） |
+| O1' | scan 用ダミーの置き場 | **プロファイルの兄弟**（`target/smoke/egui/scan/`）。**プロファイル配下に入れない** | 索引の背景再スキャン（SPEC §3.3）はディレクトリのハッシュを取る。`index.bin` を書き込む先を scan 対象にすると、拡張子フィルタとは別軸で自己参照が生じうる。兄弟なら 1 回の wipe で両方片付く |
+| O2 | `smoke-startup.ps1` も seed するか | **する** | §4.1。空プロファイルは release.yml で GUI プロセス 5 個を残す |
+| O3 | 2 本のスクリプトでプロファイルを共有 / 分離 | **分離**（`target/smoke/egui`・`target/smoke/startup`） | 共有すると「先に走った方が後の入力を決める」＝**今回消したい結合の再生産**になる |
+| O4 | `-ResultsQuery` を残す / 消す | **消す**（定数 `'z'` へ） | 存在理由（「開発機の既存索引に当たる文字を渡す」）が索引を所有した時点で消滅する。残すなら害は無いが、**残す限り「索引を制御できない場合がある」という前提も残る**。消すなら `Get-LetterVk` と、docs の「A-Z 単字でない場合は throw」の記述も同時に |
+| O5 | `-SeedConfig` を「既定 on の switch」として残す | **残さない** | 呼び出し元は `e2e.yml` 1 か所のみ。`-SeedConfig:$false` に意味のあるユースケースが無い（実 config を読ませたい局面は「プロファイルを使わない」ことを意味し、それは今回消す当のもの） |
+| O6 | seed TOML を共有ヘルパーへ括り出す | **やらない** | ADR 却下 3 ＋ issue コメントの裁定（#843 が共有モジュール本体を持つ）。ただし**相互参照コメントは 3 者（smoke-egui / smoke-startup / visual-check）へ張り直す**——現在は 2 者間のリンクしかなく、3 本目を足せばリンクが不完全になる |
+| O7 | `e2e.yml` のステップ順を入れ替えて独立性を示す | **入れ替えない** | 片方の順序で緑でも「順不同」は示せない（対称の証明にならない）。証明は §6-1 の**手元での逆順実行**で取り、CI は現行順のまま置く。churn も減る |
+| O8 | `[config] ` 検査を `smoke-startup.ps1` にも入れるか | **入れる** | 費用は 3 行。入れないと、startup 側は seed 破損に対して**完全に無言**（アサーションが「trace ≥ 1 件」だけのため） |
 
 ---
 
-## 3. 設計上の選択肢と推奨
+## 6. 検証手順（フォールトインジェクション込み）
 
-### 3.1 results 検査の要求をどう表現するか
+**順序に意味がある。1 が issue の主目的そのものの受け入れ、4〜6 がセーフティネットの実測（`.claude/rules/safety-nets.md`「効いていることは、フォールトインジェクションで一度は実測する」）。**
 
-| 案 | 内容 | 判定 |
+1. **逆順実行（headline claim の直接証明・最優先）**
+   ```powershell
+   cargo build --release -p snotra
+   pwsh -NoProfile -File scripts/smoke-startup.ps1 -ExePath target/release/snotra.exe   # 先に 5 起動
+   npm run smoke:egui -- -ExePath target/release/snotra.exe                              # 後から egui
+   ```
+   → **egui smoke が results 被覆込みで PASS すること。** 「順序制約が消えた」という主張は**この変更で新しく書く一文**であり、`docs/development-principles.md`「撤去の作法」に従って測ってから書く。
+2. **正順でも PASS**（現行 CI と同じ並び）。
+3. **実 config へ「書いていない」こと**: 実行前後で `%APPDATA%\Snotra\config.toml` の `LastWriteTime` とハッシュが不変（存在しない機械では「実行後も存在しない」）。`%APPDATA%\Snotra\*.bin` の更新時刻も不変であること。
+   - **これは env が効いたことの証明にはならない。** `SNOTRA_CONFIG_DIR` が届かなければアプリは実 config を**読む**が、読むだけならハッシュも更新時刻も変わらない。**env が効いたことを示す唯一の観測は、プロファイル側に `*.bin` が生成されること**（§1 の肯定的証拠）である。2 つの検査は交換可能ではなく、荷重を持つのは後者だけである。
+4. **FI-1（`SNOTRA_CONFIG_DIR` が効かない場合に赤くなるか）**
+   - **ライブのスクリプトは変異させない**（safety-nets「稼働中のガードを弱めない——複製に変異を当てる」）。`scripts/smoke-egui.ps1` をスクラッチパッドへコピーし、**コピー側だけ** `$env:SNOTRA_CONFIG_DIR` の代入先を**別の使い捨てディレクトリ**へ差し替える（assert 側は元の `$profileDir` を見たまま）。
+   - 期待: `*.bin` が生成されていない旨で **exit≠0**。
+   - **`SNOTRA_CONFIG_DIR` を未設定にする形の変異を選ばない**——それだとアプリが実 config を読み書きしてしまい、検証が実データに触れる（この PR が消そうとしている当のもの）。
+5. **FI-2（seed が壊れたときに赤くなるか）**
+   - コピー側の seed TOML から `[hotkey]` セクションを落とす → `[config] failed to parse …` が stderr に出る → **`[config] ` 検査で赤**。
+   - **この FI を省くと、§4.3 の沈黙経路に対する検査が「書いただけ」になる。**
+6. **FI-3（results 被覆が失われたときに赤くなるか＝`-RequireResults` の後継の実測）**
+   - コピー側の seed から `[[paths.scan]]` を落とす（索引 0 件）→ `egui_results:show` が観測されず **exit≠0**。
+   - 見るべきは「**skip ではなく赤**」であること。旧設計ならここが黄色 NOTE + exit 0 だった。
+7. **構造の確認（消し忘れの数え上げ）**
+   ```powershell
+   Select-String -Path scripts/*.ps1, .github/workflows/*.yml, docs/*.md, docs/adr/*.md, CONTRIBUTING.md `
+     -Pattern 'SeedConfig|RequireResults|ResultsQuery|resultsChecked|seededNow'
+   ```
+   → 残ってよいのは `docs/adr/ADR-config-dir-env-seam-rejected-alternatives.md` と `docs/superpowers/plans/**` のみ（§1-F）。**`head` / `Select-Object -First` を使わない**（`docs/development-principles.md`「列挙の完全性」）。
+   同様に `Select-String -Pattern 'APPDATA' -Path scripts/*.ps1` が 0 件であること。
+8. **`release.yml` の呼び出し互換**: `pwsh -NoProfile -File scripts/smoke-startup.ps1 -ExePath target/release/snotra.exe`（**`-ExePath` のみ**）で PASS。必須パラメータを増やしていないことの実測。
+9. **PowerShell 構文検査**（PostToolUse は `.ps1` に検査を割り当てない＝沈黙は「走らなかった」）
+   ```powershell
+   $errs=$null; [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path ./scripts/smoke-egui.ps1), [ref]$null, [ref]$errs) | Out-Null; $errs
+   ```
+   `smoke-startup.ps1` も同様。
+10. **`npm run governance:check`**（ガバナンス文書の変更・G-references / G-ci-table / G-build-commands）。
+11. **`npm test`**（`scripts/**/*.test.mjs` は `.ps1` を見ないが、CI スコープの非回帰確認）。
+12. **PR 上で `Smoke` workflow が自動起動すること**（`paths` に `scripts/smoke-*.ps1` と `.github/workflows/e2e.yml` が在るので発火するはず）を**ジョブのログで**確認する。`docs/build-commands.md`「CI に検証を委ねるなら、その job が実際に何を実行したかを確かめる」に従い、**ステップに渡された引数**を CI ログで読む。
+13. **2 回連続実行**（wipe の実測）: 続けて 2 回走らせ、2 回目も同じ結果になること。1 回目の `index.bin` が残って 2 回目の肯定的証拠が**空振りで合格**していないことを、wipe のログか `LastWriteTime` で確かめる。
+
+---
+
+## 7. やりすぎ（YAGNI）と判定したもの
+
+| 判定 | 対象 | 理由 |
 |---|---|---|
-| (a) | `-RequireResults` を撤去し、results 検査を**無条件**にする（空の `ResultsQuery` を到達不能にする） | **推奨** |
-| (b) | flag を残し既定 ON | 却下。到達不能な分岐が残り、読者に「skip がありうる」と誤読させる |
-| (c) | `-RequireResults` だけ残す | 却下。守る対象（skip 経路）が消えるので、常に真を検査する空の検出器になる |
-
-**(a) に付ける独立な追記（計画に無かった論点）**: `-RequireResults` は**アプリを起動する前に判定が確定する**という性質を持ち、`docs/build-commands.md`「スモーク運用メモ」がそれを**フォールトインジェクションの手順として明文化している**（`-RequireResults -ExePath <任意の既存ファイル>` で実機に触れずに赤を出せる）。撤去はこの安価な注入点を失わせる。
-
-`.claude/rules/safety-nets.md`「効いていることは、フォールトインジェクションで一度は実測する」は、**新しい不変条件についても 1 度の実測を要求する**。よって (a) は正しいが**不完全**であり、**代替の注入手順を同じ変更で用意する義務を負う**（§4.3）。この義務は、計画の裁定文からは読み取れない。
-
-### 3.2 smoke-startup のプロファイルを seed するか（**最重要の分岐**）
-
-**ソースからの分岐解析**（実測ではなくコードからの導出）:
-
-- `Config::is_first_run()` = `!config_path.exists()`、`config_path()` は env を見る `config_dir()` から導かれる（`snotra-core/src/config.rs`）。
-- ⇒ **空のプロファイルを指した瞬間、毎回 first-run になる。**
-- `main.rs` の `setup_first_run` は `launch_settings_process(app_handle, &["--first-run"])` を呼ぶ。ここで 2 つの枝に分かれる:
-
-| 枝 | 条件 | 起きること |
-|---|---|---|
-| CI | `cargo build --release -p snotra` は snotra-settings をビルドしない ⇒ `exe_dir.join("snotra-settings.exe")` が不在 | trace `cmd:launch_settings_process:not_found` を出して `Err` ⇒ フォールバックで `indexing::start_index_build`（**`Config::default_scan_paths()` で索引を作る**）。**このイベント名は `:error` で終わらないので、smoke-startup の `*:error` フィルタからは見えない** |
-| ローカル | ワークスペースをビルドしていれば `snotra-settings.exe` は隣に在る | **設定 GUI が spawn される**。`Get-Process snotra` は `snotra-settings` にマッチしないので、smoke の後片付けをすり抜けて**残る**。加えて `set_always_on_top(false)` が走り、監視スレッドが立つ |
-
-**どちらの枝が CI で起きるかを確定させる必要は無い——seed すれば問いが消えるからである。**
-
-**推奨: smoke-startup も最小 TOML を seed する（first-run 経路に入らせない）。** 副次的に、`e2e.yml` の first-run 受容注記が**理由を変えて生き残る**（§6-D）。
-
-**代替案（却下）**: 「空プロファイルにして first-run カバレッジを取り戻す」——一見魅力的（#686 の順序変更で失われたカバレッジが自然に戻る）だが、(i) ローカルで毎回 GUI が湧いて残る、(ii) CI ではフォールバックが**ユーザーの既定 scan パス**を索引しに行く、(iii) `*:error` フィルタが `:not_found` を見ないので**カバレッジが増えたように見えて何も検査していない**。**「検査が増えたつもりの false green」という、この issue が消そうとしている当のもの**なので却下。
-
-**観測可能性の補い（新規提案）**: seed は first-run を**防ぐ**が、防げたことを**示さない**。最も安価な肯定的証拠は「trace に `cmd:launch_settings_process:` で始まるイベントが 1 件も無いこと」である。これは `visual-check-colors.ps1` の `*.bin` アサーションと同じ役割（既にリポジトリで採用済みのパターンの再利用であって、新機構ではない）。**smoke-startup は既に全 trace 行を `ConvertFrom-Json` して `$events` に持っているので、追加コストは 1 行の `Where-Object` である。**
-
-### 3.3 seed TOML の重複をどうするか
-
-本変更で seed 亜種が **2 → 3** になる（smoke-egui / visual-check / smoke-startup）。共通化は ADR-config-dir-env-seam-rejected-alternatives の 3 が却下済みで、issue コメントの裁定により **#843 が引き取る**と明示されている。
-
-**推奨: 共通化しない。** ただし **3 者すべてに相互参照コメントを置く**（現在は 2 者間の相互参照しかない）。3 つ目を黙って足すと、`[hotkey]`/`[appearance]`/`[paths]` が必須である根拠が**片方だけ直る**事故の面が 1.5 倍になる。
-
-**もう一段安い代替**: smoke-startup に seed を書かず、**smoke-egui と同じ TOML 文字列を持たない**形にする——例えば `[paths]` を空にした最小 3 セクションだけ。これは実質「3 つ目」だが**最も短い**ので、#843 の共通化時に統合しやすい。
-
-### 3.4 `e2e.yml` の `paths:` に `snotra-core/**` を足すか
-
-**推奨: 足さない。理由を `e2e.yml` のコメントに 1 行残す。**
-
-- 足す論拠: 本変更で smoke は env seam に機能依存する（#701 で `snotra-egui-runtime/**` を足したのと同型）。
-- 足さない論拠: smoke は元々アプリ全体に依存しており、`snotra-core/**` を入れると 30 分 job の発火が大幅に増える。かつ **env seam が壊れれば `*.bin` 不在アサーション（§1.1 追加 5）が job 内で赤くなる**——検出器は job の中に在る。`paths` は「いつ回すか」の発見的規則であって完全性の主張ではない。
-- **受容する残余として明示する**（`AGENTS.md`「全称表現は前提条件とセットで書く」）。
-
-### 3.5 env の設定タイミング
-
-**推奨: `Start-Process` の直前に set し、直後に退避値へ戻す**（`SNOTRA_TRACE` が既に採っている形）。`finally` で戻す visual-check の形は、あちらが `cargo run` の全期間 env を要するためであり、smoke には当てはまらない。窓が短いほど「呼び出し元シェルへ漏れる」経路が減る。
+| やらない | **seed / プロファイル配管の共有モジュール化** | issue コメントの裁定で **#843** が持つ。ADR 却下 3 も現時点では重複を選んでいる |
+| やらない | **Pester テストの新設** | 同上（#843） |
+| やらない | `.claude/rules/safety-nets.md` の `paths` に `scripts/*.ps1` を足す | #843 の受け入れ条件に明記されている。**ただし本 PR ではこの rule が自動配送されないので、実装者は手動で読む必要がある**（§8 罠 7） |
+| やらない | `-ProfileDir` / `-KeepProfile` 等の新パラメータ | 呼び出し元は `e2e.yml` と `release.yml` の 2 か所だけ。可変にする顧客がいない |
+| やらない | 並行 smoke（プロファイルごとの同時実行） | `tauri_plugin_single_instance` が構造的に禁じる。issue も「残る費用」として受容済み |
+| やらない | **first-run 経路を smoke で被覆する** | `snotra-settings.exe` の同梱ビルドが要り、GUI プロセスの後始末機構も要る。`e2e.yml:77-80` が既に「first-run はこの job の検証対象ではない」と受容している。別 issue 相当 |
+| やらない | `scripts/measure-memory*.ps1` / `manual-smoke.ps1` / `bench-startup.ps1` の env 化 | issue の「触る面」外。`measure-memory.ps1:24` は逆に**実 config の設定を推奨**しており、目的が違う |
+| やらない（**別 issue を推奨**） | **`smoke-startup.ps1` の `*:error` 検査の是正** | 全 crate の `src/` を literal `:error` で検索した結果、**トレースイベント名で `:error` を末尾に持つものは 1 件も存在しない**（ヒットは `std::error::Error` / `log::error!` / `crate::error` / `folder::error_result` のみ）。つまり `$_.event -like "*:error"` は**現状どのイベントにも一致しない**。#690 が足した「trace ≥ 1 件」の検査だけが実質のアサーションである。**本 PR の射程外**（爆風半径を広げない）だが、#804 の作業中に見えた事実として記録する |
+| やらない | `e2e.yml` のステップ順の入れ替え | §5 O7 |
 
 ---
 
-## 4. 検証手順
+## 8. 実装者が踏みうる最大の罠と、それを避ける手続き
 
-### 4.1 決定的な検査（コマンド）
+**罠 1（最大）— seed が壊れても緑になる。** §4.3。既定 hotkey が seed と同一（Alt+Q）なので show/hide は通り、開発機では既定 scan（スタートメニュー）に `z` が当たって results まで通る。
+→ **手続き**: `[config] ` 行の不在検査を**同じコミットで**入れ、**FI-2 を実装直後に走らせる**。「書いた」で止めない。
 
-1. `npm run governance:check` — ガバナンス文書（`docs/build-commands.md`・ADR・`CONTRIBUTING.md`）を触るので**必須**（カテゴリ F）。G-build-commands / G-ci-table / G-heading-refs / G-adr-citations / G-stale-identifiers が回る。
-2. `npm test` — `scripts/**/*.test.mjs` が対象。**`.ps1` にテストは無いので、本変更の中核は npm test の射程外**（`vitest.config.ts` の `include` が SSOT）。ここは「走ったが何も見ていない」ことを自覚する。
-3. `cargo check --workspace` — Rust に触らないなら不要。触らない想定。
+**罠 2 — 古いプロファイルで肯定的証拠が空振りする。** `index.bin` はキャッシュミス時にしか書かれないので、前回の残骸が在れば「存在する」は自明に成立する（`visual-check-colors.ps1:83-87` が `*.bin` を消してから起動しているのは、まさにこの空振りを潰すため）。
+→ **手続き**: 起動前に `$smokeRoot` を `Remove-Item -Recurse -Force`。**wipe を先に書き、assert を後に書く**。§6-13 で 2 回連続実行して確かめる。
 
-### 4.2 本命（カテゴリ C・実機）
+**罠 3 — 「プロファイルを分けたのだから空でよい」と考える。** §4.1。release.yml で GUI プロセスが 5 個残る。
+→ **手続き**: seed を省く案を検討したら、必ず `setup_first_run` → `launch_settings_process` を**コードで**追う。issue には書かれていない。
 
-**実 config を持つ開発機で、引数なしで両方が緑になること。** これが #804 の成果そのもの（従来は `-SeedConfig` が空振りして results 検査が skip されていた）。
+**罠 4 — `SNOTRA_CONFIG_DIR` の値がそのまま使われる（展開も絶対化もしない）。** `%TEMP%\…` のような値は展開されず、相対パスは CWD 起点になり、**既定へフォールバックしない**（ADR 却下 1・意図的）。`Resolve-Path` は存在しないパスで throw する。
+→ **手続き**: `New-Item -ItemType Directory -Force` → `(Resolve-Path …).Path` の順で**絶対パス化してから**代入する（`visual-check-colors.ps1:82,132-133` と同じ順）。
 
-```powershell
-npm run smoke:egui -- -ExePath target/debug/snotra.exe
-npm run smoke:startup -- -ExePath target/debug/snotra.exe -WaitMs 5000
-```
+**罠 5 — 「順序制約は消えた」という新しい一文を測らずに書く。** 「消す変更の中で新しく書いた 1 文は、削除ではなく新規記述である」（`docs/development-principles.md`「撤去（消す変更）の作法」・#660 で実際に踏んだ）。
+→ **手続き**: §6-1 の逆順実行を**先に**やり、その結果を PR 本文に貼ってから文を書く。
 
-**併せて確認する（合格の中身）**:
+**罠 6 — `.ps1` の編集は PostToolUse が何も走らせない。** CLAUDE.md「沈黙が『合格』なのは `selectChecks` に検査が割り当てられたファイルだけである」。`scripts/` 配下の非 TS ファイルは対象外。
+→ **手続き**: §6-9 の構文検査を手で打つ。加えて**両スクリプトを実際に 1 回ずつ走らせる**まで完了としない。
 
-- 出力に `results show/hide observed` が含まれる（skip NOTE が**存在しない**こと）
-- `target/smoke-egui/profile/` に `config.toml` と `index.bin` が在る
-- `%APPDATA%\Snotra\config.toml` の**更新時刻が変わっていない**（実 config 非接触の直接確認）
-- 実行後のシェルで `$env:SNOTRA_CONFIG_DIR` が**未設定**である
-- `Get-Process snotra*` が**何も返さない**（`snotra-settings` の取り残しが無い・§3.2）
+**罠 7 — safety-nets rule が自動配送されない。** `paths` は `scripts/*.mjs` まで。**CI ゲートに載るスクリプトを触るのに、それを守る rule が届かない。**
+→ **手続き**: 実装開始時に `.claude/rules/safety-nets.md` を**手動で開く**。`.github/workflows/e2e.yml` を触った時点で配送はされるが、`.ps1` を先に触ると届かない順序がありうる。
 
-### 4.3 フォールトインジェクション（safety-nets.md の要求・**この変更の負債**）
+**罠 8 — 消し忘れの鳴り方が非対称。** `e2e.yml` の**引数**の消し忘れは pwsh が未知パラメータで落として鳴るが、**コメントと docs** の消し忘れは永久に鳴らない（§2 の機械検査射程）。
+→ **手続き**: §6-7 の grep を**完了ゲート**に置く（`head` を使わない全件）。
 
-`-RequireResults` が持っていた「実機に触れずに赤を出せる」性質が消えるので、**代替の注入点を用意し、1 度実測して手順を `docs/build-commands.md` に残す**。稼働中のガードは弱めず、複製に変異を当てる（`.claude/rules/safety-nets.md`）:
+**罠 9 — 相互参照コメントが 2 者から 3 者になる。** 現在は `smoke-egui` ↔ `visual-check` の双方向リンクだけ。`smoke-startup` が 3 本目の seed を持つと、リンクが不完全になる。
+→ **手続き**: 3 本すべてに「他 2 本にも同型の seed がある」と書くか、**seed の必須セクション根拠の正本を 1 か所（例: ADR 却下 2）に定めて 3 本から参照する**（`AGENTS.md`「文書に事実の写しを増やす変更 → 正本を 1 か所に定め他は参照へ」）。後者を推す。
 
-| 検査（新設） | 注入 | 期待 |
-|---|---|---|
-| seed 健全性 | プロファイルの `config.toml` を壊れた TOML に差し替えてから smoke を走らせる（プロファイルは使い捨てなので**実データに触れない＝安全に変異できる**） | `[config] ` 行を検出して赤 |
-| env 有効性 | スクリプトの複製で `SNOTRA_CONFIG_DIR` を存在しないドライブ等へ向ける、あるいは set 行をコメントアウトした複製を走らせる | プロファイルに `*.bin` が出ず赤 |
-| results 無条件化 | `-ResultsQuery ''` を渡す（§6-B の対策が入っていれば） | 起動前に throw |
-| first-run 不在（採用するなら） | 複製で seed 行を落とす | `cmd:launch_settings_process:` イベントを検出して赤 |
+**罠 10 — `release.yml` を忘れる。** `smoke-startup.ps1` の呼び出し元は `e2e.yml` だけではない。`release.yml` の "Run startup smoke on release binary" ステップが `-ExePath` のみで呼ぶ。
+→ **手続き**: 新しい必須パラメータを足さない。§6-8 で実測する。
 
-**注**: 使い捨てプロファイルは「稼働中のガードを弱めない」規則の**適用が容易になる**面である——実 config を触らないので、変異が誰の資産も壊さない。これは本変更の副次的な便益として書き残す価値がある。
-
-### 4.4 CI での確認
-
-`e2e.yml` は PR で自動発火する（`scripts/smoke-egui.ps1` / `smoke-startup.ps1` / `.github/workflows/e2e.yml` がいずれも `paths:` に載っている＝**この PR は自己検証する**）。ログで確認する:
-
-- egui smoke のログに results 検査の観測行が在る
-- **順序制約が消えたことの主たる証拠は §4.2 の 2 点である**——`target/smoke-egui/profile/index.bin` が在ることと `%APPDATA%\Snotra\config.toml` の mtime が変わっていないこと。この対が「2 つのプロファイルが交わらない」ことを示し、それこそが順序制約の守っていた当のものである。
-- **ステップの順序を入れ替えた commit を作って緑を見るのは任意**（§8.7 の緊張はここで解ける）。入れ替えた 1 回の緑は「順序制約が死んだ」とも「seed がたまたまその回は噛まなかった」とも読めるので、**単独では判別力を持たない**。上の 2 点が緑なら追加情報は小さい。
+**罠 11 — env の後始末。** `smoke-startup.ps1` には現在 `try/finally` が無い。途中 throw で `SNOTRA_CONFIG_DIR` が呼び出し元セッションへ漏れると、以後の `cargo run -p snotra` と `measure:memory` が使い捨てプロファイルを指し続ける（`visual-check-colors.ps1:325-329` が同じ危険を注記している）。
+→ **手続き**: `try/finally` で包み、`Remove-Item Env:SNOTRA_CONFIG_DIR -ErrorAction SilentlyContinue` ではなく**退避した値を復元**する（元から設定していた開発者を壊さない）。
 
 ---
 
-## 5. YAGNI 判定
+## 9. 自信の低い箇所・未検証の観点
 
-**やりすぎと判定するもの**:
+**本レビューはスクリプトを 1 度も実行していない。** 以下は特に未実測。
 
-1. **seed TOML の共有ヘルパー化** — ADR で却下済み、issue コメントで #843 へ割り当て済み。本 PR でやると爆風半径が CI ゲートに広がる。**相互参照コメント 3 点で足りる。**
-2. **`docs/superpowers/**` の歴史文書の一括更新** — `governanceDocs()` / `headingRefDocs()` が明示的に除外しており（機構的裏付け）、`development-principles.md` が「ADR と設計書は当時の決定文脈ゆえ旧名のままでよい」と規定する。**触らない。**
-3. **`e2e.yml` の `paths:` へ `snotra-core/**` 追加** — §3.4。受容する残余として 1 行書くだけにする。
-4. **smoke 用の Pester テスト新設** — `vitest.config.ts` の include に `.ps1` は無く、PowerShell テスト機構がリポジトリに無い。**新しい検査機構を 1 つ立てる費用**が本 issue の便益を超える。#843 が Pester を受け入れ条件に持つ（issue コメント）ので、そちらへ寄せる。
-5. **`-ResultsQuery` パラメータ自体の撤去** — 開発者が別プロファイル・別索引で試す口として意味が残る。**空を禁止すれば沈黙経路は閉じる**ので、パラメータごと消す必要はない。（ただし「seed が固定なら常に "z" で足りる」という反論もあり得る。§8 に自信度を書く。）
-6. **`smoke-egui` と `smoke-startup` でプロファイルを共有する** — ディスク節約にもならず、順序依存を別の形で復活させる。
-7. **`$env:TEMP` の trace `.err`/`.out` を `target/` へ移す** — 「temp を target へ」という表層の連想で巻き込みやすいが、trace ログはプロファイルとは別概念（§2.1）。移す理由が無く、`Remove-Item` の対象や失敗時の証拠出力パスまで書き換える差分が増える。
-8. **`measure-memory*.ps1` / `bench-startup.ps1` の env 化** — §2.3。測定の前提が実索引なので、むしろ**やってはならない**。
-
-**やりすぎに見えて必要なもの**（逆方向の判定）:
-
-- **seed 健全性検査と env 有効性検査の 2 つ**。「seed するのだから読めるはず」は副作用の不在で成功を測る形であり、ADR の却下 5 が既に一度否定している。**skip NOTE を消して沈黙経路を 0 にすると主張する以上、これらが無いと主張が嘘になる。**
-- **smoke-startup の seed**（§3.2）。無しで済ませると first-run 経路が新規に開く。
-
----
-
-## 6. 消し忘れると沈黙する箇所（名指し）
-
-**前提**: 本変更は「skip を大声で報告していた仕組み」を「skip がそもそも無い仕組み」へ置き換える。**報告器を消した後に残る skip 経路は、すべて沈黙する。**
-
-### A. プロファイルの残骸を消し忘れる（両 smoke）
-
-前回実行の `index.bin` / `config.toml.bak` が残っていると、**新設した 2 つの検査（seed 健全性・env 有効性）が古いファイルで空振り合格する**。`visual-check-colors.ps1:83-87` が同じ理由で `Remove-Item` を持っている——**参照実装からコピーするときに「掃除だから後回し」と判断すると落ちる**。`.claude/rules/safety-nets.md`「これまで無意味だった状態に意味を与える変更は、その状態に到達する全経路を列挙する」の直撃事例。
-
-### B. `-ResultsQuery ''` の沈黙 skip
-
-`param([string]$ResultsQuery = "z")` にして `-RequireResults` の guard と末尾 NOTE を消すと、**`-ResultsQuery ''` を渡した場合だけ results 検査が完全に沈黙して skip される**（`if (... -not [string]::IsNullOrEmpty($ResultsQuery))` が false になり、成功メッセージは分岐が消えて「passed」と出る）。
-
-対策: `[ValidateNotNullOrEmpty()]` を付けるか、無条件の `if ([string]::IsNullOrEmpty($ResultsQuery)) { throw ... }` を置く（= `-RequireResults` の guard を**削除ではなく無条件化**する形）。
-
-### C. `$resultsChecked` を残す
-
-常に `$true` になる変数と、それを読む 3 つの `if` を残すと、**分岐は死ぬが読者には生きて見える**——「skip がありうる」という誤った不変条件を後続の変更者へ伝える。`egui_results:hide` の対検査と orphan 検査は**無条件へ**書き換える。
-
-### D. `e2e.yml:77-80` の first-run 受容を巻き込んで消す
-
-順序制約のコメントと物理的に隣接しているので一緒に消えやすい。**受容そのものは生き残る**（seed によって first-run に入らない・first-run はこの job の検証対象ではない）。理由が「前のステップが config を作るから」→「自分で seed するから」に変わるだけである。消すと、**なぜ first-run が検査されていないのかを誰も説明できない状態**になる。
-
-### E. `e2e.yml` から引数を消して script のパラメータを残す（**方向によって騒がしさが違う**）
-
-- **script からパラメータを消し、yml に残す → 大声で落ちる**（`pwsh`: "A parameter cannot be found that matches parameter name 'SeedConfig'"）。安全側。
-- **yml から引数を消し、script にパラメータを残す → 完全に沈黙する**（未指定の `[switch]` は `$false`＝ seed もせず、旧コードなら results 検査が黙って skip される）。**危険な向きはこちら。**
-
-⇒ **実装順序の指針**: `e2e.yml` を先に直してはならない。**script を先に完成させ、yml は最後に合わせる。**
-
-### F. `visual-check-colors.ps1:93` の相互参照コメント
-
-`-SeedConfig` を名指ししているので、flag を消すと**存在しない引数を指す**。visual-check は本 issue の触る面リストに無いため、**チェックリストからも漏れやすい**。
-
-### G. `docs/build-commands.md` の「フォールトインジェクション可能」の記述
-
-`-RequireResults` の bullet ごと消すと、**safety-nets.md が要求する実測手順がリポジトリから消える**。代替手順（§4.3）を書かずに消してはならない。
-
-### H. 取り残された `snotra-settings` が smoke-egui の失敗を**別の欠陥に見せかける**
-
-`Get-Process snotra` は `snotra-settings` にマッチしない（§2.2-5）。前回実行や first-run で設定 GUI が残っていると、smoke-egui のキー注入は**フォーカスを持つそちらへ飛ぶ**。症状は `egui_results:show not observed ... after typing 'z'` ——**製品の回帰にしか見えない**。沈黙ではなく**誤帰属**だが、対策が同じ（seed で spawn させない ＋ `cmd:launch_settings_process:` の不在検査）なのでここに置く。§7 の手続き 4・5 と同じ対策で閉じる。
-
-### I. `smoke-egui.ps1` のヘッダコメント（`:52-54`）
-
-`param()` の説明コメント（`:13-22`）ばかりに目が行き、**ファイル冒頭のヘッダ散文に書かれた `-SeedConfig` の説明**が残る。同一ファイル内に 2 箇所ある。
-
----
-
-## 7. 最大の罠（1 つ）
-
-> **空のプロファイルを指した瞬間、アプリは first-run 経路に入り `snotra-settings` を spawn しようとする。この経路は issue にも参照実装にも現れず、CI とローカルで別の形で現れ、CI 側の症状は既存の `*:error` アサーションから原理的に見えない。**
-
-**なぜこれが最大か**:
-
-- §6-A（残骸による空振り）と「相対パスの `SNOTRA_CONFIG_DIR`」は、どちらも `visual-check-colors.ps1` が既に解決済みで、参照実装をなぞれば**ただで付いてくる**。
-- §6-B（残る沈黙 skip）は撤去作業そのものの直接的帰結なので、計画にも独立導出にも載りやすい。
-- first-run だけは、**「config を seed する」という発想の外側**にある。issue は「実 config の有無に依存する形をやめる」と書くが、**実 config が「在る」ことに依存していたのは smoke-egui の seed 判定だけでなく、`is_first_run()` もだった**——後者はコードにしか書かれていない。
-- そして CI での症状は `cmd:launch_settings_process:not_found` という trace イベントで、**`*:error` で終わらないため smoke-startup のフィルタが構造的に見落とす**。つまり「壊れたのに緑」になる。これは #686・#690 が繰り返し潰してきた false green と同じ族である。
-
-**避ける手続き（順に実行する）**:
-
-1. **プロファイルを空にする前に、`Config::is_first_run()` の定義を読む。** `!config_path.exists()` であり、`config_path()` は `config_dir()` 経由で env を見る——**プロファイル分離は first-run 判定を必ず動かす**、という一行を計画に書く。
-2. **`is_first_run` の唯一の消費者を追う。** `src-tauri/src/main.rs` の `let is_first_run = Config::is_first_run();` → `setup_first_run` → `launch_settings_process(&["--first-run"])`。**呼び出し先のソースを読むまで、経路を「無害」と判定しない**（`docs/development-principles.md`「受け手のソースを読むまでは、渡した値が届いたことにならない」）。
-3. **両 smoke に seed を置き、first-run 経路へ入らせない。** smoke-egui は元々 seed するので追加費用ゼロ。smoke-startup は新規。
-4. **防いだことを観測可能にする。** trace に `cmd:launch_settings_process:` で始まるイベントが 0 件であることを検査に加える（`*:error` フィルタでは見えないため、**別の述語が要る**）。
-5. **後片付けの射程を確認する。** `Get-Process snotra` は `snotra-settings` を含まない。seed で spawn を防ぐのが本筋だが、実測時に `Get-Process snotra*` で取り残しが無いことを 1 度確かめる（§4.2）。
-6. **ローカルと CI の両方で走らせる。** この罠は「ローカルでは GUI が湧く／CI では黙って別経路を通る」と**環境で症状が変わる**ので、片方だけの緑を根拠にしない。
-
----
-
-## 8. 自信の低い箇所
-
-1. **§0 の汚染。** 最も重要な留保。`workspace/plan.md` / `plan-snapshot.md` の本文が grep 結果として目に入っており、**設計判断 (a) の裁定・却下案・チェックリストの過半を見た後で本書を書いている**。§1 の変更集合と §3.1 の推奨は、独立の証拠として扱えない。**独立性が保たれているのは §2（間接参照）・§3.2（first-run）・§3.4・§4.3・§6・§7** である（これらに対応する内容は見えた行に無かった）。次回同種の作業では、grep の対象から `workspace/` を除外するパターンを最初のコマンドに入れるべきだった。
-2. **`workspace/plan-review/ci-workflow.md` を読んでいない**（別レビュアの出力と推定）。本書と統合していないので、重複・矛盾の解消は呼び出し側の仕事。
-3. **CI で first-run 経路がどちらの枝を通るかは実測していない。** `cargo build --release -p snotra` が snotra-settings を成果物に含めないという読みはコマンドから導いた推論で、rust-cache が復元する `target/` の中身までは確認していない。**seed すれば問い自体が消える**ので推奨は変わらないが、「CI ではこう動く」と断定して書かないこと。
-4. **未確認なのは「フォールバック側が**追加で**何かを出すか」だけである。** `cmd:launch_settings_process:not_found` が CI 側の枝で発火することは `window.rs` を直接読んで確定しており、ローカル側の枝（GUI が spawn され `Get-Process snotra` の射程外に残る）も同様である。**§7 の罠はこの 2 点だけで成立する。** `indexing::start_index_build` のフォールバックが `*:error` を出すかは追っていない——出れば CI に第 2 の信号が増えるだけで、**ローカルの取り残しと seed の必要性は変わらない**。
-5. **`-ResultsQuery` を残すか消すか**（§5 の 5）。seed が固定なら常に `"z"` で足り、パラメータは「使われない口」になる。残す判断は「別索引で試したい開発者」という**仮想の利用者**に依っており、YAGNI 的には消す側もあり得る。どちらでも沈黙経路は §6-B の対策で閉じる。
-6. **seed TOML の 3 つ目を作ることの是非**（§3.3）。#843 が共通化を引き取る前提での「短い 3 つ目」を推したが、「smoke-startup では seed せず first-run を受け入れる」案を完全に排除できたわけではない——§3.2 の (i)(ii)(iii) は費用の議論であって不可能性の証明ではない。
-7. **`e2e.yml` のステップ順序を実験的に入れ替えて緑を見る**（§4.4）という検証は、CI 実行 1 本ぶんの費用がかかる。順序制約が消えたことの直接証拠としては最良だが、「seed が自分のプロファイルへ行くのだから当然」と論証で済ませる判断もあり得る。**論証で済ませるなら、safety-nets.md が求める「期待と測定結果は違う」に反する**という緊張は残る。
-8. **`docs/build-commands.md` の該当箇所を節と主語で指した**（行番号は本書に書いていない）が、実際の編集では複数 bullet にまたがる。**編集後に `-SeedConfig` / `-RequireResults` / `%APPDATA%` を再 grep して 0 件（歴史文書と `SPEC.md`/`architecture.md` の正当な言及を除く）を確認する**手順を、実装者のチェックリストに入れること。
+1. **`Swatinem/rust-cache@v2` が `target/smoke/` を復元するか未実測。** `workspaces: src-tauri` の指定と、ルートの `target/` がキャッシュ対象かどうかを読み切れていない。**だから毎回 wipe する**（wipe すれば真偽に関係なく安全）。逆に言えば、wipe を省く設計はこの未検証点に依存してしまう。
+2. **CI runner の `target/release/snotra-settings.exe` の有無。** `e2e.yml` は `-p snotra` しかビルドしないが、キャッシュ復元で過去の成果物が残る可能性を排除できていない。§4.1 の分岐 A/B の**どちらに落ちるかが CI では不確定**。→ seed する設計ならどちらでも踏まないので、この不確実性は無害化される。
+3. **「scan 0 件でも `index.bin` が書かれる」は #803 のコメント由来で、自分では測っていない。** そのため `smoke-startup.ps1` の seed にも `[[paths.scan]]`（ダミー 1 件）を置く案を推奨した。0 件で書かれることを実測できたなら、startup 側は scan なしでもよい。
+4. **`index.bin` の書き込みが `hotkey:registered` より先である**という主張は `main.rs` の読解（索引ロードが `Builder…run()` より前、hotkey 登録は setup 内）に基づく。**タイミングは実測していない**。もし外れると `Stop-Process -Force` の打ち切りとレースし、肯定的証拠がフレークする。→ 実装後に「`*.bin` 検査が 3 回連続で緑」を確かめること。
+5. **キーストローク注入が前景ウィンドウに奪われるリスク。** 開発機でも results 検査が常時走るようになるため、**この既存リスクの露出が増える**（今までローカルでは skip されていた）。既存の 2 回リトライ + Backspace 機構がどこまで吸収するかは未測。ローカルで赤が増えるようなら、リトライ回数の見直しが follow-up になりうる。
+6. **`smoke-startup.ps1` を seed する設計は issue が明示していない**（「触る面」に挙げるだけ）。§4.1 の実測（コード読解）に基づく私の判断であり、**裁定が要る**。「startup は env 化だけして seed しない」を選ぶなら、release.yml の GUI プロセス残存を別途処理する必要がある。
+7. **`docs/build-commands.md` の書き換え分量**を見積もっていない。純減だが、`-RequireResults` バレットの後継に「新しい 2 つの検査 + FI 手順」を書くと**足す方が多くなる可能性**がある（「移設は削除ではなく差し引きである」）。削減幅を主張するなら実測してから。
+8. **`Get-LetterVk` を消すかどうか**は好みの範囲。消せば docs の「鳴る経路」の列挙も直す必要があり、残せば死んだ throw 分岐が残る。どちらも小さい。
+9. **`e2e.yml` の `paths` を増やす必要があるか**は「不要」と判断したが、`scripts/visual-check-colors.ps1` を触る（§1-E）ので、**その変更だけでは Smoke workflow が発火しない**組み合わせがありうる（他のファイルも触るので実際には発火する）。
+10. **`*:error` に一致するイベントが 0 件**という §7 の観察は、全 4 crate の `src/` に対する literal `:error` 検索に基づく。ビルドスクリプトや `snotra-egui-runtime` 外のマクロ展開で生成される名前までは追っていない。**中程度の確信**。

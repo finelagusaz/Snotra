@@ -64,19 +64,16 @@ jobs:
 
       # flip 済み（#532 SU7 PR2）: env なし＝「既定が egui であること」自体が検証対象（spec 決定 3）。
       #
-      # **startup smoke より前に置く**（#686）: `-SeedConfig` は config.toml **不在時のみ** seed する
-      # 安全側の設計で、seed が成立しないと results 窓の検証が自動 skip される。startup smoke は
-      # アプリを 5 回起動して config.toml を作るため、後ろに置くと seed が毎回諦めて **job は緑の
-      # まま results の検証が消える**（#671 サイクルの 5 run すべてで実測）。
-      #
-      # この順序制約を守らせるのは規約ではなく `-RequireResults` である——skip を失敗に変えるので、
-      # 将来ステップを入れ替えたら**赤くなって気づける**（順序だけ直しても再発は防げない）。
+      # **順序は自由である**（#804）: 両 smoke が SNOTRA_CONFIG_DIR で自分の検証用プロファイルを
+      # 持つようになったため、以前の「startup smoke より前に置く」制約（#686）は消えた。実 config の
+      # 有無に依存する形そのものが無くなったので、`-SeedConfig` / `-RequireResults` も撤去してある。
       - name: Run egui smoke
-        run: npm run smoke:egui -- -ExePath target/release/snotra.exe -SeedConfig -RequireResults
+        run: npm run smoke:egui -- -ExePath target/release/snotra.exe
 
       # 起動 trace に *:error が無いことの検証（旧 e2e job から移設・検証内容は同一）。
-      # 上の egui smoke が seed した config.toml が既に在るため、ここでの 5 起動は first-run 経路を
-      # 通らない（順序を入れ替える前は 1 回目が first-run だった）。first-run は本 job の検証対象
-      # ではない（アサーションは「*:error が無いこと」だけ）ので、カバレッジの縮小として受容する。
+      # 自分の検証用プロファイル（#804）へループ前に seed 済みの config.toml が在るため、ここでの
+      # 5 起動は first-run 経路を通らない（上の egui smoke には依存しない）。first-run が本 job の
+      # 検証対象でないことは変わらないが、**踏んでいないことはスクリプト側が肯定的に検査して赤に
+      # する**（`cmd:launch_settings_process:*` は `*:error` で終わらず、従来は見えなかった・#804）。
       - name: Run startup smoke
         run: pwsh -NoProfile -File scripts/smoke-startup.ps1 -ExePath target/release/snotra.exe

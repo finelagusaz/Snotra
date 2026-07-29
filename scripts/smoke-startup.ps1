@@ -29,14 +29,72 @@ $summaries = @()
 $failures = @()
 $savedTraceEnv = $env:SNOTRA_TRACE
 
+$savedConfigDirEnv = $env:SNOTRA_CONFIG_DIR
+
 function Restore-TraceEnv {
   param([string]$Saved)
-  if ($null -eq $Saved) {
+  # **`$null -eq $Saved` で判定してはならない**——`param([string]$Saved)` は束縛時に `$null` を
+  # `''` へ変換するため、その分岐は**到達不能**になる（実測）。未設定で呼ばれたときに空文字の
+  # 変数を残さないよう `IsNullOrEmpty` で見る。
+  if ([string]::IsNullOrEmpty($Saved)) {
     Remove-Item Env:SNOTRA_TRACE -ErrorAction SilentlyContinue
   } else {
     $env:SNOTRA_TRACE = $Saved
   }
 }
+
+function Restore-ConfigDirEnv {
+  param([string]$Saved)
+  # **消すのではなく元の値へ戻す**——呼び出し元が既に SNOTRA_CONFIG_DIR を持っていることがある
+  # （visual-check-colors.ps1:179 が案内する手動ワークフロー）。無条件に消すとその値を壊す。
+  # **`$null -eq $Saved` で判定してはならない**（Restore-TraceEnv と同じ理由・実測）。
+  if ([string]::IsNullOrEmpty($Saved)) {
+    Remove-Item Env:SNOTRA_CONFIG_DIR -ErrorAction SilentlyContinue
+  } else {
+    $env:SNOTRA_CONFIG_DIR = $Saved
+  }
+}
+
+# 検証用プロファイル（#804）。**実ユーザーの %APPDATA%\Snotra は読みも書きもしない**——
+# 5 起動が実 config を作る/汚すことが #804 の元凶だった。target/ の下に置くのは
+# visual-check-colors.ps1:54-58 と同じ理由（cargo clean が掃くので新しい後始末機構を足さない。
+# CARGO_TARGET_DIR 環境で掃除対象から外れるのは受容する残余
+# ——ADR-config-dir-env-seam-rejected-alternatives.md §4）。
+$profileDir = Join-Path $PSScriptRoot '..\target\smoke-startup\profile'
+New-Item -ItemType Directory -Force -Path $profileDir | Out-Null
+
+# **掃除はループ前に 1 回だけ**（検査もループ後に 1 回だけ・下）。各回で掃除して各回で検査すると、
+# index.bin が書かれる前に Stop-Process -Force された回が **false red** になる。
+# 残骸を残すと、逆に下の env 到達性判定が古いファイルで空振り合格する。
+Remove-Item (Join-Path $profileDir 'config.toml.bak') -Force -ErrorAction SilentlyContinue
+Get-ChildItem -Path $profileDir -Filter '*.bin' -ErrorAction SilentlyContinue | Remove-Item -Force
+
+# **ループの前に 1 回だけ seed し、5 起動で共有する**（#804・不変条件 5）。毎回作り直すと 5 回
+# すべてが first-run になり、**いま CI が測っているもの（first-run でない起動）とは別のものを
+# 測り始める**。カバレッジの変更は本 issue の目的ではない。
+#
+# **索引 0 件の最小 TOML**。空ヘッダにしてはならない——HotkeyConfig の modifier/key と
+# AppearanceConfig の必須フィールドは #[serde(default)] を持たず、空ヘッダは parse に失敗して
+# 破損復旧経路（stderr 診断 + config.toml.bak 退避 + 復旧バルーン）へ落ちる。[paths] は空ヘッダで
+# よい（PathsConfig.scan は #[serde(default)] ゆえ索引 0 件になる）。[general] は省略する
+# ——既定値がそのまま望ましい挙動になる。
+# **visual-check-colors.ps1 と smoke-egui.ps1 も同型の seed を持つ**（必須セクションの根拠は共通）
+# が、3 者は同型ではない（[[paths.scan]] の有無）。共有ヘルパーにするかの判断は #843 が引き取る。
+$seedToml = @"
+[hotkey]
+modifier = "Alt"
+key = "Q"
+
+[appearance]
+window_width = 600
+
+[paths]
+"@
+Set-Content -Path (Join-Path $profileDir 'config.toml') -Value $seedToml -Encoding utf8
+
+# env へ渡す値は絶対化する（config_dir_from は環境変数の値を**そのまま**保存先にする）。
+$profileFull = (Resolve-Path $profileDir).Path
+Write-Host "検証用プロファイル: $profileFull（実ユーザーの config には触れません）"
 
 for ($run = 1; $run -le $Iterations; $run++) {
   Get-Process snotra -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -46,8 +104,17 @@ for ($run = 1; $run -le $Iterations; $run++) {
   if (Test-Path $errPath) { Remove-Item $errPath -Force }
   if (Test-Path $outPath) { Remove-Item $outPath -Force }
 
+  # env は「子プロセスは生成時に環境を写す」性質に依存する——Start-Process を跨げば十分で、
+  # 親側は直後に戻してよい（本体は自分の写しを読む）。**SNOTRA_CONFIG_DIR にだけ try/finally を
+  # 持たせる**のは Start-Process 自体が throw しうるためで、漏らすと同じシェルの後続操作
+  # （`cargo run -p snotra` 等）が使い捨てプロファイルを見る（不変条件 2）。
   $env:SNOTRA_TRACE = "1"
-  $proc = Start-Process -FilePath $ExePath -PassThru -RedirectStandardError $errPath -RedirectStandardOutput $outPath
+  $env:SNOTRA_CONFIG_DIR = $profileFull
+  try {
+    $proc = Start-Process -FilePath $ExePath -PassThru -RedirectStandardError $errPath -RedirectStandardOutput $outPath
+  } finally {
+    Restore-ConfigDirEnv -Saved $savedConfigDirEnv
+  }
 
   # **最初の trace が出るまで待ってから、観測窓 $WaitMs を開く**（#690 follow-up）。
   #
@@ -89,6 +156,19 @@ for ($run = 1; $run -le $Iterations; $run++) {
     }
   }
 
+  # **seed が読めたことを肯定的に確かめる**（#804・不変条件 4）。seed が parse に失敗すると本体は
+  # 既定 config で起動し、既定の scan パスで索引を作る——**この smoke の他の判定（`*:error` 不在・
+  # trace ≥ 1・first-run 不発・`*.bin` の ∃）はすべて通り、緑のまま**である。ゆえにここが唯一の
+  # 受け皿になる。`[config] ` 付きの eprintln は読み込み失敗の全 arm に在る（成功時に出るのは
+  # config.rs:790 の duplicate instant command と :885 の system shortcut fallback の 2 件だけで、
+  # この seed は instant_commands 無し・Alt+Q ゆえどちらも踏まない）。
+  # smoke-egui.ps1 と visual-check-colors.ps1 の Test-SeedHealth が同型の判定を持つ（#843）。
+  if (Test-Path $errPath) {
+    foreach ($d in @(Select-String -Path $errPath -SimpleMatch '[config] ')) {
+      $failures += "run=$run seed した config が読めていません: $($d.Line)"
+    }
+  }
+
   # **trace が 0 件なら「*:error が無い」は自明に成立する**——空振りの合格である。
   # #690 の調査で、冷えた CI runner の初回起動が 20 秒間 trace を 1 行も出さない状態を
   # 実測した。その状態でも本 smoke は緑を返していた（アサーションが不在の検査だけゆえ）。
@@ -102,6 +182,19 @@ for ($run = 1; $run -le $Iterations; $run++) {
     $failures += "run=$run error event=$($errEvt.event)"
   }
 
+  # **first-run 経路を踏んでいないことを肯定的に検査する**（#804・不変条件 6）。seed を起動より
+  # 前に置いているので踏まないはずだが、**踏んだとき上の `*:error` フィルタでは構造的に見えない**
+  # ——実際のイベント名は :not_found / :spawned / :already_running / :exited で
+  # （commands/window.rs:53,74,87,123）どれも :error で終わらない。
+  # CI（e2e）は snotra だけをビルドするので :not_found に留まり **false green のまま通る**が、
+  # release.yml は snotra-settings.exe を同じ target/release/ へ置くため、**そこでだけ設定 GUI が
+  # 実際に spawn されて 5 起動ぶん残る**（Get-Process snotra は完全一致ゆえ snotra-settings を
+  # kill しない）。この肯定的検査はその最悪ケースを想定して置いている。
+  $firstRunEvents = @($events | Where-Object { $_.event -like "cmd:launch_settings_process:*" })
+  foreach ($frEvt in $firstRunEvents) {
+    $failures += "run=$run first-run 経路を踏んだ event=$($frEvt.event)（seed が起動より前に置かれていない）"
+  }
+
   # event_count は成功時にも出す（**検査が実際に何かを見た**ことを読み手に示すため。
   # 沈黙を合格と読ませないための肯定的報告）。
   # first_trace_ms は成功時にも出す。**起動レイテンシの分散はまだ原因未解明**であり、
@@ -113,6 +206,17 @@ for ($run = 1; $run -le $Iterations; $run++) {
     event_count = $events.Count
     error_count = $errorEvents.Count
   }
+}
+
+# **env が効いたことの肯定的証拠**（#804・不変条件 1）。効いていなければ本体は実 config を読み、
+# 実プロファイルへ書くので、ここには seed した config.toml しか残らない。
+# **ループ後に 1 回だけ検査する**——各回で見ると、index.bin が書かれる前に Stop-Process -Force
+# された回が false red になる（visual-check-colors.ps1:292-304 の実測は単発起動のものである）。
+$generated = @(Get-ChildItem -Path $profileDir -Filter '*.bin' -ErrorAction SilentlyContinue)
+if ($generated.Count -eq 0) {
+  $failures += "SNOTRA_CONFIG_DIR が効いていない: 検証用プロファイルに *.bin が 1 件も生成されていません ($profileFull)"
+} else {
+  Write-Host "プロファイルへの書き込みを確認: $($generated.Name -join ', ')（SNOTRA_CONFIG_DIR は効いています）"
 }
 
 $summaries | Format-Table -AutoSize

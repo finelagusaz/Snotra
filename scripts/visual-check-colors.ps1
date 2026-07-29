@@ -90,7 +90,7 @@ Remove-Item -Path $stderrLog -Force -ErrorAction SilentlyContinue
 # 必須セクション**（`snotra-core/src/config.rs` の `Config`）で、欠けると parse が落ちて
 # 破損復旧経路（`.bak` 退避 + 既定値起動）を踏む。既定値で起動すると背景は `CLEAR_COLOR` に
 # なり、「色が届いていない」と誤読される。
-# `scripts/smoke-egui.ps1` の `-SeedConfig` が同型の seed を持つ（必須セクションの根拠は共通・
+# `scripts/smoke-egui.ps1` と `scripts/smoke-startup.ps1` も同型の seed を持つ（必須セクションの根拠は共通・
 # 片方だけ直さないこと）。**あちらは `[[paths.scan]]` にダミーを 1 件置くが、こちらは置かない**
 # ——results 窓を出す必要が無く、scan 0 件なら索引構築が即終了するためである。
 # `[paths]` は空ヘッダで置く（`PathsConfig.scan` は `#[serde(default)]` ゆえ空 Vec になり、
@@ -288,6 +288,8 @@ try {
     # env が効いたことの**肯定的証拠**。効いていなければ本体は実 config を読み、実プロファイルへ
     # 書くので、ここには seed した config.toml しか無い。ピクセルが赤いとき「色が届いていない」と
     # 「env が効いていない」を切り分けるのはこの 1 行である。
+    # **`scripts/smoke-egui.ps1` と `scripts/smoke-startup.ps1` が同型の判定を持つ**（#804・
+    # 片方だけ直さないこと。共有ヘルパーにしない理由と共有化の送り先は seed 側と同じ・#843）。
     # **実測（#803）**: 出るのは `index.bin` である（索引 0 件でも書かれる）。`window.bin` と
     # 履歴は正常終了で書かれるものなので、下の `finally` が `Stop-Process -Force` する以上出ない。
     $generated = @(Get-ChildItem -Path $profileDir -Filter '*.bin' -ErrorAction SilentlyContinue)

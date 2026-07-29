@@ -10,9 +10,12 @@
 |---|---|
 | `scripts/smoke-egui.ps1` | seed 先を `$env:APPDATA\Snotra` → `target/smoke-egui/profile` へ。**常に seed する**（不在時のみの条件を撤去）。`-SeedConfig` / `-RequireResults` の 2 パラメータを撤去し、**results 検査の要求を無条件へ格上げ**。seed 健全性の検査を追加。skip NOTE（`:481`）を撤去 |
 | `scripts/smoke-startup.ps1` | 使い捨てプロファイルを 1 つ作り 5 起動で共有する（実 config を汚さない）。seed は**索引 0 件**の最小 TOML |
-| `.github/workflows/e2e.yml` | `-SeedConfig -RequireResults` を落とし、順序制約のコメント 9 行（`:65-73`）と first-run 受容の注記（`:77-80`）を撤去 |
+| `.github/workflows/e2e.yml` | `-SeedConfig -RequireResults` を落とし、順序制約のコメント **7 行（`:67-73`）**と first-run 受容の注記（`:77-80`）を撤去。**`:65-66` は別トピックなので残す**（フェーズ 3 の訂正が正・ラウンド 3 でこの行の「9 行（`:65-73`）」を是正した） |
 | `docs/build-commands.md` | 「スモーク運用メモ」の該当 3 bullet と `:161` の順序制約の記述を更新。**`:160` は文の一部差し替えでは済まない**——「索引内容を制御できるときだけ」という条件付きの枠組み全体が偽になるため、bullet ごと書き直す |
 | `scripts/visual-check-colors.ps1` | **1 行のみ**——`:93` の相互参照コメントから `-SeedConfig` への言及を外す（下記「触らない」節を参照） |
+| `docs/adr/ADR-config-dir-env-seam-rejected-alternatives.md` | §3 の末尾へ「その後（#804）」を追記（却下判断は書き換えない・未確定 (g)） |
+| `.github/workflows/release.yml` | **変更しない・確認のみ**。`:83` の `smoke-startup.ps1` 呼び出しは `-ExePath` だけなので引数の変更は不要（ラウンド 3 実測）。確認対象は first-run を踏んだ場合の設定 GUI 残留（フェーズ 2） |
+| `CONTRIBUTING.md` | **変更しない・確認のみ**。`docs/build-commands.md` が言及する参照の実在と整合（フェーズ 4） |
 
 **触らない（根拠つき）**:
 
@@ -26,16 +29,18 @@
 
 ### フェーズ 1 — `smoke-egui.ps1` の env 化
 
-- [ ] `$cfgDir` を `$env:APPDATA\Snotra` から `Join-Path $PSScriptRoot '..\target\smoke-egui\profile'` へ変える。**`target/` 配下に置く**（`visual-check-colors.ps1:54-58` と同じ理由——`cargo clean` が掃くので新しい後始末機構を足さない。`CARGO_TARGET_DIR` 環境での受容残余は `ADR-config-dir-env-seam-rejected-alternatives.md` §4 に既出）
+- [ ] `$cfgDir` を `$env:APPDATA\Snotra` から `Join-Path $PSScriptRoot '..\target\smoke-egui\profile'` へ変える。**`target/` 配下に置く**（`visual-check-colors.ps1:54-58` と同じ理由——`cargo clean` が掃くので新しい後始末機構を足さない。`CARGO_TARGET_DIR` 環境での受容残余は `ADR-config-dir-env-seam-rejected-alternatives.md` §4 に既出）。
+      **env へ入れる値は `(Resolve-Path $profileDir).Path` で絶対化する**（ラウンド 3 の独立再導出）——`config.rs:689` は env の値を「**そのまま**保存先にする」と明記しており、`..` を含んだ断片をそのまま渡さない。参照実装も同じ順序である（`visual-check-colors.ps1:132-133`: ディレクトリ作成 → `Resolve-Path` → env 設定）
 - [ ] **前回の残骸を消す**（`config.toml.bak` と `*.bin`）。`visual-check-colors.ps1:85-87` と同じ——残すと seed 健全性と env 到達性の 2 判定がどちらも古いファイルで空振り合格する
-- [ ] `$env:SNOTRA_CONFIG_DIR` を設定し、**`finally` で必ず戻す**（`Remove-Item Env:SNOTRA_CONFIG_DIR`）。
+- [ ] `$env:SNOTRA_CONFIG_DIR` を設定し、**`finally` で必ず戻す**（`Remove-Item Env:SNOTRA_CONFIG_DIR -ErrorAction SilentlyContinue`——**フラグを省いてはならない**: 未設定時に `ItemNotFoundException` を投げ、`$ErrorActionPreference = "Stop"`（`:58`）の下では `finally` が元の例外を覆い隠す。既存の作法も同じ形である・`visual-check-colors.ps1:329` / `smoke-startup.ps1:36`・ラウンド 3 実測）。
       **既存の `try` を流用してはならない**——`smoke-egui.ps1` の `try` は `:297` から始まり、**seed と `Start-Process` はその前にある**（レビュー実測）。env を設定する行より前から始まる `try` を新設し、その `finally` で戻す。
       **入れ子を最小にする**（ラウンド 2 の訂正）: 同ファイルの `$env:SNOTRA_TRACE` は `Start-Process` の直後に即復元しており `try` を持たない。**`SNOTRA_CONFIG_DIR` も同じ扱いにはできない**——アプリのプロセスが生きている間は有効でなければならず、生存区間が長い。ゆえに `try` は要るが、**終端は「アプリを kill し終えた行」までとし、判定ロジック全体を包まない**（PowerShell の `exit` は `try` 内なら `finally` を必ず通ることをレビューが実測済み）
 - [ ] `if (-not (Test-Path $cfgPath))` の条件を外し、**常に seed する**。seed の中身（ダミー exe + 必須セクション + `[[paths.scan]]`）は現行のまま動かさない
 - [ ] `-SeedConfig` パラメータを撤去する（常に seed するので意味を失う）
-- [ ] `$seededNow` を撤去し、`ResultsQuery` の既定を無条件で `"z"` にする
+- [ ] `$seededNow` を撤去し、`ResultsQuery` の既定を無条件で `"z"` にする。**実装の形まで指定する（ラウンド 3 の要対処）**: `param` ブロック（`:17`）の既定値を `""` → `"z"` へ変え、**`:114-115` の埋め戻し（`if ([string]::IsNullOrEmpty($ResultsQuery) -and $seededNow) { $ResultsQuery = "z" }`）はブロックごと消す**。**「`-and $seededNow` だけを落とす」形にしてはならない**——埋め戻しは `:125` の guard **より前**にあるため、`-ResultsQuery ''` が `"z"` へ書き戻されて guard へ到達せず、**下のフォールトインジェクション A が静かに死ぬ**（赤が出るはずの場面でアプリが起動してしまう）
 - [ ] **first-run の肯定的検査を smoke-egui にも置く**（ラウンド 2 の訂正）。使い捨てプロファイルを使う以上、**同じ経路を踏みうるのは smoke-startup だけではない**。`[config] ` 行の検査は parse 失敗を捕まえるが、**「config.toml が存在しない」分岐は捕まえない**（そのとき `[config] ` は出ない）ので別の検査が要る
 - [ ] **seed 健全性の検査を追加する**: 起動後、本体 stderr に `[config] ` 前置き行が無いことを確かめる。**`config.toml.bak` の不在を根拠にしない**（退避は best-effort ゆえ parse 失敗でも `.bak` が現れないことがある・`config.rs` の `backup_invalid`）。ログ自体が無い場合も赤にする（「観測できなかった」を合格と読ませない）。`visual-check-colors.ps1:143-159` の `Test-SeedHealth` と同型だが、**共有ヘルパーにはしない**（#843 の射程）
+- [ ] **env 到達性の肯定的検査を追加する**（ラウンド 3 の要対処——残骸掃除の項目が「seed 健全性と env 到達性の **2 判定**」に言及していたのに、**どの項目もこの判定を作っていなかった**）。起動後、プロファイル配下に `*.bin` が 1 件以上あることを確かめ、0 件なら赤にする。**env が効いていなければ本体は実 config を読んで実プロファイルへ書くので、ここには seed した `config.toml` しか残らない**——「env が届いていない」と「検査対象が出なかった」を切り分ける唯一の行である（参照実装 `visual-check-colors.ps1:292-304`。実測で出るのは `index.bin` で、索引 0 件でも書かれる）。**同じ検査を `smoke-startup.ps1` にも置く**——不変条件 1 の検知を手動の mtime 比較だけに委ねない（共有ヘルパーにはしない・(c)）
 - [ ] `-RequireResults` パラメータを撤去し、**その guard を無条件の要求へ格上げする**（`ResultsQuery` が空なら常に throw）。理由は不変条件 3
 - [ ] **guard の「アプリを起動せずに赤を出せる」性質を保つ。** `docs/build-commands.md:161` はこれを**フォールトインジェクションの手順として明文化**している（`-RequireResults -ExePath <任意の既存ファイル>` で実機に触らず赤を出す）。無条件化後の注入口は **`-ResultsQuery ''` を明示的に渡すこと**——判定は起動前のままなので性質は失われない。**docs の手順もこの形へ書き換える**（フェーズ 4）
 - [ ] **撤去する変数を参照している文字列を全部書き換える**: throw メッセージ（`:126-133`）が `$seededNow` / `-SeedConfig` / APPDATA パスを埋め込んでいる。`Set-StrictMode -Version Latest` 下では**未定義変数の参照自体が別のエラーになる**ため、消し残すと「results 検査の要求」ではなく無関係な失敗が出る
@@ -68,7 +73,7 @@
 - [ ] `:161` の `-RequireResults` bullet を書き換える。**順序制約と `-RequireResults` の記述は撤去し、「results 検査は無条件に要求される」へ**。#804 のスコープを名指ししている文（「env 化は #804 のスコープ」）も、本 issue で実現するので現在形へ直す
 - [ ] **フォールトインジェクションの手順を書き換える**（同 bullet）。現行は `-RequireResults -ExePath <任意の既存ファイル>` で「実機に触らず赤を出す」手順を明文化している。**この性質は保つが入口が変わる**ので `-ResultsQuery '' -ExePath <任意の既存ファイル>` へ差し替える
 - [ ] `CONTRIBUTING.md` に「results 窓 show/hide の trace 観測」への参照がある（`docs/build-commands.md` が言及）。**実在と整合を確認し、必要なら直す**
-- [ ] **`docs/build-commands.md:45`（カテゴリ C 節・「スモーク運用メモ」節の外）を直す**（ラウンド 2 の要対処）。「この 1 事例は `-RequireResults` が機構化した（#686・下記）」と書いており、フラグ撤去で**存在しない識別子を指す**。**`G-stale-identifiers` の母集団は `.claude/**` の md だけで `docs/**` を見ないため、`governance:check` では捕まらない**——手で直すしかない
+- [ ] **`docs/build-commands.md:45`（カテゴリ C 節・「スモーク運用メモ」節の外）を直す**（ラウンド 2 の要対処）。「この 1 事例は `-RequireResults` が機構化した（#686・下記）」と書いており、フラグ撤去で**存在しない識別子を指す**。**同文の「下記」という序数的な指し先も同時に失効する**（ラウンド 3 の独立再導出——`-RequireResults` を grep しても、この指しが宙に浮くことには到達しない。`docs/development-principles.md`「列挙の完全性」の序数参照クラス）。**文ごと書き直す**。**`G-stale-identifiers` の母集団は `.claude/**` の md だけで `docs/**` を見ないため、`governance:check` では捕まらない**——手で直すしかない
 - [ ] **`docs/adr/ADR-config-dir-env-seam-rejected-alternatives.md` §3 を更新する**（ラウンド 2 の要対処・未確定 (g) の裁定に従う）
 
 ### フェーズ 5 — 検証
@@ -78,7 +83,8 @@
 - [ ] **カテゴリ C（本命）**: `npm run smoke:egui -- -ExePath target/debug/snotra.exe` と `npm run smoke:startup -- -ExePath target/debug/snotra.exe -WaitMs 5000` を**実 config が在る開発機で**実行し、**両方が引数なしで緑になる**ことを確かめる（これが #804 の成果そのもの——従来は `-SeedConfig` が空振りして results 検査が skip されていた）
 - [ ] **実 config が汚れていないことを確かめる**: 実行前後で `%APPDATA%\Snotra\config.toml` の mtime とサイズが変わらないこと
 - [ ] **フォールトインジェクション A（起動を要さない）**: `pwsh -File scripts/smoke-egui.ps1 -ResultsQuery '' -ExePath <任意の既存ファイル>` が**アプリを起こさずに赤**を出すこと。撤去する `-RequireResults` が持っていた性質がそのまま残ることの実測（`.claude/rules/safety-nets.md`「効いていることは、フォールトインジェクションで一度は実測する」）
-- [ ] **フォールトインジェクション B（seed 健全性）**: `smoke-egui.ps1` を**一時ディレクトリへ複製し**、seed の TOML を必須セクション欠落へ変異させて実行 → **`[config] ` を理由とする赤**が出ること。**稼働中のスクリプトを弱めない**（同 rule・複製に変異を当てる）
+- [ ] **フォールトインジェクション B（seed 健全性）**: `smoke-egui.ps1` を **`target/fault-inject/` へ複製し**、seed の TOML を必須セクション欠落へ変異させて実行 → **`[config] ` を理由とする赤**が出ること。**稼働中のスクリプトを弱めない**（同 rule・複製に変異を当てる）。
+      **複製先を `%TEMP%` にしてはならない（ラウンド 3 の要対処・実測）**——プロファイルは `$PSScriptRoot` 起点で決まるため、複製先が `%TEMP%\<dir>\` だとプロファイルは `%TEMP%\target\smoke-egui\profile` へ落ち、**リポジトリの `target/` の外に残って `cargo clean` が掃かない**（不変条件 7 の根拠が、この手順でだけ破れる）。`target/fault-inject/` へ置けば `..\target` は `target/target/` へ解決され、`target/` 配下に留まりつつ本番プロファイルとも衝突しない。`-ExePath` は cwd 基準（`:60` の `Test-Path`）なのでリポジトリルートから打つ限り複製後も無傷（実測）
 - [ ] **本 PR 自身の CI（`e2e.yml` の smoke job）が緑になることを確認し、ログの中身まで読む**（緑が「検査が走った」を意味しない・#686）。`e2e.yml` の `paths:` は個別ファイル名の列挙で、本 PR が触る 3 ファイルを含むため自動起動する（レビュー実測）
 - [ ] **#786 を悪化させていないことの確認**: `smoke:startup` を既定引数で 1 回回し、失敗の様態が従来と同じ（`first_trace_ms` は埋まるが `event_count` が 0）であることを見る。**直さないが、変えてもいないことを実測で残す**
 - [ ] カテゴリ A・B・D・E は**該当なし**（`.rs` を 1 行も触らない・`.ts` を触らない・UI の見た目を変えない・`.githooks/` を触らない）
@@ -111,7 +117,7 @@
 
 **不要。** 製品の挙動を 1 つも変えない（検証スクリプトと CI の変更のみ）。`SPEC.md` に smoke の記述は無い。
 
-## 未確定（実装前に潰す）— ラウンド 2
+## 未確定（実装前に潰す）— ラウンド 3
 
 - [x] **(a) `-SeedConfig` / `-RequireResults` を撤去するか残すか** — **裁定: 両方撤去し、results 検査の要求を無条件へ格上げする。**
       **根拠**: `docs/build-commands.md:161` が「env 化すれば `-SeedConfig` の制約・`-RequireResults`・この順序制約がまとめて不要になる」と**リポジトリ自身の記述として**予告している。かつ `-RequireResults` が opt-in だった理由は「ローカルでは索引を制御できないのが普通だから」であり、**プロファイル分離でその前提が偽になる**。
@@ -142,4 +148,19 @@
 
 ## セルフレビュー
 
-（収束または打ち切りの後に 1 度だけ記入する）
+**3 ラウンドで打ち切り**（収束条件は「未確定ゼロ **かつ** 差分ゼロ」。ラウンド 3 は**未確定ゼロを満たし、差分ゼロを満たさなかった**——12 行の変更が出た）。ラウンド 4 は行わない。
+
+**各ラウンドが拾ったもの**:
+
+| ラウンド | 主な拾い物 | 性質 |
+|---|---|---|
+| 1 | 相互参照コメント（`visual-check-colors.ps1:93`）・撤去識別子を埋め込む throw メッセージ | 影響範囲の漏れ |
+| 2 | `try` の開始位置（`:297` は seed より後）・`visual-check-colors.ps1:108-130` の字面複製の罠・`e2e.yml:65-66` を巻き込む範囲指定・`release.yml` の設定 GUI 残留・ADR §3 の失効（未確定 (g)）・`*:error` 空回り（未確定 (h) → #845） | 実装手順の誤り + 送り先の確定 |
+| 3 | `ResultsQuery` 埋め戻しの実装曖昧さ（FI-A が静かに死ぬ）・FI-B の `$PSScriptRoot` が `target/` の外へ落ちる・**宙に浮いていた「env 到達性」判定**・`Resolve-Path` 絶対化・`-ErrorAction SilentlyContinue`・表と本文の不整合（9 行/`:65-73`）・表に無い 3 ファイル | 実装の形の確定 + 自己整合 |
+
+**打ち切り時点の残余（実装者が引き受けるもの）**:
+
+1. **ラウンド 3 の 12 行はレビューを受けていない。** すべて「答えの決まった機械的訂正」（新しい未確定を 1 件も生んでいない）だが、**訂正そのものに対する独立検証は無い**。特に env 到達性の検査（`*.bin` の ∃）と FI-B の複製先（`target/fault-inject/`）は**ラウンド 3 で初めて計画に入った項目**であり、実装時に実測で確かめること
+2. **`e2e.yml` の順序制約が本当に消えたことは、入れ替えて CI を緑にするまでは主張であって測定ではない**（独立再導出の指摘）。フェーズ 3 は「順序を入れ替えない」を選んでおり（未確定 (d)）、**この測定は行われない**。受容する残余として記録する
+3. **`docs/superpowers/plans/*.md` に撤去識別子が約 25 件残る**が、`docs/superpowers/README.md` が当該ディレクトリを「歴史資料・鮮度維持の対象外」と宣言しているため更新しない（ラウンド 3 実測）
+4. **`plan.md:33` の「アプリのプロセスが生きている間は有効でなければならず」は機序として過剰**——子プロセスは生成時に環境を写すので、親の即時復元でも本体は動く。ただし**結論（`finally` まで保つ）は参照実装 `visual-check-colors.ps1:133,329` と同形**なので手順は変えていない。文言だけの残余

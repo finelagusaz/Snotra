@@ -1,5 +1,7 @@
 # 計画に「未確定」欄を持たせ、それが空になるまでレビューを回す — 設計（2026-07-28）
 
+> **Superseded:** 常時fan-outと最大3ラウンドの自動レビューは `docs/adr/ADR-risk-tiered-plan-review.md` で廃止した。未確定欄の契約だけが現行スキルに残る。
+
 日付: 2026-07-28 / 対象: #821（`/start-issue` → `/plan-review` → `/implement` の引き渡し）
 
 ## §0 要旨

@@ -467,12 +467,15 @@ impl EguiView for SearchWindowView {
         }
 
         // status 行（#532 SU5 の一時 overlay・#700 で位置を変更）: 「起動中…」/ 失敗・結果不明通知/
-        // 非空クエリ indexing 案内を**検索バーの直下に独立した行として**描く。hint_text は空クエリ時
-        // のみ描かれるため launching/notice/非空クエリ indexing（query 非空）では使えず、別の描画面が要る
-        // ——かつてはそれを TextEdit の rect への重ね描きで賄っていた（#700 で撤回・下のブロック参照）。
+        // indexing 案内を**検索バーの直下に独立した行として**描く。かつてはこれを TextEdit の
+        // rect への重ね描きで賄っていた（#700 で撤回・下のブロック参照）。
         // 優先順は WebView2 SearchWindow.tsx の Switch 先頭一致 parity: indexing > 起動中 > 通知。
-        // 空クエリの indexing は hint が描く。非空クエリの indexing は表示ゲート（§4.7）で結果が
-        // 消えるため overlay が唯一の案内（spec 追補 1・ladder は overlay_kind に抽出しテスト固定）。
+        //
+        // **クエリの空/非空では切り替えない**（#700）。「空クエリのときは hint が描く」という
+        // 2 面構成は撤回済みであり、`notify::overlay_kind` は空/非空を入力に取らない
+        // （`indexing_overlay_does_not_depend_on_query_emptiness` が固定）。**`indexing_hint()` は
+        // 名前に反してこの status 行の文言であって、TextEdit の hint_text へは一度も渡らない**
+        // （上の hint 構築部を参照）。
         let overlay_text: Option<String> = match crate::egui_shell::overlay_kind(
             self.controller.indexing() && self.controller.state().view_kind() == ViewKind::Results,
             self.controller.is_launching(),
@@ -614,7 +617,7 @@ impl EguiView for SearchWindowView {
         // 結果リスト（shouldShowResults 相当）。§4.7: 再インデックス中は plain 結果のみ隠す
         // （instant/folder/tool carve-out・SU6 spec 決定 3）。データと選択は保持——クリアしない
         // （SolidJS parity: setIndexing は結果を触らず派生 memo が非表示を担う）。indexing 中の
-        // 案内は空クエリ=hint・非空クエリ=overlay（Task 7・spec 追補 1）が担い、show_results=false
+        // 案内は status 行が担い（#700 で一本化・空/非空で切り替えない）、show_results=false
         // では results 窓が hide される（main は bar(+toast)固定高で伸縮しない・#646 PR2 決定 6）。
         // 連言③は**1 フレーム 1 回だけ**読む（#752 F2）。`indexing` は `AtomicBool` の live-read で
         // 同一フレーム内でも変わりうるため、pre/post で 2 回読むと連言③がフレーム内で食い違う。

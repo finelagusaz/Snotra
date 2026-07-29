@@ -17,10 +17,14 @@
 //!    `notify::overlay_kind` の**排他ラダー**
 //! 3. **toast 行**（`update_available` / `update_install_now` / `update_dismiss` /
 //!    `update_installing` / `update_failed`）——status 行とは**独立に積まれ、同時に出うる**
-//!    （`SPEC.md` §4.7「結果表示制御（2 窓構成）」）。2 と 3 を「同じお知らせの面」と畳まないこと
+//!    （`SPEC.md`「4.7 結果表示制御（2 窓構成）」）。2 と 3 を「同じお知らせの面」と畳まないこと
 //!
 //! **`indexing_hint` は名前に `hint` を持つが 1 ではなく 2 である**（#700 で status 行へ移した際に
 //! 関数名だけが残った）。`hint` で grep して 1 のつもりで触ると描画面を取り違える。
+//!
+//! **文言を 1 本足したら、この 3 系統のどれかへ必ず名前を書き足す。** 列挙はいまファイル内の
+//! 全関数を覆っているが、それを守る機構は無い——足して書き忘れると、次の読者には「分類に
+//! 現れない ＝ どの面にも属さない」ように見える。
 
 use snotra_core::config::Language;
 
@@ -38,7 +42,7 @@ pub fn tool_select_hint(l: Language) -> &'static str {
     }
 }
 
-/// フォルダ展開中の入力欄プレースホルダ（#836・SPEC §6.7「フォルダ展開中の現在地表示」）。
+/// フォルダ展開中の入力欄プレースホルダ（#836・`SPEC.md`「6.7 フォルダ展開中の現在地表示」）。
 ///
 /// **`dir` はフルパスであってフォルダ名ではない。** 撤去済み WebView2 の
 /// `SearchWindow.tsx:277`（`git show 15933af^:` で復元）が `t("search.placeholder.folder",

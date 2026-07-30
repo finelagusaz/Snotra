@@ -205,9 +205,9 @@ include_folders = true
         $waitForInputChange = {
             param(
                 [string]$Scope,
-                [int]$BeforeChars,
                 [int]$AfterChars,
                 [bool]$AppendedAtEnd,
+                [Nullable[int]]$BeforeChars = $null,
                 [int]$TimeoutMs = 5000
             )
             $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
@@ -215,9 +215,9 @@ include_folders = true
                 $matched = @(Read-SnotraTraceEvents -Path $stderr | Where-Object {
                     $_.event -eq 'egui_input:changed' -and
                     $_.data.scope -eq $Scope -and
-                    $_.data.before_chars -eq $BeforeChars -and
                     $_.data.after_chars -eq $AfterChars -and
-                    $_.data.appended_at_end -eq $AppendedAtEnd
+                    $_.data.appended_at_end -eq $AppendedAtEnd -and
+                    ($null -eq $BeforeChars -or $_.data.before_chars -eq $BeforeChars)
                 } | Select-Object -Last 1)
                 if ($matched.Count -gt 0) { return $matched[0] }
                 if ($null -ne $proc -and $proc.HasExited) { break }
@@ -244,17 +244,35 @@ include_folders = true
             Set-SnotraForegroundWindow -Handle $hwnd | Should -BeTrue
             Start-Sleep -Milliseconds 300
             foreach ($vk in [byte[]](0x41, 0x4C, 0x50, 0x48, 0x41)) { & $pressKey $vk }
-            & $waitForInputChange 'search' 4 5 $true | Should -Not -BeNullOrEmpty
+            # runner が遅いと複数文字が同一フレームへまとまるため、準備入力は最終状態だけを見る。
+            & $waitForInputChange -Scope 'search' -AfterChars 5 -AppendedAtEnd $true |
+                Should -Not -BeNullOrEmpty
 
             & $pressKey 0x27 # Right: 唯一の検索結果である alpha フォルダへ入る。
             Start-Sleep -Milliseconds 300
             & $pressKey 0x41
             & $pressKey 0x41
-            & $waitForInputChange 'folder' 1 2 $true | Should -Not -BeNullOrEmpty
+            & $waitForInputChange -Scope 'folder' -AfterChars 2 -AppendedAtEnd $true |
+                Should -Not -BeNullOrEmpty
 
             & $pressKey 0x1B # Escape: alpha を復元し、次の z が末尾へ入るべき経路。
             & $pressKey 0x5A
-            & $waitForInputChange 'search' 5 6 $true | Should -Not -BeNullOrEmpty
+            & $waitForInputChange -Scope 'search' -BeforeChars 5 -AfterChars 6 `
+                -AppendedAtEnd $true | Should -Not -BeNullOrEmpty
+        } catch {
+            Write-Host '--- caret integration stderr trace ---'
+            if (Test-Path -LiteralPath $stderr) {
+                $stderrLines = @(Get-Content -LiteralPath $stderr)
+                if ($stderrLines.Count -eq 0) {
+                    Write-Host '(stderr is empty)'
+                } else {
+                    $stderrLines | ForEach-Object { Write-Host $_ }
+                }
+            } else {
+                Write-Host "(stderr file not found: $stderr)"
+            }
+            Write-Host '--- end caret integration stderr trace ---'
+            throw
         } finally {
             if ($null -ne $proc -and -not $proc.HasExited) {
                 Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue

@@ -173,4 +173,92 @@ auto_hide_on_focus_lost = false
             }
         }
     }
+
+    It 'フォルダ復帰後の次打鍵を復元クエリの末尾へ追加する' {
+        $profile = Join-Path $TestDrive 'caret-profile'
+        $stderr = Join-Path $TestDrive 'caret.err'
+        $scanRoot = Join-Path $TestDrive 'caret-fixture'
+        $folder = Join-Path $scanRoot 'alpha'
+        New-Item -ItemType Directory -Force -Path $folder | Out-Null
+        Set-Content -LiteralPath (Join-Path $folder 'aa-child.txt') -Value 'fixture'
+        $scanRootToml = (Resolve-Path -LiteralPath $scanRoot).Path.Replace('\', '/')
+        $created = New-SnotraVerificationProfile -ProfileDir $profile `
+            -AdditionalSections @'
+[general]
+show_on_startup = true
+auto_hide_on_focus_lost = false
+'@ `
+            -PathEntries @"
+[[paths.scan]]
+path = "$scanRootToml"
+extensions = [".snotra-no-match"]
+include_folders = true
+"@
+        $proc = $null
+        $pressKey = {
+            param([byte]$VirtualKey)
+            Send-SnotraKey -VirtualKey $VirtualKey
+            Start-Sleep -Milliseconds 50
+            Send-SnotraKey -VirtualKey $VirtualKey -Up
+            Start-Sleep -Milliseconds 50
+        }
+        $waitForInputChange = {
+            param(
+                [string]$Scope,
+                [int]$BeforeChars,
+                [int]$AfterChars,
+                [bool]$AppendedAtEnd,
+                [int]$TimeoutMs = 5000
+            )
+            $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
+            while ([DateTime]::UtcNow -lt $deadline) {
+                $matched = @(Read-SnotraTraceEvents -Path $stderr | Where-Object {
+                    $_.event -eq 'egui_input:changed' -and
+                    $_.data.scope -eq $Scope -and
+                    $_.data.before_chars -eq $BeforeChars -and
+                    $_.data.after_chars -eq $AfterChars -and
+                    $_.data.appended_at_end -eq $AppendedAtEnd
+                } | Select-Object -Last 1)
+                if ($matched.Count -gt 0) { return $matched[0] }
+                if ($null -ne $proc -and $proc.HasExited) { break }
+                Start-Sleep -Milliseconds 100
+            }
+            return $null
+        }
+
+        try {
+            Resolve-SnotraExistingProcess -Policy Reject
+            $proc = Start-SnotraProcess -ConfigDir $created.FullPath -Trace `
+                -FilePath $env:SNOTRA_PESTER_EXE -StandardErrorPath $stderr
+            $hwnd = Wait-SnotraWindow -Title 'Snotra' -Process $proc -TimeoutMs 30000
+
+            $indexPath = Join-Path $created.FullPath 'index.bin'
+            $indexDeadline = [DateTime]::UtcNow.AddSeconds(10)
+            while (-not (Test-Path -LiteralPath $indexPath) -and [DateTime]::UtcNow -lt $indexDeadline) {
+                if ($proc.HasExited) { break }
+                Start-Sleep -Milliseconds 100
+            }
+            Test-Path -LiteralPath $indexPath | Should -BeTrue
+            @(Select-String -Path $stderr -SimpleMatch '[config] ').Count | Should -Be 0
+
+            Set-SnotraForegroundWindow -Handle $hwnd | Should -BeTrue
+            Start-Sleep -Milliseconds 300
+            foreach ($vk in [byte[]](0x41, 0x4C, 0x50, 0x48, 0x41)) { & $pressKey $vk }
+            & $waitForInputChange 'search' 4 5 $true | Should -Not -BeNullOrEmpty
+
+            & $pressKey 0x27 # Right: 唯一の検索結果である alpha フォルダへ入る。
+            Start-Sleep -Milliseconds 300
+            & $pressKey 0x41
+            & $pressKey 0x41
+            & $waitForInputChange 'folder' 1 2 $true | Should -Not -BeNullOrEmpty
+
+            & $pressKey 0x1B # Escape: alpha を復元し、次の z が末尾へ入るべき経路。
+            & $pressKey 0x5A
+            & $waitForInputChange 'search' 5 6 $true | Should -Not -BeNullOrEmpty
+        } finally {
+            if ($null -ne $proc -and -not $proc.HasExited) {
+                Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
 }

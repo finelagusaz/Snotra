@@ -1099,6 +1099,27 @@ impl LauncherController {
     /// `in_folder` は**その TextEdit を組み立てたときの** view_kind（段 21 で読んだ値をそのまま
     /// 渡す——ここで読み直すと同一フレーム内で 2 つの真実ができる）。
     pub(super) fn on_input_changed(&mut self, buf: String, in_folder: bool, ctx: &egui::Context) {
+        if crate::trace::trace_enabled() {
+            // #840 の実機回帰検査用。入力文字列そのものは診断ログへ残さず、変更前後の
+            // 文字数と「旧文字列を prefix に持つ増加か」だけで末尾追記を観測する。
+            // state 更新より前でなければ比較元を失うため、この位置を保つ。
+            let previous = if in_folder {
+                self.state.folder_filter()
+            } else {
+                self.state.query()
+            };
+            let before_chars = previous.chars().count();
+            let after_chars = buf.chars().count();
+            crate::trace_main(
+                "egui_input:changed",
+                serde_json::json!({
+                    "scope": if in_folder { "folder" } else { "search" },
+                    "before_chars": before_chars,
+                    "after_chars": after_chars,
+                    "appended_at_end": after_chars > before_chars && buf.starts_with(previous),
+                }),
+            );
+        }
         if in_folder {
             self.state.set_folder_filter(buf);
             self.run_search(); // folder は同期フィルタ（debounce 不要・I/O 無し）

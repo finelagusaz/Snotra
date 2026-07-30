@@ -52,7 +52,9 @@ impl std::error::Error for BinError {}
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConfigError {
     HotkeyModifierEmpty,
+    HotkeyUnknownModifier { modifier: String },
     HotkeyKeyEmpty,
+    HotkeyUnsupportedKey { key: String },
     HotkeySystemConflict { modifier: String, key: String },
     VisibleRowsZero,
     WindowWidthTooSmall(u32),

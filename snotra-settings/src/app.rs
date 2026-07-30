@@ -240,7 +240,13 @@ impl SettingsApp {
 pub(crate) fn config_error_message(error: &ConfigError, tr: &Tr) -> String {
     match error {
         ConfigError::HotkeyModifierEmpty => tr.t(TrKey::ErrHotkeyModifierEmpty).to_string(),
+        ConfigError::HotkeyUnknownModifier { modifier } => {
+            tr.t_params(TrKey::ErrHotkeyUnknownModifier, &[("value", modifier)])
+        }
         ConfigError::HotkeyKeyEmpty => tr.t(TrKey::ErrHotkeyKeyEmpty).to_string(),
+        ConfigError::HotkeyUnsupportedKey { key } => {
+            tr.t_params(TrKey::ErrHotkeyUnsupportedKey, &[("value", key)])
+        }
         ConfigError::HotkeySystemConflict { modifier, key } => tr.t_params(
             TrKey::ErrHotkeySystemConflict,
             &[("value", &format!("{modifier}+{key}"))],
@@ -965,6 +971,21 @@ mod tests {
     }
 
     #[test]
+    fn config_error_message_hotkey_unknown_modifier() {
+        let error = ConfigError::HotkeyUnknownModifier {
+            modifier: "Hyper".to_string(),
+        };
+        assert_eq!(
+            config_error_message(&error, &tr_ja()),
+            "ホットキーの修飾キー Hyper は使用できません"
+        );
+        assert_eq!(
+            config_error_message(&error, &tr_en()),
+            "Hotkey modifier Hyper is not supported"
+        );
+    }
+
+    #[test]
     fn config_error_message_hotkey_key_empty() {
         assert_eq!(
             config_error_message(&ConfigError::HotkeyKeyEmpty, &tr_ja()),
@@ -973,6 +994,21 @@ mod tests {
         assert_eq!(
             config_error_message(&ConfigError::HotkeyKeyEmpty, &tr_en()),
             "Hotkey key is not set"
+        );
+    }
+
+    #[test]
+    fn config_error_message_hotkey_unsupported_key() {
+        let error = ConfigError::HotkeyUnsupportedKey {
+            key: "F13".to_string(),
+        };
+        assert_eq!(
+            config_error_message(&error, &tr_ja()),
+            "ホットキーのキー F13 は使用できません"
+        );
+        assert_eq!(
+            config_error_message(&error, &tr_en()),
+            "Hotkey key F13 is not supported"
         );
     }
 

@@ -904,6 +904,7 @@ describe("G-config-reachability checkConfigFieldReachability", () => {
   const base = {
     "snotra-core/src/config.rs": config,
     "snotra-core/src/opener.rs": "",
+    "snotra-core/src/hotkey.rs": "",
     "src-tauri/src/view.rs": "let c = &v.background_color;",
   };
   const table = { "VisualConfig.preset": "設定 UI のみが読む（フィクスチャ）" };
@@ -952,12 +953,28 @@ describe("G-config-reachability checkConfigFieldReachability", () => {
     expect(check({ "src-tauri/src/view.rs": "" }).some((x) => x.message.includes("母集団の欠落"))).toBe(true);
   });
   it("母集団の欠落: フィールドが 1 件も抽出できない", () => {
-    const f = check({ "snotra-core/src/config.rs": "// no struct\n", "snotra-core/src/opener.rs": "", "src-tauri/src/view.rs": "" });
+    const f = check({ "snotra-core/src/config.rs": "// no struct\n", "snotra-core/src/opener.rs": "", "snotra-core/src/hotkey.rs": "", "src-tauri/src/view.rs": "" });
     expect(f.some((x) => x.message.includes("母集団の欠落"))).toBe(true);
   });
   it("母集団の欠落: ランチャ側ソースが 0 件", () => {
-    const f = check({ "snotra-core/src/config.rs": config, "snotra-core/src/opener.rs": "" });
+    const f = check({ "snotra-core/src/config.rs": config, "snotra-core/src/opener.rs": "", "snotra-core/src/hotkey.rs": "" });
     expect(f.some((x) => x.message.includes("母集団の欠落"))).toBe(true);
+  });
+  it("分離した hotkey.rs の serde フィールドも母集団に入る", () => {
+    const hotkey = [
+      "#[derive(Deserialize)]",
+      "pub struct HotkeyConfig {",
+      "    pub modifier: String,",
+      "    pub key: String,",
+      "}",
+    ].join("\n");
+    const s = snap({
+      "snotra-core/src/config.rs": "",
+      "snotra-core/src/opener.rs": "",
+      "snotra-core/src/hotkey.rs": hotkey,
+      "src-tauri/src/view.rs": "let _ = (&c.modifier, &c.key);",
+    });
+    expect(checkConfigFieldReachability(s, {}, ["HotkeyConfig"])).toEqual([]);
   });
 });
 

@@ -44,6 +44,12 @@ smoke 側の env 化は #804 のスコープ。
 増えた（索引 0 件・`[[paths.scan]]` なし）。共有化するかどうかの判断は #843 が引き取る。
 **却下の判断そのものは書き換えない**——当時の文脈を残すのが ADR の目的である。
 
+**その後（#843）**: 3 本で増殖した config seed・env 復元・Win32/DWM 配管を
+`scripts/lib/SnotraSmoke.psm1` へ共有したため、この却下は現在の実装判断としては失効した。
+ただし共有するのは必須セクションの骨格とライフサイクルだけである。`smoke-egui` の scan、
+`smoke-startup` の 5 起動共有、`visual-check-colors` の色と専用 scan は各呼び出し側が渡し、
+**3 つの seed は同型ではない**という制約は維持する。
+
 ## 4. 検証プロファイルの掃除のために `cargo metadata` で `target_directory` を引く
 
 **却下。** `CARGO_TARGET_DIR` を設定した環境ではリポジトリの `target/` が `cargo clean` の対象から

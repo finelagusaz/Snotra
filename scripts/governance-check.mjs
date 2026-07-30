@@ -758,8 +758,13 @@ export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
  * ADR-area-metric-characters が警告する反射的な引き上げに当たらない根拠: 連番の衝突は `0014` `0016` `0017` で 3 回
  * 実測されており、3 回目は衝突を直す PR（#810）自身が 1 つ隣で作った。**規範を狭いまま置くことの
  * 費用が、面積の費用を上回ると判断した。**（#812）
+ * **2026-07-30 引き上げ 8678→8790**（実測 rules 8578→8690・+112 字）: #843 で
+ * `safety-nets.md` と `governance-docs.md` の配送対象へ `scripts/*.ps1` / `scripts/lib/**` を追加した。
+ * PowerShell の共有 smoke 配管と Pester が CI・規範の実装になった一方、旧 glob は `.mjs` しか拾わず、
+ * 変更者へ検証手順が届かないためである。本文規範は増やさず、必要な配送経路だけを加えた。
+ * 上限は実測 8690 + 100 字の既定余白とした。
  */
-export const AREA_BUDGET = { alwaysLoaded: 13338, rules: 8678 };
+export const AREA_BUDGET = { alwaysLoaded: 13338, rules: 8790 };
 
 /** コードポイント数（CR は除く）。読めなければ null（母集団欠落を上位で検知） */
 function countChars(text) {
@@ -1098,8 +1103,13 @@ export function headingRefDocs(snapshot) {
 // 読まれる型）。**enum variant のフィールド**（`InstantAction::Url` の `url` 等）と
 // **generics 形の struct 定義**（`pub struct Foo<T>`）は入らない——増えたときに G-config-reachability は止めない。
 // ---------------------------------------------------------------------------
-/** 母集団のソース。`[[openers]]` は `config.rs` が re-export するだけで実体は `opener.rs` に在る */
-export const CONFIG_SOURCE_PATHS = ["snotra-core/src/config.rs", "snotra-core/src/opener.rs"];
+/** 母集団のソース。`[[openers]]` と `[hotkey]` は `config.rs` が re-export するだけなので、
+ * serde 型の実体を持つ各モジュールも列挙する。 */
+export const CONFIG_SOURCE_PATHS = [
+  "snotra-core/src/config.rs",
+  "snotra-core/src/opener.rs",
+  "snotra-core/src/hotkey.rs",
+];
 /** 読み手として数えるソース。`snotra-settings/` は入れない（上のコメント参照）。
  *  `snotra-egui-runtime/` も入れない——`snotra-core` に依存せず config を読めないため（実測）。
  *  将来依存が入って config を直接読んだ場合、G-config-reachability は赤へ振れる（安全側） */
@@ -1186,7 +1196,7 @@ export function checkConfigFieldReachability(snapshot, table = NO_LAUNCHER_READ,
   const findings = [];
   for (const key of Object.keys(table)) {
     if (!all.has(key)) {
-      findings.push(finding(CONFIG_SOURCE_PATHS[0], 1, `表の \`${key}\` に対応するフィールドが config.rs に無い（表の腐敗）`));
+      findings.push(finding(CONFIG_SOURCE_PATHS[0], 1, `表の \`${key}\` に対応するフィールドが config serde 型の正本に無い（表の腐敗）`));
     } else if (!unread.has(key)) {
       findings.push(finding(CONFIG_SOURCE_PATHS[0], 1, `\`${key}\` はランチャ側から読まれている。表の記載が古い（NO_LAUNCHER_READ から外す）`));
     }

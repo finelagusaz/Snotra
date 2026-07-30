@@ -347,7 +347,9 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 保存時に `Config::validate()` で以下を検証する。いずれかに該当した場合はエラーを返し保存しない。
 
 - 修飾キーが空
+- 未知の修飾キーを含む
 - メインキーが空
+- 未対応のメインキー
 - Windows システムショートカットと競合する組み合わせ（下表）
 - Win（Super/Meta）修飾キーを含む全組み合わせ（Win 8+ がシェルレベルで `Win+*` を予約済みのため無条件ブロック。下表の完全一致とは別枠のワイルドカード判定）
 
@@ -363,14 +365,17 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 - `Ctrl+Space`: IME 切替はユーザー判断。日本語 IME はデフォルトで使用せず、中国語 IME がある場合は RegisterHotKey が失敗し既存エラー通知が捕捉する
 - `Alt+Escape`: RegisterHotKey がシェル予約により必ず失敗するため事前ブロック不要。egui のキャプチャ UI から入力もできない
 
-- 照合は modifier を `+` 分割 → trim → 小文字化 → ソート → 再結合した正規化形式で行う（`Shift+Ctrl` = `Ctrl+Shift`）
+- ホットキー文字列は core の意味 parser 1 か所で解釈する。modifier は `+` 分割・trim・ASCII 大文字小文字無視で集合化し、空 segment と重複を無視する。別名は `Ctrl`/`Control`、`Win`/`Super`/`Meta`。既知語と未知語が混在する場合も未知語を黙って捨てずエラーにする
+- メインキーは ASCII 英数字、`F1`〜`F12`、`Space` / `Enter` / `Tab` / `Backspace` / `Escape` / `Home` / `End` / `PageUp` / `PageDown` / `Insert` / `Delete` を受理する。別名は `Return` / `Esc` / `Del`。ASCII 記号、非 ASCII 文字、範囲外の function key は未対応として拒否する
+- システムショートカット照合は parser が生成した modifier 集合とメインキーで行う（`Shift+Ctrl` = `Ctrl+Shift`、`Alt+Alt` = `Alt`）
 - 下表のエントリは modifier セット完全一致でブロックする（`Alt+Shift+F4` など modifier セットが異なれば非ブロック）。ただし Win 修飾キーを含む組み合わせは上記のとおりワイルドカードで無条件ブロックする（完全一致の例外）
-- snotra-settings のキャプチャ UI（`hotkey_input.rs`）でも `is_system_shortcut` で即時拒否する（保存時の `Config::validate()` がバックストップ）
+- snotra-settings のキャプチャ UI（`hotkey_input.rs`）も同じ意味 parser で受理可否と競合を即時判定する（保存時の `Config::validate()` がバックストップ）
 
 ### 7.5 設定反映タイミング
 
 - `snotra-settings` が `config.toml` を保存すると、本体の `config_watcher`（`notify` ファイル監視）が変更を検知し設定を再読み込みする
 - ホットキー: 検知時に `PlatformCommand::SetHotkey` で再登録（失敗時は旧設定維持）
+- 通常ロードと config watcher では、ホットキーが意味 parser で解釈不能またはシステムショートカットと競合する場合、`HotkeyConfig::default()`（`Alt+Q`）へ自動修復して `config.toml` に保存する。修復後の値を登録するため、この場合は登録失敗通知を出さない。意味上は妥当でも OS の登録が失敗した場合だけ、従来の登録失敗通知経路を通る
 - トレイアイコン: 検知時に `PlatformCommand::SetTrayVisible` で切替
 - 検索方式/最大件数: 検知後即時反映
 - 履歴の保持上限（`result_limit`）: 検知後即時反映（検索の取得上限・履歴の剪定容量とも実行時に `config` から参照する live-read のため再起動不要、#348）
@@ -579,7 +584,7 @@ results 可視 ⇔ main 可視 ∧ 結果が空でない ∧ 通常結果を隠�
 - `show_on_startup = false` かつ `show_tray_icon = true` の場合は、可視要素はトレイアイコンのみ
 - `show_on_startup = false` かつ `show_tray_icon = false` の場合も非表示常駐し、ホットキー入力で表示可能
 - トレイから設定を開くときは検索UIを同時表示せず、設定画面のみ表示する
-- 初回ホットキー登録失敗時は操作不能回避のため検索UIを表示し、ウィンドウ内にエラー通知を表示する
+- 初回ホットキー登録失敗時は操作不能回避のため検索UIを表示し、ウィンドウ内にエラー通知を表示する。ただし意味 parser で解釈不能またはシステムショートカット競合の永続値はロード中に既定値へ修復されるため、この遷移には入らない
 - 設定変更によるホットキー登録失敗時は旧ホットキーに復帰し、ウィンドウ内に一時エラー通知を表示する
 
 ## 11. ビジュアル
@@ -651,6 +656,7 @@ results 可視 ⇔ main 可視 ∧ 結果が空でない ∧ 通常結果を隠�
 - エクスポート: 保存済み config.toml を指定先にコピー。ファイル名デフォルトは `config_yyyymmddhh24mm.toml`
 - インポート: TOML ファイルを選択 → パース → バリデーション → config.toml に上書き保存
   - 欠損キーはデフォルト補完（`#[serde(default)]` 付きセクション）、未知キーは無視
+  - ホットキーは通常ロード用の自動修復を行う前の生値を検証する。不正値やシステムショートカット競合を既定値へ置換して成功扱いにはしない
   - バリデーション失敗時はインポートを中止しエラー表示
 - 「設定フォルダを開く」: `%APPDATA%\Snotra` をエクスプローラーで開く
 

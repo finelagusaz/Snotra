@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use eframe::egui;
-use snotra_core::config::Config;
+use snotra_core::config::{Config, ConfigError};
 
 use crate::app::config_error_message;
 use crate::i18n::{Tr, TrKey};
@@ -243,6 +243,21 @@ fn handle_export_result(path: Option<PathBuf>, tr: &Tr) -> (Option<String>, bool
     }
 }
 
+/// import 用の設定を検証してから migration する。
+///
+/// 通常ロードは不正ホットキーを既定値へ自動補正するが、import は不正なバックアップを
+/// 成功扱いにしないため、生値を migration より先に検証する。
+fn prepare_import_config(mut config: Config) -> Result<Config, ConfigError> {
+    if let Some(error) = config.validate_hotkey().into_iter().next() {
+        return Err(error);
+    }
+    config.apply_migrations();
+    if let Some(error) = config.validate().into_iter().next() {
+        return Err(error);
+    }
+    Ok(config)
+}
+
 /// Returns (message, is_error, imported_config). None message = cancelled.
 fn handle_import_result(path: Option<PathBuf>, tr: &Tr) -> (Option<String>, bool, Option<Config>) {
     let Some(src) = path else {
@@ -254,18 +269,18 @@ fn handle_import_result(path: Option<PathBuf>, tr: &Tr) -> (Option<String>, bool
             return (Some(format!("{}{}", tr.t(TrKey::StatusImportFailed), first_line(&e.to_string()))), true, None);
         }
     };
-    let mut config = match Config::from_toml_str(&content) {
+    let config = match Config::from_toml_str(&content) {
         Ok(c) => c,
         Err(e) => {
             return (Some(format!("{}{}", tr.t(TrKey::StatusImportFailed), localize_toml_error(&e, tr))), true, None);
         }
     };
-    // Apply the same migrations as Config::load() (legacy field migration, normalization, etc.)
-    config.apply_migrations();
-    let errors = config.validate();
-    if !errors.is_empty() {
-        return (Some(format!("{}{}", tr.t(TrKey::StatusImportValidationError), config_error_message(&errors[0], tr))), true, None);
-    }
+    let config = match prepare_import_config(config) {
+        Ok(config) => config,
+        Err(error) => {
+            return (Some(format!("{}{}", tr.t(TrKey::StatusImportValidationError), config_error_message(&error, tr))), true, None);
+        }
+    };
     if let Err(e) = config.save() {
         return (Some(format!("{}{}", tr.t(TrKey::StatusImportFailed), first_line(&e))), true, None);
     }
@@ -331,5 +346,18 @@ mod tests {
         assert_eq!(extract_backtick("missing field `hotkey`"), Some("hotkey"));
         assert_eq!(extract_backtick("missing field `target`"), Some("target"));
         assert_eq!(extract_backtick("no backticks here"), None);
+    }
+
+    #[test]
+    fn import_rejects_invalid_hotkey_before_migration_can_replace_it() {
+        for (modifier, key) in [("Hyper", "Q"), ("Alt", "F13"), ("Alt+Alt", "F4")] {
+            let mut config = Config::default();
+            config.hotkey.modifier = modifier.to_string();
+            config.hotkey.key = key.to_string();
+            assert!(
+                prepare_import_config(config).is_err(),
+                "import must reject {modifier}+{key}"
+            );
+        }
     }
 }

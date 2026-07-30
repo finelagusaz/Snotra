@@ -34,7 +34,9 @@ pub(crate) enum TrKey {
     StatusReadFailedBlocked,
     // Config error messages
     ErrHotkeyModifierEmpty,
+    ErrHotkeyUnknownModifier,
     ErrHotkeyKeyEmpty,
+    ErrHotkeyUnsupportedKey,
     ErrHotkeySystemConflict,
     ErrVisibleRowsZero,
     ErrWindowWidthTooSmall,
@@ -226,7 +228,9 @@ fn ja(key: TrKey) -> &'static str {
         TrKey::StatusReadFailedBlocked => "読み込み失敗中: 上のチェックを入れると保存できます",
         // Config error messages
         TrKey::ErrHotkeyModifierEmpty => "ホットキーの修飾キーが未設定です",
+        TrKey::ErrHotkeyUnknownModifier => "ホットキーの修飾キー {value} は使用できません",
         TrKey::ErrHotkeyKeyEmpty => "ホットキーのキーが未設定です",
+        TrKey::ErrHotkeyUnsupportedKey => "ホットキーのキー {value} は使用できません",
         TrKey::ErrHotkeySystemConflict => "{value} はシステムショートカットと競合します",
         TrKey::ErrVisibleRowsZero => "最大表示件数は1以上にしてください",
         TrKey::ErrWindowWidthTooSmall => "{value} は小さすぎます（200以上）",
@@ -418,7 +422,9 @@ fn en(key: TrKey) -> &'static str {
         TrKey::StatusReadFailedBlocked => "Load failed: check the box above to enable saving",
         // Config error messages
         TrKey::ErrHotkeyModifierEmpty => "Hotkey modifier is not set",
+        TrKey::ErrHotkeyUnknownModifier => "Hotkey modifier {value} is not supported",
         TrKey::ErrHotkeyKeyEmpty => "Hotkey key is not set",
+        TrKey::ErrHotkeyUnsupportedKey => "Hotkey key {value} is not supported",
         TrKey::ErrHotkeySystemConflict => "{value} conflicts with a system shortcut",
         TrKey::ErrVisibleRowsZero => "Max results must be at least 1",
         TrKey::ErrWindowWidthTooSmall => "{value} is too small (min 200)",

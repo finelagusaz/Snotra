@@ -14,6 +14,10 @@ use std::path::{Path, PathBuf};
 const ENV_CONFIG_DIR: &str = "SNOTRA_CONFIG_DIR";
 
 pub use crate::error::ConfigError;
+// ホットキーの永続型は `hotkey.rs` が文字列 parser・意味型とともに所有する。
+// re-export で既存の `snotra_core::config::HotkeyConfig` パスを維持する。
+pub use crate::hotkey::HotkeyConfig;
+use crate::hotkey::HotkeyParseError;
 // opener マッチングエンジン・プリセット検出は `opener.rs` に分離済み（issue #435）。
 // `OpenerRule`/`OpenerTool` は `Config.openers` として config.toml に紐づく serde 型のため、
 // re-export で既存の呼び出し元（`snotra_core::config::...` パス、src-tauri/snotra-settings 含む）を壊さない。
@@ -103,24 +107,6 @@ pub struct Config {
     pub openers: Vec<OpenerRule>,
     #[serde(default)]
     pub instant_commands: Vec<InstantCommand>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HotkeyConfig {
-    pub modifier: String,
-    pub key: String,
-}
-
-impl Default for HotkeyConfig {
-    /// **既定ホットキーのリテラルはここ 1 か所だけである**（#795）。`modifier` / `key` は必須
-    /// フィールド（serde の既定関数を持たない）ため、`Config::default()` と
-    /// `fallback_hotkey_if_system_shortcut` はどちらもこの実装を経由して読む。
-    fn default() -> Self {
-        Self {
-            modifier: "Alt".to_string(),
-            key: "Q".to_string(),
-        }
-    }
 }
 
 fn default_hotkey_toggle() -> bool {
@@ -747,7 +733,7 @@ impl Config {
         }
     }
 
-    /// Apply post-load migrations: legacy field migration, normalization, system shortcut fallback.
+    /// Apply post-load migrations: legacy field migration, normalization, invalid hotkey fallback.
     /// Returns true if any changes were applied.
     /// Called by `load()` (auto-save on change) and import (caller decides when to save).
     pub fn apply_migrations(&mut self) -> bool {
@@ -762,7 +748,7 @@ impl Config {
         changed |= self.paths.normalize_scan_paths(); // (5) scan path dedup・正規化。(1) より後必須
         changed |= self.normalize_openers(); // opener ターゲットの正規化・具体度ソート
         changed |= self.migrate_instant_legacy_commands(); // 旧 `command` 単一文字列 → `Url`
-        changed |= self.fallback_hotkey_if_system_shortcut(); // system shortcut 検出時のデフォルト復帰
+        changed |= self.fallback_invalid_hotkey(); // parse 不可・system shortcut のデフォルト復帰
         self.dedup_instant_command_names(); // #638: 意図的に changed へ寄与しない（下記 doc）
         changed
     }
@@ -875,14 +861,16 @@ impl Config {
         changed
     }
 
-    /// システムショートカットと衝突するホットキーを既定値（Alt+Q）へフォールバックする。
-    fn fallback_hotkey_if_system_shortcut(&mut self) -> bool {
-        if !is_system_shortcut(&self.hotkey.modifier, &self.hotkey.key) {
-            return false;
-        }
+    /// parse 不能またはシステムショートカットと衝突するホットキーを既定値へ補正する。
+    fn fallback_invalid_hotkey(&mut self) -> bool {
+        let reason = match self.hotkey.parse() {
+            Ok(parsed) if !parsed.is_system_shortcut() => return false,
+            Ok(_) => "system shortcut".to_string(),
+            Err(error) => error.to_string(),
+        };
         let default_hotkey = HotkeyConfig::default();
         eprintln!(
-            "[config] system shortcut detected ({}+{}), falling back to default ({}+{})",
+            "[config] invalid hotkey detected ({reason}: {}+{}), falling back to default ({}+{})",
             self.hotkey.modifier, self.hotkey.key,
             default_hotkey.modifier, default_hotkey.key,
         );
@@ -1017,24 +1005,7 @@ impl Config {
 
     /// Validates config consistency. Call before save.
     pub fn validate(&self) -> Vec<ConfigError> {
-        let mut errors = Vec::new();
-
-        // Hotkey validation
-        if self.hotkey.modifier.trim().is_empty() {
-            errors.push(ConfigError::HotkeyModifierEmpty);
-        }
-        if self.hotkey.key.trim().is_empty() {
-            errors.push(ConfigError::HotkeyKeyEmpty);
-        }
-        if !self.hotkey.modifier.trim().is_empty()
-            && !self.hotkey.key.trim().is_empty()
-            && is_system_shortcut(&self.hotkey.modifier, &self.hotkey.key)
-        {
-            errors.push(ConfigError::HotkeySystemConflict {
-                modifier: self.hotkey.modifier.clone(),
-                key: self.hotkey.key.clone(),
-            });
-        }
+        let mut errors = self.validate_hotkey();
 
         // Appearance validation
         if self.appearance.effective_visible_rows() == 0 {
@@ -1106,6 +1077,51 @@ impl Config {
         errors
     }
 
+    /// 永続文字列のままのホットキーを検証する。
+    ///
+    /// import は自動補正を行う `apply_migrations()` より前にこれを呼び、不正なバックアップを
+    /// 黙って既定値へ置換しない。modifier と key が両方空なら従来どおり 2 件を返す。
+    pub fn validate_hotkey(&self) -> Vec<ConfigError> {
+        let mut errors = Vec::new();
+        if self
+            .hotkey
+            .modifier
+            .split('+')
+            .all(|part| part.trim().is_empty())
+        {
+            errors.push(ConfigError::HotkeyModifierEmpty);
+        }
+        if self.hotkey.key.trim().is_empty() {
+            errors.push(ConfigError::HotkeyKeyEmpty);
+        }
+        if !errors.is_empty() {
+            return errors;
+        }
+
+        match self.hotkey.parse() {
+            Ok(parsed) if parsed.is_system_shortcut() => {
+                errors.push(ConfigError::HotkeySystemConflict {
+                    modifier: self.hotkey.modifier.clone(),
+                    key: self.hotkey.key.clone(),
+                });
+            }
+            Ok(_) => {}
+            Err(HotkeyParseError::ModifierEmpty) => {
+                errors.push(ConfigError::HotkeyModifierEmpty);
+            }
+            Err(HotkeyParseError::UnknownModifier { modifier }) => {
+                errors.push(ConfigError::HotkeyUnknownModifier { modifier });
+            }
+            Err(HotkeyParseError::KeyEmpty) => {
+                errors.push(ConfigError::HotkeyKeyEmpty);
+            }
+            Err(HotkeyParseError::UnsupportedKey { key }) => {
+                errors.push(ConfigError::HotkeyUnsupportedKey { key });
+            }
+        }
+        errors
+    }
+
     pub fn normalize_openers(&mut self) -> bool {
         let normalized = normalize_openers(&self.openers);
         if normalized != self.openers {
@@ -1126,68 +1142,6 @@ impl Config {
     pub fn export_filename(year: u16, month: u16, day: u16, hour: u16, minute: u16) -> String {
         format!("config_{year:04}{month:02}{day:02}{hour:02}{minute:02}.toml")
     }
-}
-
-/// Forbidden (modifier_normalized, key_normalized) pairs.
-/// Entries must be pre-sorted alphabetically (e.g. "alt+ctrl" not "ctrl+alt")
-/// because is_system_shortcut() sorts modifier parts before matching.
-/// Key aliases are resolved before matching (esc→escape, del→delete, etc.)
-/// to align with hotkey.rs parse_vk().
-const SYSTEM_SHORTCUTS: &[(&str, &str)] = &[
-    ("alt", "f4"),
-    ("alt", "space"),         // Alt+Space: Windows system menu (SC_KEYMENU)
-    ("alt", "tab"),
-    ("alt+ctrl", "delete"),   // Ctrl+Alt+Delete: sorted alt < ctrl
-    ("ctrl+shift", "escape"), // Ctrl+Shift+Escape: sorted ctrl < shift
-];
-
-/// Normalizes a modifier part to its canonical form, matching hotkey.rs parse_modifier().
-/// Input must already be trimmed and lowercased.
-fn normalize_modifier_part(part: &str) -> &str {
-    match part {
-        "control" => "ctrl",
-        "super" | "meta" => "win",
-        other => other,
-    }
-}
-
-/// Normalizes a key name to its canonical form, matching hotkey.rs parse_vk().
-fn normalize_key(key: &str) -> String {
-    match key {
-        "esc" => "escape".to_string(),
-        "return" => "enter".to_string(),
-        "del" => "delete".to_string(),
-        other => other.to_string(),
-    }
-}
-
-/// Returns true if the given modifier+key combination matches a known Windows system shortcut.
-/// modifier: e.g. "Ctrl+Shift", "Control+Alt". key: e.g. "F4", "Esc".
-/// Empty modifier or key always returns false (empty check runs before this in validate()).
-/// Aliases (control→ctrl, esc→escape, del→delete) are resolved to match hotkey.rs behaviour.
-pub fn is_system_shortcut(modifier: &str, key: &str) -> bool {
-    if modifier.trim().is_empty() || key.trim().is_empty() {
-        return false;
-    }
-    let lowered: Vec<String> = modifier
-        .split('+')
-        .map(|p| p.trim().to_lowercase())
-        .filter(|p| !p.is_empty())
-        .collect();
-    let mut parts: Vec<&str> = lowered
-        .iter()
-        .map(|p| normalize_modifier_part(p.as_str()))
-        .collect();
-    // Win 8+ reserves all Win+* combinations at the shell level.
-    if parts.contains(&"win") {
-        return true;
-    }
-    parts.sort_unstable();
-    let norm_mod = parts.join("+");
-    let norm_key = normalize_key(key.trim().to_lowercase().as_str());
-    SYSTEM_SHORTCUTS
-        .iter()
-        .any(|&(m, k)| m == norm_mod && k == norm_key)
 }
 
 #[cfg(test)]
@@ -2758,79 +2712,6 @@ background_color = '#123456'
         assert_eq!(errors.len(), 6, "all 6 errors should be reported");
     }
 
-    // ---- is_system_shortcut tests ----
-
-    #[test]
-    fn system_shortcut_blocked_combos() {
-        // Each entry in SYSTEM_SHORTCUTS must be blocked
-        let cases = [
-            ("Alt", "F4"),
-            ("Alt", "Space"),
-            ("Ctrl+Shift", "Escape"),
-            ("Alt", "Tab"),
-            ("Ctrl+Alt", "Delete"),
-        ];
-        for (modifier, key) in cases {
-            assert!(
-                is_system_shortcut(modifier, key),
-                "expected {modifier}+{key} to be a system shortcut"
-            );
-        }
-    }
-
-    #[test]
-    fn system_shortcut_win_modifier_blocked() {
-        // Win 8+ reserves all Win+* combinations at the shell level
-        assert!(is_system_shortcut("Win", "Q"));
-        assert!(is_system_shortcut("Super", "A"));
-        assert!(is_system_shortcut("Ctrl+Win", "Space"));
-        assert!(is_system_shortcut("Meta", "F1"));
-    }
-
-    #[test]
-    fn system_shortcut_case_insensitive() {
-        assert!(is_system_shortcut("alt", "f4"));
-        assert!(is_system_shortcut("ALT", "F4"));
-        assert!(is_system_shortcut("Alt", "f4"));
-    }
-
-    #[test]
-    fn system_shortcut_modifier_order_independent() {
-        assert!(is_system_shortcut("Shift+Ctrl", "Escape"));
-        assert!(is_system_shortcut("ctrl+shift", "escape"));
-        // Ctrl+Alt+Delete: sorted → alt+ctrl, must match
-        assert!(is_system_shortcut("Ctrl+Alt", "Delete"));
-        assert!(is_system_shortcut("Alt+Ctrl", "Delete"));
-    }
-
-    #[test]
-    fn system_shortcut_alias_normalization() {
-        // modifier alias: control → ctrl
-        assert!(is_system_shortcut("Control+Shift", "Escape"));
-        assert!(is_system_shortcut("Control+Alt", "Delete"));
-        // key alias: esc → escape
-        assert!(is_system_shortcut("Ctrl+Shift", "Esc"));
-        // combined aliases
-        assert!(is_system_shortcut("Control+Shift", "Esc"));
-    }
-
-    #[test]
-    fn system_shortcut_allowed_combos() {
-        assert!(!is_system_shortcut("Alt", "Q"));
-        assert!(!is_system_shortcut("Ctrl", "F1"));
-        assert!(!is_system_shortcut("Alt+Shift", "F4")); // extra modifier → not Alt+F4
-        assert!(!is_system_shortcut("Alt+Shift", "Space")); // extra modifier → not Alt+Space
-        assert!(!is_system_shortcut("Ctrl", "Space")); // IME 切替はユーザー判断
-        assert!(!is_system_shortcut("Alt", "Escape")); // RegisterHotKey が失敗するので不要
-    }
-
-    #[test]
-    fn system_shortcut_empty_inputs_return_false() {
-        assert!(!is_system_shortcut("", "F4"));
-        assert!(!is_system_shortcut("Alt", ""));
-        assert!(!is_system_shortcut("", ""));
-    }
-
     #[test]
     fn validate_system_shortcut_produces_conflict_error() {
         let mut config = Config::default();
@@ -2841,6 +2722,67 @@ background_color = '#123456'
             modifier: "Alt".to_string(),
             key: "F4".to_string(),
         }));
+    }
+
+    #[test]
+    fn validate_duplicate_modifier_cannot_bypass_system_conflict() {
+        let mut config = Config::default();
+        config.hotkey.modifier = "Alt+Alt".to_string();
+        config.hotkey.key = "F4".to_string();
+        assert!(config.validate().contains(&ConfigError::HotkeySystemConflict {
+            modifier: "Alt+Alt".to_string(),
+            key: "F4".to_string(),
+        }));
+    }
+
+    #[test]
+    fn validate_reports_unknown_modifier_and_unsupported_key() {
+        let mut config = Config::default();
+        config.hotkey.modifier = "Ctrl+Hyper".to_string();
+        assert_eq!(
+            config.validate_hotkey(),
+            vec![ConfigError::HotkeyUnknownModifier {
+                modifier: "Hyper".to_string(),
+            }]
+        );
+
+        config.hotkey.modifier = "Alt".to_string();
+        config.hotkey.key = "!".to_string();
+        assert_eq!(
+            config.validate_hotkey(),
+            vec![ConfigError::HotkeyUnsupportedKey {
+                key: "!".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn validate_preserves_both_empty_hotkey_errors() {
+        let mut config = Config::default();
+        config.hotkey.modifier.clear();
+        config.hotkey.key.clear();
+        assert_eq!(
+            config.validate_hotkey(),
+            vec![ConfigError::HotkeyModifierEmpty, ConfigError::HotkeyKeyEmpty]
+        );
+
+        config.hotkey.modifier = "++".to_string();
+        assert_eq!(
+            config.validate_hotkey(),
+            vec![ConfigError::HotkeyModifierEmpty, ConfigError::HotkeyKeyEmpty]
+        );
+    }
+
+    #[test]
+    fn valid_hotkey_aliases_are_not_rewritten_and_migration_is_idempotent() {
+        let mut config = Config::normalized_default();
+        config.hotkey.modifier = " Control++Control ".to_string();
+        config.hotkey.key = "return".to_string();
+
+        assert!(!config.apply_migrations());
+        assert_eq!(config.hotkey.modifier, " Control++Control ");
+        assert_eq!(config.hotkey.key, "return");
+        assert!(!config.apply_migrations());
     }
 
     #[test]
@@ -3111,6 +3053,30 @@ background_color = '#123456'
         assert_eq!(loaded.appearance.window_width, 777);
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_from_dir_repairs_and_saves_invalid_hotkey() {
+        for (case, modifier, key) in [
+            ("unknown_modifier", "Hyper", "Q"),
+            ("unsupported_key", "Alt", "!"),
+            ("semantic_conflict", "Alt+Alt", "F4"),
+        ] {
+            let dir = temp_dir(case);
+            let path = dir.join("config.toml");
+            let mut written = Config::default();
+            written.hotkey.modifier = modifier.to_string();
+            written.hotkey.key = key.to_string();
+            fs::write(&path, toml::to_string_pretty(&written).unwrap()).unwrap();
+
+            let (loaded, outcome) = Config::load_from_dir_reporting(&dir);
+            assert_eq!(outcome, LoadOutcome::Loaded, "case={case}");
+            assert_eq!(loaded.hotkey, HotkeyConfig::default(), "case={case}");
+            let saved: Config = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            assert_eq!(saved.hotkey, HotkeyConfig::default(), "case={case}");
+
+            let _ = fs::remove_dir_all(&dir);
+        }
     }
 
     #[test]

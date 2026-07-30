@@ -4,7 +4,7 @@ param(
   [int]$ObserveTimeoutMs = 8000,
   # hotkey の仮想キーコード列（カンマ区切り・押下順・解放は逆順）。
   # **通常は指定不要**——既定では起動時の `hotkey:registered` trace から、アプリが実際に
-  # 登録した VK 列を読む（対応表の SSOT は src-tauri/src/platform/hotkey.rs の injection_vks）。
+  # 登録した VK 列を読む（対応表の SSOT は src-tauri/src/platform/hotkey.rs の PreparedHotkey）。
   # 明示指定したときだけ trace より優先される（trace が出ない旧バイナリの検証など）。
   # pwsh -File / npm 経由で配列引数が壊れないよう文字列で受けて内部で分割する。
   [string]$HotkeyVks = "18,81"
@@ -333,8 +333,8 @@ try {
   # CI runner は起動直後の負荷で初回注入を取りこぼすことがある（PR #662 で flake 実測・
   # 再走で合格）ため、観測できなければ一度だけ再注入する。
   # 押すキーは**アプリが実際に登録した値**から採る（scripts が config を読み解いて
-  # VK へ変換すると、hotkey.rs の parse_modifier / parse_vk / 修飾ビット→VK の 3 表が
-  # PowerShell 側に写り、ドリフトする）。-HotkeyVks が明示指定されたときだけそちらを使う。
+  # VK へ変換すると、core の意味 parser と platform の Win32 変換が PowerShell 側にも写り、
+  # ドリフトする）。-HotkeyVks が明示指定されたときだけそちらを使う。
   # $hotkeySource / $vksLabel は「実際に注入する VK 列」を失敗メッセージへも一致させるための
   # 単一の出所（#671 サイクル PR A レビュー指摘 2）。$HotkeyVks（既定値・未指定でも常に非空）を
   # そのままメッセージへ出すと、trace 由来の VK で失敗したときに実際と異なる値を報告してしまう。
@@ -417,8 +417,8 @@ try {
   # **config.toml.bak の不在を根拠にしない**——退避は best-effort で、fs::rename が失敗すれば parse
   # 失敗でも .bak は現れない（config.rs の backup_invalid）。`[config] ` 付きの eprintln は読み込み
   # 失敗の全 arm に在るので、これが健全な観測点である。**ただし「成功時には出ない」は無条件には
-  # 真でない**——duplicate instant command（config.rs:790）と system shortcut fallback（:885）は
-  # parse 成功後に出る。この seed は instant_commands 無し・Alt+Q ゆえどちらも踏まないが、
+  # 真でない**——duplicate instant command と invalid hotkey fallback は parse 成功後に出る。
+  # この seed は instant_commands 無し・妥当な Alt+Q ゆえどちらも踏まないが、
   # **seed を変えるときはこの前提を確かめること**。
   # visual-check-colors.ps1:143-159 の Test-SeedHealth と同型だが、共有ヘルパーにはしない（#843）。
   $configDiag = @(Select-String -Path $errPath -SimpleMatch '[config] ')

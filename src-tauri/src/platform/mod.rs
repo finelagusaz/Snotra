@@ -237,13 +237,11 @@ fn process_commands(
     while let Ok(command) = command_rx.try_recv() {
         match command {
             PlatformCommand::SetHotkey { config, reply } => {
-                hotkey::unregister();
-                let success = hotkey::register(&config);
+                let success = hotkey::replace(current_hotkey, &config);
                 if success {
                     *current_hotkey = config;
                     let _ = reply.send(true);
                 } else {
-                    let _ = hotkey::register(current_hotkey);
                     let _ = reply.send(false);
                 }
             }

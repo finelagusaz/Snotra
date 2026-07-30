@@ -20,6 +20,7 @@ on:
       # workflow の各ステップが直接呼ぶスクリプト（変更で自己検証する）
       - 'scripts/smoke-startup.ps1'      # "Run startup smoke" ステップ
       - 'scripts/smoke-egui.ps1'         # "Run egui smoke" ステップ（#532 SU7）
+      - 'scripts/lib/**'                  # 両 smoke の共有モジュール（#843）
       # 依存 manifest/lockfile（依存更新 PR を smoke 網に載せる）
       - '**/Cargo.toml'
       - 'Cargo.lock'

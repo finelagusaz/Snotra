@@ -11,6 +11,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+Import-Module (Join-Path $PSScriptRoot 'lib/SnotraSmoke.psm1') -Force
 
 if ($Iterations -lt 1) {
   throw "Iterations must be >= 1"
@@ -27,33 +28,6 @@ if (-not (Test-Path $ExePath)) {
 # no independent lifecycle to verify here.
 $summaries = @()
 $failures = @()
-$savedTraceEnv = $env:SNOTRA_TRACE
-
-$savedConfigDirEnv = $env:SNOTRA_CONFIG_DIR
-
-function Restore-TraceEnv {
-  param([string]$Saved)
-  # **`$null -eq $Saved` で判定してはならない**——`param([string]$Saved)` は束縛時に `$null` を
-  # `''` へ変換するため、その分岐は**到達不能**になる（実測）。未設定で呼ばれたときに空文字の
-  # 変数を残さないよう `IsNullOrEmpty` で見る。
-  if ([string]::IsNullOrEmpty($Saved)) {
-    Remove-Item Env:SNOTRA_TRACE -ErrorAction SilentlyContinue
-  } else {
-    $env:SNOTRA_TRACE = $Saved
-  }
-}
-
-function Restore-ConfigDirEnv {
-  param([string]$Saved)
-  # **消すのではなく元の値へ戻す**——呼び出し元が既に SNOTRA_CONFIG_DIR を持っていることがある
-  # （visual-check-colors.ps1:179 が案内する手動ワークフロー）。無条件に消すとその値を壊す。
-  # **`$null -eq $Saved` で判定してはならない**（Restore-TraceEnv と同じ理由・実測）。
-  if ([string]::IsNullOrEmpty($Saved)) {
-    Remove-Item Env:SNOTRA_CONFIG_DIR -ErrorAction SilentlyContinue
-  } else {
-    $env:SNOTRA_CONFIG_DIR = $Saved
-  }
-}
 
 # 検証用プロファイル（#804）。**実ユーザーの %APPDATA%\Snotra は読みも書きもしない**——
 # 5 起動が実 config を作る/汚すことが #804 の元凶だった。target/ の下に置くのは
@@ -61,13 +35,6 @@ function Restore-ConfigDirEnv {
 # CARGO_TARGET_DIR 環境で掃除対象から外れるのは受容する残余
 # ——ADR-config-dir-env-seam-rejected-alternatives.md §4）。
 $profileDir = Join-Path $PSScriptRoot '..\target\smoke-startup\profile'
-New-Item -ItemType Directory -Force -Path $profileDir | Out-Null
-
-# **掃除はループ前に 1 回だけ**（検査もループ後に 1 回だけ・下）。各回で掃除して各回で検査すると、
-# index.bin が書かれる前に Stop-Process -Force された回が **false red** になる。
-# 残骸を残すと、逆に下の env 到達性判定が古いファイルで空振り合格する。
-Remove-Item (Join-Path $profileDir 'config.toml.bak') -Force -ErrorAction SilentlyContinue
-Get-ChildItem -Path $profileDir -Filter '*.bin' -ErrorAction SilentlyContinue | Remove-Item -Force
 
 # **ループの前に 1 回だけ seed し、5 起動で共有する**（#804・不変条件 5）。毎回作り直すと 5 回
 # すべてが first-run になり、**いま CI が測っているもの（first-run でない起動）とは別のものを
@@ -78,43 +45,23 @@ Get-ChildItem -Path $profileDir -Filter '*.bin' -ErrorAction SilentlyContinue | 
 # 破損復旧経路（stderr 診断 + config.toml.bak 退避 + 復旧バルーン）へ落ちる。[paths] は空ヘッダで
 # よい（PathsConfig.scan は #[serde(default)] ゆえ索引 0 件になる）。[general] は省略する
 # ——既定値がそのまま望ましい挙動になる。
-# **visual-check-colors.ps1 と smoke-egui.ps1 も同型の seed を持つ**（必須セクションの根拠は共通）
-# が、3 者は同型ではない（[[paths.scan]] の有無）。共有ヘルパーにするかの判断は #843 が引き取る。
-$seedToml = @"
-[hotkey]
-modifier = "Alt"
-key = "Q"
-
-[appearance]
-window_width = 600
-
-[paths]
-"@
-Set-Content -Path (Join-Path $profileDir 'config.toml') -Value $seedToml -Encoding utf8
-
-# env へ渡す値は絶対化する（config_dir_from は環境変数の値を**そのまま**保存先にする）。
-$profileFull = (Resolve-Path $profileDir).Path
+# **掃除と必須セクションの骨格は共有モジュールが所有する**（#843）。startup 固有の意味論は
+# PathEntries を渡さない「索引 0 件」と、ループ前に 1 回だけ作って 5 起動で共有することである。
+$profile = New-SnotraVerificationProfile -ProfileDir $profileDir
+$profileFull = $profile.FullPath
 Write-Host "検証用プロファイル: $profileFull（実ユーザーの config には触れません）"
 
 for ($run = 1; $run -le $Iterations; $run++) {
-  Get-Process snotra -ErrorAction SilentlyContinue | Stop-Process -Force
+  Resolve-SnotraExistingProcess -Policy Stop
 
   $errPath = Join-Path $env:TEMP ("snotra_smoke_startup_{0}.err" -f $run)
   $outPath = Join-Path $env:TEMP ("snotra_smoke_startup_{0}.out" -f $run)
   if (Test-Path $errPath) { Remove-Item $errPath -Force }
   if (Test-Path $outPath) { Remove-Item $outPath -Force }
 
-  # env は「子プロセスは生成時に環境を写す」性質に依存する——Start-Process を跨げば十分で、
-  # 親側は直後に戻してよい（本体は自分の写しを読む）。**SNOTRA_CONFIG_DIR にだけ try/finally を
-  # 持たせる**のは Start-Process 自体が throw しうるためで、漏らすと同じシェルの後続操作
-  # （`cargo run -p snotra` 等）が使い捨てプロファイルを見る（不変条件 2）。
-  $env:SNOTRA_TRACE = "1"
-  $env:SNOTRA_CONFIG_DIR = $profileFull
-  try {
-    $proc = Start-Process -FilePath $ExePath -PassThru -RedirectStandardError $errPath -RedirectStandardOutput $outPath
-  } finally {
-    Restore-ConfigDirEnv -Saved $savedConfigDirEnv
-  }
+  # 2 つの env は共有モジュールが Start-Process の成功・例外の両経路で元へ戻す。
+  $proc = Start-SnotraProcess -ConfigDir $profileFull -Trace -FilePath $ExePath `
+    -StandardErrorPath $errPath -StandardOutputPath $outPath
 
   # **最初の trace が出るまで待ってから、観測窓 $WaitMs を開く**（#690 follow-up）。
   #
@@ -141,20 +88,9 @@ for ($run = 1; $run -le $Iterations; $run++) {
   if (-not $proc.HasExited) {
     Stop-Process -Id $proc.Id -Force
   }
-  Restore-TraceEnv -Saved $savedTraceEnv
   Start-Sleep -Milliseconds 120
 
-  $events = @()
-  if (Test-Path $errPath) {
-    foreach ($line in Get-Content $errPath) {
-      if ($line -match '^\[trace\] (.+)$') {
-        try {
-          $events += ($Matches[1] | ConvertFrom-Json)
-        } catch {
-        }
-      }
-    }
-  }
+  $events = @(Read-SnotraTraceEvents -Path $errPath)
 
   # **seed が読めたことを肯定的に確かめる**（#804・不変条件 4）。seed が parse に失敗すると本体は
   # 既定 config で起動し、既定の scan パスで索引を作る——**この smoke の他の判定（`*:error` 不在・

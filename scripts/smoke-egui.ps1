@@ -55,6 +55,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+Import-Module (Join-Path $PSScriptRoot 'lib/SnotraSmoke.psm1') -Force
 
 if (-not (Test-Path $ExePath)) {
   throw "Executable not found: $ExePath"
@@ -88,15 +89,6 @@ results window coverage would be SKIPPED: -ResultsQuery が空である。
 "@
 }
 
-New-Item -ItemType Directory -Force -Path $profileDir | Out-Null
-
-# **前回の残骸を消す**（visual-check-colors.ps1:85-87 と同じ）。残すと下の 2 判定
-# ——seed 健全性（config.toml.bak を根拠にしないので直接は効かないが、診断を誤らせる）と
-# env 到達性（*.bin の ∃）——のうち後者が**古いファイルで空振り合格する**。
-Remove-Item (Join-Path $profileDir 'config.toml.bak') -Force -ErrorAction SilentlyContinue
-Get-ChildItem -Path $profileDir -Filter '*.bin' -ErrorAction SilentlyContinue | Remove-Item -Force
-
-$cfgPath = Join-Path $profileDir "config.toml"
 # results 窓の検証用に、索引に必ず 1 件載るダミーを置く（中身は問わない——indexer は
 # 拡張子だけで判定する: snotra-core/src/indexer.rs の matches_extension）。
 # 名前は既存の索引と衝突しにくい接頭辞にし、-ResultsQuery 既定の "z" で引けるようにする。
@@ -105,11 +97,8 @@ New-Item -ItemType Directory -Force -Path $scanDir | Out-Null
 $dummy = Join-Path $scanDir "zsnotrasmoke.exe"
 if (-not (Test-Path $dummy)) { New-Item -ItemType File -Path $dummy | Out-Null }
 $scanDirToml = $scanDir -replace '\\', '/'
-# 最小の有効 TOML。**scripts/visual-check-colors.ps1 と scripts/smoke-startup.ps1 が同型の seed を
-# 持つ**（必須セクションの
-# 根拠は共通なので、片方だけ直さないこと）。**ただし同型ではない**——あちらは results 窓を
-# 出さないため [[paths.scan]] を持たない。**共通ヘルパーにしないのはそのためであり**、
-# 共有化するかどうかの判断は #843 が引き取る（#804 は書き先を変えるだけ）。
+# 最小の有効 TOML。必須セクションの骨格は共有モジュールが持ち、results 固有の scan だけを
+# PathEntries として渡す（#843）。3 本の seed が同型ではないことは維持する。
 # [hotkey]/[appearance]/[paths] は #[serde(default)] 無しの必須セクションで、
 # 空 TOML は parse 失敗し「破損復旧」経路（stderr 診断 + config.toml.bak 退避 + 復旧バルーン）を
 # 毎回踏んでしまう（PR #659 レビューで検出）。値は config.rs の既定と同一
@@ -118,35 +107,17 @@ $scanDirToml = $scanDir -replace '\\', '/'
 # **`scan = []` と `[[paths.scan]]` を併記してはならない**——同一キーの再定義で TOML の
 # parse が落ち、config 破損復旧経路へ落ちる。`[paths]` を空ヘッダで置き、その下に
 # array-of-tables を続ける（`PathsConfig.scan` は #[serde(default)] ゆえ空でも可）。
-$seedToml = @"
-[hotkey]
-modifier = "Alt"
-key = "Q"
-
-[appearance]
-window_width = 600
-
-[paths]
-
+$pathEntries = @"
 [[paths.scan]]
 path = "$scanDirToml"
 extensions = [".exe"]
 include_folders = false
 "@
-Set-Content -Path $cfgPath -Value $seedToml -Encoding utf8
-
-# **env へ渡す値は絶対化する**——config.rs の `config_dir_from` は環境変数の値を**そのまま**
-# 保存先にするので、`..` を含んだ断片を渡さない（visual-check-colors.ps1:132-133 と同じ順序:
-# ディレクトリ作成 → Resolve-Path → env 設定）。
-$profileFull = (Resolve-Path $profileDir).Path
+$profile = New-SnotraVerificationProfile -ProfileDir $profileDir -PathEntries $pathEntries
+$cfgPath = $profile.ConfigPath
+$profileFull = $profile.FullPath
 Write-Host "Seeded verification profile: $cfgPath (scan: $scanDir)"
 
-Add-Type -Namespace SmokeInput -Name Native -MemberDefinition @'
-[DllImport("user32.dll")]
-public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
-'@
-
-$KEYEVENTF_KEYUP = 0x2
 $VK_ESCAPE = 0x1B
 $VK_BACK = 0x08
 
@@ -160,54 +131,8 @@ function Get-LetterVk {
   return [byte][int][char]$u[0]
 }
 
-function Send-Key {
-  param([byte]$Vk, [switch]$Up)
-  $flags = if ($Up) { $KEYEVENTF_KEYUP } else { 0 }
-  [SmokeInput.Native]::keybd_event($Vk, 0, $flags, [UIntPtr]::Zero)
-}
-
-function Wait-TraceEvent {
-  param([string]$Path, [string]$EventName, [int]$TimeoutMs)
-  $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
-  $pattern = '"event":"' + $EventName + '"'
-  while ([DateTime]::UtcNow -lt $deadline) {
-    try {
-      if ((Test-Path $Path) -and (Select-String -Path $Path -Pattern $pattern -SimpleMatch -Quiet)) {
-        return $true
-      }
-    } catch {
-      # 書き込み中のファイル読取り競合は無視して再試行
-    }
-    Start-Sleep -Milliseconds 200
-  }
-  return $false
-}
-
-function Get-TraceEventData {
-  param([string]$Path, [string]$EventName, [int]$TimeoutMs)
-  # trace の行形式: `[trace] {"seq":N,"ts_ms":M,"event":"...","data":{...}}`（src-tauri/src/trace.rs）
-  $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
-  $pattern = '"event":"' + $EventName + '"'
-  while ([DateTime]::UtcNow -lt $deadline) {
-    try {
-      if (Test-Path $Path) {
-        $line = Select-String -Path $Path -Pattern $pattern -SimpleMatch |
-                Select-Object -Last 1
-        if ($null -ne $line) {
-          $json = $line.Line -replace '^\[trace\]\s*', ''
-          return ($json | ConvertFrom-Json).data
-        }
-      }
-    } catch {
-      # 書き込み中のファイル読取り競合は無視して再試行
-    }
-    Start-Sleep -Milliseconds 200
-  }
-  return $null
-}
-
 # 既存インスタンスは single-instance 転送で smoke を汚すため停止（smoke-startup.ps1 と同じ前提）
-Get-Process snotra -ErrorAction SilentlyContinue | Stop-Process -Force
+Resolve-SnotraExistingProcess -Policy Stop
 Start-Sleep -Milliseconds 300
 
 $webviewBefore = @(Get-Process msedgewebview2 -ErrorAction SilentlyContinue).Count
@@ -216,34 +141,10 @@ $errPath = Join-Path $env:TEMP "snotra_smoke_egui.err"
 $outPath = Join-Path $env:TEMP "snotra_smoke_egui.out"
 Remove-Item $errPath, $outPath -Force -ErrorAction SilentlyContinue
 
-# env は 2 つとも「子プロセスは生成時に環境を写す」性質に依存する——`Start-Process` を跨げば
-# 十分で、親側は直後に戻してよい（本体は自分の写しを読む）。
-# **SNOTRA_CONFIG_DIR にだけ try/finally を持たせる**のは `Start-Process` 自体が throw しうる
-# ためで、漏らすと同じシェルの後続操作（`cargo run -p snotra` 等）が使い捨てプロファイルを見る。
-# **消すのではなく元の値へ戻す**——呼び出し元が既に SNOTRA_CONFIG_DIR を持っていることがある
-# （visual-check-colors.ps1:179 が案内する手動ワークフロー）。無条件に消すとその値を壊す。
-$savedTraceEnv = $env:SNOTRA_TRACE
-$savedConfigDirEnv = $env:SNOTRA_CONFIG_DIR
-$env:SNOTRA_TRACE = "1"
-$env:SNOTRA_CONFIG_DIR = $profileFull
-try {
-  $proc = Start-Process -FilePath $ExePath -PassThru -RedirectStandardError $errPath -RedirectStandardOutput $outPath
-} finally {
-  # `-ErrorAction SilentlyContinue` を省いてはならない——未設定の Env: ドライブ項目の削除は
-  # ItemNotFoundException を投げ、$ErrorActionPreference = "Stop" の下では finally が
-  # 元の例外を覆い隠す。
-  if ($null -eq $savedConfigDirEnv) {
-    Remove-Item Env:SNOTRA_CONFIG_DIR -ErrorAction SilentlyContinue
-  } else {
-    $env:SNOTRA_CONFIG_DIR = $savedConfigDirEnv
-  }
-}
+# env は共有モジュールが Start-Process の成功・例外の両経路で元へ戻す（#843）。
+$proc = Start-SnotraProcess -ConfigDir $profileFull -Trace -FilePath $ExePath `
+  -StandardErrorPath $errPath -StandardOutputPath $outPath
 $launchedAt = Get-Date
-if ($null -eq $savedTraceEnv) {
-  Remove-Item Env:SNOTRA_TRACE -ErrorAction SilentlyContinue
-} else {
-  $env:SNOTRA_TRACE = $savedTraceEnv
-}
 
 # 失敗時の証拠出力（#690 の follow-up）。
 #
@@ -347,10 +248,11 @@ try {
     # **この 1 件だけ別予算を使う**（$StartupObserveTimeoutMs）。cold start を含むのはここだけで、
     # 以降の観測（show/hide/results）はアプリが温まった後だから ObserveTimeoutMs のままでよい。
     # 一律に広げると、本来速いはずの検査の失敗検出まで鈍る。
-    $hk = Get-TraceEventData -Path $errPath -EventName "hotkey:registered" -TimeoutMs $StartupObserveTimeoutMs
-    if ($null -eq $hk) {
+    $hkEvent = Wait-SnotraTraceEvent -Path $errPath -EventName "hotkey:registered" -TimeoutMs $StartupObserveTimeoutMs
+    if ($null -eq $hkEvent) {
       throw "hotkey:registered trace not observed within ${StartupObserveTimeoutMs}ms — cannot determine which keys to inject"
     }
+    $hk = $hkEvent.data
     if (-not $hk.ok) {
       throw "hotkey registration failed in the app (modifier=$($hk.modifier) key=$($hk.key)) — smoke cannot proceed"
     }
@@ -376,17 +278,8 @@ try {
   }
   $shown = $false
   foreach ($attempt in 1..2) {
-    foreach ($vk in $vks) {
-      Send-Key $vk
-      Start-Sleep -Milliseconds 50
-    }
-    [array]::Reverse($vks)
-    foreach ($vk in $vks) {
-      Send-Key $vk -Up
-      Start-Sleep -Milliseconds 50
-    }
-    [array]::Reverse($vks)  # 再試行に備えて押下順へ戻す
-    if (Wait-TraceEvent -Path $errPath -EventName "egui_show:done" -TimeoutMs $ObserveTimeoutMs) {
+    Send-SnotraKeyChord -VirtualKeys $vks
+    if ($null -ne (Wait-SnotraTraceEvent -Path $errPath -EventName "egui_show:done" -TimeoutMs $ObserveTimeoutMs)) {
       $shown = $true
       break
     }
@@ -457,15 +350,15 @@ try {
     $resultsShown = $false
     foreach ($attempt in 1..2) {
       if ($attempt -gt 1) {
-        Send-Key $VK_BACK
+        Send-SnotraKey -VirtualKey $VK_BACK
         Start-Sleep -Milliseconds 50
-        Send-Key $VK_BACK -Up
+        Send-SnotraKey -VirtualKey $VK_BACK -Up
         Start-Sleep -Milliseconds 50
       }
-      Send-Key $queryVk
+      Send-SnotraKey -VirtualKey $queryVk
       Start-Sleep -Milliseconds 50
-      Send-Key $queryVk -Up
-      if (Wait-TraceEvent -Path $errPath -EventName "egui_results:show" -TimeoutMs $ObserveTimeoutMs) {
+      Send-SnotraKey -VirtualKey $queryVk -Up
+      if ($null -ne (Wait-SnotraTraceEvent -Path $errPath -EventName "egui_results:show" -TimeoutMs $ObserveTimeoutMs)) {
         $resultsShown = $true
         break
       }
@@ -483,18 +376,18 @@ try {
 
   if ($failures.Count -eq 0) {
     # Escape 注入（表示中の egui 窓がフォーカスを持つ前提）
-    Send-Key $VK_ESCAPE
+    Send-SnotraKey -VirtualKey $VK_ESCAPE
     Start-Sleep -Milliseconds 50
-    Send-Key $VK_ESCAPE -Up
+    Send-SnotraKey -VirtualKey $VK_ESCAPE -Up
 
-    if (-not (Wait-TraceEvent -Path $errPath -EventName "egui_hide:done" -TimeoutMs $ObserveTimeoutMs)) {
+    if ($null -eq (Wait-SnotraTraceEvent -Path $errPath -EventName "egui_hide:done" -TimeoutMs $ObserveTimeoutMs)) {
       $failures += "egui_hide:done not observed within ${ObserveTimeoutMs}ms after Escape"
     }
 
     # main の hide は hide_egui_main が results も同時に隠す（#646 PR2 決定 6）。
     # show 側を検査したときだけ対で検査する（対称ペア・/symmetric-check）。
     if ($resultsChecked -and
-        -not (Wait-TraceEvent -Path $errPath -EventName "egui_results:hide" -TimeoutMs $ObserveTimeoutMs)) {
+        $null -eq (Wait-SnotraTraceEvent -Path $errPath -EventName "egui_results:hide" -TimeoutMs $ObserveTimeoutMs)) {
       $failures += "egui_results:hide not observed within ${ObserveTimeoutMs}ms after Escape"
     }
 

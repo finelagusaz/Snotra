@@ -126,6 +126,16 @@ fn draw_toast_button(
     enabled && response.clicked()
 }
 
+fn move_text_cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
+    if let Some(mut state) = egui::TextEdit::load_state(ctx, id) {
+        let end = egui::text::CCursor::new(text.chars().count());
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(end)));
+        egui::TextEdit::store_state(ctx, id, state);
+    }
+}
+
 /// pre-widget 入力（段 13 で読み切る値）。Escape・↑↓・→← の**読み**は TextEdit 構築（段 21）
 /// より前に終える必要があり、うち **↑↓ は消費（`events.retain`）まで含む**——この `retain` は
 /// #700 の再発を防ぐ唯一の場所であり、TextEdit の後に回すと ↑↓ が TextEdit へも効いて
@@ -318,9 +328,11 @@ impl EguiView for SearchWindowView {
         let pre = read_pre_widget_input(&ctx);
 
         self.controller.clear_blur_grace_if_focused(pre.focused);
-        if pre.escape {
-            self.controller.on_escape_pressed(&ctx);
-        }
+        let restored_search = if pre.escape {
+            self.controller.on_escape_pressed(&ctx)
+        } else {
+            false
+        };
         self.controller.on_focus_changed(pre.focused, &ctx);
 
         // ↑↓・→← の処置（`move_selection` / folder 展開）。消費込みの読みは
@@ -440,9 +452,18 @@ impl EguiView for SearchWindowView {
         let response = egui::Frame::new()
             .inner_margin(egui::Margin::same(inset.round() as i8))
             .show(ui, |ui| {
+                let input_id = ui.make_persistent_id("search_input");
+                // #840: folder filter から展開前 query へバッファ全体を復元するフレームでは、
+                // 同じ widget id に残る egui のキャレットも query 末尾へ同期する。TextEdit の
+                // 構築前に行うことで、同一フレームの文字イベントも復元後の末尾から処理される。
+                // tool は入力不可の一時表示で元の編集位置を保つため、この経路へは入れない。
+                if restored_search {
+                    move_text_cursor_to_end(&ctx, input_id, &buf);
+                }
                 ui.add_sized(
                     egui::vec2(ui.available_width(), field_height),
                     egui::TextEdit::singleline(&mut buf)
+                        .id(input_id)
                         // §18.5 ツール選択中の入力は無効化。add_enabled（全体グレーアウト）でなく
                         // interactive(false)（通常描画のまま読み取り専用・changed 不発火）——外観維持。
                         // launching 中も同様に打鍵を止める（Escape/blur/Alt+Q・↑↓は従来どおり通す・
@@ -741,6 +762,11 @@ impl EguiView for SearchWindowView {
 
 #[cfg(test)]
 mod tests {
+    use egui::text::{CCursor, CCursorRange};
+    use egui::text_edit::TextEditState;
+
+    use super::move_text_cursor_to_end;
+
     // `hex_color_parses_and_falls_back` は #673 で `visual.rs` の
     // `hex_parses_valid_and_falls_back_to_config_default` へ移した（hex→Color32 の変換が
     // view から純粋核へ移ったため）。**証明していた命題は 2 つとも移設先で保たれている**
@@ -748,4 +774,49 @@ mod tests {
     //
     // font_definitions_* 4 件・font_covers_cjk_* 3 件は #666 段 3 タスク 1 で
     // `font_stack::tests` へ移した（フォント解決の実体が `font_stack` へ移設されたため）。
+
+    // CCursor は文字単位であり、UTF-8 のバイト長を渡すと非 ASCII クエリで末尾を越える。
+    #[test]
+    fn restored_search_cursor_uses_character_count() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("restored_non_ascii_search_input");
+        let mut state = TextEditState::default();
+        state
+            .cursor
+            .set_char_range(Some(CCursorRange::one(CCursor::new(1))));
+        egui::TextEdit::store_state(&ctx, id, state);
+
+        move_text_cursor_to_end(&ctx, id, "日本語");
+
+        let restored = egui::TextEdit::load_state(&ctx, id).expect("stored TextEdit state");
+        assert_eq!(
+            restored.cursor.char_range(),
+            Some(CCursorRange::one(CCursor::new(3)))
+        );
+    }
+
+    // 回帰テスト: #840 の可視症状を、次の Event::Text が作る文字列まで通して検査する。
+    #[test]
+    fn restored_search_inserts_next_input_at_query_end() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("restored_search_input_event");
+        let mut state = TextEditState::default();
+        state
+            .cursor
+            .set_char_range(Some(CCursorRange::one(CCursor::new(2))));
+        egui::TextEdit::store_state(&ctx, id, state);
+        ctx.memory_mut(|memory| memory.request_focus(id));
+
+        let mut text = "alpha".to_string();
+        move_text_cursor_to_end(&ctx, id, &text);
+        let input = egui::RawInput {
+            events: vec![egui::Event::Text("z".to_string())],
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input, |ui| {
+            ui.add(egui::TextEdit::singleline(&mut text).id(id));
+        });
+
+        assert_eq!(text, "alphaz");
+    }
 }

@@ -273,7 +273,7 @@ PR D は副次的に既存の不変条件違反を解消する: `register_ctx` �
 
 ### `smoke:egui` / `smoke:startup` で守れるもの
 - **PR A 適用後**: results が表示される / 隠れる（`egui_results:show` / `:hide` の観測）
-- 起動 trace に `*:error` が無いこと（`smoke:startup`）
+- 起動 trace が 1 件以上あり、seed 済み検証用プロファイルで非 first-run 起動すること（`smoke:startup`。汎用的なエラー不在検査は #845 で撤去）
 - PR A 以前は **results 経路の自動被覆はゼロ**（§2.7）
 
 ### 人間の実機目視でしか守れないもの

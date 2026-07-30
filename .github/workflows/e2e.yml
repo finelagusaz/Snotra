@@ -71,10 +71,10 @@ jobs:
       - name: Run egui smoke
         run: npm run smoke:egui -- -ExePath target/release/snotra.exe
 
-      # 起動 trace に *:error が無いことの検証（旧 e2e job から移設・検証内容は同一）。
+      # 起動 trace が 1 件以上あり、seed 済み検証用プロファイルで非 first-run 起動することの検証。
       # 自分の検証用プロファイル（#804）へループ前に seed 済みの config.toml が在るため、ここでの
       # 5 起動は first-run 経路を通らない（上の egui smoke には依存しない）。first-run が本 job の
       # 検証対象でないことは変わらないが、**踏んでいないことはスクリプト側が肯定的に検査して赤に
-      # する**（`cmd:launch_settings_process:*` は `*:error` で終わらず、従来は見えなかった・#804）。
+      # する**（first-run は `cmd:launch_settings_process:*` を名指しする肯定的検査・#804）。
       - name: Run startup smoke
         run: pwsh -NoProfile -File scripts/smoke-startup.ps1 -ExePath target/release/snotra.exe

@@ -68,11 +68,11 @@ for ($run = 1; $run -le $Iterations; $run++) {
   # 旧実装は固定 $WaitMs（1,800ms）だけ待って打ち切っていた。しかし同一 runner・同一
   # バイナリで最初の trace までが **0.6s / 5.2s / 8s超** と大きくばらつくことを実測して
   # おり、遅い側に振れた起動は**丸ごと無音**のまま観測を終えていた（5 回中 3 回が
-  # trace 0 件・それでも「*:error 不在」は自明に成立するので緑だった）。
+  # trace 0 件・それでも不在だけを見る検査は自明に成立するので緑だった）。
   #
   # 固定待機を一律に伸ばすと 5 起動 × 予算が常時かかる。最初の 1 行を待つ形なら、
   # 速い起動は速いまま・遅い起動だけ待つ。$WaitMs は**最初の trace 以降**の観測窓として
-  # 残す——ここを縮めると後続イベント（*:error）の取りこぼしが増え、検査が痩せる。
+  # 残す——ここを縮めると後続の first-run イベントを取りこぼし、検査が痩せる。
   $firstTraceMs = $null
   $swFirst = [System.Diagnostics.Stopwatch]::StartNew()
   while ($swFirst.Elapsed.TotalMilliseconds -lt $FirstTraceTimeoutMs) {
@@ -93,8 +93,8 @@ for ($run = 1; $run -le $Iterations; $run++) {
   $events = @(Read-SnotraTraceEvents -Path $errPath)
 
   # **seed が読めたことを肯定的に確かめる**（#804・不変条件 4）。seed が parse に失敗すると本体は
-  # 既定 config で起動し、既定の scan パスで索引を作る——**この smoke の他の判定（`*:error` 不在・
-  # trace ≥ 1・first-run 不発・`*.bin` の ∃）はすべて通り、緑のまま**である。ゆえにここが唯一の
+  # 既定 config で起動し、既定の scan パスで索引を作る——**この smoke の他の判定（trace ≥ 1・
+  # first-run 不発・`*.bin` の ∃）はすべて通り、緑のまま**である。ゆえにここが唯一の
   # 受け皿になる。`[config] ` 付きの eprintln は読み込み失敗の全 arm に在る（成功時に出るのは
   # duplicate instant command と invalid hotkey fallback の 2 系統だけで、
   # この seed は instant_commands 無し・妥当な Alt+Q ゆえどちらも踏まない）。
@@ -105,21 +105,19 @@ for ($run = 1; $run -le $Iterations; $run++) {
     }
   }
 
-  # **trace が 0 件なら「*:error が無い」は自明に成立する**——空振りの合格である。
+  # **trace が 0 件ならイベント不在の検査は自明に成立する**——空振りの合格である。
   # #690 の調査で、冷えた CI runner の初回起動が 20 秒間 trace を 1 行も出さない状態を
   # 実測した。その状態でも本 smoke は緑を返していた（アサーションが不在の検査だけゆえ）。
   # SNOTRA_TRACE=1 の起動は最低でも `hotkey:registered` を出すため、0 件は異常である。
   if ($events.Count -eq 0) {
-    $failures += "run=$run trace が 0 件（アプリが 1 行も出していない）。この状態では「*:error 不在」は何も証明しない"
+    $failures += "run=$run trace が 0 件（アプリが 1 行も出していない）。起動経路を観測できていない"
   }
 
-  $errorEvents = @($events | Where-Object { $_.event -like "*:error" })
-  foreach ($errEvt in $errorEvents) {
-    $failures += "run=$run error event=$($errEvt.event)"
-  }
+  # trace の失敗名には統一分類がなく、best-effort の失敗も含まれる。実在イベントに一致しない
+  # 汎用パターンを置いて「起動エラー不在」を主張せず、この smoke が所有する契約を肯定的に検査する（#845）。
 
   # **first-run 経路を踏んでいないことを肯定的に検査する**（#804・不変条件 6）。seed を起動より
-  # 前に置いているので踏まないはずだが、**踏んだとき上の `*:error` フィルタでは構造的に見えない**
+  # 前に置いているので踏まないはずだが、イベント名の汎用的な失敗分類には頼らない
   # ——実際のイベント名は :not_found / :spawned / :already_running / :exited で
   # （commands/window.rs:53,74,87,123）どれも :error で終わらない。
   # CI（e2e）は snotra だけをビルドするので :not_found に留まり **false green のまま通る**が、
@@ -140,7 +138,6 @@ for ($run = 1; $run -le $Iterations; $run++) {
     run = $run
     first_trace_ms = if ($null -eq $firstTraceMs) { "n/a" } else { $firstTraceMs }
     event_count = $events.Count
-    error_count = $errorEvents.Count
   }
 }
 

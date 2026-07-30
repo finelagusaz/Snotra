@@ -37,7 +37,7 @@ TS の型検査は #532 SU7 のフロント撤去で消滅した（`tsconfig.jso
 ```bash
 npm test                    # 必須: ユニットテスト（Vitest: .claude/hooks + .githooks + scripts）
 npm run test:powershell     # 必須: Pester（共有 smoke 配管 + 実バイナリ統合）
-npm run smoke:startup       # 必須: 起動時スモーク（trace の *:error 不在検証）
+npm run smoke:startup       # 必須: 起動時スモーク（trace 出力・検証用プロファイル・非 first-run の検証）
 npm run smoke:egui          # 必須: egui show/hide スモーク（hotkey 注入 + trace 検証・#532 SU7）
 ```
 
@@ -149,7 +149,7 @@ cargo clippy --workspace --all-targets -- -D warnings  # lint チェック（カ
 cargo run -p snotra-settings     # snotra-settings（egui ネイティブ設定 GUI）の単独起動
 cargo run -p snotra              # 製品メインウィンドウ（egui 既定・#532 SU7 flip 済み。視覚スモークはこれ）
 npm run verify                   # Rust + node 一括検証（cargo check --workspace + npm test）
-npm run smoke:startup             # 起動時スモーク（trace の *:error 不在検証）
+npm run smoke:startup             # 起動時スモーク（trace 出力・検証用プロファイル・非 first-run の検証）
 npm run smoke:egui                # egui 経路の show/hide スモーク（keybd_event 注入 + trace検証・#532 SU7。既定 ExePath = target/release）
 npm run measure:memory            # メモリ実測（PrivWS 軸・ツリー合算・#532 flip 基準 3）
 npm run measure:memory:stages     # メモリ実測（起動→表示→検索→hide の段階別・前景計測。実行中の snotra を kill する）
@@ -159,7 +159,7 @@ npm run tauri build              # リリースビルド（NSIS バンドル。`
 ## スモーク運用メモ
 
 - `scripts/lib/SnotraSmoke.psm1` は 3 本の検証スクリプトに共通する config seed の必須骨格、env の設定/復元、Cargo target の本体導出、既存プロセス方針、起動、窓/trace 待機、キー注入、DWM/DPI 対応キャプチャを所有する。各 smoke の合否条件と固有の TOML 節は呼び出し側に残す。`scripts/lib/SnotraSmoke.Tests.ps1` は env の正常/例外時復元、Cargo target 導出、trace parse、既存プロセス方針を単体検査し、実バイナリで seed parse・意図したプロファイルへの `index.bin` 生成・窓矩形＝キャプチャ寸法に加え、フォルダ復帰後の次打鍵が復元クエリの末尾へ入ることを統合検査する（#840・#843）
-- `scripts/smoke-startup.ps1` は `SNOTRA_TRACE=1` で起動し、`*:error` トレースイベントが不在であることを検証する。**検証用プロファイル（`SNOTRA_CONFIG_DIR` で `target/smoke-startup/profile` を指す・#804）をループ前に 1 回だけ seed し、5 起動で共有する**——実 config には触れず、毎回作り直さないのは「first-run でない起動」を測る現在の意味論を保つため。**first-run を踏んでいないことと env が効いたこと（プロファイルに `*.bin` が生成されたこと）も検査する**（`cmd:launch_settings_process:*` は `*:error` で終わらないため、従来のフィルタからは構造的に見えなかった）。**併せて trace が 1 件以上出ていることも要求する**（#690 follow-up）——0 件なら「`*:error` 不在」は自明に成立し**空振りの合格**になるため。実際に冷えた CI runner の初回起動で trace 0 行を実測しており、その状態でも本 smoke は緑を返していた。サマリ表の `event_count` は成功時にも出す（検査が実際に何かを見たことを示す肯定的報告）。**待ち方は「最初の trace を待ってから観測時間 `WaitMs` を開始する」**（`-FirstTraceTimeoutMs`・既定 12s）——固定待機だけだと遅い側に振れた起動が丸ごと無音になる（実測: 同一 runner・同一バイナリで最初の trace までが 0.6s〜8s 超とばらつき、5 回中 3 回が無音だった）。固定待機を一律に伸ばす案を採らないのは、速い起動まで毎回待つことになるため。`first_trace_ms` も成功時に出す（**分散の原因は未解明**ゆえ、予算に触れる前に悪化を読めるようにする。`n/a` は予算内に 1 行も出なかったことを表す）
+- `scripts/smoke-startup.ps1` は `SNOTRA_TRACE=1` で起動し、trace が 1 件以上出ることを要求する。**検証用プロファイル（`SNOTRA_CONFIG_DIR` で `target/smoke-startup/profile` を指す・#804）をループ前に 1 回だけ seed し、5 起動で共有する**——実 config には触れず、毎回作り直さないのは「first-run でない起動」を測る現在の意味論を保つため。**seed が正常に読まれたこと、first-run を踏んでいないこと、env が効いたこと（プロファイルに `*.bin` が生成されたこと）も肯定的に検査する**。trace の失敗名には統一分類がなく、正常系でも起こりうる best-effort の失敗も含まれるため、汎用的な「起動エラー不在」は保証しない（#845）。trace 0 件は起動経路を何も観測できていないため失敗にする（#690 follow-up）。実際に冷えた CI runner の初回起動で trace 0 行を実測しており、その状態でも旧 smoke は緑を返していた。サマリ表の `event_count` は成功時にも出す（検査が実際に何かを見たことを示す肯定的報告）。**待ち方は「最初の trace を待ってから観測時間 `WaitMs` を開始する」**（`-FirstTraceTimeoutMs`・既定 12s）——固定待機だけだと遅い側に振れた起動が丸ごと無音になる（実測: 同一 runner・同一バイナリで最初の trace までが 0.6s〜8s 超とばらつき、5 回中 3 回が無音だった）。固定待機を一律に伸ばす案を採らないのは、速い起動まで毎回待つことになるため。`first_trace_ms` も成功時に出す（**分散の原因は未解明**ゆえ、予算に触れる前に悪化を読めるようにする。`n/a` は予算内に 1 行も出なかったことを表す）
 - `scripts/smoke-egui.ps1` は egui 経路の自動回帰の最低線（#532 SU7・e2e/ 撤去後の後継）: `SNOTRA_TRACE=1` で起動 → keybd_event で hotkey（起動時の `hotkey:registered` trace から導出した VK 列を注入。対応表の SSOT は `src-tauri/src/platform/hotkey.rs` の `injection_vks`。押下順で押し、解放込み）→ `egui_show:done` 観測 → Escape → `egui_hide:done` 観測 → `msedgewebview2` のグローバル増分 0 を検証する。`-HotkeyVks` を明示指定すると trace より優先される（trace を出さない旧バイナリの検証など）。**検証用プロファイル（`SNOTRA_CONFIG_DIR` で `target/smoke-egui/profile` を指す・#804）へ最小の有効 TOML を常に seed する**——実ユーザーの `%APPDATA%\Snotra` は読みも書きもしない（退避も復元も持たないことが、異常終了しても実 config が壊れない構造的な保証である）。空 TOML は必須セクション欠落で parse 失敗し破損復旧経路を踏むため使わない。**seed が読めたこと・first-run を踏んでいないこと・env が効いたこと（プロファイルに `*.bin` が生成されたこと）を 3 つとも肯定的に検査する**——「観測できなかった」を合格と読ませないため。実行中の snotra を kill するためローカル実行時は注意。網羅は担わず、視覚・操作列は手動 GUI smoke（カテゴリ D）が補完する
 - `scripts/smoke-egui.ps1` は results 窓の表示も検査する（#671/#673 サイクル PR A）: `egui_show:done` の後、1 文字クエリを注入して `egui_results:show` を観測し、Escape 後の `egui_hide:done` に続けて `egui_results:hide` も観測する。**#804 以降 skip は無い**——検証用プロファイルを常に seed するので、既定クエリ `"z"` が seed した索引 1 件に必ず一致する（`-ResultsQuery <letter>` は残るが、開発機の既存索引に合わせる用途は消えた。空文字を渡す用途については次の bullet）（CONTRIBUTING.md の「results 窓 show/hide の trace 観測」と対応）
 - **results 検査は無条件に要求される（#686 の `-RequireResults` を #804 が格上げ）**: 旧 flag が opt-in だったのは「ローカルでは索引を制御できないのが普通」ゆえの緩和だったが、検証用プロファイルを常に seed する以上その前提は偽になったので、flag ごと撤去して**常に要求する**形にした。**これは検出器の削除ではなく格上げである**——従来はローカルで既定 skip（緩和）だったものが、ローカルでも赤になる。**判定はアプリ起動前に確定する**ため、この guard はプロセスを起こさずに落ちる（`pwsh -File scripts/smoke-egui.ps1 -ResultsQuery '' -ExePath <任意の既存ファイル>` でフォールトインジェクション可能・実機に触らない。**空文字の明示がその注入口である**）。skip へ至る沈黙経路は構造的に消えており、他（実行ファイル不在・`hotkey:registered` 未観測・`egui_show:done` 未観測・`egui_results:show` 未観測・クエリが A-Z 単字でない）はいずれも exit≠0 で鳴る。**`e2e.yml` のステップ順序も自由になった**——両 smoke が自分の検証用プロファイルを持つため、startup smoke の 5 起動が egui smoke の seed を壊すことはない（#803 で `SNOTRA_CONFIG_DIR` が入り、#804 が smoke 2 本を env 化した）
@@ -187,7 +187,7 @@ npm run tauri build              # リリースビルド（NSIS バンドル。`
 | `npm run smoke:startup`（注） | `e2e.yml`（smoke-egui job） | 対象 paths を含む PR（自動）/ 手動 dispatch |
 | `npm run smoke:egui`（#532 SU7・egui 経路の自動回帰） | `e2e.yml`（smoke-egui job） | 対象 paths を含む PR（自動）/ 手動 dispatch |
 
-（注）CI では smoke-egui job がビルドした release バイナリを共有するため、`npm run smoke:startup`（既定 ExePath = debug）ではなく `scripts/smoke-startup.ps1 -ExePath target/release/snotra.exe` を直接実行する。検証する起動経路は同じ（release バイナリの起動 trace に `*:error` が無いこと）。これは smoke 用ビルドの起動健全性検証であり、配布バンドル（`tauri build`）の検証ではない。
+（注）CI では smoke-egui job がビルドした release バイナリを共有するため、`npm run smoke:startup`（既定 ExePath = debug）ではなく `scripts/smoke-startup.ps1 -ExePath target/release/snotra.exe` を直接実行する。検証する起動経路は同じ（release バイナリが trace を出し、seed 済み検証用プロファイルで非 first-run 起動すること）。これは smoke 用ビルドの起動健全性検証であり、配布バンドル（`tauri build`）の検証ではない。
 
 - `npm test` は ubuntu（node-check）と windows（rust-check）の両方で走る（#509）。`.githooks` / `.claude/hooks` の selftest は実運用が Windows でのみ起きるセーフティネットであり、hook 実行機構（Git-for-Windows の shebang 経由 sh 起動・パス/クォート境界）が本番と一致する OS で回帰検査する。ubuntu 側は実行ビット・POSIX sh 厳密性を相補的に担保する。CRLF 由来の fail-open は `.gitattributes` の `.githooks/** text eol=lf` で両 OS 回避済みで、かつ dash 側の故障モードなので windows 固有ではない。
 - **`skip-ci` ラベルはジョブ単位で効く** — node-check / rust-check の `if` が同一のため、貼ると cargo 系を含む**両方まるごと**スキップする（表の各行に個別注記はしない）。**`governance-check` job は `if` ガードを持たず、`skip-ci` を貼っても走る**（#587。skip-safe と定義された Markdown-only 変更こそが検査対象のため、意図的にガードしない）。CI は required status check ではない（ruleset `default` に `required_status_checks` 規則が無い・実測）ためマージは通り、main への push（マージ後）では `github.event_name == 'push'` により**ラベル無関係に必ず走る**。

@@ -325,7 +325,7 @@ try {
   # 呼び、設定 GUI がフォーカスを奪う。
   # **上の `[config] ` 検査ではこれを捕まえられない**——config.toml が「存在しない」分岐では読み込み
   # 失敗の eprintln が出ないからである（だから別の検査が要る）。
-  # **`*:error` フィルタでも見えない**——実際のイベント名は :not_found / :spawned /
+  # **失敗を表すイベント名の汎用パターンにも頼れない**——実際のイベント名は :not_found / :spawned /
   # :already_running / :exited で（commands/window.rs:53,74,87,123）どれも :error で終わらない。
   $firstRunEvents = @(Select-String -Path $errPath -SimpleMatch 'cmd:launch_settings_process:')
   if ($firstRunEvents.Count -gt 0) {

@@ -1,4 +1,4 @@
-// plan:ledger — /plan-review「Step 2 — 並列サブエージェントで検証」の台帳ディレクトリの新鮮化と、
+// plan:ledger — /plan-review「Step 2 — 計画準拠の独立レビュー」から撤去済みの台帳ディレクトリの新鮮化と、
 // 「Step 3 — 結果の統合と報告」の双方向照合を決定的に行う（#826 サイクル）。
 // shebang を置かない — CI の Windows checkout（autocrlf=true）で CRLF 化された shebang 行は
 // vitest の transform を SyntaxError で落とす（PR #592 で実測。起動は常に `node scripts/...` 経由）。

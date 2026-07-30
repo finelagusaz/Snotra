@@ -401,12 +401,15 @@ pub fn should_flush_on_enter(view_kind: ViewKind, is_plain: bool, armed: bool) -
 }
 
 /// 親ディレクトリを返す。ルート（`C:\` / `\\server\share\`）で None。folderNav.computeParentDir 相当。
+/// 入力ではスラッシュとバックスラッシュの混在を許容し、返り値はバックスラッシュへ統一する。
 pub(crate) fn compute_parent_dir(current_dir: &str) -> Option<String> {
+    // config の scan path は原表記を保持するため、OS が返す区切りとの混在をここで正規化する。
+    let canonical = current_dir.replace('/', "\\");
     // 末尾 `\` を剥がす（ただしドライブルート "X:\" は保持しない — 後段で判定）。
-    let normalized = if current_dir.len() > 3 && current_dir.ends_with('\\') {
-        &current_dir[..current_dir.len() - 1]
+    let normalized = if canonical.len() > 3 && canonical.ends_with('\\') {
+        &canonical[..canonical.len() - 1]
     } else {
-        current_dir
+        &canonical
     };
     // UNC ルート判定: \\server\share（2 セグメント以下）は終端。
     if let Some(rest) = normalized.strip_prefix("\\\\") {
@@ -662,6 +665,17 @@ mod tests {
         assert_eq!(compute_parent_dir("\\\\srv\\share\\x"), Some("\\\\srv\\share".to_string()));
         assert_eq!(compute_parent_dir("\\\\srv\\share"), None); // UNC 共有ルート終端
         assert_eq!(compute_parent_dir("\\\\srv"), None); // UNC 不完全
+    }
+
+    #[test]
+    fn parent_dir_normalizes_forward_and_mixed_separators() {
+        assert_eq!(compute_parent_dir("C:/a/b"), Some("C:\\a".to_string()));
+        assert_eq!(compute_parent_dir("C:/a\\b"), Some("C:\\a".to_string()));
+        assert_eq!(compute_parent_dir("C:/a"), Some("C:\\".to_string()));
+        assert_eq!(compute_parent_dir("C:/"), None); // `/` 表記のドライブルートも終端
+        assert_eq!(compute_parent_dir("//srv/share/x"), Some("\\\\srv\\share".to_string()));
+        assert_eq!(compute_parent_dir("\\\\srv/share\\x"), Some("\\\\srv\\share".to_string()));
+        assert_eq!(compute_parent_dir("//srv/share"), None); // `/` 表記の UNC 共有ルートも終端
     }
 
     #[test]

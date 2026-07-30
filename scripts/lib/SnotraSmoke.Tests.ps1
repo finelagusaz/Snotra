@@ -255,6 +255,20 @@ include_folders = true
             & $pressKey 0x1B # Escape: alpha を復元し、次の z が末尾へ入るべき経路。
             & $pressKey 0x5A
             & $waitForInputChange 'search' 5 6 $true | Should -Not -BeNullOrEmpty
+        } catch {
+            Write-Host '--- caret integration stderr trace ---'
+            if (Test-Path -LiteralPath $stderr) {
+                $stderrLines = @(Get-Content -LiteralPath $stderr)
+                if ($stderrLines.Count -eq 0) {
+                    Write-Host '(stderr is empty)'
+                } else {
+                    $stderrLines | ForEach-Object { Write-Host $_ }
+                }
+            } else {
+                Write-Host "(stderr file not found: $stderr)"
+            }
+            Write-Host '--- end caret integration stderr trace ---'
+            throw
         } finally {
             if ($null -ne $proc -and -not $proc.HasExited) {
                 Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue

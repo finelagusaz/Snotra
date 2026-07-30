@@ -948,7 +948,10 @@ impl LauncherController {
     }
 
     /// 段 15: Escape の処置（呼ぶのは `key_pressed(Escape)` が真のフレームだけ）。
-    pub(super) fn on_escape_pressed(&mut self, ctx: &egui::Context) {
+    /// folder から展開前 query を復元した場合だけ `true` を返す。view はこの信号で、同じ
+    /// TextEdit id に残るキャレットを復元 query の末尾へ同期する（#840）。
+    #[must_use]
+    pub(super) fn on_escape_pressed(&mut self, ctx: &egui::Context) -> bool {
         // Escape ラダー（folder 中は展開前状態へ復帰、top-level は hide 要求・#532 SU3 M2）。
         // TextEdit より前に ctx から拾うので入力欄に focus があっても届く。
         match self.state.on_escape() {
@@ -958,13 +961,18 @@ impl LauncherController {
                 self.folder_error = None;
                 self.instant_rows_query = None;
                 ctx.request_repaint();
+                true
             }
             EscapeOutcome::RestoredFromTool => {
                 // tool 解除 → 直下ビュー（folder/results）を復元描画。folder が下に生きて
                 // いるため cache/error は破棄しない（RestoredSearch との差・純粋核 doc 参照）
                 ctx.request_repaint();
+                false
             }
-            EscapeOutcome::Hide => self.emit_hide(),
+            EscapeOutcome::Hide => {
+                self.emit_hide();
+                false
+            }
         }
     }
 

@@ -41,7 +41,7 @@ npm run smoke:startup       # 必須: 起動時スモーク（trace の *:error 
 npm run smoke:egui          # 必須: egui show/hide スモーク（hotkey 注入 + trace 検証・#532 SU7）
 ```
 
-- `test:powershell` は Pester 6.0.1 を `target/pester/` へ固定取得し、グローバル環境を変更しない。統合テストは `target/debug/snotra.exe` を使うため、未ビルドなら先に `cargo build -p snotra` を実行する
+- `test:powershell` は Pester 6.0.1 を `target/pester/` へ固定取得し、グローバル環境を変更しない。統合テストの本体は `cargo metadata` の `target_directory` から導くため `CARGO_TARGET_DIR` に追随する。未ビルドなら先に `cargo build -p snotra` を実行する（別の本体を検査するときだけ `npm run test:powershell -- -ExePath <path>`）
 - WebView2 E2E（Playwright + tauri-driver）は #532 SU7 flip で撤去済み。後継は `smoke:egui`（自動回帰の最低線）+ 手動 GUI smoke（カテゴリ D）
 - **PR 上の実行責任**: `npm test` は通常 PR CI（`ci.yml`）で自動実行されるが、`smoke:startup` / `smoke:egui` は**通常 PR CI では走らない**。`src-tauri`・`snotra-egui-runtime`（描画ループ所有・#701 で追加）・依存 manifest/lockfile 等を含む変更は `Smoke` workflow（`e2e.yml`）が **paths により自動起動**し両 smoke を実行する。paths 外の変更で回したいときは `workflow_dispatch`（手動実行）。「通常 CI が緑」だけでは smoke 済みを意味しない
   - **CI に検証を委ねるなら、その job が実際に何を実行したかを確かめる**（#671 サイクルで実測: `Smoke` が 5 run 連続で緑のまま results の検証を skip していた）。この 1 事例は #686 が `-RequireResults` で機構化し、#804 が「results 検査を無条件に要求する」形へ格上げした（「スモーク運用メモ」節）が、**「緑」が「検査が走った」を意味しない形は他にも作れる**——委ねる前に、その job のステップと渡す引数を読む
@@ -137,7 +137,7 @@ npm run clean:worktrees          # Agent 委譲で残った worktree/ブラン�
 
 ```bash
 npm ci                           # 依存インストール（初回セットアップ・CI）
-npm run test:powershell         # Pester（共有 smoke 配管 + 実バイナリ統合。未ビルド時は先に cargo build -p snotra）
+npm run test:powershell         # Pester（cargo metadata の debug 本体を使用。未ビルド時は先に cargo build -p snotra）
 cargo test -p snotra-core        # ユニットテスト（純ロジック層）
 cargo test -p snotra-egui-runtime # ユニットテスト（egui入力・IME・Surface の描画失敗リトライ方針）
 cargo test -p snotra             # ユニットテスト（Tauri 統合層: state/indexing/config_watcher 等）
@@ -158,7 +158,7 @@ npm run tauri build              # リリースビルド（NSIS バンドル。`
 
 ## スモーク運用メモ
 
-- `scripts/lib/SnotraSmoke.psm1` は 3 本の検証スクリプトに共通する config seed の必須骨格、env の設定/復元、既存プロセス方針、起動、窓/trace 待機、キー注入、DWM/DPI 対応キャプチャを所有する。各 smoke の合否条件と固有の TOML 節は呼び出し側に残す。`scripts/lib/SnotraSmoke.Tests.ps1` は env の正常/例外時復元、trace parse、既存プロセス方針を単体検査し、実バイナリで seed parse と窓矩形＝キャプチャ寸法を統合検査する（#843）
+- `scripts/lib/SnotraSmoke.psm1` は 3 本の検証スクリプトに共通する config seed の必須骨格、env の設定/復元、Cargo target の本体導出、既存プロセス方針、起動、窓/trace 待機、キー注入、DWM/DPI 対応キャプチャを所有する。各 smoke の合否条件と固有の TOML 節は呼び出し側に残す。`scripts/lib/SnotraSmoke.Tests.ps1` は env の正常/例外時復元、Cargo target 導出、trace parse、既存プロセス方針を単体検査し、実バイナリで seed parse・意図したプロファイルへの `index.bin` 生成・窓矩形＝キャプチャ寸法を統合検査する（#843）
 - `scripts/smoke-startup.ps1` は `SNOTRA_TRACE=1` で起動し、`*:error` トレースイベントが不在であることを検証する。**検証用プロファイル（`SNOTRA_CONFIG_DIR` で `target/smoke-startup/profile` を指す・#804）をループ前に 1 回だけ seed し、5 起動で共有する**——実 config には触れず、毎回作り直さないのは「first-run でない起動」を測る現在の意味論を保つため。**first-run を踏んでいないことと env が効いたこと（プロファイルに `*.bin` が生成されたこと）も検査する**（`cmd:launch_settings_process:*` は `*:error` で終わらないため、従来のフィルタからは構造的に見えなかった）。**併せて trace が 1 件以上出ていることも要求する**（#690 follow-up）——0 件なら「`*:error` 不在」は自明に成立し**空振りの合格**になるため。実際に冷えた CI runner の初回起動で trace 0 行を実測しており、その状態でも本 smoke は緑を返していた。サマリ表の `event_count` は成功時にも出す（検査が実際に何かを見たことを示す肯定的報告）。**待ち方は「最初の trace を待ってから観測時間 `WaitMs` を開始する」**（`-FirstTraceTimeoutMs`・既定 12s）——固定待機だけだと遅い側に振れた起動が丸ごと無音になる（実測: 同一 runner・同一バイナリで最初の trace までが 0.6s〜8s 超とばらつき、5 回中 3 回が無音だった）。固定待機を一律に伸ばす案を採らないのは、速い起動まで毎回待つことになるため。`first_trace_ms` も成功時に出す（**分散の原因は未解明**ゆえ、予算に触れる前に悪化を読めるようにする。`n/a` は予算内に 1 行も出なかったことを表す）
 - `scripts/smoke-egui.ps1` は egui 経路の自動回帰の最低線（#532 SU7・e2e/ 撤去後の後継）: `SNOTRA_TRACE=1` で起動 → keybd_event で hotkey（起動時の `hotkey:registered` trace から導出した VK 列を注入。対応表の SSOT は `src-tauri/src/platform/hotkey.rs` の `injection_vks`。押下順で押し、解放込み）→ `egui_show:done` 観測 → Escape → `egui_hide:done` 観測 → `msedgewebview2` のグローバル増分 0 を検証する。`-HotkeyVks` を明示指定すると trace より優先される（trace を出さない旧バイナリの検証など）。**検証用プロファイル（`SNOTRA_CONFIG_DIR` で `target/smoke-egui/profile` を指す・#804）へ最小の有効 TOML を常に seed する**——実ユーザーの `%APPDATA%\Snotra` は読みも書きもしない（退避も復元も持たないことが、異常終了しても実 config が壊れない構造的な保証である）。空 TOML は必須セクション欠落で parse 失敗し破損復旧経路を踏むため使わない。**seed が読めたこと・first-run を踏んでいないこと・env が効いたこと（プロファイルに `*.bin` が生成されたこと）を 3 つとも肯定的に検査する**——「観測できなかった」を合格と読ませないため。実行中の snotra を kill するためローカル実行時は注意。網羅は担わず、視覚・操作列は手動 GUI smoke（カテゴリ D）が補完する
 - `scripts/smoke-egui.ps1` は results 窓の表示も検査する（#671/#673 サイクル PR A）: `egui_show:done` の後、1 文字クエリを注入して `egui_results:show` を観測し、Escape 後の `egui_hide:done` に続けて `egui_results:hide` も観測する。**#804 以降 skip は無い**——検証用プロファイルを常に seed するので、既定クエリ `"z"` が seed した索引 1 件に必ず一致する（`-ResultsQuery <letter>` は残るが、開発機の既存索引に合わせる用途は消えた。空文字を渡す用途については次の bullet）（CONTRIBUTING.md の「results 窓 show/hide の trace 観測」と対応）

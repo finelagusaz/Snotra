@@ -156,6 +156,36 @@ function Start-SnotraProcess {
     }
 }
 
+function Resolve-SnotraCargoExecutable {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$RepositoryRoot,
+        [ValidateSet('debug', 'release')]
+        [string]$Profile = 'debug'
+    )
+
+    $manifestPath = Join-Path $RepositoryRoot 'Cargo.toml'
+    if (-not (Test-Path -LiteralPath $manifestPath)) {
+        throw "Cargo workspace の manifest がありません: $manifestPath"
+    }
+
+    $metadataOutput = & cargo metadata --no-deps --format-version 1 --manifest-path $manifestPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "cargo metadata に失敗しました（exit=$LASTEXITCODE）。"
+    }
+    try {
+        $metadata = ($metadataOutput -join [Environment]::NewLine) | ConvertFrom-Json
+    } catch {
+        throw "cargo metadata の JSON を解釈できません: $($_.Exception.Message)"
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$metadata.target_directory)) {
+        throw 'cargo metadata に target_directory がありません。'
+    }
+
+    Join-Path ([string]$metadata.target_directory) "$Profile/snotra.exe"
+}
+
 function Resolve-SnotraExistingProcess {
     [CmdletBinding()]
     param(
@@ -342,6 +372,7 @@ Export-ModuleMember -Function @(
     'New-SnotraVerificationProfile'
     'Invoke-SnotraEnvironment'
     'Start-SnotraProcess'
+    'Resolve-SnotraCargoExecutable'
     'Resolve-SnotraExistingProcess'
     'Read-SnotraTraceEvents'
     'Wait-SnotraTraceEvent'

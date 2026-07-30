@@ -1,7 +1,7 @@
 #Requires -Version 7
 [CmdletBinding()]
 param(
-    [string]$ExePath = "target/debug/snotra.exe"
+    [string]$ExePath
 )
 
 Set-StrictMode -Version Latest
@@ -12,6 +12,9 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $moduleCache = Join-Path $repoRoot 'target/pester'
 $pesterManifest = Join-Path $moduleCache "Pester/$pesterVersion/Pester.psd1"
 $testPath = Join-Path $PSScriptRoot 'lib'
+$smokeModulePath = Join-Path $testPath 'SnotraSmoke.psm1'
+
+Import-Module $smokeModulePath -Force
 
 if (-not (Test-Path $pesterManifest)) {
     New-Item -ItemType Directory -Force -Path $moduleCache | Out-Null
@@ -21,14 +24,22 @@ if (-not (Test-Path $pesterManifest)) {
 
 Import-Module $pesterManifest -Force
 
-$resolvedExe = if ([IO.Path]::IsPathRooted($ExePath)) {
-    $ExePath
+$resolvedExe = if ($PSBoundParameters.ContainsKey('ExePath')) {
+    if ([string]::IsNullOrWhiteSpace($ExePath)) {
+        throw '-ExePath を明示する場合は空でないパスを指定してください。'
+    }
+    if ([IO.Path]::IsPathRooted($ExePath)) {
+        $ExePath
+    } else {
+        Join-Path $repoRoot $ExePath
+    }
 } else {
-    Join-Path $repoRoot $ExePath
+    Resolve-SnotraCargoExecutable -RepositoryRoot $repoRoot
 }
 if (-not (Test-Path $resolvedExe)) {
     throw "Pester の統合テストに使う実行ファイルがありません: $resolvedExe"
 }
+Write-Host "Pester integration executable: $resolvedExe"
 
 $savedExe = [Environment]::GetEnvironmentVariable('SNOTRA_PESTER_EXE', 'Process')
 try {

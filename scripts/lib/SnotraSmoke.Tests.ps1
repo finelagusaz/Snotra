@@ -82,6 +82,19 @@ Describe 'Start-SnotraProcess' {
     }
 }
 
+Describe 'Resolve-SnotraCargoExecutable' {
+    It 'CARGO_TARGET_DIR を設定したとき metadata の target_directory から debug 本体を導く' {
+        $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+        $customTarget = Join-Path $TestDrive 'custom-cargo-target'
+
+        $resolved = Invoke-SnotraEnvironment -Variables @{ CARGO_TARGET_DIR = $customTarget } -ScriptBlock {
+            Resolve-SnotraCargoExecutable -RepositoryRoot $repositoryRoot
+        }
+
+        $resolved | Should -Be (Join-Path $customTarget 'debug/snotra.exe')
+    }
+}
+
 Describe 'Read-SnotraTraceEvents' {
     It 'trace 以外と壊れた JSON を除き、有効なイベントを順番どおり返す' {
         $tracePath = Join-Path $TestDrive 'trace.log'
@@ -119,7 +132,7 @@ Describe 'Resolve-SnotraExistingProcess' {
 }
 
 Describe '実機配管' -Tag Integration {
-    It '生成した seed を本体が parse し、キャプチャ寸法が窓矩形と一致する' {
+    It '生成した seed を本体が parse して同じプロファイルへ書き込み、キャプチャ寸法が窓矩形と一致する' {
         $profile = Join-Path $TestDrive 'integration-profile'
         $stderr = Join-Path $TestDrive 'integration.err'
         $created = New-SnotraVerificationProfile -ProfileDir $profile -AdditionalSections @'
@@ -142,6 +155,17 @@ auto_hide_on_focus_lost = false
             $capture.Bitmap.Width | Should -Be $rectWidth
             $capture.Bitmap.Height | Should -Be $rectHeight
             @(Select-String -Path $stderr -SimpleMatch '[config] ').Count | Should -Be 0
+
+            # `[config]` 不在だけでは、実ユーザー側の別の有効 config を読んでも合格する。
+            # profile 作成時に古い *.bin は消しているため、ここでの生成は意図した
+            # SNOTRA_CONFIG_DIR を本体が実際に使った肯定的証拠になる。
+            $indexPath = Join-Path $created.FullPath 'index.bin'
+            $indexDeadline = [DateTime]::UtcNow.AddSeconds(10)
+            while (-not (Test-Path -LiteralPath $indexPath) -and [DateTime]::UtcNow -lt $indexDeadline) {
+                if ($proc.HasExited) { break }
+                Start-Sleep -Milliseconds 100
+            }
+            Test-Path -LiteralPath $indexPath | Should -BeTrue
         } finally {
             if ($null -ne $capture) { $capture.Bitmap.Dispose() }
             if ($null -ne $proc -and -not $proc.HasExited) {

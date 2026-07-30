@@ -215,11 +215,11 @@ $succeeded = $false
 try {
     # cargo を親プロセスにすると強制終了時に子の Snotra が残り得る。先に build して、所有できる
     # 本体プロセスを直接起動する。
-    cargo build -p snotra
+    $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+    $manifestPath = Join-Path $repositoryRoot 'Cargo.toml'
+    cargo build -p snotra --manifest-path $manifestPath
     if ($LASTEXITCODE -ne 0) { throw "cargo build -p snotra に失敗しました（exit=$LASTEXITCODE）。" }
-    $metadata = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
-    if ($LASTEXITCODE -ne 0) { throw "cargo metadata に失敗しました（exit=$LASTEXITCODE）。" }
-    $exe = Join-Path $metadata.target_directory 'debug/snotra.exe'
+    $exe = Resolve-SnotraCargoExecutable -RepositoryRoot $repositoryRoot
     if (-not (Test-Path -LiteralPath $exe)) { throw "実行ファイルが在りません: $exe" }
 
     $proc = Start-SnotraProcess -ConfigDir $profileFull -FilePath $exe `

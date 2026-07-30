@@ -1,6 +1,6 @@
 # snotra-core
 
-純ロジック lib crate（13モジュール + `lib.rs`）。Win32 非依存でユニットテスト可能。
+純ロジック lib crate（14モジュール + `lib.rs`）。Win32 非依存でユニットテスト可能。
 
 - 各ルールは「**太字 = 守る指示**、後続 = 理由・経緯」の形式。迷ったら太字部分に従えば安全
 - 本ファイルの構成: モジュール構成（責務 + モジュール別の不変条件）→ 開発ルール・実装前チェック → クロスモジュール不変条件 → データ永続化 → モジュール別の詳細規約
@@ -19,11 +19,12 @@
   - **件数パラメータ**（#388 で役割に合わせて改名済み）: `appearance.visible_rows` = 可視行数 / `search.result_limit` = **検索・フォルダの結果リスト最大長**（`Engine::search`/`capture_folder_list_context` の fetch_limit）/ `search.recent_limit` = 空クエリ recent 件数（`recent_history`）
   - **旧キーの後方互換移行**: 旧キー（`max_results`/`top_n_history`/`max_history_display`）は `apply_migrations()` が `skip_serializing` の legacy フィールド経由で移行する（2層レガシー: `result_limit` ← `[search].top_n_history` ← `[appearance].top_n_history`）
   - フロント `iconCacheSize` と `Config::icon_cache_cap()` はこれらから派生。実上限は名前でなく `engine.rs` の dispatch で確認する
-  - **`apply_migrations()` は migration 系統ごとの private fn へ段階分解済み**（issue #435）: `migrate_legacy_additional_paths` / `migrate_legacy_count_params` / `resolve_count_param_defaults` / `sanitize_fuzzy_history_cap_ratio` / `migrate_instant_legacy_commands` / `fallback_hotkey_if_system_shortcut`
+  - **`apply_migrations()` は migration 系統ごとの private fn へ段階分解済み**（issue #435）: `migrate_legacy_additional_paths` / `migrate_legacy_count_params` / `resolve_count_param_defaults` / `sanitize_fuzzy_history_cap_ratio` / `migrate_instant_legacy_commands` / `fallback_invalid_hotkey`
   - **migration の呼び出し順は元と同一に固定する**: `migrate_legacy_additional_paths`（`paths.additional`→`scan` 追加）→ `paths.normalize_scan_paths()`（dedup）の順序だけが真の依存（先に追加されたエントリを後続の正規化がまとめて dedup する）。他のステップは独立だが diff 最小化のため元の並びを保つ
 - `opener.rs` — 外部ツール起動ルールの解析・正規化・マッチングと Win プリセット検出（責務は `//!`、公開 API 契約は各 `///` を正とする。`config.rs` から分離・#435）
   - **依存方向は `config.rs` → `opener.rs`**: `OpenerRule`/`OpenerTool` は `Config.openers` として config.toml に紐づく serde 型のため型定義はこちらに置き、`config.rs` が `pub use crate::opener::{...}` で re-export して `snotra_core::config::...` の既存呼び出し元パスを維持する
   - 逆方向の依存として `normalize_opener_target` が `config.rs::normalize_scan_path_key` / `normalize_extensions`（`pub(crate)`、`paths.scan` の正規化とも共有する汎用ヘルパー）を使う
+- `hotkey.rs` — 永続ホットキー文字列の意味解析とシステムショートカット競合判定（責務は `//!`）。`HotkeyConfig` は serde 互換のため `config.rs` から re-export し、設定検証・UI・Win32 platform は同じ `ParsedHotkey` を消費する。文字列 parser を下流へ複製しない
 - `search.rs` — 検索順位計算・履歴ブースト・incremental search キャッシュ・空クエリ時履歴候補（責務・スコア階層は `//!` と `SearchEngine` の struct doc）。以下は並列 Vec レイアウトの不変条件:
   - **並列 Vec レイアウト**: `SearchEngine` は `entries` / `lower_names` / `lower_file_names` / `normalized_keys` / `char_masks` / `file_name_char_masks` / `kana_lower_names` / `kana_char_masks` の並列 Vec で cache locality を確保
   - **構築の共通化**: `compute_wave1`（文字列正規化）→ `compute_wave2`（ビットマスク計算）のヘルパー関数を `new()`（= `new_with_migemo(.., true)`）/ `new_with_migemo(entries, migemo_enabled)` / `new_with_cached_masks(.., migemo_enabled)` が共有する

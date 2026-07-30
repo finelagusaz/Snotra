@@ -1,10 +1,10 @@
 //! ホットキーをキャプチャする egui ウィジェット。
 //!
-//! 押下されたキーの組み合わせを `HotkeyConfig` として取得し、システム予約ショートカット
-//! （`is_system_shortcut`）を検出する。
+//! 押下されたキーの組み合わせを `HotkeyConfig` として取得し、core の意味 parser で
+//! 受理可否とシステム予約ショートカットを判定する。
 
 use eframe::egui;
-use snotra_core::config::{is_system_shortcut, HotkeyConfig};
+use snotra_core::config::HotkeyConfig;
 
 use crate::i18n::{Tr, TrKey};
 
@@ -109,8 +109,15 @@ fn capture_hotkey(input: &egui::InputState) -> CaptureResult {
                 if modifier.is_empty() {
                     continue;
                 }
-                // Reject system shortcuts immediately (save-time validate is a backstop)
-                if is_system_shortcut(&modifier, &name) {
+                let candidate = HotkeyConfig {
+                    modifier: modifier.clone(),
+                    key: name.clone(),
+                };
+                // UI が生成した値も core parser を通し、保存・platform と同じ意味で判定する。
+                let Ok(parsed) = candidate.parse() else {
+                    continue;
+                };
+                if parsed.is_system_shortcut() {
                     continue;
                 }
                 return CaptureResult::Captured {
@@ -209,5 +216,59 @@ fn egui_key_to_config_name(key: egui::Key) -> Option<String> {
         Key::Insert => Some("Insert".into()),
         // Not usable as hotkey
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_ui_generated_key_is_in_the_core_accepted_set() {
+        let mut actual: Vec<String> = egui::Key::ALL
+            .iter()
+            .filter_map(|&key| egui_key_to_config_name(key))
+            .collect();
+        actual.sort();
+
+        let mut expected: Vec<String> = ('A'..='Z')
+            .map(|ch| ch.to_string())
+            .chain(('0'..='9').map(|ch| ch.to_string()))
+            .chain((1..=12).map(|n| format!("F{n}")))
+            .chain(
+                ["Space", "Enter", "Tab", "Home", "End", "PageUp", "PageDown", "Insert"]
+                    .into_iter()
+                    .map(str::to_string),
+            )
+            .collect();
+        expected.sort();
+        assert_eq!(actual, expected, "UI key mapping set changed");
+        assert_eq!(actual.len(), 56, "mapped key count changed");
+
+        for key in actual {
+            HotkeyConfig {
+                modifier: "Ctrl".into(),
+                key: key.clone(),
+            }
+            .parse()
+            .unwrap_or_else(|error| panic!("UI generated unsupported key {key}: {error}"));
+        }
+    }
+
+    #[test]
+    fn manually_accepted_named_keys_are_not_capture_outputs() {
+        for (egui_key, name) in [
+            (egui::Key::Backspace, "Backspace"),
+            (egui::Key::Escape, "Escape"),
+            (egui::Key::Delete, "Delete"),
+        ] {
+            assert_eq!(egui_key_to_config_name(egui_key), None, "name={name}");
+            HotkeyConfig {
+                modifier: "Alt".into(),
+                key: name.into(),
+            }
+            .parse()
+            .unwrap_or_else(|error| panic!("manual key {name} must remain accepted: {error}"));
+        }
     }
 }

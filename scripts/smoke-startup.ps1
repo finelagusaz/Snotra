@@ -160,8 +160,8 @@ for ($run = 1; $run -le $Iterations; $run++) {
   # 既定 config で起動し、既定の scan パスで索引を作る——**この smoke の他の判定（`*:error` 不在・
   # trace ≥ 1・first-run 不発・`*.bin` の ∃）はすべて通り、緑のまま**である。ゆえにここが唯一の
   # 受け皿になる。`[config] ` 付きの eprintln は読み込み失敗の全 arm に在る（成功時に出るのは
-  # config.rs:790 の duplicate instant command と :885 の system shortcut fallback の 2 件だけで、
-  # この seed は instant_commands 無し・Alt+Q ゆえどちらも踏まない）。
+  # duplicate instant command と invalid hotkey fallback の 2 系統だけで、
+  # この seed は instant_commands 無し・妥当な Alt+Q ゆえどちらも踏まない）。
   # smoke-egui.ps1 と visual-check-colors.ps1 の Test-SeedHealth が同型の判定を持つ（#843）。
   if (Test-Path $errPath) {
     foreach ($d in @(Select-String -Path $errPath -SimpleMatch '[config] ')) {

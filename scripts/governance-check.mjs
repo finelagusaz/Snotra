@@ -1098,8 +1098,13 @@ export function headingRefDocs(snapshot) {
 // 読まれる型）。**enum variant のフィールド**（`InstantAction::Url` の `url` 等）と
 // **generics 形の struct 定義**（`pub struct Foo<T>`）は入らない——増えたときに G-config-reachability は止めない。
 // ---------------------------------------------------------------------------
-/** 母集団のソース。`[[openers]]` は `config.rs` が re-export するだけで実体は `opener.rs` に在る */
-export const CONFIG_SOURCE_PATHS = ["snotra-core/src/config.rs", "snotra-core/src/opener.rs"];
+/** 母集団のソース。`[[openers]]` と `[hotkey]` は `config.rs` が re-export するだけなので、
+ * serde 型の実体を持つ各モジュールも列挙する。 */
+export const CONFIG_SOURCE_PATHS = [
+  "snotra-core/src/config.rs",
+  "snotra-core/src/opener.rs",
+  "snotra-core/src/hotkey.rs",
+];
 /** 読み手として数えるソース。`snotra-settings/` は入れない（上のコメント参照）。
  *  `snotra-egui-runtime/` も入れない——`snotra-core` に依存せず config を読めないため（実測）。
  *  将来依存が入って config を直接読んだ場合、G-config-reachability は赤へ振れる（安全側） */
@@ -1186,7 +1191,7 @@ export function checkConfigFieldReachability(snapshot, table = NO_LAUNCHER_READ,
   const findings = [];
   for (const key of Object.keys(table)) {
     if (!all.has(key)) {
-      findings.push(finding(CONFIG_SOURCE_PATHS[0], 1, `表の \`${key}\` に対応するフィールドが config.rs に無い（表の腐敗）`));
+      findings.push(finding(CONFIG_SOURCE_PATHS[0], 1, `表の \`${key}\` に対応するフィールドが config serde 型の正本に無い（表の腐敗）`));
     } else if (!unread.has(key)) {
       findings.push(finding(CONFIG_SOURCE_PATHS[0], 1, `\`${key}\` はランチャ側から読まれている。表の記載が古い（NO_LAUNCHER_READ から外す）`));
     }

@@ -91,6 +91,11 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # Pester の統合テストが、共有モジュールで作った seed を実際の製品が parse できることと、
+      # Win32/DWM の窓矩形とキャプチャ寸法が一致することを検査する。
+      - name: cargo build (PowerShell integration fixture)
+        run: cargo build -p snotra
+
       # #562: docgen 検出器。doc コメント内の intra-doc link（散文内シンボル参照）の切れを
       # 機械検査する。deny 化は各 crate の `[lints] workspace = true`（Cargo.toml）経由で、
       # 既定 warn の素通りを塞ぐ。--document-private-items は private モジュールの //! link も
@@ -114,3 +119,6 @@ jobs:
 
       - name: "Run tests on Windows (vitest: .claude/hooks + .githooks + scripts)"
         run: npm test
+
+      - name: "Run PowerShell tests (Pester)"
+        run: npm run test:powershell

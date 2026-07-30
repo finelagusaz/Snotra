@@ -6,6 +6,7 @@
   "scripts": {
     "prepare": "git config core.hooksPath .githooks",
     "test": "vitest run",
+    "test:powershell": "pwsh -NoProfile -File scripts/run-pester.ps1",
     "clean:worktrees": "node scripts/clean-worktrees.mjs",
     "governance:check": "node scripts/governance-check.mjs",
     "race:boundaries": "node scripts/race-boundaries.mjs",

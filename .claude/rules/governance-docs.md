@@ -4,6 +4,8 @@ paths:
   - "CLAUDE.md"
   - "docs/adr/**"
   - "scripts/*.mjs"
+  - "scripts/*.ps1"
+  - "scripts/lib/**"
 ---
 
 # ガバナンス文書の参照と命名のルール

@@ -758,8 +758,13 @@ export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
  * ADR-area-metric-characters が警告する反射的な引き上げに当たらない根拠: 連番の衝突は `0014` `0016` `0017` で 3 回
  * 実測されており、3 回目は衝突を直す PR（#810）自身が 1 つ隣で作った。**規範を狭いまま置くことの
  * 費用が、面積の費用を上回ると判断した。**（#812）
+ * **2026-07-30 引き上げ 8678→8790**（実測 rules 8578→8690・+112 字）: #843 で
+ * `safety-nets.md` と `governance-docs.md` の配送対象へ `scripts/*.ps1` / `scripts/lib/**` を追加した。
+ * PowerShell の共有 smoke 配管と Pester が CI・規範の実装になった一方、旧 glob は `.mjs` しか拾わず、
+ * 変更者へ検証手順が届かないためである。本文規範は増やさず、必要な配送経路だけを加えた。
+ * 上限は実測 8690 + 100 字の既定余白とした。
  */
-export const AREA_BUDGET = { alwaysLoaded: 13338, rules: 8678 };
+export const AREA_BUDGET = { alwaysLoaded: 13338, rules: 8790 };
 
 /** コードポイント数（CR は除く）。読めなければ null（母集団欠落を上位で検知） */
 function countChars(text) {

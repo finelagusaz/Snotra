@@ -47,6 +47,9 @@ pub(crate) struct RowTheme {
     pub name_color: egui::Color32,
     pub path_color: egui::Color32,
     pub selection: egui::Color32,
+    /// 非選択行のホバーが到達する最大色。選択色から 50% 透明色を導き、別の config
+    /// キーを持たない（#724）。
+    pub hover: egui::Color32,
     pub name_size: f32,
     pub path_size: f32,
     /// status 行・updater トーストの本文サイズ（#672）。**両者は同じ「バー直下の 1 行」で
@@ -102,6 +105,7 @@ pub(crate) fn visual_snapshot(
             name_color: text,
             path_color: hint,
             selection,
+            hover: selection.gamma_multiply(0.5),
             name_size: v.font_size as f32,
             // 正本は layout（行高が同じ係数で積算するため。二重定義は行高と描画の不一致）。
             path_size: layout::path_size(v.font_size) as f32,
@@ -169,6 +173,20 @@ mod tests {
         let bad = visual_snapshot(&v, true, "");
         let d = VisualConfig::default();
         assert_eq!(bad.row.name_color, egui::Color32::from_hex(&d.text_color).unwrap());
+    }
+
+    /// #724: ホバー色は別の config キーを持たず、同じフレームの選択色から 50% 透明色を導く。
+    /// 非既定色を使い、既定値の手打ちや egui の既定色へ偶然一致しても通らないようにする。
+    #[test]
+    fn hover_color_derives_from_selected_row_color_at_half_opacity() {
+        let mut v = cfg();
+        v.selected_row_color = "#804020".into();
+
+        let snapshot = visual_snapshot(&v, true, &v.font_family);
+        let selected = egui::Color32::from_rgb(0x80, 0x40, 0x20);
+
+        assert_eq!(snapshot.row.selection, selected);
+        assert_eq!(snapshot.row.hover, selected.gamma_multiply(0.5));
     }
 
     /// font_family は変化フレームだけ clone する（毎フレームの String 確保を避ける）。

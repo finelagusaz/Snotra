@@ -270,6 +270,10 @@ fn scroll_directive(selected: bool, do_scroll: bool, generation_changed: bool) -
     }
 }
 
+fn row_hover_target(hovered: bool, is_error: bool) -> bool {
+    hovered && !is_error
+}
+
 /// 1 行を描画。scroll の指示に従い選択行へ寄せる（gate は呼び出し側 `scroll_directive`・#632/#714）。
 /// 返り値:
 /// single_clicked。ダブルクリックは扱わない（ユーザー決定: §4.8 の double-click=選択は
@@ -278,12 +282,15 @@ fn scroll_directive(selected: bool, do_scroll: bool, generation_changed: bool) -
 /// 2 行表示(#646 決定 9): 上段名前・下段パス。行高は Metrics::row_height(呼び出し側注入)。
 /// `show_icons=false` はアイコン slot 自体を畳む（skip でなくレイアウト変更・#532 SU4 Task 6）
 /// ——テキストが左端 8px 寄せになり、slot 分の空白が残らない。
+/// `reset_hover_animation` は結果集合の世代交代フレームだけ true。固定した行 ID の進捗を
+/// 現在のポインタ状態へスナップし、古いホバーを別の行へ引き継がない（#724）。
 #[allow(clippy::too_many_arguments)] // raster.rs::fill_mesh と同型（描画関数は座標/テーマ引数が集中する）
 pub(crate) fn draw_result_row(
     ui: &mut egui::Ui,
     result: &SearchResult,
     selected: bool,
     scroll: RowScroll,
+    reset_hover_animation: bool,
     icon: Option<&egui::TextureHandle>,
     show_icons: bool,
     theme: &RowTheme,
@@ -293,6 +300,13 @@ pub(crate) fn draw_result_row(
         egui::vec2(ui.available_width(), row_h),
         egui::Sense::click(),
     );
+    let hover_id = response.id.with("hover");
+    let hover_target = row_hover_target(response.hovered(), result.is_error);
+    let hover_progress = if reset_hover_animation {
+        ui.ctx().animate_bool_with_time(hover_id, hover_target, 0.0)
+    } else {
+        ui.ctx().animate_bool_responsive(hover_id, hover_target)
+    };
     if selected {
         ui.painter().rect_filled(rect, 4.0, theme.selection);
         match scroll {
@@ -313,6 +327,9 @@ pub(crate) fn draw_result_row(
                 response.scroll_to_me_animation(None, egui::style::ScrollAnimation::none());
             }
         }
+    } else if hover_progress > 0.0 {
+        ui.painter()
+            .rect_filled(rect, 4.0, theme.hover.gamma_multiply(hover_progress));
     }
     // アイコン: show_icons=true のときのみ左 28px slot の中央に 16x16 を描く。欠落
     // （icon=None）は drawn placeholder（draw_icon_fallback）で埋める。
@@ -526,6 +543,7 @@ impl snotra_egui_runtime::EguiView for ResultsView {
                     result,
                     sel,
                     scroll_directive(sel, do_scroll, generation_changed),
+                    generation_changed,
                     self.icon_textures.get(&result.path),
                     show_icons,
                     theme,
@@ -574,7 +592,16 @@ impl snotra_egui_runtime::EguiView for ResultsView {
 mod tests {
     use super::truncate_middle;
     use super::{ClickTake, ResultsShared};
-    use super::{RowScroll, scroll_directive};
+    use super::{RowScroll, row_hover_target, scroll_directive};
+
+    /// #724: ホバー開始と終了は同じ述語の true / false で対称に駆動する。選択はポインタと
+    /// 直交するため target を変えず、描画側で選択色を優先する。起動不能なエラー行だけを除く。
+    #[test]
+    fn row_hover_target_tracks_pointer_and_excludes_error_rows() {
+        assert!(row_hover_target(true, false));
+        assert!(!row_hover_target(false, false));
+        assert!(!row_hover_target(true, true));
+    }
 
     #[test]
     fn scroll_directive_maps_gate_and_generation() {

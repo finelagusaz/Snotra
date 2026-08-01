@@ -3,6 +3,22 @@ BeforeAll {
     Import-Module $modulePath -Force
 }
 
+BeforeDiscovery {
+    Import-Module (Join-Path $PSScriptRoot 'SnotraSmoke.psm1') -Force
+    # 画面がロックされていると Integration は**環境の都合で**落ちる（前面を奪えず打鍵が届かず、
+    # キャプチャはロック画面を返す・#866）。それを「赤」で残すと、実装の欠陥と区別できない。
+    # **確定してロック中のときだけ** skip し、判定不能なら従来どおり実行する（fail-open——
+    # 判定できないことを理由に検査を止めない）。
+    $sessionLocked = $false
+    try {
+        $lockState = Get-SnotraSessionLockState
+        $sessionLocked = $lockState.Locked
+        Write-Host "[#866] セッションのロック状態: Locked=$($lockState.Locked) SessionFlags=$($lockState.SessionFlags) SessionId=$($lockState.SessionId)"
+    } catch {
+        Write-Host "[#866] セッションのロック状態: 判定不能（$($_.Exception.Message)）— Integration は実行する"
+    }
+}
+
 Describe 'New-SnotraVerificationProfile' {
     It '必須セクションと呼び出し側固有の節を持つ seed を作り、古い成果物を除く' {
         $profile = Join-Path $TestDrive 'profile'
@@ -131,7 +147,76 @@ Describe 'Resolve-SnotraExistingProcess' {
     }
 }
 
-Describe '実機配管' -Tag Integration {
+Describe 'ConvertFrom-SnotraWtsInfoEx（#866 ロック検出の解釈）' {
+    # **実際のセッション状態に依存させない。** このファイルは CI（GitHub Actions の Windows
+    # runner）でも走るため、「いまロックされているか」を assert すると実行環境で結果が変わる。
+    # 純関数へ合成バイト列を渡し、解釈だけを固定する。
+    #
+    # ヘルパは BeforeAll に置く——Describe 直下の関数定義は discovery スコープに属し、
+    # It の実行時には見えない（Pester 5 以降のスコープ分離・実測で CommandNotFound）。
+    BeforeAll {
+        function New-WtsInfoExBuffer {
+            param([int]$Level = 1, [int]$SessionId = 7, [int]$SessionState = 0, [int]$SessionFlags = 1, [int]$Size = 40)
+            $b = New-Object byte[] $Size
+            [BitConverter]::GetBytes($Level).CopyTo($b, 0)
+            [BitConverter]::GetBytes($SessionId).CopyTo($b, 8)
+            [BitConverter]::GetBytes($SessionState).CopyTo($b, 12)
+            [BitConverter]::GetBytes($SessionFlags).CopyTo($b, 16)
+            $b
+        }
+    }
+
+    It 'SessionFlags=0（WTS_SESSIONSTATE_LOCK）をロックと読む' {
+        $r = ConvertFrom-SnotraWtsInfoEx -Buffer (New-WtsInfoExBuffer -SessionFlags 0) -ExpectedSessionId 7
+        $r.Locked | Should -BeTrue
+        $r.SessionId | Should -Be 7
+    }
+
+    It 'SessionFlags=1（WTS_SESSIONSTATE_UNLOCK）を非ロックと読む' {
+        (ConvertFrom-SnotraWtsInfoEx -Buffer (New-WtsInfoExBuffer -SessionFlags 1) -ExpectedSessionId 7).Locked | Should -BeFalse
+    }
+
+    It 'SessionId が呼び出し元と食い違えば「読めた」と言わない（オフセット仮定の検算）' {
+        # オフセットが 1 つずれると、無関係な 0 が「ロック中」に化ける。SessionId の一致が
+        # その沈黙経路に対する唯一の検知点である
+        { ConvertFrom-SnotraWtsInfoEx -Buffer (New-WtsInfoExBuffer -SessionId 3) -ExpectedSessionId 7 } |
+            Should -Throw '*SessionId が呼び出し元と一致しません*'
+    }
+
+    It 'Level が 1 でなければ SessionFlags の位置を仮定しない' {
+        { ConvertFrom-SnotraWtsInfoEx -Buffer (New-WtsInfoExBuffer -Level 2) -ExpectedSessionId 7 } |
+            Should -Throw '*Level が 1 ではありません*'
+    }
+
+    It 'LOCK/UNLOCK 以外の SessionFlags を非ロックへ倒さない（未知値は判定不能）' {
+        { ConvertFrom-SnotraWtsInfoEx -Buffer (New-WtsInfoExBuffer -SessionFlags -1) -ExpectedSessionId 7 } |
+            Should -Throw '*ロック状態を判定できません*'
+    }
+
+    It 'バッファが短ければ範囲外を読まない' {
+        { ConvertFrom-SnotraWtsInfoEx -Buffer (New-Object byte[] 12) -ExpectedSessionId 7 } |
+            Should -Throw '*短すぎます*'
+    }
+}
+
+Describe 'Assert-SnotraSessionUnlocked（#866 倒す向きの非対称）' {
+    It 'ロックと判定できたら止める' {
+        Mock -ModuleName SnotraSmoke Get-SnotraSessionLockState { [pscustomobject]@{ Locked = $true } }
+        { Assert-SnotraSessionUnlocked -Operation '窓のキャプチャ' } | Should -Throw '*画面がロックされている*'
+    }
+
+    It '非ロックなら素通りする' {
+        Mock -ModuleName SnotraSmoke Get-SnotraSessionLockState { [pscustomobject]@{ Locked = $false } }
+        { Assert-SnotraSessionUnlocked } | Should -Not -Throw
+    }
+
+    It '判定不能は警告のみで続行する（未知ホスト・CI runner で道具を失わないため）' {
+        Mock -ModuleName SnotraSmoke Get-SnotraSessionLockState { throw 'WTSQuerySessionInformationW に失敗しました（Win32 error 87）。' }
+        { Assert-SnotraSessionUnlocked -WarningAction SilentlyContinue } | Should -Not -Throw
+    }
+}
+
+Describe '実機配管' -Tag Integration -Skip:$sessionLocked {
     It '生成した seed を本体が parse して同じプロファイルへ書き込み、キャプチャ寸法が窓矩形と一致する' {
         $profile = Join-Path $TestDrive 'integration-profile'
         $stderr = Join-Path $TestDrive 'integration.err'

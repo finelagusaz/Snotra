@@ -26,9 +26,9 @@
 
 `git blame --ignore-revs-file` が効くことを feature ブランチ上で確かめたが、このリポジトリは squash 専用で、記録した SHA は main の blame グラフに現れない。**存在しない rev を無視しても git は静かに成功する**ため、腐っても気づけなかった。PR を 2 本に分けて解決し、否定の知識は `docs/adr/ADR-rustfmt-gate.md` へ。
 
-### 既知の罠（パイプが exit code を置き換える）を自分で踏んだ
+### 既知の罠（パイプが exit code を置き換える）を、同じサイクルで 2 度踏んだ
 
-`gh pr checks --watch 2>&1 | tail` の `exit 0` を gh の値と読み、**故障注入が失敗した**と誤診しかけた。`docs/development-principles.md`「構造的設計原則と強制の階梯」が名指ししている形で、#812 で一度踏まれている。出力に矛盾（`no checks reported`）が出たから気づけたが、空なら誤った結論に着地していた。
+1 度目は `gh pr checks --watch 2>&1 | tail` の `exit 0` を gh の値と読み、**故障注入が失敗した**と誤診しかけた。2 度目は**この振り返り本文にその罠を書いた直後**に `governance:check | tail -1 && git commit` と繋ぎ、finding を素通りさせた。知識の欠如ではない——**規範が危険だけを述べて代わりの手段を書いていなかった**ので、残る選択肢が「パイプするな」だけになり、出力を絞る必要が生じるたびに破れる形だった。`docs/development-principles.md`「構造的設計原則と強制の階梯」へ安全形（`set -o pipefail`・実測で `&&` の鎖も止まる）と「数行のコマンドを絞らない」を追記した。**危険は Bash 固有**である（PowerShell の `$LASTEXITCODE` は cmdlet を挟んでも保たれる）。
 
 ### CI の検証項目を計画に置くと循環する
 

@@ -60,7 +60,7 @@ impl BinFile {
     /// Returns `Some((data, version))` where `version` is the version that
     /// succeeded, so the caller can apply version-specific migrations.
     pub fn load_with_fallback<T: DeserializeOwned>(&self, fallbacks: &[u32]) -> Option<(T, u32)> {
-        let bytes = fs::read(&self.path).ok()?;
+        let bytes   = fs::read(&self.path).ok()?;
 
         // Try current version (always postcard)
         if let Ok(data) = try_deserialize_with_header(&bytes, self.magic, self.version) {

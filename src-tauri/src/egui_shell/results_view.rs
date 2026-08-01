@@ -436,21 +436,16 @@ fn draw_icon_fallback(ui: &egui::Ui, rect: egui::Rect, result: &SearchResult, th
 /// path を avail_px におよそ収める中間省略（`C:\a\...\app.exe`）。`per_char_px` は呼び出し側が
 /// 実 galley（`Painter::layout_no_wrap`）から実測した平均文字幅を渡す（固定係数 size*0.55 は
 /// Latin 想定で CJK グリフ（~1.0-1.8×）を過小評価し under-truncate する・reviewer Important 2）。
-/// release は panic=abort ゆえ、`max_chars < 4` ガードと空文字境界で範囲外アクセスを避ける。
+/// release は panic=abort ゆえ、`max_chars < MIN_MIDDLE_KEEP` ガードと空文字境界で範囲外
+/// アクセスを避ける（どちらも `truncate_middle_chars` 側が持つ）。
+///
+/// **px → 文字数の換算だけがここの責務である**（#870）。head/tail 分割の本体は
+/// `layout::truncate_middle_chars` にあり、フォルダ現在地の hint（`view.rs`）と共有する
+/// ——実装を 2 本並べると片方だけ直る。
 pub(crate) fn truncate_middle(s: &str, avail_px: f32, per_char_px: f32) -> String {
     let per = per_char_px.max(1.0);
     let max_chars = (avail_px / per).floor() as usize;
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= max_chars || max_chars < 4 {
-        return s.to_string();
-    }
-    let keep = max_chars - 1; // '…' の分
-    let head = keep / 2;
-    let tail = keep - head;
-    let mut out: String = chars[..head].iter().collect();
-    out.push('…');
-    out.extend(&chars[chars.len() - tail..]);
-    out
+    crate::egui_shell::layout::truncate_middle_chars(s, max_chars)
 }
 
 impl snotra_egui_runtime::EguiView for ResultsView {

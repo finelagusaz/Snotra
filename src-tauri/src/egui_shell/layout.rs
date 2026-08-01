@@ -1,6 +1,7 @@
 //! egui 検索ウィンドウの純粋レイアウト/タイミングヘルパー（#532 SU3）。ウィンドウ高さ算出・
 //! results 窓の可視性の導出（SPEC §8.6 の 4 連言）・幾何（上端 y・作業領域の残り）・
-//! 検索 debounce の判定を egui/Win32 非依存で持つ。ユニットテスト対象。
+//! 検索 debounce の判定・**表示幅に合わせたテキストの中間省略**（`truncate_middle_chars` /
+//! `fit_middle_by_measure`・#870）を egui/Win32 非依存で持つ。ユニットテスト対象。
 
 use std::time::Duration;
 
@@ -263,6 +264,84 @@ impl Debouncer {
     pub fn cancel(&mut self) {
         self.armed = false;
     }
+}
+
+/// 中間省略を行う最小の文字数。**`results_view::truncate_middle` が元から持っていた
+/// `max_chars < 4` ガードとの parity で 4 に固定する**——値を動かすと結果行の見え方が変わる
+/// （3 でも `a…z` は構成できるので、4 は「構成可能性」ではなく parity が根拠である）。
+///
+/// **これ未満では `truncate_middle_chars` が原文を返す**ため、「`max_chars` を減らしたのに
+/// 幅が跳ね上がる」非単調な段ができる。`fit_middle_by_measure` の二分探索が探索範囲を
+/// ここで打ち切るのは、その段を踏まないためである。
+pub const MIN_MIDDLE_KEEP: usize = 4;
+
+/// `s` を `max_chars` 字におよそ収める中間省略（`C:\a\…\app.exe`）。head と tail を等分し、
+/// 間に `…`（U+2026）を挟む。
+///
+/// **`results_view::truncate_middle` の中核でもある**（px ベースの API はあちらが持ち、
+/// 文字数への換算だけをあちらが行う）。head/tail 分割の実装を 2 本並べないための集約。
+///
+/// release は `panic="abort"` ゆえ、`max_chars < MIN_MIDDLE_KEEP` ガードと空文字境界で
+/// 範囲外アクセスを避ける。
+pub fn truncate_middle_chars(s: &str, max_chars: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max_chars || max_chars < MIN_MIDDLE_KEEP {
+        return s.to_string();
+    }
+    let keep = max_chars - 1; // '…' の分
+    let head = keep / 2;
+    let tail = keep - head;
+    let mut out: String = chars[..head].iter().collect();
+    out.push('…');
+    out.extend(&chars[chars.len() - tail..]);
+    out
+}
+
+/// `dir` を中間省略し、`measure` の返す実幅が `avail_px` に収まる**最長**の候補を返す（#870）。
+///
+/// `measure` は「候補を書式へ埋めた文字列（＝ hint 全体）の実幅」を返す。**固定部
+/// （接頭辞・接尾辞）の幅を別に推定しなくて済む**のがこの注入の要点で、
+/// `ADR-folder-location-display-surface` の却下理由 2（「接尾辞の実幅も別途推定が要る」）は
+/// これで消える。CJK も呼び出し側のフォント実寸に乗る。
+///
+/// **1 件でも収まる候補があれば、返す候補は必ず実測で収まっている**——収まった候補だけを
+/// `best` へ記録するため、幅が `max_chars` に対して僅かに非単調でも（`…` が消した 2 字より
+/// 広い場合）、収まらない候補を返さない。平均文字幅で 1 回割る近似はこの保証を持たず、
+/// 溢れれば egui の末尾省略が leaf を削る＝ #870 の症状へ戻る。
+///
+/// **唯一の例外**は 1 件も収まらないときで、`MIN_MIDDLE_KEEP` 字版（`best` の初期値・実測を
+/// 通っていない）を返す。これ以上短くできないためで、以降は egui 側の末尾省略に委ねる
+/// ＝現行と同じ見え方へ退化するだけである。この carve-out は
+/// `fit_middle_narrow_avail_falls_back_to_min_keep` が予算超過ごと固定している。
+///
+/// 測定回数は `1 + ceil(log2(n))`（128 字で 8 回）。egui の galley キャッシュにより
+/// 定常フレームではハッシュ引きになる。
+pub fn fit_middle_by_measure(
+    dir: &str,
+    avail_px: f32,
+    mut measure: impl FnMut(&str) -> f32,
+) -> String {
+    if measure(dir) <= avail_px {
+        return dir.to_string();
+    }
+    let n = dir.chars().count();
+    if n <= MIN_MIDDLE_KEEP {
+        return dir.to_string();
+    }
+    let mut best = truncate_middle_chars(dir, MIN_MIDDLE_KEEP);
+    let (mut lo, mut hi) = (MIN_MIDDLE_KEEP, n - 1);
+    while lo <= hi {
+        let mid = lo + (hi - lo) / 2;
+        let cand = truncate_middle_chars(dir, mid);
+        if measure(&cand) <= avail_px {
+            best = cand;
+            lo = mid + 1;
+        } else {
+            // mid >= MIN_MIDDLE_KEEP(=4) ゆえ underflow しない
+            hi = mid - 1;
+        }
+    }
+    best
 }
 
 #[cfg(test)]
@@ -580,5 +659,150 @@ mod tests {
         assert_eq!(available_below(1000, 1200, 2.0), 0.0);
         // ちょうど 0
         assert_eq!(available_below(1000, 1000, 1.0), 0.0);
+    }
+
+    // ---- 中間省略（#870） --------------------------------------------------
+
+    /// フェイク測定: ASCII 10px / 非 ASCII 20px + 固定部（接頭辞・接尾辞）30px。
+    ///
+    /// **実 galley を持ち込まずにアルゴリズムそのものを固定する**のがこの注入の狙いである。
+    /// `…`（U+2026）も非 ASCII ＝ 20px として数えるので、「2 字消して `…` を 1 つ足す」段で
+    /// 幅が増えも減りもしない——単調性の境界をちょうど踏む値になっている。
+    fn fake_measure(candidate: &str) -> f32 {
+        30.0 + candidate
+            .chars()
+            .map(|c| if c.is_ascii() { 10.0 } else { 20.0 })
+            .sum::<f32>()
+    }
+
+    const DEEP_BASE: &str = "C:\\tmp\\snotra836\\snotra836-entry\\very-long-directory-name-for-truncation\\second-level-also-long\\third-level-segment";
+
+    /// 受け入れ条件 4: 収まるパスは 1 文字も変えない（現行の見え方を変えない）。
+    #[test]
+    fn fit_middle_leaves_short_dir_untouched() {
+        assert_eq!(
+            fit_middle_by_measure("C:\\Toolbox\\ghost-launcher", 600.0, fake_measure),
+            "C:\\Toolbox\\ghost-launcher"
+        );
+        // 縮めようがない長さ（n <= MIN_MIDDLE_KEEP）は幅に関係なく原文
+        assert_eq!(fit_middle_by_measure("C:\\", 0.0, fake_measure), "C:\\");
+        assert_eq!(fit_middle_by_measure("", 0.0, fake_measure), "");
+    }
+
+    /// 受け入れ条件 2: 省略しても先頭（ドライブ）と末尾（leaf）の両方が残る。
+    /// egui 既定の**末尾**省略では leaf が消える——#870 の症状そのもの。
+    #[test]
+    fn fit_middle_keeps_head_and_tail() {
+        let dir = format!("{DEEP_BASE}\\LEAF-IS-HERE");
+        let out = fit_middle_by_measure(&dir, 600.0, fake_measure);
+        assert!(out.starts_with("C:\\"), "先頭が残る: {out}");
+        assert!(out.ends_with("LEAF-IS-HERE"), "leaf が残る: {out}");
+        assert!(out.contains('…'), "中間が省略されている: {out}");
+    }
+
+    /// 返した候補は**必ず実測で収まっている**（`best` に収まった候補だけを記録する構造の核心）。
+    /// 平均文字幅で 1 回割る近似では、ここが保証されず egui の末尾省略へ落ちる。
+    #[test]
+    fn fit_middle_result_actually_fits() {
+        let dir = format!("{DEEP_BASE}\\LEAF-IS-HERE");
+        for avail in [120.0_f32, 200.0, 333.0, 600.0, 900.0] {
+            let out = fit_middle_by_measure(&dir, avail, fake_measure);
+            assert!(
+                fake_measure(&out) <= avail,
+                "avail={avail} で収まる: {out} ({}px)",
+                fake_measure(&out)
+            );
+        }
+    }
+
+    /// #870 の症状そのもの: 同じ親の下の 2 つの leaf が**相異なる表示**になる。
+    /// 実測では第 3 階層と LEAF 到達のキャプチャが SHA256 で完全一致していた。
+    #[test]
+    fn fit_middle_distinguishes_sibling_dirs() {
+        let a = fit_middle_by_measure(&format!("{DEEP_BASE}\\LEAF-IS-HERE"), 600.0, fake_measure);
+        let b = fit_middle_by_measure(&format!("{DEEP_BASE}\\LEAF-ELSEWHERE"), 600.0, fake_measure);
+        assert_ne!(a, b, "兄弟ディレクトリが同一表示にならない");
+        // 親（第 3 階層）自身とも区別が付く
+        let parent = fit_middle_by_measure(DEEP_BASE, 600.0, fake_measure);
+        assert_ne!(a, parent);
+        assert_ne!(b, parent);
+    }
+
+    /// **二分探索の正当性の根拠**: `MIN_MIDDLE_KEEP` 以上で幅が単調非減少であること。
+    /// `truncate_middle_chars` は `max_chars < MIN_MIDDLE_KEEP` で原文を返す＝そこだけ幅が
+    /// 跳ねるため、探索範囲を `[MIN_MIDDLE_KEEP, n-1]` に閉じる根拠でもある（`n` 自体は
+    /// 第 1 段の `measure(dir) <= avail_px` が既に落としている）。
+    #[test]
+    fn truncate_middle_chars_width_is_monotonic_above_min_keep() {
+        for dir in [
+            &format!("{DEEP_BASE}\\LEAF-IS-HERE") as &str,
+            "C:\\ユーザー\\ドキュメント\\プロジェクト\\成果物",
+            "C:\\a\\bb\\ccc\\dddd\\eeeee",
+        ] {
+            let n = dir.chars().count();
+            let mut prev = f32::NEG_INFINITY;
+            for keep in MIN_MIDDLE_KEEP..=n {
+                let w = fake_measure(&truncate_middle_chars(dir, keep));
+                assert!(w >= prev, "keep={keep} で幅が減った: {w} < {prev} ({dir})");
+                prev = w;
+            }
+        }
+    }
+
+    /// `MIN_MIDDLE_KEEP` 未満は原文（`…` を挟む余地が無い）。範囲外アクセスも起こさない
+    /// ——release は `panic="abort"` ゆえ境界は落とせない。
+    #[test]
+    fn truncate_middle_chars_returns_source_below_min_keep() {
+        for keep in 0..MIN_MIDDLE_KEEP {
+            assert_eq!(truncate_middle_chars("C:\\abc\\def", keep), "C:\\abc\\def");
+            assert_eq!(truncate_middle_chars("", keep), "");
+        }
+        // 文字数ちょうど・それ以上でも原文
+        assert_eq!(truncate_middle_chars("abcde", 5), "abcde");
+        assert_eq!(truncate_middle_chars("abcde", 99), "abcde");
+    }
+
+    /// CJK 混在でも**フォントの実寸に乗る**（測定を注入する設計の要点）。平均文字幅を
+    /// Latin 想定で置く実装は CJK を過小評価して under-truncate する（#632 の方針を継承）。
+    ///
+    /// **leaf 全体が残るのは予算の半分に収まるときだけである**（head/tail 等分）。予算が
+    /// 足りなければ leaf も途中から削れるが、**残るのは leaf の末尾**であって先頭ではない
+    /// ——egui 既定の末尾省略（leaf の先頭だけが残る）と逆であり、兄弟ディレクトリを
+    /// 区別できるのはこの向きゆえである。
+    #[test]
+    fn fit_middle_handles_cjk() {
+        let dir = "C:\\ユーザー\\ドキュメント\\プロジェクト\\進行中\\最終成果物フォルダ";
+        // 予算が足りるとき: leaf 全体が残る
+        let wide = fit_middle_by_measure(dir, 360.0, fake_measure);
+        assert!(fake_measure(&wide) <= 360.0, "収まる: {wide}");
+        assert!(wide.contains('…'), "省略されている: {wide}");
+        assert!(
+            wide.ends_with("最終成果物フォルダ"),
+            "leaf 全体が残る: {wide}"
+        );
+        // 予算が足りないとき: leaf の**末尾**が残る（先頭ではない）
+        let narrow = fit_middle_by_measure(dir, 300.0, fake_measure);
+        assert!(fake_measure(&narrow) <= 300.0, "収まる: {narrow}");
+        let tail = narrow.rsplit('…').next().unwrap();
+        assert!(!tail.is_empty(), "末尾側が空でない: {narrow}");
+        assert!(dir.ends_with(tail), "残った末尾は dir の接尾辞: {narrow}");
+    }
+
+    /// 極端に狭い幅でも panic せず最短候補を返す（以降は egui の末尾省略へ委ねる）。
+    ///
+    /// **`fit_middle_by_measure` の doc が挙げる唯一の例外を、ここが固定している**——この
+    /// 経路だけは返り値が予算を超える。それを測らないと「必ず収まる」という主張の carve-out が
+    /// どのテストにも現れず、doc だけが例外を知っている状態になる。
+    #[test]
+    fn fit_middle_narrow_avail_falls_back_to_min_keep() {
+        let dir = format!("{DEEP_BASE}\\LEAF-IS-HERE");
+        let out = fit_middle_by_measure(&dir, 0.0, fake_measure);
+        assert_eq!(out, truncate_middle_chars(&dir, MIN_MIDDLE_KEEP));
+        assert_eq!(out.chars().count(), MIN_MIDDLE_KEEP);
+        assert!(
+            fake_measure(&out) > 0.0,
+            "fallback だけは予算を超えうる（doc の唯一の例外）: {}px > 0.0",
+            fake_measure(&out)
+        );
     }
 }

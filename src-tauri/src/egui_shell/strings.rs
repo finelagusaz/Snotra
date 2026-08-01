@@ -54,8 +54,15 @@ pub fn tool_select_hint(l: Language) -> &'static str {
 /// **末尾に `\` が付く場合と付かない場合が両方来る**（正規化しない・parity）: ドライブルートは
 /// `compute_parent_dir` が `C:\` を返し、フォルダ列挙は `C:\d\Cafe` を返す。
 ///
-/// 幅を超えたときの省略は呼び出し側で組まない——egui の singleline `hint_text` が
-/// `TextWrapMode::Truncate` で**末尾を `…` に**する（`view.rs` の hint 構築部を参照）。
+/// **幅を超えたときの省略は呼び出し側が組む**（#870・`view.rs` の hint 書式化部）。egui の
+/// singleline `hint_text` に任せると `TextWrapMode::Truncate` が**末尾を `…` に**するため、
+/// 深い階層でいま居るフォルダ名から削れ、異なる 2 つのディレクトリが同一表示に潰れる。
+/// 呼び出し側は `layout::fit_middle_by_measure` で `dir` を**中間省略**してからこの関数へ
+/// 渡す——ゆえに**書式の固定部（接尾辞・接頭辞）は削られない**。
+///
+/// **三点が 2 種類混ざるのは意図である**: 書式の末尾は ASCII `...`（parity・下の
+/// `folder_hint_uses_ascii_ellipsis_not_u2026` が測る）、中間省略は U+2026 `…`
+/// （結果行の `truncate_middle` と同じ字）。
 pub fn folder_hint(l: Language, dir: &str) -> String {
     match l {
         Language::Ja => format!("{dir} 内を検索..."),

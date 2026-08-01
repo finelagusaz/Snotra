@@ -31,6 +31,45 @@ use tauri::Manager;
 use crate::egui_shell::launcher_controller::{LauncherController, ToastAction};
 use crate::egui_shell::{RowTheme, ViewKind};
 
+/// hint の内幅を出すために `ui.available_width()` から引く量（#870）。
+///
+/// egui 0.35 の `TextEdit` は既定 margin が `Margin::symmetric(4, 2)`（`builder.rs:135`）で、
+/// 空バッファのとき hint の最初の text atom に `atom_shrink(true)` が付き、AtomLayout が
+/// `TextWrapMode::Truncate` で elide する（`:592-599` / `:678-688`）。その閾値は
+/// `available_size - frame.total_margin().sum()`（`atom_layout.rs:318`）＝ **こちらが
+/// `ui.available_width()` から引くべき量は margin の水平合計 8.0 ちょうど**である。
+///
+/// **`text_edit_width`（既定 280）の上限は効かない**——`add_sized` は
+/// `Layout::centered_and_justified` の子 ui を作り、AtomLayout は justified なら
+/// `max_size.x = f32::INFINITY` へ倒す（`atom_layout.rs:304-312`）。`builder.rs:478` の
+/// `allocate_width = desired_width.at_most(available_width)` はそこで捨てられる。
+///
+/// **frame expansion（`builder.rs:721-725`）も効かない**——差し替わるのは `.allocate(ui)` の
+/// **後**で、既に決まった atom の省略判定ではなく描画位置だけを動かす。
+///
+/// ゆえに `fit_middle_by_measure` の予算と egui の省略閾値は**同じ量を同じ font・同じ
+/// painter で測ったもの**になり、収まると測れた候補が egui に再度削られる経路は無い。
+/// **見積もりが足りなければ `…` が中間と末尾へ二重に付き、leaf が再び削れて #870 が直って
+/// いない状態へ静かに戻る**——カテゴリ D のキャプチャ目視が、その退行に対する検知点である。
+const TEXT_EDIT_HINT_H_MARGIN: f32 = 8.0;
+
+/// 入力欄の hint に何を出すか（#836 の優先度ラダー tool > folder > results）。
+///
+/// **値ではなく「どれか」だけを持つのは、書式化を後段へ送るためである**（#870）。フォルダ
+/// 現在地は入力欄の幅に合わせて中間省略する必要があり、幅（`ui.available_width()`）と
+/// 測定器（`ui.painter()`）は `TextEdit` を組む内側の `ui` でしか手に入らない。一方
+/// `folder_current_dir()` の**読み取り点は動かせない**（下の長文コメント）。ゆえに
+/// 「読み取りは外・書式化と省略は内」で切る。
+///
+/// **ラダーを純粋核へ切り出したのではない**——腕・順序・条件は元の 3 分岐のままである
+/// （切り出しは `ADR-folder-location-display-surface` 却下 4 で退けられている。
+/// `view_kind()` の 2 重導出になるため）。
+enum HintPlan<'a> {
+    Tool,
+    Folder(&'a str),
+    Search,
+}
+
 pub(crate) struct SearchWindowView {
     /// 検索セッション層（show を跨ぐ状態・結果・選択・起動・履歴・期限）の所有者
     /// （#666 段 3）。**依存は一方向である**——`launcher_controller` からこの型は見えない。
@@ -375,6 +414,17 @@ impl EguiView for SearchWindowView {
         // **件数は書かない**（数えるたびに変わり、古い数が読者を安心させるため）。**検算は
         // 手続きで行う**: 選んだ位置から TextEdit 構築までの間に `self.controller.` の
         // `&mut` メソッド呼び出しが 1 本も無いことを grep で列挙して確かめる（現在位置では空）。
+        //
+        // **禁じているのは前寄せだけである**（#870）。hint の**書式化**は下の closure 内へ
+        // 移してあるが、それは読んだ値を後ろで使うだけで、読み取り点は動いていない
+        // ——遷移前のディレクトリを描く経路は生まれない。
+        //
+        // **#870 以降、この不変条件のうち folder 現在地の分は借用が構造的に守る**——`HintPlan`
+        // が `folder_current_dir()` の `&str` を closure まで持つため、間に
+        // `&mut self.controller` を挟むとコンパイルが通らない（ライフタイムは enum の型に
+        // 載るので、実行時にどの腕を取るかに依らず領域が生きる）。**grep 検算がなお要るのは
+        // `view_kind()` / `is_launching()` / `folder_filter()` のように値をコピーして渡す
+        // 読みのほうである**——そちらは借用が残らないので、間に `&mut` を書けてしまう。
         let in_tool = self.controller.state().view_kind() == ViewKind::Tool;
         let in_folder = self.controller.state().view_kind() == ViewKind::Folder;
         // 入力欄が編集可能か（§18.5 ツール選択中・spec 決定 3/4 の launching 中は無効）。
@@ -395,10 +445,14 @@ impl EguiView for SearchWindowView {
         // 関数名だけが残った）。`hint` で grep してここへ辿り着いた編集者が、現在地を
         // `overlay_kind` のラダーへ配線しないこと——それは却下した代替案 B であり、排他ラダー
         // ゆえ indexing 中に現在地が黙って消える（#700 が是正した失敗様態そのもの）。
-        let hint: String = if in_tool {
+        //
+        // **ここで決めるのは「どれを出すか」だけである**（#870）。書式化と、フォルダ現在地の
+        // 幅に合わせた中間省略は下の closure 内で行う——幅と測定器が内側の `ui` にしか
+        // 無いためで、**読み取り点はこの位置に据え置かれる**（上の前寄せ禁止がそのまま効く）。
+        let hint_plan = if in_tool {
             // SolidJS placeholder.tool_select parity（egui の hint は buf が空のときだけ描かれる＝
             // HTML placeholder と同条件。表示されるのは対象パスが区切り終端等でファイル名が空のとき）
-            crate::egui_shell::ui_strings::tool_select_hint(l).to_string()
+            HintPlan::Tool
         } else if let Some(dir) = self.controller.state().folder_current_dir() {
             // **`in_folder` ではなく `Option` を直接分岐させる。** `in_folder`（= `view_kind()`
             // == `Folder`）で分岐すると「Folder なのに dir が無い」到達不能な else 側を
@@ -412,12 +466,14 @@ impl EguiView for SearchWindowView {
             // 状態を実際に構成している）。**この分岐が正しいのは `in_tool` を先に見ているから
             // であって、同値だからではない。**
             //
-            // 溢れたパスの省略はここで組まない——egui の singleline `hint_text` が
-            // `TextWrapMode::Truncate` を掛けて**末尾を `…` に**する（`RichText::new` は単一の
-            // text atom ゆえ、省略は組み立て後の文字列の末尾に当たる）。
-            crate::egui_shell::ui_strings::folder_hint(l, dir)
+            // **溢れたパスは自前で中間省略する**（#870・下の closure 内）。egui へ任せると
+            // `hint_text` が `TextWrapMode::Truncate` で**末尾を `…` に**するため
+            //（`RichText::new` は単一の text atom ゆえ省略は組み立て後の文字列の末尾に当たる）、
+            // 深い階層で**いま居るフォルダ名から削れて、異なる 2 つのディレクトリが同一表示に
+            // 潰れる**（#836 のカテゴリ D 実測で第 3 階層と leaf のキャプチャが SHA256 一致）。
+            HintPlan::Folder(dir)
         } else {
-            crate::egui_shell::ui_strings::search_hint(l).to_string()
+            HintPlan::Search
         };
         let mut buf = if in_tool {
             // §18.5: 対象の**ファイル名部分のみ**を表示——SolidJS inputValue は targetPath を
@@ -476,6 +532,48 @@ impl EguiView for SearchWindowView {
                 if restored_search {
                     move_text_cursor_to_end(&ctx, input_id, &buf);
                 }
+                // hint の書式化（#870）。**フォルダ現在地だけが幅を要る**——収まらないパスを
+                // 中間省略し、ドライブと leaf の両方を残す。`add_sized` に渡すのと同じ
+                // `ui.available_width()` から `TextEdit` の左右 margin を引いたものが、
+                // egui が hint を elide する内幅である（`TEXT_EDIT_HINT_H_MARGIN` の doc）。
+                //
+                // 測定は「候補を書式へ埋めた文字列の実幅」を返す形で注入する。**固定部
+                //（日本語の接尾辞・英語の接頭辞 + 接尾辞）の幅を別に推定しなくて済む**のが
+                // 要点で、省略は `dir` にだけ当たるため接尾辞は必ず残る。
+                //
+                // **測る font と描く font は同じ `bar_font` でなければならない。** 片方だけ
+                // 替えると、広く測れば egui が末尾を削って `…` が二重に付き（leaf が消える）、
+                // 狭く測れば要らぬ省略が入る——**どちらも検出器を持たない**（型でも
+                // テストでも捕まらず、カテゴリ D の目視だけが見る受容残余である）。
+                // 色（`name_color`）は galley の寸法に効かないので、描画側の
+                // `weak_text_color`（egui が無条件に上書きする）との食い違いは無害である。
+                let hint: String = match hint_plan {
+                    HintPlan::Tool => {
+                        crate::egui_shell::ui_strings::tool_select_hint(l).to_string()
+                    }
+                    HintPlan::Search => crate::egui_shell::ui_strings::search_hint(l).to_string(),
+                    // **egui 自身の描画条件と同じ述語でガードする**: `hint_text` はバッファが
+                    // 空のときだけ描かれる（`builder.rs:592`）。フォルダ展開中の `buf` は
+                    // `folder_filter()` なので、1 文字でも絞り込むと hint は描かれない——
+                    // その間まで測ると `folder_hint` の String 確保と `layout_no_wrap` が
+                    // 毎フレーム最大 9 回ずつ空回りする。描かれない文字列の中身は観測されない
+                    // ので、素通しでも見え方は変わらない。
+                    HintPlan::Folder(dir) if !buf.is_empty() => {
+                        crate::egui_shell::ui_strings::folder_hint(l, dir)
+                    }
+                    HintPlan::Folder(dir) => {
+                        let avail = (ui.available_width() - TEXT_EDIT_HINT_H_MARGIN).max(0.0);
+                        let shown =
+                            crate::egui_shell::layout::fit_middle_by_measure(dir, avail, |cand| {
+                                let text = crate::egui_shell::ui_strings::folder_hint(l, cand);
+                                ui.painter()
+                                    .layout_no_wrap(text, bar_font.clone(), bar_theme.name_color)
+                                    .size()
+                                    .x
+                            });
+                        crate::egui_shell::ui_strings::folder_hint(l, &shown)
+                    }
+                };
                 ui.add_sized(
                     egui::vec2(ui.available_width(), field_height),
                     egui::TextEdit::singleline(&mut buf)

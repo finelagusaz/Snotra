@@ -13,5 +13,6 @@
 # **存在しない rev を無視しても git は静かに成功する**ので腐っても気づけない（ADR-rustfmt-gate）。
 # ゆえに整形は単独 PR で先にマージし、その squash SHA をここへ書く。
 
-# style: cargo fmt --all を全体へ適用 (#858) — 63 files / +2159 -810
-# TODO(#858): 整形のみの PR がマージされた後、`git log -1 --format=%H origin/main` の SHA をここへ置く
+# style: cargo fmt --all を全体へ適用 (#860) — 63 files / +2159 -810
+# 整形のみの PR #860 を squash マージしたコミット。含まれるのは cargo fmt --all の出力だけである。
+1366251e22b28fdd8036ed7c2e6e6da21a73d178

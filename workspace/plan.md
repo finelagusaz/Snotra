@@ -149,8 +149,9 @@ open PR も無い。**63 ファイル整形の衝突相手は存在しない。*
       `post-edit.test.mjs` と `pre-bash.test.mjs` の**両方が赤**になり、後者は
       `fmt の spec が null（buildCommand の case 欠落）` と原因を名指しした。復元後は 538 passed。
       **これは今回新しく閉じた輪である**——母集団を手書きしていた間は、リストの更新漏れで緑のまま通った。
-- [ ] **CI**: 未整形の 1 ファイルを含むコミットを PR ブランチへ push し、**rust-check が赤**になることを確認 →
-      整形して戻すコミットを push し、緑に戻ることを確認（2 コミットは実測の記録として残す）
+- [x] **CI**: → **PR2 の本文チェックリストへ移送した**（2026-08-01）。この計画では閉じられない項目である。
+      未整形の 1 ファイルを含むコミットを push して `rust-check` が赤になることを確認 →
+      整形して戻し緑を確認（2 コミットは実測の記録として残す）
 
       **⚠ 計画が見落としていた順序の制約（実装中に判明・2026-08-01）**:
       `ci.yml` のトリガーは `pull_request`（branches: main）と main への push だけである。
@@ -162,7 +163,10 @@ open PR も無い。**63 ファイル整形の衝突相手は存在しない。*
       チェックリストへ送る**。この項目は `/implement` の射程外であり、PR 作成時に本文へ移して閉じる。
       **`workspace/` はこの項目が残るため削除しない**（未チェックのまま削除すると PR 前ゲートの視界から計画が消える）。
 
-- [ ] **`.git-blame-ignore-revs` へ PR1 の squash SHA を書く**（code-reviewer の H1・2026-08-01）
+- [x] **`.git-blame-ignore-revs` へ PR1 の squash SHA を書く**（code-reviewer の H1・2026-08-01）
+      **完了（2026-08-01）**: PR #860 をマージし、squash SHA `1366251e22b28fdd8036ed7c2e6e6da21a73d178` を記録。
+      `git merge-base --is-ancestor` で `origin/main` の祖先であることを、
+      `git blame --ignore-revs-file` で整形が触った行が原著者（`ca9a0f72` / 2026-02-27）へ戻ることを実測した。
       このリポジトリは **squash 専用**（`allow_merge_commit: false` / `allow_rebase_merge: false` を実測）ゆえ、
       feature ブランチ上の `201e5f6` は main の blame グラフに現れない。**存在しない rev を無視しても git は
       静かに成功する**ので、そのまま出すと no-op が沈黙したまま残る。

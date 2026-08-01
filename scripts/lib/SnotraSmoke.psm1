@@ -26,8 +26,129 @@ public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
 public static extern bool SetProcessDPIAware();
 [DllImport("dwmapi.dll")]
 public static extern int DwmGetWindowAttribute(IntPtr hWnd, int attr, out RECT value, int size);
+[DllImport("wtsapi32.dll", SetLastError = true)]
+public static extern bool WTSQuerySessionInformationW(IntPtr server, int sessionId, int infoClass, out IntPtr buffer, out int bytesReturned);
+[DllImport("wtsapi32.dll")]
+public static extern void WTSFreeMemory(IntPtr memory);
 public struct RECT { public int Left, Top, Right, Bottom; }
 '@
+    }
+}
+
+# WTSQuerySessionInformationW の引数（`WTSSessionInfoEx` = 25・`WTS_CURRENT_SESSION` = -1）と
+# `WTSINFOEX_LEVEL1_W.SessionFlags` の値。**Windows 7 では LOCK/UNLOCK の意味が逆**だが、
+# 本リポジトリの対象は Windows 10/11 ゆえ documented のまま扱う。
+$script:WtsSessionInfoEx = 25
+$script:WtsCurrentSession = -1
+$script:WtsSessionStateLock = 0
+$script:WtsSessionStateUnlock = 1
+
+<#
+.SYNOPSIS
+`WTSINFOEXW` のバイト列から SessionFlags を読む純関数。
+
+.DESCRIPTION
+**構造体のオフセットを自前で仮定するため、同じバッファから読める SessionId で検算する。**
+`WTSINFOEXW` は `Level`(DWORD) の後に union が続き、union の中身（`WTSINFOEX_LEVEL1_W`）は
+`LARGE_INTEGER` を含むので 8 バイト境界へ揃う。ゆえに SessionId は 8、SessionState は 12、
+SessionFlags は 16 に来る。**この仮定が外れれば SessionId が呼び出し元のセッションと合わなくなる**
+ので、合わなければ「読めた」と言わずに落とす（誤ったオフセットから読んだ 0 が
+「ロック中」に化けるのを防ぐ・fail-closed）。
+#>
+function ConvertFrom-SnotraWtsInfoEx {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [byte[]]$Buffer,
+        [Parameter(Mandatory)]
+        [int]$ExpectedSessionId
+    )
+
+    if ($Buffer.Length -lt 20) {
+        throw "WTSINFOEXW が短すぎます（$($Buffer.Length) バイト・20 バイト以上が要る）。"
+    }
+    $level = [BitConverter]::ToInt32($Buffer, 0)
+    if ($level -ne 1) {
+        throw "WTSINFOEXW.Level が 1 ではありません（$level）。SessionFlags の位置を仮定できません。"
+    }
+    $sessionId = [BitConverter]::ToInt32($Buffer, 8)
+    if ($sessionId -ne $ExpectedSessionId) {
+        throw "WTSINFOEXW の SessionId が呼び出し元と一致しません（構造体 $sessionId / 呼び出し元 $ExpectedSessionId）。オフセットの仮定が崩れています。"
+    }
+    $flags = [BitConverter]::ToInt32($Buffer, 16)
+    if ($flags -ne $script:WtsSessionStateLock -and $flags -ne $script:WtsSessionStateUnlock) {
+        throw "SessionFlags が LOCK(0)/UNLOCK(1) のいずれでもありません（$flags）。ロック状態を判定できません。"
+    }
+
+    [pscustomobject]@{
+        SessionId = $sessionId
+        SessionState = [BitConverter]::ToInt32($Buffer, 12)
+        SessionFlags = $flags
+        Locked = ($flags -eq $script:WtsSessionStateLock)
+    }
+}
+
+<#
+.SYNOPSIS
+現在のセッションがロックされているかを返す（判定不能なら throw）。
+
+.DESCRIPTION
+**デスクトップ名（`OpenInputDesktop` + `GetUserObjectInformation`）では判定できない。**
+近年の Windows はロック画面（LockApp）を `Default` デスクトップ上で動かすため、ロック中でも
+`Default` が返る（2026-08-01 実測の false negative・#866）。
+#>
+function Get-SnotraSessionLockState {
+    [CmdletBinding()]
+    param()
+
+    Initialize-SnotraNativeInterop
+    $buffer = [IntPtr]::Zero
+    $bytes = 0
+    if (-not [SnotraSmokeInterop.Native]::WTSQuerySessionInformationW(
+            [IntPtr]::Zero, $script:WtsCurrentSession, $script:WtsSessionInfoEx, [ref]$buffer, [ref]$bytes)) {
+        $code = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        throw "WTSQuerySessionInformationW に失敗しました（Win32 error $code）。ロック状態を判定できません。"
+    }
+    try {
+        $bytesArray = New-Object byte[] $bytes
+        [System.Runtime.InteropServices.Marshal]::Copy($buffer, $bytesArray, 0, $bytes)
+    } finally {
+        [SnotraSmokeInterop.Native]::WTSFreeMemory($buffer)
+    }
+    ConvertFrom-SnotraWtsInfoEx -Buffer $bytesArray -ExpectedSessionId (Get-Process -Id $PID).SessionId
+}
+
+<#
+.SYNOPSIS
+画面がロックされていたら、何をすればよいかを名指しして止める。
+
+.DESCRIPTION
+**ロック中は窓が Win32 の視点では生きたままである**（`IsWindowVisible` は真・矩形も妥当・
+DPI も正しい）ため、既存のガードはすべて通り、`CopyFromScreen` は**ロック画面の中身を持つ
+有効な Bitmap** を返す。判定側が落ちたとしてもメッセージは色や描画経路を指すので、読んだ人は
+レンダリングを疑い始める（#866 実測）。ここで名指しして止める。
+
+**倒す向きを 2 つに分ける。** 「ロック中と判定できた」は throw、「**判定できなかった**」は警告のみで
+続行する。この関数の仕事は*誤った結果*を防ぐことであり、状態を読めないホストで実行そのものを
+拒めば、情報を足さずに道具を失う。加えて `Get-SnotraWindowCapture` は Pester の Integration
+テスト経由で **CI（GitHub Actions の Windows runner）でも走る**——判定不能を throw に倒すと、
+runner の WTS の振る舞いが未知のまま CI を壊しうる。**ロックという確定した事実にだけ強く倒す。**
+#>
+function Assert-SnotraSessionUnlocked {
+    [CmdletBinding()]
+    param(
+        [string]$Operation = 'この操作'
+    )
+
+    $state = $null
+    try {
+        $state = Get-SnotraSessionLockState
+    } catch {
+        Write-Warning "画面のロック状態を判定できませんでした（$($_.Exception.Message)）。ロック中であれば、以降の結果は画面の中身を反映しません（#866）。"
+        return
+    }
+    if ($state.Locked) {
+        throw "画面がロックされているため $Operation を実行できません。ロック中は窓が可視のままでも画面に合成されず、キャプチャはロック画面の中身を返します（#866）。画面のロックを解除してから実行してください。"
     }
 }
 
@@ -328,6 +449,11 @@ function Get-SnotraWindowCapture {
     Initialize-SnotraDpiAwareness
     Add-Type -AssemblyName System.Drawing
 
+    # **可視判定より先に見る。** ロック中は IsWindowVisible も矩形も真っ当な値を返し、
+    # ここから下は最後まで成功して**中身だけが違う Bitmap** を返す（#866）。
+    # 判定不能を throw へ倒さない理由は Assert-SnotraSessionUnlocked のコメント。
+    Assert-SnotraSessionUnlocked -Operation '窓のキャプチャ'
+
     if (-not [SnotraSmokeInterop.Native]::IsWindowVisible($Handle)) {
         throw 'キャプチャ対象の窓が可視ではありません。'
     }
@@ -381,4 +507,7 @@ Export-ModuleMember -Function @(
     'Wait-SnotraWindow'
     'Set-SnotraForegroundWindow'
     'Get-SnotraWindowCapture'
+    'ConvertFrom-SnotraWtsInfoEx'
+    'Get-SnotraSessionLockState'
+    'Assert-SnotraSessionUnlocked'
 )

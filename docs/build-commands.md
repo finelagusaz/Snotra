@@ -75,6 +75,7 @@ npm run check:colors -- -Interactive      # 判定せず起動し、目視項目
 - **既定色での確認はこの検証にならない。** config の既定 `#282828` は `snotra-egui-runtime` の `CLEAR_COLOR` と一致するため、色が届いていなくても正常に見える（原理は `docs/development-principles.md`「config の値は到達性の検出器を持たない」）
 - **自動判定するのは main と results の定常背景である。** results は専用 scan 3 件を seed し、キー注入で表示して実ピクセルを測る。残る 2 点は目視（`-Interactive`）に留まる——**show の一瞬のフラッシュ**は present 前の 1 フレーム未満で連写しても捉えられず、**results のリサイズ時のちらつき**は入力と描画のタイミングに依存して単一キャプチャでは不在を証明できない
 - **trace は判定に使わない。** 「`set_clear_color` を呼んだ」というログは、その色が画面へ出たことを意味しない（`src-tauri/CLAUDE.md`「trace の presence 検査は状態の検査ではない」）。判定の根拠は描かれたピクセルだけである
+- **画面がロックされていると実行できない**（#866）。ロック中は窓が可視のままでも画面に合成されず、`CopyFromScreen` は**ロック画面の中身を持つ有効な Bitmap** を返す（`IsWindowVisible` も矩形も DPI も真っ当な値なので、他のガードは全部通る）。`Get-SnotraWindowCapture` が起動前に名指しして止める。**ロック状態を判定できなかったときは警告のみで続行する**——読めないホストで実行そのものを拒めば、情報を足さずに道具を失うため
 - **ユーザーの実 config は読みも書きもしない。** `SNOTRA_CONFIG_DIR`（下記）で `target/visual-check/profile` を指し、そこへ検証用の config を 1 枚書いて起動する。退避も復元も無いので、異常終了しても実 config が検証色のまま残る経路が**構造的に無い**（#803）。残るのは使い捨てプロファイルだけで、`cargo clean` が掃く（`CARGO_TARGET_DIR` を設定している環境では対象外）
 - **seed が読めたかは本体の stderr で確かめる。** `[config] ` で始まる行が出たら赤にする。**`config.toml.bak` の不在では証明にならない**——退避は best-effort で、`fs::rename` が失敗すれば parse 失敗でも `.bak` は現れない（`snotra-core/src/config.rs` の `backup_invalid`）。seed が読めていないと既定色で起動するため、「色が届いていない」と誤読される
 - **`SNOTRA_CONFIG_DIR` が効いたことは肯定的に確かめる。** 実行後にプロファイル配下へ `*.bin` が生成されていることを見る。効いていなければ本体は実 config を読むため、ピクセルが赤いときに「色が届いていない」と「env が効いていない」を切り分けられない

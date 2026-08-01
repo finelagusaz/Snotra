@@ -24,7 +24,6 @@
 //! フォント解決と登録は `font_stack`（独立モジュールへ切り出した理由は `font_stack.rs` の
 //! `//!`・#666 段 3 タスク 1）。
 
-use snotra_core::config::AppearanceConfig;
 use snotra_egui_runtime::{EguiView, RuntimeFrame};
 use tauri::Manager;
 
@@ -117,11 +116,7 @@ impl SearchWindowView {
     /// cross-thread writer 自体が消える（初版 spec の watcher flag 分岐案は却下・並行性レビュー）。
     /// なお flag ON では config_watcher の幅 set_size は get_webview_window=None で元々 no-op。
     fn window_width(&self) -> f64 {
-        self.controller
-            .app()
-            .try_state::<crate::AppState>()
-            .map(|s| f64::from(s.engine.lock().unwrap().config().appearance.window_width))
-            .unwrap_or_else(|| f64::from(AppearanceConfig::default().window_width))
+        super::window_coordinator::read_window_width(self.controller.app())
     }
 }
 

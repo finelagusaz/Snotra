@@ -60,6 +60,26 @@ pub(crate) fn read_metrics(app: &tauri::AppHandle) -> layout::Metrics {
     layout::Metrics::from_config(f, rp, bp)
 }
 
+/// 窓の論理幅を config から読む**唯一の点**。show 経路（`show_egui_main`）と
+/// フレーム内（`view.rs` の `window_width`）の両方がここを呼ぶ。
+///
+/// **読みと落とし先を独立実装に分けない**——同じことを 2 箇所でやって乖離した実績が
+/// このファイルにある（`read_metrics` の doc が記録する 52.0/43.0）。
+///
+/// **幅について OS の現在サイズは読まない**（#824 の 1）。show 経路は以前 `inner_size()` を読み、
+/// 失敗するとリテラル 600 へ落ちていた——`window_width = 900` のユーザーで窓が縮む欠陥である。
+/// 読み元ごと config へ寄せたのは、落とし先を直すだけでは hide を跨いだ設定変更が残るためで、
+/// hidden 中は `update()` が走らず `inner_size()` が旧幅を返す（show 直後に幅がスナップする）。
+/// これは `view.rs` が幅の `inner_size()` 読みを撤去したときと同じ判断である。
+///
+/// AppState 不在は setup 完了前の理論経路のみ（`.manage` は `.setup` より前・`read_metrics` の
+/// doc と同じ）。既定へ落ちるのはそのときだけである。
+pub(crate) fn read_window_width(app: &tauri::AppHandle) -> f64 {
+    app.try_state::<crate::AppState>()
+        .map(|s| f64::from(s.engine.lock().unwrap().config().appearance.window_width))
+        .unwrap_or_else(|| f64::from(AppearanceConfig::default().window_width))
+}
+
 /// `Color32` を tao のネイティブ背景ブラシ色へ（spec 決定 4）。
 ///
 /// **ブラシ側の alpha は 255 に固定する**——softbuffer の clear color が `0x00RRGGBB` で alpha を
@@ -203,17 +223,13 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
     // 崩れている）。
     #[cfg(windows)]
     {
-        let width = window
-            .inner_size()
-            .ok()
-            .map(|s| {
-                s.to_logical::<f64>(window.scale_factor().unwrap_or(1.0))
-                    .width
-            })
-            // **ここは `appearance.window_width` の消費者ではない**——読み元は OS の
-            // `inner_size()` で、既定幅 600 と一致しているのは偶然である。参照へ寄せない理由は
-            // `docs/adr/ADR-config-default-fallback-references.md`。読み元自体は #824 で決める。
-            .unwrap_or(600.0);
+        // 幅も config から当てる（#824 の 1）。**OS の現在サイズは読まない**——hidden 中は
+        // update() が走らないので、hide を跨いで幅設定が変わると `inner_size()` は旧幅を返す。
+        // それで show すると最初のフレームが新幅へ書き直して幅がスナップする（このブロック
+        // 冒頭が高さについて断っている視覚スナップと同型）。config が幅の正本であることは
+        // `view.rs` の `window_width` の doc が記録するとおりで、OS を経由する
+        // read-modify-write を作らないのが元々の設計である。
+        let width = read_window_width(app);
         // 折りたたみ高 = bar_height(#646 決定 2)。52 固定だと font 連動後の実バー高と
         // ずれ、position クランプが誤った高さで効く(このブロック冒頭の reset-on-show
         // コメントの機構と同じ理由。行番号参照は挿入でずれるため名前で指す)。

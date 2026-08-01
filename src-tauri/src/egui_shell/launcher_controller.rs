@@ -683,10 +683,14 @@ impl LauncherController {
         self.app_handle
             .try_state::<crate::AppState>()
             .map(|s| s.engine.lock().unwrap().config().general.language)
-            // 既定関数（`default_language()`）は OS ロケール依存なので、ここへ寄せると
-            // 非 ja 環境で挙動が変わる（#795 の射程外・同ファイルの他 2 箇所は参照へ寄せた）。
-            // 読み元ごと #824 で決める。
-            .unwrap_or(snotra_core::config::Language::Ja)
+            // AppState 不在（setup 完了前の理論経路のみ——`.manage` は `.setup` より前）は OS
+            // ロケールから導く（#824 の 2 で決定）。固定の `Ja` は `SPEC.md`「7.6 起動時の設定初期化」
+            // の「`ja` で始まれば日本語、それ以外は英語」と食い違っており、到達すれば非 ja 環境で
+            // 誤った文言を出す。
+            // `GeneralConfig::default()` を経由するのは、`default_language()` を `pub` にすると
+            // lib crate の公開面が増えて `dead_code` による到達性の検出を失うためである
+            // （`docs/adr/ADR-config-default-fallback-references.md`）。
+            .unwrap_or_else(|| snotra_core::config::GeneralConfig::default().language)
     }
 
     /// dir を別スレッドで全列挙・全ソートし FolderMsg を channel へ送る（token 付き）。

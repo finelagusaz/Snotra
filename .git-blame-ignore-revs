@@ -8,6 +8,10 @@
 # 手作業の整理・改名を載せてはならない——blame から消えると、なぜそう書いたかを
 # 遡れなくなる。
 
-# style: cargo fmt --all を全体へ適用 (#858)
-# 63 files / +2159 -810。cargo fmt --all の出力そのもので、整形以外を含まない。
-201e5f692cc6656326b13b2780cb558ddbb21dfb
+# **記録するのは main 上の SHA である。** このリポジトリは squash 専用なので、feature ブランチ上の
+# コミット SHA は main の blame グラフに現れない——それを書いても no-op になり、しかも
+# **存在しない rev を無視しても git は静かに成功する**ので腐っても気づけない（ADR-rustfmt-gate）。
+# ゆえに整形は単独 PR で先にマージし、その squash SHA をここへ書く。
+
+# style: cargo fmt --all を全体へ適用 (#858) — 63 files / +2159 -810
+# TODO(#858): 整形のみの PR がマージされた後、`git log -1 --format=%H origin/main` の SHA をここへ置く

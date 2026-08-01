@@ -162,6 +162,14 @@ open PR も無い。**63 ファイル整形の衝突相手は存在しない。*
       チェックリストへ送る**。この項目は `/implement` の射程外であり、PR 作成時に本文へ移して閉じる。
       **`workspace/` はこの項目が残るため削除しない**（未チェックのまま削除すると PR 前ゲートの視界から計画が消える）。
 
+- [ ] **`.git-blame-ignore-revs` へ PR1 の squash SHA を書く**（code-reviewer の H1・2026-08-01）
+      このリポジトリは **squash 専用**（`allow_merge_commit: false` / `allow_rebase_merge: false` を実測）ゆえ、
+      feature ブランチ上の `201e5f6` は main の blame グラフに現れない。**存在しない rev を無視しても git は
+      静かに成功する**ので、そのまま出すと no-op が沈黙したまま残る。
+      → **PR を 2 本に分ける**（ユーザー裁定 2026-08-01「2 PR に分ける（推奨）」）。
+      PR1 = 整形のみ → マージ後 `git log -1 --format=%H origin/main` の SHA を PR2 の本ファイルへ置く。
+      これも PR 本文チェックリストへ送る項目である。
+
 ## 不変条件と異常系
 
 | # | 不変条件 | 破れたときの検知 |

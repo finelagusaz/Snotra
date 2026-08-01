@@ -339,13 +339,74 @@ function Read-SnotraTraceEvents {
     )
 
     if (-not (Test-Path -LiteralPath $Path)) { return }
-    foreach ($line in Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue) {
-        if ($line -notmatch '^\[trace\]\s+(.+)$') { continue }
+    ConvertFrom-SnotraTraceLine -Line (Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)
+}
+
+<#
+.SYNOPSIS
+既に読み込んだ行から trace イベントを取り出す（parse の唯一の実装）。
+
+.DESCRIPTION
+`Read-SnotraTraceEvents` と `Read-SnotraTraceSnapshot` の**共通の parse 本体**である。
+スナップショットは「行数」と「parse 成功数」の差で捨てた行を数えるので、**両者が同じ 1 回の
+読み取りを見なければならない**——別々に読むと、稼働中のアプリが間に書き足した行で差が
+壊れる（parse 成功が行数を上回りうる・code-review M1）。
+#>
+function ConvertFrom-SnotraTraceLine {
+    [CmdletBinding()]
+    param(
+        [AllowEmptyCollection()]
+        [string[]]$Line = @()
+    )
+
+    foreach ($text in $Line) {
+        if ($text -notmatch '^\[trace\]\s+(.+)$') { continue }
         try {
             $Matches[1] | ConvertFrom-Json
         } catch {
             # 書き込み途中の末尾行や壊れた診断行は、次回の読取りで再評価する。
         }
+    }
+}
+
+<#
+.SYNOPSIS
+trace ファイルを 1 度読み、判定器へ渡す形（イベント列と「捨てた行」の数）にして返す。
+
+.DESCRIPTION
+**「捨てた行」は `[trace]` で始まるのに `Read-SnotraTraceEvents` が返さなかった行だけを数える。**
+stderr には非 trace の診断行（`[index-load] ...` 等）が混じるため、素朴に「全行 − parse 成功」
+で数えると**正常な実行が毎回 degrade して検出器が無意味になる**（#757 で実測: 実ログ 25 行の
+うち 1 行が非 trace の診断行だった）。
+
+この数え方は `Test-SnotraTraceInvariants -DroppedLineCount` の意味を決める判定規則であり、
+**呼び出し側に写しを置かない**——片方がドリフトすると片方の smoke だけが誤って degrade する。
+#>
+function Read-SnotraTraceSnapshot {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [AllowNull()]
+        [string]$Path
+    )
+
+    if ([string]::IsNullOrEmpty($Path) -or -not (Test-Path -LiteralPath $Path)) {
+        return @{ Available = $false; Lines = @(); Events = @(); TraceLines = 0; Dropped = 0 }
+    }
+    # **1 度だけ読む。** 行数と parse 成功数を別々の読み取りから取ると、稼働中のアプリが間に
+    # 書き足した行で差が壊れる（code-review M1）。**生行も返す**のは同じ理由で——presence の
+    # 表示と不変条件の判定が別時点のファイルを見ないようにするため。
+    $lines = @(Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)
+    $traceLineCount = 0
+    foreach ($text in $lines) { if ($text -match '^\[trace\]\s+') { $traceLineCount++ } }
+    $events = @(ConvertFrom-SnotraTraceLine -Line $lines)
+    return @{
+        Available  = $true
+        Lines      = $lines
+        Events     = $events
+        TraceLines = $traceLineCount
+        Dropped    = [Math]::Max(0, $traceLineCount - $events.Count)
     }
 }
 
@@ -558,6 +619,7 @@ Export-ModuleMember -Function @(
     'Resolve-SnotraCargoExecutable'
     'Resolve-SnotraExistingProcess'
     'Read-SnotraTraceEvents'
+    'Read-SnotraTraceSnapshot'
     'Wait-SnotraTraceEvent'
     'Send-SnotraKey'
     'Send-SnotraKeyChord'

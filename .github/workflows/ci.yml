@@ -67,16 +67,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # components: rustfmt は**明示が必要**。この action は
+      # **この job が使う component はすべて明示する**。この action は
       # `rustup toolchain install <toolchain> ... --profile minimal` を実行しており、
       # minimal プロファイルは rustfmt も clippy も含まない（action.yml で確認・#858）。
-      # 現行 CI で clippy が動いているのは runner イメージにプリインストールされた
-      # toolchain のおかげ（rustup は既存 toolchain の component を削らない）であって、
-      # action の保証ではない。fmt は本 job が新たに依存する検査ゆえ、暗黙依存を残さない。
+      # 明示しなくても動いていたのは runner イメージにプリインストールされた toolchain の
+      # おかげ（rustup は既存 toolchain の component を削らない）であって、action の保証ではない。
+      # **この依存は runner イメージが Rust のプリインストールをやめた日に初めて壊れる**——
+      # それまで一切の兆候が出ない種類の依存なので、使う側で名指ししておく（#858 で rustfmt、#859 で clippy）。
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt, clippy
 
       # #858: 整形ゲート。**ビルドを要さない（0.7s）ので最初に置く**——他の検査が
       # 数十秒かけて通った後に整形だけで落ちる、という待ち方をさせない。

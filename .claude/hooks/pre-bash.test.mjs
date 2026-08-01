@@ -889,6 +889,7 @@ describe("フック間契約 — post-edit が出す再現コマンドを pre-ba
   it.each([
     ["hook-selftest"],
     ["githooks-selftest"],
+    ["fmt"],
     ["clippy"],
     ["core-test"],
     ["egui-runtime-test"],

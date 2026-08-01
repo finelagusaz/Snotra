@@ -501,7 +501,9 @@ describe("repro の区切り正規化（フック間契約・#768）", () => {
     expect(spec.repro).toContain("vitest.mjs");
   });
 
-  it.each([["clippy"], ["core-test"], ["cargo-check"]])("%s の repro に `\\` が無い", (id) => {
+  // fmt を代表標本に含めるのは、**args に `--` を持つ唯一の id** だから（他は cargo test -p X か
+  // clippy と同型）。repro は args を join するので、区切りの扱いを誤れば fmt でだけ現れる。
+  it.each([["fmt"], ["clippy"], ["core-test"], ["cargo-check"]])("%s の repro に `\\` が無い", (id) => {
     expect(buildCommand(id, REPO).repro).not.toContain("\\");
   });
 

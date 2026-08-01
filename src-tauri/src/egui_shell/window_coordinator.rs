@@ -60,6 +60,24 @@ pub(crate) fn read_metrics(app: &tauri::AppHandle) -> layout::Metrics {
     layout::Metrics::from_config(f, rp, bp)
 }
 
+/// show 経路が**窓幅だけ**を読む（`read_metrics` と同方針——この経路が要らない値の parse を
+/// 払わせない）。
+///
+/// **`inner_size()` の失敗は「設定幅を捨ててよい」を意味しない**（#824 の 1）。以前 `show_egui_main`
+/// はここでリテラル 600 へ落ちており、`window_width = 900` のユーザーで問い合わせが失敗すると
+/// 窓が 600 へ縮んだ。落とし先を config の**実値**にすれば、その経路でも設定幅が保たれる。
+/// 既定へ落ちるのは AppState 不在（setup 完了前）のときだけである。
+///
+/// **`view.rs` の `window_width` と統合しない**: あちらはフレーム内の live-read で 1 フレーム
+/// 1 lock の規律（#673 決定 4）が掛かる面に居り、こちらは show 経路（フレーム外）の読みである
+/// （`read_background` の doc と同じ層の話）。既定源はどちらも `AppearanceConfig::default()` の
+/// 1 点を指すので、写しではなく同じ SSOT への 2 つの参照である。
+pub(crate) fn read_window_width(app: &tauri::AppHandle) -> f64 {
+    app.try_state::<crate::AppState>()
+        .map(|s| f64::from(s.engine.lock().unwrap().config().appearance.window_width))
+        .unwrap_or_else(|| f64::from(AppearanceConfig::default().window_width))
+}
+
 /// `Color32` を tao のネイティブ背景ブラシ色へ（spec 決定 4）。
 ///
 /// **ブラシ側の alpha は 255 に固定する**——softbuffer の clear color が `0x00RRGGBB` で alpha を
@@ -210,10 +228,10 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
                 s.to_logical::<f64>(window.scale_factor().unwrap_or(1.0))
                     .width
             })
-            // **ここは `appearance.window_width` の消費者ではない**——読み元は OS の
-            // `inner_size()` で、既定幅 600 と一致しているのは偶然である。参照へ寄せない理由は
-            // `docs/adr/ADR-config-default-fallback-references.md`。読み元自体は #824 で決める。
-            .unwrap_or(600.0);
+            // 主たる読み元は OS の `inner_size()`（この折り畳みは高さだけを変え、幅は現状を保つ）。
+            // **失敗したときは config の実値へ倒す**（#824 の 1 で決定）——以前のリテラル 600 は
+            // 既定幅と一致しているだけの偶然で、`window_width = 900` のユーザーでは窓が縮んだ。
+            .unwrap_or_else(|| read_window_width(app));
         // 折りたたみ高 = bar_height(#646 決定 2)。52 固定だと font 連動後の実バー高と
         // ずれ、position クランプが誤った高さで効く(このブロック冒頭の reset-on-show
         // コメントの機構と同じ理由。行番号参照は挿入でずれるため名前で指す)。

@@ -60,18 +60,18 @@ pub(crate) fn read_metrics(app: &tauri::AppHandle) -> layout::Metrics {
     layout::Metrics::from_config(f, rp, bp)
 }
 
-/// show 経路が**窓幅だけ**を読む（`read_metrics` と同方針——この経路が要らない値の parse を
-/// 払わせない）。
+/// 窓の論理幅を config から読む**唯一の点**。show 経路（`show_egui_main`）と
+/// フレーム内（`view.rs` の `window_width`）の両方がここを呼ぶ。
+///
+/// **読みと落とし先を独立実装に分けない**——同じことを 2 箇所でやって乖離した実績が
+/// このファイルにある（`read_metrics` の doc が記録する 52.0/43.0）。
 ///
 /// **`inner_size()` の失敗は「設定幅を捨ててよい」を意味しない**（#824 の 1）。以前 `show_egui_main`
-/// はここでリテラル 600 へ落ちており、`window_width = 900` のユーザーで問い合わせが失敗すると
+/// はリテラル 600 へ落ちており、`window_width = 900` のユーザーで問い合わせが失敗すると
 /// 窓が 600 へ縮んだ。落とし先を config の**実値**にすれば、その経路でも設定幅が保たれる。
-/// 既定へ落ちるのは AppState 不在（setup 完了前）のときだけである。
 ///
-/// **`view.rs` の `window_width` と統合しない**: あちらはフレーム内の live-read で 1 フレーム
-/// 1 lock の規律（#673 決定 4）が掛かる面に居り、こちらは show 経路（フレーム外）の読みである
-/// （`read_background` の doc と同じ層の話）。既定源はどちらも `AppearanceConfig::default()` の
-/// 1 点を指すので、写しではなく同じ SSOT への 2 つの参照である。
+/// AppState 不在は setup 完了前の理論経路のみ（`.manage` は `.setup` より前・`read_metrics` の
+/// doc と同じ）。既定へ落ちるのはそのときだけである。
 pub(crate) fn read_window_width(app: &tauri::AppHandle) -> f64 {
     app.try_state::<crate::AppState>()
         .map(|s| f64::from(s.engine.lock().unwrap().config().appearance.window_width))
@@ -229,8 +229,7 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
                     .width
             })
             // 主たる読み元は OS の `inner_size()`（この折り畳みは高さだけを変え、幅は現状を保つ）。
-            // **失敗したときは config の実値へ倒す**（#824 の 1 で決定）——以前のリテラル 600 は
-            // 既定幅と一致しているだけの偶然で、`window_width = 900` のユーザーでは窓が縮んだ。
+            // 失敗時の落とし先とその理由は `read_window_width` の doc（#824 の 1 で決定）。
             .unwrap_or_else(|| read_window_width(app));
         // 折りたたみ高 = bar_height(#646 決定 2)。52 固定だと font 連動後の実バー高と
         // ずれ、position クランプが誤った高さで効く(このブロック冒頭の reset-on-show

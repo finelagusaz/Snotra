@@ -21,6 +21,10 @@ public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint process
 [DllImport("user32.dll")]
 public static extern bool SetForegroundWindow(IntPtr hWnd);
 [DllImport("user32.dll")]
+public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll", CharSet = CharSet.Unicode)]
+public static extern int GetWindowTextW(IntPtr hWnd, System.Text.StringBuilder text, int count);
+[DllImport("user32.dll")]
 public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
 [DllImport("user32.dll")]
 public static extern bool SetProcessDPIAware();
@@ -428,15 +432,68 @@ function Wait-SnotraWindow {
     throw "窓 '$Title' が ${TimeoutMs}ms 以内に現れませんでした。"
 }
 
+function Get-SnotraForegroundWindow {
+    [CmdletBinding()]
+    param()
+
+    Initialize-SnotraNativeInterop
+    return [SnotraSmokeInterop.Native]::GetForegroundWindow()
+}
+
+# 前面を握っている窓を人が読める形にする。**失敗したときの一次証拠**（誰に打鍵が届いていたか）
+# はその場でしか採れないため、Set-SnotraForegroundWindow の警告へ載せる。
+function Get-SnotraForegroundWindowLabel {
+    [CmdletBinding()]
+    param()
+
+    $handle = Get-SnotraForegroundWindow
+    if ($handle -eq [IntPtr]::Zero) { return '前面窓なし' }
+
+    $title = New-Object System.Text.StringBuilder 256
+    [void][SnotraSmokeInterop.Native]::GetWindowTextW($handle, $title, $title.Capacity)
+    [uint32]$ownerPid = 0
+    [void][SnotraSmokeInterop.Native]::GetWindowThreadProcessId($handle, [ref]$ownerPid)
+    return "0x$($handle.ToString('X')) pid=$ownerPid title='$($title.ToString())'"
+}
+
+<#
+.SYNOPSIS
+窓を前面へ出し、**実際に前面になったか**を返す。
+
+.DESCRIPTION
+`SetForegroundWindow` の戻り値を答えにしない。前面ロックの規則により、**対象が既に前面でも
+FALSE が返る**（CI runner で実測・run #1280）。呼び出し側が知りたいのは「注入した打鍵の宛先が
+その窓に定まったか」であり、それを表すのは `GetForegroundWindow` との一致だけである。
+奪取が一度で通らない環境のために $TimeoutMs まで再試行し、諦めるときは前面を握っていた窓を
+警告へ残す。
+#>
 function Set-SnotraForegroundWindow {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
-        [IntPtr]$Handle
+        [IntPtr]$Handle,
+        [int]$TimeoutMs = 3000,
+        [int]$PollMs = 150
     )
 
     Initialize-SnotraNativeInterop
-    [SnotraSmokeInterop.Native]::SetForegroundWindow($Handle)
+    # 前面窓が無い環境では GetForegroundWindow も Zero を返す。Zero 同士の一致を「前面化できた」
+    # と読むと打鍵の宛先が無いまま合格するので、比較の前に落とす（fail-closed）。
+    if ($Handle -eq [IntPtr]::Zero) {
+        throw '前面化する窓のハンドルが Zero です。'
+    }
+
+    $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
+    while ($true) {
+        [void][SnotraSmokeInterop.Native]::SetForegroundWindow($Handle)
+        if ((Get-SnotraForegroundWindow) -eq $Handle) { return $true }
+        if ([DateTime]::UtcNow -ge $deadline) { break }
+        Start-Sleep -Milliseconds $PollMs
+    }
+
+    Write-Warning ("窓 0x$($Handle.ToString('X')) を ${TimeoutMs}ms 以内に前面化できません" +
+        "（前面: $(Get-SnotraForegroundWindowLabel)）。")
+    return $false
 }
 
 function Get-SnotraWindowCapture {
@@ -505,6 +562,7 @@ Export-ModuleMember -Function @(
     'Send-SnotraKey'
     'Send-SnotraKeyChord'
     'Wait-SnotraWindow'
+    'Get-SnotraForegroundWindow'
     'Set-SnotraForegroundWindow'
     'Get-SnotraWindowCapture'
     'ConvertFrom-SnotraWtsInfoEx'

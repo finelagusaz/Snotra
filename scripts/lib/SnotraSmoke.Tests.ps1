@@ -216,6 +216,29 @@ Describe 'Assert-SnotraSessionUnlocked（#866 倒す向きの非対称）' {
     }
 }
 
+Describe 'Set-SnotraForegroundWindow（#1280 前面化の判定）' {
+    # 前面を奪えない状況は runner でしか起きないため、**ここでしか通らない経路**を実ハンドルで踏む。
+    # 実機配管側は成功パスしか通らず、この分岐を検査しない。
+    It '前面になれない窓は、API の戻り値ではなく実際の前面状態で false になる' {
+        $warnings = @()
+        Set-SnotraForegroundWindow -Handle ([IntPtr]::new(-1)) -TimeoutMs 200 -PollMs 50 `
+            -WarningVariable warnings -WarningAction SilentlyContinue | Should -BeFalse
+        ($warnings -join "`n") | Should -BeLike '*前面*'
+    }
+
+    It '既に前面である窓は true になる（SetForegroundWindow が FALSE を返しても）' {
+        $current = Get-SnotraForegroundWindow
+        if ($current -eq [IntPtr]::Zero) {
+            Set-ItResult -Skipped -Because '前面窓が無い環境では一致を確かめられない'
+        }
+        Set-SnotraForegroundWindow -Handle $current -TimeoutMs 1000 -PollMs 50 | Should -BeTrue
+    }
+
+    It 'ハンドルが Zero なら「前面窓なし」と一致させずに落とす' {
+        { Set-SnotraForegroundWindow -Handle ([IntPtr]::Zero) } | Should -Throw '*Zero*'
+    }
+}
+
 Describe '実機配管' -Tag Integration -Skip:$sessionLocked {
     It '生成した seed を本体が parse して同じプロファイルへ書き込み、キャプチャ寸法が窓矩形と一致する' {
         $profile = Join-Path $TestDrive 'integration-profile'

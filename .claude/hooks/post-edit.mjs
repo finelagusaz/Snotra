@@ -33,6 +33,10 @@ const PER_CHECK_TIMEOUT_MS = 300_000;
 // 最初の失敗で hook 自体を TypeError で落とす（診断が届かなくなる）。
 // selectChecks が発行しうる id との完全性は post-edit.test.mjs のカナリアが固定する。
 export const BUDGETS = {
+  // fmt の出力は「差分そのもの」ゆえ 1 ファイルでも長い。head 20 は**どのファイルの
+  // どこが未整形か**を掴むのに十分で、修復は再現コマンドではなく `cargo fmt --all` である
+  // （読んで直すのではなく機械に直させる検査なので、全文は要らない）。
+  fmt: { lines: 20, from: "head" },
   clippy: { lines: 20, from: "head" },
   "core-test": { lines: 5, from: "tail" },
   "egui-runtime-test": { lines: 8, from: "tail" },
@@ -119,6 +123,9 @@ export function selectChecks(rel) {
   const checks = [];
   const isRust = rel.endsWith(".rs");
 
+  // fmt を clippy より前に置くのは**速いほうを先に落とす**ため（fmt はビルドを要さず 0.7s・
+  // clippy は cold なら数十秒）。整形だけで落ちるときに clippy の完了を待たせない。
+  if (isRust) checks.push("fmt");
   if (isRust) checks.push("clippy");
   if (isRust && rel.startsWith("snotra-core/")) checks.push("core-test");
   if (isRust && rel.startsWith("snotra-egui-runtime/")) checks.push("egui-runtime-test");
@@ -284,6 +291,12 @@ export function buildCommand(id, root) {
   };
 
   switch (id) {
+    // fmt は編集ファイル単位にせず --all で回す（#858）。理由は 2 つで、(1) 0.7s ゆえ
+    // 絞る利得が無く、(2) `G-hook-commands` が docs/build-commands.md カテゴリ A との
+    // トークン列一致を要求するため、hook だけ別形にすると照合が壊れる。
+    // 出力整形フラグを付けないのも同じ理由（除去リストは --message-format のみ）。
+    case "fmt":
+      return cargoSpec(["fmt", "--all", "--", "--check"]);
     // check / clippy の --workspace は cargo に Cargo.toml の members を読ませる。
     // crate 名を列挙すると members の写しになり、新しい crate で気づかれないまま漏れる（#500）。
     case "clippy":

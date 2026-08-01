@@ -43,7 +43,7 @@
 
 | 編集したファイル（ツリー相対） | 走る検査 |
 |---|---|
-| `*.rs` | clippy（各 Rust crate 配下ではその crate のテストも） |
+| `*.rs` | fmt → clippy（各 Rust crate 配下ではその crate のテストも）。fmt が先なのは 0.7s でビルドを要さないため（#858） |
 | `tauri.conf.json` / `config.toml` | WARN（人間向け・Windows 互換の注意喚起） |
 | `Cargo.toml` | cargo check |
 | `.claude/settings.json` / `.claude/hooks/**` / `package.json` / `vitest.config.ts` / ルートの `Cargo.toml` | hook-selftest |

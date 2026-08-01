@@ -1,0 +1,13 @@
+# git blame から隠すコミット（機械的な一括変更のみを載せる）。
+#
+# GitHub の blame ビューはこのファイルを設定不要で自動適用する。ローカルの git blame は
+# 自動ではないので、使うなら `git config blame.ignoreRevsFile .git-blame-ignore-revs`。
+# 詳細は docs/build-commands.md「git blame と整形コミット」。
+#
+# **載せてよいのは、意味を変えないことが機械的に保証されるコミットだけである。**
+# 手作業の整理・改名を載せてはならない——blame から消えると、なぜそう書いたかを
+# 遡れなくなる。
+
+# style: cargo fmt --all を全体へ適用 (#858)
+# 63 files / +2159 -810。cargo fmt --all の出力そのもので、整形以外を含まない。
+201e5f692cc6656326b13b2780cb558ddbb21dfb

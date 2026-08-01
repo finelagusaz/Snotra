@@ -70,16 +70,16 @@ open PR も無い。**63 ファイル整形の衝突相手は存在しない。*
 
 ### Phase 1 — 整形（単独コミット）
 
-- [ ] `cargo fmt --all` を実行する（他の変更を一切混ぜない）
-- [ ] `git diff --shortstat` が **63 files / +2159 −810** の同型であることを確認する（大きく違えば止まって原因を見る）
-- [ ] 検証: `cargo check --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` /
+- [x] `cargo fmt --all` を実行する（他の変更を一切混ぜない）
+- [x] `git diff --shortstat` が **63 files / +2159 −810** の同型であることを確認する（大きく違えば止まって原因を見る）
+- [x] 検証: `cargo check --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` /
       `cargo test -p snotra-core` / `-p snotra-egui-runtime` / `-p snotra` / `-p snotra-settings` /
       `cargo doc --workspace --no-deps --document-private-items`
-- [ ] コミットする（メッセージに「機械的整形のみ・`cargo fmt --all` の出力そのもの」と、`.git-blame-ignore-revs` へ載せる旨を書く）
+- [x] コミットする（メッセージに「機械的整形のみ・`cargo fmt --all` の出力そのもの」と、`.git-blame-ignore-revs` へ載せる旨を書く）
 
 ### Phase 2 — 機構
 
-- [ ] `ci.yml` の `rust-check`。**`Setup Rust toolchain` へ `components: rustfmt` を明示**したうえで、
+- [x] `ci.yml` の `rust-check`。**`Setup Rust toolchain` へ `components: rustfmt` を明示**したうえで、
       **その直後**へ step を足す（ビルド不要＝最速で落ちる）:
 
       - name: Setup Rust toolchain
@@ -90,30 +90,30 @@ open PR も無い。**63 ファイル整形の衝突相手は存在しない。*
       - name: cargo fmt
         run: cargo fmt --all -- --check
 
-- [ ] `post-edit.mjs`:
+- [x] `post-edit.mjs`:
   - `selectChecks`: `if (isRust) checks.push("fmt");` を **`clippy` の push より前**へ（0.69s ゆえ先に落とす）
   - `BUDGETS`: `fmt: { lines: 20, from: "head" }` を追加
   - `buildCommand` の `switch`: `case "fmt": return cargoSpec(["fmt", "--all", "--", "--check"]);`
     ——**`--message-format` のような出力整形フラグを付けない**（`G-hook-commands` の除去リストは
     `--message-format` のみ・他を足すとカテゴリ A と不一致になる）
-- [ ] `post-edit.test.mjs` の `.rs` 期待配列 **8 箇所**（`:103,107,116,120,124,125` に加え `:232` `:458`）へ `"fmt"` を追加する
-- [ ] 検証: `npm test`（`BUDGETS 完全性カナリア` が 3 点セットの欠落を捕まえる）
+- [x] `post-edit.test.mjs` の `.rs` 期待配列 **8 箇所**（`:103,107,116,120,124,125` に加え `:232` `:458`）へ `"fmt"` を追加する
+- [x] 検証: `npm test`（`BUDGETS 完全性カナリア` が 3 点セットの欠落を捕まえる）
 
 ### Phase 3 — 文書
 
-- [ ] `docs/build-commands.md` カテゴリ A のコードブロックへ 1 行。**トークン列を `cargoSpec` と一致させる**:
+- [x] `docs/build-commands.md` カテゴリ A のコードブロックへ 1 行。**トークン列を `cargoSpec` と一致させる**:
 
       cargo fmt --all -- --check    # 必須: 整形（#858・CI と PostToolUse フックが発火）
 
-- [ ] 同 `:24` 付近の hook 記述へ fmt の発火を追記する（`*.rs` 編集で clippy と fmt）
-- [ ] 同「参考コマンド」ブロックへ `cargo fmt --all`（修復側）を追加する
-- [ ] 同 CI 対応表（`:184` の行）へ `cargo fmt --all -- --check` を追加する
+- [x] 同 `:24` 付近の hook 記述へ fmt の発火を追記する（`*.rs` 編集で clippy と fmt）
+- [x] 同「参考コマンド」ブロックへ `cargo fmt --all`（修復側）を追加する
+- [x] 同 CI 対応表（`:184` の行）へ `cargo fmt --all -- --check` を追加する
       ——**`ci.yml` の `run:` と一字一句同じ文字列**（`G-ci-table` は verbatim 照合）
-- [ ] 同「スモーク運用メモ」の手前あたりへ、**ローカル `git blame` の 1 行設定**を書く:
+- [x] 同「スモーク運用メモ」の手前あたりへ、**ローカル `git blame` の 1 行設定**を書く:
       `git config blame.ignoreRevsFile .git-blame-ignore-revs`（GitHub 側は設定不要・自動）
-- [ ] `docs/hooks.md:46` の `*.rs` 行へ fmt を足す（**Phase 2 のコミットに含める**——上の「コミット境界」）
-- [ ] `.claude/rules/src-tauri.md:28` の `A（clippy/test）` → `A（clippy/test/fmt）`（同上）
-- [ ] `docs/adr/ADR-rustfmt-gate.md` を新規作成する。**否定の知識**を書く:
+- [x] `docs/hooks.md:46` の `*.rs` 行へ fmt を足す（**Phase 2 のコミットに含める**——上の「コミット境界」）
+- [x] `.claude/rules/src-tauri.md:28` の `A（clippy/test）` → `A（clippy/test/fmt）`（同上）
+- [x] `docs/adr/ADR-rustfmt-gate.md` を新規作成する。**否定の知識**を書く:
   - **B（使わないと明記）を採らなかった理由** — 初期コミットが drift 0 であり、様式は元から在った。
     B は「無かったものを導入しない」ではなく「在ったものを捨てる」宣言になる
   - **A′（既存様式へ寄せた `rustfmt.toml`）が成立しない実測** — 7 設定の表（research.md から転記）
@@ -125,7 +125,7 @@ open PR も無い。**63 ファイル整形の衝突相手は存在しない。*
     その前提が破れた場合はこの却下も破れる**——判定の観測点は初回 CI（上の「異常系」表）
   - **差分限定の fmt 検査（変更ファイルだけ見る）を採らなかった理由** — `cargo fmt` の判定を
     自作の差分スコープで写す形になる（ルート `CLAUDE.md` の「ツールの判定を自作しない」）
-- [ ] `npm run governance:check`
+- [x] `npm run governance:check`
 
 ### Phase 4 — フォールトインジェクション（`.claude/rules/safety-nets.md` の要求）
 

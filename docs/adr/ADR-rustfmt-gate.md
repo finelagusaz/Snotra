@@ -57,4 +57,4 @@
 ## 受容する残余
 
 - **`.git-blame-ignore-revs` はローカル `git blame` では自動適用されない**（実測: `blame.ignoreRevsFile` は既定で未設定）。GitHub の blame ビューは設定不要で自動適用する。ローカル側の 1 行設定は `docs/build-commands.md` に置くが、**設定するかは各人の裁量**であり機構では強制しない。
-- **`docs/hooks.md` の PostToolUse 発火一覧は `selectChecks` の写しであり、内容を照合する機構が無い。** 今回 fmt の追加に伴って手で同期したが、次回も同じ手当てが要る（`G-hook-commands` が見るのは `docs/build-commands.md` だけ）。同型のドリフトはルート `CLAUDE.md` で一度起きており、その退去先が `docs/hooks.md` である。
+- **`docs/hooks.md` の PostToolUse 発火一覧は `selectChecks` の写しであり、当時は内容を照合する機構が無かった**（`G-hook-commands` が見るのは `docs/build-commands.md` だけ）。fmt の追加に伴って手で同期し、次回も同じ手当てが要る残余として記録していた。**#863 で解消済み**——`governance:check` の G-hook-fires が代表パスを `selectChecks` に食わせて照合する。**機構の外へ残した足の名指しは `ADR-hook-fires-table-check`** が持つ。

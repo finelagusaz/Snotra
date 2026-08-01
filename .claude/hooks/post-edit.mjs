@@ -118,6 +118,9 @@ export function extractFilePath(payload) {
 /**
  * 相対パスから走らせるべき検査を決める純関数。
  * （TS typecheck / csp-test は #532 SU7 のフロント撤去で消滅——`.ts` は情報行のみ・I16）
+ *
+ * **ここを変えたら `docs/hooks.md` の発火一覧も同じ変更で直す。** `governance:check` の
+ * G-hook-fires が本関数を呼んで表と照合するため、直さなければ CI が落ちる（#863）。
  */
 export function selectChecks(rel) {
   const checks = [];

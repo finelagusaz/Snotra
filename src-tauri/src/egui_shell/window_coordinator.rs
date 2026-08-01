@@ -325,6 +325,13 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
     // results を再表示し、main が隠れたまま results だけ最前面に残る。
     // show 側の「show() の後に true を立てる」（順序不変制約）とは対称である——どちらも
     // 「main が可視でない期間に visible=true と読ませない」向きに倒している。
+    //
+    // **この順序が塞ぐのは「store より後に `main_visible` を読んだフレーム」だけである。**
+    // store より**前**に読んで store より**後**に `results.show()` を撃つフレームは素通り
+    // する（ここは別スレッドから走りうる——hotkey は Win32 メッセージループスレッド）。
+    // その並びは `drive_results_window` 末尾の事後検査（`layout::must_retract_results`）が
+    // 受け持つ。**ゆえに封鎖は「hide 側の順序 + show 側のゲート」の 2 つでは閉じない**
+    // （#671 PR A′ 当時の「対であり片方では閉じない」は必要条件であって十分条件ではない）。
     if let Some(state) = app.try_state::<crate::AppState>() {
         state.main_visible.store(false, Ordering::SeqCst);
     }
@@ -336,7 +343,10 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
     if let Some(results) = app.try_state::<ResultsWindow>() {
         // 戻り値（遷移したか）を無視するのは意図的である——ここの trace は**要求レベル**で
         // あり、既に隠れていても出す（spec 決定 7・PR A の smoke は presence のみを assert）。
-        results.hide();
+        // `MainGone`: 可視フラグが false でも raw hide を撃つ（`layout::HideReason` の doc）。
+        // **ここで撃ち漏らすと拾い直すフレームが来ない**——main が hidden の間は update() が
+        // 走らないため、results だけが画面に残ったまま次の show まで戻らない。
+        results.hide(layout::HideReason::MainGone);
         // 呼び出し側に置く（spec 決定 7）。results の hide は 2 経路あり
         // （ここと同モジュールの drive_results_window）、trace は要求レベルゆえ
         // 既に隠れていても出る——smoke は presence のみを assert する。
@@ -488,6 +498,20 @@ fn max_results(app: &tauri::AppHandle) -> u32 {
         .unwrap_or_else(|| AppearanceConfig::default().effective_visible_rows() as u32)
 }
 
+/// `AppState.main_visible` の live-read。**`drive_results_window` が同一フレームで 2 回読む**
+/// ——1 回目は show の事前ゲート（`layout::present_results` の連言①）、2 回目は show を撃った
+/// 後の事後検査（`layout::must_retract_results`）である。
+///
+/// **この 2 度読みは「重複した読み」ではなく、読み点そのものが要件である**（`AGENTS.md`
+/// 「条件別チェック」の「重複した読み・冗長に見える状態を束ねる」に対する明示的な留保）。
+/// 束ねて 1 回にすると、事後検査が「撃つ前の値」を見ることになり検査の意味が消える。
+/// AppState 不在は false（results を出さない側へ倒す）。
+fn read_main_visible(app: &tauri::AppHandle) -> bool {
+    app.try_state::<crate::AppState>()
+        .map(|s| s.main_visible.load(Ordering::SeqCst))
+        .unwrap_or(false)
+}
+
 /// `drive_results_window` の 1 フレーム分の入力（#749 段 1）。
 ///
 /// **`result_count` の読み点は呼び出し側の責務である**（#752 F2 / ADR-results-presentation-two-stage）。同一フレーム内で
@@ -528,12 +552,11 @@ pub(crate) fn drive_results_window(app: &tauri::AppHandle, i: DriveResultsInputs
     let count = i.result_count;
     // main が hidden の間は results を出さない（#671 PR A′ レビュー Important 1）。
     // main_visible は hide_egui_main が results.hide() の**前**に false へ落とすため、
-    // その後に走ったフレームはここで確実に hide 側へ倒れる。判定式と根拠は
-    // layout::present_results（純粋核・ユニットテスト対象）。
-    let main_visible = app
-        .try_state::<crate::AppState>()
-        .map(|s| s.main_visible.load(Ordering::SeqCst))
-        .unwrap_or(false);
+    // **この読みより前に store が済んでいたフレーム**はここで hide 側へ倒れる。判定式と
+    // 根拠は layout::present_results（純粋核・ユニットテスト対象）。
+    // **読んだ後に store されるフレームは倒れない**——それを受け持つのは同関数末尾の
+    // 事後検査（`layout::must_retract_results`）である。
+    let main_visible = read_main_visible(app);
     let desired_height = match layout::present_results(layout::ResultsInputs {
         main_visible,
         plain_hidden: i.plain_hidden,
@@ -545,7 +568,17 @@ pub(crate) fn drive_results_window(app: &tauri::AppHandle, i: DriveResultsInputs
             // 可視フラグは ResultsWindow が持つ（#671 PR A′ spec 決定 2）。hide() は遷移した
             // ときだけ true を返すため、trace は 1 回だけ出る（毎フレーム撃たない）。
             // trace を型の内側でなく呼び出し側に置く理由は spec 決定 7。
-            if results.hide() {
+            //
+            // **理由は `main_visible` で分ける。** main が可視なら `NotPresented`（毎フレーム
+            // 走る側ゆえフラグを信じて `SW_HIDE` を撃たない）、可視でないなら `MainGone`
+            // （フラグと窓の食い違いを回収する。main が hidden の間はフレームが稀なので
+            // 無条件でも代価が無い）。判定の意味は `layout::HideReason`。
+            let reason = if main_visible {
+                layout::HideReason::NotPresented
+            } else {
+                layout::HideReason::MainGone
+            };
+            if results.hide(reason) {
                 crate::trace_main("egui_results:hide", serde_json::json!({ "from": "drive" }));
             }
             return;
@@ -582,6 +615,28 @@ pub(crate) fn drive_results_window(app: &tauri::AppHandle, i: DriveResultsInputs
     // 置き場の理由は上の hide 側コメントと同じ（spec 決定 7）。
     if results.show(i.background) {
         crate::trace_main("egui_results:show", serde_json::json!({ "rows": count }));
+    }
+    // **事後検査**: 撃った後に main の可視を読み直す（判定式の正本は
+    // `layout::must_retract_results`）。上のゲートを通ってからここへ来るまでには
+    // `position_results_below_main` / `set_size` / `raw_show` の Win32 呼び出しが挟まり、
+    // その間に別スレッドの `hide_egui_main`（hotkey は Win32 メッセージループスレッド）が
+    // 丸ごと通り抜けうる——「読んだ時点では可視、撃った時点では hidden」の並びである。
+    // hide 側の順序（`main_visible` を results.hide() より先に落とす）はこの並びを塞がない。
+    //
+    // **`show()` の戻り値で分岐しない。** 隠すべき状態は「このフレームが表示へ遷移させた」
+    // ときだけでなく、「既に可視だった results の下で main が消えた」ときにも起きる。
+    // `MainGone` ゆえ可視フラグとも無関係に raw hide が撃たれる（`layout::HideReason`）。
+    //
+    // **撤回したら wake しない。** 隠した窓を起こしても描かれず（hidden な窓へ
+    // `RedrawRequested` は配送されない・#697）、下の決定 5 が守る「可視な results に
+    // 最新の色を描かせる」目的にも当たらない。
+    if layout::must_retract_results(read_main_visible(app)) {
+        results.hide(layout::HideReason::MainGone);
+        crate::trace_main(
+            "egui_results:hide",
+            serde_json::json!({ "from": "retract" }),
+        );
+        return;
     }
     // 決定 5（#673 spec・#697）: この無条件 wake を edge 化してはならない。results は
     // config 系イベントを一切 listen せず（register_config_wake_listeners は wake_main のみ）、

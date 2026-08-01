@@ -99,12 +99,15 @@ describe("selectChecks", () => {
     expect(selectChecks("e2e/README.md")).toEqual([]);
   });
 
-  it("snotra-core の .rs は clippy + core-test", () => {
-    expect(selectChecks("snotra-core/src/lib.rs")).toEqual(["clippy", "core-test"]);
+  // fmt は全 .rs に付く（#858）。**clippy より前**であることも固定する——順序が意味を持つのは
+  // 報告の並び（証拠が先に目へ入る）であって実行時間ではない。hook のループは fail-fast しない。
+  it("snotra-core の .rs は fmt + clippy + core-test", () => {
+    expect(selectChecks("snotra-core/src/lib.rs")).toEqual(["fmt", "clippy", "core-test"]);
   });
 
   it("egui 接着層の .rs は egui-runtime-test へ振り分ける", () => {
     expect(selectChecks("snotra-egui-runtime/src/lib.rs")).toEqual([
+      "fmt",
       "clippy",
       "egui-runtime-test",
     ]);
@@ -113,16 +116,20 @@ describe("selectChecks", () => {
 
   // §1: 現行は content 中の "config.toml" に反応して config-warn が誤発火する
   it("snotra-core/src/config.rs は config-warn を誤発火しない", () => {
-    expect(selectChecks("snotra-core/src/config.rs")).toEqual(["clippy", "core-test"]);
+    expect(selectChecks("snotra-core/src/config.rs")).toEqual(["fmt", "clippy", "core-test"]);
   });
 
-  it("snotra-settings の .rs は clippy + settings-test", () => {
-    expect(selectChecks("snotra-settings/src/main.rs")).toEqual(["clippy", "settings-test"]);
+  it("snotra-settings の .rs は fmt + clippy + settings-test", () => {
+    expect(selectChecks("snotra-settings/src/main.rs")).toEqual([
+      "fmt",
+      "clippy",
+      "settings-test",
+    ]);
   });
 
-  it("src-tauri の .rs は clippy + tauri-test", () => {
-    expect(selectChecks("src-tauri/src/lib.rs")).toEqual(["clippy", "tauri-test"]);
-    expect(selectChecks("src-tauri/build.rs")).toEqual(["clippy", "tauri-test"]);
+  it("src-tauri の .rs は fmt + clippy + tauri-test", () => {
+    expect(selectChecks("src-tauri/src/lib.rs")).toEqual(["fmt", "clippy", "tauri-test"]);
+    expect(selectChecks("src-tauri/build.rs")).toEqual(["fmt", "clippy", "tauri-test"]);
   });
 
   it("src-tauri/tauri.conf.json は config-warn のみ（csp-test は #532 SU7 で撤去済み）", () => {
@@ -229,7 +236,7 @@ describe("checksForPayload — §1 誤爆の回帰", () => {
         new_string: "x",
       },
     };
-    expect(checksForPayload(payload, fakeResolver)).toEqual(["clippy", "tauri-test"]);
+    expect(checksForPayload(payload, fakeResolver)).toEqual(["fmt", "clippy", "tauri-test"]);
   });
 
   it("file_path が無ければ何もしない（I3）", () => {
@@ -455,7 +462,7 @@ describe("resolveTarget — main() と同じ配線を通る", () => {
     expect(resolveTarget(payload, fakeResolver)).toEqual({
       root,
       rel: "src-tauri/src/main.rs",
-      ids: ["clippy", "tauri-test"],
+      ids: ["fmt", "clippy", "tauri-test"],
     });
   });
 
@@ -494,7 +501,9 @@ describe("repro の区切り正規化（フック間契約・#768）", () => {
     expect(spec.repro).toContain("vitest.mjs");
   });
 
-  it.each([["clippy"], ["core-test"], ["cargo-check"]])("%s の repro に `\\` が無い", (id) => {
+  // **母集団は BUDGETS から導出する**（#858）。代表標本を手で選ぶと、新しい形の id
+  // （fmt は args に `--` を持つ唯一の id だった）が標本から漏れる。
+  it.each(Object.keys(BUDGETS).map((id) => [id]))("%s の repro に `\\` が無い", (id) => {
     expect(buildCommand(id, REPO).repro).not.toContain("\\");
   });
 

@@ -11,6 +11,7 @@
 ### A. Rust ファイル（`*.rs`）を変更した場合
 
 ```bash
+cargo fmt --all -- --check                                                             # 必須: 整形（#858・修復は `cargo fmt --all`）
 cargo check --workspace                                                                # 必須: Rust 全 crate 型チェック
 cargo clippy --workspace --all-targets -- -D warnings                                 # 必須: lint（全 .rs 変更、テストターゲット含む）
 cargo test -p snotra-core                                                              # 必須（snotra-core を変更した場合）: 純ロジック層 TDD
@@ -21,7 +22,8 @@ cargo doc --workspace --no-deps --document-private-items                        
 ```
 
 - **`cargo test` の必須/任意**: 変更した crate のテストはローカル**必須**（PostToolUse フックが自動実行）。変更していない crate のテストはローカル任意（CI の rust-check が PR で全 4 crate のテストを常に実行し担保）
-- 上記のコマンドはいずれも CI（`ci.yml` rust-check）で PR 自動実行される（「CI/CD メモ」の対応表参照）。PostToolUse フック（`.claude/hooks/post-edit.mjs`）も `*.rs` 編集で clippy、`snotra-core/**` / `snotra-egui-runtime/**` / `src-tauri/**` / `snotra-settings/**` 編集でその crate のテストを自動発火する。`Cargo.toml` の編集では `cargo check` を自動発火する（ルートの `Cargo.toml` ではさらに hook-selftest = members カナリア）
+- **`cargo fmt` は検査（`--check`）と修復（`cargo fmt --all`）で別コマンドである**（#858）。ローカルでは PostToolUse フックが検査を自動発火するため、赤が届いたら `cargo fmt --all` を実行して直す——**差分を読んで手で直さない**（機械が持つ判定を人が写す作業になる）。整形の様式は rustfmt の既定であり `rustfmt.toml` を置かない（既定が drift 最小であることを 7 設定の比較で実測・`docs/adr/ADR-rustfmt-gate.md`）
+- 上記のコマンドはいずれも CI（`ci.yml` rust-check）で PR 自動実行される（「CI/CD メモ」の対応表参照）。PostToolUse フック（`.claude/hooks/post-edit.mjs`）も `*.rs` 編集で fmt と clippy、`snotra-core/**` / `snotra-egui-runtime/**` / `src-tauri/**` / `snotra-settings/**` 編集でその crate のテストを自動発火する。`Cargo.toml` の編集では `cargo check` を自動発火する（ルートの `Cargo.toml` ではさらに hook-selftest = members カナリア）
 - **`check` / `clippy` は `--workspace` を使う**（#500）。crate 名を `-p` で列挙すると `Cargo.toml` の `members` の写しになり、5 つ目の crate を追加したとき hook・CI・本ファイルが同じ誤りを共有して気づかれないまま漏れる。`--workspace` は cargo に SSOT を読ませる。一方 `cargo test -p <crate>` は「編集した crate → そのテスト」の写像なので `-p` のまま残す（`--workspace` にすると編集していない crate のテストまで走る）
 - **`cargo doc` は CI（rust-check）でのみ発火し、PostToolUse フックは発火しない**（#562・編集レイテンシ回避の設計判断）。deny 化は各 crate の `[lints] workspace = true`（`Cargo.toml`）→ root `[workspace.lints.rustdoc]`（`broken_intra_doc_links` / `invalid_html_tags`）で、既定 warn の素通りを塞ぐ。この 2 段（member 側の opt-in 漏れと、root 側の deny の降格・欠落）はどちらも cargo が exit 0 で沈黙するため、`npm run governance:check`（G-workspace-lints）が検知する（#713）。**沈黙は合格を意味しない**（hook 対象外）ため、doc コメント（`///` / `//!`）を触ったらローカルで上記コマンドを手動実行してリンク切れを確認する
 - **フックの検査コマンドと本ファイルの整合規約**: フックの cargo コマンドは、**カテゴリ A のコードブロック**の記載と**合否・検査対象を変えるフラグにおいて一致**させる（`--lib` の付与・`-p` の欠落等を乖離とする）。**出力整形のみのフラグ**（`--message-format short` 等、exit code を変えないもの）は hook 側の証拠予算のための追加として許容する。npm 系検査は SSOT コマンド（`npm test`）の部分集合ラッパー（対象ディレクトリ限定の vitest 実行）を許容する。コマンドの実在は `npm run governance:check`（G-build-commands）が、cargo フラグの乖離は同（G-hook-commands・#589）が検知する。npm 系ラッパーの等価判断のみ `/health-check`（Check 5 残置部分）に残る
@@ -146,6 +148,7 @@ cargo test --release -p snotra-core bench_ -- --ignored --nocapture  # 検索パ
 cargo test --release -p snotra-core --test memory_footprint -- --ignored --nocapture  # 索引の常駐メモリ実測（アロケータ計数・詳細: PERFORMANCE.md）
 cargo check --workspace          # Rust 全 crate 型チェック
 cargo clippy --workspace --all-targets -- -D warnings  # lint チェック（カテゴリ A と同じ）
+cargo fmt --all                  # 整形の**修復**（検査は カテゴリ A の `cargo fmt --all -- --check`・#858）
 cargo run -p snotra-settings     # snotra-settings（egui ネイティブ設定 GUI）の単独起動
 cargo run -p snotra              # 製品メインウィンドウ（egui 既定・#532 SU7 flip 済み。視覚スモークはこれ）
 npm run verify                   # Rust + node 一括検証（cargo check --workspace + npm test）
@@ -154,6 +157,14 @@ npm run smoke:egui                # egui 経路の show/hide スモーク（keyb
 npm run measure:memory            # メモリ実測（PrivWS 軸・ツリー合算・#532 flip 基準 3）
 npm run measure:memory:stages     # メモリ実測（起動→表示→検索→hide の段階別・前景計測。実行中の snotra を kill する）
 npm run tauri build              # リリースビルド（NSIS バンドル。`prepare:sidecar` で binaries/ を用意してから）
+```
+
+## git blame と整形コミット
+
+`.git-blame-ignore-revs` は `cargo fmt --all` の一括整形コミット（#858）を blame から隠す。**GitHub の blame ビューは設定不要で自動適用する**（ルート直下に置くことが条件・実測）。**ローカルの `git blame` は自動ではない**ため、使うなら次を 1 度実行する（任意・機構では強制しない）:
+
+```bash
+git config blame.ignoreRevsFile .git-blame-ignore-revs
 ```
 
 ## スモーク運用メモ
@@ -181,6 +192,7 @@ npm run tauri build              # リリースビルド（NSIS バンドル。`
 |---|---|---|
 | `npm test`（Vitest: hooks/githooks/scripts） | `ci.yml`（node-check=ubuntu / rust-check=windows） | PR 自動（`skip-ci` は下記ノート参照） |
 | `npm run test:powershell`（Pester: 共有 smoke 配管 + 実バイナリ統合） | `ci.yml`（rust-check） | PR 自動（`skip-ci` は下記ノート参照） |
+| `cargo fmt --all -- --check`（#858・整形ゲート） | `ci.yml`（rust-check） | PR 自動 |
 | `cargo check` / `cargo test -p snotra-core` / `cargo test -p snotra-egui-runtime` / `cargo test -p snotra` / `cargo test -p snotra-settings` / `cargo clippy` | `ci.yml`（rust-check） | PR 自動 |
 | `cargo doc --workspace --no-deps --document-private-items`（#562・intra-doc link 検査） | `ci.yml`（rust-check） | PR 自動 |
 | `npm run governance:check`（#587・ガバナンス文書検査） | `ci.yml`（governance-check） | PR 自動（**`skip-ci` 非対象** — if ガードを持たず常時実行） |

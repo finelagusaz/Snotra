@@ -67,8 +67,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # components: rustfmt は**明示が必要**。この action は
+      # `rustup toolchain install <toolchain> ... --profile minimal` を実行しており、
+      # minimal プロファイルは rustfmt も clippy も含まない（action.yml で確認・#858）。
+      # 現行 CI で clippy が動いているのは runner イメージにプリインストールされた
+      # toolchain のおかげ（rustup は既存 toolchain の component を削らない）であって、
+      # action の保証ではない。fmt は本 job が新たに依存する検査ゆえ、暗黙依存を残さない。
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      # #858: 整形ゲート。**ビルドを要さない（0.7s）ので最初に置く**——他の検査が
+      # 数十秒かけて通った後に整形だけで落ちる、という待ち方をさせない。
+      # このリポジトリの様式は初期コミットから rustfmt 既定であり（drift 0 を実測）、
+      # 2026-02〜04 に習慣が途切れて 460 ハンクまで積み上がった。**人ではなく機構が持つ**
+      # ことが本検査の目的であり、マシンが変わっても途切れないのはそのためである。
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2

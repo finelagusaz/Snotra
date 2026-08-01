@@ -39,16 +39,24 @@
 
 ## PostToolUse（post-edit.mjs）の発火一覧
 
-**正本は `selectChecks` である。** 下は現在の割り当てを読むための索引であり、判断はコードに問う。
+**正本は `selectChecks` である。** 下は代表パスによる索引であり、全域の等価性ではない——ゆえに判断はコードに問う。**ただし写しが黙って腐ることはない**: `governance:check` の G-hook-fires が、代表パス列を `selectChecks` に食わせて検査 id 列と**順序込み**で一致すること、および**発行されうる id がどれかの行に現れる**ことを要求する（#863。同型のドリフトはルート `CLAUDE.md` の同じ表で一度起きており、その退去先がここである・#474〜#497）。
 
-| 編集したファイル（ツリー相対） | 走る検査 |
-|---|---|
-| `*.rs` | fmt → clippy（各 Rust crate 配下ではその crate のテストも）。**この順は報告の並びであって実行順の打ち切りではない**——検査ループは失敗しても break せず全部走る。fmt を先頭に置くのは証拠が先に目へ入るようにするため（#858） |
-| `tauri.conf.json` / `config.toml` | WARN（人間向け・Windows 互換の注意喚起） |
-| `Cargo.toml` | cargo check |
-| `.claude/settings.json` / `.claude/hooks/**` / `package.json` / `vitest.config.ts` / ルートの `Cargo.toml` | hook-selftest |
-| `.githooks/**` | githooks-selftest |
-| 上記以外（`*.md`・`.claude/rules/**`・`.claude/skills/**`・`scripts/**` 等） | **何も走らない**——沈黙は「合格」ではない |
+**書式が判定に効く**（崩すと赤になる）: 代表パス列はバッククォート括りの**実在する具体パス 1 件**（glob は書けない・実在も検査する）、**検査 id 列のバッククォートは検査 id だけ**（空集合は `（なし）` と綴る）、散文は補足列へ置く。表の走査は最初の空行までで、途中に表でない行があれば赤になる。**検査が 1 つも走らないパスの行を 1 本は置く**——それが無いと「沈黙は合格ではない」という主張だけが黙って消せる（id を持たない行は母集団照合に掛からないため）。
+
+| 編集したファイル（代表パス） | 走る検査 id | 補足 |
+|---|---|---|
+| `snotra-core/src/lib.rs` | `fmt` `clippy` `core-test` | `.rs` は全域で fmt → clippy が走り、crate 配下ではその crate のテストが足される。**この順は報告の並びであって実行順の打ち切りではない**——検査ループは失敗しても break せず全部走る。fmt を先頭に置くのは証拠が先に目へ入るようにするため（#858） |
+| `snotra-egui-runtime/src/lib.rs` | `fmt` `clippy` `egui-runtime-test` | |
+| `snotra-settings/src/main.rs` | `fmt` `clippy` `settings-test` | |
+| `src-tauri/src/main.rs` | `fmt` `clippy` `tauri-test` | 4 crate の外に置いた `.rs` は fmt → clippy だけになる（現在そのようなファイルは無い） |
+| `src-tauri/tauri.conf.json` | `config-warn` | WARN（人間向け・Windows 互換の注意喚起）。`config.toml` も同じ経路だが、ランタイムのユーザー領域ファイルでリポジトリに実在しない |
+| `src-tauri/Cargo.toml` | `cargo-check` | |
+| `Cargo.toml` | `cargo-check` `hook-selftest` | **ルートだけは両方走る**——ワークスペース定義であると同時に「検査の定義を変えるファイル」でもあるから |
+| `.claude/settings.json` | `hook-selftest` | `.claude/hooks/**` / `package.json` / `vitest.config.ts` も同じ |
+| `.githooks/pre-commit` | `githooks-selftest` | `.githooks/**` 全体 |
+| `docs/hooks.md` | （なし） | 上記以外（`*.md`・`.claude/rules/**`・`.claude/skills/**`・`scripts/**` 等）は**何も走らない**——沈黙は「合格」ではない |
+
+**照合の外に残るものが 2 つある**（足の名指しと、なぜそこで止めたかは `docs/adr/ADR-hook-fires-table-check.md`）: 実在しないファイル（4 crate 外の `.rs`・`config.toml`）は代表パスにできないので補足列の散文だけが記述する。補足列そのものの意味整合も機構は見ない。
 
 TS 型検査は #532 SU7 のフロント撤去で消滅した（`.ts` 編集は「検査はありません」の情報行のみ）。
 

@@ -434,7 +434,10 @@ mod tests {
         // 可視アイドルが 2fps → 11.5fps）。値そのものを固定して回帰を検出する。
         let mut input = InputState::new(1.0);
         let raw = input.take(4096, PhysicalSize::new(100, 100), 1.0);
-        assert_eq!(raw.predicted_dt, 0.0, "先取りしない（要求どおりの時刻に起きる）");
+        assert_eq!(
+            raw.predicted_dt, 0.0,
+            "先取りしない（要求どおりの時刻に起きる）"
+        );
         // 2 フレーム目以降も持ち越しで戻らないこと（RawInput::take は値を保持する）。
         let raw2 = input.take(4096, PhysicalSize::new(100, 100), 1.0);
         assert_eq!(raw2.predicted_dt, 0.0);

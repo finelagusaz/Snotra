@@ -88,8 +88,14 @@ mod tests {
         }
         let img = super::png_to_color_image(&png_buf).expect("decode");
         assert_eq!(img.size, [2, 2]);
-        assert_eq!(img.pixels[0], egui::Color32::from_rgba_unmultiplied(255, 0, 0, 255));
-        assert_eq!(img.pixels[3], egui::Color32::from_rgba_unmultiplied(255, 255, 255, 128));
+        assert_eq!(
+            img.pixels[0],
+            egui::Color32::from_rgba_unmultiplied(255, 0, 0, 255)
+        );
+        assert_eq!(
+            img.pixels[3],
+            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 128)
+        );
     }
 
     // needs_extraction / retain_visible は値型 V でジェネリック化してある（egui::TextureHandle は
@@ -104,7 +110,10 @@ mod tests {
         attempts.insert("once.exe".into(), 1);
         attempts.insert("capped.exe".into(), ICON_MAX_ATTEMPTS);
 
-        assert!(super::needs_extraction("new.exe", &have, &attempts), "未知は要抽出");
+        assert!(
+            super::needs_extraction("new.exe", &have, &attempts),
+            "未知は要抽出"
+        );
         assert!(
             super::needs_extraction("once.exe", &have, &attempts),
             "1 度失敗しただけでは諦めない（#692: 一過性の失敗を恒久扱いしない）"
@@ -131,6 +140,9 @@ mod tests {
 
         assert_eq!(textures.len(), 1);
         assert!(textures.contains_key("keep.exe"), "可視集合内は保持される");
-        assert!(!textures.contains_key("drop.exe"), "可視集合外は drop される");
+        assert!(
+            !textures.contains_key("drop.exe"),
+            "可視集合外は drop される"
+        );
     }
 }

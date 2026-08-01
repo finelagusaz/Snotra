@@ -142,7 +142,6 @@ mod tests {
         VisualConfig::default()
     }
 
-
     /// **本 PR が存在する理由の不変条件**（spec 決定 4 の効果）: 1 つの snapshot の中で、
     /// 行高（metrics）と文字サイズ（row）が**同じ font_size** から導かれる。別々に lock を
     /// 取っていた頃は、間に config 適用が挟まると新 font を旧行高で描く 1 フレームが生じえた。
@@ -172,7 +171,10 @@ mod tests {
         v.text_color = "not-a-color".into();
         let bad = visual_snapshot(&v, true, "");
         let d = VisualConfig::default();
-        assert_eq!(bad.row.name_color, egui::Color32::from_hex(&d.text_color).unwrap());
+        assert_eq!(
+            bad.row.name_color,
+            egui::Color32::from_hex(&d.text_color).unwrap()
+        );
     }
 
     /// #724: ホバー色は別の config キーを持たず、同じフレームの選択色から 50% 透明色を導く。
@@ -196,7 +198,10 @@ mod tests {
         let same = visual_snapshot(&v, true, &v.font_family);
         assert!(same.font_family_changed.is_none());
         let diff = visual_snapshot(&v, true, "Other");
-        assert_eq!(diff.font_family_changed.as_deref(), Some(v.font_family.as_str()));
+        assert_eq!(
+            diff.font_family_changed.as_deref(),
+            Some(v.font_family.as_str())
+        );
     }
 
     /// 背景色の parse は **1 本**（`Color32::from_hex`）になり、`#RGB` も通る（#680 の 1）。
@@ -205,7 +210,10 @@ mod tests {
     #[test]
     fn background_color_accepts_short_hex_and_falls_back_to_config_default() {
         assert_eq!(background_color("#FFF"), egui::Color32::WHITE);
-        assert_eq!(background_color("#4A2B5C"), egui::Color32::from_rgb(0x4A, 0x2B, 0x5C));
+        assert_eq!(
+            background_color("#4A2B5C"),
+            egui::Color32::from_rgb(0x4A, 0x2B, 0x5C)
+        );
         assert_eq!(background_color("#ffffff"), egui::Color32::WHITE);
         // 旧 `config_watcher::parse_hex_color` の 5 テストが固定していた命題（撤去に伴い移設）:
         // 不正形はいずれも既定色へ落ちる。**リテラルを再手打ちせず既定から導く**。

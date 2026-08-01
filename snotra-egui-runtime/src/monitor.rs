@@ -15,8 +15,7 @@
 pub(crate) fn window_monitor(hwnd: isize) -> Option<isize> {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::Graphics::Gdi::{MONITOR_DEFAULTTONEAREST, MonitorFromWindow};
-    let monitor =
-        unsafe { MonitorFromWindow(HWND(hwnd as *mut _), MONITOR_DEFAULTTONEAREST) };
+    let monitor = unsafe { MonitorFromWindow(HWND(hwnd as *mut _), MONITOR_DEFAULTTONEAREST) };
     (!monitor.is_invalid()).then_some(monitor.0 as isize)
 }
 
@@ -31,8 +30,7 @@ pub(crate) fn monitor_refresh_hz(hwnd: isize) -> Option<u32> {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::Graphics::Gdi::{
         DEVMODEW, ENUM_CURRENT_SETTINGS, ENUM_REGISTRY_SETTINGS, EnumDisplaySettingsW,
-        GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MONITORINFOEXW,
-        MonitorFromWindow,
+        GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MONITORINFOEXW, MonitorFromWindow,
     };
     use windows::core::PCWSTR;
 
@@ -56,8 +54,7 @@ pub(crate) fn monitor_refresh_hz(hwnd: isize) -> Option<u32> {
                 dmSize: std::mem::size_of::<DEVMODEW>() as u16,
                 ..Default::default()
             };
-            if EnumDisplaySettingsW(PCWSTR(info.szDevice.as_ptr()), mode, &mut devmode)
-                .as_bool()
+            if EnumDisplaySettingsW(PCWSTR(info.szDevice.as_ptr()), mode, &mut devmode).as_bool()
                 && devmode.dmDisplayFrequency > 1
             {
                 return Some(devmode.dmDisplayFrequency);

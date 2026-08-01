@@ -74,8 +74,8 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, fonts: &[String], tr: &Tr) {
 
             // Custom theme card
             if let Some(ct) = &config.visual.custom_theme {
-                let is_active = config.visual.preset == ThemePreset::Custom
-                    && custom_theme_matches(config, ct);
+                let is_active =
+                    config.visual.preset == ThemePreset::Custom && custom_theme_matches(config, ct);
                 let ct_clone = ct.clone();
                 let response = custom_theme_card(ui, &ct_clone, is_active, tr);
                 if response.clicked() {
@@ -108,11 +108,31 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, fonts: &[String], tr: &Tr) {
         style::section_heading(ui, tr.t(TrKey::HeadingColor));
 
         style::settings_grid("color_grid").show(ui, |ui| {
-            color_row(ui, tr.t(TrKey::LabelBgColor), &mut config.visual.background_color);
-            color_row(ui, tr.t(TrKey::LabelInputBg), &mut config.visual.input_background_color);
-            color_row(ui, tr.t(TrKey::LabelTextColor), &mut config.visual.text_color);
-            color_row(ui, tr.t(TrKey::LabelSelectedRow), &mut config.visual.selected_row_color);
-            color_row(ui, tr.t(TrKey::LabelHintText), &mut config.visual.hint_text_color);
+            color_row(
+                ui,
+                tr.t(TrKey::LabelBgColor),
+                &mut config.visual.background_color,
+            );
+            color_row(
+                ui,
+                tr.t(TrKey::LabelInputBg),
+                &mut config.visual.input_background_color,
+            );
+            color_row(
+                ui,
+                tr.t(TrKey::LabelTextColor),
+                &mut config.visual.text_color,
+            );
+            color_row(
+                ui,
+                tr.t(TrKey::LabelSelectedRow),
+                &mut config.visual.selected_row_color,
+            );
+            color_row(
+                ui,
+                tr.t(TrKey::LabelHintText),
+                &mut config.visual.hint_text_color,
+            );
         });
 
         style::section_gap(ui);
@@ -149,8 +169,13 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, fonts: &[String], tr: &Tr) {
             let visible_default = config.appearance.effective_visible_rows();
             ui.add_sized(
                 [style::FIELD_NUMERIC, ui.spacing().interact_size.y],
-                egui::DragValue::new(config.appearance.visible_rows.get_or_insert(visible_default))
-                    .range(1..=50),
+                egui::DragValue::new(
+                    config
+                        .appearance
+                        .visible_rows
+                        .get_or_insert(visible_default),
+                )
+                .range(1..=50),
             );
             ui.end_row();
 
@@ -275,10 +300,8 @@ fn theme_card(ui: &mut egui::Ui, label: &str, colors: &[&str; 5], active: bool) 
     let card_width = total_width + 8.0; // padding
     let card_height = SWATCH_SIZE + 24.0; // swatch + label
 
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(card_width, card_height),
-        egui::Sense::click(),
-    );
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(card_width, card_height), egui::Sense::click());
 
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
@@ -298,10 +321,17 @@ fn theme_card(ui: &mut egui::Ui, label: &str, colors: &[&str; 5], active: bool) 
         for (i, hex) in colors.iter().enumerate() {
             let color = Color32::from_hex(hex).unwrap_or(Color32::BLACK);
             let x = rect.min.x + 4.0 + i as f32 * (SWATCH_SIZE + 4.0);
-            let swatch_rect =
-                egui::Rect::from_min_size(egui::pos2(x, swatch_y), egui::vec2(SWATCH_SIZE, SWATCH_SIZE));
+            let swatch_rect = egui::Rect::from_min_size(
+                egui::pos2(x, swatch_y),
+                egui::vec2(SWATCH_SIZE, SWATCH_SIZE),
+            );
             painter.rect_filled(swatch_rect, 2.0, color);
-            painter.rect_stroke(swatch_rect, 2.0, (1.0, Color32::GRAY), egui::StrokeKind::Outside);
+            painter.rect_stroke(
+                swatch_rect,
+                2.0,
+                (1.0, Color32::GRAY),
+                egui::StrokeKind::Outside,
+            );
         }
 
         // Label
@@ -372,12 +402,20 @@ mod tests {
                 "{name} を変えても一致してしまう——preset_matches がその色を見ていない"
             );
         };
-        drifts("background_color", |c| c.visual.background_color = "#123456".to_string());
+        drifts("background_color", |c| {
+            c.visual.background_color = "#123456".to_string()
+        });
         drifts("input_background_color", |c| {
             c.visual.input_background_color = "#123456".to_string()
         });
-        drifts("text_color", |c| c.visual.text_color = "#123456".to_string());
-        drifts("selected_row_color", |c| c.visual.selected_row_color = "#123456".to_string());
-        drifts("hint_text_color", |c| c.visual.hint_text_color = "#123456".to_string());
+        drifts("text_color", |c| {
+            c.visual.text_color = "#123456".to_string()
+        });
+        drifts("selected_row_color", |c| {
+            c.visual.selected_row_color = "#123456".to_string()
+        });
+        drifts("hint_text_color", |c| {
+            c.visual.hint_text_color = "#123456".to_string()
+        });
     }
 }

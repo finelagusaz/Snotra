@@ -183,7 +183,10 @@ fn topk_names(limit: usize, scores: &[(i64, usize)], entries: &[AppEntry]) -> Ve
     for &(score, index) in scores {
         t.push(se(score, index, entries));
     }
-    t.into_results(entries).into_iter().map(|r| r.name).collect()
+    t.into_results(entries)
+        .into_iter()
+        .map(|r| r.name)
+        .collect()
 }
 
 #[test]
@@ -248,11 +251,19 @@ fn topk_merge_is_order_independent() {
 
     let mut a1 = build(&[(10, 0), (40, 1)]);
     a1.merge(build(&[(20, 2), (30, 3)]));
-    let names_ab: Vec<String> = a1.into_results(&entries).into_iter().map(|r| r.name).collect();
+    let names_ab: Vec<String> = a1
+        .into_results(&entries)
+        .into_iter()
+        .map(|r| r.name)
+        .collect();
 
     let mut b1 = build(&[(20, 2), (30, 3)]);
     b1.merge(build(&[(10, 0), (40, 1)]));
-    let names_ba: Vec<String> = b1.into_results(&entries).into_iter().map(|r| r.name).collect();
+    let names_ba: Vec<String> = b1
+        .into_results(&entries)
+        .into_iter()
+        .map(|r| r.name)
+        .collect();
 
     assert_eq!(names_ab, vec!["e1", "e3"]); // top2 of {10,40,20,30} = 40,30
     assert_eq!(names_ab, names_ba); // merge 順に依存しない

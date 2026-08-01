@@ -110,7 +110,11 @@ impl PickerState {
         if !self.active {
             return None;
         }
-        let taken = self.result.try_lock().ok().and_then(|mut guard| guard.take());
+        let taken = self
+            .result
+            .try_lock()
+            .ok()
+            .and_then(|mut guard| guard.take());
         if taken.is_some() {
             self.active = false;
         }
@@ -145,7 +149,9 @@ mod tests {
     }
 
     fn fields(s: &str) -> Fields {
-        Fields { text: s.to_string() }
+        Fields {
+            text: s.to_string(),
+        }
     }
 
     // 不変条件: open_create はフィールドを Default に初期化し editing を消す
@@ -246,7 +252,10 @@ mod tests {
     }
 
     fn active_picker() -> PickerState {
-        PickerState { active: true, ..Default::default() }
+        PickerState {
+            active: true,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -270,6 +279,9 @@ mod tests {
         let mut p = active_picker();
         *p.result.lock().unwrap() = Some(None);
         assert_eq!(p.poll(), Some(None));
-        assert!(!p.active, "キャンセルでも active を戻す（ボタン永久無効化の防止）");
+        assert!(
+            !p.active,
+            "キャンセルでも active を戻す（ボタン永久無効化の防止）"
+        );
     }
 }

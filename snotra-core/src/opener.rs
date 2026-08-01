@@ -39,7 +39,10 @@ pub fn extract_path_condition(target: &str) -> Option<&str> {
 
 /// ターゲットから拡張子リスト部分のみ取得する（パス条件を除外）。
 pub fn extract_ext_part(target: &str) -> &str {
-    debug_assert!(target.starts_with("ext:"), "extract_ext_part called on non-ext target: {target}");
+    debug_assert!(
+        target.starts_with("ext:"),
+        "extract_ext_part called on non-ext target: {target}"
+    );
     let after_ext = &target["ext:".len()..];
     if let Some(path_cond) = extract_path_condition(target) {
         // パス条件の直前のコロンまでが拡張子部分
@@ -80,14 +83,10 @@ pub fn find_matching_tools<'a>(
             // パス条件がパス境界で終わっていることを確認
             // 例: 条件 "C:\workspace" はパス "C:\workspace123" にマッチしない
             // 条件自体がパス区切りで終わっている場合はすでに境界OK
-            let cond_ends_with_sep =
-                cond_lower.ends_with('\\') || cond_lower.ends_with('/');
+            let cond_ends_with_sep = cond_lower.ends_with('\\') || cond_lower.ends_with('/');
             if !cond_ends_with_sep {
                 let next_byte = path_lower.as_bytes().get(cond_lower.len());
-                if next_byte.is_some()
-                    && next_byte != Some(&b'\\')
-                    && next_byte != Some(&b'/')
-                {
+                if next_byte.is_some() && next_byte != Some(&b'\\') && next_byte != Some(&b'/') {
                     continue;
                 }
             }
@@ -323,8 +322,8 @@ pub fn detect_opener_presets() -> Vec<OpenerPreset> {
     }
 
     // Explorer: 常に利用可能。find_in_path でフルパスを解決し、アイコン取得を確実にする
-    let explorer_exe = find_in_path("explorer.exe")
-        .unwrap_or_else(|| r"C:\Windows\explorer.exe".to_string());
+    let explorer_exe =
+        find_in_path("explorer.exe").unwrap_or_else(|| r"C:\Windows\explorer.exe".to_string());
     presets.push(OpenerPreset {
         name: "Explorer",
         exe: explorer_exe,
@@ -400,7 +399,10 @@ mod tests {
     fn normalize_openers_sorts_by_specificity() {
         let openers = vec![
             make_rule("ext:txt", &[("Notepad", "notepad.exe", "")]),
-            make_rule("folder:c:\\workspace\\snotra", &[("Terminal", "wt.exe", "-d {path}")]),
+            make_rule(
+                "folder:c:\\workspace\\snotra",
+                &[("Terminal", "wt.exe", "-d {path}")],
+            ),
             make_rule("ext:md:c:\\projects", &[("VSCode", "Code.exe", "")]),
             make_rule("folder", &[("Explorer", "explorer.exe", "")]),
             make_rule("folder:c:\\workspace", &[("VSCode", "Code.exe", "")]),
@@ -411,14 +413,17 @@ mod tests {
         let targets: Vec<&str> = normalized.iter().map(|r| r.target.as_str()).collect();
 
         // (1) パス付きフォルダ（パスが長い順）→ (2) パスなしフォルダ → (3) パス付き拡張子 → (4) パスなし拡張子
-        assert_eq!(targets, vec![
-            "folder:c:\\workspace\\snotra",
-            "folder:c:\\workspace",
-            "folder",
-            "ext:.md:c:\\projects",
-            "ext:.txt",
-            "ext:.md",
-        ]);
+        assert_eq!(
+            targets,
+            vec![
+                "folder:c:\\workspace\\snotra",
+                "folder:c:\\workspace",
+                "folder",
+                "ext:.md:c:\\projects",
+                "ext:.txt",
+                "ext:.md",
+            ]
+        );
     }
 
     #[test]
@@ -450,7 +455,10 @@ mod tests {
 
     #[test]
     fn find_matching_tools_ext_target_with_dot() {
-        let rules = vec![make_rule("ext:.png,jpg", &[("IrfanView", "i_view64.exe", "")])];
+        let rules = vec![make_rule(
+            "ext:.png,jpg",
+            &[("IrfanView", "i_view64.exe", "")],
+        )];
         let tools = find_matching_tools("C:\\image.PNG", false, &rules);
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name, "IrfanView");
@@ -458,7 +466,10 @@ mod tests {
 
     #[test]
     fn find_matching_tools_ext_target_without_dot() {
-        let rules = vec![make_rule("ext:png,jpg,gif", &[("IrfanView", "i_view64.exe", "")])];
+        let rules = vec![make_rule(
+            "ext:png,jpg,gif",
+            &[("IrfanView", "i_view64.exe", "")],
+        )];
         let tools = find_matching_tools("C:\\photo.jpg", false, &rules);
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name, "IrfanView");
@@ -503,7 +514,10 @@ mod tests {
     fn find_matching_tools_multiple_tools_in_rule() {
         let rules = vec![make_rule(
             "folder",
-            &[("TC", "TOTALCMD64.EXE", ""), ("Explorer", "explorer.exe", "")],
+            &[
+                ("TC", "TOTALCMD64.EXE", ""),
+                ("Explorer", "explorer.exe", ""),
+            ],
         )];
         let tools = find_matching_tools("C:\\Projects", true, &rules);
         assert_eq!(tools.len(), 2);
@@ -513,7 +527,10 @@ mod tests {
 
     #[test]
     fn find_matching_tools_case_insensitive_ext() {
-        let rules = vec![make_rule("ext:PNG,JPG", &[("IrfanView", "i_view64.exe", "")])];
+        let rules = vec![make_rule(
+            "ext:PNG,JPG",
+            &[("IrfanView", "i_view64.exe", "")],
+        )];
         let tools = find_matching_tools("C:\\Photo.png", false, &rules);
         assert_eq!(tools.len(), 1);
     }
@@ -546,7 +563,10 @@ mod tests {
     fn find_matching_tools_most_specific_path_wins() {
         let rules = vec![
             make_rule("folder:C:\\workspace", &[("VSCode", "Code.exe", "")]),
-            make_rule("folder:C:\\workspace\\Snotra", &[("Terminal", "wt.exe", "-d {path}")]),
+            make_rule(
+                "folder:C:\\workspace\\Snotra",
+                &[("Terminal", "wt.exe", "-d {path}")],
+            ),
             make_rule("folder", &[("Explorer", "explorer.exe", "")]),
         ];
         let tools = find_matching_tools("C:\\workspace\\Snotra\\src", true, &rules);
@@ -556,9 +576,10 @@ mod tests {
 
     #[test]
     fn find_matching_tools_path_condition_case_insensitive() {
-        let rules = vec![
-            make_rule("folder:C:\\Workspace", &[("VSCode", "Code.exe", "")]),
-        ];
+        let rules = vec![make_rule(
+            "folder:C:\\Workspace",
+            &[("VSCode", "Code.exe", "")],
+        )];
         let tools = find_matching_tools("c:\\workspace\\project", true, &rules);
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name, "VSCode");
@@ -599,9 +620,10 @@ mod tests {
 
     #[test]
     fn find_matching_tools_path_condition_slash_normalized() {
-        let rules = vec![
-            make_rule("folder:C:\\workspace", &[("VSCode", "Code.exe", "")]),
-        ];
+        let rules = vec![make_rule(
+            "folder:C:\\workspace",
+            &[("VSCode", "Code.exe", "")],
+        )];
         // パスにスラッシュが混在
         let tools = find_matching_tools("C:/workspace/project", true, &rules);
         assert_eq!(tools.len(), 1);
@@ -622,9 +644,10 @@ mod tests {
 
     #[test]
     fn find_matching_tools_path_condition_exact_match() {
-        let rules = vec![
-            make_rule("folder:C:\\workspace", &[("VSCode", "Code.exe", "")]),
-        ];
+        let rules = vec![make_rule(
+            "folder:C:\\workspace",
+            &[("VSCode", "Code.exe", "")],
+        )];
         // 完全一致もマッチする
         let tools = find_matching_tools("C:\\workspace", true, &rules);
         assert_eq!(tools.len(), 1);
@@ -722,9 +745,10 @@ mod tests {
         assert_eq!(tools[0].name, "VSCode");
 
         // 末尾 / 付き条件でも同様
-        let rules2 = vec![
-            make_rule("folder:C:\\workspace/", &[("VSCode", "Code.exe", "")]),
-        ];
+        let rules2 = vec![make_rule(
+            "folder:C:\\workspace/",
+            &[("VSCode", "Code.exe", "")],
+        )];
         let tools2 = find_matching_tools("C:\\workspace\\project", true, &rules2);
         assert_eq!(tools2.len(), 1);
         assert_eq!(tools2[0].name, "VSCode");
@@ -782,10 +806,7 @@ mod tests {
                 args: String::new(),
             }],
         }];
-        assert!(is_preset_already_added(
-            &rules,
-            r"C:\Windows\explorer.exe"
-        ));
+        assert!(is_preset_already_added(&rules, r"C:\Windows\explorer.exe"));
         // 逆方向: 設定にフルパス、プリセットが bare name
         let rules_full = vec![OpenerRule {
             target: "folder".to_string(),

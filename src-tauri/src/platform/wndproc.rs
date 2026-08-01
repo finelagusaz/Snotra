@@ -1,8 +1,6 @@
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
-use windows::Win32::UI::WindowsAndMessaging::{
-    DefWindowProcW, PostThreadMessageW, WM_CONTEXTMENU,
-};
+use windows::Win32::UI::WindowsAndMessaging::{DefWindowProcW, PostThreadMessageW, WM_CONTEXTMENU};
 
 use super::WM_TRAY_ICON;
 

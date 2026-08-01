@@ -380,11 +380,9 @@ pub(crate) fn draw_result_row(
         return response.clicked();
     }
     let path_font = egui::FontId::proportional(theme.path_size);
-    let path_full = ui.painter().layout_no_wrap(
-        result.path.clone(),
-        path_font.clone(),
-        theme.path_color,
-    );
+    let path_full =
+        ui.painter()
+            .layout_no_wrap(result.path.clone(), path_font.clone(), theme.path_color);
     let path_str = if path_full.size().x <= avail {
         result.path.clone()
     } else {
@@ -392,7 +390,9 @@ pub(crate) fn draw_result_row(
         let per_char_px = path_full.size().x / (result.path.chars().count().max(1) as f32);
         truncate_middle(&result.path, avail, per_char_px)
     };
-    let path_galley = ui.painter().layout_no_wrap(path_str, path_font, theme.path_color);
+    let path_galley = ui
+        .painter()
+        .layout_no_wrap(path_str, path_font, theme.path_color);
     // 鏡像ケース(folder 列挙エラー行・snotra-core/src/folder.rs の error_result は
     // name 空・path 非空): 上段を空白にせず path 1 行を縦中央に単独描画
     //(上の path 空分岐と対称・plan-review scout-egui 指摘)。
@@ -408,7 +408,8 @@ pub(crate) fn draw_result_row(
     let total_h = name_galley.size().y + 4.0 + path_galley.size().y;
     let top = rect.center().y - total_h / 2.0;
     let name_h = name_galley.size().y;
-    ui.painter().galley(egui::pos2(text_x, top), name_galley, theme.name_color);
+    ui.painter()
+        .galley(egui::pos2(text_x, top), name_galley, theme.name_color);
     ui.painter().galley(
         egui::pos2(text_x, top + name_h + 4.0),
         path_galley,
@@ -424,7 +425,11 @@ pub(crate) fn draw_result_row(
 fn draw_icon_fallback(ui: &egui::Ui, rect: egui::Rect, result: &SearchResult, theme: &RowTheme) {
     let center = egui::pos2(rect.left() + 14.0, rect.center().y);
     let r = egui::Rect::from_center_size(center, egui::vec2(14.0, 14.0));
-    let col = if result.is_folder { theme.name_color } else { theme.path_color };
+    let col = if result.is_folder {
+        theme.name_color
+    } else {
+        theme.path_color
+    };
     ui.painter().rect_filled(r, 2.0, col.linear_multiply(0.5));
 }
 
@@ -632,7 +637,10 @@ mod tests {
     fn clicked_is_discarded_on_generation_mismatch() {
         let shared = ResultsShared::default();
         shared.push_clicked(7, 2);
-        assert!(matches!(shared.take_clicked_for(8), ClickTake::Stale { stamped: 7 }));
+        assert!(matches!(
+            shared.take_clicked_for(8),
+            ClickTake::Stale { stamped: 7 }
+        ));
         assert!(
             matches!(shared.take_clicked_for(7), ClickTake::None),
             "破棄後は空であること（元の世代で引いても戻らない）"

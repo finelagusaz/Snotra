@@ -1,7 +1,9 @@
 //! オープナー設定タブ（ツール/ルール管理・プリセット検出/追加）。
 
 use eframe::egui;
-use snotra_core::config::{self, extract_path_condition, opener_specificity_order, Config, OpenerRule, OpenerTool};
+use snotra_core::config::{
+    self, Config, OpenerRule, OpenerTool, extract_path_condition, opener_specificity_order,
+};
 
 use crate::i18n::{Tr, TrKey};
 use crate::style;
@@ -47,7 +49,9 @@ impl OpenerFields {
     fn from_rule_tool(rule: &OpenerRule, tool: &OpenerTool) -> Self {
         let mut fields = Self {
             // パス条件の抽出
-            target_path: extract_path_condition(&rule.target).unwrap_or("").to_string(),
+            target_path: extract_path_condition(&rule.target)
+                .unwrap_or("")
+                .to_string(),
             tool_name: tool.name.clone(),
             tool_exe: tool.exe.clone(),
             tool_args: tool.args.clone(),
@@ -63,7 +67,13 @@ impl OpenerFields {
     }
 }
 
-pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabState, tr: &Tr) {
+pub fn ui(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    config: &mut Config,
+    state: &mut OpenerTabState,
+    tr: &Tr,
+) {
     // Poll exe picker result
     if let Some(Some(path)) = state.exe_picker.poll() {
         state.modal.fields.tool_exe = path.display().to_string();
@@ -145,7 +155,10 @@ pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &m
                     ui.label(preset.name);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if already_added {
-                            ui.add_enabled(false, egui::Button::new(tr.t(TrKey::LabelAlreadyAdded)));
+                            ui.add_enabled(
+                                false,
+                                egui::Button::new(tr.t(TrKey::LabelAlreadyAdded)),
+                            );
                         } else if ui.button(tr.t(TrKey::BtnAddPreset)).clicked() {
                             preset_action = Some(i);
                         }
@@ -229,8 +242,16 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
                 TargetKind::Extension => tr.t(TrKey::TargetKindExtension),
             })
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut state.modal.fields.target_kind, TargetKind::Folder, tr.t(TrKey::TargetKindFolder));
-                ui.selectable_value(&mut state.modal.fields.target_kind, TargetKind::Extension, tr.t(TrKey::TargetKindExtension));
+                ui.selectable_value(
+                    &mut state.modal.fields.target_kind,
+                    TargetKind::Folder,
+                    tr.t(TrKey::TargetKindFolder),
+                );
+                ui.selectable_value(
+                    &mut state.modal.fields.target_kind,
+                    TargetKind::Extension,
+                    tr.t(TrKey::TargetKindExtension),
+                );
             });
 
         if state.modal.fields.target_kind == TargetKind::Extension {
@@ -259,7 +280,10 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut OpenerTabSta
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut state.modal.fields.tool_exe);
             if ui
-                .add_enabled(!state.exe_picker.active, egui::Button::new(tr.t(TrKey::BtnBrowse)))
+                .add_enabled(
+                    !state.exe_picker.active,
+                    egui::Button::new(tr.t(TrKey::BtnBrowse)),
+                )
                 .clicked()
             {
                 let dialog_title = tr.t(TrKey::DialogSelectExe).to_string();

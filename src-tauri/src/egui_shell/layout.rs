@@ -92,7 +92,9 @@ pub fn results_window_height(result_count: usize, max_results: u32, row_height: 
 /// 「main を画面下端へ置くと結果が一切出ない」という別の欠陥になる。床を割ったぶんの
 /// はみ出しは受容する（行はスクロールで到達できる）。
 pub fn clamp_results_height(desired: f64, available: Option<f64>, row_height: f64) -> f64 {
-    let Some(avail) = available else { return desired };
+    let Some(avail) = available else {
+        return desired;
+    };
     if desired <= 0.0 {
         return desired;
     }
@@ -221,7 +223,11 @@ pub struct Debouncer {
 
 impl Debouncer {
     pub fn new(interval: Duration, leading: bool) -> Self {
-        Self { interval, leading, armed: false }
+        Self {
+            interval,
+            leading,
+            armed: false,
+        }
     }
 
     pub fn interval(&self) -> Duration {
@@ -268,12 +274,18 @@ mod tests {
     #[test]
     fn aux_text_sizes_scale_with_font_size() {
         // 既定 font_size=15 で従来の固定値 13px と実質同じ（この変更は見た目を変えない）。
-        assert!((status_size(15) - 13.05).abs() < 0.01, "既定で 13px 相当を保つ");
+        assert!(
+            (status_size(15) - 13.05).abs() < 0.01,
+            "既定で 13px 相当を保つ"
+        );
         // font_size を上げれば追従する（固定値なら 15 と 24 で同値になり、ここが落ちる）。
         assert!(status_size(24) > status_size(15), "font_size に連動する");
         assert!((status_size(24) - 20.88).abs() < 0.01);
         // 補助要素どうしの序列: パス行 < status 行 < 主要素（font_size 等倍）。
-        assert!(path_size(15) < status_size(15), "パス行より大きい（行の主メッセージゆえ）");
+        assert!(
+            path_size(15) < status_size(15),
+            "パス行より大きい（行の主メッセージゆえ）"
+        );
         assert!(status_size(15) < 15.0, "主要素より小さい");
         // 極小 font_size でも読める下限を持つ（path_size の 9.0 と同型の防御）。
         assert_eq!(status_size(1), 11.0);
@@ -284,8 +296,14 @@ mod tests {
         let mut d = Debouncer::new(Duration::from_millis(50), true);
         assert!(d.on_input(), "バースト先頭は leading 発火");
         assert!(!d.on_input(), "連打中は leading 抑止");
-        assert!(!d.poll(Duration::from_millis(30)), "50ms 未満は trailing 抑止");
-        assert!(d.poll(Duration::from_millis(50)), "50ms 経過で trailing 発火");
+        assert!(
+            !d.poll(Duration::from_millis(30)),
+            "50ms 未満は trailing 抑止"
+        );
+        assert!(
+            d.poll(Duration::from_millis(50)),
+            "50ms 経過で trailing 発火"
+        );
         assert!(!d.poll(Duration::from_millis(100)), "発火後は disarm");
     }
 
@@ -303,7 +321,10 @@ mod tests {
         assert!(d.is_armed());
         d.cancel();
         assert!(!d.is_armed());
-        assert!(!d.poll(Duration::from_millis(100)), "cancel 後は trailing 発火しない");
+        assert!(
+            !d.poll(Duration::from_millis(100)),
+            "cancel 後は trailing 発火しない"
+        );
         // cancel 後の次入力はバースト先頭扱い（leading 再発火）
         assert!(d.on_input());
     }
@@ -443,7 +464,10 @@ mod tests {
         let h = 3.0 * 37.0 + 8.0; // results_window_height(3, 8, 37.0)
 
         // ①true ③true（plain_hidden = false）
-        assert_eq!(present_results(inputs(true, false, 3, 8)), Visible { desired_height: h }); // ②t ④t: 唯一の可視
+        assert_eq!(
+            present_results(inputs(true, false, 3, 8)),
+            Visible { desired_height: h }
+        ); // ②t ④t: 唯一の可視
         assert_eq!(present_results(inputs(true, false, 3, 0)), Hidden); // ②t ④f（max_results=0）
         assert_eq!(present_results(inputs(true, false, 0, 8)), Hidden); // ②f ④f
         // ①true ③false（carve-out で隠す）
@@ -468,7 +492,10 @@ mod tests {
     /// ——表から 1 行落ちても、名前付きのこれが落ちる。
     #[test]
     fn results_hidden_while_main_is_hidden_even_with_rows() {
-        assert_eq!(present_results(inputs(false, false, 3, 8)), ResultsPresentation::Hidden);
+        assert_eq!(
+            present_results(inputs(false, false, 3, 8)),
+            ResultsPresentation::Hidden
+        );
         // 対照: main が可視なら同じ入力で出る（要石が効いているのは①だけだと示す）
         assert!(matches!(
             present_results(inputs(true, false, 3, 8)),

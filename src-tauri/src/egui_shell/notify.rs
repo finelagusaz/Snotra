@@ -89,7 +89,11 @@ pub enum UpdaterPhase<U> {
     Idle,
     Checking,
     UpToDate,
-    Available { version: String, can_install: bool, update: Option<U> },
+    Available {
+        version: String,
+        can_install: bool,
+        update: Option<U>,
+    },
     // version は toast() が Installing 局面で表示しない（update_installing は汎用文言・
     // 消費経路なし）ため保持しない。Available→Installing 遷移時に破棄する。
     Installing,
@@ -99,7 +103,9 @@ pub enum UpdaterPhase<U> {
     // （`toast()` と view の描画）は `..` で受けず**フィールドを明示束縛する**こと。`..` は
     // `-D warnings` でも「payload を足したが描いていない」を通し、dead payload を作った当の
     // 経路を再生産する。詳細は表示に出ない場合も trace（`egui_update_install_failed`）に残る。
-    InstallFailed { message: String },
+    InstallFailed {
+        message: String,
+    },
 }
 
 /// toast 1 行分の表示モデル（描画専用・U 非依存）。
@@ -115,10 +121,14 @@ pub struct ToastRow {
 
 #[derive(Debug, PartialEq)]
 pub enum ToastKind {
-    Available { version: String },
+    Available {
+        version: String,
+    },
     Installing,
     /// `message` は失敗理由（空なら generic 文言のみ）。描画は `ui_strings::update_failed`。
-    Failed { message: String },
+    Failed {
+        message: String,
+    },
 }
 
 /// updater toast の状態機械。dismiss/install の競合は本型のメソッド内で原子的に解決する
@@ -130,7 +140,10 @@ pub struct UpdaterUi<U> {
 
 impl<U> Default for UpdaterUi<U> {
     fn default() -> Self {
-        Self { phase: UpdaterPhase::Idle, dismissed: false }
+        Self {
+            phase: UpdaterPhase::Idle,
+            dismissed: false,
+        }
     }
 }
 
@@ -143,13 +156,25 @@ impl<U> UpdaterUi<U> {
         }
         let phase = std::mem::replace(&mut self.phase, UpdaterPhase::Idle);
         match phase {
-            UpdaterPhase::Available { can_install: true, update: Some(update), .. } => {
+            UpdaterPhase::Available {
+                can_install: true,
+                update: Some(update),
+                ..
+            } => {
                 self.phase = UpdaterPhase::Installing;
                 Some(update)
             }
-            UpdaterPhase::Available { version, can_install: true, update: None } => {
+            UpdaterPhase::Available {
+                version,
+                can_install: true,
+                update: None,
+            } => {
                 // fake 注入（SNOTRA_EGUI_FAKE_UPDATE・視覚スモーク専用）: install 実体なし。
-                self.phase = UpdaterPhase::Available { version, can_install: true, update: None };
+                self.phase = UpdaterPhase::Available {
+                    version,
+                    can_install: true,
+                    update: None,
+                };
                 None
             }
             other => {
@@ -174,8 +199,14 @@ impl<U> UpdaterUi<U> {
             return None;
         }
         match &self.phase {
-            UpdaterPhase::Available { version, can_install, .. } => Some(ToastRow {
-                kind: ToastKind::Available { version: version.clone() },
+            UpdaterPhase::Available {
+                version,
+                can_install,
+                ..
+            } => Some(ToastRow {
+                kind: ToastKind::Available {
+                    version: version.clone(),
+                },
                 show_install: *can_install,
                 buttons_enabled: true,
             }),
@@ -185,7 +216,9 @@ impl<U> UpdaterUi<U> {
                 buttons_enabled: false,
             }),
             UpdaterPhase::InstallFailed { message } => Some(ToastRow {
-                kind: ToastKind::Failed { message: message.clone() },
+                kind: ToastKind::Failed {
+                    message: message.clone(),
+                },
                 show_install: false,
                 buttons_enabled: true,
             }),
@@ -238,23 +271,42 @@ mod tests {
     fn install_takes_update_only_from_available_with_can_install() {
         let mut u: UpdaterUi<&'static str> = UpdaterUi::default();
         assert!(u.try_begin_install().is_none(), "Idle からは install 不可");
-        u.phase =
-            UpdaterPhase::Available { version: "1.2.3".into(), can_install: false, update: Some("U") };
-        assert!(u.try_begin_install().is_none(), "check_only は install 不可");
-        u.phase =
-            UpdaterPhase::Available { version: "1.2.3".into(), can_install: true, update: Some("U") };
+        u.phase = UpdaterPhase::Available {
+            version: "1.2.3".into(),
+            can_install: false,
+            update: Some("U"),
+        };
+        assert!(
+            u.try_begin_install().is_none(),
+            "check_only は install 不可"
+        );
+        u.phase = UpdaterPhase::Available {
+            version: "1.2.3".into(),
+            can_install: true,
+            update: Some("U"),
+        };
         assert_eq!(u.try_begin_install(), Some("U"));
         assert!(matches!(u.phase, UpdaterPhase::Installing), "原子遷移");
-        assert!(u.try_begin_install().is_none(), "二重 install は拒否（Update は一度しか取れない）");
+        assert!(
+            u.try_begin_install().is_none(),
+            "二重 install は拒否（Update は一度しか取れない）"
+        );
     }
 
     #[test]
     #[allow(clippy::field_reassign_with_default)]
     fn fake_available_without_update_cannot_install() {
         let mut u: UpdaterUi<&'static str> = UpdaterUi::default();
-        u.phase = UpdaterPhase::Available { version: "9.9.9".into(), can_install: true, update: None };
+        u.phase = UpdaterPhase::Available {
+            version: "9.9.9".into(),
+            can_install: true,
+            update: None,
+        };
         assert!(u.try_begin_install().is_none());
-        assert!(matches!(u.phase, UpdaterPhase::Available { .. }), "fake は Available のまま");
+        assert!(
+            matches!(u.phase, UpdaterPhase::Available { .. }),
+            "fake は Available のまま"
+        );
     }
 
     #[test]
@@ -262,9 +314,14 @@ mod tests {
     fn dismiss_is_refused_while_installing() {
         let mut u: UpdaterUi<()> = UpdaterUi::default();
         u.phase = UpdaterPhase::Installing;
-        assert!(!u.dismiss(), "Installing 中の dismiss は拒否（WebView2 disabled parity）");
+        assert!(
+            !u.dismiss(),
+            "Installing 中の dismiss は拒否（WebView2 disabled parity）"
+        );
         assert!(u.toast().is_some(), "toast は出たまま");
-        u.phase = UpdaterPhase::InstallFailed { message: "e".into() };
+        u.phase = UpdaterPhase::InstallFailed {
+            message: "e".into(),
+        };
         assert!(u.dismiss());
         assert!(u.toast().is_none(), "dismissed 後は導出も消える");
     }
@@ -297,9 +354,16 @@ mod tests {
     #[allow(clippy::field_reassign_with_default)] // 他のテストと同じ verbatim 形を保つ
     fn install_failure_reason_reaches_toast() {
         let mut u: UpdaterUi<()> = UpdaterUi::default();
-        u.phase = UpdaterPhase::InstallFailed { message: "boom".into() };
+        u.phase = UpdaterPhase::InstallFailed {
+            message: "boom".into(),
+        };
         let t = u.toast().expect("失敗局面では toast が出る");
-        assert_eq!(t.kind, ToastKind::Failed { message: "boom".into() });
+        assert_eq!(
+            t.kind,
+            ToastKind::Failed {
+                message: "boom".into()
+            }
+        );
         assert!(!t.show_install, "失敗時に [今すぐ更新] は出さない");
         assert!(t.buttons_enabled, "[閉じる] は押せる");
     }
@@ -309,11 +373,22 @@ mod tests {
         let mut u: UpdaterUi<()> = UpdaterUi::default();
         assert!(u.toast().is_none(), "Idle は非表示");
         u.phase = UpdaterPhase::Checking;
-        assert!(u.toast().is_none(), "Checking は非表示（WebView2 は check 中 UI 無し）");
-        u.phase =
-            UpdaterPhase::Available { version: "2.0.0".into(), can_install: true, update: Some(()) };
+        assert!(
+            u.toast().is_none(),
+            "Checking は非表示（WebView2 は check 中 UI 無し）"
+        );
+        u.phase = UpdaterPhase::Available {
+            version: "2.0.0".into(),
+            can_install: true,
+            update: Some(()),
+        };
         let t = u.toast().unwrap();
-        assert_eq!(t.kind, ToastKind::Available { version: "2.0.0".into() });
+        assert_eq!(
+            t.kind,
+            ToastKind::Available {
+                version: "2.0.0".into()
+            }
+        );
         assert!(t.show_install && t.buttons_enabled);
     }
 }

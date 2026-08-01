@@ -64,12 +64,7 @@ pub(crate) fn read_dir_entries(
         // シンボリックリンク挙動は変わらず、かつ追加の stat 呼び出しが不要になる。
         let meta = entry.metadata().ok();
 
-        if !show_hidden_system
-            && meta
-                .as_ref()
-                .map(is_hidden_or_system)
-                .unwrap_or(false)
-        {
+        if !show_hidden_system && meta.as_ref().map(is_hidden_or_system).unwrap_or(false) {
             continue;
         }
 
@@ -124,13 +119,21 @@ fn build_sort_keys(entries: &[SearchResult], history: &HistoryStore) -> Vec<(Str
 }
 
 /// keyed の順序で entries を並べ替えて所有権を取り出す（clone 回避の mem::replace・共有ヘルパー）。
-fn collect_by_keyed(mut entries: Vec<SearchResult>, keyed: Vec<(String, u32, usize)>) -> Vec<SearchResult> {
+fn collect_by_keyed(
+    mut entries: Vec<SearchResult>,
+    keyed: Vec<(String, u32, usize)>,
+) -> Vec<SearchResult> {
     keyed
         .into_iter()
         .map(|(_, _, i)| {
             std::mem::replace(
                 &mut entries[i],
-                SearchResult { name: String::new(), path: String::new(), is_folder: false, is_error: false },
+                SearchResult {
+                    name: String::new(),
+                    path: String::new(),
+                    is_folder: false,
+                    is_error: false,
+                },
             )
         })
         .collect()
@@ -144,7 +147,12 @@ pub fn sort_entries_unlimited(
 ) -> Vec<SearchResult> {
     let entries: Vec<SearchResult> = entries
         .into_iter()
-        .map(|e| SearchResult { name: e.name, path: e.path, is_folder: e.is_folder, is_error: false })
+        .map(|e| SearchResult {
+            name: e.name,
+            path: e.path,
+            is_folder: e.is_folder,
+            is_error: false,
+        })
         .collect();
     let mut keyed = build_sort_keys(&entries, history);
     keyed.sort_by(|a, b| folder_entry_cmp(&entries, a, b));
@@ -158,7 +166,12 @@ pub(crate) fn score_entries(
 ) -> Vec<SearchResult> {
     let entries: Vec<SearchResult> = entries
         .into_iter()
-        .map(|e| SearchResult { name: e.name, path: e.path, is_folder: e.is_folder, is_error: false })
+        .map(|e| SearchResult {
+            name: e.name,
+            path: e.path,
+            is_folder: e.is_folder,
+            is_error: false,
+        })
         .collect();
     let k = max_results.min(entries.len());
     if k == 0 {
@@ -406,7 +419,14 @@ mod tests {
             .status()
             .expect("attrib command failed");
 
-        let results = list_folder(&dir, "", SearchMode::Substring, false, &empty_history(), 100);
+        let results = list_folder(
+            &dir,
+            "",
+            SearchMode::Substring,
+            false,
+            &empty_history(),
+            100,
+        );
         let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(results.len(), 1);
         assert!(names.contains(&"visible.txt"));
@@ -519,7 +539,9 @@ mod tests {
                 assert_eq!(results.len(), max_results);
             }
             let avg_us = total_ns / iters as u128 / 1000;
-            println!("[topk_sort] entries={n}, max_results={max_results}, avg={avg_us}µs ({iters} iters)");
+            println!(
+                "[topk_sort] entries={n}, max_results={max_results}, avg={avg_us}µs ({iters} iters)"
+            );
             let _ = fs::remove_dir_all(&dir);
         }
     }
@@ -626,16 +648,26 @@ mod tests {
         // empty_history() は既存 folder テストのヘルパー（HistoryStore::load()）。
         let hist = empty_history();
         let entries = vec![
-            DirEntryData { path: "C:\\d\\Cafe".into(), name: "Cafe".into(), is_folder: false },
-            DirEntryData { path: "C:\\d\\Café".into(), name: "Café".into(), is_folder: false },
+            DirEntryData {
+                path: "C:\\d\\Cafe".into(),
+                name: "Cafe".into(),
+                is_folder: false,
+            },
+            DirEntryData {
+                path: "C:\\d\\Café".into(),
+                name: "Café".into(),
+                is_folder: false,
+            },
         ];
         let a = sort_entries_unlimited(entries.clone(), &hist);
         // 入力順を反転しても同一順序（path 昇順で確定）
         let mut rev = entries;
         rev.reverse();
         let b = sort_entries_unlimited(rev, &hist);
-        assert_eq!(a.iter().map(|r| r.path.clone()).collect::<Vec<_>>(),
-                   b.iter().map(|r| r.path.clone()).collect::<Vec<_>>());
+        assert_eq!(
+            a.iter().map(|r| r.path.clone()).collect::<Vec<_>>(),
+            b.iter().map(|r| r.path.clone()).collect::<Vec<_>>()
+        );
         // path 昇順: "Cafe" < "Café"（バイト比較）
         assert_eq!(a[0].path, "C:\\d\\Cafe");
     }
@@ -647,9 +679,21 @@ mod tests {
         use crate::search::SearchMode;
         let hist = empty_history();
         let entries = vec![
-            DirEntryData { path: "C:\\d\\Café".into(), name: "Café".into(), is_folder: false },
-            DirEntryData { path: "C:\\d\\Cafe".into(), name: "Cafe".into(), is_folder: false },
-            DirEntryData { path: "C:\\d\\dog".into(), name: "dog".into(), is_folder: false },
+            DirEntryData {
+                path: "C:\\d\\Café".into(),
+                name: "Café".into(),
+                is_folder: false,
+            },
+            DirEntryData {
+                path: "C:\\d\\Cafe".into(),
+                name: "Cafe".into(),
+                is_folder: false,
+            },
+            DirEntryData {
+                path: "C:\\d\\dog".into(),
+                name: "dog".into(),
+                is_folder: false,
+            },
         ];
         // 経路 A: 全ソート → filter("cafe") → take(1)
         let sorted = sort_entries_unlimited(entries.clone(), &hist);
@@ -657,19 +701,27 @@ mod tests {
         // 経路 B: read_dir 相当の filter を read_dir_entries で（filter="cafe"）→ score_entries(max=1)
         let filtered = read_dir_entries_for_test(entries, "cafe", SearchMode::Substring);
         let b = score_entries(filtered, &hist, 1);
-        assert_eq!(a.iter().map(|r| r.path.clone()).collect::<Vec<_>>(),
-                   b.iter().map(|r| r.path.clone()).collect::<Vec<_>>());
+        assert_eq!(
+            a.iter().map(|r| r.path.clone()).collect::<Vec<_>>(),
+            b.iter().map(|r| r.path.clone()).collect::<Vec<_>>()
+        );
     }
 
     /// read_dir_entries のフィルタ段だけをテストで再現する（実 I/O を避ける）。matches_filter は
     /// private だが同一モジュールから呼べる。
     #[cfg(test)]
-    fn read_dir_entries_for_test(entries: Vec<DirEntryData>, filter: &str, mode: crate::search::SearchMode) -> Vec<DirEntryData> {
+    fn read_dir_entries_for_test(
+        entries: Vec<DirEntryData>,
+        filter: &str,
+        mode: crate::search::SearchMode,
+    ) -> Vec<DirEntryData> {
         let filter_lower = to_lower_folded(filter);
         let mut matcher = Matcher::new(MatcherConfig::DEFAULT);
         entries
             .into_iter()
-            .filter(|e| filter.is_empty() || matches_filter(&e.name, &filter_lower, mode, &mut matcher))
+            .filter(|e| {
+                filter.is_empty() || matches_filter(&e.name, &filter_lower, mode, &mut matcher)
+            })
             .collect()
     }
 
@@ -678,14 +730,22 @@ mod tests {
         use crate::search::SearchMode;
         let cached = vec![sr("a"), sr("b"), sr("c")];
         let out = filter_sorted(&cached, "", SearchMode::Substring, 2);
-        assert_eq!(out.iter().map(|r| r.name.clone()).collect::<Vec<_>>(), vec!["a", "b"]);
+        assert_eq!(
+            out.iter().map(|r| r.name.clone()).collect::<Vec<_>>(),
+            vec!["a", "b"]
+        );
     }
 
     #[test]
     fn filter_sorted_matches_display_name_not_path() {
         use crate::search::SearchMode;
         // path に "zzz" を含むが name には含まない → filter "zzz" は 0 件（表示名のみ・§6.3）
-        let cached = vec![SearchResult { name: "report".into(), path: "C:\\zzz\\report".into(), is_folder: false, is_error: false }];
+        let cached = vec![SearchResult {
+            name: "report".into(),
+            path: "C:\\zzz\\report".into(),
+            is_folder: false,
+            is_error: false,
+        }];
         let out = filter_sorted(&cached, "zzz", SearchMode::Substring, 8);
         assert!(out.is_empty());
     }
@@ -693,7 +753,12 @@ mod tests {
     // テスト用ヘルパー（既存 tests mod にあれば再利用）
     #[cfg(test)]
     fn sr(name: &str) -> SearchResult {
-        SearchResult { name: name.into(), path: format!("C:\\d\\{name}"), is_folder: false, is_error: false }
+        SearchResult {
+            name: name.into(),
+            path: format!("C:\\d\\{name}"),
+            is_folder: false,
+            is_error: false,
+        }
     }
 
     #[test]

@@ -59,10 +59,7 @@ impl BinFile {
     ///
     /// Returns `Some((data, version))` where `version` is the version that
     /// succeeded, so the caller can apply version-specific migrations.
-    pub fn load_with_fallback<T: DeserializeOwned>(
-        &self,
-        fallbacks: &[u32],
-    ) -> Option<(T, u32)> {
+    pub fn load_with_fallback<T: DeserializeOwned>(&self, fallbacks: &[u32]) -> Option<(T, u32)> {
         let bytes = fs::read(&self.path).ok()?;
 
         // Try current version (always postcard)
@@ -282,8 +279,7 @@ mod tests {
         let input = Dummy { value: 100 };
         assert!(bf.save(&input));
 
-        let (output, ver): (Dummy, u32) =
-            bf.load_with_fallback(&[2]).expect("load");
+        let (output, ver): (Dummy, u32) = bf.load_with_fallback(&[2]).expect("load");
         assert_eq!(output, input);
         assert_eq!(ver, 3);
 
@@ -300,8 +296,7 @@ mod tests {
 
         // Create a BinFile expecting v3 as current
         let bf = bin_file_in(&dir, *b"TEST", 3, "data.bin");
-        let (output, ver): (Dummy, u32) =
-            bf.load_with_fallback(&[2]).expect("load v2 fallback");
+        let (output, ver): (Dummy, u32) = bf.load_with_fallback(&[2]).expect("load v2 fallback");
         assert_eq!(output, Dummy { value: 55 });
         assert_eq!(ver, 2);
 
@@ -358,8 +353,7 @@ mod tests {
     fn try_roundtrip_with_header() {
         let input = Dummy { value: 42 };
         let bytes = try_serialize_with_header(*b"TEST", 1, &input).expect("serialize");
-        let output: Dummy =
-            try_deserialize_with_header(&bytes, *b"TEST", 1).expect("deserialize");
+        let output: Dummy = try_deserialize_with_header(&bytes, *b"TEST", 1).expect("deserialize");
         assert_eq!(input, output);
     }
 
@@ -426,8 +420,7 @@ mod tests {
             name: "hello".to_string(),
         };
         let bytes = try_serialize_with_header(*b"LRGE", 2, &input).expect("serialize");
-        let output: Large =
-            try_deserialize_with_header(&bytes, *b"LRGE", 2).expect("deserialize");
+        let output: Large = try_deserialize_with_header(&bytes, *b"LRGE", 2).expect("deserialize");
         assert_eq!(input, output);
     }
 }

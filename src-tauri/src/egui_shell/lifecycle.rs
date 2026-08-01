@@ -91,20 +91,41 @@ mod tests {
     fn blur_grace_rearms_while_armed_and_hides_after() {
         let ms = Duration::from_millis;
         // 猶予中は残余で再要求する（契約③: 予約はフレームの到来を約束しない）。
-        assert_eq!(blur_grace_action(ms(0), false, true, false), BlurAction::Rearm(ms(100)));
-        assert_eq!(blur_grace_action(ms(99), false, true, false), BlurAction::Rearm(ms(1)));
+        assert_eq!(
+            blur_grace_action(ms(0), false, true, false),
+            BlurAction::Rearm(ms(100))
+        );
+        assert_eq!(
+            blur_grace_action(ms(99), false, true, false),
+            BlurAction::Rearm(ms(1))
+        );
         // 境界ちょうどは Hide 側（`>=`）——減算に落ちないことも兼ねて固定する。
-        assert_eq!(blur_grace_action(BLUR_GRACE, false, true, false), BlurAction::Hide);
-        assert_eq!(blur_grace_action(ms(150), false, true, false), BlurAction::Hide);
+        assert_eq!(
+            blur_grace_action(BLUR_GRACE, false, true, false),
+            BlurAction::Hide
+        );
+        assert_eq!(
+            blur_grace_action(ms(150), false, true, false),
+            BlurAction::Hide
+        );
     }
 
     #[test]
     fn blur_grace_stays_idle_when_time_cannot_resolve_it() {
         let ms = Duration::from_millis;
         // 猶予明けだが時計と無関係な条件で不成立 → **再要求しない**（永久スピンを作らない）。
-        assert_eq!(blur_grace_action(ms(150), false, false, false), BlurAction::Idle); // auto_hide off
-        assert_eq!(blur_grace_action(ms(150), false, true, true), BlurAction::Idle); // 設定起動中
-        assert_eq!(blur_grace_action(ms(150), true, true, false), BlurAction::Idle); // focus 復帰
+        assert_eq!(
+            blur_grace_action(ms(150), false, false, false),
+            BlurAction::Idle
+        ); // auto_hide off
+        assert_eq!(
+            blur_grace_action(ms(150), false, true, true),
+            BlurAction::Idle
+        ); // 設定起動中
+        assert_eq!(
+            blur_grace_action(ms(150), true, true, false),
+            BlurAction::Idle
+        ); // focus 復帰
     }
 
     #[test]
@@ -127,7 +148,10 @@ mod tests {
             plan_hotkey(true, true, false),
             HotkeyPlan::ShowAfterAltRelease // 表示+非toggle+Alt → 解放待ち show
         );
-        assert_eq!(plan_hotkey(false, true, true), HotkeyPlan::ShowAfterAltRelease);
+        assert_eq!(
+            plan_hotkey(false, true, true),
+            HotkeyPlan::ShowAfterAltRelease
+        );
         assert_eq!(plan_hotkey(false, false, true), HotkeyPlan::ShowNow);
         assert_eq!(plan_hotkey(false, false, false), HotkeyPlan::ShowNow);
     }

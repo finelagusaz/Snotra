@@ -8,14 +8,8 @@ use std::fmt;
 /// Errors from binary file serialization/deserialization.
 #[derive(Debug)]
 pub enum BinError {
-    MagicMismatch {
-        expected: [u8; 4],
-        actual: [u8; 4],
-    },
-    VersionMismatch {
-        expected: u32,
-        actual: u32,
-    },
+    MagicMismatch { expected: [u8; 4], actual: [u8; 4] },
+    VersionMismatch { expected: u32, actual: u32 },
     DeserializeFailed,
     SerializeFailed,
     BufferTooShort,
@@ -33,11 +27,7 @@ impl fmt::Display for BinError {
                 )
             }
             Self::VersionMismatch { expected, actual } => {
-                write!(
-                    f,
-                    "version mismatch: expected {}, got {}",
-                    expected, actual
-                )
+                write!(f, "version mismatch: expected {}, got {}", expected, actual)
             }
             Self::DeserializeFailed => write!(f, "deserialization failed"),
             Self::SerializeFailed => write!(f, "serialization failed"),

@@ -54,7 +54,11 @@ pub(super) fn prepare_query_plan<'a>(
 
     let has_dot = norm_query.contains('.');
     // Bitmask pre-filter is only used in Fuzzy mode; skip the computation for others.
-    let query_mask = if mode == SearchMode::Fuzzy { char_bitmask(&norm_query) } else { 0 };
+    let query_mask = if mode == SearchMode::Fuzzy {
+        char_bitmask(&norm_query)
+    } else {
+        0
+    };
 
     // Migemo: ローマ字 ASCII クエリをひらがなに変換した kana_query を生成する。
     // kana に ASCII アルファベットが残留する場合（"dok" → "どk" 等）は None にする。

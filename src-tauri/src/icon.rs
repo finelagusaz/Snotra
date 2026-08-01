@@ -10,11 +10,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
 use snotra_core::binfmt::BinFile;
+use windows::Win32::Foundation::GetLastError;
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC,
     DeleteObject, GetDIBits, SelectObject,
 };
-use windows::Win32::Foundation::GetLastError;
 use windows::Win32::Storage::FileSystem::{FILE_FLAGS_AND_ATTRIBUTES, SearchPathW};
 use windows::Win32::UI::Shell::{SHFILEINFOW, SHGFI_ICON, SHGFI_SMALLICON, SHGetFileInfoW};
 use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, ICONINFO};
@@ -484,7 +484,11 @@ mod tests {
                     if g.is_none() {
                         let bf = BinFile::new_in(&dir2, ICON_MAGIC, ICON_VERSION, "icons.bin");
                         let data: IconCacheData = bf.load().unwrap_or_default();
-                        *g = Some(IconCache { data, cap: 100, dirty: false });
+                        *g = Some(IconCache {
+                            data,
+                            cap: 100,
+                            dirty: false,
+                        });
                         break;
                     }
                     drop(g);
@@ -516,8 +520,7 @@ mod tests {
     /// issue #522: 無効化後の事後条件（ファイル不在 かつ メモリ None）の決定論検証。
     #[test]
     fn invalidate_removes_file_and_clears_memory() {
-        let dir = std::env::temp_dir()
-            .join(format!("snotra_icon_522_det_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("snotra_icon_522_det_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -536,7 +539,10 @@ mod tests {
             Some(BinFile::new_in(&dir, ICON_MAGIC, ICON_VERSION, "icons.bin")),
         );
 
-        assert!(!dir.join("icons.bin").exists(), "icons.bin が削除されている");
+        assert!(
+            !dir.join("icons.bin").exists(),
+            "icons.bin が削除されている"
+        );
         assert!(state.lock().unwrap().is_none(), "メモリキャッシュが None");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -606,7 +612,10 @@ mod tests {
         assert_eq!(evicted, 1, "超過 1 件を退避");
         assert_eq!(cache.data.png.len(), 2);
         assert!(cache.get("a").is_none(), "最古 a が退避");
-        assert!(cache.dirty, "退避したら dirty を立てる（永続側も頭打ちにする）");
+        assert!(
+            cache.dirty,
+            "退避したら dirty を立てる（永続側も頭打ちにする）"
+        );
     }
 
     #[test]
@@ -616,7 +625,10 @@ mod tests {
         cache.dirty = false;
         let evicted = cache.enforce_cap();
         assert_eq!(evicted, 0, "cap 以内なら退避なし");
-        assert!(!cache.dirty, "退避なしなら dirty を立てない（無駄な save を避ける）");
+        assert!(
+            !cache.dirty,
+            "退避なしなら dirty を立てない（無駄な save を避ける）"
+        );
     }
 
     #[test]
@@ -639,7 +651,10 @@ mod tests {
 
         let valid: std::collections::HashSet<String> = ["b".to_string()].into_iter().collect();
         cache.retain_paths(&valid);
-        assert!(cache.data.png.len() <= cache.cap, "retain 後も cap 不変条件を満たす");
+        assert!(
+            cache.data.png.len() <= cache.cap,
+            "retain 後も cap 不変条件を満たす"
+        );
         assert!(cache.get("a").is_none());
         assert!(cache.get("b").is_some());
     }
@@ -685,7 +700,10 @@ mod tests {
                     let t = Instant::now();
                     let out = extract_png(p);
                     us.push(t.elapsed().as_micros());
-                    assert!(out.is_ok(), "{p} の抽出が失敗（テスト前提の実在パス）: {out:?}");
+                    assert!(
+                        out.is_ok(),
+                        "{p} の抽出が失敗（テスト前提の実在パス）: {out:?}"
+                    );
                 }
             }
             println!(
@@ -750,9 +768,8 @@ mod tests {
         )
         .expect("serialize legacy");
 
-        let restored: IconCacheData =
-            try_deserialize_with_header(&bytes, ICON_MAGIC, ICON_VERSION)
-                .expect("deserialize into IndexMap-backed IconCacheData");
+        let restored: IconCacheData = try_deserialize_with_header(&bytes, ICON_MAGIC, ICON_VERSION)
+            .expect("deserialize into IndexMap-backed IconCacheData");
         assert_eq!(restored.png.len(), 2);
         assert_eq!(restored.png.get("c:/a.exe"), Some(&vec![1, 2, 3]));
         assert_eq!(restored.png.get("c:/b.exe"), Some(&vec![4, 5]));

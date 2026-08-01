@@ -145,7 +145,9 @@ pub fn modal_header(ui: &mut egui::Ui, title: &str) {
 
 /// 破壊的操作のボタン（[`STATUS_ERROR`] 文字色）。削除ボタンの規範。
 pub fn danger_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    ui.add(egui::Button::new(egui::RichText::new(text).color(STATUS_ERROR)))
+    ui.add(egui::Button::new(
+        egui::RichText::new(text).color(STATUS_ERROR),
+    ))
 }
 
 /// リスト行の規範スキャフォールド: 本文を左、アクションを右寄せ、末尾に区切り線。
@@ -182,10 +184,7 @@ pub enum ReorderDir {
 /// `can_up` / `can_down` は呼び出し側が算出する（端で disabled）。
 pub fn reorder_controls(ui: &mut egui::Ui, can_up: bool, can_down: bool) -> Option<ReorderDir> {
     let mut dir = None;
-    if ui
-        .add_enabled(can_down, egui::Button::new("▼"))
-        .clicked()
-    {
+    if ui.add_enabled(can_down, egui::Button::new("▼")).clicked() {
         dir = Some(ReorderDir::Down);
     }
     if ui.add_enabled(can_up, egui::Button::new("▲")).clicked() {

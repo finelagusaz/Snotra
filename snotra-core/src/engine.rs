@@ -8,7 +8,7 @@ use crate::config::{Config, ScanPath};
 use crate::folder;
 use crate::history::{HistoryStore, PreparedHistorySave};
 use crate::indexer::{AppEntry, CachedMasks};
-use crate::search::{SearchOptions, SearchEngine, SearchMode};
+use crate::search::{SearchEngine, SearchMode, SearchOptions};
 use crate::ui_types::SearchResult;
 use std::path::Path;
 
@@ -188,10 +188,7 @@ impl Engine {
         self.history.record_folder_expansion(path);
     }
 
-    pub fn prepare_history_save_if_dirty(
-        &mut self,
-        threshold: u32,
-    ) -> Option<PreparedHistorySave> {
+    pub fn prepare_history_save_if_dirty(&mut self, threshold: u32) -> Option<PreparedHistorySave> {
         // top_n は現在の config から live-read で渡す（焼き込まない、issue #348）。
         self.history
             .prepare_save_if_dirty(threshold, self.config.search.effective_result_limit())
@@ -478,7 +475,9 @@ mod tests {
         let mut engine = Engine::new(make_entries(&["x"]), empty_history(), config);
         engine.mark_index_stale();
         assert!(engine.is_index_stale());
-        let inputs = engine.begin_index_drain().expect("stale なら snapshot を返す");
+        let inputs = engine
+            .begin_index_drain()
+            .expect("stale なら snapshot を返す");
         assert!(inputs.migemo_enabled);
         assert!(inputs.show_hidden_system);
     }
@@ -553,6 +552,9 @@ mod tests {
         let base = default_config();
         let mut c = base.clone();
         c.appearance.visible_rows = Some(base.appearance.effective_visible_rows() + 10);
-        assert_eq!(IndexInputs::from_config(&base), IndexInputs::from_config(&c));
+        assert_eq!(
+            IndexInputs::from_config(&base),
+            IndexInputs::from_config(&c)
+        );
     }
 }

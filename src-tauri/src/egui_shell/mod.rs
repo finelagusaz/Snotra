@@ -6,10 +6,10 @@
 //! main のサイズだけは 2 か所に分かれている（`window_coordinator` の show 経路と `view.rs` の
 //! 毎フレーム。理由は `window_coordinator` の `//!`）。
 mod icon_textures;
-mod lifecycle;
-mod search_state;
 mod layout;
+mod lifecycle;
 mod notify;
+mod search_state;
 // launcher_controller.rs が起動 worker の in-flight 追跡・一時通知で消費する（#532 SU5 Task 4）。
 pub(crate) use notify::{LAUNCH_TIMEOUT, NOTICE_LAUNCH, NoticeSlot};
 // NOTICE_HOTKEY は launcher_controller.rs（hotkey 失敗通知の duration）が、OverlayKind /
@@ -20,11 +20,11 @@ pub(crate) use notify::{NOTICE_HOTKEY, OverlayKind, overlay_kind};
 // （#532 SU5 Task 6）。toast 描画は view.rs が、UpdaterPhase の遷移（install 失敗）は
 // launcher_controller.rs が消費する。
 pub(crate) use notify::{ToastKind, UpdaterPhase, UpdaterUi};
-pub(crate) mod strings;
-mod results_view;
-mod results_window;
 mod font_stack;
 mod launcher_controller;
+mod results_view;
+mod results_window;
+pub(crate) mod strings;
 mod view;
 mod visual;
 mod window_coordinator;
@@ -147,7 +147,9 @@ impl EguiShellState {
 /// （hidden に頑健・launching の channel edge-trigger との構造的対比は spec C 節）。
 /// dismissed は view-local に置かない——reset-on-show が view-local を一掃した際に
 /// `[閉じる]` 済み toast が復活するため（状態機械レビュー・spec A 節）。
-pub(crate) struct UpdaterUiState(pub(crate) Mutex<crate::egui_shell::UpdaterUi<Box<tauri_plugin_updater::Update>>>);
+pub(crate) struct UpdaterUiState(
+    pub(crate) Mutex<crate::egui_shell::UpdaterUi<Box<tauri_plugin_updater::Update>>>,
+);
 
 /// 起動時 updater check（§20.2・spec B 節）。`main.rs` の setup が**無条件で一回だけ**呼び、
 /// `auto_update` の判定はこの関数の中で行う（呼び出し側では絞っていない——下の視覚スモーク
@@ -216,12 +218,18 @@ pub(crate) fn spawn_update_check(app: &tauri::AppHandle) {
                 Ok(None) => crate::egui_shell::UpdaterPhase::UpToDate,
                 Err(e) => {
                     // check 失敗は無音（console.warn parity・trace のみ）。
-                    crate::trace_main("egui_update_check_failed", serde_json::json!({ "error": e.to_string() }));
+                    crate::trace_main(
+                        "egui_update_check_failed",
+                        serde_json::json!({ "error": e.to_string() }),
+                    );
                     crate::egui_shell::UpdaterPhase::Idle
                 }
             },
             Err(e) => {
-                crate::trace_main("egui_update_check_failed", serde_json::json!({ "error": e.to_string() }));
+                crate::trace_main(
+                    "egui_update_check_failed",
+                    serde_json::json!({ "error": e.to_string() }),
+                );
                 crate::egui_shell::UpdaterPhase::Idle
             }
         };
@@ -312,7 +320,8 @@ pub(crate) fn create(
     // attach は窓ごとの wake handle を返す（#671 PR D）。**results を先に attach する順序は
     // 変えない**——`ResultsWindow::new` は attach の move より前でなければならず（PR A′）、
     // main の Moved リスナー登録もこの間に入る。
-    let results_waker = runtime.attach(results, results_view::ResultsView::new(app_handle.clone()))?;
+    let results_waker =
+        runtime.attach(results, results_view::ResultsView::new(app_handle.clone()))?;
     // #646 PR2 決定 10: ドラッグ移動中の追従。ネイティブ移動ループ中は egui フレームが
     // 回る保証が無いため、tao の Moved イベント(tauri Window リスナー経由)で直接
     // results を追従させる。通常時の従属は main update() の drive が担う(二重呼びは
@@ -368,7 +377,11 @@ pub(crate) fn read_visual(app: &tauri::AppHandle, applied_font_family: &str) -> 
             let engine = s.engine.lock().unwrap();
             let config = engine.config();
             // guard 内で行うのは hex parse と算術と &str 比較まで。I/O や重い確保を足さない。
-            visual::visual_snapshot(&config.visual, config.appearance.show_icons, applied_font_family)
+            visual::visual_snapshot(
+                &config.visual,
+                config.appearance.show_icons,
+                applied_font_family,
+            )
         }
         // AppState 不在（setup 完了前の理論経路のみ）。既定は型から導く——`AppearanceConfig` に
         // `Default` 実装を与えたことで show_icons のリテラルが不要になった（#795）。

@@ -223,7 +223,9 @@ fn ja(key: TrKey) -> &'static str {
         TrKey::StatusValidationError => "検証エラー: ",
         TrKey::StatusSaveFailed => "保存失敗: ",
         // 読み込み失敗（finding C: 一時的 read 失敗で既定値表示中）の保存ガード
-        TrKey::ReadFailedBanner => "⚠ 設定ファイルを読み込めませんでした。既定値で表示しています。このまま保存すると既存の設定が失われる可能性があります。",
+        TrKey::ReadFailedBanner => {
+            "⚠ 設定ファイルを読み込めませんでした。既定値で表示しています。このまま保存すると既存の設定が失われる可能性があります。"
+        }
         TrKey::ReadFailedConfirm => "既存設定が失われる可能性を承知の上で保存する",
         TrKey::StatusReadFailedBlocked => "読み込み失敗中: 上のチェックを入れると保存できます",
         // Config error messages
@@ -237,7 +239,9 @@ fn ja(key: TrKey) -> &'static str {
         TrKey::ErrFuzzyCapRatioOutOfRange => "{value} は 0.0〜1.0 の範囲にしてください",
         TrKey::ErrScanPathEmpty => "{n}のパスが空です",
         TrKey::ErrInstantPrefixEmpty => "インスタントコマンドのプレフィックスが空です",
-        TrKey::ErrInstantPrefixSlash => "プレフィックスに / は使用できません（スラッシュコマンドと競合）",
+        TrKey::ErrInstantPrefixSlash => {
+            "プレフィックスに / は使用できません（スラッシュコマンドと競合）"
+        }
         TrKey::ErrInstantDuplicateName => "{name} はコマンド名が重複しています",
         TrKey::ErrInstantUnknownModifier => "{name}: 不明な修飾子「{modifier}」が含まれています",
         // General tab
@@ -336,14 +340,22 @@ fn ja(key: TrKey) -> &'static str {
         // Instant command tab
         TrKey::HeadingInstantPrefix => "プレフィックス",
         TrKey::LabelInstantPrefix => "プレフィックス:",
-        TrKey::HintInstantPrefix => "検索バーでこの文字を入力するとインスタントコマンドモードになります",
+        TrKey::HintInstantPrefix => {
+            "検索バーでこの文字を入力するとインスタントコマンドモードになります"
+        }
         TrKey::HeadingInstantCommands => "コマンド一覧",
-        TrKey::InstantDescription => "URL や実行ファイルを登録し、検索バーから即座に実行できます。{query} {clip} {date} {uuid} が変数として展開されます",
+        TrKey::InstantDescription => {
+            "URL や実行ファイルを登録し、検索バーから即座に実行できます。{query} {clip} {date} {uuid} が変数として展開されます"
+        }
         TrKey::LabelNoInstantCommands => "コマンドが登録されていません",
         TrKey::LabelInstantName => "名前:",
-        TrKey::HintInstantName => "プレフィックスの後に入力する文字列です（例: \"g\" と設定すると \"@g\" で呼び出し）",
+        TrKey::HintInstantName => {
+            "プレフィックスの後に入力する文字列です（例: \"g\" と設定すると \"@g\" で呼び出し）"
+        }
         TrKey::LabelInstantCommand => "コマンド:",
-        TrKey::HintInstantCommand => "{query} クエリ・{clip} クリップボード・{date:%Y-%m-%d} 日時・{uuid} を埋め込み。literal は {{ }}（{{date}}）。URL は自動エンコード",
+        TrKey::HintInstantCommand => {
+            "{query} クエリ・{clip} クリップボード・{date:%Y-%m-%d} 日時・{uuid} を埋め込み。literal は {{ }}（{{date}}）。URL は自動エンコード"
+        }
         TrKey::LabelInstantDescription => "説明（任意）:",
         TrKey::HintInstantDescription => "コマンドの用途を記述します。検索結果リストに表示されます",
         TrKey::LabelInstantPreview => "プレビュー:",
@@ -355,18 +367,26 @@ fn ja(key: TrKey) -> &'static str {
         TrKey::RadioInstantProgram => "プログラム（exe + 引数）",
         TrKey::LabelInstantExe => "実行ファイル (.exe)",
         TrKey::LabelInstantArgs => "引数",
-        TrKey::HintInstantProgram => ".exe のみ。スクリプトはインタプリタを実行ファイルに指定。{query} / {clip} / {date} / {uuid} と %VAR% が使えます。literal は {{ }}",
-        TrKey::HintInstantMigrate => "引数つきの可能性があります。プログラム種別へ作り直すと正しく起動します",
+        TrKey::HintInstantProgram => {
+            ".exe のみ。スクリプトはインタプリタを実行ファイルに指定。{query} / {clip} / {date} / {uuid} と %VAR% が使えます。literal は {{ }}"
+        }
+        TrKey::HintInstantMigrate => {
+            "引数つきの可能性があります。プログラム種別へ作り直すと正しく起動します"
+        }
         // Backup tab
         TrKey::TabBackup => "バックアップ",
         TrKey::HeadingExport => "エクスポート",
         TrKey::LabelExportDescription => "現在の設定ファイルを別の場所にコピーします。",
         TrKey::BtnExport => "設定をエクスポート…",
         TrKey::HeadingImport => "インポート",
-        TrKey::LabelImportDescription => "エクスポートした設定ファイルを読み込みます。現在の設定は上書きされます。",
+        TrKey::LabelImportDescription => {
+            "エクスポートした設定ファイルを読み込みます。現在の設定は上書きされます。"
+        }
         TrKey::BtnImport => "設定をインポート…",
         TrKey::HeadingDataFolder => "データフォルダ",
-        TrKey::LabelDataFolderDescription => "設定ファイルやキャッシュが保存されているフォルダを開きます。",
+        TrKey::LabelDataFolderDescription => {
+            "設定ファイルやキャッシュが保存されているフォルダを開きます。"
+        }
         TrKey::BtnOpenFolder => "設定フォルダを開く",
         TrKey::StatusExportSuccess => "エクスポートしました",
         TrKey::StatusExportFailed => "エクスポート失敗: ",
@@ -384,7 +404,9 @@ fn ja(key: TrKey) -> &'static str {
         TrKey::ErrMigemoMinCharsZero => "migemo 最小文字数は 1 以上である必要があります",
         TrKey::HeadingMigemo => "ローマ字検索（Migemo）",
         TrKey::CbMigemoEnabled => "ローマ字入力で日本語名ファイルを検索する",
-        TrKey::HintMigemo => "例: \"dokyu\" と入力すると \"ドキュメント\" がヒットします。漢字名は対象外",
+        TrKey::HintMigemo => {
+            "例: \"dokyu\" と入力すると \"ドキュメント\" がヒットします。漢字名は対象外"
+        }
         TrKey::LabelMigemoMinChars => "最小文字数:",
         TrKey::TooltipMigemoDisabled => "ローマ字検索（Migemo）を有効にすると設定できます",
         TrKey::TooltipFuzzyCapDisabled => "正規化を「Fuzzy 相対キャップ」にすると設定できます",
@@ -417,7 +439,9 @@ fn en(key: TrKey) -> &'static str {
         TrKey::StatusValidationError => "Validation error: ",
         TrKey::StatusSaveFailed => "Save failed: ",
         // 読み込み失敗（finding C: 一時的 read 失敗で既定値表示中）の保存ガード
-        TrKey::ReadFailedBanner => "⚠ Could not read the settings file. Showing defaults. Saving now may overwrite your existing settings.",
+        TrKey::ReadFailedBanner => {
+            "⚠ Could not read the settings file. Showing defaults. Saving now may overwrite your existing settings."
+        }
         TrKey::ReadFailedConfirm => "Save anyway (I understand existing settings may be lost)",
         TrKey::StatusReadFailedBlocked => "Load failed: check the box above to enable saving",
         // Config error messages
@@ -530,16 +554,26 @@ fn en(key: TrKey) -> &'static str {
         // Instant command tab
         TrKey::HeadingInstantPrefix => "Prefix",
         TrKey::LabelInstantPrefix => "Prefix:",
-        TrKey::HintInstantPrefix => "Type this character in the search bar to enter instant command mode",
+        TrKey::HintInstantPrefix => {
+            "Type this character in the search bar to enter instant command mode"
+        }
         TrKey::HeadingInstantCommands => "Commands",
-        TrKey::InstantDescription => "Register URLs or executables to run instantly from the search bar. {query}, {clip}, {date}, {uuid} are expanded as variables",
+        TrKey::InstantDescription => {
+            "Register URLs or executables to run instantly from the search bar. {query}, {clip}, {date}, {uuid} are expanded as variables"
+        }
         TrKey::LabelNoInstantCommands => "No commands registered",
         TrKey::LabelInstantName => "Name:",
-        TrKey::HintInstantName => "Text typed after the prefix to invoke this command (e.g. name \"g\" → type \"@g\")",
+        TrKey::HintInstantName => {
+            "Text typed after the prefix to invoke this command (e.g. name \"g\" → type \"@g\")"
+        }
         TrKey::LabelInstantCommand => "Command:",
-        TrKey::HintInstantCommand => "Embed {query}, {clip}, {date:%Y-%m-%d}, {uuid}; literal via {{ }}. URLs are auto-encoded",
+        TrKey::HintInstantCommand => {
+            "Embed {query}, {clip}, {date:%Y-%m-%d}, {uuid}; literal via {{ }}. URLs are auto-encoded"
+        }
         TrKey::LabelInstantDescription => "Description (optional):",
-        TrKey::HintInstantDescription => "Describe what this command does. Shown in the search results list",
+        TrKey::HintInstantDescription => {
+            "Describe what this command does. Shown in the search results list"
+        }
         TrKey::LabelInstantPreview => "Preview:",
         TrKey::BtnDuplicate => "Duplicate",
         TrKey::ModalAddInstant => "Add Command",
@@ -549,18 +583,26 @@ fn en(key: TrKey) -> &'static str {
         TrKey::RadioInstantProgram => "Program (exe + args)",
         TrKey::LabelInstantExe => "Executable (.exe)",
         TrKey::LabelInstantArgs => "Arguments",
-        TrKey::HintInstantProgram => ".exe only. For scripts, set the interpreter as the executable. {query} / {clip} / {date} / {uuid} and %VAR% are supported; literal via {{ }}",
-        TrKey::HintInstantMigrate => "This may contain arguments. Recreate it as a Program command to launch correctly",
+        TrKey::HintInstantProgram => {
+            ".exe only. For scripts, set the interpreter as the executable. {query} / {clip} / {date} / {uuid} and %VAR% are supported; literal via {{ }}"
+        }
+        TrKey::HintInstantMigrate => {
+            "This may contain arguments. Recreate it as a Program command to launch correctly"
+        }
         // Backup tab
         TrKey::TabBackup => "Backup",
         TrKey::HeadingExport => "Export",
         TrKey::LabelExportDescription => "Copy the current settings file to another location.",
         TrKey::BtnExport => "Export settings…",
         TrKey::HeadingImport => "Import",
-        TrKey::LabelImportDescription => "Load an exported settings file. Current settings will be overwritten.",
+        TrKey::LabelImportDescription => {
+            "Load an exported settings file. Current settings will be overwritten."
+        }
         TrKey::BtnImport => "Import settings…",
         TrKey::HeadingDataFolder => "Data folder",
-        TrKey::LabelDataFolderDescription => "Open the folder where settings and cache files are stored.",
+        TrKey::LabelDataFolderDescription => {
+            "Open the folder where settings and cache files are stored."
+        }
         TrKey::BtnOpenFolder => "Open settings folder",
         TrKey::StatusExportSuccess => "Exported",
         TrKey::StatusExportFailed => "Export failed: ",
@@ -578,10 +620,14 @@ fn en(key: TrKey) -> &'static str {
         TrKey::ErrMigemoMinCharsZero => "Migemo min chars must be at least 1",
         TrKey::HeadingMigemo => "Romaji Search (Migemo)",
         TrKey::CbMigemoEnabled => "Search Japanese filenames with romaji input",
-        TrKey::HintMigemo => "e.g. type \"dokyu\" to find \"ドキュメント\". Kanji names are not supported",
+        TrKey::HintMigemo => {
+            "e.g. type \"dokyu\" to find \"ドキュメント\". Kanji names are not supported"
+        }
         TrKey::LabelMigemoMinChars => "Min chars:",
         TrKey::TooltipMigemoDisabled => "Available when Romaji Search (Migemo) is enabled",
-        TrKey::TooltipFuzzyCapDisabled => "Available when normalization is set to Fuzzy relative cap",
+        TrKey::TooltipFuzzyCapDisabled => {
+            "Available when normalization is set to Fuzzy relative cap"
+        }
         TrKey::HeadingAutoUpdate => "Auto Update",
         TrKey::AutoUpdateFull => "Check and install",
         TrKey::AutoUpdateCheckOnly => "Check only (notify)",

@@ -1,6 +1,6 @@
 use std::process::{Child, Command};
-use std::sync::atomic::Ordering;
 use std::sync::Mutex;
+use std::sync::atomic::Ordering;
 
 use serde_json::json;
 use tauri::{AppHandle, Manager, State};
@@ -69,7 +69,10 @@ pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> R
     let settings_exe = exe_dir.join("snotra-settings.exe");
 
     if !settings_exe.exists() {
-        let msg = format!("snotra-settings.exe not found at {}", settings_exe.display());
+        let msg = format!(
+            "snotra-settings.exe not found at {}",
+            settings_exe.display()
+        );
         trace_command(
             "cmd:launch_settings_process:not_found",
             json!({ "path": settings_exe.display().to_string() }),
@@ -112,7 +115,9 @@ pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> R
         loop {
             std::thread::sleep(std::time::Duration::from_millis(250));
             let Some(proc_state) = handle_for_monitor.try_state::<SettingsProcessState>() else {
-                eprintln!("[settings-monitor] SettingsProcessState not managed; exiting monitor thread");
+                eprintln!(
+                    "[settings-monitor] SettingsProcessState not managed; exiting monitor thread"
+                );
                 break;
             };
             let mut guard = proc_state.lock().unwrap();
@@ -144,9 +149,7 @@ pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> R
         if let Some(main) = handle_for_monitor.get_window("main") {
             let _ = main.set_always_on_top(true);
         }
-        if let Some(results) =
-            handle_for_monitor.try_state::<crate::egui_shell::ResultsWindow>()
-        {
+        if let Some(results) = handle_for_monitor.try_state::<crate::egui_shell::ResultsWindow>() {
             results.set_topmost(true);
         }
 
@@ -171,4 +174,3 @@ pub fn open_settings(state: State<AppState>, app: AppHandle) -> Result<(), Strin
 
     launch_settings_process(&app, &[])
 }
-

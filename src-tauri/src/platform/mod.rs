@@ -1,5 +1,5 @@
-pub(crate) mod tray;
 pub mod hotkey;
+pub(crate) mod tray;
 mod wndproc;
 
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -91,7 +91,10 @@ impl PlatformBridge {
             })
             .ok()?;
 
-        Some(PlatformBridgePending { command_tx, thread_id_rx })
+        Some(PlatformBridgePending {
+            command_tx,
+            thread_id_rx,
+        })
     }
 
     pub fn send_command(&self, command: PlatformCommand) {
@@ -282,8 +285,7 @@ fn process_commands(
                 let registered = hotkey::register(current_hotkey)
                     && !crate::trace::env_flag("SNOTRA_FAKE_INITIAL_HOTKEY_FAILURE");
                 if !registered {
-                    let hotkey_str =
-                        format!("{}+{}", current_hotkey.modifier, current_hotkey.key);
+                    let hotkey_str = format!("{}+{}", current_hotkey.modifier, current_hotkey.key);
                     // 独立イベント名で emit する（#673 spec 決定 3）。旧実装は汎用チャネル
                     // 1 本に `{event, hotkey}` を詰めており、内側種別は最後までこの 1 種
                     // だけだった——袋の中身は grep に映らず、受け口の有無を機構で問えない

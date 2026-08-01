@@ -11,8 +11,8 @@ use std::fs::Metadata;
 use std::hash::{Hash, Hasher};
 use std::os::windows::fs::MetadataExt;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
@@ -265,7 +265,6 @@ struct IndexCacheV2 {
     config_hash: u64,
 }
 
-
 fn compute_config_hash(scan: &[ScanPath], show_hidden_system: bool) -> u64 {
     let mut hasher = DefaultHasher::new();
     for sp in scan {
@@ -291,10 +290,7 @@ pub fn load_or_scan(scan: &[ScanPath], show_hidden_system: bool) -> (Vec<AppEntr
 /// Same as `load_or_scan`, but returns the full `LoadOrScanResult`: timing stats,
 /// cached bitmasks, and—on cache hit—a `BackgroundRescanTask` for the caller to
 /// run on a background thread.
-pub fn load_or_scan_with_stats(
-    scan: &[ScanPath],
-    show_hidden_system: bool,
-) -> LoadOrScanResult {
+pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> LoadOrScanResult {
     let total_started = Instant::now();
 
     let hash_started = Instant::now();
@@ -416,8 +412,10 @@ fn save_cache_sorted_in(dir: &Path, entries: &[AppEntry], config_hash: u64) {
         .map(|n| file_char_mask(n.as_deref()))
         .collect();
     // A-3: normalized_keys もキャッシュに含める。起動時の Wave 1 計算を完全スキップするため。
-    let normalized_keys: Vec<String> =
-        entries.iter().map(|e| normalize_entry_key(&e.target_path)).collect();
+    let normalized_keys: Vec<String> = entries
+        .iter()
+        .map(|e| normalize_entry_key(&e.target_path))
+        .collect();
 
     // Cow::Borrowed で entries の全件 clone を避ける（派生 Vec も参照で渡す）。
     // 出力バイト列は Owned 版と同一（golden テストで保証）。
@@ -741,10 +739,8 @@ fn read_user_path() -> Option<String> {
         if data_type == REG_EXPAND_SZ {
             // null terminator を付加して ExpandEnvironmentStringsW に渡す
             buf.push(0);
-            let required = ExpandEnvironmentStringsW(
-                windows::core::PCWSTR::from_raw(buf.as_ptr()),
-                None,
-            );
+            let required =
+                ExpandEnvironmentStringsW(windows::core::PCWSTR::from_raw(buf.as_ptr()), None);
             if required == 0 {
                 buf.pop(); // remove null terminator
                 return Some(String::from_utf16_lossy(&buf));
@@ -1030,10 +1026,11 @@ mod tests {
             ]),
         };
 
-        let bytes = try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache)
-            .expect("serialize");
+        let bytes =
+            try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache).expect("serialize");
         let restored: IndexCache<'static> =
-            try_deserialize_with_header(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION).expect("deserialize");
+            try_deserialize_with_header(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION)
+                .expect("deserialize");
 
         assert_eq!(restored.built_at, 1700000000);
         assert_eq!(restored.entries.len(), 2);
@@ -1044,8 +1041,14 @@ mod tests {
         assert_eq!(restored.config_hash, 12345);
         // Cow フィールドは into_owned() で Vec に戻して比較（deserialize は Owned ゆえ move）。
         assert_eq!(restored.char_masks.into_owned(), vec![0xABu64, 0xCD]);
-        assert_eq!(restored.file_name_char_masks.into_owned(), vec![0x12u64, 0x34]);
-        assert_eq!(restored.lower_names.into_owned(), vec!["firefox", "projects"]);
+        assert_eq!(
+            restored.file_name_char_masks.into_owned(),
+            vec![0x12u64, 0x34]
+        );
+        assert_eq!(
+            restored.lower_names.into_owned(),
+            vec!["firefox", "projects"]
+        );
         assert_eq!(
             restored.lower_file_names.into_owned(),
             vec![Some("firefox.lnk".to_string()), None]
@@ -1079,8 +1082,10 @@ mod tests {
         let file_name_char_masks = vec![0x12u64, 0x34];
         let lower_names = vec!["firefox".to_string(), "projects".to_string()];
         let lower_file_names = vec![Some("firefox.lnk".to_string()), None];
-        let normalized_keys =
-            vec!["c:\\apps\\firefox.lnk".to_string(), "c:\\projects".to_string()];
+        let normalized_keys = vec![
+            "c:\\apps\\firefox.lnk".to_string(),
+            "c:\\projects".to_string(),
+        ];
 
         // save 経路と同じ Cow::Borrowed で構築する。
         let cache = IndexCache {
@@ -1093,8 +1098,8 @@ mod tests {
             lower_file_names: Cow::Borrowed(&lower_file_names),
             normalized_keys: Cow::Borrowed(&normalized_keys),
         };
-        let bytes = try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache)
-            .expect("serialize");
+        let bytes =
+            try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache).expect("serialize");
 
         // 凍結 golden（固定 fixture の serialize 出力・INDX magic + version 4 ヘッダー込み）。
         // 形式変更時のみ更新する。
@@ -1188,8 +1193,7 @@ mod tests {
             entries: entries.clone(),
             config_hash,
         };
-        let bytes =
-            try_serialize_with_header(INDEX_MAGIC, 2, &cache_v2).expect("serialize v2");
+        let bytes = try_serialize_with_header(INDEX_MAGIC, 2, &cache_v2).expect("serialize v2");
 
         // try_deserialize_with_header で v2 として読める
         let restored: IndexCacheV2 =
@@ -1198,7 +1202,8 @@ mod tests {
         assert_eq!(restored.config_hash, config_hash);
 
         // v4 として読もうとすると失敗する（フィールドが足りない）
-        let v4_result = try_deserialize_with_header::<IndexCache>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION);
+        let v4_result =
+            try_deserialize_with_header::<IndexCache>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION);
         assert!(v4_result.is_err(), "v2 bytes should not deserialize as v4");
     }
 
@@ -1227,7 +1232,8 @@ mod tests {
         assert_eq!(restored.char_masks, vec![0xAB]);
 
         // v4 として読もうとすると失敗する（lower_names フィールドがない）
-        let v4_result = try_deserialize_with_header::<IndexCache>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION);
+        let v4_result =
+            try_deserialize_with_header::<IndexCache>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION);
         assert!(v4_result.is_err(), "v3 bytes should not deserialize as v4");
     }
 
@@ -1442,7 +1448,9 @@ mod tests {
 
     #[test]
     fn try_background_rescan_skips_when_write_lock_held() {
-        let _serial = INDEX_LOCK_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _serial = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // 権威的なインデックスビルドが書き込みロックを保持している状況を再現する。
         let _held = INDEX_WRITE_LOCK.lock().unwrap();
         // 背景再スキャンは書き込みロックを取得できないため、
@@ -1457,7 +1465,9 @@ mod tests {
 
     #[test]
     fn background_rescan_task_run_reports_unchanged_for_empty_inputs() {
-        let _serial = INDEX_LOCK_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _serial = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // 空のスキャン対象 → scan_all は空 → 空のキャッシュと一致 → Unchanged。
         let task = BackgroundRescanTask {
             scan: Vec::new(),
@@ -1471,7 +1481,9 @@ mod tests {
 
     #[test]
     fn stale_background_rescan_cannot_overwrite_newer_index_generation() {
-        let _serial = INDEX_LOCK_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _serial = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = temp_dir("stale_background_rescan");
         let old_hash = 41;
         let new_hash = 42;
@@ -1502,7 +1514,9 @@ mod tests {
 
     #[test]
     fn rescan_generation_is_snapshotted_before_cache_load() {
-        let _serial = INDEX_LOCK_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _serial = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let generation_before_load = current_index_generation();
 
         let (_, task_generation) = load_with_index_generation(|| {
@@ -1518,7 +1532,9 @@ mod tests {
     #[test]
     fn try_with_index_write_lock_skips_closure_when_lock_held() {
         use std::sync::atomic::{AtomicBool, Ordering};
-        let _serial = INDEX_LOCK_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _serial = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // 権威的なインデックスビルドが書き込みロックを保持している状況を再現する。
         let _held = INDEX_WRITE_LOCK.lock().unwrap();
         // ロックを取得できないので、クロージャは実行されず None が返らねばならない。
@@ -1536,7 +1552,9 @@ mod tests {
 
     #[test]
     fn with_index_write_lock_holds_lock_during_closure() {
-        let _serial = INDEX_LOCK_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _serial = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // with_index_write_lock がクロージャ実行中ずっとロックを保持していることを、
         // 「クロージャ内から try_lock すると失敗する」という形で決定論的に検証する。
         // ブロッキング取得なので、他テストがロック保持中でも待つだけで flaky にならない。
@@ -1550,7 +1568,9 @@ mod tests {
     #[test]
     fn try_with_index_write_lock_runs_closure_when_lock_free() {
         use std::sync::atomic::{AtomicBool, Ordering};
-        let _serial = INDEX_LOCK_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _serial = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // ロックが空いていればクロージャを実行し、Some(結果) を返す。
         // 回帰テスト: 「スキップ」を通した最小実装が同じ2行でこの経路も満たすため即パスする。
         let ran = AtomicBool::new(false);

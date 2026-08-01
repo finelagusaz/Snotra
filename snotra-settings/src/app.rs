@@ -103,7 +103,9 @@ impl TabId {
     /// 新セクション追加時は `SECTION_TABLE` の1箇所だけを更新すればよい
     /// （`section_table_covers_all_config_fields` テストが更新漏れを検出する）。
     fn has_changes(self, draft: &Config, saved: &Config) -> bool {
-        SECTION_TABLE.iter().any(|(tab, diff)| *tab == self && diff(draft, saved))
+        SECTION_TABLE
+            .iter()
+            .any(|(tab, diff)| *tab == self && diff(draft, saved))
     }
 }
 
@@ -124,7 +126,9 @@ const SECTION_TABLE: &[(TabId, SectionDiff)] = &[
     (TabId::Visual, |d, s| d.visual != s.visual),
     (TabId::Visual, |d, s| d.appearance != s.appearance),
     (TabId::Opener, |d, s| d.openers != s.openers),
-    (TabId::InstantCommand, |d, s| d.instant_commands != s.instant_commands),
+    (TabId::InstantCommand, |d, s| {
+        d.instant_commands != s.instant_commands
+    }),
 ];
 
 struct SettingsApp {
@@ -255,9 +259,10 @@ pub(crate) fn config_error_message(error: &ConfigError, tr: &Tr) -> String {
         ConfigError::WindowWidthTooSmall(w) => {
             tr.t_params(TrKey::ErrWindowWidthTooSmall, &[("value", &w.to_string())])
         }
-        ConfigError::FuzzyCapRatioOutOfRange { value } => {
-            tr.t_params(TrKey::ErrFuzzyCapRatioOutOfRange, &[("value", &value.to_string())])
-        }
+        ConfigError::FuzzyCapRatioOutOfRange { value } => tr.t_params(
+            TrKey::ErrFuzzyCapRatioOutOfRange,
+            &[("value", &value.to_string())],
+        ),
         ConfigError::ScanPathEmpty { index } => {
             tr.t_params(TrKey::ErrScanPathEmpty, &[("n", &(index + 1).to_string())])
         }
@@ -331,7 +336,9 @@ impl SettingsApp {
         // (e.g. programmatic focus), clear sidebar focus as well.
         if !self.hotkey_state.is_capturing()
             && self.sidebar_focused
-            && focused_id.map(|id| id != sidebar_sentinel_id).unwrap_or(false)
+            && focused_id
+                .map(|id| id != sidebar_sentinel_id)
+                .unwrap_or(false)
         {
             self.sidebar_focused = false;
         }
@@ -479,7 +486,11 @@ impl SettingsApp {
         // Footer (hide action buttons on Backup tab)
         egui::Panel::bottom("footer")
             .exact_size(40.0)
-            .frame(egui::Frame::NONE.fill(FOOTER_BG).inner_margin(egui::Margin::symmetric(12, 0)))
+            .frame(
+                egui::Frame::NONE
+                    .fill(FOOTER_BG)
+                    .inner_margin(egui::Margin::symmetric(12, 0)),
+            )
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
                     // Status (timer message takes priority; otherwise show persistent unsaved indicator)
@@ -525,7 +536,10 @@ impl SettingsApp {
 
                             // Discard button (always visible, disabled when no changes)
                             if ui
-                                .add_enabled(self.has_changes(), egui::Button::new(self.tr.t(TrKey::BtnDiscard)))
+                                .add_enabled(
+                                    self.has_changes(),
+                                    egui::Button::new(self.tr.t(TrKey::BtnDiscard)),
+                                )
                                 .clicked()
                             {
                                 self.draft = self.saved.clone();
@@ -549,7 +563,11 @@ impl SettingsApp {
             // ui.interact() does not advance the layout cursor, so rendering is unaffected.
             let sentinel_rect =
                 egui::Rect::from_min_size(ui.next_widget_position(), egui::vec2(0.0, 0.0));
-            ui.interact(sentinel_rect, sidebar_sentinel_id, egui::Sense::focusable_noninteractive());
+            ui.interact(
+                sentinel_rect,
+                sidebar_sentinel_id,
+                egui::Sense::focusable_noninteractive(),
+            );
 
             // finding C: read 失敗起因で既定値表示中の警告バナー + 保存確認チェック。
             // チェックを入れるまで Save は無効（下の footer 参照）。
@@ -558,10 +576,7 @@ impl SettingsApp {
                     .fill(BANNER_CAUTION_BG)
                     .inner_margin(egui::Margin::symmetric(10, 8))
                     .show(ui, |ui| {
-                        ui.colored_label(
-                            BANNER_CAUTION_FG,
-                            self.tr.t(TrKey::ReadFailedBanner),
-                        );
+                        ui.colored_label(BANNER_CAUTION_FG, self.tr.t(TrKey::ReadFailedBanner));
                         ui.checkbox(
                             &mut self.confirm_overwrite_despite_read_failure,
                             self.tr.t(TrKey::ReadFailedConfirm),
@@ -571,14 +586,24 @@ impl SettingsApp {
             }
 
             match self.active_tab {
-                TabId::General => tabs::general::ui(ui, &mut self.draft, &mut self.hotkey_state, &self.tr),
+                TabId::General => {
+                    tabs::general::ui(ui, &mut self.draft, &mut self.hotkey_state, &self.tr)
+                }
                 TabId::Search => tabs::search::ui(ui, &mut self.draft, &self.tr),
-                TabId::Index => tabs::index::ui(ui, &ctx, &mut self.draft, &mut self.index_state, &self.tr),
+                TabId::Index => {
+                    tabs::index::ui(ui, &ctx, &mut self.draft, &mut self.index_state, &self.tr)
+                }
                 TabId::Visual => tabs::visual::ui(ui, &mut self.draft, &self.font_list, &self.tr),
-                TabId::Opener => tabs::opener::ui(ui, &ctx, &mut self.draft, &mut self.opener_state, &self.tr),
-                TabId::InstantCommand => tabs::instant::ui(ui, &ctx, &mut self.draft, &mut self.instant_state, &self.tr),
+                TabId::Opener => {
+                    tabs::opener::ui(ui, &ctx, &mut self.draft, &mut self.opener_state, &self.tr)
+                }
+                TabId::InstantCommand => {
+                    tabs::instant::ui(ui, &ctx, &mut self.draft, &mut self.instant_state, &self.tr)
+                }
                 TabId::Backup => {
-                    if let Some(result) = tabs::backup::ui(ui, &ctx, &mut self.backup_state, &self.tr) {
+                    if let Some(result) =
+                        tabs::backup::ui(ui, &ctx, &mut self.backup_state, &self.tr)
+                    {
                         self.draft = result.imported_config.clone();
                         self.saved = result.imported_config;
                         self.tr = Tr(self.draft.general.language);
@@ -593,9 +618,7 @@ impl SettingsApp {
 
         // Track window position for save on exit (skip when minimized to avoid saving 0,0)
         let minimized = ctx.input(|i| i.viewport().minimized).unwrap_or(false);
-        if !minimized
-            && let Some(rect) = ctx.input(|i| i.viewport().outer_rect)
-        {
+        if !minimized && let Some(rect) = ctx.input(|i| i.viewport().outer_rect) {
             let pos = rect.left_top();
             self.last_position = Some(WindowPlacement {
                 x: pos.x as i32,
@@ -646,7 +669,12 @@ pub fn run(
             let heading_semibold = crate::font::configure_fonts(&cc.egui_ctx);
             apply_win11_theme(&cc.egui_ctx);
             style::apply_type_ramp(&cc.egui_ctx, heading_semibold);
-            Ok(Box::new(SettingsApp::new(config, first_run, initial_tab, load_outcome)))
+            Ok(Box::new(SettingsApp::new(
+                config,
+                first_run,
+                initial_tab,
+                load_outcome,
+            )))
         }),
     )
 }
@@ -654,7 +682,9 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use snotra_core::config::{InstantAction, InstantCommand, Language, OpenerRule, OpenerTool, ScanPath};
+    use snotra_core::config::{
+        InstantAction, InstantCommand, Language, OpenerRule, OpenerTool, ScanPath,
+    };
 
     /// Config の全トップレベルフィールドを1つずつ変更する mutation の一覧。
     ///
@@ -680,7 +710,9 @@ mod tests {
             ("general", |c: &mut Config| {
                 c.general.show_on_startup = !c.general.show_on_startup;
             }),
-            ("appearance", |c: &mut Config| c.appearance.window_width += 10),
+            ("appearance", |c: &mut Config| {
+                c.appearance.window_width += 10
+            }),
             ("visual", |c: &mut Config| {
                 c.visual.background_color = "#123456".to_string();
             }),
@@ -708,7 +740,9 @@ mod tests {
                 c.instant_commands.push(InstantCommand {
                     name: "mutation".to_string(),
                     description: String::new(),
-                    action: InstantAction::Url { url: "https://example.com".to_string() },
+                    action: InstantAction::Url {
+                        url: "https://example.com".to_string(),
+                    },
                 });
             }),
         ]
@@ -722,7 +756,10 @@ mod tests {
         for (name, mutate) in field_mutations() {
             let mut draft = saved.clone();
             mutate(&mut draft);
-            assert_ne!(draft, saved, "mutation `{name}` must actually change the config");
+            assert_ne!(
+                draft, saved,
+                "mutation `{name}` must actually change the config"
+            );
             let any_tab_dirty = TabId::ALL.iter().any(|t| t.has_changes(&draft, &saved));
             assert!(
                 any_tab_dirty,
@@ -738,7 +775,10 @@ mod tests {
         let saved = Config::normalized_default();
         let draft = saved.clone();
         for &tab in TabId::ALL {
-            assert!(!tab.has_changes(&draft, &saved), "{tab:?} must not light when unchanged");
+            assert!(
+                !tab.has_changes(&draft, &saved),
+                "{tab:?} must not light when unchanged"
+            );
         }
     }
 
@@ -797,9 +837,14 @@ mod tests {
     #[test]
     fn kittest_checkbox_click_makes_draft_dirty() {
         let mut harness = en_harness(en_config());
-        assert!(!harness.state().has_changes(), "initial state must be clean");
+        assert!(
+            !harness.state().has_changes(),
+            "initial state must be clean"
+        );
 
-        harness.get_by_label(Tr(Language::En).t(TrKey::CbHotkeyToggle)).click();
+        harness
+            .get_by_label(Tr(Language::En).t(TrKey::CbHotkeyToggle))
+            .click();
         settle(&mut harness);
 
         assert!(
@@ -815,16 +860,23 @@ mod tests {
         let original_toggle = harness.state().saved.general.hotkey_toggle;
 
         // 編集して dirty にする（Discard は has_changes() で有効化されるため先に編集）。
-        harness.get_by_label(Tr(Language::En).t(TrKey::CbHotkeyToggle)).click();
+        harness
+            .get_by_label(Tr(Language::En).t(TrKey::CbHotkeyToggle))
+            .click();
         settle(&mut harness);
         assert!(harness.state().has_changes());
         assert_ne!(harness.state().draft.general.hotkey_toggle, original_toggle);
 
         // Discard → draft = saved.clone()。
-        harness.get_by_label(Tr(Language::En).t(TrKey::BtnDiscard)).click();
+        harness
+            .get_by_label(Tr(Language::En).t(TrKey::BtnDiscard))
+            .click();
         settle(&mut harness);
 
-        assert!(!harness.state().has_changes(), "discard must clear dirty state");
+        assert!(
+            !harness.state().has_changes(),
+            "discard must clear dirty state"
+        );
         assert_eq!(
             harness.state().draft.general.hotkey_toggle,
             original_toggle,
@@ -841,9 +893,14 @@ mod tests {
         let mut config = en_config();
         config.general.hotkey_toggle = !default_toggle;
         let mut harness = en_harness(config);
-        assert!(!harness.state().has_changes(), "saved==draft initially = clean");
+        assert!(
+            !harness.state().has_changes(),
+            "saved==draft initially = clean"
+        );
 
-        harness.get_by_label(Tr(Language::En).t(TrKey::BtnResetDefault)).click();
+        harness
+            .get_by_label(Tr(Language::En).t(TrKey::BtnResetDefault))
+            .click();
         settle(&mut harness);
 
         assert_eq!(
@@ -868,9 +925,14 @@ mod tests {
         // 中間状態を直接構築。テストが検証するのは Save ボタン→save()→validate 分岐の wiring）。
         // window_width を最小未満にすると ConfigError::WindowWidthTooSmall になる。
         harness.state_mut().draft.appearance.window_width = 1;
-        assert!(harness.state().has_changes(), "draft must be dirty so Save is enabled");
+        assert!(
+            harness.state().has_changes(),
+            "draft must be dirty so Save is enabled"
+        );
 
-        harness.get_by_label(Tr(Language::En).t(TrKey::BtnSave)).click();
+        harness
+            .get_by_label(Tr(Language::En).t(TrKey::BtnSave))
+            .click();
         settle(&mut harness);
 
         assert!(
@@ -878,7 +940,8 @@ mod tests {
             "validation error must surface a status message"
         );
         assert_eq!(
-            harness.state().saved, saved_before,
+            harness.state().saved,
+            saved_before,
             "saved must not be updated when validation fails"
         );
     }
@@ -913,11 +976,15 @@ mod tests {
         h.set_size(egui::vec2(760.0, 560.0));
 
         // dirty 化（status ラベルが出る = フッターの前置ウィジェットが増える）
-        h.get_by_label(Tr(Language::En).t(TrKey::CbHotkeyToggle)).click();
+        h.get_by_label(Tr(Language::En).t(TrKey::CbHotkeyToggle))
+            .click();
         settle(&mut h);
         assert!(h.state().has_changes());
 
-        let center = h.get_by_label(Tr(Language::En).t(TrKey::BtnDiscard)).rect().center();
+        let center = h
+            .get_by_label(Tr(Language::En).t(TrKey::BtnDiscard))
+            .rect()
+            .center();
         let button = |pressed: bool| egui::Event::PointerButton {
             pos: center,
             button: egui::PointerButton::Primary,
@@ -945,7 +1012,10 @@ mod tests {
                 "discard 遷移フレーム{i}で egui の id 不安定性警告（赤枠）が出た（#456 回帰）"
             );
         }
-        assert!(!h.state().has_changes(), "discard で dirty が解消しているはず");
+        assert!(
+            !h.state().has_changes(),
+            "discard で dirty が解消しているはず"
+        );
     }
 
     // ピン留めテスト（issue #438）: i18n テーブル駆動化のリファクタで `config_error_message` の
@@ -1043,8 +1113,14 @@ mod tests {
     #[test]
     fn config_error_message_window_width_too_small() {
         let err = ConfigError::WindowWidthTooSmall(150);
-        assert_eq!(config_error_message(&err, &tr_ja()), "150 は小さすぎます（200以上）");
-        assert_eq!(config_error_message(&err, &tr_en()), "150 is too small (min 200)");
+        assert_eq!(
+            config_error_message(&err, &tr_ja()),
+            "150 は小さすぎます（200以上）"
+        );
+        assert_eq!(
+            config_error_message(&err, &tr_en()),
+            "150 is too small (min 200)"
+        );
     }
 
     #[test]
@@ -1093,9 +1169,17 @@ mod tests {
 
     #[test]
     fn config_error_message_instant_command_duplicate_name() {
-        let err = ConfigError::InstantCommandDuplicateName { name: "g".to_string() };
-        assert_eq!(config_error_message(&err, &tr_ja()), "g はコマンド名が重複しています");
-        assert_eq!(config_error_message(&err, &tr_en()), "g has a duplicate command name");
+        let err = ConfigError::InstantCommandDuplicateName {
+            name: "g".to_string(),
+        };
+        assert_eq!(
+            config_error_message(&err, &tr_ja()),
+            "g はコマンド名が重複しています"
+        );
+        assert_eq!(
+            config_error_message(&err, &tr_en()),
+            "g has a duplicate command name"
+        );
     }
 
     #[test]

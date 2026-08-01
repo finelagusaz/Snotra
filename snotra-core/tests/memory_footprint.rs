@@ -135,8 +135,11 @@ fn synthetic_entries(n: usize) -> Vec<AppEntry> {
     (0..n)
         .map(|i| {
             let name = format!("entry{i:05}");
-            let target_path =
-                format!("C:\\workspace\\project{:03}\\src\\module{:04}\\{name}", i % 512, i % 997);
+            let target_path = format!(
+                "C:\\workspace\\project{:03}\\src\\module{:04}\\{name}",
+                i % 512,
+                i % 997
+            );
             AppEntry {
                 name,
                 target_path,
@@ -188,7 +191,12 @@ fn measure_real_index_footprint() {
     );
     report("index.bin ロード（entries + masks）", t0, t1, n);
 
-    let LoadOrScanResult { entries, cached_masks, rescan_task, .. } = result;
+    let LoadOrScanResult {
+        entries,
+        cached_masks,
+        rescan_task,
+        ..
+    } = result;
     // 背景再スキャンタスクは src-tauri 側で別スレッドが消費する。常駐計測の対象外。
     drop(rescan_task);
 

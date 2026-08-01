@@ -100,7 +100,9 @@ const FALLBACK_INTERVAL_NANOS: u64 = 1_000_000_000 / 60;
 /// （呼び出し側 `set_min_interval` が 60Hz フォールバックへ倒す）。
 fn interval_from_hz(hz: u32) -> Option<Duration> {
     // 上限 1000Hz: 異常値（間隔 0ns で gate が無効化する類）を防ぐ現実的な天井（レビュー L4）。
-    (2..=1_000).contains(&hz).then(|| Duration::from_nanos(1_000_000_000u64 / u64::from(hz)))
+    (2..=1_000)
+        .contains(&hz)
+        .then(|| Duration::from_nanos(1_000_000_000u64 / u64::from(hz)))
 }
 
 /// 次の dispatch 予定時刻（契約②・#737）: 要求 deadline と gate（前回 dispatch +
@@ -235,7 +237,9 @@ impl RepaintScheduler {
         let interval = hz
             .and_then(interval_from_hz)
             .map_or(FALLBACK_INTERVAL_NANOS, |d| d.as_nanos() as u64);
-        self.inner.min_interval_nanos.store(interval, Ordering::Relaxed);
+        self.inner
+            .min_interval_nanos
+            .store(interval, Ordering::Relaxed);
     }
 }
 
@@ -304,7 +308,10 @@ mod tests {
             },
         ];
         let rendered = format_repaint_causes(&causes);
-        assert_eq!(rendered, "text_selection/visuals.rs:313 ; view.rs:439 state changed");
+        assert_eq!(
+            rendered,
+            "text_selection/visuals.rs:313 ; view.rs:439 state changed"
+        );
         assert_eq!(rendered.split("; ").count(), 2, "件数ぶん連結される");
     }
 

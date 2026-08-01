@@ -280,7 +280,10 @@ mod tests {
     #[test]
     fn history_query_key_collapses_spaces() {
         // normalize_query が連続スペースを圧縮することを確認
-        assert_eq!(normalize_history_query_key("my  tools\\foo"), "my tools\\foo");
+        assert_eq!(
+            normalize_history_query_key("my  tools\\foo"),
+            "my tools\\foo"
+        );
     }
 
     #[test]

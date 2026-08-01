@@ -2,7 +2,8 @@ use tauri::{AppHandle, Emitter, Manager};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Shell::{
     ExtractIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_WARNING, NIM_ADD,
-    NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW,
+    NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NOTIFYICON_VERSION_4, NOTIFYICONDATAW,
+    Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, DestroyIcon, DestroyMenu, GetCursorPos, GetMessageTime, HICON,
@@ -48,11 +49,7 @@ fn format_recent_history_label(item: &snotra_core::ui_types::SearchResult) -> St
     truncated
 }
 
-pub(super) fn handle_menu_command(
-    wparam: WPARAM,
-    app_handle: &AppHandle,
-    tray: &Option<TrayIcon>,
-) {
+pub(super) fn handle_menu_command(wparam: WPARAM, app_handle: &AppHandle, tray: &Option<TrayIcon>) {
     let id = wparam.0 & 0xFFFF;
     match id {
         ID_MENU_SETTINGS => {
@@ -166,7 +163,11 @@ enum RecentMenuEntry {
 
 /// `build_recent_menu_entries` の戻り値: (メニュー項目リスト, 0/1ツール項目の
 /// パス一覧 `recent_menu_paths`, 2+ツール項目の選択情報一覧 `recent_menu_tools`)。
-type RecentMenuBuild = (Vec<RecentMenuEntry>, Vec<String>, Vec<(String, String, String)>);
+type RecentMenuBuild = (
+    Vec<RecentMenuEntry>,
+    Vec<String>,
+    Vec<(String, String, String)>,
+);
 
 /// `recent`（履歴一覧）と `resolve_tools`（パス→ツール一覧の解決）から、純データと
 /// してのメニュー項目リストと ID→(path[, exe, args]) の対応表を組み立てる。
@@ -208,7 +209,10 @@ fn build_recent_menu_entries(
         } else {
             // 0/1 ツール: 直接起動（既存挙動）
             let direct_id = ID_MENU_RECENT_BASE + recent_menu_paths.len();
-            entries.push(RecentMenuEntry::Direct { id: direct_id, label });
+            entries.push(RecentMenuEntry::Direct {
+                id: direct_id,
+                label,
+            });
             recent_menu_paths.push(item.path.clone());
         }
     }
@@ -222,8 +226,10 @@ unsafe fn draw_recent_menu(hmenu: HMENU, entries: &[RecentMenuEntry], no_history
     for entry in entries {
         match entry {
             RecentMenuEntry::Empty => {
-                let text: Vec<u16> =
-                    no_history_label.encode_utf16().chain(std::iter::once(0)).collect();
+                let text: Vec<u16> = no_history_label
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
                 let _ = unsafe { AppendMenuW(hmenu, MF_GRAYED, 0, PCWSTR(text.as_ptr())) };
             }
             RecentMenuEntry::Direct { id, label } => {
@@ -238,11 +244,15 @@ unsafe fn draw_recent_menu(hmenu: HMENU, entries: &[RecentMenuEntry], no_history
                     let text: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
                     let _ = unsafe { AppendMenuW(hsub, MF_STRING, *id, PCWSTR(text.as_ptr())) };
                 }
-                let label_wide: Vec<u16> =
-                    label.encode_utf16().chain(std::iter::once(0)).collect();
+                let label_wide: Vec<u16> = label.encode_utf16().chain(std::iter::once(0)).collect();
                 // MF_POPUP: uIDNewItem に hsub のハンドル値を渡す
                 let _ = unsafe {
-                    AppendMenuW(hmenu, MF_POPUP, hsub.0 as usize, PCWSTR(label_wide.as_ptr()))
+                    AppendMenuW(
+                        hmenu,
+                        MF_POPUP,
+                        hsub.0 as usize,
+                        PCWSTR(label_wide.as_ptr()),
+                    )
                 };
             }
         }
@@ -499,8 +509,8 @@ fn load_tray_icon_from_exe() -> Option<HICON> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_recent_menu_entries, format_recent_history_label, RecentMenuEntry,
-        ID_MENU_RECENT_BASE, ID_MENU_TOOL_BASE,
+        ID_MENU_RECENT_BASE, ID_MENU_TOOL_BASE, RecentMenuEntry, build_recent_menu_entries,
+        format_recent_history_label,
     };
     use snotra_core::config::Language;
     use snotra_core::ui_types::SearchResult;
@@ -522,7 +532,8 @@ mod tests {
 
     #[test]
     fn name_equal_to_path_dedupes_to_path_only() {
-        let label = format_recent_history_label(&item("C:/Users/foo/bar.exe", "C:/Users/foo/bar.exe"));
+        let label =
+            format_recent_history_label(&item("C:/Users/foo/bar.exe", "C:/Users/foo/bar.exe"));
         assert_eq!(label, "C:/Users/foo/bar.exe");
     }
 
@@ -589,7 +600,10 @@ mod tests {
                 assert_eq!(*id, ID_MENU_RECENT_BASE);
                 assert_eq!(label, "bar.exe - C:/Users/foo/bar.exe");
             }
-            other => panic!("expected a single Direct entry, got {} entries", other.len()),
+            other => panic!(
+                "expected a single Direct entry, got {} entries",
+                other.len()
+            ),
         }
         assert_eq!(paths, vec!["C:/Users/foo/bar.exe".to_string()]);
         assert!(tools.is_empty());
@@ -601,10 +615,19 @@ mod tests {
         let items = vec![item("bar.exe", "C:/Users/foo/bar.exe")];
         let (entries, paths, tools) = build_recent_menu_entries(
             &items,
-            |_| vec![("Notepad".to_string(), "notepad.exe".to_string(), String::new())],
+            |_| {
+                vec![(
+                    "Notepad".to_string(),
+                    "notepad.exe".to_string(),
+                    String::new(),
+                )]
+            },
             Language::En,
         );
-        assert!(matches!(entries.as_slice(), [RecentMenuEntry::Direct { .. }]));
+        assert!(matches!(
+            entries.as_slice(),
+            [RecentMenuEntry::Direct { .. }]
+        ));
         assert_eq!(paths.len(), 1);
         assert!(tools.is_empty());
     }
@@ -616,7 +639,11 @@ mod tests {
             &items,
             |_| {
                 vec![
-                    ("Notepad".to_string(), "notepad.exe".to_string(), String::new()),
+                    (
+                        "Notepad".to_string(),
+                        "notepad.exe".to_string(),
+                        String::new(),
+                    ),
                     ("VS Code".to_string(), "code.exe".to_string(), String::new()),
                 ]
             },
@@ -631,11 +658,21 @@ mod tests {
                 assert_eq!(items[1].1, "Notepad");
                 assert_eq!(items[2].1, "VS Code");
             }
-            other => panic!("expected a single Submenu entry, got {} entries", other.len()),
+            other => panic!(
+                "expected a single Submenu entry, got {} entries",
+                other.len()
+            ),
         }
         assert!(paths.is_empty()); // サブメニュー項目は recent_menu_tools 側に積まれる
         assert_eq!(tools.len(), 3);
-        assert_eq!(tools[0], ("C:/Users/foo/bar.exe".to_string(), String::new(), String::new()));
+        assert_eq!(
+            tools[0],
+            (
+                "C:/Users/foo/bar.exe".to_string(),
+                String::new(),
+                String::new()
+            )
+        );
         assert_eq!(tools[1].1, "notepad.exe");
         assert_eq!(tools[2].1, "code.exe");
     }
@@ -644,10 +681,7 @@ mod tests {
     fn tool_ids_accumulate_across_multiple_submenu_items() {
         // 2 項目ともサブメニューになる場合、ID が項目をまたいで連番であることを確認する
         // （show_recent_history_menu の self.recent_menu_tools と同じ蓄積順序）。
-        let items = vec![
-            item("a.exe", "C:/a.exe"),
-            item("b.exe", "C:/b.exe"),
-        ];
+        let items = vec![item("a.exe", "C:/a.exe"), item("b.exe", "C:/b.exe")];
         let two_tools = |_: &str| {
             vec![
                 ("T1".to_string(), "t1.exe".to_string(), String::new()),

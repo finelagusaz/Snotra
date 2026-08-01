@@ -22,9 +22,9 @@ use crate::hotkey::HotkeyParseError;
 // `OpenerRule`/`OpenerTool` は `Config.openers` として config.toml に紐づく serde 型のため、
 // re-export で既存の呼び出し元（`snotra_core::config::...` パス、src-tauri/snotra-settings 含む）を壊さない。
 pub use crate::opener::{
-    detect_opener_presets, extract_ext_part, extract_path_condition, find_matching_tools,
-    is_preset_already_added, normalize_openers, opener_specificity_order, OpenerPreset,
-    OpenerRule, OpenerTool,
+    OpenerPreset, OpenerRule, OpenerTool, detect_opener_presets, extract_ext_part,
+    extract_path_condition, find_matching_tools, is_preset_already_added, normalize_openers,
+    opener_specificity_order,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,9 +38,9 @@ pub enum Language {
 #[serde(rename_all = "snake_case")]
 pub enum AutoUpdateMode {
     #[default]
-    Full,       // チェック + インストール（インストーラー版向け）
-    CheckOnly,  // チェックのみ・通知する（ポータブル版向け）
-    Disabled,   // チェックしない
+    Full, // チェック + インストール（インストーラー版向け）
+    CheckOnly, // チェックのみ・通知する（ポータブル版向け）
+    Disabled,  // チェックしない
 }
 
 /// `Config::load_reporting()` の結果区分。UI 文字列を持たない（表示・通知は呼び出し側の責務）。
@@ -83,13 +83,17 @@ pub struct InstantCommand {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum InstantAction {
-    Url { url: String },
+    Url {
+        url: String,
+    },
     Exec {
         exe: String,
         #[serde(default)]
         args: String,
     },
-    Legacy { command: String },
+    Legacy {
+        command: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -625,7 +629,9 @@ impl Config {
             .effective_visible_rows()
             .max(self.search.effective_result_limit())
             .max(self.search.effective_recent_limit());
-        working_set.max(1).saturating_mul(ICON_CACHE_RETENTION_FACTOR)
+        working_set
+            .max(1)
+            .saturating_mul(ICON_CACHE_RETENTION_FACTOR)
     }
 
     /// Returns the default scan paths (common Start Menu + Desktop).
@@ -768,7 +774,7 @@ impl Config {
         self.instant_commands.retain(|c| {
             if c.name.is_empty() {
                 return true; // 空名は dedup 対象外（検出=validate / 補正=migration の責務分離。
-                             // validate の !name.is_empty() エラーを migration が隠さない）
+                // validate の !name.is_empty() エラーを migration が隠さない）
             }
             let keep = seen.insert(c.name.clone());
             if !keep {
@@ -830,9 +836,18 @@ impl Config {
     /// skip_serializing が無効化されるため）。既定値補完は `changed` に寄与しない（常に実行される
     /// no-op 相当の後始末のため、挙動不変のまま元の実装に合わせて戻り値を持たない）。
     fn resolve_count_param_defaults(&mut self) {
-        let _ = self.appearance.visible_rows.get_or_insert_with(default_visible_rows);
-        let _ = self.search.result_limit.get_or_insert_with(default_result_limit);
-        let _ = self.search.recent_limit.get_or_insert_with(default_recent_limit);
+        let _ = self
+            .appearance
+            .visible_rows
+            .get_or_insert_with(default_visible_rows);
+        let _ = self
+            .search
+            .result_limit
+            .get_or_insert_with(default_result_limit);
+        let _ = self
+            .search
+            .recent_limit
+            .get_or_insert_with(default_recent_limit);
     }
 
     /// (4) fuzzy_history_cap_ratio が不正（非有限 or [0.0, 1.0] 範囲外）なら既定値へ補正する。
@@ -871,8 +886,7 @@ impl Config {
         let default_hotkey = HotkeyConfig::default();
         eprintln!(
             "[config] invalid hotkey detected ({reason}: {}+{}), falling back to default ({}+{})",
-            self.hotkey.modifier, self.hotkey.key,
-            default_hotkey.modifier, default_hotkey.key,
+            self.hotkey.modifier, self.hotkey.key, default_hotkey.modifier, default_hotkey.key,
         );
         self.hotkey = default_hotkey;
         true
@@ -991,8 +1005,7 @@ impl Config {
         fs::create_dir_all(dir).map_err(|e| format!("ディレクトリ作成失敗: {e}"))?;
 
         let path = dir.join("config.toml");
-        let content =
-            toml::to_string_pretty(self).map_err(|e| format!("シリアライズ失敗: {e}"))?;
+        let content = toml::to_string_pretty(self).map_err(|e| format!("シリアライズ失敗: {e}"))?;
 
         // Atomic write: .tmp → rename
         let tmp = path.with_extension("toml.tmp");
@@ -1012,7 +1025,9 @@ impl Config {
             errors.push(ConfigError::VisibleRowsZero);
         }
         if self.appearance.window_width < 200 {
-            errors.push(ConfigError::WindowWidthTooSmall(self.appearance.window_width));
+            errors.push(ConfigError::WindowWidthTooSmall(
+                self.appearance.window_width,
+            ));
         }
 
         // Search validation
@@ -1451,7 +1466,10 @@ background_color = '#123456'
         let mut config = Config::normalized_default();
         let before = config.clone();
         let changed = config.apply_migrations();
-        assert!(!changed, "normalized_default() should already be migration-stable");
+        assert!(
+            !changed,
+            "normalized_default() should already be migration-stable"
+        );
         assert_eq!(config, before);
     }
 
@@ -1564,9 +1582,18 @@ background_color = '#123456'
 
         let serialized = toml::to_string(&config).expect("serialize");
         // 旧キーは skip_serializing で出力されない
-        assert!(!serialized.contains("max_results"), "old key leaked: {serialized}");
-        assert!(!serialized.contains("top_n_history"), "old key leaked: {serialized}");
-        assert!(!serialized.contains("max_history_display"), "old key leaked: {serialized}");
+        assert!(
+            !serialized.contains("max_results"),
+            "old key leaked: {serialized}"
+        );
+        assert!(
+            !serialized.contains("top_n_history"),
+            "old key leaked: {serialized}"
+        );
+        assert!(
+            !serialized.contains("max_history_display"),
+            "old key leaked: {serialized}"
+        );
         // 新キーは出力される
         assert!(serialized.contains("visible_rows"));
         assert!(serialized.contains("result_limit"));
@@ -1710,12 +1737,16 @@ background_color = '#123456'
         assert_eq!(config.instant_commands[0].name, "g");
         assert_eq!(
             config.instant_commands[0].action,
-            InstantAction::Url { url: "https://www.google.com/search?q={query}".to_string() }
+            InstantAction::Url {
+                url: "https://www.google.com/search?q={query}".to_string()
+            }
         );
         assert_eq!(config.instant_commands[1].name, "gh");
         assert_eq!(
             config.instant_commands[1].action,
-            InstantAction::Url { url: "https://github.com/search?q={query}".to_string() }
+            InstantAction::Url {
+                url: "https://github.com/search?q={query}".to_string()
+            }
         );
     }
 
@@ -2006,7 +2037,10 @@ background_color = '#123456'
     fn validate_default_config_returns_no_errors() {
         let config = Config::default();
         let errors = config.validate();
-        assert!(errors.is_empty(), "default config should have no validation errors");
+        assert!(
+            errors.is_empty(),
+            "default config should have no validation errors"
+        );
     }
 
     #[test]
@@ -2071,7 +2105,9 @@ background_color = '#123456'
         config.appearance.window_width = 200;
         let errors = config.validate();
         assert!(
-            !errors.iter().any(|e| matches!(e, ConfigError::WindowWidthTooSmall(_))),
+            !errors
+                .iter()
+                .any(|e| matches!(e, ConfigError::WindowWidthTooSmall(_))),
             "window_width=200 should not produce an error"
         );
     }
@@ -2098,7 +2134,9 @@ background_color = '#123456'
         config.search.fuzzy_history_cap_ratio = 0.0;
         let errors = config.validate();
         assert!(
-            !errors.iter().any(|e| matches!(e, ConfigError::FuzzyCapRatioOutOfRange { .. })),
+            !errors
+                .iter()
+                .any(|e| matches!(e, ConfigError::FuzzyCapRatioOutOfRange { .. })),
             "ratio=0.0 should not produce an error"
         );
     }
@@ -2109,7 +2147,9 @@ background_color = '#123456'
         config.search.fuzzy_history_cap_ratio = 1.0;
         let errors = config.validate();
         assert!(
-            !errors.iter().any(|e| matches!(e, ConfigError::FuzzyCapRatioOutOfRange { .. })),
+            !errors
+                .iter()
+                .any(|e| matches!(e, ConfigError::FuzzyCapRatioOutOfRange { .. })),
             "ratio=1.0 should not produce an error"
         );
     }
@@ -2526,12 +2566,16 @@ background_color = '#123456'
                 InstantCommand {
                     name: "google".to_string(),
                     description: String::new(),
-                    action: InstantAction::Url { url: "https://google.com".into() },
+                    action: InstantAction::Url {
+                        url: "https://google.com".into(),
+                    },
                 },
                 InstantCommand {
                     name: "google".to_string(),
                     description: String::new(),
-                    action: InstantAction::Url { url: "https://google.co.jp".into() },
+                    action: InstantAction::Url {
+                        url: "https://google.co.jp".into(),
+                    },
                 },
             ],
             ..Default::default()
@@ -2549,19 +2593,25 @@ background_color = '#123456'
                 InstantCommand {
                     name: "google".to_string(),
                     description: String::new(),
-                    action: InstantAction::Url { url: "https://google.com".into() },
+                    action: InstantAction::Url {
+                        url: "https://google.com".into(),
+                    },
                 },
                 InstantCommand {
                     name: "bing".to_string(),
                     description: String::new(),
-                    action: InstantAction::Url { url: "https://bing.com".into() },
+                    action: InstantAction::Url {
+                        url: "https://bing.com".into(),
+                    },
                 },
             ],
             ..Default::default()
         };
         let errors = config.validate();
         assert!(
-            !errors.iter().any(|e| matches!(e, ConfigError::InstantCommandDuplicateName { .. })),
+            !errors
+                .iter()
+                .any(|e| matches!(e, ConfigError::InstantCommandDuplicateName { .. })),
         );
     }
 
@@ -2578,10 +2628,12 @@ background_color = '#123456'
             ..Default::default()
         };
         let errors = config.validate();
-        assert!(errors.contains(&ConfigError::InstantCommandUnknownModifier {
-            name: "g".to_string(),
-            modifier: "bogus".to_string(),
-        }));
+        assert!(
+            errors.contains(&ConfigError::InstantCommandUnknownModifier {
+                name: "g".to_string(),
+                modifier: "bogus".to_string(),
+            })
+        );
     }
 
     #[test]
@@ -2598,10 +2650,12 @@ background_color = '#123456'
             ..Default::default()
         };
         let errors = config.validate();
-        assert!(errors.contains(&ConfigError::InstantCommandUnknownModifier {
-            name: "ev".to_string(),
-            modifier: "nope".to_string(),
-        }));
+        assert!(
+            errors.contains(&ConfigError::InstantCommandUnknownModifier {
+                name: "ev".to_string(),
+                modifier: "nope".to_string(),
+            })
+        );
     }
 
     #[test]
@@ -2647,9 +2701,15 @@ background_color = '#123456'
         config.apply_migrations();
         assert_eq!(config.instant_commands.len(), 2);
         assert_eq!(config.instant_commands[0].name, "g");
-        assert!(matches!(config.instant_commands[0].action, InstantAction::Url { .. }));
+        assert!(matches!(
+            config.instant_commands[0].action,
+            InstantAction::Url { .. }
+        ));
         assert_eq!(config.instant_commands[1].name, "memo");
-        assert!(matches!(config.instant_commands[1].action, InstantAction::Url { .. }));
+        assert!(matches!(
+            config.instant_commands[1].action,
+            InstantAction::Url { .. }
+        ));
     }
 
     #[test]
@@ -2729,10 +2789,14 @@ background_color = '#123456'
         let mut config = Config::default();
         config.hotkey.modifier = "Alt+Alt".to_string();
         config.hotkey.key = "F4".to_string();
-        assert!(config.validate().contains(&ConfigError::HotkeySystemConflict {
-            modifier: "Alt+Alt".to_string(),
-            key: "F4".to_string(),
-        }));
+        assert!(
+            config
+                .validate()
+                .contains(&ConfigError::HotkeySystemConflict {
+                    modifier: "Alt+Alt".to_string(),
+                    key: "F4".to_string(),
+                })
+        );
     }
 
     #[test]
@@ -2763,13 +2827,19 @@ background_color = '#123456'
         config.hotkey.key.clear();
         assert_eq!(
             config.validate_hotkey(),
-            vec![ConfigError::HotkeyModifierEmpty, ConfigError::HotkeyKeyEmpty]
+            vec![
+                ConfigError::HotkeyModifierEmpty,
+                ConfigError::HotkeyKeyEmpty
+            ]
         );
 
         config.hotkey.modifier = "++".to_string();
         assert_eq!(
             config.validate_hotkey(),
-            vec![ConfigError::HotkeyModifierEmpty, ConfigError::HotkeyKeyEmpty]
+            vec![
+                ConfigError::HotkeyModifierEmpty,
+                ConfigError::HotkeyKeyEmpty
+            ]
         );
     }
 
@@ -2791,10 +2861,13 @@ background_color = '#123456'
         config.hotkey.modifier = "Alt".to_string();
         config.hotkey.key = "Q".to_string();
         let errors = config.validate();
-        let has_conflict = errors.iter().any(|e| {
-            matches!(e, ConfigError::HotkeySystemConflict { .. })
-        });
-        assert!(!has_conflict, "Alt+Q should not produce a system conflict error");
+        let has_conflict = errors
+            .iter()
+            .any(|e| matches!(e, ConfigError::HotkeySystemConflict { .. }));
+        assert!(
+            !has_conflict,
+            "Alt+Q should not produce a system conflict error"
+        );
     }
 
     // ---- CustomTheme / ThemePreset::Custom tests ----
@@ -2900,7 +2973,11 @@ background_color = '#123456'
         let config: Config = toml::from_str(toml_str).unwrap();
         let errors = config.validate();
         // Should have errors for empty hotkey and invalid visible_rows/window_width
-        assert!(errors.len() >= 2, "Expected at least 2 errors, got: {:?}", errors);
+        assert!(
+            errors.len() >= 2,
+            "Expected at least 2 errors, got: {:?}",
+            errors
+        );
     }
 
     #[test]
@@ -3322,47 +3399,76 @@ foo = 42
 
     // ---- InstantAction serde gate (release gate: 失敗は全設定リセットを意味する) ----
     fn cfg_with_instant(cmds: Vec<InstantCommand>) -> Config {
-        Config { instant_commands: cmds, ..Default::default() }
+        Config {
+            instant_commands: cmds,
+            ..Default::default()
+        }
     }
 
     #[test] // T2: legacy 行が deserialize できる（最重要・データ損失検出器）
     fn instant_legacy_command_deserializes() {
         let legacy = cfg_with_instant(vec![InstantCommand {
-            name: "g".into(), description: String::new(),
-            action: InstantAction::Legacy { command: "https://x/?q={query}".into() },
+            name: "g".into(),
+            description: String::new(),
+            action: InstantAction::Legacy {
+                command: "https://x/?q={query}".into(),
+            },
         }]);
         let s = toml::to_string(&legacy).expect("serialize legacy");
         // Legacy は `command = "..."` 形（=旧オンディスク形式）で出力される
         assert!(s.contains("command ="));
         let parsed: Config = toml::from_str(&s).expect("legacy deserialize must succeed");
-        assert!(matches!(parsed.instant_commands[0].action, InstantAction::Legacy { .. }));
+        assert!(matches!(
+            parsed.instant_commands[0].action,
+            InstantAction::Legacy { .. }
+        ));
     }
 
     #[test] // T15 + T17: legacy → Url 移行（自動分割しない）・冪等
     fn instant_legacy_migrates_to_url_idempotently() {
         let mut cfg = cfg_with_instant(vec![InstantCommand {
-            name: "ev".into(), description: String::new(),
-            action: InstantAction::Legacy { command: "C:\\tools\\editor.exe".into() },
+            name: "ev".into(),
+            description: String::new(),
+            action: InstantAction::Legacy {
+                command: "C:\\tools\\editor.exe".into(),
+            },
         }]);
         assert!(cfg.apply_migrations());
-        assert_eq!(cfg.instant_commands[0].action,
-            InstantAction::Url { url: "C:\\tools\\editor.exe".into() }); // Exec にしない
+        assert_eq!(
+            cfg.instant_commands[0].action,
+            InstantAction::Url {
+                url: "C:\\tools\\editor.exe".into()
+            }
+        ); // Exec にしない
         // 冪等: 2回目は Legacy が残っていないので action は Url のまま
         cfg.apply_migrations();
-        assert_eq!(cfg.instant_commands[0].action,
-            InstantAction::Url { url: "C:\\tools\\editor.exe".into() });
+        assert_eq!(
+            cfg.instant_commands[0].action,
+            InstantAction::Url {
+                url: "C:\\tools\\editor.exe".into()
+            }
+        );
     }
 
     #[test] // T1: Config 全体の serialize 往復で変種が保たれる
     fn instant_exec_roundtrip_preserves_variant() {
         let cfg = cfg_with_instant(vec![InstantCommand {
-            name: "ev".into(), description: "Everything".into(),
-            action: InstantAction::Exec { exe: "everything.exe".into(), args: "-s {query}".into() },
+            name: "ev".into(),
+            description: "Everything".into(),
+            action: InstantAction::Exec {
+                exe: "everything.exe".into(),
+                args: "-s {query}".into(),
+            },
         }]);
         let s = toml::to_string_pretty(&cfg).expect("serialize");
         let parsed: Config = toml::from_str(&s).expect("deserialize");
-        assert_eq!(parsed.instant_commands[0].action,
-            InstantAction::Exec { exe: "everything.exe".into(), args: "-s {query}".into() });
+        assert_eq!(
+            parsed.instant_commands[0].action,
+            InstantAction::Exec {
+                exe: "everything.exe".into(),
+                args: "-s {query}".into()
+            }
+        );
     }
 
     #[test] // T3: url と exe を両方書いた行は Url 先勝ち（untagged 宣言順）
@@ -3381,7 +3487,10 @@ foo = 42
             exe = "y.exe"
         "#;
         let cfg: Config = toml::from_str(toml_str).expect("parse");
-        assert!(matches!(cfg.instant_commands[0].action, InstantAction::Url { .. }));
+        assert!(matches!(
+            cfg.instant_commands[0].action,
+            InstantAction::Url { .. }
+        ));
     }
 
     #[test] // T4: Exec で args 省略 → 空文字
@@ -3399,8 +3508,13 @@ foo = 42
             exe = "notepad.exe"
         "#;
         let cfg: Config = toml::from_str(toml_str).expect("parse");
-        assert_eq!(cfg.instant_commands[0].action,
-            InstantAction::Exec { exe: "notepad.exe".into(), args: String::new() });
+        assert_eq!(
+            cfg.instant_commands[0].action,
+            InstantAction::Exec {
+                exe: "notepad.exe".into(),
+                args: String::new()
+            }
+        );
     }
 
     #[test]
@@ -3411,17 +3525,23 @@ foo = 42
             InstantCommand {
                 name: "gh".into(),
                 description: String::new(),
-                action: InstantAction::Url { url: "https://github.com/{q}".into() },
+                action: InstantAction::Url {
+                    url: "https://github.com/{q}".into(),
+                },
             },
             InstantCommand {
                 name: "gh".into(),
                 description: String::new(),
-                action: InstantAction::Url { url: "https://example.com/{q}".into() },
+                action: InstantAction::Url {
+                    url: "https://example.com/{q}".into(),
+                },
             },
             InstantCommand {
                 name: "g".into(),
                 description: String::new(),
-                action: InstantAction::Url { url: "https://google.com/{q}".into() },
+                action: InstantAction::Url {
+                    url: "https://google.com/{q}".into(),
+                },
             },
         ];
         config.apply_migrations();
@@ -3443,12 +3563,16 @@ foo = 42
             InstantCommand {
                 name: "gh".into(),
                 description: String::new(),
-                action: InstantAction::Url { url: "https://github.com/{q}".into() },
+                action: InstantAction::Url {
+                    url: "https://github.com/{q}".into(),
+                },
             },
             InstantCommand {
                 name: "gh".into(),
                 description: String::new(),
-                action: InstantAction::Url { url: "https://example.com/{q}".into() },
+                action: InstantAction::Url {
+                    url: "https://example.com/{q}".into(),
+                },
             },
         ];
         assert!(!config.apply_migrations());

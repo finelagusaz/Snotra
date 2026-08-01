@@ -22,10 +22,16 @@ param(
 # **唯一の検出器**でありながら、実施の有無が会話にしか残らない。`AGENTS.md`「検証の作法」に
 # 照らせば、届かない検証は実施の有無すら区別できない。ゆえに記録をファイルへ落とす。
 #
-# **trace は診断であって合否ではない**（#671 PR A′ の実測）: `egui_results:hide` は出るのに
-# 窓が残る、という回帰を trace の presence を見る smoke は緑のまま通した。本スクリプトが
-# trace を並べるのは、目視が「駄目だった」ときに次の一手を選ぶためであって、
-# **合否を決めるのは常に目視である**。
+# **trace には性質の違う 2 つが載る**（#757）。混ぜて読んではならない:
+#
+# 1. **presence（診断）** — 「そのイベントが出たか」。`egui_results:hide` は出るのに窓が残る、
+#    という #671 PR A′ の回帰を presence を見る smoke は緑のまま通した。**合否ではない**。
+#    目視が「駄目だった」ときに次の一手を選ぶための材料である
+# 2. **不変条件（合否）** — H1 / H4 / H5。「起きてはならないことが起きていないか」を見るので
+#    合否を名乗れる。判定は `scripts/lib/SnotraTraceInvariants.psm1`（Pester で実測済み）
+#
+# **項目の合否は目視と trace の両方が決める。** trace が緑でも目視が赤なら赤であり、逆も同じ。
+# **SKIP は「判定できなかった」であって合格ではない**——理由が記録に必ず併記される。
 #
 # 使い方（ユーザーが自分の端末で実行する。Claude は実行できない——対話入力を要するため）:
 #   cargo build -p snotra
@@ -43,8 +49,22 @@ if ([Console]::IsInputRedirected) {
   throw "manual-smoke は対話入力を要する。stdin がリダイレクトされた環境（エージェント / CI / パイプ）では実行できない——人間の端末で直接実行すること。"
 }
 
-# --- 項目定義（SSOT は PR 本文の目視表。ここはその実行可能な写しである） ---
-# 写しである以上ドリフトしうる。**項目を増減したら PR 本文（と plan.md の目視表）も直す。**
+# trace の parse は `SnotraSmoke.psm1`（`Read-SnotraTraceEvents`）、不変条件の判定は
+# `SnotraTraceInvariants.psm1` が持つ。**判定を純関数として外へ出してあるので、対話入力を
+# 要する本スクリプトを走らせなくても Pester（`npm run test:powershell`）が検証できる。**
+Import-Module (Join-Path $PSScriptRoot 'lib/SnotraSmoke.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib/SnotraTraceInvariants.psm1') -Force
+
+# 表示・記録の列順。**判定器から引く**——ここに写しを置くと、判定を 1 つ足したときに
+# モジュール側だけが直り、記録と exit code から新しい不変条件が黙って落ちる（`/symmetric-check`）。
+$script:InvariantNames = Get-SnotraTraceInvariantNames
+
+# --- 項目定義（この `$items` が常設 13 項目の SSOT である） ---
+# **PR 本文の目視表とは別の母集団であって、写しではない**（`docs/adr/ADR-folder-location-display-surface.md`
+# 「却下 6」）。ここに載るのは**どの変更でも壊れうる横断不変条件**（フォーカス奪取・hide の順序・
+# クリック逆流の読み点・位置復元・フォント hot-reload・キャレット・ベースライン・通知期限）であり、
+# 機能単位の受け入れ確認は PR 限りの目視表が持つ。**新機能のために先回りで足さない**——足す条件は
+# 「その表示が実際に一度回帰したとき」である（#700 → 項目 11 がその経路）。
 $items = @(
   @{ id = 1; title = "show → 1 文字打鍵でフォーカスを奪わない"
      inv = "I7（results は raw 3 操作・tao の SW_SHOW は活性化する）"
@@ -207,28 +227,61 @@ if (-not $NoLaunch) {
   Start-Sleep -Milliseconds 1500
 }
 
-function Show-Trace([string[]]$patterns) {
+# trace ファイルの現在の状態。**「捨てた行」の数え方は `Read-SnotraTraceSnapshot` が持つ**
+# （`smoke-egui.ps1` と同じ規則を共有する・`/dry-check`）。
+function Get-TraceSnapshot {
+  if (-not $traceFile) { return @{ Available = $false; Events = @(); TraceLines = 0; Dropped = 0 } }
+  return (Read-SnotraTraceSnapshot -Path $traceFile)
+}
+
+# **マーカーは操作の「前」に打つ**（#757）。後に打つと直前の操作が前の区間へ紛れ込む。
+function Get-CurrentTraceMarker {
+  $snapshot = Get-TraceSnapshot
+  if (-not $snapshot.Available) { return [long]0 }
+  return (Get-SnotraTraceMarker -Events $snapshot.Events)
+}
+
+function Get-TraceVerdict([array]$sectionList) {
+  $snapshot = Get-TraceSnapshot
+  if (-not $snapshot.Available) { return $null }
+  return (Test-SnotraTraceInvariants -Events $snapshot.Events -Sections $sectionList -DroppedLineCount $snapshot.Dropped)
+}
+
+function Show-Trace([string[]]$patterns, [array]$sectionList) {
   if (-not $traceFile -or -not (Test-Path $traceFile)) {
     Write-Host "  （trace なし: -NoLaunch で起動したか、まだ 1 行も出ていません）" -ForegroundColor DarkGray
     return
   }
   $all = @(Get-Content -Path $traceFile -ErrorAction SilentlyContinue)
   if ($patterns.Count -eq 0) {
-    Write-Host "  この項目に対応する trace はありません（**目視が唯一の検出器**）。" -ForegroundColor DarkGray
-    return
+    Write-Host "  この項目に対応する presence の trace はありません（**目視が唯一の検出器**）。" -ForegroundColor DarkGray
+  } else {
+    foreach ($p in $patterns) {
+      $hits = @($all | Where-Object { $_ -match [regex]::Escape($p) })
+      $tail = if ($hits.Count -gt 0) { $hits[-1] } else { "(観測なし)" }
+      Write-Host ("  {0,-22} {1} 件  最後: {2}" -f $p, $hits.Count, $tail) -ForegroundColor DarkGray
+    }
+    Write-Host "  ※ 上の presence は診断であって合否ではない（#671 PR A′: hide の trace は出たのに窓は残った）" -ForegroundColor DarkGray
   }
-  foreach ($p in $patterns) {
-    $hits = @($all | Where-Object { $_ -match [regex]::Escape($p) })
-    $tail = if ($hits.Count -gt 0) { $hits[-1] } else { "(観測なし)" }
-    Write-Host ("  {0,-22} {1} 件  最後: {2}" -f $p, $hits.Count, $tail) -ForegroundColor DarkGray
+
+  # 不変条件は presence と違い**合否を名乗れる**（#757）。ここまでの全区間で判定する。
+  $verdict = Get-TraceVerdict $sectionList
+  if ($null -eq $verdict) { return }
+  $summary = ($script:InvariantNames | ForEach-Object { "$_=$($verdict.Overall[$_])" }) -join ' '
+  Write-Host "  不変条件（ここまでの全区間）: $summary" -ForegroundColor DarkGray
+  foreach ($violation in $verdict.Violations) {
+    Write-Host "    違反 $($violation.Invariant) 区間 $($violation.SectionId) / seq $($violation.Seq): $($violation.Message)" -ForegroundColor Red
   }
-  Write-Host "  ※ trace は診断であって合否ではない（#671 PR A′: hide の trace は出たのに窓は残った）" -ForegroundColor DarkGray
 }
 
 # --- 実施ループ ---
 $results = @()
+$sections = @()
 $aborted = $false
 foreach ($it in $items) {
+  # **項目の読み上げより前に打つ。** ここから後に出る trace 行がこの項目のものである。
+  $sections += @{ Id = $it.id; Title = $it.title; StartSeq = (Get-CurrentTraceMarker) }
+
   Write-Host ""
   Write-Host ("--- [{0}] {1}" -f $it.id, $it.title) -ForegroundColor Cyan
   Write-Host ("守る不変条件: {0}" -f $it.inv) -ForegroundColor DarkCyan
@@ -243,7 +296,7 @@ foreach ($it in $items) {
       "p" { $verdict = "PASS" }
       "f" { $verdict = "FAIL" }
       "s" { $verdict = "SKIP" }
-      "t" { Show-Trace $it.trace }
+      "t" { Show-Trace $it.trace $sections }
       "q" { $verdict = "ABORT"; $aborted = $true }
       default { Write-Host "p / f / s / t / q のいずれかを入力してください。" -ForegroundColor Yellow }
     }
@@ -253,9 +306,41 @@ foreach ($it in $items) {
   $note = ""
   if ($verdict -ne "PASS") {
     $note = Read-Host "メモ（何が起きたか。FAIL / SKIP では必須ではないが、書かないと後から再現できません）"
-    if ($verdict -eq "FAIL") { Show-Trace $it.trace }
+    if ($verdict -eq "FAIL") { Show-Trace $it.trace $sections }
   }
   $results += @{ id = $it.id; title = $it.title; inv = $it.inv; verdict = $verdict; note = $note }
+}
+
+# --- trace の不変条件を判定する ---
+# 全区間ぶんを 1 度だけ判定する（状態機械は trace 全体を 1 パスで舐め、違反を区間へ帰属させる）。
+$finalSnapshot = Get-TraceSnapshot
+$traceVerdict = if ($finalSnapshot.Available) {
+  Test-SnotraTraceInvariants -Events $finalSnapshot.Events -Sections $sections -DroppedLineCount $finalSnapshot.Dropped
+} else { $null }
+
+function Get-SectionVerdictSummary([int]$itemId) {
+  if ($null -eq $traceVerdict) { return "trace なし" }
+  $row = @($traceVerdict.Sections | Where-Object { $_.Id -eq $itemId })
+  if ($row.Count -ne 1) { return "—" }
+  return (($script:InvariantNames | ForEach-Object {
+        $value = $row[0][$_]
+        if ($value -eq 'FAIL') { "**$_ FAIL**" } else { "$_ $value" }
+      }) -join ' / ')
+}
+
+# 目視と trace が食い違った項目。**どちらが赤でも赤である**——trace の緑は目視の赤を
+# 打ち消さないし、目視の緑は trace の FAIL を打ち消さない。
+$mismatches = @()
+foreach ($r in $results) {
+  if ($null -eq $traceVerdict) { continue }
+  $row = @($traceVerdict.Sections | Where-Object { $_.Id -eq $r.id })
+  if ($row.Count -ne 1) { continue }
+  $traceFailed = @($script:InvariantNames | Where-Object { $row[0][$_] -eq 'FAIL' })
+  if ($traceFailed.Count -gt 0 -and $r.verdict -eq 'PASS') {
+    $mismatches += "項目 $($r.id)「$($r.title)」— **目視 PASS だが trace は $($traceFailed -join ', ') が FAIL**。目視で見落とした回帰の可能性がある"
+  } elseif ($traceFailed.Count -eq 0 -and $r.verdict -eq 'FAIL') {
+    $mismatches += "項目 $($r.id)「$($r.title)」— 目視 FAIL だが trace は違反を検出せず。**この項目では目視が唯一の検出器である**"
+  }
 }
 
 # --- 記録の書き出し ---
@@ -264,6 +349,11 @@ $pass = @($done | Where-Object { $_.verdict -eq "PASS" }).Count
 $fail = @($done | Where-Object { $_.verdict -eq "FAIL" }).Count
 $skip = @($done | Where-Object { $_.verdict -eq "SKIP" }).Count
 $notRun = @($items | Where-Object { $id = $_.id; -not ($done | Where-Object { $_.id -eq $id }) })
+# **判定器の例外も赤にする**（code-review C2）——例外は欠陥であって「問題が無かった」ではない。
+$traceFail = if ($null -ne $traceVerdict) {
+  @($script:InvariantNames | Where-Object { $traceVerdict.Overall[$_] -eq 'FAIL' }).Count +
+  $(if ($traceVerdict.JudgeFailed) { 1 } else { 0 })
+} else { 0 }
 
 $lines = @()
 $lines += "## カテゴリ D 目視スモークの記録"
@@ -275,28 +365,73 @@ $lines += "| branch | ``$branch`` |"
 $lines += "| commit | ``$sha`` |"
 $lines += "| バイナリ | ``$ExePath`` |"
 if ($dirty) { $lines += "| 注意 | **working tree に未コミットの変更あり** |" }
-$lines += "| 結果 | PASS $pass / FAIL $fail / SKIP $skip / 未実施 $($notRun.Count) |"
+$lines += "| 目視 | PASS $pass / FAIL $fail / SKIP $skip / 未実施 $($notRun.Count) |"
+if ($null -ne $traceVerdict) {
+  # **`Overall` だけを書かない**（code-review High-1）——1 区間でも PASS なら PASS を名乗るため、
+  # 12 区間が SKIP でも「H4=PASS」に見える。実際に何件判定したかを併記する。
+  $lines += "| trace 不変条件 | $(($script:InvariantNames | ForEach-Object {
+        $c = $traceVerdict.Counts[$_]
+        "$_ PASS $($c.PASS) / FAIL $($c.FAIL) / SKIP $($c.SKIP)"
+      }) -join ' 、 ') |"
+  if ($traceVerdict.JudgeFailed) { $lines += "| 注意 | **判定器が例外で停止した**（SKIP は「調べられなかった」である） |" }
+  $lines += "| trace 行 | $($finalSnapshot.TraceLines) 行中 $($finalSnapshot.Events.Count) 行を parse / **捨てた行 $($finalSnapshot.Dropped)** |"
+} else {
+  $lines += "| trace 不変条件 | **判定していない**（trace なし: ``-NoLaunch`` で起動したか 1 行も出ていない） |"
+}
 $lines += ""
-$lines += "| # | 項目 | 判定 | 守る不変条件 | メモ |"
-$lines += "|---|---|---|---|---|"
+$lines += "| # | 項目 | 目視 | trace 不変条件 | 守る不変条件 | メモ |"
+$lines += "|---|---|---|---|---|---|"
 foreach ($r in $done) {
   $mark = switch ($r.verdict) { "PASS" { "PASS" } "FAIL" { "**FAIL**" } default { "SKIP" } }
+  # 縦棒は列区切りゆえ全セルで潰す（1 セルだけ潰しても表が崩れる・code-review L3）。
   $note = if ($r.note) { $r.note.Replace("|", "\|") } else { "" }
-  $lines += "| $($r.id) | $($r.title) | $mark | $($r.inv) | $note |"
+  $lines += "| $($r.id) | $($r.title.Replace('|', '\|')) | $mark | $(Get-SectionVerdictSummary $r.id) | $($r.inv.Replace('|', '\|')) | $note |"
 }
 foreach ($r in $notRun) {
-  $lines += "| $($r.id) | $($r.title) | **未実施** | $($r.inv) | |"
+  $lines += "| $($r.id) | $($r.title.Replace('|', '\|')) | **未実施** | — | $($r.inv.Replace('|', '\|')) | |"
 }
 $lines += ""
 if ($aborted) { $lines += "**途中で中断した**（未実施の項目は検証されていない——問題が無かったのではない）。"; $lines += "" }
 $lines += "検証していない項目は「問題なし」ではない。SKIP / 未実施が残る状態でマージする場合は、その判断であることを明記すること。"
+
+if ($mismatches.Count -gt 0) {
+  $lines += ""
+  $lines += "### 目視と trace の不一致"
+  $lines += ""
+  $lines += "**どちらが赤でも赤である。** trace の緑は目視の赤を打ち消さず、目視の緑は trace の FAIL を打ち消さない。"
+  $lines += ""
+  foreach ($m in $mismatches) { $lines += "- $m" }
+}
+
+if ($null -ne $traceVerdict) {
+  $lines += ""
+  $lines += "### trace 不変条件の判定"
+  $lines += ""
+  $lines += (Format-SnotraTraceVerdictTable -Result $traceVerdict)
+}
+
 $lines += ""
-$lines += "trace は診断であって合否ではない（#671 PR A′: ``egui_results:hide`` は出たのに窓は残った）。合否はすべて目視による。"
+$lines += "**presence（イベントが出たか）は診断であって合否ではない**（#671 PR A′: ``egui_results:hide`` は出たのに窓は残った）。"
+$lines += "合否を名乗れるのは H1 / H4 / H5 の不変条件（``scripts/lib/SnotraTraceInvariants.psm1``）と目視だけである。"
 
 Set-Content -Path $OutFile -Value ($lines -join "`n") -Encoding UTF8
 
 Write-Host ""
-Write-Host "=== 結果: PASS $pass / FAIL $fail / SKIP $skip / 未実施 $($notRun.Count) ===" -ForegroundColor $(if ($fail -gt 0) { "Red" } elseif ($notRun.Count -gt 0 -or $skip -gt 0) { "Yellow" } else { "Green" })
+Write-Host "=== 目視: PASS $pass / FAIL $fail / SKIP $skip / 未実施 $($notRun.Count) ===" -ForegroundColor $(if ($fail -gt 0) { "Red" } elseif ($notRun.Count -gt 0 -or $skip -gt 0) { "Yellow" } else { "Green" })
+if ($null -ne $traceVerdict) {
+  $summary = ($script:InvariantNames | ForEach-Object {
+      $c = $traceVerdict.Counts[$_]
+      "$_ P$($c.PASS)/F$($c.FAIL)/S$($c.SKIP)"
+    }) -join ' '
+  $anySkip = @($script:InvariantNames | Where-Object { $traceVerdict.Counts[$_].SKIP -gt 0 }).Count -gt 0
+  Write-Host "=== trace 不変条件: $summary ===" -ForegroundColor $(if ($traceFail -gt 0) { "Red" } elseif ($anySkip) { "Yellow" } else { "Green" })
+  if ($traceVerdict.JudgeFailed) { Write-Host "  判定器が例外で停止しました（SKIP は「調べられなかった」です）。" -ForegroundColor Red }
+  if ($finalSnapshot.Dropped -gt 0) {
+    Write-Host "  parse できなかった行が $($finalSnapshot.Dropped) 件あるため PASS を SKIP へ落としました。" -ForegroundColor Yellow
+  }
+} else {
+  Write-Host "=== trace 不変条件: 判定していない（trace なし） ===" -ForegroundColor Yellow
+}
 Write-Host "記録: $OutFile"
 if ($traceFile) { Write-Host "trace: $traceFile" }
 
@@ -313,4 +448,6 @@ if ($PostToPr) {
   else { gh pr comment --body-file $OutFile }
 }
 
-if ($fail -gt 0) { exit 1 }
+# **検出は exit code、出力は証拠**（#471）。目視と trace のどちらの FAIL でも落とす——
+# 片方だけを exit code に乗せると、もう片方の赤が「記録に書いてあるだけ」になる。
+if ($fail -gt 0 -or $traceFail -gt 0) { exit 1 }

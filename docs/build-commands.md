@@ -58,9 +58,11 @@ npm run smoke:manual -- -Only 2,5 # 一部だけ再実施
 npm run smoke:manual -- -PostToPr # 記録を PR コメントへ投稿する
 ```
 
-- **記録を残すためのものであって、判定を自動化するものではない。** 合否は常に目視であり、スクリプトが並べる trace は**診断**である（#671 PR A′: `egui_results:hide` は出たのに窓は残り、presence を見る smoke は緑のまま通した）
+- **trace には性質の違う 2 つが載る。混ぜて読まない**（#757）。**presence（イベントが出たか）は診断であって合否ではない**（#671 PR A′: `egui_results:hide` は出たのに窓は残り、presence を見る smoke は緑のまま通した）。一方 **H1 / H4 / H5 の不変条件は「起きてはならないことが起きていないか」を見るので合否を名乗れる**——判定は `scripts/lib/SnotraTraceInvariants.psm1`（Pester で実測。`smoke:egui` の orphan 検出と同じ導出を共有する）
+- **項目の合否は目視と trace の両方が決める。** trace が緑でも目視が赤なら赤であり、逆も同じ。記録は不一致を専用の節で名指しする
+- **SKIP は「判定できなかった」であって合格ではない。** 「該当イベントが無い」「`rows` が読めない」「main の可視状態が未観測」「hide 窓が閉じていない」「parse できなかった行がある」はすべて SKIP として現れ、理由が記録に併記される
 - **エージェントは実行できない**（対話入力を要する）。人間が自分の端末で走らせる。実施の有無が会話にしか残らないと「検証されていない」と「問題が無かった」が区別できなくなるため、`-PostToPr` か出力ファイルの貼り付けで PR に残す
-- 項目の SSOT は PR 本文の目視表であり、スクリプト内の `$items` はその**写し**である。項目を増減したら両方を直す
+- **`$items` の常設 13 項目が SSOT であり、PR 本文の目視表とは別の母集団である**（写しではない・`docs/adr/ADR-folder-location-display-surface.md`「却下 6」）。`$items` に載るのは**どの変更でも壊れうる横断不変条件**、PR 本文の表はその PR 限りの受け入れ確認。**新機能のために先回りで `$items` へ足さない**——足す条件は「その表示が実際に一度回帰したとき」である
 
 - **既定が egui（#532 SU7 flip 済み・env フラグ不要）**。`cargo run`（`-p` 欠落）は**ルートでは bin を決められずエラーになり**（`snotra` / `snotra-settings` の 2 本。実測: `error: cargo run could not determine which binary to run`）、cwd が crate 配下ならその crate の bin が起動する。必ず `-p snotra` を付ける
 

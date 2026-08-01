@@ -1,0 +1,531 @@
+#Requires -Version 7
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+# results 窓の trace から**不変条件**を判定する純関数群（#757）。
+#
+# **presence 検査とは別物である。** 「イベントが出たか」ではなく `src-tauri/CLAUDE.md`
+# 「Win32 / Tauri 注意事項」が求める**「起きてはならないことが起きていないか」**を見る。
+# #671 PR A′ は `egui_results:hide` が出たのに窓が残った回帰で、presence を見る smoke は
+# 緑のまま通した。
+#
+# | # | 判定 | 何を捕まえるか |
+# |---|---|---|
+# | H1 | hidden な窓の中に `egui_results:show` が現れたら異常 | main が hidden なのに results が最前面に残る（#671 PR A′） |
+# | H4 | `egui_results:show` の `rows` が 0 なら異常 | 「高さ 0 ⇔ hide」の契約違反（`layout::present_results`） |
+# | H5 | hide を挟まない連続 `egui_results:show` は異常 | 二重発火抑止（`ResultsWindow.visible` の `swap`）の破れ |
+#
+# **判定不能を PASS へ化けさせない**のがこのモジュールの要石である。「該当イベントが無い」
+# 「`rows` が読めない」「main の可視状態が未観測」「窓が閉じていない」「parse できなかった
+# 行がある」はすべて SKIP であって合格ではない。
+#
+# 入力は `SnotraSmoke.psm1` の `Read-SnotraTraceEvents` が返す parse 済みオブジェクト列。
+# trace 行の書式は `src-tauri/src/trace.rs`。
+
+$script:EventHideDone = 'egui_hide:done'
+$script:EventShowDone = 'egui_show:done'
+$script:EventResultsShow = 'egui_results:show'
+$script:EventResultsHide = 'egui_results:hide'
+$script:Invariants = @('H1', 'H4', 'H5')
+
+<#
+.SYNOPSIS
+判定する不変条件の名前。表示・集計の列順もこれが決める。
+
+.DESCRIPTION
+**呼び出し側はこの一覧を写さない**（`/symmetric-check`）。写しを持つと、判定を 1 つ足したとき
+モジュール側だけが直り、記録・集計・exit code から新しい不変条件が**黙って落ちる**。
+#>
+function Get-SnotraTraceInvariantNames {
+    [CmdletBinding()]
+    param()
+    return $script:Invariants
+}
+
+<#
+.SYNOPSIS
+オブジェクトのプロパティを、存在しなくても落ちずに読む。
+
+.DESCRIPTION
+**StrictMode 下で欠落プロパティへ直接触ると `PropertyNotFoundException` になる**（実測）。
+`.PSObject.Properties.Name -contains` も空オブジェクトでは例外を出すため、
+**indexer（`.PSObject.Properties[$Name]`）だけが安全**である。trace 行のスキーマが
+ドリフトしても判定器が落ちないように、プロパティの読みは必ずここを通す。
+#>
+function Get-SnotraTraceProperty {
+    [CmdletBinding()]
+    param(
+        $InputObject,
+        [Parameter(Mandatory)]
+        [string]$Name
+    )
+
+    if ($null -eq $InputObject) { return $null }
+    $property = $InputObject.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $null }
+    return $property.Value
+}
+
+# 数値へ変換できなければ `$null`。**キャストを裸で書かない**——trace のスキーマがドリフト
+# して `seq` や `rows` が非数値になったとき、例外が fail-safe まで飛んで**既に確定した違反が
+# 捨てられる**（code-review C2）。変換できないことは「判定不能」であって「合格」ではないので、
+# 呼び出し側が Unjudgeable として記録する。
+function ConvertTo-SnotraTraceInt64 {
+    [CmdletBinding()]
+    param($Value)
+
+    if ($null -eq $Value) { return $null }
+    try { return [long]$Value } catch { return $null }
+}
+
+<#
+.SYNOPSIS
+区間マーカー: これまでに観測した最大の `seq`。事象が無ければ 0。
+
+.DESCRIPTION
+**マーカーは操作の「前」に打つ**（#757）。後に打つと直前の操作が前の区間へ紛れ込む。
+`seq` は単一の `AtomicU64`（`src-tauri/src/trace.rs`）ゆえ全順序であり、この値より大きい
+`seq` を持つ事象が「これ以降」である。
+#>
+function Get-SnotraTraceMarker {
+    [CmdletBinding()]
+    param(
+        [psobject[]]$Events = @()
+    )
+
+    $max = [long]0
+    foreach ($event in $Events) {
+        $value = ConvertTo-SnotraTraceInt64 (Get-SnotraTraceProperty -InputObject $event -Name 'seq')
+        if ($null -eq $value) { continue }
+        if ($value -gt $max) { $max = $value }
+    }
+    return $max
+}
+
+<#
+.SYNOPSIS
+H1 / H4 / H5 を判定し、違反を区間へ帰属させる。例外は投げない。
+
+.PARAMETER Events
+`Read-SnotraTraceEvents` が返す parse 済みオブジェクト列。順序は問わない（`seq` で整列する）。
+
+.PARAMETER Sections
+`@( @{ Id = 1; Title = '...'; StartSeq = 0 }, ... )`。`Get-SnotraTraceMarker` の値を
+`StartSeq` に入れる。`Id` / `Title` / `StartSeq` の欠落は許容する。
+
+.PARAMETER DroppedLineCount
+`[trace]` で始まるのに parse できず捨てた行の数。**stderr に出る非 trace の診断行
+（`[index-load] ...` 等）を数えてはならない**——正常な実行が毎回 degrade して検出器が
+無意味になる（実測: 実ログ 25 行のうち 1 行が非 trace の診断行だった）。
+
+.DESCRIPTION
+**状態機械は trace 全体を 1 パスで舐め、違反イベントを区間へ「帰属」させる。**
+区間ごとに独立評価すると境界を跨ぐ違反を落とす——項目 N で hide し項目 N+1 で
+`egui_results:show` が出た場合、どちらの区間内にも収まらない。区間マーカーは
+**評価の境界ではなく帰属の道具**である。
+#>
+function Test-SnotraTraceInvariants {
+    [CmdletBinding()]
+    param(
+        [psobject[]]$Events = @(),
+        [hashtable[]]$Sections = @(),
+        [int]$DroppedLineCount = 0
+    )
+
+    try {
+        return Invoke-SnotraTraceJudgement -Events $Events -Sections $Sections -DroppedLineCount $DroppedLineCount
+    } catch {
+        # **判定器が落ちて記録が書けないほうが害が大きい。** ただし黙って消さず、例外の本文を
+        # 判定不能の理由として残し、**`JudgeFailed` で呼び出し側に fail-closed させる**——
+        # 例外は欠陥であって「問題が無かった」ではない（code-review C2）。
+        return New-SnotraTraceFailSafeResult -Sections $Sections -DroppedLineCount $DroppedLineCount `
+            -Reason "判定器が例外で停止した: $($_.Exception.Message)"
+    }
+}
+
+function New-SnotraTraceFailSafeResult {
+    [CmdletBinding()]
+    param(
+        [hashtable[]]$Sections = @(),
+        [int]$DroppedLineCount = 0,
+        [Parameter(Mandatory)]
+        [string]$Reason
+    )
+
+    # **不変条件名を書き並べない**（`$script:Invariants` が SSOT）——写しを置くと、判定を
+    # 1 つ足したときこの経路だけが新しい名前を欠き、`Overall` から黙って落ちる（code-review M2）。
+    function New-SkipRow([int]$Id, [string]$Title) {
+        $row = @{ Id = $Id; Title = $Title }
+        foreach ($invariant in $script:Invariants) { $row[$invariant] = 'SKIP' }
+        return $row
+    }
+
+    $rows = @( (New-SkipRow 0 '(最初の項目より前)') )
+    $index = 0
+    foreach ($section in $Sections) {
+        $index++
+        $rawId = if ($null -ne $section -and $section.ContainsKey('Id')) { $section['Id'] } else { $null }
+        $id = ConvertTo-SnotraTraceInt64 $rawId
+        if ($null -eq $id) { $id = $index }
+        $title = if ($null -ne $section -and $section.ContainsKey('Title')) { [string]$section['Title'] } else { "項目 $id" }
+        $rows += (New-SkipRow $id $title)
+    }
+
+    $overall = @{}
+    $counts = @{}
+    foreach ($invariant in $script:Invariants) {
+        $overall[$invariant] = 'SKIP'
+        $counts[$invariant] = @{ PASS = 0; FAIL = 0; SKIP = $rows.Count }
+    }
+
+    return @{
+        Sections         = $rows
+        Overall          = $overall
+        Counts           = $counts
+        Violations       = @()
+        Unjudgeable      = @( @{ Invariant = '*'; Seq = 0; SectionId = 0; Reason = $Reason } )
+        DroppedLineCount = $DroppedLineCount
+        JudgeFailed      = $true
+    }
+}
+
+function Invoke-SnotraTraceJudgement {
+    [CmdletBinding()]
+    param(
+        [psobject[]]$Events = @(),
+        [hashtable[]]$Sections = @(),
+        [int]$DroppedLineCount = 0
+    )
+
+    # --- 区間の正規化 ---------------------------------------------------------
+    # `StartSeq` を持たない区間は帰属表から外すが、**出力からは外さない**（全 SKIP で
+    # 現れる）。表から消すと「実施しなかった項目」が記録から蒸発する。
+    $normalized = @()
+    $index = 0
+    foreach ($section in $Sections) {
+        $index++
+        $rawId = if ($null -ne $section -and $section.ContainsKey('Id')) { $section['Id'] } else { $null }
+        $id = ConvertTo-SnotraTraceInt64 $rawId
+        if ($null -eq $id) { $id = $index }
+        $title = if ($null -ne $section -and $section.ContainsKey('Title')) { [string]$section['Title'] } else { "項目 $id" }
+        $rawStart = if ($null -ne $section -and $section.ContainsKey('StartSeq')) { $section['StartSeq'] } else { $null }
+        $start = ConvertTo-SnotraTraceInt64 $rawStart
+        $normalized += @{
+            Id           = $id
+            Title        = $title
+            StartSeq     = if ($null -ne $start) { $start } else { [long]0 }
+            Attributable = ($null -ne $start)
+        }
+    }
+
+    # 擬似区間 0 = 最初のマーカーより前。ここが無いと起動直後の事象が捨てられる。
+    $pseudo = @{ Id = 0; Title = '(最初の項目より前)'; StartSeq = [long]::MinValue; Attributable = $true }
+    $attributable = @(@($pseudo) + @($normalized | Where-Object { $_.Attributable }) |
+        Sort-Object -Property { $_.StartSeq } -Stable)
+
+    # --- 事象の正規化 ---------------------------------------------------------
+    # `seq` か `event` が読めない行は順序にも区間にも載せられない。捨てた行と同類として
+    # 数え、degrade の入力にする（下の $effectiveDropped）。
+    $parsed = @()
+    $malformed = 0
+    foreach ($event in $Events) {
+        $seq = ConvertTo-SnotraTraceInt64 (Get-SnotraTraceProperty -InputObject $event -Name 'seq')
+        $name = Get-SnotraTraceProperty -InputObject $event -Name 'event'
+        if ($null -eq $seq -or $null -eq $name) {
+            $malformed++
+            continue
+        }
+        $parsed += @{ Seq = $seq; Name = [string]$name; Raw = $event }
+    }
+    $parsed = @($parsed | Sort-Object -Property { $_.Seq } -Stable)
+    $effectiveDropped = $DroppedLineCount + $malformed
+
+    # --- 1 パスの状態機械 -----------------------------------------------------
+    $mainState = 'unknown'   # unknown / visible / hidden
+    $openWindow = $null
+    $hideWindows = @()
+    $resultsShown = $false
+    $violations = @()
+    $unjudgeable = @()
+    $passCount = @{}
+
+    foreach ($event in $parsed) {
+        $sectionId = Resolve-SnotraTraceSection -Attributable $attributable -Seq $event.Seq
+
+        switch ($event.Name) {
+            $script:EventHideDone {
+                # **連続する egui_hide:done は窓を打ち直さない——開いている窓を延長する。**
+                # `hide_egui_main` は可視性ガードの無い listener からも呼ばれ、遷移を問わず
+                # trace を出す。打ち直すと 2 つの hide に挟まれた違反が評価から消える。
+                if ($mainState -ne 'hidden') {
+                    $openWindow = @{ SectionId = $sectionId; Seq = $event.Seq; Violated = $false; Closed = $false }
+                    $hideWindows += $openWindow
+                }
+                $mainState = 'hidden'
+            }
+            $script:EventShowDone {
+                if ($null -ne $openWindow) {
+                    $openWindow.Closed = $true
+                    $openWindow = $null
+                }
+                $mainState = 'visible'
+            }
+            $script:EventResultsHide {
+                # **hide 側は要求レベルゆえ連続してよい**（`hide_egui_main` は遷移して
+                # いなくても出す）。H5 の separator としてはどちらの発火源も等価に扱う。
+                $resultsShown = $false
+            }
+            $script:EventResultsShow {
+                # --- H1 ---
+                if ($mainState -eq 'hidden') {
+                    if ($null -ne $openWindow) {
+                        $openWindow.Violated = $true
+                        $violations += @{
+                            Invariant = 'H1'
+                            Seq       = $event.Seq
+                            SectionId = $openWindow.SectionId
+                            Message   = "main が hidden（seq=$($openWindow.Seq) の $script:EventHideDone 以降）なのに $script:EventResultsShow が出た"
+                        }
+                    } else {
+                        # 到達しない（hidden 遷移が必ず窓を開く）が、**無記録の else を残さない**
+                        # ——沈黙経路を作らないと掲げるモジュールの中の抜け穴になる（code-review L1）。
+                        $unjudgeable += @{
+                            Invariant = 'H1'
+                            Seq       = $event.Seq
+                            SectionId = $sectionId
+                            Reason    = 'main が hidden なのに hide 窓が開いていない（状態機械の不整合）'
+                        }
+                    }
+                } elseif ($mainState -eq 'unknown') {
+                    $unjudgeable += @{
+                        Invariant = 'H1'
+                        Seq       = $event.Seq
+                        SectionId = $sectionId
+                        Reason    = "main の可視状態が未観測（$script:EventShowDone / $script:EventHideDone をまだ見ていない）"
+                    }
+                }
+
+                # --- H4 ---
+                $data = Get-SnotraTraceProperty -InputObject $event.Raw -Name 'data'
+                $rows = ConvertTo-SnotraTraceInt64 (Get-SnotraTraceProperty -InputObject $data -Name 'rows')
+                if ($null -eq $rows) {
+                    $unjudgeable += @{
+                        Invariant = 'H4'
+                        Seq       = $event.Seq
+                        SectionId = $sectionId
+                        Reason    = "$script:EventResultsShow の rows が読めない（欠落か非数値——trace のスキーマが変わった可能性）"
+                    }
+                } elseif ($rows -le 0) {
+                    $violations += @{
+                        Invariant = 'H4'
+                        Seq       = $event.Seq
+                        SectionId = $sectionId
+                        Message   = "rows = $rows の $script:EventResultsShow（高さ 0 ⇔ hide の契約違反）"
+                    }
+                } else {
+                    $passCount = Add-SnotraTracePass -PassCount $passCount -Invariant 'H4' -SectionId $sectionId
+                }
+
+                # --- H5 ---
+                if ($resultsShown) {
+                    $violations += @{
+                        Invariant = 'H5'
+                        Seq       = $event.Seq
+                        SectionId = $sectionId
+                        Message   = "$script:EventResultsHide を挟まない連続した $script:EventResultsShow（二重発火抑止の破れ）"
+                    }
+                } else {
+                    $passCount = Add-SnotraTracePass -PassCount $passCount -Invariant 'H5' -SectionId $sectionId
+                }
+                $resultsShown = $true
+            }
+        }
+    }
+
+    # --- H1 は窓ごとに締める --------------------------------------------------
+    # **違反は窓が閉じていなくても確定する。無違反は「まだ後続が来うる」ので SKIP。**
+    # この非対称が無いと、最後まで hidden で終わる実行（smoke-egui）で検出器が丸ごと黙る。
+    foreach ($window in $hideWindows) {
+        if ($window.Violated) { continue }
+        if ($window.Closed) {
+            $passCount = Add-SnotraTracePass -PassCount $passCount -Invariant 'H1' -SectionId $window.SectionId
+        } else {
+            $unjudgeable += @{
+                Invariant = 'H1'
+                Seq       = $window.Seq
+                SectionId = $window.SectionId
+                Reason    = "hide 窓が閉じていない（次の $script:EventShowDone が無い）"
+            }
+        }
+    }
+
+    # --- 区間ごとの判定 -------------------------------------------------------
+    $failed = @{}
+    foreach ($violation in $violations) {
+        $failed["$($violation.Invariant)|$($violation.SectionId)"] = $true
+    }
+
+    $rows = @()
+    foreach ($section in @(@($pseudo) + $normalized)) {
+        $row = @{ Id = $section.Id; Title = $section.Title }
+        foreach ($invariant in $script:Invariants) {
+            $key = "$invariant|$($section.Id)"
+            if ($failed.ContainsKey($key)) {
+                $row[$invariant] = 'FAIL'
+            } elseif ($passCount.ContainsKey($key) -and $passCount[$key] -gt 0) {
+                # **D7: 捨てた行があるなら PASS を名乗らない。** 決定的な違反が捨てられた
+                # 行に載っていた可能性が残る。FAIL は落とさない（違反は確定している）。
+                if ($effectiveDropped -gt 0) {
+                    $row[$invariant] = 'SKIP'
+                    $unjudgeable += @{
+                        Invariant = $invariant
+                        Seq       = 0
+                        SectionId = $section.Id
+                        Reason    = "parse できなかった行が $effectiveDropped 件あるため PASS を SKIP へ落とした"
+                    }
+                } else {
+                    $row[$invariant] = 'PASS'
+                }
+            } else {
+                $row[$invariant] = 'SKIP'
+            }
+        }
+        $rows += $row
+    }
+
+    # **`Overall` だけを読むと SKIP の山が PASS に覆われる**（code-review High-1）——1 区間でも
+    # PASS なら PASS を名乗るため。`Counts` を併せて返し、呼び出し側が「何件を実際に判定したか」
+    # を出せるようにする（`Overall` は exit code 用の要約であって網羅の主張ではない）。
+    $overall = @{}
+    $counts = @{}
+    foreach ($invariant in $script:Invariants) {
+        $verdicts = @($rows | ForEach-Object { $_[$invariant] })
+        $overall[$invariant] = if ($verdicts -contains 'FAIL') { 'FAIL' }
+        elseif ($verdicts -contains 'PASS') { 'PASS' }
+        else { 'SKIP' }
+        $counts[$invariant] = @{
+            PASS = @($verdicts | Where-Object { $_ -eq 'PASS' }).Count
+            FAIL = @($verdicts | Where-Object { $_ -eq 'FAIL' }).Count
+            SKIP = @($verdicts | Where-Object { $_ -eq 'SKIP' }).Count
+        }
+    }
+
+    return @{
+        Sections         = $rows
+        Overall          = $overall
+        Counts           = $counts
+        Violations       = $violations
+        Unjudgeable      = $unjudgeable
+        DroppedLineCount = $effectiveDropped
+        JudgeFailed      = $false
+    }
+}
+
+# 昇順に並んだ帰属表から、`Seq` より小さい `StartSeq` を持つ**最後の**区間を選ぶ。
+# 同じ `StartSeq` が並ぶ（事象を挟まずに項目が進んだ）場合は後の項目を採る——
+# マーカーは操作の前に打つので、その後の事象は後の項目のものである。
+function Resolve-SnotraTraceSection {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [array]$Attributable,
+        [Parameter(Mandatory)]
+        [long]$Seq
+    )
+
+    if ($Attributable.Count -eq 0) { return 0 }
+    $chosen = $Attributable[0]
+    foreach ($section in $Attributable) {
+        if ($section.StartSeq -lt $Seq) { $chosen = $section } else { break }
+    }
+    return $chosen.Id
+}
+
+function Add-SnotraTracePass {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [hashtable]$PassCount,
+        [Parameter(Mandatory)]
+        [string]$Invariant,
+        [Parameter(Mandatory)]
+        [int]$SectionId
+    )
+
+    $key = "$Invariant|$SectionId"
+    if ($PassCount.ContainsKey($key)) { $PassCount[$key] = $PassCount[$key] + 1 }
+    else { $PassCount[$key] = 1 }
+    return $PassCount
+}
+
+<#
+.SYNOPSIS
+判定結果を markdown の行列へ整形する（記録・PR コメント用）。
+
+.DESCRIPTION
+**SKIP を「合格」と読ませない**ため、凡例と判定不能の理由を必ず併記する。
+#>
+function Format-SnotraTraceVerdictTable {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [hashtable]$Result
+    )
+
+    $lines = @()
+    # ヘッダも `$script:Invariants` から作る（写しを置かない・code-review M2）。
+    $lines += "| 区間 | 項目 | $($script:Invariants -join ' | ') |"
+    $lines += "|---|---|$('---|' * $script:Invariants.Count)"
+    foreach ($row in $Result.Sections) {
+        $cells = foreach ($invariant in $script:Invariants) {
+            if ($row[$invariant] -eq 'FAIL') { "**FAIL**" } else { $row[$invariant] }
+        }
+        $lines += "| $($row.Id) | $($row.Title) | $($cells -join ' | ') |"
+    }
+    $lines += ''
+    $lines += 'H1 = hidden な窓に results が現れない / H4 = `rows` が 0 の show が無い / H5 = hide を挟まない連続 show が無い'
+    $lines += '**SKIP は「判定できなかった」であって合格ではない。** 理由は下の一覧にある。'
+    if ($Result.ContainsKey('Counts')) {
+        $lines += ''
+        $lines += '| 不変条件 | PASS | FAIL | SKIP |'
+        $lines += '|---|---|---|---|'
+        foreach ($invariant in $script:Invariants) {
+            $c = $Result.Counts[$invariant]
+            $lines += "| $invariant | $($c.PASS) | $($c.FAIL) | $($c.SKIP) |"
+        }
+    }
+    if ($Result.ContainsKey('JudgeFailed') -and $Result.JudgeFailed) {
+        $lines += ''
+        $lines += '**判定器そのものが例外で停止した。** この表の SKIP は「調べて問題が無かった」ではなく「調べられなかった」である。'
+    }
+
+    if ($Result.Violations.Count -gt 0) {
+        $lines += ''
+        $lines += '### trace が検出した違反'
+        $lines += ''
+        foreach ($violation in $Result.Violations) {
+            $lines += "- **$($violation.Invariant)** 区間 $($violation.SectionId) / seq $($violation.Seq) — $($violation.Message)"
+        }
+    }
+
+    if ($Result.Unjudgeable.Count -gt 0) {
+        $lines += ''
+        $lines += '### 判定できなかった理由'
+        $lines += ''
+        foreach ($reason in $Result.Unjudgeable) {
+            $lines += "- $($reason.Invariant) 区間 $($reason.SectionId) — $($reason.Reason)"
+        }
+    }
+
+    return $lines
+}
+
+Export-ModuleMember -Function @(
+    'Get-SnotraTraceInvariantNames'
+    'Get-SnotraTraceProperty'
+    'Get-SnotraTraceMarker'
+    'Test-SnotraTraceInvariants'
+    'Format-SnotraTraceVerdictTable'
+)

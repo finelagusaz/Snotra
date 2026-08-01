@@ -56,6 +56,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 Import-Module (Join-Path $PSScriptRoot 'lib/SnotraSmoke.psm1') -Force
+# H1（hide 後に results が取り残されない）の判定はここに書かない——`manual-smoke.ps1` と
+# **同じ導出**を共有する（#757）。
+Import-Module (Join-Path $PSScriptRoot 'lib/SnotraTraceInvariants.psm1') -Force
 
 if (-not (Test-Path $ExePath)) {
   throw "Executable not found: $ExePath"
@@ -391,26 +394,55 @@ try {
       $failures += "egui_results:hide not observed within ${ObserveTimeoutMs}ms after Escape"
     }
 
-    # #671 PR A′: hide 後に results だけが最前面に取り残されないこと（orphan 検出）。
+    # #671 PR A′: hide 後に results だけが最前面に取り残されないこと（H1・orphan 検出）。
     # **presence 検査ではこの事故を素通りする**——orphan でも egui_results:hide は出るため。
     # orphan は必ず「hide 以降の余分な egui_results:show」として現れる（main が hidden でも
     # repaint 要求は飛ぶ: config-applied / indexing-* / updater 完了の wake_main）。
-    # 静定を待ってから、最後の egui_hide:done より後ろの行だけを見る。
+    #
+    # **判定の正本は `lib/SnotraTraceInvariants.psm1` の H1 である**（#757）。以前はここに
+    # 生行の正規表現で書かれており、`manual-smoke.ps1` に同じ不変条件を足すと導出が 2 か所に
+    # なるので移した。オーケストレーション（静定待ち・ゲート・失敗文言）はここに残る。
+    # smoke の実行は最後まで hidden で終わるため hide 窓は閉じない——**違反は窓が閉じて
+    # いなくても FAIL、無違反は SKIP** という H1 の非対称がこの経路を成立させている。
     if ($resultsChecked -and $failures.Count -eq 0) {
       Start-Sleep -Milliseconds 1500
-      $lines = @(Get-Content -Path $errPath)
-      $hideIdx = -1
-      for ($i = $lines.Count - 1; $i -ge 0; $i--) {
-        if ($lines[$i] -match '"event":"egui_hide:done"') { $hideIdx = $i; break }
+      # 「捨てた行」の数え方は `Read-SnotraTraceSnapshot` が持つ（`manual-smoke.ps1` と同じ
+      # 規則を共有する・`/dry-check`）——非 trace の診断行を数えると毎回 degrade する。
+      $snapshot = Read-SnotraTraceSnapshot -Path $errPath
+      $dropped = $snapshot.Dropped
+      $invariants = Test-SnotraTraceInvariants -Events $snapshot.Events -Sections @() -DroppedLineCount $dropped
+
+      # **H1 だけを読むと「判定できなかった」が「正常」と同じ値になる**（code-review C1）。
+      # smoke は最後まで hidden で終わるため H1 の正常値は SKIP であり、trace 不在・判定器の
+      # 例外・イベント名のドリフトがすべて緑と見分けられなかった。3 つとも読み、さらに
+      # **判定器が実際に走った肯定的な証拠**を要求する。
+      if ($invariants.JudgeFailed) {
+        $reasons = @($invariants.Unjudgeable | ForEach-Object { $_.Reason })
+        $failures += "trace invariant judge aborted: $($reasons -join '; ')"
       }
-      # $hideIdx が最終行なら「後ろ」は空。PowerShell の範囲演算子は降順にも回るため、
-      # 空区間を範囲式で書くと逆走して誤検出する——先に件数で弾く。
-      if ($hideIdx -ge 0 -and $hideIdx -lt ($lines.Count - 1)) {
-        $after = $lines[($hideIdx + 1)..($lines.Count - 1)]
-        $orphan = @($after | Where-Object { $_ -match '"event":"egui_results:show"' })
-        if ($orphan.Count -gt 0) {
-          $failures += "results window re-shown after egui_hide:done ($($orphan.Count) x egui_results:show); main is hidden but results is left on top"
+      foreach ($invariant in (Get-SnotraTraceInvariantNames)) {
+        if ($invariants.Overall[$invariant] -ne 'FAIL') { continue }
+        $detail = @($invariants.Violations | Where-Object { $_.Invariant -eq $invariant })
+        if ($invariant -eq 'H1') {
+          $failures += "results window re-shown after egui_hide:done ($($detail.Count) x egui_results:show); main is hidden but results is left on top"
+        } else {
+          $failures += "trace invariant $invariant violated ($($detail.Count) x): $(($detail | ForEach-Object { $_.Message }) -join '; ')"
         }
+      }
+      # **肯定的な証拠**: ここへ来る時点で `Wait-SnotraTraceEvent` が show / results:show / hide を
+      # 観測済みなので、判定器が 1 件も `egui_results:show` を見ていないなら判定器側の欠陥である
+      # （trace を読めていない・イベント名がドリフトした）。**沈黙を合格と読ませない**。
+      $judgedShows = @($snapshot.Events | Where-Object {
+          (Get-SnotraTraceProperty -InputObject $_ -Name 'event') -eq 'egui_results:show'
+        })
+      if ($judgedShows.Count -eq 0) {
+        $failures += "trace invariant judge saw 0 x egui_results:show although Wait-SnotraTraceEvent observed it; the detector did not actually run"
+      }
+      # **捨てた行を failure にはしない**（#757 D6/D7）。旧判定は生行を見ていたので今日は無害に
+      # 済んでおり、ここで赤にすると不変条件と無関係な理由で CI が落ちる新しい経路を作る。
+      # 証拠としてだけ残す（H1 の PASS はモジュール側で SKIP へ落ちている）。
+      if ($dropped -gt 0) {
+        Write-Host "  [#757] parse できなかった trace 行が $dropped 件ある（H1 の PASS は SKIP へ落ちている）" -ForegroundColor Yellow
       }
     }
   }

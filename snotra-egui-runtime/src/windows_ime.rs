@@ -48,10 +48,19 @@ impl PlatformIme {
         let callback_state = Box::new(CallbackState { sender });
         let callback_ptr = (&*callback_state) as *const CallbackState as usize;
 
+        // tauri::Window::hwnd() は tauri が依存する windows 版の HWND を返す。当 crate は
+        // 別版を使うため、生ポインタを取り出して自版の型で組み直す（src-tauri と同じ形）。
+        // 両版の HWND は同一定義（pub struct HWND(pub *mut c_void)）ゆえ表現は等しい。
+        //
         // SAFETY: hwnd is owned by the attached Tauri Window. callback_ptr stays
         // valid until Drop removes this exact callback/id pair.
         let installed = unsafe {
-            SetWindowSubclass(hwnd, Some(ime_subclass_proc), IME_SUBCLASS_ID, callback_ptr)
+            SetWindowSubclass(
+                HWND(hwnd.0),
+                Some(ime_subclass_proc),
+                IME_SUBCLASS_ID,
+                callback_ptr,
+            )
         };
         if !installed.as_bool() {
             return Err(RuntimeError::ImeInitialization(

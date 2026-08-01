@@ -123,8 +123,11 @@ export function selectChecks(rel) {
   const checks = [];
   const isRust = rel.endsWith(".rs");
 
-  // fmt を clippy より前に置くのは**速いほうを先に落とす**ため（fmt はビルドを要さず 0.7s・
-  // clippy は cold なら数十秒）。整形だけで落ちるときに clippy の完了を待たせない。
+  // fmt を clippy より前に置くのは**証拠が先に出る**ようにするため。
+  // **hook では実行時間は変わらない**——main() の検査ループは失敗しても break せず、
+  // 全検査を最後まで走らせる（沈黙を合格と読ませる契約上、clippy の証拠を抑制できない）。
+  // 「先に落ちる」のは CI 側だけである（GitHub Actions は step 失敗で以降を skip する）。
+  // 整形の失敗は `cargo fmt --all` の 1 コマンドで直せるので、最初に目へ入れる価値がある。
   if (isRust) checks.push("fmt");
   if (isRust) checks.push("clippy");
   if (isRust && rel.startsWith("snotra-core/")) checks.push("core-test");
@@ -371,7 +374,12 @@ function runCheck(id, root, sections, errors) {
 
   const budget = BUDGETS[id];
   const combined = combineStreams(res.stdout, res.stderr, budget.from);
-  const evidence = takeLines(stripProgressLines(combined), budget).trim();
+  // fmt の出力は unified diff であり、cargo の進捗行を含まない。**ここで剥ぐと
+  // コンテキスト行を誤って食う**（#858）——diff のコンテキスト行は「空白 1 個 + 元のインデント」で
+  // 始まるため、`Running` / `Finished` / `Checking` 等で始まるコードが PROGRESS_LINE に一致する。
+  // 実在の種: src-tauri/src/egui_shell/notify.rs の `Checking,` / `Installing,`。
+  // PROGRESS_LINE から `\s*` を外す方向は採らない——cargo は進捗行を実際にインデントして出す。
+  const evidence = takeLines(id === "fmt" ? combined : stripProgressLines(combined), budget).trim();
 
   const status = timedOut
     ? `検査を完走できませんでした（${PER_CHECK_TIMEOUT_MS / 1000}s でタイムアウト）`

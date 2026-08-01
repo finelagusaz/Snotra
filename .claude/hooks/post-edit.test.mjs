@@ -99,8 +99,8 @@ describe("selectChecks", () => {
     expect(selectChecks("e2e/README.md")).toEqual([]);
   });
 
-  // fmt は全 .rs に付く（#858）。**clippy より前**であることも固定する——速い検査を先に
-  // 落とす配置が意図であり、順序が入れ替われば整形だけの失敗で clippy の完了を待つことになる。
+  // fmt は全 .rs に付く（#858）。**clippy より前**であることも固定する——順序が意味を持つのは
+  // 報告の並び（証拠が先に目へ入る）であって実行時間ではない。hook のループは fail-fast しない。
   it("snotra-core の .rs は fmt + clippy + core-test", () => {
     expect(selectChecks("snotra-core/src/lib.rs")).toEqual(["fmt", "clippy", "core-test"]);
   });
@@ -501,9 +501,9 @@ describe("repro の区切り正規化（フック間契約・#768）", () => {
     expect(spec.repro).toContain("vitest.mjs");
   });
 
-  // fmt を代表標本に含めるのは、**args に `--` を持つ唯一の id** だから（他は cargo test -p X か
-  // clippy と同型）。repro は args を join するので、区切りの扱いを誤れば fmt でだけ現れる。
-  it.each([["fmt"], ["clippy"], ["core-test"], ["cargo-check"]])("%s の repro に `\\` が無い", (id) => {
+  // **母集団は BUDGETS から導出する**（#858）。代表標本を手で選ぶと、新しい形の id
+  // （fmt は args に `--` を持つ唯一の id だった）が標本から漏れる。
+  it.each(Object.keys(BUDGETS).map((id) => [id]))("%s の repro に `\\` が無い", (id) => {
     expect(buildCommand(id, REPO).repro).not.toContain("\\");
   });
 

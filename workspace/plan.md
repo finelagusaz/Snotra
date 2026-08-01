@@ -97,7 +97,12 @@ open PR も無い。**63 ファイル整形の衝突相手は存在しない。*
     ——**`--message-format` のような出力整形フラグを付けない**（`G-hook-commands` の除去リストは
     `--message-format` のみ・他を足すとカテゴリ A と不一致になる）
 - [x] `post-edit.test.mjs` の `.rs` 期待配列 **8 箇所**（`:103,107,116,120,124,125` に加え `:232` `:458`）へ `"fmt"` を追加する
-- [x] 検証: `npm test`（`BUDGETS 完全性カナリア` が 3 点セットの欠落を捕まえる）
+- [x] 検証: `npm test`
+      **訂正（code-reviewer の指摘・2026-08-01）**: 当初ここに「`BUDGETS 完全性カナリア` が
+      **3 点セット**の欠落を捕まえる」と書いたが、カナリアが捕まえるのは `BUDGETS` の欠落 **1 本だけ**である。
+      `buildCommand` の case 欠落は手書きの `it.each` リストが唯一の検知点で、そこを更新し忘れれば緑のまま通った。
+      → **母集団を `Object.keys(BUDGETS)` から導出する形へ変更し、輪を閉じた**
+      （`selectChecks` → カナリア → `BUDGETS` → 導出された母集団 → `buildCommand`）。
 
 ### Phase 3 — 文書
 
@@ -139,6 +144,11 @@ open PR も無い。**63 ファイル整形の衝突相手は存在しない。*
       （赤しか見ないと「常に赤い」検査と区別できない）
       **実測（2026-08-01）**: 復元の Edit で hook は**沈黙**（`*.rs` は検査が割り当てられているので沈黙 = 合格）。
       CI の緑は下の CI 項目と同時に確認する。
+- [x] **新設した検知経路そのものの FI**（code-reviewer の M3 を受けて追加・`.claude/rules/safety-nets.md` の要求）
+      **実測（2026-08-01）**: `buildCommand` の `case "fmt":` を `case "fmt-FAULT-INJECTION":` へ改名 →
+      `post-edit.test.mjs` と `pre-bash.test.mjs` の**両方が赤**になり、後者は
+      `fmt の spec が null（buildCommand の case 欠落）` と原因を名指しした。復元後は 538 passed。
+      **これは今回新しく閉じた輪である**——母集団を手書きしていた間は、リストの更新漏れで緑のまま通った。
 - [ ] **CI**: 未整形の 1 ファイルを含むコミットを PR ブランチへ push し、**rust-check が赤**になることを確認 →
       整形して戻すコミットを push し、緑に戻ることを確認（2 コミットは実測の記録として残す）
 

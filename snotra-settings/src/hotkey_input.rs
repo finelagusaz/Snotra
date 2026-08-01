@@ -236,9 +236,11 @@ mod tests {
             .chain(('0'..='9').map(|ch| ch.to_string()))
             .chain((1..=12).map(|n| format!("F{n}")))
             .chain(
-                ["Space", "Enter", "Tab", "Home", "End", "PageUp", "PageDown", "Insert"]
-                    .into_iter()
-                    .map(str::to_string),
+                [
+                    "Space", "Enter", "Tab", "Home", "End", "PageUp", "PageDown", "Insert",
+                ]
+                .into_iter()
+                .map(str::to_string),
             )
             .collect();
         expected.sort();

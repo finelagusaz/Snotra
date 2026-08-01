@@ -25,13 +25,19 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, tr: &Tr) {
 
         // -- Visibility --
         style::section_heading(ui, tr.t(TrKey::HeadingVisibility));
-        ui.checkbox(&mut config.search.show_hidden_system, tr.t(TrKey::CbShowHiddenSystem));
+        ui.checkbox(
+            &mut config.search.show_hidden_system,
+            tr.t(TrKey::CbShowHiddenSystem),
+        );
 
         style::section_gap(ui);
 
         // -- PATH executables --
         style::section_heading(ui, tr.t(TrKey::HeadingPathEnv));
-        ui.checkbox(&mut config.search.include_path_env, tr.t(TrKey::CbIncludePathEnv));
+        ui.checkbox(
+            &mut config.search.include_path_env,
+            tr.t(TrKey::CbIncludePathEnv),
+        );
 
         style::section_gap(ui);
 
@@ -43,16 +49,26 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, tr: &Tr) {
             let result_limit_default = config.search.effective_result_limit();
             ui.add_sized(
                 [style::FIELD_NUMERIC, ui.spacing().interact_size.y],
-                egui::DragValue::new(config.search.result_limit.get_or_insert(result_limit_default))
-                    .range(10..=1000),
+                egui::DragValue::new(
+                    config
+                        .search
+                        .result_limit
+                        .get_or_insert(result_limit_default),
+                )
+                .range(10..=1000),
             );
             ui.end_row();
             ui.label(tr.t(TrKey::LabelRecentLimit));
             let recent_limit_default = config.search.effective_recent_limit();
             ui.add_sized(
                 [style::FIELD_NUMERIC, ui.spacing().interact_size.y],
-                egui::DragValue::new(config.search.recent_limit.get_or_insert(recent_limit_default))
-                    .range(1..=50),
+                egui::DragValue::new(
+                    config
+                        .search
+                        .recent_limit
+                        .get_or_insert(recent_limit_default),
+                )
+                .range(1..=50),
             );
             ui.end_row();
         });
@@ -89,7 +105,10 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, tr: &Tr) {
         // -- Migemo 検索 --
         style::section_heading(ui, tr.t(TrKey::HeadingMigemo));
 
-        ui.checkbox(&mut config.search.migemo_enabled, tr.t(TrKey::CbMigemoEnabled));
+        ui.checkbox(
+            &mut config.search.migemo_enabled,
+            tr.t(TrKey::CbMigemoEnabled),
+        );
         style::hint(ui, tr.t(TrKey::HintMigemo));
 
         ui.add_space(style::SPACE_HINT);
@@ -118,8 +137,16 @@ fn search_mode_combo(ui: &mut egui::Ui, id: &str, mode: &mut SearchModeConfig, t
     egui::ComboBox::from_id_salt(id)
         .selected_text(label)
         .show_ui(ui, |ui| {
-            ui.selectable_value(mode, SearchModeConfig::Prefix, tr.t(TrKey::SearchModePrefix));
-            ui.selectable_value(mode, SearchModeConfig::Substring, tr.t(TrKey::SearchModeSubstring));
+            ui.selectable_value(
+                mode,
+                SearchModeConfig::Prefix,
+                tr.t(TrKey::SearchModePrefix),
+            );
+            ui.selectable_value(
+                mode,
+                SearchModeConfig::Substring,
+                tr.t(TrKey::SearchModeSubstring),
+            );
             ui.selectable_value(mode, SearchModeConfig::Fuzzy, tr.t(TrKey::SearchModeFuzzy));
         });
 }
@@ -131,12 +158,18 @@ fn history_normalization_combo(
 ) {
     let label = match norm {
         SearchHistoryNormalizationConfig::Disabled => tr.t(TrKey::NormalizationDisabled),
-        SearchHistoryNormalizationConfig::FuzzyRelativeCap => tr.t(TrKey::NormalizationFuzzyRelativeCap),
+        SearchHistoryNormalizationConfig::FuzzyRelativeCap => {
+            tr.t(TrKey::NormalizationFuzzyRelativeCap)
+        }
     };
     egui::ComboBox::from_id_salt("history_normalization")
         .selected_text(label)
         .show_ui(ui, |ui| {
-            ui.selectable_value(norm, SearchHistoryNormalizationConfig::Disabled, tr.t(TrKey::NormalizationDisabled));
+            ui.selectable_value(
+                norm,
+                SearchHistoryNormalizationConfig::Disabled,
+                tr.t(TrKey::NormalizationDisabled),
+            );
             ui.selectable_value(
                 norm,
                 SearchHistoryNormalizationConfig::FuzzyRelativeCap,

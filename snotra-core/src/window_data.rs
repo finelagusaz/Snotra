@@ -152,7 +152,10 @@ mod tests {
         let migrated = load_state_v5_in(&dir).expect("load v4 via v5 path");
 
         // (a) search（絶対座標）はモニター相対座標として無意味なため破棄され None になる。
-        assert_eq!(migrated.search, None, "V4 absolute search coords must be discarded");
+        assert_eq!(
+            migrated.search, None,
+            "V4 absolute search coords must be discarded"
+        );
         // settings/settings_size は V4 でも絶対座標のまま意味を保つため引き継がれる。
         assert_eq!(migrated.settings, v4_state.settings);
         assert_eq!(migrated.settings_size, v4_state.settings_size);
@@ -166,7 +169,10 @@ mod tests {
         assert_eq!(reloaded_v5, migrated);
         let as_v4: Result<WindowPlacementState, _> =
             try_deserialize_with_header(&raw, WINDOW_MAGIC, WINDOW_VERSION_V4);
-        assert!(as_v4.is_err(), "persisted file should no longer be readable as V4");
+        assert!(
+            as_v4.is_err(),
+            "persisted file should no longer be readable as V4"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -184,7 +190,8 @@ mod tests {
         let bytes =
             try_serialize_with_header(WINDOW_MAGIC, WINDOW_VERSION_V4, &state).expect("serialize");
         let restored: WindowPlacementState =
-            try_deserialize_with_header(&bytes, WINDOW_MAGIC, WINDOW_VERSION_V4).expect("deserialize");
+            try_deserialize_with_header(&bytes, WINDOW_MAGIC, WINDOW_VERSION_V4)
+                .expect("deserialize");
         assert_eq!(state, restored);
     }
 
@@ -201,7 +208,8 @@ mod tests {
         let bytes =
             try_serialize_with_header(WINDOW_MAGIC, WINDOW_VERSION_V5, &state).expect("serialize");
         let restored: WindowPlacementState =
-            try_deserialize_with_header(&bytes, WINDOW_MAGIC, WINDOW_VERSION_V5).expect("deserialize");
+            try_deserialize_with_header(&bytes, WINDOW_MAGIC, WINDOW_VERSION_V5)
+                .expect("deserialize");
         assert_eq!(state, restored);
     }
 

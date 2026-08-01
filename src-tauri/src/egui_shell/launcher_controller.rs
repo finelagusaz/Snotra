@@ -54,12 +54,25 @@ enum FolderMsg {
 /// hide 中に完了した起動の記録消失 gap を閉じる）。Instant は記録しない（IPC 経路 parity）。
 enum LaunchWork {
     /// 通常起動（§4.8）。tools 先頭があれば launch_with_tool_core、無ければ launch_item_core。
-    Normal { path: String, query: String, tools: Vec<OpenerTool> },
+    Normal {
+        path: String,
+        query: String,
+        tools: Vec<OpenerTool>,
+    },
     /// ツール選択起動（§18.4）。
-    Tool { target_path: String, launch_query: String, exe: String, args: String },
+    Tool {
+        target_path: String,
+        launch_query: String,
+        exe: String,
+        args: String,
+    },
     /// instant 実行（§19.6）。clipboard 読み + 展開 + 実行の全体を worker で行う
     /// （engine ロック内の action 抽出だけ UI スレッド・spec C 節）。
-    Instant { name: String, action: snotra_core::config::InstantAction, instant_query: String },
+    Instant {
+        name: String,
+        action: snotra_core::config::InstantAction,
+        instant_query: String,
+    },
 }
 
 /// 起動成功時に drain が行う UI 後処理の種別（M1/M3 の同期版と同じ末尾へ合流させる）。
@@ -192,9 +205,7 @@ impl LauncherController {
         if already {
             return;
         }
-        let _ = self
-            .app_handle
-            .emit(crate::events::EGUI_HIDE_REQUESTED, ());
+        let _ = self.app_handle.emit(crate::events::EGUI_HIDE_REQUESTED, ());
     }
 
     /// index 行の起動を worker へ投げる（§4.8 シングルクリック / Enter・#631 async 化）。
@@ -213,7 +224,9 @@ impl LauncherController {
         ) {
             return;
         }
-        let Some(result) = self.state.results().get(index) else { return };
+        let Some(result) = self.state.results().get(index) else {
+            return;
+        };
         if result.is_error {
             return;
         }
@@ -225,7 +238,11 @@ impl LauncherController {
             "egui_launch",
             serde_json::json!({ "index": index, "opener": !tools.is_empty() }),
         );
-        self.start_launch(LaunchWork::Normal { path, query, tools }, LaunchTag::Normal, ctx);
+        self.start_launch(
+            LaunchWork::Normal { path, query, tools },
+            LaunchTag::Normal,
+            ctx,
+        );
     }
 
     /// 起動を per-launch worker スレッドへ投げる（#631・spec C 節）。single-flight:
@@ -238,13 +255,19 @@ impl LauncherController {
             return; // single-flight 拒否（拒否された Enter が後で再生されるキューは egui に無い）
         }
         let (tx, rx) = channel::<crate::commands::launch::LaunchResult>();
-        self.launching = Some(LaunchInFlight { started: Instant::now(), rx, tag });
+        self.launching = Some(LaunchInFlight {
+            started: Instant::now(),
+            rx,
+            tag,
+        });
         self.state.set_results(Vec::new());
         self.instant_rows_query = None; // 行が消えるため来歴も一体でクリア（finding 0 の規律）
         let app = self.app_handle.clone();
         let egui_ctx = ctx.clone();
         std::thread::spawn(move || {
-            use crate::commands::launch::{LaunchStatus, launch_item_core, launch_with_tool_core, record_and_save};
+            use crate::commands::launch::{
+                LaunchStatus, launch_item_core, launch_with_tool_core, record_and_save,
+            };
             let (outcome, record) = match work {
                 LaunchWork::Normal { path, query, tools } => {
                     let o = if let Some(first) = tools.first() {
@@ -254,17 +277,28 @@ impl LauncherController {
                     };
                     (o, Some((path, query)))
                 }
-                LaunchWork::Tool { target_path, launch_query, exe, args } => {
+                LaunchWork::Tool {
+                    target_path,
+                    launch_query,
+                    exe,
+                    args,
+                } => {
                     let o = launch_with_tool_core(&target_path, &exe, &args);
                     (o, Some((target_path, launch_query)))
                 }
-                LaunchWork::Instant { name, action, instant_query } => {
+                LaunchWork::Instant {
+                    name,
+                    action,
+                    instant_query,
+                } => {
                     // clipboard 読み（Win32）はロック外・worker 内（commands/instant.rs と同順）。
                     let clipboard = arboard::Clipboard::new()
                         .and_then(|mut cb| cb.get_text())
                         .unwrap_or_default();
                     let o = crate::commands::instant::execute_instant_action_core(
-                        action, &instant_query, &clipboard,
+                        action,
+                        &instant_query,
+                        &clipboard,
                     );
                     crate::trace_main(
                         "egui_instant",
@@ -336,7 +370,9 @@ impl LauncherController {
     /// フレーム毎の in-flight 回収（spec C 節 不変条件 2: **reset_pending 消費の後**に呼ぶ。
     /// 前に置くと show 直後フレームで stale Ok が reset より先に処理され再 show 窓を hide で撃つ）。
     fn drain_launch(&mut self, ctx: &egui::Context) {
-        let Some(inflight) = &self.launching else { return };
+        let Some(inflight) = &self.launching else {
+            return;
+        };
         match inflight.rx.try_recv() {
             Ok(outcome) => {
                 let tag = inflight.tag;
@@ -392,19 +428,28 @@ impl LauncherController {
     /// 同順: クエリ/結果クリア（clearCommandModeState 相当）→ action。`/r`（History）は結果注入型で
     /// ここへ来ない（changed ハンドラが run_search へ振る）。失敗通知は建てない（trace のみ・#631 一本化）。
     fn execute_slash(&mut self, cmd: SlashCmd) {
-        crate::trace_main("egui_slash", serde_json::json!({ "cmd": format!("{cmd:?}") }));
+        crate::trace_main(
+            "egui_slash",
+            serde_json::json!({ "cmd": format!("{cmd:?}") }),
+        );
         self.clear_search();
         let app = self.app_handle.clone();
         match cmd {
             // 到達しない: 呼び出し側（changed ハンドラ）が History を run_search へ振る。
             // 将来 execute_slash の呼び出しサイトが増えて誤配線したとき dev/test で loud に
             // 落とす（release は panic=abort ゆえ unreachable! は採らない）。
-            SlashCmd::History => debug_assert!(false, "History は execute_slash へ来ない（run_search が注入する）"),
+            SlashCmd::History => debug_assert!(
+                false,
+                "History は execute_slash へ来ない（run_search が注入する）"
+            ),
             SlashCmd::OpenSettings => {
                 // indexing 中の Err（ERR_INDEXING_IN_PROGRESS）は trace のみ（spec M3 実装確定・
                 // クエリクリア後は検索バーの indexing hint が可視＝degraded な理由提示）。
                 if let Err(e) = crate::commands::open_settings(app.state(), app.clone()) {
-                    crate::trace_main("egui_slash_error", serde_json::json!({ "cmd": "/o", "error": e }));
+                    crate::trace_main(
+                        "egui_slash_error",
+                        serde_json::json!({ "cmd": "/o", "error": e }),
+                    );
                 }
             }
             SlashCmd::RebuildIndex => {
@@ -412,7 +457,10 @@ impl LauncherController {
                 // rebuild は backend スレッド）。indexing 中の Err は意図的無音（#434 parity）。
                 self.emit_hide();
                 if let Err(e) = crate::commands::rebuild_index(app.state(), app.clone()) {
-                    crate::trace_main("egui_slash_error", serde_json::json!({ "cmd": "/s", "error": e }));
+                    crate::trace_main(
+                        "egui_slash_error",
+                        serde_json::json!({ "cmd": "/s", "error": e }),
+                    );
                 }
             }
             SlashCmd::Quit => {
@@ -429,12 +477,16 @@ impl LauncherController {
     /// ——`execute_instant_action_core` の契約）。instant は履歴を記録しない（§19.6）。
     /// 成功/失敗の後処理は `finish_launch` へ合流。
     fn execute_instant_selected(&mut self, index: usize, instant_query: &str, ctx: &egui::Context) {
-        let Some(sel) = self.state.results().get(index) else { return };
+        let Some(sel) = self.state.results().get(index) else {
+            return;
+        };
         if sel.is_error {
             return;
         }
         let name = sel.name.clone();
-        let Some(state) = self.app_handle.try_state::<crate::AppState>() else { return };
+        let Some(state) = self.app_handle.try_state::<crate::AppState>() else {
+            return;
+        };
         let Some(action) = ({
             let engine = state.engine.lock().unwrap();
             engine
@@ -454,7 +506,11 @@ impl LauncherController {
             return;
         };
         self.start_launch(
-            LaunchWork::Instant { name, action, instant_query: instant_query.to_string() },
+            LaunchWork::Instant {
+                name,
+                action,
+                instant_query: instant_query.to_string(),
+            },
             LaunchTag::Instant,
             ctx,
         );
@@ -493,7 +549,9 @@ impl LauncherController {
         ) {
             return;
         }
-        let Some(row) = self.state.results().get(index) else { return };
+        let Some(row) = self.state.results().get(index) else {
+            return;
+        };
         if row.is_error {
             return;
         }
@@ -599,7 +657,15 @@ impl LauncherController {
     fn instant_prefix(&self) -> String {
         self.app_handle
             .try_state::<crate::AppState>()
-            .map(|s| s.engine.lock().unwrap().config().search.instant_command_prefix.clone())
+            .map(|s| {
+                s.engine
+                    .lock()
+                    .unwrap()
+                    .config()
+                    .search
+                    .instant_command_prefix
+                    .clone()
+            })
             .unwrap_or_else(|| SearchConfig::default().instant_command_prefix)
     }
 
@@ -643,7 +709,9 @@ impl LauncherController {
         let app = self.app_handle.clone();
         let tx = self.folder_tx.clone();
         std::thread::spawn(move || {
-            let Some(state) = app.try_state::<crate::AppState>() else { return };
+            let Some(state) = app.try_state::<crate::AppState>() else {
+                return;
+            };
             let ctx = { state.engine.lock().unwrap().capture_folder_list_context() };
             let entries = match ctx.read_dir_entries(std::path::Path::new(&dir), "") {
                 Ok(e) => e,
@@ -654,7 +722,13 @@ impl LauncherController {
                     return;
                 }
             };
-            let sorted = { state.engine.lock().unwrap().finalize_folder_list_unlimited(entries) };
+            let sorted = {
+                state
+                    .engine
+                    .lock()
+                    .unwrap()
+                    .finalize_folder_list_unlimited(entries)
+            };
             let _ = tx.send(FolderMsg::Loaded(token, ctx, sorted));
             egui_ctx.request_repaint();
         });
@@ -718,7 +792,10 @@ impl LauncherController {
                         );
                         self.state.set_results(results);
                     }
-                    QueryIntent::Instant { filter_name, instant_query } => {
+                    QueryIntent::Instant {
+                        filter_name,
+                        instant_query,
+                    } => {
                         // §19.5: 前方一致フィルタ。毎打鍵同期（30ms debounce 撤廃・spec M3 実装確定）。
                         // indexing を見ない（§19.7: instant はインデックス非依存ゆえ構築中でも使用可）。
                         // 候補取得は IPC コマンドと同一 fn を共有（二重実装の drift 防止・finding 5）。
@@ -731,7 +808,11 @@ impl LauncherController {
                         .map(|dto| SearchResult {
                             name: dto.name,
                             // §19.5: description 設定時は優先、無ければ display（URL / exe args）
-                            path: if dto.description.is_empty() { dto.display } else { dto.description },
+                            path: if dto.description.is_empty() {
+                                dto.display
+                            } else {
+                                dto.description
+                            },
                             is_folder: false,
                             is_error: false,
                         })
@@ -744,7 +825,10 @@ impl LauncherController {
                     QueryIntent::Command => {
                         // §15.2 /r: 履歴を注入して留まる（冪等ゆえ trailing 再発火も無害）。
                         // 他（部分入力・実行済み直後）は候補なしクリア（§15.3: command 中は検索しない）。
-                        if matches!(find_slash_command(self.state.query()), Some(SlashCmd::History)) {
+                        if matches!(
+                            find_slash_command(self.state.query()),
+                            Some(SlashCmd::History)
+                        ) {
                             let rows = {
                                 let state = match self.app_handle.try_state::<crate::AppState>() {
                                     Some(s) => s,
@@ -771,7 +855,10 @@ impl LauncherController {
     /// 遅延 dispatch より前に完了している。ここで状態を変えても誰も次のフレームを起こさないため、
     /// 無関係な入力（マウス移動等）が来るまで旧 toast が画面に残る（dismiss 後の stale 表示）。
     pub(super) fn handle_toast_action(&mut self, action: ToastAction, ctx: &egui::Context) {
-        let Some(st) = self.app_handle.try_state::<crate::egui_shell::UpdaterUiState>() else {
+        let Some(st) = self
+            .app_handle
+            .try_state::<crate::egui_shell::UpdaterUiState>()
+        else {
             return;
         };
         match action {
@@ -798,7 +885,10 @@ impl LauncherController {
     /// Err 復帰時のみ InstallFailed へ遷移して toast をエラー表示にする（updaterError parity）。
     fn spawn_install(&self, update: Box<tauri_plugin_updater::Update>) {
         let handle = self.app_handle.clone();
-        crate::trace_main("egui_update_install_begin", serde_json::json!({ "version": update.version }));
+        crate::trace_main(
+            "egui_update_install_begin",
+            serde_json::json!({ "version": update.version }),
+        );
         tauri::async_runtime::spawn(async move {
             match update.download_and_install(|_, _| {}, || {}).await {
                 Ok(()) => {
@@ -832,7 +922,9 @@ impl LauncherController {
     pub(super) fn consume_reset_pending(&mut self) -> bool {
         // show 直後の resetForShow（EguiShellState.reset_pending を消費）。stale な debounce
         // armed 状態が再表示後に誤発火しないよう、debounce も併せて作り直す。
-        if let Some(sh) = self.app_handle.try_state::<crate::egui_shell::EguiShellState>()
+        if let Some(sh) = self
+            .app_handle
+            .try_state::<crate::egui_shell::EguiShellState>()
             && sh.reset_pending.swap(false, Ordering::SeqCst)
         {
             self.state.reset();
@@ -881,7 +973,9 @@ impl LauncherController {
         // lang() live-read: config-applied wake のフレームは update_config 後なので言語同時
         // 変更でも新言語で整形される。hidden 中の失敗は次 show のこの消費で表示される
         //（WebView2 は hidden 中に期限切れ・改善方向の受容差異・SU6 spec 追補 2）。
-        if let Some(sh) = self.app_handle.try_state::<crate::egui_shell::EguiShellState>()
+        if let Some(sh) = self
+            .app_handle
+            .try_state::<crate::egui_shell::EguiShellState>()
             && let Some((kind, hk)) = sh.pending_hotkey_failure.lock().unwrap().take()
         {
             let msg = match kind {
@@ -892,7 +986,11 @@ impl LauncherController {
                     crate::egui_shell::ui_strings::hotkey_change_failed(self.lang(), &hk)
                 }
             };
-            self.notice.set(msg, self.notice_base.elapsed(), crate::egui_shell::NOTICE_HOTKEY);
+            self.notice.set(
+                msg,
+                self.notice_base.elapsed(),
+                crate::egui_shell::NOTICE_HOTKEY,
+            );
             ctx.request_repaint();
         }
     }
@@ -1079,7 +1177,8 @@ impl LauncherController {
                     // interp 再導出でなく行来歴（instant_rows_query・prefix hot-change に頑健）。
                     // instant 行の path は description/display ゆえ compute_parent_dir が偶然 Some を
                     // 返して bogus folder 突入しうるのを塞ぐ。command（/r 履歴）中は許可＝→ と対称。
-                    if self.instant_rows_query.is_none() && let Some(sel) = self.state.results().get(self.state.selected())
+                    if self.instant_rows_query.is_none()
+                        && let Some(sel) = self.state.results().get(self.state.selected())
                         && !sel.is_error
                         && let Some(parent) = compute_parent_dir(&sel.path)
                     {

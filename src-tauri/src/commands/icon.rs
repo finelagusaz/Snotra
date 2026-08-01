@@ -1,7 +1,7 @@
 use rayon::prelude::*;
 use tauri::State;
 
-use crate::icon::{extract_png, IconCache, IconCacheState, IconFailure};
+use crate::icon::{IconCache, IconCacheState, IconFailure, extract_png};
 use crate::state::AppState;
 
 pub(crate) fn ensure_icon_cache_loaded_if_enabled(

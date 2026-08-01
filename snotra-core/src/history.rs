@@ -191,11 +191,7 @@ impl HistoryStore {
     }
 
     /// Testable directory-injected form of [`Self::prepare_flush`].
-    pub fn prepare_flush_in(
-        &mut self,
-        top_n: usize,
-        dir: &Path,
-    ) -> Option<PreparedHistorySave> {
+    pub fn prepare_flush_in(&mut self, top_n: usize, dir: &Path) -> Option<PreparedHistorySave> {
         let save = self.prepare_save_in(top_n, dir);
         if save.is_some() {
             self.dirty_count = 0;
@@ -432,12 +428,7 @@ mod tests {
             .or_default()
             .launch_count += 1;
         assert_eq!(store.global_count(path), 1);
-        store
-            .data
-            .global
-            .entry(key)
-            .or_default()
-            .launch_count += 1;
+        store.data.global.entry(key).or_default().launch_count += 1;
         assert_eq!(store.global_count(path), 2);
     }
 
@@ -545,11 +536,7 @@ mod tests {
         let folder = "C:\\Projects";
         let folder_key = normalize_entry_key(folder);
         assert_eq!(store.folder_expansion_count(folder), 0);
-        *store
-            .data
-            .folder_expansion
-            .entry(folder_key)
-            .or_insert(0) += 1;
+        *store.data.folder_expansion.entry(folder_key).or_insert(0) += 1;
         assert_eq!(store.folder_expansion_count(folder), 1);
     }
 
@@ -616,8 +603,9 @@ mod tests {
             .expect("serialize v2 postcard");
         let bf = HistoryStore::bin_file_in(&dir);
         std::fs::write(bf.path(), &bytes).unwrap();
-        let (loaded, version): (HistoryData, u32) =
-            bf.load_with_fallback(HISTORY_FALLBACKS).expect("load v2 postcard");
+        let (loaded, version): (HistoryData, u32) = bf
+            .load_with_fallback(HISTORY_FALLBACKS)
+            .expect("load v2 postcard");
         assert_eq!(version, HISTORY_VERSION_POSTCARD_V2);
         let migrated = migrate_time_unit_if_legacy(version, loaded);
         assert_eq!(
@@ -641,8 +629,9 @@ mod tests {
         );
         let bf = HistoryStore::bin_file_in(&dir);
         assert!(bf.save(&data));
-        let (loaded, version): (HistoryData, u32) =
-            bf.load_with_fallback(HISTORY_FALLBACKS).expect("load v3 postcard");
+        let (loaded, version): (HistoryData, u32) = bf
+            .load_with_fallback(HISTORY_FALLBACKS)
+            .expect("load v3 postcard");
         assert_eq!(version, HISTORY_VERSION);
         let migrated = migrate_time_unit_if_legacy(version, loaded);
         assert_eq!(
@@ -671,8 +660,9 @@ mod tests {
 
         let bytes =
             try_serialize_with_header(HISTORY_MAGIC, HISTORY_VERSION, &data).expect("serialize");
-        let roundtripped: HistoryData = try_deserialize_with_header(&bytes, HISTORY_MAGIC, HISTORY_VERSION)
-            .expect("deserialize");
+        let roundtripped: HistoryData =
+            try_deserialize_with_header(&bytes, HISTORY_MAGIC, HISTORY_VERSION)
+                .expect("deserialize");
 
         assert_eq!(roundtripped.global["C:\\app.lnk"].launch_count, 5);
         assert_eq!(roundtripped.query["notepad"]["C:\\app.lnk"], 3);
@@ -882,7 +872,10 @@ mod tests {
         let migrated = migrate_normalize_keys(data);
         assert_eq!(migrated.query.len(), 1);
         assert!(migrated.query.contains_key("tool\\editor"));
-        assert_eq!(migrated.query["tool\\editor"]["c:\\tool\\editor\\app.exe"], 5);
+        assert_eq!(
+            migrated.query["tool\\editor"]["c:\\tool\\editor\\app.exe"],
+            5
+        );
     }
 
     #[test]
@@ -895,7 +888,10 @@ mod tests {
             .insert("c:\\tool\\editor\\app.exe".to_string(), 4);
         let migrated = migrate_normalize_keys(data);
         assert!(migrated.query.contains_key("tool\\editor"));
-        assert_eq!(migrated.query["tool\\editor"]["c:\\tool\\editor\\app.exe"], 4);
+        assert_eq!(
+            migrated.query["tool\\editor"]["c:\\tool\\editor\\app.exe"],
+            4
+        );
     }
 
     #[test]

@@ -62,7 +62,11 @@ pub fn interpret(raw_query: &str, prefix: &str, view_kind: ViewKind) -> QueryInt
 /// ——dead/slow UNC でロードが滞留すると、前ビューの誤項目を起動しうるため。前フレーム結果の保持は
 /// フリッカ回避の意図的設計（launcher_controller.rs run_search）ゆえ温存し、不可逆な起動だけを止める。Results
 /// モードや列挙完了（cache/error いずれか到着）後は false で、通常どおり起動できる。
-pub fn folder_load_pending(view_kind: ViewKind, has_folder_cache: bool, has_folder_error: bool) -> bool {
+pub fn folder_load_pending(
+    view_kind: ViewKind,
+    has_folder_cache: bool,
+    has_folder_error: bool,
+) -> bool {
     view_kind == ViewKind::Folder && !has_folder_cache && !has_folder_error
 }
 
@@ -280,7 +284,9 @@ impl SearchState {
 
     /// folder 中の親ディレクトリ（ルート終端で None）。
     pub fn parent_dir(&self) -> Option<String> {
-        self.folder.as_ref().and_then(|f| compute_parent_dir(&f.current_dir))
+        self.folder
+            .as_ref()
+            .and_then(|f| compute_parent_dir(&f.current_dir))
     }
 
     /// driver は token を `enter_folder`/`navigate_folder` の戻り値から直接得るため、独立した
@@ -301,7 +307,12 @@ impl SearchState {
     /// どちらでも）の表示状態を frame へ退避する。tools ≥ 2 の判定は driver 側
     /// （§18.3: ≤1 は通常 Enter と同一のため、そもそも呼ばれない）。driver からは
     /// `shift_activate` が呼ぶ（#532 SU3.5 Task 3）。
-    pub fn enter_tool(&mut self, target_path: String, target_is_folder: bool, tools: Vec<OpenerTool>) {
+    pub fn enter_tool(
+        &mut self,
+        target_path: String,
+        target_is_folder: bool,
+        tools: Vec<OpenerTool>,
+    ) {
         let rows: Vec<SearchResult> = tools
             .iter()
             .map(|t| SearchResult {
@@ -386,11 +397,7 @@ impl Default for SearchState {
 
 /// 選択 index を [0, len) へクランプ（len==0 は 0）。folderNav.clampSelectedIndex 相当。
 pub(crate) fn clamp_selected(len: usize, idx: usize) -> usize {
-    if len == 0 {
-        0
-    } else {
-        idx.min(len - 1)
-    }
+    if len == 0 { 0 } else { idx.min(len - 1) }
 }
 
 /// Enter 時の trailing flush 要否（#631 flush-on-Enter・SolidJS flushPendingRefresh 同型）。
@@ -413,7 +420,11 @@ pub(crate) fn compute_parent_dir(current_dir: &str) -> Option<String> {
     };
     // UNC ルート判定: \\server\share（2 セグメント以下）は終端。
     if let Some(rest) = normalized.strip_prefix("\\\\") {
-        let parts: Vec<&str> = rest.trim_end_matches('\\').split('\\').filter(|p| !p.is_empty()).collect();
+        let parts: Vec<&str> = rest
+            .trim_end_matches('\\')
+            .split('\\')
+            .filter(|p| !p.is_empty())
+            .collect();
         if parts.len() <= 2 {
             return None;
         }
@@ -422,7 +433,10 @@ pub(crate) fn compute_parent_dir(current_dir: &str) -> Option<String> {
     let cut = normalized.rfind('\\')?;
     let mut parent = normalized[..cut].to_string();
     // "X:" → "X:\"（ドライブルートは末尾 `\` 必須）。
-    if parent.len() == 2 && parent.as_bytes()[1] == b':' && parent.as_bytes()[0].is_ascii_alphabetic() {
+    if parent.len() == 2
+        && parent.as_bytes()[1] == b':'
+        && parent.as_bytes()[0].is_ascii_alphabetic()
+    {
         parent.push('\\');
     }
     if parent.is_empty() || parent == normalized {
@@ -430,7 +444,11 @@ pub(crate) fn compute_parent_dir(current_dir: &str) -> Option<String> {
     }
     // \\server（share 未満）は終端。
     if let Some(rest) = parent.strip_prefix("\\\\") {
-        let parts: Vec<&str> = rest.trim_end_matches('\\').split('\\').filter(|p| !p.is_empty()).collect();
+        let parts: Vec<&str> = rest
+            .trim_end_matches('\\')
+            .split('\\')
+            .filter(|p| !p.is_empty())
+            .collect();
         if parts.len() < 2 {
             return None;
         }
@@ -462,28 +480,49 @@ mod tests {
 
     #[test]
     fn plain_query_is_plain() {
-        assert_eq!(interpret("firefox", "@", ViewKind::Results), QueryIntent::Plain);
+        assert_eq!(
+            interpret("firefox", "@", ViewKind::Results),
+            QueryIntent::Plain
+        );
     }
 
     #[test]
     fn flush_on_enter_only_for_armed_plain_results() {
         assert!(should_flush_on_enter(ViewKind::Results, true, true));
-        assert!(!should_flush_on_enter(ViewKind::Results, true, false), "armed でなければ flush 不要");
-        assert!(!should_flush_on_enter(ViewKind::Results, false, true), "instant/command では flush しない");
-        assert!(!should_flush_on_enter(ViewKind::Folder, true, true), "folder は同期フィルタ");
-        assert!(!should_flush_on_enter(ViewKind::Tool, true, true), "tool 中は検索自体が凍結");
+        assert!(
+            !should_flush_on_enter(ViewKind::Results, true, false),
+            "armed でなければ flush 不要"
+        );
+        assert!(
+            !should_flush_on_enter(ViewKind::Results, false, true),
+            "instant/command では flush しない"
+        );
+        assert!(
+            !should_flush_on_enter(ViewKind::Folder, true, true),
+            "folder は同期フィルタ"
+        );
+        assert!(
+            !should_flush_on_enter(ViewKind::Tool, true, true),
+            "tool 中は検索自体が凍結"
+        );
     }
 
     #[test]
     fn slash_prefix_is_command() {
-        assert_eq!(interpret("/r", "@", ViewKind::Results), QueryIntent::Command);
+        assert_eq!(
+            interpret("/r", "@", ViewKind::Results),
+            QueryIntent::Command
+        );
     }
 
     #[test]
     fn instant_prefix_without_space() {
         assert_eq!(
             interpret("@goog", "@", ViewKind::Results),
-            QueryIntent::Instant { filter_name: "goog".into(), instant_query: String::new() }
+            QueryIntent::Instant {
+                filter_name: "goog".into(),
+                instant_query: String::new()
+            }
         );
     }
 
@@ -491,7 +530,10 @@ mod tests {
     fn instant_prefix_with_space_splits_filter_and_query() {
         assert_eq!(
             interpret("@google rust egui", "@", ViewKind::Results),
-            QueryIntent::Instant { filter_name: "google".into(), instant_query: "rust egui".into() }
+            QueryIntent::Instant {
+                filter_name: "google".into(),
+                instant_query: "rust egui".into()
+            }
         );
     }
 
@@ -513,12 +555,20 @@ mod tests {
     fn leading_whitespace_trimmed_for_detection() {
         assert_eq!(
             interpret("  @a", "@", ViewKind::Results),
-            QueryIntent::Instant { filter_name: "a".into(), instant_query: String::new() }
+            QueryIntent::Instant {
+                filter_name: "a".into(),
+                instant_query: String::new()
+            }
         );
     }
 
     fn res(name: &str) -> SearchResult {
-        SearchResult { name: name.into(), path: format!("C:/{name}.exe"), is_folder: false, is_error: false }
+        SearchResult {
+            name: name.into(),
+            path: format!("C:/{name}.exe"),
+            is_folder: false,
+            is_error: false,
+        }
     }
 
     // ---- rows_generation（#699）----
@@ -542,7 +592,11 @@ mod tests {
         s.set_results(vec![res("a"), res("b")]);
         let g = s.rows_generation();
         s.enter_tool("C:/t.txt".into(), false, make_tools());
-        assert_eq!(s.rows_generation(), g + 1, "ツール行への総入れ替えで進むこと");
+        assert_eq!(
+            s.rows_generation(),
+            g + 1,
+            "ツール行への総入れ替えで進むこと"
+        );
     }
 
     /// `on_escape` は **2 分岐とも** 行を差し替える。片方だけ直すと穴が残る。
@@ -594,7 +648,11 @@ mod tests {
         s.set_results(vec![res("a")]);
         let g = s.rows_generation();
         s.reset();
-        assert_eq!(s.rows_generation(), g + 1, "reset は hide を跨いだ stale クリックを失効させる");
+        assert_eq!(
+            s.rows_generation(),
+            g + 1,
+            "reset は hide を跨いだ stale クリックを失効させる"
+        );
     }
 
     /// **進めすぎの側**。選択の移動は行の差し替えではない——ここで進めると #699 の
@@ -654,7 +712,13 @@ mod tests {
     fn interp_reads_current_query() {
         let mut s = SearchState::new();
         s.set_query("@g".into());
-        assert_eq!(s.interp("@"), QueryIntent::Instant { filter_name: "g".into(), instant_query: String::new() });
+        assert_eq!(
+            s.interp("@"),
+            QueryIntent::Instant {
+                filter_name: "g".into(),
+                instant_query: String::new()
+            }
+        );
     }
 
     #[test]
@@ -662,7 +726,10 @@ mod tests {
         assert_eq!(compute_parent_dir("C:\\a\\b"), Some("C:\\a".to_string()));
         assert_eq!(compute_parent_dir("C:\\a"), Some("C:\\".to_string()));
         assert_eq!(compute_parent_dir("C:\\"), None); // ドライブルート終端
-        assert_eq!(compute_parent_dir("\\\\srv\\share\\x"), Some("\\\\srv\\share".to_string()));
+        assert_eq!(
+            compute_parent_dir("\\\\srv\\share\\x"),
+            Some("\\\\srv\\share".to_string())
+        );
         assert_eq!(compute_parent_dir("\\\\srv\\share"), None); // UNC 共有ルート終端
         assert_eq!(compute_parent_dir("\\\\srv"), None); // UNC 不完全
     }
@@ -673,8 +740,14 @@ mod tests {
         assert_eq!(compute_parent_dir("C:/a\\b"), Some("C:\\a".to_string()));
         assert_eq!(compute_parent_dir("C:/a"), Some("C:\\".to_string()));
         assert_eq!(compute_parent_dir("C:/"), None); // `/` 表記のドライブルートも終端
-        assert_eq!(compute_parent_dir("//srv/share/x"), Some("\\\\srv\\share".to_string()));
-        assert_eq!(compute_parent_dir("\\\\srv/share\\x"), Some("\\\\srv\\share".to_string()));
+        assert_eq!(
+            compute_parent_dir("//srv/share/x"),
+            Some("\\\\srv\\share".to_string())
+        );
+        assert_eq!(
+            compute_parent_dir("\\\\srv/share\\x"),
+            Some("\\\\srv\\share".to_string())
+        );
         assert_eq!(compute_parent_dir("//srv/share"), None); // `/` 表記の UNC 共有ルートも終端
     }
 
@@ -724,13 +797,20 @@ mod tests {
         let p1 = s.parent_dir().expect("孫フォルダからは親が取れる");
         assert_eq!(p1, "C:\\a\\b");
         let t1 = s.navigate_folder(p1);
-        assert_eq!(s.view_kind(), ViewKind::Folder, "上昇しても folder のままである");
+        assert_eq!(
+            s.view_kind(),
+            ViewKind::Folder,
+            "上昇しても folder のままである"
+        );
         assert_eq!(s.folder_current_dir(), Some("C:\\a\\b"));
         let p2 = s.parent_dir().expect("さらに親が取れる");
         assert_eq!(p2, "C:\\a");
         let t2 = s.navigate_folder(p2);
         assert_eq!(s.folder_current_dir(), Some("C:\\a"));
-        assert!(t0 < t1 && t1 < t2, "遷移ごとに token が進む（遅着の旧結果を失効させる）");
+        assert!(
+            t0 < t1 && t1 < t2,
+            "遷移ごとに token が進む（遅着の旧結果を失効させる）"
+        );
     }
 
     /// ルート終端では親が無い（§6.2）。driver の `if let Some(parent)` がここで無反応に落ちる。
@@ -776,7 +856,11 @@ mod tests {
         s.set_results(vec![res("a"), res("b"), res("c"), res("d")]);
         assert_eq!(s.selected(), 3, "範囲内なら保たれる（先頭へは戻さない）");
         s.set_results(vec![res("a"), res("b")]);
-        assert_eq!(s.selected(), 1, "範囲外は末尾へクランプされる（0 ではない）");
+        assert_eq!(
+            s.selected(),
+            1,
+            "範囲外は末尾へクランプされる（0 ではない）"
+        );
     }
 
     /// 0 件が到着したときは選択の指す行が無い（§6.1 の 2 段目の末尾）。**上の「先頭へ戻さない」
@@ -893,8 +977,16 @@ mod tests {
 
     fn make_tools() -> Vec<OpenerTool> {
         vec![
-            OpenerTool { name: "VSCode".into(), exe: "Code.exe".into(), args: String::new() },
-            OpenerTool { name: "Terminal".into(), exe: "wt.exe".into(), args: "-d {path}".into() },
+            OpenerTool {
+                name: "VSCode".into(),
+                exe: "Code.exe".into(),
+                args: String::new(),
+            },
+            OpenerTool {
+                name: "Terminal".into(),
+                exe: "wt.exe".into(),
+                args: "-d {path}".into(),
+            },
         ]
     }
 
@@ -903,7 +995,10 @@ mod tests {
         let mut s = SearchState::new();
         s.set_query("code".into());
         s.set_results(vec![SearchResult {
-            name: "proj".into(), path: "C:\\proj".into(), is_folder: true, is_error: false,
+            name: "proj".into(),
+            path: "C:\\proj".into(),
+            is_folder: true,
+            is_error: false,
         }]);
         s.enter_tool("C:\\proj".into(), true, make_tools());
         assert_eq!(s.view_kind(), ViewKind::Tool);
@@ -924,7 +1019,10 @@ mod tests {
         let mut s = SearchState::new();
         s.set_query("code".into());
         s.set_results(vec![SearchResult {
-            name: "proj".into(), path: "C:\\proj".into(), is_folder: true, is_error: false,
+            name: "proj".into(),
+            path: "C:\\proj".into(),
+            is_folder: true,
+            is_error: false,
         }]);
         s.enter_tool("C:\\proj".into(), true, make_tools());
         assert_eq!(s.on_escape(), EscapeOutcome::RestoredFromTool);
@@ -939,12 +1037,18 @@ mod tests {
         let mut s = SearchState::new();
         s.set_query("pre".into());
         s.set_results(vec![SearchResult {
-            name: "dir".into(), path: "C:\\dir".into(), is_folder: true, is_error: false,
+            name: "dir".into(),
+            path: "C:\\dir".into(),
+            is_folder: true,
+            is_error: false,
         }]);
         s.enter_folder("C:\\dir".into());
         s.set_folder_filter("fil".into());
         s.set_results(vec![SearchResult {
-            name: "child".into(), path: "C:\\dir\\child".into(), is_folder: false, is_error: false,
+            name: "child".into(),
+            path: "C:\\dir\\child".into(),
+            is_folder: false,
+            is_error: false,
         }]);
         s.enter_tool("C:\\dir\\child".into(), false, make_tools());
         assert_eq!(s.view_kind(), ViewKind::Tool);
@@ -965,7 +1069,10 @@ mod tests {
     fn reset_clears_tool_slot() {
         let mut s = SearchState::new();
         s.set_results(vec![SearchResult {
-            name: "f".into(), path: "C:\\f".into(), is_folder: false, is_error: false,
+            name: "f".into(),
+            path: "C:\\f".into(),
+            is_folder: false,
+            is_error: false,
         }]);
         s.enter_tool("C:\\f".into(), false, make_tools());
         s.reset(); // §18.5: ホットキー再表示（resetForShow）でツール選択はリセット
@@ -978,7 +1085,10 @@ mod tests {
         // §18.5 入力無効の状態面: tool 中はどんな query でも Plain（instant/command 化しない）
         let mut s = SearchState::new();
         s.set_results(vec![SearchResult {
-            name: "f".into(), path: "C:\\f".into(), is_folder: false, is_error: false,
+            name: "f".into(),
+            path: "C:\\f".into(),
+            is_folder: false,
+            is_error: false,
         }]);
         s.enter_tool("C:\\f".into(), false, make_tools());
         s.set_query("@gh".into());

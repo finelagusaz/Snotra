@@ -36,12 +36,16 @@ mod tests {
     use snotra_core::config::Config;
     use snotra_core::engine::Engine;
     use snotra_core::history::HistoryStore;
-    use std::sync::atomic::{AtomicBool, AtomicU64};
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, AtomicU64};
 
     fn test_state(indexing: bool) -> AppState {
         AppState {
-            engine: Mutex::new(Engine::new(Vec::new(), HistoryStore::load(), Config::default())),
+            engine: Mutex::new(Engine::new(
+                Vec::new(),
+                HistoryStore::load(),
+                Config::default(),
+            )),
             indexing: AtomicBool::new(indexing),
             index_build_started: AtomicBool::new(false),
             main_visible: AtomicBool::new(false),

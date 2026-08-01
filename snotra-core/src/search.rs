@@ -205,7 +205,8 @@ impl IncrementalCache {
 /// 衝突は候補を余計に通すだけで、kana マッチを棄却しない。
 #[inline]
 fn kana_char_mask(kana: &str) -> u64 {
-    kana.chars().fold(0, |mask, ch| mask | (1u64 << ((ch as u32) & 63)))
+    kana.chars()
+        .fold(0, |mask, ch| mask | (1u64 << ((ch as u32) & 63)))
 }
 
 impl SearchEngine {
@@ -220,13 +221,7 @@ impl SearchEngine {
         history: &HistoryStore,
         mode: SearchMode,
     ) -> Vec<SearchResult> {
-        self.search_with_options(
-            query,
-            max_results,
-            history,
-            mode,
-            SearchOptions::default(),
-        )
+        self.search_with_options(query, max_results, history, mode, SearchOptions::default())
     }
 
     pub fn search_with_options(

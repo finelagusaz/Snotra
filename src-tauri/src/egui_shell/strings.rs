@@ -97,8 +97,12 @@ pub fn launch_timeout(l: Language, detail: &str) -> String {
 /// {hotkey} は書式挿入。英語文言に句点は付かない＝i18n.ts 実物どおり）。
 pub fn hotkey_change_failed(l: Language, hotkey: &str) -> String {
     match l {
-        Language::Ja => format!("ホットキー ({hotkey}) の登録に失敗しました。元のホットキーを維持します"),
-        Language::En => format!("Failed to register hotkey ({hotkey}). Keeping the previous hotkey"),
+        Language::Ja => {
+            format!("ホットキー ({hotkey}) の登録に失敗しました。元のホットキーを維持します")
+        }
+        Language::En => {
+            format!("Failed to register hotkey ({hotkey}). Keeping the previous hotkey")
+        }
     }
 }
 
@@ -107,8 +111,12 @@ pub fn hotkey_change_failed(l: Language, hotkey: &str) -> String {
 /// `change_failed` と別キーなのは意図（旧ホットキー維持ではなく「開く手段が無い」告知）。
 pub fn hotkey_initial_failed(l: Language, hotkey: &str) -> String {
     match l {
-        Language::Ja => format!("ホットキー ({hotkey}) の登録に失敗しました。他のアプリが使用中の可能性があります"),
-        Language::En => format!("Failed to register hotkey ({hotkey}). Another application may be using it"),
+        Language::Ja => format!(
+            "ホットキー ({hotkey}) の登録に失敗しました。他のアプリが使用中の可能性があります"
+        ),
+        Language::En => {
+            format!("Failed to register hotkey ({hotkey}). Another application may be using it")
+        }
     }
 }
 
@@ -154,7 +162,11 @@ pub fn update_failed(l: Language, reason: &str) -> String {
         Language::Ja => "更新に失敗しました",
         Language::En => "Update failed",
     };
-    if reason.is_empty() { base.to_string() } else { format!("{base}: {reason}") }
+    if reason.is_empty() {
+        base.to_string()
+    } else {
+        format!("{base}: {reason}")
+    }
 }
 
 #[cfg(test)]
@@ -177,16 +189,26 @@ mod tests {
 
     #[test]
     fn params_are_interpolated_in_both_languages() {
-        assert_eq!(launch_failed(Language::Ja, " (exe not found)"), "起動に失敗しました (exe not found)");
+        assert_eq!(
+            launch_failed(Language::Ja, " (exe not found)"),
+            "起動に失敗しました (exe not found)"
+        );
         assert_eq!(launch_failed(Language::En, ""), "Launch failed");
-        assert_eq!(update_available(Language::En, "1.2.3"), "v1.2.3 is available");
+        assert_eq!(
+            update_available(Language::En, "1.2.3"),
+            "v1.2.3 is available"
+        );
     }
 
     #[test]
     fn timeout_wording_is_indeterminate_not_failure() {
         // spec 決定 8: timeout は「失敗」でなく「結果不明」。文言に「失敗」を含めない。
         assert!(!launch_timeout(Language::Ja, "").contains("失敗"));
-        assert!(!launch_timeout(Language::En, "").to_lowercase().contains("failed"));
+        assert!(
+            !launch_timeout(Language::En, "")
+                .to_lowercase()
+                .contains("failed")
+        );
     }
 
     /// #836: フォルダ展開中のプレースホルダ。撤去済み WebView2 の
@@ -200,14 +222,26 @@ mod tests {
     /// が末尾 `\` 付きの `C:\` を返す一方でフォルダ列挙は末尾 `\` 無しを返すため、両方が実際に来る。
     #[test]
     fn folder_hint_matches_webview2_parity() {
-        assert_eq!(folder_hint(Language::Ja, "C:\\Toolbox\\ghost-launcher"), "C:\\Toolbox\\ghost-launcher 内を検索...");
-        assert_eq!(folder_hint(Language::En, "C:\\Toolbox\\ghost-launcher"), "Search in C:\\Toolbox\\ghost-launcher...");
+        assert_eq!(
+            folder_hint(Language::Ja, "C:\\Toolbox\\ghost-launcher"),
+            "C:\\Toolbox\\ghost-launcher 内を検索..."
+        );
+        assert_eq!(
+            folder_hint(Language::En, "C:\\Toolbox\\ghost-launcher"),
+            "Search in C:\\Toolbox\\ghost-launcher..."
+        );
         // ドライブルート（`compute_parent_dir` が末尾 `\` を付けて返す形）
         assert_eq!(folder_hint(Language::Ja, "C:\\"), "C:\\ 内を検索...");
         assert_eq!(folder_hint(Language::En, "C:\\"), "Search in C:\\...");
         // UNC 共有ルート（`compute_parent_dir` の終端）
-        assert_eq!(folder_hint(Language::Ja, "\\\\srv\\share"), "\\\\srv\\share 内を検索...");
-        assert_eq!(folder_hint(Language::En, "\\\\srv\\share"), "Search in \\\\srv\\share...");
+        assert_eq!(
+            folder_hint(Language::Ja, "\\\\srv\\share"),
+            "\\\\srv\\share 内を検索..."
+        );
+        assert_eq!(
+            folder_hint(Language::En, "\\\\srv\\share"),
+            "Search in \\\\srv\\share..."
+        );
     }
 
     /// 三点が ASCII であることを、上のリテラル比較とは**独立に**測る（リテラルどうしの比較は、

@@ -262,7 +262,10 @@ mod tests {
     #[test]
     fn non_collection_rejects_nonzero_face() {
         // A single TTF (no "ttcf" tag) has only face 0.
-        assert!(!face_index_valid(b"\x00\x01\x00\x00 single-face ttf body", 1));
+        assert!(!face_index_valid(
+            b"\x00\x01\x00\x00 single-face ttf body",
+            1
+        ));
     }
 
     #[test]

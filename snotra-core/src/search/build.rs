@@ -14,7 +14,12 @@ use super::{IncrementalCache, SearchEngine, kana_char_mask};
 
 /// Wave 1 の出力: `(lower_names, lower_file_names, normalized_keys, kana_lower_names)`。
 /// いずれも構築後に伸長しないため `Box<str>` で保持する（容量ワード 8B/要素を節約）。
-type Wave1Strings = (Vec<Box<str>>, Vec<Option<Box<str>>>, Vec<Box<str>>, Vec<Box<str>>);
+type Wave1Strings = (
+    Vec<Box<str>>,
+    Vec<Option<Box<str>>>,
+    Vec<Box<str>>,
+    Vec<Box<str>>,
+);
 
 /// Wave 1: entries から文字列正規化データを並列構築する。
 /// lower_names / lower_file_names / normalized_keys / kana_lower_names は
@@ -61,7 +66,12 @@ fn compute_wave1(entries: &[AppEntry], migemo_enabled: bool) -> Wave1Strings {
             )
         },
     );
-    (lower_names, lower_file_names, normalized_keys, kana_lower_names)
+    (
+        lower_names,
+        lower_file_names,
+        normalized_keys,
+        kana_lower_names,
+    )
 }
 
 /// Wave 2: lower_names / lower_file_names からビットマスクを並列構築する。
@@ -74,7 +84,12 @@ fn compute_wave2(
     lower_file_names: &[Option<Box<str>>],
 ) -> (Vec<u64>, Vec<u64>) {
     rayon::join(
-        || lower_names.iter().map(|n| name_char_mask(n)).collect::<Vec<_>>(),
+        || {
+            lower_names
+                .iter()
+                .map(|n| name_char_mask(n))
+                .collect::<Vec<_>>()
+        },
         || {
             // None → 0: entries without a file_name cannot match via the file_name path,
             // so failing the bitmask check (and being skipped when the name also fails) is correct.
@@ -88,7 +103,10 @@ fn compute_wave2(
 
 /// migemo 有効時の kana pre-filter 用並列 Vec を構築する。kana 未構築時は空 Vec を保つ。
 fn compute_kana_char_masks(kana_lower_names: &[Box<str>]) -> Vec<u64> {
-    kana_lower_names.iter().map(|name| kana_char_mask(name)).collect()
+    kana_lower_names
+        .iter()
+        .map(|name| kana_char_mask(name))
+        .collect()
 }
 
 impl SearchEngine {
@@ -145,8 +163,7 @@ impl SearchEngine {
     pub fn new_with_migemo(entries: Vec<AppEntry>, migemo_enabled: bool) -> Self {
         let (lower_names, lower_file_names, normalized_keys, kana_lower_names) =
             compute_wave1(&entries, migemo_enabled);
-        let (char_masks, file_name_char_masks) =
-            compute_wave2(&lower_names, &lower_file_names);
+        let (char_masks, file_name_char_masks) = compute_wave2(&lower_names, &lower_file_names);
         let kana_char_masks = compute_kana_char_masks(&kana_lower_names);
         Self::assemble(
             entries,
@@ -177,9 +194,11 @@ impl SearchEngine {
         migemo_enabled: bool,
     ) -> Self {
         let (lower_names, lower_file_names, normalized_keys, kana_lower_names) =
-            if let (Some(ln), Some(lfn), Some(nk)) =
-                (cached_lower_names, cached_lower_file_names, cached_normalized_keys)
-            {
+            if let (Some(ln), Some(lfn), Some(nk)) = (
+                cached_lower_names,
+                cached_lower_file_names,
+                cached_normalized_keys,
+            ) {
                 // A-3: v4 キャッシュヒット → Wave 1 完全スキップ（kana_lower_names は毎起動再計算）。
                 // キャッシュ由来の Vec<String> を Box<str> へ移す。postcard デシリアライズ後の
                 // String は capacity == len のため into_boxed_str は再アロケーションを伴わない。
@@ -192,12 +211,18 @@ impl SearchEngine {
                 } else {
                     Vec::new()
                 };
-                let ln = ln.into_iter().map(String::into_boxed_str).collect::<Vec<_>>();
+                let ln = ln
+                    .into_iter()
+                    .map(String::into_boxed_str)
+                    .collect::<Vec<_>>();
                 let lfn = lfn
                     .into_iter()
                     .map(|o| o.map(String::into_boxed_str))
                     .collect::<Vec<_>>();
-                let nk = nk.into_iter().map(String::into_boxed_str).collect::<Vec<_>>();
+                let nk = nk
+                    .into_iter()
+                    .map(String::into_boxed_str)
+                    .collect::<Vec<_>>();
                 (ln, lfn, nk, kana)
             } else {
                 // v3 フォールバック: Wave 1 を並列実行（migemo フラグを反映）

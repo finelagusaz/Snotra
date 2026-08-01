@@ -150,9 +150,9 @@ fn match_score_single_cached(
                 None
             }
         }
-        SearchMode::Substring => {
-            lower_name.find(query).map(|idx| score_tier::SUBSTRING_BASE - idx as i64)
-        }
+        SearchMode::Substring => lower_name
+            .find(query)
+            .map(|idx| score_tier::SUBSTRING_BASE - idx as i64),
         SearchMode::Fuzzy => {
             let h = haystack_u32.expect("Fuzzy mode requires UTF-32 haystack");
             let haystack = h.slice(..);
@@ -385,13 +385,13 @@ impl SearchEngine {
 
         let base_score = score?;
 
-        let (global_launches, last_launched) = history.get_global_stats_normalized(v.normalized_key);
+        let (global_launches, last_launched) =
+            history.get_global_stats_normalized(v.normalized_key);
         // 履歴キーは record_launch の保存形式に合わせる:
         // normalize_query() + パス区切り統一。path_query は生クエリベースで
         // スペース/アクセントが異なるため履歴キーには使わない。
         let history_query_key = plan.path_history_key.as_deref().unwrap_or(norm_query_str);
-        let qcount =
-            history.query_count_pre_normalized(history_query_key, v.normalized_key) as i64;
+        let qcount = history.query_count_pre_normalized(history_query_key, v.normalized_key) as i64;
 
         let folder_boost = if v.entry.is_folder {
             history.folder_expansion_count_normalized(v.normalized_key) as i64

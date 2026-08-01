@@ -227,10 +227,8 @@ impl<T: UserEvent> Plugin<T> for RuntimePlugin<T> {
                             .ok()
                             .and_then(|h| crate::monitor::window_monitor(h.0 as isize));
                         if monitor != active.last_monitor {
-                            active.last_monitor = refresh_min_interval(
-                                &active.window.window,
-                                &active.scheduler,
-                            );
+                            active.last_monitor =
+                                refresh_min_interval(&active.window.window, &active.scheduler);
                         }
                     }
                     if active.window.on_window_event(event) {
@@ -363,8 +361,9 @@ impl EguiWindow {
 
     fn on_window_event(&mut self, event: &tauri_runtime_wry::tao::event::WindowEvent<'_>) -> bool {
         self.drain_native_ime();
-        if let tauri_runtime_wry::tao::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } =
-            event
+        if let tauri_runtime_wry::tao::event::WindowEvent::ScaleFactorChanged {
+            scale_factor, ..
+        } = event
         {
             eprintln!("SNOTRA_EGUI_DPI_CHANGED scale_factor={scale_factor:.3}");
         }

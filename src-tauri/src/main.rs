@@ -20,8 +20,8 @@ mod state;
 mod trace;
 mod working_set;
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 
 use serde_json::json;
@@ -90,17 +90,17 @@ fn wait_alt_release_or_timeout() {
 #[cfg(windows)]
 fn send_alt_key_up() {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        INPUT, SendInput, VK_LMENU, VK_MENU, VK_RMENU, VIRTUAL_KEY,
+        INPUT, SendInput, VIRTUAL_KEY, VK_LMENU, VK_MENU, VK_RMENU,
     };
 
     const VK_MASK: VIRTUAL_KEY = VIRTUAL_KEY(0xE8); // unassigned — safe dummy key
 
     let inputs = [
-        make_key_input(VK_MASK, false),  // mask key down
-        make_key_input(VK_MASK, true),   // mask key up
-        make_key_input(VK_MENU, true),   // Alt (generic) up
-        make_key_input(VK_LMENU, true),  // Left Alt up
-        make_key_input(VK_RMENU, true),  // Right Alt up
+        make_key_input(VK_MASK, false), // mask key down
+        make_key_input(VK_MASK, true),  // mask key up
+        make_key_input(VK_MENU, true),  // Alt (generic) up
+        make_key_input(VK_LMENU, true), // Left Alt up
+        make_key_input(VK_RMENU, true), // Right Alt up
     ];
     unsafe {
         let _ = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
@@ -116,7 +116,7 @@ fn make_key_input(
     is_up: bool,
 ) -> windows::Win32::UI::Input::KeyboardAndMouse::INPUT {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYBD_EVENT_FLAGS,
+        INPUT, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP,
     };
     let mut input = INPUT {
         r#type: INPUT_KEYBOARD,
@@ -160,7 +160,12 @@ fn main() {
                 s.cache_save_ms,
             );
         }
-        (result.entries, false, result.cached_masks, result.rescan_task)
+        (
+            result.entries,
+            false,
+            result.cached_masks,
+            result.rescan_task,
+        )
     };
 
     // PATH エントリのスキャン + マージ
@@ -207,10 +212,12 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_single_instance::init(move |app, _args, _cwd| {
-            // When a second instance tries to start, show the main (egui) window.
-            egui_shell::show_egui_main(app, Instant::now());
-        }))
+        .plugin(tauri_plugin_single_instance::init(
+            move |app, _args, _cwd| {
+                // When a second instance tries to start, show the main (egui) window.
+                egui_shell::show_egui_main(app, Instant::now());
+            },
+        ))
         .manage(app_state)
         .manage(icon_cache_state)
         .manage(SettingsProcessState::default())
@@ -265,7 +272,9 @@ fn main() {
             // setup_hotkey_listener より前に登録される位置なので emit を取りこぼさない
             //（この egui ブロック自体が setup_platform_thread の直後・hotkey listener の前）。
             egui_shell::register_initial_hotkey_failure_listener(&app_handle);
-            app.manage(egui_shell::UpdaterUiState(std::sync::Mutex::new(Default::default())));
+            app.manage(egui_shell::UpdaterUiState(std::sync::Mutex::new(
+                Default::default(),
+            )));
             // main と results 窓が共有する一方向フローの入れ物（#646 PR2）。
             app.manage(egui_shell::ResultsShared::default());
             egui_shell::spawn_update_check(&app_handle);
@@ -313,8 +322,13 @@ fn main() {
 /// creation, and manage the resulting `PlatformBridge` once ready. The tray
 /// is NOT created here; `setup_tray` sends `SetTrayVisible` later, after all
 /// windows and listeners are ready (SPEC §7.5).
-fn setup_platform_thread(app_handle: &AppHandle, hotkey_config: HotkeyConfig, initial_language: Language) {
-    let platform_pending = PlatformBridge::begin(app_handle.clone(), hotkey_config, initial_language);
+fn setup_platform_thread(
+    app_handle: &AppHandle,
+    hotkey_config: HotkeyConfig,
+    initial_language: Language,
+) {
+    let platform_pending =
+        PlatformBridge::begin(app_handle.clone(), hotkey_config, initial_language);
 
     // Win32 init finishes in a few ms; by the time windows are created it is already done.
     if let Some(bridge) = platform_pending.and_then(PlatformBridgePending::wait) {
@@ -472,7 +486,10 @@ fn setup_config_watcher(app_handle: &AppHandle) {
 /// キャッシュヒット時のみ `Some` で渡される背景再スキャンタスクを低優先度スレッド
 /// で実行する（SPEC §3.3 ハイブリッド方式）。ロジックは snotra-core、spawn と結果の
 /// 後始末（アイコン無効化）は src-tauri の責務。
-fn setup_background_rescan(app_handle: &AppHandle, rescan_task: Option<indexer::BackgroundRescanTask>) {
+fn setup_background_rescan(
+    app_handle: &AppHandle,
+    rescan_task: Option<indexer::BackgroundRescanTask>,
+) {
     if let Some(task) = rescan_task {
         let handle_for_rescan = app_handle.clone();
         let _ = std::thread::Builder::new()

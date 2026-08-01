@@ -21,8 +21,16 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, hotkey_state: &mut HotkeyInput
             egui::ComboBox::from_id_salt("language")
                 .selected_text(lang_label)
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut config.general.language, Language::Ja, tr.t(TrKey::LanguageJa));
-                    ui.selectable_value(&mut config.general.language, Language::En, tr.t(TrKey::LanguageEn));
+                    ui.selectable_value(
+                        &mut config.general.language,
+                        Language::Ja,
+                        tr.t(TrKey::LanguageJa),
+                    );
+                    ui.selectable_value(
+                        &mut config.general.language,
+                        Language::En,
+                        tr.t(TrKey::LanguageEn),
+                    );
                 });
             ui.end_row();
         });
@@ -38,15 +46,24 @@ pub fn ui(ui: &mut egui::Ui, config: &mut Config, hotkey_state: &mut HotkeyInput
             ui.end_row();
         });
 
-        ui.checkbox(&mut config.general.hotkey_toggle, tr.t(TrKey::CbHotkeyToggle));
+        ui.checkbox(
+            &mut config.general.hotkey_toggle,
+            tr.t(TrKey::CbHotkeyToggle),
+        );
 
         style::section_gap(ui);
 
         // -- Behavior --
         style::section_heading(ui, tr.t(TrKey::HeadingBehavior));
 
-        ui.checkbox(&mut config.general.show_on_startup, tr.t(TrKey::CbShowOnStartup));
-        ui.checkbox(&mut config.general.auto_hide_on_focus_lost, tr.t(TrKey::CbAutoHide));
+        ui.checkbox(
+            &mut config.general.show_on_startup,
+            tr.t(TrKey::CbShowOnStartup),
+        );
+        ui.checkbox(
+            &mut config.general.auto_hide_on_focus_lost,
+            tr.t(TrKey::CbAutoHide),
+        );
         ui.checkbox(&mut config.general.show_tray_icon, tr.t(TrKey::CbTrayIcon));
         ui.checkbox(&mut config.general.ime_off_on_show, tr.t(TrKey::CbImeOff));
         ui.checkbox(

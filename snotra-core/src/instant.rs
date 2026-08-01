@@ -330,63 +330,40 @@ mod tests {
 
     #[test]
     fn url_query_is_encoded() {
-        let result = expand_instant_command(
-            "https://google.com/search?q={query}",
-            "機械学習",
-            "",
-        );
+        let result = expand_instant_command("https://google.com/search?q={query}", "機械学習", "");
         assert!(result.contains("%E6%A9%9F%E6%A2%B0%E5%AD%A6%E7%BF%92"));
         assert!(!result.contains("機械学習"));
     }
 
     #[test]
     fn url_clip_is_encoded() {
-        let result = expand_instant_command(
-            "https://translate.com/?text={clip}",
-            "",
-            "hello world",
-        );
+        let result =
+            expand_instant_command("https://translate.com/?text={clip}", "", "hello world");
         assert!(result.contains("hello%20world"));
         assert!(!result.contains("hello world"));
     }
 
     #[test]
     fn url_symbols_are_encoded() {
-        let result = expand_instant_command(
-            "https://example.com/?q={query}",
-            "a&b=c",
-            "",
-        );
+        let result = expand_instant_command("https://example.com/?q={query}", "a&b=c", "");
         assert!(result.contains("a%26b%3Dc"));
     }
 
     #[test]
     fn non_url_query_is_raw() {
-        let result = expand_instant_command(
-            "C:\\editor.exe {query}",
-            "hello world",
-            "",
-        );
+        let result = expand_instant_command("C:\\editor.exe {query}", "hello world", "");
         assert_eq!(result, "C:\\editor.exe hello world");
     }
 
     #[test]
     fn non_url_clip_is_raw() {
-        let result = expand_instant_command(
-            "C:\\editor.exe {clip}",
-            "",
-            "clipboard text",
-        );
+        let result = expand_instant_command("C:\\editor.exe {clip}", "", "clipboard text");
         assert_eq!(result, "C:\\editor.exe clipboard text");
     }
 
     #[test]
     fn empty_query_expands_to_empty() {
-        let result = expand_instant_command(
-            "https://google.com/search?q={query}",
-            "",
-            "",
-        );
+        let result = expand_instant_command("https://google.com/search?q={query}", "", "");
         assert_eq!(result, "https://google.com/search?q=");
     }
 
@@ -398,11 +375,8 @@ mod tests {
 
     #[test]
     fn both_placeholders_in_url() {
-        let result = expand_instant_command(
-            "https://example.com/?q={query}&c={clip}",
-            "test",
-            "data",
-        );
+        let result =
+            expand_instant_command("https://example.com/?q={query}&c={clip}", "test", "data");
         assert_eq!(result, "https://example.com/?q=test&c=data");
     }
 
@@ -410,9 +384,27 @@ mod tests {
 
     fn sample_commands() -> Vec<InstantCommand> {
         vec![
-            InstantCommand { name: "g".to_string(), description: String::new(), action: InstantAction::Url { url: "https://google.com?q={query}".into() } },
-            InstantCommand { name: "gm".to_string(), description: String::new(), action: InstantAction::Url { url: "https://mail.google.com".into() } },
-            InstantCommand { name: "n".to_string(), description: String::new(), action: InstantAction::Url { url: "notepad.exe".into() } },
+            InstantCommand {
+                name: "g".to_string(),
+                description: String::new(),
+                action: InstantAction::Url {
+                    url: "https://google.com?q={query}".into(),
+                },
+            },
+            InstantCommand {
+                name: "gm".to_string(),
+                description: String::new(),
+                action: InstantAction::Url {
+                    url: "https://mail.google.com".into(),
+                },
+            },
+            InstantCommand {
+                name: "n".to_string(),
+                description: String::new(),
+                action: InstantAction::Url {
+                    url: "notepad.exe".into(),
+                },
+            },
         ]
     }
 
@@ -449,15 +441,21 @@ mod tests {
 
     #[test]
     fn filter_case_insensitive() {
-        let cmds = vec![
-            InstantCommand { name: "Google".to_string(), description: String::new(), action: InstantAction::Url { url: "https://google.com".into() } },
-        ];
+        let cmds = vec![InstantCommand {
+            name: "Google".to_string(),
+            description: String::new(),
+            action: InstantAction::Url {
+                url: "https://google.com".into(),
+            },
+        }];
         let result = filter_instant_commands(&cmds, "google");
         assert_eq!(result.len(), 1);
     }
 
     // ---- expand_exec_args tests ----
-    fn no_env(s: &str) -> String { s.to_string() }
+    fn no_env(s: &str) -> String {
+        s.to_string()
+    }
 
     #[test]
     fn exec_args_empty_is_no_tokens() {
@@ -512,11 +510,17 @@ mod tests {
     // ---- split_args (quote-aware splitting) tests ----
     #[test]
     fn split_args_quoted_token_preserves_spaces() {
-        assert_eq!(split_args(r#"--dir "My Documents""#), vec!["--dir", "My Documents"]);
+        assert_eq!(
+            split_args(r#"--dir "My Documents""#),
+            vec!["--dir", "My Documents"]
+        );
     }
     #[test]
     fn split_args_unclosed_quote_consumes_to_end() {
-        assert_eq!(split_args(r#"--dir "My Documents"#), vec!["--dir", "My Documents"]);
+        assert_eq!(
+            split_args(r#"--dir "My Documents"#),
+            vec!["--dir", "My Documents"]
+        );
     }
     #[test]
     fn split_args_adjacent_quotes_join() {
@@ -533,7 +537,10 @@ mod tests {
     #[test]
     fn split_args_keeps_braced_placeholder_with_spaces() {
         // `{...}` 内の空白は分割しない（修飾子パイプを1トークンに保つ）
-        assert_eq!(split_args("-s {query | trim}"), vec!["-s", "{query | trim}"]);
+        assert_eq!(
+            split_args("-s {query | trim}"),
+            vec!["-s", "{query | trim}"]
+        );
     }
     #[test]
     fn split_args_keeps_braced_default_with_spaces() {
@@ -684,7 +691,10 @@ mod tests {
     #[test]
     fn unknown_modifiers_works_with_date_uuid() {
         // date/uuid 変数でも修飾子検査が機能する
-        assert_eq!(collect_unknown_modifiers("{date:%Y | bogus}"), vec!["bogus"]);
+        assert_eq!(
+            collect_unknown_modifiers("{date:%Y | bogus}"),
+            vec!["bogus"]
+        );
         assert_eq!(collect_unknown_modifiers("{uuid | nope}"), vec!["nope"]);
         assert!(collect_unknown_modifiers("{date:%Y-%m-%d | upper}").is_empty());
         assert!(collect_unknown_modifiers("{uuid | upper}").is_empty());
@@ -779,10 +789,7 @@ mod tests {
             u.chars().all(|c| c == '-' || c.is_ascii_hexdigit()),
             "hex only: {u}"
         );
-        assert!(
-            u.chars().all(|c| !c.is_ascii_uppercase()),
-            "lowercase: {u}"
-        );
+        assert!(u.chars().all(|c| !c.is_ascii_uppercase()), "lowercase: {u}");
     }
 
     #[test]
@@ -882,6 +889,9 @@ mod tests {
         let r = expand_exec_args("{{date}", "", "", no_env);
         assert_eq!(r.len(), 1);
         assert!(r[0].starts_with('{'), "leading brace kept literal: {r:?}");
-        assert!(!r[0].contains("{date}"), "second brace opened a placeholder: {r:?}");
+        assert!(
+            !r[0].contains("{date}"),
+            "second brace opened a placeholder: {r:?}"
+        );
     }
 }

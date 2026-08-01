@@ -75,7 +75,10 @@ pub fn ui(
         style::hint(ui, tr.t(TrKey::LabelExportDescription));
         ui.add_space(style::SPACE_GROUP);
         if ui
-            .add_enabled(!state.export_active, egui::Button::new(tr.t(TrKey::BtnExport)))
+            .add_enabled(
+                !state.export_active,
+                egui::Button::new(tr.t(TrKey::BtnExport)),
+            )
             .clicked()
         {
             state.message.clear();
@@ -89,7 +92,10 @@ pub fn ui(
         style::hint(ui, tr.t(TrKey::LabelImportDescription));
         ui.add_space(style::SPACE_GROUP);
         if ui
-            .add_enabled(!state.import_active, egui::Button::new(tr.t(TrKey::BtnImport)))
+            .add_enabled(
+                !state.import_active,
+                egui::Button::new(tr.t(TrKey::BtnImport)),
+            )
             .clicked()
         {
             state.message.clear();
@@ -235,11 +241,24 @@ fn handle_export_result(path: Option<PathBuf>, tr: &Tr) -> (Option<String>, bool
         return (None, false); // Cancelled
     };
     let Some(src) = Config::config_path() else {
-        return (Some(format!("{}config dir not found", tr.t(TrKey::StatusExportFailed))), true);
+        return (
+            Some(format!(
+                "{}config dir not found",
+                tr.t(TrKey::StatusExportFailed)
+            )),
+            true,
+        );
     };
     match std::fs::copy(&src, &dest) {
         Ok(_) => (Some(tr.t(TrKey::StatusExportSuccess).to_string()), false),
-        Err(e) => (Some(format!("{}{}", tr.t(TrKey::StatusExportFailed), first_line(&e.to_string()))), true),
+        Err(e) => (
+            Some(format!(
+                "{}{}",
+                tr.t(TrKey::StatusExportFailed),
+                first_line(&e.to_string())
+            )),
+            true,
+        ),
     }
 }
 
@@ -266,25 +285,61 @@ fn handle_import_result(path: Option<PathBuf>, tr: &Tr) -> (Option<String>, bool
     let content = match std::fs::read_to_string(&src) {
         Ok(c) => c,
         Err(e) => {
-            return (Some(format!("{}{}", tr.t(TrKey::StatusImportFailed), first_line(&e.to_string()))), true, None);
+            return (
+                Some(format!(
+                    "{}{}",
+                    tr.t(TrKey::StatusImportFailed),
+                    first_line(&e.to_string())
+                )),
+                true,
+                None,
+            );
         }
     };
     let config = match Config::from_toml_str(&content) {
         Ok(c) => c,
         Err(e) => {
-            return (Some(format!("{}{}", tr.t(TrKey::StatusImportFailed), localize_toml_error(&e, tr))), true, None);
+            return (
+                Some(format!(
+                    "{}{}",
+                    tr.t(TrKey::StatusImportFailed),
+                    localize_toml_error(&e, tr)
+                )),
+                true,
+                None,
+            );
         }
     };
     let config = match prepare_import_config(config) {
         Ok(config) => config,
         Err(error) => {
-            return (Some(format!("{}{}", tr.t(TrKey::StatusImportValidationError), config_error_message(&error, tr))), true, None);
+            return (
+                Some(format!(
+                    "{}{}",
+                    tr.t(TrKey::StatusImportValidationError),
+                    config_error_message(&error, tr)
+                )),
+                true,
+                None,
+            );
         }
     };
     if let Err(e) = config.save() {
-        return (Some(format!("{}{}", tr.t(TrKey::StatusImportFailed), first_line(&e))), true, None);
+        return (
+            Some(format!(
+                "{}{}",
+                tr.t(TrKey::StatusImportFailed),
+                first_line(&e)
+            )),
+            true,
+            None,
+        );
     }
-    (Some(tr.t(TrKey::StatusImportSuccess).to_string()), false, Some(config))
+    (
+        Some(tr.t(TrKey::StatusImportSuccess).to_string()),
+        false,
+        Some(config),
+    )
 }
 
 #[cfg(test)]
@@ -310,34 +365,74 @@ mod tests {
     fn localize_toml_error_ja_missing_field_extracts_name_and_line() {
         let msg = "TOML parse error at line 1, column 1\n  |\n1 | [search]\n  | ^\nmissing field `hotkey`";
         let out = localize_toml_error(msg, &tr_ja());
-        assert!(out.starts_with("行 1:"), "should start with line number: {}", out);
-        assert!(out.contains("\"hotkey\" が必要です"), "should contain field name: {}", out);
-        assert!(out.contains(msg), "should include original English: {}", out);
+        assert!(
+            out.starts_with("行 1:"),
+            "should start with line number: {}",
+            out
+        );
+        assert!(
+            out.contains("\"hotkey\" が必要です"),
+            "should contain field name: {}",
+            out
+        );
+        assert!(
+            out.contains(msg),
+            "should include original English: {}",
+            out
+        );
     }
 
     #[test]
     fn localize_toml_error_ja_invalid_type_with_line() {
         let msg = "TOML parse error at line 2, column 15\n  |\n2 | max_results = \"ten\"\n  |               ^^^^^\ninvalid type: string \"ten\", expected u32";
         let out = localize_toml_error(msg, &tr_ja());
-        assert!(out.starts_with("行 2:"), "should start with line number: {}", out);
-        assert!(out.contains("値の型が違います"), "should contain type error message: {}", out);
-        assert!(out.contains(msg), "should include original English: {}", out);
+        assert!(
+            out.starts_with("行 2:"),
+            "should start with line number: {}",
+            out
+        );
+        assert!(
+            out.contains("値の型が違います"),
+            "should contain type error message: {}",
+            out
+        );
+        assert!(
+            out.contains(msg),
+            "should include original English: {}",
+            out
+        );
     }
 
     #[test]
     fn localize_toml_error_ja_syntax_error_fallback() {
         let msg = "TOML parse error at line 5, column 3\n  |\n5 | key value\n  |   ^\nexpected '='";
         let out = localize_toml_error(msg, &tr_ja());
-        assert!(out.starts_with("行 5:"), "should start with line number: {}", out);
-        assert!(out.contains("構文エラー"), "should contain generic message: {}", out);
+        assert!(
+            out.starts_with("行 5:"),
+            "should start with line number: {}",
+            out
+        );
+        assert!(
+            out.contains("構文エラー"),
+            "should contain generic message: {}",
+            out
+        );
     }
 
     #[test]
     fn localize_toml_error_ja_no_line_number_falls_back_gracefully() {
         let msg = "some unknown error without line info";
         let out = localize_toml_error(msg, &tr_ja());
-        assert!(!out.starts_with("行"), "should not have line prefix: {}", out);
-        assert!(out.contains("構文エラー"), "should contain generic message: {}", out);
+        assert!(
+            !out.starts_with("行"),
+            "should not have line prefix: {}",
+            out
+        );
+        assert!(
+            out.contains("構文エラー"),
+            "should contain generic message: {}",
+            out
+        );
         assert!(out.contains(msg), "should include original: {}", out);
     }
 

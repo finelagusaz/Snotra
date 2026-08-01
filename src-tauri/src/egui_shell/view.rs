@@ -116,8 +116,17 @@ fn draw_toast_button(
     *cursor_x -= w + 8.0;
     let id = ui.id().with(("toast_btn", label));
     let response = ui.interact(rect, id, egui::Sense::click());
-    let color = if enabled { theme.name_color } else { theme.path_color };
-    ui.painter().rect_stroke(rect, 4.0, egui::Stroke::new(1.0, color), egui::StrokeKind::Inside);
+    let color = if enabled {
+        theme.name_color
+    } else {
+        theme.path_color
+    };
+    ui.painter().rect_stroke(
+        rect,
+        4.0,
+        egui::Stroke::new(1.0, color),
+        egui::StrokeKind::Inside,
+    );
     ui.painter().galley(
         egui::pos2(rect.left() + 8.0, center_y - galley.size().y / 2.0),
         galley,
@@ -189,7 +198,14 @@ fn read_pre_widget_input(ctx: &egui::Context) -> PreWidgetInput {
     let right = ctx.input(|i| i.key_pressed(egui::Key::ArrowRight));
     let left = ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft));
 
-    PreWidgetInput { focused, escape, nav_down, nav_up, right, left }
+    PreWidgetInput {
+        focused,
+        escape,
+        nav_down,
+        nav_up,
+        right,
+        left,
+    }
 }
 
 /// pre-widget 入力の読み取り値（段 13）。`nav_down`/`nav_up`/`right`/`left` は
@@ -502,9 +518,9 @@ impl EguiView for SearchWindowView {
             self.controller.is_launching(),
             self.controller.notice_message().is_some(),
         ) {
-            Some(crate::egui_shell::OverlayKind::Indexing) => {
-                Some(crate::egui_shell::ui_strings::indexing_hint(self.controller.lang()).to_string())
-            }
+            Some(crate::egui_shell::OverlayKind::Indexing) => Some(
+                crate::egui_shell::ui_strings::indexing_hint(self.controller.lang()).to_string(),
+            ),
             Some(crate::egui_shell::OverlayKind::Launching) => {
                 Some(crate::egui_shell::ui_strings::launching(self.controller.lang()).to_string())
             }
@@ -580,12 +596,26 @@ impl EguiView for SearchWindowView {
             let mut cursor_x = rect.right() - 8.0;
             let btn_y = rect.center().y;
             let dismiss_label = crate::egui_shell::ui_strings::update_dismiss(l);
-            if draw_toast_button(ui, &mut cursor_x, btn_y, dismiss_label, row.buttons_enabled, theme) {
+            if draw_toast_button(
+                ui,
+                &mut cursor_x,
+                btn_y,
+                dismiss_label,
+                row.buttons_enabled,
+                theme,
+            ) {
                 toast_action = Some(ToastAction::Dismiss);
             }
             if row.show_install {
                 let install_label = crate::egui_shell::ui_strings::update_install_now(l);
-                if draw_toast_button(ui, &mut cursor_x, btn_y, install_label, row.buttons_enabled, theme) {
+                if draw_toast_button(
+                    ui,
+                    &mut cursor_x,
+                    btn_y,
+                    install_label,
+                    row.buttons_enabled,
+                    theme,
+                ) {
                     toast_action = Some(ToastAction::Install);
                 }
             }

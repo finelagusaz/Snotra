@@ -56,7 +56,9 @@ pub fn start(app_handle: &AppHandle) -> Option<notify::RecommendedWatcher> {
     .ok()?;
 
     // Watch the directory (not the file) because atomic write creates a new file
-    watcher.watch(config_dir, RecursiveMode::NonRecursive).ok()?;
+    watcher
+        .watch(config_dir, RecursiveMode::NonRecursive)
+        .ok()?;
 
     Some(watcher)
 }
@@ -217,7 +219,9 @@ mod tests {
         // 正常読込・first-run・破損復旧（#343 の意図的 default 適用）は適用する。
         assert!(should_apply_config_change(LoadOutcome::Loaded));
         assert!(should_apply_config_change(LoadOutcome::FirstRun));
-        assert!(should_apply_config_change(LoadOutcome::RecoveredFromCorrupt));
+        assert!(should_apply_config_change(
+            LoadOutcome::RecoveredFromCorrupt
+        ));
     }
 
     #[test]
@@ -266,7 +270,11 @@ mod tests {
         };
         let sleep = || sleeps.set(sleeps.get() + 1);
         let (_c, outcome) = load_with_read_failed_retry(load, sleep, 3);
-        assert_eq!(outcome, LoadOutcome::Loaded, "予算内でロック解除→成功結果を採用");
+        assert_eq!(
+            outcome,
+            LoadOutcome::Loaded,
+            "予算内でロック解除→成功結果を採用"
+        );
         assert_eq!(calls.get(), 3, "2 回 ReadFailed の後 3 回目で成功");
         assert_eq!(sleeps.get(), 2, "再試行ごとに backoff");
     }

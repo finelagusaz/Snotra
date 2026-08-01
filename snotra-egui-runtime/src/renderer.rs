@@ -131,7 +131,9 @@ impl EguiRenderer {
         let t_raster = trace.then(std::time::Instant::now);
         // present は buffer を消費する。結果を保持し、free を present 成否に依らず処理する
         // （free は CPU 側 HashMap から除くだけ・不変条件⑤。present 失敗で free を落とさない）。
-        let present_result = buffer.present().map_err(|e| RuntimeError::Present(e.to_string()));
+        let present_result = buffer
+            .present()
+            .map_err(|e| RuntimeError::Present(e.to_string()));
         for id in &output.textures_delta.free {
             self.textures.remove(id);
         }
@@ -166,9 +168,14 @@ mod tests {
     /// `background_color_premultiplies_alpha_rather_than_ignoring_it` が測る。
     #[test]
     fn clear_color_packs_rgb_and_drops_alpha() {
-        assert_eq!(clear_color_u32(Some(egui::Color32::from_rgb(0x4A, 0x2B, 0x5C))), 0x004A_2B5C);
         assert_eq!(
-            clear_color_u32(Some(egui::Color32::from_rgba_premultiplied(0x12, 0x34, 0x56, 0x80))),
+            clear_color_u32(Some(egui::Color32::from_rgb(0x4A, 0x2B, 0x5C))),
+            0x004A_2B5C
+        );
+        assert_eq!(
+            clear_color_u32(Some(egui::Color32::from_rgba_premultiplied(
+                0x12, 0x34, 0x56, 0x80
+            ))),
             0x0012_3456
         );
     }

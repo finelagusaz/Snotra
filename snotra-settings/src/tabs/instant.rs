@@ -99,7 +99,11 @@ pub fn ui(
             style::list_item(
                 ui,
                 |ui| {
-                    ui.label(if cmd.name.is_empty() { tr.t(TrKey::LabelNoName) } else { &cmd.name });
+                    ui.label(if cmd.name.is_empty() {
+                        tr.t(TrKey::LabelNoName)
+                    } else {
+                        &cmd.name
+                    });
                     if !cmd.description.is_empty() {
                         style::hint(ui, &cmd.description);
                     }
@@ -189,12 +193,7 @@ enum RowAction {
     MoveDown(usize),
 }
 
-fn show_modal(
-    ctx: &egui::Context,
-    config: &mut Config,
-    state: &mut InstantTabState,
-    tr: &Tr,
-) {
+fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut InstantTabState, tr: &Tr) {
     let title = if state.modal.is_edit() {
         tr.t(TrKey::ModalEditInstant)
     } else {
@@ -223,7 +222,11 @@ fn show_modal(
         // Kind
         ui.label(tr.t(TrKey::LabelInstantKind));
         ui.horizontal(|ui| {
-            ui.radio_value(&mut state.modal.fields.kind, EditKind::Url, tr.t(TrKey::RadioInstantUrl));
+            ui.radio_value(
+                &mut state.modal.fields.kind,
+                EditKind::Url,
+                tr.t(TrKey::RadioInstantUrl),
+            );
             ui.radio_value(
                 &mut state.modal.fields.kind,
                 EditKind::Program,
@@ -253,7 +256,10 @@ fn show_modal(
                 ui.horizontal(|ui| {
                     ui.text_edit_singleline(&mut state.modal.fields.exe);
                     if ui
-                        .add_enabled(!state.exe_picker.active, egui::Button::new(tr.t(TrKey::BtnBrowse)))
+                        .add_enabled(
+                            !state.exe_picker.active,
+                            egui::Button::new(tr.t(TrKey::BtnBrowse)),
+                        )
                         .clicked()
                     {
                         let dialog_title = tr.t(TrKey::DialogSelectExe).to_string();
@@ -316,7 +322,9 @@ fn show_modal(
 
 fn save_instant_command(config: &mut Config, modal: &ModalState<InstantFields>) {
     let action = match modal.fields.kind {
-        EditKind::Url => InstantAction::Url { url: modal.fields.url.clone() },
+        EditKind::Url => InstantAction::Url {
+            url: modal.fields.url.clone(),
+        },
         EditKind::Program => InstantAction::Exec {
             exe: modal.fields.exe.clone(),
             args: modal.fields.args.clone(),

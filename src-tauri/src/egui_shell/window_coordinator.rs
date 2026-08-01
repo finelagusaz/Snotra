@@ -101,7 +101,15 @@ pub(crate) fn apply_native_background(window: &tauri::Window, color: egui::Color
 pub(crate) fn read_background(app: &tauri::AppHandle) -> egui::Color32 {
     let hex = app
         .try_state::<crate::AppState>()
-        .map(|s| s.engine.lock().unwrap().config().visual.background_color.clone())
+        .map(|s| {
+            s.engine
+                .lock()
+                .unwrap()
+                .config()
+                .visual
+                .background_color
+                .clone()
+        })
         .unwrap_or_else(|| super::visual::default_visual().background_color.clone());
     super::visual::background_color(&hex)
 }
@@ -131,7 +139,14 @@ fn position_on_target_monitor(
     // Read follow_cursor_monitor from Engine config (refreshed on every show).
     let follow_cursor = app_handle
         .try_state::<crate::AppState>()
-        .map(|s| s.engine.lock().unwrap().config().general.follow_cursor_monitor)
+        .map(|s| {
+            s.engine
+                .lock()
+                .unwrap()
+                .config()
+                .general
+                .follow_cursor_monitor
+        })
         .unwrap_or_else(|| GeneralConfig::default().follow_cursor_monitor);
 
     // Determine target monitor work area.
@@ -143,7 +158,9 @@ fn position_on_target_monitor(
     let Some(target_wa) = target_wa else { return };
 
     // Get current window size (physical) for centering/clamping.
-    let Ok(win_size) = main.outer_size() else { return };
+    let Ok(win_size) = main.outer_size() else {
+        return;
+    };
     let win_w = win_size.width as i32;
     let win_h = win_size.height as i32;
 
@@ -189,7 +206,10 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
         let width = window
             .inner_size()
             .ok()
-            .map(|s| s.to_logical::<f64>(window.scale_factor().unwrap_or(1.0)).width)
+            .map(|s| {
+                s.to_logical::<f64>(window.scale_factor().unwrap_or(1.0))
+                    .width
+            })
             // **ここは `appearance.window_width` の消費者ではない**——読み元は OS の
             // `inner_size()` で、既定幅 600 と一致しているのは偶然である。参照へ寄せない理由は
             // `docs/adr/ADR-config-default-fallback-references.md`。読み元自体は #824 で決める。
@@ -249,11 +269,14 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
             .map(|s| s.engine.lock().unwrap().config().general.ime_off_on_show)
             .unwrap_or_else(|| GeneralConfig::default().ime_off_on_show);
         if ime_control
-            && let Some(bridge) = app.try_state::<std::sync::Mutex<crate::platform::PlatformBridge>>()
+            && let Some(bridge) =
+                app.try_state::<std::sync::Mutex<crate::platform::PlatformBridge>>()
             && let Ok(b) = bridge.lock()
             && let Ok(hwnd) = window.hwnd()
         {
-            b.send_command(crate::platform::PlatformCommand::TurnOffIme(hwnd.0 as usize));
+            b.send_command(crate::platform::PlatformCommand::TurnOffIme(
+                hwnd.0 as usize,
+            ));
             crate::trace_main("egui_show:ime_control", serde_json::json!({}));
         }
     }
@@ -301,7 +324,10 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
         // 呼び出し側に置く（spec 決定 7）。results の hide は 2 経路あり
         // （ここと同モジュールの drive_results_window）、trace は要求レベルゆえ
         // 既に隠れていても出る——smoke は presence のみを assert する。
-        crate::trace_main("egui_results:hide", serde_json::json!({ "from": "hide_main" }));
+        crate::trace_main(
+            "egui_results:hide",
+            serde_json::json!({ "from": "hide_main" }),
+        );
     }
     // hide 後に working set を trim する（**main の** hide 経路の合流点＝ここが唯一の呼び出し元・
     // #532 SU6.5）。results 単独 hide（drive_results_window）では main が可視のままゆえ trim しないのが正しい。
@@ -389,9 +415,11 @@ pub(crate) fn position_results_below_main(app: &tauri::AppHandle) -> Option<i32>
         .try_state::<crate::AppState>()
         .map(|s| s.engine.lock().unwrap().config().visual.window_gap)
         .unwrap_or_else(|| super::visual::default_visual().window_gap);
-    let (Ok(pos), Ok(size), Ok(scale)) =
-        (main.outer_position(), main.outer_size(), main.scale_factor())
-    else {
+    let (Ok(pos), Ok(size), Ok(scale)) = (
+        main.outer_position(),
+        main.outer_size(),
+        main.scale_factor(),
+    ) else {
         return None;
     };
     // 算術は layout::results_top_y（純粋核・#752 C1）。Win32 の読みはここで 1 回だけ行う。
@@ -433,7 +461,14 @@ fn results_available_height(_app: &tauri::AppHandle, _top_y: i32) -> Option<f64>
 /// （#749）——引数を増やすほど、呼び出し側で読み点の違う値を並べて書きたくなる。
 fn max_results(app: &tauri::AppHandle) -> u32 {
     app.try_state::<crate::AppState>()
-        .map(|s| s.engine.lock().unwrap().config().appearance.effective_visible_rows() as u32)
+        .map(|s| {
+            s.engine
+                .lock()
+                .unwrap()
+                .config()
+                .appearance
+                .effective_visible_rows() as u32
+        })
         .unwrap_or_else(|| AppearanceConfig::default().effective_visible_rows() as u32)
 }
 
@@ -550,7 +585,9 @@ mod tests {
     /// `background_color_premultiplies_alpha_rather_than_ignoring_it` が測る（そちらが正本）。
     #[test]
     fn native_brush_forces_opaque_alpha() {
-        let c = native_brush_color(egui::Color32::from_rgba_premultiplied(0x12, 0x34, 0x56, 0x80));
+        let c = native_brush_color(egui::Color32::from_rgba_premultiplied(
+            0x12, 0x34, 0x56, 0x80,
+        ));
         assert_eq!((c.0, c.1, c.2, c.3), (0x12, 0x34, 0x56, 0xff));
     }
 

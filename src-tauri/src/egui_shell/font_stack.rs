@@ -24,10 +24,8 @@ static JP_FONT_BYTES: OnceLock<Box<[u8]>> = OnceLock::new();
 /// 判定は「厳しすぎて jp_font を残す」方向へ倒す（安全側）。
 const CJK_PROBE: &[char] = &[
     // かな（必須）
-    'あ', 'ん', 'ア', 'ヴ', 'ー',
-    // JIS 第1水準（常用寄り）
-    '日', '本', '語', '漢', '字', '検', '索',
-    // JIS 第2水準・互換漢字
+    'あ', 'ん', 'ア', 'ヴ', 'ー', // JIS 第1水準（常用寄り）
+    '日', '本', '語', '漢', '字', '検', '索', // JIS 第2水準・互換漢字
     '彁', '﨑', '槇', '遙', '瑤', '兪',
 ];
 
@@ -88,7 +86,11 @@ fn font_definitions(
             if has_jp {
                 for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
                     // 解決失敗時は jp_font 単一・先頭（#579: push=末尾だとベースラインずれ再発）。
-                    fonts.families.entry(family).or_default().insert(0, "jp_font".to_owned());
+                    fonts
+                        .families
+                        .entry(family)
+                        .or_default()
+                        .insert(0, "jp_font".to_owned());
                 }
             }
         }
@@ -140,10 +142,9 @@ fn resolve_font_family(name: &str) -> Option<(&'static [u8], u32)> {
         style: fontdb::Style::Normal,
     };
     let id = db.query(&query)?;
-    let resolved: (&'static [u8], u32) =
-        db.with_face_data(id, |data, face_index| {
-            (&*Box::leak(data.to_vec().into_boxed_slice()), face_index)
-        })?;
+    let resolved: (&'static [u8], u32) = db.with_face_data(id, |data, face_index| {
+        (&*Box::leak(data.to_vec().into_boxed_slice()), face_index)
+    })?;
     map.insert(name.to_owned(), resolved);
     Some(resolved)
 }
@@ -215,8 +216,11 @@ mod tests {
         let fonts = font_definitions(Some(dummy), None);
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
             let list = fonts.families.get(&family).expect("family present");
-            assert_eq!(list.first().map(String::as_str), Some("jp_font"),
-                "解決失敗時は jp_font 単一・先頭（#579 再発防止）");
+            assert_eq!(
+                list.first().map(String::as_str),
+                Some("jp_font"),
+                "解決失敗時は jp_font 単一・先頭（#579 再発防止）"
+            );
         }
     }
 
@@ -229,10 +233,16 @@ mod tests {
         let fonts = font_definitions(Some(dummy), Some((user, 0)));
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
             let list = fonts.families.get(&family).expect("family present");
-            assert_eq!(list.first().map(String::as_str), Some("user_font"),
-                "honor 時は user_font 先頭（font_family 優先）");
-            assert_eq!(list.get(1).map(String::as_str), Some("jp_font"),
-                "honor 時も jp_font は fallback として残す（CJK をカバー）");
+            assert_eq!(
+                list.first().map(String::as_str),
+                Some("user_font"),
+                "honor 時は user_font 先頭（font_family 優先）"
+            );
+            assert_eq!(
+                list.get(1).map(String::as_str),
+                Some("jp_font"),
+                "honor 時も jp_font は fallback として残す（CJK をカバー）"
+            );
         }
     }
 
@@ -242,14 +252,21 @@ mod tests {
         // font_data に残ると egui が eager parse してメモリを食うため、両方を検査する。
         let user: &'static [u8] = &[0u8; 4];
         let fonts = font_definitions(None, Some((user, 0)));
-        assert!(!fonts.font_data.contains_key("jp_font"),
-            "カバー済みなら jp_font のバイト列自体を積まない（削減の実体）");
+        assert!(
+            !fonts.font_data.contains_key("jp_font"),
+            "カバー済みなら jp_font のバイト列自体を積まない（削減の実体）"
+        );
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
             let list = fonts.families.get(&family).expect("family present");
-            assert_eq!(list.first().map(String::as_str), Some("user_font"),
-                "カバー済みでも user_font 先頭（#579 のベースラインずれ防止）");
-            assert!(!list.iter().any(|n| n == "jp_font"),
-                "カバー済みなら jp_font をスタックに残さない");
+            assert_eq!(
+                list.first().map(String::as_str),
+                Some("user_font"),
+                "カバー済みでも user_font 先頭（#579 のベースラインずれ防止）"
+            );
+            assert!(
+                !list.iter().any(|n| n == "jp_font"),
+                "カバー済みなら jp_font をスタックに残さない"
+            );
         }
     }
 
@@ -266,8 +283,10 @@ mod tests {
         let fonts = font_definitions(Some(jp), Some((user, 0)));
         for key in ["jp_font", "user_font"] {
             let data = fonts.font_data.get(key).expect("font registered");
-            assert!(matches!(data.font, Cow::Borrowed(_)),
-                "{key} が Cow::Owned で積まれている（from_owned だと epaint が全体を複製し常駐が 2 倍になる）");
+            assert!(
+                matches!(data.font, Cow::Borrowed(_)),
+                "{key} が Cow::Owned で積まれている（from_owned だと epaint が全体を複製し常駐が 2 倍になる）"
+            );
         }
     }
 
@@ -284,11 +303,16 @@ mod tests {
         let defaults = egui::FontDefinitions::default();
         let mut checked = 0usize;
         for (name, data) in &defaults.font_data {
-            assert!(!super::font_covers_cjk(&data.font, data.index),
-                "egui 同梱フォント {name} が CJK をカバーすると誤判定された（判定が緩すぎる）");
+            assert!(
+                !super::font_covers_cjk(&data.font, data.index),
+                "egui 同梱フォント {name} が CJK をカバーすると誤判定された（判定が緩すぎる）"
+            );
             checked += 1;
         }
-        assert!(checked > 0, "egui 既定フォントが 0 件では negative を検査できていない");
+        assert!(
+            checked > 0,
+            "egui 既定フォントが 0 件では negative を検査できていない"
+        );
     }
 
     #[test]
@@ -300,7 +324,9 @@ mod tests {
             eprintln!("skip: YuGothM.ttc が無いため positive 検査を実施していない");
             return;
         };
-        assert!(super::font_covers_cjk(&bytes, 0),
-            "和文フォント YuGothM が CJK をカバーしないと判定された（判定が厳しすぎる）");
+        assert!(
+            super::font_covers_cjk(&bytes, 0),
+            "和文フォント YuGothM が CJK をカバーしないと判定された（判定が厳しすぎる）"
+        );
     }
 }

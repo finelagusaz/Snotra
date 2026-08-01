@@ -1,4 +1,4 @@
-use snotra_core::config::{find_matching_tools, InstantAction, InstantCommand};
+use snotra_core::config::{InstantAction, InstantCommand, find_matching_tools};
 use snotra_core::instant::{expand_exec_args, split_args};
 use std::process::Stdio;
 
@@ -124,7 +124,12 @@ pub fn launch_item_with_state(path: &str, query: &str, state: &AppState) -> Laun
 }
 
 /// トレイ履歴のツール選択後の起動（同期版）。
-pub fn launch_with_tool_with_state(path: &str, exe: &str, args: &str, state: &AppState) -> LaunchResult {
+pub fn launch_with_tool_with_state(
+    path: &str,
+    exe: &str,
+    args: &str,
+    state: &AppState,
+) -> LaunchResult {
     // launch_with_tool_core does NOT use ShellExecuteW; COM STA は不要
     let result = launch_with_tool_core(path, exe, args);
     if result.is_ok() {
@@ -148,7 +153,10 @@ pub fn resolve_all_openers(path: &str, state: &AppState) -> Vec<(String, String,
     let is_folder = std::path::Path::new(path).is_dir();
     let engine = state.engine.lock().unwrap();
     let tools = find_matching_tools(path, is_folder, &engine.config().openers);
-    tools.iter().map(|t| (t.name.clone(), t.exe.clone(), t.args.clone())).collect()
+    tools
+        .iter()
+        .map(|t| (t.name.clone(), t.exe.clone(), t.args.clone()))
+        .collect()
 }
 
 fn shell_execute_error_message(code: i32) -> &'static str {
@@ -225,11 +233,19 @@ impl From<&InstantCommand> for InstantCommandDto {
         let display = match &c.action {
             InstantAction::Url { url } => url.clone(),
             InstantAction::Exec { exe, args } => {
-                if args.is_empty() { exe.clone() } else { format!("{exe} {args}") }
+                if args.is_empty() {
+                    exe.clone()
+                } else {
+                    format!("{exe} {args}")
+                }
             }
             InstantAction::Legacy { command } => command.clone(),
         };
-        Self { name: c.name.clone(), description: c.description.clone(), display }
+        Self {
+            name: c.name.clone(),
+            description: c.description.clone(),
+            display,
+        }
     }
 }
 
@@ -242,10 +258,14 @@ pub(crate) fn expand_env(input: &str) -> String {
         let src = HSTRING::from(input);
         unsafe {
             let needed = ExpandEnvironmentStringsW(&src, None);
-            if needed == 0 { return input.to_string(); }
+            if needed == 0 {
+                return input.to_string();
+            }
             let mut buf = vec![0u16; needed as usize];
             let written = ExpandEnvironmentStringsW(&src, Some(&mut buf));
-            if written == 0 { return input.to_string(); }
+            if written == 0 {
+                return input.to_string();
+            }
             // 末尾 NUL を除いて UTF-16 → String
             let len = (written as usize).saturating_sub(1).min(buf.len());
             String::from_utf16_lossy(&buf[..len])
@@ -258,13 +278,20 @@ pub(crate) fn expand_env(input: &str) -> String {
 }
 
 /// exec 種別の起動。COM 不要（CreateProcessW 直叩き）。コンソール窓抑止。
-pub(crate) fn launch_exec_core(exe: &str, args: &str, query: &str, clipboard: &str) -> LaunchResult {
+pub(crate) fn launch_exec_core(
+    exe: &str,
+    args: &str,
+    query: &str,
+    clipboard: &str,
+) -> LaunchResult {
     let exe_expanded = expand_env(exe);
     let arg_tokens = expand_exec_args(args, query, clipboard, expand_env);
 
     let mut cmd = std::process::Command::new(&exe_expanded);
     cmd.args(&arg_tokens);
-    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -278,26 +305,46 @@ pub(crate) fn launch_exec_core(exe: &str, args: &str, query: &str, clipboard: &s
 
 #[cfg(test)]
 mod tests {
-    use super::build_launch_args;
     use super::InstantCommandDto;
+    use super::build_launch_args;
     use snotra_core::config::{InstantAction, InstantCommand};
 
     #[test]
     fn instant_dto_display_url() {
-        let c = InstantCommand { name: "g".into(), description: "d".into(),
-            action: InstantAction::Url { url: "https://x".into() } };
+        let c = InstantCommand {
+            name: "g".into(),
+            description: "d".into(),
+            action: InstantAction::Url {
+                url: "https://x".into(),
+            },
+        };
         assert_eq!(InstantCommandDto::from(&c).display, "https://x");
     }
     #[test]
     fn instant_dto_display_exec_with_args() {
-        let c = InstantCommand { name: "ev".into(), description: String::new(),
-            action: InstantAction::Exec { exe: "everything.exe".into(), args: "-s {query}".into() } };
-        assert_eq!(InstantCommandDto::from(&c).display, "everything.exe -s {query}");
+        let c = InstantCommand {
+            name: "ev".into(),
+            description: String::new(),
+            action: InstantAction::Exec {
+                exe: "everything.exe".into(),
+                args: "-s {query}".into(),
+            },
+        };
+        assert_eq!(
+            InstantCommandDto::from(&c).display,
+            "everything.exe -s {query}"
+        );
     }
     #[test]
     fn instant_dto_display_exec_no_args_has_no_trailing_space() {
-        let c = InstantCommand { name: "n".into(), description: String::new(),
-            action: InstantAction::Exec { exe: "notepad.exe".into(), args: String::new() } };
+        let c = InstantCommand {
+            name: "n".into(),
+            description: String::new(),
+            action: InstantAction::Exec {
+                exe: "notepad.exe".into(),
+                args: String::new(),
+            },
+        };
         assert_eq!(InstantCommandDto::from(&c).display, "notepad.exe");
     }
 

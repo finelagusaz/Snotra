@@ -38,7 +38,13 @@ fn parse_extensions(raw: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn ui(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut Config, state: &mut IndexTabState, tr: &Tr) {
+pub fn ui(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    config: &mut Config,
+    state: &mut IndexTabState,
+    tr: &Tr,
+) {
     // Poll picker result
     if let Some(Some(path)) = state.picker.poll() {
         state.modal.fields.path = path.display().to_string();
@@ -119,12 +125,17 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut IndexTabStat
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut state.modal.fields.path);
             if ui
-                .add_enabled(!state.picker.active, egui::Button::new(tr.t(TrKey::BtnBrowse)))
+                .add_enabled(
+                    !state.picker.active,
+                    egui::Button::new(tr.t(TrKey::BtnBrowse)),
+                )
                 .clicked()
             {
                 let dialog_title = tr.t(TrKey::DialogSelectFolder).to_string();
                 state.picker.launch(ctx, move || {
-                    rfd::FileDialog::new().set_title(&dialog_title).pick_folder()
+                    rfd::FileDialog::new()
+                        .set_title(&dialog_title)
+                        .pick_folder()
                 });
             }
         });
@@ -134,7 +145,10 @@ fn show_modal(ctx: &egui::Context, config: &mut Config, state: &mut IndexTabStat
         ui.text_edit_singleline(&mut state.modal.fields.extensions);
 
         ui.add_space(style::SPACE_HINT);
-        ui.checkbox(&mut state.modal.fields.include_folders, tr.t(TrKey::CbIncludeFolders));
+        ui.checkbox(
+            &mut state.modal.fields.include_folders,
+            tr.t(TrKey::CbIncludeFolders),
+        );
 
         ui.add_space(style::SPACE_GROUP);
         ui.separator();

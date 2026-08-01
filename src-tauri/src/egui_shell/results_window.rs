@@ -151,7 +151,11 @@ impl ResultsWindow {
             HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
         };
         let Ok(hwnd) = self.window.hwnd() else { return };
-        let insert_after = if topmost { HWND_TOPMOST } else { HWND_NOTOPMOST };
+        let insert_after = if topmost {
+            HWND_TOPMOST
+        } else {
+            HWND_NOTOPMOST
+        };
         unsafe {
             let _ = SetWindowPos(
                 HWND(hwnd.0),

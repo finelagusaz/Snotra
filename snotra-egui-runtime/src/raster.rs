@@ -54,10 +54,10 @@ impl CpuTexture {
         }
         match self.filter {
             TexFilter::Nearest => {
-                let x = ((u * self.width as f32) as isize)
-                    .clamp(0, self.width as isize - 1) as usize;
-                let y = ((v * self.height as f32) as isize)
-                    .clamp(0, self.height as isize - 1) as usize;
+                let x =
+                    ((u * self.width as f32) as isize).clamp(0, self.width as isize - 1) as usize;
+                let y =
+                    ((v * self.height as f32) as isize).clamp(0, self.height as isize - 1) as usize;
                 self.pixels[y * self.width + x]
             }
             // half-texel 規約 uv*size - 0.5 で 4 近傍を ClampToEdge 補間(egui-wgpu 一致)。
@@ -112,8 +112,12 @@ pub(crate) fn fill_mesh(
         }
         let min_x = x0.min(x1).min(x2).floor().max(clip_min.0 as f32) as usize;
         let min_y = y0.min(y1).min(y2).floor().max(clip_min.1 as f32) as usize;
-        let max_x = (x0.max(x1).max(x2).ceil() as usize).min(clip_max.0).min(width);
-        let max_y = (y0.max(y1).max(y2).ceil() as usize).min(clip_max.1).min(height);
+        let max_x = (x0.max(x1).max(x2).ceil() as usize)
+            .min(clip_max.0)
+            .min(width);
+        let max_y = (y0.max(y1).max(y2).ceil() as usize)
+            .min(clip_max.1)
+            .min(height);
         for y in min_y..max_y {
             let py = y as f32 + 0.5;
             for x in min_x..max_x {
@@ -212,9 +216,15 @@ mod tests {
     #[test]
     fn raster_core_matches_soft_probe_invariants() {
         assert!(edge(0.0, 0.0, 4.0, 0.0, 1.0, 1.0) > 0.0);
-        assert_eq!(blend_premultiplied(0x0000_0000, [255, 0, 0, 255]), 0x00FF_0000);
+        assert_eq!(
+            blend_premultiplied(0x0000_0000, [255, 0, 0, 255]),
+            0x00FF_0000
+        );
         assert_eq!(blend_premultiplied(0x0012_3456, [0, 0, 0, 0]), 0x0012_3456);
-        assert_eq!(modulate([200, 100, 50, 255], [255, 255, 255, 255]), [200, 100, 50, 255]);
+        assert_eq!(
+            modulate([200, 100, 50, 255], [255, 255, 255, 255]),
+            [200, 100, 50, 255]
+        );
 
         let mut buffer = vec![0u32; 8 * 8];
         let vertex = |x: f32, y: f32| egui::epaint::Vertex {
@@ -223,8 +233,23 @@ mod tests {
             color: egui::Color32::from_rgba_premultiplied(255, 255, 255, 255),
         };
         let vertices = [vertex(0.0, 0.0), vertex(8.0, 0.0), vertex(0.0, 8.0)];
-        let white = CpuTexture { width: 0, height: 0, pixels: Vec::new(), filter: TexFilter::Nearest };
-        fill_mesh(&mut buffer, 8, 8, &vertices, &[0, 1, 2], &white, (0, 0), (8, 8), 1.0);
+        let white = CpuTexture {
+            width: 0,
+            height: 0,
+            pixels: Vec::new(),
+            filter: TexFilter::Nearest,
+        };
+        fill_mesh(
+            &mut buffer,
+            8,
+            8,
+            &vertices,
+            &[0, 1, 2],
+            &white,
+            (0, 0),
+            (8, 8),
+            1.0,
+        );
         assert_eq!(buffer[8 + 1], 0x00FF_FFFF);
         assert_eq!(buffer[7 * 8 + 7], 0);
     }
@@ -246,8 +271,15 @@ mod tests {
         // 左端手前 (u=0.0) は左 texel へ clamp → 黒。
         assert_eq!(tex.sample(0.0, 0.5), [0, 0, 0, 255]);
         // nearest は補間しない（同入力で二値のまま）。
-        let nearest = CpuTexture { filter: TexFilter::Nearest, ..CpuTexture {
-            width: 2, height: 1, pixels: vec![[0,0,0,255],[255,255,255,255]], filter: TexFilter::Nearest } };
+        let nearest = CpuTexture {
+            filter: TexFilter::Nearest,
+            ..CpuTexture {
+                width: 2,
+                height: 1,
+                pixels: vec![[0, 0, 0, 255], [255, 255, 255, 255]],
+                filter: TexFilter::Nearest,
+            }
+        };
         let n = nearest.sample(0.5, 0.5);
         assert!(n == [0, 0, 0, 255] || n == [255, 255, 255, 255]);
     }
@@ -256,7 +288,15 @@ mod tests {
         // egui::ColorImage::new は source_size を size と同値で埋める（テスト用合成画像に SVG 由来の別サイズは無い）。
         let img = egui::ColorImage::new(
             [w, h],
-            vec![egui::Color32::from_rgba_premultiplied(id_pixels[0], id_pixels[1], id_pixels[2], id_pixels[3]); w * h],
+            vec![
+                egui::Color32::from_rgba_premultiplied(
+                    id_pixels[0],
+                    id_pixels[1],
+                    id_pixels[2],
+                    id_pixels[3]
+                );
+                w * h
+            ],
         );
         ImageDelta::full(ImageData::Color(std::sync::Arc::new(img)), filter)
     }
@@ -266,13 +306,21 @@ mod tests {
         let mut store: HashMap<egui::TextureId, CpuTexture> = HashMap::new();
         let id = egui::TextureId::Managed(0);
         // pos=None 全面（Linear）。
-        apply_texture_delta(&mut store, id, &solid([10, 20, 30, 255], 2, 2, egui::TextureOptions::LINEAR));
+        apply_texture_delta(
+            &mut store,
+            id,
+            &solid([10, 20, 30, 255], 2, 2, egui::TextureOptions::LINEAR),
+        );
         assert_eq!(store[&id].filter, TexFilter::Linear);
         // pos=Some 部分上書き（filter は既存 Linear を保持）。
         let mut partial = solid([99, 99, 99, 255], 1, 1, egui::TextureOptions::NEAREST);
         partial.pos = Some([0, 0]);
         apply_texture_delta(&mut store, id, &partial);
-        assert_eq!(store[&id].filter, TexFilter::Linear, "部分更新は filter を変えない");
+        assert_eq!(
+            store[&id].filter,
+            TexFilter::Linear,
+            "部分更新は filter を変えない"
+        );
         assert_eq!(store[&id].pixels[0], [99, 99, 99, 255]);
     }
 

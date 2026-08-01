@@ -392,18 +392,21 @@ function Read-SnotraTraceSnapshot {
     )
 
     if ([string]::IsNullOrEmpty($Path) -or -not (Test-Path -LiteralPath $Path)) {
-        return @{ Available = $false; Events = @(); TraceLines = 0; Dropped = 0 }
+        return @{ Available = $false; Lines = @(); Events = @(); TraceLines = 0; Dropped = 0 }
     }
     # **1 度だけ読む。** 行数と parse 成功数を別々の読み取りから取ると、稼働中のアプリが間に
-    # 書き足した行で差が壊れる（code-review M1）。
+    # 書き足した行で差が壊れる（code-review M1）。**生行も返す**のは同じ理由で——presence の
+    # 表示と不変条件の判定が別時点のファイルを見ないようにするため。
     $lines = @(Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)
-    $traceLines = @($lines | Where-Object { $_ -match '^\[trace\]\s+' })
+    $traceLineCount = 0
+    foreach ($text in $lines) { if ($text -match '^\[trace\]\s+') { $traceLineCount++ } }
     $events = @(ConvertFrom-SnotraTraceLine -Line $lines)
     return @{
         Available  = $true
+        Lines      = $lines
         Events     = $events
-        TraceLines = $traceLines.Count
-        Dropped    = [Math]::Max(0, $traceLines.Count - $events.Count)
+        TraceLines = $traceLineCount
+        Dropped    = [Math]::Max(0, $traceLineCount - $events.Count)
     }
 }
 
@@ -615,7 +618,6 @@ Export-ModuleMember -Function @(
     'Start-SnotraProcess'
     'Resolve-SnotraCargoExecutable'
     'Resolve-SnotraExistingProcess'
-    'ConvertFrom-SnotraTraceLine'
     'Read-SnotraTraceEvents'
     'Read-SnotraTraceSnapshot'
     'Wait-SnotraTraceEvent'

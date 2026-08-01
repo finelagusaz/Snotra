@@ -420,22 +420,19 @@ try {
         $reasons = @($invariants.Unjudgeable | ForEach-Object { $_.Reason })
         $failures += "trace invariant judge aborted: $($reasons -join '; ')"
       }
+      # 不変条件ごとに特殊分岐を置かない——H1 だけ別の文言にしていた理由は歴史的な英文の
+      # 保存だったが、その文字列を参照する箇所はリポジトリ内に無い。判定の詳細は判定器が持つ。
       foreach ($invariant in (Get-SnotraTraceInvariantNames)) {
         if ($invariants.Overall[$invariant] -ne 'FAIL') { continue }
         $detail = @($invariants.Violations | Where-Object { $_.Invariant -eq $invariant })
-        if ($invariant -eq 'H1') {
-          $failures += "results window re-shown after egui_hide:done ($($detail.Count) x egui_results:show); main is hidden but results is left on top"
-        } else {
-          $failures += "trace invariant $invariant violated ($($detail.Count) x): $(($detail | ForEach-Object { $_.Message }) -join '; ')"
-        }
+        $failures += "trace invariant $invariant violated ($($detail.Count) x): $(($detail | ForEach-Object { $_.Message }) -join '; ')"
       }
       # **肯定的な証拠**: ここへ来る時点で `Wait-SnotraTraceEvent` が show / results:show / hide を
       # 観測済みなので、判定器が 1 件も `egui_results:show` を見ていないなら判定器側の欠陥である
       # （trace を読めていない・イベント名がドリフトした）。**沈黙を合格と読ませない**。
-      $judgedShows = @($snapshot.Events | Where-Object {
-          (Get-SnotraTraceProperty -InputObject $_ -Name 'event') -eq 'egui_results:show'
-        })
-      if ($judgedShows.Count -eq 0) {
+      # 数えるのは判定器（`Observed`）である——ここで生イベントから数え直すと、イベント名の
+      # 写しがこちらへ増え、名前がドリフトしたとき当の assertion が黙る。
+      if ($invariants.Observed.ResultsShow -eq 0) {
         $failures += "trace invariant judge saw 0 x egui_results:show although Wait-SnotraTraceEvent observed it; the detector did not actually run"
       }
       # **捨てた行を failure にはしない**（#757 D6/D7）。旧判定は生行を見ていたので今日は無害に

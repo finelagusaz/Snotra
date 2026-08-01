@@ -16,9 +16,10 @@ BeforeAll {
 
     function Get-Verdict {
         param($Result, [int]$SectionId, [string]$Invariant)
-        $section = @($Result.Sections | Where-Object { $_.Id -eq $SectionId })
-        if ($section.Count -ne 1) { throw "区間 $SectionId が 1 件で見つからない（$($section.Count) 件）" }
-        return $section[0][$Invariant]
+        # 区間行の引き方はモジュールのアクセサに任せる（結果ハッシュの形をテストが写さない）。
+        $section = Get-SnotraTraceSectionVerdict -Result $Result -SectionId $SectionId
+        if ($null -eq $section) { throw "区間 $SectionId が 1 件で見つからない" }
+        return $section[$Invariant]
     }
 
     # 全区間を 1 つに収める既定。区間の帰属そのものを測るテストだけが複数を渡す。
@@ -342,6 +343,57 @@ Describe 'Test-SnotraTraceInvariants — Counts が SKIP の山を隠さない�
         $r.Counts.H4.FAIL | Should -Be 0
         # 擬似区間 0 + 判定できなかった項目 2・3。
         $r.Counts.H4.SKIP | Should -Be 3
+    }
+}
+
+Describe 'Test-SnotraTraceInvariants — Observed（判定器が実際に何を見たか）' {
+    It '評価した egui_results:show と hide 窓の件数を返す（呼び出し側が数え直さないため）' {
+        $events = @(
+            New-TraceEvent 1 'egui_show:done'
+            New-TraceEvent 2 'egui_results:show' @{ rows = 3 }
+            New-TraceEvent 3 'egui_results:hide'
+            New-TraceEvent 4 'egui_hide:done'
+            New-TraceEvent 5 'egui_hide:done'
+            New-TraceEvent 6 'egui_show:done'
+            New-TraceEvent 7 'egui_results:show' @{ rows = 1 }
+        )
+        $r = Test-SnotraTraceInvariants -Events $events -Sections $script:OneSection
+
+        $r.Observed.ResultsShow | Should -Be 2
+        # 連続する hide は窓を打ち直さないので 1 つ。
+        $r.Observed.HideWindow | Should -Be 1
+    }
+
+    It 'イベント名が 1 つも一致しなければ Observed が 0 になる（検査が走らなかったことの証拠）' {
+        $events = @(
+            New-TraceEvent 1 'egui_show:DONE'
+            New-TraceEvent 2 'egui_results:shown' @{ rows = 3 }
+        )
+        $r = Test-SnotraTraceInvariants -Events $events -Sections $script:OneSection
+
+        $r.Observed.ResultsShow | Should -Be 0
+        $r.Overall.H4 | Should -Be 'SKIP'
+    }
+
+    It 'fail-safe でも Observed のキーが揃う（呼び出し側が分岐せずに読める）' {
+        $r = Test-SnotraTraceInvariants -Events @() -Sections $script:OneSection
+        $r.Observed.ResultsShow | Should -Be 0
+        $r.Observed.HideWindow | Should -Be 0
+    }
+}
+
+Describe 'Format-SnotraTraceCountSummary' {
+    It '通常形と Compact 形の両方が全不変条件を含む（呼び出し側が整形を写さないため）' {
+        $r = Test-SnotraTraceInvariants -Events @() -Sections $script:OneSection
+        $full = Format-SnotraTraceCountSummary -Result $r
+        $compact = Format-SnotraTraceCountSummary -Result $r -Compact
+
+        foreach ($name in (Get-SnotraTraceInvariantNames)) {
+            $full | Should -BeLike "*$name*"
+            $compact | Should -BeLike "*$name*"
+        }
+        $full | Should -BeLike '*SKIP*'
+        $compact.Length | Should -BeLessThan $full.Length
     }
 }
 

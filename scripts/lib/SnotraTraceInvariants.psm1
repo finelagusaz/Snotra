@@ -28,6 +28,7 @@ $script:EventShowDone = 'egui_show:done'
 $script:EventResultsShow = 'egui_results:show'
 $script:EventResultsHide = 'egui_results:hide'
 $script:Invariants = @('H1', 'H4', 'H5')
+$script:PseudoSectionTitle = '(最初の項目より前)'
 
 <#
 .SYNOPSIS
@@ -144,63 +145,21 @@ function Test-SnotraTraceInvariants {
     }
 }
 
-function New-SnotraTraceFailSafeResult {
+<#
+.SYNOPSIS
+区間の `Id` / `Title` / `StartSeq` を正規化する（フォールバック規則の SSOT）。
+
+.DESCRIPTION
+**fail-safe 経路と判定経路の両方がここを通る。** 片方に写しを置くと、同じ入力から別の
+区間表が出るようになり、しかも fail-safe 側を固定するテストが無いので静かに通る。
+`StartSeq` が読めない区間は `Attributable = $false`——帰属表から外すが、出力からは外さない。
+#>
+function ConvertTo-SnotraTraceSectionList {
     [CmdletBinding()]
     param(
-        [hashtable[]]$Sections = @(),
-        [int]$DroppedLineCount = 0,
-        [Parameter(Mandatory)]
-        [string]$Reason
+        [hashtable[]]$Sections = @()
     )
 
-    # **不変条件名を書き並べない**（`$script:Invariants` が SSOT）——写しを置くと、判定を
-    # 1 つ足したときこの経路だけが新しい名前を欠き、`Overall` から黙って落ちる（code-review M2）。
-    function New-SkipRow([int]$Id, [string]$Title) {
-        $row = @{ Id = $Id; Title = $Title }
-        foreach ($invariant in $script:Invariants) { $row[$invariant] = 'SKIP' }
-        return $row
-    }
-
-    $rows = @( (New-SkipRow 0 '(最初の項目より前)') )
-    $index = 0
-    foreach ($section in $Sections) {
-        $index++
-        $rawId = if ($null -ne $section -and $section.ContainsKey('Id')) { $section['Id'] } else { $null }
-        $id = ConvertTo-SnotraTraceInt64 $rawId
-        if ($null -eq $id) { $id = $index }
-        $title = if ($null -ne $section -and $section.ContainsKey('Title')) { [string]$section['Title'] } else { "項目 $id" }
-        $rows += (New-SkipRow $id $title)
-    }
-
-    $overall = @{}
-    $counts = @{}
-    foreach ($invariant in $script:Invariants) {
-        $overall[$invariant] = 'SKIP'
-        $counts[$invariant] = @{ PASS = 0; FAIL = 0; SKIP = $rows.Count }
-    }
-
-    return @{
-        Sections         = $rows
-        Overall          = $overall
-        Counts           = $counts
-        Violations       = @()
-        Unjudgeable      = @( @{ Invariant = '*'; Seq = 0; SectionId = 0; Reason = $Reason } )
-        DroppedLineCount = $DroppedLineCount
-        JudgeFailed      = $true
-    }
-}
-
-function Invoke-SnotraTraceJudgement {
-    [CmdletBinding()]
-    param(
-        [psobject[]]$Events = @(),
-        [hashtable[]]$Sections = @(),
-        [int]$DroppedLineCount = 0
-    )
-
-    # --- 区間の正規化 ---------------------------------------------------------
-    # `StartSeq` を持たない区間は帰属表から外すが、**出力からは外さない**（全 SKIP で
-    # 現れる）。表から消すと「実施しなかった項目」が記録から蒸発する。
     $normalized = @()
     $index = 0
     foreach ($section in $Sections) {
@@ -218,9 +177,66 @@ function Invoke-SnotraTraceJudgement {
             Attributable = ($null -ne $start)
         }
     }
+    return $normalized
+}
+
+function New-SnotraTraceFailSafeResult {
+    [CmdletBinding()]
+    param(
+        [hashtable[]]$Sections = @(),
+        [int]$DroppedLineCount = 0,
+        [Parameter(Mandatory)]
+        [string]$Reason
+    )
+
+    # **不変条件名も区間の正規化規則も書き並べない**（`$script:Invariants` と
+    # `ConvertTo-SnotraTraceSectionList` が SSOT）——写しを置くと、判定を 1 つ足したときや
+    # フォールバック規則を変えたときにこの経路だけが取り残される（code-review M2 と同種）。
+    function New-SkipRow([int]$Id, [string]$Title) {
+        $row = @{ Id = $Id; Title = $Title }
+        foreach ($invariant in $script:Invariants) { $row[$invariant] = 'SKIP' }
+        return $row
+    }
+
+    $rows = @( (New-SkipRow 0 $script:PseudoSectionTitle) )
+    foreach ($section in (ConvertTo-SnotraTraceSectionList -Sections $Sections)) {
+        $rows += (New-SkipRow $section.Id $section.Title)
+    }
+
+    $overall = @{}
+    $counts = @{}
+    foreach ($invariant in $script:Invariants) {
+        $overall[$invariant] = 'SKIP'
+        $counts[$invariant] = @{ PASS = 0; FAIL = 0; SKIP = $rows.Count }
+    }
+
+    return @{
+        Sections         = $rows
+        Overall          = $overall
+        Counts           = $counts
+        Violations       = @()
+        Unjudgeable      = @( @{ Invariant = '*'; Seq = 0; SectionId = 0; Reason = $Reason } )
+        Observed         = @{ ResultsShow = 0; HideWindow = 0 }
+        DroppedLineCount = $DroppedLineCount
+        JudgeFailed      = $true
+    }
+}
+
+function Invoke-SnotraTraceJudgement {
+    [CmdletBinding()]
+    param(
+        [psobject[]]$Events = @(),
+        [hashtable[]]$Sections = @(),
+        [int]$DroppedLineCount = 0
+    )
+
+    # --- 区間の正規化 ---------------------------------------------------------
+    # `StartSeq` を持たない区間は帰属表から外すが、**出力からは外さない**（全 SKIP で
+    # 現れる）。表から消すと「実施しなかった項目」が記録から蒸発する。
+    $normalized = @(ConvertTo-SnotraTraceSectionList -Sections $Sections)
 
     # 擬似区間 0 = 最初のマーカーより前。ここが無いと起動直後の事象が捨てられる。
-    $pseudo = @{ Id = 0; Title = '(最初の項目より前)'; StartSeq = [long]::MinValue; Attributable = $true }
+    $pseudo = @{ Id = 0; Title = $script:PseudoSectionTitle; StartSeq = [long]::MinValue; Attributable = $true }
     $attributable = @(@($pseudo) + @($normalized | Where-Object { $_.Attributable }) |
         Sort-Object -Property { $_.StartSeq } -Stable)
 
@@ -249,18 +265,26 @@ function Invoke-SnotraTraceJudgement {
     $violations = @()
     $unjudgeable = @()
     $passCount = @{}
+    # **判定器が何を実際に見たか**の帳簿。呼び出し側が生イベントから数え直すと、イベント名の
+    # 写しがそちらへ増え、名前がドリフトしたとき「検査が走らなかった」ことを検出する当の
+    # assertion が黙る。数えるのは判定した側の責務である。
+    $observed = @{ ResultsShow = 0; HideWindow = 0 }
 
     foreach ($event in $parsed) {
-        $sectionId = Resolve-SnotraTraceSection -Attributable $attributable -Seq $event.Seq
-
         switch ($event.Name) {
             $script:EventHideDone {
                 # **連続する egui_hide:done は窓を打ち直さない——開いている窓を延長する。**
                 # `hide_egui_main` は可視性ガードの無い listener からも呼ばれ、遷移を問わず
                 # trace を出す。打ち直すと 2 つの hide に挟まれた違反が評価から消える。
                 if ($mainState -ne 'hidden') {
-                    $openWindow = @{ SectionId = $sectionId; Seq = $event.Seq; Violated = $false; Closed = $false }
+                    $openWindow = @{
+                        SectionId = (Resolve-SnotraTraceSection -Attributable $attributable -Seq $event.Seq)
+                        Seq       = $event.Seq
+                        Violated  = $false
+                        Closed    = $false
+                    }
                     $hideWindows += $openWindow
+                    $observed.HideWindow++
                 }
                 $mainState = 'hidden'
             }
@@ -277,6 +301,10 @@ function Invoke-SnotraTraceJudgement {
                 $resultsShown = $false
             }
             $script:EventResultsShow {
+                # 区間の解決はここと hide の 2 分岐でしか要らない（全イベントで呼ばない）。
+                $sectionId = Resolve-SnotraTraceSection -Attributable $attributable -Seq $event.Seq
+                $observed.ResultsShow++
+
                 # --- H1 ---
                 if ($mainState -eq 'hidden') {
                     if ($null -ne $openWindow) {
@@ -324,7 +352,7 @@ function Invoke-SnotraTraceJudgement {
                         Message   = "rows = $rows の $script:EventResultsShow（高さ 0 ⇔ hide の契約違反）"
                     }
                 } else {
-                    $passCount = Add-SnotraTracePass -PassCount $passCount -Invariant 'H4' -SectionId $sectionId
+                    Add-SnotraTracePass -PassCount $passCount -Invariant 'H4' -SectionId $sectionId
                 }
 
                 # --- H5 ---
@@ -336,7 +364,7 @@ function Invoke-SnotraTraceJudgement {
                         Message   = "$script:EventResultsHide を挟まない連続した $script:EventResultsShow（二重発火抑止の破れ）"
                     }
                 } else {
-                    $passCount = Add-SnotraTracePass -PassCount $passCount -Invariant 'H5' -SectionId $sectionId
+                    Add-SnotraTracePass -PassCount $passCount -Invariant 'H5' -SectionId $sectionId
                 }
                 $resultsShown = $true
             }
@@ -349,7 +377,7 @@ function Invoke-SnotraTraceJudgement {
     foreach ($window in $hideWindows) {
         if ($window.Violated) { continue }
         if ($window.Closed) {
-            $passCount = Add-SnotraTracePass -PassCount $passCount -Invariant 'H1' -SectionId $window.SectionId
+            Add-SnotraTracePass -PassCount $passCount -Invariant 'H1' -SectionId $window.SectionId
         } else {
             $unjudgeable += @{
                 Invariant = 'H1'
@@ -397,18 +425,16 @@ function Invoke-SnotraTraceJudgement {
     # **`Overall` だけを読むと SKIP の山が PASS に覆われる**（code-review High-1）——1 区間でも
     # PASS なら PASS を名乗るため。`Counts` を併せて返し、呼び出し側が「何件を実際に判定したか」
     # を出せるようにする（`Overall` は exit code 用の要約であって網羅の主張ではない）。
-    $overall = @{}
+    # **`Overall` は `Counts` の要約である**——先に数え、そこから導く。`Overall` だけを読むと
+    # 1 区間の PASS が SKIP の山を覆うので、両方を返して呼び出し側に件数を出させる
+    # （code-review High-1）。
     $counts = @{}
+    $overall = @{}
     foreach ($invariant in $script:Invariants) {
-        $verdicts = @($rows | ForEach-Object { $_[$invariant] })
-        $overall[$invariant] = if ($verdicts -contains 'FAIL') { 'FAIL' }
-        elseif ($verdicts -contains 'PASS') { 'PASS' }
-        else { 'SKIP' }
-        $counts[$invariant] = @{
-            PASS = @($verdicts | Where-Object { $_ -eq 'PASS' }).Count
-            FAIL = @($verdicts | Where-Object { $_ -eq 'FAIL' }).Count
-            SKIP = @($verdicts | Where-Object { $_ -eq 'SKIP' }).Count
-        }
+        $tally = @{ PASS = 0; FAIL = 0; SKIP = 0 }
+        foreach ($row in $rows) { $tally[$row[$invariant]]++ }
+        $counts[$invariant] = $tally
+        $overall[$invariant] = if ($tally.FAIL -gt 0) { 'FAIL' } elseif ($tally.PASS -gt 0) { 'PASS' } else { 'SKIP' }
     }
 
     return @{
@@ -417,6 +443,7 @@ function Invoke-SnotraTraceJudgement {
         Counts           = $counts
         Violations       = $violations
         Unjudgeable      = $unjudgeable
+        Observed         = $observed
         DroppedLineCount = $effectiveDropped
         JudgeFailed      = $false
     }
@@ -457,7 +484,53 @@ function Add-SnotraTracePass {
     $key = "$Invariant|$SectionId"
     if ($PassCount.ContainsKey($key)) { $PassCount[$key] = $PassCount[$key] + 1 }
     else { $PassCount[$key] = 1 }
-    return $PassCount
+}
+
+<#
+.SYNOPSIS
+区間 1 つの判定行を引く。見つからなければ `$null`。
+
+.DESCRIPTION
+**結果ハッシュの形を呼び出し側へ漏らさないための唯一の口である。** 素の
+`$Result.Sections | Where-Object { $_.Id -eq $id }` を各所に書くと、`Sections` が
+hashtable の配列であることに 3 か所が依存する。
+#>
+function Get-SnotraTraceSectionVerdict {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [hashtable]$Result,
+        [Parameter(Mandatory)]
+        [int]$SectionId
+    )
+
+    $match = @($Result.Sections | Where-Object { $_.Id -eq $SectionId })
+    if ($match.Count -ne 1) { return $null }
+    return $match[0]
+}
+
+<#
+.SYNOPSIS
+不変条件ごとの件数を 1 行へ畳む。`-Compact` は端末向けの短い形。
+
+.DESCRIPTION
+**`Overall` だけを出させないための既定の表現である**（code-review High-1）。整形を
+呼び出し側に書くと、記録・端末・PR コメントで別々の形へドリフトする。
+#>
+function Format-SnotraTraceCountSummary {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [hashtable]$Result,
+        [switch]$Compact
+    )
+
+    $parts = foreach ($invariant in $script:Invariants) {
+        $c = $Result.Counts[$invariant]
+        if ($Compact) { "$invariant P$($c.PASS)/F$($c.FAIL)/S$($c.SKIP)" }
+        else { "$invariant PASS $($c.PASS) / FAIL $($c.FAIL) / SKIP $($c.SKIP)" }
+    }
+    return ($parts -join $(if ($Compact) { ' ' } else { ' 、 ' }))
 }
 
 <#
@@ -482,21 +555,20 @@ function Format-SnotraTraceVerdictTable {
         $cells = foreach ($invariant in $script:Invariants) {
             if ($row[$invariant] -eq 'FAIL') { "**FAIL**" } else { $row[$invariant] }
         }
-        $lines += "| $($row.Id) | $($row.Title) | $($cells -join ' | ') |"
+        # 縦棒は列区切りゆえ全セルで潰す（片側だけ潰すと題名に `|` が入った瞬間に表が崩れる）。
+        $lines += "| $($row.Id) | $($row.Title.Replace('|', '\|')) | $($cells -join ' | ') |"
     }
     $lines += ''
     $lines += 'H1 = hidden な窓に results が現れない / H4 = `rows` が 0 の show が無い / H5 = hide を挟まない連続 show が無い'
     $lines += '**SKIP は「判定できなかった」であって合格ではない。** 理由は下の一覧にある。'
-    if ($Result.ContainsKey('Counts')) {
-        $lines += ''
-        $lines += '| 不変条件 | PASS | FAIL | SKIP |'
-        $lines += '|---|---|---|---|'
-        foreach ($invariant in $script:Invariants) {
-            $c = $Result.Counts[$invariant]
-            $lines += "| $invariant | $($c.PASS) | $($c.FAIL) | $($c.SKIP) |"
-        }
+    $lines += ''
+    $lines += '| 不変条件 | PASS | FAIL | SKIP |'
+    $lines += '|---|---|---|---|'
+    foreach ($invariant in $script:Invariants) {
+        $c = $Result.Counts[$invariant]
+        $lines += "| $invariant | $($c.PASS) | $($c.FAIL) | $($c.SKIP) |"
     }
-    if ($Result.ContainsKey('JudgeFailed') -and $Result.JudgeFailed) {
+    if ($Result.JudgeFailed) {
         $lines += ''
         $lines += '**判定器そのものが例外で停止した。** この表の SKIP は「調べて問題が無かった」ではなく「調べられなかった」である。'
     }
@@ -527,5 +599,7 @@ Export-ModuleMember -Function @(
     'Get-SnotraTraceProperty'
     'Get-SnotraTraceMarker'
     'Test-SnotraTraceInvariants'
+    'Get-SnotraTraceSectionVerdict'
+    'Format-SnotraTraceCountSummary'
     'Format-SnotraTraceVerdictTable'
 )

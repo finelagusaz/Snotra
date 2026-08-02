@@ -194,10 +194,12 @@ pub enum ResultsPresentation {
 /// 見ない）、results だけが最前面に取り残される。hide 側の同期（`hide_egui_main`）と
 /// この show 側のゲートは**どちらも必要である**。
 ///
-/// **ただし 2 つでは十分でない**（#671 PR A′ 当時の「対であり片方では閉じない」の訂正）。
+/// **ただし 2 つでは十分でなかった**（#671 PR A′ 当時の「対であり片方では閉じない」の訂正）。
 /// この判定が読む `main_visible` と、判定を受けた `ResultsWindow::show` が撃つ raw
-/// `ShowWindow` の間には Win32 呼び出しが挟まり、`hide_egui_main` は別スレッドから
-/// その隔たりへ割り込める。3 つ目が `must_retract_results`（撃った後の再検査）である。
+/// `ShowWindow` の間には Win32 呼び出しが挟まり、**`hide_egui_main` が別スレッドから走れた
+/// 頃は**その隔たりへ割り込めた。3 つ目が `must_retract_results`（撃った後の再検査）である。
+/// **#880 サイクル段 2 で可視性を変える操作が証人型によりイベントループへ閉じたため、
+/// この並びは構築できない**——3 つ目は今は残してあり、撤去は後段が行う。
 /// **「hidden 中は update() が走らない」という命題には依存しない**（機構は tao/OS 層の配送
 /// 抑止と #697 で実測済みだが、この判定はそれに依存せず成立する）。
 ///
@@ -220,11 +222,17 @@ pub fn present_results(i: ResultsInputs) -> ResultsPresentation {
 
 /// results を隠す理由。**可視フラグを信じてよいかがこれで決まる**。
 ///
-/// `ResultsWindow` の可視フラグと窓の実状態は、**別スレッドの hide と競ると食い違いうる**
+/// `ResultsWindow` の可視フラグと窓の実状態は、**別スレッドの hide と競ると食い違いえた**
 /// （機構は `ResultsWindow::show` の doc）。食い違いの片方——「フラグ = false・窓 = 可視」——は
 /// フラグを見る hide を**黙って no-op にする**ため、その状態のまま main が消えると
 /// results だけが画面に残る。理由を型で持ち回るのは、隠す動機ごとに「フラグを信じてよいか」が
 /// 違うからである。
+///
+/// **この型の存在理由は #880 サイクル段 2 で失効した。** 可視性を変える操作は証人型
+/// （`EventLoopProof`）によりイベントループスレッドへ閉じ、`show` と `hide` が互いに割り込む
+/// 並びは構築できない——ゆえに「フラグ = false・窓 = 可視」の食い違いは生じない。
+/// **後段（この型の撤去）が読む面はここである**: 撤去してよい根拠は上記であり、
+/// 撤去に伴って `must_retract_results` と `present_results` の対応する注記も消えること。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HideReason {
     /// 出す条件を満たさないフレーム（`present_results` が `Hidden`・main は可視のまま）。
@@ -250,12 +258,15 @@ pub fn hide_must_be_unconditional(reason: HideReason) -> bool {
 /// show を撃った**後**に main の可視を読み直し、撤回が要るかを判定する。
 ///
 /// **`present_results` の事前判定とは読み点が違う**——両者の間には Win32 の位置決め・
-/// リサイズ・`ShowWindow` が挟まる。`hide_egui_main` は**別スレッド**から走りうる
+/// リサイズ・`ShowWindow` が挟まる。**`hide_egui_main` が別スレッドから走れた頃は**
 /// （hotkey は Win32 メッセージループスレッド・`src-tauri/CLAUDE.md`「`app.listen` の
-/// コールバックは emit した呼び出し元スレッド上で同期実行される」）ため、この隔たりに
-/// 丸ごと割り込める。**hide 側が `main_visible` を results の hide より先に落とす順序は、
+/// コールバックは emit した呼び出し元スレッド上で同期実行される」）この隔たりへ
+/// 丸ごと割り込めた。**hide 側が `main_visible` を results の hide より先に落とす順序は、
 /// この並びを塞がない**——あの順序が塞ぐのは「store より後に読んだフレーム」だけであり、
 /// store より前に読んで store より後に撃つフレームは素通りする。
+///
+/// **#880 サイクル段 2 でその並びは構築不能になった**（`HideReason` の doc と同じ根拠）。
+/// この関数は今は残してあり、撤去は後段が行う。
 ///
 /// **lock で囲まない**（意図的）。results の raw `ShowWindow` は窓を所有しないスレッドから
 /// 撃たれると所有スレッドのメッセージポンプ待ちでブロックしうるため、イベントループ側も

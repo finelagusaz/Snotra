@@ -49,6 +49,8 @@ issue の責務表は z-order を挙げている。却下した。main の最前
 
 memo の所有を `ResultsWindow` へ寄せた以上、reset も窓側の経路（show）へ寄せる方が対称に見える。却下した。**`show_egui_main` は egui のイベントループとは別のスレッドから走りうる**（setup・single-instance コールバック・hotkey listener・alt 解放待ちの spawn を含む 5 経路を実測）。現在この reset はイベントループスレッド上で、同一フレームの `drive_results_window` より前に起きる。移すとフレーム進行中に割り込みうる——`Mutex` ゆえデータ競合は無く最悪でも「余分な `set_size` が 1 回」で済むが、**スレッド同一性という現行の前提を変えることになり「意味変化ほぼゼロ」を外れる。**
 
+**この理由は #880 サイクル段 2 で失効した**（結論は変わらない）。`show_egui_main` は `!Send` な証人型 `EventLoopProof` を引数に要求するようになり、**イベントループスレッドからしか呼べない**——「別のスレッドから走りうる」という上記の論拠はもう成り立たない。**却下は現在も正しく、支える理由が変わった**: `show_egui_main` は同じスレッドではあるが**フレームの中ではない**（`update()` の外から走る）。reset は同一フレームの `drive_results_window` より**前**でなければ再 show 後の 1 フレーム目が旧 metrics で描かれるため、呼び出し点は view の reset-on-show に保つ。写しは `results_window.rs` の `reset_size_guard` doc と `view.rs` の reset-on-show 呼び出し点コメントで、**本 ADR がその正本である**。
+
 ### 7. `set_size` の戻り値を `bool` にする
 
 `show()` / `hide()` と揃えたくなる。却下した。あちらが `bool` を返すのは**呼び出し側が trace を 1 回だけ出すため**であり、`set_size` に対応する trace は無い。使われない `bool` を返すと「遷移を見て何かする経路がある」と読ませる。

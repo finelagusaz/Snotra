@@ -261,34 +261,46 @@ pub(crate) fn show_egui_main(
         state.main_visible.store(true, Ordering::SeqCst);
     }
     let _ = window.set_focus();
-    // フォーカス移行の同期待ち（SetForegroundWindow は部分的に非同期・Raymond Chen）。
-    #[cfg(windows)]
-    if let Ok(hwnd) = window.hwnd() {
-        use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-        use windows::Win32::UI::WindowsAndMessaging::{SMTO_NORMAL, SendMessageTimeoutW, WM_NULL};
-        let hwnd = HWND(hwnd.0);
-        let mut result = 0usize;
-        unsafe {
-            let _ = SendMessageTimeoutW(
-                hwnd,
-                WM_NULL,
-                WPARAM(0),
-                LPARAM(0),
-                SMTO_NORMAL,
-                100,
-                Some(&mut result),
-            );
-        }
-    }
+    // **かつてここに `SendMessageTimeoutW(hwnd, WM_NULL, …)` のフォーカス同期待ちが在った。
+    // イベントループへ移した時点で恒久的に no-op になったため撤去した**（#880 サイクル段 2）。
+    //
+    // 機構: `SendMessage` 系は、宛先窓が**呼び出しスレッド自身の所有**であるとき窓プロシージャを
+    // サブルーチンとして直接呼んで即座に戻る——キューを 1 通も排出せず、タイムアウトも意味を
+    // 持たない。main 窓は setup（イベントループスレッド）で生成され、`show_egui_main` は証人型に
+    // より同スレッドでしか呼べないので、**宛先は常に自スレッド所有**である。`WM_NULL` は tao の
+    // wndproc が扱わず（0.35.3 実測・ハンドラ皆無）`DefWindowProcW` が 0 を返すだけなので、
+    // 撤去は**構造的に挙動を変えない**。
+    //
+    // 失われた保証: 旧経路（hotkey は platform スレッド上で `show_egui_main` を走らせていた）では
+    // これは**スレッド間** `SendMessage` であり、「イベントループがメッセージ取得点へ到達した」
+    // ことを待てた。**`WM_ACTIVATE` の処理までは元々待っていない**——sent メッセージは posted
+    // メッセージより先に処理されるためである。ゆえに失われたのは活性化の完了ではなく、
+    // 「ポンプが 1 度回った」ことだけである。
+    //
+    // **導出し直せない。** 待つ対象は**自分のキュー**であり、自スレッドのキューが進むのを
+    // 待つにはポンプを回すしかないが、イベントループのコールバック内でポンプを進めることは
+    // 禁じられている（`src-tauri/CLAUDE.md`「ウィンドウ生成の制約」）。`on_event_loop` でも
+    // 遅延できない——イベントループスレッドから呼ぶとインライン実行へ倒れる。
+    // **この構造では表現不能である**というのが結論であり、下 2 つの順序依存は現在
+    // 「`set_focus()` を呼んだ後」でしかない（**未実測**——実機での確認は次段のカテゴリ C/D）。
+    //
     // 残留 Alt 解除: focus 確定後かつ物理 Alt 解放後のみ（#558）。
+    // **`send_alt_key_up` は内部で 5ms スリープする**——いまイベントループ上なので、その間
+    // ポンプが止まる（show のたび・受容する残余。撤去するなら別スレッドへ出すことになる）。
     if !crate::is_alt_pressed() {
         crate::send_alt_key_up();
     }
     // §12: 表示時 IME オフ（設定有効時・復元なし・SU6 spec 決定 4）。ime_off_on_show は実行中
     // config から都度読み（キャッシュしない・#576 同型——config_watcher の hot-reload が diff/event
-    // 追加なしに届く）。**focus 同期（上の SendMessageTimeoutW）より後に置く**——前だと IME オフが
-    // 対象窓に効かない（WebView2 apply_ime_control doc の警告条件）。Win32 は PlatformBridge 経由
-    // （rule）。TurnOffIme は生 HWND(usize) を取るため窓型非依存で &Window 一般化は不要。
+    // 追加なしに届く）。**`set_focus()` より後に置く**——前だと IME オフが対象窓に効かない
+    // （WebView2 apply_ime_control doc の警告条件）。**旧記述「focus 同期（SendMessageTimeoutW）
+    // より後」は、その同期待ちが no-op 化して撤去された今は意味を持たない**（上のコメント）。
+    // ここが依存できるのは `set_focus()` の呼び出し順だけである。
+    //
+    // なお `TurnOffIme` は **platform スレッドへの channel 送信**であり、`ImmSetOpenStatus` は
+    // そちらで非同期に走る——順序として制御できるのは**送信の位置**までで、実行の時刻ではない
+    // （これは本変更の前からそうである）。Win32 は PlatformBridge 経由（rule）。
+    // TurnOffIme は生 HWND(usize) を取るため窓型非依存で &Window 一般化は不要。
     #[cfg(windows)]
     {
         let ime_control = app
@@ -328,6 +340,11 @@ pub(crate) fn show_egui_main(
 /// （`src-tauri/CLAUDE.md`「ウィンドウ生成の制約」）。ゆえに重い処理・ディスク I/O を
 /// 臨界区間（`main_visible` の store と 2 枚の `ShowWindow` が不可分であるべき区間）に
 /// 置いてはならない。placement の**書き込み**と working set の trim は末尾へ出してある。
+///
+/// **ただし「臨界区間の外」は「イベントループの外」ではない。** 末尾へ出した 2 つも
+/// この関数の中＝イベントループスレッド上で走り、その間ポンプは止まったままである
+/// （**受容する残余**・詳細は当該箇所のコメント）。臨界区間から外したことで守られるのは
+/// 「可視性の 3 操作が不可分であること」であって、ポンプの応答性ではない。
 pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::EventLoopProof) {
     // 保留中の alt 解放待ち show を無効化（codex #5/(B)#2）: 世代を bump し、spawn 済み show
     // スレッドの gen 一致チェックを外す。
@@ -384,6 +401,13 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::E
     // ここから臨界区間の外。**順序に意味は無い**——
     // trim は hide 前後どちらで走っても無害（`src-tauri/CLAUDE.md`「working set の能動回収」）、
     // placement の書き込みは値を既に持っているので窓の状態に依存しない。
+    //
+    // **「臨界区間の外」は「イベントループの外」ではない——受容する残余である。** 下の 2 つは
+    // 依然この関数の中、すなわちイベントループスレッド上で走り、その間メッセージポンプは
+    // 止まる（本タスク以前は platform スレッド上でありループを塞がなかった）。ポンプ進行を
+    // 要する操作ではないのでデッドロックはせず、窓を隠した**後**なので視覚的なジャンクにも
+    // ならない。実測はしていない（ディスク書き込み + Toolhelp スナップショット + プロセスツリー
+    // BFS の合計）。**別スレッドへ出すか受容するかは後段の判断に残す。**
     if let Some(p) = placement {
         snotra_core::window_data::save_search_placement(p);
     }

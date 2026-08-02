@@ -107,6 +107,22 @@ fn send_alt_key_up() {
     }
     // Brief pause so the focused window processes the synthetic key-ups
     // before receiving actual user keystrokes.
+    //
+    // **この根拠は #880 サイクル段 2 で失効した（受容・未実測）。** 呼び出し元
+    // （`egui_shell::show_egui_main`）がイベントループスレッドへ移った結果、ここで対象と
+    // している focused window は**自スレッドが所有する main 窓**になった。スリープ中この
+    // スレッドはポンプを回さないので、**待っているあいだにキー up が処理されることはもう
+    // 無い**——スリープの目的は自スレッド上では達成できず、現在は純粋なコストである
+    // （`show_egui_main` の `SendMessageTimeoutW` 撤去と**同じ型の失効**。あちらの撤去跡の
+    // コメントを参照）。**hotkey に Alt を含む設定では実質すべての show がここを通る**
+    // （`ShowAfterAltRelease` の再入時に `!is_alt_pressed()` が真になるため）。
+    //
+    // **撤去は次段の判断に残す。** 見込みとしては「別スレッドへ出す」ではなく**削除**が正しい
+    // ——目的は「窓がキー up を処理できるようにする」ことであり、それを可能にするのは
+    // 待つことではなく**早く返してポンプへ戻ること**だからである。加えて注入順は
+    // `SendInput` がシステム入力キューへ積んだ時点で決まり、後から打たれた実キーはその後ろに
+    // 並ぶ。ただし**この経路は生 Win32 で `cargo test` の視界の外にあり、実機で測っていない**
+    // ——削除はカテゴリ C/D の検出器を回せる段で行うこと。
     std::thread::sleep(std::time::Duration::from_millis(5));
 }
 

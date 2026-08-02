@@ -105,7 +105,7 @@ docs: 文書間で既に食い違っている 4 件を正本への参照へ倒�
 
 **Files:** `SPEC.md`
 
-- [ ] **Step 1: #735 の「消しすぎの境界」を先に読む**
+- [x] **Step 1: #735 の「消しすぎの境界」を先に読む**
 
 `gh issue view 735` の当該節を読むこと。**3 点ある**:
 1. **`SPEC.md` の 4000ms は半分生きている**——`launch_item_core` 自体に timeout は無いが、
@@ -115,28 +115,28 @@ docs: 文書間で既に食い違っている 4 件を正本への参照へ倒�
 3. **Rust コメント内の `resetForShow` は「〜相当 / parity」という由来注記**であり、
    現行 API 名として書かれていない。**SPEC 側の 2 行とは別クラスで、消してはならない**
 
-- [ ] **Step 2: 二層構造 3 節を畳む**
+- [x] **Step 2: 二層構造 3 節を畳む**
 
 #726 が §20.3 に採った形をそのまま当てる——**古い層を削除し、生存部分は egui 層へ一本化**する。
 両層が同じ対象を語っているため、スコープ宣言ではなく削除で解ける。
 
-- [ ] **Step 3: 単独の stale 記述 13 箇所を直す**
+- [x] **Step 3: 単独の stale 記述 13 箇所を直す**
 
 #735 の表を 1 行ずつ潰す。**表の「反証」欄が正本の位置を持っている**ので、そこへ参照を倒すこと。
 
-- [ ] **Step 4: 棚卸しが追加で見つけた分を合流させる**
+- [x] **Step 4: 棚卸しが追加で見つけた分を合流させる**
 
 `.superpowers/sdd/plan/spec-inventory-identifiers.md` §3 の 23 件のうち、#735 の表に無いものを拾う
 （`about` / `settings` のウィンドウラベル・`LruIconCache` / `get_icons_batch`・
 `LaunchResult::succeeded`・`show_main_and_emit`・`notice.launch.timeout`・`hint_instant_program`）。
 **各件に「提案」欄がある**ので、それに従うこと。
 
-- [ ] **Step 5: 検証**
+- [x] **Step 5: 検証**
 
 `npm run governance:check`。**加えて `git grep` で、直した識別子がコードに実在するか
 （または参照へ倒れたか）を全件確認すること**——直しながら別の腐りを作らないため。
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
 ```
 docs: SPEC の WebView2 期 stale 記述を as-built へ畳む (#735)

@@ -15,9 +15,12 @@
 //! footgun は表現不能にできない。本型の目的は**正しい経路を 1 つにし、誤った経路を書く動機を
 //! 消す**ことであって、表現不能化ではない（spec §2.6 / §7-1）。
 //!
-//! **可視性の全体像はこの型だけでは閉じない。** main が hidden の間に results が出る事故は
-//! show 述語側のゲート（`layout::present_results`）が塞ぐ——本型は「誰が raw 操作を
-//! 撃つか」を一点に集めるだけで、「撃ってよい状況か」は判定しない。
+//! **可視性の全体像はこの型だけでは閉じない。** main が hidden の間に results が出る事故を
+//! 塞ぐのは 3 つの組み合わせである——show 述語側のゲート（`layout::present_results` の
+//! 連言①）、show を撃った後の事後検査（`layout::must_retract_results`）、そして main が
+//! 消える向きの hide を無条件にする理由の型（`layout::HideReason::MainGone`）。本型は
+//! 「誰が raw 操作を撃つか」を一点に集め、`HideReason` を受け取って**フラグを信じるか**
+//! だけを分けるのであって、「撃ってよい状況か」は判定しない。
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -91,10 +94,16 @@ impl ResultsWindow {
     pub(crate) fn show(&self, background: egui::Color32) -> bool {
         // 先に flag を swap して test-and-set を原子にする（別スレッドの hide と競っても
         // raw 操作が二重に撃たれない）。**保証するのはそこまでである**——swap と `raw_show()`
-        // の間に他スレッドの `hide()` が挟まると「フラグ=false・窓=可視」の不一致が残りうる
-        // （回収は次の show 遷移）。フラグと窓の同時性は保証しない。
-        // この型が閉じられないぶんは、show 述語側の `main_visible` ゲート
-        // （`layout::present_results`）が main hidden 中の再表示を塞ぐ。
+        // の間に他スレッドの `hide()` が挟まると「フラグ=false・窓=可視」の不一致が残りうる。
+        // フラグと窓の同時性は保証しない。
+        //
+        // **「回収は次の show 遷移」では足りない**（旧記述の訂正）。不一致のまま main が
+        // hidden になると、次のフレームの `present_results` は `Hidden` へ倒れるが、その
+        // hide はフラグが false ゆえ raw 操作を撃たない——results だけが画面に残る。
+        // ゆえに main が消える向きの hide は `HideReason::MainGone` で無条件に撃つ
+        // （`hide` の doc）。この型が閉じられないぶんを塞ぐのは、show 述語側の
+        // `main_visible` ゲート（`layout::present_results`）**と**、show を撃った後の
+        // 事後検査（`layout::must_retract_results`・`drive_results_window` 末尾）である。
         if self.visible.swap(true, Ordering::SeqCst) {
             return false;
         }
@@ -127,16 +136,27 @@ impl ResultsWindow {
         super::window_coordinator::apply_native_background(&self.window, color);
     }
 
-    /// results 窓を隠す（`show` の対）。既に不可視なら raw 操作を撃たず `false` を返す。
+    /// results 窓を隠す（`show` の対）。**戻り値は可視フラグが遷移したか**であり、raw 操作を
+    /// 撃ったかではない（呼び出し側の trace 用。理由は spec 決定 7）。
     ///
     /// raw show は tao の `WindowFlags::VISIBLE` を false のまま残すため、`Window::hide()` は
     /// 「差分なし」と判定して早期 return し窓が隠れない。ゆえに hide も対で raw にする。
-    pub(crate) fn hide(&self) -> bool {
-        if !self.visible.swap(false, Ordering::SeqCst) {
-            return false;
+    ///
+    /// **`reason` が raw 操作の要否を決める。** フラグが false でも `MainGone` なら撃つ——
+    /// 「フラグ = false・窓 = 可視」の食い違い（`show` の doc）を回収できる経路がここしか
+    /// 無いためである。判定式の正本は `layout::hide_must_be_unconditional`（純粋核・
+    /// ユニットテスト対象）で、ここに手書きしない。
+    ///
+    /// **`NotPresented` でフラグを見るのは性能上の理由である**（毎フレーム走る側ゆえ
+    /// `SW_HIDE` を打鍵ごとに撃たない）。**この経路は権威を持たない**——食い違いが起きて
+    /// いれば黙って no-op する。それでよいのは、この理由で隠すとき main は可視であり、
+    /// 「results だけが残る」事故にならないからである。
+    pub(crate) fn hide(&self, reason: super::layout::HideReason) -> bool {
+        let transitioned = self.visible.swap(false, Ordering::SeqCst);
+        if transitioned || super::layout::hide_must_be_unconditional(reason) {
+            self.raw_hide();
         }
-        self.raw_hide();
-        true
+        transitioned
     }
 
     /// results 窓の TOPMOST を切り替える（設定サイドカー起動中の一時解除・#646 PR2）。

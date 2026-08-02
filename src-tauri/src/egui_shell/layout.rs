@@ -192,7 +192,12 @@ pub enum ResultsPresentation {
 /// 結果は hidden 中も残る。hidden 中に main の update() が 1 フレームでも走ると
 /// （`config-applied` / `indexing-*` / updater 完了の `wake_main` 自体は main の可視性を
 /// 見ない）、results だけが最前面に取り残される。hide 側の同期（`hide_egui_main`）と
-/// この show 側のゲートは**対**であり、片方では閉じない。
+/// この show 側のゲートは**どちらも必要である**。
+///
+/// **ただし 2 つでは十分でない**（#671 PR A′ 当時の「対であり片方では閉じない」の訂正）。
+/// この判定が読む `main_visible` と、判定を受けた `ResultsWindow::show` が撃つ raw
+/// `ShowWindow` の間には Win32 呼び出しが挟まり、`hide_egui_main` は別スレッドから
+/// その隔たりへ割り込める。3 つ目が `must_retract_results`（撃った後の再検査）である。
 /// **「hidden 中は update() が走らない」という命題には依存しない**（機構は tao/OS 層の配送
 /// 抑止と #697 で実測済みだが、この判定はそれに依存せず成立する）。
 ///
@@ -211,6 +216,54 @@ pub fn present_results(i: ResultsInputs) -> ResultsPresentation {
     } else {
         ResultsPresentation::Hidden
     }
+}
+
+/// results を隠す理由。**可視フラグを信じてよいかがこれで決まる**。
+///
+/// `ResultsWindow` の可視フラグと窓の実状態は、**別スレッドの hide と競ると食い違いうる**
+/// （機構は `ResultsWindow::show` の doc）。食い違いの片方——「フラグ = false・窓 = 可視」——は
+/// フラグを見る hide を**黙って no-op にする**ため、その状態のまま main が消えると
+/// results だけが画面に残る。理由を型で持ち回るのは、隠す動機ごとに「フラグを信じてよいか」が
+/// 違うからである。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HideReason {
+    /// 出す条件を満たさないフレーム（`present_results` が `Hidden`・main は可視のまま）。
+    /// **毎フレーム走る**ため、フラグが false なら raw 操作を撃たない。
+    NotPresented,
+    /// main が可視でない（`hide_egui_main`、および show を撃った後の事後検査）。
+    /// **頻度はホットキーのトグル程度**であり、撃ち漏らしの代価は「results だけが最前面に
+    /// 残る」ほうが大きい。
+    MainGone,
+}
+
+/// 可視フラグを無視して raw hide を撃つべきか（`ResultsWindow::hide` が読む）。
+///
+/// **`MainGone` で無条件にするのが要石である。** main が hidden になった後は main の
+/// `update()` が走る保証が無い（tao/OS 層が hidden な窓へ `RedrawRequested` を配送しない・
+/// #697 実測）。つまり**この hide を撃ち漏らすと、次に拾い直すフレームが来ない**——
+/// 「次の遷移で回収される」は成り立たず、ユーザーがホットキーをもう一巡させるまで
+/// results だけが画面に残る。
+pub fn hide_must_be_unconditional(reason: HideReason) -> bool {
+    matches!(reason, HideReason::MainGone)
+}
+
+/// show を撃った**後**に main の可視を読み直し、撤回が要るかを判定する。
+///
+/// **`present_results` の事前判定とは読み点が違う**——両者の間には Win32 の位置決め・
+/// リサイズ・`ShowWindow` が挟まる。`hide_egui_main` は**別スレッド**から走りうる
+/// （hotkey は Win32 メッセージループスレッド・`src-tauri/CLAUDE.md`「`app.listen` の
+/// コールバックは emit した呼び出し元スレッド上で同期実行される」）ため、この隔たりに
+/// 丸ごと割り込める。**hide 側が `main_visible` を results の hide より先に落とす順序は、
+/// この並びを塞がない**——あの順序が塞ぐのは「store より後に読んだフレーム」だけであり、
+/// store より前に読んで store より後に撃つフレームは素通りする。
+///
+/// **lock で囲まない**（意図的）。results の raw `ShowWindow` は窓を所有しないスレッドから
+/// 撃たれると所有スレッドのメッセージポンプ待ちでブロックしうるため、イベントループ側も
+/// 取る lock で囲むと race がデッドロックへ化ける。`SeqCst` の全順序だけで閉じる形にする
+/// ——`main_visible` を撃った**後**に読み直せば、`true` を読んだ場合は hide 側の store が
+/// まだ起きておらず、続く `results.hide()` が必ず窓を隠す側に回る。
+pub fn must_retract_results(main_visible_after_show: bool) -> bool {
+    !main_visible_after_show
 }
 
 /// 打鍵 debounce（決定7）。時刻は driver が注入する（純粋・テスト可能）。
@@ -523,6 +576,42 @@ mod tests {
             max_results: max,
             row_height: 37.0,
         }
+    }
+
+    /// 事前ゲート（`present_results` の連言①）と事後検査（`must_retract_results`）が
+    /// **同じ入力に対して逆を言わない**ことを固定する。
+    ///
+    /// **測っているのは「2 つが同一の述語 `main_visible` に還元される」ことだけである。**
+    /// 並行実行そのもの——読み点の隔たりに hide が割り込む順序——は純粋核では測れない
+    /// （`ShowWindow` は `#[cfg(windows)]` の Win32 呼び出しで、ユニットテストの対象外・
+    /// `.claude/rules/src-tauri.md`）。**この test は決定ロジックの証拠であって、race が
+    /// 閉じた証拠ではない。** 実機側の検出器は `SnotraTraceInvariants.psm1` の H1 である。
+    #[test]
+    fn retract_agrees_with_the_presentation_gate_on_main_visibility() {
+        // 撤回するのは「撃った後に main が可視でない」ときだけである。
+        assert!(must_retract_results(false));
+        assert!(!must_retract_results(true));
+        // 事前ゲートと同符号: main が不可視なら、他の連言が何であれ出さない/撤回する。
+        for &plain_hidden in &[false, true] {
+            for &count in &[0usize, 3] {
+                assert_eq!(
+                    present_results(inputs(false, plain_hidden, count, 8)),
+                    ResultsPresentation::Hidden
+                );
+            }
+        }
+    }
+
+    /// `HideReason` → 「可視フラグを無視して raw hide を撃つか」の対応表。
+    ///
+    /// **`MainGone` が無条件であることが correctness の要である**——main が hidden の間は
+    /// フレームが走らないため、撃ち漏らしを拾い直す次のフレームが来ない。
+    /// `NotPresented` が条件付きなのは性能上の理由（毎フレーム走る側）であり、
+    /// **この非対称を「対称でないから揃える」向きに直してはならない**（`/symmetric-check`）。
+    #[test]
+    fn only_main_gone_forces_the_raw_hide() {
+        assert!(hide_must_be_unconditional(HideReason::MainGone));
+        assert!(!hide_must_be_unconditional(HideReason::NotPresented));
     }
 
     /// #752 AC1: SPEC §8.6「検索結果ウィンドウの可視性（従属軸）」の 4 連言の真理値表。

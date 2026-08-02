@@ -453,7 +453,7 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 
 - メインウィンドウ（`main`）と検索結果ウィンドウ（`results`）は起動時のセットアップで生成する（いずれも `visible: false`）。`results` は `focusable(false)` でフォーカスを取らない従属窓とし、可視性・サイズ・位置は `main` の毎フレーム更新（`drive_results_window`）が駆動する。`main` の hide 時は `results` も同時に隠す（§4.7・§8.2 参照・#646 PR2）。**この hide 同期と組になる show 側のゲート・事後検査は §8.6「検索結果ウィンドウの可視性」にある**——hide 同期だけでは閉じない
 - 設定アプリは別プロセス（`snotra-settings`）として起動する。本体は `SettingsProcessState` で子プロセスを管理し、二重起動を防止する
-- `snotra-settings` 起動中は本体のメインウィンドウの `alwaysOnTop` を一時的に `false` にし、終了検知時に `true` に復元する
+- `snotra-settings` 起動中は本体のメインウィンドウの最前面表示を一時的に外し、終了検知時に復元する
 - `platform/mod.rs` の Win32 メッセージループスレッドはウィンドウ生成より前に spawn し、Win32 初期化とウィンドウ生成を並列実行する（起動時間の短縮）
 - トレイアイコンの表示はウィンドウ生成完了後に行う
 - ホットキー登録（`RegisterHotKey`）は `hotkey-pressed` イベントリスナーの登録完了後に行う。リスナー未登録の状態でホットキーを有効化すると、起動中のキー入力が受け手なく破棄されるため
@@ -573,7 +573,7 @@ results 可視 ⇔ main 可視 ∧ 結果が空でない ∧ 通常結果を隠�
 | 生成 | トレイメニューまたはスラッシュコマンドからの起動要求（本体が二重起動を防ぐ） |
 | 破棄 | 利用者が閉じたとき / 本体終了時の kill |
 
-- 存命中は本体のメインウィンドウの `alwaysOnTop` を外す（設定アプリが背後に隠れないように・§8.5）
+- 存命中は本体のメインウィンドウの最前面表示を外す（設定アプリが背後に隠れないように・§8.5）
 
 ## 9. 実行履歴メニュー
 
@@ -1138,11 +1138,11 @@ Tauri の `tauri-plugin-updater` を用いて GitHub Releases 経由で自動更
 
 1. 起動時に更新を確認し、`Update` オブジェクトを保持する（Rust `UpdaterExt` の check。
    `on_before_exit` フックに終了保存（履歴 flush + アイコン保存）を登録した builder で check する）
-2. トーストの [今すぐ更新] で `downloadAndInstall()` を実行
-3. **Windows では `downloadAndInstall` は復帰しない**: プラグインが内部で download →
+2. トーストの [今すぐ更新] で `download_and_install()` を実行
+3. **Windows では `download_and_install` は復帰しない**: プラグインが内部で download →
    `on_before_exit` フック → NSIS installer 起動 → `std::process::exit(0)` する。
    プロセスの終了・再起動は NSIS インストーラに委ねる（`app.restart()` は新プロセスが
-   ファイルをロックし NSIS の上書きを失敗させるため使わない）。**`downloadAndInstall`
+   ファイルをロックし NSIS の上書きを失敗させるため使わない）。**`download_and_install`
    復帰後に保存処理を置かない**（到達しないため・保存は `on_before_exit` が正しい合流点）
 4. `Err` 復帰（download 失敗等）時のみトーストをエラー表示にする
 

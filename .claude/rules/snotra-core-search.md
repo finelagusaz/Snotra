@@ -1,7 +1,7 @@
 ---
 paths:
   - "snotra-core/src/search.rs"
-  - "snotra-core/src/search/*.rs"
+  - "snotra-core/src/search/**/*.rs"
 ---
 
 # search.rs ルール（ルーター・#588 試行中）

@@ -367,7 +367,7 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::E
     }
     // main_visible は **results.hide() より前**に落とす（#671 PR A′ レビュー Important 1）。
     // これは `drive_results_window` の show ゲート（layout::present_results）が読む値である。
-    // **可視性を変える操作はイベントループスレッドに閉じているため**（`EventLoopProof`）、
+    // **証人型（`EventLoopProof`）を引数に要求する 5 関数はイベントループスレッドへ閉じているため**、
     // 「results.hide() 済み・main_visible=true」の隙間へ割り込むフレームはもはや構築できない
     // ——この順序を保つのは、show 側の「show() の後に true を立てる」（順序不変制約）との
     // 対称のためである。どちらも「main が可視でない期間に visible=true と読ませない」向きに
@@ -612,9 +612,10 @@ pub(crate) fn drive_results_window(
     // main_visible は hide_egui_main が results.hide() の**前**に false へ落とすため、
     // **この読みより前に store が済んでいたフレーム**はここで hide 側へ倒れる。判定式と
     // 根拠は layout::present_results（純粋核・ユニットテスト対象）。
-    // **可視性を変える操作はイベントループスレッドに閉じている**（`EventLoopProof`）ため、
-    // この読みと `results.show()` のあいだへ hide が割り込む並びは構築できない
-    // （読んだ後に store されるフレームを心配する必要が無い）。
+    // **証人型（`EventLoopProof`）を引数に要求する 5 関数はイベントループスレッドへ閉じている**
+    // ため、この読みと `results.show()` のあいだへ hide が割り込む並びは構築できない
+    // （読んだ後に store されるフレームを心配する必要が無い）。**ただし `main_visible` を
+    // 更新しない main の hide はこの閉包の外にある**——`state.rs` の同フィールドの doc を見よ。
     let main_visible = read_main_visible(app);
     let desired_height = match layout::present_results(layout::ResultsInputs {
         main_visible,

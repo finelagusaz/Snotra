@@ -193,9 +193,10 @@ pub enum ResultsPresentation {
 /// （`config-applied` / `indexing-*` / updater 完了の `wake_main` 自体は main の可視性を
 /// 見ない）、results だけが最前面に取り残される。
 ///
-/// **並行性は条件に入らない。** 可視性を変える操作はすべてイベントループスレッドに閉じており
-/// （`EventLoopProof`）、この判定と `ResultsWindow::show` のあいだに hide が割り込む並びは
-/// **構築できない**。
+/// **並行性は条件に入らない。** 証人型（`EventLoopProof`）を引数に要求する 5 関数はイベント
+/// ループスレッドへ閉じており、この判定と `ResultsWindow::show` のあいだに hide が割り込む
+/// 並びは**構築できない**。**閉包の射程の正本は `src-tauri/CLAUDE.md`「可視性を変える操作は
+/// イベントループスレッドに閉じてある」の bullet 群である**——5 関数の外側に何が残るかもそこ。
 /// **「hidden 中は update() が走らない」という命題には依存しない**（機構は tao/OS 層の配送
 /// 抑止と #697 で実測済みだが、この判定はそれに依存せず成立する）。
 ///

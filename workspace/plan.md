@@ -19,7 +19,8 @@
 
 ## 前提条件（着手前に確認する）
 
-- [ ] **PR #880 が main へマージ済みであること。** 本計画は #880 が入れた事後検査
+- [x] **PR #880 が main へマージ済みであること。**（2026-08-02 `fa2dcf8` として squash マージ済み・
+      closingIssuesReferences 0 件・マージ後 3 点検証で誤 close 無しを確認） 本計画は #880 が入れた事後検査
       （`layout::must_retract_results`）と hide の理由型（`layout::HideReason` /
       `hide_must_be_unconditional`）を**削除する**手順を含む。未マージのまま着手すると
       タスク 5 が「存在しないものを消す」になる。**マージされていないなら、先にマージするか、
@@ -313,12 +314,78 @@ setup（`setup_startup_display` の同）。どちらも既にイベントルー
     });
 ```
 
-- [ ] **Step 6: hotkey listener は暫定で包む（本移行はタスク 3）**
+- [ ] **Step 6: hotkey listener は判定ごと移す（分割禁止）**
 
-`main.rs` の hotkey listener の `HideNow` / `ShowNow` / `ShowAfterAltRelease` 各アームを
-個別に `on_event_loop` で包み、**まずビルドを通す**。
-**この形はタスク 3 で必ず置き換える**——判定が producer スレッドに残っているため、
-連打でトグルが壊れる（設計書 §3.3）。
+**各アームを個別に包んではならない。** それでは判定（`main_visible` の読み）が producer
+スレッドに残り、タスク実行前に届いた 2 回目の押下が**同じ stale 値**を読んで両方 Hide /
+両方 Show になる——**連打でトグルが壊れる**（設計書 §3.3）。今日この問題が無いのは判定も
+副作用も同じ platform スレッド上で逐次化されているからで、**効果だけを marshalling すると
+その逐次化が失われる**。
+
+`SettingsProcessState` のチェックは**タスクの外に残す**（窓に触らない読みであり、無駄な
+タスク post を避ける）。`t0` は**post する前**に取る（marshalling の hop をレイテンシ計測に
+含める）。
+
+```rust
+    app_handle.listen(crate::events::HOTKEY_PRESSED, move |_| {
+        let t0 = Instant::now();
+        trace_main("hotkey:listener_enter", json!({}));
+        // 設定画面の起動中はホットキーを無視する（ユーザーが新しい組み合わせを設定するために
+        // 現在の組み合わせを押している可能性がある）。**窓に触らない読みなのでタスクの外に置く**。
+        if let Some(proc_state) = handle_for_hotkey.try_state::<SettingsProcessState>()
+            && proc_state.lock().unwrap().is_some()
+        {
+            return;
+        }
+        // **判定ごとイベントループへ移す。** 世代の採番・可視の読み・分岐・副作用が
+        // ひとまとまりで逐次化される——効果だけを移すと連打で stale を読む。
+        snotra_egui_runtime::on_event_loop(&handle_for_hotkey, move |app, el| {
+            let current_gen = app
+                .try_state::<egui_shell::EguiShellState>()
+                .map(|sh| sh.hotkey_generation.fetch_add(1, Ordering::SeqCst) + 1)
+                .unwrap_or(0);
+            let app_state = app.try_state::<AppState>();
+            let visible = app_state
+                .as_ref()
+                .map(|s| s.main_visible.load(Ordering::SeqCst))
+                .unwrap_or(false);
+            // hotkey_toggle は可視時の hide 判定にしか使わない（plan_hotkey）。`visible &&` で
+            // 短絡し、非表示＝show 経路（最も遅延に敏感）では engine ロックを取らない。
+            let hotkey_toggle = visible
+                && app_state
+                    .as_ref()
+                    .map(|s| s.engine.lock().unwrap().config().general.hotkey_toggle)
+                    .unwrap_or_else(|| GeneralConfig::default().hotkey_toggle);
+            match egui_shell::plan_hotkey(visible, is_alt_pressed(), hotkey_toggle) {
+                egui_shell::HotkeyPlan::HideNow => {
+                    egui_shell::hide_egui_main(app, el);
+                }
+                egui_shell::HotkeyPlan::ShowNow => {
+                    egui_shell::show_egui_main(app, el, t0);
+                }
+                egui_shell::HotkeyPlan::ShowAfterAltRelease => {
+                    // 待機はイベントループを塞げないので別スレッドで行い、**再入するときに
+                    // もう一度 marshalling する**。世代の照合もイベントループ上で行う——
+                    // 照合と show のあいだに別の押下が割り込まないため。
+                    let h = app.clone();
+                    std::thread::spawn(move || {
+                        wait_alt_release_or_timeout();
+                        snotra_egui_runtime::on_event_loop(&h, move |app, el| {
+                            let gen_now = app
+                                .try_state::<egui_shell::EguiShellState>()
+                                .map(|sh| sh.hotkey_generation.load(Ordering::SeqCst))
+                                .unwrap_or(0);
+                            if gen_now != current_gen {
+                                return;
+                            }
+                            egui_shell::show_egui_main(app, el, Instant::now());
+                        });
+                    });
+                }
+            }
+        });
+    });
+```
 
 - [ ] **Step 7: `hide_egui_main` の臨界区間を絞る（ポンプ停止の不変条件・省略不可）**
 
@@ -401,104 +468,35 @@ refactor(egui-shell): 可視性 API に EventLoopProof を要求させ呼び出�
 
 ---
 
-## タスク 3: ホットキーの判定ごとイベントループへ移す
+## タスク 3: ホットキー経路を実機で検証する
 
-**Files:**
-- Modify: `src-tauri/src/main.rs`（`setup_hotkey_listener`）
+タスク 2 でホットキーの判定・世代採番・副作用はひとまとまりでイベントループへ移っている。
+**このタスクはコードを書かない**——`cargo test` でも `smoke:egui` でも落ちない種類の回帰を
+実機で見るためだけに在る。
 
-**Interfaces:**
-- Consumes: タスク 2 の `hide_egui_main(app, el)` / `show_egui_main(app, el, t0)`
+**Files:** 変更なし（検証専用）
 
-- [ ] **Step 1: なぜ効果だけでは足りないかをコメントで固定する**
-
-判定（`main_visible` の読み）が producer スレッドに残ると、タスク実行前に届いた 2 回目の押下が
-**同じ stale 値**を読み、両方 Hide / 両方 Show になる。今日この問題が無いのは判定も副作用も
-同じ platform スレッド上で逐次化されているからである。
-
-- [ ] **Step 2: listener 本体を書き換える**
-
-`SettingsProcessState` のチェックは**タスクの外に残す**（窓に触らない読みであり、
-無駄なタスク post を避ける）。`t0` は**post する前**に取る（marshalling の hop を
-レイテンシ計測に含める）。
-
-```rust
-    app_handle.listen(crate::events::HOTKEY_PRESSED, move |_| {
-        let t0 = Instant::now();
-        trace_main("hotkey:listener_enter", json!({}));
-        // 設定画面の起動中はホットキーを無視する（ユーザーが新しい組み合わせを設定するために
-        // 現在の組み合わせを押している可能性がある）。**窓に触らない読みなのでタスクの外に置く**。
-        if let Some(proc_state) = handle_for_hotkey.try_state::<SettingsProcessState>()
-            && proc_state.lock().unwrap().is_some()
-        {
-            return;
-        }
-        // **判定ごとイベントループへ移す**（Step 1 のコメント参照）。世代の採番・可視の読み・
-        // 分岐・副作用がひとまとまりで逐次化される。
-        snotra_egui_runtime::on_event_loop(&handle_for_hotkey, move |app, el| {
-            let current_gen = app
-                .try_state::<egui_shell::EguiShellState>()
-                .map(|sh| sh.hotkey_generation.fetch_add(1, Ordering::SeqCst) + 1)
-                .unwrap_or(0);
-            let app_state = app.try_state::<AppState>();
-            let visible = app_state
-                .as_ref()
-                .map(|s| s.main_visible.load(Ordering::SeqCst))
-                .unwrap_or(false);
-            // hotkey_toggle は可視時の hide 判定にしか使わない（plan_hotkey）。`visible &&` で
-            // 短絡し、非表示＝show 経路（最も遅延に敏感）では engine ロックを取らない。
-            let hotkey_toggle = visible
-                && app_state
-                    .as_ref()
-                    .map(|s| s.engine.lock().unwrap().config().general.hotkey_toggle)
-                    .unwrap_or_else(|| GeneralConfig::default().hotkey_toggle);
-            match egui_shell::plan_hotkey(visible, is_alt_pressed(), hotkey_toggle) {
-                egui_shell::HotkeyPlan::HideNow => {
-                    egui_shell::hide_egui_main(app, el);
-                }
-                egui_shell::HotkeyPlan::ShowNow => {
-                    egui_shell::show_egui_main(app, el, t0);
-                }
-                egui_shell::HotkeyPlan::ShowAfterAltRelease => {
-                    // 待機はイベントループを塞げないので別スレッドで行い、**再入するときに
-                    // もう一度 marshalling する**。世代の照合もイベントループ上で行う——
-                    // 照合と show のあいだに別の押下が割り込まないため。
-                    let h = app.clone();
-                    std::thread::spawn(move || {
-                        wait_alt_release_or_timeout();
-                        snotra_egui_runtime::on_event_loop(&h, move |app, el| {
-                            let gen_now = app
-                                .try_state::<egui_shell::EguiShellState>()
-                                .map(|sh| sh.hotkey_generation.load(Ordering::SeqCst))
-                                .unwrap_or(0);
-                            if gen_now != current_gen {
-                                return;
-                            }
-                            egui_shell::show_egui_main(app, el, Instant::now());
-                        });
-                    });
-                }
-            }
-        });
-    });
-```
-
-- [ ] **Step 3: ビルドとテスト**
-
-`docs/build-commands.md` カテゴリ A。期待: **通る**。
-
-- [ ] **Step 4: 実機でトグルを確認する（カテゴリ D・省略不可）**
+- [ ] **Step 1: 実機でトグルを確認する（カテゴリ D・省略不可）**
 
 `docs/build-commands.md` カテゴリ D の手順でアプリを起動し、**ホットキーを連打**して
-show/hide が交互に切り替わることを見る。**`cargo test` でも `smoke:egui` でも落ちない種類の
-回帰である**（設計書 §3.3・§7）。
+show/hide が交互に切り替わることを見る。**連続 10 回以上**打ち、途中で 2 回続けて同じ向きへ
+倒れないことを確かめる。
 
-- [ ] **Step 5: コミット**
+- [ ] **Step 2: alt 解放待ちの経路を確認する**
 
-```
-fix(egui-shell): ホットキーの判定ごとイベントループへ移し連打の stale 読みを断つ
-```
+修飾キーに Alt を含むホットキー設定で、**Alt を押したままホットキーを打ち、Alt を離す**。
+窓が出ること。続けてもう一度打って隠れること（世代照合が効いていること）。
 
----
+- [ ] **Step 3: 設定画面起動中はホットキーが無視されることを確認する**
+
+`/o` で設定画面を開き、ホットキーを打つ。**本体の窓が出ないこと**（`SettingsProcessState` の
+チェックはタスクの外に残してあり、この経路がタスク post 自体を行わない）。
+
+- [ ] **Step 4: 失敗したらタスク 2 へ戻る**
+
+トグルが壊れているなら、判定が producer スレッドに残っている。**新しいガードを足して
+通してはならない**——判定と副作用が同じタスク内にあることが本設計の要である。
+
 
 ## タスク 4: 実機スモークで表示順序の回帰が無いことを見る
 

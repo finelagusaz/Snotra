@@ -366,11 +366,12 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::E
         let _ = window.hide();
     }
     // main_visible は **results.hide() より前**に落とす（#671 PR A′ レビュー Important 1）。
-    // これは `drive_results_window` の show ゲート（layout::present_results）が読む値で
-    // あり、後ろに置くと「results.hide() 済み・main_visible=true」の隙間に走ったフレームが
-    // results を再表示し、main が隠れたまま results だけ最前面に残る。
-    // show 側の「show() の後に true を立てる」（順序不変制約）とは対称である——どちらも
-    // 「main が可視でない期間に visible=true と読ませない」向きに倒している。
+    // これは `drive_results_window` の show ゲート（layout::present_results）が読む値である。
+    // **可視性を変える操作はイベントループスレッドに閉じているため**（`EventLoopProof`）、
+    // 「results.hide() 済み・main_visible=true」の隙間へ割り込むフレームはもはや構築できない
+    // ——この順序を保つのは、show 側の「show() の後に true を立てる」（順序不変制約）との
+    // 対称のためである。どちらも「main が可視でない期間に visible=true と読ませない」向きに
+    // 倒している。
     if let Some(state) = app.try_state::<crate::AppState>() {
         state.main_visible.store(false, Ordering::SeqCst);
     }

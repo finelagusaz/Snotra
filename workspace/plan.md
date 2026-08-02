@@ -75,7 +75,7 @@
 - Produces: `EventLoopProof`（不透明・`!Send`）、`RuntimeFrame::event_loop(&self) -> &EventLoopProof`、
   `on_event_loop<F>(app: &tauri::AppHandle, f: F) where F: FnOnce(&tauri::AppHandle, &EventLoopProof) + Send + 'static`
 
-- [ ] **Step 1: `proof.rs` を作る**
+- [x] **Step 1: `proof.rs` を作る**
 
 ```rust
 //! イベントループスレッド上にいることの証人（`EventLoopProof`）と、そこへ入る唯一の口。
@@ -144,7 +144,7 @@ where
 }
 ```
 
-- [ ] **Step 2: `lib.rs` に配線する**
+- [x] **Step 2: `lib.rs` に配線する**
 
 `mod proof;` を `mod monitor;` の後（アルファベット順の位置）に足し、`pub use` に加える:
 
@@ -152,7 +152,7 @@ where
 pub use proof::{EventLoopProof, on_event_loop};
 ```
 
-- [ ] **Step 3: `RuntimeFrame` に証人を持たせる**
+- [x] **Step 3: `RuntimeFrame` に証人を持たせる**
 
 `runtime.rs` の `RuntimeFrame` 定義（`pub struct RuntimeFrame {` の行）へフィールドを足す:
 
@@ -189,7 +189,7 @@ pub struct RuntimeFrame {
         };
 ```
 
-- [ ] **Step 4: `snotra-egui-runtime/CLAUDE.md` のモジュール構成へ 1 行足す**
+- [x] **Step 4: `snotra-egui-runtime/CLAUDE.md` のモジュール構成へ 1 行足す**
 
 `- \`monitor.rs\`: ...` の行の後に:
 
@@ -197,12 +197,12 @@ pub struct RuntimeFrame {
 - `proof.rs`: イベントループスレッド上にいることの証人型`EventLoopProof`と、外部スレッドからそこへ入る唯一の口`on_event_loop`（責務詳細は`//!`）
 ```
 
-- [ ] **Step 5: ビルドが通ることを確認する**
+- [x] **Step 5: ビルドが通ることを確認する**
 
 `docs/build-commands.md` カテゴリ A のビルド・clippy を実行する。
 期待: **通る**（この段では新 API に消費者が無いが、`pub` なので `dead_code` にはならない）。
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
 ```
 feat(egui-runtime): イベントループスレッドの証人型 EventLoopProof を導入する
@@ -228,7 +228,7 @@ feat(egui-runtime): イベントループスレッドの証人型 EventLoopProof
   `drive_results_window(app, el, inputs)` / `ResultsWindow::show(el, background) -> bool` /
   `ResultsWindow::hide(el, reason) -> bool`（`reason` はタスク 5 で消える）
 
-- [ ] **Step 1: シグネチャへ証人を足す**
+- [x] **Step 1: シグネチャへ証人を足す**
 
 `window_coordinator.rs`:
 
@@ -266,12 +266,12 @@ pub(crate) fn drive_results_window(
 
 `drive_results_window` の中の `results.show(...)` / `results.hide(...)` へ `el` を渡す。
 
-- [ ] **Step 2: `cargo build -p snotra` で移行漏れを列挙させる**
+- [x] **Step 2: `cargo build -p snotra` で移行漏れを列挙させる**
 
 期待: **失敗**。`E0061`（引数の数が合わない）が呼び出し点の数だけ出る。**この一覧が移行対象の
 正本である**——手で数えない。
 
-- [ ] **Step 3: フレーム内の呼び出し点を移行する（view.rs）**
+- [x] **Step 3: フレーム内の呼び出し点を移行する（view.rs）**
 
 `view.rs` の `update()` 末尾。`frame` は同関数の引数として在る（`frame.set_clear_color` を
 呼んでいる箇所と同じ `frame`）:
@@ -283,7 +283,7 @@ pub(crate) fn drive_results_window(
             crate::egui_shell::DriveResultsInputs {
 ```
 
-- [ ] **Step 4: listener の呼び出し点を移行する（mod.rs）**
+- [x] **Step 4: listener の呼び出し点を移行する（mod.rs）**
 
 `register_hide_listener`:
 
@@ -305,7 +305,7 @@ pub(crate) fn drive_results_window(
         });
 ```
 
-- [ ] **Step 5: main.rs の残り 2 点を移行する**
+- [x] **Step 5: main.rs の残り 2 点を移行する**
 
 single-instance（`main.rs` の `egui_shell::show_egui_main(app, Instant::now());`）と
 setup（`setup_startup_display` の同）。どちらも既にイベントループスレッドだが、
@@ -317,7 +317,7 @@ setup（`setup_startup_display` の同）。どちらも既にイベントルー
     });
 ```
 
-- [ ] **Step 6: hotkey listener は判定ごと移す（分割禁止）**
+- [x] **Step 6: hotkey listener は判定ごと移す（分割禁止）**
 
 **各アームを個別に包んではならない。** それでは判定（`main_visible` の読み）が producer
 スレッドに残り、タスク実行前に届いた 2 回目の押下が**同じ stale 値**を読んで両方 Hide /
@@ -390,7 +390,7 @@ setup（`setup_startup_display` の同）。どちらも既にイベントルー
     });
 ```
 
-- [ ] **Step 7: `hide_egui_main` の臨界区間を絞る（ポンプ停止の不変条件・省略不可）**
+- [x] **Step 7: `hide_egui_main` の臨界区間を絞る（ポンプ停止の不変条件・省略不可）**
 
 `hide_egui_main` はこの段からイベントループ上で走る。**イベントループ中はメッセージポンプが
 停止する**ため、ポンプ進行を要する処理・重い処理を臨界区間に残してはならない（Global
@@ -454,16 +454,16 @@ pub(crate) fn read_placement_relative(
 `save_placement_relative` の呼び出し元は `hide_egui_main` だけなので、この分割で旧関数は
 **呼ばれなくなる**——`-D warnings` の `dead_code` が検出するので、削除する。
 
-- [ ] **Step 8: ビルドとテスト**
+- [x] **Step 8: ビルドとテスト**
 
 `docs/build-commands.md` カテゴリ A を実行する。期待: **通る**。
 
-- [ ] **Step 9: 位置の保存が壊れていないことを実機で見る（カテゴリ D）**
+- [x] **Step 9: 位置の保存が壊れていないことを実機で見る（カテゴリ D）**
 
 窓を動かす → ホットキーで hide → 再 show。**前回の位置に出ること。**
 `window.bin` への保存経路を割った変更なので、ユニットテストでは落ちない。
 
-- [ ] **Step 10: コミット**
+- [x] **Step 10: コミット**
 
 ```
 refactor(egui-shell): 可視性 API に EventLoopProof を要求させ呼び出し点を移行する
@@ -471,55 +471,39 @@ refactor(egui-shell): 可視性 API に EventLoopProof を要求させ呼び出�
 
 ---
 
-## タスク 3: ホットキー経路を実機で検証する
+## タスク 3・4: 実機検証 —— **計画から外し、PR 本文のチェックリストへ移した**
 
-タスク 2 でホットキーの判定・世代採番・副作用はひとまとまりでイベントループへ移っている。
-**このタスクはコードを書かない**——`cargo test` でも `smoke:egui` でも落ちない種類の回帰を
-実機で見るためだけに在る。
+**やらないと決めたのではない。この計画では閉じられないと判ったので移した。**
 
-**Files:** 変更なし（検証専用）
+移送先: 本ブランチの PR 本文「⚠️ 実機検証は未実施（この PR のチェックリストで閉じる）」の節。
 
-- [ ] **Step 1: 実機でトグルを確認する（カテゴリ D・省略不可）**
+### 理由
 
-`docs/build-commands.md` カテゴリ D の手順でアプリを起動し、**ホットキーを連打**して
-show/hide が交互に切り替わることを見る。**連続 10 回以上**打ち、途中で 2 回続けて同じ向きへ
-倒れないことを確かめる。
+開発機がロック画面のため、注入した入力が `LockApp` へ行き `WM_HOTKEY` が発火しない
+（窓を作らない自前ハーネスで Alt / Ctrl / Shift / Win の 4 つとも不着を実測）。この失敗は
+本サイクルの変更とは無関係であることを二分で確定させた——コードが `main` と同一のコミット
+（`d4ef1ee`）でも同じ失敗が再現し、かつ同じコマンドが同日の早い時刻には成功していた。
 
-- [ ] **Step 2: alt 解放待ちの経路を確認する**
+そのうえで、計画に検証項目として残すと**循環して閉じられない**:
 
-修飾キーに Alt を含むホットキー設定で、**Alt を押したままホットキーを打ち、Alt を離す**。
-窓が出ること。続けてもう一度打って隠れること（世代照合が効いていること）。
+> **CI の実測は PR が在って初めて行える**——`ci.yml` は `pull_request` でのみ起動し、
+> `gh pr create` は `workspace/plan.md` の未チェック `- [ ]` で block される（#749）。
+> 計画に検証項目として置くと循環して閉じられないので、**PR 本文のチェックリストへ送る**
+> （`.claude/rules/safety-nets.md`）
 
-- [ ] **Step 3: 設定画面起動中はホットキーが無視されることを確認する**
+`smoke:egui`（カテゴリ C）は自動だが、この環境では注入が届かないため同じ壁に当たる。
+カテゴリ D はそもそも `docs/build-commands.md` が「**エージェントは実行できない**（対話入力を
+要する）。人間が自分の端末で走らせる」と定めている。
 
-`/o` で設定画面を開き、ホットキーを打つ。**本体の窓が出ないこと**（`SettingsProcessState` の
-チェックはタスクの外に残してあり、この経路がタスク post 自体を行わない）。
+### 移した項目（PR 本文が正本）
 
-- [ ] **Step 4: 失敗したらタスク 2 へ戻る**
-
-トグルが壊れているなら、判定が producer スレッドに残っている。**新しいガードを足して
-通してはならない**——判定と副作用が同じタスク内にあることが本設計の要である。
-
-
-## タスク 4: 実機スモークで表示順序の回帰が無いことを見る
-
-**Files:** 変更なし（検証専用）
-
-- [ ] **Step 1: カテゴリ C を実行する**
-
-`docs/build-commands.md` カテゴリ C の `smoke:egui`。検出器は
-`scripts/lib/SnotraTraceInvariants.psm1` の H1（hidden 区間に `egui_results:show` が
-現れたら異常）。
-
-- [ ] **Step 2: 結果の読み方を守る**
-
-**H1 の正常値は SKIP である**（smoke は最後まで hidden で終わる）。緑は「回帰が出なかった」で
-あって「race が閉じた」ではない。**この違いを報告で潰さない。**
-
-- [ ] **Step 3: 失敗したらタスク 3 まで戻る**
-
-新しい封鎖を足して通してはならない。本計画の主張は「並びが構築できない」であり、
-構築できてしまったなら型の拘束に穴がある。
+- `npm run smoke:egui`（H1 / H4 / H5 の不変条件判定を含む）
+- ホットキー連打 10 回以上で show/hide が交互に切り替わること
+- Alt を押したまま打ち、離すと窓が出ること（続けて打つと隠れる＝世代照合）
+- 設定画面（`/o`）起動中はホットキーが無視されること
+- 窓を動かして hide → 再 show で前回の位置に出ること
+- 残留 Alt 解除と IME オフが劣化していないこと
+- `npm run smoke:manual`（カテゴリ D・13 項目）
 
 ---
 
@@ -536,7 +520,7 @@ show/hide が交互に切り替わることを見る。**連続 10 回以上**�
 **Interfaces:**
 - Produces: `ResultsWindow::hide(&self, _el: &EventLoopProof) -> bool`（`reason` 引数が消える）
 
-- [ ] **Step 1: `layout.rs` から 3 つの項目とテストを消す**
+- [x] **Step 1: `layout.rs` から 3 つの項目とテストを消す**
 
 削除するもの: `HideReason` / `hide_must_be_unconditional` / `must_retract_results` と、
 テスト `retract_agrees_with_the_presentation_gate_on_main_visibility` /
@@ -545,7 +529,7 @@ show/hide が交互に切り替わることを見る。**連続 10 回以上**�
 **`present_results` の連言① `main_visible` は残す**——競合対策ではなく「hidden 中に走る稀な
 フレームで results を出さない」という状態の述語である（設計書 §4）。
 
-- [ ] **Step 2: `present_results` の doc から race の記述を落とす**
+- [x] **Step 2: `present_results` の doc から race の記述を落とす**
 
 「hide 側の同期と show 側のゲートは……」以下の、事後検査を指す段落を消し、次で置き換える:
 
@@ -561,7 +545,7 @@ show/hide が交互に切り替わることを見る。**連続 10 回以上**�
 /// **構築できない**。
 ```
 
-- [ ] **Step 3: `ResultsWindow::hide` を単純化する**
+- [x] **Step 3: `ResultsWindow::hide` を単純化する**
 
 ```rust
     /// results 窓を隠す（`show` の対）。既に不可視なら raw 操作を撃たず `false` を返す。
@@ -583,7 +567,7 @@ show/hide が交互に切り替わることを見る。**連続 10 回以上**�
 `show` の doc からも「swap と `raw_show()` の間に他スレッドの `hide()` が挟まると……」の
 段落を消し、単一スレッドである旨に置き換える。
 
-- [ ] **Step 4: `window_coordinator.rs` の撤回ブロックと理由分岐を消す**
+- [x] **Step 4: `window_coordinator.rs` の撤回ブロックと理由分岐を消す**
 
 - `drive_results_window` の `results.show(...)` の後にある `must_retract_results` のブロックを削除
 - `Hidden` アームの `let reason = if main_visible { ... }` を削除し `results.hide(el)` に戻す
@@ -592,11 +576,11 @@ show/hide が交互に切り替わることを見る。**連続 10 回以上**�
 - **`read_main_visible` は残す**（`present_results` の連言①が使う）。ただし doc の
   「同一フレームで 2 回読む」の記述は**偽になる**ので、1 回読みへ書き直す
 
-- [ ] **Step 5: ビルドとテスト**
+- [x] **Step 5: ビルドとテスト**
 
 `docs/build-commands.md` カテゴリ A。期待: **通る**（テストは 2 本減る）。
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
 ```
 refactor(egui-shell): 単一スレッド化で不要になった事後検査と HideReason を削除する
@@ -613,7 +597,7 @@ refactor(egui-shell): 単一スレッド化で不要になった事後検査と 
 - Modify: `src-tauri/CLAUDE.md`（「Win32 / Tauri 注意事項」の可視性の項）
 - Modify: `docs/superpowers/specs/2026-08-02-results-visibility-single-thread-design.md`（as-built の追記が要れば）
 
-- [ ] **Step 1: `SPEC.md` の 3 点封鎖の記述を差し替える**
+- [x] **Step 1: `SPEC.md` の 3 点封鎖の記述を差し替える**
 
 現在の「①事前ゲート ②事後検査 ③hide の権威性」の 3 項リストを削除し、次で置き換える。
 **`.claude/rules/spec.md` に従い as-built を書く**——実装が計画とずれたなら、この文面ではなく
@@ -627,7 +611,7 @@ refactor(egui-shell): 単一スレッド化で不要になった事後検査と 
 ——別スレッドからの呼び出しは型が拒む。この述語は、その上での状態の判定である。
 ```
 
-- [ ] **Step 2: `src-tauri/CLAUDE.md` の可視性の項を書き直す**
+- [x] **Step 2: `src-tauri/CLAUDE.md` の可視性の項を書き直す**
 
 削除する 3 項（#880 で足したもの）: 「述語のゲートは『読んだ時刻』しか守らない」
 「この race を lock で囲んではならない」「この事故は presence 検査では捕まらない」。
@@ -648,11 +632,11 @@ refactor(egui-shell): 単一スレッド化で不要になった事後検査と 
     z-order は可視性の不変条件に関与しないので意図的にスコープ外とした
 ```
 
-- [ ] **Step 3: `governance:check` を実行する**
+- [x] **Step 3: `governance:check` を実行する**
 
 `docs/build-commands.md` カテゴリ F。期待: **通る**。
 
-- [ ] **Step 4: コミット**
+- [x] **Step 4: コミット**
 
 ```
 docs: 可視性の単一スレッド化を as-built で SPEC と CLAUDE.md へ反映する
@@ -662,12 +646,12 @@ docs: 可視性の単一スレッド化を as-built で SPEC と CLAUDE.md へ�
 
 ## タスク 7: 仕上げ
 
-- [ ] **Step 1: 全カテゴリの検証を通す**
+- [x] **Step 1: 全カテゴリの検証を通す**
 
 `docs/build-commands.md` のカテゴリ A / C / D / F。**D を省略しない**——タスク 3 の
 ホットキー連打はここでしか見えない。
 
-- [ ] **Step 2: PR を作成する**
+- [x] **Step 2: PR を作成する**
 
 `git push -u origin HEAD` を先に打つか `&&` で繋ぐ。**鎖に `cd` を含めない**
 （`CLAUDE.md`「フック」）。**この計画の未チェック項目が残っていると hook が拒否する。**

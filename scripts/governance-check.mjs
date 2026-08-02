@@ -1374,51 +1374,79 @@ export function checkConfigFieldReachability(snapshot, table = NO_LAUNCHER_READ,
 // **識別子として書かれた腐りは機械で拾える**。G-references が見るのはパスの実在までで、
 // 識別子の実在は誰も見ていなかった。
 //
-// **自称スコープは狭い。** 見るのは `.claude/**` の散文中の**バッククォート内 camelCase 識別子**
-// だけである。frontmatter の文字列・素の表テキスト・日本語散文（「リアクティブ制約」等）は
-// 構造的に対象外で、#736 が挙げた 10 件のうちこの述語が届くのは 0 件である（実測）。
+// **自称スコープは狭い。** 見るのは `.claude/**` の散文と `SPEC.md` の中の
+// **バッククォート内 camelCase 識別子**だけである。frontmatter の文字列・素の表テキスト・
+// 日本語散文（「リアクティブ制約」等）は構造的に対象外で、#736 が挙げた 10 件のうちこの述語が
+// 届くのは 0 件である（実測）。snake_case・PascalCase・ドット区切り・式で書かれた腐りも
+// `STALE_IDENT` の外にある。**「文書の腐りが機構で捕まる」とは言えない**——言えるのは
+// **「camelCase で書かれた再発は捕まる」**までである。
 // **この検査は #736 の代替ではない**——同 issue は手作業で閉じ、G-stale-identifiers が引き受けるのは再発防止だけである。
 //
-// 判定: 識別子が「現行語彙」に 1 度も現れないなら finding。現行語彙は 2 つの正本からなる:
-// - **ソースの非コメント本文**（`stripRustComments`）。コメントを含めると `resetForShow` のような
-//   由来注記（「〜相当」「parity」）が語彙に化け、腐りが検出できない（実測 11 件）
-// - **`SPEC.md`**。SPEC は意図の正本であり、その語彙を写した規範は腐っていない
-//   ——SPEC 自身の stale は `#735` の射程である（`folderState` 8 件・`toolSelectionState` 4 件・
-//   `resetForShow` 2 件が実際に SPEC 側に在る）。**この 1 行が無いと、写しを SSOT より先に直す**
+// 判定: 識別子が「現行語彙」に 1 度も現れないなら finding。**現行語彙の正本は
+// 「production のソースの非コメント本文」ただ 1 つである**（`stripRustComments` + `*.test.*` の除外）。
+// この母集団を狭める 2 つは、どちらも同じ 1 つの原則から出ている——
+// **語彙を寄付してよいのは「現に動いている実装」だけである**:
+// - **コメントを外す**。含めると `resetForShow` のような由来注記（「〜相当」「parity」）が
+//   語彙に化け、腐りが原理的に検出できない（実測 11 件）
+// - **テストコードを外す**。含めると検出器自身のフィクスチャが偽陰性を作る——
+//   `createObjectURL`（本検査が守りたい対象として `governance-check.test.mjs` に名指しで書いた語）が、
+//   同ファイルに書かれているという理由だけで実リポジトリでは永久に検出されなかった（実測・#879 サイクル）
+//
+// **`SPEC.md` は語彙源ではなく検査対象である**（`ADR-stale-identifier-detector-scope`
+// 「却下 4: 現行語彙をソースだけから作る（`SPEC.md` を入れない）」の失効注記が経緯を持つ）。
+// 語彙に置いていた頃は、SPEC 内の候補が**自分自身に一致して自分を免罪していた**。
+// 語彙から外すと同時に検査対象へ入れることで、SSOT と写しが**同時に鳴る**——
+// 「どちらを先に直すか」という向きの問いが構造的に消える。
 //
 // **外部ツールの語彙を構造的に外す**: `gh` / `npm` / `cargo` 等のコマンドが同じ行に在るなら、
 // その行の識別子はコマンドの引数（`--json closingIssuesReferences` 等）である。免除注記の機構を
 // 設けない契約（本ファイル冒頭）を守るため、除外リストではなく行の形で外す。
-// これで実測の偽陽性 1 件が構造的に消え、真の腐り 6 件は残った（両方向で確認）。
 //
-// **受容する残余**: 単語 1 つの識別子（`Glob` `expand` `plain`）は対象外である。こぶを 1 つ以上
-// 要求しないと、harness のツール名と散文の語彙が大量に混じる（実測 53 件中 40 件弱）。
+// **受容する残余**:
+// - 単語 1 つの識別子（`Glob` `expand` `plain`）は対象外である。こぶを 1 つ以上要求しないと、
+//   harness のツール名と散文の語彙が大量に混じる（実測 53 件中 40 件弱）
+// - **Rust の `#[cfg(test)]` は語彙を寄付しうる**。`*.test.*` と同じ穴が別言語に開いたままで、
+//   `productionOnly` を通せば塞がる。現時点でこの穴に落ちた finding は無く（全セルで実測 0 件）、
+//   測って動かなかったものを入れないだけの理由で開けてある
+// - **`.json` は語彙源ではない**（`VOCAB_SOURCE_EXT`）。設定キーが JSON にしか無い語は偽陽性になりうる
 // ---------------------------------------------------------------------------
 
 /** 現行語彙の正本になるソース拡張子 */
 const VOCAB_SOURCE_EXT = /\.(rs|ts|tsx|mjs|ps1|toml)$/;
-/** 現行語彙の正本になる文書（意図の SSOT） */
-export const VOCAB_DOCS = ["SPEC.md"];
+/** 語彙源から外すテストコード。`VOCAB_SOURCE_EXT` のうち実在するのは `.test.mjs` だけだが
+ *  （`git ls-files` で確認）、ts/tsx を含めて拡張子の集合を揃える */
+const VOCAB_TEST_FILE = /\.test\.(mjs|ts|tsx)$/;
+/** 語彙源ではなく検査対象になる、`.claude/**` の外の文書（意図の SSOT） */
+export const STALE_EXTRA_DOCS = ["SPEC.md"];
 /** バッククォート内で腐りを問う形: camelCase（こぶ 1 つ以上）・末尾 `()` は任意 */
 const STALE_IDENT = /^([a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+)(\(\))?$/;
 /** 同じ行に在れば、その行の識別子は外部ツールの引数と見なす */
 const EXTERNAL_CMD_LINE = /`(gh|npm|cargo|git|node|pwsh|npx) /;
 
-/** 規範の散文（G-stale-identifiers の母集団）。skills / rules / agents の md */
+/** 規範の散文。skills / rules / agents の md。
+ *  **検査対象の全体ではない**——`staleIdentifierTargets` と分けてあるのは、`runAll` の
+ *  「対象 md が 0 件（母集団の欠落）」が `.claude/**` の消滅で鳴り続けるためである
+ *  （`STALE_EXTRA_DOCS` を混ぜると長さが常に 1 以上になり、その検知が永久に沈黙する） */
 export function staleIdentifierDocs(snapshot) {
   return snapshot.files.filter((f) => /^\.claude\/(skills\/.*|rules\/[^/]+|agents\/[^/]+)\.md$/.test(f));
 }
 
-/** 現行語彙。ソースはコメントを落とす（`#` コメントの言語は行頭・行中とも落とす） */
+/** G-stale-identifiers の検査対象。規範の散文 + `SPEC.md`。
+ *  `SPEC.md` は実在を問わず加える——読めなければ `scanStaleIdentifiers` が母集団の欠落として鳴る */
+export function staleIdentifierTargets(snapshot) {
+  return [...staleIdentifierDocs(snapshot), ...STALE_EXTRA_DOCS];
+}
+
+/** 現行語彙。production のソースだけを集め、コメントを落とす
+ *  （`#` コメントの言語は行頭・行中とも落とす） */
 export function currentVocabulary(snapshot) {
   const parts = [];
   for (const f of snapshot.files) {
-    if (!VOCAB_SOURCE_EXT.test(f)) continue;
+    if (!VOCAB_SOURCE_EXT.test(f) || VOCAB_TEST_FILE.test(f)) continue;
     const src = snapshot.read(f);
     if (src == null) continue;
     parts.push(/\.(ps1|toml)$/.test(f) ? src.replace(/#.*$/gm, " ") : stripRustComments(src));
   }
-  for (const d of VOCAB_DOCS) parts.push(snapshot.read(d) ?? "");
   return parts.join("\n");
 }
 
@@ -1448,7 +1476,7 @@ export function scanStaleIdentifiers(snapshot, docs) {
         checked += 1;
         if (!inVocab(im[1])) {
           findings.push(
-            finding(doc, lineNo, `規範の散文に、現行語彙に無い識別子が残っている: \`${raw}\`（ソースの非コメント本文と SPEC.md のどちらにも無い）`),
+            finding(doc, lineNo, `散文に、現行語彙に無い識別子が残っている: \`${raw}\`（production のソースの非コメント本文に無い）`),
           );
         }
       }
@@ -1649,9 +1677,11 @@ export function buildChecks(snapshot, sink = {}) {
   const docs = governanceDocs(snapshot);
   const refDocs = headingRefDocs(snapshot);
   const staleDocs = staleIdentifierDocs(snapshot);
+  const staleTargets = staleIdentifierTargets(snapshot);
   sink.docs = docs;
   sink.refDocs = refDocs;
   sink.staleDocs = staleDocs;
+  sink.staleTargets = staleTargets;
   const record = (key, r) => {
     sink[key] = r.checked;
     return r.findings;
@@ -1674,7 +1704,7 @@ export function buildChecks(snapshot, sink = {}) {
     { id: "G-adr-file-names", run: () => checkAdrFileNames(snapshot) },
     { id: "G-adr-citations", run: () => record("adrCitations", scanAdrCitations(snapshot, adrCitationDocs(snapshot, docs))) },
     { id: "G-heading-refs", run: () => record("headingRefs", scanHeadingRefs(snapshot, refDocs)) },
-    { id: "G-stale-identifiers", run: () => record("stale", scanStaleIdentifiers(snapshot, staleDocs)) },
+    { id: "G-stale-identifiers", run: () => record("stale", scanStaleIdentifiers(snapshot, staleTargets)) },
     { id: "G-near-heading-refs", run: () => record("nearRefs", scanNearHeadingRefs(snapshot, refDocs)) },
   ];
 }
@@ -1685,13 +1715,15 @@ export function runAll(snapshot) {
   const findings = [];
   if (ctx.docs.length === 0) findings.push(finding(".", 1, "ガバナンス文書が 0 件（母集団の欠落）"));
   if (ctx.refDocs.length === 0) findings.push(finding(".", 1, "G-heading-refs の対象 md が 0 件（母集団の欠落）"));
+  // `staleTargets` ではなく `staleDocs` を見る——`STALE_EXTRA_DOCS` が常に長さを埋めるため、
+  // targets 側で判定すると `.claude/**` が 1 枚残らず消えてもこの検知が沈黙する
   if (ctx.staleDocs.length === 0) findings.push(finding(".", 1, "G-stale-identifiers の対象 md が 0 件（母集団の欠落）"));
   for (const c of checks) findings.push(...c.run());
   const area = normativeArea(snapshot);
   const rules = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length;
   const skills = snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length;
   const configFieldCount = CONFIG_SOURCE_PATHS.flatMap((p) => configFields(snapshot.read(p) ?? "")).length;
-  const evidence = `検査 ${checks.length} 件 / 対象文書 ${ctx.docs.length} 件 / rules ${rules} 件 / skills ${skills} 件 / 恒久規範 常時ロード ${area.always}/${AREA_BUDGET.alwaysLoaded} 字・rules ${area.rules}/${AREA_BUDGET.rules} 字 / 見出し参照 ${ctx.headingRefs} 件を ${ctx.refDocs.length} 文書から照合 / workspace member ${workspaceMembers(snapshot).members.length} 件の lints opt-in / config フィールド ${configFieldCount} 件の到達性 / 規範の識別子 ${ctx.stale} 件を ${ctx.staleDocs.length} 文書から照合 / 近傍の見出し参照 ${ctx.nearRefs} 件 / ADR ${adrFiles(snapshot).length} 本の名前 / ADR の短縮引用 ${ctx.adrCitations} 件`;
+  const evidence = `検査 ${checks.length} 件 / 対象文書 ${ctx.docs.length} 件 / rules ${rules} 件 / skills ${skills} 件 / 恒久規範 常時ロード ${area.always}/${AREA_BUDGET.alwaysLoaded} 字・rules ${area.rules}/${AREA_BUDGET.rules} 字 / 見出し参照 ${ctx.headingRefs} 件を ${ctx.refDocs.length} 文書から照合 / workspace member ${workspaceMembers(snapshot).members.length} 件の lints opt-in / config フィールド ${configFieldCount} 件の到達性 / 散文の識別子 ${ctx.stale} 件を ${ctx.staleTargets.length} 文書から照合 / 近傍の見出し参照 ${ctx.nearRefs} 件 / ADR ${adrFiles(snapshot).length} 本の名前 / ADR の短縮引用 ${ctx.adrCitations} 件`;
   return { findings, evidence };
 }
 

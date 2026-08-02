@@ -101,18 +101,20 @@ impl ResultsWindow {
         _el: &snotra_egui_runtime::EventLoopProof,
         background: egui::Color32,
     ) -> bool {
-        // 先に flag を swap して test-and-set を原子にする（別スレッドの hide と競っても
-        // raw 操作が二重に撃たれない）。**保証するのはそこまでである**——swap と `raw_show()`
-        // の間に他スレッドの `hide()` が挟まると「フラグ=false・窓=可視」の不一致が残りうる。
-        // フラグと窓の同時性は保証しない。
+        // 先に flag を swap して test-and-set を原子にする。**証人型（`EventLoopProof`）の
+        // 導入前は、保証するのはそこまでだった**——swap と `raw_show()` の間に他スレッドの
+        // `hide()` が挟まると「フラグ=false・窓=可視」の不一致が残りえた。
         //
-        // **「回収は次の show 遷移」では足りない**（旧記述の訂正）。不一致のまま main が
-        // hidden になると、次のフレームの `present_results` は `Hidden` へ倒れるが、その
-        // hide はフラグが false ゆえ raw 操作を撃たない——results だけが画面に残る。
-        // ゆえに main が消える向きの hide は `HideReason::MainGone` で無条件に撃つ
-        // （`hide` の doc）。この型が閉じられないぶんを塞ぐのは、show 述語側の
-        // `main_visible` ゲート（`layout::present_results`）**と**、show を撃った後の
-        // 事後検査（`layout::must_retract_results`・`drive_results_window` 末尾）である。
+        // 不一致のまま main が hidden になると、次のフレームの `present_results` は `Hidden`
+        // へ倒れるが、その hide はフラグが false ゆえ raw 操作を撃たない——results だけが
+        // 画面に残る。ゆえに main が消える向きの hide は `HideReason::MainGone` で無条件に
+        // 撃ち（`hide` の doc）、show 述語側の `main_visible` ゲート
+        // （`layout::present_results`）と show を撃った後の事後検査
+        // （`layout::must_retract_results`・`drive_results_window` 末尾）で塞いでいた。
+        //
+        // **いまは `show` / `hide` の双方が証人を要求するため、この挟み込みは構築できない。**
+        // 上の 3 点は今は残してあり、撤去は本サイクルの後段が行う。swap 自体は残す——
+        // 「遷移したときだけ raw 操作を撃つ」戻り値の契約がこれで決まるためである。
         if self.visible.swap(true, Ordering::SeqCst) {
             return false;
         }

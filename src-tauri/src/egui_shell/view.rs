@@ -10,7 +10,7 @@
 //! `frame.set_clear_color` / `window.set_background_color`）あり、1 つの名前に畳んでいない**
 //! ——このうち本ファイルが直接呼ぶのは `ctx.set_visuals` と `frame.set_clear_color` の 2 つ。
 //! `window.set_background_color` は**リサイズ時に間接呼び出し**である
-//! （`window_coordinator::apply_main_background` 経由）。フォント登録は
+//! （`window_coordinator::apply_native_background` 経由）。フォント登録は
 //! `font_stack::configure_japanese_font` の**呼び出し点** 2 箇所（`setup` と `update` の
 //! font_family 差分の分岐）として持つ。**`ctx.set_fonts` 自体の呼び出しは `font_stack.rs` に
 //! あり本ファイルには無い**（#666 段 3 タスク 1 で移設）。`ui.visuals_mut()` は

@@ -470,7 +470,7 @@ stateDiagram-v2
   Standby --> SearchVisible: hotkey-pressed
   Standby --> SearchVisible: app_start [show_on_startup]
   Standby --> LauncherStopped: /q / exit-requested
-  SearchVisible --> Standby: Escape [!ToolSelectionMode && !FolderExpansionMode]
+  SearchVisible --> Standby: Escape [ツール選択中でない && フォルダ展開中でない]
   SearchVisible --> Standby: hotkey-pressed [hotkey_toggle && main_visible]
   SearchVisible --> Standby: focus_lost [auto_hide_on_focus_lost]
   SearchVisible --> LauncherStopped: /q / exit-requested
@@ -493,15 +493,15 @@ stateDiagram-v2
     NormalMode --> InstantCommandMode: Input [query startsWith prefix]
     InstantCommandMode --> NormalMode: Input [query not startsWith prefix]
     NormalMode --> FolderExpansionMode: ArrowRight [selected.isFolder]
-    NormalMode --> FolderExpansionMode: ArrowLeft [!FolderExpansionMode && parent exists]
+    NormalMode --> FolderExpansionMode: ArrowLeft [フォルダ展開中でない && parent exists]
     FolderExpansionMode --> FolderExpansionMode: ArrowRight [selected.isFolder]
     FolderExpansionMode --> FolderExpansionMode: ArrowLeft [parent exists]
     FolderExpansionMode --> NormalMode: Escape
     NormalMode --> ToolSelectionMode: Shift+Enter [tools >= 2]
     FolderExpansionMode --> ToolSelectionMode: Shift+Enter [tools >= 2]
-    ToolSelectionMode --> NormalMode: Escape [!FolderExpansionMode]
-    ToolSelectionMode --> FolderExpansionMode: Escape [FolderExpansionMode]
-    ToolSelectionMode --> NormalMode: Enter/Click [launch success && !FolderExpansionMode]
+    ToolSelectionMode --> NormalMode: Escape [フォルダ展開中でない]
+    ToolSelectionMode --> FolderExpansionMode: Escape [フォルダ展開中]
+    ToolSelectionMode --> NormalMode: Enter/Click [launch success && フォルダ展開中でない]
   }
 ```
 
@@ -682,7 +682,7 @@ results 可視 ⇔ main 可視 ∧ 結果が空でない ∧ 通常結果を隠�
 
 ### 14.2 起動の契約
 
-- 起動の結末は**成功**と**失敗**の 2 つで、**成功時のみ履歴を記録する**
+- 起動ワーカーが返す結末は**成功**と**失敗**の 2 つで、**成功時のみ履歴を記録する**
 - 起動要求から 4000ms 経過しても結末が届かないときは、失敗ではなく**結果不明**として扱う（起動という副作用は取り消せないため）。この保護の機構は `SPEC.md`「egui 経路の起動保護（#532 SU5）」が持つ
 - 起動中であることは検索バー直下の status 行に示す。失敗・結果不明のときは一時通知を出す（描画面の規則は `SPEC.md`「4.7 結果表示制御（2 窓構成）」）
 - 一時通知は単一のスロットで、新しい通知が古い通知を上書きする——2 つ並ばず、表示時間は最後の通知から数え直される

@@ -377,6 +377,10 @@ impl SearchState {
 
     /// resetForShow 相当。show のたびに driver が呼ぶ。folder モードも解除し gen を進める
     /// （hide 前の in-flight ナビ結果を再表示後に轢かせない）。
+    ///
+    /// **instant / command モードに対応するフィールドは無い**——どちらも `interpret` が
+    /// query と prefix から毎回導出する値ゆえ、`query.clear()` の帰結として落ちる
+    /// （§19.7「ホットキーによる再表示でインスタントコマンドモードはリセットされる」の実体）。
     pub fn reset(&mut self) {
         self.query.clear();
         self.results.clear();

@@ -323,8 +323,9 @@ impl EguiView for SearchWindowView {
             //
             // **呼び出し点をここに保つ**（#749）: この reset は同一フレームの
             // `drive_results_window`（update 末尾）より**前**でなければならない。show 経路
-            // （`show_egui_main`）は egui のイベントループとは別のスレッドから走りうるため、そちらへ
-            // 移すと「同一スレッド・同一フレーム」というこの前提が消える。
+            // （`show_egui_main`）は証人型（`EventLoopProof`）の導入で同じイベントループ
+            // スレッドに閉じたが、**フレームの中ではない**——そちらへ移すと「同一フレーム」
+            // というこの前提が消える。
             if let Some(results) = app.try_state::<crate::egui_shell::ResultsWindow>() {
                 results.reset_size_guard();
             }
@@ -869,6 +870,7 @@ impl EguiView for SearchWindowView {
         // 古い行が 1 フレーム描かれる。`cargo test` では落ちない種類の回帰である。
         crate::egui_shell::drive_results_window(
             &app,
+            frame.event_loop(),
             crate::egui_shell::DriveResultsInputs {
                 plain_hidden,
                 result_count: self.controller.state().results().len(),

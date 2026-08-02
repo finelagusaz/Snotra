@@ -91,7 +91,16 @@ impl ResultsWindow {
     /// `background` は下地（softbuffer が present するまでの一瞬に見えるネイティブブラシ）へ
     /// 適用する。**show 遷移のときだけ撃つ**（下の早期 return の後に置く理由）——可視のまま
     /// 毎フレーム撃つと `InvalidateRect` + `UpdateWindow` を送り続けることになる。
-    pub(crate) fn show(&self, background: egui::Color32) -> bool {
+    ///
+    /// **`_el` はイベントループスレッド上であることの証人である**（`EventLoopProof`）。この型は
+    /// 証人を使わないが（`_` 始まり）、**シグネチャから外してはならない**——results の可視性を
+    /// 変える経路を単一スレッドへ閉じるための拘束であり、外すと上の doc が言う「swap と
+    /// `raw_show()` の間に他スレッドの `hide()` が挟まる」並びが再び構築可能になる。
+    pub(crate) fn show(
+        &self,
+        _el: &snotra_egui_runtime::EventLoopProof,
+        background: egui::Color32,
+    ) -> bool {
         // 先に flag を swap して test-and-set を原子にする（別スレッドの hide と競っても
         // raw 操作が二重に撃たれない）。**保証するのはそこまでである**——swap と `raw_show()`
         // の間に他スレッドの `hide()` が挟まると「フラグ=false・窓=可視」の不一致が残りうる。
@@ -151,7 +160,13 @@ impl ResultsWindow {
     /// `SW_HIDE` を打鍵ごとに撃たない）。**この経路は権威を持たない**——食い違いが起きて
     /// いれば黙って no-op する。それでよいのは、この理由で隠すとき main は可視であり、
     /// 「results だけが残る」事故にならないからである。
-    pub(crate) fn hide(&self, reason: super::layout::HideReason) -> bool {
+    ///
+    /// **`_el` はイベントループスレッド上であることの証人である**（理由は `show` の doc）。
+    pub(crate) fn hide(
+        &self,
+        _el: &snotra_egui_runtime::EventLoopProof,
+        reason: super::layout::HideReason,
+    ) -> bool {
         let transitioned = self.visible.swap(false, Ordering::SeqCst);
         if transitioned || super::layout::hide_must_be_unconditional(reason) {
             self.raw_hide();
@@ -234,8 +249,9 @@ impl ResultsWindow {
     /// reset-on-show（`reset_pending` の消費）である**。呼び出し点をそこに保つのは順序の
     /// ためである——同一フレームの `drive_results_window` より**前**でなければ、再 show 後の
     /// 1 フレーム目が旧 metrics のサイズで描かれる。`show_egui_main` へ移すと、この
-    /// 「同一スレッド・同一フレーム」の前提が消える——あちらは egui のイベントループとは
-    /// **別のスレッドから走りうる**（hotkey listener・setup・alt 解放待ちの spawn 等・実測 5 経路）。
+    /// 「**同一フレーム**」の前提が消える——あちらは証人型（`EventLoopProof`）の導入で
+    /// 同じイベントループスレッドに閉じたが、**フレームの中ではない**（`update()` の外から
+    /// 走る）。呼び出し点はここに保つ。
     pub(crate) fn reset_size_guard(&self) {
         *self.last_size.lock().unwrap() = (0.0, 0.0);
     }

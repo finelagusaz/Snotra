@@ -115,7 +115,8 @@ pub(crate) fn apply_native_background(window: &tauri::Window, color: egui::Color
 /// show 経路が**背景色だけ**を読む（`read_metrics` と同方針——色 5 本の parse と font 比較を
 /// 払わせない）。ネイティブ背景ブラシ用であり、フレーム内の描画は `read_visual` を使う。
 ///
-/// **`read_visual` と統合しない**: こちらは show 経路（フレーム外・別スレッドからも走る）の
+/// **`read_visual` と統合しない**: こちらは show 経路（**フレーム外**——同じイベントループ
+/// スレッドではあるが `update()` の中ではない）の
 /// 読みで、**1 フレーム 1 lock の規律（#673 決定 4）が掛かる面には居ない**——同じ関数内の
 /// `read_metrics` や `follow_cursor_monitor` / `ime_off_on_show` の読みと同じ層である。
 pub(crate) fn read_background(app: &tauri::AppHandle) -> egui::Color32 {
@@ -144,7 +145,7 @@ pub(crate) fn read_background(app: &tauri::AppHandle) -> egui::Color32 {
 /// are applied and clamped to the target work area. If no saved position exists,
 /// the window is centered on the target monitor.
 ///
-/// Moved here from `main.rs` alongside its counterpart `save_placement_relative` (#749):
+/// Moved here from `main.rs` alongside its counterpart `read_placement_relative` (#749):
 /// keeping save and restore in separate modules would falsify the claim that placement is
 /// owned by one responsibility. `show_egui_main` is the only caller.
 #[cfg(windows)]
@@ -205,7 +206,17 @@ fn position_on_target_monitor(
 /// egui 経路の show。共有するのは position_on_target_monitor のみ。全 hide は外部化ゆえ
 /// runtime.visible は false にならず、show は Focused(true) に依存せず確実に描ける（codex #4）。
 /// show 列は WebView2 の show_and_focus_main を egui 用に自前複製（WebView2 本体を触らないため）。
-pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
+///
+/// **`_el` はイベントループスレッド上であることの証人である**（`EventLoopProof`）。可視性を
+/// **変える**操作を単一スレッドへ閉じるため、別スレッドからの呼び出しをコンパイル不能にする。
+/// 本体は証人を使わない（`_` 始まり）が、シグネチャから外してはならない——外した瞬間に
+/// hotkey スレッドや spawn した待機スレッドから直接撃てるようになり、判定と副作用のあいだへ
+/// 逆操作が割り込む並びが**再び構築可能になる**。
+pub(crate) fn show_egui_main(
+    app: &tauri::AppHandle,
+    _el: &snotra_egui_runtime::EventLoopProof,
+    t0: Instant,
+) {
     let Some(window) = app.get_window("main") else {
         crate::trace_main("egui_show:no_window", serde_json::json!({}));
         return;
@@ -309,14 +320,26 @@ pub(crate) fn show_egui_main(app: &tauri::AppHandle, t0: Instant) {
 /// **results の hide はここを通らない経路がある**（同モジュールの `drive_results_window`）
 /// ため、両窓を合わせた合流点ではない（#646 PR2 以降・全称主張の訂正は #671 サイクル PR A）。
 /// 外部 window.hide() のみで runtime.visible を false にしない（空白窓回避・codex #4）。
-pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
+///
+/// **`el` はイベントループスレッド上であることの証人である**（理由は `show_egui_main` の doc）。
+/// こちらは `_` を付けない——`ResultsWindow::hide` へそのまま渡すためである。
+///
+/// **本体をイベントループ上へ移したことの帰結**: この関数の実行中はメッセージポンプが停止する
+/// （`src-tauri/CLAUDE.md`「ウィンドウ生成の制約」）。ゆえに重い処理・ディスク I/O を
+/// 臨界区間（`main_visible` の store と 2 枚の `ShowWindow` が不可分であるべき区間）に
+/// 置いてはならない。placement の**書き込み**と working set の trim は末尾へ出してある。
+pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::EventLoopProof) {
     // 保留中の alt 解放待ち show を無効化（codex #5/(B)#2）: 世代を bump し、spawn 済み show
     // スレッドの gen 一致チェックを外す。
     if let Some(sh) = app.try_state::<EguiShellState>() {
         sh.hotkey_generation.fetch_add(1, Ordering::SeqCst);
     }
+    // placement は「読み」だけを窓の hide より前に置く。**書き込みはこの下**——
+    // ディスク I/O はポンプを止めた区間に置かない。
+    let placement = app
+        .get_window("main")
+        .and_then(|w| read_placement_relative(&w));
     if let Some(window) = app.get_window("main") {
-        save_placement_relative(&window); // save-on-hide
         let _ = window.hide();
     }
     // main_visible は **results.hide() より前**に落とす（#671 PR A′ レビュー Important 1）。
@@ -327,11 +350,14 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
     // 「main が可視でない期間に visible=true と読ませない」向きに倒している。
     //
     // **この順序が塞ぐのは「store より後に `main_visible` を読んだフレーム」だけである。**
-    // store より**前**に読んで store より**後**に `results.show()` を撃つフレームは素通り
-    // する（ここは別スレッドから走りうる——hotkey は Win32 メッセージループスレッド）。
-    // その並びは `drive_results_window` 末尾の事後検査（`layout::must_retract_results`）が
-    // 受け持つ。**ゆえに封鎖は「hide 側の順序 + show 側のゲート」の 2 つでは閉じない**
-    // （#671 PR A′ 当時の「対であり片方では閉じない」は必要条件であって十分条件ではない）。
+    // store より**前**に読んで store より**後**に `results.show()` を撃つフレームは、
+    // **この関数が別スレッドから走れた頃は**素通りした。その並びは
+    // `drive_results_window` 末尾の事後検査（`layout::must_retract_results`）が受け持つ。
+    //
+    // **証人型（`EventLoopProof`）の導入でこの関数はイベントループ上に閉じた**ため、
+    // フレーム（`drive_results_window`）とこの関数は tao の runner が非再入で逐次化し
+    // （`snotra-egui-runtime` の `proof.rs`）、上の並びは**構築できない**。事後検査と
+    // `HideReason` はそれでも今は残してある——撤去は本サイクルの後段が行う。
     if let Some(state) = app.try_state::<crate::AppState>() {
         state.main_visible.store(false, Ordering::SeqCst);
     }
@@ -346,7 +372,7 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
         // `MainGone`: 可視フラグが false でも raw hide を撃つ（`layout::HideReason` の doc）。
         // **ここで撃ち漏らすと拾い直すフレームが来ない**——main が hidden の間は update() が
         // 走らないため、results だけが画面に残ったまま次の show まで戻らない。
-        results.hide(layout::HideReason::MainGone);
+        results.hide(el, layout::HideReason::MainGone);
         // 呼び出し側に置く（spec 決定 7）。results の hide は 2 経路あり
         // （ここと同モジュールの drive_results_window）、trace は要求レベルゆえ
         // 既に隠れていても出る——smoke は presence のみを assert する。
@@ -355,38 +381,49 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle) {
             serde_json::json!({ "from": "hide_main" }),
         );
     }
+    // ここから臨界区間の外。**順序に意味は無い**——
+    // trim は hide 前後どちらで走っても無害（`src-tauri/CLAUDE.md`「working set の能動回収」）、
+    // placement の書き込みは値を既に持っているので窓の状態に依存しない。
+    if let Some(p) = placement {
+        snotra_core::window_data::save_search_placement(p);
+    }
     // hide 後に working set を trim する（**main の** hide 経路の合流点＝ここが唯一の呼び出し元・
     // #532 SU6.5）。results 単独 hide（drive_results_window）では main が可視のままゆえ trim しないのが正しい。
-    // EmptyWorkingSet はスレッド非依存ゆえこの context（イベントループ / listener）から直呼び可
+    // EmptyWorkingSet はスレッド非依存ゆえこの context（イベントループ）から直呼び可
     // （src-tauri/CLAUDE.md「working set の能動回収」）。trim されたページは show 時に OS が透過
     // re-fault する（逆操作不要・trim が hide 前後どちらで走っても無害）。子孫 BFS は設定プロセス
     // （snotra-settings.exe・存命中のみ）も巻き込みうる——trim は best-effort ゆえ無害。
     crate::working_set::trim_idle_working_set(std::process::id());
+    // **この trace は関数の最後の文である。** hidden 区間の開始をここで区切っており、
+    // trace 不変条件（`scripts/lib/SnotraTraceInvariants.psm1` の H1）が区間の判定に使う。
     crate::trace_main("egui_hide:done", serde_json::json!({}));
 }
 
-/// 現在の物理位置をターゲットモニター作業領域原点からの相対座標で window.bin に保存
-/// （旧 WebView2 の save_relative_placement と同じ算出・#532 SU7 で唯一の保存経路）。
-pub(crate) fn save_placement_relative(window: &tauri::Window) {
-    let Ok(pos) = window.outer_position() else {
-        return;
-    };
+/// 現在の物理位置を、ターゲットモニター作業領域原点からの相対座標へ換算する（**読みのみ**）。
+///
+/// **書き込みと分けてある**（ディスク I/O をイベントループの臨界区間から外すため——
+/// `hide_egui_main` の中でポンプが止まる。`src-tauri/CLAUDE.md`「ウィンドウ生成の制約」）。
+/// 読みは hide **より前**でなければ意味を持たないので、こちらだけが臨界区間に残る。
+///
+/// 算出は旧 WebView2 の save_relative_placement と同じ（#532 SU7 で唯一の保存経路）。
+pub(crate) fn read_placement_relative(
+    window: &tauri::Window,
+) -> Option<snotra_core::window_data::WindowPlacement> {
+    let pos = window.outer_position().ok()?;
     #[cfg(windows)]
     {
-        use snotra_core::window_data::{self, WindowPlacement};
-        let Ok(hwnd) = window.hwnd() else { return };
-        let Some(wa) = crate::monitor::window_monitor_work_area(hwnd.0 as isize) else {
-            return;
-        };
-        window_data::save_search_placement(WindowPlacement {
+        use snotra_core::window_data::WindowPlacement;
+        let hwnd = window.hwnd().ok()?;
+        let wa = crate::monitor::window_monitor_work_area(hwnd.0 as isize)?;
+        Some(WindowPlacement {
             x: pos.x - wa.left,
             y: pos.y - wa.top,
-        });
+        })
     }
     #[cfg(not(windows))]
     {
-        use snotra_core::window_data::{self, WindowPlacement};
-        window_data::save_search_placement(WindowPlacement { x: pos.x, y: pos.y });
+        use snotra_core::window_data::WindowPlacement;
+        Some(WindowPlacement { x: pos.x, y: pos.y })
     }
 }
 
@@ -540,7 +577,14 @@ pub(crate) struct DriveResultsInputs {
 ///
 /// **hidden 窓は `update()` が走らないため自分では show できない**(SU5 要石)——毎フレーム走る
 /// main 側からのみ駆動できる。呼び出し元は `SearchWindowView::update()` の末尾 1 か所である。
-pub(crate) fn drive_results_window(app: &tauri::AppHandle, i: DriveResultsInputs) {
+///
+/// **`el` はイベントループスレッド上であることの証人である**（理由は `show_egui_main` の doc）。
+/// 呼び出し元はフレームの中なので `RuntimeFrame::event_loop()` から得る。
+pub(crate) fn drive_results_window(
+    app: &tauri::AppHandle,
+    el: &snotra_egui_runtime::EventLoopProof,
+    i: DriveResultsInputs,
+) {
     let Some(results) = app.try_state::<ResultsWindow>() else {
         return;
     };
@@ -578,7 +622,7 @@ pub(crate) fn drive_results_window(app: &tauri::AppHandle, i: DriveResultsInputs
             } else {
                 layout::HideReason::MainGone
             };
-            if results.hide(reason) {
+            if results.hide(el, reason) {
                 crate::trace_main("egui_results:hide", serde_json::json!({ "from": "drive" }));
             }
             return;
@@ -613,15 +657,18 @@ pub(crate) fn drive_results_window(app: &tauri::AppHandle, i: DriveResultsInputs
     results.set_size(i.width, applied_height, i.background);
     // フォーカスを奪わない表示（tauri show() は SW_SHOW で活性化する・#646 PR2）。
     // 置き場の理由は上の hide 側コメントと同じ（spec 決定 7）。
-    if results.show(i.background) {
+    if results.show(el, i.background) {
         crate::trace_main("egui_results:show", serde_json::json!({ "rows": count }));
     }
     // **事後検査**: 撃った後に main の可視を読み直す（判定式の正本は
     // `layout::must_retract_results`）。上のゲートを通ってからここへ来るまでには
-    // `position_results_below_main` / `set_size` / `raw_show` の Win32 呼び出しが挟まり、
-    // その間に別スレッドの `hide_egui_main`（hotkey は Win32 メッセージループスレッド）が
-    // 丸ごと通り抜けうる——「読んだ時点では可視、撃った時点では hidden」の並びである。
-    // hide 側の順序（`main_visible` を results.hide() より先に落とす）はこの並びを塞がない。
+    // `position_results_below_main` / `set_size` / `raw_show` の Win32 呼び出しが挟まる。
+    // **`hide_egui_main` が別スレッドから走れた頃は**、その間にそれが丸ごと通り抜けえた
+    // ——「読んだ時点では可視、撃った時点では hidden」の並びである。hide 側の順序
+    // （`main_visible` を results.hide() より先に落とす）はこの並びを塞がない。
+    //
+    // **証人型（`EventLoopProof`）の導入でその並びは構築できなくなった**（`hide_egui_main`
+    // の同じ論点のコメントを参照）。この検査は今は残してあり、撤去は本サイクルの後段が行う。
     //
     // **`show()` の戻り値で分岐しない。** 隠すべき状態は「このフレームが表示へ遷移させた」
     // ときだけでなく、「既に可視だった results の下で main が消えた」ときにも起きる。
@@ -631,7 +678,7 @@ pub(crate) fn drive_results_window(app: &tauri::AppHandle, i: DriveResultsInputs
     // `RedrawRequested` は配送されない・#697）、下の決定 5 が守る「可視な results に
     // 最新の色を描かせる」目的にも当たらない。
     if layout::must_retract_results(read_main_visible(app)) {
-        results.hide(layout::HideReason::MainGone);
+        results.hide(el, layout::HideReason::MainGone);
         crate::trace_main(
             "egui_results:hide",
             serde_json::json!({ "from": "retract" }),

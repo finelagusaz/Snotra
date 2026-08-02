@@ -215,7 +215,11 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(
             move |app, _args, _cwd| {
                 // When a second instance tries to start, show the main (egui) window.
-                egui_shell::show_egui_main(app, Instant::now());
+                // **証人を作れるのは `on_event_loop` の中だけ**ゆえ marshalling する
+                // （このコールバックがどのスレッドから来るかに依らず正しい形になる）。
+                snotra_egui_runtime::on_event_loop(app, |app, el| {
+                    egui_shell::show_egui_main(app, el, Instant::now());
+                });
             },
         ))
         .manage(app_state)
@@ -357,55 +361,71 @@ fn setup_hotkey_listener(app_handle: &AppHandle) {
     app_handle.listen(crate::events::HOTKEY_PRESSED, move |_| {
         let t0 = Instant::now();
         trace_main("hotkey:listener_enter", json!({}));
-        // Ignore the hotkey while snotra-settings is running: the user may be
-        // pressing the current hotkey combination to configure a new one.
+        // 設定画面の起動中はホットキーを無視する（ユーザーが新しい組み合わせを設定するために
+        // 現在の組み合わせを押している可能性がある）。**窓に触らない読みなのでタスクの外に置く**
+        // ——無駄なタスク post を避ける。
         if let Some(proc_state) = handle_for_hotkey.try_state::<SettingsProcessState>()
             && proc_state.lock().unwrap().is_some()
         {
             return;
         }
-        // 共有 EguiShellState.hotkey_generation を使い（hide が bump して
-        // 保留 show を無効化・codex #5/(B)#2）、純粋核 plan_hotkey で分岐する。
-        let current_gen = handle_for_hotkey
-            .try_state::<egui_shell::EguiShellState>()
-            .map(|sh| sh.hotkey_generation.fetch_add(1, Ordering::SeqCst) + 1)
-            .unwrap_or(0);
-        let app_state = handle_for_hotkey.try_state::<AppState>();
-        let visible = app_state
-            .as_ref()
-            .map(|s| s.main_visible.load(Ordering::SeqCst))
-            .unwrap_or(false);
-        // hotkey_toggle は可視時の hide 判定にしか使わない（plan_hotkey）。`visible &&` で
-        // 短絡し、非表示＝show 経路（最も遅延に敏感）では engine ロックを取らない。
-        // 表示中でも hotkey_toggle=false なら hide せず show 側（再フォーカス/再配置）へ回る。
-        let hotkey_toggle = visible
-            && app_state
+        // **判定ごとイベントループへ移す。** 世代の採番・可視の読み・分岐・副作用が
+        // ひとまとまりで逐次化される——効果だけを移すと連打で stale を読む（各アームを
+        // 個別に包むと、判定がこの producer スレッドに残り、タスク実行前に届いた 2 回目の
+        // 押下が**同じ stale 値**を読んで両方 Hide / 両方 Show になる）。今日この問題が
+        // 無いのは判定も副作用も同じ platform スレッド上で逐次化されているからで、
+        // **効果だけを marshalling するとその逐次化が失われる**。
+        //
+        // `t0` は**post する前**に取ってある（marshalling の hop をレイテンシ計測に含める）。
+        snotra_egui_runtime::on_event_loop(&handle_for_hotkey, move |app, el| {
+            // 共有 EguiShellState.hotkey_generation を使い（hide が bump して
+            // 保留 show を無効化・codex #5/(B)#2）、純粋核 plan_hotkey で分岐する。
+            let current_gen = app
+                .try_state::<egui_shell::EguiShellState>()
+                .map(|sh| sh.hotkey_generation.fetch_add(1, Ordering::SeqCst) + 1)
+                .unwrap_or(0);
+            let app_state = app.try_state::<AppState>();
+            let visible = app_state
                 .as_ref()
-                .map(|s| s.engine.lock().unwrap().config().general.hotkey_toggle)
-                .unwrap_or_else(|| GeneralConfig::default().hotkey_toggle);
-        match egui_shell::plan_hotkey(visible, is_alt_pressed(), hotkey_toggle) {
-            egui_shell::HotkeyPlan::HideNow => {
-                egui_shell::hide_egui_main(&handle_for_hotkey);
+                .map(|s| s.main_visible.load(Ordering::SeqCst))
+                .unwrap_or(false);
+            // hotkey_toggle は可視時の hide 判定にしか使わない（plan_hotkey）。`visible &&` で
+            // 短絡し、非表示＝show 経路（最も遅延に敏感）では engine ロックを取らない。
+            // 表示中でも hotkey_toggle=false なら hide せず show 側（再フォーカス/再配置）へ回る。
+            let hotkey_toggle = visible
+                && app_state
+                    .as_ref()
+                    .map(|s| s.engine.lock().unwrap().config().general.hotkey_toggle)
+                    .unwrap_or_else(|| GeneralConfig::default().hotkey_toggle);
+            match egui_shell::plan_hotkey(visible, is_alt_pressed(), hotkey_toggle) {
+                egui_shell::HotkeyPlan::HideNow => {
+                    egui_shell::hide_egui_main(app, el);
+                }
+                egui_shell::HotkeyPlan::ShowNow => {
+                    egui_shell::show_egui_main(app, el, t0);
+                }
+                egui_shell::HotkeyPlan::ShowAfterAltRelease => {
+                    // 待機はイベントループを塞げないので別スレッドで行い、**再入するときに
+                    // もう一度 marshalling する**。世代の照合もイベントループ上で行う——
+                    // 照合と show のあいだに別の押下が割り込まないため。
+                    let h = app.clone();
+                    std::thread::spawn(move || {
+                        wait_alt_release_or_timeout();
+                        snotra_egui_runtime::on_event_loop(&h, move |app, el| {
+                            // 共有世代が変わっていたら（別 press や hide が bump）show を諦める。
+                            let gen_now = app
+                                .try_state::<egui_shell::EguiShellState>()
+                                .map(|sh| sh.hotkey_generation.load(Ordering::SeqCst))
+                                .unwrap_or(0);
+                            if gen_now != current_gen {
+                                return;
+                            }
+                            egui_shell::show_egui_main(app, el, Instant::now());
+                        });
+                    });
+                }
             }
-            egui_shell::HotkeyPlan::ShowNow => {
-                egui_shell::show_egui_main(&handle_for_hotkey, t0);
-            }
-            egui_shell::HotkeyPlan::ShowAfterAltRelease => {
-                let h = handle_for_hotkey.clone();
-                std::thread::spawn(move || {
-                    wait_alt_release_or_timeout();
-                    // 共有世代が変わっていたら（別 press や hide が bump）show を諦める。
-                    let gen_now = h
-                        .try_state::<egui_shell::EguiShellState>()
-                        .map(|sh| sh.hotkey_generation.load(Ordering::SeqCst))
-                        .unwrap_or(0);
-                    if gen_now != current_gen {
-                        return;
-                    }
-                    egui_shell::show_egui_main(&h, Instant::now());
-                });
-            }
-        }
+        });
     });
 
     // hotkey-pressed listener is now registered; activate hotkey on platform thread.
@@ -529,6 +549,11 @@ fn setup_tray(app_handle: &AppHandle, show_tray: bool, load_outcome: LoadOutcome
 /// setup: `show_egui_main` depends on the platform bridge (IME control).
 fn setup_startup_display(app_handle: &AppHandle, show_on_startup: bool) {
     if show_on_startup {
-        egui_shell::show_egui_main(app_handle, Instant::now());
+        // setup フック自身がイベントループの中で走る（`src-tauri/CLAUDE.md`「ウィンドウ生成の
+        // 制約」）ため `on_event_loop` はインライン実行へ倒れるが、**証人を作れるのは
+        // `on_event_loop` の中だけ**なので包む形は必要である。
+        snotra_egui_runtime::on_event_loop(app_handle, |app, el| {
+            egui_shell::show_egui_main(app, el, Instant::now());
+        });
     }
 }

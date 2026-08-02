@@ -135,7 +135,10 @@ where
     F: FnOnce(&tauri::AppHandle, &EventLoopProof) + Send + 'static,
 {
     let handle = app.clone();
-    let _ = tauri::Manager::run_on_main_thread(app, move || {
+    // `run_on_main_thread` は `Manager` トレイトではなく `AppHandle<R>` の inherent
+    // メソッドである（tauri 2.11.4 `src/app.rs:493-495` で実測）。`tauri::Manager::` 経由では
+    // 解決しない。
+    let _ = app.run_on_main_thread(move || {
         f(&handle, &EventLoopProof::new());
     });
 }

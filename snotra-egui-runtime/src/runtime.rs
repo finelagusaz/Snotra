@@ -28,6 +28,10 @@ pub trait EguiView: Send + 'static {
 pub struct RuntimeFrame {
     drag_requested: bool,
     clear_color: Option<egui::Color32>,
+    /// このフレームがイベントループスレッド上で走っていることの証人。
+    /// `render()` は wry plugin の `on_event` からしか呼ばれないため、この値が存在すること
+    /// 自体がその証明である（`proof.rs` の `//!`）。
+    proof: crate::proof::EventLoopProof,
 }
 
 impl RuntimeFrame {
@@ -43,6 +47,14 @@ impl RuntimeFrame {
     /// 目視のみである（`docs/superpowers/specs/2026-07-28-config-background-color-design.md` §7）。
     pub fn set_clear_color(&mut self, color: egui::Color32) {
         self.clear_color = Some(color);
+    }
+
+    /// このフレームがイベントループスレッド上にいることの証人を貸す。
+    ///
+    /// **`&self` で貸すのは意図である**——証人は `!Send` ゆえ、借りた側もこのフレームの
+    /// 寿命を越えて持ち出せない。
+    pub fn event_loop(&self) -> &crate::proof::EventLoopProof {
+        &self.proof
     }
 }
 
@@ -402,6 +414,7 @@ impl EguiWindow {
         let mut frame = RuntimeFrame {
             drag_requested: false,
             clear_color: None,
+            proof: crate::proof::EventLoopProof::new(),
         };
         let output = self
             .context

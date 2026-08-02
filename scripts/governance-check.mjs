@@ -1390,7 +1390,7 @@ export function checkConfigFieldReachability(snapshot, table = NO_LAUNCHER_READ,
 //   語彙に化け、腐りが原理的に検出できない（実測 11 件）
 // - **テストコードを外す**。含めると検出器自身のフィクスチャが偽陰性を作る——
 //   `createObjectURL`（本検査が守りたい対象として `governance-check.test.mjs` に名指しで書いた語）が、
-//   同ファイルに書かれているという理由だけで実リポジトリでは永久に検出されなかった（実測・#879 サイクル）
+//   同ファイルに書かれているという理由だけで実リポジトリでは永久に検出されなかった（実測）
 //
 // **`SPEC.md` は語彙源ではなく検査対象である**（`ADR-stale-identifier-detector-scope`
 // 「却下 4: 現行語彙をソースだけから作る（`SPEC.md` を入れない）」の失効注記が経緯を持つ）。
@@ -1405,16 +1405,17 @@ export function checkConfigFieldReachability(snapshot, table = NO_LAUNCHER_READ,
 // **受容する残余**:
 // - 単語 1 つの識別子（`Glob` `expand` `plain`）は対象外である。こぶを 1 つ以上要求しないと、
 //   harness のツール名と散文の語彙が大量に混じる（実測 53 件中 40 件弱）
-// - **Rust の `#[cfg(test)]` は語彙を寄付しうる**。`*.test.*` と同じ穴が別言語に開いたままで、
-//   `productionOnly` を通せば塞がる。現時点でこの穴に落ちた finding は無く（全セルで実測 0 件）、
-//   測って動かなかったものを入れないだけの理由で開けてある
+// - **Rust のテストコードは今も語彙を寄付しうる。** `VOCAB_TEST_FILE` が当たるのはファイル名の
+//   `.test.<ext>` という形だけで、Rust 側の 3 つの形——`#[cfg(test)] mod` の中身・
+//   `<crate>/tests/*.rs` の統合テスト・`src/**/tests/*.rs` へ分けたテストファイル——はどれも外れる。
+//   `productionOnly` を通しても落ちるのは 1 つ目だけである。現時点でこの穴に落ちた finding は
+//   1 件も無く（測定の全セルで 0 件）、測って動かなかったものを入れないだけの理由で開けてある
 // - **`.json` は語彙源ではない**（`VOCAB_SOURCE_EXT`）。設定キーが JSON にしか無い語は偽陽性になりうる
 // ---------------------------------------------------------------------------
 
 /** 現行語彙の正本になるソース拡張子 */
 const VOCAB_SOURCE_EXT = /\.(rs|ts|tsx|mjs|ps1|toml)$/;
-/** 語彙源から外すテストコード。`VOCAB_SOURCE_EXT` のうち実在するのは `.test.mjs` だけだが
- *  （`git ls-files` で確認）、ts/tsx を含めて拡張子の集合を揃える */
+/** 語彙源から外すテストコード。`VOCAB_SOURCE_EXT` と拡張子の集合を揃える */
 const VOCAB_TEST_FILE = /\.test\.(mjs|ts|tsx)$/;
 /** 語彙源ではなく検査対象になる、`.claude/**` の外の文書（意図の SSOT） */
 export const STALE_EXTRA_DOCS = ["SPEC.md"];

@@ -105,7 +105,7 @@ camelCase 限定でも `closingIssuesReferences`（GitHub API のフィールド
 ### 残る残余
 
 - **述語は camelCase しか見ない。** snake_case・PascalCase・ドット区切り・式で書かれた腐りは今も対象外である。**「SPEC の腐りが機構で捕まるようになった」とは言えない**——言えるのは**「camelCase で書かれた再発は捕まる」**までである
-- **Rust の `#[cfg(test)]` は今も語彙を寄付しうる。** `*.test.mjs` と同じ穴が別言語に開いたままで、`productionOnly` を通せば塞がる。全セルで測って finding を 1 件も動かさなかったため採らなかった——**穴が無いのではなく、まだ何も落ちていない**
+- **Rust のテストコードは今も語彙を寄付しうる。** 除外はファイル名の `.test.<ext>` という形だけを見るので、Rust 側の 3 つの形——`#[cfg(test)] mod` の中身・`<crate>/tests/*.rs` の統合テスト・`src/**/tests/*.rs` へ分けたテストファイル——はどれも外れる。`stripRustComments` の隣にある `productionOnly` を通しても落ちるのは 1 つ目だけで、残る 2 つには述語が要る。全セルで測って finding を 1 件も動かさなかったため採らなかった——**穴が無いのではなく、まだ何も落ちていない**
 - 「単語 1 つの識別子」「frontmatter・素の表テキスト・日本語散文」は上の受容する残余のまま
 - **上の帰結が「`resetForShow` / `folderState` / `toolSelectionState` は state-check のスキル文書に残る」と書いた状態は、既に解消している**（当該スキルは `consume_reset_pending` という as-built の形に直っている）。歴史としてそのまま残す
 

@@ -94,7 +94,7 @@
   - emoji への upgrade を検討する場合、**「jp_font が 📁📄 を描けるか」を前提にできない**（#689）: Yu Gothic フォールバックは条件付きになり、ユーザーフォントが CJK を被覆する構成では積まれない。判定に使うのは実際にその環境で先頭に来るフォントであって、jp_font ではない
 - インデックス再構築時はキャッシュをクリア（次回検索時に再抽出）
 - `icons.bin` は起動時に先読みせず、初回アイコン取得時に遅延ロード
-- 件数上限を超えると挿入順で最古から退避（FIFO）し、常駐メモリと `icons.bin` の両方を頭打ちにする。退避は書き込み経路（挿入・ロード）でのみ行い、取得（`get`）はアクセス順を更新しない。上限は独立した設定キーを持たず、表示ワーキングセット `max(visible_rows, result_limit, recent_limit)`（アイコンを要求しうる結果リストの最大件数＝フロント先読み・`LruIconCache` サイズ）の定数倍（実装は ×5、既定 200×5=1000）として導出する。これにより「上限 ≥ ワーキングセット」を検証なしで構造的に保証し、単一の `get_icons_batch` が自己 evict することはなく、`result_limit` 変更時は上限も自動追従する
+- 件数上限を超えると挿入順で最古から退避（FIFO）し、常駐メモリと `icons.bin` の両方を頭打ちにする。退避は書き込み経路（挿入・ロード）でのみ行い、取得（`get`）はアクセス順を更新しない。上限は独立した設定キーを持たず、表示ワーキングセット `max(visible_rows, result_limit, recent_limit)`（アイコンを要求しうる結果リストの最大件数）の定数倍（実装は ×5、既定 200×5=1000）として導出する。これにより「上限 ≥ ワーキングセット」を検証なしで構造的に保証し、1 回のアイコン一括取得が自己 evict することはなく、`result_limit` 変更時は上限も自動追従する。導出の正本は `snotra-core/src/config.rs` の `icon_cache_cap`
 
 ## 4. 検索システム
 
@@ -431,7 +431,7 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 #### マルチモニター対応
 
 - ウィンドウ位置はモニター作業領域原点からの相対座標（物理ピクセル）で保存する
-- ホットキー押下時（`show_main_and_emit`）に毎回ターゲットモニターを決定し、相対座標を絶対座標に変換して配置する
+- ホットキー押下時に毎回ターゲットモニターを決定し、相対座標を絶対座標に変換して配置する（実装は `src-tauri/src/egui_shell/window_coordinator.rs` の `position_on_target_monitor`）
 - ターゲットモニターの決定:
   - `follow_cursor_monitor = true`（デフォルト）: マウスカーソルのあるモニター
   - `follow_cursor_monitor = false`: プライマリモニター
@@ -452,7 +452,7 @@ bool フラグでは検知できず、実際の kana 文字列の `starts_with` 
 ### 8.5 ウィンドウ生成とプロセス管理
 
 - メインウィンドウ（`main`）と検索結果ウィンドウ（`results`）は起動時のセットアップで生成する（いずれも `visible: false`）。`results` は `focusable(false)` でフォーカスを取らない従属窓とし、可視性・サイズ・位置は `main` の毎フレーム更新（`drive_results_window`）が駆動する。`main` の hide 時は `results` も同時に隠す（§4.7・§8.2 参照・#646 PR2）。**この hide 同期と組になる show 側のゲート・事後検査は §8.6「検索結果ウィンドウの可視性」にある**——hide 同期だけでは閉じない
-- `about` / `settings` は別プロセス（`snotra-settings`）として起動。本体は `SettingsProcessState`（`Mutex<Option<Child>>`）で子プロセスを管理し、二重起動を防止する
+- 設定アプリは別プロセス（`snotra-settings`）として起動する。本体は `SettingsProcessState` で子プロセスを管理し、二重起動を防止する
 - `snotra-settings` 起動中は本体のメインウィンドウの `alwaysOnTop` を一時的に `false` にし、終了検知時に `true` に復元する
 - `platform/mod.rs` の Win32 メッセージループスレッドはウィンドウ生成より前に spawn し、Win32 初期化とウィンドウ生成を並列実行する（起動時間の短縮）
 - トレイアイコンの表示はウィンドウ生成完了後に行う
@@ -470,7 +470,7 @@ stateDiagram-v2
   Standby --> SearchVisible: hotkey-pressed
   Standby --> SearchVisible: app_start [show_on_startup]
   Standby --> LauncherStopped: /q / exit-requested
-  SearchVisible --> Standby: Escape [!toolSelectionState && !folderState]
+  SearchVisible --> Standby: Escape [!ToolSelectionMode && !FolderExpansionMode]
   SearchVisible --> Standby: hotkey-pressed [hotkey_toggle && main_visible]
   SearchVisible --> Standby: focus_lost [auto_hide_on_focus_lost]
   SearchVisible --> LauncherStopped: /q / exit-requested
@@ -493,15 +493,15 @@ stateDiagram-v2
     NormalMode --> InstantCommandMode: Input [query startsWith prefix]
     InstantCommandMode --> NormalMode: Input [query not startsWith prefix]
     NormalMode --> FolderExpansionMode: ArrowRight [selected.isFolder]
-    NormalMode --> FolderExpansionMode: ArrowLeft [!folderState && parent exists]
+    NormalMode --> FolderExpansionMode: ArrowLeft [!FolderExpansionMode && parent exists]
     FolderExpansionMode --> FolderExpansionMode: ArrowRight [selected.isFolder]
     FolderExpansionMode --> FolderExpansionMode: ArrowLeft [parent exists]
-    FolderExpansionMode --> NormalMode: Escape / exitFolderExpansion()
+    FolderExpansionMode --> NormalMode: Escape
     NormalMode --> ToolSelectionMode: Shift+Enter [tools >= 2]
     FolderExpansionMode --> ToolSelectionMode: Shift+Enter [tools >= 2]
-    ToolSelectionMode --> NormalMode: Escape [!folderState]
-    ToolSelectionMode --> FolderExpansionMode: Escape [folderState]
-    ToolSelectionMode --> NormalMode: Enter/Click [launch success && !folderState]
+    ToolSelectionMode --> NormalMode: Escape [!FolderExpansionMode]
+    ToolSelectionMode --> FolderExpansionMode: Escape [FolderExpansionMode]
+    ToolSelectionMode --> NormalMode: Enter/Click [launch success && !FolderExpansionMode]
   }
 ```
 
@@ -510,7 +510,7 @@ stateDiagram-v2
 - `/o` は `snotra-settings` 子プロセスを起動する（`!indexing` のときのみ有効）。本体の状態は変わらない
 - トレイ「設定」も `snotra-settings` 子プロセスを起動する（`!indexing` のときのみ有効）
 - `Standby -> SearchVisible` は `hotkey-pressed` に加えて、起動直後 `app_start [show_on_startup]` でも成立
-- `SearchVisible -> Standby` の `Escape` は `!toolSelectionState && !folderState` の場合のみ成立（`toolSelectionState` 中は `ToolSelectionMode -> NormalMode/FolderExpansionMode` を優先し、`folderState` 中は `FolderExpansionMode -> NormalMode` を優先）
+- `SearchVisible -> Standby` の `Escape` は `ToolSelectionMode` でも `FolderExpansionMode` でもない場合のみ成立（`ToolSelectionMode` 中は `ToolSelectionMode -> NormalMode/FolderExpansionMode` を優先し、`FolderExpansionMode` 中は `FolderExpansionMode -> NormalMode` を優先）
 - `SearchVisible -> Standby` の `hotkey-pressed` は `hotkey_toggle && main_visible` が前提
 - `SearchVisible -> Standby` の `focus_lost` は `auto_hide_on_focus_lost` 有効時のみ成立
 - `/q` または `exit-requested` は `Standby` / `SearchVisible` のいずれからでも `LauncherStopped` へ遷移
@@ -680,17 +680,13 @@ results 可視 ⇔ main 可視 ∧ 結果が空でない ∧ 通常結果を隠�
 - `.lnk` はショートカット本体を `ShellExecute` で起動
 - ターゲット直接実行への変換は行わない
 
-### 14.2 起動API契約（launch_item）
+### 14.2 起動の契約
 
-- `launch_item` は非同期コマンドとして実装し、OS実行結果を待ってフロントへ DTO を返す
-- 戻り値は `LaunchResult { status, code, message }`
-  - `status`: `ok` / `failed` / `timeout`
-  - `code`: OS戻りコード（timeout 時は `-1`）
-  - `message`: 追加情報（任意）
-- 起動成功（`status = ok`）時のみ履歴を記録する
-- OS呼び出しはタイムアウト付きで待機する（既定 4000ms）
-- フロントは実行中状態（ローディング）を表示し、失敗・タイムアウト時は通知を表示する
-- 通知の自動クリアは単一タイマーで管理し、連続失敗時は前回タイマーを clear して再設定する
+- 起動の結末は**成功**と**失敗**の 2 つで、**成功時のみ履歴を記録する**
+- 起動要求から 4000ms 経過しても結末が届かないときは、失敗ではなく**結果不明**として扱う（起動という副作用は取り消せないため）。この保護の機構は `SPEC.md`「egui 経路の起動保護（#532 SU5）」が持つ
+- 起動中であることは検索バー直下の status 行に示す。失敗・結果不明のときは一時通知を出す（描画面の規則は `SPEC.md`「4.7 結果表示制御（2 窓構成）」）
+- 一時通知は単一のスロットで、新しい通知が古い通知を上書きする——2 つ並ばず、表示時間は最後の通知から数え直される
+- 起動系の関数がどう結末を返すかは `src-tauri/CLAUDE.md`「共有 core 関数の返り値契約」が正本
 
 ## 15. スラッシュコマンド
 
@@ -714,7 +710,7 @@ results 可視 ⇔ main 可視 ∧ 結果が空でない ∧ 通常結果を隠�
 
 ### 15.3 即実行仕様
 
-- コマンド文字列（例: `/o`）が入力された時点で `createEffect` が発火し、debounce をキャンセルして即座に `action()` を実行する
+- コマンド文字列（例: `/o`）が完全一致した時点で、検索の debounce をキャンセルして即座にそのコマンドの動作を実行する（実装は `src-tauri/src/egui_shell/launcher_controller.rs` のクエリ変化時のコマンド分岐）
 - 実行後はクエリをクリアし、結果を空にする
 - コマンドモード中は通常検索（インデックス検索）を実行しない
 
@@ -780,11 +776,11 @@ results 可視 ⇔ main 可視 ∧ 結果が空でない ∧ 通常結果を隠�
 
 ### 18.5 状態モデル
 
-- `toolSelectionState` は `folderState` と直交する（フォルダ展開中でも Shift+Enter でツール選択に入れる）
-- 優先度: `toolSelectionState !== null` > `folderState !== null` > 通常モード
+- `ToolSelectionMode` は `FolderExpansionMode` と直交する（フォルダ展開中でも Shift+Enter でツール選択に入れる）
+- 優先度: `ToolSelectionMode` > `FolderExpansionMode` > `NormalMode`
 - ツール選択中の入力は無効化（検索結果が上書きされない）
 - ツール選択中の ArrowRight/ArrowLeft は無効化
-- ホットキーによる再表示（`resetForShow`）でツール選択はリセットされる
+- ホットキーによる再表示でツール選択はリセットされる（実装は `src-tauri/src/egui_shell/search_state.rs` の `reset`）
 
 ### 18.6 設定画面
 
@@ -996,7 +992,7 @@ query = "%SYSTEMROOT%"
   - `description` が設定されている場合、これを優先表示（`display` は表示されない）
 - スペースが入力された時点でマッチングを確定し、以降は `{query}` として扱う
 - インスタントコマンドモード中はアイコン取得をスキップする（`path` がファイルパスではないため）
-- マッチするコマンドが0件の場合は結果を空にする（`noResults` 表示はしない）
+- マッチするコマンドが0件の場合は結果を空にする（「該当なし」を示す行は出さない）
 
 ### 19.6 実行フロー
 
@@ -1020,14 +1016,14 @@ query = "%SYSTEMROOT%"
    - split → env 展開 → 変数置換の順序で処理
    - 外部入力（query / clip）は env 展開されない
 2. `Command::new(exe).args(args_vec)` で生成
-3. `spawn_blocking` でスレッドプール上で起動
-4. `spawn_blocking` の join に 4 秒のタイムアウトを設定。`Command::spawn()` は即時復帰（fire-and-forget）であり、タイムアウトは spawn 呼び出し自体の保護。起動済みプログラムの寿命は制御しない
-5. 起動失敗（exe 不在、パーミッション等）は `LaunchResult::failed` として記録
+3. 起動そのものは `SPEC.md`「egui 経路の起動保護（#532 SU5）」の経路で行う。プロセス生成は即時復帰（fire-and-forget）であり、4 秒のタイムアウトが守るのは生成呼び出し自体である——起動済みプログラムの寿命は制御しない
+4. 起動失敗（exe 不在、パーミッション等）は失敗として記録
 
 #### 起動結果
 
-- `LaunchResult::succeeded`: 起動成功（ブラウザ・プロセスが spawned）
-- `LaunchResult::failed`: 起動失敗（exe 不在、パーミッション不足等）。エラーメッセージをログに記録
+- **成功**: ブラウザ・プロセスの生成に成功した
+- **失敗**: 生成できなかった（exe 不在、パーミッション不足等）。エラーメッセージをログに記録する
+- 結末の扱い（成功時のみ履歴を記録する・4000ms 経過は結果不明）は `SPEC.md`「14.2 起動の契約」
 
 #### egui 経路の起動保護（#532 SU5）
 
@@ -1037,9 +1033,10 @@ query = "%SYSTEMROOT%"
 - single-flight: in-flight 起動中の新規起動要求（Enter/クリック）は拒否する。打鍵は
   入力欄の無効化で抑止する。Escape / blur / ホットキーによる手動 hide は launching 中も通す
   （成功時の自動 hide のみ完了後）
-- 4 秒経過は「起動失敗」ではなく**結果不明**として扱い、一時通知（`notice.launch.timeout`
-  文言）を表示して in-flight 追跡を破棄する。起動という副作用は取り消せない（`spawn_blocking`
-  の abandoned task と同じ意味論）。遅着した結果は破棄する（per-launch channel の drop で構造的に消滅）
+- 4 秒経過は「起動失敗」ではなく**結果不明**として扱い、一時通知を表示して in-flight 追跡を
+  破棄する（文言の正本は `src-tauri/src/egui_shell/strings.rs` の `launch_timeout`）。起動という
+  副作用は取り消せない（`spawn_blocking` の abandoned task と同じ意味論）。遅着した結果は破棄する
+  （per-launch channel の drop で構造的に消滅）
 - 履歴記録は worker スレッド側で成功時に行う（ウィンドウ可視性と無関係）
 
 ### 19.7 状態モデル
@@ -1050,13 +1047,12 @@ query = "%SYSTEMROOT%"
 - フォルダ展開中はインスタントコマンドを無視し、通常のフォルダフィルタとして処理する（スラッシュコマンドと同じ）
 - ツール選択中はインスタントコマンドを無視する
 - インデックス構築中でもインスタントコマンドは使用可能（インデックスに依存しないため）
-  - `handleInput` の indexing ガード: value 取得 → プレフィックス判定 → indexing チェック（プレフィックスありならバイパス）の順で処理
-  - `shouldShowResults`: インスタントコマンドモード中は `indexing()` を無視し `results().length > 0` で true にする
-- ホットキーによる再表示（`resetForShow`）でインスタントコマンドモードはリセットされる
-- `activateSelected` / `activateSelectedByIndex` はインスタントコマンドモード中、`executeInstantCommand` にディスパッチする
+  - indexing ガードはプレフィックス判定より**後**に置く（プレフィックスが付いていればバイパスする）。実装は `src-tauri/src/egui_shell/search_state.rs` の `interpret`（クエリからモードを決める）と `src-tauri/src/egui_shell/launcher_controller.rs` のインスタント分岐（indexing を読まない）
+  - インスタントコマンドモード中の結果表示はインデックス構築中かどうかを見ない（`SPEC.md`「4.7 結果表示制御（2 窓構成）」の 2 軸モデルから導出）
+- ホットキーによる再表示でインスタントコマンドモードはリセットされる（実装は `src-tauri/src/egui_shell/search_state.rs` の `reset`）
+- インスタントコマンドモード中の Enter / クリックは、通常の検索結果の起動ではなくインスタントコマンドの実行へディスパッチする
 - インスタントコマンドモード中の ArrowRight / ArrowLeft は無効化する（フォルダ展開に入らない）
 - インスタントコマンドモード中の Shift+Enter は通常 Enter と同じ動作（ツール選択に入らない）
-- プレフィックスシグナルの初期値はデフォルト `"@"`（bootstrap 到着前でも動作する）
 
 ### 19.8 設定画面
 
@@ -1079,7 +1075,7 @@ URL 種別:
 - `url`: URL テンプレート（例: `https://www.google.com/search?q={query}`）
 
 exec 種別:
-- `exe`: プログラムパス（例: `C:\Windows\notepad.exe`）。テキスト入力欄に加えファイルブラウズダイアログ（参照ボタン）を併設。既定フィルタは実行ファイル（`.exe`）だが、ドロップダウンで全ファイルも選択可能（`.com`・拡張子なし・`cmd.exe` 等の正規ユースケースを塞がない）。手入力では任意のパスを直接入力できる（ヒント: `hint_instant_program` 相当のヒントテキストを表示）
+- `exe`: プログラムパス（例: `C:\Windows\notepad.exe`）。テキスト入力欄に加えファイルブラウズダイアログ（参照ボタン）を併設。既定フィルタは実行ファイル（`.exe`）だが、ドロップダウンで全ファイルも選択可能（`.com`・拡張子なし・`cmd.exe` 等の正規ユースケースを塞がない）。手入力では任意のパスを直接入力できる（そのことを伝えるヒントテキストを併記する）
 - `args`: コマンドライン引数（任意）（例: `-s {query}`）
 
 **共通フィールド**:

@@ -830,7 +830,7 @@ impl EguiView for SearchWindowView {
             }
         }
 
-        // #646 PR2 決定 6: main は bar(+toast)のみ。結果窓の可視性・サイズ・位置も
+        // #646 PR2 決定 6: main は bar(+status/toast)のみで結果件数には伸縮しない。結果窓の可視性・サイズ・位置も
         // ここ(毎フレーム走る main)が駆動する——hidden 窓は update() が走らず自分では
         // show できない(SU5 要石)。位置 → サイズ → show の順(main の show と同じ制約)。
         let height = crate::egui_shell::layout::main_window_height(

@@ -952,6 +952,31 @@ describe("G-stale-identifiers checkStaleIdentifiers（規範の散文に残る�
   });
 });
 
+// 上の describe が固定するのは各関数の戻り値までで、**buildChecks がどちらを検査へ渡すか**は見ていない。
+// `staleTargets` を `staleDocs` へ戻しても実リポジトリの finding は 0 / 照合 1 のまま変わらないため、
+// dogfood テストも証跡の印字も気づけない——軸 B の主張（SPEC.md が検査対象になった）を守るのは
+// この describe だけである（配線を戻すと下の赤フィクスチャが緑に落ちる）。
+describe("G-stale-identifiers の配線（buildChecks が SPEC.md を検査対象として渡す）", () => {
+  const wired = (contents) => buildChecks(snap(contents), {}).find((c) => c.id === "G-stale-identifiers").run();
+  const prose = { ".claude/rules/b.md": "" }; // 母集団の欠落 finding を避けるための最小の規範文書
+
+  it("SPEC.md の現行語彙に無い識別子は finding（赤）", () => {
+    const f = wired({ ...prose, "SPEC.md": "- `deadCamelWord` を使う\n", "src-tauri/src/a.rs": "let x = 1;\n" });
+    expect(f).toHaveLength(1);
+    expect(f[0].file).toBe("SPEC.md");
+    expect(f[0].message).toContain("deadCamelWord");
+  });
+
+  it("SPEC.md の識別子がソースの非コメント本文に在れば finding 無し（緑）", () => {
+    expect(wired({ ...prose, "SPEC.md": "- `liveCamelWord` を使う\n", "src-tauri/src/a.rs": "let liveCamelWord = 1;\n" })).toEqual([]);
+  });
+
+  it("判定対象外の不混入: SPEC.md のフェンス内・外部コマンド行・単語 1 つ", () => {
+    const spec = "```\n`fencedCamelWord`\n```\n- `gh pr view` で `argCamelWord` を見る\n- `expand` する\n";
+    expect(wired({ ...prose, "SPEC.md": spec, "src-tauri/src/a.rs": "let x = 1;\n" })).toEqual([]);
+  });
+});
+
 describe("G-near-heading-refs checkNearHeadingRefs（正準形に見えて隣接していない見出し参照・#727）", () => {
   // 守りたい対象 = #725 で実際に書かれた `/start-issue` は「Step 6 — …」の形。
   // 人の目には正準形に見え、G-heading-refs の視界外で、参照先が改番されれば黙って壊れる。

@@ -85,6 +85,23 @@ pub(crate) fn read_window_width(app: &tauri::AppHandle) -> f64 {
         .unwrap_or_else(|| f64::from(AppearanceConfig::default().window_width))
 }
 
+/// index 構築中か（show 経路が status 行の有無を導くために読む）。正本は `AppState.indexing`。
+/// 毎フレーム側は `launcher_controller` の同名メソッドが同じフラグを読む。
+fn read_indexing(app: &tauri::AppHandle) -> bool {
+    app.try_state::<crate::AppState>()
+        .map(|s| s.indexing.load(Ordering::Relaxed))
+        .unwrap_or(false)
+}
+
+/// updater toast の行が出るか（show 経路が高さを導くために読む）。正本は `UpdaterUiState`。
+/// **reset-on-show はこれを触らない**——ゆえに hide を跨いで残り、show 後の最初のフレームでも
+/// 同じ値になる（`launcher_controller` の reset 消費のコメントが明記している）。
+fn read_toast_present(app: &tauri::AppHandle) -> bool {
+    app.try_state::<super::UpdaterUiState>()
+        .map(|st| st.0.lock().unwrap().toast().is_some())
+        .unwrap_or(false)
+}
+
 /// `Color32` を tao のネイティブ背景ブラシ色へ（spec 決定 4）。
 ///
 /// **ブラシ側の alpha は 255 に固定する**——softbuffer の clear color が `0x00RRGGBB` で alpha を
@@ -246,11 +263,26 @@ pub(crate) fn show_egui_main(
         // `view.rs` の `window_width` の doc が記録するとおりで、OS を経由する
         // read-modify-write を作らないのが元々の設計である。
         let width = read_window_width(app);
-        // 折りたたみ高 = bar_height(#646 決定 2)。52 固定だと font 連動後の実バー高と
-        // ずれ、position クランプが誤った高さで効く(このブロック冒頭の reset-on-show
-        // コメントの機構と同じ理由。行番号参照は挿入でずれるため名前で指す)。
-        let bar_h = read_metrics(app).bar_height;
-        let _ = window.set_size(tauri::LogicalSize::new(width, bar_h));
+        // 畳む先は「そのフレームで実際に描かれる高さ」である(#755 / #801)。かつては
+        // バー高固定で、最初のフレームが status / toast の分だけ書き直していた——その
+        // 食い違いが、伸びる(#801)か固着する(#755)かのどちらかとして必ず現れた。
+        // **両者は 1 回の show では排他であり、同じ食い違いの 2 分岐である**。
+        let m = read_metrics(app);
+        // **3 つのリテラルが reset-on-show への依存である。** 最初のフレームは reset 後の
+        // 状態を描くので、`launching` と一時通知は消えており、view は Results 段に戻っている。
+        // 前提が変わったら `status_row_present` の呼び出し点を grep すればここへ来る。
+        let status = crate::egui_shell::status_row_present(
+            read_indexing(app),
+            /* results_view */ true,
+            /* launching    */ false,
+            /* has_notice   */ false,
+        );
+        let height = layout::main_window_height(
+            m.bar_height,
+            status.then_some(m.toast_height),
+            read_toast_present(app).then_some(m.toast_height),
+        );
+        let _ = window.set_size(tauri::LogicalSize::new(width, height));
     }
     #[cfg(windows)]
     position_on_target_monitor(app, &window);

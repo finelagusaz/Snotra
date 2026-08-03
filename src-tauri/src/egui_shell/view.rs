@@ -334,6 +334,19 @@ impl EguiView for SearchWindowView {
             if let Some(results) = app.try_state::<crate::egui_shell::ResultsWindow>() {
                 results.reset_size_guard();
             }
+
+            // **main 窓のサイズ memo も初期値へ戻す**（results と対称・#755）。show 経路は
+            // OS のサイズを直接書き、この memo を更新しない。戻さないと「memo == 導出値」の
+            // 一致で補正が握り潰され、**導出がずれた瞬間に固着する**。
+            //
+            // 戻すことの代価は show ごとの同値 `set_size` 1 回だけである（show 経路が既に
+            // 同じ高さを設定しているため見た目は変わらない）。得るのは fail-safe である
+            // ——導出がずれても 1 フレームで実際に描く高さへ直る。
+            //
+            // **この 1 手を単独で入れてはならない**: show 経路が実高を導出しない状態でこれを
+            // 入れると、補正が必ず撃たれて #801 が全ての show で起きる（実測で確認済み）。
+            self.last_set_width = 0.0;
+            self.last_set_height = 0.0;
         }
 
         let ctx = ui.ctx().clone();

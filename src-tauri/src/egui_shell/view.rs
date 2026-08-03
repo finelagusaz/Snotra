@@ -506,8 +506,9 @@ impl EguiView for SearchWindowView {
         //   egui 自身が "users won't be able to override it" と注記している。ゆえに
         //   `RichText::color()` は届かない（#643 の指定は dead だった）。適用は `set_visuals` 側
         //
-        // **どちらも「色リテラルを書かない」だけでは守れない**（SPEC §11 の規範はこの 2 様態を
-        // 名指しするよう #654 で拡張した）。片方を直してもう片方を放置しない。
+        // **どちらも「色リテラルを書かない」だけでは守れない**（#654 で 2 様態とも実在した。
+        // SPEC §11 は「指定したつもりで届かない経路」とだけ述べ、機序は本コメントを正本に
+        // 指す・#888）。片方を直してもう片方を放置しない。
         let bar_theme = &visual.row;
         let bar_font = egui::FontId::proportional(bar_theme.name_size);
         // 入力欄はバー帯の内側に四辺一様の余白（`Metrics::bar_inset`）を残して置く

@@ -14,10 +14,12 @@
 //! ここを通らない。
 //!
 //! **main 窓のサイズは 2 か所に分かれたままである**（ADR-results-presentation-two-stage 却下 1 の「意図的な 2 導出」を
-//! 段 1 で巻き戻さないため）——show 経路の bar_height collapse は `show_egui_main` の中、
-//! すなわちここにあり、毎フレームの動的高さ（`layout::main_window_height` の適用）は
-//! `view.rs` にある。前者は位置クランプが展開時の高さで効くのを防ぐための折り畳みであり、
-//! 後者は status / toast 行の増減に追従するものなので、目的が違う。
+//! 段 1 で巻き戻さないため）——show 経路の実高導出は `show_egui_main` の中、すなわちここに
+//! あり、毎フレームの動的高さ（`layout::main_window_height` の適用）は `view.rs` にある。
+//! **両者は別ロジックではない**（#755 / #801）——どちらも同じ `status_row_present` /
+//! `layout::main_window_height` を通して同じ高さを導出する。分かれている理由は読み点だけで、
+//! ここは「フレームの外・reset-on-show 後の値」を、`view.rs` は「フレームの中・実際の値」を
+//! 読む。
 //!
 //! listener の**登録**は `mod.rs` に残す（setup の順序制約を `main.rs` の 1 画面に残す設計・
 //! `EguiShellHandles` の doc を参照）。ここにあるのは登録先の実体だけである。
@@ -94,8 +96,13 @@ fn read_indexing(app: &tauri::AppHandle) -> bool {
 }
 
 /// updater toast の行が出るか（show 経路が高さを導くために読む）。正本は `UpdaterUiState`。
-/// **reset-on-show はこれを触らない**——ゆえに hide を跨いで残り、show 後の最初のフレームでも
-/// 同じ値になる（`launcher_controller` の reset 消費のコメントが明記している）。
+/// **reset-on-show はこれを触らない**——ゆえに hide を跨いで残り、通常は show 後の最初の
+/// フレームでも同じ値になる（`launcher_controller` の reset 消費のコメントが明記している）。
+/// **ただし別スレッドからの更新は排除できない**——`spawn_update_check` の完了・
+/// `spawn_install` の失敗腕（`mod.rs` / `launcher_controller.rs`）は非同期に `phase` を
+/// 書き換えて `wake_main` するため、この読みと最初のフレームの間に値が変わりうる。
+/// そのときも 1 フレームだけ高さがずれるにとどまり、`view.rs` の reset-on-show による
+/// memo リセットが同じフレームの動的高さ算出で直す（固着しない）。
 fn read_toast_present(app: &tauri::AppHandle) -> bool {
     app.try_state::<super::UpdaterUiState>()
         .map(|st| st.0.lock().unwrap().toast().is_some())
@@ -248,12 +255,12 @@ pub(crate) fn show_egui_main(
         sh.hide_pending.store(false, Ordering::SeqCst);
         sh.reset_pending.store(true, Ordering::SeqCst); // resetForShow を view に指示
     }
-    // 高さリセット → 位置 → show の順（旧 WebView2 経路から引き継いだ順序制約）。
-    // reset-on-show でクエリは空 = 結果なし = bar_height（既定 43px）。前回 hide 時に status /
-    // toast 行の分だけ伸びた高さのままだと position クランプがその高さで効き、show 後に view が
-    // bar_height へ collapse して視覚スナップ + 位置ずれになる。position の前に bar_height へ collapse して
-    // これを断つ（SU3 で高さが動的化したため、旧「52px は create で固定・位置のみ復元」前提は
-    // 崩れている）。
+    // 高さ決定 → 位置 → show の順（旧 WebView2 経路から引き継いだ順序制約。#755 / #801 の
+    // 修正後もこの順序は不変——畳む先の値だけが変わった）。
+    // 前回 hide 時に status / toast 行の分だけ伸びた高さのままだと position クランプがその
+    // 高さで効き、show 後に実際の高さへ戻ると視覚スナップ + 位置ずれになる。position の前に
+    // 「そのフレームで実際に描かれる高さ」（下）を決めてこれを断つ（SU3 で高さが動的化したため、
+    // 旧「52px は create で固定・位置のみ復元」前提は崩れている）。
     #[cfg(windows)]
     {
         // 幅も config から当てる（#824 の 1）。**OS の現在サイズは読まない**——hidden 中は
@@ -269,7 +276,14 @@ pub(crate) fn show_egui_main(
         // **両者は 1 回の show では排他であり、同じ食い違いの 2 分岐である**。
         let m = read_metrics(app);
         // **3 つのリテラルが reset-on-show への依存である。** 最初のフレームは reset 後の
-        // 状態を描くので、`launching` と一時通知は消えており、view は Results 段に戻っている。
+        // 状態を描くので、`launching` は消えており、view は Results 段に戻っている。
+        // **一時通知については「消えている」が唯一の前提ではない**——`view.rs` の
+        // `consume_reset_pending` は通知をクリアするが、直後の `consume_external_pending`
+        // が同じフレームで hotkey 登録失敗の pending 通知を新たに立てうる
+        // （`launcher_controller.rs` の同関数 doc「hidden 中の失敗は次 show のこの消費で
+        // 表示される」）。ここでは常に `false` を渡すため、その場合 1 フレームだけ高さが
+        // 実際より低く畳まれるが、`view.rs` の reset-on-show が memo を 0 へ戻しているので
+        // 同じフレームの動的高さ算出が直す（固着はしない・修正前より悪化もしない）。
         // 前提が変わったら `status_row_present` の呼び出し点を grep すればここへ来る。
         let status = crate::egui_shell::status_row_present(
             read_indexing(app),

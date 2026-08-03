@@ -859,15 +859,60 @@ describe("G-heading-refs checkHeadingRefs（見出し参照の実在）", () => 
     expect(checkHeadingRefs(s, ["docs/x.md"])).toEqual([]);
   });
 
-  it("母集団は履歴資料と作業バッファを除く全 md", () => {
+  it("母集団は履歴資料・作業バッファ・凍結された歴史（docs/adr/）を除く全 md", () => {
     const s = snap({
       "PERFORMANCE.md": "",
       ".claude/agents/code-reviewer.md": "",
       "docs/superpowers/plans/p.md": "",
       "workspace/plan.md": "",
+      "docs/adr/ADR-x.md": "",
       "src/main.rs": "",
     });
     expect(headingRefDocs(s).sort()).toEqual([".claude/agents/code-reviewer.md", "PERFORMANCE.md"]);
+  });
+});
+
+describe("凍結された歴史（ADR-adr-frozen-history）— 精度の辺は畳み、実在の辺は残す", () => {
+  // 守りたい契約: ADR 本文**から**外への参照（精度の辺）は照合しない。
+  // 生きた層 → ADR と ADR → ADR の短縮引用・生きた層 → ADR 見出し（実在の辺）は照合し続ける。
+  // 種はどれも「稼働中のガードを弱めず、合成スナップショットへ蒔く」（.claude/rules/safety-nets.md）。
+
+  it("種 1: ADR 内の腐った正準参照は見ない（緑）。対照: 同じ参照が生きた文書なら赤", () => {
+    const rotten = "`docs/gone.md`「消えた節」\n";
+    const adr = snap({ "docs/adr/ADR-a.md": `# ADR-a: x\n${rotten}` });
+    expect(checkHeadingRefs(adr, headingRefDocs(adr))).toEqual([]);
+    const live = snap({ "docs/x.md": rotten });
+    expect(checkHeadingRefs(live, headingRefDocs(live))).toHaveLength(1);
+  });
+
+  it("種 2: ADR 内の実在しないパス参照は見ない（緑）。対照: 生きた文書なら赤", () => {
+    const rotten = "`docs/gone-path.md` を見よ\n";
+    const adr = snap({ "docs/adr/ADR-a.md": `# ADR-a: x\n${rotten}` });
+    expect(checkReferences(adr, governanceDocs(adr))).toEqual([]);
+    const live = snap({ "docs/x.md": rotten });
+    expect(checkReferences(live, governanceDocs(live))).toHaveLength(1);
+  });
+
+  it("種 4: ADR から消えた ADR への短縮引用は赤のまま（実在の辺は凍結後も守る）", () => {
+    const s = snap({ "docs/adr/ADR-a.md": "# ADR-a: x\n`ADR-gone` を却下の根拠とした\n" });
+    const f = checkAdrCitations(s, adrCitationDocs(s, governanceDocs(s)));
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("ADR-gone");
+  });
+
+  it("種 5: 生きた文書から ADR 見出しへの正準参照は凍結後も照合される（走査元の除外は参照先解決を絞らない）", () => {
+    const adr = "# ADR-a: x\n## 却下 6: 別案\n";
+    const ok = snap({ "docs/x.md": "`docs/adr/ADR-a.md`「却下 6」\n", "docs/adr/ADR-a.md": adr });
+    expect(checkHeadingRefs(ok, headingRefDocs(ok))).toEqual([]);
+    const rot = snap({ "docs/x.md": "`docs/adr/ADR-a.md`「消えた見出し」\n", "docs/adr/ADR-a.md": adr });
+    expect(checkHeadingRefs(rot, headingRefDocs(rot))).toHaveLength(1);
+  });
+
+  it("母集団カナリア: adrCitationDocs は docs/adr/ を明示的に含む（governanceDocs の除外に連動して落ちない）", () => {
+    const s = snap({ "docs/adr/ADR-a.md": "# ADR-a: x\n", "CLAUDE.md": "" });
+    const docs = governanceDocs(s);
+    expect(docs).not.toContain("docs/adr/ADR-a.md");
+    expect(adrCitationDocs(s, docs)).toContain("docs/adr/ADR-a.md");
   });
 });
 

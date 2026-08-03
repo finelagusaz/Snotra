@@ -1195,11 +1195,15 @@ export function checkNearHeadingRefs(snapshot, docs) {
 // ---------------------------------------------------------------------------
 
 /** G-references/G-spec-sections の対象文書（ガバナンス文書群）。docs/superpowers/ は歴史資料（#589 で非規範化）ゆえ除外 */
+/** G-references / G-spec-sections の走査元。`docs/adr/` を除くのは**凍結された歴史**の契約
+ *  （`ADR-adr-frozen-history`）——ADR 本文は決定日時点の世界の記述であり、そこから外への参照
+ *  （パス・SPEC 節）は生きた層の改名・移動に追随させない。守るのは実在の辺だけ
+ *  （生きた層 → ADR と ADR → ADR の短縮引用 = `adrCitationDocs` が明示的に持つ） */
 export function governanceDocs(snapshot) {
   return snapshot.files.filter(
     (f) =>
       ["CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md", "SPEC.md"].includes(f) ||
-      (f.startsWith("docs/") && f.endsWith(".md") && !f.startsWith("docs/superpowers/")) ||
+      (f.startsWith("docs/") && f.endsWith(".md") && !f.startsWith("docs/superpowers/") && !f.startsWith("docs/adr/")) ||
       /^(snotra-core|snotra-egui-runtime|src-tauri|snotra-settings)\/CLAUDE\.md$/.test(f) ||
       /^\.claude\/rules\/[^/]+\.md$/.test(f) ||
       /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f),
@@ -1207,13 +1211,21 @@ export function governanceDocs(snapshot) {
 }
 
 /**
- * G-heading-refs の対象。見出し参照はガバナンス文書の外（`PERFORMANCE.md`・`.claude/agents/`）にも書かれ、
- * 実際にそこで腐っていた（`src-tauri/CLAUDE.md`「TrySuspend / Resume パターン」）ため母集団を広く取る。
- * 除外は履歴資料（`docs/superpowers/`）と作業バッファ（`workspace/`・`/implement` が削除する）のみ。
+ * G-heading-refs / G-near-heading-refs の**走査元**。見出し参照はガバナンス文書の外
+ * （`PERFORMANCE.md`・`.claude/agents/`）にも書かれ、実際にそこで腐っていた
+ * （`src-tauri/CLAUDE.md`「TrySuspend / Resume パターン」）ため母集団を広く取る。
+ * 除外は履歴資料（`docs/superpowers/`）・作業バッファ（`workspace/`・`/implement` が削除する）・
+ * 凍結された歴史（`docs/adr/`・`ADR-adr-frozen-history`。実測で照合 203 件中 86 件が
+ * ADR 内＝歴史の研磨だった）。**除外が絞るのは走査元だけである**——参照先のアンカー解決は
+ * `snapshot.files` 全体に対して行われるため、生きた層から ADR の見出しを指す参照は除外後も照合される。
  */
 export function headingRefDocs(snapshot) {
   return snapshot.files.filter(
-    (f) => f.endsWith(".md") && !f.startsWith("docs/superpowers/") && !f.startsWith("workspace/"),
+    (f) =>
+      f.endsWith(".md") &&
+      !f.startsWith("docs/superpowers/") &&
+      !f.startsWith("workspace/") &&
+      !f.startsWith("docs/adr/"),
   );
 }
 
@@ -1385,9 +1397,10 @@ export function checkConfigFieldReachability(snapshot, table = NO_LAUNCHER_READ,
 // `docs/adr/` は却下案（＝もう存在しない案）、`docs/superpowers/` は #589 で非規範化された当時の設計。
 // 一方 `docs/design/` は日付スラグを持つが `status: Agreed` で `docs/architecture.md` が現在形で
 // 指す先ゆえ**含める**——外すと G-references が守るポインタの**指し先だけが黙って腐る**。
-// **`governanceDocs`（G-references の母集団）は `docs/adr/` を含む**。この非対称は正しい——
-// **ADR が指すパスは今日も在るべきだが、ADR が語る識別子は消えていてよい**。実測でも
-// `docs/adr/` を入れると finding の 8 割が ADR 自身の却下記録で、**この検出器の ADR がこの検出器を赤にする**。
+// `docs/adr/` の除外はかつてこの検査だけの非対称だったが、`ADR-adr-frozen-history` で
+// 全検査へ揃った——**凍結された歴史は語彙も供給せず、精度の照合もされない**（残るのは実在の辺のみ）。
+// 実測でも `docs/adr/` を検査対象に入れると finding の 8 割が ADR 自身の却下記録で、
+// **この検出器の ADR がこの検出器を赤にする**。
 // **モジュール `CLAUDE.md` は入れない**——ラップ対象の外部 API（Win32 / tao / TTC）を語る場所ゆえ
 // 外部語彙の**密度**が高い（実測 真の腐り 1 : 外部語彙 3。`WM_SETCURSOR` 等は語彙源をどう広げても免罪できない）。
 //
@@ -1476,8 +1489,8 @@ export function staleIdentifierDocs(snapshot) {
  *  除くのは `docs/superpowers/`（#589 で非規範化された当時の設計）と `docs/adr/`（却下案＝
  *  **もう存在しない案**を書く場所）。**基準は「日付を持つか」ではなく「もう成り立たないことを書く場所か」である**
  *  ——`docs/design/` は `status: Agreed` で `docs/architecture.md` が現在形で指す先ゆえ含める。
- *  **`governanceDocs`（G-references の母集団）は `docs/adr/` を含む**——非対称は意図的で、
- *  ADR が指すパスは今日も在るべきだが ADR が語る識別子は消えていてよい（節コメント参照）。
+ *  `docs/adr/` の除外は #893 当時この検査だけの非対称だったが、`ADR-adr-frozen-history` で
+ *  全検査（G-references / G-heading-refs 等の走査元）へ揃った。
  *  **静的リテラルと違い空になっても自分では鳴れない**ので `runAll` が 0 件検知を持つ */
 export function staleIdentifierGuideDocs(snapshot) {
   return snapshot.files.filter(
@@ -1694,6 +1707,10 @@ const ADR_CITATION = /\bADR-([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\b/g;
 export function adrCitationDocs(snapshot, docs) {
   return [
     ...docs,
+    // 凍結された歴史も**実在の辺だけ**は守る——ADR → ADR の短縮引用は、指す側が凍結でも
+    // 指される側の削除で壊れる。`docs`（governanceDocs）は docs/adr/ を含まないため明示的に足す。
+    // この 1 行が落ちると ADR→ADR の実在検査が沈黙で消える（母集団カナリアがテストで膜を張る）
+    ...snapshot.files.filter((f) => /^docs\/adr\/[^/]+\.md$/.test(f)),
     ...snapshot.files.filter((f) => /^\.claude\/skills\/.*\.md$/.test(f)),
     ...snapshot.files.filter((f) => /\.(rs|mjs)$/.test(f) && !f.startsWith("docs/") && !f.endsWith(".test.mjs")),
   ];

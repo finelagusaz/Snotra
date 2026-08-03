@@ -14,8 +14,8 @@ mod search_state;
 pub(crate) use notify::{LAUNCH_TIMEOUT, NOTICE_LAUNCH, NoticeSlot};
 // NOTICE_HOTKEY は launcher_controller.rs（hotkey 失敗通知の duration）が、OverlayKind /
 // overlay_kind は view.rs（status 行の優先ラダー）が消費する（#532 SU6 Task 7・#666 段 3 で
-// 消費者が 2 モジュールへ割れた）。status_row_present は毎フレーム側（view.rs・Task 2 で配線済み）と
-// show 経路（window_coordinator.rs・Task 4 で配線済み）の両方が消費する（#755/#801）。
+// 消費者が 2 モジュールへ割れた）。status_row_present は毎フレーム側（view.rs）と
+// show 経路（window_coordinator.rs）の両方が消費する（#755/#801 で両経路に配線）。
 pub(crate) use notify::{NOTICE_HOTKEY, OverlayKind, overlay_kind, status_row_present};
 // mod.rs の spawn_update_check が phase 書き込みで、UpdaterUiState が Default で消費する
 // （#532 SU5 Task 6）。toast 描画は view.rs が、UpdaterPhase の遷移（install 失敗）は

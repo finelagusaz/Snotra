@@ -35,4 +35,4 @@ show 経路（`show_egui_main`）が畳む先を、固定値（バー高のみ�
 ## 帰結
 
 - show 経路と毎フレームは、`status_row_present` / `main_window_height` という同じ述語・同じ積算式を共有する 2 つの呼び出し点になった。共有するのは導出であって memo ではない（`main_size` を results の導出へ入れないという `ADR-results-presentation-two-stage` 却下 1 の境界は変わらない）
-- reset-on-show で main のサイズ memo も初期値へ戻す（fail-safe）。導出が正しい限り 1 フレーム目は同値の再設定を 1 回撃つだけで見た目は変わらず、導出がずれた場合はその 1 フレームで実際に描く高さへ直る（固着せず、スナップとして現れる）
+- reset-on-show で main のサイズ memo も 0 へ戻す（fail-safe）。導出が正しい限り 1 フレーム目は同値の再設定を 1 回撃つだけで見た目は変わらず、導出がずれた場合はその 1 フレームで実際に描く高さへ直る（固着せず、スナップとして現れる）

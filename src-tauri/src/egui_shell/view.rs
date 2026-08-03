@@ -335,7 +335,7 @@ impl EguiView for SearchWindowView {
                 results.reset_size_guard();
             }
 
-            // **main 窓のサイズ memo も初期値へ戻す**（results と対称・#755）。show 経路は
+            // **main 窓のサイズ memo も 0 へ戻す**（results と対称・#755）。show 経路は
             // OS のサイズを直接書き、この memo を更新しない。戻さないと「memo == 導出値」の
             // 一致で補正が握り潰され、**導出がずれた瞬間に固着する**。
             //

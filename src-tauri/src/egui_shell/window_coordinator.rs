@@ -13,13 +13,12 @@
 //! ため層が違う・#646 PR2）。どちらも設定サイドカー監視のポーリングスレッドから来るため、
 //! ここを通らない。
 //!
-//! **main 窓のサイズは 2 か所に分かれたままである**（ADR-results-presentation-two-stage 却下 1 の「意図的な 2 導出」を
-//! 段 1 で巻き戻さないため）——show 経路の実高導出は `show_egui_main` の中、すなわちここに
-//! あり、毎フレームの動的高さ（`layout::main_window_height` の適用）は `view.rs` にある。
-//! **両者は別ロジックではない**（#755 / #801）——どちらも同じ `status_row_present` /
+//! **main 窓のサイズは 2 か所に分かれたままである**——show 経路の実高導出は `show_egui_main` の中、
+//! すなわちここにあり、毎フレームの動的高さ（`layout::main_window_height` の適用）は `view.rs` に
+//! ある。**両者は別ロジックではない**（#755 / #801）——どちらも同じ `status_row_present` /
 //! `layout::main_window_height` を通して同じ高さを導出する。分かれている理由は読み点だけで、
 //! ここは「フレームの外・reset-on-show 後の値」を、`view.rs` は「フレームの中・実際の値」を
-//! 読む。
+//! 読む（反転の経緯は `ADR-show-path-derives-drawn-height`）。
 //!
 //! listener の**登録**は `mod.rs` に残す（setup の順序制約を `main.rs` の 1 画面に残す設計・
 //! `EguiShellHandles` の doc を参照）。ここにあるのは登録先の実体だけである。

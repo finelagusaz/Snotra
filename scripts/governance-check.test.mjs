@@ -38,6 +38,7 @@ import {
   checkStaleIdentifiers,
   scanStaleIdentifiers,
   staleIdentifierDocs,
+  staleIdentifierGuideDocs,
   staleIdentifierTargets,
   currentVocabulary,
   runAll,
@@ -916,8 +917,32 @@ describe("G-stale-identifiers checkStaleIdentifiers（規範の散文に残る�
     expect(run("`interpKind` を見る\n")).toHaveLength(1);
   });
 
+  // 赤フィクスチャは実際に検出された `G12_NO_LAUNCHER_READ`（#825 の PR が消した語。
+  // SCREAMING_SNAKE 述語が捕まえる唯一の実測例で、緑の対 `NO_LAUNCHER_READ` が現行語彙に在る）。
+  const SNAKE_SRC = { "src-tauri/src/a.rs": "const NO_LAUNCHER_READ = 1;\n" };
+
+  it("SCREAMING_SNAKE も見る（赤）", () => {
+    const f = run("読まない理由は `G12_NO_LAUNCHER_READ` へ載せる\n", SNAKE_SRC);
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("G12_NO_LAUNCHER_READ");
+  });
+
+  it("語彙に在る SCREAMING_SNAKE は鳴らない（緑）", () => {
+    expect(run("読まない理由は `NO_LAUNCHER_READ` へ載せる\n", SNAKE_SRC)).toEqual([]);
+  });
+
+  it("判定対象外の不混入: `_` を持たない全大文字（こぶ 1 つ以上の要求と同型）", () => {
+    expect(run("`CI` と `TODO` と `README`\n")).toEqual([]);
+  });
+
   it("照合件数を返す（「腐りゼロ」と「照合していない」の区別・#497）", () => {
     const r = scanStaleIdentifiers(snap({ ...base, [DOC]: "`someName` と `otherName`\n" }), [DOC]);
+    expect(r.checked).toBe(2);
+    expect(r.findings).toHaveLength(2);
+  });
+
+  it("2 述語は checked を二重計上しない（先頭文字で相互排他ゆえ `??` で順に試せる）", () => {
+    const r = scanStaleIdentifiers(snap({ ...base, [DOC]: "`someName` と `SOME_NAME`\n" }), [DOC]);
     expect(r.checked).toBe(2);
     expect(r.findings).toHaveLength(2);
   });
@@ -931,24 +956,86 @@ describe("G-stale-identifiers checkStaleIdentifiers（規範の散文に残る�
     expect(staleIdentifierDocs(s).sort()).toEqual([".claude/agents/c.md", ".claude/rules/b.md", ".claude/skills/a/SKILL.md"]);
   });
 
-  it("語彙は production のソースだけから作られる（SPEC.md も docs もテストも正本ではない）", () => {
+  it("語彙は production のソースだけから作られる（SPEC.md も docs もテストも .json も正本ではない）", () => {
     const v = currentVocabulary(
-      snap({ "SPEC.md": "specWord", "src-tauri/src/a.rs": "let codeWord = 1;", "docs/x.md": "docWord", "scripts/a.test.mjs": "testWord" }),
+      snap({
+        "SPEC.md": "specWord",
+        "src-tauri/src/a.rs": "let codeWord = 1;",
+        "docs/x.md": "docWord",
+        "scripts/a.test.mjs": "testWord",
+        "package-lock.json": "lockWord",
+      }),
     );
     expect(v).toContain("codeWord");
     expect(v).not.toContain("specWord"); // SPEC.md は語彙源ではなく検査対象である
     expect(v).not.toContain("docWord"); // 一般の docs は語彙の正本ではない
     expect(v).not.toContain("testWord"); // テストコードは「現に動いている実装」ではない
+    expect(v).not.toContain("lockWord"); // .json は生成物・依存メタデータを招くので語彙源にしない
   });
 
-  it("検査対象は規範の散文 + SPEC.md、母集団の欠落を判ずるのは規範の散文だけ", () => {
-    const withProse = snap({ ".claude/rules/b.md": "", "SPEC.md": "" });
-    expect(staleIdentifierTargets(withProse).sort()).toEqual([".claude/rules/b.md", "SPEC.md"]);
+  it("`.yml` は語彙を寄付する（CI が実際に実行する実装ゆえ）が、そのコメントは寄付しない", () => {
+    const y = { ".github/workflows/ci.yml": "        run: echo x >> $GITHUB_OUTPUT\n" };
+    expect(run("`GITHUB_OUTPUT` へ書く\n", y)).toEqual([]);
+    expect(run("`GITHUB_OUTPUT` へ書く\n", { ".github/workflows/ci.yml": "# GITHUB_OUTPUT のこと\n" })).toHaveLength(1);
+  });
+
+  it("検査対象は規範の散文 + 開発ガイド + 固定パス、母集団の欠落を判ずるのは規範の散文だけ", () => {
+    const withProse = snap({ ".claude/rules/b.md": "", "docs/x.md": "", "SPEC.md": "" });
+    expect(staleIdentifierTargets(withProse).sort()).toEqual([
+      ".claude/rules/b.md",
+      "AGENTS.md",
+      "CLAUDE.md",
+      "SPEC.md",
+      "docs/x.md",
+      "snotra-settings/SETTINGS-DESIGN.md",
+    ]);
     // .claude/** が 1 枚残らず消えても runAll の「対象 md が 0 件」が鳴り続けること。
-    // SPEC.md が長さを埋める側（staleIdentifierDocs）へ混ざるとこの検知は永久に沈黙する
-    const noProse = snap({ "SPEC.md": "" });
+    // STALE_EXTRA_DOCS や docs/** が長さを埋める側（staleIdentifierDocs）へ混ざるとこの検知は永久に沈黙する
+    const noProse = snap({ "SPEC.md": "", "docs/x.md": "" });
     expect(staleIdentifierDocs(noProse)).toEqual([]);
-    expect(staleIdentifierTargets(noProse)).toEqual(["SPEC.md"]);
+    expect(staleIdentifierGuideDocs(noProse)).toEqual(["docs/x.md"]);
+  });
+
+  it("開発ガイドの母集団は docs/** から歴史記録（adr / superpowers）だけを外す", () => {
+    const s = snap({
+      "docs/architecture.md": "",
+      "docs/design/2026-05-31-x.md": "", // 日付を持つが status: Agreed で architecture.md が現在形で指す先
+      "docs/adr/ADR-x.md": "", // 却下案＝もう存在しない案
+      "docs/superpowers/specs/y.md": "", // #589 で非規範化された当時の設計
+      "docs/z.txt": "",
+      "PERFORMANCE.md": "",
+    });
+    expect(staleIdentifierGuideDocs(s).sort()).toEqual(["docs/architecture.md", "docs/design/2026-05-31-x.md"]);
+  });
+});
+
+// 既存の `runAll（空母集団の明示 fail）` は `snap({})` に対し `findings.length > 0` しか見ないため、
+// **どのガードが鳴ったかを区別しない**——`docs/**` 専用の 0 件検知を丸ごと消しても緑で通る（実測）。
+// ここは兄弟母集団（`.claude/**` と `STALE_EXTRA_DOCS` の固定パス）を**非空に保ったまま**
+// `docs/**` だけを空にして、その 1 件が鳴ることを固定する。
+describe("G-stale-identifiers の母集団ごとの 0 件検知（兄弟が非空でも鳴る）", () => {
+  const siblings = {
+    ".claude/rules/b.md": "",
+    "SPEC.md": "",
+    "CLAUDE.md": "",
+    "AGENTS.md": "",
+    "snotra-settings/SETTINGS-DESIGN.md": "",
+    "src-tauri/src/a.rs": "let x = 1;\n",
+  };
+  const guideMisses = (contents) =>
+    runAll(snap(contents)).findings.filter((f) => f.message.includes("開発ガイド（docs/**）が 0 件"));
+
+  it("docs/** が 0 件なら鳴る——兄弟母集団が埋まっていても", () => {
+    expect(staleIdentifierDocs(snap(siblings))).not.toEqual([]); // 兄弟は非空（この検知の独立性の前提）
+    expect(guideMisses(siblings)).toHaveLength(1);
+  });
+
+  it("docs/** が在れば鳴らない", () => {
+    expect(guideMisses({ ...siblings, "docs/architecture.md": "" })).toHaveLength(0);
+  });
+
+  it("docs/adr/ と docs/superpowers/ だけでは埋まらない（歴史記録は母集団ではない）", () => {
+    expect(guideMisses({ ...siblings, "docs/adr/ADR-x.md": "", "docs/superpowers/specs/y.md": "" })).toHaveLength(1);
   });
 });
 
@@ -958,7 +1045,15 @@ describe("G-stale-identifiers checkStaleIdentifiers（規範の散文に残る�
 // この describe だけである（配線を戻すと下の赤フィクスチャが緑に落ちる）。
 describe("G-stale-identifiers の配線（buildChecks が SPEC.md を検査対象として渡す）", () => {
   const wired = (contents) => buildChecks(snap(contents), {}).find((c) => c.id === "G-stale-identifiers").run();
-  const prose = { ".claude/rules/b.md": "" }; // 母集団の欠落 finding を避けるための最小の規範文書
+  // 母集団の欠落 finding を避けるための最小の母集団（規範の散文 1 本 + 開発ガイド 1 本 +
+  // `SPEC.md` 以外の固定パス 3 本。固定パスは実在を問わず検査対象なので、欠けると鳴る）
+  const prose = {
+    ".claude/rules/b.md": "",
+    "docs/architecture.md": "",
+    "CLAUDE.md": "",
+    "AGENTS.md": "",
+    "snotra-settings/SETTINGS-DESIGN.md": "",
+  };
 
   it("SPEC.md の現行語彙に無い識別子は finding（赤）", () => {
     const f = wired({ ...prose, "SPEC.md": "- `deadCamelWord` を使う\n", "src-tauri/src/a.rs": "let x = 1;\n" });
@@ -974,6 +1069,48 @@ describe("G-stale-identifiers の配線（buildChecks が SPEC.md を検査対�
   it("判定対象外の不混入: SPEC.md のフェンス内・外部コマンド行・単語 1 つ", () => {
     const spec = "```\n`fencedCamelWord`\n```\n- `gh pr view` で `argCamelWord` を見る\n- `expand` する\n";
     expect(wired({ ...prose, "SPEC.md": spec, "src-tauri/src/a.rs": "let x = 1;\n" })).toEqual([]);
+  });
+});
+
+// 母集団を広げた側も同じ穴を持つ——配線を戻しても実リポジトリの finding は動かないため、
+// dogfood テストも証跡の印字も気づけない。**射程拡大の主張を守るのはこの describe だけである。**
+describe("G-stale-identifiers の配線（buildChecks が開発ガイドと固定パス文書を検査対象として渡す）", () => {
+  const wired = (contents) => buildChecks(snap(contents), {}).find((c) => c.id === "G-stale-identifiers").run();
+  // STALE_EXTRA_DOCS の 4 本と docs/** を最小で埋める（欠けると「母集団の欠落」が混じる）
+  const base = {
+    ".claude/rules/b.md": "",
+    "docs/architecture.md": "",
+    "SPEC.md": "",
+    "CLAUDE.md": "",
+    "AGENTS.md": "",
+    "snotra-settings/SETTINGS-DESIGN.md": "",
+    "src-tauri/src/a.rs": "let x = 1;\n",
+  };
+  const rot = "- `deadCamelWord` を使う\n";
+
+  it("開発ガイド（docs/**）の腐りは finding（赤）", () => {
+    const f = wired({ ...base, "docs/hooks.md": rot });
+    expect(f).toHaveLength(1);
+    expect(f[0].file).toBe("docs/hooks.md");
+  });
+
+  it("固定パス文書 3 本も検査対象（赤）", () => {
+    for (const doc of ["CLAUDE.md", "AGENTS.md", "snotra-settings/SETTINGS-DESIGN.md"]) {
+      const f = wired({ ...base, [doc]: rot });
+      expect(f, doc).toHaveLength(1);
+      expect(f[0].file, doc).toBe(doc);
+    }
+  });
+
+  it("判定対象外の不混入: 歴史記録（docs/adr/・docs/superpowers/）は検査されない", () => {
+    expect(wired({ ...base, "docs/adr/ADR-x.md": rot })).toEqual([]);
+    expect(wired({ ...base, "docs/superpowers/specs/y.md": rot })).toEqual([]);
+  });
+
+  it("SCREAMING_SNAKE の腐りも配線を通って届く（#825 が消した実在の語）", () => {
+    const f = wired({ ...base, "docs/hooks.md": "- `G12_NO_LAUNCHER_READ` へ載せる\n" });
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("G12_NO_LAUNCHER_READ");
   });
 });
 

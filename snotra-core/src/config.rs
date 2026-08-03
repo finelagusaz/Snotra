@@ -612,7 +612,7 @@ impl Config {
     /// 表示ワーキングセット = アイコンを要求しうる結果リストの最大長
     /// `max(visible_rows, result_limit, recent_limit)`
     /// （検索・フォルダ = `result_limit`、空クエリ recent = `recent_limit`、
-    /// 可視行 = `visible_rows`。フロント `LruIconCache` サイズも `result_limit` に一致）の
+    /// 可視行 = `visible_rows`）の
     /// `ICON_CACHE_RETENTION_FACTOR` 倍。
     ///
     /// 独立した設定キーを持たず派生値とすることで「上限 ≥ ワーキングセット」が**構造的に成立**し

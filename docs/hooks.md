@@ -64,7 +64,7 @@ TS 型検査は #532 SU7 のフロント撤去で消滅した（`.ts` 編集は�
 
 ## PostToolUse（post-edit.mjs）の機構と保守
 
-- **worktree でも「そのファイルが属するツリー」を検査する**。root は `file_path`（絶対パス）から最近接の `.git` を遡って導出するため、`CLAUDE_PROJECT_DIR` の意味論に依存しない。ただしスクリプト自身の所在は `settings.json` の `${CLAUDE_PROJECT_DIR:-.}` で解決し、相対 `file_path` を受け取った場合は cwd 基準で `resolve` する。
+- **worktree でも「そのファイルが属するツリー」を検査する**。root は `file_path`（絶対パス）から最近接の `.git` を遡って導出するため、`${CLAUDE_PROJECT_DIR}` の意味論に依存しない。ただしスクリプト自身の所在は `settings.json` の `${CLAUDE_PROJECT_DIR:-.}` で解決し、相対 `file_path` を受け取った場合は cwd 基準で `resolve` する。
 - **自己防護** — `.claude/settings.json` の編集は file watcher が即座に拾う（セッション再起動は不要・実測）。壊れたスクリプトを配線するとその瞬間から全検査が沈黙する。そのため `.claude/settings.json` と `.claude/hooks/**`、および検査の定義を変えるファイル（`package.json` / `vitest.config.ts` / ルートの `Cargo.toml`）の編集は `hook-selftest`（settings.json の JSON 検証 + `vitest run .claude/hooks`）を自動発火する。`.githooks/**`（main 保護の Layer 1）は同じ理由で `githooks-selftest` を発火する。
 - **`selectChecks` に発火を足すときは、カナリアも対で足す**（#497）。カナリアの無いファイルに検査を実行しても vitest の起動しか証明しない（何も検証しない緑）。**守るのは沈黙する経路だけでよい** — 放っておいても実行時に明示的に失敗するものに見張りは不要（#500）。
 - **`config.toml` の WARN 真陽性は事実上 `tauri.conf.json` のみ**（`config.toml` はランタイムのユーザー領域ファイルでリポジトリに実在しない）。その `src-tauri/tauri.conf.json` では WARN（人間向け・Windows 互換の注意喚起）のみが出る（旧 `csp-test` は #532 SU7 のフロント撤去で CSP ごと消滅）。

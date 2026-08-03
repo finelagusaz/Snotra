@@ -109,7 +109,86 @@ camelCase 限定でも `closingIssuesReferences`（GitHub API のフィールド
 - 「単語 1 つの識別子」「frontmatter・素の表テキスト・日本語散文」は上の受容する残余のまま
 - **上の帰結が「`resetForShow` / `folderState` / `toolSelectionState` は state-check のスキル文書に残る」と書いた状態は、既に解消している**（当該スキルは `consume_reset_pending` という as-built の形に直っている）。歴史としてそのまま残す
 
+## その後（#891・射程を `docs/**` と SCREAMING_SNAKE へ広げた）
+
+上の射程では **#819 の腐り（`G12_NO_LAUNCHER_READ`）が捕まらなかった**——`docs/` に在る SCREAMING_SNAKE ゆえ、母集団と述語の両方が届いていない。腐りが `/plan-review` の独立導出の副産物としてしか見つかっていない状態は、`docs/development-principles.md`「構造的設計原則と強制の階梯」の言う「書き手の記憶」段である。
+
+**#825 の腐りはこの拡大では捕まらない。** 腐らせたのは識別子ではなく**命題**（「その一致に検査は無い」）であり、この検出器はどれだけ射程を広げても命題の真偽を見ない（`docs/adr/ADR-canonical-source-without-pointer-indirection.md`）。**射程が閉じたのは #819 のクラスだけである。**
+
+### 測定（proxy snapshot・稼働中のガードは不変）
+
+`.claude/rules/safety-nets.md`「フォールトインジェクションでは、稼働中のガードを弱めない——複製に変異を当てる」に従い、述語・母集団・語彙源を複製して変異させた。母集団は**関数の戻り値を印字して**組み立てた（`AGENTS.md`「検証の作法（全タスク共通）」の「列挙も SSOT のツール自身に問う」）。
+
+| セル | 照合 | finding | 真の腐り | 外部語彙 |
+|---|---|---|---|---|
+| ベースライン（拡大前） | 1 | 0 | 0 | 0 |
+| `docs/**`（歴史記録を除く）+ SCREAMING_SNAKE + 固定パス 3 本 | 77 | 11 | 7 | 4 |
+| **採用（上 + 語彙源に `.yml`）** | **77** | **9** | **7** | **2** |
+
+**「偽陽性 0」ではない。** 外部語彙 2 件は `backgroundThrottlingPolicy`（`tauri.conf.json` の、**在ってはならない**キー）と `CLAUDE_PROJECT_DIR`（harness の環境変数）で、どちらも「現行語彙に無いのは腐ったからではなく、そもそもこのリポジトリの実装ではないから」である——検出器が要求する向きが逆になっている。**どちらも語彙源を広げて免罪するのではなく、文書側の記述の正確化で外した**（`${CLAUDE_PROJECT_DIR}` は同じ行の `.claude/settings.json` の実際の記法と一致し、backgroundThrottlingPolicy はバッククォートを外して素のテキストにした）。
+
+**是正後の照合は 68 件へ減った。** 差し替え先（`ViewKind` / `QueryIntent` / `is_instant_prefix()`）が PascalCase・snake_case ゆえ**述語の外へ出た**ためで、腐りが消えたぶん検出器の視界も狭まっている。下の「残る残余」の 1 行目がそのまま効いている。
+
+### `docs/adr/` を母集団から外した——`governanceDocs` との非対称は正しい
+
+ADR は**否定の知識＝もう存在しない案**を書く場所である。`docs/adr/` を入れると finding の 8 割が ADR 自身の却下記録で占められ、**この検出器の ADR がこの検出器を赤にする**（実測）。
+
+**`governanceDocs`（G-references の母集団）は `docs/adr/` を含む。** この非対称は統一すべき不整合ではなく、**ADR が指すパスは今日も在るべきだが、ADR が語る識別子は消えていてよい**という正しい区別である。書いておかないと次の人が統一しにいく。
+
+**基準は「日付を持つか」ではなく「もう成り立たないことを書く場所か」である。** `docs/design/` は日付スラグを持つが `status: Agreed` で `docs/architecture.md` が現在形で「詳細は」と指す先ゆえ**含めた**——外すと G-references が守るポインタの**指し先だけが黙って腐る**。
+
+### 却下 6: モジュール `CLAUDE.md` を母集団へ入れる
+
+**理由は「外部語彙が出ないから」ではない**——`docs/**` にも実測で 2 件出ている。本当の理由は**密度**である。モジュール `CLAUDE.md` はラップ対象の外部 API（Win32 / tao / TTC）を語る場所ゆえ、実測で真の腐り 1 : 外部語彙 3。外部語彙の 3 件（`WM_SETCURSOR` / `numFonts` / `MARKER_DONT_FOCUS`）は**語彙源をどう広げても免罪できない**——OS とライブラリの中に在って、このリポジトリのどのファイルにも無い。
+
+**却下したが、そのとき測って見つかった唯一の真の腐り（`snotra-core/CLAUDE.md` の `iconCacheSize` — 撤去済みフロントの語を `Config::icon_cache_cap()` と現在形で並記していた）は手で直した。** 母集団を狭める判断が、既知の欠陥を未修正のまま隠す形にしないためである。**ただしその 1 行は検査で守られない**（下の「残る残余」）。
+
+同じ理由で `.github/**.md`（実測 9 件すべて偽陽性。secret / variable は GitHub 側に在ってリポジトリに実体が無い）・`PERFORMANCE.md`（8 件すべて「この節の具体例は WebView2 期のものである」という既存の免責注記の中の語＝`docs/adr/` と同じ歴史クラス）・`src-tauri/capabilities/README.md`（Tauri のビルド時定数）も入れない。`snotra-settings/SETTINGS-DESIGN.md` は照合 31 件 / finding 0 件で**コスト 0** ゆえ入れた。
+
+### 却下 7: `.json` を語彙源へ入れる
+
+外部語彙 2 件のうち `CLAUDE_PROJECT_DIR` は `.claude/settings.json` に在るので、`.json` を語彙源へ入れれば免罪できる。**測定上は等価だが、3 つの契約を同時に破る**:
+
+1. **「語彙を寄付してよいのは『現に動いている実装』だけである」** — `src-tauri/gen/schemas/*.json`（306 KB）は生成物、`package-lock.json`（49 KB）は依存メタデータで、寄付する新規語彙の大半は `npm install` のたびに入れ替わる integrity ハッシュの base64 断片である（実測 142 個）
+2. **「テストコードは語彙を寄付しない」** — vitest が書く test-results/.last-run.json が `failedTests` を寄付する
+3. **「判定は決定的」**（ファイル冒頭） — その test-results/.last-run.json と .claude/settings.local.json は gitignore 済みで **CI のチェックアウトに存在せず、手元と CI で語彙が割れる**（`.superpowers/` を走査から外した理由と同型・#722）
+
+**この 2 つのパスをバッククォートで書けないこと自体が、3 つ目の論証の実演である。** 初稿は正準形で書き、**手元の `governance:check` は緑・CI の同じジョブは G-references の赤**という結果になった（この PR で実測）——手元にはファイルが在り、チェックアウトには無いからである。**「CI が在って初めて行える実測」を PR 本文のチェックリストへ送る規約（`.claude/rules/safety-nets.md`「検出器のカバー範囲は、欠落のパターンごとに検算する」）が、まさにこれを捕まえた。** 存在してはならないパスは、存在を照合される形で書けない。
+
+**`.yml` を足した側にも同じ検算が要る。** `makeSnapshot` は git ではなく**ファイルシステム**を歩くので、走査除外の外に未追跡の `.yml` が在れば手元だけが語彙を得る。実測: `git ls-files --others --exclude-standard` に `.(yml|rs|ts|tsx|mjs|ps1|toml)$` を当てて **0 件**（`git ls-files "*.yml"` は追跡分しか見ないので、この検算の代わりにはならない）。既存の拡張子も同じ経路に晒されていたが、この変更で新しく増えたのは `yml` だけである。
+
+**3 つ目の論証は語彙源にしか当たらない——母集団側へ持ち出してはならない。** 向きが逆だからである: 未追跡ファイルが**検査対象**に入れば手元で赤・CI で緑（うるさいが沈黙しない）、**語彙源**に入れば手元で緑・CI で赤（免罪が消えて偽陽性になる）。`docs/**` はグロブ由来の**検査対象**なので、この理由で狭める必要はない。
+
+**「手書きの `.json` 3 本だけ」に絞る案も採らない。** 測定上は等価だが、それは**リスト**であり、却下 2 と冒頭契約に正面から当たる。`.test.<ext>` が許されているのは**ファイル名の形**だからで、リストではない。
+
+`/plan-review` の独立導出は「`.json` を足し、lock / 生成物 / CI 不在ファイルを除く」という別解へ達した。finding は 1 件減るが、**その除外が除外リストそのものである。**
+
+代わりに `.yml` だけを足した。`.github/workflows/*.yml` は**追跡され・人が書き・CI が実際に実行する**——「現に動いている実装」の定義にそのまま当たる。`.yaml` はリポジトリに 1 本も無い（実測）ので、`yml` だけで漏れない。**述語は拡張子なので `dependabot.yml` と `labels.yml` も語彙源に入る**が、どちらも GitHub / label-sync が実際に実行するデータであり同じ枠に収まる（実測でも workflows の寄付する語の部分集合で、**追加のトークンは 0 件**）。
+
+### フォールトインジェクション（実測）
+
+`.claude/rules/safety-nets.md` に従い、**述語・母集団・fail-closed を切り分けて**測った。種は架空の識別子ではなく**実在の欠陥**（#825 の PR が消した `G12_NO_LAUNCHER_READ`、緑の対は `NO_LAUNCHER_READ`）を使った。
+
+- **述語**: 既存母集団（`.claude/rules/`）へ種を蒔いて赤、緑の対で緑。逆向き（語彙に在る SCREAMING_SNAKE が鳴らないこと）も測った。JS の `\b` は `_` を単語構成文字として扱うので、`NO_LAUNCHER_READ` は語彙にヒットし `G12_NO_LAUNCHER_READ` はヒットしない——**部分一致で誤って免罪される経路は無い**
+- **母集団**: 同じ種を `docs/**` と固定パス 3 本へ移して赤、`docs/adr/` と `docs/superpowers/` へ移して緑
+- **fail-closed**: **素朴な実装は `docs/**` が丸ごと消えても緑で沈黙する**（実測）。既存の 3 つの 0 件検知はどれも他の母集団で埋まったまま非空なので代替にならない。**守られていたのは照合 1 件を寄付する母集団で、守られていなかったのが 35 件を寄付する母集団だった**。`runAll` へ `docs/**` 専用の 1 行を足した——ただし**固定パスの 3 本には要らない**（静的リテラルゆえ、読めなければ `scanStaleIdentifiers` が「母集団の欠落」を出す＝ fail-closed を無償で持つ）
+- **既存の 0 件検知テストは代替にならなかった**: `runAll（空母集団の明示 fail）` は `snap({})` に対し `findings.length > 0` しか見ず、**どのガードが鳴ったかを区別しない**。新ガードを丸ごと消しても緑で通る。兄弟母集団を**非空に保ったまま** `docs/**` だけを空にするテストを別に置き、ガードを足す前に落ちることを確認してから足した
+
+### 却下 8: 述語を「マッチ結果の捕獲群を読む」形のまま 2 本へ増やす
+
+素直な実装は `raw.match(A) ?? raw.match(B)` として結果の `[1]` を読む形である。これは動くが、**「2 述語を `|` で 1 本へ畳んではならない」という文書契約を新しく背負う**——畳むと捕獲群が 1 つずれて `inVocab(undefined)` になり、しかも**実語彙は `undefined` を含む**ので、赤が出ないまま沈黙する（複製への変異で実測。畳んだ変異体は赤テストを通し、緑テストだけが落ちた——**捕まえていたのは赤ではなく緑であり、しかもフィクスチャの語彙にたまたま `undefined` が無いことに依存していた**）。
+
+採ったのは `test()` で当てて `()` は自分で落とす形である。捕獲群を読まないので**畳もうが分けようが結果が変わらず、契約そのものが要らなくなる**（`docs/development-principles.md`「構造的設計原則と強制の階梯」——規範で守るより表現不能にする側を採る）。2 述語が先頭文字で相互排他であることは、照合件数が 1 しか進まないことの根拠として残る。
+
+### 残る残余（更新）
+
+- **述語は camelCase と SCREAMING_SNAKE を見る。** snake_case・PascalCase・ドット区切り・式で書かれた腐りは今も対象外である。**この拡大で直した 5 個のうち 4 個の差し替え先がまさにそこへ落ちた**（`ViewKind` / `QueryIntent` / `is_instant_prefix()`）——文書は正しくなったが、**同じ場所が再び腐っても鳴らない**
+- **`snotra-core/CLAUDE.md` の `Config::icon_cache_cap()` の行は検査で守られない**（モジュール `CLAUDE.md` は母集団外）。再発しても鳴らない
+- **`.yml` は GitHub 提供の語彙を寄付する**（`GITHUB_ENV` / `GITHUB_OUTPUT` / `GITHUB_TOKEN` / `TAG_NAME` / `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）。さらに `'` で分断された**日付書式の断片**（`ddTHH` / `ssZ` / `yyyyMMddHHmm`）も語彙に化ける——同名の識別子が散文に書かれれば誤って免罪する（今日 0 件）
+- **`docs/design/` を含めた判断は、そこが「もう成り立たないことを書く場所」にならない限りで正しい。** 日付スラグを歴史記録の印と読み替えると、次の人が外しにいく
+- Rust のテストコードが語彙を寄付しうる穴・「単語 1 つの識別子」・frontmatter / 素の表テキスト / 日本語散文は、上の残余のまま
+
 ---
 
 status: Accepted
-関連: `docs/adr/ADR-race-check-population-tooling.md` ・#736 ・#698 ・#735 ・#593
+関連: `docs/adr/ADR-race-check-population-tooling.md` ・`docs/adr/ADR-canonical-source-without-pointer-indirection.md` ・#736 ・#698 ・#735 ・#819 ・#891 ・#593

@@ -1374,12 +1374,28 @@ export function checkConfigFieldReachability(snapshot, table = NO_LAUNCHER_READ,
 // **識別子として書かれた腐りは機械で拾える**。G-references が見るのはパスの実在までで、
 // 識別子の実在は誰も見ていなかった。
 //
-// **自称スコープは狭い。** 見るのは `.claude/**` の散文と `SPEC.md` の中の
-// **バッククォート内 camelCase 識別子**だけである。frontmatter の文字列・素の表テキスト・
+// **自称スコープ**（#891 で広げた。射程の内訳は `ADR-stale-identifier-detector-scope` の追記節）。
+// 見るのは次の 3 群の中の**バッククォート内 camelCase / SCREAMING_SNAKE 識別子**だけである:
+// - `.claude/**` の規範の散文（`staleIdentifierDocs`）
+// - **開発ガイド `docs/**`**（`staleIdentifierGuideDocs`。設計原則・ビルド手順・フック契約・
+//   アーキ説明という性質の違うものが混在する）から**歴史記録 2 種を除いたもの**
+// - 固定パスの `STALE_EXTRA_DOCS`（意図の SSOT・常時ロードの規範・設定 UI のデザイン規約）
+//
+// **母集団から外す基準は「日付を持つか」ではなく「もう成り立たないことを書く場所か」である。**
+// `docs/adr/` は却下案（＝もう存在しない案）、`docs/superpowers/` は #589 で非規範化された当時の設計。
+// 一方 `docs/design/` は日付スラグを持つが `status: Agreed` で `docs/architecture.md` が現在形で
+// 指す先ゆえ**含める**——外すと G-references が守るポインタの**指し先だけが黙って腐る**。
+// **`governanceDocs`（G-references の母集団）は `docs/adr/` を含む**。この非対称は正しい——
+// **ADR が指すパスは今日も在るべきだが、ADR が語る識別子は消えていてよい**。実測でも
+// `docs/adr/` を入れると finding の 8 割が ADR 自身の却下記録で、**この検出器の ADR がこの検出器を赤にする**。
+// **モジュール `CLAUDE.md` は入れない**——ラップ対象の外部 API（Win32 / tao / TTC）を語る場所ゆえ
+// 外部語彙の**密度**が高い（実測 真の腐り 1 : 外部語彙 3。`WM_SETCURSOR` 等は語彙源をどう広げても免罪できない）。
+//
+// **述語の外に在るもの**は依然として多い。frontmatter の文字列・素の表テキスト・
 // 日本語散文（「リアクティブ制約」等）は構造的に対象外で、#736 が挙げた 10 件のうちこの述語が
 // 届くのは 0 件である（実測）。snake_case・PascalCase・ドット区切り・式で書かれた腐りも
-// `STALE_IDENT` の外にある。**「文書の腐りが機構で捕まる」とは言えない**——言えるのは
-// **「camelCase で書かれた再発は捕まる」**までである。
+// 両述語の外にある。**「文書の腐りが機構で捕まる」とは言えない**——言えるのは
+// **「camelCase と SCREAMING_SNAKE で書かれた再発は捕まる」**までである。
 // **この検査は #736 の代替ではない**——同 issue は手作業で閉じ、G-stale-identifiers が引き受けるのは再発防止だけである。
 //
 // 判定: 識別子が「現行語彙」に 1 度も現れないなら finding。**現行語彙の正本は
@@ -1404,27 +1420,47 @@ export function checkConfigFieldReachability(snapshot, table = NO_LAUNCHER_READ,
 //
 // **受容する残余**:
 // - 単語 1 つの識別子（`Glob` `expand` `plain`）は対象外である。こぶを 1 つ以上要求しないと、
-//   harness のツール名と散文の語彙が大量に混じる（実測 53 件中 40 件弱）
+//   harness のツール名と散文の語彙が大量に混じる（実測 53 件中 40 件弱）。SCREAMING_SNAKE 側が
+//   `_` を 1 つ以上要求するのも同じ構造である（`CI` `TODO` `README` は対象外）
+// - **`.yml` は GitHub 提供の語彙を寄付する**（`GITHUB_ENV` / `GITHUB_OUTPUT` / `GITHUB_TOKEN` /
+//   `TAG_NAME` / `TAURI_SIGNING_PRIVATE_KEY`）ほか、`'` で分断された日付書式の断片
+//   （`ddTHH` `ssZ` `yyyyMMddHHmm`）も語彙に化ける。同名の識別子が散文に書かれれば誤って免罪する（今日 0 件）
 // - **Rust のテストコードは今も語彙を寄付しうる。** `VOCAB_TEST_FILE` が当たるのはファイル名の
 //   `.test.<ext>` という形だけで、Rust 側の 3 つの形——`#[cfg(test)] mod` の中身・
 //   `<crate>/tests/*.rs` の統合テスト・`src/**/tests/*.rs` へ分けたテストファイル——はどれも外れる。
 //   `productionOnly` を通しても落ちるのは 1 つ目だけである。現時点でこの穴に落ちた finding は
 //   1 件も無く（測定の全セルで 0 件）、測って動かなかったものを入れないだけの理由で開けてある
 // - **`.json` は語彙源ではない**（`VOCAB_SOURCE_EXT`）。設定キーが JSON にしか無い語は偽陽性になりうる
+//   ——`docs/hooks.md` の `${CLAUDE_PROJECT_DIR}` はこの残余を避けて**文書側の記述を正確化**して外した。
+//   `.json` を入れれば免罪できるが、生成物（`src-tauri/gen/schemas/`）・依存メタデータ
+//   （`package-lock.json` の integrity 断片）・gitignore 済みで CI に存在しないファイルを同時に招き、
+//   **除外リスト無しには分離できない**（ファイル冒頭の「免除注記の機構を設けない」契約に当たる）
 // - **テストコードにしか無い識別子も偽陽性になりうる**——上の「テストコードを外す」の裏返しで、
 //   語彙源を狭めた側が新しく作った残余である（今日 0 件）
 // ---------------------------------------------------------------------------
 
-/** 現行語彙の正本になるソース拡張子 */
-const VOCAB_SOURCE_EXT = /\.(rs|ts|tsx|mjs|ps1|toml)$/;
+/** 現行語彙の正本になるソース拡張子。`.yml` が入るのは `.github/workflows/**` が
+ *  **追跡され・人が書き・CI が実際に実行する**＝「現に動いている実装」だからである
+ *  （`.yaml` はリポジトリに 1 本も無い）。**`.json` は入れない**——生成物・依存メタデータ・
+ *  gitignore 済みファイルを同時に招き入れ、除外リスト無しには分離できない
+ *  （`ADR-stale-identifier-detector-scope` の追記節） */
+const VOCAB_SOURCE_EXT = /\.(rs|ts|tsx|mjs|ps1|toml|yml)$/;
 /** 語彙源から外すテストコード。見るのは `.test.<ext>` という**ファイル名の形**だけで、
  *  拡張子は `VOCAB_SOURCE_EXT` の **JS/TS 系だけ**を採る（`rs|ps1|toml` は含まない——
  *  Rust 側の穴は上の「受容する残余」） */
 const VOCAB_TEST_FILE = /\.test\.(mjs|ts|tsx)$/;
-/** 語彙源ではなく検査対象になる、`.claude/**` の外の文書（意図の SSOT） */
-export const STALE_EXTRA_DOCS = ["SPEC.md"];
+/** 語彙源ではなく検査対象になる、`.claude/**` の外の**固定パス**文書
+ *  （意図の SSOT・常時ロードの規範・設定 UI のデザイン規約）。
+ *  **静的リテラルであること自体が fail-closed である**——読めなければ `scanStaleIdentifiers` が
+ *  「母集団の欠落」を出すので、グロブ由来の母集団（`staleIdentifierGuideDocs`）と違って
+ *  `runAll` 側の 0 件検知を別に置く必要がない */
+export const STALE_EXTRA_DOCS = ["SPEC.md", "CLAUDE.md", "AGENTS.md", "snotra-settings/SETTINGS-DESIGN.md"];
 /** バッククォート内で腐りを問う形: camelCase（こぶ 1 つ以上）・末尾 `()` は任意 */
 const STALE_IDENT = /^([a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+)(\(\))?$/;
+/** 同じく SCREAMING_SNAKE（`_` 1 つ以上）。camelCase 側が「こぶを 1 つ以上要求する」のと同じ構造で、
+ *  単語 1 つの識別子を受容する残余から外さない。**2 述語は先頭文字で相互排他**ゆえ、
+ *  どちらが当たっても `scanStaleIdentifiers` の照合件数は 1 しか進まない */
+const STALE_SNAKE_IDENT = /^([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)(\(\))?$/;
 /** 同じ行に在れば、その行の識別子は外部ツールの引数と見なす */
 const EXTERNAL_CMD_LINE = /`(gh|npm|cargo|git|node|pwsh|npx) /;
 
@@ -1436,10 +1472,23 @@ export function staleIdentifierDocs(snapshot) {
   return snapshot.files.filter((f) => /^\.claude\/(skills\/.*|rules\/[^/]+|agents\/[^/]+)\.md$/.test(f));
 }
 
-/** G-stale-identifiers の検査対象。規範の散文 + `SPEC.md`。
- *  `SPEC.md` は実在を問わず加える——読めなければ `scanStaleIdentifiers` が母集団の欠落として鳴る */
+/** G-stale-identifiers の母集団のうち、**グロブ由来**の開発ガイド（`docs/**`）。
+ *  除くのは `docs/superpowers/`（#589 で非規範化された当時の設計）と `docs/adr/`（却下案＝
+ *  **もう存在しない案**を書く場所）。**基準は「日付を持つか」ではなく「もう成り立たないことを書く場所か」である**
+ *  ——`docs/design/` は `status: Agreed` で `docs/architecture.md` が現在形で指す先ゆえ含める。
+ *  **`governanceDocs`（G-references の母集団）は `docs/adr/` を含む**——非対称は意図的で、
+ *  ADR が指すパスは今日も在るべきだが ADR が語る識別子は消えていてよい（節コメント参照）。
+ *  **静的リテラルと違い空になっても自分では鳴れない**ので `runAll` が 0 件検知を持つ */
+export function staleIdentifierGuideDocs(snapshot) {
+  return snapshot.files.filter(
+    (f) => f.startsWith("docs/") && f.endsWith(".md") && !f.startsWith("docs/superpowers/") && !f.startsWith("docs/adr/"),
+  );
+}
+
+/** G-stale-identifiers の検査対象。規範の散文 + 開発ガイド + 固定パスの文書。
+ *  `STALE_EXTRA_DOCS` は実在を問わず加える——読めなければ `scanStaleIdentifiers` が母集団の欠落として鳴る */
 export function staleIdentifierTargets(snapshot) {
-  return [...staleIdentifierDocs(snapshot), ...STALE_EXTRA_DOCS];
+  return [...staleIdentifierDocs(snapshot), ...staleIdentifierGuideDocs(snapshot), ...STALE_EXTRA_DOCS];
 }
 
 /** 現行語彙。production のソースだけを集め、コメントを落とす
@@ -1450,7 +1499,7 @@ export function currentVocabulary(snapshot) {
     if (!VOCAB_SOURCE_EXT.test(f) || VOCAB_TEST_FILE.test(f)) continue;
     const src = snapshot.read(f);
     if (src == null) continue;
-    parts.push(/\.(ps1|toml)$/.test(f) ? src.replace(/#.*$/gm, " ") : stripRustComments(src));
+    parts.push(/\.(ps1|toml|yml)$/.test(f) ? src.replace(/#.*$/gm, " ") : stripRustComments(src));
   }
   return parts.join("\n");
 }
@@ -1476,10 +1525,13 @@ export function scanStaleIdentifiers(snapshot, docs) {
       for (const m of line.matchAll(/`([^`\n]+)`/g)) {
         const raw = m[1];
         if (raw.includes("/") || raw.includes(" ") || raw.includes(".")) continue;
-        const im = raw.match(STALE_IDENT);
-        if (!im) continue;
+        // **捕獲群を読まない**——`test` で当てて `()` は自分で落とす。マッチ結果の `[1]` を読む形だと、
+        // 2 述語を `|` で 1 本へ畳んだ瞬間に群がずれて `inVocab(undefined)` になり、しかも実語彙は
+        // `undefined` を含むので**赤が出ないまま沈黙する**（複製への変異で実測）。読まなければ
+        // 畳もうが分けようが結果が変わらず、「畳むな」という文書契約自体が要らなくなる
+        if (!STALE_IDENT.test(raw) && !STALE_SNAKE_IDENT.test(raw)) continue;
         checked += 1;
-        if (!inVocab(im[1])) {
+        if (!inVocab(raw.replace(/\(\)$/, ""))) {
           findings.push(
             finding(doc, lineNo, `散文に、現行語彙に無い識別子が残っている: \`${raw}\`（production のソースの非コメント本文に無い）`),
           );
@@ -1682,10 +1734,12 @@ export function buildChecks(snapshot, sink = {}) {
   const docs = governanceDocs(snapshot);
   const refDocs = headingRefDocs(snapshot);
   const staleDocs = staleIdentifierDocs(snapshot);
+  const staleGuides = staleIdentifierGuideDocs(snapshot);
   const staleTargets = staleIdentifierTargets(snapshot);
   sink.docs = docs;
   sink.refDocs = refDocs;
   sink.staleDocs = staleDocs;
+  sink.staleGuides = staleGuides;
   sink.staleTargets = staleTargets;
   const record = (key, r) => {
     sink[key] = r.checked;
@@ -1721,8 +1775,11 @@ export function runAll(snapshot) {
   if (ctx.docs.length === 0) findings.push(finding(".", 1, "ガバナンス文書が 0 件（母集団の欠落）"));
   if (ctx.refDocs.length === 0) findings.push(finding(".", 1, "G-heading-refs の対象 md が 0 件（母集団の欠落）"));
   // `staleTargets` ではなく `staleDocs` を見る——`STALE_EXTRA_DOCS` が常に長さを埋めるため、
-  // targets 側で判定すると `.claude/**` が 1 枚残らず消えてもこの検知が沈黙する
+  // targets 側で判定すると `.claude/**` が 1 枚残らず消えてもこの検知が沈黙する。
+  // **グロブ由来の母集団ごとに 1 本ずつ要る**——束ねると片方が埋めた長さで他方の消滅が隠れる。
+  // 固定パスの `STALE_EXTRA_DOCS` はここに要らない（読めなければ scanStaleIdentifiers が鳴る）
   if (ctx.staleDocs.length === 0) findings.push(finding(".", 1, "G-stale-identifiers の対象 md が 0 件（母集団の欠落）"));
+  if (ctx.staleGuides.length === 0) findings.push(finding(".", 1, "G-stale-identifiers の開発ガイド（docs/**）が 0 件（母集団の欠落）"));
   for (const c of checks) findings.push(...c.run());
   const area = normativeArea(snapshot);
   const rules = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length;

@@ -15,7 +15,7 @@ $ARGUMENTS が空の場合は、会話の直近の変更内容から対象を推
 
 ## 背景
 
-このリポジトリの最頻出の高リスク領域が on-disk 永続化（`index.bin` / `config.toml` / `history.bin` / `window.bin`）で、#338・#343・#394・#461 が繰り返し噛まれてきた。SSOT は `snotra-core/CLAUDE.md`「データ永続化の注意」。このスキルはそのルールを機械的に検証する（`/cache-check` が incremental 単調性を検証するのと同型）。
+このリポジトリの最頻出の高リスク領域が on-disk 永続化（`index.bin` / `config.toml` / `history.bin` / `window.bin`）で、#338・#343・#394・#461 が繰り返し噛まれてきた。SSOT は `snotra-core/CLAUDE.md`「データ永続化の注意」。このスキルはそのルールを機械的に検証する。
 
 **永続化バグの典型パターン**:
 1. **形式変更で version 未バンプ** → 旧データを新スキーマで読んで破損 or デシリアライズ失敗

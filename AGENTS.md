@@ -53,7 +53,6 @@
 |---|---|
 | 対称ペア（clicked/double-clicked・show/hide・enter/exit・生成/破棄・フラグ真偽）を変更 | `/symmetric-check` |
 | UI モード・ガード条件を追加/変更（初回フローとガードの相互作用の確認を含む——初回起動・初期化パスを意図せず阻害しないか） | `/state-check` |
-| キャッシュ再利用（incremental・メモ化）を追加/変更 | `/cache-check`（`search.rs` は編集で自動配送） |
 | 重複した読み・冗長に見える状態を束ねる/消す | 各箇所について「**後で**読まれる/立つことに依存していないか」を 1 行ずつ書き出してから着手（#671 PR A′: 到達しないはずの stale フラグが再表示を防いでいた・#673 PR B: 読みは前へ出せるが適用は動かせない箇所が 2 件） |
 | 永続形式・識別子/キー形式を変更 | `/persistence-check`。history キーは `snotra-core/CLAUDE.md`、config キーは `/plan-review` の 4点セット（新規記録・既存移行・外部参照 API を同時に揃える） |
 | 関数・型を新規定義／改名／導入 | 呼び出し元を grep（作ることと使うことは別判断）＋ `/dry-check`。改名・**旧 API の削除**は下流の **compile-fail を「移行漏れ検出器」**に（`cargo build -p <下流 crate>`）。新 API の導入と呼び出し点の移行は **1 タスクに束ねる**——`-D warnings` 下で未使用の新 API は `dead_code` で落ち、旧 API を残せば導出が 2 箇所になる |

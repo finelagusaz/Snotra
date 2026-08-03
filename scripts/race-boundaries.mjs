@@ -1,4 +1,5 @@
-// race:boundaries — /race-check「2. 渡っているものを挙げる」の母集団を決定的に取る（#805・#593）。
+// race:boundaries — `/race-check`「母集団」を決定的に取る（#805・#593。#894 の圧縮以降、
+// 種別 ①〜⑧ の定義・検出パターン・出力仕様の SSOT は本ファイルである）。
 // shebang を置かない — CI の Windows checkout（autocrlf=true）で CRLF 化された shebang 行は
 // vitest の transform を SyntaxError で落とす（PR #592 で実測。起動は常に `node scripts/...` 経由）。
 //
@@ -19,7 +20,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 
-/** 種別表。序数・名称は `.claude/skills/race-check/SKILL.md`「2. 渡っているものを挙げる」と対応する。
+/** 種別表（序数・名称・パターンの SSOT。#894 以前は SKILL.md 側に写しの表があった）。
  *  **序数 ①〜⑧ は書き換えない** — `docs/adr/ADR-race-check-predicate-and-norm-hardening.md` `docs/adr/ADR-check-skill-skeleton.md`
  *  `docs/check-skill-skeleton-design.md` から参照され、うち 2 つは status: Accepted の ADR である
  *  （`docs/adr/ADR-race-check-simplification.md` 却下 4）。 */

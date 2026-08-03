@@ -30,8 +30,6 @@ import {
   checkHeadingRefs,
   collectAnchors,
   headingRefDocs,
-  checkConfigFieldReachability,
-  NO_LAUNCHER_READ,
   checkNearHeadingRefs,
   scanNearHeadingRefs,
   checkCheckSkillEnumeration,
@@ -962,8 +960,9 @@ describe("G-stale-identifiers checkStaleIdentifiers（規範の散文に残る�
     expect(run("`interpKind` を見る\n")).toHaveLength(1);
   });
 
-  // 赤フィクスチャは実際に検出された `G12_NO_LAUNCHER_READ`（#825 の PR が消した語。
-  // SCREAMING_SNAKE 述語が捕まえる唯一の実測例で、緑の対 `NO_LAUNCHER_READ` が現行語彙に在る）。
+  // 赤フィクスチャは実際に検出された `G12_NO_LAUNCHER_READ`（#825 の PR が消した語・SCREAMING_SNAKE
+  // 述語が捕まえた実測例）。緑の対 `NO_LAUNCHER_READ` は下の SNAKE_SRC が合成語彙として供給する
+  //（実装側の同名定数は #894 で撤去済み——このフィクスチャは実リポジトリに依存しない）。
   const SNAKE_SRC = { "src-tauri/src/a.rs": "const NO_LAUNCHER_READ = 1;\n" };
 
   it("SCREAMING_SNAKE も見る（赤）", () => {
@@ -1272,103 +1271,6 @@ describe("makeSnapshot の走査除外（#722）", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
-});
-
-describe("G-config-reachability checkConfigFieldReachability", () => {
-  const config = [
-    "#[derive(Deserialize)]",
-    "pub struct VisualConfig {",
-    "    pub background_color: String,",
-    "    pub preset: ThemePreset,",
-    "}",
-  ].join("\n");
-  const base = {
-    "snotra-core/src/config.rs": config,
-    "snotra-core/src/opener.rs": "",
-    "snotra-core/src/hotkey.rs": "",
-    "src-tauri/src/view.rs": "let c = &v.background_color;",
-  };
-  const table = { "VisualConfig.preset": "設定 UI のみが読む（フィクスチャ）" };
-  const structs = ["VisualConfig"];
-  const check = (contents, t = table, extra = []) => checkConfigFieldReachability(snap(contents, extra), t, structs);
-
-  it("緑: ランチャが読まないフィールドの集合と表が一致する", () => {
-    expect(check(base)).toEqual([]);
-  });
-  it("赤（逆方向）: 読まれないフィールドが表に無い", () => {
-    expect(check(base, {}).some((x) => x.message.includes("VisualConfig.preset"))).toBe(true);
-  });
-  it("赤（順方向）: 表にあるが実際は読まれている", () => {
-    const f = check({ ...base, "src-tauri/src/view.rs": "let c = &v.background_color; let p = &v.preset;" });
-    expect(f.some((x) => x.message.includes("表の記載が古い"))).toBe(true);
-  });
-  it("赤（順方向）: 表のキーが config.rs に実在しない", () => {
-    const f = check(base, { ...table, "VisualConfig.gone": "x" });
-    expect(f.some((x) => x.message.includes("VisualConfig.gone"))).toBe(true);
-  });
-  it("判定対象外の不混入: コメント内の読みを数えない（`preset` が doc コメントへ埋もれる実測・opener.rs）", () => {
-    expect(check({ ...base, "src-tauri/src/other.rs": "/// see v.preset for details\n// let p = &v.preset;\n" })).toEqual([]);
-  });
-  it("判定対象外の不混入: `#[cfg(test)]` 内の読みを数えない（`visible_rows` が engine.rs のテスト 4 件で落ちた実測）", () => {
-    expect(check({ ...base, "src-tauri/src/other.rs": "#[cfg(test)]\nmod tests {\n let p = &v.preset;\n}\n" })).toEqual([]);
-  });
-  it("判定対象外の不混入: `#[cfg(test)]` 以降の struct は母集団に入らない", () => {
-    const withTests = `${config}\n#[cfg(test)]\nmod tests {\n#[derive(Deserialize)]\npub struct Fixture {\n    pub never_read: u8,\n}\n}\n`;
-    expect(check({ ...base, "snotra-core/src/config.rs": withTests })).toEqual([]);
-  });
-  it("判定対象外の不混入: `Deserialize` を derive しない struct は母集団に入らない（`OpenerPreset` 等）", () => {
-    const withPlain = `${config}\n\n/// 検出結果であって config のキーではない\npub struct OpenerPreset {\n    pub never_read: u8,\n}\n`;
-    expect(check({ ...base, "snotra-core/src/config.rs": withPlain })).toEqual([]);
-  });
-  it("CRLF でも derive 判定のブロック切り出しが壊れない（CI の Windows checkout・autocrlf=true で実測）", () => {
-    const crlf = (s) => s.replaceAll("\n", "\r\n");
-    // Deserialize を持たない struct が後ろに続く形。空行分割が壊れると母集団へ混じって赤になる
-    const withPlain = crlf(`${config}\n\n/// config のキーではない\npub struct OpenerPreset {\n    pub never_read: u8,\n}\n`);
-    expect(check({ ...base, "snotra-core/src/config.rs": withPlain })).toEqual([]);
-  });
-  it("赤: 期待する struct が抽出できない（抽出アンカーの部分腐敗）", () => {
-    const f = checkConfigFieldReachability(snap(base), table, ["VisualConfig", "GoneConfig"]);
-    expect(f.some((x) => x.message.includes("部分腐敗"))).toBe(true);
-  });
-  it("母集団の欠落: config.rs が読めない", () => {
-    expect(check({ "src-tauri/src/view.rs": "" }).some((x) => x.message.includes("母集団の欠落"))).toBe(true);
-  });
-  it("母集団の欠落: フィールドが 1 件も抽出できない", () => {
-    const f = check({ "snotra-core/src/config.rs": "// no struct\n", "snotra-core/src/opener.rs": "", "snotra-core/src/hotkey.rs": "", "src-tauri/src/view.rs": "" });
-    expect(f.some((x) => x.message.includes("母集団の欠落"))).toBe(true);
-  });
-  it("母集団の欠落: ランチャ側ソースが 0 件", () => {
-    const f = check({ "snotra-core/src/config.rs": config, "snotra-core/src/opener.rs": "", "snotra-core/src/hotkey.rs": "" });
-    expect(f.some((x) => x.message.includes("母集団の欠落"))).toBe(true);
-  });
-  it("分離した hotkey.rs の serde フィールドも母集団に入る", () => {
-    const hotkey = [
-      "#[derive(Deserialize)]",
-      "pub struct HotkeyConfig {",
-      "    pub modifier: String,",
-      "    pub key: String,",
-      "}",
-    ].join("\n");
-    const s = snap({
-      "snotra-core/src/config.rs": "",
-      "snotra-core/src/opener.rs": "",
-      "snotra-core/src/hotkey.rs": hotkey,
-      "src-tauri/src/view.rs": "let _ = (&c.modifier, &c.key);",
-    });
-    expect(checkConfigFieldReachability(s, {}, ["HotkeyConfig"])).toEqual([]);
-  });
-});
-
-// safety-nets.md「検査の入力集合を、具体対象で検算する」— 守りたい対象 1 件が実リポジトリの
-// 入力に現れることを固定する。フィクスチャだけでは「実リポジトリでは何も見ていない検査」が緑で通る。
-describe("G-config-reachability カナリア — 守りたい対象が実リポジトリの入力に現れる", () => {
-  it("`VisualConfig.preset` を表から外すと実リポジトリで赤になる", () => {
-    const s = makeSnapshot(fileURLToPath(new URL("..", import.meta.url)));
-    const without = { ...NO_LAUNCHER_READ };
-    delete without["VisualConfig.preset"];
-    const f = checkConfigFieldReachability(s, without);
-    expect(f.some((x) => x.message.includes("VisualConfig.preset"))).toBe(true);
   });
 });
 

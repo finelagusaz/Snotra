@@ -432,6 +432,24 @@ Describe 'Read-SnotraTraceSnapshot（捨てた行の数え方）' {
         $snapshot = Read-SnotraTraceSnapshot -Path (Join-Path $TestDrive 'missing.log')
         $snapshot.Available | Should -BeFalse
         $snapshot.Events.Count | Should -Be 0
+        # 不在は「読み取りの失敗」ではない。両者を同じ値にすると、下の検査が区別を失う。
+        $snapshot.ReadError | Should -BeNullOrEmpty
+    }
+
+    It '読み取りに失敗したら Available=false と ReadError を立て、「読めた」と言わない（#872）' {
+        # ディレクトリは Test-Path が真で Get-Content が落ちる（実測）。`-ErrorAction
+        # SilentlyContinue` のままだと Available=true・Events 0 件・Dropped 0 という
+        # **正常な空ログと区別できない値**を返し、稼働中のアプリを観測する経路で
+        # 「読めなかった」が「まだ出ていない」に化ける。
+        $dir = Join-Path $TestDrive 'unreadable-snapshot'
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+
+        $snapshot = Read-SnotraTraceSnapshot -Path $dir
+
+        $snapshot.Available | Should -BeFalse
+        $snapshot.ReadError | Should -Not -BeNullOrEmpty
+        $snapshot.Events.Count | Should -Be 0
+        $snapshot.Dropped | Should -Be 0
     }
 }
 

@@ -249,7 +249,14 @@ function Show-Trace([string[]]$patterns, [array]$sectionList) {
   # アプリが間に書き足した行で「並べた presence」と「判定した列」が食い違う。
   $snapshot = Get-TraceSnapshot
   if (-not $snapshot.Available) {
-    Write-Host "  （trace なし: -NoLaunch で起動したか、まだ 1 行も出ていません）" -ForegroundColor DarkGray
+    # **不在と読み取り失敗を同じ文言にしない**（#872）。`Available=false` へ至る経路が
+    # 2 本になったので、片方の説明だけを出すと**読めなかった実行を「まだ出ていません」と
+    # 誤って説明する**——目視の判断材料が嘘になる。
+    if ($snapshot.ReadError) {
+      Write-Host "  （trace を読めませんでした: $($snapshot.ReadError)）" -ForegroundColor Red
+    } else {
+      Write-Host "  （trace なし: -NoLaunch で起動したか、まだ 1 行も出ていません）" -ForegroundColor DarkGray
+    }
     return
   }
   if ($patterns.Count -eq 0) {

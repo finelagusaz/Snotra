@@ -138,6 +138,62 @@ Describe 'Read-SnotraTraceEvents' {
     }
 }
 
+Describe 'Wait-SnotraTraceCondition（#872 観測側の 2 つの穴）' {
+    BeforeAll {
+        function New-SnotraTestTraceFile {
+            param([string]$Path, [string[]]$Json)
+            $Json | ForEach-Object { "[trace] $_" } | Set-Content -LiteralPath $Path
+            $Path
+        }
+    }
+
+    It '予算が尽きていても条件を必ず 1 度は評価する（停止が期限を跨いでも取りこぼさない）' {
+        # 旧実装は `while (now -lt deadline)` ゆえ、期限切れ後は**一度も読まずに** $null を返した。
+        # 停止が最後の sleep を跨ぐと、既に成立していた条件を見ないまま諦める（#872 run 1306:
+        # 期待した事象は 39.354 に出ていて期限は 42.57 以降だったのに観測されなかった）。
+        $path = New-SnotraTestTraceFile -Path (Join-Path $TestDrive 'ready.log') `
+            -Json @('{"seq":1,"event":"target","data":{"ok":true}}')
+
+        $found = Wait-SnotraTraceCondition -Path $path -TimeoutMs 0 -Predicate { $_.event -eq 'target' }
+
+        $found | Should -Not -BeNullOrEmpty
+        $found.seq | Should -Be 1
+    }
+
+    It '読み取りに失敗した周回を「まだ出ていない」と同じ沈黙へ潰さない' {
+        # ディレクトリは Test-Path が真で Get-Content が落ちる（実測）。`-ErrorAction
+        # SilentlyContinue` は空を返すので、**読めなかったと未発生が同じ $null に化ける**。
+        $dir = Join-Path $TestDrive 'unreadable'
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+
+        $found = Wait-SnotraTraceCondition -Path $dir -TimeoutMs 0 -Predicate { $true } `
+            -WarningVariable warnings -WarningAction SilentlyContinue
+
+        $found | Should -BeNullOrEmpty
+        ($warnings -join ' ') | Should -Match '読み取り'
+    }
+
+    It '本体が終了していれば予算を待たずに諦める（AbortIfExited）' {
+        # **通った実行では発火しないので、ここでしか観測されない。** 諦める条件を scriptblock で
+        # 受け取っていた版は、Pester の `It` の中で `.GetNewClosure()` が親スコープの変数を
+        # 捕まえられず、**発火しないまま予算いっぱい待つ**退化が黙って入っていた（実測: 予算
+        # 4000ms に対し 4031ms）。プロセスを型付きで受け取る形はその間違いを書けなくする。
+        $path = New-SnotraTestTraceFile -Path (Join-Path $TestDrive 'never.log') `
+            -Json @('{"seq":1,"event":"other","data":{}}')
+        $dead = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c exit 0' -PassThru -WindowStyle Hidden
+        $dead.WaitForExit()
+
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        $found = Wait-SnotraTraceCondition -Path $path -TimeoutMs 4000 -PollMs 50 `
+            -Predicate { $_.event -eq 'target' } -AbortIfExited $dead -WarningAction SilentlyContinue
+        $sw.Stop()
+
+        $found | Should -BeNullOrEmpty
+        # 諦め損ねていれば予算 4000ms を使い切る。
+        $sw.Elapsed.TotalMilliseconds | Should -BeLessThan 2000
+    }
+}
+
 Describe 'Resolve-SnotraExistingProcess' {
     It 'Reject 方針では既存プロセスを終了せず例外にする' {
         Mock -ModuleName SnotraSmoke Get-Process { @([pscustomobject]@{ Id = 123 }) }
@@ -331,20 +387,20 @@ include_folders = true
                 [Nullable[int]]$BeforeChars = $null,
                 [int]$TimeoutMs = 5000
             )
-            $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
-            while ([DateTime]::UtcNow -lt $deadline) {
-                $matched = @(Read-SnotraTraceEvents -Path $stderr | Where-Object {
-                    $_.event -eq 'egui_input:changed' -and
-                    $_.data.scope -eq $Scope -and
-                    $_.data.after_chars -eq $AfterChars -and
-                    $_.data.appended_at_end -eq $AppendedAtEnd -and
-                    ($null -eq $BeforeChars -or $_.data.before_chars -eq $BeforeChars)
-                } | Select-Object -Last 1)
-                if ($matched.Count -gt 0) { return $matched[0] }
-                if ($null -ne $proc -and $proc.HasExited) { break }
-                Start-Sleep -Milliseconds 100
-            }
-            return $null
+            # 待ちループの形は `Wait-SnotraTraceCondition` が持つ（#872）。ここに写しを置くと、
+            # 期限跨ぎ・読み取り失敗の穴を塞ぐ変更が module 側にしか入らない。
+            $predicate = {
+                $_.event -eq 'egui_input:changed' -and
+                $_.data.scope -eq $Scope -and
+                $_.data.after_chars -eq $AfterChars -and
+                $_.data.appended_at_end -eq $AppendedAtEnd -and
+                ($null -eq $BeforeChars -or $_.data.before_chars -eq $BeforeChars)
+            }.GetNewClosure()
+            $describe = "egui_input:changed(scope=$Scope, after=$AfterChars, appended=$AppendedAtEnd" +
+                $(if ($null -eq $BeforeChars) { '' } else { ", before=$BeforeChars" }) + ')'
+            $abortArgs = if ($null -eq $proc) { @{} } else { @{ AbortIfExited = $proc } }
+            return Wait-SnotraTraceCondition -Path $stderr -Predicate $predicate -Description $describe `
+                -TimeoutMs $TimeoutMs -PollMs 100 @abortArgs
         }
 
         try {

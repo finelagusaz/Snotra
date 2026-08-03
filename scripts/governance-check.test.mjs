@@ -38,6 +38,7 @@ import {
   checkStaleIdentifiers,
   scanStaleIdentifiers,
   staleIdentifierDocs,
+  staleIdentifierTargets,
   currentVocabulary,
   runAll,
   buildChecks,
@@ -891,8 +892,14 @@ describe("G-stale-identifiers checkStaleIdentifiers（規範の散文に残る�
     expect(f).toHaveLength(1);
   });
 
-  it("SPEC.md の語彙は腐りではない（写しを SSOT より先に直させない・#735）", () => {
-    expect(run("`folderState` を確認する\n", { "SPEC.md": "- `folderState` は直交する\n" })).toEqual([]);
+  it("SPEC.md は語彙源ではない（SSOT と写しが同時に鳴る・ADR の却下 4 失効）", () => {
+    expect(run("`folderState` を確認する\n", { "SPEC.md": "- `folderState` は直交する\n" })).toHaveLength(1);
+  });
+
+  it("テストコードは語彙を寄付しない（検出器自身のフィクスチャが偽陰性を作らない）", () => {
+    const f = run("Blob は `createObjectURL` で作る\n", { "scripts/x.test.mjs": "expect(createObjectURL).toBe(1);\n" });
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("createObjectURL");
   });
 
   it("外部ツールのコマンドが同じ行に在れば、その行は見ない（除外リストを置かない）", () => {
@@ -924,11 +931,49 @@ describe("G-stale-identifiers checkStaleIdentifiers（規範の散文に残る�
     expect(staleIdentifierDocs(s).sort()).toEqual([".claude/agents/c.md", ".claude/rules/b.md", ".claude/skills/a/SKILL.md"]);
   });
 
-  it("語彙は SPEC.md とソースの両方から作られる", () => {
-    const v = currentVocabulary(snap({ "SPEC.md": "specWord", "src-tauri/src/a.rs": "let codeWord = 1;", "docs/x.md": "docWord" }));
-    expect(v).toContain("specWord");
+  it("語彙は production のソースだけから作られる（SPEC.md も docs もテストも正本ではない）", () => {
+    const v = currentVocabulary(
+      snap({ "SPEC.md": "specWord", "src-tauri/src/a.rs": "let codeWord = 1;", "docs/x.md": "docWord", "scripts/a.test.mjs": "testWord" }),
+    );
     expect(v).toContain("codeWord");
+    expect(v).not.toContain("specWord"); // SPEC.md は語彙源ではなく検査対象である
     expect(v).not.toContain("docWord"); // 一般の docs は語彙の正本ではない
+    expect(v).not.toContain("testWord"); // テストコードは「現に動いている実装」ではない
+  });
+
+  it("検査対象は規範の散文 + SPEC.md、母集団の欠落を判ずるのは規範の散文だけ", () => {
+    const withProse = snap({ ".claude/rules/b.md": "", "SPEC.md": "" });
+    expect(staleIdentifierTargets(withProse).sort()).toEqual([".claude/rules/b.md", "SPEC.md"]);
+    // .claude/** が 1 枚残らず消えても runAll の「対象 md が 0 件」が鳴り続けること。
+    // SPEC.md が長さを埋める側（staleIdentifierDocs）へ混ざるとこの検知は永久に沈黙する
+    const noProse = snap({ "SPEC.md": "" });
+    expect(staleIdentifierDocs(noProse)).toEqual([]);
+    expect(staleIdentifierTargets(noProse)).toEqual(["SPEC.md"]);
+  });
+});
+
+// 上の describe が固定するのは各関数の戻り値までで、**buildChecks がどちらを検査へ渡すか**は見ていない。
+// `staleTargets` を `staleDocs` へ戻しても実リポジトリの finding は 0 / 照合 1 のまま変わらないため、
+// dogfood テストも証跡の印字も気づけない——軸 B の主張（SPEC.md が検査対象になった）を守るのは
+// この describe だけである（配線を戻すと下の赤フィクスチャが緑に落ちる）。
+describe("G-stale-identifiers の配線（buildChecks が SPEC.md を検査対象として渡す）", () => {
+  const wired = (contents) => buildChecks(snap(contents), {}).find((c) => c.id === "G-stale-identifiers").run();
+  const prose = { ".claude/rules/b.md": "" }; // 母集団の欠落 finding を避けるための最小の規範文書
+
+  it("SPEC.md の現行語彙に無い識別子は finding（赤）", () => {
+    const f = wired({ ...prose, "SPEC.md": "- `deadCamelWord` を使う\n", "src-tauri/src/a.rs": "let x = 1;\n" });
+    expect(f).toHaveLength(1);
+    expect(f[0].file).toBe("SPEC.md");
+    expect(f[0].message).toContain("deadCamelWord");
+  });
+
+  it("SPEC.md の識別子がソースの非コメント本文に在れば finding 無し（緑）", () => {
+    expect(wired({ ...prose, "SPEC.md": "- `liveCamelWord` を使う\n", "src-tauri/src/a.rs": "let liveCamelWord = 1;\n" })).toEqual([]);
+  });
+
+  it("判定対象外の不混入: SPEC.md のフェンス内・外部コマンド行・単語 1 つ", () => {
+    const spec = "```\n`fencedCamelWord`\n```\n- `gh pr view` で `argCamelWord` を見る\n- `expand` する\n";
+    expect(wired({ ...prose, "SPEC.md": spec, "src-tauri/src/a.rs": "let x = 1;\n" })).toEqual([]);
   });
 });
 

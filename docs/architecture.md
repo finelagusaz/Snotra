@@ -79,7 +79,7 @@ Tauri wry plugin で Tao イベントを受け、egui 入力・Win32 IME composi
 - 検索ウィンドウ（`main`）と結果ウィンドウ（`results`）は起動時のセットアップで作成し `visible: false`、ホットキーで表示/非表示を切替（#646 PR2 で 2 窓構成へ）
 - 検索バーは `main`、検索結果は `results`（`egui_shell/view.rs` / `egui_shell/results_view.rs`）に分離して描画する。`results` は `focusable(false)` でフォーカスを取らない従属窓
 - 結果の表示/非表示は `search_state.rs` の純粋核（view 種別 = tool>folder>results の優先度射影 + indexing 表示ゲート）で制御
-- `main` の高さは `bar_height`（+ toast 表示時のみ加算）だけで、結果表示による伸縮はしない。`results` の高さは実件数フィット（`min(件数, max_results) × row_height + 8`）を `main` のフレームが算出し、`egui_shell/window_coordinator.rs` の driver が `ResultsWindow::set_size` で適用する（両窓とも writer は `main` のフレーム 1 本・旧 `compute_window_height` は撤去済み）。show 時に bar_height（`font_size + bar_padding`・既定 43px）へリセットする
+- `main` の高さは結果表示による伸縮はしない。`main` の高さは `egui_shell/view.rs` の毎フレーム処理が算出し自窓へ直接 `set_size` する。`results` の高さは `egui_shell/window_coordinator.rs` の driver が算出し `ResultsWindow::set_size` で適用する（旧 `compute_window_height` は撤去済み）。式は `src-tauri/src/egui_shell/layout.rs`（`main_window_height` / `results_window_height` / `clamp_results_height`）が正本、ユーザー観測面は `SPEC.md` §4.7「4.7 結果表示制御（2 窓構成）」（main）・`SPEC.md` §4.5「4.5 最大列挙数」（results）が正本。show 時に bar_height（`font_size + bar_padding`・既定 43px）へリセットする
 - `results` の位置・可視性は `main` の毎フレーム更新（`drive_results_window`）が駆動する（`main` 直下 + `window_gap`・既定 4px）。両窓に DWM 角丸を適用（Windows 11 best-effort・Win10 は角丸なし）
 - マルチモニター: モニター作業領域原点からの相対座標（物理ピクセル）で位置を保存。ホットキー押下時にターゲットモニターを決定し絶対座標に変換
 
@@ -94,7 +94,7 @@ Tauri wry plugin で Tao イベントを受け、egui 入力・Win32 IME composi
 
 - 設定は `snotra-settings.exe` を子プロセスとして起動。相互依存は `config.toml` ファイル1点のみ（IPC 不要）
 - 本体は `notify` クレートで `config.toml` 変更を検知し即時反映する
-- 子プロセス管理: `Mutex<Option<Child>>` で保持。起動時に重複チェック、監視スレッドで終了検知 + `alwaysOnTop` 復元、exit ハンドラで kill
+- 子プロセス管理: `Mutex<Option<Child>>` で保持。起動時に重複チェック、監視スレッドで終了検知 + 最前面表示（`set_always_on_top`）の復元、exit ハンドラで kill
 - `snotra-settings` の設定編集は draft/saved 二重状態モデル（Save 時にのみ `config.toml` に書き込み）
 - **config↔派生状態のコヒーレンシ**: config 由来の派生状態は「live-read（毎操作で読み直し＝即時整合）」と「構築時焼き込み（要再構築）」の 2 種。後者の中核 `SearchEngine`（index）の整合は engine の `index_stale` ledger が所有し、`config_watcher` が `IndexInputs` 差分で `start_index_build` を kick → ロック外ビルド → `complete_index_drain` の re-diff で stale をクリアする（ビルド進行中の設定変更も取りこぼさない）。`HistoryStore` の剪定容量は live-read 化しキャッシュを持たない。詳細は `docs/design/2026-05-31-coherence-staleset.md`（StaleSet 契約）
 
@@ -107,7 +107,7 @@ Tauri wry plugin で Tao イベントを受け、egui 入力・Win32 IME composi
 
 ### アイコンパイプライン
 
-- `SHGetFileInfoW` → HICON → BGRA → PNG で抽出（`icons.bin` に LRU キャッシュ・遅延ロード）
+- `SHGetFileInfoW` → HICON → BGRA → PNG で抽出し、件数上限で頭打ちするキャッシュとして `icons.bin` へ遅延ロードする（退避方式は `src-tauri/src/icon.rs` が正本）
 - egui へは `commands::load_icon_pngs`（worker スレッド）→ ColorImage decode → `load_texture`（`egui_shell/icon_textures.rs`・#532 SU4）
 - path キーで stale 無害・in-flight 重複 spawn 防止・clear-on-hide でメモリ境界
 

@@ -1,7 +1,7 @@
 ---
 name: state-check
 description: "UI モード・状態遷移・ガード条件の追加・変更時、または計画レビュー時に使用。既存モードとの直交性・リセット経路・入力分岐・SPEC §8.6 整合を検証する。"
-argument-hint: "[変更内容, 例: 'InstantCommandMode 追加' / 'indexing ガードを handleInput に追加']"
+argument-hint: "[変更内容, 例: 'InstantCommandMode 追加' / 'indexing ガードを run_search に追加']"
 allowed-tools:
   - Read
   - Grep
@@ -17,14 +17,14 @@ $ARGUMENTS が空の場合は、会話の直近の変更内容から対象を推
 
 このプロダクトの UI 状態は複数の直交・排他モードの組み合わせで動く（SPEC.md §8.6 / §18.5 / §19.7）:
 
-- `folderState`（フォルダ展開）と `toolSelectionState`（ツール選択）は**直交**
+- `FolderExpansionMode`（フォルダ展開）と `ToolSelectionMode`（ツール選択）は**直交**
 - `QueryIntent`（`interpret()`）の `Instant` は `Plain`（NormalMode）/ `Command`（CommandMode）と**排他**（入力解釈は単一の判別子値。`query`+`prefix` から純粋導出）
-- 優先度: `toolSelectionState !== null` > `folderState !== null` > 通常モード
+- 優先度: `ToolSelectionMode` > `FolderExpansionMode` > `NormalMode`
 
 モードやガードを1つ追加・変更すると、既存の**全モードとの組み合わせ**それぞれについて「排他か・直交か・どちらが優先か」の明示的な判断が必要になる。判断されなかった組み合わせは「たまたま動く」状態で残り、別の変更で壊れる。
 
 典型的なバグパターン:
-1. **リセット漏れ**: 新モードのシグナルが `resetForShow()` でクリアされず、ホットキー再表示時に前回の状態が残る
+1. **リセット漏れ**: 新モードのシグナルが `consume_reset_pending`（旧 resetForShow 相当）でクリアされず、ホットキー再表示時に前回の状態が残る
 2. **Escape 連鎖の崩れ**: Escape は「ツール選択 → フォルダ展開 → ウィンドウ非表示」の順で内側から復帰する（SPEC §8.1）。新モードがこの連鎖のどこに入るか未定義
 3. **入力分岐の暗黙ホールド**: 新モード中の Enter / Shift+Enter / ArrowLeft / ArrowRight / クリックの挙動が未定義のまま、既存分岐が偶然マッチする
 4. **ガードの過剰阻害**: 正常運用向けの早期リターンガード（`if (indexing()) return` 等）が、初回起動・エラーリカバリ・別モードの特殊パスを意図せず塞ぐ（AGENTS.md「初回フローとガードの相互作用」）
@@ -50,7 +50,7 @@ $ARGUMENTS から以下を抽出する:
   判定: [整合 / 未定義 — 要対処: <内容>]
 ```
 
-最低限確認する既存状態: `folderState`、`toolSelectionState`、`QueryIntent`（`interpret()` の返す `Plain`/`Command`/`Instant`。command=`/` プレフィックス、instant=コマンドプレフィックス）、`indexing`、`launching`。
+最低限確認する既存状態: `FolderExpansionMode`、`ToolSelectionMode`、`QueryIntent`（`interpret()` の返す `Plain`/`Command`/`Instant`。command=`/` プレフィックス、instant=コマンドプレフィックス）、`indexing`、`launching`。
 
 「未定義だが現状動いている」はレッドフラグ。偶然の動作として記録し、明示化を提案する。
 
@@ -60,7 +60,7 @@ $ARGUMENTS から以下を抽出する:
 
 | リセット経路 | トリガー | 確認内容 |
 |---|---|---|
-| `resetForShow()`（実体は `consume_reset_pending`） | ホットキー再表示（show が `reset_pending` を立てる） | 新シグナルがクリアされるか |
+| `consume_reset_pending`（旧 resetForShow 相当） | ホットキー再表示（show が `reset_pending` を立てる） | 新シグナルがクリアされるか |
 | Escape 連鎖 | Escape キー | 連鎖のどの位置で復帰するか（内側優先） |
 | 実行完了 | Enter / クリックによる起動成功 | クエリクリア・非表示と同時に状態が片付くか |
 | モード離脱 | プレフィックス削除・フォルダ離脱等 | デバウンス/RAF のキャンセルを伴うか（ui ルール） |

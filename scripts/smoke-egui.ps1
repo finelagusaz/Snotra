@@ -486,6 +486,11 @@ function Get-MainWindowDwmSize {
 # **証拠出力へ渡す起点は自前で取る**——`$launchedAt` はシナリオ 1 の起動時刻であり、
 # ここで使うと「起動からの経過」が数十秒ずれて手掛かりを誤らせる。
 $toastLaunchedAt = Get-Date
+# **高さ断言の不合格は throw ではなく `$failures` を通る**（下の round ループ）ため、
+# この scriptの`catch`（$toastErrPath を渡す）を経由せず、集計失敗ブロック（末尾）まで
+# 静かに素通りする。集計失敗ブロックが証拠を出すログをシナリオ 2 のものへ切り替えられるよう、
+# ここで発生源を憶えておく（code-review 指摘）。
+$scenario2Failed = $false
 $toastProc = Start-SnotraProcess -ConfigDir $toastProfile.FullPath -FilePath $ExePath -Trace `
   -StandardErrorPath $toastErrPath -ExtraVariables @{ SNOTRA_EGUI_FAKE_UPDATE = '1' }
 try {
@@ -524,9 +529,11 @@ try {
     # 差は 43 論理 px ある。1.5 倍を閾値に置けば、ずれに影響されず両者を分けられる。
     if ($minH -lt 1.5 * $barPx) {
       $failures += ("toast ありの show #{0}: 窓が toast 行を含む高さになっていない（DWM 高さ {1}px / バー 1 行 ≒ {2:N0}px・#755）" -f $round, $minH, $barPx)
+      $scenario2Failed = $true
     }
     if ($minH -ne $maxH) {
       $failures += ("toast ありの show #{0}: 表示中に高さが動いた（{1}px → {2}px・#801 の 1 フレームの伸び）" -f $round, $minH, $maxH)
+      $scenario2Failed = $true
     }
     Write-Host ("toast ありの show #{0}: DWM {1}x{2}（min {3} / max {4}・バー 1 行 ≒ {5:N0}px）" -f `
       $round, $dwmW, $heights[0], $minH, $maxH, $barPx)
@@ -569,6 +576,16 @@ if ($failures.Count -gt 0) {
   # ここへ来る時点で finally が既にプロセスを終了させているので、生死は判定材料にならない
   # ——$null を渡してその旨を明示する（誤った手掛かりを出さない）。
   # ここへ来る時点でプロセスは終了済みゆえ事後観測はしない（生存が前提の測定である）。
+  #
+  # **シナリオ 2 の失敗も含むなら、その trace ログでも証拠を出す**（code-review 指摘）。
+  # シナリオ 2 の高さ断言は throw ではなく $failures を通るため、シナリオ 2 自身の catch
+  # （$toastErrPath を渡す）を経由せずここまで来る。ここで $errPath だけを見ると、
+  # シナリオ 2 の失敗（本検出器が主眼とする経路）に対して無関係なシナリオ 1 のログを
+  # 指してしまう。$scenario2Failed が立っているときは両方の証拠を出す
+  # （シナリオ 1 側の既存出力は変えない）。
+  if ($scenario2Failed) {
+    Show-FailureEvidence -Path $toastErrPath -Proc $null -Context "検査項目の不合格（シナリオ 2: toast あり）" -LaunchedAt $toastLaunchedAt
+  }
   Show-FailureEvidence -Path $errPath -Proc $null -Context "検査項目の不合格" -LaunchedAt $launchedAt
   exit 1
 }

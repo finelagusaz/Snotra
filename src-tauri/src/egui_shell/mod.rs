@@ -32,7 +32,7 @@ mod window_coordinator;
 // main.rs（hotkey / tray / setup）・view.rs（結果窓の駆動と wake）・launcher_controller.rs
 // （updater install 失敗の wake_main）・results_view.rs（クリック逆流）が
 // 消費する。窓操作の実体は window_coordinator.rs へ移した（#749 段 1）。**モジュール外に
-// 消費者があるものだけを re-export する**——`save_placement_relative` / `read_metrics` /
+// 消費者があるものだけを re-export する**——`read_placement_relative` / `read_metrics` /
 // `results_available_height` / `max_results` / `position_on_target_monitor` は同モジュール内
 // からしか呼ばれず、`position_results_below_main` は親である本ファイルが
 // `window_coordinator::` で直に呼ぶ。
@@ -399,7 +399,10 @@ pub(crate) fn read_visual(app: &tauri::AppHandle, applied_font_family: &str) -> 
 pub(crate) fn register_hide_listener(app: &tauri::AppHandle) {
     let handle = app.clone();
     app.listen(crate::events::EGUI_HIDE_REQUESTED, move |_| {
-        hide_egui_main(&handle);
+        // emit 元は view の `update()` の中（イベントループスレッド）ゆえ、
+        // `on_event_loop` はインライン実行へ倒れる——**今日と同じフレーム内順序が保たれる**
+        // （`proof.rs` の `on_event_loop` の doc）。
+        snotra_egui_runtime::on_event_loop(&handle, hide_egui_main);
     });
 }
 
@@ -455,7 +458,16 @@ pub(crate) fn register_initial_hotkey_failure_listener(app: &tauri::AppHandle) {
         if let Some(sh) = handle.try_state::<EguiShellState>() {
             *sh.pending_hotkey_failure.lock().unwrap() = Some((HotkeyFailureKind::Initial, hotkey));
         }
-        show_egui_main(&handle, Instant::now());
-        wake_main(&handle);
+        // **`wake_main` も同じクロージャの中へ入れる**（`register_hide_listener` との差）。
+        // このイベントの emit 元は platform スレッド（`platform/mod.rs` の
+        // `RegisterInitialHotkey`）であり、`on_event_loop` はインラインに倒れず **post** に
+        // なる。wake をクロージャの外に残すと wake が show を追い越し、上の doc が要求する
+        // 「格納 → show → wake」が崩れる——show より前に届いたフレームが pending を消費し、
+        // その後の reset-on-show（`show_egui_main` が立てた `reset_pending` の消費）の
+        // `notice.clear()` が消してしまい、通知が二度と出ない。
+        snotra_egui_runtime::on_event_loop(&handle, |app, el| {
+            show_egui_main(app, el, Instant::now());
+            wake_main(app);
+        });
     });
 }

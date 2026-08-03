@@ -16,11 +16,16 @@
 //! 消す**ことであって、表現不能化ではない（spec §2.6 / §7-1）。
 //!
 //! **可視性の全体像はこの型だけでは閉じない。** main が hidden の間に results が出る事故を
-//! 塞ぐのは 3 つの組み合わせである——show 述語側のゲート（`layout::present_results` の
-//! 連言①）、show を撃った後の事後検査（`layout::must_retract_results`）、そして main が
-//! 消える向きの hide を無条件にする理由の型（`layout::HideReason::MainGone`）。本型は
-//! 「誰が raw 操作を撃つか」を一点に集め、`HideReason` を受け取って**フラグを信じるか**
-//! だけを分けるのであって、「撃ってよい状況か」は判定しない。
+//! 塞ぐのは show 述語側のゲート（`layout::present_results` の連言① `main_visible`）である。
+//! 本型は「誰が raw 操作を撃つか」を一点に集めるのであって、「撃ってよい状況か」は判定しない。
+//!
+//! **かつては事後検査（`layout::must_retract_results`）と、main が消える向きの hide を
+//! 無条件にする理由の型（`layout::HideReason::MainGone`）も要った**——可視性を変える操作が
+//! 複数スレッドから呼べた頃は、ゲートの読みと raw 操作の間に別スレッドの hide が割り込み、
+//! 「フラグ = false・窓 = 可視」の食い違いが残りえたためである。**#880 サイクル段 2 で
+//! 可視性を変える 5 関数が証人型（`EventLoopProof`）によりイベントループスレッドへ閉じ、
+//! その並びが構築不能になったため、同段で撤去した。**（閉包の射程の正本は
+//! `src-tauri/CLAUDE.md`「可視性を変える操作はイベントループスレッドに閉じてある」の bullet 群）
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,9 +38,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub(crate) struct ResultsWindow {
     window: tauri::Window,
     /// raw show / hide の直近状態。`Cell` ではなく `AtomicBool` である理由: managed state は
-    /// `Send + Sync` を要求し、かつ topmost 復帰（`commands/window.rs` の設定プロセス監視）は
-    /// spawn したポーリングスレッドから来る——可視性の読み書きはイベントループスレッドに
-    /// 閉じない。`Ordering` は同居する `main_visible` / `hotkey_generation` に合わせ `SeqCst`。
+    /// `Send + Sync` を要求する。**書き手（swap する側）は `show` / `hide` の 2 経路だけであり、
+    /// どちらも証人型（`EventLoopProof`）によりイベントループスレッドへ閉じている**——
+    /// topmost 復帰（`commands/window.rs` の設定プロセス監視、spawn したポーリングスレッド
+    /// から来る）は `set_topmost` の doc が言うとおり可視フラグを変えない。`Ordering` は
+    /// 同居する `main_visible` / `hotkey_generation` に合わせ `SeqCst`。
     visible: AtomicBool,
     /// 直近 `set_size` の (幅, 高さ)（論理 px・#749 で `view.rs` の `last_results_width` /
     /// `last_results_height` から移設）。**`visible` とは概念が別**——冗長な Win32 呼び出しを
@@ -91,19 +98,23 @@ impl ResultsWindow {
     /// `background` は下地（softbuffer が present するまでの一瞬に見えるネイティブブラシ）へ
     /// 適用する。**show 遷移のときだけ撃つ**（下の早期 return の後に置く理由）——可視のまま
     /// 毎フレーム撃つと `InvalidateRect` + `UpdateWindow` を送り続けることになる。
-    pub(crate) fn show(&self, background: egui::Color32) -> bool {
-        // 先に flag を swap して test-and-set を原子にする（別スレッドの hide と競っても
-        // raw 操作が二重に撃たれない）。**保証するのはそこまでである**——swap と `raw_show()`
-        // の間に他スレッドの `hide()` が挟まると「フラグ=false・窓=可視」の不一致が残りうる。
-        // フラグと窓の同時性は保証しない。
-        //
-        // **「回収は次の show 遷移」では足りない**（旧記述の訂正）。不一致のまま main が
-        // hidden になると、次のフレームの `present_results` は `Hidden` へ倒れるが、その
-        // hide はフラグが false ゆえ raw 操作を撃たない——results だけが画面に残る。
-        // ゆえに main が消える向きの hide は `HideReason::MainGone` で無条件に撃つ
-        // （`hide` の doc）。この型が閉じられないぶんを塞ぐのは、show 述語側の
-        // `main_visible` ゲート（`layout::present_results`）**と**、show を撃った後の
-        // 事後検査（`layout::must_retract_results`・`drive_results_window` 末尾）である。
+    ///
+    /// **`_el` はイベントループスレッド上であることの証人である**（`EventLoopProof`）。この型は
+    /// 証人を使わないが（`_` 始まり）、**シグネチャから外してはならない**——results の可視性を
+    /// 変える経路を単一スレッドへ閉じるための拘束である。証人型を引数に要求する 5 関数は
+    /// イベントループスレッドへ一意化されており、フラグと窓の実状態が食い違う並びは構築できない
+    /// （射程の正本は `src-tauri/CLAUDE.md`「可視性を変える操作はイベントループスレッドに
+    /// 閉じてある」の bullet 群）。
+    pub(crate) fn show(
+        &self,
+        _el: &snotra_egui_runtime::EventLoopProof,
+        background: egui::Color32,
+    ) -> bool {
+        // 先に flag を swap して test-and-set を原子にする。**証人型（`EventLoopProof`）を
+        // 引数に要求する 5 関数はイベントループスレッドへ閉じている**ため、swap と `raw_show()`
+        // の間に他スレッドの `hide()` が挟まる並びは構築できない——フラグと窓の実状態が食い違う
+        // 並びも同じ理由で構築できない。swap 自体は残す——「遷移したときだけ raw 操作を撃つ」
+        // 戻り値の契約がこれで決まるためである。
         if self.visible.swap(true, Ordering::SeqCst) {
             return false;
         }
@@ -136,27 +147,19 @@ impl ResultsWindow {
         super::window_coordinator::apply_native_background(&self.window, color);
     }
 
-    /// results 窓を隠す（`show` の対）。**戻り値は可視フラグが遷移したか**であり、raw 操作を
-    /// 撃ったかではない（呼び出し側の trace 用。理由は spec 決定 7）。
+    /// results 窓を隠す（`show` の対）。既に不可視なら raw 操作を撃たず `false` を返す。
     ///
     /// raw show は tao の `WindowFlags::VISIBLE` を false のまま残すため、`Window::hide()` は
     /// 「差分なし」と判定して早期 return し窓が隠れない。ゆえに hide も対で raw にする。
     ///
-    /// **`reason` が raw 操作の要否を決める。** フラグが false でも `MainGone` なら撃つ——
-    /// 「フラグ = false・窓 = 可視」の食い違い（`show` の doc）を回収できる経路がここしか
-    /// 無いためである。判定式の正本は `layout::hide_must_be_unconditional`（純粋核・
-    /// ユニットテスト対象）で、ここに手書きしない。
-    ///
-    /// **`NotPresented` でフラグを見るのは性能上の理由である**（毎フレーム走る側ゆえ
-    /// `SW_HIDE` を打鍵ごとに撃たない）。**この経路は権威を持たない**——食い違いが起きて
-    /// いれば黙って no-op する。それでよいのは、この理由で隠すとき main は可視であり、
-    /// 「results だけが残る」事故にならないからである。
-    pub(crate) fn hide(&self, reason: super::layout::HideReason) -> bool {
-        let transitioned = self.visible.swap(false, Ordering::SeqCst);
-        if transitioned || super::layout::hide_must_be_unconditional(reason) {
-            self.raw_hide();
+    /// **可視フラグを信じてよい。** 書き手はイベントループスレッドに一意化されており
+    /// （`EventLoopProof`）、フラグと窓の実状態が食い違う並びは構築できない。
+    pub(crate) fn hide(&self, _el: &snotra_egui_runtime::EventLoopProof) -> bool {
+        if !self.visible.swap(false, Ordering::SeqCst) {
+            return false;
         }
-        transitioned
+        self.raw_hide();
+        true
     }
 
     /// results 窓の TOPMOST を切り替える（設定サイドカー起動中の一時解除・#646 PR2）。
@@ -234,8 +237,9 @@ impl ResultsWindow {
     /// reset-on-show（`reset_pending` の消費）である**。呼び出し点をそこに保つのは順序の
     /// ためである——同一フレームの `drive_results_window` より**前**でなければ、再 show 後の
     /// 1 フレーム目が旧 metrics のサイズで描かれる。`show_egui_main` へ移すと、この
-    /// 「同一スレッド・同一フレーム」の前提が消える——あちらは egui のイベントループとは
-    /// **別のスレッドから走りうる**（hotkey listener・setup・alt 解放待ちの spawn 等・実測 5 経路）。
+    /// 「**同一フレーム**」の前提が消える——あちらは証人型（`EventLoopProof`）の導入で
+    /// 同じイベントループスレッドに閉じたが、**フレームの中ではない**（`update()` の外から
+    /// 走る）。呼び出し点はここに保つ。
     pub(crate) fn reset_size_guard(&self) {
         *self.last_size.lock().unwrap() = (0.0, 0.0);
     }

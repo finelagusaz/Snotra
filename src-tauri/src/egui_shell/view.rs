@@ -10,7 +10,7 @@
 //! `frame.set_clear_color` / `window.set_background_color`）あり、1 つの名前に畳んでいない**
 //! ——このうち本ファイルが直接呼ぶのは `ctx.set_visuals` と `frame.set_clear_color` の 2 つ。
 //! `window.set_background_color` は**リサイズ時に間接呼び出し**である
-//! （`window_coordinator::apply_main_background` 経由）。フォント登録は
+//! （`window_coordinator::apply_native_background` 経由）。フォント登録は
 //! `font_stack::configure_japanese_font` の**呼び出し点** 2 箇所（`setup` と `update` の
 //! font_family 差分の分岐）として持つ。**`ctx.set_fonts` 自体の呼び出しは `font_stack.rs` に
 //! あり本ファイルには無い**（#666 段 3 タスク 1 で移設）。`ui.visuals_mut()` は
@@ -323,8 +323,9 @@ impl EguiView for SearchWindowView {
             //
             // **呼び出し点をここに保つ**（#749）: この reset は同一フレームの
             // `drive_results_window`（update 末尾）より**前**でなければならない。show 経路
-            // （`show_egui_main`）は egui のイベントループとは別のスレッドから走りうるため、そちらへ
-            // 移すと「同一スレッド・同一フレーム」というこの前提が消える。
+            // （`show_egui_main`）は証人型（`EventLoopProof`）の導入で同じイベントループ
+            // スレッドに閉じたが、**フレームの中ではない**——そちらへ移すと「同一フレーム」
+            // というこの前提が消える。
             if let Some(results) = app.try_state::<crate::egui_shell::ResultsWindow>() {
                 results.reset_size_guard();
             }
@@ -869,6 +870,7 @@ impl EguiView for SearchWindowView {
         // 古い行が 1 フレーム描かれる。`cargo test` では落ちない種類の回帰である。
         crate::egui_shell::drive_results_window(
             &app,
+            frame.event_loop(),
             crate::egui_shell::DriveResultsInputs {
                 plain_hidden,
                 result_count: self.controller.state().results().len(),

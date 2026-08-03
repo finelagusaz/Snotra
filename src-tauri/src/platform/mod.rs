@@ -268,10 +268,12 @@ fn process_commands(
             }
             PlatformCommand::TurnOffIme(hwnd_raw) => {
                 // 送信元は egui_shell::show_egui_main（旧 show_main_and_emit は #532 SU7 で削除）。
-                // 呼び出し順は set_focus() → SendMessageTimeoutW によるフォーカス同期待ち →
-                // 本コマンド送信であり、「focus より先に IME を切る」ことは意図的に避けている
-                // （前に置くと IME オフが対象窓に効かない）。HWND を直接渡すのは再 lookup を
-                // 避けるため。
+                // 呼び出し順は set_focus() → 本コマンド送信であり、「focus より先に IME を切る」
+                // ことは意図的に避けている（前に置くと IME オフが対象窓に効かない）。
+                // **かつて両者の間に在った `SendMessageTimeoutW` のフォーカス同期待ちは、
+                // show がイベントループスレッドへ移って no-op 化したため撤去された**——機構と
+                // 「導出し直せない」理由は `egui_shell/window_coordinator.rs` の `set_focus()`
+                // 直後のコメントが正本。HWND を直接渡すのは再 lookup を避けるため。
                 let hwnd = windows::Win32::Foundation::HWND(hwnd_raw as *mut core::ffi::c_void);
                 if !hwnd.is_invalid() {
                     ime::turn_off_ime(hwnd);

@@ -45,6 +45,16 @@ include_folders = false
         @(Get-ChildItem -Path $profile -Filter '*.bin').Count | Should -Be 0
         [IO.Path]::IsPathRooted($created.FullPath) | Should -BeTrue
     }
+
+    It 'ShowIcons を TOML の真偽値として書く（既定は true・$false で無効化できる）' {
+        # このノブが黙って効かなくなると、検査は緑のまま runner への要求だけが戻る（#872）。
+        # PowerShell の $true は "True" へ補間されるため、TOML として読めるかを直接見る。
+        $on = New-SnotraVerificationProfile -ProfileDir (Join-Path $TestDrive 'icons-on')
+        $off = New-SnotraVerificationProfile -ProfileDir (Join-Path $TestDrive 'icons-off') -ShowIcons $false
+
+        (Get-Content -Raw $on.ConfigPath) | Should -Match '(?m)^show_icons = true\r?$'
+        (Get-Content -Raw $off.ConfigPath) | Should -Match '(?m)^show_icons = false\r?$'
+    }
 }
 
 Describe 'Invoke-SnotraEnvironment' {
@@ -290,7 +300,10 @@ auto_hide_on_focus_lost = false
         New-Item -ItemType Directory -Force -Path $folder | Out-Null
         Set-Content -LiteralPath (Join-Path $folder 'aa-child.txt') -Value 'fixture'
         $scanRootToml = (Resolve-Path -LiteralPath $scanRoot).Path.Replace('\', '/')
-        $created = New-SnotraVerificationProfile -ProfileDir $profile `
+        # この検査はキャレット位置だけを見るので、アイコンは判定に一切入らない。
+        # runner ではシェルのアイコン問い合わせが恒久的に失敗し続け（#872）、その再要求が
+        # 打鍵から egui_input:changed までの観測時間を押し広げる。要求そのものを外す。
+        $created = New-SnotraVerificationProfile -ProfileDir $profile -ShowIcons $false `
             -AdditionalSections @'
 [general]
 show_on_startup = true

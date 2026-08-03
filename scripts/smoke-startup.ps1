@@ -73,16 +73,18 @@ for ($run = 1; $run -le $Iterations; $run++) {
   # 固定待機を一律に伸ばすと 5 起動 × 予算が常時かかる。最初の 1 行を待つ形なら、
   # 速い起動は速いまま・遅い起動だけ待つ。$WaitMs は**最初の trace 以降**の観測窓として
   # 残す——ここを縮めると後続の first-run イベントを取りこぼし、検査が痩せる。
-  $firstTraceMs = $null
+  # **待つのは「最初の行」ではなく「最初の `[trace]` 行」である**（#786）。行の存在だけを
+  # 見ると、アプリが最初に stderr へ出す `[index-load] ...`（非 trace の診断行）で抜けてしまい、
+  # 観測窓が**まだ 1 件も trace が出ていない時点**で開く——#690 が塞いだはずの穴が同じ
+  # 関数の中で開いたままだった。**キャッシュが温まっているほど `[index-load]` が早く出るので、
+  # 開発機ほど早く失敗する**（CI と手元で挙動が分かれる）。
+  #
+  # 判定の形は `Wait-SnotraTraceCondition` が単独で持つ（#872）——期限跨ぎの取りこぼしと
+  # 読み取り失敗の沈黙もそこで塞がっている。ここに写しを置かない。
   $swFirst = [System.Diagnostics.Stopwatch]::StartNew()
-  while ($swFirst.Elapsed.TotalMilliseconds -lt $FirstTraceTimeoutMs) {
-    if ((Test-Path $errPath) -and @(Get-Content $errPath -ErrorAction SilentlyContinue).Count -gt 0) {
-      $firstTraceMs = [int]$swFirst.Elapsed.TotalMilliseconds
-      break
-    }
-    if ($proc.HasExited) { break }
-    Start-Sleep -Milliseconds 100
-  }
+  $firstEvent = Wait-SnotraTraceCondition -Path $errPath -Predicate { $true } `
+    -TimeoutMs $FirstTraceTimeoutMs -PollMs 100 -AbortIfExited $proc -Description '最初の trace'
+  $firstTraceMs = if ($null -eq $firstEvent) { $null } else { [int]$swFirst.Elapsed.TotalMilliseconds }
 
   Start-Sleep -Milliseconds $WaitMs
   if (-not $proc.HasExited) {

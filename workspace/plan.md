@@ -64,7 +64,7 @@
 
 ### A-Phase 1 — 正本と機構（`.rs` 2 ファイル）
 
-- [ ] **A1** `snotra-egui-runtime/src/renderer.rs:10-12` の doc を差し替える
+- [x] **A1** `snotra-egui-runtime/src/renderer.rs:10-12` の doc を差し替える
 
   ```rust
   /// view が色を決める前（起動直後の 1 枚目）と `set_clear_color` 呼び忘れのフォールバック。
@@ -76,7 +76,7 @@
 
   - 定数行 `pub const CLEAR_COLOR: u32 = 0x0028_2828;` は変えない
 
-- [ ] **A2** `src-tauri/src/egui_shell/window_coordinator.rs:698-700` の doc を差し替える
+- [x] **A2** `src-tauri/src/egui_shell/window_coordinator.rs:698-700` の doc を差し替える
 
   ```rust
   /// runtime のフォールバック（`set_clear_color` を呼ばなかったフレームの色）が config の
@@ -88,12 +88,12 @@
   - 旧文の「一致は今まで規約でしかなかった（`snotra-egui-runtime/CLAUDE.md` が受容した残余）」を落とす。A-Phase 3 で指す先が消えるため
   - **A2 の完了は A11 の grep では検算できない**——旧文は「一致は**今まで**規約でしか**なかった**」でマーカー語に部分一致しない（review-facts 実測）。**A12 の目視確認が唯一の担保である**
 
-- [ ] **A3** **`cargo test -p snotra`** で当該テストが通ることを確認する
+- [x] **A3** **`cargo test -p snotra`** で当該テストが通ることを確認する（実測: 192 passed / 0 failed）
   - **`--lib` を付けてはならない**——`src-tauri/Cargo.toml` は `[lib]` を持たないバイナリ crate で、`cargo test -p snotra --lib` は `error: no library targets found in package 'snotra'` で止まる（実測）。SSOT は `docs/build-commands.md:19` / `:148`
 
 ### A-Phase 2 — `scripts/governance-check.mjs`
 
-- [ ] **A4** `:1228-1229` の実例を差し替える
+- [x] **A4** `:1228-1229` の実例を差し替える
 
   ```js
   // 実例: `VisualConfig.preset` はランチャが `ThemePreset` を import すらしていない。
@@ -105,7 +105,7 @@
 
 ### A-Phase 3 — 文書（`.md` 2 ファイル + `.ps1` 1 ファイル）
 
-- [ ] **A5** `snotra-egui-runtime/CLAUDE.md:39` の bullet を差し替える
+- [x] **A5** `snotra-egui-runtime/CLAUDE.md:39` の bullet を差し替える
 
   ```markdown
   - **`RuntimeFrame` の埋めないフィールドは既定値が黙って効く**（`RawInput` と同型）——`set_clear_color` を呼ばなかったフレームは `renderer.rs` の `CLEAR_COLOR`（`0x0028_2828`）へ落ちる。**呼び忘れはビルドでも自動テストでも落ちない**——検知するのは `npm run check:colors`（非既定色で実ピクセルを判定する。GUI を要するため CI には無く、人が手で走らせたときだけ動く）と目視である（`docs/build-commands.md`「`[visual]` の色を変える変更は、**非既定色で**目視する」）。**`CLEAR_COLOR` と `snotra-core` の既定背景色の一致は規約ではなく機構が固定する**——`src-tauri/src/egui_shell/window_coordinator.rs` の `runtime_fallback_matches_config_default_background`（由来と理由は `renderer.rs` の `CLEAR_COLOR` の doc）
@@ -113,7 +113,7 @@
 
   - **テストのパスを直接書く**のが要点（G-references がパスの実在を守る。`REF_EXTENSIONS` に `.rs` を含む・実測）
 
-- [ ] **A6** `docs/development-principles.md:67` の段落を差し替える
+- [x] **A6** `docs/development-principles.md:67` の段落を差し替える
 
   ```markdown
   **休眠を支えているのは、自動で回る検証が既定値の下でしか走らないことである。** 非既定の config を組むテストは在るが（`engine.rs` の検索系）、**見た目に効く値は既定の下でしか描かれない**——色を変えて描画を検証する経路は `npm run check:colors` の 1 本だけで、GUI と非ロック画面を要するため **CI には無く、人が手で走らせたときにしか動かない**（`docs/build-commands.md`「`[visual]` の色を変える変更は、**非既定色で**目視する」）。乖離を露出させる入力——ユーザーが既定と違う値を設定すること——は、放っておいて回る側の検証には現れない。**この形で実際に休眠していたのが #802 以前の `[visual].background_color` である**: 描画経路の消費者がゼロだったが、既定 `#282828` が `snotra-egui-runtime` の `CLEAR_COLOR` と一致するため既定のままでは正常に見え続けた（#802 で消費者を与え、一致は `src-tauri` のテストが固定するようになった）。
@@ -121,21 +121,25 @@
 
   - **主題文を「検証が既定値の下でしか走らない」→「自動で回る検証が〜」へ弱める**のが要点。`check:colors` の存在で旧主題文は全称として偽になる
 
-- [ ] **A7** **同じ節の `:61` 導入文を直す**（A6 とは独立の項目。第 1 版では A6 の bullet に埋め込まれており、実装者が差し替え文だけ貼って読み飛ばす経路が開いていた・review-completeness）
+- [x] **A7** **同じ節の `:61` 導入文を直す**（A6 とは独立の項目。第 1 版では A6 の bullet に埋め込まれており、実装者が差し替え文だけ貼って読み飛ばす経路が開いていた・review-completeness）
   - `:61`「この欠如は 3 つの形で**現れる**」は現在形で「3 形が今も生きている」と主張するが、A6 が唯一の現行実例を歴史へ移す。「現れうる」「現れてきた」等へ弱めるか、実例が解消済みである旨を足す
   - `:63` の 3 形の**名前**（消費者ゼロ / 導出が 2 経路 / 既定値の偶然の一致）は概念の定義ゆえ変えない
   - **異論の記録**: review-simplicity は「`:61` は概念の説明であって実例の主張ではないので削れ」とした。review-completeness は「必須であって任意ではない」とした。**後者を採る**——「3 つの形で現れる」は現況についての現在形の命題であり、支える実例が全て歴史になった節でそのまま置くのは #825 が消そうとしている欠陥そのものだからである
 
-- [ ] **A8** `docs/development-principles.md:71` の `G12_NO_LAUNCHER_READ` を `NO_LAUNCHER_READ` へ直す（**#819 案 (A)**）。1 語のみ
-- [ ] **A9** `docs/build-commands.md:77` を読み直し、`docs/development-principles.md`「config の値は到達性の検出器を持たない」への引用が空振りしていないことを確認する（節見出し `:55` は変えないので G-heading-refs は緑。確認は意味の側）
-- [ ] **A10** **`scripts/visual-check-colors.ps1:7-9` を読み直す**（第 6 の写し）。逐語は「config の既定色 `#282828` は `snotra-egui-runtime` の `CLEAR_COLOR` と一致するため、既定のまま起動しても「色が届いていない」欠陥は観測できない（`docs/development-principles.md`「config の値は到達性の検出器を持たない」）」——**今日も真**なので事実は直さなくてよいが、A6 が引用先の節の主題文を動かすので空振りしないか確認する。**`.ps1` は `governanceDocs` の母集団外ゆえ G-heading-refs にも G-references にも守られていない**（実測）——機械は助けてくれない
+- [x] **A8** `docs/development-principles.md:71` の `G12_NO_LAUNCHER_READ` を `NO_LAUNCHER_READ` へ直す（**#819 案 (A)**）。1 語のみ
+- [x] **A9** `docs/build-commands.md:77` を読み直し、`docs/development-principles.md`「config の値は到達性の検出器を持たない」への引用が空振りしていないことを確認する（節見出し `:55` は変えないので G-heading-refs は緑。確認は意味の側）
+  - **結果: 修正不要。** 逐語「config の既定 `#282828` は…`CLEAR_COLOR` と一致するため、色が届いていなくても正常に見える」は今日も真。A6 が `:67` で `check:colors` を非既定色の唯一の経路として名指したことで、**この引用の主張はむしろ補強された**（引用先が「既定では見えない」理由をより具体的に述べるようになった）
+- [x] **A10** **`scripts/visual-check-colors.ps1:7-9` を読み直す**（第 6 の写し）。逐語は「config の既定色 `#282828` は `snotra-egui-runtime` の `CLEAR_COLOR` と一致するため、既定のまま起動しても「色が届いていない」欠陥は観測できない（`docs/development-principles.md`「config の値は到達性の検出器を持たない」）」——**今日も真**なので事実は直さなくてよいが、A6 が引用先の節の主題文を動かすので空振りしないか確認する。**`.ps1` は `governanceDocs` の母集団外ゆえ G-heading-refs にも G-references にも守られていない**（実測）——機械は助けてくれない
+  - **結果: 修正不要。** A9 と同じ理由で、引用先の節見出しは不変・主張も成立したまま
 
 ### A-Phase 4 — 検算と検証
 
-- [ ] **A11** 受け入れ条件 1・2・4 を grep で検算する
+- [x] **A11** 受け入れ条件 1・2・4 を grep で検算する
+
+  **実装中に述語を 1 度直した（発見）**: 当初の `一致は規約` は、**訂正後の文**「一致は規約ではなく機構が固定する」（A5 が書いた `snotra-egui-runtime/CLAUDE.md:39`）に**部分一致する**。訂正した文が赤になる述語は「直した」と「直していない」を区別できず、検算として不成立である。`一致は規約にすぎ` へ絞った。**同時に `一致は今まで規約` を足した**——これで A2 が消した旧文（「一致は今まで規約でしかなかった」）も grep の射程に入り、**review-facts が「A11 では A2 を検算できない」と指摘した穴が塞がった**（A12 は目視の二重確認として残す）。
 
   ```bash
-  grep -rn "落ちる検査は無い\|一致は規約\|機構ではなく規約" \
+  grep -rn "落ちる検査は無い\|一致は規約にすぎ\|機構ではなく規約\|一致は今まで規約" \
     --include=*.rs --include=*.mjs --include=*.md --include=*.ps1 . \
     | grep -v "^./target" | grep -v node_modules | grep -v "^./docs/superpowers/" \
     | grep -v "^./.superpowers/" | grep -v "^./workspace/"
@@ -147,14 +151,16 @@
 
   - **「検査は無い」をパターンに入れてはならない**——全く別の残余を述べる文を巻き込む（`.superpowers/sdd/plan/spec-inventory-duplication.md:451`「本棚卸しの findings に対応する検査は無い」が実例・実測）。**第 1 版が書いた「二重に数える」という理由は誤り**（`grep` の alternation は 1 行を 1 回しか出さない・review-facts 実測）
   - **除外行はすべて実効的である**——`docs/superpowers/` には `消費者ゼロ` が 1 件実在し（`specs/2026-07-28-config-background-color-design.md:71`・実測）、`.superpowers/` は `grep -rn` の視界に入る（`WALK_EXCLUDE_PREFIXES` は `governance:check` の走査にしか効かない）。第 1 版の「防御的」という説明は誤り
-  - 1 本目の期待: **0 件**
-  - 2 本目の期待: `development-principles.md:63`（3 形の名前）・`view.rs:352`（過去形）・A6 と A4 が書き換えた 2 箇所（過去形）のみ
-  - 3 本目の期待: **0 件**
-- [ ] **A12** **A2 の完了を目視で確認する**（A11 では検算できない・A2 の注記参照）
-- [ ] **A13** `npm run governance:check`
-- [ ] **A14** `cargo test -p snotra`
-- [ ] **A15** `git diff scripts/governance-check.mjs` で `NO_LAUNCHER_READ` の表と判定関数に差分が無いことを確認する
-- [ ] **A16** `cargo fmt --check` / `cargo clippy` は PostToolUse hook が `.rs` 編集で自動実行する（沈黙 = 合格）
+  - 1 本目の期待: **0 件** → **実測 0 件** ✅
+  - 2 本目の期待: `development-principles.md:63`（3 形の名前）・`view.rs:352`（過去形）のみ → **実測どおり 2 件** ✅。**A6 と A4 が書いた過去形は「消費者**が**ゼロだった」ゆえマーカーに当たらない**（当初の期待は 4 件と書いていたが、書き換え後の日本語が助詞を伴う形になったため。条件 2 の「現在形で述べる記述が 0 件」は満たしている）
+  - 3 本目の期待: **0 件** → **実測 0 件** ✅
+- [x] **A12** **A2 の完了を目視で確認する**（二重確認。A11 の述語修正で grep でも担保されるようになった）
+- [x] **A13** `npm run governance:check` → **全検査 passed**（検査 19 件 / 見出し参照 206 件を 77 文書から / 散文の識別子 1 件を 25 文書から / ADR の短縮引用 162 件）
+- [x] **A14** `cargo test -p snotra` → **192 passed / 0 failed / 2 ignored**
+- [x] **A15** `git diff scripts/governance-check.mjs` で `NO_LAUNCHER_READ` の表と判定関数に差分が無いことを確認する → **差分はコメント 2 行 → 3 行のみ**（`3 insertions(+), 2 deletions(-)`）✅
+- [x] **A16** `cargo fmt --check` / `cargo clippy` は PostToolUse hook が `.rs` 編集で自動実行する（沈黙 = 合格）→ **沈黙**
+- [x] **A18（計画外）** 否定の知識を ADR へ回収した — `docs/adr/ADR-canonical-source-without-pointer-indirection.md`。却下した代替案は「他所を『正本を見よ』というポインタへ倒す」（計画第 1 版の形）で、理由は「照合の向きが逆になる」。`governance:check` 再実行で緑（ADR 29 本 / 短縮引用 164 件）
+- [x] **A17（計画外・code-reviewer の Low 2 を受けて追加）** A7 で書いた「**下に挙げる実例はいずれも解消済みである**」を撤回した。**射程を持たない全称であり偽だった**——同じ節の `:71` 以降には生きた残余が在る（`InstantAction::Url` の `url` は G-config-reachability の母集団外で「規範だけが頼り」、`.unwrap_or(600.0)` は「今日たまたま一致しているだけ」）。**#825 が消そうとしている欠陥そのものを新しく書いていた。** A7 の目的（現在形の主張を弱める）は「3 つの形で現れ**うる**」だけで足り、歴史の明示は `:67` の段落が過去形で担っている
 
 ## Phase A の不変条件
 
@@ -164,6 +170,7 @@
 | `CLEAR_COLOR` の値と `default_background_color()` の値は一致する | `runtime_fallback_matches_config_default_background`。**乖離で実際に落ちることをフォールトインジェクションで実測済み**（`0x0028_2829` へ 1 文字変異 → `assertion left == right failed` / 復帰後 ok・review-facts） |
 | `.md` から書くパス参照は実在する | G-references（`REF_EXTENSIONS` に `.rs` を含む）。**A5 がテストのパスを直接書くのはこの保証を得るためである** |
 | **rustdoc と `.ps1` 内のパス参照は機械照合されない** | `governanceDocs` は `.md` のみ。**受容する残余**——A1/A2 の相互参照と A10 の引用は規範でしか守られない |
+| **テスト名 `runtime_fallback_matches_config_default_background` の実在は機械照合されない** | **受容する残余**（code-reviewer が発見）。G-references が見るのはパスの実在までで、シンボル名は見ない。G-stale-identifiers の述語は camelCase 限定（`:1428`）で、Phase B が足すのも SCREAMING_SNAKE ゆえ**小文字 snake_case は両方の射程外**。加えて母集団も `.claude/**` + `SPEC.md` に限られる。**テストを改名・削除すると、新設した 3 箇所（`renderer.rs` の doc / `window_coordinator.rs` の doc / `snotra-egui-runtime/CLAUDE.md`）が両検証とも緑のまま stale になる**。A2 の doc に「改名・移動するなら両方を直す」と規範で補ってある |
 | `NO_LAUNCHER_READ` の表と実コードの双方向一致 | G-config-reachability。表を触らないので影響なし（A15 で確認） |
 
 異常系: 無し（挙動を変える変更を含まない。`.rs` の変更は doc コメントのみ）。
@@ -298,7 +305,7 @@ proxy snapshot で測った（稼働中のガードは触っていない）。**
 ## SPEC.md・関連文書の更新要否
 
 - **`SPEC.md`: 不要**（両 Phase とも）。`SPEC.md` に `CLEAR_COLOR` は 0 件（実測）
-- **ADR**: Phase A は不要（否定の知識が生じない）。**Phase B は必須**（B16）
+- **ADR**: **Phase A も必要になった**（計画時の「否定の知識が生じない」は、レビューを経て**覆った**）。マルチパースペクティブレビューが「他所を『正本を見よ』というポインタへ倒す」案を却下させ、その理由（照合の向きが逆になる）は `AGENTS.md`「文書に事実の写しを増やす変更 → 正本を 1 か所に定め他は参照へ」の素直な読みを覆す再利用可能な知識である。→ `docs/adr/ADR-canonical-source-without-pointer-indirection.md`。**Phase B は必須**（B16）
 - **`RETROSPECTIVE.md`: 不要**（サイクル末に `/retrospective` が扱う）
 
 ## 未確定（実装前に潰す）

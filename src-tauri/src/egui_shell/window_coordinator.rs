@@ -696,8 +696,9 @@ mod tests {
     }
 
     /// runtime のフォールバック（`set_clear_color` を呼ばなかったフレームの色）が config の
-    /// 既定背景色と一致することを**機構で**固定する。両 crate に依存するのはこの crate だけで、
-    /// 一致は今まで規約でしかなかった（`snotra-egui-runtime/CLAUDE.md` が受容した残余）。
+    /// 既定背景色と一致することを**機構で**固定する。両 crate に依存するのはこの crate だけなので、
+    /// 突き合わせられる位置がここしか無い。**`snotra-egui-runtime` の `CLEAR_COLOR` の doc と
+    /// `snotra-egui-runtime/CLAUDE.md` がこのテストを名指す**——改名・移動するなら両方を直す。
     #[test]
     fn runtime_fallback_matches_config_default_background() {
         let d = snotra_core::config::VisualConfig::default().background_color;

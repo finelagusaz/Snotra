@@ -106,6 +106,32 @@ Describe 'Start-SnotraProcess' {
             if ($savedTraceExists) { $env:SNOTRA_TRACE = $savedTrace } else { Remove-Item Env:SNOTRA_TRACE -ErrorAction SilentlyContinue }
         }
     }
+
+    It 'コンソール窓を見せずに起動する（debug ビルドが前面を奪うのを防ぐ）' {
+        # #872 現れ方 1: debug は console サブシステムなので、stdio をリダイレクトすると
+        # `ConsoleWindowClass` の窓が実行ファイルのフルパスを題名にして作られる。それが前面を
+        # 奪うと打鍵の宛先が本体の窓に定まらない。**通った実行では発火しない**ため、
+        # ここでしか観測されない。
+        Mock -ModuleName SnotraSmoke Start-Process { }
+
+        Start-SnotraProcess -ConfigDir 'p' -FilePath 'x.exe' -StandardErrorPath 'e.txt'
+
+        Should -Invoke -ModuleName SnotraSmoke Start-Process -Times 1 -ParameterFilter {
+            $WindowStyle -eq 'Hidden'
+        }
+    }
+
+    It 'NoNewWindow のときは WindowStyle を渡さない（Start-Process の排他な引数）' {
+        # 両方渡すと Start-Process がパラメータセットの衝突で落ちる。`-NoNewWindow` は
+        # 呼び出し元のコンソールを共有する＝新しい窓を作らないので、目的は同じく満たす。
+        Mock -ModuleName SnotraSmoke Start-Process { }
+
+        Start-SnotraProcess -ConfigDir 'p' -FilePath 'x.exe' -NoNewWindow
+
+        Should -Invoke -ModuleName SnotraSmoke Start-Process -Times 1 -ParameterFilter {
+            $NoNewWindow -eq $true -and $null -eq $WindowStyle
+        }
+    }
 }
 
 Describe 'Resolve-SnotraCargoExecutable' {

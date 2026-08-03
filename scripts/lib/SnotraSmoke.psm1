@@ -24,6 +24,8 @@ public static extern bool SetForegroundWindow(IntPtr hWnd);
 public static extern IntPtr GetForegroundWindow();
 [DllImport("user32.dll", CharSet = CharSet.Unicode)]
 public static extern int GetWindowTextW(IntPtr hWnd, System.Text.StringBuilder text, int count);
+[DllImport("user32.dll", CharSet = CharSet.Unicode)]
+public static extern int GetClassNameW(IntPtr hWnd, System.Text.StringBuilder text, int count);
 [DllImport("user32.dll")]
 public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
 [DllImport("user32.dll")]
@@ -283,7 +285,24 @@ function Start-SnotraProcess {
     if ($PSBoundParameters.ContainsKey('ArgumentList')) { $startParameters.ArgumentList = $ArgumentList }
     if ($PSBoundParameters.ContainsKey('StandardErrorPath')) { $startParameters.RedirectStandardError = $StandardErrorPath }
     if ($PSBoundParameters.ContainsKey('StandardOutputPath')) { $startParameters.RedirectStandardOutput = $StandardOutputPath }
-    if ($NoNewWindow) { $startParameters.NoNewWindow = $true }
+    # **debug ビルドはコンソール窓を連れてくる。それを見せない**（#872 の現れ方 1）。
+    # `main.rs` の `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]` により
+    # debug はコンソールサブシステムであり、stdio をリダイレクトして起動すると
+    # `ConsoleWindowClass` の窓が**実行ファイルのフルパスを題名にして**作られる。この窓が
+    # 前面を奪うと、`Set-SnotraForegroundWindow` は本体の窓を前面にできず、注入した打鍵の
+    # 宛先が定まらない——CI で実測した前面窓は
+    # `title='D:\a\Snotra\Snotra\target\debug\snotra.exe'` だった（run 1280 / 1299）。
+    # **release を使う `smoke-egui` が同じキー注入をしながら一度も踏んでいない**のは、
+    # release にこの窓が無いためである。
+    #
+    # **`Hidden` は隠すだけで、窓は在る**（実測: `ConsoleWindowClass` が visible=False で残る）。
+    # 前面は奪わなくなるが、窓を列挙する種類の検査を足すときは母集団に混じる。作らせない形は
+    # `ProcessStartInfo.CreateNoWindow`（実測: 窓 0 個）だが、`Start-Process` が露出しておらず
+    # `PassThru` 相当・引数のクォート規則・リダイレクトの再導出が要る。この 1 件には見合わない。
+    #
+    # `-WindowStyle` と `-NoNewWindow` は排他なので分ける。`-NoNewWindow` は子が呼び出し元の
+    # コンソールを使う＝新しい窓を作らないため、こちらも競合相手を増やさない。
+    if ($NoNewWindow) { $startParameters.NoNewWindow = $true } else { $startParameters.WindowStyle = 'Hidden' }
 
     Invoke-SnotraEnvironment -Variables $variables -ScriptBlock {
         Start-Process @startParameters
@@ -633,9 +652,13 @@ function Get-SnotraForegroundWindowLabel {
 
     $title = New-Object System.Text.StringBuilder 256
     [void][SnotraSmokeInterop.Native]::GetWindowTextW($handle, $title, $title.Capacity)
+    # **クラス名も出す**（#872）。題名だけでは、前面を握っていたのが本体の窓なのか
+    # debug ビルドが連れてくるコンソール窓（`ConsoleWindowClass`）なのかを事後に確定できない。
+    $class = New-Object System.Text.StringBuilder 256
+    [void][SnotraSmokeInterop.Native]::GetClassNameW($handle, $class, $class.Capacity)
     [uint32]$ownerPid = 0
     [void][SnotraSmokeInterop.Native]::GetWindowThreadProcessId($handle, [ref]$ownerPid)
-    return "0x$($handle.ToString('X')) pid=$ownerPid title='$($title.ToString())'"
+    return "0x$($handle.ToString('X')) pid=$ownerPid class='$($class.ToString())' title='$($title.ToString())'"
 }
 
 <#

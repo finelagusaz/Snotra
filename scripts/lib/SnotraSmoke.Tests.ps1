@@ -106,6 +106,29 @@ Describe 'Start-SnotraProcess' {
             if ($savedTraceExists) { $env:SNOTRA_TRACE = $savedTrace } else { Remove-Item Env:SNOTRA_TRACE -ErrorAction SilentlyContinue }
         }
     }
+
+    It 'コンソール窓を見せずに起動する（debug ビルドが前面を奪うのを防ぐ）' {
+        # 回帰テスト: #872 現れ方 1（機序は `Start-SnotraProcess` のコメントが正本）。
+        # **通った実行では発火しない**ため、この不変条件はここでしか観測されない。
+        Mock -ModuleName SnotraSmoke Start-Process { }
+
+        Start-SnotraProcess -ConfigDir 'p' -FilePath 'x.exe' -StandardErrorPath 'e.txt'
+
+        Should -Invoke -ModuleName SnotraSmoke Start-Process -Times 1 -ParameterFilter {
+            $WindowStyle -eq 'Hidden'
+        }
+    }
+
+    It 'NoNewWindow のときは WindowStyle を渡さない（Start-Process の排他な引数）' {
+        # 回帰テスト: #872（排他の理由は `Start-SnotraProcess` のコメントが正本）。
+        Mock -ModuleName SnotraSmoke Start-Process { }
+
+        Start-SnotraProcess -ConfigDir 'p' -FilePath 'x.exe' -NoNewWindow
+
+        Should -Invoke -ModuleName SnotraSmoke Start-Process -Times 1 -ParameterFilter {
+            $NoNewWindow -eq $true -and $null -eq $WindowStyle
+        }
+    }
 }
 
 Describe 'Resolve-SnotraCargoExecutable' {

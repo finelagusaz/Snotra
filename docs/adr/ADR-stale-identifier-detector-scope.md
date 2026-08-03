@@ -150,8 +150,10 @@ ADR は**否定の知識＝もう存在しない案**を書く場所である。
 外部語彙 2 件のうち `CLAUDE_PROJECT_DIR` は `.claude/settings.json` に在るので、`.json` を語彙源へ入れれば免罪できる。**測定上は等価だが、3 つの契約を同時に破る**:
 
 1. **「語彙を寄付してよいのは『現に動いている実装』だけである」** — `src-tauri/gen/schemas/*.json`（306 KB）は生成物、`package-lock.json`（49 KB）は依存メタデータで、寄付する新規語彙の大半は `npm install` のたびに入れ替わる integrity ハッシュの base64 断片である（実測 142 個）
-2. **「テストコードは語彙を寄付しない」** — `test-results/.last-run.json` が `failedTests` を寄付する
-3. **「判定は決定的」**（ファイル冒頭） — `test-results/.last-run.json` と `.claude/settings.local.json` は gitignore 済みで **CI のチェックアウトに存在せず、手元と CI で語彙が割れる**（`.superpowers/` を走査から外した理由と同型・#722）
+2. **「テストコードは語彙を寄付しない」** — vitest が書く test-results/.last-run.json が `failedTests` を寄付する
+3. **「判定は決定的」**（ファイル冒頭） — その test-results/.last-run.json と .claude/settings.local.json は gitignore 済みで **CI のチェックアウトに存在せず、手元と CI で語彙が割れる**（`.superpowers/` を走査から外した理由と同型・#722）
+
+**この 2 つのパスをバッククォートで書けないこと自体が、3 つ目の論証の実演である。** 初稿は正準形で書き、**手元の `governance:check` は緑・CI の同じジョブは G-references の赤**という結果になった（この PR で実測）——手元にはファイルが在り、チェックアウトには無いからである。**「CI が在って初めて行える実測」を PR 本文のチェックリストへ送る規約（`.claude/rules/safety-nets.md`「検出器のカバー範囲は、欠落のパターンごとに検算する」）が、まさにこれを捕まえた。** 存在してはならないパスは、存在を照合される形で書けない。
 
 **`.yml` を足した側にも同じ検算が要る。** `makeSnapshot` は git ではなく**ファイルシステム**を歩くので、走査除外の外に未追跡の `.yml` が在れば手元だけが語彙を得る。実測: `git ls-files --others --exclude-standard` に `.(yml|rs|ts|tsx|mjs|ps1|toml)$` を当てて **0 件**（`git ls-files "*.yml"` は追跡分しか見ないので、この検算の代わりにはならない）。既存の拡張子も同じ経路に晒されていたが、この変更で新しく増えたのは `yml` だけである。
 

@@ -432,6 +432,89 @@ Describe 'Read-SnotraTraceSnapshot（捨てた行の数え方）' {
         $snapshot = Read-SnotraTraceSnapshot -Path (Join-Path $TestDrive 'missing.log')
         $snapshot.Available | Should -BeFalse
         $snapshot.Events.Count | Should -Be 0
+        # 不在は「読み取りの失敗」ではない。両者を同じ値にすると、下の検査が区別を失う。
+        $snapshot.ReadError | Should -BeNullOrEmpty
+    }
+
+    It '読み取りに失敗したら Available=false と ReadError を立て、「読めた」と言わない（#872）' {
+        # ディレクトリは Test-Path が真で Get-Content が落ちる（実測）。`-ErrorAction
+        # SilentlyContinue` のままだと Available=true・Events 0 件・Dropped 0 という
+        # **正常な空ログと区別できない値**を返し、稼働中のアプリを観測する経路で
+        # 「読めなかった」が「まだ出ていない」に化ける。
+        $dir = Join-Path $TestDrive 'unreadable-snapshot'
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+
+        $snapshot = Read-SnotraTraceSnapshot -Path $dir
+
+        $snapshot.Available | Should -BeFalse
+        $snapshot.ReadError | Should -Not -BeNullOrEmpty
+        $snapshot.Events.Count | Should -Be 0
+        $snapshot.Dropped | Should -Be 0
+    }
+}
+
+Describe 'Get-SnotraTraceFailureCount（赤とみなす状態の定義）' {
+    BeforeAll {
+        function New-Verdict {
+            param([hashtable]$Overall = @{}, [bool]$JudgeFailed = $false)
+            $all = @{}
+            foreach ($n in (Get-SnotraTraceInvariantNames)) {
+                $all[$n] = if ($Overall.ContainsKey($n)) { $Overall[$n] } else { 'SKIP' }
+            }
+            return @{ Overall = $all; JudgeFailed = $JudgeFailed }
+        }
+    }
+
+    It 'trace を読めなかったら赤にする（観測不能を成功として終えない）' {
+        # #872: `Read-SnotraTraceSnapshot` が読み取り失敗を Available=false へ倒すので、
+        # 判定は走らず Verdict は $null になる。**ここで 0 を返すと、権限・共有違反で
+        # 読みが落ちた実行が exit 0 で終わる**——この PR が塞いでいる false green そのもの。
+        Get-SnotraTraceFailureCount -Verdict $null -ReadError 'Unable to get content' | Should -Be 1
+    }
+
+    It 'trace の不在は赤にしない（-NoLaunch や 1 行も出ていない実行）' {
+        # 読み取り失敗と同じ扱いにすると、trace を出さない正当な使い方が常に失敗する。
+        Get-SnotraTraceFailureCount -Verdict $null -ReadError $null | Should -Be 0
+        Get-SnotraTraceFailureCount -Verdict $null -ReadError '' | Should -Be 0
+    }
+
+    It '不変条件の FAIL を数える' {
+        $names = @(Get-SnotraTraceInvariantNames)
+        $verdict = New-Verdict -Overall @{ $names[0] = 'FAIL'; $names[1] = 'FAIL' }
+        Get-SnotraTraceFailureCount -Verdict $verdict -ReadError $null | Should -Be 2
+    }
+
+    It '判定器の例外も赤にする（例外は欠陥であって無事ではない）' {
+        Get-SnotraTraceFailureCount -Verdict (New-Verdict -JudgeFailed $true) -ReadError $null | Should -Be 1
+    }
+
+    It '全 SKIP は赤にしない（調べられなかったことを違反として数えない）' {
+        Get-SnotraTraceFailureCount -Verdict (New-Verdict) -ReadError $null | Should -Be 0
+    }
+
+    It '赤は積み上がる（FAIL と例外と読み取り失敗が互いを隠さない）' {
+        $names = @(Get-SnotraTraceInvariantNames)
+        $verdict = New-Verdict -Overall @{ $names[0] = 'FAIL' } -JudgeFailed $true
+        Get-SnotraTraceFailureCount -Verdict $verdict -ReadError 'boom' | Should -Be 3
+    }
+}
+
+Describe 'Get-SnotraTraceFailedInvariants' {
+    It '母集団を Get-SnotraTraceInvariantNames から引く（呼び出し側が名前を写さない）' {
+        # 不変条件を 1 つ足したとき、呼び出し側の写しが黙って取りこぼすのを防ぐ。
+        $names = @(Get-SnotraTraceInvariantNames)
+        $row = @{}
+        foreach ($n in $names) { $row[$n] = 'PASS' }
+        $row[$names[-1]] = 'FAIL'
+
+        $failed = @(Get-SnotraTraceFailedInvariants -Verdicts $row)
+
+        $failed.Count | Should -Be 1
+        $failed[0] | Should -Be $names[-1]
+    }
+
+    It '判定表が無ければ空を返す（呼び出し側に null 分岐を書かせない）' {
+        @(Get-SnotraTraceFailedInvariants -Verdicts $null).Count | Should -Be 0
     }
 }
 

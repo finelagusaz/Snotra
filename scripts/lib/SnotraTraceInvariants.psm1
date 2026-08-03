@@ -511,6 +511,70 @@ function Get-SnotraTraceSectionVerdict {
 
 <#
 .SYNOPSIS
+判定表（`Overall` または区間の行）のうち FAIL の不変条件名を返す。
+
+.DESCRIPTION
+**「FAIL という値で赤を見分ける」規則を呼び出し側へ写さないための口である。**
+素の `Where-Object { $row[$_] -eq 'FAIL' }` を各所に書くと、判定値の集合を変えたとき
+（例: FAIL を細分する）に一部だけが追随する。名前の母集団も
+`Get-SnotraTraceInvariantNames` から引くので、不変条件を 1 つ足したときに
+呼び出し側の写しが黙って取りこぼすことがない。
+#>
+function Get-SnotraTraceFailedInvariants {
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [hashtable]$Verdicts
+    )
+
+    if ($null -eq $Verdicts) { return @() }
+    return @(Get-SnotraTraceInvariantNames | Where-Object { $Verdicts[$_] -eq 'FAIL' })
+}
+
+<#
+.SYNOPSIS
+trace 側の「赤」の件数を返す。0 なら trace は合否を下げない。
+
+.DESCRIPTION
+**赤とみなす状態の定義を 1 か所に置く。** 呼び出し側（`manual-smoke.ps1` の exit code、
+記録、端末表示）がそれぞれ数え直すと、状態を 1 つ足したときに一部だけが追随し、
+**新しい赤が exit code から黙って落ちる**。
+
+赤は 3 つある。いずれも「問題が無かった」ではない:
+
+- 不変条件の **FAIL**（違反そのもの）
+- **判定器の例外**（`JudgeFailed`）——例外は欠陥であって無事ではない（code-review C2）
+- **trace を読めなかった**（`ReadError`）——観測できなかったことを成功として終えると、
+  権限・共有違反で読みが落ちた実行が緑になる（#872。`Read-SnotraTraceSnapshot` が
+  読み取り失敗と不在を区別しているのは、この判断のためである）
+
+**trace の不在（`-NoLaunch` で起動した・まだ 1 行も出ていない）は赤ではない。**
+`ReadError` が無いまま `Verdict` が `$null` の場合がそれで、0 を返す——ここを赤に
+倒すと、trace を出さない正当な使い方が常に失敗する。
+#>
+function Get-SnotraTraceFailureCount {
+    [CmdletBinding()]
+    param(
+        # `Test-SnotraTraceInvariants` の結果。判定していなければ $null。
+        [AllowNull()]
+        [hashtable]$Verdict,
+        # `Read-SnotraTraceSnapshot` の ReadError。読めていれば $null。
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$ReadError
+    )
+
+    $count = 0
+    if (-not [string]::IsNullOrEmpty($ReadError)) { $count++ }
+    if ($null -ne $Verdict) {
+        $count += @(Get-SnotraTraceFailedInvariants -Verdicts $Verdict.Overall).Count
+        if ($Verdict.JudgeFailed) { $count++ }
+    }
+    return $count
+}
+
+<#
+.SYNOPSIS
 不変条件ごとの件数を 1 行へ畳む。`-Compact` は端末向けの短い形。
 
 .DESCRIPTION
@@ -600,6 +664,8 @@ Export-ModuleMember -Function @(
     'Get-SnotraTraceMarker'
     'Test-SnotraTraceInvariants'
     'Get-SnotraTraceSectionVerdict'
+    'Get-SnotraTraceFailedInvariants'
+    'Get-SnotraTraceFailureCount'
     'Format-SnotraTraceCountSummary'
     'Format-SnotraTraceVerdictTable'
 )

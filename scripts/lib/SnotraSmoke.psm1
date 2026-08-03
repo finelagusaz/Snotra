@@ -347,8 +347,13 @@ function Read-SnotraTraceEvents {
         [string]$Path
     )
 
-    if (-not (Test-Path -LiteralPath $Path)) { return }
-    ConvertFrom-SnotraTraceLine -Line (Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)
+    # **読み実装は `Read-SnotraTraceSnapshot` の 1 つだけにする。** 以前はここが独自に
+    # Get-Content していたため、読み取り失敗の扱いが 2 か所にあり、片方だけが沈黙していた。
+    $snapshot = Read-SnotraTraceSnapshot -Path $Path
+    if ($snapshot.ReadError) {
+        Write-Warning "trace の読み取りに失敗しました（$Path）: $($snapshot.ReadError)"
+    }
+    return $snapshot.Events
 }
 
 <#
@@ -401,12 +406,26 @@ function Read-SnotraTraceSnapshot {
     )
 
     if ([string]::IsNullOrEmpty($Path) -or -not (Test-Path -LiteralPath $Path)) {
-        return @{ Available = $false; Lines = @(); Events = @(); TraceLines = 0; Dropped = 0 }
+        return @{ Available = $false; Lines = @(); Events = @(); TraceLines = 0; Dropped = 0; ReadError = $null }
     }
     # **1 度だけ読む。** 行数と parse 成功数を別々の読み取りから取ると、稼働中のアプリが間に
     # 書き足した行で差が壊れる（code-review M1）。**生行も返す**のは同じ理由で——presence の
     # 表示と不変条件の判定が別時点のファイルを見ないようにするため。
-    $lines = @(Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)
+    #
+    # **読み取りの失敗を空と同じ値へ潰さない**（#872）。`-ErrorAction SilentlyContinue` は
+    # 落ちた読みに対しても空を返すため、Available=true / Events 0 件 / Dropped 0 という
+    # **正常な空ログと見分けられない値**になり、稼働中のアプリを観測する経路で
+    # 「読めなかった」が「まだ出ていない」に化ける。読めなければ Available を倒す
+    # （`manual-smoke.ps1` の `Get-TraceVerdict` はこれを見て判定そのものを見送る）。
+    # **不在（ReadError=$null）と失敗（ReadError あり）は別の状態である。**
+    try {
+        $lines = @(Get-Content -LiteralPath $Path -ErrorAction Stop)
+    } catch {
+        return @{
+            Available = $false; Lines = @(); Events = @()
+            TraceLines = 0; Dropped = 0; ReadError = $_.Exception.Message
+        }
+    }
     $traceLineCount = 0
     foreach ($text in $lines) { if ($text -match '^\[trace\]\s+') { $traceLineCount++ } }
     $events = @(ConvertFrom-SnotraTraceLine -Line $lines)
@@ -416,7 +435,99 @@ function Read-SnotraTraceSnapshot {
         Events     = $events
         TraceLines = $traceLineCount
         Dropped    = [Math]::Max(0, $traceLineCount - $events.Count)
+        ReadError  = $null
     }
+}
+
+<#
+.SYNOPSIS
+trace に述語を満たす事象が現れるまで待つ（待ちループの唯一の実装）。
+
+.DESCRIPTION
+**待ちループの形は `Set-SnotraForegroundWindow` に揃える**——「評価 → 期限判定 → sleep」の順で、
+`while (now -lt deadline)` にしない。前者は**期限を跨いだ停止のあとでも必ず 1 度は評価する**が、
+後者は最後の sleep 中に停止が起きると、**既に成立していた条件を一度も見ないまま諦める**
+（#872 run 1306: 期待した事象は 39.354 に出ており期限は 42.57 以降だったのに観測されなかった）。
+
+**trace ファイルは追記のみの過去の記録である。**ゆえに期限後の 1 度の評価が「待ち時間を
+こっそり延ばす」ことにはならない——事象が起きたか否かは時刻に依らず確定している。ただし
+**期限後に初めて見つかったことは停止の徴候である**ため、見つけても警告を出して記録に残す。
+
+**却下した案: 期限を跨いだら見つかっても失敗にする。**「予算内に応答したか」を測る検査なら
+正しいが、この検査が判定するのはキャレット位置であって応答時間ではない。予算は待つ辛抱の
+上限にすぎず、そこへ性能の意味を後付けすると、遅い runner で**実装が正しいまま赤になる**。
+
+読み取りの失敗（`ReadError`）は成立判定に影響させない——その周回が「まだ見えていない」のと
+同じ扱いになるのは避けられないが、**件数を数えて必ず報告する**。沈黙させると #872 の 3 つの
+機序（期限跨ぎ・未着・読み取り失敗）が事後に区別できない。
+
+**諦める条件を scriptblock で受け取らない。** この関数は module スコープで評価するため、
+呼び出し側の変数を読むには閉包が要る。ところが `.GetNewClosure()` は Pester の `It` の中では
+**親スコープの変数を捕まえない**（実測: 予算 4000ms に対し中断せず 4031ms 待った）。捕まえ
+損ねても**発火しないだけ**なので通った実行では観測されず、「本体が死んでも予算いっぱい待つ」
+という退化が黙って入る。プロセスを型付きで受け取れば、この間違いは書けなくなる。
+#>
+function Wait-SnotraTraceCondition {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path,
+        [Parameter(Mandatory)]
+        [scriptblock]$Predicate,
+        [Parameter(Mandatory)]
+        [int]$TimeoutMs,
+        [int]$PollMs = 100,
+        # 与えると、このプロセスが終了した時点で期限を待たずに諦める（待っても変わらないため）。
+        [System.Diagnostics.Process]$AbortIfExited,
+        [string]$Description = 'trace の条件'
+    )
+
+    $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
+    $started = [DateTime]::UtcNow
+    $rounds = 0
+    $readErrors = 0
+    $lastReadError = $null
+    $lastSnapshot = $null
+    $aborted = $false
+
+    while ($true) {
+        $rounds++
+        $snapshot = Read-SnotraTraceSnapshot -Path $Path
+        $lastSnapshot = $snapshot
+        if ($snapshot.ReadError) {
+            $readErrors++
+            $lastReadError = $snapshot.ReadError
+        }
+        $matched = @($snapshot.Events | Where-Object -FilterScript $Predicate | Select-Object -Last 1)
+        if ($matched.Count -gt 0) {
+            $elapsed = [int]([DateTime]::UtcNow - $started).TotalMilliseconds
+            if ([DateTime]::UtcNow -ge $deadline) {
+                Write-Warning ("$Description は予算 ${TimeoutMs}ms を過ぎた評価で成立しました" +
+                    "（${elapsed}ms・$rounds 周）。停止の徴候として記録します。")
+            }
+            if ($readErrors -gt 0) {
+                Write-Warning "$Description の待ちで trace の読み取りに失敗した周回が $readErrors 回ありました: $lastReadError"
+            }
+            return $matched[0]
+        }
+        if ($null -ne $AbortIfExited -and $AbortIfExited.HasExited) { $aborted = $true; break }
+        if ([DateTime]::UtcNow -ge $deadline) { break }
+        Start-Sleep -Milliseconds $PollMs
+    }
+
+    # **不成立の理由を区別できる形で残す。** 何も出さないと、期限切れ・事象未着・読み取り失敗が
+    # 呼び出し側からは同じ $null にしか見えない（#872 で 7 件目まで機序を割れなかった原因）。
+    $elapsed = [int]([DateTime]::UtcNow - $started).TotalMilliseconds
+    $reason = if ($aborted) { "本体が終了（exit=$($AbortIfExited.ExitCode)）" } else { '予算切れ' }
+    $seen = if ($null -ne $lastSnapshot -and $lastSnapshot.Available) {
+        "trace 行 $($lastSnapshot.TraceLines) / 事象 $($lastSnapshot.Events.Count) / 捨てた行 $($lastSnapshot.Dropped)"
+    } else {
+        'trace を読めていない'
+    }
+    Write-Warning ("$Description が成立しませんでした（$reason・${elapsed}ms・$rounds 周・" +
+        "読み取り失敗 $readErrors 回・最後に見たもの: $seen）。" +
+        $(if ($lastReadError) { " 最後の読み取りエラー: $lastReadError" } else { '' }))
+    return $null
 }
 
 function Wait-SnotraTraceEvent {
@@ -431,13 +542,10 @@ function Wait-SnotraTraceEvent {
         [int]$PollMs = 200
     )
 
-    $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
-    while ([DateTime]::UtcNow -lt $deadline) {
-        $match = @(Read-SnotraTraceEvents -Path $Path | Where-Object { $_.event -eq $EventName } | Select-Object -Last 1)
-        if ($match.Count -gt 0) { return $match[0] }
-        Start-Sleep -Milliseconds $PollMs
-    }
-    return $null
+    # 待ちループの形（期限跨ぎ・読み取り失敗の扱い）は `Wait-SnotraTraceCondition` が単独で持つ。
+    # ここに写しを置くと、穴を塞ぐ変更が片方だけに入る（#872 では実際に 2 か所へ分かれていた）。
+    return Wait-SnotraTraceCondition -Path $Path -TimeoutMs $TimeoutMs -PollMs $PollMs `
+        -Description "trace の $EventName" -Predicate { $_.event -eq $EventName }.GetNewClosure()
 }
 
 function Send-SnotraKey {
@@ -482,8 +590,11 @@ function Wait-SnotraWindow {
     )
 
     Initialize-SnotraNativeInterop
+    # 形は `Set-SnotraForegroundWindow` / `Wait-SnotraTraceCondition` に揃える（#872）——
+    # 「評価 → 期限判定 → sleep」。`while (now -lt deadline)` だと、最後の sleep を跨ぐ停止で
+    # **窓が現れていても一度も見ないまま**「現れませんでした」と落ちる。
     $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
-    while ([DateTime]::UtcNow -lt $deadline) {
+    while ($true) {
         $handle = [SnotraSmokeInterop.Native]::FindWindowW([NullString]::Value, $Title)
         $ownerMatches = $true
         if ($handle -ne [IntPtr]::Zero -and $null -ne $Process) {
@@ -497,6 +608,7 @@ function Wait-SnotraWindow {
         if ($null -ne $Process -and $Process.HasExited) {
             throw "本体が終了しました（exit=$($Process.ExitCode)）。窓 '$Title' を観測できません。"
         }
+        if ([DateTime]::UtcNow -ge $deadline) { break }
         Start-Sleep -Milliseconds $PollMs
     }
     throw "窓 '$Title' が ${TimeoutMs}ms 以内に現れませんでした。"
@@ -629,6 +741,7 @@ Export-ModuleMember -Function @(
     'Resolve-SnotraExistingProcess'
     'Read-SnotraTraceEvents'
     'Read-SnotraTraceSnapshot'
+    'Wait-SnotraTraceCondition'
     'Wait-SnotraTraceEvent'
     'Send-SnotraKey'
     'Send-SnotraKeyChord'

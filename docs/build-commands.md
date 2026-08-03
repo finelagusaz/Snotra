@@ -126,7 +126,7 @@ npm test    # 必須: 使い捨て repo で hook を実測する（.githooks/git
 ### F. ガバナンス文書（`*.md`・`.claude/rules/`・`.claude/skills/`・workflow）を変更した場合
 
 ```bash
-npm run governance:check    # 必須: ガバナンス文書の決定的検査（参照実在・モジュール索引・スキル表・SPEC 番号・rules glob・コマンド写像・恒久規範の面積 ratchet・見出し参照の着地。#587/#593）
+npm run governance:check    # 必須: ガバナンス文書の決定的検査（参照実在・モジュール索引・スキル表・SPEC 番号・rules glob・コマンド写像・恒久規範の面積の火災報知器・見出し参照の着地。#587/#593）
 ```
 
 - PostToolUse フックは `.md` に検査を割り当てない（#497 の受容を維持）ため、**編集時の沈黙は「何も走らなかった」である**。ローカルで本コマンドを実行するか、PR CI の `governance-check` job（skip-ci 非対象・常時実行）に委ねる

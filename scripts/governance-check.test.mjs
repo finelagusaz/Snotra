@@ -713,7 +713,7 @@ describe("runAll（空母集団の明示 fail = 沈黙経路の閉塞）", () =>
   });
 });
 
-describe("G-area-budget checkNormativeAreaBudget（二面独立 ratchet・文字数指標・#593 / ADR-area-metric-characters）", () => {
+describe("G-area-budget checkNormativeAreaBudget（二面独立の火災報知器・文字数指標・#593 / ADR-doc-promise-over-area-ratchet）", () => {
   const x = (n) => "x".repeat(n);
   const rule = (p, n) => ({ [`.claude/rules/${p}`]: x(n) });
   const skill = (name, desc) => ({
@@ -729,13 +729,13 @@ describe("G-area-budget checkNormativeAreaBudget（二面独立 ratchet・文字
   it("常時ロードが基準超過なら finding（赤）", () => {
     const s = snap({ "CLAUDE.md": x(AREA_BUDGET.alwaysLoaded + 1), "AGENTS.md": "", ...base });
     const f = checkNormativeAreaBudget(s);
-    expect(f.some((v) => v.message.includes("常時ロード規範") && v.message.includes("> 基準"))).toBe(true);
+    expect(f.some((v) => v.message.includes("常時ロード規範") && v.message.includes("> 上限"))).toBe(true);
   });
 
   it("面替えでは下がらない（rules へ移せば rules 側が超過する）", () => {
     const s = snap({ "CLAUDE.md": x(10), "AGENTS.md": x(10), ...skill("s", "d"), ...rule("a.md", AREA_BUDGET.rules + 1) });
     const f = checkNormativeAreaBudget(s);
-    expect(f.some((v) => v.message.includes("rules 合計") && v.message.includes("> 基準"))).toBe(true);
+    expect(f.some((v) => v.message.includes("rules 合計") && v.message.includes("> 上限"))).toBe(true);
   });
 
   it("改行を畳んでも面積は改行のぶんしか下がらない（行数指標の誤った勾配を絶つ・ADR-area-metric-characters の核心）", () => {

@@ -144,8 +144,10 @@ pub fn available_below(work_area_bottom_phys: i32, top_y_phys: i32, results_scal
 /// 移した。引数は `(幅, 高さ)`——`set_size(width, height)` の引数順と揃える。
 ///
 /// 消費者は 2 つある（**状態は共有しない。式だけを共有する**）: `ResultsWindow::set_size`
-/// （memo は窓の所有型が持つ）と `view.rs` の main 窓ガード（memo は view が持つ・main の
-/// 高さは意図的な 2 導出ゆえ窓の所有型へ寄せない・ADR-results-presentation-two-stage 却下 1）。
+/// （memo は窓の所有型が持つ）と `view.rs` の main 窓ガード（memo は view が持つ——main の高さの
+/// **導出**は show 経路（`show_egui_main`）と共有するが、**memo は共有しない**。`main_size` を
+/// results の導出へ入れないという `ADR-results-presentation-two-stage` 却下 1 の境界は今も真である。
+/// 反転したのは同 ADR の却下 6（`ADR-show-path-derives-drawn-height` 参照）であって却下 1 ではない。
 pub fn size_delta_exceeds(prev: (f64, f64), next: (f64, f64)) -> bool {
     (next.0 - prev.0).abs() > 0.5 || (next.1 - prev.1).abs() > 0.5
 }

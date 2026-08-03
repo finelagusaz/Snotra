@@ -1411,11 +1411,15 @@ export function checkConfigFieldReachability(snapshot, table = NO_LAUNCHER_READ,
 //   `productionOnly` を通しても落ちるのは 1 つ目だけである。現時点でこの穴に落ちた finding は
 //   1 件も無く（測定の全セルで 0 件）、測って動かなかったものを入れないだけの理由で開けてある
 // - **`.json` は語彙源ではない**（`VOCAB_SOURCE_EXT`）。設定キーが JSON にしか無い語は偽陽性になりうる
+// - **テストコードにしか無い識別子も偽陽性になりうる**——上の「テストコードを外す」の裏返しで、
+//   語彙源を狭めた側が新しく作った残余である（今日 0 件）
 // ---------------------------------------------------------------------------
 
 /** 現行語彙の正本になるソース拡張子 */
 const VOCAB_SOURCE_EXT = /\.(rs|ts|tsx|mjs|ps1|toml)$/;
-/** 語彙源から外すテストコード。`VOCAB_SOURCE_EXT` と拡張子の集合を揃える */
+/** 語彙源から外すテストコード。見るのは `.test.<ext>` という**ファイル名の形**だけで、
+ *  拡張子は `VOCAB_SOURCE_EXT` の **JS/TS 系だけ**を採る（`rs|ps1|toml` は含まない——
+ *  Rust 側の穴は上の「受容する残余」） */
 const VOCAB_TEST_FILE = /\.test\.(mjs|ts|tsx)$/;
 /** 語彙源ではなく検査対象になる、`.claude/**` の外の文書（意図の SSOT） */
 export const STALE_EXTRA_DOCS = ["SPEC.md"];

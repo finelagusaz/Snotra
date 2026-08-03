@@ -8,18 +8,20 @@
 //!
 //! **反映境界は 5 つ（`ui.visuals_mut()` / `ctx.set_visuals` / `ctx.set_fonts` /
 //! `frame.set_clear_color` / `window.set_background_color`）あり、1 つの名前に畳んでいない**
-//! ——このうち本ファイルが直接呼ぶのは `ctx.set_visuals` と `frame.set_clear_color` の 2 つ。
+//! ——このうち本ファイルが直接呼ぶのは `ui.visuals_mut()` と `frame.set_clear_color` の 2 つ。
 //! `window.set_background_color` は**リサイズ時に間接呼び出し**である
 //! （`window_coordinator::apply_native_background` 経由）。フォント登録は
 //! `font_stack::configure_japanese_font` の**呼び出し点** 2 箇所（`setup` と `update` の
 //! font_family 差分の分岐）として持つ。**`ctx.set_fonts` 自体の呼び出しは `font_stack.rs` に
-//! あり本ファイルには無い**（#666 段 3 タスク 1 で移設）。`ui.visuals_mut()` は
-//! `--include=*.rs` の全域 grep で 0 件である（2026-07-28 実測）。
+//! あり本ファイルには無い**（#666 段 3 タスク 1 で移設）。**`ctx.set_visuals` は
+//! `src-tauri/src/` の全域 grep で 0 件である**（#751 で撤去・現在の pass に届かないため）。
 //!
-//! **背景色だけは style を経由しない**（spec 決定 1）——`frame.set_clear_color` は
-//! `run_ui` → `paint` の順序に乗るため同じフレームに届く。style 経由の 3 値（`extreme_bg_color` /
-//! `selection.bg_fill` / `weak_text_color`）が抱える「pass 冒頭の snapshot に間に合わない」制約
-//! （#751）とは別の経路である。
+//! **style を経由する 3 値（`extreme_bg_color` / `selection.bg_fill` / `weak_text_color`）と
+//! 背景色は、いまはどちらも同じフレームに届く**（#751 で揃えた・経路は別のまま）。背景色は
+//! `frame.set_clear_color` が `run_ui` → `paint` の順序に乗るため（spec 決定 1）、3 値は
+//! `ui.visuals_mut()` が root `Ui` の style を copy-on-write するためである。**`ctx.set_visuals`
+//! へ戻すとこの対称が壊れる**——root `Ui` は pass 冒頭で `ctx.global_style()` を `Arc` snapshot
+//! するので、そこへの書き込みは次の pass からしか効かない。
 //!
 //! フォント解決と登録は `font_stack`（独立モジュールへ切り出した理由は `font_stack.rs` の
 //! `//!`・#666 段 3 タスク 1）。
@@ -307,8 +309,11 @@ impl EguiView for SearchWindowView {
         // テーマ値（色・font・Metrics・show_icons）は 1 フレーム 1 lock で読み切る
         //(#673 spec 決定 4)。live-read 契約はフレーム間の話で不変——**`self.` へ保持しないこと**。
         // 導出は純粋核 visual::visual_snapshot、行高の正本は layout::Metrics::from_config。
-        // **ここで読むのは値だけである**: `ctx.set_visuals` / `configure_japanese_font` /
-        // ネイティブ背景ブラシの**適用**は従来の位置に残す（描画順の制約があるため）。
+        // **ここで読むのは値だけである**——**適用**は別の位置に散る: 3 値は `ui.visuals_mut()`
+        //（下・#751 で `ctx.set_visuals` から移した）、font は `configure_japanese_font`、背景色は
+        // `frame.set_clear_color`。ネイティブ背景ブラシだけは**フレーム冒頭に無い**——show 直前
+        //（`update()` の外）と、サイズを変えたときの `applied_background` 分岐（`update()` の末尾・
+        // spec 決定 3）の 2 か所である。理由の正本は下の「ここに無い」の段落。
         let visual = crate::egui_shell::read_visual(&app, &self.applied_font_family);
         let metrics = &visual.metrics;
 
@@ -338,19 +343,39 @@ impl EguiView for SearchWindowView {
         self.controller.consume_external_pending(&ctx);
 
         // 背景色は **style を経由しない**（spec 決定 1）。`render()` が `run_ui` → `paint` の順に
-        // 進むため、ここで決めた色は同じフレームの `buffer.fill` に届く——下の `set_visuals` が
-        // 抱える「pass 冒頭の style snapshot に間に合わない」制約（#751）とは無縁の経路である。
+        // 進むため、ここで決めた色は同じフレームの `buffer.fill` に届く。**下の 3 値も #751 以降は
+        // 同じフレームに届く**（`ui.visuals_mut()` へ移したため）——経路は別のままだが、到達
+        // フレームの非対称はもう無い。
         frame.set_clear_color(visual.background);
 
         // §11: 入力欄/選択色を config テーマから（ハードコード撤廃）。
         // font_family のエッジ検出も同一 lock で読む（SU6 spec 決定 2・lock 1 回/フレーム）。
-        // 値はフレーム冒頭の `visual` から取る（#673）。**適用はこの位置のまま**（呼び出し
-        // 位置は本段では動かさない）——egui 0.35.0 では root `Ui` が pass 冒頭で
-        // `ctx.global_style()` を `Arc` snapshot するため、ここで呼ぶ `ctx.set_visuals` は
-        // 現在の pass の `Ui` に届かない。この潜在バグは #751 であり、**本段では直さない**。
+        // 値はフレーム冒頭の `visual` から取る（#673）。
+        //
+        // **適用先は `ctx` ではなくこの `ui` である**（#751）。egui 0.35.0 の `Context::run_ui` は
+        // user callback より前に root `Ui` を作り（`context.rs:780-807`）、`Ui::new` はそこで
+        // `ctx.global_style()` を `Arc<Style>` として掴む（`ui.rs:108-136`）。ゆえに
+        // `ctx.set_visuals` は**現在の pass に届かない**——色だけを変えた config 適用フレームは
+        // 「次のフレームが来る保証の無い状況」（設定 UI で色を編集中）と一致するため、入力欄だけが
+        // 旧色で取り残された。`ui.visuals_mut()` は copy-on-write でこの `Ui` と**以後に作られる
+        // 子 Ui**（`ui.rs:236` の `Arc::clone`）に効くので、同じフレームに届く。
+        //
+        // **この位置は correctness の条件である**（#751 が新設した不変条件）: **visuals を読む最初の
+        // 操作**——ウィジェットの**描画**か子 Ui の**生成**——より前でなければならない。
+        // **「最初のウィジェットより前」ではない**: 上に在る `ui.interact` は `create_widget` を呼ぶ
+        //（`ui.rs:906` → `:920`）＝ウィジェット登録そのものだが、ヒットテストの矩形を積むだけで
+        // visuals を読まないので、ここより上にあってよい。
+        //
+        // 旧 `ctx.set_visuals` はどこで呼んでも当該 pass に届かなかったので位置に意味が無かったが、
+        // いまは意味がある。**破っても検知されない**——コンパイラもユニットテストも `check:colors` も
+        // smoke も捕まえない受容残余であり、上へ何かを挿入するときは「visuals を読まないこと」を
+        // 確かめること。
+        //
         // **`panel_fill` / `window_fill` はここに無い**——読む egui コンテナ（`CentralPanel` /
         // `egui::Window` 等）がリポジトリに 1 つも無く、消費者ゼロの死んだ書き込みだった（spec 決定 2）。
-        let mut visuals = ctx.style_of(ctx.theme()).visuals.clone();
+        // 同じ grep が `ctx.set_visuals` を落としてよい根拠にもなっている（global style から root Ui を
+        // 作る経路がこの crate に無く、egui 内部でその 3 値を読む箇所も無い）。
+        let visuals = ui.visuals_mut();
         visuals.extreme_bg_color = visual.input_bg; // TextEdit 背景
         visuals.selection.bg_fill = visual.selection;
         // TextEdit の hint 色はここだけが効く（#654・詳細は TextEdit 構築部のコメント）。
@@ -358,7 +383,6 @@ impl EguiView for SearchWindowView {
         //（`ui.label` / `ui.button` の類は 0 件・残りは raw painter に色を明示渡し）、
         // weak text を読むのはその hint のみ。results 窓は別 Context ゆえ影響外。
         visuals.weak_text_color = Some(visual.hint);
-        ctx.set_visuals(visuals);
 
         // SU6 spec 決定 2: font_family hot-reload（WebView2 の --font-family CSS 変数即時反映 parity）。
         // applied は解決成否に依らず無条件更新（フィールド doc 参照）。
@@ -504,7 +528,8 @@ impl EguiView for SearchWindowView {
         // - hint → **`Visuals::weak_text_color` だけが効く**。egui 0.35 の TextEdit は
         //   `hint_text.map_texts(|t| t.color(visuals.weak_text_color()))` で**無条件に上書き**し、
         //   egui 自身が "users won't be able to override it" と注記している。ゆえに
-        //   `RichText::color()` は届かない（#643 の指定は dead だった）。適用は `set_visuals` 側
+        //   `RichText::color()` は届かない（#643 の指定は dead だった）。適用は
+        //   `ui.visuals_mut()` 側（#751 以前は `ctx.set_visuals` で、同じフレームに届かなかった）
         //
         // **どちらも「色リテラルを書かない」だけでは守れない**（#654 で 2 様態とも実在した。
         // SPEC §11 は「指定したつもりで届かない経路」とだけ述べ、機序は本コメントを正本に
@@ -583,7 +608,7 @@ impl EguiView for SearchWindowView {
                         .font(bar_font.clone())
                         .text_color(bar_theme.name_color)
                         // 色を付けない——付けても egui が weak_text_color で上書きする（上の
-                        // コメント）。hint の色は `set_visuals` の `weak_text_color` が正本。
+                        // コメント）。hint の色は `ui.visuals_mut()` の `weak_text_color` が正本。
                         .hint_text(egui::RichText::new(hint).font(bar_font)),
                 )
             })
@@ -638,8 +663,9 @@ impl EguiView for SearchWindowView {
                 egui::vec2(ui.available_width(), status_h),
                 egui::Sense::hover(),
             );
-            // 色はフレーム冒頭の `visual` から（#673）。ここは ctx のスタイルではなく config を
-            // 直接読んでいた箇所ゆえ、`set_visuals` より後という位置に意味は無い（監査 #4）。
+            // 色はフレーム冒頭の `visual` から（#673）。ここは style ではなく config を直接
+            // 読んでいた箇所ゆえ、3 値の適用（`ui.visuals_mut()`）より後という位置に意味は無い
+            //（監査 #4。#751 で適用先が ctx から ui へ移った後もこの読みは無関係のまま）。
             ui.painter().rect_filled(rect, 4.0, visual.input_bg);
             ui.painter().text(
                 egui::pos2(rect.left() + 8.0, rect.center().y),
@@ -944,5 +970,54 @@ mod tests {
         });
 
         assert_eq!(text, "alphaz");
+    }
+
+    /// #751: テーマ 3 値の適用は**同じ pass の子 Ui へ届かなければならない**。
+    ///
+    /// egui 0.35.0 の `Context::run_ui` は user callback より**前**に root `Ui` を作り
+    /// （`context.rs:780-807`）、`Ui::new` はそこで `ctx.global_style()` を `Arc<Style>` として
+    /// 掴む（`ui.rs:108-136`）。ゆえに callback 内の `ctx.set_visuals` は現在の pass に届かず、
+    /// 色だけを変えた config 適用フレームで入力欄だけが旧色で残った。`ui.visuals_mut()` は
+    /// copy-on-write でこの `Ui` と以後の子 Ui（`ui.rs:236` の `Arc::clone`）に効く——
+    /// `update()` の適用がそちらを使う理由である。
+    ///
+    /// **`ctx.set_visuals` が届かないことを固定する対のテストは意図的に置かない。** それは
+    /// egui の現在の制限を固定する主張であり、上流が直した日に緑のビルドが赤くなる。
+    ///
+    /// **このテストが守るのは egui の伝播であって、`update()` の呼び出し位置ではない。**
+    /// 「最初のウィジェット／子 Ui の構築より前で適用する」という #751 の順序不変条件には
+    /// 検知手段が無い（受容残余・適用点のコメント参照）。
+    #[test]
+    fn ui_visuals_mut_reaches_child_ui_in_the_same_pass() {
+        let ctx = egui::Context::default();
+        // 既定色と偶然一致して通ることが無いよう、3 値とも非既定の色を使う。
+        let input_bg = egui::Color32::from_rgb(0x80, 0x30, 0x20);
+        let selection = egui::Color32::from_rgb(0x20, 0x70, 0x40);
+        let hint = egui::Color32::from_rgb(0x10, 0x20, 0xF0);
+
+        let seen = std::cell::RefCell::new(None);
+        // **測るのは最初の pass である。** 2 回目以降は global style 経由でも通ってしまうため、
+        // 1 pass しか走らせないことがこのテストの要点である（症状の成立条件そのもの）。
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let visuals = ui.visuals_mut();
+            visuals.extreme_bg_color = input_bg;
+            visuals.selection.bg_fill = selection;
+            visuals.weak_text_color = Some(hint);
+
+            // TextEdit が置かれるのと同じ形の子 Ui（`update()` の `egui::Frame::new().show`）。
+            // 読む側も TextEdit と同じ getter を使う——`text_edit_bg_color()` は
+            // `text_edit_bg_color.unwrap_or(extreme_bg_color)`、`weak_text_color()` は
+            // `Option` を解決する（`style.rs:1135-1148`）。生フィールドを見ると、TextEdit が
+            // 実際に読む経路を素通りする。
+            egui::Frame::new().show(ui, |child| {
+                *seen.borrow_mut() = Some((
+                    child.visuals().text_edit_bg_color(),
+                    child.visuals().selection.bg_fill,
+                    child.visuals().weak_text_color(),
+                ));
+            });
+        });
+
+        assert_eq!(seen.into_inner(), Some((input_bg, selection, hint)));
     }
 }

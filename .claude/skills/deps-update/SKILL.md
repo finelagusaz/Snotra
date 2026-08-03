@@ -42,7 +42,7 @@ cargo / npm の依存関係を一括更新し、ローカル検証 → PR 作成
 
 カテゴリの中身は `docs/build-commands.md`「変更後の検証チェックリスト」が SSOT である。**ここに写しを置かない**——写しを持った結果 SSOT と食い違った実例が #736 にある。
 
-E2E・スモークテストはローカルで実行せず `E2E & Smoke` workflow（`e2e.yml`）に委ねる。依存更新は `Cargo.lock` / `package-lock.json`（+ manifest）を変えるため、これらは `e2e.yml` の paths に該当し **smoke/E2E が自動起動**する（#145 Phase 3。ラベル付与は不要）。**通常 PR CI（`ci.yml`）では smoke/E2E は走らない**。**検証コマンドの文字列**は `docs/build-commands.md` を参照する（二重メンテを避けるためこの SKILL に書かない）。Step 2 の `cargo update` / `npm update` は検証ではなく本スキル固有の操作であり、SSOT の対象外である。
+E2E・スモークテストはローカルで実行せず `Smoke` workflow（`e2e.yml`）に委ねる。依存更新は `Cargo.lock` / `package-lock.json`（+ manifest）を変えるため、これらは `e2e.yml` の paths に該当し **smoke/E2E が自動起動**する（#145 Phase 3。ラベル付与は不要）。**通常 PR CI（`ci.yml`）では smoke/E2E は走らない**。**検証コマンドの文字列**は `docs/build-commands.md` を参照する（二重メンテを避けるためこの SKILL に書かない）。Step 2 の `cargo update` / `npm update` は検証ではなく本スキル固有の操作であり、SSOT の対象外である。
 
 検証が失敗した場合:
 
@@ -68,7 +68,7 @@ E2E・スモークテストはローカルで実行せず `E2E & Smoke` workflow
 
 - `gh pr checks` で CI の完了まで待機する
 - コマンド自体がエラーになる場合（PR がまだ index されていない等）は少し待って再試行する
-- 依存更新は paths 該当ゆえ `E2E & Smoke` workflow が自動起動する。`ci.yml` とは別 workflow だが `gh pr checks` に両方が現れるため、その完了も待つ
+- 依存更新は paths 該当ゆえ `Smoke` workflow が自動起動する。`ci.yml` とは別 workflow だが `gh pr checks` に両方が現れるため、その完了も待つ
 
 ## Step 6 — 報告
 

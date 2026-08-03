@@ -60,8 +60,13 @@ pub(crate) fn read_metrics(app: &tauri::AppHandle) -> layout::Metrics {
     layout::Metrics::from_config(f, rp, bp)
 }
 
-/// 窓の論理幅を config から読む**唯一の点**。show 経路（`show_egui_main`）と
-/// フレーム内（`view.rs` の `window_width`）の両方がここを呼ぶ。
+/// 窓の論理幅を config から読む点のうち、**窓生成後の 2 経路**（show 経路 `show_egui_main` と
+/// フレーム内の `view.rs` の `window_width`）が共有する唯一の実装。
+///
+/// **窓生成は含まない**——`main.rs` が起動時 config から `window_width` を直読みし、
+/// `create` へ渡して両窓の初期 `inner_size` にする（`mod.rs` の窓生成）。ゆえに幅が既定へ
+/// 落ちる条件は 2 系統ある: ここは AppState 不在（下記）、窓生成側は config のロード失敗。
+/// **ここに fallback / clamp / migration を足しても起動直後の初期サイズには効かない。**
 ///
 /// **読みと落とし先を独立実装に分けない**——同じことを 2 箇所でやって乖離した実績が
 /// このファイルにある（`read_metrics` の doc が記録する 52.0/43.0）。

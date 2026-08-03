@@ -108,10 +108,8 @@ Describe 'Start-SnotraProcess' {
     }
 
     It 'コンソール窓を見せずに起動する（debug ビルドが前面を奪うのを防ぐ）' {
-        # #872 現れ方 1: debug は console サブシステムなので、stdio をリダイレクトすると
-        # `ConsoleWindowClass` の窓が実行ファイルのフルパスを題名にして作られる。それが前面を
-        # 奪うと打鍵の宛先が本体の窓に定まらない。**通った実行では発火しない**ため、
-        # ここでしか観測されない。
+        # 回帰テスト: #872 現れ方 1（機序は `Start-SnotraProcess` のコメントが正本）。
+        # **通った実行では発火しない**ため、この不変条件はここでしか観測されない。
         Mock -ModuleName SnotraSmoke Start-Process { }
 
         Start-SnotraProcess -ConfigDir 'p' -FilePath 'x.exe' -StandardErrorPath 'e.txt'
@@ -122,8 +120,7 @@ Describe 'Start-SnotraProcess' {
     }
 
     It 'NoNewWindow のときは WindowStyle を渡さない（Start-Process の排他な引数）' {
-        # 両方渡すと Start-Process がパラメータセットの衝突で落ちる。`-NoNewWindow` は
-        # 呼び出し元のコンソールを共有する＝新しい窓を作らないので、目的は同じく満たす。
+        # 回帰テスト: #872（排他の理由は `Start-SnotraProcess` のコメントが正本）。
         Mock -ModuleName SnotraSmoke Start-Process { }
 
         Start-SnotraProcess -ConfigDir 'p' -FilePath 'x.exe' -NoNewWindow

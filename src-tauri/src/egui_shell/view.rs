@@ -890,9 +890,9 @@ impl EguiView for SearchWindowView {
         );
         let width = self.window_width();
         // 判定式の正本は `layout::size_delta_exceeds`（#749）。results 側と**式だけを共有し、
-        // memo は共有しない**——main の高さは show 経路の bar_height collapse と
-        // `main_window_height` の意図的な 2 導出であり（ADR-results-presentation-two-stage 却下 1）、その状態を窓の
-        // 所有型へ寄せない。
+        // memo は共有しない**（ADR-results-presentation-two-stage 却下 1: `main_size` を results の
+        // 導出へ入れない）。**高さの導出そのものは show 経路と共有する**——`status_row_present` と
+        // `main_window_height` の 2 本を両者が通る（#755 / #801）。共有するのは導出であって memo ではない。
         if crate::egui_shell::layout::size_delta_exceeds(
             (self.last_set_width, self.last_set_height),
             (width, height),

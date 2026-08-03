@@ -139,9 +139,7 @@ check 系スキル（`/race-check` `/symmetric-check` `/cache-check` `/state-che
 | `.claude/rules/safety-nets.md` | 本書へのポインタ 1 行（トリガー: check 系スキルの新設・変更） | **実測 102 字**（うち本書のパスだけで 35 字） |
 | `/race-check` `/symmetric-check` SKILL.md | 4 スロットを埋め直す | 対象外（skills 本文は `AREA_BUDGET.alwaysLoaded` の母集団外・`docs/adr/ADR-implement-step4-report-slot.md` 帰結） |
 
-`governance:check` の実測値は `rules 7956/8056 字`（余白 100 字）。ポインタ 1 行は 103 字（102 字 + 改行 1 字）で余白 100 字を 3 字超過するため、**`AREA_BUDGET.rules` の引き上げが要る**。
-
-引き上げ後の値は **`引き上げ後の実測値 + 100`** とする。`+100` はゼロ余裕を避けるための許容差であり、`scripts/governance-check.mjs` の `AREA_BUDGET` 直前のコメントが「ゼロ余裕で据えると、あらゆる編集が定数の書き換えを要求して摩擦が日常化し、赤の意味が失われる（ADR-area-metric-characters）」と明記している。過去 4 回の引き上げもすべてこの形である。**この形を採るとき、引き上げ幅はポインタ 1 行ぶん（102 字 + 改行 1 字 = 103 字）に一致する**（旧基準も同じ許容差を含むため、`(7956+103+100) - (7956+100) = 103`）——反射的な引き上げでないことの根拠はこの等式である。
+設計当時の実測値は `rules 7956/8056 字`（余白 100 字）で、ポインタ 1 行 103 字のために `AREA_BUDGET.rules` の引き上げ（実測 + 100 の形）を要した。この「±100 字の許容差で毎追記に鳴らす」運用は 2026-08-03 に廃され、`AREA_BUDGET` は暴走だけを捕まえる火災報知器になった——一次規範は「書く約束」である（`ADR-doc-promise-over-area-ratchet`）。
 
 ## 移行の順序
 

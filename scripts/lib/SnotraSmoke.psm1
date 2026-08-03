@@ -272,11 +272,15 @@ function Start-SnotraProcess {
         [string]$StandardErrorPath,
         [string]$StandardOutputPath,
         [switch]$NoNewWindow,
-        [switch]$Trace
+        [switch]$Trace,
+        # 呼び出し側が足す env（`SNOTRA_EGUI_FAKE_UPDATE` 等の視覚スモーク用ハッチ）。
+        # 名前の検証は `Invoke-SnotraEnvironment` が行う（ここでは合流だけ）。
+        [hashtable]$ExtraVariables = @{}
     )
 
     $variables = @{ SNOTRA_CONFIG_DIR = $ConfigDir }
     if ($Trace) { $variables.SNOTRA_TRACE = '1' }
+    foreach ($k in $ExtraVariables.Keys) { $variables[$k] = $ExtraVariables[$k] }
 
     $startParameters = @{
         FilePath = $FilePath

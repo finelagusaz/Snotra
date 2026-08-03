@@ -455,6 +455,99 @@ try {
   }
 }
 
+# ---- シナリオ 2: toast ありで 2 回目の show の高さが保たれるか（#755 / #801）----
+#
+# **既定プロファイル（toast なし）の高さ断言は両 issue を 1 件も捕まえない**——toast も status も
+# 無い状態では main は常にバー高であり、そこは一度も壊れていない。捕まえるには「toast あり」かつ
+# 「2 回目の show」が要る: #755 は 2 回目で 43px へ固着し、#801 は 1 フレームの伸びとして出る。
+# **両者は 1 回の show では排他である**（2026-08-04 実測・#878 のコメント）。
+#
+# `SNOTRA_EGUI_FAKE_UPDATE` は起動時に読まれるためシナリオ 1 に相乗りできず、起動が 1 回増える。
+#
+# 高さは **DWM の実表示矩形**（`DWMWA_EXTENDED_FRAME_BOUNDS` = 属性 9）で読む。`GetWindowRect` は
+# 不可視のリサイズ枠を含み、2 行の高さが 1 行の 2 倍にならない（実測: 118 / 64 に対し DWM は 110 / 56）。
+$toastProfileDir = Join-Path $PSScriptRoot '..\target\smoke-egui\profile-toast'
+# **font_size / bar_padding を明示 seed する**——既定値が変わってもこの検査の期待値が黙って動かない。
+$toastProfile = New-SnotraVerificationProfile -ProfileDir $toastProfileDir -ShowIcons $false `
+  -AdditionalSections "[visual]`r`nfont_size = 15`r`nbar_padding = 28"
+$expectedBarLogical = 15 + 28   # layout::Metrics::from_config: bar_height = font_size + bar_padding
+$toastErrPath = Join-Path $toastProfileDir 'stderr.log'
+Remove-Item -LiteralPath $toastErrPath -Force -ErrorAction SilentlyContinue
+
+function Get-MainWindowDwmSize {
+  param([IntPtr]$Handle)
+  $r = New-Object SnotraSmokeInterop.Native+RECT
+  if ([SnotraSmokeInterop.Native]::DwmGetWindowAttribute($Handle, 9, [ref]$r, 16) -ne 0) {
+    throw 'DwmGetWindowAttribute(EXTENDED_FRAME_BOUNDS) に失敗しました。'
+  }
+  [pscustomobject]@{ W = $r.Right - $r.Left; H = $r.Bottom - $r.Top }
+}
+
+# **証拠出力へ渡す起点は自前で取る**——`$launchedAt` はシナリオ 1 の起動時刻であり、
+# ここで使うと「起動からの経過」が数十秒ずれて手掛かりを誤らせる。
+$toastLaunchedAt = Get-Date
+$toastProc = Start-SnotraProcess -ConfigDir $toastProfile.FullPath -FilePath $ExePath -Trace `
+  -StandardErrorPath $toastErrPath -ExtraVariables @{ SNOTRA_EGUI_FAKE_UPDATE = '1' }
+try {
+  $hk2 = Wait-SnotraTraceEvent -Path $toastErrPath -EventName 'hotkey:registered' -TimeoutMs $StartupObserveTimeoutMs
+  if ($null -eq $hk2) { throw 'シナリオ 2: hotkey:registered を観測できませんでした' }
+  $vks2 = @($hk2.data.vks | ForEach-Object { [byte][int]$_ })
+
+  foreach ($round in 1..2) {
+    Send-SnotraKeyChord -VirtualKeys $vks2
+    if ($null -eq (Wait-SnotraTraceEvent -Path $toastErrPath -EventName 'egui_show:done' -TimeoutMs $ObserveTimeoutMs)) {
+      throw "シナリオ 2: $round 回目の egui_show:done を観測できませんでした"
+    }
+    $hwnd2 = Wait-SnotraWindow -Title 'Snotra' -Process $toastProc -TimeoutMs 5000
+
+    # **1 秒サンプリングする**——1 点だけ見ると #801 の「伸びる」を伸びた後の値で見て緑になる。
+    $heights = @()
+    $sw2 = [System.Diagnostics.Stopwatch]::StartNew()
+    $dwmW = 0
+    while ($sw2.ElapsedMilliseconds -lt 1000) {
+      $b = Get-MainWindowDwmSize -Handle $hwnd2
+      $heights += $b.H
+      $dwmW = $b.W
+      Start-Sleep -Milliseconds 100
+    }
+    $sw2.Stop()
+    $minH = ($heights | Measure-Object -Minimum).Minimum
+    $maxH = ($heights | Measure-Object -Maximum).Maximum
+
+    # 論理 px への換算は **config が幅を固定していることを較正点にする**（DPI API を別に読まない）。
+    # seed の window_width は 600（New-SnotraVerificationProfile の既定）。
+    $scale = $dwmW / 600.0
+    $barPx = $expectedBarLogical * $scale
+
+    # **片側の断言にする**——DWM 矩形には環境依存の数 px のずれが乗る（実測 +2px）。
+    # 判別したいのは「バー 1 行（43 論理 px）」と「バー + toast（86 論理 px）」で、
+    # 差は 43 論理 px ある。1.5 倍を閾値に置けば、ずれに影響されず両者を分けられる。
+    if ($minH -lt 1.5 * $barPx) {
+      $failures += ("toast ありの show #{0}: 窓が toast 行を含む高さになっていない（DWM 高さ {1}px / バー 1 行 ≒ {2:N0}px・#755）" -f $round, $minH, $barPx)
+    }
+    if ($minH -ne $maxH) {
+      $failures += ("toast ありの show #{0}: 表示中に高さが動いた（{1}px → {2}px・#801 の 1 フレームの伸び）" -f $round, $minH, $maxH)
+    }
+    Write-Host ("toast ありの show #{0}: DWM {1}x{2}（min {3} / max {4}・バー 1 行 ≒ {5:N0}px）" -f `
+      $round, $dwmW, $heights[0], $minH, $maxH, $barPx)
+
+    if ($round -lt 2) {
+      Send-SnotraKey -VirtualKey 27
+      Send-SnotraKey -VirtualKey 27 -Up
+      if ($null -eq (Wait-SnotraTraceEvent -Path $toastErrPath -EventName 'egui_hide:done' -TimeoutMs $ObserveTimeoutMs)) {
+        throw "シナリオ 2: $round 回目の egui_hide:done を観測できませんでした"
+      }
+      Start-Sleep -Milliseconds 400
+    }
+  }
+} catch {
+  Show-FailureEvidence -Path $toastErrPath -Proc $toastProc -Context "シナリオ 2 throw: $($_.Exception.Message)" `
+    -LaunchedAt $toastLaunchedAt -PostMortemWaitMs $PostMortemWaitMs
+  throw
+} finally {
+  if (-not $toastProc.HasExited) { Stop-Process -Id $toastProc.Id -Force }
+}
+
 # **env が効いたことの肯定的証拠**（#804・不変条件 1）。効いていなければ本体は実 config を読み、
 # 実プロファイルへ書くので、ここには seed した config.toml しか残らない。「env が届いていない」と
 # 「検査対象が出なかった」を切り分けるのはこの 1 行である

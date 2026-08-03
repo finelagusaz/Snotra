@@ -339,7 +339,7 @@ foreach ($r in $results) {
   if ($null -eq $traceVerdict) { continue }
   $row = Get-SnotraTraceSectionVerdict -Result $traceVerdict -SectionId $r.id
   if ($null -eq $row) { continue }
-  $traceFailed = @($script:InvariantNames | Where-Object { $row[$_] -eq 'FAIL' })
+  $traceFailed = @(Get-SnotraTraceFailedInvariants -Verdicts $row)
   if ($traceFailed.Count -gt 0 -and $r.verdict -eq 'PASS') {
     $mismatches += "項目 $($r.id)「$($r.title)」— **目視 PASS だが trace は $($traceFailed -join ', ') が FAIL**。目視で見落とした回帰の可能性がある"
   } elseif ($traceFailed.Count -eq 0 -and $r.verdict -eq 'FAIL') {
@@ -353,11 +353,10 @@ $pass = @($done | Where-Object { $_.verdict -eq "PASS" }).Count
 $fail = @($done | Where-Object { $_.verdict -eq "FAIL" }).Count
 $skip = @($done | Where-Object { $_.verdict -eq "SKIP" }).Count
 $notRun = @($items | Where-Object { $id = $_.id; -not ($done | Where-Object { $_.id -eq $id }) })
-# **判定器の例外も赤にする**（code-review C2）——例外は欠陥であって「問題が無かった」ではない。
-$traceFail = if ($null -ne $traceVerdict) {
-  @($script:InvariantNames | Where-Object { $traceVerdict.Overall[$_] -eq 'FAIL' }).Count +
-  $(if ($traceVerdict.JudgeFailed) { 1 } else { 0 })
-} else { 0 }
+# **赤とみなす状態の定義は `Get-SnotraTraceFailureCount` が単独で持つ**——違反・判定器の例外
+# （code-review C2）・trace を読めなかったこと（#872）の 3 つ。ここで数え直すと、赤を 1 つ
+# 足したときに exit code だけが追随しない。
+$traceFail = Get-SnotraTraceFailureCount -Verdict $traceVerdict -ReadError $finalSnapshot.ReadError
 
 $lines = @()
 $lines += "## カテゴリ D 目視スモークの記録"
@@ -381,6 +380,11 @@ if ($null -ne $traceVerdict) {
     $lines += "| 注意 | **判定器は ``egui_results:show`` を 1 件も見ていない**（イベント名のドリフトの可能性——H4 / H5 は事実上検査されていない） |"
   }
   $lines += "| trace 行 | $($finalSnapshot.TraceLines) 行中 $($finalSnapshot.Events.Count) 行を parse / **捨てた行 $($finalSnapshot.Dropped)** |"
+} elseif ($finalSnapshot.ReadError) {
+  # **不在と読み取り失敗を同じ行にしない**（#872）。読めなかった実行を「1 行も出ていない」と
+  # 記録へ書き残すと、後から読む人は trace が出ていないほうを疑い、**観測が落ちた事実が
+  # 記録から消える**。exit code 側は `Get-SnotraTraceFailureCount` が赤にしている。
+  $lines += "| trace 不変条件 | **読めなかった**（$($finalSnapshot.ReadError)）——判定していない。観測不能であって「問題なし」ではない |"
 } else {
   $lines += "| trace 不変条件 | **判定していない**（trace なし: ``-NoLaunch`` で起動したか 1 行も出ていない） |"
 }
@@ -432,6 +436,9 @@ if ($null -ne $traceVerdict) {
   if ($finalSnapshot.Dropped -gt 0) {
     Write-Host "  parse できなかった行が $($finalSnapshot.Dropped) 件あるため PASS を SKIP へ落としました。" -ForegroundColor Yellow
   }
+} elseif ($finalSnapshot.ReadError) {
+  Write-Host "=== trace 不変条件: 読めなかった（判定していない） ===" -ForegroundColor Red
+  Write-Host "  $($finalSnapshot.ReadError)" -ForegroundColor Red
 } else {
   Write-Host "=== trace 不変条件: 判定していない（trace なし） ===" -ForegroundColor Yellow
 }

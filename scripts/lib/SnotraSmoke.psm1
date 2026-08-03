@@ -177,13 +177,21 @@ function New-SnotraVerificationProfile {
         [string]$PathEntries = '',
         [string]$HotkeyModifier = 'Alt',
         [string]$HotkeyKey = 'Q',
-        [int]$WindowWidth = 600
+        [int]$WindowWidth = 600,
+        # $false で `results_view.rs` の `request_icons_for_results` が即 return し、
+        # icon worker も `SHGetFileInfoW` も走らなくなる。**runner では `SHGetFileInfoW` が
+        # `exists:true` のパスに対して `ShellQueryFailed(1008)` を返し**、失敗は
+        # `IconFailure::is_transient` が true ゆえ恒久 latch されず再要求され続ける
+        # ——アイコンを判定に使わない検査では、この空回りが観測時間を押し広げるだけになる（#872）。
+        [bool]$ShowIcons = $true
     )
 
     New-Item -ItemType Directory -Force -Path $ProfileDir | Out-Null
     Remove-Item -LiteralPath (Join-Path $ProfileDir 'config.toml.bak') -Force -ErrorAction SilentlyContinue
     Get-ChildItem -LiteralPath $ProfileDir -Filter '*.bin' -ErrorAction SilentlyContinue | Remove-Item -Force
 
+    # TOML の真偽値は小文字であり、PowerShell の $true は "True" へ補間される。
+    $showIconsToml = $ShowIcons.ToString().ToLowerInvariant()
     $parts = @(
         @"
 [hotkey]
@@ -192,6 +200,7 @@ key = "$HotkeyKey"
 
 [appearance]
 window_width = $WindowWidth
+show_icons = $showIconsToml
 "@.Trim()
     )
     if (-not [string]::IsNullOrWhiteSpace($AdditionalSections)) {

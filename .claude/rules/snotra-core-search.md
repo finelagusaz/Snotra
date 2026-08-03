@@ -18,7 +18,7 @@ paths:
 
 ## トリガー → 検査
 
-- **incremental・キャッシュ再利用・前回状態（`IncrementalCache`）・`has_dot`/`has_path_sep` に触れたら**: 正本（`IncrementalCache::can_reuse` の doc）を読み、`/cache-check` で単調性を検証する。述語や状態を足すときは `can_reuse`（read）と `update`（write）を対で変更する
+- **incremental・キャッシュ再利用・前回状態（`IncrementalCache`）・`has_dot`/`has_path_sep` に触れたら**: 正本（`IncrementalCache::can_reuse` の doc）を読み、再利用述語ごとに**単調性**（true → false の向きにしか転ばないか）を確認する。述語や状態を足すときは `can_reuse`（read）と `update`（write）を対で変更する（#894 で旧スキルから吸収）
 - **新しいマッチ種別を追加するなら**: bitmask pre-filter との整合を `compute_wave2` の doc（false-negative 不変条件）で確認する
 - **Wave 1/2・kana 構築に触れたら**: `compute_wave1` / `new_with_cached_masks` の doc（#337）を読む
 - **`Ord` / `BinaryHeap` / top-k に触れたら**: `snotra-core/CLAUDE.md` 実装前チェックの規律（先頭が最良/最悪の明記・入力順不変テスト）に従う

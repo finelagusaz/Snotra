@@ -919,8 +919,10 @@ export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
  * 「検査を書かない」と決めるあらゆる場面で効く。**余裕が枯れたために正しい置き場を諦める**のは、
  * ADR-area-metric-characters が却下した「ゼロ余裕」の裏返しの回避である（一度実際に起きた・#858）。
  * 上限は実測 9097 + 100 字の既定余白 → 切り上げて 9200 とした。
+ * 9200 → 9260: #894 で /cache-check（スキル 6.7KB）を廃止し、核心の単調性 1 項だけを
+ * `snotra-core-search.md` へ吸収した純増 +53 字。系全体では大幅な縮小である。
  */
-export const AREA_BUDGET = { alwaysLoaded: 13338, rules: 9200 };
+export const AREA_BUDGET = { alwaysLoaded: 13338, rules: 9260 };
 
 /** コードポイント数（CR は除く）。読めなければ null（母集団欠落を上位で検知） */
 function countChars(text) {
@@ -1229,84 +1231,7 @@ export function headingRefDocs(snapshot) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// G-config-reachability — config フィールドの到達性（ランチャが読むか）の双方向照合。
-//
-// config は到達性の検出器を持たない面である——private / `pub(crate)` の関数は呼ばなければ
-// `dead_code`、型は変えれば下流が compile-fail、モジュール索引は G-module-index、文書参照は G-references が捕まえる
-// （lib crate の `pub` 項目は `dead_code` の対象外なので、この検出器は関数にも穴を持つ）。
-// config のフィールドは `#[serde(default)]` を付ければ誰も読まなくてもコンパイルが通り、
-// **届いたかを誰も検査しない**。原理は `docs/development-principles.md`「config の値は到達性の検出器を持たない」。
-// 実例: `VisualConfig.preset` はランチャが `ThemePreset` を import すらしていない
-// （`[visual].background_color` は #802 で消費者を得たので下表に載らない——読むのは `egui_shell/visual.rs`）。
-//
-// 判定は「ランチャ側ソースに識別子が現れないフィールドの集合」と下表の**双方向一致**である。
-// 表は「読まれない理由」を持ち、検査は集合の一致だけを見る（理由は人間が読む）。
-//
-// **「0 件 = ランチャが読まない」に意味を与えるため、0 件になる経路を列挙して塞ぐ**
-// （`.claude/rules/safety-nets.md`「これまで無意味だった状態に意味を与える変更は…」）:
-// - 本当に読まれない → 検出したい当のもの
-// - `Option` の実効値をメソッドが畳む（`effective_result_limit()`）→ 表に載せる
-// - legacy 受け皿（`apply_migrations()` だけが読む）→ 表に載せる
-// - 設定エディタ専用（`snotra-settings/`）→ 表に載せる。同 crate は母集団に入れない
-//   ——ディスクを往復してユーザーへ表示し返すだけで、ランチャの挙動には届かないため
-// - **コメントに現れる** → `stripRustComments` で塞いだ。塞がないと `preset` のような普通の
-//   英単語が doc コメント（`opener.rs` の "opener preset available"）に埋もれ、検出できない（実測）
-// - **`#[cfg(test)]` の中だけが読む** → launcher blob も production に絞って塞いだ。塞がないと
-//   `visible_rows` が `engine.rs` のテスト 4 箇所だけで「読まれている」側に落ちる（実測）
-// - **文字列リテラル内の `//` 以降が消える** → `stripRustComments` の誤除去。向きは赤側
-//   （読みが消えて findings が増える）ので沈黙しない。塞いでいない
-//
-// **受容する残余（false negative）**: 一致はフィールド名のドット始まり（`.field`）で見るため、
-// **同名のフィールドアクセスがランチャ側に別の意味で在ると、読まれていなくても 0 件集合に入らない**。
-// フィールド名が `path` / `name` / `key` / `search` のようにありふれた語である全フィールドが
-// この分解能を持たない（`AppearanceConfig.max_results` はその一例）。
-// **この残余は表を静かに過小申告させる**——実例が `OpenerRule.tools` で、実体は `target` と同じく
-// `find_matching_tools()` 経由でしか読まれないのに、`ToolFrame.tools`（`search_state.rs`・別の型）への
-// `.tools` 一致で「読まれている」側に落ちる。**表に載せると今度は「表の記載が古い」で赤になるため、
-// 載せることもできない**。同じ struct の `target` だけが表に在るのはこの分解能の帰結であって、
-// 分類の判断が割れているのではない。
-//
-// **母集団の範囲**: `Deserialize` を derive する struct のフィールドだけである（= config.toml から
-// 読まれる型）。**enum variant のフィールド**（`InstantAction::Url` の `url` 等）と
-// **generics 形の struct 定義**（`pub struct Foo<T>`）は入らない——増えたときに G-config-reachability は止めない。
-// ---------------------------------------------------------------------------
-/** 母集団のソース。`[[openers]]` と `[hotkey]` は `config.rs` が re-export するだけなので、
- * serde 型の実体を持つ各モジュールも列挙する。 */
-export const CONFIG_SOURCE_PATHS = [
-  "snotra-core/src/config.rs",
-  "snotra-core/src/opener.rs",
-  "snotra-core/src/hotkey.rs",
-];
-/** 読み手として数えるソース。`snotra-settings/` は入れない（上のコメント参照）。
- *  `snotra-egui-runtime/` も入れない——`snotra-core` に依存せず config を読めないため（実測）。
- *  将来依存が入って config を直接読んだ場合、G-config-reachability は赤へ振れる（安全側） */
-export const LAUNCHER_PREFIXES = ["src-tauri/src/", "snotra-core/src/"];
-/** 抽出アンカーの**部分**腐敗を検知する（0 件だけを見ると、途中で切れた母集団が沈黙する） */
-export const CONFIG_EXPECTED_STRUCTS = [
-  "Config", "HotkeyConfig", "GeneralConfig", "SearchConfig", "AppearanceConfig",
-  "VisualConfig", "CustomTheme", "ScanPath", "PathsConfig", "InstantCommand",
-  "OpenerTool", "OpenerRule",
-];
-
-/** ランチャが読まないフィールドと、その理由。**表のキーが `Struct.field` なのは理由を struct ごとに
- *  書き分けるためであって、判定の粒度ではない**——read 判定はフィールド名だけで行うので、
- *  同名フィールド（`SearchConfig.top_n_history` と `AppearanceConfig.top_n_history` 等）は必ず同じ判定になる */
-export const NO_LAUNCHER_READ = {
-  "SearchConfig.result_limit": "実効値は `effective_result_limit()` が畳む（未設定を既定へ）。ランチャはメソッドを呼ぶ",
-  "SearchConfig.recent_limit": "実効値は `effective_recent_limit()` が畳む（同上）",
-  "AppearanceConfig.visible_rows": "実効値は `effective_visible_rows()` が畳む（同上）",
-  "OpenerRule.target": "マッチングは `opener.rs` の中で閉じる。ランチャは `find_matching_tools()` を呼ぶ",
-  "SearchConfig.top_n_history": "legacy 受け皿。`apply_migrations()` が `result_limit` へ移す（`skip_serializing`）",
-  "SearchConfig.max_history_display": "legacy 受け皿。`apply_migrations()` が `recent_limit` へ移す",
-  "AppearanceConfig.top_n_history": "legacy 受け皿（`search` 側と対の旧キー）",
-  "AppearanceConfig.max_history_display": "legacy 受け皿（同上）",
-  "PathsConfig.additional": "legacy 受け皿。`apply_migrations()` が `scan` へ移す",
-  "VisualConfig.custom_theme": "設定エディタがカスタム配色を 1 組保存する格納庫。ランチャが読まないのは設計意図",
-  "VisualConfig.preset": "設定エディタの Custom カード強調だけが読む。ランチャは `ThemePreset` を import すらしない",
-};
-
-/** Rust のコメントを落とす。落とさないと普通の英単語が doc コメントに埋もれる（上のコメント参照）。
+/** Rust のコメントを落とす。落とさないと `preset` のような普通の英単語が doc コメントに埋もれる（実測）。
  *  文字列リテラル内の `//` 以降も落ちるが、向きは赤側（読みが消える）ゆえ沈黙しない */
 function stripRustComments(src) {
   return src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/.*$/gm, " ");
@@ -1316,67 +1241,6 @@ function stripRustComments(src) {
  *  「テストだけが読む」フィールドが読まれている側へ落ちる（`visible_rows` で実測） */
 function productionOnly(src) {
   return src.split(/^#\[cfg\(test\)\]/m)[0];
-}
-
-/** `Deserialize` を derive する `pub struct` のフィールドを `{struct, field}` で列挙する
- *  （= config.toml から読まれる型。derive を持たない型〔`OpenerPreset` 等〕は config のキーではない） */
-export function configFields(text) {
-  const production = productionOnly(text);
-  const out = [];
-  for (const m of production.matchAll(/pub struct (\w+)\s*\{([\s\S]*?)\n\}/g)) {
-    // 直前の空行区切りブロック（derive + 属性 + doc コメント）に Deserialize があるか。
-    // **空行の分割は CRLF 対応で行う**——`lastIndexOf("\n\n")` は CI の Windows checkout
-    // （autocrlf=true）で見つからず、ブロックが全文へ広がって母集団が壊れる（PR #793 の CI で実測）
-    const attrs = production.slice(0, m.index).split(/\r?\n[ \t]*\r?\n/).pop() ?? "";
-    if (!/#\[derive\([^\]]*\bDeserialize\b/.test(attrs)) continue;
-    for (const f of m[2].matchAll(/^\s*pub (\w+):/gm)) out.push({ struct: m[1], field: f[1] });
-  }
-  return out;
-}
-
-export function checkConfigFieldReachability(snapshot, table = NO_LAUNCHER_READ, expectedStructs = CONFIG_EXPECTED_STRUCTS) {
-  const fields = [];
-  for (const p of CONFIG_SOURCE_PATHS) {
-    const text = snapshot.read(p);
-    if (text == null) return [finding(p, 1, `${p} が読めない（G-config-reachability 母集団の欠落）`)];
-    fields.push(...configFields(text));
-  }
-  if (fields.length === 0) {
-    return [finding(CONFIG_SOURCE_PATHS[0], 1, "`pub struct` のフィールドが 1 件も抽出できない（G-config-reachability 母集団の欠落。抽出アンカーの腐敗）")];
-  }
-  // 部分腐敗の検知: 0 件だけを見ると、途中で切れた母集団が沈黙する
-  const structs = new Set(fields.map((f) => f.struct));
-  const missing = expectedStructs.filter((s) => !structs.has(s));
-  if (missing.length > 0) {
-    return [finding(CONFIG_SOURCE_PATHS[0], 1, `期待する struct が抽出できない: ${missing.join(", ")}（G-config-reachability 抽出アンカーの部分腐敗）`)];
-  }
-  const launcher = snapshot.files.filter(
-    (f) => f.endsWith(".rs") && !CONFIG_SOURCE_PATHS.includes(f) && LAUNCHER_PREFIXES.some((p) => f.startsWith(p)),
-  );
-  if (launcher.length === 0) return [finding(CONFIG_SOURCE_PATHS[0], 1, "ランチャ側ソースが 0 件（G-config-reachability 母集団の欠落）")];
-  const blob = launcher.map((f) => stripRustComments(productionOnly(snapshot.read(f) ?? ""))).join("\n");
-
-  const all = new Set(fields.map((f) => `${f.struct}.${f.field}`));
-  // 一致はドット始まり（`.field`）で見る——struct 初期化の `field:` は「書き」であって読みではない
-  const unread = new Set(
-    fields.filter((f) => !new RegExp(`\\.${f.field}\\b`).test(blob)).map((f) => `${f.struct}.${f.field}`),
-  );
-  const findings = [];
-  for (const key of Object.keys(table)) {
-    if (!all.has(key)) {
-      findings.push(finding(CONFIG_SOURCE_PATHS[0], 1, `表の \`${key}\` に対応するフィールドが config serde 型の正本に無い（表の腐敗）`));
-    } else if (!unread.has(key)) {
-      findings.push(finding(CONFIG_SOURCE_PATHS[0], 1, `\`${key}\` はランチャ側から読まれている。表の記載が古い（NO_LAUNCHER_READ から外す）`));
-    }
-  }
-  for (const key of unread) {
-    if (!(key in table)) {
-      findings.push(
-        finding(CONFIG_SOURCE_PATHS[0], 1, `\`${key}\` をランチャ側が読んでいない。消費者を与えるか、読まない理由を NO_LAUNCHER_READ へ載せる`),
-      );
-    }
-  }
-  return findings;
 }
 
 // ---------------------------------------------------------------------------
@@ -1775,7 +1639,6 @@ export function buildChecks(snapshot, sink = {}) {
     { id: "G-hook-commands", run: () => checkHookCommands(snapshot) },
     { id: "G-hook-fires", run: () => checkHookFires(snapshot) },
     { id: "G-area-budget", run: () => checkNormativeAreaBudget(snapshot) },
-    { id: "G-config-reachability", run: () => checkConfigFieldReachability(snapshot) },
     { id: "G-check-skill-enumeration", run: () => checkCheckSkillEnumeration(snapshot) },
     { id: "G-adr-file-names", run: () => checkAdrFileNames(snapshot) },
     { id: "G-adr-citations", run: () => record("adrCitations", scanAdrCitations(snapshot, adrCitationDocs(snapshot, docs))) },
@@ -1801,8 +1664,7 @@ export function runAll(snapshot) {
   const area = normativeArea(snapshot);
   const rules = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length;
   const skills = snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length;
-  const configFieldCount = CONFIG_SOURCE_PATHS.flatMap((p) => configFields(snapshot.read(p) ?? "")).length;
-  const evidence = `検査 ${checks.length} 件 / 対象文書 ${ctx.docs.length} 件 / rules ${rules} 件 / skills ${skills} 件 / 恒久規範 常時ロード ${area.always}/${AREA_BUDGET.alwaysLoaded} 字・rules ${area.rules}/${AREA_BUDGET.rules} 字 / 見出し参照 ${ctx.headingRefs} 件を ${ctx.refDocs.length} 文書から照合 / workspace member ${workspaceMembers(snapshot).members.length} 件の lints opt-in / config フィールド ${configFieldCount} 件の到達性 / 散文の識別子 ${ctx.stale} 件を ${ctx.staleTargets.length} 文書から照合 / 近傍の見出し参照 ${ctx.nearRefs} 件 / ADR ${adrFiles(snapshot).length} 本の名前 / ADR の短縮引用 ${ctx.adrCitations} 件`;
+  const evidence = `検査 ${checks.length} 件 / 対象文書 ${ctx.docs.length} 件 / rules ${rules} 件 / skills ${skills} 件 / 恒久規範 常時ロード ${area.always}/${AREA_BUDGET.alwaysLoaded} 字・rules ${area.rules}/${AREA_BUDGET.rules} 字 / 見出し参照 ${ctx.headingRefs} 件を ${ctx.refDocs.length} 文書から照合 / workspace member ${workspaceMembers(snapshot).members.length} 件の lints opt-in / 散文の識別子 ${ctx.stale} 件を ${ctx.staleTargets.length} 文書から照合 / 近傍の見出し参照 ${ctx.nearRefs} 件 / ADR ${adrFiles(snapshot).length} 本の名前 / ADR の短縮引用 ${ctx.adrCitations} 件`;
   return { findings, evidence };
 }
 

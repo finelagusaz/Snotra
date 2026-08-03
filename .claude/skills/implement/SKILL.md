@@ -107,7 +107,7 @@ allowed-tools:
 
 ### 4a. check スキルの実行
 
-変更の種類に応じた check スキル（`/symmetric-check`・`/dry-check`・`/race-check`・`/cache-check`・`/persistence-check`・`/state-check`）を、**`AGENTS.md`「条件別チェック（トリガー → 参照先）」表に従って**実行する（トリガー→検査の写像の SSOT はその表。二重管理を避けるためここに再掲しない）。`/symmetric-check` はコードパス変更・バグ修正でほぼ常に該当。発見事項があれば修正してから 4b に進む。**同じ check が `/start-issue` の計画段階で走っていても、ここで実行する**——対象が計画と実装で別だからである（計画に無い変更は実装中に必ず生じる）。
+変更の種類に応じた check スキル（`/symmetric-check`・`/dry-check`・`/race-check`・`/persistence-check`・`/state-check`）を、**`AGENTS.md`「条件別チェック（トリガー → 参照先）」表に従って**実行する（トリガー→検査の写像の SSOT はその表。二重管理を避けるためここに再掲しない）。`/symmetric-check` はコードパス変更・バグ修正でほぼ常に該当。発見事項があれば修正してから 4b に進む。**同じ check が `/start-issue` の計画段階で走っていても、ここで実行する**——対象が計画と実装で別だからである（計画に無い変更は実装中に必ず生じる）。
 
 ### 4b. code-reviewer エージェント
 

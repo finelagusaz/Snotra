@@ -18,7 +18,7 @@ paths:
 
 ## トリガー → 検査
 
-- incremental cache・`prev_*`・キャッシュ再利用: `/cache-check`（単調性）
+- incremental cache・`prev_*`・キャッシュ再利用: 述語の単調性（`snotra-core-search.md` の項へ）
 - 設定キー・永続形式・識別子/キー形式の変更: `/persistence-check`（後方互換）
 - `Ord` / `Reverse` / `BinaryHeap`: 「先頭が最良/最悪か」を実装前に一文で明示し入力順不変テストを置く（「実装前チェック」）
 - 挙動を変えない最適化: `AGENTS.md`「事前調査」で代表入出力をベースライン差分検証

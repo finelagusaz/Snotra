@@ -41,7 +41,7 @@ check 系スキル（`/race-check` `/symmetric-check` `/cache-check` `/state-che
 
 | 型 | 例 | 性質 |
 |---|---|---|
-| **構造物アンカー** | `/dry-check`（関数の主要操作）・`/cache-check`（再利用述語の全項）・`/persistence-check`（対象 struct） | 母集団がコードの構造物から一意に決まり、**有界**。差分を必要としない |
+| **構造物アンカー** | `/dry-check`（関数の主要操作）・`/persistence-check`（対象 struct）・旧 `/cache-check`（再利用述語の全項・#894 で rules へ吸収） | 母集団がコードの構造物から一意に決まり、**有界**。差分を必要としない |
 | **差分アンカー** | `/race-check`・`/symmetric-check` | 差分を得る手段が要る。**測定した 2 つはどちらもこの型で、どちらも合格条件を全部突破された** |
 | **列挙アンカー** | `/state-check`（「最低限確認する既存状態」の列挙） | 列挙の外にあるものが構造的に不可視になる。**この型を母集団に採らない**——列挙は入口の手がかりに留め、母集団は構造物か差分から取る |
 
@@ -49,7 +49,7 @@ check 系スキル（`/race-check` `/symmetric-check` `/cache-check` `/state-che
 
 > (1) 差分を決定的に取得（リビジョン明示）→ (2) その中の候補を列挙 → **(3) 以降の母集団は候補集合**
 
-`/cache-check` が健全なのはこの形（述語を列挙 → 述語ごとに検証）だからである。
+旧 `/cache-check` が健全だったのはこの形（述語を列挙 → 述語ごとに検証）だからである。
 
 ## 必須 2 — 費用対称性
 
@@ -106,7 +106,7 @@ check 系スキル（`/race-check` `/symmetric-check` `/cache-check` `/state-che
 | `/race-check` | 差分・レンジ未固定 ❌ | 0 件のみ ❌ | 深さのみ・幅なし ❌ | 修正案のみ △ |
 | `/symmetric-check` | 定義が無い ❌ | `file:line` のみ ❌ | 無し ❌ | 無し ❌ |
 | `/dry-check` | 関数の主要操作 ✅ | grep + `file:line` △ | 無し ❌ | 無し ❌ |
-| `/cache-check` | 再利用述語の全項 ✅ | `file:line` △ | 述語数で有界 ✅ | 修正案 △ |
+| 旧 `/cache-check`（#894 で廃止） | 再利用述語の全項 ✅ | `file:line` △ | 述語数で有界 ✅ | 修正案 △ |
 | `/persistence-check` | 対象 struct ✅ | `file:line` △ | 変更種別で有界 ✅ | 修正案 △ |
 | `/state-check` | 既存状態の列挙 △ | `file:line`/SPEC 節 ✅ | 組み合わせ数で有界 ✅ | 修正案 △ |
 
@@ -179,7 +179,7 @@ check 系スキル（`/race-check` `/symmetric-check` `/cache-check` `/state-che
 
 ## 受容する残余
 
-- **残り 4 スキル（`/cache-check` `/state-check` `/persistence-check` `/dry-check`）は未測定である。** 採点表は文言の読みに基づく推定であり、2 クラス読者を当てていない。骨格が `/race-check` `/symmetric-check` で効くことを確認してから測る
+- **残り 3 スキル（`/state-check` `/persistence-check` `/dry-check`）は未測定である**（当初 4 スキルのうち `/cache-check` は #894 で廃止・rules へ吸収）。採点表は文言の読みに基づく推定であり、2 クラス読者を当てていない。骨格が `/race-check` `/symmetric-check` で効くことを確認してから測る
 - **`#781` は本設計の PR では閉じない。** 20 件のうち母集団スロットで 6 件・証拠スロットで 3 件・停止スロットで 1 件・費用対称性で 1 件（計 11 件）が閉じる見込みだが、残り 9 件（⑥ の表・`paint` 後の種別・土台 2 の接地など）は `/race-check` 固有の中身であり個別対応が要る。issue は生かし、骨格適用後に再評価する
 - **アンカー型が母集団の健全性を予測する、という仮説は 2 例でしか支持されていない。** 測定した 2 つがどちらも差分アンカーだったため、構造物アンカーが本当に健全なのかは未検証である
 - **骨格の遵守を測る検出器は置かない。** `governance:check` が測れるのは「見出しが存在するか」までで、中身の妥当性（母集団が本当に一意か・費用が本当に対称か）は機械化できない。`docs/development-principles.md`「構造的設計原則と強制の階梯」に従って (a) 責務を検査可能な層へ移す・(b) 観測点を作る を検討したが、いずれも成立しない。`.claude/rules/safety-nets.md` からの配送と `/norm-review` の起動に委ねる

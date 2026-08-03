@@ -68,7 +68,7 @@ config から導出する派生状態は「キャッシュ」とみなす。#347
 
 **規範では止まらない。** 該当箇所にはたいてい既に注意書きがある。たとえば #794 以前のホットキーは config 側の競合判定と platform 側の登録に別 parser があり、コメントで一致を要求しても `del` と未知 modifier の扱いが乖離した。#794 では core の意味型を両方が消費する機構へ移した。しかし規範が効くのは変更者がその場所を通るときだけで、**config の写しは通らない場所に散る**——既定値を変える人は、それを写した先のファイルを開かない。ゆえに機構へ移す:
 
-- **新しい config フィールドには、追加と同じ変更で消費者を与える**（作ることと使うことは別判断）。読まないなら理由を `scripts/governance-check.mjs` の `NO_LAUNCHER_READ` へ載せる——G-config-reachability が「ランチャが読まないフィールドの集合」と表の双方向一致を照合する。**G-config-reachability が止めるのは `Deserialize` を derive する struct のフィールドだけである**——enum variant のフィールド（`InstantAction::Url` の `url` 等）と generics 形の struct 定義は母集団に入らないため、そこは規範だけが頼りになる
+- **新しい config フィールドには、追加と同じ変更で消費者を与える**（作ることと使うことは別判断）。読まないなら理由をフィールドの doc コメントへ書く。機械検査（旧 G-config-reachability）は導入以来捕捉 0 件のまま検査側の表だけが腐ったため #894 で廃止した——**この規範だけが頼りである**
 - **既定値のリテラルを写さない。** フォールバックの正本は各セクションの `Default` 実装（`AppearanceConfig::default()` 等）であり、`.unwrap_or(600.0)` のような再手打ちは今日たまたま一致しているだけである（#680 の 2。src-tauri の fallback を参照へ寄せた実例は #795）。**ただし「同じ数」と「同じ概念」は別である**——同じリテラルでも読み元が違えば写しではなく、参照へ寄せると存在しない結合を主張することになる（`AGENTS.md`「検証の作法（全タスク共通）」の「消す/共通化する前に、同じ表層形が複数の概念を担っていないか分類する」。判断の記録は `docs/adr/ADR-config-default-fallback-references.md`）。**`Default` 実装自身も既定関数を呼ぶ形に揃える**——serde は「セクション欠落 → `Section::default()`」と「キー欠落 → `#[serde(default = "default_X")]`」の 2 経路を持ち、両者が食い違うと**同じ既定が TOML の書き方によって変わる**（`config.rs` の `empty_section_deserializes_to_default_*` がこの一致を固定する）
 
 ## 状態を散在フラグで表さない（単一の導出源に集約する）

@@ -656,7 +656,16 @@ impl EguiView for SearchWindowView {
         // indexing（数分に及びうる）と notice（数秒）は編集可能なまま覆われていた。
         // 行の高さは toast と同じ `metrics.toast_height`（= bar_height・#646 決定 2）で、
         // 窓高は `main_window_height` の `status_height` が積む。
-        let has_status = overlay_text.is_some();
+        // **`overlay_text.is_some()` と同値である**（同じ 4 つの入力を同じ `overlay_kind` へ
+        // 通すため）。それでも述語を経由するのは、**show 経路が同じ関数を呼ぶ**からである
+        // （`window_coordinator::show_egui_main`）。2 か所が同じ述語を通ることが、
+        // 「畳む高さ = 描く高さ」を保つ機構である（#755 / #801）。
+        let has_status = crate::egui_shell::status_row_present(
+            self.controller.indexing(),
+            self.controller.state().view_kind() == ViewKind::Results,
+            self.controller.is_launching(),
+            self.controller.notice_message().is_some(),
+        );
         if let Some(text) = overlay_text {
             let status_h = metrics.toast_height as f32;
             let (rect, _) = ui.allocate_exact_size(

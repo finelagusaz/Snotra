@@ -74,6 +74,7 @@ npm run check:colors -- -Color '#FFF'     # 3 桁 hex の受理（#680 の 1・�
 npm run check:colors -- -Interactive      # 判定せず起動し、目視項目を読み上げる
 ```
 
+- **CI では走らない。** GUI を要するため `ci.yml` にも `e2e.yml` にも入っておらず、明示的に起動したときだけ動く（**エージェントも起動できる**——下記のロック中を除く）。ゆえに `[visual]` の色に効く変更は、**CI が緑でも未検証である**
 - **既定色での確認はこの検証にならない。** config の既定 `#282828` は `snotra-egui-runtime` の `CLEAR_COLOR` と一致するため、色が届いていなくても正常に見える（原理は `docs/development-principles.md`「config の値は到達性の検出器を持たない」）
 - **自動判定するのは main と results の定常背景である。** results は専用 scan 3 件を seed し、キー注入で表示して実ピクセルを測る。残る 2 点は目視（`-Interactive`）に留まる——**show の一瞬のフラッシュ**は present 前の 1 フレーム未満で連写しても捉えられず、**results のリサイズ時のちらつき**は入力と描画のタイミングに依存して単一キャプチャでは不在を証明できない
 - **trace は判定に使わない。** 「`set_clear_color` を呼んだ」というログは、その色が画面へ出たことを意味しない（`src-tauri/CLAUDE.md`「trace の presence 検査は状態の検査ではない」）。判定の根拠は描かれたピクセルだけである

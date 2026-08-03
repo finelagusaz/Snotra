@@ -8,8 +8,10 @@ use crate::{
 };
 
 /// view が色を決める前（起動直後の 1 枚目）と `set_clear_color` 呼び忘れのフォールバック。
-/// **`snotra-core` の `default_background_color()` と同値だが、この crate は同 crate に依存しない**
-/// ——一致は機構ではなく規約であり、乖離したときに落ちる検査は無い（受容する残余）。
+/// **`snotra-core` の `default_background_color()` と同値であり、一致は機構が固定する**
+/// ——`src-tauri/src/egui_shell/window_coordinator.rs` の
+/// `runtime_fallback_matches_config_default_background` が両者を突き合わせる。この crate は
+/// `snotra-core` に依存しないため、検査は**両方に依存する下流**（`src-tauri`）にしか置けない。
 pub const CLEAR_COLOR: u32 = 0x0028_2828;
 
 /// フレームの背景色を softbuffer の `0x00RRGGBB` へ畳む純関数。

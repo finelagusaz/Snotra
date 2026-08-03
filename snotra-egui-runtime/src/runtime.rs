@@ -43,8 +43,9 @@ impl RuntimeFrame {
     ///
     /// **毎フレーム呼ぶこと。** `render()` は `run_ui` → `paint` の順に進むため、`update()` の中で
     /// 決めた色は**同じフレームの `buffer.fill` に間に合う**（遅れは原理的に生じない）。
-    /// 呼ばなかったフレームは runtime 既定の暗色へ落ちる——検知はビルドでも検査でもなく
-    /// 目視のみである（`docs/superpowers/specs/2026-07-28-config-background-color-design.md` §7）。
+    /// 呼ばなかったフレームは `renderer.rs` の `CLEAR_COLOR` へ落ちる——**ビルドでも自動テストでも
+    /// 落ちない**。検知するのは `npm run check:colors` と目視で、どちらも CI には無い
+    /// （`docs/build-commands.md`「`[visual]` の色を変える変更は、**非既定色で**目視する」）。
     pub fn set_clear_color(&mut self, color: egui::Color32) {
         self.clear_color = Some(color);
     }

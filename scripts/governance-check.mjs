@@ -1225,9 +1225,8 @@ export function headingRefDocs(snapshot) {
 // （lib crate の `pub` 項目は `dead_code` の対象外なので、この検出器は関数にも穴を持つ）。
 // config のフィールドは `#[serde(default)]` を付ければ誰も読まなくてもコンパイルが通り、
 // **届いたかを誰も検査しない**。原理は `docs/development-principles.md`「config の値は到達性の検出器を持たない」。
-// 実例: `VisualConfig.preset` はランチャが `ThemePreset` を import すらしていない。
-// （`[visual].background_color` は #802 以前が同じ形で、描画経路の消費者がゼロだった。
-//  今は `egui_shell/visual.rs` が読むので下表に載らない。）
+// 実例: `VisualConfig.preset` はランチャが `ThemePreset` を import すらしていない
+// （`[visual].background_color` は #802 で消費者を得たので下表に載らない——読むのは `egui_shell/visual.rs`）。
 //
 // 判定は「ランチャ側ソースに識別子が現れないフィールドの集合」と下表の**双方向一致**である。
 // 表は「読まれない理由」を持ち、検査は集合の一致だけを見る（理由は人間が読む）。

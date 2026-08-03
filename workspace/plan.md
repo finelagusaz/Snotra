@@ -60,7 +60,7 @@
 **注意:** A-3（`LaunchResult` の `timeout` ステータス）は **#735 の表にも在る**ため、
 **タスク 2 で §14.2 ごと畳む**。ここでは触らない。
 
-- [ ] **Step 1: `docs/architecture.md` の「LRU」を削る（A-1）**
+- [x] **Step 1: `docs/architecture.md` の「LRU」を削る（A-1）**
 
 現在「`icons.bin` に **LRU** キャッシュ・遅延ロード」と書かれているが、実装は **FIFO** である。
 一次証拠: `src-tauri/src/icon.rs` の `//!`（「挿入順保持により FIFO 退避（最古から pop）」）と
@@ -70,28 +70,28 @@
 ことを求めており、そもそも方式名を書く根拠が無い。「件数上限で頭打ち（方式は `src-tauri/src/icon.rs`）」
 程度の参照へ倒すこと。
 
-- [ ] **Step 2: `docs/architecture.md` の main 窓高さの式を落とす（A-2）**
+- [x] **Step 2: `docs/architecture.md` の main 窓高さの式を落とす（A-2）**
 
 算入項が 1 つ欠けている。**式ごと落として**正本（`src-tauri/src/egui_shell/layout.rs` の
 `main_window_height`）への参照へ倒す。Step 1 と同じ理由である。
 
-- [ ] **Step 3: `docs/architecture.md` の results 窓高さの式を落とす（A-5）**
+- [x] **Step 3: `docs/architecture.md` の results 窓高さの式を落とす（A-5）**
 
 #675 の作業領域クランプが落ちている。**式ごと落として** `layout.rs` の
 `results_window_height` / `clamp_results_height` への参照へ倒す。
 
-- [ ] **Step 4: `SPEC.md` §17.1 の履歴キー正規化を参照へ倒す（A-4）**
+- [x] **Step 4: `SPEC.md` §17.1 の履歴キー正規化を参照へ倒す（A-4）**
 
 SPEC が関数名を誤り、正規化ステップを 1 つ落としている。**正しい記述は
 `snotra-core/CLAUDE.md`「history.rs のキー正規化に関するチェックリスト」が持つ**ので、
 そこへの参照に倒すだけでよい（`` `<path>.md`「<見出し>」 `` の正準形で書くこと——
 `governance:check` の G-heading-refs が実在を照合する）。
 
-- [ ] **Step 5: 検証**
+- [x] **Step 5: 検証**
 
 `npm run governance:check`（`*.md` のみ触るので必須）。`.rs` を触らないなら カテゴリ A は不要。
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
 ```
 docs: 文書間で既に食い違っている 4 件を正本への参照へ倒す
@@ -150,22 +150,22 @@ docs: SPEC の WebView2 期 stale 記述を as-built へ畳む (#735)
 
 **Files:** 変更なし（測定のみ）
 
-- [ ] **Step 1: 語彙から SPEC.md を外したときの finding を測る**
+- [x] **Step 1: 語彙から SPEC.md を外したときの finding を測る**
 
 `scripts/governance-check.mjs` の `VOCAB_DOCS = ["SPEC.md"]` を**一時的に**空にして実行し、
 finding の件数と内訳を記録する。**稼働中のガードを弱めないこと**——
 `.claude/rules/safety-nets.md` に従い、**複製に変異を当てる**（作業ツリーを汚さない方法で測る）。
 
-- [ ] **Step 2: SPEC.md を検査対象に加えたときの finding を測る**
+- [x] **Step 2: SPEC.md を検査対象に加えたときの finding を測る**
 
 `staleIdentifierDocs` の母集団に `SPEC.md` を加えた場合を、同じ要領で測る。
 
-- [ ] **Step 3: 真の腐り / 偽陽性を分類する**
+- [x] **Step 3: 真の腐り / 偽陽性を分類する**
 
 ADR が採った方法と同じである（同 ADR の表: 述語ごとに finding / 真の腐り / 偽陽性を並べた）。
 **偽陽性が出るなら、ADR 却下 2 の判断（免除注記の機構は設けない・行の形で外す）に従うこと。**
 
-- [ ] **Step 4: 測定結果を報告する**
+- [x] **Step 4: 測定結果を報告する**
 
 **この時点で判断が要る。** 偽陽性が多ければ射程拡大は見送り、その事実を ADR へ追記する
 （それも成果である）。**測定結果を見ずにタスク 4 へ進んではならない。**
@@ -180,37 +180,37 @@ ADR が採った方法と同じである（同 ADR の表: 述語ごとに findi
 - Modify: `scripts/governance-check.mjs`（`VOCAB_DOCS` / `staleIdentifierDocs` と、その節の doc コメント）
 - Modify: `docs/adr/ADR-stale-identifier-detector-scope.md`（却下 4 の失効を追記）
 
-- [ ] **Step 1: 射程を変える**
+- [x] **Step 1: 射程を変える**
 
 測定が支持した形（語彙から外す / 母集団に加える / 両方）を実装する。
 **節の doc コメントの自称スコープを同時に直すこと**——`governance-check.mjs` 冒頭の契約が
 「自称スコープを明記する」を求めている。
 
-- [ ] **Step 2: 受容する残余を明記する**
+- [x] **Step 2: 受容する残余を明記する**
 
 **`STALE_IDENT` は camelCase しか見ない。** snake_case・PascalCase・ドット区切り・式で
 書かれた腐りは対象外である。**「SPEC の腐りが機構で捕まるようになった」とは書かないこと**——
 書けるのは「**camelCase で書かれた再発は捕まる**」までである。
 
-- [ ] **Step 3: ADR へ却下 4 の失効を追記する**
+- [x] **Step 3: ADR へ却下 4 の失効を追記する**
 
 **原文は残し、失効注記を append する**（ADR の標準的な supersession の形。
 直前のサイクルで `ADR-window-coordinator-split-rule` に同じ形を採っている）。
 書く内容: 暫定措置だったこと・#735 の完了で前提が変わったこと・新しい射程・残る残余。
 
-- [ ] **Step 4: フォールトインジェクションで検知を実測する（省略不可）**
+- [x] **Step 4: フォールトインジェクションで検知を実測する（省略不可）**
 
 `.claude/rules/safety-nets.md`——「**効いていることは、フォールトインジェクションで一度は実測する**」。
 **稼働中のガードを弱めず、複製に変異を当てる**こと。
 `SPEC.md` の複製へ現行語彙に無い camelCase 識別子を仕込み、finding が出ることを確認する。
 **逆方向も見る**——正当な識別子で偽陽性が出ないこと。
 
-- [ ] **Step 5: 検証**
+- [x] **Step 5: 検証**
 
 `npm run governance:check`（全検査 passed）+ `npm test`（`governance-check` のユニットテストが在れば）。
 **`rules N/9200` の実数を報告に含めること。**
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
 ```
 feat(governance): SPEC.md を腐り検出器の射程へ入れる
@@ -224,7 +224,7 @@ feat(governance): SPEC.md を腐り検出器の射程へ入れる
 
 **Files:** 変更なし（issue 起票のみ）
 
-- [ ] **Step 1: issue を起票する**
+- [x] **Step 1: issue を起票する**
 
 タイトル案: 「文書の腐りを防ぐ記法を定める（コード参照の正準形・歴史記述の印・値の正本の印）」
 
@@ -245,12 +245,12 @@ feat(governance): SPEC.md を腐り検出器の射程へ入れる
 
 ## タスク 6: 仕上げ
 
-- [ ] **Step 1: 全検証**
+- [x] **Step 1: 全検証**
 
 `npm run governance:check` / `npm test` / `.rs` を触ったなら `docs/build-commands.md` カテゴリ A。
 **実機（カテゴリ C / D）は本計画の射程外**（文書と検査スクリプトしか触らない）。
 
-- [ ] **Step 2: PR を作成する**
+- [x] **Step 2: PR を作成する**
 
 `git push -u origin HEAD` を先に打つか `&&` で繋ぐ。**鎖に `cd` を含めない**。
 PR 本文に**必ず書くこと**:

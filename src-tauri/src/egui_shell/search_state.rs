@@ -881,7 +881,7 @@ mod tests {
         assert!(s.results().is_empty(), "選択が 0 でも、それが指す行は無い");
     }
 
-    // ---- フォルダ内の絞り込みと選択（#838 / #921・SPEC §4.9 の as-built）----
+    // ---- フォルダ内の絞り込みと選択（`SPEC.md`「4.9 入力と選択」の as-built・#838 / #921）----
     //
     // **上の #743 ブロック（左右カーソルキーによる階層移動）の外に置く**——主題が違ううえ、
     // あちらの冒頭は本数を名指ししており、内側へ足すとその記述が stale になる。
@@ -890,16 +890,16 @@ mod tests {
     // `changed()` エッジと `launcher_controller.rs` の `on_input_changed`）は射程外で、
     // その呼び出しを消してもこのテストは緑のままである（#743 ブロックの冒頭と同じ性質の限界）。
 
-    /// フォルダ内の絞り込みの打鍵は選択を 1 行目へ戻す（SPEC §4.9「入力と選択」——通常検索も
-    /// 含めた正本はそちらで、#921 で §6.3 から一本化した）。
+    /// フォルダ内の絞り込みの打鍵は選択を 1 行目へ戻す。正本は `SPEC.md`「4.9 入力と選択」で、
+    /// 通常検索側も含めてそこが 1 か所で持つ（ここが測るのは folder 側の半分だけである）。
     /// **非ゼロから始める**——0 から始めると `enter_folder` の初期値と区別が付かない。
     /// **`enter_folder` を先に通す**——`set_folder_filter` は `folder` が `None` でも黙って
     /// `selected = 0` を撃つため、突入を忘れると folder 中の挙動を何も実証しない。
     ///
-    /// **§6.3 の as-built（列挙失敗のエラー行が絞り込みの対象外であること）は、
-    /// ここでは測れない**——判定は driver 側（`launcher_controller.rs` の `run_search_with` が
-    /// `folder_error` を filter 非適用で差し替える）にあり `AppHandle` を要する。腐り検知は
-    /// その行のコメントだけが担う（#838 で受容した残余）。
+    /// **`SPEC.md`「6.3 フォルダ展開中の検索」の as-built（列挙失敗のエラー行が絞り込みの
+    /// 対象外であること）は、ここでは測れない**——判定は `LauncherController::folder_error`
+    /// を読む driver 側にあり `AppHandle` を要する（機構はそのフィールドの doc が持つ・
+    /// #838 で受容した残余）。
     #[test]
     fn folder_filter_typing_resets_selection_to_first_row() {
         let mut s = SearchState::new();

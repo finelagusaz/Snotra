@@ -1227,10 +1227,8 @@ impl LauncherController {
             self.run_search(); // folder は同期フィルタ（debounce 不要・I/O 無し）
         } else {
             self.state.set_query(buf);
-            // SPEC §4.9「入力と選択」の実体。folder 側の対（`set_folder_filter` 内の
-            // selected=0）と合わせて 1 つの as-built を成す。**打鍵からここへの配線を固定する
-            // テストは無い**（`AppHandle` を要するため）ので、腐りの手がかりはこの参照だけ
-            // である（#921）。
+            // `SPEC.md`「4.9 入力と選択」の実体（folder 側の対は `set_folder_filter` 内の
+            // `selected = 0`）。
             self.state.reset_selection(); // SolidJS parity: 毎打鍵 selected=0（M1 gap 是正）
             // prefix はこの changed エッジで 1 回だけ取得し run_search_with へ渡す
             //（interp と合わせ engine lock の毎打鍵多重取得を避ける・finding 9）。

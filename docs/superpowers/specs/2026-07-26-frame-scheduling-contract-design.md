@@ -147,7 +147,7 @@ let mut next_allowed: Instant = Instant::now();      // 前回 dispatch + min_in
 
 `view.rs` の `unfocus_at` 節を debounce と同型へ:
 
-**出荷形**（#711 実装。初版スケッチとの差は下の errata）:
+**出荷形**（#711 **当時**。初版スケッチとの差は下の errata。第 4 引数 `settings_running` は #746 で撤去済みで、現行は 3 引数である）:
 
 ```rust
 // lifecycle.rs（純粋核・elapsed は呼び出し側が 1 回だけ読んで渡す）
@@ -179,7 +179,7 @@ if let Some(at) = self.unfocus_at {
 #711 案 B（状態遷移化）・案 C（コメントで受容）は、案 A が 3 行で済み多数派の流儀と揃う以上、複雑さ・非対称の残存に見合わない。
 
 - **errata（2026-07-26・#711 の plan-review 独立導出）**: 上のスケッチは `at.elapsed()` を **3 回**読んでいる（判定・`blur_should_hide` の引数・減算）。判定（`>= grace`）と減算（`grace - at.elapsed()`）の間に時計が進むと **`Duration` 減算が underflow して panic** し、release は `panic = "abort"`（ルート `Cargo.toml`）ゆえ**プロセスが落ちる**。**このフレームは猶予境界に着弾するよう予約されているため、`elapsed ≈ grace` はまさに典型のケースであり確率は低くない。** 実装は `elapsed` を**呼び出し側で 1 回だけ読んで純関数へ渡し**、減算を `elapsed < grace` の分岐内に閉じること（この「1 回読み」は load-bearing である）。
-- **errata（同・Codex 敵対的レビューが指摘）**: スケッチの `else if !grace_elapsed` は、猶予明けで条件不成立（`auto_hide` off・設定サイドカー起動中）のとき何もしない形だが、**その判断の正しさは「それらの変化を起こす側が wake する」ことに依存している**（契約③の追記を参照）。**設定サイドカーの終了はこの責務を負っていない**——監視スレッド（`commands/window.rs`）は `settings_running` を false へ倒すのに wake しない。ゆえに `Idle` の根拠には現在 1 つ例外がある。**是正は #746**（`!settings_running` の項自体が SPEC に無い逸脱であり、項を外すとこの経路ごと消える）。#711 はこの例外を残したまま契約③の本体だけを実装する。
+- **errata（同・Codex 敵対的レビューが指摘）**: スケッチの `else if !grace_elapsed` は、猶予明けで条件不成立（`auto_hide` off・設定サイドカー起動中）のとき何もしない形だが、**その判断の正しさは「それらの変化を起こす側が wake する」ことに依存している**（契約③の追記を参照）。**設定サイドカーの終了はこの責務を負っていない**——監視スレッド（`commands/window.rs`）は `settings_running` を false へ倒すのに wake しない。ゆえに `Idle` の根拠には**当時** 1 つ例外があった。**#746 で解消済み**（`!settings_running` の項自体が SPEC に無い逸脱であり、項ごと撤去した）。#711 はこの例外を残したまま契約③の本体だけを実装した。
 
 ## 6. 設計: hidden 抑止の接地（契約④・#697 項目 1）
 

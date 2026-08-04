@@ -52,8 +52,7 @@ pub(crate) enum BlurAction {
 ///
 /// **時計と無関係な入力はこの 2 つで全部であり、どちらも wake の持ち主がいる**——`focused` は
 /// tao の窓イベント（`on_window_event`）、`auto_hide` は `config-applied` wake。ゆえに
-/// **契約①の観点では**例外が無い（#746 以前は `settings_running` が第 3 の入力として在り、
-/// 設定サイドカーの終了監視スレッドが wake を負っていなかった。項ごと撤去して解消した）。
+/// **契約①の観点では**例外が無い（入力集合が縮んだ経緯は `blur_should_hide` の doc）。
 ///
 /// **この主張は wake の持ち主についてだけである。** `Idle` を返したフレームで `unfocus_at` が
 /// クリアされないこと（＝猶予が armed のまま残り、hide を跨いで持ち越されうること）は
@@ -113,8 +112,7 @@ mod tests {
     fn blur_grace_stays_idle_when_time_cannot_resolve_it() {
         let ms = Duration::from_millis;
         // 猶予明けだが時計と無関係な条件で不成立 → **再要求しない**（永久スピンを作らない）。
-        // **この分岐に残る入力は 2 つだけである**（auto_hide・focused）。どちらも変えた側に
-        // wake の持ち主がいる（config-applied wake / tao の窓イベント）ため、契約①に例外は無い。
+        // 入力集合と wake の持ち主についての主張は `blur_grace_action` の doc が正本。
         assert_eq!(blur_grace_action(ms(150), false, false), BlurAction::Idle); // auto_hide off
         assert_eq!(blur_grace_action(ms(150), true, true), BlurAction::Idle); // focus 復帰
     }
@@ -150,8 +148,8 @@ mod tests {
     #[test]
     fn blur_hides_only_when_all_gates_pass() {
         use super::blur_should_hide;
-        // focused, grace_elapsed, auto_hide —— **ゲートはこの 3 つで全部である**（#746）。
-        // 各行は 1 つだけ倒して落ちることを見るので、この 4 行が「3 連言」を一意に固定する。
+        // focused, grace_elapsed, auto_hide。各行は 1 つだけ倒して落ちることを見るので、
+        // この 4 行が「3 連言」を一意に固定する（ゲートが 3 つで全部である根拠は関数の doc）。
         assert!(blur_should_hide(false, true, true)); // 全成立 → hide
         assert!(!blur_should_hide(true, true, true)); // 焦点復帰 → hide しない
         assert!(!blur_should_hide(false, false, true)); // 猶予未明け → hide しない

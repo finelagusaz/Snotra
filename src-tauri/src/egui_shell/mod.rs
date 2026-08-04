@@ -105,10 +105,18 @@ pub(crate) enum HotkeyFailureKind {
 /// - hotkey_generation: alt 解放待ち show の世代。hide が bump して保留 show を無効化する（codex #5/(B)#2）。
 /// - hide_pending: view の emit dedup。show がクリアして「hide 後に Focused(true) が来ず抑止が残る」を断つ（codex #8）。
 /// - reset_pending: show が立て、view が消費して state.reset()（resetForShow 相当・SU3 M1 Task 9）。
+/// - show_read_indexing / show_read_toast / show_applied_height_bits: 不変条件検出器
+///   （レビュー是正 4）が使う、show が高さ導出時に読んだ生の入力と適用した高さ。「述語へ渡した
+///   リテラルではなく読んだ値そのもの」を残す——将来 show 側が「読んだが渡さない」形へ退行しても
+///   拾えるようにするため。詳細は `window_coordinator::show_egui_main` の書き込み点、突き合わせは
+///   `view.rs` の reset-on-show 消費フレームを参照。
 pub(crate) struct EguiShellState {
     pub(crate) hotkey_generation: AtomicU64,
     pub(crate) hide_pending: AtomicBool,
     pub(crate) reset_pending: AtomicBool,
+    pub(crate) show_read_indexing: AtomicBool,
+    pub(crate) show_read_toast: AtomicBool,
+    pub(crate) show_applied_height_bits: AtomicU64,
     /// main 窓を外部から起こすハンドル（`create()` = `attach` の戻り値・#671 PR D）。
     /// hidden 中は次 show のフレームで toast 等が読まれるため、wake は可視中のみ意味を持つ
     /// （codex レビュー: 「hidden は次 show でよい」と「visible は repaint が要る」は別条件）。
@@ -137,6 +145,9 @@ impl EguiShellState {
             hotkey_generation: AtomicU64::new(0),
             hide_pending: AtomicBool::new(false),
             reset_pending: AtomicBool::new(false),
+            show_read_indexing: AtomicBool::new(false),
+            show_read_toast: AtomicBool::new(false),
+            show_applied_height_bits: AtomicU64::new(0),
             main_waker: handles.main_waker.clone(),
             results_waker: handles.results_waker.clone(),
             pending_hotkey_failure: Mutex::new(None),

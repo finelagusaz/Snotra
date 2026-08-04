@@ -318,7 +318,10 @@ impl EguiView for SearchWindowView {
         let metrics = &visual.metrics;
 
         // show 直後の resetForShow の消費（検索セッション側のクリアは controller が行う）。
-        if self.controller.consume_reset_pending() {
+        // **真偽をローカルへ残す**——このフレームが「show 直後の最初のフレーム」であることは、
+        // 不変条件検出器（レビュー是正 4・下の height 計算点）が突き合わせの発火条件に使う。
+        let was_reset_frame = self.controller.consume_reset_pending();
+        if was_reset_frame {
             // results 窓の **サイズ**デルタガードを初期値へ戻す（#646 PR2 決定 6・memo 自体は
             // #749 で `ResultsWindow` へ移設）。これは冗長な set_size を避ける性能上のガードで
             // あり、可視性のような correctness のフラグではない（#671 spec 決定 2 の意図的な分割）。
@@ -646,10 +649,21 @@ impl EguiView for SearchWindowView {
         // （`indexing_overlay_does_not_depend_on_query_emptiness` が固定）。**`indexing_hint()` は
         // 名前に反してこの status 行の文言であって、TextEdit の hint_text へは一度も渡らない**
         // （上の hint 構築部を参照）。
+        // 4 入力を 1 度だけ読み、`overlay_kind`（文言の導出）と `status_row_present`（行の
+        // 有無・下）の両方へ**同じローカル**を渡す（レビュー是正 2）。`indexing` はスレッドを
+        // またぐ `AtomicBool` のため、独立に 2 回読むと index build スレッドの
+        // `finish_index_build()` が 2 つの読みの間に割り込み、status 行を描いたフレームが
+        // バー高だけの `set_size` を撃つ（案内が切り取られる）——この diff の前は
+        // `has_status = overlay_text.is_some()` で一致が構造的に保証されていた。
+        let indexing_raw = self.controller.indexing();
+        let is_results = self.controller.state().view_kind() == ViewKind::Results;
+        let launching_now = self.controller.is_launching();
+        let notice_now = self.controller.notice_message().map(|m| m.to_string());
+        let has_notice_now = notice_now.is_some();
         let overlay_text: Option<String> = match crate::egui_shell::overlay_kind(
-            self.controller.indexing() && self.controller.state().view_kind() == ViewKind::Results,
-            self.controller.is_launching(),
-            self.controller.notice_message().is_some(),
+            indexing_raw && is_results,
+            launching_now,
+            has_notice_now,
         ) {
             Some(crate::egui_shell::OverlayKind::Indexing) => Some(
                 crate::egui_shell::ui_strings::indexing_hint(self.controller.lang()).to_string(),
@@ -657,9 +671,7 @@ impl EguiView for SearchWindowView {
             Some(crate::egui_shell::OverlayKind::Launching) => {
                 Some(crate::egui_shell::ui_strings::launching(self.controller.lang()).to_string())
             }
-            Some(crate::egui_shell::OverlayKind::Notice) => {
-                self.controller.notice_message().map(|m| m.to_string())
-            }
+            Some(crate::egui_shell::OverlayKind::Notice) => notice_now,
             None => None,
         };
         // #700 発見 C: **入力欄に重ねず、バー直下の独立した行へ描く。** 以前は
@@ -669,15 +681,16 @@ impl EguiView for SearchWindowView {
         // indexing（数分に及びうる）と notice（数秒）は編集可能なまま覆われていた。
         // 行の高さは toast と同じ `metrics.toast_height`（= bar_height・#646 決定 2）で、
         // 窓高は `main_window_height` の `status_height` が積む。
-        // **`overlay_text.is_some()` と同値である**（同じ 4 つの入力を同じ `overlay_kind` へ
-        // 通すため）。それでも述語を経由するのは、**show 経路が同じ関数を呼ぶ**からである
-        // （`window_coordinator::show_egui_main`）。2 か所が同じ述語を通ることが、
+        // **`overlay_text.is_some()` と同値である**（上で 1 度だけ読んだ同じ 4 入力を
+        // 同じローカルとして `overlay_kind` / 本関数の両方へ通すため——読み直した入力では
+        // ない・レビュー是正 2）。それでも述語を経由するのは、**show 経路が同じ関数を呼ぶ**
+        // からである（`window_coordinator::show_egui_main`）。2 か所が同じ述語を通ることが、
         // 「畳む高さ = 描く高さ」を保つ機構である（#755 / #801）。
         let has_status = crate::egui_shell::status_row_present(
-            self.controller.indexing(),
-            self.controller.state().view_kind() == ViewKind::Results,
-            self.controller.is_launching(),
-            self.controller.notice_message().is_some(),
+            indexing_raw,
+            is_results,
+            launching_now,
+            has_notice_now,
         );
         if let Some(text) = overlay_text {
             let status_h = metrics.toast_height as f32;
@@ -888,6 +901,43 @@ impl EguiView for SearchWindowView {
             has_status.then_some(metrics.toast_height),
             has_toast.then_some(metrics.toast_height),
         );
+        // 不変条件検出器（レビュー是正 4）: 仕様は「高さは『いま描く行』で決まり、高さの変化は
+        // 行の出没と 1 対 1 で対応する。行が変わっていないのに高さが変わったら欠陥である。
+        // 行が変わったなら通知が届いた——正常」。reset-on-show の memo リセット（fail-safe）は
+        // show 側の導出が退行しても最初のフレームで動的高さ算出が直すため、外から観測する
+        // smoke の高さ断言を無力化する（過渡は 1 フレーム=約16ms、`Wait-SnotraWindow` は
+        // 200ms ポーリング + 100ms 間隔では捕まらない）。ここは in-process で
+        // 「起きてはならないことが起きていないか」を突き合わせる
+        // （`src-tauri/CLAUDE.md`「モジュール構成」の trace 規範）。
+        //
+        // 発火条件は 4 つの連言——1 つでも崩れていれば「（indexing/toast が変わった、または
+        // launching/notice が新たに立った）通知が届いただけ」で正常なので何も出さない。
+        if was_reset_frame
+            && let Some(sh) = app.try_state::<crate::egui_shell::EguiShellState>()
+            && sh
+                .show_read_indexing
+                .load(std::sync::atomic::Ordering::SeqCst)
+                == indexing_raw
+            && sh.show_read_toast.load(std::sync::atomic::Ordering::SeqCst) == has_toast
+            && !launching_now
+            && !has_notice_now
+        {
+            let show_h = f64::from_bits(
+                sh.show_applied_height_bits
+                    .load(std::sync::atomic::Ordering::SeqCst),
+            );
+            if (show_h - height).abs() > 0.5 {
+                crate::trace_main(
+                    "egui_main:height_mismatch",
+                    serde_json::json!({
+                        "show_h": show_h,
+                        "frame_h": height,
+                        "indexing": indexing_raw,
+                        "toast": has_toast,
+                    }),
+                );
+            }
+        }
         let width = self.window_width();
         // 判定式の正本は `layout::size_delta_exceeds`（#749）。results 側と**式だけを共有し、
         // memo は共有しない**（ADR-results-presentation-two-stage 却下 1: `main_size` を results の

@@ -501,7 +501,8 @@ stateDiagram-v2
 
   note right of Standby
     /o, トレイ「設定」は snotra-settings
-    子プロセスを起動する（本体の状態遷移には影響しない）。
+    子プロセスを起動する（起動そのものは遷移を起こさない。
+    フォーカス移動の帰結は下の遷移ルール要約）。
     初回起動時も snotra-settings を子プロセスとして起動。
   end note
 
@@ -531,8 +532,8 @@ stateDiagram-v2
 
 遷移ルール要約（主要ガード条件）:
 
-- `/o` は `snotra-settings` 子プロセスを起動する（`!indexing` のときのみ有効）。本体の状態は変わらない
-- トレイ「設定」も `snotra-settings` 子プロセスを起動する（`!indexing` のときのみ有効）
+- `/o` は `snotra-settings` 子プロセスを起動する（`!indexing` のときのみ有効）。**起動そのものは本体の状態を変えない**——ただし `SearchVisible` から開いた場合、設定アプリへフォーカスが移ることで下の `focus_lost` の遷移が別途成立する。すなわち `auto_hide_on_focus_lost` 有効時はメインウィンドウが隠れ、下の「起動中のホットキー入力は無視する」により**設定を閉じるまで再表示できない**。無効時は表示されたまま残り、§8.5 の最前面表示の一時解除が設定アプリを前面に出す。**設定サイドカーの起動は `focus_lost` の carve-out を作らない**（#746）
+- トレイ「設定」も `snotra-settings` 子プロセスを起動する（`!indexing` のときのみ有効）。フォーカス移動の帰結は `/o` と同じ
 - `Standby -> SearchVisible` は `hotkey-pressed` に加えて、起動直後 `app_start [show_on_startup]` でも成立
 - `SearchVisible -> Standby` の `Escape` は `ToolSelectionMode` でも `FolderExpansionMode` でもない場合のみ成立（`ToolSelectionMode` 中は `ToolSelectionMode -> NormalMode/FolderExpansionMode` を優先し、`FolderExpansionMode` 中は `FolderExpansionMode -> NormalMode` を優先）
 - `SearchVisible -> Standby` の `hotkey-pressed` は `hotkey_toggle && main_visible` が前提

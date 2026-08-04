@@ -146,6 +146,12 @@ pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> R
 
         // Restore main window alwaysOnTop（egui は get_window・codex #3・SPEC §8.5）。
         // results 窓にも対称適用する（#646 PR2・上の解除と対）。
+        //
+        // **既知の hazard（機序・重篤度・是正は #923 が正本）**: この復元はイベントループの
+        // 外——監視スレッド——から撃つため、hidden な main へ tao の差分適用が `SW_HIDE` を
+        // 漏らす（`src-tauri/CLAUDE.md`「Win32 / Tauri 注意事項」の窓ごとの層を参照）。
+        // **#746 で auto_hide 有効時に「設定終了時 main は hidden」が常態化したため、この
+        // 経路を毎回通るようになった**（従来も Escape 経由で到達可能ではあった）。
         if let Some(main) = handle_for_monitor.get_window("main") {
             let _ = main.set_always_on_top(true);
         }

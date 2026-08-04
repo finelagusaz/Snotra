@@ -214,7 +214,7 @@ fn read_pre_widget_input(ctx: &egui::Context) -> PreWidgetInput {
     // キャレットを飛ばす（epaint 0.35 の `cursor_up_one_row` / `cursor_down_one_row` の
     // 行外分岐）。結果を ↑ で選び直した直後の打鍵がクエリ**先頭**へ挿入され、
     // 「検索ワードが編集できない」として観測された（`abc` → ↑ → `x` が `xabc` になる・実測）。
-    // 消費は無条件に行う: 単一行入力欄で ↑↓ にキャレット移動の用途は無く（SPEC §4.8）、
+    // 消費は無条件に行う: 単一行入力欄で ↑↓ にキャレット移動の用途は無く（SPEC §4.9）、
     // ツール選択中・launching 中は入力欄が非対話ゆえ元から影響が無い。
     let (nav_down, nav_up) = ctx.input_mut(|i| {
         let down = i.key_pressed(egui::Key::ArrowDown);

@@ -176,6 +176,11 @@ function New-SnotraVerificationProfile {
         [Parameter(Mandatory)]
         [string]$ProfileDir,
         [string]$AdditionalSections = '',
+        # `[general]` 内の追加キー（ヘッダ行なし）。TOML はテーブルの再定義を許さないため、
+        # `[general]` 自体はこの関数が唯一発行する——呼び出し側が `-AdditionalSections` に
+        # `[general]` を書くと、下の既定ブロックと衝突して parse が落ちる（下の guard が
+        # 名指しで止める）。
+        [string]$GeneralSection = '',
         [string]$PathEntries = '',
         [string]$HotkeyModifier = 'Alt',
         [string]$HotkeyKey = 'Q',
@@ -187,6 +192,11 @@ function New-SnotraVerificationProfile {
         # ——アイコンを判定に使わない検査では、この空回りが観測時間を押し広げるだけになる（#872）。
         [bool]$ShowIcons = $true
     )
+
+    if ($AdditionalSections -match '(?m)^\s*\[general\]\s*$') {
+        throw ('AdditionalSections に [general] を含めないでください——auto_update の既定注入と' +
+            'テーブル定義が重複し、TOML の parse が落ちます。[general] のキーは -GeneralSection へ渡してください。')
+    }
 
     New-Item -ItemType Directory -Force -Path $ProfileDir | Out-Null
     Remove-Item -LiteralPath (Join-Path $ProfileDir 'config.toml.bak') -Force -ErrorAction SilentlyContinue
@@ -205,6 +215,21 @@ window_width = $WindowWidth
 show_icons = $showIconsToml
 "@.Trim()
     )
+
+    # **`auto_update` は既定で無効化する。** `GeneralConfig.auto_update` の既定は Full
+    # （`snotra-core/src/config.rs` の `#[default]`）で、`[general]` を省略しても既定値が
+    # 適用されるため、検証用プロファイルは何もしなければ**起動のたびに実ネットワークの
+    # 更新チェックを走らせる**——実在の新版が見つかれば本物の toast が出て、
+    # `SNOTRA_EGUI_FAKE_UPDATE` が届いていなくても高さ断言が満たされてしまう（#755/#801 是正 E
+    # が閉じたはずの「env が届いていない」と「検査対象が出なかった」の混同が別経路で復活する）。
+    # 副作用として smoke がネットワークの状態に依存する（間欠的な赤の源）。
+    # **fake ハッチは disabled でも効いたままである**——`spawn_update_check`
+    # （`src-tauri/src/egui_shell/mod.rs`）のハッチは `auto_update` の判定より**前**で
+    # return するため、実チェックだけが消える。
+    $generalLines = @('auto_update = "disabled"')
+    if (-not [string]::IsNullOrWhiteSpace($GeneralSection)) { $generalLines += $GeneralSection.Trim() }
+    $parts += (@('[general]') + $generalLines) -join "`r`n"
+
     if (-not [string]::IsNullOrWhiteSpace($AdditionalSections)) {
         $parts += $AdditionalSections.Trim()
     }

@@ -97,11 +97,11 @@ foreach ($name in @('zsnotracolor-a.snotra-color-fixture', 'zsnotracolor-b.snotr
 }
 $scanDirToml = (Resolve-Path $scanDir).Path -replace '\\', '/'
 
-$additionalSections = @"
-[general]
+$generalSection = @"
 show_on_startup = $showOnStartup
 auto_hide_on_focus_lost = false
-
+"@
+$additionalSections = @"
 [visual]
 background_color = "$Color"
 "@
@@ -112,7 +112,7 @@ extensions = [".snotra-color-fixture"]
 include_folders = false
 "@
 $profile = New-SnotraVerificationProfile -ProfileDir $profileDir `
-    -AdditionalSections $additionalSections -PathEntries $pathEntries
+    -GeneralSection $generalSection -AdditionalSections $additionalSections -PathEntries $pathEntries
 $profileFull = $profile.FullPath
 
 Write-Host ''

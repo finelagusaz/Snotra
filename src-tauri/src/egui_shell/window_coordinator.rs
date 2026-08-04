@@ -15,10 +15,9 @@
 //!
 //! **main 窓のサイズは 2 か所に分かれたままである**——show 経路の実高導出は `show_egui_main` の中、
 //! すなわちここにあり、毎フレームの動的高さ（`layout::main_window_height` の適用）は `view.rs` に
-//! ある。**両者は別ロジックではない**（#755 / #801）——どちらも同じ `status_row_present` /
-//! `layout::main_window_height` を通して同じ高さを導出する。分かれている理由は読み点だけで、
-//! ここは「フレームの外・reset-on-show 後の値」を、`view.rs` は「フレームの中・実際の値」を
-//! 読む（反転の経緯は `ADR-show-path-derives-drawn-height`）。
+//! ある。両者が同じ高さを導出する共有の実体の正本は `src-tauri/CLAUDE.md`「モジュール構成」の
+//! `window_coordinator.rs` の項（#755 / #801）。分かれている理由は読み点だけで、ここは
+//! 「フレームの外・reset-on-show 後の値」を、`view.rs` は「フレームの中・実際の値」を読む。
 //!
 //! listener の**登録**は `mod.rs` に残す（setup の順序制約を `main.rs` の 1 画面に残す設計・
 //! `EguiShellHandles` の doc を参照）。ここにあるのは登録先の実体だけである。

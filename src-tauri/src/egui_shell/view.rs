@@ -684,8 +684,8 @@ impl EguiView for SearchWindowView {
         // **`overlay_text.is_some()` と同値である**（上で 1 度だけ読んだ同じ 4 入力を
         // 同じローカルとして `overlay_kind` / 本関数の両方へ通すため——読み直した入力では
         // ない・レビュー是正 2）。それでも述語を経由するのは、**show 経路が同じ関数を呼ぶ**
-        // からである（`window_coordinator::show_egui_main`）。2 か所が同じ述語を通ることが、
-        // 「畳む高さ = 描く高さ」を保つ機構である（#755 / #801）。
+        // からである（`window_coordinator::show_egui_main`）。共有の実体の正本は
+        // `src-tauri/CLAUDE.md`「モジュール構成」の `window_coordinator.rs` の項（#755 / #801）。
         let has_status = crate::egui_shell::status_row_present(
             indexing_raw,
             is_results,
@@ -941,8 +941,9 @@ impl EguiView for SearchWindowView {
         let width = self.window_width();
         // 判定式の正本は `layout::size_delta_exceeds`（#749）。results 側と**式だけを共有し、
         // memo は共有しない**（ADR-results-presentation-two-stage 却下 1: `main_size` を results の
-        // 導出へ入れない）。**高さの導出そのものは show 経路と共有する**——`status_row_present` と
-        // `main_window_height` の 2 本を両者が通る（#755 / #801）。共有するのは導出であって memo ではない。
+        // 導出へ入れない）。高さの導出が show 経路と共有される事実の正本は
+        // `src-tauri/CLAUDE.md`「モジュール構成」の `window_coordinator.rs` の項（#755 / #801）。
+        // 共有するのは導出であって memo ではない。
         if crate::egui_shell::layout::size_delta_exceeds(
             (self.last_set_width, self.last_set_height),
             (width, height),

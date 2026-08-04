@@ -28,8 +28,10 @@ import {
   AREA_BUDGET,
   ALWAYS_LOADED_FILES,
   checkHeadingRefs,
+  scanHeadingRefs,
   collectAnchors,
   headingRefDocs,
+  headingRefSourceDocs,
   checkNearHeadingRefs,
   scanNearHeadingRefs,
   checkCheckSkillEnumeration,
@@ -857,16 +859,96 @@ describe("G-heading-refs checkHeadingRefs（見出し参照の実在）", () => 
     expect(checkHeadingRefs(s, ["docs/x.md"])).toEqual([]);
   });
 
-  it("母集団は履歴資料・作業バッファ・凍結された歴史（docs/adr/）を除く全 md", () => {
+  it("md の腕の母集団は履歴資料・作業バッファ・凍結された歴史（docs/adr/）を除く全 md", () => {
     const s = snap({
       "PERFORMANCE.md": "",
       ".claude/agents/code-reviewer.md": "",
       "docs/superpowers/plans/p.md": "",
       "workspace/plan.md": "",
       "docs/adr/ADR-x.md": "",
+      // 判定対象外の不混入（md 側）。`src/main.rs` は #925 以降 `headingRefSourceDocs` が
+      // 拾う側へ移ったため、md の腕の負のカナリアは非 md の別拡張子で張り直してある
+      "Cargo.toml": "",
       "src/main.rs": "",
     });
     expect(headingRefDocs(s).sort()).toEqual([".claude/agents/code-reviewer.md", "PERFORMANCE.md"]);
+  });
+});
+
+describe("G-heading-refs / G-near-heading-refs のソースの腕（`.rs`・#925）", () => {
+  // 守りたい対象 = `.rs` のコメントに書かれた正準形が、参照先の改題・移動・削除で沈黙すること。
+  // 種はすべて合成スナップショットへ蒔く（ライブの検査もリポジトリのファイルも弱めない・
+  // `.claude/rules/safety-nets.md`「フォールトインジェクションでは、稼働中のガードを弱めない——複製に変異を当てる」）。
+  const TARGET = "## Git/GitHub 運用\n\n本文\n";
+  const rs = (src) => snap({ "CLAUDE.md": TARGET, "src/a.rs": src });
+  const scanRs = (src) => scanHeadingRefs(rs(src), ["src/a.rs"]);
+
+  it("種 1: `.rs` の正準形が着地しなければ finding（赤）。対照: 着地すれば緑で照合件数が 1 進む", () => {
+    const rot = scanRs('/// 詳細は `CLAUDE.md`「Git 運用」を見よ\nfn f() {}\n');
+    expect(rot.findings).toHaveLength(1);
+    expect(rot.findings[0].message).toContain("見出し参照が着地しない");
+    const ok = scanRs('/// 詳細は `CLAUDE.md`「Git/GitHub 運用」を見よ\nfn f() {}\n');
+    expect(ok.findings).toEqual([]);
+    expect(ok.checked).toBe(1);
+  });
+
+  it("種 2: `.rs` の参照対象が解決できなければ finding（パスごと消えた場合）", () => {
+    const f = scanRs('/// `docs/gone.md`「節」\nfn f() {}\n').findings;
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("見出し参照の対象が解決できない");
+  });
+
+  it("種 3: `#[cfg(test)]` の内側のコメントも見る（テストコードを母集団から外さない）", () => {
+    // #925 が実際に見つけた腐り 1 件は `snotra-settings/src/tabs/visual.rs` の `#[cfg(test)]` の
+    // 内側にあった。`productionOnly` 相当を「G-stale-identifiers との対称性の完成」として
+    // 入れると、この it が落ちる——非対称は意図である
+    const src = 'fn f() {}\n\n#[cfg(test)]\nmod tests {\n    // 根拠は `CLAUDE.md`「Git 運用」\n    #[test]\n    fn t() {}\n}\n';
+    const f = scanRs(src).findings;
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("見出し参照が着地しない");
+  });
+
+  it("種 4: G-near-heading-refs も `.rs` を見る（実リポジトリには生きた事例が無く、ここでしか示せない）", () => {
+    const f = checkNearHeadingRefs(rs('/// 詳細は `CLAUDE.md` の「Git/GitHub 運用」を見よ\nfn f() {}\n'), ["src/a.rs"]);
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("`CLAUDE.md`「Git/GitHub 運用」と書く");
+  });
+
+  it("種 5: `.rs` の母集団が 0 件なら runAll が明示 fail（md が非空でも鳴る）", () => {
+    const { findings } = runAll(snap({ "CLAUDE.md": TARGET }));
+    expect(findings.some((f) => f.message.includes("対象ソース（.rs）が 0 件"))).toBe(true);
+  });
+
+  it("種 6: md の母集団が 0 件なら runAll が明示 fail（`.rs` が非空でも鳴る）", () => {
+    // 種 5 と別の it にする——1 本に束ねると、片方の腕が埋めた長さで他方の消滅が隠れる形を
+    // テスト側で再現してしまう（`runAll` のコメントが `staleDocs` / `staleGuides` で名指しした失敗）
+    const { findings } = runAll(snap({ "src/a.rs": "fn f() {}\n" }));
+    expect(findings.some((f) => f.message.includes("対象 md が 0 件"))).toBe(true);
+  });
+
+  it("種 7: 判定対象外の不混入（`.rs` の腕は他の拡張子を拾わない）", () => {
+    const s = snap({
+      "src/a.rs": "",
+      "src/b.ts": "",
+      "scripts/c.mjs": "",
+      "scripts/d.ps1": "",
+      "Cargo.toml": "",
+      "CLAUDE.md": "",
+    });
+    expect(headingRefSourceDocs(s)).toEqual(["src/a.rs"]);
+  });
+
+  it("種 8: 配線カナリア（G-heading-refs） — runAll 経由で `.rs` の腐りが findings に出る", () => {
+    const { findings } = runAll(rs('/// `CLAUDE.md`「Git 運用」\nfn f() {}\n'));
+    expect(findings.some((f) => f.file === "src/a.rs" && f.message.includes("見出し参照が着地しない"))).toBe(true);
+  });
+
+  it("種 9: 配線カナリア（G-near-heading-refs） — 近傍形も runAll 経由で `.rs` から出る", () => {
+    // **腕ごとに 1 本ずつ要る。** 種 8 だけでは `scanNearHeadingRefs` の引数を md の腕へ戻す変異が
+    // 素通りする（種 4 はリテラル母集団で呼ぶので buildChecks を通らず、実リポジトリの `.rs` 近傍参照は
+    // 0 件なので dogfood も evidence も動かない）。G-stale-identifiers が配線 describe を 2 本置いたのと同じ形
+    const { findings } = runAll(rs('/// 詳細は `CLAUDE.md` の「Git/GitHub 運用」を見よ\nfn f() {}\n'));
+    expect(findings.some((f) => f.file === "src/a.rs" && f.message.includes("正準形でない"))).toBe(true);
   });
 });
 

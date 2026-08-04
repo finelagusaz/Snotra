@@ -392,7 +392,7 @@ mod tests {
         } = obsidian;
 
         // 上の assert が空虚に真でないことを、**複製に変異を当てて**確かめる
-        // （`.claude/rules/safety-nets.md`「稼働中のガードを弱めず複製に変異を当てる」）。
+        // （`.claude/rules/safety-nets.md`「フォールトインジェクションでは、稼働中のガードを弱めない」）。
         // **5 色すべてに当てる**——1 本だけだと、残り 4 本が述語の `&&` から抜け落ちても緑を通る。
         let drifts = |name: &str, set: fn(&mut Config)| {
             let mut drifted = Config::default();

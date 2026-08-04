@@ -142,9 +142,9 @@ impl BlurGrace {
 
 - [x] **`cargo build -p snotra`（debug）と `cargo build -p snotra --release` の両方**を打つ。`smoke:startup` と `test:powershell` は **debug** を、`smoke:egui` は **release** を見る（`docs/build-commands.md`「実バイナリを起動する検査の前に…古いまま在るバイナリを測る」・#835）
 - [x] カテゴリ C（`npm test` / `test:powershell` / `smoke:startup` / `smoke:egui`）
-- [ ] 実機確認（下記）を実施し、trace と突き合わせる
+- [x] 実機確認を実施した。**ただし到達範囲は計画の想定より狭い**——下記「実機確認の結果」を正本とする
 - [x] `/symmetric-check` / `/state-check` / `/race-check` と `code-reviewer` を実装差分に当てる
-- [ ] **`workspace/` を消す前に ADR を起こす**（`ADR-blur-grace-single-field-state-machine`）——却下した案 A（`consume_reset_pending` に 2 行）と案 B（2 フィールドのまま struct 化）の理由は計画にしか無く、削除で失われる
+- [x] **`workspace/` を消す前に ADR を起こす**（`ADR-blur-grace-single-field-state-machine`）——却下した案 A（`consume_reset_pending` に 2 行）と案 B（2 フィールドのまま struct 化）の理由は計画にしか無く、削除で失われる
 
 ## 不変条件と異常系
 
@@ -189,6 +189,32 @@ impl BlurGrace {
 5. **`hotkey_toggle = false` の 2 手**: 可視のまま Alt+Q を押すと `ShowNow` → `show_egui_main` が `reset_pending` を無条件に立てるため、**可視中の再 show でも reset が走る**（`window_coordinator.rs:255`）。(a) 可視かつ武装中に Alt+Q → 保留中の自動 hide が取り消されること（**挙動変更**。意味としては正しい——利用者が明示的に窓を呼び戻したため） (b) その後に改めて blur すると通常どおり 100ms で hide されること
 
 **欠陥そのものの再現は実機では不安定である**（`set_focus()` の失敗を強制できない）。**欠陥の固定は純粋核テスト 1〜4 が担い、実機確認は「回帰が無いこと」を担う**——この分担を報告に明記する。
+
+## 実機確認の結果（2026-08-04 実施・**これが正本**）
+
+使い捨てプロファイル（`SNOTRA_CONFIG_DIR`）＋ `SNOTRA_TRACE` で実施。実ユーザーの config は無傷（mtime で確認）。
+
+### 到達したもの
+
+| 項目 | 判定 | 根拠 |
+|---|---|---|
+| 回帰なし（blur → 猶予 → hide） | ✅ | **40 サイクル**。`egui_show:done` 40 / `egui_hide:done` 40 |
+| 回帰なし（トグル hide → 再 show） | ✅ | `hotkey:listener_enter` → `egui_hide:done` が 15 / 28 / 17 ms の組 3 つ（可視中の Alt+Q）。**これは「focus を持ったまま hide」＝シナリオ B の前提条件**であり、その後の再 show で即時 hide なし |
+| `focused == true` の view 層配線 | ✅ | 武装できている＝`observe(true, ..)` を通っている（武装は `Focused` 状態からしか起きない） |
+| 即時 hide が起きない | ✅ | **猶予未満の hide 0 件 / 40 サイクル**。最短の show→hide は 131 ms |
+| seed の健全性 | ✅ | `[config] ` 診断 0 件 |
+
+### 到達しなかったもの（**計画の想定が誤っていた**）
+
+**計画のシナリオ 2 / 3 / 5a はいずれも「猶予 100ms 以内に別の操作をする」ことを要求するが、人間の単純反応時間（〜200ms）では原理的に届かない。** 実際に人間が試み、すべて猶予明けの自動 hide が先に起きた。
+
+- **シナリオ 2**（猶予中の focus 復帰＝`Blurred → Focused`）— 注入での自動化も試みたが失敗した。`SetForegroundWindow` はバックグラウンドプロセスからの呼び出しを Windows が制限し、**焦点が実際に動いたことを確認できていない**（「呼んだ」ことしか測れていない・`src-tauri/CLAUDE.md`「trace の presence 検査は状態の検査ではない」）。加えて PowerShell からの呼び出し自体に 165ms かかり、**制限を回避できても 100ms の窓に入らない**。→ **純粋核テスト `blur_grace_drops_pending_when_focus_returns` に委ねる**
+- **シナリオ 3 / 5a**（armed のまま別経路で hide → 再 show）— 同じ理由で作れない
+- **シナリオ A・B の顕在化そのもの** — `set_focus()` の失敗を強制できない。**加えて trace では通常動作と区別できない**: B は「show の初フレームで武装 → 100ms 後に hide」の形なので show から 130〜160ms 後の hide として現れ、「利用者が素早くクリックした通常の blur」と同じ帯域に落ちる（実際その帯域の hide が 7 件あり、どちらか判定できない）。区別には show 初フレームの focus 状態を trace する必要があり、**現在その観測点は無い**
+
+### 帰結
+
+**実機確認が担保したのは「回帰が無いこと」だけである。** 欠陥の固定は純粋核テスト 1〜4 が単独で担う。この分担は計画時の想定どおりだが、**計画が「実機で確認できる」と書いたシナリオ 2 / 3 / 5a は実行不能だった**——計画のシナリオ設計が甘かったという記録として残す（次に猶予まわりの実機確認を設計する者は、**100ms 以内の人間の操作を要求するシナリオを書かない**）。
 
 ## 未確定（実装前に潰す）
 

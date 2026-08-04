@@ -4,7 +4,7 @@
 
 **進捗**: §8 の全 5 段が 2026-07-26 完了——1 番（#697・実測 (A) 確定）/ 2 番（#714・PR #742）/ 3 番（#737・契約②の実装 + A/B 実測）/ 4 番（#711・契約③の実装）/ **5 番（規範の CLAUDE.md への移設。§3 の冒頭を参照——本書はこれ以降、導出の歴史記録である）**。
 
-**残る追跡**: #745（`unfocus_at` が契約④の backstop の外にいる）。本書の該当箇所から番号で名指ししてある。**#746（`blur_should_hide` の `!settings_running` が SPEC に無い逸脱）は解消済み**——項を撤去し、§5 errata が記す「`Idle` の根拠の唯一の例外」も同時に消えた（現在 `blur_grace_action` の時計非依存な入力は `focused` / `auto_hide` の 2 つで、どちらも wake の持ち主がいる）。
+**残る追跡**: なし。**#745（`unfocus_at` が契約④の backstop の外にいる）は解消済み**——blur 猶予を `BlurGrace` 状態機械へ畳み、reset-on-show でクリアするようにした（残る受容残余は「その呼び出しの消失を捕まえる検査が無い」ことで、機械化は #930）。**#746（`blur_should_hide` の `!settings_running` が SPEC に無い逸脱）も解消済み**——項を撤去し、§5 errata が記す「`Idle` の根拠の唯一の例外」も同時に消えた（現在 `blur_grace_action` の時計非依存な入力は `focused` / `auto_hide` の 2 つで、どちらも wake の持ち主がいる）。
 
 これらは独立の欠陥ではなく、「**再描画を誰が・いつ要求し、どこで打ち切り、来なかったらどうするのか**」という runtime の設計契約が未文書のまま、呼び出し点ごとに場当たりで決まっていることの断片である。本書はその契約を 5 か条に固定し、各 issue をその実装として位置づける。
 
@@ -97,7 +97,7 @@ worker は dispatch の間隔に `min_interval` の下限を守る。dispatch �
 
 hide を跨ぐ時限状態は reset-on-show を backstop にする（既存規範の再掲・`src-tauri/CLAUDE.md`）。「hidden 中は `update()` が走らない」の抑止機構は **#697 で実測済み**——worker は `RequestRedraw` を送るが hidden な窓には `RedrawRequested` が配送されない（抑止は tao/OS 層。`runtime.rs` の `visible` ガードは到達不能のまま受け口として残る）。§6 は実施済みの測定手順の記録として残す。
 
-**backstop の既知の穴**: `unfocus_at` / `was_focused`（blur 猶予）は reset-on-show でクリアされておらず、この条項の対象でありながら backstop の外にいる（#745）。
+**backstop の既知の穴（当時）**: `unfocus_at` / `was_focused`（blur 猶予）は reset-on-show でクリアされておらず、この条項の対象でありながら backstop の外にいた。**#745 で解消済み**——2 フィールドを `BlurGrace` 状態機械へ畳み、`consume_reset_pending` が `reset()` を呼ぶ。
 
 ### ⑤ 連続アニメーションの消費には②が天井を与える。不連続遷移にアニメーション経路を使わない
 

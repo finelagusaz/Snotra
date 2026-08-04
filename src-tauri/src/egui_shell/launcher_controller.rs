@@ -644,14 +644,6 @@ impl LauncherController {
             .unwrap_or_else(|| GeneralConfig::default().auto_hide_on_focus_lost)
     }
 
-    /// 設定サイドカー起動中は blur で hide しない（設定が focus を奪っても本体を消さない）。
-    fn settings_running(&self) -> bool {
-        self.app_handle
-            .try_state::<crate::SettingsProcessState>()
-            .map(|p| p.lock().unwrap().is_some())
-            .unwrap_or(false)
-    }
-
     /// instant prefix を実行中 config から都度読む（キャッシュしない・#576 と同設計）。
     /// フィールドは `SearchConfig::instant_command_prefix`（既定は同 struct の `Default` 実装）。
     fn instant_prefix(&self) -> String {
@@ -1095,7 +1087,6 @@ impl LauncherController {
                 at.elapsed(),
                 focused,
                 self.auto_hide_enabled(),
-                self.settings_running(),
             ) {
                 crate::egui_shell::BlurAction::Hide => {
                     self.unfocus_at = None;

@@ -28,13 +28,15 @@ import { selectChecks } from "../.claude/hooks/post-edit.mjs";
 
 /** 実在検査の対象と見なすソース系拡張子（G-references）。ランタイム生成物（.bin/.bak 等）は含めない */
 const REF_EXTENSIONS = /\.(md|rs|ts|tsx|mjs|json|toml|yml|ps1|html|css)$/;
-/** 走査から除外するディレクトリ。名前ベース（任意の深さの生成物）とルート相対プレフィックス
+/** 走査から除外するディレクトリ。名前ベース（任意の深さの生成物）とルート相対パス
  *  （untracked バッファ）を分ける——`ui/src/workspace/` のような将来の同名ソースを気づかれないまま
- *  落とさないため、workspace/worktrees はルート錨止めにする
+ *  落とさないため、PATHS 側はルート錨止めにする
+ *  **PATHS の照合は `rel` の完全一致である**——一致したディレクトリへ降りないので配下ごと落ちる。
+ *  `docs/.superpowers` も `.superpowers-extra` も `rel` が一致しないので巻き込まない（#728）
  *  `.superpowers/` は SDD（subagent-driven-development）の作業バッファで、gitignore 済みゆえ CI の
  *  チェックアウトには存在しない——走査に含めると同じコマンドが手元と CI で別の母集団を見る（#722）。 */
 const WALK_EXCLUDE_NAMES = new Set([".git", "node_modules", "target", "dist"]);
-const WALK_EXCLUDE_PREFIXES = ["workspace", ".claude/worktrees", ".superpowers"];
+const WALK_EXCLUDE_PATHS = ["workspace", ".claude/worktrees", ".superpowers"];
 
 /** リポジトリを歩いて snapshot（files: "/" 区切り相対パス一覧, read(rel)）を作る。
  *  列挙は fs 自身に問う（`git ls-files` の pathspec `**` 意味論の罠を避ける・health-check Check 1 注記） */
@@ -44,7 +46,7 @@ export function makeSnapshot(root) {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const rel = path.relative(root, path.join(dir, e.name)).replaceAll("\\", "/");
       if (e.isDirectory()) {
-        if (!WALK_EXCLUDE_NAMES.has(e.name) && !WALK_EXCLUDE_PREFIXES.includes(rel)) walk(path.join(dir, e.name));
+        if (!WALK_EXCLUDE_NAMES.has(e.name) && !WALK_EXCLUDE_PATHS.includes(rel)) walk(path.join(dir, e.name));
       } else {
         files.push(rel);
       }

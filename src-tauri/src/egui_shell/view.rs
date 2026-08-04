@@ -964,25 +964,16 @@ impl EguiView for SearchWindowView {
             }
             ui.ctx().request_repaint();
         }
-        // #738: バー矩形を作業領域の内側へ戻す。**2 つの条件がこの位置を決めている。**
+        // #738: バー矩形を作業領域の内側へ戻す。**ポインタが押されていないフレームだけ**である
+        // ——ドラッグ中も戻すと横並びモニター間の移動が封鎖される（機序と作業例、および
+        // `was_reset_frame` を OR で足す backstop を実測で却下した経緯は
+        // `clamp_main_into_work_area` の doc と `ADR-main-window-clamp-on-pointer-release`）。
         //
-        // (1) **ポインタが押されていないフレームだけ**である。ドラッグ中も戻すと、横並び
-        //     モニター間の移動が封鎖される——幅 600px の窓を A(`0..1920`) から右へ運ぶとき、
-        //     左端が `1320..1620` の区間ではまだ A の重なりが優勢で、毎フレーム `x=1320` へ
-        //     引き戻されて B が優勢になる位置へ到達できない。**保証は「離したら戻る」である**
-        //     （人間裁定・2026-08-04。判定の実体は `clamp_main_into_work_area` の doc）。
-        // (2) **`drive_results_window` より前**でなければならない。`position_results_below_main`
-        //     は main の位置を OS から読み直すため、後ろに置くと results が 1 フレームだけ
-        //     クランプ前の位置へ追従する。`set_position` は `SetWindowPos` を同期で撃つので、
-        //     ここで戻せば直後の drive は新しい位置を読む（`Moved` イベントの配送を待たない
-        //     ——それは `update()` の終了後になる）。
-        // (3) **`was_reset_frame` を OR で足す backstop は却下した（実測）。** 動機は正しい
-        //     ——egui が押下フラグを落とすのは `Event::PointerButton{pressed:false}` のときだけ
-        //     で、`PointerGone` でもフォーカス喪失でも落ちない。release が届かない経路が 1 つ
-        //     でもあれば `any_down()` は固着し、クランプが黙って死ぬ。だが**実測でドラッグ中も
-        //     毎フレームクランプが走り、(1) の封鎖がそのまま現実になった**（backstop 無し:
-        //     ドラッグ中 top=1050 のまま／有り: 956 へ引き戻される）。固着は**受容残余**であり、
-        //     却下の理由と再測の手順は `docs/adr/ADR-main-window-clamp-on-pointer-release.md`。
+        // **呼び出し側にしか無い制約はこちら**: **`drive_results_window` より前**でなければ
+        // ならない。`position_results_below_main` は main の位置を OS から読み直すため、後ろへ
+        // 置くと results が 1 フレームだけクランプ前の位置へ追従する。`set_position` は
+        // `SetWindowPos` を同期で撃つので、ここで戻せば直後の drive は新しい位置を読む
+        // （`Moved` イベントの配送を待たない——それは `update()` の終了後になる）。
         if !ui.input(|i| i.pointer.any_down()) {
             crate::egui_shell::clamp_main_into_work_area(&app, metrics.bar_height);
         }

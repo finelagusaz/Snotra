@@ -39,17 +39,24 @@
 ## テスト方針と検証コマンド
 
 ```
-node --test scripts/governance-check.test.mjs
+npx vitest run scripts/governance-check.test.mjs
 npm run governance:check
 ```
 
-**ベースライン（main `b28d2b9`・2026-08-04 実測・改名前）**:
+**`node --test` を使ってはならない** — このテストは vitest 製で、`node --test` で起動すると runner 未初期化の `TypeError: Cannot read properties of undefined (reading 'config')` で落ちる（2026-08-04 実測）。**改名と無関係な赤**であり、これを退行と読み違える経路をここで塞ぐ。SSOT は `npm test`（`vitest run`）で、上記は許容された部分集合ラッパー（`docs/build-commands.md`「フックの検査コマンドと本ファイルの整合規約」）。
+
+**ベースライン（ブランチ点 `b28d2b9` = main HEAD・`git rev-parse --short HEAD~1` で確認・2026-08-04 実測）**
+
+いずれも**改名前・`workspace/*.md` をコミットした状態**で測った（＝実装者が改名後に打つのと同じ条件）。
+
+- `npx vitest run scripts/governance-check.test.mjs` → **Test Files 1 passed / Tests 190 passed**
+- `npm run governance:check` の evidence 行:
 
 ```
 検査 18 件 / 対象文書 35 件 / rules 7 件 / skills 13 件 / 恒久規範 常時ロード 12794/15500 字・rules 9879/12000 字 / 見出し参照 114 件を 48 文書から照合 / workspace member 4 件の lints opt-in / 散文の識別子 67 件を 34 文書から照合 / 近傍の見出し参照 13 件 / ADR 29 本の名前 / ADR の短縮引用 169 件
 ```
 
-`workspace/` は除外リスト自身の要素なので、本サイクルで追加した `workspace/*.md` はこの件数に影響しない（実測: ベースラインは `workspace/` 作成前に取得したが、`walk` はディレクトリ `workspace` で降りるのをやめるため比較可能）。
+`workspace/` 追加前に取った値と**逐語で一致した**（実測）。`walk` はディレクトリ `workspace` で降りるのをやめるため、本サイクルの成果物はこの件数に影響しない。
 
 ## SPEC.md・関連文書の更新要否
 
@@ -65,10 +72,20 @@ npm run governance:check
 - [ ] `scripts/governance-check.mjs:37` の定義を `WALK_EXCLUDE_PATHS` へ改名する
 - [ ] `scripts/governance-check.mjs:47` の参照点を改名する
 - [ ] `Grep` で `WALK_EXCLUDE_PREFIXES` を全文検索し、残存が `docs/superpowers/plans/2026-07-26-skill-workflow-boundary.md` の 3 件だけであることを確認する
-- [ ] `node --test scripts/governance-check.test.mjs` が通る
-- [ ] `npm run governance:check` の evidence 行を上のベースラインと**逐語比較**し、全件数の一致を確認する（不一致なら `walk` の退行として調査する）
 - [x] #728 へ「項目 3 の WONTFIX 裁定」と「項目 2 の修正範囲の判断」をコメントする（2026-08-04 投稿済み: https://github.com/finelagusaz/Snotra/issues/728#issuecomment-5176434379 ）
-- [ ] PR A を作成する。本文は #728 を closing keyword **なしで**参照し、後続作業（項目 2）をチェックリストに載せる
+- [ ] `npx vitest run scripts/governance-check.test.mjs` が **190 passed** で通る（ベースラインと同数）
+- [ ] `npm run governance:check` の evidence 行を上のベースラインと**逐語比較**し、全件数の一致を確認する（不一致なら `walk` の退行として調査する）
+
+## PR A の作成（チェックリストに置かない）
+
+**作業項目にしない理由**: `/implement` は全項目が `- [x]` になってから `workspace/` を削除しステージへ含め（`implement/SKILL.md:123`）、`gh pr create` はその削除で `plan.md` が消えて初めて通る（`pre-bash.mjs:331`）。PR 作成を項目に置くと「削除を要する項目が、削除の条件になる」循環になる。
+
+手順:
+
+1. 上の作業項目がすべて `- [x]` になったら `workspace/` を削除してステージへ含める。
+2. コミットし、`git push -u origin HEAD && gh pr create …` の形で PR を作る（鎖に `cd` を含めない）。
+3. **PR 本文は #728 を closing keyword なしで参照する**（`Closes` / `Fixes` を書かない）。#728 は項目 2 の PR が閉じる。
+4. PR 本文のチェックリストに「#728 項目 2 を後続 PR で実施し、そちらが #728 を閉じる」を載せる。
 
 ## 後続サイクルへ送る作業（#728 項目 2・PR B）
 

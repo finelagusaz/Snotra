@@ -53,9 +53,9 @@ issue は「トップ 1 段の完全一致」と書くが、`.claude/worktrees` 
 ## 再利用できる既存パターン
 
 - **数値の差分をもって「純粋な改名」を証明する**: `governance-check.mjs:1572` の evidence 行が `検査 N 件 / 対象文書 N 件 / … / 見出し参照 N 件を M 文書から照合 / …` を出力する。`walk` が退行すれば**対象文書**の件数が動くため、改名前後で全件数が一致することが陽性の検知になる（`.claude/rules/safety-nets.md`「効いていることは、フォールトインジェクションで一度は実測する」が求める測定の代替として、変更の性質に見合う形）。
-- **ベースライン（main, `b28d2b9`, 2026-08-04 実測）**:
-  `検査 18 件 / 対象文書 35 件 / rules 7 件 / skills 13 件 / 恒久規範 常時ロード 12794/15500 字・rules 9879/12000 字 / 見出し参照 114 件を 48 文書から照合 / workspace member 4 件の lints opt-in / 散文の識別子 67 件を 34 文書から照合 / 近傍の見出し参照 13 件 / ADR 29 本の名前 / ADR の短縮引用 169 件`
-- `workspace/` は `WALK_EXCLUDE_PREFIXES` 自身の要素なので、本サイクルで追加する `workspace/*.md` は上記件数に影響しない（`walk` はディレクトリ `workspace` で降りるのをやめる）。
+- **ベースラインの実測値は `plan.md`「テスト方針と検証コマンド」を正本とする**（`workspace/` のコミット後に取り直し、追加前の値と逐語一致することを確認済み）。
+- `workspace/` は `WALK_EXCLUDE_PREFIXES` 自身の要素なので、本サイクルで追加する `workspace/*.md` は件数に影響しない（`walk` はディレクトリ `workspace` で降りるのをやめる。実測で確認）。
+- **テストランナーの罠**: `scripts/governance-check.test.mjs` は vitest 製で、`node --test` で起動すると runner 未初期化の `TypeError: Cannot read properties of undefined (reading 'config')` で落ちる（改名と無関係な赤・2026-08-04 実測）。`npx vitest run <path>` を使う。
 
 ## 技術的制約
 

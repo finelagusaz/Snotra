@@ -27,7 +27,6 @@
 - `hotkey.rs` — 永続ホットキー文字列の意味解析とシステムショートカット競合判定（責務は `//!`）。`HotkeyConfig` は serde 互換のため `config.rs` から re-export し、設定検証・UI・Win32 platform は同じ `ParsedHotkey` を消費する。文字列 parser を下流へ複製しない
 - `search.rs` — 検索順位計算・履歴ブースト・incremental search キャッシュ・空クエリ時履歴候補（責務・スコア階層は `//!` と `SearchEngine` の struct doc）。以下は並列 Vec レイアウトの不変条件:
   - **並列 Vec レイアウト**: `SearchEngine` は `entries` / `lower_names` / `lower_file_names` / `normalized_keys` / `char_masks` / `file_name_char_masks` / `kana_lower_names` / `kana_char_masks` の並列 Vec で cache locality を確保
-  - **構築の共通化**: `compute_wave1`（文字列正規化）→ `compute_wave2`（ビットマスク計算）のヘルパー関数を `new()`（= `new_with_migemo(.., true)`）/ `new_with_migemo(entries, migemo_enabled)` / `new_with_cached_masks(.., migemo_enabled)` が共有する
   - **`kana_lower_names` / `kana_char_masks` は `migemo_enabled` が true のときのみ構築し、無効時は空 Vec**（migemo 無効ユーザーの死蔵メモリ ~2.1–2.7MB/50k を削る・構築も約 2 倍速、issue #337）。2 つの kana 系 Vec は必ず同時に空/同長（`assemble` の debug_assert が検証）。空 Vec のとき検索ループは `kana_available` 空ガードで `kana_lower_names[i]` アクセスを回避し、Fuzzy pre-filter は `kana_char_masks.is_empty()` チェックで kana 経路を棄却する（構築時 migemo OFF→検索時 ON の窓での panic 防止）
   - **migemo トグルの反映は index 再構築経由**: `update_config` は engine を再構築しないため、`config_watcher` が engine の `IndexInputs` 差分で `start_index_build` を kick する再構築に依存する（#347 Phase 2 で `needs_reindex` は `IndexInputs` に統合）
   - **パスマッチング**: クエリにパス区切り文字（`\` `/`）を含む場合、`normalized_key`（= `normalize_entry_key(target_path)`）に対して Substring マッチを試みる。スコアは `3000 - min(byte_pos, 500)`。name/file_name/kana 全て不成立時のフォールバック。`has_path_sep` 時は Fuzzy ビットマスク pre-filter をスキップする
@@ -38,12 +37,12 @@
 - `history.rs`: 起動履歴・クエリ別履歴・フォルダ展開履歴の管理、バイナリ永続化
   - **剪定容量 `top_n` は焼き込まず `prepare_save_if_dirty`/`prepare_flush`/`prune` の引数で受け取る（live-read）**: `Engine` が呼び出し時に現在の config（`effective_result_limit()`）を渡すため、`result_limit` 設定変更が再起動なしで反映される（#348）
   - **`HistoryStore` に `top_n` フィールドを再導入しないこと** — 焼き込むと設定変更が反映されないドリフトが復活する
-- `folder.rs`: フォルダ内列挙とフィルタ/ソート
-- `indexer.rs`: スキャン対象列挙と重複排除、インデックスキャッシュ
-- `query.rs`: クエリ正規化（`normalize_query`）、履歴クエリキー正規化（`normalize_history_query_key` — `normalize_query` + パス区切り統一を一元化）、`char_bitmask`（文字存在ビットマスク計算 — `search.rs` と `indexer.rs` の両方が使用）
-- `binfmt.rs`: `magic + version` 付きバイナリ入出力共通処理
-- `error.rs`: `BinError`（バイナリシリアライズ/デシリアライズ失敗）と `ConfigError`（設定バリデーション失敗）の error 型定義
-- `window_data.rs`: ウィンドウ位置（`window.bin`）の保存/復元
+- `folder.rs` — フォルダ内エントリの列挙とフィルタ/ソート（責務は `//!`）
+- `indexer.rs` — スキャン対象の列挙・重複排除とインデックスキャッシュ（責務は `//!`）
+- `query.rs` — クエリ/履歴キーの正規化と文字ビットマスク（責務は `//!`）
+- `binfmt.rs` — `magic` + `version` 付きバイナリ入出力の共通処理（責務は `//!`）
+- `error.rs` — crate 共通の error 型（責務は `//!`）
+- `window_data.rs` — ウィンドウ位置（`window.bin`）の保存/復元（責務は `//!`）
 - `instant.rs` — インスタントコマンド（プレフィックス起動の URL/コマンド）の展開。公開関数の署名・契約と変数展開の中核（修飾子パイプ・encoding-as-sink・`{{X}}` エスケープ・date/uuid 純粋性・`format_date` の panic 安全 #394）は `//!` と各 `///` を正とする
 - `ui_types.rs`
 - `tests/search_frame_cost.rs`（crate ルート統合テスト）: #634 G-SYNC の `Engine::search` facade フレームコスト実測ハーネス（`#[ignore]`・手元 release 実行専用。`search/tests/performance.rs` との層の区別は `//!`）

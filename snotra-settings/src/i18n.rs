@@ -2,7 +2,8 @@
 //!
 //! `TrKey` enum（キー）＋ 言語別テーブル関数 `ja()` / `en()`（各キーの網羅 match）＋
 //! `Tr::t` / `Tr::t_params`（`{param}` 置換）でテーブル駆動する。新キーは `TrKey` に variant を
-//! 足すだけで、`ja()` / `en()` が非網羅コンパイルエラーになり網羅を強制する。
+//! 足すだけで、`ja()` / `en()` が非網羅コンパイルエラーになり網羅を強制する。両関数の
+//! `#[deny(clippy::wildcard_enum_match_arm)]` が、ワイルドアームによる網羅の回避も禁じる。
 
 use snotra_core::config::Language;
 

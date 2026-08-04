@@ -334,6 +334,12 @@ impl EguiView for SearchWindowView {
             // （`show_egui_main`）は証人型（`EventLoopProof`）の導入で同じイベントループ
             // スレッドに閉じたが、**フレームの中ではない**——そちらへ移すと「同一フレーム」
             // というこの前提が消える。
+            //
+            // **この位置を要求する理由は #749 だけではない**（#745）: 同じ
+            // `consume_reset_pending` が `BlurGrace::reset()` を呼んでおり、それが段 16–17
+            // （`on_focus_changed`）より**前**であることが blur 猶予の backstop を成立させて
+            // いる。#749 の制約が将来失効しても、**#745 の制約は残る**——片方だけを根拠に
+            // この呼び出しを動かすと、沈黙で #745 が再発する。
             if let Some(results) = app.try_state::<crate::egui_shell::ResultsWindow>() {
                 results.reset_size_guard();
             }
@@ -418,12 +424,15 @@ impl EguiView for SearchWindowView {
 
         let pre = read_pre_widget_input(&ctx);
 
-        self.controller.clear_blur_grace_if_focused(pre.focused);
         let restored_search = if pre.escape {
             self.controller.on_escape_pressed(&ctx)
         } else {
             false
         };
+        // 段 16–17: blur 猶予。**旧・段 14（focus 復帰で猶予を捨てる）と旧・段 34（フレーム
+        // 末尾で focus を畳む）はここへ合流した**（#745）——前フレームとの比較は `BlurGrace`
+        // が状態として持つ。段番号は振り直さない（`read_pre_widget_input` の doc が既に
+        // 「旧・段 14〜20 相当の位置」と歴史的番号で書いている）。
         self.controller.on_focus_changed(pre.focused, &ctx);
 
         // ↑↓・→← の処置（`move_selection` / folder 展開）。消費込みの読みは
@@ -633,7 +642,10 @@ impl EguiView for SearchWindowView {
             self.controller.on_input_changed(buf, in_folder, &ctx);
         }
         // 窓に focus があるのに入力欄が focus を持たないなら移す（Alt+Q 表示直後に打てる）。
-        // was_focused に依存しないので、hide→reshow で was_focused が stale でも確実に戻る。
+        // **blur 猶予の状態を読まない**——読む形（例: `blur_grace == Focused` を条件に足す）に
+        // すると、reset-on-show 直後は `NeverFocused` なのに窓は focus を持ちうるため、
+        // **show 直後に打鍵できなくなる**（SU2 が入れた当の挙動が消える）。この独立性は
+        // 2 フィールド時代から一貫した制約で、#745 の状態機械化でも維持する。
         // 条件は `interactive` と同じ `input_editable` を読む（非対称の解消は同変数の doc 参照）。
         if pre.focused && input_editable && !response.has_focus() {
             response.request_focus();
@@ -993,8 +1005,6 @@ impl EguiView for SearchWindowView {
                 background: visual.background,
             },
         );
-
-        self.controller.set_focused(pre.focused);
     }
 }
 

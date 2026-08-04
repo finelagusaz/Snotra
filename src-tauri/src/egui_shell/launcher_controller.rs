@@ -101,8 +101,9 @@ pub(super) enum ToastAction {
 
 pub(super) struct LauncherController {
     app_handle: tauri::AppHandle,
-    was_focused: bool,
-    unfocus_at: Option<Instant>,
+    /// blur 猶予の状態機械（#745）。**hide を跨いだ持ち越しは `consume_reset_pending` の
+    /// `reset()` が塞ぐ**——旧 2 フィールド（`was_focused` / `unfocus_at`）はこの型へ畳んだ。
+    blur_grace: crate::egui_shell::BlurGrace,
     state: SearchState,
     search_debounce: Debouncer,
     last_input_at: Instant,
@@ -136,8 +137,7 @@ impl LauncherController {
         let (folder_tx, folder_rx) = channel();
         Self {
             app_handle,
-            was_focused: false,
-            unfocus_at: None,
+            blur_grace: crate::egui_shell::BlurGrace::default(),
             state: SearchState::new(),
             search_debounce: Debouncer::new(Duration::from_millis(50), true),
             last_input_at: Instant::now(),
@@ -938,6 +938,10 @@ impl LauncherController {
             // hide で撃つ事故の backstop・並行性レビュー High）。updater toast は触らない。
             self.launching = None;
             self.notice.clear();
+            // #745: blur 猶予も hide を跨がない。**これを消すと、猶予 armed のまま別経路で
+            // hide された後の再 show で、初フレームが `focused == false` なら自動 hide される**
+            //（消失に検知手段が無いことは `BlurGrace::reset` の doc が正本）。
+            self.blur_grace.reset();
             true
         } else {
             false
@@ -1030,16 +1034,6 @@ impl LauncherController {
         }
     }
 
-    /// 段 14: focus が戻っていれば blur 猶予を捨てる。**段 16–17（`on_focus_changed`）とは
-    /// 間に Escape ラダー（段 15）を挟んで別の塊であり、束ねると順序が動く。**
-    pub(super) fn clear_blur_grace_if_focused(&mut self, focused: bool) {
-        // 再表示直後の stale 猶予をリセット: focused に戻ったら pending 破棄（codex #8）。
-        // emit dedup（hide_pending）は show_egui_main がクリアするので view では触らない。
-        if focused {
-            self.unfocus_at = None;
-        }
-    }
-
     /// 段 15: Escape の処置（呼ぶのは `key_pressed(Escape)` が真のフレームだけ）。
     /// folder から展開前 query を復元した場合だけ `true` を返す。view はこの信号で、同じ
     /// TextEdit id に残るキャレットを復元 query の末尾へ同期する（#840）。
@@ -1069,39 +1063,25 @@ impl LauncherController {
         }
     }
 
-    /// 段 16–17: blur の検知（前フレームとの比較）と猶予中の処置。前フレームの focus は
-    /// `was_focused` フィールドが持ち、更新は段 34（`set_focused`）が行う——この 2 段の間に
-    /// 書き手は無い。
+    /// 段 16–17: 今フレームの focus を `BlurGrace` へ畳み、返った処置を実行する。
+    ///
+    /// **旧・段 14（focus 復帰で猶予を捨てる）と旧・段 34（前フレームの focus を畳む）は
+    /// この 1 段へ合流した**（#745）。前フレームとの比較は `BlurGrace` が状態として持つ。
+    ///
+    /// **`now` はここで 1 回だけ読む**——多重読みが underflow を招く機序は `BlurGrace` の doc。
     pub(super) fn on_focus_changed(&mut self, focused: bool, ctx: &egui::Context) {
-        let was_focused = self.was_focused;
-        // focus 喪失 → 猶予を張り、猶予明けに repaint させる。
-        if was_focused && !focused {
-            self.unfocus_at = Some(Instant::now());
-            ctx.request_repaint_after(crate::egui_shell::BLUR_GRACE);
-        }
-        // 猶予中の処置は純粋核 blur_grace_action に委ねる（判定は blur_should_hide が正本）。
-        // **`elapsed` はここで 1 回だけ読む**——純粋核の中で読み直すと、判定と残余の減算の間に
-        // 時計が進んで underflow しうる（release は panic="abort"・設計 spec §5 errata）。
-        if let Some(at) = self.unfocus_at {
-            match crate::egui_shell::blur_grace_action(
-                at.elapsed(),
-                focused,
-                self.auto_hide_enabled(),
-            ) {
-                crate::egui_shell::BlurAction::Hide => {
-                    self.unfocus_at = None;
-                    self.emit_hide();
-                }
-                // 契約③: 予約はフレームの到来を約束しない（worker は最も早い deadline だけを
-                // 単一スロットで持ち、dispatch で take() するため、より早い要求が 1 つ割り込むと
-                // 猶予の deadline は黙って消える）。armed の間は毎フレーム残余を要求し直す
-                // ——検索 debounce・通知期限・起動タイムアウトと同じ流儀（#711）。
-                crate::egui_shell::BlurAction::Rearm(remaining) => {
-                    ctx.request_repaint_after(remaining)
-                }
-                // 時間経過では解消しない不成立。再要求すると永久スピンになる（純粋核の doc）。
-                crate::egui_shell::BlurAction::Idle => {}
-            }
+        // **`let` へ束縛してから渡す**——`self.blur_grace.observe(.., self.auto_hide_enabled())`
+        // は two-phase borrow に依存する形になり、意図が読み取りにくい。
+        let auto_hide = self.auto_hide_enabled();
+        match self.blur_grace.observe(focused, Instant::now(), auto_hide) {
+            crate::egui_shell::BlurAction::Hide => self.emit_hide(),
+            // 契約③: 予約はフレームの到来を約束しない（worker は最も早い deadline だけを
+            // 単一スロットで持ち、dispatch で take() するため、より早い要求が 1 つ割り込むと
+            // 猶予の deadline は黙って消える）。armed の間は毎フレーム残余を要求し直す
+            // ——検索 debounce・通知期限・起動タイムアウトと同じ流儀（#711）。
+            crate::egui_shell::BlurAction::Rearm(remaining) => ctx.request_repaint_after(remaining),
+            // 時間経過では解消しない不成立。再要求すると永久スピンになる（純粋核の doc）。
+            crate::egui_shell::BlurAction::Idle => {}
         }
     }
 
@@ -1297,11 +1277,5 @@ impl LauncherController {
                 self.activate_or_execute(self.state.selected(), ctx);
             }
         }
-    }
-
-    /// 段 34: 今フレームの focus を次フレームの `was_focused` として畳む（`on_focus_changed`
-    /// の唯一の書き手）。
-    pub(super) fn set_focused(&mut self, focused: bool) {
-        self.was_focused = focused;
     }
 }

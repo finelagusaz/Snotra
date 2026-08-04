@@ -1,6 +1,6 @@
 # src-tauri
 
-Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）と Win32 API 統合を担当（WebView2/フロントエンドは #532 SU7 で撤去）。
+Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）と Win32 API 統合を担当（WebView2/フロントエンドは #532 SU7 で撤去）。**`[lib]` を持たないため `cargo test -p snotra --lib` は常に失敗する**（`error: no library targets found`。2026-08-03 に 2 セッション連続で踏んだ）——テストは `--lib` なしの `cargo test -p snotra`、絞り込みはテスト名フィルタか `--bin snotra` で行う。
 
 各ルールは「**太字 = 守る指示**、後続 = 理由・経緯」の形式。迷ったら太字部分に従えば安全。
 

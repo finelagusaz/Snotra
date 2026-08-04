@@ -130,6 +130,7 @@ npm test    # 必須: 使い捨て repo で hook を実測する（.githooks/git
 npm run governance:check    # 必須: ガバナンス文書の決定的検査（参照実在・モジュール索引・スキル表・SPEC 番号・rules glob・コマンド写像・恒久規範の面積の火災報知器・見出し参照の着地。#587/#593）
 ```
 
+- **`.rs` のコメントに正準形の見出し参照を書く／その参照先の見出しを改題する変更もこのカテゴリである**（#925。G-heading-refs / G-near-heading-refs の走査元に `.rs` が入っている）。`.rs` では PostToolUse フックが走るが、その沈黙は fmt / clippy / test の合格であって見出し参照の着地を含まない
 - PostToolUse フックは `.md` に検査を割り当てない（#497 の受容を維持）ため、**編集時の沈黙は「何も走らなかった」である**。ローカルで本コマンドを実行するか、PR CI の `governance-check` job（skip-ci 非対象・常時実行）に委ねる
 - 検査の実体は `scripts/governance-check.mjs`（**検査の一覧は同ファイルのコメント見出しが SSOT**——ここに範囲で写すと黙って腐る。実際「G-module-index〜G-config-reachability」と書いたまま G-check-skill-enumeration まで増えていた・#812）。面積 ratchet の文字数指標は `docs/adr/ADR-area-metric-characters.md`、見出し参照の着地は `docs/adr/ADR-canonical-heading-references.md`、config フィールドの到達性は `docs/development-principles.md`「config の値は到達性の検出器を持たない」。意味判断（責務の妥当性・npm ラッパー等価・メモリ整合）は `/health-check` に残る
 

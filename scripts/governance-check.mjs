@@ -1120,13 +1120,17 @@ export function governanceDocs(snapshot) {
 }
 
 /**
- * G-heading-refs / G-near-heading-refs の**走査元**。見出し参照はガバナンス文書の外
+ * G-heading-refs / G-near-heading-refs の走査元のうち **md の腕**。見出し参照はガバナンス文書の外
  * （`PERFORMANCE.md`・`.claude/agents/`）にも書かれ、実際にそこで腐っていた
- * （`src-tauri/CLAUDE.md`「TrySuspend / Resume パターン」）ため母集団を広く取る。
+ * （`PERFORMANCE.md` が src-tauri の WebView2 期の節を指したまま残っていた。**消えた節の名前は
+ * 正準形で書かない**ので散文にしてある——書けばこの検査が自分のコメントを赤にする）ため母集団を広く取る。
  * 除外は履歴資料（`docs/superpowers/`）・作業バッファ（`workspace/`・`/implement` が削除する）・
  * 凍結された歴史（`docs/adr/`・`ADR-adr-frozen-history`。実測で照合 203 件中 86 件が
  * ADR 内＝歴史の研磨だった）。**除外が絞るのは走査元だけである**——参照先のアンカー解決は
  * `snapshot.files` 全体に対して行われるため、生きた層から ADR の見出しを指す参照は除外後も照合される。
+ * **ソースの腕（`.rs`）は `headingRefSourceDocs` が別に持つ。** 束ねて 1 本にしないのは、
+ * `runAll` の 0 件検知が**母集団ごとに 1 本ずつ**要るからである（`staleDocs` / `staleGuides` と
+ * 同型——和にすると md 側の長さが `.rs` の消滅を埋めて永久に沈黙する）。
  */
 export function headingRefDocs(snapshot) {
   return snapshot.files.filter(
@@ -1136,6 +1140,35 @@ export function headingRefDocs(snapshot) {
       !f.startsWith("workspace/") &&
       !f.startsWith("docs/adr/"),
   );
+}
+
+/**
+ * 同じ走査元の **ソースの腕**（`.rs`）。#921 で `SPEC.md` の節の中身を移したとき、`.rs` 側の参照は
+ * 手で直す必要があり検査は緑のままだった。`.rs` のコメントには正準形の参照が 27 件あり（#925 実測）、
+ * そのすべてが参照先の改題・移動・削除に対して沈黙していた。
+ *
+ * **Rust のテストコードを外さない。** `adrCitationDocs` が `*.test.mjs` を外すのは「フィクスチャが
+ * 赤経路を測るため意図的に実在しない名前を持つ」からであって、テストだからではない。Rust の
+ * テストコメントに書かれた規範への参照は本物であり、腐れば同じ害になる——#925 が見つけた腐り 1 件は
+ * 現に `#[cfg(test)]` の内側にあった（`snotra-settings/src/tabs/visual.rs`）。`productionOnly` 相当を
+ * 「G-stale-identifiers との対称性の完成」として後から入れてはならない（その非対称は意図である）。
+ *
+ * **`.mjs` / `.ps1` は入れない**（#925 の裁定）。実測した finding 9 件の内訳は、6 件が
+ * `governance-check.test.mjs` のフィクスチャ（赤経路を測るため意図的に実在しない名前を持つ）、
+ * 残り 3 件が**本ファイル自身のコメント**（正準形の例示 1・`…` で切り詰めた表記 1・本物の腐り 1）。
+ * 入れれば検出器の説明が検出器を赤にする（`docs/adr/` を全検査の走査元から外したのと同クラスの理由）。
+ * **腐り 1 件は #925 で直した**——母集団に入れなくても、直せるものは直す。
+ *
+ * **md の腕が持つ除外接頭辞を共有しない。** `docs/adr/` の除外は「ADR **本文**は決定日時点の世界の
+ * 記述として凍結する」という散文についての契約であり（`ADR-adr-frozen-history`）、`docs/superpowers/`
+ * も #589 で非規範化された文書である。どちらもコードについては何も決めていない——決まっていない契約を
+ * 述語で主張しない（該当する `.rs` は 0 件ゆえ挙動の差も無い）。
+ *
+ * **受容する残余**: rustdoc のコードフェンス（`///` に続く ``` 行）は `linesOutsideFences` の
+ * `/^\s*```/` に当たらないため、rustdoc の例の中に書かれた参照も照合される（今日の影響は 0 件）。
+ */
+export function headingRefSourceDocs(snapshot) {
+  return snapshot.files.filter((f) => f.endsWith(".rs"));
 }
 
 /** Rust のコメントを落とす。落とさないと `preset` のような普通の英単語が doc コメントに埋もれる（実測）。
@@ -1521,11 +1554,16 @@ export function checkAdrCitations(snapshot, docs) {
 export function buildChecks(snapshot, sink = {}) {
   const docs = governanceDocs(snapshot);
   const refDocs = headingRefDocs(snapshot);
+  const refSourceDocs = headingRefSourceDocs(snapshot);
+  // 2 つの腕は検査へ渡すときだけ束ねる。母集団としては別々に持つ——`runAll` の 0 件検知が
+  // 腕ごとに 1 本ずつ要るためである（束ねた長さは片方の消滅を隠す）
+  const allRefDocs = [...refDocs, ...refSourceDocs];
   const staleDocs = staleIdentifierDocs(snapshot);
   const staleGuides = staleIdentifierGuideDocs(snapshot);
   const staleTargets = staleIdentifierTargets(snapshot);
   sink.docs = docs;
   sink.refDocs = refDocs;
+  sink.refSourceDocs = refSourceDocs;
   sink.staleDocs = staleDocs;
   sink.staleGuides = staleGuides;
   sink.staleTargets = staleTargets;
@@ -1549,9 +1587,9 @@ export function buildChecks(snapshot, sink = {}) {
     { id: "G-check-skill-enumeration", run: () => checkCheckSkillEnumeration(snapshot) },
     { id: "G-adr-file-names", run: () => checkAdrFileNames(snapshot) },
     { id: "G-adr-citations", run: () => record("adrCitations", scanAdrCitations(snapshot, adrCitationDocs(snapshot, docs))) },
-    { id: "G-heading-refs", run: () => record("headingRefs", scanHeadingRefs(snapshot, refDocs)) },
+    { id: "G-heading-refs", run: () => record("headingRefs", scanHeadingRefs(snapshot, allRefDocs)) },
     { id: "G-stale-identifiers", run: () => record("stale", scanStaleIdentifiers(snapshot, staleTargets)) },
-    { id: "G-near-heading-refs", run: () => record("nearRefs", scanNearHeadingRefs(snapshot, refDocs)) },
+    { id: "G-near-heading-refs", run: () => record("nearRefs", scanNearHeadingRefs(snapshot, allRefDocs)) },
   ];
 }
 
@@ -1561,6 +1599,9 @@ export function runAll(snapshot) {
   const findings = [];
   if (ctx.docs.length === 0) findings.push(finding(".", 1, "ガバナンス文書が 0 件（母集団の欠落）"));
   if (ctx.refDocs.length === 0) findings.push(finding(".", 1, "G-heading-refs の対象 md が 0 件（母集団の欠落）"));
+  // 腕ごとに 1 本ずつ要る（`staleDocs` / `staleGuides` と同型）——束ねると md 側の長さが
+  // `.rs` の消滅を埋め、Rust コメントの見出し参照が誰にも見られないまま緑になる
+  if (ctx.refSourceDocs.length === 0) findings.push(finding(".", 1, "G-heading-refs の対象ソース（.rs）が 0 件（母集団の欠落）"));
   // `staleTargets` ではなく `staleDocs` を見る——`STALE_EXTRA_DOCS` が常に長さを埋めるため、
   // targets 側で判定すると `.claude/**` が 1 枚残らず消えてもこの検知が沈黙する。
   // **グロブ由来の母集団ごとに 1 本ずつ要る**——束ねると片方が埋めた長さで他方の消滅が隠れる。
@@ -1571,7 +1612,7 @@ export function runAll(snapshot) {
   const area = normativeArea(snapshot);
   const rules = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length;
   const skills = snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length;
-  const evidence = `検査 ${checks.length} 件 / 対象文書 ${ctx.docs.length} 件 / rules ${rules} 件 / skills ${skills} 件 / 恒久規範 常時ロード ${area.always}/${AREA_BUDGET.alwaysLoaded} 字・rules ${area.rules}/${AREA_BUDGET.rules} 字 / 見出し参照 ${ctx.headingRefs} 件を ${ctx.refDocs.length} 文書から照合 / workspace member ${workspaceMembers(snapshot).members.length} 件の lints opt-in / 散文の識別子 ${ctx.stale} 件を ${ctx.staleTargets.length} 文書から照合 / 近傍の見出し参照 ${ctx.nearRefs} 件 / ADR ${adrFiles(snapshot).length} 本の名前 / ADR の短縮引用 ${ctx.adrCitations} 件`;
+  const evidence = `検査 ${checks.length} 件 / 対象文書 ${ctx.docs.length} 件 / rules ${rules} 件 / skills ${skills} 件 / 恒久規範 常時ロード ${area.always}/${AREA_BUDGET.alwaysLoaded} 字・rules ${area.rules}/${AREA_BUDGET.rules} 字 / 見出し参照 ${ctx.headingRefs} 件を md ${ctx.refDocs.length} 件 + .rs ${ctx.refSourceDocs.length} 件から照合 / workspace member ${workspaceMembers(snapshot).members.length} 件の lints opt-in / 散文の識別子 ${ctx.stale} 件を ${ctx.staleTargets.length} 文書から照合 / 近傍の見出し参照 ${ctx.nearRefs} 件 / ADR ${adrFiles(snapshot).length} 本の名前 / ADR の短縮引用 ${ctx.adrCitations} 件`;
   return { findings, evidence };
 }
 

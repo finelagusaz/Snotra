@@ -87,7 +87,7 @@ Describe 'Test-SnotraTraceInvariants — 故意の違反（フォールトイン
         @($r.Violations | Where-Object { $_.Invariant -eq 'H1' }).Count | Should -Be 1
     }
 
-    It 'H4: rows = 0 の egui_results:show は FAIL（高さ 0 ⇔ hide の契約違反）' {
+    It 'H4: rows = 0 の egui_results:show は FAIL（件数 0 ⇒ hide の契約違反）' {
         $events = @(
             New-TraceEvent 1 'egui_show:done'
             New-TraceEvent 2 'egui_results:show' @{ rows = 0 }

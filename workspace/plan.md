@@ -126,19 +126,21 @@ pub fn present_results(i: ResultsInputs) -> ResultsPresentation {
 
 ### Phase 1: SPEC.md（仕様が先）
 
-- [ ] §4.5 を固定高へ書き換える（0 件は非表示・**クランプしない**・はみ出しを受容する理由）
-- [ ] §4.7 の 184 行の参照を更新する
-- [ ] §8.6 の連言表 555 行を更新する
-- [ ] `npm run governance:check`
+- [x] §4.5 を固定高へ書き換える（0 件は非表示・**クランプしない**・はみ出しを受容する理由）
+- [x] §4.7 の 184 行の参照を更新する
+- [x] §8.6 の連言表 555 行を更新する
+- [x] **`docs/adr/ADR-results-fixed-height.md` を Phase 4 から前倒しで作成**（計画外の順序変更）— SPEC §4.5 が ADR を参照するため、ADR 不在のまま `governance:check` が「バッククォート参照のパスが実在しない」で落ちた。仕様と ADR は同時に書くほかない
+- [x] `npm run governance:check` — 全検査 passed（検査 18 件 / ADR 29 本）
 
 ### Phase 2: 高さ算出と連言（Red → Green）
 
-- [ ] テストを先に書き換える（`results_window_height` / `present_results` の新期待値）— **落ちることを確認する**
-- [ ] `results_window_height` を D1 の形にし、doc に D4 の契約を書く
-- [ ] `present_results` に `result_count > 0` を足し、doc（215・218 行）を書き換える
-- [ ] 606 行・650-680 行の既存テストを新しい式へ合わせる
-- [ ] 真理値表テストの doc（591-602 行）の到達可能性の論証を書き換え、空いた 4 行のケースを足す（D2-b・614 行のコメントも）
-- [ ] `cargo test -p snotra`（**`--lib` を付けない** — `src-tauri` は `[lib]` を持たない）
+- [x] テストを先に書き換える（`results_window_height` / `present_results` の新期待値）— **落ちることを確認した**（`E0061`: 3 引数の関数に 2 引数）
+- [x] `results_window_height` を D1 の形にし、doc に D4 の契約を書く
+- [x] `present_results` に `result_count > 0` を足し、doc を書き換える
+- [x] **等価グリッド（旧 `results_should_show` との突き合わせ）は書き換えでなく削除した**（計画は「新しい式へ合わせる」だった）— 固定していた命題は「#752 の移設が挙動を変えなかったこと」であり、#835 は意図してその挙動を変える。対照を新仕様へ書き直すと実装と同じ式を 2 度書くトートロジーになる（#697）。網羅性は真理値表（16 行）、高さの不変は新設テストが引き取り、削除の理由をその場のコメントに残した
+- [x] 真理値表テストの doc の到達可能性の論証を書き換え、空いた 4 行のケースを足す（D2-b）
+- [x] **`present_results_height_does_not_move_with_result_count` を新設**（計画外）— 受け入れ条件 1「件数によらず一定」を測るテストが無かった。真理値表の可視行は 1 つだけで「ある件数で正しい」しか言えない
+- [x] `cargo test -p snotra` — **196 passed / 0 failed / 2 ignored**
 
 ### Phase 3: クランプ機構の撤去
 
@@ -146,33 +148,37 @@ pub fn present_results(i: ResultsInputs) -> ResultsPresentation {
 
 **撤去範囲が計画より増えたら、黙って広げずユーザーへ報告する。** `dead_code` の 3 段目以降はコンパイラでしか分からない（計画の連鎖は grep による静的な 2 段確認である）。
 
-- [ ] `window_coordinator.rs` の `drive_results_window` から `clamp_results_height` 呼び出しを外す（`applied_height` → `desired_height`・842-844 行の doc も削除）
-- [ ] `position_results_below_main` の戻り値 `Option<i32>` を落とし、`window_coordinator.rs:832` の `let top_y =` を外す（D3・**コンパイラは教えない**）
-- [ ] `results_available_height`（2 cfg）を削除する
-- [ ] `layout::clamp_results_height` / `available_below` とそのテストを削除する
-- [ ] `monitor::window_monitor_work_area` を削除し、`point_monitor_work_area` の doc（77 行）を書き換え、未使用になる `HWND` の import を外す
-- [ ] `ResultsWindow::scale_factor` を削除する
-- [ ] `mod.rs:38` のコメントから `results_available_height` を外し、`mod.rs:315` の「実件数フィット」を書き換える
-- [ ] `position_results_below_main` の doc（665-675 行）から戻り値の理由を外す
-- [ ] `layout::results_top_y` の doc（114 行）から `available_below` の引き合いを外す
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings`（**dead_code の取り残しはここで出る**）
+- [x] `window_coordinator.rs` の `drive_results_window` から `clamp_results_height` 呼び出しを外す（`applied_height` → `desired_height`・クランプ前提の doc も削除）
+- [x] `position_results_below_main` の戻り値 `Option<i32>` を落とし、`let top_y =` を外す（D3・**コンパイラは教えない**——予想どおり警告は 1 つも出なかった）
+- [x] `results_available_height`（2 cfg）を削除する
+- [x] `layout::clamp_results_height` / `available_below` とそのテストを削除する
+- [x] `monitor::window_monitor_work_area` を削除し、`point_monitor_work_area` の doc を書き換え、未使用になる import を外す（**`HWND` に加えて `MonitorFromWindow` も未使用になった**——計画は `HWND` だけを挙げていた）
+- [x] `ResultsWindow::scale_factor` を削除する
+- [x] `mod.rs:38` のコメントから `results_available_height` を外し、`mod.rs:315` の「実件数フィット」を書き換える
+- [x] `position_results_below_main` の doc から戻り値の理由を外す
+- [x] `layout::results_top_y` の doc から `available_below` の引き合いを外す
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` — **連鎖 dead_code は 2 件のみ**（`window_monitor_work_area` / `scale_factor`）で **3 段目は無かった**（計画の「未検証」が解消）。`cargo fmt --all -- --check` も沈黙
 
 ### Phase 4: ADR とドキュメント
 
-- [ ] `docs/adr/ADR-results-fixed-height.md` を書く
-- [ ] `src-tauri/CLAUDE.md` の `layout.rs` 項・`monitor.rs` 項から消えたシンボル名を外す
-- [ ] `docs/architecture.md:82` から `clamp_results_height` を外す
-- [ ] `scripts/manual-smoke.ps1` の項目 7 を「下端に収まらなくても高さが変わらない」へ書き換える（`inv` も更新）
-- [ ] `scripts/lib/SnotraTraceInvariants.psm1:16` の H4 の契約名を「件数 0 ⇒ hide」へ改める（**判定ロジックは変えない**）
-- [ ] `npm run governance:check`
+- [x] `docs/adr/ADR-results-fixed-height.md` を書く（Phase 1 で前倒し実施）
+- [x] `src-tauri/CLAUDE.md` の `layout.rs` 項・`monitor.rs` 項から消えたシンボル名を外す（**`window_coordinator.rs` の項にもあった**——「`results_available_height` だけは意図的に `MonitorFromWindow` のまま」という例外の記述。例外が消えたので断定を強めた）
+- [x] `docs/architecture.md:82` から `clamp_results_height` を外す
+- [x] `scripts/manual-smoke.ps1` の項目 7 を書き換える（`inv` も更新）。**件数の不変も測る 3 手順に広げた**——計画は下端だけを見る形だったが、同じ操作列で受け入れ条件 1 も確かめられる
+- [x] `scripts/lib/SnotraTraceInvariants.psm1` の H4 の契約名を「件数 0 ⇒ hide」へ改める（**判定ロジックは変えない**）。**16 行の表だけでなく 352 行の違反メッセージにも同じ契約名があった**（計画は表だけを挙げていた）
+- [x] `npm run governance:check` — 全検査 passed
 
 ### Phase 5: 検証
 
-- [ ] `cargo fmt --all -- --check`
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings`
-- [ ] `cargo test -p snotra`
-- [ ] `npm run smoke:egui`（表示経路の変更ゆえカテゴリ C 該当）
-- [ ] 目視（カテゴリ D）— 0 件 / 1 件 / `visible_rows` 未満 / 超過 / **バーを画面下端へ置いた状態**の 5 状態
+- [x] `cargo fmt --all -- --check` / `cargo clippy --workspace --all-targets -- -D warnings` — 沈黙
+- [x] `cargo test -p snotra` — 196 passed / 0 failed
+- [x] **`cargo doc --workspace --no-deps --document-private-items`**（計画に無かった。カテゴリ A の必須項目で、撤去した関数への intra-doc link 切れを見る）— 警告なし
+- [x] `npm run test:powershell` — 71 passed / 0 failed
+- [x] `npm run smoke:startup` — 5 runs passed
+- [x] `npm run smoke:egui` — passed（show/hide + results show/hide 観測・webview delta 0）
+- [x] カテゴリ D の中核を**自動計測に置き換えた**（計画は「目視」だった）— 打鍵注入 + DWM 矩形の実測で「1 件 / 20 件 / 0 件」を測る使い捨てスクリプトを書いた。結果: **1 件も 20 件も 379px（期待 8 行 ≒ 378px・幅 752px から scale 1.25）・0 件は窓なし**。受け入れ条件 1・2 の実機確認はこれで済む
+- [x] **落とし穴を 1 つ踏んだ**: 最初の計測は「1 件 58px / 20 件 379px」で FAIL した。原因は `target/debug/snotra.exe` が 2 時間前のバイナリだったこと——**`cargo test -p snotra` は bin 本体を更新しない**（テストターゲットだけをビルドする）。`cargo build -p snotra` の後に測り直して PASS。実バイナリを起動する検査では、走らせる前にビルドの新しさを確かめる
+- [ ] **受け入れ条件 3（下端に収まらないとき）は人間の目視に残る** — 窓をドラッグして作業領域の最下端へ置く操作が要り、自動化していない。`npm run smoke:manual -- -Only 7` で読み上げられる（項目 7 を本変更に合わせて書き換え済み）
 
 ## 不変条件と異常系
 
@@ -236,6 +242,29 @@ npm run smoke:egui
 - 自己照合（Step 1 の 7 点）: 7 点目「変更で偽になる散文を概念ラベルでも grep」で `scripts/manual-smoke.ps1` 項目 7（#675 の挙動を検証する手動スモーク）を発見 → 変更ファイル一覧と Phase 4 へ追加
 - 未検証: **コンパイラでの裏取り**（`dead_code` / `unused_imports` の連鎖が 3 段目を持たないこと）は実装時 Phase 3 の `cargo clippy -- -D warnings` で行う。静的には grep で 1 呼び出し点ずつ実測済み
 - 並行作業: worktree `chore/round2-findings`（locked）が在るが、触るファイルが本変更と重ならないことを `git worktree list` で確認した
+
+## 実装後レビュー（/implement Step 4）
+
+- `/symmetric-check` — 発見 0 件。show/hide の 2 分岐は無変更で、連言追加は Hidden 側へ倒す入力を増やしただけ。同型ペア（`main_scale` / `results_scale`）は撤去で 1 種類になり、取り違えの余地が消えた
+- `/state-check` — 発見 0 件（計画段階の指摘 D3-b は実装済み）。新しい状態・モード・リセット経路は増えていない
+- `/dry-check` — 発見 0 件。`* row_height + 8.0` の実装は `layout.rs:88` の 1 か所だけで、他の `+ 8.0` はテストの期待値（独立に書くのが正しい）と `view.rs` の別概念（テキスト余白）
+- `code-reviewer` — **Critical 0 / High 2 / Medium 5 / Low 3。High・Medium・Low とも修正済み（H2 を除く）**
+  - **H1（修正済み）**: SPEC §4.5 に書いた「はみ出した行はスクロールで手前へ送る」が**偽だった**。窓高 = `max_results × 行高 + 8`、content = `件数 × 行高` ゆえ、候補が `max_results` 以下ならスクロール可能量はゼロ。#675 の「あふれた行はスクロールで到達する」は窓が縮むことで生じるオーバーフローに依存しており、固定高化で生成源ごと消えていた。**計画の受容残余 2 では正しく書けていたのに、SPEC へ写すときに誤った**
+  - **H2（未対応・人間の判断が要る）**: 下記「残タスク」へ
+  - M1: `results_top_y` の doc に書いた「この crate で窓の scale を読むのはここだけ」が偽（`read_bar_anchor` も読む）。**新設した全称主張が実装より強かった**——`AGENTS.md`「検証の作法」の典型例
+  - M2: `layout.rs` の `//!` に削除済みの責務「作業領域の残り」が残っていた
+  - M3: `read_bar_anchor` の doc が、本変更で削除した `position_results_below_main` の一文を引用していた（**シンボル名 grep に掛からない概念参照**）
+  - M4: `docs/development-principles.md` が、本変更で削除した SPEC 条文を現在形で引用し、書き換えた手動スモークの期待値と食い違っていた
+  - M5: H4 の旧契約名が **3 か所目**（`SnotraTraceInvariants.Tests.ps1` のテスト名）に残っていた。計画は 2 か所と数えていた——列挙の完全性の破れ
+  - L1: `src-tauri/CLAUDE.md` の全称否定の射程を crate 内へ絞った（`snotra-egui-runtime` は別目的で `MonitorFromWindow` を使う）
+  - L2: SPEC §4.7「高さの変化は行の出没と 1 対 1」の主語を `main` と明示（`results` の新しい規則と字面が衝突していた）
+  - L3: 空白領域のクリックが背面へ届かないことを SPEC の受容残余として記録
+- 修正後の再検証: `fmt` / `clippy` / `cargo test -p snotra`（196 passed）/ `cargo doc` / `governance:check` / `test:powershell`（71 passed）— すべて Green
+
+## 残タスク（振り分け）
+
+- [ ] **H2 — `visible_rows` を作業領域より大きくすると、下端の行がどこへ動かしても見えずスクロールでも到達できない。** 撤去したクランプは「窓が画面を超えない」という絶対上限も担っていた。既定 8 行では起きず、設定画面の上限 50 まで上げられる（1080p @125% なら 22 行あたりが交差点）。**人間裁定の文言は「数行消えても」「位置を動かせばよい」であり、位置で直らない領域は射程外**。SPEC §4.5 に受容残余として明記したうえで、扱いをユーザーへ問う（受容のまま／設定 UI の上限を実用域へ下げる／警告を出す）。**issue 起票の可否はユーザーの判断**
+- [ ] **受け入れ条件 3（下端に収まらないときの挙動）の目視** — 窓のドラッグが要り自動化していない。`npm run smoke:manual -- -Only 7` で読み上げる。**PR 本文のチェックリストへ送る**
 
 ## 人間レビュー
 

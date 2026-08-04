@@ -46,9 +46,12 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
 - `AppState` は `Mutex<Engine>` で検索エンジン・履歴・設定を一括管理。Phase 2.3 以前の 3重ロック（`Mutex<SearchEngine>` / `Mutex<HistoryStore>` / `Mutex<Config>`）は Engine facade に統合済み
 - **インデックスビルドのフラグは `AppState` のメソッド経由で更新する**: `try_begin_index_build()`（`index_build_started` を CAS 取得 → `indexing` を立てる）と `finish_index_build()`（両方を戻す）が唯一の正しい経路。`indexing` / `index_build_started` を直接 `store()` しない——外部からの force-reset は走行中ビルドのガードを踏み倒す競合の原因になる。2フラグは別物（`index_build_started` は CAS 専用ガード、`indexing` は first-run 時にビルドスレッド不在でも true になる UI 表示用）
 - Managed state として `IconCacheState`（`Mutex<Option<IconCache>>`、初回アイコン要求で遅延初期化）と `SettingsProcessState`（`Mutex<Option<Child>>`、設定プロセスのハンドル管理）を保持
-- **show の操作順序制約（`egui_shell::show_egui_main`）**: 高さを決める（最初のフレームが
-  描く高さ）→ `position_on_target_monitor` → `show()` の順。位置計算はウィンドウサイズを
-  OS から読み戻してクランプするため、サイズは位置より前に確定していなければならない
+- **show の操作順序制約（`egui_shell::show_egui_main`）**: `set_size`（バー高）→
+  `position_on_target_monitor` → `set_size`（実高。最初のフレームが描く高さ）→ `show()` の順。
+  位置計算はウィンドウサイズを OS から読み戻してクランプするため、位置決定に使う 1 回目の
+  `set_size` はバー高固定のまま不変——**バーの位置はユーザーが決めるものであり、status 行・
+  toast 行の出没で動かしてはならない**。実高への 2 回目の `set_size` は位置決定の後に置くこと
+  で、show 後に窓が伸びる／縮んでから伸びる（#755 / #801）を消す
 
 ## 共有 core 関数の返り値契約
 

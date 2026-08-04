@@ -43,9 +43,9 @@
 
 ### Phase 2 — 純粋核テストの追加
 
-`search_state.rs` の `mod tests`、**`arriving_empty_rows_leaves_no_selectable_row`（`:873-882`）の直後**へ、独立した小ブロックとして追加する。
+`search_state.rs` の `mod tests`、**`arriving_empty_rows_leaves_no_selectable_row` の閉じ括弧の直後**（= #743 ブロックの外・`escape_folder_restores_then_hides` の手前）へ、独立した小ブロックとして追加する。位置は行番号でなく**シンボル名で grep して決める**（`.claude/rules/src-tauri.md`「位置はファイル名・行で断定せず見出し名・シンボル名で grep」・#588）。
 
-**#743 のブロック（`:785-882`）の内側へ入れてはならない** — 冒頭コメントが「この **5 本** が固定するのは…」と本数を名指ししており、内側へ足すとその記述が stale になる（本数を直すのは #743 の射程への介入になる）。
+**#743 のブロック（冒頭コメント「階層移動と選択（#743・SPEC §6.1 の as-built）」から `arriving_empty_rows_leaves_no_selectable_row` まで）の内側へ入れてはならない** — 冒頭コメントが「この **5 本** が固定するのは…」と本数を名指ししており、内側へ足すとその記述が stale になる（本数を直すのは #743 の射程への介入になる）。
 
 テストの骨格（AC 3・`:831-832` の教訓に従う）:
 
@@ -69,7 +69,9 @@ fn folder_filter_typing_resets_selection_to_first_row() {
 
 ## 不変条件と異常系
 
-- **挙動不変**: `src-tauri/src/**` の非テストコードに 1 行も差分を入れない（`git diff --stat` で確認する）
+- **挙動不変**: `src-tauri/src/**` の非テストコードに 1 行も差分を入れない。**`git diff --stat` はこれを測れない**（ファイルが変わったことしか示さず、hunk が `#[cfg(test)] mod tests` の内側かを判定しない）ので、証拠は 2 段に分ける
+  1. `git diff --name-only main...HEAD` が `SPEC.md` と `search_state.rs`（+ `workspace/`）だけであること
+  2. `git diff main...HEAD -- src-tauri/src/egui_shell/search_state.rs` の全 hunk が `mod tests` の内側にあること（hunk ヘッダの関数コンテキストで確認する）
 - **`res()` / `ViewKind` は同 `mod tests` のスコープに既存**（`:762` 等で使用中）— 新しい import は要らない
 - 異常系は無い（文書とテストのみ）。テストが赤くなる場合、それは「実装が想定と違う」ことを意味するので、テストを緩めず調査へ戻る
 
@@ -105,12 +107,13 @@ fn folder_filter_typing_resets_selection_to_first_row() {
 - [ ] `search_state.rs:882` の直後へ `folder_filter_typing_resets_selection_to_first_row` を追加する
 - [ ] `cargo test -p snotra folder_filter_typing` で green を確認する
 - [ ] `set_folder_filter` の `self.selected = 0;` を一時的に消して **red になること**を確認し、戻す（無効テストで緑になる罠の排除・`:793-794`）
-- [ ] `git diff --stat` で非テストコードの差分が 0 であることを確認する（挙動不変・AC 3）
+- [ ] 非テストコードの差分が 0 であることを 2 段で確認する（挙動不変・AC 3。上の「不変条件」の 1. と 2.）
 
 ### Phase 3 — 仕上げ
 
 - [ ] カテゴリ A（fmt / clippy / test）が緑であることを確認する
-- [ ] コミット（`fix(spec): ...`）→ push → PR 作成（`Closes #838`）
+- [ ] コミット → push → PR 作成（`Closes #838`）
+  - **commit type を決め打ちしない**。issue ラベルは `type:fix` だが挙動差分はゼロの as-built 明文化であり、同種の作業 `066cb3f docs: SPEC を as-built へ畳み、…(#885)` は `docs:` を使っている。コミット時点で #885 と読み比べて決める
 
 ## 未確定（実装前に潰す）
 

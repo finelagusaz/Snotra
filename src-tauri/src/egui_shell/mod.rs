@@ -57,7 +57,7 @@ pub(crate) use results_window::ResultsWindow;
 // view.rs / results_view.rs が毎フレームの描画で消費する（#673 spec 決定 4）。
 pub(crate) use visual::{RowTheme, VisualSnapshot};
 
-// view.rs の icon texture driver（worker spawn / load_texture 適用）が消費する（#532 SU4 Task 5）。
+// results_view.rs の icon texture driver（worker spawn / load_texture 適用）が消費する（#532 SU4 Task 5・#646 PR2 で移管）。
 pub(crate) use icon_textures::{IconMsg, needs_extraction, png_to_color_image, retain_visible};
 // `blur_should_hide` / `blur_grace_action` / `BLUR_GRACE` は re-export しない——**判定の消費点は
 // `BlurGrace::observe` に一本化した**（#711 で判定と再要求の 2 経路を型で塞いだものを、

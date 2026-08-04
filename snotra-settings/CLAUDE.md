@@ -14,24 +14,14 @@ egui ベースの設定・about バイナリ crate。本体（`src-tauri`）と�
 
 責務を持つ個別モジュールの責務宣言は各ファイルの `//!`（module doc）を正本とする（宣言のみの `tabs/mod.rs` は責務を持たず例外）。本節はファイル一覧と、`//!` に収まらない**横断不変条件・チェックリスト**を記す（#562）。
 
-- `main.rs`: エントリポイント、eframe 起動
+- `main.rs` — エントリポイント・eframe 起動（責務は `//!`）
 - `app.rs` — `eframe::App` 実装・タブ管理（About 含む）・保存/破棄/リセット（責務は `//!`）
 - `font.rs` — 日本語フォント読み込みとシステムフォント列挙（責務は `//!`）
-- `hotkey_input.rs`: ホットキーキャプチャウィジェット
-- `i18n.rs` — 設定 GUI の翻訳 `Tr(Language)` のテーブル駆動実装（責務は `//!`）。以下は網羅強制とタブ反映:
-  - **新キー追加時は `TrKey` に variant を足すだけ** — `ja()`/`en()` が非網羅コンパイルエラーになり網羅を強制する（`#[deny(clippy::wildcard_enum_match_arm)]` でワイルドアームによる回避も禁止）
+- `hotkey_input.rs` — ホットキーをキャプチャする egui ウィジェット（責務は `//!`）
+- `i18n.rs` — 設定 GUI の翻訳 `Tr(Language)` のテーブル駆動実装（責務は `//!`）。以下はタブとの結線:
   - タブ UI 関数は `tr: &Tr` を引数に取り、保存時に `self.tr = Tr(new_language)` で即時反映
-- `style.rs`: デザイントークン（色 / 余白 / フォントサイズ / 幅）と共有スタイルヘルパー（`tab_scroll_area` / `section_heading` / `hint` / `settings_grid` / `list_item` / `reorder_controls` / `modal_header` / `modal_buttons` / `danger_button` / `apply_type_ramp`）。全タブと app.rs がこれ経由で描画する。詳細は `SETTINGS-DESIGN.md`
-- `tabs/`: 7タブの UI 実装
-  - `mod.rs`: サブモジュール宣言のみ
-  - `common.rs`: index / opener / instant 3タブ共通のモーダル状態（`ModalState<F, I>` / `ModalMode` / `save_entry` / `delete_entry`）と非同期ファイルピッカー（`PickerState::poll` / `launch`）。純ロジックのみ（egui 描画は各タブに残す）。ユニットテストあり
-  - `general.rs`: 全般設定（起動時表示、トレイ、IME、ホットキー）
-  - `search.rs`: 検索設定（検索モード、履歴、隠しファイル）
-  - `index.rs`: インデックス設定（スキャンパス管理）
-  - `visual.rs`: ビジュアル設定（テーマプリセット、カラーピッカー、フォント）
-  - `opener.rs`: オープナー設定（ツール/ルール管理、プリセット検出・追加）
-  - `instant.rs`: インスタントコマンド設定（プレフィックス・コマンド追加/編集/削除）
-  - `backup.rs`: バックアップ設定（エクスポート・インポート・設定フォルダを開く）。Save/Discard ボタンはこのタブでは非表示
+- `style.rs` — デザイントークンと共有スタイルヘルパー（責務は `//!`）
+- `tabs/` — 7タブの UI 実装（`mod.rs` + `common.rs` / `general.rs` / `search.rs` / `index.rs` / `visual.rs` / `opener.rs` / `instant.rs` / `backup.rs`。各タブの責務は `//!`）
 
 ## スタイルシステム
 

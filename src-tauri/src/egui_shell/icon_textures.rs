@@ -1,6 +1,7 @@
 //! egui メインウィンドウのアイコン・テクスチャ層（#532 SU4）。IconCache（PNG 永続層）とは別に、
 //! path→TextureHandle をセッション内で保持する。純粋核（PNG→ColorImage decode・可視集合 retain・
-//! 抽出要否述語）をここに置き、worker spawn / load_texture の driver は view.rs が持つ。
+//! 抽出要否述語）をここに置き、worker spawn / load_texture の driver は results_view.rs が持つ
+//! （#646 PR2 で view.rs から移管——テクスチャは egui Context〔= 窓の renderer〕従属のため）。
 
 use std::collections::{HashMap, HashSet};
 

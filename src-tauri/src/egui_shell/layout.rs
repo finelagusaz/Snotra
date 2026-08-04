@@ -133,6 +133,41 @@ pub fn available_below(work_area_bottom_phys: i32, top_y_phys: i32, results_scal
     (f64::from(work_area_bottom_phys - top_y_phys) / results_scale).max(0.0)
 }
 
+/// バー矩形の**物理**高さ（#738）。可視中の位置クランプの材料である。
+///
+/// **実高（status 行・toast 行を含む高さ）ではない。** 実高でクランプすると toast が消えて
+/// 窓が縮んだときに位置が戻らず、hide が `read_placement_relative` 経由でそのずれを
+/// 永続化する（#755 / #801 で実際に起きた失敗）。「バーの位置はユーザーが決め、行の出没では
+/// 動かさない」（人間裁定・`SPEC.md` §4.7）の帰結でもあり、**`show_egui_main` が位置決めの
+/// 1 手目で畳む高さと同じ導出である**——書き手が 2 人でも材料は 1 つに保つ（#877 と同型）。
+///
+/// **返すのは content 高さである。** 非クライアント領域の分は
+/// `window_coordinator::read_bar_anchor` が 1 か所で足す（show 経路は
+/// `position_on_target_monitor` が `outer_size()` を読み戻すため OS から供給されるが、
+/// **フレームループ経路にその読み戻しは無い**）。
+///
+/// **show 経路との一致は `dpi` crate の丸め規則に依存する。** あちらは `set_size` に渡した
+/// `LogicalSize` を tao/dpi が物理へ戻した結果を `outer_size()` で読むだけで、その変換は
+/// `Pixel::from_f64`（= `round`）である。ここの `.round()` と同じ規則ゆえ今日は一致するが、
+/// **一致を固定するテストは書けない**（読み戻し側が OS と tao を跨ぐ）。上流が銀行家丸めへ
+/// 変われば 1 px 食い違い、show 直後の 1 フレームで位置がスナップする（#755 / #801 と同じ
+/// 観測形）。依存先を名指しておくのが最小の担保である。
+pub fn bar_rect_height_phys(bar_height_logical: f64, main_scale: f64) -> i32 {
+    (bar_height_logical * main_scale).round() as i32
+}
+
+/// バー矩形の中心（物理座標・#738）。クランプと hide 保存の**基準モニター**を決めるために使う。
+///
+/// **窓全体の矩形から基準モニターを決めてはならない**——理由の正本は
+/// `monitor::point_monitor_work_area` の doc。
+///
+/// `bar_outer_height_phys` は**非クライアント分を足した後**の高さである
+/// （`bar_rect_height_phys` の戻り値そのものではない）。合成は
+/// `window_coordinator::read_bar_anchor` が 1 か所で行う。
+pub fn bar_rect_center(x: i32, y: i32, width_phys: u32, bar_outer_height_phys: i32) -> (i32, i32) {
+    (x + (width_phys / 2) as i32, y + bar_outer_height_phys / 2)
+}
+
 /// 窓の再サイズが要るか（#749）。`set_size` は Win32 呼び出しゆえ、同値のフレームで撃たない
 /// ためのデルタガードである。
 ///
@@ -499,6 +534,27 @@ mod tests {
         // クランプが床を当てて作り替えてはならない
         assert_eq!(clamp_results_height(0.0, Some(0.0), row), 0.0);
         assert_eq!(clamp_results_height(0.0, Some(500.0), row), 0.0);
+    }
+
+    /// #738: 論理 px × scale の四捨五入。**動機（なぜ実高ではなくバー高か）は関数 doc**。
+    #[test]
+    fn bar_rect_height_phys_converts_logical_to_physical() {
+        assert_eq!(bar_rect_height_phys(43.0, 1.0), 43);
+        assert_eq!(bar_rect_height_phys(43.0, 1.5), 65); // 64.5 → 四捨五入で 65
+        assert_eq!(bar_rect_height_phys(43.0, 2.0), 86);
+        assert_eq!(bar_rect_height_phys(43.0, 1.25), 54); // 53.75 → 54
+    }
+
+    /// #738: 与えられた矩形の中点。**なぜ窓全体の矩形ではないかは
+    /// `monitor::point_monitor_work_area` の doc**。
+    #[test]
+    fn bar_rect_center_is_midpoint_of_given_rect() {
+        // 幅 600・バー高 43 の窓が (100, 200) にある
+        assert_eq!(bar_rect_center(100, 200, 600, 43), (400, 221));
+        // 奇数幅は切り捨て（整数除算）
+        assert_eq!(bar_rect_center(0, 0, 601, 43), (300, 21));
+        // 負原点モニター（プライマリの左に置かれた副モニター）
+        assert_eq!(bar_rect_center(-1920, -100, 600, 43), (-1620, -79));
     }
 
     /// #749: 許容 0.5 の境界。**ちょうど 0.5 は撃たない**（`>` であって `>=` ではない）。

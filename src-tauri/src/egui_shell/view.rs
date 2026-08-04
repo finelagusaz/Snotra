@@ -964,6 +964,19 @@ impl EguiView for SearchWindowView {
             }
             ui.ctx().request_repaint();
         }
+        // #738: バー矩形を作業領域の内側へ戻す。**ポインタが押されていないフレームだけ**である
+        // ——ドラッグ中も戻すと横並びモニター間の移動が封鎖される（機序と作業例、および
+        // `was_reset_frame` を OR で足す backstop を実測で却下した経緯は
+        // `clamp_main_into_work_area` の doc と `ADR-main-window-clamp-on-pointer-release`）。
+        //
+        // **呼び出し側にしか無い制約はこちら**: **`drive_results_window` より前**でなければ
+        // ならない。`position_results_below_main` は main の位置を OS から読み直すため、後ろへ
+        // 置くと results が 1 フレームだけクランプ前の位置へ追従する。`set_position` は
+        // `SetWindowPos` を同期で撃つので、ここで戻せば直後の drive は新しい位置を読む
+        // （`Moved` イベントの配送を待たない——それは `update()` の終了後になる）。
+        if !ui.input(|i| i.pointer.any_down()) {
+            crate::egui_shell::clamp_main_into_work_area(&app, metrics.bar_height);
+        }
         // **`result_count` はここで読む**（#749）——`take_clicked_for`（クリック逆流の消費・
         // 上のブロック）より**後**でなければならない（#752 F2 / ADR-results-presentation-two-stage）。この式を
         // `plain_hidden` の算出（`show_results` の直前）へ動かすと、行クリック起動フレームで

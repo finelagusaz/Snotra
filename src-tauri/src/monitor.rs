@@ -72,6 +72,25 @@ pub fn primary_monitor_work_area() -> Option<WorkArea> {
     }
 }
 
+/// Get the work area of the monitor containing the given physical point.
+///
+/// **可視中の位置クランプ（#738）はこちらを使い、`window_monitor_work_area` を使わない。**
+/// `MonitorFromWindow` は**ウィンドウ全体の矩形**の重なりでモニターを選ぶため、上下に並んだ
+/// モニターで status 行 + toast 行が出て下側へ大きく伸びると基準が下側へ移り、**行が出た
+/// だけでバーが隣モニターへ飛ぶ**（`SPEC.md` §4.7「バーの位置は行の出没で動かさない」を
+/// 破る）。呼び出し側は `layout::bar_rect_center` が返すバー矩形の中心を渡す——バー矩形は
+/// 行の出没で変わらないので、基準モニターも動かない。
+///
+/// `MONITOR_DEFAULTTONEAREST` ゆえ、点がどのモニターにも乗っていなくても最寄りを返す
+/// （完全に画面外へドラッグされた窓を復帰させるのに要る）。
+#[cfg(windows)]
+pub fn point_monitor_work_area(x: i32, y: i32) -> Option<WorkArea> {
+    unsafe {
+        let hmon = MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST);
+        work_area_from_hmonitor(hmon)
+    }
+}
+
 /// Get the work area of the monitor containing the given window.
 #[cfg(windows)]
 pub fn window_monitor_work_area(hwnd_raw: isize) -> Option<WorkArea> {

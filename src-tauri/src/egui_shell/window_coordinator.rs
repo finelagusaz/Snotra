@@ -439,9 +439,13 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::E
     }
     // placement は「読み」だけを窓の hide より前に置く。**書き込みはこの下**——
     // ディスク I/O はポンプを止めた区間に置かない。
+    // バー高は保存の**基準モニターを決めるため**に要る（#738。理由は
+    // `read_placement_relative` の doc）。`read_metrics` は engine lock をクロージャ内で
+    // 取り切って返すため、ここで保持は残らない。
+    let bar_height = read_metrics(app).bar_height;
     let placement = app
         .get_window("main")
-        .and_then(|w| read_placement_relative(&w));
+        .and_then(|w| read_placement_relative(&w, bar_height));
     if let Some(window) = app.get_window("main") {
         let _ = window.hide();
     }
@@ -504,23 +508,28 @@ pub(crate) fn hide_egui_main(app: &tauri::AppHandle, el: &snotra_egui_runtime::E
 /// 読みは hide **より前**でなければ意味を持たないので、こちらだけが臨界区間に残る。
 ///
 /// 算出は旧 WebView2 の save_relative_placement と同じ（#532 SU7 で唯一の保存経路）。
+///
+/// **基準モニターは `read_bar_anchor` が導く**（#738）——クランプと同じ 1 つの関数を通すことで
+/// 「保存の原点」と「戻す先」が食い違わないようにしてある。窓全体の矩形から引くと、保存座標の
+/// 原点が行の出没で変わり、次の show でバーがモニター 1 枚ぶん飛ぶ（理由の正本は
+/// `monitor::point_monitor_work_area` の doc）。
 pub(crate) fn read_placement_relative(
     window: &tauri::Window,
+    bar_height: f64,
 ) -> Option<snotra_core::window_data::WindowPlacement> {
-    let pos = window.outer_position().ok()?;
+    use snotra_core::window_data::WindowPlacement;
     #[cfg(windows)]
     {
-        use snotra_core::window_data::WindowPlacement;
-        let hwnd = window.hwnd().ok()?;
-        let wa = crate::monitor::window_monitor_work_area(hwnd.0 as isize)?;
+        let a = read_bar_anchor(window, bar_height)?;
         Some(WindowPlacement {
-            x: pos.x - wa.left,
-            y: pos.y - wa.top,
+            x: a.pos.x - a.work_area.left,
+            y: a.pos.y - a.work_area.top,
         })
     }
     #[cfg(not(windows))]
     {
-        use snotra_core::window_data::WindowPlacement;
+        let _ = bar_height;
+        let pos = window.outer_position().ok()?;
         Some(WindowPlacement { x: pos.x, y: pos.y })
     }
 }
@@ -555,6 +564,103 @@ pub(crate) fn wake_results(app: &tauri::AppHandle) {
         sh.results_waker.wake();
     }
 }
+
+/// main のバー矩形（物理）と、その中心が乗るモニターの作業領域。**Win32 の読みはここ 1 回**。
+///
+/// **クランプ（`clamp_main_into_work_area`）と hide 時の保存（`read_placement_relative`）は
+/// 同じ基準でなければならない**——ずれると、保存したオフセットがクランプの想定と別モニターの
+/// 原点に対する相対値になり、次の show でバーが 1 枚ぶん飛ぶ。その一致を doc の申し合わせでは
+/// なく**この関数が 1 つであること**で担保する（`position_results_below_main` の doc が言う
+/// 「計算した値を捨てる関数は、次の利用者に写しを書かせる」と同じ理由）。
+///
+/// 取得に 1 つでも失敗したら `None`——呼び出し側はいずれも「何もしない」側へ倒す。
+#[cfg(windows)]
+struct BarAnchor {
+    pos: tauri::PhysicalPosition<i32>,
+    width_phys: u32,
+    /// **非クライアント分を足した後**の高さ（`layout::bar_rect_height_phys` の戻り値そのもの
+    /// ではない）。`WorkArea::clamp` の `win_h` は物理 outer を要求するため、合成をここで
+    /// 済ませて呼び出し側に手作業を残さない。
+    outer_bar_height_phys: i32,
+    work_area: crate::monitor::WorkArea,
+}
+
+#[cfg(windows)]
+fn read_bar_anchor(window: &tauri::Window, bar_height: f64) -> Option<BarAnchor> {
+    let (Ok(pos), Ok(outer), Ok(inner), Ok(scale)) = (
+        window.outer_position(),
+        window.outer_size(),
+        window.inner_size(),
+        window.scale_factor(),
+    ) else {
+        return None;
+    };
+    // 非クライアント分は OS から取る。**この項は「将来の保険」ではなく今すでに効いている**
+    // ——`decorations: false` でも DWM の影が乗るため、実測で 10 物理 px あった（DPI 125% の
+    // 環境・#738 のカテゴリ D）。落とすとその分だけバーが作業領域からはみ出す。
+    let outer_bar_height_phys = layout::bar_rect_height_phys(bar_height, scale)
+        + (outer.height as i32 - inner.height as i32);
+    let (cx, cy) = layout::bar_rect_center(pos.x, pos.y, outer.width, outer_bar_height_phys);
+    let work_area = crate::monitor::point_monitor_work_area(cx, cy)?;
+    Some(BarAnchor {
+        pos,
+        width_phys: outer.width,
+        outer_bar_height_phys,
+        work_area,
+    })
+}
+
+/// 可視中の main を作業領域の内側へ戻す（#738）。**バー矩形だけを対象にする。**
+///
+/// **呼び出し条件はここに無い**——`view.rs` が「ポインタが押されていないフレーム」でのみ
+/// 呼ぶ。ドラッグ中も毎フレーム戻すと、横並びモニター間の移動が**封鎖される**: 幅 600px の
+/// 窓を A(`0..1920`) から右へ運ぶとき、左端が `1320..1620` の区間ではまだ A の重なりが優勢で
+/// あり、毎回 `x=1320` へ引き戻されて B が優勢になる位置へ到達できない。ゆえに保証は
+/// 「ドラッグ中も出られない」ではなく**「離したら戻る」**である（人間裁定・2026-08-04。
+/// 前者には `WM_MOVING` のフック＝tao の wndproc サブクラス化が要り、却下した）。
+///
+/// **`was_reset_frame` を OR で足す backstop は実測で却下した。** 動機は正しい——egui が押下
+/// フラグを落とすのは `Event::PointerButton{pressed:false}` のときだけで、`PointerGone` でも
+/// フォーカス喪失でも落ちない。release が届かない経路が 1 つでもあれば `any_down()` は固着し、
+/// クランプが黙って死ぬ。だが**実測ではドラッグ中も毎フレームクランプが走り、上の封鎖が
+/// そのまま現実になった**（backstop 無し: ドラッグ中 top=1050 のまま／有り: 956 へ引き戻される）。
+/// 固着は**受容残余**である（理由と再測の手順は `ADR-main-window-clamp-on-pointer-release`）。
+///
+/// **`show_egui_main` の `position_on_target_monitor` とは基準モニターの決め方が違う。**
+/// あちらは「これから出す窓をどこへ置くか」ゆえカーソル/プライマリを見るが、こちらは
+/// 「いまある窓をどこへ戻すか」ゆえ**バー矩形の中心**が乗るモニターを見る（理由は
+/// `monitor::point_monitor_work_area` の doc）。
+///
+/// 材料（バー矩形と基準モニター）は `read_bar_anchor` が導く——hide 時の保存と**同じ 1 つの
+/// 関数**を通すことが、両者の基準が一致することの担保である。
+///
+/// 取得に失敗したら**クランプしない側へ倒す**（`position_on_target_monitor` と同じ）。
+#[cfg(windows)]
+pub(crate) fn clamp_main_into_work_area(app: &tauri::AppHandle, bar_height: f64) {
+    let Some(main) = app.get_window("main") else {
+        return;
+    };
+    let Some(a) = read_bar_anchor(&main, bar_height) else {
+        return;
+    };
+    // 算術は `WorkArea::clamp`（ユニットテスト 7 件が固定する既存の純粋核）。**新しい算術を
+    // 書かない**——show 経路と同じ導出を通すことが本修正の要点である（#877 と同型）。
+    let (nx, ny) = a.work_area.clamp(
+        a.pos.x,
+        a.pos.y,
+        a.width_phys as i32,
+        a.outer_bar_height_phys,
+    );
+    // 同値なら撃たない。`set_position` は Win32 呼び出しであり、可視中は毎フレーム通る。
+    if nx != a.pos.x || ny != a.pos.y {
+        let _ = main.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
+            nx, ny,
+        )));
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn clamp_main_into_work_area(_app: &tauri::AppHandle, _bar_height: f64) {}
 
 /// results を main の直下 + window_gap に配置する(#646 PR2 決定 6)。呼び出し元は
 /// 2 つ——main の update()(通常の毎フレーム従属)と main の Moved リスナー
@@ -594,6 +700,11 @@ pub(crate) fn position_results_below_main(app: &tauri::AppHandle) -> Option<i32>
 ///
 /// 作業領域は **main の HWND** から引く——results は既に誤った位置へ置かれている可能性があり、
 /// そこから引くと別モニターの作業領域を掴みうる。
+///
+/// **ここは `MonitorFromWindow`（窓全体の矩形）のままでよい**（#738 でクランプと hide 保存を
+/// バー矩形中心へ揃えたが、この 3 件目は揃えない）。results は main の**下**に置かれるため、
+/// main が下側モニターへ伸びている状況では、伸びた先のモニターの `bottom` で高さを切るほうが
+/// 意図に合う。基準を揃えるべきなのは「バーの位置を決める／記録する」経路だけである。
 ///
 /// 換算に使うのは **results 窓の scale factor** である。tao は `set_inner_size` に渡した
 /// `LogicalSize` を**その窓の** `scale_factor()` で物理へ戻すため、main の scale を流用すると

@@ -3,11 +3,11 @@
 //! All coordinates are in physical (screen) pixels.
 
 #[cfg(windows)]
-use windows::Win32::Foundation::{HWND, POINT};
+use windows::Win32::Foundation::POINT;
 #[cfg(windows)]
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, MONITORINFO,
-    MonitorFromPoint, MonitorFromWindow,
+    MonitorFromPoint,
 };
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
@@ -74,12 +74,15 @@ pub fn primary_monitor_work_area() -> Option<WorkArea> {
 
 /// Get the work area of the monitor containing the given physical point.
 ///
-/// **可視中の位置クランプ（#738）はこちらを使い、`window_monitor_work_area` を使わない。**
+/// **基準モニターは必ず点から決める。窓の矩形から決めてはならない**（#738）。
 /// `MonitorFromWindow` は**ウィンドウ全体の矩形**の重なりでモニターを選ぶため、上下に並んだ
 /// モニターで status 行 + toast 行が出て下側へ大きく伸びると基準が下側へ移り、**行が出た
 /// だけでバーが隣モニターへ飛ぶ**（`SPEC.md` §4.7「バーの位置は行の出没で動かさない」を
 /// 破る）。呼び出し側は `layout::bar_rect_center` が返すバー矩形の中心を渡す——バー矩形は
 /// 行の出没で変わらないので、基準モニターも動かない。
+///
+/// **この crate に窓の矩形からモニターを決める経路はもう無い。** 唯一の例外だった
+/// `window_monitor_work_area`（results 窓の高さクランプ用）は #835 のクランプ撤去で消えた。
 ///
 /// `MONITOR_DEFAULTTONEAREST` ゆえ、点がどのモニターにも乗っていなくても最寄りを返す
 /// （完全に画面外へドラッグされた窓を復帰させるのに要る）。
@@ -87,15 +90,6 @@ pub fn primary_monitor_work_area() -> Option<WorkArea> {
 pub fn point_monitor_work_area(x: i32, y: i32) -> Option<WorkArea> {
     unsafe {
         let hmon = MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST);
-        work_area_from_hmonitor(hmon)
-    }
-}
-
-/// Get the work area of the monitor containing the given window.
-#[cfg(windows)]
-pub fn window_monitor_work_area(hwnd_raw: isize) -> Option<WorkArea> {
-    unsafe {
-        let hmon = MonitorFromWindow(HWND(hwnd_raw as *mut _), MONITOR_DEFAULTTONEAREST);
         work_area_from_hmonitor(hmon)
     }
 }

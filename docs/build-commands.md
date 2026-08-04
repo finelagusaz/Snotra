@@ -44,6 +44,7 @@ npm run smoke:egui          # 必須: egui show/hide スモーク（hotkey 注�
 ```
 
 - `test:powershell` は Pester 6.0.1 を `target/pester/` へ固定取得し、グローバル環境を変更しない。統合テストの本体は `cargo metadata` の `target_directory` から導くため `CARGO_TARGET_DIR` に追随する。未ビルドなら先に `cargo build -p snotra` を実行する（別の本体を検査するときだけ `npm run test:powershell -- -ExePath <path>`）
+- **実バイナリを起動する検査の前に `cargo build -p snotra` を打つ。`cargo test` では更新されない**——`cargo test` がビルドするのはテストターゲットであって `target/debug/snotra.exe` ではない。危ないのは「未ビルド」より**古いまま在る**ほうで、検査は成功したまま**変更前の挙動を測って赤や緑を出す**（#835 で 2 時間前のバイナリを測り、直したはずの伸縮を FAIL として観測した）
 - WebView2 E2E（Playwright + tauri-driver）は #532 SU7 flip で撤去済み。後継は `smoke:egui`（自動回帰の最低線）+ 手動 GUI smoke（カテゴリ D）
 - **PR 上の実行責任**: `npm test` は通常 PR CI（`ci.yml`）で自動実行されるが、`smoke:startup` / `smoke:egui` は**通常 PR CI では走らない**。`src-tauri`・`snotra-egui-runtime`（描画ループ所有・#701 で追加）・依存 manifest/lockfile 等を含む変更は `Smoke` workflow（`e2e.yml`）が **paths により自動起動**し両 smoke を実行する。paths 外の変更で回したいときは `workflow_dispatch`（手動実行）。「通常 CI が緑」だけでは smoke 済みを意味しない
   - **CI に検証を委ねるなら、その job が実際に何を実行したかを確かめる**（#671 サイクルで実測: `Smoke` が 5 run 連続で緑のまま results の検証を skip していた）。この 1 事例は #686 が `-RequireResults` で機構化し、#804 が「results 検査を無条件に要求する」形へ格上げした（「スモーク運用メモ」節）が、**「緑」が「検査が走った」を意味しない形は他にも作れる**——委ねる前に、その job のステップと渡す引数を読む

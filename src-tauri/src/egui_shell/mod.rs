@@ -35,7 +35,7 @@ mod window_coordinator;
 // （updater install 失敗の wake_main）・results_view.rs（クリック逆流）が
 // 消費する。窓操作の実体は window_coordinator.rs へ移した（#749 段 1）。**モジュール外に
 // 消費者があるものだけを re-export する**——`read_placement_relative` / `read_metrics` /
-// `results_available_height` / `max_results` / `position_on_target_monitor` は同モジュール内
+// `max_results` / `position_on_target_monitor` は同モジュール内
 // からしか呼ばれず、`position_results_below_main` は親である本ファイルが
 // `window_coordinator::` で直に呼ぶ。
 pub(crate) use window_coordinator::{
@@ -312,7 +312,7 @@ pub(crate) fn create(
     // update() が駆動する（hidden 窓は update() が走らないため自分では show できない）。
     let results = tauri::Window::builder(app, "results")
         .title("Snotra Results")
-        .inner_size(window_width, 100.0) // 初期値。実高は main が実件数フィットで設定
+        .inner_size(window_width, 100.0) // 初期値。実高は main が visible_rows 分の固定高で設定（#835）
         .decorations(false)
         .resizable(false)
         .skip_taskbar(true)

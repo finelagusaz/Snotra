@@ -1,5 +1,5 @@
 //! egui 検索ウィンドウの純粋レイアウト/タイミングヘルパー（#532 SU3）。ウィンドウ高さ算出・
-//! results 窓の可視性の導出（SPEC §8.6 の 4 連言）・幾何（上端 y・作業領域の残り）・
+//! results 窓の可視性の導出（SPEC §8.6 の 4 連言）・幾何（上端 y・バー矩形）・
 //! 検索 debounce の判定・**表示幅に合わせたテキストの中間省略**（`truncate_middle_chars` /
 //! `fit_middle_by_measure`・#870）を egui/Win32 非依存で持つ。ユニットテスト対象。
 
@@ -68,69 +68,42 @@ pub fn main_window_height(
     bar_height + status_height.unwrap_or(0.0) + toast_height.unwrap_or(0.0)
 }
 
-/// 結果窓の高さ(#646 PR2 決定 7)。実件数フィット・上限 max_results・padding 8。
-/// 0 件は 0.0(呼び出し側が hide する契約)。
-pub fn results_window_height(result_count: usize, max_results: u32, row_height: f64) -> f64 {
-    let n = result_count.min(max_results as usize);
-    if n == 0 {
+/// 結果窓の高さ（#835）。**`max_results` 分の固定高**・padding 8。**件数を入力に持たない**
+/// ——候補が少なくても窓は縮まない（#646 PR2 決定 7 の実件数フィットを覆した。理由は
+/// `ADR-results-fixed-height`）。
+///
+/// **`0.0` は「hide せよ」の契約値である。** 返すのは `max_results == 0` のときだけで
+/// （`config.toml` の手編集でのみ到達する・`ResultsInputs::max_results` の doc）、
+/// `present_results` はこれを連言④の偽として読む。**0 を作ってはならないし、消しても
+/// ならない**——この契約は #675 のクランプの doc が持っていたが、#835 でクランプごと
+/// 撤去したため、ここが正本である。
+///
+/// **作業領域の下端で抑えない**（#835 で #675 を撤去）。収まらない分は画面外へはみ出す。
+/// 窓の大きさが表示位置で変わらないことを優先した人間裁定であり、その帰結（最下端では
+/// 1 行も見えないことがある）は `SPEC.md` §4.5 が受容すると明示している。
+pub fn results_window_height(max_results: u32, row_height: f64) -> f64 {
+    if max_results == 0 {
         0.0
     } else {
-        n as f64 * row_height + 8.0
+        f64::from(max_results) * row_height + 8.0
     }
-}
-
-/// 結果窓の高さを作業領域の下端で抑える（#675）。単位はすべて**論理 px**。
-///
-/// - `desired`: `results_window_height` の値
-/// - `available`: 結果窓の上端から作業領域下端まで。**`None` はクランプしない**
-///   （非 Windows・作業領域の取得失敗。従来どおりの挙動へ倒す）
-/// - `row_height`: 1 行の高さ
-///
-/// **`desired == 0.0` は素通しする。** 0.0 は `present_results` が「hide」と読む契約値で
-/// あり（同関数）、クランプの結果として 0 を**作ってはならない**し、0 を**消してもならない**。
-///
-/// `available` が 1 行に満たなくても **1 行 + padding 8 を床**にする。ここで 0 まで潰すと
-/// 「main を画面下端へ置くと結果が一切出ない」という別の欠陥になる。床を割ったぶんの
-/// はみ出しは受容する（行はスクロールで到達できる）。
-pub fn clamp_results_height(desired: f64, available: Option<f64>, row_height: f64) -> f64 {
-    let Some(avail) = available else {
-        return desired;
-    };
-    if desired <= 0.0 {
-        return desired;
-    }
-    desired.min(avail.max(row_height + 8.0))
 }
 
 /// results 窓の上端の**物理** y（#752 C1）。`window_coordinator::position_results_below_main`
 /// の算術部（#749 で `mod.rs` から移設）。
 ///
-/// **算出と適用（`set_position`）を分けるために出したのではない**——融合は #675 の判断として
-/// 保つ（計算した値を捨てる関数は、次の利用者に写しを書かせる）。ここへ出すのは**式を
+/// **算出と適用（`set_position`）を分けるために出したのではない**——ここへ出すのは**式を
 /// テスト可能にするため**であり、`mod.rs` 側は Win32 を 1 回だけ読んでこの式を呼ぶ薄い
 /// ラッパーのままである。消費者は 2 つ（毎フレームの drive と `Moved` リスナー）で、
 /// どちらも同じラッパーを通る。
 ///
-/// `main_scale` は **main 窓の** scale である（`available_below` が取る results 窓の scale とは
-/// 別・#675）。**型では区別できない**——取り違えの検出器は無く、守るのはラッパーの単一性と
-/// この doc だけである（計画 §7 の受容残余）。
+/// `main_scale` は **main 窓の** scale である。**#835 より前は results 窓の scale を取る
+/// `available_below` と同型で並んでおり、取り違えの検出器が無いことを受容していた**——
+/// クランプの撤去で **results 窓の** scale を読む箇所が消え、この crate に残る窓の scale の
+/// 読みはすべて main 窓のもの（`read_bar_anchor` と `position_results_below_main`）になった。
+/// 同型の値が 1 種類になったので、取り違えは構造的に起こらない。
 pub fn results_top_y(main_y: i32, main_height_phys: u32, gap_logical: u32, main_scale: f64) -> i32 {
     main_y + main_height_phys as i32 + (f64::from(gap_logical) * main_scale).round() as i32
-}
-
-/// results 上端から作業領域の下端までの高さ（**論理 px**・#752 C1）。
-/// `window_coordinator::results_available_height` の算術部（#749 で `mod.rs` から移設）。
-///
-/// **`.max(0.0)` の床を落とさない**——main が作業領域の外にあると差が負になる。
-///
-/// `results_scale` は **results 窓の** scale である。tao は `set_inner_size` に渡した
-/// `LogicalSize` を**その窓の** `scale_factor()` で物理へ戻すため、main の scale を流用すると
-/// 混在 DPI 環境で高さが食い違う（#675）。
-///
-/// **`#[cfg]` の外に置く**——cfg の内側に置くと「純粋だからテストできる」が構造的に
-/// 成り立たなくなる（非 Windows でテストが到達しない）。
-pub fn available_below(work_area_bottom_phys: i32, top_y_phys: i32, results_scale: f64) -> f64 {
-    (f64::from(work_area_bottom_phys - top_y_phys) / results_scale).max(0.0)
 }
 
 /// バー矩形の**物理**高さ（#738）。可視中の位置クランプの材料である。
@@ -211,11 +184,11 @@ pub struct ResultsInputs {
     pub row_height: f64,
 }
 
-/// results 窓の見せ方の決定（#752 C2）。**クランプ前**の値であり、最終的な表示状態ではない
-/// ——作業領域による調整は driver が `clamp_results_height` で行う。
+/// results 窓の見せ方の決定（#752 C2）。**driver はこの高さをそのまま `set_size` へ渡す**
+/// ——作業領域による調整は #835 で撤去した（`results_window_height` の doc）。
 ///
 /// `{ visible: bool, height: f64 }` の struct にはしない。`visible: true, height: 0.0` という
-/// 不正状態が構築でき、「高さ 0 は hide」という契約（`clamp_results_height` の doc）と
+/// 不正状態が構築でき、「高さ 0 は hide」という契約（`results_window_height` の doc）と
 /// 矛盾するためである。先例は `search_state::EscapeOutcome` と `lifecycle::BlurAction::Rearm`。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ResultsPresentation {
@@ -241,14 +214,17 @@ pub enum ResultsPresentation {
 /// **読み点の非対称は呼び出し側の責務である**（#752 F2）。同一フレーム内で、③ `plain_hidden`
 /// はクリック逆流の消費**前**に、②の材料 `result_count` は消費**後**に読む。間に挟まる
 /// `start_launch` が `set_results(Vec::new())` を撃つため、行クリック起動フレームでは②が
-/// false になって窓が隠れる（旧構造は②を消費前に読んでいたので隠していたのは④だった——
-/// **帰結は同じ**）。**読み点を前へ寄せてはならない**——起動直後に古い行が 1 フレーム
+/// false になって窓が隠れる。**読み点を前へ寄せてはならない**——起動直後に古い行が 1 フレーム
 /// 描かれる。`cargo test` では落ちない種類の回帰である。
 /// **`plain_results_hidden` を前後で 2 回読んでもならない**——`indexing` は `AtomicBool` の
 /// live-read で、同一フレーム内でも値が変わりうる。
+///
+/// **②と④は #835 で完全に独立した。** 高さが件数を入力に持たなくなったため、「0 件だから
+/// 高さ 0、ゆえに hide」という代行は成り立たない——②は `result_count > 0` として連言に
+/// 直接現れる。④が偽になるのは `max_results == 0` のときだけである（`ADR-results-fixed-height`）。
 pub fn present_results(i: ResultsInputs) -> ResultsPresentation {
-    let desired_height = results_window_height(i.result_count, i.max_results, i.row_height);
-    if i.main_visible && !i.plain_hidden && desired_height > 0.0 {
+    let desired_height = results_window_height(i.max_results, i.row_height);
+    if i.main_visible && !i.plain_hidden && i.result_count > 0 && desired_height > 0.0 {
         ResultsPresentation::Visible { desired_height }
     } else {
         ResultsPresentation::Hidden
@@ -504,36 +480,19 @@ mod tests {
         assert_eq!(main_window_height(43.0, Some(43.0), Some(43.0)), 129.0);
     }
 
-    /// #646 PR2 決定 7: 結果窓は実件数フィット(上限 max_results)+ padding 8。
+    /// #835: 結果窓は **`max_results` 分の固定高** + padding 8。**件数では変わらない**
+    /// （#646 PR2 決定 7 の実件数フィットを覆した・`ADR-results-fixed-height`）。
     #[test]
-    fn results_height_fits_actual_count_capped_at_max() {
+    fn results_height_is_fixed_at_max_results_regardless_of_count() {
         let row = 37.0;
-        assert_eq!(results_window_height(3, 8, row), 3.0 * row + 8.0); // 実件数
-        assert_eq!(results_window_height(8, 8, row), 8.0 * row + 8.0); // ちょうど境界(result_count == max_results)
-        assert_eq!(results_window_height(20, 8, row), 8.0 * row + 8.0); // 上限で頭打ち
-        assert_eq!(results_window_height(0, 8, row), 0.0); // 0 件は非表示(高さ 0 = 呼び出し側で hide)
-    }
-
-    /// #675: 作業領域の下端で抑える。**両端を固定する**——抑えすぎると「下端に置くと結果が
-    /// 一切出ない」、抑えなさすぎると元の欠陥（タスクバーの下へ潜る）に戻る。
-    #[test]
-    fn results_height_is_clamped_at_work_area_bottom() {
-        let row = 37.0;
-        let floor = row + 8.0; // 1 行 + padding
-        // 取得できないときは従来どおり（非 Windows・API 失敗）
-        assert_eq!(clamp_results_height(300.0, None, row), 300.0);
-        // 余裕があれば素通し（既存挙動と同一）
-        assert_eq!(clamp_results_height(300.0, Some(500.0), row), 300.0);
-        // 下端で切る
-        assert_eq!(clamp_results_height(300.0, Some(120.0), row), 120.0);
-        // 1 行に満たなくても 1 行は出す（0 まで潰さない）
-        assert_eq!(clamp_results_height(300.0, Some(20.0), row), floor);
-        // main が作業領域の外にある（available が負）
-        assert_eq!(clamp_results_height(300.0, Some(-50.0), row), floor);
-        // **0 件は 0 のまま**——0.0 は present_results が hide と読む契約値で、
-        // クランプが床を当てて作り替えてはならない
-        assert_eq!(clamp_results_height(0.0, Some(0.0), row), 0.0);
-        assert_eq!(clamp_results_height(0.0, Some(500.0), row), 0.0);
+        // 既定 visible_rows = 8。件数を入力に持たないので、1 件でも 20 件でもこの高さである。
+        assert_eq!(results_window_height(8, row), 8.0 * row + 8.0);
+        // 高さが連動するのは**設定値**であって件数ではない。
+        assert_eq!(results_window_height(1, row), row + 8.0);
+        // **`max_results = 0` は 0.0**——`config.toml` の手編集で到達可能な値であり
+        // （`ResultsInputs::max_results` の doc）、0.0 は `present_results` が hide と読む
+        // 契約値である。ここを落とすと 8px のスリット窓が出る。
+        assert_eq!(results_window_height(0, row), 0.0);
     }
 
     /// #738: 論理 px × scale の四捨五入。**動機（なぜ実高ではなくバー高か）は関数 doc**。
@@ -594,16 +553,18 @@ mod tests {
     /// **②と③を区別できることが #752 の眼目である**——旧 `results_should_show` は両者を
     /// `show_results` へ潰しており、「0 件で隠れた」と「carve-out で隠れた」を固定できなかった。
     ///
-    /// ④を②から独立に false にできる唯一の入力は `max_results = 0`（到達可能・
-    /// `ResultsInputs::max_results` の doc）。
+    /// ④を偽にできる唯一の入力は `max_results = 0`（到達可能・`ResultsInputs::max_results`
+    /// の doc）。
     ///
-    /// **16 行のうち 4 行は到達不能である。** 「②false ∧ ④true」は生の入力から構成できない
-    /// （`result_count = 0` なら高さも 0 になる）。到達不能な行を assert で「検出器」に
-    /// 見せかけないため、**構成不能である事実を記述に留める**（#697「トートロジーテスト削除」）。
+    /// **#835 で 16 行すべてが到達可能になった。** かつて「②false ∧ ④true」の 4 行は生の
+    /// 入力から構成できず（高さが件数にフィットしたため `result_count = 0` なら高さも 0 に
+    /// なった）、構成不能である事実を記述に留めていた。固定高化で④は `max_results` だけで
+    /// 決まるため、`result_count = 0 ∧ max_results > 0` がその 4 行を埋める——**②と④が
+    /// 完全に独立したので、測る側にも 4 行足した**（`ADR-results-fixed-height`）。
     #[test]
     fn present_results_truth_table_distinguishes_all_four_conjuncts() {
         use ResultsPresentation::{Hidden, Visible};
-        let h = 3.0 * 37.0 + 8.0; // results_window_height(3, 8, 37.0)
+        let h = 8.0 * 37.0 + 8.0; // results_window_height(8, 37.0)——件数 3 でも 8 行分
 
         // ①true ③true（plain_hidden = false）
         assert_eq!(
@@ -611,19 +572,40 @@ mod tests {
             Visible { desired_height: h }
         ); // ②t ④t: 唯一の可視
         assert_eq!(present_results(inputs(true, false, 3, 0)), Hidden); // ②t ④f（max_results=0）
-        assert_eq!(present_results(inputs(true, false, 0, 8)), Hidden); // ②f ④f
+        assert_eq!(present_results(inputs(true, false, 0, 8)), Hidden); // ②f ④t（#835 で到達可能）
+        assert_eq!(present_results(inputs(true, false, 0, 0)), Hidden); // ②f ④f
         // ①true ③false（carve-out で隠す）
         assert_eq!(present_results(inputs(true, true, 3, 8)), Hidden); // ②t ④t だが③で隠れる
         assert_eq!(present_results(inputs(true, true, 3, 0)), Hidden);
         assert_eq!(present_results(inputs(true, true, 0, 8)), Hidden);
+        assert_eq!(present_results(inputs(true, true, 0, 0)), Hidden);
         // ①false ③true — 要石: main hidden なら行があっても出さない
         assert_eq!(present_results(inputs(false, false, 3, 8)), Hidden);
         assert_eq!(present_results(inputs(false, false, 3, 0)), Hidden);
         assert_eq!(present_results(inputs(false, false, 0, 8)), Hidden);
+        assert_eq!(present_results(inputs(false, false, 0, 0)), Hidden);
         // ①false ③false
         assert_eq!(present_results(inputs(false, true, 3, 8)), Hidden);
         assert_eq!(present_results(inputs(false, true, 3, 0)), Hidden);
         assert_eq!(present_results(inputs(false, true, 0, 8)), Hidden);
+        assert_eq!(present_results(inputs(false, true, 0, 0)), Hidden);
+    }
+
+    /// #835: 件数が変わっても高さが変わらないことを、判定の出力側で固定する。
+    ///
+    /// **上の真理値表は「可視か否か」を測るもので、高さの不変は測っていない**——真理値表の
+    /// 可視行は 1 つだけなので、そこが `h` と一致することは「ある件数で正しい」しか言わない。
+    /// #835 の受け入れ条件 1（件数によらず一定）はここが担う。
+    #[test]
+    fn present_results_height_does_not_move_with_result_count() {
+        let h = 8.0 * 37.0 + 8.0;
+        for &count in &[1usize, 2, 3, 7, 8, 20, 200] {
+            assert_eq!(
+                present_results(inputs(true, false, count, 8)),
+                ResultsPresentation::Visible { desired_height: h },
+                "件数 {count} で高さが動いた"
+            );
+        }
     }
 
     /// #671 PR A′: main が hidden の間は、結果が残っていても results を出さない。
@@ -645,47 +627,12 @@ mod tests {
         ));
     }
 
-    /// #752 AC4: 旧実装との等価グリッド。
-    ///
-    /// 旧式（`results_should_show` + `results_window_height`）を**テストローカルのクロージャ**
-    /// として再現し、直積で新実装と突き合わせる。production に旧関数を残す形にはしない
-    /// ——`-D warnings` の `dead_code` で落ちるうえ、導出が 2 か所になる（`AGENTS.md`）。
-    /// クロージャならこのコミットの中に閉じる。**期待値を手計算で literal に書き写さない**
-    /// （直積の転記ミスがそこに湧く）。
-    ///
-    /// **このグリッドが固定するのは「pre-click 件数 == post-click 件数」のフレームに限られる。**
-    /// 行クリック起動フレーム（`start_launch` が結果を空にするため pre ≠ post）の等価性は
-    /// グリッドでは表現できず、`present_results` の doc に書いた論証が担う（#752 F2 / AC5）。
-    #[test]
-    fn present_results_matches_legacy_predicate_over_input_grid() {
-        // 削除前の `results_should_show` を逐語で再現する。
-        let legacy = |main_visible: bool, show_results: bool, results_height: f64| -> bool {
-            main_visible && show_results && results_height > 0.0
-        };
-        let row = 37.0;
-        for &main_visible in &[false, true] {
-            for &plain_hidden in &[false, true] {
-                for &count in &[0usize, 1, 3, 20] {
-                    for &max in &[0u32, 1, 8] {
-                        let i = inputs(main_visible, plain_hidden, count, max);
-                        let desired = results_window_height(count, max, row);
-                        // 旧経路の `show_results` は「件数 > 0 ∧ carve-out でない」の融合だった。
-                        let show_results = count > 0 && !plain_hidden;
-                        let expected_visible = legacy(main_visible, show_results, desired);
-                        match present_results(i) {
-                            ResultsPresentation::Visible { desired_height } => {
-                                assert!(expected_visible, "新は可視・旧は不可視: {i:?}");
-                                assert_eq!(desired_height, desired, "高さが旧と違う: {i:?}");
-                            }
-                            ResultsPresentation::Hidden => {
-                                assert!(!expected_visible, "新は不可視・旧は可視: {i:?}");
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // #752 AC4 の等価グリッド（旧 `results_should_show` をテストローカルのクロージャで再現し
+    // 直積で突き合わせる）は #835 で削除した。**固定していた命題は「#752 の移設が挙動を
+    // 変えなかったこと」であり、#835 は意図してその挙動を変えた**——対照を新仕様へ書き直せば
+    // 実装と同じ式を 2 度書くだけのトートロジーになる（#697「トートロジーテスト削除」）。
+    // 直積が担っていた網羅性は上の真理値表（16 行・全行が到達可能）が、高さの不変は
+    // `present_results_height_does_not_move_with_result_count` が引き取っている。
 
     /// #752 C1: 上端 = main の下端 + gap（論理 → 物理へ換算して四捨五入）。
     ///
@@ -706,22 +653,6 @@ mod tests {
         assert_eq!(results_top_y(100, 43, 4, 2.0), 151);
         // main が負座標のモニターにいる（マルチモニターで左/上に並べた配置）
         assert_eq!(results_top_y(-1080, 43, 4, 1.0), -1033);
-    }
-
-    /// #752 C1: results 上端から作業領域下端までの論理高さ。
-    ///
-    /// **0 床を落とさない**——main が作業領域の外にあると差が負になる。負値をそのまま
-    /// `clamp_results_height` へ渡すと `avail.max(row+8)` が床へ倒れて意味が変わる。
-    #[test]
-    fn available_below_divides_by_results_scale_and_floors_at_zero() {
-        assert_eq!(available_below(1000, 400, 1.0), 600.0);
-        assert_eq!(available_below(1000, 400, 2.0), 300.0); // 物理 600 → 論理 300
-        assert_eq!(available_below(1000, 400, 1.5), 400.0);
-        // 上端が作業領域の下端より下（main が画面外）→ 負にせず 0
-        assert_eq!(available_below(1000, 1200, 1.0), 0.0);
-        assert_eq!(available_below(1000, 1200, 2.0), 0.0);
-        // ちょうど 0
-        assert_eq!(available_below(1000, 1000, 1.0), 0.0);
     }
 
     // ---- 中間省略（#870） --------------------------------------------------

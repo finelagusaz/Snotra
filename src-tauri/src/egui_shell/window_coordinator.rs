@@ -570,8 +570,8 @@ pub(crate) fn wake_results(app: &tauri::AppHandle) {
 /// **クランプ（`clamp_main_into_work_area`）と hide 時の保存（`read_placement_relative`）は
 /// 同じ基準でなければならない**——ずれると、保存したオフセットがクランプの想定と別モニターの
 /// 原点に対する相対値になり、次の show でバーが 1 枚ぶん飛ぶ。その一致を doc の申し合わせでは
-/// なく**この関数が 1 つであること**で担保する（`position_results_below_main` の doc が言う
-/// 「計算した値を捨てる関数は、次の利用者に写しを書かせる」と同じ理由）。
+/// なく**この関数が 1 つであること**で担保する（同じ値を 2 か所で計算させると、次の利用者が
+/// 写しを書く）。
 ///
 /// 取得に 1 つでも失敗したら `None`——呼び出し側はいずれも「何もしない」側へ倒す。
 #[cfg(windows)]
@@ -667,16 +667,18 @@ pub(crate) fn clamp_main_into_work_area(_app: &tauri::AppHandle, _bar_height: f6
 /// (ネイティブ移動ループ中の追従。ループ中は egui フレームが回らない可能性があるため
 /// イベント駆動で直接動かす)。デルタガードは持たない(set_position は同値でも安価・
 /// サイズ側のガードとは対称でない。理由は `ResultsWindow::set_size` の doc)。
-/// **設定した results 上端の物理 y を返す**（#675）。高さのクランプに上端が要るが、上端の
-/// 算出式の正本は `layout::results_top_y`（純粋核・#752 C1）で、**Win32 を読んでそれを適用
-/// する場所はここだけ**である。呼び出し側で再計算すると `outer_position` / `outer_size` /
-/// `window_gap` の 2 度読みになり、フレーム内で値が食い違いうる（`AGENTS.md`「条件別チェック」
-/// の「重複した読み」）。
-/// **計算した値を捨てる関数は、次の利用者に写しを書かせる。**
-pub(crate) fn position_results_below_main(app: &tauri::AppHandle) -> Option<i32> {
+/// 上端の算出式の正本は `layout::results_top_y`（純粋核・#752 C1）で、**Win32 を読んで
+/// それを適用する場所はここだけ**である。呼び出し側で再計算すると `outer_position` /
+/// `outer_size` / `window_gap` の 2 度読みになり、フレーム内で値が食い違いうる
+/// （`AGENTS.md`「条件別チェック」の「重複した読み」）。
+///
+/// **上端 y を返さない。** #675 のクランプが唯一の消費者だったため、#835 の撤去で返す先が
+/// 無くなった。**`Option` は型に `#[must_use]` を持たないので、返し続けても警告は出ない**
+/// ——消費者のいない戻り値は、次の読者に「何に使うのか」を探させる。
+pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
     let (Some(main), Some(results)) = (app.get_window("main"), app.try_state::<ResultsWindow>())
     else {
-        return None;
+        return;
     };
     let gap = app
         .try_state::<crate::AppState>()
@@ -687,43 +689,11 @@ pub(crate) fn position_results_below_main(app: &tauri::AppHandle) -> Option<i32>
         main.outer_size(),
         main.scale_factor(),
     ) else {
-        return None;
+        return;
     };
     // 算術は layout::results_top_y（純粋核・#752 C1）。Win32 の読みはここで 1 回だけ行う。
     let top = layout::results_top_y(pos.y, size.height, gap, scale);
     results.set_position(pos.x, top);
-    Some(top)
-}
-
-/// results 上端から作業領域の下端までの高さ（**論理 px**・#675）。取得できなければ `None`
-/// （呼び出し側がクランプしない側へ倒す）。
-///
-/// 作業領域は **main の HWND** から引く——results は既に誤った位置へ置かれている可能性があり、
-/// そこから引くと別モニターの作業領域を掴みうる。
-///
-/// **ここは `MonitorFromWindow`（窓全体の矩形）のままでよい**（#738 でクランプと hide 保存を
-/// バー矩形中心へ揃えたが、この 3 件目は揃えない）。results は main の**下**に置かれるため、
-/// main が下側モニターへ伸びている状況では、伸びた先のモニターの `bottom` で高さを切るほうが
-/// 意図に合う。基準を揃えるべきなのは「バーの位置を決める／記録する」経路だけである。
-///
-/// 換算に使うのは **results 窓の scale factor** である。tao は `set_inner_size` に渡した
-/// `LogicalSize` を**その窓の** `scale_factor()` で物理へ戻すため、main の scale を流用すると
-/// 混在 DPI 環境で高さが食い違う。**受容する残余**: `set_position` 直後は tao 側の scale が
-/// まだ旧モニターのものでありうる（Windows は移動後に `WM_DPICHANGED` を送る）。実害は
-/// モニター跨ぎの 1 フレームに限られる見込みで、是正しない。
-#[cfg(windows)]
-fn results_available_height(app: &tauri::AppHandle, top_y: i32) -> Option<f64> {
-    let main = app.get_window("main")?;
-    let hwnd = main.hwnd().ok()?;
-    let area = crate::monitor::window_monitor_work_area(hwnd.0 as isize)?;
-    let scale = app.try_state::<ResultsWindow>()?.scale_factor()?;
-    // 算術は layout::available_below（純粋核・cfg の外・#752 C1）。
-    Some(layout::available_below(area.bottom, top_y, scale))
-}
-
-#[cfg(not(windows))]
-fn results_available_height(_app: &tauri::AppHandle, _top_y: i32) -> Option<f64> {
-    None
 }
 
 /// 動的高さ算出用の max_results（§4.5/§4.7）。visible_rows は `Option<usize>` のため
@@ -829,29 +799,16 @@ pub(crate) fn drive_results_window(
     // 位置: main の外形直下 + gap(物理座標。gap は論理 px を scale で換算)。無ガードの
     // 単一点(position_results_below_main)へ委譲——Moved リスナーと共用する
     // ため、デルタガードはヘルパー側に持たない(#646 PR2 決定 10)。
-    let top_y = position_results_below_main(app);
-    // 作業領域の下端でクランプする（#675）。あふれた行は既存の ScrollArea が拾う。
+    position_results_below_main(app);
+    // 高さは `present_results` が導いた値をそのまま渡す。**作業領域の下端によるクランプは
+    // #835 で撤去した**——窓の大きさは表示位置で変わらず、収まらない分は画面外へはみ出す
+    // （`layout::results_window_height` の doc・`ADR-results-fixed-height`）。
     //
-    // **可視判定（上の `present_results`）には `desired_height`（クランプ前）を使う。**
-    // クランプには上端が要り、上端は直上の位置決めが決めるが、位置決めは可視判定の
-    // **後**にある（不可視なら早期 return する）。判定にクランプ後の値を使おうとすると
-    // 位置決めを判定より前へ動かすことになり、不可視フレームでも `SetWindowPos` を
-    // 撃つ——#646 PR2 決定 10 の設計を変えてしまう。クランプは `set_size` に渡す値だけに
-    // 効かせ、「0 件 ⇔ 高さ 0 ⇔ hide」の契約を判定側で無傷に保つ。
-    //
-    // **`desired_height` と `applied_height` は別名にしてある**（#752 F5）。旧実装は同一
-    // 関数内で `res_h` を 2 度束縛しており、デルタガードがどちらを覚えるべきかが名前から
-    // 読めなかった。覚えるのは**クランプ後**である。
-    let applied_height = layout::clamp_results_height(
-        desired_height,
-        top_y.and_then(|y| results_available_height(app, y)),
-        i.row_height,
-    );
     // デルタガードは `ResultsWindow::set_size` が内蔵する（#749 で移設）。**照合対象が
     // `set_size` の実引数と同じであること**——素の値を覚えると、毎フレーム撃つか必要な
     // 再サイズを撃たないかのどちらかになる——は、memo を撃つ側の内側へ入れたことで
     // 構造的に保たれる（渡した値がそのまま memo になる）。
-    results.set_size(i.width, applied_height, i.background);
+    results.set_size(i.width, desired_height, i.background);
     // フォーカスを奪わない表示（tauri show() は SW_SHOW で活性化する・#646 PR2）。
     // 置き場の理由は上の hide 側コメントと同じ（spec 決定 7）。
     if results.show(el, i.background) {

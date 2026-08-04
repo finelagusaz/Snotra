@@ -244,14 +244,10 @@ impl ResultsWindow {
         *self.last_size.lock().unwrap() = (0.0, 0.0);
     }
 
-    /// 物理 ↔ 論理の換算係数（#675）。
-    ///
-    /// **`set_size` が渡す `LogicalSize` を tao が物理へ戻すときと同じ factor でなければ
-    /// ならない**——tao の `set_inner_size` は**この窓の** `scale_factor()` で `to_physical`
-    /// する。main の scale を流用すると混在 DPI 環境で高さが食い違う。
-    pub(crate) fn scale_factor(&self) -> Option<f64> {
-        self.window.scale_factor().ok()
-    }
+    // 物理 ↔ 論理の換算係数（`scale_factor`・#675）は #835 のクランプ撤去で消えた。
+    // **この窓の scale を crate 側で読む必要が無くなったためである**——`set_size` へ渡すのは
+    // 論理 px であり、tao の `set_inner_size` がこの窓の `scale_factor()` で物理へ戻す。
+    // 読んでいたのは「作業領域の残り（物理）を論理へ換算する」ためだけだった。
 
     /// 物理座標で位置を設定する（`set_size` と同じ理由で tao 経由）。
     pub(crate) fn set_position(&self, x: i32, y: i32) {

@@ -13,7 +13,7 @@ $ErrorActionPreference = 'Stop'
 # | # | 判定 | 何を捕まえるか |
 # |---|---|---|
 # | H1 | hidden な窓の中に `egui_results:show` が現れたら異常 | main が hidden なのに results が最前面に残る（#671 PR A′） |
-# | H4 | `egui_results:show` の `rows` が 0 なら異常 | 「高さ 0 ⇔ hide」の契約違反（`layout::present_results`） |
+# | H4 | `egui_results:show` の `rows` が 0 なら異常 | 「件数 0 ⇒ hide」の契約違反（`layout::present_results` の連言②） |
 # | H5 | hide を挟まない連続 `egui_results:show` は異常 | 二重発火抑止（`ResultsWindow.visible` の `swap`）の破れ |
 #
 # **判定不能を PASS へ化けさせない**のがこのモジュールの要石である。「該当イベントが無い」
@@ -349,7 +349,7 @@ function Invoke-SnotraTraceJudgement {
                         Invariant = 'H4'
                         Seq       = $event.Seq
                         SectionId = $sectionId
-                        Message   = "rows = $rows の $script:EventResultsShow（高さ 0 ⇔ hide の契約違反）"
+                        Message   = "rows = $rows の $script:EventResultsShow（件数 0 ⇒ hide の契約違反）"
                     }
                 } else {
                     Add-SnotraTracePass -PassCount $passCount -Invariant 'H4' -SectionId $sectionId

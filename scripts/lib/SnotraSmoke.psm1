@@ -274,9 +274,21 @@ function Start-SnotraProcess {
         [switch]$NoNewWindow,
         [switch]$Trace,
         # 呼び出し側が足す env（`SNOTRA_EGUI_FAKE_UPDATE` 等の視覚スモーク用ハッチ）。
-        # 名前の検証は `Invoke-SnotraEnvironment` が行う（ここでは合流だけ）。
+        # 名前の文字種の検証は `Invoke-SnotraEnvironment` が行う。**予約キー
+        # （`SNOTRA_CONFIG_DIR` / `SNOTRA_TRACE`）の重複はここで弾く**——弾かずに合流させると
+        # 後勝ちで `-ConfigDir` が無効化され、この関数が構造的に保証していた「seed した
+        # プロファイル以外を読まない」が黙って破れる（#755/#801 是正 C）。
         [hashtable]$ExtraVariables = @{}
     )
+
+    $reservedVariableNames = @('SNOTRA_CONFIG_DIR', 'SNOTRA_TRACE')
+    foreach ($k in $ExtraVariables.Keys) {
+        if ($reservedVariableNames -contains $k) {
+            throw ("ExtraVariables に予約済みの環境変数名 '$k' が含まれています。" +
+                "-ConfigDir / -Trace 経由でのみ設定してください（黙って上書きを許すと、" +
+                "検証用プロファイル以外の実 config を読み書きしたまま検査が緑で終わりえます）。")
+        }
+    }
 
     $variables = @{ SNOTRA_CONFIG_DIR = $ConfigDir }
     if ($Trace) { $variables.SNOTRA_TRACE = '1' }
@@ -489,6 +501,13 @@ trace に述語を満たす事象が現れるまで待つ（待ちループの�
 **親スコープの変数を捕まえない**（実測: 予算 4000ms に対し中断せず 4031ms 待った）。捕まえ
 損ねても**発火しないだけ**なので通った実行では観測されず、「本体が死んでも予算いっぱい待つ」
 という退化が黙って入る。プロセスを型付きで受け取れば、この間違いは書けなくなる。
+
+**presence ではなく件数の下限（`MinMatchCount`）で待つ。** 既定の 1 は従来どおり「1 件でも
+あれば成立」で、複数回同じイベント名を待つ呼び出し側（例: show → hide → show の 2 周目）が
+**1 周目の行に毎回一致して即座に戻る**事故を防ぐのはこの下限だけである（#755/#801 是正 A）。
+呼び出し側は行為（打鍵等）の**前**に `Get-SnotraTraceEventCount` で件数を数え、
+`件数 + 1` を渡すことで「これから起きる新しい 1 件」を待てる。マーカーを行為の前に打つ考え方は
+`SnotraTraceInvariants.psm1` の `Get-SnotraTraceMarker` と同じである。
 #>
 function Wait-SnotraTraceCondition {
     [CmdletBinding()]
@@ -502,7 +521,9 @@ function Wait-SnotraTraceCondition {
         [int]$PollMs = 100,
         # 与えると、このプロセスが終了した時点で期限を待たずに諦める（待っても変わらないため）。
         [System.Diagnostics.Process]$AbortIfExited,
-        [string]$Description = 'trace の条件'
+        [string]$Description = 'trace の条件',
+        # 一致件数がこれ以上になるまで待つ。既定 1 は「presence」（従来の挙動）と同じ。
+        [int]$MinMatchCount = 1
     )
 
     $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
@@ -521,8 +542,8 @@ function Wait-SnotraTraceCondition {
             $readErrors++
             $lastReadError = $snapshot.ReadError
         }
-        $matched = @($snapshot.Events | Where-Object -FilterScript $Predicate | Select-Object -Last 1)
-        if ($matched.Count -gt 0) {
+        $matched = @($snapshot.Events | Where-Object -FilterScript $Predicate)
+        if ($matched.Count -ge $MinMatchCount) {
             $elapsed = [int]([DateTime]::UtcNow - $started).TotalMilliseconds
             if ([DateTime]::UtcNow -ge $deadline) {
                 Write-Warning ("$Description は予算 ${TimeoutMs}ms を過ぎた評価で成立しました" +
@@ -531,7 +552,7 @@ function Wait-SnotraTraceCondition {
             if ($readErrors -gt 0) {
                 Write-Warning "$Description の待ちで trace の読み取りに失敗した周回が $readErrors 回ありました: $lastReadError"
             }
-            return $matched[0]
+            return ($matched | Select-Object -Last 1)
         }
         if ($null -ne $AbortIfExited -and $AbortIfExited.HasExited) { $aborted = $true; break }
         if ([DateTime]::UtcNow -ge $deadline) { break }
@@ -562,13 +583,40 @@ function Wait-SnotraTraceEvent {
         [string]$EventName,
         [Parameter(Mandatory)]
         [int]$TimeoutMs,
-        [int]$PollMs = 200
+        [int]$PollMs = 200,
+        # 同名イベントを周回のたびに待つ呼び出し側向け（#755/#801 是正 A）。行為の前に
+        # `Get-SnotraTraceEventCount` で数えた件数 + 1 を渡すと、既に出ている古い 1 件に
+        # 即一致して戻ることがなくなる。既定 1 は presence のままの従来の挙動。
+        [int]$MinMatchCount = 1
     )
 
     # 待ちループの形（期限跨ぎ・読み取り失敗の扱い）は `Wait-SnotraTraceCondition` が単独で持つ。
     # ここに写しを置くと、穴を塞ぐ変更が片方だけに入る（#872 では実際に 2 か所へ分かれていた）。
     return Wait-SnotraTraceCondition -Path $Path -TimeoutMs $TimeoutMs -PollMs $PollMs `
+        -MinMatchCount $MinMatchCount `
         -Description "trace の $EventName" -Predicate { $_.event -eq $EventName }.GetNewClosure()
+}
+
+<#
+.SYNOPSIS
+指定イベント名の現在の一致件数を数える（`Wait-SnotraTraceEvent -MinMatchCount` のマーカー用）。
+
+.DESCRIPTION
+**行為（打鍵等）の前に呼ぶこと。** 後に呼ぶと、行為が引き起こした 1 件が自分自身の
+ベースラインへ紛れ込み、`MinMatchCount = 件数 + 1` が実際には「もう 1 件」を要求してしまう
+（#755/#801 是正 A）。
+#>
+function Get-SnotraTraceEventCount {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path,
+        [Parameter(Mandatory)]
+        [string]$EventName
+    )
+
+    $snapshot = Read-SnotraTraceSnapshot -Path $Path
+    return @($snapshot.Events | Where-Object { $_.event -eq $EventName }).Count
 }
 
 function Send-SnotraKey {
@@ -770,6 +818,7 @@ Export-ModuleMember -Function @(
     'Read-SnotraTraceSnapshot'
     'Wait-SnotraTraceCondition'
     'Wait-SnotraTraceEvent'
+    'Get-SnotraTraceEventCount'
     'Send-SnotraKey'
     'Send-SnotraKeyChord'
     'Wait-SnotraWindow'

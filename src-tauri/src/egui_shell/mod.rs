@@ -39,8 +39,8 @@ mod window_coordinator;
 // からしか呼ばれず、`position_results_below_main` は親である本ファイルが
 // `window_coordinator::` で直に呼ぶ。
 pub(crate) use window_coordinator::{
-    DriveResultsInputs, drive_results_window, hide_egui_main, show_egui_main, wake_main,
-    wake_results,
+    DriveResultsInputs, clamp_main_into_work_area, drive_results_window, hide_egui_main,
+    show_egui_main, wake_main, wake_results,
 };
 
 // mod.rs（窓生成・managed state）が消費する。RowsSnapshot は view.rs（main の snapshot 発行）・

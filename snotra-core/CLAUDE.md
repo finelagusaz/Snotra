@@ -1,6 +1,6 @@
 # snotra-core
 
-純ロジック lib crate（14モジュール + `lib.rs`）。Win32 非依存でユニットテスト可能。
+純ロジック lib crate。Win32 非依存でユニットテスト可能。
 
 - 各ルールは「**太字 = 守る指示**、後続 = 理由・経緯」の形式。迷ったら太字部分に従えば安全
 - 本ファイルの構成: モジュール構成（責務 + モジュール別の不変条件）→ 開発ルール・実装前チェック → クロスモジュール不変条件 → データ永続化 → モジュール別の詳細規約
@@ -9,6 +9,7 @@
 
 各モジュールの責務宣言は各ファイルの `//!`（module doc）を正本とする。本節はファイル一覧と、`//!` に収まらない**横断不変条件・チェックリスト**を記す。`//!` はコード側で改名に追従し、`cargo doc` の intra-doc link 検査が相互参照の腐敗を捕まえる（#562）。
 
+- `lib.rs`: モジュール宣言のみ（責務を持たない）
 - `engine.rs` — 検索・履歴・設定を単一ロックに統合する facade（責務は `//!`）。以下は engine ロックに閉じる横断コヒーレンシ:
   - **`IndexInputs`**: index 構築入力（scan / show_hidden_system / show_icons / include_path_env / migemo_enabled）の単一定義
   - **`index_stale` ledger**: `mark_index_stale` / `begin_index_drain` → snapshot / `complete_index_drain` → swap + re-diff で stale をクリア / `is_index_stale`。コヒーレンシ判断を engine Mutex（軸1）に閉じ、config 変更→index 再構築の lost-update を塞ぐ（#347/#348-A）
@@ -46,6 +47,7 @@
 - `instant.rs` — インスタントコマンド（プレフィックス起動の URL/コマンド）の展開。公開関数の署名・契約と変数展開の中核（修飾子パイプ・encoding-as-sink・`{{X}}` エスケープ・date/uuid 純粋性・`format_date` の panic 安全 #394）は `//!` と各 `///` を正とする
 - `ui_types.rs`
 - `tests/search_frame_cost.rs`（crate ルート統合テスト）: #634 G-SYNC の `Engine::search` facade フレームコスト実測ハーネス（`#[ignore]`・手元 release 実行専用。`search/tests/performance.rs` との層の区別は `//!`）
+- `tests/memory_footprint.rs`（crate ルート統合テスト）: 索引の常駐ヒープをアロケータ実測で取るハーネス（`#[ignore]`・手元 release 実行専用。責務は `//!`、計測値は `PERFORMANCE.md`）
 
 ## 開発ルール
 
@@ -69,7 +71,7 @@
   - migemo は index 構築入力なので、engine の `IndexInputs`（`config_watcher` の kick 判定と `complete_index_drain` の re-diff が共有する**単一定義**）に含める（#347 Phase 2 で `needs_reindex` / in-flight `needs_rebuild` を `IndexInputs` に統合・削除済み）
 - incremental search キャッシュに述語や状態を追加するとき: 状態は `IncrementalCache` 型に集約済み（#601。`prev_query` / `prev_candidates` / `prev_mode` / `prev_kana_query`）。read（`can_reuse`）と write（`update`）を**対で**変更し、`/cache-check` で単調性を検証する。read が参照する全フィールドを `update` が書くこと（型に閉じたので対称更新漏れは起きにくいが、フィールド追加時は両メソッドを同時に触る）
 - `query.rs` の正規化を変更する場合は、タブ・全角スペース・NBSP を `' '` に統一するテストと冪等性テストを追加または更新する
-- `folder.rs` のソート順変更時: ソート順は「`is_folder` 降順 → `exp_count` 降順 → `lower_name` 昇順 → `path` 昇順」で、先頭要素が最良（最優先）。`select_nth_unstable_by`（O(N) 平均の top-k 選択）＋ `sort_by`（安定ソートで確定順）の2段階を崩さない。入力順に依存しないことを確認するテスト（`score_entries_top_k_order_independent_of_input_order`）を通す
+- `folder.rs` のソート順変更時: 順序（先頭要素が最良）と 2 段階の構造（O(N) 平均の top-k 選択 ＋ 安定ソート）は `//!` が正本——崩さない。入力順に依存しないことを確認するテスト（`score_entries_top_k_order_independent_of_input_order`）を通す
 
 ## クロスモジュール不変条件
 

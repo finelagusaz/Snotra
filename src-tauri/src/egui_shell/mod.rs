@@ -59,9 +59,12 @@ pub(crate) use visual::{RowTheme, VisualSnapshot};
 
 // view.rs の icon texture driver（worker spawn / load_texture 適用）が消費する（#532 SU4 Task 5）。
 pub(crate) use icon_textures::{IconMsg, needs_extraction, png_to_color_image, retain_visible};
-// `blur_should_hide` / `blur_grace_action` / `BLUR_GRACE` は re-export しない——**消費点は
+// `blur_should_hide` / `blur_grace_action` / `BLUR_GRACE` は re-export しない——**判定の消費点は
 // `BlurGrace::observe` に一本化した**（#711 で判定と再要求の 2 経路を型で塞いだものを、
 // #745 の状態機械化でも維持する）。判定そのものは純粋核の内部で生きている。
+// **ただし表現不能化ではない**——Rust は enum の variant 単位の可視性を持たないため、
+// `self.blur_grace = BlurGrace::Focused;` のような**状態の直接代入は crate 内でコンパイルが
+// 通る**（`wake_main` / `wake_results` と同じ性格で、そこは規範が守る）。
 // blur 猶予の 2 件は launcher_controller.rs が、plan_hotkey は main.rs 側が消費する。
 pub(crate) use lifecycle::{BlurAction, BlurGrace, HotkeyPlan, plan_hotkey};
 // launcher_controller.rs が folder 展開（#532 SU3 M2）・Escape ラダー・Enter flush で消費する。

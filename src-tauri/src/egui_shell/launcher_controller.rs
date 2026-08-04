@@ -137,7 +137,7 @@ impl LauncherController {
         let (folder_tx, folder_rx) = channel();
         Self {
             app_handle,
-            blur_grace: crate::egui_shell::BlurGrace::NeverFocused,
+            blur_grace: crate::egui_shell::BlurGrace::default(),
             state: SearchState::new(),
             search_debounce: Debouncer::new(Duration::from_millis(50), true),
             last_input_at: Instant::now(),
@@ -939,9 +939,8 @@ impl LauncherController {
             self.launching = None;
             self.notice.clear();
             // #745: blur 猶予も hide を跨がない。**これを消すと、猶予 armed のまま別経路で
-            // hide された後の再 show で、初フレームが `focused == false` なら即座に（または
-            // 100ms 後に）自動 hide される**。`launcher_controller.rs` はユニットテストを
-            // 持てないため、この呼び出しの消失を捕まえる検査は無い（受容残余・機械化は #930）。
+            // hide された後の再 show で、初フレームが `focused == false` なら自動 hide される**
+            //（消失に検知手段が無いことは `BlurGrace::reset` の doc が正本）。
             self.blur_grace.reset();
             true
         } else {
@@ -1069,9 +1068,7 @@ impl LauncherController {
     /// **旧・段 14（focus 復帰で猶予を捨てる）と旧・段 34（前フレームの focus を畳む）は
     /// この 1 段へ合流した**（#745）。前フレームとの比較は `BlurGrace` が状態として持つ。
     ///
-    /// **`now` はここで 1 回だけ読む**——`BlurGrace::observe` は時計を読まず、武装にも経過の
-    /// 算出にも同じ `now` を使う。型の中で読み直すと判定と減算の間に時計が進み、
-    /// `Duration` 減算が underflow しうる（release は `panic="abort"`・設計 spec §5 errata）。
+    /// **`now` はここで 1 回だけ読む**——多重読みが underflow を招く機序は `BlurGrace` の doc。
     pub(super) fn on_focus_changed(&mut self, focused: bool, ctx: &egui::Context) {
         // **`let` へ束縛してから渡す**——`self.blur_grace.observe(.., self.auto_hide_enabled())`
         // は two-phase borrow に依存する形になり、意図が読み取りにくい。

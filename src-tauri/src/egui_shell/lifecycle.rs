@@ -25,8 +25,7 @@ pub(crate) fn plan_hotkey(visible: bool, alt_pressed: bool, hotkey_toggle: bool)
 /// blur（focus 喪失）から hide 判定までの猶予（#532 SU2）。
 /// **予約と判定の両方がこの値を使う**——片方だけ変えると「予約は 100ms 後・判定は別の閾値」
 /// という静かな不整合になる。
-/// **このモジュールの外へ出さない**（#745）——外の消費点は `BlurGrace::observe` に一本化した。
-const BLUR_GRACE: std::time::Duration = std::time::Duration::from_millis(100);
+const BLUR_GRACE: Duration = Duration::from_millis(100);
 
 /// blur 猶予のこのフレームでの処置（#711・契約③）。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -34,7 +33,7 @@ pub(crate) enum BlurAction {
     /// 猶予明け + 条件成立 → hide を要求する。
     Hide,
     /// 猶予中 → 残余で再要求する（armed の間は毎フレーム）。
-    Rearm(std::time::Duration),
+    Rearm(Duration),
     /// 何もしない。**3 つの由来がある**——(1) `blur_grace_action` が「**猶予明け**だが
     /// `auto_hide` が off」で返す（猶予**中**は auto_hide の値によらず `Rearm` である）、
     /// (2) `BlurGrace::observe` が focus を得たフレームで返す、(3) 同じく `NeverFocused`
@@ -51,24 +50,23 @@ pub(crate) enum BlurAction {
 /// 典型ケースなので、確率は低くない。** 減算を `elapsed < BLUR_GRACE` の分岐内へ閉じるのと
 /// 併せて、この 1 回読みが安全性を担っている（設計 spec §5 の errata）。
 ///
-/// **再要求するのは「時間経過で解消する不成立」だけ**である。`focused` / `auto_hide` は
-/// 時計と無関係な入力で、時間を進めても変わらない——再要求すると
-/// `request_repaint_after(ZERO)` の永久スピンになり、契約②で潰した消費を別の扉から
-/// 再導入する。それらの変化は変えた側が wake する責務を負う（契約①）。
+/// **再要求するのは「時間経過で解消する不成立」だけ**である。`auto_hide` は時計と無関係な
+/// 入力で、時間を進めても変わらない——再要求すると `request_repaint_after(ZERO)` の永久
+/// スピンになり、契約②で潰した消費を別の扉から再導入する。その変化は変えた側が wake する
+/// 責務を負う（契約①）——`auto_hide` は `config-applied` wake が持ち主であり、例外は無い。
 ///
-/// **時計と無関係な入力はこの 2 つで全部であり、どちらも wake の持ち主がいる**——`focused` は
-/// tao の窓イベント（`on_window_event`）、`auto_hide` は `config-applied` wake。ゆえに
-/// **契約①の観点では**例外が無い（入力集合が縮んだ経緯は `blur_should_hide` の doc）。
+/// **`focused` を引数に取らない**（#745）——focus 復帰は `BlurGrace::observe` の早期 return が
+/// 吸収しており、この層へは届かない。引数に残すと**到達不能な分岐**を読み手に追わせ、かつ
+/// 隣接する 2 つの `bool` として取り違えの余地を作る。focus のゲート自体は
+/// `blur_should_hide` の 3 連言が SPEC §8.6 と一対一で保持している。
 ///
-/// **この主張は wake の持ち主についてだけである。** `Idle` を返したフレームで猶予が armed の
-/// まま残ることは意図である（`BlurGrace` の doc 参照）——hide を跨いだ持ち越しは #745 で
-/// `BlurGrace::reset` が塞いだ。
+/// `Idle` を返したフレームで猶予が armed のまま残ることは意図である（`BlurGrace` の doc）。
 ///
 /// **このモジュールの外へ出さない**（#745）——外の消費点は `BlurGrace::observe` に一本化した。
 /// 公開したままにすると `observe` を迂回する経路が残り、#711 が「消費点の一本化を型で塞ぐ」
 /// ことで得たものが散文へ戻る。
-fn blur_grace_action(elapsed: std::time::Duration, focused: bool, auto_hide: bool) -> BlurAction {
-    if blur_should_hide(focused, elapsed >= BLUR_GRACE, auto_hide) {
+fn blur_grace_action(elapsed: Duration, auto_hide: bool) -> BlurAction {
+    if blur_should_hide(false, elapsed >= BLUR_GRACE, auto_hide) {
         BlurAction::Hide
     } else if elapsed < BLUR_GRACE {
         BlurAction::Rearm(BLUR_GRACE - elapsed)
@@ -107,10 +105,19 @@ fn blur_should_hide(focused: bool, grace_elapsed: bool, auto_hide: bool) -> bool
 ///
 /// **`Idle` は武装を解かない。** `auto_hide` が off の間に猶予が明けても `Blurred` のまま
 /// 留まり、後から `auto_hide` が有効化されれば（`config-applied` wake で）hide できる。
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+///
+/// **同じ `egui_shell/` の armed 期限 2 つ（`notify::NoticeSlot` / `layout::Debouncer`）とは
+/// 時刻の持ち方が違う**——あちらは基準 `Instant` を driver 側に置いて `Duration` を注入されるが、
+/// こちらは `Instant` 自体を状態として持つ。**意図的な差である**: 猶予の起点は「blur が起きた
+/// 瞬間」であって driver が基準を保つ意味が無く、`Instant` を呼び出し点で 1 回読む形のほうが
+/// #711 errata（多重読みの禁止）へ強く適合する（`notice_base.elapsed()` は実際に 1 フレームで
+/// 3 回読まれている）。揃え忘れではないので `Duration` 注入へ書き換えないこと。
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum BlurGrace {
     /// show 直後。**まだ一度も focus を得ていない**——この状態からは武装しない。
-    /// `Hide` を返した直後もここへ戻る（現行 2 フィールド表現の `(false, None)` に対応）。
+    /// `Hide` を返した直後もここへ戻る（旧 2 フィールド表現の `(false, None)` に対応）。
+    /// **初期状態でもある**——`reset()` と `LauncherController::new` の両方がここへ寄る。
+    #[default]
     NeverFocused,
     /// focus を持っている。
     Focused,
@@ -123,15 +130,14 @@ impl BlurGrace {
     /// この呼び出しが消えると #745 が再発するが、`launcher_controller.rs` は `AppHandle` に
     /// 縛られてユニットテストを持てないため**検知手段が無い**（受容残余・機械化は #930）。
     pub(crate) fn reset(&mut self) {
-        *self = Self::NeverFocused;
+        *self = Self::default();
     }
 
     /// 段 16–17: 今フレームの focus を畳み、このフレームの処置を返す。
     ///
-    /// 副作用（`emit_hide` / `request_repaint_after`）は呼び出し側が持つ。`auto_hide` は
-    /// 実行中 config の毎フレーム live-read（#576）で、値渡しにしてあるのは遅延評価が
-    /// borrow checker を通らないため——`observe(.., || self.auto_hide_enabled())` は
-    /// レシーバが `&mut self.blur_grace`、クロージャが `&self` 全体を捕捉して衝突する。
+    /// 副作用（`emit_hide` / `request_repaint_after`）は呼び出し側が持つ。**`auto_hide` は
+    /// 値渡しである**（実行中 config の毎フレーム live-read・#576）——遅延評価やキャッシュを
+    /// 選ばなかった理由は `ADR-blur-grace-single-field-state-machine`。
     #[must_use]
     pub(crate) fn observe(&mut self, focused: bool, now: Instant, auto_hide: bool) -> BlurAction {
         if focused {
@@ -146,12 +152,12 @@ impl BlurGrace {
                 // 武装したフレームの経過は厳密に 0 ゆえ必ず `Rearm(BLUR_GRACE)` になる
                 // （`blur_grace_rearms_while_armed_and_hides_after` が固定）。判定を
                 // `blur_grace_action` に通すのは、閾値の出所を 1 つに保つためである。
-                blur_grace_action(Duration::ZERO, false, auto_hide)
+                blur_grace_action(Duration::ZERO, auto_hide)
             }
             Self::Blurred(at) => {
                 // `now - at` ではなく飽和減算を使う——呼び出し側が単調な `now` を渡す限り
                 // 負にはならないが、`Instant` の `Sub` が持つ panic 経路を残さない。
-                let action = blur_grace_action(now.saturating_duration_since(at), false, auto_hide);
+                let action = blur_grace_action(now.saturating_duration_since(at), auto_hide);
                 if action == BlurAction::Hide {
                     *self = Self::NeverFocused;
                 }
@@ -287,7 +293,8 @@ mod tests {
             g.observe(false, t + Duration::from_millis(150), true),
             BlurAction::Hide
         );
-        assert_eq!(g, BlurGrace::NeverFocused);
+        // **内部表現ではなく振る舞いで固定する**——`Idle` が返ることは `NeverFocused` を
+        // 一意に示す（`Focused` なら次の blur で `Rearm`、`Blurred` のままなら `Hide`）。
         assert_eq!(
             g.observe(false, t + Duration::from_secs(1), true),
             BlurAction::Idle,
@@ -318,26 +325,21 @@ mod tests {
     fn blur_grace_rearms_while_armed_and_hides_after() {
         let ms = Duration::from_millis;
         // 猶予中は残余で再要求する（契約③: 予約はフレームの到来を約束しない）。
-        assert_eq!(
-            blur_grace_action(ms(0), false, true),
-            BlurAction::Rearm(ms(100))
-        );
-        assert_eq!(
-            blur_grace_action(ms(99), false, true),
-            BlurAction::Rearm(ms(1))
-        );
+        assert_eq!(blur_grace_action(ms(0), true), BlurAction::Rearm(ms(100)));
+        assert_eq!(blur_grace_action(ms(99), true), BlurAction::Rearm(ms(1)));
         // 境界ちょうどは Hide 側（`>=`）——減算に落ちないことも兼ねて固定する。
-        assert_eq!(blur_grace_action(BLUR_GRACE, false, true), BlurAction::Hide);
-        assert_eq!(blur_grace_action(ms(150), false, true), BlurAction::Hide);
+        assert_eq!(blur_grace_action(BLUR_GRACE, true), BlurAction::Hide);
+        assert_eq!(blur_grace_action(ms(150), true), BlurAction::Hide);
     }
 
     #[test]
     fn blur_grace_stays_idle_when_time_cannot_resolve_it() {
         let ms = Duration::from_millis;
         // 猶予明けだが時計と無関係な条件で不成立 → **再要求しない**（永久スピンを作らない）。
-        // 入力集合と wake の持ち主についての主張は `blur_grace_action` の doc が正本。
-        assert_eq!(blur_grace_action(ms(150), false, false), BlurAction::Idle); // auto_hide off
-        assert_eq!(blur_grace_action(ms(150), true, true), BlurAction::Idle); // focus 復帰
+        // **この層に残る時計非依存の入力は `auto_hide` だけである**——focus 復帰は
+        // `BlurGrace::observe` の早期 return が吸収しており、その挙動は
+        // `blur_grace_drops_pending_when_focus_returns` が固定する。
+        assert_eq!(blur_grace_action(ms(150), false), BlurAction::Idle);
     }
 
     #[test]
@@ -345,7 +347,7 @@ mod tests {
         // 猶予を大きく超えた経過でも減算に落ちない（設計 spec §5 errata の回帰検出器——
         // release は panic = "abort" ゆえ underflow はプロセス停止になる）。
         assert_eq!(
-            blur_grace_action(Duration::from_secs(10), false, false),
+            blur_grace_action(Duration::from_secs(10), false),
             BlurAction::Idle
         );
     }

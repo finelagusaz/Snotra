@@ -65,34 +65,41 @@ $script:InvariantNames = Get-SnotraTraceInvariantNames
 # クリック逆流の読み点・位置復元・フォント hot-reload・キャレット・ベースライン・通知期限）であり、
 # 機能単位の受け入れ確認は PR 限りの目視表が持つ。**新機能のために先回りで足さない**——足す条件は
 # 「その表示が実際に一度回帰したとき」である（#700 → 項目 11 がその経路）。
+#
+# **`inv` は issue 番号で書く。連番の ID を振らない**（#835 で置換）。かつては `I1`〜`I13` の
+# 連番だったが、**定義元がどこにも無かった**——このファイルにも無く、grep で出てくる
+# `.claude/hooks/post-edit.mjs` の `I6` / `I11` / `I13` は別体系である。結果として
+# **同じ `I7` が項目 1 では「raw 3 操作」・項目 6 では「z-order の所在」という別の不変条件を
+# 指していた**。`.claude/rules/governance-docs.md` の「序数で他を指してはならない」——
+# 番号は構造を凍らせ、ずれても誰も気づかない——が名指しで禁じる形そのものである。
 $items = @(
   @{ id = 1; title = "show → 1 文字打鍵でフォーカスを奪わない"
-     inv = "I7（results は raw 3 操作・tao の SW_SHOW は活性化する）"
+     inv = "#646 PR2（results は raw 3 操作・tao の SW_SHOW は活性化する）"
      steps = @("ホットキーで検索窓を出す", "1 文字打つ（results 窓が main の直下に出る）", "続けて 2 文字目を打つ")
      expect = "2 文字目が入力欄に入る。フォーカスが results 窓へ移らない"
      trace = @("egui_show:done", "egui_results:show") }
   @{ id = 2; title = "hide で両窓が同時に消える"
-     inv = "I3（main_visible=false は results.hide() の前）・I7"
+     inv = "#671 PR A′（main_visible=false は results.hide() の前）・#646 PR2（raw 3 操作）"
      steps = @("results が出ている状態にする", "ホットキーで隠す")
      expect = "main と results が同時に消える。**results だけが最前面に残らない**"
      trace = @("egui_hide:done", "egui_results:hide") }
   @{ id = 3; title = "行クリック起動で古い行がちらつかない"
-     inv = "I1（result_count はクリック逆流の消費**後**に読む）"
+     inv = "#752 F2（result_count はクリック逆流の消費**後**に読む）"
      steps = @("複数件ヒットするクエリを打つ", "行をマウスでクリックして起動する")
      expect = "起動の瞬間に**古い行が 1 フレーム残らない**。results はそのまま消える"
      trace = @("egui_launch", "egui_results:hide") }
   @{ id = 4; title = "main のドラッグに results が追従する"
-     inv = "I13（position_results_below_main の第 2 消費者 = Moved リスナー）"
+     inv = "#646 PR2 決定 10（position_results_below_main の第 2 消費者 = Moved リスナー）"
      steps = @("results を出した状態で、入力欄以外の余白をドラッグして窓を動かす")
      expect = "ドラッグ**中**も results が main の直下に追従する（離した後だけでなく）"
      trace = @() }
   @{ id = 5; title = "visual 設定の変更が results に反映される"
-     inv = "I5（drive 末尾の無条件 wake_results・level-triggered）"
+     inv = "#673 決定 5 / #697（drive 末尾の無条件 wake_results・level-triggered）"
      steps = @("results を出したまま設定画面を開く", "背景色か font_size を変える", "設定を適用する")
      expect = "results が**キー入力なしで**新しい見た目に描き直される"
      trace = @() }
   @{ id = 6; title = "設定画面の間だけ最前面が外れる"
-     inv = "I7（z-order は集約されていない: main は commands/window.rs・results は ResultsWindow）"
+     inv = "#749（z-order は window_coordinator の責務に含めなかった: main は commands/window.rs・results は ResultsWindow）"
      steps = @("results を出した状態で設定画面を開く", "設定画面を閉じる")
      expect = "開いている間は両窓が設定画面の背後へ回り、閉じると両方とも最前面に戻る"
      trace = @() }
@@ -109,17 +116,17 @@ main 窓自身は別軸で見る: **バー（帯）そのものが作業領域�
 "@
      trace = @() }
   @{ id = 8; title = "hide → 再 show で位置が保たれる"
-     inv = "save_placement_relative と position_on_target_monitor の両方が移設された確認"
+     inv = "#749（save_placement_relative と position_on_target_monitor の両方が window_coordinator へ移設された確認）"
      steps = @("main を既定と違う位置へ動かす", "隠す", "もう一度出す")
      expect = "同じ位置に戻る"
      trace = @("egui_show:done") }
   @{ id = 9; title = "カーソルのあるモニターに出る"
-     inv = "位置復元側（position_on_target_monitor）の移設確認"
+     inv = "#749（位置復元側 position_on_target_monitor の移設確認）"
      steps = @("別モニターへマウスカーソルを移す（`follow_cursor_monitor = true` の場合）", "ホットキーを押す")
      expect = "カーソルのあるモニターに出る。単一モニター環境では **skip** してよい"
      trace = @("egui_show:done") }
   @{ id = 10; title = "hide 中の font_size 変更が再 show の 1 フレーム目から効く"
-     inv = "I11（reset_size_guard は同一フレームの drive より前）"
+     inv = "#749（reset_size_guard は同一フレームの drive より前）"
      steps = @("検索窓を隠す", "隠したまま設定画面で font_size を変える", "ホットキーで出して 1 文字打つ")
      expect = "results が**最初のフレームから**新しい行高で出る（一瞬だけ旧行高で出て直る、が無い）"
      trace = @("egui_show:done", "egui_results:show") }
@@ -127,7 +134,7 @@ main 窓自身は別軸で見る: **バー（帯）そのものが作業領域�
   # 既存の 3 と 10 が「クリック起動で古い行がちらつかない」（#699）と「reset-on-show と
   # results driver の順序」を既にカバーするため、重複させていない。
   @{ id = 11; title = "結果を ↑ で選び直した直後の打鍵が末尾に入る"
-     inv = "↑↓ の消費（events.retain）は TextEdit の構築より前（#700）"
+     inv = "#700（↑↓ の消費 events.retain は TextEdit の構築より前）"
      steps = @("複数件ヒットするクエリ（例: `abc`）を打つ", "↑ を 1 回押して選択を動かす", "続けて 1 文字打つ（例: `x`）")
      expect = @"
 打った文字が**キャレット位置（末尾）**に入る（`abc` → ↑ → `x` で `abcx`）。
@@ -136,7 +143,7 @@ focus を保持したままの TextEdit が同じ ↑ を処理してキャレ�
 "@
      trace = @() }
   @{ id = 12; title = "Latin と CJK が混在する行のベースラインが揃う"
-     inv = "フォント登録は index 0 への insert（push = 末尾ではない・#399 / #579）"
+     inv = "#399 / #579（フォント登録は index 0 への insert・push = 末尾ではない）"
      steps = @("Latin と日本語が 1 行に混ざるクエリを打つ（例: `README` と `設定` が同居するパス）",
                "検索バーの入力欄と、results の行（名前・パスの 2 行とも）を見る",
                "config の `visual.font_family` を CJK をカバーしないフォント（例: `Segoe UI`）にして繰り返す")
@@ -149,7 +156,7 @@ softbuffer はカバレッジ AA を持たないため、2 フォント間の分
 "@
      trace = @() }
   @{ id = 13; title = "起動失敗の通知が数秒で自然に消える"
-     inv = "通知の期限を張る唯一の主体は notice.remaining() ブロック（分割で drain_launch と別モジュールへ割れた）"
+     inv = "#666 段 3（通知の期限を張る唯一の主体は notice.remaining() ブロック——分割で drain_launch と別モジュールへ割れた）"
      steps = @("存在しないパス、または起動に失敗する項目を Enter で起動する（削除済みのショートカット等）",
                "検索バー直下に赤系の失敗通知が出ることを確認する",
                "**何も操作せずに**放置する")

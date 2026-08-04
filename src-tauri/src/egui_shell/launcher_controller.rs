@@ -669,12 +669,11 @@ impl LauncherController {
             .unwrap_or_else(|| SearchConfig::default().instant_command_prefix)
     }
 
-    /// index 構築中か（AppState.indexing: AtomicBool・state.rs:14 で確認済み）。
+    /// index 構築中か（AppState.indexing: AtomicBool・state.rs:14 で確認済み）。実装は
+    /// `window_coordinator::read_indexing` へ委譲する——show 経路とバイト単位で同一の
+    /// 独立実装を持っていた重複の解消（レビュー是正 3）。
     pub(super) fn indexing(&self) -> bool {
-        self.app_handle
-            .try_state::<crate::AppState>()
-            .map(|s| s.indexing.load(std::sync::atomic::Ordering::Relaxed))
-            .unwrap_or(false)
+        super::window_coordinator::read_indexing(&self.app_handle)
     }
 
     /// UI 文言の言語（config general.language・起動時一回でなく都度読み——lock 1 回/フレームの

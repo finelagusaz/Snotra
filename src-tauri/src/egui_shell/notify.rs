@@ -42,6 +42,24 @@ pub fn overlay_kind(indexing: bool, launching: bool, has_notice: bool) -> Option
     }
 }
 
+/// status 行が 1 本出るか。**優先順そのものは `overlay_kind` が正本**であり、この述語は
+/// 「行が出るか」だけを返す（`layout::main_window_height` の `status_height` の材料）。
+///
+/// **`results_view` を独立の引数に取るのは show 経路のためである。** `show_egui_main` は
+/// フレームの外で「最初のフレームが描く高さ」を導く必要があり、reset-on-show 後の値を
+/// リテラルで渡す（`window_coordinator.rs` の呼び出し点）。毎フレーム側は実際の値を渡す。
+///
+/// **`layout.rs` へ置いてはならない**——同ファイルは `std::time::Duration` 以外の依存を
+/// 1 つも持たない自己完結した純粋核であり、この述語の意味論は高さの算術ではなく overlay 側である。
+pub fn status_row_present(
+    indexing: bool,
+    results_view: bool,
+    launching: bool,
+    has_notice: bool,
+) -> bool {
+    overlay_kind(indexing && results_view, launching, has_notice).is_some()
+}
+
 /// 一時通知の単一スロット。新規 set は旧通知を上書き（`clearLaunchNotice`→set と同型）。
 /// `now` は driver の基準 Instant からの経過（単調）。
 #[derive(Default)]
@@ -366,6 +384,29 @@ mod tests {
         );
         assert!(!t.show_install, "失敗時に [今すぐ更新] は出さない");
         assert!(t.buttons_enabled, "[閉じる] は押せる");
+    }
+
+    #[test]
+    fn status_row_absent_when_no_source_is_active() {
+        assert!(!status_row_present(false, true, false, false));
+    }
+
+    #[test]
+    fn indexing_row_requires_results_view() {
+        assert!(
+            status_row_present(true, true, false, false),
+            "Results ビューで indexing 中なら案内の行が出る"
+        );
+        assert!(
+            !status_row_present(true, false, false, false),
+            "tool / folder 段では indexing 案内を出さない（view.rs の連言と同じ）"
+        );
+    }
+
+    #[test]
+    fn launching_and_notice_do_not_depend_on_results_view() {
+        assert!(status_row_present(false, false, true, false));
+        assert!(status_row_present(false, false, false, true));
     }
 
     #[test]

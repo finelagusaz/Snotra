@@ -455,6 +455,178 @@ try {
   }
 }
 
+# **シナリオ 2 の起動前に、シナリオ 1 のプロセスの終了を待つ**（#755/#801 是正 B）。
+# `Stop-Process -Force` は終了を待たない。`tauri_plugin_single_instance` が登録されているため、
+# 先発がまだ生きたまま後発を起動すると、後発は先発へ通知して即終了し——trace が 1 行も
+# 書かれないまま `hotkey:registered` の待ちが予算を使い切ってから throw する（間欠的な赤）。
+$scenario1ExitWaitMs = 5000
+if (-not $proc.WaitForExit($scenario1ExitWaitMs)) {
+  throw ("シナリオ 1 のプロセス（pid=$($proc.Id)）が ${scenario1ExitWaitMs}ms 以内に終了しませんでした。" +
+    "single-instance 転送によりシナリオ 2 が沈黙する恐れがあるため中断します。")
+}
+
+# ---- シナリオ 2: toast ありで 2 回目の show の高さが保たれるか（#755 / #801）----
+#
+# **既定プロファイル（toast なし）の高さ断言は両 issue を 1 件も捕まえない**——toast も status も
+# 無い状態では main は常にバー高であり、そこは一度も壊れていない。捕まえるには「toast あり」かつ
+# 「2 回目の show」が要る: #755 は 2 回目で 43px へ固着し、#801 は 1 フレームの伸びとして出る。
+# **両者は 1 回の show では排他である**（2026-08-04 実測・#878 のコメント）。
+#
+# `SNOTRA_EGUI_FAKE_UPDATE` は起動時に読まれるためシナリオ 1 に相乗りできず、起動が 1 回増える。
+#
+# 高さは **DWM の実表示矩形**（`DWMWA_EXTENDED_FRAME_BOUNDS` = 属性 9）で読む。`GetWindowRect` は
+# 不可視のリサイズ枠を含み、2 行の高さが 1 行の 2 倍にならない（実測: 118 / 64 に対し DWM は 110 / 56）。
+$toastProfileDir = Join-Path $PSScriptRoot '..\target\smoke-egui\profile-toast'
+# **font_size / bar_padding を明示 seed する**——既定値が変わってもこの検査の期待値が黙って動かない。
+$toastProfile = New-SnotraVerificationProfile -ProfileDir $toastProfileDir -ShowIcons $false `
+  -AdditionalSections "[visual]`r`nfont_size = 15`r`nbar_padding = 28"
+$expectedBarLogical = 15 + 28   # layout::Metrics::from_config: bar_height = font_size + bar_padding
+# **bar + toast/status の 2 行分**（是正 E の期待値。toast 行は bar と同じメトリクスで積まれる
+# 前提——この前提が崩れたら両方の期待値を一緒に見直すこと）。
+$expectedShowHeightLogical = $expectedBarLogical * 2
+$toastErrPath = Join-Path $toastProfileDir 'stderr.log'
+Remove-Item -LiteralPath $toastErrPath -Force -ErrorAction SilentlyContinue
+
+function Get-MainWindowDwmSize {
+  param([IntPtr]$Handle)
+  $r = New-Object SnotraSmokeInterop.Native+RECT
+  if ([SnotraSmokeInterop.Native]::DwmGetWindowAttribute($Handle, 9, [ref]$r, 16) -ne 0) {
+    throw 'DwmGetWindowAttribute(EXTENDED_FRAME_BOUNDS) に失敗しました。'
+  }
+  [pscustomobject]@{ W = $r.Right - $r.Left; H = $r.Bottom - $r.Top }
+}
+
+# **可視区間に `egui_main:height_mismatch` が現れないことを判定する（是正 D）。** #801 は
+# 「行が変わっていないのに高さが変わった」ときにだけこの trace が出る——表示直後の
+# 1 フレーム（約 16ms）の中で起きるため、`Wait-SnotraWindow`（PollMs 200）や 100ms 間隔の
+# サンプリングでは過渡をほぼ観測できない（旧 `min -ne max` 断言が原理的に無力だった理由）。
+# **判定は presence（区間内に 1 件でも出たか）で行う。** `seq` は全 trace 事象を貫く単一の
+# AtomicU64（`src-tauri/src/trace.rs`）なので、区間の境界は show/hide の `seq` で切れる
+# （`SnotraTraceInvariants.psm1` の `Get-SnotraTraceMarker` と同じ考え方）。`-BeforeSeq` を
+# 省くと「ここまでに読めた分すべて」が上限になる（最終 round・次の hide が無い場合）。
+function Test-SnotraNoHeightMismatch {
+  param(
+    [Parameter(Mandatory)] [string]$Path,
+    [Parameter(Mandatory)] [long]$AfterSeq,
+    [long]$BeforeSeq
+  )
+  $events = (Read-SnotraTraceSnapshot -Path $Path).Events
+  return @($events | Where-Object {
+    $_.event -eq 'egui_main:height_mismatch' -and [long]$_.seq -gt $AfterSeq -and
+    (-not $PSBoundParameters.ContainsKey('BeforeSeq') -or [long]$_.seq -lt $BeforeSeq)
+  })
+}
+
+# **証拠出力へ渡す起点は自前で取る**——`$launchedAt` はシナリオ 1 の起動時刻であり、
+# ここで使うと「起動からの経過」が数十秒ずれて手掛かりを誤らせる。
+$toastLaunchedAt = Get-Date
+# **高さ断言の不合格は throw ではなく `$failures` を通る**（下の round ループ）ため、
+# この scriptの`catch`（$toastErrPath を渡す）を経由せず、集計失敗ブロック（末尾）まで
+# 静かに素通りする。集計失敗ブロックが証拠を出すログをシナリオ 2 のものへ切り替えられるよう、
+# ここで発生源を憶えておく（code-review 指摘）。
+$scenario2Failed = $false
+$toastProc = Start-SnotraProcess -ConfigDir $toastProfile.FullPath -FilePath $ExePath -Trace `
+  -StandardErrorPath $toastErrPath -ExtraVariables @{ SNOTRA_EGUI_FAKE_UPDATE = '1' }
+try {
+  $hk2 = Wait-SnotraTraceEvent -Path $toastErrPath -EventName 'hotkey:registered' -TimeoutMs $StartupObserveTimeoutMs
+  if ($null -eq $hk2) { throw 'シナリオ 2: hotkey:registered を観測できませんでした' }
+  $vks2 = @($hk2.data.vks | ForEach-Object { [byte][int]$_ })
+
+  foreach ($round in 1..2) {
+    # **presence ではなく increment で待つ**（是正 A）。round 2 の待ちが round 1 の行へ
+    # 即座に一致して戻ると、round 1 の hide が効かなかった場合でも round 2 は可視のままの
+    # 窓をトグルし、`Wait-SnotraWindow` は `IsWindowVisible` しか見ないので通ってしまい、
+    # #755/#801 が現れる局面を一度も観測しないまま緑になる。打鍵の前に件数を数え、
+    # `件数 + 1` を待つことで自分が引き起こした新しい 1 件だけを待つ。
+    $showBaseline = Get-SnotraTraceEventCount -Path $toastErrPath -EventName 'egui_show:done'
+    Send-SnotraKeyChord -VirtualKeys $vks2
+    $showEvent = Wait-SnotraTraceEvent -Path $toastErrPath -EventName 'egui_show:done' `
+      -TimeoutMs $ObserveTimeoutMs -MinMatchCount ($showBaseline + 1)
+    if ($null -eq $showEvent) {
+      throw "シナリオ 2: $round 回目の egui_show:done を観測できませんでした"
+    }
+    $hwnd2 = Wait-SnotraWindow -Title 'Snotra' -Process $toastProc -TimeoutMs 5000
+
+    # **`egui_show:done` の payload の height を断言する**（是正 E）。DWM 実測（下）だけでは、
+    # サンプリング区間中 `AppState.indexing` が真なら toast が 1 つも無くても bar+status の
+    # 2 行で同じ高さになり得るため、単独では「toast が実際に出たか」の証拠にならない。
+    # この値は DWM のようにスクリーン矩形を後から読むのではなく、本体がその show で
+    # 適用した高さそのものとして報告する値であり、DPI 換算なしの論理 px である。
+    if ($showEvent.data.height -ne $expectedShowHeightLogical) {
+      $failures += ("toast ありの show #{0}: egui_show:done の height が bar+toast 2 行分（{1} 論理 px）ではありません（実測 {2}・#755）" -f `
+        $round, $expectedShowHeightLogical, $showEvent.data.height)
+      $scenario2Failed = $true
+    }
+
+    # **高さの実測（DWM 矩形）は 1 点で残す**——「`set_size` が OS へ実際に効いたか」を見る
+    # 別の観点であり、捨てない。#801 の 1 フレームの伸びの検出は上の payload 断言と下の
+    # `egui_main:height_mismatch` 不在断言が担うため、旧 1 秒サンプリング + `min -ne max` は
+    # 撤去した（#801 の過渡・約 16ms を 100ms 間隔のポーリングでは原理的に観測できなかった）。
+    Start-Sleep -Milliseconds 300
+    $size2 = Get-MainWindowDwmSize -Handle $hwnd2
+
+    # 論理 px への換算は **config が幅を固定していることを較正点にする**（DPI API を別に読まない）。
+    # seed の window_width は 600（New-SnotraVerificationProfile の既定）。
+    $scale = $size2.W / 600.0
+    $barPx = $expectedBarLogical * $scale
+
+    # **片側の断言にする**——DWM 矩形には環境依存の数 px のずれが乗る（実測 +2px）。
+    # 判別したいのは「バー 1 行（43 論理 px）」と「バー + toast（86 論理 px）」で、
+    # 差は 43 論理 px ある。1.5 倍を閾値に置けば、ずれに影響されず両者を分けられる。
+    if ($size2.H -lt 1.5 * $barPx) {
+      $failures += ("toast ありの show #{0}: 窓が toast 行を含む高さになっていない（DWM 高さ {1}px / バー 1 行 ≒ {2:N0}px・#755）" -f $round, $size2.H, $barPx)
+      $scenario2Failed = $true
+    }
+    Write-Host ("toast ありの show #{0}: DWM {1}x{2}・payload height {3}（バー 1 行 ≒ {4:N0}px）" -f `
+      $round, $size2.W, $size2.H, $showEvent.data.height, $barPx)
+
+    $hideEvent = $null
+    if ($round -lt 2) {
+      # マーカーは打鍵の**前**に打つ——後に打つと、打鍵が引き起こした 1 件が自分自身の
+      # ベースラインへ紛れ込み、`件数 + 1` が実際には「もう 1 件」を要求してしまう
+      # （`Get-SnotraTraceEventCount` のコメントと同じ罠）。
+      $hideBaseline = Get-SnotraTraceEventCount -Path $toastErrPath -EventName 'egui_hide:done'
+      Send-SnotraKey -VirtualKey 27
+      Send-SnotraKey -VirtualKey 27 -Up
+      $hideEvent = Wait-SnotraTraceEvent -Path $toastErrPath -EventName 'egui_hide:done' `
+        -TimeoutMs $ObserveTimeoutMs -MinMatchCount ($hideBaseline + 1)
+      if ($null -eq $hideEvent) {
+        throw "シナリオ 2: $round 回目の egui_hide:done を観測できませんでした"
+      }
+      Start-Sleep -Milliseconds 400
+    } else {
+      # 最終 round には次の hide が無いため、区間の終端を「ここまでの観測」にする。
+      # #801 の不一致は表示直後の 1 フレームで起きるので、show 観測から DWM 実測までの
+      # 経過で大半は足りるが、遅延到着分も拾えるよう軽く待ってから下の判定へ入る。
+      Start-Sleep -Milliseconds 300
+    }
+
+    # 区間は「この round の egui_show:done の後、次の egui_hide:done（最終 round は
+    # ここまでの観測）まで」（是正 D）。
+    # **呼び出し側で `@()` に包む**——`Test-SnotraNoHeightMismatch` 内で `return @(...)` していても、
+    # 関数境界を跨ぐと PowerShell は配列を要素ごとにパイプへ展開するため、一致 0 件のとき
+    # `$mismatches` は空配列ではなく `$null` になる（`Set-StrictMode` 下で `.Count` が例外・実測）。
+    # このファイルの他の代入（`Wait-SnotraTraceCondition` の `$matched` 等）も同じ理由で
+    # 呼び出し側 `@()` を徹底している。
+    $mismatches = @(if ($null -ne $hideEvent) {
+      Test-SnotraNoHeightMismatch -Path $toastErrPath -AfterSeq ([long]$showEvent.seq) -BeforeSeq ([long]$hideEvent.seq)
+    } else {
+      Test-SnotraNoHeightMismatch -Path $toastErrPath -AfterSeq ([long]$showEvent.seq)
+    })
+    if ($mismatches.Count -gt 0) {
+      $failures += ("toast ありの show #{0}: 可視区間中に egui_main:height_mismatch が {1} 件出た（show_h={2} / frame_h={3}・#801）" -f `
+        $round, $mismatches.Count, $mismatches[0].data.show_h, $mismatches[0].data.frame_h)
+      $scenario2Failed = $true
+    }
+  }
+} catch {
+  Show-FailureEvidence -Path $toastErrPath -Proc $toastProc -Context "シナリオ 2 throw: $($_.Exception.Message)" `
+    -LaunchedAt $toastLaunchedAt -PostMortemWaitMs $PostMortemWaitMs
+  throw
+} finally {
+  if (-not $toastProc.HasExited) { Stop-Process -Id $toastProc.Id -Force }
+}
+
 # **env が効いたことの肯定的証拠**（#804・不変条件 1）。効いていなければ本体は実 config を読み、
 # 実プロファイルへ書くので、ここには seed した config.toml しか残らない。「env が届いていない」と
 # 「検査対象が出なかった」を切り分けるのはこの 1 行である
@@ -476,6 +648,16 @@ if ($failures.Count -gt 0) {
   # ここへ来る時点で finally が既にプロセスを終了させているので、生死は判定材料にならない
   # ——$null を渡してその旨を明示する（誤った手掛かりを出さない）。
   # ここへ来る時点でプロセスは終了済みゆえ事後観測はしない（生存が前提の測定である）。
+  #
+  # **シナリオ 2 の失敗も含むなら、その trace ログでも証拠を出す**（code-review 指摘）。
+  # シナリオ 2 の高さ断言は throw ではなく $failures を通るため、シナリオ 2 自身の catch
+  # （$toastErrPath を渡す）を経由せずここまで来る。ここで $errPath だけを見ると、
+  # シナリオ 2 の失敗（本検出器が主眼とする経路）に対して無関係なシナリオ 1 のログを
+  # 指してしまう。$scenario2Failed が立っているときは両方の証拠を出す
+  # （シナリオ 1 側の既存出力は変えない）。
+  if ($scenario2Failed) {
+    Show-FailureEvidence -Path $toastErrPath -Proc $null -Context "検査項目の不合格（シナリオ 2: toast あり）" -LaunchedAt $toastLaunchedAt
+  }
   Show-FailureEvidence -Path $errPath -Proc $null -Context "検査項目の不合格" -LaunchedAt $launchedAt
   exit 1
 }

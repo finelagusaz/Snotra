@@ -13,11 +13,11 @@
 //! ため層が違う・#646 PR2）。どちらも設定サイドカー監視のポーリングスレッドから来るため、
 //! ここを通らない。
 //!
-//! **main 窓のサイズは 2 か所に分かれたままである**（ADR-results-presentation-two-stage 却下 1 の「意図的な 2 導出」を
-//! 段 1 で巻き戻さないため）——show 経路の bar_height collapse は `show_egui_main` の中、
-//! すなわちここにあり、毎フレームの動的高さ（`layout::main_window_height` の適用）は
-//! `view.rs` にある。前者は位置クランプが展開時の高さで効くのを防ぐための折り畳みであり、
-//! 後者は status / toast 行の増減に追従するものなので、目的が違う。
+//! **main 窓のサイズは 2 か所に分かれたままである**——show 経路の実高導出は `show_egui_main` の中、
+//! すなわちここにあり、毎フレームの動的高さ（`layout::main_window_height` の適用）は `view.rs` に
+//! ある。両者が同じ高さを導出する共有の実体の正本は `src-tauri/CLAUDE.md`「モジュール構成」の
+//! `window_coordinator.rs` の項（#755 / #801）。分かれている理由は読み点だけで、ここは
+//! 「フレームの外・reset-on-show 後の値」を、`view.rs` は「フレームの中・実際の値」を読む。
 //!
 //! listener の**登録**は `mod.rs` に残す（setup の順序制約を `main.rs` の 1 画面に残す設計・
 //! `EguiShellHandles` の doc を参照）。ここにあるのは登録先の実体だけである。
@@ -83,6 +83,29 @@ pub(crate) fn read_window_width(app: &tauri::AppHandle) -> f64 {
     app.try_state::<crate::AppState>()
         .map(|s| f64::from(s.engine.lock().unwrap().config().appearance.window_width))
         .unwrap_or_else(|| f64::from(AppearanceConfig::default().window_width))
+}
+
+/// index 構築中か（show 経路が status 行の有無を導くために読む）。正本は `AppState.indexing`。
+/// 毎フレーム側は `launcher_controller::LauncherController::indexing` がこの実装へ委譲する
+/// （両者がバイト単位で同一実装を独立に持っていた重複の解消・レビュー是正 3）。
+pub(super) fn read_indexing(app: &tauri::AppHandle) -> bool {
+    app.try_state::<crate::AppState>()
+        .map(|s| s.indexing.load(Ordering::Relaxed))
+        .unwrap_or(false)
+}
+
+/// updater toast の行が出るか（show 経路が高さを導くために読む）。正本は `UpdaterUiState`。
+/// **reset-on-show はこれを触らない**——ゆえに hide を跨いで残り、通常は show 後の最初の
+/// フレームでも同じ値になる（`launcher_controller` の reset 消費のコメントが明記している）。
+/// **ただし別スレッドからの更新は排除できない**——`spawn_update_check` の完了・
+/// `spawn_install` の失敗腕（`mod.rs` / `launcher_controller.rs`）は非同期に `phase` を
+/// 書き換えて `wake_main` するため、この読みと最初のフレームの間に値が変わりうる。
+/// そのときも 1 フレームだけ高さがずれるにとどまり、`view.rs` の reset-on-show による
+/// memo リセットが同じフレームの動的高さ算出で直す（固着しない）。
+fn read_toast_present(app: &tauri::AppHandle) -> bool {
+    app.try_state::<super::UpdaterUiState>()
+        .map(|st| st.0.lock().unwrap().toast().is_some())
+        .unwrap_or(false)
 }
 
 /// `Color32` を tao のネイティブ背景ブラシ色へ（spec 決定 4）。
@@ -231,14 +254,23 @@ pub(crate) fn show_egui_main(
         sh.hide_pending.store(false, Ordering::SeqCst);
         sh.reset_pending.store(true, Ordering::SeqCst); // resetForShow を view に指示
     }
-    // 高さリセット → 位置 → show の順（旧 WebView2 経路から引き継いだ順序制約）。
-    // reset-on-show でクエリは空 = 結果なし = bar_height（既定 43px）。前回 hide 時に status /
-    // toast 行の分だけ伸びた高さのままだと position クランプがその高さで効き、show 後に view が
-    // bar_height へ collapse して視覚スナップ + 位置ずれになる。position の前に bar_height へ collapse して
-    // これを断つ（SU3 で高さが動的化したため、旧「52px は create で固定・位置のみ復元」前提は
-    // 崩れている）。
+    // 高さ決定 → 位置 → show の順（旧 WebView2 経路から引き継いだ順序制約。#755 / #801 の
+    // 修正後もこの順序は不変——畳む先の値だけが変わった）。
+    // **「高さ決定」は 1 回では済まない**（レビュー是正 1）: position のクランプ
+    // （`monitor.rs` の `WorkArea::clamp`・`max_y = bottom - win_h`）は
+    // `position_on_target_monitor` が `outer_size()` で読み戻す「その時点の窓サイズ」に対して
+    // 効く。status / toast 込みの実高をそのまま渡すと、作業領域の下端付近では常にその分だけ
+    // 窓が上へ押し戻される——毎フレーム経路（`view.rs`）は `set_size` しか呼ばないため、
+    // toast が消えて窓が縮んでも位置は戻らず、次の hide が `read_placement_relative` でその
+    // ずれた位置を永続化する。**バーの位置はユーザーが決め、行の出没では動かさない**
+    // （人間裁定・2026-08-04）という仕様の帰結として、位置はバー高で決め、サイズは実高で
+    // 決める——ここでは 2 回に分けて set_size する。
+    // `egui_show:done` の trace payload（下）が読む「show が適用した高さ」の受け皿。
+    // 非 windows ビルドは本関数がサイズ/位置を一切設定しないため常に `None` のまま残る。
+    #[cfg(not(windows))]
+    let applied_height: Option<f64> = None;
     #[cfg(windows)]
-    {
+    let applied_height: Option<f64> = {
         // 幅も config から当てる（#824 の 1）。**OS の現在サイズは読まない**——hidden 中は
         // update() が走らないので、hide を跨いで幅設定が変わると `inner_size()` は旧幅を返す。
         // それで show すると最初のフレームが新幅へ書き直して幅がスナップする（このブロック
@@ -246,14 +278,55 @@ pub(crate) fn show_egui_main(
         // `view.rs` の `window_width` の doc が記録するとおりで、OS を経由する
         // read-modify-write を作らないのが元々の設計である。
         let width = read_window_width(app);
-        // 折りたたみ高 = bar_height(#646 決定 2)。52 固定だと font 連動後の実バー高と
-        // ずれ、position クランプが誤った高さで効く(このブロック冒頭の reset-on-show
-        // コメントの機構と同じ理由。行番号参照は挿入でずれるため名前で指す)。
-        let bar_h = read_metrics(app).bar_height;
-        let _ = window.set_size(tauri::LogicalSize::new(width, bar_h));
-    }
-    #[cfg(windows)]
-    position_on_target_monitor(app, &window);
+        // 畳む先は「そのフレームで実際に描かれる高さ」である(#755 / #801)。かつては
+        // バー高固定で、最初のフレームが status / toast の分だけ書き直していた——その
+        // 食い違いが、伸びる(#801)か固着する(#755)かのどちらかとして必ず現れた。
+        // **両者は 1 回の show では排他であり、同じ食い違いの 2 分岐である**。
+        let m = read_metrics(app);
+        let indexing_now = read_indexing(app);
+        let toast_now = read_toast_present(app);
+        // **3 つのリテラルが reset-on-show への依存である。** 最初のフレームは reset 後の
+        // 状態を描くので、`launching` は消えており、view は Results 段に戻っている。
+        // **一時通知については「消えている」が唯一の前提ではない**——`view.rs` の
+        // `consume_reset_pending` は通知をクリアするが、直後の `consume_external_pending`
+        // が同じフレームで hotkey 登録失敗の pending 通知を新たに立てうる
+        // （`launcher_controller.rs` の同関数 doc「hidden 中の失敗は次 show のこの消費で
+        // 表示される」）。ここでは常に `false` を渡すため、その場合 1 フレームだけ高さが
+        // 実際より低く畳まれるが、`view.rs` の reset-on-show が memo を 0 へ戻しているので
+        // 同じフレームの動的高さ算出が直す（固着はしない・修正前より悪化もしない）。
+        // 前提が変わったら `status_row_present` の呼び出し点を grep すればここへ来る。
+        let status = crate::egui_shell::status_row_present(
+            indexing_now,
+            /* results_view */ true,
+            /* launching    */ false,
+            /* has_notice   */ false,
+        );
+        let height = layout::main_window_height(
+            m.bar_height,
+            status.then_some(m.toast_height),
+            toast_now.then_some(m.toast_height),
+        );
+        // 1 手目: バー高だけで position のクランプ材料を確定する。
+        let _ = window.set_size(tauri::LogicalSize::new(width, m.bar_height));
+        position_on_target_monitor(app, &window);
+        // 2 手目: 実高（#755 / #801 の修正が導く「そのフレームで実際に描かれる高さ」）へ
+        // 書き直す。2 手の間はフレームが 1 枚も描かれない（窓はまだ hidden）ため、
+        // 視覚的な影響は無い。
+        let _ = window.set_size(tauri::LogicalSize::new(width, height));
+
+        // 不変条件検出器（レビュー是正 4）: 仕様は「高さは『いま描く行』で決まり、高さの変化は
+        // 行の出没と 1 対 1 で対応する」。ここで読んだ生の入力と適用した高さを残し、`view.rs` の
+        // reset-on-show 消費フレームが「行は変わっていないのに高さが変わった」を突き合わせる。
+        // **述語へ渡したリテラル（上の `launching`/`has_notice` の `false`）ではなく、読んだ値
+        // そのものを残す**——将来 show 側が「読んだが渡さない」形へ退行しても拾えるようにする。
+        if let Some(sh) = app.try_state::<EguiShellState>() {
+            sh.show_read_indexing.store(indexing_now, Ordering::SeqCst);
+            sh.show_read_toast.store(toast_now, Ordering::SeqCst);
+            sh.show_applied_height_bits
+                .store(height.to_bits(), Ordering::SeqCst);
+        }
+        Some(height)
+    };
     // 下地（softbuffer が present するまでの一瞬に見える）を config の背景色へ合わせる。
     // **show のたびに無条件で撃つ**（spec 決定 3）——エッジ検出は「変化の瞬間に居合わせる」
     // ことを要求するが、hidden 中は update() が走らないため居合わせられない。同値の再設定は
@@ -332,7 +405,9 @@ pub(crate) fn show_egui_main(
     }
     crate::trace_main(
         "egui_show:done",
-        serde_json::json!({ "ms": t0.elapsed().as_secs_f64() * 1000.0 }),
+        // height: show の時点で toast/status 行が予算されたかの肯定的証拠（レビュー是正 4）。
+        // `None`（非 windows ビルド）は json では `null` になる。
+        serde_json::json!({ "ms": t0.elapsed().as_secs_f64() * 1000.0, "height": applied_height }),
     );
 }
 

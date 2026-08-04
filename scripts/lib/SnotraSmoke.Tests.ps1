@@ -27,7 +27,7 @@ Describe 'New-SnotraVerificationProfile' {
         Set-Content -Path (Join-Path $profile 'index.bin') -Value 'stale'
 
         $created = New-SnotraVerificationProfile -ProfileDir $profile `
-            -AdditionalSections "[general]`nshow_on_startup = true" `
+            -GeneralSection 'show_on_startup = true' `
             -PathEntries @'
 [[paths.scan]]
 path = "C:/fixture"
@@ -44,6 +44,19 @@ include_folders = false
         Test-Path (Join-Path $profile 'config.toml.bak') | Should -BeFalse
         @(Get-ChildItem -Path $profile -Filter '*.bin').Count | Should -Be 0
         [IO.Path]::IsPathRooted($created.FullPath) | Should -BeTrue
+    }
+
+    It 'auto_update を既定で disabled にする（省略すると実ネットワークの更新チェックが走る・#755/#801 是正）' {
+        # GeneralConfig.auto_update の既定は Full（snotra-core/src/config.rs の #[default]）。
+        # 検証用プロファイルがこれを踏まないことをここで固定する。
+        $created = New-SnotraVerificationProfile -ProfileDir (Join-Path $TestDrive 'auto-update-default')
+
+        (Get-Content -Raw $created.ConfigPath) | Should -Match '(?m)^auto_update = "disabled"\r?$'
+    }
+
+    It 'AdditionalSections に [general] を書くと重複テーブルとして throw する' {
+        { New-SnotraVerificationProfile -ProfileDir (Join-Path $TestDrive 'general-conflict') `
+            -AdditionalSections "[general]`nshow_on_startup = true" } | Should -Throw '*general*'
     }
 
     It 'ShowIcons を TOML の真偽値として書く（既定は true・$false で無効化できる）' {
@@ -332,8 +345,7 @@ Describe '実機配管' -Tag Integration -Skip:$sessionLocked {
     It '生成した seed を本体が parse して同じプロファイルへ書き込み、キャプチャ寸法が窓矩形と一致する' {
         $profile = Join-Path $TestDrive 'integration-profile'
         $stderr = Join-Path $TestDrive 'integration.err'
-        $created = New-SnotraVerificationProfile -ProfileDir $profile -AdditionalSections @'
-[general]
+        $created = New-SnotraVerificationProfile -ProfileDir $profile -GeneralSection @'
 show_on_startup = true
 auto_hide_on_focus_lost = false
 '@
@@ -383,8 +395,7 @@ auto_hide_on_focus_lost = false
         # runner ではシェルのアイコン問い合わせが恒久的に失敗し続け（#872）、その再要求が
         # 打鍵から egui_input:changed までの観測時間を押し広げる。要求そのものを外す。
         $created = New-SnotraVerificationProfile -ProfileDir $profile -ShowIcons $false `
-            -AdditionalSections @'
-[general]
+            -GeneralSection @'
 show_on_startup = true
 auto_hide_on_focus_lost = false
 '@ `

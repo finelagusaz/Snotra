@@ -603,11 +603,16 @@ try {
 
     # 区間は「この round の egui_show:done の後、次の egui_hide:done（最終 round は
     # ここまでの観測）まで」（是正 D）。
-    $mismatches = if ($null -ne $hideEvent) {
+    # **呼び出し側で `@()` に包む**——`Test-SnotraNoHeightMismatch` 内で `return @(...)` していても、
+    # 関数境界を跨ぐと PowerShell は配列を要素ごとにパイプへ展開するため、一致 0 件のとき
+    # `$mismatches` は空配列ではなく `$null` になる（`Set-StrictMode` 下で `.Count` が例外・実測）。
+    # このファイルの他の代入（`Wait-SnotraTraceCondition` の `$matched` 等）も同じ理由で
+    # 呼び出し側 `@()` を徹底している。
+    $mismatches = @(if ($null -ne $hideEvent) {
       Test-SnotraNoHeightMismatch -Path $toastErrPath -AfterSeq ([long]$showEvent.seq) -BeforeSeq ([long]$hideEvent.seq)
     } else {
       Test-SnotraNoHeightMismatch -Path $toastErrPath -AfterSeq ([long]$showEvent.seq)
-    }
+    })
     if ($mismatches.Count -gt 0) {
       $failures += ("toast ありの show #{0}: 可視区間中に egui_main:height_mismatch が {1} 件出た（show_h={2} / frame_h={3}・#801）" -f `
         $round, $mismatches.Count, $mismatches[0].data.show_h, $mismatches[0].data.frame_h)

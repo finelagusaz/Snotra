@@ -122,28 +122,29 @@ impl BlurGrace {
 
 ### フェーズ 1 — 状態機械の追加と移行（1 コミット）
 
-- [ ] `lifecycle.rs` に `BlurGrace` を実装し、**同じ編集でテストも書く**。**「テストだけ先に書いて Red を見る」形は取らない**——型が存在しない段階ではコンパイルエラーであって失敗するテストではない（Red の意味を持たない）。テストが落ちることは、実装後に意図的に条件を反転させて 1 度だけ確認する
-- [ ] `mod.rs` の re-export とコメントを更新する
-- [ ] `launcher_controller.rs` の 2 フィールドを `blur_grace` へ置換し、`on_focus_changed` を `observe` への委譲へ書き換える
-- [ ] `clear_blur_grace_if_focused` と `set_focused` を削除する
-- [ ] `consume_reset_pending` へ `self.blur_grace.reset()` を追加する（**本 issue の本体**）
-- [ ] `view.rs` の段 14 / 段 34 の呼び出しを削除し、段 16–17 へ `Instant::now()` を渡す
-- [ ] 偽になる散文（上表の 6 か所）を直す
-- [ ] `was_focused` / `unfocus_at` / `set_focused` を全文 grep し、残存 0 を確認する
-- [ ] カテゴリ A を実行する
+- [x] `lifecycle.rs` に `BlurGrace` を実装し、**同じ編集でテストも書く**。**「テストだけ先に書いて Red を見る」形は取らない**——型が存在しない段階ではコンパイルエラーであって失敗するテストではない（Red の意味を持たない）。テストが落ちることは、実装後に意図的に条件を反転させて 1 度だけ確認する
+- [x] `mod.rs` の re-export とコメントを更新する
+- [x] `launcher_controller.rs` の 2 フィールドを `blur_grace` へ置換し、`on_focus_changed` を `observe` への委譲へ書き換える
+- [x] `clear_blur_grace_if_focused` と `set_focused` を削除する
+- [x] `consume_reset_pending` へ `self.blur_grace.reset()` を追加する（**本 issue の本体**）
+- [x] `view.rs` の段 14 / 段 34 の呼び出しを削除し、段 16–17 へ `Instant::now()` を渡す
+- [x] 偽になる散文（上表の 6 か所）を直す
+- [x] `was_focused` / `unfocus_at` / `set_focused` を全文 grep し、残存 0 を確認する
+- [x] カテゴリ A を実行する
 
 ### フェーズ 2 — 文書同期
 
-- [ ] `src-tauri/CLAUDE.md:36` を更新する
-- [ ] 契約設計 spec の `:7` と `:100` を更新する
-- [ ] カテゴリ F（`npm run governance:check`）を実行する
+- [x] `src-tauri/CLAUDE.md:36` を更新する
+- [x] 契約設計 spec の `:7` と `:100` を更新する
+- [x] カテゴリ F（`npm run governance:check`）を実行する
 
 ### フェーズ 3 — 検証
 
-- [ ] **`cargo build -p snotra`（debug）と `cargo build -p snotra --release` の両方**を打つ。`smoke:startup` と `test:powershell` は **debug** を、`smoke:egui` は **release** を見る（`docs/build-commands.md`「実バイナリを起動する検査の前に…古いまま在るバイナリを測る」・#835）
-- [ ] カテゴリ C（`npm test` / `test:powershell` / `smoke:startup` / `smoke:egui`）
+- [x] **`cargo build -p snotra`（debug）と `cargo build -p snotra --release` の両方**を打つ。`smoke:startup` と `test:powershell` は **debug** を、`smoke:egui` は **release** を見る（`docs/build-commands.md`「実バイナリを起動する検査の前に…古いまま在るバイナリを測る」・#835）
+- [x] カテゴリ C（`npm test` / `test:powershell` / `smoke:startup` / `smoke:egui`）
 - [ ] 実機確認（下記）を実施し、trace と突き合わせる
-- [ ] `/symmetric-check` / `/state-check` / `/race-check` と `code-reviewer` を実装差分に当てる
+- [x] `/symmetric-check` / `/state-check` / `/race-check` と `code-reviewer` を実装差分に当てる
+- [ ] **`workspace/` を消す前に ADR を起こす**（`ADR-blur-grace-single-field-state-machine`）——却下した案 A（`consume_reset_pending` に 2 行）と案 B（2 フィールドのまま struct 化）の理由は計画にしか無く、削除で失われる
 
 ## 不変条件と異常系
 

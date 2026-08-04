@@ -881,6 +881,40 @@ mod tests {
         assert!(s.results().is_empty(), "選択が 0 でも、それが指す行は無い");
     }
 
+    // ---- フォルダ内の絞り込みと選択（#838・SPEC §6.3 の as-built）----
+    //
+    // **上の #743 ブロック（左右カーソルキーによる階層移動）の外に置く**——主題が違ううえ、
+    // あちらの冒頭は本数を名指ししており、内側へ足すとその記述が stale になる。
+    //
+    // **射程は状態核だけである**——打鍵から `set_folder_filter` への配線（`view.rs` の
+    // `changed()` エッジと `launcher_controller.rs` の `on_input_changed`）は射程外で、
+    // その呼び出しを消してもこのテストは緑のままである（#743 ブロックの冒頭と同じ性質の限界）。
+
+    /// フォルダ内の絞り込みの打鍵は選択を 1 行目へ戻す（SPEC §6.3・絞り込みの打鍵と選択）。
+    /// **非ゼロから始める**——0 から始めると `enter_folder` の初期値と区別が付かない。
+    /// **`enter_folder` を先に通す**——`set_folder_filter` は `folder` が `None` でも黙って
+    /// `selected = 0` を撃つため、突入を忘れると folder 中の挙動を何も実証しない。
+    ///
+    /// **§6.3 のもう 1 つの as-built（列挙失敗のエラー行が絞り込みの対象外であること）は、
+    /// ここでは測れない**——判定は driver 側（`launcher_controller.rs` の `run_search_with` が
+    /// `folder_error` を filter 非適用で差し替える）にあり `AppHandle` を要する。腐り検知は
+    /// その行のコメントだけが担う（#838 で受容した残余）。
+    #[test]
+    fn folder_filter_typing_resets_selection_to_first_row() {
+        let mut s = SearchState::new();
+        s.enter_folder("C:\\a".into());
+        s.set_results(vec![res("a"), res("b"), res("c")]);
+        s.move_selection(2);
+        assert_eq!(s.selected(), 2, "前提: 打鍵の前に選択は非ゼロである");
+        s.set_folder_filter("b".into());
+        assert_eq!(s.selected(), 0, "絞り込みの打鍵で選択は 1 行目へ戻る");
+        assert_eq!(
+            s.view_kind(),
+            ViewKind::Folder,
+            "folder 中の挙動を測っている（突入を忘れたテストは何も実証しない）"
+        );
+    }
+
     #[test]
     fn escape_folder_restores_then_hides() {
         let mut s = SearchState::new();

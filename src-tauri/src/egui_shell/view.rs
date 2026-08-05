@@ -93,6 +93,10 @@ pub(crate) struct SearchWindowView {
     /// size writer に一意化されている（幅は config live-read・#646 PR2 決定 6）。
     last_set_width: f64,
     last_set_height: f64,
+    /// 起動直後の数フレームだけ「入力欄が打鍵を受け取れる状態か」を残すための残数
+    /// （#872/#936）。**打ち切りを持つのは費用のためではなく意味のため**——知りたいのは
+    /// 最初のフレームであって、定常状態ではない。
+    focus_state_traces_left: u8,
     // results 窓のサイズデルタガードは `ResultsWindow` が持つ（#749 で移設）。**`last_set_*`
     // （main 用）を流用してはならない**という当時の不変条件（Important 1）は、memo が別の型に
     // 分かれたことで構造的に保たれる——同一フレーム内で main のブロックが先に
@@ -107,6 +111,7 @@ impl SearchWindowView {
             applied_background: None,
             last_set_width: 0.0,
             last_set_height: 52.0,
+            focus_state_traces_left: 5,
         }
     }
 
@@ -647,6 +652,28 @@ impl EguiView for SearchWindowView {
         // **show 直後に打鍵できなくなる**（SU2 が入れた当の挙動が消える）。この独立性は
         // 2 フィールド時代から一貫した制約で、#745 の状態機械化でも維持する。
         // 条件は `interactive` と同じ `input_editable` を読む（非対称の解消は同変数の doc 参照）。
+        // **最初の数フレームだけ、入力欄が打鍵を受け取れる状態かを残す**（#872/#936）。
+        // 起動直後に打った文字が捨てられることが実測されているが、**同じ沈黙を 2 つの原因が
+        // 作る**——`has_focus` が偽（下の `request_focus` は widget を追加した後なので効くのは
+        // 次フレームから）と、`input_editable` が偽（`interactive(false)` の TextEdit も
+        // イベントを無視する）である。観測が同一なので、**片方を仮定した検証は当たって
+        // いなくても通る**。両方を名指しで残して初めて分かれる。
+        //
+        // **`request_focus` の手前で読むこと**——後ろだと、この行が読む `has_focus` が
+        // 「要求した後の値」になり、当のフレームで打鍵を受け取れたかを言わなくなる。
+        if self.focus_state_traces_left > 0 {
+            self.focus_state_traces_left -= 1;
+            crate::trace_main(
+                "egui_input:focus_state",
+                serde_json::json!({
+                    "window_focused": pre.focused,
+                    "input_editable": input_editable,
+                    "has_focus": response.has_focus(),
+                    "in_tool": in_tool,
+                    "launching": self.controller.is_launching(),
+                }),
+            );
+        }
         if pre.focused && input_editable && !response.has_focus() {
             response.request_focus();
         }

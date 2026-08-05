@@ -1,9 +1,10 @@
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use tauri_runtime_wry::tao::{
     dpi::{PhysicalPosition, PhysicalSize},
     event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent},
-    keyboard::{Key, ModifiersState},
+    keyboard::{Key, KeyCode, ModifiersState},
 };
 
 pub(crate) struct InputState {
@@ -11,6 +12,14 @@ pub(crate) struct InputState {
     native_pixels_per_point: f32,
     pointer_pos: egui::Pos2,
     started_at: Instant,
+    /// focus を獲得した瞬間に既に押されていたキー（#927）。**press を release まで抑止する**
+    /// ——判定は `admit_key`、そこに機序と一次資料を書いた。
+    ///
+    /// **`Focused(false)` で全消去し、focus セッションを越えない。** 抑止したキーの release が
+    /// 届かない経路（release 時に窓が focus を失っている）で抑止が持ち越されると、以後
+    /// Escape が永久に効かなくなる——fail-closed の側へ倒れるため、消去点を持つことが
+    /// 抑止そのものと同じだけ重要である。
+    held_since_focus_gain: HashSet<KeyCode>,
     /// `take()` を通った回数＝egui へフレームを渡した回数（診断のみ・#872/#936）。
     frame_count: u64,
     /// 直近で `take` 行を出した時刻。**心拍を間引くためだけに持つ**——runner では
@@ -62,6 +71,41 @@ pub(crate) fn input_trace(kind: &str, detail: &str) {
     eprintln!("SNOTRA_EGUI_INPUT {kind} ts_ms={ts_ms} {detail}");
 }
 
+/// このキーイベントを egui へ渡すか（#927）。`true` = 渡す。`held` は副作用として更新する。
+///
+/// **tao は `WM_SETFOCUS` を受けたとき、その瞬間に押されている全キーの `Pressed` を合成する**
+/// （`tao-0.35.3/src/platform_impl/windows/keyboard.rs:87-93` の `get_async_kbd_state()` →
+/// `synthesize_kbd_state(ElementState::Pressed, …)`）。設定ウィンドウを Escape の **down** で
+/// 閉じると、本体が focus を取り戻した瞬間にこの合成 press が届き、Escape ラダーが走って
+/// **1 回の押下で 2 つの窓が閉じる**（#927 の症状。実測: 本体が受けた press は `synthetic=true`）。
+///
+/// ゆえに **focus 獲得時に押されていたキーは、release されるまで press を渡さない**。
+/// 抑止は Escape に限らない——`Z` を押しっぱなしで設定を閉じると検索欄へ合成 press が届く（実測）。
+///
+/// **非合成の press も抑止対象に含める**のは、物理キーボードのオートリピートが focus 移行を
+/// 跨いで新しい前面窓へ届く可能性を塞ぐためである（`keybd_event` はリピートを生まないので
+/// 注入では測れない。#927 の (A)）。
+///
+/// **release は常に渡す**——落とすと egui の `keys_down` に押しっぱなしが残る。egui へ渡らな
+/// かった press に対応する release が渡ることは無害である（`key_released` / `keys_down` を読む
+/// 消費者はこの crate にも `src-tauri/src/egui_shell/` にも無い・grep 実測）。
+fn admit_key(
+    is_synthetic: bool,
+    pressed: bool,
+    physical: KeyCode,
+    held: &mut HashSet<KeyCode>,
+) -> bool {
+    if !pressed {
+        held.remove(&physical);
+        return true;
+    }
+    if is_synthetic {
+        held.insert(physical);
+        return false;
+    }
+    !held.contains(&physical)
+}
+
 impl InputState {
     pub(crate) fn new(native_pixels_per_point: f32) -> Self {
         Self {
@@ -69,6 +113,7 @@ impl InputState {
             native_pixels_per_point,
             pointer_pos: egui::Pos2::ZERO,
             started_at: Instant::now(),
+            held_since_focus_gain: HashSet::new(),
             frame_count: 0,
             last_take_trace: None,
         }
@@ -164,6 +209,15 @@ impl InputState {
                 self.native_pixels_per_point = *scale_factor as f32;
             }
             WindowEvent::Focused(focused) => {
+                // **focus を失ったら抑止を全消去する**（#927）。tao は `WM_KILLFOCUS` でも
+                // 合成 release を先に送る（`tao-0.35.3/src/platform_impl/windows/event_loop.rs`
+                // の `lose_active_focus` は `keyboard_callback` より後の `match msg` で走る）ので、
+                // 到着順に関わらずここで空になる。**`Focused(true)` では消さない**——合成 press は
+                // `Focused(true)` より**先**に届くため（同 `event_loop.rs` の `keyboard_callback`
+                // が `match msg` の前にある）、ここで消すと直前に立てた抑止を自分で捨てる。
+                if !*focused {
+                    self.held_since_focus_gain.clear();
+                }
                 self.raw.focused = *focused;
                 self.raw.events.push(egui::Event::WindowFocused(*focused));
             }
@@ -209,7 +263,34 @@ impl InputState {
                     modifiers: self.raw.modifiers,
                 });
             }
-            WindowEvent::KeyboardInput { event, .. } => self.on_keyboard_event(event),
+            WindowEvent::KeyboardInput {
+                event,
+                is_synthetic,
+                ..
+            } => {
+                let pressed = event.state == ElementState::Pressed;
+                if !admit_key(
+                    *is_synthetic,
+                    pressed,
+                    event.physical_key,
+                    &mut self.held_since_focus_gain,
+                ) {
+                    // **落とした側も残す**（#872/#936）——`push_key` はここより下流ゆえ、
+                    // 抑止した打鍵は残さなければ沈黙になる。
+                    if input_trace_enabled() {
+                        input_trace(
+                            "drop_key",
+                            &format!(
+                                "state={} physical={:?} synthetic={is_synthetic} reason=held_since_focus_gain",
+                                if pressed { "down" } else { "up" },
+                                event.physical_key,
+                            ),
+                        );
+                    }
+                    return true;
+                }
+                self.on_keyboard_event(event)
+            }
             WindowEvent::ReceivedImeText(text) => {
                 let committed = committed_text_event(text);
                 // **落とした側も残す**（#872/#936）。`committed_text_event` は制御文字と空を
@@ -481,6 +562,80 @@ fn key_from_character(value: &str) -> Option<egui::Key> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #927: focus 獲得時の合成 press は egui へ渡さず、抑止対象として記録する。
+    /// **この 1 件が「1 回の押下で設定窓と本体の 2 つが閉じる」を止めている唯一の判定である。**
+    #[test]
+    fn synthetic_press_at_focus_gain_is_not_admitted() {
+        let mut held = HashSet::new();
+
+        assert!(!admit_key(true, true, KeyCode::Escape, &mut held));
+        assert!(held.contains(&KeyCode::Escape));
+    }
+
+    /// #927 (A): 抑止中は**非合成**の press も渡さない（物理オートリピートが focus 移行を
+    /// 跨いで届く経路。`keybd_event` では生成できないため注入では測れない）。
+    #[test]
+    fn physical_repeat_while_held_is_not_admitted() {
+        let mut held = HashSet::new();
+        admit_key(true, true, KeyCode::Escape, &mut held);
+
+        assert!(!admit_key(false, true, KeyCode::Escape, &mut held));
+    }
+
+    /// release は渡し、抑止を解く。**渡す側も外す側も落とせない**——渡さなければ egui の
+    /// `keys_down` に押しっぱなしが残り、外さなければ次の press が永久に届かない。
+    #[test]
+    fn release_is_admitted_and_lifts_suppression() {
+        let mut held = HashSet::new();
+        admit_key(true, true, KeyCode::Escape, &mut held);
+
+        assert!(admit_key(false, false, KeyCode::Escape, &mut held));
+        assert!(!held.contains(&KeyCode::Escape));
+    }
+
+    /// **抑止は 1 回の押下で終わる**（fail-closed の防止）: release 後の press は通常どおり渡る。
+    /// これが破れると Escape が永久に効かなくなる——症状が #927 より重い。
+    #[test]
+    fn press_after_release_is_admitted_again() {
+        let mut held = HashSet::new();
+        admit_key(true, true, KeyCode::Escape, &mut held);
+        admit_key(false, false, KeyCode::Escape, &mut held);
+
+        assert!(admit_key(false, true, KeyCode::Escape, &mut held));
+    }
+
+    /// 抑止はキーごとである（Escape を抑止していても他のキーの打鍵は届く）。
+    #[test]
+    fn other_keys_are_unaffected_by_suppression() {
+        let mut held = HashSet::new();
+        admit_key(true, true, KeyCode::Escape, &mut held);
+
+        assert!(admit_key(false, true, KeyCode::KeyA, &mut held));
+    }
+
+    /// focus 喪失時の合成 release（tao が `WM_KILLFOCUS` で作る）も渡す——押しっぱなしのまま
+    /// focus を失ったキーを egui 側で開放するのがこのイベントの役目である。
+    #[test]
+    fn synthetic_release_is_admitted() {
+        let mut held = HashSet::new();
+        admit_key(true, true, KeyCode::Escape, &mut held);
+
+        assert!(admit_key(true, false, KeyCode::Escape, &mut held));
+        assert!(held.is_empty());
+    }
+
+    /// #927: 抑止は focus セッションを越えない。**release が届かない経路**（release 時に窓が
+    /// focus を失っている）で持ち越されると、以後 Escape が効かなくなる。
+    #[test]
+    fn losing_focus_clears_suppression() {
+        let mut input = InputState::new(1.0);
+        input.held_since_focus_gain.insert(KeyCode::Escape);
+
+        input.on_window_event(&WindowEvent::Focused(false));
+
+        assert!(input.held_since_focus_gain.is_empty());
+    }
 
     #[test]
     fn modifiers_preserve_windows_shortcut_semantics() {

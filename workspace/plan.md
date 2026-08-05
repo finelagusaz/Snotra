@@ -111,28 +111,28 @@ fn admit_key(is_synthetic: bool, pressed: bool, physical: KeyCode, held: &mut Ha
 
 ### Phase 1 — 実装とユニットテスト
 
-- [ ] `/symmetric-check` をインライン実行し、insert / remove / clear の 3 経路を検算する
-- [ ] `InputState` に `held_since_focus_gain` を追加（`new()` の初期化を含む）
-- [ ] `admit_key` を実装（doc に tao の一次資料 file:line を書く）
-- [ ] `on_window_event` の `KeyboardInput` arm を `is_synthetic` 受けに変え、落とすときは `drop_key` trace
-- [ ] `Focused(false)` で `clear()`
-- [ ] テスト 7 件を追加
-- [ ] `cargo test -p snotra-egui-runtime` が緑
+- [x] `/symmetric-check` をインライン実行し、insert / remove / clear の 3 経路を検算する
+- [x] `InputState` に `held_since_focus_gain` を追加（`new()` の初期化を含む）
+- [x] `admit_key` を実装（doc に tao の一次資料 file:line を書く）
+- [x] `on_window_event` の `KeyboardInput` arm を `is_synthetic` 受けに変え、落とすときは `drop_key` trace
+- [x] `Focused(false)` で `clear()`
+- [x] テスト 7 件を追加
+- [x] `cargo test -p snotra-egui-runtime` が緑
 
 ### Phase 2 — 実機検証
 
-- [ ] `repro-927.ps1` を連言判定へ更新（`drop_key physical=Escape synthetic=true` の件数も数え、0 件なら「再現条件が成立しなかった」として赤にする）
-- [ ] `cargo build --release -p snotra -p snotra-settings`
-- [ ] `repro-927.ps1 -EscapeHoldMs 60` / `-EscapeHoldMs 900` が、**同一の走行で次の 2 つを同時に**満たす（連言・下の「合格条件を連言にする理由」）
+- [x] `repro-927.ps1` を連言判定へ更新（`drop_key physical=Escape synthetic=true` の件数も数え、0 件なら「再現条件が成立しなかった」として赤にする）
+- [x] `cargo build --release -p snotra -p snotra-settings`
+- [x] `repro-927.ps1 -EscapeHoldMs 60` / `-EscapeHoldMs 900` が、**同一の走行で次の 2 つを同時に**満たす（連言・下の「合格条件を連言にする理由」）
   - `egui_hide:done` が 0 件（`MainHidden: False`）
   - `drop_key` に `physical=Escape synthetic=true` が **1 件以上**現れる
-- [ ] `npm run smoke:egui` が緑（従来の Escape hide が生きている）
+- [x] `npm run smoke:egui` が緑（従来の Escape hide が生きている）
 - [ ] 人の実打鍵で Escape 1 秒保持 → 設定は閉じ、本体は残る
 
 ### Phase 3 — 文書
 
-- [ ] `snotra-egui-runtime/CLAUDE.md` に不変条件を 1 項目追加
-- [ ] `npm run governance:check` が緑
+- [x] `snotra-egui-runtime/CLAUDE.md` に不変条件を 1 項目追加
+- [x] `npm run governance:check` が緑
 
 ## 未確定（実装前に潰す）
 

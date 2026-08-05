@@ -1,5 +1,6 @@
 //! Tauri/Taoとegui/softbufferを接続するSnotra専用ランタイム。
 
+mod env;
 mod ime;
 mod input;
 mod monitor;

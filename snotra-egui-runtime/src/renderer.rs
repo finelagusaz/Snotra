@@ -73,7 +73,7 @@ impl EguiRenderer {
         }
         // paint フェーズ計測（#628・#532 SU6.5 G3(b)）。env 未設定なら Instant も取らない
         // ——常時 2 回の時刻取得を入れないため（計測器が測定対象を汚さない）。
-        let trace = std::env::var_os("SNOTRA_EGUI_PAINT_TRACE").is_some();
+        let trace = crate::env::trace_hatch_enabled("SNOTRA_EGUI_PAINT_TRACE");
         let t_begin = trace.then(std::time::Instant::now);
         let ppp = output.pixels_per_point;
 

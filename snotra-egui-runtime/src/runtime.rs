@@ -276,7 +276,7 @@ impl<T: UserEvent> Plugin<T> for RuntimePlugin<T> {
                 // hidden 中の抑止点の切り分け計器（#697）。送信側は repaint.rs の worker。
                 // 引き当て前に置く——引き当て失敗で握りつぶされる経路も観測対象。
                 // runtime_id は送信側の window_id と同じ ID 空間ゆえ、窓の帰属を直接照合できる。
-                if std::env::var_os("SNOTRA_EGUI_WAKE_TRACE").is_some() {
+                if crate::env::trace_hatch_enabled("SNOTRA_EGUI_WAKE_TRACE") {
                     eprintln!(
                         "SNOTRA_EGUI_WAKE_RECV window_id={window_id:?} runtime_id={:?}",
                         context.window_id_map.get(window_id)
@@ -453,7 +453,7 @@ impl EguiWindow {
         //   「1 要求 = 1 フレーム」で件数を照合しない
         // - `focused` は必須項目である。egui はフォーカスがあるときだけキャレット点滅の
         //   repaint を出すため、非フォーカスの行を混ぜると「眠っている」に見える
-        if std::env::var_os("SNOTRA_EGUI_REPAINT_TRACE").is_some() {
+        if crate::env::trace_hatch_enabled("SNOTRA_EGUI_REPAINT_TRACE") {
             let now = std::time::Instant::now();
             // 初回は None ゆえ NaN（0 と紛れない）。hide をまたぐと巨大値になる（眠っていた証拠）。
             let since = self

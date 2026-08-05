@@ -186,6 +186,98 @@ fn move_text_cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
     }
 }
 
+/// `search_input_ui` が要る 1 フレーム分の値（`RuntimeFrame` も controller も含まない）。
+pub(crate) struct SearchInputParams {
+    pub(crate) input_id: egui::Id,
+    /// フォルダ絞り込みから展開前 query へバッファ全体を復元したフレームか（#840）。
+    pub(crate) restored_search: bool,
+    /// 窓が OS の focus を持つか（`RawInput::focused`）。**focus 要求の条件である。**
+    pub(crate) window_focused: bool,
+    pub(crate) input_editable: bool,
+    pub(crate) inset: f32,
+    pub(crate) field_height: f32,
+    pub(crate) font: egui::FontId,
+    pub(crate) text_color: egui::Color32,
+}
+
+/// 検索入力欄の widget 合成。**`RuntimeFrame` にも `LauncherController` にも触らない**ので、
+/// `egui_kittest` の `Harness` から実コードのまま駆動できる（`mod tests` の kittest 検査）。
+///
+/// **この関数の内容は 3 つの順序そのものである。** キャレットの末尾同期（#840）と focus の
+/// 要求（#872/#936）は、どちらも `TextEdit` の**構築前**でなければ同一フレームの文字イベントに
+/// 効かない。#938 が入れた単体検査は egui の意味論だけを縛り、`update()` の並びが後ろへ戻っても
+/// 通る受容残余を持っていた——**kittest がこの関数を丸ごと走らせることでその残余が閉じる。**
+///
+/// **どちらの順序をどの検査が縛るかは分かれている**（ここが本 doc の正本）:
+/// - キャレット → `kittest_restored_frame_appends_same_frame_input_at_end`
+/// - focus → `kittest_first_frame_requests_focus_before_text_edit`（判定フレームの開始時点で
+///   焦点を持たない状態を作る。作らないと `!has_focus` ガードで要求が走らず縛れない・実測）
+/// - 対照（縛れているかの検算）→ `kittest_without_focus_request_the_same_input_is_dropped`
+///
+/// `hint` をクロージャで受けるのは、`HintPlan::Folder` の分岐が `ui.available_width()` と
+/// `ui.painter()` を**内側の `Frame` の中で**読むためである。文字列を先に作って渡すと
+/// `available_width` が変わり、中間省略の結果が動く。
+pub(crate) fn search_input_ui(
+    ui: &mut egui::Ui,
+    buf: &mut String,
+    params: &SearchInputParams,
+    hint: impl FnOnce(&mut egui::Ui) -> String,
+) -> egui::Response {
+    egui::Frame::new()
+        .inner_margin(egui::Margin::same(params.inset.round() as i8))
+        .show(ui, |ui| {
+            // **clone せず借りる。** ctx の用途 3 つはいずれも `hint(ui)` より前で終わるので、
+            // NLL 上ここで借りれば足りる（呼び出し側は既に clone を 1 本持っている）。
+            let ctx = ui.ctx();
+            // #840: folder filter から展開前 query へバッファ全体を復元するフレームでは、
+            // 同じ widget id に残る egui のキャレットも query 末尾へ同期する。TextEdit の
+            // 構築前に行うことで、同一フレームの文字イベントも復元後の末尾から処理される。
+            // tool は入力不可の一時表示で元の編集位置を保つため、この経路へは入れない。
+            if params.restored_search {
+                move_text_cursor_to_end(ctx, params.input_id, buf);
+            }
+            // **入力欄の focus は TextEdit の構築より前に要求する**（#872/#936）。
+            // `TextEdit` は自分が走る時点の focus でイベントを消費するか決めるため、
+            // 構築の**後**に要求すると、そのフレームに載っていた文字は焦点の無い widget の
+            // 横を素通りして捨てられる。**プロセス起動後の最初のフレームがまさにその形
+            // だった**（実測: frame 1 が `has_focus=false`、frame 2 から真。再 show では
+            // `Memory` に残るので初回だけ）。窓は可視・前面・focus 済みで「打てるはず」に
+            // 見えるのに、ローカルで 50ms・CI runner で 1.4〜19 秒、打った文字が消えていた
+            // ——これが #872 の間欠失敗の正体である。
+            //
+            // **直前の `move_text_cursor_to_end`（#840）が構築前に置かれているのと同じ理由**
+            // であり、同一フレームの文字イベントに効かせるには構築前でなければならない。
+            //
+            // **blur 猶予の状態を読まない**——読む形（例: `blur_grace == Focused` を条件に
+            // 足す）にすると、reset-on-show 直後は `NeverFocused` なのに窓は focus を持ちうる
+            // ため、show 直後に打鍵できなくなる（SU2 が入れた当の挙動が消える）。条件は
+            // `interactive` と同じ `input_editable` を読む（同変数の doc）。
+            if params.window_focused
+                && params.input_editable
+                && !ctx.memory(|m| m.has_focus(params.input_id))
+            {
+                ctx.memory_mut(|m| m.request_focus(params.input_id));
+            }
+            let hint_text = hint(ui);
+            ui.add_sized(
+                egui::vec2(ui.available_width(), params.field_height),
+                egui::TextEdit::singleline(buf)
+                    .id(params.input_id)
+                    // §18.5 ツール選択中の入力は無効化。add_enabled（全体グレーアウト）でなく
+                    // interactive(false)（通常描画のまま読み取り専用・changed 不発火）——外観維持。
+                    // launching 中も同様に打鍵を止める（Escape/blur/Alt+Q・↑↓は従来どおり通す・
+                    // spec 決定 3・4。↑↓は空リストゆえ自然 no-op）。
+                    .interactive(params.input_editable)
+                    .font(params.font.clone())
+                    .text_color(params.text_color)
+                    // 色を付けない——付けても egui が weak_text_color で上書きする。
+                    // hint の色は `ui.visuals_mut()` の `weak_text_color` が正本。
+                    .hint_text(egui::RichText::new(hint_text).font(params.font.clone())),
+            )
+        })
+        .inner
+}
+
 /// pre-widget 入力（段 13 で読み切る値）。Escape・↑↓・→← の**読み**は TextEdit 構築（段 21）
 /// より前に終える必要があり、うち **↑↓ は消費（`events.retain`）まで含む**——この `retain` は
 /// #700 の再発を防ぐ唯一の場所であり、TextEdit の後に回すと ↑↓ が TextEdit へも効いて
@@ -579,95 +671,63 @@ impl EguiView for SearchWindowView {
         // ゆえ、下に取り残しも溢れも出ない）。余白部はドラッグ掴み領域になる（決定 10）。
         let inset = metrics.bar_inset as f32;
         let field_height = (metrics.bar_height as f32 - 2.0 * inset).max(1.0);
-        let response = egui::Frame::new()
-            .inner_margin(egui::Margin::same(inset.round() as i8))
-            .show(ui, |ui| {
-                let input_id = ui.make_persistent_id("search_input");
-                // #840: folder filter から展開前 query へバッファ全体を復元するフレームでは、
-                // 同じ widget id に残る egui のキャレットも query 末尾へ同期する。TextEdit の
-                // 構築前に行うことで、同一フレームの文字イベントも復元後の末尾から処理される。
-                // tool は入力不可の一時表示で元の編集位置を保つため、この経路へは入れない。
-                if restored_search {
-                    move_text_cursor_to_end(&ctx, input_id, &buf);
+        let input_id = ui.make_persistent_id("search_input");
+        // **hint の分岐が読む `buf` は、`search_input_ui` が `&mut` で借りるので先に測る。**
+        // hint が計算されるのは `TextEdit` の構築より前ゆえ、ここで測った値と同じである。
+        let buf_is_empty = buf.is_empty();
+        let params = SearchInputParams {
+            input_id,
+            restored_search,
+            window_focused: pre.focused,
+            input_editable,
+            inset,
+            field_height,
+            font: bar_font.clone(),
+            text_color: bar_theme.name_color,
+        };
+        let response = search_input_ui(ui, &mut buf, &params, |ui| {
+            // hint の書式化（#870）。**フォルダ現在地だけが幅を要る**——収まらないパスを
+            // 中間省略し、ドライブと leaf の両方を残す。`add_sized` に渡すのと同じ
+            // `ui.available_width()` から `TextEdit` の左右 margin を引いたものが、
+            // egui が hint を elide する内幅である（`TEXT_EDIT_HINT_H_MARGIN` の doc）。
+            //
+            // 測定は「候補を書式へ埋めた文字列の実幅」を返す形で注入する。**固定部
+            //（日本語の接尾辞・英語の接頭辞 + 接尾辞）の幅を別に推定しなくて済む**のが
+            // 要点で、省略は `dir` にだけ当たるため接尾辞は必ず残る。
+            //
+            // **測る font と描く font は同じ `bar_font` でなければならない。** 片方だけ
+            // 替えると、広く測れば egui が末尾を削って `…` が二重に付き（leaf が消える）、
+            // 狭く測れば要らぬ省略が入る——**どちらも検出器を持たない**（型でも
+            // テストでも捕まらず、カテゴリ D の目視だけが見る受容残余である）。
+            // 色（`name_color`）は galley の寸法に効かないので、描画側の
+            // `weak_text_color`（egui が無条件に上書きする）との食い違いは無害である。
+            let hint: String = match hint_plan {
+                HintPlan::Tool => crate::egui_shell::ui_strings::tool_select_hint(l).to_string(),
+                HintPlan::Search => crate::egui_shell::ui_strings::search_hint(l).to_string(),
+                // **egui 自身の描画条件と同じ述語でガードする**: `hint_text` はバッファが
+                // 空のときだけ描かれる（`builder.rs:592`）。フォルダ展開中の `buf` は
+                // `folder_filter()` なので、1 文字でも絞り込むと hint は描かれない——
+                // その間まで測ると `folder_hint` の String 確保と `layout_no_wrap` が
+                // 毎フレーム最大 9 回ずつ空回りする。描かれない文字列の中身は観測されない
+                // ので、素通しでも見え方は変わらない。
+                HintPlan::Folder(dir) if !buf_is_empty => {
+                    crate::egui_shell::ui_strings::folder_hint(l, dir)
                 }
-                // **入力欄の focus は TextEdit の構築より前に要求する**（#872/#936）。
-                // `TextEdit` は自分が走る時点の focus でイベントを消費するか決めるため、
-                // 構築の**後**に要求すると、そのフレームに載っていた文字は焦点の無い widget の
-                // 横を素通りして捨てられる。**プロセス起動後の最初のフレームがまさにその形
-                // だった**（実測: frame 1 が `has_focus=false`、frame 2 から真。再 show では
-                // `Memory` に残るので初回だけ）。窓は可視・前面・focus 済みで「打てるはず」に
-                // 見えるのに、ローカルで 50ms・CI runner で 1.4〜19 秒、打った文字が消えていた
-                // ——これが #872 の間欠失敗の正体である。
-                //
-                // **直前の `move_text_cursor_to_end`（#840）が構築前に置かれているのと同じ理由**
-                // であり、同一フレームの文字イベントに効かせるには構築前でなければならない。
-                //
-                // **blur 猶予の状態を読まない**——読む形（例: `blur_grace == Focused` を条件に
-                // 足す）にすると、reset-on-show 直後は `NeverFocused` なのに窓は focus を持ちうる
-                // ため、show 直後に打鍵できなくなる（SU2 が入れた当の挙動が消える）。条件は
-                // `interactive` と同じ `input_editable` を読む（同変数の doc）。
-                if pre.focused && input_editable && !ctx.memory(|m| m.has_focus(input_id)) {
-                    ctx.memory_mut(|m| m.request_focus(input_id));
+                HintPlan::Folder(dir) => {
+                    let avail = (ui.available_width() - TEXT_EDIT_HINT_H_MARGIN).max(0.0);
+                    let shown =
+                        crate::egui_shell::layout::fit_middle_by_measure(dir, avail, |cand| {
+                            let text = crate::egui_shell::ui_strings::folder_hint(l, cand);
+                            ui.painter()
+                                .layout_no_wrap(text, bar_font.clone(), bar_theme.name_color)
+                                .size()
+                                .x
+                        });
+                    crate::egui_shell::ui_strings::folder_hint(l, &shown)
                 }
-                // hint の書式化（#870）。**フォルダ現在地だけが幅を要る**——収まらないパスを
-                // 中間省略し、ドライブと leaf の両方を残す。`add_sized` に渡すのと同じ
-                // `ui.available_width()` から `TextEdit` の左右 margin を引いたものが、
-                // egui が hint を elide する内幅である（`TEXT_EDIT_HINT_H_MARGIN` の doc）。
-                //
-                // 測定は「候補を書式へ埋めた文字列の実幅」を返す形で注入する。**固定部
-                //（日本語の接尾辞・英語の接頭辞 + 接尾辞）の幅を別に推定しなくて済む**のが
-                // 要点で、省略は `dir` にだけ当たるため接尾辞は必ず残る。
-                //
-                // **測る font と描く font は同じ `bar_font` でなければならない。** 片方だけ
-                // 替えると、広く測れば egui が末尾を削って `…` が二重に付き（leaf が消える）、
-                // 狭く測れば要らぬ省略が入る——**どちらも検出器を持たない**（型でも
-                // テストでも捕まらず、カテゴリ D の目視だけが見る受容残余である）。
-                // 色（`name_color`）は galley の寸法に効かないので、描画側の
-                // `weak_text_color`（egui が無条件に上書きする）との食い違いは無害である。
-                let hint: String = match hint_plan {
-                    HintPlan::Tool => {
-                        crate::egui_shell::ui_strings::tool_select_hint(l).to_string()
-                    }
-                    HintPlan::Search => crate::egui_shell::ui_strings::search_hint(l).to_string(),
-                    // **egui 自身の描画条件と同じ述語でガードする**: `hint_text` はバッファが
-                    // 空のときだけ描かれる（`builder.rs:592`）。フォルダ展開中の `buf` は
-                    // `folder_filter()` なので、1 文字でも絞り込むと hint は描かれない——
-                    // その間まで測ると `folder_hint` の String 確保と `layout_no_wrap` が
-                    // 毎フレーム最大 9 回ずつ空回りする。描かれない文字列の中身は観測されない
-                    // ので、素通しでも見え方は変わらない。
-                    HintPlan::Folder(dir) if !buf.is_empty() => {
-                        crate::egui_shell::ui_strings::folder_hint(l, dir)
-                    }
-                    HintPlan::Folder(dir) => {
-                        let avail = (ui.available_width() - TEXT_EDIT_HINT_H_MARGIN).max(0.0);
-                        let shown =
-                            crate::egui_shell::layout::fit_middle_by_measure(dir, avail, |cand| {
-                                let text = crate::egui_shell::ui_strings::folder_hint(l, cand);
-                                ui.painter()
-                                    .layout_no_wrap(text, bar_font.clone(), bar_theme.name_color)
-                                    .size()
-                                    .x
-                            });
-                        crate::egui_shell::ui_strings::folder_hint(l, &shown)
-                    }
-                };
-                ui.add_sized(
-                    egui::vec2(ui.available_width(), field_height),
-                    egui::TextEdit::singleline(&mut buf)
-                        .id(input_id)
-                        // §18.5 ツール選択中の入力は無効化。add_enabled（全体グレーアウト）でなく
-                        // interactive(false)（通常描画のまま読み取り専用・changed 不発火）——外観維持。
-                        // launching 中も同様に打鍵を止める（Escape/blur/Alt+Q・↑↓は従来どおり通す・
-                        // spec 決定 3・4。↑↓は空リストゆえ自然 no-op）。
-                        .interactive(input_editable)
-                        .font(bar_font.clone())
-                        .text_color(bar_theme.name_color)
-                        // 色を付けない——付けても egui が weak_text_color で上書きする（上の
-                        // コメント）。hint の色は `ui.visuals_mut()` の `weak_text_color` が正本。
-                        .hint_text(egui::RichText::new(hint).font(bar_font)),
-                )
-            })
-            .inner;
+            };
+            hint
+        });
         if response.changed() {
             self.controller.on_input_changed(buf, in_folder, &ctx);
         }
@@ -1061,7 +1121,7 @@ mod tests {
     use egui::text::{CCursor, CCursorRange};
     use egui::text_edit::TextEditState;
 
-    use super::move_text_cursor_to_end;
+    use super::{SearchInputParams, move_text_cursor_to_end, search_input_ui};
 
     // `hex_color_parses_and_falls_back` は #673 で `visual.rs` の
     // `hex_parses_valid_and_falls_back_to_config_default` へ移した（hex→Color32 の変換が
@@ -1128,8 +1188,8 @@ mod tests {
     /// 後ろに戻したときに落ちる保証にならない（当時の並びが本当に落とすことを固定する）。
     ///
     /// ⚠️ **これが縛るのは egui の意味論であって `update()` の並びではない。** 本体側の
-    /// 呼び出し位置が後ろへ戻っても、このテストは通る（受容する残余。位置の理由は
-    /// `input_id` を作った直後のコメントが正本）。
+    /// 呼び出し位置が後ろへ戻っても、このテストは通る。**この受容残余は #872 で閉じた**——
+    /// 経緯と、どの検査が何を縛るかは `search_input_ui` の doc が正本。
     #[test]
     fn focus_requested_before_text_edit_applies_same_frame_input() {
         // 文字の届き方は本体と同じ経路にする——runtime は WM_CHAR / IME 確定を
@@ -1163,6 +1223,139 @@ mod tests {
         assert_eq!(
             after_text, "",
             "構築後に要求すると、そのフレームの文字は焦点の無い widget を素通りして捨てられる"
+        );
+    }
+
+    /// kittest の state。**復元フラグをフレームごとに切り替える**ために buf と束ねる。
+    struct CaretState {
+        buf: String,
+        restored: bool,
+        window_focused: bool,
+    }
+
+    fn caret_harness(id: egui::Id, focused: bool) -> egui_kittest::Harness<'static, CaretState> {
+        egui_kittest::Harness::new_ui_state(
+            move |ui, st: &mut CaretState| {
+                let params = SearchInputParams {
+                    input_id: id,
+                    restored_search: st.restored,
+                    window_focused: st.window_focused,
+                    input_editable: true,
+                    inset: 0.0,
+                    field_height: 20.0,
+                    font: egui::FontId::proportional(12.0),
+                    text_color: egui::Color32::WHITE,
+                };
+                let _ = search_input_ui(ui, &mut st.buf, &params, |_| String::new());
+            },
+            CaretState {
+                buf: "alpha".to_owned(),
+                restored: false,
+                window_focused: focused,
+            },
+        )
+    }
+
+    /// 復元フレームで、**同一フレームに載っていた**文字が末尾へ入る（#840/#872）。
+    ///
+    /// **縛るのは `move_text_cursor_to_end` の位置だけである**——それが `TextEdit` の後ろへ
+    /// 動けば落ちる。**focus 要求の位置はこの検査では縛れない**（判定フレームの開始時点で
+    /// 既に焦点が立っており、`!has_focus` ガードで要求が走らないため・実測）。そちらは
+    /// `kittest_first_frame_requests_focus_before_text_edit` が持つ。
+    ///
+    /// **`step()` を使う（`run()` ではない）。** `run()` は再描画要求が尽きるまで複数フレーム
+    /// 回すため、文字が 2 フレーム目で入っても通ってしまい、この検査の主題（同一フレーム）が
+    /// 骨抜きになる。`step()` は「キューされた各イベントにつき 1 フレーム、イベントが無ければ
+    /// 1 フレーム」である（`egui_kittest` 0.35 の `Harness::step` の doc）。
+    #[test]
+    fn kittest_restored_frame_appends_same_frame_input_at_end() {
+        let id = egui::Id::new("search_input");
+        let mut harness = caret_harness(id, true);
+        // 復元より前に 2 フレーム回して focus と `TextEdit` の state を確立する
+        //（`move_text_cursor_to_end` は `TextEdit::load_state` が None の間は何もしない）。
+        harness.step();
+        harness.step();
+
+        // **キャレットを先頭へ置く。** これが無いと検査は discriminate しない——focus 直後の
+        // キャレットは既に末尾に在り、`move_text_cursor_to_end` が no-op になるので、
+        // 呼び出しを `TextEdit` の後ろへ動かしても結果が変わらない（故障注入で実測した）。
+        // 実経路の `restored_search` は**バッファ全体が置き換わった**フレームであり、
+        // 残るキャレットは古い（短い）テキストの位置を指す。その状態をここで作る。
+        let mut state = TextEditState::load(&harness.ctx, id).expect("2 フレーム後に state が在る");
+        state
+            .cursor
+            .set_char_range(Some(CCursorRange::one(CCursor::new(0))));
+        state.store(&harness.ctx, id);
+
+        // 復元フレーム: `restored=true` と文字を**同じフレーム**へ載せる。
+        // 文字は本体と同じ経路で渡す（runtime は WM_CHAR / IME 確定を `Ime(Commit)` にする）。
+        harness.state_mut().restored = true;
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Ime(egui::ImeEvent::Commit("z".to_owned())));
+        harness.step();
+
+        assert_eq!(
+            harness.state().buf.as_str(),
+            "alphaz",
+            "復元フレームに載った打鍵は復元クエリの末尾へ入る"
+        );
+    }
+
+    /// **プロセス起動後の最初のフレーム**を再現する（#872/#936 の実害そのもの）。
+    ///
+    /// **上の検査は focus の並びを縛れない**（実測）。判定フレームより前に `step()` を回すため、
+    /// その時点で widget は既に焦点を持ち、`!has_focus` ガードで focus 要求が**そもそも走らない**
+    /// ——ゆえに要求を `TextEdit` の後ろへ動かしても通る。縛れているのはキャレットの側だけである。
+    ///
+    /// こちらは事前の `step()` を置かない。widget がまだ焦点を持たないフレームに文字が載る形は
+    /// **起動直後の初回 show そのもの**であり、要求が構築の後ろにあれば文字は焦点の無い widget の
+    /// 横を素通りして捨てられる。
+    #[test]
+    fn kittest_first_frame_requests_focus_before_text_edit() {
+        let id = egui::Id::new("search_input");
+        let mut harness = caret_harness(id, true);
+
+        // **判定フレームの開始時点で焦点を持っていない状態を作る。** `Harness` は構築の時点で
+        // 既にフレームを 1 枚走らせるため、「`step()` を呼ばない」だけでは足りない（実測: それだけ
+        // では焦点が立っていて、要求を後ろへ動かしても通ってしまった）。
+        harness.ctx.memory_mut(|m| m.surrender_focus(id));
+
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Ime(egui::ImeEvent::Commit("z".to_owned())));
+        harness.step();
+
+        assert_ne!(
+            harness.state().buf.as_str(),
+            "alpha",
+            "最初のフレームに載った打鍵が捨てられている（focus 要求が TextEdit の後ろにある）"
+        );
+    }
+
+    /// focus を要求しなければ同じ文字が捨てられる。
+    /// **この検査が本当に focus を見ていることの対照**であり、無いと上の検査が
+    /// 「何をしても通る」形に退化したことに気づけない。
+    #[test]
+    fn kittest_without_focus_request_the_same_input_is_dropped() {
+        let id = egui::Id::new("search_input");
+        let mut harness = caret_harness(id, false); // focus 要求の条件（`window_focused`）を落とす
+        harness.step();
+        harness.step();
+
+        harness.state_mut().restored = true;
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Ime(egui::ImeEvent::Commit("z".to_owned())));
+        harness.step();
+
+        assert_eq!(
+            harness.state().buf.as_str(),
+            "alpha",
+            "焦点が無ければ文字は入らない"
         );
     }
 

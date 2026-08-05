@@ -562,9 +562,11 @@ auto_hide_on_focus_lost = false
             })
         if ($leaked.Count -gt 0) {
             $ids = $leaked.Id -join ', '
-            # **後続の検査を巻き添えにしないよう掃除してから落とす。** ここも待つ——待たずに
-            # 抜けると、掃除したと宣言しながら実際にはプロセスが生き残り、次に走らせた
-            # スイートの `Reject` がそれを掴む。
+            # **後続の検査を巻き添えにしないよう掃除してから落とす。** ここも待つ——
+            # `Stop-Process -Force` は投げっぱなしなので、待たなければ「掃除できた」と
+            # 「殺せなかった」が同じ throw に化ける（`Stop-SnotraProcessAndWait` の 5 秒待ちと
+            # `Write-Warning` だけが後者を分ける。`-Quiet` はその警告を黙らせない）。
+            # この分岐は必ず throw で終わるので、緑の run はこの待ちを 1ms も払わない。
             $leaked | ForEach-Object { [void](Stop-SnotraProcessAndWait -Process $_ -Quiet) }
             throw "実機配管の後に検査対象の snotra が残っています（pid=$ids）。終了待ちが効いていません。"
         }

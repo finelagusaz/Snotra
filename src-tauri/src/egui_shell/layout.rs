@@ -1,8 +1,14 @@
 //! egui 検索ウィンドウの純粋レイアウト/タイミングヘルパー（#532 SU3）。ウィンドウ高さ算出・
 //! results 窓の可視性の導出（SPEC §8.6 の 4 連言）・幾何（上端 y・バー矩形）・
 //! 検索 debounce の判定・**表示幅に合わせたテキストの中間省略**（`truncate_middle_chars` /
-//! `fit_middle_by_measure`・#870）を egui/Win32 非依存で持つ。ユニットテスト対象。
+//! `fit_middle_by_measure`・#870）を Win32 非依存で持つ。ユニットテスト対象。
+//!
+//! **`egui` へ問うのは行高の丸め規則ただ 1 つである**（`GuiRounding`・`results_window_height`）。
+//! かつては egui にも依存しない旨を謳っていたが、それは「egui が行をどう積むか」を
+//! **写して持つ**ことでしか成り立たず、実際に 1/32 の丸めを写し忘れて窓と中身がずれた。
+//! 規則は写さず SSOT へ問う（`AGENTS.md`「検証の作法」の「照合は SSOT に対して行う」）。
 
+use egui::emath::GuiRounding as _;
 use std::time::Duration;
 
 /// path 行のフォントサイズ(#646 決定 9)。view.rs `RowTheme::path_size` と同係数——
@@ -82,20 +88,48 @@ pub fn main_window_height(
 /// 窓の大きさが表示位置で変わらないことを優先した人間裁定であり、その帰結（最下端では
 /// 1 行も見えないことがある）は `SPEC.md` §4.5 が受容すると明示している。
 ///
-/// **余りを持たない（`row_height` の整数倍ちょうど）。** これが成り立つのは
-/// `results_view` が `item_spacing.y = 0` を敷いて**行ピッチを `row_height` に一致させて
-/// いる**からであり、両者は対である（片方だけ変えると最終行が切れるか、`max_results + 1`
-/// 行目の頭が覗く）。かつてあった `+ 8.0` は 1 窓時代の `HeightParams.results_padding`
-/// ——結果リスト領域の**内側**の余白——を #646 PR2 が窓高へそのまま持ち込んだものだが、
-/// 窓を分けた時点で「窓の高さ = `ScrollArea` の高さ」になり、`ScrollArea` は与えられた
-/// 高さいっぱいに行を積むため**余白としては一度も機能していなかった**。実際には
-/// `max_results + 1` 行目の頭 8px が覗く場所になっていたので落とした。
+/// **返すのは「egui が実際に積む高さ」である。** `row_height` を **egui の丸め規則へ通してから**
+/// 件数を掛ける——egui は UI 座標を `GUI_ROUNDING`（1/32）の倍数へ丸めるため、素の
+/// `row_height` を掛けた値は中身の高さと一致しない（`row_height = 34.92` の行は 34.90625 で
+/// 積まれる）。**掛ける前に丸めるのが要点である**: 丸めてから掛ければ誤差は乗らないが、
+/// 掛けてから丸めると 1 行あたりの誤差が件数倍に育つ。
+///
+/// **余りを持たない（丸め済み行高の整数倍ちょうど）。** これが成り立つのは `results_view` が
+/// `item_spacing.y = 0` を敷いて**行ピッチを行高に一致させている**からであり、両者は対である
+/// （片方だけ変えると最終行が切れるか、`max_results + 1` 行目の頭が覗く）。かつてあった
+/// `+ 8.0` は 1 窓時代の `HeightParams.results_padding`——結果リスト領域の**内側**の余白——を
+/// #646 PR2 が窓高へそのまま持ち込んだものだが、窓を分けた時点で「窓の高さ = `ScrollArea` の
+/// 高さ」になり、`ScrollArea` は与えられた高さいっぱいに行を積むため**余白としては一度も
+/// 機能していなかった**（実際には `max_results + 1` 行目の頭 8px が覗く場所になっていた）。
+///
+/// **これは論理 px であり、これだけでは足りない。** 物理 px へ落とす段で切り捨てが起きると
+/// 最終行が再び切れる——変換は `results_height_phys` が担う（同関数の doc）。
 pub fn results_window_height(max_results: u32, row_height: f64) -> f64 {
     if max_results == 0 {
-        0.0
-    } else {
-        f64::from(max_results) * row_height
+        return 0.0; // hide の契約値。**丸めより前に返す**（`ceil` 側も 0 を保つ）
     }
+    let drawn_row = f64::from((row_height as f32).round_ui());
+    f64::from(max_results) * drawn_row
+}
+
+/// results 窓の**物理**高さ（案 3）。論理高を**切り上げて**物理 px にする。
+///
+/// **`round` ではなく `ceil` である。** 窓の物理高は整数 px、論理高は連続量であり、
+/// `round` は半分の確率で下へ倒れて最終行を削る。実測では font_size 8..48 × 件数 1..50 ×
+/// scale 5 種の **10,250 通り中 3,702 件（36%）で最終行が切れていた**（最悪 1.125pt）。
+/// `ceil` にすると**任意の scale で切れが 0 になる**（カスタムスケーリングの 1.1・1.37 でも）。
+///
+/// **切れを消す代償は余りである。** 最大 0.97pt（scale 1.0）で、scale が上がるほど小さい
+/// （2.0 で 0.47pt）。最小の行高 24pt の 4% 未満ゆえ `max_results + 1` 行目は覗かない。
+///
+/// **egui と tao の格子は揃えられない。** 一元化の条件は「1 物理 px が 1/32 の整数個」だが、
+/// これが成り立つのは scale が 2 の冪のときだけで、1.25 では 25.6 個・1.5 では 21.33 個に
+/// なる（実測）。`row_height` を 4pt の倍数へ量子化すれば 25% 刻みの scale では揃うが、
+/// カスタムスケーリングで破れるうえ font_size 14 と 15 が同じ行高に落ちる。ゆえに
+/// **格子を揃えるのではなく、最後に丸める 1 点をここに定めて必ず上へ倒す**——直列な丸めでは
+/// 最終段が全体を支配するため、上流の格子が噛み合わなくてもこれで足りる。
+pub fn results_height_phys(logical_height: f64, scale: f64) -> u32 {
+    (logical_height * scale).ceil().max(0.0) as u32
 }
 
 /// results 窓の上端の**物理** y（#752 C1）。`window_coordinator::position_results_below_main`
@@ -108,9 +142,14 @@ pub fn results_window_height(max_results: u32, row_height: f64) -> f64 {
 ///
 /// `main_scale` は **main 窓の** scale である。**#835 より前は results 窓の scale を取る
 /// `available_below` と同型で並んでおり、取り違えの検出器が無いことを受容していた**——
-/// クランプの撤去で **results 窓の** scale を読む箇所が消え、この crate に残る窓の scale の
-/// 読みはすべて main 窓のもの（`read_bar_anchor` と `position_results_below_main`）になった。
-/// 同型の値が 1 種類になったので、取り違えは構造的に起こらない。
+/// クランプの撤去で **results 窓の** scale を読む箇所が一度は消え、同型の値が 1 種類に
+/// なったので取り違えは構造的に起こらない、と書けた時期があった。
+///
+/// **案 3 でその残余は戻った。** `ResultsWindow::set_size` が高さを物理 px で指定するために
+/// **results 窓の** scale を読む（同関数の doc）。ここへ渡すのは **main の** scale であり、
+/// 型はどちらも `f64` で区別が付かない——**検出器は無い**（受容する残余）。取り違えを防ぐのは
+/// 両者が別の関数に閉じていることと、この doc だけである。**マルチモニターで main と
+/// results が別 DPI のモニターに跨るとき、両者は実際に異なる値になる。**
 pub fn results_top_y(main_y: i32, main_height_phys: u32, gap_logical: u32, main_scale: f64) -> i32 {
     main_y + main_height_phys as i32 + (f64::from(gap_logical) * main_scale).round() as i32
 }
@@ -502,18 +541,68 @@ mod tests {
         assert_eq!(results_window_height(8, row), 8.0 * row);
         // 高さが連動するのは**設定値**であって件数ではない。
         assert_eq!(results_window_height(1, row), row);
-        // 余りゼロ（行ピッチ = row_height との対）。半端な行高でも整数倍を保つ。
+        // 余りゼロ（行ピッチ = 丸め済み行高との対）。**割る相手は素の値ではなく丸め済みの
+        // 行高である**——egui は 34.92 の行を 34.90625 で積むので、素の値で割ると整数に
+        // ならない。ここを素の値で書くと、案 3 の要（掛ける前に丸める）が測れなくなる。
+        let drawn = f64::from((34.92_f32).round_ui());
         for &n in &[1u32, 5, 8, 20, 50] {
-            let rows = results_window_height(n, 34.92) / 34.92;
+            let rows = results_window_height(n, 34.92) / drawn;
             assert!(
                 (rows - f64::from(n)).abs() < 1e-9,
                 "n={n} で {rows} 行分の高さになった（整数倍でない＝余りが出ている）"
+            );
+        }
+        // **掛ける前に丸める**こと自体を固定する。掛けてから丸める実装は 1 行あたりの
+        // 誤差が件数倍に育ち、n=50 でここが落ちる。
+        for &n in &[1u32, 8, 50] {
+            assert!(
+                (results_window_height(n, 34.92) - f64::from(n) * drawn).abs() < 1e-9,
+                "n={n}: 丸めてから掛けていない"
             );
         }
         // **`max_results = 0` は 0.0**——`config.toml` の手編集で到達可能な値であり
         // （`ResultsInputs::max_results` の doc）、0.0 は `present_results` が hide と読む
         // 契約値である。ここを落とすと 8px のスリット窓が出る。
         assert_eq!(results_window_height(0, row), 0.0);
+    }
+
+    /// 案 3: 物理 px は**切り上げ**る。`round` だと半分の確率で下へ倒れて最終行を削る。
+    ///
+    /// **全域で切れが 0 になることを測る**——font_size 8..48 × 件数 1..50 × scale（標準の
+    /// 25% 刻みに加え、Windows のカスタムスケーリングで到達する 1.1 / 1.37 も）。`ceil` を
+    /// `round` へ戻すとここが落ちる。
+    #[test]
+    fn results_height_phys_never_clips_the_last_row() {
+        let mut worst_slack = 0.0_f64;
+        for f in 8_u32..=48 {
+            let rh = Metrics::from_config(f, 6, 28).row_height;
+            for n in 1_u32..=50 {
+                for &scale in &[1.0_f64, 1.1, 1.25, 1.37, 1.5, 1.75, 2.0, 2.5, 3.0] {
+                    let logical = results_window_height(n, rh);
+                    let phys = results_height_phys(logical, scale);
+                    // 窓が egui へ渡す高さ（`runtime.rs` は物理 / scale を screen_rect にする）
+                    let screen = f64::from(phys as f32 / scale as f32);
+                    let slack = screen - logical;
+                    assert!(
+                        slack >= -1e-6,
+                        "font={f} n={n} scale={scale}: {} 切れる（窓 {screen} < 中身 {logical}）",
+                        -slack
+                    );
+                    worst_slack = worst_slack.max(slack);
+                }
+            }
+        }
+        // 余りは 1 行分より十分小さい（`max_results + 1` 行目が覗かない）。最小の行高は 24。
+        assert!(worst_slack < 1.0, "余りが大きすぎる: {worst_slack}");
+    }
+
+    /// hide の契約値（0.0）は丸めても物理変換しても 0 のままである。
+    #[test]
+    fn results_height_zero_survives_rounding_and_conversion() {
+        assert_eq!(results_window_height(0, 34.92), 0.0);
+        for &scale in &[1.0_f64, 1.25, 2.0] {
+            assert_eq!(results_height_phys(0.0, scale), 0);
+        }
     }
 
     /// #738: 論理 px × scale の四捨五入。**動機（なぜ実高ではなくバー高か）は関数 doc**。

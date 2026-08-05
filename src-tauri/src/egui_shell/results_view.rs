@@ -740,35 +740,32 @@ mod tests {
         }
     }
 
-    /// **`layout::results_window_height` が返す高さに、その件数の行がちょうど収まる。**
+    /// **`layout::results_window_height` が返す高さと、egui が実際に積む高さが厳密に一致する。**
     /// 式（`layout.rs`）と描画（egui）を直に突き合わせる——一方だけを変えれば落ちる。
     ///
-    /// 判定は等式ではなく**両側からの挟み込み**である:
-    /// - 余りが負なら最終行が切れる（#646 PR2 以来の欠陥そのもの）
-    /// - 余りが 1 行分もあれば `max_results + 1` 行目の頭が覗く（`+ 8.0` が起こしていた）
+    /// **`row_height` を設定 UI の全域（`font_size` 8..=48）で回す。** ここを 1 つの値で
+    /// 固定していたことが、この検査の盲点だった——34.92 は丸めが**下**へ向かう側の値で、
+    /// 上へ向かう 13/41 の font_size（12・26〜37）を素通りさせていた。3 種の故障注入で
+    /// 発火を確かめておきながら、実装に生きていた 4 つ目の破れに対しては盲目だったのである。
     ///
-    /// 上限を `n × GUI_ROUNDING` に取るのは、**余りの正体が egui の 1/32 丸めの累積だから**
-    /// である（1 行あたり最大 1/32・N 行で N/32）。定数で緩めると、丸め以外の理由で生じた
-    /// 余りを見逃す。
+    /// **等式で測れるのは `results_window_height` が丸めてから掛けるようになったからである**
+    /// （案 3）。以前は余りが出るため挟み込みでしか書けなかった。
     #[test]
     fn kittest_rows_exactly_fill_the_window_height() {
-        for n in [1_u32, 8, 20, 50] {
-            let row_height = 34.92_f32;
-            let drawn = measure_content_height(&rows_for_test(n as usize), row_height);
-            let window = results_window_height(n, f64::from(row_height)) as f32;
-            let slack = window - drawn;
-            assert!(
-                slack >= -1e-4,
-                "n={n}: 行が窓を {} はみ出している＝最終行が切れる（描画 {drawn} / 窓 {window}）",
-                -slack
-            );
-            let bound = n as f32 * egui::emath::GUI_ROUNDING;
-            assert!(
-                slack <= bound + 1e-4,
-                "n={n}: 余り {slack} が丸めの累積 {bound} を超える＝{} 行目の頭が覗く\
-                 （描画 {drawn} / 窓 {window}）",
-                n + 1
-            );
+        use crate::egui_shell::layout::Metrics;
+        for f in 8_u32..=48 {
+            let row_height = Metrics::from_config(f, 6, 28).row_height;
+            for n in [1_u32, 8, 20, 50] {
+                let drawn = measure_content_height(&rows_for_test(n as usize), row_height as f32);
+                let window = results_window_height(n, row_height) as f32;
+                assert!(
+                    (window - drawn).abs() < 1e-3,
+                    "font={f} n={n}: 窓 {window} と描画 {drawn} が一致しない（差 {}）。\
+                     正なら {} 行目の頭が覗き、負なら最終行が切れる",
+                    window - drawn,
+                    n + 1
+                );
+            }
         }
     }
 
@@ -794,9 +791,10 @@ mod tests {
             "行が高くなったのに窓へ収まった＝上の 2 検査は何も縛っていない\
              （描画 {drawn} / 窓 {window}）"
         );
-        // 超過は「1 行あたり 3.0 が N 行」の規模になる。**描画側だけが `round_ui` を通る**
-        // ——窓高は `layout` が返す生の値であり、丸めは egui の内側にしかない。
-        let expected = ((row_height + 3.0).round_ui() - row_height) * n as f32;
+        // 超過は「1 行あたり 3.0 が N 行」の規模になる。**両辺とも丸めを通る**——案 3 で
+        // `results_window_height` も掛ける前に `round_ui` するようになったため、差は
+        // 丸め済みどうしの引き算で表せる（案 3 より前は窓側だけが生の値だった）。
+        let expected = ((row_height + 3.0).round_ui() - row_height.round_ui()) * n as f32;
         assert!(
             (overflow - expected).abs() < 1e-3,
             "超過 {overflow} が行間相当 {expected} と規模で合わない"

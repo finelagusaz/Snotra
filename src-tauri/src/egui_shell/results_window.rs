@@ -48,6 +48,11 @@ pub(crate) struct ResultsWindow {
     /// `last_results_height` から移設）。**`visible` とは概念が別**——冗長な Win32 呼び出しを
     /// 避ける性能上のガードであり、correctness のフラグではない。
     ///
+    /// **物理指定へ移った後も論理のまま保つ**（案 3）。`size_delta_exceeds` の許容 0.5 は
+    /// 論理 px を想定した値であり、物理で覚えると同じ 0.5 が scale 2.0 では論理 0.25 を
+    /// 意味してガードが実質狭まる。**覚える単位と比べる単位を揃える**のが要点で、
+    /// 物理への変換は比較を済ませた後に行う。
+    ///
     /// `Cell` ではなく `Mutex` である理由は `visible` が `AtomicBool` である理由と同じ
     /// （managed state は `Send + Sync` を要求する）。f64 の組は atomic で表せない。
     /// **書き手はイベントループスレッドの 2 経路だけである**（`window_coordinator` の
@@ -197,7 +202,25 @@ impl ResultsWindow {
         let _ = self.window.set_always_on_top(topmost);
     }
 
-    /// 論理サイズを設定する。**tao 経由のままにする。**
+    /// サイズを設定する。**高さは物理 px で指定する**（案 3・#835 の受容残余の巻き戻し）。
+    ///
+    /// **なぜ物理か**: `LogicalSize` を渡すと tao が `round` で物理へ落とし、半分の確率で
+    /// 下へ倒れて最終行が削れる（実測 10,250 通り中 3,702 件）。切り上げは
+    /// `layout::results_height_phys` が担い、ここはその結果を適用するだけである
+    /// （`ceil` を窓の型へ持ち込むとユニットテストが届かなくなる）。
+    ///
+    /// **この窓の `scale_factor()` を読む。** #835 のクランプ撤去で「results 窓の scale を
+    /// 読む箇所」は一度消え、`layout::results_top_y` の doc は「この crate に残る窓の scale の
+    /// 読みはすべて main 窓のもの」「同型の値が 1 種類になったので取り違えは構造的に
+    /// 起こらない」と記していた。**案 3 はその残余を巻き戻す**——`results_top_y` へ渡すのは
+    /// **main の** scale、ここで読むのは **results の** scale であり、型はどちらも `f64` で
+    /// 区別が付かない。**検出器は無い**（受容する残余）。取り違えを防ぐのは、両者が別の
+    /// 関数に閉じていることと、この doc だけである。
+    ///
+    /// **幅は論理のまま丸める。** 行の描画に影響しないので `round` で足り、`ceil` にすると
+    /// 幅だけが 1px ずつ育つ。
+    ///
+    /// **tao 経由のままにする。**
     ///
     /// 理由は「差分適用を通らないから」では**ない**——tao 0.35.3 の `set_inner_size` /
     /// `set_outer_position` はどちらも `set_window_flags(|f| f.set(MAXIMIZED, false))` を呼び
@@ -220,6 +243,10 @@ impl ResultsWindow {
     /// `background` は**リサイズで露出する下地**へ適用する（`apply_native_background` の doc）。
     /// デルタガードの内側で撃つため、同値のフレームでは Win32 を呼ばない。
     pub(crate) fn set_size(&self, width: f64, height: f64, background: egui::Color32) {
+        // **scale はデルタガードより前に読む。** memo は論理値のままに保つ（`last_size` の doc）
+        // ——物理へ移すと許容 0.5 の意味が scale で変わり、scale 2.0 では論理 0.25 の
+        // ガードになる（撃つ頻度が意図せず上がる）。比較する単位と覚える単位を揃える。
+        let scale = self.window.scale_factor().unwrap_or(1.0);
         {
             let mut last = self.last_size.lock().unwrap();
             if !crate::egui_shell::layout::size_delta_exceeds(*last, (width, height)) {
@@ -227,7 +254,11 @@ impl ResultsWindow {
             }
             *last = (width, height);
         }
-        let _ = self.window.set_size(tauri::LogicalSize::new(width, height));
+        let height_phys = crate::egui_shell::layout::results_height_phys(height, scale);
+        let width_phys = (width * scale).round() as u32;
+        let _ = self
+            .window
+            .set_size(tauri::PhysicalSize::new(width_phys, height_phys));
         self.apply_native_background(background);
     }
 

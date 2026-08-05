@@ -68,7 +68,7 @@ pub fn main_window_height(
     bar_height + status_height.unwrap_or(0.0) + toast_height.unwrap_or(0.0)
 }
 
-/// 結果窓の高さ（#835）。**`max_results` 分の固定高**・padding 8。**件数を入力に持たない**
+/// 結果窓の高さ（#835）。**`max_results` 分の固定高**。**件数を入力に持たない**
 /// ——候補が少なくても窓は縮まない（#646 PR2 決定 7 の実件数フィットを覆した。理由は
 /// `ADR-results-fixed-height`）。
 ///
@@ -81,11 +81,20 @@ pub fn main_window_height(
 /// **作業領域の下端で抑えない**（#835 で #675 を撤去）。収まらない分は画面外へはみ出す。
 /// 窓の大きさが表示位置で変わらないことを優先した人間裁定であり、その帰結（最下端では
 /// 1 行も見えないことがある）は `SPEC.md` §4.5 が受容すると明示している。
+///
+/// **余りを持たない（`row_height` の整数倍ちょうど）。** これが成り立つのは
+/// `results_view` が `item_spacing.y = 0` を敷いて**行ピッチを `row_height` に一致させて
+/// いる**からであり、両者は対である（片方だけ変えると最終行が切れるか、`max_results + 1`
+/// 行目の頭が覗く）。かつてあった `+ 8.0` は 1 窓時代の `HeightParams.results_padding`
+/// ——結果リスト領域の**内側**の余白——を #646 PR2 が窓高へそのまま持ち込んだものだが、
+/// 窓を分けた時点で「窓の高さ = `ScrollArea` の高さ」になり、`ScrollArea` は与えられた
+/// 高さいっぱいに行を積むため**余白としては一度も機能していなかった**。実際には
+/// `max_results + 1` 行目の頭 8px が覗く場所になっていたので落とした。
 pub fn results_window_height(max_results: u32, row_height: f64) -> f64 {
     if max_results == 0 {
         0.0
     } else {
-        f64::from(max_results) * row_height + 8.0
+        f64::from(max_results) * row_height
     }
 }
 
@@ -480,15 +489,27 @@ mod tests {
         assert_eq!(main_window_height(43.0, Some(43.0), Some(43.0)), 129.0);
     }
 
-    /// #835: 結果窓は **`max_results` 分の固定高** + padding 8。**件数では変わらない**
+    /// #835: 結果窓は **`max_results` 分の固定高**。**件数では変わらない**
     /// （#646 PR2 決定 7 の実件数フィットを覆した・`ADR-results-fixed-height`）。
+    ///
+    /// **`row_height` の整数倍ちょうどであること**（余りを持たないこと）も測る——`results_view`
+    /// が `item_spacing.y = 0` で行ピッチを `row_height` に揃えているため、余りは余白ではなく
+    /// 「`max_results + 1` 行目の頭が覗く場所」になる。ここへ定数を足し戻す変更が落ちる。
     #[test]
     fn results_height_is_fixed_at_max_results_regardless_of_count() {
         let row = 37.0;
         // 既定 visible_rows = 8。件数を入力に持たないので、1 件でも 20 件でもこの高さである。
-        assert_eq!(results_window_height(8, row), 8.0 * row + 8.0);
+        assert_eq!(results_window_height(8, row), 8.0 * row);
         // 高さが連動するのは**設定値**であって件数ではない。
-        assert_eq!(results_window_height(1, row), row + 8.0);
+        assert_eq!(results_window_height(1, row), row);
+        // 余りゼロ（行ピッチ = row_height との対）。半端な行高でも整数倍を保つ。
+        for &n in &[1u32, 5, 8, 20, 50] {
+            let rows = results_window_height(n, 34.92) / 34.92;
+            assert!(
+                (rows - f64::from(n)).abs() < 1e-9,
+                "n={n} で {rows} 行分の高さになった（整数倍でない＝余りが出ている）"
+            );
+        }
         // **`max_results = 0` は 0.0**——`config.toml` の手編集で到達可能な値であり
         // （`ResultsInputs::max_results` の doc）、0.0 は `present_results` が hide と読む
         // 契約値である。ここを落とすと 8px のスリット窓が出る。
@@ -564,7 +585,7 @@ mod tests {
     #[test]
     fn present_results_truth_table_distinguishes_all_four_conjuncts() {
         use ResultsPresentation::{Hidden, Visible};
-        let h = 8.0 * 37.0 + 8.0; // results_window_height(8, 37.0)——件数 3 でも 8 行分
+        let h = 8.0 * 37.0; // results_window_height(8, 37.0)——件数 3 でも 8 行分
 
         // ①true ③true（plain_hidden = false）
         assert_eq!(
@@ -598,7 +619,7 @@ mod tests {
     /// #835 の受け入れ条件 1（件数によらず一定）はここが担う。
     #[test]
     fn present_results_height_does_not_move_with_result_count() {
-        let h = 8.0 * 37.0 + 8.0;
+        let h = 8.0 * 37.0;
         for &count in &[1usize, 2, 3, 7, 8, 20, 200] {
             assert_eq!(
                 present_results(inputs(true, false, count, 8)),

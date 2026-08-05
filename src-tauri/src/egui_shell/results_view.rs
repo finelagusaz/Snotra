@@ -535,6 +535,19 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         // 世代交代フレームはアニメーションなし（#714・指示の導出は scroll_directive）。
         let do_scroll = self.last_scrolled_selected != Some(snapshot.selected);
         let mut clicked: Option<usize> = None;
+        // **行ピッチを `row_height` ちょうどにする。** 窓高（`layout::results_window_height`）は
+        // `max_results × row_height + 8` で**行間を勘定していない**ため、egui 既定の
+        // `item_spacing.y`（3.0）が入ると `(N-1) × 3.0` だけ中身が窓を超え、最終行が切れる
+        // （実測: `visible_rows` 8 で 0.38 行・20 で 1.38 行はみ出す）。
+        //
+        // **高さの式へ `(N-1) × spacing` を足す形は採らない**——`layout.rs` は egui 非依存の
+        // 純粋核であり、egui の style 既定値をあちらへ書き写すと、上流が変えたときに黙って
+        // ずれる（あちらからは spacing を読めないので検知もできない）。ここで 0 にすれば
+        // 「行ピッチ = `row_height`」が構造的に真になり、式は件数だけの関数のままでいられる。
+        //
+        // **`ScrollArea` の構築より前に置くこと**——visuals の適用点（`view.rs`）と同型の
+        // 順序制約であり、後ろへ動かすと既定の spacing で積まれる。
+        ui.spacing_mut().item_spacing.y = 0.0;
         egui::ScrollArea::vertical().show(ui, |ui| {
             for (i, result) in snapshot.rows.iter().enumerate() {
                 let sel = i == snapshot.selected;

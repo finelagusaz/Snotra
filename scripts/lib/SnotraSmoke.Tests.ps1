@@ -563,8 +563,8 @@ auto_hide_on_focus_lost = false
         if ($leaked.Count -gt 0) {
             $ids = $leaked.Id -join ', '
             # **後続の検査を巻き添えにしないよう掃除してから落とす。** ここも待つ——待たずに
-            # 抜けると、この宣言が満たされない（反復再現ハーネスはスイートを子プロセスで
-            # 繰り返すため、次の反復の `Reject` が掴む）。
+            # 抜けると、掃除したと宣言しながら実際にはプロセスが生き残り、次に走らせた
+            # スイートの `Reject` がそれを掴む。
             $leaked | ForEach-Object { [void](Stop-SnotraProcessAndWait -Process $_ -Quiet) }
             throw "実機配管の後に検査対象の snotra が残っています（pid=$ids）。終了待ちが効いていません。"
         }

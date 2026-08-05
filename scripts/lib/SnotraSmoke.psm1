@@ -655,6 +655,17 @@ function Send-SnotraKey {
     Initialize-SnotraNativeInterop
     $flags = if ($Up) { 0x2 } else { 0 }
     [SnotraSmokeInterop.Native]::keybd_event($VirtualKey, 0, $flags, [UIntPtr]::Zero)
+    # **注入の時刻を残す**（`SNOTRA_EGUI_INPUT_TRACE` を立てた実行だけ・#872/#936）。
+    # `keybd_event` は戻り値が void で、注入の成否を返す経路が無い——ゆえにここで残せるのは
+    # 「呼んだ」ことだけである。それでも本体側の `SNOTRA_EGUI_INPUT rx_key` と突き合わせれば、
+    # 「注入 〜 アプリへの配送」という**どちらの側もログを持たなかった唯一の区間**が測れる。
+    # 時計は epoch ms で、本体の `ts_ms` と同じ土俵に載る。**打鍵の実装はこの 1 か所**なので、
+    # 呼び出し側（smoke / Pester）に写しを置かずに全注入点を覆える。
+    if ($env:SNOTRA_EGUI_INPUT_TRACE) {
+        $ts = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        $state = if ($Up) { 'up' } else { 'down' }
+        Write-Host ("SNOTRA_SMOKE_INJECT ts_ms={0} vk=0x{1:X2} state={2}" -f $ts, $VirtualKey, $state)
+    }
 }
 
 function Send-SnotraKeyChord {

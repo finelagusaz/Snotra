@@ -41,7 +41,11 @@ param(
     [int]$MaxMinutes = 90,
     # 失敗した検査が本体を kill する前に待つ時間（ms）。0 = 現行の挙動。
     [ValidateRange(0, 120000)]
-    [int]$FailureGraceMs = 0
+    [int]$FailureGraceMs = 0,
+    # 打鍵の到達計器（注入 → tao の配送 → egui への push）を立てる。**既定で立てる**——
+    # この経路が測れないことが #872/#936 で機序の割れなかった原因そのものであり、
+    # 標本を採るこのスクリプトで落とす理由が無い。`ci.yml` は渡さないのでゲートは無影響。
+    [bool]$InputTrace = $true
 )
 
 Set-StrictMode -Version Latest
@@ -91,15 +95,19 @@ for ($i = 1; $i -le $Iterations; $i++) {
     # 子プロセスへ渡す env（呼び出し元の環境を汚さないよう、後で必ず戻す）。
     $savedTraceDir = [Environment]::GetEnvironmentVariable('SNOTRA_PESTER_TRACE_DIR', 'Process')
     $savedGrace = [Environment]::GetEnvironmentVariable('SNOTRA_PESTER_FAILURE_GRACE_MS', 'Process')
+    $savedInputTrace = [Environment]::GetEnvironmentVariable('SNOTRA_EGUI_INPUT_TRACE', 'Process')
     try {
         $env:SNOTRA_PESTER_TRACE_DIR = $iterationDir
         if ($FailureGraceMs -gt 0) { $env:SNOTRA_PESTER_FAILURE_GRACE_MS = "$FailureGraceMs" }
+        # 子プロセス（run-pester → Start-Process の本体）まで env の継承で届く。
+        if ($InputTrace) { $env:SNOTRA_EGUI_INPUT_TRACE = '1' }
         # stderr も証拠に含める（Write-Warning が出す不成立の診断がここに載る）。
         & pwsh @arguments *>&1 | Tee-Object -FilePath $log | Out-Null
         $exitCode = $LASTEXITCODE
     } finally {
         [Environment]::SetEnvironmentVariable('SNOTRA_PESTER_TRACE_DIR', $savedTraceDir, 'Process')
         [Environment]::SetEnvironmentVariable('SNOTRA_PESTER_FAILURE_GRACE_MS', $savedGrace, 'Process')
+        [Environment]::SetEnvironmentVariable('SNOTRA_EGUI_INPUT_TRACE', $savedInputTrace, 'Process')
     }
     $elapsed = [DateTime]::UtcNow - $started
 

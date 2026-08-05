@@ -302,6 +302,20 @@ Describe 'Stop-SnotraProcessAndWait（#872 単一インスタンス衝突）' {
         } | Should -Not -Throw
         $result | Should -BeFalse
     }
+
+    It '-Quiet でも終了待ちの警告は黙らない（黙らせるのは Stop-Process のエラーだけ）' {
+        # 実機配管の `AfterAll` と各 It の `finally` は `-Quiet` 付きで呼んでおり、その
+        # コメントが「`-Quiet` はこの警告を黙らせない」に荷重をかけている。**`Write-Warning` を
+        # `if ($Quiet)` の内側へ動かすリファクタは、この It が無いとテストを 1 本も落とさずに
+        # 通り、コメントだけが静かに嘘になる。**
+        Mock -ModuleName SnotraSmoke Stop-Process {}
+
+        $warnings = @()
+        $result = Stop-SnotraProcessAndWait -Process (New-FakeProcess -WaitResult $false) `
+            -TimeoutMs 10 -Quiet -WarningVariable warnings -WarningAction SilentlyContinue
+        $result | Should -BeFalse
+        ($warnings -join "`n") | Should -BeLike '*single-instance*'
+    }
 }
 
 Describe 'Resolve-SnotraExistingProcess' {
@@ -563,10 +577,12 @@ auto_hide_on_focus_lost = false
         if ($leaked.Count -gt 0) {
             $ids = $leaked.Id -join ', '
             # **後続の検査を巻き添えにしないよう掃除してから落とす。** ここも待つ——
-            # `Stop-Process -Force` は投げっぱなしなので、待たなければ「掃除できた」と
-            # 「殺せなかった」が同じ throw に化ける（`Stop-SnotraProcessAndWait` の 5 秒待ちと
-            # `Write-Warning` だけが後者を分ける。`-Quiet` はその警告を黙らせない）。
-            # この分岐は必ず throw で終わるので、緑の run はこの待ちを 1ms も払わない。
+            # `Stop-Process -Force` は終了を待たない（snotra.exe では実測 3/30 で It の後まで
+            # 生き残った・上の `Resolve-SnotraExistingProcess -Policy Reject` のコメント）。
+            # 待たなければ「掃除できた」と「殺せなかった」が同じ throw に化ける
+            # （`Stop-SnotraProcessAndWait` の 5 秒待ちと `Write-Warning` だけが後者を分ける。
+            # `-Quiet` はその警告を黙らせない——同名 Describe の It が固定する）。合否はどちらも
+            # 赤である。この分岐は必ず throw で終わるので、緑の run はこの待ちを 1ms も払わない。
             $leaked | ForEach-Object { [void](Stop-SnotraProcessAndWait -Process $_ -Quiet) }
             throw "実機配管の後に検査対象の snotra が残っています（pid=$ids）。終了待ちが効いていません。"
         }

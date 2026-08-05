@@ -214,15 +214,17 @@ impl<T: UserEvent> Plugin<T> for RuntimePlugin<T> {
                 // 割り当てを打鍵のたびに無条件で払わないため。
                 if crate::input::input_trace_enabled() {
                     match event {
-                        TaoWindowEvent::KeyboardInput { event: key, .. } => {
-                            crate::input::input_trace(
-                                "rx_key",
-                                &format!(
-                                    "window_id={window_id:?} state={:?} physical={:?}",
-                                    key.state, key.physical_key
-                                ),
-                            )
-                        }
+                        TaoWindowEvent::KeyboardInput {
+                            event: key,
+                            is_synthetic,
+                            ..
+                        } => crate::input::input_trace(
+                            "rx_key",
+                            &format!(
+                                "window_id={window_id:?} state={:?} physical={:?} synthetic={is_synthetic}",
+                                key.state, key.physical_key
+                            ),
+                        ),
                         TaoWindowEvent::ReceivedImeText(text) => crate::input::input_trace(
                             "rx_text",
                             &format!("window_id={window_id:?} chars={}", text.chars().count()),

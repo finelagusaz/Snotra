@@ -279,7 +279,7 @@ kittest から駆動できる継ぎ目を作る。**このタスクでは挙動�
 - **`RuntimeFrame` に触れない。** 切り出す区画に `frame` の依存が 1 つも無いことを実測済み（`view.rs` が frame を使うのは `311` / `382` / `1046` の 3 箇所だけ）
 - **hint はクロージャで受ける。** `HintPlan::Folder` の分岐は `ui.available_width()` と `ui.painter()` を**内側の Frame の中で**読む。文字列を先に計算して渡すと `available_width` が変わる。クロージャなら呼ばれる位置が同じなので挙動が変わらない
 
-- [ ] **Step 1: 関数を追加する**
+- [x] **Step 1: 関数を追加する**
 
 `move_text_cursor_to_end`（`179`）の直後へ置く。中身は現在の `578`〜`671` の逐語移動である。
 
@@ -334,7 +334,7 @@ pub(crate) fn search_input_ui(
 }
 ```
 
-- [ ] **Step 2: 呼び出し側を置き換える**
+- [x] **Step 2: 呼び出し側を置き換える**
 
 `view.rs` の `578`〜`671` を次で置き換える。`input_id` は関数の外で作る（`focus_state` の trace が使う）。
 
@@ -372,15 +372,17 @@ pub(crate) fn search_input_ui(
 
 **注意**: クロージャは `buf` を借用できない（`search_input_ui` が `&mut buf` を取るため）。`HintPlan::Folder(dir) if !buf.is_empty()` のガードは、**呼び出し前に** `let buf_is_empty = buf.is_empty();` を計算して使う。
 
-- [ ] **Step 3: 挙動不変を確認する**
+- [x] **Step 3: 挙動不変を確認する**
 
 実行: `cargo clippy --workspace --all-targets -- -D warnings` と `cargo test -p snotra`
 期待: green。**既存の `focus_requested_before_text_edit_applies_same_frame_input`（`1134`）も通ること**
 
-- [ ] **Step 4: 目視で回帰が無いことを見る**
+- [x] **Step 4: 目視で回帰が無いことを見る**
 
 実行: `npm run smoke:egui`
 期待: green（`egui_show:done` → `egui_results:show` → `egui_hide:done`）
+
+**実施時の変更（Task 6 Step 5 へ寄せた）**: `smoke-egui.ps1` の既定は `target/release/snotra.exe` で、手元のそれは **8/4 10:06 製＝本サイクルの変更も #938 も含まない**。そのまま走らせると「対象を含まない自明な green」になる（`AGENTS.md`「検証コマンドは『観測形が対象を含むか』まで測る」）。**release の作り直しは Rust の変更が出揃う Task 6 Step 5 で 1 度だけ行い、そこで smoke を実行する。** Task 2 の挙動不変は `cargo test -p snotra`（206 passed・#840 と #938 の検査を含む）が受け持つ。
 
 **コミット**: `refactor(egui): 検索入力欄の widget 合成を frame 非依存の関数へ切り出す (#872)`
 

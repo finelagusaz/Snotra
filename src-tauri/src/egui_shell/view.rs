@@ -186,6 +186,90 @@ fn move_text_cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
     }
 }
 
+/// `search_input_ui` が要る 1 フレーム分の値（`RuntimeFrame` も controller も含まない）。
+pub(crate) struct SearchInputParams {
+    pub(crate) input_id: egui::Id,
+    /// フォルダ絞り込みから展開前 query へバッファ全体を復元したフレームか（#840）。
+    pub(crate) restored_search: bool,
+    /// 窓が OS の focus を持つか（`RawInput::focused`）。**focus 要求の条件である。**
+    pub(crate) window_focused: bool,
+    pub(crate) input_editable: bool,
+    pub(crate) inset: f32,
+    pub(crate) field_height: f32,
+    pub(crate) font: egui::FontId,
+    pub(crate) text_color: egui::Color32,
+}
+
+/// 検索入力欄の widget 合成。**`RuntimeFrame` にも `LauncherController` にも触らない**ので、
+/// `egui_kittest` の `Harness` から実コードのまま駆動できる（`mod tests` の kittest 検査）。
+///
+/// **この関数の内容は 3 つの順序そのものである。** キャレットの末尾同期（#840）と focus の
+/// 要求（#872/#936）は、どちらも `TextEdit` の**構築前**でなければ同一フレームの文字イベントに
+/// 効かない。#938 が入れた単体検査は egui の意味論だけを縛り、`update()` の並びが後ろへ戻っても
+/// 通る受容残余を持っていた——**kittest がこの関数を丸ごと走らせることでその残余が閉じる。**
+///
+/// `hint` をクロージャで受けるのは、`HintPlan::Folder` の分岐が `ui.available_width()` と
+/// `ui.painter()` を**内側の `Frame` の中で**読むためである。文字列を先に作って渡すと
+/// `available_width` が変わり、中間省略の結果が動く。
+pub(crate) fn search_input_ui(
+    ui: &mut egui::Ui,
+    buf: &mut String,
+    params: &SearchInputParams,
+    hint: impl FnOnce(&mut egui::Ui) -> String,
+) -> egui::Response {
+    let ctx = ui.ctx().clone();
+    egui::Frame::new()
+        .inner_margin(egui::Margin::same(params.inset.round() as i8))
+        .show(ui, |ui| {
+            // #840: folder filter から展開前 query へバッファ全体を復元するフレームでは、
+            // 同じ widget id に残る egui のキャレットも query 末尾へ同期する。TextEdit の
+            // 構築前に行うことで、同一フレームの文字イベントも復元後の末尾から処理される。
+            // tool は入力不可の一時表示で元の編集位置を保つため、この経路へは入れない。
+            if params.restored_search {
+                move_text_cursor_to_end(&ctx, params.input_id, buf);
+            }
+            // **入力欄の focus は TextEdit の構築より前に要求する**（#872/#936）。
+            // `TextEdit` は自分が走る時点の focus でイベントを消費するか決めるため、
+            // 構築の**後**に要求すると、そのフレームに載っていた文字は焦点の無い widget の
+            // 横を素通りして捨てられる。**プロセス起動後の最初のフレームがまさにその形
+            // だった**（実測: frame 1 が `has_focus=false`、frame 2 から真。再 show では
+            // `Memory` に残るので初回だけ）。窓は可視・前面・focus 済みで「打てるはず」に
+            // 見えるのに、ローカルで 50ms・CI runner で 1.4〜19 秒、打った文字が消えていた
+            // ——これが #872 の間欠失敗の正体である。
+            //
+            // **直前の `move_text_cursor_to_end`（#840）が構築前に置かれているのと同じ理由**
+            // であり、同一フレームの文字イベントに効かせるには構築前でなければならない。
+            //
+            // **blur 猶予の状態を読まない**——読む形（例: `blur_grace == Focused` を条件に
+            // 足す）にすると、reset-on-show 直後は `NeverFocused` なのに窓は focus を持ちうる
+            // ため、show 直後に打鍵できなくなる（SU2 が入れた当の挙動が消える）。条件は
+            // `interactive` と同じ `input_editable` を読む（同変数の doc）。
+            if params.window_focused
+                && params.input_editable
+                && !ctx.memory(|m| m.has_focus(params.input_id))
+            {
+                ctx.memory_mut(|m| m.request_focus(params.input_id));
+            }
+            let hint_text = hint(ui);
+            ui.add_sized(
+                egui::vec2(ui.available_width(), params.field_height),
+                egui::TextEdit::singleline(buf)
+                    .id(params.input_id)
+                    // §18.5 ツール選択中の入力は無効化。add_enabled（全体グレーアウト）でなく
+                    // interactive(false)（通常描画のまま読み取り専用・changed 不発火）——外観維持。
+                    // launching 中も同様に打鍵を止める（Escape/blur/Alt+Q・↑↓は従来どおり通す・
+                    // spec 決定 3・4。↑↓は空リストゆえ自然 no-op）。
+                    .interactive(params.input_editable)
+                    .font(params.font.clone())
+                    .text_color(params.text_color)
+                    // 色を付けない——付けても egui が weak_text_color で上書きする。
+                    // hint の色は `ui.visuals_mut()` の `weak_text_color` が正本。
+                    .hint_text(egui::RichText::new(hint_text).font(params.font.clone())),
+            )
+        })
+        .inner
+}
+
 /// pre-widget 入力（段 13 で読み切る値）。Escape・↑↓・→← の**読み**は TextEdit 構築（段 21）
 /// より前に終える必要があり、うち **↑↓ は消費（`events.retain`）まで含む**——この `retain` は
 /// #700 の再発を防ぐ唯一の場所であり、TextEdit の後に回すと ↑↓ が TextEdit へも効いて
@@ -579,95 +663,63 @@ impl EguiView for SearchWindowView {
         // ゆえ、下に取り残しも溢れも出ない）。余白部はドラッグ掴み領域になる（決定 10）。
         let inset = metrics.bar_inset as f32;
         let field_height = (metrics.bar_height as f32 - 2.0 * inset).max(1.0);
-        let response = egui::Frame::new()
-            .inner_margin(egui::Margin::same(inset.round() as i8))
-            .show(ui, |ui| {
-                let input_id = ui.make_persistent_id("search_input");
-                // #840: folder filter から展開前 query へバッファ全体を復元するフレームでは、
-                // 同じ widget id に残る egui のキャレットも query 末尾へ同期する。TextEdit の
-                // 構築前に行うことで、同一フレームの文字イベントも復元後の末尾から処理される。
-                // tool は入力不可の一時表示で元の編集位置を保つため、この経路へは入れない。
-                if restored_search {
-                    move_text_cursor_to_end(&ctx, input_id, &buf);
+        let input_id = ui.make_persistent_id("search_input");
+        // **hint の分岐が読む `buf` は、`search_input_ui` が `&mut` で借りるので先に測る。**
+        // hint が計算されるのは `TextEdit` の構築より前ゆえ、ここで測った値と同じである。
+        let buf_is_empty = buf.is_empty();
+        let params = SearchInputParams {
+            input_id,
+            restored_search,
+            window_focused: pre.focused,
+            input_editable,
+            inset,
+            field_height,
+            font: bar_font.clone(),
+            text_color: bar_theme.name_color,
+        };
+        let response = search_input_ui(ui, &mut buf, &params, |ui| {
+            // hint の書式化（#870）。**フォルダ現在地だけが幅を要る**——収まらないパスを
+            // 中間省略し、ドライブと leaf の両方を残す。`add_sized` に渡すのと同じ
+            // `ui.available_width()` から `TextEdit` の左右 margin を引いたものが、
+            // egui が hint を elide する内幅である（`TEXT_EDIT_HINT_H_MARGIN` の doc）。
+            //
+            // 測定は「候補を書式へ埋めた文字列の実幅」を返す形で注入する。**固定部
+            //（日本語の接尾辞・英語の接頭辞 + 接尾辞）の幅を別に推定しなくて済む**のが
+            // 要点で、省略は `dir` にだけ当たるため接尾辞は必ず残る。
+            //
+            // **測る font と描く font は同じ `bar_font` でなければならない。** 片方だけ
+            // 替えると、広く測れば egui が末尾を削って `…` が二重に付き（leaf が消える）、
+            // 狭く測れば要らぬ省略が入る——**どちらも検出器を持たない**（型でも
+            // テストでも捕まらず、カテゴリ D の目視だけが見る受容残余である）。
+            // 色（`name_color`）は galley の寸法に効かないので、描画側の
+            // `weak_text_color`（egui が無条件に上書きする）との食い違いは無害である。
+            let hint: String = match hint_plan {
+                HintPlan::Tool => crate::egui_shell::ui_strings::tool_select_hint(l).to_string(),
+                HintPlan::Search => crate::egui_shell::ui_strings::search_hint(l).to_string(),
+                // **egui 自身の描画条件と同じ述語でガードする**: `hint_text` はバッファが
+                // 空のときだけ描かれる（`builder.rs:592`）。フォルダ展開中の `buf` は
+                // `folder_filter()` なので、1 文字でも絞り込むと hint は描かれない——
+                // その間まで測ると `folder_hint` の String 確保と `layout_no_wrap` が
+                // 毎フレーム最大 9 回ずつ空回りする。描かれない文字列の中身は観測されない
+                // ので、素通しでも見え方は変わらない。
+                HintPlan::Folder(dir) if !buf_is_empty => {
+                    crate::egui_shell::ui_strings::folder_hint(l, dir)
                 }
-                // **入力欄の focus は TextEdit の構築より前に要求する**（#872/#936）。
-                // `TextEdit` は自分が走る時点の focus でイベントを消費するか決めるため、
-                // 構築の**後**に要求すると、そのフレームに載っていた文字は焦点の無い widget の
-                // 横を素通りして捨てられる。**プロセス起動後の最初のフレームがまさにその形
-                // だった**（実測: frame 1 が `has_focus=false`、frame 2 から真。再 show では
-                // `Memory` に残るので初回だけ）。窓は可視・前面・focus 済みで「打てるはず」に
-                // 見えるのに、ローカルで 50ms・CI runner で 1.4〜19 秒、打った文字が消えていた
-                // ——これが #872 の間欠失敗の正体である。
-                //
-                // **直前の `move_text_cursor_to_end`（#840）が構築前に置かれているのと同じ理由**
-                // であり、同一フレームの文字イベントに効かせるには構築前でなければならない。
-                //
-                // **blur 猶予の状態を読まない**——読む形（例: `blur_grace == Focused` を条件に
-                // 足す）にすると、reset-on-show 直後は `NeverFocused` なのに窓は focus を持ちうる
-                // ため、show 直後に打鍵できなくなる（SU2 が入れた当の挙動が消える）。条件は
-                // `interactive` と同じ `input_editable` を読む（同変数の doc）。
-                if pre.focused && input_editable && !ctx.memory(|m| m.has_focus(input_id)) {
-                    ctx.memory_mut(|m| m.request_focus(input_id));
+                HintPlan::Folder(dir) => {
+                    let avail = (ui.available_width() - TEXT_EDIT_HINT_H_MARGIN).max(0.0);
+                    let shown =
+                        crate::egui_shell::layout::fit_middle_by_measure(dir, avail, |cand| {
+                            let text = crate::egui_shell::ui_strings::folder_hint(l, cand);
+                            ui.painter()
+                                .layout_no_wrap(text, bar_font.clone(), bar_theme.name_color)
+                                .size()
+                                .x
+                        });
+                    crate::egui_shell::ui_strings::folder_hint(l, &shown)
                 }
-                // hint の書式化（#870）。**フォルダ現在地だけが幅を要る**——収まらないパスを
-                // 中間省略し、ドライブと leaf の両方を残す。`add_sized` に渡すのと同じ
-                // `ui.available_width()` から `TextEdit` の左右 margin を引いたものが、
-                // egui が hint を elide する内幅である（`TEXT_EDIT_HINT_H_MARGIN` の doc）。
-                //
-                // 測定は「候補を書式へ埋めた文字列の実幅」を返す形で注入する。**固定部
-                //（日本語の接尾辞・英語の接頭辞 + 接尾辞）の幅を別に推定しなくて済む**のが
-                // 要点で、省略は `dir` にだけ当たるため接尾辞は必ず残る。
-                //
-                // **測る font と描く font は同じ `bar_font` でなければならない。** 片方だけ
-                // 替えると、広く測れば egui が末尾を削って `…` が二重に付き（leaf が消える）、
-                // 狭く測れば要らぬ省略が入る——**どちらも検出器を持たない**（型でも
-                // テストでも捕まらず、カテゴリ D の目視だけが見る受容残余である）。
-                // 色（`name_color`）は galley の寸法に効かないので、描画側の
-                // `weak_text_color`（egui が無条件に上書きする）との食い違いは無害である。
-                let hint: String = match hint_plan {
-                    HintPlan::Tool => {
-                        crate::egui_shell::ui_strings::tool_select_hint(l).to_string()
-                    }
-                    HintPlan::Search => crate::egui_shell::ui_strings::search_hint(l).to_string(),
-                    // **egui 自身の描画条件と同じ述語でガードする**: `hint_text` はバッファが
-                    // 空のときだけ描かれる（`builder.rs:592`）。フォルダ展開中の `buf` は
-                    // `folder_filter()` なので、1 文字でも絞り込むと hint は描かれない——
-                    // その間まで測ると `folder_hint` の String 確保と `layout_no_wrap` が
-                    // 毎フレーム最大 9 回ずつ空回りする。描かれない文字列の中身は観測されない
-                    // ので、素通しでも見え方は変わらない。
-                    HintPlan::Folder(dir) if !buf.is_empty() => {
-                        crate::egui_shell::ui_strings::folder_hint(l, dir)
-                    }
-                    HintPlan::Folder(dir) => {
-                        let avail = (ui.available_width() - TEXT_EDIT_HINT_H_MARGIN).max(0.0);
-                        let shown =
-                            crate::egui_shell::layout::fit_middle_by_measure(dir, avail, |cand| {
-                                let text = crate::egui_shell::ui_strings::folder_hint(l, cand);
-                                ui.painter()
-                                    .layout_no_wrap(text, bar_font.clone(), bar_theme.name_color)
-                                    .size()
-                                    .x
-                            });
-                        crate::egui_shell::ui_strings::folder_hint(l, &shown)
-                    }
-                };
-                ui.add_sized(
-                    egui::vec2(ui.available_width(), field_height),
-                    egui::TextEdit::singleline(&mut buf)
-                        .id(input_id)
-                        // §18.5 ツール選択中の入力は無効化。add_enabled（全体グレーアウト）でなく
-                        // interactive(false)（通常描画のまま読み取り専用・changed 不発火）——外観維持。
-                        // launching 中も同様に打鍵を止める（Escape/blur/Alt+Q・↑↓は従来どおり通す・
-                        // spec 決定 3・4。↑↓は空リストゆえ自然 no-op）。
-                        .interactive(input_editable)
-                        .font(bar_font.clone())
-                        .text_color(bar_theme.name_color)
-                        // 色を付けない——付けても egui が weak_text_color で上書きする（上の
-                        // コメント）。hint の色は `ui.visuals_mut()` の `weak_text_color` が正本。
-                        .hint_text(egui::RichText::new(hint).font(bar_font)),
-                )
-            })
-            .inner;
+            };
+            hint
+        });
         if response.changed() {
             self.controller.on_input_changed(buf, in_folder, &ctx);
         }

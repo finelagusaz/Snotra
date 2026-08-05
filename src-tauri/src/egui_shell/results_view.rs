@@ -418,6 +418,67 @@ pub(crate) fn draw_result_row(
     response.clicked()
 }
 
+/// 行のリストを 1 フレーム分描く。**`tauri::AppHandle` にも `ResultsShared` にも触らない**ので、
+/// `egui_kittest` の `Harness` から実コードのまま駆動できる（`mod tests` の kittest 検査）。
+/// 先例と理由は `view.rs` の `search_input_ui`——純粋核へ出せない描画の不変条件は、実コードを
+/// ヘッドレスで走らせる以外に測る手段が無い。
+///
+/// **返す `ScrollAreaOutput.content_size.y` が検出器の測定点である。** これは
+/// `content_ui.min_size()`（egui 0.35 `scroll_area.rs`）＝**実際に積んだ行の総高**であり、
+/// viewport にクランプされない。`layout::results_window_height(N, row_height)` と等しいことが
+/// 「窓に N 行がちょうど収まる」の機械的な表現になる——**この 2 つを結ぶ検査は他に無い**
+/// （`layout.rs` からは行間の余白が見えず、式が式であることしか測れない）。
+///
+/// `clicked` は `ScrollArea` の inner として返す。呼び出し側は `.inner` だけを読み、
+/// `content_size` はテストだけが読む。
+#[allow(clippy::too_many_arguments)] // draw_result_row と同型（描画関数は座標/テーマ引数が集中する）
+pub(crate) fn results_list_ui(
+    ui: &mut egui::Ui,
+    rows: &[SearchResult],
+    selected: usize,
+    generation_changed: bool,
+    do_scroll: bool,
+    icons: &HashMap<String, egui::TextureHandle>,
+    show_icons: bool,
+    theme: &RowTheme,
+    row_height: f32,
+) -> egui::scroll_area::ScrollAreaOutput<Option<usize>> {
+    // **行ピッチを `row_height` ちょうどにする。** 窓高（`layout::results_window_height`）は
+    // `max_results × row_height` で**行間を勘定していない**ため、egui 既定の
+    // `item_spacing.y`（3.0）が入ると `(N-1) × 3.0` だけ中身が窓を超え、最終行が切れる
+    // （実測: `visible_rows` 8 で 0.38 行・20 で 1.38 行はみ出していた）。
+    //
+    // **高さの式へ `(N-1) × spacing` を足す形は採らない**——`layout.rs` は egui 非依存の
+    // 純粋核であり、egui の style 既定値をあちらへ書き写すと、上流が変えたときに黙って
+    // ずれる（あちらからは spacing を読めないので検知もできない）。ここで 0 にすれば
+    // 「行ピッチ = `row_height`」が構造的に真になり、式は件数だけの関数のままでいられる。
+    //
+    // **`ScrollArea` の構築より前に置くこと**——visuals の適用点（`view.rs`）と同型の
+    // 順序制約であり、後ろへ動かすと既定の spacing で積まれる。**この位置は
+    // `kittest_row_pitch_equals_row_height` が縛る**（後ろへ動かすと落ちる）。
+    ui.spacing_mut().item_spacing.y = 0.0;
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        let mut clicked: Option<usize> = None;
+        for (i, result) in rows.iter().enumerate() {
+            let sel = i == selected;
+            if draw_result_row(
+                ui,
+                result,
+                sel,
+                scroll_directive(sel, do_scroll, generation_changed),
+                generation_changed,
+                icons.get(&result.path),
+                show_icons,
+                theme,
+                row_height,
+            ) {
+                clicked = Some(i);
+            }
+        }
+        clicked
+    })
+}
+
 /// アイコン欠落時の fallback（drawn placeholder）。§3.4 は 📁📄 を規定するが softbuffer +
 /// 単一 TTF で色 emoji が描けない懸念があるため単色プレースホルダに倒す（視覚スモークは
 /// Task 7 に集約・コントローラ決定）。Task 7 の視覚スモークで jp_font が 📁📄 を描けると
@@ -534,38 +595,20 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         // 選択変化時のみ scroll_to_me(#632 のゲートを view 内フィールドで維持)。
         // 世代交代フレームはアニメーションなし（#714・指示の導出は scroll_directive）。
         let do_scroll = self.last_scrolled_selected != Some(snapshot.selected);
-        let mut clicked: Option<usize> = None;
-        // **行ピッチを `row_height` ちょうどにする。** 窓高（`layout::results_window_height`）は
-        // `max_results × row_height + 8` で**行間を勘定していない**ため、egui 既定の
-        // `item_spacing.y`（3.0）が入ると `(N-1) × 3.0` だけ中身が窓を超え、最終行が切れる
-        // （実測: `visible_rows` 8 で 0.38 行・20 で 1.38 行はみ出す）。
-        //
-        // **高さの式へ `(N-1) × spacing` を足す形は採らない**——`layout.rs` は egui 非依存の
-        // 純粋核であり、egui の style 既定値をあちらへ書き写すと、上流が変えたときに黙って
-        // ずれる（あちらからは spacing を読めないので検知もできない）。ここで 0 にすれば
-        // 「行ピッチ = `row_height`」が構造的に真になり、式は件数だけの関数のままでいられる。
-        //
-        // **`ScrollArea` の構築より前に置くこと**——visuals の適用点（`view.rs`）と同型の
-        // 順序制約であり、後ろへ動かすと既定の spacing で積まれる。
-        ui.spacing_mut().item_spacing.y = 0.0;
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for (i, result) in snapshot.rows.iter().enumerate() {
-                let sel = i == snapshot.selected;
-                if draw_result_row(
-                    ui,
-                    result,
-                    sel,
-                    scroll_directive(sel, do_scroll, generation_changed),
-                    generation_changed,
-                    self.icon_textures.get(&result.path),
-                    show_icons,
-                    theme,
-                    metrics.row_height as f32,
-                ) {
-                    clicked = Some(i);
-                }
-            }
-        });
+        // 行の描画は `results_list_ui`（`AppHandle` 非依存の自由関数）へ出してある——
+        // 行ピッチと窓高の対を kittest が実コードのまま測れるようにするため（同関数の doc）。
+        let clicked = results_list_ui(
+            ui,
+            &snapshot.rows,
+            snapshot.selected,
+            generation_changed,
+            do_scroll,
+            &self.icon_textures,
+            show_icons,
+            theme,
+            metrics.row_height as f32,
+        )
+        .inner;
         if do_scroll {
             self.last_scrolled_selected = Some(snapshot.selected);
         }
@@ -603,9 +646,162 @@ impl snotra_egui_runtime::EguiView for ResultsView {
 
 #[cfg(test)]
 mod tests {
+    use super::results_list_ui;
     use super::truncate_middle;
     use super::{ClickTake, ResultsShared};
     use super::{RowScroll, row_hover_target, scroll_directive};
+    use crate::egui_shell::RowTheme;
+    use crate::egui_shell::layout::results_window_height;
+    use snotra_core::ui_types::SearchResult;
+    use std::collections::HashMap;
+
+    // ---- 行ピッチと窓高の対（kittest・実コードをヘッドレスで走らせる）----------------
+    //
+    // **ここが `layout.rs` の式と実際の描画を結ぶ唯一の点である。** あちらのユニットテストは
+    // 「式が式であること」しか測れず（行間の余白は egui 側にあって見えない）、描画側には
+    // これまで検査が無かった。#646 PR2 から続いた「設定した件数が窓に収まらない」欠陥は、
+    // どちらの検査からも見えない場所に居たためレビューと CI を素通りしている。
+
+    fn theme_for_test(row_font: f32) -> RowTheme {
+        RowTheme {
+            name_color: egui::Color32::WHITE,
+            path_color: egui::Color32::GRAY,
+            selection: egui::Color32::DARK_BLUE,
+            hover: egui::Color32::DARK_GRAY,
+            name_size: row_font,
+            path_size: row_font * 0.78,
+            status_size: row_font,
+            button_size: row_font,
+        }
+    }
+
+    fn rows_for_test(n: usize) -> Vec<SearchResult> {
+        (0..n)
+            .map(|i| SearchResult {
+                name: format!("item {i}"),
+                path: format!("C:\\test\\item{i}.exe"),
+                is_folder: false,
+                is_error: false,
+            })
+            .collect()
+    }
+
+    /// 描いた行の総高（`ScrollAreaOutput.content_size.y`）を返す。**`row_height` を変えて
+    /// 呼べる**ことが対照実験の足場になる。
+    ///
+    /// 測定値を `Harness` の state に持たせるのは借用のためである——ローカル変数を閉包へ
+    /// 貸すと、`harness` の drop まで借用が続いて読み出せない。
+    fn measure_content_height(rows: &[SearchResult], row_height: f32) -> f32 {
+        let icons: HashMap<String, egui::TextureHandle> = HashMap::new();
+        let theme = theme_for_test(12.0);
+        let rows = rows.to_vec();
+        let mut harness = egui_kittest::Harness::builder()
+            // 窓の実寸に近い幅と、行が全部収まる高さ。**高さは content_size に影響しない**
+            // （`content_ui.min_size()` は viewport にクランプされない）が、狭いと
+            // `scroll_to_me` が働いて測定が読みにくくなる。
+            .with_size(egui::vec2(600.0, 2000.0))
+            .build_ui_state(
+                move |ui, measured: &mut f32| {
+                    let out = results_list_ui(
+                        ui, &rows, 0, false, false, &icons, true, &theme, row_height,
+                    );
+                    *measured = out.content_size.y;
+                },
+                0.0_f32,
+            );
+        harness.run();
+        *harness.state()
+    }
+
+    /// **行ピッチが `row_height`（を egui の UI 丸めに通した値）ちょうどである**
+    /// ——`item_spacing.y = 0.0` の代入が消えるか、`ScrollArea::show` の後ろへ動くと落ちる
+    /// （どちらも今日は他のどの検査にも掛からない）。
+    ///
+    /// **`round_ui()` を噛ませるのは egui の実挙動だからである。** egui は UI 座標を
+    /// `GUI_ROUNDING`（1/32）の倍数へ丸めるため、`row_height = 34.92` の行は実際には
+    /// 34.90625 で積まれる。丸めを無視して素の値と比べると、**行間の余白が 0 でも落ちる**
+    /// 検査になり、何を縛っているのか読めなくなる（実測して気づいた）。
+    ///
+    /// 総高を行数で割る形にするのは、1 行だけでは行間が現れないためである。
+    #[test]
+    fn kittest_row_pitch_equals_row_height() {
+        use egui::emath::GuiRounding as _;
+        let row_height = 34.92_f32;
+        let expected = row_height.round_ui(); // egui が実際に積む 1 行分
+        for n in [2_usize, 8, 20] {
+            let total = measure_content_height(&rows_for_test(n), row_height);
+            let pitch = total / n as f32;
+            assert!(
+                (pitch - expected).abs() < 1e-4,
+                "n={n}: 行ピッチ {pitch} が {expected}（row_height {row_height} の UI 丸め）と\
+                 一致しない。総高 {total}・1 行あたり {} の超過は行間に余白が入っている徴候",
+                pitch - expected
+            );
+        }
+    }
+
+    /// **`layout::results_window_height` が返す高さに、その件数の行がちょうど収まる。**
+    /// 式（`layout.rs`）と描画（egui）を直に突き合わせる——一方だけを変えれば落ちる。
+    ///
+    /// 判定は等式ではなく**両側からの挟み込み**である:
+    /// - 余りが負なら最終行が切れる（#646 PR2 以来の欠陥そのもの）
+    /// - 余りが 1 行分もあれば `max_results + 1` 行目の頭が覗く（`+ 8.0` が起こしていた）
+    ///
+    /// 上限を `n × GUI_ROUNDING` に取るのは、**余りの正体が egui の 1/32 丸めの累積だから**
+    /// である（1 行あたり最大 1/32・N 行で N/32）。定数で緩めると、丸め以外の理由で生じた
+    /// 余りを見逃す。
+    #[test]
+    fn kittest_rows_exactly_fill_the_window_height() {
+        for n in [1_u32, 8, 20, 50] {
+            let row_height = 34.92_f32;
+            let drawn = measure_content_height(&rows_for_test(n as usize), row_height);
+            let window = results_window_height(n, f64::from(row_height)) as f32;
+            let slack = window - drawn;
+            assert!(
+                slack >= -1e-4,
+                "n={n}: 行が窓を {} はみ出している＝最終行が切れる（描画 {drawn} / 窓 {window}）",
+                -slack
+            );
+            let bound = n as f32 * egui::emath::GUI_ROUNDING;
+            assert!(
+                slack <= bound + 1e-4,
+                "n={n}: 余り {slack} が丸めの累積 {bound} を超える＝{} 行目の頭が覗く\
+                 （描画 {drawn} / 窓 {window}）",
+                n + 1
+            );
+        }
+    }
+
+    /// **検出器が発火することの検算**（フォールトインジェクション・`.claude/rules/safety-nets.md`）。
+    ///
+    /// 上の 2 検査が縛れているかは、**縛りが破れた入力で実際に落ちること**でしか確かめられない。
+    /// 実コードを変異させる代わりに、同じ `Harness` へ**行間の余白が入ったのと同じ総高**を
+    /// 作る——`row_height` に spacing 相当（3.0）を足して描けば、行が 1 本ずつ高くなる。
+    /// これは `item_spacing.y` が戻ったときに起きることと総高において等価である。
+    ///
+    /// **ずれの大きさまで見る**——「一致しない」だけでは、1/32 の丸め誤差で落ちても同じ
+    /// 判定になり、検出器の分解能が確かめられない。
+    #[test]
+    fn kittest_detector_fires_when_rows_are_taller_than_the_formula_assumes() {
+        use egui::emath::GuiRounding as _;
+        let row_height = 34.92_f32;
+        let n = 8_u32;
+        let drawn = measure_content_height(&rows_for_test(n as usize), row_height + 3.0);
+        let window = results_window_height(n, f64::from(row_height)) as f32;
+        let overflow = drawn - window;
+        assert!(
+            overflow > 0.0,
+            "行が高くなったのに窓へ収まった＝上の 2 検査は何も縛っていない\
+             （描画 {drawn} / 窓 {window}）"
+        );
+        // 超過は「1 行あたり 3.0 が N 行」の規模になる。**描画側だけが `round_ui` を通る**
+        // ——窓高は `layout` が返す生の値であり、丸めは egui の内側にしかない。
+        let expected = ((row_height + 3.0).round_ui() - row_height) * n as f32;
+        assert!(
+            (overflow - expected).abs() < 1e-3,
+            "超過 {overflow} が行間相当 {expected} と規模で合わない"
+        );
+    }
 
     /// #724: ホバー開始と終了は同じ述語の true / false で対称に駆動する。選択はポインタと
     /// 直交するため target を変えず、描画側で選択色を優先する。起動不能なエラー行だけを除く。

@@ -7,6 +7,9 @@ name: Pester Flake Repro
 #
 # 存在理由: 調査の律速は計器の解像度ではなく標本の採取速度だった。「たまたま落ちる PR」を
 # 待つ形では 1 日 1 標本しか採れず、7 件を超える発生に対して機序が最後まで割れなかった。
+#
+# **撤去条件: #872 / #936 が閉じたら一式を消す**（対象の列挙は
+# `scripts/repro-pester-flake.ps1` の `.NOTES` が正本）。
 on:
   workflow_dispatch:
     inputs:

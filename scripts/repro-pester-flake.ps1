@@ -3,6 +3,14 @@
 .SYNOPSIS
 Pester スイートを同一 runner 上で N 回繰り返し、失敗の標本を一度に集める（#872 / #936）。
 
+.NOTES
+**この道具は #872 / #936 の決着で役目を終える。両者が閉じたら一式を撤去すること**
+——本ファイル・`.github/workflows/pester-flake-repro.yml`・`docs/build-commands.md` の
+該当 bullet・`SnotraSmoke.Tests.ps1` の env フック 2 つ（`SNOTRA_PESTER_TRACE_DIR` /
+`SNOTRA_PESTER_FAILURE_GRACE_MS`）。**撤去条件をここに書くのは、PR 本文が merge 後に
+読まれなくなるからである**（検証用の足場は、消す合図を自分で持っていないと残り続ける）。
+残す判断をするなら、その理由をここへ書き換えること。
+
 .DESCRIPTION
 **これは検出器ではない。測定器である。** 反復のうち何回落ちても、このスクリプト自身は 0 で
 終わる——赤くする責務は `ci.yml` の `rust-check` が持ち、ここは「12.5% の事象を 1 日 1 標本で

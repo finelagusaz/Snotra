@@ -1,229 +1,791 @@
-# 実装計画: #872 残余の再分類と、単一インスタンス衝突の除去
+# キャレット検査の機序の再設計 — 実装計画
 
-## 目的
+> **実装者へ:** タスク単位で進めること。ステップは `- [ ]` で追跡する。
+> **コミットは各タスクの末尾で行うが、チェックボックスにはしていない**——このリポジトリは
+> 作業項目にコミット以降（コミット・push・PR 作成・マージ）を置くことを禁じている
+> （`.claude/skills/start-issue/SKILL.md`。実施前にチェックすれば未実行の行為を完了として
+> 主張し `gh pr create` のガードを解除し、実施後にチェックすればそのチェックを含む
+> コミットが未チェックのまま残る・#922 で前者を踏んだ）。
 
-#872 の残余を「型 A（遅延）だけ」から実測どおりの 2 つへ戻し、そのうち**構造的に直せる方**（単一インスタンス衝突）を消す。あわせて、次の測定が同じ穴に落ちないよう反復再現ハーネスに自己記述を持たせる。**型 A（待ちの予算切れ）の予算判断は本計画の範囲外**——根拠となる計器なしの実測がまだ無いため（→「範囲外」）。
+**Goal:** キャレットの断言を egui_kittest（実コードの並びを縛る）へ移し、実機配管の Pester 検査を「起動後の最初のフレームで入力欄が打鍵を受け取れるか」1 点へ縮める。
 
-調査の全文と一次証拠は `workspace/research.md`。
+**Architecture:** 設計書 `docs/superpowers/specs/2026-08-05-caret-test-mechanism-design.md` が正本。3 層（L1 状態遷移 / L2 キャレット / L3 実プロセス）のうち、L1 は既存の単体検査が守る。L2 を `view.rs` から `&mut Ui` だけを取る関数へ切り出して kittest で駆動し、L3 は `egui_input:focus_state` の観測 1 件へ縮める。あわせて、縮めても残る単一インスタンス衝突（実測 3/30）を塞ぐ。
 
-## 今日の時点で確定できる判断（#872 の問いへの回答の一部）
+**Tech Stack:** Rust（egui 0.35 / egui_kittest 0.35）、PowerShell 7 + Pester 6。
 
-**この検査は `rust-check` に置き続ける。** 候補は次の理由で出揃っている。
+## Global Constraints
 
-- **(b) 注入経路を前面非依存にする** — 不要。#890 が現れ方 1 の機序を本体自身のコンソール窓と特定し、窓を隠して解消した
-- **(c) ゲートから外す** — 反対。#938 が示したとおり、この検査だけが起動直後の打鍵喪失（`show_on_startup = true` の実害）を捕まえていた
-- **(d) 再試行でくるむ** — 反対。同上の実バグを緑で塗ることになっていた
-- **(a) 現状維持** — 「現れ方ごとに塞ぐ」ではなく「原因側を直す」へ既に移行済み（#887 / #889 / #890 / #938）。本計画はその続きである
-
-## 受け入れ条件
-
-1. 同一 Pester 実行の中で、先行する It が起動した本体の終了を待たずに次の It が `Resolve-SnotraExistingProcess` を呼ぶ経路が無くなっている
-2. 待たずに終了させてから次を起動する経路（`Resolve-SnotraExistingProcess -Policy Stop` の呼び出し側）にも同じ手当てが入っている
-3. 反復再現ハーネスの `summary.md` が、**その run で打鍵の到達計器が実際に有効だったか**を証拠に基づいて記録する（`-InputTrace` の指定ではなく、残った trace の中身から測る）
-4. `-InputTrace` を渡さない実行では、計器の env が確実に落ちている（**空文字で残らない**）
-5. `snotra-egui-runtime` の trace ハッチが、空文字の env で点灯しない
-6. 上記の変更が既存の Pester 55 件（単体 53 + 統合 2）と workspace 全テストを壊していない
+- `egui = "=0.35.0"`（ピン止め）。`egui_kittest` は `"0.35"` を使う——`snotra-settings/Cargo.toml:23` と同じ指定に揃える
+- `cargo clippy --workspace --all-targets -- -D warnings` が green であること。**未使用の新 API は `dead_code` で落ちる**ため、新設と呼び出し点の移行は同じタスクに束ねる
+- PowerShell スクリプトは `Set-StrictMode -Version Latest` の下で動く（`SnotraSmoke.psm1:3`）。存在しないメンバへのアクセスは実行時エラーになる
+- **`finally` から throw しない**——元の例外を覆い隠すため
+- コメントは `docs/comment-guidelines.md` の様式に従う
 
 ---
 
-## Phase 1 — 単一インスタンス衝突を消す
+## File Structure
 
-### 既に在る手本（新設ではない）
-
-`scripts/smoke-egui.ps1:458-466` が **#755/#801 是正 B** として同じ機序を既に解いており、コメントが機序を明記している。
-
-> `Stop-Process -Force` は終了を待たない。`tauri_plugin_single_instance` が登録されているため、先発がまだ生きたまま後発を起動すると、後発は先発へ通知して即終了し——trace が 1 行も書かれないまま `hotkey:registered` の待ちが予算を使い切ってから throw する（間欠的な赤）。
-
-**Pester 側にはこの手当てが入っていない。** 本 Phase はその横展開である。
-
-### 変更ファイルと対象シンボル
-
-| ファイル | 対象 | 変更 |
+| ファイル | 責務 | 変更 |
 |---|---|---|
-| `scripts/lib/SnotraSmoke.psm1` | **新規** `Stop-SnotraProcessAndWait` | kill して終了を待つ唯一の実装。`Export-ModuleMember` へ追加 |
-| `scripts/lib/SnotraSmoke.psm1` | `Resolve-SnotraExistingProcess`（`383`）の `Stop` 分岐（`398-400`） | 停止した各プロセスの終了を待ってから返す |
-| `scripts/lib/SnotraSmoke.Tests.ps1` | seed の It の `finally`（`381`） | `Stop-SnotraProcessAndWait` へ置換 |
-| `scripts/lib/SnotraSmoke.Tests.ps1` | キャレットの It の `finally`（`502`） | 同上（**対称性のため**。この It の後に本体を起動する経路は無い——`/symmetric-check` の結果を参照） |
-| `scripts/lib/SnotraSmoke.Tests.ps1` | `Describe 'Resolve-SnotraExistingProcess'`（`233`） | 待ちが入ったことの単体検査を追加 |
+| `snotra-egui-runtime/src/env.rs` | trace ハッチの env 述語（空文字を未設定として扱う唯一の場所） | **新規** |
+| `snotra-egui-runtime/src/lib.rs` | モジュール宣言 | `mod env;` を追加 |
+| `snotra-egui-runtime/src/{input,renderer,repaint,runtime,windows_ime}.rs` | 各 trace ハッチ | `var_os(...).is_some()` 7 箇所を `env::trace_hatch_enabled` へ |
+| `snotra-egui-runtime/CLAUDE.md` | モジュール索引 | `env.rs` の行を追加 |
+| `src-tauri/src/egui_shell/view.rs` | 検索入力欄の widget 合成を切り出し、kittest 検査を持つ | 切り出し + `mod tests` へ追加 |
+| `src-tauri/Cargo.toml` | dev 依存 | `[dev-dependencies]` 節を新設し `egui_kittest` |
+| `scripts/lib/SnotraSmoke.psm1` | プロセス停止の終了待ち | `Stop-SnotraProcessAndWait` を新設 |
+| `scripts/lib/SnotraSmoke.Tests.ps1` | 実機配管の縮小・衝突の検出 | 2 つの `finally` / キャレット It / `AfterAll` / 警告ノイズ |
+| `scripts/smoke-egui.ps1` | 冗長になる固定待ち | `Start-Sleep 300`（`139`）を削除 |
+| `PERFORMANCE.md` | 計器の自称正本 | 欠けている 2 名前 + 受理値 1 文 |
+| `docs/build-commands.md` | 検証コマンドの正本 | 実機配管の記述を実態へ |
 
-### `Stop-SnotraProcessAndWait` の契約
+---
+
+## Task 1: プロセスの終了を待つ共有ヘルパ
+
+単一インスタンス衝突（実測 3/30）を塞ぐ。**縮小後も残る故障**であり、L2/L3 の再設計とは独立に効く。
+
+**Files:**
+- Modify: `scripts/lib/SnotraSmoke.psm1`（`Resolve-SnotraExistingProcess` は `383`、`Stop` 分岐は `398-400`、`Export-ModuleMember` は `847`）
+- Test: `scripts/lib/SnotraSmoke.Tests.ps1`（`Describe 'Resolve-SnotraExistingProcess'` は `233`）
+
+**Interfaces:**
+- Produces: `Stop-SnotraProcessAndWait -Process <object> [-TimeoutMs <int>] [-Quiet]` → `[bool]`（終了を確認できたら `$true`）
+
+**設計上の制約（実測済み・逸脱すると壊れる）**
+
+- **引数に `[System.Diagnostics.Process]` の型を付けてはならない。** 既存 fixture（`Tests.ps1:243-248`）は `Id` だけを持つ `[pscustomobject]` で方針分岐を固定しており、型を付けると**パラメータ束縛で例外**になる（実測: `Cannot create object of type "System.Diagnostics.Process". "Id" is a ReadOnly property.`）
+- 型を外すだけでは足りない。`Set-StrictMode -Version Latest` 下では失敗が最初のメンバアクセスへ移る（実測: `The property 'HasExited' cannot be found on this object.`）。**fixture 側に `HasExited` と `WaitForExit` を足す**
+- `psm1:399` にだけ `-ErrorAction` が無い。ヘルパへ畳むと `Policy Stop` が今まで上げていたエラーが黙るので、**`-Quiet` で明示的に切り替える**
+
+- [ ] **Step 1: 失敗するテストを書く**
+
+`Tests.ps1` の `Describe 'Resolve-SnotraExistingProcess'`（`233`）の直前へ新しい `Describe` を足す。
+
+```powershell
+Describe 'Stop-SnotraProcessAndWait（#872 単一インスタンス衝突）' {
+    BeforeAll {
+        function New-FakeProcess {
+            param([bool]$HasExited = $false, [bool]$WaitResult = $true, [int]$Id = 123)
+            $fake = [pscustomobject]@{ Id = $Id }
+            $fake | Add-Member -MemberType NoteProperty -Name HasExited -Value $HasExited
+            $fake | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value ([scriptblock]::Create("param(`$ms) `$$WaitResult"))
+            return $fake
+        }
+    }
+
+    It '$null は何もせず $true を返す' {
+        Stop-SnotraProcessAndWait -Process $null | Should -BeTrue
+    }
+
+    It '既に終了しているプロセスは kill しない' {
+        Mock -ModuleName SnotraSmoke Stop-Process {}
+        Stop-SnotraProcessAndWait -Process (New-FakeProcess -HasExited $true) | Should -BeTrue
+        Should -Invoke -ModuleName SnotraSmoke Stop-Process -Times 0
+    }
+
+    It '生存しているプロセスを kill して終了を待つ' {
+        Mock -ModuleName SnotraSmoke Stop-Process {}
+        Stop-SnotraProcessAndWait -Process (New-FakeProcess) | Should -BeTrue
+        Should -Invoke -ModuleName SnotraSmoke Stop-Process -Times 1 -ParameterFilter { $Id -eq 123 -and $Force }
+    }
+
+    It '期限内に終了しなければ throw せず $false を返す（finally から呼ぶため）' {
+        Mock -ModuleName SnotraSmoke Stop-Process {}
+        $result = $null
+        { $result = Stop-SnotraProcessAndWait -Process (New-FakeProcess -WaitResult $false) `
+            -TimeoutMs 10 -WarningAction SilentlyContinue } | Should -Not -Throw
+        $result | Should -BeFalse
+    }
+
+    It 'WaitForExit が例外を投げても throw せず $false を返す（他人のプロセスのアクセス拒否）' {
+        Mock -ModuleName SnotraSmoke Stop-Process {}
+        $fake = [pscustomobject]@{ Id = 456 }
+        $fake | Add-Member -MemberType NoteProperty -Name HasExited -Value $false
+        $fake | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { param($ms) throw 'Access is denied' }
+        $result = $null
+        { $result = Stop-SnotraProcessAndWait -Process $fake -WarningAction SilentlyContinue } |
+            Should -Not -Throw
+        $result | Should -BeFalse
+    }
+}
+```
+
+- [ ] **Step 2: 落ちることを確認する**
+
+実行: `npm run test:powershell`
+期待: 5 件が `CommandNotFoundException: Stop-SnotraProcessAndWait` で FAIL
+
+- [ ] **Step 3: ヘルパを実装する**
+
+`SnotraSmoke.psm1` の `Resolve-SnotraExistingProcess`（`383`）の直前へ置く。
+
+```powershell
+<#
+.SYNOPSIS
+プロセスを停止し、**終了を待つ**（#872 単一インスタンス衝突）。
+
+.DESCRIPTION
+`Stop-Process -Force` は制御を即返す。`tauri_plugin_single_instance` が登録されているため、
+先発がまだ生きたまま後発を起動すると、後発は先発へ通知して即終了する——`smoke-egui.ps1` が
+**#755/#801 是正 B** として同じ機序を既に解いており、機序の正本はそちらのコメントである。
+
+**throw しない。** 呼び出し点が `finally` を含み、`finally` からの throw は元の例外を覆い隠す。
+終了を確認できなかったことは戻り値と警告で表し、**赤にする責務は呼び出し側が持つ**
+（`Describe '実機配管'` の `AfterAll` と、次の It の `Resolve-SnotraExistingProcess -Policy Reject`）。
+
+**引数に型を付けない。** 既存の単体検査は `Id` だけを持つ偽オブジェクトで方針分岐を固定して
+おり、`[System.Diagnostics.Process]` を要求すると束縛で落ちる（実測）。
+#>
+function Stop-SnotraProcessAndWait {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowNull()]
+        $Process,
+        [int]$TimeoutMs = 5000,
+        # `Stop-Process` 自体のエラーを黙らせる。**既定は黙らせない**——`Policy Stop` は
+        # #853 以来 `-ErrorAction` 無しで、アクセス拒否を呼び出し側へ上げていた（psm1:399）。
+        [switch]$Quiet
+    )
+
+    if ($null -eq $Process) { return $true }
+    if ($Process.HasExited) { return $true }
+
+    if ($Quiet) {
+        Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+    } else {
+        Stop-Process -Id $Process.Id -Force
+    }
+
+    try {
+        if ($Process.WaitForExit($TimeoutMs)) { return $true }
+    } catch {
+        Write-Warning "pid=$($Process.Id) の終了待ちに失敗しました: $($_.Exception.Message)"
+        return $false
+    }
+    Write-Warning "pid=$($Process.Id) が ${TimeoutMs}ms 以内に終了しませんでした（single-instance 衝突の恐れ）。"
+    return $false
+}
+```
+
+`Export-ModuleMember -Function @(`（`847`）の一覧へ `'Stop-SnotraProcessAndWait'` を足す。
+
+- [ ] **Step 4: 通ることを確認する**
+
+実行: `npm run test:powershell`
+期待: 新設 5 件が PASS
+
+- [ ] **Step 5: `Policy Stop` を経由させる**
+
+`psm1:398-400` を置き換える。**`-Quiet` は付けない**（既存のエラーチャネルを保つ）。
+
+```powershell
+    foreach ($process in $existing) {
+        # **終了を待つ**（#872）。待たずに返すと、呼び出し側が直後に起動する本体が
+        # single-instance で先発へ通知して即終了し、trace を 1 行も書かないまま
+        # 待ちが予算を使い切る（機序の正本は `smoke-egui.ps1` の #755/#801 是正 B）。
+        [void](Stop-SnotraProcessAndWait -Process $process)
+    }
+```
+
+- [ ] **Step 6: 呼び出し側 2 箇所を移行する**
+
+`Tests.ps1:380-382` と `Tests.ps1:501-503` の `if (...) { Stop-Process ... }` を、それぞれ次へ置き換える。**`-Quiet` を付ける**（従来 `-ErrorAction SilentlyContinue` だったため）。
+
+```powershell
+            [void](Stop-SnotraProcessAndWait -Process $proc -Quiet)
+```
+
+- [ ] **Step 7: 衝突の検出を exit code の層へ上げる**
+
+`Describe '実機配管'`（`344`）の末尾へ `AfterAll` を足す。**`finally` から throw しない設計のままで、検出だけを合否へ載せる。**
+
+```powershell
+    # **待ちきれなかった生き残りを、ここで赤にする**（#872）。各 It の `finally` は
+    # `Write-Warning` しか出せない（`finally` からの throw は元の例外を覆い隠す）ため、
+    # 検出点が無いと Pester 実行全体から生きた snotra.exe が漏れても誰も見ない。
+    # `AfterAll` からの throw は It の例外を覆い隠さないので、ここが正しい層である。
+    AfterAll {
+        $leaked = @(Get-Process -Name 'snotra' -ErrorAction SilentlyContinue)
+        if ($leaked.Count -gt 0) {
+            $ids = $leaked.Id -join ', '
+            $leaked | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+            throw "実機配管の後に snotra が残っています（pid=$ids）。終了待ちが効いていません。"
+        }
+    }
+```
+
+- [ ] **Step 8: 遅着警告のノイズ源を止める**
+
+`Tests.ps1:186` の It（`予算が尽きていても条件を必ず 1 度は評価する`）は `-TimeoutMs 0` で走るため、`予算 0ms を過ぎた評価で成立しました` を**毎回 1 件**出す。`SnotraSmoke.psm1:574` の本物の遅着警告と同一文言で、grep で区別できない（実測: 全 30 反復に出ていた）。
+
+同じファイルの `:206` と `:224` に既にある書き方に揃え、その It の `Wait-SnotraTraceCondition` 呼び出しへ `-WarningAction SilentlyContinue` を足す。
+
+- [ ] **Step 9: 全体が通ることを確認する**
+
+実行: `npm run test:powershell`
+期待: 全件 PASS（既存 55 件 + 新設 5 件）
+
+- [ ] **Step 10: 故障注入で「効いている」ことを 1 度実測する**
+
+`.claude/rules/safety-nets.md`「効いていることは、フォールトインジェクションで一度は実測する」。**稼働中のガードは弱めない——複製に変異を当てる。**
+
+`SnotraSmoke.psm1` を一時ディレクトリへコピーし、複製側の `Stop-SnotraProcessAndWait` から `WaitForExit` の行を消す。その複製を import して `実機配管` の 2 つの It を連続実行し、`Tests.ps1:441` の `Reject` が throw する（＝直した機序を意図的に再現できる）ことを確かめる。結果を本ファイル末尾の「実測ログ」へ書く。
+
+**コミット**: `fix(pester): 実機配管のプロセス停止に終了待ちを入れ、単一インスタンス衝突を止める (#872)`
+
+---
+
+## Task 2: 検索入力欄の widget 合成を切り出す（挙動不変）
+
+kittest から駆動できる継ぎ目を作る。**このタスクでは挙動を変えない。**
+
+**Files:**
+- Modify: `src-tauri/src/egui_shell/view.rs`（`move_text_cursor_to_end` は `179`、切り出す区画は `578`〜`671` の `egui::Frame::new()...inner`）
+
+**Interfaces:**
+- Produces:
+  ```rust
+  pub(crate) struct SearchInputParams {
+      pub(crate) input_id: egui::Id,
+      pub(crate) restored_search: bool,
+      pub(crate) window_focused: bool,
+      pub(crate) input_editable: bool,
+      pub(crate) inset: f32,
+      pub(crate) field_height: f32,
+      pub(crate) font: egui::FontId,
+      pub(crate) text_color: egui::Color32,
+  }
+
+  pub(crate) fn search_input_ui(
+      ui: &mut egui::Ui,
+      buf: &mut String,
+      params: &SearchInputParams,
+      hint: impl FnOnce(&mut egui::Ui) -> String,
+  ) -> egui::Response
+  ```
+
+**なぜこの形か**
+
+- **`self.controller` に触れない。** `response.changed()` → `on_input_changed` は呼び出し側に残す。controller は `tauri::AppHandle` を持ち、単体検査では構築できない
+- **`RuntimeFrame` に触れない。** 切り出す区画に `frame` の依存が 1 つも無いことを実測済み（`view.rs` が frame を使うのは `311` / `382` / `1046` の 3 箇所だけ）
+- **hint はクロージャで受ける。** `HintPlan::Folder` の分岐は `ui.available_width()` と `ui.painter()` を**内側の Frame の中で**読む。文字列を先に計算して渡すと `available_width` が変わる。クロージャなら呼ばれる位置が同じなので挙動が変わらない
+
+- [ ] **Step 1: 関数を追加する**
+
+`move_text_cursor_to_end`（`179`）の直後へ置く。中身は現在の `578`〜`671` の逐語移動である。
+
+```rust
+/// 検索入力欄の widget 合成（**controller にも `RuntimeFrame` にも触らない**）。
+///
+/// **3 つの順序がこの関数の内容そのものである**——キャレットの末尾同期（#840）と focus の
+/// 要求（#872/#936）は、どちらも `TextEdit` の**構築前**でなければ同一フレームの文字イベントに
+/// 効かない。`view.rs` の `mod tests` の kittest がこの並びを実コードごと縛る。
+pub(crate) struct SearchInputParams {
+    pub(crate) input_id: egui::Id,
+    pub(crate) restored_search: bool,
+    pub(crate) window_focused: bool,
+    pub(crate) input_editable: bool,
+    pub(crate) inset: f32,
+    pub(crate) field_height: f32,
+    pub(crate) font: egui::FontId,
+    pub(crate) text_color: egui::Color32,
+}
+
+pub(crate) fn search_input_ui(
+    ui: &mut egui::Ui,
+    buf: &mut String,
+    params: &SearchInputParams,
+    hint: impl FnOnce(&mut egui::Ui) -> String,
+) -> egui::Response {
+    let ctx = ui.ctx().clone();
+    egui::Frame::new()
+        .inner_margin(egui::Margin::same(params.inset.round() as i8))
+        .show(ui, |ui| {
+            if params.restored_search {
+                move_text_cursor_to_end(&ctx, params.input_id, buf);
+            }
+            if params.window_focused
+                && params.input_editable
+                && !ctx.memory(|m| m.has_focus(params.input_id))
+            {
+                ctx.memory_mut(|m| m.request_focus(params.input_id));
+            }
+            let hint_text = hint(ui);
+            ui.add_sized(
+                egui::vec2(ui.available_width(), params.field_height),
+                egui::TextEdit::singleline(buf)
+                    .id(params.input_id)
+                    .interactive(params.input_editable)
+                    .font(params.font.clone())
+                    .text_color(params.text_color)
+                    .hint_text(egui::RichText::new(hint_text).font(params.font.clone())),
+            )
+        })
+        .inner
+}
+```
+
+- [ ] **Step 2: 呼び出し側を置き換える**
+
+`view.rs` の `578`〜`671` を次で置き換える。`input_id` は関数の外で作る（`focus_state` の trace が使う）。
+
+```rust
+        let input_id = ui.make_persistent_id("search_input");
+        let params = SearchInputParams {
+            input_id,
+            restored_search,
+            window_focused: pre.focused,
+            input_editable,
+            inset,
+            field_height,
+            font: bar_font.clone(),
+            text_color: bar_theme.name_color,
+        };
+        let response = search_input_ui(ui, &mut buf, &params, |ui| match hint_plan {
+            HintPlan::Tool => crate::egui_shell::ui_strings::tool_select_hint(l).to_string(),
+            HintPlan::Search => crate::egui_shell::ui_strings::search_hint(l).to_string(),
+            HintPlan::Folder(dir) if !buf_is_empty => {
+                crate::egui_shell::ui_strings::folder_hint(l, dir)
+            }
+            HintPlan::Folder(dir) => {
+                let avail = (ui.available_width() - TEXT_EDIT_HINT_H_MARGIN).max(0.0);
+                let shown = crate::egui_shell::layout::fit_middle_by_measure(dir, avail, |cand| {
+                    let text = crate::egui_shell::ui_strings::folder_hint(l, cand);
+                    ui.painter()
+                        .layout_no_wrap(text, bar_font.clone(), bar_theme.name_color)
+                        .size()
+                        .x
+                });
+                crate::egui_shell::ui_strings::folder_hint(l, &shown)
+            }
+        });
+```
+
+**注意**: クロージャは `buf` を借用できない（`search_input_ui` が `&mut buf` を取るため）。`HintPlan::Folder(dir) if !buf.is_empty()` のガードは、**呼び出し前に** `let buf_is_empty = buf.is_empty();` を計算して使う。
+
+- [ ] **Step 3: 挙動不変を確認する**
+
+実行: `cargo clippy --workspace --all-targets -- -D warnings` と `cargo test -p snotra`
+期待: green。**既存の `focus_requested_before_text_edit_applies_same_frame_input`（`1134`）も通ること**
+
+- [ ] **Step 4: 目視で回帰が無いことを見る**
+
+実行: `npm run smoke:egui`
+期待: green（`egui_show:done` → `egui_results:show` → `egui_hide:done`）
+
+**コミット**: `refactor(egui): 検索入力欄の widget 合成を frame 非依存の関数へ切り出す (#872)`
+
+---
+
+## Task 3: kittest でキャレットの並びを実コードごと縛る（L2 の格上げ）
+
+#938 が受容した残余——「単体テストが縛るのは egui の意味論であって `update()` の並びではない」——を閉じる。
+
+**Files:**
+- Modify: `src-tauri/Cargo.toml`（`[dev-dependencies]` 節を新設）
+- Modify: `src-tauri/src/egui_shell/view.rs`（`mod tests`）
+
+**Interfaces:**
+- Consumes: Task 2 の `search_input_ui` / `SearchInputParams`
+
+- [ ] **Step 1: dev 依存を足す**
+
+`src-tauri/Cargo.toml` へ（`snotra-settings/Cargo.toml:23` と同じ指定）:
+
+```toml
+[dev-dependencies]
+egui_kittest = { version = "0.35", default-features = false }
+```
+
+- [ ] **Step 2: 失敗するテストを書く**
+
+`view.rs` の `mod tests` へ足す。**両方向で固定する**——並びを戻したときに落ちることまで見る。
+
+```rust
+    use egui_kittest::Harness;
+
+    /// kittest の state。**復元フラグをフレームごとに切り替える**ために buf と束ねる。
+    struct CaretState {
+        buf: String,
+        restored: bool,
+        window_focused: bool,
+    }
+
+    fn caret_harness(id: egui::Id, focused: bool) -> Harness<'static, CaretState> {
+        Harness::new_ui_state(
+            move |ui, st: &mut CaretState| {
+                let params = SearchInputParams {
+                    input_id: id,
+                    restored_search: st.restored,
+                    window_focused: st.window_focused,
+                    input_editable: true,
+                    inset: 0.0,
+                    field_height: 20.0,
+                    font: egui::FontId::proportional(12.0),
+                    text_color: egui::Color32::WHITE,
+                };
+                let _ = search_input_ui(ui, &mut st.buf, &params, |_| String::new());
+            },
+            CaretState {
+                buf: "alpha".to_owned(),
+                restored: false,
+                window_focused: focused,
+            },
+        )
+    }
+
+    /// 復元フレームで、**同一フレームに載っていた**文字が末尾へ入る（#840/#872）。
+    ///
+    /// **`step()` を使う（`run()` ではない）。** `run()` は再描画要求が尽きるまで複数フレーム
+    /// 回すため、文字が 2 フレーム目で入っても通ってしまい、この検査の主題（同一フレーム）が
+    /// 骨抜きになる。`step()` は「キューされた各イベントにつき 1 フレーム、イベントが無ければ
+    /// 1 フレーム」である（`egui_kittest-0.35` の `Harness::step` doc・一次資料で確認済み）。
+    #[test]
+    fn restored_frame_appends_same_frame_input_at_end() {
+        let id = egui::Id::new("search_input");
+        let mut harness = caret_harness(id, true);
+        // 復元より前に 2 フレーム回して、focus と TextEdit の state を確立する
+        // （`move_text_cursor_to_end` は `TextEdit::load_state` が None の間は何もしない）。
+        harness.step();
+        harness.step();
+
+        // 復元フレーム: restored=true と文字を**同じフレーム**へ載せる。
+        // 文字は本体と同じ経路で渡す（runtime は WM_CHAR / IME 確定を Ime(Commit) にする）。
+        harness.state_mut().restored = true;
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Ime(egui::ImeEvent::Commit("z".to_owned())));
+        harness.step();
+
+        assert_eq!(
+            harness.state().buf.as_str(),
+            "alphaz",
+            "復元フレームに載った打鍵は復元クエリの末尾へ入る"
+        );
+    }
+
+    /// focus を要求しなければ同じ文字が捨てられる（この検査が本当に focus を見ている証拠）。
+    #[test]
+    fn without_focus_request_the_same_input_is_dropped() {
+        let id = egui::Id::new("search_input");
+        let mut harness = caret_harness(id, false); // focus 要求の条件を落とす
+        harness.step();
+        harness.step();
+
+        harness.state_mut().restored = true;
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Ime(egui::ImeEvent::Commit("z".to_owned())));
+        harness.step();
+
+        assert_eq!(
+            harness.state().buf.as_str(),
+            "alpha",
+            "焦点が無ければ文字は入らない"
+        );
+    }
+```
+
+- [ ] **Step 3: 落ちることを確認する**
+
+実行: `cargo test -p snotra restored_frame_appends -- --nocapture`
+期待: `restored_frame_appends_same_frame_input_at_end` が **`zalpha`（キャレットが先頭のまま）で FAIL** する見込み——ただしこれは Task 2 が既に正しい並びを持っているため、**実際には最初から PASS しうる**。その場合は Step 5 の故障注入が「この検査が本当に discriminate するか」の唯一の証拠になるので、**Step 5 を省略しない**。
+
+`egui_kittest` 0.35 の API はレジストリの一次資料で確認済み（`new_ui_state` / `step` / `input_mut` / `state` / `state_mut` がすべて実在）。`Harness<'static, State>` の形は `snotra-settings/src/app.rs:818` と同じ。
+
+- [ ] **Step 4: 通ることを確認する**
+
+実行: `cargo test -p snotra`
+期待: 2 件とも PASS
+
+- [ ] **Step 5: 故障注入で検出力を実測する**
+
+`search_input_ui` の中で `move_text_cursor_to_end` の呼び出しを `TextEdit` の**後ろ**へ動かす。`restored_frame_appends_same_frame_input_at_end` が落ちることを確かめてから戻す。結果を「実測ログ」へ書く。
+
+**コミット**: `test(egui): キャレットと focus の並びを kittest で実コードごと縛る (#872/#936)`
+
+---
+
+## Task 4: 実機配管を focus_state 1 点へ縮める（L3）
+
+**Files:**
+- Modify: `scripts/lib/SnotraSmoke.Tests.ps1`（キャレットの It は `386`〜`515`）
+
+**縮小の内容**
 
 ```
-param([System.Diagnostics.Process]$Process, [int]$TimeoutMs = 5000)
+現行  Resolve → Start → WaitWindow → index.bin 待ち → SetForeground
+      → A/L/P/H/A → 待ち(5s) → Right → A/A → 待ち(5s) → Escape → z → 待ち(5s)
+
+縮小  Resolve → Start → WaitWindow → SetForeground → focus_state を待つ → has_focus == true
 ```
 
-- `$null` または `HasExited` なら何もせず返す
-- `Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue` の後、`$Process.WaitForExit($TimeoutMs)` で待つ
-- **期限内に終了しなければ throw せず `Write-Warning` で残す**。呼び出し点が `finally` であり、**`finally` からの throw は元の例外を覆い隠す**（元の失敗こそが読みたいもの）。次の It の `Resolve-SnotraExistingProcess -Policy Reject` が、生き残りを大きな音で落とす役を引き続き担う
-- `Resolve-SnotraExistingProcess -Policy Stop` の側は `finally` ではないので、**同じヘルパを使いつつ警告のまま**とする（この関数は「掃除して先へ進む」意味論であり、掃除しきれなかったことは後続の起動が single-instance で沈黙する形で現れる。そこを throw にするかは Phase 1 の射程外＝現状の意味論を変えない）
+- **前面化は残す。** focus 要求は `pre.focused` に条件づけられており、前面が取れなければ `has_focus` は真にならない。#890 以降 30 反復で前面化の失敗は 0 件
+- **`index.bin` と `[config]` の検査は落とす。** 直前の It（`345`）が同じ断言を持つ
+- 打鍵を注入しないので `$pressKey` と `$waitForInputChange` は不要になる
 
-### 不変条件と異常系
+- [ ] **Step 1: It を書き換える**
 
-- **`Resolve-SnotraExistingProcess -Policy Reject` の厳しさを緩めない。** 猶予を入れて「少し待ってから諦める」形にすると、実ユーザーのインスタンスを検出する本来の役目が鈍る。直すのは**生産側**（待たずに殺して次へ進む方）である
-- `Get-Process` で得たプロセスには `WaitForExit` が使える（`Process` オブジェクト）。`Resolve-SnotraExistingProcess` は自分が起動したのではない他人のプロセスも掴むので、**アクセス拒否で `WaitForExit` が例外を出す経路**を `try/catch` で警告へ倒す
-- 既存の単体検査は `Stop-Process` を `Mock` している（`Tests.ps1:236` / `244`）。ヘルパ経由に変えると `Should -Invoke Stop-Process` の検証点が動くため、**Mock の対象と回数の期待を同時に更新する**
+`386` の It 全体を次で置き換える。名前も内容に合わせる。
 
-### 検証
+```powershell
+    It '起動後の最初のフレームで入力欄が打鍵を受け取れる状態になっている' {
+        # **この It が守るのは L3（実プロセス層）だけである。** キャレットの断言は
+        # `view.rs` の kittest が実コードごと縛る（#872 の機序再設計）。ここに打鍵を
+        # 注入しないのは、注入と 3 段の待ちが 7 か月の間欠失敗の構造的前提そのもの
+        # だったからである（#872 本文の要素 1・2）。
+        #
+        # `egui_input:focus_state` は #938 が**この回帰の検出器として**置いたもので、
+        # 偽に戻れば起動直後の打鍵が再び捨てられている（機序の正本は `view.rs` の
+        # 当該コメント）。
+        $profile = Join-Path $TestDrive 'caret-profile'
+        $stderr = Join-Path $TestDrive 'caret.err'
+        $created = New-SnotraVerificationProfile -ProfileDir $profile -ShowIcons $false `
+            -GeneralSection @'
+show_on_startup = true
+auto_hide_on_focus_lost = false
+'@
+        $proc = $null
+        try {
+            Resolve-SnotraExistingProcess -Policy Reject
+            $proc = Start-SnotraProcess -ConfigDir $created.FullPath -Trace `
+                -FilePath $env:SNOTRA_PESTER_EXE -StandardErrorPath $stderr
+            $hwnd = Wait-SnotraWindow -Title 'Snotra' -Process $proc -TimeoutMs 30000
+            Set-SnotraForegroundWindow -Handle $hwnd | Should -BeTrue
 
-- `npm run test:powershell`（`docs/build-commands.md` の必須項目）
-- フォールトインジェクション: `WaitForExit` が false を返す状況を Mock で作り、警告が出て throw しないことを検査する（`.claude/rules/safety-nets.md`「効いていることは、フォールトインジェクションで一度は実測する」）
+            $focus = Wait-SnotraTraceCondition -Path $stderr -TimeoutMs 30000 -PollMs 100 `
+                -AbortIfExited $proc -Description 'egui_input:focus_state（最初のフレーム）' `
+                -Predicate { $_.event -eq 'egui_input:focus_state' }
+            $focus | Should -Not -BeNullOrEmpty
+            $focus.data.has_focus | Should -BeTrue
+        } catch {
+            Write-Host '--- caret integration stderr trace ---'
+            if (Test-Path -LiteralPath $stderr) {
+                @(Get-Content -LiteralPath $stderr) | ForEach-Object { Write-Host $_ }
+            } else {
+                Write-Host "(stderr file not found: $stderr)"
+            }
+            Write-Host '--- end caret integration stderr trace ---'
+            throw
+        } finally {
+            [void](Stop-SnotraProcessAndWait -Process $proc -Quiet)
+        }
+    }
+```
 
-### 作業項目
+**予算を 30,000ms にする理由**: 待ちは 1 つだけになり、順序依存が無い。実測でフレーム不回転は 24.3 秒（1/30）まで観測されている——**予算を広げても隠れる退行は無い**（この待ちは「フレームが 1 度でも回ったか」しか見ないため、遅さそのものが判定に混ざらない）。
 
-- [ ] `Stop-SnotraProcessAndWait` を `SnotraSmoke.psm1` へ追加し `Export-ModuleMember` に載せる
-- [ ] `Resolve-SnotraExistingProcess` の `Stop` 分岐を新ヘルパ経由へ変える
-- [ ] `Tests.ps1:381` / `Tests.ps1:502` の `finally` を新ヘルパ経由へ変える
-- [ ] 新ヘルパの単体検査（正常終了 / 期限切れで警告 / `$null` と `HasExited` の素通り / `WaitForExit` の例外）を追加する
-- [ ] `Describe 'Resolve-SnotraExistingProcess'` の既存 2 件を、Mock 対象の変化に合わせて更新する
-- [ ] `npm run test:powershell` が green
+- [ ] **Step 2: 撤去した env フックを消す**
 
----
+`SNOTRA_PESTER_FAILURE_GRACE_MS` と `SNOTRA_PESTER_TRACE_DIR` の分岐は、打鍵の遅着を測るための足場だった。**縮小版には待ちが 1 つしか無く、遅着と喪失を分ける問いも消えた**ので、上の書き換えで一緒に落ちている。`scripts/repro-pester-flake.ps1` の `.NOTES` が撤去対象として名指ししているので、**そちらの撤去は #872 / #936 を閉じるときに一括で行う**（このタスクでは触らない）。
 
-## Phase 2 — 計器が黙って点灯する経路を断つ
+- [ ] **Step 3: 通ることを確認する**
 
-### 機序（特定済み・`workspace/research.md` 発見 3）
+実行: `cargo build -p snotra` の後 `npm run test:powershell`
+期待: 全件 PASS。**この It の所要が現行の 16〜24 秒から数秒へ落ちること**を目視で確認する
 
-`repro-pester-flake.ps1` は反復ごとに env を退避して `finally` で戻す。**退避値が `$null`（元から未設定）のとき、`[Environment]::SetEnvironmentVariable($name, $null, 'Process')` は変数を消さず空文字で作る**（PowerShell 7 で実測: `null=False empty=True Env ドライブに存在=True`）。
+- [ ] **Step 4: 故障注入で検出力を実測する**
 
-その空文字を、2 つの読み手が逆に読む。
+`view.rs` の focus 要求の条件を落とす（`params.window_focused &&` を `false &&` にする）。この It が `has_focus` = false で落ちることを確かめてから戻す。結果を「実測ログ」へ書く。
 
-- `snotra-egui-runtime/src/input.rs:34` — `var_os(...).is_some()` は `Some("")` ゆえ **true＝計器 ON**
-- `scripts/lib/SnotraSmoke.psm1:664` — `if ($env:...)` は空文字が偽ゆえ **OFF**
-
-ゆえに 1 反復目の `finally` を境に、以降すべての反復でアプリだけが計器つきで走る。**両側を直す**（どちらか一方でも塞がるが、片方だけでは同じ形が別の env で再発する）。
-
-### 変更ファイルと対象シンボル
-
-| ファイル | 対象 | 変更 |
-|---|---|---|
-| `scripts/repro-pester-flake.ps1` | env の退避（`122-124`）と復元（`143-145`） | **`Invoke-SnotraEnvironment` と同じ形へ寄せる**（下記） |
-| `scripts/run-pester.ps1` | `SNOTRA_PESTER_EXE` の退避・復元（`49` 近傍） | 同上（実害は無いが同型・研究 発見 5） |
-| `snotra-egui-runtime/src/input.rs` | **新規** `env_flag`（private） | `1｜true｜yes｜on` だけを真とする。`src-tauri/src/trace.rs:20` と同じ意味論 |
-| `snotra-egui-runtime/src/{input,renderer,repaint,runtime,windows_ime}.rs` | `var_os(...).is_some()` の 7 箇所 | 新 `env_flag` へ寄せる |
-| `scripts/repro-pester-flake.ps1` | 集計（`170`〜）・`$summary`（`175`〜）・`.NOTES` | 証拠に基づく計器の有無を `summary.md` へ出す |
-
-### 設計判断
-
-- **正しい手本は既にリポジトリの中に在る**（`/symmetric-check` の所見）。`Invoke-SnotraEnvironment`（`SnotraSmoke.psm1:267-286`）は**存在の有無（`Exists`）を値とは別に記録し、元が未設定なら `Remove-Item` する**。`repro-pester-flake.ps1` はこれを再利用せず手書きの写しを置き、**写しの側だけが壊れていた**。実装は「値だけを退避する」形をやめ、`Exists` を持つ形へ寄せる（`Invoke-SnotraEnvironment` を直接使えるなら使う——ただし同関数は `ScriptBlock` を包む形なので、反復ループの構造に合うかは実装時に判断する）
-- **`env_flag` を共有せず `snotra-egui-runtime` に置く**——`snotra-egui-runtime` は `snotra-core` に依存しておらず（`Cargo.toml` 実測）、8 行の述語のために依存辺を増やさない。**双方の doc に互いを名指しで書く**ことで写しであることを明示する（`docs/comment-guidelines.md` の定型に従う）。※ 依存辺を増やして `snotra-core` へ寄せる案もある。**レビューで選び直してよい点である**
-- **意図ではなく対象を測って報告する**——現在の ⚠️ は `$InputTrace`（意図）を見ており、実態と食い違ったときに沈黙した。反復ごとに `caret.err` の `SNOTRA_EGUI_INPUT` 行の有無を数え、`summary.md` へ「計器つきの反復: N / M（証拠）」を出す。**N > 0 なら `-InputTrace` の有無に関わらず ⚠️ を出す**
-- `caret.err` が無い反復（本体が起動しなかった＝Phase 1 が直す衝突など）は「証拠なし」であり、「計器なし」と混同しない
-
-### 不変条件と異常系
-
-- **7 箇所の意味論を変えると、これまで空文字や任意値で点いていた計器が消える。** いずれも診断用の trace ハッチであり、`SNOTRA_TRACE`（`env_flag` 経由）とは別系統である。**現行で `=1` を渡している呼び出し側は挙動が変わらない**——変わるのは空文字・`0`・`false` を渡していた経路だけである。`scripts/` 内の設定箇所を grep して 1 件ずつ確認する
-- **このスクリプトは測定器であって検出器ではない**（冒頭 doc）。⚠️ を増やしても exit code は 0 のまま
-
-### 検証
-
-- `cargo clippy --workspace --all-targets -- -D warnings` / workspace 全テスト（`docs/build-commands.md` カテゴリ A）
-- `env_flag` の単体検査（`1`/`true`/`yes`/`on`/`ON ` が真、**空文字**・`0`・`false`・未設定が偽）
-- **フォールトインジェクション**: 反復 1 → 2 の境界を再現する。`-InputTrace` なしで 2 反復回し、(a) 1 反復目の後に `Env:SNOTRA_EGUI_INPUT_TRACE` が存在しないこと、(b) 2 反復目の `caret.err` に `SNOTRA_EGUI_INPUT` 行が無いこと、(c) `-InputTrace` ありでは両方が逆になること——**両方向**を実測する
-
-### 作業項目
-
-- [ ] env の退避・復元 4 箇所（`repro-pester-flake.ps1` の 3 つ + `run-pester.ps1` の 1 つ）を、`Invoke-SnotraEnvironment` と同じ「`Exists` を別に持ち、未設定なら `Remove-Item`」の形へ変える
-- [ ] `snotra-egui-runtime` に private `env_flag` を追加し、単体検査（空文字を含む）を置く
-- [ ] `var_os(...).is_some()` の 7 箇所を `env_flag` へ寄せる
-- [ ] `scripts/` 内で上記 6 種の env を設定している箇所を grep し、挙動が変わらないことを 1 件ずつ確認する
-- [ ] 反復ごとに `caret.err` から計器の有無を測り、`summary.md` へ「計器つきの反復: N / M（証拠）」と食い違いの ⚠️ を出す
-- [ ] `.NOTES` / `.DESCRIPTION` を実態へ合わせる
-- [ ] ローカル 2 反復 × 2 条件で両方向を実測し、結果を本ファイル末尾の「実測ログ」へ書く
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings` と workspace 全テストが green
+**コミット**: `test(pester): 実機配管を focus_state 1 点へ縮め、打鍵注入と 3 段の待ちを外す (#872)`
 
 ---
 
-## Phase 3 — 記録の訂正
+## Task 5: 空文字の env が trace ハッチを点灯させるのを止める
 
-### 変更ファイル
+測定ハーネスが `SNOTRA_EGUI_INPUT_TRACE` を空文字で漏らし、**2 反復目以降の全測定が計器つきで走っていた**（実測 26/27）。読み手側を直す。
 
-| ファイル | 変更 |
+**Files:**
+- Create: `snotra-egui-runtime/src/env.rs`
+- Modify: `snotra-egui-runtime/src/lib.rs`（`mod env;`）
+- Modify: `snotra-egui-runtime/src/{input,renderer,repaint,runtime,windows_ime}.rs`（7 箇所）
+- Modify: `snotra-egui-runtime/CLAUDE.md`（モジュール索引）
+
+**Interfaces:**
+- Produces: `pub(crate) fn trace_hatch_enabled(name: &str) -> bool`
+
+**厳しい許可リスト（`src-tauri/src/trace.rs` の `env_flag`）へ寄せない理由**
+
+- PowerShell 側の読み手（`SnotraSmoke.psm1:664`）は緩いまま残る。`=0` では現在**両者 ON で一貫**しているのに、許可リストへ寄せると PS が真・Rust が偽の**新しい食い違い**が生まれる
+- `renderer.rs:76` は `paint()` の中＝毎フレーム。`env_flag` は `var` + `trim().to_ascii_lowercase()` で ON 時の割り当てが 1→2 に増える。直後のコメントが「計器が測定対象を汚さない」ことを設計意図として明記している
+- 実バグは**空文字ちょうど**である。手本は `snotra-core/src/config.rs` の `config_dir_from`（`var_os` + `!is_empty()`・rustdoc に理由あり）
+
+- [ ] **Step 1: 失敗するテストを書く**
+
+`snotra-egui-runtime/src/env.rs` を新規作成する。
+
+```rust
+//! trace ハッチ（`SNOTRA_EGUI_*_TRACE`）の env 述語。
+//!
+//! **空文字を「未設定」として扱う唯一の場所である。** `var_os(..).is_some()` は `Some("")` を
+//! 真と読むため、値を消したつもりの空文字で計器が点く。PowerShell の
+//! `[Environment]::SetEnvironmentVariable($name, $null, 'Process')` は変数を消さず**空文字で
+//! 作る**ので、この経路は実際に踏まれた（#872: 測定ハーネスが 26/27 反復を計器つきにしていた）。
+//!
+//! **`src-tauri/src/trace.rs` の `env_flag`（`1|true|yes|on` の許可リスト）へは寄せない。**
+//! こちらのハッチは PowerShell 側にも緩い読み手（`scripts/lib/SnotraSmoke.psm1` の
+//! `Send-SnotraKey`）が居り、許可リストにすると `=0` 系で新しい食い違いが生まれる。
+//! 同じ「空文字は未設定」の判断は `snotra-core/src/config.rs` の `config_dir_from` にもある。
+
+/// 判定核（env を読まないので並列テストから安全に、網羅的に測れる）。
+///
+/// 判定核を分ける形は `snotra-core` の `config_dir_from` と同じ流儀である——edition 2024 では
+/// `std::env::set_var` が `unsafe` であり、env を触るテストは並列実行とも噛み合わない。
+fn is_enabled(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_some_and(|v| !v.is_empty())
+}
+
+/// trace ハッチが有効か。**空文字は未設定として扱う。**
+pub(crate) fn trace_hatch_enabled(name: &str) -> bool {
+    is_enabled(std::env::var_os(name).as_deref())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_enabled;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn empty_value_is_treated_as_unset() {
+        assert!(!is_enabled(None), "未設定は偽");
+        assert!(!is_enabled(Some(OsStr::new(""))), "空文字は偽（#872 の実バグ）");
+    }
+
+    #[test]
+    fn any_non_empty_value_enables() {
+        for v in ["1", "0", "true", "false", "on", "verbose"] {
+            assert!(is_enabled(Some(OsStr::new(v))), "{v} は真（許可リストにしない）");
+        }
+    }
+}
+```
+
+- [ ] **Step 2: 落ちることを確認する**
+
+実行: `cargo test -p snotra-egui-runtime env::`
+期待: `mod env` が宣言されていないため**コンパイルエラー**
+
+- [ ] **Step 3: モジュールを宣言し、7 箇所を移行する**
+
+`lib.rs` へ `mod env;` を足す。次の 7 箇所を `crate::env::trace_hatch_enabled("<名前>")` へ置き換える。**`input.rs` の `OnceLock` によるキャッシュは残す**（述語だけ差し替える）。
+
+| ファイル:行 | env 名 |
 |---|---|
-| `docs/build-commands.md`（`210`） | 反復再現 workflow の bullet に、計器の自己記述に触れる 1 文を足す（面積を増やさないよう既存文を書き換える） |
+| `input.rs:34` | `SNOTRA_EGUI_INPUT_TRACE` |
+| `renderer.rs:76` | `SNOTRA_EGUI_PAINT_TRACE` |
+| `repaint.rs:197` | `SNOTRA_EGUI_WAKE_TRACE` |
+| `runtime.rs:279` | `SNOTRA_EGUI_WAKE_TRACE` |
+| `runtime.rs:456` | `SNOTRA_EGUI_REPAINT_TRACE` |
+| `windows_ime.rs:100` | `SNOTRA_EGUI_IME_TRACE` |
+| `windows_ime.rs:209` | `SNOTRA_EGUI_IME_TRACE` |
 
-`SPEC.md` の更新は**不要**——本計画はテストハーネスと測定器だけを触り、製品の挙動・状態遷移を変えない。
+`snotra-egui-runtime/CLAUDE.md` の「モジュール構成」へ 1 行足す:
 
-### 作業項目
+```
+- `env.rs`: trace ハッチの env 述語（空文字を未設定として扱う唯一の場所・#872）
+```
 
-- [ ] `docs/build-commands.md` の該当 bullet を更新する
-- [ ] `npm run governance:check` が green
+- [ ] **Step 4: 通ることを確認する**
+
+実行: `cargo clippy --workspace --all-targets -- -D warnings` と `cargo test -p snotra-egui-runtime`
+期待: green。**`var_os(...).is_some()` が 0 件になったことを `grep -rn "var_os(" snotra-egui-runtime/src` で確認する**
+
+- [ ] **Step 5: 空文字を直接注入して両方向を実測する**
+
+`.claude/rules/safety-nets.md`「**故障注入は回復機構ごと巻き戻して行う**」——PowerShell 側の復元を直さない以上、空文字は依然として作られうる。それを直接注入して測る。
+
+```powershell
+$env:SNOTRA_EGUI_INPUT_TRACE = ''
+# 本体を起動し、stderr に SNOTRA_EGUI_INPUT 行が 0 件であることを確認
+$env:SNOTRA_EGUI_INPUT_TRACE = '1'
+# 同じく起動し、行が出ることを確認（両方向）
+```
+
+結果を「実測ログ」へ書く。
+
+**コミット**: `fix(egui): 空文字の env が trace ハッチを点灯させるのを止める (#872)`
 
 ---
 
-## 範囲外（明示）
+## Task 6: 記録を実態へ合わせる
 
-- **型 A（待ちの予算切れ）の `TimeoutMs` / `PollMs` の変更**——根拠となる計器なしの実測が無い（U2）。#872 の第 5 の候補はこの計画では判断しない
-- **遅着警告のノイズ分離**（研究 発見 6）——`予算 Xms を過ぎた評価で成立しました` は本物の遅着で 4 回鳴っていたが、`Tests.ps1:186` の単体検査が同一文言を毎回 1 件出すため区別できない。**これは第 5 の候補（予算を広げる）の前提条件**であり、その判断と同じ枝で直すのが筋なので今回は入れない。**#872 のコメントへ記録する**
-- **`Read-SnotraTraceSnapshot` の増分読みへの作り替え**——1 周 0.5〜2.5 秒の内訳が観測側とアプリ側に分離できていない（研究 発見 4）。分離する前の最適化は当て推量になる
-- **`smoke-startup.ps1` の 5 回ループの終了待ち**（`/symmetric-check` の [要確認]）——同じ機序の候補だが実測していない。**#786（`smoke:startup` の別 flake）が既に OPEN でそちらの担当**であり、本 issue の枝で混ぜると 2 つの検査の赤が同じ PR に乗る。**#786 へ機序の候補として記録する**
-- **反復再現 job の dispatch**——外向きの CI 資源を使う。承認とは別に、実行の可否をユーザーへ確認してから行う
+**Files:**
+- Modify: `PERFORMANCE.md`（計器の一覧は `250-253`）
+- Modify: `docs/build-commands.md`（実機配管の記述は `178`、`smoke-egui.ps1` の関連は `180`）
+- Modify: `scripts/smoke-egui.ps1`（`139` の `Start-Sleep 300`）
+
+- [ ] **Step 1: `PERFORMANCE.md` の計器一覧を直す**
+
+この節は「**このリストが計器の正本である**」と自称しながら、5 名前のうち 3 つしか載せていない（`SNOTRA_EGUI_INPUT_TRACE` と `SNOTRA_EGUI_IME_TRACE` が欠落）。受理値にも触れていない。2 名前を足し、次の 1 文を置く。
+
+```
+**値は空でなければ何でもよい（空文字は「未設定」として扱う・#872）。** `SNOTRA_TRACE` だけは
+別の意味論（`1|true|yes|on` のみ・`src-tauri/src/trace.rs`）である。
+```
+
+- [ ] **Step 2: `smoke-egui.ps1` の冗長な固定待ちを消す**
+
+`139` の `Start-Sleep -Milliseconds 300` は `Policy Stop` に対する事実上の待ちだった（#853 以前からの逐語の持ち越し）。Task 1 で関数の内側に本物の待ちが入るため、説明のつかない固定遅延として残る。削除し、`138` のコメントへ「終了待ちは `Resolve-SnotraExistingProcess` が持つ（#872）」を足す。
+
+- [ ] **Step 3: `docs/build-commands.md` を実態へ合わせる**
+
+`178` の実機配管の説明から「フォルダ復帰後の次打鍵が復元クエリの末尾へ入ることを統合検査する（#840・#843）」を、次の趣旨へ書き換える（**面積を増やさず既存文を置き換える**）。
+
+> 起動後の最初のフレームで入力欄が打鍵を受け取れる状態になっていることを実機で検査する（#872）。キャレットの断言は `src-tauri/src/egui_shell/view.rs` の kittest が実コードごと縛る。
+
+- [ ] **Step 4: ガバナンス検査**
+
+実行: `npm run governance:check`
+期待: green（検査 18 件）
+
+- [ ] **Step 5: 全体の検証**
+
+実行: `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test --workspace` / `npm run test:powershell` / `npm run smoke:egui`
+期待: すべて green
+
+**コミット**: `docs: 計器の正本と実機配管の記述を実態へ合わせる (#872)`
+
+---
+
+## 実測ログ（実装中に埋める）
+
+| 何を測ったか | タスク | 結果 |
+|---|---|---|
+| 待ちを外した複製で衝突が再現するか | 1-10 | |
+| `move_text_cursor_to_end` を後ろへ動かすと kittest が落ちるか | 3-5 | |
+| focus 要求を落とすと縮小した実機配管が落ちるか | 4-4 | |
+| 空文字/`1` の両方向で計器が切り替わるか | 5-5 | |
 
 ---
 
 ## 未確定（実装前に潰す）
 
-- [x] **U1** — `-InputTrace` を渡していない run で計器の env がどこから立ったか。**解決**: `[Environment]::SetEnvironmentVariable($name, $null, 'Process')` が変数を消さず**空文字で作る**（PowerShell 7 で実測）。Rust 側の `var_os(...).is_some()` がそれを真と読み、PowerShell 側の `if ($env:...)` は偽と読む。1 反復目の `finally` が境界になる。→ Phase 2 が両側を直す
-- [x] **U3** — 遅着の警告が実際に現れるか。**解決**: 現れる。修正後 run で `予算 5000ms を過ぎた評価で成立`（例: `5251ms・7 周`）が 4 反復（iter-001 / 012 / 019 = pass、iter-014 = fail）。**ただし全 30 反復に単体検査由来の `予算 0ms …（2ms・1 周）` が 1 件ずつ混じり、grep では区別できない**。機構は在るが読めない → 範囲外へ記録し #872 へ残す
-- [x] **U4**（実装中に発生・解決）— `env_flag` を crate 間で共有するか。**解決**: `snotra-egui-runtime` は `snotra-core` に依存していない（`Cargo.toml` 実測）ため、依存辺を増やさず private な写しを置き、双方の doc で互いを名指しする。**レビューで選び直してよい設計判断として Phase 2 に明記した**
+- [x] **U-A** — `Set-SnotraForegroundWindow` を外せるか。**残す判断で確定**（設計書）。focus 要求が `pre.focused` に条件づけられており、アプリの `set_focus()` だけで OS が前面を渡すかは未実測。外す試みは follow-up
+- [x] **U-B** — フレーム不回転（実測 1/30）。**縮小版でも残ることを受容**。ただし断言の失敗ではなく 1 回の待ちの時間切れとして現れる
+- [x] **U-C** — `egui_kittest` 0.35 の API。**解決**（レジストリの一次資料で確認）。`new_ui_state` / `step` / `input_mut` / `state` / `state_mut` はすべて実在する。**`run()` ではなく `step()` を使う**——`run()` は再描画要求が尽きるまで複数フレーム回すため、「同一フレーム」という検査の主題が骨抜きになる（`step` の doc: *Run a frame for each queued event (or a single frame if there are no events)*）
 
-**U2**（計器なしでの型 A の率と分布）は本計画の範囲外へ送ったため、未確定ではなく #872 の次の測定として残す。
+## PR 本文のチェックリストへ転記するもの（CI が要る／散文では蒸発する）
 
----
+**ここでは意図的にチェックボックスを使わない。** この計画が所有しない作業をチェックボックスで
+置くと、plan.md に未チェックの `- [ ]` が恒久的に残り、`gh pr create` のガード（#749）を
+永久にブロックする。PR を立てるときに本文へ転記すること。
 
-## セルフレビュー
+1. `rust-check` の log に `Stop-SnotraProcessAndWait` の警告が実際に出るか（`finally` 内の `Write-Warning` の扱いは未実測。CI の実測は PR が在って初めて行える）
+2. #872 へコメント: 残余の再分類（衝突 / 遅着 / フレーム不回転）・計器汚染・機序の再設計
+3. #786 へコメント: `smoke-startup.ps1` の 5 回ループが同型（`Policy Stop` + 固定 120ms）である候補機序
+4. #872 / #936 を閉じるときに `repro-pester-flake.ps1` 一式を撤去（撤去対象の正本は同ファイルの `.NOTES`）
 
-- リスク: **高**（`/plan-review`「リスク判定」の「hook、CI、rules、skills、ガバナンス文書を変更する」に該当——`rust-check` が実行する Pester 配管と測定用 workflow のスクリプトを変更する）
-- plan-review: **自己レビューのみ**（高リスクだが、独立レビュー 1 体の起動はユーザーの指示を待つ——本セッションはサブエージェント委譲を既定で行わない設定である）
-- 実行した check スキル: `/symmetric-check`（結果は下記）
-- エージェント数: 0
-- 要対処: **3 件、いずれも計画へ反映済み** —— (1) `Invoke-SnotraEnvironment` という正しい手本の再利用（Phase 2 設計判断）、(2) `run-pester.ps1:49` の同型を対象へ追加、(3) `smoke-startup.ps1` の [要確認] を範囲外＋#786 へ送出
-- 未検証: U2（範囲外へ送出。本計画の作業項目はすべて検証手段を持つ）
+## 受容する残余（名指し）
 
-### 自己照合（`/start-issue` Step 5a の 5 点）
-
-1. **issue の全要件に作業項目が対応するか** — #872 の問い（ゲートに置き続けるか）には「今日の時点で確定できる判断」節が答え、残余の扱いは Phase 1 が 1 つを消し、もう 1 つ（型 A）は範囲外として明示した
-2. **境界条件と検証** — `$null` / `HasExited` / 期限切れ / アクセス拒否の 4 経路を `Stop-SnotraProcessAndWait` の作業項目に列挙し、それぞれ単体検査を置く
-3. **新しいリソース・プロセスの正常/失敗/破棄経路** — 新規リソースは作らない。既存プロセスの**破棄経路**に待ちを足すのが本計画である
-4. **より単純な既存パターンで置き換えられないか** — **2 軸とも置き換えた。**プロセスの終了待ちは `smoke-egui.ps1:458-466`（#755/#801 是正 B）、env の退避・復元は `Invoke-SnotraEnvironment`（psm1:`267-286`）が既存の手本である。**新しい発明は `env_flag` の写し 1 つだけ**で、それも `src-tauri/src/trace.rs:20` の既存実装と同じ意味論である
-5. **壊してはならない不変条件に検知手段があるか** — 「`Reject` の厳しさを緩めない」は既存単体検査（`Tests.ps1:234-249`）が守る。「測定器は exit 0 のまま」はスクリプト末尾の `exit 0` と冒頭 doc が守る
-
-### `/symmetric-check` の結果（実施済み・全判定に根拠あり）
-
-**軸 1: プロセスの生成/破棄**——`Start-SnotraProcess` の呼び出し点 6 箇所を全件評価した。
-
-| 生成 | 破棄 | 後続の起動 | 終了待ち | 判定 |
-|---|---|---|---|---|
-| `Tests.ps1:356`（seed の It） | `381` | **有り**（`442`） | 無し | **[適用]** Phase 1（実測 3/30 の赤） |
-| `Tests.ps1:442`（キャレットの It） | `502` | **無し**（`実機配管` 最後の It。後続の `SnotraTraceInvariants.Tests.ps1` は `Start-Process` 0 件・実測） | 無し | **[適用]** Phase 1（**対称性のためのみ**。この経路に実害は無い） |
-| `smoke-egui.ps1:148` | `453` | 有り（`528`） | **`462` `WaitForExit(5000)`** | **[不要]** 既に対称（#755/#801 是正 B） |
-| `smoke-egui.ps1:528`（toast） | `627` | **無し**（以降 `Start-SnotraProcess` 無し・集計のみ） | 無し | **[不要]** 衝突相手が居ない |
-| `smoke-startup.ps1:63`（**5 回ループ**） | `91` + `Start-Sleep 120` | **有り**（次の反復） | **固定 120ms のみ** | **[要確認]** 下記 |
-| `visual-check-colors.ps1:225` | `299` | 無し（起動 1 回） | 無し | **[不要]** |
-
-**[要確認] `smoke-startup.ps1` — #786 へ渡す候補機序。** ループの各反復は `Policy Stop`（`55`）→ 起動（`63`）→ `Stop-Process`（`91`）→ 固定 `120ms`（`92`）で、**待ちが固定時間しかない**。先発が生きたまま後発を起動すると single-instance により**後発は即終了し trace を 1 行も書かない**（機序の正本は `smoke-egui.ps1:458-461` のコメント）。この smoke が「原因未解明」として記録している分散——**5 回中 3 回が丸ごと無音**（`smoke-startup.ps1:66-71`）——は「遅い」ではなく「書かなかった」であり、この機序と整合する。**実測していないので [適用] とはしない。** #786 へ機序の候補として渡す
-
-**軸 2: 計器フラグの真偽（env の設定/復元）**
-
-| 設定 | 復元 | 元が未設定のとき | 判定 |
-|---|---|---|---|
-| `Invoke-SnotraEnvironment`（psm1:`274`） | `281` / `283` | **`Exists` を別に記録し `Remove-Item`** | **[不要]** 正しい手本 |
-| `repro-pester-flake.ps1:126-129` | `143-145` | **`$null` → 空文字で残る** | **[適用]** Phase 2 |
-| `run-pester.ps1:49` | 同左 | 同左 | **[適用]** Phase 2（実害なし・同型） |
-
-**軸 3: 同型ペアの取り違え（swap）**——**該当なし**。今回の変更に「同じ型の値を対称な 2 対象へ配線する」箇所は無い（プロセスは 1 つずつ扱われ、env は名前で区別される）。grep パターン: `main.*results` / `tx.*rx` / `from.*to` — 変更対象ファイル内に該当なし
-
-### 適用したトリガー（`AGENTS.md`「条件別チェック」）
-
-- **対称ペア（生成/破棄・フラグ真偽）を変更** → `/symmetric-check` **実施済み**（結果は上記・要対処 3 件を反映）
-- **セーフティネットを変更** → `.claude/rules/safety-nets.md`（配送済み・フォールトインジェクションを Phase 1 / Phase 2 の検証へ**両方向で**入れた）
-- **関数・型を新規定義** → `Stop-SnotraProcessAndWait` と `env_flag`。**新 API の導入と呼び出し点の移行を 1 タスクに束ねる**（`-D warnings` 下で未使用の新 API は `dead_code` で落ちる）。重複の探索は `/symmetric-check` の過程で手作業により実施し、**既存の同等ロジックを 2 件特定した**（`Invoke-SnotraEnvironment` / `src-tauri` の `env_flag`）——いずれも計画へ反映済み。`/dry-check` は**実装後**（関数が存在する状態）に `/implement` の中で走らせる
-- **ガバナンス文書を変更** → `npm run governance:check`（Phase 3）
-- **バグ発見時は同一パターン全コードパス検索** → 2 系統とも実施済み
-  - `Stop-Process`: `scripts/` の全 12 箇所を列挙。`Resolve-SnotraExistingProcess -Policy Stop` の呼び出し側（`smoke-egui.ps1:138` / `smoke-startup.ps1:55`）が同じ形であることを確認して受け入れ条件 2 に入れた。`bench-startup.ps1` / `measure-memory-stages.ps1` / `visual-check-colors.ps1` は CI のゲートではなく共有ヘルパも通っていないため今回は触らない（#890 の残余として同じ非対称が既に記録されている）
-  - 空文字 env: 復元側 4 箇所（`repro-pester-flake.ps1:143-145` / `run-pester.ps1:49`）と読み手側 7 箇所（`snotra-egui-runtime`）を列挙。**実害があるのは読み手が Rust の 1 組だけ**であることを確認した（残る 3 つは読み手も PowerShell で、空文字は一貫して偽）。詳細は `workspace/research.md` 発見 5
-
----
+- **終了が 5,000ms 以内に収まる範囲のシャットダウン退行は吸収され、検査は緑のまま通る。** 完全な漏れは `AfterAll` が捕まえるが、遅くなったこと自体の読み手は置いていない
+- **`SnotraSmoke.psm1:664` の PowerShell 側の読み手は緩いまま残る。** 空文字では両者とも偽で一致するので、実バグの経路は塞がる
 
 ## 人間レビュー
 
-- [ ] 承認待ち
+- [x] 承認済み — 2026-08-05 / 問い: "`workspace/plan.md` をご確認のうえ、注釈を加えるか承認してください。**承認前は実装へ渡しません**（承認後に workspace をコミットします）。" / 回答: "承認、/implement で進めて"

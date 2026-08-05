@@ -194,7 +194,7 @@ impl RepaintScheduler {
                             // proxy 以降である（wry の user-message 処理は窓の引き当てに成功
                             // すれば request_redraw() へ渡すだけで、hidden でも非破棄なら
                             // 引き当ては成功する——ゆえに実体は tao/OS 層）。
-                            if std::env::var_os("SNOTRA_EGUI_WAKE_TRACE").is_some() {
+                            if crate::env::trace_hatch_enabled("SNOTRA_EGUI_WAKE_TRACE") {
                                 eprintln!("SNOTRA_EGUI_WAKE_SEND window_id={window_id:?}");
                             }
                             if proxy

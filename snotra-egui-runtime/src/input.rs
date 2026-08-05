@@ -28,10 +28,15 @@ const TAKE_TRACE_HEARTBEAT: Duration = Duration::from_millis(100);
 /// 無条件に払う。呼ぶ前に問えるよう外へ出す。
 pub(crate) fn input_trace_enabled() -> bool {
     // **一度だけ読む**。この述語は窓イベントごと（マウス移動を含む）とフレームごとに問われる
-    // ため、`env::var_os` の割り当てを毎回払うと、計器を**切っていても**出荷バイナリの
-    // ホットパスに費用が残る。キャッシュの形は `src-tauri/src/trace.rs` の `trace_enabled` と同じ。
+    // ため、env の読み出し（`crate::env::trace_hatch_enabled` の中の `var_os`）の割り当てを
+    // 毎回払うと、計器を**切っていても**出荷バイナリのホットパスに費用が残る。
+    // キャッシュの形は `src-tauri/src/trace.rs` の `trace_enabled` と同じ。
+    //
+    // **キャッシュを持つのはこの 1 箇所だけである**（残り 6 箇所は呼び出しごとに読む）。
+    // 実害があるのは「実行中に env が変わる」場合だけで、Windows のプロセス env では通常
+    // 起きない。ここだけ持つ理由は上の頻度であって、他が持たないことの正当化ではない。
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("SNOTRA_EGUI_INPUT_TRACE").is_some())
+    *ENABLED.get_or_init(|| crate::env::trace_hatch_enabled("SNOTRA_EGUI_INPUT_TRACE"))
 }
 
 /// 到達した入力を 1 件 1 行で残す（#872/#936 の型 B＝打鍵の喪失を、層ごとに割るための計器）。

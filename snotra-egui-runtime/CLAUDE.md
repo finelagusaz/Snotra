@@ -5,6 +5,7 @@ Tauri管理のネイティブWindowへeguiをsoftbuffer（CPUラスタ）で描�
 ## モジュール構成
 
 - `lib.rs`: 公開API
+- `env.rs`: trace ハッチ（`SNOTRA_EGUI_*_TRACE`）の env 述語。**空文字を「未設定」として扱う唯一の場所**（#872）
 - `input.rs`: Taoイベントからegui入力への純粋変換
 - `ime.rs`: IME未確定範囲とDPI座標の純粋変換
 - `windows_ime.rs`: IMM32 preedit取得、候補ウィンドウ位置、subclassの所有/破棄

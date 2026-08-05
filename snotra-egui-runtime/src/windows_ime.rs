@@ -97,7 +97,7 @@ impl PlatformIme {
         }
 
         let (spot, area) = logical_ime_rect_to_physical(output.cursor_rect, scale_factor);
-        if std::env::var_os("SNOTRA_EGUI_IME_TRACE").is_some()
+        if crate::env::trace_hatch_enabled("SNOTRA_EGUI_IME_TRACE")
             && self.last_candidate_rect.replace(Some((spot, area))) != Some((spot, area))
         {
             eprintln!(
@@ -206,7 +206,7 @@ unsafe extern "system" fn ime_subclass_proc(
             _ => None,
         };
         if let Some(event) = event {
-            if std::env::var_os("SNOTRA_EGUI_IME_TRACE").is_some()
+            if crate::env::trace_hatch_enabled("SNOTRA_EGUI_IME_TRACE")
                 && let egui::ImeEvent::Preedit {
                     text,
                     active_range_chars,

@@ -626,7 +626,7 @@ auto_hide_on_focus_lost = false
 - `renderer.rs:76` は `paint()` の中＝毎フレーム。`env_flag` は `var` + `trim().to_ascii_lowercase()` で ON 時の割り当てが 1→2 に増える。直後のコメントが「計器が測定対象を汚さない」ことを設計意図として明記している
 - 実バグは**空文字ちょうど**である。手本は `snotra-core/src/config.rs` の `config_dir_from`（`var_os` + `!is_empty()`・rustdoc に理由あり）
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `snotra-egui-runtime/src/env.rs` を新規作成する。
 
@@ -676,12 +676,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: 落ちることを確認する**
+- [x] **Step 2: 落ちることを確認する**
 
 実行: `cargo test -p snotra-egui-runtime env::`
 期待: `mod env` が宣言されていないため**コンパイルエラー**
 
-- [ ] **Step 3: モジュールを宣言し、7 箇所を移行する**
+- [x] **Step 3: モジュールを宣言し、7 箇所を移行する**
 
 `lib.rs` へ `mod env;` を足す。次の 7 箇所を `crate::env::trace_hatch_enabled("<名前>")` へ置き換える。**`input.rs` の `OnceLock` によるキャッシュは残す**（述語だけ差し替える）。
 
@@ -701,12 +701,12 @@ mod tests {
 - `env.rs`: trace ハッチの env 述語（空文字を未設定として扱う唯一の場所・#872）
 ```
 
-- [ ] **Step 4: 通ることを確認する**
+- [x] **Step 4: 通ることを確認する**
 
 実行: `cargo clippy --workspace --all-targets -- -D warnings` と `cargo test -p snotra-egui-runtime`
 期待: green。**`var_os(...).is_some()` が 0 件になったことを `grep -rn "var_os(" snotra-egui-runtime/src` で確認する**
 
-- [ ] **Step 5: 空文字を直接注入して両方向を実測する**
+- [x] **Step 5: 空文字を直接注入して両方向を実測する**
 
 `.claude/rules/safety-nets.md`「**故障注入は回復機構ごと巻き戻して行う**」——PowerShell 側の復元を直さない以上、空文字は依然として作られうる。それを直接注入して測る。
 
@@ -770,7 +770,7 @@ $env:SNOTRA_EGUI_INPUT_TRACE = '1'
 | 待ちを外した複製で衝突が再現するか | 1-10 | **再現した（両方向）。** 変異（kill も待ちもしない複製）→ キャレット It が `RuntimeException: Snotra が既に起動しています（pid=20544）` で 77ms で失敗（**CI の iter-008/021/029 と逐語一致**）、加えて新設 `AfterAll` が `実機配管の後に snotra が残っています` で発火。修正版 → 統合 2/2 pass・`AfterAll` 沈黙 |
 | `move_text_cursor_to_end` を後ろへ動かすと kittest が落ちるか | 3-5 | **1 回目は落ちなかった**（focus 直後のキャレットが既に末尾で no-op ゆえ、検査が縛れていなかった）。復元フレームの前にキャレットを先頭へ置く 1 段を足して再注入 → **`left: "zalpha" / right: "alphaz"` で落ちた**。戻して 208 passed |
 | focus 要求を落とすと縮小した実機配管が落ちるか | 4-4 | **落ちた。** focus 要求の条件を反転した debug ビルドで `has_focus:false` が 5 フレームとも記録され `Expected $true, but got $false`。復元後 76 passed。**所要は 2.56s → 491ms**（CI runner では従来 16〜24 秒） |
-| 空文字/`1` の両方向で計器が切り替わるか | 5-5 | |
+| 空文字/`1` の両方向で計器が切り替わるか | 5-5 | **両方向 OK。** 空文字 → `SNOTRA_EGUI_INPUT` 行 **0**、`1` → **13**（`[trace]` は両方 7 行でアプリは正常動作）。PowerShell 側の復元は直していないので、空文字は依然として作られうる状態での注入である |
 
 ---
 

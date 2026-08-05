@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tauri_runtime_wry::tao::{
     dpi::{PhysicalPosition, PhysicalSize},
@@ -11,7 +11,17 @@ pub(crate) struct InputState {
     native_pixels_per_point: f32,
     pointer_pos: egui::Pos2,
     started_at: Instant,
+    /// `take()` を通った回数＝egui へフレームを渡した回数（診断のみ・#872/#936）。
+    frame_count: u64,
+    /// 直近で `take` 行を出した時刻。**心拍を間引くためだけに持つ**——runner では
+    /// stderr 1 行が 17〜56ms かかると実測されており（run 30963445957）、全フレームに
+    /// 出すと計器が系を乱す側へ回る。
+    last_take_trace: Option<Instant>,
 }
+
+/// フレームの心拍を出す最短間隔（#872/#936）。**入力を積んだフレームはこの間引きを受けない**
+/// ——落としてよいのは「何も起きていないことの証拠」だけである。
+const TAKE_TRACE_HEARTBEAT: Duration = Duration::from_millis(100);
 
 /// 打鍵の到達計器が有効か（`SNOTRA_EGUI_INPUT_TRACE`・#872/#936）。
 /// 判定を `input_trace` の内側だけに置くと、呼び出し側が `format!` の割り当てを
@@ -50,6 +60,8 @@ impl InputState {
             native_pixels_per_point,
             pointer_pos: egui::Pos2::ZERO,
             started_at: Instant::now(),
+            frame_count: 0,
+            last_take_trace: None,
         }
     }
 
@@ -62,6 +74,35 @@ impl InputState {
         size: PhysicalSize<u32>,
         native_pixels_per_point: f32,
     ) -> egui::RawInput {
+        // **フレームが走ったこと自体を残す**（#872/#936 の最後の分岐）。ここより下流の
+        // trace（`egui_input:changed` 等）は「入力が実った」ときしか出ないため、
+        // 「フレームが 1 枚も走っていない」と「走ったが TextEdit が受け取らない」が
+        // 同じ沈黙へ潰れている。**この 1 行だけが両者を分ける。**
+        //
+        // **全フレームには出さない**——runner では stderr 1 行が 17〜56ms かかると実測した
+        // （run 30963445957・隣接する 2 行の間隔）。全フレームに出すと計器が系を乱す側へ回る。
+        // 入力を積んだフレームは必ず出し、それ以外は 100ms ごとの心拍に間引く：
+        // 「走っていない」は**行の不在**ではなく**心拍の途切れ**として見えるので、間引いても
+        // 判定は壊れない。
+        self.frame_count += 1;
+        if input_trace_enabled() {
+            let now = Instant::now();
+            let pending = self.raw.events.len();
+            let due = self
+                .last_take_trace
+                .is_none_or(|last| now.duration_since(last) >= TAKE_TRACE_HEARTBEAT);
+            if pending > 0 || due {
+                self.last_take_trace = Some(now);
+                input_trace(
+                    "take",
+                    &format!(
+                        "frame={} events={pending} focused={}",
+                        self.frame_count, self.raw.focused
+                    ),
+                );
+            }
+        }
+
         self.native_pixels_per_point = native_pixels_per_point;
         let size_points = egui::vec2(
             size.width as f32 / native_pixels_per_point,

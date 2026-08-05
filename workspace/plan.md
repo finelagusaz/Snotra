@@ -539,7 +539,7 @@ egui_kittest = { version = "0.35", default-features = false }
 - **`index.bin` と `[config]` の検査は落とす。** 直前の It（`345`）が同じ断言を持つ
 - 打鍵を注入しないので `$pressKey` と `$waitForInputChange` は不要になる
 
-- [ ] **Step 1: It を書き換える**
+- [x] **Step 1: It を書き換える**
 
 `386` の It 全体を次で置き換える。名前も内容に合わせる。
 
@@ -590,16 +590,16 @@ auto_hide_on_focus_lost = false
 
 **予算を 30,000ms にする理由**: 待ちは 1 つだけになり、順序依存が無い。実測でフレーム不回転は 24.3 秒（1/30）まで観測されている——**予算を広げても隠れる退行は無い**（この待ちは「フレームが 1 度でも回ったか」しか見ないため、遅さそのものが判定に混ざらない）。
 
-- [ ] **Step 2: 撤去した env フックを消す**
+- [x] **Step 2: 撤去した env フックを消す**
 
 `SNOTRA_PESTER_FAILURE_GRACE_MS` と `SNOTRA_PESTER_TRACE_DIR` の分岐は、打鍵の遅着を測るための足場だった。**縮小版には待ちが 1 つしか無く、遅着と喪失を分ける問いも消えた**ので、上の書き換えで一緒に落ちている。`scripts/repro-pester-flake.ps1` の `.NOTES` が撤去対象として名指ししているので、**そちらの撤去は #872 / #936 を閉じるときに一括で行う**（このタスクでは触らない）。
 
-- [ ] **Step 3: 通ることを確認する**
+- [x] **Step 3: 通ることを確認する**
 
 実行: `cargo build -p snotra` の後 `npm run test:powershell`
 期待: 全件 PASS。**この It の所要が現行の 16〜24 秒から数秒へ落ちること**を目視で確認する
 
-- [ ] **Step 4: 故障注入で検出力を実測する**
+- [x] **Step 4: 故障注入で検出力を実測する**
 
 `view.rs` の focus 要求の条件を落とす（`params.window_focused &&` を `false &&` にする）。この It が `has_focus` = false で落ちることを確かめてから戻す。結果を「実測ログ」へ書く。
 
@@ -769,7 +769,7 @@ $env:SNOTRA_EGUI_INPUT_TRACE = '1'
 |---|---|---|
 | 待ちを外した複製で衝突が再現するか | 1-10 | **再現した（両方向）。** 変異（kill も待ちもしない複製）→ キャレット It が `RuntimeException: Snotra が既に起動しています（pid=20544）` で 77ms で失敗（**CI の iter-008/021/029 と逐語一致**）、加えて新設 `AfterAll` が `実機配管の後に snotra が残っています` で発火。修正版 → 統合 2/2 pass・`AfterAll` 沈黙 |
 | `move_text_cursor_to_end` を後ろへ動かすと kittest が落ちるか | 3-5 | **1 回目は落ちなかった**（focus 直後のキャレットが既に末尾で no-op ゆえ、検査が縛れていなかった）。復元フレームの前にキャレットを先頭へ置く 1 段を足して再注入 → **`left: "zalpha" / right: "alphaz"` で落ちた**。戻して 208 passed |
-| focus 要求を落とすと縮小した実機配管が落ちるか | 4-4 | |
+| focus 要求を落とすと縮小した実機配管が落ちるか | 4-4 | **落ちた。** focus 要求の条件を反転した debug ビルドで `has_focus:false` が 5 フレームとも記録され `Expected $true, but got $false`。復元後 76 passed。**所要は 2.56s → 491ms**（CI runner では従来 16〜24 秒） |
 | 空文字/`1` の両方向で計器が切り替わるか | 5-5 | |
 
 ---

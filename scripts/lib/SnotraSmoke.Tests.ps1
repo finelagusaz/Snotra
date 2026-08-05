@@ -464,107 +464,49 @@ auto_hide_on_focus_lost = false
         }
     }
 
-    It 'フォルダ復帰後の次打鍵を復元クエリの末尾へ追加する' {
+    It '起動後の最初のフレームで入力欄が打鍵を受け取れる状態になっている' {
+        # **この It が守るのは L3（実プロセス層）だけである。** キャレットの断言は
+        # `src-tauri/src/egui_shell/view.rs` の kittest が**実コードの並びごと**縛る
+        # （#872 の機序再設計・設計書は
+        # `docs/superpowers/specs/2026-08-05-caret-test-mechanism-design.md`）。
+        #
+        # **打鍵を注入しないのは、注入と 3 段の待ちが 7 か月の間欠失敗の構造的前提
+        # そのものだったからである**（#872 本文の要素 1 = 前面窓依存・要素 2 = 実時間
+        # ポーリング）。OS の打鍵がアプリへ届く配線は `smoke-egui.ps1` が release
+        # ビルドで見ている（hotkey VK 列 → `egui_show:done` → 1 文字クエリ →
+        # `egui_results:show`）。
+        #
+        # `egui_input:focus_state` は #938 が**この回帰の検出器として**置いたもので、
+        # 偽に戻れば起動直後の打鍵が再び捨てられている（機序の正本は `view.rs` の
+        # 当該コメント）。**前面化は残す**——focus 要求は `pre.focused`（窓の OS focus）に
+        # 条件づけられており、前面を奪えなければ `has_focus` は真にならない。
         $profile = Join-Path $TestDrive 'caret-profile'
         $stderr = Join-Path $TestDrive 'caret.err'
-        $scanRoot = Join-Path $TestDrive 'caret-fixture'
-        $folder = Join-Path $scanRoot 'alpha'
-        New-Item -ItemType Directory -Force -Path $folder | Out-Null
-        Set-Content -LiteralPath (Join-Path $folder 'aa-child.txt') -Value 'fixture'
-        $scanRootToml = (Resolve-Path -LiteralPath $scanRoot).Path.Replace('\', '/')
-        # この検査はキャレット位置だけを見るので、アイコンは判定に一切入らない。
-        # runner ではシェルのアイコン問い合わせが恒久的に失敗し続け（#872）、その再要求が
-        # 打鍵から egui_input:changed までの観測時間を押し広げる。要求そのものを外す。
+        # この検査はアイコンを一切見ない。runner ではシェルのアイコン問い合わせが恒久的に
+        # 失敗し続け（#872 / #887）、その再要求が起動を押し広げる。要求そのものを外す。
         $created = New-SnotraVerificationProfile -ProfileDir $profile -ShowIcons $false `
             -GeneralSection @'
 show_on_startup = true
 auto_hide_on_focus_lost = false
-'@ `
-            -PathEntries @"
-[[paths.scan]]
-path = "$scanRootToml"
-extensions = [".snotra-no-match"]
-include_folders = true
-"@
+'@
         $proc = $null
-        $pressKey = {
-            param([byte]$VirtualKey)
-            Send-SnotraKey -VirtualKey $VirtualKey
-            Start-Sleep -Milliseconds 50
-            Send-SnotraKey -VirtualKey $VirtualKey -Up
-            Start-Sleep -Milliseconds 50
-        }
-        $waitForInputChange = {
-            param(
-                [string]$Scope,
-                [int]$AfterChars,
-                [bool]$AppendedAtEnd,
-                [Nullable[int]]$BeforeChars = $null,
-                [int]$TimeoutMs = 5000
-            )
-            # 待ちループの形は `Wait-SnotraTraceCondition` が持つ（#872）。ここに写しを置くと、
-            # 期限跨ぎ・読み取り失敗の穴を塞ぐ変更が module 側にしか入らない。
-            $predicate = {
-                $_.event -eq 'egui_input:changed' -and
-                $_.data.scope -eq $Scope -and
-                $_.data.after_chars -eq $AfterChars -and
-                $_.data.appended_at_end -eq $AppendedAtEnd -and
-                ($null -eq $BeforeChars -or $_.data.before_chars -eq $BeforeChars)
-            }.GetNewClosure()
-            $describe = "egui_input:changed(scope=$Scope, after=$AfterChars, appended=$AppendedAtEnd" +
-                $(if ($null -eq $BeforeChars) { '' } else { ", before=$BeforeChars" }) + ')'
-            $abortArgs = if ($null -eq $proc) { @{} } else { @{ AbortIfExited = $proc } }
-            return Wait-SnotraTraceCondition -Path $stderr -Predicate $predicate -Description $describe `
-                -TimeoutMs $TimeoutMs -PollMs 100 @abortArgs
-        }
-
         try {
             Resolve-SnotraExistingProcess -Policy Reject
             $proc = Start-SnotraProcess -ConfigDir $created.FullPath -Trace `
                 -FilePath $env:SNOTRA_PESTER_EXE -StandardErrorPath $stderr
             $hwnd = Wait-SnotraWindow -Title 'Snotra' -Process $proc -TimeoutMs 30000
-
-            $indexPath = Join-Path $created.FullPath 'index.bin'
-            $indexDeadline = [DateTime]::UtcNow.AddSeconds(10)
-            while (-not (Test-Path -LiteralPath $indexPath) -and [DateTime]::UtcNow -lt $indexDeadline) {
-                if ($proc.HasExited) { break }
-                Start-Sleep -Milliseconds 100
-            }
-            Test-Path -LiteralPath $indexPath | Should -BeTrue
-            @(Select-String -Path $stderr -SimpleMatch '[config] ').Count | Should -Be 0
-
             Set-SnotraForegroundWindow -Handle $hwnd | Should -BeTrue
-            Start-Sleep -Milliseconds 300
-            foreach ($vk in [byte[]](0x41, 0x4C, 0x50, 0x48, 0x41)) { & $pressKey $vk }
-            # runner が遅いと複数文字が同一フレームへまとまるため、準備入力は最終状態だけを見る。
-            & $waitForInputChange -Scope 'search' -AfterChars 5 -AppendedAtEnd $true |
-                Should -Not -BeNullOrEmpty
 
-            & $pressKey 0x27 # Right: 唯一の検索結果である alpha フォルダへ入る。
-            Start-Sleep -Milliseconds 300
-            & $pressKey 0x41
-            & $pressKey 0x41
-            & $waitForInputChange -Scope 'folder' -AfterChars 2 -AppendedAtEnd $true |
-                Should -Not -BeNullOrEmpty
+            # **予算は 30,000ms** ——待ちは 1 つだけで順序依存が無く、この待ちは
+            # 「フレームが 1 度でも回ったか」しか見ないので、遅さそのものは判定に混ざらない。
+            # ゆえに広げても隠れる退行が無い（実測でフレーム不回転は 24.3 秒まで観測されている）。
+            $focus = Wait-SnotraTraceCondition -Path $stderr -TimeoutMs 30000 -PollMs 100 `
+                -AbortIfExited $proc -Description 'egui_input:focus_state（最初のフレーム）' `
+                -Predicate { $_.event -eq 'egui_input:focus_state' }
 
-            & $pressKey 0x1B # Escape: alpha を復元し、次の z が末尾へ入るべき経路。
-            & $pressKey 0x5A
-            & $waitForInputChange -Scope 'search' -BeforeChars 5 -AfterChars 6 `
-                -AppendedAtEnd $true | Should -Not -BeNullOrEmpty
+            $focus | Should -Not -BeNullOrEmpty
+            $focus.data.has_focus | Should -BeTrue
         } catch {
-            # **失敗の直後に本体を殺すと「予算後の遅着」が永久に観測できない**（#936 受け入れ条件 1）。
-            # 期待した事象が 5,000ms の後に届くのか、恒久的に届かないのかは、待ちを諦めた時点の
-            # trace からは区別できず、`finally` の `Stop-Process` がその先を見る機会ごと消している。
-            # `SNOTRA_PESTER_FAILURE_GRACE_MS` を渡した実行だけ、kill の前に待って読み直す。
-            # **既定（未設定）は従来どおり即 kill** ——CI ゲートの所要も判定も変えない。
-            $graceMs = 0
-            if ($env:SNOTRA_PESTER_FAILURE_GRACE_MS) {
-                [void][int]::TryParse($env:SNOTRA_PESTER_FAILURE_GRACE_MS, [ref]$graceMs)
-            }
-            if ($graceMs -gt 0) {
-                Write-Host "--- failure grace: ${graceMs}ms 待ってから trace を読み直します（#936） ---"
-                Start-Sleep -Milliseconds $graceMs
-            }
             Write-Host '--- caret integration stderr trace ---'
             if (Test-Path -LiteralPath $stderr) {
                 $stderrLines = @(Get-Content -LiteralPath $stderr)
@@ -579,19 +521,7 @@ include_folders = true
             Write-Host '--- end caret integration stderr trace ---'
             throw
         } finally {
-            # **終了を待つ**（#872）。下の写しが名乗る「書き終えたものを写す」という不変条件は、
-            # 待たない kill の直後では成立していなかった——**この待ちが初めてそれを成立させる**。
             [void](Stop-SnotraProcessAndWait -Process $proc -Quiet)
-            # **成否によらず trace を残す**（`SNOTRA_PESTER_TRACE_DIR` を渡した実行だけ・#872/#936）。
-            # 現状の証拠は失敗時のダンプしかなく、**pass した実行の歩調が無いので、fail 時の所要が
-            # 異常なのか平常なのかを比べられない**。対照群を採れるのはここだけである——`$stderr` は
-            # `TestDrive` の下に在り、It を抜けると Pester が消す。kill の後に写すのは、書き終えた
-            # ものを写すためである。
-            if ($env:SNOTRA_PESTER_TRACE_DIR -and (Test-Path -LiteralPath $stderr)) {
-                New-Item -ItemType Directory -Force -Path $env:SNOTRA_PESTER_TRACE_DIR | Out-Null
-                Copy-Item -LiteralPath $stderr -Force -ErrorAction SilentlyContinue `
-                    -Destination (Join-Path $env:SNOTRA_PESTER_TRACE_DIR 'caret.err')
-            }
         }
     }
 

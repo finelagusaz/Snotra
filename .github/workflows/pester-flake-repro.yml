@@ -26,6 +26,10 @@ on:
         description: '打ち切りまでの上限（分）'
         required: false
         default: '90'
+      input_trace:
+        description: '打鍵の到達計器（true で機序を測る／率は壊れる。既定 false で率を測る）'
+        required: false
+        default: 'false'
   # **push でも起動する**——`workflow_dispatch` は既定ブランチに在るものしか起動できないため、
   # main へ入る前にこの workflow 自身を実測する経路がこれしかない（セーフティネットは
   # 「効いていることを一度は実測する」が規則・`.claude/rules/safety-nets.md`）。
@@ -68,6 +72,7 @@ jobs:
           -Iterations ${{ github.event.inputs.iterations || '30' }}
           -MaxMinutes ${{ github.event.inputs.max_minutes || '90' }}
           -FailureGraceMs ${{ github.event.inputs.failure_grace_ms || '15000' }}
+          ${{ github.event.inputs.input_trace == 'true' && '-InputTrace' || '' }}
 
       # **成功した反復の証拠も上げる**（対照群）。失敗時のダンプしか残らない現状では、
       # fail の所要が異常なのか平常なのかを比べられない。

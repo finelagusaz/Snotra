@@ -27,7 +27,11 @@ const TAKE_TRACE_HEARTBEAT: Duration = Duration::from_millis(100);
 /// 判定を `input_trace` の内側だけに置くと、呼び出し側が `format!` の割り当てを
 /// 無条件に払う。呼ぶ前に問えるよう外へ出す。
 pub(crate) fn input_trace_enabled() -> bool {
-    std::env::var_os("SNOTRA_EGUI_INPUT_TRACE").is_some()
+    // **一度だけ読む**。この述語は窓イベントごと（マウス移動を含む）とフレームごとに問われる
+    // ため、`env::var_os` の割り当てを毎回払うと、計器を**切っていても**出荷バイナリの
+    // ホットパスに費用が残る。キャッシュの形は `src-tauri/src/trace.rs` の `trace_enabled` と同じ。
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("SNOTRA_EGUI_INPUT_TRACE").is_some())
 }
 
 /// 到達した入力を 1 件 1 行で残す（#872/#936 の型 B＝打鍵の喪失を、層ごとに割るための計器）。

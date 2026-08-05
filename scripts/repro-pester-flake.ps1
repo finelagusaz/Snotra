@@ -42,10 +42,20 @@ param(
     # 失敗した検査が本体を kill する前に待つ時間（ms）。0 = 現行の挙動。
     [ValidateRange(0, 120000)]
     [int]$FailureGraceMs = 0,
-    # 打鍵の到達計器（注入 → tao の配送 → egui への push）を立てる。**既定で立てる**——
-    # この経路が測れないことが #872/#936 で機序の割れなかった原因そのものであり、
-    # 標本を採るこのスクリプトで落とす理由が無い。`ci.yml` は渡さないのでゲートは無影響。
-    [bool]$InputTrace = $true
+    # 打鍵の到達計器（注入 → tao の配送 → egui への push → フレーム）を立てる。
+    #
+    # **既定は false である。この計器は失敗率を壊す**——実測で 36.7%（計器なし）→ 63.3%
+    # （3 点計器）→ **100%**（+ take 計器）。runner では stderr 1 行が 17〜56ms かかり、
+    # それが最初のフレームの到来を押し下げて、当の故障（最初のフレームより前の文字が
+    # 捨てられる）を自分で誘発するためである（run 30964784854）。
+    #
+    # **率を測る回と機序を測る回は別の回にすること。** 立てた回の失敗率は、立てない回と
+    # 比較してはならない。
+    #
+    # **`[bool]` ではなく `[switch]` である**——`pwsh -File` 経由では `[bool]` パラメータは
+    # `$false` / `0` / `$true` のどの形でもバインドに失敗する（実測。`-File` は引数を文字列として
+    # 渡し、Boolean は文字列を受け付けない）。workflow は `-File` で呼ぶので、渡せる形にする。
+    [switch]$InputTrace
 )
 
 Set-StrictMode -Version Latest
@@ -74,6 +84,11 @@ $deadline = [DateTime]::UtcNow.AddMinutes($MaxMinutes)
 $records = [System.Collections.Generic.List[object]]::new()
 
 Write-Host "反復再現: $Iterations 回 / 上限 $MaxMinutes 分 / 証拠 → $resolvedOutput"
+if ($InputTrace) {
+    # **サマリにも出す**（下の $summary）——率だけを見た人が計器つきの回と無しの回を
+    # 並べて比較するのを防ぐのは、この 1 行しかない。
+    Write-Host '打鍵の到達計器: 有効（**この回の失敗率は、計器なしの回と比較できない**）'
+}
 if ($FailureGraceMs -gt 0) {
     Write-Host "失敗時の猶予: ${FailureGraceMs}ms（kill 前に trace を読み直す）"
 }
@@ -140,6 +155,11 @@ $failSeconds = @($failed | ForEach-Object { $_.Seconds })
 $summary = [System.Text.StringBuilder]::new()
 [void]$summary.AppendLine('## Pester 反復再現')
 [void]$summary.AppendLine('')
+if ($InputTrace) {
+    [void]$summary.AppendLine('> ⚠️ **打鍵の到達計器つきの回である。失敗率は計器なしの回と比較できない**')
+    [void]$summary.AppendLine('> （stderr 1 行 17〜56ms が最初のフレームを押し下げ、当の故障を誘発する）。')
+    [void]$summary.AppendLine('')
+}
 [void]$summary.AppendLine("- 反復: $($records.Count) 回（要求 $Iterations 回）")
 [void]$summary.AppendLine("- 失敗: $($failed.Count) 回（うち注目検査 $($watched.Count) 回）")
 if ($records.Count -gt 0) {

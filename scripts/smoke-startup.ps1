@@ -90,6 +90,10 @@ for ($run = 1; $run -le $Iterations; $run++) {
   if (-not $proc.HasExited) {
     Stop-Process -Id $proc.Id -Force
   }
+  # **この 120ms は待ちではなく、書き終えを待つ猶予である。** プロセスの終了待ちは
+  # ループ先頭の `Resolve-SnotraExistingProcess -Policy Stop` が持つ（#872 で
+  # `Stop-SnotraProcessAndWait` を通るようになった）ので、次の起動が single-instance で
+  # 沈黙することはない。ここが守るのは直後の `Read-SnotraTraceEvents` が読む stderr である。
   Start-Sleep -Milliseconds 120
 
   $events = @(Read-SnotraTraceEvents -Path $errPath)

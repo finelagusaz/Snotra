@@ -57,8 +57,11 @@ M2 を構造で塞ぐ（show 跨ぎ状態を 1 つの型へ集約し `*self = Se
 | `scripts/lib/SnotraTraceInvariants.psm1` | `$script:Invariants` へ `H6`／`$script:EventHideBlurGrace`／`$script:BlurGraceEpsilonMs`／状態機械へ `$showGuard` と H6 判定／`$observed.ShowWindow`／**散文の写し 3 箇所**（冒頭表 `:13-17`・`Test-SnotraTraceInvariants` の doc `:109`・凡例 `:626`） |
 | `scripts/lib/SnotraTraceInvariants.Tests.ps1` | H6 の test 群（Phase 3・10 件） |
 | `scripts/smoke-egui.ps1` | 肯定的証拠 `Observed.ShowWindow -eq 0` の assert（既存の `ResultsShow` と同型・`:438`） |
-| `scripts/manual-smoke.ps1` | `:433` の散文「H1 / H4 / H5」→ H6 を含める |
-| `docs/build-commands.md` | `:62` の散文「H1 / H4 / H5 の不変条件」→ H6 を含める |
+| `scripts/manual-smoke.ps1` | 散文の写し **2 箇所**（`:30`「不変条件（合否） — H1 / H4 / H5」・`:433`「合否を名乗れるのは…」）／`:388` の注意行（`ResultsShow` が 0 のとき「H4 / H5 は事実上検査されていない」）の **H6 版**（`ShowWindow` が 0 のとき）を足す。**既存行に H6 を混ぜない**——H6 は `ResultsShow` に依存しないので偽になる |
+| `docs/build-commands.md` | `:62` の散文「H1 / H4 / H5 の不変条件」／**直下の SKIP 理由の列挙**（`:64`「…はすべて SKIP として現れ」＝**全称の主張**）へ H6 の新しい SKIP 理由を足す |
+| `src-tauri/CLAUDE.md` | 「イベント駆動 wake の不変条件」の「blur 猶予は #745 で `BlurGrace::reset` として合流した。**そこに残る受容残余は同 doc が正本**」——残余が縮むので、指し先の doc の訂正に合わせて主張自体を見直す |
+| `scripts/smoke-egui.ps1`（コメント） | `:59-61`「H1（hide 後に results が取り残されない）の判定はここに書かない」が H1 だけを名指ししている／`:418-421`「smoke は最後まで hidden で終わるため H1 の正常値は SKIP」は **H6 にも同じことが言える**（ε=400 の帰結）ので、H6 を含む形へ |
+| `src-tauri/src/egui_shell/window_coordinator.rs`（コメント） | `:268-269` の payload 受け皿コメント（`blur_grace_ms` の追加）。**`:499-500` の「trace 不変条件（H1）が区間の判定に使う」は真のまま**——H6 は `egui_hide:done` を判定に使わない（**触らない判断を記録する**） |
 
 ## H6 の判定仕様
 
@@ -71,9 +74,14 @@ issue は「show 直後の Escape・hotkey トグルは正当」ゆえの除外�
 判定対象にすると、この除外は**時間の閾値でしか書けない**。それは smoke（入力を制御できる）では
 足りても、**同じ判定器を食う `manual-smoke.ps1` では破れる**——判定器の名前の母集団は
 `Get-SnotraTraceInvariantNames` 一本であり（写しを置かない規律）、`Get-SnotraTraceFailureCount` は
-H6 の FAIL をそのまま赤に数える。人間が Alt+Q を素早く 2 度叩けば show→hide が 150ms を下回りうる
-（`plan_hotkey` は `visible && hotkey_toggle` で即 `HideNow`）。**呼び出し側ごとに H6 を外す**のは
-母集団の規律を壊すので採らない。
+H6 の FAIL をそのまま赤に数える。**呼び出し側ごとに H6 を外す**のは母集団の規律を壊すので採らない。
+
+人間の操作が 150ms を下回りうるかには**先行する反対材料がある**——`ADR-blur-grace-single-field-state-machine`
+は「猶予（100ms）以内の人間の操作を要求する実機シナリオは実行不能（単純反応時間が〜200ms）」と記録している。
+ただしそれが縛るのは**反応**であって、意図した Alt+Q の連打（打鍵の運動プログラム。`plan_hotkey` は
+`visible && hotkey_toggle` で即 `HideNow`）は反応時間に縛られない。**この点は未測定である。**
+→ **事象で分ける設計の根拠を、この不確かな見積もりに置かない。** 根拠は「人間の速さを推定する必要が
+そもそも無くなる」ことであり、閾値方式なら測って裏付けねばならない前提が、事象方式では**消える**。
 
 ゆえに**猶予が hide を決めた瞬間を名指すイベントを本体側に足す**。決定点は
 `launcher_controller.rs:1077`（`BlurAction::Hide => self.emit_hide()`）**1 箇所だけ**である。
@@ -87,17 +95,31 @@ H6 の FAIL をそのまま赤に数える。人間が Alt+Q を素早く 2 度�
 へ運ぶのではなく、決定点で 1 行 trace するだけなので、`emit_hide` の 6 呼び出し点も
 `hide_egui_main` の signature も変えない。
 
-### ε = 50ms（`$script:BlurGraceEpsilonMs`）
+### ε = 400ms（`$script:BlurGraceEpsilonMs`）
 
-閾値 = `blur_grace_ms`（本体が payload で運ぶ）+ ε。**ε が吸収するのは 2 つの trace の書き込み位置の
-ずれだけ**である（show は show 完了後・hide 要求は決定フレーム内）。**猶予由来の hide 要求は区間内に
-一切現れてはならないので、ε に「正当な hide との識別余裕」を持たせる必要はもう無い。**
+閾値 = `blur_grace_ms`（本体が payload で運ぶ）+ ε。**`reset()` の消失は 2 つの経路で現れ、ε はその
+遅い方を覆う量である**（独立導出 §2.3 論点 2 の指摘で 50ms から改めた）:
 
-- 捕まえたい側（武装持ち越しの hide 要求）は**再 show の初フレーム**で出る。**これは導出上の下界であって
-  実測値ではない**——実測できたのは同じフレーム位置に出る `egui_input:focus_state` の 1 行目までの
-  11〜33ms であり、**不正な hide そのものは一度も観測していない**（実測では常に focus 済みで武装しない）。
-- 参考: 正当な `egui_hide:done` は show から 353ms / 487ms（実測）。**H6 はこれを判定しない**が、
-  「`egui_hide:done` を見る設計にしていたら余裕が 200ms しか無かった」ことの記録として doc に残す。
+| 経路 | hide 時の状態 | 猶予が hide を決める時刻 |
+|---|---|---|
+| 強い経路 | `Blurred(t_old)`（武装が hide を跨いだ） | 再 show の**初フレーム**（show から数十 ms） |
+| 弱い経路 | `Focused`（持ち越し） | 初フレームで武装 → 猶予明けのフレーム。**#746 実測の 315ms / 483ms がこれ** |
+
+- **弱い経路も #745 の症状である**——正しいコードなら `NeverFocused` から始まるので、focus が
+  何 ms 遅れても hide しない。ε = 50 では取り逃がす。
+- **偽陽性の条件は「show から 400ms 以内に focus を得て blur し、猶予が明けること」**。
+  `ADR-blur-grace-single-field-state-machine` が「猶予以内の人間の操作は実行不能（単純反応時間が
+  〜200ms）」を記録しており、窓の出現に反応して別窓へマウスを運ぶ時間を足せばこの帯には収まらない。
+  **ただし未測定であるため、判定器の doc に偽陽性の条件を名指しで書く。**
+- 捕まえたい側の下界（初フレーム）は**導出であり実測ではない**——実測できたのは同じフレーム位置の
+  `egui_input:focus_state` 1 行目までの 11〜33ms で、**不正な hide 要求そのものは一度も観測していない**。
+
+**帰結: `smoke:egui` での H6 の正常値は PASS ではなく SKIP になる。** 閾値が 500ms へ広がると、
+シナリオ 1 の trace には区間を閉じる証人（show+500ms より後の事象）が無い——最後の事象は
+`egui_hide:done` の +353ms である（実測）。**これは H1 とまったく同じ性質であり**（`smoke-egui.ps1:418-421`
+が「smoke は最後まで hidden で終わるため H1 の正常値は SKIP」と書く形）、肯定的証拠は
+`Observed.ShowWindow` が担う。観測地平を閉じるための引数（読み取り時刻）を判定器へ足す案は、
+**H1 に無い機構を H6 のためだけに増やすので採らない**。
 
 ### 状態機械への追加（`Invoke-SnotraTraceJudgement` の 1 パスに合流させる）
 
@@ -113,11 +135,14 @@ H6 の FAIL をそのまま赤に数える。人間が Alt+Q を素早く 2 度�
 - **区間を閉じる証人**: `ts_ms` が `Ts + GraceMs + ε` を超える**任意の事象**を見たら `$showGuard.Closed = $true`。
   閉じた区間だけが PASS を名乗り、閉じないまま trace が終わった show は SKIP（「まだ後続が来うる」）。
   **H1 と同じ非対称**（違反は窓が閉じていなくても確定・無違反は閉じて初めて PASS）。
+- **`ts_ms` は壁時計であり単調ではない**（`trace.rs:45-48` は `SystemTime::now()`）。NTP 補正等で
+  **差分が負になったら SKIP**（判定不能）とする——「判定不能を PASS へ化けさせない」の要石に従う。
+  `seq` 順に並べた後の `ts_ms` が非単調でも状態機械が落ちないこと。
 - `$observed.ShowWindow`（開いた show 区間の数）を足す——**判定器が実際に見た件数**の帳簿。
 - 帰属は **show 側の区間**（殺された show の側で読むほうが意味が通る）。
-
-smoke シナリオ 1 では show の 353ms 後に `egui_hide:done` が出るので区間は必ず閉じ、
-**H6 は実 PASS を名乗る**——「検査が走った」ことが判定表に現れる。
+- **連続する `egui_show:done` は区間を打ち直す**（H1 の hide 窓が「延長」するのと**意図的に非対称**）——
+  `show_egui_main` は呼ばれるたび `reset_pending` を立てる（`window_coordinator.rs:255`）ので猶予の起点は
+  最後の show である。延長にすると「2 回目の show の 50ms 後の hide」が 1 回目からの経過として PASS に化ける。
 
 **fail-safe / degrade 経路**は `$script:Invariants` を回す既存実装がそのまま面倒を見る
 （`New-SnotraTraceFailSafeResult` / D7 の PASS→SKIP 落とし）。写しは足さない。
@@ -146,6 +171,11 @@ smoke シナリオ 1 では show の 353ms 後に `egui_hide:done` が出るの�
 - [ ] 散文の写し 3 箇所を更新（冒頭表・`Test-SnotraTraceInvariants` の doc・`Format-SnotraTraceVerdictTable` の凡例）
 
 ### Phase 3 — Pester（フォールトインジェクション）
+- [ ] **前提**: `New-TraceEvent`（`Tests.ps1:7-15`）は `ts_ms = 1000 + $Seq` を自動で入れる。H6 の fixture は
+      時刻を明示する必要があるので、省略可能な `[long]$TsMs` パラメータを足す（既定は従来の式＝既存 fixture 不変）
+- [ ] **検算（独立導出 §4.4）**: 既存 fixture の show と hide は数 ms しか離れていない。**もし「payload が
+      無ければ既定値」を採っていたら `:58-72` の「正常列」が FAIL になって落ちていた**。`blur_grace_ms` 欠落を
+      SKIP にする設計が、条件 4 と既存テストの無傷を**同じ 1 つの決定**で満たす（この検算を test の doc に残す）
 - [ ] 違反: `show(ts=1000, blur_grace_ms=100)` → `egui_hide:blur_grace(ts=1030)` で H6 が FAIL
       （**変異の強さの根拠**: 武装持ち越しの hide 要求は再 show の初フレームで出る＝同じ位置の
       `focus_state` 1 行目が実測 11〜33ms）
@@ -157,19 +187,36 @@ smoke シナリオ 1 では show の 353ms 後に `egui_hide:done` が出るの�
 - [ ] 判定不能 2: show に `blur_grace_ms` が無い → SKIP + 理由（**写しへ落ちないことの証拠**）
 - [ ] 判定不能 3: 先行 show の無い `egui_hide:blur_grace` → SKIP + 理由
 - [ ] 判定不能 4: 区間を閉じる後続事象が無い show（違反も無い）→ SKIP（H1 と同じ非対称）
+- [ ] 判定不能 5: `ts_ms` の差分が負（壁時計の巻き戻り）→ SKIP + 理由
+- [ ] 非対称: `show(1000)` → `show(2000)` → `egui_hide:blur_grace(2050)` は **FAIL**（区間を打ち直す。
+      延長意味論なら PASS に化ける回帰点）
+- [ ] 帰属: 区間 2 つを跨ぐ事象列で、違反が **show のあった区間**へ帰属する
 - [ ] `Observed.ShowWindow` が開いた区間の件数を返す
+- [ ] イベント名のドリフト（`egui_show:DONE` 等）で `Observed.ShowWindow` が 0 になる
+      （`:367-376` の既存 test の H6 版＝**検査が走らなかったことの証拠**）
+- [ ] `Format-SnotraTraceVerdictTable` の凡例に H6 の説明が載ることを assert（**凡例だけが写しであり、
+      落ちる唯一の場所**である）
 - [ ] 既存の「正常列で H1/H4/H5 がすべて PASS」test（`:58`）に H6 を足し、**既存 3 つが引き続き名指しで
       検査されている**ことを保つ（issue「射程の注意」）
 
 ### Phase 4 — 呼び出し側と文書
 - [ ] `smoke-egui.ps1`: `$invariants.Observed.ShowWindow -eq 0` なら失敗を積む（既存 `ResultsShow` の直後・同じ理由文）
-- [ ] `manual-smoke.ps1:433` / `docs/build-commands.md:62` の散文へ H6
+- [ ] `smoke-egui.ps1` のコメント `:59-61` と `:418-421` を H6 を含む形へ（H6 の正常値も SKIP である）
+- [ ] **受容する残余を明記する**: 判定ブロック全体が `if ($resultsChecked -and $failures.Count -eq 0)`
+      （`smoke-egui.ps1:410`）の内側にあるため、**先行する検査が 1 件でも失敗すると H6 は一度も判定されない**。
+      この gate は既存であり本 issue では変えない——変えない選択であることを 1 行残す
+- [ ] `manual-smoke.ps1` の写し 2 箇所（`:30` / `:433`）と `:388` の H6 版の注意行
+- [ ] `docs/build-commands.md:62` の散文 + `:64` の SKIP 理由の列挙（全称の主張）
+- [ ] `src-tauri/CLAUDE.md`「イベント駆動 wake の不変条件」の受容残余の主張を見直す
 - [ ] `lifecycle.rs:201-203`（`blur_grace_resets_stale_arm_across_hide` の対照テストの doc
       「このテストは `consume_reset_pending` の `reset()` 呼び出しが消えたことを検出しない……
       機械化は #930 が追う」）を、決着後の姿へ更新する。**`#930` を名指す生きた散文はこの 2 箇所である**
       （他の 3 箇所は `docs/adr/ADR-blur-grace-single-field-state-machine.md:39,45` と
       `docs/superpowers/specs/2026-07-26-frame-scheduling-contract-design.md:7`＝**凍結された歴史ゆえ触らない**・
       `governance-docs.md`「ADR 本文内の参照は照合されない」）
+- [ ] `launcher_controller.rs:943` のコメント「**消失に検知手段が無いこと**は `BlurGrace::reset` の doc が
+      正本」——`#930` を含まないため識別子の grep では見えず、**概念ラベル「検知手段」の grep で出た 3 番目の
+      生きた散文である**。正本を指す形は保ったまま、事実の断定部分を訂正後の姿へ合わせる
 - [ ] `lifecycle.rs` の `BlurGrace::reset` doc を実測で訂正:
       「呼び出し点が**この 1 つである限り**、削除は `dead_code` でコンパイルが落ちる（#930 で実測）。
       2 つ目の非テスト呼び出し点を足すとこの検知は消える。**残る欠落は『新しい show 跨ぎ状態の
@@ -248,6 +295,55 @@ Pester の合成事象列が担う**——fixture の位置（show+30ms）は「
   （実測したのは同じフレーム位置の `focus_state` 11〜33ms）。(2) **CI 上での H6 の挙動**
   ——`ci.yml` / `e2e.yml` は `pull_request` でしか起動しないので PR 本文のチェックリストへ送る
   （`safety-nets.md`「CI の実測は PR が在って初めて行える」）
+
+## plan-review 結果（2026-08-05・承認後にユーザーが `/plan-review` を明示起動）
+
+- リスク: **高**
+- レビュー方式: **独立導出 1 体**（Step 2b・成果物 `workspace/plan-review-h6-derivation.md`）
+- エージェント数: **1**（`workspace/` を読ませない条件で issue の WHAT のみを渡した。
+  導出側の申告どおり `BLUR_GRACE` の grep が `plan.md` / `research.md` の数行を混入させたため、
+  **完全な独立ではない**——重なった論点は payload 案と `auto_hide=false` の閉塞の 2 つ）
+
+### 要対処（すべて反映済み・一次資料で再照合した）
+
+1. **ε が 1 桁小さかった** — 導出 §2.3 論点 2。`reset()` の消失は**弱い経路**（`Focused` 持ち越し →
+   初フレームで武装 → 猶予明けに hide）でも現れ、着弾は show+315〜483ms（#746 実測）。ε=50 では
+   取り逃がす。**400ms へ改めた**（帰結として smoke での正常値が PASS → SKIP に変わる。H1 と同性質）
+2. **散文の写しが 4 箇所漏れていた** — `manual-smoke.ps1:30`（`:433` しか挙げていなかった）・
+   `docs/build-commands.md:64` の SKIP 理由の列挙・`src-tauri/CLAUDE.md` の受容残余・
+   `smoke-egui.ps1:59-61`。**`:64` が全称（「…はすべて SKIP として現れ」）であることは一次資料で確認した**
+3. **`manual-smoke.ps1:388` の注意行に H6 を混ぜてはならない** — あれは `ResultsShow` が 0 のときの文言で、
+   H6 は `ResultsShow` に依存しない。H6 版（`ShowWindow`）を別に足す
+4. **`New-TraceEvent` が `ts_ms` を自動生成する**（`1000 + $Seq`）— H6 の fixture には明示パラメータが要る
+5. **`ts_ms` は壁時計で単調でない** — 差分が負のときの扱いが未定義だった → SKIP（判定不能）
+6. **テストが 4 件足りなかった** — 区間の打ち直し・帰属・名前ドリフトでの `ShowWindow=0`・負の差分
+7. **`$failures.Count -eq 0` の gate** — 先行検査が失敗すると H6 は一度も判定されない。既存の gate ゆえ
+   本 issue では変えないが、**変えない選択であることを残す**
+
+### 軽微
+
+- 導出の推奨する実装順序（§8）は本計画の Phase 順と一致した（本体 → 判定器 → 呼び出し側 → 散文）
+- 導出 §4.4 の検算（`blur_grace_ms` 欠落を SKIP にする設計が既存 fixture を無傷にする）を Phase 3 へ取り込んだ
+
+### 判断の不一致（本計画の側を採る・根拠を突き合わせた）
+
+- **導出は「論点 1 は解決不能」と結論した**（§2.3 論点 1: 「trace は hide の理由を持たない」）が、
+  それは**既存のイベントだけを母集団にした結論**である。導出自身が ⚠️6 で「`manual-smoke.ps1` は人間が
+  操作するため前提が保証されない」を挙げており、**本計画の `egui_hide:blur_grace` 新設はその ⚠️ を
+  構造的に消す**（決定点は 1 箇所・`launcher_controller.rs:1077`）。ゆえに本計画の設計を維持する。
+- 導出は受け入れ条件 3 に**テスト用ハッチの本体投入**（(a) 案）を推奨するが、**clippy が既に当の改変を
+  捕まえる**という実測（導出はビルド禁止ゆえ到達できない事実）により、ハッチは不要と判断する。
+
+### 未検証
+
+- ε=400 の上限側（正当な猶予 hide が show+400ms 以内に起きうるか）は**未測定**。`ADR-blur-grace-single-field-state-machine`
+  の反応時間の記録が傍証だが実測ではない → 判定器の doc に偽陽性の条件を名指しで書くことで受ける
+- CI 上での挙動（`pull_request` でしか起動しない）→ PR 本文のチェックリストへ
+
+### 判断
+
+- **実装着手: 可**（要対処 7 件はすべて計画へ反映済み。要件・対象ファイル集合は変わったが、
+  設計の骨格〔判定する事象・閾値の出所・番号〕は承認時のまま）
 
 ## 未確定（実装前に潰す）
 

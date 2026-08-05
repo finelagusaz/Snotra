@@ -327,6 +327,12 @@ impl EguiView for SearchWindowView {
         // 不変条件検出器（レビュー是正 4・下の height 計算点）が突き合わせの発火条件に使う。
         let was_reset_frame = self.controller.consume_reset_pending();
         if was_reset_frame {
+            // **show ごとに観測の予算を張り直す**（#872/#936）。egui の widget focus は
+            // `Memory` に残るため、**2 回目以降の show で入力欄が focus を保つのか、初回と
+            // 同じく最初のフレームで失うのかは、初回だけの計測では言えない**——前者なら
+            // 脆弱な窓はプロセス起動時に限られ、後者なら Alt+Q のたびに開く。
+            // ここが「show 直後の最初のフレーム」の唯一の判定点である。
+            self.focus_state_traces_left = 5;
             // results 窓の **サイズ**デルタガードを初期値へ戻す（#646 PR2 決定 6・memo 自体は
             // #749 で `ResultsWindow` へ移設）。これは冗長な set_size を避ける性能上のガードで
             // あり、可視性のような correctness のフラグではない（#671 spec 決定 2 の意図的な分割）。

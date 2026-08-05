@@ -208,6 +208,12 @@ pub(crate) struct SearchInputParams {
 /// 効かない。#938 が入れた単体検査は egui の意味論だけを縛り、`update()` の並びが後ろへ戻っても
 /// 通る受容残余を持っていた——**kittest がこの関数を丸ごと走らせることでその残余が閉じる。**
 ///
+/// **どちらの順序をどの検査が縛るかは分かれている**（ここが本 doc の正本）:
+/// - キャレット → `kittest_restored_frame_appends_same_frame_input_at_end`
+/// - focus → `kittest_first_frame_requests_focus_before_text_edit`（判定フレームの開始時点で
+///   焦点を持たない状態を作る。作らないと `!has_focus` ガードで要求が走らず縛れない・実測）
+/// - 対照（縛れているかの検算）→ `kittest_without_focus_request_the_same_input_is_dropped`
+///
 /// `hint` をクロージャで受けるのは、`HintPlan::Folder` の分岐が `ui.available_width()` と
 /// `ui.painter()` を**内側の `Frame` の中で**読むためである。文字列を先に作って渡すと
 /// `available_width` が変わり、中間省略の結果が動く。
@@ -217,16 +223,18 @@ pub(crate) fn search_input_ui(
     params: &SearchInputParams,
     hint: impl FnOnce(&mut egui::Ui) -> String,
 ) -> egui::Response {
-    let ctx = ui.ctx().clone();
     egui::Frame::new()
         .inner_margin(egui::Margin::same(params.inset.round() as i8))
         .show(ui, |ui| {
+            // **clone せず借りる。** ctx の用途 3 つはいずれも `hint(ui)` より前で終わるので、
+            // NLL 上ここで借りれば足りる（呼び出し側は既に clone を 1 本持っている）。
+            let ctx = ui.ctx();
             // #840: folder filter から展開前 query へバッファ全体を復元するフレームでは、
             // 同じ widget id に残る egui のキャレットも query 末尾へ同期する。TextEdit の
             // 構築前に行うことで、同一フレームの文字イベントも復元後の末尾から処理される。
             // tool は入力不可の一時表示で元の編集位置を保つため、この経路へは入れない。
             if params.restored_search {
-                move_text_cursor_to_end(&ctx, params.input_id, buf);
+                move_text_cursor_to_end(ctx, params.input_id, buf);
             }
             // **入力欄の focus は TextEdit の構築より前に要求する**（#872/#936）。
             // `TextEdit` は自分が走る時点の focus でイベントを消費するか決めるため、
@@ -1180,9 +1188,8 @@ mod tests {
     /// 後ろに戻したときに落ちる保証にならない（当時の並びが本当に落とすことを固定する）。
     ///
     /// ⚠️ **これが縛るのは egui の意味論であって `update()` の並びではない。** 本体側の
-    /// 呼び出し位置が後ろへ戻っても、このテストは通る（位置の理由は `search_input_ui` の
-    /// 中のコメントが正本）。**この受容残余は #872 で閉じた**——`kittest_*` の 3 本が
-    /// `search_input_ui` を実コードのまま走らせ、キャレットと focus の並びを個別に縛る。
+    /// 呼び出し位置が後ろへ戻っても、このテストは通る。**この受容残余は #872 で閉じた**——
+    /// 経緯と、どの検査が何を縛るかは `search_input_ui` の doc が正本。
     #[test]
     fn focus_requested_before_text_edit_applies_same_frame_input() {
         // 文字の届き方は本体と同じ経路にする——runtime は WM_CHAR / IME 確定を
@@ -1251,10 +1258,10 @@ mod tests {
 
     /// 復元フレームで、**同一フレームに載っていた**文字が末尾へ入る（#840/#872）。
     ///
-    /// **上の `focus_requested_before_text_edit_applies_same_frame_input` との違いが要点である。**
-    /// あちらは egui の意味論を合成した `run_ui` で測るので、本体側の呼び出しが後ろへ戻っても
-    /// 通る（#938 が受容した残余）。こちらは `search_input_ui` を**実コードのまま**走らせるので、
-    /// `move_text_cursor_to_end` と `request_focus` のどちらかが `TextEdit` の後ろへ動けば落ちる。
+    /// **縛るのは `move_text_cursor_to_end` の位置だけである**——それが `TextEdit` の後ろへ
+    /// 動けば落ちる。**focus 要求の位置はこの検査では縛れない**（判定フレームの開始時点で
+    /// 既に焦点が立っており、`!has_focus` ガードで要求が走らないため・実測）。そちらは
+    /// `kittest_first_frame_requests_focus_before_text_edit` が持つ。
     ///
     /// **`step()` を使う（`run()` ではない）。** `run()` は再描画要求が尽きるまで複数フレーム
     /// 回すため、文字が 2 フレーム目で入っても通ってしまい、この検査の主題（同一フレーム）が

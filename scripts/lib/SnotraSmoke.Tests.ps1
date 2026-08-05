@@ -1,6 +1,31 @@
 BeforeAll {
     $modulePath = Join-Path $PSScriptRoot 'SnotraSmoke.psm1'
     Import-Module $modulePath -Force
+
+    # **偽プロセス（#872）。`Stop-SnotraProcessAndWait` を通る経路すべてが使う。**
+    # ヘルパは実プロセスを要求せずメンバだけを見る形にしてあるので、これで全経路を測れる
+    # （引数へ `[System.Diagnostics.Process]` を付けると `Id` が ReadOnly ゆえ束縛で落ちる・実測）。
+    # `Set-StrictMode -Version Latest` の下では、メンバを持たない偽物はメンバアクセスで落ちる。
+    # **ファイル先頭に置くのは、`Resolve-SnotraExistingProcess` の Describe からも使うためである。**
+    function New-FakeProcess {
+        param(
+            [bool]$HasExited = $false,
+            [bool]$WaitResult = $true,
+            [switch]$WaitThrows,
+            [int]$Id = 123
+        )
+        $fake = [pscustomobject]@{ Id = $Id }
+        $fake | Add-Member -MemberType NoteProperty -Name HasExited -Value $HasExited
+        $waitResult = $WaitResult
+        $throws = [bool]$WaitThrows
+        $method = {
+            param($ms)
+            if ($throws) { throw 'Access is denied' }
+            return $waitResult
+        }.GetNewClosure()
+        $fake | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value $method
+        return $fake
+    }
 }
 
 BeforeDiscovery {
@@ -236,31 +261,6 @@ Describe 'Wait-SnotraTraceCondition（#872 観測側の 2 つの穴）' {
 }
 
 Describe 'Stop-SnotraProcessAndWait（#872 単一インスタンス衝突）' {
-    BeforeAll {
-        # **偽プロセスに `HasExited` と `WaitForExit` を足す。** ヘルパは実プロセスを要求せず
-        # メンバだけを見る形にしてあるので、この fixture で全経路を測れる（引数へ
-        # `[System.Diagnostics.Process]` を付けると `Id` が ReadOnly ゆえ束縛で落ちる・実測）。
-        function New-FakeProcess {
-            param(
-                [bool]$HasExited = $false,
-                [bool]$WaitResult = $true,
-                [switch]$WaitThrows,
-                [int]$Id = 123
-            )
-            $fake = [pscustomobject]@{ Id = $Id }
-            $fake | Add-Member -MemberType NoteProperty -Name HasExited -Value $HasExited
-            $waitResult = $WaitResult
-            $throws = [bool]$WaitThrows
-            $method = {
-                param($ms)
-                if ($throws) { throw 'Access is denied' }
-                return $waitResult
-            }.GetNewClosure()
-            $fake | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value $method
-            return $fake
-        }
-    }
-
     It '$null は何もせず $true を返す' {
         Stop-SnotraProcessAndWait -Process $null | Should -BeTrue
     }
@@ -314,12 +314,9 @@ Describe 'Resolve-SnotraExistingProcess' {
     }
 
     It 'Stop 方針では列挙した既存プロセスだけを停止し、終了を待つ' {
-        # **偽プロセスに `HasExited` / `WaitForExit` を持たせる**（#872）。`Stop` 分岐は
-        # `Stop-SnotraProcessAndWait` を通るようになり、そのヘルパはメンバを読む。
-        # `Set-StrictMode -Version Latest` の下では、持たない偽物はメンバアクセスで落ちる。
-        $fake = [pscustomobject]@{ Id = 123 }
-        $fake | Add-Member -MemberType NoteProperty -Name HasExited -Value $false
-        $fake | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { param($ms) $true }
+        # `Stop` 分岐は `Stop-SnotraProcessAndWait` を通るので、偽物にもメンバが要る
+        # （生成はファイル先頭の `New-FakeProcess` が正本）。
+        $fake = New-FakeProcess
         Mock -ModuleName SnotraSmoke Get-Process { @($fake) }.GetNewClosure()
         Mock -ModuleName SnotraSmoke Stop-Process {}
 
@@ -549,16 +546,26 @@ auto_hide_on_focus_lost = false
         # 開発者が普段使いで起動している実インスタンスも掴む。絞らないと (1) それを予告なく
         # Force kill し、(2)「終了待ちが効いていません」という**誤った診断**で赤くする
         # （その場合の実態は先行インスタンスであり、各 It 冒頭の `Reject` が先に throw する）。
-        # `.Path` は権限の無いプロセスで例外を投げうるので個別に握りつぶす。
+        #
+        # **絞る材料が無ければ落とす（fail-closed）。** 空の `$expected` で絞ると一致が常に
+        # 空になり、**検出器は主語ゼロで自明に緑を返す**——「効いていない」と「漏れが無い」が
+        # 同じ緑に化ける。これは本 PR が `ADR-egui-trace-hatch-empty-only` で塞いだ空文字 env と
+        # 同じ形の欠陥であり、検出器の側に開けてはならない。
         $expected = $env:SNOTRA_PESTER_EXE
+        if ([string]::IsNullOrWhiteSpace($expected)) {
+            throw '実機配管の後始末で SNOTRA_PESTER_EXE が空でした。検査対象を絞れないため、漏れの有無を判定できません。'
+        }
+        # `.Path` は権限の無いプロセスで例外を投げうるので個別に握りつぶす。
         $leaked = @(Get-Process -Name 'snotra' -ErrorAction SilentlyContinue | Where-Object {
                 $path = try { $_.Path } catch { $null }
-                $path -and $expected -and $path -eq $expected
+                $path -and $path -eq $expected
             })
         if ($leaked.Count -gt 0) {
             $ids = $leaked.Id -join ', '
-            # 後続の検査を巻き添えにしないよう掃除してから落とす。
-            $leaked | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+            # **後続の検査を巻き添えにしないよう掃除してから落とす。** ここも待つ——待たずに
+            # 抜けると、この宣言が満たされない（反復再現ハーネスはスイートを子プロセスで
+            # 繰り返すため、次の反復の `Reject` が掴む）。
+            $leaked | ForEach-Object { [void](Stop-SnotraProcessAndWait -Process $_ -Quiet) }
             throw "実機配管の後に検査対象の snotra が残っています（pid=$ids）。終了待ちが効いていません。"
         }
     }

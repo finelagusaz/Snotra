@@ -89,7 +89,7 @@ New-Item -ItemType Directory -Force -Path $resolvedOutput | Out-Null
 # **注目している検査の名前をここに置く。** 集計で「この検査が落ちた反復」を数えるためだけの
 # 文字列であり、判定には使わない（判定は run-pester.ps1 の exit code）。名前が変われば
 # 集計欄が 0 になるだけで、失敗そのものは exit code 側に残る。
-$watchedTest = 'フォルダ復帰後の次打鍵を復元クエリの末尾へ追加する'
+$watchedTest = '起動後の最初のフレームで入力欄が打鍵を受け取れる状態になっている'
 
 $deadline = [DateTime]::UtcNow.AddMinutes($MaxMinutes)
 $records = [System.Collections.Generic.List[object]]::new()

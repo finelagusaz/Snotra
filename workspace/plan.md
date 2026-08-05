@@ -58,7 +58,7 @@
 - 型を外すだけでは足りない。`Set-StrictMode -Version Latest` 下では失敗が最初のメンバアクセスへ移る（実測: `The property 'HasExited' cannot be found on this object.`）。**fixture 側に `HasExited` と `WaitForExit` を足す**
 - `psm1:399` にだけ `-ErrorAction` が無い。ヘルパへ畳むと `Policy Stop` が今まで上げていたエラーが黙るので、**`-Quiet` で明示的に切り替える**
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `Tests.ps1` の `Describe 'Resolve-SnotraExistingProcess'`（`233`）の直前へ新しい `Describe` を足す。
 
@@ -111,12 +111,12 @@ Describe 'Stop-SnotraProcessAndWait（#872 単一インスタンス衝突）' {
 }
 ```
 
-- [ ] **Step 2: 落ちることを確認する**
+- [x] **Step 2: 落ちることを確認する**
 
 実行: `npm run test:powershell`
 期待: 5 件が `CommandNotFoundException: Stop-SnotraProcessAndWait` で FAIL
 
-- [ ] **Step 3: ヘルパを実装する**
+- [x] **Step 3: ヘルパを実装する**
 
 `SnotraSmoke.psm1` の `Resolve-SnotraExistingProcess`（`383`）の直前へ置く。
 
@@ -172,12 +172,12 @@ function Stop-SnotraProcessAndWait {
 
 `Export-ModuleMember -Function @(`（`847`）の一覧へ `'Stop-SnotraProcessAndWait'` を足す。
 
-- [ ] **Step 4: 通ることを確認する**
+- [x] **Step 4: 通ることを確認する**
 
 実行: `npm run test:powershell`
 期待: 新設 5 件が PASS
 
-- [ ] **Step 5: `Policy Stop` を経由させる**
+- [x] **Step 5: `Policy Stop` を経由させる**
 
 `psm1:398-400` を置き換える。**`-Quiet` は付けない**（既存のエラーチャネルを保つ）。
 
@@ -190,7 +190,7 @@ function Stop-SnotraProcessAndWait {
     }
 ```
 
-- [ ] **Step 6: 呼び出し側 2 箇所を移行する**
+- [x] **Step 6: 呼び出し側 2 箇所を移行する**
 
 `Tests.ps1:380-382` と `Tests.ps1:501-503` の `if (...) { Stop-Process ... }` を、それぞれ次へ置き換える。**`-Quiet` を付ける**（従来 `-ErrorAction SilentlyContinue` だったため）。
 
@@ -198,7 +198,7 @@ function Stop-SnotraProcessAndWait {
             [void](Stop-SnotraProcessAndWait -Process $proc -Quiet)
 ```
 
-- [ ] **Step 7: 衝突の検出を exit code の層へ上げる**
+- [x] **Step 7: 衝突の検出を exit code の層へ上げる**
 
 `Describe '実機配管'`（`344`）の末尾へ `AfterAll` を足す。**`finally` から throw しない設計のままで、検出だけを合否へ載せる。**
 
@@ -217,22 +217,28 @@ function Stop-SnotraProcessAndWait {
     }
 ```
 
-- [ ] **Step 8: 遅着警告のノイズ源を止める**
+- [x] **Step 8: 遅着警告のノイズ源を止める**
 
 `Tests.ps1:186` の It（`予算が尽きていても条件を必ず 1 度は評価する`）は `-TimeoutMs 0` で走るため、`予算 0ms を過ぎた評価で成立しました` を**毎回 1 件**出す。`SnotraSmoke.psm1:574` の本物の遅着警告と同一文言で、grep で区別できない（実測: 全 30 反復に出ていた）。
 
 同じファイルの `:206` と `:224` に既にある書き方に揃え、その It の `Wait-SnotraTraceCondition` 呼び出しへ `-WarningAction SilentlyContinue` を足す。
 
-- [ ] **Step 9: 全体が通ることを確認する**
+- [x] **Step 9: 全体が通ることを確認する**
 
 実行: `npm run test:powershell`
 期待: 全件 PASS（既存 55 件 + 新設 5 件）
 
-- [ ] **Step 10: 故障注入で「効いている」ことを 1 度実測する**
+- [x] **Step 10: 故障注入で「効いている」ことを 1 度実測する**
 
 `.claude/rules/safety-nets.md`「効いていることは、フォールトインジェクションで一度は実測する」。**稼働中のガードは弱めない——複製に変異を当てる。**
 
 `SnotraSmoke.psm1` を一時ディレクトリへコピーし、複製側の `Stop-SnotraProcessAndWait` から `WaitForExit` の行を消す。その複製を import して `実機配管` の 2 つの It を連続実行し、`Tests.ps1:441` の `Reject` が throw する（＝直した機序を意図的に再現できる）ことを確かめる。結果を本ファイル末尾の「実測ログ」へ書く。
+
+**実施時の変更**: 変異は「待ちを外す」ではなく「**kill も待ちも行わない**」にした。前者はローカルの速さでは衝突が確率的にしか起きず、注入が空振りしうる。後者は「直前の It が生きたプロセスを残す」状況を決定的に作るので、**検出器（`Reject` と `AfterAll`）が鳴るかを測る**という目的にはこちらが適う。複製一式（`scripts/lib/*`）を temp へ写し、`Tests.ps1` が `$PSScriptRoot` から module を読む形をそのまま使った。
+
+- [x] **Step 11（計画外・実装中に判明）: 既存の `Policy Stop` の fixture を更新する**
+
+`Tests.ps1` の `Stop 方針では列挙した既存プロセスだけを停止する` は `Id` だけの偽オブジェクトを `Get-Process` の mock に返させていた。Step 5 で `Policy Stop` がヘルパを通るようになり、ヘルパは `HasExited` / `WaitForExit` を読むため、`Set-StrictMode -Version Latest` の下でメンバアクセスに落ちる。fixture へ両メンバを足し、It 名も `…停止し、終了を待つ` へ改めた。**この作業は計画の「設計上の制約」で予見していたが、作業項目としては書き落としていた。**
 
 **コミット**: `fix(pester): 実機配管のプロセス停止に終了待ちを入れ、単一インスタンス衝突を止める (#872)`
 
@@ -757,7 +763,7 @@ $env:SNOTRA_EGUI_INPUT_TRACE = '1'
 
 | 何を測ったか | タスク | 結果 |
 |---|---|---|
-| 待ちを外した複製で衝突が再現するか | 1-10 | |
+| 待ちを外した複製で衝突が再現するか | 1-10 | **再現した（両方向）。** 変異（kill も待ちもしない複製）→ キャレット It が `RuntimeException: Snotra が既に起動しています（pid=20544）` で 77ms で失敗（**CI の iter-008/021/029 と逐語一致**）、加えて新設 `AfterAll` が `実機配管の後に snotra が残っています` で発火。修正版 → 統合 2/2 pass・`AfterAll` 沈黙 |
 | `move_text_cursor_to_end` を後ろへ動かすと kittest が落ちるか | 3-5 | |
 | focus 要求を落とすと縮小した実機配管が落ちるか | 4-4 | |
 | 空文字/`1` の両方向で計器が切り替わるか | 5-5 | |

@@ -190,7 +190,12 @@ Describe 'Wait-SnotraTraceCondition（#872 観測側の 2 つの穴）' {
         $path = New-SnotraTestTraceFile -Path (Join-Path $TestDrive 'ready.log') `
             -Json @('{"seq":1,"event":"target","data":{"ok":true}}')
 
-        $found = Wait-SnotraTraceCondition -Path $path -TimeoutMs 0 -Predicate { $_.event -eq 'target' }
+        # **警告を抑える**（#872）。この It は `-TimeoutMs 0` ゆえ必ず「予算を過ぎた評価で
+        # 成立しました」を出す。それは `SnotraSmoke.psm1` が**本物の遅着**に出すのと同一文言で、
+        # 全実行に 1 件混ざると grep で本物と区別できなくなる（実測: 30 反復すべてに出ていた）。
+        # 抑止の形は同じファイルの `:206` / `:224` と揃える。
+        $found = Wait-SnotraTraceCondition -Path $path -TimeoutMs 0 -Predicate { $_.event -eq 'target' } `
+            -WarningAction SilentlyContinue
 
         $found | Should -Not -BeNullOrEmpty
         $found.seq | Should -Be 1
@@ -230,6 +235,75 @@ Describe 'Wait-SnotraTraceCondition（#872 観測側の 2 つの穴）' {
     }
 }
 
+Describe 'Stop-SnotraProcessAndWait（#872 単一インスタンス衝突）' {
+    BeforeAll {
+        # **偽プロセスに `HasExited` と `WaitForExit` を足す。** ヘルパは実プロセスを要求せず
+        # メンバだけを見る形にしてあるので、この fixture で全経路を測れる（引数へ
+        # `[System.Diagnostics.Process]` を付けると `Id` が ReadOnly ゆえ束縛で落ちる・実測）。
+        function New-FakeProcess {
+            param(
+                [bool]$HasExited = $false,
+                [bool]$WaitResult = $true,
+                [switch]$WaitThrows,
+                [int]$Id = 123
+            )
+            $fake = [pscustomobject]@{ Id = $Id }
+            $fake | Add-Member -MemberType NoteProperty -Name HasExited -Value $HasExited
+            $waitResult = $WaitResult
+            $throws = [bool]$WaitThrows
+            $method = {
+                param($ms)
+                if ($throws) { throw 'Access is denied' }
+                return $waitResult
+            }.GetNewClosure()
+            $fake | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value $method
+            return $fake
+        }
+    }
+
+    It '$null は何もせず $true を返す' {
+        Stop-SnotraProcessAndWait -Process $null | Should -BeTrue
+    }
+
+    It '既に終了しているプロセスは kill しない' {
+        Mock -ModuleName SnotraSmoke Stop-Process {}
+
+        Stop-SnotraProcessAndWait -Process (New-FakeProcess -HasExited $true) | Should -BeTrue
+
+        Should -Invoke -ModuleName SnotraSmoke Stop-Process -Times 0
+    }
+
+    It '生存しているプロセスを kill して終了を待つ' {
+        Mock -ModuleName SnotraSmoke Stop-Process {}
+
+        Stop-SnotraProcessAndWait -Process (New-FakeProcess) | Should -BeTrue
+
+        Should -Invoke -ModuleName SnotraSmoke Stop-Process -Times 1 -ParameterFilter { $Id -eq 123 -and $Force }
+    }
+
+    It '期限内に終了しなければ throw せず $false を返す（finally から呼ぶため）' {
+        Mock -ModuleName SnotraSmoke Stop-Process {}
+
+        $result = $null
+        {
+            $result = Stop-SnotraProcessAndWait -Process (New-FakeProcess -WaitResult $false) `
+                -TimeoutMs 10 -WarningAction SilentlyContinue
+        } | Should -Not -Throw
+        $result | Should -BeFalse
+    }
+
+    It 'WaitForExit が例外を投げても throw せず $false を返す（他人のプロセスのアクセス拒否）' {
+        Mock -ModuleName SnotraSmoke Stop-Process {}
+
+        $result = $null
+        {
+            $result = Stop-SnotraProcessAndWait -Process (New-FakeProcess -WaitThrows -Id 456) `
+                -WarningAction SilentlyContinue
+        } | Should -Not -Throw
+        $result | Should -BeFalse
+    }
+}
+
 Describe 'Resolve-SnotraExistingProcess' {
     It 'Reject 方針では既存プロセスを終了せず例外にする' {
         Mock -ModuleName SnotraSmoke Get-Process { @([pscustomobject]@{ Id = 123 }) }
@@ -239,8 +313,14 @@ Describe 'Resolve-SnotraExistingProcess' {
         Should -Invoke -ModuleName SnotraSmoke Stop-Process -Times 0
     }
 
-    It 'Stop 方針では列挙した既存プロセスだけを停止する' {
-        Mock -ModuleName SnotraSmoke Get-Process { @([pscustomobject]@{ Id = 123 }) }
+    It 'Stop 方針では列挙した既存プロセスだけを停止し、終了を待つ' {
+        # **偽プロセスに `HasExited` / `WaitForExit` を持たせる**（#872）。`Stop` 分岐は
+        # `Stop-SnotraProcessAndWait` を通るようになり、そのヘルパはメンバを読む。
+        # `Set-StrictMode -Version Latest` の下では、持たない偽物はメンバアクセスで落ちる。
+        $fake = [pscustomobject]@{ Id = 123 }
+        $fake | Add-Member -MemberType NoteProperty -Name HasExited -Value $false
+        $fake | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { param($ms) $true }
+        Mock -ModuleName SnotraSmoke Get-Process { @($fake) }.GetNewClosure()
         Mock -ModuleName SnotraSmoke Stop-Process {}
 
         Resolve-SnotraExistingProcess -Policy Stop
@@ -377,9 +457,10 @@ auto_hide_on_focus_lost = false
             Test-Path -LiteralPath $indexPath | Should -BeTrue
         } finally {
             if ($null -ne $capture) { $capture.Bitmap.Dispose() }
-            if ($null -ne $proc -and -not $proc.HasExited) {
-                Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-            }
+            # **終了を待つ**（#872）。待たずに次の It へ進むと、その It の
+            # `Resolve-SnotraExistingProcess -Policy Reject` がこのプロセスを掴んで throw する
+            # （実測 3/30）。ここは `finally` なので throw せず、警告と戻り値だけを残す。
+            [void](Stop-SnotraProcessAndWait -Process $proc -Quiet)
         }
     }
 
@@ -498,9 +579,9 @@ include_folders = true
             Write-Host '--- end caret integration stderr trace ---'
             throw
         } finally {
-            if ($null -ne $proc -and -not $proc.HasExited) {
-                Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-            }
+            # **終了を待つ**（#872）。下の写しが名乗る「書き終えたものを写す」という不変条件は、
+            # 待たない kill の直後では成立していなかった——**この待ちが初めてそれを成立させる**。
+            [void](Stop-SnotraProcessAndWait -Process $proc -Quiet)
             # **成否によらず trace を残す**（`SNOTRA_PESTER_TRACE_DIR` を渡した実行だけ・#872/#936）。
             # 現状の証拠は失敗時のダンプしかなく、**pass した実行の歩調が無いので、fail 時の所要が
             # 異常なのか平常なのかを比べられない**。対照群を採れるのはここだけである——`$stderr` は
@@ -511,6 +592,22 @@ include_folders = true
                 Copy-Item -LiteralPath $stderr -Force -ErrorAction SilentlyContinue `
                     -Destination (Join-Path $env:SNOTRA_PESTER_TRACE_DIR 'caret.err')
             }
+        }
+    }
+
+    # **待ちきれなかった生き残りを、ここで赤にする**（#872）。各 It の `finally` は
+    # `Write-Warning` しか出せない（`finally` からの throw は元の例外を覆い隠すため）ので、
+    # 検出点を置かないと Pester 実行全体から生きた snotra.exe が漏れても誰も見ない
+    # ——**`Write-Warning` は `run-pester.ps1` の合否（`FailedCount`）に一切影響しない**。
+    # `AfterAll` からの throw は It の例外を覆い隠さないため、ここが正しい層である
+    # （`docs/development-principles.md`「構造的設計原則と強制の階梯」の一段上げ）。
+    AfterAll {
+        $leaked = @(Get-Process -Name 'snotra' -ErrorAction SilentlyContinue)
+        if ($leaked.Count -gt 0) {
+            $ids = $leaked.Id -join ', '
+            # 後続の検査を巻き添えにしないよう掃除してから落とす。
+            $leaked | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+            throw "実機配管の後に snotra が残っています（pid=$ids）。終了待ちが効いていません。"
         }
     }
 }

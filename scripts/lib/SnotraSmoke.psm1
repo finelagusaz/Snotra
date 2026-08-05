@@ -380,6 +380,57 @@ function Resolve-SnotraCargoExecutable {
     Join-Path ([string]$metadata.target_directory) "$Profile/snotra.exe"
 }
 
+<#
+.SYNOPSIS
+プロセスを停止し、**終了を待つ**（#872 単一インスタンス衝突）。
+
+.DESCRIPTION
+`Stop-Process -Force` は制御を即返す。`tauri_plugin_single_instance` が登録されているため、
+先発がまだ生きたまま後発を起動すると、後発は先発へ通知して即終了する——`scripts/smoke-egui.ps1`
+が **#755/#801 是正 B** として同じ機序を既に解いており、**機序の正本はそちらのコメントである**。
+
+**throw しない。** 呼び出し点が `finally` を含み、`finally` からの throw は元の例外を覆い隠す
+（元の失敗こそが読みたいもの）。終了を確認できなかったことは戻り値と警告で表し、**赤にする
+責務は呼び出し側が持つ**——`SnotraSmoke.Tests.ps1` の `Describe '実機配管'` の `AfterAll` と、
+次の It の `Resolve-SnotraExistingProcess -Policy Reject` がその実体である。
+
+**引数に型を付けない。** 既存の単体検査は `Id` だけを持つ偽オブジェクトで方針分岐を固定して
+おり、`[System.Diagnostics.Process]` を要求するとパラメータ束縛で落ちる（実測:
+`Cannot create object of type "System.Diagnostics.Process". "Id" is a ReadOnly property.`）。
+#>
+function Stop-SnotraProcessAndWait {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowNull()]
+        $Process,
+        [int]$TimeoutMs = 5000,
+        # `Stop-Process` 自体のエラーを黙らせる。**既定は黙らせない**——`Resolve-SnotraExistingProcess`
+        # の `Stop` 分岐は #853 以来 `-ErrorAction` を付けておらず、アクセス拒否を呼び出し側へ
+        # 上げていた。ヘルパへ畳むときにそのエラーチャネルを黙らせない。
+        [switch]$Quiet
+    )
+
+    if ($null -eq $Process) { return $true }
+    if ($Process.HasExited) { return $true }
+
+    if ($Quiet) {
+        Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+    } else {
+        Stop-Process -Id $Process.Id -Force
+    }
+
+    try {
+        if ($Process.WaitForExit($TimeoutMs)) { return $true }
+    } catch {
+        Write-Warning "pid=$($Process.Id) の終了待ちに失敗しました: $($_.Exception.Message)"
+        return $false
+    }
+    Write-Warning "pid=$($Process.Id) が ${TimeoutMs}ms 以内に終了しませんでした（single-instance 衝突の恐れ）。"
+    return $false
+}
+
 function Resolve-SnotraExistingProcess {
     [CmdletBinding()]
     param(
@@ -396,7 +447,11 @@ function Resolve-SnotraExistingProcess {
     }
 
     foreach ($process in $existing) {
-        Stop-Process -Id $process.Id -Force
+        # **終了を待つ**（#872）。待たずに返すと、呼び出し側が直後に起動する本体が
+        # single-instance で先発へ通知して即終了し、trace を 1 行も書かないまま待ちが
+        # 予算を使い切る。**`-Quiet` は付けない**——この分岐は #853 以来
+        # `Stop-Process` のエラーを呼び出し側へ上げており、そのチャネルを保つ。
+        [void](Stop-SnotraProcessAndWait -Process $process)
     }
 }
 
@@ -850,6 +905,7 @@ Export-ModuleMember -Function @(
     'Start-SnotraProcess'
     'Resolve-SnotraCargoExecutable'
     'Resolve-SnotraExistingProcess'
+    'Stop-SnotraProcessAndWait'
     'Read-SnotraTraceEvents'
     'Read-SnotraTraceSnapshot'
     'Wait-SnotraTraceCondition'

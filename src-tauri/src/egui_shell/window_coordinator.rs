@@ -598,8 +598,9 @@ fn read_bar_anchor(window: &tauri::Window, bar_height: f64) -> Option<BarAnchor>
     // 非クライアント分は OS から取る。**この項は「将来の保険」ではなく今すでに効いている**
     // ——`decorations: false` でも DWM の影が乗るため、実測で 10 物理 px あった（DPI 125% の
     // 環境・#738 のカテゴリ D）。落とすとその分だけバーが作業領域からはみ出す。
-    let outer_bar_height_phys = layout::bar_rect_height_phys(bar_height, scale)
-        + (outer.height as i32 - inner.height as i32);
+    let outer_bar_height_phys =
+        layout::bar_rect_height_phys(bar_height, layout::MainScale::new(scale))
+            + (outer.height as i32 - inner.height as i32);
     let (cx, cy) = layout::bar_rect_center(pos.x, pos.y, outer.width, outer_bar_height_phys);
     let work_area = crate::monitor::point_monitor_work_area(cx, cy)?;
     Some(BarAnchor {
@@ -692,7 +693,10 @@ pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
         return;
     };
     // 算術は layout::results_top_y（純粋核・#752 C1）。Win32 の読みはここで 1 回だけ行う。
-    let top = layout::results_top_y(pos.y, size.height, gap, scale);
+    // **`main` から読んだ scale をその場で `MainScale` へ包む**（`layout::MainScale` の doc）
+    // ——results 窓の scale（`ResultsWindow::set_size` が読む）と型で分かれており、
+    // 取り違えはコンパイルが通らない。
+    let top = layout::results_top_y(pos.y, size.height, gap, layout::MainScale::new(scale));
     results.set_position(pos.x, top);
 }
 

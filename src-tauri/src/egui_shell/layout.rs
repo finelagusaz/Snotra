@@ -59,6 +59,42 @@ impl Metrics {
     }
 }
 
+/// **main 窓の** scale factor。`ResultsScale` と取り違えられないための newtype。
+///
+/// **フィールドは private である。** `pub f64` にすると呼び出し側で
+/// `MainScale(results_scale)` と書けてしまい、型は付いても拘束にならない——構築を
+/// 「窓が手元にある場所」へ閉じることが要点で、生成子は `window_coordinator::main_scale`
+/// （main のハンドルから読む）だけである。
+///
+/// **なぜ要るか**: #835 のクランプ撤去で results 窓の scale を読む箇所が一度消え、
+/// 「同型の値が 1 種類になったので取り違えは構造的に起こらない」と書けた時期があった。
+/// 物理 px への切り上げ（`results_height_phys`）でその読みが戻り、同型の `f64` が 2 種類
+/// 並ぶ状態が再来したため、**doc の申し合わせではなく型で分ける**。
+/// マルチモニターで main と results が別 DPI に跨れば、両者は実際に異なる値になる。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MainScale(f64);
+
+/// **results 窓の** scale factor（`MainScale` の対）。生成子は `ResultsWindow::set_size`
+/// （自窓のハンドルから読む）だけである。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ResultsScale(f64);
+
+impl MainScale {
+    /// 窓から読んだ値を包む。**呼ぶのは main のハンドルを持つ場所だけである**
+    /// （`window_coordinator::main_scale`）。
+    pub fn new(scale: f64) -> Self {
+        Self(scale)
+    }
+}
+
+impl ResultsScale {
+    /// 窓から読んだ値を包む。**呼ぶのは results のハンドルを持つ場所だけである**
+    /// （`ResultsWindow::set_size`）。
+    pub fn new(scale: f64) -> Self {
+        Self(scale)
+    }
+}
+
 /// main 窓の高さ(#646 PR2 決定 6)。bar(+status/toast)のみで結果に伸縮しない。
 ///
 /// `status_height`: indexing 案内・起動中・一時通知の行(#700)。**入力欄に重ねず独立した行を
@@ -128,8 +164,27 @@ pub fn results_window_height(max_results: u32, row_height: f64) -> f64 {
 /// カスタムスケーリングで破れるうえ font_size 14 と 15 が同じ行高に落ちる。ゆえに
 /// **格子を揃えるのではなく、最後に丸める 1 点をここに定めて必ず上へ倒す**——直列な丸めでは
 /// 最終段が全体を支配するため、上流の格子が噛み合わなくてもこれで足りる。
-pub fn results_height_phys(logical_height: f64, scale: f64) -> u32 {
-    (logical_height * scale).ceil().max(0.0) as u32
+/// **`ResultsScale` を要求する。** 生の `f64` を取ると main の scale を渡せてしまい、
+/// マルチモニターで別 DPI に跨ったとき窓が誤った大きさになる（`MainScale` の doc）。
+pub fn results_height_phys(logical_height: f64, scale: ResultsScale) -> u32 {
+    (logical_height * scale.0).ceil().max(0.0) as u32
+}
+
+/// results 窓の**物理**サイズ（幅, 高さ）。`ResultsWindow::set_size` が渡す唯一の口である。
+///
+/// **幅と高さで丸めが違うのは意図である。** 高さは `ceil`（`results_height_phys`——切り捨てが
+/// 最終行を削る）、幅は `round`（行の描画に影響せず、`ceil` にすると窓が 1px ずつ育つ）。
+///
+/// **この関数があるのは `ResultsScale` の中身を呼び出し側へ漏らさないためである。** 生の `f64`
+/// を取り出せる口を作ると、そこで `MainScale` の値を包み直せてしまい、newtype で分けた意味が
+/// 消える（`MainScale` の doc）。窓側は「論理サイズと自窓の scale を渡す」だけでよい。
+pub fn results_size_phys(
+    width_logical: f64,
+    height_logical: f64,
+    scale: ResultsScale,
+) -> (u32, u32) {
+    let width = (width_logical * scale.0).round().max(0.0) as u32;
+    (width, results_height_phys(height_logical, scale))
 }
 
 /// results 窓の上端の**物理** y（#752 C1）。`window_coordinator::position_results_below_main`
@@ -145,13 +200,19 @@ pub fn results_height_phys(logical_height: f64, scale: f64) -> u32 {
 /// クランプの撤去で **results 窓の** scale を読む箇所が一度は消え、同型の値が 1 種類に
 /// なったので取り違えは構造的に起こらない、と書けた時期があった。
 ///
-/// **案 3 でその残余は戻った。** `ResultsWindow::set_size` が高さを物理 px で指定するために
-/// **results 窓の** scale を読む（同関数の doc）。ここへ渡すのは **main の** scale であり、
-/// 型はどちらも `f64` で区別が付かない——**検出器は無い**（受容する残余）。取り違えを防ぐのは
-/// 両者が別の関数に閉じていることと、この doc だけである。**マルチモニターで main と
-/// results が別 DPI のモニターに跨るとき、両者は実際に異なる値になる。**
-pub fn results_top_y(main_y: i32, main_height_phys: u32, gap_logical: u32, main_scale: f64) -> i32 {
-    main_y + main_height_phys as i32 + (f64::from(gap_logical) * main_scale).round() as i32
+/// **案 3 でその読みは戻った。** `ResultsWindow::set_size` が高さを物理 px で指定するために
+/// **results 窓の** scale を読む（同関数の doc）。**ただし残余としては戻っていない**——
+/// 両者は `MainScale` / `ResultsScale` に分かれており、**取り違えはコンパイルが通らない**
+/// （実測: 双方向で `expected MainScale, found ResultsScale` / その逆）。ここが要求するのは
+/// **main の** scale である。**マルチモニターで main と results が別 DPI のモニターに跨るとき、
+/// 両者は実際に異なる値になる**——型で分けたのはその状況で黙って誤らないためである。
+pub fn results_top_y(
+    main_y: i32,
+    main_height_phys: u32,
+    gap_logical: u32,
+    main_scale: MainScale,
+) -> i32 {
+    main_y + main_height_phys as i32 + (f64::from(gap_logical) * main_scale.0).round() as i32
 }
 
 /// バー矩形の**物理**高さ（#738）。可視中の位置クランプの材料である。
@@ -173,8 +234,8 @@ pub fn results_top_y(main_y: i32, main_height_phys: u32, gap_logical: u32, main_
 /// **一致を固定するテストは書けない**（読み戻し側が OS と tao を跨ぐ）。上流が銀行家丸めへ
 /// 変われば 1 px 食い違い、show 直後の 1 フレームで位置がスナップする（#755 / #801 と同じ
 /// 観測形）。依存先を名指しておくのが最小の担保である。
-pub fn bar_rect_height_phys(bar_height_logical: f64, main_scale: f64) -> i32 {
-    (bar_height_logical * main_scale).round() as i32
+pub fn bar_rect_height_phys(bar_height_logical: f64, main_scale: MainScale) -> i32 {
+    (bar_height_logical * main_scale.0).round() as i32
 }
 
 /// バー矩形の中心（物理座標・#738）。クランプと hide 保存の**基準モニター**を決めるために使う。
@@ -579,7 +640,7 @@ mod tests {
             for n in 1_u32..=50 {
                 for &scale in &[1.0_f64, 1.1, 1.25, 1.37, 1.5, 1.75, 2.0, 2.5, 3.0] {
                     let logical = results_window_height(n, rh);
-                    let phys = results_height_phys(logical, scale);
+                    let phys = results_height_phys(logical, ResultsScale::new(scale));
                     // 窓が egui へ渡す高さ（`runtime.rs` は物理 / scale を screen_rect にする）
                     let screen = f64::from(phys as f32 / scale as f32);
                     let slack = screen - logical;
@@ -601,17 +662,17 @@ mod tests {
     fn results_height_zero_survives_rounding_and_conversion() {
         assert_eq!(results_window_height(0, 34.92), 0.0);
         for &scale in &[1.0_f64, 1.25, 2.0] {
-            assert_eq!(results_height_phys(0.0, scale), 0);
+            assert_eq!(results_height_phys(0.0, ResultsScale::new(scale)), 0);
         }
     }
 
     /// #738: 論理 px × scale の四捨五入。**動機（なぜ実高ではなくバー高か）は関数 doc**。
     #[test]
     fn bar_rect_height_phys_converts_logical_to_physical() {
-        assert_eq!(bar_rect_height_phys(43.0, 1.0), 43);
-        assert_eq!(bar_rect_height_phys(43.0, 1.5), 65); // 64.5 → 四捨五入で 65
-        assert_eq!(bar_rect_height_phys(43.0, 2.0), 86);
-        assert_eq!(bar_rect_height_phys(43.0, 1.25), 54); // 53.75 → 54
+        assert_eq!(bar_rect_height_phys(43.0, MainScale::new(1.0)), 43);
+        assert_eq!(bar_rect_height_phys(43.0, MainScale::new(1.5)), 65); // 64.5 → 四捨五入で 65
+        assert_eq!(bar_rect_height_phys(43.0, MainScale::new(2.0)), 86);
+        assert_eq!(bar_rect_height_phys(43.0, MainScale::new(1.25)), 54); // 53.75 → 54
     }
 
     /// #738: 与えられた矩形の中点。**なぜ窓全体の矩形ではないかは
@@ -752,17 +813,17 @@ mod tests {
     #[test]
     fn results_top_y_rounds_gap_at_half_boundary() {
         // scale 1.0: 換算なし
-        assert_eq!(results_top_y(100, 43, 4, 1.0), 147);
+        assert_eq!(results_top_y(100, 43, 4, MainScale::new(1.0)), 147);
         // 積がちょうど x.5（丸めの境界）
-        assert_eq!(results_top_y(0, 0, 3, 1.5), 5); // 4.5 → 5
-        assert_eq!(results_top_y(0, 0, 1, 1.5), 2); // 1.5 → 2
-        assert_eq!(results_top_y(0, 0, 3, 0.5), 2); // 1.5 → 2
+        assert_eq!(results_top_y(0, 0, 3, MainScale::new(1.5)), 5); // 4.5 → 5
+        assert_eq!(results_top_y(0, 0, 1, MainScale::new(1.5)), 2); // 1.5 → 2
+        assert_eq!(results_top_y(0, 0, 3, MainScale::new(0.5)), 2); // 1.5 → 2
         // x.5 未満は切り捨て側へ
-        assert_eq!(results_top_y(0, 0, 2, 1.2), 2); // 2.4 → 2
+        assert_eq!(results_top_y(0, 0, 2, MainScale::new(1.2)), 2); // 2.4 → 2
         // 高 DPI
-        assert_eq!(results_top_y(100, 43, 4, 2.0), 151);
+        assert_eq!(results_top_y(100, 43, 4, MainScale::new(2.0)), 151);
         // main が負座標のモニターにいる（マルチモニターで左/上に並べた配置）
-        assert_eq!(results_top_y(-1080, 43, 4, 1.0), -1033);
+        assert_eq!(results_top_y(-1080, 43, 4, MainScale::new(1.0)), -1033);
     }
 
     // ---- 中間省略（#870） --------------------------------------------------

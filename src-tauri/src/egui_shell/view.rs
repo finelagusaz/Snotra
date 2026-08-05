@@ -1113,7 +1113,7 @@ mod tests {
     use egui::text::{CCursor, CCursorRange};
     use egui::text_edit::TextEditState;
 
-    use super::move_text_cursor_to_end;
+    use super::{SearchInputParams, move_text_cursor_to_end, search_input_ui};
 
     // `hex_color_parses_and_falls_back` は #673 で `visual.rs` の
     // `hex_parses_valid_and_falls_back_to_config_default` へ移した（hex→Color32 の変換が
@@ -1215,6 +1215,107 @@ mod tests {
         assert_eq!(
             after_text, "",
             "構築後に要求すると、そのフレームの文字は焦点の無い widget を素通りして捨てられる"
+        );
+    }
+
+    /// kittest の state。**復元フラグをフレームごとに切り替える**ために buf と束ねる。
+    struct CaretState {
+        buf: String,
+        restored: bool,
+        window_focused: bool,
+    }
+
+    fn caret_harness(id: egui::Id, focused: bool) -> egui_kittest::Harness<'static, CaretState> {
+        egui_kittest::Harness::new_ui_state(
+            move |ui, st: &mut CaretState| {
+                let params = SearchInputParams {
+                    input_id: id,
+                    restored_search: st.restored,
+                    window_focused: st.window_focused,
+                    input_editable: true,
+                    inset: 0.0,
+                    field_height: 20.0,
+                    font: egui::FontId::proportional(12.0),
+                    text_color: egui::Color32::WHITE,
+                };
+                let _ = search_input_ui(ui, &mut st.buf, &params, |_| String::new());
+            },
+            CaretState {
+                buf: "alpha".to_owned(),
+                restored: false,
+                window_focused: focused,
+            },
+        )
+    }
+
+    /// 復元フレームで、**同一フレームに載っていた**文字が末尾へ入る（#840/#872）。
+    ///
+    /// **上の `focus_requested_before_text_edit_applies_same_frame_input` との違いが要点である。**
+    /// あちらは egui の意味論を合成した `run_ui` で測るので、本体側の呼び出しが後ろへ戻っても
+    /// 通る（#938 が受容した残余）。こちらは `search_input_ui` を**実コードのまま**走らせるので、
+    /// `move_text_cursor_to_end` と `request_focus` のどちらかが `TextEdit` の後ろへ動けば落ちる。
+    ///
+    /// **`step()` を使う（`run()` ではない）。** `run()` は再描画要求が尽きるまで複数フレーム
+    /// 回すため、文字が 2 フレーム目で入っても通ってしまい、この検査の主題（同一フレーム）が
+    /// 骨抜きになる。`step()` は「キューされた各イベントにつき 1 フレーム、イベントが無ければ
+    /// 1 フレーム」である（`egui_kittest` 0.35 の `Harness::step` の doc）。
+    #[test]
+    fn kittest_restored_frame_appends_same_frame_input_at_end() {
+        let id = egui::Id::new("search_input");
+        let mut harness = caret_harness(id, true);
+        // 復元より前に 2 フレーム回して focus と `TextEdit` の state を確立する
+        //（`move_text_cursor_to_end` は `TextEdit::load_state` が None の間は何もしない）。
+        harness.step();
+        harness.step();
+
+        // **キャレットを先頭へ置く。** これが無いと検査は discriminate しない——focus 直後の
+        // キャレットは既に末尾に在り、`move_text_cursor_to_end` が no-op になるので、
+        // 呼び出しを `TextEdit` の後ろへ動かしても結果が変わらない（故障注入で実測した）。
+        // 実経路の `restored_search` は**バッファ全体が置き換わった**フレームであり、
+        // 残るキャレットは古い（短い）テキストの位置を指す。その状態をここで作る。
+        let mut state = TextEditState::load(&harness.ctx, id).expect("2 フレーム後に state が在る");
+        state
+            .cursor
+            .set_char_range(Some(CCursorRange::one(CCursor::new(0))));
+        state.store(&harness.ctx, id);
+
+        // 復元フレーム: `restored=true` と文字を**同じフレーム**へ載せる。
+        // 文字は本体と同じ経路で渡す（runtime は WM_CHAR / IME 確定を `Ime(Commit)` にする）。
+        harness.state_mut().restored = true;
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Ime(egui::ImeEvent::Commit("z".to_owned())));
+        harness.step();
+
+        assert_eq!(
+            harness.state().buf.as_str(),
+            "alphaz",
+            "復元フレームに載った打鍵は復元クエリの末尾へ入る"
+        );
+    }
+
+    /// focus を要求しなければ同じ文字が捨てられる。
+    /// **この検査が本当に focus を見ていることの対照**であり、無いと上の検査が
+    /// 「何をしても通る」形に退化したことに気づけない。
+    #[test]
+    fn kittest_without_focus_request_the_same_input_is_dropped() {
+        let id = egui::Id::new("search_input");
+        let mut harness = caret_harness(id, false); // focus 要求の条件（`window_focused`）を落とす
+        harness.step();
+        harness.step();
+
+        harness.state_mut().restored = true;
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Ime(egui::ImeEvent::Commit("z".to_owned())));
+        harness.step();
+
+        assert_eq!(
+            harness.state().buf.as_str(),
+            "alpha",
+            "焦点が無ければ文字は入らない"
         );
     }
 

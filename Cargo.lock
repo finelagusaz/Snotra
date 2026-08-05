@@ -4718,6 +4718,7 @@ version = "0.1.0"
 dependencies = [
  "arboard",
  "egui",
+ "egui_kittest",
  "fontdb",
  "indexmap 2.14.0",
  "notify",

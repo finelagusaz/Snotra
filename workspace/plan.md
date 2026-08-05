@@ -399,7 +399,7 @@ pub(crate) fn search_input_ui(
 **Interfaces:**
 - Consumes: Task 2 の `search_input_ui` / `SearchInputParams`
 
-- [ ] **Step 1: dev 依存を足す**
+- [x] **Step 1: dev 依存を足す**
 
 `src-tauri/Cargo.toml` へ（`snotra-settings/Cargo.toml:23` と同じ指定）:
 
@@ -408,7 +408,7 @@ pub(crate) fn search_input_ui(
 egui_kittest = { version = "0.35", default-features = false }
 ```
 
-- [ ] **Step 2: 失敗するテストを書く**
+- [x] **Step 2: 失敗するテストを書く**
 
 `view.rs` の `mod tests` へ足す。**両方向で固定する**——並びを戻したときに落ちることまで見る。
 
@@ -499,21 +499,23 @@ egui_kittest = { version = "0.35", default-features = false }
     }
 ```
 
-- [ ] **Step 3: 落ちることを確認する**
+- [x] **Step 3: 落ちることを確認する**
 
 実行: `cargo test -p snotra restored_frame_appends -- --nocapture`
 期待: `restored_frame_appends_same_frame_input_at_end` が **`zalpha`（キャレットが先頭のまま）で FAIL** する見込み——ただしこれは Task 2 が既に正しい並びを持っているため、**実際には最初から PASS しうる**。その場合は Step 5 の故障注入が「この検査が本当に discriminate するか」の唯一の証拠になるので、**Step 5 を省略しない**。
 
 `egui_kittest` 0.35 の API はレジストリの一次資料で確認済み（`new_ui_state` / `step` / `input_mut` / `state` / `state_mut` がすべて実在）。`Harness<'static, State>` の形は `snotra-settings/src/app.rs:818` と同じ。
 
-- [ ] **Step 4: 通ることを確認する**
+- [x] **Step 4: 通ることを確認する**
 
 実行: `cargo test -p snotra`
 期待: 2 件とも PASS
 
-- [ ] **Step 5: 故障注入で検出力を実測する**
+- [x] **Step 5: 故障注入で検出力を実測する**
 
 `search_input_ui` の中で `move_text_cursor_to_end` の呼び出しを `TextEdit` の**後ろ**へ動かす。`restored_frame_appends_same_frame_input_at_end` が落ちることを確かめてから戻す。結果を「実測ログ」へ書く。
+
+**実施時の発見（このステップを省いていたら気づけなかった）**: **1 回目の注入は落ちなかった。** focus 直後の egui のキャレットは既に末尾に在り、`move_text_cursor_to_end` が no-op になるため、呼び出しを後ろへ動かしても結果が変わらない。つまり**初版の検査はキャレットの並びを縛れていなかった**（縛れていたのは focus だけで、それは対照検査が既に見ている）。実経路の `restored_search` は**バッファ全体が置き換わった**フレームであり、残るキャレットは古い（短い）テキストの位置を指す——復元フレームの前に `TextEditState` でキャレットを先頭へ置く 1 段を足して、その状態を作った。2 回目の注入は `left: "zalpha" / right: "alphaz"` で落ちた。
 
 **コミット**: `test(egui): キャレットと focus の並びを kittest で実コードごと縛る (#872/#936)`
 
@@ -766,7 +768,7 @@ $env:SNOTRA_EGUI_INPUT_TRACE = '1'
 | 何を測ったか | タスク | 結果 |
 |---|---|---|
 | 待ちを外した複製で衝突が再現するか | 1-10 | **再現した（両方向）。** 変異（kill も待ちもしない複製）→ キャレット It が `RuntimeException: Snotra が既に起動しています（pid=20544）` で 77ms で失敗（**CI の iter-008/021/029 と逐語一致**）、加えて新設 `AfterAll` が `実機配管の後に snotra が残っています` で発火。修正版 → 統合 2/2 pass・`AfterAll` 沈黙 |
-| `move_text_cursor_to_end` を後ろへ動かすと kittest が落ちるか | 3-5 | |
+| `move_text_cursor_to_end` を後ろへ動かすと kittest が落ちるか | 3-5 | **1 回目は落ちなかった**（focus 直後のキャレットが既に末尾で no-op ゆえ、検査が縛れていなかった）。復元フレームの前にキャレットを先頭へ置く 1 段を足して再注入 → **`left: "zalpha" / right: "alphaz"` で落ちた**。戻して 208 passed |
 | focus 要求を落とすと縮小した実機配管が落ちるか | 4-4 | |
 | 空文字/`1` の両方向で計器が切り替わるか | 5-5 | |
 

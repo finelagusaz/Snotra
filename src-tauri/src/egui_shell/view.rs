@@ -1180,8 +1180,9 @@ mod tests {
     /// 後ろに戻したときに落ちる保証にならない（当時の並びが本当に落とすことを固定する）。
     ///
     /// ⚠️ **これが縛るのは egui の意味論であって `update()` の並びではない。** 本体側の
-    /// 呼び出し位置が後ろへ戻っても、このテストは通る（受容する残余。位置の理由は
-    /// `input_id` を作った直後のコメントが正本）。
+    /// 呼び出し位置が後ろへ戻っても、このテストは通る（位置の理由は `search_input_ui` の
+    /// 中のコメントが正本）。**この受容残余は #872 で閉じた**——`kittest_*` の 3 本が
+    /// `search_input_ui` を実コードのまま走らせ、キャレットと focus の並びを個別に縛る。
     #[test]
     fn focus_requested_before_text_edit_applies_same_frame_input() {
         // 文字の届き方は本体と同じ経路にする——runtime は WM_CHAR / IME 確定を
@@ -1292,6 +1293,38 @@ mod tests {
             harness.state().buf.as_str(),
             "alphaz",
             "復元フレームに載った打鍵は復元クエリの末尾へ入る"
+        );
+    }
+
+    /// **プロセス起動後の最初のフレーム**を再現する（#872/#936 の実害そのもの）。
+    ///
+    /// **上の検査は focus の並びを縛れない**（実測）。判定フレームより前に `step()` を回すため、
+    /// その時点で widget は既に焦点を持ち、`!has_focus` ガードで focus 要求が**そもそも走らない**
+    /// ——ゆえに要求を `TextEdit` の後ろへ動かしても通る。縛れているのはキャレットの側だけである。
+    ///
+    /// こちらは事前の `step()` を置かない。widget がまだ焦点を持たないフレームに文字が載る形は
+    /// **起動直後の初回 show そのもの**であり、要求が構築の後ろにあれば文字は焦点の無い widget の
+    /// 横を素通りして捨てられる。
+    #[test]
+    fn kittest_first_frame_requests_focus_before_text_edit() {
+        let id = egui::Id::new("search_input");
+        let mut harness = caret_harness(id, true);
+
+        // **判定フレームの開始時点で焦点を持っていない状態を作る。** `Harness` は構築の時点で
+        // 既にフレームを 1 枚走らせるため、「`step()` を呼ばない」だけでは足りない（実測: それだけ
+        // では焦点が立っていて、要求を後ろへ動かしても通ってしまった）。
+        harness.ctx.memory_mut(|m| m.surrender_focus(id));
+
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Ime(egui::ImeEvent::Commit("z".to_owned())));
+        harness.step();
+
+        assert_ne!(
+            harness.state().buf.as_str(),
+            "alpha",
+            "最初のフレームに載った打鍵が捨てられている（focus 要求が TextEdit の後ろにある）"
         );
     }
 

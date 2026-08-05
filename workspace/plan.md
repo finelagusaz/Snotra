@@ -730,7 +730,7 @@ $env:SNOTRA_EGUI_INPUT_TRACE = '1'
 - Modify: `docs/build-commands.md`（実機配管の記述は `178`、`smoke-egui.ps1` の関連は `180`）
 - Modify: `scripts/smoke-egui.ps1`（`139` の `Start-Sleep 300`）
 
-- [ ] **Step 1: `PERFORMANCE.md` の計器一覧を直す**
+- [x] **Step 1: `PERFORMANCE.md` の計器一覧を直す**
 
 この節は「**このリストが計器の正本である**」と自称しながら、5 名前のうち 3 つしか載せていない（`SNOTRA_EGUI_INPUT_TRACE` と `SNOTRA_EGUI_IME_TRACE` が欠落）。受理値にも触れていない。2 名前を足し、次の 1 文を置く。
 
@@ -739,22 +739,22 @@ $env:SNOTRA_EGUI_INPUT_TRACE = '1'
 別の意味論（`1|true|yes|on` のみ・`src-tauri/src/trace.rs`）である。
 ```
 
-- [ ] **Step 2: `smoke-egui.ps1` の冗長な固定待ちを消す**
+- [x] **Step 2: `smoke-egui.ps1` の冗長な固定待ちを消す**
 
 `139` の `Start-Sleep -Milliseconds 300` は `Policy Stop` に対する事実上の待ちだった（#853 以前からの逐語の持ち越し）。Task 1 で関数の内側に本物の待ちが入るため、説明のつかない固定遅延として残る。削除し、`138` のコメントへ「終了待ちは `Resolve-SnotraExistingProcess` が持つ（#872）」を足す。
 
-- [ ] **Step 3: `docs/build-commands.md` を実態へ合わせる**
+- [x] **Step 3: `docs/build-commands.md` を実態へ合わせる**
 
 `178` の実機配管の説明から「フォルダ復帰後の次打鍵が復元クエリの末尾へ入ることを統合検査する（#840・#843）」を、次の趣旨へ書き換える（**面積を増やさず既存文を置き換える**）。
 
 > 起動後の最初のフレームで入力欄が打鍵を受け取れる状態になっていることを実機で検査する（#872）。キャレットの断言は `src-tauri/src/egui_shell/view.rs` の kittest が実コードごと縛る。
 
-- [ ] **Step 4: ガバナンス検査**
+- [x] **Step 4: ガバナンス検査**
 
 実行: `npm run governance:check`
 期待: green（検査 18 件）
 
-- [ ] **Step 5: 全体の検証**
+- [x] **Step 5: 全体の検証**
 
 実行: `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test --workspace` / `npm run test:powershell` / `npm run smoke:egui`
 期待: すべて green
@@ -795,6 +795,21 @@ $env:SNOTRA_EGUI_INPUT_TRACE = '1'
 
 - **終了が 5,000ms 以内に収まる範囲のシャットダウン退行は吸収され、検査は緑のまま通る。** 完全な漏れは `AfterAll` が捕まえるが、遅くなったこと自体の読み手は置いていない
 - **`SnotraSmoke.psm1:664` の PowerShell 側の読み手は緩いまま残る。** 空文字では両者とも偽で一致するので、実バグの経路は塞がる
+
+---
+
+## code-reviewer の指摘への対応（Step 4b・実装後）
+
+**Critical 2 件はいずれも「本サイクルの中心的主張が立たない」もので、自分で実測して確定させてから直した。**
+
+- [x] **C1 — 縮めた実機配管が、自ら名乗る回帰を検出しなかった。** `Wait-SnotraTraceCondition` は一致の**最後**を返す（`psm1` の `Select-Object -Last 1`）。#938 の回帰は「frame 1 だけ偽・frame 2 以降は真」で、`focus_state` は show ごと 5 行出るので、**回帰した実装でも最後の行は真＝ PASS**（合成 trace で実測: seq=3 / True）。Task 4 Step 4 の注入は 5 行とも偽にする**本来の回帰より強い変異**だったため素通りしていた。**修正**: `Read-SnotraTraceSnapshot` で `window_focused` が真の**最初の**行に断言し、その部分集合が空でないことを別に断言する（省くと主語ゼロで自明に緑）。合成 trace 3 条件で検算（回帰 → FAIL / 正常 → PASS / 主語ゼロ → FAIL）
+- [x] **C2 — kittest も focus の並びを縛れていなかった。** 判定フレームより前に `Harness` が既にフレームを走らせており、focus 要求が `!has_focus` ガードで走らない状態で測っていた（注入しても通ることを実測）。**修正**: `kittest_first_frame_requests_focus_before_text_edit` を追加し、判定フレームの直前に `surrender_focus` で焦点を手放す。再注入で `left: "alpha" / right: "alpha"` で落ちることを確認
+- [x] **H1 — `AfterAll` の `Get-Process -Name snotra` がグローバルだった。** 開発者の実インスタンスを予告なく Force kill し、しかも「終了待ちが効いていません」という誤った診断で赤くする。`.Path` が検査対象の実行ファイルと一致するものだけに絞った
+- [x] **M1 — `repro-pester-flake.ps1` の env 2 つが読み手を失ったまま「効く」と書かれていた。** Task 4 で読み手が消えた事実を doc へ書いた
+- [x] **M3 — 旧テストの doc が `input_id` を作った直後のコメントを正本として指していた。** 切り出しでその位置が動いたため `search_input_ui` の中を指すよう直し、受容残余が #872 で閉じたことも書いた
+- H2（落ちた断言の棚卸し）と M2（`smoke-startup.ps1` の同型）は**指摘どおりで対応不要**——前者は判断の裏取り、後者は範囲外として #786 へ送出済み
+
+**得られた規律**（設計書の「検証」節へ恒久記録した）: **故障注入は、本来の回帰より強い変異にしてはならない。** 同じ型の誤りをこのサイクルで 3 回踏んだ。注入が赤くなったことは、検査が当の回帰を捕まえる証拠にならない。
 
 ## 人間レビュー
 

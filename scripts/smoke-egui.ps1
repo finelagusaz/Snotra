@@ -134,9 +134,12 @@ function Get-LetterVk {
   return [byte][int][char]$u[0]
 }
 
-# 既存インスタンスは single-instance 転送で smoke を汚すため停止（smoke-startup.ps1 と同じ前提）
+# 既存インスタンスは single-instance 転送で smoke を汚すため停止（smoke-startup.ps1 と同じ前提）。
+# **終了待ちは `Resolve-SnotraExistingProcess` が持つ**（#872）。かつてここに在った
+# `Start-Sleep -Milliseconds 300` は、待たない `Stop-Process -Force` に対する事実上の待ちで
+# あり（#853 以前からの逐語の持ち越し）、関数の内側に本物の待ちが入った今は説明のつかない
+# 固定遅延として残るだけなので消した。
 Resolve-SnotraExistingProcess -Policy Stop
-Start-Sleep -Milliseconds 300
 
 $webviewBefore = @(Get-Process msedgewebview2 -ErrorAction SilentlyContinue).Count
 
@@ -459,6 +462,11 @@ try {
 # `Stop-Process -Force` は終了を待たない。`tauri_plugin_single_instance` が登録されているため、
 # 先発がまだ生きたまま後発を起動すると、後発は先発へ通知して即終了し——trace が 1 行も
 # 書かれないまま `hotkey:registered` の待ちが予算を使い切ってから throw する（間欠的な赤）。
+#
+# **共有ヘルパ `Stop-SnotraProcessAndWait`（`lib/SnotraSmoke.psm1`・#872）と意図的に別である。**
+# あちらは `finally` から呼ぶため throw せず警告と戻り値で表す。ここは「シナリオ 2 を始めて
+# よいか」の前提条件なので、満たせなければ**中断する**のが正しい。片方を直すときは
+# もう片方も見ること（重複ではなく、意味論の違う 2 つである）。
 $scenario1ExitWaitMs = 5000
 if (-not $proc.WaitForExit($scenario1ExitWaitMs)) {
   throw ("シナリオ 1 のプロセス（pid=$($proc.Id)）が ${scenario1ExitWaitMs}ms 以内に終了しませんでした。" +

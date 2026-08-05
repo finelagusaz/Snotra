@@ -500,12 +500,25 @@ auto_hide_on_focus_lost = false
             # **予算は 30,000ms** ——待ちは 1 つだけで順序依存が無く、この待ちは
             # 「フレームが 1 度でも回ったか」しか見ないので、遅さそのものは判定に混ざらない。
             # ゆえに広げても隠れる退行が無い（実測でフレーム不回転は 24.3 秒まで観測されている）。
-            $focus = Wait-SnotraTraceCondition -Path $stderr -TimeoutMs 30000 -PollMs 100 `
+            $seen = Wait-SnotraTraceCondition -Path $stderr -TimeoutMs 30000 -PollMs 100 `
                 -AbortIfExited $proc -Description 'egui_input:focus_state（最初のフレーム）' `
                 -Predicate { $_.event -eq 'egui_input:focus_state' }
+            $seen | Should -Not -BeNullOrEmpty
 
-            $focus | Should -Not -BeNullOrEmpty
-            $focus.data.has_focus | Should -BeTrue
+            # **最初の行に断言する。`Wait-SnotraTraceCondition` の戻り値を使ってはならない。**
+            # あれは一致の**最後**を返す（`SnotraSmoke.psm1` の `Select-Object -Last 1`）。
+            # #938 の回帰は「frame 1 だけ偽・frame 2 以降は真」という形で現れ（機序の正本は
+            # `view.rs` の当該コメント）、`focus_state` は show ごとに 5 行出る。ゆえに最後の行を
+            # 見ると**回帰した実装でも真を読んで PASS する**（合成 trace で実測: seq=3 / true）。
+            $snapshot = Read-SnotraTraceSnapshot -Path $stderr
+            $focusRows = @($snapshot.Events | Where-Object {
+                    $_.event -eq 'egui_input:focus_state' -and $_.data.window_focused
+                })
+            # **部分集合が空でないことを別に断言する。** 省くと主語ゼロで自明に緑になる——
+            # `focus_state` は show ごと 5 フレームで尽き、show の外では再武装しない。
+            $focusRows.Count | Should -BeGreaterThan 0
+            # 窓が focus を持つ最初のフレームで、入力欄も焦点を持っていなければならない。
+            $focusRows[0].data.has_focus | Should -BeTrue
         } catch {
             Write-Host '--- caret integration stderr trace ---'
             if (Test-Path -LiteralPath $stderr) {
@@ -532,12 +545,21 @@ auto_hide_on_focus_lost = false
     # `AfterAll` からの throw は It の例外を覆い隠さないため、ここが正しい層である
     # （`docs/development-principles.md`「構造的設計原則と強制の階梯」の一段上げ）。
     AfterAll {
-        $leaked = @(Get-Process -Name 'snotra' -ErrorAction SilentlyContinue)
+        # **検査が起動した本体だけに絞る。** `Get-Process -Name 'snotra'` はグローバルで、
+        # 開発者が普段使いで起動している実インスタンスも掴む。絞らないと (1) それを予告なく
+        # Force kill し、(2)「終了待ちが効いていません」という**誤った診断**で赤くする
+        # （その場合の実態は先行インスタンスであり、各 It 冒頭の `Reject` が先に throw する）。
+        # `.Path` は権限の無いプロセスで例外を投げうるので個別に握りつぶす。
+        $expected = $env:SNOTRA_PESTER_EXE
+        $leaked = @(Get-Process -Name 'snotra' -ErrorAction SilentlyContinue | Where-Object {
+                $path = try { $_.Path } catch { $null }
+                $path -and $expected -and $path -eq $expected
+            })
         if ($leaked.Count -gt 0) {
             $ids = $leaked.Id -join ', '
             # 後続の検査を巻き添えにしないよう掃除してから落とす。
             $leaked | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
-            throw "実機配管の後に snotra が残っています（pid=$ids）。終了待ちが効いていません。"
+            throw "実機配管の後に検査対象の snotra が残っています（pid=$ids）。終了待ちが効いていません。"
         }
     }
 }

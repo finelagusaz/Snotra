@@ -93,6 +93,10 @@ pub(crate) struct SearchWindowView {
     /// size writer に一意化されている（幅は config live-read・#646 PR2 決定 6）。
     last_set_width: f64,
     last_set_height: f64,
+    /// 起動直後の数フレームだけ「入力欄が打鍵を受け取れる状態か」を残すための残数
+    /// （#872/#936）。**打ち切りを持つのは費用のためではなく意味のため**——知りたいのは
+    /// 最初のフレームであって、定常状態ではない。
+    focus_state_traces_left: u8,
     // results 窓のサイズデルタガードは `ResultsWindow` が持つ（#749 で移設）。**`last_set_*`
     // （main 用）を流用してはならない**という当時の不変条件（Important 1）は、memo が別の型に
     // 分かれたことで構造的に保たれる——同一フレーム内で main のブロックが先に
@@ -107,6 +111,7 @@ impl SearchWindowView {
             applied_background: None,
             last_set_width: 0.0,
             last_set_height: 52.0,
+            focus_state_traces_left: 5,
         }
     }
 
@@ -322,6 +327,12 @@ impl EguiView for SearchWindowView {
         // 不変条件検出器（レビュー是正 4・下の height 計算点）が突き合わせの発火条件に使う。
         let was_reset_frame = self.controller.consume_reset_pending();
         if was_reset_frame {
+            // **show ごとに観測の予算を張り直す**（#872/#936）。egui の widget focus は
+            // `Memory` に残るため、**2 回目以降の show で入力欄が focus を保つのか、初回と
+            // 同じく最初のフレームで失うのかは、初回だけの計測では言えない**——前者なら
+            // 脆弱な窓はプロセス起動時に限られ、後者なら Alt+Q のたびに開く。
+            // ここが「show 直後の最初のフレーム」の唯一の判定点である。
+            self.focus_state_traces_left = 5;
             // results 窓の **サイズ**デルタガードを初期値へ戻す（#646 PR2 決定 6・memo 自体は
             // #749 で `ResultsWindow` へ移設）。これは冗長な set_size を避ける性能上のガードで
             // あり、可視性のような correctness のフラグではない（#671 spec 決定 2 の意図的な分割）。
@@ -579,6 +590,25 @@ impl EguiView for SearchWindowView {
                 if restored_search {
                     move_text_cursor_to_end(&ctx, input_id, &buf);
                 }
+                // **入力欄の focus は TextEdit の構築より前に要求する**（#872/#936）。
+                // `TextEdit` は自分が走る時点の focus でイベントを消費するか決めるため、
+                // 構築の**後**に要求すると、そのフレームに載っていた文字は焦点の無い widget の
+                // 横を素通りして捨てられる。**プロセス起動後の最初のフレームがまさにその形
+                // だった**（実測: frame 1 が `has_focus=false`、frame 2 から真。再 show では
+                // `Memory` に残るので初回だけ）。窓は可視・前面・focus 済みで「打てるはず」に
+                // 見えるのに、ローカルで 50ms・CI runner で 1.4〜19 秒、打った文字が消えていた
+                // ——これが #872 の間欠失敗の正体である。
+                //
+                // **直前の `move_text_cursor_to_end`（#840）が構築前に置かれているのと同じ理由**
+                // であり、同一フレームの文字イベントに効かせるには構築前でなければならない。
+                //
+                // **blur 猶予の状態を読まない**——読む形（例: `blur_grace == Focused` を条件に
+                // 足す）にすると、reset-on-show 直後は `NeverFocused` なのに窓は focus を持ちうる
+                // ため、show 直後に打鍵できなくなる（SU2 が入れた当の挙動が消える）。条件は
+                // `interactive` と同じ `input_editable` を読む（同変数の doc）。
+                if pre.focused && input_editable && !ctx.memory(|m| m.has_focus(input_id)) {
+                    ctx.memory_mut(|m| m.request_focus(input_id));
+                }
                 // hint の書式化（#870）。**フォルダ現在地だけが幅を要る**——収まらないパスを
                 // 中間省略し、ドライブと leaf の両方を残す。`add_sized` に渡すのと同じ
                 // `ui.available_width()` から `TextEdit` の左右 margin を引いたものが、
@@ -641,14 +671,32 @@ impl EguiView for SearchWindowView {
         if response.changed() {
             self.controller.on_input_changed(buf, in_folder, &ctx);
         }
-        // 窓に focus があるのに入力欄が focus を持たないなら移す（Alt+Q 表示直後に打てる）。
-        // **blur 猶予の状態を読まない**——読む形（例: `blur_grace == Focused` を条件に足す）に
-        // すると、reset-on-show 直後は `NeverFocused` なのに窓は focus を持ちうるため、
-        // **show 直後に打鍵できなくなる**（SU2 が入れた当の挙動が消える）。この独立性は
-        // 2 フィールド時代から一貫した制約で、#745 の状態機械化でも維持する。
-        // 条件は `interactive` と同じ `input_editable` を読む（非対称の解消は同変数の doc 参照）。
-        if pre.focused && input_editable && !response.has_focus() {
-            response.request_focus();
+        // **かつてここに「窓に focus があるのに入力欄が持たないなら移す」があった**（#872/#936
+        // で TextEdit の構築前へ移設）。ここに置くと、そのフレームに載っていた文字は既に
+        // 捨てられた後であり、効くのは次のフレームからだった。**移設は挙動を 1 フレーム
+        // 早めるだけで、回復の速さは変わらない**——このフレームで焦点を失った場合（Escape 等）、
+        // 旧: このフレームの末尾で要求 → 次フレームの widget が持つ / 新: 次フレームの構築前に
+        // 要求 → 同じ widget が持つ、で一致する。**2 か所で要求しない**（#700 と同じ理由）。
+        // **show ごとに最初の数フレームだけ、入力欄が打鍵を受け取れる状態だったかを残す**
+        // （#872/#936）。**`response.has_focus()` は widget が走った時点の値**なので、
+        // 「そのフレームの文字イベントを受け取れたか」をそのまま言う——上の移設が効いていれば
+        // 最初のフレームから真であり、**この行は移設の回帰検出器になる**（偽に戻れば、
+        // 起動直後の打鍵が再び捨てられている）。
+        //
+        // **`input_editable` を併記する**——両者は同じ沈黙を作るため、片方だけを見ると
+        // 当たっていなくても説明が通ってしまう（実測でこちらは初回から真と判った）。
+        if self.focus_state_traces_left > 0 {
+            self.focus_state_traces_left -= 1;
+            crate::trace_main(
+                "egui_input:focus_state",
+                serde_json::json!({
+                    "window_focused": pre.focused,
+                    "input_editable": input_editable,
+                    "has_focus": response.has_focus(),
+                    "in_tool": in_tool,
+                    "launching": self.controller.is_launching(),
+                }),
+            );
         }
 
         // status 行（#532 SU5 の一時 overlay・#700 で位置を変更）: 「起動中…」/ 失敗・結果不明通知/
@@ -1066,6 +1114,56 @@ mod tests {
         });
 
         assert_eq!(text, "alphaz");
+    }
+
+    /// 回帰テスト: #872/#936。**focus の要求が `TextEdit` の構築より後だと、そのフレームに
+    /// 載っていた文字は捨てられる。**
+    ///
+    /// `update()` はかつて widget を追加した**後**に `response.request_focus()` を撃っており、
+    /// プロセス起動後の最初のフレーム（`has_focus=false`）に届いた文字が丸ごと消えていた。
+    /// ローカルではその窓が 50ms しか開かないが、CI runner では 1.4〜19 秒開き、#872 の
+    /// 間欠失敗（失敗率 12.5%・7 か月）の正体がこれだった。
+    ///
+    /// **両方の並びを 1 フレームずつ走らせて差まで測る**——「構築前なら入る」だけでは、
+    /// 後ろに戻したときに落ちる保証にならない（当時の並びが本当に落とすことを固定する）。
+    ///
+    /// ⚠️ **これが縛るのは egui の意味論であって `update()` の並びではない。** 本体側の
+    /// 呼び出し位置が後ろへ戻っても、このテストは通る（受容する残余。位置の理由は
+    /// `input_id` を作った直後のコメントが正本）。
+    #[test]
+    fn focus_requested_before_text_edit_applies_same_frame_input() {
+        // 文字の届き方は本体と同じ経路にする——runtime は WM_CHAR / IME 確定を
+        // `Event::Ime(Commit)` として渡す（`snotra-egui-runtime/src/input.rs`）。
+        let typed = || egui::RawInput {
+            events: vec![egui::Event::Ime(egui::ImeEvent::Commit("a".to_owned()))],
+            ..Default::default()
+        };
+
+        // 現在の並び: 構築より前に要求する。
+        let before = egui::Context::default();
+        let before_id = egui::Id::new("focus_before_widget");
+        let mut before_text = String::new();
+        let _ = before.run_ui(typed(), |ui| {
+            ui.ctx().memory_mut(|m| m.request_focus(before_id));
+            ui.add(egui::TextEdit::singleline(&mut before_text).id(before_id));
+        });
+        assert_eq!(
+            before_text, "a",
+            "構築前に focus を要求すれば、同じフレームの文字が入る"
+        );
+
+        // かつての並び: 構築より後に要求する。
+        let after = egui::Context::default();
+        let after_id = egui::Id::new("focus_after_widget");
+        let mut after_text = String::new();
+        let _ = after.run_ui(typed(), |ui| {
+            let response = ui.add(egui::TextEdit::singleline(&mut after_text).id(after_id));
+            response.request_focus();
+        });
+        assert_eq!(
+            after_text, "",
+            "構築後に要求すると、そのフレームの文字は焦点の無い widget を素通りして捨てられる"
+        );
     }
 
     /// #751: テーマ 3 値の適用は**同じ pass の子 Ui へ届かなければならない**。

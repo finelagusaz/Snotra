@@ -471,6 +471,19 @@ include_folders = true
             & $waitForInputChange -Scope 'search' -BeforeChars 5 -AfterChars 6 `
                 -AppendedAtEnd $true | Should -Not -BeNullOrEmpty
         } catch {
+            # **失敗の直後に本体を殺すと「予算後の遅着」が永久に観測できない**（#936 受け入れ条件 1）。
+            # 期待した事象が 5,000ms の後に届くのか、恒久的に届かないのかは、待ちを諦めた時点の
+            # trace からは区別できず、`finally` の `Stop-Process` がその先を見る機会ごと消している。
+            # `SNOTRA_PESTER_FAILURE_GRACE_MS` を渡した実行だけ、kill の前に待って読み直す。
+            # **既定（未設定）は従来どおり即 kill** ——CI ゲートの所要も判定も変えない。
+            $graceMs = 0
+            if ($env:SNOTRA_PESTER_FAILURE_GRACE_MS) {
+                [void][int]::TryParse($env:SNOTRA_PESTER_FAILURE_GRACE_MS, [ref]$graceMs)
+            }
+            if ($graceMs -gt 0) {
+                Write-Host "--- failure grace: ${graceMs}ms 待ってから trace を読み直します（#936） ---"
+                Start-Sleep -Milliseconds $graceMs
+            }
             Write-Host '--- caret integration stderr trace ---'
             if (Test-Path -LiteralPath $stderr) {
                 $stderrLines = @(Get-Content -LiteralPath $stderr)
@@ -487,6 +500,16 @@ include_folders = true
         } finally {
             if ($null -ne $proc -and -not $proc.HasExited) {
                 Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            }
+            # **成否によらず trace を残す**（`SNOTRA_PESTER_TRACE_DIR` を渡した実行だけ・#872/#936）。
+            # 現状の証拠は失敗時のダンプしかなく、**pass した実行の歩調が無いので、fail 時の所要が
+            # 異常なのか平常なのかを比べられない**。対照群を採れるのはここだけである——`$stderr` は
+            # `TestDrive` の下に在り、It を抜けると Pester が消す。kill の後に写すのは、書き終えた
+            # ものを写すためである。
+            if ($env:SNOTRA_PESTER_TRACE_DIR -and (Test-Path -LiteralPath $stderr)) {
+                New-Item -ItemType Directory -Force -Path $env:SNOTRA_PESTER_TRACE_DIR | Out-Null
+                Copy-Item -LiteralPath $stderr -Force -ErrorAction SilentlyContinue `
+                    -Destination (Join-Path $env:SNOTRA_PESTER_TRACE_DIR 'caret.err')
             }
         }
     }

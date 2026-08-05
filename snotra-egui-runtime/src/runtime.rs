@@ -206,14 +206,37 @@ impl<T: UserEvent> Plugin<T> for RuntimePlugin<T> {
             Event::WindowEvent {
                 window_id, event, ..
             } => {
+                use tauri_runtime_wry::tao::event::WindowEvent as TaoWindowEvent;
+                // **引き当ての前に残す**（#872/#936 の型 B）。この下の 2 つの引き当て
+                // （`window_id_map` と `self.active`）はどちらも失敗すると `return false` で
+                // **黙って捨てる**ため、ここより後ろに置くと「そもそも配送されなかった」と
+                // 「配送されたが捨てた」が同じ沈黙へ潰れる。判定は先に問う——`format!` の
+                // 割り当てを打鍵のたびに無条件で払わないため。
+                if crate::input::input_trace_enabled() {
+                    match event {
+                        TaoWindowEvent::KeyboardInput { event: key, .. } => {
+                            crate::input::input_trace(
+                                "rx_key",
+                                &format!(
+                                    "window_id={window_id:?} state={:?} physical={:?}",
+                                    key.state, key.physical_key
+                                ),
+                            )
+                        }
+                        TaoWindowEvent::ReceivedImeText(text) => crate::input::input_trace(
+                            "rx_text",
+                            &format!("window_id={window_id:?} chars={}", text.chars().count()),
+                        ),
+                        _ => {}
+                    }
+                }
                 let Some(runtime_id) = context.window_id_map.get(window_id) else {
                     return false;
                 };
-                if matches!(event, tauri_runtime_wry::tao::event::WindowEvent::Destroyed) {
+                if matches!(event, TaoWindowEvent::Destroyed) {
                     self.active.remove(&runtime_id);
                     return false;
                 }
-                use tauri_runtime_wry::tao::event::WindowEvent as TaoWindowEvent;
                 // 契約②（#737）: 配送の下限間隔の backstop。窓が静止したまま OS 設定で
                 // リフレッシュレートが変わる・モニターが抜き差しされる経路は Moved でも
                 // ScaleFactorChanged でも捕まらないため、show のたびに必ず来る Focused(true)

@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tauri_runtime_wry::tao::{
     dpi::{PhysicalPosition, PhysicalSize},
@@ -11,6 +11,50 @@ pub(crate) struct InputState {
     native_pixels_per_point: f32,
     pointer_pos: egui::Pos2,
     started_at: Instant,
+    /// `take()` を通った回数＝egui へフレームを渡した回数（診断のみ・#872/#936）。
+    frame_count: u64,
+    /// 直近で `take` 行を出した時刻。**心拍を間引くためだけに持つ**——runner では
+    /// stderr 1 行が 17〜56ms かかると実測されており（run 30963445957）、全フレームに
+    /// 出すと計器が系を乱す側へ回る。
+    last_take_trace: Option<Instant>,
+}
+
+/// フレームの心拍を出す最短間隔（#872/#936）。**入力を積んだフレームはこの間引きを受けない**
+/// ——落としてよいのは「何も起きていないことの証拠」だけである。
+const TAKE_TRACE_HEARTBEAT: Duration = Duration::from_millis(100);
+
+/// 打鍵の到達計器が有効か（`SNOTRA_EGUI_INPUT_TRACE`・#872/#936）。
+/// 判定を `input_trace` の内側だけに置くと、呼び出し側が `format!` の割り当てを
+/// 無条件に払う。呼ぶ前に問えるよう外へ出す。
+pub(crate) fn input_trace_enabled() -> bool {
+    // **一度だけ読む**。この述語は窓イベントごと（マウス移動を含む）とフレームごとに問われる
+    // ため、`env::var_os` の割り当てを毎回払うと、計器を**切っていても**出荷バイナリの
+    // ホットパスに費用が残る。キャッシュの形は `src-tauri/src/trace.rs` の `trace_enabled` と同じ。
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("SNOTRA_EGUI_INPUT_TRACE").is_some())
+}
+
+/// 到達した入力を 1 件 1 行で残す（#872/#936 の型 B＝打鍵の喪失を、層ごとに割るための計器）。
+///
+/// **`[trace]` を名乗らない。** あちらの `seq` は `src-tauri/src/trace.rs` の単一 `AtomicU64` が
+/// 持つ全順序であり、この crate からは触れない。seq を欠いた `[trace]` 行は
+/// `SnotraTraceInvariants.psm1` が「捨てた行」に数えて smoke を degrade させる（`$seq` が
+/// null の行は順序にも区間にも載せられないため）。既存の `SNOTRA_EGUI_WAKE_TRACE` と同じ
+/// 流儀で独自の接頭辞を使い、**`ts_ms`（epoch ms）は `[trace]` と同じ時計**なので
+/// 事後に 1 本の時系列へ並べられる。
+///
+/// **文字の内容は出さない**——出すのは件数だけである（`on_input_changed` が入力文字列を
+/// 残さず文字数だけを残すのと同じ方針）。物理キーコードは出す: 「どのキーが消えたか」が
+/// この計器の問いそのもので、それ無しでは 5 打鍵のうち何番目が落ちたか分からない。
+pub(crate) fn input_trace(kind: &str, detail: &str) {
+    if !input_trace_enabled() {
+        return;
+    }
+    let ts_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    eprintln!("SNOTRA_EGUI_INPUT {kind} ts_ms={ts_ms} {detail}");
 }
 
 impl InputState {
@@ -20,6 +64,8 @@ impl InputState {
             native_pixels_per_point,
             pointer_pos: egui::Pos2::ZERO,
             started_at: Instant::now(),
+            frame_count: 0,
+            last_take_trace: None,
         }
     }
 
@@ -32,6 +78,35 @@ impl InputState {
         size: PhysicalSize<u32>,
         native_pixels_per_point: f32,
     ) -> egui::RawInput {
+        // **フレームが走ったこと自体を残す**（#872/#936 の最後の分岐）。ここより下流の
+        // trace（`egui_input:changed` 等）は「入力が実った」ときしか出ないため、
+        // 「フレームが 1 枚も走っていない」と「走ったが TextEdit が受け取らない」が
+        // 同じ沈黙へ潰れている。**この 1 行だけが両者を分ける。**
+        //
+        // **全フレームには出さない**——runner では stderr 1 行が 17〜56ms かかると実測した
+        // （run 30963445957・隣接する 2 行の間隔）。全フレームに出すと計器が系を乱す側へ回る。
+        // 入力を積んだフレームは必ず出し、それ以外は 100ms ごとの心拍に間引く：
+        // 「走っていない」は**行の不在**ではなく**心拍の途切れ**として見えるので、間引いても
+        // 判定は壊れない。
+        self.frame_count += 1;
+        if input_trace_enabled() {
+            let now = Instant::now();
+            let pending = self.raw.events.len();
+            let due = self
+                .last_take_trace
+                .is_none_or(|last| now.duration_since(last) >= TAKE_TRACE_HEARTBEAT);
+            if pending > 0 || due {
+                self.last_take_trace = Some(now);
+                input_trace(
+                    "take",
+                    &format!(
+                        "frame={} events={pending} focused={}",
+                        self.frame_count, self.raw.focused
+                    ),
+                );
+            }
+        }
+
         self.native_pixels_per_point = native_pixels_per_point;
         let size_points = egui::vec2(
             size.width as f32 / native_pixels_per_point,
@@ -131,7 +206,18 @@ impl InputState {
             }
             WindowEvent::KeyboardInput { event, .. } => self.on_keyboard_event(event),
             WindowEvent::ReceivedImeText(text) => {
-                if let Some(event) = committed_text_event(text) {
+                let committed = committed_text_event(text);
+                // **落とした側も残す**（#872/#936）。`committed_text_event` は制御文字と空を
+                // 弾くので、「届いたのに egui へ渡らなかった」経路がここにも在る。
+                input_trace(
+                    "push_text",
+                    &format!(
+                        "chars={} committed={}",
+                        text.chars().count(),
+                        committed.is_some()
+                    ),
+                );
+                if let Some(event) = committed {
                     self.raw.events.push(event);
                 }
             }
@@ -153,6 +239,22 @@ impl InputState {
         let pressed = event.state == ElementState::Pressed;
         let active_key =
             key_from_tao(&event.logical_key).or_else(|| key_from_key_code(event.physical_key));
+
+        // **`mapped` を残す**（#872/#936）: `key_from_tao` / `key_from_key_code` が両方 None なら
+        // この打鍵は egui へ 1 件も積まれずに消える。「届いたが実らなかった」の最も内側の経路で
+        // あり、外からは沈黙としか見えない。
+        if input_trace_enabled() {
+            input_trace(
+                "push_key",
+                &format!(
+                    "state={} physical={:?} repeat={} mapped={}",
+                    if pressed { "down" } else { "up" },
+                    event.physical_key,
+                    event.repeat,
+                    active_key.is_some()
+                ),
+            );
+        }
 
         if let Some(key) = active_key {
             if pressed && self.raw.modifiers.command {

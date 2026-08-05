@@ -940,7 +940,8 @@ impl LauncherController {
             self.notice.clear();
             // #745: blur 猶予も hide を跨がない。**これを消すと、猶予 armed のまま別経路で
             // hide された後の再 show で、初フレームが `focused == false` なら自動 hide される**
-            //（消失に検知手段が無いことは `BlurGrace::reset` の doc が正本）。
+            //（**この呼び出しの消失は `dead_code` が捕まえる**——射程と脆さ、および残る欠落は
+            // `BlurGrace::reset` の doc が正本）。
             self.blur_grace.reset();
             true
         } else {

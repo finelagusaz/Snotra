@@ -127,8 +127,15 @@ pub(crate) enum BlurGrace {
 
 impl BlurGrace {
     /// 段 3: reset-on-show。**呼び出し点は `LauncherController::consume_reset_pending` である。**
-    /// この呼び出しが消えると #745 が再発するが、`launcher_controller.rs` は `AppHandle` に
-    /// 縛られてユニットテストを持てないため**検知手段が無い**（受容残余・機械化は #930）。
+    /// この呼び出しが消えると #745 が再発する。`launcher_controller.rs` は `AppHandle` に縛られて
+    /// ユニットテストを持てないが、**呼び出し点がこの 1 つである限り、削除は `-D warnings` 下の
+    /// `dead_code` でコンパイルが落ちる**（#930 で実測。CI も同じ形で走る）。**2 つ目の非テスト
+    /// 呼び出し点を足すとこの検知は消える。**
+    ///
+    /// **残る欠落は「show を跨ぐ新しい状態を足して、`consume_reset_pending` の一覧へ入れ忘れる」
+    /// 形であり、そこに検知手段は無い**（#745 の実際の形）。trace 側に検出器を置く案は #930 で
+    /// 測って却下した——`smoke:egui` は武装が hide を跨ぐ状態を作れず、判定対象の事象を一度も
+    /// 出せない（恒久 SKIP になる）。
     pub(crate) fn reset(&mut self) {
         *self = Self::default();
     }
@@ -199,8 +206,8 @@ mod tests {
     /// 示す——reset を抜けば `Hide` になる状況を作れている、という対照である。
     ///
     /// **このテストは `consume_reset_pending` の `reset()` 呼び出しが消えたことを検出しない**
-    /// （実測: 呼び出しを削除しても blur 系 12 本すべて通る）。呼び出し点の消失に検知手段が
-    /// 無いことは `BlurGrace::reset` の doc が記すとおりで、機械化は #930 が追う。
+    /// （実測: 呼び出しを削除しても blur 系 12 本すべて通る）。**消失を捕まえるのはテストではなく
+    /// `dead_code` である**——射程と脆さは `BlurGrace::reset` の doc が正本。
     /// **`reset` の実装が部分的になった場合**（例: `Blurred` のときだけ戻す）は、
     /// テスト A ではなく `blur_grace_resets_prior_focus_across_hide` が落ちる（実測）。
     #[test]

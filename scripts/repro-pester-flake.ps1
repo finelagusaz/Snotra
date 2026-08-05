@@ -107,6 +107,9 @@ for ($i = 1; $i -le $Iterations; $i++) {
     if ($PSBoundParameters.ContainsKey('ExePath')) { $arguments += @('-ExePath', $ExePath) }
 
     $started = [DateTime]::UtcNow
+    # **代入より前に束ねる**——`Set-StrictMode -Version Latest` の下では、代入を飛ばした経路が
+    # 「未定義変数の参照」という別の失敗に化けて測定ごと落ちる。
+    $exitCode = -1
     # 子プロセスへ渡す env（呼び出し元の環境を汚さないよう、後で必ず戻す）。
     $savedTraceDir = [Environment]::GetEnvironmentVariable('SNOTRA_PESTER_TRACE_DIR', 'Process')
     $savedGrace = [Environment]::GetEnvironmentVariable('SNOTRA_PESTER_FAILURE_GRACE_MS', 'Process')
@@ -117,8 +120,17 @@ for ($i = 1; $i -le $Iterations; $i++) {
         # 子プロセス（run-pester → Start-Process の本体）まで env の継承で届く。
         if ($InputTrace) { $env:SNOTRA_EGUI_INPUT_TRACE = '1' }
         # stderr も証拠に含める（Write-Warning が出す不成立の診断がここに載る）。
-        & pwsh @arguments *>&1 | Tee-Object -FilePath $log | Out-Null
-        $exitCode = $LASTEXITCODE
+        #
+        # **子の起動そのものが失敗しても loop を止めない**（冒頭 doc の契約）。`$ErrorActionPreference`
+        # は `Stop` なので、`pwsh` が解決できない等の終了エラーは既定では反復ごと巻き添えにして
+        # 測定を終わらせる——その 1 反復を記録して次へ進む。
+        try {
+            & pwsh @arguments *>&1 | Tee-Object -FilePath $log | Out-Null
+            $exitCode = $LASTEXITCODE
+        } catch {
+            Write-Warning "反復 $i の起動に失敗しました: $($_.Exception.Message)"
+            Add-Content -LiteralPath $log -Value "反復の起動に失敗: $($_.Exception.Message)"
+        }
     } finally {
         [Environment]::SetEnvironmentVariable('SNOTRA_PESTER_TRACE_DIR', $savedTraceDir, 'Process')
         [Environment]::SetEnvironmentVariable('SNOTRA_PESTER_FAILURE_GRACE_MS', $savedGrace, 'Process')

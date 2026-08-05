@@ -698,9 +698,6 @@ impl EguiView for SearchWindowView {
                 }),
             );
         }
-        if pre.focused && input_editable && !response.has_focus() {
-            response.request_focus();
-        }
 
         // status 行（#532 SU5 の一時 overlay・#700 で位置を変更）: 「起動中…」/ 失敗・結果不明通知/
         // indexing 案内を**検索バーの直下に独立した行として**描く。かつてはこれを TextEdit の

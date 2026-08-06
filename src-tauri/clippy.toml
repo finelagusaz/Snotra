@@ -28,25 +28,32 @@
 # 必要になったら `#[allow(clippy::disallowed_methods)]` + 理由コメントで開けること——
 # **それがこの機構で sanctioned な唯一の解消手段である。**
 #
-# **この設定が死んでも、誰も知らせてくれない**（4 経路とも 2026-08-06 に実測）:
-#   0. この lint は **warn 既定**である（`clippy-driver -W help` で実測）。赤くなるのは `ci.yml` と
-#      `.claude/hooks/post-edit.mjs` が `-D warnings` を渡している間だけで、ルート `Cargo.toml` の
-#      `[workspace.lints]` に clippy カテゴリは無い。**どちらかが `-D warnings` を落とせば、
-#      このファイルは黙って助言へ降格する。**
-#   1. メソッド名・型名の書き損じ → warning は出るが `-D warnings` でも exit 0
-#   2. crate 名の書き損じ・egui 依存の消滅 → 診断そのものが出ない
+# **この設定が死ぬ経路と、いま誰が見ているか**（いずれも 2026-08-06 に実測）:
+#   0. この lint は **warn 既定**である（`clippy-driver -W help` で実測）。**ルート `Cargo.toml` の
+#      `[workspace.lints.clippy]` が deny 化しているので、`-D warnings` には依存しない**（#950。それ以前は
+#      `ci.yml` と `.claude/hooks/post-edit.mjs` がそれを渡している間だけ赤くなった）。その deny が消える・
+#      warn へ降格する・**同じ節の `all = "allow"` に打ち消される**（deny の行を残したまま禁止が消える）の
+#      3 経路は `npm run governance:check` の G-clippy-disallowed が見張る
+#   1. メソッド名・型名の書き損じ → warning は出るが `-D warnings` でも exit 0 → **G-clippy-disallowed**
+#   2. crate 名の書き損じ・egui 依存の消滅 → 診断そのものが出ない → **G-clippy-disallowed**
+#      （ファイルの削除・空配列化・エントリ 1 行の消失・配列内でのコメントアウトも同じ検査が捕まえる）
 #   3. このファイルは cargo の fingerprint に入らない → ここだけを変えて同じコマンドを打つと、
-#      キャッシュ replay で設定を適用せずに exit 0 を返す（`.rs` を触るか `cargo clean -p snotra` を挟む）
-#   PostToolUse hook は exit code でしか検出しないため、1・2 の warning は会話にも届かない。
-#   **パスを足す・変えるときは、その場で違反を注入して赤くなることを必ず測ること。**
+#      キャッシュ replay で設定を適用せずに exit 0 を返す（`.rs` を触るか `cargo clean -p snotra` を挟む）。
+#      **これは誰も見ていない残余である**
+#   PostToolUse hook は exit code でしか検出しないため、1・2 の warning は会話にも届かない——
+#   だから検知を clippy の外（Node の静的読み取り）へ置いた。
+#   **パスを足す・変えるときは、その場で違反を注入して赤くなることを必ず測ること**——
+#   G-clippy-disallowed が見るのは既知 7 件の在否であって、**足したパスが解決することは見ない**。
 #
 # **egui のピンを動かしたら、この表を注入で測り直すこと。** 上流の API 変更でパスが解決しなく
 # なっても、上の 2 番の形で黙る（型エラーにも警告にもならない）。ピンはルート `Cargo.toml`。
 #
-# **この内容を `Cargo.toml` の `[lints.clippy]` へは移せない**——`disallowed-methods` は lint の
+# **`Cargo.toml` へ移せるのはレベルだけで、内容は移せない**——`disallowed-methods`（禁止集合）は lint の
 # レベルではなく**設定値**であり、`clippy.toml`（または `CLIPPY_CONF_DIR`）が唯一の口である。
-# `[workspace.lints]` は全 member 共通ゆえ `snotra-settings` の正当な使用を巻き込む点でも使えない
-# （crate ごとに分けたいという要件そのものが workspace lints と反対を向いている）。
+# `[workspace.lints]` は全 member 共通ゆえ、禁止集合をそこへ置けば `snotra-settings` の正当な使用を
+# 巻き込む——crate ごとに分けたいという要件そのものが workspace lints と反対を向いている。
+# **一方でレベル（deny）は移した**（#950）: 禁止集合を持たない 3 crate では集合が空で無害であり
+# （`-D warnings` 無しで exit 0・診断なしを実測）、上の経路 0 が消えるからである。
 disallowed-methods = [
     { path = "egui::Context::set_visuals", reason = "root Ui が pass 冒頭で掴む Arc<Style> に間に合わない（#751）。run_ui の中では ui.visuals_mut() を使う" },
     { path = "egui::Context::set_visuals_of", reason = "root Ui が pass 冒頭で掴む Arc<Style> に間に合わない（#751）。run_ui の中では ui.visuals_mut() を使う" },

@@ -303,15 +303,11 @@ pub(crate) fn draw_result_row(
         egui::vec2(ui.available_width(), row_h),
         egui::Sense::click(),
     );
-    let hover_id = response.id.with("hover");
-    let hover_target = row_hover_target(response.hovered(), result.is_error);
-    let hover_progress = if reset_hover_animation {
-        ui.ctx().animate_bool_with_time(hover_id, hover_target, 0.0)
-    } else {
-        ui.ctx().animate_bool_responsive(hover_id, hover_target)
-    };
+    // **スクロール要求は可視性より前に出す。** 画面外の選択行を viewport へ引き戻すことが
+    // この機構の目的そのものであり、下の早期 return より後ろへ落とすと、選択行が画面外の
+    // ときに `scroll_to_me` が発火せず世代交代で選択行へ戻れなくなる（`show_rows` による
+    // 仮想化を却下したのと同じ理由が、同じ形で戻ってくる・`layout::icon_prefetch_range` の doc）。
     if selected {
-        ui.painter().rect_filled(rect, 4.0, theme.selection);
         match scroll {
             RowScroll::None => {}
             RowScroll::Animated => {
@@ -330,6 +326,31 @@ pub(crate) fn draw_result_row(
                 response.scroll_to_me_animation(None, egui::style::ScrollAnimation::none());
             }
         }
+    }
+    // **viewport の外に出た行は、ここから下を一切やらない。** 行の確保（＝窓高・
+    // スクロールバー・ピッチ）とスクロール要求は上で済んでおり、以降は「見えるものを描く」
+    // 仕事だけである。`snapshot.rows` は可視行数ではなく `effective_result_limit`
+    // （既定 200・設定次第で 1000）ゆえ、間引かないと画面に 8 行しか出ないフレームでも
+    // 全行ぶんのアイコン描画とテキストレイアウトを払う。
+    //
+    // 実測（release・`kittest_row_draw_cost_probe`・可視 8 行の実寸窓）: 画面外 1 行あたり
+    // 約 0.8us で、1 フレームは rows=8 で 13us・200 で 156us・1000 で 807us だった。
+    // 同じ idiom の先例は `snotra-settings/src/tabs/visual.rs` の `is_rect_visible`。
+    if !ui.is_rect_visible(rect) {
+        return response.clicked();
+    }
+    // hover のアニメーションは**間引きの下**で足りる。画面外の行は `hovered()` が偽ゆえ
+    // 進捗は 0 へ向かうだけであり、スクロールで入ってきた行が 0 から立ち上がるのは
+    // 望ましい挙動である（画面外で進んだ進捗を持ち込まない）。
+    let hover_id = response.id.with("hover");
+    let hover_target = row_hover_target(response.hovered(), result.is_error);
+    let hover_progress = if reset_hover_animation {
+        ui.ctx().animate_bool_with_time(hover_id, hover_target, 0.0)
+    } else {
+        ui.ctx().animate_bool_responsive(hover_id, hover_target)
+    };
+    if selected {
+        ui.painter().rect_filled(rect, 4.0, theme.selection);
     } else if hover_progress > 0.0 {
         ui.painter()
             .rect_filled(rect, 4.0, theme.hover.gamma_multiply(hover_progress));

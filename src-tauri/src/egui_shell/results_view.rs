@@ -162,7 +162,10 @@ impl ResultsView {
         }
     }
 
-    /// 現結果の未取得アイコンを worker に積む（settled 相当・描画前に呼ぶ）。in-flight
+    /// 渡された行の未取得アイコンを worker に積む（settled 相当）。**`rows` は結果全件では
+    /// なく `layout::icon_prefetch_range` で絞った viewport 範囲である**——呼び出し側が
+    /// そのフレームで実際に描いた `ScrollArea` の状態から導く（絞る理由と実測は同関数の doc）。
+    /// ゆえに**描画より後に呼ぶ**（範囲がスクロール状態に依存するため）。in-flight
     /// （icon_pending）の path は除外し、抽出中の repaint（マウス移動・カーソル点滅等）による
     /// 同一 path 集合への重複 spawn を防ぐ（thread pileup 対策）。spawn した path は icon_pending
     /// へ積み、drain（Loaded/Missing）で remove する。wanted が空なら insert も spawn もしない。
@@ -597,7 +600,8 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         let do_scroll = self.last_scrolled_selected != Some(snapshot.selected);
         // 行の描画は `results_list_ui`（`AppHandle` 非依存の自由関数）へ出してある——
         // 行ピッチと窓高の対を kittest が実コードのまま測れるようにするため（同関数の doc）。
-        let clicked = results_list_ui(
+        let row_height = metrics.row_height as f32;
+        let list_out = results_list_ui(
             ui,
             &snapshot.rows,
             snapshot.selected,
@@ -606,9 +610,9 @@ impl snotra_egui_runtime::EguiView for ResultsView {
             &self.icon_textures,
             show_icons,
             theme,
-            metrics.row_height as f32,
-        )
-        .inner;
+            row_height,
+        );
+        let clicked = list_out.inner;
         if do_scroll {
             self.last_scrolled_selected = Some(snapshot.selected);
         }
@@ -631,7 +635,19 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         // icon worker を積まない・perf 最適化）の後継（#532 SU4 の系譜）。main の search_debounce は
         // ResultsView から参照できないため、live 値を snapshot 経由で運ぶ（Task 5 concern 2 の fix）。
         if snapshot.settled {
-            self.request_icons_for_results(&snapshot.rows, show_icons, &icon_ctx);
+            // **抽出だけを viewport 範囲へ絞る**（描画・テクスチャ保持は全件のまま）。
+            // `snapshot.rows` は可視行数ではなく `effective_result_limit`（既定 200）ゆえ、
+            // 絞る前は画面に出る 8 個のために 200 回シェルへ問い合わせていた
+            // （実測 105ms／settle。内訳と却下した代替は `layout::icon_prefetch_range` の doc）。
+            // 範囲は**このフレームで実際に描いた** ScrollArea の状態から導く——次フレームでは
+            // スクロール位置が動いており、そのときは新しい範囲で再度ここへ来る。
+            let range = crate::egui_shell::layout::icon_prefetch_range(
+                list_out.state.offset.y,
+                list_out.inner_rect.height(),
+                row_height,
+                snapshot.rows.len(),
+            );
+            self.request_icons_for_results(&snapshot.rows[range], show_icons, &icon_ctx);
         }
         // クリック逆流(決定 5): 共有スロットへ積み、main を起こして起動処理させる。
         // ToastAction と同じ遅延 dispatch 型——起動ロジックは main の一箇所に保つ。

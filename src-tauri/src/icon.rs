@@ -746,6 +746,159 @@ mod tests {
         );
     }
 
+    /// アイコンパイプラインの**区間別**コスト計測（#532 SU4 Probe 1 の続き）。
+    /// `icon_extract_cost_probe` が「抽出全区間」を 1 つの数字で見るのに対し、こちらは
+    /// **どの区間に伸びしろがあるか**を分けて測る。`cargo test -p snotra --release
+    /// icon_pipeline_cost_probe -- --ignored --nocapture` で実行。
+    ///
+    /// 測る区間は 4 つ:
+    /// - `shell+gdi`: `extract_icon`（`SHGetFileInfoW` → GDI → BGRA）
+    /// - `encode`: `bgra_to_png`（BGRA → RGBA → PNG）。**`icons.bin` 永続化に必要**
+    /// - `decode`: `png_to_color_image`（PNG → RGBA → `Color32`）。**miss 経路では
+    ///   `encode` の直後に走る往復であり、抽出時の RGBA を渡せば省ける**
+    /// - `batch(N) parallel`: 実際の `load_icon_pngs` と同じ rayon 並列で N 件を一気に抽出した
+    ///   実時間。N は既定で `effective_result_limit`（200）に合わせる
+    ///
+    /// 対象パスは既定でスタートメニューの `.lnk` を走査して集める（実インデックスの主成分）。
+    /// `SNOTRA_ICON_DIAG_PATHS` で明示指定もできる（`icon_extract_cost_probe` と同じ規約）。
+    #[test]
+    #[ignore = "計測プローブ（実機・release 実行専用）"]
+    fn icon_pipeline_cost_probe() {
+        use rayon::prelude::*;
+        use std::time::Instant;
+
+        fn pctl(mut v: Vec<u128>, p: f64) -> u128 {
+            if v.is_empty() {
+                return 0;
+            }
+            v.sort_unstable();
+            let idx = ((v.len() as f64 - 1.0) * p).round() as usize;
+            v[idx]
+        }
+
+        // 対象パス: 明示指定が無ければスタートメニュー配下の .lnk を再帰収集する
+        // （実インデックスの主成分であり、per-call が最も重い型でもある）。
+        let paths: Vec<String> = match std::env::var("SNOTRA_ICON_DIAG_PATHS") {
+            Ok(s) => s
+                .split(';')
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect(),
+            Err(_) => {
+                fn collect_lnk(dir: &std::path::Path, out: &mut Vec<String>, budget: usize) {
+                    if out.len() >= budget {
+                        return;
+                    }
+                    let Ok(rd) = std::fs::read_dir(dir) else {
+                        return;
+                    };
+                    for e in rd.flatten() {
+                        let p = e.path();
+                        if p.is_dir() {
+                            collect_lnk(&p, out, budget);
+                        } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("lnk")) {
+                            out.push(p.to_string_lossy().into_owned());
+                        }
+                        if out.len() >= budget {
+                            return;
+                        }
+                    }
+                }
+                let mut out = Vec::new();
+                for var in ["ProgramData", "APPDATA"] {
+                    if let Some(base) = std::env::var_os(var) {
+                        let start = std::path::Path::new(&base)
+                            .join(r"Microsoft\Windows\Start Menu\Programs");
+                        collect_lnk(&start, &mut out, 200);
+                    }
+                }
+                out
+            }
+        };
+        assert!(
+            !paths.is_empty(),
+            "対象パスが 0 件（スタートメニューが空なら SNOTRA_ICON_DIAG_PATHS で明示指定する）"
+        );
+        println!(
+            "対象 {} 件（既定は result_limit=200 に合わせる）",
+            paths.len()
+        );
+
+        // shell のアイコンキャッシュを温める（cold 初回は `icon_extract_cost_probe` の担当）。
+        paths.par_iter().for_each(|p| {
+            let _ = extract_png(p);
+        });
+
+        // 区間別 per-call。同じ 1 パスに対し shell+gdi → encode → decode を続けて測り、
+        // **同一のアイコンに対する 3 区間の比**が読めるようにする。
+        let (mut shell_us, mut enc_us, mut dec_us) = (Vec::new(), Vec::new(), Vec::new());
+        for p in &paths {
+            let t = Instant::now();
+            let Ok(icon) = extract_icon(p) else { continue };
+            shell_us.push(t.elapsed().as_micros());
+
+            let t = Instant::now();
+            let Some(png) = bgra_to_png(&icon) else {
+                continue;
+            };
+            enc_us.push(t.elapsed().as_micros());
+
+            let t = Instant::now();
+            let img = crate::egui_shell::png_to_color_image(&png);
+            dec_us.push(t.elapsed().as_micros());
+            assert!(
+                img.is_some(),
+                "自前エンコードの PNG は必ず decode できる: {p}"
+            );
+        }
+        for (label, v) in [
+            ("shell+gdi", &shell_us),
+            ("encode   ", &enc_us),
+            ("decode   ", &dec_us),
+        ] {
+            println!(
+                "[{label}] per-call  p50={}us p95={}us  合計={}us  (n={})",
+                pctl(v.clone(), 0.5),
+                pctl(v.clone(), 0.95),
+                v.iter().sum::<u128>(),
+                v.len(),
+            );
+        }
+
+        // 実バッチ: load_icon_pngs の Step 2 と同じ rayon 並列で全件抽出した実時間。
+        // **キャッシュミス時に 1 回の settle が払う実額**である。
+        let mut batch_us = Vec::new();
+        for _ in 0..5 {
+            let t = Instant::now();
+            let n = paths.par_iter().filter(|p| extract_png(p).is_ok()).count();
+            batch_us.push(t.elapsed().as_micros());
+            assert!(
+                n > 0,
+                "1 件も抽出できていない（対象パスの前提が崩れている）"
+            );
+        }
+        println!(
+            "[batch x{} parallel] warm 実時間 p50={}us p95={}us  (frame budget=16700us)",
+            paths.len(),
+            pctl(batch_us.clone(), 0.5),
+            pctl(batch_us.clone(), 0.95),
+        );
+
+        // キャッシュヒット経路の decode 単体: icons.bin ヒット時は shell+gdi/encode を払わず
+        // decode + load_texture だけになる。load_texture は egui ctx 依存でここでは測れないため、
+        // decode 合計を「1 settle ぶんのヒット経路 CPU」の下限として出す。
+        let pngs: Vec<Vec<u8>> = paths.iter().filter_map(|p| extract_png(p).ok()).collect();
+        let t = Instant::now();
+        for png in &pngs {
+            let _ = crate::egui_shell::png_to_color_image(png);
+        }
+        println!(
+            "[hit path decode x{}] 直列合計={}us（load_texture 別途）",
+            pngs.len(),
+            t.elapsed().as_micros(),
+        );
+    }
+
     #[test]
     fn wire_compat_hashmap_format_loads() {
         // 受け入れ条件7: 旧 v5 icons.bin（HashMap 書き込み）が IndexMap 化後も読める。

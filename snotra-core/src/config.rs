@@ -343,10 +343,7 @@ pub struct AppearanceConfig {
 
 impl Default for AppearanceConfig {
     /// 全フィールドが serde の既定関数を経由する（`window_width` の既定リテラルは
-    /// `default_window_width` が持つ唯一の定義点である・#795）。#824 で `window_width` にも
-    /// `#[serde(default = "…")]` を足した——`SPEC.md`「13.1 設定データ」が宣言する
-    /// 「欠損キーはデフォルト補完」に実装を追随させたもので、それまでは `[appearance]` に
-    /// このキーが無い TOML だけが parse 失敗して `.bak` 退避経路へ落ちていた。
+    /// `default_window_width` が持つ唯一の定義点である・#795、#824）。
     ///
     /// legacy な `Option` 3 本は **`None` でなければならない**——`Some(v)` にすると
     /// `migrate_legacy_count_params` が黙って `visible_rows` へ昇格させる。
@@ -1359,7 +1356,6 @@ show_icons = false
 [hotkey]
 modifier = "Ctrl"
 [appearance]
-window_width = 600
 [paths]
 "#;
         let config: Config = toml::from_str(toml).expect("parse");
@@ -1374,7 +1370,6 @@ window_width = 600
 modifier = "alt"
 key = "q"
 [appearance]
-window_width = 600
 [paths]
 [visual.custom_theme]
 background_color = '#123456'
@@ -1402,7 +1397,6 @@ background_color = '#123456'
 modifier = "alt"
 key = "q"
 [appearance]
-window_width = 600
 [paths]
 additional = ['C:\Tools']
 "#;
@@ -3215,10 +3209,6 @@ extensions = ['.exe']
         // 欠落セクションは対応する `Default` へ落ちる
         assert_eq!(config.appearance, AppearanceConfig::default());
         assert_eq!(config.paths, PathsConfig::default());
-        assert_eq!(
-            config.appearance.effective_visible_rows(),
-            Config::default().appearance.effective_visible_rows()
-        );
     }
 
     // -- backup_invalid: parse 失敗時の .bak 退避（issue #338） --

@@ -40,13 +40,9 @@ $profileDir = Join-Path $PSScriptRoot '..\target\smoke-startup\profile'
 # すべてが first-run になり、**いま CI が測っているもの（first-run でない起動）とは別のものを
 # 測り始める**。カバレッジの変更は本 issue の目的ではない。
 #
-# **索引 0 件の最小 TOML**。config.toml を置くこと自体が要る——ファイルが無いと first-run と
-# 判定され、Config::default() の探索パスシード（default_scan_paths）が実マシンのスタート
-# メニュー等（存在するものだけ）を索引しうるため、索引 0 件でなくなる。#824 以降は空ヘッダでも
-# parse は通り（Config の全セクションと各セクションのキーが #[serde(default)] を持つ。配列要素の
-# 必須フィールドは対象外）、parse 失敗による破損復旧経路（stderr 診断 + config.toml.bak 退避 +
-# 復旧バルーン）はもう踏まない。骨格を明示的に書くのは seed の意図を読めるようにするためである。
-# [general] は省略する——既定値がそのまま望ましい。
+# **索引 0 件の最小 TOML**。config.toml を置く共通の理由は New-SnotraVerificationProfile の
+# 上のコメントが正本で、startup 固有の帰結は「first-run になると探索パスのシードが撒かれ、
+# 索引 0 件でなくなる」ことである。[general] は省略する——既定値がそのまま望ましい。
 # **掃除と共通セクションの骨格は共有モジュールが所有する**（#843）。startup 固有の意味論は
 # PathEntries を渡さない「索引 0 件」と、ループ前に 1 回だけ作って 5 起動で共有することである。
 $profile = New-SnotraVerificationProfile -ProfileDir $profileDir

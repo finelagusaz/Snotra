@@ -392,6 +392,18 @@ fn bgra_to_png(data: &IconData) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
+    /// 計測列のパーセンタイル（`p` は 0.0..=1.0）。空なら 0。
+    /// **両プローブが共有する**——測る対象（全区間 vs 区間別）は別だが、この算法は
+    /// 測定対象に依存しない。
+    fn pctl(mut v: Vec<u128>, p: f64) -> u128 {
+        if v.is_empty() {
+            return 0;
+        }
+        v.sort_unstable();
+        let idx = ((v.len() as f64 - 1.0) * p).round() as usize;
+        v[idx]
+    }
+
     /// #692 の再現ハーネス（`#[ignore]`・環境依存ゆえ CI では走らせない）。
     ///
     /// シェルのアイコンキャッシュは**プロセスごとに冷えており**、初回要求で
@@ -680,15 +692,6 @@ mod tests {
         let doc = r"C:\Windows\System32\drivers\etc\hosts";
         let lnk = r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\AdGuard.lnk";
 
-        fn pctl(mut v: Vec<u128>, p: f64) -> u128 {
-            if v.is_empty() {
-                return 0;
-            }
-            v.sort_unstable();
-            let idx = ((v.len() as f64 - 1.0) * p).round() as usize;
-            v[idx]
-        }
-
         // 型別 warm 計測: 各パスを 1 回 prime してから N 回測る（shell キャッシュ warm）。
         let measure = |label: &str, paths: &[&str]| {
             for p in paths {
@@ -743,6 +746,137 @@ mod tests {
             pctl(batch_us.clone(), 0.5),
             pctl(batch_us.clone(), 0.95),
             pctl(batch_us.clone(), 1.0),
+        );
+    }
+
+    /// アイコンパイプラインの**区間別**コスト計測（#532 SU4 Probe 1 の続き）。
+    /// `icon_extract_cost_probe` が「抽出全区間」を 1 つの数字で見るのに対し、こちらは
+    /// **どの区間に伸びしろがあるか**を分けて測る。`cargo test -p snotra --release
+    /// icon_pipeline_cost_probe -- --ignored --nocapture` で実行。
+    ///
+    /// 測る区間は 4 つ:
+    /// - `shell+gdi`: `extract_icon`（`SHGetFileInfoW` → GDI → BGRA）
+    /// - `encode`: `bgra_to_png`（BGRA → RGBA → PNG）。**`icons.bin` 永続化に必要**
+    /// - `decode`: `png_to_color_image`（PNG → RGBA → `Color32`）。**miss 経路では
+    ///   `encode` の直後に走る往復であり、抽出時の RGBA を渡せば省ける**
+    /// - `batch(N) parallel`: 実際の `load_icon_pngs` と同じ rayon 並列で N 件を一気に抽出した
+    ///   実時間。N は既定で `effective_result_limit`（200）に合わせる
+    ///
+    /// 対象パスは既定で**本番と同じ母集団**（`Config::default_scan_paths()` = common Start Menu
+    /// ＋ Desktop の `.lnk`）から先頭 200 件を採る。**自前でディレクトリを歩いてはならない**
+    /// ——`default_scan_paths` は User Start Menu を意図的に除外しており（同関数の doc）、
+    /// 手書きの走査はインデックスに入らないパスを測ってしまう。同じ組み合わせで本番相当の
+    /// 母集団を作る先例は `snotra_core::search::tests::performance` の
+    /// `measure_lower_name_footprint_report`。`SNOTRA_ICON_DIAG_PATHS` で明示指定もできる
+    /// （`icon_extract_cost_probe` と同じ規約）。
+    #[test]
+    #[ignore = "計測プローブ（実機・release 実行専用）"]
+    fn icon_pipeline_cost_probe() {
+        use rayon::prelude::*;
+        use std::time::Instant;
+
+        let paths: Vec<String> = match std::env::var("SNOTRA_ICON_DIAG_PATHS") {
+            Ok(s) => s
+                .split(';')
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect(),
+            Err(_) => snotra_core::indexer::scan_all(
+                &snotra_core::config::Config::default_scan_paths(),
+                false,
+            )
+            .into_iter()
+            .map(|e| e.target_path)
+            .take(200)
+            .collect(),
+        };
+        assert!(
+            !paths.is_empty(),
+            "対象パスが 0 件（スタートメニューが空なら SNOTRA_ICON_DIAG_PATHS で明示指定する）"
+        );
+        println!(
+            "対象 {} 件（既定は result_limit=200 に合わせる）",
+            paths.len()
+        );
+
+        // 温めついでに PNG を回収する（**warm-up と hit 経路の材料を兼ねる**——分けると
+        // 最も重い shell+gdi を全件ぶん 1 周余計に払う）。cold 初回は `icon_extract_cost_probe`
+        // の担当ゆえ、ここで温まっていることが後続の計測の前提である。
+        let pngs: Vec<Vec<u8>> = paths
+            .par_iter()
+            .filter_map(|p| extract_png(p).ok())
+            .collect();
+
+        // 区間別 per-call。**3 区間を 1 本のタプル列に持つ**——別々の Vec に push すると
+        // 途中で失敗した path が片方にだけ残り、「同一のアイコンに対する 3 区間の比」という
+        // この計測の前提が黙って崩れる。3 区間すべて成功した path だけを積む。
+        let mut per_call: Vec<(u128, u128, u128)> = Vec::new();
+        for p in &paths {
+            let t = Instant::now();
+            let Ok(icon) = extract_icon(p) else { continue };
+            let shell = t.elapsed().as_micros();
+
+            let t = Instant::now();
+            let Some(png) = bgra_to_png(&icon) else {
+                continue;
+            };
+            let encode = t.elapsed().as_micros();
+
+            let t = Instant::now();
+            let img = crate::egui_shell::png_to_color_image(&png);
+            let decode = t.elapsed().as_micros();
+            assert!(
+                img.is_some(),
+                "自前エンコードの PNG は必ず decode できる: {p}"
+            );
+            per_call.push((shell, encode, decode));
+        }
+        for (label, project) in [
+            ("shell+gdi", (|t: &(u128, u128, u128)| t.0) as fn(_) -> _),
+            ("encode", |t: &(u128, u128, u128)| t.1),
+            ("decode", |t: &(u128, u128, u128)| t.2),
+        ] {
+            let v: Vec<u128> = per_call.iter().map(project).collect();
+            println!(
+                "[{label:<9}] per-call  p50={}us p95={}us  合計={}us  (n={})",
+                pctl(v.clone(), 0.5),
+                pctl(v.clone(), 0.95),
+                v.iter().sum::<u128>(),
+                v.len(),
+            );
+        }
+
+        // 実バッチ: load_icon_pngs の Step 2 と同じ rayon 並列で全件抽出した実時間。
+        // **キャッシュミス時に 1 回の settle が払う実額**である。
+        let mut batch_us = Vec::new();
+        for _ in 0..5 {
+            let t = Instant::now();
+            let n = paths.par_iter().filter(|p| extract_png(p).is_ok()).count();
+            batch_us.push(t.elapsed().as_micros());
+            assert!(
+                n > 0,
+                "1 件も抽出できていない（対象パスの前提が崩れている）"
+            );
+        }
+        println!(
+            "[batch x{} parallel] warm 実時間 p50={}us p95={}us  (frame budget=16700us)",
+            paths.len(),
+            pctl(batch_us.clone(), 0.5),
+            pctl(batch_us.clone(), 0.95),
+        );
+
+        // キャッシュヒット経路の decode 単体: icons.bin ヒット時は shell+gdi/encode を払わず
+        // decode + load_texture だけになる。load_texture は egui ctx 依存でここでは測れないため、
+        // decode 合計を「1 settle ぶんのヒット経路 CPU」の下限として出す。
+        // 材料は warm-up で回収済みの `pngs` を使い回す（再抽出しない）。
+        let t = Instant::now();
+        for png in &pngs {
+            let _ = crate::egui_shell::png_to_color_image(png);
+        }
+        println!(
+            "[hit path decode x{}] 直列合計={}us（load_texture 別途）",
+            pngs.len(),
+            t.elapsed().as_micros(),
         );
     }
 

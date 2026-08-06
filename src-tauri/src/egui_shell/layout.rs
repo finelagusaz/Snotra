@@ -148,6 +148,68 @@ pub fn results_window_height(max_results: u32, row_height: f64) -> f64 {
     f64::from(max_results) * drawn_row
 }
 
+/// `icon_prefetch_range` が可視ぶんの上下へ何画面ぶん先読みするか。
+///
+/// **この係数は config キーにしない。** `Config::icon_cache_cap` が派生値なのは
+/// 「上限 ≥ ワーキングセット」という**不等式を検証なしで構造的に成立させる**ためだが
+/// （同メソッドの doc）、先読みマージンに保つべき不等式は無い——「大きくすれば体感が良く
+/// 費用が増える」だけのレイテンシ／費用のチューニング定数である。設定可能にすると
+/// 「マージンだけ大きくして 200 件へ戻す」設定を作れてしまい、絞った意味が無くなる。
+/// 名前付き定数にする作法は `snotra_core::config` の `ICON_CACHE_RETENTION_FACTOR` と同型。
+const ICON_PREFETCH_SCREENS: usize = 1;
+
+/// アイコン抽出を積むべき行の範囲——viewport に見えている行に、上下
+/// `ICON_PREFETCH_SCREENS` 画面ぶんの先読みマージンを足したもの。
+/// `total_rows` でクランプ済みの半開区間を返す。
+///
+/// **これは「描く行」ではない。** 行の描画は `results_list_ui` が `snapshot.rows` 全件に
+/// 対して行い（仮想化しない——`show_rows` にすると描画されない行の `scroll_to_me` が
+/// 発火せず、世代交代フレームで選択行へ戻れなくなる）、テクスチャの保持も全件のままである
+/// （SU4 決定 A のメモリ境界は 16x16 テクスチャ数百 KB の話で、そこは支配項ではない）。
+/// **絞るのは抽出だけである。**
+///
+/// **理由は測ってある**（2026-08-06・release・`icon::tests::icon_pipeline_cost_probe`・
+/// 既定 scan paths の 133 件）: `SHGetFileInfoW` → GDI の区間が 1 件あたり p50 **3048us** を
+/// 占め、PNG encode（114us）・decode（12us）は合計しても 0.5% に届かない。133 件を rayon 並列で
+/// 一括抽出した実時間は **87.8ms**。`snapshot.rows` は `visible_rows`（既定 8）ではなく
+/// `effective_result_limit`（既定 **200**・設定次第で 1000）ゆえ、絞る前は 1 回の settle が
+/// この規模を丸ごと払っていた——画面に出る 8 個のために全件シェルへ問い合わせていたことになる。
+/// **支配項は呼び出し回数であり、呼び出し 1 回の中身ではない。**
+///
+pub fn icon_prefetch_range(
+    offset_y: f32,
+    viewport_h: f32,
+    row_height: f32,
+    total_rows: usize,
+) -> std::ops::Range<usize> {
+    if !row_height.is_finite() {
+        return 0..total_rows;
+    }
+    // **ピッチは egui が実際に積む値へ丸めてから使う**（正本は `results_window_height` の
+    // `drawn_row`）——素の `row_height` で割ると、行の積み方と index の写像が僅かにずれる。
+    // 丸めた結果が 0 以下になる病的な入力もここで弾く（除算が壊れる）。
+    // なお `results_list_ui` は `item_spacing.y = 0.0` を敷いてピッチ = 行高を構造的に真に
+    // しているが、この関数は呼ばれ方に依存しない。
+    let pitch = row_height.round_ui();
+    if pitch <= 0.0 {
+        return 0..total_rows;
+    }
+    // 非有限・異常値は `max(0.0)`（NaN を 0 にする）と飽和 cast、そして `min(total_rows)` の
+    // 3 段で吸収する——`is_finite` の分岐を別に置く必要はない。
+    // 端数の行も見えている（+1）。`viewport_h = 0` でも最低 1 行は積む。
+    let rows_in_view = ((viewport_h.max(0.0) / pitch).ceil() as usize)
+        .saturating_add(1)
+        .min(total_rows);
+    let first = ((offset_y.max(0.0) / pitch).floor() as usize).min(total_rows);
+    let margin = rows_in_view.saturating_mul(ICON_PREFETCH_SCREENS);
+    let start = first.saturating_sub(margin);
+    let end = first
+        .saturating_add(rows_in_view)
+        .saturating_add(margin)
+        .min(total_rows);
+    start..end
+}
+
 /// results 窓の**物理**高さ（案 3）。論理高を**切り上げて**物理 px にする。
 ///
 /// **`round` ではなく `ceil` である。** 窓の物理高は整数 px、論理高は連続量であり、
@@ -474,6 +536,50 @@ pub fn fit_middle_by_measure(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 抽出範囲が**結果全件ではなく viewport 近傍に収まる**こと——この検査が落ちるときは
+    /// 「画面に出る 8 個のために 200 回シェルへ問い合わせる」状態へ戻っている
+    /// （実測 105ms／settle・`icon_prefetch_range` の doc）。
+    #[test]
+    fn icon_prefetch_range_is_bounded_by_viewport_not_row_count() {
+        // 既定相当: 行高 34、可視 8 行ぶんの viewport（272px）、結果 200 件、先頭。
+        let r = icon_prefetch_range(0.0, 272.0, 34.0, 200);
+        assert_eq!(r.start, 0, "先頭ではマージンで下へ出ない");
+        assert!(
+            r.len() <= 20,
+            "可視 8 行＋上下マージンに収まる（実際 {} 件）",
+            r.len()
+        );
+        assert!(r.len() >= 8, "可視行は必ず含む（実際 {} 件）", r.len());
+    }
+
+    #[test]
+    fn icon_prefetch_range_follows_scroll_and_clamps_to_total() {
+        // 中ほどまでスクロール（100 行目付近）: 範囲もそこへ移り、先頭は含まない。
+        let mid = icon_prefetch_range(34.0 * 100.0, 272.0, 34.0, 200);
+        assert!(mid.start > 0, "スクロール後は先頭を積まない");
+        assert!(mid.contains(&100), "可視行 100 を含む");
+        // 末尾: total で切り、範囲外へはみ出さない（スライス添字に使うため必須）。
+        let end = icon_prefetch_range(34.0 * 195.0, 272.0, 34.0, 200);
+        assert!(end.end <= 200, "total を超えない");
+        assert!(end.contains(&195), "可視行 195 を含む");
+    }
+
+    #[test]
+    fn icon_prefetch_range_degenerate_inputs_stay_valid() {
+        // 0 件・非有限・行高 0 のいずれでも空か全件を返し、`start <= end` を破らない
+        // （スライス添字に使うため、ここが崩れると release では panic=abort になる）。
+        for r in [
+            icon_prefetch_range(0.0, 272.0, 34.0, 0),
+            icon_prefetch_range(f32::NAN, 272.0, 34.0, 50),
+            icon_prefetch_range(0.0, f32::INFINITY, 34.0, 50),
+            icon_prefetch_range(0.0, 272.0, 0.0, 50),
+            icon_prefetch_range(-100.0, 272.0, -34.0, 50),
+        ] {
+            assert!(r.start <= r.end, "start <= end");
+            assert!(r.end <= 50, "total を超えない");
+        }
+    }
 
     /// #672: **文字サイズが font_size に連動する**こと自体を固定する（SPEC §11 の規範
     /// 「文字サイズに固定値を書かない」）。固定値へ戻す変更はここで落ちる。

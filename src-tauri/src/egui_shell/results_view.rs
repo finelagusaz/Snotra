@@ -162,7 +162,10 @@ impl ResultsView {
         }
     }
 
-    /// 現結果の未取得アイコンを worker に積む（settled 相当・描画前に呼ぶ）。in-flight
+    /// 渡された行の未取得アイコンを worker に積む（settled 相当）。**`rows` は結果全件では
+    /// なく `layout::icon_prefetch_range` で絞った viewport 範囲である**——呼び出し側が
+    /// そのフレームで実際に描いた `ScrollArea` の状態から導く（絞る理由と実測は同関数の doc）。
+    /// ゆえに**描画より後に呼ぶ**（範囲がスクロール状態に依存するため）。in-flight
     /// （icon_pending）の path は除外し、抽出中の repaint（マウス移動・カーソル点滅等）による
     /// 同一 path 集合への重複 spawn を防ぐ（thread pileup 対策）。spawn した path は icon_pending
     /// へ積み、drain（Loaded/Missing）で remove する。wanted が空なら insert も spawn もしない。
@@ -300,15 +303,11 @@ pub(crate) fn draw_result_row(
         egui::vec2(ui.available_width(), row_h),
         egui::Sense::click(),
     );
-    let hover_id = response.id.with("hover");
-    let hover_target = row_hover_target(response.hovered(), result.is_error);
-    let hover_progress = if reset_hover_animation {
-        ui.ctx().animate_bool_with_time(hover_id, hover_target, 0.0)
-    } else {
-        ui.ctx().animate_bool_responsive(hover_id, hover_target)
-    };
+    // **スクロール要求は可視性より前に出す。** 画面外の選択行を viewport へ引き戻すことが
+    // この機構の目的そのものであり、下の早期 return より後ろへ落とすと、選択行が画面外の
+    // ときに `scroll_to_me` が発火せず世代交代で選択行へ戻れなくなる（`show_rows` による
+    // 仮想化を却下したのと同じ理由が、同じ形で戻ってくる・`layout::icon_prefetch_range` の doc）。
     if selected {
-        ui.painter().rect_filled(rect, 4.0, theme.selection);
         match scroll {
             RowScroll::None => {}
             RowScroll::Animated => {
@@ -327,6 +326,31 @@ pub(crate) fn draw_result_row(
                 response.scroll_to_me_animation(None, egui::style::ScrollAnimation::none());
             }
         }
+    }
+    // **viewport の外に出た行は、ここから下を一切やらない。** 行の確保（＝窓高・
+    // スクロールバー・ピッチ）とスクロール要求は上で済んでおり、以降は「見えるものを描く」
+    // 仕事だけである。`snapshot.rows` は可視行数ではなく `effective_result_limit`
+    // （既定 200・設定次第で 1000）ゆえ、間引かないと画面に 8 行しか出ないフレームでも
+    // 全行ぶんのアイコン描画とテキストレイアウトを払う。
+    //
+    // 実測（release・`kittest_row_draw_cost_probe`・可視 8 行の実寸窓）: 画面外 1 行あたり
+    // 約 0.8us で、1 フレームは rows=8 で 13us・200 で 156us・1000 で 807us だった。
+    // 同じ idiom の先例は `snotra-settings/src/tabs/visual.rs` の `is_rect_visible`。
+    if !ui.is_rect_visible(rect) {
+        return response.clicked();
+    }
+    // hover のアニメーションは**間引きの下**で足りる。画面外の行は `hovered()` が偽ゆえ
+    // 進捗は 0 へ向かうだけであり、スクロールで入ってきた行が 0 から立ち上がるのは
+    // 望ましい挙動である（画面外で進んだ進捗を持ち込まない）。
+    let hover_id = response.id.with("hover");
+    let hover_target = row_hover_target(response.hovered(), result.is_error);
+    let hover_progress = if reset_hover_animation {
+        ui.ctx().animate_bool_with_time(hover_id, hover_target, 0.0)
+    } else {
+        ui.ctx().animate_bool_responsive(hover_id, hover_target)
+    };
+    if selected {
+        ui.painter().rect_filled(rect, 4.0, theme.selection);
     } else if hover_progress > 0.0 {
         ui.painter()
             .rect_filled(rect, 4.0, theme.hover.gamma_multiply(hover_progress));
@@ -597,7 +621,8 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         let do_scroll = self.last_scrolled_selected != Some(snapshot.selected);
         // 行の描画は `results_list_ui`（`AppHandle` 非依存の自由関数）へ出してある——
         // 行ピッチと窓高の対を kittest が実コードのまま測れるようにするため（同関数の doc）。
-        let clicked = results_list_ui(
+        let row_height = metrics.row_height as f32;
+        let list_out = results_list_ui(
             ui,
             &snapshot.rows,
             snapshot.selected,
@@ -606,9 +631,9 @@ impl snotra_egui_runtime::EguiView for ResultsView {
             &self.icon_textures,
             show_icons,
             theme,
-            metrics.row_height as f32,
-        )
-        .inner;
+            row_height,
+        );
+        let clicked = list_out.inner;
         if do_scroll {
             self.last_scrolled_selected = Some(snapshot.selected);
         }
@@ -620,18 +645,50 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         // placeholder → 追いつく体感になりうるが、クラッシュ・不整合ではなく hidden 中の
         // update 停止（SU5 要石）と整合する自然な帰結として受容する（plan-review rev-egui
         // 指摘・受容）。
-        let visible: HashSet<String> = snapshot.rows.iter().map(|r| r.path.clone()).collect();
-        retain_visible(&mut self.icon_textures, &visible);
-        self.icon_attempts.retain(|p, _| visible.contains(p));
-        // **pending も可視集合で刈る**（#692）。worker が 1 通も送らずに終わる経路
-        // （managed state 不在で早期 return）があり、刈らないと path が永久に in-flight
-        // 扱いのまま `needs_extraction` を素通りできず、その行のアイコンは戻らない。
-        self.icon_pending.retain(|p| visible.contains(p));
+        //
+        // **世代交代フレームだけで足りる**（毎フレームやらない）。世代内で 3 つの map/set に
+        // 入る path は先読み範囲 ⊆ `snapshot.rows` ゆえ必ず `visible` に含まれ、retain は
+        // 構造的に no-op である。刈る必要が生じるのは rows が入れ替わった瞬間だけで、それは
+        // `rows_generation` が必ず進む——`search_state.rs` の `rows_generation` の doc が
+        // 「`self.results` へ代入・`clear` するメソッドは、必ずここを進める」と定めており、
+        // 代入・`clear` の 6 箇所すべてで成立している（逆向きに数え上げて確認済み）。
+        // 毎フレームやっていた頃は、可視集合の構築だけで結果件数ぶんの `String` 確保を
+        // 払っていた（`result_limit` は既定 200・設定次第で 1000）。
+        if generation_changed {
+            let visible: HashSet<String> = snapshot.rows.iter().map(|r| r.path.clone()).collect();
+            retain_visible(&mut self.icon_textures, &visible);
+            self.icon_attempts.retain(|p, _| visible.contains(p));
+            // **pending も可視集合で刈る**（#692）。worker が 1 通も送らずに終わる経路
+            // （managed state 不在で早期 return）があり、刈らないと path が永久に in-flight
+            // 扱いのまま `needs_extraction` を素通りできず、その行のアイコンは戻らない。
+            self.icon_pending.retain(|p| visible.contains(p));
+        }
         // snapshot.settled は旧 view.rs の `!self.search_debounce.is_armed()` ゲート（連打中は
         // icon worker を積まない・perf 最適化）の後継（#532 SU4 の系譜）。main の search_debounce は
         // ResultsView から参照できないため、live 値を snapshot 経由で運ぶ（Task 5 concern 2 の fix）。
         if snapshot.settled {
-            self.request_icons_for_results(&snapshot.rows, show_icons, &icon_ctx);
+            // **抽出だけを viewport 範囲へ絞る**（描画・テクスチャ保持は全件のまま）。
+            // `snapshot.rows` は可視行数ではなく `effective_result_limit`（既定 200）ゆえ、
+            // 絞る前は画面に出る 8 個のために 200 回シェルへ問い合わせていた
+            // （実測 105ms／settle。内訳と却下した代替は `layout::icon_prefetch_range` の doc）。
+            //
+            // **範囲は「この描画の結果として次に見えることになる行」である**——`state.offset` は
+            // `ScrollArea::end()` が `scroll_to_me` の行き先を適用した**後**の値で（egui 0.35
+            // `scroll_area.rs` の `show_viewport_dyn` は content closure の後に `end()` を呼び、
+            // その戻り値を `ScrollAreaOutput.state` に載せる）、`inner_rect` は `begin()` が
+            // 決めた矩形である。両者は厳密には別の時点の値だが、**この混成は利点である**：
+            // 世代交代フレーム（`RowScroll::Instant`）で「飛び先の行」を同じフレームのうちに
+            // 先読みでき、追加の repaint を待たない。
+            //
+            // **`ScrollArea::show_viewport` へ移してはならない**——あれが渡す `Rect` は
+            // `begin()` 由来ゆえ `scroll_to_me` 適用前で、飛び先ではなく元の位置を先読みする。
+            let range = crate::egui_shell::layout::icon_prefetch_range(
+                list_out.state.offset.y,
+                list_out.inner_rect.height(),
+                row_height,
+                snapshot.rows.len(),
+            );
+            self.request_icons_for_results(&snapshot.rows[range], show_icons, &icon_ctx);
         }
         // クリック逆流(決定 5): 共有スロットへ積み、main を起こして起動処理させる。
         // ToastAction と同じ遅延 dispatch 型——起動ロジックは main の一箇所に保つ。
@@ -711,6 +768,50 @@ mod tests {
             );
         harness.run();
         *harness.state()
+    }
+
+    /// 行描画の **per-row コスト**計測（`/simplify` の Efficiency 指摘の検証）。
+    /// `cargo test -p snotra --release kittest_row_draw_cost_probe -- --ignored --nocapture`
+    ///
+    /// 測りたいのは「画面外の行に毎フレーム払っているコスト」なので、**窓は実寸**
+    /// （可視 8 行相当）にする——`measure_content_height` の 2000px 窓では clip rect が
+    /// 全行を含み、画面外という状態自体が作れない。`step()`（1 フレーム固定）で測るのは
+    /// `run()` が安定するまでの可変フレーム数を割り算に持ち込まないため。
+    #[test]
+    #[ignore = "計測プローブ（release 実行専用）"]
+    fn kittest_row_draw_cost_probe() {
+        use std::time::Instant;
+
+        let row_height = 34.0_f32;
+        let measure = |n: usize| -> u128 {
+            let icons: HashMap<String, egui::TextureHandle> = HashMap::new();
+            let theme = theme_for_test(12.0);
+            let rows = rows_for_test(n);
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(600.0, row_height * 8.0))
+                .build_ui(move |ui| {
+                    let _ = results_list_ui(
+                        ui, &rows, 0, false, false, &icons, true, &theme, row_height,
+                    );
+                });
+            // galley キャッシュとフォントアトラスを温める（cold 初回を混ぜない）。
+            for _ in 0..5 {
+                harness.step();
+            }
+            const N: u32 = 50;
+            let t = Instant::now();
+            for _ in 0..N {
+                harness.step();
+            }
+            t.elapsed().as_micros() / u128::from(N)
+        };
+
+        for n in [8_usize, 200, 1000] {
+            println!(
+                "[rows={n:>4}] 1 フレーム {}us（frame budget=16700us）",
+                measure(n)
+            );
+        }
     }
 
     /// **行ピッチが `row_height`（を egui の UI 丸めに通した値）ちょうどである**

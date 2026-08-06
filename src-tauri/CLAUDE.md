@@ -35,7 +35,7 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
   - `launcher_controller.rs` — 検索セッション層（show を跨ぐ状態・結果・選択・起動・履歴・期限）の所有者（責務は `//!`）
   - `lifecycle.rs` は純粋核（`plan_hotkey` / `blur_should_hide`）
   - `search_state.rs` は検索状態の純粋核（`SearchState` / `interpret` / `QueryIntent`）
-  - `layout.rs` は高さ算出 + results 可視性の導出 + 幾何 + debounce + テキストの中間省略の純粋核（`Metrics` / `results_window_height` / `present_results` / `results_top_y` / `size_delta_exceeds` / `Debouncer` / `truncate_middle_chars` / `fit_middle_by_measure`。旧 `compute_window_height` / `HeightParams` は #646 PR2 で撤去済み・旧 `results_should_show` は #752 で `present_results` へ吸収・旧 `clamp_results_height` / `available_below` は #835 で撤去〔`ADR-results-fixed-height`〕）
+  - `layout.rs` は高さ算出 + results 可視性の導出 + 幾何 + debounce + テキストの中間省略の純粋核（`Metrics` / `results_window_height` / `present_results` / `results_top_y` / `size_delta_exceeds` / `icon_prefetch_range` / `Debouncer` / `truncate_middle_chars` / `fit_middle_by_measure`。旧 `compute_window_height` / `HeightParams` は #646 PR2 で撤去済み・旧 `results_should_show` は #752 で `present_results` へ吸収・旧 `clamp_results_height` / `available_below` は #835 で撤去〔`ADR-results-fixed-height`〕）
   - `icon_textures.rs` — アイコン・テクスチャ層の純粋核（責務は `//!`）
   - `notify.rs` — 通知 primitive の純粋核（責務は `//!`）
   - `strings.rs` — UI 文言テーブル（責務は `//!`）

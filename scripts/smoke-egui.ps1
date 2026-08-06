@@ -100,11 +100,13 @@ New-Item -ItemType Directory -Force -Path $scanDir | Out-Null
 $dummy = Join-Path $scanDir "zsnotrasmoke.exe"
 if (-not (Test-Path $dummy)) { New-Item -ItemType File -Path $dummy | Out-Null }
 $scanDirToml = $scanDir -replace '\\', '/'
-# 最小の有効 TOML。必須セクションの骨格は共有モジュールが持ち、results 固有の scan だけを
+# 最小の有効 TOML。共通セクションの骨格は共有モジュールが持ち、results 固有の scan だけを
 # PathEntries として渡す（#843）。3 本の seed が同型ではないことは維持する。
-# [hotkey]/[appearance]/[paths] は #[serde(default)] 無しの必須セクションで、
-# 空 TOML は parse 失敗し「破損復旧」経路（stderr 診断 + config.toml.bak 退避 + 復旧バルーン）を
-# 毎回踏んでしまう（PR #659 レビューで検出）。値は config.rs の既定と同一
+# config.toml を置くこと自体が要る——ファイルが無いと first-run になり、Config::default() の
+# 探索パスシード（存在する既定パスだけ）で実マシンを索引しうる。#824 で [hotkey]/[appearance]/[paths] にも
+# #[serde(default)] が付いたため、空 TOML が「破損復旧」経路（stderr 診断 + config.toml.bak
+# 退避 + 復旧バルーン）を踏むことはもう無い（PR #659 レビューが検出した当時の理由）。
+# 骨格を明示するのは seed の意図を読めるようにするため。値は config.rs の既定と同一
 # （hotkey Alt+Q = 本スクリプト既定の -HotkeyVks 18,81 と一致）。
 # scan は上の 1 ファイルだけを対象にする（索引は 1 件・ビルドは即座に終わる）。
 # **`scan = []` と `[[paths.scan]]` を併記してはならない**——同一キーの再定義で TOML の

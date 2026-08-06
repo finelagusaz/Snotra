@@ -12,18 +12,28 @@ use std::fmt;
 /// 文字列形式は後方互換のため維持し、利用前に必ず [`Self::parse`] で意味型へ変換する。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HotkeyConfig {
+    #[serde(default = "default_hotkey_modifier")]
     pub modifier: String,
+    #[serde(default = "default_hotkey_key")]
     pub key: String,
 }
 
+fn default_hotkey_modifier() -> String {
+    "Alt".to_string()
+}
+
+fn default_hotkey_key() -> String {
+    "Q".to_string()
+}
+
 impl Default for HotkeyConfig {
-    /// **既定ホットキーのリテラルはここ 1 か所だけである**（#795）。`modifier` / `key` は必須
-    /// フィールド（serde の既定関数を持たない）ため、`Config::default()` とロード時の
-    /// 不正ホットキー補正はどちらもこの実装を経由して読む。
+    /// **既定ホットキーのリテラルは `default_hotkey_modifier` / `default_hotkey_key` の
+    /// 各 1 か所だけである**（#795）。`Config::default()`・ロード時の不正ホットキー補正・
+    /// serde のキー欠落補完（#824）はすべてその 2 関数を読む。
     fn default() -> Self {
         Self {
-            modifier: "Alt".to_string(),
-            key: "Q".to_string(),
+            modifier: default_hotkey_modifier(),
+            key: default_hotkey_key(),
         }
     }
 }

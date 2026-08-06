@@ -98,12 +98,15 @@ pub enum InstantAction {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
+    #[serde(default)]
     pub hotkey: HotkeyConfig,
     #[serde(default)]
     pub general: GeneralConfig,
+    #[serde(default)]
     pub appearance: AppearanceConfig,
     #[serde(default)]
     pub visual: VisualConfig,
+    #[serde(default)]
     pub paths: PathsConfig,
     #[serde(default)]
     pub search: SearchConfig,
@@ -188,6 +191,10 @@ fn default_visible_rows() -> usize {
 
 fn default_show_icons() -> bool {
     true
+}
+
+fn default_window_width() -> u32 {
+    600
 }
 
 fn default_search_mode() -> SearchModeConfig {
@@ -316,6 +323,7 @@ pub struct AppearanceConfig {
     /// 移行時に明示値を上書きしない。
     #[serde(default)]
     pub visible_rows: Option<usize>,
+    #[serde(default = "default_window_width")]
     pub window_width: u32,
     #[serde(default = "default_show_icons")]
     pub show_icons: bool,
@@ -334,16 +342,18 @@ pub struct AppearanceConfig {
 }
 
 impl Default for AppearanceConfig {
-    /// **`window_width` の既定リテラルはここ 1 か所だけである**（#795）。同フィールドは serde の
-    /// 既定関数を持たない（`[appearance]` に無い TOML は parse 失敗 →`.bak` 退避経路へ落ちる。
-    /// `#[serde(default)]` を足すと受理する入力集合が変わるため、意図的に足していない）。
+    /// 全フィールドが serde の既定関数を経由する（`window_width` の既定リテラルは
+    /// `default_window_width` が持つ唯一の定義点である・#795）。#824 で `window_width` にも
+    /// `#[serde(default = "…")]` を足した——`SPEC.md`「13.1 設定データ」が宣言する
+    /// 「欠損キーはデフォルト補完」に実装を追随させたもので、それまでは `[appearance]` に
+    /// このキーが無い TOML だけが parse 失敗して `.bak` 退避経路へ落ちていた。
     ///
     /// legacy な `Option` 3 本は **`None` でなければならない**——`Some(v)` にすると
     /// `migrate_legacy_count_params` が黙って `visible_rows` へ昇格させる。
     fn default() -> Self {
         Self {
             visible_rows: None,
-            window_width: 600,
+            window_width: default_window_width(),
             show_icons: default_show_icons(),
             max_results: None,
             top_n_history: None,
@@ -419,11 +429,31 @@ pub enum ThemePreset {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CustomTheme {
+    #[serde(default = "default_background_color")]
     pub background_color: String,
+    #[serde(default = "default_input_background_color")]
     pub input_background_color: String,
+    #[serde(default = "default_text_color")]
     pub text_color: String,
+    #[serde(default = "default_selected_row_color")]
     pub selected_row_color: String,
+    #[serde(default = "default_hint_text_color")]
     pub hint_text_color: String,
+}
+
+impl Default for CustomTheme {
+    /// 5 色の既定リテラルは `default_*_color()` が持つ（`VisualConfig` と共有する
+    /// 同じ関数である）。`#[derive(Default)]` は使えない——`String::default()` は
+    /// `""` であって色ではない。
+    fn default() -> Self {
+        Self {
+            background_color: default_background_color(),
+            input_background_color: default_input_background_color(),
+            text_color: default_text_color(),
+            selected_row_color: default_selected_row_color(),
+            hint_text_color: default_hint_text_color(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -481,7 +511,12 @@ pub struct ScanPath {
     pub include_folders: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// `PathsConfig::default()` は **`scan` が空**である。既定の探索パス
+/// （`Config::default_scan_paths()`）を撒くのは `Config::default()` だけで、
+/// これは「設定ファイルが無い / 読めない」ときのシードだからである。
+/// `[paths]` セクションを省いた TOML と `scan` キーを省いた TOML はどちらも
+/// この既定へ落ちる——2 経路の既定を一致させるための非対称である（#824）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PathsConfig {
     #[serde(default, skip_serializing)]
     pub additional: Vec<String>,
@@ -576,9 +611,13 @@ impl Default for Config {
             general: GeneralConfig::default(),
             appearance: AppearanceConfig::default(),
             visual: VisualConfig::default(),
+            // `scan` のシードを撒くのは**ここだけ**である（`PathsConfig::default()` は空）。
+            // 「設定ファイルが無い / 読めない」ときに何も索引できないのを避けるためのシードで
+            // あって、parse 経路の既定ではない——両者を揃えると `[paths]` を書いたか否かで
+            // 未指定 `scan` の値が変わり、#795 が塞いだ乖離クラスが復活する（#824）。
             paths: PathsConfig {
-                additional: Vec::new(),
                 scan: Self::default_scan_paths(),
+                ..Default::default()
             },
             search: SearchConfig::default(),
             openers: Vec::new(),
@@ -1294,6 +1333,84 @@ background_color = '#123456'
         assert_eq!(config.visual.window_gap, 4);
     }
 
+    /// #824: フィールド単位の `#[serde(default = "…")]` を測るテストは、**セクションを書き・
+    /// 対象キーだけを省き・既存キーを sentinel として置く**。上の
+    /// `visual_field_defaults_apply_when_section_present` と同じ理由で、セクションごと省くと
+    /// 親の struct 級 `#[serde(default)]` が丸ごと既定へ落とし、属性を外しても通ってしまう。
+    #[test]
+    fn appearance_window_width_default_applies_when_key_missing() {
+        let toml = r#"
+[hotkey]
+modifier = "alt"
+key = "q"
+[appearance]
+show_icons = false
+[paths]
+"#;
+        let config: Config = toml::from_str(toml).expect("parse");
+        // sentinel: 記載した既存キーが反映されている（struct 級 default に落ちていない証拠）。
+        assert!(!config.appearance.show_icons);
+        assert_eq!(config.appearance.window_width, 600);
+    }
+
+    #[test]
+    fn hotkey_key_default_applies_when_key_missing() {
+        let toml = r#"
+[hotkey]
+modifier = "Ctrl"
+[appearance]
+window_width = 600
+[paths]
+"#;
+        let config: Config = toml::from_str(toml).expect("parse");
+        assert_eq!(config.hotkey.modifier, "Ctrl"); // sentinel
+        assert_eq!(config.hotkey.key, "Q");
+    }
+
+    #[test]
+    fn custom_theme_field_default_applies_when_key_missing() {
+        let toml = r#"
+[hotkey]
+modifier = "alt"
+key = "q"
+[appearance]
+window_width = 600
+[paths]
+[visual.custom_theme]
+background_color = '#123456'
+"#;
+        let config: Config = toml::from_str(toml).expect("parse");
+        // `custom_theme` は `Option` なので、`None` のまま素通りしないことを先に確かめる。
+        let theme = config
+            .visual
+            .custom_theme
+            .expect("[visual.custom_theme] を書いたので Some である");
+        assert_eq!(theme.background_color, "#123456"); // sentinel
+        assert_eq!(theme.input_background_color, "#383838");
+        assert_eq!(theme.text_color, "#E0E0E0");
+        assert_eq!(theme.selected_row_color, "#505050");
+        assert_eq!(theme.hint_text_color, "#808080");
+    }
+
+    /// 変わらないことの pin——`scan` は以前から `#[serde(default)]` を持つ。#824 で
+    /// `[paths]` セクションごとの欠落を既定へ落とすとき、**キー欠落側の値を動かさない**
+    /// （既に受理している入力の解釈を変えない）ことを固定する。
+    #[test]
+    fn paths_section_without_scan_key_stays_empty() {
+        let toml = r#"
+[hotkey]
+modifier = "alt"
+key = "q"
+[appearance]
+window_width = 600
+[paths]
+additional = ['C:\Tools']
+"#;
+        let config: Config = toml::from_str(toml).expect("parse");
+        assert_eq!(config.paths.additional, vec!["C:\\Tools".to_string()]); // sentinel
+        assert!(config.paths.scan.is_empty());
+    }
+
     #[test]
     fn deserialize_full_config() {
         let toml_str = r#"
@@ -1678,8 +1795,10 @@ background_color = '#123456'
     /// `deserialize_minimal_config_uses_defaults` はセクションを**丸ごと省略**する形なので
     /// キー欠落の経路を通らず、この乖離は見えない。
     ///
-    /// `AppearanceConfig` / `HotkeyConfig` は必須フィールド（`window_width` / `modifier` / `key`）を
-    /// 持ち空文字列から parse できないため、ここでは対象にできない（`Config` 経由でのみ検証可能）。
+    /// 各 struct について「空セクションのデシリアライズ結果 == `Default` 実装」を固定し、
+    /// 必須フィールドの混入をその struct の範囲で捕まえる（#824）。**新しい struct を
+    /// `Config` へ足したときにこの群へ 1 本足すことは機構では強制されない**——`Config` 全体を
+    /// 見るのは `config_parses_with_all_sections_omitted` の側である。
     #[test]
     fn empty_section_deserializes_to_default_general() {
         let parsed: GeneralConfig = toml::from_str("").expect("空の [general] は既定で埋まる");
@@ -1696,6 +1815,106 @@ background_color = '#123456'
     fn empty_section_deserializes_to_default_visual() {
         let parsed: VisualConfig = toml::from_str("").expect("空の [visual] は既定で埋まる");
         assert_eq!(parsed, VisualConfig::default());
+    }
+
+    #[test]
+    fn empty_section_deserializes_to_default_appearance() {
+        let parsed: AppearanceConfig =
+            toml::from_str("").expect("空の [appearance] は既定で埋まる");
+        assert_eq!(parsed, AppearanceConfig::default());
+    }
+
+    #[test]
+    fn empty_section_deserializes_to_default_hotkey() {
+        let parsed: HotkeyConfig = toml::from_str("").expect("空の [hotkey] は既定で埋まる");
+        assert_eq!(parsed, HotkeyConfig::default());
+    }
+
+    /// 空 `Vec` リテラルではなく `PathsConfig::default()` と比較する——`derive(Default)` と
+    /// parse 経路を互いに固定し、既定の探索パス（`Config::default()` 専用のシード）が
+    /// どちらかへ紛れ込んだら落ちるようにする。
+    #[test]
+    fn empty_section_deserializes_to_default_paths() {
+        let parsed: PathsConfig = toml::from_str("").expect("空の [paths] は既定で埋まる");
+        assert_eq!(parsed, PathsConfig::default());
+    }
+
+    #[test]
+    fn empty_section_deserializes_to_default_custom_theme() {
+        let parsed: CustomTheme =
+            toml::from_str("").expect("空の [visual.custom_theme] は既定で埋まる");
+        assert_eq!(parsed, CustomTheme::default());
+    }
+
+    /// TOML 空文字列が `Config` として parse できること（#824）。**`Config::default()` との
+    /// 全体比較はしない**——`paths.scan` は意図的に食い違い（`Config::default()` は既定の
+    /// 探索パスを撒くシード、parse 経路は空）、`general.language` は OS ロケール依存である。
+    #[test]
+    fn config_parses_with_all_sections_omitted() {
+        let config: Config = toml::from_str("").expect("全セクション欠落でも既定で埋まる");
+        assert_eq!(config.hotkey, HotkeyConfig::default());
+        assert_eq!(config.appearance, AppearanceConfig::default());
+        assert_eq!(config.general, GeneralConfig::default());
+        assert_eq!(config.visual, VisualConfig::default());
+        assert_eq!(config.search, SearchConfig::default());
+        assert_eq!(config.paths, PathsConfig::default());
+        assert!(
+            config.paths.scan.is_empty(),
+            "parse 経路の既定に探索パスのシードを混ぜない（シードは Config::default() だけ）"
+        );
+        // `instant_commands` も `Config::default()`（g / gh の 2 件）と食い違う。これは
+        // #824 より前からある非対称で、3 セクションを書いた最小 config では今日も空になる
+        // ——parse 経路の既定は `Vec::new()` のままにする（シードを撒くのは default だけ）。
+        assert!(config.openers.is_empty());
+        assert!(config.instant_commands.is_empty());
+    }
+
+    /// `Config::default()` だけが `scan` へシードを撒く。parse 経路の既定（空）と食い違うのは
+    /// 意図であり、`config_parses_with_all_sections_omitted` と対でその意図を両側から固定する
+    /// （片側だけだと、シードを `PathsConfig::default()` へ寄せる変更が無検知で通る）。
+    /// 既定の探索パスは環境依存で空にもなりうるため、件数ではなく導出元との一致で測る。
+    #[test]
+    fn config_default_seeds_scan_paths_unlike_parse_path() {
+        assert_eq!(Config::default().paths.scan, Config::default_scan_paths());
+        assert!(PathsConfig::default().scan.is_empty());
+    }
+
+    /// 後方互換の証明はこの向き——**今日受理されている完全形**を新コードで読み、全値が
+    /// そのまま残ること（`snotra-core/CLAUDE.md`「データ永続化の注意」）。#824 の変更は
+    /// 受理集合を広げるだけで、既に parse できる入力の解釈を動かさない。
+    #[test]
+    fn full_config_parse_is_unchanged() {
+        let toml = r#"
+[hotkey]
+modifier = "Ctrl"
+key = "Space"
+[appearance]
+window_width = 900
+show_icons = false
+[visual.custom_theme]
+background_color = '#111111'
+input_background_color = '#222222'
+text_color = '#333333'
+selected_row_color = '#444444'
+hint_text_color = '#555555'
+[[paths.scan]]
+path = 'C:\Tools'
+extensions = ['.exe']
+"#;
+        let config: Config = toml::from_str(toml).expect("parse");
+        assert_eq!(config.hotkey.modifier, "Ctrl");
+        assert_eq!(config.hotkey.key, "Space");
+        assert_eq!(config.appearance.window_width, 900);
+        assert!(!config.appearance.show_icons);
+        let theme = config.visual.custom_theme.expect("custom_theme");
+        assert_eq!(theme.background_color, "#111111");
+        assert_eq!(theme.input_background_color, "#222222");
+        assert_eq!(theme.text_color, "#333333");
+        assert_eq!(theme.selected_row_color, "#444444");
+        assert_eq!(theme.hint_text_color, "#555555");
+        assert_eq!(config.paths.scan.len(), 1);
+        assert_eq!(config.paths.scan[0].path, "C:\\Tools");
+        assert_eq!(config.paths.scan[0].extensions, vec![".exe".to_string()]);
     }
 
     #[test]
@@ -2980,26 +3199,25 @@ background_color = '#123456'
         );
     }
 
+    /// #824 で契約が反転した——欠落セクションは parse 失敗ではなく既定補完になる。
+    /// **書かれた値は既定で上書きされない**ことも同時に固定する。
     #[test]
-    fn partial_toml_falls_back_to_default_via_unwrap_or_default() {
-        // Partial TOML missing required sections → toml::from_str fails.
-        // Config::load() now matches on the parse error (backing the file up to
-        // .bak and falling back to an in-memory default), not unwrap_or_default().
-        // This test still pins the serde-level fallback to default values.
+    fn partial_toml_fills_missing_sections_with_defaults() {
         let toml_str = r#"
             [hotkey]
             modifier = "Ctrl"
             key = "Space"
         "#;
-        // Direct parse fails (missing required sections)
-        assert!(toml::from_str::<Config>(toml_str).is_err());
-        // But unwrap_or_default produces a usable config
-        let config: Config = toml::from_str(toml_str).unwrap_or_default();
-        let default = Config::default();
-        assert_eq!(config.hotkey.modifier, default.hotkey.modifier);
+        let config: Config = toml::from_str(toml_str).expect("欠落セクションは既定で埋まる");
+        // 書かれた値は保たれる
+        assert_eq!(config.hotkey.modifier, "Ctrl");
+        assert_eq!(config.hotkey.key, "Space");
+        // 欠落セクションは対応する `Default` へ落ちる
+        assert_eq!(config.appearance, AppearanceConfig::default());
+        assert_eq!(config.paths, PathsConfig::default());
         assert_eq!(
             config.appearance.effective_visible_rows(),
-            default.appearance.effective_visible_rows()
+            Config::default().appearance.effective_visible_rows()
         );
     }
 
@@ -3184,6 +3402,28 @@ background_color = '#123456'
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// #824: 構文は正しいがセクションを欠く config.toml は「破損」ではない——既定で埋めて
+    /// `Loaded` を返し、`.bak` を作らない（`SPEC.md`「13.1 設定データ」）。1 キーの打ち間違いで
+    /// 設定ファイル全体が退避される経路を塞ぐ、この変更の直接の回帰テストである。
+    #[test]
+    fn load_from_dir_missing_section_is_loaded_not_recovered() {
+        let dir = temp_dir("load_missing_section");
+        let path = dir.join("config.toml");
+        fs::write(&path, "[hotkey]\nmodifier = \"Ctrl\"\nkey = \"Space\"\n").unwrap();
+
+        let (config, outcome) = Config::load_from_dir_reporting(&dir);
+
+        assert_eq!(outcome, LoadOutcome::Loaded);
+        assert_eq!(config.hotkey.modifier, "Ctrl");
+        assert_eq!(config.appearance.window_width, 600);
+        assert!(
+            !path.with_extension("toml.bak").exists(),
+            "構文の正しい config を .bak へ退避してはならない"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn load_from_dir_transient_read_error_leaves_file_intact() {
         let dir = temp_dir("load_transient");
@@ -3273,7 +3513,8 @@ background_color = '#123456'
 
     #[test]
     fn from_toml_str_fills_defaults() {
-        // hotkey, appearance, paths are required; general, visual, search, openers, instant_commands have #[serde(default)]
+        // 全セクションが `#[serde(default)]` を持つ（#824）。ここでは書いたセクションの値が
+        // 保たれ、書かなかった openers / instant_commands が既定になることを見る。
         let toml = r#"
 [hotkey]
 modifier = "Ctrl"
@@ -3350,10 +3591,12 @@ scan = []
     }
 
     #[test]
-    fn from_toml_str_rejects_missing_required_section() {
-        // Missing [appearance] and [paths] — should fail
-        let result = Config::from_toml_str("[hotkey]\nmodifier = \"Alt\"\nkey = \"Q\"\n");
-        assert!(result.is_err());
+    fn from_toml_str_fills_missing_sections() {
+        // #824: `[appearance]` と `[paths]` が無くても既定で埋まる（インポート経路も同じ）
+        let config = Config::from_toml_str("[hotkey]\nmodifier = \"Alt\"\nkey = \"Q\"\n")
+            .expect("欠落セクションは既定で埋まる");
+        assert_eq!(config.appearance, AppearanceConfig::default());
+        assert_eq!(config.paths, PathsConfig::default());
     }
 
     #[test]

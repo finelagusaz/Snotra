@@ -75,11 +75,14 @@ Resolve-SnotraExistingProcess -Policy Reject
 # --- 検証用プロファイルを作り直す ---
 Remove-Item -Path $stderrLog -Force -ErrorAction SilentlyContinue
 
-# 最小の有効 TOML。**`[hotkey]` / `[appearance]` / `[paths]` は `#[serde(default)]` を持たない
-# 必須セクション**（`snotra-core/src/config.rs` の `Config`）で、欠けると parse が落ちて
-# 破損復旧経路（`.bak` 退避 + 既定値起動）を踏む。既定値で起動すると背景は `CLEAR_COLOR` に
-# なり、「色が届いていない」と誤読される。
-# 必須セクションの骨格は共有モジュールが持つ（#843）。visual 固有の general/visual と scan は
+# 最小の有効 TOML。**config.toml を置くこと自体が要る**——ファイルが無いと first-run になり
+# 既定値で起動して背景が `CLEAR_COLOR` になり、「色が届いていない」と誤読される。#824 で
+# `Config` の全セクションに `#[serde(default)]` が付いたため、欠落セクションが parse を落として
+# 破損復旧経路（`.bak` 退避 + 既定値起動）を踏むことはもう無い。ここで値を書く理由は
+# `[visual]` の色（これが検証対象そのものである）、下で理由を説明する
+# `auto_hide_on_focus_lost` と `[[paths.scan]]`、そして `-Interactive` から導く
+# `show_on_startup` である。
+# 共通セクションの骨格は共有モジュールが持つ（#843）。visual 固有の general/visual と scan は
 # 呼び出し側から渡し、3 本の seed が同型でないことを保つ。
 # **`auto_hide_on_focus_lost = false` は自動判定の前提である**（既定は true）。スクリプトを走らせた
 # 端末がフォーカスを保つため、既定のままだと窓は可視判定を通った直後に隠れ、**キャプチャは窓が

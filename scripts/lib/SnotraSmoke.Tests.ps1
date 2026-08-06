@@ -45,7 +45,7 @@ BeforeDiscovery {
 }
 
 Describe 'New-SnotraVerificationProfile' {
-    It '必須セクションと呼び出し側固有の節を持つ seed を作り、古い成果物を除く' {
+    It '共通セクションと呼び出し側固有の節を持つ seed を作り、古い成果物を除く' {
         $profile = Join-Path $TestDrive 'profile'
         New-Item -ItemType Directory -Force -Path $profile | Out-Null
         Set-Content -Path (Join-Path $profile 'config.toml.bak') -Value 'stale'

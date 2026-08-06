@@ -5,9 +5,11 @@ on:
   pull_request:
     branches:
       - main
-    # paths が唯一の自動ゲート。カテゴリ C 相当（ウィンドウ生成・ホットキー・スラッシュコマンド）を
-    # 含みうる変更、および依存 manifest/lockfile に触れた PR で自動起動する。
-    # 手動実行は workflow_dispatch。拾いすぎ（配下 *.md 等）は過剰実行で安全側ゆえ negation を足さない。
+    # **PR 側ではこの paths が唯一の自動ゲートである**（下の `push:` は paths を持たず、
+    # main への全マージで起動する——目的が違うため。理由はそちらのコメント）。カテゴリ C 相当
+    # （ウィンドウ生成・ホットキー・スラッシュコマンド）を含みうる変更、および依存 manifest/lockfile に
+    # 触れた PR で自動起動する。手動実行は workflow_dispatch。
+    # 拾いすぎ（配下 *.md 等）は過剰実行で安全側ゆえ negation を足さない。
     # WebView2 e2e（Playwright + tauri-driver）は #532 SU7 flip で撤去済み——後継は smoke-egui job
     # （egui 経路の自動回帰の最低線）+ 手動 GUI smoke 体制（docs/build-commands.md）。
     paths:
@@ -26,10 +28,29 @@ on:
       - 'Cargo.lock'
       - 'package.json'
       - 'package-lock.json'
+  # **回帰検出のためではなく、rust-cache を main スコープへ書くための経路である**。
+  # GitHub Actions のキャッシュは、`pull_request` 実行の書き込みが PR 自身のスコープに閉じ、
+  # 他 PR からは読めない（実測: smoke-egui のエントリ 8 件がすべて `refs/pull/*/merge` だった）。
+  # base ブランチ（main）のスコープだけが全 PR から読めるため、main で 1 度作る経路が要る。
+  #
+  # **`paths` を意図的に持たない**。キャッシュキーは Cargo.lock だけでなく **rustc のバージョンでも
+  # 変わり**（`dtolnay/rust-toolchain@stable` は 6 週ごとに動く）、後者は paths で表現できない。
+  # 絞ると、rustc が更新された週から次に Cargo.lock が動くまで全 PR が完全 cold へ戻る。
+  # **「いつ warm すべきか」を条件で言い当てるより、毎マージで warm し直すほうが穴が無い**
+  # （回帰検出は副産物）。main への push は squash マージのみ（直 push は GitHub ruleset が拒否）で、
+  # PUBLIC リポジトリゆえ Actions の分数課金も無い。
+  push:
+    branches:
+      - main
 
 concurrency:
   group: e2e-${{ github.ref }}
-  cancel-in-progress: true
+  # **main ではキャンセルしない**。main の run は rust-cache を main スコープへ書くために在るが、
+  # **キャンセルされた run で保存の Post ステップが走る保証は無い**（未実測ゆえ「走らない」とは
+  # 書かない。保証が無い側へ倒すのが安全側である）。**これは理屈上の心配ではない**——main へは
+  # 直近 14 日で 184 コミット（1 日平均 13）入っており、連続マージが同じ `group` を奪い合う頻度に
+  # 達している。PR 側は従来どおり最新だけを残す。
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   # egui 経路の自動回帰 smoke（#532 SU7・e2e/ 撤去後の後継の最低線）。
@@ -52,15 +73,37 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # **`workspaces:` を指定しない**（既定の `.` ＝ルート）。このリポジトリは
+      # ルートが cargo workspace で `src-tauri` はそのメンバーゆえ、下の
+      # `cargo build -p snotra` が書くのは**ルートの `target/`** である。かつて
+      # `workspaces: src-tauri` を指定していた頃は存在しない `src-tauri/target` を
+      # キャッシュ対象にしており、`full match: true` と表示されながら復元していたのは
+      # `~/.cargo` のレジストリだけだった（132MB。ルート指定の rust-check は 2573MB）。
+      # **緑のログが空振りを隠す形の一種である**——毎 run で依存 357 crate を積み直し、
+      # ビルドの 8m39s のうち 5m23s をそこに費やしていた（run 31070343704 で実測）。
+      #
+      # `save-if` で main からしか保存しないのは、Actions キャッシュの 10GB 上限を
+      # 守るためである。PR ごとに release の target（GB 級）を書くと LRU で
+      # rust-check の 2.5GB が落ち、CI 全体が今より遅くなる。
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install dependencies
         run: npm ci
 
+      # **この job が建てるのは smoke 用のバイナリであり、配布バンドルではない**
+      # （`docs/build-commands.md`「検証コマンド ↔ GitHub Actions workflow の対応」の注）。
+      # `[profile.release]` の `lto = true` / `codegen-units = 1` は最終段の codegen と
+      # リンクだけで 3m15s を占め、しかも rust-cache は workspace crate を保存しないので
+      # キャッシュでは削れない。**この job に限って** env で緩める（`Cargo.toml` は触らない
+      # ——release.yml が建てる配布物の設定は変えない）。`panic = "abort"` と `opt-level` は
+      # そのままゆえ、検証対象である起動時の挙動は配布バンドルと同じ経路を通る。
       - name: Build release binary
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
         run: cargo build --release -p snotra
 
       # flip 済み（#532 SU7 PR2）: env なし＝「既定が egui であること」自体が検証対象（spec 決定 3）。

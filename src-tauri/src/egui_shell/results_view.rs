@@ -624,13 +624,24 @@ impl snotra_egui_runtime::EguiView for ResultsView {
         // placeholder → 追いつく体感になりうるが、クラッシュ・不整合ではなく hidden 中の
         // update 停止（SU5 要石）と整合する自然な帰結として受容する（plan-review rev-egui
         // 指摘・受容）。
-        let visible: HashSet<String> = snapshot.rows.iter().map(|r| r.path.clone()).collect();
-        retain_visible(&mut self.icon_textures, &visible);
-        self.icon_attempts.retain(|p, _| visible.contains(p));
-        // **pending も可視集合で刈る**（#692）。worker が 1 通も送らずに終わる経路
-        // （managed state 不在で早期 return）があり、刈らないと path が永久に in-flight
-        // 扱いのまま `needs_extraction` を素通りできず、その行のアイコンは戻らない。
-        self.icon_pending.retain(|p| visible.contains(p));
+        //
+        // **世代交代フレームだけで足りる**（毎フレームやらない）。世代内で 3 つの map/set に
+        // 入る path は先読み範囲 ⊆ `snapshot.rows` ゆえ必ず `visible` に含まれ、retain は
+        // 構造的に no-op である。刈る必要が生じるのは rows が入れ替わった瞬間だけで、それは
+        // `rows_generation` が必ず進む——`search_state.rs` の `rows_generation` の doc が
+        // 「`self.results` へ代入・`clear` するメソッドは、必ずここを進める」と定めており、
+        // 代入・`clear` の 6 箇所すべてで成立している（逆向きに数え上げて確認済み）。
+        // 毎フレームやっていた頃は、可視集合の構築だけで結果件数ぶんの `String` 確保を
+        // 払っていた（`result_limit` は既定 200・設定次第で 1000）。
+        if generation_changed {
+            let visible: HashSet<String> = snapshot.rows.iter().map(|r| r.path.clone()).collect();
+            retain_visible(&mut self.icon_textures, &visible);
+            self.icon_attempts.retain(|p, _| visible.contains(p));
+            // **pending も可視集合で刈る**（#692）。worker が 1 通も送らずに終わる経路
+            // （managed state 不在で早期 return）があり、刈らないと path が永久に in-flight
+            // 扱いのまま `needs_extraction` を素通りできず、その行のアイコンは戻らない。
+            self.icon_pending.retain(|p| visible.contains(p));
+        }
         // snapshot.settled は旧 view.rs の `!self.search_debounce.is_armed()` ゲート（連打中は
         // icon worker を積まない・perf 最適化）の後継（#532 SU4 の系譜）。main の search_debounce は
         // ResultsView から参照できないため、live 値を snapshot 経由で運ぶ（Task 5 concern 2 の fix）。
@@ -736,6 +747,50 @@ mod tests {
             );
         harness.run();
         *harness.state()
+    }
+
+    /// 行描画の **per-row コスト**計測（`/simplify` の Efficiency 指摘の検証）。
+    /// `cargo test -p snotra --release kittest_row_draw_cost_probe -- --ignored --nocapture`
+    ///
+    /// 測りたいのは「画面外の行に毎フレーム払っているコスト」なので、**窓は実寸**
+    /// （可視 8 行相当）にする——`measure_content_height` の 2000px 窓では clip rect が
+    /// 全行を含み、画面外という状態自体が作れない。`step()`（1 フレーム固定）で測るのは
+    /// `run()` が安定するまでの可変フレーム数を割り算に持ち込まないため。
+    #[test]
+    #[ignore = "計測プローブ（release 実行専用）"]
+    fn kittest_row_draw_cost_probe() {
+        use std::time::Instant;
+
+        let row_height = 34.0_f32;
+        let measure = |n: usize| -> u128 {
+            let icons: HashMap<String, egui::TextureHandle> = HashMap::new();
+            let theme = theme_for_test(12.0);
+            let rows = rows_for_test(n);
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(600.0, row_height * 8.0))
+                .build_ui(move |ui| {
+                    let _ = results_list_ui(
+                        ui, &rows, 0, false, false, &icons, true, &theme, row_height,
+                    );
+                });
+            // galley キャッシュとフォントアトラスを温める（cold 初回を混ぜない）。
+            for _ in 0..5 {
+                harness.step();
+            }
+            const N: u32 = 50;
+            let t = Instant::now();
+            for _ in 0..N {
+                harness.step();
+            }
+            t.elapsed().as_micros() / u128::from(N)
+        };
+
+        for n in [8_usize, 200, 1000] {
+            println!(
+                "[rows={n:>4}] 1 フレーム {}us（frame budget=16700us）",
+                measure(n)
+            );
+        }
     }
 
     /// **行ピッチが `row_height`（を egui の UI 丸めに通した値）ちょうどである**

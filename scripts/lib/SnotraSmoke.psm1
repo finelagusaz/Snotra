@@ -170,6 +170,11 @@ function Initialize-SnotraDpiAwareness {
     $script:dpiAwarenessInitialized = $true
 }
 
+# **検証プロファイルに config.toml を置く共通の理由はここが正本である**（3 本の呼び出し側は
+# 固有の理由だけを書く）。ファイルが無いと Config::load が first-run と判定し、
+# Config::default() の探索パスシード（default_scan_paths）が実マシンの既定パス（存在する
+# ものだけ）を索引しうる。#824 以降、中身が空でも parse 自体は通る——セクションもキーも
+# 既定へ落ちるため——ので、骨格を書くのは seed の意図を読めるようにするためである。
 function New-SnotraVerificationProfile {
     [CmdletBinding()]
     param(

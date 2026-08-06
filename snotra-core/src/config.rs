@@ -655,6 +655,11 @@ impl Config {
     /// （検証・floor・drift が不要）、`result_limit` 変更時は上限も自動追従する。単一の
     /// `get_icons_batch` が自己 evict することはない。倍率で再検索時の再抽出を抑えつつ無制限増加を止める。
     ///
+    /// **この上限が対応するのは「保持」集合であって「抽出」範囲ではない。** UI がアイコン抽出を
+    /// 要求するのは viewport 近傍だけだが（`src-tauri` の `egui_shell::layout::icon_prefetch_range`）、
+    /// テクスチャとキャッシュは結果リスト全件ぶん保持する。**要求が減ったことを理由にこの上限を
+    /// 縮めてはならない**——縮めるとスクロールや再検索のたびに再抽出が走る。
+    ///
     /// 保守注意: ここの `working_set` は engine がアイコンを要求する結果リストの fetch 上限と対応する
     /// （`Engine::search` / `capture_folder_list_context` = `effective_result_limit`、
     /// `recent_history` = `effective_recent_limit`）。engine 側でアイコンを要求する新たな

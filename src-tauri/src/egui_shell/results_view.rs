@@ -639,8 +639,17 @@ impl snotra_egui_runtime::EguiView for ResultsView {
             // `snapshot.rows` は可視行数ではなく `effective_result_limit`（既定 200）ゆえ、
             // 絞る前は画面に出る 8 個のために 200 回シェルへ問い合わせていた
             // （実測 105ms／settle。内訳と却下した代替は `layout::icon_prefetch_range` の doc）。
-            // 範囲は**このフレームで実際に描いた** ScrollArea の状態から導く——次フレームでは
-            // スクロール位置が動いており、そのときは新しい範囲で再度ここへ来る。
+            //
+            // **範囲は「この描画の結果として次に見えることになる行」である**——`state.offset` は
+            // `ScrollArea::end()` が `scroll_to_me` の行き先を適用した**後**の値で（egui 0.35
+            // `scroll_area.rs` の `show_viewport_dyn` は content closure の後に `end()` を呼び、
+            // その戻り値を `ScrollAreaOutput.state` に載せる）、`inner_rect` は `begin()` が
+            // 決めた矩形である。両者は厳密には別の時点の値だが、**この混成は利点である**：
+            // 世代交代フレーム（`RowScroll::Instant`）で「飛び先の行」を同じフレームのうちに
+            // 先読みでき、追加の repaint を待たない。
+            //
+            // **`ScrollArea::show_viewport` へ移してはならない**——あれが渡す `Rect` は
+            // `begin()` 由来ゆえ `scroll_to_me` 適用前で、飛び先ではなく元の位置を先読みする。
             let range = crate::egui_shell::layout::icon_prefetch_range(
                 list_out.state.offset.y,
                 list_out.inner_rect.height(),

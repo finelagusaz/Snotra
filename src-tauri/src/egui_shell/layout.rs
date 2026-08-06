@@ -148,8 +148,19 @@ pub fn results_window_height(max_results: u32, row_height: f64) -> f64 {
     f64::from(max_results) * drawn_row
 }
 
-/// アイコン抽出を積むべき行の範囲——viewport に見えている行に、上下 1 画面ぶんの
-/// 先読みマージンを足したもの。`total_rows` でクランプ済みの半開区間を返す。
+/// `icon_prefetch_range` が可視ぶんの上下へ何画面ぶん先読みするか。
+///
+/// **この係数は config キーにしない。** `Config::icon_cache_cap` が派生値なのは
+/// 「上限 ≥ ワーキングセット」という**不等式を検証なしで構造的に成立させる**ためだが
+/// （同メソッドの doc）、先読みマージンに保つべき不等式は無い——「大きくすれば体感が良く
+/// 費用が増える」だけのレイテンシ／費用のチューニング定数である。設定可能にすると
+/// 「マージンだけ大きくして 200 件へ戻す」設定を作れてしまい、絞った意味が無くなる。
+/// 名前付き定数にする作法は `snotra_core::config` の `ICON_CACHE_RETENTION_FACTOR` と同型。
+const ICON_PREFETCH_SCREENS: usize = 1;
+
+/// アイコン抽出を積むべき行の範囲——viewport に見えている行に、上下
+/// `ICON_PREFETCH_SCREENS` 画面ぶんの先読みマージンを足したもの。
+/// `total_rows` でクランプ済みの半開区間を返す。
 ///
 /// **これは「描く行」ではない。** 行の描画は `results_list_ui` が `snapshot.rows` 全件に
 /// 対して行い（仮想化しない——`show_rows` にすると描画されない行の `scroll_to_me` が
@@ -157,45 +168,46 @@ pub fn results_window_height(max_results: u32, row_height: f64) -> f64 {
 /// （SU4 決定 A のメモリ境界は 16x16 テクスチャ数百 KB の話で、そこは支配項ではない）。
 /// **絞るのは抽出だけである。**
 ///
-/// **理由は測ってある**（2026-08-06・release・`icon::tests::icon_pipeline_cost_probe`）:
-/// `SHGetFileInfoW` → GDI の区間が 1 件あたり p50 **2885us** を占め、PNG encode（64us）・
-/// decode（11us）は合計しても 0.35% に届かない。`snapshot.rows` は `visible_rows`（既定 8）
-/// ではなく `effective_result_limit`（既定 **200**）ゆえ、絞る前は 1 回の settle が
-/// rayon 並列でも **105ms** を払っていた——画面に出る 8 個のために 200 回シェルへ問い合わせて
-/// いたことになる。**支配項は呼び出し回数であり、呼び出し 1 回の中身ではない。**
+/// **理由は測ってある**（2026-08-06・release・`icon::tests::icon_pipeline_cost_probe`・
+/// 既定 scan paths の 133 件）: `SHGetFileInfoW` → GDI の区間が 1 件あたり p50 **3048us** を
+/// 占め、PNG encode（114us）・decode（12us）は合計しても 0.5% に届かない。133 件を rayon 並列で
+/// 一括抽出した実時間は **87.8ms**。`snapshot.rows` は `visible_rows`（既定 8）ではなく
+/// `effective_result_limit`（既定 **200**・設定次第で 1000）ゆえ、絞る前は 1 回の settle が
+/// この規模を丸ごと払っていた——画面に出る 8 個のために全件シェルへ問い合わせていたことになる。
+/// **支配項は呼び出し回数であり、呼び出し 1 回の中身ではない。**
 ///
-/// マージンを 1 画面ぶん取るのは、スクロールで placeholder が見えてから抽出が始まるのを
-/// 避けるため。マージンを 0 にすると体感が悪化し、大きくすると上の 200 件へ戻っていく。
 pub fn icon_prefetch_range(
     offset_y: f32,
     viewport_h: f32,
     row_height: f32,
     total_rows: usize,
 ) -> std::ops::Range<usize> {
-    // 行ピッチが 0/負/非有限だと除算が壊れる。`results_list_ui` は `item_spacing.y = 0.0` を
-    // 敷いてピッチ = `row_height` を構造的に真にしているが、ここは呼ばれ方に依存しない。
-    if !row_height.is_finite() || row_height <= 0.0 || total_rows == 0 {
+    if !row_height.is_finite() {
         return 0..total_rows;
     }
-    let offset = if offset_y.is_finite() {
-        offset_y.max(0.0)
-    } else {
-        0.0
-    };
-    let view = if viewport_h.is_finite() {
-        viewport_h.max(0.0)
-    } else {
-        0.0
-    };
-    let first = (offset / row_height).floor() as usize;
+    // **ピッチは egui が実際に積む値へ丸めてから使う**（正本は `results_window_height` の
+    // `drawn_row`）——素の `row_height` で割ると、行の積み方と index の写像が僅かにずれる。
+    // 丸めた結果が 0 以下になる病的な入力もここで弾く（除算が壊れる）。
+    // なお `results_list_ui` は `item_spacing.y = 0.0` を敷いてピッチ = 行高を構造的に真に
+    // しているが、この関数は呼ばれ方に依存しない。
+    let pitch = row_height.round_ui();
+    if pitch <= 0.0 {
+        return 0..total_rows;
+    }
+    // 非有限・異常値は `max(0.0)`（NaN を 0 にする）と飽和 cast、そして `min(total_rows)` の
+    // 3 段で吸収する——`is_finite` の分岐を別に置く必要はない。
     // 端数の行も見えている（+1）。`viewport_h = 0` でも最低 1 行は積む。
-    let count = (view / row_height).ceil() as usize + 1;
-    let start = first.saturating_sub(count).min(total_rows);
-    let end = first
-        .saturating_add(count)
-        .saturating_add(count)
+    let rows_in_view = ((viewport_h.max(0.0) / pitch).ceil() as usize)
+        .saturating_add(1)
         .min(total_rows);
-    start..end.max(start)
+    let first = ((offset_y.max(0.0) / pitch).floor() as usize).min(total_rows);
+    let margin = rows_in_view.saturating_mul(ICON_PREFETCH_SCREENS);
+    let start = first.saturating_sub(margin);
+    let end = first
+        .saturating_add(rows_in_view)
+        .saturating_add(margin)
+        .min(total_rows);
+    start..end
 }
 
 /// results 窓の**物理**高さ（案 3）。論理高を**切り上げて**物理 px にする。

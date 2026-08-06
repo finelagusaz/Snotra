@@ -392,6 +392,18 @@ fn bgra_to_png(data: &IconData) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
+    /// 計測列のパーセンタイル（`p` は 0.0..=1.0）。空なら 0。
+    /// **両プローブが共有する**——測る対象（全区間 vs 区間別）は別だが、この算法は
+    /// 測定対象に依存しない。
+    fn pctl(mut v: Vec<u128>, p: f64) -> u128 {
+        if v.is_empty() {
+            return 0;
+        }
+        v.sort_unstable();
+        let idx = ((v.len() as f64 - 1.0) * p).round() as usize;
+        v[idx]
+    }
+
     /// #692 の再現ハーネス（`#[ignore]`・環境依存ゆえ CI では走らせない）。
     ///
     /// シェルのアイコンキャッシュは**プロセスごとに冷えており**、初回要求で
@@ -680,15 +692,6 @@ mod tests {
         let doc = r"C:\Windows\System32\drivers\etc\hosts";
         let lnk = r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\AdGuard.lnk";
 
-        fn pctl(mut v: Vec<u128>, p: f64) -> u128 {
-            if v.is_empty() {
-                return 0;
-            }
-            v.sort_unstable();
-            let idx = ((v.len() as f64 - 1.0) * p).round() as usize;
-            v[idx]
-        }
-
         // 型別 warm 計測: 各パスを 1 回 prime してから N 回測る（shell キャッシュ warm）。
         let measure = |label: &str, paths: &[&str]| {
             for p in paths {
@@ -759,61 +762,33 @@ mod tests {
     /// - `batch(N) parallel`: 実際の `load_icon_pngs` と同じ rayon 並列で N 件を一気に抽出した
     ///   実時間。N は既定で `effective_result_limit`（200）に合わせる
     ///
-    /// 対象パスは既定でスタートメニューの `.lnk` を走査して集める（実インデックスの主成分）。
-    /// `SNOTRA_ICON_DIAG_PATHS` で明示指定もできる（`icon_extract_cost_probe` と同じ規約）。
+    /// 対象パスは既定で**本番と同じ母集団**（`Config::default_scan_paths()` = common Start Menu
+    /// ＋ Desktop の `.lnk`）から先頭 200 件を採る。**自前でディレクトリを歩いてはならない**
+    /// ——`default_scan_paths` は User Start Menu を意図的に除外しており（同関数の doc）、
+    /// 手書きの走査はインデックスに入らないパスを測ってしまう。同じ組み合わせで本番相当の
+    /// 母集団を作る先例は `snotra_core::search::tests::performance` の
+    /// `measure_lower_name_footprint_report`。`SNOTRA_ICON_DIAG_PATHS` で明示指定もできる
+    /// （`icon_extract_cost_probe` と同じ規約）。
     #[test]
     #[ignore = "計測プローブ（実機・release 実行専用）"]
     fn icon_pipeline_cost_probe() {
         use rayon::prelude::*;
         use std::time::Instant;
 
-        fn pctl(mut v: Vec<u128>, p: f64) -> u128 {
-            if v.is_empty() {
-                return 0;
-            }
-            v.sort_unstable();
-            let idx = ((v.len() as f64 - 1.0) * p).round() as usize;
-            v[idx]
-        }
-
-        // 対象パス: 明示指定が無ければスタートメニュー配下の .lnk を再帰収集する
-        // （実インデックスの主成分であり、per-call が最も重い型でもある）。
         let paths: Vec<String> = match std::env::var("SNOTRA_ICON_DIAG_PATHS") {
             Ok(s) => s
                 .split(';')
                 .filter(|s| !s.is_empty())
                 .map(String::from)
                 .collect(),
-            Err(_) => {
-                fn collect_lnk(dir: &std::path::Path, out: &mut Vec<String>, budget: usize) {
-                    if out.len() >= budget {
-                        return;
-                    }
-                    let Ok(rd) = std::fs::read_dir(dir) else {
-                        return;
-                    };
-                    for e in rd.flatten() {
-                        let p = e.path();
-                        if p.is_dir() {
-                            collect_lnk(&p, out, budget);
-                        } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("lnk")) {
-                            out.push(p.to_string_lossy().into_owned());
-                        }
-                        if out.len() >= budget {
-                            return;
-                        }
-                    }
-                }
-                let mut out = Vec::new();
-                for var in ["ProgramData", "APPDATA"] {
-                    if let Some(base) = std::env::var_os(var) {
-                        let start = std::path::Path::new(&base)
-                            .join(r"Microsoft\Windows\Start Menu\Programs");
-                        collect_lnk(&start, &mut out, 200);
-                    }
-                }
-                out
-            }
+            Err(_) => snotra_core::indexer::scan_all(
+                &snotra_core::config::Config::default_scan_paths(),
+                false,
+            )
+            .into_iter()
+            .map(|e| e.target_path)
+            .take(200)
+            .collect(),
         };
         assert!(
             !paths.is_empty(),
@@ -824,40 +799,46 @@ mod tests {
             paths.len()
         );
 
-        // shell のアイコンキャッシュを温める（cold 初回は `icon_extract_cost_probe` の担当）。
-        paths.par_iter().for_each(|p| {
-            let _ = extract_png(p);
-        });
+        // 温めついでに PNG を回収する（**warm-up と hit 経路の材料を兼ねる**——分けると
+        // 最も重い shell+gdi を全件ぶん 1 周余計に払う）。cold 初回は `icon_extract_cost_probe`
+        // の担当ゆえ、ここで温まっていることが後続の計測の前提である。
+        let pngs: Vec<Vec<u8>> = paths
+            .par_iter()
+            .filter_map(|p| extract_png(p).ok())
+            .collect();
 
-        // 区間別 per-call。同じ 1 パスに対し shell+gdi → encode → decode を続けて測り、
-        // **同一のアイコンに対する 3 区間の比**が読めるようにする。
-        let (mut shell_us, mut enc_us, mut dec_us) = (Vec::new(), Vec::new(), Vec::new());
+        // 区間別 per-call。**3 区間を 1 本のタプル列に持つ**——別々の Vec に push すると
+        // 途中で失敗した path が片方にだけ残り、「同一のアイコンに対する 3 区間の比」という
+        // この計測の前提が黙って崩れる。3 区間すべて成功した path だけを積む。
+        let mut per_call: Vec<(u128, u128, u128)> = Vec::new();
         for p in &paths {
             let t = Instant::now();
             let Ok(icon) = extract_icon(p) else { continue };
-            shell_us.push(t.elapsed().as_micros());
+            let shell = t.elapsed().as_micros();
 
             let t = Instant::now();
             let Some(png) = bgra_to_png(&icon) else {
                 continue;
             };
-            enc_us.push(t.elapsed().as_micros());
+            let encode = t.elapsed().as_micros();
 
             let t = Instant::now();
             let img = crate::egui_shell::png_to_color_image(&png);
-            dec_us.push(t.elapsed().as_micros());
+            let decode = t.elapsed().as_micros();
             assert!(
                 img.is_some(),
                 "自前エンコードの PNG は必ず decode できる: {p}"
             );
+            per_call.push((shell, encode, decode));
         }
-        for (label, v) in [
-            ("shell+gdi", &shell_us),
-            ("encode   ", &enc_us),
-            ("decode   ", &dec_us),
+        for (label, project) in [
+            ("shell+gdi", (|t: &(u128, u128, u128)| t.0) as fn(_) -> _),
+            ("encode", |t: &(u128, u128, u128)| t.1),
+            ("decode", |t: &(u128, u128, u128)| t.2),
         ] {
+            let v: Vec<u128> = per_call.iter().map(project).collect();
             println!(
-                "[{label}] per-call  p50={}us p95={}us  合計={}us  (n={})",
+                "[{label:<9}] per-call  p50={}us p95={}us  合計={}us  (n={})",
                 pctl(v.clone(), 0.5),
                 pctl(v.clone(), 0.95),
                 v.iter().sum::<u128>(),
@@ -887,7 +868,7 @@ mod tests {
         // キャッシュヒット経路の decode 単体: icons.bin ヒット時は shell+gdi/encode を払わず
         // decode + load_texture だけになる。load_texture は egui ctx 依存でここでは測れないため、
         // decode 合計を「1 settle ぶんのヒット経路 CPU」の下限として出す。
-        let pngs: Vec<Vec<u8>> = paths.iter().filter_map(|p| extract_png(p).ok()).collect();
+        // 材料は warm-up で回収済みの `pngs` を使い回す（再抽出しない）。
         let t = Instant::now();
         for png in &pngs {
             let _ = crate::egui_shell::png_to_color_image(png);

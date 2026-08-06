@@ -87,8 +87,19 @@ jobs:
       - name: cargo fmt
         run: cargo fmt --all -- --check
 
+      # `save-if` で main からしか保存しない。**この job 単体の都合ではなく、Actions キャッシュの
+      # 10GB 上限を共有しているからである**——保存を許すと PR ごとに 2573MB が
+      # `refs/pull/*/merge` へ積まれ（実測）、e2e.yml が main スコープへ置く smoke 用の
+      # エントリを LRU で押し出しうる。**押し出されても赤くならない**（restore-key で部分ヒットし、
+      # ビルドが静かに元の所要へ戻る）ため、検出ではなく圧力そのものを断つ。
+      #
+      # 受容する残余: Cargo.lock を変える PR では、その PR の 2 回目以降の run も main の
+      # エントリからしか復元できない。rust-check は debug ビルドで元々短く（実測 4m18s）、
+      # 依存を動かす PR は稀（`/deps-update`）なので、常時かかる 10GB 圧力と釣り合わない。
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: cargo check
         run: cargo check --workspace

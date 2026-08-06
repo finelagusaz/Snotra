@@ -23,6 +23,7 @@ run 31070343704（2026-08-06）の実測:
 2. `save-if: ${{ github.ref == 'refs/heads/main' }}`。PR からは保存せず、エントリを 1 個に抑える。
 3. `push: branches: [main]` を `paths` 無しで足し、main の run で warm する。`cancel-in-progress` は main だけ外す。
 4. "Build release binary" ステップ限定の env で `CARGO_PROFILE_RELEASE_LTO=false` / `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16`。
+5. **`ci.yml` の rust-cache にも `save-if` を足す**（射程の拡張）。10GB 上限は 2 つの workflow が共有する 1 つの資源であり、rust-check が PR ごとに 2573MB を `refs/pull/*/merge` へ積み続ける限り、上の決定 2 が置く main エントリは LRU で押し出されうる。**押し出されても赤くはならない**——restore-key で部分ヒットし、ビルドが静かに元の所要へ戻る（今回直したのと同じ「緑のまま空振りする」形）。**圧力を作ったのはこの変更なので、検出器を足すのではなく圧力を断つ。**
 
 ## 検討した代替案と却下理由
 

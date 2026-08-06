@@ -10,7 +10,13 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # **main ではキャンセルしない**。下の rust-check へ `save-if` を入れて main を唯一の保存経路に
+  # したため、main の run がキャンセルされると保存の Post ステップまで到達する保証が無くなる
+  # （到達しないと確かめたわけではない。保証が無い側へ倒すのが安全側である）。main へは直近
+  # 14 日で 184 コミット（1 日平均 13）入っており、連続マージが同じ `group` を奪い合う頻度に
+  # 達している。**e2e.yml が同じ理由で同じ形を採る**——保存経路を絞ったなら、その経路を
+  # キャンセルしない。PR 側は従来どおり最新だけを残す。
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   # 旧 frontend-check の縮退（#532 SU7 PR3・フロント撤去）。残る npm test は

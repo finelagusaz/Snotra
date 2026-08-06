@@ -147,11 +147,15 @@ pub(crate) fn launch_settings_process(app: &AppHandle, extra_args: &[&str]) -> R
         // Restore main window alwaysOnTop（egui は get_window・codex #3・SPEC §8.5）。
         // results 窓にも対称適用する（#646 PR2・上の解除と対）。
         //
-        // **既知の hazard（機序・重篤度・是正は #923 が正本）**: この復元はイベントループの
-        // 外——監視スレッド——から撃つため、hidden な main へ tao の差分適用が `SW_HIDE` を
-        // 漏らす（`src-tauri/CLAUDE.md`「Win32 / Tauri 注意事項」の窓ごとの層を参照）。
-        // **#746 で auto_hide 有効時に「設定終了時 main は hidden」が常態化したため、この
-        // 経路を毎回通るようになった**（従来も Escape 経由で到達可能ではあった）。
+        // **対称に書いてあるが、2 行の実行スレッドは違う**（#923 で実測）:
+        // `set_always_on_top` は tauri の `send_user_message` と tao の `execute_in_thread` で
+        // 二重に marshalling され、フラグの読みと `apply_diff` はイベントループ上で走る——
+        // ゆえに `show_egui_main` / `hide_egui_main` と逐次化される。**ここを cross-thread と
+        // 読んではならない**（在りもしない競合を見る。#923 はそれで起票され取り下げた）。
+        // このスレッドで即時に走るのは生 `SetWindowPos` の `set_topmost` だけである。
+        // hidden な main へ `apply_diff` が `SW_HIDE` を漏らすのは毎回起きるが、逐次化ゆえ
+        // 無害である。**無害なのは実測の範囲であって原理ではない**——どちらかを別経路へ
+        // 移すなら測り直すこと。
         if let Some(main) = handle_for_monitor.get_window("main") {
             let _ = main.set_always_on_top(true);
         }

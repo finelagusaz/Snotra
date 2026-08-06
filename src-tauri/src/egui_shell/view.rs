@@ -9,12 +9,22 @@
 //! **反映境界は 5 つ（`ui.visuals_mut()` / `ctx.set_visuals` / `ctx.set_fonts` /
 //! `frame.set_clear_color` / `window.set_background_color`）あり、1 つの名前に畳んでいない**
 //! ——このうち本ファイルが直接呼ぶのは `ui.visuals_mut()` と `frame.set_clear_color` の 2 つ。
+//! **前者の呼び出し点は `search_input_ui` の入口 1 か所である**（#949 で `update()` から移設。
+//! 順序不変条件と、それを縛る検査はその関数の doc が正本）。
 //! `window.set_background_color` は**リサイズ時に間接呼び出し**である
 //! （`window_coordinator::apply_native_background` 経由）。フォント登録は
 //! `font_stack::configure_japanese_font` の**呼び出し点** 2 箇所（`setup` と `update` の
 //! font_family 差分の分岐）として持つ。**`ctx.set_fonts` 自体の呼び出しは `font_stack.rs` に
 //! あり本ファイルには無い**（#666 段 3 タスク 1 で移設）。**`ctx.set_visuals` は
-//! `src-tauri/src/` の全域 grep で 0 件である**（#751 で撤去・現在の pass に届かないため）。
+//! `src-tauri/src/` の全域 grep で 0 件である**（#751 で撤去・現在の pass に届かないため。
+//! #900 以降は `src-tauri/clippy.toml` の `disallowed-methods` が機構で禁じる）。
+//!
+//! **この crate では `panel_fill` / `window_fill` を書かない**——main 窓には読む egui コンテナ
+//! （`CentralPanel` / `egui::Window` 等）が 1 つも無く、消費者ゼロの死んだ書き込みだった
+//! （spec 決定 2 で撤去）。**揃えるために書き足さないこと**——ただし
+//! **`snotra-settings` には当てはまらない**（あちらは `CentralPanel` を使うので実消費者が在り、
+//! `ctx.set_visuals` こそが正しい API である。`src-tauri/clippy.toml` の禁止が crate スコープに
+//! 閉じているのも同じ理由）。
 //!
 //! **style を経由する 3 値（`extreme_bg_color` / `selection.bg_fill` / `weak_text_color`）と
 //! 背景色は、いまはどちらも同じフレームに届く**（#751 で揃えた・経路は別のまま）。背景色は
@@ -186,6 +196,25 @@ fn move_text_cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
     }
 }
 
+/// `search_input_ui` が**この関数の中で `ui` へ適用する**テーマ 3 値（#949）。
+///
+/// **`SearchInputParams` と分けてある**——あちらは `TextEdit` へ**渡す**値、こちらは `ui` へ
+/// **適用する**値であり、順序の不変条件を負うのはこちらだけである（理由は `search_input_ui` の doc）。
+///
+/// **3 フィールドは同型（`Color32`）ゆえ、構築時に取り違えても型は通る。** `search_input_ui` の
+/// **中**での取り違えは同関数の検査が捕まえるが、**呼び出し側で `VisualSnapshot` から詰めるとき**の
+/// 取り違えは型でもテストでも捕まらない——区別できる観測は非既定色での目視だけである
+/// （`docs/build-commands.md`「`[visual]` の色を変える変更は、**非既定色で**目視する」）。
+pub(crate) struct InputVisuals {
+    /// `TextEdit` の背景（`Visuals::extreme_bg_color`）。
+    pub(crate) input_bg: egui::Color32,
+    /// 選択帯（`Visuals::selection.bg_fill`）。
+    pub(crate) selection: egui::Color32,
+    /// hint 文字色（`Visuals::weak_text_color`）。**TextEdit の hint はこれだけが効く**
+    /// （egui が `RichText::color()` を無条件に上書きする・#654。機序は TextEdit 構築部のコメント）。
+    pub(crate) hint: egui::Color32,
+}
+
 /// `search_input_ui` が要る 1 フレーム分の値（`RuntimeFrame` も controller も含まない）。
 pub(crate) struct SearchInputParams {
     pub(crate) input_id: egui::Id,
@@ -203,26 +232,62 @@ pub(crate) struct SearchInputParams {
 /// 検索入力欄の widget 合成。**`RuntimeFrame` にも `LauncherController` にも触らない**ので、
 /// `egui_kittest` の `Harness` から実コードのまま駆動できる（`mod tests` の kittest 検査）。
 ///
-/// **この関数の内容は 3 つの順序そのものである。** キャレットの末尾同期（#840）と focus の
-/// 要求（#872/#936）は、どちらも `TextEdit` の**構築前**でなければ同一フレームの文字イベントに
-/// 効かない。#938 が入れた単体検査は egui の意味論だけを縛り、`update()` の並びが後ろへ戻っても
-/// 通る受容残余を持っていた——**kittest がこの関数を丸ごと走らせることでその残余が閉じる。**
+/// **この関数の内容は 4 つの順序そのものである。** テーマ 3 値の適用（#751/#949）・キャレットの
+/// 末尾同期（#840）・focus の要求（#872/#936）は、いずれも後ろへ動かすと同じフレームに効かない
+///（前者は子 `Ui` の生成より、後 2 者は `TextEdit` の構築より前でなければならない）。#938 が
+/// 入れた単体検査は egui の意味論だけを縛り、`update()` の並びが後ろへ戻っても通る受容残余を
+/// 持っていた——**この関数を丸ごと走らせる検査でその残余が閉じる。**
 ///
-/// **どちらの順序をどの検査が縛るかは分かれている**（ここが本 doc の正本）:
+/// **どの順序をどの検査が縛るかは分かれている**（ここが本 doc の正本）:
+/// - テーマ 3 値 → `search_input_ui_applies_theme_values_to_child_ui_in_the_first_pass`
 /// - キャレット → `kittest_restored_frame_appends_same_frame_input_at_end`
 /// - focus → `kittest_first_frame_requests_focus_before_text_edit`（判定フレームの開始時点で
 ///   焦点を持たない状態を作る。作らないと `!has_focus` ガードで要求が走らず縛れない・実測）
 /// - 対照（縛れているかの検算）→ `kittest_without_focus_request_the_same_input_is_dropped`
+///
+/// **適用先は `ctx` ではなくこの `ui` である**（#751・ここが機序の正本）。egui 0.35.0 の
+/// `Context::run_ui` は user callback より前に root `Ui` を作り（`context.rs:780-807`）、`Ui::new`
+/// はそこで `ctx.global_style()` を `Arc<Style>` として掴む（`ui.rs:108-136`）。ゆえに
+/// `ctx.set_visuals` は**現在の pass に届かない**——色だけを変えた config 適用フレームは
+/// 「次のフレームが来る保証の無い状況」（設定 UI で色を編集中）と一致するため、入力欄だけが
+/// 旧色で取り残された。`ui.visuals_mut()` は copy-on-write でこの `Ui` と**以後に作られる子 Ui**
+///（`ui.rs:236` の `Arc::clone`）に効くので、同じフレームに届く。`Context` 経由の書き込みは
+/// `src-tauri/clippy.toml` の `disallowed-methods` が禁じる（#900）。
+///
+/// **この位置は `update()` にあった**（#751）——規範だけで守られ、破っても検知されなかった。
+/// #949 で 3 値の唯一の消費者（下の `TextEdit`）を描くこの関数へ吸収し、位置を関数の入口に
+/// 固定した。**検査が守るのは「この関数の中」だけである**——`update()` 側でこの関数の呼び出し
+/// より前に visuals を読むウィジェットを足す退行は、検査から**原理的に見えない**（受容する残余・
+/// 却下した代替案とあわせて `ADR-visuals-order-detector-at-choke-point`）。
+///
+/// **観測点は `hint` クロージャである**——実コードのクロージャが子 `Ui` を受け取るのを流用する。
+/// 代価として、本来必要な「子 `Ui` の生成より前」より 1 段強い「`hint` の呼び出しより前」まで
+/// 縛る。適用を関数の入口に置く限り偽陽性は出ない。
 ///
 /// `hint` をクロージャで受けるのは、`HintPlan::Folder` の分岐が `ui.available_width()` と
 /// `ui.painter()` を**内側の `Frame` の中で**読むためである。文字列を先に作って渡すと
 /// `available_width` が変わり、中間省略の結果が動く。
 pub(crate) fn search_input_ui(
     ui: &mut egui::Ui,
+    input_visuals: InputVisuals,
     buf: &mut String,
     params: &SearchInputParams,
     hint: impl FnOnce(&mut egui::Ui) -> String,
 ) -> egui::Response {
+    // **子 `Ui` を作る前に適用する**（上の doc の順序）。`Frame::show` より後ろへ動かすと、
+    // 子は生成時に親の style を `Arc::clone` 済みで、この書き込みは届かない（実測）。
+    //
+    // **この書き込みは呼び出し元の `ui` に残る**（`&mut` ゆえ関数を出ても戻らない）。移設前の適用は
+    // この呼び出しより前（`update()` 前半・`frame.set_clear_color` の直後）に在ったので、
+    // **呼び出しより後ろの範囲は変わっていない**——**前の区間は失った**（上の doc と
+    // `ADR-visuals-order-detector-at-choke-point`）。`search_input_ui` より後の status 行・toast は
+    // raw painter へ色を明示渡しするため 3 値を読まない。`ui.scope()` で閉じないのは、その
+    // **後方の**同値性を保つためである。
+    let visuals = ui.visuals_mut();
+    visuals.extreme_bg_color = input_visuals.input_bg;
+    visuals.selection.bg_fill = input_visuals.selection;
+    visuals.weak_text_color = Some(input_visuals.hint);
+
     egui::Frame::new()
         .inner_margin(egui::Margin::same(params.inset.round() as i8))
         .show(ui, |ui| {
@@ -406,8 +471,8 @@ impl EguiView for SearchWindowView {
         // テーマ値（色・font・Metrics・show_icons）は 1 フレーム 1 lock で読み切る
         //(#673 spec 決定 4)。live-read 契約はフレーム間の話で不変——**`self.` へ保持しないこと**。
         // 導出は純粋核 visual::visual_snapshot、行高の正本は layout::Metrics::from_config。
-        // **ここで読むのは値だけである**——**適用**は別の位置に散る: 3 値は `ui.visuals_mut()`
-        //（下・#751 で `ctx.set_visuals` から移した）、font は `configure_japanese_font`、背景色は
+        // **ここで読むのは値だけである**——**適用**は別の位置に散る: 3 値は `search_input_ui` の
+        // 入口（#949 で `update()` から移設）、font は `configure_japanese_font`、背景色は
         // `frame.set_clear_color`。ネイティブ背景ブラシだけは**フレーム冒頭に無い**——show 直前
         //（`update()` の外）と、サイズを変えたときの `applied_background` 分岐（`update()` の末尾・
         // spec 決定 3）の 2 か所である。理由の正本は下の「ここに無い」の段落。
@@ -468,46 +533,19 @@ impl EguiView for SearchWindowView {
         self.controller.consume_external_pending(&ctx);
 
         // 背景色は **style を経由しない**（spec 決定 1）。`render()` が `run_ui` → `paint` の順に
-        // 進むため、ここで決めた色は同じフレームの `buffer.fill` に届く。**下の 3 値も #751 以降は
-        // 同じフレームに届く**（`ui.visuals_mut()` へ移したため）——経路は別のままだが、到達
-        // フレームの非対称はもう無い。
+        // 進むため、ここで決めた色は同じフレームの `buffer.fill` に届く。**style を経由する 3 値も
+        // #751 以降は同じフレームに届く**（`ui.visuals_mut()` へ移したため）——経路は別のままだが、
+        // 到達フレームの非対称はもう無い。
         frame.set_clear_color(visual.background);
 
-        // §11: 入力欄/選択色を config テーマから（ハードコード撤廃）。
+        // §11: 入力欄/選択色は config テーマから取る（ハードコード撤廃）。**適用はここに無い**
+        // ——3 値（`extreme_bg_color` / `selection.bg_fill` / `weak_text_color`）は
+        // `search_input_ui` の入口が `ui.visuals_mut()` で適用する（#949 で `update()` から移設。
+        // 機序と順序不変条件の正本はその doc）。**唯一の消費者はその関数が描く `TextEdit` である**
+        // ——この view の egui ウィジェットは他に無く、status 行と toast は raw painter へ色を
+        // 明示渡しする。results 窓は別 Context ゆえ影響外。
         // font_family のエッジ検出も同一 lock で読む（SU6 spec 決定 2・lock 1 回/フレーム）。
         // 値はフレーム冒頭の `visual` から取る（#673）。
-        //
-        // **適用先は `ctx` ではなくこの `ui` である**（#751）。egui 0.35.0 の `Context::run_ui` は
-        // user callback より前に root `Ui` を作り（`context.rs:780-807`）、`Ui::new` はそこで
-        // `ctx.global_style()` を `Arc<Style>` として掴む（`ui.rs:108-136`）。ゆえに
-        // `ctx.set_visuals` は**現在の pass に届かない**——色だけを変えた config 適用フレームは
-        // 「次のフレームが来る保証の無い状況」（設定 UI で色を編集中）と一致するため、入力欄だけが
-        // 旧色で取り残された。`ui.visuals_mut()` は copy-on-write でこの `Ui` と**以後に作られる
-        // 子 Ui**（`ui.rs:236` の `Arc::clone`）に効くので、同じフレームに届く。
-        //
-        // **この位置は correctness の条件である**（#751 が新設した不変条件）: **visuals を読む最初の
-        // 操作**——ウィジェットの**描画**か子 Ui の**生成**——より前でなければならない。
-        // **「最初のウィジェットより前」ではない**: 上に在る `ui.interact` は `create_widget` を呼ぶ
-        //（`ui.rs:906` → `:920`）＝ウィジェット登録そのものだが、ヒットテストの矩形を積むだけで
-        // visuals を読まないので、ここより上にあってよい。
-        //
-        // 旧 `ctx.set_visuals` はどこで呼んでも当該 pass に届かなかったので位置に意味が無かったが、
-        // いまは意味がある。**破っても検知されない**——コンパイラもユニットテストも `check:colors` も
-        // smoke も捕まえない受容残余であり、上へ何かを挿入するときは「visuals を読まないこと」を
-        // 確かめること。
-        //
-        // **`panel_fill` / `window_fill` はここに無い**——読む egui コンテナ（`CentralPanel` /
-        // `egui::Window` 等）がリポジトリに 1 つも無く、消費者ゼロの死んだ書き込みだった（spec 決定 2）。
-        // 同じ grep が `ctx.set_visuals` を落としてよい根拠にもなっている（global style から root Ui を
-        // 作る経路がこの crate に無く、egui 内部でその 3 値を読む箇所も無い）。
-        let visuals = ui.visuals_mut();
-        visuals.extreme_bg_color = visual.input_bg; // TextEdit 背景
-        visuals.selection.bg_fill = visual.selection;
-        // TextEdit の hint 色はここだけが効く（#654・詳細は TextEdit 構築部のコメント）。
-        // **他の描画を巻き込まない**: この view が使う egui ウィジェットは TextEdit 1 つだけで
-        //（`ui.label` / `ui.button` の類は 0 件・残りは raw painter に色を明示渡し）、
-        // weak text を読むのはその hint のみ。results 窓は別 Context ゆえ影響外。
-        visuals.weak_text_color = Some(visual.hint);
 
         // SU6 spec 決定 2: font_family hot-reload（WebView2 の --font-family CSS 変数即時反映 parity）。
         // applied は解決成否に依らず無条件更新（フィールド doc 参照）。
@@ -657,7 +695,8 @@ impl EguiView for SearchWindowView {
         //   `hint_text.map_texts(|t| t.color(visuals.weak_text_color()))` で**無条件に上書き**し、
         //   egui 自身が "users won't be able to override it" と注記している。ゆえに
         //   `RichText::color()` は届かない（#643 の指定は dead だった）。適用は
-        //   `ui.visuals_mut()` 側（#751 以前は `ctx.set_visuals` で、同じフレームに届かなかった）
+        //   `search_input_ui` の入口（`ui.visuals_mut()`・#949 で `update()` から移設。
+        //   #751 以前は `ctx.set_visuals` で、同じフレームに届かなかった）
         //
         // **どちらも「色リテラルを書かない」だけでは守れない**（#654 で 2 様態とも実在した。
         // SPEC §11 は「指定したつもりで届かない経路」とだけ述べ、機序は本コメントを正本に
@@ -685,7 +724,21 @@ impl EguiView for SearchWindowView {
             font: bar_font.clone(),
             text_color: bar_theme.name_color,
         };
-        let response = search_input_ui(ui, &mut buf, &params, |ui| {
+        // **テーマ 3 値の適用点はこの下——`search_input_ui` の入口である**（#949 で移設）。
+        // **ここより前で新しいウィジェット・子 `Ui` を作るなら、visuals を読まないことを
+        // 確かめるか、その `Ui` へ自分で visuals を渡すこと。** `update()` の冒頭からここまでは
+        // 3 値が未適用の区間であり、適用が `update()` の前半に在った #751 当時より**広い**。
+        // **この区間の退行を捕まえる自動検査は無い**——移設で入った検査は `search_input_ui` を
+        // 単独で駆動するので、ここには届かない。残るのは**カテゴリ D の非既定色目視**だけである
+        //（受容する残余・`ADR-visuals-order-detector-at-choke-point`）。現時点でこの区間に visuals を読む描画は
+        // 無い: `ui.interact` は `create_widget` を呼ぶが（`ui.rs:906` → `:920`）ヒットテストの
+        // 矩形を積むだけで visuals を読まず、status 行と toast は raw painter へ色を明示渡しする。
+        let input_visuals = InputVisuals {
+            input_bg: visual.input_bg,
+            selection: visual.selection,
+            hint: visual.hint,
+        };
+        let response = search_input_ui(ui, input_visuals, &mut buf, &params, |ui| {
             // hint の書式化（#870）。**フォルダ現在地だけが幅を要る**——収まらないパスを
             // 中間省略し、ドライブと leaf の両方を残す。`add_sized` に渡すのと同じ
             // `ui.available_width()` から `TextEdit` の左右 margin を引いたものが、
@@ -818,9 +871,9 @@ impl EguiView for SearchWindowView {
                 egui::vec2(ui.available_width(), status_h),
                 egui::Sense::hover(),
             );
-            // 色はフレーム冒頭の `visual` から（#673）。ここは style ではなく config を直接
-            // 読んでいた箇所ゆえ、3 値の適用（`ui.visuals_mut()`）より後という位置に意味は無い
-            //（監査 #4。#751 で適用先が ctx から ui へ移った後もこの読みは無関係のまま）。
+            // 色はフレーム冒頭の `visual` から（#673）。**ここは style を読まない**——config の値を
+            // painter へ直接渡すので、3 値の適用との前後関係に意味は無い（監査 #4。#751 で適用先が
+            // ctx から ui へ、#949 で `update()` から `search_input_ui` へ移った後も無関係のまま）。
             ui.painter().rect_filled(rect, 4.0, visual.input_bg);
             ui.painter().text(
                 egui::pos2(rect.left() + 8.0, rect.center().y),
@@ -1121,7 +1174,17 @@ mod tests {
     use egui::text::{CCursor, CCursorRange};
     use egui::text_edit::TextEditState;
 
-    use super::{SearchInputParams, move_text_cursor_to_end, search_input_ui};
+    use super::{InputVisuals, SearchInputParams, move_text_cursor_to_end, search_input_ui};
+
+    /// 検査用のテーマ 3 値。**3 値とも非既定色にする**——既定色と偶然一致すると、適用が
+    /// 落ちていても通ってしまう。
+    fn test_visuals() -> InputVisuals {
+        InputVisuals {
+            input_bg: egui::Color32::from_rgb(0x80, 0x30, 0x20),
+            selection: egui::Color32::from_rgb(0x20, 0x70, 0x40),
+            hint: egui::Color32::from_rgb(0x10, 0x20, 0xF0),
+        }
+    }
 
     // `hex_color_parses_and_falls_back` は #673 で `visual.rs` の
     // `hex_parses_valid_and_falls_back_to_config_default` へ移した（hex→Color32 の変換が
@@ -1246,7 +1309,8 @@ mod tests {
                     font: egui::FontId::proportional(12.0),
                     text_color: egui::Color32::WHITE,
                 };
-                let _ = search_input_ui(ui, &mut st.buf, &params, |_| String::new());
+                let _ =
+                    search_input_ui(ui, test_visuals(), &mut st.buf, &params, |_| String::new());
             },
             CaretState {
                 buf: "alpha".to_owned(),
@@ -1371,9 +1435,11 @@ mod tests {
     /// **`ctx.set_visuals` が届かないことを固定する対のテストは意図的に置かない。** それは
     /// egui の現在の制限を固定する主張であり、上流が直した日に緑のビルドが赤くなる。
     ///
-    /// **このテストが守るのは egui の伝播であって、`update()` の呼び出し位置ではない。**
-    /// 「最初のウィジェット／子 Ui の構築より前で適用する」という #751 の順序不変条件には
-    /// 検知手段が無い（受容残余・適用点のコメント参照）。
+    /// **このテストが守るのは egui の伝播であって、製品関数の適用位置ではない。**
+    /// 「子 `Ui` の生成より前で適用する」という #751 の順序不変条件を縛るのは、下の
+    /// `search_input_ui_applies_theme_values_to_child_ui_in_the_first_pass` である（#949）。
+    /// **両者を併存させるのは切り分けのためである**——あちらが落ちたときに**こちらが緑なら、
+    /// 原因は egui ではなく製品コードの側**だと言える。
     #[test]
     fn ui_visuals_mut_reaches_child_ui_in_the_same_pass() {
         let ctx = egui::Context::default();
@@ -1406,5 +1472,57 @@ mod tests {
         });
 
         assert_eq!(seen.into_inner(), Some((input_bg, selection, hint)));
+    }
+
+    /// #949: **テーマ 3 値の適用は `search_input_ui` の入口に在り、同じ pass の子 `Ui` へ届く。**
+    ///
+    /// **上のテストとの分担**（消さないこと）: あちらが測るのは **egui の伝播**であって、製品関数の
+    /// どこで適用しているかは縛らない。こちらは `search_input_ui` を**実コードのまま** 1 pass
+    /// 走らせ、`hint` クロージャが受け取る子 `Ui` の値を突き合わせる。**新テストが落ちたとき、
+    /// 上のテストが緑なら原因は製品コード側だと切り分けられる**——併存はその対照のためである。
+    ///
+    /// #751 が「コンパイラもユニットテストも `check:colors` も smoke も捕まえない受容残余」と
+    /// 記録した順序不変条件は、#949 の移設とこの検査で**検知手段を持つ**。
+    ///
+    /// **`Harness` ではなく素の `run_ui` を使う。** 初回 pass であることが症状の成立条件そのもの
+    /// であり、`egui_kittest::Harness` は構築の時点で既に 1 フレーム走らせる
+    ///（`kittest_first_frame_requests_focus_before_text_edit` の doc に実測が在る）。
+    ///
+    /// **この検査が捕まえないもの**は `search_input_ui` の doc（`update()` 側の未適用区間）。
+    #[test]
+    fn search_input_ui_applies_theme_values_to_child_ui_in_the_first_pass() {
+        let ctx = egui::Context::default();
+        let expected = test_visuals();
+        let mut buf = String::new();
+        let params = SearchInputParams {
+            input_id: egui::Id::new("search_input"),
+            restored_search: false,
+            window_focused: true,
+            input_editable: true,
+            inset: 0.0,
+            field_height: 20.0,
+            font: egui::FontId::proportional(12.0),
+            text_color: egui::Color32::WHITE,
+        };
+
+        let seen = std::cell::RefCell::new(None);
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            // 読む側は `TextEdit` と同じ解決 getter を使う（生フィールドを見ると実経路を
+            // 素通りする——理由は上のテストの doc）。
+            let _ = search_input_ui(ui, test_visuals(), &mut buf, &params, |child| {
+                *seen.borrow_mut() = Some((
+                    child.visuals().text_edit_bg_color(),
+                    child.visuals().selection.bg_fill,
+                    child.visuals().weak_text_color(),
+                ));
+                String::new()
+            });
+        });
+
+        assert_eq!(
+            seen.into_inner(),
+            Some((expected.input_bg, expected.selection, expected.hint)),
+            "3 値が子 Ui へ届いていない（適用が子 Ui の生成より後ろに在るか、値が欠けている）"
+        );
     }
 }

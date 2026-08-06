@@ -1,0 +1,58 @@
+# `Context` 経由で global style を書く 7 メソッドを、この crate で禁じる（#751 / #900）。
+#
+# root `Ui` は pass 冒頭で `ctx.global_style()` を `Arc<Style>` として掴む。ゆえに run_ui の
+# callback 内からの書き込みは**その pass に届かず**、色だけを変えた config 適用フレーム
+# （＝次フレームが来る保証の無い状況）で入力欄だけが旧色で残る。修正は PR #901（7562cef。
+# squash subject が #751 を含まないので `git log --grep` では辿れない）、却下した代替案は
+# ADR-visuals-application-target（このファイルからの参照は governance:check の走査元に入らないため、
+# パス形で書いても保護されない。改名しない slug 名で指す）。
+#
+# 含めなかったもの:
+#   - `style_ui` / `settings_ui` — 内部で書き込み口を呼ぶが、これらは egui 組み込みのスタイル
+#     編集パネルを**描くウィジェット API** である。呼ぶ人は inspector を出したいのであって #751 の
+#     誤りを犯していない。禁止すると偽陽性になり、解消手段が `#[allow]` しか残らない——機構を
+#     完全に無効化する逃げ道を、正当な理由で打鍵させることになる。
+#   - `options_mut` / `memory_mut` — 汎用アクセサ。どちらも `Options` の `dark_style` /
+#     `light_style`（どちらも pub）へ直接書けるので、**これがこの機構の穴である**（受容残余）。
+#     `memory_mut` は focus 操作の実使用があり禁止できない。
+#   - `set_debug_on_hover` — `all_styles_mut` を呼ぶが、クロージャが egui 内部で `style.debug` へ
+#     固定されており visuals を書けない。
+#   - `set_fonts` / `add_font` — style ではなくフォント定義。`font_stack.rs` に正当な実使用がある。
+#   - `set_theme` — 書くのは `theme_preference` であって style の中身ではない。この crate は config の
+#     hex 色から直接 `Visuals` を作るので使わない。ただし run_ui 内で呼べば「当該 pass に届かない」
+#     症状は同型に出る（1 フレーム遅れて切り替わる）。
+#
+# **この禁止は crate 全体に掛かるので、欠陥を持たない地点も塞ぐ。** `EguiView::setup` は
+# `EguiWindow::new` から run_ui の**外**で呼ばれるため、そこでの global style 書き込みは第 1 pass から
+# 効く（＝ #751 の欠陥を持たない）。歴史上そこに style 書き込みは一度も無いので塞ぐ判断を採ったが、
+# 必要になったら `#[allow(clippy::disallowed_methods)]` + 理由コメントで開けること——
+# **それがこの機構で sanctioned な唯一の解消手段である。**
+#
+# **この設定が死んでも、誰も知らせてくれない**（4 経路とも 2026-08-06 に実測）:
+#   0. この lint は **warn 既定**である（`clippy-driver -W help` で実測）。赤くなるのは `ci.yml` と
+#      `.claude/hooks/post-edit.mjs` が `-D warnings` を渡している間だけで、ルート `Cargo.toml` の
+#      `[workspace.lints]` に clippy カテゴリは無い。**どちらかが `-D warnings` を落とせば、
+#      このファイルは黙って助言へ降格する。**
+#   1. メソッド名・型名の書き損じ → warning は出るが `-D warnings` でも exit 0
+#   2. crate 名の書き損じ・egui 依存の消滅 → 診断そのものが出ない
+#   3. このファイルは cargo の fingerprint に入らない → ここだけを変えて同じコマンドを打つと、
+#      キャッシュ replay で設定を適用せずに exit 0 を返す（`.rs` を触るか `cargo clean -p snotra` を挟む）
+#   PostToolUse hook は exit code でしか検出しないため、1・2 の warning は会話にも届かない。
+#   **パスを足す・変えるときは、その場で違反を注入して赤くなることを必ず測ること。**
+#
+# **egui のピンを動かしたら、この表を注入で測り直すこと。** 上流の API 変更でパスが解決しなく
+# なっても、上の 2 番の形で黙る（型エラーにも警告にもならない）。ピンはルート `Cargo.toml`。
+#
+# **この内容を `Cargo.toml` の `[lints.clippy]` へは移せない**——`disallowed-methods` は lint の
+# レベルではなく**設定値**であり、`clippy.toml`（または `CLIPPY_CONF_DIR`）が唯一の口である。
+# `[workspace.lints]` は全 member 共通ゆえ `snotra-settings` の正当な使用を巻き込む点でも使えない
+# （crate ごとに分けたいという要件そのものが workspace lints と反対を向いている）。
+disallowed-methods = [
+    { path = "egui::Context::set_visuals", reason = "root Ui が pass 冒頭で掴む Arc<Style> に間に合わない（#751）。run_ui の中では ui.visuals_mut() を使う" },
+    { path = "egui::Context::set_visuals_of", reason = "root Ui が pass 冒頭で掴む Arc<Style> に間に合わない（#751）。run_ui の中では ui.visuals_mut() を使う" },
+    { path = "egui::Context::style_mut_of", reason = "root Ui が pass 冒頭で掴む Arc<Style> に間に合わない（#751）。run_ui の中では ui.visuals_mut() を使う" },
+    { path = "egui::Context::set_style_of", reason = "root Ui が pass 冒頭で掴む Arc<Style> に間に合わない（#751）。run_ui の中では ui.visuals_mut() を使う" },
+    { path = "egui::Context::global_style_mut", reason = "root Ui が pass 冒頭で掴む Arc<Style> に間に合わない（#751）。run_ui の中では ui.visuals_mut() を使う" },
+    { path = "egui::Context::set_global_style", reason = "root Ui が pass 冒頭で掴む Arc<Style> に間に合わない（#751）。run_ui の中では ui.visuals_mut() を使う" },
+    { path = "egui::Context::all_styles_mut", reason = "root Ui が pass 冒頭で掴む Arc<Style> に間に合わない（#751）。run_ui の中では ui.visuals_mut() を使う" },
+]

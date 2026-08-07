@@ -351,6 +351,26 @@ pub fn load_or_scan(scan: &[ScanPath], show_hidden_system: bool) -> (Vec<AppEntr
     (result.entries, result.cache_changed)
 }
 
+/// `index.bin` に載っているときだけエントリを返す（**走査は絶対にしない**）。実データを
+/// corpus として使うテスト専用。
+///
+/// **`load_or_scan_with_stats` で代用してはならない。** あちらの cache-miss の枝は全走査を
+/// 走らせたうえで `index.bin` を書く。`INDEX_WRITE_LOCK` はプロセス内の `static` ゆえ、
+/// **テストバイナリが複数プロセスに分かれると排他が効かず**、固定 tmp 名（`index.bin.tmp`）の
+/// 食い合いでキャッシュが壊れうる（`snotra-core/CLAUDE.md`「index.bin 書き込みの排他」）。
+/// 開発者の `cargo test` が黙って C ドライブを全走査する副作用も同時に消える。
+///
+/// **既定のスイートで実データを読むテストはすべてここを通すこと**（`search/tests/path.rs` の
+/// corpus 2 件と `tests/path_query_cost.rs` の `derives_same_bytes_as_normalize_entry_key`）。
+/// `#[ignore]` の計測ハーネスのうち `cached_masks` を要するものだけは
+/// [`load_or_scan_with_stats`] のままでよい——手元で 1 つずつ意図して走らせるものであり、
+/// 実運用の起動経路を測ることが目的だからである。
+#[doc(hidden)]
+pub fn load_cached_entries(scan: &[ScanPath], show_hidden_system: bool) -> Option<Vec<AppEntry>> {
+    let hash = compute_config_hash(scan, show_hidden_system);
+    Some(load_cache(hash)?.entries)
+}
+
 /// Same as `load_or_scan`, but returns the full `LoadOrScanResult`: timing stats,
 /// cached bitmasks, and—on cache hit—a `BackgroundRescanTask` for the caller to
 /// run on a background thread.

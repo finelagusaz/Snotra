@@ -117,7 +117,11 @@ impl SearchEngine {
         kana: (Vec<Box<str>>, Vec<u64>),
     ) -> Self {
         let (mut kana_lower_names, mut kana_char_masks) = kana;
-        let mut lower_names = lower_names;
+        // ここから先の `lower_names` の `None` は「`entries[i].name` と同一」を意味する
+        // （`SearchEngine::lower_names` の doc）。**この時点では全要素が `Some` である**
+        // ——下の共有判定はその前提に乗っている。`Option<Box<str>>` は `Box<str>` と同じ
+        // 16 B ゆえ、包んでも Vec 本体は動かない。
+        let mut lower_names: Vec<Option<Box<str>>> = lower_names.into_iter().map(Some).collect();
         let mut lower_file_names = lower_file_names;
         let mut char_masks = char_masks;
         let mut file_name_char_masks = file_name_char_masks;
@@ -154,8 +158,16 @@ impl SearchEngine {
             "SearchEngine: kana parallel Vecs must both be empty or match entries length"
         );
 
-        // `lower_file_names[i]` が `lower_names[i]` とバイト一致するなら `Box<str>` を落とし、
-        // 旗で表す（実測 9.71 MiB / 255,961 ブロックの削減。読み替えは `entry_view` の 1 点）。
+        // 重複する派生文字列を落とす。**共有は鎖になっている**:
+        //
+        //   `lower_file_names[i]` → `lower_names[i]` → `entries[i].name`
+        //
+        // 実測の削減は前段 9.71 MiB / 255,961 ブロック、後段 9.80 MiB / 270,355 ブロック。
+        // 読み替えはどちらも `entry_view` の 1 点で、そこでも同じ順に解決する。
+        //
+        // **判定を全部済ませてから落とす。** 先に `lower_names[i]` を潰すと、前段の比較相手が
+        // 消えて file name 側の共有を取りこぼす（結果は正しいまま削減だけが減るので、
+        // **テストでは捕まらない**種類の誤りである）。
         //
         // **ビットマスクより後に置く。** `file_name_char_masks` は完全な文字列から導出されて
         // いなければならず（cache 経由でも Wave 2 経由でも `assemble` 到達時には確定済み）、
@@ -173,9 +185,18 @@ impl SearchEngine {
         // 形を残してある。増分の機序（比較か、255,961 個の `Box<str>` の解放か）は
         // **切り分けていない**——ここに書けるのは「並列化は効かない」までである。
         for i in 0..entries.len() {
-            if lower_file_names[i].as_deref() == Some(&*lower_names[i]) {
+            // ここでの `lower_names[i]` は必ず `Some`（上で `map(Some)` した直後であり、
+            // このループは各 `i` を 1 度しか通らない）。
+            let lower_name = lower_names[i].as_deref();
+            let shares_file_name = lower_file_names[i].as_deref() == lower_name;
+            let shares_name = lower_name == Some(&*entries.get(i).name);
+
+            if shares_file_name {
                 entries.mark_file_name_is_lower_name(i);
                 lower_file_names[i] = None;
+            }
+            if shares_name {
+                lower_names[i] = None;
             }
         }
 

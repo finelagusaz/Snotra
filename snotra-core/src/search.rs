@@ -116,7 +116,16 @@ pub struct SearchEngine {
     entries: PathStore,
     /// 派生文字列の並列 Vec は `Box<str>` で保持する。これらは構築後に伸長しないため、
     /// `String` の容量ワード（8B/要素）が無駄になる。`str` へ Deref するので読み取り側は無変更。
-    lower_names: Vec<Box<str>>,
+    ///
+    /// **`None` は「`entries[i].name` と同一」を意味する**（`assemble` が構築時に測って潰す）。
+    /// `to_lower_folded` が恒等写像になる名前——既に小文字の ASCII と、変換対象を持たない
+    /// CJK——がそれに当たり、実データでは 86.6% を占める。**`Option` で足りるのは
+    /// `lower_names` に「無い」という状態が元から無いからである**（`lower_file_names` の
+    /// `None` は「file name 成分が無い」を先に意味しており、そちらは旗を別に要した）。
+    /// `Option<Box<str>>` は niche 最適化で `Box<str>` と同じ 16 B ゆえ Vec 本体は動かない。
+    lower_names: Vec<Option<Box<str>>>,
+    /// `None` は「file name 成分が無い」。内容が `lower_names[i]` と同一のときは
+    /// `CompactEntry::file_name_is_lower_name` が立ち、ここは `None` に潰れている。
     lower_file_names: Vec<Option<Box<str>>>,
     /// Character-presence bitmask for lower_name (a-z: bits 0-25, 0-9: bits 26-35).
     /// Kept as a compact `Vec<u64>` — 8 entries per cache line — so the pre-filter sweep

@@ -109,15 +109,20 @@ impl SearchEngine {
 
         // `lower_names` も `lower_file_names` と同じ理由で条件つきに割る（下の段落）。
         // 相手は `entries[].name` で、**一致する分は「小文字化しても変わらなかった名前」**である。
+        //
+        // **`None`（= `entries[].name` と同一）の行を残す。** 潰した後は 0 になるが、
+        // 消すと「測って 0 だった」と「測っていない」が区別できなくなる——この行が 0 に
+        // なったこと自体が、共有が効いている証拠である。
         let mut lower_split = [
-            FootprintRow::empty("lower_names（= entries[].name）"),
+            FootprintRow::empty("lower_names（= entries[].name・未共有）"),
             FootprintRow::empty("lower_names（≠）"),
         ];
-        for (i, s) in lower_names.iter().enumerate() {
+        for (i, slot) in lower_names.iter().enumerate() {
+            let Some(s) = slot else { continue };
             lower_split[usize::from(**s != *entries.get(i).name)].add_str(s);
         }
         rows.extend(lower_split);
-        rows.push(vec_body::<Box<str>>(
+        rows.push(vec_body::<Option<Box<str>>>(
             "lower_names（Vec 本体）",
             lower_names.capacity(),
         ));
@@ -136,7 +141,9 @@ impl SearchEngine {
             // `None` は確保を持たない（`Option<Box<str>>` はニッチ最適化で 16 B のまま）。
             let Some(s) = slot else { continue };
             let is_folder = entries.get(i).is_folder;
-            let same = *lower_names[i] == **s;
+            // 比較相手は**解決後**の `lower_name`（鎖の上段が潰れていれば `entry.name`）。
+            let lower_name = lower_names[i].as_deref().unwrap_or(&entries.get(i).name);
+            let same = lower_name == &**s;
             split[usize::from(!is_folder) * 2 + usize::from(!same)].add_str(s);
         }
         rows.extend(split);

@@ -127,39 +127,115 @@ fn shared_file_name_flag_is_measured_not_inferred_from_is_folder() {
     }
 }
 
-/// 旗による読み替えが、潰す前の導出と 1 バイトも違わないことを実インデックスの全件で確かめる。
+/// **共有は鎖になっている**: `lower_file_names[i]` → `lower_names[i]` → `entries[i].name`。
+/// 両方の輪が同時に外れるエントリ（既に小文字の folder）で、`entry_view` が鎖を上から解いて
+/// 元のバイトを返すことを固定する。
 ///
-/// **共有は最適化であって意味の変更ではない。** `entry_view` が返す `lower_file_name` は、
-/// 索引がその文字列を持っていようといまいと `query::lower_file_name` の導出と一致しなければ
-/// ならない——ずれると `has_dot` のクエリで拡張子マッチが静かに変わる（クラッシュせず、
-/// 順位だけが動く）。実インデックスが無ければ自動スキップする corpus であり、機構としての
-/// 保証は上の合成 fixture のほうが持つ（`real_index_entries` の doc）。
+/// **鎖の順序を誤ると削減だけが減り、結果は正しいまま**である——`assemble` が先に
+/// `lower_names` を潰すと file name 側の比較相手が消えて共有を取りこぼすが、`entry_view` は
+/// どちらでも正しい値を返すので**挙動だけを見るテストでは捕まらない**。ゆえに索引が実際に
+/// 文字列を落としたか（`is_none`）まで見る。
 #[test]
-fn entry_view_lower_file_name_matches_derivation_over_real_index() {
+fn shared_lower_name_chain_collapses_both_links() {
+    let entries = vec![
+        // 既に小文字の folder: `lower_name == name` かつ `lower_file_name == lower_name`。
+        AppEntry {
+            name: "same".to_string(),
+            target_path: "C:\\real\\same".to_string(),
+            is_folder: true,
+        },
+        // 大文字始まりの folder: `lower_name != name` だが `lower_file_name == lower_name`。
+        AppEntry {
+            name: "Alias".to_string(),
+            target_path: "C:\\real\\Alias".to_string(),
+            is_folder: true,
+        },
+    ];
+
+    for migemo_enabled in [false, true] {
+        let engine = SearchEngine::new_with_migemo(entries.clone(), migemo_enabled);
+
+        let both = engine.entry_view(0);
+        assert_eq!(both.lower_name, "same", "migemo={migemo_enabled}");
+        assert_eq!(
+            both.lower_file_name,
+            Some("same"),
+            "migemo={migemo_enabled}"
+        );
+        assert!(
+            engine.lower_names[0].is_none(),
+            "migemo={migemo_enabled}: name と同一なら鎖の上段が落ちる"
+        );
+        assert!(
+            engine.lower_file_names[0].is_none(),
+            "migemo={migemo_enabled}: 上段が落ちても下段は落ちなければならない（順序の検知器）"
+        );
+
+        let folded = engine.entry_view(1);
+        assert_eq!(folded.lower_name, "alias", "migemo={migemo_enabled}");
+        assert_eq!(
+            folded.lower_file_name,
+            Some("alias"),
+            "migemo={migemo_enabled}"
+        );
+        assert!(
+            engine.lower_names[1].is_some(),
+            "migemo={migemo_enabled}: 小文字化で変わる名前は自前の文字列を持つ"
+        );
+        assert!(
+            engine.lower_file_names[1].is_none(),
+            "migemo={migemo_enabled}: 上段が残っていても下段は共有できる"
+        );
+    }
+}
+
+/// 共有による読み替えが、潰す前の導出と 1 バイトも違わないことを実インデックスの全件で確かめる。
+///
+/// **共有は最適化であって意味の変更ではない。** `entry_view` が返す 2 つの文字列は、索引が
+/// それを持っていようといまいと導出（`to_lower_folded` / `query::lower_file_name`）と
+/// 一致しなければならない——ずれると `lower_name` はタイブレークの並びが、`lower_file_name` は
+/// `has_dot` クエリの拡張子マッチが**静かに**変わる（クラッシュせず、順位だけが動く）。
+/// 実インデックスが無ければ自動スキップする corpus であり、機構としての保証は上の合成
+/// fixture のほうが持つ（`real_index_entries` の doc）。
+#[test]
+fn entry_view_shared_strings_match_derivation_over_real_index() {
     let Some(entries) = real_index_entries() else {
         println!("実インデックスが無いためスキップします。");
         return;
     };
     // `new_with_migemo` は entries を消費するので、期待値は先に導出しておく。
-    let expected: Vec<Option<String>> = entries
+    let expected: Vec<(String, Option<String>)> = entries
         .iter()
-        .map(|e| crate::query::lower_file_name(&e.target_path))
+        .map(|e| {
+            (
+                crate::query::to_lower_folded(&e.name),
+                crate::query::lower_file_name(&e.target_path),
+            )
+        })
         .collect();
     let engine = SearchEngine::new_with_migemo(entries, false);
 
-    let mut shared = 0usize;
-    for (i, want) in expected.iter().enumerate() {
+    let (mut shared_name, mut shared_file_name) = (0usize, 0usize);
+    for (i, (want_name, want_file_name)) in expected.iter().enumerate() {
         let view = engine.entry_view(i);
         assert_eq!(
-            view.lower_file_name,
-            want.as_deref(),
-            "index {i} で読み替えが導出とずれている"
+            view.lower_name, want_name,
+            "index {i} で lower_name の読み替えが導出とずれている"
         );
-        shared += usize::from(view.entry.file_name_is_lower_name);
+        assert_eq!(
+            view.lower_file_name,
+            want_file_name.as_deref(),
+            "index {i} で lower_file_name の読み替えが導出とずれている"
+        );
+        shared_name += usize::from(engine.lower_names[i].is_none());
+        shared_file_name += usize::from(view.entry.file_name_is_lower_name);
     }
+    let pct = |k: usize| k as f64 * 100.0 / expected.len().max(1) as f64;
     println!(
-        "{} 件で読み替えが導出と一致しました（共有 {shared} 件・{:.1}%）。",
+        "{} 件で読み替えが導出と一致しました（lower_name の共有 {shared_name} 件・{:.1}% / \
+         lower_file_name の共有 {shared_file_name} 件・{:.1}%）。",
         expected.len(),
-        shared as f64 * 100.0 / expected.len().max(1) as f64,
+        pct(shared_name),
+        pct(shared_file_name),
     );
 }

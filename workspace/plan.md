@@ -225,7 +225,9 @@ assert にすると前提が固定される。**判定の分かれ目は返り�
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings` が **exit != 0**、かつ診断が
       **4 件**（型段 `EscapeOutcome` / メソッド段 `bool` / メソッド段 `Option<U>` /
       型段へ移設した `BlurAction`）そろうことを確認。exit code と診断の要点を控える
-- [ ] `git checkout -- src-tauri/src/egui_shell/launcher_controller.rs` で戻し、clippy が緑に復すことを確認
+- [ ] 注入を戻し、**`git diff --stat` の出力が空**であることで確認する（「注入したファイルを
+      `checkout --` した」ではなく「作業ツリーに注入が 1 つも残っていない」を測る——将来
+      注入が別ファイルへ移っても空振りしない形）。そのうえで clippy が緑に復すことを確認
 
 ### Phase 5 — 文書
 
@@ -240,7 +242,11 @@ assert にすると前提が固定される。**判定の分かれ目は返り�
 
 - [ ] `cargo fmt --all -- --check` / `cargo check --workspace` / `cargo clippy --workspace --all-targets -- -D warnings`
 - [ ] `cargo test -p snotra`
-- [ ] `cargo doc --workspace --no-deps --document-private-items`（doc コメントを触ったため・hook 非発火）
+- [ ] `cargo doc --workspace --no-deps --document-private-items`（doc コメントを触ったため・hook 非発火）。
+      **沈黙を合格と読む前に `target/doc/snotra/` に `notify` のページが在るかを見る**——`snotra` は
+      `[lib]` を持たない bin crate（`src-tauri/CLAUDE.md` 冒頭）ゆえ、bin ターゲットの private
+      item が実際に文書化されるかは測るまで分からない。生成されていなければ intra-doc link 検査は
+      編集したコメントを見ていない（＝合格ではない）ので、その旨を PR 本文へ書く
 - [ ] `npm run governance:check`（`src-tauri/CLAUDE.md` 変更・G-heading-refs の着地を含む）
 - [ ] 実装差分を確定させる（`git diff` で意図した 6 ファイル以外に変更が無いことを確認。
       とくに Phase 4 の注入が残っていないこと）

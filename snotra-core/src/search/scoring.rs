@@ -76,6 +76,10 @@ thread_local! {
 ///
 /// 借用は `f` の中に閉じる。`f` の戻り値へキーの参照を持ち出すことはできない
 /// （持ち出せてしまうと、次のエントリの詰め直しで内容が入れ替わる）。
+///
+/// **`f` の中からこの関数を再び呼んではならない**——`borrow_mut` の二重取得で panic する。
+/// 現在の 2 つの呼び出し点は入れ子にならないが、`f` は `history` の照合を含む長さがあるので、
+/// 中へ正規化を要する処理を足すときは外へ出すこと（誤りは沈黙せず panic として出る）。
 pub(super) fn with_normalized_key<R>(target_path: &str, f: impl FnOnce(&str) -> R) -> R {
     KEY_BUF.with(|cell| {
         let mut key = cell.borrow_mut();

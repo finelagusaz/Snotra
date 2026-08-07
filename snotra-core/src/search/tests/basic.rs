@@ -248,6 +248,71 @@ fn recent_history_empty_when_no_launches() {
     assert!(results.is_empty());
 }
 
+/// `recent_history` の出力順は `recent_launches` の順に従い、対応する entry を持たない
+/// 履歴パスは落ちる。
+///
+/// **`recent_launches` の返り値そのものを期待値にするのが要点である**——同一秒に記録すると
+/// `last_launched` が並び、順序はパス昇順のタイブレークで決まる。期待値を固定文字列で
+/// 書くと、計測の秒境界をまたいだ回だけ落ちる不安定なテストになる。
+///
+/// **`empty_history()` は空ではない**——実体は `HistoryStore::load()` で、開発機の実
+/// `history.bin` を読む。ゆえに期待値は本テストが記録したパス（`c:\fake\`）へ絞る。
+/// 絞らないと開発機の実起動履歴が期待値に混入する（実際に踏んだ）。
+#[test]
+fn recent_history_follows_recent_launches_order_and_drops_unmatched() {
+    let entries = make_entries(&["alpha", "beta", "gamma"]);
+    let engine = SearchEngine::new(entries);
+    let mut history = empty_history();
+    history.record_launch("C:\\fake\\gamma.lnk", "g");
+    history.record_launch("C:\\fake\\alpha.lnk", "a");
+    history.record_launch("C:\\fake\\beta.lnk", "b");
+    // 索引に対応する entry を持たない履歴（アンインストール後などに実際に起きる）。
+    history.record_launch("C:\\fake\\vanished.lnk", "v");
+
+    let results = engine.recent_history(&history, 8);
+    assert_eq!(results.len(), 3, "対応する entry の無い履歴は落ちる");
+
+    let expected: Vec<String> = history
+        .recent_launches(usize::MAX)
+        .into_iter()
+        .filter(|p| p.starts_with("c:\\fake\\") && !p.contains("vanished"))
+        .map(str::to_string)
+        .collect();
+    let actual: Vec<String> = results
+        .iter()
+        .map(|r| crate::indexer::normalize_entry_key(&r.path))
+        .collect();
+    assert_eq!(actual, expected, "出力順は recent_launches の順に従う");
+}
+
+/// 正規化キーが衝突する entry が複数あるとき、**索引の後ろにあるほうを返す**。
+///
+/// 旧実装は全 entry から `HashMap` を組んでおり、後から挿入したものが上書きしていた。
+/// 走査 1 パスへ変えたときに前勝ちへ転ぶと、同じ入力で違う結果を返すようになる
+/// ——挙動として現れにくい（どちらも「それらしい」結果に見える）ので検査で固定する。
+#[test]
+fn recent_history_keeps_last_entry_when_paths_collapse_to_same_key() {
+    let entries = vec![
+        AppEntry {
+            name: "First".to_string(),
+            target_path: "C:\\Fake\\Dup.lnk".to_string(),
+            is_folder: false,
+        },
+        AppEntry {
+            name: "Second".to_string(),
+            target_path: "C:/fake/dup.lnk".to_string(),
+            is_folder: false,
+        },
+    ];
+    let engine = SearchEngine::new(entries);
+    let mut history = empty_history();
+    history.record_launch("C:\\fake\\dup.lnk", "dup");
+
+    let results = engine.recent_history(&history, 8);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].name, "Second", "衝突時は索引の後ろが勝つ");
+}
+
 #[test]
 fn has_dot_uses_cached_lower_file_name() {
     let entries = vec![AppEntry {

@@ -240,6 +240,20 @@ fn search_double_ext_full() {
     assert_eq!(results[0].name, "hoge");
 }
 
+/// `empty_history()` は名前どおり空でなければならない（#963）。
+/// **CI では常に緑で開発機でだけ落ちる**性質は `engine.rs` の同名テストの doc を参照。
+///
+/// 直下の `recent_history_empty_when_no_launches` はこの前提に乗っている——fixture が
+/// 実履歴を持つと「起動していないから空」ではなく「実履歴のパスが合成 entry と
+/// たまたま一致しないから空」を測ることになり、意味が入れ替わる。
+#[test]
+fn empty_history_fixture_is_actually_empty() {
+    assert!(
+        empty_history().recent_launches(usize::MAX).is_empty(),
+        "empty_history() が空でない — 実 history.bin を読んでいる"
+    );
+}
+
 #[test]
 fn recent_history_empty_when_no_launches() {
     let entries = make_entries(&["Firefox", "Chrome"]);
@@ -255,9 +269,9 @@ fn recent_history_empty_when_no_launches() {
 /// `last_launched` が並び、順序はパス昇順のタイブレークで決まる。期待値を固定文字列で
 /// 書くと、計測の秒境界をまたいだ回だけ落ちる不安定なテストになる。
 ///
-/// **`empty_history()` は空ではない**——実体は `HistoryStore::load()` で、開発機の実
-/// `history.bin` を読む。ゆえに期待値は本テストが記録したパス（`c:\fake\`）へ絞る。
-/// 絞らないと開発機の実起動履歴が期待値に混入する（実際に踏んだ）。
+/// 期待値は本テストが記録したパス（`c:\fake\`）へ絞ってある。**#963 で `empty_history()` が
+/// 真に空になった今この絞り込みは不要だが、期待値を「自分が記録したもの」に限る形は
+/// fixture の実装に依存しないぶん強い**ので残す。
 #[test]
 fn recent_history_follows_recent_launches_order_and_drops_unmatched() {
     let entries = make_entries(&["alpha", "beta", "gamma"]);

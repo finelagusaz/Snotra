@@ -56,6 +56,7 @@
 
 - 新規ロジックは可能な限りこの crate に追加してテスト可能性を維持する
 - `#[cfg(test)]` でユニットテストを必ず書く
+- **ユニットテストの fixture に `HistoryStore::load()` を使わない**（#963）。実 `%APPDATA%\Snotra\history.bin` を読むため開発者のマシン状態で結果が変わり、しかも CI のランナーにはそのファイルが無いので**食い違いは CI では緑のまま開発機でだけ現れる**。空は `HistoryStore::empty()`、特定の内容は `HistoryStore::load_in` へ注入する。実運用の姿を測る計測ハーネス（`tests/` の `#[ignore]` ベンチ）だけは `load()` のままでよい
 - 検索スコア計算は `search.rs`、フォルダ列挙は `folder.rs` に集約（DRY）
 - **UI 表示文字列を持たない**: この crate は Win32 非依存の純ロジック層。エラーは `is_error: true` フラグで呼び出し側へ伝え、ユーザー向け文言の組み立て・表示は UI 層（`src-tauri/src/egui_shell/strings.rs`・`snotra-settings/src/i18n.rs`）の責務。ここに表示メッセージを埋め込まない
 - **`#[cfg(windows)]` で Win32 依存コードを追加する場合**: テストも `#[cfg(windows)]` で囲むか、OS リソースが存在しない環境でも安全にスキップできるよう `if let Some(...) =` パターンを使う。`assert!(value.is_some())` のような環境前提アサーションは環境依存テストになる

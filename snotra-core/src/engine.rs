@@ -285,7 +285,20 @@ mod tests {
     }
 
     fn empty_history() -> HistoryStore {
-        HistoryStore::load()
+        HistoryStore::empty()
+    }
+
+    /// `empty_history()` は名前どおり空でなければならない（#963）。
+    ///
+    /// **この検査は CI では常に緑で、開発機でだけ落ちる。** ランナーには
+    /// `%APPDATA%\Snotra` が無いので `HistoryStore::load()` も空を返すためで、
+    /// だからこそ食い違いを CI が構造的に検出できない。ここで固定する。
+    #[test]
+    fn empty_history_fixture_is_actually_empty() {
+        assert!(
+            empty_history().recent_launches(usize::MAX).is_empty(),
+            "empty_history() が空でない — 実 history.bin を読んでいる"
+        );
     }
 
     fn default_config() -> Config {

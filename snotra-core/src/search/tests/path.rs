@@ -71,7 +71,7 @@ fn path_match_receives_history_boost() {
         make_entry("app1", "C:\\tool\\editor\\app1.exe"),
         make_entry("app2", "C:\\tool\\editor\\app2.exe"),
     ];
-    let mut history = HistoryStore::load();
+    let mut history = HistoryStore::empty();
     for _ in 0..5 {
         history.record_launch("C:\\tool\\editor\\app1.exe", "");
     }
@@ -189,7 +189,7 @@ fn path_match_history_key_unified_across_separators() {
         make_entry("app1", "C:\\tool\\editor\\app1.exe"),
         make_entry("app2", "C:\\tool\\editor\\app2.exe"),
     ];
-    let mut history = HistoryStore::load();
+    let mut history = HistoryStore::empty();
     // tool/editor（スラッシュ）で起動記録
     history.record_launch("C:\\tool\\editor\\app1.exe", "tool/editor");
 

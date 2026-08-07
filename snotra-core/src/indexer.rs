@@ -1191,6 +1191,18 @@ mod tests {
         assert_eq!(restored.lower_names.into_owned(), lower_names);
     }
 
+    /// v5 化の前に実際に書かれていた v4 バイト列（同じ fixture の serialize 出力で、末尾に
+    /// `normalized_keys` を持つ）。`config_hash` は 12345、entries は Firefox / Projects の 2 件。
+    const GOLDEN_V4: &[u8] = &[
+        73, 78, 68, 88, 4, 0, 0, 0, 128, 226, 207, 170, 6, 2, 7, 70, 105, 114, 101, 102, 111, 120,
+        19, 67, 58, 92, 97, 112, 112, 115, 92, 102, 105, 114, 101, 102, 111, 120, 46, 108, 110,
+        107, 0, 8, 80, 114, 111, 106, 101, 99, 116, 115, 11, 67, 58, 92, 80, 114, 111, 106, 101,
+        99, 116, 115, 1, 185, 96, 2, 171, 1, 205, 1, 2, 18, 52, 2, 7, 102, 105, 114, 101, 102, 111,
+        120, 8, 112, 114, 111, 106, 101, 99, 116, 115, 2, 1, 11, 102, 105, 114, 101, 102, 111, 120,
+        46, 108, 110, 107, 0, 2, 19, 99, 58, 92, 97, 112, 112, 115, 92, 102, 105, 114, 101, 102,
+        111, 120, 46, 108, 110, 107, 11, 99, 58, 92, 112, 114, 111, 106, 101, 99, 116, 115,
+    ];
+
     /// **v4 の凍結バイト列**（v5 化の前に実際に書かれていた形式。同じ fixture の
     /// serialize 出力で、末尾に `normalized_keys` を持つ）から、新コードが
     /// `lower_names` / `lower_file_names` を復元できることを示す。
@@ -1199,22 +1211,10 @@ mod tests {
     /// 示せない。**旧形式の凍結バイトを入力にして初めて後方互換の証拠になる**
     /// （`snotra-core/CLAUDE.md`「データ永続化の注意」）。
     ///
-    /// ここで `lower_names` が Some で返ることが、**v4 ユーザーの初回起動で Wave 1 が
-    /// 走らない**ことの根拠でもある（`normalized_keys` は捨てるが、Wave 1 のスキップ判定は
-    /// 残り 2 本が揃っているかで決まる）。
+    /// 対になる `v4_index_bin_loads_through_load_cache_in_with_wave1_skipped` が、同じ
+    /// バイト列を **`load_cache_in` 経由で**読む（分岐の選択と戻り値まで含めて測る）。
     #[test]
     fn frozen_v4_bytes_still_load_with_lower_names() {
-        const GOLDEN_V4: &[u8] = &[
-            73, 78, 68, 88, 4, 0, 0, 0, 128, 226, 207, 170, 6, 2, 7, 70, 105, 114, 101, 102, 111,
-            120, 19, 67, 58, 92, 97, 112, 112, 115, 92, 102, 105, 114, 101, 102, 111, 120, 46, 108,
-            110, 107, 0, 8, 80, 114, 111, 106, 101, 99, 116, 115, 11, 67, 58, 92, 80, 114, 111,
-            106, 101, 99, 116, 115, 1, 185, 96, 2, 171, 1, 205, 1, 2, 18, 52, 2, 7, 102, 105, 114,
-            101, 102, 111, 120, 8, 112, 114, 111, 106, 101, 99, 116, 115, 2, 1, 11, 102, 105, 114,
-            101, 102, 111, 120, 46, 108, 110, 107, 0, 2, 19, 99, 58, 92, 97, 112, 112, 115, 92,
-            102, 105, 114, 101, 102, 111, 120, 46, 108, 110, 107, 11, 99, 58, 92, 112, 114, 111,
-            106, 101, 99, 116, 115,
-        ];
-
         // v5 として読もうとすると失敗する（末尾に余分な normalized_keys が残るため）。
         assert!(
             try_deserialize_with_header::<IndexCache>(GOLDEN_V4, INDEX_MAGIC, INDEX_CACHE_VERSION)
@@ -1237,6 +1237,38 @@ mod tests {
             restored.normalized_keys,
             vec!["c:\\apps\\firefox.lnk", "c:\\projects"]
         );
+    }
+
+    /// **v4 の `index.bin` を `load_cache_in` 経由で読む。** 上の struct 単体テストとは層が違う
+    /// ——こちらは「どの分岐が選ばれ、`CachedMasks` に何が入って返るか」を測る。
+    ///
+    /// `lower_names` / `lower_file_names` が Some で返ることが、**v4 ユーザーの初回起動で
+    /// Wave 1 が走らない**ことの根拠である（`new_with_cached_masks` のスキップ判定はこの
+    /// 2 本が揃っているかで決まる）。v4 分岐を消すと struct 単体テストは通ったままここが落ちる。
+    #[test]
+    fn v4_index_bin_loads_through_load_cache_in_with_wave1_skipped() {
+        let dir = temp_dir("v4_fallback_through_load_cache_in");
+        fs::write(dir.join("index.bin"), GOLDEN_V4).expect("write v4 index.bin");
+
+        let result = load_cache_in(&dir, 12345).expect("v4 の index.bin が読めること");
+        assert_eq!(result.entries.len(), 2);
+        assert_eq!(result.entries[0].name, "Firefox");
+        let masks = result.cached_masks.expect("v4 でもマスクは返る");
+        assert_eq!(masks.char_masks, vec![0xABu64, 0xCD]);
+        assert_eq!(
+            masks.lower_names,
+            Some(vec!["firefox".to_string(), "projects".to_string()]),
+            "v4 から lower_names が復元されないと Wave 1 が走り、初回起動が遅くなる"
+        );
+        assert_eq!(
+            masks.lower_file_names,
+            Some(vec![Some("firefox.lnk".to_string()), None])
+        );
+
+        // config_hash が違えば stale 扱いで None（v5 経路と同じ規律）。
+        assert!(load_cache_in(&dir, 12346).is_none());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

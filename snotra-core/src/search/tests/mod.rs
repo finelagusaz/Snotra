@@ -7,6 +7,7 @@
 mod common;
 
 mod basic;
+mod build;
 mod incremental;
 mod migemo;
 mod path;

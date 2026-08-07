@@ -111,6 +111,19 @@ fn compute_kana_char_masks(kana_lower_names: &[Box<str>]) -> Vec<u64> {
 
 impl SearchEngine {
     /// 全並列 Vec の長さが entries と一致することを検証し、Self を組み立てる。
+    ///
+    /// 組み立て前に全 Vec を [`Vec::shrink_to_fit`] する。**索引は構築後に伸長しないため
+    /// 余剰容量は最後まで解放されない常駐**であり、`index.bin` 経由の Vec はそれを大量に持つ:
+    /// serde の `size_hint` は DoS 防止のため事前確保を 1 MiB 相当で頭打ちにし、以降を Vec の
+    /// 倍々成長に委ねるため、確保が実使用の約 2 倍で着地する（312,377 エントリの実測で
+    /// `char_masks` は 2^19 = 524,288 要素分を確保して 312,377 しか使っていなかった）。
+    /// 余剰は `SearchEngine` へそのまま持ち越される——`new_with_cached_masks` の
+    /// `Vec<String>` → `Vec<Box<str>>` 変換は確保ブロックを再利用するため、要素サイズが
+    /// 縮んでも確保バイト数が動かない。
+    ///
+    /// **合流点はここ 1 箇所である。** 3 つのコンストラクタがすべて通るため、
+    /// 個々の経路へ `shrink_to_fit` を配ると漏れが生じる。実測は `PERFORMANCE.md`
+    /// 「索引の常駐の内訳」。
     fn assemble(
         entries: Vec<AppEntry>,
         lower_names: Vec<Box<str>>,
@@ -120,7 +133,21 @@ impl SearchEngine {
         file_name_char_masks: Vec<u64>,
         kana: (Vec<Box<str>>, Vec<u64>),
     ) -> Self {
-        let (kana_lower_names, kana_char_masks) = kana;
+        let (mut kana_lower_names, mut kana_char_masks) = kana;
+        let mut entries = entries;
+        let mut lower_names = lower_names;
+        let mut lower_file_names = lower_file_names;
+        let mut normalized_keys = normalized_keys;
+        let mut char_masks = char_masks;
+        let mut file_name_char_masks = file_name_char_masks;
+        entries.shrink_to_fit();
+        lower_names.shrink_to_fit();
+        lower_file_names.shrink_to_fit();
+        normalized_keys.shrink_to_fit();
+        char_masks.shrink_to_fit();
+        file_name_char_masks.shrink_to_fit();
+        kana_lower_names.shrink_to_fit();
+        kana_char_masks.shrink_to_fit();
         debug_assert!(
             lower_names.len() == entries.len()
                 && lower_file_names.len() == entries.len()

@@ -375,9 +375,11 @@ fn measure_real_index_footprint() {
 fn report_cache_bytes(n: usize) {
     let Some(b) = indexer::cache_byte_breakdown_in(&Config::config_dir().expect("config dir"))
     else {
-        // 版の一覧をここへ書き写さない（`cache_byte_breakdown_in` の分岐が正本。
-        // 焼き込むと版を足したときにこの 1 行だけが腐る）。
-        println!("\n  --- index.bin の内訳: どの版としても読めないためスキップ ---");
+        // **「どの版としても読めない」と書いてはならない。** この計器の射程は製品の
+        // フォールバック鎖より狭く、製品は読めるがここでは読めない古い版が在りうる
+        // （`cache_byte_breakdown_in` の doc）。版の一覧もここへ書き写さない——焼き込むと
+        // 版を足したときにこの 1 行だけが腐る。
+        println!("\n  --- index.bin の内訳: この計器が読める版では読めなかったためスキップ ---");
         return;
     };
 

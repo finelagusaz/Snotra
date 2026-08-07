@@ -1216,7 +1216,7 @@ fn enumerate_path_candidates(path_list: &str, show_hidden_system: bool) -> Vec<P
 /// 掛けて素通しする形にすると、全件ぶんの `String` 確保が消える。篩を抜けた少数だけが
 /// フルパスの正規化キーまで進む。
 ///
-/// 実測値は `PERFORMANCE.md`「採用: PATH スキャンの問いを反転（186 → 約 58 ms・確保 -99.3%・反復 9）」を
+/// 実測値は `PERFORMANCE.md`「採用: PATH スキャンの問いを反転（確保 314,395 → 2,066・反復 9）」を
 /// 正本とする（ここには写さない——数値は次の反復で動き、写しは片方だけ更新されて残る）。
 /// 篩が偽陰性を出さない根拠は [`normalize_file_name_key_into`] の doc。
 fn reject_existing(candidates: Vec<PathCandidate>, existing_entries: &[AppEntry]) -> Vec<AppEntry> {
@@ -1251,8 +1251,14 @@ fn reject_existing(candidates: Vec<PathCandidate>, existing_entries: &[AppEntry]
     }
 
     // **`zip` で対応を構造にする。** 外部イテレータで駆動する `retain` でも同じ結果になるが、
-    // それは「`retain` が要素を元の順に 1 回ずつ訪れる」という約束への暗黙の依存になり、
-    // 長さがずれたときに保持側へ黙って倒れる。`zip` なら対応の取り違えを型が持つ。
+    // それは「`retain` が要素を元の順に 1 回ずつ訪れる」という約束への暗黙の依存になる。
+    //
+    // **長さの一致を保証しているのは `zip` ではない**——`Zip` は短い方で黙って止まる。
+    // 保証しているのは上の `vec![false; candidates.len()]` が同じ関数の同じ式で長さを
+    // 決めていることと、`by_file_key` が `candidates` を `&str` で借りているために
+    // **その借用が死ぬ（＝この `into_iter()`）まで `candidates` を変える経路が構築できない**
+    // ことである。ずれを借用検査が作れなくしているので、実行時の assert は置かない
+    // ——コンパイラが証明することを実行時に主張し直しても、守るものが増えない。
     candidates
         .into_iter()
         .zip(rejected)
@@ -1423,10 +1429,15 @@ fn serialized_len<T: Serialize>(value: &T) -> Option<usize> {
 /// ディスクが何を持ち続けているかは**そちらからは原理的に見えない**（`target_path` は
 /// 常駐 0.01 MiB に対しディスクは全文を持つ）。
 ///
-/// **現行版だけでなく、フォールバック鎖が読める旧版もすべて読む**（版の一覧はこの関数の
-/// 分岐が正本——ここに書き写すと版を足したときに片方だけ腐る）。現行版だけを読む形に
-/// してはならない——実運用点のファイルが旧版のまま留まることは実際に起きるので、そこで
-/// `None` を返す計器は**一番測りたい相手にだけ黙る**。読めた版は
+/// **現行版だけでなく旧版も読む。ただし製品のフォールバック鎖（`load_cache_in`）より
+/// 狭い**——最古の版まではたどらない（読める版の一覧はこの関数の分岐が正本。書き写すと
+/// 版を足したときに片方だけ腐る）。現行版だけを読む形にしてはならない——実運用点の
+/// ファイルが旧版のまま留まることは実際に起きるので、そこで `None` を返す計器は
+/// **一番測りたい相手にだけ黙る**。
+///
+/// **この関数が読めないほど古い版では、今もそう黙る。** 製品が読めて計器が読めない版の
+/// 幅がその盲点であり、`None` は「壊れている」ではなく「この計器の射程の外」を意味する。
+/// 読める版を増やすときは `load_cache_in` の鎖と揃えること。読めた版は
 /// [`CacheByteBreakdown::version`] が返す。
 ///
 /// **撤去条件**: オンディスク形式の削減を打ち切ったとき（＝`INDEX_CACHE_VERSION` をこれ以上
@@ -2149,7 +2160,7 @@ mod tests {
                 .expect("v4 が読めること")
                 .version,
             4,
-            "治具が v4 を書けていること（ここが v5 だと以降の検査が自明に通る）"
+            "治具が v4 を書けていること（ここが現行版だと以降の検査が自明に通る）"
         );
 
         let outcome = try_background_rescan_in(
@@ -2201,7 +2212,7 @@ mod tests {
         let digest = entries_digest(&entries);
 
         save_cache_sorted_in(&dir, &entries, config_hash);
-        let before = fs::read(dir.join("index.bin")).expect("read v5 index.bin");
+        let before = fs::read(dir.join("index.bin")).expect("現行版の index.bin が読めること");
 
         let outcome = try_background_rescan_in(
             &dir,
@@ -2367,12 +2378,13 @@ mod tests {
             .map(|n| file_char_mask(n.as_deref()))
             .collect();
 
-        // v5（現行）: 製品の save 経路そのものを通す。
-        let dir = temp_dir("version_reported_v5");
+        // **現行版**: 製品の save 経路そのものを通す（版のリテラルを書かない——比較相手は
+        // `INDEX_CACHE_VERSION` であり、番号を書くとこのコメントだけが版を上げたとき腐る）。
+        let dir = temp_dir("version_reported_current");
         save_cache_sorted_in(&dir, &entries, config_hash);
         assert_eq!(
             load_cache_in(&dir, config_hash)
-                .expect("v5 が読めること")
+                .expect("現行版が読めること")
                 .version,
             INDEX_CACHE_VERSION
         );
@@ -2959,13 +2971,48 @@ mod tests {
         let path_list = dir.to_string_lossy().to_string();
         let entries = scan_path_dirs(&path_list, &existing, true);
 
-        // `read_dir` の順序は OS の保証を持たないので、ここは順序ではなく**集合**で見る
-        // （列挙順は `scan_path_dirs_preserves_enumeration_order` が別に固定している）。
+        // `read_dir` の順序は OS の保証を持たないので、ここは順序ではなく**集合**で見る。
+        // 検出力は落ちない——添字がずれれば落ちるのは別の候補になるので、`b` が結果へ
+        // 混ざって集合が変わる。**単一ディレクトリ内の順序はどのテストも固定していない**
+        // （`read_dir` に順序保証が無いので原理的にできない。`..._preserves_enumeration_order`
+        // が固定するのは PATH ディレクトリ**間**の順序である）。
         let mut names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         names.sort_unstable();
         assert_eq!(names, vec!["a", "c"], "真ん中の候補だけが落ちるはず");
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_path_dirs_rejects_the_right_one_among_same_named_candidates() {
+        // **篩の同じバケットに候補が 2 つ入る経路。** `by_file_key` の値が `Vec<usize>`
+        // である理由そのものであり、同名 exe が別ディレクトリに並ぶのは実運用で珍しく
+        // ない（多重インストール）。内側ループを `idxs.first()` へ縮めても他のテストは
+        // 全部通る——そのとき落ちるのは先頭の候補だけなので、**既存にある方が残って
+        // 索引へ重複で入る**。件数もパスも見ないと沈黙する。
+        let dir_a = temp_dir("path_samename_a");
+        let dir_b = temp_dir("path_samename_b");
+        fs::write(dir_a.join("tool.exe"), "").unwrap();
+        fs::write(dir_b.join("tool.exe"), "").unwrap();
+
+        let existing = vec![AppEntry {
+            name: "tool".to_string(),
+            target_path: dir_b.join("tool.exe").to_string_lossy().into_owned(),
+            is_folder: false,
+        }];
+
+        let path_list = format!("{};{}", dir_a.display(), dir_b.display());
+        let entries = scan_path_dirs(&path_list, &existing, true);
+
+        assert_eq!(entries.len(), 1, "既存にある dir_b 側だけが落ちるはず");
+        assert_eq!(
+            entries[0].target_path,
+            dir_a.join("tool.exe").to_string_lossy(),
+            "落とす相手を同名の別候補と取り違えている"
+        );
+
+        let _ = fs::remove_dir_all(&dir_a);
+        let _ = fs::remove_dir_all(&dir_b);
     }
 
     #[test]

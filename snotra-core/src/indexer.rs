@@ -242,6 +242,14 @@ pub struct LoadOrScanStats {
     pub cache_hit: bool,
     pub hash_ms: u128,
     pub cache_load_ms: u128,
+    /// `index.bin` をバイト列として読む時間。**`cache_load_ms` の内数である**
+    /// （他の項目と違い、フェーズの和には足さない）。
+    ///
+    /// `cache_load_ms` は「読む」と「deserialize する」の 2 つを 1 つの数にしており、
+    /// **両者はオンディスク形式の変更に対して逆向きに振る舞う**——読むバイトを減らせば前者は
+    /// 減るが、形式を圧縮すれば後者は増えうる。分けずに測ると、どちらが効いたのか原理的に
+    /// 区別できない。cache-miss の枝では 0（読む対象が無い）。
+    pub cache_read_ms: u128,
     /// 背景再スキャン用の digest を取る時間（キャッシュヒット時のみ非ゼロ）。
     ///
     /// **この項目が無かったために、ここに居た全エントリ複製がどのフェーズにも現れなかった。**
@@ -394,6 +402,7 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
         load_with_index_generation(|| load_cache(current_hash))
     {
         let cache_load_ms = cache_load_started.elapsed().as_millis();
+        let cache_read_ms = result.read_ms;
         let return_entries = result.entries;
         let cached_masks = result.cached_masks;
         // 背景再スキャンはここでは spawn しない。タスクとして返し、`src-tauri` が
@@ -415,6 +424,7 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
             cache_hit: true,
             hash_ms,
             cache_load_ms,
+            cache_read_ms,
             digest_ms,
             scan_ms: 0,
             sort_ms: 0,
@@ -454,6 +464,8 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
         cache_hit: false,
         hash_ms,
         cache_load_ms,
+        // cache-miss の枝は `index.bin` を読み切れていない（不在・stale・破損のいずれか）。
+        cache_read_ms: 0,
         // cache-miss の枝は背景再スキャンを返さない（走査したてが最新である）。
         digest_ms: 0,
         scan_ms,
@@ -596,6 +608,8 @@ pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> Vec<AppE
 struct LoadCacheResult {
     entries: Vec<AppEntry>,
     cached_masks: Option<CachedMasks>,
+    /// `index.bin` をバイト列として読み終えるまでの時間（`LoadOrScanStats::cache_read_ms` へ運ぶ）。
+    read_ms: u128,
 }
 
 fn load_cache(config_hash: u64) -> Option<LoadCacheResult> {
@@ -606,7 +620,9 @@ fn load_cache(config_hash: u64) -> Option<LoadCacheResult> {
 /// `load_cache` と同じ読み込みを `dir` 注入で行う（統合テスト用、issue #429）。
 fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
     let bf = cache_bin_file_in(dir);
+    let read_started = Instant::now();
     let bytes = bf.load_bytes()?;
+    let read_ms = read_started.elapsed().as_millis();
 
     // v5 (現行): ビットマスク + lower names。
     // deserialize は Cow::Owned を返すため .into_owned() は clone なしの move。
@@ -625,6 +641,7 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
         return Some(LoadCacheResult {
             entries: cache.entries.into_owned(),
             cached_masks: Some(masks),
+            read_ms,
         });
     }
 
@@ -644,6 +661,7 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
         return Some(LoadCacheResult {
             entries: cache.entries,
             cached_masks: Some(masks),
+            read_ms,
         });
     }
 
@@ -661,6 +679,7 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
         return Some(LoadCacheResult {
             entries: cache.entries,
             cached_masks: Some(masks),
+            read_ms,
         });
     }
 
@@ -672,6 +691,7 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
         return Some(LoadCacheResult {
             entries: cache.entries,
             cached_masks: None,
+            read_ms,
         });
     }
 
@@ -1037,6 +1057,233 @@ pub fn extend_cached_masks(masks: &mut CachedMasks, new_entries: &[AppEntry]) {
             lfn.push(lower_file);
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// 計測専用: `index.bin` のオンディスク内訳
+// ---------------------------------------------------------------------------
+
+/// `index.bin` の 1 項目が占めるオンディスクのバイト数。
+#[doc(hidden)]
+#[derive(Debug, Clone)]
+pub struct CacheByteRow {
+    pub label: &'static str,
+    pub bytes: usize,
+    pub items: usize,
+}
+
+/// `index.bin` のバイト内訳。
+///
+/// **`residual` が 0 でなければ帰属が誤っている。** postcard は struct に枠を持たず、
+/// フィールドの連結がそのまま payload になる——ゆえに項目別の長さの和は payload 長と
+/// **一致しなければならない**。この検算が無い内訳は、正しい帰属と誤った帰属を区別できない
+/// （`tests/memory_footprint.rs` のフェーズ内訳が残余を出すのと同じ理由）。
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct CacheByteBreakdown {
+    /// 実際に読めた形式のバージョン。**現行版とは限らない。**
+    ///
+    /// 実運用点のファイルが旧版のまま留まることは実際に起きる——`index.bin` を書き直す契機は
+    /// cache-miss と背景再スキャンの `Changed` だけであり、索引の中身が変わらない限り**旧版が
+    /// 何日でも残る**（2026-08-07 に実測: v5 導入後の実 `index.bin` が v4 のままで、
+    /// `normalized_keys` を毎起動で読んで捨てていた）。**この値を読まずに内訳を解釈しないこと。**
+    pub version: u32,
+    /// `index.bin` のファイル長（ヘッダ 8 バイトを含む）。
+    pub file_len: usize,
+    /// postcard payload の長さ（`file_len` − ヘッダ）。
+    pub payload_len: usize,
+    /// `IndexCache` のフィールド別バイト数。
+    pub rows: Vec<CacheByteRow>,
+    /// `payload_len` − Σ`rows`。**0 でなければ帰属が誤っている。**
+    pub residual: i64,
+    /// `entries` の内部内訳（`name` / `target_path` / `is_folder`）。
+    pub entry_rows: Vec<CacheByteRow>,
+    /// `entries` のバイト数 − Σ`entry_rows`。**0 でなければ帰属が誤っている。**
+    pub entry_residual: i64,
+}
+
+/// postcard の LEB128 varint が `v` を表すのに使うバイト数。
+fn varint_len(mut v: usize) -> usize {
+    let mut n = 1;
+    while v >= 0x80 {
+        v >>= 7;
+        n += 1;
+    }
+    n
+}
+
+/// 値を postcard へ書いたときの長さ（バッファは即座に捨てる）。
+fn serialized_len<T: Serialize>(value: &T) -> Option<usize> {
+    postcard::to_allocvec(value).ok().map(|v| v.len())
+}
+
+/// `dir` の `index.bin` を読み、フィールド別のバイト内訳を返す。
+///
+/// **オンディスク形式を変える判断の唯一の一次証拠である。** 常駐の内訳
+/// （`SearchEngine::footprint_rows`）はメモリが「持たない」ことを学んだ後の姿を映すので、
+/// ディスクが何を持ち続けているかは**そちらからは原理的に見えない**（`target_path` は
+/// 常駐 0.01 MiB に対しディスクは全文を持つ）。
+///
+/// **v5 と v4 の両方を読む。** 現行版だけを読む形にしてはならない——実運用点のファイルが
+/// 旧版のまま留まることは実際に起きるので、そこで `None` を返す計器は
+/// **一番測りたい相手にだけ黙る**。読めた版は [`CacheByteBreakdown::version`] が返す。
+///
+/// **撤去条件**: オンディスク形式の削減を打ち切ったとき（＝`INDEX_CACHE_VERSION` をこれ以上
+/// 形式縮小のために上げないと決めたとき）。それまでは各反復の前後で天井と実績を突き合わせる。
+#[doc(hidden)]
+pub fn cache_byte_breakdown_in(dir: &Path) -> Option<CacheByteBreakdown> {
+    let bf = cache_bin_file_in(dir);
+    let bytes = bf.load_bytes()?;
+    let file_len = bytes.len();
+
+    if let Ok(c) =
+        try_deserialize_with_header::<IndexCache<'static>>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION)
+    {
+        drop(bytes);
+        return build_breakdown(
+            INDEX_CACHE_VERSION,
+            file_len,
+            c.built_at,
+            c.config_hash,
+            &c.entries,
+            &c.char_masks,
+            &c.file_name_char_masks,
+            &c.lower_names,
+            &c.lower_file_names,
+            None,
+        );
+    }
+
+    if let Ok(c) = try_deserialize_with_header::<IndexCacheV4>(&bytes, INDEX_MAGIC, 4) {
+        drop(bytes);
+        return build_breakdown(
+            4,
+            file_len,
+            c.built_at,
+            c.config_hash,
+            &c.entries,
+            &c.char_masks,
+            &c.file_name_char_masks,
+            &c.lower_names,
+            &c.lower_file_names,
+            Some(&c.normalized_keys),
+        );
+    }
+
+    None
+}
+
+/// 読めた版によらず同じ帰属を組む。**スライスで受ける**ので、v5 の `Cow<[T]>` も v4 の
+/// `Vec<T>` も同じ経路を通る（postcard はどちらも `serialize_seq` へ委譲し、バイト列は
+/// 一致する）。
+#[allow(clippy::too_many_arguments)]
+fn build_breakdown(
+    version: u32,
+    file_len: usize,
+    built_at: u64,
+    config_hash: u64,
+    entries: &[AppEntry],
+    char_masks: &[u64],
+    file_name_char_masks: &[u64],
+    lower_names: &[String],
+    lower_file_names: &[Option<String>],
+    normalized_keys: Option<&[String]>,
+) -> Option<CacheByteBreakdown> {
+    let n = entries.len();
+    let mut rows = vec![
+        CacheByteRow {
+            label: "built_at",
+            bytes: serialized_len(&built_at)?,
+            items: 1,
+        },
+        CacheByteRow {
+            label: "entries",
+            bytes: serialized_len(&entries)?,
+            items: n,
+        },
+        CacheByteRow {
+            label: "config_hash",
+            bytes: serialized_len(&config_hash)?,
+            items: 1,
+        },
+        CacheByteRow {
+            label: "char_masks",
+            bytes: serialized_len(&char_masks)?,
+            items: char_masks.len(),
+        },
+        CacheByteRow {
+            label: "file_name_char_masks",
+            bytes: serialized_len(&file_name_char_masks)?,
+            items: file_name_char_masks.len(),
+        },
+        CacheByteRow {
+            label: "lower_names",
+            bytes: serialized_len(&lower_names)?,
+            items: lower_names.len(),
+        },
+        CacheByteRow {
+            label: "lower_file_names",
+            bytes: serialized_len(&lower_file_names)?,
+            items: lower_file_names.len(),
+        },
+    ];
+    if let Some(keys) = normalized_keys {
+        rows.push(CacheByteRow {
+            label: "normalized_keys（v4 のみ・読んで捨てる）",
+            bytes: serialized_len(&keys)?,
+            items: keys.len(),
+        });
+    }
+
+    let payload_len = file_len - 8;
+    let attributed: usize = rows.iter().map(|r| r.bytes).sum();
+    let residual = payload_len as i64 - attributed as i64;
+
+    // `entries` の内訳。**算術で出すが、和が上の実測値と一致することで裏打ちされる**
+    // （一致しなければ `entry_residual` に現れる）。
+    let name_bytes: usize = entries
+        .iter()
+        .map(|e| varint_len(e.name.len()) + e.name.len())
+        .sum();
+    let target_bytes: usize = entries
+        .iter()
+        .map(|e| varint_len(e.target_path.len()) + e.target_path.len())
+        .sum();
+    let entry_rows = vec![
+        CacheByteRow {
+            label: "entries: 長さプレフィックス",
+            bytes: varint_len(n),
+            items: 1,
+        },
+        CacheByteRow {
+            label: "entries[].name",
+            bytes: name_bytes,
+            items: n,
+        },
+        CacheByteRow {
+            label: "entries[].target_path",
+            bytes: target_bytes,
+            items: n,
+        },
+        CacheByteRow {
+            label: "entries[].is_folder",
+            bytes: n,
+            items: n,
+        },
+    ];
+    let entries_bytes = rows.iter().find(|r| r.label == "entries")?.bytes;
+    let entry_attributed: usize = entry_rows.iter().map(|r| r.bytes).sum();
+    let entry_residual = entries_bytes as i64 - entry_attributed as i64;
+
+    Some(CacheByteBreakdown {
+        version,
+        file_len,
+        payload_len,
+        rows,
+        residual,
+        entry_rows,
+        entry_residual,
+    })
 }
 
 #[cfg(test)]

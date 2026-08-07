@@ -386,10 +386,13 @@ fn report_cache_bytes(n: usize) {
         mib(b.file_len),
         mib(b.payload_len)
     );
-    if b.version != 5 {
+    // 現行版はリテラルで書かず定数を読む。焼き込むと版を上げたときにこの注記だけが
+    // 取り残され、**実装より強い（そして矛盾した）主張**が出力に残る（反復 8 で実際に起きた）。
+    if b.version != snotra_core::indexer::INDEX_CACHE_VERSION {
         println!(
-            "  ※ 現行は v5。**実運用点は v{} のまま**で、v5 で消したフィールドをまだ読んでいる。",
-            b.version
+            "  ※ **実運用点は v{} のまま**で、現行 v{} が消したフィールドをまだ読んでいる。",
+            b.version,
+            snotra_core::indexer::INDEX_CACHE_VERSION
         );
     }
     println!(

@@ -29,7 +29,14 @@ use crate::query::{
 };
 
 const INDEX_MAGIC: [u8; 4] = *b"INDX";
-const INDEX_CACHE_VERSION: u32 = 6;
+/// `index.bin` の現行フォーマット版。
+///
+/// 計測ハーネス（`tests/memory_footprint.rs`）が「読めた版が現行版か」を判定するために読む。
+/// **版のリテラルを他所へ焼き込まないこと**——反復 8 で v6 へ上げたとき、ハーネスの注記だけ
+/// が `5` のまま取り残され、「現行は v5。実運用点は v6 のまま」という**それ自体が矛盾した**
+/// 文を出し続けた（現行が v5 なら v6 は存在しえない）。
+#[doc(hidden)]
+pub const INDEX_CACHE_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppEntry {
@@ -1096,18 +1103,42 @@ fn read_user_path() -> Option<String> {
 /// 既存エントリにない実行ファイルを返す。
 ///
 /// `read_user_path` から分離することでテスト可能性を確保。
-fn scan_path_dirs(
-    path_list: &str,
-    existing_entries: &[AppEntry],
-    show_hidden_system: bool,
-) -> Vec<AppEntry> {
-    let mut seen: std::collections::HashSet<String> = existing_entries
-        .iter()
-        .map(|e| normalize_entry_key(&e.target_path))
-        .collect();
+/// `target_path` の**末尾セグメントだけ**を [`normalize_entry_key_into`] で正規化して
+/// `buf` へ書く。`buf` の中身は捨てられる。
+///
+/// [`scan_path_dirs`] の事前フィルタ専用。**照合する両辺は必ずこの 1 つを通すこと**——
+/// `normalize_entry_key_into` と同じ理屈で、同じ手順を通ることだけが一致の根拠になる。
+///
+/// **これは篩であって判定ではない。** 正規化は「全体 `trim` → 文字単位の写像（小文字化と
+/// `/` → `\`）」であり、写像は新たな `\` を生まないのでセグメント境界を保つ。ゆえに
+/// `normalize_entry_key(a) == normalize_entry_key(b)` ならこのキーも必ず一致する
+/// （＝**偽陰性を出さない**）。逆は成り立たない——別ディレクトリの同名ファイルが
+/// 通り抜けるので、通した候補はフルパスの正規化キーで確かめること。
+fn normalize_file_name_key_into(buf: &mut String, target_path: &str) {
+    let trimmed = target_path.trim();
+    let segment = match trimmed.rfind(['\\', '/']) {
+        // 区切りはどちらも 1 バイトゆえ `i + 1` は char 境界。
+        Some(i) => &trimmed[i + 1..],
+        None => trimmed,
+    };
+    normalize_entry_key_into(buf, segment);
+}
 
+/// PATH 上で見つけた実行ファイル 1 件と、照合に使う 2 段のキー。
+struct PathCandidate {
+    entry: AppEntry,
+    /// `normalize_entry_key(entry.target_path)`（判定に使う）。
+    key: String,
+    /// [`normalize_file_name_key_into`] の結果（篩に使う）。
+    file_key: String,
+}
+
+/// `path_list` のディレクトリを平坦スキャンし、対象拡張子の実行ファイルを候補として返す。
+/// PATH ディレクトリ間の重複はここで排除する（既存エントリとの照合は [`reject_existing`]）。
+fn enumerate_path_candidates(path_list: &str, show_hidden_system: bool) -> Vec<PathCandidate> {
     let path_exts = ["exe", "bat", "cmd", "com"];
-    let mut new_entries = Vec::new();
+    let mut candidates: Vec<PathCandidate> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for dir_str in path_list.split(';') {
         let dir_str = dir_str.trim();
@@ -1147,17 +1178,76 @@ fn scan_path_dirs(
             }
             let path_str = path.to_string_lossy().into_owned();
             let key = normalize_entry_key(&path_str);
-            if seen.insert(key) {
-                new_entries.push(AppEntry {
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            let mut file_key = String::new();
+            normalize_file_name_key_into(&mut file_key, &path_str);
+            candidates.push(PathCandidate {
+                entry: AppEntry {
                     name,
                     target_path: path_str,
                     is_folder: false,
-                });
+                },
+                key,
+                file_key,
+            });
+        }
+    }
+
+    candidates
+}
+
+/// `existing_entries` に既にあるパスを `candidates` から落とす（列挙順は保つ）。
+///
+/// **問いを反転させてある**（反復 9）。かつては既存エントリ全件の正規化キーを `HashSet`
+/// へ積んでから候補を引いていたが、実運用点では 312,691 件を正規化して 101 件を照合する
+/// 比率であり、区間 186 ms のうち 194 ms 相当（3 回最小・分割実測）がその積み上げだった
+/// ——ファイルシステムの列挙は 9 ms しかない。候補側に小さな索引を作り、既存エントリは
+/// **ファイル名だけ**を篩に掛けて素通しする形にすると、全件ぶんの `String` 確保が消える。
+///
+/// 篩を抜けた少数だけがフルパスの正規化キーまで進む。篩が偽陰性を出さない根拠は
+/// [`normalize_file_name_key_into`] の doc。
+fn reject_existing(candidates: &mut Vec<PathCandidate>, existing_entries: &[AppEntry]) {
+    // ファイル名キー → 候補の添字（同名の候補が別ディレクトリに並びうるので複数持つ）。
+    let mut by_file_key: std::collections::HashMap<&str, Vec<usize>> =
+        std::collections::HashMap::with_capacity(candidates.len());
+    for (i, c) in candidates.iter().enumerate() {
+        by_file_key.entry(c.file_key.as_str()).or_default().push(i);
+    }
+
+    let mut rejected = vec![false; candidates.len()];
+    // 確保を暖まらせて使い回す（`normalize_entry_key_into` の doc と同じ形）。
+    let mut file_buf = String::new();
+    let mut full_buf = String::new();
+    for e in existing_entries {
+        normalize_file_name_key_into(&mut file_buf, &e.target_path);
+        let Some(idxs) = by_file_key.get(file_buf.as_str()) else {
+            continue;
+        };
+        normalize_entry_key_into(&mut full_buf, &e.target_path);
+        for &i in idxs {
+            if candidates[i].key == full_buf {
+                rejected[i] = true;
             }
         }
     }
 
-    new_entries
+    let mut iter = rejected.iter();
+    candidates.retain(|_| !iter.next().copied().unwrap_or(false));
+}
+
+fn scan_path_dirs(
+    path_list: &str,
+    existing_entries: &[AppEntry],
+    show_hidden_system: bool,
+) -> Vec<AppEntry> {
+    let mut candidates = enumerate_path_candidates(path_list, show_hidden_system);
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    reject_existing(&mut candidates, existing_entries);
+    candidates.into_iter().map(|c| c.entry).collect()
 }
 
 /// ユーザー PATH のディレクトリを平坦スキャンし、既存エントリにない実行ファイルを返す。
@@ -2794,6 +2884,85 @@ mod tests {
         assert!(entries.is_empty());
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_path_dirs_keeps_candidate_that_only_shares_a_file_name() {
+        // 事前フィルタはファイル名しか見ないので、別ディレクトリの同名ファイルは必ず
+        // 通り抜ける。**通り抜けた先のフルパス比較が効いていないと、起動できるはずの
+        // exe が黙って消える**（返り値が減るだけで panic もテスト失敗も起きない）。
+        let dir = temp_dir("path_same_name");
+        fs::write(dir.join("tool.exe"), "").unwrap();
+
+        let existing = vec![AppEntry {
+            name: "tool".to_string(),
+            target_path: "C:\\elsewhere\\tool.exe".to_string(),
+            is_folder: false,
+        }];
+
+        let path_list = dir.to_string_lossy().to_string();
+        let entries = scan_path_dirs(&path_list, &existing, true);
+
+        assert_eq!(entries.len(), 1, "ディレクトリが違うので新規のはず");
+        assert_eq!(entries[0].name, "tool");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_path_dirs_skips_existing_paths_written_in_other_notations() {
+        // **事前フィルタが偽陰性を出さないことの検査。** 既存エントリ側の表記が違っても
+        // （大文字・`/` 区切り・前後の空白）、正規化キーが一致するならファイル名キーも
+        // 必ず一致して篩を通り、フルパス比較で落ちる。ここが破れると重複エントリが
+        // 索引へ入る——これも結果が「それらしく」出るので挙動テストでは捕まらない。
+        let dir = temp_dir("path_notation");
+        fs::write(dir.join("tool.exe"), "").unwrap();
+
+        let canonical = dir.join("tool.exe").to_string_lossy().into_owned();
+        let path_list = dir.to_string_lossy().to_string();
+
+        for variant in [
+            canonical.to_ascii_uppercase(),
+            canonical.replace('\\', "/"),
+            format!("  {canonical}  "),
+        ] {
+            let existing = vec![AppEntry {
+                name: "tool".to_string(),
+                target_path: variant.clone(),
+                is_folder: false,
+            }];
+            let entries = scan_path_dirs(&path_list, &existing, true);
+            assert!(
+                entries.is_empty(),
+                "表記 {variant:?} で重複を落とせていない"
+            );
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_path_dirs_preserves_enumeration_order() {
+        // 返り値は呼び出し側で `entries.extend` されるだけでソートし直されない
+        // （`main.rs` の起動経路・`indexing.rs` の背景ビルド経路とも）。反転で
+        // 「積みながら返す」から「候補を作って落とす」へ変えたので、順序を固定する。
+        let dir_a = temp_dir("path_order_a");
+        let dir_b = temp_dir("path_order_b");
+        fs::write(dir_a.join("first.exe"), "").unwrap();
+        fs::write(dir_b.join("second.exe"), "").unwrap();
+
+        let path_list = format!("{};{}", dir_a.display(), dir_b.display());
+        let entries = scan_path_dirs(&path_list, &[], true);
+
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["first", "second"],
+            "PATH ディレクトリの順序を保つ"
+        );
+
+        let _ = fs::remove_dir_all(&dir_a);
+        let _ = fs::remove_dir_all(&dir_b);
     }
 
     #[test]

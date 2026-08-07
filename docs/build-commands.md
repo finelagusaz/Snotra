@@ -165,7 +165,7 @@ cargo test -p snotra-egui-runtime # ユニットテスト（egui入力・IME・S
 cargo test -p snotra             # ユニットテスト（Tauri 統合層: state/indexing/config_watcher 等）
 cargo test -p snotra-settings    # ユニットテスト（設定 GUI の純ロジック: font face 検証・TOML エラーローカライズ）
 cargo test --release -p snotra-core bench_ -- --ignored --nocapture  # 検索パフォーマンス計測（詳細: PERFORMANCE.md）
-cargo test --release -p snotra-core --test memory_footprint -- --ignored --nocapture  # 索引の常駐メモリ実測（アロケータ計数・詳細: PERFORMANCE.md）
+cargo test --release -p snotra-core --test memory_footprint -- --ignored --nocapture --test-threads=1  # 索引の常駐メモリ実測（詳細: PERFORMANCE.md）
 cargo check --workspace          # Rust 全 crate 型チェック
 cargo clippy --workspace --all-targets -- -D warnings  # lint チェック（カテゴリ A と同じ）
 cargo fmt --all                  # 整形の**修復**（検査は カテゴリ A の `cargo fmt --all -- --check`・#858）
@@ -178,6 +178,12 @@ npm run measure:memory            # メモリ実測（PrivWS 軸・ツリー合�
 npm run measure:memory:stages     # メモリ実測（起動→表示→検索→hide の段階別・前景計測。実行中の snotra を kill する）
 npm run tauri build              # リリースビルド（NSIS バンドル。`prepare:sidecar` で binaries/ を用意してから）
 ```
+
+`memory_footprint` の `--test-threads=1` は**外せない**。計数アロケータは `static AtomicUsize` の
+プロセス大域であり、並列実行すると 2 つのテストが計数器を奪い合う。失敗にはならず
+**もっともらしい数値**が出るため、内部矛盾（規模に対する単調性の破れ・`live 0.00 MiB`）に
+気づかなければそのまま結論に使ってしまう（2026-08-07 実測。詳細は PERFORMANCE.md
+「索引の常駐の内訳」）。
 
 ## git blame と整形コミット
 

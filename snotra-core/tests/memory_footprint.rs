@@ -5,8 +5,10 @@
 //! **確保回数**の両方を測る（1 エントリあたり複数の小 `Box<str>` を持つ設計では、
 //! 回数由来のオーバーヘッドが無視できない）。
 //!
-//! 計測は環境依存ゆえ CI では回さない。手元で release 実行する:
-//! `cargo test -p snotra-core --release --test memory_footprint -- --ignored --nocapture`
+//! 計測は環境依存ゆえ CI では回さない。手元で release 実行する（コマンドの SSOT は
+//! `docs/build-commands.md`）。**`--test-threads=1` を外さないこと**——上の計数器は
+//! プロセス大域ゆえ、並列実行すると Phase A/B が奪い合い、失敗ではなく
+//! **もっともらしい数値**を出す（実測: 規模に対する単調性の破れ・`live 0.00 MiB`）。
 //!
 //! 実運用点（`%APPDATA%\Snotra\index.bin` の実インデックス）と合成ラダーの両方を測る。
 //! 実インデックスが無い環境では Phase A は自動スキップし、合成のみ報告する。
@@ -126,6 +128,177 @@ fn report(label: &str, before: Snap, after: Snap, n: usize) {
 }
 
 // ---------------------------------------------------------------------------
+// 内訳の分離計測（`docs/superpowers/specs/2026-08-07-index-memory-footprint-design.md` §5）
+// ---------------------------------------------------------------------------
+
+/// 文字列群の内訳。**`len` と `cap` を分けて持つのが要点**——`CachedMasks` は `Vec<String>`
+/// で届き `SearchEngine` は `Vec<Box<str>>` で持つため、両者の差が「文字列そのもの」と
+/// 「容量の遊び」のどちらを削るべきかを分ける。同一視すると候補の選択を誤る。
+#[derive(Default, Clone, Copy)]
+struct StrStat {
+    len: usize,
+    cap: usize,
+    count: usize,
+}
+
+impl StrStat {
+    fn add(&mut self, s: &String) {
+        self.len += s.len();
+        self.cap += s.capacity();
+        self.count += 1;
+    }
+
+    fn of<'a>(it: impl Iterator<Item = &'a String>) -> Self {
+        let mut stat = Self::default();
+        for s in it {
+            stat.add(s);
+        }
+        stat
+    }
+}
+
+/// 文字列 Vec 1 本の内訳を 1 行で報告し、**帰属できたバイト数**を返す。
+/// アロケータが数えるのは `capacity`（`layout.size()`）のほうであり、`len` は
+/// 「削れば消える文字列そのもの」の量を示す別軸である。
+fn breakdown_row(label: &str, stat: StrStat, n: usize) -> usize {
+    println!(
+        "  {label:<26} len {:>7.2} MiB  cap {:>7.2} MiB  要素 {:>8}  {:>6.1} B/entry",
+        mib(stat.len),
+        mib(stat.cap),
+        stat.count,
+        stat.cap as f64 / n as f64,
+    );
+    stat.cap
+}
+
+/// Vec 本体（ヒープ上の連続領域）を 1 行で報告し、帰属バイト数を返す。文字列の中身とは別勘定。
+/// **`len` ではなく `capacity` × 要素サイズで数える**——アロケータが見るのは確保量である。
+fn stride_row<T>(label: &str, capacity: usize, n: usize) -> usize {
+    let bytes = capacity * std::mem::size_of::<T>();
+    println!(
+        "  {label:<26}                    stride {:>7.2} MiB              {:>6.1} B/entry",
+        mib(bytes),
+        bytes as f64 / n as f64,
+    );
+    bytes
+}
+
+/// `SearchEngine` を構築する**前**に、手元の `entries` と `cached_masks` を直接走査して
+/// 常駐の内訳を出し、**帰属できた合計バイト数**を返す。engine 構築後は private フィールドゆえ
+/// 外から測れず、また `new_with_cached_masks` は Vec を move で受け取るため、
+/// この時点が唯一の観測点である。
+///
+/// この関数自身の確保は呼び出し側の計測区間の**外**（`t1` と `t2` の間）に置くこと。
+///
+/// 返り値をアロケータ実測に**合わせにいかない**。差はそのまま「未帰属」として出す
+/// ——差を埋める項を推測で足すと、内訳が実測ではなく辻褄合わせになる。
+fn report_breakdown(
+    entries: &[AppEntry],
+    entries_cap: usize,
+    masks: Option<&indexer::CachedMasks>,
+    n: usize,
+) -> usize {
+    if n == 0 {
+        return 0;
+    }
+    println!("\n  --- 常駐の内訳（SearchEngine 構築前・cached_masks 由来）---");
+
+    let names = StrStat::of(entries.iter().map(|e| &e.name));
+    let paths = StrStat::of(entries.iter().map(|e| &e.target_path));
+    let mut total = breakdown_row("entries[].name", names, n);
+    total += breakdown_row("entries[].target_path", paths, n);
+    total += stride_row::<AppEntry>("entries（Vec 本体）", entries_cap, n);
+
+    let Some(masks) = masks else {
+        println!("  cached_masks = None（v3 以前のキャッシュ。派生 Vec は Wave 1 で再計算される）");
+        return total;
+    };
+
+    total += stride_row::<u64>("char_masks", masks.char_masks.capacity(), n);
+    total += stride_row::<u64>(
+        "file_name_char_masks",
+        masks.file_name_char_masks.capacity(),
+        n,
+    );
+
+    if let Some(v) = masks.lower_names.as_ref() {
+        total += breakdown_row("lower_names", StrStat::of(v.iter()), n);
+        total += stride_row::<String>("lower_names（Vec 本体）", v.capacity(), n);
+    }
+    if let Some(v) = masks.lower_file_names.as_ref() {
+        total += breakdown_row("lower_file_names", StrStat::of(v.iter().flatten()), n);
+        total += stride_row::<Option<String>>("lower_file_names（Vec 本体）", v.capacity(), n);
+    }
+    if let Some(v) = masks.normalized_keys.as_ref() {
+        total += breakdown_row("normalized_keys", StrStat::of(v.iter()), n);
+        total += stride_row::<String>("normalized_keys（Vec 本体）", v.capacity(), n);
+    }
+
+    report_duplication(entries, masks, n);
+    total
+}
+
+/// 設計書 §2 の「4 重保持」が実データで何件に当たるかを測る。§2 は indexer の
+/// 名前導出規則（folder は `file_name()` / file は `file_stem()`）からの**機構上の導出**で
+/// あり、率は測っていない。ここで測る率が候補 A の削減量の係数になる。
+fn report_duplication(entries: &[AppEntry], masks: &indexer::CachedMasks, n: usize) {
+    let folders = entries.iter().filter(|e| e.is_folder).count();
+    println!(
+        "  is_folder = {folders} / {n}（{:.1}%）",
+        folders as f64 * 100.0 / n as f64
+    );
+
+    // 長さが揃わないキャッシュは索引がずれている（`assemble` の debug_assert 相当）。
+    // 一致率を出す前に弾く——ずれたまま比較した率は無意味である。
+    let (Some(lower), Some(files)) = (masks.lower_names.as_ref(), masks.lower_file_names.as_ref())
+    else {
+        return;
+    };
+    if lower.len() != n || files.len() != n {
+        println!(
+            "  警告: 派生 Vec の長さが entries と揃いません（lower {} / file {} / entries {n}）。\
+             一致率の計測をスキップします。",
+            lower.len(),
+            files.len()
+        );
+        return;
+    }
+
+    let mut folder_same = 0usize;
+    let mut file_same = 0usize;
+    let mut key_is_lower_path = 0usize;
+    let keys = masks.normalized_keys.as_ref().filter(|k| k.len() == n);
+    for (i, entry) in entries.iter().enumerate() {
+        if files[i].as_deref() == Some(lower[i].as_str()) {
+            if entry.is_folder {
+                folder_same += 1;
+            } else {
+                file_same += 1;
+            }
+        }
+        // `normalized_keys` を `target_path` から導出できるか（候補 B の前提）。
+        // `normalize_entry_key` は Unicode 小文字化ゆえ長さ保存ではない——バイト単位で照合する。
+        if let Some(keys) = keys
+            && keys[i] == indexer::normalize_entry_key(&entry.target_path)
+        {
+            key_is_lower_path += 1;
+        }
+    }
+    let files_total = n - folders;
+    println!(
+        "  lower_file_names == lower_names: folder {folder_same}/{folders}（{:.1}%）\
+         / file {file_same}/{files_total}",
+        folder_same as f64 * 100.0 / folders.max(1) as f64,
+    );
+    if keys.is_some() {
+        println!(
+            "  normalized_keys == normalize_entry_key(target_path): {key_is_lower_path}/{n}（{:.1}%）",
+            key_is_lower_path as f64 * 100.0 / n as f64
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 合成インデックス（実運用点の文字列長分布に合わせる）
 // ---------------------------------------------------------------------------
 
@@ -200,6 +373,10 @@ fn measure_real_index_footprint() {
     // 背景再スキャンタスクは src-tauri 側で別スレッドが消費する。常駐計測の対象外。
     drop(rescan_task);
 
+    // 内訳は engine 構築の**前**に取る（構築後は private フィールドで、かつ Vec は
+    // move で吸われる）。計測区間の外＝`t2` の snapshot より前に置くこと。
+    let accounted = report_breakdown(&entries, entries.capacity(), cached_masks.as_ref(), n);
+
     // 実 config どおりの migemo 設定で構築（= 実運用の常駐形）。
     reset_peak();
     let t2 = snap();
@@ -218,10 +395,22 @@ fn measure_real_index_footprint() {
     let t3 = snap();
     report("SearchEngine 構築（実 config）", t2, t3, n);
 
+    let resident = t3.live.saturating_sub(t0.live);
+    let blocks = t3.blocks.saturating_sub(t0.blocks);
     println!(
-        "  --- 合計常駐（entries + 派生）: {:.2} MiB / peak {:.2} MiB ---",
-        mib(t3.live.saturating_sub(t0.live)),
+        "  --- 合計常駐（entries + 派生）: {:.2} MiB / peak {:.2} MiB / blocks {blocks}（{:.2} blocks/entry）---",
+        mib(resident),
         mib(t3.peak.saturating_sub(t0.live)),
+        blocks as f64 / n as f64,
+    );
+    // 内訳が実測に届かない分を明示する。**この差を埋める項を推測で足さない**——
+    // 未帰属が大きいなら、それ自体が「まだ見えていない保持がある」という所見である。
+    println!(
+        "      内訳の帰属 {:.2} MiB / 未帰属 {:.2} MiB（{:.1} B/entry・実測の {:.1}%）",
+        mib(accounted),
+        mib(resident.saturating_sub(accounted)),
+        resident.saturating_sub(accounted) as f64 / n as f64,
+        resident.saturating_sub(accounted) as f64 * 100.0 / resident as f64,
     );
 
     drop(engine);

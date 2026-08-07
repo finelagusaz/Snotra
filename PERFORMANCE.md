@@ -119,6 +119,12 @@ trace 計装（`suspend:call_returned` / `suspend:completed`）で、`TrySuspend
 
 ## egui 期のメモリ実測（2026-07-25 計測）
 
+> **この節の実運用点は 38,847 エントリである。2026-08-07 に同じ機で測り直したところ
+> 312,377 エントリ（`index.bin` 107.0 MiB）に育っており、索引の常駐は 14.96 → 166.08 MiB
+> になっていた。** 下の font A/B と「索引の常駐」の絶対値は現運用点に当てはまらない
+> ——機構（`from_static` / cmap カバー判定 / Context 数への比例）だけが生きている。
+> 現在の値と内訳は「索引の常駐の内訳（2026-08-07 計測・312,377 エントリ）」を見ること。
+
 `#532 SU7` 後の構成（単一プロセス・WebView2 なし）を release ビルドで実機計測した。
 計測ハーネスは `snotra-core/tests/memory_footprint.rs`（アロケータ計数・実行コマンドは
 `docs/build-commands.md`）と `scripts/measure-memory.ps1`。
@@ -216,6 +222,59 @@ jp_font は元から `from_static` だったが user_font だけ `from_owned` �
 - migemo の限界費用は 10k/38.8k/100k で一貫して **+28.6%**（133 → 171 B/entry）
 - アロケータ実測は `layout.size()` の集計であり、Windows ヒープのブロックヘッダ・
   サイズクラス丸めを**含まない**。233,430 ブロックゆえ実 RSS はこれより大きい
+
+## 索引の常駐の内訳（2026-08-07 計測・312,377 エントリ）
+
+実 config の `[[paths.scan]] path = 'C:\'` + `include_folders = true`（C ドライブ全体の
+フォルダ索引）による現運用点。`index.bin` = **107.0 MiB**。ハーネスは
+`snotra-core/tests/memory_footprint.rs`。**`--test-threads=1` が必須**——計数器が
+`static AtomicUsize` のプロセス大域であり、並列実行では Phase A/B が奪い合って
+エラーにならず**もっともらしい数値**を出す（実測: 単調性の破れと `live 0.00 MiB`）。
+
+| 区間 | live | peak | blocks/entry |
+|---|---:|---:|---:|
+| `index.bin` ロード（+ 再スキャン複製） | 228.57 MiB | 273.08 MiB | 7.00 |
+| **`SearchEngine` 常駐** | **166.08 MiB** | 166.08 MiB | **5.00** |
+
+内訳は **100% 帰属済み（未帰属 0.00 MiB）**。557.4 B/entry の行き先:
+
+| 項目 | 確保 | B/entry | 性質 |
+|---|---:|---:|---|
+| `entries[].target_path`（文字列） | 35.56 MiB | 119.3 | 原本 |
+| `normalized_keys`（文字列） | 35.56 MiB | 119.3 | **`target_path` から 100% 再現可能** |
+| `entries` Vec 本体 | 32.00 MiB | 107.4 | 実使用は 16.68 MiB |
+| `lower_file_names`（文字列） | 10.47 MiB | 35.1 | **folder は 100% が `lower_names` と同一** |
+| `entries[].name`（文字列） | 10.25 MiB | 34.4 | `target_path` の末尾成分 |
+| `lower_names`（文字列） | 10.25 MiB | 34.4 | |
+| `lower_names` / `lower_file_names` / `normalized_keys` の Vec 本体 | 各 8.00 MiB | 各 26.9 | |
+| `char_masks` / `file_name_char_masks` | 各 4.00 MiB | 各 13.4 | 実使用は各 2.38 MiB |
+
+### 重複の実測（機構からの導出ではなく実データの率）
+
+- `is_folder` = 255,961 / 312,377（**81.9%**）
+- `lower_file_names[i] == lower_names[i]`: folder **255,961/255,961（100.0%）** / file **0/56,416**。
+  indexer が folder の `name` に `file_name()`、file に `file_stem()`（拡張子なし）を使う
+  規則どおりで、例外は 1 件も無い
+- `normalized_keys[i] == normalize_entry_key(target_path)`: **312,377/312,377（100.0%）**。
+  `normalize_entry_key` は Unicode 小文字化ゆえ長さ保存ではないが、**この索引には
+  例外が 1 件も無い**（他の索引で成り立つ保証ではない）
+
+### Vec 本体の確保が実使用の約 2 倍ある
+
+Vec 本体の合計は **64.00 MiB**（確保）。`char_masks` は 524,288 = 2^19 要素分を確保して
+312,377 しか使っていない。serde の `size_hint` は DoS 防止のため 4,096 要素で頭打ちにし、
+以降は Vec の倍々成長に委ねるため、`index.bin` から読んだ全 Vec が成長の踊り場を抱える。
+
+**この余剰は `SearchEngine` へそのまま持ち越される。** `new_with_cached_masks` の
+`Vec<String>` → `Vec<Box<str>>` 変換は in-place collect（16 B ≤ 24 B・align 一致）で
+**確保ブロックを再利用する**ため、要素サイズが縮んでも `layout.size()` は動かない
+（構築区間の allocs = 0 が実測）。
+
+### `BackgroundRescanTask` の全エントリ複製
+
+ロード区間 228.57 MiB と常駐 166.08 MiB の差 **62.49 MiB**（210 B/entry）は
+`indexer.rs` の `BackgroundRescanTask.cached_entries`。キャッシュヒットする毎回の起動で
+背景再スキャンの実行中ずっと常駐する。
 
 ## 試みたが機能しない手法
 

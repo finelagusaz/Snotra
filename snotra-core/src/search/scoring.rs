@@ -278,10 +278,20 @@ impl<'a> TopK<'a> {
 impl SearchEngine {
     #[inline]
     pub(super) fn entry_view(&self, i: usize) -> EntryView<'_> {
+        let entry = self.entries.get(i);
+        let lower_name = &*self.lower_names[i];
         EntryView {
-            entry: self.entries.get(i),
-            lower_name: &self.lower_names[i],
-            lower_file_name: self.lower_file_names[i].as_deref(),
+            entry,
+            lower_name,
+            // 旗が立つエントリは `lower_file_names[i]` が `None` に潰してあり、内容は
+            // `lower_name` と**バイト一致する**（構築時に測って落とした・`build.rs` の
+            // `assemble`）。**追加のメモリ読みは無い**——`entry` も `lower_name` も既に
+            // 手元にあり、分岐が読むのは同じキャッシュラインの `bool` 1 つである。
+            lower_file_name: if entry.file_name_is_lower_name {
+                Some(lower_name)
+            } else {
+                self.lower_file_names[i].as_deref()
+            },
         }
     }
 

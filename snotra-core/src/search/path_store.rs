@@ -75,6 +75,21 @@ pub(super) struct CompactEntry {
     /// 親を持たないときはフルパス。**どちらを指すかは `parent` が決める。**
     aux: u32,
     pub(super) is_folder: bool,
+    /// 真なら `lower_file_names[i]` の内容が `lower_names[i]` と同一であり、索引は前者の
+    /// `Box<str>` を持たない（`None` に潰してある）。読み替えは `SearchEngine::entry_view`
+    /// の 1 点だけで行う。
+    ///
+    /// **`is_folder` から推論してはならない。** 実データでは folder の 100% がこれに当たるが、
+    /// それは indexer の名前導出規則の帰結であって `SearchEngine::new` が受け取る
+    /// `AppEntry` の性質ではない。旗は構築時に**測った**結果であり（`build.rs` の `assemble`）、
+    /// 外れた入力は文字列を持ち続けるだけで結果は変わらない（[`PathStore::sorted_by_path`]
+    /// と同じ形である）。
+    ///
+    /// **この bool は無料である**——`Box<str>`(16) + `u32`×2(8) + `bool`(1) の後ろに 7 バイトの
+    /// パディングがあり、2 つめの `bool` を置いても `CompactEntry` は 32 B のままである（実測）。
+    /// 3 変種の `enum` で `lower_file_names` 側に持たせる案は `Box<str>` の niche が 1 つしか
+    /// 無いため 16 → 24 B になり、削減 9.71 MiB のうち 2.38 MiB を食う。
+    pub(super) file_name_is_lower_name: bool,
 }
 
 /// 索引全体のパス表現。`SearchEngine` が `Vec<AppEntry>` の代わりに持つ。
@@ -108,6 +123,15 @@ impl PathStore {
 
     pub(super) fn get(&self, i: usize) -> &CompactEntry {
         &self.entries[i]
+    }
+
+    /// `i` の [`CompactEntry::file_name_is_lower_name`] を立てる。
+    ///
+    /// **判定はここでしない**——旗の意味は派生文字列（`lower_names` / `lower_file_names`）に
+    /// あり、`PathStore` はそれらを知らない。記憶域だけをここが持ち、何を立てるかは
+    /// `build.rs` の `assemble` が決める。
+    pub(super) fn mark_file_name_is_lower_name(&mut self, i: usize) {
+        self.entries[i].file_name_is_lower_name = true;
     }
 
     pub(super) fn shrink_to_fit(&mut self) {
@@ -523,6 +547,9 @@ impl PathStore {
                 parent,
                 aux: aux_id,
                 is_folder,
+                // 旗は `build.rs` の `assemble` が派生文字列を測ってから立てる。
+                // ここは `target_path` しか知らないので判定できない。
+                file_name_is_lower_name: false,
             });
         }
 

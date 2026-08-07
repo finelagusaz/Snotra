@@ -76,6 +76,10 @@ fn assemble_shrinks_parallel_vecs_to_fit() {
 /// 2 件目は成立する側で、旗が立って `lower_file_names` から文字列が落ちることを見る
 /// ——**両方を置く**のは、片方だけだと「常に共有しない」実装も「常に共有する」実装も
 /// 通ってしまうためである。
+///
+/// **migemo の両設定を通す。** kana 系 2 本は `assemble` の**外**で確定してから渡されるので
+/// 潰す位置の不変条件は同じはずだが、実運用の config が片方に寄っている以上（計測環境は
+/// `migemo_enabled = false`）、通していない側は「壊れても気づかない側」である。
 #[test]
 fn shared_file_name_flag_is_measured_not_inferred_from_is_folder() {
     let entries = vec![
@@ -92,28 +96,35 @@ fn shared_file_name_flag_is_measured_not_inferred_from_is_folder() {
             is_folder: true,
         },
     ];
-    let engine = SearchEngine::new_with_migemo(entries, false);
 
-    let mismatched = engine.entry_view(0);
-    assert_eq!(mismatched.lower_name, "alias");
-    assert_eq!(
-        mismatched.lower_file_name,
-        Some("tail"),
-        "末尾成分と name が違う folder で共有してはならない"
-    );
-    assert!(!mismatched.entry.file_name_is_lower_name);
-    assert!(
-        engine.lower_file_names[0].is_some(),
-        "共有しないエントリの文字列を落としてはならない"
-    );
+    for migemo_enabled in [false, true] {
+        let engine = SearchEngine::new_with_migemo(entries.clone(), migemo_enabled);
 
-    let shared = engine.entry_view(1);
-    assert_eq!(shared.lower_file_name, Some("same"));
-    assert!(shared.entry.file_name_is_lower_name);
-    assert!(
-        engine.lower_file_names[1].is_none(),
-        "共有するエントリの `Box<str>` は落ちていなければ削減にならない"
-    );
+        let mismatched = engine.entry_view(0);
+        assert_eq!(mismatched.lower_name, "alias", "migemo={migemo_enabled}");
+        assert_eq!(
+            mismatched.lower_file_name,
+            Some("tail"),
+            "migemo={migemo_enabled}: 末尾成分と name が違う folder で共有してはならない"
+        );
+        assert!(!mismatched.entry.file_name_is_lower_name);
+        assert!(
+            engine.lower_file_names[0].is_some(),
+            "migemo={migemo_enabled}: 共有しないエントリの文字列を落としてはならない"
+        );
+
+        let shared = engine.entry_view(1);
+        assert_eq!(
+            shared.lower_file_name,
+            Some("same"),
+            "migemo={migemo_enabled}"
+        );
+        assert!(shared.entry.file_name_is_lower_name);
+        assert!(
+            engine.lower_file_names[1].is_none(),
+            "migemo={migemo_enabled}: 共有するエントリの `Box<str>` は落ちていなければ削減にならない"
+        );
+    }
 }
 
 /// 旗による読み替えが、潰す前の導出と 1 バイトも違わないことを実インデックスの全件で確かめる。

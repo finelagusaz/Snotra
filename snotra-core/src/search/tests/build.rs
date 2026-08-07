@@ -4,7 +4,7 @@
 //! ここはその 1 点を守る。
 
 use super::common::{make_entries, real_index_entries};
-use crate::indexer::AppEntry;
+use crate::indexer::{AppEntry, CachedLower};
 use crate::search::*;
 
 /// `len` より大きい容量を持つ Vec を作る（`index.bin` 由来の Vec が持つ余剰の再現）。
@@ -39,10 +39,12 @@ fn assemble_shrinks_parallel_vecs_to_fit() {
         entries,
         oversized(vec![0u64; n]),
         oversized(vec![0u64; n]),
-        Some(oversized(owned(&lower))),
-        Some(oversized(
-            lower.iter().map(|s| Some(s.to_string())).collect(),
-        )),
+        // **`Raw`（v5/v4 相当）で渡す。** 余剰容量が最も乗るのはこの経路である
+        // ——`Vec<String>` → `Vec<Box<str>>` の変換が確保ブロックを再利用して持ち越す。
+        Some(CachedLower::Raw {
+            lower_names: oversized(owned(&lower)),
+            lower_file_names: oversized(lower.iter().map(|s| Some(s.to_string())).collect()),
+        }),
         true, // migemo 有効 = kana 系 2 本も構築される
     );
 

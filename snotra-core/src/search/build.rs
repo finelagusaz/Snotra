@@ -7,13 +7,33 @@
 
 use rayon::prelude::*;
 
-use crate::indexer::AppEntry;
+use crate::indexer::{AppEntry, CachedLower, LowerFileName};
 use crate::query::{
     file_char_mask, lower_file_name, measure_derived_sharing, name_char_mask, to_kana,
     to_lower_folded,
 };
 
 use super::{IncrementalCache, PathStore, SearchEngine, kana_char_mask};
+
+/// `assemble` へ渡す派生文字列。**測定が済んでいるかを型で区別する。**
+///
+/// **同じ型で渡してはならない。** `Measured` に対する共有判定は「全要素が `Some`」を前提に
+/// しており、潰し済みの列をそこへ流すと `lower_file_names[i]` と `lower_names[i]` がどちらも
+/// `None` のときに「一致」と読まれ、**file name 成分を持たないエントリに共有の旗が立つ**。
+/// 実データではフォルダ 256,262 件すべてが該当し、`entry_view` はそれらの file name として
+/// `lower_name` を返すようになる（検索結果は「それらしく」出るので挙動テストでは捕まらない）。
+enum DerivedStrings {
+    /// Wave 1 の出力、または v5 以下のキャッシュ。全要素が実体を持つ。`assemble` が測って潰す。
+    Measured {
+        lower_names: Vec<Box<str>>,
+        lower_file_names: Vec<Option<Box<str>>>,
+    },
+    /// v6 キャッシュ。記録時に `measure_derived_sharing` で測って潰してある。**測り直さない。**
+    Collapsed {
+        lower_names: Vec<Option<String>>,
+        lower_file_names: Vec<LowerFileName>,
+    },
+}
 
 /// Wave 1 の出力: `(lower_names, lower_file_names, kana_lower_names)`。
 /// いずれも構築後に伸長しないため `Box<str>` で保持する（容量ワード 8B/要素を節約）。
@@ -22,6 +42,15 @@ use super::{IncrementalCache, PathStore, SearchEngine, kana_char_mask};
 /// （実測 35.56 MiB。経緯は `PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を
 /// 保持するか導出するか」）。
 type Wave1Strings = (Vec<Box<str>>, Vec<Option<Box<str>>>, Vec<Box<str>>);
+
+/// `DerivedStrings` を `assemble` の内部表現へ開いた形。
+/// 3 つめは `Collapsed` のときだけ `Some` で、**共有の旗を立てる位置**を持つ
+/// （`PathStore` を作った後でなければ立てられないため、開いた時点では控えるしかない）。
+type UnpackedDerived = (
+    Vec<Option<Box<str>>>,
+    Vec<Option<Box<str>>>,
+    Option<Vec<usize>>,
+);
 
 /// Wave 1: entries から文字列正規化データを並列構築する。
 /// lower_names / lower_file_names / kana_lower_names は entries への純粋な map であり
@@ -113,19 +142,59 @@ impl SearchEngine {
     /// 「索引の常駐の内訳」。
     fn assemble(
         entries: Vec<AppEntry>,
-        lower_names: Vec<Box<str>>,
-        lower_file_names: Vec<Option<Box<str>>>,
+        derived: DerivedStrings,
         char_masks: Vec<u64>,
         file_name_char_masks: Vec<u64>,
         kana: (Vec<Box<str>>, Vec<u64>),
     ) -> Self {
         let (mut kana_lower_names, mut kana_char_masks) = kana;
         // ここから先の `lower_names` の `None` は「`entries[i].name` と同一」を意味する
-        // （`SearchEngine::lower_names` の doc）。**この時点では全要素が `Some` である**
-        // ——下の共有判定はその前提に乗っている。`Option<Box<str>>` は `Box<str>` と同じ
-        // 16 B ゆえ、包んでも Vec 本体は動かない。
-        let mut lower_names: Vec<Option<Box<str>>> = lower_names.into_iter().map(Some).collect();
-        let mut lower_file_names = lower_file_names;
+        // （`SearchEngine::lower_names` の doc）。**`Measured` の時点では全要素が `Some` である**
+        // ——下の共有判定はその前提に乗っており、だから `Collapsed` を同じ入口へ流せない
+        // （`DerivedStrings` の doc）。`Option<Box<str>>` は `Box<str>` と同じ 16 B ゆえ、
+        // 包んでも Vec 本体は動かない。
+        // **旗は `PathStore` を作った後でなければ立てられない**（`mark_file_name_is_lower_name`
+        // は `CompactEntry` の空きパディングへ書く）。ゆえに `Collapsed` の旗はここでは適用せず、
+        // 位置だけを控えて下で立てる。
+        let (mut lower_names, mut lower_file_names, shared_file_name_at): UnpackedDerived =
+            match derived {
+                DerivedStrings::Measured {
+                    lower_names,
+                    lower_file_names,
+                } => (
+                    lower_names.into_iter().map(Some).collect(),
+                    lower_file_names,
+                    None,
+                ),
+                // **展開に測定は要らない。** 記録側が `measure_derived_sharing` で測った結果が
+                // そのまま表現になっている——ここで測り直すと、`None` どうしの一致で誤った旗が立つ。
+                DerivedStrings::Collapsed {
+                    lower_names,
+                    lower_file_names,
+                } => {
+                    let mut shared = Vec::new();
+                    let files = lower_file_names
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, f)| match f {
+                            LowerFileName::Text(s) => Some(s.into_boxed_str()),
+                            LowerFileName::Absent => None,
+                            LowerFileName::SameAsLowerName => {
+                                shared.push(i);
+                                None
+                            }
+                        })
+                        .collect();
+                    (
+                        lower_names
+                            .into_iter()
+                            .map(|o| o.map(String::into_boxed_str))
+                            .collect(),
+                        files,
+                        Some(shared),
+                    )
+                }
+            };
         let mut char_masks = char_masks;
         let mut file_name_char_masks = file_name_char_masks;
         // `target_path` の `String` はここで木の接頭辞共有へ組み替えられ、`Vec<AppEntry>` ごと
@@ -187,8 +256,26 @@ impl SearchEngine {
         // だった**（3 変種を同一セッションで実測）。並列化では取り戻せないので、いちばん短い
         // 形を残してある。増分の機序（比較か、255,961 個の `Box<str>` の解放か）は
         // **切り分けていない**——ここに書けるのは「並列化は効かない」までである。
+        // **`Collapsed` はここを通らない。** 記録側が既に測っており、測り直すと
+        // 「`None` どうしの一致」で file name 成分の無いエントリに旗が立つ（`DerivedStrings`
+        // の doc）。控えておいた位置へ旗を立てるだけで済ませる。
+        if let Some(shared) = shared_file_name_at {
+            for i in shared {
+                entries.mark_file_name_is_lower_name(i);
+            }
+            return Self::finish(
+                entries,
+                lower_names,
+                lower_file_names,
+                char_masks,
+                file_name_char_masks,
+                kana_lower_names,
+                kana_char_masks,
+            );
+        }
+
         for i in 0..entries.len() {
-            // ここでの `lower_names[i]` は必ず `Some`（上で `map(Some)` した直後であり、
+            // ここでの `lower_names[i]` は必ず `Some`（`Measured` を `map(Some)` した直後であり、
             // このループは各 `i` を 1 度しか通らない）。
             let Some(lower_name) = lower_names[i].as_deref() else {
                 continue;
@@ -213,6 +300,31 @@ impl SearchEngine {
             }
         }
 
+        Self::finish(
+            entries,
+            lower_names,
+            lower_file_names,
+            char_masks,
+            file_name_char_masks,
+            kana_lower_names,
+            kana_char_masks,
+        )
+    }
+
+    /// 潰し終えた並列 Vec を `Self` にする。`Measured` / `Collapsed` の両経路が合流する。
+    ///
+    /// **`assemble` の外へ出してはならない。** 長さの検証と `shrink_to_fit` はあちらが持って
+    /// おり、ここを直接呼ぶ経路を作るとその 2 つを迂回できてしまう。
+    #[allow(clippy::too_many_arguments)]
+    fn finish(
+        entries: PathStore,
+        lower_names: Vec<Option<Box<str>>>,
+        lower_file_names: Vec<Option<Box<str>>>,
+        char_masks: Vec<u64>,
+        file_name_char_masks: Vec<u64>,
+        kana_lower_names: Vec<Box<str>>,
+        kana_char_masks: Vec<u64>,
+    ) -> Self {
         Self {
             entries,
             lower_names,
@@ -243,8 +355,10 @@ impl SearchEngine {
         let kana_char_masks = compute_kana_char_masks(&kana_lower_names);
         Self::assemble(
             entries,
-            lower_names,
-            lower_file_names,
+            DerivedStrings::Measured {
+                lower_names,
+                lower_file_names,
+            },
             char_masks,
             file_name_char_masks,
             (kana_lower_names, kana_char_masks),
@@ -254,11 +368,11 @@ impl SearchEngine {
     /// キャッシュから読み込んだデータを使って SearchEngine を構築する。
     ///
     /// - `char_masks` / `file_name_char_masks`: Wave 2 の再計算をスキップ
-    /// - `cached_lower_names` / `cached_lower_file_names`:
-    ///   v4+ キャッシュヒット時に Some → Wave 1 の再計算もスキップ（A-3）
-    ///   v3 フォールバック時は None → Wave 1 を通常通り並列実行
+    /// - `cached_lower`: `Some` なら Wave 1 の再計算もスキップ。**variant が意味を分ける**
+    ///   ——`Collapsed`（v6）は共有判定もスキップし、`Raw`（v5/v4）は `assemble` が測って潰す。
+    ///   `None`（v3 フォールバック）は Wave 1 を通常通り並列実行する
     /// - `migemo_enabled`: false のとき kana_lower_names を構築しない（空 Vec、issue #337）。
-    ///   v4 パス（再計算）・v3 フォールバックの**両方**でこのフラグを反映する。
+    ///   **全経路で**このフラグを反映する
     ///
     /// **`normalized_keys` は受け取らない。** v5 でオンディスク形式から落とし、検索時に
     /// `target_path` から導出する形へ移した。v4 バイト列を読んだ場合も当該フィールドは
@@ -268,43 +382,75 @@ impl SearchEngine {
         entries: Vec<AppEntry>,
         char_masks: Vec<u64>,
         file_name_char_masks: Vec<u64>,
-        cached_lower_names: Option<Vec<String>>,
-        cached_lower_file_names: Option<Vec<Option<String>>>,
+        cached_lower: Option<CachedLower>,
         migemo_enabled: bool,
     ) -> Self {
-        let (lower_names, lower_file_names, kana_lower_names) =
-            if let (Some(ln), Some(lfn)) = (cached_lower_names, cached_lower_file_names) {
-                // A-3: v4+ キャッシュヒット → Wave 1 完全スキップ（kana_lower_names は毎起動再計算）。
-                // キャッシュ由来の Vec<String> を Box<str> へ移す。postcard デシリアライズ後の
-                // String は capacity == len のため into_boxed_str は再アロケーションを伴わない。
-                // migemo 無効時は kana を再計算せず空 Vec のままにする。
-                let kana = if migemo_enabled {
-                    entries
-                        .par_iter()
-                        .map(|e| to_kana(&to_lower_folded(&e.name)).into_boxed_str())
-                        .collect::<Vec<_>>()
-                } else {
-                    Vec::new()
-                };
-                let ln = ln
-                    .into_iter()
-                    .map(String::into_boxed_str)
-                    .collect::<Vec<_>>();
-                let lfn = lfn
-                    .into_iter()
-                    .map(|o| o.map(String::into_boxed_str))
-                    .collect::<Vec<_>>();
-                (ln, lfn, kana)
+        // kana は毎起動再計算する（キャッシュに持たない）。migemo 無効時は空 Vec のまま。
+        let kana_for_cached = |entries: &[AppEntry]| {
+            if migemo_enabled {
+                entries
+                    .par_iter()
+                    .map(|e| to_kana(&to_lower_folded(&e.name)).into_boxed_str())
+                    .collect::<Vec<_>>()
             } else {
-                // v3 フォールバック: Wave 1 を並列実行（migemo フラグを反映）
-                compute_wave1(&entries, migemo_enabled)
-            };
+                Vec::new()
+            }
+        };
+
+        let (derived, kana_lower_names) = match cached_lower {
+            // v6: 潰し済み。`assemble` は測り直さない。
+            Some(CachedLower::Collapsed {
+                lower_names,
+                lower_file_names,
+            }) => {
+                let kana = kana_for_cached(&entries);
+                (
+                    DerivedStrings::Collapsed {
+                        lower_names,
+                        lower_file_names,
+                    },
+                    kana,
+                )
+            }
+            // v5/v4: Wave 1 はスキップできるが、共有判定は `assemble` が行う。
+            // postcard デシリアライズ後の String は capacity == len のため
+            // into_boxed_str は再アロケーションを伴わない。
+            Some(CachedLower::Raw {
+                lower_names,
+                lower_file_names,
+            }) => {
+                let kana = kana_for_cached(&entries);
+                (
+                    DerivedStrings::Measured {
+                        lower_names: lower_names
+                            .into_iter()
+                            .map(String::into_boxed_str)
+                            .collect(),
+                        lower_file_names: lower_file_names
+                            .into_iter()
+                            .map(|o| o.map(String::into_boxed_str))
+                            .collect(),
+                    },
+                    kana,
+                )
+            }
+            // v3 フォールバック: Wave 1 を並列実行（migemo フラグを反映）。
+            None => {
+                let (lower_names, lower_file_names, kana) = compute_wave1(&entries, migemo_enabled);
+                (
+                    DerivedStrings::Measured {
+                        lower_names,
+                        lower_file_names,
+                    },
+                    kana,
+                )
+            }
+        };
 
         let kana_char_masks = compute_kana_char_masks(&kana_lower_names);
         Self::assemble(
             entries,
-            lower_names,
-            lower_file_names,
+            derived,
             char_masks,
             file_name_char_masks,
             (kana_lower_names, kana_char_masks),

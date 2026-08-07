@@ -226,8 +226,10 @@ impl<'a> ParentCache<'a> {
 
 impl TreeIndex {
     /// `entries` がソート済みなら二分探索、でなければ照合表を選ぶ。
-    /// **ソート済みかは仮定せず O(n) で確かめる**——外れた入力に二分探索を当てると
-    /// 親を取り違え、エラーにならずに黙って別の木ができる。
+    ///
+    /// **製品の `build()` はこれを通さない**（実測 6.5 ms の前払いになる）。正しさには
+    /// 要らないからで、理由は `resolve_one_with` の `pi < i` ガードの側に書いてある。
+    /// 手段どうしを同条件で比べる計測でだけ使う。
     fn choose_lookup(entries: &[AppEntry]) -> ParentLookup {
         if entries
             .windows(2)
@@ -239,8 +241,11 @@ impl TreeIndex {
         }
     }
 
+    /// 製品が呼ぶ形。**`choose_lookup` を通さない**——`resolve_one_with` の `pi < i` ガードが
+    /// 未整列の入力でも正しさを保つため、312,377 件の整列チェック（実測 6.5 ms）は
+    /// 削減量をわずかに左右するだけの前払いになる。
     fn build(entries: &[AppEntry]) -> Self {
-        Self::build_with(entries, Self::choose_lookup(entries))
+        Self::build_with(entries, ParentLookup::CachedParallel)
     }
 
     fn build_with(entries: &[AppEntry], lookup: ParentLookup) -> Self {
@@ -394,6 +399,16 @@ fn resolve_one_with<'a>(
     };
     let par = &path[..par_end];
     let pi = find_parent(par)?;
+    // **親は必ず自分より前に居る**（ソート順の性質・実測で違反 0 件）。ここで弾くことで
+    // 循環が構造的に生じえなくなり、再構築が止まらなくなる事故を型ではなく順序で防ぐ。
+    //
+    // このガードがあるので**整列済みかを事前に走査する必要はない**——`binary_search_by` が
+    // `Ok` を返すのは `entries[pi].target_path == par` のときだけであり、未整列の配列でも
+    // 「別の親を返す」ことは起こりえない。起こるのは取りこぼしだけで、取りこぼした
+    // エントリは側テーブル行き（フルパス保持）になり結果は正しいままである。
+    if pi >= i {
+        return None;
+    }
     // **連結して比べ直さない。** `par` も `tail` も `path` の部分スライスなので、
     // 確かめるのは間に挟まる区切りだけでよい（1 エントリ 1 確保が消える）。
     let sep = &path[par_end..cut + 1];
@@ -542,6 +557,20 @@ fn measure_tree_build_cost() {
             std::hint::black_box(&tree);
         }
         println!("  {lookup:?}: 最小 {best:.1} ms（SearchEngine 構築は現状 2〜3 ms）");
+    }
+
+    // **製品が呼ぶのは `build()` であって `build_with()` ではない。** 手段の比較だけを測ると、
+    // 製品が前後で払う額が丸ごと計測区間の外へ落ちる——`build()` が `choose_lookup`
+    // （312,377 件の整列チェック）を通していた頃は、ここに 6.5 ms が隠れていた。
+    {
+        let mut best = f64::MAX;
+        for _ in 0..3 {
+            let start = Instant::now();
+            let tree = TreeIndex::build(&entries);
+            best = best.min(start.elapsed().as_secs_f64() * 1000.0);
+            std::hint::black_box(&tree);
+        }
+        println!("  build()（製品が呼ぶ形）: 最小 {best:.1} ms");
     }
 
     // 2 つの手段が**同じ木を作る**ことを確かめる。速いほうを採るのは、結果が同じときだけ

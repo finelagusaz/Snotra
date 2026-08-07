@@ -7,7 +7,7 @@
 //!
 //! 実測（実 `index.bin` 312,377 エントリ・`PERFORMANCE.md`「`target_path` のフォルダ木
 //! 接頭辞共有」）: 文字列 35.56 → 0.22 MiB、`entries` の 1 要素 56 → 32 B、
-//! 1 エントリあたりの確保ブロック 1 → 0。常駐 97.51 → 55.02 MiB。
+//! 1 エントリあたりの確保ブロック 1 → 0。常駐 97.51 → 54.92 MiB。
 //!
 //! **払うのは構築の 2〜3 → 66〜78 ms だけである。** 検索経路はどれも遅くなっていない
 //! ——`recent_history` は 9.9 → 6.4 ms、パスクエリのフレームコストは全件で改善した。
@@ -86,10 +86,13 @@ pub(super) struct PathStore {
     table: Vec<Box<str>>,
     /// `target_path` のバイト順に並んでいるか。**仮定ではなく構築時の実測である。**
     ///
-    /// 真なら index の順序がフルパスのバイト順と一致するので、[`Self::cmp_paths`] は
+    /// 真なら index の順序がフルパスのバイト順と**厳密に**一致するので、[`Self::cmp_paths`] は
     /// 組み立てずに index を比べるだけでよい（`sort_entries_canonical` は第 1 キーが
     /// `target_path` であり、dedup により `target_path` は一意ゆえ第 1 キーだけで全順序が
     /// 決まる）。偽なら組み立てて比べる経路へ落ち、結果は変わらない。
+    ///
+    /// **狭義の単調増加でなければならない**——重複を許すと同じパスの 2 件へ index 比較が
+    /// `Less`/`Greater` を返し、`Equal` が返らなくなる（判定は `build` のコメント）。
     ///
     /// **「本番は必ず整列している」という文書上の契約に寄りかからない**のが要点である
     /// ——`SearchEngine::new` は任意順を受け取れるので、契約にすると破れたとき静かに
@@ -428,9 +431,14 @@ impl PathStore {
     pub(super) fn build(entries: Vec<AppEntry>) -> Self {
         let n = entries.len();
         // 整列の判定は並列で 1 回だけ。全件走査の tie-break がこの 1 bit に載る。
+        //
+        // **`<=` ではなく `<` である。** `<=` は重複パスを許してしまい、そのとき
+        // `cmp_paths` の高速路（index 比較）は同じパスの 2 件へ `Less`/`Greater` を返す
+        // ——正しくは `Equal` であり、`ScoredEntry::eq` が index 違いで真になれなくなる。
+        // 狭く取れば、重複がある入力は旗が下りて組み立てて比べる経路へ落ちるだけで済む。
         let sorted_by_path = entries
             .par_windows(2)
-            .all(|w| w[0].target_path <= w[1].target_path);
+            .all(|w| w[0].target_path < w[1].target_path);
         let mut table: Vec<Box<str>> = vec![Box::from("")];
         let mut aux = vec![0u32; n];
 

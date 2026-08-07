@@ -280,9 +280,11 @@ fn measure_real_index_footprint() {
 
     // **実運用の起動経路は、ロードと構築の間に PATH スキャンを挟む**（`main.rs` の
     // `load_or_scan_with_stats` → `scan_path_env` → `Engine::new_from_cache`）。この区間は
-    // 全 `entries` の `target_path` を `normalize_entry_key` で正規化して `HashSet` へ積む
-    // ——**エントリ数に比例する確保がロードと構築のどちらの計測にも入っていなかった。**
-    // 反復 6 の digest がどのフェーズにも現れなかったのと同じ形である。
+    // **かつて**全 `entries` の `target_path` を正規化して `HashSet` へ積んでおり、
+    // **エントリ数に比例する確保がロードと構築のどちらの計測にも入っていなかった**
+    // （反復 6 の digest がどのフェーズにも現れなかったのと同じ形）。反復 9 でその積み上げ
+    // は消えたが、**計器はそのまま残す**——エントリ数に比例する仕事がここへ戻る退行を
+    // 捕まえられるのは、この区間を名指しで測るこの行だけである。
     //
     // **返り値は entries へ混ぜない。** PATH スキャンはファイルシステムを読むため実行ごとに
     // ぶれ、混ぜると常駐がバイト単位で再現しなくなる（決定性は内訳と実測を突き合わせる
@@ -373,7 +375,11 @@ fn measure_real_index_footprint() {
 fn report_cache_bytes(n: usize) {
     let Some(b) = indexer::cache_byte_breakdown_in(&Config::config_dir().expect("config dir"))
     else {
-        println!("\n  --- index.bin の内訳: v5/v4 のどちらとしても読めないためスキップ ---");
+        // **「どの版としても読めない」と書いてはならない。** この計器の射程は製品の
+        // フォールバック鎖より狭く、製品は読めるがここでは読めない古い版が在りうる
+        // （`cache_byte_breakdown_in` の doc）。版の一覧もここへ書き写さない——焼き込むと
+        // 版を足したときにこの 1 行だけが腐る。
+        println!("\n  --- index.bin の内訳: この計器が読める版では読めなかったためスキップ ---");
         return;
     };
 
@@ -386,10 +392,12 @@ fn report_cache_bytes(n: usize) {
         mib(b.file_len),
         mib(b.payload_len)
     );
-    if b.version != 5 {
+    // 現行版はリテラルで書かず定数を読む（理由は `INDEX_CACHE_VERSION` の doc）。
+    if b.version != snotra_core::indexer::INDEX_CACHE_VERSION {
         println!(
-            "  ※ 現行は v5。**実運用点は v{} のまま**で、v5 で消したフィールドをまだ読んでいる。",
-            b.version
+            "  ※ **実運用点は v{} のまま**で、現行 v{} が消したフィールドをまだ読んでいる。",
+            b.version,
+            snotra_core::indexer::INDEX_CACHE_VERSION
         );
     }
     println!(

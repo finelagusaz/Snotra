@@ -17,11 +17,15 @@ use super::{IncrementalCache, PathStore, SearchEngine, kana_char_mask};
 
 /// `assemble` へ渡す派生文字列。**測定が済んでいるかを型で区別する。**
 ///
-/// **同じ型で渡してはならない。** `Measured` に対する共有判定は「全要素が `Some`」を前提に
-/// しており、潰し済みの列をそこへ流すと `lower_file_names[i]` と `lower_names[i]` がどちらも
-/// `None` のときに「一致」と読まれ、**file name 成分を持たないエントリに共有の旗が立つ**。
-/// 実データではフォルダ 256,262 件すべてが該当し、`entry_view` はそれらの file name として
-/// `lower_name` を返すようになる（検索結果は「それらしく」出るので挙動テストでは捕まらない）。
+/// **分ける理由は「測り直しが無駄だから」であって、「測り直すと壊れるから」ではない。**
+/// 潰し済みの列を測定ループへ流しても結果は変わらない——`measure_derived_sharing` が
+/// `lower_name: &str`（`Option` ではない）を取るため、潰れた要素はループの `let Some(..) else`
+/// で素通りするからである。**「`None` どうしの一致で file name 成分の無いエントリに旗が立つ」
+/// という危険は、判定を一元化する前の `Option<&str>` どうしの比較に固有のものだった**
+/// （2026-08-08 に、測り直す実装へ戻す実験で確かめた——検知器は落ちなかった）。
+///
+/// 分ける実益は 2 つある: **312,690 回の比較を丸ごと省ける**こと（構築 68 → 58 ms のうち
+/// 比較ぶん）と、**呼び出し点から「この版は測り直さない」が読めること**である。
 enum DerivedStrings {
     /// Wave 1 の出力、または v5 以下のキャッシュ。全要素が実体を持つ。`assemble` が測って潰す。
     Measured {
@@ -193,14 +197,17 @@ impl SearchEngine {
         // 建つ前には呼べない。位置を控える `Vec<usize>` を挟む形もあるが、**制約に足場で
         // 応えるより、制約が満たされる場所まで展開を遅らせるほうが構造が 1 段浅くなる**
         // （`PathStore::build` は派生文字列を一切見ないので、遅らせる障害は無い）。
-        let needs_measuring = matches!(derived, DerivedStrings::Measured { .. });
-        let (mut lower_names, mut lower_file_names) = match derived {
+        // **3 つめ（測り直すか）は `match` の中から出す。** 外で `matches!` を取ると、variant を
+        // 足したときに既定値へ黙って落ちる——「測らない」へ倒れれば削減だけが減り、「測る」へ
+        // 倒れれば結果が壊れる。どちらも沈黙するので、コンパイラに列挙させる。
+        let (mut lower_names, mut lower_file_names, needs_measuring) = match derived {
             DerivedStrings::Measured {
                 lower_names,
                 lower_file_names,
             } => (
                 lower_names.into_iter().map(Some).collect::<Vec<_>>(),
                 lower_file_names,
+                true,
             ),
             // **展開に測定は要らない。** 記録側が `measure_derived_sharing` で測った結果が
             // そのまま表現になっている——ここで測り直すと、`None` どうしの一致で誤った旗が立つ。
@@ -226,6 +233,7 @@ impl SearchEngine {
                         .map(|o| o.map(String::into_boxed_str))
                         .collect(),
                     files,
+                    false,
                 )
             }
         };
@@ -276,9 +284,9 @@ impl SearchEngine {
         // だった**（3 変種を同一セッションで実測）。並列化では取り戻せないので、いちばん短い
         // 形を残してある。増分の機序（比較か、255,961 個の `Box<str>` の解放か）は
         // **切り分けていない**——ここに書けるのは「並列化は効かない」までである。
-        // **`Collapsed` はここを通らない。** 記録側が既に測っており、測り直すと
-        // 「`None` どうしの一致」で file name 成分の無いエントリに旗が立つ（`DerivedStrings`
-        // の doc）。あちらの旗は展開のその場で立て終えている。
+        // **`Collapsed` はここを通らない**（旗は展開のその場で立て終えている）。通しても
+        // 結果は変わらない——潰れた要素は下の `let Some(..) else` で素通りする——が、
+        // 312,690 回の比較が丸ごと無駄になる（`DerivedStrings` の doc）。
         let measured_count = if needs_measuring { entries.len() } else { 0 };
         for i in 0..measured_count {
             // ここでの `lower_names[i]` は必ず `Some`（`Measured` を `map(Some)` した直後であり、

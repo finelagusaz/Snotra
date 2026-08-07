@@ -76,12 +76,9 @@ pub enum LowerFileName {
 
 /// キャッシュから復元した派生文字列。**潰し済みか未測定かを型で区別する。**
 ///
-/// **同じ型で渡してはならない。** `SearchEngine::assemble` は「渡ってくる `lower_names` は
-/// すべて `Some`」を前提に共有を測る——潰し済みの列をそこへ流すと、`lower_file_names[i]` と
-/// `lower_names[i]` がどちらも `None` のときに「一致」と読まれ、**file name 成分を持たない
-/// エントリに共有の旗が立つ**。実データではフォルダ 256,262 件すべてが該当し、`entry_view` は
-/// それらの file name として `lower_name` を返すようになる（検索結果は「それらしく」出るので
-/// 挙動テストでは捕まらない）。variant を分ければ、取り違えはコンパイルを通らない。
+/// **分ける理由は「測り直しが無駄だから」である**（`search/build.rs` の `DerivedStrings` の doc
+/// が機序の正本）。潰し済みの列を測定経路へ流しても結果は変わらないが、312,690 回の比較が
+/// 丸ごと無駄になる。variant を分けることで、その取り違えはコンパイルを通らない。
 #[derive(Debug)]
 pub enum CachedLower {
     /// v6 以降。記録時に `query::measure_derived_sharing` で測って潰してある。

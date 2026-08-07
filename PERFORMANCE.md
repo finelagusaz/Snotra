@@ -321,6 +321,36 @@ Vec 本体の合計は **64.00 MiB**（確保）。`char_masks` は 524,288 = 2^
 - **Unicode 小文字化は並列化の利きが悪い**（単スレッド 148 ms → 16 コア 55 ms で 2.7× 止まり）。
   ASCII 路は 75 → 4 ms（19×）と素直に効く。**倍率だけを見て絶対値を推定してはならない**
 
+### 採用: `normalized_keys` の廃止（-40.32 MiB・IndexCache v5）
+
+索引に持っていた `normalized_keys` を落とし、必要な候補についてだけ `target_path` から
+導出する形へ移した（`search/scoring.rs` の `with_normalized_key`）。
+
+| 指標 | 変更前 | 変更後 |
+|---|---:|---:|
+| `SearchEngine` 常駐 | 137.83 MiB | **97.51 MiB**（**-40.32**・-29.3%） |
+| live ブロック数 | 5.00 / entry | **4.00 / entry**（1,561,891 → 1,249,513） |
+| `recent_history`（窓を開くたび） | 65.4 ms | **9.8 ms**（-85%） |
+| パスクエリ全走査 | 2.1-3.1 ms | 4.5-7.4 ms |
+
+対のレイテンシ実測（同日・同セッション・**各 3 回**）:
+
+| bench（300k・中央値） | 変更前 | 変更後 |
+|---|---:|---:|
+| `bench_fuzzy_search_scaling` | 3,652 µs | 3,993 µs（**+9.3%**） |
+| `bench_new_scaling` | 530 ms | 529 ms（ノイズ内） |
+
+- **1 標本ずつの比較は +29% を示した。3 回ずつ取り直すと +9.3% だった**——A 側の下振れと
+  B 側の上振れを突き合わせていた。**退行の疑いこそ標本を増やす**（1 回の比較で
+  「#110 の領域」と判断しかけた）
+- fuzzy の +9.3% は 1 打鍵あたり +0.34 ms。マッチ**成立後**の履歴照合が導出を要求するため、
+  マッチ件数に比例して乗る
+- `recent_history` の改善は `normalized_keys` とは独立の欠陥の是正である。高々 8 件を探すのに
+  312,377 件ぶんの照合表を毎回組んでいた——**探す側で表を組む**形に反転させ、走査 1 パスにした
+- v4 キャッシュを持つ既存ユーザーは、`normalized_keys` を読んで捨てる経路を通る。復元する
+  4 本は v5 と同じでどれも v4 に揃っているため **Wave 1 はスキップされたまま**であり、
+  **常駐の削減は v5 への書き換えを待たずに効く**（ディスクとロード時ピークだけが据え置き）
+
 ### `BackgroundRescanTask` の全エントリ複製
 
 ロード区間 228.57 MiB と常駐 166.08 MiB の差 **62.49 MiB**（210 B/entry）は
@@ -348,7 +378,7 @@ Vec 本体の合計は **64.00 MiB**（確保）。`char_masks` は 524,288 = 2^
   詳細は `snotra-core/src/search.rs` の `SearchEngine` 構造体コメントを参照。
 
   **採用した別案（branch `refactor/entry-view-accessor`）**: AoS 統合の代わりに `EntryView<'a>` アクセサパターンを導入。
-  `entry_view(i)` が 4 本の並列 Vec の参照（`entry` / `lower_name` / `lower_file_name` / `normalized_key`）を束ねて返すことで、スコアリングループの可読性を向上させた（4 行 → 1 行）。`char_masks` / `file_name_char_masks` はプリフィルタのキャッシュ効率を保つため EntryView に含めず SearchEngine から直接アクセスする。
+  `entry_view(i)` が並列 Vec の参照（`entry` / `lower_name` / `lower_file_name`。当時は `normalized_key` も含んでいたが、2026-08-07 に索引ごと廃して導出へ移した）を束ねて返すことで、スコアリングループの可読性を向上させた。`char_masks` / `file_name_char_masks` はプリフィルタのキャッシュ効率を保つため EntryView に含めず SearchEngine から直接アクセスする。
   `#[inline]` により性能への影響はゼロ（メモリレイアウト不変）。`new()` 末尾の `debug_assert!` で全 Vec 長の同期を検証する。
 
 ## 計測と受け入れ基準

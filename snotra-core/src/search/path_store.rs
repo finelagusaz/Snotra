@@ -9,17 +9,31 @@
 //! 接頭辞共有」）: 文字列 35.56 → 0.22 MiB、`entries` の 1 要素 56 → 32 B、
 //! 1 エントリあたりの確保ブロック 1 → 0。常駐 97.51 → 55.02 MiB。
 //!
-//! **払うのは組み立て直しのコストである。** 構築が 2〜3 → 約 20 ms、パスクエリ全走査が
-//! +3 ms、`recent_history` が +4.2 ms。どれも実測で、判定の根拠は `PERFORMANCE.md` にある。
+//! **払うのは構築の 2〜3 → 66〜78 ms だけである。** 検索経路はどれも遅くなっていない
+//! ——`recent_history` は 9.9 → 6.4 ms、パスクエリのフレームコストは全件で改善した。
+//! 判定の根拠はすべて `PERFORMANCE.md` の実測にある。
 //!
 //! # 組み立ての 2 系統
 //!
 //! 読み手は 2 種類あり、**流用してはならない**:
 //!
 //! - [`PathStore::raw_into`] — 原文のまま。表示パス（`SearchResult.path`）と tie-break が使う
-//! - [`PathStore::normalized_into`] — 小文字化 + `/` → `\`。履歴照合とパスマッチが使う
+//! - [`PathCursor::normalized`] — 小文字化 + `/` → `\`。履歴照合とパスマッチが使う
 //!
 //! 正規化側は「組み立ててから正規化する」二段払いにせず、正規化バッファへ直接書き出す。
+//!
+//! # 全件走査は 1 件ずつ独立に組み立てない
+//!
+//! **素直に「1 件ごとに根まで辿って書き直す」と全経路が 1.6〜1.9 倍遅くなる**（実測）。
+//! 速さは走査の形から来る:
+//!
+//! - 索引はソート順ゆえ**隣り合うエントリは祖先を共有する** → [`PathCursor`] が鎖を持ち回り、
+//!   バッファを巻き戻して 1 段だけ書き足す
+//! - 整列済みなら**index の順序がフルパスのバイト順と一致する** → [`PathStore::cmp_paths`] は
+//!   組み立てずに index を比べる（tie-break は `c:\` のようなクエリで総当たりに発火する）
+//!
+//! どちらも**仮定ではなく構築時の実測**に載っている（`sorted_by_path`）。外れた入力は
+//! 遅い経路を通るだけで、結果は変わらない。
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -30,6 +44,15 @@ use crate::indexer::AppEntry;
 
 /// 親を持たないことを表す番兵。このとき `aux` は [`PathStore::table`] のフルパスを指す。
 const NO_PARENT: u32 = u32::MAX;
+
+/// 祖先の鎖の長さの上限。**構築時に強制する**（[`PathStore::build`]）ので、組み立て側は
+/// 鎖がこれを超えないことを前提にしてよい。
+///
+/// 上限を組み立て側の打ち切りで実現してはならない——打ち切ると「根でないもの」を根として
+/// 扱い、`table[aux]`（拡張子）をパスの先頭として書いてしまう。**短いパスではなく誤った
+/// パスになり、しかも黙って通る。** 構築時に上限超過を根へ落とせば（＝自分のフルパスを
+/// 持たせれば）、その状態は表現できなくなる。実データの最大深さは 17 段。
+const CHAIN_CAP: usize = 64;
 
 /// 索引 1 件ぶんの圧縮表現（32 B）。`AppEntry`（56 B）から `target_path` の `String` を
 /// 落とし、親の index と `table` の id に置き換えたもの。
@@ -61,6 +84,17 @@ pub(super) struct PathStore {
     /// 同居させるのは、組み立ての最後の 1 段（根）が必ずここを引くためである。
     /// 別テーブルにして二分探索させると、**全エントリの組み立てにその探索が乗る**。
     table: Vec<Box<str>>,
+    /// `target_path` のバイト順に並んでいるか。**仮定ではなく構築時の実測である。**
+    ///
+    /// 真なら index の順序がフルパスのバイト順と一致するので、[`Self::cmp_paths`] は
+    /// 組み立てずに index を比べるだけでよい（`sort_entries_canonical` は第 1 キーが
+    /// `target_path` であり、dedup により `target_path` は一意ゆえ第 1 キーだけで全順序が
+    /// 決まる）。偽なら組み立てて比べる経路へ落ち、結果は変わらない。
+    ///
+    /// **「本番は必ず整列している」という文書上の契約に寄りかからない**のが要点である
+    /// ——`SearchEngine::new` は任意順を受け取れるので、契約にすると破れたとき静かに
+    /// 順序が変わる。測って持てば、破れた入力は遅い経路を通るだけになる。
+    sorted_by_path: bool,
 }
 
 impl PathStore {
@@ -109,6 +143,12 @@ impl PathStore {
     /// [`crate::indexer::normalize_entry_key_into`] で、記録側と同じバイトになることは
     /// `tests/path_query_cost.rs` の `tree_reconstruction_derives_same_bytes_as_normalize_entry_key`
     /// が実インデックスの全件で固定する。
+    ///
+    /// **製品はこれを呼ばない**——全件走査は [`PathCursor`] が祖先の鎖を持ち回る形で組み立てる。
+    /// ここに残すのは**カーソルの正しさを固定する参照実装**としてであり、鎖の状態に依らない
+    /// この素直な形と 1 バイトも違わないことを `path_store_cursor_matches_full_rebuild` が
+    /// 順・逆順・乱順の 3 通りで検証する（カーソルは最適化であって意味の変更ではない）。
+    #[cfg(test)]
     pub(super) fn normalized_into(&self, buf: &mut String, i: usize) {
         let (root, chain, depth) = self.walk_to_root(i);
         buf.clear();
@@ -138,6 +178,12 @@ impl PathStore {
         if a == b {
             return Ordering::Equal;
         }
+        // 整列済みなら index の順序がフルパスのバイト順と一致する（[`Self::sorted_by_path`]）。
+        // **これは効き所である**——`c:\` のような全件が同スコアになるクエリでは tie-break が
+        // 総当たりで発火し、1 回ごとに両辺を組み立て直すと走査全体を支配する。
+        if self.sorted_by_path {
+            return a.cmp(&b);
+        }
         CMP_BUFS.with(|cell| {
             let (lhs, rhs) = &mut *cell.borrow_mut();
             self.raw_into(lhs, a);
@@ -154,17 +200,23 @@ impl PathStore {
         buf
     }
 
-    /// 根まで辿って途中の index を積む。返すのは（根, 鎖, 段数）。
+    /// 根まで辿って途中の index を積む。返すのは（根, 鎖, 段数）。`chain[0]` が `i` 自身、
+    /// `chain[depth - 1]` が根の直下である。
     ///
-    /// 上限を切らないのは `parent < self` の不変条件が構築時に強制されているからで、
-    /// 段数は必ず index を下回る。配列の長さは実測の最大深さ 17 段に対する余裕である
-    /// （越えたぶんは根として扱われ、組み立ては短いパスを返す——止まらなくなることはない）。
+    /// **鎖が配列に収まることは構築時に保証されている**（[`CHAIN_CAP`]）。`parent < self` が
+    /// 循環を、深さの打ち止めが長さを、それぞれ表現不能にしているので、ここに打ち切りの
+    /// 分岐は要らない——`debug_assert` は不変条件が壊れたときに黙って誤ったパスを返す
+    /// のではなく落ちるためにある。
     #[inline]
-    fn walk_to_root(&self, i: usize) -> (usize, [u32; 64], usize) {
-        let mut chain = [0u32; 64];
+    fn walk_to_root(&self, i: usize) -> (usize, [u32; CHAIN_CAP], usize) {
+        let mut chain = [0u32; CHAIN_CAP];
         let mut depth = 0usize;
         let mut cur = i;
-        while self.entries[cur].parent != NO_PARENT && depth < chain.len() {
+        while self.entries[cur].parent != NO_PARENT {
+            debug_assert!(
+                depth < CHAIN_CAP,
+                "鎖が CHAIN_CAP を超えた（構築側の不変条件違反）"
+            );
             chain[depth] = cur as u32;
             depth += 1;
             cur = self.entries[cur].parent as usize;
@@ -181,7 +233,111 @@ impl PathStore {
     }
 }
 
+/// 全件走査のあいだ、直前に組み立てた祖先の鎖を持ち回るカーソル。
+///
+/// **索引はソート順に並んでいるので、隣り合うエントリは祖先をほぼ共有する。** 毎回根まで
+/// 辿って全部書き直すと、共有している部分を何度も書き直すことになる。鎖を持ち回れば、
+/// 大半のエントリは**バッファを巻き戻して 1 段だけ書き足す**だけで済む。
+///
+/// 親が鎖に載っているかの判定は `u32` の線形走査（高々 [`CHAIN_CAP`] 個・実測の深さは平均
+/// 6.05 段）であり、メモリを追いかけない。外れたときは根まで辿って作り直すので、
+/// **順序が乱れた入力でも結果は変わらない**（速さだけが落ちる）。
+///
+/// 効く根拠は構築側と同じ性質である——`PathStore::build` で親解決の照合表を「直前の親の
+/// 使い回し」に替えたとき 152 → 23 ms になった。
+pub(super) struct PathCursor {
+    buf: String,
+    /// いま `buf` に載っている鎖: `(index, その段まで書いた時点の buf の長さ)`。
+    /// 先頭が根で、末尾が直前に組み立てたエントリ。
+    stack: Vec<(u32, u32)>,
+}
+
+impl PathCursor {
+    pub(super) const fn new() -> Self {
+        Self {
+            buf: String::new(),
+            stack: Vec::new(),
+        }
+    }
+
+    /// `i` の正規化キーを組み立てて貸す。鎖の状態に依らない素直な組み立て（`PathStore::normalized_into`・`cfg(test)`）と**必ず同じバイト列**を
+    /// 返す（差し替えは最適化であって意味の変更ではない）。
+    pub(super) fn normalized(&mut self, store: &PathStore, i: usize) -> &str {
+        let parent = store.entries[i].parent;
+        if parent == NO_PARENT {
+            // 根そのもの。鎖を作り直して終わり（下の共通処理を通さない——通すと
+            // 自分自身を 2 回書いてしまう）。
+            self.buf.clear();
+            self.stack.clear();
+            push_segment(
+                &mut self.buf,
+                store.table[store.entries[i].aux as usize].trim(),
+            );
+            self.buf.make_ascii_lowercase();
+            self.stack.push((i as u32, self.buf.len() as u32));
+            return &self.buf;
+        }
+
+        match self.stack.iter().rposition(|&(idx, _)| idx == parent) {
+            // 当たり: 親の段まで巻き戻す。共有している接頭辞は書き直さない。
+            Some(pos) => {
+                self.buf.truncate(self.stack[pos].1 as usize);
+                self.stack.truncate(pos + 1);
+            }
+            // 外れ: 根まで辿って鎖ごと作り直す。`chain[0]` は `i` 自身なので下の共通処理へ譲る。
+            None => {
+                let (root, chain, depth) = store.walk_to_root(i);
+                self.buf.clear();
+                self.stack.clear();
+                push_segment(
+                    &mut self.buf,
+                    store.table[store.entries[root].aux as usize].trim(),
+                );
+                self.buf.make_ascii_lowercase();
+                self.stack.push((root as u32, self.buf.len() as u32));
+                for d in (1..depth).rev() {
+                    self.append(store, chain[d] as usize);
+                }
+            }
+        }
+        self.append(store, i);
+        &self.buf
+    }
+
+    /// 1 段ぶんを書き足して鎖へ積む。**小文字化は書き足した範囲だけに当てる**——
+    /// 全体へ当て直すと、巻き戻しで節約したぶんを取り戻してしまう。
+    #[inline]
+    fn append(&mut self, store: &PathStore, idx: usize) {
+        store.push_separator(&mut self.buf);
+        let start = self.buf.len();
+        push_segment(&mut self.buf, &store.entries[idx].name);
+        push_segment(&mut self.buf, &store.table[store.entries[idx].aux as usize]);
+        self.buf[start..].make_ascii_lowercase();
+        self.stack.push((idx as u32, self.buf.len() as u32));
+    }
+}
+
+/// スレッドローカルのカーソルで `i` の正規化キーを組み立て、`&str` として貸す。
+///
+/// **正規化キーを得る経路はここ 1 本である**（`search/scoring.rs` の `with_normalized_key` が
+/// 唯一の呼び出し元で、検索の `score_one_entry` と空クエリの `recent_history` が共有する）。
+///
+/// 借用は `f` の中に閉じる。**`f` の中からこの関数を再び呼んではならない**——`borrow_mut` の
+/// 二重取得で panic する（誤りは沈黙せず落ちる）。
+pub(super) fn with_cursor<R>(store: &PathStore, i: usize, f: impl FnOnce(&str) -> R) -> R {
+    CURSOR.with(|cell| {
+        let mut cursor = cell.borrow_mut();
+        let key = cursor.normalized(store, i);
+        f(key)
+    })
+}
+
 thread_local! {
+    /// 全件走査のカーソル。rayon の worker ごとに 1 本で、`MATCHER` と同じ形である。
+    /// 走査は連続した index を順に舐めるので、worker ごとに鎖が暖まる。
+    static CURSOR: std::cell::RefCell<PathCursor> =
+        const { std::cell::RefCell::new(PathCursor::new()) };
+
     /// tie-break の組み立て先。**2 本要る**——`cmp_paths` が両辺を同時に持つためである。
     /// 容量を再利用するので暖まったあとの確保は起きない。
     static CMP_BUFS: std::cell::RefCell<(String, String)> =
@@ -271,6 +427,10 @@ impl PathStore {
     /// 壊れた入力でも [`PathStore::walk_to_root`] が止まらなくなることはない。
     pub(super) fn build(entries: Vec<AppEntry>) -> Self {
         let n = entries.len();
+        // 整列の判定は並列で 1 回だけ。全件走査の tie-break がこの 1 bit に載る。
+        let sorted_by_path = entries
+            .par_windows(2)
+            .all(|w| w[0].target_path <= w[1].target_path);
         let mut table: Vec<Box<str>> = vec![Box::from("")];
         let mut aux = vec![0u32; n];
 
@@ -294,20 +454,25 @@ impl PathStore {
         };
 
         let mut compact = Vec::with_capacity(n);
+        // 鎖の長さは**ここで**打ち止める。`parent < i` ゆえ親の深さは既に確定しており、
+        // 1 引き算で数えられる（[`CHAIN_CAP`] の doc に理由）。
+        let mut depths: Vec<u16> = Vec::with_capacity(n);
         for (i, entry) in entries.into_iter().enumerate() {
             let AppEntry {
                 name,
                 target_path,
                 is_folder,
             } = entry;
-            let (parent, aux_id) = match parents[i] {
-                Some(pi) => (pi as u32, aux[i]),
+            let linked = parents[i].filter(|&pi| (depths[pi] as usize) + 1 < CHAIN_CAP);
+            let (parent, aux_id, depth) = match linked {
+                Some(pi) => (pi as u32, aux[i], depths[pi] + 1),
                 None => {
                     // 親を持たないエントリだけがフルパスを持つ（実データで 0.03%）。
                     table.push(target_path.into_boxed_str());
-                    (NO_PARENT, (table.len() - 1) as u32)
+                    (NO_PARENT, (table.len() - 1) as u32, 0)
                 }
             };
+            depths.push(depth);
             compact.push(CompactEntry {
                 name: name.into_boxed_str(),
                 parent,
@@ -319,6 +484,7 @@ impl PathStore {
         Self {
             entries: compact,
             table,
+            sorted_by_path,
         }
     }
 }

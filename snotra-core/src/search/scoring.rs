@@ -59,19 +59,13 @@ const _: () = {
 // that allocation on every rayon chunk boundary.
 thread_local! {
     static MATCHER: RefCell<Matcher> = RefCell::new(Matcher::new(MatcherConfig::DEFAULT));
-
-    /// 正規化キーの詰め直し先。索引は `normalized_keys` を持たず（実測 35.56 MiB を削った）、
-    /// 必要な候補についてだけ `target_path` からここへ導出する。
-    /// **容量を再利用するので暖まったあとの確保は起きない。** rayon の worker ごとに 1 本ゆえ
-    /// 常駐への寄与は worker 数ぶんで、`MATCHER` と同じ形である。
-    static KEY_BUF: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
 /// スレッドローカルのバッファへ索引 `i` の正規化キーを詰め、`&str` として貸す。
 ///
 /// **索引の `normalized_keys` を廃した後、正規化キーを得る経路はここ 1 本である**
 /// （検索の `score_one_entry` と空クエリの `recent_history` が共有する）。
-/// 組み立ての実体は [`PathStore::normalized_into`]——索引は `target_path` すら持たず、
+/// 組み立ての実体は [`super::path_store::with_cursor`]——索引は `target_path` すら持たず、
 /// フォルダ木の接頭辞共有から正規化バッファへ直接書き出す。規則の正本は
 /// [`crate::indexer::normalize_entry_key_into`] で、記録側（`indexer` / `history`）と同じ
 /// 規則を通ることが実インデックス全件のバイト一致テストで固定されている。
@@ -83,11 +77,7 @@ thread_local! {
 /// 現在の 2 つの呼び出し点は入れ子にならないが、`f` は `history` の照合を含む長さがあるので、
 /// 中へ正規化を要する処理を足すときは外へ出すこと（誤りは沈黙せず panic として出る）。
 pub(super) fn with_normalized_key<R>(paths: &PathStore, i: usize, f: impl FnOnce(&str) -> R) -> R {
-    KEY_BUF.with(|cell| {
-        let mut key = cell.borrow_mut();
-        paths.normalized_into(&mut key, i);
-        f(&key)
-    })
+    super::path_store::with_cursor(paths, i, f)
 }
 
 /// Lightweight view over per-entry fields for index `i` that are used in the scoring loop.

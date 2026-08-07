@@ -237,6 +237,7 @@ fn report_breakdown(
         total += stride_row::<Option<String>>("lower_file_names（Vec 本体）", v.capacity(), n);
     }
     report_duplication(entries, masks, n);
+    report_tree_feasibility(entries, n);
     total
 }
 
@@ -282,6 +283,174 @@ fn report_duplication(entries: &[AppEntry], masks: &indexer::CachedMasks, n: usi
         "  lower_file_names == lower_names: folder {folder_same}/{folders}（{:.1}%）\
          / file {file_same}/{files_total}",
         folder_same as f64 * 100.0 / folders.max(1) as f64,
+    );
+}
+
+/// フォルダ木の接頭辞共有（`target_path` を「親 index + 末尾成分」で持つ案）の
+/// **構造前提**を測る。削減量ではなく前提そのものが対象である——「親が索引に居る」
+/// 「親 + 区切り + 末尾がバイト一致する」「親 index が自分より小さい」はどれも機構からは
+/// 導けない。scan の順序・`show_hidden_system` フィルタ・ドライブ直下・UNC 共有・
+/// 区切り文字の揺れがいずれも例外を作りうるため、実データに当てる以外に確かめようがない。
+///
+/// `parent_index < self_index` を測るのは、成り立つなら**循環を表現不能にできる**からである
+/// （文書化した契約ではなく構造で担保する形になり、`index.bin` の破損時に無限ループ＝
+/// フォールバック鎖が捕まえないハングではなく、load 時 1 比較の検証で弾ける）。
+fn report_tree_feasibility(entries: &[AppEntry], n: usize) {
+    use std::collections::HashMap;
+
+    println!("  --- フォルダ木の接頭辞共有の構造前提 ---");
+
+    let by_path: HashMap<&str, usize> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (e.target_path.as_str(), i))
+        .collect();
+    if by_path.len() != n {
+        // 重複パスがあると親の解決先が一意でなくなる。率を出す前に事実として報告する。
+        println!(
+            "  警告: target_path が一意ではありません（distinct {} / entries {n}）",
+            by_path.len()
+        );
+    }
+
+    // バイト内訳は件数比とは別物である。folder が件数の 81.9% でも、深さ分布が違えば
+    // バイト比は一致しない——削減量の係数になるのは件数ではなくこちら。
+    let (mut bytes_folder, mut bytes_file) = (0usize, 0usize);
+    for e in entries {
+        if e.is_folder {
+            bytes_folder += e.target_path.len();
+        } else {
+            bytes_file += e.target_path.len();
+        }
+    }
+    let bytes_total = bytes_folder + bytes_file;
+    println!(
+        "  target_path のバイト内訳: folder {:.2} MiB（{:.1}%）/ file {:.2} MiB（{:.1}%）",
+        mib(bytes_folder),
+        bytes_folder as f64 * 100.0 / bytes_total.max(1) as f64,
+        mib(bytes_file),
+        bytes_file as f64 * 100.0 / bytes_total.max(1) as f64,
+    );
+
+    let mut parent_of: Vec<Option<usize>> = vec![None; n];
+    let (mut roots, mut orphan, mut mismatch, mut order_violation) =
+        (0usize, 0usize, 0usize, 0usize);
+    let (mut ok_folder, mut ok_file) = (0usize, 0usize);
+    let (mut tail_is_name_folder, mut tail_has_name_prefix_file) = (0usize, 0usize);
+    // 木表現で「それでも保持が要る文字列」のバイト数を 2 案ぶん積む。
+    let (mut keep_full, mut keep_tail_file, mut keep_ext_file) = (0usize, 0usize, 0usize);
+    let mut exts: HashMap<&str, usize> = HashMap::new();
+
+    for (i, e) in entries.iter().enumerate() {
+        let path = std::path::Path::new(&e.target_path);
+        let (Some(parent), Some(tail)) = (path.parent(), path.file_name()) else {
+            roots += 1;
+            keep_full += e.target_path.len();
+            continue;
+        };
+        let (Some(parent), Some(tail)) = (parent.to_str(), tail.to_str()) else {
+            orphan += 1;
+            keep_full += e.target_path.len();
+            continue;
+        };
+
+        // 再構築規則: 親が区切りで終わる（`C:\` 等のドライブ直下）なら区切りを足さない。
+        let mut rebuilt = String::with_capacity(parent.len() + 1 + tail.len());
+        rebuilt.push_str(parent);
+        if !parent.ends_with(['\\', '/']) {
+            rebuilt.push('\\');
+        }
+        rebuilt.push_str(tail);
+
+        let Some(&pi) = by_path.get(parent) else {
+            orphan += 1;
+            keep_full += e.target_path.len();
+            continue;
+        };
+        if rebuilt != e.target_path {
+            mismatch += 1;
+            keep_full += e.target_path.len();
+            continue;
+        }
+
+        parent_of[i] = Some(pi);
+        if pi >= i {
+            order_violation += 1;
+        }
+        if e.is_folder {
+            ok_folder += 1;
+            // folder は indexer が `file_name()` を name に使うため、末尾成分が name と
+            // 一致すれば追加のバイトは 0 になる（`name` を再利用できる）。
+            if tail == e.name {
+                tail_is_name_folder += 1;
+            } else {
+                keep_full += tail.len();
+            }
+        } else {
+            ok_file += 1;
+            // file の name は `file_stem()`（拡張子なし）ゆえ末尾成分とは一致しない。
+            // name が接頭辞なら差分＝拡張子だけを持てばよく、拡張子は強く intern する。
+            keep_tail_file += tail.len();
+            if let Some(ext) = tail.strip_prefix(e.name.as_str()) {
+                tail_has_name_prefix_file += 1;
+                keep_ext_file += ext.len();
+                *exts.entry(ext).or_insert(0) += 1;
+            } else {
+                keep_ext_file += tail.len();
+            }
+        }
+    }
+
+    let folders = entries.iter().filter(|e| e.is_folder).count();
+    let files = n - folders;
+    println!(
+        "  親の解決: 解決 {}（folder {ok_folder} / file {ok_file}）/ ルート {roots} / \
+         索引に親が不在 {orphan} / 再構築の不一致 {mismatch}",
+        ok_folder + ok_file
+    );
+    println!(
+        "  末尾成分 == name: folder {tail_is_name_folder}/{ok_folder}（{:.1}%）/ \
+         file の name が末尾成分の接頭辞 {tail_has_name_prefix_file}/{ok_file}",
+        tail_is_name_folder as f64 * 100.0 / ok_folder.max(1) as f64,
+    );
+    println!("  親 index < 自 index の違反: {order_violation} 件（0 なら循環が表現不能にできる）");
+
+    // 深さ = 根まで辿る段数。再構築コストは 1 エントリあたりこの段数ぶんのランダム読みになる。
+    // 循環があっても止まるよう上限で打ち切り、打ち切り件数を隠さず出す。
+    let (mut depth_sum, mut depth_max, mut truncated) = (0usize, 0usize, 0usize);
+    for i in 0..n {
+        let mut d = 0usize;
+        let mut cur = i;
+        while let Some(p) = parent_of[cur] {
+            d += 1;
+            cur = p;
+            if d > 4096 {
+                truncated += 1;
+                break;
+            }
+        }
+        depth_sum += d;
+        depth_max = depth_max.max(d);
+    }
+    println!(
+        "  深さ: 平均 {:.2} 段 / 最大 {depth_max} 段（打ち切り {truncated} 件）",
+        depth_sum as f64 / n.max(1) as f64,
+    );
+
+    // 投影。文字列の中身だけを比べる（Vec 本体・`Box<str>` のポインタ分は別勘定）。
+    let projected_tail = keep_full + keep_tail_file;
+    let projected_ext = keep_full + keep_ext_file;
+    println!(
+        "  投影（文字列の中身のみ）: 現在 {:.2} MiB → 末尾成分を持つ案 {:.2} MiB / \
+         file は拡張子だけ持つ案 {:.2} MiB（distinct 拡張子 {}）",
+        mib(bytes_total),
+        mib(projected_tail),
+        mib(projected_ext),
+        exts.len(),
+    );
+    println!(
+        "  参考: folder {folders} / file {files}、親 index の追加分 {:.2} MiB（u32 × {n}）",
+        mib(4 * n),
     );
 }
 

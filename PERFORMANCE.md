@@ -259,16 +259,41 @@ jp_font は元から `from_static` だったが user_font だけ `from_owned` �
   `normalize_entry_key` は Unicode 小文字化ゆえ長さ保存ではないが、**この索引には
   例外が 1 件も無い**（他の索引で成り立つ保証ではない）
 
-### Vec 本体の確保が実使用の約 2 倍ある
+### 採用: `assemble` で全並列 Vec を `shrink_to_fit`（-28.25 MiB）
+
+上表は反復前の値である。`assemble`（3 コンストラクタの唯一の合流点）で 8 本の Vec を
+`shrink_to_fit` した結果:
+
+| 指標 | 変更前 | 変更後 |
+|---|---:|---:|
+| `SearchEngine` 常駐 | 166.08 MiB | **137.83 MiB**（**-28.25**・-17.0%） |
+| ロード時ピーク | 273.08 MiB | 273.08 MiB（不変・縮小は確保後） |
+| live ブロック数 | 1,561,891 | 1,561,891（不変） |
+| 構築の壁時計（実 `index.bin`） | 1 / 2 / 3 ms | 2 / 3 / 3 ms |
+
+- **3 回の実行でバイト数・ブロック数とも完全に一致した**。アロケータ計数は決定的で、
+  PrivComm の ~4 MiB のばらつきとは別の計器である
+- **ブロック数は動かない**（`shrink_to_fit` はブロックの数ではなくサイズを変える・`allocs` は
+  6 増える）。**ブロック数だけを見ていたら「何も起きていない」と読める**
+- 対のレイテンシ実測（同日・同セッション A/B。設計書 §4.2・前例は #110）:
+  `bench_new_scaling` 300k が 544 → 532 ms、`bench_fuzzy_search_scaling` 300k が
+  3,829 → 3,469 µs。**どの規模でも向きが一貫せず、退行なし**（メモリレイアウトは不変で、
+  変わるのは末尾の未使用容量だけゆえ機構とも整合する）
+- 検知器は `snotra-core/src/search/tests/build.rs`。**余剰容量は検索結果を変えないため
+  挙動テストでは捕まらない**——`shrink_to_fit` を 8 箇所とも外すと落ちることを実測した
+
+### Vec 本体の確保が実使用の約 2 倍あった（反復 1 で解消）
 
 Vec 本体の合計は **64.00 MiB**（確保）。`char_masks` は 524,288 = 2^19 要素分を確保して
 312,377 しか使っていない。serde の `size_hint` は DoS 防止のため 4,096 要素で頭打ちにし、
 以降は Vec の倍々成長に委ねるため、`index.bin` から読んだ全 Vec が成長の踊り場を抱える。
 
-**この余剰は `SearchEngine` へそのまま持ち越される。** `new_with_cached_masks` の
-`Vec<String>` → `Vec<Box<str>>` 変換は in-place collect（16 B ≤ 24 B・align 一致）で
-**確保ブロックを再利用する**ため、要素サイズが縮んでも `layout.size()` は動かない
-（構築区間の allocs = 0 が実測）。
+**この余剰は `SearchEngine` へそのまま持ち越される**（実測: 構築前に走査した内訳の合計が
+構築後の常駐と一致し、未帰属 0.00 MiB）。機序は `new_with_cached_masks` の
+`Vec<String>` → `Vec<Box<str>>` 変換が in-place collect（16 B ≤ 24 B・align 一致）で
+確保ブロックを再利用し、要素サイズが縮んでも `layout.size()` が動かないためと**推定される**
+——`allocs = 0` からの導出であって、in-place collect は std の特殊化ゆえ保証ではない。
+**持ち越しの事実はバイト合計の一致が支えており、この機序の推定には依存しない。**
 
 ### `BackgroundRescanTask` の全エントリ複製
 

@@ -107,22 +107,29 @@ fn mib(bytes: usize) -> f64 {
     bytes as f64 / 1024.0 / 1024.0
 }
 
+/// 符号つきの差分（MiB）。**`saturating_sub` で丸めない**——区間が正味で解放する
+/// （`shrink_to_fit` 等）ことは実際に起きる。飽和させると減少が `0.00 MiB` に化け、
+/// 「何も起きなかった」と読める嘘になる（実測で踏んだ）。
+fn delta_mib(after: usize, before: usize) -> f64 {
+    (after as f64 - before as f64) / 1024.0 / 1024.0
+}
+
 /// 区間の差分を 1 行で報告する。`n` はエントリ数（0 なら per-entry を出さない）。
 fn report(label: &str, before: Snap, after: Snap, n: usize) {
-    let live = after.live.saturating_sub(before.live);
-    let blocks = after.blocks.saturating_sub(before.blocks);
+    let live = after.live as f64 - before.live as f64;
+    let blocks = after.blocks as f64 - before.blocks as f64;
     let allocs = after.allocs.saturating_sub(before.allocs);
     println!(
-        "  {label:<34} live {:>8.2} MiB  peak {:>8.2} MiB  blocks {blocks:>9}  allocs {allocs:>9}",
-        mib(live),
+        "  {label:<34} live {:>+8.2} MiB  peak {:>8.2} MiB  blocks {blocks:>+9.0}  allocs {allocs:>9}",
+        live / 1024.0 / 1024.0,
         mib(after.peak.saturating_sub(before.live)),
     );
     if n > 0 {
         println!(
-            "  {:<34} = {:>6.1} B/entry, {:>5.2} blocks/entry",
+            "  {:<34} = {:>+6.1} B/entry, {:>+5.2} blocks/entry",
             "",
-            live as f64 / n as f64,
-            blocks as f64 / n as f64,
+            live / n as f64,
+            blocks / n as f64,
         );
     }
 }
@@ -347,7 +354,9 @@ fn measure_real_index_footprint() {
     // load_or_scan（masks 破棄）で代用すると再計算が走り、ピークも構築コストも別物になる。
     reset_peak();
     let t0 = snap();
+    let load_start = std::time::Instant::now();
     let result = indexer::load_or_scan_with_stats(scan, config.search.show_hidden_system);
+    let load_ms = load_start.elapsed().as_secs_f64() * 1000.0;
     let t1 = snap();
     let n = result.entries.len();
 
@@ -380,6 +389,7 @@ fn measure_real_index_footprint() {
     // 実 config どおりの migemo 設定で構築（= 実運用の常駐形）。
     reset_peak();
     let t2 = snap();
+    let build_start = std::time::Instant::now();
     let engine = match cached_masks {
         Some(masks) => SearchEngine::new_with_cached_masks(
             entries,
@@ -392,8 +402,15 @@ fn measure_real_index_footprint() {
         ),
         None => SearchEngine::new_with_migemo(entries, config.search.migemo_enabled),
     };
+    let build_ms = build_start.elapsed().as_secs_f64() * 1000.0;
     let t3 = snap();
     report("SearchEngine 構築（実 config）", t2, t3, n);
+    // 起動経路の壁時計。**メモリ削減 1 件につきレイテンシ 1 件を対にする**ための計器
+    // （設計書 §4.2・前例は #110）。1 回きりの起動経路ゆえ標本は 1 つで、
+    // `bench_new_scaling` とは別物である（あちらは合成 Vec からの構築で index.bin を通らない）。
+    println!(
+        "  壁時計: ロード {load_ms:.0} ms / 構築 {build_ms:.0} ms（各 1 標本・実行間で数十%ぶれる）"
+    );
 
     let resident = t3.live.saturating_sub(t0.live);
     let blocks = t3.blocks.saturating_sub(t0.blocks);
@@ -403,14 +420,15 @@ fn measure_real_index_footprint() {
         mib(t3.peak.saturating_sub(t0.live)),
         blocks as f64 / n as f64,
     );
-    // 内訳が実測に届かない分を明示する。**この差を埋める項を推測で足さない**——
-    // 未帰属が大きいなら、それ自体が「まだ見えていない保持がある」という所見である。
+    // 内訳は**構築前**の走査、常駐は**構築後**の実測である。両者の差は「未帰属」ではなく
+    // 「構築が正味で増減させた分」を含む——`assemble` の `shrink_to_fit` は実際に減らす。
+    // **差を埋める項を推測で足さない**。差が説明できないなら、それ自体が所見である。
     println!(
-        "      内訳の帰属 {:.2} MiB / 未帰属 {:.2} MiB（{:.1} B/entry・実測の {:.1}%）",
+        "      構築前の内訳 {:.2} MiB → 構築後の常駐 {:.2} MiB（差 {:+.2} MiB・{:+.1} B/entry）",
         mib(accounted),
-        mib(resident.saturating_sub(accounted)),
-        resident.saturating_sub(accounted) as f64 / n as f64,
-        resident.saturating_sub(accounted) as f64 * 100.0 / resident as f64,
+        mib(resident),
+        delta_mib(resident, accounted),
+        (resident as f64 - accounted as f64) / n as f64,
     );
 
     drop(engine);

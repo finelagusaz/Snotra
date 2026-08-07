@@ -260,3 +260,89 @@ fn bench_new_migemo_on_off() {
         bench_new_migemo("new_migemo_off", n, false);
     }
 }
+
+/// フルパスを `PathStore` から**原文のまま**組み直す全件コストを測る（実 `index.bin`）。
+///
+/// 測る理由は、ディスクの `target_path` を木表現へ移す案（`PERFORMANCE.md`「次の反復の
+/// 候補」）の成立条件がここにあるためである。その案ではロード結果が `target_path` の実体を
+/// 持たないので、背景再スキャンの比較に使う [`crate::indexer`] の digest は**組み直しながら**
+/// 取ることになる。組み直しが `digest_ms`（実測 8〜17 ms）を上回れば、削った額の払い戻しに
+/// なって案が成立しない。
+///
+/// **忠実性はここでは測らない。** 原文とのバイト一致は `search/tests/path.rs` の
+/// [`super::path::path_store_raw_matches_target_path_over_real_index`] が実インデックス全件で
+/// 持つ。digest が混ぜるのは `name` / `target_path` / `is_folder` の 3 つだけなので、
+/// `target_path` がバイト一致し他の 2 つが不変なら digest の値は**構成上**一致する。ここが
+/// 測るのは時間だけである。
+///
+/// 並列版の刻みは digest の `CHUNK` と同じ 8192 に揃えてある——別の刻みで測ると、実際に
+/// 走らせる形とは違うものの数字を報告することになる。
+///
+/// **撤去条件**: 上の案を採ったらこの計器は digest 経路の常設計器として残す。測って
+/// 成立しないと分かったら、`PERFORMANCE.md`「試みたが機能しない手法」へ結果を移したうえで
+/// この関数を消す（予測の足場を実測の書に住み着かせないため）。
+#[test]
+#[ignore]
+fn measure_raw_path_rebuild_cost_over_real_index() {
+    use crate::search::path_store::PathStore;
+    use rayon::prelude::*;
+    use std::time::Instant;
+
+    /// digest の畳み込みと同じ刻み。
+    const CHUNK: usize = 8192;
+
+    let Some(entries) = super::common::real_index_entries() else {
+        println!("実インデックスが無いためスキップします。");
+        return;
+    };
+    let n = entries.len();
+    let store = PathStore::build(entries);
+    let ranges: Vec<(usize, usize)> = (0..n)
+        .step_by(CHUNK)
+        .map(|s| (s, (s + CHUNK).min(n)))
+        .collect();
+
+    // rayon プールの立ち上げを計測から締め出す（`tests/memory_footprint.rs` の `//!` が記す罠と
+    // 同じもの——最初に走った区間がプールの確保を被る）。
+    let _: usize = ranges.par_iter().map(|&(s, e)| e - s).sum();
+
+    let iters = 3usize;
+    let (mut seq_min, mut par_min) = (u128::MAX, u128::MAX);
+    for _ in 0..iters {
+        // 逐次: 1 本のバッファを使い回す（エントリごとの確保をしない形）。
+        let mut buf = String::new();
+        let t = Instant::now();
+        let mut seq_bytes = 0usize;
+        for i in 0..n {
+            store.raw_into(&mut buf, i);
+            // 組み立てを最適化で消させないために読む。
+            seq_bytes += buf.len();
+        }
+        seq_min = seq_min.min(t.elapsed().as_micros());
+
+        // 並列: worker ごとに 1 本ずつ持つ（digest と同じ塊の切り方）。
+        let t = Instant::now();
+        let par_bytes: usize = ranges
+            .par_iter()
+            .map(|&(s, e)| {
+                let mut buf = String::new();
+                let mut bytes = 0usize;
+                for i in s..e {
+                    store.raw_into(&mut buf, i);
+                    bytes += buf.len();
+                }
+                bytes
+            })
+            .sum();
+        par_min = par_min.min(t.elapsed().as_micros());
+
+        // 両者が同じ仕事をしたことの検算（塊の切り方で取りこぼしが出ていないか）。
+        assert_eq!(seq_bytes, par_bytes, "逐次と並列で組み立てたバイト数が違う");
+    }
+
+    println!(
+        "[raw_rebuild] entries={n}, 逐次 {:.1}ms / 並列 {:.1}ms（各 {iters} 回の最小値・刻み {CHUNK}）",
+        seq_min as f64 / 1000.0,
+        par_min as f64 / 1000.0,
+    );
+}

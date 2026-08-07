@@ -279,7 +279,11 @@ impl SearchEngine {
     #[inline]
     pub(super) fn entry_view(&self, i: usize) -> EntryView<'_> {
         let entry = self.entries.get(i);
-        let lower_name = &*self.lower_names[i];
+        // 鎖を上から解く（`build.rs` の `assemble`）。`lower_names[i]` の `None` は
+        // 「`entry.name` と同一」、`lower_file_names[i]` の共有旗は「解決後の `lower_name` と
+        // 同一」を意味する。**どちらも追加のメモリ読みを起こさない**——`entry` は既に手元にあり、
+        // 分岐が読むのは同じキャッシュラインに載っている値だけである。
+        let lower_name = self.lower_names[i].as_deref().unwrap_or(&entry.name);
         EntryView {
             entry,
             lower_name,

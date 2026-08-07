@@ -37,25 +37,39 @@ fn search_top_k_is_independent_from_input_order() {
 
 #[test]
 fn rank_cmp_breaks_full_tie_with_target_path() {
-    // index は Ord/PartialEq に不参加（tie-break キーは score→last_launched→lower_name→path）
+    // tie-break キーは score→last_launched→lower_name→path。**`index` は順序に不参加である**
+    // ——`ScoredEntry` は `index` を持つが、それは `paths` からフルパスを組み立てるための
+    // 添字であって順序のキーではない。index の小さい `B` が後ろへ回ることがそれを示す。
+    let paths = PathStore::build(vec![
+        AppEntry {
+            name: "tool".into(),
+            target_path: "C:\\B\\tool.exe".into(),
+            is_folder: false,
+        },
+        AppEntry {
+            name: "tool".into(),
+            target_path: "C:\\A\\tool.exe".into(),
+            is_folder: false,
+        },
+    ]);
     let ra = ScoredEntry {
         score: 100,
         last_launched: 200,
         lower_name: "tool",
-        path: "C:\\B\\tool.exe",
+        paths: &paths,
         index: 0,
     };
     let rb = ScoredEntry {
         score: 100,
         last_launched: 200,
         lower_name: "tool",
-        path: "C:\\A\\tool.exe",
+        paths: &paths,
         index: 1,
     };
     let mut scored = [ra, rb];
     scored.sort();
-    assert_eq!(scored[0].path, "C:\\A\\tool.exe");
-    assert_eq!(scored[1].path, "C:\\B\\tool.exe");
+    assert_eq!(paths.to_path(scored[0].index), "C:\\A\\tool.exe");
+    assert_eq!(paths.to_path(scored[1].index), "C:\\B\\tool.exe");
 }
 
 #[test]
@@ -154,39 +168,38 @@ fn bitmask_filter_does_not_skip_accented_entries() {
 
 // --- TopK 単体テスト（#602: top-k 更新規則の一元化） ---
 
-/// index i を name "e{i}" に対応させる entries（`TopK::into_results` の照合用）。
-fn topk_entries(n: usize) -> Vec<AppEntry> {
-    (0..n)
-        .map(|i| AppEntry {
-            name: format!("e{i}"),
-            target_path: format!("C:\\fake\\e{i}.lnk"),
-            is_folder: false,
-        })
-        .collect()
+/// index i を name "e{i}" に対応させる索引（`TopK::into_results` の照合用）。
+fn topk_entries(n: usize) -> PathStore {
+    PathStore::build(
+        (0..n)
+            .map(|i| AppEntry {
+                name: format!("e{i}"),
+                target_path: format!("C:\\fake\\e{i}.lnk"),
+                is_folder: false,
+            })
+            .collect(),
+    )
 }
 
-/// score と index を指定した `ScoredEntry`。lower_name/path は `entries[index]` を借用するため、
-/// entries は TopK より長生きする必要がある。
-fn se(score: i64, index: usize, entries: &[AppEntry]) -> ScoredEntry<'_> {
+/// score と index を指定した `ScoredEntry`。lower_name は索引から借用し、フルパスは
+/// `paths` + `index` から組み立てるため、`paths` は TopK より長生きする必要がある。
+fn se(score: i64, index: usize, paths: &PathStore) -> ScoredEntry<'_> {
     ScoredEntry {
         score,
         last_launched: 0,
-        lower_name: &entries[index].name,
-        path: &entries[index].target_path,
+        lower_name: &paths.get(index).name,
+        paths,
         index,
     }
 }
 
 /// `(score, index)` 列を limit の TopK に push し、best-first の name 列を返す。
-fn topk_names(limit: usize, scores: &[(i64, usize)], entries: &[AppEntry]) -> Vec<String> {
+fn topk_names(limit: usize, scores: &[(i64, usize)], paths: &PathStore) -> Vec<String> {
     let mut t = TopK::new(limit);
     for &(score, index) in scores {
-        t.push(se(score, index, entries));
+        t.push(se(score, index, paths));
     }
-    t.into_results(entries)
-        .into_iter()
-        .map(|r| r.name)
-        .collect()
+    t.into_results(paths).into_iter().map(|r| r.name).collect()
 }
 
 #[test]
@@ -267,4 +280,119 @@ fn topk_merge_is_order_independent() {
 
     assert_eq!(names_ab, vec!["e1", "e3"]); // top2 of {10,40,20,30} = 40,30
     assert_eq!(names_ab, names_ba); // merge 順に依存しない
+}
+
+// --- 順序同一性の検知器（`target_path` の表現を変える改修用） ---
+
+/// 検知器の fixture。**`target_path` の保持形式を変えても結果順序が 1 バイトも動かない**ことを
+/// 固定するためにある。狙って含めているもの:
+///
+/// - **完全 tie**: 同名のフォルダ/ファイルを複数置き、score / last_launched / lower_name が
+///   揃うようにする。tie-break が `path` まで落ちてはじめて順序が決まる
+/// - **バイト順とセグメント順のずれ**: 区切り `\`(0x5C) は `-`(0x2D) や `.`(0x2E) より大きいので
+///   `C:\a` < `C:\a-x` < `C:\a.y` < `C:\a\bin` の順に並ぶ。**セグメント単位で比べる実装は
+///   ここで必ず壊れる**（親子の接頭辞共有はこの誤りを誘発しやすい）
+/// - **親が集合に無いエントリ**: 接頭辞共有では側テーブル行きになる経路を通す
+/// - **拡張子つきファイル**: `name` は `file_stem`（拡張子なし）ゆえ末尾成分と一致しない
+///
+/// 並びは `sort_entries_canonical` と同じ `target_path` のバイト順に揃える（本番の索引は
+/// 常にこの順で `SearchEngine` へ渡る）。
+fn ordering_fixture() -> Vec<AppEntry> {
+    let folders = [
+        "C:\\a",
+        "C:\\a-x",
+        "C:\\a-x\\bin",
+        "C:\\a.y",
+        "C:\\a.y\\bin",
+        "C:\\a\\bin",
+        "C:\\b",
+        "C:\\b\\bin",
+        "C:\\b\\bin\\bin",
+        "C:\\orphan\\deep",
+    ];
+    let files = [
+        "C:\\a-x\\tool.lnk",
+        "C:\\a\\tool.exe",
+        "C:\\b\\tool.exe",
+        "C:\\orphan\\deep\\tool.exe",
+    ];
+    let mut entries: Vec<AppEntry> = folders
+        .iter()
+        .map(|p| AppEntry {
+            name: p.rsplit('\\').next().unwrap().to_string(),
+            target_path: (*p).to_string(),
+            is_folder: true,
+        })
+        .chain(files.iter().map(|p| {
+            let tail = p.rsplit('\\').next().unwrap();
+            AppEntry {
+                name: tail.rsplit_once('.').unwrap().0.to_string(),
+                target_path: (*p).to_string(),
+                is_folder: false,
+            }
+        }))
+        .collect();
+    entries.sort_by(|a, b| a.target_path.cmp(&b.target_path));
+    entries
+}
+
+/// クエリ 1 本の結果を `path` の列にする（この fixture では `name` と `is_folder` が `path` から
+/// 一意に決まるため、`path` の列が `SearchResult` の同一性を代表する）。
+fn ordering_paths(engine: &mut SearchEngine, query: &str, mode: SearchMode) -> Vec<String> {
+    engine
+        .search(query, 20, &empty_history(), mode)
+        .into_iter()
+        .map(|r| r.path)
+        .collect()
+}
+
+/// **`target_path` の保持形式を変える改修の検算はこれが唯一の手段である。**
+/// 順序の後退は挙動テストに現れない——件数も内容も同じで並びだけが変わるため、
+/// 列そのものを固定しない限り誰も気づかない（余剰容量が挙動テストに現れないのと同じ形）。
+///
+/// 期待値は改修**前**のコードから採り、改修後も 1 バイトも動かないことを要求する。
+#[test]
+fn search_result_order_is_stable_across_target_path_representations() {
+    let cases: &[(&str, SearchMode, &[&str])] = &[
+        // 完全 tie: name が全て "bin" ゆえ tie-break は path まで落ちる。
+        (
+            "bin",
+            SearchMode::Prefix,
+            &[
+                "C:\\a-x\\bin",
+                "C:\\a.y\\bin",
+                "C:\\a\\bin",
+                "C:\\b\\bin",
+                "C:\\b\\bin\\bin",
+            ],
+        ),
+        // 完全 tie（ファイル・`name` は file_stem ゆえ末尾成分と一致しない）。
+        (
+            "tool",
+            SearchMode::Prefix,
+            &[
+                "C:\\a-x\\tool.lnk",
+                "C:\\a\\tool.exe",
+                "C:\\b\\tool.exe",
+                "C:\\orphan\\deep\\tool.exe",
+            ],
+        ),
+        // パスクエリ: bitmask pre-filter を素通りし、正規化キーの部分一致で拾う経路。
+        (
+            "\\a\\",
+            SearchMode::Fuzzy,
+            &["C:\\a\\bin", "C:\\a\\tool.exe"],
+        ),
+        (
+            "a-x\\",
+            SearchMode::Fuzzy,
+            &["C:\\a-x\\bin", "C:\\a-x\\tool.lnk"],
+        ),
+    ];
+
+    let mut engine = SearchEngine::new(ordering_fixture());
+    for (query, mode, golden) in cases {
+        let got = ordering_paths(&mut engine, query, *mode);
+        assert_eq!(got, *golden, "クエリ {query:?}（{mode:?}）で順序が動いた");
+    }
 }

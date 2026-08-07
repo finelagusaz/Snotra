@@ -199,3 +199,102 @@ fn path_match_history_key_unified_across_separators() {
     assert_eq!(results.len(), 2);
     assert_eq!(results[0].name, "app1"); // history boost で上位
 }
+
+// --- PathCursor（祖先の鎖の持ち回り）の正しさ ---
+
+/// 鎖の当たり外れを両方通す fixture。**兄弟の連続**（当たり）と**部分木の割り込み**
+/// （外れ）を意図的に混ぜる。区切り `\`(0x5C) は `-`(0x2D) や `.`(0x2E) より大きいので、
+/// `C:\a` の直後に `C:\a-x` が割り込んで `C:\a` が鎖から押し出される並びになる。
+fn cursor_fixture() -> Vec<AppEntry> {
+    let folders = [
+        "C:\\a",
+        "C:\\a-x",
+        "C:\\a-x\\deep",
+        "C:\\a-x\\deep\\deeper",
+        "C:\\a.y",
+        "C:\\a\\bin",
+        "C:\\a\\bin\\sub",
+        "C:\\a\\lib",
+        "C:\\b",
+        "C:\\b\\bin",
+        // 親が集合に無い（側テーブル行き＝自分がフルパスを持つ）。
+        "D:\\orphan\\deep\\dir",
+    ];
+    let files = [
+        "C:\\a-x\\deep\\deeper\\tool.exe",
+        "C:\\a\\bin\\tool.exe",
+        "C:\\a\\lib\\tool.dll",
+        "C:\\b\\bin\\tool.exe",
+    ];
+    let mut entries: Vec<AppEntry> = folders
+        .iter()
+        .map(|p| AppEntry {
+            name: p.rsplit('\\').next().unwrap().to_string(),
+            target_path: (*p).to_string(),
+            is_folder: true,
+        })
+        .chain(files.iter().map(|p| {
+            let tail = p.rsplit('\\').next().unwrap();
+            AppEntry {
+                name: tail.rsplit_once('.').unwrap().0.to_string(),
+                target_path: (*p).to_string(),
+                is_folder: false,
+            }
+        }))
+        .collect();
+    entries.sort_by(|a, b| a.target_path.cmp(&b.target_path));
+    entries
+}
+
+/// **カーソルは最適化であって意味の変更ではない。** 鎖の状態に依らない素直な組み立て
+/// （`PathStore::normalized_into`）と 1 バイトも違わないことを、走査順を変えて固定する。
+///
+/// 3 通りを通すのが要点である——順方向は鎖が当たり続ける経路、逆順と乱順は毎回外れて
+/// 全書き直しへ落ちる経路。**片方だけ通しても、巻き戻しの誤りか全書き直しの誤りかの
+/// どちらかが隠れる。** 現物（`normalize_entry_key`）との一致も同時に確かめる。
+#[test]
+fn path_store_cursor_matches_full_rebuild() {
+    use crate::indexer::normalize_entry_key;
+    use crate::search::path_store::{PathCursor, PathStore};
+
+    let entries = cursor_fixture();
+    let expected: Vec<String> = entries
+        .iter()
+        .map(|e| normalize_entry_key(&e.target_path))
+        .collect();
+    let n = entries.len();
+    let store = PathStore::build(entries);
+
+    // 乱順は固定の擬似乱数（決定的でなければ失敗が再現しない）。
+    let mut scrambled: Vec<usize> = (0..n).collect();
+    let mut seed = 0x2545_F491_4F6C_DD1Du64;
+    for i in (1..n).rev() {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        scrambled.swap(i, (seed % (i as u64 + 1)) as usize);
+    }
+
+    let orders: [(&str, Vec<usize>); 3] = [
+        ("順方向", (0..n).collect()),
+        ("逆順", (0..n).rev().collect()),
+        ("乱順", scrambled),
+    ];
+    let mut full = String::new();
+    for (label, order) in orders {
+        // 走査ごとに鎖を空から始める（カーソルの寿命 = 1 走査）。
+        let mut cursor = PathCursor::new();
+        for i in order {
+            store.normalized_into(&mut full, i);
+            let via_cursor = cursor.normalized(&store, i).to_string();
+            assert_eq!(
+                via_cursor, full,
+                "{label}: カーソルと素直な組み立てがずれた（index {i}）"
+            );
+            assert_eq!(
+                via_cursor, expected[i],
+                "{label}: 現物とずれた（index {i}）"
+            );
+        }
+    }
+}

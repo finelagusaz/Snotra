@@ -250,8 +250,15 @@ impl Engine {
         }
     }
 
-    pub fn entries(&self) -> &[AppEntry] {
-        self.search_engine.entries()
+    /// 索引の件数。**`&[AppEntry]` を貸す `entries()` は無い**——索引は `target_path` を
+    /// 圧縮して持ち、`AppEntry` の形では存在しない（`search/path_store.rs` の `//!`）。
+    pub fn entry_count(&self) -> usize {
+        self.search_engine.entry_count()
+    }
+
+    /// 索引 `i` の表示名。
+    pub fn entry_name(&self, i: usize) -> &str {
+        self.search_engine.entry_name(i)
     }
 }
 
@@ -312,8 +319,8 @@ mod tests {
             empty_history(),
             default_config(),
         );
-        assert_eq!(engine.entries().len(), 1);
-        assert_eq!(engine.entries()[0].name, "Firefox");
+        assert_eq!(engine.entry_count(), 1);
+        assert_eq!(engine.entry_name(0), "Firefox");
     }
 
     #[test]
@@ -414,12 +421,12 @@ mod tests {
     #[test]
     fn replace_entries_updates_search() {
         let mut engine = Engine::new(make_entries(&["OldApp"]), empty_history(), default_config());
-        assert_eq!(engine.entries().len(), 1);
-        assert_eq!(engine.entries()[0].name, "OldApp");
+        assert_eq!(engine.entry_count(), 1);
+        assert_eq!(engine.entry_name(0), "OldApp");
 
         engine.replace_entries(make_entries(&["NewApp1", "NewApp2"]));
-        assert_eq!(engine.entries().len(), 2);
-        assert_eq!(engine.entries()[0].name, "NewApp1");
+        assert_eq!(engine.entry_count(), 2);
+        assert_eq!(engine.entry_name(0), "NewApp1");
     }
 
     #[test]

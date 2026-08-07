@@ -14,12 +14,12 @@ use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32String};
 
 use crate::config::SearchHistoryNormalizationConfig;
 use crate::history::HistoryStore;
-use crate::indexer::{AppEntry, normalize_entry_key_into};
 use crate::ui_types::SearchResult;
 
+use super::path_store::CompactEntry;
 use super::{
-    FOLDER_EXPANSION_WEIGHT, GLOBAL_WEIGHT, QUERY_WEIGHT, QueryPlan, SearchEngine, SearchMode,
-    SearchOptions,
+    FOLDER_EXPANSION_WEIGHT, GLOBAL_WEIGHT, PathStore, QUERY_WEIGHT, QueryPlan, SearchEngine,
+    SearchMode, SearchOptions,
 };
 
 /// マッチ種別ごとの基準スコア（全順序の不変条件を単一定義に集約）。
@@ -59,20 +59,16 @@ const _: () = {
 // that allocation on every rayon chunk boundary.
 thread_local! {
     static MATCHER: RefCell<Matcher> = RefCell::new(Matcher::new(MatcherConfig::DEFAULT));
-
-    /// 正規化キーの詰め直し先。索引は `normalized_keys` を持たず（実測 35.56 MiB を削った）、
-    /// 必要な候補についてだけ `target_path` からここへ導出する。
-    /// **容量を再利用するので暖まったあとの確保は起きない。** rayon の worker ごとに 1 本ゆえ
-    /// 常駐への寄与は worker 数ぶんで、`MATCHER` と同じ形である。
-    static KEY_BUF: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
-/// スレッドローカルのバッファへ `target_path` の正規化キーを詰め、`&str` として貸す。
+/// スレッドローカルのバッファへ索引 `i` の正規化キーを詰め、`&str` として貸す。
 ///
 /// **索引の `normalized_keys` を廃した後、正規化キーを得る経路はここ 1 本である**
-/// （検索の `score_one_entry` と空クエリの `recent_history` が共有する）。規則の正本は
-/// [`normalize_entry_key_into`] で、記録側（`indexer` / `history`）と同じ関数を通るため
-/// バイト一致は構成から保証される。
+/// （検索の `score_one_entry` と空クエリの `recent_history` が共有する）。
+/// 組み立ての実体は [`super::path_store::with_cursor`]——索引は `target_path` すら持たず、
+/// フォルダ木の接頭辞共有から正規化バッファへ直接書き出す。規則の正本は
+/// [`crate::indexer::normalize_entry_key_into`] で、記録側（`indexer` / `history`）と同じ
+/// 規則を通ることが実インデックス全件のバイト一致テストで固定されている。
 ///
 /// 借用は `f` の中に閉じる。`f` の戻り値へキーの参照を持ち出すことはできない
 /// （持ち出せてしまうと、次のエントリの詰め直しで内容が入れ替わる）。
@@ -80,12 +76,8 @@ thread_local! {
 /// **`f` の中からこの関数を再び呼んではならない**——`borrow_mut` の二重取得で panic する。
 /// 現在の 2 つの呼び出し点は入れ子にならないが、`f` は `history` の照合を含む長さがあるので、
 /// 中へ正規化を要する処理を足すときは外へ出すこと（誤りは沈黙せず panic として出る）。
-pub(super) fn with_normalized_key<R>(target_path: &str, f: impl FnOnce(&str) -> R) -> R {
-    KEY_BUF.with(|cell| {
-        let mut key = cell.borrow_mut();
-        normalize_entry_key_into(&mut key, target_path);
-        f(&key)
-    })
+pub(super) fn with_normalized_key<R>(paths: &PathStore, i: usize, f: impl FnOnce(&str) -> R) -> R {
+    super::path_store::with_cursor(paths, i, f)
 }
 
 /// Lightweight view over per-entry fields for index `i` that are used in the scoring loop.
@@ -98,7 +90,7 @@ pub(super) fn with_normalized_key<R>(target_path: &str, f: impl FnOnce(&str) -> 
 /// `normalized_key` はここに無い——索引から外し `KEY_BUF` へ導出する形へ移した
 /// （`PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を保持するか導出するか」）。
 pub(super) struct EntryView<'a> {
-    pub(super) entry: &'a AppEntry,
+    pub(super) entry: &'a CompactEntry,
     pub(super) lower_name: &'a str,
     pub(super) lower_file_name: Option<&'a str>,
 }
@@ -112,8 +104,13 @@ pub(super) struct ScoredEntry<'a> {
     pub(super) score: i64,
     pub(super) last_launched: u64,
     pub(super) lower_name: &'a str, // tie-breaking key (alphabetical) = &self.lower_names[index]
-    pub(super) path: &'a str,       // tie-breaking key = &self.entries[index].target_path
-    pub(super) index: usize,        // SearchResult 組立時に entries[index] から clone する
+    /// tie-break の最終キー（`index` のフルパス）を組み立てるための参照。
+    ///
+    /// **フルパスの `&str` は借用できない**——索引はフルパスを連続したバイト列として
+    /// 持っておらず、組み立て先はスレッドローカルの一時バッファだからである。参照 1 本を
+    /// 持ち、比較のときだけ [`PathStore::cmp_paths`] へ `index` を渡す。
+    pub(super) paths: &'a PathStore,
+    pub(super) index: usize, // SearchResult 組立時に entries[index] から clone する
 }
 
 // Higher score is better; better entries are ordered as `Ordering::Less`.
@@ -124,7 +121,8 @@ impl PartialEq for ScoredEntry<'_> {
         self.score == other.score
             && self.last_launched == other.last_launched
             && self.lower_name == other.lower_name
-            && self.path == other.path
+            // `cmp` と同じ経路で判定する（フルパスは組み立てないと比べられない）。
+            && self.paths.cmp_paths(self.index, other.index) == Ordering::Equal
     }
 }
 
@@ -143,7 +141,8 @@ impl Ord for ScoredEntry<'_> {
             .cmp(&self.score)
             .then_with(|| other.last_launched.cmp(&self.last_launched))
             .then_with(|| self.lower_name.cmp(other.lower_name))
-            .then_with(|| self.path.cmp(other.path))
+            // フルパスの**原文のバイト列**で比べる。組み立てはここまで落ちたときだけ走る。
+            .then_with(|| self.paths.cmp_paths(self.index, other.index))
     }
 }
 
@@ -210,16 +209,18 @@ pub(super) fn adjusted_history_boost(
 /// top-k ヒープを best-first の [`SearchResult`] 列へ変換する（結果組立フェーズ）。
 /// `into_sorted_vec()` はヒープ内部 Vec を再利用して昇順ソートする。
 /// `ScoredEntry::Ord` は Less = better ゆえ昇順で best が先頭になる（tie-break の意味を保つ）。
-/// 所有 String の clone はここで初めて発生する（top-k 確定後の K 件のみ）。
-fn heap_into_results(entries: &[AppEntry], top_k: BinaryHeap<ScoredEntry>) -> Vec<SearchResult> {
+/// 所有 String の生成はここで初めて発生する（top-k 確定後の K 件のみ）。
+/// **フルパスの組み立てもここに閉じる**——索引はフルパスを持たないため、`clone` ではなく
+/// [`PathStore::to_path`] で組み立てる。K 件ぶんゆえホットパスへの寄与はない。
+fn heap_into_results(paths: &PathStore, top_k: BinaryHeap<ScoredEntry>) -> Vec<SearchResult> {
     top_k
         .into_sorted_vec()
         .into_iter()
         .map(|r| {
-            let entry = &entries[r.index];
+            let entry = paths.get(r.index);
             SearchResult {
-                name: entry.name.clone(),
-                path: entry.target_path.clone(),
+                name: entry.name.to_string(),
+                path: paths.to_path(r.index),
                 is_folder: entry.is_folder,
                 is_error: false,
             }
@@ -269,8 +270,8 @@ impl<'a> TopK<'a> {
 
     /// best-first の `SearchResult` 列へ変換する終端操作。所有 String の clone は
     /// top-k 確定後の K 件だけで `index` 経由で行う。
-    pub(super) fn into_results(self, entries: &[AppEntry]) -> Vec<SearchResult> {
-        heap_into_results(entries, self.heap)
+    pub(super) fn into_results(self, paths: &PathStore) -> Vec<SearchResult> {
+        heap_into_results(paths, self.heap)
     }
 }
 
@@ -278,7 +279,7 @@ impl SearchEngine {
     #[inline]
     pub(super) fn entry_view(&self, i: usize) -> EntryView<'_> {
         EntryView {
-            entry: &self.entries[i],
+            entry: self.entries.get(i),
             lower_name: &self.lower_names[i],
             lower_file_name: self.lower_file_names[i].as_deref(),
         }
@@ -411,7 +412,7 @@ impl SearchEngine {
         }
 
         // 1 エントリにつき 1 回だけ詰める——下のパスマッチと履歴照合 3 種が同じ結果を見る。
-        with_normalized_key(&v.entry.target_path, |key| {
+        with_normalized_key(&self.entries, i, |key| {
             // パスマッチ: name/file_name/kana 全て不成立時のフォールバック。
             // スコア PATH_BASE(3000) は Kana(4500) より低く、名前マッチを常に優先する。
             let score = score.or_else(|| {
@@ -448,7 +449,7 @@ impl SearchEngine {
                 score: combined,
                 last_launched,
                 lower_name: v.lower_name,
-                path: &v.entry.target_path,
+                paths: &self.entries,
                 index: i,
             })
         })

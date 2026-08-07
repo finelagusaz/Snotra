@@ -192,7 +192,9 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 
 `load_or_scan_with_stats` はキャッシュヒット時、再スキャンを*その場で spawn せず* `LoadOrScanResult.rescan_task`（`Some(BackgroundRescanTask)`）として返す。`src-tauri` が `AppHandle` を持った状態で低優先度スレッドで `task.run()` し、`RescanOutcome::Changed` ならアイコンキャッシュを無効化する。
 
-- ロジック（lock 取得・`scan_all` / `sort_entries_canonical` / `entries_equal` 比較・`save_cache_sorted`）は `snotra-core`、spawn とアイコン無効化は `src-tauri`。`index.bin` は snotra-core の資源、`icons.bin` は src-tauri の資源——所有者に責務を寄せている
+- ロジック（lock 取得・`scan_all` / `sort_entries_canonical` / `entries_digest` 比較・`save_cache_sorted`）は `snotra-core`、spawn とアイコン無効化は `src-tauri`。`index.bin` は snotra-core の資源、`icons.bin` は src-tauri の資源——所有者に責務を寄せている
+- **タスクが抱えるのは digest（u64）であって全エントリの複製ではない**（反復 6）。かつては `Vec<AppEntry>` を丸ごと持ち、起動のたびに 624,755 ブロック・62.49 MiB を確保していた。**digest は列の順序に依存する**ので、比較する両辺は必ず `sort_entries_canonical` を通すこと——外すと中身が同じでも「変わった」と判定して `index.bin` を毎回書き直す（結果は正しいまま静かに遅くなるので挙動テストでは捕まらない。検知器は `sorted_comparison_ignores_enumeration_order`）
+- **`cache_load_ms` と `total_ms` の間に処理を足すときは、`LoadOrScanStats` に並ぶ項目を必ず作る**。この複製はそこに居たためどのフェーズ計測にも現れず、起動段の live ブロックの 1/3 を占めたまま見えなかった（`digest_ms` を足して塞いだ。残余は `tests/memory_footprint.rs` が毎回出す）
 - `try_background_rescan` はアイコンキャッシュに触れない。`RescanOutcome::{Skipped, Unchanged, Changed}` で結果を伝え、呼び出し側が `Changed` を見て無効化する
 - スキャンロジックを変更するとき、このバックグラウンドパスにも影響することを意識する
 

@@ -171,11 +171,12 @@ fn main() {
         {
             let s = &result.stats;
             eprintln!(
-                "[index-load] cache_hit={} total={}ms hash={}ms cache_load={}ms scan={}ms sort={}ms cache_save={}ms",
+                "[index-load] cache_hit={} total={}ms hash={}ms cache_load={}ms digest={}ms scan={}ms sort={}ms cache_save={}ms",
                 s.cache_hit,
                 s.total_ms,
                 s.hash_ms,
                 s.cache_load_ms,
+                s.digest_ms,
                 s.scan_ms,
                 s.sort_ms,
                 s.cache_save_ms,

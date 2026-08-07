@@ -1880,6 +1880,99 @@ mod tests {
         assert!(v4_result.is_err(), "v3 bytes should not deserialize as v4");
     }
 
+    /// **`load_cache_in` が返す `version` は、実際に読めた枝と一致しなければならない。**
+    ///
+    /// この値だけが背景再スキャンの昇格判定（`cached_version != INDEX_CACHE_VERSION`）の入力で
+    /// あり、**取り違えても検索結果は正しいまま**である——枝に誤って現行版を書けば、その形式の
+    /// ユーザーは永久に昇格せず旧形式を読み続ける（症状は「遅い」だけ・実運用点で 1 度踏んだ）。
+    /// ゆえに 4 枝すべての値をここで固定する。
+    ///
+    /// **既存の v2 / v3 テストでは代用できない。** あちらは `try_deserialize_with_header` を
+    /// 直接呼んでおり `load_cache_in` の枝選択を通らないので、`version` の帰属を見ていない。
+    #[test]
+    fn load_cache_in_reports_the_version_it_actually_read() {
+        let entries = vec![AppEntry {
+            name: "Firefox".to_string(),
+            target_path: "C:\\apps\\firefox.lnk".to_string(),
+            is_folder: false,
+        }];
+        let config_hash = 4242u64;
+        let lower_names: Vec<String> = entries.iter().map(|e| to_lower_folded(&e.name)).collect();
+        let lower_file_names: Vec<Option<String>> = entries
+            .iter()
+            .map(|e| lower_file_name(&e.target_path))
+            .collect();
+        let char_masks: Vec<u64> = lower_names.iter().map(|n| name_char_mask(n)).collect();
+        let file_name_char_masks: Vec<u64> = lower_file_names
+            .iter()
+            .map(|n| file_char_mask(n.as_deref()))
+            .collect();
+
+        // v5（現行）: 製品の save 経路そのものを通す。
+        let dir = temp_dir("version_reported_v5");
+        save_cache_sorted_in(&dir, &entries, config_hash);
+        assert_eq!(
+            load_cache_in(&dir, config_hash)
+                .expect("v5 が読めること")
+                .version,
+            INDEX_CACHE_VERSION
+        );
+        let _ = fs::remove_dir_all(&dir);
+
+        // v4: 末尾に normalized_keys を持つ形式。
+        let dir = temp_dir("version_reported_v4");
+        write_v4_cache_in(&dir, &entries, config_hash);
+        assert_eq!(
+            load_cache_in(&dir, config_hash)
+                .expect("v4 が読めること")
+                .version,
+            4
+        );
+        let _ = fs::remove_dir_all(&dir);
+
+        // v3: マスクのみ（lower names なし）。
+        let dir = temp_dir("version_reported_v3");
+        let v3 = IndexCacheV3 {
+            built_at: 0,
+            entries: entries.clone(),
+            config_hash,
+            char_masks: char_masks.clone(),
+            file_name_char_masks: file_name_char_masks.clone(),
+        };
+        fs::write(
+            dir.join("index.bin"),
+            try_serialize_with_header(INDEX_MAGIC, 3, &v3).expect("serialize v3"),
+        )
+        .expect("write v3");
+        assert_eq!(
+            load_cache_in(&dir, config_hash)
+                .expect("v3 が読めること")
+                .version,
+            3
+        );
+        let _ = fs::remove_dir_all(&dir);
+
+        // v2: マスクなし。
+        let dir = temp_dir("version_reported_v2");
+        let v2 = IndexCacheV2 {
+            built_at: 0,
+            entries: entries.clone(),
+            config_hash,
+        };
+        fs::write(
+            dir.join("index.bin"),
+            try_serialize_with_header(INDEX_MAGIC, 2, &v2).expect("serialize v2"),
+        )
+        .expect("write v2");
+        let v2_result = load_cache_in(&dir, config_hash).expect("v2 が読めること");
+        assert_eq!(v2_result.version, 2);
+        assert!(
+            v2_result.cached_masks.is_none(),
+            "v2 はマスクを持たない（枝を取り違えていないことの裏取り）"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn config_hash_changes_with_different_paths() {
         let scan1 = vec![ScanPath {

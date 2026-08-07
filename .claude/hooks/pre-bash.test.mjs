@@ -760,7 +760,7 @@ describe("judgeCommandShape — platform ゲート", () => {
     expect(judgeCommandShape("git push -u origin HEAD", "win32")).toBeNull();
   });
 
-  // #768 `/norm-review` 1 巡目が暴いた欠陥の機構化。
+  // #768 の norm-review 1 巡目が暴いた欠陥の機構化（当該スキルは 2026-08-07 に廃止・欠陥と機構は残る）。
   // heredoc の拒否文言は代替として `$env:TEMP` 配下の一時ファイルを挙げていたが、区切りを
   // 示していなかった。忠実な読者は `$env:TEMP\msg.txt` と書き、**同じ hook の `\` 判定に落ちる** —
   // 「代わりにこうせよ」が別の拒否を招く状態だった。文書で戒めるのではなくここで縛る。

@@ -26,6 +26,7 @@ use std::time::Instant;
 use rayon::prelude::*;
 
 use snotra_core::config::Config;
+use snotra_core::engine::Engine;
 use snotra_core::history::HistoryStore;
 use snotra_core::indexer::{self, AppEntry};
 use snotra_core::search::SearchEngine;
@@ -703,6 +704,69 @@ fn measure_recent_history_shape_with_tree() {
         best_tree - best_now,
         best_tree / best_now,
     );
+}
+
+/// パス区切りを含むクエリの**製品レベル**フレームコスト（実 `index.bin` × `Engine::search`）。
+///
+/// **既存の計器はどれもここを測れない。** `tests/search_frame_cost.rs` は合成索引であり
+/// パス区切りクエリを 1 本も持たない（しかもパス長 66.4 B・浅い一様木で、実運用の
+/// 119.3 B・深さ平均 6.05 段とは別物）。`measure_path_query_sweep_cost` は走査だけを
+/// 切り出した写しであって、`Engine::search`（config 実効 limit・履歴ブースト・top-k 組立込み）
+/// ではない。
+///
+/// **`has_path_sep` は incremental cache を無条件で無効化する**（`IncrementalCache::can_reuse`）。
+/// ゆえにパスを打っている間は毎打鍵が全件走査になり、ここが UI スレッドで払う額そのものになる。
+/// クエリは「パスを 1 文字ずつ打っていく」形に並べる——区切りを打った瞬間から全件走査へ
+/// 切り替わるので、その前後を同じ表で見られるようにする。
+#[test]
+#[ignore = "計測専用。release + --nocapture で手動実行する"]
+fn measure_path_query_frame_cost() {
+    let config = Config::load();
+    if config.paths.scan.is_empty() {
+        println!("実 config に scan パスが無いため計測をスキップします。");
+        return;
+    }
+    let result =
+        indexer::load_or_scan_with_stats(&config.paths.scan, config.search.show_hidden_system);
+    let n = result.entries.len();
+    let history = HistoryStore::load();
+    let mut engine = match result.cached_masks {
+        Some(masks) => Engine::new_from_cache(result.entries, masks, history, config),
+        None => Engine::new(result.entries, history, config),
+    };
+
+    println!("\n=== パスクエリのフレームコスト（実 index.bin・{n} 件・Engine::search）===");
+    println!("  query                  results     min      p50      max");
+    for query in [
+        "users",       // 区切り無し = bitmask pre-filter が効く（比較の基準）
+        "c:\\",        // 区切りを打った瞬間から全件走査
+        "c:\\users",   //
+        "c:\\users\\", //
+        "\\program files\\",
+        "\\zzz-no-such-path\\",
+    ] {
+        // 2 回の暖機のあと 20 回。min/p50/max を出す——**平均は出さない**。1 フレームを
+        // 落とすかどうかを決めるのは中央値と最悪値であって平均ではない。
+        for _ in 0..2 {
+            let _ = engine.search(query);
+        }
+        let mut samples_us = Vec::with_capacity(20);
+        let mut results = 0usize;
+        for _ in 0..20 {
+            let started = Instant::now();
+            let out = engine.search(query);
+            samples_us.push(started.elapsed().as_micros() as u64);
+            results = out.len();
+        }
+        samples_us.sort_unstable();
+        println!(
+            "  {query:<22}{results:>7}{:>8}{:>9}{:>9}",
+            samples_us[0],
+            samples_us[samples_us.len() / 2],
+            samples_us[samples_us.len() - 1],
+        );
+    }
+    println!("  （µs。60fps の 1 フレームは 16,700 µs）");
 }
 
 /// 空クエリ（窓を開いた瞬間・クエリ消去時）に走る `recent_history` の実コスト。

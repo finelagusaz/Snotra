@@ -299,23 +299,23 @@ fn path_store_cursor_matches_full_rebuild() {
     }
 }
 
-/// 実 `%APPDATA%\Snotra\index.bin` を実起動と同じ経路で読む（scan パス未設定なら `None`）。
+/// 実 `%APPDATA%\Snotra\index.bin` に**載っているときだけ**エントリを返す。
+/// scan パス未設定・キャッシュ不在・キャッシュが config と食い違うときは `None`。
 ///
-/// **これは corpus であって保証ではない。** 実インデックスが無い環境（CI）では下の 2 テストは
-/// 自動スキップし、そこに残る保証は [`path_store_cursor_matches_full_rebuild`] の合成 fixture の
-/// ほうである。合成が届かない多様さ（ドライブ直下・UNC 共有・非 ASCII・深い木・親が索引に
-/// 不在のエントリ）を開発機の実データで舐めるのがこの corpus の役目で、両者は代替ではなく補完
-/// である。**「実データの全件で固定してある」と書くときは、この自動スキップを併記すること。**
+/// **これは corpus であって保証ではない。** 上の 3 条件のいずれかで下の 2 テストは自動スキップ
+/// し（CI は 1 つめで必ず該当する）、そこに残る保証は [`path_store_cursor_matches_full_rebuild`]
+/// の合成 fixture のほうである。合成が届かない多様さ（ドライブ直下・UNC 共有・非 ASCII・深い木・
+/// 親が索引に不在のエントリ）を開発機の実データで舐めるのがこの corpus の役目で、両者は代替では
+/// なく補完である。**「実データの全件で固定してある」と書くときは、この自動スキップを併記すること。**
+///
+/// 走査しない入口（[`crate::indexer::load_cached_entries`]）を通すのは必須である——理由は
+/// その doc にある。
 fn real_index_entries() -> Option<Vec<AppEntry>> {
     let config = crate::config::Config::load();
     if config.paths.scan.is_empty() {
         return None;
     }
-    let result = crate::indexer::load_or_scan_with_stats(
-        &config.paths.scan,
-        config.search.show_hidden_system,
-    );
-    Some(result.entries)
+    crate::indexer::load_cached_entries(&config.paths.scan, config.search.show_hidden_system)
 }
 
 /// 原文の再構築が `target_path` と 1 バイトも違わないことを、実インデックスの全件で確かめる。

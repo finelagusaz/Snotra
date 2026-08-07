@@ -106,24 +106,28 @@ fn derives_same_bytes_as_normalize_entry_key() {
     );
 }
 
-/// 実 `index.bin` を実起動と同じ経路で読み、比較用に「保持していたら」の側も作る。
+/// 実 `index.bin` に**載っているときだけ**読み、比較用に「保持していたら」の側も作る。
 ///
 /// **`normalized_keys` は索引にもオンディスクにも既に無い**（v5 で落とした）。保持側は
 /// v4 が持っていたものと同じ内容を、ここで 1 度だけ作って再現する——比較の意味は
 /// 「事前計算を持つ」対「毎回導出する」であって、どこから来た文字列かではない。
+///
+/// 走査しない入口（`indexer::load_cached_entries`）を通すのは必須である。
+/// [`derives_same_bytes_as_normalize_entry_key`] は `#[ignore]` を持たず既定のスイートで走るため、
+/// `load_or_scan_with_stats` だと cold cache の `cargo test` が全走査と `index.bin` の書き込みを
+/// 起こす（理由の全文は当該入口の doc）。
 fn load_real_index() -> Option<(Vec<AppEntry>, Vec<String>)> {
     let config = Config::load();
     let scan = &config.paths.scan;
     if scan.is_empty() {
         return None;
     }
-    let result = indexer::load_or_scan_with_stats(scan, config.search.show_hidden_system);
-    let keys: Vec<String> = result
-        .entries
+    let entries = indexer::load_cached_entries(scan, config.search.show_hidden_system)?;
+    let keys: Vec<String> = entries
         .iter()
         .map(|e| indexer::normalize_entry_key(&e.target_path))
         .collect();
-    Some((result.entries, keys))
+    Some((entries, keys))
 }
 
 /// 全件走査 1 回の壁時計を返す（`find` の結果は数え上げて捨てない）。

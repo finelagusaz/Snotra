@@ -452,6 +452,34 @@ fn report_tree_feasibility(entries: &[AppEntry], n: usize) {
         "  参考: folder {folders} / file {files}、親 index の追加分 {:.2} MiB（u32 × {n}）",
         mib(4 * n),
     );
+
+    // **バイトだけで 2 案を比べない。** このハーネスの冒頭が言うとおり、小さな `Box<str>` を
+    // 1 エントリあたり何個持つかがアロケータ由来のオーバーヘッドを決める。`layout.size()` しか
+    // 数えない計器にはその差が映らないため、確保ブロック数を別軸として並べる。
+    //
+    // 現在 `target_path` は 1 エントリ 1 ブロック。末尾成分案は file のぶんだけブロックを
+    // 戻すが、拡張子 intern 案は id が `AppEntry` に埋まるので per-entry のブロックが消える。
+    let blocks_now = n;
+    let blocks_tail = ok_file + roots + orphan + mismatch;
+    let blocks_ext = exts.len() + roots + orphan + mismatch;
+    println!(
+        "  投影（確保ブロック数）: 現在 {blocks_now} → 末尾成分案 {blocks_tail}（{:+}）/ \
+         拡張子 intern 案 {blocks_ext}（{:+}）",
+        blocks_tail as i64 - blocks_now as i64,
+        blocks_ext as i64 - blocks_now as i64,
+    );
+
+    // `AppEntry` の stride。`String`(24) を何に置き換えるかで Vec 本体が動く。
+    // 末尾成分案 = name(24) + tail Box<str>(16) + parent u32(4) + bool(1) → 48
+    // 拡張子案   = name(24) + parent u32(4) + ext u16(2) + bool(1)       → 32
+    let stride_now = std::mem::size_of::<AppEntry>();
+    println!(
+        "  投影（entries Vec 本体・{n} 要素）: 現在 {stride_now} B/要素 {:.2} MiB → \
+         末尾成分案 48 B {:.2} MiB / 拡張子案 32 B {:.2} MiB",
+        mib(stride_now * n),
+        mib(48 * n),
+        mib(32 * n),
+    );
 }
 
 // ---------------------------------------------------------------------------

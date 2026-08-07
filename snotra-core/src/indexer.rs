@@ -4,6 +4,7 @@
 //! 食い合いによる破損を防ぐ。キャッシュヒット時の背景再スキャンは `BackgroundRescanTask`
 //! として返し、spawn とアイコン無効化は所有者（`src-tauri`）へ委ねる。
 
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
@@ -241,6 +242,13 @@ pub struct LoadOrScanStats {
     pub cache_hit: bool,
     pub hash_ms: u128,
     pub cache_load_ms: u128,
+    /// 背景再スキャン用の digest を取る時間（キャッシュヒット時のみ非ゼロ）。
+    ///
+    /// **この項目が無かったために、ここに居た全エントリ複製がどのフェーズにも現れなかった。**
+    /// `cache_load_ms` は複製の前で止まり、複製は `total_ms` にしか効かない——差を読む者が
+    /// いなければ、起動段の live ブロックの 1/3 を占める処理が計測上は存在しないままになる。
+    /// **`cache_load_ms` と `total_ms` の間に処理を足すときは、必ずここに並ぶ項目を作ること。**
+    pub digest_ms: u128,
     pub scan_ms: u128,
     pub sort_ms: u128,
     pub cache_save_ms: u128,
@@ -390,17 +398,24 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
         let cached_masks = result.cached_masks;
         // 背景再スキャンはここでは spawn しない。タスクとして返し、`src-tauri` が
         // `AppHandle` を持った状態で spawn する（`Changed` 時のアイコン無効化のため）。
+        //
+        // **エントリを複製せず digest を取る。** 複製していた頃は起動のたびに 624,754 個の
+        // `String` を確保しており（実測・ロード段の live ブロックの 1/3）、しかも
+        // `cache_load_ms` が**この行の前で止まる**ため、どのフェーズ計測にも現れなかった。
+        let digest_started = Instant::now();
         let rescan_task = BackgroundRescanTask {
             scan: scan.to_vec(),
             show_hidden_system,
             config_hash: current_hash,
-            cached_entries: return_entries.clone(),
+            cached_digest: entries_digest(&return_entries),
             generation: rescan_generation,
         };
+        let digest_ms = digest_started.elapsed().as_millis();
         let stats = LoadOrScanStats {
             cache_hit: true,
             hash_ms,
             cache_load_ms,
+            digest_ms,
             scan_ms: 0,
             sort_ms: 0,
             cache_save_ms: 0,
@@ -439,6 +454,8 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
         cache_hit: false,
         hash_ms,
         cache_load_ms,
+        // cache-miss の枝は背景再スキャンを返さない（走査したてが最新である）。
+        digest_ms: 0,
         scan_ms,
         sort_ms,
         cache_save_ms,
@@ -454,13 +471,60 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
     }
 }
 
-fn entries_equal(a: &[AppEntry], b: &[AppEntry]) -> bool {
-    if a.len() != b.len() {
-        return false;
+/// ソート済みエントリ列の digest。背景再スキャンが「索引が変わったか」を判定するためだけに
+/// 使う（かつては全エントリの複製を抱えて逐一比較していた）。
+///
+/// **`entries_equal` が見ていた 3 フィールドと長さをすべて混ぜること。** 1 つでも落とすと、
+/// その種の変更を**確率ではなく確定で**永久に見逃す（`is_folder` を落とせば folder↔file の
+/// 反転が永遠に検出されない）。列はどちらも `sort_entries_canonical` を通っており
+/// （保存 3 経路と `try_background_rescan_in` のすべてで直前に呼ぶ）、順序は canonical である。
+///
+/// **この値を `index.bin` へ書いてはならない。** 突き合わせるのはロード直後に取った値と、
+/// 背景スレッドが走査後に取った値——どちらも同じプロセス・同じバイナリである。ゆえに
+/// `DefaultHasher` の出力が Rust のバージョン間で変わっても影響せず、下の `CHUNK` を
+/// 変えてもよい。
+///
+/// **永続化は「12 ms を消せる」最適化に見えるが、その瞬間に 2 つがオンディスク互換の
+/// 制約へ化ける**——`DefaultHasher` の出力はバージョン間で安定する保証が無く、`CHUNK` は
+/// 畳み込みの形を決めるので値を変えると digest が変わる。どちらも今は自由に動かせるが、
+/// ディスクへ出した後は動かせない。書くと決めるなら、安定なハッシュ関数を明示的に選び、
+/// `CHUNK` を形式の一部として固定し、`IndexCache` のバージョンを上げること
+/// （手順は `snotra-core/CLAUDE.md`「IndexCache バージョン変更チェックリスト」）。
+/// ディスクへ書く `compute_config_hash` は、版が変わるとキャッシュが 1 度無効になるという
+/// 性質を既に背負っている。
+///
+/// **受容する残余: 衝突（2⁻⁶⁴）は「変わったのに Unchanged と報告する」形で現れる。**
+/// 索引は次にファイルシステムが変わるまで古いままになり、アイコンキャッシュも無効化されない。
+/// **一時的ではなく、その状態が続く限り持続する**——同じ組み合わせなら毎回同じ衝突になる。
+/// `compute_config_hash` は同じ u64 でキャッシュの有効性そのものを判定しており（衝突すれば
+/// **別の config の索引をそのまま使う**）、こちらの帰結はそれより軽い。
+fn entries_digest(entries: &[AppEntry]) -> u64 {
+    /// 塊の大きさ。**値を変えると digest が変わる**（分割が畳み込みの形を決めるため）。
+    /// プロセス内でしか比較しないので問題にならない——上の doc がその契約である。
+    const CHUNK: usize = 8192;
+
+    // 塊ごとに並列でハッシュし、**塊の順に**畳む。長さを先に混ぜるので分割は一意に決まり、
+    // 境界の曖昧さは生じない。**解放と違ってハッシュは並列化が効く**——実測 43 → 12 ms
+    // （直列版と各 3 回の最小値で比較。`search/build.rs` の共有の潰しは同じ手が効かなかった）。
+    let chunk_digests: Vec<u64> = entries
+        .par_chunks(CHUNK)
+        .map(|chunk| {
+            let mut hasher = DefaultHasher::new();
+            for e in chunk {
+                e.name.hash(&mut hasher);
+                e.target_path.hash(&mut hasher);
+                e.is_folder.hash(&mut hasher);
+            }
+            hasher.finish()
+        })
+        .collect();
+
+    let mut hasher = DefaultHasher::new();
+    entries.len().hash(&mut hasher);
+    for d in chunk_digests {
+        d.hash(&mut hasher);
     }
-    a.iter().zip(b.iter()).all(|(x, y)| {
-        x.name == y.name && x.target_path == y.target_path && x.is_folder == y.is_folder
-    })
+    hasher.finish()
 }
 
 fn sort_entries_canonical(entries: &mut [AppEntry]) {
@@ -676,7 +740,7 @@ fn try_background_rescan(
     scan: &[ScanPath],
     show_hidden_system: bool,
     config_hash: u64,
-    cached_entries: &[AppEntry],
+    cached_digest: u64,
     generation: u64,
 ) -> RescanOutcome {
     let Some(dir) = Config::config_dir() else {
@@ -687,7 +751,7 @@ fn try_background_rescan(
         scan,
         show_hidden_system,
         config_hash,
-        cached_entries,
+        cached_digest,
         generation,
     )
 }
@@ -697,7 +761,7 @@ fn try_background_rescan_in(
     scan: &[ScanPath],
     show_hidden_system: bool,
     config_hash: u64,
-    cached_entries: &[AppEntry],
+    cached_digest: u64,
     generation: u64,
 ) -> RescanOutcome {
     // 権威的ビルド（rebuild_and_save / cache-miss save）が書き込み中なら Skipped。
@@ -709,7 +773,7 @@ fn try_background_rescan_in(
         }
         let mut scanned = scan_all(scan, show_hidden_system);
         sort_entries_canonical(&mut scanned);
-        if entries_equal(cached_entries, &scanned) {
+        if entries_digest(&scanned) == cached_digest {
             Some(false)
         } else {
             save_cache_sorted_in(dir, &scanned, config_hash);
@@ -725,11 +789,15 @@ fn try_background_rescan_in(
 
 /// 背景再スキャンのタスク。所有データを抱え、`src-tauri` 側のスレッドへ `move` できる。
 /// `load_or_scan_with_stats` がキャッシュヒット時に `Some` で返す。
+///
+/// **全エントリの複製ではなく digest を持つ。** かつては `Vec<AppEntry>` を丸ごと抱えており、
+/// 起動のたびに 312,377 件ぶんの `String` を 624,754 個確保していた（実測 62.5 MiB・ロード段の
+/// live ブロックの 1/3）。比較の消費点は `entries_digest`（private）1 か所で真偽値しか要らない。
 pub struct BackgroundRescanTask {
     scan: Vec<ScanPath>,
     show_hidden_system: bool,
     config_hash: u64,
-    cached_entries: Vec<AppEntry>,
+    cached_digest: u64,
     generation: u64,
 }
 
@@ -741,7 +809,7 @@ impl BackgroundRescanTask {
             &self.scan,
             self.show_hidden_system,
             self.config_hash,
-            &self.cached_entries,
+            self.cached_digest,
             self.generation,
         )
     }
@@ -1405,8 +1473,13 @@ mod tests {
         assert_ne!(hash1, hash2);
     }
 
+    // digest の検査は「同じなら一致」と「1 フィールドずつ違えば不一致」を**フィールドごとに
+    // 分けて**置く。まとめると、落としたフィールドがどれか失敗名から分からなくなる
+    // ——digest が `is_folder` を混ぜ忘れる類の誤りは、確率ではなく**確定で**その種の変更を
+    // 永久に見逃すため、名指しできることに意味がある（`entries_digest` の doc）。
+
     #[test]
-    fn entries_equal_identical() {
+    fn entries_digest_identical() {
         let a = vec![
             AppEntry {
                 name: "A".into(),
@@ -1420,11 +1493,11 @@ mod tests {
             },
         ];
         let b = a.clone();
-        assert!(entries_equal(&a, &b));
+        assert_eq!(entries_digest(&a), entries_digest(&b));
     }
 
     #[test]
-    fn entries_equal_different_length() {
+    fn entries_digest_different_length() {
         let a = vec![AppEntry {
             name: "A".into(),
             target_path: "C:\\a.exe".into(),
@@ -1442,11 +1515,11 @@ mod tests {
                 is_folder: false,
             },
         ];
-        assert!(!entries_equal(&a, &b));
+        assert_ne!(entries_digest(&a), entries_digest(&b));
     }
 
     #[test]
-    fn entries_equal_different_name() {
+    fn entries_digest_different_name() {
         let a = vec![AppEntry {
             name: "A".into(),
             target_path: "C:\\a.exe".into(),
@@ -1457,11 +1530,11 @@ mod tests {
             target_path: "C:\\a.exe".into(),
             is_folder: false,
         }];
-        assert!(!entries_equal(&a, &b));
+        assert_ne!(entries_digest(&a), entries_digest(&b));
     }
 
     #[test]
-    fn entries_equal_different_target() {
+    fn entries_digest_different_target() {
         let a = vec![AppEntry {
             name: "A".into(),
             target_path: "C:\\a.exe".into(),
@@ -1472,11 +1545,11 @@ mod tests {
             target_path: "C:\\b.exe".into(),
             is_folder: false,
         }];
-        assert!(!entries_equal(&a, &b));
+        assert_ne!(entries_digest(&a), entries_digest(&b));
     }
 
     #[test]
-    fn entries_equal_different_is_folder() {
+    fn entries_digest_different_is_folder() {
         let a = vec![AppEntry {
             name: "A".into(),
             target_path: "C:\\a".into(),
@@ -1487,12 +1560,53 @@ mod tests {
             target_path: "C:\\a".into(),
             is_folder: true,
         }];
-        assert!(!entries_equal(&a, &b));
+        assert_ne!(entries_digest(&a), entries_digest(&b));
     }
 
     #[test]
-    fn entries_equal_both_empty() {
-        assert!(entries_equal(&[], &[]));
+    fn entries_digest_both_empty() {
+        assert_eq!(entries_digest(&[]), entries_digest(&[]));
+    }
+
+    /// 隣り合うフィールドの境界が曖昧だと、`name` と `target_path` の切れ目が動いただけの
+    /// 別物が同じ digest になる。`Hash for str` が長さを混ぜるため実際には起きないが、
+    /// **手書きの `write` へ変えた瞬間に壊れる**種類の性質なのでここで固定する。
+    #[test]
+    fn entries_digest_field_boundary_is_not_ambiguous() {
+        let a = vec![AppEntry {
+            name: "AB".into(),
+            target_path: "C".into(),
+            is_folder: false,
+        }];
+        let b = vec![AppEntry {
+            name: "A".into(),
+            target_path: "BC".into(),
+            is_folder: false,
+        }];
+        assert_ne!(entries_digest(&a), entries_digest(&b));
+    }
+
+    /// エントリの境界も同じ理由で曖昧であってはならない（1 件が 2 件に割れても気づく）。
+    #[test]
+    fn entries_digest_entry_boundary_is_not_ambiguous() {
+        let a = vec![AppEntry {
+            name: "AB".into(),
+            target_path: "P".into(),
+            is_folder: false,
+        }];
+        let b = vec![
+            AppEntry {
+                name: "A".into(),
+                target_path: "P".into(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "B".into(),
+                target_path: "P".into(),
+                is_folder: false,
+            },
+        ];
+        assert_ne!(entries_digest(&a), entries_digest(&b));
     }
 
     #[test]
@@ -1524,7 +1638,11 @@ mod tests {
 
         sort_entries_canonical(&mut a);
         sort_entries_canonical(&mut b);
-        assert!(entries_equal(&a, &b));
+        // **digest は順序に依存する**（列を順に混ぜるため）。列挙順の違いを吸収しているのは
+        // `sort_entries_canonical` のほうであり、比較を digest へ替えたことでこの検査は
+        // 「あれば望ましい」から**必須**になった——ソートを外した経路が 1 つでもできると、
+        // 中身が同じでも「変わった」と判定して毎回 index.bin を書き直す。
+        assert_eq!(entries_digest(&a), entries_digest(&b));
     }
 
     #[test]
@@ -1606,7 +1724,13 @@ mod tests {
         let _held = INDEX_WRITE_LOCK.lock().unwrap();
         // 背景再スキャンは書き込みロックを取得できないため、
         // スキャンも保存もせず Skipped を返さねばならない。
-        let outcome = try_background_rescan(&[], false, 0, &[], current_index_generation());
+        let outcome = try_background_rescan(
+            &[],
+            false,
+            0,
+            entries_digest(&[]),
+            current_index_generation(),
+        );
         assert_eq!(
             outcome,
             RescanOutcome::Skipped,
@@ -1624,7 +1748,7 @@ mod tests {
             scan: Vec::new(),
             show_hidden_system: false,
             config_hash: 0,
-            cached_entries: Vec::new(),
+            cached_digest: entries_digest(&[]),
             generation: current_index_generation(),
         };
         assert_eq!(task.run(), RescanOutcome::Unchanged);
@@ -1649,11 +1773,11 @@ mod tests {
             &[],
             false,
             old_hash,
-            &[AppEntry {
+            entries_digest(&[AppEntry {
                 name: "stale".to_string(),
                 target_path: "C:\\stale.exe".to_string(),
                 is_folder: false,
-            }],
+            }]),
             old_generation,
         );
 

@@ -244,6 +244,26 @@ fn measure_real_index_footprint() {
         result.cached_masks.is_some()
     );
     report("index.bin ロード（entries + masks）", t0, t1, n);
+    // **フェーズ内訳を出す。** 製品が既に測っている（`LoadOrScanStats`）のに、ここが壁時計だけを
+    // 出していたせいで「ロードのどこに時間が居るか」が見えなかった——全エントリ複製が
+    // `cache_load_ms` の外に居て、どのフェーズにも現れないまま起動段の live ブロックの 1/3 を
+    // 占めていたのはそれが理由である
+    // （`PERFORMANCE.md`「採用: 背景再スキャンの比較を digest へ（ロード 395 → 312 ms・反復 6）」）。
+    // **合計が `total` に届かない分は、まだ名前の付いていない処理がそこに居るということである。**
+    let s = &result.stats;
+    println!(
+        "  フェーズ: total {}ms = hash {}ms + cache_load {}ms + digest {}ms + scan {}ms + sort {}ms + cache_save {}ms（残余 {}ms）",
+        s.total_ms,
+        s.hash_ms,
+        s.cache_load_ms,
+        s.digest_ms,
+        s.scan_ms,
+        s.sort_ms,
+        s.cache_save_ms,
+        s.total_ms.saturating_sub(
+            s.hash_ms + s.cache_load_ms + s.digest_ms + s.scan_ms + s.sort_ms + s.cache_save_ms
+        ),
+    );
 
     let LoadOrScanResult {
         entries,

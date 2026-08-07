@@ -132,7 +132,7 @@ impl SearchEngine {
             n_before,
             "PathStore: 組み替えでエントリ数が変わってはならない"
         );
-        let entries = paths;
+        let mut entries = paths;
         lower_names.shrink_to_fit();
         lower_file_names.shrink_to_fit();
         char_masks.shrink_to_fit();
@@ -153,6 +153,32 @@ impl SearchEngine {
                     && kana_char_masks.len() == entries.len()),
             "SearchEngine: kana parallel Vecs must both be empty or match entries length"
         );
+
+        // `lower_file_names[i]` が `lower_names[i]` とバイト一致するなら `Box<str>` を落とし、
+        // 旗で表す（実測 9.71 MiB / 255,961 ブロックの削減。読み替えは `entry_view` の 1 点）。
+        //
+        // **ビットマスクより後に置く。** `file_name_char_masks` は完全な文字列から導出されて
+        // いなければならず（cache 経由でも Wave 2 経由でも `assemble` 到達時には確定済み）、
+        // 先に潰すと `file_char_mask(None) == 0` になって pre-filter が **false negative** を
+        // 出す（`compute_wave2` の不変条件）。**長さの `debug_assert` より後でもある**——
+        // 長さがずれた入力では、添字の panic ではなく上の診断が先に出るべきである。
+        //
+        // **`is_folder` で分岐しない。** 一致は indexer の名前導出規則の帰結として実データの
+        // folder 100% に成り立つが、`SearchEngine::new` は任意の `AppEntry` を受け取れる。
+        // 測って落とすので、外れた入力は文字列を持ち続けるだけで**結果は変わらない**。
+        //
+        // **この形が最も単純で、かつ速い形でもある。** 構築は 57 → 75 ms（各 3 回の最小値）
+        // 増えるが、比較を rayon へ出しても、比較と解放の両方を出しても**最小値は 75 ms のまま
+        // だった**（3 変種を同一セッションで実測）。並列化では取り戻せないので、いちばん短い
+        // 形を残してある。増分の機序（比較か、255,961 個の `Box<str>` の解放か）は
+        // **切り分けていない**——ここに書けるのは「並列化は効かない」までである。
+        for i in 0..entries.len() {
+            if lower_file_names[i].as_deref() == Some(&*lower_names[i]) {
+                entries.mark_file_name_is_lower_name(i);
+                lower_file_names[i] = None;
+            }
+        }
+
         Self {
             entries,
             lower_names,

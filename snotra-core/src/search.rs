@@ -15,6 +15,10 @@ use crate::ui_types::SearchResult;
 
 // 構築処理（Wave 1/2・kana マスク・IndexCache 復元・全コンストラクタ）は子モジュールへ分離（#598）。
 mod build;
+// 常駐ヒープの内訳を数える計測専用の走査。**製品のレイアウトの隣に置く**——別クレートの
+// 統合テストからは private フィールドへ届かず、代用すると測る対象が製品からずれる。
+mod footprint;
+pub use footprint::FootprintRow;
 // `target_path` の圧縮表現（フォルダ木の接頭辞共有）は子モジュールへ分離。
 mod path_store;
 use path_store::PathStore;

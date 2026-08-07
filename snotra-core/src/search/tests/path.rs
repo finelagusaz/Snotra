@@ -298,3 +298,83 @@ fn path_store_cursor_matches_full_rebuild() {
         }
     }
 }
+
+/// 実 `%APPDATA%\Snotra\index.bin` を実起動と同じ経路で読む（scan パス未設定なら `None`）。
+///
+/// **これは corpus であって保証ではない。** 実インデックスが無い環境（CI）では下の 2 テストは
+/// 自動スキップし、そこに残る保証は [`path_store_cursor_matches_full_rebuild`] の合成 fixture の
+/// ほうである。合成が届かない多様さ（ドライブ直下・UNC 共有・非 ASCII・深い木・親が索引に
+/// 不在のエントリ）を開発機の実データで舐めるのがこの corpus の役目で、両者は代替ではなく補完
+/// である。**「実データの全件で固定してある」と書くときは、この自動スキップを併記すること。**
+fn real_index_entries() -> Option<Vec<AppEntry>> {
+    let config = crate::config::Config::load();
+    if config.paths.scan.is_empty() {
+        return None;
+    }
+    let result = crate::indexer::load_or_scan_with_stats(
+        &config.paths.scan,
+        config.search.show_hidden_system,
+    );
+    Some(result.entries)
+}
+
+/// 原文の再構築が `target_path` と 1 バイトも違わないことを、実インデックスの全件で確かめる。
+///
+/// **正規化版の一致だけでは足りない**——tie-break の遅い経路（`PathStore::cmp_paths`）と
+/// 表示パス（`SearchResult.path`）は原文のバイトに載る。
+#[test]
+fn path_store_raw_matches_target_path_over_real_index() {
+    use crate::search::path_store::PathStore;
+
+    let Some(entries) = real_index_entries() else {
+        println!("実インデックスが無いためスキップします。");
+        return;
+    };
+    // `build` は `entries` を消費するので、比較相手は先に取り分ける。
+    let expected: Vec<String> = entries.iter().map(|e| e.target_path.clone()).collect();
+    let store = PathStore::build(entries);
+    let mut buf = String::new();
+    for (i, want) in expected.iter().enumerate() {
+        store.raw_into(&mut buf, i);
+        assert_eq!(&buf, want, "原文の再構築がずれている（index {i}）");
+    }
+    println!(
+        "{} 件で原文の再構築が target_path とバイト一致しました。",
+        expected.len()
+    );
+}
+
+/// 正規化キーの組み立てが `normalize_entry_key` と 1 バイトも違わないことを、実インデックスの
+/// 全件で確かめる。**組み立てるのは製品が実際に通る [`PathCursor`] のほうである**——全件走査は
+/// カーソル経由であり、素直な組み立て（`PathStore::normalized_into`）はその参照実装にすぎない。
+///
+/// ここが 1 バイトずれると履歴照合が沈黙で外れる（クラッシュせず検索結果も返り、ブーストだけが
+/// 消える）。走査順は製品と同じ昇順＝鎖が当たり続ける経路で、外れる経路は
+/// [`path_store_cursor_matches_full_rebuild`] が逆順・乱順で受け持つ。
+#[test]
+fn path_store_cursor_matches_normalize_entry_key_over_real_index() {
+    use crate::indexer::normalize_entry_key;
+    use crate::search::path_store::{PathCursor, PathStore};
+
+    let Some(entries) = real_index_entries() else {
+        println!("実インデックスが無いためスキップします。");
+        return;
+    };
+    let expected: Vec<String> = entries
+        .iter()
+        .map(|e| normalize_entry_key(&e.target_path))
+        .collect();
+    let store = PathStore::build(entries);
+    let mut cursor = PathCursor::new();
+    for (i, want) in expected.iter().enumerate() {
+        assert_eq!(
+            cursor.normalized(&store, i),
+            want.as_str(),
+            "カーソルの組み立てが現物とずれている（index {i}）"
+        );
+    }
+    println!(
+        "{} 件でカーソルの組み立てが normalize_entry_key と一致しました。",
+        expected.len()
+    );
+}

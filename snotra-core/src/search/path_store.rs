@@ -40,6 +40,7 @@ use std::collections::HashMap;
 
 use rayon::prelude::*;
 
+use super::footprint::{FootprintRow, boxed_strs, vec_body};
 use crate::indexer::AppEntry;
 
 /// 親を持たないことを表す番兵。このとき `aux` は [`PathStore::table`] のフルパスを指す。
@@ -121,11 +122,42 @@ impl PathStore {
         self.entries.capacity()
     }
 
+    /// 常駐ヒープの内訳を数えて `rows` へ積む（計測専用・勘定の規約は `search/footprint.rs`
+    /// の `//!`）。**自分の内側は自分で数える**——フィールドは private ゆえ、外から数えると
+    /// 表現を変えるたびに数え方も外で直すことになる。
+    pub(super) fn footprint_rows(&self, rows: &mut Vec<FootprintRow>) {
+        // **`..` を書かない**（理由は `SearchEngine::footprint_rows`）。`sorted_by_path` は
+        // `bool` ゆえヒープを持たないが、束縛して捨てる形にすることで網羅性は保たれる。
+        let Self {
+            entries,
+            table,
+            sorted_by_path: _,
+        } = self;
+        rows.push(boxed_strs(
+            "PathStore: entries[].name",
+            entries.iter().map(|e| &*e.name),
+        ));
+        rows.push(vec_body::<CompactEntry>(
+            "PathStore: entries（Vec 本体）",
+            entries.capacity(),
+        ));
+        rows.push(boxed_strs(
+            "PathStore: table（親不在のフルパス + 拡張子）",
+            table.iter().map(|s| &**s),
+        ));
+        rows.push(vec_body::<Box<str>>(
+            "PathStore: table（Vec 本体）",
+            table.capacity(),
+        ));
+    }
+
     /// `i` のフルパスを**原文のまま**組み立てる（小文字化も `/` → `\` 変換も trim もしない）。
     ///
-    /// 結果は元の `AppEntry.target_path` とバイト一致する。実 `index.bin` の全 312,377 件で
-    /// 固定してある（`tests/path_query_cost.rs` の
-    /// `tree_raw_reconstruction_is_byte_identical_to_target_path`）。
+    /// 結果は元の `AppEntry.target_path` とバイト一致する。合成 fixture での保証は
+    /// `search/tests/path.rs` の `path_store_cursor_matches_full_rebuild` が常に持ち、実 `index.bin`
+    /// の全件（実測 312,377 件）での照合は同ファイルの
+    /// `path_store_raw_matches_target_path_over_real_index` が受け持つ——**後者は実インデックスの
+    /// 無い環境（CI）では自動スキップする**ので、開発機で走る corpus であって保証ではない。
     pub(super) fn raw_into(&self, buf: &mut String, i: usize) {
         let (root, chain, depth) = self.walk_to_root(i);
         buf.clear();
@@ -143,9 +175,7 @@ impl PathStore {
     ///
     /// **組み立ててから正規化する二段払いにはしない**——正規化バッファへ直接書き出す 1 パスで
     /// あり、増分は段数ぶんの読みだけである。規則の正本は
-    /// [`crate::indexer::normalize_entry_key_into`] で、記録側と同じバイトになることは
-    /// `tests/path_query_cost.rs` の `tree_reconstruction_derives_same_bytes_as_normalize_entry_key`
-    /// が実インデックスの全件で固定する。
+    /// [`crate::indexer::normalize_entry_key_into`] である。
     ///
     /// **製品はこれを呼ばない**——全件走査は [`PathCursor`] が祖先の鎖を持ち回る形で組み立てる。
     /// ここに残すのは**カーソルの正しさを固定する参照実装**としてであり、鎖の状態に依らない
@@ -265,6 +295,13 @@ impl PathCursor {
 
     /// `i` の正規化キーを組み立てて貸す。鎖の状態に依らない素直な組み立て（`PathStore::normalized_into`・`cfg(test)`）と**必ず同じバイト列**を
     /// 返す（差し替えは最適化であって意味の変更ではない）。
+    ///
+    /// **記録側（`normalize_entry_key`）と 1 バイトも違わないことがここの契約である**——ずれると
+    /// 履歴照合が沈黙で外れる（クラッシュせず検索結果も返り、ブーストだけが消える）。合成 fixture
+    /// での検証は `search/tests/path.rs` の `path_store_cursor_matches_full_rebuild`（順・逆順・
+    /// 乱順）、実 `index.bin` の全件での照合は同ファイルの
+    /// `path_store_cursor_matches_normalize_entry_key_over_real_index`（**実インデックスが無ければ
+    /// 自動スキップ**）。
     pub(super) fn normalized(&mut self, store: &PathStore, i: usize) -> &str {
         let parent = store.entries[i].parent;
         if parent == NO_PARENT {

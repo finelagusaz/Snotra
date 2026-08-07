@@ -15,5 +15,5 @@ pub(super) fn make_entries(names: &[&str]) -> Vec<AppEntry> {
 }
 
 pub(super) fn empty_history() -> HistoryStore {
-    HistoryStore::load()
+    HistoryStore::empty()
 }

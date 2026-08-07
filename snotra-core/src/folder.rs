@@ -247,7 +247,17 @@ mod tests {
     }
 
     fn empty_history() -> HistoryStore {
-        HistoryStore::load()
+        HistoryStore::empty()
+    }
+
+    /// `empty_history()` は名前どおり空でなければならない（#963）。
+    /// **CI では常に緑で開発機でだけ落ちる**性質は `engine.rs` の同名テストの doc を参照。
+    #[test]
+    fn empty_history_fixture_is_actually_empty() {
+        assert!(
+            empty_history().recent_launches(usize::MAX).is_empty(),
+            "empty_history() が空でない — 実 history.bin を読んでいる"
+        );
     }
 
     #[test]
@@ -645,7 +655,7 @@ mod tests {
     fn folder_cmp_is_total_order_by_path() {
         // "Café" と "Cafe" は to_lower_folded で同キー化する（アクセント畳込み）。
         // path tie-breaker が無いと select_nth_unstable の境界順が read_dir 順へ漏れる。
-        // empty_history() は既存 folder テストのヘルパー（HistoryStore::load()）。
+        // empty_history() は既存 folder テストのヘルパー（`HistoryStore::empty()`）。
         let hist = empty_history();
         let entries = vec![
             DirEntryData {

@@ -176,6 +176,9 @@ fn measure_recent_history_cost() {
         ),
         None => SearchEngine::new_with_migemo(result.entries, config.search.migemo_enabled),
     };
+    // **ここは実 `history.bin` を読むのが正しい**（#963 でユニットテスト側の fixture は
+    // 空へ移したが、計測ハーネスは実運用の姿を測るのが目的である）。統合テストは
+    // 別クレートゆえ `HistoryStore::empty()`（`#[cfg(test)]`）に手も届かない。
     let history = HistoryStore::load();
     let limit = config.search.recent_limit.unwrap_or(8);
 

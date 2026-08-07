@@ -82,11 +82,30 @@ impl HistoryStore {
     /// 履歴をディスクから読み込む。`top_n`（剪定容量）は焼き込まず、`save`/`prune` 呼び出し時に
     /// 引数で受け取る（live-read 化、issue #348）。これにより `result_limit` の設定変更が
     /// 再起動なしで反映され、`HistoryStore.top_n` の焼き込みによるドリフトが構造的に発生しない。
+    ///
+    /// **ユニットテストの fixture にこれを使わないこと**——実 `%APPDATA%\Snotra\history.bin` を
+    /// 読むため開発者のマシン状態でテスト結果が変わる。空が欲しいなら [`Self::empty`]、
+    /// 特定の内容が欲しいなら [`Self::load_in`] に注入する（理由の全文は `empty` の doc・#963）。
     pub fn load() -> Self {
         match Config::config_dir() {
             Some(dir) => Self::load_in(&dir),
             None => Self::from_loaded(HistoryData::default(), HISTORY_VERSION),
         }
+    }
+
+    /// 空の履歴を作る（**テスト fixture 専用**・ファイル I/O を伴わない）。
+    ///
+    /// **テストで `load()` を fixture に使ってはならない**（#963）。`load()` は
+    /// `Config::config_dir()`（= 実 `%APPDATA%\Snotra`）を読むため開発機の実履歴が混入し、
+    /// 順序や件数を見る検査の結果が開発者のマシン状態で変わる。しかも CI のランナーには
+    /// そのファイルが無く `load()` も空を返すので、**食い違いは CI では緑のまま、
+    /// 開発機でだけ現れる**——検出器が構造的に届かない形になる。
+    ///
+    /// 実履歴を意図して読みたいのは計測ハーネス（`tests/` 配下の `#[ignore]` ベンチ）だけで、
+    /// あちらは実運用の姿を測るのが目的ゆえ `load()` のままでよい。
+    #[cfg(test)]
+    pub(crate) fn empty() -> Self {
+        Self::from_loaded(HistoryData::default(), HISTORY_VERSION)
     }
 
     /// `load()` と同じ読み込みを `dir` 注入で行う（統合テスト用、issue #429）。

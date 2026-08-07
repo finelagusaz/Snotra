@@ -28,10 +28,11 @@
   - 逆方向の依存として `normalize_opener_target` が `config.rs::normalize_scan_path_key` / `normalize_extensions`（`pub(crate)`、`paths.scan` の正規化とも共有する汎用ヘルパー）を使う
 - `hotkey.rs` — 永続ホットキー文字列の意味解析とシステムショートカット競合判定（責務は `//!`）。`HotkeyConfig` は serde 互換のため `config.rs` から re-export し、設定検証・UI・Win32 platform は同じ `ParsedHotkey` を消費する。文字列 parser を下流へ複製しない
 - `search.rs` — 検索順位計算・履歴ブースト・incremental search キャッシュ・空クエリ時履歴候補（責務・スコア階層は `//!` と `SearchEngine` の struct doc）。以下は並列 Vec レイアウトの不変条件:
-  - **並列 Vec レイアウト**: `SearchEngine` は `entries` / `lower_names` / `lower_file_names` / `normalized_keys` / `char_masks` / `file_name_char_masks` / `kana_lower_names` / `kana_char_masks` の並列 Vec で cache locality を確保
+  - **並列 Vec レイアウト**: `SearchEngine` は `entries` / `lower_names` / `lower_file_names` / `char_masks` / `file_name_char_masks` / `kana_lower_names` / `kana_char_masks` の並列 Vec で cache locality を確保
+  - **正規化キー（履歴照合・パスマッチ）は索引に持たない**: `target_path` から `normalize_entry_key_into` で導出し、スレッドローカルのバッファへ詰め直す（唯一の経路は `search/scoring.rs` の `with_normalized_key`）。**畳み込み比較を別実装で書き起こしてはならない**——記録側と照合側が同じ関数を通ることがバイト一致の根拠であり、1 バイトずれると履歴照合が沈黙で外れる（クラッシュせず検索結果も返り、ブーストだけが消える）
   - **`kana_lower_names` / `kana_char_masks` は `migemo_enabled` が true のときのみ構築し、無効時は空 Vec**（migemo 無効ユーザーの死蔵メモリ ~2.1–2.7MB/50k を削る・構築も約 2 倍速、issue #337）。2 つの kana 系 Vec は必ず同時に空/同長（`assemble` の debug_assert が検証）。空 Vec のとき検索ループは `kana_available` 空ガードで `kana_lower_names[i]` アクセスを回避し、Fuzzy pre-filter は `kana_char_masks.is_empty()` チェックで kana 経路を棄却する（構築時 migemo OFF→検索時 ON の窓での panic 防止）
   - **migemo トグルの反映は index 再構築経由**: `update_config` は engine を再構築しないため、`config_watcher` が engine の `IndexInputs` 差分で `start_index_build` を kick する再構築に依存する（#347 Phase 2 で `needs_reindex` は `IndexInputs` に統合）
-  - **パスマッチング**: クエリにパス区切り文字（`\` `/`）を含む場合、`normalized_key`（= `normalize_entry_key(target_path)`）に対して Substring マッチを試みる。スコアは `3000 - min(byte_pos, 500)`。name/file_name/kana 全て不成立時のフォールバック。`has_path_sep` 時は Fuzzy ビットマスク pre-filter をスキップする
+  - **パスマッチング**: クエリにパス区切り文字（`\` `/`）を含む場合、導出した正規化キー（= `normalize_entry_key(target_path)` と同値）に対して Substring マッチを試みる。スコアは `3000 - min(byte_pos, 500)`。name/file_name/kana 全て不成立時のフォールバック。`has_path_sep` 時は Fuzzy ビットマスク pre-filter をスキップする
   - **スコアリング・順位計算は `search/scoring.rs` に分離**（#600。責務は `//!`）: `mod score_tier`（+ `const _` 全順序アサーション）・thread-local `MATCHER`・`EntryView` / `entry_view`・`score_one_entry`・`ScoredEntry` と `Ord` 一式・`heap_into_results`・`adjusted_history_boost`・`kana_substring_score`・`match_score_single_cached`・`TopK`（top-k 更新規則の一元化。fold/reduce が同じ `push`/`merge` を共有・#602）。候補選択・rayon fold/reduce の骨格・incremental cache 更新は `search.rs` に残す。子から親の並列 Vec private を直接読み、共有型（`EntryView` / `ScoredEntry` / `score_one_entry` / `adjusted_history_boost` / `TopK` 一式）は `pub(super)`（`heap_into_results` は #602 で `TopK::into_results` 内部に隠蔽され private）
   - **クエリ計画は `search/query_plan.rs` に分離**（#599。責務は `//!`）: `QueryPlan` と `prepare_query_plan`（正規化クエリ・dot/path 判定・Fuzzy bitmask・migemo かなクエリ・UTF-32 needle・パス照合クエリ・履歴キーの純粋導出）。incremental 判定と前回状態の read/write は `search.rs` の `IncrementalCache`（`can_reuse` / `update`・#601）に残す。`QueryPlan` とフィールドは `pub(super)` で親のみに公開
   - **構築処理は `search/build.rs` に分離**（#598。責務は `//!`）: Wave 1/2・kana マスクの並列構築、IndexCache 復元（v4 ヒット時 Wave 1 スキップ / v3 fallback）、全コンストラクタ（`new` / `new_with_migemo` / `new_with_cached_masks` / `assemble`）。検索ホットパスは `search.rs` に残す。`kana_char_mask`（query 側と共有しうる純粋関数）は `search.rs` 側に残置
@@ -49,6 +50,7 @@
 - `ui_types.rs`
 - `tests/search_frame_cost.rs`（crate ルート統合テスト）: #634 G-SYNC の `Engine::search` facade フレームコスト実測ハーネス（`#[ignore]`・手元 release 実行専用。`search/tests/performance.rs` との層の区別は `//!`）
 - `tests/memory_footprint.rs`（crate ルート統合テスト）: 索引の常駐ヒープをアロケータ実測で取るハーネス（`#[ignore]`・手元 release 実行専用。責務は `//!`、計測値は `PERFORMANCE.md`）
+- `tests/path_query_cost.rs`（crate ルート統合テスト）: パスクエリ（`has_path_sep`）全走査のコスト実測ハーネス（`#[ignore]`・手元 release 実行専用。責務は `//!`、計測値は `PERFORMANCE.md`）。**`normalized_keys` を保持するか導出するかの差を測る唯一の計器**であり、既存の bench 群はパス区切りを含むクエリを 1 つも持たない
 
 ## 開発ルール
 
@@ -63,7 +65,7 @@
 - 共通原則は `AGENTS.md`「事前調査（レビュー未然防止）」に従う
 - `search.rs` で `Ord` / `Reverse` / `BinaryHeap` を扱う変更では、`BinaryHeap` の先頭が最良/最悪のどちらかを実装前に明記する
 - `search.rs` の top-k 更新ロジックを変更する場合は、入力順を変えても結果が不変であるテストを追加または更新する
-- `SearchEngine` にフィールドを追加する前に: 既存の並列 Vec（特に `normalized_keys`）で代替できないか先に検討する。再利用できれば 5 箇所同時更新・IndexCache バージョンバンプが不要になる
+- `SearchEngine` にフィールドを追加する前に: 既存の並列 Vec で代替できないか、あるいは**そもそも持たずに導出できないか**を先に検討する。再利用・導出できれば 5 箇所同時更新・IndexCache バージョンバンプが不要になる。**導出を選ぶ判断は「その読みが早期 return の前にあるか後ろにあるか」で決まる**——同じフィールドでも、フィルタとして使われる読みと通過後の装飾として使われる読みではコストの桁が違う（`normalized_keys` は後者が主で導出へ移せた・`PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を保持するか導出するか」）
 - `SearchEngine` に新しい並列 Vec フィールドを追加するとき: `EntryView` 構造体・`entry_view()` メソッド・`assemble()` 内の `debug_assert!` **と `shrink_to_fit()`**（余剰容量は索引が伸長しないぶん最後まで常駐する。理由は `assemble` の doc、検知は `search/tests/build.rs`）を同時に更新し、全 Vec 長の同期を保つ。Wave 1 の文字列正規化は `compute_wave1` に、Wave 2 のビットマスク計算は `compute_wave2` に追加する（`new()` / `new_with_migemo()` / `new_with_cached_masks()` が共有）
 - **`kana_lower_names` / `kana_char_masks` は条件付き構築（migemo 有効時のみ）で長さ `{0, entries.len()}` の例外**:
   - `assemble` の `debug_assert!` は他 5 Vec を `== entries.len()` で検証するが、kana 系 2 Vec は「両方空 or 両方 `== entries.len()`」を許す
@@ -80,9 +82,11 @@
 
 `indexer::normalize_entry_key` は「小文字化 + `/` → `\\`」の正規化関数。**2回適用しても1回と同じ結果になる（冪等）** ことが設計契約であり、`migrate_normalize_keys_is_idempotent` テストで保証されている。以下の3モジュールが依存する:
 
-- `indexer.rs`: スキャン時の重複排除キー、IndexCache の `normalized_keys`
+- `indexer.rs`: スキャン時の重複排除キー
 - `history.rs`: 全記録・参照・マイグレーションのキー正規化
-- `search.rs`: `SearchEngine.normalized_keys` ベクタ（履歴照合用）
+- `search.rs` / `search/scoring.rs`: 履歴照合とパスマッチのキー（索引には持たず `with_normalized_key` が導出する）
+
+**規則の定義は `normalize_entry_key_into` 1 つである**（`normalize_entry_key` はその薄い包み）。記録側と照合側が同じ関数を通ることがバイト一致の根拠なので、**この関数を迂回する畳み込み比較を書かないこと**。ASCII 高速路は分岐しても結果が変わらない（ASCII 範囲では Unicode 小文字化と ASCII 小文字化が一致する）ことに依存しており、実インデックスの全パスでの一致を `tests/path_query_cost.rs` の `derives_same_bytes_as_normalize_entry_key` が固定する。
 
 この関数の正規化ルールを変更する場合は、3モジュール全てへの影響と冪等性テストを確認する。
 

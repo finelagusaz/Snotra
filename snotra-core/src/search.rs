@@ -110,8 +110,6 @@ pub struct SearchEngine {
     /// `String` の容量ワード（8B/要素）が無駄になる。`str` へ Deref するので読み取り側は無変更。
     lower_names: Vec<Box<str>>,
     lower_file_names: Vec<Option<Box<str>>>,
-    /// Pre-computed normalized keys for history lookups (one per entry).
-    normalized_keys: Vec<Box<str>>,
     /// Character-presence bitmask for lower_name (a-z: bits 0-25, 0-9: bits 26-35).
     /// Kept as a compact `Vec<u64>` — 8 entries per cache line — so the pre-filter sweep
     /// that discards non-matching candidates before scoring is L1-cache-friendly.
@@ -313,25 +311,48 @@ impl SearchEngine {
         results
     }
 
+    /// 空クエリのときに出す「最近起動した」候補。窓を開くたび・クエリを消すたびに走る。
+    ///
+    /// **照合表は探す側（履歴・高々 `max_results` 件）で組む。** 探される側（全エントリ）で
+    /// 組むと索引の規模に比例した確保が毎回走り、312,377 エントリで 65.4 ms を実測した
+    /// （`recent_launches` が返すのは既定 8 件である）。走査は 1 パスで、キーは
+    /// [`scoring::with_normalized_key`] が導出する。
     pub fn recent_history(&self, history: &HistoryStore, max_results: usize) -> Vec<SearchResult> {
-        // recent_launches() は正規化済みキーを返すため、照合側も正規化済み normalized_keys を使う
-        let path_to_entry: HashMap<&str, &AppEntry> = (0..self.entries.len())
-            .map(|i| {
-                let v = self.entry_view(i);
-                (v.normalized_key, v.entry)
-            })
+        // recent_launches() は正規化済みキーを返すため、照合側も同じ正規化を通した値で引く。
+        let recent = history.recent_launches(max_results);
+        if recent.is_empty() {
+            return Vec::new();
+        }
+        let wanted: HashMap<&str, usize> = recent
+            .iter()
+            .enumerate()
+            .map(|(rank, path)| (*path, rank))
             .collect();
 
-        history
-            .recent_launches(max_results)
-            .into_iter()
-            .filter_map(|path| {
-                path_to_entry.get(path).map(|entry| SearchResult {
-                    name: entry.name.clone(),
-                    path: entry.target_path.clone(),
-                    is_folder: entry.is_folder,
-                    is_error: false,
+        // rayon の collect は入力順を保つ。後勝ちで詰めることで、同じキーへ潰れる
+        // エントリが複数あるときの取り分けを旧実装（HashMap への後勝ち collect）と揃える。
+        let hits: Vec<(usize, &AppEntry)> = self
+            .entries
+            .par_iter()
+            .filter_map(|entry| {
+                scoring::with_normalized_key(&entry.target_path, |key| {
+                    wanted.get(key).map(|&rank| (rank, entry))
                 })
+            })
+            .collect();
+        let mut found: Vec<Option<&AppEntry>> = vec![None; recent.len()];
+        for (rank, entry) in hits {
+            found[rank] = Some(entry);
+        }
+
+        found
+            .into_iter()
+            .flatten()
+            .map(|entry| SearchResult {
+                name: entry.name.clone(),
+                path: entry.target_path.clone(),
+                is_folder: entry.is_folder,
+                is_error: false,
             })
             .collect()
     }

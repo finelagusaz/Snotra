@@ -7,27 +7,26 @@
 
 use rayon::prelude::*;
 
-use crate::indexer::{AppEntry, normalize_entry_key};
+use crate::indexer::AppEntry;
 use crate::query::{file_char_mask, lower_file_name, name_char_mask, to_kana, to_lower_folded};
 
 use super::{IncrementalCache, SearchEngine, kana_char_mask};
 
-/// Wave 1 の出力: `(lower_names, lower_file_names, normalized_keys, kana_lower_names)`。
+/// Wave 1 の出力: `(lower_names, lower_file_names, kana_lower_names)`。
 /// いずれも構築後に伸長しないため `Box<str>` で保持する（容量ワード 8B/要素を節約）。
-type Wave1Strings = (
-    Vec<Box<str>>,
-    Vec<Option<Box<str>>>,
-    Vec<Box<str>>,
-    Vec<Box<str>>,
-);
+///
+/// **`normalized_keys` はここに無い**——`target_path` からの導出に置き換えて索引から外した
+/// （実測 35.56 MiB。経緯は `PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を
+/// 保持するか導出するか」）。
+type Wave1Strings = (Vec<Box<str>>, Vec<Option<Box<str>>>, Vec<Box<str>>);
 
 /// Wave 1: entries から文字列正規化データを並列構築する。
-/// lower_names / lower_file_names / normalized_keys / kana_lower_names は
-/// entries への純粋な map であり相互依存がないため rayon::join で並列構築する。
+/// lower_names / lower_file_names / kana_lower_names は entries への純粋な map であり
+/// 相互依存がないため rayon::join で並列構築する。
 /// `migemo_enabled` が false の場合、kana_lower_names は空 Vec（migemo 無効ユーザーの
 /// 死蔵メモリを削るため、issue #337）。空 Vec の検索ループ側ガードは search_with_options 参照。
 fn compute_wave1(entries: &[AppEntry], migemo_enabled: bool) -> Wave1Strings {
-    let ((lower_names, lower_file_names), (normalized_keys, kana_lower_names)) = rayon::join(
+    let ((lower_names, lower_file_names), kana_lower_names) = rayon::join(
         || {
             rayon::join(
                 || {
@@ -45,33 +44,18 @@ fn compute_wave1(entries: &[AppEntry], migemo_enabled: bool) -> Wave1Strings {
             )
         },
         || {
-            rayon::join(
-                || {
-                    entries
-                        .iter()
-                        .map(|e| normalize_entry_key(&e.target_path).into_boxed_str())
-                        .collect::<Vec<_>>()
-                },
-                || {
-                    // migemo 無効時は kana を構築しない（空 Vec）。
-                    if migemo_enabled {
-                        entries
-                            .iter()
-                            .map(|e| to_kana(&to_lower_folded(&e.name)).into_boxed_str())
-                            .collect::<Vec<_>>()
-                    } else {
-                        Vec::new()
-                    }
-                },
-            )
+            // migemo 無効時は kana を構築しない（空 Vec）。
+            if migemo_enabled {
+                entries
+                    .iter()
+                    .map(|e| to_kana(&to_lower_folded(&e.name)).into_boxed_str())
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            }
         },
     );
-    (
-        lower_names,
-        lower_file_names,
-        normalized_keys,
-        kana_lower_names,
-    )
+    (lower_names, lower_file_names, kana_lower_names)
 }
 
 /// Wave 2: lower_names / lower_file_names からビットマスクを並列構築する。
@@ -128,7 +112,6 @@ impl SearchEngine {
         entries: Vec<AppEntry>,
         lower_names: Vec<Box<str>>,
         lower_file_names: Vec<Option<Box<str>>>,
-        normalized_keys: Vec<Box<str>>,
         char_masks: Vec<u64>,
         file_name_char_masks: Vec<u64>,
         kana: (Vec<Box<str>>, Vec<u64>),
@@ -137,13 +120,11 @@ impl SearchEngine {
         let mut entries = entries;
         let mut lower_names = lower_names;
         let mut lower_file_names = lower_file_names;
-        let mut normalized_keys = normalized_keys;
         let mut char_masks = char_masks;
         let mut file_name_char_masks = file_name_char_masks;
         entries.shrink_to_fit();
         lower_names.shrink_to_fit();
         lower_file_names.shrink_to_fit();
-        normalized_keys.shrink_to_fit();
         char_masks.shrink_to_fit();
         file_name_char_masks.shrink_to_fit();
         kana_lower_names.shrink_to_fit();
@@ -151,7 +132,6 @@ impl SearchEngine {
         debug_assert!(
             lower_names.len() == entries.len()
                 && lower_file_names.len() == entries.len()
-                && normalized_keys.len() == entries.len()
                 && char_masks.len() == entries.len()
                 && file_name_char_masks.len() == entries.len(),
             "SearchEngine: all parallel Vecs must have the same length as entries"
@@ -167,7 +147,6 @@ impl SearchEngine {
             entries,
             lower_names,
             lower_file_names,
-            normalized_keys,
             char_masks,
             file_name_char_masks,
             kana_lower_names,
@@ -188,7 +167,7 @@ impl SearchEngine {
     /// `migemo_enabled` に応じて kana_lower_names の構築要否を決めて構築する。
     /// false のとき kana は空 Vec（migemo 無効ユーザーの死蔵メモリ ~2.1–2.7MB/50k を削る）。
     pub fn new_with_migemo(entries: Vec<AppEntry>, migemo_enabled: bool) -> Self {
-        let (lower_names, lower_file_names, normalized_keys, kana_lower_names) =
+        let (lower_names, lower_file_names, kana_lower_names) =
             compute_wave1(&entries, migemo_enabled);
         let (char_masks, file_name_char_masks) = compute_wave2(&lower_names, &lower_file_names);
         let kana_char_masks = compute_kana_char_masks(&kana_lower_names);
@@ -196,7 +175,6 @@ impl SearchEngine {
             entries,
             lower_names,
             lower_file_names,
-            normalized_keys,
             char_masks,
             file_name_char_masks,
             (kana_lower_names, kana_char_masks),
@@ -206,27 +184,27 @@ impl SearchEngine {
     /// キャッシュから読み込んだデータを使って SearchEngine を構築する。
     ///
     /// - `char_masks` / `file_name_char_masks`: Wave 2 の再計算をスキップ
-    /// - `cached_lower_names` / `cached_lower_file_names` / `cached_normalized_keys`:
+    /// - `cached_lower_names` / `cached_lower_file_names`:
     ///   v4+ キャッシュヒット時に Some → Wave 1 の再計算もスキップ（A-3）
     ///   v3 フォールバック時は None → Wave 1 を通常通り並列実行
     /// - `migemo_enabled`: false のとき kana_lower_names を構築しない（空 Vec、issue #337）。
     ///   v4 パス（再計算）・v3 フォールバックの**両方**でこのフラグを反映する。
+    ///
+    /// **`normalized_keys` は受け取らない。** v5 でオンディスク形式から落とし、検索時に
+    /// `target_path` から導出する形へ移した。v4 バイト列を読んだ場合も当該フィールドは
+    /// 捨てるだけで、`lower_names` / `lower_file_names` が揃っていれば Wave 1 は
+    /// スキップされたままである（v4 ユーザーの初回起動が遅くならない）。
     pub fn new_with_cached_masks(
         entries: Vec<AppEntry>,
         char_masks: Vec<u64>,
         file_name_char_masks: Vec<u64>,
         cached_lower_names: Option<Vec<String>>,
         cached_lower_file_names: Option<Vec<Option<String>>>,
-        cached_normalized_keys: Option<Vec<String>>,
         migemo_enabled: bool,
     ) -> Self {
-        let (lower_names, lower_file_names, normalized_keys, kana_lower_names) =
-            if let (Some(ln), Some(lfn), Some(nk)) = (
-                cached_lower_names,
-                cached_lower_file_names,
-                cached_normalized_keys,
-            ) {
-                // A-3: v4 キャッシュヒット → Wave 1 完全スキップ（kana_lower_names は毎起動再計算）。
+        let (lower_names, lower_file_names, kana_lower_names) =
+            if let (Some(ln), Some(lfn)) = (cached_lower_names, cached_lower_file_names) {
+                // A-3: v4+ キャッシュヒット → Wave 1 完全スキップ（kana_lower_names は毎起動再計算）。
                 // キャッシュ由来の Vec<String> を Box<str> へ移す。postcard デシリアライズ後の
                 // String は capacity == len のため into_boxed_str は再アロケーションを伴わない。
                 // migemo 無効時は kana を再計算せず空 Vec のままにする。
@@ -246,11 +224,7 @@ impl SearchEngine {
                     .into_iter()
                     .map(|o| o.map(String::into_boxed_str))
                     .collect::<Vec<_>>();
-                let nk = nk
-                    .into_iter()
-                    .map(String::into_boxed_str)
-                    .collect::<Vec<_>>();
-                (ln, lfn, nk, kana)
+                (ln, lfn, kana)
             } else {
                 // v3 フォールバック: Wave 1 を並列実行（migemo フラグを反映）
                 compute_wave1(&entries, migemo_enabled)
@@ -261,7 +235,6 @@ impl SearchEngine {
             entries,
             lower_names,
             lower_file_names,
-            normalized_keys,
             char_masks,
             file_name_char_masks,
             (kana_lower_names, kana_char_masks),

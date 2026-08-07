@@ -166,6 +166,7 @@ cargo test -p snotra             # ユニットテスト（Tauri 統合層: stat
 cargo test -p snotra-settings    # ユニットテスト（設定 GUI の純ロジック: font face 検証・TOML エラーローカライズ）
 cargo test --release -p snotra-core bench_ -- --ignored --nocapture  # 検索パフォーマンス計測（詳細: PERFORMANCE.md）
 cargo test --release -p snotra-core --test memory_footprint -- --ignored --nocapture --test-threads=1  # 索引の常駐メモリ実測（詳細: PERFORMANCE.md）
+cargo test --release -p snotra-core --test path_query_cost -- --ignored --nocapture --test-threads=1   # パスクエリ全走査のコスト実測（詳細: PERFORMANCE.md）
 cargo check --workspace          # Rust 全 crate 型チェック
 cargo clippy --workspace --all-targets -- -D warnings  # lint チェック（カテゴリ A と同じ）
 cargo fmt --all                  # 整形の**修復**（検査は カテゴリ A の `cargo fmt --all -- --check`・#858）

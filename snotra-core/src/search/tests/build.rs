@@ -43,7 +43,6 @@ fn assemble_shrinks_parallel_vecs_to_fit() {
         Some(oversized(
             lower.iter().map(|s| Some(s.to_string())).collect(),
         )),
-        Some(oversized(owned(&lower))),
         true, // migemo 有効 = kana 系 2 本も構築される
     );
 
@@ -54,7 +53,6 @@ fn assemble_shrinks_parallel_vecs_to_fit() {
         ("entries", engine.entries.capacity()),
         ("lower_names", engine.lower_names.capacity()),
         ("lower_file_names", engine.lower_file_names.capacity()),
-        ("normalized_keys", engine.normalized_keys.capacity()),
         ("char_masks", engine.char_masks.capacity()),
         (
             "file_name_char_masks",

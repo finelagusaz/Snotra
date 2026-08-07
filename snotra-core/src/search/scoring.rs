@@ -14,7 +14,7 @@ use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32String};
 
 use crate::config::SearchHistoryNormalizationConfig;
 use crate::history::HistoryStore;
-use crate::indexer::AppEntry;
+use crate::indexer::{AppEntry, normalize_entry_key_into};
 use crate::ui_types::SearchResult;
 
 use super::{
@@ -59,19 +59,48 @@ const _: () = {
 // that allocation on every rayon chunk boundary.
 thread_local! {
     static MATCHER: RefCell<Matcher> = RefCell::new(Matcher::new(MatcherConfig::DEFAULT));
+
+    /// 正規化キーの詰め直し先。索引は `normalized_keys` を持たず（実測 35.56 MiB を削った）、
+    /// 必要な候補についてだけ `target_path` からここへ導出する。
+    /// **容量を再利用するので暖まったあとの確保は起きない。** rayon の worker ごとに 1 本ゆえ
+    /// 常駐への寄与は worker 数ぶんで、`MATCHER` と同じ形である。
+    static KEY_BUF: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+/// スレッドローカルのバッファへ `target_path` の正規化キーを詰め、`&str` として貸す。
+///
+/// **索引の `normalized_keys` を廃した後、正規化キーを得る経路はここ 1 本である**
+/// （検索の `score_one_entry` と空クエリの `recent_history` が共有する）。規則の正本は
+/// [`normalize_entry_key_into`] で、記録側（`indexer` / `history`）と同じ関数を通るため
+/// バイト一致は構成から保証される。
+///
+/// 借用は `f` の中に閉じる。`f` の戻り値へキーの参照を持ち出すことはできない
+/// （持ち出せてしまうと、次のエントリの詰め直しで内容が入れ替わる）。
+///
+/// **`f` の中からこの関数を再び呼んではならない**——`borrow_mut` の二重取得で panic する。
+/// 現在の 2 つの呼び出し点は入れ子にならないが、`f` は `history` の照合を含む長さがあるので、
+/// 中へ正規化を要する処理を足すときは外へ出すこと（誤りは沈黙せず panic として出る）。
+pub(super) fn with_normalized_key<R>(target_path: &str, f: impl FnOnce(&str) -> R) -> R {
+    KEY_BUF.with(|cell| {
+        let mut key = cell.borrow_mut();
+        normalize_entry_key_into(&mut key, target_path);
+        f(&key)
+    })
 }
 
 /// Lightweight view over per-entry fields for index `i` that are used in the scoring loop.
-/// Bundles 4 references (entry / lower_name / lower_file_name / normalized_key) without
+/// Bundles 3 references (entry / lower_name / lower_file_name) without
 /// changing the underlying SoA layout, so all cache-locality properties are preserved.
 /// `char_masks` / `file_name_char_masks` / `kana_lower_names` / `kana_char_masks` are accessed
 /// directly from SearchEngine in the scoring closure (same SoA pattern, intentionally excluded
 /// from EntryView).
+///
+/// `normalized_key` はここに無い——索引から外し `KEY_BUF` へ導出する形へ移した
+/// （`PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を保持するか導出するか」）。
 pub(super) struct EntryView<'a> {
     pub(super) entry: &'a AppEntry,
     pub(super) lower_name: &'a str,
     pub(super) lower_file_name: Option<&'a str>,
-    pub(super) normalized_key: &'a str,
 }
 
 /// 並列 top-k ヒープで使う、借用ベースのスコア済みエントリ。
@@ -252,7 +281,6 @@ impl SearchEngine {
             entry: &self.entries[i],
             lower_name: &self.lower_names[i],
             lower_file_name: self.lower_file_names[i].as_deref(),
-            normalized_key: &self.normalized_keys[i],
         }
     }
 
@@ -373,44 +401,56 @@ impl SearchEngine {
 
         let score = primary_score.or(kana_score);
 
-        // パスマッチ: name/file_name/kana 全て不成立時のフォールバック。
-        // normalized_key は normalize_entry_key() で小文字化 + パス区切り正規化済み。
-        // スコア PATH_BASE(3000) は Kana(4500) より低く、名前マッチを常に優先する。
-        let score = score.or_else(|| {
-            plan.path_query.as_deref().and_then(|pq| {
-                let pos = v.normalized_key.find(pq)?;
-                Some((score_tier::PATH_BASE - (pos as i64).min(score_tier::PATH_POS_CAP)).max(1))
+        // **正規化キーが要る候補だけを先に切り分ける。** 索引は `normalized_keys` を持たず
+        // `target_path` から導出するため、ここを素通りさせると bitmask を通っただけの
+        // 不一致候補にまで導出コストが乗る（旧実装が `normalized_key` を読まずに
+        // `score?` で抜けていた経路と同じ形を保つ）。キーが要るのは 2 通りだけ:
+        // パスマッチ（name/file/kana 全滅かつパスクエリあり）と、マッチ成立後の履歴照合。
+        if score.is_none() && plan.path_query.is_none() {
+            return None;
+        }
+
+        // 1 エントリにつき 1 回だけ詰める——下のパスマッチと履歴照合 3 種が同じ結果を見る。
+        with_normalized_key(&v.entry.target_path, |key| {
+            // パスマッチ: name/file_name/kana 全て不成立時のフォールバック。
+            // スコア PATH_BASE(3000) は Kana(4500) より低く、名前マッチを常に優先する。
+            let score = score.or_else(|| {
+                plan.path_query.as_deref().and_then(|pq| {
+                    let pos = key.find(pq)?;
+                    Some(
+                        (score_tier::PATH_BASE - (pos as i64).min(score_tier::PATH_POS_CAP)).max(1),
+                    )
+                })
+            });
+
+            let base_score = score?;
+
+            let (global_launches, last_launched) = history.get_global_stats_normalized(key);
+            // 履歴キーは record_launch の保存形式に合わせる:
+            // normalize_query() + パス区切り統一。path_query は生クエリベースで
+            // スペース/アクセントが異なるため履歴キーには使わない。
+            let history_query_key = plan.path_history_key.as_deref().unwrap_or(norm_query_str);
+            let qcount = history.query_count_pre_normalized(history_query_key, key) as i64;
+
+            let folder_boost = if v.entry.is_folder {
+                history.folder_expansion_count_normalized(key) as i64 * FOLDER_EXPANSION_WEIGHT
+            } else {
+                0
+            };
+
+            let raw_history_boost =
+                (global_launches as i64) * GLOBAL_WEIGHT + qcount * QUERY_WEIGHT + folder_boost;
+            let history_boost =
+                adjusted_history_boost(mode, base_score, raw_history_boost, options);
+            let combined = base_score + history_boost;
+
+            Some(ScoredEntry {
+                score: combined,
+                last_launched,
+                lower_name: v.lower_name,
+                path: &v.entry.target_path,
+                index: i,
             })
-        });
-
-        let base_score = score?;
-
-        let (global_launches, last_launched) =
-            history.get_global_stats_normalized(v.normalized_key);
-        // 履歴キーは record_launch の保存形式に合わせる:
-        // normalize_query() + パス区切り統一。path_query は生クエリベースで
-        // スペース/アクセントが異なるため履歴キーには使わない。
-        let history_query_key = plan.path_history_key.as_deref().unwrap_or(norm_query_str);
-        let qcount = history.query_count_pre_normalized(history_query_key, v.normalized_key) as i64;
-
-        let folder_boost = if v.entry.is_folder {
-            history.folder_expansion_count_normalized(v.normalized_key) as i64
-                * FOLDER_EXPANSION_WEIGHT
-        } else {
-            0
-        };
-
-        let raw_history_boost =
-            (global_launches as i64) * GLOBAL_WEIGHT + qcount * QUERY_WEIGHT + folder_boost;
-        let history_boost = adjusted_history_boost(mode, base_score, raw_history_boost, options);
-        let combined = base_score + history_boost;
-
-        Some(ScoredEntry {
-            score: combined,
-            last_launched,
-            lower_name: v.lower_name,
-            path: &v.entry.target_path,
-            index: i,
         })
     }
 }

@@ -84,8 +84,11 @@ impl HistoryStore {
     /// 再起動なしで反映され、`HistoryStore.top_n` の焼き込みによるドリフトが構造的に発生しない。
     ///
     /// **ユニットテストの fixture にこれを使わないこと**——実 `%APPDATA%\Snotra\history.bin` を
-    /// 読むため開発者のマシン状態でテスト結果が変わる。空が欲しいなら [`Self::empty`]、
+    /// 読むため開発者のマシン状態でテスト結果が変わる。空が欲しいなら `Self::empty`、
     /// 特定の内容が欲しいなら [`Self::load_in`] に注入する（理由の全文は `empty` の doc・#963）。
+    ///
+    /// （`Self::empty` を intra-doc link にしないのは `#[cfg(test)]` ゆえ非 test ビルドの
+    /// rustdoc から見えず、`broken_intra_doc_links = "deny"` で CI が落ちるため）
     pub fn load() -> Self {
         match Config::config_dir() {
             Some(dir) => Self::load_in(&dir),

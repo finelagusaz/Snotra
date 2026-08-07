@@ -180,8 +180,48 @@ enum ParentLookup {
     /// 同上を rayon で並列に回す。導出（親と拡張子）は互いに独立ゆえ分割でき、
     /// `SearchEngine` 構築の他の段（Wave 1/2）が既に rayon 並列であるのと同じ形になる。
     BinarySearchParallel,
+    /// 上に加えて**直前に解決した親を使い回す**。ソート順では兄弟がほぼ連続するため、
+    /// 大半の要素は 1 回の文字列比較で探索そのものを飛ばせる（賭けの成否は実測で出す）。
+    CachedParallel,
     /// 任意順を受け付ける照合表（ソートされていない入力用のフォールバック）。
     HashMap,
+}
+
+/// 直前に解決した親を憶えておく move-to-front の小さなキャッシュ。**ソート順で連続処理する
+/// ときだけ意味がある**——兄弟は連続して現れるので、同じ親を何度も探索し直すのが元の無駄である。
+///
+/// 部分木が割り込むと外れる（`dir\a`, `dir\a\x`, `dir\b` で `dir` が押し出される）ため、
+/// 直近の祖先の鎖を覆えるだけの段数が要る。**段数は実測で決めた**（312,377 件・並列・
+/// 各 3 回の最小値）: 2 段 25.3 ms / **4 段 23.8 ms** / 8 段 25.6 ms。深さの平均は 6.05 段
+/// だが、8 段では `get` の線形走査が伸びて損が勝つ。
+#[derive(Default)]
+struct ParentCache<'a> {
+    slots: [Option<(&'a str, usize)>; 4],
+}
+
+impl<'a> ParentCache<'a> {
+    fn get(&self, par: &str) -> Option<usize> {
+        self.slots
+            .iter()
+            .flatten()
+            .find(|(p, _)| *p == par)
+            .map(|(_, i)| *i)
+    }
+
+    /// 既に居るものは前へ出すだけで増やさない——同じ親が複数の段を占めると、
+    /// 実効の段数が減って割り込みに弱くなる。
+    fn put(&mut self, par: &'a str, i: usize) {
+        if let Some(pos) = self
+            .slots
+            .iter()
+            .position(|s| s.map(|(p, _)| p) == Some(par))
+        {
+            self.slots[..=pos].rotate_right(1);
+            return;
+        }
+        self.slots.rotate_right(1);
+        self.slots[0] = Some((par, i));
+    }
 }
 
 impl TreeIndex {
@@ -193,7 +233,7 @@ impl TreeIndex {
             .windows(2)
             .all(|w| w[0].target_path <= w[1].target_path)
         {
-            ParentLookup::BinarySearchParallel
+            ParentLookup::CachedParallel
         } else {
             ParentLookup::HashMap
         }
@@ -217,7 +257,9 @@ impl TreeIndex {
         };
         let find_parent = |par: &str| -> Option<usize> {
             match lookup {
-                ParentLookup::BinarySearch | ParentLookup::BinarySearchParallel => entries
+                ParentLookup::BinarySearch
+                | ParentLookup::BinarySearchParallel
+                | ParentLookup::CachedParallel => entries
                     .binary_search_by(|e| e.target_path.as_str().cmp(par))
                     .ok(),
                 ParentLookup::HashMap => by_path.get(par).copied(),
@@ -230,13 +272,37 @@ impl TreeIndex {
 
         // 並列版は導出（親と拡張子・互いに独立）だけ rayon へ出し、intern は後段で 1 回だけ
         // 直列に通す。**構築の他の段（Wave 1/2）は既に rayon 並列ゆえ、これが製品の形である。**
-        if lookup == ParentLookup::BinarySearchParallel {
-            let resolved: Vec<(i32, &str)> = (0..entries.len())
+        //
+        // 分割は要素ごとではなく**連続した塊ごと**にする。直前に解決した親の使い回し
+        // （`ParentCache`）は隣り合う要素が同じ親を持つことに賭けるので、要素を撒くと賭けが
+        // 成立しない。塊の境界でだけキャッシュが冷たくなる。
+        if matches!(
+            lookup,
+            ParentLookup::BinarySearchParallel | ParentLookup::CachedParallel
+        ) {
+            const CHUNK: usize = 8192;
+            let use_cache = lookup == ParentLookup::CachedParallel;
+            let starts: Vec<usize> = (0..entries.len()).step_by(CHUNK).collect();
+            let resolved: Vec<(i32, &str)> = starts
                 .into_par_iter()
-                .map(|i| match resolve_one(entries, &find_parent, i) {
-                    Some((pi, ext)) => (pi as i32, ext),
-                    None => (-1, ""),
+                .map(|start| {
+                    let end = (start + CHUNK).min(entries.len());
+                    let mut cache = ParentCache::default();
+                    (start..end)
+                        .map(|i| {
+                            let hit = if use_cache {
+                                resolve_one_cached(entries, &find_parent, i, &mut cache)
+                            } else {
+                                resolve_one(entries, &find_parent, i)
+                            };
+                            match hit {
+                                Some((pi, ext)) => (pi as i32, ext),
+                                None => (-1, ""),
+                            }
+                        })
+                        .collect::<Vec<_>>()
                 })
+                .flatten()
                 .collect();
             for (i, (pi, ext)) in resolved.into_iter().enumerate() {
                 parent[i] = pi;
@@ -281,6 +347,35 @@ impl TreeIndex {
 fn resolve_one<'a>(
     entries: &'a [AppEntry],
     find_parent: &impl Fn(&str) -> Option<usize>,
+    i: usize,
+) -> Option<(usize, &'a str)> {
+    resolve_one_with(entries, &mut |par| find_parent(par), i)
+}
+
+/// 上のキャッシュ付き版。**探索そのものを飛ばす**のが狙いで、外れたときだけ `find_parent`
+/// へ落ちる。キャッシュへ入れるのは解決できた親だけ（不在の親を憶えても引き直しが減らない）。
+fn resolve_one_cached<'a>(
+    entries: &'a [AppEntry],
+    find_parent: &impl Fn(&str) -> Option<usize>,
+    i: usize,
+    cache: &mut ParentCache<'a>,
+) -> Option<(usize, &'a str)> {
+    let mut lookup = |par: &'a str| -> Option<usize> {
+        if let Some(hit) = cache.get(par) {
+            return Some(hit);
+        }
+        let pi = find_parent(par)?;
+        cache.put(par, pi);
+        Some(pi)
+    };
+    resolve_one_with(entries, &mut lookup, i)
+}
+
+/// 親の引き方を差し替えられる導出本体。**パスの切り分けはここ 1 か所**であり、
+/// キャッシュの有無で切り分け規則が枝分かれしないようにしている。
+fn resolve_one_with<'a>(
+    entries: &'a [AppEntry],
+    find_parent: &mut impl FnMut(&'a str) -> Option<usize>,
     i: usize,
 ) -> Option<(usize, &'a str)> {
     let e = &entries[i];
@@ -437,6 +532,7 @@ fn measure_tree_build_cost() {
         ParentLookup::HashMap,
         ParentLookup::BinarySearch,
         ParentLookup::BinarySearchParallel,
+        ParentLookup::CachedParallel,
     ] {
         let mut best = f64::MAX;
         for _ in 0..3 {
@@ -454,6 +550,7 @@ fn measure_tree_build_cost() {
     for other in [
         ParentLookup::BinarySearch,
         ParentLookup::BinarySearchParallel,
+        ParentLookup::CachedParallel,
     ] {
         let b = TreeIndex::build_with(&entries, other);
         assert_eq!(a.parent, b.parent, "{other:?} が照合表と違う木を作っている");

@@ -149,6 +149,256 @@ fn sweep_derived(
     (start.elapsed().as_secs_f64() * 1000.0, hits)
 }
 
+// ---------------------------------------------------------------------------
+// 木表現（親 index + 末尾成分）の再構築コスト
+// ---------------------------------------------------------------------------
+
+/// `target_path` を「親 index + 末尾成分」で持つ案を、**コストを測るためだけに**最小再現する。
+/// 製品にこの形はまだ無い——本ハーネスは実装前の見積もりを取るためにある。
+///
+/// 末尾成分は folder なら `name` そのもの、file なら `name` + intern した拡張子。どちらも
+/// 実データで 100% 成立することを `tests/memory_footprint.rs` の構造前提が測っている。
+struct TreeIndex {
+    /// 親の index。`-1` は親を持たない（製品では側テーブルにフルパスを持つ・実データで 96 件）。
+    parent: Vec<i32>,
+    /// 拡張子 intern 表の id。folder と拡張子なし file は `0`（空文字）。
+    ext_id: Vec<u16>,
+    ext_table: Vec<String>,
+}
+
+impl TreeIndex {
+    fn build(entries: &[AppEntry]) -> Self {
+        use std::collections::HashMap;
+
+        let by_path: HashMap<&str, usize> = entries
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (e.target_path.as_str(), i))
+            .collect();
+        let mut parent = vec![-1i32; entries.len()];
+        let mut ext_id = vec![0u16; entries.len()];
+        let mut ext_table = vec![String::new()];
+        let mut ext_ids: HashMap<&str, u16> = HashMap::new();
+
+        for (i, e) in entries.iter().enumerate() {
+            let p = std::path::Path::new(&e.target_path);
+            let (Some(par), Some(tail)) = (
+                p.parent().and_then(|x| x.to_str()),
+                p.file_name().and_then(|x| x.to_str()),
+            ) else {
+                continue;
+            };
+            let Some(&pi) = by_path.get(par) else {
+                continue;
+            };
+            // 再構築がバイト一致しないものは木へ入れず側テーブル行きにする
+            // （実データでは 0 件だが、成立を仮定せず毎回確かめる）。
+            let mut rebuilt = String::with_capacity(par.len() + 1 + tail.len());
+            rebuilt.push_str(par);
+            if !par.ends_with(['\\', '/']) {
+                rebuilt.push('\\');
+            }
+            rebuilt.push_str(tail);
+            if rebuilt != e.target_path {
+                continue;
+            }
+            let Some(ext) = tail.strip_prefix(e.name.as_str()) else {
+                continue;
+            };
+            parent[i] = pi as i32;
+            if !ext.is_empty() {
+                let id = *ext_ids.entry(ext).or_insert_with(|| {
+                    ext_table.push(ext.to_string());
+                    (ext_table.len() - 1) as u16
+                });
+                ext_id[i] = id;
+            }
+        }
+        Self {
+            parent,
+            ext_id,
+            ext_table,
+        }
+    }
+}
+
+/// 1 セグメントを `/` → `\` だけ直して**追記**する（`clear` も `trim` も小文字化もしない）。
+///
+/// **ASCII は一括で動かす。** 1 文字ずつ `push` すると `String: Extend<char>` が毎回 UTF-8
+/// 符号化の分岐を通り 2.5-3 倍遅くなる——`normalize_entry_key_into` が明記している落とし穴で
+/// あり、計器がここを踏むと木の再構築コストではなく**書き方の差**を測ってしまう（実際に踏んだ）。
+/// ASCII の小文字化は呼び出し側が最後に 1 回 `make_ascii_lowercase` でまとめて当てる。
+fn push_segment(buf: &mut String, s: &str) {
+    if s.is_ascii() {
+        let mut rest = s;
+        while let Some(pos) = rest.find('/') {
+            buf.push_str(&rest[..pos]);
+            buf.push('\\');
+            rest = &rest[pos + 1..];
+        }
+        buf.push_str(rest);
+    } else {
+        // 非 ASCII はここで小文字化まで済ませる。末尾の `make_ascii_lowercase` は ASCII バイト
+        // しか触らないため、ここで書いた結果に二重適用しても変わらない（冪等）。
+        for ch in s.chars() {
+            if ch == '/' {
+                buf.push('\\');
+            } else {
+                buf.extend(ch.to_lowercase());
+            }
+        }
+    }
+}
+
+/// 木を辿って正規化キーを組み立てる。**再構築 → 正規化の二段払いにはしない**——
+/// 正規化バッファへ直接書き出す 1 パスであり、増分はセグメントぶんのランダム読みだけである。
+/// これが出荷する形ゆえ、測る対象もこれにする。
+fn reconstruct_normalized_into(buf: &mut String, entries: &[AppEntry], tree: &TreeIndex, i: usize) {
+    // 根まで辿って段を積む。深さは実データで最大 17 段（`memory_footprint.rs` 実測）。
+    let mut stack = [0u32; 64];
+    let mut depth = 0usize;
+    let mut cur = i;
+    while tree.parent[cur] >= 0 && depth < stack.len() {
+        stack[depth] = cur as u32;
+        depth += 1;
+        cur = tree.parent[cur] as usize;
+    }
+    buf.clear();
+    // 根（製品では側テーブルのフルパス）。`trim` は現物が全体に当てるのと同じ規則で、
+    // 先頭側はここ・末尾側は最終セグメントが担う。
+    push_segment(buf, entries[cur].target_path.trim());
+    for d in (0..depth).rev() {
+        let idx = stack[d] as usize;
+        if buf.as_bytes().last() != Some(&b'\\') {
+            buf.push('\\');
+        }
+        push_segment(buf, &entries[idx].name);
+        let ext = &tree.ext_table[tree.ext_id[idx] as usize];
+        if !ext.is_empty() {
+            push_segment(buf, ext);
+        }
+    }
+    buf.make_ascii_lowercase();
+}
+
+/// 木からの再構築が現物と 1 バイトも違わないことを、実インデックスの全パスで固定する。
+/// **ここがずれると以降の測定値は別物の計測になる**（`derives_same_bytes_as_normalize_entry_key`
+/// と同じ役割で、対象が木表現の側）。
+#[test]
+fn tree_reconstruction_derives_same_bytes_as_normalize_entry_key() {
+    let Some((entries, _)) = load_real_index() else {
+        println!("実インデックスが無いためスキップします。");
+        return;
+    };
+    let tree = TreeIndex::build(&entries);
+    let mut buf = String::new();
+    let mut rooted = 0usize;
+    for (i, entry) in entries.iter().enumerate() {
+        let expected = indexer::normalize_entry_key(&entry.target_path);
+        reconstruct_normalized_into(&mut buf, &entries, &tree, i);
+        assert_eq!(
+            buf, expected,
+            "木からの再構築がずれている: {}",
+            entry.target_path
+        );
+        if tree.parent[i] < 0 {
+            rooted += 1;
+        }
+    }
+    println!(
+        "{} 件のパスで木からの再構築が現物と一致しました（側テーブル行き {rooted} 件・{:.1}%・\
+         intern した拡張子 {} 種）。",
+        entries.len(),
+        rooted as f64 * 100.0 / entries.len() as f64,
+        tree.ext_table.len() - 1,
+    );
+}
+
+/// 木表現側の全件走査。`sweep_derived` と同条件（同じ needle・同じ `par_iter`・
+/// 同じスレッドローカルバッファ）で測る。
+fn sweep_tree(entries: &[AppEntry], tree: &TreeIndex, needle: &str) -> (f64, usize) {
+    let start = Instant::now();
+    let hits = (0..entries.len())
+        .into_par_iter()
+        .filter(|&i| {
+            KEY_BUF.with(|cell| {
+                let mut buf = cell.borrow_mut();
+                reconstruct_normalized_into(&mut buf, entries, tree, i);
+                buf.contains(needle)
+            })
+        })
+        .count();
+    (start.elapsed().as_secs_f64() * 1000.0, hits)
+}
+
+/// `recent_history` と**同じ形**の全件走査（キー導出 → 照合表への hash 引き）を、現行の導出と
+/// 木からの再構築で同条件に測る。パスクエリ側は `contains` で終わるのに対しこちらは hash 引きで
+/// 終わる——キー導出の増分がこの形でも同じ額かは、片方を測って他方へ外挿してよい話ではない。
+fn sweep_recent_shape(
+    entries: &[AppEntry],
+    tree: Option<&TreeIndex>,
+    wanted: &std::collections::HashMap<&str, usize>,
+) -> (f64, usize) {
+    let start = Instant::now();
+    let hits = (0..entries.len())
+        .into_par_iter()
+        .filter(|&i| {
+            KEY_BUF.with(|cell| {
+                let mut buf = cell.borrow_mut();
+                match tree {
+                    Some(t) => reconstruct_normalized_into(&mut buf, entries, t, i),
+                    None => indexer::normalize_entry_key_into(&mut buf, &entries[i].target_path),
+                }
+                wanted.contains_key(buf.as_str())
+            })
+        })
+        .count();
+    (start.elapsed().as_secs_f64() * 1000.0, hits)
+}
+
+/// 窓を開くたびに走る `recent_history` の形で、木表現の増分を測る。
+#[test]
+#[ignore = "計測専用。release + --nocapture で手動実行する"]
+fn measure_recent_history_shape_with_tree() {
+    let Some((entries, _)) = load_real_index() else {
+        println!("実 config に scan パスが無いため計測をスキップします。");
+        return;
+    };
+    let config = Config::load();
+    let history = HistoryStore::load();
+    let limit = config.search.recent_limit.unwrap_or(8);
+    let recent = history.recent_launches(limit);
+    let wanted: std::collections::HashMap<&str, usize> = recent
+        .iter()
+        .enumerate()
+        .map(|(rank, path)| (*path, rank))
+        .collect();
+    let tree = TreeIndex::build(&entries);
+    let n = entries.len();
+
+    println!(
+        "\n=== recent_history の形の全件走査（実 index.bin・{n} 件・照合表 {} 件）===",
+        wanted.len()
+    );
+    let (mut best_now, mut best_tree) = (f64::MAX, f64::MAX);
+    let (mut h_now, mut h_tree) = (0usize, 0usize);
+    for _ in 0..3 {
+        let (ms, h) = sweep_recent_shape(&entries, None, &wanted);
+        best_now = best_now.min(ms);
+        h_now = h;
+        let (ms, h) = sweep_recent_shape(&entries, Some(&tree), &wanted);
+        best_tree = best_tree.min(ms);
+        h_tree = h;
+    }
+    assert_eq!(h_now, h_tree, "現行と木で一致数が違う（再現がずれている）");
+    println!(
+        "  現行の導出 {best_now:.1} ms / 木からの再構築 {best_tree:.1} ms（{:+.1} ms・{:.2}x）\
+         、一致 {h_now} 件",
+        best_tree - best_now,
+        best_tree / best_now,
+    );
+}
+
 /// 空クエリ（窓を開いた瞬間・クエリ消去時）に走る `recent_history` の実コスト。
 ///
 /// `recent_launches` が返すのは高々 `recent_limit` 件（既定 8）だが、現行の実装は照合表を
@@ -203,8 +453,12 @@ fn measure_path_query_sweep_cost() {
         return;
     };
     let n = entries.len();
+    let tree = TreeIndex::build(&entries);
     println!("\n=== パスクエリ全走査のコスト（実 index.bin・{n} 件）===");
-    println!("  needle              保持 (ms)  導出:素 (ms)  導出:ASCII (ms)  ASCII 倍率   hits");
+    println!(
+        "  needle              保持 (ms)  導出:素 (ms)  導出:ASCII (ms)  木:再構築 (ms)  \
+         木/導出   hits"
+    );
 
     // 一致数が 0 のもの・多いものを混ぜる。`find` は一致で打ち切るため、
     // **一致が多いほど走査は速く終わる**——一致数を併記しないと倍率を読み違える。
@@ -218,6 +472,7 @@ fn measure_path_query_sweep_cost() {
         let mut best_pre = f64::MAX;
         let mut best_plain = f64::MAX;
         let mut best_fast = f64::MAX;
+        let mut best_tree = f64::MAX;
         let mut hits = 0usize;
         for _ in 0..3 {
             let (ms, h) = sweep_prebuilt(&keys, needle);
@@ -229,10 +484,16 @@ fn measure_path_query_sweep_cost() {
             let (ms, h3) = sweep_derived(&entries, needle, normalize_into_ascii_fast);
             best_fast = best_fast.min(ms);
             assert_eq!(h, h3, "保持と導出:ASCII で一致数が違う（写しがずれている）");
+            let (ms, h4) = sweep_tree(&entries, &tree, needle);
+            best_tree = best_tree.min(ms);
+            assert_eq!(h, h4, "保持と木:再構築 で一致数が違う（再現がずれている）");
         }
+        // 比べる相手は「保持」ではなく**現行の導出**である——`normalized_keys` は v5 で
+        // 既に無く、木表現が置き換えるのは導出:ASCII の側だからである。
         println!(
-            "  {needle:<20}{best_pre:>9.1}{best_plain:>13.1}{best_fast:>16.1}{:>12.2}x{hits:>7}",
-            best_fast / best_pre,
+            "  {needle:<20}{best_pre:>9.1}{best_plain:>13.1}{best_fast:>16.1}{best_tree:>15.1}\
+             {:>9.2}x{hits:>7}",
+            best_tree / best_fast,
         );
     }
 }

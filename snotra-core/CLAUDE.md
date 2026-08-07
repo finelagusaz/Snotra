@@ -49,6 +49,7 @@
 - `ui_types.rs`
 - `tests/search_frame_cost.rs`（crate ルート統合テスト）: #634 G-SYNC の `Engine::search` facade フレームコスト実測ハーネス（`#[ignore]`・手元 release 実行専用。`search/tests/performance.rs` との層の区別は `//!`）
 - `tests/memory_footprint.rs`（crate ルート統合テスト）: 索引の常駐ヒープをアロケータ実測で取るハーネス（`#[ignore]`・手元 release 実行専用。責務は `//!`、計測値は `PERFORMANCE.md`）
+- `tests/path_query_cost.rs`（crate ルート統合テスト）: パスクエリ（`has_path_sep`）全走査のコスト実測ハーネス（`#[ignore]`・手元 release 実行専用。責務は `//!`、計測値は `PERFORMANCE.md`）。**`normalized_keys` を保持するか導出するかの差を測る唯一の計器**であり、既存の bench 群はパス区切りを含むクエリを 1 つも持たない
 
 ## 開発ルール
 

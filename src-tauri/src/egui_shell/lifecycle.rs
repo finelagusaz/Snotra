@@ -28,6 +28,12 @@ pub(crate) fn plan_hotkey(visible: bool, alt_pressed: bool, hotkey_toggle: bool)
 const BLUR_GRACE: Duration = Duration::from_millis(100);
 
 /// blur 猶予のこのフレームでの処置（#711・契約③）。
+///
+/// **`#[must_use]` は関数ではなく型に付けてある**（#934 で `BlurGrace::observe` のメソッド段から
+/// 移した）——危ういのは「この値を落とすこと」であって特定の関数ではないため、自由関数
+/// `blur_grace_action` も同じ強制を受ける。配置の規約と受容残余の正本は
+/// `src-tauri/CLAUDE.md`「処置を返す純粋核の強制」。
+#[must_use = "driver が処置を実行しないと hide 要求・repaint 再予約が黙って消える（#745・#934）"]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BlurAction {
     /// 猶予明け + 条件成立 → hide を要求する。
@@ -145,7 +151,8 @@ impl BlurGrace {
     /// 副作用（`emit_hide` / `request_repaint_after`）は呼び出し側が持つ。**`auto_hide` は
     /// 値渡しである**（実行中 config の毎フレーム live-read・#576）——遅延評価やキャッシュを
     /// 選ばなかった理由は `ADR-blur-grace-single-field-state-machine`。
-    #[must_use]
+    ///
+    /// **`#[must_use]` はここではなく `BlurAction` の型宣言に在る**（#934 で移した）。
     pub(crate) fn observe(&mut self, focused: bool, now: Instant, auto_hide: bool) -> BlurAction {
         if focused {
             *self = Self::Focused;

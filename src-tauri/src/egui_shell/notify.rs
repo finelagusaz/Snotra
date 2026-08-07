@@ -74,6 +74,16 @@ impl NoticeSlot {
     }
 
     /// 期限切れならクリアして true（表示が変わった＝repaint 要）を返す。
+    ///
+    /// **落として stale 表示になるかは呼び出し点に依る。** 現行の唯一の production 呼び出し点
+    /// （`launcher_controller::poll_async`）は `update()` の中で、status 行が `notice_message()` を
+    /// 読むより前に走るため、クリアは同じフレームの paint に乗る——**この呼び出し点では表示の stale は
+    /// 起きない**（status 行の消滅は窓高も変えるため、そのリサイズを誰が再描画するかは未測。
+    /// 「落ちるのは 1 フレームだけ」とまでは測っていない）。**paint より後（遅延 dispatch）や worker
+    /// から poll するなら**表示が stale のまま次の無関係な入力まで残る
+    /// （`src-tauri/CLAUDE.md`「イベント駆動 wake の不変条件」。`UpdaterUi::dismiss` 側は遅延
+    /// dispatch ゆえ実際にそうなる）。
+    #[must_use = "期限切れの検知を落とすと repaint が撃たれない——paint 後（遅延 dispatch）や worker から poll するなら表示が stale のまま次の無関係な入力まで残る（#934）"]
     pub fn poll(&mut self, now: Duration) -> bool {
         if let Some((_, expires)) = &self.current
             && now >= *expires
@@ -168,6 +178,14 @@ impl<U> Default for UpdaterUi<U> {
 impl<U> UpdaterUi<U> {
     /// `[今すぐ更新]`: Available{can_install} のときだけ Update を取り出し Installing へ原子遷移。
     /// それ以外（二重クリック・Installing 中・dismissed 済）は None。
+    ///
+    /// **`Some` を落とすと install 不能で固着する**——`Update` を取り出して phase を `Installing`
+    /// にした**後**に返すため、Available へ戻す経路が無い（#934）。`Installing` に入ると `toast()` は
+    /// ボタン無効で出続け、`dismiss` も Installing 中は拒否するので **toast すら消せない**。
+    /// **`egui_shell/` の「処置を返す純粋核」で、プロセスの再起動まで回復経路が無いのはここだけである**
+    /// （`consume_reset_pending` も one-shot だが回復は次の show で来る）。**ただし `#[must_use]` が捕まえるのは
+    /// 「一度も見なかった」だけである**——`if ….is_some() { }` は「使用」と判定され `Update` は失われる。
+    #[must_use = "Update を取り出し phase を Installing にした後ゆえ、落とすと install 不能で固着する（#934）"]
     pub fn try_begin_install(&mut self) -> Option<U> {
         if self.dismissed {
             return None;
@@ -203,6 +221,15 @@ impl<U> UpdaterUi<U> {
     }
 
     /// `[閉じる]`: Installing 中は拒否（false）。それ以外は dismissed を立て true。
+    /// **荷を負うのは `true`（dismiss 成立）の側である**——`false`（Installing 中の拒否）を区別せず
+    /// repaint してしまうのは余分な 1 フレームだけで無害（呼び出し点のコメントが明言）。落として
+    /// 困るのは `dismissed` が立ったのに repaint が撃たれない場合である。
+    ///
+    /// **結末が呼び出し点に依るのは `NoticeSlot::poll` と同じである**（同じ機構ゆえ非対称にしない）:
+    /// 現行の唯一の production 呼び出し点 `handle_toast_action` は paint 後の遅延 dispatch なので
+    /// このフレームの描画は既に終わっており、旧 toast が次の無関係な入力まで残る。`update()` の中の
+    /// 読みより前から呼ぶなら同フレームの paint に乗る。
+    #[must_use = "true（dismiss 成立）を落とすと repaint が撃たれず、旧 toast が次の無関係な入力まで残る（遅延 dispatch ゆえこのフレームの描画は既に終わっている・#934）"]
     pub fn dismiss(&mut self) -> bool {
         if matches!(self.phase, UpdaterPhase::Installing) {
             return false;

@@ -911,9 +911,11 @@ impl LauncherController {
     // ---- `update()` の各段から落ちる遷移（呼ぶ順序を決めるのは `view.rs` である）------------
 
     /// 段 3: show 直後の resetForShow を消費し、**今フレームが reset フレームなら `true`**。
-    /// 返り値を落としてはならない——同一フレームの `ResultsWindow::reset_size_guard()` は
+    /// **返り値の破棄は `#[must_use]` が禁じる**（#934。それまでこの散文が唯一の歯止めだった）——
+    /// 同一フレームの `ResultsWindow::reset_size_guard()` は
     /// view 側に残る（#749 の位置不変条件・理由は `view.rs` の呼び出し点のコメント）ため、
     /// view が reset フレームを知る手段はこの返り値だけである。
+    #[must_use = "消費（swap(false)）した後に reset フレームを知る手段はこの返り値だけである（#749 の位置不変条件・#934）"]
     pub(super) fn consume_reset_pending(&mut self) -> bool {
         // show 直後の resetForShow（EguiShellState.reset_pending を消費）。stale な debounce
         // armed 状態が再表示後に誤発火しないよう、debounce も併せて作り直す。
@@ -1038,7 +1040,7 @@ impl LauncherController {
     /// 段 15: Escape の処置（呼ぶのは `key_pressed(Escape)` が真のフレームだけ）。
     /// folder から展開前 query を復元した場合だけ `true` を返す。view はこの信号で、同じ
     /// TextEdit id に残るキャレットを復元 query の末尾へ同期する（#840）。
-    #[must_use]
+    #[must_use = "キャレット同期の信号を落とすと、復元した query の末尾へキャレットが寄らない（#840）"]
     pub(super) fn on_escape_pressed(&mut self, ctx: &egui::Context) -> bool {
         // Escape ラダー（folder 中は展開前状態へ復帰、top-level は hide 要求・#532 SU3 M2）。
         // TextEdit より前に ctx から拾うので入力欄に focus があっても届く。

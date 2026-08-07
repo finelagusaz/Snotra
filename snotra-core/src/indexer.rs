@@ -1114,6 +1114,13 @@ fn read_user_path() -> Option<String> {
 /// `normalize_entry_key(a) == normalize_entry_key(b)` ならこのキーも必ず一致する
 /// （＝**偽陰性を出さない**）。逆は成り立たない——別ディレクトリの同名ファイルが
 /// 通り抜けるので、通した候補はフルパスの正規化キーで確かめること。
+///
+/// **前提を 1 つ名指しする。** [`normalize_entry_key_into`] は ASCII 高速路を持ち、
+/// フルパスとその末尾セグメントは**別の分岐を通りうる**（フルパスに非 ASCII が混じり、
+/// ファイル名だけ ASCII の場合）。上の論証が成り立つのは、**両分岐が ASCII 入力に対して
+/// 同じ結果を出すから**である（同関数の doc が根拠を持ち、実インデックスの全パスでの
+/// 一致を `tests/path_query_cost.rs` の `derives_same_bytes_as_normalize_entry_key` が
+/// 固定する）。高速路の条件を触るときは、この篩の健全性も同時に崩れうる。
 fn normalize_file_name_key_into(buf: &mut String, target_path: &str) {
     let trimmed = target_path.trim();
     let segment = match trimmed.rfind(['\\', '/']) {

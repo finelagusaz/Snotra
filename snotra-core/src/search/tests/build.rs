@@ -4,7 +4,7 @@
 //! ここはその 1 点を守る。
 
 use super::common::{make_entries, real_index_entries};
-use crate::indexer::AppEntry;
+use crate::indexer::{AppEntry, CachedLower, LowerFileName};
 use crate::search::*;
 
 /// `len` より大きい容量を持つ Vec を作る（`index.bin` 由来の Vec が持つ余剰の再現）。
@@ -39,10 +39,12 @@ fn assemble_shrinks_parallel_vecs_to_fit() {
         entries,
         oversized(vec![0u64; n]),
         oversized(vec![0u64; n]),
-        Some(oversized(owned(&lower))),
-        Some(oversized(
-            lower.iter().map(|s| Some(s.to_string())).collect(),
-        )),
+        // **`Raw`（v5/v4 相当）で渡す。** 余剰容量が最も乗るのはこの経路である
+        // ——`Vec<String>` → `Vec<Box<str>>` の変換が確保ブロックを再利用して持ち越す。
+        Some(CachedLower::Raw {
+            lower_names: oversized(owned(&lower)),
+            lower_file_names: oversized(lower.iter().map(|s| Some(s.to_string())).collect()),
+        }),
         true, // migemo 有効 = kana 系 2 本も構築される
     );
 
@@ -64,6 +66,89 @@ fn assemble_shrinks_parallel_vecs_to_fit() {
     for (label, capacity) in actual {
         assert_eq!(capacity, n, "{label} に余剰容量が残っている（len = {n}）");
     }
+}
+
+/// **`Collapsed`（v6 キャッシュ）経路を通す唯一の検知器。**
+///
+/// 他の旗の検知器（`shared_file_name_flag_is_measured_not_inferred_from_is_folder` /
+/// `shared_lower_name_chain_collapses_both_links`）は**どちらも `Measured` 経路**を通るので、
+/// v6 の展開が壊れてもこの 2 本は緑のままである。ここが守るのは
+/// **`LowerFileName` の 3 状態が `entry_view` の読み替えへ正しく着地すること**——とくに
+/// `Absent` が「file name 成分が無い」のまま残り、`SameAsLowerName` と混ざらないこと。
+///
+/// **測り直しの有無はここでは測れない**（測り直しても結果は変わらない・`DerivedStrings` の
+/// doc）。索引の内部表現（`is_none` と旗）まで見るのは、**検索結果が正しいまま削減だけが
+/// 失われる**形の退行を捕まえるためである。
+#[test]
+fn collapsed_cache_is_not_remeasured_and_absent_file_names_stay_absent() {
+    let entries = vec![
+        // 1. file name 成分が**無い**（`Absent`）かつ `lower_name` も潰れている。
+        //    **素朴な `None == None` 比較で旗が立つのはこのエントリである。**
+        AppEntry {
+            name: "docs".to_string(),
+            target_path: "C:\\docs".to_string(),
+            is_folder: true,
+        },
+        // 2. file name が `lower_name` と同一（`SameAsLowerName`）。旗が立つべき。
+        AppEntry {
+            name: "same".to_string(),
+            target_path: "C:\\real\\same".to_string(),
+            is_folder: true,
+        },
+        // 3. file name が独自の文字列（`Text`）。
+        AppEntry {
+            name: "firefox".to_string(),
+            target_path: "C:\\apps\\firefox.lnk".to_string(),
+            is_folder: false,
+        },
+    ];
+    let n = entries.len();
+
+    let engine = SearchEngine::new_with_cached_masks(
+        entries,
+        vec![0u64; n],
+        vec![0u64; n],
+        Some(CachedLower::Collapsed {
+            // すべて `None` = `name` と同一（3 件とも既に小文字）。
+            lower_names: vec![None, None, None],
+            lower_file_names: vec![
+                LowerFileName::Absent,
+                LowerFileName::SameAsLowerName,
+                LowerFileName::Text("firefox.lnk".to_string()),
+            ],
+        }),
+        false,
+    );
+
+    // 1: **旗が立ってはならない。** ここが `Some("docs")` になる実装が、この PR が
+    // 「結果を壊しうる唯一の点」と名指したものである。
+    let absent = engine.entry_view(0);
+    assert_eq!(absent.lower_name, "docs");
+    assert_eq!(
+        absent.lower_file_name, None,
+        "`Absent` は「`lower_name` と同一」ではない——測り直す実装だとここが Some になる"
+    );
+    assert!(!absent.entry.file_name_is_lower_name);
+
+    // 2: 旗が立ち、`lower_name` へ解決される。
+    let shared = engine.entry_view(1);
+    assert_eq!(shared.lower_file_name, Some("same"));
+    assert!(shared.entry.file_name_is_lower_name);
+    assert!(
+        engine.lower_file_names[1].is_none(),
+        "共有するエントリの文字列は落ちていなければ削減にならない"
+    );
+
+    // 3: 独自の文字列がそのまま残る。
+    let text = engine.entry_view(2);
+    assert_eq!(text.lower_file_name, Some("firefox.lnk"));
+    assert!(!text.entry.file_name_is_lower_name);
+
+    // 記録側の潰し方がそのまま索引の表現になっている（測り直していれば `Some` が復活する）。
+    assert!(
+        engine.lower_names.iter().all(|n| n.is_none()),
+        "`None` = name と同一。展開で実体を作り直してはならない"
+    );
 }
 
 /// **`lower_file_name` の共有は `is_folder` からの推論ではなく、測った結果である。**

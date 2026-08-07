@@ -95,8 +95,9 @@ impl Engine {
         }
     }
 
-    /// v3/v4 キャッシュヒット時に使用するコンストラクタ。
-    /// - v4 ヒット: ビットマスク + lower names を渡し Wave 1/2 を完全スキップ（A-3）
+    /// キャッシュヒット時に使用するコンストラクタ。
+    /// - v6 ヒット: 潰し済みの派生文字列を渡し、Wave 1/2 と共有判定をすべてスキップ
+    /// - v5/v4 ヒット: 未測定の派生文字列を渡し Wave 1/2 をスキップ（共有判定は走る）
     /// - v3 フォールバック: ビットマスクのみ渡し Wave 1 は SearchEngine 内で実行
     pub fn new_from_cache(
         entries: Vec<AppEntry>,
@@ -108,8 +109,7 @@ impl Engine {
             entries,
             cached_masks.char_masks,
             cached_masks.file_name_char_masks,
-            cached_masks.lower_names,
-            cached_masks.lower_file_names,
+            cached_masks.lower,
             config.search.migemo_enabled,
         );
         Self {

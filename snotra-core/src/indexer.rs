@@ -24,10 +24,12 @@ use windows::Win32::System::Threading::{
 
 use crate::binfmt::{BinFile, try_deserialize_with_header};
 use crate::config::{Config, ScanPath};
-use crate::query::{file_char_mask, lower_file_name, name_char_mask, to_lower_folded};
+use crate::query::{
+    file_char_mask, lower_file_name, measure_derived_sharing, name_char_mask, to_lower_folded,
+};
 
 const INDEX_MAGIC: [u8; 4] = *b"INDX";
-const INDEX_CACHE_VERSION: u32 = 5;
+const INDEX_CACHE_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppEntry {
@@ -50,9 +52,47 @@ pub struct AppEntry {
 pub struct CachedMasks {
     pub char_masks: Vec<u64>,
     pub file_name_char_masks: Vec<u64>,
-    /// A-3: v4+ キャッシュ時のみ Some。存在すれば SearchEngine の Wave 1 をスキップ。
-    pub lower_names: Option<Vec<String>>,
-    pub lower_file_names: Option<Vec<Option<String>>>,
+    /// v4+ キャッシュ時のみ `Some`。存在すれば `SearchEngine` の Wave 1 をスキップする。
+    pub lower: Option<CachedLower>,
+}
+
+/// `lower_file_names` のオンディスク表現（v6）。
+///
+/// **`Option<String>` では足りない。** `None` には「file name 成分が無い」という先客がおり、
+/// そこへ「`lower_names[i]` と同一」を重ねると 2 つの意味が同じ表現に乗る。メモリ側は
+/// `CompactEntry::file_name_is_lower_name`（構造体の空きパディング）で解いたが、**ディスクに
+/// 空きパディングは無い**——旗を別の `Vec<bool>` で持つと 0.30 MiB 余分にかかり、しかも
+/// 2 本の Vec の対応がずれても型は何も言わない。3 状態を 1 つの enum に閉じると、
+/// postcard のタグ 1 バイトだけで済み**意味も型に載る**（実測 1.11 MiB 対 1.41 MiB）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LowerFileName {
+    /// file name 成分が無い（`query::lower_file_name` が `None` を返した）。
+    Absent,
+    /// 解決後の `lower_name` とバイト一致する。
+    SameAsLowerName,
+    /// 独自の文字列。
+    Text(String),
+}
+
+/// キャッシュから復元した派生文字列。**潰し済みか未測定かを型で区別する。**
+///
+/// **分ける理由は「測り直しが無駄だから」である**（`search/build.rs` の `DerivedStrings` の doc
+/// が機序の正本）。潰し済みの列を測定経路へ流しても結果は変わらないが、312,690 回の比較が
+/// 丸ごと無駄になる。variant を分けることで、その取り違えはコンパイルを通らない。
+#[derive(Debug)]
+pub enum CachedLower {
+    /// v6 以降。記録時に `query::measure_derived_sharing` で測って潰してある。
+    /// `assemble` は測り直さず、この潰し方をそのまま索引の表現として使う。
+    Collapsed {
+        /// `None` = `entries[i].name` と同一。
+        lower_names: Vec<Option<String>>,
+        lower_file_names: Vec<LowerFileName>,
+    },
+    /// v5 / v4。全件が実体を持つ未測定の列。`assemble` が測って潰す。
+    Raw {
+        lower_names: Vec<String>,
+        lower_file_names: Vec<Option<String>>,
+    },
 }
 
 pub fn scan_all(scan_paths: &[ScanPath], show_hidden_system: bool) -> Vec<AppEntry> {
@@ -300,8 +340,29 @@ struct IndexCache<'a> {
     config_hash: u64,
     char_masks: Cow<'a, [u64]>,
     file_name_char_masks: Cow<'a, [u64]>,
-    lower_names: Cow<'a, [String]>,
-    lower_file_names: Cow<'a, [Option<String>]>,
+    /// `None` = `entries[i].name` とバイト一致（実データで 86.6%）。
+    lower_names: Cow<'a, [Option<String>]>,
+    /// 3 状態（`LowerFileName`）。「無い」と「`lower_name` と同一」を別の値で表す。
+    lower_file_names: Cow<'a, [LowerFileName]>,
+}
+
+/// v5 フォールバック用スキーマ（派生文字列を全件そのまま持つ旧形式）。
+///
+/// **v6 との差は `lower_names` / `lower_file_names` の表現だけである。** v5 は全 312,690 件を
+/// 実体で持ち（実測 21.63 MiB）、v6 は共有を測って潰した形で持つ（1.90 MiB）。読み込みは
+/// どちらも成功し、**違うのは確保の回数**——v5 を読むと 625,380 個の `String` を作り、
+/// うち 527,000 個は `assemble` が即座に捨てる。
+#[derive(Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
+struct IndexCacheV5 {
+    #[allow(dead_code)]
+    built_at: u64,
+    entries: Vec<AppEntry>,
+    config_hash: u64,
+    char_masks: Vec<u64>,
+    file_name_char_masks: Vec<u64>,
+    lower_names: Vec<String>,
+    lower_file_names: Vec<Option<String>>,
 }
 
 /// v4 フォールバック用スキーマ（末尾に `normalized_keys` を持つ旧形式）。
@@ -571,11 +632,31 @@ fn save_cache_sorted_in(dir: &Path, entries: &[AppEntry], config_hash: u64) {
         .iter()
         .map(|e| lower_file_name(&e.target_path))
         .collect();
+    // **マスクは潰す前の完全な文字列から導出する。** 潰した後に取ると
+    // `file_char_mask(None) == 0` になり、pre-filter が false negative を出す
+    // （`search/build.rs` の `compute_wave2` と同じ不変条件——あちらは「ビットマスクより後に
+    // 潰す」という順序で守っており、ここでは「潰す前に導出する」という順序で守る）。
     let char_masks: Vec<u64> = lower_names.iter().map(|n| name_char_mask(n)).collect();
     let file_name_char_masks: Vec<u64> = lower_file_names
         .iter()
         .map(|n| file_char_mask(n.as_deref()))
         .collect();
+
+    // **共有を測って潰した形で書く**（v6）。畳み込みは `collapse_lower_pair` が正本であり、
+    // 追記側（`extend_cached_masks`）と同じ関数を通ることだけが、ディスクとメモリで潰れ方が
+    // 一致する根拠である。ここを別実装で書き起こしてはならない。
+    //
+    // **2 本を値ごと渡す。** マスクは上で導出済みで、以後この 2 本を読む箇所は無い
+    // ——参照で渡して `clone` すると、潰さずに済む分まで複製することになる。
+    let (collapsed_lower_names, collapsed_lower_file_names): (Vec<_>, Vec<_>) = entries
+        .iter()
+        .zip(lower_names)
+        .zip(lower_file_names)
+        .map(|((entry, lower_name), lower_file)| {
+            collapse_lower_pair(&entry.name, lower_name, lower_file)
+        })
+        .unzip();
+
     // Cow::Borrowed で entries の全件 clone を避ける（派生 Vec も参照で渡す）。
     // 出力バイト列は Owned 版と同一（golden テストで保証）。
     let cache = IndexCache {
@@ -587,8 +668,8 @@ fn save_cache_sorted_in(dir: &Path, entries: &[AppEntry], config_hash: u64) {
         config_hash,
         char_masks: Cow::Borrowed(&char_masks),
         file_name_char_masks: Cow::Borrowed(&file_name_char_masks),
-        lower_names: Cow::Borrowed(&lower_names),
-        lower_file_names: Cow::Borrowed(&lower_file_names),
+        lower_names: Cow::Borrowed(&collapsed_lower_names),
+        lower_file_names: Cow::Borrowed(&collapsed_lower_file_names),
     };
     if !bf.save(&cache) {
         eprintln!("[indexer] failed to save {}", bf.path().display());
@@ -632,7 +713,7 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
     let bytes = bf.load_bytes()?;
     let read_ms = read_started.elapsed().as_millis();
 
-    // v5 (現行): ビットマスク + lower names。
+    // v6 (現行): ビットマスク + **共有を潰した** lower names。
     // deserialize は Cow::Owned を返すため .into_owned() は clone なしの move。
     if let Ok(cache) =
         try_deserialize_with_header::<IndexCache<'static>>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION)
@@ -643,14 +724,42 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
         let masks = CachedMasks {
             char_masks: cache.char_masks.into_owned(),
             file_name_char_masks: cache.file_name_char_masks.into_owned(),
-            lower_names: Some(cache.lower_names.into_owned()),
-            lower_file_names: Some(cache.lower_file_names.into_owned()),
+            // **`Collapsed` で渡す。** ここを `Raw` にすると `assemble` が測り直し、
+            // `None` どうしの一致で file name 成分の無いエントリに旗が立つ。
+            lower: Some(CachedLower::Collapsed {
+                lower_names: cache.lower_names.into_owned(),
+                lower_file_names: cache.lower_file_names.into_owned(),
+            }),
         };
         return Some(LoadCacheResult {
             entries: cache.entries.into_owned(),
             cached_masks: Some(masks),
             read_ms,
             version: INDEX_CACHE_VERSION,
+        });
+    }
+
+    // v5 フォールバック: 派生文字列を全件そのまま持つ形式。**読めるが確保が倍以上かかる**
+    // ——625,380 個の `String` を作り、うち約 527,000 個は `assemble` が測って即座に捨てる。
+    // 背景再スキャンが v6 へ昇格させるまでの 1 回だけ通る経路である（→「indexer.rs の
+    // 背景再スキャン」）。
+    if let Ok(cache) = try_deserialize_with_header::<IndexCacheV5>(&bytes, INDEX_MAGIC, 5) {
+        if cache.config_hash != config_hash {
+            return None;
+        }
+        let masks = CachedMasks {
+            char_masks: cache.char_masks,
+            file_name_char_masks: cache.file_name_char_masks,
+            lower: Some(CachedLower::Raw {
+                lower_names: cache.lower_names,
+                lower_file_names: cache.lower_file_names,
+            }),
+        };
+        return Some(LoadCacheResult {
+            entries: cache.entries,
+            cached_masks: Some(masks),
+            read_ms,
+            version: 5,
         });
     }
 
@@ -669,8 +778,10 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
         let masks = CachedMasks {
             char_masks: cache.char_masks,
             file_name_char_masks: cache.file_name_char_masks,
-            lower_names: Some(cache.lower_names),
-            lower_file_names: Some(cache.lower_file_names),
+            lower: Some(CachedLower::Raw {
+                lower_names: cache.lower_names,
+                lower_file_names: cache.lower_file_names,
+            }),
         };
         return Some(LoadCacheResult {
             entries: cache.entries,
@@ -688,8 +799,7 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
         let masks = CachedMasks {
             char_masks: cache.char_masks,
             file_name_char_masks: cache.file_name_char_masks,
-            lower_names: None,
-            lower_file_names: None,
+            lower: None,
         };
         return Some(LoadCacheResult {
             entries: cache.entries,
@@ -1066,28 +1176,67 @@ pub fn scan_path_env(existing_entries: &[AppEntry], show_hidden_system: bool) ->
     scan_path_dirs(&user_path, existing_entries, show_hidden_system)
 }
 
+/// 派生文字列 1 組を、`measure_derived_sharing` の判定に従って潰した形へ畳む。
+///
+/// **`save_cache_sorted_in` と `extend_cached_masks` が共有する。** 別実装で書き起こすと、
+/// PATH エントリの分だけが索引の読み替えとずれる——`assemble` は `Collapsed` を測り直さない
+/// ので、ずれは**検索結果のスコアという形で静かに現れる**。
+fn collapse_lower_pair(
+    name: &str,
+    lower_name: String,
+    lower_file: Option<String>,
+) -> (Option<String>, LowerFileName) {
+    let sharing = measure_derived_sharing(name, &lower_name, lower_file.as_deref());
+    let file = match (sharing.file_name_is_lower_name, lower_file) {
+        (true, _) => LowerFileName::SameAsLowerName,
+        (false, None) => LowerFileName::Absent,
+        (false, Some(s)) => LowerFileName::Text(s),
+    };
+    let name = if sharing.lower_name_is_name {
+        None
+    } else {
+        Some(lower_name)
+    };
+    (name, file)
+}
+
 /// CachedMasks の各 Vec に新しいエントリの分を追記する。
 /// インデックスキャッシュの恩恵を維持しつつ、PATH エントリ等の追加分を補完する。
 ///
-/// `char_masks` / `file_name_char_masks` は常に追記。
-/// `lower_names` / `lower_file_names` / `normalized_keys` は Some の場合のみ追記。
-/// `kana_lower_names` は SearchEngine 側で entries から直接計算されるためここでは扱わない。
+/// `char_masks` / `file_name_char_masks` は常に追記。派生文字列は `lower` が `Some` の場合のみ、
+/// **その variant が持つ表現に合わせて**追記する。`kana_lower_names` は SearchEngine 側で
+/// entries から直接計算されるためここでは扱わない。
 pub fn extend_cached_masks(masks: &mut CachedMasks, new_entries: &[AppEntry]) {
     for entry in new_entries {
         let lower = to_lower_folded(&entry.name);
         let lower_file = lower_file_name(&entry.target_path);
 
-        let mask = name_char_mask(&lower);
-        let file_mask = file_char_mask(lower_file.as_deref());
+        // **マスクは潰す前の完全な文字列から導出する**（`file_char_mask(None) == 0` による
+        // pre-filter の false negative を避ける・`compute_wave2` の不変条件）。
+        masks.char_masks.push(name_char_mask(&lower));
+        masks
+            .file_name_char_masks
+            .push(file_char_mask(lower_file.as_deref()));
 
-        masks.char_masks.push(mask);
-        masks.file_name_char_masks.push(file_mask);
-
-        if let Some(ref mut ln) = masks.lower_names {
-            ln.push(lower);
-        }
-        if let Some(ref mut lfn) = masks.lower_file_names {
-            lfn.push(lower_file);
+        match masks.lower {
+            // v3 以下: 派生文字列を持たない（Wave 1 が全件を計算する）。
+            None => {}
+            Some(CachedLower::Raw {
+                ref mut lower_names,
+                ref mut lower_file_names,
+            }) => {
+                lower_names.push(lower);
+                lower_file_names.push(lower_file);
+            }
+            // **潰し済みの列へは、同じ判定を通した値だけを足す。**
+            Some(CachedLower::Collapsed {
+                ref mut lower_names,
+                ref mut lower_file_names,
+            }) => {
+                let (name, file) = collapse_lower_pair(&entry.name, lower, lower_file);
+                lower_names.push(name);
+                lower_file_names.push(file);
+            }
         }
     }
 }
@@ -1181,8 +1330,28 @@ pub fn cache_byte_breakdown_in(dir: &Path) -> Option<CacheByteBreakdown> {
             &c.entries,
             &c.char_masks,
             &c.file_name_char_masks,
-            &c.lower_names,
-            &c.lower_file_names,
+            LowerRepr::Collapsed {
+                names: &c.lower_names,
+                files: &c.lower_file_names,
+            },
+            None,
+        );
+    }
+
+    if let Ok(c) = try_deserialize_with_header::<IndexCacheV5>(&bytes, INDEX_MAGIC, 5) {
+        drop(bytes);
+        return build_breakdown(
+            5,
+            file_len,
+            c.built_at,
+            c.config_hash,
+            &c.entries,
+            &c.char_masks,
+            &c.file_name_char_masks,
+            LowerRepr::Raw {
+                names: &c.lower_names,
+                files: &c.lower_file_names,
+            },
             None,
         );
     }
@@ -1197,8 +1366,10 @@ pub fn cache_byte_breakdown_in(dir: &Path) -> Option<CacheByteBreakdown> {
             &c.entries,
             &c.char_masks,
             &c.file_name_char_masks,
-            &c.lower_names,
-            &c.lower_file_names,
+            LowerRepr::Raw {
+                names: &c.lower_names,
+                files: &c.lower_file_names,
+            },
             Some(&c.normalized_keys),
         );
     }
@@ -1206,7 +1377,25 @@ pub fn cache_byte_breakdown_in(dir: &Path) -> Option<CacheByteBreakdown> {
     None
 }
 
-/// 読めた版によらず同じ帰属を組む。**スライスで受ける**ので、v5 の `Cow<[T]>` も v4 の
+/// 派生文字列 2 本の、版ごとの表現。**`build_breakdown` へは表現だけを渡す**——行の生成を
+/// 呼び出し側へ出すと、フィールドの並び順が文書の申し合わせに落ちる。postcard は struct に
+/// 枠を持たないので、**2 行を入れ替えても長さの和は変わり**、残余 0 の検算はその誤りを
+/// 捕まえない（捕まえるのは項目の欠落と重複だけである）。
+enum LowerRepr<'a> {
+    /// v6: 潰し済み。
+    Collapsed {
+        names: &'a [Option<String>],
+        files: &'a [LowerFileName],
+    },
+    /// v5 / v4: 全件が実体を持つ。**両版で型も数え方も同一**ゆえ 1 つの variant で足りる
+    /// （版そのものは [`CacheByteBreakdown::version`] が正本として持つ）。
+    Raw {
+        names: &'a [String],
+        files: &'a [Option<String>],
+    },
+}
+
+/// 読めた版によらず同じ帰属を組む。**スライスで受ける**ので、現行の `Cow<[T]>` も旧版の
 /// `Vec<T>` も同じ経路を通る（postcard はどちらも `serialize_seq` へ委譲し、バイト列は
 /// 一致する）。
 #[allow(clippy::too_many_arguments)]
@@ -1218,11 +1407,41 @@ fn build_breakdown(
     entries: &[AppEntry],
     char_masks: &[u64],
     file_name_char_masks: &[u64],
-    lower_names: &[String],
-    lower_file_names: &[Option<String>],
+    lower: LowerRepr<'_>,
     normalized_keys: Option<&[String]>,
 ) -> Option<CacheByteBreakdown> {
     let n = entries.len();
+    let (lower_names_row, lower_file_names_row) = match lower {
+        LowerRepr::Collapsed { names, files } => (
+            CacheByteRow {
+                label: "lower_names（潰し済み）",
+                bytes: serialized_len(&names)?,
+                // **実体を持つ件数を出す**（列の長さではない）。潰れた分は 1 バイトの
+                // タグにしかならないので、件数と長さの比が共有の効きを表す。
+                items: names.iter().filter(|s| s.is_some()).count(),
+            },
+            CacheByteRow {
+                label: "lower_file_names（3 状態）",
+                bytes: serialized_len(&files)?,
+                items: files
+                    .iter()
+                    .filter(|f| matches!(f, LowerFileName::Text(_)))
+                    .count(),
+            },
+        ),
+        LowerRepr::Raw { names, files } => (
+            CacheByteRow {
+                label: "lower_names（全件実体）",
+                bytes: serialized_len(&names)?,
+                items: names.len(),
+            },
+            CacheByteRow {
+                label: "lower_file_names（全件実体）",
+                bytes: serialized_len(&files)?,
+                items: files.iter().filter(|s| s.is_some()).count(),
+            },
+        ),
+    };
     let mut rows = vec![
         CacheByteRow {
             label: "built_at",
@@ -1249,16 +1468,8 @@ fn build_breakdown(
             bytes: serialized_len(&file_name_char_masks)?,
             items: file_name_char_masks.len(),
         },
-        CacheByteRow {
-            label: "lower_names",
-            bytes: serialized_len(&lower_names)?,
-            items: lower_names.len(),
-        },
-        CacheByteRow {
-            label: "lower_file_names",
-            bytes: serialized_len(&lower_file_names)?,
-            items: lower_file_names.len(),
-        },
+        lower_names_row,
+        lower_file_names_row,
     ];
     if let Some(keys) = normalized_keys {
         rows.push(CacheByteRow {
@@ -1457,8 +1668,12 @@ mod tests {
             config_hash: 12345,
             char_masks: Cow::Owned(vec![0xAB, 0xCD]),
             file_name_char_masks: Cow::Owned(vec![0x12, 0x34]),
-            lower_names: Cow::Owned(vec!["firefox".to_string(), "projects".to_string()]),
-            lower_file_names: Cow::Owned(vec![Some("firefox.lnk".to_string()), None]),
+            // v6: `None` = name と同一。ここでは 2 件目がそれに当たる形にしてある。
+            lower_names: Cow::Owned(vec![Some("firefox".to_string()), None]),
+            lower_file_names: Cow::Owned(vec![
+                LowerFileName::Text("firefox.lnk".to_string()),
+                LowerFileName::SameAsLowerName,
+            ]),
         };
 
         let bytes =
@@ -1482,21 +1697,30 @@ mod tests {
         );
         assert_eq!(
             restored.lower_names.into_owned(),
-            vec!["firefox", "projects"]
+            vec![Some("firefox".to_string()), None]
         );
         assert_eq!(
             restored.lower_file_names.into_owned(),
-            vec![Some("firefox.lnk".to_string()), None]
+            vec![
+                LowerFileName::Text("firefox.lnk".to_string()),
+                LowerFileName::SameAsLowerName,
+            ]
         );
     }
 
-    #[test]
-    fn index_cache_on_disk_format_is_stable() {
-        // on-disk バイト形式の絶対安定を守る golden テスト。
-        // IndexCache のフィールド順・型を変えると（= 既存 index.bin を無言破損）バイト列が変化し
-        // このテストが落ちる。save/load が単一 struct を共有する統合後、フィールド reorder は
-        // roundtrip テストを素通りするため、この golden が唯一の検出器（version 非バンプでも検出）。
-        // 意図的な形式変更（INDEX_CACHE_VERSION バンプ）時は golden を更新すること。
+    /// `golden_v6_fixture` の戻り値（entries / 2 本のマスク / 潰し済みの派生文字列 2 本）。
+    type GoldenV6Fixture = (
+        Vec<AppEntry>,
+        Vec<u64>,
+        Vec<u64>,
+        Vec<Option<String>>,
+        Vec<LowerFileName>,
+    );
+
+    /// v6 golden の fixture。**`LowerFileName` の 3 状態すべてを載せる**——1 つでも欠けると
+    /// その状態のバイト表現が凍結されず、タグの値が変わっても golden が素通りする。
+    /// v4/v5 の golden とは entries 数が違う（あちらは 2 件）。
+    fn golden_v6_fixture() -> GoldenV6Fixture {
         let entries = vec![
             AppEntry {
                 name: "Firefox".to_string(),
@@ -1508,11 +1732,39 @@ mod tests {
                 target_path: "C:\\Projects".to_string(),
                 is_folder: true,
             },
+            AppEntry {
+                name: "docs".to_string(),
+                target_path: "C:\\docs".to_string(),
+                is_folder: true,
+            },
         ];
-        let char_masks = vec![0xABu64, 0xCD];
-        let file_name_char_masks = vec![0x12u64, 0x34];
-        let lower_names = vec!["firefox".to_string(), "projects".to_string()];
-        let lower_file_names = vec![Some("firefox.lnk".to_string()), None];
+        (
+            entries,
+            vec![0xABu64, 0xCD, 0xEF],
+            vec![0x12u64, 0x34, 0x56],
+            // 3 件目は `name` と同一（＝落とせる）。
+            vec![
+                Some("firefox".to_string()),
+                Some("projects".to_string()),
+                None,
+            ],
+            vec![
+                LowerFileName::Text("firefox.lnk".to_string()),
+                LowerFileName::Absent,
+                LowerFileName::SameAsLowerName,
+            ],
+        )
+    }
+
+    #[test]
+    fn index_cache_on_disk_format_is_stable() {
+        // on-disk バイト形式の絶対安定を守る golden テスト。
+        // IndexCache のフィールド順・型を変えると（= 既存 index.bin を無言破損）バイト列が変化し
+        // このテストが落ちる。save/load が単一 struct を共有する統合後、フィールド reorder は
+        // roundtrip テストを素通りするため、この golden が唯一の検出器（version 非バンプでも検出）。
+        // 意図的な形式変更（INDEX_CACHE_VERSION バンプ）時は golden を更新すること。
+        let (entries, char_masks, file_name_char_masks, lower_names, lower_file_names) =
+            golden_v6_fixture();
 
         // save 経路と同じ Cow::Borrowed で構築する。
         let cache = IndexCache {
@@ -1527,29 +1779,17 @@ mod tests {
         let bytes =
             try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache).expect("serialize");
 
-        // 凍結 golden（固定 fixture の serialize 出力・INDX magic + version 5 ヘッダー込み）。
-        // 形式変更時のみ更新する。
-        // **v4 golden との差は先頭のバージョンバイトと、末尾の `normalized_keys` 列の欠落だけ**
-        // （下の `frozen_v4_bytes_still_load_with_lower_names` と並べて読める形にしてある）。
-        const GOLDEN_V5: &[u8] = &[
-            73, 78, 68, 88, 5, 0, 0, 0, 128, 226, 207, 170, 6, 2, 7, 70, 105, 114, 101, 102, 111,
-            120, 19, 67, 58, 92, 97, 112, 112, 115, 92, 102, 105, 114, 101, 102, 111, 120, 46, 108,
-            110, 107, 0, 8, 80, 114, 111, 106, 101, 99, 116, 115, 11, 67, 58, 92, 80, 114, 111,
-            106, 101, 99, 116, 115, 1, 185, 96, 2, 171, 1, 205, 1, 2, 18, 52, 2, 7, 102, 105, 114,
-            101, 102, 111, 120, 8, 112, 114, 111, 106, 101, 99, 116, 115, 2, 1, 11, 102, 105, 114,
-            101, 102, 111, 120, 46, 108, 110, 107, 0,
-        ];
         assert_eq!(
-            bytes, GOLDEN_V5,
+            bytes, GOLDEN_V6,
             "on-disk 形式が変化した。IndexCache のフィールド順/型変更は既存 index.bin を破損する。\
              意図的なら INDEX_CACHE_VERSION をバンプし golden を更新すること"
         );
 
         let restored: IndexCache<'static> =
-            try_deserialize_with_header(GOLDEN_V5, INDEX_MAGIC, INDEX_CACHE_VERSION)
-                .expect("凍結 v5 バイトがロードできること");
+            try_deserialize_with_header(GOLDEN_V6, INDEX_MAGIC, INDEX_CACHE_VERSION)
+                .expect("凍結 v6 バイトがロードできること");
         assert!(matches!(restored.entries, Cow::Owned(_)));
-        assert_eq!(restored.entries.len(), 2);
+        assert_eq!(restored.entries.len(), 3);
         assert_eq!(restored.entries[0].name, "Firefox");
         assert_eq!(restored.entries[0].target_path, "C:\\apps\\firefox.lnk");
         assert!(!restored.entries[0].is_folder);
@@ -1557,6 +1797,79 @@ mod tests {
         assert!(restored.entries[1].is_folder);
         assert_eq!(restored.char_masks.into_owned(), char_masks);
         assert_eq!(restored.lower_names.into_owned(), lower_names);
+        assert_eq!(restored.lower_file_names.into_owned(), lower_file_names);
+    }
+
+    /// 凍結 golden（`golden_v6_fixture` の serialize 出力・INDX magic + version 6 ヘッダー込み）。
+    ///
+    /// **末尾の 3 バイト `0, 1` の前後が `LowerFileName` のタグである**: `Text` = 2 + 文字列、
+    /// `Absent` = 0、`SameAsLowerName` = 1。`lower_names` 側は `Option` の `Some` = 1 + 文字列 /
+    /// `None` = 0。タグの割り当てを変えると（＝ variant の宣言順を入れ替えると）既存の
+    /// `index.bin` を無言で誤読するので、ここが落ちる。
+    const GOLDEN_V6: &[u8] = &[
+        73, 78, 68, 88, 6, 0, 0, 0, 128, 226, 207, 170, 6, 3, 7, 70, 105, 114, 101, 102, 111, 120,
+        19, 67, 58, 92, 97, 112, 112, 115, 92, 102, 105, 114, 101, 102, 111, 120, 46, 108, 110,
+        107, 0, 8, 80, 114, 111, 106, 101, 99, 116, 115, 11, 67, 58, 92, 80, 114, 111, 106, 101,
+        99, 116, 115, 1, 4, 100, 111, 99, 115, 7, 67, 58, 92, 100, 111, 99, 115, 1, 185, 96, 3,
+        171, 1, 205, 1, 239, 1, 3, 18, 52, 86, 3, 1, 7, 102, 105, 114, 101, 102, 111, 120, 1, 8,
+        112, 114, 111, 106, 101, 99, 116, 115, 0, 3, 2, 11, 102, 105, 114, 101, 102, 111, 120, 46,
+        108, 110, 107, 0, 1,
+    ];
+
+    /// **v6 化の前に実際に書かれていた v5 バイト列**（派生文字列を全件そのまま持つ形式）。
+    /// `config_hash` は 12345、entries は Firefox / Projects の 2 件。
+    const GOLDEN_V5: &[u8] = &[
+        73, 78, 68, 88, 5, 0, 0, 0, 128, 226, 207, 170, 6, 2, 7, 70, 105, 114, 101, 102, 111, 120,
+        19, 67, 58, 92, 97, 112, 112, 115, 92, 102, 105, 114, 101, 102, 111, 120, 46, 108, 110,
+        107, 0, 8, 80, 114, 111, 106, 101, 99, 116, 115, 11, 67, 58, 92, 80, 114, 111, 106, 101,
+        99, 116, 115, 1, 185, 96, 2, 171, 1, 205, 1, 2, 18, 52, 2, 7, 102, 105, 114, 101, 102, 111,
+        120, 8, 112, 114, 111, 106, 101, 99, 116, 115, 2, 1, 11, 102, 105, 114, 101, 102, 111, 120,
+        46, 108, 110, 107, 0,
+    ];
+
+    /// **v5 の凍結バイト列から `load_cache_in` が読めること。**
+    ///
+    /// 向きが要点である——v6 の往復（上の golden）が示すのは forward-stability だけで、
+    /// 「既存ユーザーの `index.bin` が読めるか」は独立には証明しない
+    /// （`snotra-core/CLAUDE.md`「データ永続化の注意」）。
+    ///
+    /// **`CachedLower::Raw` で返らなければならない。** `Collapsed` で返すと `assemble` が
+    /// 測り直しをスキップし、全件実体の列を「潰し済み」と誤解して読み替える。
+    #[test]
+    fn frozen_v5_bytes_load_as_raw_through_load_cache_in() {
+        let dir = temp_dir("v5_frozen_through_load_cache_in");
+        fs::write(dir.join("index.bin"), GOLDEN_V5).expect("write v5 index.bin");
+
+        let result = load_cache_in(&dir, 12345).expect("v5 の index.bin が読めること");
+        assert_eq!(
+            result.version, 5,
+            "v5 として読めたことが昇格の判断材料になる"
+        );
+        assert_eq!(result.entries.len(), 2);
+        assert_eq!(result.entries[0].name, "Firefox");
+
+        let masks = result.cached_masks.expect("v5 でもマスクは返る");
+        match masks.lower {
+            Some(CachedLower::Raw {
+                lower_names,
+                lower_file_names,
+            }) => {
+                assert_eq!(
+                    lower_names,
+                    vec!["firefox".to_string(), "projects".to_string()]
+                );
+                assert_eq!(
+                    lower_file_names,
+                    vec![Some("firefox.lnk".to_string()), None]
+                );
+            }
+            other => panic!("v5 は Raw で返らなければならない（実際: {other:?}）"),
+        }
+
+        // config_hash が違えば stale 扱いで None（v6 経路と同じ規律）。
+        assert!(load_cache_in(&dir, 12346).is_none());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// v5 化の前に実際に書かれていた v4 バイト列（同じ fixture の serialize 出力で、末尾に
@@ -1623,17 +1936,25 @@ mod tests {
         assert_eq!(result.entries[0].name, "Firefox");
         let masks = result.cached_masks.expect("v4 でもマスクは返る");
         assert_eq!(masks.char_masks, vec![0xABu64, 0xCD]);
-        assert_eq!(
-            masks.lower_names,
-            Some(vec!["firefox".to_string(), "projects".to_string()]),
-            "v4 から lower_names が復元されないと Wave 1 が走り、初回起動が遅くなる"
-        );
-        assert_eq!(
-            masks.lower_file_names,
-            Some(vec![Some("firefox.lnk".to_string()), None])
-        );
+        match masks.lower {
+            Some(CachedLower::Raw {
+                lower_names,
+                lower_file_names,
+            }) => {
+                assert_eq!(
+                    lower_names,
+                    vec!["firefox".to_string(), "projects".to_string()],
+                    "v4 から lower_names が復元されないと Wave 1 が走り、初回起動が遅くなる"
+                );
+                assert_eq!(
+                    lower_file_names,
+                    vec![Some("firefox.lnk".to_string()), None]
+                );
+            }
+            other => panic!("v4 は Raw で返らなければならない（実際: {other:?}）"),
+        }
 
-        // config_hash が違えば stale 扱いで None（v5 経路と同じ規律）。
+        // config_hash が違えば stale 扱いで None（v6 経路と同じ規律）。
         assert!(load_cache_in(&dir, 12346).is_none());
 
         let _ = fs::remove_dir_all(&dir);
@@ -1808,11 +2129,30 @@ mod tests {
         assert_eq!(result.entries.len(), 2);
         assert_eq!(result.entries[0].name, "Firefox");
         assert_eq!(result.entries[1].name, "Projects");
-        let masks = result.cached_masks.expect("v5 cache should include masks");
-        assert_eq!(
-            masks.lower_names,
-            Some(vec!["firefox".to_string(), "projects".to_string()])
-        );
+        let masks = result.cached_masks.expect("v6 cache should include masks");
+        // **`Collapsed` で返る。** save 側が `measure_derived_sharing` で潰して書いており、
+        // "Firefox" → "firefox" は小文字化で変わるので実体が残り、file name は別物ゆえ `Text`。
+        match masks.lower {
+            Some(CachedLower::Collapsed {
+                lower_names,
+                lower_file_names,
+            }) => {
+                assert_eq!(
+                    lower_names,
+                    vec![Some("firefox".to_string()), Some("projects".to_string())]
+                );
+                assert_eq!(
+                    lower_file_names,
+                    vec![
+                        LowerFileName::Text("firefox.lnk".to_string()),
+                        // "C:\\Projects" の file name 成分は "Projects" → "projects" で
+                        // `lower_name` と一致する。
+                        LowerFileName::SameAsLowerName,
+                    ]
+                );
+            }
+            other => panic!("v6 は Collapsed で返らなければならない（実際: {other:?}）"),
+        }
 
         // config_hash が異なると stale 扱いで None
         assert!(load_cache_in(&dir, config_hash.wrapping_add(1)).is_none());
@@ -1885,7 +2225,7 @@ mod tests {
     /// この値だけが背景再スキャンの昇格判定（`cached_version != INDEX_CACHE_VERSION`）の入力で
     /// あり、**取り違えても検索結果は正しいまま**である——枝に誤って現行版を書けば、その形式の
     /// ユーザーは永久に昇格せず旧形式を読み続ける（症状は「遅い」だけ・実運用点で 1 度踏んだ）。
-    /// ゆえに 4 枝すべての値をここで固定する。
+    /// ゆえに **5 枝すべて**の値をここで固定する。
     ///
     /// **既存の v2 / v3 テストでは代用できない。** あちらは `try_deserialize_with_header` を
     /// 直接呼んでおり `load_cache_in` の枝選択を通らないので、`version` の帰属を見ていない。
@@ -1916,6 +2256,30 @@ mod tests {
                 .expect("v5 が読めること")
                 .version,
             INDEX_CACHE_VERSION
+        );
+        let _ = fs::remove_dir_all(&dir);
+
+        // v5: 派生文字列を全件そのまま持つ形式。
+        let dir = temp_dir("version_reported_v5");
+        let v5 = IndexCacheV5 {
+            built_at: 0,
+            entries: entries.clone(),
+            config_hash,
+            char_masks: char_masks.clone(),
+            file_name_char_masks: file_name_char_masks.clone(),
+            lower_names: lower_names.clone(),
+            lower_file_names: lower_file_names.clone(),
+        };
+        fs::write(
+            dir.join("index.bin"),
+            try_serialize_with_header(INDEX_MAGIC, 5, &v5).expect("serialize v5"),
+        )
+        .expect("write v5");
+        assert_eq!(
+            load_cache_in(&dir, config_hash)
+                .expect("v5 が読めること")
+                .version,
+            5
         );
         let _ = fs::remove_dir_all(&dir);
 
@@ -2476,12 +2840,14 @@ mod tests {
     }
 
     #[test]
-    fn extend_cached_masks_grows_all_vecs() {
+    fn extend_cached_masks_grows_raw_vecs() {
         let mut masks = CachedMasks {
             char_masks: vec![0xAB],
             file_name_char_masks: vec![0xCD],
-            lower_names: Some(vec!["existing".to_string()]),
-            lower_file_names: Some(vec![Some("existing.lnk".to_string())]),
+            lower: Some(CachedLower::Raw {
+                lower_names: vec!["existing".to_string()],
+                lower_file_names: vec![Some("existing.lnk".to_string())],
+            }),
         };
 
         let new_entries = vec![AppEntry {
@@ -2494,17 +2860,91 @@ mod tests {
 
         assert_eq!(masks.char_masks.len(), 2);
         assert_eq!(masks.file_name_char_masks.len(), 2);
-        assert_eq!(masks.lower_names.as_ref().unwrap().len(), 2);
-        assert_eq!(masks.lower_file_names.as_ref().unwrap().len(), 2);
+        match masks.lower {
+            Some(CachedLower::Raw {
+                lower_names,
+                lower_file_names,
+            }) => {
+                assert_eq!(
+                    lower_names,
+                    vec!["existing".to_string(), "tool".to_string()]
+                );
+                assert_eq!(
+                    lower_file_names,
+                    vec![
+                        Some("existing.lnk".to_string()),
+                        Some("tool.exe".to_string())
+                    ],
+                    "Raw へは潰さずそのまま足す（`assemble` が後で測る）"
+                );
+            }
+            other => panic!("variant は保たれなければならない（実際: {other:?}）"),
+        }
+    }
+
+    /// **潰し済みの列へは、同じ判定を通した値だけを足す。**
+    ///
+    /// `assemble` は `Collapsed` を測り直さないので、ここで生の値を混ぜると PATH エントリの
+    /// 分だけが索引の読み替えとずれる——`entry_view` はディスクの潰し方を信じるため、
+    /// **クラッシュも検索の失敗も起こさず、スコアだけが変わる**。
+    #[test]
+    fn extend_cached_masks_collapses_before_appending_to_collapsed_vecs() {
+        let mut masks = CachedMasks {
+            char_masks: vec![0xAB],
+            file_name_char_masks: vec![0xCD],
+            lower: Some(CachedLower::Collapsed {
+                lower_names: vec![None],
+                lower_file_names: vec![LowerFileName::SameAsLowerName],
+            }),
+        };
+
+        let new_entries = vec![
+            // `name` が既に小文字 → `lower_name` は落とせる。file name は拡張子ぶん別物。
+            AppEntry {
+                name: "tool".to_string(),
+                target_path: "C:\\bin\\tool.exe".to_string(),
+                is_folder: false,
+            },
+            // 大文字を含む → `lower_name` は実体を持つ。file name 成分は `lower_name` と同一。
+            AppEntry {
+                name: "Docs".to_string(),
+                target_path: "C:\\Docs".to_string(),
+                is_folder: true,
+            },
+        ];
+
+        extend_cached_masks(&mut masks, &new_entries);
+
+        assert_eq!(masks.char_masks.len(), 3);
+        match masks.lower {
+            Some(CachedLower::Collapsed {
+                lower_names,
+                lower_file_names,
+            }) => {
+                assert_eq!(
+                    lower_names,
+                    vec![None, None, Some("docs".to_string())],
+                    "`name` と同一なら追記側でも落とす"
+                );
+                assert_eq!(
+                    lower_file_names,
+                    vec![
+                        LowerFileName::SameAsLowerName,
+                        LowerFileName::Text("tool.exe".to_string()),
+                        LowerFileName::SameAsLowerName,
+                    ]
+                );
+            }
+            other => panic!("variant は保たれなければならない（実際: {other:?}）"),
+        }
     }
 
     #[test]
-    fn extend_cached_masks_handles_none_optional_fields() {
+    fn extend_cached_masks_handles_absent_lower() {
         let mut masks = CachedMasks {
             char_masks: vec![0xAB],
             file_name_char_masks: vec![0xCD],
-            lower_names: None,
-            lower_file_names: None,
+            lower: None,
         };
 
         let new_entries = vec![AppEntry {
@@ -2517,7 +2957,6 @@ mod tests {
 
         assert_eq!(masks.char_masks.len(), 2);
         assert_eq!(masks.file_name_char_masks.len(), 2);
-        assert!(masks.lower_names.is_none());
-        assert!(masks.lower_file_names.is_none());
+        assert!(masks.lower.is_none());
     }
 }

@@ -10,7 +10,7 @@ use rayon::prelude::*;
 use crate::indexer::AppEntry;
 use crate::query::{file_char_mask, lower_file_name, name_char_mask, to_kana, to_lower_folded};
 
-use super::{IncrementalCache, SearchEngine, kana_char_mask};
+use super::{IncrementalCache, PathStore, SearchEngine, kana_char_mask};
 
 /// Wave 1 の出力: `(lower_names, lower_file_names, kana_lower_names)`。
 /// いずれも構築後に伸長しないため `Box<str>` で保持する（容量ワード 8B/要素を節約）。
@@ -117,12 +117,22 @@ impl SearchEngine {
         kana: (Vec<Box<str>>, Vec<u64>),
     ) -> Self {
         let (mut kana_lower_names, mut kana_char_masks) = kana;
-        let mut entries = entries;
         let mut lower_names = lower_names;
         let mut lower_file_names = lower_file_names;
         let mut char_masks = char_masks;
         let mut file_name_char_masks = file_name_char_masks;
-        entries.shrink_to_fit();
+        // `target_path` の `String` はここで木の接頭辞共有へ組み替えられ、`Vec<AppEntry>` ごと
+        // 解放される（`path_store` の `//!`）。長さの検証は組み替え後の `PathStore` に対して行う
+        // ——組み替えは全件を 1 対 1 で写すが、そう**信じる**のではなく測るのがこの節の役目である。
+        let n_before = entries.len();
+        let mut paths = PathStore::build(entries);
+        paths.shrink_to_fit();
+        debug_assert_eq!(
+            paths.len(),
+            n_before,
+            "PathStore: 組み替えでエントリ数が変わってはならない"
+        );
+        let entries = paths;
         lower_names.shrink_to_fit();
         lower_file_names.shrink_to_fit();
         char_masks.shrink_to_fit();

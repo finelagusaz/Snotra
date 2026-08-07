@@ -11,11 +11,13 @@ use rayon::prelude::*;
 
 use crate::config::{SearchConfig, SearchHistoryNormalizationConfig};
 use crate::history::HistoryStore;
-use crate::indexer::AppEntry;
 use crate::ui_types::SearchResult;
 
 // 構築処理（Wave 1/2・kana マスク・IndexCache 復元・全コンストラクタ）は子モジュールへ分離（#598）。
 mod build;
+// `target_path` の圧縮表現（フォルダ木の接頭辞共有）は子モジュールへ分離。
+mod path_store;
+use path_store::PathStore;
 // クエリ計画（QueryPlan・prepare_query_plan の純粋導出）は子モジュールへ分離（#599）。
 mod query_plan;
 use query_plan::{QueryPlan, prepare_query_plan};
@@ -105,7 +107,9 @@ impl From<&SearchConfig> for SearchOptions {
 /// Adding a new derived field requires updating `new()` and keeping all Vecs in sync —
 /// enforce this by running the full test suite after any structural change.
 pub struct SearchEngine {
-    entries: Vec<AppEntry>,
+    /// エントリ本体（`name` / `is_folder`）と、`target_path` をフォルダ木の接頭辞共有で
+    /// 保持する表現。フルパスは持たず、必要な時点で組み立てる（`search/path_store.rs` の `//!`）。
+    entries: PathStore,
     /// 派生文字列の並列 Vec は `Box<str>` で保持する。これらは構築後に伸長しないため、
     /// `String` の容量ワード（8B/要素）が無駄になる。`str` へ Deref するので読み取り側は無変更。
     lower_names: Vec<Box<str>>,
@@ -331,34 +335,49 @@ impl SearchEngine {
 
         // rayon の collect は入力順を保つ。後勝ちで詰めることで、同じキーへ潰れる
         // エントリが複数あるときの取り分けを旧実装（HashMap への後勝ち collect）と揃える。
-        let hits: Vec<(usize, &AppEntry)> = self
-            .entries
-            .par_iter()
-            .filter_map(|entry| {
-                scoring::with_normalized_key(&entry.target_path, |key| {
-                    wanted.get(key).map(|&rank| (rank, entry))
+        // 借用ではなく index で拾う——索引はフルパスを連続したバイト列として持たず、
+        // 正規化キーはスレッドローカルの一時バッファにしか無い（`path_store` の `//!`）。
+        let hits: Vec<(usize, usize)> = (0..self.entries.len())
+            .into_par_iter()
+            .filter_map(|i| {
+                scoring::with_normalized_key(&self.entries, i, |key| {
+                    wanted.get(key).map(|&rank| (rank, i))
                 })
             })
             .collect();
-        let mut found: Vec<Option<&AppEntry>> = vec![None; recent.len()];
-        for (rank, entry) in hits {
-            found[rank] = Some(entry);
+        let mut found: Vec<Option<usize>> = vec![None; recent.len()];
+        for (rank, i) in hits {
+            found[rank] = Some(i);
         }
 
         found
             .into_iter()
             .flatten()
-            .map(|entry| SearchResult {
-                name: entry.name.clone(),
-                path: entry.target_path.clone(),
-                is_folder: entry.is_folder,
-                is_error: false,
+            .map(|i| {
+                let entry = self.entries.get(i);
+                SearchResult {
+                    name: entry.name.to_string(),
+                    // フルパスの組み立ては高々 `max_results` 件に閉じる。
+                    path: self.entries.to_path(i),
+                    is_folder: entry.is_folder,
+                    is_error: false,
+                }
             })
             .collect()
     }
 
-    pub fn entries(&self) -> &[AppEntry] {
-        &self.entries
+    /// 索引の件数。
+    ///
+    /// **`&[AppEntry]` を貸す `entries()` は無い**——索引は `target_path` を圧縮して持ち、
+    /// `AppEntry` の形では存在しないからである（`search/path_store.rs` の `//!`）。
+    /// フルパスが要る呼び出し元は `search` / `recent_history` が返す `SearchResult` を使う。
+    pub fn entry_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// 索引 `i` の表示名。
+    pub fn entry_name(&self, i: usize) -> &str {
+        &self.entries.get(i).name
     }
 }
 

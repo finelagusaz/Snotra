@@ -88,6 +88,17 @@ npm run check:colors -- -Interactive      # 判定せず起動し、目視項目
 - **`SNOTRA_CONFIG_DIR` が効いたことは肯定的に確かめる。** 実行後にプロファイル配下へ `*.bin` が生成されていることを見る。効いていなければ本体は実 config を読むため、ピクセルが赤いときに「色が届いていない」と「env が効いていない」を切り分けられない
 - 判定が赤のとき（`-KeepShot` なら緑でも）`target/visual-check/` へスクリーンショットを残す。観測点が背景でない場所を指していないかは、この画像で確認する
 
+#### エージェントが目視項目を自分で実施するとき
+
+`smoke:manual` が実行できないのは合否の記録に `Read-Host` を使うからで、**目視項目の実体（アプリを操作して表示を観測する）は実施できる**（#836 で 11 項目・#870 で日英 2 本の実績）。実施するなら次の 4 点に従う。
+
+- **`scripts/lib/SnotraSmoke.psm1` の関数だけで組む。** `New-SnotraVerificationProfile` / `Start-SnotraProcess` / `Wait-SnotraWindow` / `Set-SnotraForegroundWindow` / `Send-SnotraKey` / `Get-SnotraWindowCapture` で、使い捨てプロファイルの seed から打鍵注入・窓矩形キャプチャまで完結する。**この経路だけが上の画面ロック検出（#866）に守られる**——モジュールに無い操作（マウスの `SetCursorPos` + `mouse_event` 系はいまも無い）を自前 P/Invoke で足すと、その実行は検出の外へ出る。ロック中に走らせればロック画面を撮り、`check:colors` のような判定が無いぶん**誰も気づかない**
+- **撮る前に、その入力が分岐へ入っているかを確かめる**（#872）。中間省略・overflow・clipping は入力が短ければ発生せず、**正常に見える画像が撮れてしまう**。分岐へ確実に入る fixture を用意して初めて測ったことになる（`AGENTS.md`「検証の作法（全タスク共通）」の「観測形が対象を含むか」の視覚版）
+- **高さの判定に `GetWindowRect` を使わない**——不可視のリサイズ枠を含むため、2 行の窓が 1 行の 2 倍にならない（実測 118 / 64 に対し `DwmGetWindowAttribute` の `EXTENDED_FRAME_BOUNDS` は 110 / 56）。位置の判定は `GetWindowRect` でよい（クランプが渡す物理 outer 座標系と同じ）。作業領域は `MonitorFromWindow` + `GetMonitorInfoW` の `rcWork` を、プロセスを PER_MONITOR_AWARE_V2 にしてから読む
+- **OS のモーダルループ中（`frame.drag_window()` のドラッグ等）の値を単発観測で判定しない**——合成マウス移動への追従が不安定で、同一手順・同一バイナリでも窓 top が 956 と 1050 の間で揺れた（最終位置は毎回安定）。**実装の有無を切り替える対照実験だけが差を示す**
+
+判定者は分ける——ピクセル値・窓の可視性のように決定的なものは exit code を返す検査へ寄せ、「読めるか」のような非決定的な判断は調査の道具に留める。実行前に、フォアグラウンド窓へ入力を撃つ旨と**キーボードから手を離す時間**を人へ明示的に求めること。
+
 #### 別プロファイルで起動するための env ハッチ（`SNOTRA_CONFIG_DIR`）
 
 保存先ディレクトリを差し替える（#803。契約の正本は `SPEC.md` §13 と `Config::config_dir` の rustdoc）。`config.toml` / `history.bin` / `index.bin` / `icons.bin` / `window.bin` の**すべて**がこの 1 点から導かれるので、検証が実ユーザーのデータに触れずに済む。

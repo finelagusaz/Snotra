@@ -645,28 +645,20 @@ fn save_cache_sorted_in(dir: &Path, entries: &[AppEntry], config_hash: u64) {
         .map(|n| file_char_mask(n.as_deref()))
         .collect();
 
-    // **共有を測って潰した形で書く**（v6）。判定は `measure_derived_sharing` が正本であり、
-    // 索引側（`SearchEngine::assemble`）と同じ関数を通ることだけが、ディスクとメモリで
-    // 潰れ方が一致する根拠である。ここを別実装で書き起こしてはならない。
-    let mut collapsed_lower_names: Vec<Option<String>> = Vec::with_capacity(entries.len());
-    let mut collapsed_lower_file_names: Vec<LowerFileName> = Vec::with_capacity(entries.len());
-    for ((entry, lower_name), lower_file) in entries
+    // **共有を測って潰した形で書く**（v6）。畳み込みは `collapse_lower_pair` が正本であり、
+    // 追記側（`extend_cached_masks`）と同じ関数を通ることだけが、ディスクとメモリで潰れ方が
+    // 一致する根拠である。ここを別実装で書き起こしてはならない。
+    //
+    // **2 本を値ごと渡す。** マスクは上で導出済みで、以後この 2 本を読む箇所は無い
+    // ——参照で渡して `clone` すると、潰さずに済む分まで複製することになる。
+    let (collapsed_lower_names, collapsed_lower_file_names): (Vec<_>, Vec<_>) = entries
         .iter()
-        .zip(lower_names.iter())
-        .zip(lower_file_names.iter())
-    {
-        let sharing = measure_derived_sharing(&entry.name, lower_name, lower_file.as_deref());
-        collapsed_lower_file_names.push(match (sharing.file_name_is_lower_name, lower_file) {
-            (true, _) => LowerFileName::SameAsLowerName,
-            (false, None) => LowerFileName::Absent,
-            (false, Some(s)) => LowerFileName::Text(s.clone()),
-        });
-        collapsed_lower_names.push(if sharing.lower_name_is_name {
-            None
-        } else {
-            Some(lower_name.clone())
-        });
-    }
+        .zip(lower_names)
+        .zip(lower_file_names)
+        .map(|((entry, lower_name), lower_file)| {
+            collapse_lower_pair(&entry.name, lower_name, lower_file)
+        })
+        .unzip();
 
     // Cow::Borrowed で entries の全件 clone を避ける（派生 Vec も参照で渡す）。
     // 出力バイト列は Owned 版と同一（golden テストで保証）。
@@ -1341,24 +1333,10 @@ pub fn cache_byte_breakdown_in(dir: &Path) -> Option<CacheByteBreakdown> {
             &c.entries,
             &c.char_masks,
             &c.file_name_char_masks,
-            [
-                CacheByteRow {
-                    label: "lower_names（潰し済み）",
-                    bytes: serialized_len(&c.lower_names)?,
-                    // **実体を持つ件数を出す**（列の長さではない）。潰れた分は 1 バイトの
-                    // タグにしかならないので、件数と長さの比が共有の効きを表す。
-                    items: c.lower_names.iter().filter(|s| s.is_some()).count(),
-                },
-                CacheByteRow {
-                    label: "lower_file_names（3 状態）",
-                    bytes: serialized_len(&c.lower_file_names)?,
-                    items: c
-                        .lower_file_names
-                        .iter()
-                        .filter(|f| matches!(f, LowerFileName::Text(_)))
-                        .count(),
-                },
-            ],
+            LowerRepr::Collapsed {
+                names: &c.lower_names,
+                files: &c.lower_file_names,
+            },
             None,
         );
     }
@@ -1373,18 +1351,10 @@ pub fn cache_byte_breakdown_in(dir: &Path) -> Option<CacheByteBreakdown> {
             &c.entries,
             &c.char_masks,
             &c.file_name_char_masks,
-            [
-                CacheByteRow {
-                    label: "lower_names（v5・全件実体）",
-                    bytes: serialized_len(&c.lower_names)?,
-                    items: c.lower_names.len(),
-                },
-                CacheByteRow {
-                    label: "lower_file_names（v5・全件実体）",
-                    bytes: serialized_len(&c.lower_file_names)?,
-                    items: c.lower_file_names.iter().filter(|s| s.is_some()).count(),
-                },
-            ],
+            LowerRepr::Raw {
+                names: &c.lower_names,
+                files: &c.lower_file_names,
+            },
             None,
         );
     }
@@ -1399,18 +1369,10 @@ pub fn cache_byte_breakdown_in(dir: &Path) -> Option<CacheByteBreakdown> {
             &c.entries,
             &c.char_masks,
             &c.file_name_char_masks,
-            [
-                CacheByteRow {
-                    label: "lower_names（v4・全件実体）",
-                    bytes: serialized_len(&c.lower_names)?,
-                    items: c.lower_names.len(),
-                },
-                CacheByteRow {
-                    label: "lower_file_names（v4・全件実体）",
-                    bytes: serialized_len(&c.lower_file_names)?,
-                    items: c.lower_file_names.iter().filter(|s| s.is_some()).count(),
-                },
-            ],
+            LowerRepr::Raw {
+                names: &c.lower_names,
+                files: &c.lower_file_names,
+            },
             Some(&c.normalized_keys),
         );
     }
@@ -1418,15 +1380,27 @@ pub fn cache_byte_breakdown_in(dir: &Path) -> Option<CacheByteBreakdown> {
     None
 }
 
+/// 派生文字列 2 本の、版ごとの表現。**`build_breakdown` へは表現だけを渡す**——行の生成を
+/// 呼び出し側へ出すと、フィールドの並び順が文書の申し合わせに落ちる。postcard は struct に
+/// 枠を持たないので、**2 行を入れ替えても長さの和は変わり**、残余 0 の検算はその誤りを
+/// 捕まえない（捕まえるのは項目の欠落と重複だけである）。
+enum LowerRepr<'a> {
+    /// v6: 潰し済み。
+    Collapsed {
+        names: &'a [Option<String>],
+        files: &'a [LowerFileName],
+    },
+    /// v5 / v4: 全件が実体を持つ。**両版で型も数え方も同一**ゆえ 1 つの variant で足りる
+    /// （版そのものは [`CacheByteBreakdown::version`] が正本として持つ）。
+    Raw {
+        names: &'a [String],
+        files: &'a [Option<String>],
+    },
+}
+
 /// 読めた版によらず同じ帰属を組む。**スライスで受ける**ので、現行の `Cow<[T]>` も旧版の
 /// `Vec<T>` も同じ経路を通る（postcard はどちらも `serialize_seq` へ委譲し、バイト列は
 /// 一致する）。
-///
-/// **派生文字列の 2 行だけは呼び出し側が作る。** 表現が版ごとに違う（v6 は潰し済み・
-/// v5 以下は全件実体）ため、ここで型を 1 つに決められない。フィールドの並び順を守るのは
-/// 呼び出し側の責任だが、**守れているかは残余が 0 になるかで分かる**——postcard は struct に
-/// 枠を持たないので、順序を違えても長さの和は変わらず、この検算は順序の誤りを捕まえない
-/// （捕まえるのは項目の欠落と重複である）。
 #[allow(clippy::too_many_arguments)]
 fn build_breakdown(
     version: u32,
@@ -1436,11 +1410,41 @@ fn build_breakdown(
     entries: &[AppEntry],
     char_masks: &[u64],
     file_name_char_masks: &[u64],
-    lower_rows: [CacheByteRow; 2],
+    lower: LowerRepr<'_>,
     normalized_keys: Option<&[String]>,
 ) -> Option<CacheByteBreakdown> {
     let n = entries.len();
-    let [lower_names_row, lower_file_names_row] = lower_rows;
+    let (lower_names_row, lower_file_names_row) = match lower {
+        LowerRepr::Collapsed { names, files } => (
+            CacheByteRow {
+                label: "lower_names（潰し済み）",
+                bytes: serialized_len(&names)?,
+                // **実体を持つ件数を出す**（列の長さではない）。潰れた分は 1 バイトの
+                // タグにしかならないので、件数と長さの比が共有の効きを表す。
+                items: names.iter().filter(|s| s.is_some()).count(),
+            },
+            CacheByteRow {
+                label: "lower_file_names（3 状態）",
+                bytes: serialized_len(&files)?,
+                items: files
+                    .iter()
+                    .filter(|f| matches!(f, LowerFileName::Text(_)))
+                    .count(),
+            },
+        ),
+        LowerRepr::Raw { names, files } => (
+            CacheByteRow {
+                label: "lower_names（全件実体）",
+                bytes: serialized_len(&names)?,
+                items: names.len(),
+            },
+            CacheByteRow {
+                label: "lower_file_names（全件実体）",
+                bytes: serialized_len(&files)?,
+                items: files.iter().filter(|s| s.is_some()).count(),
+            },
+        ),
+    };
     let mut rows = vec![
         CacheByteRow {
             label: "built_at",

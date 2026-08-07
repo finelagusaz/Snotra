@@ -35,6 +35,28 @@ enum DerivedStrings {
     },
 }
 
+impl DerivedStrings {
+    /// エントリ数。**2 本の長さは一致していなければならない**ので、片方だけを返す形にはしない
+    /// ——食い違いをここで潰すと、`assemble` の長さ検証がその食い違いを素通りする。
+    fn len(&self) -> usize {
+        let (names, files) = match self {
+            Self::Measured {
+                lower_names,
+                lower_file_names,
+            } => (lower_names.len(), lower_file_names.len()),
+            Self::Collapsed {
+                lower_names,
+                lower_file_names,
+            } => (lower_names.len(), lower_file_names.len()),
+        };
+        debug_assert_eq!(
+            names, files,
+            "DerivedStrings: lower_names と lower_file_names の長さが違う"
+        );
+        names
+    }
+}
+
 /// Wave 1 の出力: `(lower_names, lower_file_names, kana_lower_names)`。
 /// いずれも構築後に伸長しないため `Box<str>` で保持する（容量ワード 8B/要素を節約）。
 ///
@@ -42,15 +64,6 @@ enum DerivedStrings {
 /// （実測 35.56 MiB。経緯は `PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を
 /// 保持するか導出するか」）。
 type Wave1Strings = (Vec<Box<str>>, Vec<Option<Box<str>>>, Vec<Box<str>>);
-
-/// `DerivedStrings` を `assemble` の内部表現へ開いた形。
-/// 3 つめは `Collapsed` のときだけ `Some` で、**共有の旗を立てる位置**を持つ
-/// （`PathStore` を作った後でなければ立てられないため、開いた時点では控えるしかない）。
-type UnpackedDerived = (
-    Vec<Option<Box<str>>>,
-    Vec<Option<Box<str>>>,
-    Option<Vec<usize>>,
-);
 
 /// Wave 1: entries から文字列正規化データを並列構築する。
 /// lower_names / lower_file_names / kana_lower_names は entries への純粋な map であり
@@ -148,55 +161,14 @@ impl SearchEngine {
         kana: (Vec<Box<str>>, Vec<u64>),
     ) -> Self {
         let (mut kana_lower_names, mut kana_char_masks) = kana;
-        // ここから先の `lower_names` の `None` は「`entries[i].name` と同一」を意味する
-        // （`SearchEngine::lower_names` の doc）。**`Measured` の時点では全要素が `Some` である**
-        // ——下の共有判定はその前提に乗っており、だから `Collapsed` を同じ入口へ流せない
-        // （`DerivedStrings` の doc）。`Option<Box<str>>` は `Box<str>` と同じ 16 B ゆえ、
-        // 包んでも Vec 本体は動かない。
-        // **旗は `PathStore` を作った後でなければ立てられない**（`mark_file_name_is_lower_name`
-        // は `CompactEntry` の空きパディングへ書く）。ゆえに `Collapsed` の旗はここでは適用せず、
-        // 位置だけを控えて下で立てる。
-        let (mut lower_names, mut lower_file_names, shared_file_name_at): UnpackedDerived =
-            match derived {
-                DerivedStrings::Measured {
-                    lower_names,
-                    lower_file_names,
-                } => (
-                    lower_names.into_iter().map(Some).collect(),
-                    lower_file_names,
-                    None,
-                ),
-                // **展開に測定は要らない。** 記録側が `measure_derived_sharing` で測った結果が
-                // そのまま表現になっている——ここで測り直すと、`None` どうしの一致で誤った旗が立つ。
-                DerivedStrings::Collapsed {
-                    lower_names,
-                    lower_file_names,
-                } => {
-                    let mut shared = Vec::new();
-                    let files = lower_file_names
-                        .into_iter()
-                        .enumerate()
-                        .map(|(i, f)| match f {
-                            LowerFileName::Text(s) => Some(s.into_boxed_str()),
-                            LowerFileName::Absent => None,
-                            LowerFileName::SameAsLowerName => {
-                                shared.push(i);
-                                None
-                            }
-                        })
-                        .collect();
-                    (
-                        lower_names
-                            .into_iter()
-                            .map(|o| o.map(String::into_boxed_str))
-                            .collect(),
-                        files,
-                        Some(shared),
-                    )
-                }
-            };
         let mut char_masks = char_masks;
         let mut file_name_char_masks = file_name_char_masks;
+        // **長さの検証は展開より前に行う。** 下の `debug_assert` は `PathStore` に対して測るので、
+        // 派生文字列の長さはここで見ておかないと、ずれた入力が展開の添字 panic として先に出る。
+        debug_assert!(
+            derived.len() == entries.len(),
+            "SearchEngine: 派生文字列の長さが entries と一致しない"
+        );
         // `target_path` の `String` はここで木の接頭辞共有へ組み替えられ、`Vec<AppEntry>` ごと
         // 解放される（`path_store` の `//!`）。長さの検証は組み替え後の `PathStore` に対して行う
         // ——組み替えは全件を 1 対 1 で写すが、そう**信じる**のではなく測るのがこの節の役目である。
@@ -209,6 +181,54 @@ impl SearchEngine {
             "PathStore: 組み替えでエントリ数が変わってはならない"
         );
         let mut entries = paths;
+
+        // ここから先の `lower_names` の `None` は「`entries[i].name` と同一」を意味する
+        // （`SearchEngine::lower_names` の doc）。**`Measured` の時点では全要素が `Some` である**
+        // ——下の共有判定はその前提に乗っており、だから `Collapsed` を同じ入口へ流せない
+        // （`DerivedStrings` の doc）。`Option<Box<str>>` は `Box<str>` と同じ 16 B ゆえ、
+        // 包んでも Vec 本体は動かない。
+        //
+        // **展開を `PathStore::build` より後に置くのは、旗をその場で立てるためである。**
+        // `mark_file_name_is_lower_name` は `CompactEntry` の空きパディングへ書くので、木が
+        // 建つ前には呼べない。位置を控える `Vec<usize>` を挟む形もあるが、**制約に足場で
+        // 応えるより、制約が満たされる場所まで展開を遅らせるほうが構造が 1 段浅くなる**
+        // （`PathStore::build` は派生文字列を一切見ないので、遅らせる障害は無い）。
+        let needs_measuring = matches!(derived, DerivedStrings::Measured { .. });
+        let (mut lower_names, mut lower_file_names) = match derived {
+            DerivedStrings::Measured {
+                lower_names,
+                lower_file_names,
+            } => (
+                lower_names.into_iter().map(Some).collect::<Vec<_>>(),
+                lower_file_names,
+            ),
+            // **展開に測定は要らない。** 記録側が `measure_derived_sharing` で測った結果が
+            // そのまま表現になっている——ここで測り直すと、`None` どうしの一致で誤った旗が立つ。
+            DerivedStrings::Collapsed {
+                lower_names,
+                lower_file_names,
+            } => {
+                let files = lower_file_names
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, f)| match f {
+                        LowerFileName::Text(s) => Some(s.into_boxed_str()),
+                        LowerFileName::Absent => None,
+                        LowerFileName::SameAsLowerName => {
+                            entries.mark_file_name_is_lower_name(i);
+                            None
+                        }
+                    })
+                    .collect();
+                (
+                    lower_names
+                        .into_iter()
+                        .map(|o| o.map(String::into_boxed_str))
+                        .collect(),
+                    files,
+                )
+            }
+        };
         lower_names.shrink_to_fit();
         lower_file_names.shrink_to_fit();
         char_masks.shrink_to_fit();
@@ -258,23 +278,9 @@ impl SearchEngine {
         // **切り分けていない**——ここに書けるのは「並列化は効かない」までである。
         // **`Collapsed` はここを通らない。** 記録側が既に測っており、測り直すと
         // 「`None` どうしの一致」で file name 成分の無いエントリに旗が立つ（`DerivedStrings`
-        // の doc）。控えておいた位置へ旗を立てるだけで済ませる。
-        if let Some(shared) = shared_file_name_at {
-            for i in shared {
-                entries.mark_file_name_is_lower_name(i);
-            }
-            return Self::finish(
-                entries,
-                lower_names,
-                lower_file_names,
-                char_masks,
-                file_name_char_masks,
-                kana_lower_names,
-                kana_char_masks,
-            );
-        }
-
-        for i in 0..entries.len() {
+        // の doc）。あちらの旗は展開のその場で立て終えている。
+        let measured_count = if needs_measuring { entries.len() } else { 0 };
+        for i in 0..measured_count {
             // ここでの `lower_names[i]` は必ず `Some`（`Measured` を `map(Some)` した直後であり、
             // このループは各 `i` を 1 度しか通らない）。
             let Some(lower_name) = lower_names[i].as_deref() else {
@@ -300,31 +306,9 @@ impl SearchEngine {
             }
         }
 
-        Self::finish(
-            entries,
-            lower_names,
-            lower_file_names,
-            char_masks,
-            file_name_char_masks,
-            kana_lower_names,
-            kana_char_masks,
-        )
-    }
-
-    /// 潰し終えた並列 Vec を `Self` にする。`Measured` / `Collapsed` の両経路が合流する。
-    ///
-    /// **`assemble` の外へ出してはならない。** 長さの検証と `shrink_to_fit` はあちらが持って
-    /// おり、ここを直接呼ぶ経路を作るとその 2 つを迂回できてしまう。
-    #[allow(clippy::too_many_arguments)]
-    fn finish(
-        entries: PathStore,
-        lower_names: Vec<Option<Box<str>>>,
-        lower_file_names: Vec<Option<Box<str>>>,
-        char_masks: Vec<u64>,
-        file_name_char_masks: Vec<u64>,
-        kana_lower_names: Vec<Box<str>>,
-        kana_char_masks: Vec<u64>,
-    ) -> Self {
+        // **合流点は `assemble` の末尾そのものである。** 両経路の分岐は上のループの有無だけに
+        // 絞ってあり、組み立てを別関数へ切り出すと「長さの検証と `shrink_to_fit` を迂回して
+        // 直接呼ぶ」経路が表現できてしまう（doc で禁じるより構造で消すほうが強い）。
         Self {
             entries,
             lower_names,

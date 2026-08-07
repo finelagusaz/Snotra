@@ -422,6 +422,47 @@ fn report_cache_bytes(n: usize) {
         b.entry_residual, 0,
         "entries の内訳が entries のバイト数と一致しない"
     );
+
+    // **仮想の行は残余の外にある。** 現にファイルへ在るものではなく「もしこの形なら何バイトか」
+    // であり、上の検算へ混ぜると帰属の意味が壊れる。天井を掛け算で見積もらないために測る。
+    if !b.hypothetical_rows.is_empty() {
+        println!("\n  --- 仮想: 派生文字列の共有をディスクへ持ち込んだら（残余の検算外）---");
+        for row in &b.hypothetical_rows {
+            println!(
+                "  {:<44}{:>10.2}{:>11}{:>10.1}",
+                row.label,
+                mib(row.bytes),
+                row.items,
+                row.bytes as f64 / n as f64,
+            );
+        }
+        let now: usize = b
+            .rows
+            .iter()
+            .filter(|r| r.label == "lower_names" || r.label == "lower_file_names")
+            .map(|r| r.bytes)
+            .sum();
+        let x: usize = b
+            .hypothetical_rows
+            .iter()
+            .filter(|r| r.label.starts_with("[案]") || r.label.starts_with("[案 X]"))
+            .map(|r| r.bytes)
+            .sum();
+        let y: usize = b
+            .hypothetical_rows
+            .iter()
+            .filter(|r| r.label.starts_with("[案]") || r.label.starts_with("[案 Y]"))
+            .map(|r| r.bytes)
+            .sum();
+        println!(
+            "      現在 {:.2} MiB → 案 X {:.2} MiB（{:+.2}）/ 案 Y {:.2} MiB（{:+.2}）",
+            mib(now),
+            mib(x),
+            delta_mib(x, now),
+            mib(y),
+            delta_mib(y, now),
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

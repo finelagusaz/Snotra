@@ -1133,6 +1133,28 @@ pub struct CacheByteBreakdown {
     pub entry_rows: Vec<CacheByteRow>,
     /// `entries` のバイト数 − Σ`entry_rows`。**0 でなければ帰属が誤っている。**
     pub entry_residual: i64,
+    /// **仮想の行**——「もし派生文字列の共有をディスクへも持ち込んだら何バイトか」。
+    ///
+    /// `rows` とは違い**現にファイルに在るものではない**ので、残余の検算には入らない。
+    /// 天井を算術で見積もらないために置く（実測 86.6% / 81.9% という重複率から
+    /// 掛け算しても、可変長 varint とタグのバイトは出てこない）。
+    pub hypothetical_rows: Vec<CacheByteRow>,
+}
+
+/// 測定専用: `lower_file_names` を 3 状態で表す案のシリアライズ形。
+///
+/// **`Option<String>` では足りない。** `None` には「file name 成分が無い」という先客がおり、
+/// そこへ「`lower_names[i]` と同一」を重ねると 2 つの意味が同じ表現に乗る——メモリ側は
+/// `CompactEntry::file_name_is_lower_name`（空きパディング）で解いたが、ディスクには
+/// 空きパディングが無い。
+#[derive(Serialize)]
+enum LowerFileNameProbe<'a> {
+    /// file name 成分が無い。
+    Absent,
+    /// 解決後の `lower_name` と同一。
+    SameAsLowerName,
+    /// 独自の文字列。
+    Text(&'a str),
 }
 
 /// postcard の LEB128 varint が `v` を表すのに使うバイト数。
@@ -1308,6 +1330,61 @@ fn build_breakdown(
     let entry_attributed: usize = entry_rows.iter().map(|r| r.bytes).sum();
     let entry_residual = entries_bytes as i64 - entry_attributed as i64;
 
+    // --- 仮想の行: 派生文字列の共有をディスクへも持ち込んだら何バイトか ---
+    //
+    // **判定は `search/build.rs` の `assemble` と同じ形である**（`lower_file_names[i]` が
+    // 解決後の `lower_name` と一致するか / `lower_names[i]` が `name` と一致するか）。ここは
+    // 天井を測るための写しであり、**実装へ進むならこの判定は 1 つの関数へ寄せること**——
+    // 記録側と適用側が同じ関数を通ることだけが、ディスクとメモリで潰れ方が一致する根拠になる
+    // （`normalize_entry_key_into` と同じ理屈）。
+    //
+    // **判定の順序は `assemble` に合わせる**（file name 側を先に測ってから name 側を潰す）。
+    // 逆にすると前段の比較相手が消えて共有を取りこぼし、**天井を過小に見積もる**。
+    let mut shared_lower: Vec<Option<&str>> = Vec::with_capacity(n);
+    let mut probe_x: Vec<LowerFileNameProbe<'_>> = Vec::with_capacity(n);
+    let mut flags_y: Vec<bool> = Vec::with_capacity(n);
+    let mut shared_lower_file: Vec<Option<&str>> = Vec::with_capacity(n);
+    for (i, entry) in entries.iter().enumerate() {
+        let lower_name = lower_names.get(i).map(|s| s.as_str());
+        let lower_file = lower_file_names.get(i).and_then(|o| o.as_deref());
+        let shares_file_name = lower_file == lower_name;
+        let shares_name = lower_name == Some(entry.name.as_str());
+
+        probe_x.push(match (shares_file_name, lower_file) {
+            (true, _) => LowerFileNameProbe::SameAsLowerName,
+            (false, None) => LowerFileNameProbe::Absent,
+            (false, Some(s)) => LowerFileNameProbe::Text(s),
+        });
+        flags_y.push(shares_file_name);
+        shared_lower_file.push(if shares_file_name { None } else { lower_file });
+        shared_lower.push(if shares_name { None } else { lower_name });
+    }
+    let hypothetical_rows = vec![
+        CacheByteRow {
+            label: "[案] lower_names（None = name と同一）",
+            bytes: serialized_len(&shared_lower)?,
+            items: shared_lower.iter().filter(|s| s.is_some()).count(),
+        },
+        CacheByteRow {
+            label: "[案 X] lower_file_names（3 状態 enum）",
+            bytes: serialized_len(&probe_x)?,
+            items: probe_x
+                .iter()
+                .filter(|p| matches!(p, LowerFileNameProbe::Text(_)))
+                .count(),
+        },
+        CacheByteRow {
+            label: "[案 Y] lower_file_names（Option）",
+            bytes: serialized_len(&shared_lower_file)?,
+            items: shared_lower_file.iter().filter(|s| s.is_some()).count(),
+        },
+        CacheByteRow {
+            label: "[案 Y] file_name_is_lower_name（旗の Vec）",
+            bytes: serialized_len(&flags_y)?,
+            items: flags_y.iter().filter(|b| **b).count(),
+        },
+    ];
+
     Some(CacheByteBreakdown {
         version,
         file_len,
@@ -1316,6 +1393,7 @@ fn build_breakdown(
         residual,
         entry_rows,
         entry_residual,
+        hypothetical_rows,
     })
 }
 

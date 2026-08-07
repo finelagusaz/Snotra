@@ -242,6 +242,14 @@ pub struct LoadOrScanStats {
     pub cache_hit: bool,
     pub hash_ms: u128,
     pub cache_load_ms: u128,
+    /// `index.bin` をバイト列として読む時間。**`cache_load_ms` の内数である**
+    /// （他の項目と違い、フェーズの和には足さない）。
+    ///
+    /// `cache_load_ms` は「読む」と「deserialize する」の 2 つを 1 つの数にしており、
+    /// **両者はオンディスク形式の変更に対して逆向きに振る舞う**——読むバイトを減らせば前者は
+    /// 減るが、形式を圧縮すれば後者は増えうる。分けずに測ると、どちらが効いたのか原理的に
+    /// 区別できない。cache-miss の枝では 0（読む対象が無い）。
+    pub cache_read_ms: u128,
     /// 背景再スキャン用の digest を取る時間（キャッシュヒット時のみ非ゼロ）。
     ///
     /// **この項目が無かったために、ここに居た全エントリ複製がどのフェーズにも現れなかった。**
@@ -301,7 +309,10 @@ struct IndexCache<'a> {
 /// **読むだけで捨てる。** 導出可能な派生を持たない形へ移したため、v4 バイト列から
 /// 復元するのは v5 と同じ 4 本（マスク 2 本 + lower 2 本）である。**それらは v4 にも
 /// 揃っているので Wave 1 はスキップされたまま**で、v4 ユーザーの初回起動は遅くならない。
+/// `Serialize` は**テストのときだけ**derive する。製品が v4 を書く経路はもう無い
+/// （読むだけ・書くのは常に現行版）が、「中身は同じだが版だけ古い」状況を作る治具には要る。
 #[derive(Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
 struct IndexCacheV4 {
     #[allow(dead_code)]
     built_at: u64,
@@ -394,6 +405,8 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
         load_with_index_generation(|| load_cache(current_hash))
     {
         let cache_load_ms = cache_load_started.elapsed().as_millis();
+        let cache_read_ms = result.read_ms;
+        let cached_version = result.version;
         let return_entries = result.entries;
         let cached_masks = result.cached_masks;
         // 背景再スキャンはここでは spawn しない。タスクとして返し、`src-tauri` が
@@ -409,12 +422,14 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
             config_hash: current_hash,
             cached_digest: entries_digest(&return_entries),
             generation: rescan_generation,
+            cached_version,
         };
         let digest_ms = digest_started.elapsed().as_millis();
         let stats = LoadOrScanStats {
             cache_hit: true,
             hash_ms,
             cache_load_ms,
+            cache_read_ms,
             digest_ms,
             scan_ms: 0,
             sort_ms: 0,
@@ -454,6 +469,8 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
         cache_hit: false,
         hash_ms,
         cache_load_ms,
+        // cache-miss の枝は `index.bin` を読み切れていない（不在・stale・破損のいずれか）。
+        cache_read_ms: 0,
         // cache-miss の枝は背景再スキャンを返さない（走査したてが最新である）。
         digest_ms: 0,
         scan_ms,
@@ -596,6 +613,11 @@ pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> Vec<AppE
 struct LoadCacheResult {
     entries: Vec<AppEntry>,
     cached_masks: Option<CachedMasks>,
+    /// `index.bin` をバイト列として読み終えるまでの時間（`LoadOrScanStats::cache_read_ms` へ運ぶ）。
+    read_ms: u128,
+    /// 実際に読めた形式のバージョン。**現行版とは限らない**——フォールバック経路で読めた
+    /// ときは旧版であり、背景再スキャンがそれを見て現行版へ書き戻す。
+    version: u32,
 }
 
 fn load_cache(config_hash: u64) -> Option<LoadCacheResult> {
@@ -606,7 +628,9 @@ fn load_cache(config_hash: u64) -> Option<LoadCacheResult> {
 /// `load_cache` と同じ読み込みを `dir` 注入で行う（統合テスト用、issue #429）。
 fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
     let bf = cache_bin_file_in(dir);
+    let read_started = Instant::now();
     let bytes = bf.load_bytes()?;
+    let read_ms = read_started.elapsed().as_millis();
 
     // v5 (現行): ビットマスク + lower names。
     // deserialize は Cow::Owned を返すため .into_owned() は clone なしの move。
@@ -625,12 +649,19 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
         return Some(LoadCacheResult {
             entries: cache.entries.into_owned(),
             cached_masks: Some(masks),
+            read_ms,
+            version: INDEX_CACHE_VERSION,
         });
     }
 
     // v4 フォールバック: 末尾の normalized_keys を**読んで捨てる**。復元する 4 本は v5 と同じで
     // どれも v4 に揃っているため、**Wave 1 はスキップされたまま**（v4 ユーザーの初回起動は
-    // 遅くならない）。次回の save で v5 へ昇格する。
+    // 遅くならない）。
+    //
+    // **昇格は「次回の save」では起きない。** ここはかつてそう書いていたが、save の契機は
+    // cache-miss と背景再スキャンの `Changed` だけであり、索引の中身が変わらない限りその
+    // 「次回」は来ない——実運用点で v4 が残り続け、毎起動 35.98 MiB を読んで捨てていた
+    // （2026-08-07 実測）。昇格させるのは背景再スキャンで、`version` がその判断材料である。
     if let Ok(cache) = try_deserialize_with_header::<IndexCacheV4>(&bytes, INDEX_MAGIC, 4) {
         if cache.config_hash != config_hash {
             return None;
@@ -644,6 +675,8 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
         return Some(LoadCacheResult {
             entries: cache.entries,
             cached_masks: Some(masks),
+            read_ms,
+            version: 4,
         });
     }
 
@@ -661,6 +694,8 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
         return Some(LoadCacheResult {
             entries: cache.entries,
             cached_masks: Some(masks),
+            read_ms,
+            version: 3,
         });
     }
 
@@ -672,6 +707,8 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
         return Some(LoadCacheResult {
             entries: cache.entries,
             cached_masks: None,
+            read_ms,
+            version: 2,
         });
     }
 
@@ -742,6 +779,7 @@ fn try_background_rescan(
     config_hash: u64,
     cached_digest: u64,
     generation: u64,
+    cached_version: u32,
 ) -> RescanOutcome {
     let Some(dir) = Config::config_dir() else {
         return RescanOutcome::Skipped;
@@ -753,6 +791,7 @@ fn try_background_rescan(
         config_hash,
         cached_digest,
         generation,
+        cached_version,
     )
 }
 
@@ -763,6 +802,7 @@ fn try_background_rescan_in(
     config_hash: u64,
     cached_digest: u64,
     generation: u64,
+    cached_version: u32,
 ) -> RescanOutcome {
     // 権威的ビルド（rebuild_and_save / cache-miss save）が書き込み中なら Skipped。
     let changed = try_with_index_write_lock(|| {
@@ -773,12 +813,20 @@ fn try_background_rescan_in(
         }
         let mut scanned = scan_all(scan, show_hidden_system);
         sort_entries_canonical(&mut scanned);
-        if entries_digest(&scanned) == cached_digest {
-            Some(false)
-        } else {
+        let changed = entries_digest(&scanned) != cached_digest;
+
+        // **書く条件は 2 つある。** 中身が変わったとき（従来）と、**読めた形式が旧版のとき**。
+        // 後者を欠くと、索引の中身が変わらない限り旧版が何日でも残り、そのユーザーは
+        // 新形式の削減を**永久に受け取らない**（2026-08-07 に実運用点で実測。詳細は
+        // `background_rescan_upgrades_stale_format_when_entries_are_unchanged`）。
+        //
+        // 昇格をこの経路に置くのは、ここが **`sort_entries_canonical` を通した自前の
+        // 走査結果を既に持っている唯一の場所**だからである。ロード側で書こうとすると、
+        // engine へ move する `entries` の複製が要り、反復 6 で消した 62.5 MiB が復活する。
+        if changed || cached_version != INDEX_CACHE_VERSION {
             save_cache_sorted_in(dir, &scanned, config_hash);
-            Some(true)
         }
+        Some(changed)
     });
     match changed {
         None | Some(None) => RescanOutcome::Skipped,
@@ -799,6 +847,10 @@ pub struct BackgroundRescanTask {
     config_hash: u64,
     cached_digest: u64,
     generation: u64,
+    /// ロードで実際に読めた形式のバージョン。**旧版なら、中身が変わっていなくても
+    /// 現行版で書き戻す**（`try_background_rescan_in`）。ここを運ばないと、索引が変わらない
+    /// ユーザーの `index.bin` は旧版のまま留まり、新形式の削減を永久に受け取らない。
+    cached_version: u32,
 }
 
 impl BackgroundRescanTask {
@@ -811,6 +863,7 @@ impl BackgroundRescanTask {
             self.config_hash,
             self.cached_digest,
             self.generation,
+            self.cached_version,
         )
     }
 }
@@ -1037,6 +1090,233 @@ pub fn extend_cached_masks(masks: &mut CachedMasks, new_entries: &[AppEntry]) {
             lfn.push(lower_file);
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// 計測専用: `index.bin` のオンディスク内訳
+// ---------------------------------------------------------------------------
+
+/// `index.bin` の 1 項目が占めるオンディスクのバイト数。
+#[doc(hidden)]
+#[derive(Debug, Clone)]
+pub struct CacheByteRow {
+    pub label: &'static str,
+    pub bytes: usize,
+    pub items: usize,
+}
+
+/// `index.bin` のバイト内訳。
+///
+/// **`residual` が 0 でなければ帰属が誤っている。** postcard は struct に枠を持たず、
+/// フィールドの連結がそのまま payload になる——ゆえに項目別の長さの和は payload 長と
+/// **一致しなければならない**。この検算が無い内訳は、正しい帰属と誤った帰属を区別できない
+/// （`tests/memory_footprint.rs` のフェーズ内訳が残余を出すのと同じ理由）。
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct CacheByteBreakdown {
+    /// 実際に読めた形式のバージョン。**現行版とは限らない。**
+    ///
+    /// 実運用点のファイルが旧版のまま留まることは実際に起きる——`index.bin` を書き直す契機は
+    /// cache-miss と背景再スキャンの `Changed` だけであり、索引の中身が変わらない限り**旧版が
+    /// 何日でも残る**（2026-08-07 に実測: v5 導入後の実 `index.bin` が v4 のままで、
+    /// `normalized_keys` を毎起動で読んで捨てていた）。**この値を読まずに内訳を解釈しないこと。**
+    pub version: u32,
+    /// `index.bin` のファイル長（ヘッダ 8 バイトを含む）。
+    pub file_len: usize,
+    /// postcard payload の長さ（`file_len` − ヘッダ）。
+    pub payload_len: usize,
+    /// `IndexCache` のフィールド別バイト数。
+    pub rows: Vec<CacheByteRow>,
+    /// `payload_len` − Σ`rows`。**0 でなければ帰属が誤っている。**
+    pub residual: i64,
+    /// `entries` の内部内訳（`name` / `target_path` / `is_folder`）。
+    pub entry_rows: Vec<CacheByteRow>,
+    /// `entries` のバイト数 − Σ`entry_rows`。**0 でなければ帰属が誤っている。**
+    pub entry_residual: i64,
+}
+
+/// postcard の LEB128 varint が `v` を表すのに使うバイト数。
+fn varint_len(mut v: usize) -> usize {
+    let mut n = 1;
+    while v >= 0x80 {
+        v >>= 7;
+        n += 1;
+    }
+    n
+}
+
+/// 値を postcard へ書いたときの長さ（バッファは即座に捨てる）。
+fn serialized_len<T: Serialize>(value: &T) -> Option<usize> {
+    postcard::to_allocvec(value).ok().map(|v| v.len())
+}
+
+/// `dir` の `index.bin` を読み、フィールド別のバイト内訳を返す。
+///
+/// **オンディスク形式を変える判断の唯一の一次証拠である。** 常駐の内訳
+/// （`SearchEngine::footprint_rows`）はメモリが「持たない」ことを学んだ後の姿を映すので、
+/// ディスクが何を持ち続けているかは**そちらからは原理的に見えない**（`target_path` は
+/// 常駐 0.01 MiB に対しディスクは全文を持つ）。
+///
+/// **v5 と v4 の両方を読む。** 現行版だけを読む形にしてはならない——実運用点のファイルが
+/// 旧版のまま留まることは実際に起きるので、そこで `None` を返す計器は
+/// **一番測りたい相手にだけ黙る**。読めた版は [`CacheByteBreakdown::version`] が返す。
+///
+/// **撤去条件**: オンディスク形式の削減を打ち切ったとき（＝`INDEX_CACHE_VERSION` をこれ以上
+/// 形式縮小のために上げないと決めたとき）。それまでは各反復の前後で天井と実績を突き合わせる。
+#[doc(hidden)]
+pub fn cache_byte_breakdown_in(dir: &Path) -> Option<CacheByteBreakdown> {
+    let bf = cache_bin_file_in(dir);
+    let bytes = bf.load_bytes()?;
+    let file_len = bytes.len();
+
+    if let Ok(c) =
+        try_deserialize_with_header::<IndexCache<'static>>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION)
+    {
+        drop(bytes);
+        return build_breakdown(
+            INDEX_CACHE_VERSION,
+            file_len,
+            c.built_at,
+            c.config_hash,
+            &c.entries,
+            &c.char_masks,
+            &c.file_name_char_masks,
+            &c.lower_names,
+            &c.lower_file_names,
+            None,
+        );
+    }
+
+    if let Ok(c) = try_deserialize_with_header::<IndexCacheV4>(&bytes, INDEX_MAGIC, 4) {
+        drop(bytes);
+        return build_breakdown(
+            4,
+            file_len,
+            c.built_at,
+            c.config_hash,
+            &c.entries,
+            &c.char_masks,
+            &c.file_name_char_masks,
+            &c.lower_names,
+            &c.lower_file_names,
+            Some(&c.normalized_keys),
+        );
+    }
+
+    None
+}
+
+/// 読めた版によらず同じ帰属を組む。**スライスで受ける**ので、v5 の `Cow<[T]>` も v4 の
+/// `Vec<T>` も同じ経路を通る（postcard はどちらも `serialize_seq` へ委譲し、バイト列は
+/// 一致する）。
+#[allow(clippy::too_many_arguments)]
+fn build_breakdown(
+    version: u32,
+    file_len: usize,
+    built_at: u64,
+    config_hash: u64,
+    entries: &[AppEntry],
+    char_masks: &[u64],
+    file_name_char_masks: &[u64],
+    lower_names: &[String],
+    lower_file_names: &[Option<String>],
+    normalized_keys: Option<&[String]>,
+) -> Option<CacheByteBreakdown> {
+    let n = entries.len();
+    let mut rows = vec![
+        CacheByteRow {
+            label: "built_at",
+            bytes: serialized_len(&built_at)?,
+            items: 1,
+        },
+        CacheByteRow {
+            label: "entries",
+            bytes: serialized_len(&entries)?,
+            items: n,
+        },
+        CacheByteRow {
+            label: "config_hash",
+            bytes: serialized_len(&config_hash)?,
+            items: 1,
+        },
+        CacheByteRow {
+            label: "char_masks",
+            bytes: serialized_len(&char_masks)?,
+            items: char_masks.len(),
+        },
+        CacheByteRow {
+            label: "file_name_char_masks",
+            bytes: serialized_len(&file_name_char_masks)?,
+            items: file_name_char_masks.len(),
+        },
+        CacheByteRow {
+            label: "lower_names",
+            bytes: serialized_len(&lower_names)?,
+            items: lower_names.len(),
+        },
+        CacheByteRow {
+            label: "lower_file_names",
+            bytes: serialized_len(&lower_file_names)?,
+            items: lower_file_names.len(),
+        },
+    ];
+    if let Some(keys) = normalized_keys {
+        rows.push(CacheByteRow {
+            label: "normalized_keys（v4 のみ・読んで捨てる）",
+            bytes: serialized_len(&keys)?,
+            items: keys.len(),
+        });
+    }
+
+    let payload_len = file_len - 8;
+    let attributed: usize = rows.iter().map(|r| r.bytes).sum();
+    let residual = payload_len as i64 - attributed as i64;
+
+    // `entries` の内訳。**算術で出すが、和が上の実測値と一致することで裏打ちされる**
+    // （一致しなければ `entry_residual` に現れる）。
+    let name_bytes: usize = entries
+        .iter()
+        .map(|e| varint_len(e.name.len()) + e.name.len())
+        .sum();
+    let target_bytes: usize = entries
+        .iter()
+        .map(|e| varint_len(e.target_path.len()) + e.target_path.len())
+        .sum();
+    let entry_rows = vec![
+        CacheByteRow {
+            label: "entries: 長さプレフィックス",
+            bytes: varint_len(n),
+            items: 1,
+        },
+        CacheByteRow {
+            label: "entries[].name",
+            bytes: name_bytes,
+            items: n,
+        },
+        CacheByteRow {
+            label: "entries[].target_path",
+            bytes: target_bytes,
+            items: n,
+        },
+        CacheByteRow {
+            label: "entries[].is_folder",
+            bytes: n,
+            items: n,
+        },
+    ];
+    let entries_bytes = rows.iter().find(|r| r.label == "entries")?.bytes;
+    let entry_attributed: usize = entry_rows.iter().map(|r| r.bytes).sum();
+    let entry_residual = entries_bytes as i64 - entry_attributed as i64;
+
+    Some(CacheByteBreakdown {
+        version,
+        file_len,
+        payload_len,
+        rows,
+        residual,
+        entry_rows,
+        entry_residual,
+    })
 }
 
 #[cfg(test)]
@@ -1359,6 +1639,150 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// v4 形式の `index.bin` を `dir` へ書く（テスト専用の治具）。
+    ///
+    /// **凍結バイト列（`GOLDEN_V4`）では代用できない。** あちらのエントリは固定であり、
+    /// 背景再スキャンは実ファイルシステムを走査した結果と digest を突き合わせる——
+    /// 「中身は同じだが版だけ古い」状況を作るには、走査で出てくるエントリそのものを
+    /// v4 で書く必要がある。
+    fn write_v4_cache_in(dir: &Path, entries: &[AppEntry], config_hash: u64) {
+        let lower_names: Vec<String> = entries.iter().map(|e| to_lower_folded(&e.name)).collect();
+        let lower_file_names: Vec<Option<String>> = entries
+            .iter()
+            .map(|e| lower_file_name(&e.target_path))
+            .collect();
+        let v4 = IndexCacheV4 {
+            built_at: 0,
+            entries: entries.to_vec(),
+            config_hash,
+            char_masks: lower_names.iter().map(|s| name_char_mask(s)).collect(),
+            file_name_char_masks: lower_file_names
+                .iter()
+                .map(|s| file_char_mask(s.as_deref()))
+                .collect(),
+            lower_names,
+            lower_file_names,
+            // v5 が消したフィールド。**これを読んで捨てることが昇格の動機である。**
+            normalized_keys: entries
+                .iter()
+                .map(|e| normalize_entry_key(&e.target_path))
+                .collect(),
+        };
+        let bytes = try_serialize_with_header(INDEX_MAGIC, 4, &v4).expect("serialize v4");
+        fs::write(dir.join("index.bin"), &bytes).expect("write v4 index.bin");
+    }
+
+    /// **旧版の `index.bin` は、索引の中身が変わらない限り旧版のまま残り続けていた。**
+    ///
+    /// 書き戻す契機は cache-miss と背景再スキャンの `Changed` だけであり、走査結果が
+    /// キャッシュと一致する限り save は永久に来ない。`IndexCacheV4` の doc が書いていた
+    /// 「次回の save で v5 へ昇格する」は、**その「次回」が来ない経路を勘定していなかった**。
+    ///
+    /// 実運用点で実測して踏んだ（2026-08-07）: v5 導入後の実 `index.bin` が v4 のまま残り、
+    /// 毎起動で `normalized_keys` 35.98 MiB を読んでは捨てていた。**症状は「遅い」だけで、
+    /// 検索結果は正しいまま**——挙動テストでは原理的に捕まらない類である。
+    #[test]
+    fn background_rescan_upgrades_stale_format_when_entries_are_unchanged() {
+        let _guard = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = temp_dir("rescan_upgrades_stale_format");
+        let apps = dir.join("apps");
+        fs::create_dir_all(&apps).expect("create apps dir");
+        fs::write(apps.join("firefox.lnk"), b"x").expect("write fixture");
+
+        let scan = vec![ScanPath {
+            path: apps.to_string_lossy().into_owned(),
+            extensions: vec![".lnk".to_string()],
+            include_folders: false,
+        }];
+        let config_hash = compute_config_hash(&scan, false);
+
+        let mut entries = scan_all(&scan, false);
+        sort_entries_canonical(&mut entries);
+        assert_eq!(entries.len(), 1, "治具の走査が 1 件を返すこと");
+        let digest = entries_digest(&entries);
+
+        write_v4_cache_in(&dir, &entries, config_hash);
+        assert_eq!(
+            cache_byte_breakdown_in(&dir)
+                .expect("v4 が読めること")
+                .version,
+            4,
+            "治具が v4 を書けていること（ここが v5 だと以降の検査が自明に通る）"
+        );
+
+        let outcome = try_background_rescan_in(
+            &dir,
+            &scan,
+            false,
+            config_hash,
+            digest,
+            current_index_generation(),
+            4,
+        );
+
+        // **エントリ集合は変わっていない。** 形式の昇格は中身を変えないので `Changed` を
+        // 返してはならない——呼び出し側はそれを見てアイコンキャッシュを捨てる。
+        assert_eq!(outcome, RescanOutcome::Unchanged);
+        assert_eq!(
+            cache_byte_breakdown_in(&dir)
+                .expect("昇格後も読めること")
+                .version,
+            INDEX_CACHE_VERSION,
+            "版が現行へ昇格していること"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 対の検査: **版が現行なら書き直さない。** 昇格の条件を「旧版のとき」に絞れておらず
+    /// 毎回書いていると、起動のたびに 71 MiB の書き込みが背景で走る（症状は同じく
+    /// 「遅い」だけで結果は正しい）。`built_at` を見て、ファイルが据え置かれたことを測る。
+    #[test]
+    fn background_rescan_does_not_rewrite_when_format_is_current() {
+        let _guard = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = temp_dir("rescan_keeps_current_format");
+        let apps = dir.join("apps");
+        fs::create_dir_all(&apps).expect("create apps dir");
+        fs::write(apps.join("firefox.lnk"), b"x").expect("write fixture");
+
+        let scan = vec![ScanPath {
+            path: apps.to_string_lossy().into_owned(),
+            extensions: vec![".lnk".to_string()],
+            include_folders: false,
+        }];
+        let config_hash = compute_config_hash(&scan, false);
+
+        let mut entries = scan_all(&scan, false);
+        sort_entries_canonical(&mut entries);
+        let digest = entries_digest(&entries);
+
+        save_cache_sorted_in(&dir, &entries, config_hash);
+        let before = fs::read(dir.join("index.bin")).expect("read v5 index.bin");
+
+        let outcome = try_background_rescan_in(
+            &dir,
+            &scan,
+            false,
+            config_hash,
+            digest,
+            current_index_generation(),
+            INDEX_CACHE_VERSION,
+        );
+
+        assert_eq!(outcome, RescanOutcome::Unchanged);
+        let after = fs::read(dir.join("index.bin")).expect("read index.bin again");
+        assert_eq!(
+            before, after,
+            "版が現行で中身も同じなら、ファイルは 1 バイトも変わらないこと"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn save_cache_sorted_in_then_load_cache_in_roundtrip() {
         // issue #429: BinFile の dir 注入経路（save_cache_sorted_in / load_cache_in）が
@@ -1454,6 +1878,99 @@ mod tests {
         let v4_result =
             try_deserialize_with_header::<IndexCache>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION);
         assert!(v4_result.is_err(), "v3 bytes should not deserialize as v4");
+    }
+
+    /// **`load_cache_in` が返す `version` は、実際に読めた枝と一致しなければならない。**
+    ///
+    /// この値だけが背景再スキャンの昇格判定（`cached_version != INDEX_CACHE_VERSION`）の入力で
+    /// あり、**取り違えても検索結果は正しいまま**である——枝に誤って現行版を書けば、その形式の
+    /// ユーザーは永久に昇格せず旧形式を読み続ける（症状は「遅い」だけ・実運用点で 1 度踏んだ）。
+    /// ゆえに 4 枝すべての値をここで固定する。
+    ///
+    /// **既存の v2 / v3 テストでは代用できない。** あちらは `try_deserialize_with_header` を
+    /// 直接呼んでおり `load_cache_in` の枝選択を通らないので、`version` の帰属を見ていない。
+    #[test]
+    fn load_cache_in_reports_the_version_it_actually_read() {
+        let entries = vec![AppEntry {
+            name: "Firefox".to_string(),
+            target_path: "C:\\apps\\firefox.lnk".to_string(),
+            is_folder: false,
+        }];
+        let config_hash = 4242u64;
+        let lower_names: Vec<String> = entries.iter().map(|e| to_lower_folded(&e.name)).collect();
+        let lower_file_names: Vec<Option<String>> = entries
+            .iter()
+            .map(|e| lower_file_name(&e.target_path))
+            .collect();
+        let char_masks: Vec<u64> = lower_names.iter().map(|n| name_char_mask(n)).collect();
+        let file_name_char_masks: Vec<u64> = lower_file_names
+            .iter()
+            .map(|n| file_char_mask(n.as_deref()))
+            .collect();
+
+        // v5（現行）: 製品の save 経路そのものを通す。
+        let dir = temp_dir("version_reported_v5");
+        save_cache_sorted_in(&dir, &entries, config_hash);
+        assert_eq!(
+            load_cache_in(&dir, config_hash)
+                .expect("v5 が読めること")
+                .version,
+            INDEX_CACHE_VERSION
+        );
+        let _ = fs::remove_dir_all(&dir);
+
+        // v4: 末尾に normalized_keys を持つ形式。
+        let dir = temp_dir("version_reported_v4");
+        write_v4_cache_in(&dir, &entries, config_hash);
+        assert_eq!(
+            load_cache_in(&dir, config_hash)
+                .expect("v4 が読めること")
+                .version,
+            4
+        );
+        let _ = fs::remove_dir_all(&dir);
+
+        // v3: マスクのみ（lower names なし）。
+        let dir = temp_dir("version_reported_v3");
+        let v3 = IndexCacheV3 {
+            built_at: 0,
+            entries: entries.clone(),
+            config_hash,
+            char_masks: char_masks.clone(),
+            file_name_char_masks: file_name_char_masks.clone(),
+        };
+        fs::write(
+            dir.join("index.bin"),
+            try_serialize_with_header(INDEX_MAGIC, 3, &v3).expect("serialize v3"),
+        )
+        .expect("write v3");
+        assert_eq!(
+            load_cache_in(&dir, config_hash)
+                .expect("v3 が読めること")
+                .version,
+            3
+        );
+        let _ = fs::remove_dir_all(&dir);
+
+        // v2: マスクなし。
+        let dir = temp_dir("version_reported_v2");
+        let v2 = IndexCacheV2 {
+            built_at: 0,
+            entries: entries.clone(),
+            config_hash,
+        };
+        fs::write(
+            dir.join("index.bin"),
+            try_serialize_with_header(INDEX_MAGIC, 2, &v2).expect("serialize v2"),
+        )
+        .expect("write v2");
+        let v2_result = load_cache_in(&dir, config_hash).expect("v2 が読めること");
+        assert_eq!(v2_result.version, 2);
+        assert!(
+            v2_result.cached_masks.is_none(),
+            "v2 はマスクを持たない（枝を取り違えていないことの裏取り）"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1730,6 +2247,7 @@ mod tests {
             0,
             entries_digest(&[]),
             current_index_generation(),
+            INDEX_CACHE_VERSION,
         );
         assert_eq!(
             outcome,
@@ -1750,6 +2268,9 @@ mod tests {
             config_hash: 0,
             cached_digest: entries_digest(&[]),
             generation: current_index_generation(),
+            // **現行版を渡す。** 旧版にすると昇格の枝へ入り、このテストが実 `config_dir` の
+            // `index.bin` を空の内容で上書きする（開発者の索引が消える）。
+            cached_version: INDEX_CACHE_VERSION,
         };
         assert_eq!(task.run(), RescanOutcome::Unchanged);
     }
@@ -1779,6 +2300,7 @@ mod tests {
                 is_folder: false,
             }]),
             old_generation,
+            INDEX_CACHE_VERSION,
         );
 
         assert_eq!(outcome, RescanOutcome::Skipped);

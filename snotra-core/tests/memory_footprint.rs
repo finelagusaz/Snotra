@@ -251,11 +251,15 @@ fn measure_real_index_footprint() {
     // （`PERFORMANCE.md`「採用: 背景再スキャンの比較を digest へ（ロード 395 → 312 ms・反復 6）」）。
     // **合計が `total` に届かない分は、まだ名前の付いていない処理がそこに居るということである。**
     let s = &result.stats;
+    // `cache_read_ms` は `cache_load_ms` の**内数**ゆえ、残余の計算には足さない
+    // （足すと二重計上で残余が負に振れる）。分けて出すのは、読むバイト数と deserialize が
+    // オンディスク形式の変更に対して**逆向きに振る舞う**ためである。
     println!(
-        "  フェーズ: total {}ms = hash {}ms + cache_load {}ms + digest {}ms + scan {}ms + sort {}ms + cache_save {}ms（残余 {}ms）",
+        "  フェーズ: total {}ms = hash {}ms + cache_load {}ms（うち read {}ms）+ digest {}ms + scan {}ms + sort {}ms + cache_save {}ms（残余 {}ms）",
         s.total_ms,
         s.hash_ms,
         s.cache_load_ms,
+        s.cache_read_ms,
         s.digest_ms,
         s.scan_ms,
         s.sort_ms,
@@ -273,6 +277,28 @@ fn measure_real_index_footprint() {
     } = result;
     // 背景再スキャンタスクは src-tauri 側で別スレッドが消費する。常駐計測の対象外。
     drop(rescan_task);
+
+    // **実運用の起動経路は、ロードと構築の間に PATH スキャンを挟む**（`main.rs` の
+    // `load_or_scan_with_stats` → `scan_path_env` → `Engine::new_from_cache`）。この区間は
+    // 全 `entries` の `target_path` を `normalize_entry_key` で正規化して `HashSet` へ積む
+    // ——**エントリ数に比例する確保がロードと構築のどちらの計測にも入っていなかった。**
+    // 反復 6 の digest がどのフェーズにも現れなかったのと同じ形である。
+    //
+    // **返り値は entries へ混ぜない。** PATH スキャンはファイルシステムを読むため実行ごとに
+    // ぶれ、混ぜると常駐がバイト単位で再現しなくなる（決定性は内訳と実測を突き合わせる
+    // 前提そのもの）。ここで測るのは区間のコストであって、PATH エントリの常駐ではない。
+    if config.search.include_path_env {
+        reset_peak();
+        let tp0 = snap();
+        let path_start = std::time::Instant::now();
+        let path_entries = indexer::scan_path_env(&entries, config.search.show_hidden_system);
+        let path_ms = path_start.elapsed().as_secs_f64() * 1000.0;
+        let tp1 = snap();
+        let added = path_entries.len();
+        drop(path_entries);
+        report("PATH スキャン（起動経路・常駐外）", tp0, tp1, n);
+        println!("  壁時計: PATH スキャン {path_ms:.0} ms（+{added} 件・返り値は捨てる）");
+    }
 
     // 実 config どおりの migemo 設定で構築（= 実運用の常駐形）。
     reset_peak();
@@ -330,6 +356,71 @@ fn measure_real_index_footprint() {
     println!(
         "  drop 後の残留: {:.2} MiB（索引ではないものの額。未帰属はこれを下回れない）",
         mib(t4.live.saturating_sub(t0.live))
+    );
+
+    // オンディスクの内訳は**最後に取る**。この計器自身が形式全体を postcard へ書き直して
+    // 長さを測る（＝100 MiB 級の一時確保をする）ので、上の常駐・残留の測定より前に置くと
+    // peak を汚す。
+    report_cache_bytes(n);
+}
+
+/// `index.bin` のバイト内訳を表にする。
+///
+/// **常駐の内訳とは測っている物体が違う。** あちらは構築後の `SearchEngine`——メモリが
+/// 反復 2〜5 で「持たない」ことを学んだ後の姿である。こちらはディスクが今も持ち続けている
+/// 姿で、両者の差が「読んで確保して `assemble` が即座に捨てているもの」になる。
+/// **オンディスク形式を変える判断は、常駐の内訳からは原理的にできない**——`target_path` は
+/// 常駐 0.01 MiB（フォルダ木の接頭辞共有）に対し、ディスクは全文を持つ。
+fn report_cache_bytes(n: usize) {
+    let Some(b) = indexer::cache_byte_breakdown_in(&Config::config_dir().expect("config dir"))
+    else {
+        println!("\n  --- index.bin の内訳: v5/v4 のどちらとしても読めないためスキップ ---");
+        return;
+    };
+
+    // **版を必ず出す。** 実運用点のファイルが現行版とは限らない——`index.bin` を書き直す契機は
+    // cache-miss と背景再スキャンの `Changed` だけなので、索引の中身が変わらなければ旧版が
+    // 残り続ける。版を見ずに内訳を読むと、既に消したはずのフィールドを「まだある」と誤読する。
+    println!(
+        "\n  --- index.bin の内訳（v{} / {:.2} MiB / payload {:.2} MiB）---",
+        b.version,
+        mib(b.file_len),
+        mib(b.payload_len)
+    );
+    if b.version != 5 {
+        println!(
+            "  ※ 現行は v5。**実運用点は v{} のまま**で、v5 で消したフィールドをまだ読んでいる。",
+            b.version
+        );
+    }
+    println!(
+        "  {:<44}{:>10}{:>11}{:>10}",
+        "項目", "MiB", "要素", "B/entry"
+    );
+    for row in b.rows.iter().chain(b.entry_rows.iter()) {
+        println!(
+            "  {:<44}{:>10.2}{:>11}{:>10.1}",
+            row.label,
+            mib(row.bytes),
+            row.items,
+            row.bytes as f64 / n as f64,
+        );
+    }
+    // **残余が 0 でなければ帰属が誤っている。** postcard は struct に枠を持たず、フィールドの
+    // 連結がそのまま payload になる——項目別の和は payload 長と一致しなければならない。
+    // 一致しない内訳は、正しい帰属と誤った帰属を区別できない（このセッションで最も高くついた
+    // 失敗が「計器が製品でないものを測っていた」ことであり、その検知器がこの 1 行である）。
+    println!(
+        "      残余: フィールド {:+} B / entries 内訳 {:+} B（**どちらも 0 でなければ帰属が誤っている**）",
+        b.residual, b.entry_residual
+    );
+    assert_eq!(
+        b.residual, 0,
+        "index.bin のフィールド帰属が payload 長と一致しない"
+    );
+    assert_eq!(
+        b.entry_residual, 0,
+        "entries の内訳が entries のバイト数と一致しない"
     );
 }
 

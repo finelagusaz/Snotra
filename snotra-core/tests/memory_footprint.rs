@@ -236,11 +236,6 @@ fn report_breakdown(
         total += breakdown_row("lower_file_names", StrStat::of(v.iter().flatten()), n);
         total += stride_row::<Option<String>>("lower_file_names（Vec 本体）", v.capacity(), n);
     }
-    if let Some(v) = masks.normalized_keys.as_ref() {
-        total += breakdown_row("normalized_keys", StrStat::of(v.iter()), n);
-        total += stride_row::<String>("normalized_keys（Vec 本体）", v.capacity(), n);
-    }
-
     report_duplication(entries, masks, n);
     total
 }
@@ -273,8 +268,6 @@ fn report_duplication(entries: &[AppEntry], masks: &indexer::CachedMasks, n: usi
 
     let mut folder_same = 0usize;
     let mut file_same = 0usize;
-    let mut key_is_lower_path = 0usize;
-    let keys = masks.normalized_keys.as_ref().filter(|k| k.len() == n);
     for (i, entry) in entries.iter().enumerate() {
         if files[i].as_deref() == Some(lower[i].as_str()) {
             if entry.is_folder {
@@ -283,13 +276,6 @@ fn report_duplication(entries: &[AppEntry], masks: &indexer::CachedMasks, n: usi
                 file_same += 1;
             }
         }
-        // `normalized_keys` を `target_path` から導出できるか（候補 B の前提）。
-        // `normalize_entry_key` は Unicode 小文字化ゆえ長さ保存ではない——バイト単位で照合する。
-        if let Some(keys) = keys
-            && keys[i] == indexer::normalize_entry_key(&entry.target_path)
-        {
-            key_is_lower_path += 1;
-        }
     }
     let files_total = n - folders;
     println!(
@@ -297,12 +283,6 @@ fn report_duplication(entries: &[AppEntry], masks: &indexer::CachedMasks, n: usi
          / file {file_same}/{files_total}",
         folder_same as f64 * 100.0 / folders.max(1) as f64,
     );
-    if keys.is_some() {
-        println!(
-            "  normalized_keys == normalize_entry_key(target_path): {key_is_lower_path}/{n}（{:.1}%）",
-            key_is_lower_path as f64 * 100.0 / n as f64
-        );
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -397,7 +377,6 @@ fn measure_real_index_footprint() {
             masks.file_name_char_masks,
             masks.lower_names,
             masks.lower_file_names,
-            masks.normalized_keys,
             config.search.migemo_enabled,
         ),
         None => SearchEngine::new_with_migemo(entries, config.search.migemo_enabled),

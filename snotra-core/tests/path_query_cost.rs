@@ -26,7 +26,9 @@ use std::time::Instant;
 use rayon::prelude::*;
 
 use snotra_core::config::Config;
+use snotra_core::history::HistoryStore;
 use snotra_core::indexer::{self, AppEntry};
+use snotra_core::search::SearchEngine;
 
 thread_local! {
     /// 導出側の再利用バッファ。**容量を再利用するため暖まった後の確保はゼロ**——
@@ -52,29 +54,10 @@ fn normalize_into(buf: &mut String, path: &str) {
     }
 }
 
-/// ASCII 高速路つきの写し。**ASCII 範囲では Unicode 小文字化と ASCII 小文字化の結果が
-/// 一致する**ため、バイト一致は保たれる（一致は `derives_same_bytes_as_normalize_entry_key`
-/// が実インデックスの全パスで固定する）。非 ASCII を 1 文字でも含む行だけ低速路へ落ちる。
+/// **出荷する実装そのもの**（`indexer::normalize_entry_key_into`）。写しではない。
+/// 判定の根拠になる数字は、測る対象を製品と同一にしてから採る。
 fn normalize_into_ascii_fast(buf: &mut String, path: &str) {
-    buf.clear();
-    let trimmed = path.trim();
-    buf.reserve(trimmed.len());
-    if trimmed.is_ascii() {
-        // SAFETY: ASCII のみを push するので UTF-8 のまま保たれる。
-        let bytes = unsafe { buf.as_mut_vec() };
-        bytes.extend(trimmed.as_bytes().iter().map(|&b| match b {
-            b'/' => b'\\',
-            _ => b.to_ascii_lowercase(),
-        }));
-        return;
-    }
-    for ch in trimmed.chars() {
-        if ch == '/' {
-            buf.push('\\');
-        } else {
-            buf.extend(ch.to_lowercase());
-        }
-    }
+    indexer::normalize_entry_key_into(buf, path);
 }
 
 /// 上の写しが現物と 1 バイトも違わないことを、実インデックスの全パスで固定する。
@@ -113,7 +96,11 @@ fn derives_same_bytes_as_normalize_entry_key() {
     );
 }
 
-/// 実 `index.bin` を実起動と同じ経路で読む。`normalized_keys` は v4 キャッシュから得る。
+/// 実 `index.bin` を実起動と同じ経路で読み、比較用に「保持していたら」の側も作る。
+///
+/// **`normalized_keys` は索引にもオンディスクにも既に無い**（v5 で落とした）。保持側は
+/// v4 が持っていたものと同じ内容を、ここで 1 度だけ作って再現する——比較の意味は
+/// 「事前計算を持つ」対「毎回導出する」であって、どこから来た文字列かではない。
 fn load_real_index() -> Option<(Vec<AppEntry>, Vec<String>)> {
     let config = Config::load();
     let scan = &config.paths.scan;
@@ -121,10 +108,11 @@ fn load_real_index() -> Option<(Vec<AppEntry>, Vec<String>)> {
         return None;
     }
     let result = indexer::load_or_scan_with_stats(scan, config.search.show_hidden_system);
-    let keys = result.cached_masks.as_ref()?.normalized_keys.clone()?;
-    if keys.len() != result.entries.len() {
-        return None;
-    }
+    let keys: Vec<String> = result
+        .entries
+        .iter()
+        .map(|e| indexer::normalize_entry_key(&e.target_path))
+        .collect();
     Some((result.entries, keys))
 }
 
@@ -159,6 +147,49 @@ fn sweep_derived(
         })
         .count();
     (start.elapsed().as_secs_f64() * 1000.0, hits)
+}
+
+/// 空クエリ（窓を開いた瞬間・クエリ消去時）に走る `recent_history` の実コスト。
+///
+/// `recent_launches` が返すのは高々 `recent_limit` 件（既定 8）だが、現行の実装は照合表を
+/// **全エントリぶん**組み立てる。`normalized_keys` を廃止するなら、この経路も
+/// 走査時導出へ移ることになるため、先に現状を測る。
+#[test]
+#[ignore = "計測専用。release + --nocapture で手動実行する"]
+fn measure_recent_history_cost() {
+    let config = Config::load();
+    if config.paths.scan.is_empty() {
+        println!("実 config に scan パスが無いため計測をスキップします。");
+        return;
+    }
+    let result =
+        indexer::load_or_scan_with_stats(&config.paths.scan, config.search.show_hidden_system);
+    let n = result.entries.len();
+    let engine = match result.cached_masks {
+        Some(m) => SearchEngine::new_with_cached_masks(
+            result.entries,
+            m.char_masks,
+            m.file_name_char_masks,
+            m.lower_names,
+            m.lower_file_names,
+            config.search.migemo_enabled,
+        ),
+        None => SearchEngine::new_with_migemo(result.entries, config.search.migemo_enabled),
+    };
+    let history = HistoryStore::load();
+    let limit = config.search.recent_limit.unwrap_or(8);
+
+    println!("\n=== 空クエリの履歴候補（recent_history）のコスト（実 index.bin・{n} 件）===");
+    let mut best = f64::MAX;
+    let mut hits = 0usize;
+    for _ in 0..5 {
+        let start = Instant::now();
+        let out = engine.recent_history(&history, limit);
+        best = best.min(start.elapsed().as_secs_f64() * 1000.0);
+        hits = out.len();
+    }
+    println!("  recent_limit = {limit}, 返した件数 = {hits}, 最小 {best:.1} ms");
+    println!("  = 窓を開くたび・クエリを消すたびに払う額（{n} 件ぶんの照合表を毎回組む現行の形）");
 }
 
 #[test]

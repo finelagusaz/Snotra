@@ -26,7 +26,7 @@ use crate::config::{Config, ScanPath};
 use crate::query::{file_char_mask, lower_file_name, name_char_mask, to_lower_folded};
 
 const INDEX_MAGIC: [u8; 4] = *b"INDX";
-const INDEX_CACHE_VERSION: u32 = 4;
+const INDEX_CACHE_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppEntry {
@@ -39,8 +39,12 @@ pub struct AppEntry {
 /// 起動時の計算をスキップし、起動時間を短縮する。
 ///
 /// - `char_masks` / `file_name_char_masks`: v3+ キャッシュヒット時に常に存在
-/// - `lower_names` / `lower_file_names` / `normalized_keys`: v4+ ヒット時のみ存在
+/// - `lower_names` / `lower_file_names`: v4+ ヒット時のみ存在
 ///   (v3 フォールバック時は None → Wave 1 計算が走る)
+///
+/// `normalized_keys` は持たない——`target_path` からの導出へ移して索引・オンディスクの
+/// 双方から外した（`PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を
+/// 保持するか導出するか」）。
 #[derive(Debug)]
 pub struct CachedMasks {
     pub char_masks: Vec<u64>,
@@ -48,7 +52,6 @@ pub struct CachedMasks {
     /// A-3: v4+ キャッシュ時のみ Some。存在すれば SearchEngine の Wave 1 をスキップ。
     pub lower_names: Option<Vec<String>>,
     pub lower_file_names: Option<Vec<Option<String>>>,
-    pub normalized_keys: Option<Vec<String>>,
 }
 
 pub fn scan_all(scan_paths: &[ScanPath], show_hidden_system: bool) -> Vec<AppEntry> {
@@ -154,16 +157,54 @@ pub(crate) fn is_hidden_or_system(meta: &Metadata) -> bool {
 }
 
 pub fn normalize_entry_key(path: &str) -> String {
+    let mut normalized = String::with_capacity(path.len());
+    normalize_entry_key_into(&mut normalized, path);
+    normalized
+}
+
+/// [`normalize_entry_key`] を**確保済みバッファへ**書き出す。`buf` の中身は捨てられる。
+///
+/// 検索ホットパスは `normalized_key` を索引に持たず、ここで毎回導出する。呼び出し側は
+/// スレッドローカルのバッファを使い回すので、暖まったあとの確保は起きない。
+///
+/// **規則の定義はこの関数 1 つである。** `normalize_entry_key` はこれの薄い包みであり、
+/// 記録時（`indexer` の重複排除キー・`history` の全キー）と照合時（`search`）が同じ規則を
+/// 通ることがバイト一致の根拠になる。**畳み込み比較を別実装で書き起こしてはならない**
+/// ——1 バイトずれると履歴照合が沈黙で外れる（クラッシュせず検索結果も返り、
+/// ブーストだけが効かなくなるので気づく手段が無い）。
+///
+/// ASCII 高速路を持つ。**ASCII 範囲では Unicode 小文字化と ASCII 小文字化の結果が一致する**
+/// ため分岐しても結果は変わらず、実運用点（312,377 パス・非 ASCII 混じりは 1.7%）で
+/// 全件一致を実測してある。支配項は `char::to_lowercase()` のテーブル参照で、
+/// 高速路の有無でパスクエリ全走査が 9.2-11.7 倍から 1.7-2.3 倍へ変わる
+/// （`PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を保持するか導出するか」）。
+pub fn normalize_entry_key_into(buf: &mut String, path: &str) {
+    buf.clear();
     let trimmed = path.trim();
-    let mut normalized = String::with_capacity(trimmed.len());
+    buf.reserve(trimmed.len());
+    if trimmed.is_ascii() {
+        // 一括で動かす。1 文字ずつ `push` すると `String: Extend<char>` が毎回 UTF-8 符号化の
+        // 分岐を通り、実測で 2.5-3 倍遅くなる（`unsafe` なしでこの速度を出すのが要点）。
+        // `/` は Windows パスにまず現れず（スキャナが `\` で組む）、`find` は即 `None` を返して
+        // `push_str` 1 回の memcpy に落ちる。
+        let mut rest = trimmed;
+        while let Some(pos) = rest.find('/') {
+            buf.push_str(&rest[..pos]);
+            buf.push('\\');
+            rest = &rest[pos + 1..];
+        }
+        buf.push_str(rest);
+        // `buf` は先頭で空にしてあるので全体が今回の書き込みぶんである。
+        buf.make_ascii_lowercase();
+        return;
+    }
     for ch in trimmed.chars() {
         if ch == '/' {
-            normalized.push('\\');
+            buf.push('\\');
         } else {
-            normalized.extend(ch.to_lowercase());
+            buf.extend(ch.to_lowercase());
         }
     }
-    normalized
 }
 
 fn build_extension_list(extensions: &[String]) -> Vec<String> {
@@ -221,15 +262,20 @@ pub struct LoadOrScanResult {
     pub rescan_task: Option<BackgroundRescanTask>,
 }
 
-/// v4 フォーマット: ビットマスクに加えて lower_names / lower_file_names / normalized_keys を保存。
-/// 起動時に SearchEngine の Wave 1（to_lower_folded / normalize_entry_key）を完全スキップできる。
+/// v5 フォーマット: ビットマスクに加えて lower_names / lower_file_names を保存。
+/// 起動時に SearchEngine の Wave 1（to_lower_folded）を完全スキップできる。
+///
+/// **v4 との差は `normalized_keys` を持たないことだけである**（実測 35.56 MiB / 312,377 件）。
+/// `target_path` から `normalize_entry_key_into` で導出できる純粋な派生であり、検索時に
+/// 必要な候補についてだけ詰め直す形へ移した（`PERFORMANCE.md`「パスクエリ全走査のコスト —
+/// `normalized_keys` を保持するか導出するか」）。
 ///
 /// **owned/borrowed を単一 struct に統合する（`Cow<'a, [T]>`）**。save は `Cow::Borrowed` で
 /// `entries` の全件 clone を避けてシリアライズし、load は `Cow::Owned` で deserialize する
 /// （`IndexCache<'static>`）。単一 struct ゆえ「owned 版と borrowed 版でフィールド順がズレて
 /// `index.bin` を無言破損する」footgun は型として起こり得ない。`Cow<[T]>` は Borrowed/Owned とも
 /// 内側スライスの `serialize_seq` に委譲し `Vec<T>`/`&[T]` とバイト列が一致するため、
-/// バイト形式は不変（`INDEX_CACHE_VERSION` バンプ不要）。形式の絶対安定は
+/// Cow 化そのものはバイト形式を変えない。形式の絶対安定は
 /// `index_cache_on_disk_format_is_stable`（golden bytes）でガードする。
 #[derive(Serialize, Deserialize)]
 struct IndexCache<'a> {
@@ -240,7 +286,25 @@ struct IndexCache<'a> {
     file_name_char_masks: Cow<'a, [u64]>,
     lower_names: Cow<'a, [String]>,
     lower_file_names: Cow<'a, [Option<String>]>,
-    normalized_keys: Cow<'a, [String]>,
+}
+
+/// v4 フォールバック用スキーマ（末尾に `normalized_keys` を持つ旧形式）。
+///
+/// **読むだけで捨てる。** 導出可能な派生を持たない形へ移したため、v4 バイト列から
+/// 復元するのは v5 と同じ 4 本（マスク 2 本 + lower 2 本）である。**それらは v4 にも
+/// 揃っているので Wave 1 はスキップされたまま**で、v4 ユーザーの初回起動は遅くならない。
+#[derive(Deserialize)]
+struct IndexCacheV4 {
+    #[allow(dead_code)]
+    built_at: u64,
+    entries: Vec<AppEntry>,
+    config_hash: u64,
+    char_masks: Vec<u64>,
+    file_name_char_masks: Vec<u64>,
+    lower_names: Vec<String>,
+    lower_file_names: Vec<Option<String>>,
+    #[allow(dead_code)]
+    normalized_keys: Vec<String>,
 }
 
 /// v3 フォールバック用スキーマ（ビットマスクのみ、lower names なし）。
@@ -411,12 +475,6 @@ fn save_cache_sorted_in(dir: &Path, entries: &[AppEntry], config_hash: u64) {
         .iter()
         .map(|n| file_char_mask(n.as_deref()))
         .collect();
-    // A-3: normalized_keys もキャッシュに含める。起動時の Wave 1 計算を完全スキップするため。
-    let normalized_keys: Vec<String> = entries
-        .iter()
-        .map(|e| normalize_entry_key(&e.target_path))
-        .collect();
-
     // Cow::Borrowed で entries の全件 clone を避ける（派生 Vec も参照で渡す）。
     // 出力バイト列は Owned 版と同一（golden テストで保証）。
     let cache = IndexCache {
@@ -430,7 +488,6 @@ fn save_cache_sorted_in(dir: &Path, entries: &[AppEntry], config_hash: u64) {
         file_name_char_masks: Cow::Borrowed(&file_name_char_masks),
         lower_names: Cow::Borrowed(&lower_names),
         lower_file_names: Cow::Borrowed(&lower_file_names),
-        normalized_keys: Cow::Borrowed(&normalized_keys),
     };
     if !bf.save(&cache) {
         eprintln!("[indexer] failed to save {}", bf.path().display());
@@ -467,7 +524,7 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
     let bf = cache_bin_file_in(dir);
     let bytes = bf.load_bytes()?;
 
-    // v4 (現行): ビットマスク + lower names / normalized_keys を含む。
+    // v5 (現行): ビットマスク + lower names。
     // deserialize は Cow::Owned を返すため .into_owned() は clone なしの move。
     if let Ok(cache) =
         try_deserialize_with_header::<IndexCache<'static>>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION)
@@ -480,10 +537,28 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
             file_name_char_masks: cache.file_name_char_masks.into_owned(),
             lower_names: Some(cache.lower_names.into_owned()),
             lower_file_names: Some(cache.lower_file_names.into_owned()),
-            normalized_keys: Some(cache.normalized_keys.into_owned()),
         };
         return Some(LoadCacheResult {
             entries: cache.entries.into_owned(),
+            cached_masks: Some(masks),
+        });
+    }
+
+    // v4 フォールバック: 末尾の normalized_keys を**読んで捨てる**。復元する 4 本は v5 と同じで
+    // どれも v4 に揃っているため、**Wave 1 はスキップされたまま**（v4 ユーザーの初回起動は
+    // 遅くならない）。次回の save で v5 へ昇格する。
+    if let Ok(cache) = try_deserialize_with_header::<IndexCacheV4>(&bytes, INDEX_MAGIC, 4) {
+        if cache.config_hash != config_hash {
+            return None;
+        }
+        let masks = CachedMasks {
+            char_masks: cache.char_masks,
+            file_name_char_masks: cache.file_name_char_masks,
+            lower_names: Some(cache.lower_names),
+            lower_file_names: Some(cache.lower_file_names),
+        };
+        return Some(LoadCacheResult {
+            entries: cache.entries,
             cached_masks: Some(masks),
         });
     }
@@ -498,7 +573,6 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
             file_name_char_masks: cache.file_name_char_masks,
             lower_names: None,
             lower_file_names: None,
-            normalized_keys: None,
         };
         return Some(LoadCacheResult {
             entries: cache.entries,
@@ -874,9 +948,6 @@ pub fn extend_cached_masks(masks: &mut CachedMasks, new_entries: &[AppEntry]) {
         if let Some(ref mut lfn) = masks.lower_file_names {
             lfn.push(lower_file);
         }
-        if let Some(ref mut nk) = masks.normalized_keys {
-            nk.push(normalize_entry_key(&entry.target_path));
-        }
     }
 }
 
@@ -1020,10 +1091,6 @@ mod tests {
             file_name_char_masks: Cow::Owned(vec![0x12, 0x34]),
             lower_names: Cow::Owned(vec!["firefox".to_string(), "projects".to_string()]),
             lower_file_names: Cow::Owned(vec![Some("firefox.lnk".to_string()), None]),
-            normalized_keys: Cow::Owned(vec![
-                "c:\\apps\\firefox.lnk".to_string(),
-                "c:\\projects".to_string(),
-            ]),
         };
 
         let bytes =
@@ -1053,10 +1120,6 @@ mod tests {
             restored.lower_file_names.into_owned(),
             vec![Some("firefox.lnk".to_string()), None]
         );
-        assert_eq!(
-            restored.normalized_keys.into_owned(),
-            vec!["c:\\apps\\firefox.lnk", "c:\\projects"]
-        );
     }
 
     #[test]
@@ -1082,10 +1145,6 @@ mod tests {
         let file_name_char_masks = vec![0x12u64, 0x34];
         let lower_names = vec!["firefox".to_string(), "projects".to_string()];
         let lower_file_names = vec![Some("firefox.lnk".to_string()), None];
-        let normalized_keys = vec![
-            "c:\\apps\\firefox.lnk".to_string(),
-            "c:\\projects".to_string(),
-        ];
 
         // save 経路と同じ Cow::Borrowed で構築する。
         let cache = IndexCache {
@@ -1096,14 +1155,56 @@ mod tests {
             file_name_char_masks: Cow::Borrowed(&file_name_char_masks),
             lower_names: Cow::Borrowed(&lower_names),
             lower_file_names: Cow::Borrowed(&lower_file_names),
-            normalized_keys: Cow::Borrowed(&normalized_keys),
         };
         let bytes =
             try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache).expect("serialize");
 
-        // 凍結 golden（固定 fixture の serialize 出力・INDX magic + version 4 ヘッダー込み）。
+        // 凍結 golden（固定 fixture の serialize 出力・INDX magic + version 5 ヘッダー込み）。
         // 形式変更時のみ更新する。
-        const GOLDEN: &[u8] = &[
+        // **v4 golden との差は先頭のバージョンバイトと、末尾の `normalized_keys` 列の欠落だけ**
+        // （下の `frozen_v4_bytes_still_load_with_lower_names` と並べて読める形にしてある）。
+        const GOLDEN_V5: &[u8] = &[
+            73, 78, 68, 88, 5, 0, 0, 0, 128, 226, 207, 170, 6, 2, 7, 70, 105, 114, 101, 102, 111,
+            120, 19, 67, 58, 92, 97, 112, 112, 115, 92, 102, 105, 114, 101, 102, 111, 120, 46, 108,
+            110, 107, 0, 8, 80, 114, 111, 106, 101, 99, 116, 115, 11, 67, 58, 92, 80, 114, 111,
+            106, 101, 99, 116, 115, 1, 185, 96, 2, 171, 1, 205, 1, 2, 18, 52, 2, 7, 102, 105, 114,
+            101, 102, 111, 120, 8, 112, 114, 111, 106, 101, 99, 116, 115, 2, 1, 11, 102, 105, 114,
+            101, 102, 111, 120, 46, 108, 110, 107, 0,
+        ];
+        assert_eq!(
+            bytes, GOLDEN_V5,
+            "on-disk 形式が変化した。IndexCache のフィールド順/型変更は既存 index.bin を破損する。\
+             意図的なら INDEX_CACHE_VERSION をバンプし golden を更新すること"
+        );
+
+        let restored: IndexCache<'static> =
+            try_deserialize_with_header(GOLDEN_V5, INDEX_MAGIC, INDEX_CACHE_VERSION)
+                .expect("凍結 v5 バイトがロードできること");
+        assert!(matches!(restored.entries, Cow::Owned(_)));
+        assert_eq!(restored.entries.len(), 2);
+        assert_eq!(restored.entries[0].name, "Firefox");
+        assert_eq!(restored.entries[0].target_path, "C:\\apps\\firefox.lnk");
+        assert!(!restored.entries[0].is_folder);
+        assert_eq!(restored.entries[1].name, "Projects");
+        assert!(restored.entries[1].is_folder);
+        assert_eq!(restored.char_masks.into_owned(), char_masks);
+        assert_eq!(restored.lower_names.into_owned(), lower_names);
+    }
+
+    /// **v4 の凍結バイト列**（v5 化の前に実際に書かれていた形式。同じ fixture の
+    /// serialize 出力で、末尾に `normalized_keys` を持つ）から、新コードが
+    /// `lower_names` / `lower_file_names` を復元できることを示す。
+    ///
+    /// 向きが要点である——新コードの出力を golden 化しても forward-stability しか
+    /// 示せない。**旧形式の凍結バイトを入力にして初めて後方互換の証拠になる**
+    /// （`snotra-core/CLAUDE.md`「データ永続化の注意」）。
+    ///
+    /// ここで `lower_names` が Some で返ることが、**v4 ユーザーの初回起動で Wave 1 が
+    /// 走らない**ことの根拠でもある（`normalized_keys` は捨てるが、Wave 1 のスキップ判定は
+    /// 残り 2 本が揃っているかで決まる）。
+    #[test]
+    fn frozen_v4_bytes_still_load_with_lower_names() {
+        const GOLDEN_V4: &[u8] = &[
             73, 78, 68, 88, 4, 0, 0, 0, 128, 226, 207, 170, 6, 2, 7, 70, 105, 114, 101, 102, 111,
             120, 19, 67, 58, 92, 97, 112, 112, 115, 92, 102, 105, 114, 101, 102, 111, 120, 46, 108,
             110, 107, 0, 8, 80, 114, 111, 106, 101, 99, 116, 115, 11, 67, 58, 92, 80, 114, 111,
@@ -1113,28 +1214,29 @@ mod tests {
             102, 105, 114, 101, 102, 111, 120, 46, 108, 110, 107, 11, 99, 58, 92, 112, 114, 111,
             106, 101, 99, 116, 115,
         ];
-        assert_eq!(
-            bytes, GOLDEN,
-            "on-disk 形式が変化した。IndexCache のフィールド順/型変更は既存 index.bin を破損する。\
-             意図的なら INDEX_CACHE_VERSION をバンプし golden を更新すること"
+
+        // v5 として読もうとすると失敗する（末尾に余分な normalized_keys が残るため）。
+        assert!(
+            try_deserialize_with_header::<IndexCache>(GOLDEN_V4, INDEX_MAGIC, INDEX_CACHE_VERSION)
+                .is_err(),
+            "v4 バイトが v5 として読めてはならない"
         );
 
-        // backward-compat: 凍結 GOLDEN（= #461 前の owned IndexCache が書いた v4 バイト列と
-        // バイト同一。feasibility spike + postcard 手動デコードで実証済み）を、統合後の新コードが
-        // Owned で正しくロードできることを確認する。これで「既存 index.bin が新コードでロード可能」
-        // を bytes(新規生成)ではなく凍結バイトから証明する（fixture 改変にも頑健）。
-        let restored: IndexCache<'static> =
-            try_deserialize_with_header(GOLDEN, INDEX_MAGIC, INDEX_CACHE_VERSION)
-                .expect("既存 v4 形式バイトが新コードでロードできること");
-        assert!(matches!(restored.entries, Cow::Owned(_)));
+        let restored: IndexCacheV4 =
+            try_deserialize_with_header(GOLDEN_V4, INDEX_MAGIC, 4).expect("v4 として読めること");
         assert_eq!(restored.entries.len(), 2);
         assert_eq!(restored.entries[0].name, "Firefox");
-        assert_eq!(restored.entries[0].target_path, "C:\\apps\\firefox.lnk");
-        assert!(!restored.entries[0].is_folder);
-        assert_eq!(restored.entries[1].name, "Projects");
-        assert!(restored.entries[1].is_folder);
-        assert_eq!(restored.char_masks.into_owned(), char_masks);
-        assert_eq!(restored.normalized_keys.into_owned(), normalized_keys);
+        assert_eq!(restored.char_masks, vec![0xABu64, 0xCD]);
+        assert_eq!(restored.lower_names, vec!["firefox", "projects"]);
+        assert_eq!(
+            restored.lower_file_names,
+            vec![Some("firefox.lnk".to_string()), None]
+        );
+        // 捨てる側も、読めていること自体は確かめておく（形式のずれを黙って通さない）。
+        assert_eq!(
+            restored.normalized_keys,
+            vec!["c:\\apps\\firefox.lnk", "c:\\projects"]
+        );
     }
 
     #[test]
@@ -1162,13 +1264,10 @@ mod tests {
         assert_eq!(result.entries.len(), 2);
         assert_eq!(result.entries[0].name, "Firefox");
         assert_eq!(result.entries[1].name, "Projects");
-        let masks = result.cached_masks.expect("v4 cache should include masks");
+        let masks = result.cached_masks.expect("v5 cache should include masks");
         assert_eq!(
-            masks.normalized_keys,
-            Some(vec![
-                "c:\\apps\\firefox.lnk".to_string(),
-                "c:\\projects".to_string(),
-            ])
+            masks.lower_names,
+            Some(vec!["firefox".to_string(), "projects".to_string()])
         );
 
         // config_hash が異なると stale 扱いで None
@@ -1685,7 +1784,6 @@ mod tests {
             file_name_char_masks: vec![0xCD],
             lower_names: Some(vec!["existing".to_string()]),
             lower_file_names: Some(vec![Some("existing.lnk".to_string())]),
-            normalized_keys: Some(vec!["c:\\existing.lnk".to_string()]),
         };
 
         let new_entries = vec![AppEntry {
@@ -1700,7 +1798,6 @@ mod tests {
         assert_eq!(masks.file_name_char_masks.len(), 2);
         assert_eq!(masks.lower_names.as_ref().unwrap().len(), 2);
         assert_eq!(masks.lower_file_names.as_ref().unwrap().len(), 2);
-        assert_eq!(masks.normalized_keys.as_ref().unwrap().len(), 2);
     }
 
     #[test]
@@ -1710,7 +1807,6 @@ mod tests {
             file_name_char_masks: vec![0xCD],
             lower_names: None,
             lower_file_names: None,
-            normalized_keys: None,
         };
 
         let new_entries = vec![AppEntry {
@@ -1725,6 +1821,5 @@ mod tests {
         assert_eq!(masks.file_name_char_masks.len(), 2);
         assert!(masks.lower_names.is_none());
         assert!(masks.lower_file_names.is_none());
-        assert!(masks.normalized_keys.is_none());
     }
 }

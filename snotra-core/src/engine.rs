@@ -110,7 +110,6 @@ impl Engine {
             cached_masks.file_name_char_masks,
             cached_masks.lower_names,
             cached_masks.lower_file_names,
-            cached_masks.normalized_keys,
             config.search.migemo_enabled,
         );
         Self {

@@ -100,6 +100,11 @@ pub struct ToolFrame {
 
 /// Escape ラダーの分岐（driver が side-effect を実行）。tool 段・folder 段・top-level の
 /// 3 段ラダー（instant/command 解除段は M3 で確定済み・prefix hot-change は別軸）。
+///
+/// **`#[must_use]` は関数ではなく型に付けてある**（#934）——危ういのは「この値を落とすこと」で
+/// あって特定の関数ではないため、`EscapeOutcome` を返す将来の関数も覆う。配置の規約と受容残余の
+/// 正本は `src-tauri/CLAUDE.md`「処置を返す純粋核の強制」。
+#[must_use = "driver が処置を実行しないと hide 要求・repaint 予約・ビュー復元が黙って消える（#934）"]
 #[derive(Debug, PartialEq, Eq)]
 pub enum EscapeOutcome {
     /// folder → 展開前検索状態へ復帰済み（driver は追加操作なし）
@@ -948,7 +953,7 @@ mod tests {
         let mut s = SearchState::new();
         s.set_results(vec![res("a")]);
         let tok = s.enter_folder("C:\\a".into());
-        s.on_escape(); // folder 離脱 → gen 失効 + folder None
+        assert_eq!(s.on_escape(), EscapeOutcome::RestoredSearch); // folder 離脱 → gen 失効 + folder None
         assert!(!s.accept_folder_result(tok)); // 離脱後は旧ナビ結果を受理しない
         assert_eq!(s.view_kind(), ViewKind::Results);
     }
@@ -1144,7 +1149,7 @@ mod tests {
         let tok = s.enter_folder("C:\\slow".into());
         s.enter_tool("C:\\slow\\x".into(), false, make_tools());
         assert!(!s.accept_folder_result(tok));
-        s.on_escape(); // tool 解除 → folder 復帰
+        assert_eq!(s.on_escape(), EscapeOutcome::RestoredFromTool); // tool 解除 → folder 復帰
         assert!(s.accept_folder_result(tok)); // folder に戻れば同 token は再び有効（gen は進めていない）
     }
 
@@ -1156,7 +1161,7 @@ mod tests {
         let mut s = SearchState::new();
         s.set_results(vec![res("a")]);
         let t1 = s.enter_folder("C:\\a".into());
-        s.on_escape(); // folder=None・gen 進む
+        assert_eq!(s.on_escape(), EscapeOutcome::RestoredSearch); // folder=None・gen 進む
         let t2 = s.enter_folder("C:\\a".into()); // 再突入・folder=Some・gen 進む
         assert!(!s.accept_folder_result(t1)); // 旧 token は folder Some でも拒否
         assert!(s.accept_folder_result(t2)); // 最新 token は受理

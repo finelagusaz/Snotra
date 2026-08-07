@@ -432,6 +432,7 @@ impl Debouncer {
 
     /// 入力があったフレームで呼ぶ。leading 有効かつバースト先頭なら true（＝今すぐ検索）。
     /// いずれにせよ armed にして trailing を予約する。
+    #[must_use = "leading 発火の信号を落とすとバースト先頭の検索が飛ぶ（#934）"]
     pub fn on_input(&mut self) -> bool {
         let fire_leading = self.leading && !self.armed;
         self.armed = true;
@@ -439,6 +440,7 @@ impl Debouncer {
     }
 
     /// 入力の無いフレームで呼ぶ。前回入力からの経過が interval 以上なら trailing 発火し disarm。
+    #[must_use = "trailing 発火の信号を落とすと、既に disarm 済ゆえこのバーストの最終クエリでは検索が走らない（次の打鍵が再武装するまで戻らない・#934）"]
     pub fn poll(&mut self, elapsed_since_input: Duration) -> bool {
         if self.armed && elapsed_since_input >= self.interval {
             self.armed = false;
@@ -629,7 +631,7 @@ mod tests {
     #[test]
     fn cancel_disarms_pending_trailing() {
         let mut d = Debouncer::new(Duration::from_millis(50), true);
-        d.on_input();
+        assert!(d.on_input(), "leading 有効の初回はバースト先頭");
         assert!(d.is_armed());
         d.cancel();
         assert!(!d.is_armed());

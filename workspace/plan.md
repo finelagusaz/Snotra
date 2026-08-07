@@ -11,10 +11,11 @@
 1. 下表の「対象 ○」の全行に `#[must_use = "<失うものの名前>"]` が付いている
 2. 素の文で戻り値を捨てているテスト 4 件が **assert へ変わっている**（`let _ =` を新設しない）
 3. `cargo clippy --workspace --all-targets -- -D warnings` が緑
-4. **故障注入で赤を実測している**——production 側へ素の drop を注入し、3 形（型段 / メソッド段
-   `bool` / メソッド段 `Option<U>`）すべてが診断に現れることを確認して revert
+4. **故障注入で赤を実測している**——production 側へ素の drop を注入し、診断に現れることを確認して
+   revert（**実行では 3 形ではなく 8 シンボル全数へ広げた**。理由は Phase 4）
 5. 規則と配置規約が `src-tauri/CLAUDE.md` の `egui_shell/` 節に 1 行で在る
-6. **主張を機構より強く書いていない**——下の「不変条件と異常系」の受容残余 2 件が文書に在る
+6. **主張を機構より強く書いていない**——受容残余が文書に在る（**計画時 2 件 → 実行で 4 件**:
+   型段の射程と `double_must_use` の限界が測定とレビューで加わった）
 
 ## 対象の全数と在否の判断
 
@@ -31,7 +32,7 @@
 | 8 | `launcher_controller::consume_reset_pending` | `bool` | ○ | メソッド段 | driver 側だが**doc が既に「返り値を落としてはならない」と散文で命じている**（`:914`）＝階梯の最下段に在る規則を 1 段上げる |
 | 1 | `lifecycle::BlurGrace::observe` | `BlurAction` | ○ | **型段へ移設** | 既に有（メソッド段）。型段へ移すと free fn `blur_grace_action` も覆い、配置規約が一様になる |
 | 9 | `launcher_controller::on_escape_pressed` | `bool` | — | 既済（#840） | 変更しない |
-| 10 | `search_state::SearchState::enter_folder` | `u64` | ✕ | — | **下流が型で強制している**——`spawn_folder_load(tok, …)` は token 無しに呼べない。落として害が出る形が構築できない |
+| 10 | `search_state::SearchState::enter_folder` | `u64` | ✕ | — | **production で token を消費するのは `spawn_folder_load` だけ**で、落とせば spawn の呼び忘れとして同じ数行の中で目に見える。（**計画は「落として害が出る形が構築できない」と書いたが偽**——`self.state.enter_folder(dir);` は素の文でコンパイルが通る。型が塞ぐのは「token 無しに load を呼ぶこと」だけで「load を呼び忘れること」ではない。レビュー L5 で訂正） |
 | 11 | `search_state::SearchState::navigate_folder` | `u64` | ✕ | — | 同上 |
 
 **在否の判断基準は「処置かデータか」ではなく「下流が値を構造的に要求するか」である。**
@@ -39,9 +40,12 @@
 （除外の理由は上記の型強制）。
 
 **母集団を `&mut self` に絞る理由**（issue の文言「処置を返す純粋核」より狭いのは意図である）:
-引数だけから導く自由関数——`lifecycle::plan_hotkey → HotkeyPlan`・`notify::overlay_kind`・
-`layout::present_results`・`search_state::interp`——は名前の上では処置を返すが、落としても
-**同じ引数で呼び直せる**ので失われるものが無い。**状態を進めてから返すものだけが「落とすと
+状態を進めずに導くもの——自由関数 `lifecycle::plan_hotkey → HotkeyPlan`・`notify::overlay_kind`・
+`layout::present_results`・`lifecycle::blur_should_hide`・`search_state::interpret` と、`&self`
+メソッド（`interp` は `QueryIntent` の導出・`accept_folder_result` は token の照合述語。**計画は
+`interp` を「自由関数」と誤って分類していた**——実体は `&self`、自由関数は `interpret`。レビュー
+L4 / round 2 L3 で 2 度訂正）——は名前の上では処置を返すが、**同じ入力で呼び直せる**ので
+失われるものが無い。**状態を進めてから返すものだけが「落とすと
 回復できない」。** なお `lifecycle::blur_grace_action`（自由関数だが `BlurAction` を返す）は
 #1 の型段移設で**付随的に覆われる**——型段を選ぶことが射程を買う唯一の場所である。
 
@@ -109,6 +113,17 @@ hook の「沈黙 = 合格」の契約が一時的に使えなくなる（hook �
 2. **`#[must_use]` は「見たが捨てた」を捕まえない。** #6 の危険形
    `if u.try_begin_install().is_some() { }` は「使用」と判定され通り、`Update` は失われる。
    この属性が捕まえるのは「一度も見なかった」だけである
+3. **（実行中に測定で追加）型段はメソッド段より射程が狭い。** `&T`（参照）・`impl Trait`（不透明型）・
+   ジェネリック包み（`Option<T>` / `Vec<T>` 等）では発火しない——**覆われる例外は `Box<T>` / tuple /
+   配列の 3 つだけ**（rustc がそこだけ再帰する。`Result<T, _>` が発火するのは `Result` 自身が
+   `#[must_use]` だからで中身のおかげではない）。probe crate で 2 度実測した。**危ういのは
+   「新しい関数を足す」より「既存関数の返り値型をそう編集する」経路である**——メソッド段なら
+   属性が関数に付いて追随するが、型段は編集の瞬間にガードだけが黙って消える
+4. **（実行中にレビューで追加）`clippy::double_must_use` を当てにできない。** 移設で古いメソッド段を
+   消し忘れる誤りに当たることはあるが、捕まえるのは**メッセージ無しの残存だけ**である（診断文自身が
+   `with no message` と名乗る）。**本 PR が確立した `#[must_use = "…"]` 規約どおりの残存は沈黙する。**
+   deny の出所も `[workspace.lints.clippy]`（`disallowed_methods` の 1 行のみ）ではなく
+   `ci.yml` と post-edit hook が渡す `-D warnings` である。**移設のときは目で確かめる**
 
 ### 却下した代替案（1 行ずつ）
 
@@ -196,60 +211,92 @@ npm run governance:check                                    # カテゴリ F（s
 **当のテストが依存している前提そのもの**（「folder を離脱した」「leading が発火した」）であり、
 assert にすると前提が固定される。**判定の分かれ目は返り値がテストの前提かどうかである。**
 
-- [ ] `search_state.rs:951` を `assert_eq!(s.on_escape(), EscapeOutcome::RestoredSearch);` へ（コメントは維持）
-- [ ] `search_state.rs:1147` を `assert_eq!(s.on_escape(), EscapeOutcome::RestoredFromTool);` へ
-- [ ] `search_state.rs:1159` を `assert_eq!(s.on_escape(), EscapeOutcome::RestoredSearch);` へ
-- [ ] `layout.rs:632` を `assert!(d.on_input(), "leading 有効の初回はバースト先頭");` へ
-- [ ] `cargo test -p snotra` が緑（4 件の期待値が実際の返り値と一致することの確認）
+- [x] `search_state.rs:951` を `assert_eq!(s.on_escape(), EscapeOutcome::RestoredSearch);` へ（コメントは維持）
+- [x] `search_state.rs:1147` を `assert_eq!(s.on_escape(), EscapeOutcome::RestoredFromTool);` へ
+- [x] `search_state.rs:1159` を `assert_eq!(s.on_escape(), EscapeOutcome::RestoredSearch);` へ
+- [x] `layout.rs:632` を `assert!(d.on_input(), "leading 有効の初回はバースト先頭");` へ
+- [x] `cargo test -p snotra` が緑 → **218 passed / 0 failed**（4 件の期待値は実際の返り値と一致）
 
 ### Phase 2 — 純粋核へ属性
 
-- [ ] `search_state.rs` の `EscapeOutcome` 宣言へ型段の `#[must_use = "…"]`
-- [ ] `layout.rs` の `Debouncer::on_input` / `Debouncer::poll` へメソッド段
-- [ ] `notify.rs` の `NoticeSlot::poll` / `UpdaterUi::try_begin_install` / `UpdaterUi::dismiss` へメソッド段
+- [x] `search_state.rs` の `EscapeOutcome` 宣言へ型段の `#[must_use = "…"]`
+- [x] `layout.rs` の `Debouncer::on_input` / `Debouncer::poll` へメソッド段
+- [x] `notify.rs` の `NoticeSlot::poll` / `UpdaterUi::try_begin_install` / `UpdaterUi::dismiss` へメソッド段
 
 ### Phase 3 — driver 側と先例の配置統一
 
-- [ ] `launcher_controller.rs` の `consume_reset_pending` へメソッド段。doc（914-916）の
-      「返り値を落としてはならない」を「機構（`#[must_use]`）が守る」旨へ改める——散文の命令を
-      残したまま属性を足すと、階梯の段が 2 つ書かれた状態になる。**変えるのは命令の様態だけで、
-      #749 の理由（`ResultsWindow::reset_size_guard()` は view 側に残るので view が reset フレームを
-      知る手段はこの返り値だけ）は逐語で残す**——属性が置き換えるのは命令であって、何が壊れるかの
-      説明ではない
-- [ ] `lifecycle.rs` の `BlurAction` 宣言へ型段を足し、`observe`（148）のメソッド段を削除。
-      **#745 の doc コメントは動かさない**（経緯の記録はそこが正本）
+- [x] `launcher_controller.rs` の `consume_reset_pending` へメソッド段。doc の
+      「返り値を落としてはならない」を「機構（`#[must_use]`）が守る」旨へ改めた。**#749 の理由
+      （`ResultsWindow::reset_size_guard()` は view 側に残るので view が reset フレームを知る手段は
+      この返り値だけ）は逐語で残した**
+- [x] `lifecycle.rs` の `BlurAction` 宣言へ型段を足し、`observe` のメソッド段を削除。
+      **#745 の doc コメントは動かしていない**
+- [x] **計画外の発見**: バッチ編集の中間状態（型段を足した直後・メソッド段を消す前）で
+      `clippy::double_must_use` が exit 101 になった。**当初これを「移設の消し忘れを捕まえる機構」と
+      書いたが、レビュー H1/H2 で 2 点とも過大と判明して撤回した**（下の「レビュー結果」）
 
 ### Phase 4 — 故障注入
 
-- [ ] `launcher_controller.rs` へ 4 件の素の drop を注入
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings` が **exit != 0**、かつ診断が
-      **4 件**（型段 `EscapeOutcome` / メソッド段 `bool` / メソッド段 `Option<U>` /
-      型段へ移設した `BlurAction`）そろうことを確認。exit code と診断の要点を控える
-- [ ] 注入を戻し、**`git diff --stat` の出力が空**であることで確認する（「注入したファイルを
-      `checkout --` した」ではなく「作業ツリーに注入が 1 つも残っていない」を測る——将来
-      注入が別ファイルへ移っても空振りしない形）。そのうえで clippy が緑に復すことを確認
+- [x] **4 配置ではなく 8 シンボル全数へ注入した**（計画からの拡大）。`.claude/rules/safety-nets.md`
+      「検出器のカバー範囲は、欠落のパターンごとに検算する」＝足ごとに壊す。**属性を書いた項目が
+      正しいことは書き写しの一致では測れない**（隣の関数に付いていても同じ文字列に見える）。
+      各行へ `// FAULT-INJECTION-934` のマーカーを付けた
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` が **exit 101**・診断 **8/8**:
+
+      launcher_controller.rs:861:17  UpdaterUi::<U>::dismiss
+      launcher_controller.rs:867:17  UpdaterUi::<U>::try_begin_install
+      launcher_controller.rs:1009:9  NoticeSlot::poll
+      launcher_controller.rs:1050:9  EscapeOutcome                       ← 型段
+      launcher_controller.rs:1083:9  BlurAction                          ← 型段へ移設（最重要）
+      launcher_controller.rs:1218:21 Debouncer::on_input
+      launcher_controller.rs:1247:9  Debouncer::poll
+      view.rs:485:9                  LauncherController::consume_reset_pending
+
+      診断はいずれも**こちらが書いたメッセージを表示した**（＝メッセージとシンボルの取り違えも
+      同時に検査できた）。**rustc 自身の修正提案が `use let _ = ...` である**——受容残余 1 は
+      コンパイラが能動的に案内する逃げ道であり、仮定ではない
+- [x] マーカー行を削除して撤去 → **残存 0 件**（`grep -rn "FAULT-INJECTION" --include=*.rs` が空）・
+      clippy **exit 0** に復帰・`view.rs` は `git diff` が空（注入前と完全に同一）
+- [x] **計画の撤去手順に欠陥があったので直した。** 計画は
+      `git checkout -- …/launcher_controller.rs`（初版）→ `git diff --stat` が空（改訂版）と
+      書いていたが**どちらも誤り**である: 前者は同ファイルに同居する**正当な変更**
+      （`consume_reset_pending` の属性と doc）を巻き戻す（実行していれば Phase 3 の半分が黙って
+      消えていた）。後者は「他のすべてがコミット済み」のときしか空にならず、注入と正当な変更を
+      区別しない。**正しい判定は注入固有のマーカーの不在である**
 
 ### Phase 5 — 文書
 
-- [ ] `src-tauri/CLAUDE.md`「モジュール構成」の `egui_shell/` 節（`mod.rs` の索引行より後・
-      「外部から窓を起こす経路は…」より前）へ横断不変条件 1 行を追加。内容は
-      (a) 処置を返す純粋核は `#[must_use]` を持つ、(b) 型段/メソッド段の配置規約、
-      (c) token 返し（`enter_folder` / `navigate_folder`）を除く理由、
-      (d) 受容残余 2 件（**`let _ =` で黙る——`lifecycle.rs` テストに実使用 13 件**・
-      「見たが捨てた」を捕まえない）。**「落とせなくなった」と書かない**
+- [x] `src-tauri/CLAUDE.md`「モジュール構成」の `egui_shell/` 節（`mod.rs` の索引行より後・
+      「外部から窓を起こす経路は…」より前）へ横断不変条件 1 行を追加。太字リードは
+      **「処置を返す純粋核の強制（#934）」**（`.rs` から正準形で 2 件が参照する着地点）
+- [x] **8 件の名前一覧は書かなかった**（計画からの判断）——検知器の無い写しは 9 件目で黙って腐る。
+      規則と判定基準（`&mut self` かつ非 unit）と、名指しが要る箇所（型段の 2 件・除外の 2 種）
+      だけを書いた。`.rs` 側の doc は「そのシンボルで何が失われるか」だけを持つ
+- [x] 受容残余は**4 件**（`let _ =` で黙る・「見たが捨てた」形・**型段の射程**・
+      **`double_must_use` を当てにしない**）。**「落とせなくなった」と書いていない**
 
 ### Phase 6 — 検証
 
-- [ ] `cargo fmt --all -- --check` / `cargo check --workspace` / `cargo clippy --workspace --all-targets -- -D warnings`
-- [ ] `cargo test -p snotra`
-- [ ] `cargo doc --workspace --no-deps --document-private-items`（doc コメントを触ったため・hook 非発火）。
+- [x] `cargo fmt --all -- --check` / `cargo check --workspace` /
+      `cargo clippy --workspace --all-targets -- -D warnings` → 全件 exit 0
+- [x] `cargo test -p snotra` → **218 passed / 0 failed / 4 ignored**
+- [x] `cargo doc --workspace --no-deps --document-private-items`（doc コメントを触ったため・hook 非発火）。
       **沈黙を合格と読む前に `target/doc/snotra/` に `notify` のページが在るかを見る**——`snotra` は
-      `[lib]` を持たない bin crate（`src-tauri/CLAUDE.md` 冒頭）ゆえ、bin ターゲットの private
-      item が実際に文書化されるかは測るまで分からない。生成されていなければ intra-doc link 検査は
-      編集したコメントを見ていない（＝合格ではない）ので、その旨を PR 本文へ書く
-- [ ] `npm run governance:check`（`src-tauri/CLAUDE.md` 変更・G-heading-refs の着地を含む）
-- [ ] 実装差分を確定させる（`git diff` で意図した 6 ファイル以外に変更が無いことを確認。
-      とくに Phase 4 の注入が残っていないこと）
+      `[lib]` を持たない bin crate ゆえ、bin ターゲットの private item が実際に文書化されるかは
+      測るまで分からない。→ **exit 0 かつ生成を確認**（`egui_shell/notify/` が在り、編集した 6 シンボルの
+      ページ `struct.UpdaterUi.html` / `struct.NoticeSlot.html` / `struct.Debouncer.html` /
+      `enum.EscapeOutcome.html` / `enum.BlurAction.html` / `struct.LauncherController.html` が全数存在）。
+      **懸念は解消**——intra-doc link 検査は編集したコメントを実際に見ている
+- [x] `npm run governance:check` → 全 **19 検査 passed**。**見出し参照が 152 → 155 件**
+      （`.rs` へ書いた正準形 3 件が母集団に入り着地。`lifecycle.rs:35` / `search_state.rs:106` が
+      「処置を返す純粋核の強制」へ、`notify.rs:77` が「イベント駆動 wake の不変条件」へ）
+- [x] 実装差分を確定させた → 変更は 6 ファイル（`src-tauri/CLAUDE.md` + `egui_shell/` 5 ファイル）。
+      `grep -rn "FAULT-INJECTION\|PROBE-" src-tauri/src/` が **0 件**
+- [x] **fix-forward の再検証**（`AGENTS.md`「レビュー指摘へ修正を当てた」）: 指摘 18 件を当てた後、
+      カテゴリ A・F を全件再実行して緑を確認し、**指摘を出した枠（code-reviewer）へ修正差分を
+      再投入した**（round 2 = Critical / High / Medium いずれも 0）
+- [x] **この plan.md 自身を一度失った**（下の「事故」節）。実行記録は会話から再構成したもので、
+      測定値はすべて当時の実出力である
 
 ## 未確定（実装前に潰す）
 
@@ -278,6 +325,72 @@ assert にすると前提が固定される。**判定の分かれ目は返り�
       tauri/Win32 API の best-effort 破棄で対象外）。もう一つの収穫は
       **#6 `try_begin_install` が「取り出して遷移させた後」なのに無防備であること**
       （列挙 11 件で唯一「回復不能」な壊れ方）
+
+## レビュー結果（Step 4）
+
+### 4a. check スキル
+
+| 枠 | 値 | 根拠 |
+|---|---|---|
+| `/symmetric-check` | **実施** — 適用漏れ 0・取り違え 0・**⚠ 1 件**（型段の射程・反映済み） | 触れた 5 型の全メソッドを列挙して母集団を閉じた。確認漏れを 1 件疑って潰した（`accept_folder_result` は `&self` と実測）。8 件の属性↔シンボル対応を全数照合（取り違え 0） |
+| `/race-check` | **該当なし** | 母集団を決めるのは `npm run race:boundaries -- --base main`（skill の SSOT）。判定対象 4 行・8 種別すべて **0 件**を実測 |
+| `/dry-check` | **該当なし** | トリガーは「関数・型を新規定義／改名／導入」。関数も型も定義・改名していない |
+| `/persistence-check` | **該当なし** | シリアライズ・on-disk 形式に触れていない |
+| `/state-check` | **該当なし** | UI モード・状態遷移・ガード条件を 1 つも追加/変更していない |
+
+### 4b. code-reviewer（2 巡）
+
+**round 1**: Critical **0** / High **2** / Medium **1** / Low **8**（うち ⚠ 3）。
+**round 2**（fix-forward 差分への再実行）: Critical **0** / High **0** / Medium **0** / Low **7**（うち ⚠ 2）。
+**計 18 件すべて修正した。**
+
+**H1/H2 は「機構より強い主張」＝受け入れ条件 6 に直接当たる指摘で、どちらも自分で一次資料に
+当たって再現した**（H1: `[workspace.lints.clippy]` を読んで `disallowed_methods` 1 行だけを確認 /
+H2: `observe` へメッセージ付き属性を戻して clippy が exit 0 で沈黙することを実測 ＋ レビュアーの
+probe crate を独立に再実行）。
+
+| 巡 | # | 指摘 | 対応 |
+|---|---|---|---|
+| 1 | H1 | `double_must_use` の deny 出所を設定ファイルへ誤帰属（#950 と同型の罠） | 修正 |
+| 1 | H2 | 同 lint の射程が過大（メッセージ付きの残存は沈黙） | 修正 |
+| 1 | M1 | `dismiss` のメッセージが荷を負う値を取り違え（`false` ではなく `true`） | 修正 |
+| 1 | L1 | `Debouncer::poll`「二度と来ない」が全称的 | 修正 |
+| 1 | L2 ⚠ | `NoticeSlot::poll` の引用した不変条件の前提が現行呼び出し点で不成立 | 修正（前提を書く形へ） |
+| 1 | L3 | 型段の射程の記述が過大かつ危険側に不足 | 修正（`&T` / `impl Trait` 追加・復帰手順に「既存シグネチャの編集」） |
+| 1 | L4 | `interp` を「自由関数」と誤分類 | 修正 |
+| 1 | L5 | 「下流が型で既に強制している」が偽 | 修正 |
+| 1 | L6 | `on_escape_pressed` だけメッセージ無しで残る | 修正（下記の逸脱申告） |
+| 1 | L7 ⚠ | `consume_reset_pending`「知る手段はこの返り値だけ」が全称的 | 修正（属性へ「消費した後に」・#749 の doc 逐語は不変） |
+| 1 | L8 ⚠ | `try_begin_install`「唯一」の条件不足 | 修正。**round 2 で reviewer が `UpdaterPhase` の書き込み点を全数列挙して真と決着**（`spawn_update_check` は `main.rs:305` の setup 1 回だけで定期再 check が無く、`Installing` から phase を動かすものが存在しない） |
+| 2 | L1 | `Option`/`Vec` を「ユーザ定義のジェネリック」と誤記 | 修正（「覆われる例外は `Box`/tuple/配列の 3 つだけ」へ反転） |
+| 2 | L2 | 「token の唯一の消費者」はテスト 8 か所で反証される | 修正（「production で消費するのは」へ） |
+| 2 | L3 | `interp` は `QueryIntent` を返すので「照合述語」ではない | 修正（導出と述語を分離） |
+| 2 | L4 | 残余が 4 つ目になったのに「3 件」が追随していない | 修正 |
+| 2 | L5 | `plan.md` に撤回済みの主張が未マークで 3 か所 | 修正 |
+| 2 | ⚠1 | `dismiss` が呼び出し点依存の事実を無条件形で述べ `NoticeSlot::poll` と非対称 | 修正（両方を条件形へ揃えた） |
+| 2 | ⚠2 | 「落ちるのは冗長な 1 フレーム」は推論（窓高変化のリサイズ再描画は未測） | 修正（「この呼び出し点では stale は起きない」に留め未測を明記） |
+
+**承認範囲からの小さな逸脱を 1 件申告する（round 1 L6）**: 承認された表は #9 `on_escape_pressed` を
+「既済（#840）・変更しない」としていたが、**メッセージ無しの属性 1 件だけが残る**状態は、本 PR が
+CLAUDE.md へ書いた「メッセージで失うものを名指す」規約と噛み合わない。1 行でメッセージを足した
+（発火集合は不変で、診断文が読めるようになるだけ）。**承認した 8 件の集合は変わっていない。**
+round 2 で reviewer も「範囲は 1 件も動いていない・戻す必要なし」と判定した。
+
+## 事故 — この plan.md を一度失った
+
+コミット直前、`git rm -r workspace/` が plan.md の未コミット変更を理由に停止したのを受けて、
+ステージを戻すために `git reset HEAD workspace/ && git checkout-index -f -- workspace/plan.md` を
+打った。**`checkout-index -f` は index（= HEAD）の内容で作業ツリーを上書きする**ため、消し込みと
+故障注入ログとレビュー記録がすべて失われた（控えは無し）。
+
+**この節より上の実行記録は会話から再構成したものである。測定値はいずれも当時の実出力**（218 passed /
+exit 101 と診断 8 件 / 見出し参照 155 件 / probe の発火表）だが、**再構成である事実は残す**。
+
+教訓が 2 つある。(1) **`git rm` が「local modifications」で止まったのは保護であって障害ではない**——
+そこで force するか順序を変えるかの分岐に、`checkout-index` という第 3 の（破壊的な）道を選んだ。
+(2) **スキルの「`workspace/` は git 履歴から復元可能」が成り立つのは最終状態をコミットした場合だけ
+である**——未コミットの実行記録を持つ plan.md には当てはまらない。**削除の前にコミットする順序が
+正しい**（このサイクルでは実装コミットに plan.md を含め、撤去を次のコミットに分ける形を採った）。
 
 ## セルフレビュー
 

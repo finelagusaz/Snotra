@@ -79,6 +79,46 @@ pub fn file_char_mask(lower_file_name: Option<&str>) -> u64 {
     lower_file_name.map_or(0, name_char_mask)
 }
 
+/// 1 エントリぶんの派生文字列が、どこまで上流と重複しているか。
+///
+/// 鎖は `lower_file_name` → `lower_name` → `name` の順で、各段が上流と一致すれば持たずに済む。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DerivedSharing {
+    /// `lower_name` が `name` とバイト一致する（`to_lower_folded` が恒等写像になる名前）。
+    pub lower_name_is_name: bool,
+    /// `lower_file_name` が `lower_name` とバイト一致する。
+    ///
+    /// **`None`（file name 成分が無い）はここに含まれない。** 「無い」と「同一」は別の状態で
+    /// あり、混ぜると `entry_view` が file name として `lower_name` を返す。
+    pub file_name_is_lower_name: bool,
+}
+
+/// 派生文字列の共有を**測る**（推論しない）。
+///
+/// **記録側（`indexer::save_cache_sorted_in`）と適用側（`SearchEngine::assemble`）が同じ関数を
+/// 通ることだけが、ディスクとメモリで潰れ方が一致する根拠である**（`normalize_entry_key_into`
+/// と同じ理屈）。片方だけを書き換えると、索引はディスクの潰し方を信じて読み替えるので、
+/// **結果が静かにずれる**——クラッシュも検索の失敗も起こさず、スコアだけが変わる。
+///
+/// **両方を同時に測るのは、呼び出し側に順序の責任を持たせないためである。** file name 側の
+/// 比較相手は「潰す前の `lower_name`」であり、name 側を先に潰すとその相手が消えて共有を
+/// 取りこぼす（結果は正しいまま削減だけが減るので、挙動テストでは捕まらない）。
+///
+/// **`is_folder` から推論してはならない。** 実データでは folder の 100% が一致するが、それは
+/// indexer の名前導出規則（folder は `file_name()`、file は `file_stem()`）の帰結であって、
+/// `SearchEngine::new` が受け取る `AppEntry` の性質ではない。
+#[inline]
+pub fn measure_derived_sharing(
+    name: &str,
+    lower_name: &str,
+    lower_file_name: Option<&str>,
+) -> DerivedSharing {
+    DerivedSharing {
+        lower_name_is_name: lower_name == name,
+        file_name_is_lower_name: lower_file_name == Some(lower_name),
+    }
+}
+
 /// Derive the lowercase, accent-folded file name from an entry's `target_path`, or
 /// `None` if the path has no file name component. Single definition shared by
 /// `search.rs` (Wave 1) and `indexer.rs` (cache build / incremental extend) —
@@ -142,8 +182,80 @@ pub fn normalize_query(query: &str) -> Cow<'_, str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_history_query_key, normalize_query, to_kana, to_lower_folded};
+    use super::{
+        DerivedSharing, measure_derived_sharing, normalize_history_query_key, normalize_query,
+        to_kana, to_lower_folded,
+    };
     use std::borrow::Cow;
+
+    /// **`lower_file` が `None` のとき、共有の旗を立ててはならない。**
+    ///
+    /// `None` は「file name 成分が無い」であって「`lower_name` と同一」ではない。ここを
+    /// 取り違えると `entry_view` が `Some(lower_name)` を返し、file name を持たないエントリが
+    /// file name 経由でマッチする。**実データの影響は小さくない**——フォルダ 256,262 件は
+    /// すべて `None` である（実運用点の内訳で folder 側が 0 件なのはそれが理由）。
+    ///
+    /// しかも `lower_name` 側も同時に潰れていると、素朴な `lower_file == lower_name` 比較は
+    /// `None == None` で真になる。**その形はディスク由来の潰し済み入力でだけ現れる**ので、
+    /// 潰す前の値どうしを比べるこの関数を通すことが唯一の防ぎ方である。
+    #[test]
+    fn absent_file_name_never_shares_even_when_lower_name_is_shared() {
+        let s = measure_derived_sharing("Projects", "projects", None);
+        assert!(!s.file_name_is_lower_name, "None は「同一」ではない");
+
+        // `name` がそのまま小文字（= lower_name を潰せる）フォルダでも同じ。
+        let s = measure_derived_sharing("projects", "projects", None);
+        assert_eq!(
+            s,
+            DerivedSharing {
+                lower_name_is_name: true,
+                file_name_is_lower_name: false,
+            }
+        );
+    }
+
+    #[test]
+    fn measures_both_sharings_independently() {
+        // file と lower_name が一致し、name も小文字（両方潰せる）。
+        assert_eq!(
+            measure_derived_sharing("readme", "readme", Some("readme")),
+            DerivedSharing {
+                lower_name_is_name: true,
+                file_name_is_lower_name: true,
+            }
+        );
+        // name に大文字があるので lower_name は潰せないが、file は lower_name と同一。
+        assert_eq!(
+            measure_derived_sharing("README", "readme", Some("readme")),
+            DerivedSharing {
+                lower_name_is_name: false,
+                file_name_is_lower_name: true,
+            }
+        );
+        // file が別物（`file_stem` と `file_name` の差＝拡張子）。
+        assert_eq!(
+            measure_derived_sharing("firefox", "firefox", Some("firefox.lnk")),
+            DerivedSharing {
+                lower_name_is_name: true,
+                file_name_is_lower_name: false,
+            }
+        );
+    }
+
+    /// **判定は「潰す前の値」に対して行う。** file name 側の比較相手は解決後の `lower_name`
+    /// であり、name 側を先に潰すとその相手が消える。この関数が両方を同時に測るのは、
+    /// 呼び出し側に順序の責任を持たせないためである（`assemble` はかつてコメントで
+    /// 順序を約束していた）。
+    #[test]
+    fn file_name_sharing_is_measured_against_the_uncollapsed_lower_name() {
+        // lower_name が name と同一（潰せる）でも、file 側の判定はその文字列に対して行う。
+        let s = measure_derived_sharing("projects", "projects", Some("projects"));
+        assert!(s.lower_name_is_name);
+        assert!(
+            s.file_name_is_lower_name,
+            "name 側を先に潰した実装ではここが false になり、共有を取りこぼす"
+        );
+    }
 
     #[test]
     fn trim_and_lowercase() {

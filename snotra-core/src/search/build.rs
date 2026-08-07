@@ -8,7 +8,10 @@
 use rayon::prelude::*;
 
 use crate::indexer::AppEntry;
-use crate::query::{file_char_mask, lower_file_name, name_char_mask, to_kana, to_lower_folded};
+use crate::query::{
+    file_char_mask, lower_file_name, measure_derived_sharing, name_char_mask, to_kana,
+    to_lower_folded,
+};
 
 use super::{IncrementalCache, PathStore, SearchEngine, kana_char_mask};
 
@@ -187,15 +190,25 @@ impl SearchEngine {
         for i in 0..entries.len() {
             // ここでの `lower_names[i]` は必ず `Some`（上で `map(Some)` した直後であり、
             // このループは各 `i` を 1 度しか通らない）。
-            let lower_name = lower_names[i].as_deref();
-            let shares_file_name = lower_file_names[i].as_deref() == lower_name;
-            let shares_name = lower_name == Some(&*entries.get(i).name);
+            let Some(lower_name) = lower_names[i].as_deref() else {
+                continue;
+            };
+            // **判定は `query::measure_derived_sharing` が正本である。** 記録側
+            // （`indexer::save_cache_sorted_in`）と同じ関数を通ることだけが、ディスクとメモリで
+            // 潰れ方が一致する根拠になる——片方だけ書き換えると、索引はディスクの潰し方を
+            // 信じて読み替えるので**結果が静かにずれる**。上に書いた「判定を全部済ませてから
+            // 落とす」も、両方を同時に返すあの関数が構造として保っている。
+            let sharing = measure_derived_sharing(
+                &entries.get(i).name,
+                lower_name,
+                lower_file_names[i].as_deref(),
+            );
 
-            if shares_file_name {
+            if sharing.file_name_is_lower_name {
                 entries.mark_file_name_is_lower_name(i);
                 lower_file_names[i] = None;
             }
-            if shares_name {
+            if sharing.lower_name_is_name {
                 lower_names[i] = None;
             }
         }

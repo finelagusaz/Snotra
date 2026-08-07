@@ -1605,7 +1605,7 @@ export function checkStaleIdentifiers(snapshot, docs) {
 // grep 指示を含む混成表で、`/plan-review` のような非 check スキルも現れるため）:
 // - 表の `/…-check` = {cache, dry, persistence, race, state, symmetric}（6 件）
 // - 4a の `/…-check` = 同じ 6 件
-// `/plan-review` `/norm-review` は `-check` で終わらないため**構造的に外れる**。`/health-check` は
+// `/plan-review` は `-check` で終わらないため**構造的に外れる**。`/health-check` は
 // 表に現れない（ルート `CLAUDE.md` のスキル表に在り、そちらは G-skill-table が見る）。
 //
 // これで #778 の (a)（表側へ同期義務を 1 行置く）が不要になった——`AGENTS.md` は G-area-budget の常時ロード面で

@@ -166,43 +166,97 @@ struct TreeIndex {
     ext_table: Vec<String>,
 }
 
+/// 親 index を引く手段。**`entries` がソート済みなら二分探索が使える**——
+/// `sort_entries_canonical` は `target_path` のバイト順で並べ、dedup により
+/// `target_path` は一意ゆえ、第 1 キーだけで全順序が決まる。
+///
+/// 二分探索を使う理由は実測である: 312k 件ぶんの `HashMap` は ~119 B のキーを
+/// 全件ハッシュして確保も伴い、実測 249.6 ms（`SearchEngine` 構築は現状 2〜3 ms）。
+/// 二分探索はハッシュも確保もせず、文字列比較は先頭で分岐して早く終わる。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ParentLookup {
+    /// ソート済み前提の二分探索。
+    BinarySearch,
+    /// 同上を rayon で並列に回す。導出（親と拡張子）は互いに独立ゆえ分割でき、
+    /// `SearchEngine` 構築の他の段（Wave 1/2）が既に rayon 並列であるのと同じ形になる。
+    BinarySearchParallel,
+    /// 任意順を受け付ける照合表（ソートされていない入力用のフォールバック）。
+    HashMap,
+}
+
 impl TreeIndex {
+    /// `entries` がソート済みなら二分探索、でなければ照合表を選ぶ。
+    /// **ソート済みかは仮定せず O(n) で確かめる**——外れた入力に二分探索を当てると
+    /// 親を取り違え、エラーにならずに黙って別の木ができる。
+    fn choose_lookup(entries: &[AppEntry]) -> ParentLookup {
+        if entries
+            .windows(2)
+            .all(|w| w[0].target_path <= w[1].target_path)
+        {
+            ParentLookup::BinarySearchParallel
+        } else {
+            ParentLookup::HashMap
+        }
+    }
+
     fn build(entries: &[AppEntry]) -> Self {
+        Self::build_with(entries, Self::choose_lookup(entries))
+    }
+
+    fn build_with(entries: &[AppEntry], lookup: ParentLookup) -> Self {
         use std::collections::HashMap;
 
-        let by_path: HashMap<&str, usize> = entries
-            .iter()
-            .enumerate()
-            .map(|(i, e)| (e.target_path.as_str(), i))
-            .collect();
+        let by_path: HashMap<&str, usize> = if lookup == ParentLookup::HashMap {
+            entries
+                .iter()
+                .enumerate()
+                .map(|(i, e)| (e.target_path.as_str(), i))
+                .collect()
+        } else {
+            HashMap::new()
+        };
+        let find_parent = |par: &str| -> Option<usize> {
+            match lookup {
+                ParentLookup::BinarySearch | ParentLookup::BinarySearchParallel => entries
+                    .binary_search_by(|e| e.target_path.as_str().cmp(par))
+                    .ok(),
+                ParentLookup::HashMap => by_path.get(par).copied(),
+            }
+        };
         let mut parent = vec![-1i32; entries.len()];
         let mut ext_id = vec![0u16; entries.len()];
         let mut ext_table = vec![String::new()];
         let mut ext_ids: HashMap<&str, u16> = HashMap::new();
 
-        for (i, e) in entries.iter().enumerate() {
-            let p = std::path::Path::new(&e.target_path);
-            let (Some(par), Some(tail)) = (
-                p.parent().and_then(|x| x.to_str()),
-                p.file_name().and_then(|x| x.to_str()),
-            ) else {
-                continue;
-            };
-            let Some(&pi) = by_path.get(par) else {
-                continue;
-            };
-            // 再構築がバイト一致しないものは木へ入れず側テーブル行きにする
-            // （実データでは 0 件だが、成立を仮定せず毎回確かめる）。
-            let mut rebuilt = String::with_capacity(par.len() + 1 + tail.len());
-            rebuilt.push_str(par);
-            if !par.ends_with(['\\', '/']) {
-                rebuilt.push('\\');
+        // 並列版は導出（親と拡張子・互いに独立）だけ rayon へ出し、intern は後段で 1 回だけ
+        // 直列に通す。**構築の他の段（Wave 1/2）は既に rayon 並列ゆえ、これが製品の形である。**
+        if lookup == ParentLookup::BinarySearchParallel {
+            let resolved: Vec<(i32, &str)> = (0..entries.len())
+                .into_par_iter()
+                .map(|i| match resolve_one(entries, &find_parent, i) {
+                    Some((pi, ext)) => (pi as i32, ext),
+                    None => (-1, ""),
+                })
+                .collect();
+            for (i, (pi, ext)) in resolved.into_iter().enumerate() {
+                parent[i] = pi;
+                if pi >= 0 && !ext.is_empty() {
+                    let id = *ext_ids.entry(ext).or_insert_with(|| {
+                        ext_table.push(ext.to_string());
+                        (ext_table.len() - 1) as u16
+                    });
+                    ext_id[i] = id;
+                }
             }
-            rebuilt.push_str(tail);
-            if rebuilt != e.target_path {
-                continue;
-            }
-            let Some(ext) = tail.strip_prefix(e.name.as_str()) else {
+            return Self {
+                parent,
+                ext_id,
+                ext_table,
+            };
+        }
+
+        for i in 0..entries.len() {
+            let Some((pi, ext)) = resolve_one(entries, &find_parent, i) else {
                 continue;
             };
             parent[i] = pi as i32;
@@ -220,6 +274,39 @@ impl TreeIndex {
             ext_table,
         }
     }
+}
+
+/// エントリ 1 件の親 index と拡張子を導出する。**直列版と並列版が同じ導出を通る**ための
+/// 唯一の定義であり、片方だけを変えると木が 2 種類できる。
+fn resolve_one<'a>(
+    entries: &'a [AppEntry],
+    find_parent: &impl Fn(&str) -> Option<usize>,
+    i: usize,
+) -> Option<(usize, &'a str)> {
+    let e = &entries[i];
+    let path = e.target_path.as_str();
+    // **`Path` を経由しない。** Windows の `Path` は `OsStr`（WTF-8）を包み、
+    // `to_str()` が UTF-8 検証の走査を全件に乗せる。パスは既に `&str` である。
+    let cut = path.rfind(['\\', '/'])?;
+    let tail = &path[cut + 1..];
+    // 親はドライブ直下だけ区切りを含む（`C:\`）。それ以外は含まない（`C:\foo`）。
+    // ここは `Path::parent` の意味論の写しゆえ、**現物との一致は
+    // `tree_raw_reconstruction_is_byte_identical_to_target_path` が全件で固定する。**
+    let par_end = if cut == 0 || path.as_bytes()[cut - 1] == b':' {
+        cut + 1
+    } else {
+        cut
+    };
+    let par = &path[..par_end];
+    let pi = find_parent(par)?;
+    // **連結して比べ直さない。** `par` も `tail` も `path` の部分スライスなので、
+    // 確かめるのは間に挟まる区切りだけでよい（1 エントリ 1 確保が消える）。
+    let sep = &path[par_end..cut + 1];
+    if sep != "\\" && !(sep.is_empty() && par.ends_with(['\\', '/'])) {
+        return None;
+    }
+    let ext = tail.strip_prefix(e.name.as_str())?;
+    Some((pi, ext))
 }
 
 /// 1 セグメントを `/` → `\` だけ直して**追記**する（`clear` も `trim` も小文字化もしない）。
@@ -279,6 +366,99 @@ fn reconstruct_normalized_into(buf: &mut String, entries: &[AppEntry], tree: &Tr
         }
     }
     buf.make_ascii_lowercase();
+}
+
+/// 木を辿って **原文のまま**（小文字化も `/` → `\` 変換も trim もせず）パスを組み立てる。
+///
+/// **正規化版とは別に要る。** `target_path` の読み手は 2 種類あり、`with_normalized_key` が
+/// 作る小文字キー（履歴照合・パスマッチ）に対して、tie-break（`ScoredEntry::cmp`）と
+/// `SearchResult.path` の clone は原文のバイトを要求する。正規化版を流用すると
+/// 表示パスが小文字に化け、順序も別物になる。
+fn reconstruct_raw_into(buf: &mut String, entries: &[AppEntry], tree: &TreeIndex, i: usize) {
+    let mut stack = [0u32; 64];
+    let mut depth = 0usize;
+    let mut cur = i;
+    while tree.parent[cur] >= 0 && depth < stack.len() {
+        stack[depth] = cur as u32;
+        depth += 1;
+        cur = tree.parent[cur] as usize;
+    }
+    buf.clear();
+    buf.push_str(&entries[cur].target_path);
+    for d in (0..depth).rev() {
+        let idx = stack[d] as usize;
+        if buf.as_bytes().last() != Some(&b'\\') {
+            buf.push('\\');
+        }
+        buf.push_str(&entries[idx].name);
+        // 空文字（folder・拡張子なし file）の `push_str` は no-op ゆえ分岐を置かない。
+        buf.push_str(&tree.ext_table[tree.ext_id[idx] as usize]);
+    }
+}
+
+/// 原文の再構築が `target_path` と 1 バイトも違わないことを全パスで固定する。
+/// tie-break と表示パスがこの一致に載るため、**正規化版の一致だけでは足りない**。
+#[test]
+fn tree_raw_reconstruction_is_byte_identical_to_target_path() {
+    let Some((entries, _)) = load_real_index() else {
+        println!("実インデックスが無いためスキップします。");
+        return;
+    };
+    let tree = TreeIndex::build(&entries);
+    let mut buf = String::new();
+    for (i, entry) in entries.iter().enumerate() {
+        reconstruct_raw_into(&mut buf, &entries, &tree, i);
+        assert_eq!(
+            buf, entry.target_path,
+            "原文の再構築がずれている（index {i}）"
+        );
+    }
+    println!(
+        "{} 件のパスで原文の再構築が target_path とバイト一致しました。",
+        entries.len()
+    );
+}
+
+/// 木の構築コスト。**起動のたびに払う額**であり、`SearchEngine` 構築が現状 2〜3 ms である
+/// ことに対して無視できるかは測らないと分からない（312k 件ぶんの `HashMap` を組む）。
+#[test]
+#[ignore = "計測専用。release + --nocapture で手動実行する"]
+fn measure_tree_build_cost() {
+    let Some((entries, _)) = load_real_index() else {
+        println!("実 config に scan パスが無いため計測をスキップします。");
+        return;
+    };
+    println!(
+        "\n=== 木の構築コスト（実 index.bin・{} 件）===",
+        entries.len()
+    );
+    println!("  選ばれた手段: {:?}", TreeIndex::choose_lookup(&entries));
+    for lookup in [
+        ParentLookup::HashMap,
+        ParentLookup::BinarySearch,
+        ParentLookup::BinarySearchParallel,
+    ] {
+        let mut best = f64::MAX;
+        for _ in 0..3 {
+            let start = Instant::now();
+            let tree = TreeIndex::build_with(&entries, lookup);
+            best = best.min(start.elapsed().as_secs_f64() * 1000.0);
+            std::hint::black_box(&tree);
+        }
+        println!("  {lookup:?}: 最小 {best:.1} ms（SearchEngine 構築は現状 2〜3 ms）");
+    }
+
+    // 2 つの手段が**同じ木を作る**ことを確かめる。速いほうを採るのは、結果が同じときだけ
+    // 意味がある——ソート済み前提が外れれば二分探索は黙って別の親を返す。
+    let a = TreeIndex::build_with(&entries, ParentLookup::HashMap);
+    for other in [
+        ParentLookup::BinarySearch,
+        ParentLookup::BinarySearchParallel,
+    ] {
+        let b = TreeIndex::build_with(&entries, other);
+        assert_eq!(a.parent, b.parent, "{other:?} が照合表と違う木を作っている");
+        assert_eq!(a.ext_id, b.ext_id, "{other:?} の拡張子 id が照合表と違う");
+    }
 }
 
 /// 木からの再構築が現物と 1 バイトも違わないことを、実インデックスの全パスで固定する。

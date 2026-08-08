@@ -8,7 +8,7 @@
 use rayon::prelude::*;
 
 use crate::index_tree::IndexTree;
-use crate::indexer::{AppEntry, CachedLower, LowerFileName};
+use crate::indexer::{AppEntry, CachedLower, CachedMasks, LowerFileName};
 use crate::query::{
     file_char_mask, lower_file_name, measure_derived_sharing, name_char_mask, to_kana,
     to_lower_folded,
@@ -373,12 +373,15 @@ impl SearchEngine {
         )
     }
 
-    /// 派生文字列を持たない木から構築する（全走査の直後・初回起動）。
+    /// 派生文字列を持たない木から構築する（初回起動と、`cached_masks` が返らなかったとき）。
+    ///
+    /// 通る経路の正本は [`crate::indexer::LoadOrScanResult::cached_masks`] の doc である
+    /// （**cache-miss はもうここを通らない**）。
     ///
     /// **Wave 1 の材料はフルパスを要求する**（`lower_file_name` は `target_path` を取る）ため、
     /// 導出のあいだだけ実体へ戻す。**木専用の導出を書き起こさない**——規則が 2 つになると
-    /// 片方の経路だけが静かにすれる。通るのは全走査の直後だけであり、そこは既に
-    /// ファイルシステム走査が支配している。
+    /// 片方の経路だけが静かにすれる。**この根拠は「ここが遅くてよい」に依存しない**
+    /// ——実体化の対価は `IndexTree::materialize` の doc が持つ。
     pub fn new_from_tree(tree: IndexTree, migemo_enabled: bool) -> Self {
         let (lower_names, lower_file_names, kana_lower_names) =
             wave1_from_tree(&tree, migemo_enabled);
@@ -411,11 +414,19 @@ impl SearchEngine {
     /// スキップされたままである（v4 ユーザーの初回起動が遅くならない）。
     pub fn new_with_cached_masks(
         tree: IndexTree,
-        char_masks: Vec<u64>,
-        file_name_char_masks: Vec<u64>,
-        cached_lower: Option<CachedLower>,
+        masks: CachedMasks,
         migemo_enabled: bool,
     ) -> Self {
+        // **組のまま受け取る。** 3 引数へほどく形だと `char_masks` と `file_name_char_masks` が
+        // 同型（`Vec<u64>`）で隣接し、**取り違えてもコンパイルが通る**——そして誤ったマスクを
+        // 持つ索引は panic せず、Fuzzy pre-filter の false negative（検索結果が静かに欠ける）
+        // としてしか現れない。`CachedMasks` はこの 4 本を「同じ導出から出た組」として束ねる
+        // ためにある型なので、境界を跨ぐ手前でほどかない。
+        let CachedMasks {
+            char_masks,
+            file_name_char_masks,
+            lower: cached_lower,
+        } = masks;
         // kana は毎起動再計算する（キャッシュに持たない）。migemo 無効時は空 Vec のまま。
         let kana_for_cached = |tree: &IndexTree| {
             if migemo_enabled {

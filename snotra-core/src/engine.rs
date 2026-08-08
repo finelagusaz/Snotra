@@ -145,13 +145,8 @@ impl Engine {
         history: HistoryStore,
         config: Config,
     ) -> Self {
-        let search_engine = SearchEngine::new_with_cached_masks(
-            tree,
-            cached_masks.char_masks,
-            cached_masks.file_name_char_masks,
-            cached_masks.lower,
-            config.search.migemo_enabled,
-        );
+        let search_engine =
+            SearchEngine::new_with_cached_masks(tree, cached_masks, config.search.migemo_enabled);
         Self {
             search_engine,
             history,

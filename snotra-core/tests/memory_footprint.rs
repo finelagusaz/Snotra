@@ -351,13 +351,9 @@ fn measure_real_index_footprint() {
     let t2 = snap();
     let build_start = std::time::Instant::now();
     let engine = match cached_masks {
-        Some(masks) => SearchEngine::new_with_cached_masks(
-            tree,
-            masks.char_masks,
-            masks.file_name_char_masks,
-            masks.lower,
-            config.search.migemo_enabled,
-        ),
+        Some(masks) => {
+            SearchEngine::new_with_cached_masks(tree, masks, config.search.migemo_enabled)
+        }
         None => SearchEngine::new_from_tree(tree, config.search.migemo_enabled),
     };
     let build_ms = build_start.elapsed().as_secs_f64() * 1000.0;

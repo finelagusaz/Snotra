@@ -3,31 +3,30 @@
 //! 検索の結果は正しいまま余剰容量だけが常駐する、という失敗は**挙動テストで捕まらない**。
 //! ここはその 1 点を守る。
 
-use super::common::{make_entries, real_index_entries};
+use super::common::{make_entries, real_index_entries, real_scanned_entries};
 use crate::index_tree::IndexTree;
-use crate::indexer::{AppEntry, CachedLower, LowerFileName};
+use crate::indexer::{AppEntry, CachedLower, CachedMasks, LowerFileName};
 use crate::search::*;
 
-/// A/B 検知器が `index.bin` を書くための作業ディレクトリ。
+/// 潰れの 4 種の出現件数。**非空虚検査の材料**——どれも起きない fixture では「全件一致」が
+/// 空虚になるので、呼び出し側がこれを検算する。
 ///
-/// **プロセス id を名前に入れる。** これらは実経路（`save_cache_sorted_in`）を通すので実際に
-/// ファイルを書く。`label` と `migemo_enabled` だけを鍵にすると、snotra-core のテストバイナリが
-/// 同時に 2 つ走ったとき（`cargo test` と `cargo test --release` の重なり、temp root を共有する
-/// 2 つの CI ジョブ）に同じディレクトリを食い合い、**コード変更と無関係な赤**になる
-/// ——片方の `remove_dir_all` が、もう片方の `create_dir_all` の直前や `index.bin.tmp` の
-/// 書き込み中に入るためである。`INDEX_WRITE_LOCK` はプロセス内の `static` ゆえここでは効かない。
-fn ab_scratch_dir(label: &str, migemo_enabled: bool) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "snotra_ab_{label}_{migemo_enabled}_{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("temp dir");
-    dir
+/// **無名の 4-tuple にしてはならない。** 4 つとも `usize` で、取り違えても型は何も言わず、
+/// 非空虚検査は「どれかが 0 でないこと」しか見ないので**入れ替わっても緑になる**。
+#[derive(Debug, Clone, Copy)]
+struct CollapseCounts {
+    /// `lower_name` が `name` と同一で潰れた件数。
+    shared_name: usize,
+    /// `lower_file_name` が `lower_name` と同一で旗が立った件数。
+    shared_file: usize,
+    /// file name 成分が無い件数（`LowerFileName::Absent` 相当）。
+    absent: usize,
+    /// file name が独自の文字列として残った件数（`LowerFileName::Text` 相当）。
+    text: usize,
 }
 
-/// 保存経路（`save_cache_sorted_in`）と `assemble` の測り直しが、同じ入力に対して
-/// **`entry_view` の読み替えまで一致する**ことを全件で確かめる。
+/// 保存側の導出と `assemble` の測り直しが、同じ入力に対して **`entry_view` の読み替えまで
+/// 一致する**ことを全件で確かめる。
 ///
 /// 反復 11 で cache-miss の枝が `new_from_tree`（`Measured` を `assemble` が測って潰す）から
 /// `new_with_cached_masks`（保存が返す `Collapsed` をそのまま使う）へ移った。一致は
@@ -40,69 +39,60 @@ fn ab_scratch_dir(label: &str, migemo_enabled: bool) -> std::path::PathBuf {
 /// 見える形になるのはここだけである。生の `lower_names[i]` を比べる形にすると
 /// 「どちらも潰れているが旗が違う」食い違いを取り逃す。
 ///
-/// **保存側は実経路を通す**（潰し方を書き起こすと、比べているのが 2 つの実装ではなく
-/// テストの中の 1 つの実装になる）。
-///
-/// 戻り値は潰れの 4 種の出現件数 `(lower_name 共有, file_name 共有, Absent, Text)`。
-/// **呼び出し側がこれを検算する**——どれも起きない fixture では「全件一致」が空虚になる。
+/// **保存側は実経路（[`crate::indexer::derive_columns`]）を通す**——潰し方を書き起こすと、
+/// 比べているのが 2 つの実装ではなくテストの中の 1 つの実装になる。**`index.bin` は書かない**
+/// （書いたものと返したものが同一であることは `indexer.rs` の往復テストが別に pin する）。
 fn assert_save_and_assemble_agree(
     label: &str,
     entries: Vec<AppEntry>,
     migemo_enabled: bool,
-) -> (usize, usize, usize, usize) {
+) -> CollapseCounts {
     let n = entries.len();
-    let dir = ab_scratch_dir(label, migemo_enabled);
 
     // A: 旧 cache-miss 経路。木を実体化して Wave 1/2 を建て直し、`assemble` が測って潰す。
     let a = SearchEngine::new_from_tree(IndexTree::build(entries.clone()), migemo_enabled);
-    // B: 新 cache-miss 経路。保存が計算して書いた `Collapsed` をそのまま索引の表現にする。
-    let (tree, masks) = crate::indexer::save_cache_sorted_in(&dir, entries, 7);
-    let b = SearchEngine::new_with_cached_masks(
-        tree,
-        masks.char_masks,
-        masks.file_name_char_masks,
-        masks.lower,
-        migemo_enabled,
-    );
-    let _ = std::fs::remove_dir_all(&dir);
+    // B: 新 cache-miss 経路。保存側が導出した `Collapsed` をそのまま索引の表現にする。
+    let (tree, masks) = crate::indexer::derive_columns(entries).into_cached_masks();
+    let b = SearchEngine::new_with_cached_masks(tree, masks, migemo_enabled);
 
-    compare_engines(label, migemo_enabled, &a, &b, n, 0)
+    assert_engines_agree(label, migemo_enabled, &a, &b, n);
+    collapse_census(&b, 0..n)
 }
 
-/// 2 つの索引を全件で突き合わせる。`assert_save_and_assemble_agree` と PATH マージ版の
-/// 共有部分（**同じ突き合わせを 2 度書くと、片方だけが緩む**）。
+/// 2 つの索引を全件で突き合わせる（比較だけ・返り値なし）。
 ///
-/// **突き合わせは全件、数えるのは `count_from` 以降**。この 2 つの範囲を分けるのは、呼び出し側の
-/// 非空虚検査が「自分が新しく通した経路で判定が起きたか」を問うためである——PATH 併合版が
-/// 全件で数えると、base のエントリだけで 3 つのカウンタが埋まり、**追記側が 1 度も判定を
-/// 下さなくても緑になる**（`extend_cached_masks` を検算しているつもりで検算していない状態）。
-fn compare_engines(
+/// **同じ突き合わせを 2 度書くと、片方だけが緩む**ので 1 か所に置く。**数え上げはここに
+/// 混ぜない**——[`collapse_census`] が単一の索引に対して行う統計であり、比較を 1 ミリも
+/// 必要としない（範囲を切るのは範囲を知っている呼び出し側の仕事である）。
+fn assert_engines_agree(
     label: &str,
     migemo_enabled: bool,
     a: &SearchEngine,
     b: &SearchEngine,
     n: usize,
-    count_from: usize,
-) -> (usize, usize, usize, usize) {
+) {
     assert_eq!(a.entries.len(), n, "{label}: A の件数が想定と違う");
     assert_eq!(b.entries.len(), n, "{label}: B の件数が想定と違う");
-    // **kana 系 2 本の長さも突き合わせる。** 下の per-entry の比較は長さが揃っている前提で
-    // 添字を引くので、揃っていなければここで診断を出す（`assemble` の `debug_assert` と同じ
-    // 「両方空 or 両方 entries.len()」を、A と B が同じ側に居ることまで含めて見る）。
+    // **kana 系 2 本は「両方空 or 両方 n」を、A と B の両方について見る。** 長さの一致だけでは
+    // 足りない——両方が `n-1` でも通ってしまい、`assemble` の `debug_assert` が守っている性質を
+    // 検査済みだと読ませてしまう。下の per-entry が添字を引く前提でもある。
+    for (side, engine) in [("A", a), ("B", b)] {
+        for (col, len) in [
+            ("kana_lower_names", engine.kana_lower_names.len()),
+            ("kana_char_masks", engine.kana_char_masks.len()),
+        ] {
+            assert!(
+                len == 0 || len == n,
+                "{label}/migemo={migemo_enabled}: {side} の {col} が 0 でも {n} でもない（{len}）"
+            );
+        }
+    }
     assert_eq!(
         a.kana_lower_names.len(),
         b.kana_lower_names.len(),
-        "{label}/migemo={migemo_enabled}: kana_lower_names の長さがずれている"
-    );
-    assert_eq!(
-        a.kana_char_masks.len(),
-        b.kana_char_masks.len(),
-        "{label}/migemo={migemo_enabled}: kana_char_masks の長さがずれている"
+        "{label}/migemo={migemo_enabled}: A と B で kana の構築有無が違う"
     );
 
-    // **潰れの 4 種が実際に起きたことを数える。** 数えないと、どれも起きない fixture で
-    // 「全件一致」を報告する空虚なテストになる（`Absent` は実データで稀である）。
-    let (mut shared_name, mut shared_file, mut absent, mut text) = (0usize, 0usize, 0usize, 0usize);
     for i in 0..n {
         let (va, vb) = (a.entry_view(i), b.entry_view(i));
         assert_eq!(
@@ -130,10 +120,13 @@ fn compare_engines(
             "{label}/migemo={migemo_enabled}: index {i} の lower_file_names の潰れ方がずれている"
         );
         // マスクは潰す前の完全な文字列から導出されるので、両経路で一致しなければならない。
-        assert_eq!(a.char_masks[i], b.char_masks[i], "index {i} の char_mask");
+        assert_eq!(
+            a.char_masks[i], b.char_masks[i],
+            "{label}/migemo={migemo_enabled}: index {i} の char_mask がずれている"
+        );
         assert_eq!(
             a.file_name_char_masks[i], b.file_name_char_masks[i],
-            "index {i} の file_name_char_mask"
+            "{label}/migemo={migemo_enabled}: index {i} の file_name_char_mask がずれている"
         );
         // **kana 系 2 本も突き合わせる。** ここも同じ導出の 2 実装である——A 側は
         // `compute_wave1` が実体化した `AppEntry.name` から、B 側は `kana_for_cached` が
@@ -150,25 +143,38 @@ fn compare_engines(
                 "{label}/migemo={migemo_enabled}: index {i} の kana_char_mask がずれている"
             );
         }
-
-        // **数えるのは `count_from` 以降だけである**（理由はこの関数の doc）。
-        if i < count_from {
-            continue;
-        }
-        shared_name += usize::from(a.lower_names[i].is_none());
-        shared_file += usize::from(va.entry.file_name_is_lower_name);
-        absent += usize::from(va.lower_file_name.is_none() && !va.entry.file_name_is_lower_name);
-        text += usize::from(
-            va.lower_file_name.is_some_and(|f| f != va.lower_name)
-                && !va.entry.file_name_is_lower_name,
-        );
     }
-    println!(
-        "{label}/migemo={migemo_enabled}: {n} 件一致（index {count_from} 以降で \
-         lower_name 共有 {shared_name} / \
-         file_name 共有 {shared_file} / Absent {absent} / Text {text}）"
-    );
-    (shared_name, shared_file, absent, text)
+    println!("{label}/migemo={migemo_enabled}: {n} 件一致");
+}
+
+/// 1 つの索引の `range` について潰れの 4 種を数える。
+///
+/// **範囲を切るのは呼び出し側である。** PATH 併合版は追記した範囲だけを数えたい——全件で
+/// 数えると base のエントリだけでカウンタが埋まり、**追記側が 1 度も判定を下さなくても
+/// 非空虚検査が緑になる**（`extend_cached_masks` を検算しているつもりで検算していない状態）。
+///
+/// **3 種は排他である**ことを `else if` の連なりで表す。独立した 3 本の加算にして否定を
+/// 各腕へ配る形だと、4 種目を足すときに 1 本忘れれば二重計上になり、合計を誰も検算して
+/// いないので気づかない。`shared_name` は別軸なので連なりに入れない。
+fn collapse_census(engine: &SearchEngine, range: std::ops::Range<usize>) -> CollapseCounts {
+    let mut c = CollapseCounts {
+        shared_name: 0,
+        shared_file: 0,
+        absent: 0,
+        text: 0,
+    };
+    for i in range {
+        let view = engine.entry_view(i);
+        c.shared_name += usize::from(engine.lower_names[i].is_none());
+        if view.entry.file_name_is_lower_name {
+            c.shared_file += 1;
+        } else if view.lower_file_name.is_none() {
+            c.absent += 1;
+        } else if view.lower_file_name.is_some_and(|f| f != view.lower_name) {
+            c.text += 1;
+        }
+    }
+    c
 }
 
 /// 合成 fixture で、潰れの 4 種すべてを 1 度以上通す（既定スイート）。
@@ -214,13 +220,10 @@ fn save_side_collapse_and_assemble_measurement_agree_at_entry_view() {
     // **migemo の両設定を通す。** kana は `assemble` の外で確定するので潰し方は同じはずだが、
     // 計測環境が `false` に寄っている以上、通していない側は「壊れても気づかない側」である。
     for migemo_enabled in [false, true] {
-        let (shared_name, shared_file, absent, text) =
-            assert_save_and_assemble_agree("synthetic", entries.clone(), migemo_enabled);
+        let c = assert_save_and_assemble_agree("synthetic", entries.clone(), migemo_enabled);
         assert!(
-            shared_name > 0 && shared_file > 0 && absent > 0 && text > 0,
-            "潰れの 4 種が揃っていない fixture では一致が空虚である\
-             （lower_name 共有 {shared_name} / file_name 共有 {shared_file} / \
-             Absent {absent} / Text {text}）"
+            c.shared_name > 0 && c.shared_file > 0 && c.absent > 0 && c.text > 0,
+            "潰れの 4 種が揃っていない fixture では一致が空虚である（{c:?}）"
         );
     }
 }
@@ -282,35 +285,27 @@ fn path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree() {
     let total = base.len() + path_entries.len();
 
     for migemo_enabled in [false, true] {
-        let dir = ab_scratch_dir("pathmerge", migemo_enabled);
-
         // B: 現行の起動経路。**順序も `main.rs` に合わせる**（マスクへ追記 → 木へ追加）。
-        let (mut tree, mut masks) = crate::indexer::save_cache_sorted_in(&dir, base.clone(), 7);
+        let (mut tree, mut masks) =
+            crate::indexer::derive_columns(base.clone()).into_cached_masks();
         crate::indexer::extend_cached_masks(&mut masks, &path_entries);
         tree.extend_with_roots(path_entries.clone());
-        let b = SearchEngine::new_with_cached_masks(
-            tree,
-            masks.char_masks,
-            masks.file_name_char_masks,
-            masks.lower,
-            migemo_enabled,
-        );
-        let _ = std::fs::remove_dir_all(&dir);
+        let b = SearchEngine::new_with_cached_masks(tree, masks, migemo_enabled);
 
         // A: 変更前の cache-miss。拡張後の木から Wave 1/2 を導出する。
         let mut tree_a = IndexTree::build(base.clone());
         tree_a.extend_with_roots(path_entries.clone());
         let a = SearchEngine::new_from_tree(tree_a, migemo_enabled);
 
-        // **数えるのは追記した範囲だけである**（`base.len()` 以降）。全件で数えると base の
-        // 2 件だけで 3 つのカウンタが埋まり、**追記側が 1 度も判定を下さなくても緑になる**
-        // ——この検知器が名指ししている当の相手を見ないまま「空虚ではない」と報告する形。
-        let (shared_name, shared_file, _absent, text) =
-            compare_engines("path-merge", migemo_enabled, &a, &b, total, base.len());
+        assert_engines_agree("path-merge", migemo_enabled, &a, &b, total);
+        // **数えるのは追記した範囲だけである。** 全件で数えると base の 2 件だけで
+        // カウンタが埋まり、**追記側が 1 度も判定を下さなくても緑になる**——この検知器が
+        // 名指ししている当の相手を見ないまま「空虚ではない」と報告する形になる。
+        let c = collapse_census(&b, base.len()..total);
         assert!(
-            shared_name > 0 && shared_file > 0 && text > 0,
-            "追記側（`extend_cached_masks`）が判定を 1 つも下していない fixture では一致が空虚である\
-             （追記範囲での lower_name 共有 {shared_name} / file_name 共有 {shared_file} / Text {text}）"
+            c.shared_name > 0 && c.shared_file > 0 && c.text > 0,
+            "追記側（`extend_cached_masks`）が判定を 1 つも下していない fixture では\
+             一致が空虚である（追記範囲で {c:?}）"
         );
     }
 }
@@ -328,24 +323,21 @@ fn path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree() {
 #[test]
 #[ignore = "実ファイルシステムの全走査・手元で明示的に走らせる"]
 fn save_side_collapse_agrees_with_assemble_over_real_index() {
-    let config = crate::config::Config::load();
-    if config.paths.scan.is_empty() {
-        println!("実 config に scan パスが無いためスキップします。");
+    let Some(entries) = real_scanned_entries() else {
         return;
-    }
-    let mut entries =
-        crate::indexer::scan_all(&config.paths.scan, config.search.show_hidden_system);
-    assert!(!entries.is_empty(), "走査が 0 件では接地にならない");
-    crate::indexer::sort_entries_canonical(&mut entries);
-    let (shared_name, shared_file, absent, text) =
-        assert_save_and_assemble_agree("real", entries, false);
-    // 実データに `Absent` はほぼ現れないので、ここでは要求しない（合成が担う）。
+    };
+    let c = assert_save_and_assemble_agree("real", entries, false);
+    // **`Absent` は要求しない**（実データにはほぼ現れない・合成が担う）。**条件に無い項目を
+    // メッセージへ数え上げない**——`Absent 0` が並ぶと、要求していないものが原因だと誤読させる。
     assert!(
-        shared_name > 0 && shared_file > 0 && text > 0,
-        "実データで潰れが 1 件も起きないのは異常である\
-         （lower_name 共有 {shared_name} / file_name 共有 {shared_file} / \
-         Absent {absent} / Text {text}）"
+        c.shared_name > 0 && c.shared_file > 0 && c.text > 0,
+        "実データで潰れが 1 件も起きないのは異常である（lower_name 共有 {} / \
+         file_name 共有 {} / Text {}）",
+        c.shared_name,
+        c.shared_file,
+        c.text,
     );
+    println!("実データ {c:?}");
 }
 
 /// `len` より大きい容量を持つ Vec を作る（`index.bin` 由来の Vec が持つ余剰の再現）。
@@ -381,14 +373,16 @@ fn assemble_shrinks_parallel_vecs_to_fit() {
 
     let engine = SearchEngine::new_with_cached_masks(
         IndexTree::build(entries),
-        oversized(vec![0u64; n]),
-        oversized(vec![0u64; n]),
-        // **`Raw`（v5/v4 相当）で渡す。** 余剰容量が最も乗るのはこの経路である
-        // ——`Vec<String>` → `Vec<Box<str>>` の変換が確保ブロックを再利用して持ち越す。
-        Some(CachedLower::Raw {
-            lower_names: oversized(owned(&lower)),
-            lower_file_names: oversized(lower.iter().map(|s| Some(s.to_string())).collect()),
-        }),
+        CachedMasks {
+            char_masks: oversized(vec![0u64; n]),
+            file_name_char_masks: oversized(vec![0u64; n]),
+            // **`Raw`（v5/v4 相当）で渡す。** 余剰容量が最も乗るのはこの経路である
+            // ——`Vec<String>` → `Vec<Box<str>>` の変換が確保ブロックを再利用して持ち越す。
+            lower: Some(CachedLower::Raw {
+                lower_names: oversized(owned(&lower)),
+                lower_file_names: oversized(lower.iter().map(|s| Some(s.to_string())).collect()),
+            }),
+        },
         true, // migemo 有効 = kana 系 2 本も構築される
     );
 
@@ -453,17 +447,19 @@ fn collapsed_cache_is_not_remeasured_and_absent_file_names_stay_absent() {
     // 入力順を保つ（前者は enumerate 順に push、後者は zip）。
     let engine = SearchEngine::new_with_cached_masks(
         IndexTree::build(entries),
-        vec![0u64; n],
-        vec![0u64; n],
-        Some(CachedLower::Collapsed {
-            // すべて `None` = `name` と同一（3 件とも既に小文字）。
-            lower_names: vec![None, None, None],
-            lower_file_names: vec![
-                LowerFileName::Absent,
-                LowerFileName::SameAsLowerName,
-                LowerFileName::Text("firefox.lnk".to_string()),
-            ],
-        }),
+        CachedMasks {
+            char_masks: vec![0u64; n],
+            file_name_char_masks: vec![0u64; n],
+            lower: Some(CachedLower::Collapsed {
+                // すべて `None` = `name` と同一（3 件とも既に小文字）。
+                lower_names: vec![None, None, None],
+                lower_file_names: vec![
+                    LowerFileName::Absent,
+                    LowerFileName::SameAsLowerName,
+                    LowerFileName::Text("firefox.lnk".to_string()),
+                ],
+            }),
+        },
         false,
     );
 

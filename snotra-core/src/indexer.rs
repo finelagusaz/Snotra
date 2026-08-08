@@ -61,7 +61,10 @@ pub struct AppEntry {
 /// `normalized_keys` は持たない——`target_path` からの導出へ移して索引・オンディスクの
 /// 双方から外した（`PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を
 /// 保持するか導出するか」）。
+/// `PartialEq` は**テストのときだけ**持つ。「返した組と `index.bin` へ書いた組が同一である」
+/// を 1 行で言うためであり、製品はこの型を比べない。
 #[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct CachedMasks {
     pub char_masks: Vec<u64>,
     pub file_name_char_masks: Vec<u64>,
@@ -93,6 +96,7 @@ pub enum LowerFileName {
 /// が機序の正本）。潰し済みの列を測定経路へ流しても結果は変わらないが、312,690 回の比較が
 /// 丸ごと無駄になる。variant を分けることで、その取り違えはコンパイルを通らない。
 #[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub enum CachedLower {
     /// v6 以降。記録時に `query::measure_derived_sharing` で測って潰してある。
     /// `assemble` は測り直さず、この潰し方をそのまま索引の表現として使う。
@@ -331,11 +335,10 @@ pub struct LoadOrScanResult {
     /// 書いたその足で返したものを載せる（反復 11）。
     ///
     /// **`None` になる場合を数え上げてはならない。** 版のフォールバック鎖は伸びるので、
-    /// 数えた散文はそのたび腐る（正本は `load_cache_in` の分岐と、cache-miss 枝が受け取る
-    /// `save_cache_sorted` の返り値である）。**`None` は今も起こる**——ビットマスクを持たない
-    /// 古い版を読んだときと、保存先が引けなかったときであり、**前者はキャッシュヒットで
-    /// 起こる**。ゆえに消費側は `Some` を前提にしてはならず、`new_from_tree` の腕は
-    /// 到達不能ではない。
+    /// 数えた散文はそのたび腐る。**`None` は今も起こり、キャッシュヒットでも起こりうる**
+    /// ——ゆえに消費側は `Some` を前提にしてはならず、`Engine::new_from_tree` の腕は到達不能
+    /// ではない。正本は `load_cache_in` の分岐と、cache-miss 枝が受け取る `save_cache_sorted`
+    /// の返り値である。
     pub cached_masks: Option<CachedMasks>,
     /// キャッシュヒット時のみ `Some`。`src-tauri` が低優先度スレッドで `run()` し、
     /// `RescanOutcome::Changed` ならアイコンキャッシュを無効化する。
@@ -766,18 +769,45 @@ fn save_cache_sorted(entries: Vec<AppEntry>, config_hash: u64) -> (IndexTree, Op
     (tree, Some(masks))
 }
 
-/// `save_cache_sorted` と同じ保存処理を `dir` 注入で行う（統合テスト用、issue #429）。
+/// 木と派生 4 本を導出しただけの中間の姿。**I/O もロック契約も持たない。**
 ///
-/// **`INDEX_WRITE_LOCK` は取らない**（`save_cache_sorted` と同じ契約で、呼び出し側が保持する）。
-/// `pub(crate)` なのは `search::tests::build` の A/B 検知器がこの実経路を通るためである
-/// ——保存側の潰し方を別実装で書き起こしては、突き合わせる意味が消える。
-pub(crate) fn save_cache_sorted_in(
-    dir: &Path,
-    entries: Vec<AppEntry>,
-    config_hash: u64,
-) -> (IndexTree, CachedMasks) {
-    let bf = cache_bin_file_in(dir);
+/// 分けてあるのは、`index.bin` を書く関数と「潰しの導出」を突き合わせたい検知器が別物だから
+/// である——書き込みごと公開すると、検知器がファイルシステムと、型に無いロック契約
+/// （→「index.bin 書き込みの排他」）を巻き込む。
+///
+/// **タプルにしてはならない。** `Vec<u64>` が 2 本隣接するので、名前の無い並びでは取り違えて
+/// も型検査を通る（同じ理由で [`CachedMasks`] は組のまま渡す）。
+pub(crate) struct DerivedColumns {
+    pub(crate) tree: IndexTree,
+    pub(crate) char_masks: Vec<u64>,
+    pub(crate) file_name_char_masks: Vec<u64>,
+    pub(crate) lower_names: Vec<Option<String>>,
+    pub(crate) lower_file_names: Vec<LowerFileName>,
+}
 
+impl DerivedColumns {
+    /// 列を [`CachedMasks`] へ畳む。
+    ///
+    /// **`index.bin` へ書き終えた後に呼ぶ。** 書く側は素の列を `Cow::Borrowed` で借りるので、
+    /// enum（[`CachedLower`]）へ包むのは借用が終わってからでなければならない——逆順にすると
+    /// 包んだ中身を取り出すために `unreachable!()` 付きの `match` が要る。
+    pub(crate) fn into_cached_masks(self) -> (IndexTree, CachedMasks) {
+        let masks = CachedMasks {
+            char_masks: self.char_masks,
+            file_name_char_masks: self.file_name_char_masks,
+            // **`Collapsed` で渡す。** 列は `collapse_lower_pair`（= `measure_derived_sharing`）
+            // を通してあり、`assemble` はこれを測り直さない（variant の意味は [`CachedLower`]）。
+            lower: Some(CachedLower::Collapsed {
+                lower_names: self.lower_names,
+                lower_file_names: self.lower_file_names,
+            }),
+        };
+        (self.tree, masks)
+    }
+}
+
+/// エントリから木と派生 4 本を導出する。**I/O を持たない。**
+pub(crate) fn derive_columns(entries: Vec<AppEntry>) -> DerivedColumns {
     // マスクを計算してキャッシュに含める。起動時に SearchEngine::new_with_cached_masks()
     // がマスク再計算をスキップできるようにする。
     let lower_names: Vec<String> = entries.iter().map(|e| to_lower_folded(&e.name)).collect();
@@ -814,6 +844,37 @@ pub(crate) fn save_cache_sorted_in(
     // 吸い上げるので、順序を入れ替えると `lower_file_name(&e.target_path)` の材料が消える。
     let tree = IndexTree::build(entries);
 
+    DerivedColumns {
+        tree,
+        char_masks,
+        file_name_char_masks,
+        lower_names: collapsed_lower_names,
+        lower_file_names: collapsed_lower_file_names,
+    }
+}
+
+/// `save_cache_sorted` と同じ保存処理を `dir` 注入で行う（統合テスト用、issue #429）。
+///
+/// **`INDEX_WRITE_LOCK` は取らない**（`save_cache_sorted` と同じ契約で、呼び出し側が保持する）。
+/// この契約は型に無いので、**呼び出し元をこのモジュールの中に閉じておくこと**が唯一の担保で
+/// ある（→「index.bin 書き込みの排他」）。導出だけを要する検知器は [`derive_columns`] を呼ぶ。
+///
+/// **書いた 4 本をそのまま返す。** かつては書いた直後に捨てており、cache-miss の枝は
+/// `new_from_tree` が木を実体化して Wave 1/2 を建て直していた——**計算したものを捨ててから、
+/// 同じものを作り直していた**（実測は `PERFORMANCE.md`「採用: 保存が返した派生データを
+/// cache-miss がそのまま使う」）。
+///
+/// **書き込みの失敗は返り値に影響しない。** 返すのは今メモリに在る木と、その木に対して導出
+/// した派生データであり、両者の整合はディスクへ届いたかとは独立である。書けなければ次回が
+/// cache-miss になるだけで、この起動の索引は正しい。
+fn save_cache_sorted_in(
+    dir: &Path,
+    entries: Vec<AppEntry>,
+    config_hash: u64,
+) -> (IndexTree, CachedMasks) {
+    let bf = cache_bin_file_in(dir);
+    let derived = derive_columns(entries);
+
     // Cow::Borrowed で木の列と派生 Vec の全件 clone を避ける。
     // 出力バイト列は Owned 版と同一（golden テストで保証）。
     let cache = IndexCache {
@@ -821,55 +882,32 @@ pub(crate) fn save_cache_sorted_in(
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs(),
-        names: Cow::Borrowed(&tree.names),
-        is_folder: Cow::Borrowed(&tree.is_folder),
-        parent: Cow::Borrowed(&tree.parent),
-        aux: Cow::Borrowed(&tree.aux),
-        table: Cow::Borrowed(&tree.table),
-        sorted_by_path: tree.sorted_by_path,
+        names: Cow::Borrowed(&derived.tree.names),
+        is_folder: Cow::Borrowed(&derived.tree.is_folder),
+        parent: Cow::Borrowed(&derived.tree.parent),
+        aux: Cow::Borrowed(&derived.tree.aux),
+        table: Cow::Borrowed(&derived.tree.table),
+        sorted_by_path: derived.tree.sorted_by_path,
         config_hash,
-        char_masks: Cow::Borrowed(&char_masks),
-        file_name_char_masks: Cow::Borrowed(&file_name_char_masks),
-        lower_names: Cow::Borrowed(&collapsed_lower_names),
-        lower_file_names: Cow::Borrowed(&collapsed_lower_file_names),
+        char_masks: Cow::Borrowed(&derived.char_masks),
+        file_name_char_masks: Cow::Borrowed(&derived.file_name_char_masks),
+        lower_names: Cow::Borrowed(&derived.lower_names),
+        lower_file_names: Cow::Borrowed(&derived.lower_file_names),
     };
     if !bf.save(&cache) {
         eprintln!("[indexer] failed to save {}", bf.path().display());
     }
-    // **書いた 4 本をそのまま返す。** かつてはここで捨てており、cache-miss の枝は
-    // `new_from_tree` が木を実体化して Wave 1/2 を建て直していた——**計算したものを捨てて
-    // から、同じものを作り直していた**（実測 構築段 allocs 2,801,461・peak 92.81 MiB）。
-    //
-    // **`clone` を挟んではならない。** 上の `Cow::Borrowed` の借用は `bf.save` を最後に
-    // 終わる（NLL）ので、ここは move で通る。clone を挟むと変更の意味がそのまま消える。
-    //
-    // **書き込みの失敗は返り値に影響しない。** 返すのは今メモリに在る木と、その木に対して
-    // 導出した派生データであり、両者の整合はディスクへ届いたかとは独立である。書けなければ
-    // 次回が cache-miss になるだけで、この起動の索引は正しい。
-    let masks = CachedMasks {
-        char_masks,
-        file_name_char_masks,
-        // **`Collapsed` で渡す。** 上で `collapse_lower_pair`（= `measure_derived_sharing`）を
-        // 通してあり、`assemble` はこれを測り直さない。`Raw` にすると測り直しが走り、
-        // `None` どうしの一致で file name 成分の無いエントリに旗が立つ
-        // （`load_cache_in` の v7 枝と同じ理由・`CachedLower` の doc）。
-        lower: Some(CachedLower::Collapsed {
-            lower_names: collapsed_lower_names,
-            lower_file_names: collapsed_lower_file_names,
-        }),
-    };
-    (tree, masks)
+    // **畳むのは書き終えた後である**（借用の順序・[`DerivedColumns::into_cached_masks`] の doc）。
+    // `clone` は挟まない——上の `Cow::Borrowed` の借用は `bf.save` を最後に終わる（NLL）。
+    derived.into_cached_masks()
 }
 
 /// Force rebuild: scan and save cache, regardless of existing cache.
 /// Called from settings dialog (Phase 5).
 ///
 /// **保存が返す `CachedMasks` をここでは捨てている（意図的・受容する残余）。** 下流の
-/// `PrebuiltIndex::from_tree` が木しか取らないため、この経路は今も `new_from_tree` で
-/// 全件を実体化してから Wave 1/2 を建て直す——起動経路で消したのと同じ無駄が、設定からの
-/// 再構築と `drain_index` に残る。繋ぐには `PrebuiltIndex` の新しいコンストラクタと、
-/// `src-tauri` 側の PATH マージへ `extend_cached_masks` を足すことが要る（起動経路と違い
-/// あちらは今それを呼んでいない）。**1 反復 1 候補の規約ゆえ別の反復へ回す。**
+/// `PrebuiltIndex::from_tree` が木しか取らないため、この経路は今も Wave 1/2 を建て直す
+/// （issue #979・繋ぎ方は `PERFORMANCE.md`「次の反復の候補」の該当行）。
 pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> IndexTree {
     // 権威的書き手: scan + sort + save を書き込みロック保持下で行い、
     // 背景再スキャン / 別の rebuild との index.bin 同時書き込みを防ぐ。
@@ -2828,29 +2866,14 @@ mod tests {
         // テストでは捕まらない。同じ値どうしの同一性ゆえ ⚠（save 側の潰し方が `assemble` の
         // 測り直しと一致するか）の証拠にはならない。捕まえるのは「返す側だけを別実装で
         // 計算する」退行である。
-        assert_eq!(returned.char_masks, masks.char_masks);
+        //
+        // **列ごとに分解しない。** 手で分解すると、`CachedMasks` に列が増えたとき**足し忘れ
+        // てもコンパイルが通る**。`Collapsed` であることは直下の `match` が期待値つきで見て
+        // おり、この等号がそれを返り値側へ運ぶのでカバレッジは減らない。
         assert_eq!(
-            returned.file_name_char_masks, masks.file_name_char_masks,
-            "返したマスクが書いたものとずれている"
+            returned, masks,
+            "返り値が index.bin へ書いたものとずれている"
         );
-        match (returned.lower, &masks.lower) {
-            (
-                Some(CachedLower::Collapsed {
-                    lower_names: rn,
-                    lower_file_names: rf,
-                }),
-                Some(CachedLower::Collapsed {
-                    lower_names: dn,
-                    lower_file_names: df,
-                }),
-            ) => {
-                assert_eq!(&rn, dn, "返した lower_names が書いたものとずれている");
-                assert_eq!(&rf, df, "返した lower_file_names が書いたものとずれている");
-            }
-            (r, d) => {
-                panic!("両者とも Collapsed でなければならない（返り {r:?} / ディスク {d:?}）")
-            }
-        }
 
         // **`Collapsed` で返る。** save 側が `measure_derived_sharing` で潰して書いており、
         // "Firefox" → "firefox" は小文字化で変わるので実体が残り、file name は別物ゆえ `Text`。

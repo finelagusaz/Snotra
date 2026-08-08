@@ -24,7 +24,7 @@ use windows::Win32::System::Threading::{
 
 use crate::binfmt::{BinFile, try_deserialize_with_header};
 use crate::config::{Config, ScanPath};
-use crate::index_tree::{IndexTree, raw_path_into};
+use crate::index_tree::IndexTree;
 use crate::query::{
     file_char_mask, lower_file_name, measure_derived_sharing, name_char_mask, to_lower_folded,
 };
@@ -615,20 +615,10 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
 /// `DefaultHasher` の出力が Rust のバージョン間で変わっても影響せず、下の `CHUNK` を
 /// 変えてもよい。
 ///
-/// **永続化は「12 ms を消せる」最適化に見えるが、その瞬間に 2 つがオンディスク互換の
-/// 制約へ化ける**——`DefaultHasher` の出力はバージョン間で安定する保証が無く、`CHUNK` は
-/// 畳み込みの形を決めるので値を変えると digest が変わる。どちらも今は自由に動かせるが、
-/// ディスクへ出した後は動かせない。書くと決めるなら、安定なハッシュ関数を明示的に選び、
-/// `CHUNK` を形式の一部として固定し、`IndexCache` のバージョンを上げること
-/// （手順は `snotra-core/CLAUDE.md`「IndexCache バージョン変更チェックリスト」）。
+/// **永続化は「12 ms を消せる」最適化に見えるが、その瞬間にオンディスク互換の制約へ化ける。**
 /// ディスクへ書く `compute_config_hash` は、版が変わるとキャッシュが 1 度無効になるという
-/// 性質を既に背負っている。
-///
-/// **受容する残余: 衝突（2⁻⁶⁴）は「変わったのに Unchanged と報告する」形で現れる。**
-/// 索引は次にファイルシステムが変わるまで古いままになり、アイコンキャッシュも無効化されない。
-/// **一時的ではなく、その状態が続く限り持続する**——同じ組み合わせなら毎回同じ衝突になる。
-/// `compute_config_hash` は同じ u64 でキャッシュの有効性そのものを判定しており（衝突すれば
-/// **別の config の索引をそのまま使う**）、こちらの帰結はそれより軽い。
+/// 性質を既に背負っている。**契約と受容する残余（衝突の帰結）の正本は [`digest_over`] の
+/// doc である**——こちらは 2 つの source のうち `&[AppEntry]` 専用の入口にすぎない。
 fn entries_digest(entries: &[AppEntry]) -> u64 {
     digest_over(&entries)
 }
@@ -668,16 +658,35 @@ impl DigestSource for IndexTree {
         self.names[i].hash(hasher);
         // **組み直した結果は原文とバイト一致する**（`raw_path_into` の doc が根拠の所在を
         // 持つ）。ゆえに走査結果と同じバイト列が混ざる。
-        raw_path_into(self, scratch, i);
+        self.path_into(scratch, i);
         scratch.hash(hasher);
         self.is_folder[i].hash(hasher);
     }
 }
 
 /// 塊の大きさ。**値を変えると digest が変わる**（分割が畳み込みの形を決めるため）。
-/// プロセス内でしか比較しないので問題にならない——[`entries_digest`] の doc がその契約である。
+/// プロセス内でしか比較しないので問題にならない——契約の正本は [`digest_over`] の doc である
+/// （[`entries_digest`] は 2 つの source のうち片方専用の入口にすぎないので、そちらを指すと
+/// 一般側を読むために特殊側へ跳ぶことになる）。
+///
+/// **`index_tree::resolve_all` の刻みとは独立である**（片方は親の解決、片方は畳み込みの境界）。
+/// 値が 8192 で一致しているのは偶然であり、共通化しない。
 const DIGEST_CHUNK: usize = 8192;
 
+/// [`DigestSource`] を畳み込んで 1 つの u64 にする。**畳み込みの形はここが唯一持つ。**
+///
+/// **契約: この値はプロセス内でしか比較しない。** `DefaultHasher`（SipHash 1-3）の出力は
+/// Rust のバージョン間で安定である保証が無く、[`DIGEST_CHUNK`] も畳み込みの形を決めるので、
+/// どちらも今は自由に動かせる——ディスクへ出した瞬間に動かせなくなる。書くと決めるなら、
+/// 安定なハッシュ関数を明示的に選び、刻みを形式の一部として固定し、`IndexCache` の
+/// バージョンを上げること（手順は `snotra-core/CLAUDE.md`「IndexCache バージョン変更
+/// チェックリスト」）。
+///
+/// **受容する残余: 衝突（2⁻⁶⁴）は「変わったのに Unchanged と報告する」形で現れる。**
+/// 索引は次にファイルシステムが変わるまで古いままになり、アイコンキャッシュも無効化されない。
+/// **一時的ではなく、その状態が続く限り持続する**——同じ組み合わせなら毎回同じ衝突になる。
+/// `compute_config_hash` は同じ u64 でキャッシュの有効性そのものを判定しており（衝突すれば
+/// **別の config の索引をそのまま使う**）、こちらの帰結はそれより軽い。
 fn digest_over<S: DigestSource + ?Sized>(src: &S) -> u64 {
     let n = src.count();
     // 塊ごとに並列でハッシュし、**塊の順に**畳む。長さを先に混ぜるので分割は一意に決まり、
@@ -707,7 +716,9 @@ fn digest_over<S: DigestSource + ?Sized>(src: &S) -> u64 {
     hasher.finish()
 }
 
-fn sort_entries_canonical(entries: &mut [AppEntry]) {
+/// 正準の並び。**digest の値と木の形の両方をこの順序が決める**ので、比べる両辺・木を建てる
+/// 両者は必ずここを通すこと（写しを書くと、写した側だけが旧い並びで木を建てて緑を返す）。
+pub(crate) fn sort_entries_canonical(entries: &mut [AppEntry]) {
     entries.sort_by(|a, b| {
         a.target_path
             .cmp(&b.target_path)
@@ -1401,7 +1412,7 @@ fn reject_existing(candidates: Vec<PathCandidate>, existing: &IndexTree) -> Vec<
         };
         // **篩を通った分だけフルパスを組み立てる。** 通るのは PATH 上の実行ファイルと
         // 同名のエントリだけなので、組み立ては全件ではなくその数に比例する。
-        raw_path_into(existing, &mut raw_buf, i);
+        existing.path_into(&mut raw_buf, i);
         normalize_entry_key_into(&mut norm_buf, &raw_buf);
         for &i in idxs {
             if candidates[i].key == norm_buf {
@@ -1598,16 +1609,14 @@ impl EntryRepr<'_> {
         }
     }
 
-    /// 上位の表で 1 行を占めるときのラベル。**行の照合はこの値で行う**——版ごとに違うので、
-    /// リテラルで書くと片方の版でだけ `None` になる。
-    fn top_label(&self) -> &'static str {
-        match self {
+    fn top_row(&self) -> Option<CacheByteRow> {
+        // 版ごとに違うラベル。**リテラルを他所へ書き写さない**——照合に使うと、片方の版でだけ
+        // 一致しなくなる形の不変条件が生まれる（呼び出し側はバイト数を move の前に読むので、
+        // ラベルで探し直す必要は無い）。
+        let label = match self {
             Self::Flat(_) => "entries",
             Self::Tree { .. } => "木（5 列 + 整列の旗）",
-        }
-    }
-
-    fn top_row(&self) -> Option<CacheByteRow> {
+        };
         let bytes = match self {
             Self::Flat(e) => serialized_len(e)?,
             Self::Tree {
@@ -1627,7 +1636,7 @@ impl EntryRepr<'_> {
             }
         };
         Some(CacheByteRow {
-            label: self.top_label(),
+            label,
             bytes,
             items: self.count(),
         })
@@ -1637,8 +1646,7 @@ impl EntryRepr<'_> {
     /// 裏打ちされる**（一致しなければ `entry_residual` に現れる）。
     fn sub_rows(&self) -> Vec<CacheByteRow> {
         let n = self.count();
-        let strs =
-            |v: &[String]| -> usize { v.iter().map(|s| varint_len(s.len()) + s.len()).sum() };
+        let strs = |v: &[String]| -> usize { v.iter().map(|s| postcard_str_len(s)).sum() };
         match self {
             Self::Flat(entries) => vec![
                 CacheByteRow {
@@ -1648,17 +1656,14 @@ impl EntryRepr<'_> {
                 },
                 CacheByteRow {
                     label: "entries[].name",
-                    bytes: entries
-                        .iter()
-                        .map(|e| varint_len(e.name.len()) + e.name.len())
-                        .sum(),
+                    bytes: entries.iter().map(|e| postcard_str_len(&e.name)).sum(),
                     items: n,
                 },
                 CacheByteRow {
                     label: "entries[].target_path",
                     bytes: entries
                         .iter()
-                        .map(|e| varint_len(e.target_path.len()) + e.target_path.len())
+                        .map(|e| postcard_str_len(&e.target_path))
                         .sum(),
                     items: n,
                 },
@@ -1729,6 +1734,15 @@ fn varint_len(mut v: usize) -> usize {
         n += 1;
     }
     n
+}
+
+/// 文字列 1 件を postcard へ書いたときの長さ（長さの varint + 本体）。
+///
+/// 括り出してあるのは、`sub_rows` の中だけで同じ 2 項式が 3 回書かれていたためである
+/// ——新しい表現を足すたびに 4 回目・5 回目と増える形だった。
+#[inline]
+fn postcard_str_len(s: &str) -> usize {
+    varint_len(s.len()) + s.len()
 }
 
 /// 値を postcard へ書いたときの長さ（バッファは即座に捨てる）。
@@ -1913,13 +1927,19 @@ fn build_breakdown(
             },
         ),
     };
+    // **バイト数はここで読んでおく。** `rows` へ move した行を後からラベルの文字列照合で
+    // 探し直す形も書けるが、それは「行を作る側と探す側で版ごとのラベルが一致し続ける」という
+    // 不変条件を新設し、外したときは `?` の無言の `None` として出る。`usize` は `Copy` なので
+    // move の前に読めば、その不変条件ごと要らなくなる。
+    let top_row = entries.top_row()?;
+    let entries_bytes = top_row.bytes;
     let mut rows = vec![
         CacheByteRow {
             label: "built_at",
             bytes: serialized_len(&built_at)?,
             items: 1,
         },
-        entries.top_row()?,
+        top_row,
         CacheByteRow {
             label: "config_hash",
             bytes: serialized_len(&config_hash)?,
@@ -1951,7 +1971,6 @@ fn build_breakdown(
     let residual = payload_len as i64 - attributed as i64;
 
     let entry_rows = entries.sub_rows();
-    let entries_bytes = rows.iter().find(|r| r.label == entries.top_label())?.bytes;
     let entry_attributed: usize = entry_rows.iter().map(|r| r.bytes).sum();
     let entry_residual = entries_bytes as i64 - entry_attributed as i64;
 

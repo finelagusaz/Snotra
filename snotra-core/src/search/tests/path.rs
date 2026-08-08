@@ -329,12 +329,10 @@ fn path_store_raw_matches_target_path_over_real_index() {
         crate::indexer::scan_all(&config.paths.scan, config.search.show_hidden_system);
     // 製品と同じ並びで木を建てる（親の二分探索は整列を前提にする）。順序がずれても結果は
     // 変わらないが、取りこぼした親のぶん木の形が実運用点と別物になる。
-    entries.sort_by(|a: &AppEntry, b: &AppEntry| {
-        a.target_path
-            .cmp(&b.target_path)
-            .then_with(|| a.name.cmp(&b.name))
-            .then_with(|| a.is_folder.cmp(&b.is_folder))
-    });
+    // **比較子を書き起こさない**——この並びは digest の値そのものを決める入力なので、
+    // 写しを持つと製品側が変わったときにこのテストだけが旧い並びで木を建て、
+    // 「実運用点と別物の木」に対して「原文とバイト一致」を報告する。
+    crate::indexer::sort_entries_canonical(&mut entries);
     assert!(!entries.is_empty(), "走査が 0 件では接地にならない");
 
     // `build` は `entries` を消費するので、比較相手は先に取り分ける。

@@ -21,6 +21,11 @@
 //! **辿る規則そのものを 2 回書いてはならない。** [`TreeNodes`] が「i 番の親・aux・名前を
 //! どう取るか」だけを抽象化し、[`walk_to_root`] と [`raw_path_into`] は両方の並べ方から
 //! 同じ 1 つの実装が使われる（単型化されるので索引側の速さは落ちない）。
+//!
+//! **射程を書く。** 構造が 1 つに保っているのは**原文の組み立て**である——索引側の正規化
+//! （`PathStore::normalized_into` と `PathCursor`）は、巻き戻しを効かせるために別の走査を持つ。
+//! 両者をまたいで共有されるのは [`push_separator`] の 1 行だけであり、そこが要石ゆえ
+//! 関数として括り出してある。セグメントの変換（trim・小文字化）は依然として 2 か所にある。
 
 use rayon::prelude::*;
 
@@ -86,6 +91,23 @@ pub(crate) fn walk_to_root<N: TreeNodes + ?Sized>(
     (cur, chain, depth)
 }
 
+/// 直前の段が区切りで終わっていなければ `\` を足す。
+///
+/// **この 1 行が、組み立ての向き（原文 / 正規化キー）をまたいで共有される唯一の規則である。**
+/// 原文側（[`raw_path_into`]）と索引側の正規化（`PathStore::normalized_into` と `PathCursor`）は
+/// 走査の形が違うが、区切りの入れ方だけは一致していなければならない——ずれても「短いパス」では
+/// なく「区切りが 1 つ多い／少ないパス」になり、表示パス・tie-break・digest・履歴照合が
+/// **正しく見えるまま**すれる。
+///
+/// 見るのは `\` の 1 バイトだけである（`/` は見ない）。正規化側のバッファは `/` → `\` 変換後で
+/// あり、原文側の親がドライブ直下（`C:\`）なら既に `\` で終わっている。
+#[inline]
+pub(crate) fn push_separator(buf: &mut String) {
+    if buf.as_bytes().last() != Some(&b'\\') {
+        buf.push('\\');
+    }
+}
+
 /// `i` のフルパスを**原文のまま**組み立てる（小文字化も `/` → `\` 変換も trim もしない）。
 ///
 /// 結果は元の `AppEntry.target_path` とバイト一致する。**この一致が木表現の要石である**
@@ -108,10 +130,7 @@ pub(crate) fn raw_path_into<N: TreeNodes + ?Sized>(nodes: &N, buf: &mut String, 
     buf.push_str(nodes.table_str(nodes.aux_of(root)));
     for d in (0..depth).rev() {
         let idx = chain[d] as usize;
-        // 親がドライブ直下（`C:\`）なら既に区切りで終わっている。
-        if buf.as_bytes().last() != Some(&b'\\') {
-            buf.push('\\');
-        }
+        push_separator(buf);
         buf.push_str(nodes.name_of(idx));
         // 空文字（folder・拡張子なし file）の `push_str` は no-op ゆえ分岐を置かない。
         buf.push_str(nodes.table_str(nodes.aux_of(idx)));
@@ -196,7 +215,8 @@ impl IndexTree {
         if is_folder.len() != n || parent.len() != n || aux.len() != n || table.is_empty() {
             return None;
         }
-        let mut depths: Vec<u16> = Vec::with_capacity(n);
+        // 値は高々 `CHAIN_CAP - 1` = 63 ゆえ `u8` で足りる（n = 312,625 で一時確保が半分）。
+        let mut depths: Vec<u8> = Vec::with_capacity(n);
         for i in 0..n {
             if aux[i] as usize >= table.len() {
                 return None;
@@ -259,9 +279,16 @@ impl IndexTree {
 
     /// 木を `Vec<AppEntry>` へ戻す（フルパスを組み直して実体化する）。
     ///
-    /// **製品の起動経路はこれを通らない。** 実体化は木が消したはずの 312,691 個の `String` を
-    /// その場で作り直すので、通せば削減が丸ごと戻る。用途は 2 つだけである——corpus テストと、
-    /// 派生文字列をまったく持たない旧版（v3）を読んだときの Wave 1 の材料。
+    /// **実体化は木が消したはずの 312,625 個の `String` をその場で作り直す**ので、通した区間の
+    /// ピークには v7 がディスクから消したのと同額（約 36 MiB）が戻る。**壁時計ではなくピークが
+    /// 対価である**——`tests/memory_footprint.rs` が測っているのはそちらの側である。
+    ///
+    /// 通る経路は 3 つで、いずれも**全走査の直後**（実測 75 秒）に限られる: 初回起動と
+    /// cache-miss 起動（`Engine::new_from_tree`）、設定からの再構築
+    /// （`PrebuiltIndex::from_tree`）、そして派生文字列を持たない旧版（v3）を読んだときの
+    /// Wave 1。加えて corpus テストと `load_cached_entries` が通る。
+    ///
+    /// **`index.bin` のキャッシュヒット（＝ほとんどの起動）はここを通らない。**
     pub(crate) fn materialize(&self) -> Vec<AppEntry> {
         let mut buf = String::new();
         (0..self.len())
@@ -325,7 +352,8 @@ impl IndexTree {
         let mut aux_col = Vec::with_capacity(n);
         // 鎖の長さは**ここで**打ち止める。`parent < i` ゆえ親の深さは既に確定しており、
         // 1 引き算で数えられる（[`CHAIN_CAP`] の doc に理由）。
-        let mut depths: Vec<u16> = Vec::with_capacity(n);
+        // 値は高々 `CHAIN_CAP - 1` = 63 ゆえ `u8` で足りる（n = 312,625 で一時確保が半分）。
+        let mut depths: Vec<u8> = Vec::with_capacity(n);
         for (i, entry) in entries.into_iter().enumerate() {
             let AppEntry {
                 name,

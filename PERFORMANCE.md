@@ -585,6 +585,9 @@ ASCII 限定の分岐＝別実装が要り、`snotra-core/CLAUDE.md`「`normaliz
 
 | 候補 | 実測されているもの | 見積もり | 注意 |
 |---|---|---:|---|
+| `save_cache_sorted_in` が `CachedMasks` を返す | save 側が `char_masks` / `file_name_char_masks` / 潰し済み派生 2 本を計算して書いた直後に捨て、cache-miss の枝が `new_from_tree` で全件実体化して建て直す（実測 確保 312,625 回・約 36 MiB／組み直し 逐次 24.9 ms） | **確保 -312,625・-36 MiB のピーク**（Wave 1/2 の二重計算ぶんは未実測） | 戻りを `(IndexTree, CachedMasks)` にし、`LoadOrScanResult.cached_masks` へ載せる。**`cache_changed` 時に `None` → `Some(Collapsed)` へ変わる＝どのコンストラクタが選ばれるかが変わる**ので 1 反復 1 候補。⚠ 「save 側で潰した `Collapsed` が `assemble` の `Measured` 経路と同じ表現になる」は**未実測**——潰し方の一致は測る対象である（`snotra-core/CLAUDE.md`「重複する派生文字列は索引に持たず、鎖で共有する」） |
+| アイコン剪定を篩へ通す | `drain_index` が `IconCacheState` の lock 内で索引 312,625 件のフルパスを組み直す。生き残るのは高々 `icon_cache_cap`（既定 1,000）件 | 組み直し **24.9 ms → 数百件ぶん** | `reject_existing` と同じ形（`IndexTree::file_key_into` で篩→通ったぶんだけ `raw_path_into`）。`IconCache::keys()` の新設が要る。**lock の外へ出す変種は採らない**——stale な集合で新規挿入を捨てうる＝挙動変更 |
+| `IndexTree` のフィールドを private 化 | 現在 `pub(crate)` ゆえ、crate 内から構造体リテラルで `from_parts` の検証を迂回して組める | 額ではなく構造（不変条件を表現不能にする） | `columns()` / `into_columns()` の 2 口を出す。保存経路の `Cow::Borrowed` × 5・`PathStore::adopt` の分解・テストの `tree.names[0]` 系を全部書き換えることになるので、差分の外へ広がる |
 | `reject_existing` の走査を rayon で並列化 | 走査は逐次で約 45 ms | **-32 ms** | 倍率 3.6 は `entries_digest` の 43 → 12 ms を**別の関数へ持ち込んだ外挿**。**「read-only だから digest と条件が揃う」は誤り**——ループは `rejected[i]` へ書き、`file_buf` / `full_buf` を毎反復書き換えるので、`map_init` で per-worker に割るか添字を収集して reduce する形が要る |
 | `by_file_key` を `FxHashMap` へ | 引く回数は既存側の 312,691 回 | -3〜5 ms | 依存は `Cargo.toml` に既にある（`history.rs` が先例）。単価差は一般値からの見積もりで未実測 |
 | `path.is_dir()` をやめて `entry.metadata()` の属性語を読む | **242 回の syscall**（PATH 配下の全エントリ数） | 上限 9 ms | 列挙 9 ms が天井の根拠なので、**ここが削れると天井そのものが下がる**。⚠ `Path::is_dir()` はリンクを辿り `DirEntry::metadata()` は辿らない——reparse point / junction での挙動差は効率ではなく仕様の判断 |

@@ -131,6 +131,21 @@ pub fn try_serialize_with_header<T: Serialize>(
     postcard::to_extend(payload, buf).map_err(|_| BinError::SerializeFailed)
 }
 
+/// ヘッダーが名乗る形式バージョンを読む（本体は復号しない）。短すぎれば `None`。
+///
+/// **ヘッダーの配置（magic 4 B + version u32 LE）を知る場所をここ 1 つに閉じるための口である。**
+/// 版を発見する用途は [`try_deserialize_with_header`] では満たせない——あちらは期待する版を
+/// **入力**に取るので、置かれているものが何かは答えられない。写しを外へ出すと、ヘッダーを
+/// 変える日にコンパイラも `governance:check` も指さず、出るのは
+/// 「v1701077335 は旧版である」のようなもっともらしい嘘になる。
+///
+/// **本体を読まない**ことが要点である。計測ハーネスは 51 MiB の一時確保を避けるために
+/// 先頭 8 バイトだけを読む。
+pub fn peek_version(bytes: &[u8]) -> Option<u32> {
+    let raw: [u8; 4] = bytes.get(4..8)?.try_into().ok()?;
+    Some(u32::from_le_bytes(raw))
+}
+
 /// Result-based deserialization.
 pub fn try_deserialize_with_header<T: DeserializeOwned>(
     bytes: &[u8],
@@ -147,7 +162,7 @@ pub fn try_deserialize_with_header<T: DeserializeOwned>(
             actual: file_magic,
         });
     }
-    let file_version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+    let file_version = peek_version(bytes).ok_or(BinError::BufferTooShort)?;
     if file_version != version {
         return Err(BinError::VersionMismatch {
             expected: version,

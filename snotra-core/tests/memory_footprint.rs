@@ -222,10 +222,8 @@ fn on_disk_index_version() -> Option<u32> {
         .ok()?
         .read_exact(&mut header)
         .ok()?;
-    // ヘッダーは magic 4 B + version u32 LE（`binfmt.rs`）。
-    Some(u32::from_le_bytes([
-        header[4], header[5], header[6], header[7],
-    ]))
+    // **ヘッダーの配置を書き写さない。** 正本は `binfmt` で、そこと同じ 1 つを通す。
+    snotra_core::binfmt::peek_version(&header)
 }
 
 #[test]

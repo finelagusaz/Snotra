@@ -38,7 +38,7 @@ pub fn start_index_build(app: &AppHandle) -> bool {
             // ビルド本体（drain ループ）を catch_unwind で包む。挙動は **panic 戦略依存**:
             // - unwind ビルド（debug/test、または release で panic="unwind"）: panic をここで捕捉し、
             //   下の finish_index_build で flag を戻す → flag 固着（wedge）を防ぐ。主な panic 発火点
-            //   （rebuild_and_save / PrebuiltIndex::new）はロック外で engine ロックを保持しないため poison しない。
+            //   （rebuild_and_save / PrebuiltIndex::from_tree）はロック外で engine ロックを保持しないため poison しない。
             // - release（このワークスペースは Cargo.toml で panic="abort"）: build スレッドの panic は
             //   プロセスを abort させ、ここには到達しない。ただし silent wedge にもならない（プロセスごと
             //   終了し、次回起動で fresh build される）。どちらの戦略でも「flag 固着で UI が永久構築中」は起きない。

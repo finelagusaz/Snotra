@@ -263,11 +263,10 @@ fn bench_new_migemo_on_off() {
 
 /// フルパスを `PathStore` から**原文のまま**組み直す全件コストを測る（実 `index.bin`）。
 ///
-/// 測る理由は、ディスクの `target_path` を木表現へ移す案（`PERFORMANCE.md`「次の反復の
-/// 候補」）の成立条件がここにあるためである。その案ではロード結果が `target_path` の実体を
-/// 持たないので、背景再スキャンの比較に使う [`crate::indexer`] の digest は**組み直しながら**
-/// 取ることになる。組み直しが `digest_ms`（実測 8〜17 ms）を上回れば、削った額の払い戻しに
-/// なって案が成立しない。
+/// **採用済みの案の常設計器である。** ディスクの `target_path` は木表現へ移り（IndexCache v7）、
+/// ロード結果は実体を持たないので、背景再スキャンの比較に使う [`crate::indexer`] の digest は
+/// **組み直しながら**取っている。実測は `PERFORMANCE.md`「採用: `target_path` の木表現を
+/// ディスクへ」（`digest` 11 → 17 ms）。ここはその組み直しぶんを切り出して測る。
 ///
 /// **忠実性はここでは測らない。** 原文とのバイト一致は `search/tests/path.rs` の
 /// [`super::path::path_store_raw_matches_target_path_over_real_index`] が実データ全件で持つ
@@ -280,9 +279,9 @@ fn bench_new_migemo_on_off() {
 /// 並列版の刻みは digest の `CHUNK` と同じ 8192 に揃えてある——別の刻みで測ると、実際に
 /// 走らせる形とは違うものの数字を報告することになる。
 ///
-/// **撤去条件**: 上の案を採ったらこの計器は digest 経路の常設計器として残す。測って
-/// 成立しないと分かったら、`PERFORMANCE.md`「試みたが機能しない手法」へ結果を移したうえで
-/// この関数を消す（予測の足場を実測の書に住み着かせないため）。
+/// **撤去条件**: digest がフルパスの組み直しをやめたとき（`PERFORMANCE.md`「見送った: digest を
+/// 「パス」ではなく「木」に対して取る」を採る日）。そのとき組み直しは digest 経路から消えるので、
+/// この計器も一緒に消す。
 #[test]
 #[ignore]
 fn measure_raw_path_rebuild_cost_over_real_index() {

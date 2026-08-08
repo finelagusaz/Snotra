@@ -75,6 +75,19 @@ type Wave1Strings = (Vec<Box<str>>, Vec<Option<Box<str>>>, Vec<Box<str>>);
 /// 相互依存がないため rayon::join で並列構築する。
 /// `migemo_enabled` が false の場合、kana_lower_names は空 Vec（migemo 無効ユーザーの
 /// 死蔵メモリを削るため、issue #337）。空 Vec の検索ループ側ガードは search_with_options 参照。
+/// 木から Wave 1 を導出する（実体へ戻してから [`compute_wave1`] を通す）。
+///
+/// **木専用の導出を書き起こさない**——`lower_file_name` は `target_path` を取るので材料は
+/// フルパスを要求する。規則が 2 つになると、片方の経路だけが静かにすれる。
+///
+/// 通る経路は 2 つ（`new_from_tree` と、`new_with_cached_masks` の v3 フォールバック腕）。
+/// **1 本に寄せてあるのは、実体化するという判断を 2 部出荷しないためである**——コメントごと
+/// 二重化していると、片方だけ直したときに文面の食い違いが「説明の違い」に見えてしまう。
+fn wave1_from_tree(tree: &IndexTree, migemo_enabled: bool) -> Wave1Strings {
+    let materialized = tree.materialize();
+    compute_wave1(&materialized, migemo_enabled)
+}
+
 fn compute_wave1(entries: &[AppEntry], migemo_enabled: bool) -> Wave1Strings {
     let ((lower_names, lower_file_names), kana_lower_names) = rayon::join(
         || {
@@ -367,10 +380,8 @@ impl SearchEngine {
     /// 片方の経路だけが静かにすれる。通るのは全走査の直後だけであり、そこは既に
     /// ファイルシステム走査が支配している。
     pub fn new_from_tree(tree: IndexTree, migemo_enabled: bool) -> Self {
-        let materialized = tree.materialize();
         let (lower_names, lower_file_names, kana_lower_names) =
-            compute_wave1(&materialized, migemo_enabled);
-        drop(materialized);
+            wave1_from_tree(&tree, migemo_enabled);
         let (char_masks, file_name_char_masks) = compute_wave2(&lower_names, &lower_file_names);
         let kana_char_masks = compute_kana_char_masks(&kana_lower_names);
         Self::assemble(
@@ -456,14 +467,10 @@ impl SearchEngine {
             }
             // v3 フォールバック: Wave 1 を並列実行（migemo フラグを反映）。
             None => {
-                // v3 は派生文字列を一切持たないので Wave 1 を走らせる。その材料は
-                // フルパスを要求する（`lower_file_name` は `target_path` を取る）ため、この腕だけ
-                // 実体へ戻す。**木専用の導出を書き起こさない**——規則が 2 つになると
-                // 旧版の経路だけが静かにすれる。v3 は背景再スキャンが昇格させるまでの
+                // v3 は派生文字列を一切持たないので Wave 1 を走らせる（実体へ戻す理由は
+                // [`wave1_from_tree`] の doc）。v3 は背景再スキャンが昇格させるまでの
                 // 1 回だけ通る経路である。
-                let materialized = tree.materialize();
-                let (lower_names, lower_file_names, kana) =
-                    compute_wave1(&materialized, migemo_enabled);
+                let (lower_names, lower_file_names, kana) = wave1_from_tree(&tree, migemo_enabled);
                 (
                     DerivedStrings::Measured {
                         lower_names,

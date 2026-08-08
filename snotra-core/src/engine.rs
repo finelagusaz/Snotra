@@ -41,16 +41,21 @@ impl FolderListContext {
 pub struct PrebuiltIndex(SearchEngine);
 
 impl PrebuiltIndex {
-    /// `migemo_enabled` に応じて kana_lower_names の構築要否を決める（issue #337）。
-    /// 呼び出し側（indexing.rs）はロック内でキャプチャした config の migemo を渡す。
+    /// `Vec<AppEntry>` から建てる。**製品経路は通らない**——v7 で索引の入口はすべて
+    /// [`IndexTree`] を取る形へ移り、ここに残る呼び出し元はテストと計測ハーネスだけである
+    /// （`#[cfg(test)]` で締めないのは、`snotra-core/tests/` の統合テストが外部クレートとして
+    /// リンクするため）。**製品コードから新たに呼ばないこと**——木を建て直すぶんだけ
+    /// 静かに遅くなり、型は同じ `PrebuiltIndex` を返すのでレビューでも実行結果でも差が見えない。
     pub fn new(entries: Vec<AppEntry>, migemo_enabled: bool) -> Self {
         Self(SearchEngine::new_with_migemo(entries, migemo_enabled))
     }
 
     /// 既に建った木から構築する（`rebuild_and_save` が返した木をそのまま使う経路）。
+    /// **製品はこちらを通る。**
     ///
-    /// **`new` と使い分ける。** 木を持っているのに `Vec<AppEntry>` へ戻してから渡すと、
-    /// 実体化と再構築で同じ木を 2 度建てることになる。
+    /// 木を `Vec<AppEntry>` へ戻してから [`Self::new`] へ渡すと、同じ木を 2 度建てることに
+    /// なる。**実体化そのものは消えない**——Wave 1 の材料がフルパスを要求するので、
+    /// `SearchEngine::new_from_tree` の中で 1 度だけ払う（`IndexTree::materialize` の doc）。
     pub fn from_tree(tree: IndexTree, migemo_enabled: bool) -> Self {
         Self(SearchEngine::new_from_tree(tree, migemo_enabled))
     }

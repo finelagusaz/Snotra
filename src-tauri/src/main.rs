@@ -162,7 +162,7 @@ fn main() {
     let is_first_run = Config::is_first_run();
     let (config, load_outcome) = Config::load_reporting();
 
-    let (tree, initial_indexing, cached_masks, rescan_task) = if is_first_run {
+    let (mut tree, initial_indexing, mut cached_masks, rescan_task) = if is_first_run {
         (
             snotra_core::index_tree::IndexTree::empty(),
             true,
@@ -191,7 +191,6 @@ fn main() {
     };
 
     // PATH エントリのスキャン + マージ
-    let (mut tree, mut cached_masks) = (tree, cached_masks);
     if config.search.include_path_env {
         let path_entries = indexer::scan_path_env(&tree, config.search.show_hidden_system);
         if !path_entries.is_empty() {

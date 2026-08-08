@@ -40,7 +40,9 @@
 use std::cmp::Ordering;
 
 use super::footprint::{FootprintRow, boxed_strs, vec_body};
-use crate::index_tree::{IndexTree, NO_PARENT, TreeNodes, raw_path_into, walk_to_root};
+use crate::index_tree::{
+    IndexTree, NO_PARENT, TreeNodes, push_separator, raw_path_into, walk_to_root,
+};
 #[cfg(test)]
 use crate::indexer::AppEntry;
 
@@ -196,7 +198,7 @@ impl PathStore {
         push_segment(buf, self.table[self.entries[root].aux as usize].trim());
         for d in (0..depth).rev() {
             let idx = chain[d] as usize;
-            self.push_separator(buf);
+            push_separator(buf);
             push_segment(buf, &self.entries[idx].name);
             push_segment(buf, &self.table[self.entries[idx].aux as usize]);
         }
@@ -238,14 +240,6 @@ impl PathStore {
         let mut buf = String::new();
         self.raw_into(&mut buf, i);
         buf
-    }
-
-    #[inline]
-    fn push_separator(&self, buf: &mut String) {
-        // 親がドライブ直下（`C:\`）なら既に区切りで終わっている。
-        if buf.as_bytes().last() != Some(&b'\\') {
-            buf.push('\\');
-        }
     }
 }
 
@@ -355,7 +349,7 @@ impl PathCursor {
     /// 全体へ当て直すと、巻き戻しで節約したぶんを取り戻してしまう。
     #[inline]
     fn append(&mut self, store: &PathStore, idx: usize) {
-        store.push_separator(&mut self.buf);
+        push_separator(&mut self.buf);
         let start = self.buf.len();
         push_segment(&mut self.buf, &store.entries[idx].name);
         push_segment(&mut self.buf, &store.table[store.entries[idx].aux as usize]);
@@ -473,10 +467,10 @@ impl PathStore {
     /// `Vec<AppEntry>` から木を建てて受け取る（テストの fixture 用）。
     ///
     /// **製品は通らない**——`SearchEngine` の全経路は `IndexTree` を受け取る形へ移った。
-    #[cfg(test)]
     ///
     /// 木を建てる規則そのものは [`IndexTree::build`] が持つ——`index.bin` へ書く側と
     /// ここが**同じ 1 つを通る**ことが、ディスクと索引で木が一致する根拠である。
+    #[cfg(test)]
     pub(super) fn build(entries: Vec<AppEntry>) -> Self {
         Self::adopt(IndexTree::build(entries))
     }

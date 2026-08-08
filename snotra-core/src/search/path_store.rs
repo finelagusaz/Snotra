@@ -1,9 +1,8 @@
 //! `target_path` をフォルダ木の接頭辞共有で保持する索引側の表現（#961/#962 に続く反復 3）。
 //!
-//! 索引の 8 割はフォルダで、パスは親子で接頭辞を共有する。`indexer` の名前導出規則
-//! （folder は `file_name()` / file は `file_stem()`）ゆえ、**フォルダの末尾成分は `name`
-//! そのもの**であり、ファイルは `name` + 拡張子で組み直せる。親の index と拡張子 id だけを
-//! 持てば、フルパスの文字列は親を持たないエントリのぶんしか要らない。
+//! **木そのもの（何を持ち、どう辿るか）の正本は [`crate::index_tree`] である。** ここが持つ
+//! のは索引側の並べ方（1 件 32 B の構造体の列）と、全件走査に効く 2 つの最適化——[`PathCursor`]
+//! と [`PathStore::cmp_paths`] の高速路——だけである。
 //!
 //! この組み替え自体の実測（実 `index.bin` 312,377 エントリ・`PERFORMANCE.md`
 //! 「`target_path` のフォルダ木接頭辞共有」）: 文字列 35.56 → 0.22 MiB、`entries` の 1 要素
@@ -39,24 +38,10 @@
 //! 遅い経路を通るだけで、結果は変わらない。
 
 use std::cmp::Ordering;
-use std::collections::HashMap;
-
-use rayon::prelude::*;
 
 use super::footprint::{FootprintRow, boxed_strs, vec_body};
+use crate::index_tree::{IndexTree, NO_PARENT, TreeNodes, raw_path_into, walk_to_root};
 use crate::indexer::AppEntry;
-
-/// 親を持たないことを表す番兵。このとき `aux` は [`PathStore::table`] のフルパスを指す。
-const NO_PARENT: u32 = u32::MAX;
-
-/// 祖先の鎖の長さの上限。**構築時に強制する**（[`PathStore::build`]）ので、組み立て側は
-/// 鎖がこれを超えないことを前提にしてよい。
-///
-/// 上限を組み立て側の打ち切りで実現してはならない——打ち切ると「根でないもの」を根として
-/// 扱い、`table[aux]`（拡張子）をパスの先頭として書いてしまう。**短いパスではなく誤った
-/// パスになり、しかも黙って通る。** 構築時に上限超過を根へ落とせば（＝自分のフルパスを
-/// 持たせれば）、その状態は表現できなくなる。実データの最大深さは 17 段。
-const CHAIN_CAP: usize = 64;
 
 /// 索引 1 件ぶんの圧縮表現（32 B）。`AppEntry`（56 B）から `target_path` の `String` を
 /// 落とし、親の index と `table` の id に置き換えたもの。
@@ -185,17 +170,11 @@ impl PathStore {
     /// の全件（実測 312,377 件）での照合は同ファイルの
     /// `path_store_raw_matches_target_path_over_real_index` が受け持つ——**後者は実インデックスの
     /// 無い環境（CI）では自動スキップする**ので、開発機で走る corpus であって保証ではない。
+    ///
+    /// **規則は [`raw_path_into`] が唯一持つ。** ディスク側の並べ方（[`IndexTree`]）も同じ
+    /// 実装を通るので、両者がずれることは表現できない。
     pub(super) fn raw_into(&self, buf: &mut String, i: usize) {
-        let (root, chain, depth) = self.walk_to_root(i);
-        buf.clear();
-        buf.push_str(&self.table[self.entries[root].aux as usize]);
-        for d in (0..depth).rev() {
-            let idx = chain[d] as usize;
-            self.push_separator(buf);
-            buf.push_str(&self.entries[idx].name);
-            // 空文字（folder・拡張子なし file）の `push_str` は no-op ゆえ分岐を置かない。
-            buf.push_str(&self.table[self.entries[idx].aux as usize]);
-        }
+        raw_path_into(self, buf, i);
     }
 
     /// `i` の正規化キー（`normalize_entry_key` と同じ規則）を組み立てる。
@@ -210,7 +189,7 @@ impl PathStore {
     /// 順・逆順・乱順の 3 通りで検証する（カーソルは最適化であって意味の変更ではない）。
     #[cfg(test)]
     pub(super) fn normalized_into(&self, buf: &mut String, i: usize) {
-        let (root, chain, depth) = self.walk_to_root(i);
+        let (root, chain, depth) = walk_to_root(self, i);
         buf.clear();
         // 根だけ `trim` する。現物は全体へ当てるが、末尾側は最終セグメントが担う。
         push_segment(buf, self.table[self.entries[root].aux as usize].trim());
@@ -260,30 +239,6 @@ impl PathStore {
         buf
     }
 
-    /// 根まで辿って途中の index を積む。返すのは（根, 鎖, 段数）。`chain[0]` が `i` 自身、
-    /// `chain[depth - 1]` が根の直下である。
-    ///
-    /// **鎖が配列に収まることは構築時に保証されている**（[`CHAIN_CAP`]）。`parent < self` が
-    /// 循環を、深さの打ち止めが長さを、それぞれ表現不能にしているので、ここに打ち切りの
-    /// 分岐は要らない——`debug_assert` は不変条件が壊れたときに黙って誤ったパスを返す
-    /// のではなく落ちるためにある。
-    #[inline]
-    fn walk_to_root(&self, i: usize) -> (usize, [u32; CHAIN_CAP], usize) {
-        let mut chain = [0u32; CHAIN_CAP];
-        let mut depth = 0usize;
-        let mut cur = i;
-        while self.entries[cur].parent != NO_PARENT {
-            debug_assert!(
-                depth < CHAIN_CAP,
-                "鎖が CHAIN_CAP を超えた（構築側の不変条件違反）"
-            );
-            chain[depth] = cur as u32;
-            depth += 1;
-            cur = self.entries[cur].parent as usize;
-        }
-        (cur, chain, depth)
-    }
-
     #[inline]
     fn push_separator(&self, buf: &mut String) {
         // 親がドライブ直下（`C:\`）なら既に区切りで終わっている。
@@ -293,13 +248,37 @@ impl PathStore {
     }
 }
 
+/// 索引側の並べ方（1 件 32 B の構造体の列）を [`raw_path_into`] へ差し出す。
+///
+/// **単型化されるので、辿る段はこれまでどおり [`CompactEntry`] のフィールドを直接読む形へ
+/// コンパイルされる**——`parent` と `name` が同じキャッシュラインに載る利得は失われない
+/// （[`CompactEntry`] の doc がその測定を持つ）。
+impl TreeNodes for PathStore {
+    #[inline]
+    fn parent_of(&self, i: usize) -> u32 {
+        self.entries[i].parent
+    }
+    #[inline]
+    fn aux_of(&self, i: usize) -> u32 {
+        self.entries[i].aux
+    }
+    #[inline]
+    fn name_of(&self, i: usize) -> &str {
+        &self.entries[i].name
+    }
+    #[inline]
+    fn table_str(&self, id: u32) -> &str {
+        &self.table[id as usize]
+    }
+}
+
 /// 全件走査のあいだ、直前に組み立てた祖先の鎖を持ち回るカーソル。
 ///
 /// **索引はソート順に並んでいるので、隣り合うエントリは祖先をほぼ共有する。** 毎回根まで
 /// 辿って全部書き直すと、共有している部分を何度も書き直すことになる。鎖を持ち回れば、
 /// 大半のエントリは**バッファを巻き戻して 1 段だけ書き足す**だけで済む。
 ///
-/// 親が鎖に載っているかの判定は `u32` の線形走査（高々 [`CHAIN_CAP`] 個・実測の深さは平均
+/// 親が鎖に載っているかの判定は `u32` の線形走査（高々 [`crate::index_tree::CHAIN_CAP`] 個・実測の深さは平均
 /// 6.05 段）であり、メモリを追いかけない。外れたときは根まで辿って作り直すので、
 /// **順序が乱れた入力でも結果は変わらない**（速さだけが落ちる）。
 ///
@@ -353,7 +332,7 @@ impl PathCursor {
             }
             // 外れ: 根まで辿って鎖ごと作り直す。`chain[0]` は `i` 自身なので下の共通処理へ譲る。
             None => {
-                let (root, chain, depth) = store.walk_to_root(i);
+                let (root, chain, depth) = walk_to_root(store, i);
                 self.buf.clear();
                 self.stack.clear();
                 push_segment(
@@ -444,190 +423,57 @@ fn push_segment(buf: &mut String, s: &str) {
 // 構築
 // ---------------------------------------------------------------------------
 
-/// 直前に解決した親を憶えておく move-to-front の小さなキャッシュ。
-///
-/// ソート順では兄弟がほぼ連続して現れるので、同じ親を何度も探索し直すのが元の無駄である。
-/// 部分木が割り込むと外れる（`dir\a`, `dir\a\x`, `dir\b` で `dir` が押し出される）ため
-/// 直近の祖先の鎖を覆えるだけの段数を持つ。**段数は実測で決めた**（312,377 件・並列・
-/// 各 3 回の最小値）: 2 段 25.3 ms / **4 段 23.8 ms** / 8 段 25.6 ms。深さの平均は 6.05 段
-/// だが、8 段では線形走査が伸びて損が勝つ。
-#[derive(Default)]
-struct ParentCache<'a> {
-    slots: [Option<(&'a str, usize)>; 4],
-}
-
-impl<'a> ParentCache<'a> {
-    fn get(&self, par: &str) -> Option<usize> {
-        self.slots
-            .iter()
-            .flatten()
-            .find(|(p, _)| *p == par)
-            .map(|(_, i)| *i)
-    }
-
-    /// 既に居るものは前へ出すだけで増やさない——同じ親が複数の段を占めると、
-    /// 実効の段数が減って割り込みに弱くなる。
-    fn put(&mut self, par: &'a str, i: usize) {
-        if let Some(pos) = self
-            .slots
-            .iter()
-            .position(|s| s.map(|(p, _)| p) == Some(par))
-        {
-            self.slots[..=pos].rotate_right(1);
-            return;
-        }
-        self.slots.rotate_right(1);
-        self.slots[0] = Some((par, i));
-    }
-}
-
 impl PathStore {
-    /// `Vec<AppEntry>` を圧縮表現へ組み替える。
+    /// [`IndexTree`] を索引側の並べ方（1 件 32 B の構造体の列）へ組み替えて受け取る。
     ///
-    /// **入力が `target_path` のバイト順に整列していることを前提にするが、要求はしない。**
-    /// 親は二分探索で引き、`binary_search_by` が `Ok` を返すのは完全一致のときだけなので、
-    /// 整列していない入力でも**別の親を返すことは起こりえない**——起こるのは取りこぼしだけで、
-    /// 取りこぼしたエントリは自分のフルパスを持つ（結果は正しく、削減量だけが落ちる）。
-    /// この性質のおかげで整列済みかを事前に走査する必要がなく、実測 6.5 ms を払わずに済む。
+    /// **並べ方を変えるだけで、木そのものは作り直さない。** 親と拡張子の解決は
+    /// [`IndexTree::build`] が済ませてあり、`index.bin` から読んだ木では**保存した側が**
+    /// 済ませてある——ここが「ディスクの木表現」がロードと構築の両方に効く理由である。
     ///
-    /// 循環は `pi < i` の 1 比較で構造的に潰す。文書化した契約ではなく順序で担保するので、
-    /// 壊れた入力でも [`PathStore::walk_to_root`] が止まらなくなることはない。
-    pub(super) fn build(entries: Vec<AppEntry>) -> Self {
-        let n = entries.len();
-        // 整列の判定は並列で 1 回だけ。全件走査の tie-break がこの 1 bit に載る。
-        //
-        // **`<=` ではなく `<` である。** `<=` は重複パスを許してしまい、そのとき
-        // `cmp_paths` の高速路（index 比較）は同じパスの 2 件へ `Less`/`Greater` を返す
-        // ——正しくは `Equal` であり、`ScoredEntry::eq` が index 違いで真になれなくなる。
-        // 狭く取れば、重複がある入力は旗が下りて組み立てて比べる経路へ落ちるだけで済む。
-        let sorted_by_path = entries
-            .par_windows(2)
-            .all(|w| w[0].target_path < w[1].target_path);
-        let mut table: Vec<Box<str>> = vec![Box::from("")];
-        let mut aux = vec![0u32; n];
-
-        // 拡張子の intern までは `entries` を借りたまま行い、**借用をここで閉じる**——
-        // 続く組み立ては `entries` を消費して `String` を move するため、借りたままでは通らない。
-        // 親 index だけを借用のない形へ写して次の段へ渡す。
-        let parents: Vec<Option<usize>> = {
-            let resolved = resolve_all(&entries);
-            let mut ext_ids: HashMap<&str, u32> = HashMap::new();
-            for (i, r) in resolved.iter().enumerate() {
-                if let Some((_, ext)) = r
-                    && !ext.is_empty()
-                {
-                    aux[i] = *ext_ids.entry(ext).or_insert_with(|| {
-                        table.push(Box::from(*ext));
-                        (table.len() - 1) as u32
-                    });
-                }
-            }
-            resolved.iter().map(|r| r.map(|(pi, _)| pi)).collect()
-        };
-
-        let mut compact = Vec::with_capacity(n);
-        // 鎖の長さは**ここで**打ち止める。`parent < i` ゆえ親の深さは既に確定しており、
-        // 1 引き算で数えられる（[`CHAIN_CAP`] の doc に理由）。
-        let mut depths: Vec<u16> = Vec::with_capacity(n);
-        for (i, entry) in entries.into_iter().enumerate() {
-            let AppEntry {
-                name,
-                target_path,
-                is_folder,
-            } = entry;
-            let linked = parents[i].filter(|&pi| (depths[pi] as usize) + 1 < CHAIN_CAP);
-            let (parent, aux_id, depth) = match linked {
-                Some(pi) => (pi as u32, aux[i], depths[pi] + 1),
-                None => {
-                    // 親を持たないエントリだけがフルパスを持つ（実データで 0.03%）。
-                    table.push(target_path.into_boxed_str());
-                    (NO_PARENT, (table.len() - 1) as u32, 0)
-                }
-            };
-            depths.push(depth);
-            compact.push(CompactEntry {
+    /// 名前は `String` から `Box<str>` へ移す。[`CompactEntry`] を 32 B に保つための 8 B で
+    /// あり、全件で 2.4 MiB に相当する（容量が長さと等しければ確保は起きない）。
+    ///
+    /// **長さの一致は [`IndexTree::from_parts`] が確かめている。** ここで `zip` が短い側で
+    /// 黙って止まらないのはそのためであり、`zip` 自身が保証するのではない。
+    pub(super) fn adopt(tree: IndexTree) -> Self {
+        let IndexTree {
+            names,
+            is_folder,
+            parent,
+            aux,
+            table,
+            sorted_by_path,
+        } = tree;
+        debug_assert_eq!(names.len(), is_folder.len());
+        debug_assert_eq!(names.len(), parent.len());
+        debug_assert_eq!(names.len(), aux.len());
+        let entries = names
+            .into_iter()
+            .zip(is_folder)
+            .zip(parent)
+            .zip(aux)
+            .map(|(((name, is_folder), parent), aux)| CompactEntry {
                 name: name.into_boxed_str(),
                 parent,
-                aux: aux_id,
+                aux,
                 is_folder,
                 // 旗は `build.rs` の `assemble` が派生文字列を測ってから立てる。
-                // ここは `target_path` しか知らないので判定できない。
+                // 木は `target_path` の形しか知らないので判定できない。
                 file_name_is_lower_name: false,
-            });
-        }
-
+            })
+            .collect();
         Self {
-            entries: compact,
-            table,
+            entries,
+            table: table.into_iter().map(String::into_boxed_str).collect(),
             sorted_by_path,
         }
     }
-}
 
-/// 全エントリの（親 index, 拡張子）を導出する。導出どうしは独立ゆえ rayon で回す。
-///
-/// **分割は要素ごとではなく連続した塊ごとにする。** [`ParentCache`] は隣り合う要素が同じ親を
-/// 持つことに賭けるので、要素を撒くと賭けが成立しない（実測 30.0 → 23.0 ms）。
-fn resolve_all(entries: &[AppEntry]) -> Vec<Option<(usize, &str)>> {
-    const CHUNK: usize = 8192;
-    (0..entries.len())
-        .step_by(CHUNK)
-        .collect::<Vec<_>>()
-        .into_par_iter()
-        .map(|start| {
-            let end = (start + CHUNK).min(entries.len());
-            let mut cache = ParentCache::default();
-            (start..end)
-                .map(|i| resolve_one(entries, i, &mut cache))
-                .collect::<Vec<_>>()
-        })
-        .flatten()
-        .collect()
-}
-
-/// エントリ 1 件の親 index と拡張子を導出する。組み替えの規則はここが唯一の定義である。
-fn resolve_one<'a>(
-    entries: &'a [AppEntry],
-    i: usize,
-    cache: &mut ParentCache<'a>,
-) -> Option<(usize, &'a str)> {
-    let e = &entries[i];
-    let path = e.target_path.as_str();
-    // **`Path` を経由しない。** Windows の `Path` は `OsStr`（WTF-8）を包み、`to_str()` が
-    // UTF-8 検証の走査を全件に乗せる（実測 167 → 117 ms）。パスは既に `&str` である。
-    let cut = path.rfind(['\\', '/'])?;
-    let tail = &path[cut + 1..];
-    // 親はドライブ直下だけ区切りを含む（`C:\`）。それ以外は含まない（`C:\foo`）。
-    let par_end = if cut == 0 || path.as_bytes()[cut - 1] == b':' {
-        cut + 1
-    } else {
-        cut
-    };
-    let par = &path[..par_end];
-
-    let pi = match cache.get(par) {
-        Some(hit) => hit,
-        None => {
-            let found = entries
-                .binary_search_by(|c| c.target_path.as_str().cmp(par))
-                .ok()?;
-            cache.put(par, found);
-            found
-        }
-    };
-    // **親は必ず自分より前に居る。** ここで弾くことで循環が構造的に生じえなくなる。
-    if pi >= i {
-        return None;
+    /// `Vec<AppEntry>` から木を建てて受け取る（キャッシュを持たない経路）。
+    ///
+    /// 木を建てる規則そのものは [`IndexTree::build`] が持つ——`index.bin` へ書く側と
+    /// ここが**同じ 1 つを通る**ことが、ディスクと索引で木が一致する根拠である。
+    pub(super) fn build(entries: Vec<AppEntry>) -> Self {
+        Self::adopt(IndexTree::build(entries))
     }
-
-    // **連結して比べ直さない。** `par` も `tail` も `path` の部分スライスなので、確かめるのは
-    // 間に挟まる区切りだけでよい（1 エントリ 1 確保が消える・実測 249.6 → 167 ms）。
-    let sep = &path[par_end..cut + 1];
-    if sep != "\\" && !(sep.is_empty() && par.ends_with(['\\', '/'])) {
-        return None;
-    }
-    // file の `name` は `file_stem()`（拡張子なし）ゆえ末尾成分の接頭辞になる。
-    // folder は `file_name()` そのものなので差分は空文字になる。
-    let ext = tail.strip_prefix(e.name.as_str())?;
-    Some((pi, ext))
 }

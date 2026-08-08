@@ -1124,7 +1124,7 @@ fn read_user_path() -> Option<String> {
 ///    `trim` する**。区切りの直後に空白があるパス（`C:\dir\ tool.exe`）では、
 ///    「正規化してから切り出す」と「切り出してから正規化する」が一致するために、
 ///    写像と `trim` が可換であることが要る。
-fn normalize_file_name_key_into(buf: &mut String, target_path: &str) {
+pub(crate) fn normalize_file_name_key_into(buf: &mut String, target_path: &str) {
     let trimmed = target_path.trim();
     let segment = match trimmed.rfind(['\\', '/']) {
         // 区切りはどちらも 1 バイトゆえ `i + 1` は char 境界。

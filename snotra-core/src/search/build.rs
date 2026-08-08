@@ -80,9 +80,7 @@ type Wave1Strings = (Vec<Box<str>>, Vec<Option<Box<str>>>, Vec<Box<str>>);
 /// **木専用の導出を書き起こさない**——`lower_file_name` は `target_path` を取るので材料は
 /// フルパスを要求する。規則が 2 つになると、片方の経路だけが静かにすれる。
 ///
-/// 通る経路は 2 つ（`new_from_tree` と、`new_with_cached_masks` の v3 フォールバック腕）。
-/// **1 本に寄せてあるのは、実体化するという判断を 2 部出荷しないためである**——コメントごと
-/// 二重化していると、片方だけ直したときに文面の食い違いが「説明の違い」に見えてしまう。
+/// 通るのは [`SearchEngine::new_from_tree`] と、[`SearchEngine::new_with_cached_masks`] の v3 フォールバック腕である。**1 本に寄せてあるのは、実体化するという判断を 2 部出荷しないためである**——コメントごと二重化していると、片方だけ直したときに文面の食い違いが「説明の違い」に見えてしまう。
 fn wave1_from_tree(tree: &IndexTree, migemo_enabled: bool) -> Wave1Strings {
     let materialized = tree.materialize();
     compute_wave1(&materialized, migemo_enabled)

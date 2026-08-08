@@ -99,8 +99,7 @@ pub fn apply_type_ramp(ctx: &egui::Context, heading_semibold: bool) {
 
 /// タブ本体を包む標準スクロール領域。`interact_size.y` を [`ROW_HEIGHT`] に設定する。
 ///
-/// 全タブで完全同一だった `ScrollArea::vertical().auto_shrink([false,false])
-/// .scroll_source(drag:false)` ボイラープレートを 1 箇所に集約する。
+/// 全タブで完全同一だった `ScrollArea::vertical().auto_shrink([false,false]).scroll_source(drag:false)` ボイラープレートを 1 箇所に集約する。
 pub fn tab_scroll_area<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])

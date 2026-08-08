@@ -749,10 +749,7 @@ mod tests {
         );
     }
 
-    /// アイコンパイプラインの**区間別**コスト計測（#532 SU4 Probe 1 の続き）。
-    /// `icon_extract_cost_probe` が「抽出全区間」を 1 つの数字で見るのに対し、こちらは
-    /// **どの区間に伸びしろがあるか**を分けて測る。`cargo test -p snotra --release
-    /// icon_pipeline_cost_probe -- --ignored --nocapture` で実行。
+    /// アイコンパイプラインの**区間別**コスト計測（#532 SU4 Probe 1 の続き）。`icon_extract_cost_probe` が「抽出全区間」を 1 つの数字で見るのに対し、こちらは**どの区間に伸びしろがあるか**を分けて測る。`cargo test -p snotra --release icon_pipeline_cost_probe -- --ignored --nocapture` で実行。
     ///
     /// 測る区間は 4 つ:
     /// - `shell+gdi`: `extract_icon`（`SHGetFileInfoW` → GDI → BGRA）

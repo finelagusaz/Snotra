@@ -44,12 +44,7 @@ pub fn tool_select_hint(l: Language) -> &'static str {
 
 /// フォルダ展開中の入力欄プレースホルダ（#836・`SPEC.md`「6.7 フォルダ展開中の現在地表示」）。
 ///
-/// **`dir` はフルパスであってフォルダ名ではない。** 撤去済み WebView2 の
-/// `SearchWindow.tsx:277`（`git show 15933af^:` で復元）が `t("search.placeholder.folder",
-/// { dir: fs.currentDir })` と `currentDir` をそのまま渡していた——issue #836 本文の
-/// 「（フォルダ名）内を検索…」は値の略記である（添付スクリーンショットは
-/// `C:\Toolbox\ghost-launcher 内を検索...` を示す）。`C:\a\b` と `C:\x\b` を区別できるのは
-/// フルパスだけで、#743（`←` が階層を上げていないという誤読）の用途はそれを要求する。
+/// **`dir` はフルパスであってフォルダ名ではない。** 撤去済み WebView2 の `SearchWindow.tsx:277`（`git show 15933af^:` で復元）が `t("search.placeholder.folder", { dir: fs.currentDir })` と `currentDir` をそのまま渡していた——issue #836 本文の「（フォルダ名）内を検索…」は値の略記である（添付スクリーンショットは `C:\Toolbox\ghost-launcher 内を検索...` を示す）。`C:\a\b` と `C:\x\b` を区別できるのはフルパスだけで、#743（`←` が階層を上げていないという誤読）の用途はそれを要求する。
 ///
 /// **末尾に `\` が付く場合と付かない場合が両方来る**（正規化しない・parity）: ドライブルートは
 /// `compute_parent_dir` が `C:\` を返し、フォルダ列挙は `C:\d\Cafe` を返す。

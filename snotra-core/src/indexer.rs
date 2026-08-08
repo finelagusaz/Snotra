@@ -808,8 +808,7 @@ impl DerivedColumns {
 
 /// エントリから木と派生 4 本を導出する。**I/O を持たない。**
 pub(crate) fn derive_columns(entries: Vec<AppEntry>) -> DerivedColumns {
-    // マスクを計算してキャッシュに含める。起動時に SearchEngine::new_with_cached_masks()
-    // がマスク再計算をスキップできるようにする。
+    // マスクをここで計算するのは、受け取った側が再計算せずに索引の表現へそのまま使うためである（受け取る経路の正本は `LoadOrScanResult::cached_masks` の doc であり、ここで数えない）。
     //
     // **per-entry の導出そのものは [`derive_entry_collapsed`] が持つ。** 追記側
     // （`extend_cached_masks`）と同じ関数を通ることだけが、ディスクとメモリで潰れ方と

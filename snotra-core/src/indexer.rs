@@ -55,8 +55,8 @@ pub struct AppEntry {
 ///
 /// - `char_masks` / `file_name_char_masks`: この型が在るなら必ず在る
 /// - `lower`: 派生文字列を持たない古い版を読んだときは `None` → Wave 1 計算が走る。
-///   **版の番号を書かない**（`SearchEngine::new_with_cached_masks` の doc と同じ理由で、
-///   番号を書くと版を上げるたびにこの散文だけが腐る）
+///   **版の番号を書かない**（`Engine::new_from_cache` の doc と同じ理由で、番号を書くと
+///   版を上げるたびにこの散文だけが腐る）
 ///
 /// `normalized_keys` は持たない——`target_path` からの導出へ移して索引・オンディスクの
 /// 双方から外した（`PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を

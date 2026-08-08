@@ -172,6 +172,8 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 
 1つでも欠けるとキャッシュヒット時/ミス時で異なる結果を返す。
 
+**版を 1 つ上げると、直前の版が「全ユーザーの `index.bin` が今まさに置かれている版」へ変わる**（反復 10 で 4 件の取りこぼしが同時に出た）。ゆえに 8 番目として、**直前の版を受け取る側を全部数え直す**: (a) `cache_byte_breakdown_in` の鎖（現行版だけを読む形にすると**一番測りたい相手にだけ黙る**）、(b) `load_cache_in_reports_the_version_it_actually_read` の枝（この値だけが昇格判定の入力で、取り違えても**検索結果は正しいまま**）、(c) 直前の版の凍結バイト列を `load_cache_in` 経由で読むテスト（`try_deserialize_with_header` の直呼びでは枝選択・`config_hash` 判定・`CachedLower` の variant・`version` の帰属を 1 つも通らない）。**枝の数を散文に書かないこと**——版を足したときにその数だけが腐り、しかも「揃っている」と読める。
+
 **on-disk 形式の安定ガード**: 旧 `IndexCacheRef`（borrowed 双子）は #461 で `Cow` 統合され消滅した（owned/borrowed のフィールド順ズレ→`index.bin` 無言破損の footgun が型として解消）。統合後は save/load が単一 struct を共有するためフィールド reorder が roundtrip テストを素通りする。**バイト形式の絶対安定は `index_cache_on_disk_format_is_stable`（golden bytes）がガードする**。フィールド追加・順序変更で `INDEX_CACHE_VERSION` をバンプしたら、この golden bytes も更新すること。
 
 ## engine.rs のロック最小化パターン

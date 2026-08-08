@@ -230,23 +230,13 @@ fn save_side_collapse_and_assemble_measurement_agree_at_entry_view() {
 
 /// **保存が返した派生データの直後に PATH エントリを併合する経路**（`indexer::merge_path_entries`）。
 ///
-/// **この組み合わせは反復 11 で初めて生きた。** それ以前は `cached_masks` が `None` だったので
-/// `extend_cached_masks` は**呼ばれず**、`new_from_tree` が拡張後の木から Wave 1/2 を導出して
-/// いた——PATH エントリぶんも自動的に整合していた。今は `Some` で返るので「マスクへ追記 →
-/// 木へ根として追加 → `new_from_cache`」の順に変わる。**上の 2 本の検知器はどちらもここを
-/// 迂回する**（`new_with_cached_masks` を直接呼び、PATH 併合を通らない）。
+/// **この組み合わせは反復 11 で初めて生きた。** それ以前は `cached_masks` が `None` だったので `extend_cached_masks` は**呼ばれず**、`new_from_tree` が拡張後の木から Wave 1/2 を導出していた——PATH エントリぶんも自動的に整合していた。今は `Some` で返るので「マスクへ追記 → 木へ根として追加 → `new_from_cache`」の順に変わる。**上の 2 本の検知器はどちらもここを迂回する**（`new_with_cached_masks` を直接呼び、PATH 併合を通らない）。
 ///
-/// 守るのは 2 つ。(1) 追記側（`extend_cached_masks`）の潰し方が、拡張後の木から導出した
-/// 結果と一致すること。(2) **2 本の追記の長さが揃うこと**——`assemble` の長さ検証は
-/// `debug_assert` ゆえ release では消え、ずれは添字 panic か沈黙の食い違いになる。
+/// 守るのは 2 つ。(1) 追記側（`extend_cached_masks`）の潰し方が、拡張後の木から導出した結果と一致すること。(2) **追記した 2 列と木の長さが揃うこと**——`assemble` の長さ検証は `debug_assert` ゆえ release では消え、ずれは添字 panic か沈黙の食い違いになる。**追記を欠く変異で実際に赤くなることを確かめてある**（`migemo_enabled` の両設定で）。
 ///
-/// **起動経路と背景の再構築（`drain_index`）は同じ `merge_path_entries` を通る**ので、この 1 本が
-/// 両方を覆う。**そこを迂回して併合するコードは書ける**（`IndexTree::extend_with_roots` は `pub`）
-/// ——閉じているのは現存する 2 つの呼び出し点であって、この検知器の射程もそこまでである。
+/// **起動経路と背景の再構築（`drain_index`）は同じ `merge_path_entries` を通る**ので、この 1 本が両方を覆う。**そこを迂回して併合するコードは書ける**（`IndexTree::extend_with_roots` は `pub`）——閉じているのは現存する呼び出し点であって、この検知器の射程もそこまでである。
 ///
-/// `masks` が `None` の枝は [`merge_path_entries_extends_the_tree_even_without_masks`] が守る
-/// （こちらは `Some` の枝しか通らないので、木への追加が `if let Some` の内側へ入る誤りには
-/// 当たらない——変異を注入して実測した）。
+/// **`masks` が `None` の枝はここを通らない。** [`merge_path_entries_extends_the_tree_even_without_masks`] がそちらを持つ——木への追加が `if let Some` の内側へ入る誤りに、この検知器は原理的に当たらない（`Some` の枝しか通らないため。変異を注入して、あちらだけが赤くなることを実測した）。
 #[test]
 fn path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree() {
     let mut base = vec![
@@ -289,14 +279,12 @@ fn path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree() {
     let total = base.len() + path_entries.len();
 
     for migemo_enabled in [false, true] {
-        // B: 現行の製品経路。**併合は `indexer::merge_path_entries` そのものを通す**——
-        // 手で 2 手を並べると、この検知器が測るのは製品コードではなく「テストの中の写し」に
-        // なる（起動経路と drain 経路が同じ関数を通ることが長さの揃う根拠なので、その関数を
-        // 迂回した検算には意味が無い）。
-        let (mut tree, mut masks) =
-            crate::indexer::derive_columns(base.clone()).into_cached_masks();
-        crate::indexer::merge_path_entries(&mut tree, Some(&mut masks), path_entries.clone());
-        let b = SearchEngine::new_with_cached_masks(tree, masks, migemo_enabled);
+        // B: 現行の製品経路。**併合は `indexer::merge_path_entries` そのものを通す**——手で 2 手を並べると、この検知器が測るのは製品コードではなく「テストの中の写し」になる（起動経路と drain 経路が同じ関数を通ることが長さの揃う根拠なので、その関数を迂回した検算には意味が無い）。
+        let (mut tree, masks) = crate::indexer::derive_columns(base.clone()).into_cached_masks();
+        // `merge_path_entries` が `&mut Option<_>` を取るので、ここだけ包み直しが要る（製品の呼び出し点はどれも `Option` の束縛を持っているため、そちらには要らない）。
+        let mut masks = Some(masks);
+        crate::indexer::merge_path_entries(&mut tree, &mut masks, path_entries.clone());
+        let b = SearchEngine::new_with_cached_masks(tree, masks.unwrap(), migemo_enabled);
 
         // A: 変更前の cache-miss。拡張後の木から Wave 1/2 を導出する。
         let mut tree_a = IndexTree::build(base.clone());
@@ -318,15 +306,11 @@ fn path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree() {
 
 /// **`masks` が `None` の枝でも木は伸びる**（`indexer::merge_path_entries`）。
 ///
-/// **この腕は到達可能な製品経路である。** `Config::config_dir` が引けないとき
-/// `indexer::rebuild_and_save` は派生データを返さず、`src-tauri` の再構築は木だけを持って
-/// `PrebuiltIndex::from_tree` へ落ちる。派生文字列を持たない古い版を読んだキャッシュヒットも
-/// 同じ形になる。**「起こりえない状態のテスト」として削らないこと。**
+/// **この腕は到達可能な製品経路である。** `Config::config_dir` が引けないとき `indexer::rebuild_and_save` は派生データを返さず、`src-tauri` の再構築は木だけを持って `PrebuiltIndex::from_tree` へ落ちる。派生文字列を持たない古い版を読んだキャッシュヒットも同じ形になる。**「起こりえない状態のテスト」として削らないこと。**
 ///
-/// 守るのは 1 つ: 木への追加が `masks` の有無に**引きずられない**こと。追加を `if let Some`
-/// の内側へ書いてしまうと、`None` の枝では PATH エントリが索引から丸ごと落ちる——**panic も
-/// 型エラーも出ず、PATH 経由でしか届かないプログラムが検索から静かに消える**だけである
-/// （上の検知器は `Some` の枝しか通らないので、この誤りには当たらない）。
+/// 守るのは 1 つ: 木への追加が `masks` の有無に**引きずられない**こと。追加を `if let Some` の内側へ書いてしまうと、`None` の枝では PATH エントリが索引から丸ごと落ちる——**panic も型エラーも出ず、PATH 経由でしか届かないプログラムが検索から静かに消える**だけである（上の検知器は `Some` の枝しか通らないので、この誤りには当たらない）。
+///
+/// **効いているのは `tree.len()` の等値検査である。** 下の A/B 比較は `masks` が `None` のとき A 側と同じ計算になるので原理的に失敗しない——**それでも置いてあるのは、この検知器が「木が伸びる」だけでなく「伸びた結果が正しい木である」も名乗るためである**。`assert_engines_agree` を落として `len` だけにすると、根として足すべきものを親解決して足す変更（＝別の壊し方）を見逃す。
 #[test]
 fn merge_path_entries_extends_the_tree_even_without_masks() {
     let mut base = vec![
@@ -360,7 +344,7 @@ fn merge_path_entries_extends_the_tree_even_without_masks() {
     for migemo_enabled in [false, true] {
         // B: `masks` を持たない製品経路。
         let mut tree = IndexTree::build(base.clone());
-        crate::indexer::merge_path_entries(&mut tree, None, path_entries.clone());
+        crate::indexer::merge_path_entries(&mut tree, &mut None, path_entries.clone());
         assert_eq!(
             tree.len(),
             total,

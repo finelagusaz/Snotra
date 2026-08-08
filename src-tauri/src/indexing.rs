@@ -38,8 +38,7 @@ pub fn start_index_build(app: &AppHandle) -> bool {
             // ビルド本体（drain ループ）を catch_unwind で包む。挙動は **panic 戦略依存**:
             // - unwind ビルド（debug/test、または release で panic="unwind"）: panic をここで捕捉し、
             //   下の finish_index_build で flag を戻す → flag 固着（wedge）を防ぐ。主な panic 発火点
-            //   （rebuild_and_save / merge_path_entries / PrebuiltIndex の構築）はロック外で
-            //   engine ロックを保持しないため poison しない。
+            //   （rebuild_and_save / merge_path_entries / PrebuiltIndex の構築）はロック外で engine ロックを保持しないため poison しない。
             // - release（このワークスペースは Cargo.toml で panic="abort"）: build スレッドの panic は
             //   プロセスを abort させ、ここには到達しない。ただし silent wedge にもならない（プロセスごと
             //   終了し、次回起動で fresh build される）。どちらの戦略でも「flag 固着で UI が永久構築中」は起きない。
@@ -100,18 +99,14 @@ fn drain_index(app_handle: &AppHandle) {
         };
         let Some(inputs) = inputs else { break };
 
-        // **保存が返した派生データをそのまま索引の表現に使う**（`rebuild_and_save` の doc）。
-        // 捨てて建て直していた頃の額は `PERFORMANCE.md`「採用: `PrebuiltIndex` を
-        // `CachedMasks` 込みで建てる」。
+        // **保存が返した派生データをそのまま索引の表現に使う**（`rebuild_and_save` の doc）。捨てて建て直していた頃の額は `PERFORMANCE.md`「採用: `PrebuiltIndex` を `CachedMasks` 込みで建てる」。
         let (mut tree, mut cached_masks) =
             indexer::rebuild_and_save(&inputs.scan, inputs.show_hidden_system);
 
-        // PATH エントリのマージ。**マスクへの追記と木への追加は `merge_path_entries` が対で
-        // 行う**——起動経路（`main.rs`）と同じ関数を通ることが、両者で長さが揃うことの根拠で
-        // ある（片方を欠いたときの症状はその doc）。
+        // PATH エントリのマージ。**マスクへの追記と木への追加は `merge_path_entries` が対で行う**——起動経路（`main.rs`）と同じ関数を通ることが、両者で長さが揃うことの根拠である（片方を欠いたときの症状はその doc）。
         if inputs.include_path_env {
             let path_entries = indexer::scan_path_env(&tree, inputs.show_hidden_system);
-            indexer::merge_path_entries(&mut tree, cached_masks.as_mut(), path_entries);
+            indexer::merge_path_entries(&mut tree, &mut cached_masks, path_entries);
         }
 
         // Sync icon cache with current index
@@ -153,8 +148,7 @@ fn drain_index(app_handle: &AppHandle) {
         // SearchEngine の構築（O(N)）は Mutex 外で実施してロック保持時間を最小化する。
         // migemo 無効時は kana_lower_names を構築しない（issue #337）。
         //
-        // **分岐を決めるのは派生データの有無だけである。** `None` の枝は到達不能ではない
-        // （正本は `indexer::save_cache_sorted` の分岐）。
+        // **分岐を決めるのは派生データの有無だけである。** `None` の枝が選ばれる条件の正本は `indexer::save_cache_sorted` の分岐である。
         let new_index = match cached_masks {
             Some(masks) => {
                 snotra_core::engine::PrebuiltIndex::from_cache(tree, masks, inputs.migemo_enabled)

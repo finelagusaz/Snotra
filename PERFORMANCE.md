@@ -629,8 +629,11 @@ ASCII 限定の分岐＝別実装が要り、`snotra-core/CLAUDE.md`「`normaliz
 欠く変異では `path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree` が
 `SearchEngine: 派生文字列の長さが entries と一致しない` で落ち、木への追加を `if let Some` の
 内側へ移す変異では `merge_path_entries_extends_the_tree_even_without_masks` が落ちる（`migemo`
-の両設定で落ちることも、ループ順序を反転させて確かめた）。**ただし表現不能化ではない**——
-`IndexTree::extend_with_roots` は `pub` のままで、閉じたのは現存する 2 つの呼び出し点である。
+の両設定で落ちることも、ループ順序を反転させて確かめた）。**署名は `&mut Option<CachedMasks>`
+である**——`Option<&mut _>` にすると呼び出し側に `as_mut()` を書く手が挟まり、`Some` を持ち
+ながら `None` を渡す形が型を通ったまま書ける（症状は上の沈黙クラッシュ）。**ただし表現不能化
+ではない**——`IndexTree::extend_with_roots` は `pub` のままで、閉じたのは現存する呼び出し点で
+ある。
 
 ### 採用: 保存が返した派生データを cache-miss がそのまま使う（構築 539 → 24 ms・反復 11）
 
@@ -693,8 +696,9 @@ ASCII 限定の分岐＝別実装が要り、`snotra-core/CLAUDE.md`「`normaliz
 なる。実測 312,649 件一致）。
 
 **当時の残余（意図的）は解消済み**: `rebuild_and_save` → `drain_index` の枝は
-`PrebuiltIndex::from_tree` のままで返るマスクを捨てていた。1 反復 1 候補の規約を割るため候補表へ
-回してあり、上の「採用: `PrebuiltIndex` を `CachedMasks` 込みで建てる」がそれを閉じた。
+`PrebuiltIndex::from_tree` のままで返るマスクを捨てていた。1 反復 1 候補の規約を割るため当時は
+候補表へ回し、上の「採用: `PrebuiltIndex` を `CachedMasks` 込みで建てる」がそれを閉じて候補表
+から外した。
 
 ### 採用: `target_path` の木表現をディスクへ（`index.bin` 51.34 → 16.52 MiB・IndexCache v7・反復 10）
 

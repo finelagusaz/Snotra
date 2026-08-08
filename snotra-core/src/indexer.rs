@@ -49,11 +49,7 @@ pub struct AppEntry {
 /// 事前計算済みの派生データ。SearchEngine の構築時に渡すことで起動時の計算をスキップする。
 ///
 /// **出所は 2 つある。** `index.bin` から読んだもの（キャッシュヒット）と、
-/// `save_cache_sorted_in` が書いたその足で返したもの（反復 11 以降）。**後者を受け取る経路を
-/// 数え上げてはならない**——正本は `save_cache_sorted` を呼ぶ側であり、数えた散文は経路が
-/// 増えるたびに腐る。**どちらも同じ表現で返る**——潰し方の判定は
-/// `query::measure_derived_sharing` の 1 か所を通るので、消費側は出所を区別しない（区別する
-/// のは `lower` の variant だけである）。
+/// `save_cache_sorted_in` が書いたその足で返したもの（反復 11 以降）。**後者を受け取る経路を数え上げてはならない**——正本は `save_cache_sorted` を呼ぶ側であり、数えた散文は経路が増えるたびに腐る。**どちらも同じ表現で返る**——潰し方の判定は `query::measure_derived_sharing` の 1 か所を通るので、消費側は出所を区別しない（区別するのは `lower` の variant だけである）。
 ///
 /// - `char_masks` / `file_name_char_masks`: この型が在るなら必ず在る
 /// - `lower`: 派生文字列を持たない古い版を読んだときは `None` → Wave 1 計算が走る。
@@ -896,16 +892,11 @@ fn save_cache_sorted_in(
 /// Force rebuild: scan and save cache, regardless of existing cache.
 /// Called from settings dialog (Phase 5).
 ///
-/// **書いた派生データをそのまま返す。** かつては捨てており、呼び出し側は木しか受け取れず
-/// Wave 1/2 を建て直していた——**計算したものを捨ててから、同じものを作り直していた**
-/// （額は `PERFORMANCE.md`「採用: `PrebuiltIndex` を `CachedMasks` 込みで建てる」）。
+/// **書いた派生データをそのまま返す。** かつては捨てており、呼び出し側は木しか受け取れず Wave 1/2 を建て直していた——**計算したものを捨ててから、同じものを作り直していた**（額は `PERFORMANCE.md`「採用: `PrebuiltIndex` を `CachedMasks` 込みで建てる」）。
 ///
-/// **マスクが `Option` なのは `save_cache_sorted` から受け継ぐ性質である**（保存先が引けない
-/// 枝では派生データを計算しない）。**`None` になる場合を数え上げてはならない**——正本はその
-/// 関数の分岐である。`None` を受けた呼び出し側は木から導出する経路へ落ちる。
+/// **マスクが `Option` なのは `save_cache_sorted` から受け継ぐ性質である**（保存先が引けない枝では派生データを計算しない）。**`None` になる場合を数え上げてはならない**——正本はその関数の分岐である。`None` を受けた呼び出し側は木から導出する経路へ落ちる。
 ///
-/// PATH エントリを併合するなら [`merge_path_entries`] を通すこと（マスクと木の長さが揃うことの
-/// 根拠は、起動経路と再構築経路が同じ関数を通ることである）。
+/// PATH エントリを併合するなら [`merge_path_entries`] を通すこと（マスクと木の長さが揃うことの根拠は、起動経路と再構築経路が同じ関数を通ることである）。
 pub fn rebuild_and_save(
     scan: &[ScanPath],
     show_hidden_system: bool,
@@ -1673,34 +1664,22 @@ pub fn extend_cached_masks(masks: &mut CachedMasks, new_entries: &[AppEntry]) {
 
 /// PATH スキャンが見つけたエントリを、索引の材料へ併合する。
 ///
-/// **マスクへの追記と木への追加を対で行う唯一の関数である。** 起動経路（`src-tauri` の
-/// `main`）と背景の再構築（同 `drain_index`）が**同じここを通ること**だけが、両経路で
-/// マスクと木の長さが揃うことの根拠になる。片方だけ書くと [`CachedMasks`] の各 Vec は元の
-/// 長さのまま木だけが伸び、`SearchEngine` の長さ検証は `debug_assert` ゆえ **release では
-/// 消える**——破綻は検索の並列 Vec の添字外 panic として、再構築を終えた後に初めて検索した
-/// ときに現れる（`panic = "abort"` ゆえプロセスごと落ちる）。検知器は
-/// `search/tests/build.rs` の
-/// `path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree`。
+/// **マスクへの追記と木への追加を対で行う唯一の関数である。** 起動経路（`src-tauri` の `main`）と背景の再構築（同 `drain_index`）が**同じここを通ること**だけが、両経路でマスクと木の長さが揃うことの根拠になる。片方だけ書くと [`CachedMasks`] の各 Vec は元の長さのまま木だけが伸び、`SearchEngine` の長さ検証は `debug_assert` ゆえ **release では消える**——破綻は検索の並列 Vec の添字外 panic として、再構築を終えた後に初めて検索したときに現れる（`panic = "abort"` ゆえプロセスごと落ちる）。検知器は `search/tests/build.rs` の `path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree`。
 ///
-/// **ただし表現不能化ではない。** [`IndexTree::extend_with_roots`] は `pub` のままなので、
-/// ここを通さずに併合するコードは書ける。閉じたのは**現存する 2 つの呼び出し点**であって、
-/// 併合という操作そのものではない。
+/// **`masks` は `&mut Option<_>` で取る。** 呼び出し側はどちらも `Option<CachedMasks>` の束縛を持っているので、変数をそのまま渡せば済む——`Option<&mut _>` にすると `as_mut()` を書く手が挟まり、`Some` を持ちながら `None` を渡す形が**型を通ったまま**書ける（その誤りの症状が上の沈黙クラッシュである）。
 ///
-/// `masks` が `None` で来る枝は実在する（数え上げない・正本は [`CachedMasks`] と
-/// [`rebuild_and_save`] の doc）。そのときは木だけが伸び、Wave 1/2 が拡張後の木から導出する。
+/// **ただし表現不能化ではない。** [`IndexTree::extend_with_roots`] は `pub` のままなので、ここを通さずに併合するコードは書ける。閉じたのは**現存する呼び出し点**であって、併合という操作そのものではない。
 ///
-/// **スキャンは呼び出し側に残してある。** 実 PATH 環境変数を読む [`scan_path_env`] を内側へ
-/// 入れると、この関数が決定的なユニットテストに乗らない。スキャンの呼び忘れは `entries` が
-/// 手元に無いという形で目に見えるので、閉じる価値があるのは併合の側だけである。
+/// `masks` が `None` で来る枝は実在する（数え上げない・正本は [`CachedMasks`] と [`rebuild_and_save`] の doc）。そのときは木だけが伸び、Wave 1/2 が拡張後の木から導出する。
+///
+/// **スキャンは呼び出し側に残してある。** 実 PATH 環境変数を読む [`scan_path_env`] を内側へ入れると、この関数が決定的なユニットテストに乗らない。スキャンの呼び忘れは `entries` が手元に無いという形で目に見えるので、閉じる価値があるのは併合の側だけである。
 pub fn merge_path_entries(
     tree: &mut IndexTree,
-    masks: Option<&mut CachedMasks>,
+    masks: &mut Option<CachedMasks>,
     entries: Vec<AppEntry>,
 ) {
-    // **追記が先に来るのは所有権の帰結であって規約ではない。** `extend_with_roots` は
-    // `entries` を move で取るため、逆順に書くと clone が要る——順序の取り違えは「うっかり」
-    // では書けない。ゆえにこの順序に検知器を置いていない。
-    if let Some(masks) = masks {
+    // **追記が先に来るのは所有権の帰結であって規約ではない。** `extend_with_roots` は `entries` を move で取るため、逆順に書くと clone が要る——順序の取り違えは「うっかり」では書けない。ゆえにこの順序に検知器を置いていない。
+    if let Some(masks) = masks.as_mut() {
         extend_cached_masks(masks, &entries);
     }
     tree.extend_with_roots(entries);

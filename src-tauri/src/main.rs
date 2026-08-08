@@ -190,13 +190,10 @@ fn main() {
         (result.tree, false, result.cached_masks, result.rescan_task)
     };
 
-    // PATH エントリのスキャン + マージ。**併合は `merge_path_entries` が対で行う**——背景の
-    // 再構築（`indexing::drain_index`）と同じ関数を通ることが、マスクと木の長さが揃うことの
-    // 根拠である（片方を欠いたときの症状はその doc）。**空の場合のガードは持たない**——
-    // 追記も木への追加も、空なら何もしない。
+    // PATH エントリのスキャン + マージ。**併合は `merge_path_entries` が対で行う**——背景の再構築（`indexing::drain_index`）と同じ関数を通ることが、マスクと木の長さが揃うことの根拠である（片方を欠いたときの症状はその doc）。**空の場合のガードは持たない**——追記も木への追加も、空なら何もしない。
     if config.search.include_path_env {
         let path_entries = indexer::scan_path_env(&tree, config.search.show_hidden_system);
-        indexer::merge_path_entries(&mut tree, cached_masks.as_mut(), path_entries);
+        indexer::merge_path_entries(&mut tree, &mut cached_masks, path_entries);
     }
 
     // Lazy-load icon cache on first icon request to keep startup path short.

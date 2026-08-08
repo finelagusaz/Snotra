@@ -50,14 +50,32 @@ impl PrebuiltIndex {
         Self(SearchEngine::new_with_migemo(entries, migemo_enabled))
     }
 
-    /// 既に建った木から構築する（`rebuild_and_save` が返した木をそのまま使う経路）。
-    /// **製品はこちらを通る。**
+    /// 木だけから構築する（**派生データが返らなかったときの枝**）。
+    ///
+    /// **「製品はこちらを通る」と書いてはならない**（かつてそう書いていた）。`rebuild_and_save`
+    /// が `CachedMasks` を返すようになったので、再構築の主経路は [`Self::from_cache`] である。
+    /// ここへ来るのは保存先が引けず派生データを計算しなかった枝で、**到達不能ではない**
+    /// （正本は `indexer::save_cache_sorted` の分岐）。
     ///
     /// 木を `Vec<AppEntry>` へ戻してから [`Self::new`] へ渡すと、同じ木を 2 度建てることに
     /// なる。**実体化そのものは消えない**——Wave 1 の材料がフルパスを要求するので、
     /// `SearchEngine::new_from_tree` の中で 1 度だけ払う（`IndexTree::materialize` の doc）。
     pub fn from_tree(tree: IndexTree, migemo_enabled: bool) -> Self {
         Self(SearchEngine::new_from_tree(tree, migemo_enabled))
+    }
+
+    /// 木と、**保存が書いたその足で返した派生データ**から構築する。**再構築の主経路。**
+    ///
+    /// [`Engine::new_from_cache`] と同じ入口を、ロック外で建てる `PrebuiltIndex` の側にも
+    /// 開けたものである（起動経路と再構築経路が同じ表現へ着地することの根拠）。**版の番号を
+    /// 書かない**——どのコンストラクタが選ばれるかを決めるのは `CachedMasks.lower` の variant
+    /// であって版ではなく、番号を書くと版を上げるたびにこの散文だけが腐る。
+    pub fn from_cache(tree: IndexTree, masks: CachedMasks, migemo_enabled: bool) -> Self {
+        Self(SearchEngine::new_with_cached_masks(
+            tree,
+            masks,
+            migemo_enabled,
+        ))
     }
 }
 

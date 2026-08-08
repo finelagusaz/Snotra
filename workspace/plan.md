@@ -4,11 +4,11 @@
 
 `rebuild_and_save` → `drain_index` の枝が、保存が計算した `CachedMasks` をそのまま索引の表現に使う。
 
-1. `rebuild_and_save` が `(IndexTree, CachedMasks)` を返し、`drain_index` がその第 2 要素を `PrebuiltIndex` へ渡す
+1. `rebuild_and_save` が `(IndexTree, Option<CachedMasks>)` を返し、`drain_index` がその第 2 要素を `PrebuiltIndex` へ渡す（D1 で訂正）
 2. drain 側の PATH マージが `extend_cached_masks` を通る。**「構造的に不可能」と書いてはならない**——閉じるのは**現存する 2 つの呼び出し点**（`main.rs` と `indexing.rs`）が同じ 1 関数を通ることであって、`IndexTree::extend_with_roots` は `pub` のまま残るので、**将来 3 つ目の併合経路を `merge_path_entries` を通さずに書くことはできる**（`src-tauri/CLAUDE.md` が raw 窓操作について「ただし表現不能化ではない」と書くのと同じ性格の**受容する残余**）。可視性を絞る案は #984 の射程を大きく超えるので採らない
 3. `indexer.rs` の `rebuild_and_save` の doc から「意図的・受容する残余」の記述が消える（issue の撤去条件）
 4. `PERFORMANCE.md`「次の反復の候補」の該当行が同節から消え、行き先が確定している（同節の撤去条件）
-5. `PrebuiltIndex::from_tree` を名指しする散文が 1 つも残っていない（削除するため）
+5. `PrebuiltIndex::from_tree` を「製品の主経路」として書いた散文が 1 つも残っていない（**関数は残るので、名指しそのものは残る**——D3 で訂正）
 6. **呼び忘れを再現する変異で落ちる検知器**が CI に居る
 7. `cargo fmt --check` / `cargo check --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test -p snotra-core` / `cargo test -p snotra` / `cargo doc --workspace --no-deps --document-private-items` / `npm run governance:check` がすべて green
 
@@ -93,42 +93,44 @@ D1 の訂正の帰結。`masks` が `None` の枝（`config_dir` が引けない
 
 ### Phase 1 — snotra-core（返り値・併合関数・コンストラクタ）
 
-- [ ] `indexer::rebuild_and_save` の返りを `(IndexTree, Option<CachedMasks>)` にし、doc の「受容する残余」を差し替える
-- [ ] `indexer::merge_path_entries` を新設する（D2 の署名・doc に長さの不変条件を書く）
-- [ ] `PrebuiltIndex::from_cache` を足し、`from_tree` の doc を D3 のとおり書き換える
-- [ ] `cargo check -p snotra-core` が通る
+- [x] `indexer::rebuild_and_save` の返りを `(IndexTree, Option<CachedMasks>)` にし、doc の「受容する残余」を差し替える
+- [x] `indexer::merge_path_entries` を新設する（D2 の署名・doc に長さの不変条件を書く）
+- [x] `PrebuiltIndex::from_cache` を足し、`from_tree` の doc を D3 のとおり書き換える
+- [x] `cargo check -p snotra-core` が通る
 
 ### Phase 2 — src-tauri（呼び出し点の移行）
 
-- [ ] `cargo build -p snotra` を先に走らせ、**compile-fail が移行漏れを名指しする**ことを確認する（`indexing.rs:102` の返り値型不一致）
-- [ ] `drain_index` を `(tree, masks)` → `merge_path_entries` → `Some`/`None` の分岐へ繋ぐ。**`masks.as_mut()` の可変借用が、直後の `match masks`（値で消費）より前に終わることを実測で確かめる**（NLL で通る見込みだが、`Option` 化で唯一署名が刺されうる箇所ゆえ仮定しない）
-- [ ] `main.rs` の PATH マージを `merge_path_entries` へ置換する（`!is_empty()` ガードの削除は D2 の根拠を持つ挙動不変の単純化）
-- [ ] `indexing.rs:41` のコメントの関数名を直す
-- [ ] `cargo check --workspace` が通る
+- [x] `cargo build -p snotra` を先に走らせ、**compile-fail が移行漏れを名指しする**ことを確認する → **実測**: PostToolUse hook の clippy が `indexing.rs` の 5 点を名指しした（`:106` `&IndexTree` 不一致 / `:107` `extend_with_roots` 無し / `:132` `len` 無し / `:133` `path_into` 無し / `:148` `IndexTree` 不一致）。返り値型 1 か所の変更が下流の全使用点を挙げる形になった
+- [x] `drain_index` を `(tree, masks)` → `merge_path_entries` → `Some`/`None` の分岐へ繋ぐ。**`masks.as_mut()` の可変借用が `match masks` より前に終わること**を実測（`cargo clippy --workspace --all-targets -- -D warnings` が通る＝NLL で借用が call で終わっている）
+- [x] `main.rs` の PATH マージを `merge_path_entries` へ置換する（`!is_empty()` ガードの削除は挙動不変——`extend_with_roots` は `index_tree.rs:404` で空を早期 return し、`extend_cached_masks` は空スライスの `for` で no-op）
+- [x] `indexing.rs:41` のコメントの関数名を直す
+- [x] `cargo check --workspace` が通る
 
 ### Phase 3 — 検知器と変異試験
 
-- [ ] 既存検知器の B 側を `merge_path_entries` 経由へ書き換え、doc を差し替える
-- [ ] `masks = None` の腕の検知器を足す
-- [ ] `cargo test -p snotra-core` が green
-- [ ] **変異試験**: `merge_path_entries` から `extend_cached_masks` の行を消して `cargo test -p snotra-core` が **赤になる**ことを実測し、結果をこの計画へ書き戻してから元に戻す（呼び忘れが検知されることの唯一の証拠）
-- [ ] **変異試験は `migemo_enabled` の両設定で赤になることを確かめる**（「初めて生きる組み合わせ」4 が根拠——kana 系 2 本は拡張後の木からフルサイズで作られるので、片方の設定でだけ緑になる形がありうる）
+- [x] 既存検知器の B 側を `merge_path_entries` 経由へ書き換え、doc を差し替える
+- [x] `masks = None` の腕の検知器を足す（`merge_path_entries_extends_the_tree_even_without_masks`）
+- [x] `cargo test -p snotra-core` が green（**553 passed / 0 failed / 11 ignored**）
+- [x] **変異試験 1**（追記の欠落）: `merge_path_entries` から `extend_cached_masks` を消す → `path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree` が **赤**。落ち方は `search/build.rs:184` の `debug_assert`「SearchEngine: 派生文字列の長さが entries と一致しない」——**計画が予告した機序そのもの**（release ではこれが消え、後の検索で添字外 panic になる）
+- [x] **変異試験 2**（木への追加を `if let Some` の内側へ）: `merge_path_entries_extends_the_tree_even_without_masks` が **赤**（`assert_eq!(tree.len(), total)`）。**既存の検知器は緑のまま通った**——`Some` の枝しか通らないので、この誤りには原理的に当たらないことも同時に実測できた
+- [x] **両変異が `migemo_enabled` の両設定で赤になる**ことを確かめた。ループは `[false, true]` の順で最初の失敗で止まるため、**順序を `[true, false]` へ反転させて再測**し、どちらの変異も `true` 側で落ちることを確認してから元に戻した
 
 **順序の変異試験は置かない**（`/symmetric-check` Step 2c の結果）。`extend_cached_masks(masks, &entries)` → `tree.extend_with_roots(entries)` の順序は**所有権が強制する**——`extend_with_roots` は `Vec<AppEntry>` を値で取るため、逆順にするには `entries.clone()` が要る。**入れ替えは「うっかり」では書けない**ので、検知器を置く対象が無い。意味の上でも両者は独立である（`extend_cached_masks` は木を読まず、`extend_with_roots` はマスクを読まない）。守るべき順序の不変条件は `derive_entry_collapsed` の内側（潰す前にマスクを取る）にあり、そちらは既存の `derived_masks_come_from_the_uncollapsed_strings` が守る。
 
 ### Phase 4 — 文書
 
-- [ ] 上の「文書」表の 8 か所を直す
-- [ ] `PERFORMANCE.md` の候補行を「採用」節へ移す（**数字の欄は `未実測`**・書き方の全文は U1 の `- [x]` が正本）
-- [ ] `npm run governance:check` が green
-- [ ] `cargo doc --workspace --no-deps --document-private-items` が green（intra-doc link 切れ——hook は沈黙する）
+- [x] 上の「文書」表の **9 か所**を直す（表の行数と一致・当初「8 か所」と書いていたのは `CachedMasks` の doc を後から足す前の数。**数え上げた散文が自分の表と食い違う典型**だったので直した）
+- [x] `PERFORMANCE.md` の候補行を「採用」節へ移す（数字の欄は `未実測`）
+- [x] `docs/architecture.md` は更新不要と grep で確認（`:53` の `PrebuiltIndex`（ロック外で構築→スワップ）は総称の記述で、コンストラクタを名指ししていない）
+- [x] `npm run governance:check` が green（検査 19 件 / 見出し参照 175 件を md 47 + .rs 96 から照合 / 散文の識別子 70 件）
+- [x] `cargo doc --workspace --no-deps --document-private-items` が green。**自分が増やした warning を 2 件見つけて潰した**——`[`save_cache_sorted`]` は private ゆえ public な doc からリンクすると `private_intra_doc_links` が鳴る（`indexer.rs:53` と `:903`）。リンクを外して識別子表記へ落とし、warning を 11 → 9 件（残る 9 件はすべて既存）へ戻した
 
 ### Phase 5 — 全体検証
 
-- [ ] `cargo fmt --all -- --check`
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings`
-- [ ] `cargo test -p snotra-core` / `cargo test -p snotra`
-- [ ] 実装差分を確定させる（未コミットの差分に対して `git diff` を**引数 1 個の形**で読む——`main...HEAD` は commit 同士の比較ゆえ作業ツリーを見ない・#922）
+- [x] `cargo fmt --all -- --check`（FMT-OK）
+- [x] `cargo clippy --workspace --all-targets -- -D warnings`（exit 0）
+- [x] `cargo test -p snotra-core`（553 passed / 0 failed）/ `cargo test -p snotra`（218 passed / 0 failed）
+- [x] 実装差分を確定させた（`git diff --stat` を**引数 1 個の形**で読み、9 ファイル・+225/-50 を確認）
 
 ## 不変条件と異常系
 

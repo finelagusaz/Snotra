@@ -585,7 +585,6 @@ ASCII 限定の分岐＝別実装が要り、`snotra-core/CLAUDE.md`「`normaliz
 
 | 候補 | 実測されているもの | 見積もり | 注意 |
 |---|---|---:|---|
-| `PrebuiltIndex` を `CachedMasks` 込みで建てる | 反復 11 が起動経路だけを繋いだ結果、`rebuild_and_save` → `drain_index` の枝は今も `new_from_tree` で全件実体化して建て直す（起動経路での実測は 構築段 allocs 2,716,070・peak 83.27 MiB・壁時計 515 ms ぶん） | 起動経路と**同額**（ただし背景スレッド・設定からの再構築であって起動レイテンシではない） | `PrebuiltIndex` の新コンストラクタと、`src-tauri` の `drain_index` 側 PATH マージへ `extend_cached_masks` を足す（起動経路と違い**あちらは今それを呼んでいない**——`from_tree` に留まるので今は要らないだけで、繋いだ日に呼び忘れると**マスクだけが短くなる**。`assemble` の長さ検証は `debug_assert` ゆえ release では消える）。`rebuild_and_save` の返りを `(IndexTree, Option<CachedMasks>)` へ広げる |
 | アイコン剪定を篩へ通す | `drain_index` が `IconCacheState` の lock 内で索引 312,625 件のフルパスを組み直す。生き残るのは高々 `icon_cache_cap`（既定 1,000）件 | 組み直し **24.9 ms → 数百件ぶん** | `reject_existing` と同じ形（`IndexTree::file_key_into` で篩→通ったぶんだけ `raw_path_into`）。`IconCache::keys()` の新設が要る。**lock の外へ出す変種は採らない**——stale な集合で新規挿入を捨てうる＝挙動変更 |
 | `IndexTree` のフィールドを private 化 | 現在 `pub(crate)` ゆえ、crate 内から構造体リテラルで `from_parts` の検証を迂回して組める | 額ではなく構造（不変条件を表現不能にする） | `columns()` / `into_columns()` の 2 口を出す。保存経路の `Cow::Borrowed` × 5・`PathStore::adopt` の分解・テストの `tree.names[0]` 系を全部書き換えることになるので、差分の外へ広がる |
 | `reject_existing` の走査を rayon で並列化 | 走査は逐次で約 45 ms | **-32 ms** | 倍率 3.6 は `entries_digest` の 43 → 12 ms を**別の関数へ持ち込んだ外挿**。**「read-only だから digest と条件が揃う」は誤り**——ループは `rejected[i]` へ書き、`file_buf` / `full_buf` を毎反復書き換えるので、`map_init` で per-worker に割るか添字を収集して reduce する形が要る |
@@ -599,6 +598,39 @@ ASCII 限定の分岐＝別実装が要り、`snotra-core/CLAUDE.md`「`normaliz
 **触らないと判断したもの**（額を測ったうえで）: `enumerate_path_candidates` の `key.clone()`
 （≤候補数の確保・約 7 µs）と `by_file_key` の `Vec<usize>`（同オーダー）。どちらも複雑さの
 増分が額に見合わない。
+
+### 採用: `PrebuiltIndex` を `CachedMasks` 込みで建てる（設定からの再構築・**未実測**）
+
+`rebuild_and_save` が `save_cache_sorted` の返す `CachedMasks` を捨てており、`drain_index` は
+`PrebuiltIndex::from_tree` で Wave 1/2 を建て直していた（反復 11 が起動経路だけを繋いだ残余）。
+返りを `(IndexTree, Option<CachedMasks>)` へ広げ、`PrebuiltIndex::from_cache` を足して繋いだ。
+**`index.bin` の形式には 1 バイトも触らない**（`INDEX_CACHE_VERSION` 据え置き・
+`index_cache_on_disk_format_is_stable` の golden が差分ゼロで緑であることがその証拠）。
+
+| 指標 | 値 |
+|---|---|
+| 構築段 allocs / peak / 壁時計 | **未実測** |
+
+**額は下の反復 11 の実測と同一の導出である。** 通る関数列は `derive_columns` →
+`into_cached_masks` → `new_with_cached_masks` で、cache-miss 起動で測った構築段
+539 → 24 ms・allocs -2,716,070・peak -83.27 MiB がそのまま当てはまる。**この数字を上の表へ
+書き写していないのは、それが別の経路で取った標本だからである。**
+
+**独立に測っていない理由は 2 つ。** (1) 同じ関数列を通るので、測っても反復 11 の再確認にしか
+ならない。(2) **この枝は起動レイテンシではない**——背景スレッドと設定ダイアログからの再構築で
+あり、起動予算の判断材料にならない。計測ハーネスを新設する案は却下した: `IndexTree` /
+`CachedMasks` はどちらも `Clone` を持たないのでフルスキャン 2 回か `Clone` の追加が要り、さらに
+`derive_columns` を `pub` へ開ける必要が生じる——**その関数を `pub(crate)` に留めている理由
+（検知器がファイルシステムと、型に無いロック契約を巻き込まないこと）が形骸化する**取引になる。
+
+**呼び忘れの検知器を置いた。** 併合（マスクへ追記 ＋ 木へ根として追加）を
+`indexer::merge_path_entries` の 1 関数へ寄せ、起動経路と再構築経路が同じそこを通る形にした。
+`search/tests/build.rs` の 2 本が守り、**どちらも変異を注入して落ちることを実測した**——追記を
+欠く変異では `path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree` が
+`SearchEngine: 派生文字列の長さが entries と一致しない` で落ち、木への追加を `if let Some` の
+内側へ移す変異では `merge_path_entries_extends_the_tree_even_without_masks` が落ちる（`migemo`
+の両設定で落ちることも、ループ順序を反転させて確かめた）。**ただし表現不能化ではない**——
+`IndexTree::extend_with_roots` は `pub` のままで、閉じたのは現存する 2 つの呼び出し点である。
 
 ### 採用: 保存が返した派生データを cache-miss がそのまま使う（構築 539 → 24 ms・反復 11）
 
@@ -660,9 +692,9 @@ ASCII 限定の分岐＝別実装が要り、`snotra-core/CLAUDE.md`「`normaliz
 **原文をファイルシステム走査から取る**——`index.bin` から取ると組み直し対組み直しの不動点に
 なる。実測 312,649 件一致）。
 
-**残余（意図的）**: `rebuild_and_save` → `drain_index` の枝は `PrebuiltIndex::from_tree` の
-ままで、返るマスクを捨てている。繋ぐには `PrebuiltIndex` の新コンストラクタと `drain_index`
-側の `extend_cached_masks` が要り、1 反復 1 候補の規約を割るため上の候補表へ回した。
+**当時の残余（意図的）は解消済み**: `rebuild_and_save` → `drain_index` の枝は
+`PrebuiltIndex::from_tree` のままで返るマスクを捨てていた。1 反復 1 候補の規約を割るため候補表へ
+回してあり、上の「採用: `PrebuiltIndex` を `CachedMasks` 込みで建てる」がそれを閉じた。
 
 ### 採用: `target_path` の木表現をディスクへ（`index.bin` 51.34 → 16.52 MiB・IndexCache v7・反復 10）
 

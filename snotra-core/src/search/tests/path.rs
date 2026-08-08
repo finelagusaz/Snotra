@@ -320,20 +320,12 @@ fn path_store_cursor_matches_full_rebuild() {
 fn path_store_raw_matches_target_path_over_real_index() {
     use crate::search::path_store::PathStore;
 
-    let config = crate::config::Config::load();
-    if config.paths.scan.is_empty() {
-        println!("実 config に scan パスが無いためスキップします。");
+    // **原文はファイルシステムの走査から取る**（`index.bin` から取ると不動点になる）。
+    // 走査・整列・非空の検算は `common::real_scanned_entries` が持つ——**規則の写しを
+    // ここへ書かないこと**。
+    let Some(entries) = super::common::real_scanned_entries() else {
         return;
-    }
-    let mut entries =
-        crate::indexer::scan_all(&config.paths.scan, config.search.show_hidden_system);
-    // 製品と同じ並びで木を建てる（親の二分探索は整列を前提にする）。順序がずれても結果は
-    // 変わらないが、取りこぼした親のぶん木の形が実運用点と別物になる。
-    // **比較子を書き起こさない**——この並びは digest の値そのものを決める入力なので、
-    // 写しを持つと製品側が変わったときにこのテストだけが旧い並びで木を建て、
-    // 「実運用点と別物の木」に対して「原文とバイト一致」を報告する。
-    crate::indexer::sort_entries_canonical(&mut entries);
-    assert!(!entries.is_empty(), "走査が 0 件では接地にならない");
+    };
 
     // `build` は `entries` を消費するので、比較相手は先に取り分ける。
     let expected: Vec<String> = entries.iter().map(|e| e.target_path.clone()).collect();

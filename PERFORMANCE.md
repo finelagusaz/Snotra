@@ -585,10 +585,11 @@ ASCII 限定の分岐＝別実装が要り、`snotra-core/CLAUDE.md`「`normaliz
 
 | 候補 | 実測されているもの | 見積もり | 注意 |
 |---|---|---:|---|
-| `save_cache_sorted_in` が `CachedMasks` を返す | save 側が `char_masks` / `file_name_char_masks` / 潰し済み派生 2 本を計算して書いた直後に捨て、cache-miss の枝が `new_from_tree` で全件実体化して建て直す（実測 確保 312,625 回・約 36 MiB／組み直し 逐次 24.9 ms） | **確保 -312,625・-36 MiB のピーク**（Wave 1/2 の二重計算ぶんは未実測） | 戻りを `(IndexTree, CachedMasks)` にし、`LoadOrScanResult.cached_masks` へ載せる。**`cache_changed` 時に `None` → `Some(Collapsed)` へ変わる＝どのコンストラクタが選ばれるかが変わる**ので 1 反復 1 候補。⚠ 「save 側で潰した `Collapsed` が `assemble` の `Measured` 経路と同じ表現になる」は**未実測**——潰し方の一致は測る対象である（`snotra-core/CLAUDE.md`「重複する派生文字列は索引に持たず、鎖で共有する」） |
+| `PrebuiltIndex` を `CachedMasks` 込みで建てる | 反復 11 が起動経路だけを繋いだ結果、`rebuild_and_save` → `drain_index` の枝は今も `new_from_tree` で全件実体化して建て直す（起動経路での実測は 構築段 allocs 2,716,070・peak 83.27 MiB・壁時計 515 ms ぶん） | 起動経路と**同額**（ただし背景スレッド・設定からの再構築であって起動レイテンシではない） | `PrebuiltIndex` の新コンストラクタと、`src-tauri` の `drain_index` 側 PATH マージへ `extend_cached_masks` を足す（起動経路と違い**あちらは今それを呼んでいない**——`from_tree` に留まるので今は要らないだけで、繋いだ日に呼び忘れると**マスクだけが短くなる**。`assemble` の長さ検証は `debug_assert` ゆえ release では消える）。`rebuild_and_save` の返りを `(IndexTree, Option<CachedMasks>)` へ広げる |
 | アイコン剪定を篩へ通す | `drain_index` が `IconCacheState` の lock 内で索引 312,625 件のフルパスを組み直す。生き残るのは高々 `icon_cache_cap`（既定 1,000）件 | 組み直し **24.9 ms → 数百件ぶん** | `reject_existing` と同じ形（`IndexTree::file_key_into` で篩→通ったぶんだけ `raw_path_into`）。`IconCache::keys()` の新設が要る。**lock の外へ出す変種は採らない**——stale な集合で新規挿入を捨てうる＝挙動変更 |
 | `IndexTree` のフィールドを private 化 | 現在 `pub(crate)` ゆえ、crate 内から構造体リテラルで `from_parts` の検証を迂回して組める | 額ではなく構造（不変条件を表現不能にする） | `columns()` / `into_columns()` の 2 口を出す。保存経路の `Cow::Borrowed` × 5・`PathStore::adopt` の分解・テストの `tree.names[0]` 系を全部書き換えることになるので、差分の外へ広がる |
 | `reject_existing` の走査を rayon で並列化 | 走査は逐次で約 45 ms | **-32 ms** | 倍率 3.6 は `entries_digest` の 43 → 12 ms を**別の関数へ持ち込んだ外挿**。**「read-only だから digest と条件が揃う」は誤り**——ループは `rejected[i]` へ書き、`file_buf` / `full_buf` を毎反復書き換えるので、`map_init` で per-worker に割るか添字を収集して reduce する形が要る |
+| `CachedLower::Collapsed.lower_names` を `Vec<Option<Box<str>>>` へ | 反復 11 で受容した重なり +20.74 MiB の内訳は 4 本の spine（2.38 + 2.38 + 7.16 + 7.16 = 19.08 MiB）でほぼ説明がつく | **-2.38 MiB**（spine の要素幅 24 → 16 B × 312,649）＋ cache-miss で `assemble` の `into_boxed_str` が move 1 つになり **4.77 MiB の一時確保が消える** | **`LowerFileName` に削り代は無い**（`Text(Box<str>)` にしても 24 B のまま——`String` の `Cap` が持つ niche が fieldless 2 変種を吸う。実測済み）。オンディスク型に触るので `/persistence-check` 対象・postcard の線上表現が `String` と `Box<str>` で同一かは**未実測**（ずれれば版バンプが要り額に見合わない）。cache-HIT 枝では純益がほぼ無い（今の `.collect()` が postcard の余剰 spine を詰め直す役目を兼ねている） |
 | `by_file_key` を `FxHashMap` へ | 引く回数は既存側の 312,691 回 | -3〜5 ms | 依存は `Cargo.toml` に既にある（`history.rs` が先例）。単価差は一般値からの見積もりで未実測 |
 | `path.is_dir()` をやめて `entry.metadata()` の属性語を読む | **242 回の syscall**（PATH 配下の全エントリ数） | 上限 9 ms | 列挙 9 ms が天井の根拠なので、**ここが削れると天井そのものが下がる**。⚠ `Path::is_dir()` はリンクを辿り `DirEntry::metadata()` は辿らない——reparse point / junction での挙動差は効率ではなく仕様の判断 |
 | 拡張子照合の `to_ascii_lowercase()` を `eq_ignore_ascii_case` へ | **242 回の確保**（残る 2,066 の 12%） | µs 桁 | 壁時計では無視できる。挙げてあるのは受け入れ判定が確保回数だからで、額で採る話ではない |
@@ -598,6 +599,70 @@ ASCII 限定の分岐＝別実装が要り、`snotra-core/CLAUDE.md`「`normaliz
 **触らないと判断したもの**（額を測ったうえで）: `enumerate_path_candidates` の `key.clone()`
 （≤候補数の確保・約 7 µs）と `by_file_key` の `Vec<usize>`（同オーダー）。どちらも複雑さの
 増分が額に見合わない。
+
+### 採用: 保存が返した派生データを cache-miss がそのまま使う（構築 539 → 24 ms・反復 11）
+
+`save_cache_sorted_in` が `char_masks` / `file_name_char_masks` / 潰し済み派生 2 本を計算して
+`index.bin` へ書いた**直後に捨てて**おり、cache-miss の枝は `new_from_tree` で木を全件実体化
+してから同じものを建て直していた。返り値を `(IndexTree, CachedMasks)` へ広げ、
+`LoadOrScanResult.cached_masks` へ載せた——**`index.bin` の形式には 1 バイトも触らない**
+（`INDEX_CACHE_VERSION` は据え置き。`index_cache_on_disk_format_is_stable` の golden が緑の
+ままであることがその証拠）。
+
+**計器は cache-HIT 枝しか測らない。** `SNOTRA_CONFIG_DIR` を temp へ向け `config.toml` だけ
+置いて（`index.bin` 不在）初回起動を再現した。scan 集合は実物のまま・312,648〜312,649 件・
+`migemo_enabled = false`。
+
+| 指標 | A（変更前） | B（変更後） | 差 |
+|---|---:|---:|---|
+| **構築段 allocs** | 2,801,461 | **85,391** | **-2,716,070・-97.0%** |
+| **構築段 peak** | 92.81 MiB | **9.54 MiB** | **-83.27** |
+| **構築段 壁時計** | 539 ms | **24 ms** | **-515・-96%** |
+| 構築段 blocks | +98,452 | -3 | ロード段へ移動（下記） |
+| ロード段 live | +20.22 MiB | +40.96 MiB | +20.74（寿命が延びた分） |
+| ロード段 blocks | +312,918 | +411,374 | +98,456 |
+| **合計 peak** | 113.03 MiB | **50.50 MiB** | **-62.53** |
+| **索引の常駐** | 35.44 MiB | 35.44 MiB | **不変** |
+| **`index.bin`** | 16.52 MiB | 16.52 MiB | **不変** |
+
+構築段の peak 9.54 MiB は `PathStore` の `entries` Vec 本体ちょうど（312,649 × 32 B）である
+——`adopt` の 1 本を残して、構築段の一時確保が消えた。
+
+**壁時計のロード段は比較対象ではない。** 2 回の実行で `scan_ms` が 35,573 対 22,187 ms と
+13 秒ずれており、これはファイルシステムのキャッシュの温度であってこの変更とは無関係である。
+上の表で読めるのは**確保回数・peak・blocks（決定的）と、構築段の壁時計**だけである。
+
+**cache-miss の直後に PATH エントリを併合する経路は、この変更で初めて生きた。** 変更前は
+`cached_masks` が `None` ゆえ `extend_cached_masks` は呼ばれず、`new_from_tree` が拡張後の木
+から導出していた。今は「マスクへ追記 → 木へ根として追加 → `new_from_cache`」の順に変わる
+——`assemble` の長さ検証は `debug_assert` ゆえ release では消えるので、追記の呼び忘れは
+添字 panic か沈黙の食い違いになる。検知器は
+`path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree`（呼び忘れを再現する
+変異で実際に落ちることを確認済み）。
+
+**予測は 8 項目中 7 項目が当たり、1 項目が外れた**（実装前に `ab96dcd` へ記録）。外れたのは
+「構築段 blocks は +98,452 のまま不変」で、実測は -3 だった。**潰し方がずれた合図ではなく、
+不変量の名指しを取り違えていた**——索引が持つ 98,451 個の文字列ブロックは消えたのではなく、
+構築段からロード段へ**移動した**（合計 blocks 411,370 → 411,371 は不変）。同じ現象を予測 6
+（ロード段 live +22.7 MiB）では正しく当てており、**同一の寿命変化を 2 つの指標で逆に読んで
+いた**のがこの外れの正体である。
+
+**合計 peak は予測を大きく上回って減った**（予測は「-36 MiB には届かない」で、実測 -62.53）。
+保存側 4 本が `assemble` まで生き延びる分の相殺を見込んでいたが、消えた `materialize` の
+一時確保がそれを大幅に上回った。
+
+**候補表の ⚠ は実装前に discharge した。** 「save 側で潰した `Collapsed` が `assemble` の
+`Measured` 経路と同じ表現になるか」は、差が `lower_file_name(原文)` 対
+`lower_file_name(組み直し)` の一点に縮む（`name` は木が逐語で持ち、判定は両経路とも
+`query::measure_derived_sharing` の 1 か所を通る）。`path_store_raw_matches_target_path_over_real_index`
+を実行して **312,648 件全件のバイト一致**を実測し、純関数ゆえ像も一致することを確かめた。
+機構としては `search/tests/build.rs` の `save_side_collapse_*` 2 本が守る（実データ側は
+**原文をファイルシステム走査から取る**——`index.bin` から取ると組み直し対組み直しの不動点に
+なる。実測 312,649 件一致）。
+
+**残余（意図的）**: `rebuild_and_save` → `drain_index` の枝は `PrebuiltIndex::from_tree` の
+ままで、返るマスクを捨てている。繋ぐには `PrebuiltIndex` の新コンストラクタと `drain_index`
+側の `extend_cached_masks` が要り、1 反復 1 候補の規約を割るため上の候補表へ回した。
 
 ### 採用: `target_path` の木表現をディスクへ（`index.bin` 51.34 → 16.52 MiB・IndexCache v7・反復 10）
 

@@ -245,13 +245,9 @@ fn measure_recent_history_cost() {
         indexer::load_or_scan_with_stats(&config.paths.scan, config.search.show_hidden_system);
     let n = result.tree.len();
     let engine = match result.cached_masks {
-        Some(m) => SearchEngine::new_with_cached_masks(
-            result.tree,
-            m.char_masks,
-            m.file_name_char_masks,
-            m.lower,
-            config.search.migemo_enabled,
-        ),
+        Some(m) => {
+            SearchEngine::new_with_cached_masks(result.tree, m, config.search.migemo_enabled)
+        }
         None => SearchEngine::new_from_tree(result.tree, config.search.migemo_enabled),
     };
     // **ここは実 `history.bin` を読むのが正しい**（#963 でユニットテスト側の fixture は

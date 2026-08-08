@@ -94,12 +94,32 @@ impl IconCache {
         }
     }
 
-    /// 現在のインデックスに存在するパスのみ残し、不要なエントリを除去する。
+    /// 現在保持しているパスの snapshot。
+    ///
+    /// **owned で返すのは、呼び出し側が lock を離してから判定するためである**——剪定
+    /// （`indexing::dead_icon_paths`）は索引の全件走査ゆえ、lock の中で回すと表示中の
+    /// アイコン取得がその間ずっと待たされる。判定に使う集合はこの snapshot であって
+    /// 現在のキャッシュではない、という**ずれを前提に置いた API** である
+    /// （ずれても安全である理由は [`Self::remove_paths`] の doc）。
+    pub fn keys(&self) -> Vec<String> {
+        self.data.png.keys().cloned().collect()
+    }
+
+    /// 索引から消えたと**確かめられた**パスだけを除去する。
     /// `clear()` と異なり有効なアイコンを再利用するため、再構築後の再抽出コストを削減する。
     /// 1 件でも除去した場合は dirty フラグを立てる。
-    pub fn retain_paths(&mut self, valid_paths: &std::collections::HashSet<String>) {
+    ///
+    /// **「残す集合」ではなく「落とす集合」を受け取るのが要石である。** 判定を lock の外で
+    /// 行う以上、渡される集合は [`Self::keys`] を取った時点の snapshot から導かれており、
+    /// その後に挿入されたキーを知らない。**残す集合で書くと、その新しいキーは「残す集合に
+    /// 無い」ゆえ落ちる**——落とす集合で書けば、知らないキーは落とす集合にも居ないので残る。
+    ///
+    /// これは lock を持ったまま剪定していた頃と**同じ**振る舞いである（改善ではない）:
+    /// 挿入する側（`commands::icon::load_icon_pngs` の Step 3）は抽出を lock の外で行い、
+    /// 挿入で lock を取り直すので、剪定中の挿入は retain の**後**に着地していた。
+    pub fn remove_paths(&mut self, dead_paths: &std::collections::HashSet<String>) {
         let before = self.data.png.len();
-        self.data.png.retain(|k, _| valid_paths.contains(k));
+        self.data.png.retain(|k, _| !dead_paths.contains(k));
         if self.data.png.len() < before {
             self.dirty = true;
         }
@@ -656,19 +676,55 @@ mod tests {
     }
 
     #[test]
-    fn retain_paths_preserves_cap_invariant() {
+    fn remove_paths_preserves_cap_invariant() {
         let mut cache = empty_cache_with_cap(2);
         cache.insert("a".into(), vec![1]);
         cache.insert("b".into(), vec![2]); // len == cap
 
-        let valid: std::collections::HashSet<String> = ["b".to_string()].into_iter().collect();
-        cache.retain_paths(&valid);
+        let dead: std::collections::HashSet<String> = ["a".to_string()].into_iter().collect();
+        cache.remove_paths(&dead);
         assert!(
             cache.data.png.len() <= cache.cap,
-            "retain 後も cap 不変条件を満たす"
+            "除去後も cap 不変条件を満たす"
         );
         assert!(cache.get("a").is_none());
         assert!(cache.get("b").is_some());
+    }
+
+    /// **剪定の判定が lock の外で走る窓を検査する。** `keys` を取ってから
+    /// `remove_paths` までの間に挿入されたキーは、判定の入力に居ない——それでも
+    /// 落ちてはならない（正本は `remove_paths` の doc）。
+    ///
+    /// **これは「落とす集合」で書いたことだけが与える性質である。** 述語を
+    /// 「残す集合」（`retain(|k| alive.contains(k))`）へ書き換えると、下の
+    /// `late` は alive に居ないので落ち、このテストは落ちる——**変異を注入して
+    /// 実際に落ちることを確かめてある**（2026-08-09 実測）。
+    #[test]
+    fn concurrent_insert_during_prune_window_survives() {
+        let mut cache = empty_cache_with_cap(8);
+        cache.insert("alive".into(), vec![1]);
+        cache.insert("gone".into(), vec![2]);
+
+        // lock の外で判定する側が見る snapshot。
+        let snapshot = cache.keys();
+        assert_eq!(snapshot.len(), 2);
+
+        // 窓の間に別スレッドが挿入した（＝判定の入力に居ない）キー。
+        cache.insert("late".into(), vec![3]);
+
+        // 索引には "alive" しか無かった、という判定結果。
+        let dead: std::collections::HashSet<String> = snapshot
+            .into_iter()
+            .filter(|k| k != "alive")
+            .collect::<std::collections::HashSet<_>>();
+        cache.remove_paths(&dead);
+
+        assert!(cache.get("gone").is_none(), "索引に無いキーは落ちる");
+        assert!(cache.get("alive").is_some(), "索引に在るキーは残る");
+        assert!(
+            cache.get("late").is_some(),
+            "判定の窓の間に挿入されたキーは、判定の入力に居なくても落ちてはならない"
+        );
     }
 
     /// #532 SU4 Probe 1: アイコン抽出（`SHGetFileInfoW`→BGRA→PNG 全区間）の実コスト計測。

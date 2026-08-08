@@ -111,37 +111,30 @@ fn drain_index(app_handle: &AppHandle) {
         // Sync icon cache with current index
         {
             let icon_state = app_handle.state::<icon::IconCacheState>();
-            let mut current = icon_state.lock().unwrap();
-            if inputs.show_icons {
-                // Prune stale icons — retain only entries present in the current index.
-                // Unlike clear(), this preserves valid icons and avoids re-extraction cost.
-                if let Some(c) = current.as_mut() {
-                    // 木はフルパスを持たないので組み直す。**バッファを使い回し、集合は
-                    // 索引側ではなくキャッシュ側で作る。**
-                    //
-                    // 索引の全パスを所有 `String` の集合にすると、312,625 件ぶんの確保が
-                    // 一時的に積み上がる——**v7 がディスクから消したのと同じ額**（約 36 MiB）を
-                    // 剪定のためだけに作り直すことになる。アイコンキャッシュは
-                    // `Config::icon_cache_cap()` で頭打ち（既定 1,000 件）なので、索引の側は
-                    // 走るだけにして、確保はヒットしたぶん（高々 cap 件）に限る。
-                    //
-                    // 意味は変わらない: `alive` は「キャッシュのキー ∩ 索引のパス」であり、
-                    // `retain_paths` の述語（キーが索引に在るか）と同値である。
-                    let mut buf = String::new();
-                    let mut alive: std::collections::HashSet<String> =
-                        std::collections::HashSet::new();
-                    let tree = material.tree();
-                    for i in 0..tree.len() {
-                        tree.path_into(&mut buf, i);
-                        if c.get(&buf).is_some() {
-                            alive.insert(buf.clone());
-                        }
-                    }
-                    c.retain_paths(&alive);
-                }
+            if !inputs.show_icons {
+                // show_icons disabled — drop the cache entirely（snapshot は要らない）
+                *icon_state.lock().unwrap() = None;
             } else {
-                // show_icons disabled — drop the cache entirely
-                *current = None;
+                // **判定は lock の外で行う。** 索引の全件走査（312,625 件・実測 36 ms）を
+                // lock の中で回すと、表示中のアイコン取得（`commands::icon::load_icon_pngs`）が
+                // その間ずっと待つ。lock を持つのは snapshot と除去の一瞬だけにする。
+                //
+                // **安全なのは述語が「落とす集合」だからである**（正本は
+                // `IconCache::remove_paths` の doc）——窓の間に挿入されたキーは
+                // `dead_icon_paths` の入力に居ないので落ちない。
+                let keys = icon_state
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .map(icon::IconCache::keys);
+                if let Some(keys) = keys {
+                    let dead = dead_icon_paths(material.tree(), keys);
+                    // 窓の間に `invalidate_icon_cache` / show_icons=false が `None` へ
+                    // 落としていることがあるので、取り直して確かめる。
+                    if let Some(c) = icon_state.lock().unwrap().as_mut() {
+                        c.remove_paths(&dead);
+                    }
+                }
             }
         }
 
@@ -160,6 +153,38 @@ fn drain_index(app_handle: &AppHandle) {
                 .complete_index_drain(new_index, &inputs);
         }
     }
+}
+
+/// アイコンキャッシュのキーのうち、**索引に無いと確かめられた**ものを返す（純関数）。
+///
+/// 木はフルパスを持たないので組み直して照合する。**バッファを 1 本使い回し、集合は
+/// 索引側ではなくキャッシュ側で作る。** 索引の全パスを所有 `String` の集合にすると
+/// 312,625 件ぶんの確保が一時的に積み上がる——**`index.bin` v7 がディスクから消したのと
+/// 同じ額**（約 36 MiB）を剪定のためだけに作り直すことになる。アイコンキャッシュは
+/// `Config::icon_cache_cap()` で頭打ち（既定 1,000 件）なので、索引の側は走るだけにする。
+///
+/// **返すのが「落とす集合」であることは呼び出し側の安全性の要石である**——判定は lock の
+/// 外で走り、その窓の間に挿入されたキーは `keys` に居ない。ここが「残す集合」を返すと、
+/// そのキーは残す集合に無いという理由で落ちる（正本は [`icon::IconCache::remove_paths`]）。
+///
+/// `keys` が空なら走査ごと省く。**初回起動がまさにその場合である**（アイコンキャッシュは
+/// 最初の表示まで空）。
+fn dead_icon_paths(
+    tree: &snotra_core::index_tree::IndexTree,
+    keys: Vec<String>,
+) -> std::collections::HashSet<String> {
+    let mut dead: std::collections::HashSet<String> = keys.into_iter().collect();
+    if dead.is_empty() {
+        return dead;
+    }
+    let mut buf = String::new();
+    for i in 0..tree.len() {
+        tree.path_into(&mut buf, i);
+        // 索引に在ると分かったキーは落とす集合から外す。**ヒットしても確保しない**
+        // （`alive` を積む形は 1 件ごとに `String` を確保していた）。
+        dead.remove(&buf);
+    }
+    dead
 }
 
 fn notify_indexing_started(app: &AppHandle) {
@@ -182,4 +207,64 @@ fn notify_indexing_complete(app: &AppHandle) {
     }
     // Notify frontend
     let _ = app.emit(crate::events::INDEXING_COMPLETE, ());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dead_icon_paths;
+    use snotra_core::index_tree::IndexTree;
+
+    /// `C:\app` の下に `tool.exe` と `sub`、その下に `deep.exe` を持つ木。
+    /// `parent` の番兵 `u32::MAX` は根を表す（`aux` は `table` のフルパスを指す）。
+    fn tree() -> IndexTree {
+        IndexTree::from_parts(
+            vec![
+                String::new(), // 0: 根（フルパスは table[1]）
+                "tool".into(), // 1: C:\app\tool.exe
+                "sub".into(),  // 2: C:\app\sub
+                "deep".into(), // 3: C:\app\sub\deep.exe
+            ],
+            vec![true, false, true, false],
+            vec![u32::MAX, 0, 0, 2],
+            vec![1, 2, 0, 2],
+            vec![String::new(), "C:\\app".into(), ".exe".into()],
+            false,
+        )
+        .expect("fixture の列は健全である")
+    }
+
+    #[test]
+    fn dead_icon_paths_returns_only_keys_absent_from_the_tree() {
+        let tree = tree();
+        let dead = dead_icon_paths(
+            &tree,
+            vec![
+                "C:\\app\\tool.exe".into(),
+                "C:\\app\\sub\\deep.exe".into(),
+                "C:\\app\\removed.exe".into(),
+            ],
+        );
+        assert_eq!(dead.len(), 1, "索引に在る 2 件は落とす集合に入らない");
+        assert!(dead.contains("C:\\app\\removed.exe"));
+    }
+
+    /// **キャッシュが空なら索引を走査しない。** 初回起動がまさにこの場合で、
+    /// そこでは剪定する相手が 1 件も無い。
+    #[test]
+    fn dead_icon_paths_is_empty_for_an_empty_cache() {
+        assert!(dead_icon_paths(&tree(), Vec::new()).is_empty());
+    }
+
+    /// 照合は**フルパスの原文**に対して行う（末尾成分や正規化キーではない）。
+    /// 大文字小文字が違うキーは別物として落ちる——アイコンキャッシュのキーは
+    /// エントリの `target_path` そのものなので、実運用では一致する。
+    #[test]
+    fn dead_icon_paths_compares_full_paths_verbatim() {
+        let dead = dead_icon_paths(&tree(), vec!["tool.exe".into(), "C:\\APP\\tool.exe".into()]);
+        assert_eq!(
+            dead.len(),
+            2,
+            "末尾成分だけ・大小が違う形はどちらも一致しない"
+        );
+    }
 }

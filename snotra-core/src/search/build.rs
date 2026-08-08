@@ -373,9 +373,7 @@ impl SearchEngine {
 
     /// [`IndexMaterial`] から構築する。**索引を建てる唯一の入口である。**
     ///
-    /// **派生データの有無で分岐するのはここだけである。** かつては同じ `match` が
-    /// `PrebuiltIndex` / `Engine` / `SearchEngine` の 3 層・5 か所の呼び出し点へ写っていた
-    /// （そのうち 1 か所だけを直す案を却下した経緯は [`IndexMaterial`] の doc）。
+    /// **派生データの有無で分岐するのはここだけである。** かつては同じ `match` が `PrebuiltIndex` / `Engine` / `SearchEngine` の 3 層・5 か所の呼び出し点へ写っていた（そのうち 1 か所だけを直す案を却下した経緯は [`IndexMaterial`] の doc）。
     pub fn from_material(material: IndexMaterial, migemo_enabled: bool) -> Self {
         let (tree, masks) = material.into_parts();
         match masks {
@@ -384,13 +382,9 @@ impl SearchEngine {
         }
     }
 
-    /// 派生文字列を持たない木から構築する。**入口は [`Self::from_material`] であり、ここは
-    /// その `None` 側の実装である。**
+    /// 派生文字列を持たない木から構築する。**入口は [`Self::from_material`] であり、ここはその「派生データ無し」側の実装である。**
     ///
-    /// **「cache-miss はもうここを通らない」と無条件に書いてはならない**（かつてそう書いて
-    /// おり、`RETROSPECTIVE.md` が前サイクルの取りこぼしとして記録している）。保存側が派生
-    /// データを返さなかった cache-miss は今もここへ来る——条件の正本は
-    /// `indexer::save_cache_sorted` の分岐である。
+    /// **「cache-miss はもうここを通らない」と無条件に書いてはならない**（かつてそう書いており、`RETROSPECTIVE.md` が前サイクルの取りこぼしとして記録している）。保存側が派生データを返さなかった cache-miss は今もここへ来る——条件の正本は `indexer::save_cache_sorted` の分岐である。
     ///
     /// **Wave 1 の材料はフルパスを要求する**（`lower_file_name` は `target_path` を取る）ため、
     /// 導出のあいだだけ実体へ戻す。**木専用の導出を書き起こさない**——規則が 2 つになると

@@ -1,0 +1,276 @@
+# code-review ラウンド 3: issue #984 / 6cff280 → 99e5217（IndexMaterial への設計転換）
+
+母集団: `git diff main...HEAD`（18 ファイル）全体。今回の差分は `git diff 6cff280..99e5217`（14 ファイル・+556/-260）。
+
+本ラウンドで走らせたもの:
+- **削除 API の逆引き（探し方を変えた）**: 239 ファイル（`.rs` / `.md`・`workspace/` と `target/` を除く）を**改行とコメント記号を畳んだ正規形**にしてから needle 検索する node スクリプト。加えて `grep -o` で識別子トークンだけを抜き、`load_or_scan[^_]` のように**語境界つき**でも引いた
+- **折返し規約の機械検査**: 今回の差分が追加したコメント行 91 本について、前行が文末記号で終わっていないのに次行が続く形を数えた
+- 検証コマンドは主エージェント実施ぶんを信頼した（fmt / clippy / test / doc / governance:check）。ラウンド 2 で自分が走らせた結果と矛盾する所見は無い
+
+## 件数（ラウンド 3 の新規）
+
+**Critical 0 / High 2 / Medium 2 / Low 2 / ⚠ 3**
+
+- **High-1**: `docs/comment-guidelines.md:23` の**模範例**が指す `Engine::new_from_cache` を、この差分が削除した——**規範の根拠が腐った**。`RETROSPECTIVE.md:31` が #977 として記録している失敗と同型。
+- **High-2**: 削除 API を指す散文が 3 か所残存（`snotra-core/CLAUDE.md:185`・`search/tests/performance.rs:235` が `from_cache` / `from_tree`、`indexer.rs:506` が `load_or_scan`）。**母集団を修飾名で grep したため裸のメソッド名を構造的に取りこぼした**。
+- **Medium-1**: `LoadCacheResult.material` の doc「**どの枝も `from_untrusted` を通す**」は偽——v2 枝は `from_tree` を通る（同じ関数の 100 行下に理由つきで在る）。
+- **Medium-2**: 1 段落 1 行の折返し規約が、新規 doc の一部（`engine.rs` / `search/build.rs` / `memory_footprint.rs`）で守られていない。`indexer.rs` の `IndexMaterial` 系は守れており、**適用がファイルごとにむらがある**。
+- **⚠A** `from_untrusted` が見るのは列長だけである（doc の書き方が「壊れたファイルを弾く」と読める強さ）／**⚠B** crate 内のマージ迂回は A/B 検知器の A 側と grep で区別できない／**⚠C** 凍結設計文書の疑似コードが `#[cfg(test)]` になった `PrebuiltIndex::new` を製品経路として書いている。
+
+---
+
+## 設計転換そのものの評価（結論: 正しい方向で、ラウンド 2 の Medium は本当に閉じた）
+
+### 閉じたことをコードで確認した
+
+- `IndexMaterial { tree, masks }` は**両フィールド private**（`indexer.rs:1649-1651`）。構築口は 3 つで、`pub` は `from_tree` だけ——`derived` と `from_untrusted` は `pub(crate)`。**crate 外から不整合な材料を作る構文が無い。**
+- 伸ばす操作は `extend_with_path_entries(&mut self, ..)` の 1 つだけ。読みは `tree(&self) -> &IndexTree`（**伸ばす操作を公開しない**と doc が明言）。ほどく口 `into_parts` は `pub(crate)`。
+- `IndexTree::extend_with_roots` が `pub(crate)` へ落ちたので、**crate 外から木だけを伸ばす経路も消えた**。
+- ラウンド 2 の Medium（`&mut None` が型を通る）は**構文として存在しなくなった**——`extend_with_path_entries` は引数にマスクを取らず、自分のフィールドを読む。これは私が案 B として挙げた形そのもので、**「表現不能化」の主張が今回は実装に追いついている**。
+- `match` の写しは実測 0 件: `Some(masks) =>` / `None =>` の分岐は `SearchEngine::from_material`（`search/build.rs:379-385`）の 1 か所だけ。`PrebuiltIndex::from_material` / `Engine::from_material` は素通しである。
+
+### `from_untrusted` の検証は十分である（コーディネータの問い 1）
+
+| 見るもの | 実装 | 判定 |
+|---|---|---|
+| `char_masks` / `file_name_char_masks` の長さ | `!= n` で弾く（`n = tree.len()`） | **等値ゆえ木より短いものも長いものも弾く** ✓ |
+| `lower == None`（v3） | `true`（検証する列が無い） | ✓ 正しい |
+| `lower == Some(Collapsed)`（v7 / v6） | `lower_names.len() == n && lower_file_names.len() == n` | ✓ |
+| `lower == Some(Raw)`（v5 / v4） | 同上 | ✓ **2 variant を両方見ている** |
+| variant の追加 | `match` に `_` が無い | ✓ 追加時はコンパイルエラーになる |
+
+2 つの `Some` 腕が同じ述語なのは**まとめられない**（`Collapsed` は `Vec<Option<String>>` / `Vec<LowerFileName>`、`Raw` は `Vec<String>` / `Vec<Option<String>>` で束縛の型が違う）。DRY 違反ではない。
+
+**`derived` が検証を持たない根拠も正しい。** `derive_columns`（`indexer.rs:792-`）は `for entry in &entries` の 1 周で 4 本へ 1 件ずつ push し、そのあと同じ `entries` を `IndexTree::build` へ渡す。`build` はエントリ 1 件につき列へ 1 回 push するので `tree.len() == entries.len()` が構成上成り立つ。以後の伸長は `extend_with_path_entries` だけを通り、そこも対で push する。**構成上正しいという主張は成立している。**
+
+### `load_cache_in` の `?` は保全として正しい向きである（問い 3）
+
+各枝は `material: IndexMaterial::from_untrusted(tree, masks)?` の形で、`None` なら `load_cache_in` ごと `None` を返す＝**全走査へ落ちて index.bin を書き直す**。
+
+- **「次の枝を試す」は誤りである。** 枝は同じバイト列に対する版ごとのデコードであり、vN として**デコードは成功したが列長が合わない**のは「その版として壊れている」ことを意味する。同じバイト列を vN-1 として読み直せば、失敗するか、より悪く**別の意味に解釈して通る**。
+- 既存の `config_hash` 不一致も同じく即 `None`（全走査）である。**新しい失敗を既存の作法へ揃えており、一貫している。**
+- 壊れた `index.bin` はその後の保存で上書きされる。回復不能な状態に固まる経路は無い。
+
+---
+
+## High
+
+### High-1. `docs/comment-guidelines.md:23` の模範例が、この差分で削除された関数を指している——規範の根拠が腐った
+
+場所: `docs/comment-guidelines.md:23`（第一原則「書かないもの」の箇条）
+
+    模範例は `snotra-core/src/engine.rs` の `Engine::new_from_cache`——「**版の番号を書かない。**
+    分岐を決めるのは `CachedMasks.lower` の variant であって版ではなく、番号を書くと版を上げる
+    たびにこの散文だけが腐る」と自ら宣言し、正本（`indexer::load_cache_in` の分岐）を名指ししている。
+
+`Engine::new_from_cache` は**この差分が削除した**（`plan.md:269`）。正規形の全文検索で `Engine::new_from_cache` を含むのは `docs/comment-guidelines.md` **ただ 1 ファイル**である（`workspace/` を除く 239 ファイルを走査）。
+
+根本原因（壊れた不変条件）: `AGENTS.md`「文書に事実の写しを増やす変更」の #977 の教訓——「**しかもその 6 枚目は規範の根拠として使われており、前提が偽になって根拠ごと腐った**」。`RETROSPECTIVE.md:31` が同じ機序を記録している:
+
+    「cache-miss はもう `new_from_tree` を通らない」を 5 か所へ全文で書き、6 枚目を取りこぼした。
+    しかもその文は「木専用の導出を書き起こすな」という**規範の根拠**として使われており、
+    前提が偽になって根拠ごと腐った。
+
+**今回は「削除」でそれが起きた。** しかも腐ったのは、この PR が 3 ラウンドにわたって自らの指摘根拠として引いてきた当の条項である（M3・Low-1・Medium-2 はすべてこの箇条を引いている）。
+
+**破損は 2 重である**:
+
+1. **関数名が実在しない。** 読者が `Engine::new_from_cache` を grep すると 0 件で、条項の模範例を確かめられない。
+2. **引用文も現行と一致しない。** 宣言は `Engine::from_material`（`engine.rs:120`）へ引き継がれているが、テキストは「**版の番号を書かない。** 番号を書くと版を上げるたびにこの散文だけが腐る（`INDEX_CACHE_VERSION` の doc が……）」で、**「分岐を決めるのは `CachedMasks.lower` の variant であって版ではなく」の句が落ちている**。comment-guidelines.md はその句を含む形で逐語引用しているので、引用としても成り立たない。
+
+また comment-guidelines.md は模範例の性質として「正本（`indexer::load_cache_in` の分岐）を名指ししている」と書くが、`Engine::from_material` が名指しするのは「`indexer::save_cache_sorted` **と** `indexer::load_cache_in` の分岐」である（2 つに増えた）。**引き継ぎ先のほうが正確になっている**ので、指す先を変えるだけで条項は救える。
+
+**なぜ機械検査が鳴らなかったか**: `governance:check` は「散文の識別子 70 件を 33 文書から照合」するが、この 1 件は捕まらなかった（全検査 passed）。`cargo doc` も鳴らない——`` `Engine::new_from_cache` `` は素のバッククォートで、intra-doc link ではないため `broken_intra_doc_links` の対象外である。**ラウンド 1 で私が書いた「素のバッククォート名は誰も検査しない」がそのまま実現した形である。**
+
+修正例（`docs/comment-guidelines.md:23`）:
+
+    模範例は `snotra-core/src/engine.rs` の `Engine::from_material`——「**版の番号を書かない。**
+    番号を書くと版を上げるたびにこの散文だけが腐る」と自ら宣言し、正本
+    （`indexer::save_cache_sorted` と `indexer::load_cache_in` の分岐）を名指ししている。
+
+**この 1 行を直すのは #984 の射程内である**（差分が壊した参照を差分の中で直すのは同期であって拡張ではない・`AGENTS.md` 3 層分担）。
+
+### High-2. 削除した API を指す散文が 3 か所残っている。母集団を修飾名で grep したことが構造的な取りこぼしを生んだ
+
+| 場所 | 残っている名 | 状態 |
+|---|---|---|
+| `snotra-core/CLAUDE.md:185` | `from_cache` / `from_tree` | **両方削除済み。** しかも文の主張ごと古い——「**どのコンストラクタを選ぶかは保存が派生データを返したかで決まる**（`from_cache` / `from_tree`。正本は各 `///` と `indexer::save_cache_sorted` の分岐）」。今は `PrebuiltIndex` のコンストラクタは `from_material` **1 つ**で、分岐は `SearchEngine::from_material` の内側にある。**「どのコンストラクタを選ぶか」という設計自体が消えた** |
+| `snotra-core/src/search/tests/performance.rs:235` | `from_cache` / `from_tree` | 同上。**ラウンド 1 で私が L5 として挙げ、ラウンド 2 で直した当の行が、ラウンド 3 で再び古くなった**（「**コンストラクタを名指ししない**——製品が通るのは `from_cache` / `from_tree` であり」と書いて、名指ししないと宣言した直後に名指ししている 2 つが消えた） |
+| `snotra-core/src/indexer.rs:506` | `load_or_scan` | **削除済み**（`plan.md:269`）。`load_or_scan_with_stats` の doc 冒頭が今も「Same as `load_or_scan`, but returns the full `LoadOrScanResult`」——**削除した関数の隣の doc が、その関数を基準に自分を説明している** |
+
+根本原因（壊れた不変条件）: 「改名・削除は下流の compile-fail を移行漏れ検出器にする」（`AGENTS.md`）が**散文には効かない**。`plan.md:255-260` は写しの母集団を grep で取ったと記録しているが、needle が**修飾名**（`PrebuiltIndex::from_cache` / `Engine::new_from_cache`）だった。上の 2 件は `` `from_cache` `` と裸で書かれているので修飾名では当たらない。3 件目は `load_or_scan` が `load_or_scan_with_stats` の**接頭辞**なので、素朴な grep では生き残った参照が大量の正当な参照に埋まる。
+
+**私が使った探し方（推奨）**:
+
+1. **裸のメソッド名でも引く**——`grep -rn "from_cache\|from_tree" --include=*.rs --include=*.md`。誤検出は増えるが、削除 API の掃きでは誤検出のほうが安い。
+2. **接頭辞になる名は語境界で引く**——`grep -rn "load_or_scan[^_]"`。これが `indexer.rs:506` を単独で浮かび上がらせた。
+3. **改行を畳んでから引く**——行またぎの写しはラウンド 2 の L1 と `plan.md:258` の実例のとおり素の grep に当たらない。239 ファイルを畳んで検索した結果、`merge_path_entries` / `PrebuiltIndex::from_cache` / `PrebuiltIndex::from_tree` / `LoadOrScanResult::cached_masks` / `result.cached_masks` / `result.tree` は**すべて 0 件**（掃きは修飾名の範囲では完全だった）。
+
+修正例: `CLAUDE.md:185` は「コンストラクタは `from_material` の 1 つで、派生データの有無による分岐は `SearchEngine::from_material` の内側に閉じている（正本はその `///`）」へ。`performance.rs:235` は「製品が通るのは `from_material` であり」へ。`indexer.rs:506` は「Returns the full `LoadOrScanResult`: timing stats, …」と自立した説明へ（比較対象が消えたので比較をやめる）。
+
+---
+
+## Medium
+
+### Medium-1. `LoadCacheResult.material` の doc「どの枝も `from_untrusted` を通す」は偽である
+
+場所: `snotra-core/src/indexer.rs:898`
+
+    /// **どの枝も [`IndexMaterial::from_untrusted`] を通す**（構成上正しいのは導出したその足の組だけである）。
+
+**v2 枝は通らない**（同じ関数の約 100 行下・`indexer.rs:1050-1053`）:
+
+    // マスクを持たない版ゆえ検証する列が無い（木の整合は `IndexTree::build` が持つ）。
+    material: IndexMaterial::from_tree(IndexTree::build(cache.entries)),
+
+根本原因（壊れた不変条件）: `AGENTS.md`「検証の作法」の「**全称表現は前提条件とセットで書く**（「唯一の」「すべての」「全経路」など）。**書けないなら書かない**」。「どの枝も」は前提条件を持たない全称で、反例が同じ関数の中に**理由つきのコメント付きで**在る。
+
+`plan.md:266` は正確に書けている——「`load_cache_in` の全枝を `from_untrusted` へ通す（v7〜v3 の 5 枝。**v2 はマスクを持たないので `from_tree`**）」。**計画のほうが doc より正確**という形なので、doc に条件を移すだけで済む。
+
+**害は小さい**: 安全上の含意（「ディスクから来てマスクを持つ材料は必ず長さ検証を受ける」）は真のままである。v2 にはマスクが無いので検証する対象が存在しない。ゆえに Medium に留める——ただしラウンド 1 の M2（`materialize` の自己矛盾）とまったく同じ形の再発である。
+
+修正例:
+
+    /// **マスクを持つ枝はすべて [`IndexMaterial::from_untrusted`] を通す**（v2 はマスクを持たないので検証する列が無い）。構成上検証を要さないのは `derive_columns` の出力だけである。
+
+### Medium-2. 1 段落 1 行の折返し規約が、新規 doc の一部で守られていない（適用がファイルごとにむらがある）
+
+ラウンド 2 で**私が自分の判断を撤回して**採用が決まった規約（`docs/comment-guidelines.md`「日本語の折返し」・適用範囲は新規に書くコメントと触った段落）が、Phase 6 の新規 doc の一部で守られていない。
+
+機械検査: 今回の差分が追加したコメント行 91 本のうち、**前行が文末記号で終わらないまま次行へ続く形が 20 件**（うち 4〜6 件は太字終端の誤検出なので、**実質 14〜16 段落**）。
+
+| ファイル | 守れているか | 例 |
+|---|---|---|
+| `snotra-core/src/indexer.rs`（`IndexMaterial` の型 doc・`from_tree` / `derived` / `from_untrusted` / `extend_with_path_entries` / `tree` / `into_parts` / `has_masks`） | **守れている**（すべて 1 段落 1 行） | — |
+| `snotra-core/src/engine.rs` | **守れていない** | `PrebuiltIndex::new`（`:45-50`）は 6 行に折れ、`**その呼び出し元は 1 つも / 存在しなかった**` と `**今はコンパイラが / 拒む。**` で**太字スパンが行をまたぐ**。`Engine::from_material`（`:115-122`）も同様 |
+| `snotra-core/src/search/build.rs` | **守れていない** | `SearchEngine::from_material`（`:376-378`）／`new_from_tree`（`:387-398`）。`**入口は [`Self::from_material`] であり、ここは / その `None` 側の実装である。**` は太字スパンまたぎ、`保存側が派生 / データを返さなかった` は**語の途中**で折れている |
+| `snotra-core/tests/memory_footprint.rs` | **守れていない** | `:250-252` のインラインコメント |
+
+根本原因（壊れた不変条件）: 規約の適用範囲は**その変更で触った段落**であり、ファイル単位ではない。`indexer.rs` で守れているのは、`IndexMaterial` が新規追加ブロックだったからだと思われる——**既存ファイルの既存段落を書き換えた箇所では、周囲の折返しに引きずられて折り続けている**。
+
+**実害はラウンド 2 の L1 と同じ形で出る**: `grep "保存側が派生データを返さなかった cache-miss は今もここへ来る"` は 0 件を返す。`grep "入口は [`Self::from_material`] であり、ここはその `None` 側の実装である"` も 0 件。**どちらも「その doc を探している人」がいちばん打ちそうな検索語である。**
+
+修正例: 上の 4 ファイルの該当段落を 1 行へ結合する。**優先は太字スパンまたぎと語またぎ**（`1 つも / 存在しなかった`・`派生 / データ`・`今はコンパイラが / 拒む`）——そこが検索を壊す。
+
+---
+
+## Low
+
+### Low-1. `has_masks` の `#[doc(hidden)] pub` は妥当だが、crate 外で本当に要るのは「出力ラベル」だけである（問い 2 への回答）
+
+場所: `snotra-core/src/indexer.rs:1723`
+
+**「消費側が `Option` を見て分岐する形の復活口」にはなっていない**——ただしそれを保証しているのは doc だけである。`src-tauri` から `material.has_masks()` を読んで `if` を書いても、コンパイラも clippy も governance:check も何も言わない。この差分が `Option` を型から追い出した成果は、**この 1 メソッドについては文書契約に戻っている**。
+
+**判断は既存慣習と整合している**: `SearchEngine::footprint_rows` が同じ `#[doc(hidden)] pub` で、理由も同じ（`tests/` の統合テストは外部クレートとしてリンクするので `#[cfg(test)]` では届かない）。**先例があるので採用は妥当**である。
+
+ただし用途を数え直すと、`pub` が要る先は 1 つだけである:
+
+- **検知器**（`search/tests/build.rs:288`）は `snotra-core` の**内側**のユニットテストなので `pub(crate)` で足りる。
+- **`tests/memory_footprint.rs:270`** だけが crate 外で、用途は `println!("… cached_masks = {}", result.material.has_masks())` の**出力ラベル 1 個**である（分岐には使っていない・実装を読んで確認した）。
+
+ゆえに、より狭い形が実際に在る: **`has_masks` を `pub(crate)` にし、枝のラベルを `LoadOrScanStats` へ 1 フィールド足して運ぶ**（`memory_footprint.rs` はすでに `result.stats.cache_hit` を同じ `println!` で読んでいるので、読む側の変更はほぼ無い）。そうすると「製品コードから読める `Option` 相当の口」が**型として消える**。
+
+**採否は任意**（現状でも誤りではない）。ただし「文書契約より表現不能化を好む」がこの PR の主題だったので、**最後の 1 個が文書契約で残ったことは記録しておく価値がある**。
+
+### Low-2. `memory_footprint.rs:268` の出力ラベルが、削除されたフィールド名のまま
+
+    println!("  entries = {n}, cache_hit = {}, cached_masks = {}", …, result.material.has_masks());
+
+`cached_masks` は `LoadOrScanResult` から消えたフィールド名である。計測ログを読んだ人がその名で grep すると、`has_masks` にも `IndexMaterial` にも辿れない。`has_masks` か `派生データ` へ。
+
+---
+
+## ⚠（確信の持てない所見）
+
+### ⚠A. `from_untrusted` が見るのは列の**長さ**だけであり、doc の書き方はそれより広く読める
+
+doc は「切り詰められた `index.bin` は……」「**版が読めたことは中身が健全であることを意味しない**」と書くが、実際に見るのは 4 本の長さだけである。マスクの**値**（`char_mask` の bit）は検証していない——**これは正しい**（任意の `u64` が合法な入力で、検証しようがない。誤った値の帰結は Fuzzy pre-filter の false negative＝結果が静かに欠けることだが、それは検出不能）。木の添字範囲は `IndexTree::from_parts` が見る。
+
+つまり**射程は「長さの整合」で閉じており、それで十分**である。ただし doc が「中身が健全であることを意味しない」と一般に書いているので、読者が「ここを通れば健全」と逆に読む余地がある。1 句足すなら「**見るのは列長である**——値の妥当性は検証不能ゆえ見ない」。指摘に落とすほどではない。
+
+### ⚠B. crate 内のマージ迂回は、A/B 検知器の A 側と grep で区別できない
+
+`IndexTree::extend_with_roots` は `pub(crate)` ゆえ `snotra-core` の中からは呼べる。`plan.md:235` が「現状その呼び出し点は無く（検知器の A 側オラクルのみ）、可視性をさらに絞ると A/B 比較の独立性が失われる」と記録しており、**この判断に同意する**（A 側が製品経路を迂回することは検知器の設計要件である）。
+
+懸念は運用の側にある: 将来 crate 内に**製品の**迂回が入ったとき、`grep extend_with_roots` の結果は検知器の A 側 2 件と混ざる。区別する手立ては今のところ「A 側は `tree_a` という変数名を使う」という慣習だけである。**検知器を置くほどの額ではない**と思うが、確信はない。もし置くなら「`extend_with_roots` の呼び出し元は `IndexMaterial` と `#[cfg(test)]` だけ」を測る形になる。
+
+### ⚠C. 凍結した設計文書の疑似コードが、`#[cfg(test)]` になった関数を製品経路として書いている
+
+`docs/design/2026-05-31-coherence-staleset.md:135` / `:235` / `:257` は drain のビルダーを `PrebuiltIndex::new` と書く。ラウンド 1 で「日付つきの凍結記録ゆえ触らない」判断を根拠つきで確認し、私も同意した。**ただし今回 `PrebuiltIndex::new` が `#[cfg(test)]` になったので、その疑似コードは「製品からは呼べない関数」を製品経路として書いていることになった**（以前は「呼べるが呼ばない」だった）。
+
+凍結の判断はそれでも維持でよいと思う（当時の記述として読むのが設計記録の作法であり、`plan.md:87` がそう明記している）。**確信は低い**——「凍結記録が現行のコンパイラ設定と矛盾する」ところまで来たら 1 行の注記（「現行では `#[cfg(test)]`。当時の記述」）を足す判断もありうる。
+
+---
+
+## 逆向きの監査（問い 6）——消した行が守っていた不変条件と再確立地点
+
+| 消したもの | 守っていた不変条件 | 再確立地点 | 判定 |
+|---|---|---|---|
+| `PrebuiltIndex::from_tree` の doc | 「木を `Vec<AppEntry>` へ戻して `new` へ渡すと同じ木を 2 度建てる。**実体化そのものは消えない**」 | `SearchEngine::new_from_tree`（`search/build.rs:394-398`）が「Wave 1 の材料はフルパスを要求する／木専用の導出を書き起こさない／実体化の対価は `IndexTree::materialize` の doc」を保持 | **再確立あり** |
+| `Engine::new_from_tree` の doc | 「**「全走査の直後」と書いてはならない**」（反復 11） | `SearchEngine::new_from_tree`（`:389-392`）が「**「cache-miss はもうここを通らない」と無条件に書いてはならない**（`RETROSPECTIVE.md` が前サイクルの取りこぼしとして記録）」＋条件の正本名指し | **再確立あり・出所が強くなった** |
+| `Engine::new_from_cache` の doc | 「**版の番号を書かない**」＋正本名指し | `Engine::from_material`（`engine.rs:120-122`）へ引き継がれた。**ただし外部からの参照（`comment-guidelines.md:23`）が追随していない** | **再確立あり／参照は破損 → High-1** |
+| `PrebuiltIndex::from_cache` の doc | 同上 | `indexer.rs:56` が `Engine::from_material` の doc を同じ理由の正本として指す | **再確立あり** |
+| `indexer::load_or_scan` | （薄い包み・不変条件は持たない） | — | **散文参照が 1 件残った → High-2** |
+| 「表現不能化ではない」の受容宣言 4 か所 | 「閉じているのは呼び出し点であって操作ではない」（閉じ具合の正直な限界） | `search/tests/build.rs:237` が「**crate 外からそこを迂回するコードは書けない**……**ただし crate 内では書ける**（……現状は残余ではなく余地である）」へ**更新**（削除ではなく、閉じ具合が実際に上がったので記述も上げた）。撤去の記録は `PERFORMANCE.md:630`（「4 か所から消した」は**過去の変化量**ゆえ数え上げ禁止の対象外） | **再確立あり・正確になった** |
+| `LoadOrScanResult.cached_masks` の doc（「`None` になる場合を数え上げてはならない」） | 数え上げ禁止 | `rebuild_and_save`（`indexer.rs:880`）の「**持たない場合を数え上げてはならない**——正本は `save_cache_sorted` の分岐」／`LoadOrScanResult.material`（`:329`）が `IndexMaterial` の doc を正本に指す | **再確立あり**（`LoadOrScanResult::cached_masks` を指す散文は正規形検索で 0 件＝掃き済み） |
+| `main.rs` / `indexing.rs` の `match cached_masks` | 「派生データの有無で建て方が分かれる」 | `SearchEngine::from_material` の 1 か所（`search/build.rs:380-384`）。呼び出し点には「**ここで分岐しない**」と条件の正本が残る（`indexing.rs:151`） | **再確立あり** |
+
+**この差分が消して再確立していないものは 2 件で、どちらも参照側である**（High-1 / High-2）。挙動を守っていた不変条件の消失は 1 件も無い。
+
+---
+
+## ラウンド 1・2 の項目の解消状況
+
+| 項目 | 判定 |
+|---|---|
+| R2-High（検知器 2 の A/B の正当化が偽） | **解消** — 当該段落ごと消えた。現行の `path_merge_extends_the_tree_even_without_derived_data` の doc に「根/親解決を捕まえる」という主張は無い |
+| R2-Medium（「表現不能化」の主張が実装より強い） | **解消（構造で）** — `IndexMaterial` のフィールド private ＋ `extend_with_path_entries` が引数にマスクを取らない形になり、**主張が実装に追いついた**。`&mut None` に相当する構文が存在しない |
+| R2-Low-1（⚠1 の処置が逆向き・分岐条件の列挙が残った） | **解消** — `engine.rs` の当該 doc ごと消え（関数が削除された）、後継の `from_material` は条件を書き写さず正本（`save_cache_sorted` / `load_cache_in` の分岐）を指す形になった |
+| R2-Low-2（`PERFORMANCE.md:628` の「2 本」） | **解消** — 現行は検知器を名前で挙げる形。数詞の残存は正規形検索で 0 件 |
+| R2-⚠A（`&mut Option<_>` が過剰な権能） | **解消** — 署名が消えた（`&mut self` メソッドへ） |
+| R2-⚠B（箇条書き内の折返しの判定が割れる） | **未解決（規約側の課題）** — 今回 Medium-2 として別の形で表面化した。規約に 1 句足すのが筋 |
+| R2-⚠C（`unwrap` が暗黙の検査） | **より良い形へ置換** — `unwrap` ではなく `has_masks()` の明示 assert（`build.rs:287-290`）になり、**何を測っているかが読める**。しかも変異 3 で発火位置を実測している。これは私の指摘より良い解決である |
+| R1-M1〜L5・⚠1〜3 | ラウンド 2 で解消済み（一部は今回、該当散文ごと消えた）。**再発は 1 件**——`performance.rs:235`（R1-L5）が High-2 として再び古くなった |
+
+---
+
+## コーディネータの問い 1〜6 への直接の回答
+
+1. **`IndexMaterial` は名乗る不変条件を持っているか** — **持っている。** `from_untrusted` は 4 本すべてを等値で見（短いものも長いものも弾く）、`lower` の 2 variant を両方見る（`_` を書いていないので variant 追加はコンパイルエラー）。`derived` が検証を持たない根拠（`derive_columns` の 1 周）も**正しい**。→ 上の表。
+2. **`has_masks` の `#[doc(hidden)] pub`** — 復活口には**なっていない**が、保証しているのは doc だけ（Low-1）。crate 外で本当に要るのは `memory_footprint.rs` の**出力ラベル 1 個**だけなので、より狭い形が実在する。
+3. **`load_cache_in` の `?`** — **正しい向き。** 全走査へ落とすのが保全であり、「次の枝を試す」は同じバイト列を別の意味で解釈しうるので誤り。既存の `config_hash` 不一致と同じ作法に揃っている。
+4. **削除 API の doc 参照** — **3 か所残っていた**（High-2）。取りこぼしの原因は needle が修飾名だったこと＋接頭辞に埋まったこと。裸のメソッド名・語境界（`load_or_scan[^_]`）・改行を畳んだ全文検索の 3 手で出た。修飾名の範囲では掃きは完全だった（`merge_path_entries` ほか 6 needle が 0 件）。
+5. **1 段落 1 行** — **一部で守られていない**（Medium-2）。`indexer.rs` の新規ブロックは守れており、既存ファイルの書き換え箇所（`engine.rs` / `search/build.rs` / `memory_footprint.rs`）で折れている。太字スパンまたぎと語またぎが実際に grep を壊している。
+6. **逆向きの監査** — 挙動を守っていた不変条件の消失は**0 件**。再確立していないのは参照側 2 件（High-1 / High-2）。→ 上の表。
+
+---
+
+## 追記: 「なぜ機械検査が鳴らなかったか」を実装で確かめた（High-1 / High-2 の補強）
+
+High-1 の節で「`governance:check` の散文識別子照合に捕まらなかった」と書いたが、**理由を推測で済ませていた**。`scripts/governance-check.mjs` を読んで確定させた。
+
+当該検査は **`G-stale-identifiers`**（`:1415-` / 「散文の識別子 N 件を M 文書から照合」の実体）。理由は**母集団ではなく needle の形**だった:
+
+- **`docs/**` は母集団に入っている**（`staleIdentifierGuideDocs`。除くのは `docs/adr/` と `docs/superpowers/` の歴史記録 2 種だけ）。ゆえに `docs/comment-guidelines.md` は**検査対象である**。
+- **見る識別子の形が合わない。** 判定は `:1504` の `STALE_IDENT = /^([a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+)(\(\))?$/`（camelCase・こぶ 1 つ以上）と `:1508` の `STALE_SNAKE_IDENT`（SCREAMING_SNAKE）**だけ**である。`Engine::new_from_cache` は snake_case ＋ `::` 区切りなのでどちらにも当たらない。
+- **検査自身の doc がその射程を宣言している**（`:1441-1443`）: 「snake_case・PascalCase・ドット区切り・式で書かれた腐りも……届くのは 0 件である（実測）。……**「camelCase と SCREAMING_SNAKE で書かれた再発は捕まる」**までである」。
+
+**つまりこの腐りは、検出器が自ら「射程外」と宣言している当のクラスに落ちている。** しかも**このブランチが載っている作業ブランチ名は `fix/975-stale-identifiers-snake-case`** であり、issue #975 がまさにこの穴（snake_case 未カバー）を閉じるために在る。**High-1 は #975 が閉じるまで機械では再発を防げない**——今は 1 行直す以外の手が無い、というのが正確な状況である。
+
+High-2 の 2 件についても同じ実装から答えが出る:
+
+- **`snotra-core/CLAUDE.md:185` は母集団から構造的に外れている。** `:1436-1437`「**モジュール `CLAUDE.md` は入れない**——ラップ対象の外部 API（Win32 / tao / TTC）を語る場所ゆえ外部語彙の**密度**が高い（実測 真の腐り 1 : 外部語彙 3）」。意図的な非対称であり、**ここの腐りはレビューでしか捕まらない。**
+- **`.rs` の doc コメント（`performance.rs:235` / `indexer.rs:506`）は語彙源からも検査対象からも外れている。** 現行語彙は「production のソースの**非コメント本文**」ただ 1 つ（`:1446-1447`・`stripRustComments`）で、コメントは語彙を寄付しないかわりに**照合もされない**。`cargo doc` も素のバッククォートは見ない（intra-doc link だけ）。
+
+**帰結（この PR への含意）**: 今回の 4 件はいずれも「機構が見ていない面」に落ちており、**`governance:check` が全検査 passed であることは掃き漏れの不在を意味しない**。API を削除する差分では、下の「探し方」（裸のメソッド名・語境界・改行畳み）を人が回すのが唯一の防御である。
+
+## 追記 2: ⚠C の前提を確かめた
+
+`PrebuiltIndex::new` の `.rs` 参照を全件引いた結果は 5 件で、**製品経路は 1 件も無い**:
+
+- `snotra-core/src/engine.rs:450` / `:467` / `:520` / `:537` — いずれも同ファイルの `mod tests` の内側（`apply_prebuilt_index_rebuilds_kana_per_migemo` 等）。
+- `snotra-core/src/search/tests/performance.rs:235` — **doc コメントの中の言及**（呼び出しではない）。なお同行の「`PrebuiltIndex::new` はテストとベンチだけが使う」は今も真である（`search/tests/performance.rs` は crate 内のユニットテストなので `#[cfg(test)]` が効く）。古いのは同じ行の `from_cache` / `from_tree` の側だけである（High-2）。
+
+`#[cfg(test)]` を迂回する re-export / test-util shim は無い。**⚠C は記述のとおり成立する**（凍結設計文書の疑似コードが、製品からは呼べなくなった関数を製品経路として書いている）。判断としては凍結維持でよいと考えるが、確信は低いままである。
+

@@ -187,8 +187,7 @@ fn measure_path_query_frame_cost() {
         indexer::load_or_scan_with_stats(&config.paths.scan, config.search.show_hidden_system);
     let n = result.material.tree().len();
     let history = HistoryStore::load();
-    // **木を `Vec<AppEntry>` へ戻さない。** `Engine::new` を通すと実体化と木の再構築で
-    // 同じ木を 2 度建てることになる（`Engine::from_material` の doc）。
+    // **木を `Vec<AppEntry>` へ戻さない。** 実体化と木の再構築で同じ木を 2 度建てることになる（`IndexTree::materialize` の doc）。
     let mut engine = Engine::from_material(result.material, history, config);
 
     println!("\n=== パスクエリのフレームコスト（実 index.bin・{n} 件・Engine::search）===");

@@ -247,9 +247,7 @@ fn measure_real_index_footprint() {
     // なってしまう——旧版を測った実行が v7 と自称する。
     let on_disk_version = on_disk_index_version();
 
-    // 実起動と同じ経路を辿る: load_or_scan_with_stats が返す `IndexMaterial` を
-    // `from_material` へ渡し、Wave 1 をスキップする。**派生データを捨てる形で代用すると**
-    // 再計算が走り、ピークも構築コストも別物になる。
+    // 実起動と同じ経路を辿る: load_or_scan_with_stats が返す `IndexMaterial` を `from_material` へ渡し、Wave 1 をスキップする。**派生データを捨てる形で代用すると**再計算が走り、ピークも構築コストも別物になる。
     reset_peak();
     let t0 = snap();
     let load_start = std::time::Instant::now();

@@ -42,12 +42,7 @@ pub struct PrebuiltIndex(SearchEngine);
 impl PrebuiltIndex {
     /// `Vec<AppEntry>` から建てる。**製品経路は通らない。**
     ///
-    /// **`#[cfg(test)]` で締めてある。** かつては「`snotra-core/tests/` の統合テストが外部
-    /// クレートとしてリンクするため締められない」と書いていたが、**その呼び出し元は 1 つも
-    /// 存在しなかった**（grep 実測）。締めていなかったせいで「製品コードから新たに呼ばない
-    /// こと」という規約だけが残り、破っても木を建て直すぶん静かに遅くなるだけで、型は同じ
-    /// `PrebuiltIndex` を返すのでレビューでも実行結果でも差が見えなかった。**今はコンパイラが
-    /// 拒む。**
+    /// **`#[cfg(test)]` で締めてある。** かつては「`snotra-core/tests/` の統合テストが外部クレートとしてリンクするため締められない」と書いていたが、**その呼び出し元は 1 つも存在しなかった**（grep 実測）。締めていなかったせいで「製品コードから新たに呼ばないこと」という規約だけが残り、破っても木を建て直すぶん静かに遅くなるだけで、型は同じ `PrebuiltIndex` を返すのでレビューでも実行結果でも差が見えなかった。**今はコンパイラが拒む。**
     #[cfg(test)]
     pub fn new(entries: Vec<AppEntry>, migemo_enabled: bool) -> Self {
         Self(SearchEngine::new_with_migemo(entries, migemo_enabled))
@@ -55,8 +50,7 @@ impl PrebuiltIndex {
 
     /// [`IndexMaterial`] から構築する。**製品はこの 1 つだけを通る。**
     ///
-    /// 派生データの有無で分岐しないのは、材料が組のまま来るからである（分岐は
-    /// `SearchEngine::from_material` の 1 か所に閉じている）。
+    /// 派生データの有無で分岐しないのは、材料が組のまま来るからである（分岐は `SearchEngine::from_material` の 1 か所に閉じている）。
     pub fn from_material(material: IndexMaterial, migemo_enabled: bool) -> Self {
         Self(SearchEngine::from_material(material, migemo_enabled))
     }
@@ -112,14 +106,9 @@ impl Engine {
 
     /// [`IndexMaterial`] から構築する。**起動経路が通る唯一の入口である。**
     ///
-    /// **派生データの有無で入口を分けない**（かつては `new_from_tree` / `new_from_cache` の 2 本
-    /// があり、呼び出し側が `match` で捌いていた）。分岐は `SearchEngine::from_material` の
-    /// 1 か所に閉じており、**どちらの枝が選ばれるかを決める条件の正本は
-    /// `indexer::save_cache_sorted` と `indexer::load_cache_in` の分岐である**。
+    /// **派生データの有無で入口を分けない**（かつては `new_from_tree` / `new_from_cache` の 2 本があり、呼び出し側が `match` で捌いていた）。分岐は `SearchEngine::from_material` の 1 か所に閉じており、**どちらの枝が選ばれるかを決める条件の正本は `indexer::save_cache_sorted` と `indexer::load_cache_in` の分岐である**。
     ///
-    /// **版の番号を書かない。** 番号を書くと版を上げるたびにこの散文だけが腐る
-    /// （`INDEX_CACHE_VERSION` の doc が「現行は v5・実運用点は v6 のまま」というそれ自体
-    /// 矛盾した文が残った事例を記録している）。
+    /// **版の番号を書かない。** 番号を書くと版を上げるたびにこの散文だけが腐る（`INDEX_CACHE_VERSION` の doc が「現行は v5・実運用点は v6 のまま」というそれ自体矛盾した文が残った事例を記録している）。
     pub fn from_material(material: IndexMaterial, history: HistoryStore, config: Config) -> Self {
         let search_engine = SearchEngine::from_material(material, config.search.migemo_enabled);
         Self {

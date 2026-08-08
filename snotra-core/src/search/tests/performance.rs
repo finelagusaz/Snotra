@@ -232,7 +232,7 @@ fn bench_new_scaling() {
     }
 }
 
-/// migemo on/off の構築コスト差を計測する（issue #337）。kana 構築（to_kana の全エントリ map）をスキップした分の差を可視化する。構築はロック外（`PrebuiltIndex`）で行われ、ロック保持時間は `apply_prebuilt_index` の O(1) ムーブのみ（migemo 状態に依存しない）。**コンストラクタを名指ししない**——製品が通るのは `from_cache` / `from_tree` であり、`PrebuiltIndex::new` はテストとベンチだけが使う（同関数の doc）。
+/// migemo on/off の構築コスト差を計測する（issue #337）。kana 構築（to_kana の全エントリ map）をスキップした分の差を可視化する。構築はロック外（`PrebuiltIndex`）で行われ、ロック保持時間は `apply_prebuilt_index` の O(1) ムーブのみ（migemo 状態に依存しない）。**コンストラクタを名指ししない**——製品が通るのは `from_material` の 1 つであり、`PrebuiltIndex::new` は `#[cfg(test)]` ゆえ製品から呼べない（同関数の doc）。**この一文は 2 度腐った**（`new` → `from_cache`/`from_tree` → `from_material`）ので、次に触るときは名前を書かず「入口は 1 つ」だけを残すことを検討する。
 fn bench_new_migemo(label: &str, n: usize, migemo_enabled: bool) {
     use std::time::Instant;
     let entries = make_bench_entries_katakana(n);

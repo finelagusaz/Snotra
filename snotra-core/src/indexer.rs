@@ -53,8 +53,7 @@ pub struct AppEntry {
 ///
 /// - `char_masks` / `file_name_char_masks`: この型が在るなら必ず在る
 /// - `lower`: 派生文字列を持たない古い版を読んだときは `None` → Wave 1 計算が走る。
-///   **版の番号を書かない**（`Engine::from_material` の doc と同じ理由で、番号を書くと
-///   版を上げるたびにこの散文だけが腐る）
+///   **版の番号を書かない**（`Engine::from_material` の doc と同じ理由で、番号を書くと版を上げるたびにこの散文だけが腐る）
 ///
 /// `normalized_keys` は持たない——`target_path` からの導出へ移して索引・オンディスクの
 /// 双方から外した（`PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を
@@ -325,8 +324,7 @@ pub struct LoadOrScanResult {
     /// **`Vec<AppEntry>` ではない**——v7 は `target_path` をディスクに持たないので、
     /// 実体へ戻すと削った 312,691 回の確保がその場で復活する。
     ///
-    /// **組のまま渡す。** ほどいた 2 値を持ち回せると、木を伸ばしてマスクを追記し忘れる形が
-    /// 書けるようになる（正本は [`IndexMaterial`] の doc）。
+    /// **組のまま渡す。** ほどいた 2 値を持ち回せると、木を伸ばしてマスクを追記し忘れる形が書けるようになる（正本は [`IndexMaterial`] の doc）。
     pub material: IndexMaterial,
     /// キャッシュが無く（または stale で）フルスキャンが走った場合 true。
     pub cache_changed: bool,
@@ -503,9 +501,9 @@ pub fn load_cached_entries(scan: &[ScanPath], show_hidden_system: bool) -> Optio
     Some(load_cache(hash)?.material.tree().materialize())
 }
 
-/// Same as `load_or_scan`, but returns the full `LoadOrScanResult`: timing stats,
-/// cached bitmasks, and—on cache hit—a `BackgroundRescanTask` for the caller to
-/// run on a background thread.
+/// キャッシュを読む、無ければ全走査して保存する。返すのは [`LoadOrScanResult`]——索引の材料（[`IndexMaterial`]）とフェーズ計測、そしてキャッシュヒット時だけ背景再スキャンのタスクである。
+///
+/// **「`load_or_scan` と同じで、ただし〜」と書いてはならない**（かつてそう書いていた）。その関数は #984 で削除され、この doc だけが実在しない名前を基準に自分を説明する状態になっていた。
 pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> LoadOrScanResult {
     let total_started = Instant::now();
 
@@ -595,10 +593,7 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
     };
 
     LoadOrScanResult {
-        // **cache-miss でも派生データを持って返る。** 保存側が `index.bin` へ書いたのと同じ
-        // 4 本であり、キャッシュヒット時に `load_cache_in` が返すものと**表現まで同じ**である
-        // （どちらも `collapse_lower_pair` = `measure_derived_sharing` を通した `Collapsed`）。
-        // ゆえに `cache_changed` は「どのコンストラクタが選ばれるか」を決めない。
+        // **cache-miss でも派生データを持って返る。** 保存側が `index.bin` へ書いたのと同じ 4 本であり、キャッシュヒット時に `load_cache_in` が返すものと**表現まで同じ**である（どちらも `collapse_lower_pair` = `measure_derived_sharing` を通した `Collapsed`）。ゆえに `cache_changed` は「どのコンストラクタが選ばれるか」を決めない。
         material,
         cache_changed: true,
         stats,
@@ -739,9 +734,7 @@ pub(crate) fn sort_entries_canonical(entries: &mut [AppEntry]) {
 /// 呼び出し側がそのまま索引の材料に使えるようにするためである（`rebuild_and_save` と
 /// cache-miss の枝が実際にそうする）。
 ///
-/// **派生データを持たない材料を返す枝がある。** `config_dir` が引けないときは `index.bin` を
-/// 書かないので派生データも計算しない——常に計算する形にすると、誰も読まない列を全件ぶん
-/// 組み立てることになる。**この分岐がこの性質の正本である**（数え上げは他へ書かない）。
+/// **派生データを持たない材料を返す枝がある。** `config_dir` が引けないときは `index.bin` を書かないので派生データも計算しない——常に計算する形にすると、誰も読まない列を全件ぶん組み立てることになる。**この分岐がこの性質の正本である**（数え上げは他へ書かない）。
 fn save_cache_sorted(entries: Vec<AppEntry>, config_hash: u64) -> IndexMaterial {
     let Some(dir) = Config::config_dir() else {
         return IndexMaterial::from_tree(IndexTree::build(entries));
@@ -895,7 +888,7 @@ pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> IndexMat
 struct LoadCacheResult {
     /// 索引の材料。**v7 は木をディスクから直接読み、旧版は `target_path` から建て直す。**
     ///
-    /// **どの枝も [`IndexMaterial::from_untrusted`] を通す**（構成上正しいのは導出したその足の組だけである）。
+    /// **マスクを持つ版の枝はすべて [`IndexMaterial::from_untrusted`] を通す**（列長を検証する）。**「どの枝も」と書いてはならない**——マスクを持たない版は検証する列が無いので `from_tree` を通る。構成上の正しさで検証を省けるのは導出したその足の組だけである。
     material: IndexMaterial,
     /// `index.bin` をバイト列として読み終えるまでの時間（`LoadOrScanStats::cache_read_ms` へ運ぶ）。
     read_ms: u128,
@@ -1666,7 +1659,7 @@ impl IndexMaterial {
 
     /// **ディスクから読んだ組を検証してから受け取る。** 列長が木と揃わなければ `None` を返し、呼び出し側は全走査へ落ちる。
     ///
-    /// 検証をここに置くのは、`load_cache_in` が [`IndexTree::from_parts`] で**木の整合しか**見ていなかったためである——切り詰められた `index.bin` は「木より短いマスク」として起動経路へ入り、`SearchEngine` の長さ検証は `debug_assert` ゆえ release で消えて初回検索の添字外 panic になっていた。**版が読めたことは中身が健全であることを意味しない**（`from_parts` の doc と同じ理屈）。
+    /// **見るのは列の長さだけである。** マスクの中身が正しいかは検証できない（正しさの定義が「その木から導出した値と一致する」であり、それを確かめるには導出し直すことになる——検証のために削減を捨てる形になる）。検証をここに置くのは、`load_cache_in` が [`IndexTree::from_parts`] で**木の整合しか**見ていなかったためである——切り詰められた `index.bin` は「木より短いマスク」として起動経路へ入り、`SearchEngine` の長さ検証は `debug_assert` ゆえ release で消えて初回検索の添字外 panic になっていた。**版が読めたことは中身が健全であることを意味しない**（`from_parts` の doc と同じ理屈）。
     pub(crate) fn from_untrusted(tree: IndexTree, masks: CachedMasks) -> Option<Self> {
         let n = tree.len();
         if masks.char_masks.len() != n || masks.file_name_char_masks.len() != n {

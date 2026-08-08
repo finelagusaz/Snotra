@@ -228,7 +228,7 @@ fn measure_path_query_frame_cost() {
     println!("  （µs。60fps の 1 フレームは 16,700 µs）");
 }
 
-/// 空クエリ（窓を開いた瞬間・クエリ消去時）に走る `recent_history` の実コスト。
+/// `recent_history` の実コスト。**窓を開いた瞬間・クエリ消去時には走らない**（頻度と呼び出し元の正本は `SearchEngine::recent_history` の doc）。**この計測が測るのは「呼ばれたときの 1 回」である。**
 ///
 /// `recent_launches` が返すのは高々 `recent_limit` 件（既定 8）だが、現行の実装は照合表を
 /// **全エントリぶん**組み立てる。`normalized_keys` を廃止するなら、この経路も

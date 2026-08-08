@@ -4,10 +4,7 @@
 //! [`JP_FONT_BYTES`] は `OnceLock`（**set-once・never-clear**）を厳守する: [`jp_font_bytes`]
 //! が返す参照は `transmute` で `'static` 化しており、その健全性はこの不変条件だけを根拠に
 //! 成り立つ。再 set・クリアの経路を足してはならない。
-//! フォント登録は **3 枝**（#532 SU4 の 2 枝に #689 が 1 枝を足した）: config font_family が
-//! 解決し CJK 非被覆なら user_font 先頭 + jp_font fallback（WebView2 CSS スタック parity）、
-//! 解決し**被覆するなら user_font 単一**（jp_font を積まない・#689）、解決失敗時は jp_font
-//! 単一。いずれも index 0 へ `insert` する（#579 の元不変条件）。判定は `font_covers_cjk`。
+//! フォント登録の枝は次のとおり（#532 SU4 の形に #689 が 1 枝を足した）: config font_family が解決し CJK を**カバーしない**なら user_font 先頭 + jp_font fallback（WebView2 CSS スタック parity）、解決し**カバーするなら user_font 単一**（jp_font を積まない・#689）、解決失敗時は jp_font 単一。いずれも index 0 へ `insert` する（#579 の元不変条件）。判定は `font_covers_cjk`。**枝を列挙するのは、この index 0 の不変条件が枝ごとに同じであることを一目で見せるためである**（正本の代わりの写しではない）。
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};

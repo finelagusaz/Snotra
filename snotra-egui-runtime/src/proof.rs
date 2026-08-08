@@ -20,8 +20,7 @@ use std::marker::PhantomData;
 /// 構築を防ぎ、後者は `!Send + !Sync` にして**参照ごと別スレッドへ持ち出すこと**を防ぐ
 /// （`on_event_loop` が要求する `F: Send` のクロージャにも `std::thread::spawn` にも入らない）。
 ///
-/// 構築点は 2 つだけである: `RuntimeFrame`（フレームの中）と `on_event_loop`（marshalling した
-/// タスクの中）。**3 つ目を足すときは、その経路が本当にイベントループ上かを一次証拠で示すこと。**
+/// 構築点はここに挙げるものに限る: [`crate::RuntimeFrame`]（フレームの中）と [`on_event_loop`]（marshalling したタスクの中）。**足すときは、その経路が本当にイベントループ上かを一次証拠で示すこと。**
 pub struct EventLoopProof {
     _not_send: PhantomData<*const ()>,
 }
@@ -38,11 +37,7 @@ impl EventLoopProof {
 
 /// フレームの外からイベントループスレッドへ入る唯一の口。
 ///
-/// **遅延 primitive ではない。** `AppHandle::run_on_main_thread` は
-/// `tauri-runtime-wry` の `send_user_message` へ落ち、**イベントループスレッドから呼ぶと
-/// その場で同期・再入的に実行される**（`src/lib.rs:235-255` の `current_thread().id() ==
-/// context.main_thread_id` 分岐）。別スレッドからは `PostMessageW` で post して即座に戻る。
-/// ゆえにフレーム内から出た要求は今日と同じフレーム内順序を保つ。
+/// **遅延 primitive ではない。** `AppHandle::run_on_main_thread` は `tauri-runtime-wry` の `send_user_message` へ落ち、**イベントループスレッドから呼ぶとその場で同期・再入的に実行される**（`src/lib.rs:235-255` の `current_thread().id() == context.main_thread_id` 分岐）。別スレッドからは `PostMessageW` で post して即座に戻る。ゆえにフレーム内から出た要求は今日と同じフレーム内順序を保つ。
 ///
 /// **hidden な窓でも走る。** Task の受け口は tao が別に建てる `thread_msg_target`
 /// （0×0・`WS_EX_LAYERED` ゆえ不可視・イベントループの寿命と同じ）であり、アプリ窓の可視性とは

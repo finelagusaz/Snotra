@@ -808,8 +808,7 @@ impl DerivedColumns {
 
 /// エントリから木と派生 4 本を導出する。**I/O を持たない。**
 pub(crate) fn derive_columns(entries: Vec<AppEntry>) -> DerivedColumns {
-    // マスクを計算してキャッシュに含める。起動時に SearchEngine::new_with_cached_masks()
-    // がマスク再計算をスキップできるようにする。
+    // マスクをここで計算するのは、受け取った側が再計算せずに索引の表現へそのまま使うためである（受け取る経路の正本は `LoadOrScanResult::cached_masks` の doc であり、ここで数えない）。
     let lower_names: Vec<String> = entries.iter().map(|e| to_lower_folded(&e.name)).collect();
     let lower_file_names: Vec<Option<String>> = entries
         .iter()

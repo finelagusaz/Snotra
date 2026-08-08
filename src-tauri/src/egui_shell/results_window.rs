@@ -209,13 +209,7 @@ impl ResultsWindow {
     /// `layout::results_height_phys` が担い、ここはその結果を適用するだけである
     /// （`ceil` を窓の型へ持ち込むとユニットテストが届かなくなる）。
     ///
-    /// **この窓の `scale_factor()` を読み、その場で `ResultsScale` へ包む。** #835 のクランプ
-    /// 撤去で「results 窓の scale を読む箇所」は一度消え、`layout::results_top_y` の doc は
-    /// 「同型の値が 1 種類になったので取り違えは構造的に起こらない」と記していた。案 3 で
-    /// 読みは戻ったが、**残余としては戻していない**——`MainScale` / `ResultsScale` に型で
-    /// 分かれており、取り違えはコンパイルが通らない（実測: 双方向で `expected ResultsScale,
-    /// found MainScale` / その逆）。**読む窓と型は同じ式で決めること**——先に `f64` へ落として
-    /// 後から包む書き方にすると、包む場所が読む場所から離れて取り違えが戻る。
+    /// **この窓の `scale_factor()` を読み、その場で `ResultsScale` へ包む。** #835 のクランプ撤去で「results 窓の scale を読む箇所」は一度消え、`layout::results_top_y` の doc は「同型の値が 1 種類になったので取り違えは構造的に起こらない」と記していた。案 3 で読みは戻ったが、**残余としては戻していない**——`MainScale` / `ResultsScale` に型で分かれており、取り違えはコンパイルが通らない（実測: 双方向で `expected ResultsScale, found MainScale` / その逆）。**読む窓と型は同じ式で決めること**——先に `f64` へ落として後から包む書き方にすると、包む場所が読む場所から離れて取り違えが戻る。
     ///
     /// **幅も高さも `layout::results_size_phys` の 1 つの口を通す。** 幅は `round`（行の描画に
     /// 影響しないので足りる。`ceil` にすると幅だけが 1px ずつ育つ）、高さは `ceil`。

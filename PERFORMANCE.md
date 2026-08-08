@@ -1301,6 +1301,7 @@ migemo の設定に依らない（`shared_file_name_flag_is_measured_not_inferre
 
 ## 計測と受け入れ基準
 
+- **計器が測る枝と、変更が触る枝が同じか先に確かめる**（反復 11）。`tests/memory_footprint.rs` の `measure_real_index_footprint` は開発機に `index.bin` が在る限り **cache-HIT 枝しか測らない**ので、cache-miss を触る変更は素直に走らせると差分ゼロになり、**出力の見た目は成功時とまったく同じ**である。cache-miss を測るには `SNOTRA_CONFIG_DIR` を temp へ向け `config.toml` だけ置く（`index.bin` は置かない）——scan 集合は実物のまま初回起動を再現でき、実運用の `index.bin` も無傷で済む。**A 側の標本は実装前にしか取れない**
 - 変更ごとに「入力 → 検索結果反映」までの遅延を観測し、体感を先に確認する
 - 体感改善後、必要なら p50/p95 を追加計測して次のボトルネックを特定する
 - 原則として「待ち時間」「重複」「計算量」「描画」の順を崩さない

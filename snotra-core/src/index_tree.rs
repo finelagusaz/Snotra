@@ -543,8 +543,12 @@ mod tests {
     ///
     /// - 列の長さ不一致 → 組み替えの `zip` が短い側で止まり、**索引が黙って短くなる**
     /// - `aux` が範囲外 → 組み立てが添字 panic（release は `panic="abort"` ＝ 起動不能）
-    /// - `parent >= i` → [`walk_to_root`] の停止性が崩れる（**止まらない**）
-    /// - 深さが [`CHAIN_CAP`] 以上 → `chain` 配列の範囲外
+    /// - `parent >= i` → `walk_to_root` の停止性が崩れる（**止まらない**）
+    /// - 深さが `CHAIN_CAP` 以上 → `chain` 配列の範囲外
+    ///
+    /// （角括弧のリンクを使わないのは、`#[cfg(test)]` 内の doc を rustdoc が一切見ないため
+    /// である——`cargo doc` の intra-doc link 検査に載らないので、書けば「検査済みの参照」に
+    /// 見えるだけの飾りになる。）
     ///
     /// **版が読めたことは中身が健全であることを意味しない。** 5 条件を 1 本ずつ潰すのは、
     /// 1 つ消しても残りが通るせいで**検査の欠落が緑のまま残る**ためである。
@@ -567,11 +571,20 @@ mod tests {
         );
 
         // 3. `table` が空。0 番の空文字は `aux` の既定値が指す先であり、必ず居る
-        //    （[`IndexTree::empty`] も空にしない）。
-        let (names, is_folder, parent, aux, _) = healthy_parts();
+        //    （`IndexTree::empty` も空にしない）。**n = 0 の形で見る**——エントリがあると
+        //    `aux[i] >= table.len()` の検査が先に弾いてしまい、`table.is_empty()` を消しても
+        //    このケースは緑のままになる（列が空なら aux のループは 1 度も回らない）。
         assert!(
-            IndexTree::from_parts(names, is_folder, parent, aux, Vec::new(), false).is_none(),
-            "空の table を受理してはならない"
+            IndexTree::from_parts(
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                true
+            )
+            .is_none(),
+            "空の table を受理してはならない（0 件でも 0 番の空文字は要る）"
         );
 
         // 4. `parent >= i`（ここでは自己参照）。**停止性の唯一の根拠がこれである。**

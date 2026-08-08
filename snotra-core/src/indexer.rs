@@ -1684,7 +1684,12 @@ impl EntryRepr<'_> {
                 parent,
                 aux,
                 table,
-                ..
+                // **`..` を書かない。** 値は読まない（旗は真偽によらず 1 バイト）が、列を
+                // 足したときにここを触り忘れたらコンパイルを止めるのが網羅的分解の役目
+                // である——`footprint_rows` と同じ規律（`snotra-core/CLAUDE.md` の
+                // search.rs 節）。残余の検算は `#[ignore]` の計器でしか走らないので、
+                // 落とすとコンパイラの検出が手作業へ格下げされる。
+                sorted_by_path: _,
             } => vec![
                 CacheByteRow {
                     label: "木: 長さプレフィックス（5 列）",
@@ -2353,7 +2358,7 @@ mod tests {
     /// **v7 化の前に実際に書かれていた v6 バイト列**（`target_path` を実体で全件持つ形式）。
     /// `config_hash` は 12345、entries は Firefox / Projects / docs の 3 件。
     ///
-    /// 末尾 3 バイト `0, 1` の前後は `LowerFileName` のタグである（割り当ては [`GOLDEN_V7`] の
+    /// 末尾 3 バイト `0, 1` の前後は `LowerFileName` のタグである（割り当ては `GOLDEN_V7` の
     /// doc が正本。v6 と v7 で同じであり、変えれば既存の `index.bin` を無言で誤読する）。
     const GOLDEN_V6: &[u8] = &[
         73, 78, 68, 88, 6, 0, 0, 0, 128, 226, 207, 170, 6, 3, 7, 70, 105, 114, 101, 102, 111, 120,

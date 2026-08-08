@@ -167,10 +167,10 @@ impl PathStore {
     /// `i` のフルパスを**原文のまま**組み立てる（小文字化も `/` → `\` 変換も trim もしない）。
     ///
     /// 結果は元の `AppEntry.target_path` とバイト一致する。合成 fixture での保証は
-    /// `search/tests/path.rs` の `path_store_cursor_matches_full_rebuild` が常に持ち、実 `index.bin`
-    /// の全件（実測 312,377 件）での照合は同ファイルの
-    /// `path_store_raw_matches_target_path_over_real_index` が受け持つ——**後者は実インデックスの
-    /// 無い環境（CI）では自動スキップする**ので、開発機で走る corpus であって保証ではない。
+    /// `search/tests/path.rs` の `path_store_cursor_matches_full_rebuild` が常に持ち、実データの
+    /// 全件での照合は同ファイルの `path_store_raw_matches_target_path_over_real_index` が
+    /// 受け持つ——**後者は `#[ignore]` で、原文をファイルシステムの走査から取る**（理由は
+    /// [`raw_path_into`] の doc）。開発機で明示的に走らせる corpus であって保証ではない。
     ///
     /// **規則は [`raw_path_into`] が唯一持つ。** ディスク側の並べ方（[`IndexTree`]）も同じ
     /// 実装を通るので、両者がずれることは表現できない。

@@ -94,8 +94,13 @@ pub(crate) fn walk_to_root<N: TreeNodes + ?Sized>(
 /// 遅くなるので挙動テストでは捕まらない）。合成 fixture での保証は
 /// `search/tests/path.rs` の `path_store_cursor_matches_full_rebuild` が常に持ち、実データの
 /// 全件照合は同ファイルの `path_store_raw_matches_target_path_over_real_index` が受け持つ
-/// ——**後者は実インデックスの無い環境（CI）では自動スキップする**ので、開発機で走る
+/// ——**後者は `#[ignore]` で、原文をファイルシステムの走査から取る**（`index.bin` から
+/// 取ると組み直し同士の比較になり、どれだけ壊れていても落ちない）。開発機で明示的に走らせる
 /// corpus であって保証ではない。
+///
+/// **digest の 2 実装が一致することは別に固定してある**（`indexer` の
+/// `digest_over_tree_matches_digest_over_scanned_entries`）——そちらは合成 fixture ゆえ
+/// CI でも走り、組み直しが digest を通して同じ値になることを毎回検算する。
 #[inline]
 pub(crate) fn raw_path_into<N: TreeNodes + ?Sized>(nodes: &N, buf: &mut String, i: usize) {
     let (root, chain, depth) = walk_to_root(nodes, i);
@@ -170,6 +175,15 @@ impl IndexTree {
     ///
     /// どれも「読めたが壊れている」形なので、`None` を返して呼び出し側を**再走査へ落とす**。
     /// 深さの検算は `parent < i` のおかげで 1 パスで済む（親の深さは必ず先に確定している）。
+    ///
+    /// **`sorted_by_path` だけは検証しない。意図的な非対称であり、被害範囲はここに書く。**
+    /// 確かめるにはフルパスを全件組み直して比べるしかなく（実測 並列 4.9 ms / 逐次 24.9 ms）、
+    /// それは**この旗が存在する理由そのもの**——組み立てずに済ませること——を打ち消す。
+    /// 誤って `true` が入ったときの帰結は他の 4 つと違って局所的である: `cmp_paths` が
+    /// index 比較の高速路へ入り、**同スコアのエントリどうしの tie-break だけ**がパス順でなく
+    /// 格納順になる。エントリは消えず、panic も再スキャンの暴走も起きず、順序は安定している。
+    /// 上の 4 つ（索引が短くなる・添字 panic・停止しない）とは桁が違うので、全件の組み直しを
+    /// 毎起動払う側には倒さない。
     pub fn from_parts(
         names: Vec<String>,
         is_folder: Vec<bool>,
@@ -344,6 +358,9 @@ impl IndexTree {
         }
     }
 
+    /// PATH スキャンが見つけたエントリを、**親を解決せずに根として**足す。
+    ///
+    /// 根はフルパスを実体で持つので、解決しないぶんの損は PATH の 101 件ぶん
     /// （合計およそ 5 KiB）にしかならない一方、解決すれば「パス → index」の索引を
     /// 全件ぶん建てることになる。反復 9 が PATH スキャンで却下したのと同じ比率の誤りである。
     ///
@@ -354,19 +371,32 @@ impl IndexTree {
         if entries.is_empty() {
             return;
         }
+        // **`self` を網羅的に分解してから積む。** 手で 5 本を push する形は、列を 1 本足した
+        // ときにここだけ触り忘れてもコンパイルが通る——`empty` / `build` / `from_parts` は
+        // 構造体リテラルゆえコンパイラが捕まえるのに、この関数だけが漏れる。積み損ねた列は
+        // `PathStore::adopt` の連鎖 `zip` が最短で黙って切り、`debug_assert` は release で
+        // 消えるので、**PATH 経由でしか届かないプログラムが検索から静かに消える**。
+        let Self {
+            names,
+            is_folder,
+            parent,
+            aux,
+            table,
+            sorted_by_path,
+        } = self;
         for entry in entries {
             let AppEntry {
                 name,
                 target_path,
-                is_folder,
+                is_folder: entry_is_folder,
             } = entry;
-            self.table.push(target_path);
-            self.names.push(name);
-            self.is_folder.push(is_folder);
-            self.parent.push(NO_PARENT);
-            self.aux.push((self.table.len() - 1) as u32);
+            table.push(target_path);
+            names.push(name);
+            is_folder.push(entry_is_folder);
+            parent.push(NO_PARENT);
+            aux.push((table.len() - 1) as u32);
         }
-        self.sorted_by_path = false;
+        *sorted_by_path = false;
     }
 
     /// `i` の**末尾成分**を、`indexer` の篩と同じ規則で正規化して `buf` へ書く。
@@ -378,10 +408,14 @@ impl IndexTree {
     ///
     /// **根だけは別の腕を通る。** 根は `table` にフルパスを持つため、そこから末尾成分を
     /// 切り出す既存の経路（`indexer` 側）へ落とす。実データで根は約 200 件（0.06%）
-    /// ——**ほとんど通らない腕ゆえ、壊れても静かである**。両腕が
-    /// `normalize_file_name_key_into(target_path)` と一致することは
-    /// `index_tree_file_key_matches_normalize_file_name_key_over_frozen_v6` が実データの
-    /// 全件で固定する。
+    /// ——**ほとんど通らない腕ゆえ、壊れても静かである**。
+    ///
+    /// 両腕が `normalize_file_name_key_into(target_path)` と一致することは
+    /// `file_key_matches_normalize_file_name_key_on_both_arms`（合成 fixture・根と非根を
+    /// 両方通し、各腕が実際に通ったことも数える）と、`search/tests/path.rs` の
+    /// `index_tree_file_key_matches_normalize_file_name_key_over_real_index`（実データ全件・
+    /// 開発機限定）が固定する。**合成のほうが機構としての保証を持つ**——corpus は実インデックス
+    /// が無ければ自動スキップし、根は実データで 0.06% しか居ない。
     pub(crate) fn file_key_into(&self, buf: &mut String, seg: &mut String, i: usize) {
         if self.parent[i] == NO_PARENT {
             crate::indexer::normalize_file_name_key_into(buf, self.table_str(self.aux[i]));
@@ -613,6 +647,74 @@ mod tests {
             )
             .is_none(),
             "CHAIN_CAP 以上の深さを受理してはならない"
+        );
+    }
+
+    /// **PATH の篩のキーは、両腕とも `normalize_file_name_key_into` と一致しなければならない。**
+    ///
+    /// 篩は `reject_existing` が既存エントリを素通しさせないための唯一の機構であり、
+    /// ずれると `by_file_key.get()` が外れて**索引に既にある PATH 実行ファイルが二重に
+    /// 入る**（件数が増えるだけで panic も失敗も起きない）。
+    ///
+    /// **両腕が実際に通ったことを数える。** 非根の腕は実データの 99.94% を占めるのに、
+    /// `scan_path_dirs_*` の fixture はどれも 1 要素の木を渡すので**その 1 件は必ず根になる**
+    /// ——つまり非根の腕はどのテストからも実行されていなかった。腕ごとの件数を assert しないと、
+    /// 木の建ち方が変わって全件が根に落ちてもこのテストは緑のままになる。
+    #[test]
+    fn file_key_matches_normalize_file_name_key_on_both_arms() {
+        // `target_path` のバイト昇順。`name` は indexer の導出規則（folder は `file_name()`、
+        // file は `file_stem()`）に合わせる——`resolve_one` は `tail.strip_prefix(name)` で
+        // 拡張子を切るので、規則がずれると親が解決されず全件が根になる。
+        let entries = [
+            ("Projects", "C:\\Projects", true),
+            // 名前に空白を含む folder（拡張子は空文字）。
+            ("My App", "C:\\Projects\\My App", true),
+            ("run", "C:\\Projects\\My App\\run.exe", false),
+            // 非 ASCII の名前 + 大文字の拡張子（小文字化の両分岐を通す）。
+            ("Ünïcode", "C:\\Projects\\Ünïcode.LNK", false),
+            ("apps", "C:\\apps", true),
+            // 区切りの直後に空白があるパス（`normalize_file_name_key_into` の doc が
+            // 「写像と `trim` が可換」を前提として名指している形）。
+            (" tool", "C:\\apps\\ tool.EXE", false),
+        ];
+        let want: Vec<String> = entries
+            .iter()
+            .map(|(_, path, _)| {
+                let mut b = String::new();
+                crate::indexer::normalize_file_name_key_into(&mut b, path);
+                b
+            })
+            .collect();
+
+        let tree = IndexTree::build(
+            entries
+                .iter()
+                .map(|(name, path, is_folder)| AppEntry {
+                    name: (*name).to_string(),
+                    target_path: (*path).to_string(),
+                    is_folder: *is_folder,
+                })
+                .collect(),
+        );
+
+        let (mut roots, mut children) = (0usize, 0usize);
+        let (mut buf, mut seg) = (String::new(), String::new());
+        for (i, (_, path, _)) in entries.iter().enumerate() {
+            if tree.parent[i] == NO_PARENT {
+                roots += 1;
+            } else {
+                children += 1;
+            }
+            tree.file_key_into(&mut buf, &mut seg, i);
+            assert_eq!(buf, want[i], "篩のキーが正規化とずれている（{path}）");
+        }
+        assert_eq!(
+            roots, 2,
+            "根の腕が想定どおり通っていない（fixture の前提崩れ）"
+        );
+        assert_eq!(
+            children, 4,
+            "非根の腕が想定どおり通っていない（fixture の前提崩れ）"
         );
     }
 }

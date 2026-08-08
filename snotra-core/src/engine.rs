@@ -116,9 +116,15 @@ impl Engine {
     }
 
     /// キャッシュヒット時に使用するコンストラクタ。
-    /// - v6 ヒット: 潰し済みの派生文字列を渡し、Wave 1/2 と共有判定をすべてスキップ
-    /// - v5/v4 ヒット: 未測定の派生文字列を渡し Wave 1/2 をスキップ（共有判定は走る）
-    /// - v3 フォールバック: ビットマスクのみ渡し Wave 1 は SearchEngine 内で実行
+    ///
+    /// **版の番号を書かない。** 分岐を決めるのは `CachedMasks.lower` の variant であって版では
+    /// なく、番号を書くと版を上げるたびにこの散文だけが腐る（`INDEX_CACHE_VERSION` の doc が
+    /// 「現行は v5・実運用点は v6 のまま」というそれ自体矛盾した文が残った事例を記録している）。
+    /// どの版がどの variant を返すかの正本は `indexer::load_cache_in` の分岐である。
+    ///
+    /// - `Collapsed`: 潰し済みの派生文字列を渡し、Wave 1/2 と共有判定をすべてスキップ
+    /// - `Raw`: 未測定の派生文字列を渡し Wave 1/2 をスキップ（共有判定は走る）
+    /// - `None`: ビットマスクのみ渡し Wave 1 は SearchEngine 内で実行
     pub fn new_from_cache(
         tree: IndexTree,
         cached_masks: CachedMasks,

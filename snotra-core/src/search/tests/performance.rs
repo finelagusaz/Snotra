@@ -270,10 +270,12 @@ fn bench_new_migemo_on_off() {
 /// なって案が成立しない。
 ///
 /// **忠実性はここでは測らない。** 原文とのバイト一致は `search/tests/path.rs` の
-/// [`super::path::path_store_raw_matches_target_path_over_real_index`] が実インデックス全件で
-/// 持つ。digest が混ぜるのは `name` / `target_path` / `is_folder` の 3 つだけなので、
-/// `target_path` がバイト一致し他の 2 つが不変なら digest の値は**構成上**一致する。ここが
-/// 測るのは時間だけである。
+/// [`super::path::path_store_raw_matches_target_path_over_real_index`] が実データ全件で持つ
+/// （`#[ignore]`・原文はファイルシステムの走査から取る）。digest が混ぜるのは
+/// `name` / `target_path` / `is_folder` の 3 つだけなので、`target_path` がバイト一致し
+/// 他の 2 つが不変なら digest の値は**構成上**一致する。**その「構成上」を実際に検算するのは
+/// `indexer` の `digest_over_tree_matches_digest_over_scanned_entries`** であり、そちらは
+/// 合成 fixture ゆえ CI でも走る。ここが測るのは時間だけである。
 ///
 /// 並列版の刻みは digest の `CHUNK` と同じ 8192 に揃えてある——別の刻みで測ると、実際に
 /// 走らせる形とは違うものの数字を報告することになる。

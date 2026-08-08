@@ -356,8 +356,9 @@ struct IndexCache<'a> {
     aux: Cow<'a, [u32]>,
     /// 拡張子と、親を持たないエントリのフルパスの intern 表。
     table: Cow<'a, [String]>,
-    /// 保存時に測った整列の旗。**読む側は [`crate::index_tree::IndexTree::from_parts`] の
-    /// 検証を通してから使う。**
+    /// 保存時に測った整列の旗。**5 列と違い、読む側は検証せずそのまま信じる**——
+    /// 理由と被害範囲は [`crate::index_tree::IndexTree::from_parts`] の doc に書いてある
+    /// （壊れた値の帰結は同スコアの tie-break の順序に閉じる）。
     sorted_by_path: bool,
     config_hash: u64,
     char_masks: Cow<'a, [u64]>,
@@ -494,26 +495,11 @@ pub fn load_or_scan(scan: &[ScanPath], show_hidden_system: bool) -> (IndexTree, 
 #[doc(hidden)]
 pub fn load_cached_entries(scan: &[ScanPath], show_hidden_system: bool) -> Option<Vec<AppEntry>> {
     let hash = compute_config_hash(scan, show_hidden_system);
-    Some(materialize_entries(&load_cache(hash)?.tree))
-}
-
-/// 木を `Vec<AppEntry>` へ戻す（`target_path` を組み直して実体化する）。
-///
-/// **製品の起動経路はこれを通らない。** 実体化は木が消したはずの 312,691 個の `String` を
-/// その場で作り直すので、通せば削減が丸ごと戻る。用途は corpus テストと、旧形式との
-/// 突き合わせだけである。
-fn materialize_entries(tree: &IndexTree) -> Vec<AppEntry> {
-    let mut buf = String::new();
-    (0..tree.len())
-        .map(|i| {
-            raw_path_into(tree, &mut buf, i);
-            AppEntry {
-                name: tree.names[i].clone(),
-                target_path: buf.clone(),
-                is_folder: tree.is_folder[i],
-            }
-        })
-        .collect()
+    // **実体化の規則は `IndexTree::materialize` の 1 つである。** ここに写しを置いていた
+    // ときは、木 →`Vec<AppEntry>` の規則が 2 部出荷されていた——片方に触れば corpus テストは
+    // 製品が決して見ないデータを検証することになる（`index_tree.rs` の `//!` が「辿る規則は
+    // 1 つ」と定めているのと同じ理屈で、戻す規則も 1 つでなければならない）。
+    Some(load_cache(hash)?.tree.materialize())
 }
 
 /// Same as `load_or_scan`, but returns the full `LoadOrScanResult`: timing stats,
@@ -1397,9 +1383,15 @@ fn reject_existing(candidates: Vec<PathCandidate>, existing: &IndexTree) -> Vec<
 
     let mut rejected = vec![false; candidates.len()];
     // 確保を暖まらせて使い回す（`normalize_entry_key_into` の doc と同じ形）。
+    //
+    // **生パスと正規化キーは別の変数に持つ。** 1 本を `mem::take` で貸し借りする形も書けるが、
+    // `take` は容量 0 の `String` を置き去りにするので `normalize_entry_key_into` が篩を通る
+    // たびに確保し直し、**この行が意図している使い回しがまさに消える**。読む側も、1 つの名前が
+    // 生パスと正規化キーのどちらを持つ瞬間なのかを 3 文追わされる。
     let mut file_buf = String::new();
     let mut seg_buf = String::new();
-    let mut full_buf = String::new();
+    let mut raw_buf = String::new();
+    let mut norm_buf = String::new();
     for i in 0..existing.len() {
         // **篩はフルパスを組み立てない。** 木では末尾成分が `name` + 拡張子で直接取れるので、
         // ここが 312,691 回走っても根まで辿る必要が無い（`IndexTree::file_key_into`）。
@@ -1409,15 +1401,13 @@ fn reject_existing(candidates: Vec<PathCandidate>, existing: &IndexTree) -> Vec<
         };
         // **篩を通った分だけフルパスを組み立てる。** 通るのは PATH 上の実行ファイルと
         // 同名のエントリだけなので、組み立ては全件ではなくその数に比例する。
-        raw_path_into(existing, &mut full_buf, i);
-        let full_path = std::mem::take(&mut full_buf);
-        normalize_entry_key_into(&mut full_buf, &full_path);
+        raw_path_into(existing, &mut raw_buf, i);
+        normalize_entry_key_into(&mut norm_buf, &raw_buf);
         for &i in idxs {
-            if candidates[i].key == full_buf {
+            if candidates[i].key == norm_buf {
                 rejected[i] = true;
             }
         }
-        full_buf = full_path;
     }
 
     // **`zip` で対応を構造にする。** 外部イテレータで駆動する `retain` でも同じ結果になるが、
@@ -3009,6 +2999,51 @@ mod tests {
     // 分けて**置く。まとめると、落としたフィールドがどれか失敗名から分からなくなる
     // ——digest が `is_folder` を混ぜ忘れる類の誤りは、確率ではなく**確定で**その種の変更を
     // 永久に見逃すため、名指しできることに意味がある（`entries_digest` の doc）。
+
+    /// **`DigestSource` の 2 実装が同じ値を出すこと。ここが背景再スキャンの心臓である。**
+    ///
+    /// 比べる 2 辺は別々の実装を通る——走査側は `&[AppEntry]`（`target_path` を実体で持つ）、
+    /// ロード側は [`IndexTree`]（持たずに組み直す）。**main では実装が 1 つで、食い違いは
+    /// 構造的に起こりえなかった**が、木を導入した時点でそれは失われた。1 件でも値がずれれば
+    /// `changed` が毎起動 true になり、16.5 MiB の `index.bin` を書き直し、
+    /// `RescanOutcome::Changed` がアイコンキャッシュを捨てる——**検索結果は正しいまま**なので
+    /// 挙動テストは 1 本も落ちない。
+    ///
+    /// 木を通る形を fixture に全部載せる: 根 / 非根 / 拡張子あり・なし / folder / file /
+    /// 非 ASCII / 空白。**根だけの fixture では意味が無い**——根は `table` のフルパスを
+    /// そのまま返すので、組み直しの規則を 1 つも通らない。
+    #[test]
+    fn digest_over_tree_matches_digest_over_scanned_entries() {
+        let entries: Vec<AppEntry> = [
+            ("Projects", "C:\\Projects", true),
+            ("My App", "C:\\Projects\\My App", true),
+            ("run", "C:\\Projects\\My App\\run.exe", false),
+            ("Ünïcode", "C:\\Projects\\Ünïcode.LNK", false),
+            ("apps", "C:\\apps", true),
+            ("tool", "C:\\apps\\tool.exe", false),
+        ]
+        .iter()
+        .map(|(name, path, is_folder)| AppEntry {
+            name: (*name).to_string(),
+            target_path: (*path).to_string(),
+            is_folder: *is_folder,
+        })
+        .collect();
+
+        let tree = IndexTree::build(entries.clone());
+        // fixture の前提: 木が実際に枝を持っていること（全件が根だと組み直しを検査しない）。
+        assert!(
+            tree.parent
+                .iter()
+                .any(|p| *p != crate::index_tree::NO_PARENT),
+            "fixture が全件根になっている（親の解決が効いていない）"
+        );
+        assert_eq!(
+            digest_over(&tree),
+            entries_digest(&entries),
+            "木とスキャン結果の digest がずれている——再スキャンが毎起動走り続ける"
+        );
+    }
 
     #[test]
     fn entries_digest_identical() {

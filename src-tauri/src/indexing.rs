@@ -115,16 +115,27 @@ fn drain_index(app_handle: &AppHandle) {
                 // Prune stale icons — retain only entries present in the current index.
                 // Unlike clear(), this preserves valid icons and avoids re-extraction cost.
                 if let Some(c) = current.as_mut() {
-                    // 木はフルパスを持たないので組み直す。**バッファを使い回す**
-                    // ——アイコンの剪定は索引全件を走るので、1 件ごとの確保が乗る。
+                    // 木はフルパスを持たないので組み直す。**バッファを使い回し、集合は
+                    // 索引側ではなくキャッシュ側で作る。**
+                    //
+                    // 索引の全パスを所有 `String` の集合にすると、312,625 件ぶんの確保が
+                    // 一時的に積み上がる——**v7 がディスクから消したのと同じ額**（約 36 MiB）を
+                    // 剪定のためだけに作り直すことになる。アイコンキャッシュは
+                    // `Config::icon_cache_cap()` で頭打ち（既定 1,000 件）なので、索引の側は
+                    // 走るだけにして、確保はヒットしたぶん（高々 cap 件）に限る。
+                    //
+                    // 意味は変わらない: `alive` は「キャッシュのキー ∩ 索引のパス」であり、
+                    // `retain_paths` の述語（キーが索引に在るか）と同値である。
                     let mut buf = String::new();
-                    let valid: std::collections::HashSet<String> = (0..tree.len())
-                        .map(|i| {
-                            tree.path_into(&mut buf, i);
-                            buf.clone()
-                        })
-                        .collect();
-                    c.retain_paths(&valid);
+                    let mut alive: std::collections::HashSet<String> =
+                        std::collections::HashSet::new();
+                    for i in 0..tree.len() {
+                        tree.path_into(&mut buf, i);
+                        if c.get(&buf).is_some() {
+                            alive.insert(buf.clone());
+                        }
+                    }
+                    c.retain_paths(&alive);
                 }
             } else {
                 // show_icons disabled — drop the cache entirely

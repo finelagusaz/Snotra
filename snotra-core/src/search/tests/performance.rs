@@ -350,5 +350,7 @@ fn measure_raw_path_rebuild_cost_over_real_index() {
 // doc に書いた撤去条件である**。数字と判定は `PERFORMANCE.md`「試みたが機能しない:
 // アイコン剪定を篩へ通す」を正本とする。
 //
-// **再び測る必要が生じるのは、剪定が `IconCacheState` の lock の中へ戻るときだけである。**
-// lock の外に在る限り、あの 5 形の差は背景スレッドの CPU でしかない。
+// **再び測る値打ちが出る条件は 2 通りある**（どちらも `PERFORMANCE.md` の同節が正本）:
+// 剪定が `IconCacheState` の lock の中へ戻るときと、背景再構築の壁時計そのものを削りに
+// いくときである。lock の外に在る限り 5 形の差は背景スレッドの CPU でしかないが、
+// **その CPU を削る候補は同じ候補表に現に載っている**（`reject_existing` の rayon 並列化）。

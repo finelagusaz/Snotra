@@ -118,10 +118,7 @@ fn drain_index(app_handle: &AppHandle) {
                 // **判定は lock の外で行う。** 索引の全件走査（312,625 件・実測 36 ms）を
                 // lock の中で回すと、表示中のアイコン取得（`commands::icon::load_icon_pngs`）が
                 // その間ずっと待つ。lock を持つのは snapshot と除去の一瞬だけにする。
-                //
-                // **安全なのは述語が「落とす集合」だからである**（正本は
-                // `IconCache::remove_paths` の doc）——窓の間に挿入されたキーは
-                // `dead_icon_paths` の入力に居ないので落ちない。
+                // **その窓が安全である理由と受容残余は `IconCache::remove_paths` の doc が正本。**
                 let keys = icon_state
                     .lock()
                     .unwrap()
@@ -129,9 +126,15 @@ fn drain_index(app_handle: &AppHandle) {
                     .map(icon::IconCache::keys);
                 if let Some(keys) = keys {
                     let dead = dead_icon_paths(material.tree(), keys);
+                    // **消すものが無ければ lock を取らない。** アプリが 1 つも消えていない
+                    // 通常の再構築では `dead` は空で、そこで lock を取るのはこの節が削ろうと
+                    // している lock そのものである。
+                    //
                     // 窓の間に `invalidate_icon_cache` / show_icons=false が `None` へ
                     // 落としていることがあるので、取り直して確かめる。
-                    if let Some(c) = icon_state.lock().unwrap().as_mut() {
+                    if !dead.is_empty()
+                        && let Some(c) = icon_state.lock().unwrap().as_mut()
+                    {
                         c.remove_paths(&dead);
                     }
                 }
@@ -163,12 +166,14 @@ fn drain_index(app_handle: &AppHandle) {
 /// 同じ額**（約 36 MiB）を剪定のためだけに作り直すことになる。アイコンキャッシュは
 /// `Config::icon_cache_cap()` で頭打ち（既定 1,000 件）なので、索引の側は走るだけにする。
 ///
-/// **返すのが「落とす集合」であることは呼び出し側の安全性の要石である**——判定は lock の
-/// 外で走り、その窓の間に挿入されたキーは `keys` に居ない。ここが「残す集合」を返すと、
-/// そのキーは残す集合に無いという理由で落ちる（正本は [`icon::IconCache::remove_paths`]）。
+/// **返すのが「残す集合」ではなく「落とす集合」であることは、呼び出し側の安全性の要石で
+/// ある**——理由と受容残余は [`icon::IconCache::remove_paths`] の doc が正本とする。
 ///
-/// `keys` が空なら走査ごと省く。**初回起動がまさにその場合である**（アイコンキャッシュは
-/// 最初の表示まで空）。
+/// `keys` が空なら走査ごと省く。**初回起動はここではない**——そのときキャッシュは
+/// `None`（`icons.bin` は初回の表示まで遅延ロード・`SPEC.md` §3.4）ゆえ、呼び出し側の
+/// `as_ref()` が手前で止める。効くのは `Some(空)`——ロードは走ったがまだ 1 件も挿入されて
+/// いない狭い区間だけである。**それでも置くのは、外したときに払うのが 312,625 回の
+/// 組み直しだからである。**
 fn dead_icon_paths(
     tree: &snotra_core::index_tree::IndexTree,
     keys: Vec<String>,
@@ -248,8 +253,7 @@ mod tests {
         assert!(dead.contains("C:\\app\\removed.exe"));
     }
 
-    /// **キャッシュが空なら索引を走査しない。** 初回起動がまさにこの場合で、
-    /// そこでは剪定する相手が 1 件も無い。
+    /// **キャッシュが空なら索引を走査しない**（到達条件は関数の doc を正本とする）。
     #[test]
     fn dead_icon_paths_is_empty_for_an_empty_cache() {
         assert!(dead_icon_paths(&tree(), Vec::new()).is_empty());

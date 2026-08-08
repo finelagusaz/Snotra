@@ -226,9 +226,54 @@ D1 の訂正の帰結。`masks` が `None` の枝（`config_dir` が引けない
 - [x] **L5**: `search/tests/performance.rs` が製品の構築を `PrebuiltIndex::new` と名指ししており、同関数の doc「製品経路は通らない」と矛盾。**この差分は同じ stale な事実を 2 枚直して 3 枚目を落としていた**（#977 と同型）。計画の除外理由「`new` は残るので偽にならない」は、偽になっている主張を取り違えていた
 - [x] **⚠1**: `from_tree` の doc の「到達不能ではない」が第一原則の禁止列（到達可能性）に字面上当たる。誤読の予防価値は残したまま、その句を落として分岐の正本を指す形へ
 - [x] **⚠2**: **レビュアーの「この差分の欠陥として挙げるのは不当」という判断は誤りだった。** `docs/comment-guidelines.md:53` は「1 段落 1 行。**適用は新規に書くコメントと、その変更で触った段落だけである**」と書き、「既存が手折りだから揃える」という緩和を規約自身が先に潰している。新規・touched の doc 段落をすべて 1 行へ直した
-- [ ] **⚠3**: `Some(CachedLower::Raw)` が drain 経路へ来る組み合わせ。**受容する残余**——`Raw` 腕は単体検査とキャッシュヒットで既に生きており、追記と構築は独立ゆえ害が無い。レビュアーも静的読解のみと明記しており、追う額に見合わない
+（⚠3 は作業項目ではないので下の「受容した残余」へ移した——チェックボックスのまま残すと `pre-bash` hook が `gh pr create` を拒否する・`/code-review` の指摘 [8] で実測）
+
+### 受容した残余（作業項目ではない・チェックボックスを持たない）
+
+- **⚠3**: `Some(CachedLower::Raw)` が drain 経路へ来る組み合わせ。`Raw` 腕は単体検査とキャッシュヒットで既に生きており、追記と構築は独立ゆえ害が無い。レビュアーも静的読解のみと明記しており、追う額に見合わない
+- **⚠4**（`/code-review` ラウンド 1）: マスク長不一致の帰結を `scoring.rs` の 1 経路でしか追っていない。**Phase 6 で意味が変わった**——`IndexMaterial::from_untrusted` がディスク側の入口で列長を検証するようになったので、この帰結に至る経路自体が塞がった（残るのは crate 内でマージを迂回した場合だけ）
+- **crate 内からのマージ迂回**: `IndexTree::extend_with_roots` は `pub(crate)` ゆえ `snotra-core` の中からは呼べる。現状その呼び出し点は無く（検知器の A 側オラクルのみ）、可視性をさらに絞ると A/B 比較の独立性が失われる
 
 **レビュアーが実施できなかった検証**: 変異注入（サンドボックスの分類器が `perl -i` を拒否）。ゆえに変異試験の一次証拠は主エージェント側の実測（Phase 3）だけである。**独立な再現ではない**ことを残余として明記する。
+
+## Phase 6 — `IndexMaterial` へ束ねる（レビュー後の設計転換）
+
+**ユーザー指示（逐語）**: "2件ともやろう。設計の背景深堀してより良い案があればそちらを採用しよう"
+
+### 背景の調査結果（着手前）
+
+- **指摘 [9] の提案（`PrebuiltIndex::from_parts`）は 5 か所のうち 1 か所しか直せない。** 同じ `Option` 分岐は **3 つの型の層**に散っている: `PrebuiltIndex::{from_cache, from_tree}`（`indexing.rs:152`）・`Engine::{new_from_cache, new_from_tree}`（`main.rs:211` / `path_query_cost.rs:190`）・`SearchEngine::{new_with_cached_masks, new_from_tree}`（`memory_footprint.rs:353` / `path_query_cost.rs:248`）。根は最下層の 2 コンストラクタで、上の 2 層はその写しである。**この却下は否定の知識ゆえ `IndexMaterial` の doc へ 1 行残す**（ADR は起こさない）
+- **束ねる案はこのリポジトリが既に採用している原理の 1 段上への適用である。** `SearchEngine::new_with_cached_masks` の doc（`search/build.rs:418-422`）が「**組のまま受け取る。** 3 引数へほどく形だと……**取り違えてもコンパイルが通る**……境界を跨ぐ手前でほどかない」と書き、`DerivedColumns` の doc も「**タプルにしてはならない**……同じ理由で `CachedMasks` は組のまま渡す」と書く。**却下の ADR は無い**（`docs/adr/` 38 本を grep・0 件）
+- 名前は発明ではない——`LoadOrScanResult.tree` の doc が既にこの組を「**索引の材料**」と呼んでいる
+
+### 設計判断
+
+- **D4: `IndexMaterial { tree, masks }` を `indexer.rs` に新設し、フィールドを private にする。** これで「木を伸ばしたのにマスクを追記し忘れる」が**本当に表現不能**になる（`&mut Option<_>` への署名変更では閉じていなかった・指摘 [4]）。`merge_path_entries` は `IndexMaterial::extend_with_path_entries(&mut self, ..)` へ移す
+- **D5: 型が不変条件を所有する。** `IndexMaterial::from_untrusted(tree, masks) -> Option<Self>` を作り、**ディスクから来る全枝をそこへ通してマスク列長を検証する**（`load_cache_in` は今まで `IndexTree::from_parts` で木の整合しか見ておらず、切り詰められた `index.bin` が release で添字外 panic になりえた・指摘 [6]）。`derive_columns` の出力は構成上正しいので中身検証を持たない `pub(crate)` の口を通す。**これで「長さが揃う」が散文の約束から真の主張へ変わる**
+- **D6: 消す/絞る対象は grep で数え上げてから決める**（D3 の誤りの再戦）。`PrebuiltIndex::{from_cache, from_tree}` と `Engine::{new_from_cache, new_from_tree}` は `from_material` が代替したら削除、`SearchEngine` の 2 本は **A/B 検知器が 2 経路を別々に要するので残す**（`pub(crate)` へ）、`IndexTree::extend_with_roots` は `pub(crate)`、`PrebuiltIndex::new` は指摘 [2] のとおり `#[cfg(test)]`
+
+### 写しの母集団（編集前に grep で数え上げた）
+
+- **「表現不能化ではない」系の残余宣言 = 4 件**（`indexer.rs:1671` / `snotra-core/CLAUDE.md:46` / `PERFORMANCE.md:634-635` / `search/tests/build.rs:237`）。**D4 でこの 4 件は消える**（count 修正ではなく削除）
+- **`PERFORMANCE.md` の 1 件は行をまたいで書いてあり grep に当たらなかった**——`.rs` で直したばかりの L1 と同じ機序が `.md` で再発していた。**母集団を取る grep 自身が取りこぼす**という一段深い事実
+- **「もうここを通らない」= `search/build.rs:377` の 1 件**（指摘 [1]）。`search/build.rs:301` は別の主題（`Collapsed` の話）で写しではない
+- **「併合」= 17 件。うち 2 件は既存**（`PERFORMANCE.md:794` の見出しと `RETROSPECTIVE.md:23`）——**指摘 [10] の検証者はこれを見ていない**。`:794` の見出しはどこからも参照されていないので改題は自由（正準参照の対象外・grep 実測）
+
+### 作業項目
+
+- [x] `IndexMaterial` を新設（`from_tree` / `derived` / `from_untrusted` の 3 系統）
+- [x] `merge_path_entries` を `IndexMaterial::extend_with_path_entries` へ移し、`extend_with_roots` を `pub(crate)` へ
+- [x] `load_cache_in` の全枝を `from_untrusted` へ通す（v7〜v3 の 5 枝。v2 はマスクを持たないので `from_tree`）
+- [x] `SearchEngine::from_material` / `Engine::from_material` / `PrebuiltIndex::from_material` を足し、**5 か所の `match` を 0 にした**
+- [x] `rebuild_and_save` と `LoadOrScanResult` を `IndexMaterial` へ（`LoadOrScanResult` の `tree` / `cached_masks` の 2 フィールドが `material` の 1 つになった）
+- [x] 旧 API を削除／可視性を絞った（compile-fail が移行漏れを名指しした）: `PrebuiltIndex::{from_cache, from_tree}` と `Engine::{new_from_cache, new_from_tree}` を削除、**呼び出し元ゼロだった `indexer::load_or_scan` も削除**（同時に `memory_footprint.rs` がその名を参照していた散文も直した——放置すれば実在しない API を指す散文を新たに作ることになる）、`PrebuiltIndex::new` を `#[cfg(test)]` へ（指摘 [2] のとおり「統合テストがリンクする」という理由は実例ゼロだった）
+- [x] **変異試験を再注入した**（Phase 3 の証拠は関数名が変わった時点で失効するため）:
+  - 変異 1（追記を欠く）→ `path_merge_after_cache_miss_...` が `assemble` の `debug_assert` で赤。**migemo 逆順でも赤**（ループを `[true, false]` にして再測）
+  - 変異 2（木への追加を `if let Some` の内側へ）→ `path_merge_extends_the_tree_even_without_derived_data` が赤
+  - **変異 3（マスクを取り落とす・新設）→ `has_masks()` の assert（`build.rs:287`）が赤。** 発火位置を実測して確かめた——**A/B 一致では捕まらない**（両側が木から導出するので一致は成立したまま削減だけが消える）。これが `has_masks` を足した根拠である
+- [x] 生き残った doc 指摘を直した（[1] `search/build.rs:377` の偽の全称 / [2] / [3] v3 の到達経路 / [5] 数え上げ / [7] 残余宣言 4 か所を**削除** / [10] 訳語 / ラウンド 2 の High と Medium は該当散文ごと消えた）
+- [x] `plan.md` の ⚠3 をチェックボックスの無い「受容した残余」節へ移した（指摘 [8]）
+- [x] カテゴリ A・F を全件再実行（fmt OK / clippy exit 0 / core 553 passed / snotra 218 passed / `cargo doc` warning 9 件＝**自分が増やした 2 件を潰して既存のみへ戻した** / governance:check 全検査 passed・見出し参照 176 件）
 
 ## 人間レビュー
 

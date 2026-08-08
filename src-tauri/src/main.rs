@@ -162,11 +162,10 @@ fn main() {
     let is_first_run = Config::is_first_run();
     let (config, load_outcome) = Config::load_reporting();
 
-    let (mut tree, initial_indexing, mut cached_masks, rescan_task) = if is_first_run {
+    let (mut material, initial_indexing, rescan_task) = if is_first_run {
         (
-            snotra_core::index_tree::IndexTree::empty(),
+            indexer::IndexMaterial::from_tree(snotra_core::index_tree::IndexTree::empty()),
             true,
-            None,
             None,
         )
     } else {
@@ -187,13 +186,14 @@ fn main() {
                 s.cache_save_ms,
             );
         }
-        (result.tree, false, result.cached_masks, result.rescan_task)
+        (result.material, false, result.rescan_task)
     };
 
-    // PATH エントリのスキャン + マージ。**併合は `merge_path_entries` が対で行う**——背景の再構築（`indexing::drain_index`）と同じ関数を通ることが、マスクと木の長さが揃うことの根拠である（片方を欠いたときの症状はその doc）。**空の場合のガードは持たない**——追記も木への追加も、空なら何もしない。
+    // PATH エントリのスキャン + マージ。**木とマスクは組のまま持つ**ので、片方だけ伸ばす形はここでは書けない（正本は `IndexMaterial` の doc）。**空の場合のガードは持たない**——追記も木への追加も、空なら何もしない。
     if config.search.include_path_env {
-        let path_entries = indexer::scan_path_env(&tree, config.search.show_hidden_system);
-        indexer::merge_path_entries(&mut tree, &mut cached_masks, path_entries);
+        let path_entries =
+            indexer::scan_path_env(material.tree(), config.search.show_hidden_system);
+        material.extend_with_path_entries(path_entries);
     }
 
     // Lazy-load icon cache on first icon request to keep startup path short.
@@ -208,11 +208,7 @@ fn main() {
     let window_width = config.appearance.window_width;
     let bg_color = config.visual.background_color.clone();
 
-    let engine = if let Some(masks) = cached_masks {
-        Engine::new_from_cache(tree, masks, history, config)
-    } else {
-        Engine::new_from_tree(tree, history, config)
-    };
+    let engine = Engine::from_material(material, history, config);
 
     let app_state = AppState {
         engine: Mutex::new(engine),

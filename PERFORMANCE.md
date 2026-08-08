@@ -544,7 +544,7 @@ Vec 本体の合計は **64.00 MiB**（確保）。`char_masks` は 524,288 = 2^
 #### 却下: `PathStore` に「このパスが在るか」を問う経路
 
 計画段階では索引側へ問う形を想定していた。**順序の話に還元してはならない**——起動経路では
-`scan_path_env` が `Engine::new_from_cache` より前に走る（`main.rs:196` 対 `:217`）のは
+`scan_path_env` が `Engine::from_material` より前に走るのは
 確かだが、それは**動かせる事実**であり、却下の根拠としては弱い。壊れない根拠は次の 3 つ。
 
 1. **背景ビルド経路には engine が在るのに使えない。** `indexing.rs:106` の時点で
@@ -601,9 +601,10 @@ ASCII 限定の分岐＝別実装が要り、`snotra-core/CLAUDE.md`「`normaliz
 
 ### 採用: `PrebuiltIndex` を `CachedMasks` 込みで建てる（設定からの再構築・**未実測**）
 
-`rebuild_and_save` が `save_cache_sorted` の返す `CachedMasks` を捨てており、`drain_index` は
-`PrebuiltIndex::from_tree` で Wave 1/2 を建て直していた（反復 11 が起動経路だけを繋いだ残余）。
-返りを `(IndexTree, Option<CachedMasks>)` へ広げ、`PrebuiltIndex::from_cache` を足して繋いだ。
+`rebuild_and_save` が `save_cache_sorted` の返す派生データを捨てており、`drain_index` は木だけを
+受け取って Wave 1/2 を建て直していた（反復 11 が起動経路だけを繋いだ残余）。**木と派生データを
+`IndexMaterial` へ束ねて組のまま運ぶ形にし**、索引を建てる入口を `from_material` の 1 つへ
+まとめて繋いだ。
 **`index.bin` の形式には 1 バイトも触らない**（`INDEX_CACHE_VERSION` 据え置き・
 `index_cache_on_disk_format_is_stable` の golden が差分ゼロで緑であることがその証拠）。
 
@@ -623,24 +624,38 @@ ASCII 限定の分岐＝別実装が要り、`snotra-core/CLAUDE.md`「`normaliz
 `derive_columns` を `pub` へ開ける必要が生じる——**その関数を `pub(crate)` に留めている理由
 （検知器がファイルシステムと、型に無いロック契約を巻き込まないこと）が形骸化する**取引になる。
 
-**呼び忘れの検知器を置いた。** 併合（マスクへ追記 ＋ 木へ根として追加）を
-`indexer::merge_path_entries` の 1 関数へ寄せ、起動経路と再構築経路が同じそこを通る形にした。
-`search/tests/build.rs` の 2 本が守り、**どちらも変異を注入して落ちることを実測した**——追記を
-欠く変異では `path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree` が
-`SearchEngine: 派生文字列の長さが entries と一致しない` で落ち、木への追加を `if let Some` の
-内側へ移す変異では `merge_path_entries_extends_the_tree_even_without_masks` が落ちる（`migemo`
-の両設定で落ちることも、ループ順序を反転させて確かめた）。**署名は `&mut Option<CachedMasks>`
-である**——`Option<&mut _>` にすると呼び出し側に `as_mut()` を書く手が挟まり、`Some` を持ち
-ながら `None` を渡す形が型を通ったまま書ける（症状は上の沈黙クラッシュ）。**ただし表現不能化
-ではない**——`IndexTree::extend_with_roots` は `pub` のままで、閉じたのは現存する呼び出し点で
-ある。
+**呼び忘れを構造で消した。** マージ（マスクへ追記 ＋ 木へ根として追加）は
+`IndexMaterial::extend_with_path_entries` の 1 メソッドで、フィールドが private ゆえ
+**crate 外から片方だけ伸ばす形は書けない**（`IndexTree::extend_with_roots` も `pub(crate)` へ
+下げた）。**「表現不能化ではない」という受容宣言は 4 か所から消した**——`&mut Option<_>` の
+署名だけで閉じたと書いていた版は偽で、`&mut None` を渡す形が型を通っていた（同じ差分の検知器が
+それを実演していた）。**crate 内ではまだ書ける**が、`snotra-core` の中に PATH マージの
+呼び出し点は無い。
+
+**検知器は 3 種の変異で落ちることを実測した**（`search/tests/build.rs`）: (1) 追記を欠く →
+`path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree` が
+`SearchEngine: 派生文字列の長さが entries と一致しない`（`assemble` の `debug_assert`）で落ちる。
+(2) 木への追加を `if let Some` の内側へ移す → `path_merge_extends_the_tree_even_without_derived_data`
+が落ちる。(3) **マスクを取り落とす** → 同じ 1 本目が `has_masks()` の assert で落ちる——この 3 つ目は
+A/B 一致では捕まらない（両側が木から導出するので**一致は成立したまま削減だけが消える**）。
+`migemo` の両設定で落ちることも、ループ順序を反転させて確かめた。
+
+**分岐の写しを 5 か所から 0 へ落とした。** 派生データの有無で建て方を選ぶ `match` は
+`PrebuiltIndex` / `Engine` / `SearchEngine` の 3 層・5 呼び出し点に散っていた。`PrebuiltIndex`
+にだけ集約用のコンストラクタを足す案は**そのうち 1 か所しか直せない**（根は最下層の 2
+コンストラクタで、上の 2 層はその写し）ため採らなかった。
+
+**型が不変条件を持つようにした。** `load_cache_in` は `IndexTree::from_parts` で**木の整合しか**
+検証しておらず、切り詰められた `index.bin` は「木より短いマスク」として起動経路へ入りえた
+（`assemble` の検証は `debug_assert` ゆえ release で消え、初回検索の添字外 panic になる）。
+ディスクから来る全枝を `IndexMaterial::from_untrusted` へ通し、列長が揃わなければ全走査へ落とす。
 
 ### 採用: 保存が返した派生データを cache-miss がそのまま使う（構築 539 → 24 ms・反復 11）
 
 `save_cache_sorted_in` が `char_masks` / `file_name_char_masks` / 潰し済み派生 2 本を計算して
 `index.bin` へ書いた**直後に捨てて**おり、cache-miss の枝は `new_from_tree` で木を全件実体化
 してから同じものを建て直していた。返り値を `(IndexTree, CachedMasks)` へ広げ、
-`LoadOrScanResult.cached_masks` へ載せた——**`index.bin` の形式には 1 バイトも触らない**
+`LoadOrScanResult` へ載せた（**当時は木と別のフィールドだった**——組へ束ねたのは上の反復）——**`index.bin` の形式には 1 バイトも触らない**
 （`INDEX_CACHE_VERSION` は据え置き。`index_cache_on_disk_format_is_stable` の golden が緑の
 ままであることがその証拠）。
 
@@ -667,9 +682,9 @@ ASCII 限定の分岐＝別実装が要り、`snotra-core/CLAUDE.md`「`normaliz
 13 秒ずれており、これはファイルシステムのキャッシュの温度であってこの変更とは無関係である。
 上の表で読めるのは**確保回数・peak・blocks（決定的）と、構築段の壁時計**だけである。
 
-**cache-miss の直後に PATH エントリを併合する経路は、この変更で初めて生きた。** 変更前は
+**cache-miss の直後に PATH エントリをマージする経路は、この変更で初めて生きた。** 変更前は
 `cached_masks` が `None` ゆえ `extend_cached_masks` は呼ばれず、`new_from_tree` が拡張後の木
-から導出していた。今は「マスクへ追記 → 木へ根として追加 → `new_from_cache`」の順に変わる
+から導出していた。今は「マスクへ追記 → 木へ根として追加 → 派生データ込みで建てる」の順に変わる
 ——`assemble` の長さ検証は `debug_assert` ゆえ release では消えるので、追記の呼び忘れは
 添字 panic か沈黙の食い違いになる。検知器は
 `path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree`（呼び忘れを再現する
@@ -696,7 +711,7 @@ ASCII 限定の分岐＝別実装が要り、`snotra-core/CLAUDE.md`「`normaliz
 なる。実測 312,649 件一致）。
 
 **当時の残余（意図的）は解消済み**: `rebuild_and_save` → `drain_index` の枝は
-`PrebuiltIndex::from_tree` のままで返るマスクを捨てていた。1 反復 1 候補の規約を割るため当時は
+木しか受け取らず、返るマスクを捨てていた。1 反復 1 候補の規約を割るため当時は
 候補表へ回し、上の「採用: `PrebuiltIndex` を `CachedMasks` 込みで建てる」がそれを閉じて候補表
 から外した。
 
@@ -791,7 +806,7 @@ digest テスト群が一斉に無効になり、背景再スキャン側は比�
 ことになる。**1 反復 = 1 候補**の規約に従い、7.5 ms は払って先へ進む。採るなら独立した
 反復で、`sorted_comparison_ignores_enumeration_order` 系の検知器を作り直してから。
 
-#### 併合順に守るべき整列の不変条件は無い（実測）
+#### マージ順に守るべき整列の不変条件は無い（実測）
 
 `PathStore.sorted_by_path` は構築時の実測値であり、これが真なら `cmp_paths` は組み立てずに
 index を比べる。**実運用点では既に偽である**: 索引単体（312,691 件）は真だが、`main.rs` が

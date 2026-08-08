@@ -92,7 +92,7 @@ npm run check:colors -- -Interactive      # 判定せず起動し、目視項目
 
 `smoke:manual` が実行できないのは合否の記録に `Read-Host` を使うからで、**目視項目の実体（アプリを操作して表示を観測する）は実施できる**（#836 で 11 項目・#870 で日英 2 本の実績）。実施するなら次の 4 点に従う。
 
-- **`scripts/lib/SnotraSmoke.psm1` の関数だけで組む。** `New-SnotraVerificationProfile` / `Start-SnotraProcess` / `Wait-SnotraWindow` / `Set-SnotraForegroundWindow` / `Send-SnotraKey` / `Get-SnotraWindowCapture` で、使い捨てプロファイルの seed から打鍵注入・窓矩形キャプチャまで完結する。**この経路だけが上の画面ロック検出（#866）に守られる**——モジュールに無い操作（マウスの `SetCursorPos` + `mouse_event` 系はいまも無い）を自前 P/Invoke で足すと、その実行は検出の外へ出る。ロック中に走らせればロック画面を撮り、`check:colors` のような判定が無いぶん**誰も気づかない**
+- **`scripts/lib/SnotraSmoke.psm1` の関数だけで組む。** `New-SnotraVerificationProfile` / `Start-SnotraProcess` / `Wait-SnotraWindow` / `Set-SnotraForegroundWindow` / `Send-SnotraKey` / `Get-SnotraWindowCapture` で、使い捨てプロファイルの seed から打鍵注入・窓矩形キャプチャまで完結する。**この経路だけが上の画面ロック検出（#866）に守られる**——モジュールに無い操作（マウスの `SetCursorPos` + mouse_event 系（いずれも Win32 API）はいまも無い）を自前 P/Invoke で足すと、その実行は検出の外へ出る。ロック中に走らせればロック画面を撮り、`check:colors` のような判定が無いぶん**誰も気づかない**
 - **撮る前に、その入力が分岐へ入っているかを確かめる**（#872）。中間省略・overflow・clipping は入力が短ければ発生せず、**正常に見える画像が撮れてしまう**。分岐へ確実に入る fixture を用意して初めて測ったことになる（`AGENTS.md`「検証の作法（全タスク共通）」の「観測形が対象を含むか」の視覚版）
 - **高さの判定に `GetWindowRect` を使わない**——不可視のリサイズ枠を含むため、2 行の窓が 1 行の 2 倍にならない（実測 118 / 64 に対し `DwmGetWindowAttribute` の `EXTENDED_FRAME_BOUNDS` は 110 / 56）。位置の判定は `GetWindowRect` でよい（クランプが渡す物理 outer 座標系と同じ）。作業領域は `MonitorFromWindow` + `GetMonitorInfoW` の `rcWork` を、プロセスを PER_MONITOR_AWARE_V2 にしてから読む
 - **OS のモーダルループ中（`frame.drag_window()` のドラッグ等）の値を単発観測で判定しない**——合成マウス移動への追従が不安定で、同一手順・同一バイナリでも窓 top が 956 と 1050 の間で揺れた（最終位置は毎回安定）。**実装の有無を切り替える対照実験だけが差を示す**
@@ -180,7 +180,7 @@ npm run measure:memory:stages     # メモリ実測（起動→表示→検索�
 npm run tauri build              # リリースビルド（NSIS バンドル。`prepare:sidecar` で binaries/ を用意してから）
 ```
 
-`memory_footprint` の `--test-threads=1` は**外せない**。計数アロケータは `static AtomicUsize` の
+`tests/memory_footprint.rs` の `--test-threads=1` は**外せない**。計数アロケータは `static AtomicUsize` の
 プロセス大域であり、並列実行すると 2 つのテストが計数器を奪い合う。失敗にはならず
 **もっともらしい数値**が出るため、内部矛盾（規模に対する単調性の破れ・`live 0.00 MiB`）に
 気づかなければそのまま結論に使ってしまう（2026-08-07 実測。詳細は PERFORMANCE.md
@@ -229,7 +229,7 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 （注）CI では smoke-egui job がビルドした release バイナリを共有するため、`npm run smoke:startup`（既定 ExePath = debug）ではなく `scripts/smoke-startup.ps1 -ExePath target/release/snotra.exe` を直接実行する。検証する起動経路は同じ（release バイナリが trace を出し、seed 済み検証用プロファイルで非 first-run 起動すること）。これは smoke 用ビルドの起動健全性検証であり、配布バンドル（`tauri build`）の検証ではない。**その帰結として、この job のバイナリだけは `[profile.release]` の `lto` / `codegen-units` を env で緩めて建てる**（`e2e.yml` の "Build release binary" ステップにコメントで根拠を置いた。`Cargo.toml` は変えないので `release.yml` が建てる配布物は fat LTO のまま）。`panic = "abort"` と `opt-level` は共有するため、検証対象である起動時の挙動は配布バンドルと同じ経路を通る。
 
 - `npm test` は ubuntu（node-check）と windows（rust-check）の両方で走る（#509）。`.githooks` / `.claude/hooks` の selftest は実運用が Windows でのみ起きるセーフティネットであり、hook 実行機構（Git-for-Windows の shebang 経由 sh 起動・パス/クォート境界）が本番と一致する OS で回帰検査する。ubuntu 側は実行ビット・POSIX sh 厳密性を相補的に担保する。CRLF 由来の fail-open は `.gitattributes` の `.githooks/** text eol=lf` で両 OS 回避済みで、かつ dash 側の故障モードなので windows 固有ではない。
-- **`skip-ci` ラベルはジョブ単位で効く** — node-check / rust-check の `if` が同一のため、貼ると cargo 系を含む**両方まるごと**スキップする（表の各行に個別注記はしない）。**`governance-check` job は `if` ガードを持たず、`skip-ci` を貼っても走る**（#587。skip-safe と定義された Markdown-only 変更こそが検査対象のため、意図的にガードしない）。CI は required status check ではない（ruleset `default` に `required_status_checks` 規則が無い・実測）ためマージは通り、main への push（マージ後）では `github.event_name == 'push'` により**ラベル無関係に必ず走る**。
+- **`skip-ci` ラベルはジョブ単位で効く** — node-check / rust-check の `if` が同一のため、貼ると cargo 系を含む**両方まるごと**スキップする（表の各行に個別注記はしない）。**`governance-check` job は `if` ガードを持たず、`skip-ci` を貼っても走る**（#587。skip-safe と定義された Markdown-only 変更こそが検査対象のため、意図的にガードしない）。CI は required status check ではない（ruleset `default` に required status checks 規則が無い・実測）ためマージは通り、main への push（マージ後）では `github.event_name == 'push'` により**ラベル無関係に必ず走る**。
 - **`skip-ci` を貼ってよいのは skip-safe な変更のみ** — node-check / rust-check がテスト対象に持たない `.claude/skills/**`・`.claude/rules/**`・`.claude/agents/**`・`docs/**`・`**/*.md` だけ（これらの決定的検査は skip されない governance-check が担う・#587）。**貼ってはならない**: `.claude/hooks/**`・`.githooks/**`・`scripts/**`・`.claude/settings.json` — これらは `npm test` が両 OS でセルフテストを回す（`vitest.config.ts` の `include`・上の #509）。「`.claude`-only だから安全」と一括りにしない（同じ表層形 `.claude/` が「Claude が読むだけの設定」と「CI が検査するセーフティネット」の二概念を担うため・#500）。
 - カテゴリ C（ウィンドウ生成・ホットキー・スラッシュコマンド）相当の変更や依存更新を含む PR は、対象 paths（`src-tauri/**`・`**/Cargo.toml`・`Cargo.lock`・`package.json`・`package-lock.json` 等）に該当するため `Smoke` workflow が自動起動する。paths 外の変更で手動実行するには `workflow_dispatch`。
 - **`Smoke` は main への push でも起動する。そちらは `paths` を持たず、全マージで走る**。**目的が回帰検出ではなく rust-cache の warm だからである** — Actions のキャッシュは `pull_request` 実行の書き込みが PR 自身のスコープに閉じ、base ブランチ（main）のスコープだけが全 PR から読める。**`paths` で絞らないのは、キャッシュキーが Cargo.lock だけでなく rustc のバージョンでも変わり、後者を paths で表現できないからである**（`dtolnay/rust-toolchain@stable` は 6 週ごとに動く。絞ると更新週から次の Cargo.lock 変更まで全 PR が完全 cold へ戻る）。PUBLIC リポジトリゆえ Actions の分数課金は無い。**main の run だけ `cancel-in-progress` を外してあるのも同じ目的による**（キャンセルされるとキャッシュを保存する Post ステップに到達しない。理由と実測は `e2e.yml` のコメント）。

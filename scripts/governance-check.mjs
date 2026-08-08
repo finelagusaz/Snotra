@@ -1438,9 +1438,12 @@ function productionOnly(src) {
 //
 // **述語の外に在るもの**は依然として多い。frontmatter の文字列・素の表テキスト・
 // 日本語散文（「リアクティブ制約」等）は構造的に対象外で、#736 が挙げた 10 件のうちこの述語が
-// 届くのは 0 件である（実測）。snake_case・PascalCase・ドット区切り・式で書かれた腐りも
-// 両述語の外にある。**「文書の腐りが機構で捕まる」とは言えない**——言えるのは
-// **「camelCase と SCREAMING_SNAKE で書かれた再発は捕まる」**までである。
+// 届くのは 0 件である（実測）。PascalCase・ドット区切り・式で書かれた腐りも 3 述語の外にある。
+// **「文書の腐りが機構で捕まる」とは言えない**——言えるのは
+// **「`.md` の散文に camelCase / SCREAMING_SNAKE / lowercase snake_case で書かれた再発は捕まる」**
+// までである。**`.rs` の doc コメントは母集団外**ゆえ、そこに書かれた腐りは捕まらない
+// （#975 で `.rs` を足す案を測って却下した。理由は外部 API の密度・`ADR-stale-identifier-detector-scope`
+// 「その後（#975・述語へ lowercase snake_case を足し、`.rs` への母集団拡大は却下した）」）。
 // **この検査は #736 の代替ではない**——同 issue は手作業で閉じ、G-stale-identifiers が引き受けるのは再発防止だけである。
 //
 // 判定: 識別子が「現行語彙」に 1 度も現れないなら finding。**現行語彙の正本は
@@ -1506,6 +1509,12 @@ const STALE_IDENT = /^([a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+)(\(\))?$/;
  *  単語 1 つの識別子を受容する残余から外さない。**2 述語は先頭文字で相互排他**ゆえ、
  *  どちらが当たっても `scanStaleIdentifiers` の照合件数は 1 しか進まない */
 const STALE_SNAKE_IDENT = /^([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)(\(\))?$/;
+/** 同じく lowercase snake_case（`_` 1 つ以上・#975）。**このリポジトリの主要言語の語彙はここに居る**
+ *  ——Rust の関数名・テスト名・フィールド名はすべて lowercase snake_case であり、上の 2 述語は
+ *  そのどれにも当たらなかった（`index_tree.rs` の doc が存在しないテスト名を引いたまま素通りした）。
+ *  **3 述語は先頭文字と字種で相互排他である**（camelCase は `_` を含まず、SCREAMING は先頭が大文字）
+ *  ゆえ、どれが当たっても `scanStaleIdentifiers` の照合件数は 1 しか進まない */
+const STALE_LOWER_SNAKE_IDENT = /^([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(\(\))?$/;
 /** 同じ行に在れば、その行の識別子は外部ツールの引数と見なす */
 const EXTERNAL_CMD_LINE = /`(gh|npm|cargo|git|node|pwsh|npx) /;
 
@@ -1574,7 +1583,8 @@ export function scanStaleIdentifiers(snapshot, docs) {
         // 2 述語を `|` で 1 本へ畳んだ瞬間に群がずれて `inVocab(undefined)` になり、しかも実語彙は
         // `undefined` を含むので**赤が出ないまま沈黙する**（複製への変異で実測）。読まなければ
         // 畳もうが分けようが結果が変わらず、「畳むな」という文書契約自体が要らなくなる
-        if (!STALE_IDENT.test(raw) && !STALE_SNAKE_IDENT.test(raw)) continue;
+        if (!STALE_IDENT.test(raw) && !STALE_SNAKE_IDENT.test(raw) && !STALE_LOWER_SNAKE_IDENT.test(raw))
+          continue;
         checked += 1;
         if (!inVocab(raw.replace(/\(\)$/, ""))) {
           findings.push(

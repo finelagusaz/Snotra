@@ -897,7 +897,7 @@ fn save_cache_sorted_in(
 ///
 /// **保存が返す `CachedMasks` をここでは捨てている（意図的・受容する残余）。** 下流の
 /// `PrebuiltIndex::from_tree` が木しか取らないため、この経路は今も Wave 1/2 を建て直す
-/// （issue #979・繋ぎ方は `PERFORMANCE.md`「次の反復の候補」の該当行）。
+/// （issue #984・繋ぎ方は `PERFORMANCE.md`「次の反復の候補」の該当行）。
 pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> IndexTree {
     // 権威的書き手: scan + sort + save を書き込みロック保持下で行い、
     // 背景再スキャン / 別の rebuild との index.bin 同時書き込みを防ぐ。

@@ -9,7 +9,7 @@ resolver = "2"
 
 [workspace.dependencies]
 egui = "=0.35.0"
-tauri = { version = "=2.11.4", features = ["unstable"] }
+tauri = { version = "=2.11.5", features = ["unstable"] }
 tauri-runtime = "=2.11.3"
 tauri-runtime-wry = "=2.11.4"
 

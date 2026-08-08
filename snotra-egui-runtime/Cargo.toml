@@ -13,7 +13,7 @@ workspace = true
 arboard = "3"
 egui.workspace = true
 log = "0.4"
-softbuffer = { version = "=0.4.6", default-features = false }
+softbuffer = { version = "=0.4.8", default-features = false }
 tauri.workspace = true
 tauri-runtime.workspace = true
 tauri-runtime-wry.workspace = true

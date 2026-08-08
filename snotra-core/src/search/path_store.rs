@@ -41,6 +41,7 @@ use std::cmp::Ordering;
 
 use super::footprint::{FootprintRow, boxed_strs, vec_body};
 use crate::index_tree::{IndexTree, NO_PARENT, TreeNodes, raw_path_into, walk_to_root};
+#[cfg(test)]
 use crate::indexer::AppEntry;
 
 /// 索引 1 件ぶんの圧縮表現（32 B）。`AppEntry`（56 B）から `target_path` の `String` を

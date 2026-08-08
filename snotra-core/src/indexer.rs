@@ -2120,8 +2120,8 @@ mod tests {
         );
     }
 
-    /// `golden_v6_fixture` の戻り値（entries / 2 本のマスク / 潰し済みの派生文字列 2 本）。
-    type GoldenV6Fixture = (
+    /// `golden_fixture` の戻り値（entries / 2 本のマスク / 潰し済みの派生文字列 2 本）。
+    type GoldenFixture = (
         Vec<AppEntry>,
         Vec<u64>,
         Vec<u64>,
@@ -2129,20 +2129,37 @@ mod tests {
         Vec<LowerFileName>,
     );
 
-    /// v6 golden の fixture。**`LowerFileName` の 3 状態すべてを載せる**——1 つでも欠けると
-    /// その状態のバイト表現が凍結されず、タグの値が変わっても golden が素通りする。
-    /// v4/v5 の golden とは entries 数が違う（あちらは 2 件）。
-    fn golden_v6_fixture() -> GoldenV6Fixture {
+    /// 現行 golden の fixture。**版を名前に持たない**——凍結バイト列は版ごとに増えるが、
+    /// それを生む入力は常に「現行版が凍結している 1 つ」だからである（旧版の定数は当時の
+    /// 入力ではなく**自分が何を含むか**を doc に持つ）。
+    ///
+    /// 3 つの網羅をここで背負う。どれが欠けても、その表現のバイトが凍結されずに素通りする:
+    ///
+    /// - **`LowerFileName` の 3 状態すべて**（タグの値が変わっても golden が気づかない）
+    /// - **木の根と非根の両方**（1..2 件目が親子）。根の `aux` はフルパスの id、非根の `aux` は
+    ///   拡張子の id という**同じ列の 2 つの意味**が、これで初めて両方バイトに現れる
+    /// - **`sorted_by_path` が真になる並び**（`target_path` のバイト昇順）。偽だけを凍結すると、
+    ///   旗の位置や極性が変わっても 1 バイトも動かない
+    fn golden_fixture() -> GoldenFixture {
+        // **バイト昇順で並べる**（`C:\P` < `C:\a` < `C:\d`）。崩すと `sorted_by_path` が偽に
+        // なるうえ、`IndexTree::build` の親の二分探索が取りこぼして 2 件目が根になる
+        // ——どちらも「落ちない形での網羅の喪失」である。
         let entries = vec![
-            AppEntry {
-                name: "Firefox".to_string(),
-                target_path: "C:\\apps\\firefox.lnk".to_string(),
-                is_folder: false,
-            },
             AppEntry {
                 name: "Projects".to_string(),
                 target_path: "C:\\Projects".to_string(),
                 is_folder: true,
+            },
+            // 唯一の非根。親は 0 番で、`aux` は拡張子 `.exe` の id を指す。
+            AppEntry {
+                name: "app".to_string(),
+                target_path: "C:\\Projects\\app.exe".to_string(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "Firefox".to_string(),
+                target_path: "C:\\apps\\firefox.lnk".to_string(),
+                is_folder: false,
             },
             AppEntry {
                 name: "docs".to_string(),
@@ -2152,17 +2169,19 @@ mod tests {
         ];
         (
             entries,
-            vec![0xABu64, 0xCD, 0xEF],
-            vec![0x12u64, 0x34, 0x56],
-            // 3 件目は `name` と同一（＝落とせる）。
+            vec![0xABu64, 0xCD, 0xEF, 0x21],
+            vec![0x12u64, 0x34, 0x56, 0x78],
+            // 2・4 件目は `name` と同一（＝落とせる）。
             vec![
-                Some("firefox".to_string()),
                 Some("projects".to_string()),
+                None,
+                Some("firefox".to_string()),
                 None,
             ],
             vec![
-                LowerFileName::Text("firefox.lnk".to_string()),
                 LowerFileName::Absent,
+                LowerFileName::Text("app.exe".to_string()),
+                LowerFileName::Text("firefox.lnk".to_string()),
                 LowerFileName::SameAsLowerName,
             ],
         )
@@ -2176,7 +2195,7 @@ mod tests {
         // roundtrip テストを素通りするため、この golden が唯一の検出器（version 非バンプでも検出）。
         // 意図的な形式変更（INDEX_CACHE_VERSION バンプ）時は golden を更新すること。
         let (entries, char_masks, file_name_char_masks, lower_names, lower_file_names) =
-            golden_v6_fixture();
+            golden_fixture();
 
         // save 経路と同じ Cow::Borrowed で構築する。
         let tree = IndexTree::build(entries.clone());
@@ -2207,11 +2226,38 @@ mod tests {
             try_deserialize_with_header(GOLDEN_V7, INDEX_MAGIC, INDEX_CACHE_VERSION)
                 .expect("凍結 v7 バイトがロードできること");
         assert!(matches!(restored.names, Cow::Owned(_)));
-        assert_eq!(restored.names.len(), 3);
-        assert_eq!(restored.names[0], "Firefox");
-        assert!(!restored.is_folder[0]);
-        assert_eq!(restored.names[1], "Projects");
-        assert!(restored.is_folder[1]);
+        assert_eq!(restored.names.len(), 4);
+        assert_eq!(restored.names[0], "Projects");
+        assert!(restored.is_folder[0]);
+        assert_eq!(restored.names[1], "app");
+        assert!(!restored.is_folder[1]);
+
+        // **木の 3 列は、組み直したフルパスで検算する。** `names` / `is_folder` だけを見ると
+        // `parent` / `aux` / `table` は「新コードの出力を新コードで読み返した」だけになり、
+        // 親や拡張子の取り違えをそのまま凍結する。突き合わせる相手は fixture の
+        // `target_path` リテラル——木を通っていない唯一の原文である。
+        let restored_tree = IndexTree::from_parts(
+            restored.names.into_owned(),
+            restored.is_folder.into_owned(),
+            restored.parent.into_owned(),
+            restored.aux.into_owned(),
+            restored.table.into_owned(),
+            restored.sorted_by_path,
+        )
+        .expect("凍結 v7 の列が木の不変条件を満たすこと");
+        assert!(
+            restored.sorted_by_path,
+            "fixture はバイト昇順ゆえ真である（偽だけを凍結すると旗が動いても気づかない）"
+        );
+        let mut buf = String::new();
+        for (i, entry) in entries.iter().enumerate() {
+            restored_tree.path_into(&mut buf, i);
+            assert_eq!(
+                buf, entry.target_path,
+                "凍結 v7 から組み直したフルパスが原文とずれている（index {i}）"
+            );
+        }
+
         assert_eq!(restored.char_masks.into_owned(), char_masks);
         assert_eq!(restored.lower_names.into_owned(), lower_names);
         assert_eq!(restored.lower_file_names.into_owned(), lower_file_names);
@@ -2244,12 +2290,36 @@ mod tests {
         assert!(!expected.is_empty(), "凍結 v6 が空では接地にならない");
     }
 
-    /// 凍結 golden（`golden_v6_fixture` の serialize 出力・INDX magic + version 6 ヘッダー込み）。
+    /// 凍結 golden（`golden_fixture` の serialize 出力・INDX magic + version 7 ヘッダー込み）。
     ///
-    /// **末尾の 3 バイト `0, 1` の前後が `LowerFileName` のタグである**: `Text` = 2 + 文字列、
-    /// `Absent` = 0、`SameAsLowerName` = 1。`lower_names` 側は `Option` の `Some` = 1 + 文字列 /
-    /// `None` = 0。タグの割り当てを変えると（＝ variant の宣言順を入れ替えると）既存の
-    /// `index.bin` を無言で誤読するので、ここが落ちる。
+    /// **この定数が持つのは forward-stability だけである。** v7 は現行版ゆえ「v7 として実際に
+    /// 書かれていた旧バイト列」が存在せず、新コードの出力を凍結する以外に採りようがない
+    /// （`snotra-core/CLAUDE.md`「データ永続化の注意」が禁じている向きは、**旧形式の後方互換を
+    /// 新出力の golden で代用すること**である）。後方互換はここではなく `GOLDEN_V6` /
+    /// `GOLDEN_V5` / `GOLDEN_V4` からの load テストが持ち、木の組み直しの接地は
+    /// `index_tree_raw_matches_frozen_v6_specimen` が持つ。
+    ///
+    /// **末尾の `lower_file_names` は `LowerFileName` のタグである**: `Absent` = 0、
+    /// `SameAsLowerName` = 1、`Text` = 2 + 文字列。`lower_names` 側は `Option` の
+    /// `None` = 0 / `Some` = 1 + 文字列。タグの割り当てを変えると（＝ variant の宣言順を
+    /// 入れ替えると）既存の `index.bin` を無言で誤読するので、ここが落ちる。
+    const GOLDEN_V7: &[u8] = &[
+        73, 78, 68, 88, 7, 0, 0, 0, 128, 226, 207, 170, 6, 4, 8, 80, 114, 111, 106, 101, 99, 116,
+        115, 3, 97, 112, 112, 7, 70, 105, 114, 101, 102, 111, 120, 4, 100, 111, 99, 115, 4, 1, 0,
+        0, 1, 4, 255, 255, 255, 255, 15, 0, 255, 255, 255, 255, 15, 255, 255, 255, 255, 15, 4, 2,
+        1, 3, 4, 5, 0, 4, 46, 101, 120, 101, 11, 67, 58, 92, 80, 114, 111, 106, 101, 99, 116, 115,
+        19, 67, 58, 92, 97, 112, 112, 115, 92, 102, 105, 114, 101, 102, 111, 120, 46, 108, 110,
+        107, 7, 67, 58, 92, 100, 111, 99, 115, 1, 185, 96, 4, 171, 1, 205, 1, 239, 1, 33, 4, 18,
+        52, 86, 120, 4, 1, 8, 112, 114, 111, 106, 101, 99, 116, 115, 0, 1, 7, 102, 105, 114, 101,
+        102, 111, 120, 0, 4, 0, 2, 7, 97, 112, 112, 46, 101, 120, 101, 2, 11, 102, 105, 114, 101,
+        102, 111, 120, 46, 108, 110, 107, 1,
+    ];
+
+    /// **v7 化の前に実際に書かれていた v6 バイト列**（`target_path` を実体で全件持つ形式）。
+    /// `config_hash` は 12345、entries は Firefox / Projects / docs の 3 件。
+    ///
+    /// 末尾 3 バイト `0, 1` の前後は `LowerFileName` のタグである（割り当ては [`GOLDEN_V7`] の
+    /// doc が正本。v6 と v7 で同じであり、変えれば既存の `index.bin` を無言で誤読する）。
     const GOLDEN_V6: &[u8] = &[
         73, 78, 68, 88, 6, 0, 0, 0, 128, 226, 207, 170, 6, 3, 7, 70, 105, 114, 101, 102, 111, 120,
         19, 67, 58, 92, 97, 112, 112, 115, 92, 102, 105, 114, 101, 102, 111, 120, 46, 108, 110,
@@ -2349,8 +2419,8 @@ mod tests {
 
         let restored: IndexCacheV4 =
             try_deserialize_with_header(GOLDEN_V4, INDEX_MAGIC, 4).expect("v4 として読めること");
-        assert_eq!(restored.names.len(), 2);
-        assert_eq!(restored.names[0], "Firefox");
+        assert_eq!(restored.entries.len(), 2);
+        assert_eq!(restored.entries[0].name, "Firefox");
         assert_eq!(restored.char_masks, vec![0xABu64, 0xCD]);
         assert_eq!(restored.lower_names, vec!["firefox", "projects"]);
         assert_eq!(
@@ -2572,7 +2642,7 @@ mod tests {
         let result = load_cache_in(&dir, config_hash).expect("load cache written to dir");
         assert_eq!(result.tree.len(), 2);
         assert_eq!(result.tree.names[0], "Firefox");
-        assert_eq!(result.entries[1].name, "Projects");
+        assert_eq!(result.tree.names[1], "Projects");
         let masks = result.cached_masks.expect("v6 cache should include masks");
         // **`Collapsed` で返る。** save 側が `measure_derived_sharing` で潰して書いており、
         // "Firefox" → "firefox" は小文字化で変わるので実体が残り、file name は別物ゆえ `Text`。
@@ -2625,7 +2695,7 @@ mod tests {
         // try_deserialize_with_header で v2 として読める
         let restored: IndexCacheV2 =
             try_deserialize_with_header(&bytes, INDEX_MAGIC, 2).expect("deserialize v2");
-        assert_eq!(restored.tree.names[0], "Firefox");
+        assert_eq!(restored.entries[0].name, "Firefox");
         assert_eq!(restored.config_hash, config_hash);
 
         // v4 として読もうとすると失敗する（フィールドが足りない）
@@ -3418,13 +3488,13 @@ mod tests {
 
     #[test]
     fn scan_path_dirs_handles_nonexistent_dir() {
-        let entries = scan_path_dirs("C:\\nonexistent_dir_12345", &[], true);
+        let entries = scan_path_dirs("C:\\nonexistent_dir_12345", &IndexTree::empty(), true);
         assert!(entries.is_empty());
     }
 
     #[test]
     fn scan_path_dirs_handles_empty_path_list() {
-        let entries = scan_path_dirs("", &[], true);
+        let entries = scan_path_dirs("", &IndexTree::empty(), true);
         assert!(entries.is_empty());
     }
 

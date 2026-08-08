@@ -314,7 +314,7 @@ fn measure_real_index_footprint() {
             masks.lower,
             config.search.migemo_enabled,
         ),
-        None => SearchEngine::new_with_migemo(tree, config.search.migemo_enabled),
+        None => SearchEngine::new_from_tree(tree, config.search.migemo_enabled),
     };
     let build_ms = build_start.elapsed().as_secs_f64() * 1000.0;
     let t3 = snap();

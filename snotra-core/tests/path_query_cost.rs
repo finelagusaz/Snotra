@@ -74,7 +74,7 @@ fn normalize_into_ascii_fast(buf: &mut String, path: &str) {
 /// **ここがずれると以降の測定値は別物の計測になる。**
 #[test]
 fn derives_same_bytes_as_normalize_entry_key() {
-    let Some((tree, _)) = load_real_index() else {
+    let Some((entries, _)) = load_real_index() else {
         println!("実インデックスが無いためスキップします。");
         return;
     };
@@ -127,7 +127,7 @@ fn load_real_index() -> Option<(Vec<AppEntry>, Vec<String>)> {
         .iter()
         .map(|e| indexer::normalize_entry_key(&e.target_path))
         .collect();
-    Some((tree, keys))
+    Some((entries, keys))
 }
 
 /// 全件走査 1 回の壁時計を返す（`find` の結果は数え上げて捨てない）。
@@ -189,7 +189,9 @@ fn measure_path_query_frame_cost() {
     let history = HistoryStore::load();
     let mut engine = match result.cached_masks {
         Some(masks) => Engine::new_from_cache(result.tree, masks, history, config),
-        None => Engine::new(result.tree, history, config),
+        // **木を `Vec<AppEntry>` へ戻さない。** `Engine::new` を通すと実体化と木の再構築で
+        // 同じ木を 2 度建てることになる（`Engine::new_from_tree` の doc）。
+        None => Engine::new_from_tree(result.tree, history, config),
     };
 
     println!("\n=== パスクエリのフレームコスト（実 index.bin・{n} 件・Engine::search）===");
@@ -250,7 +252,7 @@ fn measure_recent_history_cost() {
             m.lower,
             config.search.migemo_enabled,
         ),
-        None => SearchEngine::new_with_migemo(result.tree, config.search.migemo_enabled),
+        None => SearchEngine::new_from_tree(result.tree, config.search.migemo_enabled),
     };
     // **ここは実 `history.bin` を読むのが正しい**（#963 でユニットテスト側の fixture は
     // 空へ移したが、計測ハーネスは実運用の姿を測るのが目的である）。統合テストは
@@ -285,7 +287,7 @@ fn measure_recent_history_cost() {
 #[test]
 #[ignore = "計測専用。release + --nocapture で手動実行する"]
 fn measure_path_query_sweep_cost() {
-    let Some((tree, keys)) = load_real_index() else {
+    let Some((entries, keys)) = load_real_index() else {
         println!("実 config に scan パスが無いため計測をスキップします。");
         return;
     };
@@ -310,10 +312,10 @@ fn measure_path_query_sweep_cost() {
             let (ms, h) = sweep_prebuilt(&keys, needle);
             best_pre = best_pre.min(ms);
             hits = h;
-            let (ms, h2) = sweep_derived(&tree, needle, normalize_into);
+            let (ms, h2) = sweep_derived(&entries, needle, normalize_into);
             best_plain = best_plain.min(ms);
             assert_eq!(h, h2, "保持と導出:素 で一致数が違う（写しがずれている）");
-            let (ms, h3) = sweep_derived(&tree, needle, normalize_into_ascii_fast);
+            let (ms, h3) = sweep_derived(&entries, needle, normalize_into_ascii_fast);
             best_fast = best_fast.min(ms);
             assert_eq!(h, h3, "保持と導出:ASCII で一致数が違う（写しがずれている）");
         }

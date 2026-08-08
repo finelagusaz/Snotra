@@ -585,7 +585,7 @@ ASCII 限定の分岐＝別実装が要り、`snotra-core/CLAUDE.md`「`normaliz
 
 | 候補 | 実測されているもの | 見積もり | 注意 |
 |---|---|---:|---|
-| `PrebuiltIndex` を `CachedMasks` 込みで建てる | 反復 11 が起動経路だけを繋いだ結果、`rebuild_and_save` → `drain_index` の枝は今も `new_from_tree` で全件実体化して建て直す（起動経路での実測は 構築段 allocs 2,716,070・peak 83.27 MiB・壁時計 515 ms ぶん） | 起動経路と**同額**（ただし背景スレッド・設定からの再構築であって起動レイテンシではない） | `PrebuiltIndex` の新コンストラクタと、`src-tauri` の `drain_index` 側 PATH マージへ `extend_cached_masks` を足す（起動経路と違い**あちらは今それを呼んでいない**）。`rebuild_and_save` の返りを `(IndexTree, Option<CachedMasks>)` へ広げる |
+| `PrebuiltIndex` を `CachedMasks` 込みで建てる | 反復 11 が起動経路だけを繋いだ結果、`rebuild_and_save` → `drain_index` の枝は今も `new_from_tree` で全件実体化して建て直す（起動経路での実測は 構築段 allocs 2,716,070・peak 83.27 MiB・壁時計 515 ms ぶん） | 起動経路と**同額**（ただし背景スレッド・設定からの再構築であって起動レイテンシではない） | `PrebuiltIndex` の新コンストラクタと、`src-tauri` の `drain_index` 側 PATH マージへ `extend_cached_masks` を足す（起動経路と違い**あちらは今それを呼んでいない**——`from_tree` に留まるので今は要らないだけで、繋いだ日に呼び忘れると**マスクだけが短くなる**。`assemble` の長さ検証は `debug_assert` ゆえ release では消える）。`rebuild_and_save` の返りを `(IndexTree, Option<CachedMasks>)` へ広げる |
 | アイコン剪定を篩へ通す | `drain_index` が `IconCacheState` の lock 内で索引 312,625 件のフルパスを組み直す。生き残るのは高々 `icon_cache_cap`（既定 1,000）件 | 組み直し **24.9 ms → 数百件ぶん** | `reject_existing` と同じ形（`IndexTree::file_key_into` で篩→通ったぶんだけ `raw_path_into`）。`IconCache::keys()` の新設が要る。**lock の外へ出す変種は採らない**——stale な集合で新規挿入を捨てうる＝挙動変更 |
 | `IndexTree` のフィールドを private 化 | 現在 `pub(crate)` ゆえ、crate 内から構造体リテラルで `from_parts` の検証を迂回して組める | 額ではなく構造（不変条件を表現不能にする） | `columns()` / `into_columns()` の 2 口を出す。保存経路の `Cow::Borrowed` × 5・`PathStore::adopt` の分解・テストの `tree.names[0]` 系を全部書き換えることになるので、差分の外へ広がる |
 | `reject_existing` の走査を rayon で並列化 | 走査は逐次で約 45 ms | **-32 ms** | 倍率 3.6 は `entries_digest` の 43 → 12 ms を**別の関数へ持ち込んだ外挿**。**「read-only だから digest と条件が揃う」は誤り**——ループは `rejected[i]` へ書き、`file_buf` / `full_buf` を毎反復書き換えるので、`map_init` で per-worker に割るか添字を収集して reduce する形が要る |
@@ -626,6 +626,18 @@ ASCII 限定の分岐＝別実装が要り、`snotra-core/CLAUDE.md`「`normaliz
 
 構築段の peak 9.54 MiB は `PathStore` の `entries` Vec 本体ちょうど（312,649 × 32 B）である
 ——`adopt` の 1 本を残して、構築段の一時確保が消えた。
+
+**壁時計のロード段は比較対象ではない。** 2 回の実行で `scan_ms` が 35,573 対 22,187 ms と
+13 秒ずれており、これはファイルシステムのキャッシュの温度であってこの変更とは無関係である。
+上の表で読めるのは**確保回数・peak・blocks（決定的）と、構築段の壁時計**だけである。
+
+**cache-miss の直後に PATH エントリを併合する経路は、この変更で初めて生きた。** 変更前は
+`cached_masks` が `None` ゆえ `extend_cached_masks` は呼ばれず、`new_from_tree` が拡張後の木
+から導出していた。今は「マスクへ追記 → 木へ根として追加 → `new_from_cache`」の順に変わる
+——`assemble` の長さ検証は `debug_assert` ゆえ release では消えるので、追記の呼び忘れは
+添字 panic か沈黙の食い違いになる。検知器は
+`path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree`（呼び忘れを再現する
+変異で実際に落ちることを確認済み）。
 
 **予測は 8 項目中 7 項目が当たり、1 項目が外れた**（実装前に `ab96dcd` へ記録）。外れたのは
 「構築段 blocks は +98,452 のまま不変」で、実測は -3 だった。**潰し方がずれた合図ではなく、

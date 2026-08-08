@@ -48,6 +48,22 @@ fn assert_save_and_assemble_agree(
         masks.lower,
         migemo_enabled,
     );
+    let _ = std::fs::remove_dir_all(&dir);
+
+    compare_engines(label, migemo_enabled, &a, &b, n)
+}
+
+/// 2 つの索引を全件で突き合わせる。`assert_save_and_assemble_agree` と PATH マージ版の
+/// 共有部分（**同じ突き合わせを 2 度書くと、片方だけが緩む**）。
+fn compare_engines(
+    label: &str,
+    migemo_enabled: bool,
+    a: &SearchEngine,
+    b: &SearchEngine,
+    n: usize,
+) -> (usize, usize, usize, usize) {
+    assert_eq!(a.entries.len(), n, "{label}: A の件数が想定と違う");
+    assert_eq!(b.entries.len(), n, "{label}: B の件数が想定と違う");
 
     // **潰れの 4 種が実際に起きたことを数える。** 数えないと、どれも起きない fixture で
     // 「全件一致」を報告する空虚なテストになる（`Absent` は実データで稀である）。
@@ -93,7 +109,6 @@ fn assert_save_and_assemble_agree(
                 && !va.entry.file_name_is_lower_name,
         );
     }
-    let _ = std::fs::remove_dir_all(&dir);
     println!(
         "{label}/migemo={migemo_enabled}: {n} 件一致（lower_name 共有 {shared_name} / \
          file_name 共有 {shared_file} / Absent {absent} / Text {text}）"
@@ -151,6 +166,95 @@ fn save_side_collapse_and_assemble_measurement_agree_at_entry_view() {
             "潰れの 4 種が揃っていない fixture では一致が空虚である\
              （lower_name 共有 {shared_name} / file_name 共有 {shared_file} / \
              Absent {absent} / Text {text}）"
+        );
+    }
+}
+
+/// **cache-miss の直後に PATH エントリを併合する経路**（`main.rs` の起動経路そのまま）。
+///
+/// **この組み合わせは反復 11 で初めて生きた。** 変更前の cache-miss は `cached_masks` が
+/// `None` だったので `extend_cached_masks` は**呼ばれず**、`new_from_tree` が拡張後の木から
+/// Wave 1/2 を導出していた——PATH エントリぶんも自動的に整合していた。今は `Some` で返るので
+/// 「マスクへ追記 → 木へ根として追加 → `new_from_cache`」の順に変わる。**上の 2 本の検知器は
+/// どちらもここを迂回する**（`new_with_cached_masks` を直接呼び、PATH 併合を通らない）。
+///
+/// 守るのは 2 つ。(1) 追記側（`extend_cached_masks`）の潰し方が、拡張後の木から導出した
+/// 結果と一致すること。(2) **2 本の追記の長さが揃うこと**——`assemble` の長さ検証は
+/// `debug_assert` ゆえ release では消え、ずれは添字 panic か沈黙の食い違いになる。
+///
+/// **`drain_index` は今も `extend_cached_masks` を呼んでいない**（`from_tree` に留まるので
+/// 呼ぶ必要が無い）。あちらを `CachedMasks` 経由へ繋ぐ日には、呼び忘れが長さの食い違いとして
+/// 出る——そのときこの検知器が形の手本になる。
+#[test]
+fn path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree() {
+    let mut base = vec![
+        AppEntry {
+            name: "apps".to_string(),
+            target_path: "C:\\apps".to_string(),
+            is_folder: true,
+        },
+        AppEntry {
+            name: "Firefox".to_string(),
+            target_path: "C:\\apps\\Firefox.lnk".to_string(),
+            is_folder: false,
+        },
+    ];
+    crate::indexer::sort_entries_canonical(&mut base);
+
+    // PATH エントリは**すべて根として**足される（親を解決しない・`extend_with_roots` の doc）。
+    // 潰れの 3 種を通す形にしてある——`name` の大小と file name の一致／不一致で、追記側が
+    // 実際に判定を下す。
+    let path_entries = vec![
+        // `lower_name` が実体を持ち（大文字）、file name は拡張子ぶん別物 → `Text`
+        AppEntry {
+            name: "Node".to_string(),
+            target_path: "C:\\tools\\node.exe".to_string(),
+            is_folder: false,
+        },
+        // `lower_name` が `name` と同一、file name も一致 → `None` + `SameAsLowerName`
+        AppEntry {
+            name: "git".to_string(),
+            target_path: "C:\\bin\\git".to_string(),
+            is_folder: false,
+        },
+        // 別ドライブ・全大文字の拡張子
+        AppEntry {
+            name: "CURL".to_string(),
+            target_path: "D:\\utils\\CURL.EXE".to_string(),
+            is_folder: false,
+        },
+    ];
+    let total = base.len() + path_entries.len();
+
+    for migemo_enabled in [false, true] {
+        let dir = std::env::temp_dir().join(format!("snotra_ab_pathmerge_{migemo_enabled}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        // B: 現行の起動経路。**順序も `main.rs` に合わせる**（マスクへ追記 → 木へ追加）。
+        let (mut tree, mut masks) = crate::indexer::save_cache_sorted_in(&dir, base.clone(), 7);
+        crate::indexer::extend_cached_masks(&mut masks, &path_entries);
+        tree.extend_with_roots(path_entries.clone());
+        let b = SearchEngine::new_with_cached_masks(
+            tree,
+            masks.char_masks,
+            masks.file_name_char_masks,
+            masks.lower,
+            migemo_enabled,
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // A: 変更前の cache-miss。拡張後の木から Wave 1/2 を導出する。
+        let mut tree_a = IndexTree::build(base.clone());
+        tree_a.extend_with_roots(path_entries.clone());
+        let a = SearchEngine::new_from_tree(tree_a, migemo_enabled);
+
+        let (shared_name, shared_file, _absent, text) =
+            compare_engines("path-merge", migemo_enabled, &a, &b, total);
+        assert!(
+            shared_name > 0 && shared_file > 0 && text > 0,
+            "追記側が判定を 1 つも下していない fixture では一致が空虚である\
+             （lower_name 共有 {shared_name} / file_name 共有 {shared_file} / Text {text}）"
         );
     }
 }

@@ -2117,7 +2117,7 @@ mod tests {
     }
 
     #[test]
-    fn temp_dir_name_is_unique_per_process() {
+    fn temp_dir_name_contains_process_id() {
         let dir = temp_dir("process_unique");
         let name = dir
             .file_name()

@@ -46,12 +46,15 @@ pub struct AppEntry {
     pub is_folder: bool,
 }
 
-/// キャッシュから読み込んだ事前計算データ。SearchEngine の構築時に渡すことで
-/// 起動時の計算をスキップし、起動時間を短縮する。
+/// 事前計算済みの派生データ。SearchEngine の構築時に渡すことで起動時の計算をスキップする。
 ///
-/// - `char_masks` / `file_name_char_masks`: v3+ キャッシュヒット時に常に存在
-/// - `lower_names` / `lower_file_names`: v4+ ヒット時のみ存在
-///   (v3 フォールバック時は None → Wave 1 計算が走る)
+/// **出所は 2 つある。** `index.bin` から読んだもの（キャッシュヒット）と、
+/// `save_cache_sorted_in` が書いたその足で返したもの（cache-miss・反復 11）。**どちらも
+/// 同じ表現で返る**——潰し方の判定は `query::measure_derived_sharing` の 1 か所を通るので、
+/// 消費側は出所を区別しない（区別するのは `lower` の variant だけである）。
+///
+/// - `char_masks` / `file_name_char_masks`: 常に存在
+/// - `lower`: v3 フォールバック時のみ `None` → Wave 1 計算が走る
 ///
 /// `normalized_keys` は持たない——`target_path` からの導出へ移して索引・オンディスクの
 /// 双方から外した（`PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を
@@ -322,7 +325,10 @@ pub struct LoadOrScanResult {
     pub cache_changed: bool,
     /// 各フェーズの所要時間。
     pub stats: LoadOrScanStats,
-    /// v3/v4 キャッシュヒット時の事前計算データ。
+    /// 事前計算済みの派生データ。**キャッシュヒット時と cache-miss 時の両方で `Some` になる**
+    /// ——前者は `index.bin` から読んだもの、後者は保存側が書いたその足で返したものである
+    /// （反復 11）。`None` になるのは保存先が引けなかったときだけで、そのとき下流は
+    /// `new_from_tree` で建て直す。
     pub cached_masks: Option<CachedMasks>,
     /// キャッシュヒット時のみ `Some`。`src-tauri` が低優先度スレッドで `run()` し、
     /// `RescanOutcome::Changed` ならアイコンキャッシュを無効化する。
@@ -561,7 +567,7 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
     // 権威的書き手: scan + sort + save を書き込みロック保持下で行い、
     // 背景再スキャン / 別ビルドとの index.bin 同時書き込みを防ぐ。
     // フェーズ計測はクロージャの戻り値として持ち出す。
-    let (tree, scan_ms, sort_ms, cache_save_ms) = with_index_write_lock(|| {
+    let (tree, cached_masks, scan_ms, sort_ms, cache_save_ms) = with_index_write_lock(|| {
         let scan_started = Instant::now();
         let mut entries = scan_all(scan, show_hidden_system);
         let scan_ms = scan_started.elapsed().as_millis();
@@ -571,12 +577,14 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
         let sort_ms = sort_started.elapsed().as_millis();
 
         let cache_save_started = Instant::now();
-        // **保存が返す木をそのまま使う。** 走査結果を保存のために建て直させると、同じ木を
-        // 2 回建てることになる（親解決は実測 23 ms）。
-        let tree = save_cache_sorted(entries, current_hash);
+        // **保存が返す木と派生データをそのまま使う。** 走査結果を保存のために建て直させると、
+        // 同じ木を 2 回建てることになる（親解決は実測 23 ms）。派生データも同じ理屈で、
+        // 保存側が計算して書いたものをここで受け取らないと、下流が全件を実体化してから
+        // 建て直すことになる。
+        let (tree, cached_masks) = save_cache_sorted(entries, current_hash);
         let cache_save_ms = cache_save_started.elapsed().as_millis();
 
-        (tree, scan_ms, sort_ms, cache_save_ms)
+        (tree, cached_masks, scan_ms, sort_ms, cache_save_ms)
     });
 
     let stats = LoadOrScanStats {
@@ -597,7 +605,12 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
         tree,
         cache_changed: true,
         stats,
-        cached_masks: None,
+        // **cache-miss でも `Some` で返る。** 保存側が `index.bin` へ書いたのと同じ 4 本で
+        // あり、キャッシュヒット時に `load_cache_in` が返すものと**表現まで同じ**である
+        // （どちらも `collapse_lower_pair` = `measure_derived_sharing` を通した `Collapsed`）。
+        // ゆえに `cache_changed` は「どのコンストラクタが選ばれるか」を決めない——決めるのは
+        // `cached_masks` の有無と `CachedLower` の variant だけである。
+        cached_masks,
         rescan_task: None,
     }
 }
@@ -727,22 +740,35 @@ pub(crate) fn sort_entries_canonical(entries: &mut [AppEntry]) {
     });
 }
 
-/// エントリを木へ組み替えて保存し、**その木を返す**。
+/// エントリを木へ組み替えて保存し、**その木と、書いたばかりの派生データを返す**。
 ///
 /// **`&[AppEntry]` を借りる形にしてはならない。** v7 が書くのは木であり、木を建てる段は
 /// `target_path` の `String` を move で吸い上げる。借りる形にすると保存のたびに全件を
 /// clone することになり、削ったはずの 36.01 MiB が保存経路で復活する。返り値にしてあるのは、
 /// 呼び出し側がそのまま索引の材料に使えるようにするためである（`rebuild_and_save` と
 /// cache-miss の枝が実際にそうする）。
-fn save_cache_sorted(entries: Vec<AppEntry>, config_hash: u64) -> IndexTree {
+///
+/// **マスクが `Option` なのは保存先が無い枝があるからである。** `config_dir` が引けないとき
+/// は `index.bin` を書かないので派生データも計算しない——ここを `CachedMasks` 直返しにすると、
+/// 誰も読まない列を全件ぶん組み立てることになる。
+fn save_cache_sorted(entries: Vec<AppEntry>, config_hash: u64) -> (IndexTree, Option<CachedMasks>) {
     let Some(dir) = Config::config_dir() else {
-        return IndexTree::build(entries);
+        return (IndexTree::build(entries), None);
     };
-    save_cache_sorted_in(&dir, entries, config_hash)
+    let (tree, masks) = save_cache_sorted_in(&dir, entries, config_hash);
+    (tree, Some(masks))
 }
 
 /// `save_cache_sorted` と同じ保存処理を `dir` 注入で行う（統合テスト用、issue #429）。
-fn save_cache_sorted_in(dir: &Path, entries: Vec<AppEntry>, config_hash: u64) -> IndexTree {
+///
+/// **`INDEX_WRITE_LOCK` は取らない**（`save_cache_sorted` と同じ契約で、呼び出し側が保持する）。
+/// `pub(crate)` なのは `search::tests::build` の A/B 検知器がこの実経路を通るためである
+/// ——保存側の潰し方を別実装で書き起こしては、突き合わせる意味が消える。
+pub(crate) fn save_cache_sorted_in(
+    dir: &Path,
+    entries: Vec<AppEntry>,
+    config_hash: u64,
+) -> (IndexTree, CachedMasks) {
     let bf = cache_bin_file_in(dir);
 
     // マスクを計算してキャッシュに含める。起動時に SearchEngine::new_with_cached_masks()
@@ -803,11 +829,40 @@ fn save_cache_sorted_in(dir: &Path, entries: Vec<AppEntry>, config_hash: u64) ->
     if !bf.save(&cache) {
         eprintln!("[indexer] failed to save {}", bf.path().display());
     }
-    tree
+    // **書いた 4 本をそのまま返す。** かつてはここで捨てており、cache-miss の枝は
+    // `new_from_tree` が木を実体化して Wave 1/2 を建て直していた——**計算したものを捨てて
+    // から、同じものを作り直していた**（実測 構築段 allocs 2,801,461・peak 92.81 MiB）。
+    //
+    // **`clone` を挟んではならない。** 上の `Cow::Borrowed` の借用は `bf.save` を最後に
+    // 終わる（NLL）ので、ここは move で通る。clone を挟むと変更の意味がそのまま消える。
+    //
+    // **書き込みの失敗は返り値に影響しない。** 返すのは今メモリに在る木と、その木に対して
+    // 導出した派生データであり、両者の整合はディスクへ届いたかとは独立である。書けなければ
+    // 次回が cache-miss になるだけで、この起動の索引は正しい。
+    let masks = CachedMasks {
+        char_masks,
+        file_name_char_masks,
+        // **`Collapsed` で渡す。** 上で `collapse_lower_pair`（= `measure_derived_sharing`）を
+        // 通してあり、`assemble` はこれを測り直さない。`Raw` にすると測り直しが走り、
+        // `None` どうしの一致で file name 成分の無いエントリに旗が立つ
+        // （`load_cache_in` の v7 枝と同じ理由・`CachedLower` の doc）。
+        lower: Some(CachedLower::Collapsed {
+            lower_names: collapsed_lower_names,
+            lower_file_names: collapsed_lower_file_names,
+        }),
+    };
+    (tree, masks)
 }
 
 /// Force rebuild: scan and save cache, regardless of existing cache.
 /// Called from settings dialog (Phase 5).
+///
+/// **保存が返す `CachedMasks` をここでは捨てている（意図的・受容する残余）。** 下流の
+/// `PrebuiltIndex::from_tree` が木しか取らないため、この経路は今も `new_from_tree` で
+/// 全件を実体化してから Wave 1/2 を建て直す——起動経路で消したのと同じ無駄が、設定からの
+/// 再構築と `drain_index` に残る。繋ぐには `PrebuiltIndex` の新しいコンストラクタと、
+/// `src-tauri` 側の PATH マージへ `extend_cached_masks` を足すことが要る（起動経路と違い
+/// あちらは今それを呼んでいない）。**1 反復 1 候補の規約ゆえ別の反復へ回す。**
 pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> IndexTree {
     // 権威的書き手: scan + sort + save を書き込みロック保持下で行い、
     // 背景再スキャン / 別の rebuild との index.bin 同時書き込みを防ぐ。
@@ -815,7 +870,7 @@ pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> IndexTre
         let mut entries = scan_all(scan, show_hidden_system);
         sort_entries_canonical(&mut entries);
         let config_hash = compute_config_hash(scan, show_hidden_system);
-        save_cache_sorted(entries, config_hash)
+        save_cache_sorted(entries, config_hash).0
     })
 }
 
@@ -1100,7 +1155,10 @@ fn try_background_rescan_in(
         // 走査結果を既に持っている唯一の場所**だからである。ロード側で書こうとすると、
         // engine へ move する `entries` の複製が要り、反復 6 で消した 62.5 MiB が復活する。
         if changed || cached_version != INDEX_CACHE_VERSION {
-            save_cache_sorted_in(dir, scanned, config_hash);
+            // **返る木と `CachedMasks` はここでは捨てる。** 背景再スキャンは索引を建てない
+            // ——建てるのは呼び出し側（`Changed` を見た `src-tauri` が再構築を kick する）で
+            // あり、ここが抱えると起動段の外に索引 1 本ぶんの常駐が生まれる。
+            drop(save_cache_sorted_in(dir, scanned, config_hash));
         }
         Some(changed)
     });
@@ -2749,13 +2807,44 @@ mod tests {
         ];
         let config_hash = 42u64;
 
-        save_cache_sorted_in(&dir, entries.clone(), config_hash);
+        let (_, returned) = save_cache_sorted_in(&dir, entries.clone(), config_hash);
 
         let result = load_cache_in(&dir, config_hash).expect("load cache written to dir");
         assert_eq!(result.tree.len(), 2);
         assert_eq!(result.tree.names[0], "Firefox");
         assert_eq!(result.tree.names[1], "Projects");
         let masks = result.cached_masks.expect("v6 cache should include masks");
+
+        // **書いたものと返したものが同一である。** cache-miss の枝はこの返り値をそのまま
+        // 索引の材料にするので、ここがずれると「保存したキャッシュで次回起動したとき」と
+        // 「保存した回の起動」で索引の姿が変わる——**どちらも結果は正しく出る**ので挙動
+        // テストでは捕まらない。同じ値どうしの同一性ゆえ ⚠（save 側の潰し方が `assemble` の
+        // 測り直しと一致するか）の証拠にはならない。捕まえるのは「返す側だけを別実装で
+        // 計算する」退行である。
+        assert_eq!(returned.char_masks, masks.char_masks);
+        assert_eq!(
+            returned.file_name_char_masks, masks.file_name_char_masks,
+            "返したマスクが書いたものとずれている"
+        );
+        match (returned.lower, &masks.lower) {
+            (
+                Some(CachedLower::Collapsed {
+                    lower_names: rn,
+                    lower_file_names: rf,
+                }),
+                Some(CachedLower::Collapsed {
+                    lower_names: dn,
+                    lower_file_names: df,
+                }),
+            ) => {
+                assert_eq!(&rn, dn, "返した lower_names が書いたものとずれている");
+                assert_eq!(&rf, df, "返した lower_file_names が書いたものとずれている");
+            }
+            (r, d) => {
+                panic!("両者とも Collapsed でなければならない（返り {r:?} / ディスク {d:?}）")
+            }
+        }
+
         // **`Collapsed` で返る。** save 側が `measure_derived_sharing` で潰して書いており、
         // "Firefox" → "firefox" は小文字化で変わるので実体が残り、file name は別物ゆえ `Text`。
         match masks.lower {

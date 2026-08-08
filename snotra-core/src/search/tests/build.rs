@@ -8,6 +8,186 @@ use crate::index_tree::IndexTree;
 use crate::indexer::{AppEntry, CachedLower, LowerFileName};
 use crate::search::*;
 
+/// 保存経路（`save_cache_sorted_in`）と `assemble` の測り直しが、同じ入力に対して
+/// **`entry_view` の読み替えまで一致する**ことを全件で確かめる。
+///
+/// 反復 11 で cache-miss の枝が `new_from_tree`（`Measured` を `assemble` が測って潰す）から
+/// `new_with_cached_masks`（保存が返す `Collapsed` をそのまま使う）へ移った。一致は
+/// **構成的には示せる**——`name` は木が逐語で持ち、`lower_file_name` の材料は原文と組み直しが
+/// バイト一致し（`path_store_raw_matches_target_path_over_real_index` が実データ全件で接地）、
+/// 判定は両経路とも `query::measure_derived_sharing` の 1 か所を通る。ここが足すのは
+/// **その 3 本のどれかが将来切れたときに気づく**という機構である。
+///
+/// **突き合わせるのは `entry_view` である。** 読み替えの単一点であり、表現の差が製品に
+/// 見える形になるのはここだけである。生の `lower_names[i]` を比べる形にすると
+/// 「どちらも潰れているが旗が違う」食い違いを取り逃す。
+///
+/// **保存側は実経路を通す**（潰し方を書き起こすと、比べているのが 2 つの実装ではなく
+/// テストの中の 1 つの実装になる）。
+///
+/// 戻り値は潰れの 4 種の出現件数 `(lower_name 共有, file_name 共有, Absent, Text)`。
+/// **呼び出し側がこれを検算する**——どれも起きない fixture では「全件一致」が空虚になる。
+fn assert_save_and_assemble_agree(
+    label: &str,
+    entries: Vec<AppEntry>,
+    migemo_enabled: bool,
+) -> (usize, usize, usize, usize) {
+    let n = entries.len();
+    let dir = std::env::temp_dir().join(format!("snotra_ab_{label}_{migemo_enabled}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temp dir");
+
+    // A: 旧 cache-miss 経路。木を実体化して Wave 1/2 を建て直し、`assemble` が測って潰す。
+    let a = SearchEngine::new_from_tree(IndexTree::build(entries.clone()), migemo_enabled);
+    // B: 新 cache-miss 経路。保存が計算して書いた `Collapsed` をそのまま索引の表現にする。
+    let (tree, masks) = crate::indexer::save_cache_sorted_in(&dir, entries, 7);
+    let b = SearchEngine::new_with_cached_masks(
+        tree,
+        masks.char_masks,
+        masks.file_name_char_masks,
+        masks.lower,
+        migemo_enabled,
+    );
+
+    // **潰れの 4 種が実際に起きたことを数える。** 数えないと、どれも起きない fixture で
+    // 「全件一致」を報告する空虚なテストになる（`Absent` は実データで稀である）。
+    let (mut shared_name, mut shared_file, mut absent, mut text) = (0usize, 0usize, 0usize, 0usize);
+    for i in 0..n {
+        let (va, vb) = (a.entry_view(i), b.entry_view(i));
+        assert_eq!(
+            va.lower_name, vb.lower_name,
+            "{label}/migemo={migemo_enabled}: index {i} の lower_name がずれている"
+        );
+        assert_eq!(
+            va.lower_file_name, vb.lower_file_name,
+            "{label}/migemo={migemo_enabled}: index {i} の lower_file_name がずれている"
+        );
+        assert_eq!(
+            va.entry.file_name_is_lower_name, vb.entry.file_name_is_lower_name,
+            "{label}/migemo={migemo_enabled}: index {i} の共有の旗がずれている"
+        );
+        // **表現そのものも比べる。** 読み替えが一致していても、片方だけが実体を持ち続けて
+        // いれば削減が失われている（結果は正しいままなので挙動テストでは捕まらない）。
+        assert_eq!(
+            a.lower_names[i].is_none(),
+            b.lower_names[i].is_none(),
+            "{label}/migemo={migemo_enabled}: index {i} の lower_names の潰れ方がずれている"
+        );
+        assert_eq!(
+            a.lower_file_names[i].is_none(),
+            b.lower_file_names[i].is_none(),
+            "{label}/migemo={migemo_enabled}: index {i} の lower_file_names の潰れ方がずれている"
+        );
+        // マスクは潰す前の完全な文字列から導出されるので、両経路で一致しなければならない。
+        assert_eq!(a.char_masks[i], b.char_masks[i], "index {i} の char_mask");
+        assert_eq!(
+            a.file_name_char_masks[i], b.file_name_char_masks[i],
+            "index {i} の file_name_char_mask"
+        );
+
+        shared_name += usize::from(a.lower_names[i].is_none());
+        shared_file += usize::from(va.entry.file_name_is_lower_name);
+        absent += usize::from(va.lower_file_name.is_none() && !va.entry.file_name_is_lower_name);
+        text += usize::from(
+            va.lower_file_name.is_some_and(|f| f != va.lower_name)
+                && !va.entry.file_name_is_lower_name,
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    println!(
+        "{label}/migemo={migemo_enabled}: {n} 件一致（lower_name 共有 {shared_name} / \
+         file_name 共有 {shared_file} / Absent {absent} / Text {text}）"
+    );
+    (shared_name, shared_file, absent, text)
+}
+
+/// 合成 fixture で、潰れの 4 種すべてを 1 度以上通す（既定スイート）。
+#[test]
+fn save_side_collapse_and_assemble_measurement_agree_at_entry_view() {
+    let mut entries = vec![
+        // file name 成分が**無い**（`Path::file_name()` が `None`）→ `Absent`。
+        // 実データでは稀ゆえ、合成でしか安定して通せない腕である。
+        AppEntry {
+            name: "C:".to_string(),
+            target_path: "C:\\".to_string(),
+            is_folder: true,
+        },
+        // 末尾成分と一致する folder → `SameAsLowerName`（実データの folder はほぼこれ）。
+        AppEntry {
+            name: "apps".to_string(),
+            target_path: "C:\\apps".to_string(),
+            is_folder: true,
+        },
+        // 拡張子ゆえ file name が別物 → `Text`。かつ `name` は大文字を含むので
+        // `lower_name` は実体を持つ（＝ `lower_names[i]` が `Some` の側）。
+        AppEntry {
+            name: "Firefox".to_string(),
+            target_path: "C:\\apps\\Firefox.lnk".to_string(),
+            is_folder: false,
+        },
+        // 既に小文字の folder → `lower_name` が `name` と同一（`None` の側）。
+        AppEntry {
+            name: "projects".to_string(),
+            target_path: "C:\\projects".to_string(),
+            is_folder: true,
+        },
+        // 非 ASCII（アクセント畳み込みが効く側）。
+        AppEntry {
+            name: "Café".to_string(),
+            target_path: "C:\\apps\\Café.lnk".to_string(),
+            is_folder: false,
+        },
+    ];
+    // **製品と同じ並びで木を建てる**（`save_cache_sorted_in` の呼び出し元は必ず通す）。
+    crate::indexer::sort_entries_canonical(&mut entries);
+
+    // **migemo の両設定を通す。** kana は `assemble` の外で確定するので潰し方は同じはずだが、
+    // 計測環境が `false` に寄っている以上、通していない側は「壊れても気づかない側」である。
+    for migemo_enabled in [false, true] {
+        let (shared_name, shared_file, absent, text) =
+            assert_save_and_assemble_agree("synthetic", entries.clone(), migemo_enabled);
+        assert!(
+            shared_name > 0 && shared_file > 0 && absent > 0 && text > 0,
+            "潰れの 4 種が揃っていない fixture では一致が空虚である\
+             （lower_name 共有 {shared_name} / file_name 共有 {shared_file} / \
+             Absent {absent} / Text {text}）"
+        );
+    }
+}
+
+/// 実データの全件で同じことを確かめる（規模と、合成では作れないパスの形）。
+///
+/// **原文はファイルシステムの走査から取る。`index.bin` から取ってはならない。** v7 は
+/// `target_path` を持たないので、そこから取ると A 側の `materialize` が組み直し対組み直しの
+/// **不動点**になり、どれだけ壊れても落ちない（件数つきの成功メッセージまで出る）。走査から
+/// 取れば、A 側の `materialize(build(原文))` が原文と一致することまでこの 1 本が覆う
+/// ——それが候補表の ⚠「保存側の潰し方が `assemble` の測り直しと一致するか」の核である。
+///
+/// 合成 fixture では作れないものを足す——深い階層・非 ASCII・空白・大文字の拡張子、
+/// 根と非根が混ざった木。`#[ignore]` は実環境依存ゆえで、CI の保証は上の合成が持つ。
+#[test]
+#[ignore = "実ファイルシステムの全走査・手元で明示的に走らせる"]
+fn save_side_collapse_agrees_with_assemble_over_real_index() {
+    let config = crate::config::Config::load();
+    if config.paths.scan.is_empty() {
+        println!("実 config に scan パスが無いためスキップします。");
+        return;
+    }
+    let mut entries =
+        crate::indexer::scan_all(&config.paths.scan, config.search.show_hidden_system);
+    assert!(!entries.is_empty(), "走査が 0 件では接地にならない");
+    crate::indexer::sort_entries_canonical(&mut entries);
+    let (shared_name, shared_file, absent, text) =
+        assert_save_and_assemble_agree("real", entries, false);
+    // 実データに `Absent` はほぼ現れないので、ここでは要求しない（合成が担う）。
+    assert!(
+        shared_name > 0 && shared_file > 0 && text > 0,
+        "実データで潰れが 1 件も起きないのは異常である\
+         （lower_name 共有 {shared_name} / file_name 共有 {shared_file} / \
+         Absent {absent} / Text {text}）"
+    );
+}
+
 /// `len` より大きい容量を持つ Vec を作る（`index.bin` 由来の Vec が持つ余剰の再現）。
 /// `with_capacity` 後の `extend` は再確保しないため、容量はそのまま残る。
 fn oversized<T>(items: Vec<T>) -> Vec<T> {

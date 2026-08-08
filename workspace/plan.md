@@ -112,6 +112,7 @@ D1 の訂正の帰結。`masks` が `None` の枝（`config_dir` が引けない
 - [ ] `masks = None` の腕の検知器を足す
 - [ ] `cargo test -p snotra-core` が green
 - [ ] **変異試験**: `merge_path_entries` から `extend_cached_masks` の行を消して `cargo test -p snotra-core` が **赤になる**ことを実測し、結果をこの計画へ書き戻してから元に戻す（呼び忘れが検知されることの唯一の証拠）
+- [ ] **変異試験は `migemo_enabled` の両設定で赤になることを確かめる**（「初めて生きる組み合わせ」4 が根拠——kana 系 2 本は拡張後の木からフルサイズで作られるので、片方の設定でだけ緑になる形がありうる）
 
 **順序の変異試験は置かない**（`/symmetric-check` Step 2c の結果）。`extend_cached_masks(masks, &entries)` → `tree.extend_with_roots(entries)` の順序は**所有権が強制する**——`extend_with_roots` は `Vec<AppEntry>` を値で取るため、逆順にするには `entries.clone()` が要る。**入れ替えは「うっかり」では書けない**ので、検知器を置く対象が無い。意味の上でも両者は独立である（`extend_cached_masks` は木を読まず、`extend_with_roots` はマスクを読まない）。守るべき順序の不変条件は `derive_entry_collapsed` の内側（潰す前にマスクを取る）にあり、そちらは既存の `derived_masks_come_from_the_uncollapsed_strings` が守る。
 
@@ -170,7 +171,7 @@ D1 の訂正の帰結。`masks` が `None` の枝（`config_dir` が引けない
     1. `IndexTree` / `CachedMasks` はどちらも `Clone` を持たないので、**木を 2 度建てる（＝フルスキャン 2 回）か `Clone` を足す**かが要る
     2. `derive_columns` / `sort_entries_canonical` を `pub(crate)` から `pub` へ開ける必要が生じうる。**これは悪い取引である**——`derive_columns` を分けた理由そのものが「検知器がファイルシステムと、型に無いロック契約を巻き込まないようにする」ことだから（`indexer.rs:772-779` の doc）。可視性を開けるとその分離が形骸化する
     3. `AGENTS.md`「一時的な足場」の規約により、撤去条件を自前の doc へ書く義務が乗る
-  - **潰し方**: ユーザーへ 1 問だけ聞く（Step 5c の承認と同時）。A なら Phase 4 のみ、B なら Phase 4 の前に計測 Phase が 1 つ増える
+  - 潰し方: ユーザーへ 1 問だけ聞く（Step 5c の承認と同時）とした。**実施済み** — A が選ばれ、計測 Phase は増えていない
 
 ## セルフレビュー
 

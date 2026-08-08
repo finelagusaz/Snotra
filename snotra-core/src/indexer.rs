@@ -809,35 +809,25 @@ impl DerivedColumns {
 /// エントリから木と派生 4 本を導出する。**I/O を持たない。**
 pub(crate) fn derive_columns(entries: Vec<AppEntry>) -> DerivedColumns {
     // マスクをここで計算するのは、受け取った側が再計算せずに索引の表現へそのまま使うためである（受け取る経路の正本は `LoadOrScanResult::cached_masks` の doc であり、ここで数えない）。
-    let lower_names: Vec<String> = entries.iter().map(|e| to_lower_folded(&e.name)).collect();
-    let lower_file_names: Vec<Option<String>> = entries
-        .iter()
-        .map(|e| lower_file_name(&e.target_path))
-        .collect();
-    // **マスクは潰す前の完全な文字列から導出する。** 潰した後に取ると
-    // `file_char_mask(None) == 0` になり、pre-filter が false negative を出す
-    // （`search/build.rs` の `compute_wave2` と同じ不変条件——あちらは「ビットマスクより後に
-    // 潰す」という順序で守っており、ここでは「潰す前に導出する」という順序で守る）。
-    let char_masks: Vec<u64> = lower_names.iter().map(|n| name_char_mask(n)).collect();
-    let file_name_char_masks: Vec<u64> = lower_file_names
-        .iter()
-        .map(|n| file_char_mask(n.as_deref()))
-        .collect();
-
-    // **共有を測って潰した形で書く**（v6 以降）。畳み込みは `collapse_lower_pair` が正本であり、
-    // 追記側（`extend_cached_masks`）と同じ関数を通ることだけが、ディスクとメモリで潰れ方が
-    // 一致する根拠である。ここを別実装で書き起こしてはならない。
     //
-    // **2 本を値ごと渡す。** マスクは上で導出済みで、以後この 2 本を読む箇所は無い
-    // ——参照で渡して `clone` すると、潰さずに済む分まで複製することになる。
-    let (collapsed_lower_names, collapsed_lower_file_names): (Vec<_>, Vec<_>) = entries
-        .iter()
-        .zip(lower_names)
-        .zip(lower_file_names)
-        .map(|((entry, lower_name), lower_file)| {
-            collapse_lower_pair(&entry.name, lower_name, lower_file)
-        })
-        .unzip();
+    // **per-entry の導出そのものは [`derive_entry_collapsed`] が持つ。** 追記側
+    // （`extend_cached_masks`）と同じ関数を通ることだけが、ディスクとメモリで潰れ方と
+    // マスクが一致する根拠である。ここに列ごとの別実装を書き起こしてはならない。
+    //
+    // 4 本を 1 周で埋める。列ごとの `collect` に分けると、潰す前の `Vec<String>` /
+    // `Vec<Option<String>>` の spine が潰した後の spine と重なって生きる区間ができる。
+    let len = entries.len();
+    let mut char_masks = Vec::with_capacity(len);
+    let mut file_name_char_masks = Vec::with_capacity(len);
+    let mut collapsed_lower_names = Vec::with_capacity(len);
+    let mut collapsed_lower_file_names = Vec::with_capacity(len);
+    for entry in &entries {
+        let (char_mask, file_mask, lower_name, lower_file) = derive_entry_collapsed(entry);
+        char_masks.push(char_mask);
+        file_name_char_masks.push(file_mask);
+        collapsed_lower_names.push(lower_name);
+        collapsed_lower_file_names.push(lower_file);
+    }
 
     // **木を建てるのは派生文字列を導出し終えた後である。** 建てる段が `target_path` を
     // 吸い上げるので、順序を入れ替えると `lower_file_name(&e.target_path)` の材料が消える。
@@ -906,7 +896,7 @@ fn save_cache_sorted_in(
 ///
 /// **保存が返す `CachedMasks` をここでは捨てている（意図的・受容する残余）。** 下流の
 /// `PrebuiltIndex::from_tree` が木しか取らないため、この経路は今も Wave 1/2 を建て直す
-/// （issue #979・繋ぎ方は `PERFORMANCE.md`「次の反復の候補」の該当行）。
+/// （issue #984・繋ぎ方は `PERFORMANCE.md`「次の反復の候補」の該当行）。
 pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> IndexTree {
     // 権威的書き手: scan + sort + save を書き込みロック保持下で行い、
     // 背景再スキャン / 別の rebuild との index.bin 同時書き込みを防ぐ。
@@ -1572,11 +1562,40 @@ pub fn scan_path_env(existing: &IndexTree, show_hidden_system: bool) -> Vec<AppE
     scan_path_dirs(&user_path, existing, show_hidden_system)
 }
 
+/// エントリ 1 件の派生（**潰す前**）。マスク 2 本と、潰す前の派生文字列 1 組を返す。
+///
+/// **マスクは潰す前の完全な文字列から導出する。** 潰した後に取ると
+/// `file_char_mask(None) == 0` になり、pre-filter が false negative を出す
+/// （`search/build.rs` の `compute_wave2` と同じ不変条件——あちらは「ビットマスクより後に
+/// 潰す」という順序で守っており、ここでは「潰す前に導出する」という順序で守る）。
+///
+/// 潰さない列（`CachedLower::Raw`）へ追記する経路と、マスクだけを要する経路（`lower` が
+/// `None`）がこれを直接呼ぶ。潰した形が要るなら [`derive_entry_collapsed`] を呼ぶ。
+fn derive_entry_lowers(entry: &AppEntry) -> (u64, u64, String, Option<String>) {
+    let lower_name = to_lower_folded(&entry.name);
+    let lower_file = lower_file_name(&entry.target_path);
+    let char_mask = name_char_mask(&lower_name);
+    let file_mask = file_char_mask(lower_file.as_deref());
+    (char_mask, file_mask, lower_name, lower_file)
+}
+
+/// エントリ 1 件の派生（**潰した形**）。マスク 2 本と、畳んだ派生文字列 1 組を返す。
+///
+/// **潰す前にマスクを取るという順序は、この 1 か所にしかない。**（`derive_entry_lowers` が
+/// 返した後でだけ `collapse_lower_pair` を当てる。）記録側（[`derive_columns`]）と追記側
+/// （`extend_cached_masks` の `Collapsed` 枝）が同じここを通ることが、ディスクとメモリで
+/// 潰れ方とマスクが一致する根拠である。検知器は `derived_masks_come_from_the_uncollapsed_strings`。
+fn derive_entry_collapsed(entry: &AppEntry) -> (u64, u64, Option<String>, LowerFileName) {
+    let (char_mask, file_mask, lower_name, lower_file) = derive_entry_lowers(entry);
+    let (lower_name, lower_file) = collapse_lower_pair(&entry.name, lower_name, lower_file);
+    (char_mask, file_mask, lower_name, lower_file)
+}
+
 /// 派生文字列 1 組を、`measure_derived_sharing` の判定に従って潰した形へ畳む。
 ///
-/// **`save_cache_sorted_in` と `extend_cached_masks` が共有する。** 別実装で書き起こすと、
-/// PATH エントリの分だけが索引の読み替えとずれる——`assemble` は `Collapsed` を測り直さない
-/// ので、ずれは**検索結果のスコアという形で静かに現れる**。
+/// **唯一の呼び出し元は [`derive_entry_collapsed`] である**（記録側・追記側はそこを通る）。
+/// 別実装で書き起こすと、その経路の分だけが索引の読み替えとずれる——`assemble` は
+/// `Collapsed` を測り直さないので、ずれは**検索結果のスコアという形で静かに現れる**。
 fn collapse_lower_pair(
     name: &str,
     lower_name: String,
@@ -1604,23 +1623,24 @@ fn collapse_lower_pair(
 /// entries から直接計算されるためここでは扱わない。
 pub fn extend_cached_masks(masks: &mut CachedMasks, new_entries: &[AppEntry]) {
     for entry in new_entries {
-        let lower = to_lower_folded(&entry.name);
-        let lower_file = lower_file_name(&entry.target_path);
-
-        // **マスクは潰す前の完全な文字列から導出する**（`file_char_mask(None) == 0` による
-        // pre-filter の false negative を避ける・`compute_wave2` の不変条件）。
-        masks.char_masks.push(name_char_mask(&lower));
-        masks
-            .file_name_char_masks
-            .push(file_char_mask(lower_file.as_deref()));
-
+        // per-entry の導出は記録側（`derive_columns`）と同じ [`derive_entry_lowers`] /
+        // [`derive_entry_collapsed`] を通す。ここに関数列を書き起こしてはならない。
         match masks.lower {
-            // v3 以下: 派生文字列を持たない（Wave 1 が全件を計算する）。
-            None => {}
+            // v3 以下: 派生文字列を持たない（Wave 1 が全件を計算する）。マスクだけ足す。
+            None => {
+                let (char_mask, file_mask, _, _) = derive_entry_lowers(entry);
+                masks.char_masks.push(char_mask);
+                masks.file_name_char_masks.push(file_mask);
+            }
+            // 潰さない列。**この枝は潰す段を持たないので順序の不変条件も持たない**
+            // （`assemble` が後で測る）。
             Some(CachedLower::Raw {
                 ref mut lower_names,
                 ref mut lower_file_names,
             }) => {
+                let (char_mask, file_mask, lower, lower_file) = derive_entry_lowers(entry);
+                masks.char_masks.push(char_mask);
+                masks.file_name_char_masks.push(file_mask);
                 lower_names.push(lower);
                 lower_file_names.push(lower_file);
             }
@@ -1629,7 +1649,9 @@ pub fn extend_cached_masks(masks: &mut CachedMasks, new_entries: &[AppEntry]) {
                 ref mut lower_names,
                 ref mut lower_file_names,
             }) => {
-                let (name, file) = collapse_lower_pair(&entry.name, lower, lower_file);
+                let (char_mask, file_mask, name, file) = derive_entry_collapsed(entry);
+                masks.char_masks.push(char_mask);
+                masks.file_name_char_masks.push(file_mask);
                 lower_names.push(name);
                 lower_file_names.push(file);
             }
@@ -2099,11 +2121,35 @@ mod tests {
     /// これらのテストは先頭でこのガードを取得する。
     static INDEX_LOCK_TEST_GUARD: Mutex<()> = Mutex::new(());
 
+    /// テスト用の作業ディレクトリを作り直して返す。
+    ///
+    /// 名前には `tag`（プロセス内の一意性）に加えて **`std::process::id()`** を含める。
+    /// `INDEX_WRITE_LOCK` はプロセス内の `static Mutex` ゆえ、テストバイナリが複数
+    /// プロセスに分かれる状況（`cargo test` と `cargo test --release` の重なり・
+    /// temp root を共有する 2 ジョブ・別 worktree での並行実行）では効かない。
+    /// pid を落とすと、片方の `remove_dir_all` がもう片方の `create_dir_all` や
+    /// `index.bin.tmp` の書き込みに割り込み、コード変更と無関係な panic になる（#978）。
     fn temp_dir(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("snotra_idx_test_{}", tag));
+        let dir =
+            std::env::temp_dir().join(format!("snotra_idx_test_{}-{}", tag, std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
+    }
+
+    #[test]
+    fn temp_dir_name_contains_process_id() {
+        let dir = temp_dir("process_unique");
+        let name = dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("temp dir name");
+        assert_eq!(
+            name,
+            format!("snotra_idx_test_process_unique-{}", std::process::id()),
+            "作業ディレクトリ名に自プロセスの pid が入っていない（#978）"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -3904,6 +3950,115 @@ mod tests {
             }
             other => panic!("variant は保たれなければならない（実際: {other:?}）"),
         }
+
+        // **マスクは潰す前の文字列から取る**（記録側の
+        // `derived_masks_come_from_the_uncollapsed_strings` と同じ不変条件を追記側でも見る）。
+        // 潰した後に取ると `SameAsLowerName` の 3 件目が `file_char_mask(None) == 0` になる。
+        assert_eq!(
+            masks.file_name_char_masks[1],
+            file_char_mask(Some("tool.exe"))
+        );
+        assert_eq!(
+            masks.file_name_char_masks[2],
+            file_char_mask(Some("docs")),
+            "`SameAsLowerName` へ潰れる件でも、マスクは潰す前の \"docs\" から取る"
+        );
+        assert_ne!(masks.file_name_char_masks[2], 0);
+        assert_eq!(masks.char_masks[1], name_char_mask("tool"));
+        assert_eq!(masks.char_masks[2], name_char_mask("docs"));
+    }
+
+    /// **マスクは潰す前の完全な文字列から導出する**（順序の不変条件・[`derive_entry_collapsed`]）。
+    ///
+    /// 潰した後に取ると、`lower_name` が `None` へ潰れた件は `name` から、file name が
+    /// `SameAsLowerName` / `Absent` へ潰れた件は `file_char_mask(None) == 0` から取ることに
+    /// なり、**pre-filter が false negative を出してその経路のエントリだけが検索でヒット
+    /// しなくなる**。結果は「それらしく」出るので挙動テストでは捕まらない——ここで潰れた件の
+    /// マスクを、潰す前の文字列から取ったマスクと直接突き合わせる。
+    ///
+    /// `derive_columns` は I/O を持たないので temp dir を要さない。
+    #[test]
+    fn derived_masks_come_from_the_uncollapsed_strings() {
+        let entries = vec![
+            // 両方潰れない: `name` に大文字、file name は拡張子ぶん `lower_name` と別。
+            AppEntry {
+                name: "Tool".to_string(),
+                target_path: "C:\\bin\\Tool.exe".to_string(),
+                is_folder: false,
+            },
+            // file name が `lower_name` と同一 → `SameAsLowerName` へ潰れる。
+            AppEntry {
+                name: "Docs".to_string(),
+                target_path: "C:\\Docs".to_string(),
+                is_folder: true,
+            },
+            // `name` が既に小文字 → `lower_names[2]` は `None` へ潰れる。
+            AppEntry {
+                name: "notes".to_string(),
+                target_path: "C:\\bin\\notes.txt".to_string(),
+                is_folder: false,
+            },
+            // file name 成分が無い → `Absent`（マスクは 0 が正しい唯一の件）。
+            AppEntry {
+                name: "Root".to_string(),
+                target_path: "C:\\".to_string(),
+                is_folder: true,
+            },
+        ];
+
+        let derived = derive_columns(entries);
+
+        // 前提: 潰れることを先に固定する（潰れなくなればこのテストは自明に通ってしまう）。
+        assert_eq!(
+            derived.lower_names,
+            vec![
+                Some("tool".to_string()),
+                Some("docs".to_string()),
+                None,
+                Some("root".to_string())
+            ]
+        );
+        assert_eq!(
+            derived.lower_file_names,
+            vec![
+                LowerFileName::Text("tool.exe".to_string()),
+                LowerFileName::SameAsLowerName,
+                LowerFileName::Text("notes.txt".to_string()),
+                LowerFileName::Absent,
+            ]
+        );
+
+        // 本題: マスクは潰す前の文字列に対応する。
+        assert_eq!(derived.char_masks[0], name_char_mask("tool"));
+        assert_eq!(derived.char_masks[1], name_char_mask("docs"));
+        assert_eq!(
+            derived.char_masks[2],
+            name_char_mask("notes"),
+            "`None` へ潰れた件も、マスクは潰す前の \"notes\" から取る"
+        );
+        assert_eq!(derived.char_masks[3], name_char_mask("root"));
+
+        assert_eq!(
+            derived.file_name_char_masks[0],
+            file_char_mask(Some("tool.exe"))
+        );
+        assert_eq!(
+            derived.file_name_char_masks[1],
+            file_char_mask(Some("docs")),
+            "`SameAsLowerName` へ潰れた件も、マスクは潰す前の \"docs\" から取る"
+        );
+        assert_ne!(
+            derived.file_name_char_masks[1], 0,
+            "潰した後に取ると `file_char_mask(None) == 0` になる"
+        );
+        assert_eq!(
+            derived.file_name_char_masks[2],
+            file_char_mask(Some("notes.txt"))
+        );
+        assert_eq!(
+            derived.file_name_char_masks[3], 0,
+            "file name 成分が無い件だけが 0 である"
+        );
     }
 
     #[test]

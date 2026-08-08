@@ -188,7 +188,73 @@ ADR は**否定の知識＝もう存在しない案**を書く場所である。
 - **`docs/design/` を含めた判断は、そこが「もう成り立たないことを書く場所」にならない限りで正しい。** 日付スラグを歴史記録の印と読み替えると、次の人が外しにいく
 - Rust のテストコードが語彙を寄付しうる穴・「単語 1 つの識別子」・frontmatter / 素の表テキスト / 日本語散文は、上の残余のまま
 
+## その後（#975・述語へ lowercase snake_case を足し、`.rs` への母集団拡大は却下した）
+
+上の「残る残余」が 2 度にわたり「述語は camelCase と SCREAMING_SNAKE を見る。snake_case … は
+今も対象外である」と記していた残余が、実害として現れた——反復 10 で `index_tree.rs` の doc が
+存在しないテスト名を「実データの全件で固定する」と引き、**リポジトリ全体でその doc 行 1 件しか
+ヒットしない**まま素通りした。`/code-review high` が指摘して初めて分かった（#975）。
+
+**Rust の関数名・テスト名・フィールド名はすべて lowercase snake_case である。** この検出器は
+**このリポジトリの主要言語の語彙をほぼ 1 件も見ていなかった**（照合 70 件は JS/TS の camelCase と
+定数が大半）。
+
+### 測定（proxy snapshot・稼働中のガードは不変）
+
+| 母集団 | 述語 | 照合 | finding |
+|---|---|---:|---:|
+| `.md`（現行母集団） | 現行 | 70 | 0 |
+| **`.md`** | **現行 + lowercase snake** | **318** | **34** |
+| `.rs`（追加候補） | 現行 | 102 | 18 |
+| `.rs` | 現行 + lowercase snake | 1,617 | 110 |
+
+### 却下 9: 母集団へ `.rs` の doc コメントを足す（#975 の「やること」2）
+
+**却下した。** #975 は「1 だけでは `.md` の引用しか見ず、2 だけでは述語が当たらない。どちらも
+単独では今回の欠陥を捕まえない」と書いており、**その指摘は正しい**——本 ADR の決定は
+**元の欠陥を機構では捕まえないまま残す**ことを意味する。
+
+理由は**密度**である。`.rs` へ広げると finding 110 件で、内訳は外部 API が支配的だった
+——`serialize_seq`（serde）・`keybd_event` / `set_var` / `remove_var`（Win32・std）・`size_hint`
+（Rust std）・`call_event_handler` / `event_buffer` / `send_user_message` / `thread_msg_target`
+（tao / tauri の内部）。これは却下 6 でモジュール `CLAUDE.md` を外した理由（「ラップ対象の外部
+API を語る場所ゆえ真の腐り 1 : 外部語彙 3」）と同じ形で、**`.rs` の doc コメントはその密度が
+さらに高い場所だった**。語彙源へ依存クレートを入れて免罪する案は却下 7 の 3 契約に当たる。
+
+**ゆえに「`.rs` の doc コメントに書かれた腐りは捕まる」と書いてはならない。** 捕まるのは
+`.md` 側だけである。
+
+### 是正した 34 件の内訳——「真の腐り」と呼べたのは 1 文書に集中する 21 件だけだった
+
+| 分類 | 件数 | 処置 |
+|---|---:|---|
+| 設計メモ 1 本（`docs/design/2026-05-31-coherence-staleset.md`） | 21 | 実装後の差分を頭に注記し、本文の当該語を散文化 |
+| 外部語彙（Win32 / GitHub API / tokio / egui / harness） | 6 | 記述の正確化（バッククォートを外す・出所を名指す） |
+| SPEC 自身の状態遷移名（focus_lost） | 3 | 「状態遷移図の辺」と名指す形へ正確化 |
+| 歴史記述（「旧 X は撤去済み」） | 3 | 散文化（`.claude/rules/governance-docs.md` の定めどおり） |
+| テストファイル名 | 1 | `tests/memory_footprint.rs` とパスで書いて正確化 |
+
+**設計メモの 21 件は、この検出器が拾える形で最も価値のある腐りだった。** needs_reindex /
+needs_rebuild は #347 Phase 2 で `IndexInputs` へ統合・削除された語であり、`docs/architecture.md`
+が「詳細は」と**現在形で指す先**がその名前で書かれていた——却下 6 の判断が守ろうとした
+「G-references が守るポインタの指し先だけが黙って腐る」状態そのものである。
+
+**同時に、上の「`docs/design/` を含めた判断は、そこが『もう成り立たないことを書く場所』に
+ならない限りで正しい」という条件が実際に試された。** 答えは「メモを歴史記録として扱い、
+as-built の注記を頭へ置く」であって、母集団から外すことではない。外せば 21 件は二度と鳴らない。
+
+### 残る残余（更新）
+
+- **述語は camelCase・SCREAMING_SNAKE・lowercase snake_case を見る。** PascalCase・ドット
+  区切り・式で書かれた腐りは今も対象外である
+- **`.rs` の doc コメントは母集団外である**（却下 9）。#975 の元の欠陥——`.rs` の doc に書かれた
+  存在しないテスト名——は**今も機構では捕まらない**。射程が閉じたのは `.md` 側だけである
+- **SPEC 自身の概念語彙が snake_case のとき偽陽性になる。** 今回 focus_lost を「状態遷移図の辺」と
+  正確化して外したが、同じ図の `hotkey-pressed` はハイフンゆえ述語の外にある——**同じ列の語が
+  字面だけで分かれる**。次に snake_case の遷移名を足せば鳴る
+- 上の各節の残余（単語 1 つ・frontmatter・日本語散文・Rust のテストコードが語彙を寄付しうる穴）は据え置き
+
 ---
 
 status: Accepted
-関連: `docs/adr/ADR-race-check-population-tooling.md` ・`docs/adr/ADR-canonical-source-without-pointer-indirection.md` ・#736 ・#698 ・#735 ・#819 ・#891 ・#593
+関連: `docs/adr/ADR-race-check-population-tooling.md` ・`docs/adr/ADR-canonical-source-without-pointer-indirection.md` ・#736 ・#698 ・#735 ・#819 ・#891 ・#975 ・#593

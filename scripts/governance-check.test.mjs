@@ -1247,16 +1247,36 @@ describe("G-stale-identifiers checkStaleIdentifiers（規範の散文に残る�
     expect(run("`CI` と `TODO` と `README`\n")).toEqual([]);
   });
 
+  // 赤フィクスチャは #975 が名指しした**実在の欠陥**——`snotra-core/src/index_tree.rs` の doc が
+  // 存在しないテスト名を「実データの全件で固定する」と引いたまま素通りしていた（反復 10）。
+  // 緑の対は同じ形で実在する側の名前で、LOWER_SRC が合成語彙として供給する
+  //（実リポジトリの語彙に依存させない——#891 が「フィクスチャが偽陰性を作る」で踏んだ経路）。
+  const LOWER_SRC = { "snotra-core/src/a.rs": "fn index_tree_file_key_matches_normalize_file_name_key() {}\n" };
+
+  it("lowercase snake_case も見る（赤・#975 の実在の欠陥）", () => {
+    const f = run("両腕の一致は `index_tree_file_key_matches_normalize_file_name_key_over_frozen_v6` が固定する\n", LOWER_SRC);
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("over_frozen_v6");
+  });
+
+  it("語彙に在る lowercase snake_case は鳴らない（緑）", () => {
+    expect(run("両腕の一致は `index_tree_file_key_matches_normalize_file_name_key` が固定する\n", LOWER_SRC)).toEqual([]);
+  });
+
+  it("判定対象外の不混入: `_` を持たない小文字 1 語（こぶ 1 つ以上の要求と同型）", () => {
+    expect(run("`expand` と `collapse` と `mount`\n")).toEqual([]);
+  });
+
   it("照合件数を返す（「腐りゼロ」と「照合していない」の区別・#497）", () => {
     const r = scanStaleIdentifiers(snap({ ...base, [DOC]: "`someName` と `otherName`\n" }), [DOC]);
     expect(r.checked).toBe(2);
     expect(r.findings).toHaveLength(2);
   });
 
-  it("2 述語は checked を二重計上しない（先頭文字で相互排他ゆえ `??` で順に試せる）", () => {
-    const r = scanStaleIdentifiers(snap({ ...base, [DOC]: "`someName` と `SOME_NAME`\n" }), [DOC]);
-    expect(r.checked).toBe(2);
-    expect(r.findings).toHaveLength(2);
+  it("3 述語は checked を二重計上しない（先頭文字と字種で相互排他ゆえ順に試せる）", () => {
+    const r = scanStaleIdentifiers(snap({ ...base, [DOC]: "`someName` と `SOME_NAME` と `some_name`\n" }), [DOC]);
+    expect(r.checked).toBe(3);
+    expect(r.findings).toHaveLength(3);
   });
 
   it("読めない文書は母集団の欠落として finding", () => {

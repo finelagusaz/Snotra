@@ -188,7 +188,7 @@ bool フラグでは検知できず、実際の kana 文字列の prefix 比較�
 
 - メインウィンドウ（`main`）と検索結果ウィンドウ（`results`）は分離した 2 つのウィンドウで構成する（#646 PR2）。`results` は `main` に従属し、フォーカスを取らない（§8.5 参照）
 - 結果の表示/非表示は `results` が空なら非表示。ツール選択・フォルダ展開ビューはインデックス構築中でも表示し、通常結果ビューはインスタントコマンドモードまたは非インデックス時に表示する（2 軸モデルから導出）
-- `main` の高さはバー高（+ status 行・toast 行が出ていればそれぞれトースト行高を加算）のみで、結果表示による伸縮はしない。`results` の高さは最大表示件数分の固定高（§4.5）で `main` が算出して適用する（旧 `compute_window_height` は撤去済み・#646 PR2 決定6/7、固定高は #835）
+- `main` の高さはバー高（+ status 行・toast 行が出ていればそれぞれトースト行高を加算）のみで、結果表示による伸縮はしない。`results` の高さは最大表示件数分の固定高（§4.5）で `main` が算出して適用する（旧 compute_window_height は撤去済み・#646 PR2 決定6/7、固定高は #835）
 - **`main` の高さの変化は行の出没と 1 対 1 で対応する**（`results` は §4.5 のとおり件数で変わらない）——バー・status 行・toast 行の構成が変わらない限り高さは変わらず、行が増減すれば必ず高さも変わる。indexing 完了・起動失敗・updater 進捗などの通知が届いて status 行・toast 行が出没した結果として高さが変わるのは正常な反映であり、表示中に遅れて届いた通知による変化も欠陥ではない（#755 / #801）
 - **インデックス構築案内・起動中・一時通知は検索バーの直下に独立した status 行として描き、入力欄には重ねない**（#700）。重ねると入力欄が編集可能なまま文字が見えなくなり、編集不能として観測される。status 行と toast 行は独立に積む（同時成立時にどちらも隠さない）
 - **これらの案内の描画面は status 行ただ 1 つで、クエリの空/非空では切り替えない**（#700）。入力欄の hint は本来のプレースホルダに徹する——2 面あると打鍵の瞬間に案内が入力欄から status 行へ飛ぶ（実機で観測）
@@ -410,7 +410,7 @@ bool フラグでは検知できず、実際の kana 文字列の prefix 比較�
 
 ### 7.6 起動時の設定初期化
 
-- 起動時に読み込んだ設定を本体が保持し、UI（egui view）は毎フレーム live-read するため、起動時の一括取得機構は存在しない（旧 `get_bootstrap_payload` IPC は #532 SU7 のフロント撤去で消滅）
+- 起動時に読み込んだ設定を本体が保持し、UI（egui view）は毎フレーム live-read するため、起動時の一括取得機構は存在しない（旧 get_bootstrap_payload IPC は #532 SU7 のフロント撤去で消滅）
 - 初期言語は OS 設定から自動判定（`sys-locale`・`ja` で始まれば日本語、それ以外は英語）
 
 ## 8. ウィンドウ動作
@@ -534,12 +534,12 @@ stateDiagram-v2
 
 遷移ルール要約（主要ガード条件）:
 
-- `/o` は `snotra-settings` 子プロセスを起動する（`!indexing` のときのみ有効）。**起動そのものは本体の状態を変えない**——ただし `SearchVisible` から開いた場合、設定アプリへフォーカスが移ることで下の `focus_lost` の遷移が別途成立する。すなわち `auto_hide_on_focus_lost` 有効時はメインウィンドウが隠れ、下の「起動中のホットキー入力は無視する」により**設定を閉じるまで再表示できない**。無効時は表示されたまま残り、§8.5 の最前面表示の一時解除が設定アプリを前面に出す。**設定サイドカーの起動は `focus_lost` の carve-out を作らない**（#746）
+- `/o` は `snotra-settings` 子プロセスを起動する（`!indexing` のときのみ有効）。**起動そのものは本体の状態を変えない**——ただし `SearchVisible` から開いた場合、設定アプリへフォーカスが移ることで下の focus_lost の遷移（上の状態遷移図の辺）が別途成立する。すなわち `auto_hide_on_focus_lost` 有効時はメインウィンドウが隠れ、下の「起動中のホットキー入力は無視する」により**設定を閉じるまで再表示できない**。無効時は表示されたまま残り、§8.5 の最前面表示の一時解除が設定アプリを前面に出す。**設定サイドカーの起動は focus_lost の carve-out を作らない**（#746）
 - トレイ「設定」も `snotra-settings` 子プロセスを起動する（`!indexing` のときのみ有効）。フォーカス移動の帰結は `/o` と同じ
 - `Standby -> SearchVisible` は `hotkey-pressed` に加えて、起動直後 `app_start [show_on_startup]` でも成立
 - `SearchVisible -> Standby` の `Escape` は `ToolSelectionMode` でも `FolderExpansionMode` でもない場合のみ成立（`ToolSelectionMode` 中は `ToolSelectionMode -> NormalMode/FolderExpansionMode` を優先し、`FolderExpansionMode` 中は `FolderExpansionMode -> NormalMode` を優先）
 - `SearchVisible -> Standby` の `hotkey-pressed` は `hotkey_toggle && main_visible` が前提
-- `SearchVisible -> Standby` の `focus_lost` は `auto_hide_on_focus_lost` 有効時のみ成立
+- `SearchVisible -> Standby` の focus_lost は `auto_hide_on_focus_lost` 有効時のみ成立
 - `/q` または `exit-requested` は `Standby` / `SearchVisible` のいずれからでも `LauncherStopped` へ遷移
 - `/o` 実行時に `indexing == true` の場合、設定オープンは no-op
 - 初回起動では `snotra-settings` を子プロセスとして直接起動する（indexing ガードをバイパス）
@@ -1053,13 +1053,13 @@ query = "%SYSTEMROOT%"
 #### egui 経路の起動保護（#532 SU5）
 
 - 起動は per-launch 専用スレッド + フレーム drain で実行する（通常起動・ツール起動・
-  インスタント実行の 3 経路とも）。イベントループスレッドで起動を同期実行しない（旧 WebView2 経路の `spawn_blocking` + 4 秒タイムアウトに相当する保護）
+  インスタント実行の 3 経路とも）。イベントループスレッドで起動を同期実行しない（旧 WebView2 経路の spawn_blocking + 4 秒タイムアウトに相当する保護）
 - single-flight: in-flight 起動中の新規起動要求（Enter/クリック）は拒否する。打鍵は
   入力欄の無効化で抑止する。Escape / blur / ホットキーによる手動 hide は launching 中も通す
   （成功時の自動 hide のみ完了後）
 - 4 秒経過は「起動失敗」ではなく**結果不明**として扱い、一時通知を表示して in-flight 追跡を
   破棄する（文言の正本は `src-tauri/src/egui_shell/strings.rs` の `launch_timeout`）。起動という
-  副作用は取り消せない（`spawn_blocking` の abandoned task と同じ意味論）。遅着した結果は破棄する
+  副作用は取り消せない（tokio の spawn_blocking の abandoned task と同じ意味論）。遅着した結果は破棄する
   （per-launch channel の drop で構造的に消滅）
 - 履歴記録は worker スレッド側で成功時に行う（ウィンドウ可視性と無関係）
 

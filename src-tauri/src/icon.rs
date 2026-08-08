@@ -114,9 +114,19 @@ impl IconCache {
     /// その後に挿入されたキーを知らない。**残す集合で書くと、その新しいキーは「残す集合に
     /// 無い」ゆえ落ちる**——落とす集合で書けば、知らないキーは落とす集合にも居ないので残る。
     ///
-    /// これは lock を持ったまま剪定していた頃と**同じ**振る舞いである（改善ではない）:
-    /// 挿入する側（`commands::icon::load_icon_pngs` の Step 3）は抽出を lock の外で行い、
-    /// 挿入で lock を取り直すので、剪定中の挿入は retain の**後**に着地していた。
+    /// lock を持ったまま剪定していた頃と**同じ**振る舞いである（改善ではない）——ただし
+    /// **これは測った事実ではなく、`commands::icon::load_icon_pngs` の 3 段ロック規律を
+    /// 読んで導いた主張である**: 挿入する側は抽出を lock の外で行い挿入で lock を取り直す
+    /// ので、剪定中の挿入は retain の**後**に着地していた。測ってあるのは述語の向きだけで
+    /// （`concurrent_insert_during_prune_window_survives`）、スレッドを跨ぐ等価性ではない。
+    ///
+    /// **窓の間にキャッシュが世代交代することがある（受容する残余）。**
+    /// `invalidate_icon_cache` が `None` と `icons.bin` 削除を撃つと、次の表示が
+    /// `IconCache::load` で**別の世代**を建てる——呼び出し側の `as_mut()` は `None` を
+    /// 弾くだけで、世代の違いは見ない。**それでも安全である**: `dead_paths` の要素は
+    /// (a) 古い世代に在り、かつ (b) 呼び出し側がこれから差し替える索引に無いパスであり、
+    /// どちらの条件も「消してよい」を意味する。新しい世代から消えるのは、その 2 条件を
+    /// 満たすものだけである（世代を跨いで**残す**側を消すことはない——落とす集合ゆえ）。
     pub fn remove_paths(&mut self, dead_paths: &std::collections::HashSet<String>) {
         let before = self.data.png.len();
         self.data.png.retain(|k, _| !dead_paths.contains(k));

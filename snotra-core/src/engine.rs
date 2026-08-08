@@ -109,7 +109,11 @@ impl Engine {
         }
     }
 
-    /// 派生文字列を持たない木から構築する（全走査の直後・初回起動）。
+    /// 派生文字列を持たない木から構築する（初回起動と、`cached_masks` が返らなかったとき）。
+    ///
+    /// **「全走査の直後」と書いてはならない**（反復 11）。cache-miss はもう
+    /// [`Self::new_from_cache`] を通り、ここへ来るのは初回起動と、ビットマスクを持たない
+    /// 古い版を読んだキャッシュ**ヒット**である。
     pub fn new_from_tree(tree: IndexTree, history: HistoryStore, config: Config) -> Self {
         let search_engine = SearchEngine::new_from_tree(tree, config.search.migemo_enabled);
         Self {
@@ -120,7 +124,12 @@ impl Engine {
         }
     }
 
-    /// キャッシュヒット時に使用するコンストラクタ。
+    /// 事前計算済みの派生データを受け取るコンストラクタ。
+    ///
+    /// **「キャッシュヒット時に使う」ではない**（反復 11）。cache-miss の枝も、保存側が書いた
+    /// その足の `CachedMasks` を持ってここへ来る——分岐を決めるのは `cached_masks` の有無で
+    /// あって `cache_changed` ではない（`indexer::LoadOrScanResult::cached_masks` の doc）。
+    /// ゆえに**この入口には全走査の直後という前提を置けない**。
     ///
     /// **版の番号を書かない。** 分岐を決めるのは `CachedMasks.lower` の variant であって版では
     /// なく、番号を書くと版を上げるたびにこの散文だけが腐る（`INDEX_CACHE_VERSION` の doc が

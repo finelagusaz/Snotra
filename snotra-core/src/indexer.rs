@@ -53,8 +53,10 @@ pub struct AppEntry {
 /// 同じ表現で返る**——潰し方の判定は `query::measure_derived_sharing` の 1 か所を通るので、
 /// 消費側は出所を区別しない（区別するのは `lower` の variant だけである）。
 ///
-/// - `char_masks` / `file_name_char_masks`: 常に存在
-/// - `lower`: v3 フォールバック時のみ `None` → Wave 1 計算が走る
+/// - `char_masks` / `file_name_char_masks`: この型が在るなら必ず在る
+/// - `lower`: 派生文字列を持たない古い版を読んだときは `None` → Wave 1 計算が走る。
+///   **版の番号を書かない**（`SearchEngine::new_with_cached_masks` の doc と同じ理由で、
+///   番号を書くと版を上げるたびにこの散文だけが腐る）
 ///
 /// `normalized_keys` は持たない——`target_path` からの導出へ移して索引・オンディスクの
 /// 双方から外した（`PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を
@@ -325,10 +327,15 @@ pub struct LoadOrScanResult {
     pub cache_changed: bool,
     /// 各フェーズの所要時間。
     pub stats: LoadOrScanStats,
-    /// 事前計算済みの派生データ。**キャッシュヒット時と cache-miss 時の両方で `Some` になる**
-    /// ——前者は `index.bin` から読んだもの、後者は保存側が書いたその足で返したものである
-    /// （反復 11）。`None` になるのは保存先が引けなかったときだけで、そのとき下流は
-    /// `new_from_tree` で建て直す。
+    /// 事前計算済みの派生データ。**キャッシュヒットに限らない**——cache-miss の枝も、保存側が
+    /// 書いたその足で返したものを載せる（反復 11）。
+    ///
+    /// **`None` になる場合を数え上げてはならない。** 版のフォールバック鎖は伸びるので、
+    /// 数えた散文はそのたび腐る（正本は `load_cache_in` の分岐と、cache-miss 枝が受け取る
+    /// `save_cache_sorted` の返り値である）。**`None` は今も起こる**——ビットマスクを持たない
+    /// 古い版を読んだときと、保存先が引けなかったときであり、**前者はキャッシュヒットで
+    /// 起こる**。ゆえに消費側は `Some` を前提にしてはならず、`new_from_tree` の腕は
+    /// 到達不能ではない。
     pub cached_masks: Option<CachedMasks>,
     /// キャッシュヒット時のみ `Some`。`src-tauri` が低優先度スレッドで `run()` し、
     /// `RescanOutcome::Changed` ならアイコンキャッシュを無効化する。

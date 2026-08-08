@@ -371,7 +371,7 @@ impl SearchEngine {
         )
     }
 
-    /// [`IndexMaterial`] から構築する。**索引を建てる唯一の入口である。**
+    /// [`IndexMaterial`] から構築する。**crate 外から索引を建てる入口はこれだけである**——`new_from_tree` / `new_with_cached_masks` は `pub(crate)` へ下げてある（`new` / `new_with_migemo` は `Vec<AppEntry>` から建てる別系統で、テストと計測ハーネスが使う）。**「唯一の入口」と無条件に書いてはならない**（かつてそう書いていた）: 下げる前は木とマスクをほどいた組を crate 外から渡せ、**長さの検証は `assemble` の `debug_assert` だけ＝release では何も守っていなかった**。
     ///
     /// **派生データの有無で分岐するのはここだけである。** かつては同じ `match` が `PrebuiltIndex` / `Engine` / `SearchEngine` の 3 層・5 か所の呼び出し点へ写っていた（そのうち 1 か所だけを直す案を却下した経緯は [`IndexMaterial`] の doc）。
     pub fn from_material(material: IndexMaterial, migemo_enabled: bool) -> Self {
@@ -390,7 +390,7 @@ impl SearchEngine {
     /// 導出のあいだだけ実体へ戻す。**木専用の導出を書き起こさない**——規則が 2 つになると
     /// 片方の経路だけが静かにすれる。**この根拠は「ここが遅くてよい」に依存しない**
     /// ——実体化の対価は `IndexTree::materialize` の doc が持つ。
-    pub fn new_from_tree(tree: IndexTree, migemo_enabled: bool) -> Self {
+    pub(crate) fn new_from_tree(tree: IndexTree, migemo_enabled: bool) -> Self {
         let (lower_names, lower_file_names, kana_lower_names) =
             wave1_from_tree(&tree, migemo_enabled);
         let (char_masks, file_name_char_masks) = compute_wave2(&lower_names, &lower_file_names);
@@ -420,7 +420,7 @@ impl SearchEngine {
     /// `target_path` から導出する形へ移した。v4 バイト列を読んだ場合も当該フィールドは
     /// 捨てるだけで、`lower_names` / `lower_file_names` が揃っていれば Wave 1 は
     /// スキップされたままである（v4 ユーザーの初回起動が遅くならない）。
-    pub fn new_with_cached_masks(
+    pub(crate) fn new_with_cached_masks(
         tree: IndexTree,
         masks: CachedMasks,
         migemo_enabled: bool,

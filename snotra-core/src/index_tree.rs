@@ -311,7 +311,7 @@ impl IndexTree {
     ///
     /// 循環は `pi < i` の 1 比較で構造的に潰す。文書化した契約ではなく順序で担保するので、
     /// 壊れた入力でも [`walk_to_root`] が止まらなくなることはない。
-    pub fn build(entries: Vec<AppEntry>) -> Self {
+    pub(crate) fn build(entries: Vec<AppEntry>) -> Self {
         let n = entries.len();
         // 整列の判定は並列で 1 回だけ。全件走査の tie-break がこの 1 bit に載る。
         //

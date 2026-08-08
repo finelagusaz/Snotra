@@ -42,7 +42,9 @@ pub struct PrebuiltIndex(SearchEngine);
 impl PrebuiltIndex {
     /// `Vec<AppEntry>` から建てる。**製品経路は通らない。**
     ///
-    /// **`#[cfg(test)]` で締めてある。** かつては「`snotra-core/tests/` の統合テストが外部クレートとしてリンクするため締められない」と書いていたが、**その呼び出し元は 1 つも存在しなかった**（grep 実測）。締めていなかったせいで「製品コードから新たに呼ばないこと」という規約だけが残り、破っても木を建て直すぶん静かに遅くなるだけで、型は同じ `PrebuiltIndex` を返すのでレビューでも実行結果でも差が見えなかった。**今はコンパイラが拒む。**
+    /// **`#[cfg(test)]` で締めてある。** かつては「`snotra-core/tests/` の統合テストが外部クレートとしてリンクするため締められない」と書いていたが、**その呼び出し元は 1 つも存在しなかった**（grep 実測）。締めていなかったせいで「製品コードから新たに呼ばないこと」という規約だけが残り、破っても木を建て直すぶん静かに遅くなるだけで、型は同じ `PrebuiltIndex` を返すのでレビューでも実行結果でも差が見えなかった。
+    ///
+    /// **「今はコンパイラが拒む」と書いてはならない**（かつてそう書いていた）——`#[cfg(test)]` が閉じるのはこのシンボル名だけで、同じ障害（`Vec<AppEntry>` から建て直す）は `from_material(IndexMaterial::from_tree(IndexTree::build(entries)))` として書けていた。**塞いだのは `IndexTree::build` を `pub(crate)` へ下げたことである**——crate 外から手に入る木は `IndexTree::empty()` だけになり、その連鎖は今はコンパイルを通らない。**crate 内では今も書ける。**
     #[cfg(test)]
     pub fn new(entries: Vec<AppEntry>, migemo_enabled: bool) -> Self {
         Self(SearchEngine::new_with_migemo(entries, migemo_enabled))

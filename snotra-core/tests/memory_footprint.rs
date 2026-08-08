@@ -263,7 +263,7 @@ fn measure_real_index_footprint() {
         );
     }
     println!(
-        "  entries = {n}, cache_hit = {}, cached_masks = {}",
+        "  entries = {n}, cache_hit = {}, has_masks = {}",
         result.stats.cache_hit,
         result.material.has_masks()
     );

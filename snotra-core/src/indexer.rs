@@ -1,8 +1,14 @@
-//! スキャン対象の列挙・重複排除と、インデックスキャッシュ（`index.bin`）の入出力。
+//! スキャン対象の列挙・重複排除、インデックスキャッシュ（`index.bin`）の入出力、そして
+//! **索引の材料を組のまま運ぶ器**（[`IndexMaterial`]）。
 //!
 //! `index.bin` への書き込みは `INDEX_WRITE_LOCK` で単一書き手に直列化し、tmp→rename の
 //! 食い合いによる破損を防ぐ。キャッシュヒット時の背景再スキャンは `BackgroundRescanTask`
 //! として返し、spawn とアイコン無効化は所有者（`src-tauri`）へ委ねる。
+//!
+//! 木と派生データを 1 つの型へ束ねるのはこのモジュールの責務である——**両者の長さが揃うこと**
+//! を、消費側の規約ではなく型で持つ（`index.bin` から来た組は `IndexMaterial::from_untrusted`
+//! が検証し、揃わなければ全走査へ落とす）。索引を建てる側は `search` にあり、そちらは組を
+//! ほどかずに受け取る（理由は [`IndexMaterial`] の doc）。
 
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -48,15 +54,11 @@ pub struct AppEntry {
 
 /// 事前計算済みの派生データ。SearchEngine の構築時に渡すことで起動時の計算をスキップする。
 ///
-/// **出所は 2 つある。** `index.bin` から読んだもの（キャッシュヒット）と、
-/// `save_cache_sorted_in` が書いたその足で返したもの（cache-miss・反復 11）。**どちらも
-/// 同じ表現で返る**——潰し方の判定は `query::measure_derived_sharing` の 1 か所を通るので、
-/// 消費側は出所を区別しない（区別するのは `lower` の variant だけである）。
+/// 出所は `index.bin` から読んだもの（キャッシュヒット）と、`save_cache_sorted_in` が書いたその足で返したもの（反復 11 以降）である。**出所を数え上げてはならない**——かつて「**出所は 2 つある**」と書きながら**同じ段落の次の文で数え上げを禁じていた**（`docs/comment-guidelines.md`「第一原則: コメントは「なぜ」を書く」が経路の数を書かないよう定めているのに、自分で反した形）。正本は `save_cache_sorted` と `load_cache_in` の分岐であり、数えた散文は枝が増えるたびに腐る。**出所によって表現は変わらない**——潰し方の判定は `query::measure_derived_sharing` の 1 か所を通るので、消費側は出所を区別しない（区別するのは `lower` の variant だけである）。
 ///
 /// - `char_masks` / `file_name_char_masks`: この型が在るなら必ず在る
 /// - `lower`: 派生文字列を持たない古い版を読んだときは `None` → Wave 1 計算が走る。
-///   **版の番号を書かない**（`Engine::new_from_cache` の doc と同じ理由で、番号を書くと
-///   版を上げるたびにこの散文だけが腐る）
+///   **版の番号を書かない**（`Engine::from_material` の doc と同じ理由で、番号を書くと版を上げるたびにこの散文だけが腐る）
 ///
 /// `normalized_keys` は持たない——`target_path` からの導出へ移して索引・オンディスクの
 /// 双方から外した（`PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を
@@ -322,24 +324,17 @@ pub struct LoadOrScanStats {
 
 /// `load_or_scan_with_stats` の戻り値。
 pub struct LoadOrScanResult {
-    /// ロード or スキャンされた索引の材料。
+    /// ロード or スキャンされた索引の材料（木と派生データの組）。
     ///
     /// **`Vec<AppEntry>` ではない**——v7 は `target_path` をディスクに持たないので、
     /// 実体へ戻すと削った 312,691 回の確保がその場で復活する。
-    pub tree: IndexTree,
+    ///
+    /// **組のまま渡す。** ほどいた 2 値を持ち回せると、木を伸ばしてマスクを追記し忘れる形が書けるようになる（正本は [`IndexMaterial`] の doc）。
+    pub material: IndexMaterial,
     /// キャッシュが無く（または stale で）フルスキャンが走った場合 true。
     pub cache_changed: bool,
     /// 各フェーズの所要時間。
     pub stats: LoadOrScanStats,
-    /// 事前計算済みの派生データ。**キャッシュヒットに限らない**——cache-miss の枝も、保存側が
-    /// 書いたその足で返したものを載せる（反復 11）。
-    ///
-    /// **`None` になる場合を数え上げてはならない。** 版のフォールバック鎖は伸びるので、
-    /// 数えた散文はそのたび腐る。**`None` は今も起こり、キャッシュヒットでも起こりうる**
-    /// ——ゆえに消費側は `Some` を前提にしてはならず、`Engine::new_from_tree` の腕は到達不能
-    /// ではない。正本は `load_cache_in` の分岐と、cache-miss 枝が受け取る `save_cache_sorted`
-    /// の返り値である。
-    pub cached_masks: Option<CachedMasks>,
     /// キャッシュヒット時のみ `Some`。`src-tauri` が低優先度スレッドで `run()` し、
     /// `RescanOutcome::Changed` ならアイコンキャッシュを無効化する。
     pub rescan_task: Option<BackgroundRescanTask>,
@@ -482,13 +477,6 @@ fn cache_bin_file_in(dir: &Path) -> BinFile {
     BinFile::new_in(dir, INDEX_MAGIC, INDEX_CACHE_VERSION, "index.bin")
 }
 
-/// Load cached entries or scan the filesystem. Returns `(entries, cache_changed)`
-/// where `cache_changed = true` means the cache was missing/stale and a full scan ran.
-pub fn load_or_scan(scan: &[ScanPath], show_hidden_system: bool) -> (IndexTree, bool) {
-    let result = load_or_scan_with_stats(scan, show_hidden_system);
-    (result.tree, result.cache_changed)
-}
-
 /// `index.bin` に載っているときだけエントリを返す（**走査は絶対にしない**）。実データを
 /// corpus として使うテスト専用。
 ///
@@ -515,12 +503,12 @@ pub fn load_cached_entries(scan: &[ScanPath], show_hidden_system: bool) -> Optio
     // ときは、木 →`Vec<AppEntry>` の規則が 2 部出荷されていた——片方に触れば corpus テストは
     // 製品が決して見ないデータを検証することになる（`index_tree.rs` の `//!` が「辿る規則は
     // 1 つ」と定めているのと同じ理屈で、戻す規則も 1 つでなければならない）。
-    Some(load_cache(hash)?.tree.materialize())
+    Some(load_cache(hash)?.material.tree().materialize())
 }
 
-/// Same as `load_or_scan`, but returns the full `LoadOrScanResult`: timing stats,
-/// cached bitmasks, and—on cache hit—a `BackgroundRescanTask` for the caller to
-/// run on a background thread.
+/// キャッシュを読む、無ければ全走査して保存する。返すのは [`LoadOrScanResult`]——索引の材料（[`IndexMaterial`]）とフェーズ計測、そしてキャッシュヒット時だけ背景再スキャンのタスクである。
+///
+/// **「`load_or_scan` と同じで、ただし〜」と書いてはならない**（かつてそう書いていた）。その関数は #984 で削除され、この doc だけが実在しない名前を基準に自分を説明する状態になっていた。
 pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> LoadOrScanResult {
     let total_started = Instant::now();
 
@@ -535,8 +523,7 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
         let cache_load_ms = cache_load_started.elapsed().as_millis();
         let cache_read_ms = result.read_ms;
         let cached_version = result.version;
-        let return_tree = result.tree;
-        let cached_masks = result.cached_masks;
+        let material = result.material;
         // 背景再スキャンはここでは spawn しない。タスクとして返し、`src-tauri` が
         // `AppHandle` を持った状態で spawn する（`Changed` 時のアイコン無効化のため）。
         //
@@ -548,7 +535,7 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
             scan: scan.to_vec(),
             show_hidden_system,
             config_hash: current_hash,
-            cached_digest: digest_over(&return_tree),
+            cached_digest: digest_over(material.tree()),
             generation: rescan_generation,
             cached_version,
         };
@@ -565,10 +552,9 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
             total_ms: total_started.elapsed().as_millis(),
         };
         return LoadOrScanResult {
-            tree: return_tree,
+            material,
             cache_changed: false,
             stats,
-            cached_masks,
             rescan_task: Some(rescan_task),
         };
     }
@@ -577,7 +563,7 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
     // 権威的書き手: scan + sort + save を書き込みロック保持下で行い、
     // 背景再スキャン / 別ビルドとの index.bin 同時書き込みを防ぐ。
     // フェーズ計測はクロージャの戻り値として持ち出す。
-    let (tree, cached_masks, scan_ms, sort_ms, cache_save_ms) = with_index_write_lock(|| {
+    let (material, scan_ms, sort_ms, cache_save_ms) = with_index_write_lock(|| {
         let scan_started = Instant::now();
         let mut entries = scan_all(scan, show_hidden_system);
         let scan_ms = scan_started.elapsed().as_millis();
@@ -591,10 +577,10 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
         // 同じ木を 2 回建てることになる（親解決は実測 23 ms）。派生データも同じ理屈で、
         // 保存側が計算して書いたものをここで受け取らないと、下流が全件を実体化してから
         // 建て直すことになる。
-        let (tree, cached_masks) = save_cache_sorted(entries, current_hash);
+        let material = save_cache_sorted(entries, current_hash);
         let cache_save_ms = cache_save_started.elapsed().as_millis();
 
-        (tree, cached_masks, scan_ms, sort_ms, cache_save_ms)
+        (material, scan_ms, sort_ms, cache_save_ms)
     });
 
     let stats = LoadOrScanStats {
@@ -612,15 +598,10 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
     };
 
     LoadOrScanResult {
-        tree,
+        // **cache-miss でも派生データを持って返る。** 保存側が `index.bin` へ書いたのと同じ 4 本であり、キャッシュヒット時に `load_cache_in` が返すものと**表現まで同じ**である（どちらも `collapse_lower_pair` = `measure_derived_sharing` を通した `Collapsed`）。ゆえに `cache_changed` は「どのコンストラクタが選ばれるか」を決めない。
+        material,
         cache_changed: true,
         stats,
-        // **cache-miss でも `Some` で返る。** 保存側が `index.bin` へ書いたのと同じ 4 本で
-        // あり、キャッシュヒット時に `load_cache_in` が返すものと**表現まで同じ**である
-        // （どちらも `collapse_lower_pair` = `measure_derived_sharing` を通した `Collapsed`）。
-        // ゆえに `cache_changed` は「どのコンストラクタが選ばれるか」を決めない——決めるのは
-        // `cached_masks` の有無と `CachedLower` の variant だけである。
-        cached_masks,
         rescan_task: None,
     }
 }
@@ -758,15 +739,13 @@ pub(crate) fn sort_entries_canonical(entries: &mut [AppEntry]) {
 /// 呼び出し側がそのまま索引の材料に使えるようにするためである（`rebuild_and_save` と
 /// cache-miss の枝が実際にそうする）。
 ///
-/// **マスクが `Option` なのは保存先が無い枝があるからである。** `config_dir` が引けないとき
-/// は `index.bin` を書かないので派生データも計算しない——ここを `CachedMasks` 直返しにすると、
-/// 誰も読まない列を全件ぶん組み立てることになる。
-fn save_cache_sorted(entries: Vec<AppEntry>, config_hash: u64) -> (IndexTree, Option<CachedMasks>) {
+/// **派生データを持たない材料を返す枝がある。** `config_dir` が引けないときは `index.bin` を書かないので派生データも計算しない——常に計算する形にすると、誰も読まない列を全件ぶん組み立てることになる。**この分岐がこの性質の正本である**（数え上げは他へ書かない）。
+fn save_cache_sorted(entries: Vec<AppEntry>, config_hash: u64) -> IndexMaterial {
     let Some(dir) = Config::config_dir() else {
-        return (IndexTree::build(entries), None);
+        return IndexMaterial::from_tree(IndexTree::build(entries));
     };
     let (tree, masks) = save_cache_sorted_in(&dir, entries, config_hash);
-    (tree, Some(masks))
+    IndexMaterial::derived(tree, masks)
 }
 
 /// 木と派生 4 本を導出しただけの中間の姿。**I/O もロック契約も持たない。**
@@ -808,7 +787,7 @@ impl DerivedColumns {
 
 /// エントリから木と派生 4 本を導出する。**I/O を持たない。**
 pub(crate) fn derive_columns(entries: Vec<AppEntry>) -> DerivedColumns {
-    // マスクをここで計算するのは、受け取った側が再計算せずに索引の表現へそのまま使うためである（受け取る経路の正本は `LoadOrScanResult::cached_masks` の doc であり、ここで数えない）。
+    // マスクをここで計算するのは、受け取った側が再計算せずに索引の表現へそのまま使うためである（運ぶ器は [`IndexMaterial`] であり、受け取る経路をここで数えない）。
     //
     // **per-entry の導出そのものは [`derive_entry_collapsed`] が持つ。** 追記側
     // （`extend_cached_masks`）と同じ関数を通ることだけが、ディスクとメモリで潰れ方と
@@ -894,25 +873,28 @@ fn save_cache_sorted_in(
 /// Force rebuild: scan and save cache, regardless of existing cache.
 /// Called from settings dialog (Phase 5).
 ///
-/// **保存が返す `CachedMasks` をここでは捨てている（意図的・受容する残余）。** 下流の
-/// `PrebuiltIndex::from_tree` が木しか取らないため、この経路は今も Wave 1/2 を建て直す
-/// （issue #984・繋ぎ方は `PERFORMANCE.md`「次の反復の候補」の該当行）。
-pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> IndexTree {
+/// **書いた派生データをそのまま返す。** かつては捨てており、呼び出し側は木しか受け取れず Wave 1/2 を建て直していた——**計算したものを捨ててから、同じものを作り直していた**（額は `PERFORMANCE.md`「採用: `PrebuiltIndex` を `CachedMasks` 込みで建てる」）。
+///
+/// **派生データを持つかは [`IndexMaterial`] の内側の話である**（保存先が引けない枝では計算しない）。**持たない場合を数え上げてはならない**——正本は `save_cache_sorted` の分岐である。
+///
+/// PATH エントリをマージするなら [`IndexMaterial::extend_with_path_entries`] を通すこと。
+pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> IndexMaterial {
     // 権威的書き手: scan + sort + save を書き込みロック保持下で行い、
     // 背景再スキャン / 別の rebuild との index.bin 同時書き込みを防ぐ。
     with_index_write_lock(|| {
         let mut entries = scan_all(scan, show_hidden_system);
         sort_entries_canonical(&mut entries);
         let config_hash = compute_config_hash(scan, show_hidden_system);
-        save_cache_sorted(entries, config_hash).0
+        save_cache_sorted(entries, config_hash)
     })
 }
 
-/// キャッシュ読み込み結果。v3 ヒット時はマスク付き、v2 ヒット時はマスクなし。
+/// キャッシュ読み込み結果。
 struct LoadCacheResult {
-    /// 索引の材料。**v7 はこれをディスクから直接読み、旧版は `target_path` から建て直す。**
-    tree: IndexTree,
-    cached_masks: Option<CachedMasks>,
+    /// 索引の材料。**v7 は木をディスクから直接読み、旧版は `target_path` から建て直す。**
+    ///
+    /// **マスクを持つ版の枝はすべて [`IndexMaterial::from_untrusted`] を通す**（列長を検証する）。**「どの枝も」と書いてはならない**——マスクを持たない版は検証する列が無いので `from_tree` を通る。構成上の正しさで検証を省けるのは導出したその足の組だけである。
+    material: IndexMaterial,
     /// `index.bin` をバイト列として読み終えるまでの時間（`LoadOrScanStats::cache_read_ms` へ運ぶ）。
     read_ms: u128,
     /// 実際に読めた形式のバージョン。**現行版とは限らない**——フォールバック経路で読めた
@@ -963,8 +945,7 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
             }),
         };
         return Some(LoadCacheResult {
-            tree,
-            cached_masks: Some(masks),
+            material: IndexMaterial::from_untrusted(tree, masks)?,
             read_ms,
             version: INDEX_CACHE_VERSION,
         });
@@ -987,8 +968,7 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
             }),
         };
         return Some(LoadCacheResult {
-            tree: IndexTree::build(cache.entries),
-            cached_masks: Some(masks),
+            material: IndexMaterial::from_untrusted(IndexTree::build(cache.entries), masks)?,
             read_ms,
             version: 6,
         });
@@ -1011,8 +991,7 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
             }),
         };
         return Some(LoadCacheResult {
-            tree: IndexTree::build(cache.entries),
-            cached_masks: Some(masks),
+            material: IndexMaterial::from_untrusted(IndexTree::build(cache.entries), masks)?,
             read_ms,
             version: 5,
         });
@@ -1039,8 +1018,7 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
             }),
         };
         return Some(LoadCacheResult {
-            tree: IndexTree::build(cache.entries),
-            cached_masks: Some(masks),
+            material: IndexMaterial::from_untrusted(IndexTree::build(cache.entries), masks)?,
             read_ms,
             version: 4,
         });
@@ -1057,8 +1035,7 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
             lower: None,
         };
         return Some(LoadCacheResult {
-            tree: IndexTree::build(cache.entries),
-            cached_masks: Some(masks),
+            material: IndexMaterial::from_untrusted(IndexTree::build(cache.entries), masks)?,
             read_ms,
             version: 3,
         });
@@ -1070,8 +1047,8 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
             return None;
         }
         return Some(LoadCacheResult {
-            tree: IndexTree::build(cache.entries),
-            cached_masks: None,
+            // マスクを持たない版ゆえ検証する列が無い（木の整合は `IndexTree::build` が持つ）。
+            material: IndexMaterial::from_tree(IndexTree::build(cache.entries)),
             read_ms,
             version: 2,
         });
@@ -1621,7 +1598,7 @@ fn collapse_lower_pair(
 /// `char_masks` / `file_name_char_masks` は常に追記。派生文字列は `lower` が `Some` の場合のみ、
 /// **その variant が持つ表現に合わせて**追記する。`kana_lower_names` は SearchEngine 側で
 /// entries から直接計算されるためここでは扱わない。
-pub fn extend_cached_masks(masks: &mut CachedMasks, new_entries: &[AppEntry]) {
+pub(crate) fn extend_cached_masks(masks: &mut CachedMasks, new_entries: &[AppEntry]) {
     for entry in new_entries {
         // per-entry の導出は記録側（`derive_columns`）と同じ [`derive_entry_lowers`] /
         // [`derive_entry_collapsed`] を通す。ここに関数列を書き起こしてはならない。
@@ -1656,6 +1633,89 @@ pub fn extend_cached_masks(masks: &mut CachedMasks, new_entries: &[AppEntry]) {
                 lower_file_names.push(file);
             }
         }
+    }
+}
+
+/// 索引の材料。**木と、その木に対して導出した派生データを組のまま運ぶ。**
+///
+/// **ほどいて 2 つの値として持ち回してはならない。** 束ねる理由は [`CachedMasks`] が 4 本を束ねるのと同じ（`SearchEngine::new_with_cached_masks` の doc「境界を跨ぐ手前でほどかない」）で、こちらが消すのは「**木を伸ばしたのにマスクへ追記し忘れる**」誤りである。フィールドが private ゆえ木だけを伸ばす経路は書けない——その誤りは `SearchEngine` の長さ検証が `debug_assert` ゆえ **release で沈黙し**、再構築を終えた後の初回検索で並列 Vec の添字外 panic として出る（`panic = "abort"` ゆえプロセスごと終了）。
+///
+/// **`Option` を消費側へ配らない。** かつては呼び出し点が `match` で `Some` / `None` を捌き、同じ分岐が `PrebuiltIndex` / `Engine` / `SearchEngine` の **3 層 5 か所**へ写っていた。`PrebuiltIndex::from_parts` を足すだけの案は**そのうち 1 か所しか直せない**（根は最下層の 2 コンストラクタで、上の 2 層はその写しだから）ので採らなかった。
+///
+/// **ディスクから来た組は `from_untrusted` を通す**（列長を検証する）。構成上正しいのは `derive_columns` の出力だけである。
+pub struct IndexMaterial {
+    tree: IndexTree,
+    masks: Option<CachedMasks>,
+}
+
+impl IndexMaterial {
+    /// 派生データを持たない材料（初回起動と、保存側がマスクを返さなかったとき）。
+    pub fn from_tree(tree: IndexTree) -> Self {
+        Self { tree, masks: None }
+    }
+
+    /// 導出したその足の組。**長さを検証しない**——[`derive_columns`] が 1 周で 4 本を埋めるので構成上一致する。
+    pub(crate) fn derived(tree: IndexTree, masks: CachedMasks) -> Self {
+        Self {
+            tree,
+            masks: Some(masks),
+        }
+    }
+
+    /// **ディスクから読んだ組を検証してから受け取る。** 列長が木と揃わなければ `None` を返し、呼び出し側は全走査へ落ちる。
+    ///
+    /// **見るのは列の長さだけである。** マスクの中身が正しいかは検証できない（正しさの定義が「その木から導出した値と一致する」であり、それを確かめるには導出し直すことになる——検証のために削減を捨てる形になる）。検証をここに置くのは、`load_cache_in` が [`IndexTree::from_parts`] で**木の整合しか**見ていなかったためである——切り詰められた `index.bin` は「木より短いマスク」として起動経路へ入り、`SearchEngine` の長さ検証は `debug_assert` ゆえ release で消えて初回検索の添字外 panic になっていた。**版が読めたことは中身が健全であることを意味しない**（`from_parts` の doc と同じ理屈）。
+    pub(crate) fn from_untrusted(tree: IndexTree, masks: CachedMasks) -> Option<Self> {
+        let n = tree.len();
+        if masks.char_masks.len() != n || masks.file_name_char_masks.len() != n {
+            return None;
+        }
+        let lower_ok = match &masks.lower {
+            None => true,
+            Some(CachedLower::Collapsed {
+                lower_names,
+                lower_file_names,
+            }) => lower_names.len() == n && lower_file_names.len() == n,
+            Some(CachedLower::Raw {
+                lower_names,
+                lower_file_names,
+            }) => lower_names.len() == n && lower_file_names.len() == n,
+        };
+        lower_ok.then_some(Self {
+            tree,
+            masks: Some(masks),
+        })
+    }
+
+    /// PATH スキャンが見つけたエントリをマージする。**マスクへの追記と木への追加を対で行う唯一の場所である。**
+    ///
+    /// 起動経路（`src-tauri` の `main`）と背景の再構築（同 `drain_index`）が同じここを通る。片方だけ書く形は**この型の外からは書けない**——それがフィールドを private にしてある理由である。検知器は `search/tests/build.rs` の `path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree` と `path_merge_extends_the_tree_even_without_derived_data`（**どちらも変異を注入して落ちることを実測してある**）。
+    ///
+    /// **スキャンは呼び出し側に残してある。** 実 PATH 環境変数を読む [`scan_path_env`] を内側へ入れると、この操作が決定的なユニットテストに乗らない。スキャンの呼び忘れは `entries` が手元に無いという形で目に見えるので、閉じる価値があるのはマージの側だけである。
+    pub fn extend_with_path_entries(&mut self, entries: Vec<AppEntry>) {
+        // **追記が先に来るのは所有権の帰結であって規約ではない。** `extend_with_roots` は `entries` を move で取るため、逆順に書くと clone が要る——順序の取り違えは「うっかり」では書けない。ゆえにこの順序に検知器を置いていない。
+        if let Some(masks) = self.masks.as_mut() {
+            extend_cached_masks(masks, &entries);
+        }
+        self.tree.extend_with_roots(entries);
+    }
+
+    /// 木の読み取り（件数・パスの組み直し）。**伸ばす操作は公開しない。**
+    pub fn tree(&self) -> &IndexTree {
+        &self.tree
+    }
+
+    /// 索引を建てる側だけがほどく。**crate 外へ出さない**——ほどいた 2 値を持ち回せるようになると、この型の存在理由が消える。
+    pub(crate) fn into_parts(self) -> (IndexTree, Option<CachedMasks>) {
+        (self.tree, self.masks)
+    }
+
+    /// 派生データを持っているか。**検知器と計測ハーネスのためだけに在る**（`SearchEngine::footprint_rows` と同じ `#[doc(hidden)] pub` の扱い）。
+    ///
+    /// **製品コードはこれを読んで分岐してはならない。** 建て方の分岐は `SearchEngine::from_material` の 1 か所に閉じており、そこへ戻すために `Option` を外へ出していない。ここが要るのは 2 つの理由による: (1) `extend_with_path_entries` が**マスクを取り落とさない**ことを検知器が名指しで測れるようにする——落とすと `from_material` が黙って木からの導出へ切り替わり、A/B 一致は**成立したまま**削減だけが消える（挙動テストでは捕まらない類の退行）。(2) `tests/memory_footprint.rs` が「どちらの枝を測ったか」を出力に添える——添えないとその数字は読めない。
+    #[doc(hidden)]
+    pub fn has_masks(&self) -> bool {
+        self.masks.is_some()
     }
 }
 
@@ -2549,16 +2609,17 @@ mod tests {
             result.version, 6,
             "v6 として読めたことが昇格の判断材料になる"
         );
-        assert_eq!(result.tree.len(), 3);
-        assert_eq!(result.tree.names[0], "Firefox");
+        let (tree, masks) = result.material.into_parts();
+        assert_eq!(tree.len(), 3);
+        assert_eq!(tree.names[0], "Firefox");
 
         // 木は `target_path` から建て直される。原文へ戻せることまで見る——v6 の実体を
         // 捨てて木にした段で取りこぼせば、以後この索引のパスは静かに壊れる。
         let mut buf = String::new();
-        result.tree.path_into(&mut buf, 0);
+        tree.path_into(&mut buf, 0);
         assert_eq!(buf, "C:\\apps\\firefox.lnk");
 
-        let masks = result.cached_masks.expect("v6 でもマスクは返る");
+        let masks = masks.expect("v6 でもマスクは返る");
         match masks.lower {
             Some(CachedLower::Collapsed {
                 lower_names,
@@ -2619,10 +2680,11 @@ mod tests {
             result.version, 5,
             "v5 として読めたことが昇格の判断材料になる"
         );
-        assert_eq!(result.tree.len(), 2);
-        assert_eq!(result.tree.names[0], "Firefox");
+        let (tree, masks) = result.material.into_parts();
+        assert_eq!(tree.len(), 2);
+        assert_eq!(tree.names[0], "Firefox");
 
-        let masks = result.cached_masks.expect("v5 でもマスクは返る");
+        let masks = masks.expect("v5 でもマスクは返る");
         match masks.lower {
             Some(CachedLower::Raw {
                 lower_names,
@@ -2706,9 +2768,10 @@ mod tests {
         fs::write(dir.join("index.bin"), GOLDEN_V4).expect("write v4 index.bin");
 
         let result = load_cache_in(&dir, 12345).expect("v4 の index.bin が読めること");
-        assert_eq!(result.tree.len(), 2);
-        assert_eq!(result.tree.names[0], "Firefox");
-        let masks = result.cached_masks.expect("v4 でもマスクは返る");
+        let (tree, masks) = result.material.into_parts();
+        assert_eq!(tree.len(), 2);
+        assert_eq!(tree.names[0], "Firefox");
+        let masks = masks.expect("v4 でもマスクは返る");
         assert_eq!(masks.char_masks, vec![0xABu64, 0xCD]);
         match masks.lower {
             Some(CachedLower::Raw {
@@ -2900,10 +2963,11 @@ mod tests {
         let (_, returned) = save_cache_sorted_in(&dir, entries.clone(), config_hash);
 
         let result = load_cache_in(&dir, config_hash).expect("load cache written to dir");
-        assert_eq!(result.tree.len(), 2);
-        assert_eq!(result.tree.names[0], "Firefox");
-        assert_eq!(result.tree.names[1], "Projects");
-        let masks = result.cached_masks.expect("v6 cache should include masks");
+        let (tree, masks) = result.material.into_parts();
+        assert_eq!(tree.len(), 2);
+        assert_eq!(tree.names[0], "Firefox");
+        assert_eq!(tree.names[1], "Projects");
+        let masks = masks.expect("v6 cache should include masks");
 
         // **書いたものと返したものが同一である。** cache-miss の枝はこの返り値をそのまま
         // 索引の材料にするので、ここがずれると「保存したキャッシュで次回起動したとき」と
@@ -3155,7 +3219,7 @@ mod tests {
         let v2_result = load_cache_in(&dir, config_hash).expect("v2 が読めること");
         assert_eq!(v2_result.version, 2);
         assert!(
-            v2_result.cached_masks.is_none(),
+            !v2_result.material.has_masks(),
             "v2 はマスクを持たない（枝を取り違えていないことの裏取り）"
         );
         let _ = fs::remove_dir_all(&dir);
@@ -4080,5 +4144,82 @@ mod tests {
         assert_eq!(masks.char_masks.len(), 2);
         assert_eq!(masks.file_name_char_masks.len(), 2);
         assert!(masks.lower.is_none());
+    }
+
+    /// 2 件の木を建てる（下の検証テスト群の材料）。
+    fn two_entry_tree() -> IndexTree {
+        IndexTree::build(vec![
+            AppEntry {
+                name: "Firefox".to_string(),
+                target_path: "C:\\apps\\firefox.lnk".to_string(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "Projects".to_string(),
+                target_path: "C:\\Projects".to_string(),
+                is_folder: true,
+            },
+        ])
+    }
+
+    /// **`from_untrusted` の拒否経路そのものを走らせる。**
+    ///
+    /// これが無いと、`index.bin` から来た組を検証する**唯一の**機構に検知器が 1 本も無い状態になる——条件の向きを書き換えても（`!=` を `<` へ、`lower_ok` の腕を 1 本落とす等）既存テストは全数緑のまま通り、壊れた `index.bin` は「木より短いマスク」として起動経路へ入る。`assemble` の長さ検証は `debug_assert` ゆえ release では消えるので、帰結は起動後の初回検索での添字外アクセス → `panic = "abort"` である（全走査による自動復旧も起きない）。
+    ///
+    /// **長い側も弾くことまで見る。** 等値（`!=`）で書いてあるので短い列と長い列の両方が落ちるが、`<` へ書き換えると長い側だけが素通りする——列が余分に長い `index.bin` は添字外にはならないが、木と対応しないマスクで検索することになり**スコアが静かにずれる**。
+    #[test]
+    fn from_untrusted_rejects_masks_whose_len_disagrees_with_the_tree() {
+        let full = |n: usize| CachedMasks {
+            char_masks: vec![0; n],
+            file_name_char_masks: vec![0; n],
+            lower: None,
+        };
+
+        // 揃っている組は受け取る（受理側を測らないと、下の拒否が「常に None」でも緑になる）。
+        assert!(
+            IndexMaterial::from_untrusted(two_entry_tree(), full(2)).is_some(),
+            "長さの揃った組は受理されなければならない"
+        );
+
+        for n in [1usize, 3] {
+            assert!(
+                IndexMaterial::from_untrusted(two_entry_tree(), full(n)).is_none(),
+                "木が 2 件なのにマスクが {n} 件の組を受理している"
+            );
+        }
+
+        // 列ごとに独立して見ていること（片方だけずれた組も弾く）。
+        let mut only_file_short = full(2);
+        only_file_short.file_name_char_masks.pop();
+        assert!(
+            IndexMaterial::from_untrusted(two_entry_tree(), only_file_short).is_none(),
+            "file_name_char_masks だけがずれた組を受理している"
+        );
+
+        // `lower` の 2 variant も見ていること。
+        let collapsed_short = CachedMasks {
+            char_masks: vec![0; 2],
+            file_name_char_masks: vec![0; 2],
+            lower: Some(CachedLower::Collapsed {
+                lower_names: vec![None],
+                lower_file_names: vec![LowerFileName::Absent],
+            }),
+        };
+        assert!(
+            IndexMaterial::from_untrusted(two_entry_tree(), collapsed_short).is_none(),
+            "Collapsed の列がずれた組を受理している"
+        );
+        let raw_short = CachedMasks {
+            char_masks: vec![0; 2],
+            file_name_char_masks: vec![0; 2],
+            lower: Some(CachedLower::Raw {
+                lower_names: vec!["firefox".to_string()],
+                lower_file_names: vec![None],
+            }),
+        };
+        assert!(
+            IndexMaterial::from_untrusted(two_entry_tree(), raw_short).is_none(),
+            "Raw の列がずれた組を受理している"
+        );
     }
 }

@@ -153,7 +153,10 @@ npm run governance:check    # 必須: ガバナンス文書の決定的検査（
 ```bash
 npm test                          # ユニットテスト（Vitest: .claude/hooks + .githooks + scripts）
 npm run clean:worktrees          # Agent 委譲で残った worktree/ブランチを掃除（dirty はスキップ、-- --force で強制）
+npm run race:boundaries -- --base <分岐元ブランチ>   # /race-check の母集団を列挙（廃止・移行の検査には --include-removed を足す）
 ```
+
+- **`race:boundaries` の `--base` は省略できない。** 差分と未追跡がともに空なら非ゼロで止まる——**未コミット分が落ちる素の `git diff` を許さないため**である（`..` / `...` の 2 点形が作業ツリーを見ない罠は「検証の作法」の一般則と同根・#922）。出力仕様（種別の定義・検出パターン・0 件の明示）は `scripts/race-boundaries.mjs` が SSOT で、**候補の読み方と 0 件の意味**は `/race-check` が持つ
 
 ## Windows のみ実行可能（`windows` クレートや Win32 API・実行バイナリに依存）
 

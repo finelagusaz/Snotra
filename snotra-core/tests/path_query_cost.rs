@@ -185,14 +185,10 @@ fn measure_path_query_frame_cost() {
     }
     let result =
         indexer::load_or_scan_with_stats(&config.paths.scan, config.search.show_hidden_system);
-    let n = result.tree.len();
+    let n = result.material.tree().len();
     let history = HistoryStore::load();
-    let mut engine = match result.cached_masks {
-        Some(masks) => Engine::new_from_cache(result.tree, masks, history, config),
-        // **木を `Vec<AppEntry>` へ戻さない。** `Engine::new` を通すと実体化と木の再構築で
-        // 同じ木を 2 度建てることになる（`Engine::new_from_tree` の doc）。
-        None => Engine::new_from_tree(result.tree, history, config),
-    };
+    // **木を `Vec<AppEntry>` へ戻さない。** 実体化と木の再構築で同じ木を 2 度建てることになる（`IndexTree::materialize` の doc）。
+    let mut engine = Engine::from_material(result.material, history, config);
 
     println!("\n=== パスクエリのフレームコスト（実 index.bin・{n} 件・Engine::search）===");
     println!("  query                  results     min      p50      max");
@@ -243,13 +239,8 @@ fn measure_recent_history_cost() {
     }
     let result =
         indexer::load_or_scan_with_stats(&config.paths.scan, config.search.show_hidden_system);
-    let n = result.tree.len();
-    let engine = match result.cached_masks {
-        Some(m) => {
-            SearchEngine::new_with_cached_masks(result.tree, m, config.search.migemo_enabled)
-        }
-        None => SearchEngine::new_from_tree(result.tree, config.search.migemo_enabled),
-    };
+    let n = result.material.tree().len();
+    let engine = SearchEngine::from_material(result.material, config.search.migemo_enabled);
     // **ここは実 `history.bin` を読むのが正しい**（#963 でユニットテスト側の fixture は
     // 空へ移したが、計測ハーネスは実運用の姿を測るのが目的である）。統合テストは
     // 別クレートゆえ `HistoryStore::empty()`（`#[cfg(test)]`）に手も届かない。

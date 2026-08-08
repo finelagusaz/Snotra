@@ -7,8 +7,7 @@
 use crate::config::{Config, ScanPath};
 use crate::folder;
 use crate::history::{HistoryStore, PreparedHistorySave};
-use crate::index_tree::IndexTree;
-use crate::indexer::{AppEntry, CachedMasks};
+use crate::indexer::{AppEntry, IndexMaterial};
 use crate::search::{SearchEngine, SearchMode, SearchOptions};
 use crate::ui_types::SearchResult;
 use std::path::Path;
@@ -41,23 +40,21 @@ impl FolderListContext {
 pub struct PrebuiltIndex(SearchEngine);
 
 impl PrebuiltIndex {
-    /// `Vec<AppEntry>` から建てる。**製品経路は通らない**——v7 で索引の入口はすべて
-    /// [`IndexTree`] を取る形へ移り、ここに残る呼び出し元はテストと計測ハーネスだけである
-    /// （`#[cfg(test)]` で締めないのは、`snotra-core/tests/` の統合テストが外部クレートとして
-    /// リンクするため）。**製品コードから新たに呼ばないこと**——木を建て直すぶんだけ
-    /// 静かに遅くなり、型は同じ `PrebuiltIndex` を返すのでレビューでも実行結果でも差が見えない。
+    /// `Vec<AppEntry>` から建てる。**製品経路は通らない。**
+    ///
+    /// **`#[cfg(test)]` で締めてある。** かつては「`snotra-core/tests/` の統合テストが外部クレートとしてリンクするため締められない」と書いていたが、**その呼び出し元は 1 つも存在しなかった**（grep 実測）。締めていなかったせいで「製品コードから新たに呼ばないこと」という規約だけが残り、破っても木を建て直すぶん静かに遅くなるだけで、型は同じ `PrebuiltIndex` を返すのでレビューでも実行結果でも差が見えなかった。
+    ///
+    /// **「今はコンパイラが拒む」と書いてはならない**（かつてそう書いていた）——`#[cfg(test)]` が閉じるのはこのシンボル名だけで、同じ障害（`Vec<AppEntry>` から建て直す）は `from_material(IndexMaterial::from_tree(IndexTree::build(entries)))` として書けていた。**塞いだのは `IndexTree::build` を `pub(crate)` へ下げたことである**——crate 外から手に入る木は `IndexTree::empty()` だけになり、その連鎖は今はコンパイルを通らない。**crate 内では今も書ける。**
+    #[cfg(test)]
     pub fn new(entries: Vec<AppEntry>, migemo_enabled: bool) -> Self {
         Self(SearchEngine::new_with_migemo(entries, migemo_enabled))
     }
 
-    /// 既に建った木から構築する（`rebuild_and_save` が返した木をそのまま使う経路）。
-    /// **製品はこちらを通る。**
+    /// [`IndexMaterial`] から構築する。**製品はこの 1 つだけを通る。**
     ///
-    /// 木を `Vec<AppEntry>` へ戻してから [`Self::new`] へ渡すと、同じ木を 2 度建てることに
-    /// なる。**実体化そのものは消えない**——Wave 1 の材料がフルパスを要求するので、
-    /// `SearchEngine::new_from_tree` の中で 1 度だけ払う（`IndexTree::materialize` の doc）。
-    pub fn from_tree(tree: IndexTree, migemo_enabled: bool) -> Self {
-        Self(SearchEngine::new_from_tree(tree, migemo_enabled))
+    /// 派生データの有無で分岐しないのは、材料が組のまま来るからである（分岐は `SearchEngine::from_material` の 1 か所に閉じている）。
+    pub fn from_material(material: IndexMaterial, migemo_enabled: bool) -> Self {
+        Self(SearchEngine::from_material(material, migemo_enabled))
     }
 }
 
@@ -109,44 +106,13 @@ impl Engine {
         }
     }
 
-    /// 派生文字列を持たない木から構築する（初回起動と、`cached_masks` が返らなかったとき）。
+    /// [`IndexMaterial`] から構築する。**起動経路が通る唯一の入口である。**
     ///
-    /// **「全走査の直後」と書いてはならない**（反復 11）。cache-miss はもう
-    /// [`Self::new_from_cache`] を通り、ここへ来るのは初回起動と、ビットマスクを持たない
-    /// 古い版を読んだキャッシュ**ヒット**である。
-    pub fn new_from_tree(tree: IndexTree, history: HistoryStore, config: Config) -> Self {
-        let search_engine = SearchEngine::new_from_tree(tree, config.search.migemo_enabled);
-        Self {
-            search_engine,
-            history,
-            config,
-            index_stale: false,
-        }
-    }
-
-    /// 事前計算済みの派生データを受け取るコンストラクタ。
+    /// **派生データの有無で入口を分けない**（かつては `new_from_tree` / `new_from_cache` の 2 本があり、呼び出し側が `match` で捌いていた）。分岐は `SearchEngine::from_material` の 1 か所に閉じており、**どちらの枝が選ばれるかを決める条件の正本は `indexer::save_cache_sorted` と `indexer::load_cache_in` の分岐である**。
     ///
-    /// **「キャッシュヒット時に使う」ではない**（反復 11）。cache-miss の枝も、保存側が書いた
-    /// その足の `CachedMasks` を持ってここへ来る——分岐を決めるのは `cached_masks` の有無で
-    /// あって `cache_changed` ではない（`indexer::LoadOrScanResult::cached_masks` の doc）。
-    /// ゆえに**この入口には全走査の直後という前提を置けない**。
-    ///
-    /// **版の番号を書かない。** 分岐を決めるのは `CachedMasks.lower` の variant であって版では
-    /// なく、番号を書くと版を上げるたびにこの散文だけが腐る（`INDEX_CACHE_VERSION` の doc が
-    /// 「現行は v5・実運用点は v6 のまま」というそれ自体矛盾した文が残った事例を記録している）。
-    /// どの版がどの variant を返すかの正本は `indexer::load_cache_in` の分岐である。
-    ///
-    /// - `Collapsed`: 潰し済みの派生文字列を渡し、Wave 1/2 と共有判定をすべてスキップ
-    /// - `Raw`: 未測定の派生文字列を渡し Wave 1/2 をスキップ（共有判定は走る）
-    /// - `None`: ビットマスクのみ渡し Wave 1 は SearchEngine 内で実行
-    pub fn new_from_cache(
-        tree: IndexTree,
-        cached_masks: CachedMasks,
-        history: HistoryStore,
-        config: Config,
-    ) -> Self {
-        let search_engine =
-            SearchEngine::new_with_cached_masks(tree, cached_masks, config.search.migemo_enabled);
+    /// **版の番号を書かない。** 番号を書くと版を上げるたびにこの散文だけが腐る（`INDEX_CACHE_VERSION` の doc が「現行は v5・実運用点は v6 のまま」というそれ自体矛盾した文が残った事例を記録している）。
+    pub fn from_material(material: IndexMaterial, history: HistoryStore, config: Config) -> Self {
+        let search_engine = SearchEngine::from_material(material, config.search.migemo_enabled);
         Self {
             search_engine,
             history,

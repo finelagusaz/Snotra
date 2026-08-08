@@ -283,15 +283,9 @@ impl IndexTree {
     /// ピークには v7 がディスクから消したのと同額（約 36 MiB）が戻る。**壁時計ではなくピークが
     /// 対価である**——`tests/memory_footprint.rs` が測っているのはそちらの側である。
     ///
-    /// 通る経路は「派生文字列を自前で導出しなければならない構築」に限られる:
-    /// `Engine::new_from_tree`（初回起動と、`cached_masks` が返らなかったとき）、
-    /// 設定からの再構築（`PrebuiltIndex::from_tree`）、そして派生文字列を持たない古い版を
-    /// 読んだときの Wave 1。加えて corpus テストと `load_cached_entries` が通る。
+    /// 通る経路は「派生文字列を自前で導出しなければならない構築」に限られる: `SearchEngine::from_material` が派生データを持たない材料を受けた枝（初回起動と、保存側がそれを返さなかったとき）と、派生文字列を持たない古い版を読んだときの Wave 1。加えて corpus テストと `load_cached_entries` が通る。
     ///
-    /// **cache-miss 起動はもうここを通らない**（反復 11）。保存側が書いた `CachedMasks` を
-    /// そのまま受け取るようになったためで、`PERFORMANCE.md` が構築段 peak -83.27 MiB として
-    /// 計上しているのはこの実体化が消えたぶんである。**`materialize` の削減を「cache-miss で
-    /// 効く」と見積もってはならない。**
+    /// **保存側が `CachedMasks` を返したなら、cache-miss 起動も設定からの再構築もここを通らない**（反復 11 と後続）。**「もう通らない」と無条件に書いてはならない**——返らなかったときの枝が上の列挙に在り、そちらは今もここへ落ちる。`PERFORMANCE.md` が構築段 peak -83.27 MiB として計上しているのはこの実体化が消えたぶんであり、**`materialize` の削減を「cache-miss で効く」と見積もってはならない。**
     ///
     /// **`index.bin` のキャッシュヒット（＝ほとんどの起動）もここを通らない。**
     pub(crate) fn materialize(&self) -> Vec<AppEntry> {
@@ -317,7 +311,7 @@ impl IndexTree {
     ///
     /// 循環は `pi < i` の 1 比較で構造的に潰す。文書化した契約ではなく順序で担保するので、
     /// 壊れた入力でも [`walk_to_root`] が止まらなくなることはない。
-    pub fn build(entries: Vec<AppEntry>) -> Self {
+    pub(crate) fn build(entries: Vec<AppEntry>) -> Self {
         let n = entries.len();
         // 整列の判定は並列で 1 回だけ。全件走査の tie-break がこの 1 bit に載る。
         //
@@ -400,7 +394,7 @@ impl IndexTree {
     /// **整列の旗は必ず下ろす。** 足したパスがバイト順で末尾に来る保証は無く、実運用点では
     /// 実際に崩れる（PATH の実行ファイルは `C:\Windows\System32\…` ゆえ途中に入る・実測）。
     /// 偽は遅い経路へ落ちるだけで結果は変わらない。
-    pub fn extend_with_roots(&mut self, entries: Vec<AppEntry>) {
+    pub(crate) fn extend_with_roots(&mut self, entries: Vec<AppEntry>) {
         if entries.is_empty() {
             return;
         }

@@ -149,9 +149,7 @@ fn assert_engines_agree(
 
 /// 1 つの索引の `range` について潰れの 4 種を数える。
 ///
-/// **範囲を切るのは呼び出し側である。** PATH 併合版は追記した範囲だけを数えたい——全件で
-/// 数えると base のエントリだけでカウンタが埋まり、**追記側が 1 度も判定を下さなくても
-/// 非空虚検査が緑になる**（`extend_cached_masks` を検算しているつもりで検算していない状態）。
+/// **範囲を切るのは呼び出し側である。** PATH マージ版は追記した範囲だけを数えたい——全件で数えると base のエントリだけでカウンタが埋まり、**追記側が 1 度も判定を下さなくても非空虚検査が緑になる**（`extend_cached_masks` を検算しているつもりで検算していない状態）。
 ///
 /// **3 種は排他である**ことを `else if` の連なりで表す。独立した 3 本の加算にして否定を
 /// 各腕へ配る形だと、4 種目を足すときに 1 本忘れれば二重計上になり、合計を誰も検算して
@@ -228,21 +226,15 @@ fn save_side_collapse_and_assemble_measurement_agree_at_entry_view() {
     }
 }
 
-/// **cache-miss の直後に PATH エントリを併合する経路**（`main.rs` の起動経路そのまま）。
+/// **保存が返した派生データの直後に PATH エントリをマージする経路**（`IndexMaterial::extend_with_path_entries`）。
 ///
-/// **この組み合わせは反復 11 で初めて生きた。** 変更前の cache-miss は `cached_masks` が
-/// `None` だったので `extend_cached_masks` は**呼ばれず**、`new_from_tree` が拡張後の木から
-/// Wave 1/2 を導出していた——PATH エントリぶんも自動的に整合していた。今は `Some` で返るので
-/// 「マスクへ追記 → 木へ根として追加 → `new_from_cache`」の順に変わる。**上の 2 本の検知器は
-/// どちらもここを迂回する**（`new_with_cached_masks` を直接呼び、PATH 併合を通らない）。
+/// **この組み合わせは反復 11 で初めて生きた。** それ以前は保存側が派生データを返さず `extend_cached_masks` は**呼ばれず**、`new_from_tree` が拡張後の木から Wave 1/2 を導出していた——PATH エントリぶんも自動的に整合していた。今は返るので「マスクへ追記 → 木へ根として追加 → `from_material`」の順に変わる。**上の 2 本の検知器はどちらもここを迂回する**（`new_with_cached_masks` を直接呼び、PATH マージを通らない）。
 ///
-/// 守るのは 2 つ。(1) 追記側（`extend_cached_masks`）の潰し方が、拡張後の木から導出した
-/// 結果と一致すること。(2) **2 本の追記の長さが揃うこと**——`assemble` の長さ検証は
-/// `debug_assert` ゆえ release では消え、ずれは添字 panic か沈黙の食い違いになる。
+/// 守るのは 2 つ。(1) 追記側（`extend_cached_masks`）の潰し方が、拡張後の木から導出した結果と一致すること。(2) **追記した 2 列と木の長さが揃うこと**——`assemble` の長さ検証は `debug_assert` ゆえ release では消え、ずれは添字 panic か沈黙の食い違いになる。**追記を欠く変異で実際に赤くなることを確かめてある**（`migemo_enabled` の両設定で）。
 ///
-/// **`drain_index` は今も `extend_cached_masks` を呼んでいない**（`from_tree` に留まるので
-/// 呼ぶ必要が無い）。あちらを `CachedMasks` 経由へ繋ぐ日には、呼び忘れが長さの食い違いとして
-/// 出る——そのときこの検知器が形の手本になる。
+/// **起動経路と背景の再構築（`drain_index`）は同じ `IndexMaterial::extend_with_path_entries` を通る**ので、この 1 本が両方を覆う。**crate 外からそこを迂回するコードは書けない**——木とマスクは `IndexMaterial` の private フィールドで、`IndexTree::extend_with_roots` も `pub(crate)` である。**ただし crate 内では書ける**（`snotra-core` の中に PATH マージの呼び出し点は無いので、現状は残余ではなく余地である）。
+///
+/// **派生データを持たない枝はここを通らない。** [`path_merge_extends_the_tree_even_without_derived_data`] がそちらを持つ——木への追加が `if let Some` の内側へ入る誤りに、この検知器は原理的に当たらない（派生データを持つ枝しか通らないため。変異を注入して、あちらだけが赤くなることを実測した）。
 #[test]
 fn path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree() {
     let mut base = vec![
@@ -285,12 +277,16 @@ fn path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree() {
     let total = base.len() + path_entries.len();
 
     for migemo_enabled in [false, true] {
-        // B: 現行の起動経路。**順序も `main.rs` に合わせる**（マスクへ追記 → 木へ追加）。
-        let (mut tree, mut masks) =
-            crate::indexer::derive_columns(base.clone()).into_cached_masks();
-        crate::indexer::extend_cached_masks(&mut masks, &path_entries);
-        tree.extend_with_roots(path_entries.clone());
-        let b = SearchEngine::new_with_cached_masks(tree, masks, migemo_enabled);
+        // B: 現行の製品経路。**マージは `IndexMaterial::extend_with_path_entries` そのものを通す**——手で 2 手を並べると、この検知器が測るのは製品コードではなく「テストの中の写し」になる（起動経路と drain 経路が同じ関数を通ることが長さの揃う根拠なので、その関数を迂回した検算には意味が無い）。
+        let (tree, masks) = crate::indexer::derive_columns(base.clone()).into_cached_masks();
+        let mut material = crate::indexer::IndexMaterial::derived(tree, masks);
+        material.extend_with_path_entries(path_entries.clone());
+        // **マスクを取り落としていないことを名指しで測る。** 落ちていると `from_material` が黙って木からの導出へ切り替わり、下の A/B 一致は**成立したまま**削減だけが消える（理由は `IndexMaterial::has_masks` の doc）。
+        assert!(
+            material.has_masks(),
+            "マージがマスクを取り落としている（`from_material` が木からの導出へ切り替わる）"
+        );
+        let b = SearchEngine::from_material(material, migemo_enabled);
 
         // A: 変更前の cache-miss。拡張後の木から Wave 1/2 を導出する。
         let mut tree_a = IndexTree::build(base.clone());
@@ -307,6 +303,65 @@ fn path_merge_after_cache_miss_agrees_with_deriving_over_the_extended_tree() {
             "追記側（`extend_cached_masks`）が判定を 1 つも下していない fixture では\
              一致が空虚である（追記範囲で {c:?}）"
         );
+    }
+}
+
+/// **派生データを持たない材料でも木は伸びる**（`IndexMaterial::extend_with_path_entries`）。
+///
+/// **この腕は到達可能な製品経路である。** 到達する条件は**初回起動**（`main` が空の木から材料を作る）、`Config::config_dir` が引けず `indexer::rebuild_and_save` が派生データを返さないとき、そして `load_cache_in` の**マスクを持たない版の腕**である。**「派生文字列を持たない古い版のキャッシュヒット」と書いてはならない**（かつてそう書いていた）——そちらは `Some(CachedMasks { lower: None })` を返すので**この腕を通らない**。`CachedMasks` の doc の「古い版は `None`」は `lower` の話であり、材料そのものの有無ではない。条件の正本は `load_cache_in` の分岐である。**「起こりえない状態のテスト」として削らないこと。**
+///
+/// 守るのは 1 つ: 木への追加が `masks` の有無に**引きずられない**こと。追加を `if let Some` の内側へ書いてしまうと、`None` の枝では PATH エントリが索引から丸ごと落ちる——**panic も型エラーも出ず、PATH 経由でしか届かないプログラムが検索から静かに消える**だけである（上の検知器は `Some` の枝しか通らないので、この誤りには当たらない）。
+///
+/// **効いているのは `tree.len()` の等値検査だけである。** 下の A/B 比較は、この腕では A 側と同じ計算になるので**原理的に失敗しない**——`extend_with_roots` を共有しているため、その関数を変えれば A と B が同じだけ動く。**「根として足すべきものを親解決して足す変更を見逃す」と書いてはならない**（かつてそう書いていた・ラウンド 2 の指摘への修正で持ち込み、ラウンド 3 が「消えた」と誤判定し、`/code-review` の再実行が現存を実測した）: `IndexTree::build` の doc が「**結果は変わらず、記憶域が増えるだけである**」と書くとおり、根か親解決かは `materialize` を通した像に差を生まない。
+///
+/// **それでも A/B を置いてあるのは、`extend_with_path_entries` 自身が `entries` を並べ替える変更を捕まえるためである**（`len` は等しいまま `entry_view(i)` が食い違う）。絞る・重複を落とす変更は `len` に出るので、A/B が要るのは並べ替えだけである。**この 1 点は未計測である**（変異を注入していない）。
+#[test]
+fn path_merge_extends_the_tree_even_without_derived_data() {
+    let mut base = vec![
+        AppEntry {
+            name: "apps".to_string(),
+            target_path: "C:\\apps".to_string(),
+            is_folder: true,
+        },
+        AppEntry {
+            name: "Firefox".to_string(),
+            target_path: "C:\\apps\\Firefox.lnk".to_string(),
+            is_folder: false,
+        },
+    ];
+    crate::indexer::sort_entries_canonical(&mut base);
+
+    let path_entries = vec![
+        AppEntry {
+            name: "Node".to_string(),
+            target_path: "C:\\tools\\node.exe".to_string(),
+            is_folder: false,
+        },
+        AppEntry {
+            name: "git".to_string(),
+            target_path: "C:\\bin\\git".to_string(),
+            is_folder: false,
+        },
+    ];
+    let total = base.len() + path_entries.len();
+
+    for migemo_enabled in [false, true] {
+        // B: 派生データを持たない製品経路。
+        let mut material = crate::indexer::IndexMaterial::from_tree(IndexTree::build(base.clone()));
+        material.extend_with_path_entries(path_entries.clone());
+        assert_eq!(
+            material.tree().len(),
+            total,
+            "派生データが無いとき木が伸びていない（追加が `if let Some` の内側に入った合図）"
+        );
+        let b = SearchEngine::from_material(material, migemo_enabled);
+
+        // A: 木への追加を直に書いた版。
+        let mut tree_a = IndexTree::build(base.clone());
+        tree_a.extend_with_roots(path_entries.clone());
+        let a = SearchEngine::new_from_tree(tree_a, migemo_enabled);
+
+        assert_engines_agree("path-merge-no-masks", migemo_enabled, &a, &b, total);
     }
 }
 

@@ -247,16 +247,14 @@ fn measure_real_index_footprint() {
     // なってしまう——旧版を測った実行が v7 と自称する。
     let on_disk_version = on_disk_index_version();
 
-    // 実起動と同じ経路を辿る（main.rs:203 → 246）: load_or_scan_with_stats が返す
-    // cached_masks を new_from_cache へ渡し、Wave 1 をスキップする。ここを
-    // load_or_scan（masks 破棄）で代用すると再計算が走り、ピークも構築コストも別物になる。
+    // 実起動と同じ経路を辿る: load_or_scan_with_stats が返す `IndexMaterial` を `from_material` へ渡し、Wave 1 をスキップする。**派生データを捨てる形で代用すると**再計算が走り、ピークも構築コストも別物になる。
     reset_peak();
     let t0 = snap();
     let load_start = std::time::Instant::now();
     let result = indexer::load_or_scan_with_stats(scan, config.search.show_hidden_system);
     let load_ms = load_start.elapsed().as_secs_f64() * 1000.0;
     let t1 = snap();
-    let n = result.tree.len();
+    let n = result.material.tree().len();
 
     if result.cache_changed {
         println!(
@@ -265,9 +263,9 @@ fn measure_real_index_footprint() {
         );
     }
     println!(
-        "  entries = {n}, cache_hit = {}, cached_masks = {}",
+        "  entries = {n}, cache_hit = {}, has_masks = {}",
         result.stats.cache_hit,
-        result.cached_masks.is_some()
+        result.material.has_masks()
     );
     // **どの版を測ったかを出さないと、この数字は読めない。** 旧版の `index.bin` は
     // フォールバック枝で読まれ、木は `target_path` を実体化してから建て直される
@@ -314,8 +312,7 @@ fn measure_real_index_footprint() {
     );
 
     let LoadOrScanResult {
-        tree,
-        cached_masks,
+        material,
         rescan_task,
         ..
     } = result;
@@ -323,7 +320,7 @@ fn measure_real_index_footprint() {
     drop(rescan_task);
 
     // **実運用の起動経路は、ロードと構築の間に PATH スキャンを挟む**（`main.rs` の
-    // `load_or_scan_with_stats` → `scan_path_env` → `Engine::new_from_cache`）。この区間は
+    // `load_or_scan_with_stats` → `scan_path_env` → `Engine::from_material`）。この区間は
     // **かつて**全 `entries` の `target_path` を正規化して `HashSet` へ積んでおり、
     // **エントリ数に比例する確保がロードと構築のどちらの計測にも入っていなかった**
     // （反復 6 の digest がどのフェーズにも現れなかったのと同じ形）。反復 9 でその積み上げ
@@ -337,7 +334,8 @@ fn measure_real_index_footprint() {
         reset_peak();
         let tp0 = snap();
         let path_start = std::time::Instant::now();
-        let path_entries = indexer::scan_path_env(&tree, config.search.show_hidden_system);
+        let path_entries =
+            indexer::scan_path_env(material.tree(), config.search.show_hidden_system);
         let path_ms = path_start.elapsed().as_secs_f64() * 1000.0;
         let tp1 = snap();
         let added = path_entries.len();
@@ -350,12 +348,7 @@ fn measure_real_index_footprint() {
     reset_peak();
     let t2 = snap();
     let build_start = std::time::Instant::now();
-    let engine = match cached_masks {
-        Some(masks) => {
-            SearchEngine::new_with_cached_masks(tree, masks, config.search.migemo_enabled)
-        }
-        None => SearchEngine::new_from_tree(tree, config.search.migemo_enabled),
-    };
+    let engine = SearchEngine::from_material(material, config.search.migemo_enabled);
     let build_ms = build_start.elapsed().as_secs_f64() * 1000.0;
     let t3 = snap();
     report("SearchEngine 構築（実 config）", t2, t3, n);

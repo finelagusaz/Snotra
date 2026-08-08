@@ -498,3 +498,108 @@ fn resolve_one<'a>(
     let ext = tail.strip_prefix(e.name.as_str())?;
     Some((pi, ext))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `from_parts` が取る 5 列（names / is_folder / parent / aux / table）。
+    type Parts = (Vec<String>, Vec<bool>, Vec<u32>, Vec<u32>, Vec<String>);
+
+    /// 3 件（根 → 子 → 孫）の健全な列。各テストが 1 か所だけ壊して使う。
+    fn healthy_parts() -> Parts {
+        (
+            vec!["Projects".into(), "sub".into(), "app".into()],
+            vec![true, true, false],
+            vec![NO_PARENT, 0, 1],
+            vec![2, 0, 1],
+            vec![String::new(), ".exe".into(), "C:\\Projects".into()],
+        )
+    }
+
+    /// 土台。**これが通らないと下の「壊したら弾く」は空虚になる**——`None` はどんな理由でも
+    /// 返るので、健全な入力が `Some` になることを先に固定しないと「検査が効いている」証拠に
+    /// ならない（何でも弾く実装でも赤にならない）。
+    #[test]
+    fn from_parts_accepts_healthy_columns_and_rebuilds_paths() {
+        let (names, is_folder, parent, aux, table) = healthy_parts();
+        let tree = IndexTree::from_parts(names, is_folder, parent, aux, table, false)
+            .expect("健全な列は受理される");
+
+        let mut buf = String::new();
+        let want = [
+            "C:\\Projects",
+            "C:\\Projects\\sub",
+            "C:\\Projects\\sub\\app.exe",
+        ];
+        for (i, expected) in want.iter().enumerate() {
+            tree.path_into(&mut buf, i);
+            assert_eq!(&buf, expected, "index {i}");
+        }
+    }
+
+    /// **`index.bin` の 5 列は独立に読まれる**ので、壊れたファイルは長さの揃わない列や
+    /// 範囲外の添字を与えうる。弾かなかったときの帰結は静かで、しかも条件ごとに違う:
+    ///
+    /// - 列の長さ不一致 → 組み替えの `zip` が短い側で止まり、**索引が黙って短くなる**
+    /// - `aux` が範囲外 → 組み立てが添字 panic（release は `panic="abort"` ＝ 起動不能）
+    /// - `parent >= i` → [`walk_to_root`] の停止性が崩れる（**止まらない**）
+    /// - 深さが [`CHAIN_CAP`] 以上 → `chain` 配列の範囲外
+    ///
+    /// **版が読めたことは中身が健全であることを意味しない。** 5 条件を 1 本ずつ潰すのは、
+    /// 1 つ消しても残りが通るせいで**検査の欠落が緑のまま残る**ためである。
+    #[test]
+    fn from_parts_rejects_each_broken_invariant() {
+        // 1. 列の長さが揃わない（`is_folder` だけ 1 件短い）。
+        let (names, mut is_folder, parent, aux, table) = healthy_parts();
+        is_folder.pop();
+        assert!(
+            IndexTree::from_parts(names, is_folder, parent, aux, table, false).is_none(),
+            "列の長さ不一致を受理してはならない"
+        );
+
+        // 2. `aux` が `table` の外を指す。
+        let (names, is_folder, parent, mut aux, table) = healthy_parts();
+        aux[1] = table.len() as u32;
+        assert!(
+            IndexTree::from_parts(names, is_folder, parent, aux, table, false).is_none(),
+            "table 範囲外の aux を受理してはならない"
+        );
+
+        // 3. `table` が空。0 番の空文字は `aux` の既定値が指す先であり、必ず居る
+        //    （[`IndexTree::empty`] も空にしない）。
+        let (names, is_folder, parent, aux, _) = healthy_parts();
+        assert!(
+            IndexTree::from_parts(names, is_folder, parent, aux, Vec::new(), false).is_none(),
+            "空の table を受理してはならない"
+        );
+
+        // 4. `parent >= i`（ここでは自己参照）。**停止性の唯一の根拠がこれである。**
+        let (names, is_folder, mut parent, aux, table) = healthy_parts();
+        parent[1] = 1;
+        assert!(
+            IndexTree::from_parts(names, is_folder, parent, aux, table, false).is_none(),
+            "parent >= i を受理してはならない"
+        );
+
+        // 5. 深さが CHAIN_CAP 以上。**鎖を実際に伸ばして測る**——上限の値を書き写すと、
+        //    定数を変えたときにこのテストだけが古い前提のまま緑になる。
+        let n = CHAIN_CAP + 1;
+        let names: Vec<String> = (0..n).map(|i| format!("d{i}")).collect();
+        let parent: Vec<u32> = std::iter::once(NO_PARENT)
+            .chain((0..n - 1).map(|i| i as u32))
+            .collect();
+        assert!(
+            IndexTree::from_parts(
+                names,
+                vec![true; n],
+                parent,
+                vec![0; n],
+                vec![String::new(), "C:\\d0".into()],
+                false,
+            )
+            .is_none(),
+            "CHAIN_CAP 以上の深さを受理してはならない"
+        );
+    }
+}

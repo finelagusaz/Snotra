@@ -765,7 +765,7 @@ fn save_cache_sorted_in(dir: &Path, entries: Vec<AppEntry>, config_hash: u64) ->
         .map(|n| file_char_mask(n.as_deref()))
         .collect();
 
-    // **共有を測って潰した形で書く**（v6）。畳み込みは `collapse_lower_pair` が正本であり、
+    // **共有を測って潰した形で書く**（v6 以降）。畳み込みは `collapse_lower_pair` が正本であり、
     // 追記側（`extend_cached_masks`）と同じ関数を通ることだけが、ディスクとメモリで潰れ方が
     // 一致する根拠である。ここを別実装で書き起こしてはならない。
     //
@@ -1794,6 +1794,27 @@ pub fn cache_byte_breakdown_in(dir: &Path) -> Option<CacheByteBreakdown> {
         );
     }
 
+    // **v6 を落とさない。** v7 が現行になった瞬間、v6 は「実運用点に実際に置かれている版」に
+    // なった——ここを飛ばすと、置き換えようとしている当の形式でだけ計器が黙る
+    // （実測で踏んだ: 実 `index.bin` が v6 のとき「読めなかったためスキップ」と出た）。
+    if let Ok(c) = try_deserialize_with_header::<IndexCacheV6>(&bytes, INDEX_MAGIC, 6) {
+        drop(bytes);
+        return build_breakdown(
+            6,
+            file_len,
+            c.built_at,
+            c.config_hash,
+            EntryRepr::Flat(&c.entries),
+            &c.char_masks,
+            &c.file_name_char_masks,
+            LowerRepr::Collapsed {
+                names: &c.lower_names,
+                files: &c.lower_file_names,
+            },
+            None,
+        );
+    }
+
     if let Ok(c) = try_deserialize_with_header::<IndexCacheV5>(&bytes, INDEX_MAGIC, 5) {
         drop(bytes);
         return build_breakdown(
@@ -2344,6 +2365,69 @@ mod tests {
         108, 110, 107, 0, 1,
     ];
 
+    /// **v6 の凍結バイト列から `load_cache_in` が読めること。**
+    ///
+    /// **`index_tree_raw_matches_frozen_v6_specimen` では代用できない。** あちらは
+    /// `try_deserialize_with_header` を直接呼ぶので、`load_cache_in` の枝選択・`config_hash` の
+    /// 判定・`CachedLower` の variant・`version` の帰属を 1 つも通らない。
+    ///
+    /// **v6 は「全ユーザーの `index.bin` が今まさに置かれている版」である。** v7 が現行に
+    /// なったことでフォールバック枝へ落ちた——つまりこの枝は新設であり、かつ**最初に
+    /// 通る人が最も多い**枝でもある。
+    ///
+    /// **`CachedLower::Collapsed` で返らなければならない。** `Raw` で返すと `assemble` が
+    /// 測り直し、`None` どうしの一致で file name 成分を持たないエントリに旗が立つ。
+    #[test]
+    fn frozen_v6_bytes_load_as_collapsed_through_load_cache_in() {
+        let dir = temp_dir("v6_frozen_through_load_cache_in");
+        fs::write(dir.join("index.bin"), GOLDEN_V6).expect("write v6 index.bin");
+
+        let result = load_cache_in(&dir, 12345).expect("v6 の index.bin が読めること");
+        assert_eq!(
+            result.version, 6,
+            "v6 として読めたことが昇格の判断材料になる"
+        );
+        assert_eq!(result.tree.len(), 3);
+        assert_eq!(result.tree.names[0], "Firefox");
+
+        // 木は `target_path` から建て直される。原文へ戻せることまで見る——v6 の実体を
+        // 捨てて木にした段で取りこぼせば、以後この索引のパスは静かに壊れる。
+        let mut buf = String::new();
+        result.tree.path_into(&mut buf, 0);
+        assert_eq!(buf, "C:\\apps\\firefox.lnk");
+
+        let masks = result.cached_masks.expect("v6 でもマスクは返る");
+        match masks.lower {
+            Some(CachedLower::Collapsed {
+                lower_names,
+                lower_file_names,
+            }) => {
+                assert_eq!(
+                    lower_names,
+                    vec![
+                        Some("firefox".to_string()),
+                        Some("projects".to_string()),
+                        None
+                    ]
+                );
+                assert_eq!(
+                    lower_file_names,
+                    vec![
+                        LowerFileName::Text("firefox.lnk".to_string()),
+                        LowerFileName::Absent,
+                        LowerFileName::SameAsLowerName,
+                    ]
+                );
+            }
+            other => panic!("v6 は Collapsed で返らなければならない（実際: {other:?}）"),
+        }
+
+        // config_hash が違えば stale 扱いで None（他の版の枝と同じ規律）。
+        assert!(load_cache_in(&dir, 12346).is_none());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     /// **v6 化の前に実際に書かれていた v5 バイト列**（派生文字列を全件そのまま持つ形式）。
     /// `config_hash` は 12345、entries は Firefox / Projects の 2 件。
     const GOLDEN_V5: &[u8] = &[
@@ -2753,7 +2837,9 @@ mod tests {
     /// この値だけが背景再スキャンの昇格判定（`cached_version != INDEX_CACHE_VERSION`）の入力で
     /// あり、**取り違えても検索結果は正しいまま**である——枝に誤って現行版を書けば、その形式の
     /// ユーザーは永久に昇格せず旧形式を読み続ける（症状は「遅い」だけ・実運用点で 1 度踏んだ）。
-    /// ゆえに **5 枝すべて**の値をここで固定する。
+    /// ゆえに **`load_cache_in` の全枝**の値をここで固定する（枝の数を書かない——版を足した
+    /// ときにこの散文だけが腐り、しかも「揃っている」と読めてしまう。実際に v7 を足したとき
+    /// 「5 枝すべて」のまま v6 が抜けた）。
     ///
     /// **既存の v2 / v3 テストでは代用できない。** あちらは `try_deserialize_with_header` を
     /// 直接呼んでおり `load_cache_in` の枝選択を通らないので、`version` の帰属を見ていない。
@@ -2785,6 +2871,37 @@ mod tests {
                 .expect("現行版が読めること")
                 .version,
             INDEX_CACHE_VERSION
+        );
+        let _ = fs::remove_dir_all(&dir);
+
+        // v6: `target_path` を実体で全件持つ形式。**実運用点が今まさに置かれている版**であり、
+        // ここを `INDEX_CACHE_VERSION` と取り違えると全ユーザーが永久に昇格しない。
+        let dir = temp_dir("version_reported_v6");
+        let v6 = IndexCacheV6 {
+            built_at: 0,
+            entries: entries.clone(),
+            config_hash,
+            char_masks: char_masks.clone(),
+            file_name_char_masks: file_name_char_masks.clone(),
+            lower_names: lower_names.iter().cloned().map(Some).collect(),
+            lower_file_names: lower_file_names
+                .iter()
+                .map(|f| match f {
+                    Some(s) => LowerFileName::Text(s.clone()),
+                    None => LowerFileName::Absent,
+                })
+                .collect(),
+        };
+        fs::write(
+            dir.join("index.bin"),
+            try_serialize_with_header(INDEX_MAGIC, 6, &v6).expect("serialize v6"),
+        )
+        .expect("write v6");
+        assert_eq!(
+            load_cache_in(&dir, config_hash)
+                .expect("v6 が読めること")
+                .version,
+            6
         );
         let _ = fs::remove_dir_all(&dir);
 

@@ -117,7 +117,7 @@ pub(crate) fn raw_path_into<N: TreeNodes + ?Sized>(nodes: &N, buf: &mut String, 
 ///
 /// フィールドを直接触れるのは、`indexer` が保存時に `Cow::Borrowed` で各列をそのまま
 /// シリアライズするためである（全件 clone を避ける）。
-pub(crate) struct IndexTree {
+pub struct IndexTree {
     /// 表示名。`AppEntry.name` をそのまま移す。
     pub(crate) names: Vec<String>,
     pub(crate) is_folder: Vec<bool>,
@@ -158,6 +158,109 @@ impl TreeNodes for IndexTree {
 }
 
 impl IndexTree {
+    /// ディスクから読んだ 5 本の列を、不変条件を**確かめてから**木にする。
+    ///
+    /// **確かめずに組んではならない。** 列は `index.bin` から独立に読まれるので、壊れた
+    /// ファイルは長さの揃わない列や範囲外の添字を与えうる。それぞれの帰結は:
+    ///
+    /// - 長さが揃わない → 組み替えの `zip` が短い側で黙って止まり、**索引が静かに短くなる**
+    /// - `aux` が `table` の外 → 組み立てが範囲外で panic（release は `panic="abort"`）
+    /// - `parent >= i` → [`walk_to_root`] の停止性が崩れる（`parent < i` が唯一の根拠である）
+    /// - 深さが [`CHAIN_CAP`] 以上 → `chain` 配列の範囲外
+    ///
+    /// どれも「読めたが壊れている」形なので、`None` を返して呼び出し側を**再走査へ落とす**。
+    /// 深さの検算は `parent < i` のおかげで 1 パスで済む（親の深さは必ず先に確定している）。
+    pub fn from_parts(
+        names: Vec<String>,
+        is_folder: Vec<bool>,
+        parent: Vec<u32>,
+        aux: Vec<u32>,
+        table: Vec<String>,
+        sorted_by_path: bool,
+    ) -> Option<Self> {
+        let n = names.len();
+        if is_folder.len() != n || parent.len() != n || aux.len() != n || table.is_empty() {
+            return None;
+        }
+        let mut depths: Vec<u16> = Vec::with_capacity(n);
+        for i in 0..n {
+            if aux[i] as usize >= table.len() {
+                return None;
+            }
+            let depth = if parent[i] == NO_PARENT {
+                0
+            } else {
+                let pi = parent[i] as usize;
+                if pi >= i {
+                    return None;
+                }
+                depths[pi] + 1
+            };
+            if depth as usize >= CHAIN_CAP {
+                return None;
+            }
+            depths.push(depth);
+        }
+        Some(Self {
+            names,
+            is_folder,
+            parent,
+            aux,
+            table,
+            sorted_by_path,
+        })
+    }
+
+    /// エントリを 1 件も持たない木（初回起動）。
+    ///
+    /// `table` は空にしない——0 番の空文字は `aux` の既定値が指す先であり、
+    /// [`Self::from_parts`] もそれを不変条件として検査する。
+    pub fn empty() -> Self {
+        Self {
+            names: Vec::new(),
+            is_folder: Vec::new(),
+            parent: Vec::new(),
+            aux: Vec::new(),
+            table: vec![String::new()],
+            // 空の列は「狭義の単調増加」を空虚に満たすが、`build` が測る値と揃えて真にする。
+            sorted_by_path: true,
+        }
+    }
+
+    /// `i` のフルパスを `buf` へ組み直す（crate の外から使う口）。
+    ///
+    /// 中身の規則は [`raw_path_into`] が持つ。**バッファを渡す形にしてあるのは、
+    /// 全件走査で 1 件ごとに確保させないためである。**
+    pub fn path_into(&self, buf: &mut String, i: usize) {
+        raw_path_into(self, buf, i);
+    }
+
+    pub fn len(&self) -> usize {
+        self.names.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.names.is_empty()
+    }
+
+    /// 木を `Vec<AppEntry>` へ戻す（フルパスを組み直して実体化する）。
+    ///
+    /// **製品の起動経路はこれを通らない。** 実体化は木が消したはずの 312,691 個の `String` を
+    /// その場で作り直すので、通せば削減が丸ごと戻る。用途は 2 つだけである——corpus テストと、
+    /// 派生文字列をまったく持たない旧版（v3）を読んだときの Wave 1 の材料。
+    pub(crate) fn materialize(&self) -> Vec<AppEntry> {
+        let mut buf = String::new();
+        (0..self.len())
+            .map(|i| {
+                raw_path_into(self, &mut buf, i);
+                AppEntry {
+                    name: self.names[i].clone(),
+                    target_path: buf.clone(),
+                    is_folder: self.is_folder[i],
+                }
+            })
+            .collect()
+    }
     /// `Vec<AppEntry>` を木表現へ組み替える。
     ///
     /// **入力が `target_path` のバイト順に整列していることを前提にするが、要求はしない。**
@@ -168,7 +271,7 @@ impl IndexTree {
     ///
     /// 循環は `pi < i` の 1 比較で構造的に潰す。文書化した契約ではなく順序で担保するので、
     /// 壊れた入力でも [`walk_to_root`] が止まらなくなることはない。
-    pub(crate) fn build(entries: Vec<AppEntry>) -> Self {
+    pub fn build(entries: Vec<AppEntry>) -> Self {
         let n = entries.len();
         // 整列の判定は並列で 1 回だけ。全件走査の tie-break がこの 1 bit に載る。
         //
@@ -239,6 +342,55 @@ impl IndexTree {
             table,
             sorted_by_path,
         }
+    }
+
+    /// （合計およそ 5 KiB）にしかならない一方、解決すれば「パス → index」の索引を
+    /// 全件ぶん建てることになる。反復 9 が PATH スキャンで却下したのと同じ比率の誤りである。
+    ///
+    /// **整列の旗は必ず下ろす。** 足したパスがバイト順で末尾に来る保証は無く、実運用点では
+    /// 実際に崩れる（PATH の実行ファイルは `C:\Windows\System32\…` ゆえ途中に入る・実測）。
+    /// 偽は遅い経路へ落ちるだけで結果は変わらない。
+    pub fn extend_with_roots(&mut self, entries: Vec<AppEntry>) {
+        if entries.is_empty() {
+            return;
+        }
+        for entry in entries {
+            let AppEntry {
+                name,
+                target_path,
+                is_folder,
+            } = entry;
+            self.table.push(target_path);
+            self.names.push(name);
+            self.is_folder.push(is_folder);
+            self.parent.push(NO_PARENT);
+            self.aux.push((self.table.len() - 1) as u32);
+        }
+        self.sorted_by_path = false;
+    }
+
+    /// `i` の**末尾成分**を、`indexer` の篩と同じ規則で正規化して `buf` へ書く。
+    ///
+    /// `seg` は作業用に使い回すバッファで、中身は捨てられる。
+    ///
+    /// **フルパスを組み立てない。** 木では末尾成分が `name` + 拡張子でそのまま取れるので、
+    /// 根まで辿る必要が無い（篩は 312,691 回走るので、ここが区間を支配する）。
+    ///
+    /// **根だけは別の腕を通る。** 根は `table` にフルパスを持つため、そこから末尾成分を
+    /// 切り出す既存の経路（`indexer` 側）へ落とす。実データで根は約 200 件（0.06%）
+    /// ——**ほとんど通らない腕ゆえ、壊れても静かである**。両腕が
+    /// `normalize_file_name_key_into(target_path)` と一致することは
+    /// `index_tree_file_key_matches_normalize_file_name_key_over_frozen_v6` が実データの
+    /// 全件で固定する。
+    pub(crate) fn file_key_into(&self, buf: &mut String, seg: &mut String, i: usize) {
+        if self.parent[i] == NO_PARENT {
+            crate::indexer::normalize_file_name_key_into(buf, self.table_str(self.aux[i]));
+            return;
+        }
+        seg.clear();
+        seg.push_str(&self.names[i]);
+        seg.push_str(self.table_str(self.aux[i]));
+        crate::indexer::normalize_entry_key_into(buf, seg);
     }
 }
 

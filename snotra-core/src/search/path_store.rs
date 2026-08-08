@@ -469,7 +469,10 @@ impl PathStore {
         }
     }
 
-    /// `Vec<AppEntry>` から木を建てて受け取る（キャッシュを持たない経路）。
+    /// `Vec<AppEntry>` から木を建てて受け取る（テストの fixture 用）。
+    ///
+    /// **製品は通らない**——`SearchEngine` の全経路は `IndexTree` を受け取る形へ移った。
+    #[cfg(test)]
     ///
     /// 木を建てる規則そのものは [`IndexTree::build`] が持つ——`index.bin` へ書く側と
     /// ここが**同じ 1 つを通る**ことが、ディスクと索引で木が一致する根拠である。

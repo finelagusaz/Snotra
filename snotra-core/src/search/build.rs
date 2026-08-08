@@ -7,6 +7,7 @@
 
 use rayon::prelude::*;
 
+use crate::index_tree::IndexTree;
 use crate::indexer::{AppEntry, CachedLower, LowerFileName};
 use crate::query::{
     file_char_mask, lower_file_name, measure_derived_sharing, name_char_mask, to_kana,
@@ -158,7 +159,7 @@ impl SearchEngine {
     /// 個々の経路へ `shrink_to_fit` を配ると漏れが生じる。実測は `PERFORMANCE.md`
     /// 「索引の常駐の内訳」。
     fn assemble(
-        entries: Vec<AppEntry>,
+        tree: IndexTree,
         derived: DerivedStrings,
         char_masks: Vec<u64>,
         file_name_char_masks: Vec<u64>,
@@ -170,14 +171,16 @@ impl SearchEngine {
         // **長さの検証は展開より前に行う。** 下の `debug_assert` は `PathStore` に対して測るので、
         // 派生文字列の長さはここで見ておかないと、ずれた入力が展開の添字 panic として先に出る。
         debug_assert!(
-            derived.len() == entries.len(),
+            derived.len() == tree.len(),
             "SearchEngine: 派生文字列の長さが entries と一致しない"
         );
         // `target_path` の `String` はここで木の接頭辞共有へ組み替えられ、`Vec<AppEntry>` ごと
         // 解放される（`path_store` の `//!`）。長さの検証は組み替え後の `PathStore` に対して行う
         // ——組み替えは全件を 1 対 1 で写すが、そう**信じる**のではなく測るのがこの節の役目である。
-        let n_before = entries.len();
-        let mut paths = PathStore::build(entries);
+        let n_before = tree.len();
+        // **木は建て直さない。** `index.bin` から読んだ木は親も拡張子も解決済みで、
+        // ここは索引側の並べ方へ移すだけである（`PathStore::adopt`）。
+        let mut paths = PathStore::adopt(tree);
         paths.shrink_to_fit();
         debug_assert_eq!(
             paths.len(),
@@ -346,7 +349,32 @@ impl SearchEngine {
         let (char_masks, file_name_char_masks) = compute_wave2(&lower_names, &lower_file_names);
         let kana_char_masks = compute_kana_char_masks(&kana_lower_names);
         Self::assemble(
-            entries,
+            IndexTree::build(entries),
+            DerivedStrings::Measured {
+                lower_names,
+                lower_file_names,
+            },
+            char_masks,
+            file_name_char_masks,
+            (kana_lower_names, kana_char_masks),
+        )
+    }
+
+    /// 派生文字列を持たない木から構築する（全走査の直後・初回起動）。
+    ///
+    /// **Wave 1 の材料はフルパスを要求する**（`lower_file_name` は `target_path` を取る）ため、
+    /// 導出のあいだだけ実体へ戻す。**木専用の導出を書き起こさない**——規則が 2 つになると
+    /// 片方の経路だけが静かにすれる。通るのは全走査の直後だけであり、そこは既に
+    /// ファイルシステム走査が支配している。
+    pub fn new_from_tree(tree: IndexTree, migemo_enabled: bool) -> Self {
+        let materialized = tree.materialize();
+        let (lower_names, lower_file_names, kana_lower_names) =
+            compute_wave1(&materialized, migemo_enabled);
+        drop(materialized);
+        let (char_masks, file_name_char_masks) = compute_wave2(&lower_names, &lower_file_names);
+        let kana_char_masks = compute_kana_char_masks(&kana_lower_names);
+        Self::assemble(
+            tree,
             DerivedStrings::Measured {
                 lower_names,
                 lower_file_names,
@@ -371,18 +399,18 @@ impl SearchEngine {
     /// 捨てるだけで、`lower_names` / `lower_file_names` が揃っていれば Wave 1 は
     /// スキップされたままである（v4 ユーザーの初回起動が遅くならない）。
     pub fn new_with_cached_masks(
-        entries: Vec<AppEntry>,
+        tree: IndexTree,
         char_masks: Vec<u64>,
         file_name_char_masks: Vec<u64>,
         cached_lower: Option<CachedLower>,
         migemo_enabled: bool,
     ) -> Self {
         // kana は毎起動再計算する（キャッシュに持たない）。migemo 無効時は空 Vec のまま。
-        let kana_for_cached = |entries: &[AppEntry]| {
+        let kana_for_cached = |tree: &IndexTree| {
             if migemo_enabled {
-                entries
+                tree.names
                     .par_iter()
-                    .map(|e| to_kana(&to_lower_folded(&e.name)).into_boxed_str())
+                    .map(|n| to_kana(&to_lower_folded(n)).into_boxed_str())
                     .collect::<Vec<_>>()
             } else {
                 Vec::new()
@@ -395,7 +423,7 @@ impl SearchEngine {
                 lower_names,
                 lower_file_names,
             }) => {
-                let kana = kana_for_cached(&entries);
+                let kana = kana_for_cached(&tree);
                 (
                     DerivedStrings::Collapsed {
                         lower_names,
@@ -411,7 +439,7 @@ impl SearchEngine {
                 lower_names,
                 lower_file_names,
             }) => {
-                let kana = kana_for_cached(&entries);
+                let kana = kana_for_cached(&tree);
                 (
                     DerivedStrings::Measured {
                         lower_names: lower_names
@@ -428,7 +456,14 @@ impl SearchEngine {
             }
             // v3 フォールバック: Wave 1 を並列実行（migemo フラグを反映）。
             None => {
-                let (lower_names, lower_file_names, kana) = compute_wave1(&entries, migemo_enabled);
+                // v3 は派生文字列を一切持たないので Wave 1 を走らせる。その材料は
+                // フルパスを要求する（`lower_file_name` は `target_path` を取る）ため、この腕だけ
+                // 実体へ戻す。**木専用の導出を書き起こさない**——規則が 2 つになると
+                // 旧版の経路だけが静かにすれる。v3 は背景再スキャンが昇格させるまでの
+                // 1 回だけ通る経路である。
+                let materialized = tree.materialize();
+                let (lower_names, lower_file_names, kana) =
+                    compute_wave1(&materialized, migemo_enabled);
                 (
                     DerivedStrings::Measured {
                         lower_names,
@@ -441,7 +476,7 @@ impl SearchEngine {
 
         let kana_char_masks = compute_kana_char_masks(&kana_lower_names);
         Self::assemble(
-            entries,
+            tree,
             derived,
             char_masks,
             file_name_char_masks,

@@ -99,12 +99,12 @@ fn drain_index(app_handle: &AppHandle) {
         };
         let Some(inputs) = inputs else { break };
 
-        let mut entries = indexer::rebuild_and_save(&inputs.scan, inputs.show_hidden_system);
+        let mut tree = indexer::rebuild_and_save(&inputs.scan, inputs.show_hidden_system);
 
-        // PATH エントリのマージ
+        // PATH エントリのマージ（すべて根として足す・理由は `IndexTree::extend_with_roots`）
         if inputs.include_path_env {
-            let path_entries = indexer::scan_path_env(&entries, inputs.show_hidden_system);
-            entries.extend(path_entries);
+            let path_entries = indexer::scan_path_env(&tree, inputs.show_hidden_system);
+            tree.extend_with_roots(path_entries);
         }
 
         // Sync icon cache with current index
@@ -115,8 +115,15 @@ fn drain_index(app_handle: &AppHandle) {
                 // Prune stale icons — retain only entries present in the current index.
                 // Unlike clear(), this preserves valid icons and avoids re-extraction cost.
                 if let Some(c) = current.as_mut() {
-                    let valid: std::collections::HashSet<String> =
-                        entries.iter().map(|e| e.target_path.clone()).collect();
+                    // 木はフルパスを持たないので組み直す。**バッファを使い回す**
+                    // ——アイコンの剪定は索引全件を走るので、1 件ごとの確保が乗る。
+                    let mut buf = String::new();
+                    let valid: std::collections::HashSet<String> = (0..tree.len())
+                        .map(|i| {
+                            tree.path_into(&mut buf, i);
+                            buf.clone()
+                        })
+                        .collect();
                     c.retain_paths(&valid);
                 }
             } else {
@@ -127,7 +134,7 @@ fn drain_index(app_handle: &AppHandle) {
 
         // SearchEngine の構築（O(N)）は Mutex 外で実施してロック保持時間を最小化する。
         // migemo 無効時は kana_lower_names を構築しない（issue #337）。
-        let new_index = snotra_core::engine::PrebuiltIndex::new(entries, inputs.migemo_enabled);
+        let new_index = snotra_core::engine::PrebuiltIndex::from_tree(tree, inputs.migemo_enabled);
         {
             let state = app_handle.state::<AppState>();
             state

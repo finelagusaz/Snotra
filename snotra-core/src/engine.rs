@@ -7,6 +7,7 @@
 use crate::config::{Config, ScanPath};
 use crate::folder;
 use crate::history::{HistoryStore, PreparedHistorySave};
+use crate::index_tree::IndexTree;
 use crate::indexer::{AppEntry, CachedMasks};
 use crate::search::{SearchEngine, SearchMode, SearchOptions};
 use crate::ui_types::SearchResult;
@@ -44,6 +45,14 @@ impl PrebuiltIndex {
     /// 呼び出し側（indexing.rs）はロック内でキャプチャした config の migemo を渡す。
     pub fn new(entries: Vec<AppEntry>, migemo_enabled: bool) -> Self {
         Self(SearchEngine::new_with_migemo(entries, migemo_enabled))
+    }
+
+    /// 既に建った木から構築する（`rebuild_and_save` が返した木をそのまま使う経路）。
+    ///
+    /// **`new` と使い分ける。** 木を持っているのに `Vec<AppEntry>` へ戻してから渡すと、
+    /// 実体化と再構築で同じ木を 2 度建てることになる。
+    pub fn from_tree(tree: IndexTree, migemo_enabled: bool) -> Self {
+        Self(SearchEngine::new_from_tree(tree, migemo_enabled))
     }
 }
 
@@ -95,18 +104,29 @@ impl Engine {
         }
     }
 
+    /// 派生文字列を持たない木から構築する（全走査の直後・初回起動）。
+    pub fn new_from_tree(tree: IndexTree, history: HistoryStore, config: Config) -> Self {
+        let search_engine = SearchEngine::new_from_tree(tree, config.search.migemo_enabled);
+        Self {
+            search_engine,
+            history,
+            config,
+            index_stale: false,
+        }
+    }
+
     /// キャッシュヒット時に使用するコンストラクタ。
     /// - v6 ヒット: 潰し済みの派生文字列を渡し、Wave 1/2 と共有判定をすべてスキップ
     /// - v5/v4 ヒット: 未測定の派生文字列を渡し Wave 1/2 をスキップ（共有判定は走る）
     /// - v3 フォールバック: ビットマスクのみ渡し Wave 1 は SearchEngine 内で実行
     pub fn new_from_cache(
-        entries: Vec<AppEntry>,
+        tree: IndexTree,
         cached_masks: CachedMasks,
         history: HistoryStore,
         config: Config,
     ) -> Self {
         let search_engine = SearchEngine::new_with_cached_masks(
-            entries,
+            tree,
             cached_masks.char_masks,
             cached_masks.file_name_char_masks,
             cached_masks.lower,

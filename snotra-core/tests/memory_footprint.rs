@@ -230,7 +230,7 @@ fn measure_real_index_footprint() {
     let result = indexer::load_or_scan_with_stats(scan, config.search.show_hidden_system);
     let load_ms = load_start.elapsed().as_secs_f64() * 1000.0;
     let t1 = snap();
-    let n = result.entries.len();
+    let n = result.tree.len();
 
     if result.cache_changed {
         println!(
@@ -270,7 +270,7 @@ fn measure_real_index_footprint() {
     );
 
     let LoadOrScanResult {
-        entries,
+        tree,
         cached_masks,
         rescan_task,
         ..
@@ -293,7 +293,7 @@ fn measure_real_index_footprint() {
         reset_peak();
         let tp0 = snap();
         let path_start = std::time::Instant::now();
-        let path_entries = indexer::scan_path_env(&entries, config.search.show_hidden_system);
+        let path_entries = indexer::scan_path_env(&tree, config.search.show_hidden_system);
         let path_ms = path_start.elapsed().as_secs_f64() * 1000.0;
         let tp1 = snap();
         let added = path_entries.len();
@@ -308,13 +308,13 @@ fn measure_real_index_footprint() {
     let build_start = std::time::Instant::now();
     let engine = match cached_masks {
         Some(masks) => SearchEngine::new_with_cached_masks(
-            entries,
+            tree,
             masks.char_masks,
             masks.file_name_char_masks,
             masks.lower,
             config.search.migemo_enabled,
         ),
-        None => SearchEngine::new_with_migemo(entries, config.search.migemo_enabled),
+        None => SearchEngine::new_with_migemo(tree, config.search.migemo_enabled),
     };
     let build_ms = build_start.elapsed().as_secs_f64() * 1000.0;
     let t3 = snap();

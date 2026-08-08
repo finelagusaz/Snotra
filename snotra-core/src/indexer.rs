@@ -1,8 +1,14 @@
-//! スキャン対象の列挙・重複排除と、インデックスキャッシュ（`index.bin`）の入出力。
+//! スキャン対象の列挙・重複排除、インデックスキャッシュ（`index.bin`）の入出力、そして
+//! **索引の材料を組のまま運ぶ器**（[`IndexMaterial`]）。
 //!
 //! `index.bin` への書き込みは `INDEX_WRITE_LOCK` で単一書き手に直列化し、tmp→rename の
 //! 食い合いによる破損を防ぐ。キャッシュヒット時の背景再スキャンは `BackgroundRescanTask`
 //! として返し、spawn とアイコン無効化は所有者（`src-tauri`）へ委ねる。
+//!
+//! 木と派生データを 1 つの型へ束ねるのはこのモジュールの責務である——**両者の長さが揃うこと**
+//! を、消費側の規約ではなく型で持つ（`index.bin` から来た組は `IndexMaterial::from_untrusted`
+//! が検証し、揃わなければ全走査へ落とす）。索引を建てる側は `search` にあり、そちらは組を
+//! ほどかずに受け取る（理由は [`IndexMaterial`] の doc）。
 
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};

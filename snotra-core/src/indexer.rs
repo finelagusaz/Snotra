@@ -1586,12 +1586,17 @@ enum EntryRepr<'a> {
     /// v6 以下: `AppEntry` の列を丸ごと持つ（`target_path` が実体で入っている）。
     Flat(&'a [AppEntry]),
     /// v7: 木の列。`target_path` は親と拡張子 id に置き換わり、実体は根のぶんだけ `table` に残る。
+    ///
+    /// **`sorted_by_path` も持つ。** 1 バイトしか無いが、`IndexCache` に居る以上
+    /// 帰属しなければ残余が 0 にならない——そして残余の検算は、列を 1 本落とした誤りと
+    /// 旗を落とした誤りを区別しない（実際に 5 列だけを数えて +1 B で落ちた）。
     Tree {
         names: &'a [String],
         is_folder: &'a [bool],
         parent: &'a [u32],
         aux: &'a [u32],
         table: &'a [String],
+        sorted_by_path: bool,
     },
 }
 
@@ -1608,7 +1613,7 @@ impl EntryRepr<'_> {
     fn top_label(&self) -> &'static str {
         match self {
             Self::Flat(_) => "entries",
-            Self::Tree { .. } => "木（names + is_folder + parent + aux + table）",
+            Self::Tree { .. } => "木（5 列 + 整列の旗）",
         }
     }
 
@@ -1621,12 +1626,14 @@ impl EntryRepr<'_> {
                 parent,
                 aux,
                 table,
+                sorted_by_path,
             } => {
                 serialized_len(names)?
                     + serialized_len(is_folder)?
                     + serialized_len(parent)?
                     + serialized_len(aux)?
                     + serialized_len(table)?
+                    + serialized_len(sorted_by_path)?
             }
         };
         Some(CacheByteRow {
@@ -1677,11 +1684,17 @@ impl EntryRepr<'_> {
                 parent,
                 aux,
                 table,
+                ..
             } => vec![
                 CacheByteRow {
                     label: "木: 長さプレフィックス（5 列）",
                     bytes: varint_len(n) * 4 + varint_len(table.len()),
                     items: 5,
+                },
+                CacheByteRow {
+                    label: "sorted_by_path（整列の旗）",
+                    bytes: 1,
+                    items: 1,
                 },
                 CacheByteRow {
                     label: "is_folder",
@@ -1769,6 +1782,7 @@ pub fn cache_byte_breakdown_in(dir: &Path) -> Option<CacheByteBreakdown> {
                 parent: &c.parent,
                 aux: &c.aux,
                 table: &c.table,
+                sorted_by_path: c.sorted_by_path,
             },
             &c.char_masks,
             &c.file_name_char_masks,

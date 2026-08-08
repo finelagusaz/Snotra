@@ -24,6 +24,7 @@ use windows::Win32::System::Threading::{
 
 use crate::binfmt::{BinFile, try_deserialize_with_header};
 use crate::config::{Config, ScanPath};
+use crate::index_tree::IndexTree;
 use crate::query::{
     file_char_mask, lower_file_name, measure_derived_sharing, name_char_mask, to_lower_folded,
 };
@@ -36,7 +37,7 @@ const INDEX_MAGIC: [u8; 4] = *b"INDX";
 /// が `5` のまま取り残され、「現行は v5。実運用点は v6 のまま」という**それ自体が矛盾した**
 /// 文を出し続けた（現行が v5 なら v6 は存在しえない）。
 #[doc(hidden)]
-pub const INDEX_CACHE_VERSION: u32 = 6;
+pub const INDEX_CACHE_VERSION: u32 = 7;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppEntry {
@@ -312,8 +313,11 @@ pub struct LoadOrScanStats {
 
 /// `load_or_scan_with_stats` の戻り値。
 pub struct LoadOrScanResult {
-    /// ロード or スキャンされたエントリ集合。
-    pub entries: Vec<AppEntry>,
+    /// ロード or スキャンされた索引の材料。
+    ///
+    /// **`Vec<AppEntry>` ではない**——v7 は `target_path` をディスクに持たないので、
+    /// 実体へ戻すと削った 312,691 回の確保がその場で復活する。
+    pub tree: IndexTree,
     /// キャッシュが無く（または stale で）フルスキャンが走った場合 true。
     pub cache_changed: bool,
     /// 各フェーズの所要時間。
@@ -343,14 +347,45 @@ pub struct LoadOrScanResult {
 #[derive(Serialize, Deserialize)]
 struct IndexCache<'a> {
     built_at: u64,
-    entries: Cow<'a, [AppEntry]>,
+    /// 表示名（`AppEntry.name`）。
+    names: Cow<'a, [String]>,
+    is_folder: Cow<'a, [bool]>,
+    /// 木の親（`crate::index_tree::TreeNodes::parent_of`）。
+    parent: Cow<'a, [u32]>,
+    /// 木の `table` 添字（`crate::index_tree::TreeNodes::aux_of`）。
+    aux: Cow<'a, [u32]>,
+    /// 拡張子と、親を持たないエントリのフルパスの intern 表。
+    table: Cow<'a, [String]>,
+    /// 保存時に測った整列の旗。**5 列と違い、読む側は検証せずそのまま信じる**——
+    /// 理由と被害範囲は [`crate::index_tree::IndexTree::from_parts`] の doc に書いてある
+    /// （壊れた値の帰結は同スコアの tie-break の順序に閉じる）。
+    sorted_by_path: bool,
     config_hash: u64,
     char_masks: Cow<'a, [u64]>,
     file_name_char_masks: Cow<'a, [u64]>,
-    /// `None` = `entries[i].name` とバイト一致（実データで 86.6%）。
+    /// `None` = `names[i]` とバイト一致（実データで 86.6%）。
     lower_names: Cow<'a, [Option<String>]>,
     /// 3 状態（`LowerFileName`）。「無い」と「`lower_name` と同一」を別の値で表す。
     lower_file_names: Cow<'a, [LowerFileName]>,
+}
+
+/// v6 フォールバック用スキーマ（`target_path` を全件そのまま持つ旧形式）。
+///
+/// **v7 との差は `target_path` の表現だけである。** v6 は 312,691 件のフルパスを実体で持ち
+/// （実測 36.01 MiB・ディスクの 70%）、v7 は木の親と拡張子 id に置き換えて持たない。
+/// 読み込みはどちらも成功し、**違うのは確保の回数**——v6 を読むと `String` を 312,691 個
+/// 余分に作り、`PathStore` へ組み替えた `assemble` が即座に捨てる。
+#[derive(Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
+struct IndexCacheV6 {
+    #[allow(dead_code)]
+    built_at: u64,
+    entries: Vec<AppEntry>,
+    config_hash: u64,
+    char_masks: Vec<u64>,
+    file_name_char_masks: Vec<u64>,
+    lower_names: Vec<Option<String>>,
+    lower_file_names: Vec<LowerFileName>,
 }
 
 /// v5 フォールバック用スキーマ（派生文字列を全件そのまま持つ旧形式）。
@@ -433,9 +468,9 @@ fn cache_bin_file_in(dir: &Path) -> BinFile {
 
 /// Load cached entries or scan the filesystem. Returns `(entries, cache_changed)`
 /// where `cache_changed = true` means the cache was missing/stale and a full scan ran.
-pub fn load_or_scan(scan: &[ScanPath], show_hidden_system: bool) -> (Vec<AppEntry>, bool) {
+pub fn load_or_scan(scan: &[ScanPath], show_hidden_system: bool) -> (IndexTree, bool) {
     let result = load_or_scan_with_stats(scan, show_hidden_system);
-    (result.entries, result.cache_changed)
+    (result.tree, result.cache_changed)
 }
 
 /// `index.bin` に載っているときだけエントリを返す（**走査は絶対にしない**）。実データを
@@ -452,10 +487,19 @@ pub fn load_or_scan(scan: &[ScanPath], show_hidden_system: bool) -> (Vec<AppEntr
 /// `#[ignore]` の計測ハーネスのうち `cached_masks` を要するものだけは
 /// [`load_or_scan_with_stats`] のままでよい——手元で 1 つずつ意図して走らせるものであり、
 /// 実運用の起動経路を測ることが目的だからである。
+///
+/// **返すのは木を実体へ戻したものであり、ディスクに在った文字列ではない**（v7 は
+/// `target_path` を持たない）。ゆえに「組み直しが原文と一致するか」をこの返り値と
+/// 突き合わせても、**組み直しの結果どうしを比べることになる**。その照合の接地は
+/// `index_tree_raw_matches_frozen_v6_specimen`（旧形式の凍結バイト列が唯一の原文）が持つ。
 #[doc(hidden)]
 pub fn load_cached_entries(scan: &[ScanPath], show_hidden_system: bool) -> Option<Vec<AppEntry>> {
     let hash = compute_config_hash(scan, show_hidden_system);
-    Some(load_cache(hash)?.entries)
+    // **実体化の規則は `IndexTree::materialize` の 1 つである。** ここに写しを置いていた
+    // ときは、木 →`Vec<AppEntry>` の規則が 2 部出荷されていた——片方に触れば corpus テストは
+    // 製品が決して見ないデータを検証することになる（`index_tree.rs` の `//!` が「辿る規則は
+    // 1 つ」と定めているのと同じ理屈で、戻す規則も 1 つでなければならない）。
+    Some(load_cache(hash)?.tree.materialize())
 }
 
 /// Same as `load_or_scan`, but returns the full `LoadOrScanResult`: timing stats,
@@ -475,7 +519,7 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
         let cache_load_ms = cache_load_started.elapsed().as_millis();
         let cache_read_ms = result.read_ms;
         let cached_version = result.version;
-        let return_entries = result.entries;
+        let return_tree = result.tree;
         let cached_masks = result.cached_masks;
         // 背景再スキャンはここでは spawn しない。タスクとして返し、`src-tauri` が
         // `AppHandle` を持った状態で spawn する（`Changed` 時のアイコン無効化のため）。
@@ -488,7 +532,7 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
             scan: scan.to_vec(),
             show_hidden_system,
             config_hash: current_hash,
-            cached_digest: entries_digest(&return_entries),
+            cached_digest: digest_over(&return_tree),
             generation: rescan_generation,
             cached_version,
         };
@@ -505,7 +549,7 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
             total_ms: total_started.elapsed().as_millis(),
         };
         return LoadOrScanResult {
-            entries: return_entries,
+            tree: return_tree,
             cache_changed: false,
             stats,
             cached_masks,
@@ -517,7 +561,7 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
     // 権威的書き手: scan + sort + save を書き込みロック保持下で行い、
     // 背景再スキャン / 別ビルドとの index.bin 同時書き込みを防ぐ。
     // フェーズ計測はクロージャの戻り値として持ち出す。
-    let (entries, scan_ms, sort_ms, cache_save_ms) = with_index_write_lock(|| {
+    let (tree, scan_ms, sort_ms, cache_save_ms) = with_index_write_lock(|| {
         let scan_started = Instant::now();
         let mut entries = scan_all(scan, show_hidden_system);
         let scan_ms = scan_started.elapsed().as_millis();
@@ -527,10 +571,12 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
         let sort_ms = sort_started.elapsed().as_millis();
 
         let cache_save_started = Instant::now();
-        save_cache_sorted(&entries, current_hash);
+        // **保存が返す木をそのまま使う。** 走査結果を保存のために建て直させると、同じ木を
+        // 2 回建てることになる（親解決は実測 23 ms）。
+        let tree = save_cache_sorted(entries, current_hash);
         let cache_save_ms = cache_save_started.elapsed().as_millis();
 
-        (entries, scan_ms, sort_ms, cache_save_ms)
+        (tree, scan_ms, sort_ms, cache_save_ms)
     });
 
     let stats = LoadOrScanStats {
@@ -548,7 +594,7 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
     };
 
     LoadOrScanResult {
-        entries,
+        tree,
         cache_changed: true,
         stats,
         cached_masks: None,
@@ -569,50 +615,110 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
 /// `DefaultHasher` の出力が Rust のバージョン間で変わっても影響せず、下の `CHUNK` を
 /// 変えてもよい。
 ///
-/// **永続化は「12 ms を消せる」最適化に見えるが、その瞬間に 2 つがオンディスク互換の
-/// 制約へ化ける**——`DefaultHasher` の出力はバージョン間で安定する保証が無く、`CHUNK` は
-/// 畳み込みの形を決めるので値を変えると digest が変わる。どちらも今は自由に動かせるが、
-/// ディスクへ出した後は動かせない。書くと決めるなら、安定なハッシュ関数を明示的に選び、
-/// `CHUNK` を形式の一部として固定し、`IndexCache` のバージョンを上げること
-/// （手順は `snotra-core/CLAUDE.md`「IndexCache バージョン変更チェックリスト」）。
+/// **永続化は「12 ms を消せる」最適化に見えるが、その瞬間にオンディスク互換の制約へ化ける。**
 /// ディスクへ書く `compute_config_hash` は、版が変わるとキャッシュが 1 度無効になるという
-/// 性質を既に背負っている。
+/// 性質を既に背負っている。**契約と受容する残余（衝突の帰結）の正本は [`digest_over`] の
+/// doc である**——こちらは 2 つの source のうち `&[AppEntry]` 専用の入口にすぎない。
+fn entries_digest(entries: &[AppEntry]) -> u64 {
+    digest_over(&entries)
+}
+
+/// digest が 1 件から読むもの。**比べる 2 辺が別の形で索引を持つために要る。**
+///
+/// 背景再スキャンは走査結果（`Vec<AppEntry>`・フルパスを実体で持つ）を、ロード側は
+/// [`IndexTree`]（フルパスを持たず組み直す）を差し出す。**畳み込みの形を 2 回書いては
+/// ならない**——塊の切り方が digest の値そのものを決めるので、別実装にした瞬間に
+/// 両辺が永久に食い違い、再スキャンが毎起動走り続ける（結果は正しいまま静かに遅くなる）。
+/// ここを通す限り、混ぜる値も順序も塊の境界も 1 つの実装が決める。
+trait DigestSource: Sync {
+    fn count(&self) -> usize;
+    /// `i` 番の `name` / `target_path` / `is_folder` を**この順で**混ぜる。
+    ///
+    /// `scratch` はフルパスを組み直す側だけが使う作業用バッファで、中身は捨てられる。
+    fn mix(&self, i: usize, scratch: &mut String, hasher: &mut DefaultHasher);
+}
+
+impl DigestSource for &[AppEntry] {
+    fn count(&self) -> usize {
+        self.len()
+    }
+    fn mix(&self, i: usize, _scratch: &mut String, hasher: &mut DefaultHasher) {
+        let e = &self[i];
+        e.name.hash(hasher);
+        e.target_path.hash(hasher);
+        e.is_folder.hash(hasher);
+    }
+}
+
+impl DigestSource for IndexTree {
+    fn count(&self) -> usize {
+        self.len()
+    }
+    fn mix(&self, i: usize, scratch: &mut String, hasher: &mut DefaultHasher) {
+        self.names[i].hash(hasher);
+        // **組み直した結果は原文とバイト一致する**（`raw_path_into` の doc が根拠の所在を
+        // 持つ）。ゆえに走査結果と同じバイト列が混ざる。
+        self.path_into(scratch, i);
+        scratch.hash(hasher);
+        self.is_folder[i].hash(hasher);
+    }
+}
+
+/// 塊の大きさ。**値を変えると digest が変わる**（分割が畳み込みの形を決めるため）。
+/// プロセス内でしか比較しないので問題にならない——契約の正本は [`digest_over`] の doc である
+/// （[`entries_digest`] は 2 つの source のうち片方専用の入口にすぎないので、そちらを指すと
+/// 一般側を読むために特殊側へ跳ぶことになる）。
+///
+/// **`index_tree::resolve_all` の刻みとは独立である**（片方は親の解決、片方は畳み込みの境界）。
+/// 値が 8192 で一致しているのは偶然であり、共通化しない。
+const DIGEST_CHUNK: usize = 8192;
+
+/// [`DigestSource`] を畳み込んで 1 つの u64 にする。**畳み込みの形はここが唯一持つ。**
+///
+/// **契約: この値はプロセス内でしか比較しない。** `DefaultHasher`（SipHash 1-3）の出力は
+/// Rust のバージョン間で安定である保証が無く、[`DIGEST_CHUNK`] も畳み込みの形を決めるので、
+/// どちらも今は自由に動かせる——ディスクへ出した瞬間に動かせなくなる。書くと決めるなら、
+/// 安定なハッシュ関数を明示的に選び、刻みを形式の一部として固定し、`IndexCache` の
+/// バージョンを上げること（手順は `snotra-core/CLAUDE.md`「IndexCache バージョン変更
+/// チェックリスト」）。
 ///
 /// **受容する残余: 衝突（2⁻⁶⁴）は「変わったのに Unchanged と報告する」形で現れる。**
 /// 索引は次にファイルシステムが変わるまで古いままになり、アイコンキャッシュも無効化されない。
 /// **一時的ではなく、その状態が続く限り持続する**——同じ組み合わせなら毎回同じ衝突になる。
 /// `compute_config_hash` は同じ u64 でキャッシュの有効性そのものを判定しており（衝突すれば
 /// **別の config の索引をそのまま使う**）、こちらの帰結はそれより軽い。
-fn entries_digest(entries: &[AppEntry]) -> u64 {
-    /// 塊の大きさ。**値を変えると digest が変わる**（分割が畳み込みの形を決めるため）。
-    /// プロセス内でしか比較しないので問題にならない——上の doc がその契約である。
-    const CHUNK: usize = 8192;
-
+fn digest_over<S: DigestSource + ?Sized>(src: &S) -> u64 {
+    let n = src.count();
     // 塊ごとに並列でハッシュし、**塊の順に**畳む。長さを先に混ぜるので分割は一意に決まり、
     // 境界の曖昧さは生じない。**解放と違ってハッシュは並列化が効く**——実測 43 → 12 ms
     // （直列版と各 3 回の最小値で比較。`search/build.rs` の共有の潰しは同じ手が効かなかった）。
-    let chunk_digests: Vec<u64> = entries
-        .par_chunks(CHUNK)
-        .map(|chunk| {
+    let chunk_digests: Vec<u64> = (0..n)
+        .step_by(DIGEST_CHUNK)
+        .collect::<Vec<_>>()
+        .into_par_iter()
+        .map(|start| {
+            let end = (start + DIGEST_CHUNK).min(n);
             let mut hasher = DefaultHasher::new();
-            for e in chunk {
-                e.name.hash(&mut hasher);
-                e.target_path.hash(&mut hasher);
-                e.is_folder.hash(&mut hasher);
+            // 組み直す側のためのバッファは**塊ごとに 1 本**（1 件ごとに確保しない）。
+            let mut scratch = String::new();
+            for i in start..end {
+                src.mix(i, &mut scratch, &mut hasher);
             }
             hasher.finish()
         })
         .collect();
 
     let mut hasher = DefaultHasher::new();
-    entries.len().hash(&mut hasher);
+    n.hash(&mut hasher);
     for d in chunk_digests {
         d.hash(&mut hasher);
     }
     hasher.finish()
 }
 
-fn sort_entries_canonical(entries: &mut [AppEntry]) {
+/// 正準の並び。**digest の値と木の形の両方をこの順序が決める**ので、比べる両辺・木を建てる
+/// 両者は必ずここを通すこと（写しを書くと、写した側だけが旧い並びで木を建てて緑を返す）。
+pub(crate) fn sort_entries_canonical(entries: &mut [AppEntry]) {
     entries.sort_by(|a, b| {
         a.target_path
             .cmp(&b.target_path)
@@ -621,15 +727,22 @@ fn sort_entries_canonical(entries: &mut [AppEntry]) {
     });
 }
 
-fn save_cache_sorted(entries: &[AppEntry], config_hash: u64) {
+/// エントリを木へ組み替えて保存し、**その木を返す**。
+///
+/// **`&[AppEntry]` を借りる形にしてはならない。** v7 が書くのは木であり、木を建てる段は
+/// `target_path` の `String` を move で吸い上げる。借りる形にすると保存のたびに全件を
+/// clone することになり、削ったはずの 36.01 MiB が保存経路で復活する。返り値にしてあるのは、
+/// 呼び出し側がそのまま索引の材料に使えるようにするためである（`rebuild_and_save` と
+/// cache-miss の枝が実際にそうする）。
+fn save_cache_sorted(entries: Vec<AppEntry>, config_hash: u64) -> IndexTree {
     let Some(dir) = Config::config_dir() else {
-        return;
+        return IndexTree::build(entries);
     };
-    save_cache_sorted_in(&dir, entries, config_hash);
+    save_cache_sorted_in(&dir, entries, config_hash)
 }
 
 /// `save_cache_sorted` と同じ保存処理を `dir` 注入で行う（統合テスト用、issue #429）。
-fn save_cache_sorted_in(dir: &Path, entries: &[AppEntry], config_hash: u64) {
+fn save_cache_sorted_in(dir: &Path, entries: Vec<AppEntry>, config_hash: u64) -> IndexTree {
     let bf = cache_bin_file_in(dir);
 
     // マスクを計算してキャッシュに含める。起動時に SearchEngine::new_with_cached_masks()
@@ -649,7 +762,7 @@ fn save_cache_sorted_in(dir: &Path, entries: &[AppEntry], config_hash: u64) {
         .map(|n| file_char_mask(n.as_deref()))
         .collect();
 
-    // **共有を測って潰した形で書く**（v6）。畳み込みは `collapse_lower_pair` が正本であり、
+    // **共有を測って潰した形で書く**（v6 以降）。畳み込みは `collapse_lower_pair` が正本であり、
     // 追記側（`extend_cached_masks`）と同じ関数を通ることだけが、ディスクとメモリで潰れ方が
     // 一致する根拠である。ここを別実装で書き起こしてはならない。
     //
@@ -664,14 +777,23 @@ fn save_cache_sorted_in(dir: &Path, entries: &[AppEntry], config_hash: u64) {
         })
         .unzip();
 
-    // Cow::Borrowed で entries の全件 clone を避ける（派生 Vec も参照で渡す）。
+    // **木を建てるのは派生文字列を導出し終えた後である。** 建てる段が `target_path` を
+    // 吸い上げるので、順序を入れ替えると `lower_file_name(&e.target_path)` の材料が消える。
+    let tree = IndexTree::build(entries);
+
+    // Cow::Borrowed で木の列と派生 Vec の全件 clone を避ける。
     // 出力バイト列は Owned 版と同一（golden テストで保証）。
     let cache = IndexCache {
         built_at: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs(),
-        entries: Cow::Borrowed(entries),
+        names: Cow::Borrowed(&tree.names),
+        is_folder: Cow::Borrowed(&tree.is_folder),
+        parent: Cow::Borrowed(&tree.parent),
+        aux: Cow::Borrowed(&tree.aux),
+        table: Cow::Borrowed(&tree.table),
+        sorted_by_path: tree.sorted_by_path,
         config_hash,
         char_masks: Cow::Borrowed(&char_masks),
         file_name_char_masks: Cow::Borrowed(&file_name_char_masks),
@@ -681,25 +803,26 @@ fn save_cache_sorted_in(dir: &Path, entries: &[AppEntry], config_hash: u64) {
     if !bf.save(&cache) {
         eprintln!("[indexer] failed to save {}", bf.path().display());
     }
+    tree
 }
 
 /// Force rebuild: scan and save cache, regardless of existing cache.
 /// Called from settings dialog (Phase 5).
-pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> Vec<AppEntry> {
+pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> IndexTree {
     // 権威的書き手: scan + sort + save を書き込みロック保持下で行い、
     // 背景再スキャン / 別の rebuild との index.bin 同時書き込みを防ぐ。
     with_index_write_lock(|| {
         let mut entries = scan_all(scan, show_hidden_system);
         sort_entries_canonical(&mut entries);
         let config_hash = compute_config_hash(scan, show_hidden_system);
-        save_cache_sorted(&entries, config_hash);
-        entries
+        save_cache_sorted(entries, config_hash)
     })
 }
 
 /// キャッシュ読み込み結果。v3 ヒット時はマスク付き、v2 ヒット時はマスクなし。
 struct LoadCacheResult {
-    entries: Vec<AppEntry>,
+    /// 索引の材料。**v7 はこれをディスクから直接読み、旧版は `target_path` から建て直す。**
+    tree: IndexTree,
     cached_masks: Option<CachedMasks>,
     /// `index.bin` をバイト列として読み終えるまでの時間（`LoadOrScanStats::cache_read_ms` へ運ぶ）。
     read_ms: u128,
@@ -720,7 +843,7 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
     let bytes = bf.load_bytes()?;
     let read_ms = read_started.elapsed().as_millis();
 
-    // v6 (現行): ビットマスク + **共有を潰した** lower names。
+    // v7 (現行): 木の列 + ビットマスク + **共有を潰した** lower names。
     // deserialize は Cow::Owned を返すため .into_owned() は clone なしの move。
     if let Ok(cache) =
         try_deserialize_with_header::<IndexCache<'static>>(&bytes, INDEX_MAGIC, INDEX_CACHE_VERSION)
@@ -728,6 +851,18 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
         if cache.config_hash != config_hash {
             return None;
         }
+        // **検証を通してから木にする。** 5 本の列は独立に読まれるので、壊れたファイルは
+        // 長さの揃わない列や範囲外の添字を与えうる（帰結は `IndexTree::from_parts` の doc）。
+        // 通らなければ `None`＝全走査へ落とす——**版が読めたことは中身が健全であることを
+        // 意味しない。**
+        let tree = IndexTree::from_parts(
+            cache.names.into_owned(),
+            cache.is_folder.into_owned(),
+            cache.parent.into_owned(),
+            cache.aux.into_owned(),
+            cache.table.into_owned(),
+            cache.sorted_by_path,
+        )?;
         let masks = CachedMasks {
             char_masks: cache.char_masks.into_owned(),
             file_name_char_masks: cache.file_name_char_masks.into_owned(),
@@ -739,10 +874,34 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
             }),
         };
         return Some(LoadCacheResult {
-            entries: cache.entries.into_owned(),
+            tree,
             cached_masks: Some(masks),
             read_ms,
             version: INDEX_CACHE_VERSION,
+        });
+    }
+
+    // v6 フォールバック: `target_path` を全件そのまま持つ形式。**読めるが確保が 312,691 回
+    // 余分にかかる**——フルパスの `String` を作り、木へ組み替えた段で即座に捨てる。
+    // 背景再スキャンが v7 へ昇格させるまでの 1 回だけ通る経路である（→「indexer.rs の
+    // 背景再スキャン」）。
+    if let Ok(cache) = try_deserialize_with_header::<IndexCacheV6>(&bytes, INDEX_MAGIC, 6) {
+        if cache.config_hash != config_hash {
+            return None;
+        }
+        let masks = CachedMasks {
+            char_masks: cache.char_masks,
+            file_name_char_masks: cache.file_name_char_masks,
+            lower: Some(CachedLower::Collapsed {
+                lower_names: cache.lower_names,
+                lower_file_names: cache.lower_file_names,
+            }),
+        };
+        return Some(LoadCacheResult {
+            tree: IndexTree::build(cache.entries),
+            cached_masks: Some(masks),
+            read_ms,
+            version: 6,
         });
     }
 
@@ -763,7 +922,7 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
             }),
         };
         return Some(LoadCacheResult {
-            entries: cache.entries,
+            tree: IndexTree::build(cache.entries),
             cached_masks: Some(masks),
             read_ms,
             version: 5,
@@ -791,7 +950,7 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
             }),
         };
         return Some(LoadCacheResult {
-            entries: cache.entries,
+            tree: IndexTree::build(cache.entries),
             cached_masks: Some(masks),
             read_ms,
             version: 4,
@@ -809,7 +968,7 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
             lower: None,
         };
         return Some(LoadCacheResult {
-            entries: cache.entries,
+            tree: IndexTree::build(cache.entries),
             cached_masks: Some(masks),
             read_ms,
             version: 3,
@@ -822,7 +981,7 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
             return None;
         }
         return Some(LoadCacheResult {
-            entries: cache.entries,
+            tree: IndexTree::build(cache.entries),
             cached_masks: None,
             read_ms,
             version: 2,
@@ -941,7 +1100,7 @@ fn try_background_rescan_in(
         // 走査結果を既に持っている唯一の場所**だからである。ロード側で書こうとすると、
         // engine へ move する `entries` の複製が要り、反復 6 で消した 62.5 MiB が復活する。
         if changed || cached_version != INDEX_CACHE_VERSION {
-            save_cache_sorted_in(dir, &scanned, config_hash);
+            save_cache_sorted_in(dir, scanned, config_hash);
         }
         Some(changed)
     });
@@ -1124,7 +1283,7 @@ fn read_user_path() -> Option<String> {
 ///    `trim` する**。区切りの直後に空白があるパス（`C:\dir\ tool.exe`）では、
 ///    「正規化してから切り出す」と「切り出してから正規化する」が一致するために、
 ///    写像と `trim` が可換であることが要る。
-fn normalize_file_name_key_into(buf: &mut String, target_path: &str) {
+pub(crate) fn normalize_file_name_key_into(buf: &mut String, target_path: &str) {
     let trimmed = target_path.trim();
     let segment = match trimmed.rfind(['\\', '/']) {
         // 区切りはどちらも 1 バイトゆえ `i + 1` は char 境界。
@@ -1219,7 +1378,7 @@ fn enumerate_path_candidates(path_list: &str, show_hidden_system: bool) -> Vec<P
 /// 実測値は `PERFORMANCE.md`「採用: PATH スキャンの問いを反転（確保 314,395 → 2,066・反復 9）」を
 /// 正本とする（ここには写さない——数値は次の反復で動き、写しは片方だけ更新されて残る）。
 /// 篩が偽陰性を出さない根拠は [`normalize_file_name_key_into`] の doc。
-fn reject_existing(candidates: Vec<PathCandidate>, existing_entries: &[AppEntry]) -> Vec<AppEntry> {
+fn reject_existing(candidates: Vec<PathCandidate>, existing: &IndexTree) -> Vec<AppEntry> {
     // **候補が無ければ既存エントリを 1 件も見ない。** この関数のコストは丸ごと下の走査に
     // あるので、外すと PATH に実行ファイルを持たないユーザーで全件ぶんの篩が戻る。
     if candidates.is_empty() {
@@ -1235,16 +1394,28 @@ fn reject_existing(candidates: Vec<PathCandidate>, existing_entries: &[AppEntry]
 
     let mut rejected = vec![false; candidates.len()];
     // 確保を暖まらせて使い回す（`normalize_entry_key_into` の doc と同じ形）。
+    //
+    // **生パスと正規化キーは別の変数に持つ。** 1 本を `mem::take` で貸し借りする形も書けるが、
+    // `take` は容量 0 の `String` を置き去りにするので `normalize_entry_key_into` が篩を通る
+    // たびに確保し直し、**この行が意図している使い回しがまさに消える**。読む側も、1 つの名前が
+    // 生パスと正規化キーのどちらを持つ瞬間なのかを 3 文追わされる。
     let mut file_buf = String::new();
-    let mut full_buf = String::new();
-    for e in existing_entries {
-        normalize_file_name_key_into(&mut file_buf, &e.target_path);
+    let mut seg_buf = String::new();
+    let mut raw_buf = String::new();
+    let mut norm_buf = String::new();
+    for i in 0..existing.len() {
+        // **篩はフルパスを組み立てない。** 木では末尾成分が `name` + 拡張子で直接取れるので、
+        // ここが 312,691 回走っても根まで辿る必要が無い（`IndexTree::file_key_into`）。
+        existing.file_key_into(&mut file_buf, &mut seg_buf, i);
         let Some(idxs) = by_file_key.get(file_buf.as_str()) else {
             continue;
         };
-        normalize_entry_key_into(&mut full_buf, &e.target_path);
+        // **篩を通った分だけフルパスを組み立てる。** 通るのは PATH 上の実行ファイルと
+        // 同名のエントリだけなので、組み立ては全件ではなくその数に比例する。
+        existing.path_into(&mut raw_buf, i);
+        normalize_entry_key_into(&mut norm_buf, &raw_buf);
         for &i in idxs {
-            if candidates[i].key == full_buf {
+            if candidates[i].key == norm_buf {
                 rejected[i] = true;
             }
         }
@@ -1274,12 +1445,12 @@ fn reject_existing(candidates: Vec<PathCandidate>, existing_entries: &[AppEntry]
 /// [`enumerate_path_candidates`] と [`reject_existing`] の doc を見ること。
 fn scan_path_dirs(
     path_list: &str,
-    existing_entries: &[AppEntry],
+    existing: &IndexTree,
     show_hidden_system: bool,
 ) -> Vec<AppEntry> {
     reject_existing(
         enumerate_path_candidates(path_list, show_hidden_system),
-        existing_entries,
+        existing,
     )
 }
 
@@ -1291,12 +1462,12 @@ fn scan_path_dirs(
 /// - 対象拡張子: .exe / .bat / .cmd / .com（正本は `enumerate_path_candidates` の `path_exts`）
 /// - `existing_entries` に同一パスがあるものは返さない（normalize_entry_key で判定）
 /// - PATH ディレクトリ間での重複も排除する
-pub fn scan_path_env(existing_entries: &[AppEntry], show_hidden_system: bool) -> Vec<AppEntry> {
+pub fn scan_path_env(existing: &IndexTree, show_hidden_system: bool) -> Vec<AppEntry> {
     let user_path = match read_user_path() {
         Some(p) if !p.is_empty() => p,
         _ => return Vec::new(),
     };
-    scan_path_dirs(&user_path, existing_entries, show_hidden_system)
+    scan_path_dirs(&user_path, existing, show_hidden_system)
 }
 
 /// 派生文字列 1 組を、`measure_derived_sharing` の判定に従って潰した形へ畳む。
@@ -1407,6 +1578,154 @@ pub struct CacheByteBreakdown {
     pub entry_residual: i64,
 }
 
+/// 内訳計器から見た「エントリの持ち方」。版によって形が違うので、両方を数えられる形にする。
+///
+/// **v7 が来た瞬間に `None` を返す作りにしてはならない。** この計器は形式を変える判断の一次
+/// 証拠であり、新形式で黙れば**削減した直後にだけ測れなくなる**（同じ形の失敗が
+/// `PERFORMANCE.md` に記録されている）。
+enum EntryRepr<'a> {
+    /// v6 以下: `AppEntry` の列を丸ごと持つ（`target_path` が実体で入っている）。
+    Flat(&'a [AppEntry]),
+    /// v7: 木の列。`target_path` は親と拡張子 id に置き換わり、実体は根のぶんだけ `table` に残る。
+    ///
+    /// **`sorted_by_path` も持つ。** 1 バイトしか無いが、`IndexCache` に居る以上
+    /// 帰属しなければ残余が 0 にならない——そして残余の検算は、列を 1 本落とした誤りと
+    /// 旗を落とした誤りを区別しない（実際に 5 列だけを数えて +1 B で落ちた）。
+    Tree {
+        names: &'a [String],
+        is_folder: &'a [bool],
+        parent: &'a [u32],
+        aux: &'a [u32],
+        table: &'a [String],
+        sorted_by_path: bool,
+    },
+}
+
+impl EntryRepr<'_> {
+    fn count(&self) -> usize {
+        match self {
+            Self::Flat(e) => e.len(),
+            Self::Tree { names, .. } => names.len(),
+        }
+    }
+
+    fn top_row(&self) -> Option<CacheByteRow> {
+        // 版ごとに違うラベル。**リテラルを他所へ書き写さない**——照合に使うと、片方の版でだけ
+        // 一致しなくなる形の不変条件が生まれる（呼び出し側はバイト数を move の前に読むので、
+        // ラベルで探し直す必要は無い）。
+        let label = match self {
+            Self::Flat(_) => "entries",
+            Self::Tree { .. } => "木（5 列 + 整列の旗）",
+        };
+        let bytes = match self {
+            Self::Flat(e) => serialized_len(e)?,
+            Self::Tree {
+                names,
+                is_folder,
+                parent,
+                aux,
+                table,
+                sorted_by_path,
+            } => {
+                serialized_len(names)?
+                    + serialized_len(is_folder)?
+                    + serialized_len(parent)?
+                    + serialized_len(aux)?
+                    + serialized_len(table)?
+                    + serialized_len(sorted_by_path)?
+            }
+        };
+        Some(CacheByteRow {
+            label,
+            bytes,
+            items: self.count(),
+        })
+    }
+
+    /// 上の 1 行をさらに割った内訳。**算術で出すが、和が上の実測値と一致することで
+    /// 裏打ちされる**（一致しなければ `entry_residual` に現れる）。
+    fn sub_rows(&self) -> Vec<CacheByteRow> {
+        let n = self.count();
+        let strs = |v: &[String]| -> usize { v.iter().map(|s| postcard_str_len(s)).sum() };
+        match self {
+            Self::Flat(entries) => vec![
+                CacheByteRow {
+                    label: "entries: 長さプレフィックス",
+                    bytes: varint_len(n),
+                    items: 1,
+                },
+                CacheByteRow {
+                    label: "entries[].name",
+                    bytes: entries.iter().map(|e| postcard_str_len(&e.name)).sum(),
+                    items: n,
+                },
+                CacheByteRow {
+                    label: "entries[].target_path",
+                    bytes: entries
+                        .iter()
+                        .map(|e| postcard_str_len(&e.target_path))
+                        .sum(),
+                    items: n,
+                },
+                CacheByteRow {
+                    label: "entries[].is_folder",
+                    bytes: n,
+                    items: n,
+                },
+            ],
+            Self::Tree {
+                names,
+                is_folder,
+                parent,
+                aux,
+                table,
+                // **`..` を書かない。** 値は読まない（旗は真偽によらず 1 バイト）が、列を
+                // 足したときにここを触り忘れたらコンパイルを止めるのが網羅的分解の役目
+                // である——`footprint_rows` と同じ規律（`snotra-core/CLAUDE.md` の
+                // search.rs 節）。残余の検算は `#[ignore]` の計器でしか走らないので、
+                // 落とすとコンパイラの検出が手作業へ格下げされる。
+                sorted_by_path: _,
+            } => vec![
+                CacheByteRow {
+                    label: "木: 長さプレフィックス（5 列）",
+                    bytes: varint_len(n) * 4 + varint_len(table.len()),
+                    items: 5,
+                },
+                CacheByteRow {
+                    label: "sorted_by_path（整列の旗）",
+                    bytes: 1,
+                    items: 1,
+                },
+                CacheByteRow {
+                    label: "is_folder",
+                    bytes: is_folder.len(),
+                    items: n,
+                },
+                CacheByteRow {
+                    label: "names",
+                    bytes: strs(names),
+                    items: n,
+                },
+                CacheByteRow {
+                    label: "parent",
+                    bytes: parent.iter().map(|v| varint_len(*v as usize)).sum(),
+                    items: n,
+                },
+                CacheByteRow {
+                    label: "aux",
+                    bytes: aux.iter().map(|v| varint_len(*v as usize)).sum(),
+                    items: n,
+                },
+                CacheByteRow {
+                    label: "table（拡張子 + 根のフルパス）",
+                    bytes: strs(table),
+                    items: table.len(),
+                },
+            ],
+        }
+    }
+}
+
 /// postcard の LEB128 varint が `v` を表すのに使うバイト数。
 fn varint_len(mut v: usize) -> usize {
     let mut n = 1;
@@ -1415,6 +1734,15 @@ fn varint_len(mut v: usize) -> usize {
         n += 1;
     }
     n
+}
+
+/// 文字列 1 件を postcard へ書いたときの長さ（長さの varint + 本体）。
+///
+/// 括り出してあるのは、`sub_rows` の中だけで同じ 2 項式が 3 回書かれていたためである
+/// ——新しい表現を足すたびに 4 回目・5 回目と増える形だった。
+#[inline]
+fn postcard_str_len(s: &str) -> usize {
+    varint_len(s.len()) + s.len()
 }
 
 /// 値を postcard へ書いたときの長さ（バッファは即座に捨てる）。
@@ -1457,7 +1785,35 @@ pub fn cache_byte_breakdown_in(dir: &Path) -> Option<CacheByteBreakdown> {
             file_len,
             c.built_at,
             c.config_hash,
-            &c.entries,
+            EntryRepr::Tree {
+                names: &c.names,
+                is_folder: &c.is_folder,
+                parent: &c.parent,
+                aux: &c.aux,
+                table: &c.table,
+                sorted_by_path: c.sorted_by_path,
+            },
+            &c.char_masks,
+            &c.file_name_char_masks,
+            LowerRepr::Collapsed {
+                names: &c.lower_names,
+                files: &c.lower_file_names,
+            },
+            None,
+        );
+    }
+
+    // **v6 を落とさない。** v7 が現行になった瞬間、v6 は「実運用点に実際に置かれている版」に
+    // なった——ここを飛ばすと、置き換えようとしている当の形式でだけ計器が黙る
+    // （実測で踏んだ: 実 `index.bin` が v6 のとき「読めなかったためスキップ」と出た）。
+    if let Ok(c) = try_deserialize_with_header::<IndexCacheV6>(&bytes, INDEX_MAGIC, 6) {
+        drop(bytes);
+        return build_breakdown(
+            6,
+            file_len,
+            c.built_at,
+            c.config_hash,
+            EntryRepr::Flat(&c.entries),
             &c.char_masks,
             &c.file_name_char_masks,
             LowerRepr::Collapsed {
@@ -1475,7 +1831,7 @@ pub fn cache_byte_breakdown_in(dir: &Path) -> Option<CacheByteBreakdown> {
             file_len,
             c.built_at,
             c.config_hash,
-            &c.entries,
+            EntryRepr::Flat(&c.entries),
             &c.char_masks,
             &c.file_name_char_masks,
             LowerRepr::Raw {
@@ -1493,7 +1849,7 @@ pub fn cache_byte_breakdown_in(dir: &Path) -> Option<CacheByteBreakdown> {
             file_len,
             c.built_at,
             c.config_hash,
-            &c.entries,
+            EntryRepr::Flat(&c.entries),
             &c.char_masks,
             &c.file_name_char_masks,
             LowerRepr::Raw {
@@ -1534,13 +1890,12 @@ fn build_breakdown(
     file_len: usize,
     built_at: u64,
     config_hash: u64,
-    entries: &[AppEntry],
+    entries: EntryRepr<'_>,
     char_masks: &[u64],
     file_name_char_masks: &[u64],
     lower: LowerRepr<'_>,
     normalized_keys: Option<&[String]>,
 ) -> Option<CacheByteBreakdown> {
-    let n = entries.len();
     let (lower_names_row, lower_file_names_row) = match lower {
         LowerRepr::Collapsed { names, files } => (
             CacheByteRow {
@@ -1572,17 +1927,19 @@ fn build_breakdown(
             },
         ),
     };
+    // **バイト数はここで読んでおく。** `rows` へ move した行を後からラベルの文字列照合で
+    // 探し直す形も書けるが、それは「行を作る側と探す側で版ごとのラベルが一致し続ける」という
+    // 不変条件を新設し、外したときは `?` の無言の `None` として出る。`usize` は `Copy` なので
+    // move の前に読めば、その不変条件ごと要らなくなる。
+    let top_row = entries.top_row()?;
+    let entries_bytes = top_row.bytes;
     let mut rows = vec![
         CacheByteRow {
             label: "built_at",
             bytes: serialized_len(&built_at)?,
             items: 1,
         },
-        CacheByteRow {
-            label: "entries",
-            bytes: serialized_len(&entries)?,
-            items: n,
-        },
+        top_row,
         CacheByteRow {
             label: "config_hash",
             bytes: serialized_len(&config_hash)?,
@@ -1613,39 +1970,7 @@ fn build_breakdown(
     let attributed: usize = rows.iter().map(|r| r.bytes).sum();
     let residual = payload_len as i64 - attributed as i64;
 
-    // `entries` の内訳。**算術で出すが、和が上の実測値と一致することで裏打ちされる**
-    // （一致しなければ `entry_residual` に現れる）。
-    let name_bytes: usize = entries
-        .iter()
-        .map(|e| varint_len(e.name.len()) + e.name.len())
-        .sum();
-    let target_bytes: usize = entries
-        .iter()
-        .map(|e| varint_len(e.target_path.len()) + e.target_path.len())
-        .sum();
-    let entry_rows = vec![
-        CacheByteRow {
-            label: "entries: 長さプレフィックス",
-            bytes: varint_len(n),
-            items: 1,
-        },
-        CacheByteRow {
-            label: "entries[].name",
-            bytes: name_bytes,
-            items: n,
-        },
-        CacheByteRow {
-            label: "entries[].target_path",
-            bytes: target_bytes,
-            items: n,
-        },
-        CacheByteRow {
-            label: "entries[].is_folder",
-            bytes: n,
-            items: n,
-        },
-    ];
-    let entries_bytes = rows.iter().find(|r| r.label == "entries")?.bytes;
+    let entry_rows = entries.sub_rows();
     let entry_attributed: usize = entry_rows.iter().map(|r| r.bytes).sum();
     let entry_residual = entries_bytes as i64 - entry_attributed as i64;
 
@@ -1792,9 +2117,15 @@ mod tests {
             },
         ];
 
+        let tree = IndexTree::build(entries.clone());
         let cache = IndexCache {
             built_at: 1700000000,
-            entries: Cow::Owned(entries.clone()),
+            names: Cow::Owned(tree.names.clone()),
+            is_folder: Cow::Owned(tree.is_folder.clone()),
+            parent: Cow::Owned(tree.parent.clone()),
+            aux: Cow::Owned(tree.aux.clone()),
+            table: Cow::Owned(tree.table.clone()),
+            sorted_by_path: tree.sorted_by_path,
             config_hash: 12345,
             char_masks: Cow::Owned(vec![0xAB, 0xCD]),
             file_name_char_masks: Cow::Owned(vec![0x12, 0x34]),
@@ -1813,11 +2144,11 @@ mod tests {
                 .expect("deserialize");
 
         assert_eq!(restored.built_at, 1700000000);
-        assert_eq!(restored.entries.len(), 2);
-        assert_eq!(restored.entries[0].name, "Firefox");
-        assert!(!restored.entries[0].is_folder);
-        assert_eq!(restored.entries[1].name, "Projects");
-        assert!(restored.entries[1].is_folder);
+        assert_eq!(restored.names.len(), 2);
+        assert_eq!(restored.names[0], "Firefox");
+        assert!(!restored.is_folder[0]);
+        assert_eq!(restored.names[1], "Projects");
+        assert!(restored.is_folder[1]);
         assert_eq!(restored.config_hash, 12345);
         // Cow フィールドは into_owned() で Vec に戻して比較（deserialize は Owned ゆえ move）。
         assert_eq!(restored.char_masks.into_owned(), vec![0xABu64, 0xCD]);
@@ -1838,8 +2169,8 @@ mod tests {
         );
     }
 
-    /// `golden_v6_fixture` の戻り値（entries / 2 本のマスク / 潰し済みの派生文字列 2 本）。
-    type GoldenV6Fixture = (
+    /// `golden_fixture` の戻り値（entries / 2 本のマスク / 潰し済みの派生文字列 2 本）。
+    type GoldenFixture = (
         Vec<AppEntry>,
         Vec<u64>,
         Vec<u64>,
@@ -1847,20 +2178,37 @@ mod tests {
         Vec<LowerFileName>,
     );
 
-    /// v6 golden の fixture。**`LowerFileName` の 3 状態すべてを載せる**——1 つでも欠けると
-    /// その状態のバイト表現が凍結されず、タグの値が変わっても golden が素通りする。
-    /// v4/v5 の golden とは entries 数が違う（あちらは 2 件）。
-    fn golden_v6_fixture() -> GoldenV6Fixture {
+    /// 現行 golden の fixture。**版を名前に持たない**——凍結バイト列は版ごとに増えるが、
+    /// それを生む入力は常に「現行版が凍結している 1 つ」だからである（旧版の定数は当時の
+    /// 入力ではなく**自分が何を含むか**を doc に持つ）。
+    ///
+    /// 3 つの網羅をここで背負う。どれが欠けても、その表現のバイトが凍結されずに素通りする:
+    ///
+    /// - **`LowerFileName` の 3 状態すべて**（タグの値が変わっても golden が気づかない）
+    /// - **木の根と非根の両方**（1..2 件目が親子）。根の `aux` はフルパスの id、非根の `aux` は
+    ///   拡張子の id という**同じ列の 2 つの意味**が、これで初めて両方バイトに現れる
+    /// - **`sorted_by_path` が真になる並び**（`target_path` のバイト昇順）。偽だけを凍結すると、
+    ///   旗の位置や極性が変わっても 1 バイトも動かない
+    fn golden_fixture() -> GoldenFixture {
+        // **バイト昇順で並べる**（`C:\P` < `C:\a` < `C:\d`）。崩すと `sorted_by_path` が偽に
+        // なるうえ、`IndexTree::build` の親の二分探索が取りこぼして 2 件目が根になる
+        // ——どちらも「落ちない形での網羅の喪失」である。
         let entries = vec![
-            AppEntry {
-                name: "Firefox".to_string(),
-                target_path: "C:\\apps\\firefox.lnk".to_string(),
-                is_folder: false,
-            },
             AppEntry {
                 name: "Projects".to_string(),
                 target_path: "C:\\Projects".to_string(),
                 is_folder: true,
+            },
+            // 唯一の非根。親は 0 番で、`aux` は拡張子 `.exe` の id を指す。
+            AppEntry {
+                name: "app".to_string(),
+                target_path: "C:\\Projects\\app.exe".to_string(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "Firefox".to_string(),
+                target_path: "C:\\apps\\firefox.lnk".to_string(),
+                is_folder: false,
             },
             AppEntry {
                 name: "docs".to_string(),
@@ -1870,17 +2218,19 @@ mod tests {
         ];
         (
             entries,
-            vec![0xABu64, 0xCD, 0xEF],
-            vec![0x12u64, 0x34, 0x56],
-            // 3 件目は `name` と同一（＝落とせる）。
+            vec![0xABu64, 0xCD, 0xEF, 0x21],
+            vec![0x12u64, 0x34, 0x56, 0x78],
+            // 2・4 件目は `name` と同一（＝落とせる）。
             vec![
-                Some("firefox".to_string()),
                 Some("projects".to_string()),
+                None,
+                Some("firefox".to_string()),
                 None,
             ],
             vec![
-                LowerFileName::Text("firefox.lnk".to_string()),
                 LowerFileName::Absent,
+                LowerFileName::Text("app.exe".to_string()),
+                LowerFileName::Text("firefox.lnk".to_string()),
                 LowerFileName::SameAsLowerName,
             ],
         )
@@ -1894,12 +2244,18 @@ mod tests {
         // roundtrip テストを素通りするため、この golden が唯一の検出器（version 非バンプでも検出）。
         // 意図的な形式変更（INDEX_CACHE_VERSION バンプ）時は golden を更新すること。
         let (entries, char_masks, file_name_char_masks, lower_names, lower_file_names) =
-            golden_v6_fixture();
+            golden_fixture();
 
         // save 経路と同じ Cow::Borrowed で構築する。
+        let tree = IndexTree::build(entries.clone());
         let cache = IndexCache {
             built_at: 1_700_000_000,
-            entries: Cow::Borrowed(&entries),
+            names: Cow::Borrowed(&tree.names),
+            is_folder: Cow::Borrowed(&tree.is_folder),
+            parent: Cow::Borrowed(&tree.parent),
+            aux: Cow::Borrowed(&tree.aux),
+            table: Cow::Borrowed(&tree.table),
+            sorted_by_path: tree.sorted_by_path,
             config_hash: 12345,
             char_masks: Cow::Borrowed(&char_masks),
             file_name_char_masks: Cow::Borrowed(&file_name_char_masks),
@@ -1910,32 +2266,109 @@ mod tests {
             try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache).expect("serialize");
 
         assert_eq!(
-            bytes, GOLDEN_V6,
+            bytes, GOLDEN_V7,
             "on-disk 形式が変化した。IndexCache のフィールド順/型変更は既存 index.bin を破損する。\
              意図的なら INDEX_CACHE_VERSION をバンプし golden を更新すること"
         );
 
         let restored: IndexCache<'static> =
-            try_deserialize_with_header(GOLDEN_V6, INDEX_MAGIC, INDEX_CACHE_VERSION)
-                .expect("凍結 v6 バイトがロードできること");
-        assert!(matches!(restored.entries, Cow::Owned(_)));
-        assert_eq!(restored.entries.len(), 3);
-        assert_eq!(restored.entries[0].name, "Firefox");
-        assert_eq!(restored.entries[0].target_path, "C:\\apps\\firefox.lnk");
-        assert!(!restored.entries[0].is_folder);
-        assert_eq!(restored.entries[1].name, "Projects");
-        assert!(restored.entries[1].is_folder);
+            try_deserialize_with_header(GOLDEN_V7, INDEX_MAGIC, INDEX_CACHE_VERSION)
+                .expect("凍結 v7 バイトがロードできること");
+        assert!(matches!(restored.names, Cow::Owned(_)));
+        assert_eq!(restored.names.len(), 4);
+        assert_eq!(restored.names[0], "Projects");
+        assert!(restored.is_folder[0]);
+        assert_eq!(restored.names[1], "app");
+        assert!(!restored.is_folder[1]);
+
+        // **木の 3 列は、組み直したフルパスで検算する。** `names` / `is_folder` だけを見ると
+        // `parent` / `aux` / `table` は「新コードの出力を新コードで読み返した」だけになり、
+        // 親や拡張子の取り違えをそのまま凍結する。突き合わせる相手は fixture の
+        // `target_path` リテラル——木を通っていない唯一の原文である。
+        let restored_tree = IndexTree::from_parts(
+            restored.names.into_owned(),
+            restored.is_folder.into_owned(),
+            restored.parent.into_owned(),
+            restored.aux.into_owned(),
+            restored.table.into_owned(),
+            restored.sorted_by_path,
+        )
+        .expect("凍結 v7 の列が木の不変条件を満たすこと");
+        assert!(
+            restored.sorted_by_path,
+            "fixture はバイト昇順ゆえ真である（偽だけを凍結すると旗が動いても気づかない）"
+        );
+        let mut buf = String::new();
+        for (i, entry) in entries.iter().enumerate() {
+            restored_tree.path_into(&mut buf, i);
+            assert_eq!(
+                buf, entry.target_path,
+                "凍結 v7 から組み直したフルパスが原文とずれている（index {i}）"
+            );
+        }
+
         assert_eq!(restored.char_masks.into_owned(), char_masks);
         assert_eq!(restored.lower_names.into_owned(), lower_names);
         assert_eq!(restored.lower_file_names.into_owned(), lower_file_names);
     }
 
-    /// 凍結 golden（`golden_v6_fixture` の serialize 出力・INDX magic + version 6 ヘッダー込み）。
+    /// **旧形式の凍結バイト列が、木の組み直しの唯一の接地である。**
     ///
-    /// **末尾の 3 バイト `0, 1` の前後が `LowerFileName` のタグである**: `Text` = 2 + 文字列、
-    /// `Absent` = 0、`SameAsLowerName` = 1。`lower_names` 側は `Option` の `Some` = 1 + 文字列 /
-    /// `None` = 0。タグの割り当てを変えると（＝ variant の宣言順を入れ替えると）既存の
-    /// `index.bin` を無言で誤読するので、ここが落ちる。
+    /// v7 は `target_path` を持たないので、v7 から実体化した値と組み直しを突き合わせても
+    /// 「組み直しの結果どうし」を比べることにしかならない。ここでは **v6 の凍結バイト列**
+    /// ——すなわち木を知らない時代に書かれた原文——から読み、木へ組み替えて組み直した結果が
+    /// 1 バイトも違わないことを見る。
+    ///
+    /// 実データ規模の corpus は `search/tests/path.rs` が受け持つ（開発機限定）。ここは
+    /// 版をまたいで CI でも走る側である。
+    #[test]
+    fn index_tree_raw_matches_frozen_v6_specimen() {
+        let restored: IndexCacheV6 =
+            try_deserialize_with_header(GOLDEN_V6, INDEX_MAGIC, 6).expect("凍結 v6 が読めること");
+        let expected: Vec<String> = restored
+            .entries
+            .iter()
+            .map(|e| e.target_path.clone())
+            .collect();
+        let tree = IndexTree::build(restored.entries);
+        let mut buf = String::new();
+        for (i, want) in expected.iter().enumerate() {
+            tree.path_into(&mut buf, i);
+            assert_eq!(&buf, want, "原文の組み直しがずれている（index {i}）");
+        }
+        assert!(!expected.is_empty(), "凍結 v6 が空では接地にならない");
+    }
+
+    /// 凍結 golden（`golden_fixture` の serialize 出力・INDX magic + version 7 ヘッダー込み）。
+    ///
+    /// **この定数が持つのは forward-stability だけである。** v7 は現行版ゆえ「v7 として実際に
+    /// 書かれていた旧バイト列」が存在せず、新コードの出力を凍結する以外に採りようがない
+    /// （`snotra-core/CLAUDE.md`「データ永続化の注意」が禁じている向きは、**旧形式の後方互換を
+    /// 新出力の golden で代用すること**である）。後方互換はここではなく `GOLDEN_V6` /
+    /// `GOLDEN_V5` / `GOLDEN_V4` からの load テストが持ち、木の組み直しの接地は
+    /// `index_tree_raw_matches_frozen_v6_specimen` が持つ。
+    ///
+    /// **末尾の `lower_file_names` は `LowerFileName` のタグである**: `Absent` = 0、
+    /// `SameAsLowerName` = 1、`Text` = 2 + 文字列。`lower_names` 側は `Option` の
+    /// `None` = 0 / `Some` = 1 + 文字列。タグの割り当てを変えると（＝ variant の宣言順を
+    /// 入れ替えると）既存の `index.bin` を無言で誤読するので、ここが落ちる。
+    const GOLDEN_V7: &[u8] = &[
+        73, 78, 68, 88, 7, 0, 0, 0, 128, 226, 207, 170, 6, 4, 8, 80, 114, 111, 106, 101, 99, 116,
+        115, 3, 97, 112, 112, 7, 70, 105, 114, 101, 102, 111, 120, 4, 100, 111, 99, 115, 4, 1, 0,
+        0, 1, 4, 255, 255, 255, 255, 15, 0, 255, 255, 255, 255, 15, 255, 255, 255, 255, 15, 4, 2,
+        1, 3, 4, 5, 0, 4, 46, 101, 120, 101, 11, 67, 58, 92, 80, 114, 111, 106, 101, 99, 116, 115,
+        19, 67, 58, 92, 97, 112, 112, 115, 92, 102, 105, 114, 101, 102, 111, 120, 46, 108, 110,
+        107, 7, 67, 58, 92, 100, 111, 99, 115, 1, 185, 96, 4, 171, 1, 205, 1, 239, 1, 33, 4, 18,
+        52, 86, 120, 4, 1, 8, 112, 114, 111, 106, 101, 99, 116, 115, 0, 1, 7, 102, 105, 114, 101,
+        102, 111, 120, 0, 4, 0, 2, 7, 97, 112, 112, 46, 101, 120, 101, 2, 11, 102, 105, 114, 101,
+        102, 111, 120, 46, 108, 110, 107, 1,
+    ];
+
+    /// **v7 化の前に実際に書かれていた v6 バイト列**（`target_path` を実体で全件持つ形式）。
+    /// `config_hash` は 12345、entries は Firefox / Projects / docs の 3 件。
+    ///
+    /// 末尾 3 バイト `0, 1` の前後は `LowerFileName` のタグである（割り当ては `GOLDEN_V7` の
+    /// doc が正本。v6 と v7 で同じであり、変えれば既存の `index.bin` を無言で誤読する）。
     const GOLDEN_V6: &[u8] = &[
         73, 78, 68, 88, 6, 0, 0, 0, 128, 226, 207, 170, 6, 3, 7, 70, 105, 114, 101, 102, 111, 120,
         19, 67, 58, 92, 97, 112, 112, 115, 92, 102, 105, 114, 101, 102, 111, 120, 46, 108, 110,
@@ -1945,6 +2378,69 @@ mod tests {
         112, 114, 111, 106, 101, 99, 116, 115, 0, 3, 2, 11, 102, 105, 114, 101, 102, 111, 120, 46,
         108, 110, 107, 0, 1,
     ];
+
+    /// **v6 の凍結バイト列から `load_cache_in` が読めること。**
+    ///
+    /// **`index_tree_raw_matches_frozen_v6_specimen` では代用できない。** あちらは
+    /// `try_deserialize_with_header` を直接呼ぶので、`load_cache_in` の枝選択・`config_hash` の
+    /// 判定・`CachedLower` の variant・`version` の帰属を 1 つも通らない。
+    ///
+    /// **v6 は「全ユーザーの `index.bin` が今まさに置かれている版」である。** v7 が現行に
+    /// なったことでフォールバック枝へ落ちた——つまりこの枝は新設であり、かつ**最初に
+    /// 通る人が最も多い**枝でもある。
+    ///
+    /// **`CachedLower::Collapsed` で返らなければならない。** `Raw` で返すと `assemble` が
+    /// 測り直し、`None` どうしの一致で file name 成分を持たないエントリに旗が立つ。
+    #[test]
+    fn frozen_v6_bytes_load_as_collapsed_through_load_cache_in() {
+        let dir = temp_dir("v6_frozen_through_load_cache_in");
+        fs::write(dir.join("index.bin"), GOLDEN_V6).expect("write v6 index.bin");
+
+        let result = load_cache_in(&dir, 12345).expect("v6 の index.bin が読めること");
+        assert_eq!(
+            result.version, 6,
+            "v6 として読めたことが昇格の判断材料になる"
+        );
+        assert_eq!(result.tree.len(), 3);
+        assert_eq!(result.tree.names[0], "Firefox");
+
+        // 木は `target_path` から建て直される。原文へ戻せることまで見る——v6 の実体を
+        // 捨てて木にした段で取りこぼせば、以後この索引のパスは静かに壊れる。
+        let mut buf = String::new();
+        result.tree.path_into(&mut buf, 0);
+        assert_eq!(buf, "C:\\apps\\firefox.lnk");
+
+        let masks = result.cached_masks.expect("v6 でもマスクは返る");
+        match masks.lower {
+            Some(CachedLower::Collapsed {
+                lower_names,
+                lower_file_names,
+            }) => {
+                assert_eq!(
+                    lower_names,
+                    vec![
+                        Some("firefox".to_string()),
+                        Some("projects".to_string()),
+                        None
+                    ]
+                );
+                assert_eq!(
+                    lower_file_names,
+                    vec![
+                        LowerFileName::Text("firefox.lnk".to_string()),
+                        LowerFileName::Absent,
+                        LowerFileName::SameAsLowerName,
+                    ]
+                );
+            }
+            other => panic!("v6 は Collapsed で返らなければならない（実際: {other:?}）"),
+        }
+
+        // config_hash が違えば stale 扱いで None（他の版の枝と同じ規律）。
+        assert!(load_cache_in(&dir, 12346).is_none());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     /// **v6 化の前に実際に書かれていた v5 バイト列**（派生文字列を全件そのまま持つ形式）。
     /// `config_hash` は 12345、entries は Firefox / Projects の 2 件。
@@ -1975,8 +2471,8 @@ mod tests {
             result.version, 5,
             "v5 として読めたことが昇格の判断材料になる"
         );
-        assert_eq!(result.entries.len(), 2);
-        assert_eq!(result.entries[0].name, "Firefox");
+        assert_eq!(result.tree.len(), 2);
+        assert_eq!(result.tree.names[0], "Firefox");
 
         let masks = result.cached_masks.expect("v5 でもマスクは返る");
         match masks.lower {
@@ -2062,8 +2558,8 @@ mod tests {
         fs::write(dir.join("index.bin"), GOLDEN_V4).expect("write v4 index.bin");
 
         let result = load_cache_in(&dir, 12345).expect("v4 の index.bin が読めること");
-        assert_eq!(result.entries.len(), 2);
-        assert_eq!(result.entries[0].name, "Firefox");
+        assert_eq!(result.tree.len(), 2);
+        assert_eq!(result.tree.names[0], "Firefox");
         let masks = result.cached_masks.expect("v4 でもマスクは返る");
         assert_eq!(masks.char_masks, vec![0xABu64, 0xCD]);
         match masks.lower {
@@ -2211,7 +2707,7 @@ mod tests {
         sort_entries_canonical(&mut entries);
         let digest = entries_digest(&entries);
 
-        save_cache_sorted_in(&dir, &entries, config_hash);
+        save_cache_sorted_in(&dir, entries.clone(), config_hash);
         let before = fs::read(dir.join("index.bin")).expect("現行版の index.bin が読めること");
 
         let outcome = try_background_rescan_in(
@@ -2253,12 +2749,12 @@ mod tests {
         ];
         let config_hash = 42u64;
 
-        save_cache_sorted_in(&dir, &entries, config_hash);
+        save_cache_sorted_in(&dir, entries.clone(), config_hash);
 
         let result = load_cache_in(&dir, config_hash).expect("load cache written to dir");
-        assert_eq!(result.entries.len(), 2);
-        assert_eq!(result.entries[0].name, "Firefox");
-        assert_eq!(result.entries[1].name, "Projects");
+        assert_eq!(result.tree.len(), 2);
+        assert_eq!(result.tree.names[0], "Firefox");
+        assert_eq!(result.tree.names[1], "Projects");
         let masks = result.cached_masks.expect("v6 cache should include masks");
         // **`Collapsed` で返る。** save 側が `measure_derived_sharing` で潰して書いており、
         // "Firefox" → "firefox" は小文字化で変わるので実体が残り、file name は別物ゆえ `Text`。
@@ -2355,7 +2851,9 @@ mod tests {
     /// この値だけが背景再スキャンの昇格判定（`cached_version != INDEX_CACHE_VERSION`）の入力で
     /// あり、**取り違えても検索結果は正しいまま**である——枝に誤って現行版を書けば、その形式の
     /// ユーザーは永久に昇格せず旧形式を読み続ける（症状は「遅い」だけ・実運用点で 1 度踏んだ）。
-    /// ゆえに **5 枝すべて**の値をここで固定する。
+    /// ゆえに **`load_cache_in` の全枝**の値をここで固定する（枝の数を書かない——版を足した
+    /// ときにこの散文だけが腐り、しかも「揃っている」と読めてしまう。実際に v7 を足したとき
+    /// 「5 枝すべて」のまま v6 が抜けた）。
     ///
     /// **既存の v2 / v3 テストでは代用できない。** あちらは `try_deserialize_with_header` を
     /// 直接呼んでおり `load_cache_in` の枝選択を通らないので、`version` の帰属を見ていない。
@@ -2381,12 +2879,43 @@ mod tests {
         // **現行版**: 製品の save 経路そのものを通す（版のリテラルを書かない——比較相手は
         // `INDEX_CACHE_VERSION` であり、番号を書くとこのコメントだけが版を上げたとき腐る）。
         let dir = temp_dir("version_reported_current");
-        save_cache_sorted_in(&dir, &entries, config_hash);
+        save_cache_sorted_in(&dir, entries.clone(), config_hash);
         assert_eq!(
             load_cache_in(&dir, config_hash)
                 .expect("現行版が読めること")
                 .version,
             INDEX_CACHE_VERSION
+        );
+        let _ = fs::remove_dir_all(&dir);
+
+        // v6: `target_path` を実体で全件持つ形式。**実運用点が今まさに置かれている版**であり、
+        // ここを `INDEX_CACHE_VERSION` と取り違えると全ユーザーが永久に昇格しない。
+        let dir = temp_dir("version_reported_v6");
+        let v6 = IndexCacheV6 {
+            built_at: 0,
+            entries: entries.clone(),
+            config_hash,
+            char_masks: char_masks.clone(),
+            file_name_char_masks: file_name_char_masks.clone(),
+            lower_names: lower_names.iter().cloned().map(Some).collect(),
+            lower_file_names: lower_file_names
+                .iter()
+                .map(|f| match f {
+                    Some(s) => LowerFileName::Text(s.clone()),
+                    None => LowerFileName::Absent,
+                })
+                .collect(),
+        };
+        fs::write(
+            dir.join("index.bin"),
+            try_serialize_with_header(INDEX_MAGIC, 6, &v6).expect("serialize v6"),
+        )
+        .expect("write v6");
+        assert_eq!(
+            load_cache_in(&dir, config_hash)
+                .expect("v6 が読めること")
+                .version,
+            6
         );
         let _ = fs::remove_dir_all(&dir);
 
@@ -2489,6 +3018,51 @@ mod tests {
     // 分けて**置く。まとめると、落としたフィールドがどれか失敗名から分からなくなる
     // ——digest が `is_folder` を混ぜ忘れる類の誤りは、確率ではなく**確定で**その種の変更を
     // 永久に見逃すため、名指しできることに意味がある（`entries_digest` の doc）。
+
+    /// **`DigestSource` の 2 実装が同じ値を出すこと。ここが背景再スキャンの心臓である。**
+    ///
+    /// 比べる 2 辺は別々の実装を通る——走査側は `&[AppEntry]`（`target_path` を実体で持つ）、
+    /// ロード側は [`IndexTree`]（持たずに組み直す）。**main では実装が 1 つで、食い違いは
+    /// 構造的に起こりえなかった**が、木を導入した時点でそれは失われた。1 件でも値がずれれば
+    /// `changed` が毎起動 true になり、16.5 MiB の `index.bin` を書き直し、
+    /// `RescanOutcome::Changed` がアイコンキャッシュを捨てる——**検索結果は正しいまま**なので
+    /// 挙動テストは 1 本も落ちない。
+    ///
+    /// 木を通る形を fixture に全部載せる: 根 / 非根 / 拡張子あり・なし / folder / file /
+    /// 非 ASCII / 空白。**根だけの fixture では意味が無い**——根は `table` のフルパスを
+    /// そのまま返すので、組み直しの規則を 1 つも通らない。
+    #[test]
+    fn digest_over_tree_matches_digest_over_scanned_entries() {
+        let entries: Vec<AppEntry> = [
+            ("Projects", "C:\\Projects", true),
+            ("My App", "C:\\Projects\\My App", true),
+            ("run", "C:\\Projects\\My App\\run.exe", false),
+            ("Ünïcode", "C:\\Projects\\Ünïcode.LNK", false),
+            ("apps", "C:\\apps", true),
+            ("tool", "C:\\apps\\tool.exe", false),
+        ]
+        .iter()
+        .map(|(name, path, is_folder)| AppEntry {
+            name: (*name).to_string(),
+            target_path: (*path).to_string(),
+            is_folder: *is_folder,
+        })
+        .collect();
+
+        let tree = IndexTree::build(entries.clone());
+        // fixture の前提: 木が実際に枝を持っていること（全件が根だと組み直しを検査しない）。
+        assert!(
+            tree.parent
+                .iter()
+                .any(|p| *p != crate::index_tree::NO_PARENT),
+            "fixture が全件根になっている（親の解決が効いていない）"
+        );
+        assert_eq!(
+            digest_over(&tree),
+            entries_digest(&entries),
+            "木とスキャン結果の digest がずれている——再スキャンが毎起動走り続ける"
+        );
+    }
 
     #[test]
     fn entries_digest_identical() {
@@ -2781,7 +3355,7 @@ mod tests {
         let old_generation = current_index_generation();
 
         with_index_write_lock(|| {
-            save_cache_sorted_in(&dir, &[], new_hash);
+            save_cache_sorted_in(&dir, Vec::new(), new_hash);
         });
 
         let outcome = try_background_rescan_in(
@@ -2898,7 +3472,7 @@ mod tests {
         fs::write(dir.join("script.bat"), "").unwrap();
 
         let path_list = dir.to_string_lossy().to_string();
-        let entries = scan_path_dirs(&path_list, &[], true);
+        let entries = scan_path_dirs(&path_list, &IndexTree::empty(), true);
 
         assert_eq!(entries.len(), 2);
         assert!(entries.iter().any(|e| e.name == "tool"));
@@ -2920,7 +3494,7 @@ mod tests {
         }];
 
         let path_list = dir.to_string_lossy().to_string();
-        let entries = scan_path_dirs(&path_list, &existing, true);
+        let entries = scan_path_dirs(&path_list, &IndexTree::build(existing.clone()), true);
 
         assert!(entries.is_empty());
 
@@ -2942,7 +3516,7 @@ mod tests {
         }];
 
         let path_list = dir.to_string_lossy().to_string();
-        let entries = scan_path_dirs(&path_list, &existing, true);
+        let entries = scan_path_dirs(&path_list, &IndexTree::build(existing.clone()), true);
 
         assert_eq!(entries.len(), 1, "ディレクトリが違うので新規のはず");
         assert_eq!(entries[0].name, "tool");
@@ -2969,7 +3543,7 @@ mod tests {
         }];
 
         let path_list = dir.to_string_lossy().to_string();
-        let entries = scan_path_dirs(&path_list, &existing, true);
+        let entries = scan_path_dirs(&path_list, &IndexTree::build(existing.clone()), true);
 
         // `read_dir` の順序は OS の保証を持たないので、ここは順序ではなく**集合**で見る。
         // 検出力は落ちない——添字がずれれば落ちるのは別の候補になるので、`b` が結果へ
@@ -3002,7 +3576,7 @@ mod tests {
         }];
 
         let path_list = format!("{};{}", dir_a.display(), dir_b.display());
-        let entries = scan_path_dirs(&path_list, &existing, true);
+        let entries = scan_path_dirs(&path_list, &IndexTree::build(existing.clone()), true);
 
         assert_eq!(entries.len(), 1, "既存にある dir_b 側だけが落ちるはず");
         assert_eq!(
@@ -3037,7 +3611,7 @@ mod tests {
                 target_path: variant.clone(),
                 is_folder: false,
             }];
-            let entries = scan_path_dirs(&path_list, &existing, true);
+            let entries = scan_path_dirs(&path_list, &IndexTree::build(existing.clone()), true);
             assert!(
                 entries.is_empty(),
                 "表記 {variant:?} で重複を落とせていない"
@@ -3058,7 +3632,7 @@ mod tests {
         fs::write(dir_b.join("second.exe"), "").unwrap();
 
         let path_list = format!("{};{}", dir_a.display(), dir_b.display());
-        let entries = scan_path_dirs(&path_list, &[], true);
+        let entries = scan_path_dirs(&path_list, &IndexTree::empty(), true);
 
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(
@@ -3080,7 +3654,7 @@ mod tests {
         fs::write(dir.join("data.json"), "").unwrap();
 
         let path_list = dir.to_string_lossy().to_string();
-        let entries = scan_path_dirs(&path_list, &[], true);
+        let entries = scan_path_dirs(&path_list, &IndexTree::empty(), true);
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "tool");
@@ -3095,7 +3669,7 @@ mod tests {
 
         // 同じディレクトリを2回指定
         let path_list = format!("{};{}", dir.display(), dir.display());
-        let entries = scan_path_dirs(&path_list, &[], true);
+        let entries = scan_path_dirs(&path_list, &IndexTree::empty(), true);
 
         assert_eq!(entries.len(), 1);
 
@@ -3104,13 +3678,13 @@ mod tests {
 
     #[test]
     fn scan_path_dirs_handles_nonexistent_dir() {
-        let entries = scan_path_dirs("C:\\nonexistent_dir_12345", &[], true);
+        let entries = scan_path_dirs("C:\\nonexistent_dir_12345", &IndexTree::empty(), true);
         assert!(entries.is_empty());
     }
 
     #[test]
     fn scan_path_dirs_handles_empty_path_list() {
-        let entries = scan_path_dirs("", &[], true);
+        let entries = scan_path_dirs("", &IndexTree::empty(), true);
         assert!(entries.is_empty());
     }
 

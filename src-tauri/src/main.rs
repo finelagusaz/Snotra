@@ -162,8 +162,13 @@ fn main() {
     let is_first_run = Config::is_first_run();
     let (config, load_outcome) = Config::load_reporting();
 
-    let (entries, initial_indexing, cached_masks, rescan_task) = if is_first_run {
-        (Vec::new(), true, None, None)
+    let (mut tree, initial_indexing, mut cached_masks, rescan_task) = if is_first_run {
+        (
+            snotra_core::index_tree::IndexTree::empty(),
+            true,
+            None,
+            None,
+        )
     } else {
         let result =
             indexer::load_or_scan_with_stats(&config.paths.scan, config.search.show_hidden_system);
@@ -182,23 +187,19 @@ fn main() {
                 s.cache_save_ms,
             );
         }
-        (
-            result.entries,
-            false,
-            result.cached_masks,
-            result.rescan_task,
-        )
+        (result.tree, false, result.cached_masks, result.rescan_task)
     };
 
     // PATH エントリのスキャン + マージ
-    let (mut entries, mut cached_masks) = (entries, cached_masks);
     if config.search.include_path_env {
-        let path_entries = indexer::scan_path_env(&entries, config.search.show_hidden_system);
+        let path_entries = indexer::scan_path_env(&tree, config.search.show_hidden_system);
         if !path_entries.is_empty() {
             if let Some(ref mut masks) = cached_masks {
                 indexer::extend_cached_masks(masks, &path_entries);
             }
-            entries.extend(path_entries);
+            // **すべて根として足す**（親を解決しない）。理由と整列の旗の扱いは
+            // `IndexTree::extend_with_roots` の doc。
+            tree.extend_with_roots(path_entries);
         }
     }
 
@@ -215,9 +216,9 @@ fn main() {
     let bg_color = config.visual.background_color.clone();
 
     let engine = if let Some(masks) = cached_masks {
-        Engine::new_from_cache(entries, masks, history, config)
+        Engine::new_from_cache(tree, masks, history, config)
     } else {
-        Engine::new(entries, history, config)
+        Engine::new_from_tree(tree, history, config)
     };
 
     let app_state = AppState {

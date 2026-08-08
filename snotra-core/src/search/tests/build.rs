@@ -4,6 +4,7 @@
 //! ここはその 1 点を守る。
 
 use super::common::{make_entries, real_index_entries};
+use crate::index_tree::IndexTree;
 use crate::indexer::{AppEntry, CachedLower, LowerFileName};
 use crate::search::*;
 
@@ -20,23 +21,26 @@ fn owned(names: &[&str]) -> Vec<String> {
 }
 
 /// 余剰容量は「検索は正しいが常駐だけが増える」形の劣化ゆえ、挙動テストでは捕まらない。
-/// `assemble` の `shrink_to_fit` が消えたらここで落ちる。
 ///
 /// 経路は `new_with_cached_masks` の v4 ヒット枝を選ぶ——`Vec<String>` → `Vec<Box<str>>` の
 /// 変換が確保ブロックを再利用して余剰を持ち越すため、実運用で余剰が最も乗る経路である。
+///
+/// **7 行のうち 6 行と `entries` の 1 行は機序が違う。** 派生文字列とマスクの 6 本は
+/// `assemble` の `shrink_to_fit` が消えたら落ちる。`entries` だけは落ちない——`PathStore::adopt`
+/// の 2 つの `collect` は長さの分かった iterator から `len` ちょうどで確保するので、入力側の
+/// 余剰は原理的に伝播せず `paths.shrink_to_fit()` は no-op である（v7 で第 1 引数が
+/// `IndexTree` になったときにそうなった。`paths.shrink_to_fit()` を外して実測済み）。
+/// **それでも 1 行を残すのは、守っている対象が呼び出しではなく「索引に余剰が無い」性質
+/// だからである**——`adopt` が exact でなくなった日に、この行だけが気づく。
 #[test]
 fn assemble_shrinks_parallel_vecs_to_fit() {
     let names = ["Firefox", "Chrome", "Notepad"];
     let lower = ["firefox", "chrome", "notepad"];
-    let entries: Vec<AppEntry> = oversized(make_entries(&names));
+    let entries = make_entries(&names);
     let n = entries.len();
-    assert!(
-        entries.capacity() > n,
-        "fixture の前提が崩れている: 余剰容量のある Vec を渡せていない"
-    );
 
     let engine = SearchEngine::new_with_cached_masks(
-        entries,
+        IndexTree::build(entries),
         oversized(vec![0u64; n]),
         oversized(vec![0u64; n]),
         // **`Raw`（v5/v4 相当）で渡す。** 余剰容量が最も乗るのはこの経路である
@@ -104,8 +108,11 @@ fn collapsed_cache_is_not_remeasured_and_absent_file_names_stay_absent() {
     ];
     let n = entries.len();
 
+    // **添字の対応が命綱である。** `Collapsed` の列は添字で `entries` に対応づけられるので、
+    // 木を建てる段（`IndexTree::build`）と索引側へ移す段（`PathStore::adopt`）はどちらも
+    // 入力順を保つ（前者は enumerate 順に push、後者は zip）。
     let engine = SearchEngine::new_with_cached_masks(
-        entries,
+        IndexTree::build(entries),
         vec![0u64; n],
         vec![0u64; n],
         Some(CachedLower::Collapsed {

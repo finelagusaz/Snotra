@@ -205,6 +205,27 @@ fn synthetic_entries(n: usize) -> Vec<AppEntry> {
 // Phase A: 実運用点（実 index.bin）
 // ---------------------------------------------------------------------------
 
+/// `index.bin` のヘッダーが名乗る形式バージョン（ファイルが無ければ `None`）。
+///
+/// **ロード側に問わずファイルを直接読む。** 知りたいのは「どの形式が実運用点に置かれて
+/// いるか」であって、ロードがどの枝を選んだかではない——両者は一致するとは限らず
+/// （config_hash 不一致なら版が現行でも全走査へ落ちる）、食い違ったときに区別が付くのは
+/// 独立に読んだ側だけである。保存先の導出は `Config::config_dir()` の 1 点を通す。
+///
+/// **ヘッダーの 8 バイトだけを読む。** 全体を読むと 51 MiB の一時確保がこのハーネスの
+/// 計数器に乗り、測りに来た当の数字を汚す。
+fn on_disk_index_version() -> Option<u32> {
+    use std::io::Read;
+    let path = Config::config_dir()?.join("index.bin");
+    let mut header = [0u8; 8];
+    std::fs::File::open(path)
+        .ok()?
+        .read_exact(&mut header)
+        .ok()?;
+    // **ヘッダーの配置を書き写さない。** 正本は `binfmt` で、そこと同じ 1 つを通す。
+    snotra_core::binfmt::peek_version(&header)
+}
+
 #[test]
 #[ignore = "計測専用。release + --nocapture で手動実行する"]
 fn measure_real_index_footprint() {
@@ -221,6 +242,11 @@ fn measure_real_index_footprint() {
         config.search.migemo_enabled, config.search.show_hidden_system
     );
 
+    // **ロードより前に読む。** cache-miss の枝はこの区間の中で現行版を書き出すので、
+    // あとから読むと「測る前に何が置かれていたか」ではなく「測ったあと何が残ったか」に
+    // なってしまう——旧版を測った実行が v7 と自称する。
+    let on_disk_version = on_disk_index_version();
+
     // 実起動と同じ経路を辿る（main.rs:203 → 246）: load_or_scan_with_stats が返す
     // cached_masks を new_from_cache へ渡し、Wave 1 をスキップする。ここを
     // load_or_scan（masks 破棄）で代用すると再計算が走り、ピークも構築コストも別物になる。
@@ -230,7 +256,7 @@ fn measure_real_index_footprint() {
     let result = indexer::load_or_scan_with_stats(scan, config.search.show_hidden_system);
     let load_ms = load_start.elapsed().as_secs_f64() * 1000.0;
     let t1 = snap();
-    let n = result.entries.len();
+    let n = result.tree.len();
 
     if result.cache_changed {
         println!(
@@ -243,6 +269,24 @@ fn measure_real_index_footprint() {
         result.stats.cache_hit,
         result.cached_masks.is_some()
     );
+    // **どの版を測ったかを出さないと、この数字は読めない。** 旧版の `index.bin` は
+    // フォールバック枝で読まれ、木は `target_path` を実体化してから建て直される
+    // ——現行版の削減はそこには現れないのに、出力の見た目は成功時とまったく同じである
+    // （実運用点が旧版のまま残る機序は `snotra-core/CLAUDE.md`「indexer.rs の背景再スキャン」）。
+    match on_disk_version {
+        Some(v) if v == indexer::INDEX_CACHE_VERSION => {
+            println!("  on-disk 形式: v{v}（現行）");
+        }
+        Some(v) => {
+            println!(
+                "  on-disk 形式: v{v} — 旧版である。**以下はフォールバック枝の数字であり、\
+                 現行 v{} の常駐ではない。** 昇格させてから測り直すこと（アプリを 1 回起動して\
+                 背景再スキャンを走らせるか、index.bin を退避して全走査させる）",
+                indexer::INDEX_CACHE_VERSION
+            );
+        }
+        None => println!("  on-disk 形式: index.bin を読めなかった（全走査の枝である）"),
+    }
     report("index.bin ロード（entries + masks）", t0, t1, n);
     // **フェーズ内訳を出す。** 製品が既に測っている（`LoadOrScanStats`）のに、ここが壁時計だけを
     // 出していたせいで「ロードのどこに時間が居るか」が見えなかった——全エントリ複製が
@@ -270,7 +314,7 @@ fn measure_real_index_footprint() {
     );
 
     let LoadOrScanResult {
-        entries,
+        tree,
         cached_masks,
         rescan_task,
         ..
@@ -293,7 +337,7 @@ fn measure_real_index_footprint() {
         reset_peak();
         let tp0 = snap();
         let path_start = std::time::Instant::now();
-        let path_entries = indexer::scan_path_env(&entries, config.search.show_hidden_system);
+        let path_entries = indexer::scan_path_env(&tree, config.search.show_hidden_system);
         let path_ms = path_start.elapsed().as_secs_f64() * 1000.0;
         let tp1 = snap();
         let added = path_entries.len();
@@ -308,13 +352,13 @@ fn measure_real_index_footprint() {
     let build_start = std::time::Instant::now();
     let engine = match cached_masks {
         Some(masks) => SearchEngine::new_with_cached_masks(
-            entries,
+            tree,
             masks.char_masks,
             masks.file_name_char_masks,
             masks.lower,
             config.search.migemo_enabled,
         ),
-        None => SearchEngine::new_with_migemo(entries, config.search.migemo_enabled),
+        None => SearchEngine::new_from_tree(tree, config.search.migemo_enabled),
     };
     let build_ms = build_start.elapsed().as_secs_f64() * 1000.0;
     let t3 = snap();

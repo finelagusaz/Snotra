@@ -5,6 +5,7 @@ pub mod error;
 pub mod folder;
 pub mod history;
 pub mod hotkey;
+pub mod index_tree;
 pub mod indexer;
 pub mod instant;
 pub mod opener;

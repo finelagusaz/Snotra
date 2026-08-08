@@ -7,6 +7,7 @@
 use crate::config::{Config, ScanPath};
 use crate::folder;
 use crate::history::{HistoryStore, PreparedHistorySave};
+use crate::index_tree::IndexTree;
 use crate::indexer::{AppEntry, CachedMasks};
 use crate::search::{SearchEngine, SearchMode, SearchOptions};
 use crate::ui_types::SearchResult;
@@ -40,10 +41,23 @@ impl FolderListContext {
 pub struct PrebuiltIndex(SearchEngine);
 
 impl PrebuiltIndex {
-    /// `migemo_enabled` に応じて kana_lower_names の構築要否を決める（issue #337）。
-    /// 呼び出し側（indexing.rs）はロック内でキャプチャした config の migemo を渡す。
+    /// `Vec<AppEntry>` から建てる。**製品経路は通らない**——v7 で索引の入口はすべて
+    /// [`IndexTree`] を取る形へ移り、ここに残る呼び出し元はテストと計測ハーネスだけである
+    /// （`#[cfg(test)]` で締めないのは、`snotra-core/tests/` の統合テストが外部クレートとして
+    /// リンクするため）。**製品コードから新たに呼ばないこと**——木を建て直すぶんだけ
+    /// 静かに遅くなり、型は同じ `PrebuiltIndex` を返すのでレビューでも実行結果でも差が見えない。
     pub fn new(entries: Vec<AppEntry>, migemo_enabled: bool) -> Self {
         Self(SearchEngine::new_with_migemo(entries, migemo_enabled))
+    }
+
+    /// 既に建った木から構築する（`rebuild_and_save` が返した木をそのまま使う経路）。
+    /// **製品はこちらを通る。**
+    ///
+    /// 木を `Vec<AppEntry>` へ戻してから [`Self::new`] へ渡すと、同じ木を 2 度建てることに
+    /// なる。**実体化そのものは消えない**——Wave 1 の材料がフルパスを要求するので、
+    /// `SearchEngine::new_from_tree` の中で 1 度だけ払う（`IndexTree::materialize` の doc）。
+    pub fn from_tree(tree: IndexTree, migemo_enabled: bool) -> Self {
+        Self(SearchEngine::new_from_tree(tree, migemo_enabled))
     }
 }
 
@@ -95,18 +109,35 @@ impl Engine {
         }
     }
 
+    /// 派生文字列を持たない木から構築する（全走査の直後・初回起動）。
+    pub fn new_from_tree(tree: IndexTree, history: HistoryStore, config: Config) -> Self {
+        let search_engine = SearchEngine::new_from_tree(tree, config.search.migemo_enabled);
+        Self {
+            search_engine,
+            history,
+            config,
+            index_stale: false,
+        }
+    }
+
     /// キャッシュヒット時に使用するコンストラクタ。
-    /// - v6 ヒット: 潰し済みの派生文字列を渡し、Wave 1/2 と共有判定をすべてスキップ
-    /// - v5/v4 ヒット: 未測定の派生文字列を渡し Wave 1/2 をスキップ（共有判定は走る）
-    /// - v3 フォールバック: ビットマスクのみ渡し Wave 1 は SearchEngine 内で実行
+    ///
+    /// **版の番号を書かない。** 分岐を決めるのは `CachedMasks.lower` の variant であって版では
+    /// なく、番号を書くと版を上げるたびにこの散文だけが腐る（`INDEX_CACHE_VERSION` の doc が
+    /// 「現行は v5・実運用点は v6 のまま」というそれ自体矛盾した文が残った事例を記録している）。
+    /// どの版がどの variant を返すかの正本は `indexer::load_cache_in` の分岐である。
+    ///
+    /// - `Collapsed`: 潰し済みの派生文字列を渡し、Wave 1/2 と共有判定をすべてスキップ
+    /// - `Raw`: 未測定の派生文字列を渡し Wave 1/2 をスキップ（共有判定は走る）
+    /// - `None`: ビットマスクのみ渡し Wave 1 は SearchEngine 内で実行
     pub fn new_from_cache(
-        entries: Vec<AppEntry>,
+        tree: IndexTree,
         cached_masks: CachedMasks,
         history: HistoryStore,
         config: Config,
     ) -> Self {
         let search_engine = SearchEngine::new_with_cached_masks(
-            entries,
+            tree,
             cached_masks.char_masks,
             cached_masks.file_name_char_masks,
             cached_masks.lower,

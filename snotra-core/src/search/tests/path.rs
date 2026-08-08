@@ -299,18 +299,42 @@ fn path_store_cursor_matches_full_rebuild() {
     }
 }
 
-/// 原文の再構築が `target_path` と 1 バイトも違わないことを、実インデックスの全件で確かめる。
+/// 原文の再構築が `target_path` と 1 バイトも違わないことを、実データの全件で確かめる。
 ///
 /// **正規化版の一致だけでは足りない**——tie-break の遅い経路（`PathStore::cmp_paths`）と
-/// 表示パス（`SearchResult.path`）は原文のバイトに載る。
+/// 表示パス（`SearchResult.path`）は原文のバイトに載る。さらに背景再スキャンの digest が
+/// この一致に載るようになった（`indexer` の `DigestSource`）ので、1 バイトのずれは
+/// 「毎起動で再スキャンとアイコン破棄が走り続ける」形で現れる。
+///
+/// **原文はファイルシステムを走査して取る。`index.bin` から取ってはならない。**
+/// v7 の `index.bin` は `target_path` を持たないので、そこから読んだ値は既に
+/// `raw_path_into` の出力である——それを組み直しと突き合わせても
+/// **「組み直し対組み直し」の不動点を見るだけ**で、`raw_path_into` がどれだけ壊れていても
+/// assert は落ちない（成功メッセージまで出る。実際にその形で一度書かれていた）。
+/// スキャナの `target_path` だけが、木を 1 度も通っていない原文である。
+///
+/// **`#[ignore]` はそのコスト**（実測 75 秒の全走査）。実インデックスの有無ではなく
+/// config の scan パスの有無で成否が決まるので、CI では走らせない。
 #[test]
+#[ignore = "実データ照合。全走査 75 秒ゆえ手元で明示実行する"]
 fn path_store_raw_matches_target_path_over_real_index() {
     use crate::search::path_store::PathStore;
 
-    let Some(entries) = real_index_entries() else {
-        println!("実インデックスが無いためスキップします。");
+    let config = crate::config::Config::load();
+    if config.paths.scan.is_empty() {
+        println!("実 config に scan パスが無いためスキップします。");
         return;
-    };
+    }
+    let mut entries =
+        crate::indexer::scan_all(&config.paths.scan, config.search.show_hidden_system);
+    // 製品と同じ並びで木を建てる（親の二分探索は整列を前提にする）。順序がずれても結果は
+    // 変わらないが、取りこぼした親のぶん木の形が実運用点と別物になる。
+    // **比較子を書き起こさない**——この並びは digest の値そのものを決める入力なので、
+    // 写しを持つと製品側が変わったときにこのテストだけが旧い並びで木を建て、
+    // 「実運用点と別物の木」に対して「原文とバイト一致」を報告する。
+    crate::indexer::sort_entries_canonical(&mut entries);
+    assert!(!entries.is_empty(), "走査が 0 件では接地にならない");
+
     // `build` は `entries` を消費するので、比較相手は先に取り分ける。
     let expected: Vec<String> = entries.iter().map(|e| e.target_path.clone()).collect();
     let store = PathStore::build(entries);
@@ -320,7 +344,52 @@ fn path_store_raw_matches_target_path_over_real_index() {
         assert_eq!(&buf, want, "原文の再構築がずれている（index {i}）");
     }
     println!(
-        "{} 件で原文の再構築が target_path とバイト一致しました。",
+        "{} 件で原文の再構築が、走査した target_path とバイト一致しました。",
+        expected.len()
+    );
+}
+
+/// PATH の篩のキーが `normalize_file_name_key_into` と一致することを、実データの全件で確かめる。
+///
+/// **機構としての保証は合成 fixture のほう**（`index_tree.rs` の
+/// `file_key_matches_normalize_file_name_key_on_both_arms`）が持つ。ここが足すのは規模と、
+/// 合成では作れない実際のパスの形（深い階層・非 ASCII・空白・大文字の拡張子）である。
+///
+/// **入力が `index.bin` 由来でも循環しない。** 篩は木の `name` + 拡張子から、比較相手は
+/// フルパスの末尾成分から導くので、突き合わせているのは 2 つの正規化関数が末尾で一致するか
+/// であって、組み直しの正しさではない。
+#[test]
+fn index_tree_file_key_matches_normalize_file_name_key_over_real_index() {
+    let Some(entries) = real_index_entries() else {
+        println!("実インデックスが無いためスキップします。");
+        return;
+    };
+    let expected: Vec<String> = entries
+        .iter()
+        .map(|e| {
+            let mut b = String::new();
+            crate::indexer::normalize_file_name_key_into(&mut b, &e.target_path);
+            b
+        })
+        .collect();
+    let tree = crate::index_tree::IndexTree::build(entries);
+
+    let (mut roots, mut children) = (0usize, 0usize);
+    let (mut buf, mut seg) = (String::new(), String::new());
+    for (i, want) in expected.iter().enumerate() {
+        if tree.parent[i] == crate::index_tree::NO_PARENT {
+            roots += 1;
+        } else {
+            children += 1;
+        }
+        tree.file_key_into(&mut buf, &mut seg, i);
+        assert_eq!(&buf, want, "篩のキーが正規化とずれている（index {i}）");
+    }
+    // **両腕が通ったことを数える。** 根は実データで 0.1% 未満しか居ないので、数えないと
+    // 「根の腕は 1 度も走らなかった」を一致と読み違える。
+    assert!(roots > 0 && children > 0, "片方の腕しか通っていない");
+    println!(
+        "{} 件で篩のキーが一致しました（根 {roots} 件 / 非根 {children} 件）。",
         expected.len()
     );
 }

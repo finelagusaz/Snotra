@@ -127,3 +127,27 @@ grep で同じことをしようとした過程で 1 件実測した: 素朴な 
 - #1000（4 件が出たサイクル・PR #1006）
 - `docs/adr/ADR-retire-norm-review.md`（規範の検算手段を廃止した実測）
 - `docs/adr/ADR-startup-instrument-contract-shape.md`（#1000 で却下した 3 案）
+
+## 9. 候補一覧（Task 1・Rust）
+
+母集団 905 件（`cargo test --workspace -- --list | grep -c ': test$'`、§3 の記載と一致）を全数読み、
+テスト本体が一覧・配列・`match` の腕を走査しているものを候補として抜いた。**この時点では分類も
+判定も行わない**（Phase 2 の SSOT 分類は Task 3、Phase 3 の変異確定は Task 4）。件数: **15 件**。
+
+| # | 候補 |
+|---|---|
+| 1 | `snotra-settings/src/app.rs::section_table_covers_all_config_fields` |
+| 2 | `snotra-settings/src/app.rs::section_table_no_false_positive_when_unchanged` |
+| 3 | `snotra-core/src/error.rs::bin_error_source_all_variants_return_none` |
+| 4 | `src-tauri/src/events.rs::event_names_are_pairwise_distinct` |
+| 5 | `snotra-settings/src/hotkey_input.rs::every_ui_generated_key_is_in_the_core_accepted_set` |
+| 6 | `src-tauri/src/startup.rs::count_matches_the_enum_declaration` |
+| 7 | `src-tauri/src/startup.rs::every_phase_key_is_present_even_when_skipped` |
+| 8 | `src-tauri/src/startup.rs::failure_reasons_are_stable_and_unique` |
+| 9 | `src-tauri/src/startup.rs::index_and_from_index_are_inverse_over_the_whole_enum` |
+| 10 | `src-tauri/src/startup.rs::keys_are_unique` |
+| 11 | `src-tauri/src/startup.rs::out_of_range_index_is_dropped_instead_of_panicking` |
+| 12 | `snotra-core/src/hotkey.rs::modifier_aliases_order_duplicates_and_empty_segments_form_one_set` |
+| 13 | `snotra-core/src/hotkey.rs::key_aliases_share_one_semantic_key` |
+| 14 | `snotra-core/src/hotkey.rs::supported_key_set_parses_case_insensitively` |
+| 15 | `src-tauri/src/platform/hotkey.rs::prepared_named_key_aliases_use_the_same_typed_mapping` |

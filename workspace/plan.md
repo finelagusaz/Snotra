@@ -171,7 +171,7 @@ hotkey 登録完了 ★終端 → ok なら startup:ready / 失敗なら startup
 - [x] 区間を**生の ns（`Duration`）で保持**し、`*_ms` は出力時にだけ切り捨てる。終端で `anchor.elapsed()` を**直接**読んだ `post_main_elapsed_ns` を、部分和とは別に出す
 - [x] `platform/mod.rs` の `PlatformBridge::begin` / `PlatformBridgePending::wait` を `Result<_, BridgeError>` へ変え、初回 command の送信結果を呼び出し側へ返す（`send_command` の 10 呼び出し点には波及させず、`send_initial_hotkey_registration` を別に置いた——**結果を要るのは起動の終端だけである**）
 - [x] 終端を**失敗経路すべて**から呼ぶ（列挙は上の設計節・正本は `StartupFailure` の variant）。**登録の成否でイベント名を分けて** 1 行出す（`startup:ready` / `startup:failed`。内訳は同一・`reason` は `StartupFailure` が安定文字列へ写す）
-- [ ] **`SystemTime::now()` の分解能を Rust 側で 1 度実測する**（下の未確定 1 の残り。誤差上限では押さえてあるので、値を記録するだけでよい）
+- **（→ PR 本文へ移送）`SystemTime::now()` の分解能を Rust 側で 1 度実測する**（下の未確定 1 の残り。誤差上限では押さえてあるので、値を記録するだけでよい）
 - [x] **実装差分へ `/race-check` を当てる**（計画段階では起動しない設計のため・#784）——母集団 `npm run race:boundaries -- --base main`（① 0 / ② 1 / ③ 0 / ④ 9 / ⑤ 0 / ⑦ 0 / ⑧ 0）。境界 3 本を立てて 5 問に答え、**要修正 1 件**:
   - `FINISHED` の CAS（重複 spawn ガード型）と `RegisterInitialHotkey` の send は **[安全]**
   - `TIMELINE` は **[要修正]** だった——**失敗経路では `hotkey_register` をマークしないので `sum_phase_ns < post_main_ns` になり、受け入れ 3 の検算がその経路で必ず破れる**（ハーネスが二重に失敗し理由が読めない）。`unmarked_tail_ns` を項目として出し、恒等式を `post_main_ns == sum_phase_ns + unmarked_tail_ns`（全経路で成立）へ変えた。検知器 2 本を追加（`unmarked_tail_closes_the_sum_when_the_last_phase_never_ran` / `unmarked_tail_is_zero_on_the_normal_path`）
@@ -190,36 +190,39 @@ hotkey 登録完了 ★終端 → ok なら startup:ready / 失敗なら startup
     | **合計** | **327** | `post_main 207` + `pre_main 120` |
 
     **不変条件が実データで成立**: `sum_phase_ns == post_main_ns`（207,305,000 で一致）・`unmarked_tail_ns = 0`・`reached_phase = "hotkey_register"`・全 18 キーが出た
-  - [ ] **「終端が二度目を出さない」だけ単体テストを持てていない**——`FINISHED` はプロセス大域の `AtomicBool` で、cargo test は 1 プロセスに全テストを載せるため、`finish()` を呼ぶテストが**その大域を消費して他のテストから観測不能になる**。**変異 (r) で外から測る**（同じ理由で `begin`/`mark` の大域経路も単体では測れない）
+  - **（→ PR 本文へ移送）「終端が二度目を出さない」だけ単体テストを持てていない**——`FINISHED` はプロセス大域の `AtomicBool` で、cargo test は 1 プロセスに全テストを載せるため、`finish()` を呼ぶテストが**その大域を消費して他のテストから観測不能になる**。**変異 (r) で外から測る**（同じ理由で `begin`/`mark` の大域経路も単体では測れない）
 - [x] `Phase` を enum で持ち、出力は**全 variant を網羅列挙**する（`..` を書かない——`SearchEngine::footprint_rows` と同じ形で、区間を足したときの漏れをコンパイラに捕まえさせる）
-- [ ] **検知器を変異で落とす**: (a) 一度きり性を外す (b) **マークを 1 つ落とす**（→ 当該区間が `null` になりキー検査が落ちる。**総和の検算は落ちない**ことも同時に確かめ、なぜ別の検査が要るかを doc に残す） (c) 枝フラグを固定値にする (d) 総和の検算を無条件 true にする (e) **登録失敗でも `startup:ready` を出す**（→ ハーネスが失敗すること。**登録を実際に失敗させて**測る——占有済みホットキーを config に置けば `RegisterHotKey` が false を返す） (f) **`include_path_env = false` で `path_merge` を 0 にする**（→ 枝フラグ整合検査が落ちること）
-- [ ] **丸め・基準点の変異**: (g) 各 500,000 ns の 2 区間 + 終端 1,000,000 ns の fixture（→ **生 ns 検算は通り、ms 和の厳密一致を要求する誤ったハーネス検査は落ちる**。この 1 本が「丸めを表示境界に閉じる」の根拠である） (h) `post_main_elapsed_ns` を `Σ phase_ns` から代入する（同語反復化。→ fixture で終端値を意図的にずらすとこの変異は**不正に通る**——「終端値を直接取らない実装」を落とすテスト） (i) `post_main_elapsed_ns` の基準を anchor 以外のマークへ差し替える (j) 終端値を command **送信**時点で固定し platform 側の登録完了を含めない (k) ns→ms の除数を `1_000` にする (l) `total == pre_main + Σ phase_ms` を再導入する（→ (g) の fixture で落ちる）
-- [ ] **失敗経路の変異**: (m) `begin` を `Err(Spawn)` に (n) `platform_thread_loop` の初期化通知を `Err(CreateWindow)` に (o) managed bridge を取得できなくする (p) 初回 command の send を失敗させる (q) `setup_platform_thread` 側の失敗終端を削除する（→ 「終端なしのタイムアウト」がテスト成功扱いにならないこと） (r) 失敗終端の CAS を外す（→ 初期化失敗と bridge 不在を同時に模擬したとき一度きり検査が落ちる）——**いずれもタイムアウトではなく `startup:failed` と安定した `reason` で落ちること**
-- [ ] **上のすべてで実際に落ちることを実測する**（反復 8 で 3 本中 1 本が落ちなかった教訓）
-- [ ] **⚠ 由来の検証項目**（Codex が確信を持てないと明示した 3 点。**未確定として残さず、測る対象に変える**）
-  - [ ] `PlatformBridgePending::wait` の **channel 切断が本番でどう起きるか**は特定できていない（`recv().ok()?` の失敗経路は実在するが、thread panic 等の原因は未確定）。**原因の特定は成立条件にしない**——変異 (n) / (p) で経路を模擬し、終端が出ることだけを測る。特定できなかったことは `startup.rs` の `//!` へ受容する残余として書く
-  - [ ] `Mutex<PlatformBridge>` の **poison を作る既知経路は未確認**。人為的に poison させて変異 (o) の経路が `startup:failed` を出すことを測る（`setup_hotkey_listener` の `let Ok(b) = bridge.lock()` が明示的に無視している経路である）
-  - [ ] **`GetProcessTimes` の creation 取得と `SystemTime::now()` を採る順序**を決め、`pre_main_ns` が**負にならない**ことと、順序による誤差の向き・大きさを測る（どちらの順でも `Instant` と同一時計にはならないので、上の「異時計をまたぐ厳密加法を契約にしない」判定は変わらない）
-- [ ] カテゴリ A の検証（`docs/build-commands.md`）
+- **（→ PR 本文へ移送）検知器を変異で落とす**: (a) 一度きり性を外す (b) **マークを 1 つ落とす**（→ 当該区間が `null` になりキー検査が落ちる。**総和の検算は落ちない**ことも同時に確かめ、なぜ別の検査が要るかを doc に残す） (c) 枝フラグを固定値にする (d) 総和の検算を無条件 true にする (e) **登録失敗でも `startup:ready` を出す**（→ ハーネスが失敗すること。**登録を実際に失敗させて**測る——占有済みホットキーを config に置けば `RegisterHotKey` が false を返す） (f) **`include_path_env = false` で `path_merge` を 0 にする**（→ 枝フラグ整合検査が落ちること）
+- **（→ PR 本文へ移送）丸め・基準点の変異**: (g) 各 500,000 ns の 2 区間 + 終端 1,000,000 ns の fixture（→ **生 ns 検算は通り、ms 和の厳密一致を要求する誤ったハーネス検査は落ちる**。この 1 本が「丸めを表示境界に閉じる」の根拠である） (h) `post_main_elapsed_ns` を `Σ phase_ns` から代入する（同語反復化。→ fixture で終端値を意図的にずらすとこの変異は**不正に通る**——「終端値を直接取らない実装」を落とすテスト） (i) `post_main_elapsed_ns` の基準を anchor 以外のマークへ差し替える (j) 終端値を command **送信**時点で固定し platform 側の登録完了を含めない (k) ns→ms の除数を `1_000` にする (l) `total == pre_main + Σ phase_ms` を再導入する（→ (g) の fixture で落ちる）
+- **（→ PR 本文へ移送）失敗経路の変異**: (m) `begin` を `Err(Spawn)` に (n) `platform_thread_loop` の初期化通知を `Err(CreateWindow)` に (o) managed bridge を取得できなくする (p) 初回 command の send を失敗させる (q) `setup_platform_thread` 側の失敗終端を削除する（→ 「終端なしのタイムアウト」がテスト成功扱いにならないこと） (r) 失敗終端の CAS を外す（→ 初期化失敗と bridge 不在を同時に模擬したとき一度きり検査が落ちる）——**いずれもタイムアウトではなく `startup:failed` と安定した `reason` で落ちること**
+- **（→ PR 本文へ移送）上のすべてで実際に落ちることを実測する**（反復 8 で 3 本中 1 本が落ちなかった教訓）
+- **（→ PR 本文へ移送）⚠ 由来の検証項目**（Codex が確信を持てないと明示した 3 点。**未確定として残さず、測る対象に変える**）
+  - `PlatformBridgePending::wait` の **channel 切断が本番でどう起きるか**は特定できていない（`recv().ok()?` の失敗経路は実在するが、thread panic 等の原因は未確定）。**原因の特定は成立条件にしない**——変異 (n) / (p) で経路を模擬し、終端が出ることだけを測る。特定できなかったことは `startup.rs` の `//!` へ受容する残余として書く
+  - `Mutex<PlatformBridge>` の **poison を作る既知経路は未確認**。人為的に poison させて変異 (o) の経路が `startup:failed` を出すことを測る（`setup_hotkey_listener` の `let Ok(b) = bridge.lock()` が明示的に無視している経路である）
+  - **`GetProcessTimes` の creation 取得と `SystemTime::now()` を採る順序**を決め、`pre_main_ns` が**負にならない**ことと、順序による誤差の向き・大きさを測る（どちらの順でも `Instant` と同一時計にはならないので、上の「異時計をまたぐ厳密加法を契約にしない」判定は変わらない）
+- [x] カテゴリ A の検証（`docs/build-commands.md`）——fmt / clippy `-D warnings` / `cargo test --workspace`（snotra 242 passed）
+- [x] **カテゴリ C の検証**（`.claude/rules/src-tauri.md` がホットキー経路の変更に要求する。**計画に書き落としていた**——code-reviewer の M-6）: `npm test` 617 / `test:powershell` 97 / `smoke:startup` 5 runs / `smoke:egui` show-hide 観測。**`cargo build -p snotra` を先に打った**（`cargo test` は `target/debug/snotra.exe` を更新せず、古いバイナリを測る罠がある・#835）
 
-### Phase 2 — ハーネス
+### Phase 2 — ハーネス（**全項目を PR 本文へ移送**）
 
-- [ ] `scripts/bench-startup.ps1` を書き換える。`scripts/lib/SnotraSmoke.psm1` の待ち合わせ・trace パースを再利用する
-- [ ] **`startup:ready` と `startup:failed` の両方**を終端として待ち、どちらも出なければ**失敗させる**（沈黙を合格と読ませない・#471 / #690 の型）。`startup:failed` が来たらそれを理由つきの失敗として扱う——**`startup:ready` だけを待つとタイムアウトになり、「終端が出なかった」という誤った理由で落ちる**
-- [ ] 受け入れ 3 の 3 検査をハーネス側で行い、いずれかが破れたら失敗させる——**キーの過不足** / **枝フラグが説明しない `null`** / **`post_main_elapsed_ns` と `Σ phase_ns` の不一致**（**ms 表示値の和は検査しない**）。JSON の欠落フィールドを PowerShell が黙って `$null` に落とす経路（`Set-StrictMode` の効き方）を実測してから書く
-- [ ] `startup:failed` の `reason` を**そのまま**出力へ載せる（ハーネス側で分類名を書き起こさない——写しが 2 部になる）
-- [ ] 各項目の min / p50 / max を出す。**分散こそが観測対象**なので最小値だけに畳まない
-- [ ] メモリは従として残し、**子孫プロセス走査を撤去**する（現構成のプロセスツリーは 1 件）
-- [ ] env の復元が空文字を作らないこと（#872 の実測。`SNOTRA_TRACE` は `env_flag` ゆえ空文字は「無効」に落ちるが、復元の形は smoke 群と揃える）
+**Phase 1 の差分だけで PR を立てるため、以下は PR 本文のチェックリストが持つ。** 仕様（何を検査するか）はこの計画が正本であり、PR 本文はその実行を追跡する。
 
-### Phase 3 — 測定と記録
+- `scripts/bench-startup.ps1` を書き換える。`scripts/lib/SnotraSmoke.psm1` の待ち合わせ・trace パースを再利用する
+- **`startup:ready` と `startup:failed` の両方**を終端として待ち、どちらも出なければ**失敗させる**（沈黙を合格と読ませない・#471 / #690 の型）。`startup:failed` が来たらそれを理由つきの失敗として扱う——**`startup:ready` だけを待つとタイムアウトになり、「終端が出なかった」という誤った理由で落ちる**
+- 受け入れ 3 の 3 検査をハーネス側で行い、いずれかが破れたら失敗させる——**キーの過不足** / **`reached_phase` 以前で枝フラグが説明しない `null`** / **`post_main_ns` と `sum_phase_ns` + `unmarked_tail_ns` の不一致**（**ms 表示値の和は検査しない**）。JSON の欠落フィールドを PowerShell が黙って `$null` に落とす経路（`Set-StrictMode` の効き方）を実測してから書く
+- `startup:failed` の `reason` を**そのまま**出力へ載せる（ハーネス側で分類名を書き起こさない——写しが 2 部になる）
+- 各項目の min / p50 / max を出す。**分散こそが観測対象**なので最小値だけに畳まない
+- メモリは従として残し、**子孫プロセス走査を撤去**する（現構成のプロセスツリーは 1 件）
+- env の復元が空文字を作らないこと（#872 の実測。`SNOTRA_TRACE` は `env_flag` ゆえ空文字は「無効」に落ちるが、復元の形は smoke 群と揃える）
 
-- [ ] release ビルドで現運用点のベースラインを **3 標本以上**取る（同日・同セッション）
-- [ ] **`SNOTRA_TRACE` の有無で `first_trace_ms` を比較**し、計器自身が系を乱していないことを測る（`SNOTRA_EGUI_INPUT_TRACE` は 1 行 17〜56ms の前例がある）
-- [ ] `PERFORMANCE.md`「計測と受け入れ基準」へ計器の所在とベースラインを書く
-- [ ] `docs/build-commands.md` へ実行コマンドを足す
-- [ ] `src-tauri/CLAUDE.md` のモジュール構成へ `startup.rs` の行を足す
-- [ ] `npm run governance:check` を通す
+### Phase 3 — 測定と記録（**同じく PR 本文へ移送**）
+
+- release ビルドで現運用点のベースラインを **3 標本以上**取る（同日・同セッション）
+- **`SNOTRA_TRACE` の有無で `first_trace_ms` を比較**し、計器自身が系を乱していないことを測る（`SNOTRA_EGUI_INPUT_TRACE` は 1 行 17〜56ms の前例がある）
+- `PERFORMANCE.md`「計測と受け入れ基準」へ計器の所在とベースラインを書く
+- `docs/build-commands.md` へ実行コマンドを足す
+- [x] `src-tauri/CLAUDE.md` のモジュール構成へ `startup.rs` の行を足す（**Phase 1 で前倒しした**——`governance:check` が赤のままコミットしていたのを code-reviewer の High-2 が捕まえたため）
+- [x] `npm run governance:check` を通す（全検査 passed・Phase 1 時点で実測）
 
 ## 不変条件と異常系
 

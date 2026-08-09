@@ -696,3 +696,55 @@ crate 追加の直後に走るとは限らない）、(c) ルート `CLAUDE.md`�
 （`private_intra_doc_links`・`--document-private-items` を渡したときだけ出る形）のみで、
 **本サイクルの前後で同数**（stash して測った）。新規の警告は無い。
 `npm run governance:check` は全検査 passed、`vitest run scripts/` は 316 passed。
+
+#### 11.6.1 倒した後の再変異（Task 7・§6 の受け入れ「倒した後で変異を当て、実際に落ちる/落ちないことを確かめている」）
+
+**測ったのは Task 5・Task 6 をすべて含んだ最終状態である**（Task 6 の Red はその時点の木での測定）。
+
+**(1) 機構へ倒した 1 件は、今度は落ちる。** §10.4 と同じ変異（判定本体へ H6 を足し
+`$script:Invariants` へは足さない）を当て、`Invoke-Pester -Path scripts/lib/SnotraTraceInvariants.Tests.ps1`
+（Pester 6.0.1）:
+
+```
+[-] 判定本体が名指しする不変条件と一覧が過不足なく一致する（モジュールのソースを走査する）
+ Expected $null or empty, because 判定本体だけが知る不変条件は FailureCount に数えられず exit 0 になる, but got 'H6'.
+PASSED=41 FAILED=1
+```
+
+素は **42 passed / 0 failed**。**同じ変異が §10.4 では 41 passed / 0 failed だったので、
+差は新しい検査 1 本によるものである。**
+
+**runtime の帰結は変わっていない**（`rows = 2000` を食わせると依然 `Violations: H6` /
+`Overall keys: H1,H4,H5` / `FailureCount: 0`）。**倒したのは検知であって挙動ではない**——
+足し忘れは今もスモークを素通りさせるが、**その足し忘れを持つ木は Pester で赤になるので出荷されない**。
+
+**(2) 全体の挙動不変**（doc へ射程を書いた 20 件 + 変更不要 5 件を面で覆う）:
+
+| コマンド | 結果 |
+|---|---|
+| `cargo test --workspace` | **884 passed / 0 failed / 21 ignored**。合計 **905** は §3 の母集団（`cargo test --workspace -- --list` の実測）と一致——**テストは 1 本も増減していない** |
+| `npm run governance:check` | 全検査 passed。構造の件数（検査 19 / 対象文書 35 / rules 8 / skills 12 / 見出し参照 180 / member 4 / clippy 禁止 7 / ADR 41 / 短縮引用 210）は Task 4 時点と**すべて同一**。動いたのは面積（rules 11469 → 11554 字）と散文の識別子（286 → 290 件）だけで、どちらも Task 5 が rules / doc へ射程を書き足した分である |
+| `npm run test:powershell` | **98 passed / 0 failed**（Task 6 の新設 1 本を含む）。**1 回目は 97 passed / 1 failed** で、落ちたのは `起動後の最初のフレームで入力欄が打鍵を受け取れる状態になっている`——`SnotraSmoke` 側の実機起動テストで、**再走で緑**（#897 が記録する既知のフレークと同じ形）。本サイクルが触ったのは `SnotraTraceInvariants` だけであり、当該テストは import すらしない |
+
+**(3) 代表 6 件への再変異**（doc 群のうち、Task 5 が最も手を入れた箇所を選んだ）:
+
+| 代表 | 選んだ理由 | 変異 | 結果 |
+|---|---|---|---|
+| Rust #1 C（`section_table_covers_all_config_fields`） | A 群の中心。`app.rs` は本サイクル最大の Rust 差分（26 行） | `Config` へ `audit_probe` ＋ `Default` と destructure の最小修正 | **2 passed**（③ のまま） |
+| Rust #1 S（同上・`TabId::ALL`） | 同上 | `TabId` へ `AuditProbe`（`ALL` へは足さない）＋ 網羅 match 2 本へ腕 | **2 passed**（③ のまま） |
+| **B1**（`default_config_matches_obsidian_preset`） | Task 5 が主張文を書き換えた箇所。**§10.6.2 で「測定不要」としたまま射程文だけを書いたので、ここで初めて測る** | `PresetDef` へ `audit_probe` ＋ destructure へ `audit_probe: _,` ＋ 全 `PRESETS` を埋める（変異は足さない） | **1 passed** ——**書き換えた射程文（「`新フィールド: _,` の 1 行で通り、下の変異を足さないまま緑になる」）が実測どおりであることを確認した** |
+| ガバナンス #8（`ALWAYS_LOADED_FILES`） | `governance-check.mjs` へ射程コメントを足した箇所 | 5000 字の `PROBE-ALWAYS.md` ＋ `CLAUDE.md` へ `@` | **緑**。常時ロード面は 14421 → **14438 字**（§10.3 と同値） |
+| ガバナンス #6（`REF_EXTENSIONS`） | 同上 | `docs/architecture.md` へ実在しない `` `scripts/lib/NoSuchProbe.psm1` `` | **緑**（③ のまま） |
+| Rust #16（`system_shortcuts_are_checked_after_semantic_normalization`） | `snotra-core/src/hotkey.rs` は 2 番目に大きい Rust 差分（21 行） | `is_system_shortcut()` へ `alt_only && Home` を追加（テストの `blocked` へは足さない） | **10 passed**（③ のまま） |
+
+**(4) 選ばなかった 20 件が (2) でカバーされる理由**: **本サイクルで実行される行を足したのは
+`SnotraTraceInvariants.Tests.ps1` の新しい検査 1 本だけである。** 目視ではなく機械で確かめた——
+`git diff 1f02be1..HEAD -- '*.rs'` と同 `-- scripts/governance-check.mjs` から
+`+++` / `---` とコメント行（`///` `//!` `//` `*` `/*`）を差し引くと**残る行が 0 件**であり、
+`SnotraTraceInvariants.psm1` の +10 行も同じくコメントである。残りはすべて `*.md` の散文。
+**コメントは実行されない**——ゆえに「doc を書くついでに挙動を変えた」が起きうるのは
+(i) コメントが構文を壊してコンパイル/parse に失敗する、(ii) `.mjs` のコメントが検査の入力
+（語彙・ADR 引用）に紛れ込む、の 2 経路だけである。(i) は `cargo test --workspace` の 905 件と
+`npm run test:powershell` の 98 件が、(ii) は `npm run governance:check` の構造件数が
+Task 4 と一致することが覆う。**各候補の③性は「その一覧の外で起きた追加を検査が見ない」という
+構造の性質であり、コメントの追加では変わらない**（変わるなら (i)(ii) のどちらかとして現れる）。

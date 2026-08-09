@@ -9,7 +9,6 @@ use std::sync::Mutex;
 use snotra_core::indexer;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::icon;
 use crate::platform::{PlatformBridge, PlatformCommand};
 use crate::state::AppState;
 
@@ -108,12 +107,9 @@ fn drain_index(app_handle: &AppHandle) {
             material.extend_with_path_entries(path_entries);
         }
 
-        // アイコンキャッシュを新しい索引へ揃える（lock 規律と受容残余は `icon.rs` が正本）。
-        icon::sync_with_index(
-            &app_handle.state::<icon::IconCacheState>(),
-            inputs.show_icons,
-            material.tree(),
-        );
+        // **アイコンキャッシュにはもう触らない。** 索引照合の剪定は #996 で撤去し、無効化時の
+        // 破棄も `config_watcher` の true → false のエッジへ移した（理由は `icon::drop_icon_cache`
+        // の doc が正本）。ゆえに `IndexInputs` は索引を建て直す入力だけを持つ。
 
         // SearchEngine の構築（O(N)）は Mutex 外で実施してロック保持時間を最小化する。
         // migemo 無効時は kana_lower_names を構築しない（issue #337）。

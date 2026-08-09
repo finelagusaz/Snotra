@@ -11,7 +11,7 @@
 
 - `lib.rs`: モジュール宣言のみ（責務を持たない）
 - `engine.rs` — 検索・履歴・設定を単一ロックに統合する facade（責務は `//!`）。以下は engine ロックに閉じる横断コヒーレンシ:
-  - **`IndexInputs`**: index 構築入力（scan / show_hidden_system / show_icons / include_path_env / migemo_enabled）の単一定義
+  - **`IndexInputs`**: index 構築入力（scan / show_hidden_system / include_path_env / migemo_enabled）の単一定義。**「変わったら索引を建て直さねばならない入力」だけを載せる**——`show_icons` は「アイコンキャッシュを落とす契機」を運ぶために長く相乗りしていたが、この判定は**向きを持たない**ので `false → true` でも全再構築を払って効果 0 になり、#996 follow-up で外した（破棄は `snotra` の `config_watcher::icons_turned_off` がエッジで撃つ）
   - **`index_stale` ledger**: `mark_index_stale` / `begin_index_drain` → snapshot / `complete_index_drain` → swap + re-diff で stale をクリア / `is_index_stale`。コヒーレンシ判断を engine Mutex（軸1）に閉じ、config 変更→index 再構築の lost-update を塞ぐ（#347/#348-A）
   - **`complete_index_drain` は「ビルド開始時 snapshot == 現在 IndexInputs」のときだけ stale をクリアする**（ビルド中変更を取りこぼさない）
 - `config.rs` — `config.toml` の読込/保存・既定値補完、`Language` enum の定義（責務は `//!`）。以下は設定移行・デシリアライズ経路の不変条件:

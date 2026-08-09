@@ -61,13 +61,19 @@ impl PrebuiltIndex {
 /// インデックス（`SearchEngine`）の構築入力。config から焼き込まれるカテゴリ B の入力一式（issue #347）。
 /// `config_watcher` の再構築要否判定（old/new 差分）と `complete_index_drain` の re-diff
 /// （ビルド開始時スナップショット/現在）で**この単一定義を共有**する（needs_reindex と in-flight
-/// needs_rebuild の二重メンテを解消）。`show_icons` は概念的には icon-stale だが、現状は index
-/// ビルドのついでにアイコンキャッシュを prune するため含める（設計メモ §6 Q2）。
+/// needs_rebuild の二重メンテを解消）。
+///
+/// **ここに載せてよいのは「変わったら索引を建て直さねばならない入力」だけである。**
+/// `appearance.show_icons` は長らく例外で（icon-stale を index-stale に相乗りさせていた）、
+/// #996 で索引照合の剪定が消えた後は「アイコンキャッシュを落とす契機」としてしか残って
+/// いなかった。**契機を運ぶために全再構築を kick するのは対価が釣り合わない**——判定は
+/// この構造体の不一致ゆえ**向きを持たず**、`false → true` でも 313,028 件を建て直したうえで
+/// 破棄側は何もしない。ゆえに `show_icons` は外し、破棄は `config_watcher` が
+/// true → false のエッジで直接撃つ形へ移した（`snotra` の `icon::drop_icon_cache` が正本）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct IndexInputs {
     pub scan: Vec<ScanPath>,
     pub show_hidden_system: bool,
-    pub show_icons: bool,
     pub include_path_env: bool,
     pub migemo_enabled: bool,
 }
@@ -77,7 +83,6 @@ impl IndexInputs {
         Self {
             scan: config.paths.scan.clone(),
             show_hidden_system: config.search.show_hidden_system,
-            show_icons: config.appearance.show_icons,
             include_path_env: config.search.include_path_env,
             migemo_enabled: config.search.migemo_enabled,
         }
@@ -546,10 +551,6 @@ mod tests {
         assert_ne!(b, IndexInputs::from_config(&c), "show_hidden_system");
 
         let mut c = base.clone();
-        c.appearance.show_icons = !base.appearance.show_icons;
-        assert_ne!(b, IndexInputs::from_config(&c), "show_icons");
-
-        let mut c = base.clone();
         c.search.include_path_env = !base.search.include_path_env;
         assert_ne!(b, IndexInputs::from_config(&c), "include_path_env");
 
@@ -576,5 +577,28 @@ mod tests {
             IndexInputs::from_config(&base),
             IndexInputs::from_config(&c)
         );
+    }
+
+    /// **`show_icons` は索引を変えないので index 入力ではない**（#996 follow-up）。
+    ///
+    /// **この 1 本が守るのは「アイコン表示の切替で 313,028 件の全再構築が走らない」ことである。**
+    /// 戻すと壊れ方が静かである——検索結果もアイコン表示も正しいまま、チェックボックスを
+    /// 触るたびに全走査と `index.bin` の書き直しが走る。しかも `false → true` の向きでは
+    /// **払って効果が 0** になる（破棄は `true → false` でしか仕事をしない）。
+    #[test]
+    fn index_inputs_ignore_show_icons_in_both_directions() {
+        for start in [false, true] {
+            let mut base = default_config();
+            base.appearance.show_icons = start;
+            let mut c = base.clone();
+            c.appearance.show_icons = !start;
+            assert_eq!(
+                IndexInputs::from_config(&base),
+                IndexInputs::from_config(&c),
+                "show_icons {start} → {} は索引を変えない（アイコンの破棄は config_watcher の\
+                 エッジ検出が担う）",
+                !start
+            );
+        }
     }
 }

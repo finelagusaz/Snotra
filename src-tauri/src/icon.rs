@@ -31,6 +31,19 @@ struct IconCacheData {
     png: IndexMap<String, Vec<u8>>,
 }
 
+/// パス → PNG バイト列のキャッシュ。
+///
+/// **掃除の機構と、それが残す受容残余はここが正本である。**
+///
+/// **キーを選び取って間引く機構は [`Self::enforce_cap`] の FIFO ただ 1 つである**
+/// （#996 で索引照合の剪定を撤去した。**丸ごとの破棄は別経路が持つ**——数えずに指すのは、
+/// `None` を書く側が増減しても腐らせないためである）。
+/// ゆえに**索引に無いキーは `cap` 件を上限に残りうる——それは受容する**。害が有界なのは cap の
+/// おかげであって、片づけの保証があるからではない。**correctness は剪定が担っていなかった**：
+/// stale なアイコンの防御は [`invalidate_icon_cache`] であり、パスが消えて別のファイルが同じ
+/// パスにできた場合、そのパスは索引に**在る**ので剪定は元々残していた。撤去の根拠と実測値は
+/// `PERFORMANCE.md`「撤去: アイコン剪定そのもの」が正本（**数値をここへ写さない**——再測定
+/// された日にこの行だけが古くなる）。
 pub struct IconCache {
     data: IconCacheData,
     /// 最大保持件数。超過時は挿入順で最古から退避する。永続化しない runtime config
@@ -93,53 +106,6 @@ impl IconCache {
             self.dirty = false;
         }
     }
-
-    /// 現在保持しているパスの snapshot。
-    ///
-    /// **owned で返すのは、呼び出し側が lock を離してから判定するためである**（なぜそうするかは [`sync_with_index`]、そのずれが安全である理由は [`Self::remove_paths`]、確保の額は `PERFORMANCE.md` の反復 12 が正本）。**判定に使う集合はこの snapshot であって現在のキャッシュではない。**
-    pub fn keys(&self) -> Vec<String> {
-        self.data.png.keys().cloned().collect()
-    }
-
-    /// 渡した集合のパスを除去する。
-    /// `clear()` と異なり有効なアイコンを再利用するため、再構築後の再抽出コストを削減する。
-    /// 1 件でも除去した場合は dirty フラグを立てる。
-    ///
-    /// **`dead_paths` の意味は「索引に無い」であって「消えた」ではない。** 呼び出し側（[`sync_with_index`]）が渡すのは `IndexTree::absent_paths` の結果である。**キャッシュには索引に載るとは限らないパスが入る**——`egui_shell::results_view` の `request_icons_for_results` は行を `is_folder` でも view の種別でも絞らないので、フォルダを掘って表示した行のアイコンも同じ経路で挿入される（スキャンパスの内側を掘っていれば索引と一致しうるので、**どちらの向きにも言い切れない**）。**名前を「死」と読むと事実より強い。**
-    ///
-    /// **「残す集合」ではなく「落とす集合」を受け取るのが要石である。** 判定を lock の外で行う以上、渡される集合は [`Self::keys`] を取った時点の snapshot から導かれており、その後に挿入されたキーを知らない。**残す集合で書くと、その新しいキーは「残す集合に無い」ゆえ落ちる**——落とす集合で書けば、知らないキーは落とす集合にも居ないので残る。
-    ///
-    /// **旧実装（lock を握ったままの剪定）との異同を、ここでは主張しない。** 3 巡のレビューで**軸ごとに違う答えになり、書くたびに強すぎるか弱すぎるかへ振れた**——挿入の着地順・世代交代・FIFO 退避・終了時 flush はそれぞれ別の答えを持つ。読者が要るのは比較ではなく、**今この関数が何を保証し、何を保証しないか**である。
-    ///
-    /// # 受容する残余
-    ///
-    /// **剪定は best-effort である**——索引に無いキーが、cap（既定 1,000）件を上限に不定の期間
-    /// 残りうる。構造では塞いでいない。**害が有界なのは cap のおかげであって、片づけの保証が
-    /// あるからではない。ただし「索引に無いから読まれない」とも書けない**——フォルダ階層モードの
-    /// 行は索引に無いパスを表示してアイコンを引くので、生き延びた古い PNG がそこで返りうる。
-    ///
-    /// 残りうる機序は 3 つある（**どれも同じ 1 つの残余の現れ方であって、独立した弱点ではない**）:
-    ///
-    /// - **窓を跨いだ挿入**: snapshot の後に挿入されたキーは `dead_paths` に居ないので残る
-    ///   （それが上の要石の裏返しである）。片づける契機は複数あるが、どれも来ない期間はいくらでも
-    ///   長くなりうる——`enforce_cap` は FIFO ゆえ索引を見ず、`save_if_dirty` はむしろ書く
-    /// - **窓の間の世代交代**: `invalidate_icon_cache` が `None` と `icons.bin` 削除を撃つと、次の
-    ///   表示が `IconCache::load` で別の世代を建てる（呼び出し側の `as_mut()` は `None` を弾く
-    ///   だけで世代の違いは見ない）。**消えるものは正しいが時期が早い**——代償は再抽出で、それが
-    ///   いつ走るかは表示側の都合で決まる（`results_view` は既にテクスチャを持つ行を弾く一方、
-    ///   結果集合が変われば `retain_visible` がそれを捨てる）
-    /// - **終了時 flush との競合**: `main::flush_persistent_state` が窓の間に lock を取ると剪定前の
-    ///   `icons.bin` を書いて `dirty` を落とし、その後の除去は `exit(0)` に追われて保存されない
-    ///
-    /// **検査の側の残余は別種であり、`concurrent_insert_during_prune_window_survives` の doc が
-    /// 持つ**（この関数の実行時契約ではないので、ここでは数えない）。
-    pub fn remove_paths(&mut self, dead_paths: &std::collections::HashSet<String>) {
-        let before = self.data.png.len();
-        self.data.png.retain(|k, _| !dead_paths.contains(k));
-        if self.data.png.len() < before {
-            self.dirty = true;
-        }
-    }
 }
 
 /// アイコン抽出が失敗した段階（#692）。**`None` に潰すと「アイコンが無い」と
@@ -188,32 +154,27 @@ pub fn extract_png(path: &str) -> Result<Vec<u8>, IconFailure> {
 /// Managed state for icon cache
 pub type IconCacheState = Mutex<Option<IconCache>>;
 
-/// 索引の再構築に合わせてアイコンキャッシュを揃える（`indexing::drain_index` の 1 手順）。
+/// メモリ内キャッシュだけを捨てる（`icons.bin` は残す）。
 ///
-/// **判定は lock の外で行う。** 索引の全件走査（312,625 件・実測 36 ms）を lock の中で回すと、表示中のアイコン取得（`commands::icon::load_icon_pngs` の Step 1/3）がその間ずっと待つ。lock を持つのは snapshot と除去の一瞬だけにする。**その窓が安全である理由と受容残余は [`IconCache::remove_paths`] の doc が正本とする。**
+/// **[`invalidate_icon_cache`] との違いはファイルを消さないことである。** 撃つのは
+/// 「アイコン表示を無効にした」ときで、そのとき `icons.bin` を消す理由は無い——中身は stale
+/// ではなく、再有効化すれば [`IconCache::load`] がそのまま読み戻せる。手放したいのは
+/// **常駐 RAM だけ**である（掃除の機構と受容する残余は [`IconCache`] の doc が正本）。
 ///
-/// **`show_icons` が偽なら丸ごと捨てる**（snapshot も判定も要らない）。
-pub fn sync_with_index(
-    icons: &IconCacheState,
-    show_icons: bool,
-    tree: &snotra_core::index_tree::IndexTree,
-) {
-    if !show_icons {
-        *icons.lock().unwrap() = None;
-        return;
-    }
-    let Some(keys) = icons.lock().unwrap().as_ref().map(IconCache::keys) else {
-        return;
-    };
-    let dead = tree.absent_paths(keys);
-    // **消すものが無ければ lock を取らない。** 空になるのは、キャッシュのキーが 1 件残らず新しい索引に在るときだけである（**頻度は書かない**——キャッシュにはフォルダ階層モードの行のような索引に載るとは限らないパスも入り、それが索引と一致するかは掘った場所で決まる）。それでも置くのは、空のときに払うのがこの関数が避けている当の lock だからである。
-    //
-    // 窓の間に `invalidate_icon_cache` / show_icons=false が `None` へ落としていることがあるので、取り直して確かめる。
-    if !dead.is_empty()
-        && let Some(c) = icons.lock().unwrap().as_mut()
-    {
-        c.remove_paths(&dead);
-    }
+/// **呼ぶのは `config_watcher::apply_config_change` の true → false のエッジ 1 か所である。**
+/// エッジで撃つのは、この破棄が**向きを持つ**からである——`false → true` では捨てるものが
+/// 無い。かつては `show_icons` を `IndexInputs` に載せて索引再構築の drain 上で撃っていたが、
+/// **向きを持たない機構（`IndexInputs` の不一致）で向きのある契機を運んでいた**ため、
+/// アイコン表示を戻すだけでも 313,028 件の全再構築が走っていた（撤去の記録は
+/// `PERFORMANCE.md` が正本）。
+///
+/// **`commands::icon::ensure_icon_cache_loaded_if_enabled` にも同じ `None` 化があるが、
+/// そちらには寄りかかれない**——起こすのは `load_icon_pngs` だけで、その呼び出し元
+/// （`egui_shell::results_view` の `request_icons_for_results`）が `!show_icons` で早期 return
+/// する。**「決して通らない」とまでは書けない**（両者が読む `show_icons` は出所が違い、
+/// ガードを通った要求が切り替えを跨げば偽のまま着く）が、破棄の保証としては数えられない。
+pub fn drop_icon_cache(icons: &IconCacheState) {
+    *icons.lock().unwrap() = None;
 }
 
 fn icon_bin_file() -> Option<BinFile> {
@@ -703,92 +664,30 @@ mod tests {
         Mutex::new(Some(cache))
     }
 
-    /// `sync_with_index` のテスト用の材料。**列を手で並べない**——`IndexMaterial` が公開する
-    /// **PATH エントリの追記の口**（`from_tree` + `extend_with_path_entries`）を通すので、
-    /// `IndexTree` の内部表現をこの crate が知る必要が無い。**索引を建てる口ではない**
-    /// （それは `pub(crate)` に閉じてある）。**木ではなく材料を返すのは、`tree()` が貸すだけ
-    /// だから**である（呼び出し側が材料を生かしたまま `&IndexTree` を渡す）。
-    ///
-    /// **建つのは全件が根の平坦な木で、入力を変えてもそれは変わらない**——追記の口は
-    /// `IndexTree::extend_with_roots` を呼び、親を解決せずに全件を根として積む。ゆえに
-    /// `raw_path_into` は根の段で `name` を読まず、**この fixture は木の配線（親を辿る
-    /// 組み立て・拡張子の再結合）を検査しない**——そこは `snotra-core` 側の検査が持つ。
-    /// `name` に拡張子込みの末尾成分を入れているのもそのためで、core 側の `tree_with` が
-    /// 同じ形を禁じているのは**親を解決する経路の話**である（矛盾ではない）。
-    /// **配線まで測りたくなったら、この fixture を直すのではなく core 側の既知の木を借りること。**
-    fn material_of(paths: &[&str]) -> snotra_core::indexer::IndexMaterial {
-        let entries: Vec<snotra_core::indexer::AppEntry> = paths
-            .iter()
-            .map(|p| snotra_core::indexer::AppEntry {
-                name: p.rsplit(['\\', '/']).next().unwrap_or(p).to_string(),
-                target_path: (*p).to_string(),
-                is_folder: false,
-            })
-            .collect();
-        let mut material = snotra_core::indexer::IndexMaterial::from_tree(
-            snotra_core::index_tree::IndexTree::empty(),
-        );
-        material.extend_with_path_entries(entries);
-        material
-    }
-
-    /// **木を実際に引いていることを固定する。** 空の木では「木に無いキー」と「全キー」が
-    /// 一致してしまい、`absent_paths` を呼ばなくなる退行（呼び出しを PATH 併合の前へ動かす・
-    /// 別の木を渡す・入力を素通しする）が緑のまま通る。**在るキーが残ることを断言する 1 本が
-    /// その退行を落とす唯一の経路である。**
+    /// [`drop_icon_cache`] は**無条件に捨てる**——撃つかどうかの判断は
+    /// `config_watcher::icons_turned_off` が持ち、そちらの向き（`true → false` でだけ撃つ）は
+    /// 同モジュールの `icons_turned_off_fires_only_on_the_true_to_false_edge` が 4 方向で固定する。
+    /// **ここに「有効なら捨てない」を書かない**——この関数はもうその判断をしない。
     #[test]
-    fn sync_with_index_keeps_keys_present_in_a_non_empty_tree() {
-        let state = state_with(&["C:\\app\\live.exe", "C:\\app\\gone.exe"]);
-        let material = material_of(&["C:\\app\\live.exe"]);
-        sync_with_index(&state, true, material.tree());
+    fn drop_icon_cache_drops_every_entry() {
+        let state = state_with(&["a", "b"]);
 
-        let guard = state.lock().unwrap();
-        let cache = guard.as_ref().expect("キャッシュは残る");
-        assert!(
-            cache.get("C:\\app\\live.exe").is_some(),
-            "木に在るキーは残る（ここが落ちるなら木を引いていない）"
-        );
-        assert!(
-            cache.get("C:\\app\\gone.exe").is_none(),
-            "木に無いキーは落ちる"
-        );
-    }
-
-    /// 以下 3 本は**分岐だけ**を押さえる（木を引いていることの固定は上の 1 本が担う）。
-    /// 空の木を渡すので全キーが `dead` になり、判定を通したうえで各分岐が数行で書ける。
-    #[test]
-    fn sync_with_index_drops_the_cache_when_icons_are_disabled() {
-        let state = state_with(&["a"]);
-
-        sync_with_index(&state, false, &snotra_core::index_tree::IndexTree::empty());
+        drop_icon_cache(&state);
 
         assert!(
             state.lock().unwrap().is_none(),
-            "show_icons=false ではキャッシュごと捨てる（剪定しない）"
+            "メモリ内キャッシュごと手放す（`icons.bin` は消さない）"
         );
     }
 
+    /// **不在のキャッシュに対して何もしない**（ロードして捨てる形にしない）。
+    /// 遅延ロードをここへ足す退行は、無効化のたびに `icons.bin` を読んで捨てるだけの
+    /// I/O になり、**挙動としては正しく見える**ので他のテストでは捕まらない。
     #[test]
-    fn sync_with_index_is_a_noop_when_the_cache_is_absent() {
+    fn drop_icon_cache_does_not_load_an_absent_cache() {
         let state: IconCacheState = Mutex::new(None);
-        sync_with_index(&state, true, &snotra_core::index_tree::IndexTree::empty());
-        assert!(
-            state.lock().unwrap().is_none(),
-            "遅延ロード前は何も起こさない（ここでロードしない）"
-        );
-    }
-
-    #[test]
-    fn sync_with_index_removes_keys_absent_from_the_tree() {
-        let state = state_with(&["a"]);
-
-        sync_with_index(&state, true, &snotra_core::index_tree::IndexTree::empty());
-
-        let guard = state.lock().unwrap();
-        let cache = guard
-            .as_ref()
-            .expect("キャッシュは残る（捨てるのは disabled 側だけ）");
-        assert!(cache.get("a").is_none(), "空の木では全キーが索引に無い");
+        drop_icon_cache(&state);
+        assert!(state.lock().unwrap().is_none(), "ここでロードしない");
     }
 
     #[test]
@@ -814,55 +713,6 @@ mod tests {
         let _ = cache.get("missing");
         let after: Vec<String> = cache.data.png.keys().cloned().collect();
         assert_eq!(before, after, "get は read-only（順序・件数を変えない）");
-    }
-
-    #[test]
-    fn remove_paths_preserves_cap_invariant() {
-        let mut cache = empty_cache_with_cap(2);
-        cache.insert("a".into(), vec![1]);
-        cache.insert("b".into(), vec![2]); // len == cap
-
-        let dead: std::collections::HashSet<String> = ["a".to_string()].into_iter().collect();
-        cache.remove_paths(&dead);
-        assert!(
-            cache.data.png.len() <= cache.cap,
-            "除去後も cap 不変条件を満たす"
-        );
-        assert!(cache.get("a").is_none());
-        assert!(cache.get("b").is_some());
-    }
-
-    /// **これは検知器ではなく、述語の向きを書き留めた実行される注記である。** `keys` を取ってから `remove_paths` までの間に挿入されたキーは判定の入力に居ない——それでも落ちてはならない（正本は `remove_paths` の doc）。**production の退行で発火する保証は無いので、そのつもりで読むこと**（理由は下）。
-    ///
-    /// **これは「落とす集合」で書いたことだけが与える性質である。** 下の `cache.remove_paths(&dead)` を「残す集合」の形（`retain(|k, _| alive.contains(k))`・＝候補表が否定した変種）へ差し替えると、`late` の断言で落ちる——**実際に注入して確かめてある**（2026-08-09 実測）。
-    ///
-    /// **ただし変異させたのはこのテストの中であって production ではない。** production 側だけを壊す形（`remove_paths` の述語反転）では先行する 2 つの断言が先に落ちるので、`late` の行は**この検知器が守る性質を書き留めてはいるが、production の退行で発火する保証は無い**——実際の退行経路（呼び出し側が `alive` を組んで渡す形へ戻す）はこのテストの書き換えを伴う。**受容する残余である。**
-    #[test]
-    fn concurrent_insert_during_prune_window_survives() {
-        let mut cache = empty_cache_with_cap(8);
-        cache.insert("alive".into(), vec![1]);
-        cache.insert("gone".into(), vec![2]);
-
-        // lock の外で判定する側が見る snapshot。
-        let snapshot = cache.keys();
-        assert_eq!(snapshot.len(), 2);
-
-        // 窓の間に別スレッドが挿入した（＝判定の入力に居ない）キー。
-        cache.insert("late".into(), vec![3]);
-
-        // 索引には "alive" しか無かった、という判定結果。
-        let dead: std::collections::HashSet<String> = snapshot
-            .into_iter()
-            .filter(|k| k != "alive")
-            .collect::<std::collections::HashSet<_>>();
-        cache.remove_paths(&dead);
-
-        assert!(cache.get("gone").is_none(), "索引に無いキーは落ちる");
-        assert!(cache.get("alive").is_some(), "索引に在るキーは残る");
-        assert!(
-            cache.get("late").is_some(),
-            "判定の窓の間に挿入されたキーは、判定の入力に居なくても落ちてはならない"
-        );
     }
 
     /// #532 SU4 Probe 1: アイコン抽出（`SHGetFileInfoW`→BGRA→PNG 全区間）の実コスト計測。

@@ -95,6 +95,10 @@ fn apply_config_change(app: &AppHandle) {
     let language_changed = new_config.general.language != old_config.general.language;
     let new_language = new_config.general.language;
 
+    // アイコン表示を切ったかの判定は old/new のここで行い、**破棄そのものは `update_config` の
+    // 後で撃つ**（下）。
+    let icons_off = icons_turned_off(&old_config, &new_config);
+
     // Hotkey change — best-effort, log on failure (don't block)
     if let Some(bridge) = app.try_state::<Mutex<PlatformBridge>>()
         && let Ok(b) = bridge.lock()
@@ -138,6 +142,18 @@ fn apply_config_change(app: &AppHandle) {
         state.engine.lock().unwrap().update_config(new_config);
     }
 
+    // アイコン表示を切ったらメモリ内キャッシュを手放す（`icons.bin` は残す）。**判定は old/new
+    // で上に済ませ、破棄はここ——`update_config` より後——で撃つ。順序が correctness の条件で
+    // ある**: 先に撃つと、engine がまだ `show_icons=true` を返す隙に icon worker
+    // （`ensure_icon_cache_loaded_if_enabled` → `IconCache::load`）がキャッシュを建て直し、
+    // **無効なのに常駐したまま次のトグルか終了まで残る**。後に撃てば、engine を読む worker は
+    // 偽を見て自分で `None` にする。**それでも窓は閉じない**——`update_config` の直前に真を
+    // 読んだ worker は、この破棄の後に挿入しうる（`ensure_…` は config 読みと icon lock を
+    // 別々に取る）。**これは受容する残余で、drain 上で撃っていた頃から在る**。
+    if icons_off && let Some(icons) = app.try_state::<crate::icon::IconCacheState>() {
+        crate::icon::drop_icon_cache(&icons);
+    }
+
     // Trigger reindex if needed. ビルド進行中でも常に kick する（!indexing ゲート撤去、#347/#348-A）。
     // start_index_build が mark_index_stale で stale を立て、in-flight ビルドの complete re-diff /
     // finish 後の再チェックが取りこぼしを拾う。CAS が二重起動を防ぐ。
@@ -163,6 +179,22 @@ fn apply_config_change(app: &AppHandle) {
 /// 適用なので適用する。
 pub(crate) fn should_apply_config_change(outcome: LoadOutcome) -> bool {
     !matches!(outcome, LoadOutcome::ReadFailed)
+}
+
+/// アイコン表示が有効 → 無効へ落ちたか（`icon::drop_icon_cache` を撃つ唯一の条件）。
+///
+/// **エッジで見るのは、この破棄が向きを持つからである**——`false → true` に捨てるものは無い。
+/// かつては `show_icons` を `IndexInputs` に載せ、**向きを持たない不一致**で索引再構築ごと
+/// kick していたため、アイコン表示を戻すだけでも全再構築を払って効果 0 だった（記録は
+/// `PERFORMANCE.md`）。
+///
+/// **取りこぼさない根拠は呼び出し側にある**: `apply_config_change` は `ReadFailed` を
+/// [`should_apply_config_change`] で先に弾いて **engine の config を更新しない**ので、
+/// 次に通ったときの `old` は依然として旧値であり、エッジは失われない。
+/// **起動時に落とすものは無い**——`IconCacheState` は `None` で始まり、`show_icons=false` の
+/// 間は `ensure_icon_cache_loaded_if_enabled` がロードしない。
+pub(crate) fn icons_turned_off(old: &Config, new: &Config) -> bool {
+    old.appearance.show_icons && !new.appearance.show_icons
 }
 
 /// config 読み込みのリトライ予算（一時的ロック解除を待つ）。
@@ -205,6 +237,38 @@ mod tests {
     // `background_color_accepts_short_hex_and_falls_back_to_config_default` へ移設した
     // （関数ごと撤去したため・spec 決定 4）。証明していた命題「不正形は既定色へ落ちる」は
     // 同テストが受け持ち、`#RGB` を受理する側の変化も同テストが固定する。
+
+    /// **エッジは向きを持つ**——`true → false` のときだけ撃つ。
+    ///
+    /// **`false → true` で撃ってはならない**（捨てるものが無いうえ、再有効化のたびに
+    /// 温まったキャッシュを捨てて再抽出させる）。**同値で撃ってもならない**——config の保存は
+    /// アイコンと無関係な変更でも走るので、撃てば「設定を保存するたびにアイコンが消える」になる。
+    /// この 2 つが、向きを持たない `IndexInputs` の不一致に相乗りさせていた形との違いである。
+    #[test]
+    fn icons_turned_off_fires_only_on_the_true_to_false_edge() {
+        let on = |v| {
+            let mut c = Config::default();
+            c.appearance.show_icons = v;
+            c
+        };
+
+        assert!(
+            icons_turned_off(&on(true), &on(false)),
+            "true → false で撃つ"
+        );
+        assert!(
+            !icons_turned_off(&on(false), &on(true)),
+            "false → true では撃たない（捨てるものが無い）"
+        );
+        assert!(
+            !icons_turned_off(&on(true), &on(true)),
+            "有効のまま保存しただけでは撃たない"
+        );
+        assert!(
+            !icons_turned_off(&on(false), &on(false)),
+            "無効のまま保存しただけでは撃たない"
+        );
+    }
 
     #[test]
     fn should_apply_config_change_skips_read_failed() {

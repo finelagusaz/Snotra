@@ -114,6 +114,51 @@ pub enum CachedLower {
     },
 }
 
+/// 2 つの**正規化済み**の根について、`a` が `b` の祖先か同一か。
+///
+/// **境界の 2 枝を 1 本にまとめてはならない。** [`crate::config::normalize_scan_path_key`] は
+/// ドライブ根だけ末尾 `\` を残す（`c:\` に対し `c:\tools`）。ドライブ根にも境界チェックを
+/// 課すと `c:\\tools` を探して偽になり、非ドライブ根から外すと `c:\tools` が `c:\toolsextra`
+/// を入れ子だと誤判定する。
+// `allow`: 呼び出し点は Task 3 で `scan_all` へ入る。それまでは lib ターゲットから
+// 到達しないため `-D warnings` 下で `dead_code` が落とす。**Task 3 で必ず外す。**
+#[allow(dead_code)]
+fn is_ancestor_or_same(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    b.len() > a.len() && b.starts_with(a) && (a.ends_with('\\') || b.as_bytes()[a.len()] == b'\\')
+}
+
+/// 走査の根どうしが重なるか。**重なるときだけ [`scan_all`] は重複排除の `seen` を建てる。**
+///
+/// 木の走査は同じディレクトリを二度読まないので、1 回の `scan_all` の中で同じ正規化キーが
+/// 二度現れる経路は**根が入れ子になっているとき以外に無い**。junction / reparse point で
+/// 別名になった経路は文字列が異なるので `seen` は元から捕まえない。
+///
+/// **判定は入れ子だけを見る**（拡張子集合の交差・`include_folders` の両立は見ない）。額は
+/// 増えないのに判定の面積だけが広がるための過剰近似である。
+///
+/// **完全一致も重なりとして拾う。** 起動経路は `apply_migrations` → `normalize_scan_paths`
+/// を通るので同一キーの根は残らないが、`scan_all` は dedup を通さない配列も受け取る
+/// （`src-tauri` の `icon_pipeline_cost_probe` が `Config::default_scan_paths()` を直接渡す）。
+/// 述語を config 側の dedup の性質へ依存させないための冗長である。
+///
+/// 根は一桁ゆえ全ペア走査で無料である。
+// `allow`: 上の [`is_ancestor_or_same`] と同じ理由。**Task 3 で必ず外す。**
+#[allow(dead_code)]
+fn roots_overlap(scan_paths: &[ScanPath]) -> bool {
+    let keys: Vec<String> = scan_paths
+        .iter()
+        .map(|sp| crate::config::normalize_scan_path_key(&sp.path))
+        .collect();
+    keys.iter().enumerate().any(|(i, a)| {
+        keys[i + 1..]
+            .iter()
+            .any(|b| is_ancestor_or_same(a, b) || is_ancestor_or_same(b, a))
+    })
+}
+
 pub fn scan_all(scan_paths: &[ScanPath], show_hidden_system: bool) -> Vec<AppEntry> {
     let mut entries = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -2195,6 +2240,57 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
+    }
+
+    // ---- roots_overlap tests ----
+
+    /// 述語のテスト用に最小の `ScanPath` を作る。拡張子と `include_folders` は
+    /// **判定に関与しない**（設計書 §2.2 の過剰近似）。
+    fn root(path: &str) -> ScanPath {
+        ScanPath {
+            path: path.to_string(),
+            extensions: vec![".exe".to_string()],
+            include_folders: false,
+        }
+    }
+
+    #[test]
+    fn roots_overlap_detects_drive_root_ancestor() {
+        assert!(roots_overlap(&[root("C:\\"), root("C:\\Tools")]));
+    }
+
+    /// **境界の 2 枝を 1 本にまとめると、ここが落ちる。** `c:\tools` は `c:\toolsextra` の
+    /// 接頭辞だが、次の 1 バイトが `\` ではないので入れ子ではない。
+    #[test]
+    fn roots_overlap_ignores_sibling_sharing_a_prefix() {
+        assert!(!roots_overlap(&[root("C:\\Tools"), root("C:\\ToolsExtra")]));
+    }
+
+    #[test]
+    fn roots_overlap_is_order_independent() {
+        assert!(roots_overlap(&[root("C:\\Tools"), root("C:\\")]));
+    }
+
+    /// **完全一致も重なりとして拾う。** `scan_all` は `dedup_scan_paths` を通さない配列も
+    /// 受け取る（`src-tauri` の `icon_pipeline_cost_probe`）。
+    #[test]
+    fn roots_overlap_detects_exact_duplicates_after_normalization() {
+        assert!(roots_overlap(&[root("C:\\Tools"), root("c:/tools/")]));
+    }
+
+    #[test]
+    fn roots_overlap_false_for_single_root() {
+        assert!(!roots_overlap(&[root("C:\\")]));
+    }
+
+    #[test]
+    fn roots_overlap_false_across_drives() {
+        assert!(!roots_overlap(&[root("C:\\"), root("D:\\Apps")]));
+    }
+
+    #[test]
+    fn roots_overlap_false_for_empty() {
+        assert!(!roots_overlap(&[]));
     }
 
     #[test]

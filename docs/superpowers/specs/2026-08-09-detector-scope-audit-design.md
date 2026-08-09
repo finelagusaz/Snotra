@@ -593,3 +593,53 @@ FailureCount     : 0           ← exit code は 0
 5. **残りの ③**（Rust #3・#4・#5・#8・#12〜#16 とガバナンス 14 件） — **既定どおり「射程を doc へ
    明記」で足りる**。名指す doc がそもそも無い（9 件）か、doc が既に残余を書いている
    （ガバナンス側の大半）ため、機構へ倒す理由が無い
+
+## 11. 仕分けの結果（Task 5・Task 6 への申し送り）
+
+**判定基準は §4 のとおり「足し忘れが製品の欠陥になるか」で、根拠を 1 行で書けることを条件にした。**
+書けないものは既定どおり doc へ倒した（狭い保証で十分）。
+
+### 11.1 集計
+
+| 処置 | Rust | ガバナンス | スモーク | 計 |
+|---|---:|---:|---:|---:|
+| **doc へ射程を書いた** | 9 | 11 | 0 | **20** |
+| **確認したが変更不要**（既に射程が書けている） | 2 | 3 | 0 | **5** |
+| **機構へ倒す**（Task 6） | 0 | 0 | 1 | **1** |
+| 計（③ の候補件数） | 11 | 14 | 1 | **26** |
+
+このほか **A/B/C/D 群の偽の主張 12 か所**（A 4・B 2・C 5〔C3 は 2 ファイル〕・D 1）を是正した。
+A1〜A3 は Rust ③ #1/#2 と同じ箇所であり、上表の「doc へ射程を書いた」に含まれる。
+
+### 11.2 機構へ倒す 1 件（Task 6 の入力）
+
+**`scripts/lib/SnotraTraceInvariants.psm1` の `$script:Invariants`。**
+判定根拠 1 行: **判定本体が violation を積んでも一覧に無ければ `FailureCount = 0` で exit 0 になり、
+製品の回帰がスモークを素通りする**（§10.4 で帰結まで実測）。③ のうち製品の欠陥に達するのはここだけである。
+
+**この件の doc は直していない**——`Get-SnotraTraceInvariantNames` の doc は保護を主張しておらず、
+むしろ「呼び出し側はこの一覧を写さない……黙って落ちる」と**警告している側**である（§10.6.3）。
+偽の主張が無いので消すものが無く、残るのは機構の実装だけである。
+
+### 11.3 機構化の余地（Task 6 の裁量・必須ではない）
+
+**Rust ③ #1/#2（`SECTION_TABLE` / A 群）。** 足し忘れの帰結は「新セクションを編集してもタブ別
+ダーティ点（`•`）が出ない」であり、保存・破棄は構造体全体の `PartialEq` で判定するのでデータは
+壊れない——**表示の退行に留まるため §4 の基準には届かない**と判定し、doc で倒した。ただし
+§10.6.3 が挙げた到達点（`snotra-settings/src/i18n.rs` の「網羅 `match` ＋ `wildcard_enum_match_arm`
+の deny」）はこの箇所にもそのまま当たるので、Task 6 が費用を見て採るなら止める理由は無い。
+
+### 11.4 変更不要と確認した 5 件
+
+- Rust: `events.rs::event_names_are_pairwise_distinct`（§2 の範そのもの）・
+  `startup.rs::failure_reasons_are_stable_and_unique`（「`Phase` と同じ弱さを持つ」と明記済み）
+- ガバナンス: `VOCAB_TEST_FILE`（Rust 側の穴を「受容する残余」節が持つ）・
+  `REQUIRED_DISALLOWED_METHODS`（射程の正本は `src-tauri/clippy.toml` 冒頭と
+  `docs/build-commands.md`）・`DISALLOWED_METHODS_GROUPS`（残余をコメントが明記済み）
+
+### 11.5 検証
+
+`cargo doc --workspace --no-deps --document-private-items` は `snotra-core` の既存 9 件
+（`private_intra_doc_links`・`--document-private-items` を渡したときだけ出る形）のみで、
+**本サイクルの前後で同数**（stash して測った）。新規の警告は無い。
+`npm run governance:check` は全検査 passed、`vitest run scripts/` は 316 passed。

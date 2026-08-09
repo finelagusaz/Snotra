@@ -2,8 +2,12 @@
 //! トレイ/ホットキー起動を行う。
 //!
 //! 起動時の背景再スキャン（`indexer::load_or_scan_with_stats` が返す `BackgroundRescanTask`）を
-//! setup フェーズで低優先度スレッドに spawn し、`RescanOutcome::Changed` なら
-//! `icon::invalidate_icon_cache` を呼ぶ。
+//! setup フェーズで低優先度スレッドに spawn する。`RescanOutcome::Changed` なら
+//! `icon::invalidate_icon_cache` を呼び、返った材料で索引を建て直して `apply_rescanned_index` が
+//! 走っているセッションの索引を差し替える。差し替えは `is_index_stale()` と `IndexInputs` の
+//! 同一性を同じロック内で照合した上での条件つきで、どちらか一方でも不一致なら見送る
+//! （理由・残余は `apply_rescanned_index` の doc と設計書
+//! `docs/superpowers/specs/2026-08-10-rescan-applies-its-result-design.md` §2.4・§3）。
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 

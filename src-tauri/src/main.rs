@@ -729,9 +729,20 @@ mod tests {
             Some((idx, _)) => &after[..idx],
             None => after,
         };
+        // **母集団が黙って空にならないことを、まずそれ自体で確かめる。** 終端は
+        // 「2 番目の `\nfn `」という**位置**で切っているため、2 関数の間に別の
+        // 関数を挿入する・`apply_rescanned_index` を移動するといった変更が起きると、
+        // body から apply_rescanned_index が丸ごと落ちて以下の assert が panic せず
+        // 素通りしうる。沈黙する検知器は検知器ではない。
+        assert!(
+            body.contains("fn apply_rescanned_index("),
+            "母集団が apply_rescanned_index を含まない——終端の切り出し（2 番目の `\\nfn `）が\
+             関数の挿入・移動でずれた。位置で切る以上ここが黙ると検査ごと無意味になる"
+        );
         // 呼び出し（`(` を伴う）だけを見る——`` `start_index_build` `` のような裸の
         // バッククォート参照は doc/inline コメントが「呼んではならない」理由を説明する
-        // ために既に使っており、それを誤検出しないため。
+        // ために既に使っており、それを誤検出しないため。**散文で参照するときも括弧を
+        // 付けないこと**——`` `start_index_build()` `` と書くと同じ理由で偽陽性になる。
         assert!(
             !body.contains("start_index_build("),
             "再スキャンの適用から start_index_build を呼んでいる（全走査が 2 回になる）"

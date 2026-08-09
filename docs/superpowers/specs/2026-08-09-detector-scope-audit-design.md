@@ -608,7 +608,10 @@ FailureCount     : 0           ← exit code は 0
 | **機構へ倒す**（Task 6） | 0 | 0 | 1 | **1** |
 | 計（③ の候補件数） | 11 | 14 | 1 | **26** |
 
-このほか **A/B/C/D 群の偽の主張 12 か所**（A 4・B 2・C 5〔C3 は 2 ファイル〕・D 1）を是正した。
+このほか **A/B/C/D 群の偽の主張 12 件**（A 4・B 2・C 5・D 1）を是正した。**「件」は §10.6 の表の行数であって
+ファイル数でも行位置の数でもない**——C3 は 2 ファイル（`health-check/SKILL.md` と `implement/SKILL.md`）に
+またがり、A1〜A3 は `app.rs` の 3 箇所、A4 と B2 は同じ `snotra-settings/CLAUDE.md`、C1 と C4 は同じ
+`mechanized-checks.md` なので、**触ったファイルは 9 枚**である。
 A1〜A3 は Rust ③ #1/#2 と同じ箇所であり、上表の「doc へ射程を書いた」に含まれる。
 
 ### 11.2 機構へ倒す 1 件（Task 6 の入力）
@@ -726,7 +729,12 @@ PASSED=41 FAILED=1
 | `npm run governance:check` | 全検査 passed。構造の件数（検査 19 / 対象文書 35 / rules 8 / skills 12 / 見出し参照 180 / member 4 / clippy 禁止 7 / ADR 41 / 短縮引用 210）は Task 4 時点と**すべて同一**。動いたのは面積（rules 11469 → 11554 字）と散文の識別子（286 → 290 件）だけで、どちらも Task 5 が rules / doc へ射程を書き足した分である |
 | `npm run test:powershell` | **98 passed / 0 failed**（Task 6 の新設 1 本を含む）。**1 回目は 97 passed / 1 failed** で、落ちたのは `起動後の最初のフレームで入力欄が打鍵を受け取れる状態になっている`——`SnotraSmoke` 側の実機起動テストで、**再走で緑**（#897 が記録する既知のフレークと同じ形）。本サイクルが触ったのは `SnotraTraceInvariants` だけであり、当該テストは import すらしない |
 
-**(3) 代表 6 件への再変異**（doc 群のうち、Task 5 が最も手を入れた箇所を選んだ）:
+**(3) 代表への再変異 — 変異 6 通り・③ 候補としては 4 件**（Task 5 が最も手を入れた箇所を選んだ）。
+**数え方に注意する**（本監査は「候補件数」と「延べ分類数」を併用しているので混ざりやすい）:
+**Rust #1 の C と S は同一候補の 2 分類であって 2 候補ではない**（§9.0 の二重分類）。
+**B1 は ③ 26 候補の外である**——§10.6.2 のとおり Task 1 の篩が
+`default_config_matches_obsidian_preset` を候補に採っていないので、分母にも分子にも入らない。
+ゆえに**代表で直接検証した distinct な ③ 候補は 4 件**（Rust #1・ガバナンス #6・ガバナンス #8・Rust #16）である。
 
 | 代表 | 選んだ理由 | 変異 | 結果 |
 |---|---|---|---|
@@ -737,7 +745,10 @@ PASSED=41 FAILED=1
 | ガバナンス #6（`REF_EXTENSIONS`） | 同上 | `docs/architecture.md` へ実在しない `` `scripts/lib/NoSuchProbe.psm1` `` | **緑**（③ のまま） |
 | Rust #16（`system_shortcuts_are_checked_after_semantic_normalization`） | `snotra-core/src/hotkey.rs` は 2 番目に大きい Rust 差分（21 行） | `is_system_shortcut()` へ `alt_only && Home` を追加（テストの `blocked` へは足さない） | **10 passed**（③ のまま） |
 
-**(4) 選ばなかった 20 件が (2) でカバーされる理由**: **本サイクルで実行される行を足したのは
+**(4) 直接測っていない 21 件が (2) でカバーされる理由**（③ 26 候補 − 代表 4 件 − 機構 1 件〔(1) で別枠に検証済み〕
+＝ **21**。§11.1 の処置別に割ると、**代表 4 件はすべて「doc へ射程を書いた」20 件の中から選んでいる**ので、
+残りは同 20 件のうちの **16 件**と、「変更不要」**5 件のすべて**である）:
+**本サイクルで実行される行を足したのは
 `SnotraTraceInvariants.Tests.ps1` の新しい検査 1 本だけである。** 目視ではなく機械で確かめた——
 `git diff 1f02be1..HEAD -- '*.rs'` と同 `-- scripts/governance-check.mjs` から
 `+++` / `---` とコメント行（`///` `//!` `//` `*` `/*`）を差し引くと**残る行が 0 件**であり、

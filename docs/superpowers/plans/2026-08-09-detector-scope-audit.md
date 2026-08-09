@@ -24,7 +24,7 @@
 - **`.rs` を編集したら PostToolUse hook が fmt / clippy / test を自動実行する**（沈黙 = 合格・手動再実行は不要）
 - **コミットメッセージは日本語**、本文に `Refs #1008` を含める。末尾に `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
 - **複数行のコミットメッセージは HEREDOC で渡さない**（pre-bash hook が拒否する）。Write ツールで一時ファイルへ書き `git commit -F <path>`。パスの区切りは先頭から末尾まで `/`
-- **本計画のチェックボックスは pre-bash hook の視界の外にある**（実測）。hook が未チェック項目で `gh pr create` を拒むのは `workspace/plan.md` だけで、`docs/superpowers/plans/` は見ていない。**未完のまま PR を作れてしまうので、Task 8 Step 1 の受け入れ検算を省かないこと**
+- **本計画のチェックボックスは pre-bash hook の管轄外である（意図的な分離）。** hook が未チェック項目で `gh pr create` を拒むのは `workspace/plan.md` だけで、`docs/superpowers/plans/` は対象にしていない——**superpowers 配下と `workspace/` 配下では管轄するスキルが違うため、チェックボックスの管理対象を後者に絞ってある**。ゆえに本計画の完了は機構ではなく **Task 8 Step 1 の受け入れ検算**が担う
 
 ---
 

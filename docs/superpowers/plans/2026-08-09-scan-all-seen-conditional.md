@@ -66,7 +66,8 @@
 /// 必ず挟まる。重複件数は 1 回の走査の中で閉じるので churn の影響を受けない
 /// （設計書 `docs/superpowers/specs/2026-08-09-scan-all-seen-conditional-design.md` §4）。
 ///
-/// **この区間だけで Phase A の実行時間が +20〜35 秒になる**（実走査そのもの）。
+/// **この区間は実走査そのものゆえ、Phase A の実行時間が大きく伸びる。** 所要はファイルシステムの
+/// キャッシュの温度で数倍にぶれるので、ここに秒数を書かない（書けば測り直すたびに腐る）。
 fn report_scan_all_cost(config: &Config) {
     reset_peak();
     let t0 = snap();
@@ -119,7 +120,8 @@ Expected: 成功（警告なし）。`Config` / `indexer` は同ファイル上�
 - [ ] **Step 4: A 側標本を取る**
 
 Run: `cargo test --release -p snotra-core --test memory_footprint -- --ignored --nocapture --test-threads=1`
-Expected: Phase A の末尾に次の 3 行が出る（+20〜35 秒かかる）。
+Expected: Phase A の末尾に次の 3 行が出る（所要はファイルシステムのキャッシュの温度で
+数倍にぶれる——秒数は書かない）。
 
 ```
   scan_all（背景再スキャン経路・常駐外）  live +xx.xx MiB  peak xx.xx MiB  blocks +xxxxxx  allocs   xxxxxx

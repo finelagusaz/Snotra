@@ -417,7 +417,8 @@ fn measure_real_index_footprint() {
 /// 必ず挟まる。重複件数は 1 回の走査の中で閉じるので churn の影響を受けない
 /// （設計書 `docs/superpowers/specs/2026-08-09-scan-all-seen-conditional-design.md` §4）。
 ///
-/// **この区間だけで Phase A の実行時間が +20〜35 秒になる**（実走査そのもの）。
+/// **この区間は実走査そのものゆえ、Phase A の実行時間が大きく伸びる。** 所要はファイルシステムの
+/// キャッシュの温度で数倍にぶれるので、ここに秒数を書かない（書けば測り直すたびに腐る）。
 fn report_scan_all_cost(config: &Config) {
     reset_peak();
     let t0 = snap();

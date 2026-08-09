@@ -206,6 +206,7 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 - **旧版の `index.bin` を現行版へ書き戻すのもこの経路の責務である**（`cached_version`）。**書く契機は「中身が変わったとき」だけではない**——それだけだと、索引の中身が変わらないユーザーの `index.bin` は旧版のまま何日でも残り、新形式の削減を**永久に受け取らない**（2026-08-07 実測: v5 導入後の実運用点が v4 のまま残り、毎起動で `normalized_keys` 35.98 MiB を読んでは捨てていた。**症状は「遅い」だけで検索結果は正しいまま**ゆえ挙動テストでは捕まらない）。**昇格をロード側に置いてはならない**——engine へ move する `entries` の複製が要り、反復 6 で消した 62.5 MiB が復活する。ここは `sort_entries_canonical` を通した自前の走査結果を既に持っている唯一の場所である。**返すのは `Unchanged` のまま**（形式の昇格は中身を変えないので `Changed` は嘘になり、呼び出し側がアイコンキャッシュを無用に捨てる）。検知器は 2 本を対で置く（`background_rescan_upgrades_stale_format_when_entries_are_unchanged` と `background_rescan_does_not_rewrite_when_format_is_current`）——後者が無いと「毎回書き直す」退行が同じく静かに通る
 - `try_background_rescan` はアイコンキャッシュに触れない。`RescanOutcome::{Skipped, Unchanged, Changed}` で結果を伝え、呼び出し側が `Changed` を見て無効化する
 - スキャンロジックを変更するとき、このバックグラウンドパスにも影響することを意識する
+- **`scan_all` の重複排除は根ごとに `check`/`record` を割り当てる**（`root_roles`）。積むのは「後続の根と重なる」根だけで、先行とだけ重なる根は照合のみでキーを積まない——木の走査は同じディレクトリを二度読まないので、1 回の走査の中で同じ正規化キーが二度現れる経路は**根が入れ子のとき以外に無い**（`dedup_scan_paths` は完全一致マージのみゆえ入れ子の根は表現可能であり、**素で消すことはできない**）。実運用点は最大の根 `C:\` が最後に来るため、その 311,700 件ぶんの `String` 確保が消える（`PERFORMANCE.md`「採用: `scan_all` の `seen` を根ごとの役割（`check`/`record`）で条件づける」）。検知器は `scan_all_dedups_when_roots_are_nested`（`root_roles` の判定を潰すと落ちることを実測済み）。**削減そのものの退行は挙動テストでは捕まらない**——`record` を余分に `true` にしても走査結果は同じなので、捕まえるのは `tests/memory_footprint.rs` の確保回数だけである
 
 ## エントリ名の導出ルール
 

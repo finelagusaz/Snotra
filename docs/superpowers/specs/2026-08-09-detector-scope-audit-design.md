@@ -141,25 +141,54 @@ grep 2 軸検算で見つけた篩の見落とし——§9.1 の #16 と Step 1 
 | 分類 | 延べ件数 | 内訳 |
 |---|---:|---|
 | **C**（コンパイラ） | **6** | Rust のみ（純 C 4 件 + Rust #1・#2 の C+S 二重 2 件） |
-| S（ソーステキスト） | 23 | Rust 12（純 10 + 二重 2）・ガバナンス 10（純 7 + 二重 3）・スモーク 1 |
-| F（ファイルシステム） | **0** | 該当なし（理由は次段） |
+| S（ソーステキスト） | 18 | Rust 12（純 10 + 二重 2）・ガバナンス 5・スモーク 1 |
+| F（ファイルシステム） | **5** | ガバナンスのみ（純 2 + ガバナンス #3/#4/#5 の F+X 二重 3） |
 | X（外部設定） | 7 | ガバナンスのみ（純 4 + 二重 3） |
 
-候補の行数は Rust 16 + ガバナンス 14 + スモーク 1 = 31、二重分類 5 件（Rust 2・ガバナンス 3）を
-加えた延べ分類数は 36（6+23+0+7）。
+候補の行数は Rust 16 + ガバナンス 14 + スモーク 1 = 31、二重分類 5 件（Rust の C+S 2・ガバナンスの
+F+X 3）を加えた延べ分類数は 36（6+18+5+7）。
 
 **C はすべて Rust に閉じる**——ガバナンス・スモークの母集団はいずれも Rust の型システムの外側
-（JS/PowerShell のリテラルか、TOML/外部ツールの仕様）にあるため、コンパイラが SSOT になり得ない。
-**Task 6 の derive 導入判断に効く数字は C=6**（うち純 C は 4 件、残り 2 件は Rust #1・#2 の
-二重分類の片側）。
+（JS/PowerShell のリテラルか、TOML/外部ツールの仕様・ファイル一覧）にあるため、コンパイラが
+SSOT になり得ない。**Task 6 の derive 導入判断に効く数字は C=6**（うち純 C は 4 件、残り 2 件は
+Rust #1・#2 の二重分類の片側）。
 
-**F が 0 件である理由**: 「母集団がファイルシステムそのもの」の検査は Phase 2 の時点で
-「母集団の SSOT が走査対象自身にあり、足し忘れの経路が構造的に無い」として候補から除外済み
-（§9.2 末尾「候補から外したもの」の最終段落・`G-architecture-table` 等 11 件）。手書きリテラルの
-まま残った候補は、性質上「ファイルの実在」ではなく「ソーステキスト上の編集方針」（S）か
-「外部ツール／TOML 設定の仕様」（X）のどちらかに落ちた——動的走査で守られる型（F）と
-手書きで取り残される型（S/X）が非重複だったのは偶然ではなく、**F 型のリスクは Phase 2 以前に
-既に機構で塞がれているため**である（詳細は Task 3 レポート）。
+**F は当初 0 件と誤って結論していた（修正ラウンド 1 で訂正）。** §4 が F の実例として挙げる
+「対象文書 35 件」は `governanceDocs().length`（governance-check.mjs:1793,1854）そのものであり、
+これはガバナンス候補 #3/#4/#5（`G-references`/`G-spec-sections`/`G-adr-citations` が共有する
+`governanceDocs()`）の母集団と完全に一致する。`governanceDocs()` の中身を分解すると:
+
+- **動的に glob する部分**（`docs/**/*.md`・`.claude/rules/*.md`・`.claude/skills/*/SKILL.md`。
+  governance-check.mjs:1341-1347 の後半 3 条件）は母集団の SSOT が走査対象自身にあり、
+  Phase 2（Task 2）の時点で「足し忘れの経路が構造的に無い」候補として正しく除外されている
+- **手書きのルート文書配列**（`["CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md", "SPEC.md"]`、
+  governance-check.mjs:1341）は**要素そのものがリポジトリのファイルパスである**——
+  「足し忘れたとき、足したことを知っている者は誰か」を問うと、その新設ファイルの実在を
+  知っているのはファイルシステムであり、F が正しい。修正前は「ディレクトリ規則で導出できない
+  編集方針上の選定だから S」と判定したが、これは**選定理由（なぜこの 4 件を選んだか）と
+  母集団の型（要素がファイルか否か）を混同していた**——選定が編集方針でも、要素がファイル
+  である以上 F 側の足し忘れリスク（新しいファイルを追加し忘れる）は現に存在する
+- **crate CLAUDE.md 正規表現**（`/^(snotra-core|...)\/CLAUDE\.md$/`）は crate 名という
+  Rust ファイル階層の外側にある識別子でパラメタ化されており、真の SSOT は Cargo workspace
+  の member 一覧（X、§9.2 #1 と同型）
+
+ゆえに #3/#4/#5 は **F + X**（旧: S + X）に訂正する。**同じ「配列の要素が裸のファイルパス」という
+形は候補 #8（`ALWAYS_LOADED_FILES`）・#9（`STALE_EXTRA_DOCS`）にも当たる**——いずれも
+`["CLAUDE.md", "AGENTS.md"]` / `["SPEC.md", "CLAUDE.md", "AGENTS.md", "snotra-settings/SETTINGS-DESIGN.md"]`
+という、要素が全て実在ファイルパスの手書き配列であり、こちらも **S → F** に訂正する。
+
+**F ではない（S のまま）候補との境界**: 拡張子フィルタ（§9.2 #2/#6/#7/#10/#11）は要素が
+`"rs"` `"ts"` のような**拡張子・カテゴリ**であってファイルパスそのものではない——ファイルシステムは
+「どの拡張子を実在検査の対象にすべきか」を教えてくれない（無数の拡張子を持つファイルが実在し得る）
+ため、これらは編集方針（S）のまま残る。同様に `MODULE_INDEX_CRATES`（#1）はキーが crate 名という
+識別子であり、値の `src:` ディレクトリパスはその識別子から機械的に導出される付随情報にすぎない
+ため、母集団の本体は「crate 名の一覧」（X、Cargo.toml）のままとした。X 側 3 件
+（`REQUIRED_RUSTDOC_LINTS`・`REQUIRED_DISALLOWED_METHODS`・`DISALLOWED_METHODS_GROUPS`）も
+要素が lint 名・メソッドパス・group 名であってファイルパスではないため F 化の対象外。
+この境界（要素がファイルパスか、ファイルを指す識別子か、ファイルとは無関係なカテゴリ／識別子か）
+で全 14 件・全 16 件（Rust）・1 件（スモーク）を見直したが、上記 3 件（#3/#4/#5 の F 側・#8・#9）
+以外に F 性の見落としは無かった（Rust・スモークの母集団は enum variant／文字列 alias／PowerShell
+識別子であり、ファイルパスを要素に持つものは無い）。
 
 ### 9.1 Rust（Task 1 が 15 件・Task 3 の grep 検算で #16 を追加）
 
@@ -201,19 +230,20 @@ grep 2 軸検算で見つけた篩の見落とし——§9.1 の #16 と Step 1 
 だけを分析して本体の向き判定を書き漏らした 2 件を含む）、同じ観点（包含フィルタか・向きは過小包含か）
 で再走査を重ねた。**再走査で列挙した拡張子系ハードコードリテラル 7 件は 1 件残らず候補/除外＋理由の
 どちらかへ処分済み**（内訳は表の直後の「候補から外したもの」を参照）。件数: **14 件**
-（S 7 件・X 4 件・S+X 二重 3 件。延べ S10/X7。分類は Task 3、判定基準は §9.0）。
+（S 5 件・F 2 件・X 4 件・F+X 二重 3 件。延べ S5/F5/X7。分類は Task 3、修正ラウンド 1 で
+#3/#4/#5・#8・#9 を S→F〔一部 F+X〕に訂正済み・判定基準は §9.0）。
 
 | # | 候補 | 手書き一覧（識別子・行） | 見落としうる形 | 分類 | 分類理由（母集団の真の SSOT） |
 |---|---|---|---|---|---|
 | 1 | `G-module-index` | `MODULE_INDEX_CRATES`（governance-check.mjs:92、crate 4 件） | 新 crate を追加しても追記し忘れると、そのモジュール索引は双方向照合されない | X | crate 一覧の真の SSOT はルート `Cargo.toml` の `[workspace] members`（TOML 設定）。governance-check.mjs 自身の手書きではなく外部設定の写しである |
 | 2 | `G-module-index` | 順方向照合の拡張子フィルタ（governance-check.mjs:116、無名の正規表現 `rs\|ts\|tsx\|html`） | 「モジュール構成」節に `` `foo.mjs` `` のようなこの 4 拡張子以外のバッククォート参照があっても実在照合されない（`MODULE_INDEX_CRATES` とは独立した 2 本目のハードコード拡張子一覧） | S | どの拡張子を実在照合の対象にするかは本プロジェクト独自の編集方針であり、参照すべき外部の権威的仕様は無い |
-| 3 | `G-references` | `governanceDocs()`（governance-check.mjs:1339、ルート文書 4 件 + crate CLAUDE.md 正規表現 4 crate） | 新 crate の CLAUDE.md がこの正規表現に無いと、その文書内の参照実在は照合されない | S + X | ルート文書 4 件のリストは編集方針の手書き決定（S）。crate CLAUDE.md 正規表現は `MODULE_INDEX_CRATES`（#1）と同じ crate 名一覧を独立に持つ「2 本目」（Task 2 が既に指摘）——真の SSOT は同じく Cargo.toml（X）。二重分類 |
-| 4 | `G-spec-sections` | 同上（`governanceDocs()` を共有） | 同上——新 crate CLAUDE.md 内の `SPEC §N` 参照が照合対象から漏れる | S + X | #3 と同一関数を共有するため同じ橋渡し構造（root docs=S、crate 名=X） |
-| 5 | `G-adr-citations` | 同上（`adrCitationDocs` が `docs`＝`governanceDocs()` を含む） | 同上に加え ADR 短縮引用が該当文書内で照合されない（他の入力＝ADR/skills/`.rs`・`.mjs` は走査ベースのため影響は限定的） | S + X | #3/#4 と同じ `governanceDocs()` を内包（他の入力は動的走査ゆえ候補から除外済み・下記参照） |
+| 3 | `G-references` | `governanceDocs()`（governance-check.mjs:1339、ルート文書 4 件 + crate CLAUDE.md 正規表現 4 crate） | 新 crate の CLAUDE.md がこの正規表現に無いと、その文書内の参照実在は照合されない | F + X | **修正ラウンド 1 で S→F に訂正**（§9.0 参照）。ルート文書 4 件のリストは要素そのものがリポジトリのファイルパス——足し忘れを知るのはファイルシステム（F）。crate CLAUDE.md 正規表現は `MODULE_INDEX_CRATES`（#1）と同じ crate 名一覧を独立に持つ「2 本目」（Task 2 が既に指摘）——真の SSOT は Cargo.toml（X）。二重分類 |
+| 4 | `G-spec-sections` | 同上（`governanceDocs()` を共有） | 同上——新 crate CLAUDE.md 内の `SPEC §N` 参照が照合対象から漏れる | F + X | #3 と同一関数を共有するため同じ橋渡し構造（root docs=F、crate 名=X。修正ラウンド 1 で訂正） |
+| 5 | `G-adr-citations` | 同上（`adrCitationDocs` が `docs`＝`governanceDocs()` を含む） | 同上に加え ADR 短縮引用が該当文書内で照合されない（他の入力＝ADR/skills/`.rs`・`.mjs` は走査ベースのため影響は限定的） | F + X | #3/#4 と同じ `governanceDocs()` を内包（他の入力は動的走査ゆえ候補から除外済み・下記参照。修正ラウンド 1 で訂正） |
 | 6 | `G-references` | `REF_EXTENSIONS`（governance-check.mjs:30、拡張子 11 種） | バッククォート内パス様参照の実在照合は、拡張子がこの一覧に無いファイル種別（`/` を含んでいても）を静かにスキップする（修正ラウンド 1 の指摘） | S | 「実在検査の対象と見なすソース系拡張子」は編集方針であり、外部仕様の写しではない |
 | 7 | `G-adr-citations` | `adrCitationDocs` の `.rs\|.mjs` 拡張子ホワイトリスト（governance-check.mjs:1757、`/\.(rs\|mjs)$/`） | `.ts` / `.tsx` / `.ps1` 等の非 docs ソースに ADR の短縮引用があっても実在照合を素通りする（修正ラウンド 2 の指摘。同じ行の `!f.endsWith(".test.mjs")` だけを分析し本体の向き判定を書き漏らしていた） | S | 同上（#6 と同型の編集方針） |
-| 8 | `G-area-budget` | `ALWAYS_LOADED_FILES`（governance-check.mjs:1052、`["CLAUDE.md", "AGENTS.md"]`） | 常時ロード面に 3 つ目のファイルが増えても追記し忘れると火災報知器の面積に算入されない | S | 「常時ロードされる」は Claude Code ハーネスの挙動という外部事実だが、それを記述する機械可読な設定ファイルは本リポジトリに無い——この配列自身が唯一の記録であり、他に指せる SSOT が無い |
-| 9 | `G-stale-identifiers` | `STALE_EXTRA_DOCS`（governance-check.mjs:1505、固定パス 4 件） | 新設した「意図の SSOT」級の文書がここに無いと、腐り識別子の検査対象から漏れる | S | コメント自身が「静的リテラルであること自体が fail-closed である」と明記——ディレクトリ規則で導出できない編集方針上の選定（#8 と同型） |
+| 8 | `G-area-budget` | `ALWAYS_LOADED_FILES`（governance-check.mjs:1052、`["CLAUDE.md", "AGENTS.md"]`） | 常時ロード面に 3 つ目のファイルが増えても追記し忘れると火災報知器の面積に算入されない | F | **修正ラウンド 1 で S→F に訂正**（§9.0 参照）。要素は `CLAUDE.md`/`AGENTS.md` という実在ファイルパスそのもの——「なぜこの 2 件を常時ロード扱いにするか」は編集方針（ハーネスの挙動という外部事実）だが、「足し忘れた 3 つ目のファイルの実在」を知るのはファイルシステムであり、母集団の型は F |
+| 9 | `G-stale-identifiers` | `STALE_EXTRA_DOCS`（governance-check.mjs:1505、固定パス 4 件） | 新設した「意図の SSOT」級の文書がここに無いと、腐り識別子の検査対象から漏れる | F | **修正ラウンド 1 で S→F に訂正**（§9.0 参照）。#8 と同型——要素は全て実在ファイルパス。コメントの「静的リテラルであること自体が fail-closed」は選定理由の説明であり、母集団の型（F）を否定しない |
 | 10 | `G-stale-identifiers` | `VOCAB_TEST_FILE`（governance-check.mjs:1499、`.test.(mjs\|ts\|tsx)` の拡張子 3 種） | この形以外のテスト専用ファイル（Rust の `#[cfg(test)] mod` 等・コメントで残余と明記済み）の語彙が「現行語彙」へ紛れ込み、実在しない識別子が偶然そのテスト専用語彙と一致すると stale 判定から漏れる | S | 対象拡張子の選定は編集方針（#2/#6/#7 と同型） |
 | 11 | `G-stale-identifiers` | `currentVocabulary` のコメント除去振り分け（governance-check.mjs:1556、`/\.(ps1\|toml\|yml)$/` の可否で `#` 除去 or `stripRustComments` を選ぶ） | `VOCAB_SOURCE_EXT`（:1495）へ `#` コメント言語の拡張子を追加してもここへ追記し忘れると、その言語のコメントが語彙へ生で混入し、由来注記等に含まれる腐り識別子が偶然一致して stale 判定から漏れる（`currentVocabulary` 自身のコメントが「含めると `resetForShow` のような由来注記が語彙に化け、腐りが原理的に検出できない（実測 11 件）」と明記する失敗形の再演。修正ラウンド 2 の Minor 指摘） | S | 同上（拡張子選定は編集方針） |
 | 12 | `G-workspace-lints` | `REQUIRED_RUSTDOC_LINTS`（governance-check.mjs:345、lint 名 2 件） | 3 つ目の必須 rustdoc lint を deny させたくても追記し忘れると非実効のまま緑になる | X | ルート `Cargo.toml` の `[workspace.lints.rust]` に対する要求項目のカナリア——真の母集団は TOML 設定の側にある |

@@ -34,6 +34,7 @@ use crate::index_tree::IndexTree;
 use crate::query::{
     file_char_mask, lower_file_name, measure_derived_sharing, name_char_mask, to_lower_folded,
 };
+use crate::rescan_log;
 
 const INDEX_MAGIC: [u8; 4] = *b"INDX";
 /// `index.bin` の現行フォーマット版。
@@ -641,6 +642,7 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
             cached_digest: digest_over(material.tree()),
             generation: rescan_generation,
             cached_version,
+            cached_len: material.tree().len(),
         };
         let digest_ms = digest_started.elapsed().as_millis();
         let stats = LoadOrScanStats {
@@ -1225,6 +1227,7 @@ fn try_background_rescan(
     cached_digest: u64,
     generation: u64,
     cached_version: u32,
+    cached_len: usize,
 ) -> RescanOutcome {
     let Some(dir) = Config::config_dir() else {
         return RescanOutcome::Skipped;
@@ -1237,9 +1240,11 @@ fn try_background_rescan(
         cached_digest,
         generation,
         cached_version,
+        cached_len,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn try_background_rescan_in(
     dir: &Path,
     scan: &[ScanPath],
@@ -1248,7 +1253,26 @@ fn try_background_rescan_in(
     cached_digest: u64,
     generation: u64,
     cached_version: u32,
+    cached_len: usize,
 ) -> RescanOutcome {
+    // **`start` は走査の前に書く。** 終端だけを書く形では、走査より短いセッション
+    // （実測 12 秒 < 22 秒）が「そもそも起動しなかった」と区別できない（#1001）。
+    let started = Instant::now();
+    let sid = rescan_log::new_sid();
+    rescan_log::prune_in(dir);
+    rescan_log::append_in(
+        dir,
+        &rescan_log::start_line(
+            &rescan_log::now_rfc3339(),
+            &sid,
+            scan.len(),
+            cached_len,
+            cached_version,
+        ),
+    );
+
+    let mut rec = rescan_log::RescanRecord::default();
+
     // 権威的ビルド（rebuild_and_save / cache-miss save）が書き込み中なら Skipped。
     let changed = try_with_index_write_lock(|| {
         // 世代検査は書き込みロック取得後に行う。検査後に権威的ビルドが割り込む
@@ -1256,9 +1280,18 @@ fn try_background_rescan_in(
         if current_index_generation() != generation {
             return None;
         }
+        let t = Instant::now();
         let mut scanned = scan_all(scan, show_hidden_system);
+        rec.scan = Some(t.elapsed());
+        rec.scanned = Some(scanned.len());
+
+        let t = Instant::now();
         sort_entries_canonical(&mut scanned);
+        rec.sort = Some(t.elapsed());
+
+        let t = Instant::now();
         let changed = entries_digest(&scanned) != cached_digest;
+        rec.digest = Some(t.elapsed());
 
         // **書く条件は 2 つある。** 中身が変わったとき（従来）と、**読めた形式が旧版のとき**。
         // 後者を欠くと、索引の中身が変わらない限り旧版が何日でも残り、そのユーザーは
@@ -1268,19 +1301,47 @@ fn try_background_rescan_in(
         // 昇格をこの経路に置くのは、ここが **`sort_entries_canonical` を通した自前の
         // 走査結果を既に持っている唯一の場所**だからである。ロード側で書こうとすると、
         // engine へ move する `entries` の複製が要り、反復 6 で消した 62.5 MiB が復活する。
-        if changed || cached_version != INDEX_CACHE_VERSION {
+        let stale_format = cached_version != INDEX_CACHE_VERSION;
+        if changed || stale_format {
+            // **中身が変わっていないのに書いた**ことを記録へ残す。この経路は
+            // `outcome=unchanged` なのに `save_ms` が非 null になる唯一の理由である。
+            rec.format_upgrade = !changed && stale_format;
+            let t = Instant::now();
             // **返る木と `CachedMasks` はここでは捨てる。** 背景再スキャンは索引を建てない
             // ——建てるのは呼び出し側（`Changed` を見た `src-tauri` が再構築を kick する）で
             // あり、ここが抱えると起動段の外に索引 1 本ぶんの常駐が生まれる。
             drop(save_cache_sorted_in(dir, scanned, config_hash));
+            rec.save = Some(t.elapsed());
         }
         Some(changed)
     });
-    match changed {
-        None | Some(None) => RescanOutcome::Skipped,
-        Some(Some(false)) => RescanOutcome::Unchanged,
-        Some(Some(true)) => RescanOutcome::Changed,
-    }
+    let (outcome, logged) = match changed {
+        None => (
+            RescanOutcome::Skipped,
+            rescan_log::LoggedOutcome::SkippedLock,
+        ),
+        Some(None) => (
+            RescanOutcome::Skipped,
+            rescan_log::LoggedOutcome::SkippedGeneration,
+        ),
+        Some(Some(false)) => (
+            RescanOutcome::Unchanged,
+            rescan_log::LoggedOutcome::Unchanged,
+        ),
+        Some(Some(true)) => (RescanOutcome::Changed, rescan_log::LoggedOutcome::Changed),
+    };
+    // **`total` は終端で 1 回読む。** 部分和から作らない（作れば検算が同語反復になる）。
+    rescan_log::append_in(
+        dir,
+        &rescan_log::end_line(
+            &rescan_log::now_rfc3339(),
+            &sid,
+            logged,
+            &rec,
+            started.elapsed(),
+        ),
+    );
+    outcome
 }
 
 /// 背景再スキャンのタスク。所有データを抱え、`src-tauri` 側のスレッドへ `move` できる。
@@ -1299,6 +1360,10 @@ pub struct BackgroundRescanTask {
     /// 現行版で書き戻す**（`try_background_rescan_in`）。ここを運ばないと、索引が変わらない
     /// ユーザーの `index.bin` は旧版のまま留まり、新形式の削減を永久に受け取らない。
     cached_version: u32,
+    /// ロード時点の索引のエントリ件数。**記録の `cached` に出す**——結末が `Changed` の
+    /// とき「何件から何件へ変わったか」を読み手が追えるようにするため。
+    /// **digest だけを持つ設計（反復 6）は壊さない**——増えるのは `usize` 1 つである。
+    cached_len: usize,
 }
 
 impl BackgroundRescanTask {
@@ -1312,6 +1377,7 @@ impl BackgroundRescanTask {
             self.cached_digest,
             self.generation,
             self.cached_version,
+            self.cached_len,
         )
     }
 }
@@ -2276,6 +2342,7 @@ fn build_breakdown(
 mod tests {
     use super::*;
     use crate::binfmt::{try_deserialize_with_header, try_serialize_with_header};
+    use crate::rescan_log;
     use std::fs;
 
     /// `INDEX_WRITE_LOCK` に触れるテストを直列化するガード。
@@ -3153,6 +3220,7 @@ mod tests {
             digest,
             current_index_generation(),
             4,
+            0,
         );
 
         // **エントリ集合は変わっていない。** 形式の昇格は中身を変えないので `Changed` を
@@ -3204,6 +3272,7 @@ mod tests {
             digest,
             current_index_generation(),
             INDEX_CACHE_VERSION,
+            0,
         );
 
         assert_eq!(outcome, RescanOutcome::Unchanged);
@@ -3820,6 +3889,7 @@ mod tests {
             entries_digest(&[]),
             current_index_generation(),
             INDEX_CACHE_VERSION,
+            0,
         );
         assert_eq!(
             outcome,
@@ -3843,6 +3913,7 @@ mod tests {
             // **現行版を渡す。** 旧版にすると昇格の枝へ入り、このテストが実 `config_dir` の
             // `index.bin` を空の内容で上書きする（開発者の索引が消える）。
             cached_version: INDEX_CACHE_VERSION,
+            cached_len: 0,
         };
         assert_eq!(task.run(), RescanOutcome::Unchanged);
     }
@@ -3873,6 +3944,7 @@ mod tests {
             }]),
             old_generation,
             INDEX_CACHE_VERSION,
+            0,
         );
 
         assert_eq!(outcome, RescanOutcome::Skipped);
@@ -3896,6 +3968,132 @@ mod tests {
 
         assert_eq!(task_generation, generation_before_load);
         assert_ne!(task_generation, current_index_generation());
+    }
+
+    /// 記録の行を読む小道具。
+    fn rescan_log_lines(dir: &Path) -> Vec<serde_json::Value> {
+        std::fs::read_to_string(rescan_log::log_path_in(dir))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect()
+    }
+
+    /// **走査を始める前に `start` が出る。** 変異: `start` を書かず終端だけ書く実装に
+    /// すると、この検査が落ちる——それは「完走しなかった起動」を観測不能にする変更である。
+    #[test]
+    fn background_rescan_writes_start_before_scanning_and_end_at_the_terminal() {
+        let _serial = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = temp_dir("rescan_log_pair");
+        let scan: Vec<ScanPath> = Vec::new();
+        save_cache_sorted_in(&dir, Vec::new(), compute_config_hash(&scan, false));
+
+        let outcome = try_background_rescan_in(
+            &dir,
+            &scan,
+            false,
+            compute_config_hash(&scan, false),
+            entries_digest(&[]),
+            current_index_generation(),
+            INDEX_CACHE_VERSION,
+            0,
+        );
+        assert_eq!(outcome, RescanOutcome::Unchanged);
+
+        let lines = rescan_log_lines(&dir);
+        assert_eq!(lines.len(), 2, "start と end の 2 行が出る");
+        assert_eq!(lines[0]["ev"], "start");
+        assert_eq!(lines[1]["ev"], "end");
+        assert_eq!(lines[0]["sid"], lines[1]["sid"], "同じ sid で組になる");
+        assert_eq!(lines[1]["outcome"], "unchanged");
+        assert!(lines[1]["save_ms"].is_null(), "書かなかったので null");
+        assert!(!lines[1]["scan_ms"].is_null(), "走査はした");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// **ロック競合でも `end` を書く。** 終端は 1 か所ではない——`Skipped` の経路で
+    /// 黙ると、「起動したが再スキャンは走らなかった」が読めなくなる。
+    #[test]
+    fn background_rescan_records_the_skip_when_the_write_lock_is_held() {
+        let _serial = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = temp_dir("rescan_log_skip_lock");
+        let guard = INDEX_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let outcome = try_background_rescan_in(
+            &dir,
+            &[],
+            false,
+            0,
+            0,
+            current_index_generation(),
+            INDEX_CACHE_VERSION,
+            0,
+        );
+        drop(guard);
+        assert_eq!(outcome, RescanOutcome::Skipped);
+
+        let lines = rescan_log_lines(&dir);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[1]["outcome"], "skipped");
+        assert_eq!(lines[1]["skip_reason"], "lock", "世代不一致と区別する");
+        assert!(lines[1]["scan_ms"].is_null(), "走査していない");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 世代不一致の skip は `lock` と別の理由として出る。
+    #[test]
+    fn background_rescan_records_the_skip_when_the_generation_moved() {
+        let _serial = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = temp_dir("rescan_log_skip_generation");
+
+        let stale_generation = current_index_generation().wrapping_sub(1);
+        let outcome = try_background_rescan_in(
+            &dir,
+            &[],
+            false,
+            0,
+            0,
+            stale_generation,
+            INDEX_CACHE_VERSION,
+            0,
+        );
+        assert_eq!(outcome, RescanOutcome::Skipped);
+
+        let lines = rescan_log_lines(&dir);
+        assert_eq!(lines[1]["skip_reason"], "generation");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// **`cached` は索引のエントリ件数である。** 木の節点数と食い違えば、読み手は
+    /// 「何件から何件へ変わったか」を誤読する。
+    #[test]
+    fn tree_len_is_the_entry_count() {
+        let entries = vec![
+            AppEntry {
+                name: "A".into(),
+                target_path: "C:\\a.txt".into(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "B".into(),
+                target_path: "C:\\dir\\b.txt".into(),
+                is_folder: false,
+            },
+        ];
+        let n = entries.len();
+        let dir = temp_dir("tree_len_is_entry_count");
+        let (tree, _) = save_cache_sorted_in(&dir, entries, 0);
+        assert_eq!(tree.len(), n, "木の len は索引のエントリ件数と一致する");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

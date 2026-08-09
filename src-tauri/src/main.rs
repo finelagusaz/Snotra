@@ -16,6 +16,7 @@ mod ime;
 mod indexing;
 mod monitor;
 mod platform;
+mod startup;
 mod state;
 mod trace;
 mod working_set;
@@ -159,8 +160,13 @@ fn make_key_input(
 fn send_alt_key_up() {}
 
 fn main() {
+    // **anchor はここである。** これより前（DLL ロード・CRT 初期化）は `pre_main` として
+    // 別に測る——測らないと、そこに住む遅延が計測区間の外へ落ちる（`crate::startup` の `//!`）。
+    startup::begin();
+
     let is_first_run = Config::is_first_run();
     let (config, load_outcome) = Config::load_reporting();
+    startup::mark(startup::Phase::ConfigLoad);
 
     let (mut material, initial_indexing, rescan_task) = if is_first_run {
         (
@@ -186,6 +192,17 @@ fn main() {
                 s.cache_save_ms,
             );
         }
+        // 内側の内訳との差が `index_load_unattributed_ms` になる——`load_or_scan_with_stats`
+        // の中にある未命名の処理を、外側の計器が捕まえるための項目である。
+        startup::set_index_load_stats_ms(result.stats.total_ms as u64);
+        // **枝は `LoadOrScanStats` から取る。** `initial_indexing` は first-run でしか
+        // 立たないので、そこから導くと非 first-run の cache-miss が cache_hit=true に化ける。
+        startup::set_branch(startup::Branch {
+            first_run: false,
+            cache_hit: result.stats.cache_hit,
+            include_path_env: config.search.include_path_env,
+        });
+        startup::mark(startup::Phase::IndexLoad);
         (result.material, false, result.rescan_task)
     };
 
@@ -194,12 +211,24 @@ fn main() {
         let path_entries =
             indexer::scan_path_env(material.tree(), config.search.show_hidden_system);
         material.extend_with_path_entries(path_entries);
+        // **既定（`include_path_env = false`）ではこのマークを通らない**——出力は `null` に
+        // なる。0 と書いてはならない（「実行して 1 ms 未満」と区別できなくなる）。
+        startup::mark(startup::Phase::PathMerge);
+    }
+    if is_first_run {
+        // first-run は索引ロードを通らない（`index_load` は `null` になる）。
+        startup::set_branch(startup::Branch {
+            first_run: true,
+            cache_hit: false,
+            include_path_env: config.search.include_path_env,
+        });
     }
 
     // Lazy-load icon cache on first icon request to keep startup path short.
     let icon_cache_state: IconCacheState = Mutex::new(None);
 
     let history = HistoryStore::load();
+    startup::mark(startup::Phase::HistoryLoad);
 
     let show_on_startup = config.general.show_on_startup;
     let show_tray = config.general.show_tray_icon;
@@ -209,6 +238,7 @@ fn main() {
     let bg_color = config.visual.background_color.clone();
 
     let engine = Engine::from_material(material, history, config);
+    startup::mark(startup::Phase::EngineBuild);
 
     let app_state = AppState {
         engine: Mutex::new(engine),
@@ -240,6 +270,9 @@ fn main() {
         // invoke_handler は無い（#532 SU7 PR3・フロント撤去で IPC は消滅。egui は
         // commands/ の _core 関数・engine を直呼びする）
         .setup(move |app| {
+            // **setup はイベントループより前ではない**（同じ 1 イベントの処理中）。ゆえに
+            // ここまでが「tauri の初期化」であり、以降が窓とリスナーである。
+            startup::mark(startup::Phase::TauriInit);
             let app_handle = app.handle().clone();
 
             // Spawn platform thread early to parallelize Win32 init with window creation.
@@ -250,7 +283,19 @@ fn main() {
 
             // 窓生成（egui・platform thread spawn 後・SPEC §8.5 で Win32 初期化と並列化）。
             // 幅の復元は create が window_width で行う（#532 SU7 flip で唯一の経路）。
-            let handles = egui_shell::create(app, window_width as f64, &bg_color)?;
+            // **setup ブロック唯一の早期 return である。** ここで抜けると
+            // `RegisterInitialHotkey` は送られないので、終端を出さないとハーネスには
+            // 「タイムアウト」としか見えない（`crate::startup` の `//!`）。
+            let handles = match egui_shell::create(app, window_width as f64, &bg_color) {
+                Ok(h) => h,
+                Err(e) => {
+                    startup::finish(Err(startup::StartupFailure::WindowCreation));
+                    return Err(Box::new(e));
+                }
+            };
+            // **フォント解決を含む区間である**（`font_stack.rs`）。窓を一度も出していない
+            // 時点で常駐に効くことが実測されており、表示より前に走る。
+            startup::mark(startup::Phase::WindowsCreate);
             // #671 PR D（spec 決定 8 の終端形）: show/hide を跨ぐ共有状態（世代・emit dedup）と
             // 両窓の wake handle。**`create()` の後**に manage する——handle は attach の戻り値
             // ゆえ窓の生成より前には存在しない。各 view の `setup()` はもう `EguiShellState` を
@@ -303,6 +348,10 @@ fn main() {
             // platform thread. Registering the listener before activating the
             // hotkey ensures no event is emitted before there is a receiver to
             // handle it — this order must not change (src-tauri/CLAUDE.md).
+            //
+            // **`SetupRest` はこの呼び出しの中（送信の直前）で刻まれる。** platform
+            // スレッドは送信の直後から並行に走り、登録を終えると終端を出す——そのとき
+            // マークが済んでいないと `setup_rest` が `null` のまま出力される。
             setup_hotkey_listener(&app_handle);
 
             // Listen for open-settings event from tray
@@ -343,12 +392,17 @@ fn setup_platform_thread(
     hotkey_config: HotkeyConfig,
     initial_language: Language,
 ) {
-    let platform_pending =
-        PlatformBridge::begin(app_handle.clone(), hotkey_config, initial_language);
-
     // Win32 init finishes in a few ms; by the time windows are created it is already done.
-    if let Some(bridge) = platform_pending.and_then(PlatformBridgePending::wait) {
-        app_handle.manage(Mutex::new(bridge));
+    match PlatformBridge::begin(app_handle.clone(), hotkey_config, initial_language)
+        .and_then(PlatformBridgePending::wait)
+    {
+        Ok(bridge) => {
+            app_handle.manage(Mutex::new(bridge));
+        }
+        // **起動はここで続行するが、終端は出す。** 出さないと `RegisterInitialHotkey` の
+        // arm が走らないまま起動が終わり、ハーネスには「タイムアウト」としか見えない
+        // （正本は `crate::startup` の `//!`）。
+        Err(e) => startup::finish(Err(startup::StartupFailure::from(e))),
     }
 }
 
@@ -443,10 +497,36 @@ fn setup_hotkey_listener(app_handle: &AppHandle) {
     // hotkey-pressed listener is now registered; activate hotkey on platform thread.
     // Registering the hotkey only after the listener is ready ensures no event
     // is emitted before there is a receiver to handle it.
-    if let Some(bridge) = app_handle.try_state::<Mutex<PlatformBridge>>()
-        && let Ok(b) = bridge.lock()
-    {
-        b.send_command(PlatformCommand::RegisterInitialHotkey);
+    // **マークは送信より前でなければならない。** 送信した瞬間から platform スレッドが
+    // 並行に走り、登録を終えると終端（`startup:finish`）を出す。マークが後ろにあると、
+    // platform 側が先に着いた回だけ `setup_rest` が `null` のまま出力され、ハーネスが
+    // 「説明されない null」で落ちる（/code-review が指摘。**実際に一度そう書いた**
+    // ——setup ブロックの末尾へ移した版がそれで、送信より 5 つの setup ぶん後ろだった）。
+    //
+    // **代償は受け入れる。** この関数は setup ブロックの途中で呼ばれるので、以降の
+    // リスナー登録・config watcher・トレイ生成は `hotkey_register` の区間へ含まれる
+    // ——`hotkey_register` は「純粋な登録待ち」ではなく「送信後に main スレッドがやった
+    // 残り + 登録待ち」である。**並行に走るものを 1 本の時間軸で刻む以上、どちらかへ
+    // 寄せるしかない**（両方を正しく分けるには platform 側にも独立した anchor が要る）。
+    startup::mark(startup::Phase::SetupRest);
+
+    // **送信できなかった経路にも終端を置く。** bridge state 不在・`Mutex` の poison・
+    // channel 切断のいずれでも `RegisterInitialHotkey` の arm は走らないので、ここで
+    // `startup:failed` を出さないとハーネスには「タイムアウト」としか見えない。
+    let sent = match app_handle.try_state::<Mutex<PlatformBridge>>() {
+        Some(bridge) => match bridge.lock() {
+            // **写像は 1 か所に集約してある**（`startup::StartupFailure::from`）。
+            // ここでワイルドカードを書くと、`BridgeError` に variant を足したとき
+            // 黙って既存の `reason` へ潰れる——`reason` はハーネスの契約である。
+            Ok(b) => b
+                .send_initial_hotkey_registration()
+                .map_err(startup::StartupFailure::from),
+            Err(_) => Err(startup::StartupFailure::PlatformBridgeUnavailable),
+        },
+        None => Err(startup::StartupFailure::PlatformBridgeUnavailable),
+    };
+    if let Err(failure) = sent {
+        startup::finish(Err(failure));
     }
 }
 

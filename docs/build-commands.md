@@ -178,6 +178,7 @@ cargo run -p snotra              # 製品メインウィンドウ（egui 既定�
 npm run verify                   # Rust + node 一括検証（cargo check --workspace + npm test）
 npm run smoke:startup             # 起動時スモーク（trace 出力・検証用プロファイル・非 first-run の検証）
 npm run smoke:egui                # egui 経路の show/hide スモーク（keybd_event 注入 + trace検証・#532 SU7。既定 ExePath = target/release）
+npm run bench:startup             # 起動の端から端までの内訳実測（区間ごとの min/p50/max・詳細: PERFORMANCE.md）
 npm run measure:memory            # メモリ実測（PrivWS 軸・ツリー合算・#532 flip 基準 3）
 npm run measure:memory:stages     # メモリ実測（起動→表示→検索→hide の段階別・前景計測。実行中の snotra を kill する）
 npm run tauri build              # リリースビルド（NSIS バンドル。`prepare:sidecar` で binaries/ を用意してから）
@@ -188,6 +189,12 @@ npm run tauri build              # リリースビルド（NSIS バンドル。`
 **もっともらしい数値**が出るため、内部矛盾（規模に対する単調性の破れ・`live 0.00 MiB`）に
 気づかなければそのまま結論に使ってしまう（2026-08-07 実測。詳細は PERFORMANCE.md
 「索引の常駐の内訳」）。
+
+`npm run bench:startup` は **release 本体を測る**（既定 `target/release/snotra.exe`）。**先に
+`cargo build --release -p snotra` を打つこと**——`cargo test` はテストターゲットしかビルドせず、
+古い本体が在ると検査は成功したまま**変更前の挙動を測る**（#835 で 2 時間前のバイナリを測った）。
+出力は区間ごとの min / p50 / max で、**最小値に畳まない**——このハーネスが答える問いは
+「起動が何 ms か」ではなく「分散がどの区間に住むか」だからである（詳細は PERFORMANCE.md）。
 
 ## git blame と整形コミット
 

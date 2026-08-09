@@ -3873,16 +3873,24 @@ mod tests {
         );
     }
 
+    /// **`try_background_rescan_in` 経由で検証する**（`try_background_rescan` 自体ではない）。
+    /// 後者は `Config::config_dir()` を内部で解決し、`try_background_rescan_in` が Skipped
+    /// 経路でも `start`/`end` の 2 行を書くため、そのまま呼ぶと実 `%APPDATA%\Snotra\
+    /// rescan-log.jsonl` を合成行で汚す（上限 200 行の窓を単体テストが食いつぶす）。
+    /// **失う残余**: `try_background_rescan`（`Config::config_dir()` を解決して委譲するだけの
+    /// 薄いラッパー）を直接覚えるテストがこれで無くなる——受容する。
     #[test]
-    fn try_background_rescan_skips_when_write_lock_held() {
+    fn try_background_rescan_in_skips_when_write_lock_held() {
         let _serial = INDEX_LOCK_TEST_GUARD
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        let dir = temp_dir("rescan_skips_when_lock_held");
         // 権威的なインデックスビルドが書き込みロックを保持している状況を再現する。
         let _held = INDEX_WRITE_LOCK.lock().unwrap();
         // 背景再スキャンは書き込みロックを取得できないため、
         // スキャンも保存もせず Skipped を返さねばならない。
-        let outcome = try_background_rescan(
+        let outcome = try_background_rescan_in(
+            &dir,
             &[],
             false,
             0,
@@ -3896,26 +3904,34 @@ mod tests {
             RescanOutcome::Skipped,
             "background rescan must return Skipped when the index write lock is held"
         );
+        drop(_held);
+        let _ = fs::remove_dir_all(&dir);
     }
 
+    /// **`try_background_rescan_in` 経由で検証する**（`BackgroundRescanTask::run` 自体ではない）。
+    /// `run()` も内部で `Config::config_dir()` を解決するため、そのまま呼ぶと実
+    /// `%APPDATA%\Snotra\rescan-log.jsonl` を合成行で汚す。**失う残余**: `run()`（同じく
+    /// `Config::config_dir()` を解決して委譲するだけの薄いラッパー）を直接覚えるテストが
+    /// これで無くなる——受容する。
     #[test]
-    fn background_rescan_task_run_reports_unchanged_for_empty_inputs() {
+    fn background_rescan_in_reports_unchanged_for_empty_inputs() {
         let _serial = INDEX_LOCK_TEST_GUARD
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        let dir = temp_dir("rescan_in_reports_unchanged");
         // 空のスキャン対象 → scan_all は空 → 空のキャッシュと一致 → Unchanged。
-        let task = BackgroundRescanTask {
-            scan: Vec::new(),
-            show_hidden_system: false,
-            config_hash: 0,
-            cached_digest: entries_digest(&[]),
-            generation: current_index_generation(),
-            // **現行版を渡す。** 旧版にすると昇格の枝へ入り、このテストが実 `config_dir` の
-            // `index.bin` を空の内容で上書きする（開発者の索引が消える）。
-            cached_version: INDEX_CACHE_VERSION,
-            cached_len: 0,
-        };
-        assert_eq!(task.run(), RescanOutcome::Unchanged);
+        let outcome = try_background_rescan_in(
+            &dir,
+            &[],
+            false,
+            0,
+            entries_digest(&[]),
+            current_index_generation(),
+            INDEX_CACHE_VERSION,
+            0,
+        );
+        assert_eq!(outcome, RescanOutcome::Unchanged);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -3979,10 +3995,16 @@ mod tests {
             .collect()
     }
 
-    /// **走査を始める前に `start` が出る。** 変異: `start` を書かず終端だけ書く実装に
-    /// すると、この検査が落ちる——それは「完走しなかった起動」を観測不能にする変更である。
+    /// **1 回の再スキャンが同じ `sid` を持つ `start`/`end` の 2 行を残し、`Unchanged` なら
+    /// `save_ms` が `null` であることを固定する。**
+    ///
+    /// **固定できていない性質**: `start` が走査より前に出ること（#1001 の存在理由そのもの）は
+    /// このテストでは検知できない——`prune_in` と `start` の追記を走査の**後ろ**（`end` の直前）
+    /// へ動かす変異でも、戻り値後のファイル内容だけを見るこの検査は通ってしまう。その順序を
+    /// 検知するのは Task 4 の実機ゲート（12 秒で kill し `start` だけが残ることを見る）のみで、
+    /// CI はこの性質を守らない。
     #[test]
-    fn background_rescan_writes_start_before_scanning_and_end_at_the_terminal() {
+    fn background_rescan_writes_a_start_end_pair_sharing_one_sid() {
         let _serial = INDEX_LOCK_TEST_GUARD
             .lock()
             .unwrap_or_else(|e| e.into_inner());

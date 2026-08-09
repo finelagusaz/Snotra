@@ -621,6 +621,30 @@ A1〜A3 は Rust ③ #1/#2 と同じ箇所であり、上表の「doc へ射程�
 むしろ「呼び出し側はこの一覧を写さない……黙って落ちる」と**警告している側**である（§10.6.3）。
 偽の主張が無いので消すものが無く、残るのは機構の実装だけである。
 
+**実装結果（Task 6）**: `SnotraTraceInvariants.Tests.ps1` へ**モジュール自身のソーステキストを
+走査するテスト**を 1 本足した。`Invariant = '…'` / `-Invariant '…'` のリテラルを拾い、
+`Get-SnotraTraceInvariantNames` と**両方向**で突き合わせる。§2 が挙げた「母集団を一覧ではなく
+ソーステキストへ移す」形（`startup.rs::count_matches_the_enum_declaration`）の PowerShell 版であり、
+一覧は残して照合を足した——順序が表示・集計の列順を決めるため、導出に置き換えると編集順が
+列順になる。**一覧を母集団に取る形では原理的に届かない**ことは、既存の
+「返す名前が Overall のキーと過不足なく一致する」が変異下でも緑のまま通ることで確認した。
+
+実測（Pester 6.0.1・`target/pester/` のキャッシュ・`SnotraTraceInvariants.Tests.ps1` 単体）:
+
+| 状態 | 結果 |
+|---|---|
+| 素（検査を足す前） | 41 passed / 0 failed |
+| §10.4 の変異（H6 を判定本体へ・一覧へ足さない）／検査を足す前 | 41 passed / 0 failed（③ の再現） |
+| 同変異／検査を足した後 | 41 passed / **1 failed**（`but got 'H6'`） |
+| 逆向きの変異（`'H9'` を一覧へ・判定本体には無い） | 41 passed / **1 failed**（`but got 'H9'`） |
+| 素（検査を足した後） | **42 passed / 0 failed** |
+
+**新しい検査自身の射程**（正本は同テストのコメント）: 単一引用符のリテラルしか見えない・
+`Invariant = '…'` と `-Invariant '…'` の 2 形しか見ない・走査するのは当該 `.psm1` 1 枚だけ・
+順序は守らない・**名前と判定の対応も守らない**（H4 の判定が H5 の名前で違反を積んでも、
+両方が一覧に在れば通る）。`npm run test:powershell` が `scripts/lib` を丸ごと拾うため、
+この検査は PR CI（`ci.yml` の "Run PowerShell tests (Pester)"）で常時走る。
+
 ### 11.3 機構化の余地（Task 6 の裁量・必須ではない）
 
 **Rust ③ #1/#2（`SECTION_TABLE` / A 群）。** 足し忘れの帰結は「新セクションを編集してもタブ別

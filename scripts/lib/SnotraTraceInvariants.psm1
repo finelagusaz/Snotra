@@ -37,6 +37,11 @@ $script:PseudoSectionTitle = '(最初の項目より前)'
 .DESCRIPTION
 **呼び出し側はこの一覧を写さない**（`/symmetric-check`）。写しを持つと、判定を 1 つ足したとき
 モジュール側だけが直り、記録・集計・exit code から新しい不変条件が**黙って落ちる**。
+
+**逆向き——判定本体へ足してこの一覧へ足し忘れた場合——は検査が捕まえる。**
+`SnotraTraceInvariants.Tests.ps1` の同名 `Describe` にあるソース走査テストが、このモジュールの
+ソーステキストから `Invariant` のリテラルを拾って一覧と突き合わせる（#1008）。
+**その検査が守らない範囲は同テストのコメントが正本である。**
 #>
 function Get-SnotraTraceInvariantNames {
     [CmdletBinding()]

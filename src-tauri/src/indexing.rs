@@ -6,6 +6,7 @@
 
 use std::sync::Mutex;
 
+use snotra_core::engine::{IndexInputs, PrebuiltIndex};
 use snotra_core::indexer;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -85,6 +86,27 @@ pub fn start_index_build(app: &AppHandle) -> bool {
     true
 }
 
+/// 材料から索引を建てる。**PATH エントリのマージを含む。**
+///
+/// **drain ループと背景再スキャンの適用が同じここを通ることが、両者が一致することの
+/// 根拠である。** 手順を写すと、片方だけ PATH マージを忘れる欠陥が沈黙で起きる
+/// ——PATH のコマンドが検索から消えるが、検索結果自体は出るので気づく手段が無い
+/// （`normalize_entry_key_into` と同じ理屈）。
+pub(crate) fn build_index_from_material(
+    mut material: indexer::IndexMaterial,
+    inputs: &IndexInputs,
+) -> PrebuiltIndex {
+    // **木とマスクは組のまま持つ**ので、片方だけ伸ばす形はここでは書けない
+    // （正本は `IndexMaterial` の doc）。
+    if inputs.include_path_env {
+        let path_entries = indexer::scan_path_env(material.tree(), inputs.show_hidden_system);
+        material.extend_with_path_entries(path_entries);
+    }
+    // **ここで分岐しない。** 派生データの有無で建て方が分かれるのは
+    // `SearchEngine::from_material` の 1 か所だけである。
+    PrebuiltIndex::from_material(material, inputs.migemo_enabled)
+}
+
 /// `index_stale` が解消されるまでドレインする:
 /// begin（現在 config の `IndexInputs` スナップショット）→ ロック外で重い構築 → complete（O(1) スワップ + re-diff）。
 /// ビルド中に config が変わっていれば complete が stale を残し、次の begin が再び snapshot を返して再ビルドする。
@@ -99,13 +121,7 @@ fn drain_index(app_handle: &AppHandle) {
         let Some(inputs) = inputs else { break };
 
         // **保存が返した派生データをそのまま索引の表現に使う**（`rebuild_and_save` の doc）。捨てて建て直していた頃の額は `PERFORMANCE.md`「採用: `PrebuiltIndex` を `CachedMasks` 込みで建てる」。
-        let mut material = indexer::rebuild_and_save(&inputs.scan, inputs.show_hidden_system);
-
-        // PATH エントリのマージ。**木とマスクは組のまま持つ**ので、片方だけ伸ばす形はここでは書けない（正本は `IndexMaterial` の doc）。
-        if inputs.include_path_env {
-            let path_entries = indexer::scan_path_env(material.tree(), inputs.show_hidden_system);
-            material.extend_with_path_entries(path_entries);
-        }
+        let material = indexer::rebuild_and_save(&inputs.scan, inputs.show_hidden_system);
 
         // **アイコンキャッシュにはもう触らない。** 索引照合の剪定は #996 で撤去し、無効化時の
         // 破棄も `config_watcher` の true → false のエッジへ移した（理由は `icon::drop_icon_cache`
@@ -113,10 +129,7 @@ fn drain_index(app_handle: &AppHandle) {
 
         // SearchEngine の構築（O(N)）は Mutex 外で実施してロック保持時間を最小化する。
         // migemo 無効時は kana_lower_names を構築しない（issue #337）。
-        //
-        // **ここで分岐しない。** 派生データの有無で建て方が分かれるのは `SearchEngine::from_material` の 1 か所だけで、その条件の正本は `indexer::save_cache_sorted` の分岐である。
-        let new_index =
-            snotra_core::engine::PrebuiltIndex::from_material(material, inputs.migemo_enabled);
+        let new_index = build_index_from_material(material, &inputs);
         {
             let state = app_handle.state::<AppState>();
             state

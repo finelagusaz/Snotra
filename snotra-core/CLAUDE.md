@@ -199,7 +199,7 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 
 ## indexer.rs の背景再スキャン
 
-`load_or_scan_with_stats` はキャッシュヒット時、再スキャンを*その場で spawn せず* `LoadOrScanResult.rescan_task`（`Some(BackgroundRescanTask)`）として返す。`src-tauri` が `AppHandle` を持った状態で低優先度スレッドで `task.run()` し、**結末と索引の材料の組**（`RescanRun { outcome, material }`）を受け取る。材料が載るのは `Changed` のときだけで、呼び出し側はそれでアイコンキャッシュを無効化し、走っているセッションの索引をその場で差し替える（建てる手順は `src-tauri/CLAUDE.md` の `indexing.rs` 節、差し替えの安全性は `apply_rescanned_index` の doc と設計書 `docs/superpowers/specs/2026-08-10-rescan-applies-its-result-design.md` §2.4・§3 を参照）。
+`load_or_scan_with_stats` はキャッシュヒット時、再スキャンを*その場で spawn せず* `LoadOrScanResult.rescan_task`（`Some(BackgroundRescanTask)`）として返す。`src-tauri` が `AppHandle` を持った状態で低優先度スレッドで `task.run()` し、**結末・索引の材料・材料を走査した対象の同一性の組**（`RescanRun { outcome, material, scanned_config_hash }`）を受け取る。材料と `scanned_config_hash` が載るのは `Changed` のときだけで、呼び出し側はそれでアイコンキャッシュを無効化し、走っているセッションの索引をその場で差し替える（建てる手順は `src-tauri/CLAUDE.md` の `indexing.rs` 節、差し替えの安全性は `apply_rescanned_index` の doc と設計書 `docs/superpowers/specs/2026-08-10-rescan-applies-its-result-design.md` §2.4・§3 を参照）。
 
 - ロジック（lock 取得・`scan_all` / `sort_entries_canonical` / `entries_digest` 比較・`save_cache_sorted`）は `snotra-core`、spawn とアイコン無効化は `src-tauri`。`index.bin` は snotra-core の資源、`icons.bin` は src-tauri の資源——所有者に責務を寄せている
 - **タスクが抱えるのは digest（u64）であって全エントリの複製ではない**（反復 6）。かつては `Vec<AppEntry>` を丸ごと持ち、起動のたびに 624,755 ブロック・62.49 MiB を確保していた。**digest は列の順序に依存する**ので、比較する両辺は必ず `sort_entries_canonical` を通すこと——外すと中身が同じでも「変わった」と判定して `index.bin` を毎回書き直す（結果は正しいまま静かに遅くなるので挙動テストでは捕まらない。検知器は `sorted_comparison_ignores_enumeration_order`）

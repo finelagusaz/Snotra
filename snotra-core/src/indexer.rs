@@ -577,6 +577,19 @@ fn compute_config_hash(scan: &[ScanPath], show_hidden_system: bool) -> u64 {
     hasher.finish()
 }
 
+/// `compute_config_hash`（private）を crate 外から呼ぶための薄い入口。**走査対象そのものの
+/// 同一性だけを表す**——入力は `scan` と `show_hidden_system` の 2 つだけで、
+/// `include_path_env` / `migemo_enabled` は含まない（それらは走査ではなく索引の**構築**を
+/// 左右する入力であり、`engine::IndexInputs` が別に持つ）。
+///
+/// [`RescanRun::scanned_config_hash`] は同じ `compute_config_hash` を通して作った値を運ぶ。
+/// `src-tauri` の `apply_rescanned_index` は、差し替え時点の現在 config からこの入口経由で
+/// 同じ値を導き、`scanned_config_hash` と照合する——**内部を丸ごと公開する代わりに、
+/// 比較に要る計算だけをここへ閉じ込めてある**。
+pub fn scan_identity_hash(scan: &[ScanPath], show_hidden_system: bool) -> u64 {
+    compute_config_hash(scan, show_hidden_system)
+}
+
 fn cache_bin_file_in(dir: &Path) -> BinFile {
     BinFile::new_in(dir, INDEX_MAGIC, INDEX_CACHE_VERSION, "index.bin")
 }
@@ -1229,6 +1242,14 @@ pub struct RescanRun {
     /// 走査はここまでで 1 回きりであり、呼び出し側が建て直す必要は無い
     /// ——建て直す実装（`start_index_build` を呼ぶ形）は全走査を 2 回にする。
     pub material: Option<IndexMaterial>,
+    /// **`material` を実際に走査した対象の同一性**（`scan_identity_hash` と同じ値）。
+    /// `material` と同時にだけ `Some` になる。呼び出し側はこれを、差し替え時点の
+    /// 現在 config から `scan_identity_hash` で導いた値と照合する——**差し替え前後の
+    /// 2 度の検査時点の入力どうしを比べるだけでは、両方が同じ新しい config を指して
+    /// いても「材料はそれより古い config で走査した」ことを見抜けない**（`main.rs`
+    /// `apply_rescanned_index` の doc が実例を持つ）。ここが運ぶのは、その 2 検査の
+    /// どちらとも独立な「材料の出自」そのものである。
+    pub scanned_config_hash: Option<u64>,
 }
 
 /// 背景再スキャン本体。書き込みロックを取得できなければ（権威的ビルドが進行中）
@@ -1248,6 +1269,7 @@ fn try_background_rescan(
         return RescanRun {
             outcome: RescanOutcome::Skipped,
             material: None,
+            scanned_config_hash: None,
         };
     };
     try_background_rescan_in(
@@ -1294,6 +1316,7 @@ fn try_background_rescan_in(
 
     let mut rec = rescan_log::RescanRecord::default();
     let mut material = None;
+    let mut scanned_config_hash = None;
 
     // 権威的ビルド（rebuild_and_save / cache-miss save）が書き込み中なら Skipped。
     let changed = try_with_index_write_lock(|| {
@@ -1344,6 +1367,13 @@ fn try_background_rescan_in(
             // **中身が変わったときだけ運ぶ**（昇格だけなら中身は同一）。
             if changed {
                 material = Some(IndexMaterial::derived(tree, masks));
+                // **材料と対で、それを走査した対象の同一性も運ぶ**（I-1）。適用側の
+                // 検査を「差し替え前後の 2 検査どうしの一致」に閉じると、両方が
+                // 同じ新しい config を指していても「材料はそれより古い config で
+                // 走査した」ケースを見抜けない。ここに書く `config_hash` は、まさに
+                // 今 `scan_all` した対象（引数の `scan` / `show_hidden_system`）から
+                // 導いた値であり、`save_cache_sorted_in` へ渡すのと同じ値である。
+                scanned_config_hash = Some(config_hash);
             }
         }
         Some(changed)
@@ -1374,7 +1404,11 @@ fn try_background_rescan_in(
             started.elapsed(),
         ),
     );
-    RescanRun { outcome, material }
+    RescanRun {
+        outcome,
+        material,
+        scanned_config_hash,
+    }
 }
 
 /// 背景再スキャンのタスク。所有データを抱え、`src-tauri` 側のスレッドへ `move` できる。
@@ -3938,6 +3972,41 @@ mod tests {
         assert!(
             run.material.is_some(),
             "Changed なら索引の材料が返ること（捨てると 1 起動ぶん遅れる）"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// **`RescanRun` は材料と対で、それを走査した対象の同一性を運ぶ。** `apply_rescanned_index`
+    /// （`src-tauri`）はこれを差し替え時点の現在 config から導いた値と照合する——差し替え前後の
+    /// 2 検査どうしの一致だけでは、両方が同じ新しい config を指していても「材料はそれより古い
+    /// config で走査した」ケースを見抜けない（I-1）。変異: `scanned_config_hash` を配線し
+    /// 忘れる実装（`material` は返るがこちらは `None` のまま）でこの検査が落ちる。
+    #[test]
+    fn background_rescan_run_carries_the_scanned_config_hash() {
+        let _serial = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = temp_dir("rescan_scanned_config_hash");
+        let scan: Vec<ScanPath> = Vec::new();
+        let hash = compute_config_hash(&scan, false);
+        save_cache_sorted_in(&dir, Vec::new(), hash);
+
+        let run = try_background_rescan_in(
+            &dir,
+            &scan,
+            false,
+            hash,
+            entries_digest(&[]) ^ 1,
+            current_index_generation(),
+            INDEX_CACHE_VERSION,
+            0,
+        );
+        assert_eq!(run.outcome, RescanOutcome::Changed);
+        assert_eq!(
+            run.scanned_config_hash,
+            Some(hash),
+            "材料を走査した対象の同一性（scan_identity_hash と同じ値）が運ばれること"
         );
 
         let _ = fs::remove_dir_all(&dir);

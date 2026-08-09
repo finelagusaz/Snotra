@@ -3,10 +3,10 @@
 //!
 //! 起動時の背景再スキャン（`indexer::load_or_scan_with_stats` が返す `BackgroundRescanTask`）を
 //! setup フェーズで低優先度スレッドに spawn する。`RescanOutcome::Changed` なら
-//! `icon::invalidate_icon_cache` を呼び、返った材料で索引を建て直して `apply_rescanned_index` が
+//! `icon::invalidate_icon_cache` を呼び、返った材料から索引を建てて `apply_rescanned_index` が
 //! 走っているセッションの索引を差し替える。差し替えは `is_index_stale()` と `IndexInputs` の
-//! 同一性を同じロック内で照合した上での条件つきで、どちらか一方でも不一致なら見送る
-//! （理由・残余は `apply_rescanned_index` の doc と設計書
+//! 同一性、そして材料を走査した対象の同一性を同じロック内で照合した上での条件つきで、
+//! いずれか一つでも不一致なら見送る（理由・残余は `apply_rescanned_index` の doc と設計書
 //! `docs/superpowers/specs/2026-08-10-rescan-applies-its-result-design.md` §2.4・§3）。
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -619,8 +619,11 @@ fn setup_background_rescan(
                 if let Some(icons) = handle_for_rescan.try_state::<IconCacheState>() {
                     icon::invalidate_icon_cache(&icons);
                 }
-                if let Some(material) = run.material {
-                    apply_rescanned_index(&handle_for_rescan, material);
+                // `material` と `scanned_config_hash` は対で `Some`（`RescanRun` の doc）。
+                if let (Some(material), Some(scanned_config_hash)) =
+                    (run.material, run.scanned_config_hash)
+                {
+                    apply_rescanned_index(&handle_for_rescan, material, scanned_config_hash);
                 }
             });
     }
@@ -634,7 +637,22 @@ fn setup_background_rescan(
 ///
 /// **重い構築（`build_index_from_material`）はロックの外で行う。** ロックの中に入れて
 /// よいのは差し替えの一瞬だけである。
-fn apply_rescanned_index(app: &AppHandle, material: indexer::IndexMaterial) {
+///
+/// `scanned_config_hash` は `material` を実際に走査した対象の同一性
+/// （`indexer::scan_identity_hash(scan, show_hidden_system)` と同じ値。運ぶ経緯は
+/// `RescanRun::scanned_config_hash` の doc）。**差し替え前後の 2 回の検査どうしを比べる
+/// だけでは足りない**——本式ビルドが「再スキャンがロックを手放してから 2 回目の検査まで」
+/// の窓で完走すると、1 回目・2 回目の `IndexInputs` はどちらも**その新しい config**を
+/// 指して一致してしまい、旧来の 2 検査は素通りする。だが材料は**それより古い config で
+/// 走査したもの**であり、走査対象の違う索引が stale を立てぬまま居座る（設計書 §3 が
+/// 記す残余）。ゆえに 2 回目のロック内で、**今の config から導いた走査対象の同一性**を
+/// `scanned_config_hash` と直接照合する——snapshot 同士ではなく、材料の出自そのものと
+/// 比べる。
+fn apply_rescanned_index(
+    app: &AppHandle,
+    material: indexer::IndexMaterial,
+    scanned_config_hash: u64,
+) {
     let Some(state) = app.try_state::<AppState>() else {
         return;
     };
@@ -650,18 +668,33 @@ fn apply_rescanned_index(app: &AppHandle, material: indexer::IndexMaterial) {
         }
         IndexInputs::from_config(engine.config())
     };
+    // **走査した対象が今の対象と既に違うなら、重い構築の前に見送る。** 正しさの根拠は
+    // 下の 2 回目の照合にあり、ここは前倒しの節約にすぎない。
+    if indexer::scan_identity_hash(&inputs.scan, inputs.show_hidden_system) != scanned_config_hash {
+        return;
+    }
 
     let index = indexing::build_index_from_material(material, &inputs);
 
     let Ok(mut engine) = state.engine.lock() else {
         return;
     };
+    let current_inputs = IndexInputs::from_config(engine.config());
     // **stale だけでは足りない。** 本式ビルドが先に完走すると `complete_index_drain` が
     // stale を落とすため、2 回目の検査は通ってしまい、**新しい索引を古い入力で建てた
     // 索引で上書きする**——しかも stale が落ちているので誰も直さない。ゆえに
     // 「建てたときの入力が今も現在の入力か」まで見る（`complete_index_drain` の
     // re-diff と同型の判定だが、**台帳には触れない**）。
-    if engine.is_index_stale() || IndexInputs::from_config(engine.config()) != inputs {
+    if engine.is_index_stale() || current_inputs != inputs {
+        return;
+    }
+    // **上の 2 検査だけでは閉じない窓が残る（I-1）。** 本式ビルドが「ロック解放〜2 回目の
+    // 検査」の間に完走すると、1 回目・2 回目の `inputs` はどちらもその新しい config を
+    // 指して一致し、上の検査は通ってしまう。それでも材料は古い config で走査したもの
+    // なので、走査した対象そのものを今の config から導いた値と直接照合する。
+    if indexer::scan_identity_hash(&current_inputs.scan, current_inputs.show_hidden_system)
+        != scanned_config_hash
+    {
         return;
     }
     // **`complete_index_drain` を使ってはならない**——あれは「このビルドが現在の
@@ -719,6 +752,10 @@ mod tests {
     /// 終わりまで（この 2 関数のどちらから退行が生えても捕まえる。`apply_rescanned_index`
     /// だけに閉じていた前版は spawn 本体への注入に沈黙した）。ソーステキストそのものを見る
     /// 手は `startup.rs` の `count_matches_the_enum_declaration` と同じ。
+    ///
+    /// **残る死角**: 母集団はこの 2 関数のソーステキストだけであり、**呼び出しグラフは
+    /// 辿らない**。この 2 関数の外に定義したヘルパー経由で `start_index_build` /
+    /// `complete_index_drain` を呼ぶ退行は、母集団の外側にある限り捕まらない。
     #[test]
     fn rescan_application_does_not_kick_a_full_rebuild_or_forge_the_ledger() {
         let src = include_str!("main.rs");

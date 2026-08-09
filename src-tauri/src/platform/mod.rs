@@ -122,10 +122,14 @@ impl PlatformBridge {
     /// 他の送信（[`Self::send_command`]）は fire-and-forget でよい——起動の終端に関わらない
     /// ためである。こちらだけが結果を返すのは、**bridge が生きていない起動を
     /// `startup:failed` として出せないと、ハーネスの「タイムアウト」に化ける**からである。
+    ///
+    /// **`thread_id == 0` のガードは持たない。**（以下、理由） [`PlatformBridgePending::wait`] が
+    /// その場合に `Err(BridgeError::Init)` を返すので、`thread_id == 0` の
+    /// `PlatformBridge` は構築できない（構築点は `wait` の 1 つだけ）。ここに書くと
+    /// **到達しない分岐**になり、`StartupFailure::PlatformInit` の出所を 2 か所に
+    /// 見せてしまう（/code-review の指摘）。[`Self::send_command`] 側の同じガードは
+    /// **消していない**——あちらは fire-and-forget で、防御的な早期 return の意味が別である。
     pub fn send_initial_hotkey_registration(&self) -> Result<(), BridgeError> {
-        if self.thread_id == 0 {
-            return Err(BridgeError::Init);
-        }
         self.command_tx
             .send(PlatformCommand::RegisterInitialHotkey)
             .map_err(|_| BridgeError::Disconnected)?;

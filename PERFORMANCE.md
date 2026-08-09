@@ -1462,7 +1462,7 @@ migemo の設定に依らない（`shared_file_name_flag_is_measured_not_inferre
 | tauri_init | 3 | 3 | 4 |
 | **windows_create**（フォント解決込み） | 27 | 27 | 28 |
 | setup_rest | 0 | 0 | 0 |
-| **hotkey_register**（platform スレッドの登録待ち） | 18 | 19 | 19 |
+| **hotkey_register**（送信後の setup の残り + platform スレッドの登録待ち） | 18 | 19 | 21 |
 | **post_main** | 76 | 79 | 80 |
 
 **`windows_create` と `hotkey_register` で post_main の 58% を占める。** 索引まわり
@@ -1493,9 +1493,12 @@ migemo の設定に依らない（`shared_file_name_flag_is_measured_not_inferre
 | **hotkey_register** | **298** | **312** | **2,171** | **18〜19** |
 | **post_main** | 332 | 348 | **2,212** | 76〜80 |
 
-- **分散は起動処理そのものではなく `RegisterHotKey` の完了待ちに集中している。** 他の区間は
-  開発機とほぼ同じで、`windows_create` に至っては差が無い。**`hotkey_register` だけが
-  16〜114 倍**である
+- **分散は `hotkey_register` に集中している。** 他の区間は開発機とほぼ同じで、
+  `windows_create` に至っては差が無い。**この区間だけが 16〜114 倍**である
+  - **この表は競合の修正より前に取った。** 当時マークが送信より後ろに在ったため、
+    `hotkey_register` は送信後の setup の残りを含んでいた（今も含む——上の「代償」節）。
+    ただし**当時は `setup_rest` が `null` になりうる状態でもあった**（7 標本とも 0 が出て
+    いるので、この 7 回は main 側が先に着いている）。**次の CI 実行で取り直すこと**
 - **1 回目だけ 2,212 ms、2 回目以降は 332〜351 ms**（6 倍）。cold と warm の差がこの区間に乗る
 - **`first_trace_ms` が測っていたのは起動ではなくホットキー登録だった**——最初の trace は
   `hotkey:registered` であり、その手前の区間（config / 索引 / engine / 窓）は合計 50 ms 前後で
@@ -1514,6 +1517,16 @@ migemo の設定に依らない（`shared_file_name_flag_is_measured_not_inferre
 マークを setup ブロックの末尾へ移したところ **0 → 18〜19 ms**、`post_main` も
 55〜62 → 76〜80 ms になった。**前の測定は setup の残り約 20 ms を取りこぼしていた。**
 「区間の意味」と「マークの位置」がずれても総和は合い続ける——ここでも**和は何も守らない**。
+
+**ただしその移設が競合を作った**（`/code-review` が指摘）。末尾は送信より 5 つの setup
+ぶん後ろで、**platform スレッドが先に登録を終えた回は `setup_rest` が `null` のまま
+終端が出る**——ハーネスが「説明されない `null`」で落ちる。マークは**送信の直前**へ戻した。
+
+**代償として `hotkey_register` は「純粋な登録待ち」ではない**——送信後に main スレッドが
+やった残り（リスナー登録・config watcher・トレイ生成）を含む。**並行に走るものを 1 本の
+時間軸で刻む以上、どちらかへ寄せるしかない**（分けるには platform 側にも独立した anchor
+が要る）。**開発機では値が変わらなかった**（p50 79 ms のまま）——platform 側が遅い側に
+着くためで、リスクは runner のような環境で顕在化する。
 
 ## 計測ベースライン（2026-03-06）
 

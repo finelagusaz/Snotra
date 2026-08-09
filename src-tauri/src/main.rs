@@ -348,6 +348,10 @@ fn main() {
             // platform thread. Registering the listener before activating the
             // hotkey ensures no event is emitted before there is a receiver to
             // handle it — this order must not change (src-tauri/CLAUDE.md).
+            //
+            // **`SetupRest` はこの呼び出しの中（送信の直前）で刻まれる。** platform
+            // スレッドは送信の直後から並行に走り、登録を終えると終端を出す——そのとき
+            // マークが済んでいないと `setup_rest` が `null` のまま出力される。
             setup_hotkey_listener(&app_handle);
 
             // Listen for open-settings event from tray
@@ -372,12 +376,6 @@ fn main() {
             // Show window on startup if configured. Must run last: relies on the
             // platform bridge (IME control) and listeners registered above.
             setup_startup_display(&app_handle, show_on_startup);
-
-            // **setup ブロックの末尾で刻む。** ここが「main スレッドが起動でやることの
-            // 終わり」であり、残る `hotkey_register` は platform スレッドが登録を終える
-            // までの**待ち**を表す。`setup_hotkey_listener` の中（送信直前）に置いていた
-            // 頃は、以降の setup がまるごと hotkey_register へ吸われていた。
-            startup::mark(startup::Phase::SetupRest);
 
             Ok(())
         })
@@ -499,11 +497,18 @@ fn setup_hotkey_listener(app_handle: &AppHandle) {
     // hotkey-pressed listener is now registered; activate hotkey on platform thread.
     // Registering the hotkey only after the listener is ready ensures no event
     // is emitted before there is a receiver to handle it.
-    // **ここに `SetupRest` のマークを置いてはならない。** この関数は setup ブロックの
-    // 途中で呼ばれ、以降もリスナー登録・config watcher・トレイ生成が続く。ここで刻むと
-    // 「setup の残り」が hotkey_register の区間へ丸ごと吸われ、しかも platform スレッドは
-    // 並行に登録を終えるので **hotkey_register がほぼ 0 ms に潰れる**（実測: 7 回とも 0）。
-    // マークは setup ブロックの末尾（`setup_tray` の後）に在る。
+    // **マークは送信より前でなければならない。** 送信した瞬間から platform スレッドが
+    // 並行に走り、登録を終えると終端（`startup:finish`）を出す。マークが後ろにあると、
+    // platform 側が先に着いた回だけ `setup_rest` が `null` のまま出力され、ハーネスが
+    // 「説明されない null」で落ちる（/code-review が指摘。**実際に一度そう書いた**
+    // ——setup ブロックの末尾へ移した版がそれで、送信より 5 つの setup ぶん後ろだった）。
+    //
+    // **代償は受け入れる。** この関数は setup ブロックの途中で呼ばれるので、以降の
+    // リスナー登録・config watcher・トレイ生成は `hotkey_register` の区間へ含まれる
+    // ——`hotkey_register` は「純粋な登録待ち」ではなく「送信後に main スレッドがやった
+    // 残り + 登録待ち」である。**並行に走るものを 1 本の時間軸で刻む以上、どちらかへ
+    // 寄せるしかない**（両方を正しく分けるには platform 側にも独立した anchor が要る）。
+    startup::mark(startup::Phase::SetupRest);
 
     // **送信できなかった経路にも終端を置く。** bridge state 不在・`Mutex` の poison・
     // channel 切断のいずれでも `RegisterInitialHotkey` の arm は走らないので、ここで

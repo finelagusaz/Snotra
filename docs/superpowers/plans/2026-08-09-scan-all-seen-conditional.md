@@ -542,7 +542,393 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 
 ---
 
-## Task 4: B 側標本を取り、文書へ落とす
+## Task 4: 判定を根ごとの `check` / `record` へ細かくする
+
+> **このタスクは実測を受けた設計改訂である**（設計書 §1 の訂正・§2.2 の書き直し）。Task 3 までの
+> 「`scan_all` 単位で建てる／建てない」判定は、実 config が 4 根で `C:\` が他 3 根の祖先だった
+> ため**実運用点で削減 0** だった（allocs 5,991,749 → 5,991,979・peak 変化なし）。**判定は
+> 正しく、前提が偽だった。**
+
+**Files:**
+- Modify: `snotra-core/src/indexer.rs`（`roots_overlap` を `root_roles` へ置換 / `Dedup`・`RootRole` を新設 / `scan_all`・`scan_directory_with_extensions` を書き換え / テストの追加と書き換え）
+
+**Interfaces:**
+- Consumes: `is_ancestor_or_same(&str, &str) -> bool`（Task 2・そのまま残す）/ `normalize_entry_key_into(&mut String, &str)`（`indexer.rs` の既存 `pub` 関数）
+- Produces: `struct RootRole { check: bool, record: bool }` / `fn root_roles(&[ScanPath]) -> Vec<RootRole>` / `struct Dedup { set, buf, role }` と `Dedup::accept(&mut self, path: &str) -> bool`
+
+- [ ] **Step 1: 失敗するテストを書く**
+
+`mod tests` の中、Task 2 が足した `roots_overlap` のテスト群と置き換える形で足す。**`root(path)` ヘルパーは Task 2 が定義済みなので再定義しない。**
+
+```rust
+    // ---- root_roles tests ----
+
+    /// **積むのは「後続の根と重なる」側である。** 重複が起きるのは先に入ったエントリが
+    /// 後の走査で再び現れるときだけなので、向きはこの 1 通りしかない。
+    #[test]
+    fn root_roles_records_on_the_earlier_root_and_checks_on_the_later() {
+        let roles = root_roles(&[root("C:\\X"), root("C:\\X\\sub")]);
+        assert_eq!((roles[0].check, roles[0].record), (false, true));
+        assert_eq!((roles[1].check, roles[1].record), (true, false));
+    }
+
+    /// **順序が逆でも役割が入れ替わるだけで、重複排除は成立する。**
+    #[test]
+    fn root_roles_follow_the_order_not_the_depth() {
+        let roles = root_roles(&[root("C:\\X\\sub"), root("C:\\X")]);
+        assert_eq!((roles[0].check, roles[0].record), (false, true));
+        assert_eq!((roles[1].check, roles[1].record), (true, false));
+    }
+
+    /// 実運用点の形（最大の根が最後に来る）。**ここで `C:\` が「照合のみ」になることが
+    /// この設計の全部である**——積まないので 30 万件ぶんの `String` 確保が消える。
+    #[test]
+    fn root_roles_over_the_real_shape_leave_the_largest_root_inert() {
+        let roles = root_roles(&[
+            root("C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs"),
+            root("C:\\Users\\Eoh\\Desktop"),
+            root("C:\\"),
+        ]);
+        assert_eq!((roles[0].check, roles[0].record), (false, true));
+        assert_eq!((roles[1].check, roles[1].record), (false, true));
+        assert_eq!(
+            (roles[2].check, roles[2].record),
+            (true, false),
+            "最大の根が積む側に回ると削減が消える"
+        );
+    }
+
+    #[test]
+    fn root_roles_are_all_inert_when_nothing_overlaps() {
+        let roles = root_roles(&[root("C:\\A"), root("D:\\B")]);
+        assert!(roles.iter().all(|r| !r.check && !r.record));
+    }
+
+    #[test]
+    fn root_roles_treat_exact_duplicates_as_overlap() {
+        let roles = root_roles(&[root("C:\\Tools"), root("c:/tools/")]);
+        assert_eq!((roles[0].check, roles[0].record), (false, true));
+        assert_eq!((roles[1].check, roles[1].record), (true, false));
+    }
+
+    /// **境界の 2 枝を 1 本にまとめると、ここが落ちる**（`c:\tools` は `c:\toolsextra` の
+    /// 接頭辞だが、次の 1 バイトが `\` ではないので入れ子ではない）。
+    #[test]
+    fn root_roles_ignore_siblings_sharing_a_prefix() {
+        let roles = root_roles(&[root("C:\\Tools"), root("C:\\ToolsExtra")]);
+        assert!(roles.iter().all(|r| !r.check && !r.record));
+    }
+
+    #[test]
+    fn root_roles_empty_for_no_paths() {
+        assert!(root_roles(&[]).is_empty());
+    }
+```
+
+さらに、走査の挙動を**両方向で**固定するテストを足す（Task 3 の `scan_all_dedups_when_roots_are_nested` は `[X, X\sub]` の順しか見ていない）。
+
+```rust
+    /// **子の根が先に来る順序でも重複が出ない。** 役割が入れ替わるだけで成立することを、
+    /// 述語の単体テストではなく走査の結果で固定する。
+    #[test]
+    fn scan_all_dedups_when_the_child_root_comes_first() {
+        let dir = temp_dir("nested_roots_child_first");
+        let sub = dir.join("sub");
+        fs::create_dir_all(&sub).expect("create sub dir");
+        fs::write(sub.join("tool.exe"), b"x").expect("write fixture");
+
+        let scan = vec![
+            ScanPath {
+                path: sub.to_string_lossy().into_owned(),
+                extensions: vec![".exe".to_string()],
+                include_folders: false,
+            },
+            ScanPath {
+                path: dir.to_string_lossy().into_owned(),
+                extensions: vec![".exe".to_string()],
+                include_folders: false,
+            },
+        ];
+        let entries = scan_all(&scan, true);
+
+        assert_eq!(
+            entries.len(),
+            1,
+            "子の根が先に来る順序で同じファイルが二度入っている"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+```
+
+**Task 2 が足した `roots_overlap` のテスト 7 本は削除する**（`roots_overlap` 自体を消すため）。境界の検査は上の `root_roles_ignore_siblings_sharing_a_prefix` と `root_roles_treat_exact_duplicates_as_overlap` が引き継ぐ。
+
+- [ ] **Step 2: テストが落ちることを確認**
+
+Run: `cargo test -p snotra-core root_roles`
+Expected: FAIL — `cannot find function 'root_roles' in this scope`（コンパイルエラー）
+
+- [ ] **Step 3: `root_roles` を実装し、`roots_overlap` を置き換える**
+
+Task 2 が入れた `roots_overlap` を**削除**し、同じ位置へ次を置く。`is_ancestor_or_same` はそのまま残す。
+
+```rust
+/// 2 つの正規化済みの根が重なるか（どちらが祖先でもよい）。
+fn roots_overlap_pair(a: &str, b: &str) -> bool {
+    is_ancestor_or_same(a, b) || is_ancestor_or_same(b, a)
+}
+
+/// 走査中の根の役割。**重複排除に払う代金を根ごとに決める。**
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RootRole {
+    /// 先行する根と重なる → 既出かを照合する。
+    check: bool,
+    /// 後続の根と重なる → 自分のキーを積む。
+    record: bool,
+}
+
+/// 根ごとに [`RootRole`] を決める。
+///
+/// **積むのは「後続の根と重なる」側だけである。** 木の走査は同じディレクトリを二度読まない
+/// ので、あるエントリが二度現れるのは「根 `i` に入ったものが、後続の根 `j > i` の走査でも
+/// 現れる」ときに限る。ゆえに根 `i` のキーを保持する必要があるのは後続に重なる根があるとき
+/// だけで、**最後の根は（先行と重なっていても）照合するだけでよい**。
+///
+/// **額は根の順序に依存する。** 実運用点では最大の根 `C:\` が最後に来るため、その 30 万件が
+/// 丸ごと「照合のみ」になる。**これは判定の欠陥ではない**——順序に対して述語は正しく、額だけが
+/// 構成に依存する。**順序を並べ替えて額を取りに行ってはならない**: 返り値の順序が変わり、
+/// `entries_digest` がずれて毎起動 `index.bin` を書き直す（検知器は
+/// `sorted_comparison_ignores_enumeration_order`）。
+///
+/// **完全一致も重なりとして拾う。** `scan_all` は `dedup_scan_paths` を通さない配列も受け取る
+/// （`src-tauri` の `icon_pipeline_cost_probe` が `Config::default_scan_paths()` を直接渡す）。
+///
+/// 根は一桁ゆえ全ペア走査で無料である。
+fn root_roles(scan_paths: &[ScanPath]) -> Vec<RootRole> {
+    let keys: Vec<String> = scan_paths
+        .iter()
+        .map(|sp| crate::config::normalize_scan_path_key(&sp.path))
+        .collect();
+    (0..keys.len())
+        .map(|i| RootRole {
+            check: keys[..i].iter().any(|h| roots_overlap_pair(h, &keys[i])),
+            record: keys[i + 1..]
+                .iter()
+                .any(|j| roots_overlap_pair(&keys[i], j)),
+        })
+        .collect()
+}
+```
+
+- [ ] **Step 4: テストが通ることを確認**
+
+Run: `cargo test -p snotra-core root_roles`
+Expected: PASS（7 本）
+
+- [ ] **Step 5: `Dedup` 型を実装し、`accept_entry` を置き換える**
+
+Task 3 が入れた `accept_entry` を**削除**し、同じ位置へ次を置く。
+
+```rust
+/// 走査中の重複排除の状態。**集合・バッファ・根の役割を 1 つに束ねる**——別々の引数で
+/// 並べると、再帰の呼び出し点で組を崩せてしまう。
+struct Dedup {
+    /// 重なる根が 1 つも無ければ `None`（この走査は重複排除を必要としない）。
+    set: Option<std::collections::HashSet<String>>,
+    /// 照合だけの根で使い回す正規化キーのバッファ。**確保を走査あたり 1 回に抑える。**
+    buf: String,
+    /// いま走査している根の役割。[`scan_all`] のループが根ごとに差し替える。
+    role: RootRole,
+}
+
+impl Dedup {
+    /// このエントリを採用してよいか。
+    ///
+    /// **`record` が偽の根で `normalize_entry_key` を呼ばないことが本設計の全部である**
+    /// ——実運用点では最大の根がこちらへ回り、30 万件ぶんの `String` 確保が消える。
+    /// 照合は [`normalize_entry_key_into`] で 1 本のバッファへ詰め直し、`HashSet<String>` を
+    /// `&str` で引く（`Borrow<str>`）。**記録側と照合側が同じ関数を通ることがバイト一致の
+    /// 根拠である**——別実装を書き起こしてはならない。
+    fn accept(&mut self, path: &str) -> bool {
+        let Some(set) = self.set.as_mut() else {
+            return true;
+        };
+        match (self.role.check, self.role.record) {
+            // 積む根は insert が照合を兼ねる（既出なら false が返る）。
+            (_, true) => set.insert(normalize_entry_key(path)),
+            (true, false) => {
+                normalize_entry_key_into(&mut self.buf, path);
+                !set.contains(self.buf.as_str())
+            }
+            (false, false) => true,
+        }
+    }
+}
+```
+
+- [ ] **Step 6: `scan_all` と `scan_directory_with_extensions` を繋ぎ替える**
+
+```rust
+pub fn scan_all(scan_paths: &[ScanPath], show_hidden_system: bool) -> Vec<AppEntry> {
+    let mut entries = Vec::new();
+    let roles = root_roles(scan_paths);
+    // **どの根も集合に触れないなら建てない**（根拠は [`root_roles`] の doc）。
+    let needs_set = roles.iter().any(|r| r.check || r.record);
+    let mut dedup = Dedup {
+        set: needs_set.then(std::collections::HashSet::new),
+        buf: String::new(),
+        role: RootRole {
+            check: false,
+            record: false,
+        },
+    };
+
+    for (sp, role) in scan_paths.iter().zip(&roles) {
+        dedup.role = *role;
+        let ext_set = build_extension_list(&sp.extensions);
+        scan_directory_with_extensions(
+            Path::new(&sp.path),
+            &ext_set,
+            sp.include_folders,
+            show_hidden_system,
+            &mut entries,
+            &mut dedup,
+        );
+    }
+
+    entries
+}
+```
+
+`scan_directory_with_extensions` の第 6 引数を `dedup: &mut Dedup` にし、2 つの採用点を次へ置き換える（**`!name.is_empty() &&` の後ろに置く短絡評価を保つ**）。
+
+フォルダ側:
+
+```rust
+                if !name.is_empty() {
+                    let path_str = path.to_string_lossy();
+                    if dedup.accept(path_str.as_ref()) {
+                        entries.push(AppEntry {
+                            name,
+                            target_path: path_str.into_owned(),
+                            is_folder: true,
+                        });
+                    }
+                }
+```
+
+ファイル側:
+
+```rust
+                let path_str = path.to_string_lossy();
+                if !name.is_empty() && dedup.accept(path_str.as_ref()) {
+                    entries.push(AppEntry {
+                        name,
+                        target_path: path_str.into_owned(),
+                        is_folder: false,
+                    });
+                }
+```
+
+再帰呼び出しは `dedup` をそのまま渡す（自動再借用）。
+
+- [ ] **Step 7: 既存テストの呼び出しを直す**
+
+`scan_directory_with_extensions` を直接呼ぶテストが 5 箇所ある。**行番号で辿らない**——次で位置を出す。
+
+```bash
+grep -n "scan_directory_with_extensions" snotra-core/src/indexer.rs
+```
+
+Task 3 が入れた `let mut seen = Some(std::collections::HashSet::new());` を次へ置き換え、呼び出しの引数も `&mut dedup` にする。
+
+```rust
+        let mut dedup = Dedup {
+            set: Some(std::collections::HashSet::new()),
+            buf: String::new(),
+            role: RootRole {
+                check: false,
+                record: true,
+            },
+        };
+```
+
+**`record: true` を使う**——これらのテストは単一ディレクトリの走査で重複排除の挙動を見ており、従来の `insert` する形と等価にするため。
+
+Run: `cargo test -p snotra-core`
+Expected: PASS（全テスト）
+
+- [ ] **Step 8: 変異注入 —— 検知器が本当に発火することを実測する**
+
+**2 つの変異を順に入れ、それぞれで落ちることを確かめる。** 片方だけでは向きの誤りを捕まえられない。
+
+変異 A（積む側を潰す）:
+
+```rust
+            record: false, // ← 変異。`root_roles` の record を常に false にする
+```
+
+Run: `cargo test -p snotra-core scan_all_dedups`
+Expected: **FAIL** — `scan_all_dedups_when_roots_are_nested` と `scan_all_dedups_when_the_child_root_comes_first` の両方が `left: 2, right: 1` で落ちる
+
+変異 B（照合側を潰す）:
+
+```rust
+            check: false, // ← 変異。`root_roles` の check を常に false にする
+```
+
+Run: `cargo test -p snotra-core scan_all_dedups`
+Expected: **FAIL**（同上）
+
+**どちらかが落ちなかったら、そこで止まって報告する。** 検知器が対象を捕まえていないということであり、先へ進んではならない。
+
+- [ ] **Step 9: 変異を戻し、全体が通ることを確認**
+
+Run: `cargo test -p snotra-core`
+Expected: PASS（全テスト）
+
+- [ ] **Step 10: doc の検査**
+
+Run: `cargo doc --workspace --no-deps --document-private-items`
+Expected: 成功
+
+- [ ] **Step 11: コミット**
+
+```bash
+git add snotra-core/src/indexer.rs
+git commit -F <path>
+```
+
+メッセージ:
+
+```
+perf(core): 重複排除の代金を根ごとに決める（#1002）
+
+実 config は 4 根で C:\ が他 3 根の祖先だった。「重なるなら建てる」の粒度
+では判定が真になり、実運用点の削減が 0 だった（allocs 5,991,749 →
+5,991,979・peak 変化なし）。判定は正しく、前提が偽だった。
+
+木の走査は同じディレクトリを二度読まないので、あるエントリが二度現れるのは
+「根 i に入ったものが後続の根 j > i の走査でも現れる」ときに限る。ゆえに
+積むのは後続と重なる根だけでよく、最後の根は照合するだけでよい。実運用点で
+は最大の根 C:\ が最後に来るため、その 30 万件が丸ごと照合のみになる。
+
+照合側は normalize_entry_key_into で 1 本のバッファへ詰め直し、HashSet を
+&str で引く（確保 0）。記録側と照合側が同じ関数を通ることがバイト一致の
+根拠である。
+
+額は根の順序に依存するが、順序を並べ替えて額を取りに行ってはならない——
+返り値の順序が変わり entries_digest がずれる。
+
+検知器は 2 つの変異（record を常に false / check を常に false）で
+それぞれ落ちることを実測した。
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+```
+
+---
+
+## Task 5: B 側標本を取り、文書へ落とす
 
 **Files:**
 - Modify: `PERFORMANCE.md`（節を追加）

@@ -608,7 +608,8 @@ fn setup_background_rescan(
             .name("snotra-index-rescan".to_string())
             .spawn(move || {
                 indexer::lower_current_thread_priority();
-                if task.run().outcome == indexer::RescanOutcome::Changed
+                let run = task.run();
+                if run.outcome == indexer::RescanOutcome::Changed
                     && let Some(icons) = handle_for_rescan.try_state::<IconCacheState>()
                 {
                     icon::invalidate_icon_cache(&icons);

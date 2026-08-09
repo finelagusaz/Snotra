@@ -638,8 +638,9 @@ fn apply_rescanned_index(app: &AppHandle, material: indexer::IndexMaterial) {
     let Some(state) = app.try_state::<AppState>() else {
         return;
     };
-    // **stale なら譲る。** config が変わって本式ビルドが動いている（あるいはこれから
-    // 動く）ということであり、起動時の config で走査したこちらに資格は無い。
+    // **stale なら譲る。** 契機（設定変更・手動再構築など）を問わず本式ビルドが
+    // 動いている（あるいはこれから動く）ということであり、起動時の config で
+    // 走査したこちらに資格は無い。
     let inputs = {
         let Ok(engine) = state.engine.lock() else {
             return;

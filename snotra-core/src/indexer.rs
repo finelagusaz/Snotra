@@ -127,41 +127,103 @@ fn is_ancestor_or_same(a: &str, b: &str) -> bool {
     b.len() > a.len() && b.starts_with(a) && (a.ends_with('\\') || b.as_bytes()[a.len()] == b'\\')
 }
 
-/// 走査の根どうしが重なるか。**重なるときだけ [`scan_all`] は重複排除の `seen` を建てる。**
+/// 2 つの正規化済みの根が重なるか（どちらが祖先でもよい）。
+fn roots_overlap_pair(a: &str, b: &str) -> bool {
+    is_ancestor_or_same(a, b) || is_ancestor_or_same(b, a)
+}
+
+/// 走査中の根の役割。**重複排除に払う代金を根ごとに決める。**
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RootRole {
+    /// 先行する根と重なる → 既出かを照合する。
+    check: bool,
+    /// 後続の根と重なる → 自分のキーを積む。
+    record: bool,
+}
+
+/// 根ごとに [`RootRole`] を決める。
 ///
-/// 木の走査は同じディレクトリを二度読まないので、1 回の `scan_all` の中で同じ正規化キーが
-/// 二度現れる経路は**根が入れ子になっているとき以外に無い**。junction / reparse point で
-/// 別名になった経路は文字列が異なるので `seen` は元から捕まえない。
+/// **積むのは「後続の根と重なる」側だけである。** 木の走査は同じディレクトリを二度読まない
+/// ので、あるエントリが二度現れるのは「根 `i` に入ったものが、後続の根 `j > i` の走査でも
+/// 現れる」ときに限る。ゆえに根 `i` のキーを保持する必要があるのは後続に重なる根があるとき
+/// だけで、**最後の根は（先行と重なっていても）照合するだけでよい**。
 ///
-/// **判定は入れ子だけを見る**（拡張子集合の交差・`include_folders` の両立は見ない）。額は
-/// 増えないのに判定の面積だけが広がるための過剰近似である。
+/// **額は根の順序に依存する。** 実運用点では最大の根 `C:\` が最後に来るため、その 30 万件が
+/// 丸ごと「照合のみ」になる。**これは判定の欠陥ではない**——順序に対して述語は正しく、額だけが
+/// 構成に依存する。**順序を並べ替えて額を取りに行ってはならない**: 返り値の順序が変わり、
+/// `entries_digest` がずれて毎起動 `index.bin` を書き直す（検知器は
+/// `sorted_comparison_ignores_enumeration_order`）。
 ///
-/// **完全一致も重なりとして拾う。** 起動経路は `apply_migrations` → `normalize_scan_paths`
-/// を通るので同一キーの根は残らないが、`scan_all` は dedup を通さない配列も受け取る
+/// **完全一致も重なりとして拾う。** `scan_all` は `dedup_scan_paths` を通さない配列も受け取る
 /// （`src-tauri` の `icon_pipeline_cost_probe` が `Config::default_scan_paths()` を直接渡す）。
-/// 述語を config 側の dedup の性質へ依存させないための冗長である。
 ///
 /// 根は一桁ゆえ全ペア走査で無料である。
-fn roots_overlap(scan_paths: &[ScanPath]) -> bool {
+fn root_roles(scan_paths: &[ScanPath]) -> Vec<RootRole> {
     let keys: Vec<String> = scan_paths
         .iter()
         .map(|sp| crate::config::normalize_scan_path_key(&sp.path))
         .collect();
-    keys.iter().enumerate().any(|(i, a)| {
-        keys[i + 1..]
-            .iter()
-            .any(|b| is_ancestor_or_same(a, b) || is_ancestor_or_same(b, a))
-    })
+    (0..keys.len())
+        .map(|i| RootRole {
+            check: keys[..i].iter().any(|h| roots_overlap_pair(h, &keys[i])),
+            record: keys[i + 1..]
+                .iter()
+                .any(|j| roots_overlap_pair(&keys[i], j)),
+        })
+        .collect()
+}
+
+/// 走査中の重複排除の状態。**集合・バッファ・根の役割を 1 つに束ねる**——別々の引数で
+/// 並べると、再帰の呼び出し点で組を崩せてしまう。
+struct Dedup {
+    /// 重なる根が 1 つも無ければ `None`（この走査は重複排除を必要としない）。
+    set: Option<std::collections::HashSet<String>>,
+    /// 照合だけの根で使い回す正規化キーのバッファ。**確保を走査あたり 1 回に抑える。**
+    buf: String,
+    /// いま走査している根の役割。[`scan_all`] のループが根ごとに差し替える。
+    role: RootRole,
+}
+
+impl Dedup {
+    /// このエントリを採用してよいか。
+    ///
+    /// **`record` が偽の根で `normalize_entry_key` を呼ばないことが本設計の全部である**
+    /// ——実運用点では最大の根がこちらへ回り、30 万件ぶんの `String` 確保が消える。
+    /// 照合は [`normalize_entry_key_into`] で 1 本のバッファへ詰め直し、`HashSet<String>` を
+    /// `&str` で引く（`Borrow<str>`）。**記録側と照合側が同じ関数を通ることがバイト一致の
+    /// 根拠である**——別実装を書き起こしてはならない。
+    fn accept(&mut self, path: &str) -> bool {
+        let Some(set) = self.set.as_mut() else {
+            return true;
+        };
+        match (self.role.check, self.role.record) {
+            // 積む根は insert が照合を兼ねる(既出なら false が返る)。
+            (_, true) => set.insert(normalize_entry_key(path)),
+            (true, false) => {
+                normalize_entry_key_into(&mut self.buf, path);
+                !set.contains(self.buf.as_str())
+            }
+            (false, false) => true,
+        }
+    }
 }
 
 pub fn scan_all(scan_paths: &[ScanPath], show_hidden_system: bool) -> Vec<AppEntry> {
     let mut entries = Vec::new();
-    // **重ならない根では `seen` を建てない**（根拠は [`roots_overlap`] の doc）。現運用点
-    // （根が `C:\` 一本）では全エントリぶんの正規化 + `HashSet` 挿入がまるごと消える。
-    let mut seen: Option<std::collections::HashSet<String>> =
-        roots_overlap(scan_paths).then(std::collections::HashSet::new);
+    let roles = root_roles(scan_paths);
+    // **どの根も集合に触れないなら建てない**（根拠は [`root_roles`] の doc）。
+    let needs_set = roles.iter().any(|r| r.check || r.record);
+    let mut dedup = Dedup {
+        set: needs_set.then(std::collections::HashSet::new),
+        buf: String::new(),
+        role: RootRole {
+            check: false,
+            record: false,
+        },
+    };
 
-    for sp in scan_paths {
+    for (sp, role) in scan_paths.iter().zip(&roles) {
+        dedup.role = *role;
         let ext_set = build_extension_list(&sp.extensions);
         scan_directory_with_extensions(
             Path::new(&sp.path),
@@ -169,23 +231,11 @@ pub fn scan_all(scan_paths: &[ScanPath], show_hidden_system: bool) -> Vec<AppEnt
             sp.include_folders,
             show_hidden_system,
             &mut entries,
-            &mut seen,
+            &mut dedup,
         );
     }
 
     entries
-}
-
-/// `seen` を建てている走査では既出キーを落とし、建てていない走査では素通しする。
-///
-/// **`None` のとき [`normalize_entry_key`] を呼ばないことがこの関数の要点である**——
-/// 1 件ごとの `String` 確保がここで消える。呼び出し側は `!name.is_empty() &&` の**後ろ**に
-/// 置くこと（現行の短絡評価を保つ。名前が空のエントリのキーを `seen` へ入れない）。
-fn accept_entry(seen: &mut Option<std::collections::HashSet<String>>, path: &str) -> bool {
-    match seen {
-        Some(set) => set.insert(normalize_entry_key(path)),
-        None => true,
-    }
 }
 
 /// Recursively scan for files matching given extensions, optionally including folders
@@ -195,7 +245,7 @@ fn scan_directory_with_extensions(
     include_folders: bool,
     show_hidden_system: bool,
     entries: &mut Vec<AppEntry>,
-    seen: &mut Option<std::collections::HashSet<String>>,
+    dedup: &mut Dedup,
 ) {
     let Ok(read_dir) = std::fs::read_dir(dir) else {
         return;
@@ -220,7 +270,7 @@ fn scan_directory_with_extensions(
                     .to_string();
                 if !name.is_empty() {
                     let path_str = path.to_string_lossy();
-                    if accept_entry(seen, path_str.as_ref()) {
+                    if dedup.accept(path_str.as_ref()) {
                         entries.push(AppEntry {
                             name,
                             target_path: path_str.into_owned(),
@@ -235,7 +285,7 @@ fn scan_directory_with_extensions(
                 include_folders,
                 show_hidden_system,
                 entries,
-                seen,
+                dedup,
             );
         } else {
             let ext = path.extension().and_then(|e| e.to_str());
@@ -247,7 +297,7 @@ fn scan_directory_with_extensions(
                     .unwrap_or("")
                     .to_string();
                 let path_str = path.to_string_lossy();
-                if !name.is_empty() && accept_entry(seen, path_str.as_ref()) {
+                if !name.is_empty() && dedup.accept(path_str.as_ref()) {
                     entries.push(AppEntry {
                         name,
                         target_path: path_str.into_owned(),
@@ -2250,7 +2300,7 @@ mod tests {
         dir
     }
 
-    // ---- roots_overlap tests ----
+    // ---- root_roles tests ----
 
     /// 述語のテスト用に最小の `ScanPath` を作る。拡張子と `include_folders` は
     /// **判定に関与しない**（設計書 §2.2 の過剰近似）。
@@ -2262,43 +2312,65 @@ mod tests {
         }
     }
 
+    /// **積むのは「後続の根と重なる」側である。** 重複が起きるのは先に入ったエントリが
+    /// 後の走査で再び現れるときだけなので、向きはこの 1 通りしかない。
     #[test]
-    fn roots_overlap_detects_drive_root_ancestor() {
-        assert!(roots_overlap(&[root("C:\\"), root("C:\\Tools")]));
+    fn root_roles_records_on_the_earlier_root_and_checks_on_the_later() {
+        let roles = root_roles(&[root("C:\\X"), root("C:\\X\\sub")]);
+        assert_eq!((roles[0].check, roles[0].record), (false, true));
+        assert_eq!((roles[1].check, roles[1].record), (true, false));
     }
 
-    /// **境界の 2 枝を 1 本にまとめると、ここが落ちる。** `c:\tools` は `c:\toolsextra` の
-    /// 接頭辞だが、次の 1 バイトが `\` ではないので入れ子ではない。
+    /// **順序が逆でも役割が入れ替わるだけで、重複排除は成立する。**
     #[test]
-    fn roots_overlap_ignores_sibling_sharing_a_prefix() {
-        assert!(!roots_overlap(&[root("C:\\Tools"), root("C:\\ToolsExtra")]));
+    fn root_roles_follow_the_order_not_the_depth() {
+        let roles = root_roles(&[root("C:\\X\\sub"), root("C:\\X")]);
+        assert_eq!((roles[0].check, roles[0].record), (false, true));
+        assert_eq!((roles[1].check, roles[1].record), (true, false));
+    }
+
+    /// 実運用点の形（最大の根が最後に来る）。**ここで `C:\` が「照合のみ」になることが
+    /// この設計の全部である**——積まないので 30 万件ぶんの `String` 確保が消える。
+    #[test]
+    fn root_roles_over_the_real_shape_leave_the_largest_root_inert() {
+        let roles = root_roles(&[
+            root("C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs"),
+            root("C:\\Users\\Eoh\\Desktop"),
+            root("C:\\"),
+        ]);
+        assert_eq!((roles[0].check, roles[0].record), (false, true));
+        assert_eq!((roles[1].check, roles[1].record), (false, true));
+        assert_eq!(
+            (roles[2].check, roles[2].record),
+            (true, false),
+            "最大の根が積む側に回ると削減が消える"
+        );
     }
 
     #[test]
-    fn roots_overlap_is_order_independent() {
-        assert!(roots_overlap(&[root("C:\\Tools"), root("C:\\")]));
-    }
-
-    /// **完全一致も重なりとして拾う。** `scan_all` は `dedup_scan_paths` を通さない配列も
-    /// 受け取る（`src-tauri` の `icon_pipeline_cost_probe`）。
-    #[test]
-    fn roots_overlap_detects_exact_duplicates_after_normalization() {
-        assert!(roots_overlap(&[root("C:\\Tools"), root("c:/tools/")]));
+    fn root_roles_are_all_inert_when_nothing_overlaps() {
+        let roles = root_roles(&[root("C:\\A"), root("D:\\B")]);
+        assert!(roles.iter().all(|r| !r.check && !r.record));
     }
 
     #[test]
-    fn roots_overlap_false_for_single_root() {
-        assert!(!roots_overlap(&[root("C:\\")]));
+    fn root_roles_treat_exact_duplicates_as_overlap() {
+        let roles = root_roles(&[root("C:\\Tools"), root("c:/tools/")]);
+        assert_eq!((roles[0].check, roles[0].record), (false, true));
+        assert_eq!((roles[1].check, roles[1].record), (true, false));
+    }
+
+    /// **境界の 2 枝を 1 本にまとめると、ここが落ちる**（`c:\tools` は `c:\toolsextra` の
+    /// 接頭辞だが、次の 1 バイトが `\` ではないので入れ子ではない）。
+    #[test]
+    fn root_roles_ignore_siblings_sharing_a_prefix() {
+        let roles = root_roles(&[root("C:\\Tools"), root("C:\\ToolsExtra")]);
+        assert!(roles.iter().all(|r| !r.check && !r.record));
     }
 
     #[test]
-    fn roots_overlap_false_across_drives() {
-        assert!(!roots_overlap(&[root("C:\\"), root("D:\\Apps")]));
-    }
-
-    #[test]
-    fn roots_overlap_false_for_empty() {
-        assert!(!roots_overlap(&[]));
+    fn root_roles_empty_for_no_paths() {
+        assert!(root_roles(&[]).is_empty());
     }
 
     /// **入れ子の根では重複排除が要る。** `dedup_scan_paths` は完全一致マージのみゆえ、
@@ -2333,6 +2405,38 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// **子の根が先に来る順序でも重複が出ない。** 役割が入れ替わるだけで成立することを、
+    /// 述語の単体テストではなく走査の結果で固定する。
+    #[test]
+    fn scan_all_dedups_when_the_child_root_comes_first() {
+        let dir = temp_dir("nested_roots_child_first");
+        let sub = dir.join("sub");
+        fs::create_dir_all(&sub).expect("create sub dir");
+        fs::write(sub.join("tool.exe"), b"x").expect("write fixture");
+
+        let scan = vec![
+            ScanPath {
+                path: sub.to_string_lossy().into_owned(),
+                extensions: vec![".exe".to_string()],
+                include_folders: false,
+            },
+            ScanPath {
+                path: dir.to_string_lossy().into_owned(),
+                extensions: vec![".exe".to_string()],
+                include_folders: false,
+            },
+        ];
+        let entries = scan_all(&scan, true);
+
+        assert_eq!(
+            entries.len(),
+            1,
+            "子の根が先に来る順序で同じファイルが二度入っている"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn temp_dir_name_contains_process_id() {
         let dir = temp_dir("process_unique");
@@ -2356,9 +2460,16 @@ mod tests {
         fs::write(dir.join("readme.txt"), "").unwrap();
 
         let mut entries = Vec::new();
-        let mut seen = Some(std::collections::HashSet::new());
+        let mut dedup = Dedup {
+            set: Some(std::collections::HashSet::new()),
+            buf: String::new(),
+            role: RootRole {
+                check: false,
+                record: true,
+            },
+        };
         let exts = build_extension_list(&["exe".to_string(), "bat".to_string()]);
-        scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
+        scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut dedup);
 
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         assert!(names.contains(&"app"));
@@ -2376,9 +2487,16 @@ mod tests {
         fs::create_dir(dir.join("subdir")).unwrap();
 
         let mut entries = Vec::new();
-        let mut seen = Some(std::collections::HashSet::new());
+        let mut dedup = Dedup {
+            set: Some(std::collections::HashSet::new()),
+            buf: String::new(),
+            role: RootRole {
+                check: false,
+                record: true,
+            },
+        };
         let exts = build_extension_list(&["exe".to_string()]);
-        scan_directory_with_extensions(&dir, &exts, true, true, &mut entries, &mut seen);
+        scan_directory_with_extensions(&dir, &exts, true, true, &mut entries, &mut dedup);
 
         let folder_entries: Vec<&AppEntry> = entries.iter().filter(|e| e.is_folder).collect();
         assert_eq!(folder_entries.len(), 1);
@@ -2399,9 +2517,16 @@ mod tests {
         fs::create_dir(dir.join("subdir")).unwrap();
 
         let mut entries = Vec::new();
-        let mut seen = Some(std::collections::HashSet::new());
+        let mut dedup = Dedup {
+            set: Some(std::collections::HashSet::new()),
+            buf: String::new(),
+            role: RootRole {
+                check: false,
+                record: true,
+            },
+        };
         let exts = build_extension_list(&["exe".to_string()]);
-        scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
+        scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut dedup);
 
         assert!(entries.iter().all(|e| !e.is_folder));
         assert_eq!(entries.len(), 1);
@@ -2420,9 +2545,16 @@ mod tests {
         fs::write(sub2.join("tool.exe"), "").unwrap();
 
         let mut entries = Vec::new();
-        let mut seen = Some(std::collections::HashSet::new());
+        let mut dedup = Dedup {
+            set: Some(std::collections::HashSet::new()),
+            buf: String::new(),
+            role: RootRole {
+                check: false,
+                record: true,
+            },
+        };
         let exts = build_extension_list(&["exe".to_string()]);
-        scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
+        scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut dedup);
 
         let tools: Vec<&AppEntry> = entries.iter().filter(|e| e.name == "tool").collect();
         assert_eq!(tools.len(), 2);
@@ -2436,9 +2568,16 @@ mod tests {
         fs::write(dir.join("app.EXE"), "").unwrap();
 
         let mut entries = Vec::new();
-        let mut seen = Some(std::collections::HashSet::new());
+        let mut dedup = Dedup {
+            set: Some(std::collections::HashSet::new()),
+            buf: String::new(),
+            role: RootRole {
+                check: false,
+                record: true,
+            },
+        };
         let exts = build_extension_list(&["exe".to_string()]);
-        scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
+        scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut dedup);
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "app");

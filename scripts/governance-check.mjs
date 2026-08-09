@@ -351,10 +351,12 @@ export function workspaceMembers(snapshot) {
 /** ルートに在ることを要求する rustdoc lint。**名指しは意図的である**——「非空かつ全エントリ deny」だけでは
  *  片方の行が消えた形（残った 1 件は deny のまま）が緑を通る（実測）。消えたら困る識別子をカナリアが
  *  持つのは正しい形で、先例は `.claude/hooks/post-edit.test.mjs` の member 名ハードコードである。
- *  **名指した lint の降格・欠落は捕まえるが、一覧そのものは固定しない**——新しい rustdoc lint を
- *  deny させたくてもここへ足さなければ、それは非実効のまま緑になる（受容する残余。
- *  `DISALLOWED_METHODS_GROUPS` と同型・2026-08-09 実測 #1008）。 */
-export const REQUIRED_RUSTDOC_LINTS =["broken_intra_doc_links", "invalid_html_tags"];
+ *  **固定するのは名指した lint の在否だけで、一覧そのものは固定しない**——3 つ目の lint を
+ *  `[workspace.lints.rustdoc]` へ deny で足してもここへ足さなければ、**その行が後日まるごと消えても
+ *  誰も気づかない**（受容する残余・2026-08-09 実測 #1008）。**足した lint が非実効になるのではない**:
+ *  cargo はその lint を適用するし、在るあいだは下の「全エントリが deny/forbid」の側でも見られている。
+ *  固定されないのは「在り続けること」である（`DISALLOWED_METHODS_GROUPS` と同型）。 */
+export const REQUIRED_RUSTDOC_LINTS = ["broken_intra_doc_links", "invalid_html_tags"];
 
 /** member 側の opt-in。**字面ではなく構文的位置で判定する**——`version.workspace = true` と
  *  `<dep>.workspace = true` が同じ字面で全 member に現れるため、字面一致の述語は常に緑になる
@@ -1528,7 +1530,7 @@ const VOCAB_TEST_FILE = /\.test\.(mjs|ts|tsx)$/;
  *  **保証は狭い**——「意図の SSOT」級の文書を新設してここへ足さなければ、その文書の腐り識別子は
  *  一度も照合されない（2026-08-09 実測: ルート直下に新設した文書へ実在しない識別子を 3 形置いても
  *  照合件数が動かなかった・#1008）。 */
-export const STALE_EXTRA_DOCS =["SPEC.md", "CLAUDE.md", "AGENTS.md", "snotra-settings/SETTINGS-DESIGN.md"];
+export const STALE_EXTRA_DOCS = ["SPEC.md", "CLAUDE.md", "AGENTS.md", "snotra-settings/SETTINGS-DESIGN.md"];
 /** バッククォート内で腐りを問う形: camelCase（こぶ 1 つ以上）・末尾 `()` は任意 */
 const STALE_IDENT = /^([a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+)(\(\))?$/;
 /** 同じく SCREAMING_SNAKE（`_` 1 つ以上）。camelCase 側が「こぶを 1 つ以上要求する」のと同じ構造で、
@@ -1581,8 +1583,9 @@ export function currentVocabulary(snapshot) {
     if (src == null) continue;
     // コメント除去の振り分け。**`VOCAB_SOURCE_EXT` へ `#` コメントの言語を足したら、この正規表現へも
     // 同時に足すこと**——足し忘れるとその言語のコメントが生のまま語彙へ入り、由来注記に書かれた
-    // 識別子が「現行語彙」に化けて、腐りが原理的に検出できなくなる（上の「受容する残余」が記録する
-    // 失敗形の再演。2026-08-09 実測・#1008）。この対応を強制する機構は無い。
+    // 識別子が「現行語彙」に化ける。その識別子が文書で腐っていても免罪されて検出されない
+    // （2026-08-09 実測: `.psm1` のコメント語が実際に赤を緑へ変えた・#1008。上の「受容する残余」が
+    // 記録する失敗形の再演）。この対応を強制する機構は無い。
     parts.push(/\.(ps1|toml|yml)$/.test(f) ? src.replace(/#.*$/gm, " ") : stripRustComments(src));
   }
   return parts.join("\n");

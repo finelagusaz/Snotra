@@ -20,7 +20,7 @@ allowed-tools:
 
 ## Check 1 — CLAUDE.md モジュール構成の乖離
 
-→ **`npm run governance:check`（G-module-index・#587）が機械検査する。ここでは実行しない。** **ただし照合されるのは `MODULE_INDEX_CRATES` に載っている crate だけである**——crate を新設して同表へ足し忘れると、その `CLAUDE.md` のモジュール構成は丸ごと未照合のまま緑になる（2026-08-09 実測・#1008）。crate が増えた直後は、その 1 件だけ目で見ること。テストファイル除外（SSOT: `vitest.config.ts` の include）・basename 照合の意味論はスクリプト（`scripts/governance-check.mjs`）とそのテストが固定する。責務記述の**内容の妥当性**（索引の存在ではなく記述が実態と合っているか）は機械化できず、気づいた乖離があれば発見事項として報告する。
+→ **`npm run governance:check`（G-module-index・#587）が機械検査する。ここでは実行しない。** **ただし照合されるのは `MODULE_INDEX_CRATES` に載っている crate だけである**——crate を新設して同表へ足し忘れると、その `CLAUDE.md` のモジュール構成は丸ごと未照合のまま緑になる（2026-08-09 実測・#1008）。**この穴を拾う機構は無い。** テストファイル除外（SSOT: `vitest.config.ts` の include）・basename 照合の意味論はスクリプト（`scripts/governance-check.mjs`）とそのテストが固定する。責務記述の**内容の妥当性**（索引の存在ではなく記述が実態と合っているか）は機械化できず、気づいた乖離があれば発見事項として報告する。
 
 ## Check 5 — docs/build-commands.md コマンドの整合（SSOT）
 

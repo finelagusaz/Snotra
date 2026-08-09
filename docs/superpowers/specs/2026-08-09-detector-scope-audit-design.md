@@ -629,7 +629,21 @@ A1〜A3 は Rust ③ #1/#2 と同じ箇所であり、上表の「doc へ射程�
 §10.6.3 が挙げた到達点（`snotra-settings/src/i18n.rs` の「網羅 `match` ＋ `wildcard_enum_match_arm`
 の deny」）はこの箇所にもそのまま当たるので、Task 6 が費用を見て採るなら止める理由は無い。
 
-### 11.4 変更不要と確認した 5 件
+### 11.4 機構の外に残る穴（記録のみ・本サイクルでは塞がない）
+
+**新設した crate のモジュール索引を見る人がいない。** `MODULE_INDEX_CRATES` へ足し忘れると
+G-module-index は照合せず（§10.3 #1 で実測）、`/health-check` の Check 1 は「機械検査するので
+ここでは実行しない」と**全面委譲を宣言している**——ゆえに機構も人も見ない区間ができる。
+
+**本サイクルでは射程の記述だけを置き、手順は足さなかった。** `/health-check` へ「crate が増えた
+直後は目で見る」という実行義務を足す案は、(a) 同スキルが冒頭で「実行するのは 2 つ」と宣言する
+構造と食い違い、(b)「crate が増えた直後」を誰がいつ判定するかが決められず（`/health-check` は
+crate 追加の直後に走るとは限らない）、(c) ルート `CLAUDE.md`「最重要ルール」2 が定める
+**エージェント設定の変更は合意してから**に当たるため、修正ラウンド 1 で取り下げた。
+塞ぐなら `MODULE_INDEX_CRATES` を `Cargo.toml` の `[workspace] members` から導く機構化が筋であり、
+これは Task 6 の裁量に属する（§11.3 と同じ扱い）。
+
+### 11.5 変更不要と確認した 5 件
 
 - Rust: `events.rs::event_names_are_pairwise_distinct`（§2 の範そのもの）・
   `startup.rs::failure_reasons_are_stable_and_unique`（「`Phase` と同じ弱さを持つ」と明記済み）
@@ -637,7 +651,7 @@ A1〜A3 は Rust ③ #1/#2 と同じ箇所であり、上表の「doc へ射程�
   `REQUIRED_DISALLOWED_METHODS`（射程の正本は `src-tauri/clippy.toml` 冒頭と
   `docs/build-commands.md`）・`DISALLOWED_METHODS_GROUPS`（残余をコメントが明記済み）
 
-### 11.5 検証
+### 11.6 検証
 
 `cargo doc --workspace --no-deps --document-private-items` は `snotra-core` の既存 9 件
 （`private_intra_doc_links`・`--document-private-items` を渡したときだけ出る形）のみで、

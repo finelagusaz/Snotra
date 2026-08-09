@@ -189,8 +189,12 @@ pub fn prune_in(dir: &Path) {
     let _ = std::fs::write(&path, out);
 }
 
-/// この 1 回の再スキャンを指す識別子。**pid だけでは再利用で衝突する**ので起動時刻を混ぜる
-/// （2 プロセスの同時稼働は実在する・2026-08-09 実測）。
+/// この 1 回の再スキャン呼び出しを指す識別子。**呼ぶたびに新しい値を返す**——同一プロセス内で
+/// 安定した値ではない。pid に現在ミリ秒を混ぜて作るため、**2 プロセスの同時稼働があっても
+/// pid で区別が付く**（2026-08-09 実測）。
+///
+/// **残る前提**: 一意性は「呼び出し側が 1 回の再スキャンにつき 1 回だけ呼ぶ」ことに依存する。
+/// 同一プロセス内で同じミリ秒に 2 回呼べば衝突しうる。
 pub fn new_sid() -> String {
     let ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -407,7 +411,10 @@ mod tests {
     /// **書けなくても製品は止まらない。** 存在しないディレクトリへの追記は黙って捨てる。
     #[test]
     fn append_is_best_effort_when_the_directory_does_not_exist() {
-        let dir = std::env::temp_dir().join("snotra-rescanlog-does-not-exist-xyz");
+        let dir = std::env::temp_dir().join(format!(
+            "snotra-rescanlog-does-not-exist-xyz-{}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&dir);
         append_in(&dir, "a"); // panic しないこと
         assert!(!log_path_in(&dir).exists());
@@ -466,7 +473,8 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// `sid` は同一プロセス内で安定し、pid を含む（読み手がプロセスを辿れる）。
+    /// `sid` は pid を含む（読み手がプロセスを辿れる）。同一プロセス内で安定した値ではなく、
+    /// 呼ぶたびに変わる（`new_sid` の doc を参照）。
     #[test]
     fn sid_contains_the_pid() {
         let sid = new_sid();

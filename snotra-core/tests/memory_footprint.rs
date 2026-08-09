@@ -405,10 +405,11 @@ fn measure_real_index_footprint() {
     report_scan_all_cost(&config);
 }
 
-/// 背景再スキャンが毎起動踏む `scan_all` 区間を測る。
+/// 背景再スキャンがキャッシュヒットの起動ごとに踏む `scan_all` 区間を測る。
 ///
 /// **この関数が測る区間は `scan_all` だけである。** 背景再スキャン経路の残り 3 区間
-/// （`sort` / `digest` / `save`）は `rescan-log.jsonl` が毎起動測る（#1001 受け入れ 1）。
+/// （`sort` / `digest` / `save`）は `rescan-log.jsonl` がキャッシュヒットの起動ごとに測る
+/// （#1001 受け入れ 1）。
 /// 経路全体の内訳は出力末尾の 1 行が指す。
 ///
 /// **`LoadOrScanStats` をここの代理に使ってはならない。** あれはロード経路（`load_or_scan_with_stats`）
@@ -419,9 +420,9 @@ fn measure_real_index_footprint() {
 /// `digest_over(tree)` であり、背景再スキャンが撃つ `entries_digest(&scanned)` とは別の計算
 /// である——同じ「digest」でも測っている対象が違う。
 ///
-/// **広げない理由**: `sort_entries_canonical` と `entries_digest` は `indexer.rs` の
-/// `pub(crate)` ゆえここから呼べない。可視性を緩めるか計測専用の入口を製品へ足すことは、
-/// #1000 が却下した「注入点を製品コードへ足す」と同型になる。
+/// **広げない理由**: `sort_entries_canonical` は `indexer.rs` の `pub(crate)`、`entries_digest`
+/// はさらに狭い private ゆえ、どちらもこの統合テストからは呼べない。可視性を緩めるか
+/// 計測専用の入口を製品へ足すことは、#1000 が却下した「注入点を製品コードへ足す」と同型になる。
 ///
 /// **この区間はどのフェーズ計測にも現れない。** Phase A のロードはキャッシュヒット枝ゆえ
 /// `scan_ms` が 0 で、`rescan_task` は呼び出し側が `drop` する——`cache_load_ms` と
@@ -473,7 +474,7 @@ fn report_scan_all_cost(config: &Config) {
     }
     println!(
         "  ※ この区間は scan_all のみ。背景再スキャン経路の sort / digest / save は \
-         rescan-log.jsonl が毎起動測る（#1001 受け入れ 1）"
+         rescan-log.jsonl がキャッシュヒットの起動ごとに測る（#1001 受け入れ 1）"
     );
 }
 

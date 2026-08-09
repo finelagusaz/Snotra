@@ -6,7 +6,7 @@
 
 2026-08-09 に実機を外部から観測して確かめた事実（#1001 の 2 つのコメントが一次記録）:
 
-- 背景再スキャンは**毎起動走り、1 コアを約 22 秒使い切って終わる**（CPU の伸びとスレッド消滅が同時刻を指す）
+- 背景再スキャンは**キャッシュヒットの起動ごとに走り、1 コアを約 22 秒使い切って終わる**（CPU の伸びとスレッド消滅が同時刻を指す）
 - `Changed` なら `index.bin` を書く（launch + 22 秒に実測）。`Unchanged` なら**何も残さない**
 - **セッションが走査より短いと成果はまるごと消える**（12 秒 kill → 書かれない / 45 秒 → 書かれる。同一の変更で A/B した）
 
@@ -90,11 +90,13 @@
 
 | 器 | 測るもの | いつ |
 |---|---|---|
-| `rescan-log.jsonl`（本反復で新設） | 区間の壁時計・件数・結末・完走の有無 | **実運用の毎起動** |
-| `tests/memory_footprint.rs` の `report_scan_all_cost`（**拡張する**） | 確保回数・peak・重複検算 | 手元（`#[ignore]`） |
-| `LoadOrScanStats.cache_save_ms`（既存） | 保存の区間 | cache-miss 枝 |
+| `rescan-log.jsonl`（本反復で新設） | 背景再スキャン経路の `scan` / `sort` / `digest` / `save` 区間の壁時計・件数・結末・完走の有無 | **実運用のキャッシュヒットの起動ごと** |
+| `tests/memory_footprint.rs` の `report_scan_all_cost` | `scan_all` 区間の確保回数・peak・重複検算 | 手元（`#[ignore]`） |
+| `LoadOrScanStats`（既存） | ロード経路（`load_or_scan_with_stats`）の区間 | cache-hit / cache-miss 両枝（起動時） |
 
-**`report_scan_all_cost` の拡張**: 現状は `scan_all` だけを測っている。`sort_entries_canonical` + `entries_digest` まで広げ、経路の形で確保回数・peak を持たせる。**`save` は含めない**——実 `index.bin` を書き換えてしまうためで、保存の区間は上表の残り 2 つが覆う。
+**`report_scan_all_cost` は広げなかった。** 当初案は `sort_entries_canonical` + `entries_digest` まで測る区間を広げる予定だったが、実装せずに終わった——広げるには `sort_entries_canonical`（`indexer.rs` の `pub(crate)`）・`entries_digest`（private）のどちらかの可視性を緩めるか、計測専用の入口を製品コードへ足す必要があり、これは #1000 が却下した「注入点を製品コードへ足す」案と同型になる。ゆえに `report_scan_all_cost` は `scan_all` だけを測る計器のまま残し、**`sort` / `digest` / `save` は `rescan-log.jsonl` に任せる**分担になった。
+
+**`LoadOrScanStats` はロード経路の計器であり、背景再スキャン経路の代理にならない。** 枝ごとに片方しか埋まらない——cache-hit 枝は `sort_ms` / `scan_ms` / `cache_save_ms` が 0 で `digest_ms` だけが実数、cache-miss 枝はその逆で `digest_ms` が 0 になる（`indexer.rs` の該当分岐）。背景再スキャンの `sort` / `digest` / `save` を読みたいときは `rescan-log.jsonl` を見る。
 
 ## 7. 文書更新
 

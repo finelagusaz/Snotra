@@ -1257,6 +1257,9 @@ fn try_background_rescan_in(
 ) -> RescanOutcome {
     // **`start` は走査の前に書く。** 終端だけを書く形では、走査より短いセッション
     // （実測 12 秒 < 22 秒）が「そもそも起動しなかった」と区別できない（#1001）。
+    // `total_ms` はここ（計器自身の前置き——sid 生成・剪定・`start` の追記——より前）で
+    // 計り始めるため、この前置きの時間は scan/sort/digest/save のどこにも属さず
+    // `unattributed_ms` に入る。
     let started = Instant::now();
     let sid = rescan_log::new_sid();
     rescan_log::prune_in(dir);
@@ -1292,6 +1295,11 @@ fn try_background_rescan_in(
         let t = Instant::now();
         let changed = entries_digest(&scanned) != cached_digest;
         rec.digest = Some(t.elapsed());
+
+        // **`scanned` を捨てる操作の帰属は分岐で変わる。** `Unchanged` 側はこの後ここで
+        // 暗黙に drop され、どの区間の計測時間にも属さないので `unattributed_ms` に入る。
+        // 一方 `Changed`/昇格側は `save_cache_sorted_in` へ move してその中で消費される
+        // ため `save_ms` の内側に入る——`unattributed_ms` が指すものが結末によって違う。
 
         // **書く条件は 2 つある。** 中身が変わったとき（従来）と、**読めた形式が旧版のとき**。
         // 後者を欠くと、索引の中身が変わらない限り旧版が何日でも残り、そのユーザーは
@@ -4001,8 +4009,8 @@ mod tests {
     /// **固定できていない性質**: `start` が走査より前に出ること（#1001 の存在理由そのもの）は
     /// このテストでは検知できない——`prune_in` と `start` の追記を走査の**後ろ**（`end` の直前）
     /// へ動かす変異でも、戻り値後のファイル内容だけを見るこの検査は通ってしまう。その順序を
-    /// 検知するのは Task 4 の実機ゲート（12 秒で kill し `start` だけが残ることを見る）のみで、
-    /// CI はこの性質を守らない。
+    /// 検知するのは実機での短命セッション観測（12 秒で kill し `start` だけが残ることを見る）
+    /// のみで、CI はこの性質を守らない。
     #[test]
     fn background_rescan_writes_a_start_end_pair_sharing_one_sid() {
         let _serial = INDEX_LOCK_TEST_GUARD
@@ -4020,7 +4028,7 @@ mod tests {
             entries_digest(&[]),
             current_index_generation(),
             INDEX_CACHE_VERSION,
-            0,
+            312_625,
         );
         assert_eq!(outcome, RescanOutcome::Unchanged);
 
@@ -4029,6 +4037,10 @@ mod tests {
         assert_eq!(lines[0]["ev"], "start");
         assert_eq!(lines[1]["ev"], "end");
         assert_eq!(lines[0]["sid"], lines[1]["sid"], "同じ sid で組になる");
+        assert_eq!(
+            lines[0]["cached"], 312_625,
+            "cached は渡した cached_len をそのまま運ぶ（0 への変異を検知する）"
+        );
         assert_eq!(lines[1]["outcome"], "unchanged");
         assert!(lines[1]["save_ms"].is_null(), "書かなかったので null");
         assert!(!lines[1]["scan_ms"].is_null(), "走査はした");

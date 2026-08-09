@@ -107,7 +107,7 @@ impl IconCache {
     /// `clear()` と異なり有効なアイコンを再利用するため、再構築後の再抽出コストを削減する。
     /// 1 件でも除去した場合は dirty フラグを立てる。
     ///
-    /// **`dead_paths` の意味は「索引に無い」であって「消えた」ではない。** 呼び出し側（[`sync_with_index`]）が渡すのは `IndexTree::absent_paths` の結果で、そこには**索引に載るとは限らないパス**——フォルダを掘って表示した行のアイコン——も入る（経路は同メソッドの doc）。**名前を「死」と読むと事実より強い。**
+    /// **`dead_paths` の意味は「索引に無い」であって「消えた」ではない。** 呼び出し側（[`sync_with_index`]）が渡すのは `IndexTree::absent_paths` の結果である。**キャッシュには索引に載るとは限らないパスが入る**——`egui_shell::results_view` の `request_icons_for_results` は行を `is_folder` でも view の種別でも絞らないので、フォルダを掘って表示した行のアイコンも同じ経路で挿入される（スキャンパスの内側を掘っていれば索引と一致しうるので、**どちらの向きにも言い切れない**）。**名前を「死」と読むと事実より強い。**
     ///
     /// **「残す集合」ではなく「落とす集合」を受け取るのが要石である。** 判定を lock の外で行う以上、渡される集合は [`Self::keys`] を取った時点の snapshot から導かれており、その後に挿入されたキーを知らない。**残す集合で書くと、その新しいキーは「残す集合に無い」ゆえ落ちる**——落とす集合で書けば、知らないキーは落とす集合にも居ないので残る。
     ///
@@ -683,8 +683,58 @@ mod tests {
         );
     }
 
+    /// `sync_with_index` のテスト用の材料。**列を手で並べない**——`IndexMaterial` の公開経路
+    /// （`from_tree` + `extend_with_path_entries`）を通すので、`IndexTree` の内部表現を
+    /// この crate が知る必要が無い。**木ではなく材料を返すのは、`tree()` が貸すだけだから**
+    /// である（呼び出し側が材料を生かしたまま `&IndexTree` を渡す）。
+    fn material_of(paths: &[&str]) -> snotra_core::indexer::IndexMaterial {
+        let entries: Vec<snotra_core::indexer::AppEntry> = paths
+            .iter()
+            .map(|p| snotra_core::indexer::AppEntry {
+                name: p.rsplit(['\\', '/']).next().unwrap_or(p).to_string(),
+                target_path: (*p).to_string(),
+                is_folder: false,
+            })
+            .collect();
+        let mut material = snotra_core::indexer::IndexMaterial::from_tree(
+            snotra_core::index_tree::IndexTree::empty(),
+        );
+        material.extend_with_path_entries(entries);
+        material
+    }
+
+    /// **木を実際に引いていることを固定する。** 空の木では「木に無いキー」と「全キー」が
+    /// 一致してしまい、`absent_paths` を呼ばなくなる退行（呼び出しを PATH 併合の前へ動かす・
+    /// 別の木を渡す・入力を素通しする）が緑のまま通る。**在るキーが残ることを断言する 1 本が
+    /// その退行を落とす唯一の経路である。**
+    #[test]
+    fn sync_with_index_keeps_keys_present_in_a_non_empty_tree() {
+        let state: IconCacheState = Mutex::new(Some(empty_cache_with_cap(4)));
+        {
+            let mut guard = state.lock().unwrap();
+            let cache = guard.as_mut().unwrap();
+            cache.insert("C:\\app\\live.exe".into(), vec![1]);
+            cache.insert("C:\\app\\gone.exe".into(), vec![2]);
+        }
+
+        let material = material_of(&["C:\\app\\live.exe"]);
+        sync_with_index(&state, true, material.tree());
+
+        let guard = state.lock().unwrap();
+        let cache = guard.as_ref().expect("キャッシュは残る");
+        assert!(
+            cache.get("C:\\app\\live.exe").is_some(),
+            "木に在るキーは残る（ここが落ちるなら木を引いていない）"
+        );
+        assert!(
+            cache.get("C:\\app\\gone.exe").is_none(),
+            "木に無いキーは落ちる"
+        );
+    }
+
     /// `sync_with_index` の分岐を固定する。**空の木を渡すと全キーが `dead` になる**ので、
-    /// 判定そのものを通したうえで各分岐を数行で押さえられる。
+    /// 判定そのものを通したうえで各分岐を数行で押さえられる。**ただし空の木だけでは
+    /// 「木を引いている」ことを固定できない**（上の非空の木の 1 本がそれを担う）。
     #[test]
     fn sync_with_index_drops_the_cache_when_icons_are_disabled() {
         let state: IconCacheState = Mutex::new(Some(empty_cache_with_cap(4)));

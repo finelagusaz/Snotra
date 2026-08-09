@@ -1474,14 +1474,35 @@ migemo の設定に依らない（`shared_file_name_flag_is_measured_not_inferre
   1 行だけなので、`SNOTRA_EGUI_INPUT_TRACE` の 17〜56 ms/行のような影響は出ない
 - **debug は別の運用点である**（同日・同機で 327 ms: pre_main 120 / windows_create 66 /
   index_load 47 / path_merge 41 / hotkey_register 21）。**release と 4 倍違うので混ぜて読まない**
-- **`smoke-startup.ps1` が記録した 0.6〜8s の分散は、まだ説明できていない。** あちらは
-  **CI runner** の値で、ここは開発機である。**同じ計器を同じ条件へ当てるまで、この内訳を
-  あの分散の説明として使ってはならない**——`e2e.yml` の "Measure startup timeline" が
-  そのために在る（観測であって回帰の検査ではないので `continue-on-error`。**閾値を置くのは
-  分散の正体を掴んでから**）
-  - **「あちらは debug ビルドだから条件が違う」と書いてはならない**（一度そう書いた）。
-    `e2e.yml` の当該 job は `-ExePath target/release/snotra.exe` を渡しており、**どちらも
-    release である**。違うのは開発機か runner かであって、ビルドプロファイルではない
+- **「あちらは debug ビルドだから条件が違う」と書いてはならない**（一度そう書いた）。
+  `e2e.yml` の当該 job は `-ExePath target/release/snotra.exe` を渡しており、**どちらも
+  release である**。違うのは開発機か runner かであって、ビルドプロファイルではない
+
+### runner での内訳 — 分散は `RegisterHotKey` に集中していた（2026-08-09・CI 実測・7 標本）
+
+`e2e.yml` の "Measure startup timeline"（`-UseVerificationProfile`・検証用プロファイルゆえ
+索引は極小・`include_path_env = false`）。**`smoke-startup.ps1` が `first_trace_ms` として
+0.6s / 5.2s / 8s超 を記録しながら原因未解明だった分散の、最初の内訳である。**
+
+| 区間 | min | p50 | max | 開発機（release・実 config） |
+|---|---:|---:|---:|---:|
+| pre_main | 11 | 14 | 17 | 7〜17 |
+| config_load | 2 | 2 | 2 | 1 |
+| tauri_init | 4 | 5 | 5 | 3 |
+| windows_create | 25 | 27 | 32 | 27 |
+| **hotkey_register** | **298** | **312** | **2,171** | **18〜19** |
+| **post_main** | 332 | 348 | **2,212** | 76〜80 |
+
+- **分散は起動処理そのものではなく `RegisterHotKey` の完了待ちに集中している。** 他の区間は
+  開発機とほぼ同じで、`windows_create` に至っては差が無い。**`hotkey_register` だけが
+  16〜114 倍**である
+- **1 回目だけ 2,212 ms、2 回目以降は 332〜351 ms**（6 倍）。cold と warm の差がこの区間に乗る
+- **`first_trace_ms` が測っていたのは起動ではなくホットキー登録だった**——最初の trace は
+  `hotkey:registered` であり、その手前の区間（config / 索引 / engine / 窓）は合計 50 ms 前後で
+  runner でも安定している。**「起動が遅い」という読み方が、そもそも当たっていなかった**
+- **この計器は `continue-on-error` で回している**（観測であって回帰の検査ではない）。
+  閾値を置くなら `hotkey_register` に対してだが、**cold の 2.2 s と warm の 0.33 s を
+  1 本の閾値で扱えないので、まず何が cold を作るかを分けて測ること**
 
 ### 計器が計器の欠陥を暴いた（配置ミス・実測で発覚）
 

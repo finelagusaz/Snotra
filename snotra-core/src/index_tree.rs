@@ -277,28 +277,6 @@ impl IndexTree {
         self.names.is_empty()
     }
 
-    /// 渡したパスのうち、**この木に無いもの**を返す。
-    ///
-    /// **「無い」だけを主張する。** 呼び出し側（`snotra` の `icon::sync_with_index`）がこれをアイコンキャッシュの剪定に使うので誘惑があるが、**「消えた」「死んでいる」とは言えない**——木に載るのはスキャン対象と PATH のエントリだけで、呼び出し側の集合が同じ母集団から来る保証はこの層には無い。**下流のどの経路がそういうキーを入れるかは、下流の doc（`snotra` の `IconCache::remove_paths`）が持つ**——この crate は下流の実装を知らないので、ここへ書くと誰も検算しない写しになる。
-    ///
-    /// **判定は「落とす集合」を返す向きである**——呼び出し側は lock を離した snapshot からこれを作るので、その後に増えたキーを知らない。残す集合を返すと、知らないキーが「残す集合に無い」という理由で落ちる（正本は `snotra` の `IconCache::remove_paths`）。
-    ///
-    /// **バッファを 1 本使い回し、集合は木の側ではなく `keys` の側で作る。** 木の全パスを所有 `String` の集合にすると、312,625 件ぶんの確保が一時的に積み上がる——`materialize` と同額（約 36 MiB）を判定のためだけに払うことになる。`keys` が空なら走査ごと省く。
-    pub fn absent_paths(&self, keys: Vec<String>) -> std::collections::HashSet<String> {
-        let mut absent: std::collections::HashSet<String> = keys.into_iter().collect();
-        if absent.is_empty() {
-            return absent;
-        }
-        let mut buf = String::new();
-        for i in 0..self.len() {
-            self.path_into(&mut buf, i);
-            // 木に在ると分かったものを外す。**ヒットしても確保しない**（在る側を積む形は
-            // 1 件ごとに `String` を確保していた）。
-            absent.remove(&buf);
-        }
-        absent
-    }
-
     /// 木を `Vec<AppEntry>` へ戻す（フルパスを組み直して実体化する）。
     ///
     /// **実体化は木が消したはずの 312,625 個の `String` をその場で作り直す**ので、通した区間の
@@ -619,88 +597,6 @@ mod tests {
             tree.path_into(&mut buf, i);
             assert_eq!(&buf, expected, "index {i}");
         }
-    }
-
-    /// [`IndexTree::absent_paths`] の fixture。**列を手で並べずに製品の建て方を通す**——`build` は `index.bin` を書く側と索引を建てる側が共有する唯一の口であり、列を手書きした fixture は表現が変わった日に「別の木」を黙って建てる。
-    ///
-    /// **`name` の導出は `indexer` の規則を書き写している**（folder は `file_name()`、file は `file_stem()`）——SSOT の関数が無く `indexer.rs` に 3 か所インラインで在るためで、「通している」のではない。**拡張子込みの末尾成分を入れてはならない**: [`resolve_one`] の `tail.strip_prefix(name)` が空を返して `aux` が 0 へ潰れ、**拡張子の再結合（[`raw_path_into`] 末尾の `push_str`）を一度も通らない木**になる。ゆえに写しがずれていないことを、建てる前に 1 件ずつ断言する。
-    ///
-    /// **木の配線そのものはここで守らない。** 拡張子の再結合が壊れれば `path_into` が短いパスを返し、下の `absent_paths_*` が集合の差として落ちる（2026-08-09 に旧形を注入して実測）。親の解決は [`from_parts_accepts_healthy_columns_and_rebuilds_paths`] と `file_key_matches_normalize_file_name_key_on_both_arms` が既に固定している。
-    fn tree_with(paths: &[(&str, bool)]) -> IndexTree {
-        let mut entries: Vec<AppEntry> = paths
-            .iter()
-            .map(|(p, is_folder)| {
-                let path = std::path::Path::new(p);
-                let seg = if *is_folder {
-                    path.file_name()
-                } else {
-                    path.file_stem()
-                };
-                // **取れなかったらフルパスへ落とさない**——落とすと `C:\` や UNC の共有名で
-                // `name` にパス全体が入り、製品が決して作らない木を黙って建てる。
-                let name = seg
-                    .and_then(|s| s.to_str())
-                    .unwrap_or_else(|| panic!("末尾成分を取れない入力は fixture に置けない（{p}）"))
-                    .to_string();
-                assert!(!name.is_empty(), "`indexer` は空の name を弾く（{p}）");
-                // **写しがずれていないことを 1 件ずつ刺す。** file の `name` に拡張子が
-                // 残っていれば、この木は上の doc が禁じた形である。
-                if !is_folder && path.extension().is_some() {
-                    assert_ne!(
-                        Some(name.as_str()),
-                        path.file_name().and_then(|s| s.to_str()),
-                        "file の name に拡張子が残っている（`file_stem()` ではなく `file_name()` を通した）"
-                    );
-                }
-                AppEntry {
-                    name,
-                    target_path: (*p).to_string(),
-                    is_folder: *is_folder,
-                }
-            })
-            .collect();
-        crate::indexer::sort_entries_canonical(&mut entries);
-        IndexTree::build(entries)
-    }
-
-    #[test]
-    fn absent_paths_returns_only_keys_the_tree_does_not_have() {
-        let tree = tree_with(&[
-            ("C:\\app", true),
-            ("C:\\app\\tool.exe", false),
-            ("C:\\app\\sub", true),
-            ("C:\\app\\sub\\deep.exe", false),
-        ]);
-
-        let absent = tree.absent_paths(vec![
-            "C:\\app\\tool.exe".into(),
-            "C:\\app\\sub\\deep.exe".into(),
-            "C:\\app\\removed.exe".into(),
-        ]);
-
-        assert_eq!(absent.len(), 1, "木に在る 2 件は落とす集合に入らない");
-        assert!(absent.contains("C:\\app\\removed.exe"));
-    }
-
-    /// 照合は**フルパスの原文**に対して行う（末尾成分でも正規化キーでもない）。
-    #[test]
-    fn absent_paths_compares_full_paths_verbatim() {
-        let tree = tree_with(&[("C:\\app", true), ("C:\\app\\tool.exe", false)]);
-        let absent = tree.absent_paths(vec!["tool.exe".into(), "C:\\APP\\tool.exe".into()]);
-        assert_eq!(
-            absent.len(),
-            2,
-            "末尾成分だけ・大小が違う形はどちらも一致しない"
-        );
-    }
-
-    #[test]
-    fn absent_paths_is_empty_without_keys() {
-        assert!(
-            tree_with(&[("C:\\app", true)])
-                .absent_paths(Vec::new())
-                .is_empty()
-        );
     }
 
     /// **`index.bin` の 5 列は独立に読まれる**ので、壊れたファイルは長さの揃わない列や

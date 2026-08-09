@@ -108,11 +108,12 @@ fn drain_index(app_handle: &AppHandle) {
             material.extend_with_path_entries(path_entries);
         }
 
-        // アイコンキャッシュを新しい索引へ揃える（lock 規律と受容残余は `icon.rs` が正本）。
-        icon::sync_with_index(
+        // アイコンが無効ならキャッシュを捨てる。**索引と突き合わせる剪定はもう無い**（#996 で
+        // 撤去し、掃除は `IconCache::enforce_cap` の FIFO へ一本化した）。この呼び出しが
+        // 索引ビルドに乗り続ける理由は `icon::drop_icon_cache_if_disabled` の doc が正本。
+        icon::drop_icon_cache_if_disabled(
             &app_handle.state::<icon::IconCacheState>(),
             inputs.show_icons,
-            material.tree(),
         );
 
         // SearchEngine の構築（O(N)）は Mutex 外で実施してロック保持時間を最小化する。

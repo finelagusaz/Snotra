@@ -61,8 +61,11 @@ impl PrebuiltIndex {
 /// インデックス（`SearchEngine`）の構築入力。config から焼き込まれるカテゴリ B の入力一式（issue #347）。
 /// `config_watcher` の再構築要否判定（old/new 差分）と `complete_index_drain` の re-diff
 /// （ビルド開始時スナップショット/現在）で**この単一定義を共有**する（needs_reindex と in-flight
-/// needs_rebuild の二重メンテを解消）。`show_icons` は概念的には icon-stale だが、現状は index
-/// ビルドのついでにアイコンキャッシュを prune するため含める（設計メモ §6 Q2）。
+/// needs_rebuild の二重メンテを解消）。`show_icons` は概念的には icon-stale だが、**これが偽へ
+/// 変わったときにアイコンキャッシュを落とす経路として当てにできるのが index ビルドの drain
+/// だけである**ため含める（#996 で索引照合の剪定を撤去した後も、その 1 点が残る理由と、
+/// 「当てにできる」までしか書けない理由は `snotra` の `icon::drop_icon_cache_if_disabled` の
+/// doc が正本）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct IndexInputs {
     pub scan: Vec<ScanPath>,

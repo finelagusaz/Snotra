@@ -9,8 +9,10 @@
 `IconCache::enforce_cap` の FIFO へ一本化する。剪定の存在から出ていた受容残余 3 つと、
 それを支える API・テスト・文書を同時に消す。
 
-**仕様変更ではない**（`SPEC.md` §3.4 は遅延ロードと FIFO cap のみを規定し、剪定を規定していない
-——research.md で裏取り済み）。ゆえに `SPEC.md` の更新は不要。
+**仕様変更である**（訂正・2026-08-09）。当初「`SPEC.md` §3.4 は剪定を規定していない」と
+書いていたが**偽だった**——`SPEC.md:95` の「インデックス再構築時はキャッシュをクリア」が
+drain 側を指している（経緯と見落とした機序は research.md「訂正」節）。`AGENTS.md` に従い
+`SPEC.md` → コード → ドキュメントの順で同期した。**採否そのものは変わらない。**
 
 ## 受け入れ条件
 
@@ -47,32 +49,37 @@
 
 ### Phase 1 — production コードの撤去（compile-fail を検出器にする）
 
-- [ ] `snotra-core/src/index_tree.rs` から `absent_paths` とそのテスト 3 本・`tree_with` を削除する
-- [ ] `src-tauri/src/icon.rs` の `sync_with_index` を `drop_icon_cache_if_disabled(icons: &IconCacheState, show_icons: bool)` へ縮める（木の引数・`absent_paths` 呼び出し・2 回目の lock を削除）
-- [ ] `IconCache::keys` / `IconCache::remove_paths` を削除する
-- [ ] `src-tauri/src/indexing.rs` の呼び出しを新シグネチャへ合わせる
-- [ ] `cargo build --workspace` が通ることを確認する（**移行漏れの検出器はこれである**——grep ではない）
+- [x] `snotra-core/src/index_tree.rs` から `absent_paths` とそのテスト 3 本・`tree_with` を削除する
+- [x] `src-tauri/src/icon.rs` の `sync_with_index` を `drop_icon_cache_if_disabled(icons: &IconCacheState, show_icons: bool)` へ縮める（木の引数・`absent_paths` 呼び出し・2 回目の lock を削除）
+- [x] `IconCache::keys` / `IconCache::remove_paths` を削除する
+- [x] `src-tauri/src/indexing.rs` の呼び出しを新シグネチャへ合わせる
+- [x] `cargo build --workspace` が通ることを確認する（**移行漏れの検出器はこれである**——grep ではない）
 
 ### Phase 2 — テストの整理
 
-- [ ] 削除: `sync_with_index_keeps_keys_present_in_a_non_empty_tree` / `sync_with_index_removes_keys_absent_from_the_tree` / `remove_paths_preserves_cap_invariant` / `concurrent_insert_during_prune_window_survives` / fixture `material_of`
-- [ ] 残す 2 本を新しい名前へ合わせる（`..._drops_the_cache_when_icons_are_disabled` / `..._is_a_noop_when_the_cache_is_absent`）
-- [ ] **残す分岐を守る断言があることを確かめる**——`show_icons=false` でキャッシュが `None` になることと、`show_icons=true` では触らないことの 2 方向
-- [ ] `cargo test --workspace` が通ることを確認する
+- [x] 削除: `sync_with_index_keeps_keys_present_in_a_non_empty_tree` / `sync_with_index_removes_keys_absent_from_the_tree` / `remove_paths_preserves_cap_invariant` / `concurrent_insert_during_prune_window_survives` / fixture `material_of`
+- [x] 残す 2 本を新しい名前へ合わせる（`..._drops_the_cache_when_icons_are_disabled` / `..._is_a_noop_when_the_cache_is_absent`）
+- [x] **残す分岐を守る断言があることを確かめる**——`show_icons=false` でキャッシュが `None` になることと、`show_icons=true` では触らないことの 2 方向
+- [x] `cargo test --workspace` が通ることを確認する
 
 ### Phase 3 — doc コメントの整理
 
-- [ ] `IconCache` の doc から剪定由来の記述（受容残余 3 つ・述語の向きの要石）を削除する。**`enforce_cap` の FIFO が唯一の掃除である**ことを 1 行で書く
-- [ ] `snotra-core/src/engine.rs` の `IndexInputs` doc を直す——`show_icons` を含める理由は「prune のついで」ではなく「無効化時にキャッシュを落とすため」である
-- [ ] `cargo doc --workspace --no-deps --document-private-items` を**手で**走らせる（PostToolUse hook は intra-doc link を見ない）
+- [x] `IconCache` の doc から剪定由来の記述（受容残余 3 つ・述語の向きの要石）を削除する。**`enforce_cap` の FIFO が唯一の掃除である**ことを 1 行で書く
+- [x] `snotra-core/src/engine.rs` の `IndexInputs` doc を直す——`show_icons` を含める理由は「prune のついで」ではなく「無効化時にキャッシュを落とすため」である
+- [x] `cargo doc --workspace --no-deps --document-private-items` を**手で**走らせる（PostToolUse hook は intra-doc link を見ない）
 
 ### Phase 4 — `PERFORMANCE.md` の整合
 
-- [ ] 「採用: アイコン剪定の判定を lock の外へ出す」節（:609）を**撤去の記録へ書き換える**（issue の撤去条件が名指し）。実測値（剪定が落としたのは 0 件）を根拠として残す
-- [ ] 候補表の「アイコン剪定の照合を二分探索へ」行（:595）を削除する（前提が消えた）
-- [ ] 「試みたが機能しない: 篩へ通す」節（:636）の「再び測る値打ちが出る 2 通り」から剪定側を落とす
-- [ ] :1185 の「フルパスを要求する消費者」から「アイコンキャッシュの剪定キー」を落とす
-- [ ] :25 のプレイブック §3（述語の向き）は**一般則なので残す**。実例への参照だけ直す
+- [x] 「採用: アイコン剪定の判定を lock の外へ出す」節（:609）を**撤去の記録へ書き換える**（issue の撤去条件が名指し）。実測値（剪定が落としたのは 0 件）を根拠として残す
+- [x] 候補表の「アイコン剪定の照合を二分探索へ」行（:595）を削除する（前提が消えた）
+- [x] 「試みたが機能しない: 篩へ通す」節（:636）の「再び測る値打ちが出る 2 通り」から剪定側を落とす
+- [x] :1185 の「フルパスを要求する消費者」から「アイコンキャッシュの剪定キー」を落とす
+- [x] :25 のプレイブック §3（述語の向き）は**一般則なので残す**。実例への参照だけ直す
+- [x] **（実装中に判明・計画外）** `docs/comment-guidelines.md:29` が `tree_with` を「書き写したと
+      自ら名乗る」模範例として名指していた。**計画の doc 掃討が漏らした**——`grep 剪定|remove_paths|
+      absent_paths|sync_with_index` には fixture 名が入っていない。`governance:check` が捕捉した
+      （散文に現行語彙に無い識別子）。同等の生きた実例は他に無い（grep 実測: 他はすべて「書き写すな」
+      の禁止側）ため、規則本体を残して参照だけ落とした
 
 ### Phase 5 — 調査用の足場の撤去（**この計画のコミット前に完了済み**）
 
@@ -80,14 +87,64 @@
       撤去条件「採否が決まったら」が承認の時点で満たされたため、計画のコミット前に実施した
       （`git checkout -- src-tauri/src/icon.rs`）。**数値は `workspace/research.md` が正本である**
 
+### Phase 6.5 — レビュー指摘への対応（計画外・code-reviewer round 1）
+
+- [x] **High-1**: `SPEC.md:95` を現況へ同期した（インデックス再構築そのものでは掃除しない・
+      丸ごと捨てる 2 契機を明記）。`invalidate_icon_cache` の呼び出し点が 1 か所であることを
+      grep で確かめてから「2 つ」と書いた
+- [x] **High-1 波及**: `PERFORMANCE.md` の「§3.4 は遅延ロードと FIFO cap しか規定していない」
+      という**偽の主張**を訂正し、見落とした機序（`grep アイコン` で節を読んだ）まで記録した
+- [x] **High-1 波及**: `plan.md` / `research.md` の誤った裏取りを訂正した（記録を偽のまま残さない）
+- [x] **Low-1**: `search/tests/performance.rs:350` の「再び測る値打ちが出る条件」への参照を、
+      受け皿が消えたので撤去後の扱いへ差し替えた
+- [x] **Low-2**: 「掃除は `enforce_cap` ただ 1 つ」を「**キーを選び取って間引く機構は**ただ 1 つ」
+      へ限定した（丸ごとの破棄が 2 経路あるので字義どおりには偽だった）
+- [x] **Low-3**: 「そちらは到達しない」→「寄りかかれない」。`show_icons` の出所が
+      live-read と `VisualSnapshot` で違うため、切り替えを跨いだ要求は偽のまま着きうる。
+      **当初「1 フレームだけ」と数を書いたが自分で検算して撤回した**——`spawn_icon_load` は
+      切り離したスレッドを起こすので、engine を読む時刻はフレーム数で押さえられない
+      （`results_view.rs:210-216`）。最終形は「窓の長さは書かない」＋機序
+- [x] **Low-4**: 「剪定は 1 件も落としていなかった」→「**測ったセッションでは**〜」
+- [x] **Low-5**: 全称否定を日付つきの観測へ倒した
+- [x] **Low-6**: `show_icons` を `IndexInputs` から外す案を候補表へ置いた（この反復では対処しない）
+- [x] **Nit-1**: 「引数を取り違える」を落とした（型が違うのでコンパイルが通らない）
+**Nit-2 は作業項目に置かない**（射程外ゆえ、この計画が所有しない）: `index_tree.rs:264` の
+`path_into` doc「crate の外から使う口」は外部呼び出し 0 件（grep 実測）だが、**差分前から偽**
+である（`absent_paths` も同 crate 内だったため、この撤去が生んだものではない）。直すなら
+doc ではなく `pub` 自体の是非になるので、報告に回して人の判断を仰ぐ。
+
+### Phase 6.6 — レビュー指摘への対応（code-reviewer round 2・High 0 件）
+
+- [x] **Low-A**: 「丸ごとの破棄は `invalidate_icon_cache` と `drop_icon_cache_if_disabled` が
+      持つ」という**数え上げが偽**だった（実際は 3 か所——`commands/icon.rs:22` が漏れており、
+      **同じ doc の 10 行下で自分が言及している当の関数**だった）。数を落として「別経路が持つ」
+      へ倒した。`IconCacheState` へ `None` を書く箇所を grep して 3 か所と実測してから直した
+- [x] **Low-B**: `icon.rs` を「当てにできる」へ緩めたのに、**それを正本として指す
+      `engine.rs` が「しか無い」の強いまま残っていた**（修正が指摘箇所へ集中して周辺に残った形）。
+      `engine.rs` と候補表の引用を同時に揃えた
+- [x] **Low-C**: 候補表の「実測されているもの」列が、テストの射程を超えて「再構築を kick する
+      ことを固定している」と書いていた。実際に `index_inputs_differ_on_each_index_key`
+      （実名で確認）が固定するのは `IndexInputs` の不一致までで、kick は `config_watcher` の
+      不変条件が持つ。2 層に分けて書き直した
+- [x] **nit ×4**: `performance.rs` の括弧の写し／`research.md` 結論 #1 の全称／`plan.md` の
+      Low-3 行が実装の 1 つ前の版を指していた点／テスト doc の折返し
+
+**⚠ Low-D（方法論・SPEC の記述は正しいので修正しない）**: SPEC の「丸ごと破棄するのは
+2 つの場合に限る」の裏取りに `invalidate_icon_cache` の呼び出し点 grep（1 か所）を挙げたが、
+**それが支えるのは箇条書き 1 つ目の呼び出し点であって、網羅そのものではない**。網羅を測る
+grep は `IconCacheState` へ `None` を書く 3 か所の側で、契機へ畳むと 2 つになる（3 つ目は
+「アイコン表示を無効へ切り替えたとき」に吸収される）。**結論は正しいが、示した証拠は主張と
+別物だった**——High-1 を生んだのと同じ機序（`AGENTS.md`「照合は SSOT に対して行う」）の再発
+であり、記録として残す。
+
 ### Phase 6 — 検証
 
-- [ ] `cargo fmt --all -- --check`
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings`
-- [ ] `cargo test --workspace`
-- [ ] `cargo doc --workspace --no-deps --document-private-items`
-- [ ] `npm run governance:check`
-- [ ] 実装差分を確定させる（Phase 1〜5 がすべて反映されている）
+- [x] `cargo fmt --all -- --check`
+- [x] `cargo clippy --workspace --all-targets -- -D warnings`
+- [x] `cargo test --workspace`
+- [x] `cargo doc --workspace --no-deps --document-private-items`
+- [x] `npm run governance:check`
+- [x] 実装差分を確定させる（Phase 1〜5 がすべて反映されている）
 
 ## 不変条件と異常系
 
@@ -115,7 +172,7 @@ cap で有界であり、correctness は `invalidate_icon_cache` が担う。実
 
 | 文書 | 要否 | 理由 |
 |---|---|---|
-| `SPEC.md` | **不要** | §3.4 は剪定を規定していない（裏取り済み） |
+| `SPEC.md` | **要**（当初「不要」→ レビューで訂正） | §3.4:95「インデックス再構築時はキャッシュをクリア」が drain 側を規定していた。`grep アイコン` で節を読んだため当の 1 行が母集団から落ちていた |
 | `PERFORMANCE.md` | **要**（Phase 4） | 剪定の存在を前提にした記述が 4 か所 |
 | `src-tauri/CLAUDE.md` | **不要** | `icon.rs` の記述は `invalidate_icon_cache` の TOCTOU のみで剪定に触れていない（grep 実測） |
 | `snotra-core/CLAUDE.md` | **不要** | 「剪定」の記述は履歴剪定（`top_n`）であって無関係（grep 実測） |

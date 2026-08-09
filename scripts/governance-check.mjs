@@ -91,10 +91,15 @@ const finding = (file, line, message) => ({ file, line, message });
 // ui は #532 SU7 のフロント撤去で消滅（ui/CLAUDE.md ごと削除）
 // snotra-egui-runtime は #701 で追加。「#532 の検証層」として作られたまま母集団から漏れており、
 // SU7 で製品の描画層になった後も更新されていなかった（G-references の governanceDocs も同時に是正）
-/** G-module-index が照合する crate。**保証は狭い**——crate を新設してここへ足さなければ、その
- *  `CLAUDE.md` のモジュール構成は順方向も逆方向も一度も照合されないまま緑になる（2026-08-09 実測:
- *  member を 1 つ増やし、その索引へ実在しない `.rs` を書いても検査は緑・#1008）。
- *  真の母集団はルート `Cargo.toml` の `[workspace] members` であり、この表はその写しである。 */
+/** G-module-index が照合する crate。**本検査の保証は狭い**——crate を新設してここへ足さなければ、
+ *  その `CLAUDE.md` のモジュール構成は順方向も逆方向も一度も照合されず `governance:check` は緑を
+ *  返す（2026-08-09 実測: member を 1 つ増やし、その索引へ実在しない `.rs` を書いても緑・#1008）。
+ *  真の母集団はルート `Cargo.toml` の `[workspace] members` であり、この表はその写しである。
+ *  **ただし写しのずれ自体は本ファイルの外で固定されている**——`governance-check.test.mjs` の
+ *  母集団カナリア（#701）が実 `Cargo.toml` を読み、`CLAUDE.md` を持つ member が本表と
+ *  `governanceDocs()` の**両方**に載ることを `npm test` で強制する。**残る穴は `CLAUDE.md` を
+ *  持たない crate だけで、そのとき照合すべき索引もまだ無い**（`skip-ci` ラベルの付いた PR では
+ *  そのカナリアも走らない）。 */
 export const MODULE_INDEX_CRATES = {
   "snotra-core": { src: "snotra-core/src/", exts: /\.rs$/ },
   "snotra-egui-runtime": { src: "snotra-egui-runtime/src/", exts: /\.rs$/ },
@@ -1356,11 +1361,14 @@ export function checkNearHeadingRefs(snapshot, docs) {
  *  （生きた層 → ADR と ADR → ADR の短縮引用 = `adrCitationDocs` が明示的に持つ）
  *
  *  **保証は狭い**: 3 検査が照合するのは、ここが返した文書の中に書かれた参照だけである
- *  （G-adr-citations は `adrCitationDocs` で入力を足す）。ここに入らない層——ルート直下へ新設した
- *  文書や、member を増やした crate の `CLAUDE.md` など——に書いた実在しない参照・`SPEC §N`・
- *  ADR 引用は素通りする（2026-08-09 実測・#1008）。**リポジトリ全体を見る検査ではない。**
+ *  （G-adr-citations は `adrCitationDocs` で入力を足す）。ここに入らない層——**ルート直下へ新設した
+ *  文書**など——に書いた実在しない参照・`SPEC §N`・ADR 引用は素通りする（2026-08-09 実測・#1008）。
+ *  **リポジトリ全体を見る検査ではない。**
  *  なお crate 名の正規表現は `MODULE_INDEX_CRATES` と同じ一覧を独立に持つ 2 本目であり、
- *  真の母集団はどちらもルート `Cargo.toml` の `[workspace] members` である。 */
+ *  真の母集団はどちらもルート `Cargo.toml` の `[workspace] members` である。**crate を増やしたときの
+ *  この正規表現の更新漏れは `governance-check.test.mjs` の母集団カナリア（#701）が `npm test` で
+ *  捕まえる**（詳細は `MODULE_INDEX_CRATES` の doc）——**カナリアが見ないのはルート文書の配列の側**
+ *  であり、そこへの足し忘れは今も沈黙する。 */
 export function governanceDocs(snapshot) {
   return snapshot.files.filter(
     (f) =>

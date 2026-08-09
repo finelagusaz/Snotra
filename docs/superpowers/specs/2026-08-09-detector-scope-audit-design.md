@@ -274,7 +274,7 @@ Rust #1・#2 の二重分類の片側）。
 | 9 | `G-stale-identifiers` | `STALE_EXTRA_DOCS`（governance-check.mjs:1505、固定パス 4 件） | 新設した「意図の SSOT」級の文書がここに無いと、腐り識別子の検査対象から漏れる | F | **修正ラウンド 1 で S→F に訂正**（§9.0 参照）。#8 と同型——要素は全て実在ファイルパス。コメントの「静的リテラルであること自体が fail-closed」は選定理由の説明であり、母集団の型（F）を否定しない |
 | 10 | `G-stale-identifiers` | `VOCAB_TEST_FILE`（governance-check.mjs:1499、`.test.(mjs\|ts\|tsx)` の拡張子 3 種） | この形以外のテスト専用ファイル（Rust の `#[cfg(test)] mod` 等・コメントで残余と明記済み）の語彙が「現行語彙」へ紛れ込み、実在しない識別子が偶然そのテスト専用語彙と一致すると stale 判定から漏れる | S | 対象拡張子の選定は編集方針（#2/#6/#7 と同型） |
 | 11 | `G-stale-identifiers` | `currentVocabulary` のコメント除去振り分け（governance-check.mjs:1556、`/\.(ps1\|toml\|yml)$/` の可否で `#` 除去 or `stripRustComments` を選ぶ） | `VOCAB_SOURCE_EXT`（:1495）へ `#` コメント言語の拡張子を追加してもここへ追記し忘れると、その言語のコメントが語彙へ生で混入し、由来注記等に含まれる腐り識別子が偶然一致して stale 判定から漏れる（`currentVocabulary` 自身のコメントが「含めると `resetForShow` のような由来注記が語彙に化け、腐りが原理的に検出できない（実測 11 件）」と明記する失敗形の再演。修正ラウンド 2 の Minor 指摘） | S | 同上（拡張子選定は編集方針） |
-| 12 | `G-workspace-lints` | `REQUIRED_RUSTDOC_LINTS`（governance-check.mjs:345、lint 名 2 件） | 3 つ目の必須 rustdoc lint を deny させたくても追記し忘れると非実効のまま緑になる | X | ルート `Cargo.toml` の `[workspace.lints.rust]` に対する要求項目のカナリア——真の母集団は TOML 設定の側にある |
+| 12 | `G-workspace-lints` | `REQUIRED_RUSTDOC_LINTS`（governance-check.mjs:345、lint 名 2 件） | 3 つ目の rustdoc lint を deny で足しても追記し忘れると、**その行が後日まるごと消えても誰も気づかない**（**足した lint が非実効になるのではない**——cargo は適用するし、在るあいだは `rustdocLintsAreDenied` の「全エントリが deny/forbid」の側で見られている。固定されないのは「在り続けること」・修正ラウンド 2 で訂正） | X | ルート `Cargo.toml` の `[workspace.lints.rust]` に対する要求項目のカナリア——真の母集団は TOML 設定の側にある |
 | 13 | `G-clippy-disallowed` | `REQUIRED_DISALLOWED_METHODS`（governance-check.mjs:461、禁止メソッドパス 7 件） | 8 つ目の禁止対象メソッドを追加しても追記し忘れると禁止漏れが検知されない | X | doc comment 自身が「含めなかったメソッドと、その除外理由の正本は `src-tauri/clippy.toml` 冒頭のコメントである」と明記——真の母集団は外部 TOML 設定 |
 | 14 | `G-clippy-disallowed` | `DISALLOWED_METHODS_GROUPS`（governance-check.mjs:521、群名 2 件。コメントに「上流が 3 つ目の群へ入れたら、この配列が更新されるまで沈黙する」と残余が明記済み） | 上流 clippy が 3 つ目の打ち消し群を持ったとき、この検査は気づかない | X | 群一覧の真の SSOT は upstream clippy 自身の lint-group taxonomy（`clippy-driver -W help`）——本リポジトリの外にある仕様 |
 
@@ -430,6 +430,27 @@ Rust のコンパイラは関与しない（§9.0 の「C はすべて Rust に�
 | 14 | `G-clippy-disallowed` / `DISALLOWED_METHODS_GROUPS` | X | `[workspace.lints.clippy]` へ 3 つ目の群 `suspicious = "allow"` | 同じ位置を `style = "allow"` にすると**赤** | **③** |
 
 **ガバナンス層の集計: ① 0 件・② 0 件・③ 17 件。**
+
+**脚注（修正ラウンド 2 で追記）— #1・#3〜#5 の X 側・#13 について。** 上の ③ は
+「`npm run governance:check` 単体では照合されない」という測定どおりの判定であり、変えない。
+**ただしこの層の外に相方が居る件が 2 つある**（`governance-check.test.mjs` の実リポジトリ
+カナリアを全数走査して確かめた——鍵は `new URL("..", import.meta.url)`。ヒット 5 件のうち
+一覧の同期を固定するのは次の 2 件だけで、残り 3 件は「実リポで緑」「サマリ件数」の確認である）:
+
+- **#1 と #3〜#5 の X 側** — 母集団カナリア（#701）が実 `Cargo.toml` を読み、`CLAUDE.md` を持つ
+  member が `MODULE_INDEX_CRATES` と `governanceDocs()` の**両方**に載ることを `npm test` で強制する。
+  上の変異（`snotra-probe` を members へ足し `CLAUDE.md` を置く）は **`npm test` なら赤くなったはず**である。
+  残る穴は `CLAUDE.md` を持たない crate と、`governanceDocs()` の**ルート文書配列**の側だけ
+- **#13** — G-clippy-disallowed のカナリアが実 `src-tauri/clippy.toml` を読み、
+  `disallowed-methods` が `REQUIRED_DISALLOWED_METHODS` と**同じ長さで全要素を含む**ことを assert する。
+  ゆえに「8 件目を clippy.toml へ足して定数へ足し忘れる」形は `npm test` が赤くする。
+  **既存 doc の記述は真のまま**である——`src-tauri/clippy.toml` 冒頭と `docs/build-commands.md` が
+  書くのは「**足したパスが解決すること**は見ない」「8 件目の**書き損じ**は射程外」であり、
+  カナリアが固定するのは 2 つの一覧の同期であって、パスが clippy に解決されるかではない
+
+**#12・#14 は該当しない**（`REQUIRED_RUSTDOC_LINTS` を実 `Cargo.toml` と突き合わせるカナリアは無く、
+G-workspace-lints のカナリアが見るのは members の導出と「実リポで緑」だけである）。
+**vitest 層が §3 の母集団に入っていないため、本表の測定はそこを一度も観測していない**（§12.5）。
 
 **この層で②が 1 件も出ないのは、候補の抜き方が正しかったことの裏返しである。** Task 2 は
 「母集団を走査・外部解析から動的に取るもの」を候補から外しており、残った 14 件は定義上すべて
@@ -699,19 +720,31 @@ A1〜A3 は Rust ③ #1/#2 と同じ箇所であり、上表の「doc へ射程�
 届かない件を裁量で格上げすると、必須 1 件の実測と混ざる。§11.4 と同じくフォローアップとして残す
 ——**手を付けなかったのは見落としではない**。
 
-### 11.4 機構の外に残る穴（記録のみ・本サイクルでは塞がない）
+### 11.4 crate の足し忘れは誰が見るか（修正ラウンド 2 で訂正）
 
-**新設した crate のモジュール索引を見る人がいない。** `MODULE_INDEX_CRATES` へ足し忘れると
-G-module-index は照合せず（§10.3 #1 で実測）、`/health-check` の Check 1 は「機械検査するので
-ここでは実行しない」と**全面委譲を宣言している**——ゆえに機構も人も見ない区間ができる。
+**本節はかつて「機構も人も見ない区間ができる」と書いていた。これは偽であった**——最終レビューが
+反例を挙げ、`scripts/governance-check.test.mjs:93-124` を読んで確かめた。
 
-**本サイクルでは射程の記述だけを置き、手順は足さなかった。** `/health-check` へ「crate が増えた
-直後は目で見る」という実行義務を足す案は、(a) 同スキルが冒頭で「実行するのは 2 つ」と宣言する
-構造と食い違い、(b)「crate が増えた直後」を誰がいつ判定するかが決められず（`/health-check` は
-crate 追加の直後に走るとは限らない）、(c) ルート `CLAUDE.md`「最重要ルール」2 が定める
-**エージェント設定の変更は合意してから**に当たるため、修正ラウンド 1 で取り下げた。
-塞ぐなら `MODULE_INDEX_CRATES` を `Cargo.toml` の `[workspace] members` から導く機構化が筋であり、
-これは Task 6 の裁量に属する（§11.3 と同じ扱い）。
+**現に固定されている**: 同ファイルの母集団カナリア（#701）が実 `Cargo.toml` の
+`[workspace] members` を読み、**`CLAUDE.md` を持つ member が `MODULE_INDEX_CRATES` と
+`governanceDocs()` の両方に載ること**を assert する（母集団が空になる形へのガードも持つ）。
+`vitest.config.ts` の include が `scripts/**/*.test.mjs` を拾い、`npm test` として CI の
+`node-check`（ubuntu）と `rust-check`（windows）の両方で走る。**残る穴は `CLAUDE.md` を持たない
+crate だけであり、そのとき照合すべき索引もまだ無い**（ほかに `skip-ci` ラベルの付いた PR では
+両 job とも走らない——実測: `ci.yml` の当該 2 job だけがそのラベルで gate されている）。
+
+**誤りの機序**: §10.3 の測定コマンドは**すべて `npm run governance:check`** であり、
+**vitest 層は §3 が定めた 3 層の母集団に入っていない**（§12.5 に明記した）。`governance:check` が
+緑だったという観測は正しく、そこから**「機構は無い」へ一般化した瞬間に偽になった**。
+`AGENTS.md`「全称否定（『X は存在しない』）も同じ強さの主張である——不在の観測 1 つで確定させず、
+探し方を変えて所在を確かめてから書く」に、**その規範を引用しながら書いた本書自身が反していた**。
+皮肉なことに、そのカナリアのコメント自身が「crate を足しても何も鳴らない（沈黙する経路）」と
+この穴を説明しており、**カナリアはまさにそれを塞ぐために #701 で書かれていた**。
+
+**波及の是正**（同一パターン全コードパス検索の結果・5 か所）: `.claude/skills/health-check/SKILL.md`・
+`.claude/skills/implement/SKILL.md`・`governance-check.mjs` の `MODULE_INDEX_CRATES` と
+`governanceDocs()` の doc・本節。**§10.3 #1 / #3〜#5 の X 側の測定表には脚注を付けた**——
+③ の判定（`governance:check` 単体では照合されない）は変えていない。測定が測ったとおりだからである。
 
 ### 11.5 変更不要と確認した 5 件
 
@@ -851,6 +884,13 @@ Task 8 では取り直していない**（変異が破壊的で、最終検証�
 
 ### 12.5 受け入れの外に残るもの（本書が主張しないこと）
 
+- **vitest 層（`.claude/hooks` / `.githooks` / `scripts` の `*.test.mjs`・実測 316 本）は §3 の
+  3 層母集団に入っていない。** §10 の測定コマンドは Rust が `cargo test`、ガバナンスが
+  `npm run governance:check`、スモークが `Invoke-Pester` であり、**`npm test` は一度も走っていない**
+  ——ゆえに本書の ③ は「その 3 コマンドが照合しない」を意味するのであって、「どの機構も見ない」
+  ではない。**この読み違えを実際に犯した**（§11.4。`governance-check.test.mjs` の母集団カナリアが
+  現に crate の足し忘れを固定していた）。同じ層に他の相方が居るかは §11.4 の走査で確かめたが、
+  **その走査は「実リポジトリを読む test」を鍵にした 1 軸であり網羅を主張できない**
 - **篩の見落としの検算は Rust 層にしか掛かっていない**（§4 Phase 2 の「実測」）。ガバナンス 19 件・
   スモーク 3 件は全数を手で読んだが、grep 2 軸のような独立の検算は当てていない
 - **偽の主張の走査は、識別子と日本語述語を鍵にした grep であり網羅を主張できない**（§10.6.3 の末尾）

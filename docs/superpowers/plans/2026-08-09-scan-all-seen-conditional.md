@@ -1041,8 +1041,8 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 > 二択にする案）を前提に書かれていたが、Task 4 で `root_roles`（根ごとの `check`/`record`）
 > へ改訂された。`roots_overlap` は現在のソースに存在しない。以下は改訂後の実態。
 
-**役割の入れ替え（`record`/`check`）を検知するのは `root_roles` の単体テストであり、CI で
-守られる。** 実運用点の形（最大の根が最後に来る）で `roles[2]==(true,false)` を固定する
+**役割を走査順ではなく木の深さ（どちらが祖先か）で決めてしまう誤りを検知するのは
+`root_roles` の単体テストであり、CI で守られる。** 実運用点の形（最大の根が最後に来る）で `roles[2]==(true,false)` を固定する
 `root_roles_over_the_real_shape_leave_the_largest_root_inert` が、最大の根が積む側に回る
 退行（＝削減が消える退行の一種）を捕まえる。
 

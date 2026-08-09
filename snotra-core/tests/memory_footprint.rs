@@ -407,6 +407,14 @@ fn measure_real_index_footprint() {
 
 /// 背景再スキャンが毎起動踏む `scan_all` 区間を測る。
 ///
+/// **この関数が測る区間は `scan_all` だけであり、`sort` / `digest` / `save` を含まない。**
+/// `sort_entries_canonical` と `entries_digest` は `indexer.rs` の `pub(crate)` ゆえここから
+/// 呼べず、可視性を緩めるか計測専用の入口を製品へ足すことは #1000 が却下した「注入点を製品
+/// コードへ足す」と同型になる——広げず、既に測っている側を指す。`sort` / `digest` は Phase A
+/// の `LoadOrScanStats`（`sort_ms` / `digest_ms`）が、`save` は `cache_save_ms` と
+/// `rescan-log.jsonl` の `save_ms` が測る（#1001 受け入れ 1）。経路全体の内訳は出力末尾の
+/// 1 行が指す。
+///
 /// **この区間はどのフェーズ計測にも現れない。** Phase A のロードはキャッシュヒット枝ゆえ
 /// `scan_ms` が 0 で、`rescan_task` は呼び出し側が `drop` する——`cache_load_ms` と
 /// `total_ms` の間に居た全エントリ複製が見えなかったのと同じ形である
@@ -455,6 +463,10 @@ fn report_scan_all_cost(config: &Config) {
     if dups.len() > 20 {
         println!("    …ほか {} 件", dups.len() - 20);
     }
+    println!(
+        "  ※ この区間は scan_all のみ。sort / digest は Phase A の LoadOrScanStats、\
+         save は cache_save_ms と rescan-log.jsonl の save_ms が測る（#1001 受け入れ 1）"
+    );
 }
 
 /// `index.bin` のバイト内訳を表にする。

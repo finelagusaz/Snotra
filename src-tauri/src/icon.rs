@@ -703,16 +703,19 @@ mod tests {
         Mutex::new(Some(cache))
     }
 
-    /// `sync_with_index` のテスト用の材料。**列を手で並べない**——`IndexMaterial` の公開経路
-    /// （`from_tree` + `extend_with_path_entries`）を通すので、`IndexTree` の内部表現を
-    /// この crate が知る必要が無い。**木ではなく材料を返すのは、`tree()` が貸すだけだから**
-    /// である（呼び出し側が材料を生かしたまま `&IndexTree` を渡す）。
+    /// `sync_with_index` のテスト用の材料。**列を手で並べない**——`IndexMaterial` が公開する
+    /// **PATH エントリの追記の口**（`from_tree` + `extend_with_path_entries`）を通すので、
+    /// `IndexTree` の内部表現をこの crate が知る必要が無い。**索引を建てる口ではない**
+    /// （それは `pub(crate)` に閉じてある）。**木ではなく材料を返すのは、`tree()` が貸すだけ
+    /// だから**である（呼び出し側が材料を生かしたまま `&IndexTree` を渡す）。
     ///
-    /// **建つのは全件が根の平坦な木である**（`extend_with_path_entries` は親を解決しない）。
-    /// ゆえに `raw_path_into` は根の段で `name` を読まず、**この fixture は木の配線
-    /// （親を辿る組み立て・拡張子の再結合）を検査しない**——そこは `snotra-core` 側の
-    /// 検査が持つ。`name` に拡張子込みの末尾成分を入れているのはそのためで、core 側の
-    /// `tree_with` が同じ形を禁じているのは**親を解決する経路の話**である（矛盾ではない）。
+    /// **建つのは全件が根の平坦な木で、入力を変えてもそれは変わらない**——追記の口は
+    /// `IndexTree::extend_with_roots` を呼び、親を解決せずに全件を根として積む。ゆえに
+    /// `raw_path_into` は根の段で `name` を読まず、**この fixture は木の配線（親を辿る
+    /// 組み立て・拡張子の再結合）を検査しない**——そこは `snotra-core` 側の検査が持つ。
+    /// `name` に拡張子込みの末尾成分を入れているのもそのためで、core 側の `tree_with` が
+    /// 同じ形を禁じているのは**親を解決する経路の話**である（矛盾ではない）。
+    /// **配線まで測りたくなったら、この fixture を直すのではなく core 側の既知の木を借りること。**
     fn material_of(paths: &[&str]) -> snotra_core::indexer::IndexMaterial {
         let entries: Vec<snotra_core::indexer::AppEntry> = paths
             .iter()

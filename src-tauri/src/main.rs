@@ -27,7 +27,7 @@ use std::time::Instant;
 
 use serde_json::json;
 use snotra_core::config::{Config, GeneralConfig, HotkeyConfig, Language, LoadOutcome};
-use snotra_core::engine::Engine;
+use snotra_core::engine::{Engine, IndexInputs};
 use snotra_core::history::HistoryStore;
 use snotra_core::indexer;
 use tauri::{AppHandle, Listener, Manager};
@@ -609,13 +609,58 @@ fn setup_background_rescan(
             .spawn(move || {
                 indexer::lower_current_thread_priority();
                 let run = task.run();
-                if run.outcome == indexer::RescanOutcome::Changed
-                    && let Some(icons) = handle_for_rescan.try_state::<IconCacheState>()
-                {
+                if run.outcome != indexer::RescanOutcome::Changed {
+                    return;
+                }
+                if let Some(icons) = handle_for_rescan.try_state::<IconCacheState>() {
                     icon::invalidate_icon_cache(&icons);
+                }
+                if let Some(material) = run.material {
+                    apply_rescanned_index(&handle_for_rescan, material);
                 }
             });
     }
+}
+
+/// 再スキャンが返した材料で、走っているセッションの索引を差し替える。
+///
+/// **`start_index_build` を呼んではならない。** その drain ループは `rebuild_and_save` を
+/// 通り `scan_all` をもう一度走らせる——走査が 2 回になり、#1001 の当の代金が倍になる。
+/// 材料は再スキャンが既に持っており、建て直す必要は無い。
+///
+/// **重い構築（`build_index_from_material`）はロックの外で行う。** ロックの中に入れて
+/// よいのは差し替えの一瞬だけである。
+fn apply_rescanned_index(app: &AppHandle, material: indexer::IndexMaterial) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    // **stale なら譲る。** config が変わって本式ビルドが動いている（あるいはこれから
+    // 動く）ということであり、起動時の config で走査したこちらに資格は無い。
+    let inputs = {
+        let Ok(engine) = state.engine.lock() else {
+            return;
+        };
+        if engine.is_index_stale() {
+            return;
+        }
+        IndexInputs::from_config(engine.config())
+    };
+
+    let index = indexing::build_index_from_material(material, &inputs);
+
+    let Ok(mut engine) = state.engine.lock() else {
+        return;
+    };
+    // **建てている間に config が変わりうる。** 窓は閉じないが、読み直せば大半は捕まる。
+    // 取り逃しても走っている本式ビルドが後から上書きするので収束する。
+    if engine.is_index_stale() {
+        return;
+    }
+    // **`complete_index_drain` を使ってはならない**——あれは「このビルドが現在の
+    // `IndexInputs` を満たした」と台帳へ宣言する操作で、起動時の config で走査した
+    // こちらにその資格は無い。宣言すれば config 変更で立った stale を誤って落とし、
+    // 本来走るべき再構築が走らなくなる。
+    engine.apply_prebuilt_index(index);
 }
 
 /// Show the tray icon now that all windows are pre-created and all event
@@ -648,5 +693,30 @@ fn setup_startup_display(app_handle: &AppHandle, show_on_startup: bool) {
         snotra_egui_runtime::on_event_loop(app_handle, |app, el| {
             egui_shell::show_egui_main(app, el, Instant::now());
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// **走査を 2 回にしないことを、時間ではなく構造で固定する。**
+    ///
+    /// `start_index_build` の drain ループは `rebuild_and_save`（= `scan_all`）を通るので、
+    /// 再スキャンの適用からそれを呼ぶと全走査が 2 回になる（#1001 の当の代金が倍）。
+    /// 速さは環境で揺れるが、**呼んでいるかどうかは揺れない**。
+    ///
+    /// 母集団はこのファイルのソーステキストそのものである（`startup.rs` の
+    /// `count_matches_the_enum_declaration` と同じ手）。
+    #[test]
+    fn rescan_application_does_not_kick_a_full_rebuild() {
+        let src = include_str!("main.rs");
+        let after = src
+            .split_once("fn apply_rescanned_index(")
+            .expect("apply_rescanned_index が見つからない（改名したらこの検査も直す）")
+            .1;
+        let body = after.split_once("\nfn ").map_or(after, |(b, _)| b);
+        assert!(
+            !body.contains("start_index_build"),
+            "再スキャンの適用から start_index_build を呼んでいる（全走査が 2 回になる）"
+        );
     }
 }

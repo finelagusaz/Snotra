@@ -592,7 +592,6 @@ ASCII 限定の分岐＝別実装が要り、`snotra-core/CLAUDE.md`「`normaliz
 
 | 候補 | 実測されているもの | 見積もり | 注意 |
 |---|---|---:|---|
-| `show_icons` を `IndexInputs` から外す | `show_icons` の反転が `IndexInputs` の**不一致になる**ことは `index_inputs_differ_on_each_index_key` が固定している（実測）。**その不一致が再構築を kick することは別の層が持つ**（`config_watcher::apply_config_change` の側の不変条件。正本は `src-tauri/CLAUDE.md` のモジュール構成節の `config_watcher.rs` の項）。**再構築そのものの額は index ビルド全体と同じ**（実索引 313,028 件。scan 段と `index.bin` の書き直しの実測は「壁時計のロード段は比較対象ではない」節が正本） | **未実測**（削るのは「アイコン表示のチェックを外しただけで全再構築が走る」ぶん） | **非対称が 2 つある。** (1) **判定は `IndexInputs` の不一致ゆえ向きを持たない**——`false→true` でも全再構築が走り、そのとき `drop_icon_cache_if_disabled` は何もしない（＝払って効果 0）。使っているのは `true→false` のエッジだけである。(2) **守っている実体は高々 cap 件の常駐 RAM だけ**で、対価は全走査 + `index.bin` 保存 + PATH 併合 + マスク再構築である。**#996 で理由が 1 点に絞られて露わになった**——`show_icons` を含める根拠は「偽へ変わったときにキャッシュを落とす経路として当てにできるのが drain だけ」である（剪定のついで、ではなくなった）。外すなら `config_watcher::apply_config_change` が true→false のエッジで直接落とす形が要る。**エッジ検出を新設する側の正しさ**（適用の取りこぼし・起動直後の初期状態）が主な費用で、額ではない |
 | `IndexTree` のフィールドを private 化 | 現在 `pub(crate)` ゆえ、crate 内から構造体リテラルで `from_parts` の検証を迂回して組める | 額ではなく構造（不変条件を表現不能にする） | `columns()` / `into_columns()` の 2 口を出す。保存経路の `Cow::Borrowed` × 5・`PathStore::adopt` の分解・テストの `tree.names[0]` 系を全部書き換えることになるので、差分の外へ広がる |
 | `reject_existing` の走査を rayon で並列化 | 走査は逐次で約 45 ms | **-32 ms** | 倍率 3.6 は `entries_digest` の 43 → 12 ms を**別の関数へ持ち込んだ外挿**。**「read-only だから digest と条件が揃う」は誤り**——ループは `rejected[i]` へ書き、`file_buf` / `full_buf` を毎反復書き換えるので、`map_init` で per-worker に割るか添字を収集して reduce する形が要る |
 | `CachedLower::Collapsed.lower_names` を `Vec<Option<Box<str>>>` へ | 反復 11 で受容した重なり +20.74 MiB の内訳は 4 本の spine（2.38 + 2.38 + 7.16 + 7.16 = 19.08 MiB）でほぼ説明がつく | **-2.38 MiB**（spine の要素幅 24 → 16 B × 312,649）＋ cache-miss で `assemble` の `into_boxed_str` が move 1 つになり **4.77 MiB の一時確保が消える** | **`LowerFileName` に削り代は無い**（`Text(Box<str>)` にしても 24 B のまま——`String` の `Cap` が持つ niche が fieldless 2 変種を吸う。実測済み）。オンディスク型に触るので `/persistence-check` 対象・postcard の線上表現が `String` と `Box<str>` で同一かは**未実測**（ずれれば版バンプが要り額に見合わない）。cache-HIT 枝では純益がほぼ無い（今の `.collect()` が postcard の余剰 spine を詰め直す役目を兼ねている） |
@@ -650,6 +649,29 @@ ASCII 限定の分岐＝別実装が要り、`snotra-core/CLAUDE.md`「`normaliz
 
 **残る掃除は cap だけであり、索引に無いキーは cap 件を上限に残りうる**（受容する残余。
 正本は `IconCache` の doc）。
+
+### 採用: `show_icons` を `IndexInputs` から外す（アイコン切替の全再構築が消えた・**額は未実測**）
+
+剪定を撤去した結果、`show_icons` が索引構築入力に残る理由は「**アイコンキャッシュを落とす
+契機を運ぶため**」の 1 点だけになった。**契機のために全再構築を kick するのは対価が
+釣り合わない**——判定は `IndexInputs` の不一致であり、**向きを持たない**。
+
+| 向き | 払うもの | 得るもの |
+|---|---|---|
+| `true → false` | 索引 313,028 件の全再構築（全走査 + `index.bin` 保存 + PATH 併合 + マスク再構築） | Mutex へ `None` を 1 回書く（≦ cap 件の常駐 RAM を手放す） |
+| `false → true` | **同じ全再構築** | **無し**——破棄側は `show_icons` が真なら何もしない |
+
+**破棄は `config_watcher::apply_config_change` の `true → false` のエッジへ移した**
+（`icons_turned_off`）。**向きのある契機を、向きを持たない機構に相乗りさせていたのが誤り**
+だった、というのがこの反復の教訓である。
+
+**額は未実測である**（削れるのは「アイコン表示のチェックを触っただけで走っていた全再構築」で、
+規模の目安は index ビルド全体と同じ——scan 段と `index.bin` の書き直しの実測は「壁時計の
+ロード段は比較対象ではない」節が正本）。**測っていないのは、この変更を採る理由が額ではなく
+構造だからである**: `false → true` の側は払って効果が 0 であり、額を測るまでもなく無駄と分かる。
+
+**仕様変更なので `SPEC.md` §7.5 を同期した**（「インデックス条件…アイコン設定: 検知時に…
+自動再構築」からアイコン設定を外し、切替時の挙動を別行にした）。
 
 ### 試みたが機能しない: アイコン剪定を篩へ通す（反復 12・実装前に反証）
 

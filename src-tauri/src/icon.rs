@@ -154,28 +154,27 @@ pub fn extract_png(path: &str) -> Result<Vec<u8>, IconFailure> {
 /// Managed state for icon cache
 pub type IconCacheState = Mutex<Option<IconCache>>;
 
-/// アイコンが無効ならキャッシュを丸ごと捨てる（`indexing::drain_index` の 1 手順）。
+/// メモリ内キャッシュだけを捨てる（`icons.bin` は残す）。
 ///
-/// **索引と突き合わせる剪定はここに無い**（#996 で撤去した）。**掃除の機構と受容する残余は
-/// [`IconCache`] の doc が正本とする。**
+/// **[`invalidate_icon_cache`] との違いはファイルを消さないことである。** 撃つのは
+/// 「アイコン表示を無効にした」ときで、そのとき `icons.bin` を消す理由は無い——中身は stale
+/// ではなく、再有効化すれば [`IconCache::load`] がそのまま読み戻せる。手放したいのは
+/// **常駐 RAM だけ**である（掃除の機構と受容する残余は [`IconCache`] の doc が正本）。
 ///
-/// **この関数が `drain_index` に居続けるのは、`show_icons` を偽にしたときにキャッシュを落とす
-/// 経路として当てにできるのがここだけだからである。** 一見すると
-/// `commands::icon::ensure_icon_cache_loaded_if_enabled` が同じ `None` 化を持つので重複に
-/// 見えるが、**そちらには寄りかかれない**——起こすのは `load_icon_pngs` だけで、その呼び出し元
+/// **呼ぶのは `config_watcher::apply_config_change` の true → false のエッジ 1 か所である。**
+/// エッジで撃つのは、この破棄が**向きを持つ**からである——`false → true` では捨てるものが
+/// 無い。かつては `show_icons` を `IndexInputs` に載せて索引再構築の drain 上で撃っていたが、
+/// **向きを持たない機構（`IndexInputs` の不一致）で向きのある契機を運んでいた**ため、
+/// アイコン表示を戻すだけでも 313,028 件の全再構築が走っていた（撤去の記録は
+/// `PERFORMANCE.md` が正本）。
+///
+/// **`commands::icon::ensure_icon_cache_loaded_if_enabled` にも同じ `None` 化があるが、
+/// そちらには寄りかかれない**——起こすのは `load_icon_pngs` だけで、その呼び出し元
 /// （`egui_shell::results_view` の `request_icons_for_results`）が `!show_icons` で早期 return
-/// する。**「決して通らない」とまでは書けない**: 両者が読む `show_icons` は出所が違い
-/// （ガード側はフレーム冒頭の `VisualSnapshot`・`ensure_…` 側は engine の live-read）、
-/// ガードを通った要求が切り替えを跨げば偽のまま `ensure_…` へ着く。**その窓の長さは書かない**
-/// ——`spawn_icon_load` は切り離したスレッドを起こすので、engine を読む時刻はフレーム数でも
-/// 何でも押さえられない。**消すと、無効化した後もアイコンが cap 件を上限に常駐し続ける**
-/// （手放す契機が終了まで来ない）。**`icons.bin` が残ることは根拠に数えない**——無効化は
-/// ファイルを消さないので（`bf.remove()` を撃つのは [`invalidate_icon_cache`] だけである）、
-/// [`IconCache::save_if_dirty`] が書くのは既にそこに在ったものの上書きにすぎない。
-pub fn drop_icon_cache_if_disabled(icons: &IconCacheState, show_icons: bool) {
-    if !show_icons {
-        *icons.lock().unwrap() = None;
-    }
+/// する。**「決して通らない」とまでは書けない**（両者が読む `show_icons` は出所が違い、
+/// ガードを通った要求が切り替えを跨げば偽のまま着く）が、破棄の保証としては数えられない。
+pub fn drop_icon_cache(icons: &IconCacheState) {
+    *icons.lock().unwrap() = None;
 }
 
 fn icon_bin_file() -> Option<BinFile> {
@@ -665,45 +664,30 @@ mod tests {
         Mutex::new(Some(cache))
     }
 
-    /// 下の 3 本は [`drop_icon_cache_if_disabled`] の**両方向**を押さえる。#996 で索引照合の
-    /// 剪定を撤去した後、この関数に残る挙動は「`show_icons` が偽なら捨てる・真なら触らない」
-    /// だけであり、**触らない側こそ守る値打ちがある**——条件を反転する退行は、アイコンが有効な
-    /// まま索引再構築のたびにキャッシュが消えるという形で現れ、**表示は正しいまま再抽出だけが
-    /// 増える**ので挙動テストでは捕まらない。
+    /// [`drop_icon_cache`] は**無条件に捨てる**——撃つかどうかの判断は
+    /// `config_watcher::icons_turned_off` が持ち、そちらの向き（`true → false` でだけ撃つ）は
+    /// 同モジュールの `icons_turned_off_fires_only_on_the_true_to_false_edge` が 4 方向で固定する。
+    /// **ここに「有効なら捨てない」を書かない**——この関数はもうその判断をしない。
     #[test]
-    fn drop_icon_cache_if_disabled_drops_the_cache_when_icons_are_disabled() {
-        let state = state_with(&["a"]);
-
-        drop_icon_cache_if_disabled(&state, false);
-
-        assert!(
-            state.lock().unwrap().is_none(),
-            "show_icons=false ではキャッシュごと捨てる"
-        );
-    }
-
-    #[test]
-    fn drop_icon_cache_if_disabled_keeps_the_cache_when_icons_are_enabled() {
+    fn drop_icon_cache_drops_every_entry() {
         let state = state_with(&["a", "b"]);
 
-        drop_icon_cache_if_disabled(&state, true);
+        drop_icon_cache(&state);
 
-        let guard = state.lock().unwrap();
-        let cache = guard
-            .as_ref()
-            .expect("show_icons=true ではキャッシュを捨てない");
-        assert!(cache.get("a").is_some(), "既存のキーは 1 件も落ちない");
-        assert!(cache.get("b").is_some());
-    }
-
-    #[test]
-    fn drop_icon_cache_if_disabled_does_not_load_an_absent_cache() {
-        let state: IconCacheState = Mutex::new(None);
-        drop_icon_cache_if_disabled(&state, true);
         assert!(
             state.lock().unwrap().is_none(),
-            "遅延ロード前は何も起こさない（ここでロードしない）"
+            "メモリ内キャッシュごと手放す（`icons.bin` は消さない）"
         );
+    }
+
+    /// **不在のキャッシュに対して何もしない**（ロードして捨てる形にしない）。
+    /// 遅延ロードをここへ足す退行は、無効化のたびに `icons.bin` を読んで捨てるだけの
+    /// I/O になり、**挙動としては正しく見える**ので他のテストでは捕まらない。
+    #[test]
+    fn drop_icon_cache_does_not_load_an_absent_cache() {
+        let state: IconCacheState = Mutex::new(None);
+        drop_icon_cache(&state);
+        assert!(state.lock().unwrap().is_none(), "ここでロードしない");
     }
 
     #[test]

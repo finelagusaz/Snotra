@@ -144,17 +144,18 @@ hotkey 登録完了 ★終端 → ok なら startup:ready / 失敗なら startup
 
 ### Phase 1 — Rust 側の時間軸
 
-- [ ] `src-tauri/src/startup.rs` を追加する（`//!` に責務・基準点の設計・一度きり性の理由を書く）
-- [ ] プロセス作成時刻を `GetProcessTimes` で取る（`Win32_System_Threading` は `Cargo.toml` に既存・確認済み）。非 Windows は `pre_main` を持たない形に落とす
-- [ ] `mark(Phase)` を `trace_enabled()` の早期 return で守る（無効時のコストを消す）
-- [ ] `main.rs` の各地点へマークを置く（**並びを変えない**——マークを足すだけ）
-- [ ] 区間を**生の ns（`Duration`）で保持**し、`*_ms` は出力時にだけ切り捨てる。終端で `anchor.elapsed()` を**直接**読んだ `post_main_elapsed_ns` を、部分和とは別に出す
-- [ ] `platform/mod.rs` の `PlatformBridge::begin` / `PlatformBridgePending::wait` を `Result<_, PlatformBridgeFailure>` へ変え、初回 command の送信結果を呼び出し側へ返す
-- [ ] 終端を **3 か所**から呼ぶ（`setup_platform_thread` / `setup_hotkey_listener` / `RegisterInitialHotkey` の arm）。**登録の成否でイベント名を分けて** 1 行出す（`startup:ready` / `startup:failed`。内訳は同一・`reason` は `StartupFailure` が安定文字列へ写す）
+- [x] `src-tauri/src/startup.rs` を追加する（`//!` に責務・基準点の設計・一度きり性の理由を書く）
+- [x] プロセス作成時刻を `GetProcessTimes` で取る（`Win32_System_Threading` は `Cargo.toml` に既存・確認済み）。非 Windows は `pre_main` を持たない形に落とす
+- [x] `mark(Phase)` を `trace_enabled()` の早期 return で守る（無効時のコストを消す）——`begin()` が `OnceLock` を張らないので、以降の `mark` は `TIMELINE.get()` の `None` で即帰る
+- [x] `main.rs` の各地点へマークを置く（**並びを変えない**——マークを足すだけ）
+- [x] 区間を**生の ns（`Duration`）で保持**し、`*_ms` は出力時にだけ切り捨てる。終端で `anchor.elapsed()` を**直接**読んだ `post_main_elapsed_ns` を、部分和とは別に出す
+- [x] `platform/mod.rs` の `PlatformBridge::begin` / `PlatformBridgePending::wait` を `Result<_, BridgeError>` へ変え、初回 command の送信結果を呼び出し側へ返す（`send_command` の 10 呼び出し点には波及させず、`send_initial_hotkey_registration` を別に置いた——**結果を要るのは起動の終端だけである**）
+- [x] 終端を **3 か所**から呼ぶ（`setup_platform_thread` / `setup_hotkey_listener` / `RegisterInitialHotkey` の arm）。**登録の成否でイベント名を分けて** 1 行出す（`startup:ready` / `startup:failed`。内訳は同一・`reason` は `StartupFailure` が安定文字列へ写す）
 - [ ] **`SystemTime::now()` の分解能を Rust 側で 1 度実測する**（下の未確定 1 の残り。誤差上限では押さえてあるので、値を記録するだけでよい）
 - [ ] **実装差分へ `/race-check` を当てる**（計画段階では起動しない設計のため・#784）
-- [ ] ユニットテスト: (a) マークが単調増加する (b) 終端が二度目を出さない (c) 無効時に何も出さない
-- [ ] `Phase` を enum で持ち、出力は**全 variant を網羅列挙**する（`..` を書かない——`SearchEngine::footprint_rows` と同じ形で、区間を足したときの漏れをコンパイラに捕まえさせる）
+- [x] ユニットテスト（13 本）: マークの差分・スキップ時の `null`・生 ns の総和・丸め境界・`to_ms` の切り捨て・キーの網羅・`pre_main` の `null`・枝フラグ・`index_load_unattributed_ms` の 2 態・`reason` の一意性と固定・`ok`/`reason` の対
+  - [ ] **「終端が二度目を出さない」だけ単体テストを持てていない**——`FINISHED` はプロセス大域の `AtomicBool` で、cargo test は 1 プロセスに全テストを載せるため、`finish()` を呼ぶテストが**その大域を消費して他のテストから観測不能になる**。**変異 (r) で外から測る**（同じ理由で `begin`/`mark` の大域経路も単体では測れない）
+- [x] `Phase` を enum で持ち、出力は**全 variant を網羅列挙**する（`..` を書かない——`SearchEngine::footprint_rows` と同じ形で、区間を足したときの漏れをコンパイラに捕まえさせる）
 - [ ] **検知器を変異で落とす**: (a) 一度きり性を外す (b) **マークを 1 つ落とす**（→ 当該区間が `null` になりキー検査が落ちる。**総和の検算は落ちない**ことも同時に確かめ、なぜ別の検査が要るかを doc に残す） (c) 枝フラグを固定値にする (d) 総和の検算を無条件 true にする (e) **登録失敗でも `startup:ready` を出す**（→ ハーネスが失敗すること。**登録を実際に失敗させて**測る——占有済みホットキーを config に置けば `RegisterHotKey` が false を返す） (f) **`include_path_env = false` で `path_merge` を 0 にする**（→ 枝フラグ整合検査が落ちること）
 - [ ] **丸め・基準点の変異**: (g) 各 500,000 ns の 2 区間 + 終端 1,000,000 ns の fixture（→ **生 ns 検算は通り、ms 和の厳密一致を要求する誤ったハーネス検査は落ちる**。この 1 本が「丸めを表示境界に閉じる」の根拠である） (h) `post_main_elapsed_ns` を `Σ phase_ns` から代入する（同語反復化。→ fixture で終端値を意図的にずらすとこの変異は**不正に通る**——「終端値を直接取らない実装」を落とすテスト） (i) `post_main_elapsed_ns` の基準を anchor 以外のマークへ差し替える (j) 終端値を command **送信**時点で固定し platform 側の登録完了を含めない (k) ns→ms の除数を `1_000` にする (l) `total == pre_main + Σ phase_ms` を再導入する（→ (g) の fixture で落ちる）
 - [ ] **失敗経路の変異**: (m) `begin` を `Err(Spawn)` に (n) `platform_thread_loop` の初期化通知を `Err(CreateWindow)` に (o) managed bridge を取得できなくする (p) 初回 command の send を失敗させる (q) `setup_platform_thread` 側の失敗終端を削除する（→ 「終端なしのタイムアウト」がテスト成功扱いにならないこと） (r) 失敗終端の CAS を外す（→ 初期化失敗と bridge 不在を同時に模擬したとき一度きり検査が落ちる）——**いずれもタイムアウトではなく `startup:failed` と安定した `reason` で落ちること**

@@ -46,14 +46,34 @@ pub struct PlatformBridgePending {
     thread_id_rx: Receiver<u32>,
 }
 
+/// platform bridge の失敗分類。
+///
+/// **`Option` ではなくこれを返すのは、起動の終端が理由を要るからである**——どの失敗でも
+/// `None` に潰すと、`startup:failed` が出せずハーネスの「タイムアウト」に化ける
+/// （`crate::startup` の `//!`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BridgeError {
+    /// platform スレッドの spawn に失敗した。
+    Spawn,
+    /// platform スレッドの Win32 初期化に失敗した（`thread_id` に 0 が返る）。
+    Init,
+    /// 初期化結果を受け取れなかった（channel 切断）。
+    Handshake,
+    /// command の送信に失敗した（channel 切断）。
+    Disconnected,
+}
+
 impl PlatformBridgePending {
     /// Blocks until the platform thread signals its Win32 init is complete.
-    pub fn wait(self) -> Option<PlatformBridge> {
-        let thread_id = self.thread_id_rx.recv().ok()?;
+    pub fn wait(self) -> Result<PlatformBridge, BridgeError> {
+        let thread_id = self
+            .thread_id_rx
+            .recv()
+            .map_err(|_| BridgeError::Handshake)?;
         if thread_id == 0 {
-            return None;
+            return Err(BridgeError::Init);
         }
-        Some(PlatformBridge {
+        Ok(PlatformBridge {
             command_tx: self.command_tx,
             thread_id,
         })
@@ -73,7 +93,7 @@ impl PlatformBridge {
         app_handle: AppHandle,
         initial_hotkey: HotkeyConfig,
         initial_language: Language,
-    ) -> Option<PlatformBridgePending> {
+    ) -> Result<PlatformBridgePending, BridgeError> {
         let (command_tx, command_rx) = mpsc::channel();
         let (thread_id_tx, thread_id_rx) = mpsc::channel();
 
@@ -89,12 +109,30 @@ impl PlatformBridge {
                     thread_id_tx,
                 );
             })
-            .ok()?;
+            .map_err(|_| BridgeError::Spawn)?;
 
-        Some(PlatformBridgePending {
+        Ok(PlatformBridgePending {
             command_tx,
             thread_id_rx,
         })
+    }
+
+    /// 初回ホットキー登録コマンドの送信。**成否を返す唯一の送信経路である。**
+    ///
+    /// 他の送信（[`Self::send_command`]）は fire-and-forget でよい——起動の終端に関わらない
+    /// ためである。こちらだけが結果を返すのは、**bridge が生きていない起動を
+    /// `startup:failed` として出せないと、ハーネスの「タイムアウト」に化ける**からである。
+    pub fn send_initial_hotkey_registration(&self) -> Result<(), BridgeError> {
+        if self.thread_id == 0 {
+            return Err(BridgeError::Init);
+        }
+        self.command_tx
+            .send(PlatformCommand::RegisterInitialHotkey)
+            .map_err(|_| BridgeError::Disconnected)?;
+        unsafe {
+            let _ = PostThreadMessageW(self.thread_id, WM_PLATFORM_WAKE, WPARAM(0), LPARAM(0));
+        }
+        Ok(())
     }
 
     pub fn send_command(&self, command: PlatformCommand) {
@@ -295,6 +333,14 @@ fn process_commands(
                     // `hotkey-registration-failed` と同じ素の String に揃える。
                     let _ = app_handle.emit(crate::events::INITIAL_HOTKEY_FAILED, hotkey_str);
                 }
+                // 起動の終端（成功側）。**ここが「押せば窓が出る状態」の成立点である**
+                // ——listener は送信より前に登録され、窓は `egui_shell::create` で既に在る
+                // （根拠は `crate::startup` の `//!`）。失敗側の終端は `main.rs` にもある。
+                crate::startup::finish(if registered {
+                    Ok(())
+                } else {
+                    Err(crate::startup::StartupFailure::HotkeyRegistration)
+                });
             }
             PlatformCommand::ShowConfigRecoveryBalloon => {
                 // トレイ未生成（show_tray_icon=false 等）なら no-op。

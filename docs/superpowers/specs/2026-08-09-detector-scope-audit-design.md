@@ -645,7 +645,16 @@ A1〜A3 は Rust ③ #1/#2 と同じ箇所であり、上表の「doc へ射程�
 両方が一覧に在れば通る）。`npm run test:powershell` が `scripts/lib` を丸ごと拾うため、
 この検査は PR CI（`ci.yml` の "Run PowerShell tests (Pester)"）で走る——**ただし常時ではない**。
 当該ステップは `rust-check` job に属し、その job は `skip-ci` ラベルの付いた PR では
-**丸ごと省かれる**（`skip-ci` 非対象なのは `governance-check` job だけである・#587）。
+**丸ごと省かれる**（`ci.yml` の 3 job のうち skip-ci ガードを持たないのは `governance-check`
+だけである・#587）。
+
+**skip-ci を張った PR で消えるのは照合だけで、判定器そのものは動く。** `e2e.yml` は
+`scripts/lib/**` を `paths` に持ち（`ci.yml` とは別に `pull_request` で起動し、skip-ci
+ガードを持たない）、その `smoke-egui` job が走らせる `scripts/smoke-egui.ps1` は
+`SnotraTraceInvariants.psm1` を import して `Test-SnotraTraceInvariants` を呼ぶ。
+**つまりこのモジュールを触った PR では、一覧の照合が省かれたまま判定器だけが本番同様に
+走る組み合わせが作れる**——§10.4 が測った「違反を積みながら exit 0」がまさにその状況で
+起きる。skip-ci はそのために張るラベルではないが、射程としてはここが最も薄い。
 
 ### 11.3 機構化の余地（Task 6 の裁量・必須ではない）
 

@@ -292,3 +292,79 @@ Rust #1・#2 の二重分類の片側）。
 H2 / H3 が欠番であることについて: `git log --all -S "'H2'" -- scripts/lib/SnotraTraceInvariants.psm1`
 ・同 `-S "'H3'"` はいずれも 0 件で、モジュール新設コミット（#879）の時点で既に `H1`/`H4`/`H5` の
 3 件だった。削除された痕跡は無く、採番の飛ばし（H2/H3 が実装された形跡が無い）と判断する。
+
+## 10. 仕分け表（Task 4・定型変異の実測）
+
+§9 の候補 31 件・延べ 36 分類それぞれに §4 の定型変異を当て、実際に落ちるかを測った。
+**読みでは判定していない**——#1000 の 3 件がいずれも読みで見抜けなかったため、全件を変異で測った。
+
+### 10.0 判定の定義（3 分岐と「素の結果／最終判定」を分ける理由）
+
+| 結果 | 意味 |
+|---|---|
+| **①** | コンパイラが守っている（緑のビルドに足し忘れが残らない） |
+| **②** | その検査が落ちる |
+| **③** | どちらも通る＝**射程不一致** |
+
+**素の変異の結果と最終判定を分けて記録する。** 定型変異を当てるとコンパイルが落ちることが多いが、
+落ちた場所が**監査対象の一覧とは別の一覧**（`Display` の網羅 match・UI dispatch の match 等）である
+場合、開発者はそこへ腕を 1 本足すだけで緑に戻り、**監査対象の一覧の足し忘れはそのまま残る**。
+そこで各件について、
+
+1. **素の変異の結果** — 変異をそのまま当てたときに何が起きたか（コンパイルエラーの箇所を明記）
+2. **調整** — 監査対象の一覧には足さずに、コンパイルだけを通すための最小修正
+3. **調整後** — その状態で監査対象の検査が落ちるか
+4. **最終判定** — **緑のビルドに当該一覧の足し忘れが残るなら ③**、残り得ないなら ①／②
+
+の 4 つを記録する。**①と数えるのは、コンパイラが止めた対象が監査対象の一覧そのものだったとき**
+（または他の検査が同じ足し忘れを必ず捕まえるとき）に限る。`dead_code` / `unused` による停止は
+①ではない——本ワークスペースは `[workspace.lints]` に `unused` の deny を持たず（実測: `cargo test`
+で `warning: constant AUDIT_PROBE is never used` と出て**コンパイルは通った**）、`-D warnings` が
+効くのは clippy 経路だけなので、`cargo test` を測定コマンドにする限りこの罠は踏まない。
+
+### 10.1 対照実験（既知 2 件・レシピの検算）
+
+| 対照 | 変異 | コマンド | 期待 | 実測 |
+|---|---|---|---|---|
+| `events.rs::event_names_are_pairwise_distinct` | 末尾へ `pub(crate) const AUDIT_PROBE: &str = "audit-probe";` | `cargo test -p snotra event_names` | PASS（③） | **PASS**（`dead_code` は warning 止まりでコンパイルは通る）✅ |
+| `startup.rs::count_matches_the_enum_declaration` | `enum Phase` へ `AuditProbe,` | `cargo test -p snotra count_matches_the_enum_declaration` | FAIL（②）・ただしコンパイルが先に落ちうる | **素: E0004（`key()`/`index()` の 2 箇所）→ 腕を 2 本足して調整 → FAILED（left: 10, right: 9）**✅ |
+
+**両方とも期待どおり。** レシピは妥当であると確かめてから 10.2 以降へ入った。
+
+### 10.2 Rust 16 件（延べ 18 分類：C 6・S 12）
+
+測定コマンドはいずれも `cargo test -p <crate> <フィルタ>`（workspace 全体は走らせない）。
+
+| # | 候補 | 分類 | 変異 | 素の結果 | 調整 | 調整後 | 最終 |
+|---|---|---|---|---|---|---|---|
+| 1 | `snotra-settings::section_table_covers_all_config_fields` | C | `Config` へ `pub audit_probe: bool` を追加 | ①相当 E0063（`Default for Config`）→調整後 **E0027**（`field_mutations()` の `..` なし destructure＝当該ガード） | `Default` へ `audit_probe: false`／destructure へ `audit_probe: _` | **PASS** | **③** |
+| 1 | 同上 | S | `TabId` へ `AuditProbe,`（`TabId::ALL` へは足さない） | ①相当 E0004（`label()` :79 と UI dispatch :589＝**別一覧**） | 両 match へ腕 1 本ずつ | **PASS** | **③** |
+| 2 | `snotra-settings::section_table_no_false_positive_when_unchanged` | C | 同 #1 C | 同上（同一 crate がコンパイル不能） | 同上 | **PASS** | **③** |
+| 2 | 同上 | S | 同 #1 S | 同上 | 同上 | **PASS** | **③** |
+| 3 | `snotra-core::bin_error_source_all_variants_return_none` | S | `BinError` へ `AuditProbe,` | ①相当 E0004（`impl Display` ＝**別一覧**） | `Display` へ腕 1 本 | **PASS** | **③** |
+| 4 | `src-tauri::event_names_are_pairwise_distinct` | S | `AUDIT_PROBE` 定数を追加（対照 1） | **PASS** | 不要 | — | **③**（doc が明記済み） |
+| 5 | `snotra-settings::every_ui_generated_key_is_in_the_core_accepted_set` | S | ①`egui::Key::ALL` の未マップ variant（`Key::Backspace`）が現に存在したまま素で緑／②逆向きに `Key::Backspace => Some("Backspace")` を追加 | ①向き **PASS**（射程外）／②向き **FAILED**（`UI key mapping set changed`） | 不要 | — | **③**（監査対象の向き＝上流 variant 追加は素通り。手書き `expected` 側の足し忘れは②で守られる） |
+| 6 | `src-tauri::count_matches_the_enum_declaration` | S | `Phase` へ `AuditProbe,`（対照 2） | ①相当 E0004（`key()`/`index()`） | 両 match へ腕 | **FAILED** | **②** |
+| 7 | `src-tauri::every_phase_key_is_present_even_when_skipped` | C | 同上 | **E0004**（`index()` は doc が名指しする当該ガード） | 腕 2 本 | PASS（ただし #6 が FAILED） | **①** |
+| 8 | `src-tauri::failure_reasons_are_stable_and_unique` | S | `StartupFailure` へ `AuditProbe,` | ①相当 E0004（`reason()` ＝**別一覧**。`todo!()` でも通る旨をテストの doc 自身が明記） | `reason()` へ腕 1 本 | **PASS** | **③**（doc が明記済み） |
+| 9 | `src-tauri::index_and_from_index_are_inverse_over_the_whole_enum` | C | 同 #7 | **E0004**（`index()`＝doc が名指しする当該ガード） | 腕 2 本 | PASS（#6 が FAILED） | **①** |
+| 10 | `src-tauri::keys_are_unique` | C | 同 #7 | **E0004** | 腕 2 本 | PASS（#6 が FAILED） | **①** |
+| 11 | `src-tauri::out_of_range_index_is_dropped_instead_of_panicking` | C | 同 #7 | **E0004** | 腕 2 本 | PASS（#6 が FAILED） | **①** |
+| 12 | `snotra-core::modifier_aliases_order_duplicates_and_empty_segments_form_one_set` | S | modifier match へ `\| "cmd"` を追加（テストの `["Win","Super","Meta"]` には足さない） | **PASS**（`hotkey::tests` 10 本すべて緑） | 不要 | — | **③** |
+| 13 | `snotra-core::key_aliases_share_one_semantic_key` | S | key match へ `\| "ret"`（Enter の 3 つ目の alias） | **PASS**（同 10 本すべて緑） | 不要 | — | **③** |
+| 14 | `snotra-core::supported_key_set_parses_case_insensitively` | S | `HotkeyKey` へ `AuditProbe,` ＋ parse 腕 `"auditprobe"` | **PASS**（snotra-core は素で通る・10 本すべて緑） | 不要 | — | **③**（下流 `src-tauri::key_vk()` は E0004 で止まるので**新 variant** は緑で出荷できないが、この検査自身は 62 中 12 の抜き取りであり、既存 variant への **alias 追加**は #13 の実測どおり誰も止めない） |
+| 15 | `src-tauri::prepared_named_key_aliases_use_the_same_typed_mapping` | S | snotra-core の Delete alias を `"delete" \| "del" \| "rm"` へ | **PASS** | 不要 | — | **③** |
+| 16 | `snotra-core::system_shortcuts_are_checked_after_semantic_normalization` | S | `is_system_shortcut()` へ `\|\| (alt_only && key == Home)` を追加（テストの `blocked` 7 組には足さない） | **PASS**（同 10 本すべて緑） | 不要 | — | **③** |
+
+**Rust 層の集計: ① 4 件（#7/#9/#10/#11＝いずれも `Phase` の C 分類）・② 1 件（#6）・③ 13 件。**
+
+**#1/#2 の C 分類について特記する。** `field_mutations()` の doc は「mutation と `SECTION_TABLE` の
+両方に対応を追加するまで検出が続く」と書いているが、**実測ではそうならない**——destructure へ
+`audit_probe: _,` の 1 行を足すだけでコンパイルが通り、`SECTION_TABLE` が新セクションを持たないまま
+2 本のテストが緑になる（実測: `2 passed`）。`..` なし destructure が強制するのは「フィールドの存在を
+1 度は目にすること」であって、対応表への追記ではない。
+
+**`Phase`（#7/#9/#10/#11）だけが①なのは #6 が在るからである。** 腕を足して調整した状態で
+`cargo test -p snotra startup::tests` を走らせると **19 passed / 1 failed** で、落ちるのは #6 だけ。
+C 分類の 4 本は 1 本も落ちない——**コンパイラと #6 の二重の網が `Phase` を守っており、C 分類の
+テスト自身は足し忘れを見ていない**。

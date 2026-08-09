@@ -8,13 +8,13 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
 
 責務を持つ個別モジュールの責務宣言は各ファイルの `//!`（module doc）を正本とする（薄いラッパーを集約記述する `commands/`・`platform/` は責務を本節に直接記す例外）。本節はファイル一覧と、`//!` に収まらない**横断不変条件・チェックリスト**を記す（#562）。
 
-- `main.rs` — エントリポイント・Tauri セットアップ・イベントリスナー登録（責務は `//!`）
+- `main.rs` — エントリポイント・Tauri セットアップ・イベントリスナー登録（責務は `//!`）。**背景再スキャンの適用（`apply_rescanned_index`）は `apply_prebuilt_index` で `search_engine` を差し替えるだけで、`complete_index_drain` のように `index_stale` 台帳を claim しない**——再スキャンが走査したのは起動時の config であり、現在の `IndexInputs` を満たしたと宣言する資格を持たない。差し替え直前に `is_index_stale()` と `IndexInputs` の同一性を同じロック内で照合し、どちらかが不一致なら差し替えを見送る（理由・残余は `docs/superpowers/specs/2026-08-10-rescan-applies-its-result-design.md` §2.4・§3）
 - `state.rs` — Tauri managed state `AppState`（責務・構成は `//!`）。以下はビルドフラグの規律:
   - **インデックスビルドの開始/終了は `try_begin_index_build()` / `finish_index_build()` メソッド経由で行う** — `indexing`・`index_build_started` を coherent に更新する
   - **config 変更→index 再構築のコヒーレンシ判断は engine の `index_stale` ledger（軸1）に閉じており、この 2 AtomicBool は二重ビルド防止（CAS）と UI 表示専用に純化されている**（#347/#348-A）
 - `icon.rs` — アイコンのオンデマンド抽出とキャッシュ永続化（責務は `//!`）。**`invalidate_icon_cache` はメモリ内 `IconCacheState` と `icons.bin` を単一 lock 内で両方無効化する** — lock 外でファイル削除すると、並行ロード（None 検知 → `icons.bin` 再ロード）が削除直前の旧ファイルをメモリへ戻す TOCTOU が起きる（#522、実測 17/2000 回）。片方だけだと終了時 `save_if_dirty` で古いアイコンが復活する
 - `indexing.rs` — バックグラウンドインデックス構築（責務は `//!`）。以下は drain / panic 戦略の不変条件:
-  - **`start_index_build` は `mark_index_stale`（CAS の前）→ CAS → spawn の順**で、**drain ループ**（`begin_index_drain` で現在 config の `IndexInputs` snapshot → ロック外で `rebuild_and_save` → `IndexMaterial::extend_with_path_entries` → `PrebuiltIndex::from_material` → `complete_index_drain` で swap + re-diff）を stale が消えるまで回す。**保存が返した派生データをそのまま索引の表現に使う**——木とマスクは `IndexMaterial` が組のまま運ぶので、**片方だけ伸ばす形はこの crate からは書けない**（正本は `indexer::IndexMaterial` の doc）
+  - **`start_index_build` は `mark_index_stale`（CAS の前）→ CAS → spawn の順**で、**drain ループ**（`begin_index_drain` で現在 config の `IndexInputs` snapshot → ロック外で `rebuild_and_save` → `build_index_from_material` → `complete_index_drain` で swap + re-diff）を stale が消えるまで回す。**索引を建てる手順（PATH マージ + `PrebuiltIndex::from_material`）は `build_index_from_material` の 1 関数に閉じており、`main.rs` の背景再スキャン適用（`apply_rescanned_index`）もここを通る**——手順を書き写すと片方だけ PATH マージを忘れる欠陥が沈黙で起きる（PATH のコマンドが検索から消えるが結果自体は出るので気づく手段が無い。詳細は同関数の doc）。**保存が返した派生データをそのまま索引の表現に使う**——木とマスクは `IndexMaterial` が組のまま運ぶので、**片方だけ伸ばす形はこの crate からは書けない**（正本は `indexer::IndexMaterial` の doc）
   - **ビルド本体は `catch_unwind` で包む（panic 戦略依存）**: unwind ビルド=debug/test では panic を捕捉し `finish_index_build` で flag 固着 wedge を防ぐ。release は Cargo.toml で `panic="abort"` のため build panic はプロセス abort＝ここに来ないが silent wedge にもならず、再起動で fresh build される。どちらでも UI 永久構築中は起きない
   - **finish 後に `is_index_stale` を再チェック**し、finish 窓で刺さった変更を再 kick で拾う。**unwind の panic 経路では再 kick しない**（決定論 panic の無限リトライ回避）
   - config 変更→index 再構築のコヒーレンシは engine の `index_stale` ledger に一元化（#347/#348-A）

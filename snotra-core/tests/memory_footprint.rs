@@ -407,13 +407,21 @@ fn measure_real_index_footprint() {
 
 /// 背景再スキャンが毎起動踏む `scan_all` 区間を測る。
 ///
-/// **この関数が測る区間は `scan_all` だけであり、`sort` / `digest` / `save` を含まない。**
-/// `sort_entries_canonical` と `entries_digest` は `indexer.rs` の `pub(crate)` ゆえここから
-/// 呼べず、可視性を緩めるか計測専用の入口を製品へ足すことは #1000 が却下した「注入点を製品
-/// コードへ足す」と同型になる——広げず、既に測っている側を指す。`sort` / `digest` は Phase A
-/// の `LoadOrScanStats`（`sort_ms` / `digest_ms`）が、`save` は `cache_save_ms` と
-/// `rescan-log.jsonl` の `save_ms` が測る（#1001 受け入れ 1）。経路全体の内訳は出力末尾の
-/// 1 行が指す。
+/// **この関数が測る区間は `scan_all` だけである。** 背景再スキャン経路の残り 3 区間
+/// （`sort` / `digest` / `save`）は `rescan-log.jsonl` が毎起動測る（#1001 受け入れ 1）。
+/// 経路全体の内訳は出力末尾の 1 行が指す。
+///
+/// **`LoadOrScanStats` をここの代理に使ってはならない。** あれはロード経路（`load_or_scan_with_stats`）
+/// の計測であり、しかも枝ごとに片方しか埋まらない——cache-hit 枝は `scan_ms` / `sort_ms` /
+/// `cache_save_ms` が 0 で `digest_ms` だけが実数、cache-miss 枝はその逆で `digest_ms` が 0
+/// （`indexer.rs` の該当分岐）。Phase A（このハーネス）は実 `index.bin` を読むため通常
+/// cache-hit 枝を通り、`sort_ms` は常に 0 としか出ない。加えて cache-hit 枝の `digest_ms` は
+/// `digest_over(tree)` であり、背景再スキャンが撃つ `entries_digest(&scanned)` とは別の計算
+/// である——同じ「digest」でも測っている対象が違う。
+///
+/// **広げない理由**: `sort_entries_canonical` と `entries_digest` は `indexer.rs` の
+/// `pub(crate)` ゆえここから呼べない。可視性を緩めるか計測専用の入口を製品へ足すことは、
+/// #1000 が却下した「注入点を製品コードへ足す」と同型になる。
 ///
 /// **この区間はどのフェーズ計測にも現れない。** Phase A のロードはキャッシュヒット枝ゆえ
 /// `scan_ms` が 0 で、`rescan_task` は呼び出し側が `drop` する——`cache_load_ms` と
@@ -464,8 +472,8 @@ fn report_scan_all_cost(config: &Config) {
         println!("    …ほか {} 件", dups.len() - 20);
     }
     println!(
-        "  ※ この区間は scan_all のみ。sort / digest は Phase A の LoadOrScanStats、\
-         save は cache_save_ms と rescan-log.jsonl の save_ms が測る（#1001 受け入れ 1）"
+        "  ※ この区間は scan_all のみ。背景再スキャン経路の sort / digest / save は \
+         rescan-log.jsonl が毎起動測る（#1001 受け入れ 1）"
     );
 }
 

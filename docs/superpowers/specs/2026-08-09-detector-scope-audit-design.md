@@ -130,7 +130,7 @@ grep で同じことをしようとした過程で 1 件実測した: 素朴な 
 
 ## 9. 候補一覧
 
-3 層合計 **25 件**（Rust 15 件・ガバナンス 9 件・スモーク 1 件）。**この時点では分類も判定も行わない**
+3 層合計 **28 件**（Rust 15 件・ガバナンス 12 件・スモーク 1 件）。**この時点では分類も判定も行わない**
 （Phase 2 の SSOT 分類は Task 3、Phase 3 の変異確定は Task 4）。
 
 ### 9.1 Rust（Task 1）
@@ -163,29 +163,47 @@ grep で同じことをしようとした過程で 1 件実測した: 素朴な 
 リテラルから母集団を取るもの」と「ファイルシステム走査・外部ファイル解析（`Cargo.toml` の
 `workspaceMembers`・doc 内の表・`selectChecks` の import）から動的に取るもの」が混在しており、
 **前者だけを候補として抜いた**——後者は母集団の SSOT が走査対象自身にあり、足し忘れの経路が構造的に無い。
-件数: **9 件**。
+
+**判定基準は「手書きか」だけでなく「足し忘れの向き」である。** 除外リスト（除外し忘れると過剰包含
+＝チェック対象が増える方向）と包含フィルタ（追記し忘れると過小包含＝チェックが抜ける方向）は
+形が似ていても向きが逆で、前者は本監査の対象外（後述）。修正ラウンド 1 で `REF_EXTENSIONS` の
+検討漏れを指摘され、同じ観点（包含フィルタか・向きは過小包含か）で全ハードコード配列・正規表現を
+再走査し、2 件を追加で見つけた。件数: **12 件**。
 
 | # | 候補 | 手書き一覧（識別子・行） | 見落としうる形 |
 |---|---|---|---|
 | 1 | `G-module-index` | `MODULE_INDEX_CRATES`（governance-check.mjs:92、crate 4 件） | 新 crate を追加しても追記し忘れると、そのモジュール索引は双方向照合されない |
-| 2 | `G-references` | `governanceDocs()`（governance-check.mjs:1339、ルート文書 4 件 + crate CLAUDE.md 正規表現 4 crate） | 新 crate の CLAUDE.md がこの正規表現に無いと、その文書内の参照実在は照合されない |
-| 3 | `G-spec-sections` | 同上（`governanceDocs()` を共有） | 同上——新 crate CLAUDE.md 内の `SPEC §N` 参照が照合対象から漏れる |
-| 4 | `G-adr-citations` | 同上（`adrCitationDocs` が `docs`＝`governanceDocs()` を含む） | 同上に加え ADR 短縮引用が該当文書内で照合されない（他の入力＝ADR/skills/`.rs`・`.mjs` は走査ベースのため影響は限定的） |
-| 5 | `G-area-budget` | `ALWAYS_LOADED_FILES`（governance-check.mjs:1052、`["CLAUDE.md", "AGENTS.md"]`） | 常時ロード面に 3 つ目のファイルが増えても追記し忘れると火災報知器の面積に算入されない |
-| 6 | `G-stale-identifiers` | `STALE_EXTRA_DOCS`（governance-check.mjs:1505、固定パス 4 件） | 新設した「意図の SSOT」級の文書がここに無いと、腐り識別子の検査対象から漏れる |
-| 7 | `G-workspace-lints` | `REQUIRED_RUSTDOC_LINTS`（governance-check.mjs:345、lint 名 2 件） | 3 つ目の必須 rustdoc lint を deny させたくても追記し忘れると非実効のまま緑になる |
-| 8 | `G-clippy-disallowed` | `REQUIRED_DISALLOWED_METHODS`（governance-check.mjs:461、禁止メソッドパス 7 件） | 8 つ目の禁止対象メソッドを追加しても追記し忘れると禁止漏れが検知されない |
-| 9 | `G-clippy-disallowed` | `DISALLOWED_METHODS_GROUPS`（governance-check.mjs:521、群名 2 件。コメントに「上流が 3 つ目の群へ入れたら、この配列が更新されるまで沈黙する」と残余が明記済み） | 上流 clippy が 3 つ目の打ち消し群を持ったとき、この検査は気づかない |
+| 2 | `G-module-index` | 順方向照合の拡張子フィルタ（governance-check.mjs:116、無名の正規表現 `rs\|ts\|tsx\|html`） | 「モジュール構成」節に `` `foo.mjs` `` のようなこの 4 拡張子以外のバッククォート参照があっても実在照合されない（`MODULE_INDEX_CRATES` とは独立した 2 本目のハードコード拡張子一覧） |
+| 3 | `G-references` | `governanceDocs()`（governance-check.mjs:1339、ルート文書 4 件 + crate CLAUDE.md 正規表現 4 crate） | 新 crate の CLAUDE.md がこの正規表現に無いと、その文書内の参照実在は照合されない |
+| 4 | `G-spec-sections` | 同上（`governanceDocs()` を共有） | 同上——新 crate CLAUDE.md 内の `SPEC §N` 参照が照合対象から漏れる |
+| 5 | `G-adr-citations` | 同上（`adrCitationDocs` が `docs`＝`governanceDocs()` を含む） | 同上に加え ADR 短縮引用が該当文書内で照合されない（他の入力＝ADR/skills/`.rs`・`.mjs` は走査ベースのため影響は限定的） |
+| 6 | `G-references` | `REF_EXTENSIONS`（governance-check.mjs:30、拡張子 11 種） | バッククォート内パス様参照の実在照合は、拡張子がこの一覧に無いファイル種別（`/` を含んでいても）を静かにスキップする（修正ラウンド 1 の指摘） |
+| 7 | `G-area-budget` | `ALWAYS_LOADED_FILES`（governance-check.mjs:1052、`["CLAUDE.md", "AGENTS.md"]`） | 常時ロード面に 3 つ目のファイルが増えても追記し忘れると火災報知器の面積に算入されない |
+| 8 | `G-stale-identifiers` | `STALE_EXTRA_DOCS`（governance-check.mjs:1505、固定パス 4 件） | 新設した「意図の SSOT」級の文書がここに無いと、腐り識別子の検査対象から漏れる |
+| 9 | `G-stale-identifiers` | `VOCAB_TEST_FILE`（governance-check.mjs:1499、`.test.(mjs\|ts\|tsx)` の拡張子 3 種） | この形以外のテスト専用ファイル（Rust の `#[cfg(test)] mod` 等・コメントで残余と明記済み）の語彙が「現行語彙」へ紛れ込み、実在しない識別子が偶然そのテスト専用語彙と一致すると stale 判定から漏れる |
+| 10 | `G-workspace-lints` | `REQUIRED_RUSTDOC_LINTS`（governance-check.mjs:345、lint 名 2 件） | 3 つ目の必須 rustdoc lint を deny させたくても追記し忘れると非実効のまま緑になる |
+| 11 | `G-clippy-disallowed` | `REQUIRED_DISALLOWED_METHODS`（governance-check.mjs:461、禁止メソッドパス 7 件） | 8 つ目の禁止対象メソッドを追加しても追記し忘れると禁止漏れが検知されない |
+| 12 | `G-clippy-disallowed` | `DISALLOWED_METHODS_GROUPS`（governance-check.mjs:521、群名 2 件。コメントに「上流が 3 つ目の群へ入れたら、この配列が更新されるまで沈黙する」と残余が明記済み） | 上流 clippy が 3 つ目の打ち消し群を持ったとき、この検査は気づかない |
 
-**候補から外したもの（理由）**: `WALK_EXCLUDE_NAMES` / `WALK_EXCLUDE_PATHS`（governance-check.mjs:38-39）
-は全検査共通の走査除外リストだが、足し忘れの向きは**過剰包含**（除外し忘れたディレクトリのファイルが
-誤って検査対象に入る）であり、本監査が捉える「見落とし」（過小包含）とは逆方向のため対象外とした。
-`OUTPUT_ONLY_FLAGS`（G-hook-commands・governance-check.mjs:860）も同様に、追記し忘れの向きは
-false negative ではなく false positive（無関係なフラグ差分で赤くなる）である。`G-architecture-table` /
-`G-build-commands` / `G-ci-table` / `G-rules-globs` / `G-skill-table` / `G-hook-commands` /
-`G-hook-fires` / `G-check-skill-enumeration` / `G-adr-file-names` / `G-heading-refs` /
-`G-near-heading-refs` は母集団をファイルシステム走査・外部ファイル解析・import した実装から得ており、
-手書きリテラルではないため対象外とした。
+**候補から外したもの（理由。除外リスト＝過剰包含の向きと、包含フィルタでも向きが安全側のものを分けて書く）**:
+
+- 除外リスト（足し忘れの向きが過剰包含）: `WALK_EXCLUDE_NAMES` / `WALK_EXCLUDE_PATHS`
+  （governance-check.mjs:38-39、全検査共通の走査除外）は除外し忘れたディレクトリのファイルが
+  誤って検査対象に入る方向であり、本監査が捉える「見落とし」（過小包含）とは逆。`OUTPUT_ONLY_FLAGS`
+  （G-hook-commands・governance-check.mjs:860）も同様に、追記し忘れの向きは false negative ではなく
+  false positive（無関係なフラグ差分で赤くなる）。`adrCitationDocs` のテストファイル除外
+  （governance-check.mjs:1757、`!f.endsWith(".test.mjs")`）も、除外し忘れるとテストのフィクスチャ
+  （意図的に実在しない ADR 名を持つ）が誤って検査対象に入り赤くなる方向で同じ
+- 包含フィルタだが向きが安全側（過小包含すると検査が緩むのではなく厳しくなる）: `VOCAB_SOURCE_EXT`
+  （G-stale-identifiers・governance-check.mjs:1495） は「現行語彙」の元になるソース拡張子の一覧。
+  この一覧が漏れる（新しいソース言語の拡張子が無い）と、その言語由来の正当な識別子が語彙に入らず、
+  文書中のその識別子が**偽陽性で stale 扱いになる**方向であり、見落としではなく過検出に倒れる。
+  `EXTERNAL_CMD_LINE`（governance-check.mjs:1519、外部コマンド名の一覧）も同様に、未知のコマンド名
+  を持つ行は識別子照合の対象に残る（除外されない）ため過検出方向で安全
+- 母集団を走査・外部ファイル解析・import から得ており手書きリテラルではないもの: `G-architecture-table` /
+  `G-build-commands` / `G-ci-table` / `G-rules-globs` / `G-skill-table` / `G-hook-commands` /
+  `G-hook-fires` / `G-check-skill-enumeration` / `G-adr-file-names` / `G-heading-refs` /
+  `G-near-heading-refs`
 
 ### 9.3 スモーク（Task 2）
 

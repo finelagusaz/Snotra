@@ -105,9 +105,15 @@ impl IconCache {
         self.data.png.keys().cloned().collect()
     }
 
-    /// 索引から消えたと**確かめられた**パスだけを除去する。
+    /// 渡した集合のパスを除去する。
     /// `clear()` と異なり有効なアイコンを再利用するため、再構築後の再抽出コストを削減する。
     /// 1 件でも除去した場合は dirty フラグを立てる。
+    ///
+    /// **`dead_paths` の意味は「索引に無い」であって「消えた」ではない。** 呼び出し側
+    /// （[`sync_with_index`]）が渡すのは `IndexTree::absent_paths` の結果で、そこには
+    /// **そもそも索引に載らないパス**——フォルダを掘って表示した行のアイコン——も入る
+    /// （経路は同メソッドの doc）。**これは剪定が lock を握っていた頃からの意味論である**が、
+    /// 名前を「死」と読むと事実より強い。
     ///
     /// **「残す集合」ではなく「落とす集合」を受け取るのが要石である。** 判定を lock の外で
     /// 行う以上、渡される集合は [`Self::keys`] を取った時点の snapshot から導かれており、
@@ -199,6 +205,39 @@ pub fn extract_png(path: &str) -> Result<Vec<u8>, IconFailure> {
 
 /// Managed state for icon cache
 pub type IconCacheState = Mutex<Option<IconCache>>;
+
+/// 索引の再構築に合わせてアイコンキャッシュを揃える（`indexing::drain_index` の 1 手順）。
+///
+/// **判定は lock の外で行う。** 索引の全件走査（312,625 件・実測 36 ms）を lock の中で
+/// 回すと、表示中のアイコン取得（`commands::icon::load_icon_pngs` の Step 1/3）がその間
+/// ずっと待つ。lock を持つのは snapshot と除去の一瞬だけにする。**その窓が安全である理由と
+/// 受容残余は [`IconCache::remove_paths`] の doc が正本とする。**
+///
+/// **`show_icons` が偽なら丸ごと捨てる**（snapshot も判定も要らない）。
+pub fn sync_with_index(
+    icons: &IconCacheState,
+    show_icons: bool,
+    tree: &snotra_core::index_tree::IndexTree,
+) {
+    if !show_icons {
+        *icons.lock().unwrap() = None;
+        return;
+    }
+    let Some(keys) = icons.lock().unwrap().as_ref().map(IconCache::keys) else {
+        return;
+    };
+    let dead = tree.absent_paths(keys);
+    // **消すものが無ければ lock を取らない。** アプリが 1 つも消えていない通常の再構築では
+    // `dead` は空で、そこで lock を取るのはこの関数が避けている当の lock である。
+    //
+    // 窓の間に `invalidate_icon_cache` / show_icons=false が `None` へ落としていることが
+    // あるので、取り直して確かめる。
+    if !dead.is_empty()
+        && let Some(c) = icons.lock().unwrap().as_mut()
+    {
+        c.remove_paths(&dead);
+    }
+}
 
 fn icon_bin_file() -> Option<BinFile> {
     BinFile::new(ICON_MAGIC, ICON_VERSION, "icons.bin")

@@ -13,6 +13,7 @@
 //! 沈黙で起きる（設計の正本は
 //! `docs/superpowers/specs/2026-08-09-rescan-in-situ-instrument-design.md` §8.2）。
 
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// 記録の語彙としての結末。**`indexer::RescanOutcome` とは別の型である**——あちらは
@@ -137,9 +138,77 @@ pub fn end_line(
     .to_string()
 }
 
+/// 保つ行数の上限。1 行 200 B 程度なので約 40 KB。**全読みして書き直しても安い。**
+pub const MAX_LINES: usize = 200;
+
+/// 記録の在り処。**`dir` は `Config::config_dir()` から来る**——保存先を導く経路は
+/// あの 1 つだけであり、`SNOTRA_CONFIG_DIR` もそこで効く。
+pub fn log_path_in(dir: &Path) -> PathBuf {
+    dir.join("rescan-log.jsonl")
+}
+
+/// 1 行追記する。**失敗は握り潰す**（ディレクトリ不在・権限・ロック）。
+///
+/// **計器のために製品を落とさない**——release は `panic = "abort"` ゆえ、ここでの
+/// `unwrap` はプロセスの死に直結する。
+pub fn append_in(dir: &Path, line: &str) {
+    use std::io::Write;
+    let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path_in(dir))
+    else {
+        return;
+    };
+    // 1 回の write で改行まで出す。**行の途中で他プロセスに割り込まれる窓を狭める**
+    // （Windows の追記は小さい書き込みなら原子的に扱われる）。
+    let _ = f.write_all(format!("{line}\n").as_bytes());
+}
+
+/// 上限を超えていたら**末尾** `MAX_LINES` 行を残して書き直す。`start` を書く前に 1 回だけ呼ぶ。
+///
+/// **最新を残す**（古い方を捨てる）。逆にすると、読みたい直近の起動が真っ先に消える。
+///
+/// **JSON として読めない行も 1 行として数える。** この物体は壊れた行が混ざっても
+/// 機能し続けねばならない（2 プロセスの追記が競合した残骸がありうる）。
+///
+/// **受容する残余**: 2 プロセスが同時にここへ来ると行が失われうる。読み→書き直しの
+/// 間にロックを置かないためで、**使い捨ての物体ゆえ許容する**。
+pub fn prune_in(dir: &Path) {
+    let path = log_path_in(dir);
+    let Ok(body) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let lines: Vec<&str> = body.lines().collect();
+    if lines.len() <= MAX_LINES {
+        return;
+    }
+    let kept = &lines[lines.len() - MAX_LINES..];
+    let mut out = kept.join("\n");
+    out.push('\n');
+    let _ = std::fs::write(&path, out);
+}
+
+/// この 1 回の再スキャンを指す識別子。**pid だけでは再利用で衝突する**ので起動時刻を混ぜる
+/// （2 プロセスの同時稼働は実在する・2026-08-09 実測）。
+pub fn new_sid() -> String {
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("{}-{}", std::process::id(), ms)
+}
+
+/// 記録の時刻。**UTC の RFC3339（ミリ秒まで）**。読み手は人間なので文字列で出す。
+pub fn now_rfc3339() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::PathBuf;
 
     fn ms(n: u64) -> Duration {
         Duration::from_millis(n)
@@ -307,5 +376,110 @@ mod tests {
         );
         assert_eq!(LoggedOutcome::Changed.outcome(), "changed");
         assert_eq!(LoggedOutcome::Unchanged.outcome(), "unchanged");
+    }
+
+    /// テスト用の一時ディレクトリ。**プロセス ID とテスト名で分ける**（並列実行で衝突しない）。
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("snotra-rescanlog-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("temp dir を作れること");
+        dir
+    }
+
+    fn lines_in(dir: &Path) -> Vec<String> {
+        fs::read_to_string(log_path_in(dir))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn append_creates_the_file_and_adds_one_line_per_call() {
+        let dir = temp_dir("append");
+        append_in(&dir, "a");
+        append_in(&dir, "b");
+        assert_eq!(lines_in(&dir), vec!["a", "b"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// **書けなくても製品は止まらない。** 存在しないディレクトリへの追記は黙って捨てる。
+    #[test]
+    fn append_is_best_effort_when_the_directory_does_not_exist() {
+        let dir = std::env::temp_dir().join("snotra-rescanlog-does-not-exist-xyz");
+        let _ = fs::remove_dir_all(&dir);
+        append_in(&dir, "a"); // panic しないこと
+        assert!(!log_path_in(&dir).exists());
+    }
+
+    /// **剪定は最新を残す。** 変異: 末尾ではなく先頭 N 行を残す実装にすると落ちる。
+    #[test]
+    fn prune_keeps_the_newest_lines_not_the_oldest() {
+        let dir = temp_dir("prune_newest");
+        for i in 0..(MAX_LINES + 50) {
+            append_in(&dir, &format!("line{i}"));
+        }
+        prune_in(&dir);
+        let lines = lines_in(&dir);
+        assert_eq!(lines.len(), MAX_LINES, "上限まで縮む");
+        assert_eq!(
+            lines.last().map(String::as_str),
+            Some(format!("line{}", MAX_LINES + 49).as_str()),
+            "最新が残る"
+        );
+        assert_eq!(
+            lines.first().map(String::as_str),
+            Some(format!("line{}", 50).as_str()),
+            "古い 50 行が落ちる"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn prune_does_nothing_below_the_limit() {
+        let dir = temp_dir("prune_below");
+        append_in(&dir, "only");
+        prune_in(&dir);
+        assert_eq!(lines_in(&dir), vec!["only"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// **壊れた行があっても剪定は続く。** 変異: parse 失敗で早期 return する実装にすると
+    /// 落ちる——この物体は JSON として読めない行が混ざっても機能し続けなければならない
+    /// （2 プロセスの追記が競合した残骸がありうる）。
+    #[test]
+    fn prune_survives_lines_that_are_not_json() {
+        let dir = temp_dir("prune_garbage");
+        for i in 0..(MAX_LINES + 10) {
+            append_in(
+                &dir,
+                if i % 7 == 0 {
+                    "}{ broken"
+                } else {
+                    "{\"ev\":\"x\"}"
+                },
+            );
+        }
+        prune_in(&dir);
+        assert_eq!(lines_in(&dir).len(), MAX_LINES);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// `sid` は同一プロセス内で安定し、pid を含む（読み手がプロセスを辿れる）。
+    #[test]
+    fn sid_contains_the_pid() {
+        let sid = new_sid();
+        assert!(
+            sid.starts_with(&format!("{}-", std::process::id())),
+            "sid={sid}"
+        );
+    }
+
+    #[test]
+    fn now_rfc3339_is_parseable_and_utc() {
+        let ts = now_rfc3339();
+        assert!(ts.ends_with('Z'), "UTC で出す: {ts}");
+        chrono::DateTime::parse_from_rfc3339(&ts).expect("RFC3339 として読めること");
     }
 }

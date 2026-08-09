@@ -334,6 +334,9 @@ H2 / H3 が欠番であることについて: `git log --all -S "'H2'" -- script
 ### 10.2 Rust 16 件（延べ 18 分類：C 6・S 12）
 
 測定コマンドはいずれも `cargo test -p <crate> <フィルタ>`（workspace 全体は走らせない）。
+**`<フィルタ>` は候補列のテスト名そのもの**（`::` の左は crate。例: #3 なら
+`cargo test -p snotra-core bin_error_source_all_variants_return_none`）——再現時にコマンドが
+一意に決まるようにこう決めてある。
 
 | # | 候補 | 分類 | 変異 | 素の結果 | 調整 | 調整後 | 最終 |
 |---|---|---|---|---|---|---|---|
@@ -380,7 +383,7 @@ Rust のコンパイラは関与しない（§9.0 の「C はすべて Rust に�
 
 | # | 検査 / 一覧 | 分類 | 変異 | 対照（射程内へ同じ payload） | 結果 |
 |---|---|---|---|---|---|
-| 1 | `G-module-index` / `MODULE_INDEX_CRATES` | X | `snotra-probe` crate を新設し `Cargo.toml` の `members` へ追加（`MODULE_INDEX_CRATES` へは足さない）。その `CLAUDE.md` の「モジュール構成」に実在しない `` `no_such_probe_file.rs` `` を書き、`src/lib.rs` は索引に載せない | — | **③**（`workspace member 5 件` と数えられながら索引は照合されない） |
+| 1 | `G-module-index` / `MODULE_INDEX_CRATES` | X | `snotra-probe` crate を新設し `Cargo.toml` の `members` へ追加（`MODULE_INDEX_CRATES` へは足さない）。その `CLAUDE.md` の「モジュール構成」に実在しない `` `no_such_probe_file.rs` `` を書き、`src/lib.rs` は索引に載せない | #2 の対照が同じ役目を果たす——**同じ payload（実在しない `.rs` のバッククォート参照）が、`MODULE_INDEX_CRATES` に載っている crate の「モジュール構成」節では赤くなる**。ゆえにこの緑は「検査が見ない crate だった」ことを意味する | **③**（`workspace member 5 件` と数えられながら索引は照合されない） |
 | 2 | `G-module-index` / 順方向の拡張子正規表現 | S | `snotra-core/CLAUDE.md` の「モジュール構成」節へ `` `no_such_probe.mjs` `` を追加 | 同じ位置を `` `no_such_probe.rs` `` にすると**赤**（`索引に記載の … に対応する実ファイルが無い`） | **③** |
 | 3 | `G-references` / `governanceDocs()` | F | ルート直下に `PROBE-AUDIT.md` を新設し、実在しない `` `docs/no-such-probe-doc.md` `` を書く | `docs/architecture.md` へ同じ 1 行を置くと**赤** | **③** |
 | 3 | 同上 | X | 新 crate `snotra-probe/CLAUDE.md` に同じ参照を書く（crate 名の正規表現に無い） | 同上 | **③** |
@@ -458,12 +461,81 @@ FailureCount     : 0           ← exit code は 0
 ### 10.6 「①」を額面どおり受け取ってはならない件（Task 5/6 への申し送り）
 
 **①と数えた 4 件以外にも、素の変異ではコンパイルが落ちた分類が 6 つある**（#1 の C・S、
-#2 の C・S、#3、#8＝候補 4 件）。**どれも落ちた先は監査対象の一覧ではなく別の一覧**（`Display` の
-網羅 match・`label()`・UI dispatch・`reason()`・`Config` の `Default`）であり、腕を 1 本
-足すか `_` を 1 つ書けば緑に戻る——そして**監査対象の一覧の足し忘れはそのまま残る**。
-本表ではこれらを③に数えた（§10.0 の定義）。
+#2 の C・S、#3、#8＝候補 4 件）。**止まった先は 2 種類ある**:
 
-**とくに `field_mutations()` の doc は事実と食い違っている。** 「mutation と `SECTION_TABLE` の
+- **監査対象のガード自身**（#1 C / #2 C の**調整後**）——`field_mutations()` の `..` なし
+  destructure が E0027 を出す。ただし `audit_probe: _,` の 1 行で通り、`SECTION_TABLE` の
+  足し忘れは残る（**素の停止は無関係な `Default for Config` の E0063 である**）
+- **監査対象とは別の一覧**（#1 S / #2 S / #3 / #8）——`label()`・UI dispatch・`Display` の
+  網羅 match・`reason()`。腕を 1 本足せば緑に戻り、当該一覧の足し忘れは残る
+
+**どちらも「緑のビルドに足し忘れが残る」ので③に数えた**（§10.0 の定義）。
+
+#### 10.6.1 同型の偽の主張の現存箇所（Task 5 はこの一覧だけで動ける）
+
+**`field_mutations()` の doc は事実と食い違っている。** 「mutation と `SECTION_TABLE` の
 両方に対応を追加するまで検出が続く」と書いてあるが、実測では destructure へ `audit_probe: _,` の
 1 行を足すだけで 2 本とも緑になる。**#1000 で外部レンズが捕まえた 3 件と同じ型**（「足し忘れると
-落ちる」と書いてあるが落ちない）であり、Phase 4 で最優先に倒すべきはここである。
+落ちる」と書いてあるが落ちない）である。
+
+**そして同じ主張は 1 か所ではない。** `grep -rn "section_table_covers_all_config_fields"` で
+数え上げた現存箇所は 4 つで、**1 か所だけ直すと 3 か所が残る**（`AGENTS.md`「バグ発見時は
+同一パターン全コードパス検索を行う」）。
+
+| # | 場所 | 主張 | なぜ偽か |
+|---|---|---|---|
+| A1 | `snotra-settings/src/app.rs:691-693`（`field_mutations()` の doc） | 「mutation と `SECTION_TABLE` の**両方に対応を追加するまで検出が続く**」 | destructure へ `_` を 1 つ書けば通る（実測 `2 passed`） |
+| A2 | `snotra-settings/src/app.rs:102-104`（`TabId::has_changes` の doc） | 「`SECTION_TABLE` の 1 箇所だけを更新すればよい（`section_table_covers_all_config_fields` テストが**更新漏れを検出する**）」 | 同上。更新漏れは検出されない |
+| A3 | `snotra-settings/src/app.rs:113-118`（`SECTION_TABLE` の doc） | 「この表の合成が `draft != saved` と一致することを **Config の全フィールドについて**検証する」 | 検証されるのは `field_mutations()` の `vec!` に載っているフィールドだけ。**全称が実装より強い** |
+| A4 | `snotra-settings/CLAUDE.md:73` | 「更新漏れは `section_table_covers_all_config_fields` テストの**網羅 destructure がコンパイルエラー/テスト失敗で検出する**」 | 同上。**規範文書側の写しであり、放置すると規範を守る読者を誤らせる** |
+
+**A4 は他の 3 か所より配送の射程が広い。** `snotra-settings/**/*.rs` を編集すると
+`.claude/rules/snotra-settings.md` が自動配送され、その rule は「事実の正本は
+`snotra-settings/CLAUDE.md`」と宣言している（ただし rule 自身はこの節を名指してはいない——
+自動配送面から **1 ホップ**である）。`///` の doc コメントは当該ファイルを開いた者しか読まないので、
+**A4 → A1〜A3 の順で直すのが配送コストに見合う。**
+
+#### 10.6.2 候補外だが同型の主張（測定していない）
+
+| # | 場所 | 主張 | 備考 |
+|---|---|---|---|
+| B1 | `snotra-settings/src/tabs/visual.rs:381-383` | 「**`app.rs` の `field_mutations` と同型**」と自称したうえで「`PresetDef` にフィールドが増えるとここがコンパイルエラーになり、**下の変異を足すまで検出が続く**」 | Task 1 の篩は `default_config_matches_obsidian_preset` を候補に採っていないため §10 の 36 分類には現れない。**構造が #1 C と同一なので測定は不要**（destructure へ `_` を 1 つ書けば通る）。Task 5/6 の射程には入れる |
+
+#### 10.6.3 同じ観点で ③ 26 件を再走査した結果（新規 4 件）
+
+**探し方**: (1) ③ と判定した Rust 11 件のテスト名を 1 つずつ全リポジトリ grep
+（`--include=*.rs --include=*.md --include=*.mjs --include=*.ps1 --include=*.psm1 --include=*.yml`）、
+(2) ガバナンス 14 件が属する 8 つの `G-*` id を `.md` / `.rs` / `.toml` / `.yml` へ grep、
+(3) 監査対象の一覧の識別子（`TabId::ALL` / `MODULE_INDEX_CRATES` / `governanceDocs` /
+`REF_EXTENSIONS` / `ALWAYS_LOADED_FILES` / `STALE_EXTRA_DOCS` / `REQUIRED_RUSTDOC_LINTS` /
+`REQUIRED_DISALLOWED_METHODS` / `DISALLOWED_METHODS_GROUPS` / `Get-SnotraTraceInvariantNames`）を
+`.md` へ grep、(4) `.claude/rules/` `.claude/skills/` `.claude/agents/` の `governance:check`
+言及を全数読む。
+
+| # | 場所 | 主張 | なぜ偽か（対応する実測） |
+|---|---|---|---|
+| C1 | `.claude/skills/health-check/references/mechanized-checks.md:9` | 「番号連続性に加え、**リポジトリ内の** `SPEC §N.x` 参照の実在も検査対象」 | 走査元は `governanceDocs()`（35 文書）だけ。ルート直下の新設文書・新 crate の `CLAUDE.md`・`.rs` / `.mjs` / `.ps1`・`docs/adr/`・`docs/superpowers/` はいずれも射程外（§10.3 #4 の F / X 側で `SPEC §99.9` が素通りすることを実測） |
+| C2 | `.claude/rules/governance-docs.md:21` | 「ADR を消すときは生きた層の引用を散文化してから（**G-adr-citations が赤で強制する**）」 | 強制されるのは `governanceDocs()` + `docs/adr/` + `.claude/skills/**` + 非 docs の `.rs` / `.mjs` だけ。`.ts` / `.tsx` / `.ps1` の引用（§10.3 #7）・新設ルート文書・新 crate `CLAUDE.md` の引用（同 #5）は素通りする |
+| C3 | `.claude/skills/health-check/SKILL.md:23` と `.claude/skills/implement/SKILL.md:77` | 「モジュール構成の乖離は G-module-index が機械検査する。**ここでは実行しない**」／「索引漏れは `governance:check` が捕捉する」 | 照合されるのは `MODULE_INDEX_CRATES` の 4 crate だけ。**5 つ目の crate は索引が丸ごと未照合のまま緑になる**（§10.3 #1 で実測）。health-check は全面委譲を宣言しているので、この穴を拾う人がいなくなる |
+| C4 | `.claude/skills/health-check/references/mechanized-checks.md:8, 10` | 「対象は**ガバナンス文書群全体**に一般化された」 | **境界事例・低優先**。「ガバナンス文書群」を `governanceDocs()` の定義そのものと読めば真だが、読者は「規範文書ならどれでも」と取りうる（C1 と同じ母集団の話であり、C1 を直すときに合わせて見ればよい） |
+
+**偽ではないと確認したもの（同じ grep に掛かったが射程が正しく書けている）**:
+`Cargo.toml:32`（「上流 clippy が 3 つ目の群へ入れたら、その群は見張られない」と残余を名指し・
+§10.3 #14 の実測と一致）、`src-tauri/clippy.toml:46` と `docs/build-commands.md:29`
+（「見るのは既知 7 件の在否であって、足したパスが解決することは見ない」「8 件目として
+足したパスの書き損じは射程外」・同 #13 と一致）、`docs/build-commands.md:28` と
+`docs/development-principles.md:103`（G-workspace-lints は 2 lint を名指しで検査する設計だと
+書いてある。§10.3 #12 の③は「3 つ目を**固定しない**」ことであって、doc が主張する降格・欠落の
+検知は現に働く）、`docs/comment-guidelines.md:23`（G-stale-identifiers が「型で修飾した形には
+当たらない」と残余を明記）、`src-tauri/src/startup.rs:78, 524, 529`（#6 が捕まえるという主張は
+**②の実測どおり真**）、`scripts/lib/SnotraTraceInvariants.psm1:38-39`（`Get-SnotraTraceInvariantNames`
+の doc は「写しを持つと黙って落ちる」と**警告している側**であり、保護を主張していない）、
+`docs/development-principles.md:38, 42`（`TabId::ALL` を参照先・例として挙げるだけで、
+その一覧が足し忘れから守られているとは主張していない）。
+
+**残り 10 件の Rust ③ 候補（#3・#4・#5・#8・#12〜#16）は、自分の定義位置以外のどこからも
+名指されていなかった**（各テスト名の全リポジトリ grep がヒット 1 件。唯一の例外は
+`docs/superpowers/plans/2026-07-25-pr-c-platform-event-dissolution.md:231` に写された
+`event_names_are_pairwise_distinct` のコード断片だが、`docs/superpowers/` は #589 で
+非規範化された歴史資料であり規範面ではない）。**ゆえにこれら 10 件について偽の主張が在りうるのは
+テスト自身の doc コメントの中だけであり、§10.2 の「最終」列がその全数である。**

@@ -38,10 +38,10 @@ $script:PseudoSectionTitle = '(最初の項目より前)'
 **呼び出し側はこの一覧を写さない**（`/symmetric-check`）。写しを持つと、判定を 1 つ足したとき
 モジュール側だけが直り、記録・集計・exit code から新しい不変条件が**黙って落ちる**。
 
-**逆向き——判定本体へ足してこの一覧へ足し忘れた場合——は検査が捕まえる。**
+**逆向き——判定本体へ足してこの一覧へ足し忘れた場合——には検査がある。**
 `SnotraTraceInvariants.Tests.ps1` の同名 `Describe` にあるソース走査テストが、このモジュールの
 ソーステキストから `Invariant` のリテラルを拾って一覧と突き合わせる（#1008）。
-**その検査が守らない範囲は同テストのコメントが正本である。**
+**ただし守る範囲は狭い**——名前を変数から組めば見えないなど、その正本は同テストのコメントである。
 #>
 function Get-SnotraTraceInvariantNames {
     [CmdletBinding()]
@@ -220,6 +220,11 @@ function New-SnotraTraceFailSafeResult {
         Overall          = $overall
         Counts           = $counts
         Violations       = @()
+        # `'*'` は「不変条件を特定できない」印であり名前ではない。**この印はここと
+        # `SnotraTraceInvariants.Tests.ps1` のソース走査テスト（除外リテラル）の 2 か所に在る**
+        # ——別の文字へ変えるとテスト側だけが古い値を除外し続け、新しい印を不変条件名として
+        # 拾って偽の FAIL になる。片方だけが直る写しであり、#1008 が数えて回った型そのものである
+        # （安全側に倒れるので沈黙より軽い、という理由で写しのまま残している）。
         Unjudgeable      = @( @{ Invariant = '*'; Seq = 0; SectionId = 0; Reason = $Reason } )
         Observed         = @{ ResultsShow = 0; HideWindow = 0 }
         DroppedLineCount = $DroppedLineCount

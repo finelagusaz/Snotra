@@ -62,6 +62,10 @@ Describe 'Get-SnotraTraceInvariantNames' {
         #   独立に決めてよい（`Sort-Object -Unique` で集合として比べている）。
         # - **名前と判定の対応は守らない。** H4 の判定が H5 の名前で違反を積んでいても、
         #   両方が一覧に在れば気づかない。守るのは名前の集合の一致だけである。
+        # - **コードとコメントを区別しない**（取り逃す側ではなく、誤って拾う側の穴である）。
+        #   走査はファイル全文を見るので、`.psm1` のコメントへ `Invariant = 'H6'` の形の
+        #   **例示**を書いた瞬間、判定本体に無い名前として偽の FAIL になる。安全側なので
+        #   沈黙よりは軽いが、直し方は「例示を別の書き方にする」であってこの検査ではない。
         $source = Get-Content -LiteralPath $script:TraceModulePath -Raw
         # `'*'` は fail-safe が「不変条件を特定できない」ことを表す印であり、名前ではない。
         $judged = @([regex]::Matches($source, "(?:-Invariant\s+|Invariant\s*=\s*)'([^']*)'") |

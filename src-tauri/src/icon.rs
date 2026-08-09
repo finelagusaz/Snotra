@@ -107,19 +107,21 @@ impl IconCache {
     /// `clear()` と異なり有効なアイコンを再利用するため、再構築後の再抽出コストを削減する。
     /// 1 件でも除去した場合は dirty フラグを立てる。
     ///
-    /// **`dead_paths` の意味は「索引に無い」であって「消えた」ではない。** 呼び出し側（[`sync_with_index`]）が渡すのは `IndexTree::absent_paths` の結果で、そこには**索引に載るとは限らないパス**——フォルダを掘って表示した行のアイコン——も入る（経路は同メソッドの doc）。**これは剪定が lock を握っていた頃からの意味論である**が、名前を「死」と読むと事実より強い。
+    /// **`dead_paths` の意味は「索引に無い」であって「消えた」ではない。** 呼び出し側（[`sync_with_index`]）が渡すのは `IndexTree::absent_paths` の結果で、そこには**索引に載るとは限らないパス**——フォルダを掘って表示した行のアイコン——も入る（経路は同メソッドの doc）。**名前を「死」と読むと事実より強い。**
     ///
     /// **「残す集合」ではなく「落とす集合」を受け取るのが要石である。** 判定を lock の外で行う以上、渡される集合は [`Self::keys`] を取った時点の snapshot から導かれており、その後に挿入されたキーを知らない。**残す集合で書くと、その新しいキーは「残す集合に無い」ゆえ落ちる**——落とす集合で書けば、知らないキーは落とす集合にも居ないので残る。
     ///
-    /// **挿入の軸に限れば** lock を持ったまま剪定していた頃と同じ振る舞いである（改善ではない）——ただし**これは測った事実ではなく、`commands::icon::load_icon_pngs` の 3 段ロック規律を読んで導いた主張である**: 挿入する側は抽出を lock の外で行い挿入で lock を取り直すので、剪定中の挿入は retain の**後**に着地していた。**他の軸では同じでない**（下の残余 2 は新規である）。
+    /// **旧実装（lock を握ったままの剪定）との異同を、ここでは主張しない。** 3 巡のレビューで**軸ごとに違う答えになり、書くたびに強すぎるか弱すぎるかへ振れた**——挿入の着地順・世代交代・FIFO 退避・終了時 flush はそれぞれ別の答えを持つ。読者が要るのは比較ではなく、**今この関数が何を保証し、何を保証しないか**である。
     ///
     /// # 受容する残余（どれも構造では塞いでいない）
     ///
-    /// **1. 剪定を生き延びたキーを有界な時間で片づける経路は無い。** 判定の窓の間に挿入されたキーは `dead_paths` に居ないので残り、`enforce_cap` は FIFO ゆえ索引を見ず、`save_if_dirty` はむしろ `icons.bin` へ書く。片づくのは次の索引再構築（config 変更のほか手動 rebuild・first-run フォールバックが `start_index_build` を呼ぶ）だが、**どれも来ない期間はいくらでも長くなりうる**。**これは lock を握っていた頃からの性質である**（当時も、剪定中に lock 待ちした挿入は `retain` の**後**に着地して判定を受けなかった。窓の長さも同じ）——包含が厳密に成り立つのは誰も観測できない一瞬だけだった。害は cap（既定 1,000）件に有界。**ただし「読まれないから無害」とは書けない**——フォルダ階層モードの行は索引に無いパスを表示してアイコンを引くので、生き延びた古い PNG がそこで返りうる。
+    /// **1. 判定の窓を跨いだキーは剪定を素通りする。** snapshot を取った後に挿入されたキーは `dead_paths` に居ないので残る（それが上の要石の裏返しである）。**片づける契機は複数あるが**（次の索引再構築・`invalidate_icon_cache`・`show_icons` を偽にする設定変更）、**どれも来ない期間はいくらでも長くなりうる**——`enforce_cap` は FIFO ゆえ索引を見ず、`save_if_dirty` はむしろ `icons.bin` へ書く。害は cap（既定 1,000）件に有界。**ただし「索引に無いから読まれない」とは書けない**——フォルダ階層モードの行は索引に無いパスを表示してアイコンを引くので、生き延びた古い PNG がそこで返りうる。
     ///
-    /// **2. 窓の間にキャッシュが世代交代することがある（この形は新規である）。** `invalidate_icon_cache` が `None` と `icons.bin` 削除を撃つと、次の表示が `IconCache::load` で**別の世代**を建てる——呼び出し側の `as_mut()` は `None` を弾くだけで、世代の違いは見ない。**旧実装では起こりえなかった**: `invalidate_icon_cache` は同じ lock を要求するので、lock を握り続ける剪定の**途中**には着地できなかった。**消えるものは正しいが、時期が早い**: `dead_paths` の要素は (a) 古い世代に在り (b) 呼び出し側がこれから差し替える索引に無いパスなので、消してよいものである。代償は `icons.bin` にその 1 件が残らないことで、**表示中の行は再抽出されない**（`results_view` の `needs_extraction` が既にテクスチャを持つ行を弾く）——効くのは次のコールドスタートである。
+    /// **2. 窓の間にキャッシュが世代交代することがある。** `invalidate_icon_cache` が `None` と `icons.bin` 削除を撃つと、次の表示が `IconCache::load` で**別の世代**を建てる——呼び出し側の `as_mut()` は `None` を弾くだけで、世代の違いは見ない。**消えるものは正しいが、時期が早い**: `dead_paths` の要素は (a) 古い世代に在り (b) 呼び出し側がこれから差し替える索引に無いパスなので、消してよいものである。代償は再抽出で、**それがいつ走るかは表示側の都合で決まる**（`results_view` は既にテクスチャを持つ行を弾く一方、結果集合が変われば `retain_visible` がそのテクスチャを捨てる）。
     ///
-    /// **3. 終了時の flush と競合しうる。** `main::flush_persistent_state` が窓の間に lock を取ると剪定前の `icons.bin` を書いて `dirty` を落とし、その後の除去は `exit(0)` に追われて保存されない。**旧実装でも起きたが、負ける窓が「lock 争奪の一瞬」から「走査の 36 ms 全体」へ広がった。** 帰結は残余 1 と同じ（索引に無いエントリが 1 セッション分残る）。
+    /// **3. 終了時の flush と競合しうる。** `main::flush_persistent_state` が窓の間に lock を取ると剪定前の `icons.bin` を書いて `dirty` を落とし、その後の除去は `exit(0)` に追われて保存されない。帰結は残余 1 と同じ（索引に無いエントリが 1 セッション分残る）。
+    ///
+    /// **4. lock の構造そのものを守る検知器は無い。** 2 回の lock 取得を 1 回へ戻す退行——この関数が買ったものを丸ごと失い、かつ「残す集合」の形へ戻る入口——は全テスト緑のまま通る。検知器（`concurrent_insert_during_prune_window_survives`）が測るのは述語の向きだけで、その射程は同テストの doc が持つ。
     pub fn remove_paths(&mut self, dead_paths: &std::collections::HashSet<String>) {
         let before = self.data.png.len();
         self.data.png.retain(|k, _| !dead_paths.contains(k));
@@ -193,7 +195,7 @@ pub fn sync_with_index(
         return;
     };
     let dead = tree.absent_paths(keys);
-    // **消すものが無ければ lock を取らない。** ただし `dead` が空になる条件は狭い——キャッシュに索引由来のキーしか無く、かつ 1 件も消えていないときだけである。**フォルダを 1 度でも掘れば恒常的に非空になる**（その行のパスは索引に載るとは限らない・`IndexTree::absent_paths` の doc）。それでも置くのは、空のときに払うのがこの関数が避けている当の lock だからである。
+    // **消すものが無ければ lock を取らない。** 空になるのは、キャッシュのキーが 1 件残らず新しい索引に在るときだけである（**頻度は書かない**——キャッシュにはフォルダ階層モードの行のような索引に載るとは限らないパスも入り、それが索引と一致するかは掘った場所で決まる）。それでも置くのは、空のときに払うのがこの関数が避けている当の lock だからである。
     //
     // 窓の間に `invalidate_icon_cache` / show_icons=false が `None` へ落としていることがあるので、取り直して確かめる。
     if !dead.is_empty()
@@ -679,6 +681,55 @@ mod tests {
             cache.dirty,
             "退避したら dirty を立てる（永続側も頭打ちにする）"
         );
+    }
+
+    /// `sync_with_index` の分岐を固定する。**空の木を渡すと全キーが `dead` になる**ので、
+    /// 判定そのものを通したうえで各分岐を数行で押さえられる。
+    #[test]
+    fn sync_with_index_drops_the_cache_when_icons_are_disabled() {
+        let state: IconCacheState = Mutex::new(Some(empty_cache_with_cap(4)));
+        state
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .insert("a".into(), vec![1]);
+
+        sync_with_index(&state, false, &snotra_core::index_tree::IndexTree::empty());
+
+        assert!(
+            state.lock().unwrap().is_none(),
+            "show_icons=false ではキャッシュごと捨てる（剪定しない）"
+        );
+    }
+
+    #[test]
+    fn sync_with_index_is_a_noop_when_the_cache_is_absent() {
+        let state: IconCacheState = Mutex::new(None);
+        sync_with_index(&state, true, &snotra_core::index_tree::IndexTree::empty());
+        assert!(
+            state.lock().unwrap().is_none(),
+            "遅延ロード前は何も起こさない（ここでロードしない）"
+        );
+    }
+
+    #[test]
+    fn sync_with_index_removes_keys_absent_from_the_tree() {
+        let state: IconCacheState = Mutex::new(Some(empty_cache_with_cap(4)));
+        state
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .insert("a".into(), vec![1]);
+
+        sync_with_index(&state, true, &snotra_core::index_tree::IndexTree::empty());
+
+        let guard = state.lock().unwrap();
+        let cache = guard
+            .as_ref()
+            .expect("キャッシュは残る（捨てるのは disabled 側だけ）");
+        assert!(cache.get("a").is_none(), "空の木では全キーが索引に無い");
     }
 
     #[test]

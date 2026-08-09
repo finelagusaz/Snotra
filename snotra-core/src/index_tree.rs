@@ -624,15 +624,26 @@ mod tests {
     /// [`IndexTree::absent_paths`] の fixture。**列を手で並べずに製品の建て方を通す**——`build` は `index.bin` を書く側と索引を建てる側が共有する唯一の口であり、列を手書きした fixture は表現が変わった日に「別の木」を黙って建てる。
     ///
     /// **`name` は製品の導出規則をそのまま通す**（`indexer`: folder は `file_name()`、file は `file_stem()`）。拡張子込みの末尾成分を `name` に入れると [`resolve_one`] の `tail.strip_prefix(name)` が全件で空を返し、`aux` が 0 へ潰れて**拡張子の再結合（[`raw_path_into`] 末尾の `push_str`）が一度も走らない木**になる——組み立てが壊れても緑のままになるので、末尾で実際に intern されたことを数える。
+    ///
+    /// **数える条件は入力から決める。** 非根になるのは親を `paths` に持つエントリだけであり、親を書かなければ `build` は根として積む（`aux` はフルパスを指し 0 ではない）——それは正しい木なので、断言の側が誤爆してはならない。
     fn tree_with(paths: &[(&str, bool)]) -> IndexTree {
+        // 末尾成分の分解。`indexer` と同じ `Path` の規則を通す（`rfind('.')` で自作すると
+        // `.env` のような先頭ドット名で `file_stem()` と食い違い、製品が生成しない木になる）。
+        let stem_of = |p: &str, is_folder: bool| -> String {
+            let path = std::path::Path::new(p);
+            let seg = if is_folder {
+                path.file_name()
+            } else {
+                path.file_stem()
+            };
+            seg.and_then(|s| s.to_str()).unwrap_or(p).to_string()
+        };
+
         let mut entries: Vec<AppEntry> = paths
             .iter()
             .map(|(p, is_folder)| {
-                let tail = p.rsplit(['\\', '/']).next().unwrap_or(p);
-                let name = match (is_folder, tail.rfind('.')) {
-                    (false, Some(dot)) => tail[..dot].to_string(),
-                    _ => tail.to_string(),
-                };
+                let name = stem_of(p, *is_folder);
+                assert!(!name.is_empty(), "`indexer` は空の name を弾く（{p}）");
                 AppEntry {
                     name,
                     target_path: (*p).to_string(),
@@ -643,9 +654,14 @@ mod tests {
         crate::indexer::sort_entries_canonical(&mut entries);
         let tree = IndexTree::build(entries);
 
-        // 入力が拡張子つきの file を含むなら、非根の `aux` が実際に拡張子を指していること。
+        // 親を入力に持つ拡張子つき file が在るなら、その非根の `aux` は拡張子を指していること。
         let wants_ext = paths.iter().any(|(p, is_folder)| {
-            !is_folder && p.rsplit(['\\', '/']).next().unwrap_or(p).contains('.')
+            !is_folder
+                && std::path::Path::new(p).extension().is_some()
+                && std::path::Path::new(p)
+                    .parent()
+                    .and_then(|par| par.to_str())
+                    .is_some_and(|par| paths.iter().any(|(q, _)| *q == par))
         });
         if wants_ext {
             let interned = tree
@@ -656,7 +672,7 @@ mod tests {
                 .count();
             assert!(
                 interned >= 1,
-                "拡張子つきの file を渡したのに非根の aux が全て 0（拡張子の再結合を通らない木になっている）"
+                "親つきの拡張子ありファイルを渡したのに非根の aux が全て 0（拡張子の再結合を通らない木になっている）"
             );
         }
         tree

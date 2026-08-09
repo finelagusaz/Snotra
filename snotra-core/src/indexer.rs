@@ -120,9 +120,6 @@ pub enum CachedLower {
 /// ドライブ根だけ末尾 `\` を残す（`c:\` に対し `c:\tools`）。ドライブ根にも境界チェックを
 /// 課すと `c:\\tools` を探して偽になり、非ドライブ根から外すと `c:\tools` が `c:\toolsextra`
 /// を入れ子だと誤判定する。
-// `allow`: 呼び出し点は Task 3 で `scan_all` へ入る。それまでは lib ターゲットから
-// 到達しないため `-D warnings` 下で `dead_code` が落とす。**Task 3 で必ず外す。**
-#[allow(dead_code)]
 fn is_ancestor_or_same(a: &str, b: &str) -> bool {
     if a == b {
         return true;
@@ -145,8 +142,6 @@ fn is_ancestor_or_same(a: &str, b: &str) -> bool {
 /// 述語を config 側の dedup の性質へ依存させないための冗長である。
 ///
 /// 根は一桁ゆえ全ペア走査で無料である。
-// `allow`: 上の [`is_ancestor_or_same`] と同じ理由。**Task 3 で必ず外す。**
-#[allow(dead_code)]
 fn roots_overlap(scan_paths: &[ScanPath]) -> bool {
     let keys: Vec<String> = scan_paths
         .iter()
@@ -161,7 +156,10 @@ fn roots_overlap(scan_paths: &[ScanPath]) -> bool {
 
 pub fn scan_all(scan_paths: &[ScanPath], show_hidden_system: bool) -> Vec<AppEntry> {
     let mut entries = Vec::new();
-    let mut seen = std::collections::HashSet::new();
+    // **重ならない根では `seen` を建てない**（根拠は [`roots_overlap`] の doc）。現運用点
+    // （根が `C:\` 一本）では全エントリぶんの正規化 + `HashSet` 挿入がまるごと消える。
+    let mut seen: Option<std::collections::HashSet<String>> =
+        roots_overlap(scan_paths).then(std::collections::HashSet::new);
 
     for sp in scan_paths {
         let ext_set = build_extension_list(&sp.extensions);
@@ -178,6 +176,18 @@ pub fn scan_all(scan_paths: &[ScanPath], show_hidden_system: bool) -> Vec<AppEnt
     entries
 }
 
+/// `seen` を建てている走査では既出キーを落とし、建てていない走査では素通しする。
+///
+/// **`None` のとき [`normalize_entry_key`] を呼ばないことがこの関数の要点である**——
+/// 1 件ごとの `String` 確保がここで消える。呼び出し側は `!name.is_empty() &&` の**後ろ**に
+/// 置くこと(現行の短絡評価を保つ。名前が空のエントリのキーを `seen` へ入れない)。
+fn accept_entry(seen: &mut Option<std::collections::HashSet<String>>, path: &str) -> bool {
+    match seen {
+        Some(set) => set.insert(normalize_entry_key(path)),
+        None => true,
+    }
+}
+
 /// Recursively scan for files matching given extensions, optionally including folders
 fn scan_directory_with_extensions(
     dir: &Path,
@@ -185,7 +195,7 @@ fn scan_directory_with_extensions(
     include_folders: bool,
     show_hidden_system: bool,
     entries: &mut Vec<AppEntry>,
-    seen: &mut std::collections::HashSet<String>,
+    seen: &mut Option<std::collections::HashSet<String>>,
 ) {
     let Ok(read_dir) = std::fs::read_dir(dir) else {
         return;
@@ -210,8 +220,7 @@ fn scan_directory_with_extensions(
                     .to_string();
                 if !name.is_empty() {
                     let path_str = path.to_string_lossy();
-                    let key = normalize_entry_key(path_str.as_ref());
-                    if seen.insert(key) {
+                    if accept_entry(seen, path_str.as_ref()) {
                         entries.push(AppEntry {
                             name,
                             target_path: path_str.into_owned(),
@@ -238,8 +247,7 @@ fn scan_directory_with_extensions(
                     .unwrap_or("")
                     .to_string();
                 let path_str = path.to_string_lossy();
-                let key = normalize_entry_key(path_str.as_ref());
-                if !name.is_empty() && seen.insert(key) {
+                if !name.is_empty() && accept_entry(seen, path_str.as_ref()) {
                     entries.push(AppEntry {
                         name,
                         target_path: path_str.into_owned(),
@@ -2293,6 +2301,38 @@ mod tests {
         assert!(!roots_overlap(&[]));
     }
 
+    /// **入れ子の根では重複排除が要る。** `dedup_scan_paths` は完全一致マージのみゆえ、
+    /// `X` と `X\sub` は両方とも残る（設計書 §1）。
+    #[test]
+    fn scan_all_dedups_when_roots_are_nested() {
+        let dir = temp_dir("nested_roots");
+        let sub = dir.join("sub");
+        fs::create_dir_all(&sub).expect("create sub dir");
+        fs::write(sub.join("tool.exe"), b"x").expect("write fixture");
+
+        let scan = vec![
+            ScanPath {
+                path: dir.to_string_lossy().into_owned(),
+                extensions: vec![".exe".to_string()],
+                include_folders: false,
+            },
+            ScanPath {
+                path: sub.to_string_lossy().into_owned(),
+                extensions: vec![".exe".to_string()],
+                include_folders: false,
+            },
+        ];
+        let entries = scan_all(&scan, true);
+
+        assert_eq!(
+            entries.len(),
+            1,
+            "入れ子の根で同じファイルが二度入っている（重複排除が効いていない）"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn temp_dir_name_contains_process_id() {
         let dir = temp_dir("process_unique");
@@ -2316,7 +2356,7 @@ mod tests {
         fs::write(dir.join("readme.txt"), "").unwrap();
 
         let mut entries = Vec::new();
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = Some(std::collections::HashSet::new());
         let exts = build_extension_list(&["exe".to_string(), "bat".to_string()]);
         scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
 
@@ -2336,7 +2376,7 @@ mod tests {
         fs::create_dir(dir.join("subdir")).unwrap();
 
         let mut entries = Vec::new();
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = Some(std::collections::HashSet::new());
         let exts = build_extension_list(&["exe".to_string()]);
         scan_directory_with_extensions(&dir, &exts, true, true, &mut entries, &mut seen);
 
@@ -2359,7 +2399,7 @@ mod tests {
         fs::create_dir(dir.join("subdir")).unwrap();
 
         let mut entries = Vec::new();
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = Some(std::collections::HashSet::new());
         let exts = build_extension_list(&["exe".to_string()]);
         scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
 
@@ -2380,7 +2420,7 @@ mod tests {
         fs::write(sub2.join("tool.exe"), "").unwrap();
 
         let mut entries = Vec::new();
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = Some(std::collections::HashSet::new());
         let exts = build_extension_list(&["exe".to_string()]);
         scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
 
@@ -2396,7 +2436,7 @@ mod tests {
         fs::write(dir.join("app.EXE"), "").unwrap();
 
         let mut entries = Vec::new();
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = Some(std::collections::HashSet::new());
         let exts = build_extension_list(&["exe".to_string()]);
         scan_directory_with_extensions(&dir, &exts, false, true, &mut entries, &mut seen);
 

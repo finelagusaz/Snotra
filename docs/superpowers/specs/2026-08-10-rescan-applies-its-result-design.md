@@ -52,7 +52,7 @@ PrebuiltIndex::from_material(material, inputs.migemo_enabled)
 ### 2.4 差し替えの安全性 — 台帳を claim せず、stale なら譲る
 
 - 差し替えは **`apply_prebuilt_index`** を使う。これは `search_engine` を差し替えるだけで `index_stale` 台帳に触らない。**`complete_index_drain` を使ってはならない**——あれは「このビルドが現在の `IndexInputs` を満たした」と台帳へ宣言する操作であり、再スキャンはその資格を持たない（走査したのは起動時の config である）
-- 差し替えの直前に `is_index_stale()` を読み、**真なら差し替えない**。config が変わって本式ビルドが動いている（あるいはこれから動く）ということなので、そちらに譲る。**同じロック内で `IndexInputs` の同一性も snapshot と照合し、不一致なら差し替えない**（理由と、それでも残る残余は §3）
+- 差し替えの直前に `is_index_stale()` を読み、**真なら差し替えない**。config 変更・手動再構築いずれかの契機で本式ビルドが動いている（あるいはこれから動く）ということなので、そちらに譲る。**同じロック内で `IndexInputs` の同一性も snapshot と照合し、不一致なら差し替えない**（理由と、それでも残る残余は §3）
 - 重い構築（`PrebuiltIndex::from_material`）は**ロックの外**で行う。ロック内に入れてよいのは `apply_prebuilt_index` の一瞬だけである
 
 ### 2.5 通知は出さない

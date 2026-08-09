@@ -8,7 +8,7 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
 
 責務を持つ個別モジュールの責務宣言は各ファイルの `//!`（module doc）を正本とする（薄いラッパーを集約記述する `commands/`・`platform/` は責務を本節に直接記す例外）。本節はファイル一覧と、`//!` に収まらない**横断不変条件・チェックリスト**を記す（#562）。
 
-- `main.rs` — エントリポイント・Tauri セットアップ・イベントリスナー登録（責務は `//!`）。**背景再スキャンの適用（`apply_rescanned_index`）は `apply_prebuilt_index` で `search_engine` を差し替えるだけで、`complete_index_drain` のように `index_stale` 台帳を claim しない**——再スキャンが走査したのは起動時の config であり、現在の `IndexInputs` を満たしたと宣言する資格を持たない。差し替え直前に `is_index_stale()` と `IndexInputs` の同一性を同じロック内で照合し、どちらかが不一致なら差し替えを見送る（理由・残余は `docs/superpowers/specs/2026-08-10-rescan-applies-its-result-design.md` §2.4・§3）
+- `main.rs` — エントリポイント・Tauri セットアップ・イベントリスナー登録（責務は `//!`）。**背景再スキャンの適用（`apply_rescanned_index`）は `apply_prebuilt_index` で `search_engine` を差し替えるだけで、`complete_index_drain` のように `index_stale` 台帳を claim しない**——再スキャンが走査したのは起動時の config であり、現在の `IndexInputs` を満たしたと宣言する資格を持たない（差し替えの適用条件は `main.rs` 冒頭の `//!` を参照）
 - `state.rs` — Tauri managed state `AppState`（責務・構成は `//!`）。以下はビルドフラグの規律:
   - **インデックスビルドの開始/終了は `try_begin_index_build()` / `finish_index_build()` メソッド経由で行う** — `indexing`・`index_build_started` を coherent に更新する
   - **config 変更→index 再構築のコヒーレンシ判断は engine の `index_stale` ledger（軸1）に閉じており、この 2 AtomicBool は二重ビルド防止（CAS）と UI 表示専用に純化されている**（#347/#348-A）

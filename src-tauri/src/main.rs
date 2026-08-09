@@ -651,9 +651,12 @@ fn apply_rescanned_index(app: &AppHandle, material: indexer::IndexMaterial) {
     let Ok(mut engine) = state.engine.lock() else {
         return;
     };
-    // **建てている間に config が変わりうる。** 窓は閉じないが、読み直せば大半は捕まる。
-    // 取り逃しても走っている本式ビルドが後から上書きするので収束する。
-    if engine.is_index_stale() {
+    // **stale だけでは足りない。** 本式ビルドが先に完走すると `complete_index_drain` が
+    // stale を落とすため、2 回目の検査は通ってしまい、**新しい索引を古い入力で建てた
+    // 索引で上書きする**——しかも stale が落ちているので誰も直さない。ゆえに
+    // 「建てたときの入力が今も現在の入力か」まで見る（`complete_index_drain` の
+    // re-diff と同型の判定だが、**台帳には触れない**）。
+    if engine.is_index_stale() || IndexInputs::from_config(engine.config()) != inputs {
         return;
     }
     // **`complete_index_drain` を使ってはならない**——あれは「このビルドが現在の
@@ -698,25 +701,44 @@ fn setup_startup_display(app_handle: &AppHandle, show_on_startup: bool) {
 
 #[cfg(test)]
 mod tests {
-    /// **走査を 2 回にしないことを、時間ではなく構造で固定する。**
+    /// **走査を 2 回にせず、台帳の資格も僭称しないことを、時間ではなく構造で固定する。**
     ///
     /// `start_index_build` の drain ループは `rebuild_and_save`（= `scan_all`）を通るので、
     /// 再スキャンの適用からそれを呼ぶと全走査が 2 回になる（#1001 の当の代金が倍）。
-    /// 速さは環境で揺れるが、**呼んでいるかどうかは揺れない**。
+    /// `complete_index_drain` は「このビルドが現在の `IndexInputs` を満たした」と台帳へ
+    /// 宣言する操作で、起動時の config で走査したこちらにその資格は無い（宣言すれば
+    /// config 変更で立った stale を誤って落とす）。速さは環境で揺れるが、
+    /// **呼んでいるかどうかは揺れない**。
     ///
-    /// 母集団はこのファイルのソーステキストそのものである（`startup.rs` の
-    /// `count_matches_the_enum_declaration` と同じ手）。
+    /// 母集団は `setup_background_rescan` の spawn 本体から `apply_rescanned_index` の
+    /// 終わりまで（この 2 関数のどちらから退行が生えても捕まえる。`apply_rescanned_index`
+    /// だけに閉じていた前版は spawn 本体への注入に沈黙した）。ソーステキストそのものを見る
+    /// 手は `startup.rs` の `count_matches_the_enum_declaration` と同じ。
     #[test]
-    fn rescan_application_does_not_kick_a_full_rebuild() {
+    fn rescan_application_does_not_kick_a_full_rebuild_or_forge_the_ledger() {
         let src = include_str!("main.rs");
         let after = src
-            .split_once("fn apply_rescanned_index(")
-            .expect("apply_rescanned_index が見つからない（改名したらこの検査も直す）")
+            .split_once("fn setup_background_rescan(")
+            .expect("setup_background_rescan が見つからない（改名したらこの検査も直す）")
             .1;
-        let body = after.split_once("\nfn ").map_or(after, |(b, _)| b);
+        // 最初の "\nfn " は setup_background_rescan と apply_rescanned_index の境界。
+        // 2 番目が apply_rescanned_index の終わり（次の関数の開始）。
+        let mut fn_boundaries = after.match_indices("\nfn ");
+        let _ = fn_boundaries.next();
+        let body = match fn_boundaries.next() {
+            Some((idx, _)) => &after[..idx],
+            None => after,
+        };
+        // 呼び出し（`(` を伴う）だけを見る——`` `start_index_build` `` のような裸の
+        // バッククォート参照は doc/inline コメントが「呼んではならない」理由を説明する
+        // ために既に使っており、それを誤検出しないため。
         assert!(
-            !body.contains("start_index_build"),
+            !body.contains("start_index_build("),
             "再スキャンの適用から start_index_build を呼んでいる（全走査が 2 回になる）"
+        );
+        assert!(
+            !body.contains("complete_index_drain("),
+            "再スキャンの適用から complete_index_drain を呼んでいる（台帳の資格を僭称する）"
         );
     }
 }

@@ -1,6 +1,9 @@
 BeforeAll {
+    # 走査するテストが同じパスを写さないよう、モジュールの所在は 1 つの変数に持つ。
+    $script:TraceModulePath = Join-Path $PSScriptRoot 'SnotraTraceInvariants.psm1'
+
     Import-Module (Join-Path $PSScriptRoot 'SnotraSmoke.psm1') -Force
-    Import-Module (Join-Path $PSScriptRoot 'SnotraTraceInvariants.psm1') -Force
+    Import-Module $script:TraceModulePath -Force
 
     # trace 1 行ぶんの合成。`Read-SnotraTraceEvents` が返す形（`ConvertFrom-Json` の産物）に
     # 合わせる——判定器が受け取るのは常にその形である。
@@ -36,6 +39,47 @@ Describe 'Get-SnotraTraceInvariantNames' {
 
         @($names | Where-Object { $keys -notcontains $_ }) | Should -BeNullOrEmpty
         @($keys | Where-Object { $names -notcontains $_ }) | Should -BeNullOrEmpty
+    }
+
+    It '判定本体が名指しする不変条件と一覧が過不足なく一致する（モジュールのソースを走査する）' {
+        # **母集団はこのモジュールのソーステキストそのものである。** 上の It のように
+        # 判定結果（`Overall` のキー）を母集団に取る形では足し忘れを検出できない——キーは
+        # `$script:Invariants` から作られるので、一覧自身が母集団になる。実際、判定本体へ
+        # H6 を足して一覧へ足さない変異を当てても、上の It を含む 41 本すべてが緑のまま
+        # 通った（#1008 で実測）。そのとき違反は現に積まれるのに `Get-SnotraTraceFailureCount`
+        # は 0 を返し、**スモークが exit 0 で終わって製品の回帰を素通りさせる**。
+        # ソースを読めば、判定本体だけが H6 を知っている状態が左右の食い違いとして現れる。
+        #
+        # **この検査が守らないもの**（`startup.rs` の `count_matches_the_enum_declaration` が
+        # 「改名したらこの検査も直す」と自分の脆さを書くのと同じ性質のものを、ここへ列挙する）:
+        #
+        # - **単一引用符のリテラルで書かれた名前しか見えない。** `Invariant = $invariant` の
+        #   ように変数から組む箇所は素通りする（degrade の分岐が現にその形である）。
+        # - **見るのは `Invariant = '…'` と `-Invariant '…'` の 2 形だけである。** 違反や
+        #   PASS の記録先を別の書き方で増やしたら、この検査も一緒に直す必要がある。
+        # - **走査するのはこのモジュール 1 枚だけである。** 判定を別ファイルへ移したら届かない。
+        # - **一覧の順序は守らない。** 順序は表示・集計の列順を決めるが、ソースの出現順とは
+        #   独立に決めてよい（`Sort-Object -Unique` で集合として比べている）。
+        # - **名前と判定の対応は守らない。** H4 の判定が H5 の名前で違反を積んでいても、
+        #   両方が一覧に在れば気づかない。守るのは名前の集合の一致だけである。
+        # - **コードとコメントを区別しない**（取り逃す側ではなく、誤って拾う側の穴である）。
+        #   走査はファイル全文を見るので、`.psm1` のコメントへ `Invariant = 'H6'` の形の
+        #   **例示**を書いた瞬間、判定本体に無い名前として偽の FAIL になる。安全側なので
+        #   沈黙よりは軽いが、直し方は「例示を別の書き方にする」であってこの検査ではない。
+        $source = Get-Content -LiteralPath $script:TraceModulePath -Raw
+        # `'*'` は fail-safe が「不変条件を特定できない」ことを表す印であり、名前ではない。
+        $judged = @([regex]::Matches($source, "(?:-Invariant\s+|Invariant\s*=\s*)'([^']*)'") |
+            ForEach-Object { $_.Groups[1].Value } |
+            Where-Object { $_ -ne '*' } |
+            Sort-Object -Unique)
+        $listed = @(Get-SnotraTraceInvariantNames)
+
+        # 走査が空振りしたら、以下の 2 つの比較は自明に通る（母集団ゼロの偽の緑）。
+        $judged.Count | Should -BeGreaterThan 0 -Because 'ソース走査が 1 件も拾わないなら検査そのものが壊れている'
+        @($judged | Where-Object { $listed -notcontains $_ }) |
+            Should -BeNullOrEmpty -Because '判定本体だけが知る不変条件は FailureCount に数えられず exit 0 になる'
+        @($listed | Where-Object { $judged -notcontains $_ }) |
+            Should -BeNullOrEmpty -Because '判定本体が名指ししない不変条件は、表で永久に SKIP のまま残る'
     }
 }
 

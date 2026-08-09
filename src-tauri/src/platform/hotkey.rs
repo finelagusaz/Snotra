@@ -254,6 +254,12 @@ mod tests {
         assert_eq!(prepared.injection_vks, vec![0x11, 0x10, 0x12, 0x41]);
     }
 
+    /// **保証は狭い**: 見るのは、下に並べた alias 対が同じ VK へ解決されることだけである。alias の
+    /// 一覧を持つのは snotra-core の `parse()`（非網羅 match）であり、そこへ alias を足してもここへ
+    /// 書き足さなければ検査対象にならない（2026-08-09 実測: Delete へ 3 つ目の alias を足しても
+    /// 緑・#1008）——**core と platform のマッピングが全 alias で一致することを網羅する機構では
+    /// ない**。`key_vk()` が `HotkeyKey` の網羅 match であること（variant の新設は E0004 で止まる）
+    /// は型が担っており、この検査の働きではない。
     #[test]
     fn prepared_named_key_aliases_use_the_same_typed_mapping() {
         for key in ["Delete", "del"] {

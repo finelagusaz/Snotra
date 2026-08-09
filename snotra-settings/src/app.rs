@@ -99,9 +99,10 @@ impl TabId {
         }
     }
 
-    /// タブ別ダーティ点（`•`）の判定を `SECTION_TABLE` から導出する。
-    /// 新セクション追加時は `SECTION_TABLE` の1箇所だけを更新すればよい
-    /// （`section_table_covers_all_config_fields` テストが更新漏れを検出する）。
+    /// タブ別ダーティ点（`•`）の判定を [`SECTION_TABLE`] から導出する。
+    ///
+    /// 新セクション追加時に手で更新するのは [`SECTION_TABLE`] の 1 箇所だけでよい。**その更新漏れを
+    /// 検出する機構は無い**——射程は [`SECTION_TABLE`] の doc が正本。
     fn has_changes(self, draft: &Config, saved: &Config) -> bool {
         SECTION_TABLE
             .iter()
@@ -114,8 +115,12 @@ impl TabId {
 /// タブ別ダーティ点（[`TabId::has_changes`]）はここから導出される。全体判定
 /// （[`SettingsApp::has_changes`]）は構造体全体の `PartialEq`（`draft != saved`）を使うため
 /// 新フィールド追加時も自動追従するが、この表を更新し忘れるとタブ点だけが無反応になりうる。
-/// `section_table_covers_all_config_fields` テストが、この表の合成が `draft != saved` と
-/// 一致すること（＝更新漏れがないこと）を Config の全フィールドについて検証する。
+///
+/// **保証は狭い**: `section_table_covers_all_config_fields` が照合するのは、`field_mutations()` の
+/// `vec!` に現に並んでいるフィールドについてだけである——**Config の全フィールドを網羅する検査ではない**。
+/// 新フィールドをその `vec!` にも本表にも足さないままコンパイルを通す書き方が在り（`..` なし
+/// destructure は `新フィールド: _,` の 1 行で黙る・2026-08-09 実測 #1008）、そのときタブ点だけが
+/// 無反応のまま 2 本とも緑になる。**足し忘れを捕まえるのは人のレビューだけである。**
 type SectionDiff = fn(&Config, &Config) -> bool;
 
 const SECTION_TABLE: &[(TabId, SectionDiff)] = &[
@@ -688,13 +693,16 @@ mod tests {
 
     /// Config の全トップレベルフィールドを1つずつ変更する mutation の一覧。
     ///
-    /// 冒頭の `..` なし destructure が Config のフィールド網羅をコンパイル時に強制する:
-    /// Config に新フィールド（新セクション）を追加するとここがコンパイルエラーになり、
-    /// mutation と `SECTION_TABLE` の両方に対応を追加するまで検出が続く。
+    /// **保証は狭い**: 冒頭の `..` なし destructure が見るのは「新フィールドを一度は目にしたか」
+    /// だけである。Config に新フィールドを足すとここが E0027 になるが、`新フィールド: _,` の 1 行で
+    /// コンパイルは通り、下の `vec!` にも `SECTION_TABLE` にも足さないまま 2 本とも緑になる
+    /// （2026-08-09 実測・#1008）——「両方への追記を強制する」機構ではなく、追記の要否を人が
+    /// 判断する契機を 1 度だけ作る仕掛けである。
     type FieldMutation = (&'static str, fn(&mut Config));
 
     fn field_mutations() -> Vec<FieldMutation> {
-        // 網羅性ガード: 新フィールド追加でコンパイルエラーにする（`..` を使わないこと）。
+        // 新フィールド追加でここを E0027 にするための destructure（`..` を使わないこと）。
+        // 網羅を強制はしない——射程は上の doc。
         let Config {
             hotkey: _,
             general: _,

@@ -103,6 +103,11 @@ mod tests {
         assert_eq!(format!("{}", err), "buffer too short for header");
     }
 
+    /// **保証は狭い**: `impl Error for BinError {}` は `source()` を上書きしないので default 実装が
+    /// 常に `None` を返す——ここに並べた分について判定は自明である。下の `Vec` は手書きの列挙で、
+    /// variant を新設してもここへ足さなければ検査対象にならない（2026-08-09 実測・#1008）。
+    /// **「全 variant を網羅する」機構ではなく**、`source()` を返す impl を後から書いた人に対して
+    /// 「この型は原因を連ねない」という契約を明文で残すだけ。
     #[test]
     fn bin_error_source_all_variants_return_none() {
         use std::error::Error;

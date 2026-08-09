@@ -223,6 +223,14 @@ fn egui_key_to_config_name(key: egui::Key) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// **保証は狭い**: 見るのは `egui_key_to_config_name` が現に返す集合が下の `expected` と一致し、
+    /// その全要素を core が受理することだけである。`egui::Key` に上流が variant を足しても同関数の
+    /// match は `_ => None` を持つのでこの検査は素通りする——**現に `Key::ALL` に居てマッピングを
+    /// 持たない variant（`Key::Backspace`）が在るまま緑である**（2026-08-09 実測・#1008）。
+    /// 「UI が拾えるキーの網羅」ではなく、**マッピングと手書き `expected` の食い違い**を弾くだけ
+    /// である。逆向きに `Key::Backspace => Some("Backspace")` を足すと、落ちるのは集合一致の assert
+    /// （`UI key mapping set changed`）である——**末尾の parse ループ（core が受理するか）も同じ
+    /// テストが見ているが、その変異では働いていない**（2026-08-09 実測・#1008）。
     #[test]
     fn every_ui_generated_key_is_in_the_core_accepted_set() {
         let mut actual: Vec<String> = egui::Key::ALL

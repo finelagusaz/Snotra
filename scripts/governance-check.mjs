@@ -26,7 +26,9 @@ import { fileURLToPath } from "node:url";
 // post-edit.mjs は import しただけでは main() を走らせない（I13 のガード）。
 import { selectChecks } from "../.claude/hooks/post-edit.mjs";
 
-/** 実在検査の対象と見なすソース系拡張子（G-references）。ランタイム生成物（.bin/.bak 等）は含めない */
+/** 実在検査の対象と見なすソース系拡張子（G-references）。ランタイム生成物（.bin/.bak 等）は含めない。
+ *  **保証は狭い**——バッククォート内のパス様参照は、拡張子がここに無ければ（`/` を含んでいても）
+ *  静かにスキップされる（2026-08-09 実測: `.psm1` の実在しないパスが素通り・#1008）。 */
 const REF_EXTENSIONS = /\.(md|rs|ts|tsx|mjs|json|toml|yml|ps1|html|css)$/;
 /** 走査から除外するディレクトリ。名前ベース（任意の深さの生成物）とルート相対パス
  *  （untracked バッファ）を分ける——`ui/src/workspace/` のような将来の同名ソースを気づかれないまま
@@ -89,6 +91,15 @@ const finding = (file, line, message) => ({ file, line, message });
 // ui は #532 SU7 のフロント撤去で消滅（ui/CLAUDE.md ごと削除）
 // snotra-egui-runtime は #701 で追加。「#532 の検証層」として作られたまま母集団から漏れており、
 // SU7 で製品の描画層になった後も更新されていなかった（G-references の governanceDocs も同時に是正）
+/** G-module-index が照合する crate。**本検査の保証は狭い**——crate を新設してここへ足さなければ、
+ *  その `CLAUDE.md` のモジュール構成は順方向も逆方向も一度も照合されず `governance:check` は緑を
+ *  返す（2026-08-09 実測: member を 1 つ増やし、その索引へ実在しない `.rs` を書いても緑・#1008）。
+ *  真の母集団はルート `Cargo.toml` の `[workspace] members` であり、この表はその写しである。
+ *  **ただし写しのずれ自体は本ファイルの外で固定されている**——`governance-check.test.mjs` の
+ *  母集団カナリア（#701）が実 `Cargo.toml` を読み、`CLAUDE.md` を持つ member が本表と
+ *  `governanceDocs()` の**両方**に載ることを `npm test` で強制する。**残る穴は `CLAUDE.md` を
+ *  持たない crate だけで、そのとき照合すべき索引もまだ無い**（`skip-ci` ラベルの付いた PR では
+ *  そのカナリアも走らない）。 */
 export const MODULE_INDEX_CRATES = {
   "snotra-core": { src: "snotra-core/src/", exts: /\.rs$/ },
   "snotra-egui-runtime": { src: "snotra-egui-runtime/src/", exts: /\.rs$/ },
@@ -112,7 +123,10 @@ export function checkModuleIndex(snapshot, crates = Object.keys(MODULE_INDEX_CRA
       findings.push(finding(mdPath, 1, "「モジュール構成」節が見つからない"));
       continue;
     }
-    // 順方向: 節内のバッククォート付きソースファイル名 → basename がリポジトリに実在
+    // 順方向: 節内のバッククォート付きソースファイル名 → basename がリポジトリに実在。
+    // **見るのは直下の正規表現が挙げる拡張子だけである**——`` `foo.mjs` `` のような他種の
+    // バッククォート参照は実在照合されない（2026-08-09 実測・#1008）。どれを対象にするかは
+    // 本プロジェクトの編集方針であって、外部仕様の写しではない。
     for (const m of section.matchAll(/`([^`\n]+\.(?:rs|ts|tsx|html))`/g)) {
       const token = m[1];
       if (/[*?{]/.test(token)) continue; // glob・パターン例は対象外
@@ -341,7 +355,12 @@ export function workspaceMembers(snapshot) {
 
 /** ルートに在ることを要求する rustdoc lint。**名指しは意図的である**——「非空かつ全エントリ deny」だけでは
  *  片方の行が消えた形（残った 1 件は deny のまま）が緑を通る（実測）。消えたら困る識別子をカナリアが
- *  持つのは正しい形で、先例は `.claude/hooks/post-edit.test.mjs` の member 名ハードコードである。 */
+ *  持つのは正しい形で、先例は `.claude/hooks/post-edit.test.mjs` の member 名ハードコードである。
+ *  **固定するのは名指した lint の在否だけで、一覧そのものは固定しない**——3 つ目の lint を
+ *  `[workspace.lints.rustdoc]` へ deny で足してもここへ足さなければ、**その行が後日まるごと消えても
+ *  誰も気づかない**（受容する残余・2026-08-09 実測 #1008）。**足した lint が非実効になるのではない**:
+ *  cargo はその lint を適用するし、在るあいだは下の「全エントリが deny/forbid」の側でも見られている。
+ *  固定されないのは「在り続けること」である（`DISALLOWED_METHODS_GROUPS` と同型）。 */
 export const REQUIRED_RUSTDOC_LINTS = ["broken_intra_doc_links", "invalid_html_tags"];
 
 /** member 側の opt-in。**字面ではなく構文的位置で判定する**——`version.workspace = true` と
@@ -1048,7 +1067,11 @@ export function checkHookFires(snapshot, select = selectChecks) {
 // #593 が推奨する経路であり、課税すれば登ってほしい階梯を登る側が罰せられる。
 // ---------------------------------------------------------------------------
 
-/** 常時ロードされる恒久規範ファイル（ルート直下の 2 文書。ほかに skill description が同じ面に載る） */
+/** 常時ロードされる恒久規範ファイル（ルート直下の 2 文書。ほかに skill description が同じ面に載る）。
+ *  **保証は狭い**——常時ロード面にファイルが増えてもここへ足さなければ、その面積は `AREA_BUDGET` に
+ *  一度も算入されない（2026-08-09 実測: 5000 字の文書を新設して `CLAUDE.md` から `@` で読み込ませても、
+ *  計上が動いたのは `CLAUDE.md` 側の 1 行分だけ・#1008）。足し忘れを知るのはファイルシステムであって
+ *  この検査ではない。 */
 export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
 
 /**
@@ -1335,7 +1358,17 @@ export function checkNearHeadingRefs(snapshot, docs) {
 /** G-references / G-spec-sections の走査元。`docs/adr/` を除くのは**凍結された歴史**の契約
  *  （`ADR-adr-frozen-history`）——ADR 本文は決定日時点の世界の記述であり、そこから外への参照
  *  （パス・SPEC 節）は生きた層の改名・移動に追随させない。守るのは実在の辺だけ
- *  （生きた層 → ADR と ADR → ADR の短縮引用 = `adrCitationDocs` が明示的に持つ） */
+ *  （生きた層 → ADR と ADR → ADR の短縮引用 = `adrCitationDocs` が明示的に持つ）
+ *
+ *  **保証は狭い**: 3 検査が照合するのは、ここが返した文書の中に書かれた参照だけである
+ *  （G-adr-citations は `adrCitationDocs` で入力を足す）。ここに入らない層——**ルート直下へ新設した
+ *  文書**など——に書いた実在しない参照・`SPEC §N`・ADR 引用は素通りする（2026-08-09 実測・#1008）。
+ *  **リポジトリ全体を見る検査ではない。**
+ *  なお crate 名の正規表現は `MODULE_INDEX_CRATES` と同じ一覧を独立に持つ 2 本目であり、
+ *  真の母集団はどちらもルート `Cargo.toml` の `[workspace] members` である。**crate を増やしたときの
+ *  この正規表現の更新漏れは `governance-check.test.mjs` の母集団カナリア（#701）が `npm test` で
+ *  捕まえる**（詳細は `MODULE_INDEX_CRATES` の doc）——**カナリアが見ないのはルート文書の配列の側**
+ *  であり、そこへの足し忘れは今も沈黙する。 */
 export function governanceDocs(snapshot) {
   return snapshot.files.filter(
     (f) =>
@@ -1501,7 +1534,10 @@ const VOCAB_TEST_FILE = /\.test\.(mjs|ts|tsx)$/;
  *  （意図の SSOT・常時ロードの規範・設定 UI のデザイン規約）。
  *  **静的リテラルであること自体が fail-closed である**——読めなければ `scanStaleIdentifiers` が
  *  「母集団の欠落」を出すので、グロブ由来の母集団（`staleIdentifierGuideDocs`）と違って
- *  `runAll` 側の 0 件検知を別に置く必要がない */
+ *  `runAll` 側の 0 件検知を別に置く必要がない。
+ *  **保証は狭い**——「意図の SSOT」級の文書を新設してここへ足さなければ、その文書の腐り識別子は
+ *  一度も照合されない（2026-08-09 実測: ルート直下に新設した文書へ実在しない識別子を 3 形置いても
+ *  照合件数が動かなかった・#1008）。 */
 export const STALE_EXTRA_DOCS = ["SPEC.md", "CLAUDE.md", "AGENTS.md", "snotra-settings/SETTINGS-DESIGN.md"];
 /** バッククォート内で腐りを問う形: camelCase（こぶ 1 つ以上）・末尾 `()` は任意 */
 const STALE_IDENT = /^([a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+)(\(\))?$/;
@@ -1553,6 +1589,11 @@ export function currentVocabulary(snapshot) {
     if (!VOCAB_SOURCE_EXT.test(f) || VOCAB_TEST_FILE.test(f)) continue;
     const src = snapshot.read(f);
     if (src == null) continue;
+    // コメント除去の振り分け。**`VOCAB_SOURCE_EXT` へ `#` コメントの言語を足したら、この正規表現へも
+    // 同時に足すこと**——足し忘れるとその言語のコメントが生のまま語彙へ入り、由来注記に書かれた
+    // 識別子が「現行語彙」に化ける。その識別子が文書で腐っていても免罪されて検出されない
+    // （2026-08-09 実測: `.psm1` のコメント語が実際に赤を緑へ変えた・#1008。上の「受容する残余」が
+    // 記録する失敗形の再演）。この対応を強制する機構は無い。
     parts.push(/\.(ps1|toml|yml)$/.test(f) ? src.replace(/#.*$/gm, " ") : stripRustComments(src));
   }
   return parts.join("\n");
@@ -1754,6 +1795,8 @@ export function adrCitationDocs(snapshot, docs) {
     // この 1 行が落ちると ADR→ADR の実在検査が沈黙で消える（母集団カナリアがテストで膜を張る）
     ...snapshot.files.filter((f) => /^docs\/adr\/[^/]+\.md$/.test(f)),
     ...snapshot.files.filter((f) => /^\.claude\/skills\/.*\.md$/.test(f)),
+    // 非 docs のソース。**見るのは直下の正規表現が挙げる拡張子だけである**——`.ts` / `.tsx` /
+    // `.ps1` / `.psm1` に書いた ADR の短縮引用は実在照合を素通りする（2026-08-09 実測・#1008）。
     ...snapshot.files.filter((f) => /\.(rs|mjs)$/.test(f) && !f.startsWith("docs/") && !f.endsWith(".test.mjs")),
   ];
 }

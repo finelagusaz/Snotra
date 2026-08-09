@@ -70,7 +70,7 @@ eframe は毎フレーム `App::ui()`（旧 `update()`。eframe 0.35 で `logic(
 - **has_changes()**: `draft != saved` で判定。Save/Discard ボタンの有効化に使用
 - **Discard**: `draft = saved.clone()` で全タブの編集を一括破棄
 - **Reset to default**: `draft = Config::normalized_default()` で既定値に戻す（saved は変更しない → has_changes() が true になり Save が必要）。`normalized_default()` は `apply_migrations()` 適用済みの「正規化済み（Option フィールドが全 Some）」既定値を返すため、`saved` との `PartialEq` がタブ遷移順序（DragValue の `get_or_insert`）に依存しない
-- **タブ別ダーティ点（`•`）**: `app.rs` の `SECTION_TABLE`（Config セクション → TabId 対応表、SSOT）から導出。Config に新セクションを追加したら表を1箇所更新する（更新漏れは `section_table_covers_all_config_fields` テストの網羅 destructure がコンパイルエラー/テスト失敗で検出する）
+- **タブ別ダーティ点（`•`）**: `app.rs` の `SECTION_TABLE`（Config セクション → TabId 対応表、SSOT）から導出。Config に新セクションを追加したら表を1箇所更新する。**更新漏れを捕まえる機構は無い**——`section_table_covers_all_config_fields` の `..` なし destructure が強制するのは「新フィールドを一度は目にすること」だけで、`新フィールド: _,` の 1 行を足せばコンパイルは通り、`SECTION_TABLE` が古いまま 2 本とも緑になる（2026-08-09 実測・#1008）。射程の正本は同テストと `SECTION_TABLE` の doc
 
 ### 保存フロー
 
@@ -132,7 +132,7 @@ OpenerRule のターゲットは文字列プレフィックスで種別を表現
 - ユニットテストは書かない方針（egui UI コードはモック困難）。ロジックのテストは `snotra-core` 側で行う
   - 例外1: 純粋な非 egui ヘルパー（例 `font.rs` の `face_index_valid`）の境界テストはインラインで置いてよい。egui モック困難の理由が当たらず、かつ degrade パスが視覚スモークで再現できない（dev 機には対象フェイスが在る）ため、テストが唯一の検証手段になる
   - 例外2: **UI 操作 + 状態観測**は `egui_kittest`（AccessKit）でヘッドレステストできる（下記「ヘッドレス UI テスト」）。「egui モック困難」は描画のモックを指し、AccessKit ツリー経由の操作には当たらない
-  - 例外3: **UI が持つ定数と `snotra-core` の既定値の一致**は、その UI と同じ述語を通してインラインで固定する（例 `tabs/visual.rs` の `default_config_matches_obsidian_preset`）。`PRESETS` の型を変えない判断（`docs/adr/ADR-config-default-fallback-references.md`）ゆえ置換で消せず、テストが唯一の検知手段になる（#795）。**述語は UI が使うもの（`preset_matches`）をそのまま呼ぶ**——自前で比較を書くと UI が守る不変条件より厳しい主張になる
+  - 例外3: **UI が持つ定数と `snotra-core` の既定値の一致**は、その UI と同じ述語を通してインラインで固定する（例 `tabs/visual.rs` の `default_config_matches_obsidian_preset`）。`PRESETS` の型を変えない判断（`docs/adr/ADR-config-default-fallback-references.md`）ゆえ置換で消せず、テストが唯一の検知手段になる（#795）。**そのテストが見るのは、現に書いてある色ぶんの比較だけである**——`PresetDef` に色を足したときの手当てを強制する機構は無い（射程の正本は同テストのコメント・#1008）。**述語は UI が使うもの（`preset_matches`）をそのまま呼ぶ**——自前で比較を書くと UI が守る不変条件より厳しい主張になる
 
 ## ヘッドレス UI テスト（egui_kittest）
 

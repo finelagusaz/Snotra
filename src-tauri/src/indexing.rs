@@ -108,42 +108,12 @@ fn drain_index(app_handle: &AppHandle) {
             material.extend_with_path_entries(path_entries);
         }
 
-        // Sync icon cache with current index
-        {
-            let icon_state = app_handle.state::<icon::IconCacheState>();
-            let mut current = icon_state.lock().unwrap();
-            if inputs.show_icons {
-                // Prune stale icons — retain only entries present in the current index.
-                // Unlike clear(), this preserves valid icons and avoids re-extraction cost.
-                if let Some(c) = current.as_mut() {
-                    // 木はフルパスを持たないので組み直す。**バッファを使い回し、集合は
-                    // 索引側ではなくキャッシュ側で作る。**
-                    //
-                    // 索引の全パスを所有 `String` の集合にすると、312,625 件ぶんの確保が
-                    // 一時的に積み上がる——**v7 がディスクから消したのと同じ額**（約 36 MiB）を
-                    // 剪定のためだけに作り直すことになる。アイコンキャッシュは
-                    // `Config::icon_cache_cap()` で頭打ち（既定 1,000 件）なので、索引の側は
-                    // 走るだけにして、確保はヒットしたぶん（高々 cap 件）に限る。
-                    //
-                    // 意味は変わらない: `alive` は「キャッシュのキー ∩ 索引のパス」であり、
-                    // `retain_paths` の述語（キーが索引に在るか）と同値である。
-                    let mut buf = String::new();
-                    let mut alive: std::collections::HashSet<String> =
-                        std::collections::HashSet::new();
-                    let tree = material.tree();
-                    for i in 0..tree.len() {
-                        tree.path_into(&mut buf, i);
-                        if c.get(&buf).is_some() {
-                            alive.insert(buf.clone());
-                        }
-                    }
-                    c.retain_paths(&alive);
-                }
-            } else {
-                // show_icons disabled — drop the cache entirely
-                *current = None;
-            }
-        }
+        // アイコンキャッシュを新しい索引へ揃える（lock 規律と受容残余は `icon.rs` が正本）。
+        icon::sync_with_index(
+            &app_handle.state::<icon::IconCacheState>(),
+            inputs.show_icons,
+            material.tree(),
+        );
 
         // SearchEngine の構築（O(N)）は Mutex 外で実施してロック保持時間を最小化する。
         // migemo 無効時は kana_lower_names を構築しない（issue #337）。

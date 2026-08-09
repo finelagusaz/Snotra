@@ -368,3 +368,38 @@ H2 / H3 が欠番であることについて: `git log --all -S "'H2'" -- script
 `cargo test -p snotra startup::tests` を走らせると **19 passed / 1 failed** で、落ちるのは #6 だけ。
 C 分類の 4 本は 1 本も落ちない——**コンパイラと #6 の二重の網が `Phase` を守っており、C 分類の
 テスト自身は足し忘れを見ていない**。
+
+### 10.3 ガバナンス 14 件（延べ 17 分類：S 5・F 5・X 7）
+
+測定コマンドはすべて `npm run governance:check`（exit code と「N 件の不整合」で判定）。
+この層に①は原理的に現れない——母集団は JS のリテラル・ファイル一覧・TOML であり、
+Rust のコンパイラは関与しない（§9.0 の「C はすべて Rust に閉じる」と整合）。
+
+**各変異には対照（同じ payload を射程内へ置いたら赤くなること）を測ってある。** 変異が
+「検査が見ない場所に落ちた」のか「検査が見たのに素通りした」のかを、緑だけでは区別できないためである。
+
+| # | 検査 / 一覧 | 分類 | 変異 | 対照（射程内へ同じ payload） | 結果 |
+|---|---|---|---|---|---|
+| 1 | `G-module-index` / `MODULE_INDEX_CRATES` | X | `snotra-probe` crate を新設し `Cargo.toml` の `members` へ追加（`MODULE_INDEX_CRATES` へは足さない）。その `CLAUDE.md` の「モジュール構成」に実在しない `` `no_such_probe_file.rs` `` を書き、`src/lib.rs` は索引に載せない | — | **③**（`workspace member 5 件` と数えられながら索引は照合されない） |
+| 2 | `G-module-index` / 順方向の拡張子正規表現 | S | `snotra-core/CLAUDE.md` の「モジュール構成」節へ `` `no_such_probe.mjs` `` を追加 | 同じ位置を `` `no_such_probe.rs` `` にすると**赤**（`索引に記載の … に対応する実ファイルが無い`） | **③** |
+| 3 | `G-references` / `governanceDocs()` | F | ルート直下に `PROBE-AUDIT.md` を新設し、実在しない `` `docs/no-such-probe-doc.md` `` を書く | `docs/architecture.md` へ同じ 1 行を置くと**赤** | **③** |
+| 3 | 同上 | X | 新 crate `snotra-probe/CLAUDE.md` に同じ参照を書く（crate 名の正規表現に無い） | 同上 | **③** |
+| 4 | `G-spec-sections` / `governanceDocs()` | F | `PROBE-AUDIT.md` に `SPEC §99.9` | `docs/architecture.md` では**赤** | **③** |
+| 4 | 同上 | X | `snotra-probe/CLAUDE.md` に `SPEC §99.9` | 同上 | **③** |
+| 5 | `G-adr-citations` / `governanceDocs()` | F | `PROBE-AUDIT.md` に `ADR-no-such-probe-adr` | `docs/architecture.md` では**赤** | **③** |
+| 5 | 同上 | X | `snotra-probe/CLAUDE.md` に同じ引用 | 同上 | **③** |
+| 6 | `G-references` / `REF_EXTENSIONS` | S | `docs/architecture.md` へ実在しない `` `scripts/lib/NoSuchProbe.psm1` ``（`.psm1` は `REF_EXTENSIONS` の `ps1` に当たらない） | 同じ行の `.md` 版は**赤** | **③** |
+| 7 | `G-adr-citations` / `.rs\|.mjs` ホワイトリスト | S | `vitest.config.ts` へ `// probe: ADR-no-such-probe-adr` | 同じ 1 行を `scripts/race-boundaries.mjs` へ置くと**赤** | **③** |
+| 8 | `G-area-budget` / `ALWAYS_LOADED_FILES` | F | 5000 字の `PROBE-ALWAYS.md` を新設し `CLAUDE.md` へ `@PROBE-ALWAYS.md` を足す | — | **③**（常時ロード面は 14421 → **14438 字**しか動かない＝`CLAUDE.md` 側の 1 行分だけ。5000 字は算入されない） |
+| 9 | `G-stale-identifiers` / `STALE_EXTRA_DOCS` | F | ルート `PROBE-AUDIT.md` に `` `noSuchProbeIdentifier()` `` 他 2 形 | `docs/architecture.md` では**赤** | **③**（照合件数 286 / 33 文書が動かない） |
+| 10 | `G-stale-identifiers` / `VOCAB_TEST_FILE` | S | `docs/architecture.md` へ `` `probe_test_only_ident` `` を書き、その識別子を Rust の `#[cfg(test)] mod` の中にだけ定義する | **A/B で測った**: 定義前は**赤**、`#[cfg(test)]` へ足すと**緑** | **③**（`VOCAB_TEST_FILE` は `.test.(mjs\|ts\|tsx)` しか見ないので Rust のテスト語彙が現行語彙へ入る） |
+| 11 | `G-stale-identifiers` / `currentVocabulary` のコメント除去振り分け | S | `.psm1` に `# probeCommentIdent` を書き、`VOCAB_SOURCE_EXT` へ `psm1` を足す（:1556 の `/\.(ps1\|toml\|yml)$/` へは足さない） | **A/B で測った**: `VOCAB_SOURCE_EXT` へ足す前は**赤**、足すと**緑** | **③**（`#` コメントが `stripRustComments` を素通りして語彙に化ける） |
+| 12 | `G-workspace-lints` / `REQUIRED_RUSTDOC_LINTS` | X | `Cargo.toml` の `[workspace.lints.rustdoc]` へ 3 つ目の `private_intra_doc_links = "deny"` | `invalid_html_tags` を別名へ書き換えると**赤** | **③** |
+| 13 | `G-clippy-disallowed` / `REQUIRED_DISALLOWED_METHODS` | X | `src-tauri/clippy.toml` へ 8 つ目の禁止パスを追加 | `all_styles_mut` を別名へ書き換えると**赤** | **③**（`clippy 禁止 8 件` と数えられるが、8 件目は固定されない） |
+| 14 | `G-clippy-disallowed` / `DISALLOWED_METHODS_GROUPS` | X | `[workspace.lints.clippy]` へ 3 つ目の群 `suspicious = "allow"` | 同じ位置を `style = "allow"` にすると**赤** | **③** |
+
+**ガバナンス層の集計: ① 0 件・② 0 件・③ 17 件。**
+
+**この層で②が 1 件も出ないのは、候補の抜き方が正しかったことの裏返しである。** Task 2 は
+「母集団を走査・外部解析から動的に取るもの」を候補から外しており、残った 14 件は定義上すべて
+手書きリテラルを母集団にしている——手書きの一覧は、その一覧の外で起きた追加を原理的に見られない。

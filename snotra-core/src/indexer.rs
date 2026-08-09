@@ -180,7 +180,7 @@ pub fn scan_all(scan_paths: &[ScanPath], show_hidden_system: bool) -> Vec<AppEnt
 ///
 /// **`None` のとき [`normalize_entry_key`] を呼ばないことがこの関数の要点である**——
 /// 1 件ごとの `String` 確保がここで消える。呼び出し側は `!name.is_empty() &&` の**後ろ**に
-/// 置くこと(現行の短絡評価を保つ。名前が空のエントリのキーを `seen` へ入れない)。
+/// 置くこと（現行の短絡評価を保つ。名前が空のエントリのキーを `seen` へ入れない）。
 fn accept_entry(seen: &mut Option<std::collections::HashSet<String>>, path: &str) -> bool {
     match seen {
         Some(set) => set.insert(normalize_entry_key(path)),

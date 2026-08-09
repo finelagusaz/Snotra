@@ -396,6 +396,60 @@ fn measure_real_index_footprint() {
     // 長さを測る（＝100 MiB 級の一時確保をする）ので、上の常駐・残留の測定より前に置くと
     // peak を汚す。
     report_cache_bytes(n);
+
+    // **最後に置く。** 上の常駐・残留の測定より前に置くと、実走査の一時確保が peak を汚す。
+    report_scan_all_cost(&config);
+}
+
+/// 背景再スキャンが毎起動踏む `scan_all` 区間を測る。
+///
+/// **この区間はどのフェーズ計測にも現れない。** Phase A のロードはキャッシュヒット枝ゆえ
+/// `scan_ms` が 0 で、`rescan_task` は呼び出し側が `drop` する——`cache_load_ms` と
+/// `total_ms` の間に居た全エントリ複製が見えなかったのと同じ形である
+/// （`snotra-core/CLAUDE.md`「indexer.rs の背景再スキャン」）。
+///
+/// **返り値は entries へ混ぜない。** 実走査はファイルシステムの churn で実行ごとにぶれ、
+/// 混ぜると常駐がバイト単位で再現しなくなる。ここで測るのは区間のコストである
+/// （PATH スキャンの区間と同じ規約）。
+///
+/// **受け入れゲートは「正規化キーの重複件数 0」である。** A/B で走査結果を突き合わせては
+/// ならない——A と B は別プロセス・別時刻の走査であり、間に temp・ログ・キャッシュの churn が
+/// 必ず挟まる。重複件数は 1 回の走査の中で閉じるので churn の影響を受けない
+/// （設計書 `docs/superpowers/specs/2026-08-09-scan-all-seen-conditional-design.md` §4）。
+///
+/// **この区間だけで Phase A の実行時間が +20〜35 秒になる**（実走査そのもの）。
+fn report_scan_all_cost(config: &Config) {
+    reset_peak();
+    let t0 = snap();
+    let start = std::time::Instant::now();
+    let scanned = indexer::scan_all(&config.paths.scan, config.search.show_hidden_system);
+    let ms = start.elapsed().as_secs_f64() * 1000.0;
+    let t1 = snap();
+
+    let n = scanned.len();
+    report("scan_all（背景再スキャン経路・常駐外）", t0, t1, n);
+    println!("  壁時計: scan_all {ms:.0} ms（{n} 件・実行ごとに数十%ぶれる）");
+
+    // **検算は区間の外で行う。** この走査自体が n 件の `String` を確保するので、
+    // `t1` より前に置くと測りたい額へ自分の額が混ざる。
+    let mut keys = std::collections::HashSet::with_capacity(n);
+    let mut dups: Vec<&str> = Vec::new();
+    for e in &scanned {
+        if !keys.insert(indexer::normalize_entry_key(&e.target_path)) {
+            dups.push(&e.target_path);
+        }
+    }
+    println!(
+        "  正規化キーの重複: {} 件（0 が受け入れ条件——0 なら `seen` を建てない走査は、\
+         建てた走査と件数も順序も一致する）",
+        dups.len()
+    );
+    for p in dups.iter().take(20) {
+        println!("    重複: {p}");
+    }
+    if dups.len() > 20 {
+        println!("    …ほか {} 件", dups.len() - 20);
+    }
 }
 
 /// `index.bin` のバイト内訳を表にする。

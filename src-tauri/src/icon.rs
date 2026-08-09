@@ -96,9 +96,7 @@ impl IconCache {
 
     /// 現在保持しているパスの snapshot。
     ///
-    /// **owned で返すのは、呼び出し側が lock を離してから判定するためである**——判定（`IndexTree::absent_paths`）は索引の全件走査ゆえ、lock の中で回すと表示中のアイコン取得がその間ずっと待たされる。**判定に使う集合はこの snapshot であって現在のキャッシュではない**——そのずれが安全である理由は [`Self::remove_paths`] の doc が正本とする。
-    ///
-    /// **確保はここへ移っただけで消えていない。** キャッシュの全キー（高々 `Config::icon_cache_cap()`・既定 1,000 件）を clone する。lock 保持を 36 ms 削る対価であって、確保回数の削減ではない。
+    /// **owned で返すのは、呼び出し側が lock を離してから判定するためである**（なぜそうするかは [`sync_with_index`]、そのずれが安全である理由は [`Self::remove_paths`]、確保の額は `PERFORMANCE.md` の反復 12 が正本）。**判定に使う集合はこの snapshot であって現在のキャッシュではない。**
     pub fn keys(&self) -> Vec<String> {
         self.data.png.keys().cloned().collect()
     }
@@ -113,15 +111,28 @@ impl IconCache {
     ///
     /// **旧実装（lock を握ったままの剪定）との異同を、ここでは主張しない。** 3 巡のレビューで**軸ごとに違う答えになり、書くたびに強すぎるか弱すぎるかへ振れた**——挿入の着地順・世代交代・FIFO 退避・終了時 flush はそれぞれ別の答えを持つ。読者が要るのは比較ではなく、**今この関数が何を保証し、何を保証しないか**である。
     ///
-    /// # 受容する残余（どれも構造では塞いでいない）
+    /// # 受容する残余
     ///
-    /// **1. 判定の窓を跨いだキーは剪定を素通りする。** snapshot を取った後に挿入されたキーは `dead_paths` に居ないので残る（それが上の要石の裏返しである）。**片づける契機は複数あるが**（次の索引再構築・`invalidate_icon_cache`・`show_icons` を偽にする設定変更）、**どれも来ない期間はいくらでも長くなりうる**——`enforce_cap` は FIFO ゆえ索引を見ず、`save_if_dirty` はむしろ `icons.bin` へ書く。害は cap（既定 1,000）件に有界。**ただし「索引に無いから読まれない」とは書けない**——フォルダ階層モードの行は索引に無いパスを表示してアイコンを引くので、生き延びた古い PNG がそこで返りうる。
+    /// **剪定は best-effort である**——索引に無いキーが、cap（既定 1,000）件を上限に不定の期間
+    /// 残りうる。構造では塞いでいない。**害が有界なのは cap のおかげであって、片づけの保証が
+    /// あるからではない。ただし「索引に無いから読まれない」とも書けない**——フォルダ階層モードの
+    /// 行は索引に無いパスを表示してアイコンを引くので、生き延びた古い PNG がそこで返りうる。
     ///
-    /// **2. 窓の間にキャッシュが世代交代することがある。** `invalidate_icon_cache` が `None` と `icons.bin` 削除を撃つと、次の表示が `IconCache::load` で**別の世代**を建てる——呼び出し側の `as_mut()` は `None` を弾くだけで、世代の違いは見ない。**消えるものは正しいが、時期が早い**: `dead_paths` の要素は (a) 古い世代に在り (b) 呼び出し側がこれから差し替える索引に無いパスなので、消してよいものである。代償は再抽出で、**それがいつ走るかは表示側の都合で決まる**（`results_view` は既にテクスチャを持つ行を弾く一方、結果集合が変われば `retain_visible` がそのテクスチャを捨てる）。
+    /// 残りうる機序は 3 つある（**どれも同じ 1 つの残余の現れ方であって、独立した弱点ではない**）:
     ///
-    /// **3. 終了時の flush と競合しうる。** `main::flush_persistent_state` が窓の間に lock を取ると剪定前の `icons.bin` を書いて `dirty` を落とし、その後の除去は `exit(0)` に追われて保存されない。帰結は残余 1 と同じ（索引に無いエントリが 1 セッション分残る）。
+    /// - **窓を跨いだ挿入**: snapshot の後に挿入されたキーは `dead_paths` に居ないので残る
+    ///   （それが上の要石の裏返しである）。片づける契機は複数あるが、どれも来ない期間はいくらでも
+    ///   長くなりうる——`enforce_cap` は FIFO ゆえ索引を見ず、`save_if_dirty` はむしろ書く
+    /// - **窓の間の世代交代**: `invalidate_icon_cache` が `None` と `icons.bin` 削除を撃つと、次の
+    ///   表示が `IconCache::load` で別の世代を建てる（呼び出し側の `as_mut()` は `None` を弾く
+    ///   だけで世代の違いは見ない）。**消えるものは正しいが時期が早い**——代償は再抽出で、それが
+    ///   いつ走るかは表示側の都合で決まる（`results_view` は既にテクスチャを持つ行を弾く一方、
+    ///   結果集合が変われば `retain_visible` がそれを捨てる）
+    /// - **終了時 flush との競合**: `main::flush_persistent_state` が窓の間に lock を取ると剪定前の
+    ///   `icons.bin` を書いて `dirty` を落とし、その後の除去は `exit(0)` に追われて保存されない
     ///
-    /// **4. lock の構造そのものを守る検知器は無い。** 2 回の lock 取得を 1 回へ戻す退行——この関数が買ったものを丸ごと失い、かつ「残す集合」の形へ戻る入口——は全テスト緑のまま通る。検知器（`concurrent_insert_during_prune_window_survives`）が測るのは述語の向きだけで、その射程は同テストの doc が持つ。
+    /// **検査の側の残余は別種であり、`concurrent_insert_during_prune_window_survives` の doc が
+    /// 持つ**（この関数の実行時契約ではないので、ここでは数えない）。
     pub fn remove_paths(&mut self, dead_paths: &std::collections::HashSet<String>) {
         let before = self.data.png.len();
         self.data.png.retain(|k, _| !dead_paths.contains(k));
@@ -683,10 +694,25 @@ mod tests {
         );
     }
 
+    /// キャッシュの状態を 1 行で組む（`Some` + 指定のキーを挿入）。
+    fn state_with(keys: &[&str]) -> IconCacheState {
+        let mut cache = empty_cache_with_cap(4);
+        for (i, k) in keys.iter().enumerate() {
+            cache.insert((*k).to_string(), vec![i as u8]);
+        }
+        Mutex::new(Some(cache))
+    }
+
     /// `sync_with_index` のテスト用の材料。**列を手で並べない**——`IndexMaterial` の公開経路
     /// （`from_tree` + `extend_with_path_entries`）を通すので、`IndexTree` の内部表現を
     /// この crate が知る必要が無い。**木ではなく材料を返すのは、`tree()` が貸すだけだから**
     /// である（呼び出し側が材料を生かしたまま `&IndexTree` を渡す）。
+    ///
+    /// **建つのは全件が根の平坦な木である**（`extend_with_path_entries` は親を解決しない）。
+    /// ゆえに `raw_path_into` は根の段で `name` を読まず、**この fixture は木の配線
+    /// （親を辿る組み立て・拡張子の再結合）を検査しない**——そこは `snotra-core` 側の
+    /// 検査が持つ。`name` に拡張子込みの末尾成分を入れているのはそのためで、core 側の
+    /// `tree_with` が同じ形を禁じているのは**親を解決する経路の話**である（矛盾ではない）。
     fn material_of(paths: &[&str]) -> snotra_core::indexer::IndexMaterial {
         let entries: Vec<snotra_core::indexer::AppEntry> = paths
             .iter()
@@ -709,14 +735,7 @@ mod tests {
     /// その退行を落とす唯一の経路である。**
     #[test]
     fn sync_with_index_keeps_keys_present_in_a_non_empty_tree() {
-        let state: IconCacheState = Mutex::new(Some(empty_cache_with_cap(4)));
-        {
-            let mut guard = state.lock().unwrap();
-            let cache = guard.as_mut().unwrap();
-            cache.insert("C:\\app\\live.exe".into(), vec![1]);
-            cache.insert("C:\\app\\gone.exe".into(), vec![2]);
-        }
-
+        let state = state_with(&["C:\\app\\live.exe", "C:\\app\\gone.exe"]);
         let material = material_of(&["C:\\app\\live.exe"]);
         sync_with_index(&state, true, material.tree());
 
@@ -732,18 +751,11 @@ mod tests {
         );
     }
 
-    /// `sync_with_index` の分岐を固定する。**空の木を渡すと全キーが `dead` になる**ので、
-    /// 判定そのものを通したうえで各分岐を数行で押さえられる。**ただし空の木だけでは
-    /// 「木を引いている」ことを固定できない**（上の非空の木の 1 本がそれを担う）。
+    /// 以下 3 本は**分岐だけ**を押さえる（木を引いていることの固定は上の 1 本が担う）。
+    /// 空の木を渡すので全キーが `dead` になり、判定を通したうえで各分岐が数行で書ける。
     #[test]
     fn sync_with_index_drops_the_cache_when_icons_are_disabled() {
-        let state: IconCacheState = Mutex::new(Some(empty_cache_with_cap(4)));
-        state
-            .lock()
-            .unwrap()
-            .as_mut()
-            .unwrap()
-            .insert("a".into(), vec![1]);
+        let state = state_with(&["a"]);
 
         sync_with_index(&state, false, &snotra_core::index_tree::IndexTree::empty());
 
@@ -765,13 +777,7 @@ mod tests {
 
     #[test]
     fn sync_with_index_removes_keys_absent_from_the_tree() {
-        let state: IconCacheState = Mutex::new(Some(empty_cache_with_cap(4)));
-        state
-            .lock()
-            .unwrap()
-            .as_mut()
-            .unwrap()
-            .insert("a".into(), vec![1]);
+        let state = state_with(&["a"]);
 
         sync_with_index(&state, true, &snotra_core::index_tree::IndexTree::empty());
 
@@ -823,7 +829,7 @@ mod tests {
         assert!(cache.get("b").is_some());
     }
 
-    /// **剪定の判定が lock の外で走る窓を検査する。** `keys` を取ってから `remove_paths` までの間に挿入されたキーは、判定の入力に居ない——それでも落ちてはならない（正本は `remove_paths` の doc）。
+    /// **これは検知器ではなく、述語の向きを書き留めた実行される注記である。** `keys` を取ってから `remove_paths` までの間に挿入されたキーは判定の入力に居ない——それでも落ちてはならない（正本は `remove_paths` の doc）。**production の退行で発火する保証は無いので、そのつもりで読むこと**（理由は下）。
     ///
     /// **これは「落とす集合」で書いたことだけが与える性質である。** 下の `cache.remove_paths(&dead)` を「残す集合」の形（`retain(|k, _| alive.contains(k))`・＝候補表が否定した変種）へ差し替えると、`late` の断言で落ちる——**実際に注入して確かめてある**（2026-08-09 実測）。
     ///

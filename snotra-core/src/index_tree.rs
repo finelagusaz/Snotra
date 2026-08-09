@@ -623,44 +623,35 @@ mod tests {
 
     /// [`IndexTree::absent_paths`] の fixture。**列を手で並べずに製品の建て方を通す**——`build` は `index.bin` を書く側と索引を建てる側が共有する唯一の口であり、列を手書きした fixture は表現が変わった日に「別の木」を黙って建てる。
     ///
-    /// **`name` は製品の導出規則をそのまま通す**（`indexer`: folder は `file_name()`、file は `file_stem()`）。拡張子込みの末尾成分を `name` に入れると [`resolve_one`] の `tail.strip_prefix(name)` が全件で空を返し、`aux` が 0 へ潰れて**拡張子の再結合（[`raw_path_into`] 末尾の `push_str`）が一度も走らない木**になる——組み立てが壊れても緑のままになるので、末尾で実際に intern されたことを数える。
+    /// **`name` の導出は `indexer` の規則を書き写している**（folder は `file_name()`、file は `file_stem()`）——SSOT の関数が無く `indexer.rs` に 3 か所インラインで在るためで、「通している」のではない。**拡張子込みの末尾成分を入れてはならない**: [`resolve_one`] の `tail.strip_prefix(name)` が空を返して `aux` が 0 へ潰れ、**拡張子の再結合（[`raw_path_into`] 末尾の `push_str`）を一度も通らない木**になる。ゆえに写しがずれていないことを、建てる前に 1 件ずつ断言する。
     ///
-    /// **数える条件は入力から決める。** 非根になるのは親を `paths` に持つエントリだけであり、親を書かなければ `build` は根として積む（`aux` はフルパスを指し 0 ではない）——それは正しい木なので、断言の側が誤爆してはならない。
+    /// **木の配線そのものはここで守らない。** 拡張子の再結合が壊れれば `path_into` が短いパスを返し、下の `absent_paths_*` が集合の差として落ちる（2026-08-09 に旧形を注入して実測）。親の解決は [`from_parts_accepts_healthy_columns_and_rebuilds_paths`] と `file_key_matches_normalize_file_name_key_on_both_arms` が既に固定している。
     fn tree_with(paths: &[(&str, bool)]) -> IndexTree {
-        // 末尾成分の分解。`indexer` と同じ `Path` の規則を通す（`rfind('.')` で自作すると
-        // `.env` のような先頭ドット名で `file_stem()` と食い違い、製品が生成しない木になる）。
-        // **取れなかったらフルパスへ落とさない**——落とすと `C:\` や UNC の共有名で `name` に
-        // パス全体が入り、製品が決して作らない木を fixture が黙って建てる（`indexer` は
-        // 空の name を弾くので、そこは fixture の入力として不正である）。
-        let stem_of = |p: &str, is_folder: bool| -> String {
-            let path = std::path::Path::new(p);
-            let seg = if is_folder {
-                path.file_name()
-            } else {
-                path.file_stem()
-            };
-            seg.and_then(|s| s.to_str())
-                .unwrap_or_else(|| panic!("末尾成分を取れない入力は fixture に置けない（{p}）"))
-                .to_string()
-        };
-
-        // 親の切り出しは [`resolve_one`] と同じ規則を通す。**`Path::parent()` を使わない**
-        // ——UNC で末尾区切りの有無がずれ、下の照合が黙って外れて断言ごと飛ぶ。
-        fn parent_of(p: &str) -> Option<&str> {
-            let cut = p.rfind(['\\', '/'])?;
-            let end = if cut == 0 || p.as_bytes()[cut - 1] == b':' {
-                cut + 1
-            } else {
-                cut
-            };
-            Some(&p[..end])
-        }
-
         let mut entries: Vec<AppEntry> = paths
             .iter()
             .map(|(p, is_folder)| {
-                let name = stem_of(p, *is_folder);
+                let path = std::path::Path::new(p);
+                let seg = if *is_folder {
+                    path.file_name()
+                } else {
+                    path.file_stem()
+                };
+                // **取れなかったらフルパスへ落とさない**——落とすと `C:\` や UNC の共有名で
+                // `name` にパス全体が入り、製品が決して作らない木を黙って建てる。
+                let name = seg
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_else(|| panic!("末尾成分を取れない入力は fixture に置けない（{p}）"))
+                    .to_string();
                 assert!(!name.is_empty(), "`indexer` は空の name を弾く（{p}）");
+                // **写しがずれていないことを 1 件ずつ刺す。** file の `name` に拡張子が
+                // 残っていれば、この木は上の doc が禁じた形である。
+                if !is_folder && path.extension().is_some() {
+                    assert_ne!(
+                        Some(name.as_str()),
+                        path.file_name().and_then(|s| s.to_str()),
+                        "file の name に拡張子が残っている（`file_stem()` ではなく `file_name()` を通した）"
+                    );
+                }
                 AppEntry {
                     name,
                     target_path: (*p).to_string(),
@@ -669,31 +660,7 @@ mod tests {
             })
             .collect();
         crate::indexer::sort_entries_canonical(&mut entries);
-        let tree = IndexTree::build(entries);
-
-        // 親を入力に持つ拡張子つき file は、**その全件**が非根かつ `aux` が拡張子を指すこと。
-        // **`>= 1` で済ませない**——1 件通れば緑になる形は、片方だけ再結合が壊れる退行を見逃す。
-        let expected = paths
-            .iter()
-            .filter(|(p, is_folder)| {
-                !is_folder
-                    && std::path::Path::new(p).extension().is_some()
-                    && parent_of(p).is_some_and(|par| paths.iter().any(|(q, _)| *q == par))
-            })
-            .count();
-        if expected > 0 {
-            let interned = tree
-                .parent
-                .iter()
-                .zip(&tree.aux)
-                .filter(|(p, a)| **p != NO_PARENT && **a != 0)
-                .count();
-            assert_eq!(
-                interned, expected,
-                "親つきの拡張子ありファイルの件数と、拡張子を intern した非根の件数が一致しない（拡張子の再結合を通らない木になっている）"
-            );
-        }
-        tree
+        IndexTree::build(entries)
     }
 
     #[test]

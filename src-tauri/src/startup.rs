@@ -25,11 +25,13 @@
 //!
 //! # 終端は 1 か所ではない
 //!
-//! 終端（[`finish`]）は 3 か所から呼ばれる——`setup_platform_thread`（bridge の初期化失敗）・
-//! `setup_hotkey_listener`（bridge state 不在・lock 失敗・初回 command の送信失敗）・
-//! platform スレッドの `RegisterInitialHotkey` の arm（登録の成否）。**arm だけに閉じると、
-//! arm 自体が実行されない失敗経路がハーネスの「タイムアウト」に化ける**——診断したい相手が
-//! 読めなくなる。
+//! **`RegisterInitialHotkey` の arm だけに閉じてはならない**——bridge の初期化失敗・窓の
+//! 生成失敗のように、その arm 自体が実行されない経路が実在する。そこで終端を出さないと、
+//! ハーネスには「タイムアウト」としか見えず、**診断したい相手が読めなくなる**。
+//!
+//! 呼び出し点は `main.rs`（`setup_platform_thread` / `egui_shell::create` の早期 return /
+//! `setup_hotkey_listener`）と `platform/mod.rs`（arm）に在り、**列挙は [`StartupFailure`]
+//! の variant が持つ**（数をここへ書くと、経路を足したときにこの行だけが腐る）。
 //!
 //! 一度きり性は [`FINISHED`] の CAS が持つ。**二重の守りではなく必須である**——platform の
 //! 初期化に失敗した後、`setup_hotkey_listener` が bridge 不在をもう一度観測して二つ目の
@@ -47,8 +49,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 
-/// 起動経路の区間。**出力はこの全 variant を並べる**——`ALL` に足し忘れると
-/// `all_covers_every_variant` が落ちる。
+/// 起動経路の区間。**出力はこの全 variant を並べる**。
+/// variant を足すときの手当ては [`Phase::COUNT`] の doc を見ること。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Phase {
     ConfigLoad,
@@ -63,17 +65,46 @@ pub(crate) enum Phase {
 }
 
 impl Phase {
-    pub(crate) const ALL: [Phase; 9] = [
-        Phase::ConfigLoad,
-        Phase::IndexLoad,
-        Phase::PathMerge,
-        Phase::HistoryLoad,
-        Phase::EngineBuild,
-        Phase::TauriInit,
-        Phase::WindowsCreate,
-        Phase::SetupRest,
-        Phase::HotkeyRegister,
-    ];
+    /// 出力に並べる区間の数。**variant を足したらここも上げる。**
+    ///
+    /// 足し忘れは `count_matches_the_enum_declaration` が捕まえる——`include_str!` で
+    /// **このファイルのソーステキスト自身**を走査し、`enum Phase` の宣言から variant を
+    /// 数えて突き合わせる。
+    ///
+    /// **かつてここには「原理的に守れない」と書いてあった。それは誤りだった**——
+    /// 手書きの一覧（`const ALL` や `index()` の match）を母集団にする限り守れない、
+    /// というところまでは正しいが、**母集団を「一覧」ではなく「ソーステキスト」に取れば
+    /// 守れる**（code-reviewer が反証を作って両方向に測った: 変異で FAILED・素で passed）。
+    /// `std::mem::variant_count` が nightly であることは、検知手段が無いことを意味しない。
+    ///
+    /// 加えて**害そのものも消してある**（検知器と二重に持つ）。[`Timeline::mark`] と
+    /// [`Timeline::to_json`] は範囲外の添字で panic せず、[`Self::all`] は `None` を
+    /// 読み飛ばす——release は `panic = "abort"` ゆえ、計器の欠陥で製品を落とすより
+    /// その区間を捨てるほうが軽い。**欠けは出力の `null` として読める。**
+    pub(crate) const COUNT: usize = 9;
+
+    pub(crate) fn all() -> impl Iterator<Item = Phase> {
+        (0..Self::COUNT).filter_map(Self::from_index)
+    }
+
+    /// 添字 → variant。**`index()` の逆であり、両者が唯一の対応表である。**
+    ///
+    /// 範囲外は `None`。`all()` はここが `Some` を返す間だけ回るので、**`COUNT` を
+    /// 大きく取りすぎても出力に幽霊の区間は現れない**。
+    fn from_index(i: usize) -> Option<Phase> {
+        Some(match i {
+            0 => Phase::ConfigLoad,
+            1 => Phase::IndexLoad,
+            2 => Phase::PathMerge,
+            3 => Phase::HistoryLoad,
+            4 => Phase::EngineBuild,
+            5 => Phase::TauriInit,
+            6 => Phase::WindowsCreate,
+            7 => Phase::SetupRest,
+            8 => Phase::HotkeyRegister,
+            _ => return None,
+        })
+    }
 
     /// 出力の JSON キー（`*_ns` / `*_ms` の接頭辞）。
     pub(crate) fn key(self) -> &'static str {
@@ -90,13 +121,20 @@ impl Phase {
         }
     }
 
+    /// variant → 添字。**網羅 match ゆえ、variant を足すとコンパイルが通らない**
+    /// （足し忘れが検査ではなくコンパイラに捕まる）。
     fn index(self) -> usize {
-        // `ALL` の並びが添字の正本である（`key` と同じく網羅 match で書けるが、
-        // 並びを 2 か所へ写すと `ALL` を並べ替えたときに黙ってずれる）。
-        Phase::ALL
-            .iter()
-            .position(|p| *p == self)
-            .expect("Phase::ALL が全 variant を含む（all_covers_every_variant が守る）")
+        match self {
+            Phase::ConfigLoad => 0,
+            Phase::IndexLoad => 1,
+            Phase::PathMerge => 2,
+            Phase::HistoryLoad => 3,
+            Phase::EngineBuild => 4,
+            Phase::TauriInit => 5,
+            Phase::WindowsCreate => 6,
+            Phase::SetupRest => 7,
+            Phase::HotkeyRegister => 8,
+        }
     }
 }
 
@@ -114,6 +152,8 @@ pub(crate) enum StartupFailure {
     PlatformBridgeUnavailable,
     /// 初回 command の送信に失敗した（channel 切断）。
     PlatformCommandDisconnected,
+    /// 窓の生成に失敗した（`egui_shell::create`）。setup ブロック唯一の早期 return。
+    WindowCreation,
     /// `RegisterHotKey` が失敗した（キー競合・不正な設定）。
     HotkeyRegistration,
 }
@@ -127,6 +167,7 @@ impl StartupFailure {
             StartupFailure::PlatformHandshake => "platform-handshake",
             StartupFailure::PlatformBridgeUnavailable => "platform-bridge-unavailable",
             StartupFailure::PlatformCommandDisconnected => "platform-command-disconnected",
+            StartupFailure::WindowCreation => "window-creation",
             StartupFailure::HotkeyRegistration => "hotkey-registration",
         }
     }
@@ -136,6 +177,24 @@ impl StartupFailure {
     /// 通っていない（`null`）。
     fn reached_the_arm(self) -> bool {
         matches!(self, StartupFailure::HotkeyRegistration)
+    }
+}
+
+/// bridge の失敗を終端の分類へ写す。**この写像はここ 1 か所である。**
+///
+/// 呼び出し点ごとに `match` を書くと、片方だけがワイルドカードを持つ形になりやすく、
+/// `BridgeError` に variant を足したとき**黙って既存の `reason` へ潰れる**——`reason` は
+/// ハーネスの契約なので、潰れても赤にならず意味だけがずれる。網羅 match をここへ集めておけば、
+/// variant の追加はコンパイラが指す。
+impl From<crate::platform::BridgeError> for StartupFailure {
+    fn from(e: crate::platform::BridgeError) -> Self {
+        use crate::platform::BridgeError;
+        match e {
+            BridgeError::Spawn => StartupFailure::PlatformSpawn,
+            BridgeError::Init => StartupFailure::PlatformInit,
+            BridgeError::Handshake => StartupFailure::PlatformHandshake,
+            BridgeError::Disconnected => StartupFailure::PlatformCommandDisconnected,
+        }
     }
 }
 
@@ -157,7 +216,11 @@ pub(crate) struct Timeline {
     pre_main: Option<Duration>,
     /// 直前のマークの anchor からの経過。最初のマークは anchor 起点。
     last: Duration,
-    durations: [Option<Duration>; Phase::ALL.len()],
+    /// **固定長配列ではなく `Vec` である。** 長さは常に [`Phase::COUNT`] だが、
+    /// 型で固定すると**「範囲外の添字を渡された」状況をテストで構築できない**
+    /// ——`Phase` の値からは範囲外を作れず、配列を縮めると型が合わない。
+    /// 「害を消した」（panic しない）という主張が検査できなくなるので `Vec` を取る。
+    durations: Vec<Option<Duration>>,
     branch: Branch,
     index_load_stats_ms: Option<u64>,
 }
@@ -167,7 +230,7 @@ impl Timeline {
         Self {
             pre_main,
             last: Duration::ZERO,
-            durations: [None; Phase::ALL.len()],
+            durations: vec![None; Phase::COUNT],
             branch: Branch::default(),
             index_load_stats_ms: None,
         }
@@ -181,7 +244,14 @@ impl Timeline {
         // 単調でない入力（時計の巻き戻り・呼び出し順の誤り）は 0 幅として記録する。
         // **負にはしない**——符号なしで持つ以上、飽和させるほうが panic より読める。
         let delta = elapsed_since_anchor.saturating_sub(self.last);
-        self.durations[phase.index()] = Some(delta);
+        // **添字が範囲外でも panic しない。** `Phase` に variant を足して `COUNT` を
+        // 上げ忘れた状態がそれに当たる——**検査では守れない**（一覧が母集団なので、
+        // `index()`/`key()` へ arm を足せばテストは通ってしまう。実測済み）。
+        // release は `panic = "abort"` ゆえ、**計器の欠陥で製品プロセスを落とすより
+        // その区間を黙って捨てるほうが害が小さい**（欠けは出力の `null` で読める）。
+        if let Some(slot) = self.durations.get_mut(phase.index()) {
+            *slot = Some(delta);
+        }
         self.last = elapsed_since_anchor.max(self.last);
     }
 
@@ -197,7 +267,11 @@ impl Timeline {
     /// 呼び出し点を製品側に作ると、網羅列挙を迂回する経路が生まれる）。
     #[cfg(test)]
     pub(crate) fn phase_ns(&self, phase: Phase) -> Option<u128> {
-        self.durations[phase.index()].map(|d| d.as_nanos())
+        self.durations
+            .get(phase.index())
+            .copied()
+            .flatten()
+            .map(|d| d.as_nanos())
     }
 
     /// 記録済み区間の生 ns の総和。**終端で anchor から直接読んだ値と突き合わせる相手**であり、
@@ -227,8 +301,13 @@ impl Timeline {
         };
 
         put("pre_main".to_string(), self.pre_main);
-        for p in Phase::ALL {
-            put(p.key().to_string(), self.durations[p.index()]);
+        for p in Phase::all() {
+            // **範囲外でも panic しない**（`mark` と同じ理由——`COUNT` の doc）。
+            // 添字を持つ 3 か所すべてを揃えること: ここ・`mark`・下の `index_load`。
+            put(
+                p.key().to_string(),
+                self.durations.get(p.index()).copied().flatten(),
+            );
         }
 
         // **終端で anchor から直接読んだ値であり、部分和から作らない。** 作れば検算は
@@ -240,17 +319,51 @@ impl Timeline {
         m.insert("post_main_ms".into(), json!(to_ms(post_main_elapsed)));
         m.insert("sum_phase_ns".into(), json!(self.sum_phase_ns() as u64));
 
+        // **名前の付いていない末尾**。`post_main_ns - sum_phase_ns` であり、**恒等式
+        // `post_main_ns == sum_phase_ns + unmarked_tail_ns` は全経路で成り立つ**。
+        //
+        // 0 でなくなるのは、終端が最後の区間をマークせずに出たときである——bridge の
+        // 初期化失敗など、`RegisterInitialHotkey` の arm が走らなかった経路がそれに当たる。
+        // **残余を項目にせず「和が一致すること」だけを不変条件にすると、その経路で検算が
+        // 必ず破れ、ハーネスが二重に失敗して理由が読めなくなる**（反復 6 が `digest_ms` を
+        // 足してフェーズ間の隙間を塞いだのと同じ形）。
+        m.insert(
+            "unmarked_tail_ns".into(),
+            json!(
+                post_main_elapsed
+                    .as_nanos()
+                    .saturating_sub(self.sum_phase_ns()) as u64
+            ),
+        );
+
         // `load_or_scan_with_stats` の中にある未命名の処理。**first-run 枝では
         // `LoadOrScanStats` 自体が存在しないので `null`**（0 にしない）。
         m.insert(
             "index_load_unattributed_ms".into(),
             match (
-                self.durations[Phase::IndexLoad.index()],
+                self.durations
+                    .get(Phase::IndexLoad.index())
+                    .copied()
+                    .flatten(),
                 self.index_load_stats_ms,
             ) {
                 (Some(measured), Some(inner)) => json!(to_ms(measured) as i64 - inner as i64),
                 _ => serde_json::Value::Null,
             },
+        );
+
+        // **どこまで進んだか。** 失敗終端では以降の区間が `null` になるが、その `null` は
+        // 「マークの取り落とし」ではなく「そこまで行かなかった」である。**両者を区別する
+        // 材料をハーネスへ渡す**——これが無いと、ハーネスは `reason` から Phase を再導出する
+        // （写しが 2 部になる）か、失敗経路の `null` を一律免除する（取り落としが一切
+        // 見えなくなる）かのどちらかになる。
+        m.insert(
+            "reached_phase".into(),
+            self.durations
+                .iter()
+                .rposition(Option::is_some)
+                .and_then(Phase::from_index)
+                .map_or(serde_json::Value::Null, |p| json!(p.key())),
         );
 
         m.insert("first_run".into(), json!(self.branch.first_run));
@@ -399,23 +512,80 @@ mod tests {
     }
 
     #[test]
-    fn all_covers_every_variant() {
-        // `ALL` への足し忘れを捕まえる。`Phase` に variant を足したらここが落ちる。
+    fn index_and_from_index_are_inverse_over_the_whole_enum() {
+        // **variant の足し忘れを捕まえるのはコンパイラである。** `index()` が網羅 match
+        // ゆえ variant を足すとコンパイルが通らず、`COUNT` だけ増やすと `from_index` の
+        // `unreachable!()` へ落ちてこのテストが落ちる。
+        //
+        // **この検査は往復だけを見る。** 足し忘れそのものは
+        // `count_matches_the_enum_declaration` が別に捕まえる——手書きの一覧を走査する形
+        // （かつての `const ALL`・その後の `index()`/`key()` の match）は、**一覧自身が
+        // 母集団なので足し忘れを検出できない**（両方とも変異で実測した）。
+        for i in 0..Phase::COUNT {
+            let p = Phase::from_index(i).expect("COUNT の範囲は from_index が Some を返す");
+            assert_eq!(p.index(), i, "添字 {i} で往復しない");
+        }
         let mut seen = Vec::new();
-        for p in Phase::ALL {
-            assert!(!seen.contains(&p), "ALL に重複がある: {p:?}");
+        for p in Phase::all() {
+            assert!(!seen.contains(&p), "重複がある: {p:?}");
             seen.push(p);
         }
+        assert_eq!(seen.len(), Phase::COUNT);
+    }
+
+    #[test]
+    fn count_matches_the_enum_declaration() {
+        // **母集団はこのファイルのソーステキストそのものである。** 手書きの一覧
+        // （`const ALL`・`index()` / `key()` の match）を走査する形では、一覧自身が
+        // 母集団になるので足し忘れを検出できない——**両方とも変異で実測した**。
+        // ソースを読めば `COUNT` の据え置きが左右の食い違いとして現れる。
+        //
+        // `std::mem::variant_count` は nightly だが、**検知手段が無いことは意味しない**
+        // （かつてこの doc は「原理的に守れない」と断定していた。誤りだった）。
+        let src = include_str!("startup.rs");
+        let decl = src
+            .split_once("pub(crate) enum Phase {")
+            .expect("enum Phase の宣言が見つからない（改名したらこの検査も直す）")
+            .1
+            .split_once('}')
+            .expect("enum Phase の宣言が閉じていない")
+            .0;
+        let declared = decl
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.ends_with(',') && !l.starts_with("//") && !l.starts_with("/*"))
+            .count();
         assert_eq!(
-            seen.len(),
-            9,
-            "variant を足したら ALL と この件数を同時に直す"
+            declared,
+            Phase::COUNT,
+            "enum Phase の variant 数と COUNT がずれている（variant を足したら COUNT も上げる）"
         );
     }
 
     #[test]
+    fn out_of_range_index_is_dropped_instead_of_panicking() {
+        // **`COUNT` を上げ忘れた variant を `mark` / `to_json` へ渡した状況**を、
+        // 配列側を縮めて再現する（`Phase` の値では範囲外を作れないため）。release は
+        // `panic = "abort"` ゆえ、ここで panic すると計器の欠陥が製品を落とす。
+        //
+        // 前版はこの検査を `[T; 9].get_mut(9) == None` という std の恒真式で書いており、
+        // **`mark` も `to_json` も一度も呼んでいなかった**（code-reviewer が指摘）。
+        let mut t = Timeline::new(None);
+        t.durations = Vec::new(); // COUNT より短い＝全 variant が範囲外
+        t.mark(Phase::ConfigLoad, ms(1));
+        t.mark(Phase::HotkeyRegister, ms(2));
+        let json = t.to_json(ms(2), Ok(()));
+        // 区間は 1 つも記録されないが、キーは全部出て `null` になる。
+        for p in Phase::all() {
+            assert!(json[format!("{}_ns", p.key())].is_null(), "{:?}", p);
+        }
+        assert_eq!(json["sum_phase_ns"], 0u64);
+        assert_eq!(json["unmarked_tail_ns"], ms(2).as_nanos() as u64);
+    }
+
+    #[test]
     fn keys_are_unique() {
-        let mut keys: Vec<&str> = Phase::ALL.iter().map(|p| p.key()).collect();
+        let mut keys: Vec<&str> = Phase::all().map(|p| p.key()).collect();
         keys.sort_unstable();
         let before = keys.len();
         keys.dedup();
@@ -482,11 +652,58 @@ mod tests {
     }
 
     #[test]
+    fn unmarked_tail_closes_the_sum_when_the_last_phase_never_ran() {
+        // bridge の初期化失敗など、`RegisterInitialHotkey` の arm が走らなかった経路。
+        // **恒等式 post_main == sum_phase + unmarked_tail は全経路で成り立つ**——
+        // 残余を項目にしないと、この経路で検算が必ず破れてハーネスが二重に失敗する。
+        let mut t = Timeline::new(None);
+        t.mark(Phase::ConfigLoad, ms(10));
+        let json = t.to_json(ms(25), Err(StartupFailure::PlatformSpawn));
+
+        assert!(json["hotkey_register_ns"].is_null(), "arm は走っていない");
+        assert_eq!(json["sum_phase_ns"], 10_000_000u64);
+        assert_eq!(json["unmarked_tail_ns"], 15_000_000u64);
+        assert_eq!(
+            json["post_main_ns"].as_u64().unwrap(),
+            json["sum_phase_ns"].as_u64().unwrap() + json["unmarked_tail_ns"].as_u64().unwrap(),
+        );
+    }
+
+    #[test]
+    fn reached_phase_names_the_last_marked_interval() {
+        // **失敗経路の `null` を 2 種に分ける材料である**——「そこまで行かなかった」と
+        // 「マークを取り落とした」。これが無いとハーネスは `reason` から Phase を
+        // 再導出する（写しが 2 部）か、一律免除する（取り落としが見えない）しかない。
+        let mut t = Timeline::new(None);
+        assert!(
+            t.to_json(Duration::ZERO, Ok(()))["reached_phase"].is_null(),
+            "1 つも刻んでいなければ null"
+        );
+
+        t.mark(Phase::ConfigLoad, ms(1));
+        t.mark(Phase::HistoryLoad, ms(2)); // index_load / path_merge は飛ばす
+        let json = t.to_json(ms(2), Err(StartupFailure::PlatformSpawn));
+        assert_eq!(
+            json["reached_phase"], "history_load",
+            "飛ばした区間ではなく、実際に刻んだ最後を指す"
+        );
+    }
+
+    #[test]
+    fn unmarked_tail_is_zero_on_the_normal_path() {
+        let mut t = Timeline::new(None);
+        t.mark(Phase::ConfigLoad, ms(10));
+        t.mark(Phase::HotkeyRegister, ms(25));
+        let json = t.to_json(ms(25), Ok(()));
+        assert_eq!(json["unmarked_tail_ns"], 0u64, "全区間を刻めば残余は 0");
+    }
+
+    #[test]
     fn every_phase_key_is_present_even_when_skipped() {
         // キーの欠落は異常、通らなかった区間は null。**両者を区別する。**
         let t = Timeline::new(None);
         let json = t.to_json(Duration::ZERO, Ok(()));
-        for p in Phase::ALL {
+        for p in Phase::all() {
             let ns = format!("{}_ns", p.key());
             let ms_key = format!("{}_ms", p.key());
             assert!(json.get(&ns).is_some(), "{ns} が出力に無い");
@@ -539,12 +756,18 @@ mod tests {
 
     #[test]
     fn failure_reasons_are_stable_and_unique() {
+        // **手書きの列挙である**（`Phase` と同じ弱さを持つ——variant を足してここへ
+        // 書き足さなくても落ちない）。`StartupFailure` は添字を持たないので `Phase` の
+        // `COUNT`/`from_index` に当たる仕掛けが無く、`reason()` の網羅 match だけが
+        // 足し忘れを止める。**その match は `todo!()` を書けば通ってしまう**ので、
+        // ここは網羅の証明ではなく「既存の `reason` が衝突せず固定である」ことの検査である。
         let all = [
             StartupFailure::PlatformSpawn,
             StartupFailure::PlatformInit,
             StartupFailure::PlatformHandshake,
             StartupFailure::PlatformBridgeUnavailable,
             StartupFailure::PlatformCommandDisconnected,
+            StartupFailure::WindowCreation,
             StartupFailure::HotkeyRegistration,
         ];
         let mut reasons: Vec<&str> = all.iter().map(|f| f.reason()).collect();

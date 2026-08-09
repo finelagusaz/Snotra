@@ -283,7 +283,16 @@ fn main() {
 
             // 窓生成（egui・platform thread spawn 後・SPEC §8.5 で Win32 初期化と並列化）。
             // 幅の復元は create が window_width で行う（#532 SU7 flip で唯一の経路）。
-            let handles = egui_shell::create(app, window_width as f64, &bg_color)?;
+            // **setup ブロック唯一の早期 return である。** ここで抜けると
+            // `RegisterInitialHotkey` は送られないので、終端を出さないとハーネスには
+            // 「タイムアウト」としか見えない（`crate::startup` の `//!`）。
+            let handles = match egui_shell::create(app, window_width as f64, &bg_color) {
+                Ok(h) => h,
+                Err(e) => {
+                    startup::finish(Err(startup::StartupFailure::WindowCreation));
+                    return Err(Box::new(e));
+                }
+            };
             // **フォント解決を含む区間である**（`font_stack.rs`）。窓を一度も出していない
             // 時点で常駐に効くことが実測されており、表示より前に走る。
             startup::mark(startup::Phase::WindowsCreate);
@@ -389,14 +398,7 @@ fn setup_platform_thread(
         // **起動はここで続行するが、終端は出す。** 出さないと `RegisterInitialHotkey` の
         // arm が走らないまま起動が終わり、ハーネスには「タイムアウト」としか見えない
         // （正本は `crate::startup` の `//!`）。
-        Err(e) => startup::finish(Err(match e {
-            platform::BridgeError::Spawn => startup::StartupFailure::PlatformSpawn,
-            platform::BridgeError::Init => startup::StartupFailure::PlatformInit,
-            platform::BridgeError::Handshake => startup::StartupFailure::PlatformHandshake,
-            platform::BridgeError::Disconnected => {
-                startup::StartupFailure::PlatformCommandDisconnected
-            }
-        })),
+        Err(e) => startup::finish(Err(startup::StartupFailure::from(e))),
     }
 }
 
@@ -500,12 +502,12 @@ fn setup_hotkey_listener(app_handle: &AppHandle) {
     // `startup:failed` を出さないとハーネスには「タイムアウト」としか見えない。
     let sent = match app_handle.try_state::<Mutex<PlatformBridge>>() {
         Some(bridge) => match bridge.lock() {
-            Ok(b) => b.send_initial_hotkey_registration().map_err(|e| match e {
-                platform::BridgeError::Disconnected => {
-                    startup::StartupFailure::PlatformCommandDisconnected
-                }
-                _ => startup::StartupFailure::PlatformBridgeUnavailable,
-            }),
+            // **写像は 1 か所に集約してある**（`startup::StartupFailure::from`）。
+            // ここでワイルドカードを書くと、`BridgeError` に variant を足したとき
+            // 黙って既存の `reason` へ潰れる——`reason` はハーネスの契約である。
+            Ok(b) => b
+                .send_initial_hotkey_registration()
+                .map_err(startup::StartupFailure::from),
             Err(_) => Err(startup::StartupFailure::PlatformBridgeUnavailable),
         },
         None => Err(startup::StartupFailure::PlatformBridgeUnavailable),

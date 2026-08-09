@@ -59,11 +59,14 @@ hotkey 登録完了 ★終端 → ok なら startup:ready / 失敗なら startup
 | `setup_hotkey_listener` | bridge state 不在・`lock()` 失敗のとき、**`RegisterInitialHotkey` を送らずに return する** |
 | `PlatformBridge::send_command` | **channel の send 失敗を戻り値に出さず捨てる**——bridge が manage 済みでも platform スレッドが死んでいれば command は処理されない |
 
-**ゆえに終端は 3 か所から出す**（すべて同じ `finish(Err(..))` を通す）:
+**ゆえに終端は arm だけに閉じない**（すべて同じ `finish(Err(..))` を通す。**実装後に窓の生成失敗が加わった**ので、数ではなく列挙で書く）:
 
-1. `main.rs` の `setup_platform_thread` — `begin` / `wait` の失敗
-2. `main.rs` の `setup_hotkey_listener` — bridge state 不在・lock 失敗・初回 command の送信失敗
-3. `platform/mod.rs` の `RegisterInitialHotkey` の arm — command が届いた後の登録成否
+- `main.rs` の `setup_platform_thread` — `begin` / `wait` の失敗
+- `main.rs` の `egui_shell::create` の早期 return — 窓の生成失敗（**実装中に発見**・code-reviewer の M-1）
+- `main.rs` の `setup_hotkey_listener` — bridge state 不在・lock 失敗・初回 command の送信失敗
+- `platform/mod.rs` の `RegisterInitialHotkey` の arm — command が届いた後の登録成否
+
+**列挙の正本は `StartupFailure` の variant である**（数を散文へ写すと、経路を足したときにその行だけが腐る——実際に「3 か所」と書いた直後に 4 つ目が増えた）。
 
 **失敗理由は安定した文字列で載せる。** `PlatformBridge::begin` / `PlatformBridgePending::wait` は `Option` では原因を失うので `Result<_, PlatformBridgeFailure>` にし、初回 command の送信も成功／切断を呼び出し側へ返す API にする。`startup.rs` の `StartupFailure` がそれを `reason` へ写す——**OS 依存のエラー文字列をハーネスの契約にしない**。
 
@@ -109,6 +112,23 @@ hotkey 登録完了 ★終端 → ok なら startup:ready / 失敗なら startup
 
 ハーネスは**枝フラグが説明しない `null` を失敗として扱う**。
 
+**ただし説明者は枝フラグだけではない**（code-reviewer の High-3）。失敗終端では `windows_create` 以降も `null` になる。これを勘定に入れずに「枝フラグが説明しない `null` は失敗」を字義どおり実装すると、`unmarked_tail_ns` を足した理由とまったく同じ形でハーネスが二重に失敗する。
+
+**当初は「`ok = false` が説明者」と書いたが、それは 2 つの理由で成り立たなかった**（code-reviewer の 2 巡目・High-2-3）:
+
+- **一律免除は緩すぎる**——失敗経路でマークの取り落としが**一切見えなくなる**
+- **`reason` から Phase を導くのは写しが 2 部になる**——ハーネスが対応表を持つことになり、経路を足すたびに両方を直す
+
+**Rust 側が `reached_phase`（実際に刻んだ最後の区間名）を出す形にした。** ハーネスは対応表を持たず、免除も一律ではない:
+
+| `null` の説明者 | 説明される区間 |
+|---|---|
+| `first_run = true` | `index_load`・`index_load_unattributed_ms` |
+| `include_path_env = false` | `path_merge` |
+| **`reached_phase` より後ろ** | **そこへ到達していない区間**（`ok` の真偽に依らず同じ規則） |
+
+**`reached_phase` 以前の `null` は、上 2 つの枝フラグが説明しない限り失敗とする。**
+
 ### マーク一覧（この順に単調増加する）
 
 | マーク | 位置 |
@@ -150,10 +170,26 @@ hotkey 登録完了 ★終端 → ok なら startup:ready / 失敗なら startup
 - [x] `main.rs` の各地点へマークを置く（**並びを変えない**——マークを足すだけ）
 - [x] 区間を**生の ns（`Duration`）で保持**し、`*_ms` は出力時にだけ切り捨てる。終端で `anchor.elapsed()` を**直接**読んだ `post_main_elapsed_ns` を、部分和とは別に出す
 - [x] `platform/mod.rs` の `PlatformBridge::begin` / `PlatformBridgePending::wait` を `Result<_, BridgeError>` へ変え、初回 command の送信結果を呼び出し側へ返す（`send_command` の 10 呼び出し点には波及させず、`send_initial_hotkey_registration` を別に置いた——**結果を要るのは起動の終端だけである**）
-- [x] 終端を **3 か所**から呼ぶ（`setup_platform_thread` / `setup_hotkey_listener` / `RegisterInitialHotkey` の arm）。**登録の成否でイベント名を分けて** 1 行出す（`startup:ready` / `startup:failed`。内訳は同一・`reason` は `StartupFailure` が安定文字列へ写す）
+- [x] 終端を**失敗経路すべて**から呼ぶ（列挙は上の設計節・正本は `StartupFailure` の variant）。**登録の成否でイベント名を分けて** 1 行出す（`startup:ready` / `startup:failed`。内訳は同一・`reason` は `StartupFailure` が安定文字列へ写す）
 - [ ] **`SystemTime::now()` の分解能を Rust 側で 1 度実測する**（下の未確定 1 の残り。誤差上限では押さえてあるので、値を記録するだけでよい）
-- [ ] **実装差分へ `/race-check` を当てる**（計画段階では起動しない設計のため・#784）
+- [x] **実装差分へ `/race-check` を当てる**（計画段階では起動しない設計のため・#784）——母集団 `npm run race:boundaries -- --base main`（① 0 / ② 1 / ③ 0 / ④ 9 / ⑤ 0 / ⑦ 0 / ⑧ 0）。境界 3 本を立てて 5 問に答え、**要修正 1 件**:
+  - `FINISHED` の CAS（重複 spawn ガード型）と `RegisterInitialHotkey` の send は **[安全]**
+  - `TIMELINE` は **[要修正]** だった——**失敗経路では `hotkey_register` をマークしないので `sum_phase_ns < post_main_ns` になり、受け入れ 3 の検算がその経路で必ず破れる**（ハーネスが二重に失敗し理由が読めない）。`unmarked_tail_ns` を項目として出し、恒等式を `post_main_ns == sum_phase_ns + unmarked_tail_ns`（全経路で成立）へ変えた。検知器 2 本を追加（`unmarked_tail_closes_the_sum_when_the_last_phase_never_ran` / `unmarked_tail_is_zero_on_the_normal_path`）
+  - 受容: `TIMELINE` の lock が poison すると以降の mark が沈黙する（計器ゆえ best-effort）
 - [x] ユニットテスト（13 本）: マークの差分・スキップ時の `null`・生 ns の総和・丸め境界・`to_ms` の切り捨て・キーの網羅・`pre_main` の `null`・枝フラグ・`index_load_unattributed_ms` の 2 態・`reason` の一意性と固定・`ok`/`reason` の対
+  - [x] **実機で 1 回起動して計器が出ることを確認した**（レビュー 2 巡目が最優先とした M-6）。`smoke:startup` 5 runs / `smoke:egui` とも通過。手で 1 回起動して取った実測（debug ビルド・cache-hit・`include_path_env = true`）:
+
+    | 区間 | ms | |
+    |---|---:|---|
+    | **pre_main** | **120** | **全体の 37%**——`main()` 基準で刻んでいたら計測区間の外へ落ちていた |
+    | windows_create | 66 | フォント解決込み |
+    | index_load | 47 | うち **5 ms** が `LoadOrScanStats` に現れない（`index_load_unattributed_ms`） |
+    | path_merge | 41 | |
+    | hotkey_register | 21 | |
+    | engine_build / config_load / tauri_init / history_load / setup_rest | 14 / 11 / 5 / 0 / 0 | |
+    | **合計** | **327** | `post_main 207` + `pre_main 120` |
+
+    **不変条件が実データで成立**: `sum_phase_ns == post_main_ns`（207,305,000 で一致）・`unmarked_tail_ns = 0`・`reached_phase = "hotkey_register"`・全 18 キーが出た
   - [ ] **「終端が二度目を出さない」だけ単体テストを持てていない**——`FINISHED` はプロセス大域の `AtomicBool` で、cargo test は 1 プロセスに全テストを載せるため、`finish()` を呼ぶテストが**その大域を消費して他のテストから観測不能になる**。**変異 (r) で外から測る**（同じ理由で `begin`/`mark` の大域経路も単体では測れない）
 - [x] `Phase` を enum で持ち、出力は**全 variant を網羅列挙**する（`..` を書かない——`SearchEngine::footprint_rows` と同じ形で、区間を足したときの漏れをコンパイラに捕まえさせる）
 - [ ] **検知器を変異で落とす**: (a) 一度きり性を外す (b) **マークを 1 つ落とす**（→ 当該区間が `null` になりキー検査が落ちる。**総和の検算は落ちない**ことも同時に確かめ、なぜ別の検査が要るかを doc に残す） (c) 枝フラグを固定値にする (d) 総和の検算を無条件 true にする (e) **登録失敗でも `startup:ready` を出す**（→ ハーネスが失敗すること。**登録を実際に失敗させて**測る——占有済みホットキーを config に置けば `RegisterHotKey` が false を返す） (f) **`include_path_env = false` で `path_merge` を 0 にする**（→ 枝フラグ整合検査が落ちること）
@@ -196,7 +232,7 @@ hotkey 登録完了 ★終端 → ok なら startup:ready / 失敗なら startup
 | `pre_main` と post-main を異時計のまま混同しない | 時刻補正や丸め差を計器の不良と誤認する／逆に許容誤差が基準点ずれを隠す | `pre_main_ns` を独立項目として出し、複合表示値を厳密検算の対象から外す |
 | `null` と `0` を混同しない | 「通らなかった」が「0 ms で通った」に見える。**`path_merge` が典型**——既定 `include_path_env = false` はスキップであって 0 ms ではない | 枝フラグが説明しない `null` をハーネスが失敗させる（逆に、枝フラグが `null` を要求するのに数値が来ても失敗させる） |
 | 終端の名前が readiness を運ぶ | **ホットキーが使えない起動が green になる** | イベント名を分ける（`startup:ready` / `startup:failed`）。ハーネスは両方待ち、後者を失敗として扱う |
-| 終端がどの失敗経路でも出る | **bridge の初期化失敗が「タイムアウト」に化け、診断したい相手が読めない** | 3 か所（`setup_platform_thread` / `setup_hotkey_listener` / arm）から同じ `finish(Err(..))` を通す。変異試験で経路ごとに落とす |
+| 終端がどの失敗経路でも出る | **bridge の初期化失敗・窓の生成失敗が「タイムアウト」に化け、診断したい相手が読めない** | 失敗経路すべてから同じ `finish(Err(..))` を通す（列挙は設計節）。変異試験で経路ごとに落とす |
 | 無効時にコストゼロ | 製品の起動が計器のぶん遅くなる | `trace_enabled()` の早期 return + Phase 3 の A/B |
 | 枝が出力に現れる | cache-miss の標本を cache-hit の基準と比べる | 出力に `cache_hit` / `first_run` / `include_path_env` |
 

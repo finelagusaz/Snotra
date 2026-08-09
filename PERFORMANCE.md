@@ -1475,8 +1475,13 @@ migemo の設定に依らない（`shared_file_name_flag_is_measured_not_inferre
 - **debug は別の運用点である**（同日・同機で 327 ms: pre_main 120 / windows_create 66 /
   index_load 47 / path_merge 41 / hotkey_register 21）。**release と 4 倍違うので混ぜて読まない**
 - **`smoke-startup.ps1` が記録した 0.6〜8s の分散は、まだ説明できていない。** あちらは
-  **debug ビルドを CI runner で**測った値であり、ここは開発機の release である。**同じ計器を
-  同じ条件へ当てるまで、この内訳をあの分散の説明として使ってはならない**
+  **CI runner** の値で、ここは開発機である。**同じ計器を同じ条件へ当てるまで、この内訳を
+  あの分散の説明として使ってはならない**——`e2e.yml` の "Measure startup timeline" が
+  そのために在る（観測であって回帰の検査ではないので `continue-on-error`。**閾値を置くのは
+  分散の正体を掴んでから**）
+  - **「あちらは debug ビルドだから条件が違う」と書いてはならない**（一度そう書いた）。
+    `e2e.yml` の当該 job は `-ExePath target/release/snotra.exe` を渡しており、**どちらも
+    release である**。違うのは開発機か runner かであって、ビルドプロファイルではない
 
 ### 計器が計器の欠陥を暴いた（配置ミス・実測で発覚）
 

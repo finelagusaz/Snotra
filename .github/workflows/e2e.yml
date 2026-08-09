@@ -22,6 +22,7 @@ on:
       # workflow の各ステップが直接呼ぶスクリプト（変更で自己検証する）
       - 'scripts/smoke-startup.ps1'      # "Run startup smoke" ステップ
       - 'scripts/smoke-egui.ps1'         # "Run egui smoke" ステップ（#532 SU7）
+      - 'scripts/bench-startup.ps1'      # "Measure startup timeline" ステップ（#1000）
       - 'scripts/lib/**'                  # 両 smoke の共有モジュール（#843）
       # 依存 manifest/lockfile（依存更新 PR を smoke 網に載せる）
       - '**/Cargo.toml'
@@ -121,3 +122,16 @@ jobs:
       # する**（first-run は `cmd:launch_settings_process:*` を名指しする肯定的検査・#804）。
       - name: Run startup smoke
         run: pwsh -NoProfile -File scripts/smoke-startup.ps1 -ExePath target/release/snotra.exe
+
+      # **runner での起動レイテンシの内訳を取る**（#1000）。`smoke-startup.ps1` が
+      # `first_trace_ms` として 0.6s / 5.2s / 8s超 の分散を記録しながら**原因未解明**の
+      # ままなのが、この計器を作った動機である——同じ runner・同じ release 本体で
+      # 区間ごとに刻めば、分散がどこに住むかが読める。
+      #
+      # **`continue-on-error` を付ける。** これは回帰の検査ではなく観測であり、runner の
+      # 遅い側に振れた 1 回で PR を止めるのは目的に合わない（内訳は失敗しても
+      # `startup:failed` の理由つきでログに残る）。**回帰の検査として使うなら、まず
+      # 分散の正体を掴んでから閾値を決めること**——今は基準そのものが無い。
+      - name: Measure startup timeline
+        continue-on-error: true
+        run: pwsh -NoProfile -File scripts/bench-startup.ps1 -ExePath target/release/snotra.exe -UseVerificationProfile -Iterations 7

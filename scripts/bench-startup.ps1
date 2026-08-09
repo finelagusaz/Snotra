@@ -25,7 +25,14 @@ param(
   [int]$TerminalTimeoutMs = 20000,
   # 終端が出た後、メモリを測るまでの落ち着き待ち。
   [int]$SettleMs = 1500,
-  [string]$ExePath = "C:/workspace/Snotra/target/release/snotra.exe"
+  [string]$ExePath = "C:/workspace/Snotra/target/release/snotra.exe",
+  # **検証用プロファイルを使う**（CI 等、実 config が無い環境向け）。既定は実 config で、
+  # 開発機の実運用点をそのまま測る。CI では実 config が無く first-run へ落ちるため、
+  # smoke 群と同じ形（`New-SnotraVerificationProfile` + `SNOTRA_CONFIG_DIR`）で
+  # 非 first-run を再現する。**枝は出力の `first_run` / `cache_hit` に現れる**ので、
+  # どちらで測ったかは読み手が毎回確かめられる。
+  [switch]$UseVerificationProfile,
+  [string]$ProfileDir = "target/bench-startup/profile"
 )
 
 Set-StrictMode -Version Latest
@@ -167,9 +174,18 @@ function Get-Percentile {
   return $sorted[$idx]
 }
 
+$profileFull = $null
+if ($UseVerificationProfile) {
+  # **seed は 1 回だけ**（ループ内で作り直すと毎回 first-run + cache-miss になり、
+  # 測っているものが変わる）。2 回目以降の起動が `index.bin` を読む形が実運用点に近い。
+  $profileFull = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $ProfileDir))
+  New-SnotraVerificationProfile -ProfileDir $profileFull -ShowIcons $false | Out-Null
+}
+
 Write-Host "=== Snotra 起動計器（時間が主・メモリは従） ===" -ForegroundColor Cyan
 Write-Host "Exe:        $ExePath"
 Write-Host "Iterations: $Iterations"
+if ($null -ne $profileFull) { Write-Host "Profile:    $profileFull（検証用・SNOTRA_CONFIG_DIR）" }
 Write-Host ""
 
 $savedTrace = $env:SNOTRA_TRACE
@@ -187,12 +203,19 @@ try {
     $outPath = Join-Path $env:TEMP ("snotra_bench_{0}.out" -f $run)
     foreach ($p in @($errPath, $outPath)) { if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force } }
 
-    $env:SNOTRA_TRACE = "1"
     # **外から独立に測る壁時計。** 内側の申告と突き合わせる相手であり、計器が自分の
     # 出力だけで辻褄を合わせる形（同語反復化）を外から捕まえる唯一の材料である。
     $wall = [System.Diagnostics.Stopwatch]::StartNew()
-    $proc = Start-Process -FilePath $ExePath -PassThru `
-      -RedirectStandardError $errPath -RedirectStandardOutput $outPath
+    if ($null -ne $profileFull) {
+      # **env の設定と復元は共有モジュールが持つ**（成功・例外の両経路で戻す）。
+      # `SNOTRA_CONFIG_DIR` / `SNOTRA_TRACE` は予約キーで、ここから上書きできない。
+      $proc = Start-SnotraProcess -ConfigDir $profileFull -Trace -FilePath $ExePath `
+        -StandardErrorPath $errPath -StandardOutputPath $outPath
+    } else {
+      $env:SNOTRA_TRACE = "1"
+      $proc = Start-Process -FilePath $ExePath -PassThru `
+        -RedirectStandardError $errPath -RedirectStandardOutput $outPath
+    }
 
     # **終端は 2 つある。** `startup:ready` だけを待つと、失敗した起動では期限切れになり
     # 「終端が出なかった」という**誤った理由**で落ちる——起きたこと（登録失敗・bridge の

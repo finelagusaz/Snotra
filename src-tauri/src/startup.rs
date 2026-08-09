@@ -39,9 +39,17 @@
 //!
 //! # 受容する残余
 //!
-//! `PlatformBridgePending::wait` の channel 切断が本番でどう起きるかは特定できていない
-//! （`recv()` の失敗経路は実在するが、thread panic 等の原因は未確定）。**原因の特定を
-//! 成立条件にしていない**——変異で経路を模擬し、終端が出ることだけを測る。
+//! **失敗経路（`StartupFailure` のうち `HotkeyRegistration` 以外）は実機で一度も観測して
+//! いない。** bridge の spawn / Win32 初期化 / channel を実際に失敗させる手段が無いためで、
+//! **注入点を製品コードへ足す案は却下した**（2026-08-09 のユーザー判断）——計測しきれない
+//! リスクは残るが、**本来不要なコードがトラブルの原因を作り込む理由にはならない**。
+//! `SNOTRA_FAKE_INITIAL_HOTKEY_FAILURE`（`platform/mod.rs`）のような既存のハッチを増やす
+//! 方向も同じ理由で採らない。
+//!
+//! ゆえに次の 2 つは**書けない**: (a) これらの経路が実際に `startup:failed` を出すこと
+//! (b) `PlatformBridgePending::wait` の channel 切断が本番でどう起きるか（`recv()` の失敗
+//! 経路は実在するが、thread panic 等の原因は未確定）。守っているのは**写像の網羅性**
+//! （[`StartupFailure::from`] の match と `reason` の一意性）だけである。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};

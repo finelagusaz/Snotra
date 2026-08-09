@@ -279,22 +279,11 @@ impl IndexTree {
 
     /// 渡したパスのうち、**この木に無いもの**を返す。
     ///
-    /// **「無い」だけを主張する。** 呼び出し側（`snotra` の `icon::sync_with_index`）が
-    /// これをアイコンキャッシュの剪定に使うので誘惑があるが、**「消えた」「死んでいる」とは
-    /// 言えない**——木に載るのはスキャン対象と PATH のエントリだけであり、フォルダを掘って
-    /// 表示した行のように**索引に載るとは限らないパス**が呼び出し側の集合には混じる
-    /// （実在の経路: `results_view::request_icons_for_results` は行を `is_folder` でも
-    /// view の種別でも絞らない。スキャンパスの内側を掘っていれば一致しうるので
-    /// 「載らない」とも言い切れない——**どちらの向きにも言えないのが事実である**）。
+    /// **「無い」だけを主張する。** 呼び出し側（`snotra` の `icon::sync_with_index`）がこれをアイコンキャッシュの剪定に使うので誘惑があるが、**「消えた」「死んでいる」とは言えない**——木に載るのはスキャン対象と PATH のエントリだけであり、フォルダを掘って表示した行のように**索引に載るとは限らないパス**が呼び出し側の集合には混じる（実在の経路: `results_view::request_icons_for_results` は行を `is_folder` でも view の種別でも絞らない。スキャンパスの内側を掘っていれば一致しうるので「載らない」とも言い切れない——**どちらの向きにも言えないのが事実である**）。
     ///
-    /// **判定は「落とす集合」を返す向きである**——呼び出し側は lock を離した snapshot から
-    /// これを作るので、その後に増えたキーを知らない。残す集合を返すと、知らないキーが
-    /// 「残す集合に無い」という理由で落ちる（正本は `snotra` の `IconCache::remove_paths`）。
+    /// **判定は「落とす集合」を返す向きである**——呼び出し側は lock を離した snapshot からこれを作るので、その後に増えたキーを知らない。残す集合を返すと、知らないキーが「残す集合に無い」という理由で落ちる（正本は `snotra` の `IconCache::remove_paths`）。
     ///
-    /// **バッファを 1 本使い回し、集合は木の側ではなく `keys` の側で作る。** 木の全パスを
-    /// 所有 `String` の集合にすると、312,625 件ぶんの確保が一時的に積み上がる——
-    /// `materialize` と同額（約 36 MiB）を判定のためだけに払うことになる。
-    /// `keys` が空なら走査ごと省く。
+    /// **バッファを 1 本使い回し、集合は木の側ではなく `keys` の側で作る。** 木の全パスを所有 `String` の集合にすると、312,625 件ぶんの確保が一時的に積み上がる——`materialize` と同額（約 36 MiB）を判定のためだけに払うことになる。`keys` が空なら走査ごと省く。
     pub fn absent_paths(&self, keys: Vec<String>) -> std::collections::HashSet<String> {
         let mut absent: std::collections::HashSet<String> = keys.into_iter().collect();
         if absent.is_empty() {
@@ -632,20 +621,45 @@ mod tests {
         }
     }
 
-    /// [`IndexTree::absent_paths`] の fixture。**列を手で並べずに製品の建て方を通す**
-    /// ——`build` は `index.bin` を書く側と索引を建てる側が共有する唯一の口であり、
-    /// 列を手書きした fixture は表現が変わった日に「別の木」を黙って建てる。
+    /// [`IndexTree::absent_paths`] の fixture。**列を手で並べずに製品の建て方を通す**——`build` は `index.bin` を書く側と索引を建てる側が共有する唯一の口であり、列を手書きした fixture は表現が変わった日に「別の木」を黙って建てる。
+    ///
+    /// **`name` は製品の導出規則をそのまま通す**（`indexer`: folder は `file_name()`、file は `file_stem()`）。拡張子込みの末尾成分を `name` に入れると [`resolve_one`] の `tail.strip_prefix(name)` が全件で空を返し、`aux` が 0 へ潰れて**拡張子の再結合（[`raw_path_into`] 末尾の `push_str`）が一度も走らない木**になる——組み立てが壊れても緑のままになるので、末尾で実際に intern されたことを数える。
     fn tree_with(paths: &[(&str, bool)]) -> IndexTree {
         let mut entries: Vec<AppEntry> = paths
             .iter()
-            .map(|(p, is_folder)| AppEntry {
-                name: p.rsplit('\\').next().unwrap_or(p).to_string(),
-                target_path: (*p).to_string(),
-                is_folder: *is_folder,
+            .map(|(p, is_folder)| {
+                let tail = p.rsplit(['\\', '/']).next().unwrap_or(p);
+                let name = match (is_folder, tail.rfind('.')) {
+                    (false, Some(dot)) => tail[..dot].to_string(),
+                    _ => tail.to_string(),
+                };
+                AppEntry {
+                    name,
+                    target_path: (*p).to_string(),
+                    is_folder: *is_folder,
+                }
             })
             .collect();
         crate::indexer::sort_entries_canonical(&mut entries);
-        IndexTree::build(entries)
+        let tree = IndexTree::build(entries);
+
+        // 入力が拡張子つきの file を含むなら、非根の `aux` が実際に拡張子を指していること。
+        let wants_ext = paths.iter().any(|(p, is_folder)| {
+            !is_folder && p.rsplit(['\\', '/']).next().unwrap_or(p).contains('.')
+        });
+        if wants_ext {
+            let interned = tree
+                .parent
+                .iter()
+                .zip(&tree.aux)
+                .filter(|(p, a)| **p != NO_PARENT && **a != 0)
+                .count();
+            assert!(
+                interned >= 1,
+                "拡張子つきの file を渡したのに非根の aux が全て 0（拡張子の再結合を通らない木になっている）"
+            );
+        }
+        tree
     }
 
     #[test]

@@ -27,6 +27,10 @@
 //!
 //! `tests/*.rs` は独立したクレートルートゆえ、ここで宣言する `#[global_allocator]` は
 //! 製品バイナリに一切入らない（`tests/search_frame_cost.rs` と同じ隔離）。
+//!
+//! **`scan_all` 区間（`report_scan_all_cost`）は実走査そのものゆえ、Phase A の実行時間が
+//! 大きく伸びる。** 所要はファイルシステムキャッシュの温度で数倍にぶれるので、初見で走らせる
+//! と無出力のまま長く待つことになる（秒数はここに書かない——書けば測り直すたびに腐る）。
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};

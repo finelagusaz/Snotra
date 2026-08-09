@@ -133,7 +133,7 @@ fn roots_overlap_pair(a: &str, b: &str) -> bool {
 }
 
 /// 走査中の根の役割。**重複排除に払う代金を根ごとに決める。**
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 struct RootRole {
     /// 先行する根と重なる → 既出かを照合する。
     check: bool,
@@ -2335,7 +2335,7 @@ mod tests {
     fn root_roles_over_the_real_shape_leave_the_largest_root_inert() {
         let roles = root_roles(&[
             root("C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs"),
-            root("C:\\Users\\Eoh\\Desktop"),
+            root("C:\\Users\\User\\Desktop"),
             root("C:\\"),
         ]);
         assert_eq!((roles[0].check, roles[0].record), (false, true));

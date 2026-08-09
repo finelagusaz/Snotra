@@ -4,7 +4,20 @@
 
 **Goal:** `indexer::scan_all` が重複排除の `HashSet` を建てるのを「走査の根どうしが重なるとき」だけに限り、根が `C:\` 一本の運用点で 312,625 件ぶんの正規化キー確保を消す。
 
-**Architecture:** 走査の根の集合に対して入れ子関係を事前判定する述語を足し、`seen` を `Option<HashSet<String>>` にする。木の走査は同じディレクトリを二度読まないので、1 回の `scan_all` の中で同じ正規化キーが二度現れる経路は根が入れ子のとき以外に無い。判定は根の数（一桁）に対する全ペア走査で、額に影響しない。
+> **訂正（2026-08-09・実測）。** この Goal が前提した「根が `C:\` 一本」は偽である。実
+> `config.toml` は 4 根（Start Menu Programs / Desktop / Dropbox / `C:\`）で、`C:\` は他
+> 3 根の祖先だった。ゆえに素朴な「重なるなら建てる」判定では削減が 0 になる（実測: allocs
+> 5,991,749 → 5,991,979・変化なし）。Task 4 はこの実測を受けた改訂であり、正本は設計書
+> §1。件数・削減量の正本は `PERFORMANCE.md`「採用: `scan_all` の `seen` を根ごとの役割
+> （`check`/`record`）で条件づける」。
+
+**Architecture:** 走査の根の集合に対して、根ごとに `check`（先行する根と重なるかを照合）/
+`record`（後続の根と重なるので自分のキーを積む）を割り当てる（`root_roles`）。木の走査は
+同じディレクトリを二度読まないので、1 回の `scan_all` の中で同じ正規化キーが二度現れる
+経路は根が入れ子のとき以外に無い。判定は根の数（一桁）に対する全ペア走査で、額に影響
+しない。当初は `seen` を `Option<HashSet<String>>` にする二値の案（Task 2/3）だったが、
+実運用点（4 根・`C:\` が他 3 根の祖先）では削減が 0 になることが実測で分かり、Task 4 で
+根ごとの役割へ改訂した（正本は設計書 §1）。
 
 **Tech Stack:** Rust / `snotra-core` crate / `cargo test` / 計測は `tests/memory_footprint.rs` の計数アロケータ。
 
@@ -28,9 +41,9 @@
 | ファイル | 役割 | 変更 |
 |---|---|---|
 | `snotra-core/tests/memory_footprint.rs` | 索引の常駐・区間コストの実測ハーネス | Phase A の末尾に `scan_all` 区間を足す（Task 1） |
-| `snotra-core/src/indexer.rs` | 走査・重複排除・索引キャッシュ | 述語 2 つを新設（Task 2）・`seen` を `Option` 化（Task 3） |
-| `PERFORMANCE.md` | 実測値の正本 | 節を追加（Task 4） |
-| `snotra-core/CLAUDE.md` | モジュール固有の不変条件 | 「indexer.rs の背景再スキャン」へ 1 行（Task 4） |
+| `snotra-core/src/indexer.rs` | 走査・重複排除・索引キャッシュ | 述語 2 つを新設（Task 2）・`seen` を `Option` 化（Task 3）・`root_roles` へ細分化（Task 4） |
+| `PERFORMANCE.md` | 実測値の正本 | 節を追加（Task 5） |
+| `snotra-core/CLAUDE.md` | モジュール固有の不変条件 | 「indexer.rs の背景再スキャン」へ 1 行（Task 5） |
 
 `SPEC.md` は変更しない（挙動不変。設計書 §6 の分岐に入った場合のみ再判定）。
 
@@ -1024,18 +1037,25 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 
 ## 検知器の射程（受容する残余）
 
-**「`seen` を建てない」ことの検知器は挙動テストでは原理的に作れない。** `seen` を建てても
-走査結果は同じなので、`roots_overlap` を常に `true` へ潰す変異は**どのテストも落とさない**。
+> **改訂（Task 4 を受けて）。** 本節は当初 `roots_overlap`（走査全体を「建てる/建てない」の
+> 二択にする案）を前提に書かれていたが、Task 4 で `root_roles`（根ごとの `check`/`record`）
+> へ改訂された。`roots_overlap` は現在のソースに存在しない。以下は改訂後の実態。
 
-- 機構で守られるのは片側だけである: `roots_overlap` を常に `false` へ潰す変異は
-  `scan_all_dedups_when_roots_are_nested` が捕まえる（Task 3 / Step 5 で実測する）
-- 反対側（削減が消える退行）を捕まえるのは `tests/memory_footprint.rs` の確保回数だけで、
-  これは `#[ignore]` の手動計測である。**CI は守らない**
+**役割の入れ替え（`record`/`check`）を検知するのは `root_roles` の単体テストであり、CI で
+守られる。** 実運用点の形（最大の根が最後に来る）で `roles[2]==(true,false)` を固定する
+`root_roles_over_the_real_shape_leave_the_largest_root_inert` が、最大の根が積む側に回る
+退行（＝削減が消える退行の一種）を捕まえる。
 
-これは受容する残余である。Task 4 / Step 3 で `snotra-core/CLAUDE.md` へ明記する。
+- `root_roles` の役割割り当ての退行は上記の単体テストが捕まえる
+- 一方、`Dedup::accept` の照合枝で確保が復活する退行や `scan_all` の結線そのものの退行は、
+  走査結果が同じままなので挙動テストでも `root_roles` の単体テストでも捕まらない。捕まえる
+  のは `tests/memory_footprint.rs` の確保回数だけで、これは `#[ignore]` の手動計測——
+  **CI は守らない**
+
+これは受容する残余である。Task 5 / Step 3 で `snotra-core/CLAUDE.md` へ明記した。
 
 ## PR
 
-4 タスクすべてを 1 PR にまとめる。**`gh pr create` の前に `git push -u origin HEAD` を打つ**
+5 タスクすべてを 1 PR にまとめる。**`gh pr create` の前に `git push -u origin HEAD` を打つ**
 （未 push だと `pre-bash` hook が空 PR として拒む）。PR 本文には issue の closing keyword
 （`Closes #1002`）を入れ、マージは `/merge-pr` の手順で行う。

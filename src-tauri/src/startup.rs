@@ -690,6 +690,33 @@ mod tests {
     }
 
     #[test]
+    fn post_main_is_taken_independently_of_the_partial_sum() {
+        // **変異 (h)「`post_main` を部分和から作る」を落とす唯一の検査である。**
+        //
+        // 恒等式（検査 3）は `unmarked_tail_ns = post_main - sum_phase` として計算する以上
+        // **構成上ほぼ常に真**であり、同語反復化した実装を通してしまう。ハーネスの外部壁時計
+        // （検査 4）も上限しか縛らないので、内側で小さく辻褄を合わせる形は素通りする
+        // （どちらも実際に変異を当てて素通りを実測した）。
+        //
+        // ここでは**部分和と食い違う終端値**を渡す。`to_json` が引数を使わず部分和から
+        // 組み立てるようになれば、`unmarked_tail_ns` が 0 になってこの検査が落ちる。
+        let mut t = Timeline::new(None);
+        t.mark(Phase::ConfigLoad, ms(10));
+        let json = t.to_json(ms(30), Ok(()));
+        assert_eq!(
+            json["post_main_ns"],
+            ms(30).as_nanos() as u64,
+            "引数をそのまま出す"
+        );
+        assert_eq!(json["sum_phase_ns"], ms(10).as_nanos() as u64);
+        assert_eq!(
+            json["unmarked_tail_ns"],
+            ms(20).as_nanos() as u64,
+            "部分和から作っていたらここが 0 になる"
+        );
+    }
+
+    #[test]
     fn unmarked_tail_is_zero_on_the_normal_path() {
         let mut t = Timeline::new(None);
         t.mark(Phase::ConfigLoad, ms(10));

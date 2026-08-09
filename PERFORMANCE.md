@@ -1427,6 +1427,9 @@ migemo の設定に依らない（`shared_file_name_flag_is_measured_not_inferre
 - 体感改善後、必要なら p50/p95 を追加計測して次のボトルネックを特定する
 - 原則として「待ち時間」「重複」「計算量」「描画」の順を崩さない
 - ランタイムの計測は `SNOTRA_TRACE=1` の構造化トレース（`src-tauri/src/trace.rs`）で行う
+- **起動の端から端まで（プロセス作成 → ホットキー登録完了）は `src-tauri/src/startup.rs` が 1 行で出す**（`startup:ready` / `startup:failed`・#1000）。ハーネスは `npm run bench:startup`。**区間の意味・`null` の規則・恒等式は `startup.rs` の `//!` が正本**（ここへ写すと片方だけ腐る）。要点だけ: **壁時計の引き算は `pre_main` の 1 か所に閉じ**、丸めは表示境界でだけ行う（厳密に検算するのは生 ns）。**通らなかった区間は `null` で、0 ではない**
+  - **区間和では「マークの取り落とし」を検出できない**——累積タイムラインは telescoping sum ゆえ、落ちた区間の時間は隣へ吸収されて等式が崩れない。取り落としを捕まえるのは**キーの網羅**と**枝フラグ・`reached_phase` が説明しない `null`** のほうである（`bench-startup.ps1` の検査 1・2）
+  - **検査は双方向でなければならない**——「説明されない `null`」だけを見る形は、**スキップした区間に `0` を書く誤りを素通しする**（変異を書いていて気づいた）。逆向き（`null` であるべき区間に値がある）も同じ重さで落とす
 - egui/softbuffer の計器は 5 つの env（いずれも未設定なら計器のコストは 0）。**このリストが計器の正本である**——`docs/build-commands.md` には置かない
   - **受理値: 空でなければ何でもよい**（`=1` でも `=0` でも点く）。**空文字は「未設定」として扱う**——判定は `snotra-egui-runtime/src/env.rs` の 1 箇所に集約してある（#872: PowerShell の env 復元が空文字を作り、測定ハーネスの全反復が黙って計器つきで走っていた）。**`SNOTRA_TRACE` だけは別の意味論である**（`1｜true｜yes｜on` のみ・`src-tauri/src/trace.rs` の `env_flag`）
   - `SNOTRA_EGUI_PAINT_TRACE`: paint フェーズ（`tess_ms` / `raster_ms` / `total_ms` / `meshes` / `px`）。#532 SU6.5 の flip ゲート G3(b) の主判定に使った
@@ -1441,6 +1444,50 @@ migemo の設定に依らない（`shared_file_name_flag_is_measured_not_inferre
 - `bench_folder_narrow_filter` は「大量エントリ + 狭いフィルタ」で、非一致エントリに不要な文字列化や属性判定をしていないかを確認する
 - `bench_folder_hidden_filter_all` は `show_hidden_system = false` 相当で、`metadata()` を伴う属性判定コスト込みの回帰を確認する
 - **warm frame は日をまたいで比較しない**——同一ホスト・同一バイナリでも日によって 3 倍変わる。構成 A / B の比較は必ず**同日・同条件で両方を測る**（#532 Phase 1 の検証バイナリで実測: 2026-07-17 に 26-30ms、7/14 は 8-10ms。変動の原因は未解明ゆえ、日をまたいだ数値の差を改善・退行と読んではならない）
+
+## 起動の端から端まで（2026-08-09 計測・release・7 標本）
+
+`npm run bench:startup`（`scripts/bench-startup.ps1`）。実運用 config（cache-hit・
+`include_path_env = true`・312k 規模）。**最小値に畳まない**——このハーネスが答える問いは
+「起動が何 ms か」ではなく「分散がどの区間に住むか」である。
+
+| 区間 | min | p50 | max |
+|---|---:|---:|---:|
+| **pre_main**（プロセス作成 → `main()` 突入） | 7 | 7 | **17** |
+| config_load | 1 | 1 | 1 |
+| index_load | 8 | 8 | 11 |
+| path_merge | 12 | 14 | 16 |
+| history_load | 0 | 0 | 0 |
+| engine_build | 2 | 2 | 2 |
+| tauri_init | 3 | 3 | 4 |
+| **windows_create**（フォント解決込み） | 27 | 27 | 28 |
+| setup_rest | 0 | 0 | 0 |
+| **hotkey_register**（platform スレッドの登録待ち） | 18 | 19 | 19 |
+| **post_main** | 76 | 79 | 80 |
+
+**`windows_create` と `hotkey_register` で post_main の 58% を占める。** 索引まわり
+（`index_load` + `path_merge`）は合わせて 22 ms で、常駐メモリの反復が削ってきた区間は
+**起動時間では既に主役ではない**。
+
+- **計器は系を乱していない**（同日 A/B・各 5 回・同一の代理指標）: OFF が min 32.0 / p50 35.4 ms、
+  ON が min 19.3 / p50 33.2 ms で**差は雑音**（ON のほうが速い回もある）。起動段の trace は
+  1 行だけなので、`SNOTRA_EGUI_INPUT_TRACE` の 17〜56 ms/行のような影響は出ない
+- **debug は別の運用点である**（同日・同機で 327 ms: pre_main 120 / windows_create 66 /
+  index_load 47 / path_merge 41 / hotkey_register 21）。**release と 4 倍違うので混ぜて読まない**
+- **`smoke-startup.ps1` が記録した 0.6〜8s の分散は、まだ説明できていない。** あちらは
+  **debug ビルドを CI runner で**測った値であり、ここは開発機の release である。**同じ計器を
+  同じ条件へ当てるまで、この内訳をあの分散の説明として使ってはならない**
+
+### 計器が計器の欠陥を暴いた（配置ミス・実測で発覚）
+
+最初の 7 標本は **`hotkey_register` が 7 回とも 0 ms** だった。`SetupRest` のマークを
+`setup_hotkey_listener` の中（送信直前）に置いていたためで、そこは setup ブロックの**途中**
+——以降のリスナー登録・config watcher・トレイ生成が丸ごと `hotkey_register` へ吸われ、
+しかも platform スレッドは並行に登録を終えるので差がほぼ 0 に潰れていた。
+
+マークを setup ブロックの末尾へ移したところ **0 → 18〜19 ms**、`post_main` も
+55〜62 → 76〜80 ms になった。**前の測定は setup の残り約 20 ms を取りこぼしていた。**
+「区間の意味」と「マークの位置」がずれても総和は合い続ける——ここでも**和は何も守らない**。
 
 ## 計測ベースライン（2026-03-06）
 

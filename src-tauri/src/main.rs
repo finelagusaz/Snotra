@@ -373,6 +373,12 @@ fn main() {
             // platform bridge (IME control) and listeners registered above.
             setup_startup_display(&app_handle, show_on_startup);
 
+            // **setup ブロックの末尾で刻む。** ここが「main スレッドが起動でやることの
+            // 終わり」であり、残る `hotkey_register` は platform スレッドが登録を終える
+            // までの**待ち**を表す。`setup_hotkey_listener` の中（送信直前）に置いていた
+            // 頃は、以降の setup がまるごと hotkey_register へ吸われていた。
+            startup::mark(startup::Phase::SetupRest);
+
             Ok(())
         })
         .run(app_context)
@@ -493,9 +499,11 @@ fn setup_hotkey_listener(app_handle: &AppHandle) {
     // hotkey-pressed listener is now registered; activate hotkey on platform thread.
     // Registering the hotkey only after the listener is ready ensures no event
     // is emitted before there is a receiver to handle it.
-    // **ここまでが「送信の直前」である。** 以降 `hotkey_register` の区間は、platform
-    // スレッドが登録を終えるまでを測る。
-    startup::mark(startup::Phase::SetupRest);
+    // **ここに `SetupRest` のマークを置いてはならない。** この関数は setup ブロックの
+    // 途中で呼ばれ、以降もリスナー登録・config watcher・トレイ生成が続く。ここで刻むと
+    // 「setup の残り」が hotkey_register の区間へ丸ごと吸われ、しかも platform スレッドは
+    // 並行に登録を終えるので **hotkey_register がほぼ 0 ms に潰れる**（実測: 7 回とも 0）。
+    // マークは setup ブロックの末尾（`setup_tray` の後）に在る。
 
     // **送信できなかった経路にも終端を置く。** bridge state 不在・`Mutex` の poison・
     // channel 切断のいずれでも `RegisterInitialHotkey` の arm は走らないので、ここで

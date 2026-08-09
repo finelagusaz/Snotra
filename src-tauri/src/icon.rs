@@ -33,14 +33,17 @@ struct IconCacheData {
 
 /// パス → PNG バイト列のキャッシュ。
 ///
+/// **掃除の機構と、それが残す受容残余はここが正本である。**
+///
 /// **キーを選び取って間引く機構は [`Self::enforce_cap`] の FIFO ただ 1 つである**
 /// （#996 で索引照合の剪定を撤去した。**丸ごとの破棄は別経路が持つ**——数えずに指すのは、
 /// `None` を書く側が増減しても腐らせないためである）。
 /// ゆえに**索引に無いキーは `cap` 件を上限に残りうる——それは受容する**。害が有界なのは cap の
 /// おかげであって、片づけの保証があるからではない。**correctness は剪定が担っていなかった**：
 /// stale なアイコンの防御は [`invalidate_icon_cache`] であり、パスが消えて別のファイルが同じ
-/// パスにできた場合、そのパスは索引に**在る**ので剪定は元々残していた。撤去の根拠と実測
-/// （実運用の 650 件に対し剪定が落としたのは 0 件）は `PERFORMANCE.md` の該当節が正本。
+/// パスにできた場合、そのパスは索引に**在る**ので剪定は元々残していた。撤去の根拠と実測値は
+/// `PERFORMANCE.md`「撤去: アイコン剪定そのもの」が正本（**数値をここへ写さない**——再測定
+/// された日にこの行だけが古くなる）。
 pub struct IconCache {
     data: IconCacheData,
     /// 最大保持件数。超過時は挿入順で最古から退避する。永続化しない runtime config
@@ -153,11 +156,8 @@ pub type IconCacheState = Mutex<Option<IconCache>>;
 
 /// アイコンが無効ならキャッシュを丸ごと捨てる（`indexing::drain_index` の 1 手順）。
 ///
-/// **索引と突き合わせる剪定はここに無い**（#996 で撤去した）。**キーを選び取って間引く機構は
-/// [`IconCache::enforce_cap`] の FIFO ただ 1 つ**であり（丸ごと `None` にする側は下記のとおり
-/// 複数ある）、索引に無いキーは cap を上限に残りうる——**それは受容する**。stale なアイコンの
-/// 防御は元々 [`invalidate_icon_cache`] であって剪定ではなかった（撤去の根拠と実測は
-/// `PERFORMANCE.md` の該当節が正本）。
+/// **索引と突き合わせる剪定はここに無い**（#996 で撤去した）。**掃除の機構と受容する残余は
+/// [`IconCache`] の doc が正本とする。**
 ///
 /// **この関数が `drain_index` に居続けるのは、`show_icons` を偽にしたときにキャッシュを落とす
 /// 経路として当てにできるのがここだけだからである。** 一見すると
@@ -168,8 +168,10 @@ pub type IconCacheState = Mutex<Option<IconCache>>;
 /// （ガード側はフレーム冒頭の `VisualSnapshot`・`ensure_…` 側は engine の live-read）、
 /// ガードを通った要求が切り替えを跨げば偽のまま `ensure_…` へ着く。**その窓の長さは書かない**
 /// ——`spawn_icon_load` は切り離したスレッドを起こすので、engine を読む時刻はフレーム数でも
-/// 何でも押さえられない。消すと、無効化した後もメモリ内のアイコンが残り、終了時の
-/// [`IconCache::save_if_dirty`] が `icons.bin` を書く。
+/// 何でも押さえられない。**消すと、無効化した後もアイコンが cap 件を上限に常駐し続ける**
+/// （手放す契機が終了まで来ない）。**`icons.bin` が残ることは根拠に数えない**——無効化は
+/// ファイルを消さないので（`bf.remove()` を撃つのは [`invalidate_icon_cache`] だけである）、
+/// [`IconCache::save_if_dirty`] が書くのは既にそこに在ったものの上書きにすぎない。
 pub fn drop_icon_cache_if_disabled(icons: &IconCacheState, show_icons: bool) {
     if !show_icons {
         *icons.lock().unwrap() = None;

@@ -128,11 +128,15 @@ grep で同じことをしようとした過程で 1 件実測した: 素朴な 
 - `docs/adr/ADR-retire-norm-review.md`（規範の検算手段を廃止した実測）
 - `docs/adr/ADR-startup-instrument-contract-shape.md`（#1000 で却下した 3 案）
 
-## 9. 候補一覧（Task 1・Rust）
+## 9. 候補一覧
+
+3 層合計 **25 件**（Rust 15 件・ガバナンス 9 件・スモーク 1 件）。**この時点では分類も判定も行わない**
+（Phase 2 の SSOT 分類は Task 3、Phase 3 の変異確定は Task 4）。
+
+### 9.1 Rust（Task 1）
 
 母集団 905 件（`cargo test --workspace -- --list | grep -c ': test$'`、§3 の記載と一致）を全数読み、
-テスト本体が一覧・配列・`match` の腕を走査しているものを候補として抜いた。**この時点では分類も
-判定も行わない**（Phase 2 の SSOT 分類は Task 3、Phase 3 の変異確定は Task 4）。件数: **15 件**。
+テスト本体が一覧・配列・`match` の腕を走査しているものを候補として抜いた。件数: **15 件**。
 
 | # | 候補 |
 |---|---|
@@ -151,3 +155,47 @@ grep で同じことをしようとした過程で 1 件実測した: 素朴な 
 | 13 | `snotra-core/src/hotkey.rs::key_aliases_share_one_semantic_key` |
 | 14 | `snotra-core/src/hotkey.rs::supported_key_set_parses_case_insensitively` |
 | 15 | `src-tauri/src/platform/hotkey.rs::prepared_named_key_aliases_use_the_same_typed_mapping` |
+
+### 9.2 ガバナンス（Task 2）
+
+母集団 19 件（`grep -n "id: 'G-" scripts/governance-check.mjs`、§3 の記載と一致）の実装を読み、
+**各検査が検査対象（母集団）をどこから取っているか**を分類した。この層は「手書きの配列・オブジェクト
+リテラルから母集団を取るもの」と「ファイルシステム走査・外部ファイル解析（`Cargo.toml` の
+`workspaceMembers`・doc 内の表・`selectChecks` の import）から動的に取るもの」が混在しており、
+**前者だけを候補として抜いた**——後者は母集団の SSOT が走査対象自身にあり、足し忘れの経路が構造的に無い。
+件数: **9 件**。
+
+| # | 候補 | 手書き一覧（識別子・行） | 見落としうる形 |
+|---|---|---|---|
+| 1 | `G-module-index` | `MODULE_INDEX_CRATES`（governance-check.mjs:92、crate 4 件） | 新 crate を追加しても追記し忘れると、そのモジュール索引は双方向照合されない |
+| 2 | `G-references` | `governanceDocs()`（governance-check.mjs:1339、ルート文書 4 件 + crate CLAUDE.md 正規表現 4 crate） | 新 crate の CLAUDE.md がこの正規表現に無いと、その文書内の参照実在は照合されない |
+| 3 | `G-spec-sections` | 同上（`governanceDocs()` を共有） | 同上——新 crate CLAUDE.md 内の `SPEC §N` 参照が照合対象から漏れる |
+| 4 | `G-adr-citations` | 同上（`adrCitationDocs` が `docs`＝`governanceDocs()` を含む） | 同上に加え ADR 短縮引用が該当文書内で照合されない（他の入力＝ADR/skills/`.rs`・`.mjs` は走査ベースのため影響は限定的） |
+| 5 | `G-area-budget` | `ALWAYS_LOADED_FILES`（governance-check.mjs:1052、`["CLAUDE.md", "AGENTS.md"]`） | 常時ロード面に 3 つ目のファイルが増えても追記し忘れると火災報知器の面積に算入されない |
+| 6 | `G-stale-identifiers` | `STALE_EXTRA_DOCS`（governance-check.mjs:1505、固定パス 4 件） | 新設した「意図の SSOT」級の文書がここに無いと、腐り識別子の検査対象から漏れる |
+| 7 | `G-workspace-lints` | `REQUIRED_RUSTDOC_LINTS`（governance-check.mjs:345、lint 名 2 件） | 3 つ目の必須 rustdoc lint を deny させたくても追記し忘れると非実効のまま緑になる |
+| 8 | `G-clippy-disallowed` | `REQUIRED_DISALLOWED_METHODS`（governance-check.mjs:461、禁止メソッドパス 7 件） | 8 つ目の禁止対象メソッドを追加しても追記し忘れると禁止漏れが検知されない |
+| 9 | `G-clippy-disallowed` | `DISALLOWED_METHODS_GROUPS`（governance-check.mjs:521、群名 2 件。コメントに「上流が 3 つ目の群へ入れたら、この配列が更新されるまで沈黙する」と残余が明記済み） | 上流 clippy が 3 つ目の打ち消し群を持ったとき、この検査は気づかない |
+
+**候補から外したもの（理由）**: `WALK_EXCLUDE_NAMES` / `WALK_EXCLUDE_PATHS`（governance-check.mjs:38-39）
+は全検査共通の走査除外リストだが、足し忘れの向きは**過剰包含**（除外し忘れたディレクトリのファイルが
+誤って検査対象に入る）であり、本監査が捉える「見落とし」（過小包含）とは逆方向のため対象外とした。
+`OUTPUT_ONLY_FLAGS`（G-hook-commands・governance-check.mjs:860）も同様に、追記し忘れの向きは
+false negative ではなく false positive（無関係なフラグ差分で赤くなる）である。`G-architecture-table` /
+`G-build-commands` / `G-ci-table` / `G-rules-globs` / `G-skill-table` / `G-hook-commands` /
+`G-hook-fires` / `G-check-skill-enumeration` / `G-adr-file-names` / `G-heading-refs` /
+`G-near-heading-refs` は母集団をファイルシステム走査・外部ファイル解析・import した実装から得ており、
+手書きリテラルではないため対象外とした。
+
+### 9.3 スモーク（Task 2）
+
+母集団 3 件（`$script:Invariants`、`scripts/lib/SnotraTraceInvariants.psm1:30`、
+`@('H1', 'H4', 'H5')`。§3 の記載と一致）。**この一覧自身が候補である**——`Get-SnotraTraceInvariantNames`
+（同ファイル:41）はこの手書き配列を返すだけの関数で、新しい不変条件を判定ロジックへ追加してもこの配列へ
+追記し忘れると、記録・集計・exit code のどこにも現れない（同関数の doc comment 自身がこの経路を
+警告している：「呼び出し側はこの一覧を写さない……判定を 1 つ足したときモジュール側だけが直り……
+黙って落ちる」）。件数: **1 件**。
+
+H2 / H3 が欠番であることについて: `git log --all -S "'H2'" -- scripts/lib/SnotraTraceInvariants.psm1`
+・同 `-S "'H3'"` はいずれも 0 件で、モジュール新設コミット（#879）の時点で既に `H1`/`H4`/`H5` の
+3 件だった。削除された痕跡は無く、採番の飛ばし（H2/H3 が実装された形跡が無い）と判断する。

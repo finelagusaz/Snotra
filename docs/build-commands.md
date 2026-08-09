@@ -196,6 +196,12 @@ npm run tauri build              # リリースビルド（NSIS バンドル。`
 出力は区間ごとの min / p50 / max で、**最小値に畳まない**——このハーネスが答える問いは
 「起動が何 ms か」ではなく「分散がどの区間に住むか」だからである（詳細は PERFORMANCE.md）。
 
+`rescan-log.jsonl`（SPEC.md §13.4）はテキストなので PowerShell で直接読む:
+
+```powershell
+Get-Content "$env:APPDATA/Snotra/rescan-log.jsonl" -Tail 20   # 背景再スキャンの記録（#1001・start だけの行 = 未完走の起動）
+```
+
 ## git blame と整形コミット
 
 `.git-blame-ignore-revs` は `cargo fmt --all` の一括整形コミット（#858）を blame から隠す。**GitHub の blame ビューは設定不要で自動適用する**（ルート直下に置くことが条件・実測）。**ローカルの `git blame` は自動ではない**ため、使うなら次を 1 度実行する（任意・機構では強制しない）:

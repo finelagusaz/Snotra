@@ -1032,12 +1032,17 @@ pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> IndexMat
 struct LoadCacheResult {
     /// 索引の材料。**v7 は木をディスクから直接読み、旧版は `target_path` から建て直す。**
     ///
-    /// **マスクを持つ版の枝はすべて [`IndexMaterial::from_untrusted`] を通す**（列長を検証する）。**「どの枝も」と書いてはならない**——マスクを持たない版は検証する列が無いので `from_tree` を通る。構成上の正しさで検証を省けるのは導出したその足の組だけである。
+    /// **通る構築子は `upgrade`（[`LegacyUpgrade`]）で分かれる。** `Write` はどの版でも
+    /// `upgrade_legacy_cache_in` 経由で [`IndexMaterial::derived`]（自分で導出した組・
+    /// 長さを検証しない）を通る。`Skip` はディスクの生データをそのまま使うため、
+    /// マスクを持つ版（v3〜v7）は [`IndexMaterial::from_untrusted`]（列長を検証する）、
+    /// マスクを持たない v2 だけ `from_tree` を通る。
     material: IndexMaterial,
     /// `index.bin` をバイト列として読み終えるまでの時間（`LoadOrScanStats::cache_read_ms` へ運ぶ）。
     read_ms: u128,
     /// 実際に読めた形式のバージョン。**現行版とは限らない**——フォールバック経路で読めた
-    /// ときは旧版であり、背景再スキャンがそれを見て現行版へ書き戻す。
+    /// ときは旧版であり、`Write` のときは旧版枝（`upgrade_legacy_cache_in`）がその場で
+    /// 現行版へ書き戻す（[`LegacyUpgrade`] の doc）。
     version: u32,
 }
 
@@ -1047,7 +1052,7 @@ struct LoadCacheResult {
 /// `load_cached_entries` は corpus テストの入口（`search/tests/common.rs`）であり、
 /// 開発者の実 `%APPDATA%\Snotra\index.bin` を読む。ここで書き戻すと、テストを走らせる
 /// だけで実データを書き換える（#1013 と同型）。
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LegacyUpgrade {
     Write,
     Skip,
@@ -1067,22 +1072,76 @@ fn load_cache(config_hash: u64, upgrade: LegacyUpgrade) -> Option<LoadCacheResul
 /// **保存に失敗してもロードは成功させる。** 昇格は最適化であって、失敗が索引の可用性を
 /// 落としてはならない——落とすと、書けない環境（読み取り専用・ディスク満杯）で
 /// 旧版ユーザーだけが索引を失う。
+///
+/// **`IndexMaterial::derived` を使う（`from_untrusted` ではない）。** `save_cache_sorted_in` →
+/// `derive_columns` がこの場で導出した組であり、ディスクから読んだ検証すべき組ではない
+/// （`IndexMaterial` の型 doc）。列長は `derive_columns` が 1 周で 4 本を埋める構成上の
+/// 保証であり、`Option` で失敗を返す理由が無い。
 fn upgrade_legacy_cache_in(
     dir: &Path,
-    entries: Vec<AppEntry>,
+    mut entries: Vec<AppEntry>,
     config_hash: u64,
     read_ms: u128,
     version: u32,
-) -> Option<LoadCacheResult> {
+) -> LoadCacheResult {
+    // **他の全呼び出し元と同じく、保存の直前に整列する。** `save_cache_sorted_in` は
+    // 名前どおり整列済みの入力を前提とする——ここだけ怠ると、旧版ファイルが現在の
+    // canon と違う順序で書かれていた場合に `sorted_by_path=false` が現行版へ焼き込まれ、
+    // 次回の `entries_digest` 比較が順序差で一度だけ偽の `Changed` を招きうる。
+    sort_entries_canonical(&mut entries);
     // **`index.bin` を書く経路はすべて書き込みロックを経由する契約である。**
     let (tree, masks) = with_index_write_lock(|| save_cache_sorted_in(dir, entries, config_hash));
-    Some(LoadCacheResult {
-        material: IndexMaterial::from_untrusted(tree, masks)?,
+    LoadCacheResult {
+        material: IndexMaterial::derived(tree, masks),
         read_ms,
         // **`version` は「読めた」版のままにする。** 呼び出し側はこれで「旧版だった」を
         // 知る。書き戻した後の版を入れると、その事実が消える。
         version,
-    })
+    }
+}
+
+/// 旧版枝が読み終えた生の材料。**判定（`LegacyUpgrade`）はまだ載っていない。**
+///
+/// `masks` は v2 だけ `None`（マスクを持たない版）。それ以外の旧版は必ず `Some`。
+struct LegacyRead {
+    entries: Vec<AppEntry>,
+    masks: Option<CachedMasks>,
+    version: u32,
+}
+
+/// 旧版枝の出口を一本化する。**`match upgrade` を書くのはここ 1 か所だけである。**
+///
+/// 旧版枝を 1 本足すときは、その版のバイト列を [`LegacyRead`] へ組み立ててここへ渡すだけでよい
+/// ——`Write`/`Skip` の 2 腕を枝ごとに書き起こす義務は生まれない（判定の写しを作らない）。
+fn finish_legacy_read(
+    dir: &Path,
+    config_hash: u64,
+    read_ms: u128,
+    upgrade: LegacyUpgrade,
+    read: LegacyRead,
+) -> Option<LoadCacheResult> {
+    match upgrade {
+        LegacyUpgrade::Write => Some(upgrade_legacy_cache_in(
+            dir,
+            read.entries,
+            config_hash,
+            read_ms,
+            read.version,
+        )),
+        LegacyUpgrade::Skip => {
+            let tree = IndexTree::build(read.entries);
+            let material = match read.masks {
+                Some(masks) => IndexMaterial::from_untrusted(tree, masks)?,
+                // マスクを持たない版（v2）ゆえ検証する列が無い（木の整合は `IndexTree::build` が持つ）。
+                None => IndexMaterial::from_tree(tree),
+            };
+            Some(LoadCacheResult {
+                material,
+                read_ms,
+                version: read.version,
+            })
+        }
+    }
 }
 
 /// `load_cache` と同じ読み込みを `dir` 注入で行う（統合テスト用、issue #429）。
@@ -1131,150 +1190,134 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
 
     // v6 フォールバック: `target_path` を全件そのまま持つ形式。**読めるが確保が 312,691 回
     // 余分にかかる**——フルパスの `String` を作り、木へ組み替えた段で即座に捨てる。
-    // **`Write` のときはこの場で現行版へ書き戻す**（`Skip` の意味は `LegacyUpgrade` の doc）。
     if let Ok(cache) = try_deserialize_with_header::<IndexCacheV6>(&bytes, INDEX_MAGIC, 6) {
         if cache.config_hash != config_hash {
             return None;
         }
-        return match upgrade {
-            LegacyUpgrade::Write => {
-                upgrade_legacy_cache_in(dir, cache.entries, config_hash, read_ms, 6)
-            }
-            LegacyUpgrade::Skip => {
-                let masks = CachedMasks {
-                    char_masks: cache.char_masks,
-                    file_name_char_masks: cache.file_name_char_masks,
-                    lower: Some(CachedLower::Collapsed {
-                        lower_names: cache.lower_names,
-                        lower_file_names: cache.lower_file_names,
-                    }),
-                };
-                Some(LoadCacheResult {
-                    material: IndexMaterial::from_untrusted(
-                        IndexTree::build(cache.entries),
-                        masks,
-                    )?,
-                    read_ms,
-                    version: 6,
-                })
-            }
+        let masks = CachedMasks {
+            char_masks: cache.char_masks,
+            file_name_char_masks: cache.file_name_char_masks,
+            lower: Some(CachedLower::Collapsed {
+                lower_names: cache.lower_names,
+                lower_file_names: cache.lower_file_names,
+            }),
         };
+        return finish_legacy_read(
+            dir,
+            config_hash,
+            read_ms,
+            upgrade,
+            LegacyRead {
+                entries: cache.entries,
+                masks: Some(masks),
+                version: 6,
+            },
+        );
     }
 
     // v5 フォールバック: 派生文字列を全件そのまま持つ形式。**読めるが確保が倍以上かかる**
     // ——625,380 個の `String` を作り、うち約 527,000 個は `assemble` が測って即座に捨てる。
-    // **`Write` のときはこの場で現行版へ書き戻す**（`LegacyUpgrade` の doc）。
     if let Ok(cache) = try_deserialize_with_header::<IndexCacheV5>(&bytes, INDEX_MAGIC, 5) {
         if cache.config_hash != config_hash {
             return None;
         }
-        return match upgrade {
-            LegacyUpgrade::Write => {
-                upgrade_legacy_cache_in(dir, cache.entries, config_hash, read_ms, 5)
-            }
-            LegacyUpgrade::Skip => {
-                let masks = CachedMasks {
-                    char_masks: cache.char_masks,
-                    file_name_char_masks: cache.file_name_char_masks,
-                    lower: Some(CachedLower::Raw {
-                        lower_names: cache.lower_names,
-                        lower_file_names: cache.lower_file_names,
-                    }),
-                };
-                Some(LoadCacheResult {
-                    material: IndexMaterial::from_untrusted(
-                        IndexTree::build(cache.entries),
-                        masks,
-                    )?,
-                    read_ms,
-                    version: 5,
-                })
-            }
+        let masks = CachedMasks {
+            char_masks: cache.char_masks,
+            file_name_char_masks: cache.file_name_char_masks,
+            lower: Some(CachedLower::Raw {
+                lower_names: cache.lower_names,
+                lower_file_names: cache.lower_file_names,
+            }),
         };
+        return finish_legacy_read(
+            dir,
+            config_hash,
+            read_ms,
+            upgrade,
+            LegacyRead {
+                entries: cache.entries,
+                masks: Some(masks),
+                version: 5,
+            },
+        );
     }
 
     // v4 フォールバック: 末尾の normalized_keys を**読んで捨てる**。`Skip`（corpus テストの
     // 入口のみが通る）のときは v5 と同じ 4 本を復元し、どれも v4 に揃っているため
     // **Wave 1 はスキップされたまま**（v4 ユーザーの初回起動は遅くならない）。
     //
-    // **`Write` のときはこの場で現行版へ書き戻す。** かつては「次回の save」に賭けていたが、
-    // save の契機は cache-miss と背景再スキャンの `Changed` だけであり、索引の中身が変わらない
-    // 限りその「次回」は来ない——実運用点で v4 が残り続け、毎起動 35.98 MiB を読んで捨てていた
-    // （2026-08-07 実測）。ここが唯一その場で昇格させる場所である（`LegacyUpgrade` の doc）。
+    // **`Write` のときは `finish_legacy_read` がその場で現行版へ書き戻す。** かつては
+    // 「次回の save」に賭けていたが、save の契機は cache-miss と背景再スキャンの `Changed`
+    // だけであり、索引の中身が変わらない限りその「次回」は来ない——実運用点で v4 が
+    // 残り続け、毎起動 35.98 MiB を読んで捨てていた（2026-08-07 実測）。
     if let Ok(cache) = try_deserialize_with_header::<IndexCacheV4>(&bytes, INDEX_MAGIC, 4) {
         if cache.config_hash != config_hash {
             return None;
         }
-        return match upgrade {
-            LegacyUpgrade::Write => {
-                upgrade_legacy_cache_in(dir, cache.entries, config_hash, read_ms, 4)
-            }
-            LegacyUpgrade::Skip => {
-                let masks = CachedMasks {
-                    char_masks: cache.char_masks,
-                    file_name_char_masks: cache.file_name_char_masks,
-                    lower: Some(CachedLower::Raw {
-                        lower_names: cache.lower_names,
-                        lower_file_names: cache.lower_file_names,
-                    }),
-                };
-                Some(LoadCacheResult {
-                    material: IndexMaterial::from_untrusted(
-                        IndexTree::build(cache.entries),
-                        masks,
-                    )?,
-                    read_ms,
-                    version: 4,
-                })
-            }
+        let masks = CachedMasks {
+            char_masks: cache.char_masks,
+            file_name_char_masks: cache.file_name_char_masks,
+            lower: Some(CachedLower::Raw {
+                lower_names: cache.lower_names,
+                lower_file_names: cache.lower_file_names,
+            }),
         };
+        return finish_legacy_read(
+            dir,
+            config_hash,
+            read_ms,
+            upgrade,
+            LegacyRead {
+                entries: cache.entries,
+                masks: Some(masks),
+                version: 4,
+            },
+        );
     }
 
-    // v3 フォールバック: ビットマスクのみ（lower names なし → Wave 1 は実行）。`Write` のとき
-    // はこの場で現行版へ書き戻す（`LegacyUpgrade` の doc）。
+    // v3 フォールバック: ビットマスクのみ。`Skip` のときは lower names を持たないため
+    // Wave 1 が実行される。**`Write` のときは `finish_legacy_read` 経由で derive し直すため、
+    // v3 ユーザーも Wave 1 がスキップされるようになる**（昇格する起動 1 回ぶんの代価は
+    // `upgrade_legacy_cache_in` の doc を参照）。
     if let Ok(cache) = try_deserialize_with_header::<IndexCacheV3>(&bytes, INDEX_MAGIC, 3) {
         if cache.config_hash != config_hash {
             return None;
         }
-        return match upgrade {
-            LegacyUpgrade::Write => {
-                upgrade_legacy_cache_in(dir, cache.entries, config_hash, read_ms, 3)
-            }
-            LegacyUpgrade::Skip => {
-                let masks = CachedMasks {
-                    char_masks: cache.char_masks,
-                    file_name_char_masks: cache.file_name_char_masks,
-                    lower: None,
-                };
-                Some(LoadCacheResult {
-                    material: IndexMaterial::from_untrusted(
-                        IndexTree::build(cache.entries),
-                        masks,
-                    )?,
-                    read_ms,
-                    version: 3,
-                })
-            }
+        let masks = CachedMasks {
+            char_masks: cache.char_masks,
+            file_name_char_masks: cache.file_name_char_masks,
+            lower: None,
         };
+        return finish_legacy_read(
+            dir,
+            config_hash,
+            read_ms,
+            upgrade,
+            LegacyRead {
+                entries: cache.entries,
+                masks: Some(masks),
+                version: 3,
+            },
+        );
     }
 
-    // v2 フォールバック (マスクなし)。`Write` のときはこの場で現行版へ書き戻す
-    // （`LegacyUpgrade` の doc）。
+    // v2 フォールバック (マスクなし)。`masks: None` を渡すと `finish_legacy_read` の `Skip` 腕が
+    // `from_tree` へ落とす（検証する列が無いため）。
     if let Ok(cache) = try_deserialize_with_header::<IndexCacheV2>(&bytes, INDEX_MAGIC, 2) {
         if cache.config_hash != config_hash {
             return None;
         }
-        return match upgrade {
-            LegacyUpgrade::Write => {
-                upgrade_legacy_cache_in(dir, cache.entries, config_hash, read_ms, 2)
-            }
-            // マスクを持たない版ゆえ検証する列が無い（木の整合は `IndexTree::build` が持つ）。
-            LegacyUpgrade::Skip => Some(LoadCacheResult {
-                material: IndexMaterial::from_tree(IndexTree::build(cache.entries)),
-                read_ms,
+        return finish_legacy_read(
+            dir,
+            config_hash,
+            read_ms,
+            upgrade,
+            LegacyRead {
+                entries: cache.entries,
+                masks: None,
                 version: 2,
-            }),
-        };
+            },
+        );
     }
 
     None
@@ -1448,14 +1491,15 @@ fn try_background_rescan_in(
         // 一方 `Changed`/昇格側は `save_cache_sorted_in` へ move してその中で消費される
         // ため `save_ms` の内側に入る——`unattributed_ms` が指すものが結末によって違う。
 
-        // **書く条件は 2 つある。** 中身が変わったとき（従来）と、**読めた形式が旧版のとき**。
-        // 後者を欠くと、索引の中身が変わらない限り旧版が何日でも残り、そのユーザーは
-        // 新形式の削減を**永久に受け取らない**（2026-08-07 に実運用点で実測。詳細は
-        // `background_rescan_upgrades_stale_format_when_entries_are_unchanged`）。
-        //
-        // 昇格をこの経路に置くのは、ここが **`sort_entries_canonical` を通した自前の
-        // 走査結果を既に持っている唯一の場所**だからである。ロード側で書こうとすると、
-        // engine へ move する `entries` の複製が要り、反復 6 で消した 62.5 MiB が復活する。
+        // **昇格の主体はもうここではない。** かつては「`sort_entries_canonical` を通した
+        // 自前の走査結果を既に持っている唯一の場所」としてここが書き戻しを担っていたが、
+        // `load_cache_in` の旧版枝（`upgrade_legacy_cache_in`）へ移設した（#1001 系列・
+        // `snotra-core/CLAUDE.md`「indexer.rs の背景再スキャン」）。移設後、ロードが
+        // `LegacyUpgrade::Write` で旧版を書き戻すと `INDEX_GENERATION` が進むため、その
+        // 直後に走るこの再スキャンは世代検査（このクロージャ冒頭）で必ず `None` へ落ち、
+        // 以下の `stale_format` 枝には**到達しない**。ゆえにこの枝は製品では実質死んでいる
+        // ——`try_background_rescan_in` ごと Task 4/5 で撤去する予定であり、それまでの残骸
+        // として置いてある。
         let stale_format = cached_version != INDEX_CACHE_VERSION;
         if changed || stale_format {
             // **中身が変わっていないのに書いた**ことを記録へ残す。この経路は
@@ -3132,7 +3176,7 @@ mod tests {
             load_cache_in(&dir, 12345, LegacyUpgrade::Skip).expect("v6 の index.bin が読めること");
         assert_eq!(
             result.version, 6,
-            "v6 として読めたことが昇格の判断材料になる"
+            "「読めた版」を運ぶ（`Write` のときは昇格の判断材料にもなる。`LegacyUpgrade` の doc）"
         );
         let (tree, masks) = result.material.into_parts();
         assert_eq!(tree.len(), 3);
@@ -3204,7 +3248,7 @@ mod tests {
             load_cache_in(&dir, 12345, LegacyUpgrade::Skip).expect("v5 の index.bin が読めること");
         assert_eq!(
             result.version, 5,
-            "v5 として読めたことが昇格の判断材料になる"
+            "「読めた版」を運ぶ（`Write` のときは昇格の判断材料にもなる。`LegacyUpgrade` の doc）"
         );
         let (tree, masks) = result.material.into_parts();
         assert_eq!(tree.len(), 2);
@@ -3607,25 +3651,107 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// **v2 の `Write` 枝を独立に固定する。** v2 はマスクを持たない唯一の版であり、
+    /// `finish_legacy_read` の `LegacyRead { masks: None, .. }` を通る構造的に他と違う枝
+    /// （`Skip` なら `from_tree`、`Write` なら `upgrade_legacy_cache_in` 経由で `derived`）。
+    /// v4〜v6 の `Write` テストだけでは、`masks: None` を渡したときも `upgrade_legacy_cache_in`
+    /// が正しく呼ばれることまでは固定されない（レビューの ⚠️ 指摘）。
+    #[test]
+    fn load_cache_upgrades_a_legacy_v2_format_in_place() {
+        // `Write` は `INDEX_WRITE_LOCK` を取る（上のテストと同じ理由）。
+        let _guard = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = temp_dir("load_upgrade_v2");
+        let entries = vec![AppEntry {
+            name: "a".into(),
+            target_path: "C:\\a".into(),
+            is_folder: false,
+        }];
+        let bytes = try_serialize_with_header(
+            INDEX_MAGIC,
+            2,
+            &IndexCacheV2 {
+                built_at: 1_700_000_000,
+                entries: entries.clone(),
+                config_hash: 42,
+            },
+        )
+        .expect("serialize");
+        assert!(cache_bin_file_in(&dir).save_bytes(&bytes), "save");
+
+        let result = load_cache_in(&dir, 42, LegacyUpgrade::Write).expect("v2 が読めること");
+        assert_eq!(result.version, 2, "`version` は**読めた**版のままである");
+        assert_eq!(result.material.tree().len(), 1, "材料が正しいこと");
+        // v2 は本来マスクを持たないが、`Write` で昇格した後は現行版として derive し直され、
+        // 必ずマスクを持つ（`Skip` の `!has_masks()` と対になる非対称——`load_cache_in`
+        // の doc を参照）。
+        assert!(
+            result.material.has_masks(),
+            "昇格後は derive し直したマスクを持つこと"
+        );
+
+        // ディスクは現行版になっていること。
+        let raw = cache_bin_file_in(&dir)
+            .load_bytes()
+            .expect("読み直せること");
+        assert_eq!(
+            crate::binfmt::peek_version(&raw),
+            Some(INDEX_CACHE_VERSION),
+            "旧版を読んだ後、ディスクは現行版で書き戻されていること"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     /// **現行版を読んだときは書き直さない。** ここが退行すると毎起動 17 MiB を書く
     /// （結果は正しいまま静かに遅くなるので挙動テストでは捕まらない）。
+    ///
+    /// **`built_at` を事前に過去へ固定した現行版を fixture として直接ディスクへ置く。**
+    /// `save_cache_sorted_in` で作ってから読む形（旧版）だと save→load が同一プロセス内で
+    /// マイクロ秒差に収まり、`built_at`（`SystemTime::now()...as_secs()`・秒粒度）が同じ秒の
+    /// 値になるため、「現行版でも無条件に書き直す」退行が入っても差が出ず**原理的に発火しない**
+    /// （レビューで指摘・2026-08-10）。固定値を仕込めば、書き直しが起きた瞬間に必ず
+    /// 現在時刻へ動くので粒度に依存しない。
     #[test]
     fn load_cache_does_not_rewrite_when_the_format_is_current() {
+        // v7 の `Write` 枝は分岐しないためロックは取らないが、`Write` を渡す以上は将来の
+        // 退行（v7 判定漏れで旧版枝へ落ちる等）に備えて直列化しておく（Minor 7 の指摘）。
+        let _guard = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = temp_dir("load_no_rewrite");
         let entries = vec![AppEntry {
             name: "a".into(),
             target_path: "C:\\a".into(),
             is_folder: false,
         }];
-        let _ = save_cache_sorted_in(&dir, entries, 42);
-        let before = index_built_at_in(&dir).expect("built_at");
+        let config_hash = 42u64;
+        let derived = derive_columns(entries);
+        let cache = IndexCache {
+            built_at: 1_700_000_000,
+            names: Cow::Borrowed(&derived.tree.names),
+            is_folder: Cow::Borrowed(&derived.tree.is_folder),
+            parent: Cow::Borrowed(&derived.tree.parent),
+            aux: Cow::Borrowed(&derived.tree.aux),
+            table: Cow::Borrowed(&derived.tree.table),
+            sorted_by_path: derived.tree.sorted_by_path,
+            config_hash,
+            char_masks: Cow::Borrowed(&derived.char_masks),
+            file_name_char_masks: Cow::Borrowed(&derived.file_name_char_masks),
+            lower_names: Cow::Borrowed(&derived.lower_names),
+            lower_file_names: Cow::Borrowed(&derived.lower_file_names),
+        };
+        let bytes =
+            try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache).expect("serialize");
+        assert!(cache_bin_file_in(&dir).save_bytes(&bytes), "save");
 
-        // 同じ秒に収まると差が出ないので、`built_at` が動いていないことで測る。
-        let result = load_cache_in(&dir, 42, LegacyUpgrade::Write).expect("v7 が読めること");
+        let result =
+            load_cache_in(&dir, config_hash, LegacyUpgrade::Write).expect("v7 が読めること");
         assert_eq!(result.version, INDEX_CACHE_VERSION);
         assert_eq!(
             index_built_at_in(&dir),
-            Some(before),
+            Some(1_700_000_000),
             "現行版のロードで index.bin を書き直してはならない"
         );
 

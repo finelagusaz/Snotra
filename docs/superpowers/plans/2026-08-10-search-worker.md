@@ -14,6 +14,7 @@
 - **`cargo test -p snotra --lib` は常に失敗する**（`src-tauri` は `[lib]` を持たない）。テストは `cargo test -p snotra`
 - **PostToolUse hook が `.rs` の編集ごとに fmt / clippy / test を自動実行する。沈黙は合格である**。手で再実行しない
 - **doc コメント（`///` / `//!`）を足したら `cargo doc --workspace --no-deps --document-private-items` を手で走らせる**（intra-doc link 切れは hook が沈黙し CI でのみ落ちる）
+- **新しく書くコメントは「1 段落 1 行」——文の途中で物理改行を入れない**（`docs/comment-guidelines.md`「日本語の折返し」。表・箇条書き・コードフェンスは対象外）。行が長くなって構わない——rustfmt はコメントを折り返さないので長い行がそのまま正しい形である。**折返しは rustdoc の描画を壊さず grep だけを壊す**ので気づかれない（2026-08-08 の実測で 5 件、うち 1 件は識別子を分断して grep が 0 件を返した）。**本計画のコード例はすべてこの形で書いてあるので、逐語で写せば規約を満たす**。**適用は `.rs` である**——PowerShell（`.ps1` / `.psm1`）のコメントは既存ファイルの作法（折返しあり）へ合わせること。同ガイドラインは `.rs` の編集で配送され、模範例も Rust であり、そこへ厳格適用すると既存と不揃いになる
 - **`.rs` ファイルを新規追加したら `src-tauri/CLAUDE.md`「モジュール構成」の該当リストへファイル名行を足し、`npm run governance:check` を走らせる**
 - **検知器（H6 / H7）を足したら、故障注入で実際に発火することを一度測る**（`.claude/rules/safety-nets.md`）。稼働中のガードは弱めず、複製に変異を当てる
 - `-D warnings` 下では未使用の新 API が `dead_code` で落ちる。**新しい型・関数の導入と呼び出し点の移行は同じタスクに束ねる**
@@ -74,9 +75,7 @@ Expected: FAIL（`cannot find type FrameTimer`）
 
 ```rust
 /// フレームの開始時刻を 1 つだけ持ち、前フレームからの間隔を返す（#1004 PR 1）。
-/// **間隔は合否ではなく内訳である**——判定に使うのはフレームの所要時間の側で、
-/// このランタイムはイベント駆動ゆえ健全でも間隔は debounce 幅・打鍵間隔まで開く
-///（`docs/superpowers/specs/2026-08-10-search-worker-design.md` の §3.3 が正本）。
+/// **間隔は合否ではなく内訳である**——判定に使うのはフレームの所要時間の側で、このランタイムはイベント駆動ゆえ健全でも間隔は debounce 幅・打鍵間隔まで開く（`docs/superpowers/specs/2026-08-10-search-worker-design.md` の §3.3 が正本）。
 #[derive(Default)]
 pub struct FrameTimer {
     last_began: Option<Instant>,
@@ -258,16 +257,13 @@ Expected: FAIL（`file not found for module` か `cannot find type SearchDispatc
 ```rust
 //! 検索 dispatch の同一性を測る純粋核（#1004）。
 //!
-//! **`SearchState::rows_generation` とは別の量である**——世代は「行が差し替わったか」、
-//! ここの seq は「どの要求か」を指す。#699 の世代は `set_results` が持ったままにする。
+//! **`SearchState::rows_generation` とは別の量である**——世代は「行が差し替わったか」、ここの seq は「どの要求か」を指す。#699 の世代は `set_results` が持ったままにする。
 //!
-//! **PR 1（同期）と PR 2（worker）で同じ型を使う**——計器が改修の前後で同じ区間を測る
-//! ことが受け入れの条件である（#1000 の「同じ器を当てられること」）。
+//! **PR 1（同期）と PR 2（worker）で同じ型を使う**——計器が改修の前後で同じ区間を測ることが受け入れの条件である（#1000 の「同じ器を当てられること」）。
 
 use std::time::{Duration, Instant};
 
-/// 採り込みが成立したときの経過。**打鍵起点と dispatch 起点の両方を持つ**——打鍵起点には
-/// 50 ms の trailing debounce 待ちが必ず入るため、片方では worker 往復の費用を読めない。
+/// 採り込みが成立したときの経過。**打鍵起点と dispatch 起点の両方を持つ**——打鍵起点には 50 ms の trailing debounce 待ちが必ず入るため、片方では worker 往復の費用を読めない。
 pub struct Settled {
     pub seq: u64,
     pub since_key: Duration,
@@ -317,7 +313,7 @@ impl SearchDispatch {
         self.pending = None;
     }
 
-    /// 現在 in-flight の seq（無ければ 0）。判定器が「失効した結果を採っていないか」を読む材料。
+    /// 現在 in-flight の seq（無ければ 0）。判定器が「失効した結果を採っていないか」を読む材料である。
     pub fn pending_seq(&self) -> u64 {
         self.pending.as_ref().map_or(0, |p| p.seq)
     }
@@ -352,8 +348,7 @@ Expected: 3 テストとも PASS
                                 None => return,
                             };
                             let mut engine = state.engine.lock().unwrap();
-                            // 索引件数は H6 のゲート材料（判定が意味を持つ規模かを判定器が知る）。
-                            // **既に lock を握っている区間で取る**——このために lock を増やさない。
+                            // 索引件数は H6 のゲート材料である（判定が意味を持つ規模かを判定器が知る）。**既に lock を握っている区間で取る**——このために lock を増やさない。
                             let n = engine.entry_count();
                             (engine.search(&query), n)
                         }; // lock 解放
@@ -714,14 +709,9 @@ Expected: FAIL
 ```rust
 //! 検索を実行する worker（#1004）。**プロセス寿命の 1 本**であり、要求は最新だけを走らせる。
 //!
-//! **都度 spawn を採らない理由**は `spawn_folder_load` の doc と対である——あちらの
-//! per-nav spawn は dead UNC の hang を隔離するための選択で、`engine.search` には
-//! 転移しない（hang しない代わりに必ず共有 Mutex を要求する）。打鍵ごとに spawn すると
-//! 捨てるとわかっている結果のために lock と CPU を払う。
+//! **都度 spawn を採らない理由**は `spawn_folder_load` の doc と対である——あちらの per-nav spawn は dead UNC の hang を隔離するための選択で、`engine.search` には転移しない（hang しない代わりに必ず共有 Mutex を要求する）。打鍵ごとに spawn すると、捨てるとわかっている結果のために lock と CPU を払う。
 //!
-//! **`egui::Context` を持たない**——長寿命 worker が Context clone を握ると
-//! `RepaintScheduler` の Arc が窓の `Destroyed` を越えて生き、停止を妨げる（#671 PR D）。
-//! 起床は `wake_main` を使う。
+//! **`egui::Context` を持たない**——長寿命 worker が Context clone を握ると `RepaintScheduler` の Arc が窓の `Destroyed` を越えて生き、停止を妨げる（#671 PR D）。起床は `wake_main` を使う。
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 
@@ -737,7 +727,7 @@ pub enum SearchMsg {
     Done {
         seq: u64,
         results: Vec<SearchResult>,
-        /// H6 のゲート材料。**engine lock を握っている区間で取る**（lock を増やさない）。
+        /// H6 のゲート材料である。**engine lock を握っている区間で取る**（lock を増やさない）。
         index_entries: usize,
     },
 }
@@ -747,8 +737,7 @@ pub fn coalesce(first: SearchRequest, rest: impl Iterator<Item = SearchRequest>)
     rest.fold(first, |_, next| next)
 }
 
-/// worker を 1 本立てる。`Sender` が drop されると `recv` が Err を返しループが終わる
-/// （join はしない・best-effort）。
+/// worker を 1 本立てる。`Sender` が drop されると `recv` が Err を返しループが終わる（join はしない・best-effort）。
 pub fn spawn_search_worker(app: tauri::AppHandle) -> (Sender<SearchRequest>, Receiver<SearchMsg>) {
     let (req_tx, req_rx) = channel::<SearchRequest>();
     let (msg_tx, msg_rx) = channel::<SearchMsg>();
@@ -836,17 +825,14 @@ Task 3 Step 6 で書いた同期ブロック全体を次で置き換える:
 ```rust
                     QueryIntent::Plain => {
                         if self.state.query().trim().is_empty() || self.indexing() {
-                            // 空クエリと構築中は**同期でクリアする**（worker を経由させると
-                            // 消した文字が 1 フレーム残る）。同期で差し替える以上、
-                            // in-flight は失効させる（spec の §4.5）。
+                            // 空クエリと構築中は**同期でクリアする**（worker を経由させると消した文字が 1 フレーム残る）。同期で差し替える以上、in-flight は失効させる（spec の §4.5）。
                             self.dispatch.invalidate();
                             self.state.set_results(Vec::new());
                             return;
                         }
                         let query = self.state.query().to_string();
                         let seq = self.dispatch.issue(self.last_input_at, Instant::now());
-                        // 送信失敗（worker が死んでいる）は無視する——次の打鍵で再送され、
-                        // 表示は前の行を保ったままになる。
+                        // 送信失敗（worker が死んでいる）は無視する——次の打鍵で再送され、表示は前の行を保ったままになる。
                         let _ = self
                             .search_tx
                             .send(crate::egui_shell::SearchRequest { seq, query });
@@ -859,8 +845,7 @@ Task 3 Step 6 で書いた同期ブロック全体を次で置き換える:
 - [ ] **Step 3: drain を書く**
 
 ```rust
-    /// worker の結果を採り込む（#1004）。**seq が現 pending と一致するときだけ行を差し替える**
-    /// ——追い越された結果は捨てる。世代は `set_results` が進める（#699 は無傷）。
+    /// worker の結果を採り込む（#1004）。**seq が現 pending と一致するときだけ行を差し替える**——追い越された結果は捨てる。世代は `set_results` が進める（#699 は無傷）。
     pub(super) fn drain_search(&mut self) {
         while let Ok(crate::egui_shell::SearchMsg::Done {
             seq,
@@ -977,8 +962,7 @@ Step 1 で数えた各 `set_results` の直前へ `self.dispatch.invalidate();`�
             self.search_debounce.is_armed(),
         ) {
             self.search_debounce.cancel();
-            // #1004: Enter は最終クエリの結果をその場で要求する。worker の往復を待てない
-            //（待つ設計は Enter 二度押し・Escape・hide の in-flight を全部抱える）。
+            // #1004: Enter は最終クエリの結果をその場で要求するため、worker の往復を待てない（待つ設計は Enter 二度押し・Escape・hide の in-flight を全部抱える）。
             // Enter は 1 回きりで、ユーザーは結果を待っている——ここの同期は正当である。
             let query = self.state.query().to_string();
             if !query.trim().is_empty() && !self.indexing() {

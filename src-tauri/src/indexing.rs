@@ -29,6 +29,20 @@ pub fn start_index_build(app: &AppHandle) -> bool {
         return false;
     }
 
+    // **アイコンキャッシュを捨てる。** #996 が索引照合の剪定を撤去し、以後は背景再スキャンの
+    // `RescanOutcome::Changed` が唯一の担い手だった。その再スキャンを撤去した（#1001）ので、
+    // 担い手はここである。**判定を置かない**——ユーザー（あるいは config 変更）が再構築を
+    // 要求した事実そのものが引き金であり、集合が変わったかを測り直す必要は無い。
+    //
+    // ここで撃つのは CAS に成功した側だけである（要求のたびに撃つと、走行中ビルドへの
+    // 重複要求で無駄に捨てる）。ただし `drain_index` の finish 窓で刺さった変更は自己再 kick
+    // として再びここを通るため、直前の無効化から間を置かず 2 回撃たれうる——1 回目の無効化後に
+    // ユーザーが検索してアイコンを再抽出していれば、それも巻き添えで捨てる。無害だが無駄。
+    // engine ロックは `mark_index_stale()` の中で解放済みで、ロックを跨いだ取得にはならない。
+    if let Some(icons) = app.try_state::<crate::icon::IconCacheState>() {
+        crate::icon::invalidate_icon_cache(&icons);
+    }
+
     notify_indexing_started(app);
 
     let app_handle = app.clone();
@@ -123,9 +137,11 @@ fn drain_index(app_handle: &AppHandle) {
         // **保存が返した派生データをそのまま索引の表現に使う**（`rebuild_and_save` の doc）。捨てて建て直していた頃の額は `PERFORMANCE.md`「採用: `PrebuiltIndex` を `CachedMasks` 込みで建てる」。
         let material = indexer::rebuild_and_save(&inputs.scan, inputs.show_hidden_system);
 
-        // **アイコンキャッシュにはもう触らない。** 索引照合の剪定は #996 で撤去し、無効化時の
-        // 破棄も `config_watcher` の true → false のエッジへ移した（理由は `icon::drop_icon_cache`
-        // の doc が正本）。ゆえに `IndexInputs` は索引を建て直す入力だけを持つ。
+        // **drain ループ自身はアイコンキャッシュに触らない。** 無効化は `start_index_build` が
+        // ビルド要求を受理した瞬間に 1 回だけ撃つ（このループの外）。索引照合の剪定は #996 で
+        // 撤去したままであり、表示無効化時の破棄も `config_watcher` の true → false のエッジの
+        // まま（理由は `icon::drop_icon_cache` の doc が正本）。ゆえに `IndexInputs` は索引を
+        // 建て直す入力だけを持つ（この結論は変わらない）。
 
         // SearchEngine の構築（O(N)）は Mutex 外で実施してロック保持時間を最小化する。
         // migemo 無効時は kana_lower_names を構築しない（issue #337）。
@@ -161,4 +177,40 @@ fn notify_indexing_complete(app: &AppHandle) {
     }
     // Notify frontend
     let _ = app.emit(crate::events::INDEXING_COMPLETE, ());
+}
+
+#[cfg(test)]
+mod tests {
+    /// **アイコンキャッシュの無効化はここが唯一の担い手である。** #996 が再構築時の
+    /// 掃除を撤去したため、かつては背景再スキャンの `RescanOutcome::Changed` が
+    /// 担っていた。再スキャンごと撤去した（#1001）ので、ここが落ちると
+    /// **エントリ集合が変わってもアイコンが古いまま FIFO 上限まで残る**——
+    /// 検索結果は正しいままなので挙動テストでは捕まらない。
+    ///
+    /// **残る死角**: 母集団は `start_index_build` のソーステキストだけであり、
+    /// 呼び出しグラフは辿らない。この関数の外のヘルパー経由で無効化する形へ
+    /// 変えると、母集団の外なので捕まらない。
+    #[test]
+    fn start_index_build_invalidates_the_icon_cache() {
+        let src = include_str!("indexing.rs");
+        let after = src
+            .split_once("pub fn start_index_build(")
+            .expect("start_index_build が見つからない（改名したらこの検査も直す）")
+            .1;
+        let body = match after.find("\npub(crate) fn ") {
+            Some(idx) => &after[..idx],
+            None => after,
+        };
+        // **母集団が黙って空にならないことを、まずそれ自体で確かめる。**
+        assert!(
+            body.contains("try_begin_index_build("),
+            "母集団が start_index_build の本体を含まない——終端の切り出しがずれた。\
+             沈黙する検知器は検知器ではない"
+        );
+        assert!(
+            body.contains("invalidate_icon_cache("),
+            "start_index_build がアイコンキャッシュを無効化していない（#996 撤去後、\
+             ここが唯一の担い手である）"
+        );
+    }
 }

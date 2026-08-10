@@ -577,6 +577,19 @@ fn compute_config_hash(scan: &[ScanPath], show_hidden_system: bool) -> u64 {
     hasher.finish()
 }
 
+/// `compute_config_hash`（private）を crate 外から呼ぶための薄い入口。**走査対象そのものの
+/// 同一性だけを表す**——入力は `scan` と `show_hidden_system` の 2 つだけで、
+/// `include_path_env` / `migemo_enabled` は含まない（それらは走査ではなく索引の**構築**を
+/// 左右する入力であり、`engine::IndexInputs` が別に持つ）。
+///
+/// [`RescanRun::scanned_config_hash`] は同じ `compute_config_hash` を通して作った値を運ぶ。
+/// `src-tauri` の `apply_rescanned_index` は、差し替え時点の現在 config からこの入口経由で
+/// 同じ値を導き、`scanned_config_hash` と照合する——**内部を丸ごと公開する代わりに、
+/// 比較に要る計算だけをここへ閉じ込めてある**。
+pub fn scan_identity_hash(scan: &[ScanPath], show_hidden_system: bool) -> u64 {
+    compute_config_hash(scan, show_hidden_system)
+}
+
 fn cache_bin_file_in(dir: &Path) -> BinFile {
     BinFile::new_in(dir, INDEX_MAGIC, INDEX_CACHE_VERSION, "index.bin")
 }
@@ -1216,6 +1229,29 @@ pub enum RescanOutcome {
     Changed,
 }
 
+/// 背景再スキャンの結果。**結末と、索引を建てる材料の組**である。
+///
+/// **材料が載るのは `Changed` のときだけである。** 形式の昇格だけ（`format_upgrade`）の
+/// ときは中身が同一で、差し替えても得るものが無い（索引 1 本ぶんの常駐を無駄に積む）。
+///
+/// **`RescanOutcome` 自身に材料を持たせない。** 持たせると `Copy` と `PartialEq` を失い、
+/// 結末だけを見る既存の検知器が一斉に書き換えになる。
+pub struct RescanRun {
+    pub outcome: RescanOutcome,
+    /// `Changed` のときの索引の材料。**呼び出し側がこれで索引を建てて差し替える。**
+    /// 走査はここまでで 1 回きりであり、呼び出し側が建て直す必要は無い
+    /// ——建て直す実装（`start_index_build` を呼ぶ形）は全走査を 2 回にする。
+    pub material: Option<IndexMaterial>,
+    /// **`material` を実際に走査した対象の同一性**（`scan_identity_hash` と同じ値）。
+    /// `material` と同時にだけ `Some` になる。呼び出し側はこれを、差し替え時点の
+    /// 現在 config から `scan_identity_hash` で導いた値と照合する——**差し替え前後の
+    /// 2 度の検査時点の入力どうしを比べるだけでは、両方が同じ新しい config を指して
+    /// いても「材料はそれより古い config で走査した」ことを見抜けない**（`main.rs`
+    /// `apply_rescanned_index` の doc が実例を持つ）。ここが運ぶのは、その 2 検査の
+    /// どちらとも独立な「材料の出自」そのものである。
+    pub scanned_config_hash: Option<u64>,
+}
+
 /// 背景再スキャン本体。書き込みロックを取得できなければ（権威的ビルドが進行中）
 /// スキャン・保存をせず `Skipped` を返す。再スキャンは日和見的な鮮度維持であり、
 /// 本式ビルドが走っていれば不要。アイコンキャッシュには触れない（`icons.bin` は
@@ -1228,9 +1264,13 @@ fn try_background_rescan(
     generation: u64,
     cached_version: u32,
     cached_len: usize,
-) -> RescanOutcome {
+) -> RescanRun {
     let Some(dir) = Config::config_dir() else {
-        return RescanOutcome::Skipped;
+        return RescanRun {
+            outcome: RescanOutcome::Skipped,
+            material: None,
+            scanned_config_hash: None,
+        };
     };
     try_background_rescan_in(
         &dir,
@@ -1254,7 +1294,7 @@ fn try_background_rescan_in(
     generation: u64,
     cached_version: u32,
     cached_len: usize,
-) -> RescanOutcome {
+) -> RescanRun {
     // **`start` は走査の前に書く。** 終端だけを書く形では、走査より短いセッション
     // （実測 12 秒 < 22 秒）が「そもそも起動しなかった」と区別できない（#1001）。
     // `total_ms` はここ（計器自身の前置き——sid 生成・剪定・`start` の追記——より前）で
@@ -1275,6 +1315,8 @@ fn try_background_rescan_in(
     );
 
     let mut rec = rescan_log::RescanRecord::default();
+    let mut material = None;
+    let mut scanned_config_hash = None;
 
     // 権威的ビルド（rebuild_and_save / cache-miss save）が書き込み中なら Skipped。
     let changed = try_with_index_write_lock(|| {
@@ -1315,11 +1357,24 @@ fn try_background_rescan_in(
             // `outcome=unchanged` なのに `save_ms` が非 null になる唯一の理由である。
             rec.format_upgrade = !changed && stale_format;
             let t = Instant::now();
-            // **返る木と `CachedMasks` はここでは捨てる。** 背景再スキャンは索引を建てない
-            // ——建てるのは呼び出し側（`Changed` を見た `src-tauri` が再構築を kick する）で
-            // あり、ここが抱えると起動段の外に索引 1 本ぶんの常駐が生まれる。
-            drop(save_cache_sorted_in(dir, scanned, config_hash));
+            // **保存が返した木と `CachedMasks` を、そのまま索引の材料にする。**
+            // かつてここは捨てており（「呼び出し側が再構築を kick する」と書いてあったが、
+            // その kick は存在しなかった）、`index.bin` は新しいのに走っているセッションの
+            // 索引は最後まで古いままだった——**索引が常に 1 起動ぶん遅れていた**。
+            // 建て直すのではなく運ぶので、**走査は 1 回のままである**。
+            let (tree, masks) = save_cache_sorted_in(dir, scanned, config_hash);
             rec.save = Some(t.elapsed());
+            // **中身が変わったときだけ運ぶ**（昇格だけなら中身は同一）。
+            if changed {
+                material = Some(IndexMaterial::derived(tree, masks));
+                // **材料と対で、それを走査した対象の同一性も運ぶ**（I-1）。適用側の
+                // 検査を「差し替え前後の 2 検査どうしの一致」に閉じると、両方が
+                // 同じ新しい config を指していても「材料はそれより古い config で
+                // 走査した」ケースを見抜けない。ここに書く `config_hash` は、まさに
+                // 今 `scan_all` した対象（引数の `scan` / `show_hidden_system`）から
+                // 導いた値であり、`save_cache_sorted_in` へ渡すのと同じ値である。
+                scanned_config_hash = Some(config_hash);
+            }
         }
         Some(changed)
     });
@@ -1349,7 +1404,11 @@ fn try_background_rescan_in(
             started.elapsed(),
         ),
     );
-    outcome
+    RescanRun {
+        outcome,
+        material,
+        scanned_config_hash,
+    }
 }
 
 /// 背景再スキャンのタスク。所有データを抱え、`src-tauri` 側のスレッドへ `move` できる。
@@ -1375,9 +1434,9 @@ pub struct BackgroundRescanTask {
 }
 
 impl BackgroundRescanTask {
-    /// 再スキャンを実行し、結果を返す。`Changed` のときは呼び出し側が
-    /// アイコンキャッシュを無効化すること。
-    pub fn run(self) -> RescanOutcome {
+    /// 再スキャンを実行し、**結末と索引の材料の組**を返す。`Changed` のときは呼び出し側が
+    /// アイコンキャッシュを無効化し、返った材料で索引を建てて差し替える。
+    pub fn run(self) -> RescanRun {
         try_background_rescan(
             &self.scan,
             self.show_hidden_system,
@@ -3220,7 +3279,7 @@ mod tests {
             "治具が v4 を書けていること（ここが現行版だと以降の検査が自明に通る）"
         );
 
-        let outcome = try_background_rescan_in(
+        let run = try_background_rescan_in(
             &dir,
             &scan,
             false,
@@ -3233,7 +3292,11 @@ mod tests {
 
         // **エントリ集合は変わっていない。** 形式の昇格は中身を変えないので `Changed` を
         // 返してはならない——呼び出し側はそれを見てアイコンキャッシュを捨てる。
-        assert_eq!(outcome, RescanOutcome::Unchanged);
+        assert_eq!(run.outcome, RescanOutcome::Unchanged);
+        assert!(
+            run.material.is_none(),
+            "形式の昇格だけなら中身は同一——材料を返してはならない"
+        );
         assert_eq!(
             cache_byte_breakdown_in(&dir)
                 .expect("昇格後も読めること")
@@ -3272,7 +3335,7 @@ mod tests {
         save_cache_sorted_in(&dir, entries.clone(), config_hash);
         let before = fs::read(dir.join("index.bin")).expect("現行版の index.bin が読めること");
 
-        let outcome = try_background_rescan_in(
+        let run = try_background_rescan_in(
             &dir,
             &scan,
             false,
@@ -3283,7 +3346,7 @@ mod tests {
             0,
         );
 
-        assert_eq!(outcome, RescanOutcome::Unchanged);
+        assert_eq!(run.outcome, RescanOutcome::Unchanged);
         let after = fs::read(dir.join("index.bin")).expect("read index.bin again");
         assert_eq!(
             before, after,
@@ -3881,6 +3944,128 @@ mod tests {
         );
     }
 
+    /// **`Changed` のとき材料が返る。** これが無いと呼び出し側は索引を建てられず、
+    /// 走っているセッションの索引は最後まで古いままになる（索引が 1 起動ぶん遅れる）。
+    /// 変異: 材料を捨てる実装（現状への回帰）でこの検査が落ちる。
+    #[test]
+    fn background_rescan_returns_material_when_entries_changed() {
+        let _serial = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = temp_dir("rescan_material_changed");
+        let scan: Vec<ScanPath> = Vec::new();
+        let hash = compute_config_hash(&scan, false);
+        save_cache_sorted_in(&dir, Vec::new(), hash);
+
+        // 空の走査結果に対し、キャッシュ側の digest をわざと食い違わせて Changed にする。
+        let run = try_background_rescan_in(
+            &dir,
+            &scan,
+            false,
+            hash,
+            entries_digest(&[]) ^ 1,
+            current_index_generation(),
+            INDEX_CACHE_VERSION,
+            0,
+        );
+        assert_eq!(run.outcome, RescanOutcome::Changed);
+        assert!(
+            run.material.is_some(),
+            "Changed なら索引の材料が返ること（捨てると 1 起動ぶん遅れる）"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// **`RescanRun` は材料と対で、それを走査した対象の同一性を運ぶ。** `apply_rescanned_index`
+    /// （`src-tauri`）はこれを差し替え時点の現在 config から導いた値と照合する——差し替え前後の
+    /// 2 検査どうしの一致だけでは、両方が同じ新しい config を指していても「材料はそれより古い
+    /// config で走査した」ケースを見抜けない（I-1）。変異: `scanned_config_hash` を配線し
+    /// 忘れる実装（`material` は返るがこちらは `None` のまま）でこの検査が落ちる。
+    #[test]
+    fn background_rescan_run_carries_the_scanned_config_hash() {
+        let _serial = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = temp_dir("rescan_scanned_config_hash");
+        let scan: Vec<ScanPath> = Vec::new();
+        let hash = compute_config_hash(&scan, false);
+        save_cache_sorted_in(&dir, Vec::new(), hash);
+
+        let run = try_background_rescan_in(
+            &dir,
+            &scan,
+            false,
+            hash,
+            entries_digest(&[]) ^ 1,
+            current_index_generation(),
+            INDEX_CACHE_VERSION,
+            0,
+        );
+        assert_eq!(run.outcome, RescanOutcome::Changed);
+        assert_eq!(
+            run.scanned_config_hash,
+            Some(hash),
+            "材料を走査した対象の同一性（scan_identity_hash と同じ値）が運ばれること"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// **`Unchanged` では材料を返さない。** 中身が同じなのに差し替えれば、索引 1 本ぶんの
+    /// 常駐を無駄に積むだけである。変異: 常に材料を返す実装で落ちる。
+    #[test]
+    fn background_rescan_returns_no_material_when_unchanged() {
+        let _serial = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = temp_dir("rescan_material_unchanged");
+        let scan: Vec<ScanPath> = Vec::new();
+        let hash = compute_config_hash(&scan, false);
+        save_cache_sorted_in(&dir, Vec::new(), hash);
+
+        let run = try_background_rescan_in(
+            &dir,
+            &scan,
+            false,
+            hash,
+            entries_digest(&[]),
+            current_index_generation(),
+            INDEX_CACHE_VERSION,
+            0,
+        );
+        assert_eq!(run.outcome, RescanOutcome::Unchanged);
+        assert!(run.material.is_none(), "Unchanged で材料を返してはならない");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// **`Skipped` でも材料を返さない**（走査すらしていない）。
+    #[test]
+    fn background_rescan_returns_no_material_when_skipped() {
+        let _serial = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = temp_dir("rescan_material_skipped");
+        let held = INDEX_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let run = try_background_rescan_in(
+            &dir,
+            &[],
+            false,
+            0,
+            0,
+            current_index_generation(),
+            INDEX_CACHE_VERSION,
+            0,
+        );
+        drop(held);
+        assert_eq!(run.outcome, RescanOutcome::Skipped);
+        assert!(run.material.is_none(), "Skipped で材料を返してはならない");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     /// **`try_background_rescan_in` 経由で検証する**（`try_background_rescan` 自体ではない）。
     /// 後者は `Config::config_dir()` を内部で解決し、`try_background_rescan_in` が Skipped
     /// 経路でも `start`/`end` の 2 行を書くため、そのまま呼ぶと実 `%APPDATA%\Snotra\
@@ -3897,7 +4082,7 @@ mod tests {
         let _held = INDEX_WRITE_LOCK.lock().unwrap();
         // 背景再スキャンは書き込みロックを取得できないため、
         // スキャンも保存もせず Skipped を返さねばならない。
-        let outcome = try_background_rescan_in(
+        let run = try_background_rescan_in(
             &dir,
             &[],
             false,
@@ -3908,7 +4093,7 @@ mod tests {
             0,
         );
         assert_eq!(
-            outcome,
+            run.outcome,
             RescanOutcome::Skipped,
             "background rescan must return Skipped when the index write lock is held"
         );
@@ -3928,7 +4113,7 @@ mod tests {
             .unwrap_or_else(|e| e.into_inner());
         let dir = temp_dir("rescan_in_reports_unchanged");
         // 空のスキャン対象 → scan_all は空 → 空のキャッシュと一致 → Unchanged。
-        let outcome = try_background_rescan_in(
+        let run = try_background_rescan_in(
             &dir,
             &[],
             false,
@@ -3938,7 +4123,7 @@ mod tests {
             INDEX_CACHE_VERSION,
             0,
         );
-        assert_eq!(outcome, RescanOutcome::Unchanged);
+        assert_eq!(run.outcome, RescanOutcome::Unchanged);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -3956,7 +4141,7 @@ mod tests {
             save_cache_sorted_in(&dir, Vec::new(), new_hash);
         });
 
-        let outcome = try_background_rescan_in(
+        let run = try_background_rescan_in(
             &dir,
             &[],
             false,
@@ -3971,7 +4156,7 @@ mod tests {
             0,
         );
 
-        assert_eq!(outcome, RescanOutcome::Skipped);
+        assert_eq!(run.outcome, RescanOutcome::Skipped);
         assert!(load_cache_in(&dir, new_hash).is_some());
         assert!(load_cache_in(&dir, old_hash).is_none());
         let _ = fs::remove_dir_all(&dir);
@@ -4020,7 +4205,7 @@ mod tests {
         let scan: Vec<ScanPath> = Vec::new();
         save_cache_sorted_in(&dir, Vec::new(), compute_config_hash(&scan, false));
 
-        let outcome = try_background_rescan_in(
+        let run = try_background_rescan_in(
             &dir,
             &scan,
             false,
@@ -4030,7 +4215,7 @@ mod tests {
             INDEX_CACHE_VERSION,
             312_625,
         );
-        assert_eq!(outcome, RescanOutcome::Unchanged);
+        assert_eq!(run.outcome, RescanOutcome::Unchanged);
 
         let lines = rescan_log_lines(&dir);
         assert_eq!(lines.len(), 2, "start と end の 2 行が出る");
@@ -4058,7 +4243,7 @@ mod tests {
         let dir = temp_dir("rescan_log_skip_lock");
         let guard = INDEX_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
-        let outcome = try_background_rescan_in(
+        let run = try_background_rescan_in(
             &dir,
             &[],
             false,
@@ -4069,7 +4254,7 @@ mod tests {
             0,
         );
         drop(guard);
-        assert_eq!(outcome, RescanOutcome::Skipped);
+        assert_eq!(run.outcome, RescanOutcome::Skipped);
 
         let lines = rescan_log_lines(&dir);
         assert_eq!(lines.len(), 2);
@@ -4089,7 +4274,7 @@ mod tests {
         let dir = temp_dir("rescan_log_skip_generation");
 
         let stale_generation = current_index_generation().wrapping_sub(1);
-        let outcome = try_background_rescan_in(
+        let run = try_background_rescan_in(
             &dir,
             &[],
             false,
@@ -4099,7 +4284,7 @@ mod tests {
             INDEX_CACHE_VERSION,
             0,
         );
-        assert_eq!(outcome, RescanOutcome::Skipped);
+        assert_eq!(run.outcome, RescanOutcome::Skipped);
 
         let lines = rescan_log_lines(&dir);
         assert_eq!(lines[1]["skip_reason"], "generation");

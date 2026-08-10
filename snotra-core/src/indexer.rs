@@ -425,7 +425,13 @@ pub struct LoadOrScanStats {
     /// （`cache_read_ms` と同じ扱い——足すと二重計上になり、`total_ms` から差し引く残余計算が
     /// 負に振れて `saturating_sub` に黙って潰される）。save は `load_cache_in` 呼び出しの
     /// 内側（`LegacyUpgrade::Write` で旧版を読んだとき）で起きるため、cache_load_ms の外に
-    /// 出しようがない。cache-hit かつ現行版・または `LegacyUpgrade::Skip` のときは 0。
+    /// 出しようがない。cache-hit かつ現行版を読んだときは 0。
+    ///
+    /// **`load_or_scan_with_stats`（この struct の生成元）は常に `LegacyUpgrade::Write` で
+    /// 呼ぶ**——`LegacyUpgrade::Skip` は corpus テストの入口（`load_cached_entries`）専用で、
+    /// `LoadOrScanStats` を生成しない。ゆえにここでは `Skip` は考慮しなくてよい
+    /// （`LoadCacheResult::upgrade_save_ms` の doc は `Skip` 経由の 0 も併記しているが、
+    /// それは `LoadCacheResult` 自体が両方の呼び出し元を持つため）。
     pub cache_save_ms: u128,
     pub total_ms: u128,
 }

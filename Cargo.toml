@@ -27,6 +27,9 @@ invalid_html_tags = "deny"
 # 実際に解決する（crate は publish せず docs.rs 建ても無いので、フラグ無しで建てる消費者は居ない）。
 # **この allow はリンク切れの検査を弱めない**——存在しないシンボルへの link は
 # 上の `broken_intra_doc_links = "deny"` が引き続き deny で捕まえる（変異注入で実測）。
+# **撤去条件: どれかの crate を publish する、または docs.rs へ doc を建てる方針が出たら、この行を外す。**
+# そのとき doc はフラグ無しでも建つので、上に書いた前提（`--document-private-items` 固定）が崩れる
+# ——private への link は本当に死に、この警告は正しい指摘へ変わる。
 private_intra_doc_links = "allow"
 
 # `src-tauri/clippy.toml` の禁止（#900）を、コマンドラインから独立させる（#950）。

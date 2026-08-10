@@ -83,8 +83,7 @@ pub(crate) use search_state::{needs_index_refresh, plain_results_hidden};
 pub(crate) use layout::Debouncer;
 // view.rs が `update()` のフレーム所要と間隔の計器として消費する（#1004 PR 1）。
 pub(crate) use layout::FrameTimer;
-// launcher_controller.rs が検索 dispatch の同一性（seq 発行・採り込み判定）で消費する
-// （#1004 PR 1: 同期経路の計器、PR 2: worker 結果の裁定）。
+// launcher_controller.rs が検索 dispatch の同一性（seq 発行・採り込み判定）で消費する（#1004 PR 1: 同期経路の計器、PR 2: worker 結果の裁定）。
 pub(crate) use search_dispatch::SearchDispatch;
 // view.rs が UI 文言（hint/overlay/toast）で、launcher_controller.rs が通知文言（起動失敗・
 // 結果不明・hotkey 登録失敗）で消費する（#532 SU5・言語は lang() が毎フレーム live-read）。

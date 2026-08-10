@@ -374,6 +374,19 @@ try {
     }
   }
 
+  # --- パスクエリ打鍵（#1004）----------------------------------------------
+  # `c:\` は has_path_sep が真になり incremental cache が無効化される＝全件走査の経路。
+  # 打鍵から結果までのフレームが予算を超えないことを H6 が判定する（区間は
+  # egui_input:changed → egui_search:settled で切れるのでマーカーは要らない）。
+  Send-SnotraKey -VirtualKey 0x43            # c
+  Send-SnotraKey -VirtualKey 0x43 -Up
+  Start-Sleep -Milliseconds 120              # debounce(50ms) の trailing を跨がせる
+  Send-SnotraKeyChord -VirtualKeys @(0x10, 0xBA)   # Shift + ; = :
+  Start-Sleep -Milliseconds 120
+  Send-SnotraKey -VirtualKey 0xDC            # \
+  Send-SnotraKey -VirtualKey 0xDC -Up
+  Start-Sleep -Milliseconds 300              # 全件走査 + 採り込みの完了を待つ
+
   # 表示中に WebView2 プロセスが増えていないこと（グローバル before/after・SU2 G4 と同じ測り方）
   $webviewAfter = @(Get-Process msedgewebview2 -ErrorAction SilentlyContinue).Count
   if ($webviewAfter -gt $webviewBefore) {

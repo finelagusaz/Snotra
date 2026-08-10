@@ -182,9 +182,9 @@ fn icon_bin_file() -> Option<BinFile> {
 }
 
 /// アイコンキャッシュをメモリ内・ディスク両方で無効化する。索引の再構築が始まったとき
-/// （`indexing::start_index_build`）に呼ぶ。**背景再スキャンの `RescanOutcome::Changed`
-/// からもまだ呼ばれている**——撤去は Task 4（#1001）で、それまでは同じ実行で 2 経路から
-/// 呼ばれうる。メモリ内 `IconCacheState` を `None` にし、`icons.bin` を削除する。
+/// （`indexing::start_index_build`）に呼ぶ。**背景再スキャンの spawn と結果適用は
+/// Task 4（#1001）で撤去済みで、現在この関数の呼び出し元はここ 1 つだけである。**
+/// メモリ内 `IconCacheState` を `None` にし、`icons.bin` を削除する。
 /// 両方やらないと、ファイルだけ消してもメモリ内の古いアイコンが終了時の
 /// `save_if_dirty` で再永続化される。
 /// 両操作は**単一 lock 内で原子的に**行う（→ `invalidate_icon_cache_with` の doc、#522）。

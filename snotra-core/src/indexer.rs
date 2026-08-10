@@ -2,8 +2,9 @@
 //! **索引の材料を組のまま運ぶ器**（[`IndexMaterial`]）。
 //!
 //! `index.bin` への書き込みは `INDEX_WRITE_LOCK` で単一書き手に直列化し、tmp→rename の
-//! 食い合いによる破損を防ぐ。キャッシュヒット時の背景再スキャンは `BackgroundRescanTask`
-//! として返し、spawn とアイコン無効化は所有者（`src-tauri`）へ委ねる。
+//! 食い合いによる破損を防ぐ。`BackgroundRescanTask` はキャッシュヒット時に返る背景再
+//! スキャンのタスクだが、**呼び出し元（`src-tauri`）は Task 4（#1001）で撤去済みで、
+//! この API は現在どこからも spawn されない**（core 側の撤去は Task 5 で予定）。
 //!
 //! 木と派生データを 1 つの型へ束ねるのはこのモジュールの責務である——**両者の長さが揃うこと**
 //! を、消費側の規約ではなく型で持つ（`index.bin` から来た組は `IndexMaterial::from_untrusted`
@@ -439,8 +440,8 @@ pub struct LoadOrScanResult {
     pub cache_changed: bool,
     /// 各フェーズの所要時間。
     pub stats: LoadOrScanStats,
-    /// キャッシュヒット時のみ `Some`。`src-tauri` が低優先度スレッドで `run()` し、
-    /// `RescanOutcome::Changed` ならアイコンキャッシュを無効化する。
+    /// キャッシュヒット時のみ `Some`。**呼び出し元は撤去済みで、この値は現在どこからも
+    /// spawn されない**（`BackgroundRescanTask` の doc を参照。core 側の撤去は Task 5 で予定）。
     pub rescan_task: Option<BackgroundRescanTask>,
 }
 
@@ -583,9 +584,10 @@ fn compute_config_hash(scan: &[ScanPath], show_hidden_system: bool) -> u64 {
 /// 左右する入力であり、`engine::IndexInputs` が別に持つ）。
 ///
 /// [`RescanRun::scanned_config_hash`] は同じ `compute_config_hash` を通して作った値を運ぶ。
-/// `src-tauri` の `apply_rescanned_index` は、差し替え時点の現在 config からこの入口経由で
-/// 同じ値を導き、`scanned_config_hash` と照合する——**内部を丸ごと公開する代わりに、
-/// 比較に要る計算だけをここへ閉じ込めてある**。
+/// **呼び出し元（`src-tauri` の `apply_rescanned_index`）は Task 4（#1001）で撤去済みで、
+/// この関数は現在どこからも呼ばれない**——差し替え時点の現在 config からこの入口経由で
+/// 同じ値を導き、`scanned_config_hash` と照合していた。**内部を丸ごと公開する代わりに、
+/// 比較に要る計算だけをここへ閉じ込めてある**という設計は、消費者が戻る日のために残す。
 pub fn scan_identity_hash(scan: &[ScanPath], show_hidden_system: bool) -> u64 {
     compute_config_hash(scan, show_hidden_system)
 }
@@ -1394,9 +1396,11 @@ pub struct RescanRun {
     /// `material` と同時にだけ `Some` になる。呼び出し側はこれを、差し替え時点の
     /// 現在 config から `scan_identity_hash` で導いた値と照合する——**差し替え前後の
     /// 2 度の検査時点の入力どうしを比べるだけでは、両方が同じ新しい config を指して
-    /// いても「材料はそれより古い config で走査した」ことを見抜けない**（`main.rs`
-    /// `apply_rescanned_index` の doc が実例を持つ）。ここが運ぶのは、その 2 検査の
-    /// どちらとも独立な「材料の出自」そのものである。
+    /// いても「材料はそれより古い config で走査した」ことを見抜けない**（実例は
+    /// 設計書 `docs/superpowers/specs/2026-08-10-rescan-applies-its-result-design.md`
+    /// §2.4 が持つ。**呼び出し元〔`main.rs` の `apply_rescanned_index`〕は Task 4
+    /// （#1001）で撤去済み**）。ここが運ぶのは、その 2 検査のどちらとも独立な
+    /// 「材料の出自」そのものである。
     pub scanned_config_hash: Option<u64>,
 }
 
@@ -1560,8 +1564,11 @@ fn try_background_rescan_in(
     }
 }
 
-/// 背景再スキャンのタスク。所有データを抱え、`src-tauri` 側のスレッドへ `move` できる。
+/// 背景再スキャンのタスク。所有データを抱え、スレッドへ `move` できる形で設計してある。
 /// `load_or_scan_with_stats` がキャッシュヒット時に `Some` で返す。
+///
+/// **呼び出し元は撤去済みで、この API は現在どこからも spawn されない**（Task 4（#1001）で
+/// `src-tauri` 側の spawn と結果適用を撤去。core 側の削除は Task 5 で予定）。
 ///
 /// **全エントリの複製ではなく digest を持つ。** かつては `Vec<AppEntry>` を丸ごと抱えており、
 /// 起動のたびに 312,377 件ぶんの `String` を 624,754 個確保していた（実測 62.5 MiB・ロード段の
@@ -1583,8 +1590,10 @@ pub struct BackgroundRescanTask {
 }
 
 impl BackgroundRescanTask {
-    /// 再スキャンを実行し、**結末と索引の材料の組**を返す。`Changed` のときは呼び出し側が
-    /// アイコンキャッシュを無効化し、返った材料で索引を建てて差し替える。
+    /// 再スキャンを実行し、**結末と索引の材料の組**を返す。**呼び出し元は撤去済みで、
+    /// 現在この関数を呼ぶ経路は無い**（`BackgroundRescanTask` の doc を参照）。かつて
+    /// `Changed` を受け取った側（`src-tauri`）はそれでアイコンキャッシュを無効化し、
+    /// 返った材料で索引を建てて差し替えていた。
     pub fn run(self) -> RescanRun {
         try_background_rescan(
             &self.scan,
@@ -1599,8 +1608,9 @@ impl BackgroundRescanTask {
 }
 
 /// 呼び出し元スレッドの優先度を下げる。背景再スキャン等のバックグラウンドスレッドが
-/// 起動直後のユーザー操作と CPU を奪い合わないようにする。`src-tauri` が rescan
-/// スレッドの先頭で呼ぶ。
+/// 起動直後のユーザー操作と CPU を奪い合わないようにする、という用途で `src-tauri` の
+/// rescan スレッド先頭から呼ばれていたが、**呼び出し元は撤去済みで現在どこからも
+/// 呼ばれない**（Task 4（#1001）。core 側の削除は Task 5 で予定）。
 #[cfg(windows)]
 pub fn lower_current_thread_priority() {
     unsafe {
@@ -4408,11 +4418,12 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// **`RescanRun` は材料と対で、それを走査した対象の同一性を運ぶ。** `apply_rescanned_index`
-    /// （`src-tauri`）はこれを差し替え時点の現在 config から導いた値と照合する——差し替え前後の
-    /// 2 検査どうしの一致だけでは、両方が同じ新しい config を指していても「材料はそれより古い
-    /// config で走査した」ケースを見抜けない（I-1）。変異: `scanned_config_hash` を配線し
-    /// 忘れる実装（`material` は返るがこちらは `None` のまま）でこの検査が落ちる。
+    /// **`RescanRun` は材料と対で、それを走査した対象の同一性を運ぶ。** かつての呼び出し元
+    /// `apply_rescanned_index`（`src-tauri`。Task 4（#1001）で撤去済み）はこれを差し替え時点の
+    /// 現在 config から導いた値と照合していた——差し替え前後の 2 検査どうしの一致だけでは、
+    /// 両方が同じ新しい config を指していても「材料はそれより古い config で走査した」ケースを
+    /// 見抜けない（I-1）。変異: `scanned_config_hash` を配線し忘れる実装（`material` は返るが
+    /// こちらは `None` のまま）でこの検査が落ちる。
     #[test]
     fn background_rescan_run_carries_the_scanned_config_hash() {
         let _serial = INDEX_LOCK_TEST_GUARD

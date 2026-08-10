@@ -391,13 +391,28 @@ try {
     Start-Sleep -Milliseconds 50
 
     Send-SnotraKey -VirtualKey 0x43            # c
+    Start-Sleep -Milliseconds 50
     Send-SnotraKey -VirtualKey 0x43 -Up
     Start-Sleep -Milliseconds 120              # debounce(50ms) の trailing を跨がせる
     Send-SnotraKeyChord -VirtualKeys @(0x10, 0xBA)   # Shift + ; = :
     Start-Sleep -Milliseconds 120
     Send-SnotraKey -VirtualKey 0xDC            # \
+    Start-Sleep -Milliseconds 50
     Send-SnotraKey -VirtualKey 0xDC -Up
     Start-Sleep -Milliseconds 300              # 全件走査 + 採り込みの完了を待つ
+
+    # **打鍵が入ったことを観測する。** 固定 sleep だけで済ませると、3 キーのどれかが
+    # 落ちても $failures が増えず沈黙する。とくに `\` が落ちると has_path_sep が偽のまま
+    # incremental cache の経路に落ち、**全件走査を一度も叩かずに緑を返す**。既存 3 ブロック
+    # （hotkey / 1 文字クエリ / Escape）が例外なく観測を持つのと同じ理由である。
+    # `after_chars -eq 3` は 3 キーすべてが入ったことの証拠——Backspace で空にしてから
+    # "c" "Shift+;（:）" "\" と打つので 3 文字になる。
+    $pathTyped = Wait-SnotraTraceCondition -Path $errPath -TimeoutMs $ObserveTimeoutMs `
+      -Description "パスクエリ 3 文字の入力" `
+      -Predicate { $_.event -eq 'egui_input:changed' -and $_.data.after_chars -eq 3 }.GetNewClosure()
+    if ($null -eq $pathTyped) {
+      $failures += "path query 'c:\' not observed as 3 chars within ${ObserveTimeoutMs}ms"
+    }
   }
 
   # 表示中に WebView2 プロセスが増えていないこと（グローバル before/after・SU2 G4 と同じ測り方）

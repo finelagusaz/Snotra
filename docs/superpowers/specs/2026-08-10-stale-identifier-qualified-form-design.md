@@ -78,6 +78,18 @@ span 粒度でも除外されることを実測した。免除注記の機構は
 | 歴史記述: `Engine::new_from_cache` ×3・`layout::results_should_show` | 4 | バッククォートを外して散文化（#975 の是正で歴史記述に採った処置と同じ） |
 | 外部語彙: `closingIssuesReferences` ×2・`mergedAt`・`head_limit` | 4 | 記述の正確化（コマンド span へ畳む・出所を名指す） |
 
+**`docs/comment-guidelines.md` の当該行は、バッククォートを外すだけでは直らない。** 同じ行は
+歴史記述に加えて**現在形の射程主張**（「型で修飾した形には当たらない——`::` を含むトークンは
+どの述語にも一致しない」）を持っており、本実装が入った瞬間に偽になる。**これは命題クラスの
+腐りゆえ、どの機構も捕まえない**——同じ行が自ら語っている機序（#989 の並行マージで偽になった）の
+再演である。`.claude/rules/governance-docs.md` の定めどおり、機構の実装の詳細を写さず正本を指す形へ
+書き直す。
+
+**検出器の自称スコープも同じ書き直しの対象である。** `scripts/governance-check.mjs` の
+G-stale-identifiers 節は、冒頭で「camelCase / SCREAMING_SNAKE 識別子だけ」と述べながら、
+同じブロックの後段は 3 述語を挙げている——**#975 の lowercase snake_case が冒頭から既に抜けている**。
+本実装はこのブロックをどのみち触るので、修飾形の追記と同時に既存の抜けも揃える。
+
 **#991 が書いたばかりの行を再び触る。** 矛盾ではなく、「バッククォート＝現在形の実在主張」という
 規約の完遂である。外部語彙 1 件はルート `CLAUDE.md` に落ちる——規範文書ゆえ、本設計への同意が
 セーフティネット変更の合意を兼ねる（2026-08-10 に取得済み）。
@@ -109,5 +121,14 @@ span 粒度でも除外されることを実測した。免除注記の機構は
 
 1. `f1827b0` 版の当該行を凍結した fixture で赤くなり、述語だけ／span だけの変異では緑になる
 2. 保守性の逆向き（外部 API の修飾形が照合されない）を測ってある
-3. 移行 9 件を処置し、`npm run governance:check` が緑
-4. `ADR-stale-identifier-detector-scope` へ追記節（測定表・却下した全セグメント案・残余）
+3. 移行 9 件を処置し、`npm run governance:check` が緑。うち `docs/comment-guidelines.md` の
+   当該行は**射程主張の書き直しまで**含む（バッククォートを外すだけでは偽の命題が残る）
+4. `scripts/governance-check.mjs` の G-stale-identifiers 節の自称スコープを、
+   **修飾形の追記と既存の抜け（lowercase snake_case）の両方**について再同期してある
+5. `ADR-stale-identifier-detector-scope` へ追記節（測定表・却下した全セグメント案・残余）
+
+## 実装上の注意
+
+- **fixture は `.test.mjs` 以外に置かない。** `VOCAB_TEST_FILE` が語彙源から外すのはその形だけなので、
+  他所へ置くと fixture の `Engine::new_from_cache` が実文書を免罪する——
+  `ADR-stale-identifier-detector-scope` が記録する `createObjectURL` の罠の再演になる

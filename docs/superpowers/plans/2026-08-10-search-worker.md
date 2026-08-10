@@ -434,8 +434,21 @@ Expected: 送出 → 観測 → 取りこぼし時に一度だけ再注入、と
       Send-SnotraKey -VirtualKey 0xDC            # \
       Send-SnotraKey -VirtualKey 0xDC -Up
       Start-Sleep -Milliseconds 300              # 全件走査 + 採り込みの完了を待つ
+
+      # **打鍵が入ったことを観測する。** 固定 sleep だけで済ませると、3 キーのどれかが
+      # 落ちても $failures が増えず沈黙する。とくに `\` が落ちると has_path_sep が偽のまま
+      # incremental cache の経路に落ち、**全件走査を一度も叩かずに緑を返す**。既存 3 ブロック
+      # （hotkey / 1 文字クエリ / Escape）が例外なく観測を持つのと同じ理由である。
+      $pathTyped = Wait-SnotraTraceCondition -Path $errPath -TimeoutMs $ObserveTimeoutMs `
+        -Description "パスクエリ 3 文字の入力" `
+        -Predicate { $_.event -eq 'egui_input:changed' -and $_.data.after_chars -eq 3 }.GetNewClosure()
+      if ($null -eq $pathTyped) {
+        $failures += "path query 'c:\' not observed as 3 chars within ${ObserveTimeoutMs}ms"
+      }
     }
 ```
+
+**`Send-SnotraKey` の down / up の間には既存ブロックと同じく 50 ms を挟むこと**（既存の hotkey・1 文字クエリ・Escape はいずれもそうしている）。
 
 **注入は show が落ち着いてから打つこと。** 2026-08-10 の実測（release・smoke）では、**show 直後の 5 フレームが 13〜23 ms、hide 直後の 1 フレームが 55 ms** かかっている（定常フレームは 64〜139 µs）。これらが打鍵区間へ混入すると H6 は worker 化の後も赤いままになる。既存の 1 文字クエリ注入の**後ろ**へ置くこの位置なら、初期化のフレームは既に過ぎている——**位置を前へ動かさないこと。**
 

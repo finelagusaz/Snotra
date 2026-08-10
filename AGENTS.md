@@ -57,7 +57,7 @@
 | 永続形式・識別子/キー形式を変更 | `/persistence-check`。history キーは `snotra-core/CLAUDE.md`、config キーは `/plan-review` の 4点セット（新規記録・既存移行・外部参照 API を同時に揃える） |
 | 関数・型を新規定義／改名／導入 | 呼び出し元を grep（作ることと使うことは別判断）＋ `/dry-check`。改名・**旧 API の削除**は下流の **compile-fail を「移行漏れ検出器」**に（`cargo build -p <下流 crate>`）。新 API の導入と呼び出し点の移行は **1 タスクに束ねる**——`-D warnings` 下で未使用の新 API は `dead_code` で落ち、旧 API を残せば導出が 2 箇所になる |
 | worker spawn・channel・フレーム drain・Tauri listener・スレッド/窓をまたぐ共有状態・フレーム内 live-read・paint 後の遅延処理を追加/変更、または async 関数を追加/変更 | `/race-check` |
-| 網羅性が要件（全文監査・全箇所改名・コンパイラを持たない機構の廃止） | `docs/development-principles.md`「列挙の完全性」＋ `/plan-review`「Step 2b」（独立再導出） |
+| 網羅性が要件（全文監査・全箇所改名・コンパイラを持たない機構の廃止） | **その一覧の母集団を誰が知っているか**から始める（`docs/development-principles.md`「列挙の完全性」）＋ `/plan-review`「Step 2b」（独立再導出） |
 | 調査・測定のための一時的な足場（script・workflow・env フック）を新設 | 撤去条件（どの issue が閉じたら消すか）と撤去対象の列挙を、**その成果物自身の doc へ書く**——PR 本文は merge 後に読まれないため、消す合図を自分で持たない足場は残り続ける（#872 の repro-pester-flake.ps1 の .NOTES が実際に撤去を駆動した。撤去済み） |
 | セーフティネット（hook・CI・`.githooks/`・`.claude/settings.json`・rules・skills・規範）を新設/変更 | `.claude/rules/safety-nets.md`（rules・skills までは対象を触ると自動配送。規範文書＝ルート `CLAUDE.md` / `AGENTS.md` 等は自動配送されないため手動参照） |
 | ガバナンス文書（`*.md`・スキル表・モジュール索引・rules・workflow）を変更、または `.rs` のコメントの見出し参照（正準形）とその参照先を変更 | `npm run governance:check`（`docs/build-commands.md` カテゴリ F・#587。PR では CI の governance-check job が常時実行） |

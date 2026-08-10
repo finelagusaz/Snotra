@@ -114,4 +114,20 @@ mod tests {
             "同期で行を差し替えたら in-flight は必ず古い（spec §4.5）"
         );
     }
+
+    #[test]
+    fn stale_result_is_dropped_after_synchronous_replacement() {
+        let base = Instant::now();
+        let mut d = SearchDispatch::default();
+        // `c:\u` を打って worker が走り出した
+        let in_flight = d.issue(base, base);
+        // クエリを空にした → 同期でクリアした出所が invalidate を呼ぶ
+        d.invalidate();
+        // worker の結果が遅れて届く
+        assert!(
+            d.accept(in_flight, base + Duration::from_millis(20))
+                .is_none(),
+            "空クエリの下に古い行が生え直してはならない"
+        );
+    }
 }

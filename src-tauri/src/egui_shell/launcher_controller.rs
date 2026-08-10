@@ -270,6 +270,8 @@ impl LauncherController {
             rx,
             tag,
         });
+        // 突入時に in-flight を失効させる——しないと launching 中に worker の遅着結果が届き、隠れているはずの results 窓が drain_search 経由で生え直す（spec §4.5）。
+        self.dispatch.invalidate();
         self.state.set_results(Vec::new());
         self.instant_rows_query = None; // 行が消えるため来歴も一体でクリア（finding 0 の規律）
         let app = self.app_handle.clone();
@@ -429,6 +431,7 @@ impl LauncherController {
     /// 再発させないための集約（/code-review #637 finding 6）。
     fn clear_search(&mut self) {
         self.state.set_query(String::new());
+        self.dispatch.invalidate(); // 同期でクエリごと差し替える＝in-flight は古い（spec §4.5）
         self.state.set_results(Vec::new());
         self.search_debounce.cancel();
         self.instant_rows_query = None;
@@ -759,9 +762,11 @@ impl LauncherController {
         match self.state.view_kind() {
             ViewKind::Folder => {
                 if let Some(err) = &self.folder_error {
+                    self.dispatch.invalidate(); // 同期で差し替える＝in-flight は古い（spec §4.5）
                     self.state.set_results(err.clone()); // 列挙失敗行（filter 非適用）
                 } else if let Some((ctx, sorted)) = &self.folder_cache {
                     let filtered = ctx.filter_sorted(sorted, self.state.folder_filter());
+                    self.dispatch.invalidate(); // 同期で差し替える＝in-flight は古い（spec §4.5）
                     self.state.set_results(filtered);
                 }
                 // cache 未着（ロード中）は前フレーム結果を保持（フリット無し・set しない）
@@ -814,6 +819,7 @@ impl LauncherController {
                         // 来歴 snapshot: この行集合が instant 候補であることと、その時点の
                         // instant_query を一体で記録する（activate_or_execute が参照・finding 0）。
                         self.instant_rows_query = Some(instant_query);
+                        self.dispatch.invalidate(); // 同期で差し替える＝in-flight は古い（spec §4.5）
                         self.state.set_results(rows);
                     }
                     QueryIntent::Command => {
@@ -831,8 +837,10 @@ impl LauncherController {
                                 let engine = state.engine.lock().unwrap();
                                 engine.recent_history()
                             };
+                            self.dispatch.invalidate(); // 同期で差し替える＝in-flight は古い（spec §4.5）
                             self.state.set_results(rows);
                         } else {
+                            self.dispatch.invalidate(); // 同期で差し替える＝in-flight は古い（spec §4.5）
                             self.state.set_results(Vec::new());
                         }
                     }
@@ -957,6 +965,7 @@ impl LauncherController {
             && sh.reset_pending.swap(false, Ordering::SeqCst)
         {
             self.state.reset();
+            self.dispatch.invalidate(); // hide を跨いだ in-flight は show 後の行を汚さない
             self.folder_cache = None;
             self.folder_error = None;
             self.instant_rows_query = None; // §19.7: resetForShow で instant モード解除
@@ -1289,7 +1298,7 @@ impl LauncherController {
     /// フレームの IME 確定・paste が旧 state で起動されるのを防ぐ（不変条件 3）。
     pub(super) fn on_enter(&mut self, shift_held: bool, ctx: &egui::Context) {
         // #631 flush-on-Enter: trailing 窓内（打鍵後 50ms 以内）の Enter は leading 時点の
-        // 結果で起動しうる。armed な plain クエリは cancel → 同期 run_search で最終クエリの
+        // 結果で起動しうる。armed な plain クエリは cancel → 同期 engine.search で最終クエリの
         // 結果に置換してから dispatch（SolidJS resolveActivationTarget の flushPendingRefresh 同型）。
         let prefix = self.instant_prefix();
         let is_plain = matches!(self.state.interp(&prefix), QueryIntent::Plain);
@@ -1299,7 +1308,20 @@ impl LauncherController {
             self.search_debounce.is_armed(),
         ) {
             self.search_debounce.cancel();
-            self.run_search_with(&prefix);
+            // #1004: Enter は最終クエリの結果をその場で要求するため、worker の往復を待てない（待つ設計は Enter 二度押し・Escape・hide の in-flight を全部抱える）。
+            // Enter は 1 回きりで、ユーザーは結果を待っている——ここの同期は正当である。
+            let query = self.state.query().to_string();
+            if !query.trim().is_empty()
+                && !self.indexing()
+                && let Some(state) = self.app_handle.try_state::<crate::AppState>()
+            {
+                let results = {
+                    let mut engine = state.engine.lock().unwrap();
+                    engine.search(&query)
+                };
+                self.dispatch.invalidate(); // 同期で差し替える＝in-flight は古い
+                self.state.set_results(results);
+            }
             // flush 後の selected は set_results 内の clamp_selected（min クランプ・0 リセットではない）
             // に委ねる——SolidJS parity（resolveActivationTarget → clampSelectedIndex(selected, len)）。
             // trailing 窓内に ↓↑ で動かした非 0 選択は新結果リストへ clamp されたまま引き継がれる

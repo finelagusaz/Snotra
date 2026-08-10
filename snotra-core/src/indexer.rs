@@ -637,10 +637,17 @@ pub fn load_cached_entries(scan: &[ScanPath], show_hidden_system: bool) -> Optio
     )
 }
 
-/// キャッシュを読む、無ければ全走査して保存する。返すのは [`LoadOrScanResult`]——索引の材料（[`IndexMaterial`]）とフェーズ計測である。
+/// `load_or_scan_with_stats` と同じ手順を `dir` 注入で行う（統合テスト用）。
+///
+/// **製品の入口（`Config::config_dir()` を解決する側）でテストを書かないこと。**
+/// 実 `%APPDATA%\Snotra` を読み書きし、テスト実行が実運用のデータを動かす（#1013 の Gotcha）。
 ///
 /// **「`load_or_scan` と同じで、ただし〜」と書いてはならない**（かつてそう書いていた）。その関数は #984 で削除され、この doc だけが実在しない名前を基準に自分を説明する状態になっていた。
-pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> LoadOrScanResult {
+pub fn load_or_scan_with_stats_in(
+    dir: &Path,
+    scan: &[ScanPath],
+    show_hidden_system: bool,
+) -> LoadOrScanResult {
     let total_started = Instant::now();
 
     let hash_started = Instant::now();
@@ -650,7 +657,7 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
     let cache_load_started = Instant::now();
     // **キャッシュが読めたらそこで終わりである。** 走査は明示操作の契機でしか走らない
     // （`docs/adr/ADR-rescan-explicit-only.md`）。
-    if let Some(result) = load_cache(current_hash, LegacyUpgrade::Write) {
+    if let Some(result) = load_cache_in(dir, current_hash, LegacyUpgrade::Write) {
         let cache_load_ms = cache_load_started.elapsed().as_millis();
         let stats = LoadOrScanStats {
             cache_hit: true,
@@ -687,7 +694,8 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
         // 同じ木を 2 回建てることになる（親解決は実測 23 ms）。派生データも同じ理屈で、
         // 保存側が計算して書いたものをここで受け取らないと、下流が全件を実体化してから
         // 建て直すことになる。
-        let material = save_cache_sorted(entries, current_hash);
+        let (tree, masks) = save_cache_sorted_in(dir, entries, current_hash);
+        let material = IndexMaterial::derived(tree, masks);
         let cache_save_ms = cache_save_started.elapsed().as_millis();
 
         (material, scan_ms, sort_ms, cache_save_ms)
@@ -710,6 +718,47 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
         material,
         cache_changed: true,
         stats,
+    }
+}
+
+/// キャッシュを読む、無ければ全走査して保存する。返すのは [`LoadOrScanResult`]——索引の材料（[`IndexMaterial`]）とフェーズ計測である。
+///
+/// 保存先（`Config::config_dir()`）を解決してから [`load_or_scan_with_stats_in`] へ委譲する薄い
+/// 包みである。解決できない環境では保存できないが索引は建てられる——`save_cache_sorted` の
+/// `None` 枝と同じ方針で、走査はして `index.bin` へは書かない。
+pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> LoadOrScanResult {
+    match Config::config_dir() {
+        Some(dir) => load_or_scan_with_stats_in(&dir, scan, show_hidden_system),
+        None => {
+            let total_started = Instant::now();
+
+            let hash_started = Instant::now();
+            let _ = compute_config_hash(scan, show_hidden_system);
+            let hash_ms = hash_started.elapsed().as_millis();
+
+            let scan_started = Instant::now();
+            let mut entries = scan_all(scan, show_hidden_system);
+            let scan_ms = scan_started.elapsed().as_millis();
+
+            let sort_started = Instant::now();
+            sort_entries_canonical(&mut entries);
+            let sort_ms = sort_started.elapsed().as_millis();
+
+            LoadOrScanResult {
+                material: IndexMaterial::from_tree(IndexTree::build(entries)),
+                cache_changed: true,
+                stats: LoadOrScanStats {
+                    cache_hit: false,
+                    hash_ms,
+                    cache_load_ms: 0,
+                    cache_read_ms: 0,
+                    scan_ms,
+                    sort_ms,
+                    cache_save_ms: 0,
+                    total_ms: total_started.elapsed().as_millis(),
+                },
+            }
+        }
     }
 }
 
@@ -3065,6 +3114,53 @@ mod tests {
         assert!(load_cache_in(&dir, config_hash.wrapping_add(1), LegacyUpgrade::Skip).is_none());
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// **キャッシュヒットの起動は走査しない。** #1001 の受け入れの本体である。
+    ///
+    /// 「走査していない」を、時間ではなく**結果**で測る——キャッシュを保存した後で
+    /// 走査対象へファイルを 1 つ足し、それが返る材料に**現れない**ことを見る。
+    /// 走査が 1 回でも走れば現れるので、時計や環境に依存せず決定論的である。
+    ///
+    /// **残る死角**: この検知器が守るのは「走査という副作用が起きないこと」ではなく
+    /// 「cache-hit の材料がキャッシュ由来であること」である。cache-hit 枝へ
+    /// `let _ = scan_all(...)` のように結果を捨てる走査を足す退行は、材料が変わらない
+    /// ので**この検知器では捕まらない**（変異確認で実測。詳細はコミットの報告に残す）。
+    #[test]
+    fn a_cache_hit_startup_does_not_scan() {
+        let dir = temp_dir("cache_hit_no_scan");
+        let scan_root = temp_dir("cache_hit_no_scan_root");
+        std::fs::write(scan_root.join("first.txt"), b"x").expect("write");
+
+        let scan = vec![ScanPath {
+            path: scan_root.display().to_string(),
+            extensions: vec![".txt".into()],
+            include_folders: false,
+        }];
+
+        // 1 回目: cache-miss → 走査して保存する。
+        let first = load_or_scan_with_stats_in(&dir, &scan, false);
+        assert!(!first.stats.cache_hit, "1 回目は cache-miss であること");
+        assert_eq!(first.material.tree().len(), 1);
+
+        // キャッシュを書いた後で対象を増やす。
+        std::fs::write(scan_root.join("second.txt"), b"y").expect("write");
+
+        // 2 回目: cache-hit → 走査しないので、増えたファイルは見えない。
+        let second = load_or_scan_with_stats_in(&dir, &scan, false);
+        assert!(second.stats.cache_hit, "2 回目は cache-hit であること");
+        assert_eq!(
+            second.stats.scan_ms, 0,
+            "cache-hit で走査時間が立ってはならない"
+        );
+        assert_eq!(
+            second.material.tree().len(),
+            1,
+            "cache-hit の起動が走査している（増えたファイルが見えてしまった）"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&scan_root);
     }
 
     /// **旧版を読んだ起動が、その場で現行版へ書き戻す。** 移す前はここが背景再スキャンの

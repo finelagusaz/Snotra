@@ -378,14 +378,27 @@ try {
   # `c:\` は has_path_sep が真になり incremental cache が無効化される＝全件走査の経路。
   # 打鍵から結果までのフレームが予算を超えないことを H6 が判定する（区間は
   # egui_input:changed → egui_search:settled で切れるのでマーカーは要らない）。
-  Send-SnotraKey -VirtualKey 0x43            # c
-  Send-SnotraKey -VirtualKey 0x43 -Up
-  Start-Sleep -Milliseconds 120              # debounce(50ms) の trailing を跨がせる
-  Send-SnotraKeyChord -VirtualKeys @(0x10, 0xBA)   # Shift + ; = :
-  Start-Sleep -Milliseconds 120
-  Send-SnotraKey -VirtualKey 0xDC            # \
-  Send-SnotraKey -VirtualKey 0xDC -Up
-  Start-Sleep -Milliseconds 300              # 全件走査 + 採り込みの完了を待つ
+  # 窓が出ている根拠が要る（$resultsChecked のブロックが egui_results:show を観測済み）ため、
+  # 既存の 1 文字クエリ注入・Escape 注入と同じく $failures.Count -eq 0 でガードする——
+  # 窓が無い状態で注入すると、キューへ送った打鍵が前面の別アプリへ飛ぶ。
+  if ($failures.Count -eq 0 -and $resultsChecked) {
+    # 先行の 1 文字クエリが入力欄に残っているため、消してから打鍵する（既存の再注入前と
+    # 同じ Backspace 作法・356〜362 行）。送らないと "c" が残ったまま "c:\" ではなく
+    # "cc:\" 相当になり、全件走査の経路（has_path_sep）に正しく入らない。
+    Send-SnotraKey -VirtualKey $VK_BACK
+    Start-Sleep -Milliseconds 50
+    Send-SnotraKey -VirtualKey $VK_BACK -Up
+    Start-Sleep -Milliseconds 50
+
+    Send-SnotraKey -VirtualKey 0x43            # c
+    Send-SnotraKey -VirtualKey 0x43 -Up
+    Start-Sleep -Milliseconds 120              # debounce(50ms) の trailing を跨がせる
+    Send-SnotraKeyChord -VirtualKeys @(0x10, 0xBA)   # Shift + ; = :
+    Start-Sleep -Milliseconds 120
+    Send-SnotraKey -VirtualKey 0xDC            # \
+    Send-SnotraKey -VirtualKey 0xDC -Up
+    Start-Sleep -Milliseconds 300              # 全件走査 + 採り込みの完了を待つ
+  }
 
   # 表示中に WebView2 プロセスが増えていないこと（グローバル before/after・SU2 G4 と同じ測り方）
   $webviewAfter = @(Get-Process msedgewebview2 -ErrorAction SilentlyContinue).Count

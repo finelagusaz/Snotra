@@ -156,79 +156,190 @@ PERFORMANCE.md` は #1023 と #1010 を返すが、両者が触ったのはメ�
       `continue` で検査を飛ばしており、**失敗した起動のペイロードは一度も契約検査を受けて
       いなかった**。検査 5 は騙られた run（`event=startup:ready`）にも届く必要があるため
       呼び出し構造を直し、**失敗経路も検査 1〜5 を通るようにした**
-- [ ] (j) を当てて実 config で走らせる
-- [ ] (a)+(j) の同時変異で二重終端を作り、ハーネスの挙動を測る
-- [ ] 各件の結果（赤/素通り・出た文言・機序）を `workspace/plan.md` の下の「実測結果」表へ書き込む
-- [ ] `git status` で作業ツリーに変異が残っていないことを確認する（`git diff` が空）
+- [x] (j) を当てて実 config で走らせる
+      → **素通り（予測どおり）**。`post_main` が 71〜82 → **54〜58 ms** に化けたのに `passed`。
+      検査 4 は**上限だけ**を縛るので、内側の申告が小さくなる方向は原理的に見えない。
+      `hotkey_register` はまた **0.00 ms**（(i) と同じ署名）——**残り時間が「起動していない」
+      ことになる**方向の変異であり、実害の向きとしては (i) より重い
+- [x] (a)+(j) の同時変異で二重終端を作り、ハーネスの挙動を測る
+      → **二重終端は作れた**（生 trace に `startup:` が **2 行**）。**ハーネスは `passed`**——
+      `Wait-SnotraTraceCondition` の `Select-Object -Last 1` が重複を畳み、最後の 1 行しか見ない。
+      **(a) の結論を訂正する**: 「実行不能」なのは**製品経路の再現**であって、**検知器の監査では
+      なかった**。(j) との同時変異で「一度きり性を外したときハーネスが検知するか」は測れ、
+      答えは**検知しない**である
+- [x] 各件の結果（赤/素通り・出た文言・機序）を下の「実測結果」表へ書き込む
+- [x] `git status` で作業ツリーに変異が残っていないことを確認する（`git diff -- src-tauri/` が空）
 
 ### Phase 2 — 測って記録する 2 件
 
-- [ ] `SystemTime::now()` の分解能を **Rust 側で**測る。tight loop で相異なる値の最小差を取り、
+- [x] `SystemTime::now()` の分解能を **Rust 側で**測る。tight loop で相異なる値の最小差を取り、
       標本数と最小/中央値を記録する。**常設のテストにはしない**（環境依存の値を assert すると間欠的に赤くなる）。
-      **測定コードは scratchpad に置いてコミットしない**（下の「決定」）——一度きりの測定であり、
-      結果は環境定数として doc に残る。再現手順は `pre_main_elapsed` の doc が担う
-- [ ] `GetProcessTimes` の creation 取得と `SystemTime::now()` の**順序を決める**。現状は
-      `SystemTime::now()` が先（`startup.rs:483` → `489`）。creation は過去の固定値ゆえ**順序は符号を変えない**
-      が、決めた順序と理由を `pre_main_elapsed` の doc へ書く
-- [ ] `pre_main` の誤差の向き・大きさを測る（`begin()` は anchor → `pre_main_elapsed()` の順ゆえ、
-      誤差は**正方向**に anchor〜now の間隔ぶん乗る）。両順序で N 回サンプルして差を出す
-- [ ] `pre_main` が負にならないことを確かめる（`checked_sub` が `None` を返す形＝出力は `null`。
-      **0 に丸めない**という既存の設計と一致するか）
-- [ ] 測定値を `PERFORMANCE.md`「起動の端から端まで（2026-08-09 計測・release・7 標本）」へ追記する
+      **測定コードは scratchpad に置いてコミットしない**（下の「決定」）
+      → **min / 中央とも 100 ns**（200 標本 / ループ 397 回 / max 2400 ns）。**PowerShell で測った
+      0.0015 ms（1500 ns）と一桁違う**——issue が「代理では測らない」と指定したのは正しかった。
+      issue が保険を掛けた「最悪粒度 15.6 ms」は実測で 5 桁小さい
+- [x] `GetProcessTimes` の creation 取得と `SystemTime::now()` の**順序を決める**
+      → **issue の前提が誤っていた（実装を読んで判明）**。issue は「順序を決めよ」と言うが、
+      **順序は誤差の向きを決める**——`pre_main = now - created` で `created` は過去の固定値ゆえ、
+      `now` が先なら差は**小さく**出る（現状は `now` が先＝過小評価側）。ただし入れ替えで動く額は
+      `SystemTime::now()` 1 回の所要（中央 0 ns / max 200 ns・1000 標本）で、**`pre_main` の
+      粒度（ms）に届かない**。現状の順序を維持し、測定値つきで `pre_main_elapsed` の doc へ書いた
+- [x] `pre_main` の誤差の向き・大きさを測る
+      → **計画の記述が 2 つの誤差を混同していた**。`begin()` の順序（anchor → `pre_main_elapsed()`）が
+      乗せるのは**正方向**の誤差で中央 0 ns / max 100 ns、`pre_main_elapsed` 内部の順序が乗せるのは
+      **負方向**で中央 0 ns / max 200 ns。**別の誤差である**。両方とも ms に届かない。
+      `begin()` の doc の「順序が額を決めるわけではない」も実測に合わせて訂正した
+- [x] `pre_main` が負にならないことを確かめる（`checked_sub` が `None` を返す形＝出力は `null`）
+      → **実機 7 標本で 7.5〜14.8 ms・負値 0 件・`null` 0 件**
+- [x] 測定値を doc へ記録する → **`PERFORMANCE.md` ではなく `startup.rs` の
+      `pre_main_elapsed` / `begin` の doc へ置いた**（計画は `PERFORMANCE.md` を指していた）。
+      これは**運用点の測定値ではなく実装の性質**（時計の分解能・順序の誤差）であり、
+      `PERFORMANCE.md` は運用点の記録が正本である。co-location の側に寄せた
 
 ### Phase 3 — 残置 3 件
 
-- [ ] **L-6（β で確定）**: `index_load_unattributed_ms` の非負性は**現在の呼び出し形では成り立つ**
-      （研究メモの検算）。成り立つ根拠は「外側が内側を包む」「両者が切り捨て」の 2 前提であり、
-      **どちらも機構で守られていない**。前提と、破れたときに負値がそのまま出力へ現れることを
-      `to_json` の当該ブロックの doc へ書く
-- [ ] **L-6（β の機構側）**: `Test-StartupPayload` へ `index_load_unattributed_ms >= 0` を足す。
-      **足したら変異で落ちることまで測る**——保存した実ペイロードの当該値を負へ書き換える
-      （(l) と同じく再ビルド不要）。**セーフティネットの変更ゆえ `.claude/rules/safety-nets.md` の手順が乗る**
-- [ ] **M-5**: `RegisterInitialHotkey` の「起動時 1 回」制約を、**実際に編集される場所**から読める位置へ置く
-      （`PlatformCommand::RegisterInitialHotkey` の variant 宣言と `send_initial_hotkey_registration`）。
-      **`startup.rs` の `//!` にある記述を写さず**、制約の帰結だけを 1 行書いて正本を指す
-- [ ] **L-4**: `unmarked_tail_ns` の説明が `to_json` のインラインコメントにしかない。`//!`「区間は網羅列挙する」
-      の近傍へ、出力項目としての 1 行を置く（**全文を写さない**——正本はインラインのまま）
+- [x] **L-6（β で確定）**: `index_load_unattributed_ms` の非負性は**現在の呼び出し形では成り立つ**。
+      2 前提（外側が内側を包む・両者が切り捨て）と、**破れたときに負値が panic せず出力に現れる**ことを
+      `to_json` の当該ブロックへ書いた。**#1023 で前提が実際に動いた実例も添えた**
+- [x] **L-6（β の機構側）**: `Test-StartupPayload` へ検査 6（`index_load_unattributed_ms >= 0`）を追加。
+      **変異で落ちることを測った**——保存した実ペイロードの当該値を `-1` に書き換えると赤（再ビルド不要）、
+      素のペイロードでは破れ 0 件（偽陽性なし）
+- [x] **M-5**: 「起動時 1 回」制約を `PlatformCommand::RegisterInitialHotkey` の variant 宣言と
+      `send_initial_hotkey_registration` の両方へ置いた。**帰結だけを書いて正本（`startup.rs` の `//!`）を
+      指す形**。**issue の記述を鵜呑みにせず実在を確認した**——代替として案内する variant は
+      `UpdateHotkey` ではなく **`SetHotkey`** である（grep で確認）
+- [x] **L-4**: `unmarked_tail_ns` の 1 行を `//!`「区間は網羅列挙する」へ置き、正本（`to_json` の
+      当該ブロック）を指した
 
 ### Phase 4 — M-2 の判断
 
-- [ ] 二重起動経路を実機で踏み、`bench-startup.ps1` から見えるかを確かめる
-      （**ハーネスは各 run の前に `Stop-Process -Force` で既存の snotra を殺す**〔`bench-startup.ps1:199`〕ので、
-      ハーネス経由では踏めないはずである——それを実測する）
-- [ ] 「直す」「受容する」のどちらかに倒し、根拠とともに `//!` へ 1 行置く（実装は変えない案が
-      code-reviewer の提案であり、既定はそれ）
+- [x] 二重起動経路を実機で踏み、`bench-startup.ps1` から見えるかを確かめる
+      → **2 つ目は exit code 0 / 95 ms / stderr 0 行**（終端も trace も 1 行出さない）。
+      **1 つ目は終端 1 行のまま**（`show_egui_main` は計器を触らない）。ハーネスは各 run の前に
+      既存プロセスを殺すので、**この経路を踏むことは原理的に無い**
+- [x] 「直す」「受容する」のどちらかに倒し、根拠とともに `//!` へ 1 行置く
+      → **「受容する」**。実装は変えず、`//!` に「二重起動は終端を出さない（受容・実測）」節を置いた。
+      **手で踏んだときも取り違えようがない**——2 つ目の stderr が空だからである
 
 ### Phase 5 — 記録の反映と検証
 
-- [ ] Phase 1 の実測結果を `bench-startup.ps1` の `Test-StartupPayload` の doc へ反映する
+- [x] Phase 1 の実測結果を `bench-startup.ps1` の `Test-StartupPayload` の doc へ反映する
       （**素通りが実測された検査の弱さは、その検査の隣に書く**。既に検査 3 はその形で書かれている）
-- [ ] **(e) の検知器を足す**（実測で素通りが確認できたときだけ）— `event` と `ok` / `reason` の整合を
-      検める。ADR-startup-instrument-contract-shape が「イベント名が意味を運ぶ」設計を選びながら、
-      **その名前を値と突き合わせる側が居なかった**箇所である
-- [ ] **(e) の検知器が捕まえることを測る** — **変異 (e) を、検知器を足したハーネスへ当て直して赤を見る**
-      （占有下・変異ビルド）。**Phase 0 の占有対照はこの証拠にならない**——あちらは整合したペイロード
-      （`startup:failed` / `reason=hotkey-registration`）ゆえ、緑は「偽陽性が無い」ことしか言わない
-- [ ] **(j) は doc へ倒す**（検知器を足さない）— 検査 4 の下限は**意図的に置いていない**（trace の到着が
-      ポーリング間隔ぶん遅れる）。ゆえに「終端値が実際より小さくなる方向は見えない」という射程を、
-      `events.rs` の `event_names_are_pairwise_distinct` と同じ形で**検査 4 の隣**へ書く
-- [ ] `startup.rs` の `//!`「受容する残余」を実測後の姿へ更新する（**測ったものと測っていないものの区別**を保つ）
-- [ ] `cargo fmt` / `cargo clippy -p snotra -- -D warnings` / `cargo test -p snotra`（`--lib` を付けない）
-- [ ] `npm run governance:check`（`.md` と `.rs` の見出し参照を触るため）
-- [ ] `npm run bench:startup`（素の release・**7 標本**——Phase 0 と揃える）が緑で通る
+- [x] **(e) の検知器を足す** — 検査 5（`event` と `ok` / `reason` の整合）を追加した
+- [x] **(e) の検知器が捕まえることを測る** — 変異ビルド・占有下で **passed → 赤**へ反転を実測。
+      偽陽性は正常起動（`ok=true`）と実失敗の起動（`ok=false`）の両経路で 0 件
+- [x] **(j) は doc へ倒す**（検知器を足さない）— 検査 4 の doc へ「この検査が見ないもの」を書いた。
+      下限が無いので終端を手前で打ち切る変異は原理的に素通りすること、下限を置かない理由（trace の
+      到着遅れと区別できない）を、`events.rs` の `event_names_are_pairwise_distinct` と同じ形で
+      **検査 4 の隣**に置いた
+- [x] `startup.rs` の `//!`「受容する残余」を実測後の姿へ更新した（**測ったものと測っていないものの
+      区別**を保った——実機観測済みは `HotkeyRegistration` だけ・一度きり性の検知手段が無いことを明記・
+      二重起動の節を新設・既存ハッチが代理である理由を追記）
+- [x] `cargo fmt`（OK）/ `cargo clippy -p snotra --all-targets -- -D warnings`（緑）/
+      `cargo test -p snotra`（241 passed・`--lib` は付けない）/
+      `cargo doc --workspace --no-deps --document-private-items`（exit 0・警告は `snotra-core` の既存分のみ）
+- [x] `npm run governance:check` — 全検査 passed（19 件 / 見出し参照 184 件）
+- [x] `npm run bench:startup`（素の release・7 標本）が緑（**検査 1〜6 すべて有効な状態で**）
+
+## code-reviewer の指摘と対応（ラウンド 1・2026-08-10）
+
+**High 2 件はどちらも私の誤りだった。** 全件 fix-forward で当て、修正差分を同じ道具で再実行した。
+
+- [x] **High 1: 測っていない量の測定値を載せていた** — `pre_main_elapsed` の順序を入れ替えたとき
+      動くのは **`GetProcessTimes` の所要**であって `SystemTime::now()` の所要ではない。
+      「中央 0 ns / max 200 ns」は後者の値で、**帰属が誤っていた**。**対象そのものを測り直した**:
+      `GetProcessTimes` 1 回は **min 100 / 中央 200 / max 5400 ns**（1000 標本）。
+      あわせて「5 桁小さい」（下端で不成立）→「最悪の 5400 ns でも 3 桁下」、「中央 0 ns」→
+      「`Instant` の分解能未満」、7 標本の出所が 2 つ混在していた点も直した
+- [x] **High 2: 実在しない害を理由に挙げ、実在する害を書いていなかった** — `RegisterInitialHotkey`
+      の 2 度目は**終端を 2 行出さない**（`FINISHED` が捨てる——doc が自分で否定していた）。
+      実際の害は `hotkey::register` が同じ `HOTKEY_ID` で失敗し（先に `UnregisterHotKey` を
+      呼ばない・コードで確認）、`INITIAL_HOTKEY_FAILED` が飛んで**偽の登録失敗通知が出る**こと。
+      **無効な理由を書くと「FINISHED が面倒を見るなら制約は要らない」と読まれて外される**
+- [x] **Medium 1**: 「検査は 3 つある」が 6 項目を並べていた（`ae3335d` 時点で既に腐っており、
+      **私が 2 度編集しながら見逃した**）。数を書かず各項を正本とする形へ。宙ぶらりんの
+      `workspace/plan.md` 参照も落とした
+- [x] **Medium 2**: 検査 5 に「見ないもの」が無い非対称（検査 3・4 は持つ）。`event` と `ok` は
+      同じ `outcome` から導かれるので**`outcome` 自体の誤りは素通りする**——射程を隣に書いた
+- [x] **Medium 3**: `occupy-hotkey.ps1` の「唯一の手段」が同ファイル 2 段落上で反証されていた。
+      検査 5 の発火に要るのは `ok=false` の payload であって実登録失敗ではない。
+      **「変異なしで `ok=false` になる対照はこれでしか取れない」**へ狭めた
+- [x] **Medium 4**: `PERFORMANCE.md` の常駐。指標が `WorkingSet64`（private WS ではない）で、
+      測定窓が終端 +1.5s・**旧側は背景再スキャン走行中**であることを明記。差は p50 同士の
+      6〜7 MB ではなく**範囲の最接近 4.3 MB** で述べる形へ
+- [x] **Low 1**: 「ハーネスがこの経路を踏むことは無い」の全称否定 → ハーネスが区別材料
+      （「本体が終了（exit=0）」「trace 行 0」）を出す事実を書く形へ（`SnotraSmoke.psm1:650` で確認）
+- [x] **Low 2**: 二重終端の機序。`Select-Object -Last 1` ではなく**1 行見つけた時点で待機を抜ける**
+- [x] **Low 3**: `a > b ⇒ floor(a) ≥ floor(b)` → `a ≥ b ⇒ …`（外側 = 内側でも非負性が要る）
+- [x] **Low 4**: **私の差分が新しく作った重複**（`Test-StartupPayload` の呼び出し 2 か所・引数一致）。
+      検査を分岐の手前へ出して 1 か所に畳んだ
+- [x] **Low 6**: 「Win32 の排他は modifiers と vk の組に働く」は未測定の仕様主張 → 測ったこと
+      （同じ引数なら失敗する）だけに狭めた
+- [x] **Low 7**: `try` を登録の直後から開く形へ（生成/破棄のペアを構造で守る）
+- **Low 5（受容）**: `.ps1` の見出し参照は G-heading-refs の母集団外。**既知の残余として受容する**
+      ——`.ps1` を母集団へ入れるのはガバナンス機構の変更であり、この issue の射程を超える
+
+**修正差分の再実行**（`AGENTS.md`「レビュー指摘へ修正を当てた」行）: 検査ロジック 3 ケース・
+実機 2 経路（正常/実失敗）・`cargo fmt` / `clippy` / `test`（241 passed）・`governance:check`（19 件）・
+`cargo doc`（`snotra` crate の警告 0）・`bench:startup` 7 標本、いずれも修正前と同じ結論。
+
+## code-reviewer の指摘と対応（ラウンド 2・修正差分の検算）
+
+**ラウンド 1 の修正が 1 件で逆側へ振れ、周辺に 4 件の弱点を作っていた**——`AGENTS.md`
+「修正は指摘箇所へ注意が集中し、周辺に新しい誤りを生む」が実際に起きた形である。
+
+- [x] **Medium A（振れすぎ）**: 「ハーネスは 1 行見つけた時点で抜けるので 2 行目は読まれない」は
+      **実測した状況で偽になりうる**。`Wait-SnotraTraceCondition` は**スナップショット単位**で拾い、
+      その中の最後の 1 行を返す（`SnotraSmoke.psm1:630-640` で確認）。(a)+(j) が作る 2 行は数 ms 差で
+      ポーリング刻みは 100 ms ゆえ**同一スナップショットに入る公算が高く、読まれるのは 2 行目**。
+      ラウンド 1 の版（`Select-Object -Last 1` が畳む）とラウンド 1 の修正版（1 行目で抜ける）は
+      **どちらも半分しか真でなかった**。両方を覆う不変条件「**返るのは常に 1 行だけ**」へ差し替えた
+- [x] **Low B**: `begin()` の「`Instant` の分解能未満（max 100 ns）」が自己矛盾（非零の実測値がある）。
+      かつ**未測定の量（`Instant` の分解能）を新しく持ち込んでいた**。「中央が 0・max 100 ns」へ
+- [x] **Low C**: `SystemTime::now()` の分解能の段落が、High 1 の修正で**孤立した**（何の主張も
+      支えなくなった）。「`pre_main` の値そのものの粒度の下限」として接続し直した
+- [x] **Low D**: `Wait-SnotraTraceCondition` の**表示文言 2 本**へ結合していた（`.ps1` は
+      G-heading-refs の母集団外ゆえ、文言が変われば沈黙で腐る）。性質だけを書く形へ
+- [x] **Low E**: `occupy-hotkey.ps1` の括弧が「偽陽性を測る対照にならない」と書いていたが、
+      **検査 5 から見てハッチ経由と実失敗の payload は同一**（どちらも `ok=false` /
+      `reason=hotkey-registration` / `event=startup:failed`）。「測っている対象が実失敗であること」
+      を担保する、へ狭めた
+- [x] **Low F**: `Get-SnotraPrivateWorkingSetMB` は `WorkingSet64`（プロセス全体）を返しており
+      **名前が嘘だった**。`Get-SnotraWorkingSetMB` へ改名し、呼び出し 1 か所を更新・旧名の由来を doc へ
+- [x] **Low G**: `try` 移動の副作用で `if ($DurationSeconds -gt 0)` が 2 回出ていた。1 つに畳んだ
+
+**ラウンド 2 の検算結果（レビュー側の実測）**: Low 4 の畳み込みは失敗終端 3 種すべてで挙動不変
+（`$terminal -eq $null` は `$data` の手前で `continue` するので新しい呼び出しに到達しない・
+コンソール出力の順序も不変——契約検査は `Write-Host` を持たない）。Low 7 の `try` 移動は
+`finally` の到達性を実際に改善（`throw` 経路は `try` の外＝未登録ゆえ解放不要）。High 1 の帰属は
+両 doc とも正しい量を指す。
+
+**ラウンド 2 の修正後の再実行**: `cargo fmt` OK / `clippy -D warnings` 緑 / `cargo test` 241 passed /
+`cargo doc`（`snotra` crate の警告 0）/ `governance:check` 19 件 / 実機 2 経路（正常＝緑・
+実失敗＝「起動が失敗した」のみ）/ `bench:startup` 7 標本 passed。
 
 ## 実測結果（Phase 1 で埋める）
 
+**8 件すべて当てた。予測が外れたのは (i) と (a) の 2 件である。**
+
 | # | 予測 | 実測 | 出た文言・機序 |
 |---|---|---|---|
-| (l) | 赤 | | |
-| (d) | 赤 | | |
-| (i) | 赤 | | |
-| (c-A) | 赤（`cache_hit` は素通り） | | |
-| (c-B) | 赤 | | |
-| (e) | 素通り | | |
-| (j) | 素通り | | |
-| (a) | 実行不能 | | |
+| (l) | 赤 | **赤** | `post_main_ms == Σ phase_ms` が 7/7 で不成立（差 3〜4 ms＝9 区間ぶんの切り捨て）。**式の形は計画の転記が誤っており、実ペイロードで測って確定させた**（`total` は出力に無い・`pre_main` は `post_main` の外側） |
+| (d) | 赤 | **赤（予測より広い）** | `cargo test` が **4 本**落ちた（予測は 1 本）。`sum_phase_ns` は 4 本が共有する土台。ハーネスも検査 3 で赤（`75668200 != 151336400`・ちょうど 2 倍） |
+| (i) | 赤 | **素通り（外れ）** | 同語反復化で `unmarked_tail = 0` になり、検査 3 は `X == X + 0` で必ず真。**#1000 で実測済みの (h) と同型**だった。**予定外の検知器**: `anchor` が未使用になり `-D warnings` の clippy が最初に落ちる（`_anchor` にすれば通るので弱い）。`hotkey_register` が 0.00 ms になる |
+| (c-A) | 赤（`cache_hit` は素通り） | **赤・`cache_hit` は素通り** | 検査 2 の逆向きが 2 区間を名指し: 「null であるべき区間に値がある: index_load = 1631800 ns」「同 path_merge」。`cache_hit=False` の偽りは一言も咎められない |
+| (c-B) | 赤 | **赤** | 検査 2 の順向き: 「説明されない null: path_merge」。(c-A) と併せて**双方向が両向きとも実証された** |
+| (e) | 素通り | **素通り → 検知器を足して赤** | 素通り時: 登録が実際に失敗しているのに `passed`。`ok=False` / `reason=hotkey-registration` が正直に載ったまま `event` だけが騙る。**検査 5 追加後**: 「event が ok と食い違う: event=startup:ready / ok=False / reason=hotkey-registration（期待 startup:failed）」 |
+| (j) | 素通り | **素通り** | `post_main` が 71〜82 → 54〜58 ms に化けても `passed`。検査 4 は上限だけを縛る。`hotkey_register` が 0.00 ms |
+| (a) | 実行不能 | **測れた（外れ）** | (j) との同時変異で二重終端を作れた（生 trace に `startup:` が 2 行）。**ハーネスは `passed`**——`Select-Object -Last 1` が畳む。**実行不能なのは製品経路の再現であって、検知器の監査ではなかった** |
+
+### 変異が明かした横断的な事実
+
+- **`hotkey_register` の 0.00 ms が 2 つの異なる変異の共通署名である**（(i) と (j)）。
+  `PERFORMANCE.md`「計器が計器の欠陥を暴いた」が記録した配置ミスも同じ署名だった。
+  **人間の目には映るが、検査は誰も 0 を咎めない**——3 つの異なる欠陥に共通する signal である
+- **検査 2 の説明者は 3 つと書かれているが、実際に判定へ使われるのは 2 つである**
+  （`first_run` / `include_path_env`。`cache_hit` は出力するだけ・(c-A) で実測）
 
 ## 不変条件と異常系
 

@@ -14,16 +14,17 @@ Alt+Q である（`SnotraSmoke.psm1` の `New-SnotraVerificationProfile`）。�
 から書く」）。
 
 引数は `platform/hotkey.rs` の `register_prepared` と同じにする——
-`RegisterHotKey(NULL, 1, MOD_NOREPEAT | MOD_ALT, VK_Q)`。**同じ組み合わせでなければ占有に
-ならない**（Win32 の排他は modifiers と vk の組に対して働く）。
+`RegisterHotKey(NULL, 1, MOD_NOREPEAT | MOD_ALT, VK_Q)`。**同じ引数で握れば Snotra 側が
+失敗することは実測した**（どの引数までが「同じ」と見なされるか——`MOD_NOREPEAT` の有無が
+排他に効くか等——は測っていない）。ゆえに `register_prepared` を変えたらここも揃えること。
 
 .NOTES
 **このスクリプトは常設である。** `AGENTS.md`「条件別チェック（トリガー → 参照先）」が撤去条件の
-明記を要求する「調査・測定のための一時的な足場」ではない——理由は、`bench-startup.ps1` の
-`Test-StartupPayload` が持つ「`event` と `ok` / `reason` の整合」検査を**再検算できる唯一の
-手段**だからである。あの検査が効くことは、実際に登録を失敗させた起動（このスクリプトが作る）と、
-失敗を偽る変異ビルドの両方を当てて初めて測れる。**当該検査が消えたら、このスクリプトも用済みに
-なる。**
+明記を要求する「調査・測定のための一時的な足場」ではない——理由は、**実際の `RegisterHotKey`
+失敗を起こせる唯一の手段**だからである。`bench-startup.ps1` の `Test-StartupPayload` が持つ
+「`event` と `ok` / `reason` の整合」検査を、**実際に壊れた起動**に対して検算できる
+（ハッチは登録が成功したままの起動なので、**測っている対象が実失敗であること**はこのスクリプトで
+しか担保できない）。**当該検査が消えたら、このスクリプトも用済みになる。**
 
 **解放し損ねても後を引かない**——プロセスが終われば OS が登録を解放する。`-DurationSeconds` を
 渡さない場合は Ctrl+C で止める（対話用）。エージェントから使うときは秒数を渡すか、
@@ -62,17 +63,15 @@ if (-not [Snotra.HotkeyOccupier]::RegisterHotKey([IntPtr]::Zero, $HOTKEY_ID, $mo
   throw "Alt+Q を握れませんでした（GetLastError=$err）。既に誰かが握っているか、Snotra が起動中です"
 }
 
-Write-Host "Alt+Q を握りました（MOD_NOREPEAT|MOD_ALT + VK_Q・id=$HOTKEY_ID）。" -ForegroundColor Green
-if ($DurationSeconds -gt 0) {
-  Write-Host "$DurationSeconds 秒後に解放します。" -ForegroundColor Cyan
-} else {
-  Write-Host "Ctrl+C で解放します。" -ForegroundColor Cyan
-}
-
+# **`try` は登録の直後から開く**（生成/破棄のペア）。間に置いた行が投げると `finally` を
+# 通らない——実害はプロセス終了で OS が解放するので無いが、ペアは構造で守る。
 try {
+  Write-Host "Alt+Q を握りました（MOD_NOREPEAT|MOD_ALT + VK_Q・id=$HOTKEY_ID）。" -ForegroundColor Green
   if ($DurationSeconds -gt 0) {
+    Write-Host "$DurationSeconds 秒後に解放します。" -ForegroundColor Cyan
     Start-Sleep -Seconds $DurationSeconds
   } else {
+    Write-Host "Ctrl+C で解放します。" -ForegroundColor Cyan
     while ($true) { Start-Sleep -Seconds 1 }
   }
 } finally {

@@ -34,6 +34,13 @@ pub enum PlatformCommand {
     SetLanguage(Language),
     /// Register the initial hotkey. Sent by main after the hotkey-pressed listener
     /// is ready so that no hotkey event is dropped before there is a receiver.
+    ///
+    /// **起動時に 1 回だけ送る。** 2 度目は [`hotkey::register`] が同じ [`hotkey::HOTKEY_ID`] へ
+    /// `RegisterHotKey` を撃って**失敗し**（先に `UnregisterHotKey` を呼ばない）、
+    /// [`crate::events::INITIAL_HOTKEY_FAILED`] が飛んで**偽の登録失敗通知が出る**
+    /// ——ホットキー自体は 1 度目の登録で生きているのに、である。
+    /// **起動計器は壊れない**（`crate::startup` の `FINISHED` が終端を一度きりに保つ）。
+    /// 以降のホットキー変更は [`PlatformCommand::SetHotkey`] を使う。
     RegisterInitialHotkey,
     /// config が壊れて既定値にフォールバックした旨をトレイバルーンで通知する。
     /// トレイ生成後（`SetTrayVisible(true)` の後）に送ること。
@@ -122,6 +129,8 @@ impl PlatformBridge {
     /// 他の送信（[`Self::send_command`]）は fire-and-forget でよい——起動の終端に関わらない
     /// ためである。こちらだけが結果を返すのは、**bridge が生きていない起動を
     /// `startup:failed` として出せないと、ハーネスの「タイムアウト」に化ける**からである。
+    ///
+    /// **起動時に 1 回だけ呼ぶ**（理由は [`PlatformCommand::RegisterInitialHotkey`]）。
     ///
     /// **`thread_id == 0` のガードは持たない。**（以下、理由） [`PlatformBridgePending::wait`] が
     /// その場合に `Err(BridgeError::Init)` を返すので、`thread_id == 0` の

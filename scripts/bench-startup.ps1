@@ -57,7 +57,7 @@ $PhaseKeys = @(
 1 回ぶんのペイロードが契約を満たすか検査し、破れの一覧を返す（空なら合格）。
 
 .DESCRIPTION
-**検査は 3 つある**（`workspace/plan.md` 受け入れ 3）:
+**下に並べた各項が検査の正本である**（数は書かない——足すたびに腐る）:
 
 1. **キーの過不足** — 全区間の `*_ns` / `*_ms` が在ること。`Set-StrictMode` 下で欠落キーは
    `$null` ではなく `PropertyNotFoundException` を投げる（実測）ので、存在判定は
@@ -87,8 +87,18 @@ $PhaseKeys = @(
 5. **`event` と `ok` / `reason` の整合** — イベント名が意味を運ぶ設計（`ADR-startup-instrument-contract-shape`）
    ゆえ、**名前と中身が食い違ったら壊れている**。#1009 で実測: ホットキー登録が実際に失敗した
    起動で `event` だけを `startup:ready` に偽ると、`ok=false` / `reason=hotkey-registration` が
-   正直に載ったまま**検査 1〜4 は全部通った**——キーの存在しか見ておらず、値を一度も読んで
-   いなかったためである。
+   正直に載ったまま**それ以前の検査は全部通った**——キーの存在しか見ておらず、値を一度も
+   読んでいなかったためである。
+
+   **この検査が見ないもの: `outcome` そのものの誤り。** `event` と `ok` は同じ `outcome` から
+   導かれるので、`outcome` を取り違える変異は両方が揃って動き素通りする。捕まえるのは
+   `to_json`（`ok`）と `finish`（`event`）という**別の場所の導出が食い違うこと**だけである。
+   `ok` と `reason` の突き合わせはさらに狭い——両者は `to_json` の隣接 2 行が同じ `outcome` から
+   作るので、その 2 行を同時に変異させない限り落ちない。
+6. **`index_load_unattributed_ms` の非負性** — 外側の区間と内側の `LoadOrScanStats.total_ms` の差
+   であり、**Rust 側は `i64` で引くので負値がそのまま出力に現れる**（panic しない）。非負性が
+   2 つの前提（外側が内側を包む・両者が切り捨て）に乗っていて**どちらも機構で守られていない**
+   ことは `startup.rs` の当該ブロックが正本。ここはその前提が破れたことを外から捕まえる。
 #>
 function Test-StartupPayload {
   [CmdletBinding()]
@@ -181,12 +191,22 @@ function Test-StartupPayload {
     $failures += "ok=false なのに reason が null（失敗の理由が読めない）"
   }
 
+  # --- 6. index_load_unattributed_ms の非負性 ---
+  # `null` は正常（first-run 枝では `LoadOrScanStats` 自体が無い）。値が在るときだけ検める。
+  if ($null -ne $Data.index_load_unattributed_ms -and [long]$Data.index_load_unattributed_ms -lt 0) {
+    $failures += ("index_load_unattributed_ms が負: $($Data.index_load_unattributed_ms)" +
+      "（外側の index_load が内側の LoadOrScanStats.total_ms を下回った——" +
+      "正本は startup.rs の当該ブロック）")
+  }
+
   return $failures
 }
 
-function Get-SnotraPrivateWorkingSetMB {
+function Get-SnotraWorkingSetMB {
   param([int]$ProcessId)
   # **子孫の走査は持たない**（現構成のプロセスツリーは 1 件・#532 SU7 で WebView2 は消滅）。
+  # **返すのは `WorkingSet64`（プロセス全体）であって private working set ではない。**
+  # 旧名 `Get-SnotraPrivateWorkingSetMB` は在りもしない private を名乗っていた（#1009 で改名）。
   $p = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
   if (-not $p) { return $null }
   return [math]::Round($p.WorkingSet64 / 1MB, 1)
@@ -255,7 +275,7 @@ try {
     $memMB = $null
     if ($null -ne $terminal) {
       Start-Sleep -Milliseconds $SettleMs
-      if (-not $proc.HasExited) { $memMB = Get-SnotraPrivateWorkingSetMB -ProcessId $proc.Id }
+      if (-not $proc.HasExited) { $memMB = Get-SnotraWorkingSetMB -ProcessId $proc.Id }
     }
 
     if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
@@ -269,22 +289,20 @@ try {
     }
 
     $data = $terminal.data
+
+    # **契約の検査は成功・失敗のどちらの終端でも走らせる。** 失敗した起動でも payload は契約を
+    # 守るべきであり、**とくに `event` と `ok` の整合はここを通らないと `startup:ready` を騙る
+    # 変異に届かない**——騙られた run は下の失敗分岐へ入らないためである。
+    $contractFailures = Test-StartupPayload -Data $data -PhaseKey $PhaseKeys `
+      -ObservedWallClockMs $observedMs -EventName $terminal.event
+    foreach ($f in $contractFailures) { $failures += "run=$run $f" }
+
     if ($terminal.event -eq 'startup:failed') {
       # **`reason` はそのまま載せる**（ハーネス側で分類名を書き起こさない——写しが 2 部になる）。
       $failures += "run=$run 起動が失敗した: reason=$($data.reason) / reached_phase=$($data.reached_phase)"
       Write-Host "startup:failed reason=$($data.reason)" -ForegroundColor Red
-      # **契約の検査はここでも走らせる。** 失敗した起動でも payload は契約を守るべきであり、
-      # **とくに検査 5（`event` と `ok` の整合）はここを通らないと `startup:ready` を騙る変異に
-      # 届かない**——騙られた run はこの分岐へ入らないので、下の呼び出しが唯一の関門になる。
-      $contractFailures = Test-StartupPayload -Data $data -PhaseKey $PhaseKeys `
-        -ObservedWallClockMs $observedMs -EventName $terminal.event
-      foreach ($f in $contractFailures) { $failures += "run=$run $f" }
       continue
     }
-
-    $contractFailures = Test-StartupPayload -Data $data -PhaseKey $PhaseKeys `
-      -ObservedWallClockMs $observedMs -EventName $terminal.event
-    foreach ($f in $contractFailures) { $failures += "run=$run $f" }
 
     $row = [ordered]@{ run = $run; memory_MB = $memMB }
     foreach ($k in $PhaseKeys) { $row[$k] = $data."${k}_ms" }

@@ -300,17 +300,40 @@ fn measure_real_index_footprint() {
     // `cache_read_ms` は `cache_load_ms` の**内数**ゆえ、残余の計算には足さない
     // （足すと二重計上で残余が負に振れる）。分けて出すのは、読むバイト数と deserialize が
     // オンディスク形式の変更に対して**逆向きに振る舞う**ためである。
+    //
+    // `cache_save_ms` も枝によっては同じ扱いが要る（`LoadOrScanStats::cache_save_ms` の
+    // doc）。cache-miss 枝では scan/sort に続く独立フェーズなので和に足すが、**cache-hit 枝で
+    // 旧版昇格が走った場合はここに入る save 時間が `cache_load_ms` の内数**——足すと
+    // 二重計上になり、残余が負へ振れて `saturating_sub` に黙って潰される（改善したはずの
+    // 計測が壊れた形と同型で、しかも符号が飽和側にしか出ないので気づけない）。cache-hit 枝は
+    // scan_ms/sort_ms が常に 0 なのでそちらは無条件のままでよく、除外が要るのは
+    // cache_save_ms だけである。
+    let cache_save_is_internal = s.cache_hit;
     println!(
-        "  フェーズ: total {}ms = hash {}ms + cache_load {}ms（うち read {}ms）+ scan {}ms + sort {}ms + cache_save {}ms（残余 {}ms）",
+        "  フェーズ: total {}ms = hash {}ms + cache_load {}ms（うち read {}ms{}）+ scan {}ms + sort {}ms + cache_save {}ms（残余 {}ms）",
         s.total_ms,
         s.hash_ms,
         s.cache_load_ms,
         s.cache_read_ms,
+        if cache_save_is_internal && s.cache_save_ms > 0 {
+            format!("・旧版昇格の save {}ms を含む", s.cache_save_ms)
+        } else {
+            String::new()
+        },
         s.scan_ms,
         s.sort_ms,
         s.cache_save_ms,
-        s.total_ms
-            .saturating_sub(s.hash_ms + s.cache_load_ms + s.scan_ms + s.sort_ms + s.cache_save_ms),
+        s.total_ms.saturating_sub(
+            s.hash_ms
+                + s.cache_load_ms
+                + s.scan_ms
+                + s.sort_ms
+                + if cache_save_is_internal {
+                    0
+                } else {
+                    s.cache_save_ms
+                }
+        ),
     );
 
     let LoadOrScanResult { material, .. } = result;

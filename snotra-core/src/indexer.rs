@@ -417,6 +417,15 @@ pub struct LoadOrScanStats {
     pub cache_read_ms: u128,
     pub scan_ms: u128,
     pub sort_ms: u128,
+    /// キャッシュ保存にかかった時間。**枝によって和への足し方が違う。**
+    ///
+    /// cache-miss 枝（scan して save する）では scan_ms / sort_ms に続く独立フェーズであり、
+    /// フェーズの和に足す。**cache-hit 枝で旧版昇格（`upgrade_legacy_cache_in`）が走った
+    /// 場合はここに昇格の save 時間が入るが、`cache_load_ms` の内数である**
+    /// （`cache_read_ms` と同じ扱い——足すと二重計上になり、`total_ms` から差し引く残余計算が
+    /// 負に振れて `saturating_sub` に黙って潰される）。save は `load_cache_in` 呼び出しの
+    /// 内側（`LegacyUpgrade::Write` で旧版を読んだとき）で起きるため、cache_load_ms の外に
+    /// 出しようがない。cache-hit かつ現行版・または `LegacyUpgrade::Skip` のときは 0。
     pub cache_save_ms: u128,
     pub total_ms: u128,
 }
@@ -666,7 +675,10 @@ fn load_or_scan_with_stats_in(
             cache_read_ms: result.read_ms,
             scan_ms: 0,
             sort_ms: 0,
-            cache_save_ms: 0,
+            // 旧版昇格が走ったときだけ非 0（`LoadCacheResult::upgrade_save_ms` の doc）。
+            // `cache_load_ms` の内数——フェーズの和には足さない
+            // （`LoadOrScanStats::cache_save_ms` の doc）。
+            cache_save_ms: result.upgrade_save_ms,
             total_ms: total_started.elapsed().as_millis(),
         };
         return LoadOrScanResult {
@@ -952,6 +964,10 @@ struct LoadCacheResult {
     material: IndexMaterial,
     /// `index.bin` をバイト列として読み終えるまでの時間（`LoadOrScanStats::cache_read_ms` へ運ぶ）。
     read_ms: u128,
+    /// 旧版昇格（`upgrade_legacy_cache_in`）が走った場合の save 所要時間
+    /// （`LoadOrScanStats::cache_save_ms` へ運ぶ）。昇格が走らなかった枝（現行版 v7・
+    /// `LegacyUpgrade::Skip`）では 0。
+    upgrade_save_ms: u128,
     /// 実際に読めた形式のバージョン。**現行版とは限らない**——フォールバック経路で読めた
     /// ときは旧版であり、`Write` のときは旧版枝（`upgrade_legacy_cache_in`）がその場で
     /// 現行版へ書き戻す（[`LegacyUpgrade`] の doc）。
@@ -1010,10 +1026,18 @@ fn upgrade_legacy_cache_in(
     // そのまま焼き込まれる。
     sort_entries_canonical(&mut entries);
     // **`index.bin` を書く経路はすべて書き込みロックを経由する契約である。**
+    //
+    // **ここで測る save_ms は cache-miss 枝の `cache_save_ms` と対称に、save のみを測る**
+    // （直前の `sort_entries_canonical` は含めない）。この区間全体は呼び出し元の
+    // `cache_load_started` の計測区間の内側で起きるため、`LoadOrScanStats::cache_save_ms`
+    // へ運んだ値は `cache_load_ms` の**内数**になる（フェーズの和には足さない——doc を参照）。
+    let save_started = Instant::now();
     let (tree, masks) = with_index_write_lock(|| save_cache_sorted_in(dir, entries, config_hash));
+    let upgrade_save_ms = save_started.elapsed().as_millis();
     LoadCacheResult {
         material: IndexMaterial::derived(tree, masks),
         read_ms,
+        upgrade_save_ms,
         // **`version` は「読めた」版のままにする。** 呼び出し側はこれで「旧版だった」を
         // 知る。書き戻した後の版を入れると、その事実が消える。
         version,
@@ -1058,6 +1082,8 @@ fn finish_legacy_read(
             Some(LoadCacheResult {
                 material,
                 read_ms,
+                // **`Skip` は書き戻さないので save は起きない。**
+                upgrade_save_ms: 0,
                 version: read.version,
             })
         }
@@ -1104,6 +1130,8 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
         return Some(LoadCacheResult {
             material: IndexMaterial::from_untrusted(tree, masks)?,
             read_ms,
+            // **現行版は昇格しないので save は起きない。**
+            upgrade_save_ms: 0,
             version: INDEX_CACHE_VERSION,
         });
     }
@@ -3224,6 +3252,93 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// **旧版昇格の save 時間は `LoadCacheResult::upgrade_save_ms` として見える化されている。**
+    ///
+    /// 昇格 save（`upgrade_legacy_cache_in` → `save_cache_sorted_in`。旧版起動 1 回だけ発生する
+    /// `derive_columns` の再導出 + postcard シリアライズ + 数百 ms 級の書き込み）は、呼び出し元の
+    /// `cache_load_ms` 計測区間の内側で起きる。運ばずに 0 を返すと、実際に save が起きた起動で
+    /// 「保存していない」という**偽の測定値**を `LoadOrScanStats::cache_save_ms` が報告することに
+    /// なる（`LoadOrScanStats` の doc「`cache_load_ms` と `total_ms` の間に処理を足すときは
+    /// 項目を作ること」が守るべき対象そのもの）。
+    /// 両方向を固定する: 旧版を `Write` で読んだときは非 0、現行版を読んだとき
+    /// （昇格が走らない）は 0。
+    #[test]
+    fn load_cache_reports_upgrade_save_ms_only_when_it_upgrades_a_legacy_format() {
+        // `Write` は `INDEX_WRITE_LOCK` を取る（上のテストと同じ理由）。
+        let _guard = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        // 旧版（v4）: 昇格が走るので save 時間が乗る。
+        let legacy_dir = temp_dir("upgrade_save_ms_legacy");
+        let entries = vec![AppEntry {
+            name: "a".into(),
+            target_path: "C:\\a".into(),
+            is_folder: false,
+        }];
+        let bytes = try_serialize_with_header(
+            INDEX_MAGIC,
+            4,
+            &IndexCacheV4 {
+                built_at: 1_700_000_000,
+                entries: entries.clone(),
+                config_hash: 42,
+                char_masks: vec![0; entries.len()],
+                file_name_char_masks: vec![0; entries.len()],
+                lower_names: vec!["a".into()],
+                lower_file_names: vec![None],
+                normalized_keys: vec![],
+            },
+        )
+        .expect("serialize");
+        assert!(cache_bin_file_in(&legacy_dir).save_bytes(&bytes), "save");
+
+        let legacy_result =
+            load_cache_in(&legacy_dir, 42, LegacyUpgrade::Write).expect("v4 が読めること");
+        assert_eq!(legacy_result.material.tree().len(), 1, "材料が正しいこと");
+        // `upgrade_save_ms` は壁時計なので理論上 0ms もありうるが、実際には
+        // `derive_columns` の再導出 + postcard シリアライズ + tmp→rename を含む区間であり、
+        // 手元環境で 0 に丸まったことは無い。0 に丸まる環境が出た場合は壁時計ではなく
+        // 「save のクロージャを実際に通ったか」で判定し直すこと。
+        assert!(
+            legacy_result.upgrade_save_ms > 0,
+            "旧版を Write で読んだら昇格 save が走り、時間が計測されること（実測 0ms は\
+             save を通っていない可能性が高い）"
+        );
+
+        // 現行版（v7）: 昇格しないので save 時間は乗らない。
+        let current_dir = temp_dir("upgrade_save_ms_current");
+        let config_hash = 42u64;
+        let derived = derive_columns(entries);
+        let cache = IndexCache {
+            built_at: 1_700_000_000,
+            names: Cow::Borrowed(&derived.tree.names),
+            is_folder: Cow::Borrowed(&derived.tree.is_folder),
+            parent: Cow::Borrowed(&derived.tree.parent),
+            aux: Cow::Borrowed(&derived.tree.aux),
+            table: Cow::Borrowed(&derived.tree.table),
+            sorted_by_path: derived.tree.sorted_by_path,
+            config_hash,
+            char_masks: Cow::Borrowed(&derived.char_masks),
+            file_name_char_masks: Cow::Borrowed(&derived.file_name_char_masks),
+            lower_names: Cow::Borrowed(&derived.lower_names),
+            lower_file_names: Cow::Borrowed(&derived.lower_file_names),
+        };
+        let bytes =
+            try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache).expect("serialize");
+        assert!(cache_bin_file_in(&current_dir).save_bytes(&bytes), "save");
+
+        let current_result = load_cache_in(&current_dir, config_hash, LegacyUpgrade::Write)
+            .expect("v7 が読めること");
+        assert_eq!(
+            current_result.upgrade_save_ms, 0,
+            "現行版は昇格しないので save 時間は 0 であること"
+        );
+
+        let _ = fs::remove_dir_all(&legacy_dir);
+        let _ = fs::remove_dir_all(&current_dir);
     }
 
     /// **v2 の `Write` 枝を独立に固定する。** v2 はマスクを持たない唯一の版であり、

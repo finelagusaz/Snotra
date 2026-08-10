@@ -31,7 +31,7 @@ pub fn start_index_build(app: &AppHandle) -> bool {
 
     // **アイコンキャッシュを捨てる（メモリ内 `IconCacheState` と `icons.bin` の両方を
     // 無効化）。** #996 が索引照合の剪定を撤去して以来、この無効化は背景再スキャンの
-    // `RescanOutcome::Changed`（main.rs）が担っていた。Task 4（#1001）で背景再スキャンの
+    // `RescanOutcome::Changed`（main.rs）が担っていた。#1001 で背景再スキャンの
     // spawn と結果適用そのものが撤去されたため、**現在はここが唯一の担い手である**。
     // **判定を置かない**——ユーザー（あるいは config 変更）が再構築を
     // 要求した事実そのものが引き金であり、集合が変わったかを測り直す必要は無い。
@@ -106,7 +106,7 @@ pub fn start_index_build(app: &AppHandle) -> bool {
 ///
 /// **索引を建てる手順（PATH マージ + `PrebuiltIndex::from_material`）を共有する
 /// 呼び出し点は、この crate ではこの drain ループの 1 つに閉じている**（背景再スキャンの
-/// 適用は Task 4（#1001）で撤去済み）。手順を書き写すと、片方だけ PATH マージを忘れる
+/// 適用は #1001 で撤去済み）。手順を書き写すと、片方だけ PATH マージを忘れる
 /// 欠陥が沈黙で起きる——PATH のコマンドが検索から消えるが、検索結果自体は出るので
 /// 気づく手段が無い（`normalize_entry_key_into` と同じ理屈）。**起動時のロード直後
 /// （`main.rs` の PATH エントリのスキャン + マージ）は同じ手順を別に持つ**——そこは
@@ -187,7 +187,7 @@ fn notify_indexing_complete(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     /// **アイコンキャッシュの無効化の担い手は現在ここ 1 つだけである。** 背景再スキャンの
-    /// spawn と結果適用（`RescanOutcome::Changed` を契機とした無効化）は Task 4（#1001）で
+    /// spawn と結果適用（`RescanOutcome::Changed` を契機とした無効化）は #1001 で
     /// 撤去済み。#996 が再構築時の索引照合剪定を撤去して以来、**メモリ内
     /// `IconCacheState` と `icons.bin` の両方を無効化する**（`invalidate_icon_cache`）
     /// 直接契機はここだけに限られる——表示無効化トグル（`config_watcher`）はメモリ内のみを
@@ -218,7 +218,7 @@ mod tests {
         assert!(
             body.contains("invalidate_icon_cache("),
             "start_index_build がアイコンキャッシュを無効化していない——背景再スキャンの\
-             spawn/適用は Task 4（#1001）で撤去済みなので、ここが落ちると索引再構築を\
+             spawn/適用は #1001 で撤去済みなので、ここが落ちると索引再構築を\
              直接の契機とする無効化を丸ごと失う"
         );
     }

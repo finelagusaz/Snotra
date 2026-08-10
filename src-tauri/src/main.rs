@@ -1,13 +1,8 @@
 //! アプリケーションのエントリポイント。Tauri のセットアップ・イベントリスナー登録・
 //! トレイ/ホットキー起動を行う。
 //!
-//! 起動時の背景再スキャン（`indexer::load_or_scan_with_stats` が返す `BackgroundRescanTask`）を
-//! setup フェーズで低優先度スレッドに spawn する。`RescanOutcome::Changed` なら
-//! `icon::invalidate_icon_cache` を呼び、返った材料から索引を建てて `apply_rescanned_index` が
-//! 走っているセッションの索引を差し替える。差し替えは `is_index_stale()` と `IndexInputs` の
-//! 同一性、そして材料を走査した対象の同一性を同じロック内で照合した上での条件つきで、
-//! いずれか一つでも不一致なら見送る（理由・残余は `apply_rescanned_index` の doc と設計書
-//! `docs/superpowers/specs/2026-08-10-rescan-applies-its-result-design.md` §2.4・§3）。
+//! 起動時の背景再スキャンは撤去済み（#1001 `docs/adr/ADR-rescan-explicit-only.md`）。
+//! 索引の更新は明示操作（`start_index_build` の kick）だけを経路とする。
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -31,7 +26,7 @@ use std::time::Instant;
 
 use serde_json::json;
 use snotra_core::config::{Config, GeneralConfig, HotkeyConfig, Language, LoadOutcome};
-use snotra_core::engine::{Engine, IndexInputs};
+use snotra_core::engine::Engine;
 use snotra_core::history::HistoryStore;
 use snotra_core::indexer;
 use tauri::{AppHandle, Listener, Manager};
@@ -172,11 +167,10 @@ fn main() {
     let (config, load_outcome) = Config::load_reporting();
     startup::mark(startup::Phase::ConfigLoad);
 
-    let (mut material, initial_indexing, rescan_task) = if is_first_run {
+    let (mut material, initial_indexing) = if is_first_run {
         (
             indexer::IndexMaterial::from_tree(snotra_core::index_tree::IndexTree::empty()),
             true,
-            None,
         )
     } else {
         let result =
@@ -185,12 +179,11 @@ fn main() {
         {
             let s = &result.stats;
             eprintln!(
-                "[index-load] cache_hit={} total={}ms hash={}ms cache_load={}ms digest={}ms scan={}ms sort={}ms cache_save={}ms",
+                "[index-load] cache_hit={} total={}ms hash={}ms cache_load={}ms scan={}ms sort={}ms cache_save={}ms",
                 s.cache_hit,
                 s.total_ms,
                 s.hash_ms,
                 s.cache_load_ms,
-                s.digest_ms,
                 s.scan_ms,
                 s.sort_ms,
                 s.cache_save_ms,
@@ -207,7 +200,7 @@ fn main() {
             include_path_env: config.search.include_path_env,
         });
         startup::mark(startup::Phase::IndexLoad);
-        (result.material, false, result.rescan_task)
+        (result.material, false)
     };
 
     // PATH エントリのスキャン + マージ。**木とマスクは組のまま持つ**ので、片方だけ伸ばす形はここでは書けない（正本は `IndexMaterial` の doc）。**空の場合のガードは持たない**——追記も木への追加も、空なら何もしない。
@@ -366,10 +359,6 @@ fn main() {
 
             // Start config.toml file watcher for external changes (snotra-settings)
             setup_config_watcher(&app_handle);
-
-            // 背景再スキャン（SPEC §3.3 ハイブリッド方式）。キャッシュヒット時のみ。
-            // ロジックは snotra-core、spawn と結果の後始末（アイコン無効化）は src-tauri。
-            setup_background_rescan(&app_handle, rescan_task);
 
             // All windows pre-created and all listeners registered; now safe to show tray.
             // Showing tray before this point would allow right-click menu actions before
@@ -599,111 +588,6 @@ fn setup_config_watcher(app_handle: &AppHandle) {
     }
 }
 
-/// キャッシュヒット時のみ `Some` で渡される背景再スキャンタスクを低優先度スレッド
-/// で実行する（SPEC §3.3 ハイブリッド方式）。ロジックは snotra-core、spawn と結果の
-/// 後始末（アイコン無効化）は src-tauri の責務。
-fn setup_background_rescan(
-    app_handle: &AppHandle,
-    rescan_task: Option<indexer::BackgroundRescanTask>,
-) {
-    if let Some(task) = rescan_task {
-        let handle_for_rescan = app_handle.clone();
-        let _ = std::thread::Builder::new()
-            .name("snotra-index-rescan".to_string())
-            .spawn(move || {
-                indexer::lower_current_thread_priority();
-                let run = task.run();
-                if run.outcome != indexer::RescanOutcome::Changed {
-                    return;
-                }
-                if let Some(icons) = handle_for_rescan.try_state::<IconCacheState>() {
-                    icon::invalidate_icon_cache(&icons);
-                }
-                // `material` と `scanned_config_hash` は対で `Some`（`RescanRun` の doc）。
-                if let (Some(material), Some(scanned_config_hash)) =
-                    (run.material, run.scanned_config_hash)
-                {
-                    apply_rescanned_index(&handle_for_rescan, material, scanned_config_hash);
-                }
-            });
-    }
-}
-
-/// 再スキャンが返した材料で、走っているセッションの索引を差し替える。
-///
-/// **`start_index_build` を呼んではならない。** その drain ループは `rebuild_and_save` を
-/// 通り `scan_all` をもう一度走らせる——走査が 2 回になり、#1001 の当の代金が倍になる。
-/// 材料は再スキャンが既に持っており、建て直す必要は無い。
-///
-/// **重い構築（`build_index_from_material`）はロックの外で行う。** ロックの中に入れて
-/// よいのは差し替えの一瞬だけである。
-///
-/// `scanned_config_hash` は `material` を実際に走査した対象の同一性
-/// （`indexer::scan_identity_hash(scan, show_hidden_system)` と同じ値。運ぶ経緯は
-/// `RescanRun::scanned_config_hash` の doc）。**差し替え前後の 2 回の検査どうしを比べる
-/// だけでは足りない**——本式ビルドが「再スキャンがロックを手放してから 2 回目の検査まで」
-/// の窓で完走すると、1 回目・2 回目の `IndexInputs` はどちらも**その新しい config**を
-/// 指して一致してしまい、旧来の 2 検査は素通りする。だが材料は**それより古い config で
-/// 走査したもの**であり、走査対象の違う索引が stale を立てぬまま居座る（設計書 §3 が
-/// 記す残余）。ゆえに 2 回目のロック内で、**今の config から導いた走査対象の同一性**を
-/// `scanned_config_hash` と直接照合する——snapshot 同士ではなく、材料の出自そのものと
-/// 比べる。
-fn apply_rescanned_index(
-    app: &AppHandle,
-    material: indexer::IndexMaterial,
-    scanned_config_hash: u64,
-) {
-    let Some(state) = app.try_state::<AppState>() else {
-        return;
-    };
-    // **stale なら譲る。** 契機（設定変更・手動再構築など）を問わず本式ビルドが
-    // 動いている（あるいはこれから動く）ということであり、起動時の config で
-    // 走査したこちらに資格は無い。
-    let inputs = {
-        let Ok(engine) = state.engine.lock() else {
-            return;
-        };
-        if engine.is_index_stale() {
-            return;
-        }
-        IndexInputs::from_config(engine.config())
-    };
-    // **走査した対象が今の対象と既に違うなら、重い構築の前に見送る。** 正しさの根拠は
-    // 下の 2 回目の照合にあり、ここは前倒しの節約にすぎない。
-    if indexer::scan_identity_hash(&inputs.scan, inputs.show_hidden_system) != scanned_config_hash {
-        return;
-    }
-
-    let index = indexing::build_index_from_material(material, &inputs);
-
-    let Ok(mut engine) = state.engine.lock() else {
-        return;
-    };
-    let current_inputs = IndexInputs::from_config(engine.config());
-    // **stale だけでは足りない。** 本式ビルドが先に完走すると `complete_index_drain` が
-    // stale を落とすため、2 回目の検査は通ってしまい、**新しい索引を古い入力で建てた
-    // 索引で上書きする**——しかも stale が落ちているので誰も直さない。ゆえに
-    // 「建てたときの入力が今も現在の入力か」まで見る（`complete_index_drain` の
-    // re-diff と同型の判定だが、**台帳には触れない**）。
-    if engine.is_index_stale() || current_inputs != inputs {
-        return;
-    }
-    // **上の 2 検査だけでは閉じない窓が残る（I-1）。** 本式ビルドが「ロック解放〜2 回目の
-    // 検査」の間に完走すると、1 回目・2 回目の `inputs` はどちらもその新しい config を
-    // 指して一致し、上の検査は通ってしまう。それでも材料は古い config で走査したもの
-    // なので、走査した対象そのものを今の config から導いた値と直接照合する。
-    if indexer::scan_identity_hash(&current_inputs.scan, current_inputs.show_hidden_system)
-        != scanned_config_hash
-    {
-        return;
-    }
-    // **`complete_index_drain` を使ってはならない**——あれは「このビルドが現在の
-    // `IndexInputs` を満たした」と台帳へ宣言する操作で、起動時の config で走査した
-    // こちらにその資格は無い。宣言すれば config 変更で立った stale を誤って落とし、
-    // 本来走るべき再構築が走らなくなる。
-    engine.apply_prebuilt_index(index);
-}
-
 /// Show the tray icon now that all windows are pre-created and all event
 /// listeners are registered. Showing tray before this point would allow
 /// right-click menu actions before the windows/listeners are ready (SPEC
@@ -734,64 +618,5 @@ fn setup_startup_display(app_handle: &AppHandle, show_on_startup: bool) {
         snotra_egui_runtime::on_event_loop(app_handle, |app, el| {
             egui_shell::show_egui_main(app, el, Instant::now());
         });
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    /// **走査を 2 回にせず、台帳の資格も僭称しないことを、時間ではなく構造で固定する。**
-    ///
-    /// `start_index_build` の drain ループは `rebuild_and_save`（= `scan_all`）を通るので、
-    /// 再スキャンの適用からそれを呼ぶと全走査が 2 回になる（#1001 の当の代金が倍）。
-    /// `complete_index_drain` は「このビルドが現在の `IndexInputs` を満たした」と台帳へ
-    /// 宣言する操作で、起動時の config で走査したこちらにその資格は無い（宣言すれば
-    /// config 変更で立った stale を誤って落とす）。速さは環境で揺れるが、
-    /// **呼んでいるかどうかは揺れない**。
-    ///
-    /// 母集団は `setup_background_rescan` の spawn 本体から `apply_rescanned_index` の
-    /// 終わりまで（この 2 関数のどちらから退行が生えても捕まえる。`apply_rescanned_index`
-    /// だけに閉じていた前版は spawn 本体への注入に沈黙した）。ソーステキストそのものを見る
-    /// 手は `startup.rs` の `count_matches_the_enum_declaration` と同じ。
-    ///
-    /// **残る死角**: 母集団はこの 2 関数のソーステキストだけであり、**呼び出しグラフは
-    /// 辿らない**。この 2 関数の外に定義したヘルパー経由で `start_index_build` /
-    /// `complete_index_drain` を呼ぶ退行は、母集団の外側にある限り捕まらない。
-    #[test]
-    fn rescan_application_does_not_kick_a_full_rebuild_or_forge_the_ledger() {
-        let src = include_str!("main.rs");
-        let after = src
-            .split_once("fn setup_background_rescan(")
-            .expect("setup_background_rescan が見つからない（改名したらこの検査も直す）")
-            .1;
-        // 最初の "\nfn " は setup_background_rescan と apply_rescanned_index の境界。
-        // 2 番目が apply_rescanned_index の終わり（次の関数の開始）。
-        let mut fn_boundaries = after.match_indices("\nfn ");
-        let _ = fn_boundaries.next();
-        let body = match fn_boundaries.next() {
-            Some((idx, _)) => &after[..idx],
-            None => after,
-        };
-        // **母集団が黙って空にならないことを、まずそれ自体で確かめる。** 終端は
-        // 「2 番目の `\nfn `」という**位置**で切っているため、2 関数の間に別の
-        // 関数を挿入する・`apply_rescanned_index` を移動するといった変更が起きると、
-        // body から apply_rescanned_index が丸ごと落ちて以下の assert が panic せず
-        // 素通りしうる。沈黙する検知器は検知器ではない。
-        assert!(
-            body.contains("fn apply_rescanned_index("),
-            "母集団が apply_rescanned_index を含まない——終端の切り出し（2 番目の `\\nfn `）が\
-             関数の挿入・移動でずれた。位置で切る以上ここが黙ると検査ごと無意味になる"
-        );
-        // 呼び出し（`(` を伴う）だけを見る——`` `start_index_build` `` のような裸の
-        // バッククォート参照は doc/inline コメントが「呼んではならない」理由を説明する
-        // ために既に使っており、それを誤検出しないため。**散文で参照するときも括弧を
-        // 付けないこと**——`` `start_index_build()` `` と書くと同じ理由で偽陽性になる。
-        assert!(
-            !body.contains("start_index_build("),
-            "再スキャンの適用から start_index_build を呼んでいる（全走査が 2 回になる）"
-        );
-        assert!(
-            !body.contains("complete_index_drain("),
-            "再スキャンの適用から complete_index_drain を呼んでいる（台帳の資格を僭称する）"
-        );
     }
 }

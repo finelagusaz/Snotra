@@ -13,7 +13,8 @@ paths:
 - `normalize_entry_key` を変更: 「`normalize_entry_key` の冪等性契約」+「history.rs のキー正規化に関するチェックリスト」
 - 文字ビットマスクの導出を変更: 「`char_bitmask` は `query.rs` に一元化済み」
 - `index.bin` を書く新経路を追加: 「index.bin 書き込みの排他」
-- 背景再スキャン・`icons.bin` に触れる: 「indexer.rs の背景再スキャン」
+- 索引が更新される契機・形式昇格に触れる: 「indexer.rs の索引更新の契機」
+- `scan_all` の重複排除に触れる: 「`scan_all` の重複排除」
 - UI 表示文字列（`is_error` フラグ）: 「開発ルール」
 
 ## トリガー → 検査

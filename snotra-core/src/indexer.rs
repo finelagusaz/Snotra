@@ -2,15 +2,15 @@
 //! **索引の材料を組のまま運ぶ器**（[`IndexMaterial`]）。
 //!
 //! `index.bin` への書き込みは `INDEX_WRITE_LOCK` で単一書き手に直列化し、tmp→rename の
-//! 食い合いによる破損を防ぐ。キャッシュヒット時の背景再スキャンは `BackgroundRescanTask`
-//! として返し、spawn とアイコン無効化は所有者（`src-tauri`）へ委ねる。
+//! 食い合いによる破損を防ぐ。**走査の契機は明示操作だけである**——初回構築・`/s` による
+//! 手動再構築・設定変更による再構築の 3 つで、キャッシュヒットの起動は読むだけで終わる
+//! （判断の記録は `docs/adr/ADR-rescan-explicit-only.md`）。
 //!
 //! 木と派生データを 1 つの型へ束ねるのはこのモジュールの責務である——**両者の長さが揃うこと**
 //! を、消費側の規約ではなく型で持つ（`index.bin` から来た組は `IndexMaterial::from_untrusted`
 //! が検証し、揃わなければ全走査へ落とす）。索引を建てる側は `search` にあり、そちらは組を
 //! ほどかずに受け取る（理由は [`IndexMaterial`] の doc）。
 
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
@@ -19,14 +19,9 @@ use std::hash::{Hash, Hasher};
 use std::os::windows::fs::MetadataExt;
 use std::path::Path;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
-#[cfg(windows)]
-use windows::Win32::System::Threading::{
-    GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL,
-};
 
 use crate::binfmt::{BinFile, try_deserialize_with_header};
 use crate::config::{Config, ScanPath};
@@ -34,7 +29,6 @@ use crate::index_tree::IndexTree;
 use crate::query::{
     file_char_mask, lower_file_name, measure_derived_sharing, name_char_mask, to_lower_folded,
 };
-use crate::rescan_log;
 
 const INDEX_MAGIC: [u8; 4] = *b"INDX";
 /// `index.bin` の現行フォーマット版。
@@ -151,9 +145,10 @@ struct RootRole {
 ///
 /// **額は根の順序に依存する。** 実運用点では最大の根 `C:\` が最後に来るため、その 30 万件が
 /// 丸ごと「照合のみ」になる。**これは判定の欠陥ではない**——順序に対して述語は正しく、額だけが
-/// 構成に依存する。**順序を並べ替えて額を取りに行ってはならない**: 返り値の順序が変わり、
-/// `entries_digest` がずれて毎起動 `index.bin` を書き直す（検知器は
-/// `sorted_comparison_ignores_enumeration_order`）。
+/// 構成に依存する。**順序を並べ替えて額を取りに行ってはならない**: 重複排除は先勝ちであり
+/// （[`Dedup::accept`]）、勝つ根が変われば索引の中身そのものが変わる——根ごとに
+/// `extensions` / `include_folders` が違い、`target_path` は根の文字列へ連ねて組むので
+/// 字面もその根のものになる。
 ///
 /// **完全一致も重なりとして拾う。** `scan_all` は `dedup_scan_paths` を通さない配列も受け取る
 /// （`src-tauri` の `icon_pipeline_cost_probe` が `Config::default_scan_paths()` を直接渡す）。
@@ -400,6 +395,13 @@ fn compare_ascii_lower(lower: &str, raw: &str) -> std::cmp::Ordering {
     lower.len().cmp(&raw.len())
 }
 
+/// `load_or_scan_with_stats` の各フェーズ所要時間。
+///
+/// **`cache_load_ms` と `total_ms` の間に処理を足すときは、必ずここに並ぶ項目を作ること。**
+/// 項目が無い処理は `total_ms` にしか効かず、差を読む者がいなければ計測上は存在しないままに
+/// なる。反復 6 で実際にそうなった——ロード直後に全エントリを複製する処理がここに居たが、
+/// `cache_load_ms` は複製の前で止まるため、起動段の live ブロックの 1/3 を占めたまま
+/// どのフェーズにも現れなかった（項目を足して初めて見えた）。
 #[derive(Debug, Clone, Copy)]
 pub struct LoadOrScanStats {
     pub cache_hit: bool,
@@ -413,15 +415,23 @@ pub struct LoadOrScanStats {
     /// 減るが、形式を圧縮すれば後者は増えうる。分けずに測ると、どちらが効いたのか原理的に
     /// 区別できない。cache-miss の枝では 0（読む対象が無い）。
     pub cache_read_ms: u128,
-    /// 背景再スキャン用の digest を取る時間（キャッシュヒット時のみ非ゼロ）。
-    ///
-    /// **この項目が無かったために、ここに居た全エントリ複製がどのフェーズにも現れなかった。**
-    /// `cache_load_ms` は複製の前で止まり、複製は `total_ms` にしか効かない——差を読む者が
-    /// いなければ、起動段の live ブロックの 1/3 を占める処理が計測上は存在しないままになる。
-    /// **`cache_load_ms` と `total_ms` の間に処理を足すときは、必ずここに並ぶ項目を作ること。**
-    pub digest_ms: u128,
     pub scan_ms: u128,
     pub sort_ms: u128,
+    /// キャッシュ保存にかかった時間。**枝によって和への足し方が違う。**
+    ///
+    /// cache-miss 枝（scan して save する）では scan_ms / sort_ms に続く独立フェーズであり、
+    /// フェーズの和に足す。**cache-hit 枝で旧版昇格（`upgrade_legacy_cache_in`）が走った
+    /// 場合はここに昇格の save 時間が入るが、`cache_load_ms` の内数である**
+    /// （`cache_read_ms` と同じ扱い——足すと二重計上になり、`total_ms` から差し引く残余計算が
+    /// 負に振れて `saturating_sub` に黙って潰される）。save は `load_cache_in` 呼び出しの
+    /// 内側（`LegacyUpgrade::Write` で旧版を読んだとき）で起きるため、cache_load_ms の外に
+    /// 出しようがない。cache-hit かつ現行版を読んだときは 0。
+    ///
+    /// **`load_or_scan_with_stats`（この struct の生成元）は常に `LegacyUpgrade::Write` で
+    /// 呼ぶ**——`LegacyUpgrade::Skip` は corpus テストの入口（`load_cached_entries`）専用で、
+    /// `LoadOrScanStats` を生成しない。ゆえにここでは `Skip` は考慮しなくてよい
+    /// （`LoadCacheResult::upgrade_save_ms` の doc は `Skip` 経由の 0 も併記しているが、
+    /// それは `LoadCacheResult` 自体が両方の呼び出し元を持つため）。
     pub cache_save_ms: u128,
     pub total_ms: u128,
 }
@@ -439,9 +449,6 @@ pub struct LoadOrScanResult {
     pub cache_changed: bool,
     /// 各フェーズの所要時間。
     pub stats: LoadOrScanStats,
-    /// キャッシュヒット時のみ `Some`。`src-tauri` が低優先度スレッドで `run()` し、
-    /// `RescanOutcome::Changed` ならアイコンキャッシュを無効化する。
-    pub rescan_task: Option<BackgroundRescanTask>,
 }
 
 /// v5 フォーマット: ビットマスクに加えて lower_names / lower_file_names を保存。
@@ -582,16 +589,29 @@ fn compute_config_hash(scan: &[ScanPath], show_hidden_system: bool) -> u64 {
 /// `include_path_env` / `migemo_enabled` は含まない（それらは走査ではなく索引の**構築**を
 /// 左右する入力であり、`engine::IndexInputs` が別に持つ）。
 ///
-/// [`RescanRun::scanned_config_hash`] は同じ `compute_config_hash` を通して作った値を運ぶ。
-/// `src-tauri` の `apply_rescanned_index` は、差し替え時点の現在 config からこの入口経由で
-/// 同じ値を導き、`scanned_config_hash` と照合する——**内部を丸ごと公開する代わりに、
-/// 比較に要る計算だけをここへ閉じ込めてある**。
+/// **呼び出し元（`src-tauri` の `apply_rescanned_index`）は #1001 で撤去済みで、
+/// この関数は現在どこからも呼ばれない**——背景再スキャンが返した材料について、
+/// それを走査した時点の対象と差し替え時点の現在 config が同じかをこの入口経由で照合して
+/// いた。**内部を丸ごと公開する代わりに、比較に要る計算だけをここへ閉じ込めてある**という
+/// 設計は、消費者が戻る日のために残す。
 pub fn scan_identity_hash(scan: &[ScanPath], show_hidden_system: bool) -> u64 {
     compute_config_hash(scan, show_hidden_system)
 }
 
 fn cache_bin_file_in(dir: &Path) -> BinFile {
     BinFile::new_in(dir, INDEX_MAGIC, INDEX_CACHE_VERSION, "index.bin")
+}
+
+/// `index.bin` が名乗る最終構築時刻（UNIX 秒）を読む。読めなければ `None`。
+///
+/// **索引本体を読まない。** 設定アプリがこれを呼ぶので、17 MiB の確保を持ち込まない。
+///
+/// **`built_at` が全版で先頭フィールドであることは、観測された性質であって契約ではない**
+/// （v2〜v7 の 6 版で確認した）。新しい版を足すときも先頭へ置くこと——この依存は
+/// `index_cache_on_disk_format_is_stable` の assertion 1 本が固定している。
+pub fn index_built_at_in(dir: &Path) -> Option<u64> {
+    // u64 の postcard varint は最大 10 バイト。
+    cache_bin_file_in(dir).peek_first_field::<u64>(10)
 }
 
 /// `index.bin` に載っているときだけエントリを返す（**走査は絶対にしない**）。実データを
@@ -620,13 +640,29 @@ pub fn load_cached_entries(scan: &[ScanPath], show_hidden_system: bool) -> Optio
     // ときは、木 →`Vec<AppEntry>` の規則が 2 部出荷されていた——片方に触れば corpus テストは
     // 製品が決して見ないデータを検証することになる（`index_tree.rs` の `//!` が「辿る規則は
     // 1 つ」と定めているのと同じ理屈で、戻す規則も 1 つでなければならない）。
-    Some(load_cache(hash)?.material.tree().materialize())
+    //
+    // **`LegacyUpgrade::Skip` を渡す。** ここは開発者の実 `%APPDATA%\Snotra\index.bin` を
+    // 読む corpus テストの入口であり（`search/tests/common.rs`）、`Write` にすると
+    // テストを走らせるだけで実データを書き換える（`LegacyUpgrade` の doc）。
+    Some(
+        load_cache(hash, LegacyUpgrade::Skip)?
+            .material
+            .tree()
+            .materialize(),
+    )
 }
 
-/// キャッシュを読む、無ければ全走査して保存する。返すのは [`LoadOrScanResult`]——索引の材料（[`IndexMaterial`]）とフェーズ計測、そしてキャッシュヒット時だけ背景再スキャンのタスクである。
+/// `load_or_scan_with_stats` と同じ手順を `dir` 注入で行う（統合テスト用）。
+///
+/// **製品の入口（`Config::config_dir()` を解決する側）でテストを書かないこと。**
+/// 実 `%APPDATA%\Snotra` を読み書きし、テスト実行が実運用のデータを動かす（#1013 の Gotcha）。
 ///
 /// **「`load_or_scan` と同じで、ただし〜」と書いてはならない**（かつてそう書いていた）。その関数は #984 で削除され、この doc だけが実在しない名前を基準に自分を説明する状態になっていた。
-pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> LoadOrScanResult {
+fn load_or_scan_with_stats_in(
+    dir: &Path,
+    scan: &[ScanPath],
+    show_hidden_system: bool,
+) -> LoadOrScanResult {
     let total_started = Instant::now();
 
     let hash_started = Instant::now();
@@ -634,52 +670,33 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
     let hash_ms = hash_started.elapsed().as_millis();
 
     let cache_load_started = Instant::now();
-    if let Some((result, rescan_generation)) =
-        load_with_index_generation(|| load_cache(current_hash))
-    {
+    // **キャッシュが読めたらそこで終わりである。** 走査は明示操作の契機でしか走らない
+    // （`docs/adr/ADR-rescan-explicit-only.md`）。
+    if let Some(result) = load_cache_in(dir, current_hash, LegacyUpgrade::Write) {
         let cache_load_ms = cache_load_started.elapsed().as_millis();
-        let cache_read_ms = result.read_ms;
-        let cached_version = result.version;
-        let material = result.material;
-        // 背景再スキャンはここでは spawn しない。タスクとして返し、`src-tauri` が
-        // `AppHandle` を持った状態で spawn する（`Changed` 時のアイコン無効化のため）。
-        //
-        // **エントリを複製せず digest を取る。** 複製していた頃は起動のたびに 624,754 個の
-        // `String` を確保しており（実測・ロード段の live ブロックの 1/3）、しかも
-        // `cache_load_ms` が**この行の前で止まる**ため、どのフェーズ計測にも現れなかった。
-        let digest_started = Instant::now();
-        let rescan_task = BackgroundRescanTask {
-            scan: scan.to_vec(),
-            show_hidden_system,
-            config_hash: current_hash,
-            cached_digest: digest_over(material.tree()),
-            generation: rescan_generation,
-            cached_version,
-            cached_len: material.tree().len(),
-        };
-        let digest_ms = digest_started.elapsed().as_millis();
         let stats = LoadOrScanStats {
             cache_hit: true,
             hash_ms,
             cache_load_ms,
-            cache_read_ms,
-            digest_ms,
+            cache_read_ms: result.read_ms,
             scan_ms: 0,
             sort_ms: 0,
-            cache_save_ms: 0,
+            // 旧版昇格が走ったときだけ非 0（`LoadCacheResult::upgrade_save_ms` の doc）。
+            // `cache_load_ms` の内数——フェーズの和には足さない
+            // （`LoadOrScanStats::cache_save_ms` の doc）。
+            cache_save_ms: result.upgrade_save_ms,
             total_ms: total_started.elapsed().as_millis(),
         };
         return LoadOrScanResult {
-            material,
+            material: result.material,
             cache_changed: false,
             stats,
-            rescan_task: Some(rescan_task),
         };
     }
     let cache_load_ms = cache_load_started.elapsed().as_millis();
 
     // 権威的書き手: scan + sort + save を書き込みロック保持下で行い、
-    // 背景再スキャン / 別ビルドとの index.bin 同時書き込みを防ぐ。
+    // 別ビルドとの index.bin 同時書き込みを防ぐ。
     // フェーズ計測はクロージャの戻り値として持ち出す。
     let (material, scan_ms, sort_ms, cache_save_ms) = with_index_write_lock(|| {
         let scan_started = Instant::now();
@@ -695,7 +712,8 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
         // 同じ木を 2 回建てることになる（親解決は実測 23 ms）。派生データも同じ理屈で、
         // 保存側が計算して書いたものをここで受け取らないと、下流が全件を実体化してから
         // 建て直すことになる。
-        let material = save_cache_sorted(entries, current_hash);
+        let (tree, masks) = save_cache_sorted_in(dir, entries, current_hash);
+        let material = IndexMaterial::derived(tree, masks);
         let cache_save_ms = cache_save_started.elapsed().as_millis();
 
         (material, scan_ms, sort_ms, cache_save_ms)
@@ -707,8 +725,6 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
         cache_load_ms,
         // cache-miss の枝は `index.bin` を読み切れていない（不在・stale・破損のいずれか）。
         cache_read_ms: 0,
-        // cache-miss の枝は背景再スキャンを返さない（走査したてが最新である）。
-        digest_ms: 0,
         scan_ms,
         sort_ms,
         cache_save_ms,
@@ -720,126 +736,61 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
         material,
         cache_changed: true,
         stats,
-        rescan_task: None,
     }
 }
 
-/// ソート済みエントリ列の digest。背景再スキャンが「索引が変わったか」を判定するためだけに
-/// 使う（かつては全エントリの複製を抱えて逐一比較していた）。
+/// キャッシュを読む、無ければ全走査して保存する。返すのは [`LoadOrScanResult`]——索引の材料（[`IndexMaterial`]）とフェーズ計測である。
 ///
-/// **`entries_equal` が見ていた 3 フィールドと長さをすべて混ぜること。** 1 つでも落とすと、
-/// その種の変更を**確率ではなく確定で**永久に見逃す（`is_folder` を落とせば folder↔file の
-/// 反転が永遠に検出されない）。列はどちらも `sort_entries_canonical` を通っており
-/// （保存 3 経路と `try_background_rescan_in` のすべてで直前に呼ぶ）、順序は canonical である。
-///
-/// **この値を `index.bin` へ書いてはならない。** 突き合わせるのはロード直後に取った値と、
-/// 背景スレッドが走査後に取った値——どちらも同じプロセス・同じバイナリである。ゆえに
-/// `DefaultHasher` の出力が Rust のバージョン間で変わっても影響せず、下の `CHUNK` を
-/// 変えてもよい。
-///
-/// **永続化は「12 ms を消せる」最適化に見えるが、その瞬間にオンディスク互換の制約へ化ける。**
-/// ディスクへ書く `compute_config_hash` は、版が変わるとキャッシュが 1 度無効になるという
-/// 性質を既に背負っている。**契約と受容する残余（衝突の帰結）の正本は [`digest_over`] の
-/// doc である**——こちらは 2 つの source のうち `&[AppEntry]` 専用の入口にすぎない。
-fn entries_digest(entries: &[AppEntry]) -> u64 {
-    digest_over(&entries)
-}
+/// 保存先（`Config::config_dir()`）を解決してから [`load_or_scan_with_stats_in`] へ委譲する薄い
+/// 包みである。解決できない環境では保存できないが索引は建てられる——`save_cache_sorted` の
+/// `None` 枝と同じ方針で、走査はして `index.bin` へは書かない。
+pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> LoadOrScanResult {
+    match Config::config_dir() {
+        Some(dir) => load_or_scan_with_stats_in(&dir, scan, show_hidden_system),
+        None => {
+            // **ここだけ `with_index_write_lock` を経由しない。** 保存先が無いので
+            // `index.bin` を書かず、保護すべき共有資源（tmp→rename の書き込み対象）が
+            // そもそも存在しない——「index.bin を書く経路は排他を経由する」契約
+            // （→「index.bin 書き込みの排他」）が対象を持たないだけで、免除ではない。
+            let total_started = Instant::now();
 
-/// digest が 1 件から読むもの。**比べる 2 辺が別の形で索引を持つために要る。**
-///
-/// 背景再スキャンは走査結果（`Vec<AppEntry>`・フルパスを実体で持つ）を、ロード側は
-/// [`IndexTree`]（フルパスを持たず組み直す）を差し出す。**畳み込みの形を 2 回書いては
-/// ならない**——塊の切り方が digest の値そのものを決めるので、別実装にした瞬間に
-/// 両辺が永久に食い違い、再スキャンが毎起動走り続ける（結果は正しいまま静かに遅くなる）。
-/// ここを通す限り、混ぜる値も順序も塊の境界も 1 つの実装が決める。
-trait DigestSource: Sync {
-    fn count(&self) -> usize;
-    /// `i` 番の `name` / `target_path` / `is_folder` を**この順で**混ぜる。
-    ///
-    /// `scratch` はフルパスを組み直す側だけが使う作業用バッファで、中身は捨てられる。
-    fn mix(&self, i: usize, scratch: &mut String, hasher: &mut DefaultHasher);
-}
+            let hash_started = Instant::now();
+            let _ = compute_config_hash(scan, show_hidden_system);
+            let hash_ms = hash_started.elapsed().as_millis();
 
-impl DigestSource for &[AppEntry] {
-    fn count(&self) -> usize {
-        self.len()
-    }
-    fn mix(&self, i: usize, _scratch: &mut String, hasher: &mut DefaultHasher) {
-        let e = &self[i];
-        e.name.hash(hasher);
-        e.target_path.hash(hasher);
-        e.is_folder.hash(hasher);
-    }
-}
+            let scan_started = Instant::now();
+            let mut entries = scan_all(scan, show_hidden_system);
+            let scan_ms = scan_started.elapsed().as_millis();
 
-impl DigestSource for IndexTree {
-    fn count(&self) -> usize {
-        self.len()
-    }
-    fn mix(&self, i: usize, scratch: &mut String, hasher: &mut DefaultHasher) {
-        self.names[i].hash(hasher);
-        // **組み直した結果は原文とバイト一致する**（`raw_path_into` の doc が根拠の所在を
-        // 持つ）。ゆえに走査結果と同じバイト列が混ざる。
-        self.path_into(scratch, i);
-        scratch.hash(hasher);
-        self.is_folder[i].hash(hasher);
-    }
-}
+            let sort_started = Instant::now();
+            sort_entries_canonical(&mut entries);
+            let sort_ms = sort_started.elapsed().as_millis();
 
-/// 塊の大きさ。**値を変えると digest が変わる**（分割が畳み込みの形を決めるため）。
-/// プロセス内でしか比較しないので問題にならない——契約の正本は [`digest_over`] の doc である
-/// （[`entries_digest`] は 2 つの source のうち片方専用の入口にすぎないので、そちらを指すと
-/// 一般側を読むために特殊側へ跳ぶことになる）。
-///
-/// **`index_tree::resolve_all` の刻みとは独立である**（片方は親の解決、片方は畳み込みの境界）。
-/// 値が 8192 で一致しているのは偶然であり、共通化しない。
-const DIGEST_CHUNK: usize = 8192;
-
-/// [`DigestSource`] を畳み込んで 1 つの u64 にする。**畳み込みの形はここが唯一持つ。**
-///
-/// **契約: この値はプロセス内でしか比較しない。** `DefaultHasher`（SipHash 1-3）の出力は
-/// Rust のバージョン間で安定である保証が無く、[`DIGEST_CHUNK`] も畳み込みの形を決めるので、
-/// どちらも今は自由に動かせる——ディスクへ出した瞬間に動かせなくなる。書くと決めるなら、
-/// 安定なハッシュ関数を明示的に選び、刻みを形式の一部として固定し、`IndexCache` の
-/// バージョンを上げること（手順は `snotra-core/CLAUDE.md`「IndexCache バージョン変更
-/// チェックリスト」）。
-///
-/// **受容する残余: 衝突（2⁻⁶⁴）は「変わったのに Unchanged と報告する」形で現れる。**
-/// 索引は次にファイルシステムが変わるまで古いままになり、アイコンキャッシュも無効化されない。
-/// **一時的ではなく、その状態が続く限り持続する**——同じ組み合わせなら毎回同じ衝突になる。
-/// `compute_config_hash` は同じ u64 でキャッシュの有効性そのものを判定しており（衝突すれば
-/// **別の config の索引をそのまま使う**）、こちらの帰結はそれより軽い。
-fn digest_over<S: DigestSource + ?Sized>(src: &S) -> u64 {
-    let n = src.count();
-    // 塊ごとに並列でハッシュし、**塊の順に**畳む。長さを先に混ぜるので分割は一意に決まり、
-    // 境界の曖昧さは生じない。**解放と違ってハッシュは並列化が効く**——実測 43 → 12 ms
-    // （直列版と各 3 回の最小値で比較。`search/build.rs` の共有の潰しは同じ手が効かなかった）。
-    let chunk_digests: Vec<u64> = (0..n)
-        .step_by(DIGEST_CHUNK)
-        .collect::<Vec<_>>()
-        .into_par_iter()
-        .map(|start| {
-            let end = (start + DIGEST_CHUNK).min(n);
-            let mut hasher = DefaultHasher::new();
-            // 組み直す側のためのバッファは**塊ごとに 1 本**（1 件ごとに確保しない）。
-            let mut scratch = String::new();
-            for i in start..end {
-                src.mix(i, &mut scratch, &mut hasher);
+            LoadOrScanResult {
+                material: IndexMaterial::from_tree(IndexTree::build(entries)),
+                cache_changed: true,
+                stats: LoadOrScanStats {
+                    cache_hit: false,
+                    hash_ms,
+                    cache_load_ms: 0,
+                    cache_read_ms: 0,
+                    scan_ms,
+                    sort_ms,
+                    cache_save_ms: 0,
+                    total_ms: total_started.elapsed().as_millis(),
+                },
             }
-            hasher.finish()
-        })
-        .collect();
-
-    let mut hasher = DefaultHasher::new();
-    n.hash(&mut hasher);
-    for d in chunk_digests {
-        d.hash(&mut hasher);
+        }
     }
-    hasher.finish()
 }
 
-/// 正準の並び。**digest の値と木の形の両方をこの順序が決める**ので、比べる両辺・木を建てる
-/// 両者は必ずここを通すこと（写しを書くと、写した側だけが旧い並びで木を建てて緑を返す）。
+/// 正準の並び。**木の形をこの順序が決める**ので、木を建てる者は必ずここを通すこと
+/// （写しを書くと、写した側だけが旧い並びで木を建てて緑を返す）。
+///
+/// **`save_cache_sorted(_in)` を呼ぶ側は直前にここを通す契約である。** 親の解決は整列済みを
+/// 前提に `target_path` を二分探索するので（[`crate::index_tree`] の `resolve_one`）、崩すと
+/// 親が解決されないまま木が平たくなり、接頭辞共有で削ったフルパスが `table` へ実体で戻る。
+/// **症状は「`index.bin` が太る」だけで検索結果は正しいまま**ゆえ、挙動テストでは捕まらない。
 pub(crate) fn sort_entries_canonical(entries: &mut [AppEntry]) {
     entries.sort_by(|a, b| {
         a.target_path
@@ -998,7 +949,7 @@ fn save_cache_sorted_in(
 /// PATH エントリをマージするなら [`IndexMaterial::extend_with_path_entries`] を通すこと。
 pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> IndexMaterial {
     // 権威的書き手: scan + sort + save を書き込みロック保持下で行い、
-    // 背景再スキャン / 別の rebuild との index.bin 同時書き込みを防ぐ。
+    // 別の書き手との index.bin 同時書き込みを防ぐ。
     with_index_write_lock(|| {
         let mut entries = scan_all(scan, show_hidden_system);
         sort_entries_canonical(&mut entries);
@@ -1011,22 +962,142 @@ pub fn rebuild_and_save(scan: &[ScanPath], show_hidden_system: bool) -> IndexMat
 struct LoadCacheResult {
     /// 索引の材料。**v7 は木をディスクから直接読み、旧版は `target_path` から建て直す。**
     ///
-    /// **マスクを持つ版の枝はすべて [`IndexMaterial::from_untrusted`] を通す**（列長を検証する）。**「どの枝も」と書いてはならない**——マスクを持たない版は検証する列が無いので `from_tree` を通る。構成上の正しさで検証を省けるのは導出したその足の組だけである。
+    /// **通る構築子は `upgrade`（[`LegacyUpgrade`]）で分かれる。** `Write` はどの版でも
+    /// `upgrade_legacy_cache_in` 経由で [`IndexMaterial::derived`]（自分で導出した組・
+    /// 長さを検証しない）を通る。`Skip` はディスクの生データをそのまま使うため、
+    /// マスクを持つ版（v3〜v7）は [`IndexMaterial::from_untrusted`]（列長を検証する）、
+    /// マスクを持たない v2 だけ `from_tree` を通る。
     material: IndexMaterial,
     /// `index.bin` をバイト列として読み終えるまでの時間（`LoadOrScanStats::cache_read_ms` へ運ぶ）。
     read_ms: u128,
+    /// 旧版昇格（`upgrade_legacy_cache_in`）が走った場合の save 所要時間
+    /// （`LoadOrScanStats::cache_save_ms` へ運ぶ）。昇格が走らなかった枝（現行版 v7・
+    /// `LegacyUpgrade::Skip`）では 0。
+    upgrade_save_ms: u128,
     /// 実際に読めた形式のバージョン。**現行版とは限らない**——フォールバック経路で読めた
-    /// ときは旧版であり、背景再スキャンがそれを見て現行版へ書き戻す。
+    /// ときは旧版であり、`Write` のときは旧版枝（`upgrade_legacy_cache_in`）がその場で
+    /// 現行版へ書き戻す（[`LegacyUpgrade`] の doc）。
+    ///
+    /// **読み手はテストだけである**（`allow(dead_code)` はそのためである）。かつては背景
+    /// 再スキャンの昇格判定の入力だったが、昇格がロードの旧版枝へ移り、判定は枝そのものに
+    /// なった。**残すのは、フォールバックの鎖のどの枝で読めたのかを外から見る手段がこれ
+    /// しか無いからである**——材料だけを見ても v5 の枝で読めたのか v6 の枝で読めたのかは
+    /// 区別できず、鎖の枝選択の退行は静かに通る。
+    #[allow(dead_code)]
     version: u32,
 }
 
-fn load_cache(config_hash: u64) -> Option<LoadCacheResult> {
+/// 旧版を読んだとき、その場で現行版へ書き戻すか。
+///
+/// **`Skip` が要るのは、製品の起動経路以外にも `load_cache_in` を通る入口があるからである。**
+/// `load_cached_entries` は corpus テストの入口（`search/tests/common.rs`）であり、
+/// 開発者の実 `%APPDATA%\Snotra\index.bin` を読む。ここで書き戻すと、テストを走らせる
+/// だけで実データを書き換える（#1013 と同型）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LegacyUpgrade {
+    Write,
+    Skip,
+}
+
+fn load_cache(config_hash: u64, upgrade: LegacyUpgrade) -> Option<LoadCacheResult> {
     let dir = Config::config_dir()?;
-    load_cache_in(&dir, config_hash)
+    load_cache_in(&dir, config_hash, upgrade)
+}
+
+/// 旧版を読んだ枝の共通処理: **走査結果を既に手に持っているので、その場で現行版へ書き戻す。**
+///
+/// **返す材料は書き戻しの副産物である**（`save_cache_sorted_in` が返す木とマスクをそのまま
+/// 使う）。旧版が持っていたマスクは捨てて derive し直すが、これは**昇格する起動でだけ払う
+/// 一回性の代価**であり、以後は現行版の枝に入る。
+///
+/// **保存に失敗してもロードは成功させる。** 昇格は最適化であって、失敗が索引の可用性を
+/// 落としてはならない——落とすと、書けない環境（読み取り専用・ディスク満杯）で
+/// 旧版ユーザーだけが索引を失う。
+///
+/// **`IndexMaterial::derived` を使う（`from_untrusted` ではない）。** `save_cache_sorted_in` →
+/// `derive_columns` がこの場で導出した組であり、ディスクから読んだ検証すべき組ではない
+/// （`IndexMaterial` の型 doc）。列長は `derive_columns` が 1 周で 4 本を埋める構成上の
+/// 保証であり、`Option` で失敗を返す理由が無い。
+fn upgrade_legacy_cache_in(
+    dir: &Path,
+    mut entries: Vec<AppEntry>,
+    config_hash: u64,
+    read_ms: u128,
+    version: u32,
+) -> LoadCacheResult {
+    // **他の全呼び出し元と同じく、保存の直前に整列する。** `save_cache_sorted_in` は
+    // 名前どおり整列済みの入力を前提とする——ここだけ怠ると、旧版ファイルが現在の
+    // canon と違う順序で書かれていた場合に親の解決が当てにならなくなり（規約と帰結は
+    // `sort_entries_canonical` の doc）、平たい木と `sorted_by_path=false` が現行版へ
+    // そのまま焼き込まれる。
+    sort_entries_canonical(&mut entries);
+    // **`index.bin` を書く経路はすべて書き込みロックを経由する契約である。**
+    //
+    // **ここで測る save_ms は cache-miss 枝の `cache_save_ms` と対称に、save のみを測る**
+    // （直前の `sort_entries_canonical` は含めない）。この区間全体は呼び出し元の
+    // `cache_load_started` の計測区間の内側で起きるため、`LoadOrScanStats::cache_save_ms`
+    // へ運んだ値は `cache_load_ms` の**内数**になる（フェーズの和には足さない——doc を参照）。
+    let save_started = Instant::now();
+    let (tree, masks) = with_index_write_lock(|| save_cache_sorted_in(dir, entries, config_hash));
+    let upgrade_save_ms = save_started.elapsed().as_millis();
+    LoadCacheResult {
+        material: IndexMaterial::derived(tree, masks),
+        read_ms,
+        upgrade_save_ms,
+        // **`version` は「読めた」版のままにする。** 呼び出し側はこれで「旧版だった」を
+        // 知る。書き戻した後の版を入れると、その事実が消える。
+        version,
+    }
+}
+
+/// 旧版枝が読み終えた生の材料。**判定（`LegacyUpgrade`）はまだ載っていない。**
+///
+/// `masks` は v2 だけ `None`（マスクを持たない版）。それ以外の旧版は必ず `Some`。
+struct LegacyRead {
+    entries: Vec<AppEntry>,
+    masks: Option<CachedMasks>,
+    version: u32,
+}
+
+/// 旧版枝の出口を一本化する。**`match upgrade` を書くのはここ 1 か所だけである。**
+///
+/// 旧版枝を 1 本足すときは、その版のバイト列を [`LegacyRead`] へ組み立ててここへ渡すだけでよい
+/// ——`Write`/`Skip` の 2 腕を枝ごとに書き起こす義務は生まれない（判定の写しを作らない）。
+fn finish_legacy_read(
+    dir: &Path,
+    config_hash: u64,
+    read_ms: u128,
+    upgrade: LegacyUpgrade,
+    read: LegacyRead,
+) -> Option<LoadCacheResult> {
+    match upgrade {
+        LegacyUpgrade::Write => Some(upgrade_legacy_cache_in(
+            dir,
+            read.entries,
+            config_hash,
+            read_ms,
+            read.version,
+        )),
+        LegacyUpgrade::Skip => {
+            let tree = IndexTree::build(read.entries);
+            let material = match read.masks {
+                Some(masks) => IndexMaterial::from_untrusted(tree, masks)?,
+                // マスクを持たない版（v2）ゆえ検証する列が無い（木の整合は `IndexTree::build` が持つ）。
+                None => IndexMaterial::from_tree(tree),
+            };
+            Some(LoadCacheResult {
+                material,
+                read_ms,
+                // **`Skip` は書き戻さないので save は起きない。**
+                upgrade_save_ms: 0,
+                version: read.version,
+            })
+        }
+    }
 }
 
 /// `load_cache` と同じ読み込みを `dir` 注入で行う（統合テスト用、issue #429）。
-fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
+fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option<LoadCacheResult> {
     let bf = cache_bin_file_in(dir);
     let read_started = Instant::now();
     let bytes = bf.load_bytes()?;
@@ -1065,14 +1136,14 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
         return Some(LoadCacheResult {
             material: IndexMaterial::from_untrusted(tree, masks)?,
             read_ms,
+            // **現行版は昇格しないので save は起きない。**
+            upgrade_save_ms: 0,
             version: INDEX_CACHE_VERSION,
         });
     }
 
     // v6 フォールバック: `target_path` を全件そのまま持つ形式。**読めるが確保が 312,691 回
     // 余分にかかる**——フルパスの `String` を作り、木へ組み替えた段で即座に捨てる。
-    // 背景再スキャンが v7 へ昇格させるまでの 1 回だけ通る経路である（→「indexer.rs の
-    // 背景再スキャン」）。
     if let Ok(cache) = try_deserialize_with_header::<IndexCacheV6>(&bytes, INDEX_MAGIC, 6) {
         if cache.config_hash != config_hash {
             return None;
@@ -1085,17 +1156,21 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
                 lower_file_names: cache.lower_file_names,
             }),
         };
-        return Some(LoadCacheResult {
-            material: IndexMaterial::from_untrusted(IndexTree::build(cache.entries), masks)?,
+        return finish_legacy_read(
+            dir,
+            config_hash,
             read_ms,
-            version: 6,
-        });
+            upgrade,
+            LegacyRead {
+                entries: cache.entries,
+                masks: Some(masks),
+                version: 6,
+            },
+        );
     }
 
     // v5 フォールバック: 派生文字列を全件そのまま持つ形式。**読めるが確保が倍以上かかる**
     // ——625,380 個の `String` を作り、うち約 527,000 個は `assemble` が測って即座に捨てる。
-    // 背景再スキャンが v6 へ昇格させるまでの 1 回だけ通る経路である（→「indexer.rs の
-    // 背景再スキャン」）。
     if let Ok(cache) = try_deserialize_with_header::<IndexCacheV5>(&bytes, INDEX_MAGIC, 5) {
         if cache.config_hash != config_hash {
             return None;
@@ -1108,21 +1183,27 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
                 lower_file_names: cache.lower_file_names,
             }),
         };
-        return Some(LoadCacheResult {
-            material: IndexMaterial::from_untrusted(IndexTree::build(cache.entries), masks)?,
+        return finish_legacy_read(
+            dir,
+            config_hash,
             read_ms,
-            version: 5,
-        });
+            upgrade,
+            LegacyRead {
+                entries: cache.entries,
+                masks: Some(masks),
+                version: 5,
+            },
+        );
     }
 
-    // v4 フォールバック: 末尾の normalized_keys を**読んで捨てる**。復元する 4 本は v5 と同じで
-    // どれも v4 に揃っているため、**Wave 1 はスキップされたまま**（v4 ユーザーの初回起動は
-    // 遅くならない）。
+    // v4 フォールバック: 末尾の normalized_keys を**読んで捨てる**。`Skip`（corpus テストの
+    // 入口のみが通る）のときは v5 と同じ 4 本を復元し、どれも v4 に揃っているため
+    // **Wave 1 はスキップされたまま**（v4 ユーザーの初回起動は遅くならない）。
     //
-    // **昇格は「次回の save」では起きない。** ここはかつてそう書いていたが、save の契機は
-    // cache-miss と背景再スキャンの `Changed` だけであり、索引の中身が変わらない限りその
-    // 「次回」は来ない——実運用点で v4 が残り続け、毎起動 35.98 MiB を読んで捨てていた
-    // （2026-08-07 実測）。昇格させるのは背景再スキャンで、`version` がその判断材料である。
+    // **`Write` のときは `finish_legacy_read` がその場で現行版へ書き戻す。** かつては
+    // 「次回の save」に賭けていたが、当時 save が来る契機は索引の中身が変わったときだけで
+    // あり、変わらない限りその「次回」は来なかった——実運用点で v4 が残り続け、毎起動
+    // 35.98 MiB を読んで捨てていた（2026-08-07 実測）。
     if let Ok(cache) = try_deserialize_with_header::<IndexCacheV4>(&bytes, INDEX_MAGIC, 4) {
         if cache.config_hash != config_hash {
             return None;
@@ -1135,14 +1216,23 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
                 lower_file_names: cache.lower_file_names,
             }),
         };
-        return Some(LoadCacheResult {
-            material: IndexMaterial::from_untrusted(IndexTree::build(cache.entries), masks)?,
+        return finish_legacy_read(
+            dir,
+            config_hash,
             read_ms,
-            version: 4,
-        });
+            upgrade,
+            LegacyRead {
+                entries: cache.entries,
+                masks: Some(masks),
+                version: 4,
+            },
+        );
     }
 
-    // v3 フォールバック: ビットマスクのみ（lower names なし → Wave 1 は実行）
+    // v3 フォールバック: ビットマスクのみ。`Skip` のときは lower names を持たないため
+    // Wave 1 が実行される。**`Write` のときは `finish_legacy_read` 経由で derive し直すため、
+    // v3 ユーザーも Wave 1 がスキップされるようになる**（昇格する起動 1 回ぶんの代価は
+    // `upgrade_legacy_cache_in` の doc を参照）。
     if let Ok(cache) = try_deserialize_with_header::<IndexCacheV3>(&bytes, INDEX_MAGIC, 3) {
         if cache.config_hash != config_hash {
             return None;
@@ -1152,315 +1242,53 @@ fn load_cache_in(dir: &Path, config_hash: u64) -> Option<LoadCacheResult> {
             file_name_char_masks: cache.file_name_char_masks,
             lower: None,
         };
-        return Some(LoadCacheResult {
-            material: IndexMaterial::from_untrusted(IndexTree::build(cache.entries), masks)?,
+        return finish_legacy_read(
+            dir,
+            config_hash,
             read_ms,
-            version: 3,
-        });
+            upgrade,
+            LegacyRead {
+                entries: cache.entries,
+                masks: Some(masks),
+                version: 3,
+            },
+        );
     }
 
-    // v2 フォールバック (マスクなし)
+    // v2 フォールバック (マスクなし)。`masks: None` を渡すと `finish_legacy_read` の `Skip` 腕が
+    // `from_tree` へ落とす（検証する列が無いため）。
     if let Ok(cache) = try_deserialize_with_header::<IndexCacheV2>(&bytes, INDEX_MAGIC, 2) {
         if cache.config_hash != config_hash {
             return None;
         }
-        return Some(LoadCacheResult {
-            // マスクを持たない版ゆえ検証する列が無い（木の整合は `IndexTree::build` が持つ）。
-            material: IndexMaterial::from_tree(IndexTree::build(cache.entries)),
+        return finish_legacy_read(
+            dir,
+            config_hash,
             read_ms,
-            version: 2,
-        });
+            upgrade,
+            LegacyRead {
+                entries: cache.entries,
+                masks: None,
+                version: 2,
+            },
+        );
     }
 
     None
 }
 
 /// `index.bin` の scan + save 区間を直列化する書き込みロック。
-/// 権威的ビルド（`rebuild_and_save` / cache-miss save）と背景再スキャンが共有する。
+/// 書き手（`rebuild_and_save` / cache-miss save / ロードの旧版枝の昇格）が共有する。
 /// `save_cache_sorted` 自体はロックを取らない（呼び出し側が保持する契約）。
 static INDEX_WRITE_LOCK: Mutex<()> = Mutex::new(());
-/// 権威的な index 書き込みの開始ごとに進む世代。
-/// 背景タスクは生成時の値を保持し、ロック取得後に一致を検査する。
-static INDEX_GENERATION: AtomicU64 = AtomicU64::new(0);
-
-fn current_index_generation() -> u64 {
-    INDEX_GENERATION.load(Ordering::Relaxed)
-}
-
-fn snapshot_index_generation() -> u64 {
-    let _guard = INDEX_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    current_index_generation()
-}
-
-/// キャッシュ読み込み前の世代と読み込み結果を対にする。
-/// この順序により、読み込み後に権威的ビルドが始まった場合、返却する背景タスクは
-/// 必ず古い世代を保持し、新しい `index.bin` を上書きせず `Skipped` になる。
-fn load_with_index_generation<T>(load: impl FnOnce() -> Option<T>) -> Option<(T, u64)> {
-    let generation = snapshot_index_generation();
-    load().map(|value| (value, generation))
-}
-
-/// 書き込みロックを非ブロッキングで取得し、取れたらクロージャを実行して `Some(結果)` を返す。
-/// 取得できなければクロージャを実行せず `None` を返す。背景再スキャン等の日和見的書き手が使う。
-fn try_with_index_write_lock<R>(f: impl FnOnce() -> R) -> Option<R> {
-    let _guard = INDEX_WRITE_LOCK.try_lock().ok()?;
-    Some(f())
-}
 
 /// 書き込みロックをブロッキングで取得し、クロージャを実行して結果を返す。
-/// 権威的書き手（`rebuild_and_save` / cache-miss save）が使う。
 fn with_index_write_lock<R>(f: impl FnOnce() -> R) -> R {
     // Mutex<()> は保持する状態を持たないため、poison しても into_inner で回復して継続する。
     // （`.unwrap()` だと一度の panic 以降、全 index 書き込みが永久に panic する）
     let _guard = INDEX_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    INDEX_GENERATION.fetch_add(1, Ordering::Relaxed);
     f()
 }
-
-/// 背景再スキャンの結果。`src-tauri` 側はこれを見てアイコン無効化等の後始末を行う。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RescanOutcome {
-    /// 権威的ビルドが書き込み中でロックを取得できず、再スキャンをスキップした。
-    Skipped,
-    /// 再スキャンしたが、エントリ集合はキャッシュと同一だった。
-    Unchanged,
-    /// エントリ集合がキャッシュと異なり、`index.bin` を更新した。
-    /// 呼び出し側はアイコンキャッシュの無効化を行うこと。
-    Changed,
-}
-
-/// 背景再スキャンの結果。**結末と、索引を建てる材料の組**である。
-///
-/// **材料が載るのは `Changed` のときだけである。** 形式の昇格だけ（`format_upgrade`）の
-/// ときは中身が同一で、差し替えても得るものが無い（索引 1 本ぶんの常駐を無駄に積む）。
-///
-/// **`RescanOutcome` 自身に材料を持たせない。** 持たせると `Copy` と `PartialEq` を失い、
-/// 結末だけを見る既存の検知器が一斉に書き換えになる。
-pub struct RescanRun {
-    pub outcome: RescanOutcome,
-    /// `Changed` のときの索引の材料。**呼び出し側がこれで索引を建てて差し替える。**
-    /// 走査はここまでで 1 回きりであり、呼び出し側が建て直す必要は無い
-    /// ——建て直す実装（`start_index_build` を呼ぶ形）は全走査を 2 回にする。
-    pub material: Option<IndexMaterial>,
-    /// **`material` を実際に走査した対象の同一性**（`scan_identity_hash` と同じ値）。
-    /// `material` と同時にだけ `Some` になる。呼び出し側はこれを、差し替え時点の
-    /// 現在 config から `scan_identity_hash` で導いた値と照合する——**差し替え前後の
-    /// 2 度の検査時点の入力どうしを比べるだけでは、両方が同じ新しい config を指して
-    /// いても「材料はそれより古い config で走査した」ことを見抜けない**（`main.rs`
-    /// `apply_rescanned_index` の doc が実例を持つ）。ここが運ぶのは、その 2 検査の
-    /// どちらとも独立な「材料の出自」そのものである。
-    pub scanned_config_hash: Option<u64>,
-}
-
-/// 背景再スキャン本体。書き込みロックを取得できなければ（権威的ビルドが進行中）
-/// スキャン・保存をせず `Skipped` を返す。再スキャンは日和見的な鮮度維持であり、
-/// 本式ビルドが走っていれば不要。アイコンキャッシュには触れない（`icons.bin` は
-/// `src-tauri` の資源 — 呼び出し側が `Changed` を見て無効化する）。
-fn try_background_rescan(
-    scan: &[ScanPath],
-    show_hidden_system: bool,
-    config_hash: u64,
-    cached_digest: u64,
-    generation: u64,
-    cached_version: u32,
-    cached_len: usize,
-) -> RescanRun {
-    let Some(dir) = Config::config_dir() else {
-        return RescanRun {
-            outcome: RescanOutcome::Skipped,
-            material: None,
-            scanned_config_hash: None,
-        };
-    };
-    try_background_rescan_in(
-        &dir,
-        scan,
-        show_hidden_system,
-        config_hash,
-        cached_digest,
-        generation,
-        cached_version,
-        cached_len,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn try_background_rescan_in(
-    dir: &Path,
-    scan: &[ScanPath],
-    show_hidden_system: bool,
-    config_hash: u64,
-    cached_digest: u64,
-    generation: u64,
-    cached_version: u32,
-    cached_len: usize,
-) -> RescanRun {
-    // **`start` は走査の前に書く。** 終端だけを書く形では、走査より短いセッション
-    // （実測 12 秒 < 22 秒）が「そもそも起動しなかった」と区別できない（#1001）。
-    // `total_ms` はここ（計器自身の前置き——sid 生成・剪定・`start` の追記——より前）で
-    // 計り始めるため、この前置きの時間は scan/sort/digest/save のどこにも属さず
-    // `unattributed_ms` に入る。
-    let started = Instant::now();
-    let sid = rescan_log::new_sid();
-    rescan_log::prune_in(dir);
-    rescan_log::append_in(
-        dir,
-        &rescan_log::start_line(
-            &rescan_log::now_rfc3339(),
-            &sid,
-            scan.len(),
-            cached_len,
-            cached_version,
-        ),
-    );
-
-    let mut rec = rescan_log::RescanRecord::default();
-    let mut material = None;
-    let mut scanned_config_hash = None;
-
-    // 権威的ビルド（rebuild_and_save / cache-miss save）が書き込み中なら Skipped。
-    let changed = try_with_index_write_lock(|| {
-        // 世代検査は書き込みロック取得後に行う。検査後に権威的ビルドが割り込む
-        // TOCTOU を防ぎ、古い snapshot が新しい index.bin を巻き戻さないため。
-        if current_index_generation() != generation {
-            return None;
-        }
-        let t = Instant::now();
-        let mut scanned = scan_all(scan, show_hidden_system);
-        rec.scan = Some(t.elapsed());
-        rec.scanned = Some(scanned.len());
-
-        let t = Instant::now();
-        sort_entries_canonical(&mut scanned);
-        rec.sort = Some(t.elapsed());
-
-        let t = Instant::now();
-        let changed = entries_digest(&scanned) != cached_digest;
-        rec.digest = Some(t.elapsed());
-
-        // **`scanned` を捨てる操作の帰属は分岐で変わる。** `Unchanged` 側はこの後ここで
-        // 暗黙に drop され、どの区間の計測時間にも属さないので `unattributed_ms` に入る。
-        // 一方 `Changed`/昇格側は `save_cache_sorted_in` へ move してその中で消費される
-        // ため `save_ms` の内側に入る——`unattributed_ms` が指すものが結末によって違う。
-
-        // **書く条件は 2 つある。** 中身が変わったとき（従来）と、**読めた形式が旧版のとき**。
-        // 後者を欠くと、索引の中身が変わらない限り旧版が何日でも残り、そのユーザーは
-        // 新形式の削減を**永久に受け取らない**（2026-08-07 に実運用点で実測。詳細は
-        // `background_rescan_upgrades_stale_format_when_entries_are_unchanged`）。
-        //
-        // 昇格をこの経路に置くのは、ここが **`sort_entries_canonical` を通した自前の
-        // 走査結果を既に持っている唯一の場所**だからである。ロード側で書こうとすると、
-        // engine へ move する `entries` の複製が要り、反復 6 で消した 62.5 MiB が復活する。
-        let stale_format = cached_version != INDEX_CACHE_VERSION;
-        if changed || stale_format {
-            // **中身が変わっていないのに書いた**ことを記録へ残す。この経路は
-            // `outcome=unchanged` なのに `save_ms` が非 null になる唯一の理由である。
-            rec.format_upgrade = !changed && stale_format;
-            let t = Instant::now();
-            // **保存が返した木と `CachedMasks` を、そのまま索引の材料にする。**
-            // かつてここは捨てており（「呼び出し側が再構築を kick する」と書いてあったが、
-            // その kick は存在しなかった）、`index.bin` は新しいのに走っているセッションの
-            // 索引は最後まで古いままだった——**索引が常に 1 起動ぶん遅れていた**。
-            // 建て直すのではなく運ぶので、**走査は 1 回のままである**。
-            let (tree, masks) = save_cache_sorted_in(dir, scanned, config_hash);
-            rec.save = Some(t.elapsed());
-            // **中身が変わったときだけ運ぶ**（昇格だけなら中身は同一）。
-            if changed {
-                material = Some(IndexMaterial::derived(tree, masks));
-                // **材料と対で、それを走査した対象の同一性も運ぶ**（I-1）。適用側の
-                // 検査を「差し替え前後の 2 検査どうしの一致」に閉じると、両方が
-                // 同じ新しい config を指していても「材料はそれより古い config で
-                // 走査した」ケースを見抜けない。ここに書く `config_hash` は、まさに
-                // 今 `scan_all` した対象（引数の `scan` / `show_hidden_system`）から
-                // 導いた値であり、`save_cache_sorted_in` へ渡すのと同じ値である。
-                scanned_config_hash = Some(config_hash);
-            }
-        }
-        Some(changed)
-    });
-    let (outcome, logged) = match changed {
-        None => (
-            RescanOutcome::Skipped,
-            rescan_log::LoggedOutcome::SkippedLock,
-        ),
-        Some(None) => (
-            RescanOutcome::Skipped,
-            rescan_log::LoggedOutcome::SkippedGeneration,
-        ),
-        Some(Some(false)) => (
-            RescanOutcome::Unchanged,
-            rescan_log::LoggedOutcome::Unchanged,
-        ),
-        Some(Some(true)) => (RescanOutcome::Changed, rescan_log::LoggedOutcome::Changed),
-    };
-    // **`total` は終端で 1 回読む。** 部分和から作らない（作れば検算が同語反復になる）。
-    rescan_log::append_in(
-        dir,
-        &rescan_log::end_line(
-            &rescan_log::now_rfc3339(),
-            &sid,
-            logged,
-            &rec,
-            started.elapsed(),
-        ),
-    );
-    RescanRun {
-        outcome,
-        material,
-        scanned_config_hash,
-    }
-}
-
-/// 背景再スキャンのタスク。所有データを抱え、`src-tauri` 側のスレッドへ `move` できる。
-/// `load_or_scan_with_stats` がキャッシュヒット時に `Some` で返す。
-///
-/// **全エントリの複製ではなく digest を持つ。** かつては `Vec<AppEntry>` を丸ごと抱えており、
-/// 起動のたびに 312,377 件ぶんの `String` を 624,754 個確保していた（実測 62.5 MiB・ロード段の
-/// live ブロックの 1/3）。比較の消費点は `entries_digest`（private）1 か所で真偽値しか要らない。
-pub struct BackgroundRescanTask {
-    scan: Vec<ScanPath>,
-    show_hidden_system: bool,
-    config_hash: u64,
-    cached_digest: u64,
-    generation: u64,
-    /// ロードで実際に読めた形式のバージョン。**旧版なら、中身が変わっていなくても
-    /// 現行版で書き戻す**（`try_background_rescan_in`）。ここを運ばないと、索引が変わらない
-    /// ユーザーの `index.bin` は旧版のまま留まり、新形式の削減を永久に受け取らない。
-    cached_version: u32,
-    /// ロード時点の索引のエントリ件数。**記録の `cached` に出す**——結末が `Changed` の
-    /// とき「何件から何件へ変わったか」を読み手が追えるようにするため。
-    /// **digest だけを持つ設計（反復 6）は壊さない**——増えるのは `usize` 1 つである。
-    cached_len: usize,
-}
-
-impl BackgroundRescanTask {
-    /// 再スキャンを実行し、**結末と索引の材料の組**を返す。`Changed` のときは呼び出し側が
-    /// アイコンキャッシュを無効化し、返った材料で索引を建てて差し替える。
-    pub fn run(self) -> RescanRun {
-        try_background_rescan(
-            &self.scan,
-            self.show_hidden_system,
-            self.config_hash,
-            self.cached_digest,
-            self.generation,
-            self.cached_version,
-            self.cached_len,
-        )
-    }
-}
-
-/// 呼び出し元スレッドの優先度を下げる。背景再スキャン等のバックグラウンドスレッドが
-/// 起動直後のユーザー操作と CPU を奪い合わないようにする。`src-tauri` が rescan
-/// スレッドの先頭で呼ぶ。
-#[cfg(windows)]
-pub fn lower_current_thread_priority() {
-    unsafe {
-        let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
-    }
-}
-
-#[cfg(not(windows))]
-pub fn lower_current_thread_priority() {}
 
 /// レジストリキーの RAII ガード。Drop 時に自動で RegCloseKey を呼ぶ。
 #[cfg(windows)]
@@ -1979,10 +1807,12 @@ pub struct CacheByteRow {
 pub struct CacheByteBreakdown {
     /// 実際に読めた形式のバージョン。**現行版とは限らない。**
     ///
-    /// 実運用点のファイルが旧版のまま留まることは実際に起きる——`index.bin` を書き直す契機は
-    /// cache-miss と背景再スキャンの `Changed` だけであり、索引の中身が変わらない限り**旧版が
-    /// 何日でも残る**（2026-08-07 に実測: v5 導入後の実 `index.bin` が v4 のままで、
-    /// `normalized_keys` を毎起動で読んで捨てていた）。**この値を読まずに内訳を解釈しないこと。**
+    /// この計器はファイルを直接読むだけで、旧版を現行版へ書き戻さない（それをするのは
+    /// `load_cache_in` の旧版枝である・[`LegacyUpgrade`] の doc）。ゆえに製品がまだ一度も
+    /// ロードしていない `index.bin` はここでは旧版のまま現れる。かつては書き戻しの契機が
+    /// 索引の中身の変化に括り付いており、**旧版が何日でも残った**——2026-08-07 に実測した
+    /// （v5 導入後の実 `index.bin` が v4 のままで、`normalized_keys` を毎起動で読んで捨てて
+    /// いた）。**この値を読まずに内訳を解釈しないこと。**
     pub version: u32,
     /// `index.bin` のファイル長（ヘッダ 8 バイトを含む）。
     pub file_len: usize,
@@ -2409,7 +2239,6 @@ fn build_breakdown(
 mod tests {
     use super::*;
     use crate::binfmt::{try_deserialize_with_header, try_serialize_with_header};
-    use crate::rescan_log;
     use std::fs;
 
     /// `INDEX_WRITE_LOCK` に触れるテストを直列化するガード。
@@ -2888,6 +2717,16 @@ mod tests {
              意図的なら INDEX_CACHE_VERSION をバンプし golden を更新すること"
         );
 
+        // **`index_built_at_in` はヘッダー直後の最初のフィールドが `built_at` である
+        // ことに依存している。** フィールドを並べ替えると golden も落ちるが、落ちた側が
+        // 「並べ替えた」だけを報せて依存の所在を報せない。ここで名指ししておく。
+        assert_eq!(
+            crate::binfmt::peek_first_field_from_bytes::<u64>(&bytes, INDEX_MAGIC),
+            Some(1_700_000_000),
+            "ヘッダー直後の最初のフィールドが built_at でなくなった。index_built_at_in が\
+             黙って別の値を返すようになる（表示だけが壊れ、テストは他が全部通る）"
+        );
+
         let restored: IndexCache<'static> =
             try_deserialize_with_header(GOLDEN_V7, INDEX_MAGIC, INDEX_CACHE_VERSION)
                 .expect("凍結 v7 バイトがロードできること");
@@ -3013,10 +2852,11 @@ mod tests {
         let dir = temp_dir("v6_frozen_through_load_cache_in");
         fs::write(dir.join("index.bin"), GOLDEN_V6).expect("write v6 index.bin");
 
-        let result = load_cache_in(&dir, 12345).expect("v6 の index.bin が読めること");
+        let result =
+            load_cache_in(&dir, 12345, LegacyUpgrade::Skip).expect("v6 の index.bin が読めること");
         assert_eq!(
             result.version, 6,
-            "v6 として読めたことが昇格の判断材料になる"
+            "「読めた版」を運ぶ（`Write` のときは昇格の判断材料にもなる。`LegacyUpgrade` の doc）"
         );
         let (tree, masks) = result.material.into_parts();
         assert_eq!(tree.len(), 3);
@@ -3055,7 +2895,7 @@ mod tests {
         }
 
         // config_hash が違えば stale 扱いで None（他の版の枝と同じ規律）。
-        assert!(load_cache_in(&dir, 12346).is_none());
+        assert!(load_cache_in(&dir, 12346, LegacyUpgrade::Skip).is_none());
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -3084,10 +2924,11 @@ mod tests {
         let dir = temp_dir("v5_frozen_through_load_cache_in");
         fs::write(dir.join("index.bin"), GOLDEN_V5).expect("write v5 index.bin");
 
-        let result = load_cache_in(&dir, 12345).expect("v5 の index.bin が読めること");
+        let result =
+            load_cache_in(&dir, 12345, LegacyUpgrade::Skip).expect("v5 の index.bin が読めること");
         assert_eq!(
             result.version, 5,
-            "v5 として読めたことが昇格の判断材料になる"
+            "「読めた版」を運ぶ（`Write` のときは昇格の判断材料にもなる。`LegacyUpgrade` の doc）"
         );
         let (tree, masks) = result.material.into_parts();
         assert_eq!(tree.len(), 2);
@@ -3112,7 +2953,7 @@ mod tests {
         }
 
         // config_hash が違えば stale 扱いで None（v6 経路と同じ規律）。
-        assert!(load_cache_in(&dir, 12346).is_none());
+        assert!(load_cache_in(&dir, 12346, LegacyUpgrade::Skip).is_none());
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -3176,7 +3017,8 @@ mod tests {
         let dir = temp_dir("v4_fallback_through_load_cache_in");
         fs::write(dir.join("index.bin"), GOLDEN_V4).expect("write v4 index.bin");
 
-        let result = load_cache_in(&dir, 12345).expect("v4 の index.bin が読めること");
+        let result =
+            load_cache_in(&dir, 12345, LegacyUpgrade::Skip).expect("v4 の index.bin が読めること");
         let (tree, masks) = result.material.into_parts();
         assert_eq!(tree.len(), 2);
         assert_eq!(tree.names[0], "Firefox");
@@ -3201,7 +3043,7 @@ mod tests {
         }
 
         // config_hash が違えば stale 扱いで None（v6 経路と同じ規律）。
-        assert!(load_cache_in(&dir, 12346).is_none());
+        assert!(load_cache_in(&dir, 12346, LegacyUpgrade::Skip).is_none());
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -3209,9 +3051,8 @@ mod tests {
     /// v4 形式の `index.bin` を `dir` へ書く（テスト専用の治具）。
     ///
     /// **凍結バイト列（`GOLDEN_V4`）では代用できない。** あちらのエントリは固定であり、
-    /// 背景再スキャンは実ファイルシステムを走査した結果と digest を突き合わせる——
-    /// 「中身は同じだが版だけ古い」状況を作るには、走査で出てくるエントリそのものを
-    /// v4 で書く必要がある。
+    /// `config_hash` も治具の走査対象と噛み合わない——「その `dir` を走査した結果が
+    /// v4 で載っている」状況を作るには、エントリそのものを v4 で書く必要がある。
     fn write_v4_cache_in(dir: &Path, entries: &[AppEntry], config_hash: u64) {
         let lower_names: Vec<String> = entries.iter().map(|e| to_lower_folded(&e.name)).collect();
         let lower_file_names: Vec<Option<String>> = entries
@@ -3239,123 +3080,6 @@ mod tests {
         fs::write(dir.join("index.bin"), &bytes).expect("write v4 index.bin");
     }
 
-    /// **旧版の `index.bin` は、索引の中身が変わらない限り旧版のまま残り続けていた。**
-    ///
-    /// 書き戻す契機は cache-miss と背景再スキャンの `Changed` だけであり、走査結果が
-    /// キャッシュと一致する限り save は永久に来ない。`IndexCacheV4` の doc が書いていた
-    /// 「次回の save で v5 へ昇格する」は、**その「次回」が来ない経路を勘定していなかった**。
-    ///
-    /// 実運用点で実測して踏んだ（2026-08-07）: v5 導入後の実 `index.bin` が v4 のまま残り、
-    /// 毎起動で `normalized_keys` 35.98 MiB を読んでは捨てていた。**症状は「遅い」だけで、
-    /// 検索結果は正しいまま**——挙動テストでは原理的に捕まらない類である。
-    #[test]
-    fn background_rescan_upgrades_stale_format_when_entries_are_unchanged() {
-        let _guard = INDEX_LOCK_TEST_GUARD
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = temp_dir("rescan_upgrades_stale_format");
-        let apps = dir.join("apps");
-        fs::create_dir_all(&apps).expect("create apps dir");
-        fs::write(apps.join("firefox.lnk"), b"x").expect("write fixture");
-
-        let scan = vec![ScanPath {
-            path: apps.to_string_lossy().into_owned(),
-            extensions: vec![".lnk".to_string()],
-            include_folders: false,
-        }];
-        let config_hash = compute_config_hash(&scan, false);
-
-        let mut entries = scan_all(&scan, false);
-        sort_entries_canonical(&mut entries);
-        assert_eq!(entries.len(), 1, "治具の走査が 1 件を返すこと");
-        let digest = entries_digest(&entries);
-
-        write_v4_cache_in(&dir, &entries, config_hash);
-        assert_eq!(
-            cache_byte_breakdown_in(&dir)
-                .expect("v4 が読めること")
-                .version,
-            4,
-            "治具が v4 を書けていること（ここが現行版だと以降の検査が自明に通る）"
-        );
-
-        let run = try_background_rescan_in(
-            &dir,
-            &scan,
-            false,
-            config_hash,
-            digest,
-            current_index_generation(),
-            4,
-            0,
-        );
-
-        // **エントリ集合は変わっていない。** 形式の昇格は中身を変えないので `Changed` を
-        // 返してはならない——呼び出し側はそれを見てアイコンキャッシュを捨てる。
-        assert_eq!(run.outcome, RescanOutcome::Unchanged);
-        assert!(
-            run.material.is_none(),
-            "形式の昇格だけなら中身は同一——材料を返してはならない"
-        );
-        assert_eq!(
-            cache_byte_breakdown_in(&dir)
-                .expect("昇格後も読めること")
-                .version,
-            INDEX_CACHE_VERSION,
-            "版が現行へ昇格していること"
-        );
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// 対の検査: **版が現行なら書き直さない。** 昇格の条件を「旧版のとき」に絞れておらず
-    /// 毎回書いていると、起動のたびに 71 MiB の書き込みが背景で走る（症状は同じく
-    /// 「遅い」だけで結果は正しい）。`built_at` を見て、ファイルが据え置かれたことを測る。
-    #[test]
-    fn background_rescan_does_not_rewrite_when_format_is_current() {
-        let _guard = INDEX_LOCK_TEST_GUARD
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = temp_dir("rescan_keeps_current_format");
-        let apps = dir.join("apps");
-        fs::create_dir_all(&apps).expect("create apps dir");
-        fs::write(apps.join("firefox.lnk"), b"x").expect("write fixture");
-
-        let scan = vec![ScanPath {
-            path: apps.to_string_lossy().into_owned(),
-            extensions: vec![".lnk".to_string()],
-            include_folders: false,
-        }];
-        let config_hash = compute_config_hash(&scan, false);
-
-        let mut entries = scan_all(&scan, false);
-        sort_entries_canonical(&mut entries);
-        let digest = entries_digest(&entries);
-
-        save_cache_sorted_in(&dir, entries.clone(), config_hash);
-        let before = fs::read(dir.join("index.bin")).expect("現行版の index.bin が読めること");
-
-        let run = try_background_rescan_in(
-            &dir,
-            &scan,
-            false,
-            config_hash,
-            digest,
-            current_index_generation(),
-            INDEX_CACHE_VERSION,
-            0,
-        );
-
-        assert_eq!(run.outcome, RescanOutcome::Unchanged);
-        let after = fs::read(dir.join("index.bin")).expect("read index.bin again");
-        assert_eq!(
-            before, after,
-            "版が現行で中身も同じなら、ファイルは 1 バイトも変わらないこと"
-        );
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
     #[test]
     fn save_cache_sorted_in_then_load_cache_in_roundtrip() {
         // issue #429: BinFile の dir 注入経路（save_cache_sorted_in / load_cache_in）が
@@ -3377,7 +3101,8 @@ mod tests {
 
         let (_, returned) = save_cache_sorted_in(&dir, entries.clone(), config_hash);
 
-        let result = load_cache_in(&dir, config_hash).expect("load cache written to dir");
+        let result = load_cache_in(&dir, config_hash, LegacyUpgrade::Skip)
+            .expect("load cache written to dir");
         let (tree, masks) = result.material.into_parts();
         assert_eq!(tree.len(), 2);
         assert_eq!(tree.names[0], "Firefox");
@@ -3424,7 +3149,500 @@ mod tests {
         }
 
         // config_hash が異なると stale 扱いで None
-        assert!(load_cache_in(&dir, config_hash.wrapping_add(1)).is_none());
+        assert!(load_cache_in(&dir, config_hash.wrapping_add(1), LegacyUpgrade::Skip).is_none());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// **キャッシュヒットの起動は走査しない。** #1001 の受け入れの本体である。
+    ///
+    /// 「走査していない」を、時間ではなく**結果**で測る——キャッシュを保存した後で
+    /// 走査対象へファイルを 1 つ足し、それが返る材料に**現れない**ことを見る。
+    /// 走査が 1 回でも走れば現れるので、時計や環境に依存せず決定論的である。
+    ///
+    /// **残る死角**: この検知器が守るのは「走査という副作用が起きないこと」ではなく
+    /// 「cache-hit の材料がキャッシュ由来であること」である。cache-hit 枝へ
+    /// `let _ = scan_all(...)` のように結果を捨てる走査を足す退行は、材料が変わらない
+    /// ので**この検知器では捕まらない**（変異確認で実測。詳細はコミットの報告に残す）。
+    #[test]
+    fn a_cache_hit_startup_does_not_scan() {
+        let dir = temp_dir("cache_hit_no_scan");
+        let scan_root = temp_dir("cache_hit_no_scan_root");
+        std::fs::write(scan_root.join("first.txt"), b"x").expect("write");
+
+        let scan = vec![ScanPath {
+            path: scan_root.display().to_string(),
+            extensions: vec![".txt".into()],
+            include_folders: false,
+        }];
+
+        // 1 回目: cache-miss → 走査して保存する。
+        let first = load_or_scan_with_stats_in(&dir, &scan, false);
+        assert!(!first.stats.cache_hit, "1 回目は cache-miss であること");
+        assert_eq!(first.material.tree().len(), 1);
+
+        // キャッシュを書いた後で対象を増やす。
+        std::fs::write(scan_root.join("second.txt"), b"y").expect("write");
+
+        // 2 回目: cache-hit → 走査しないので、増えたファイルは見えない。
+        let second = load_or_scan_with_stats_in(&dir, &scan, false);
+        assert!(second.stats.cache_hit, "2 回目は cache-hit であること");
+        assert_eq!(
+            second.stats.scan_ms, 0,
+            "cache-hit で走査時間が立ってはならない"
+        );
+        assert_eq!(
+            second.material.tree().len(),
+            1,
+            "cache-hit の起動が走査している（増えたファイルが見えてしまった）"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&scan_root);
+    }
+
+    /// **旧版を読んだ起動が、その場で現行版へ書き戻す。** 移す前はここが背景再スキャンの
+    /// 責務だった（#1001 で再スキャンごと撤去した）。書き戻さないと、索引の中身が
+    /// 変わらないユーザーの `index.bin` は旧版のまま何日でも残り、新形式の削減を
+    /// 永久に受け取らない（2026-08-07 実測。症状は「遅い」だけで検索結果は正しいまま）。
+    #[test]
+    fn load_cache_upgrades_a_legacy_format_in_place() {
+        // `Write` は `upgrade_legacy_cache_in` 経由で `INDEX_WRITE_LOCK` を取る
+        // （`upgrade_legacy_cache_in` の doc）。`INDEX_WRITE_LOCK` に触れるテストは
+        // このガードで直列化する契約（`INDEX_LOCK_TEST_GUARD` の doc）。
+        let _guard = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = temp_dir("load_upgrade");
+        let entries = vec![
+            AppEntry {
+                name: "a".into(),
+                target_path: "C:\\a".into(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "b".into(),
+                target_path: "C:\\b".into(),
+                is_folder: true,
+            },
+        ];
+        let bytes = try_serialize_with_header(
+            INDEX_MAGIC,
+            4,
+            &IndexCacheV4 {
+                built_at: 1_700_000_000,
+                entries: entries.clone(),
+                config_hash: 42,
+                char_masks: vec![0; entries.len()],
+                file_name_char_masks: vec![0; entries.len()],
+                lower_names: vec!["a".into(), "b".into()],
+                lower_file_names: vec![None, None],
+                normalized_keys: vec![],
+            },
+        )
+        .expect("serialize");
+        assert!(cache_bin_file_in(&dir).save_bytes(&bytes), "save");
+
+        let result = load_cache_in(&dir, 42, LegacyUpgrade::Write).expect("v4 が読めること");
+        assert_eq!(result.version, 4, "`version` は**読めた**版のままである");
+        assert_eq!(result.material.tree().len(), 2, "材料が正しいこと");
+
+        // ディスクは現行版になっていること。
+        let raw = cache_bin_file_in(&dir)
+            .load_bytes()
+            .expect("読み直せること");
+        assert_eq!(
+            crate::binfmt::peek_version(&raw),
+            Some(INDEX_CACHE_VERSION),
+            "旧版を読んだ後、ディスクは現行版で書き戻されていること"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// **旧版昇格の save 時間は `LoadCacheResult::upgrade_save_ms` として見える化されている。**
+    ///
+    /// 昇格 save（`upgrade_legacy_cache_in` → `save_cache_sorted_in`。旧版起動 1 回だけ発生する
+    /// `derive_columns` の再導出 + postcard シリアライズ + 数百 ms 級の書き込み）は、呼び出し元の
+    /// `cache_load_ms` 計測区間の内側で起きる。運ばずに 0 を返すと、実際に save が起きた起動で
+    /// 「保存していない」という**偽の測定値**を `LoadOrScanStats::cache_save_ms` が報告することに
+    /// なる（`LoadOrScanStats` の doc「`cache_load_ms` と `total_ms` の間に処理を足すときは
+    /// 項目を作ること」が守るべき対象そのもの）。
+    /// 両方向を固定する: 旧版を `Write` で読んだときは非 0、現行版を読んだとき
+    /// （昇格が走らない）は 0。
+    #[test]
+    fn load_cache_reports_upgrade_save_ms_only_when_it_upgrades_a_legacy_format() {
+        // `Write` は `INDEX_WRITE_LOCK` を取る（上のテストと同じ理由）。
+        let _guard = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        // 旧版（v4）: 昇格が走るので save 時間が乗る。
+        let legacy_dir = temp_dir("upgrade_save_ms_legacy");
+        let entries = vec![AppEntry {
+            name: "a".into(),
+            target_path: "C:\\a".into(),
+            is_folder: false,
+        }];
+        let bytes = try_serialize_with_header(
+            INDEX_MAGIC,
+            4,
+            &IndexCacheV4 {
+                built_at: 1_700_000_000,
+                entries: entries.clone(),
+                config_hash: 42,
+                char_masks: vec![0; entries.len()],
+                file_name_char_masks: vec![0; entries.len()],
+                lower_names: vec!["a".into()],
+                lower_file_names: vec![None],
+                normalized_keys: vec![],
+            },
+        )
+        .expect("serialize");
+        assert!(cache_bin_file_in(&legacy_dir).save_bytes(&bytes), "save");
+
+        let legacy_result =
+            load_cache_in(&legacy_dir, 42, LegacyUpgrade::Write).expect("v4 が読めること");
+        assert_eq!(legacy_result.material.tree().len(), 1, "材料が正しいこと");
+        // `upgrade_save_ms` は壁時計なので理論上 0ms もありうるが、実際には
+        // `derive_columns` の再導出 + postcard シリアライズ + tmp→rename を含む区間であり、
+        // 手元環境で 0 に丸まったことは無い。0 に丸まる環境が出た場合は壁時計ではなく
+        // 「save のクロージャを実際に通ったか」で判定し直すこと。
+        assert!(
+            legacy_result.upgrade_save_ms > 0,
+            "旧版を Write で読んだら昇格 save が走り、時間が計測されること（実測 0ms は\
+             save を通っていない可能性が高い）"
+        );
+
+        // 現行版（v7）: 昇格しないので save 時間は乗らない。
+        let current_dir = temp_dir("upgrade_save_ms_current");
+        let config_hash = 42u64;
+        let derived = derive_columns(entries);
+        let cache = IndexCache {
+            built_at: 1_700_000_000,
+            names: Cow::Borrowed(&derived.tree.names),
+            is_folder: Cow::Borrowed(&derived.tree.is_folder),
+            parent: Cow::Borrowed(&derived.tree.parent),
+            aux: Cow::Borrowed(&derived.tree.aux),
+            table: Cow::Borrowed(&derived.tree.table),
+            sorted_by_path: derived.tree.sorted_by_path,
+            config_hash,
+            char_masks: Cow::Borrowed(&derived.char_masks),
+            file_name_char_masks: Cow::Borrowed(&derived.file_name_char_masks),
+            lower_names: Cow::Borrowed(&derived.lower_names),
+            lower_file_names: Cow::Borrowed(&derived.lower_file_names),
+        };
+        let bytes =
+            try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache).expect("serialize");
+        assert!(cache_bin_file_in(&current_dir).save_bytes(&bytes), "save");
+
+        let current_result = load_cache_in(&current_dir, config_hash, LegacyUpgrade::Write)
+            .expect("v7 が読めること");
+        assert_eq!(
+            current_result.upgrade_save_ms, 0,
+            "現行版は昇格しないので save 時間は 0 であること"
+        );
+
+        let _ = fs::remove_dir_all(&legacy_dir);
+        let _ = fs::remove_dir_all(&current_dir);
+    }
+
+    /// **`LoadOrScanStats::cache_save_ms` レベルで固定する。** 上のテストは
+    /// `LoadCacheResult::upgrade_save_ms`（`load_cache_in` の返り値）までしか見ておらず、
+    /// それを呼び出し元の `cache_save_ms` へ運ぶ配線（`load_or_scan_with_stats_in` の
+    /// cache-hit 枝、`cache_save_ms: result.upgrade_save_ms`）自体は固定していない
+    /// ——**最終レビュー Important 1 の実際の欠陥はこの配線が `cache_save_ms: 0` を
+    /// 焼き込んでいたことであり**、`upgrade_save_ms` 単体の検知器はこの配線を落とす
+    /// 退行（`result.upgrade_save_ms` を使わず `0` を書く）では落ちない。
+    #[test]
+    fn load_or_scan_with_stats_reports_upgrade_save_ms_in_cache_save_ms() {
+        // `Write` は `INDEX_WRITE_LOCK` を取る（上のテストと同じ理由）。
+        let _guard = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        let scan = vec![ScanPath {
+            path: "C:\\nonexistent-for-hash-only".into(),
+            extensions: vec![".txt".into()],
+            include_folders: false,
+        }];
+        let config_hash = compute_config_hash(&scan, false);
+
+        // 旧版（v4）: cache-hit しつつ昇格が走るので cache_save_ms が非 0 になること。
+        let legacy_dir = temp_dir("stats_upgrade_save_ms_legacy");
+        let entries = vec![AppEntry {
+            name: "a".into(),
+            target_path: "C:\\a".into(),
+            is_folder: false,
+        }];
+        let bytes = try_serialize_with_header(
+            INDEX_MAGIC,
+            4,
+            &IndexCacheV4 {
+                built_at: 1_700_000_000,
+                entries: entries.clone(),
+                config_hash,
+                char_masks: vec![0; entries.len()],
+                file_name_char_masks: vec![0; entries.len()],
+                lower_names: vec!["a".into()],
+                lower_file_names: vec![None],
+                normalized_keys: vec![],
+            },
+        )
+        .expect("serialize");
+        assert!(cache_bin_file_in(&legacy_dir).save_bytes(&bytes), "save");
+
+        let result = load_or_scan_with_stats_in(&legacy_dir, &scan, false);
+        // **`cache_hit` を先に確かめる。** hash が合わず miss 枝へ落ちた場合も
+        // `cache_save_ms > 0` にはなりうるが、それは cache-miss 枝の独立フェーズとしての
+        // save であって、昇格 save の配線を固定したことにはならない——この assert が
+        // 検知器の前提を保証する。
+        assert!(
+            result.stats.cache_hit,
+            "config_hash を揃えたので cache-hit になること（miss だとこの検知器は無意味になる）"
+        );
+        assert!(
+            result.stats.cache_save_ms > 0,
+            "cache-hit 枝で旧版昇格が走ったら LoadOrScanStats::cache_save_ms が非 0 になること\
+             （load_or_scan_with_stats_in の配線 result.upgrade_save_ms を落とす退行の検知器）"
+        );
+
+        // 現行版（v7）: cache-hit だが昇格しないので cache_save_ms は 0 のまま。
+        let current_dir = temp_dir("stats_upgrade_save_ms_current");
+        let derived = derive_columns(entries);
+        let cache = IndexCache {
+            built_at: 1_700_000_000,
+            names: Cow::Borrowed(&derived.tree.names),
+            is_folder: Cow::Borrowed(&derived.tree.is_folder),
+            parent: Cow::Borrowed(&derived.tree.parent),
+            aux: Cow::Borrowed(&derived.tree.aux),
+            table: Cow::Borrowed(&derived.tree.table),
+            sorted_by_path: derived.tree.sorted_by_path,
+            config_hash,
+            char_masks: Cow::Borrowed(&derived.char_masks),
+            file_name_char_masks: Cow::Borrowed(&derived.file_name_char_masks),
+            lower_names: Cow::Borrowed(&derived.lower_names),
+            lower_file_names: Cow::Borrowed(&derived.lower_file_names),
+        };
+        let bytes =
+            try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache).expect("serialize");
+        assert!(cache_bin_file_in(&current_dir).save_bytes(&bytes), "save");
+
+        let result = load_or_scan_with_stats_in(&current_dir, &scan, false);
+        assert!(result.stats.cache_hit, "現行版も cache-hit であること");
+        assert_eq!(
+            result.stats.cache_save_ms, 0,
+            "現行版は昇格しないので cache_save_ms は 0 のままであること"
+        );
+
+        let _ = fs::remove_dir_all(&legacy_dir);
+        let _ = fs::remove_dir_all(&current_dir);
+    }
+
+    /// **v2 の `Write` 枝を独立に固定する。** v2 はマスクを持たない唯一の版であり、
+    /// `finish_legacy_read` の `LegacyRead { masks: None, .. }` を通る構造的に他と違う枝
+    /// （`Skip` なら `from_tree`、`Write` なら `upgrade_legacy_cache_in` 経由で `derived`）。
+    /// v4〜v6 の `Write` テストだけでは、`masks: None` を渡したときも `upgrade_legacy_cache_in`
+    /// が正しく呼ばれることまでは固定されない（レビューの ⚠️ 指摘）。
+    #[test]
+    fn load_cache_upgrades_a_legacy_v2_format_in_place() {
+        // `Write` は `INDEX_WRITE_LOCK` を取る（上のテストと同じ理由）。
+        let _guard = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = temp_dir("load_upgrade_v2");
+        let entries = vec![AppEntry {
+            name: "a".into(),
+            target_path: "C:\\a".into(),
+            is_folder: false,
+        }];
+        let bytes = try_serialize_with_header(
+            INDEX_MAGIC,
+            2,
+            &IndexCacheV2 {
+                built_at: 1_700_000_000,
+                entries: entries.clone(),
+                config_hash: 42,
+            },
+        )
+        .expect("serialize");
+        assert!(cache_bin_file_in(&dir).save_bytes(&bytes), "save");
+
+        let result = load_cache_in(&dir, 42, LegacyUpgrade::Write).expect("v2 が読めること");
+        assert_eq!(result.version, 2, "`version` は**読めた**版のままである");
+        assert_eq!(result.material.tree().len(), 1, "材料が正しいこと");
+        // v2 は本来マスクを持たないが、`Write` で昇格した後は現行版として derive し直され、
+        // 必ずマスクを持つ（`Skip` の `!has_masks()` と対になる非対称——`load_cache_in`
+        // の doc を参照）。
+        assert!(
+            result.material.has_masks(),
+            "昇格後は derive し直したマスクを持つこと"
+        );
+
+        // ディスクは現行版になっていること。
+        let raw = cache_bin_file_in(&dir)
+            .load_bytes()
+            .expect("読み直せること");
+        assert_eq!(
+            crate::binfmt::peek_version(&raw),
+            Some(INDEX_CACHE_VERSION),
+            "旧版を読んだ後、ディスクは現行版で書き戻されていること"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// **現行版を読んだときは書き直さない。** ここが退行すると毎起動 17 MiB を書く
+    /// （結果は正しいまま静かに遅くなるので挙動テストでは捕まらない）。
+    ///
+    /// **`built_at` を事前に過去へ固定した現行版を fixture として直接ディスクへ置く。**
+    /// `save_cache_sorted_in` で作ってから読む形（旧版）だと save→load が同一プロセス内で
+    /// マイクロ秒差に収まり、`built_at`（`SystemTime::now()...as_secs()`・秒粒度）が同じ秒の
+    /// 値になるため、「現行版でも無条件に書き直す」退行が入っても差が出ず**原理的に発火しない**
+    /// （レビューで指摘・2026-08-10）。固定値を仕込めば、書き直しが起きた瞬間に必ず
+    /// 現在時刻へ動くので粒度に依存しない。
+    #[test]
+    fn load_cache_does_not_rewrite_when_the_format_is_current() {
+        // v7 の `Write` 枝は分岐しないためロックは取らないが、`Write` を渡す以上は将来の
+        // 退行（v7 判定漏れで旧版枝へ落ちる等）に備えて直列化しておく（Minor 7 の指摘）。
+        let _guard = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = temp_dir("load_no_rewrite");
+        let entries = vec![AppEntry {
+            name: "a".into(),
+            target_path: "C:\\a".into(),
+            is_folder: false,
+        }];
+        let config_hash = 42u64;
+        let derived = derive_columns(entries);
+        let cache = IndexCache {
+            built_at: 1_700_000_000,
+            names: Cow::Borrowed(&derived.tree.names),
+            is_folder: Cow::Borrowed(&derived.tree.is_folder),
+            parent: Cow::Borrowed(&derived.tree.parent),
+            aux: Cow::Borrowed(&derived.tree.aux),
+            table: Cow::Borrowed(&derived.tree.table),
+            sorted_by_path: derived.tree.sorted_by_path,
+            config_hash,
+            char_masks: Cow::Borrowed(&derived.char_masks),
+            file_name_char_masks: Cow::Borrowed(&derived.file_name_char_masks),
+            lower_names: Cow::Borrowed(&derived.lower_names),
+            lower_file_names: Cow::Borrowed(&derived.lower_file_names),
+        };
+        let bytes =
+            try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache).expect("serialize");
+        assert!(cache_bin_file_in(&dir).save_bytes(&bytes), "save");
+
+        let result =
+            load_cache_in(&dir, config_hash, LegacyUpgrade::Write).expect("v7 が読めること");
+        assert_eq!(result.version, INDEX_CACHE_VERSION);
+        assert_eq!(
+            index_built_at_in(&dir),
+            Some(1_700_000_000),
+            "現行版のロードで index.bin を書き直してはならない"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// **`Skip` は書き戻さない。** `load_cached_entries`（corpus テストの入口）が通す枝で、
+    /// ここが `Write` へ退行すると、開発者の実 `%APPDATA%\Snotra\index.bin` を読むだけの
+    /// テスト実行が実データを書き換えてしまう（#1013 と同型）。`built_at` が動かないことで
+    /// 書き戻しが起きていないことを測る。
+    #[test]
+    fn load_cache_skip_does_not_upgrade_a_legacy_format() {
+        let dir = temp_dir("load_skip_no_upgrade");
+        let entries = vec![AppEntry {
+            name: "a".into(),
+            target_path: "C:\\a".into(),
+            is_folder: false,
+        }];
+        let bytes = try_serialize_with_header(
+            INDEX_MAGIC,
+            4,
+            &IndexCacheV4 {
+                built_at: 1_700_000_000,
+                entries: entries.clone(),
+                config_hash: 42,
+                char_masks: vec![0; entries.len()],
+                file_name_char_masks: vec![0; entries.len()],
+                lower_names: vec!["a".into()],
+                lower_file_names: vec![None],
+                normalized_keys: vec![],
+            },
+        )
+        .expect("serialize");
+        assert!(cache_bin_file_in(&dir).save_bytes(&bytes), "save");
+
+        let result = load_cache_in(&dir, 42, LegacyUpgrade::Skip).expect("v4 が読めること");
+        assert_eq!(result.version, 4);
+
+        // ディスクは v4 のまま、書き戻しは起きていない
+        // （`index_built_at_in` は現行版の `IndexCache::built_at` を読める全版共通の口——
+        // `LegacyUpgrade::Write` が走っていればここが現在時刻へ動く）。
+        assert_eq!(
+            index_built_at_in(&dir),
+            Some(1_700_000_000),
+            "`Skip` は index.bin を書き戻してはならない"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 設定アプリが最終構築日時を出すための口。**17 MiB を読まない**ことが要点で、
+    /// 読めない・無いときは黙って `None` を返す（表示は「未構築」へ倒れる）。
+    #[test]
+    fn index_built_at_reads_the_timestamp_without_loading_the_index() {
+        let dir = temp_dir("built_at_read");
+        assert_eq!(index_built_at_in(&dir), None, "不在は None");
+
+        let entries = vec![AppEntry {
+            name: "a".into(),
+            target_path: "C:\\a".into(),
+            is_folder: false,
+        }];
+        let _ = save_cache_sorted_in(&dir, entries, 42);
+
+        let built_at = index_built_at_in(&dir).expect("保存した直後は読めること");
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        // 保存は今なので、未来ではなく、かつ極端に古くもない。
+        assert!(
+            built_at <= now,
+            "未来の値を返してはならない: {built_at} > {now}"
+        );
+        assert!(
+            now - built_at < 300,
+            "保存直後の値とかけ離れている: {built_at}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// **旧版でも読める**（`built_at` は全版で先頭フィールドである）。
+    #[test]
+    fn index_built_at_reads_a_legacy_version_too() {
+        let dir = temp_dir("built_at_legacy");
+        let bytes = try_serialize_with_header(
+            INDEX_MAGIC,
+            4,
+            &IndexCacheV4 {
+                built_at: 1_700_000_000,
+                entries: vec![],
+                config_hash: 1,
+                char_masks: vec![],
+                file_name_char_masks: vec![],
+                lower_names: vec![],
+                lower_file_names: vec![],
+                normalized_keys: vec![],
+            },
+        )
+        .expect("serialize");
+        assert!(cache_bin_file_in(&dir).save_bytes(&bytes), "save");
+        assert_eq!(index_built_at_in(&dir), Some(1_700_000_000));
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -3491,9 +3709,9 @@ mod tests {
 
     /// **`load_cache_in` が返す `version` は、実際に読めた枝と一致しなければならない。**
     ///
-    /// この値だけが背景再スキャンの昇格判定（`cached_version != INDEX_CACHE_VERSION`）の入力で
-    /// あり、**取り違えても検索結果は正しいまま**である——枝に誤って現行版を書けば、その形式の
-    /// ユーザーは永久に昇格せず旧形式を読み続ける（症状は「遅い」だけ・実運用点で 1 度踏んだ）。
+    /// **フォールバックの鎖のどの枝で読めたのかを外から見る手段はこれしか無い**（材料だけを
+    /// 見ても v5 の枝と v6 の枝は区別できない）。しかも**取り違えても検索結果は正しいまま**で
+    /// ある——枝選択の退行は「読めてはいるが想定と違う形式で読んでいる」形で静かに残る。
     /// ゆえに **`load_cache_in` の全枝**の値をここで固定する（枝の数を書かない——版を足した
     /// ときにこの散文だけが腐り、しかも「揃っている」と読めてしまう。実際に v7 を足したとき
     /// 「5 枝すべて」のまま v6 が抜けた）。
@@ -3524,7 +3742,7 @@ mod tests {
         let dir = temp_dir("version_reported_current");
         save_cache_sorted_in(&dir, entries.clone(), config_hash);
         assert_eq!(
-            load_cache_in(&dir, config_hash)
+            load_cache_in(&dir, config_hash, LegacyUpgrade::Skip)
                 .expect("現行版が読めること")
                 .version,
             INDEX_CACHE_VERSION
@@ -3555,7 +3773,7 @@ mod tests {
         )
         .expect("write v6");
         assert_eq!(
-            load_cache_in(&dir, config_hash)
+            load_cache_in(&dir, config_hash, LegacyUpgrade::Skip)
                 .expect("v6 が読めること")
                 .version,
             6
@@ -3579,7 +3797,7 @@ mod tests {
         )
         .expect("write v5");
         assert_eq!(
-            load_cache_in(&dir, config_hash)
+            load_cache_in(&dir, config_hash, LegacyUpgrade::Skip)
                 .expect("v5 が読めること")
                 .version,
             5
@@ -3590,7 +3808,7 @@ mod tests {
         let dir = temp_dir("version_reported_v4");
         write_v4_cache_in(&dir, &entries, config_hash);
         assert_eq!(
-            load_cache_in(&dir, config_hash)
+            load_cache_in(&dir, config_hash, LegacyUpgrade::Skip)
                 .expect("v4 が読めること")
                 .version,
             4
@@ -3612,7 +3830,7 @@ mod tests {
         )
         .expect("write v3");
         assert_eq!(
-            load_cache_in(&dir, config_hash)
+            load_cache_in(&dir, config_hash, LegacyUpgrade::Skip)
                 .expect("v3 が読めること")
                 .version,
             3
@@ -3631,7 +3849,8 @@ mod tests {
             try_serialize_with_header(INDEX_MAGIC, 2, &v2).expect("serialize v2"),
         )
         .expect("write v2");
-        let v2_result = load_cache_in(&dir, config_hash).expect("v2 が読めること");
+        let v2_result =
+            load_cache_in(&dir, config_hash, LegacyUpgrade::Skip).expect("v2 が読めること");
         assert_eq!(v2_result.version, 2);
         assert!(
             !v2_result.material.has_masks(),
@@ -3655,223 +3874,6 @@ mod tests {
         let hash1 = compute_config_hash(&scan1, false);
         let hash2 = compute_config_hash(&scan2, false);
         assert_ne!(hash1, hash2);
-    }
-
-    // digest の検査は「同じなら一致」と「1 フィールドずつ違えば不一致」を**フィールドごとに
-    // 分けて**置く。まとめると、落としたフィールドがどれか失敗名から分からなくなる
-    // ——digest が `is_folder` を混ぜ忘れる類の誤りは、確率ではなく**確定で**その種の変更を
-    // 永久に見逃すため、名指しできることに意味がある（`entries_digest` の doc）。
-
-    /// **`DigestSource` の 2 実装が同じ値を出すこと。ここが背景再スキャンの心臓である。**
-    ///
-    /// 比べる 2 辺は別々の実装を通る——走査側は `&[AppEntry]`（`target_path` を実体で持つ）、
-    /// ロード側は [`IndexTree`]（持たずに組み直す）。**main では実装が 1 つで、食い違いは
-    /// 構造的に起こりえなかった**が、木を導入した時点でそれは失われた。1 件でも値がずれれば
-    /// `changed` が毎起動 true になり、16.5 MiB の `index.bin` を書き直し、
-    /// `RescanOutcome::Changed` がアイコンキャッシュを捨てる——**検索結果は正しいまま**なので
-    /// 挙動テストは 1 本も落ちない。
-    ///
-    /// 木を通る形を fixture に全部載せる: 根 / 非根 / 拡張子あり・なし / folder / file /
-    /// 非 ASCII / 空白。**根だけの fixture では意味が無い**——根は `table` のフルパスを
-    /// そのまま返すので、組み直しの規則を 1 つも通らない。
-    #[test]
-    fn digest_over_tree_matches_digest_over_scanned_entries() {
-        let entries: Vec<AppEntry> = [
-            ("Projects", "C:\\Projects", true),
-            ("My App", "C:\\Projects\\My App", true),
-            ("run", "C:\\Projects\\My App\\run.exe", false),
-            ("Ünïcode", "C:\\Projects\\Ünïcode.LNK", false),
-            ("apps", "C:\\apps", true),
-            ("tool", "C:\\apps\\tool.exe", false),
-        ]
-        .iter()
-        .map(|(name, path, is_folder)| AppEntry {
-            name: (*name).to_string(),
-            target_path: (*path).to_string(),
-            is_folder: *is_folder,
-        })
-        .collect();
-
-        let tree = IndexTree::build(entries.clone());
-        // fixture の前提: 木が実際に枝を持っていること（全件が根だと組み直しを検査しない）。
-        assert!(
-            tree.parent
-                .iter()
-                .any(|p| *p != crate::index_tree::NO_PARENT),
-            "fixture が全件根になっている（親の解決が効いていない）"
-        );
-        assert_eq!(
-            digest_over(&tree),
-            entries_digest(&entries),
-            "木とスキャン結果の digest がずれている——再スキャンが毎起動走り続ける"
-        );
-    }
-
-    #[test]
-    fn entries_digest_identical() {
-        let a = vec![
-            AppEntry {
-                name: "A".into(),
-                target_path: "C:\\a.exe".into(),
-                is_folder: false,
-            },
-            AppEntry {
-                name: "B".into(),
-                target_path: "C:\\b".into(),
-                is_folder: true,
-            },
-        ];
-        let b = a.clone();
-        assert_eq!(entries_digest(&a), entries_digest(&b));
-    }
-
-    #[test]
-    fn entries_digest_different_length() {
-        let a = vec![AppEntry {
-            name: "A".into(),
-            target_path: "C:\\a.exe".into(),
-            is_folder: false,
-        }];
-        let b = vec![
-            AppEntry {
-                name: "A".into(),
-                target_path: "C:\\a.exe".into(),
-                is_folder: false,
-            },
-            AppEntry {
-                name: "B".into(),
-                target_path: "C:\\b.exe".into(),
-                is_folder: false,
-            },
-        ];
-        assert_ne!(entries_digest(&a), entries_digest(&b));
-    }
-
-    #[test]
-    fn entries_digest_different_name() {
-        let a = vec![AppEntry {
-            name: "A".into(),
-            target_path: "C:\\a.exe".into(),
-            is_folder: false,
-        }];
-        let b = vec![AppEntry {
-            name: "B".into(),
-            target_path: "C:\\a.exe".into(),
-            is_folder: false,
-        }];
-        assert_ne!(entries_digest(&a), entries_digest(&b));
-    }
-
-    #[test]
-    fn entries_digest_different_target() {
-        let a = vec![AppEntry {
-            name: "A".into(),
-            target_path: "C:\\a.exe".into(),
-            is_folder: false,
-        }];
-        let b = vec![AppEntry {
-            name: "A".into(),
-            target_path: "C:\\b.exe".into(),
-            is_folder: false,
-        }];
-        assert_ne!(entries_digest(&a), entries_digest(&b));
-    }
-
-    #[test]
-    fn entries_digest_different_is_folder() {
-        let a = vec![AppEntry {
-            name: "A".into(),
-            target_path: "C:\\a".into(),
-            is_folder: false,
-        }];
-        let b = vec![AppEntry {
-            name: "A".into(),
-            target_path: "C:\\a".into(),
-            is_folder: true,
-        }];
-        assert_ne!(entries_digest(&a), entries_digest(&b));
-    }
-
-    #[test]
-    fn entries_digest_both_empty() {
-        assert_eq!(entries_digest(&[]), entries_digest(&[]));
-    }
-
-    /// 隣り合うフィールドの境界が曖昧だと、`name` と `target_path` の切れ目が動いただけの
-    /// 別物が同じ digest になる。`Hash for str` が長さを混ぜるため実際には起きないが、
-    /// **手書きの `write` へ変えた瞬間に壊れる**種類の性質なのでここで固定する。
-    #[test]
-    fn entries_digest_field_boundary_is_not_ambiguous() {
-        let a = vec![AppEntry {
-            name: "AB".into(),
-            target_path: "C".into(),
-            is_folder: false,
-        }];
-        let b = vec![AppEntry {
-            name: "A".into(),
-            target_path: "BC".into(),
-            is_folder: false,
-        }];
-        assert_ne!(entries_digest(&a), entries_digest(&b));
-    }
-
-    /// エントリの境界も同じ理由で曖昧であってはならない（1 件が 2 件に割れても気づく）。
-    #[test]
-    fn entries_digest_entry_boundary_is_not_ambiguous() {
-        let a = vec![AppEntry {
-            name: "AB".into(),
-            target_path: "P".into(),
-            is_folder: false,
-        }];
-        let b = vec![
-            AppEntry {
-                name: "A".into(),
-                target_path: "P".into(),
-                is_folder: false,
-            },
-            AppEntry {
-                name: "B".into(),
-                target_path: "P".into(),
-                is_folder: false,
-            },
-        ];
-        assert_ne!(entries_digest(&a), entries_digest(&b));
-    }
-
-    #[test]
-    fn sorted_comparison_ignores_enumeration_order() {
-        let mut a = vec![
-            AppEntry {
-                name: "B".into(),
-                target_path: "C:\\b.exe".into(),
-                is_folder: false,
-            },
-            AppEntry {
-                name: "A".into(),
-                target_path: "C:\\a.exe".into(),
-                is_folder: false,
-            },
-        ];
-        let mut b = vec![
-            AppEntry {
-                name: "A".into(),
-                target_path: "C:\\a.exe".into(),
-                is_folder: false,
-            },
-            AppEntry {
-                name: "B".into(),
-                target_path: "C:\\b.exe".into(),
-                is_folder: false,
-            },
-        ];
-
-        sort_entries_canonical(&mut a);
-        sort_entries_canonical(&mut b);
-        // **digest は順序に依存する**（列を順に混ぜるため）。列挙順の違いを吸収しているのは
-        // `sort_entries_canonical` のほうであり、比較を digest へ替えたことでこの検査は
-        // 「あれば望ましい」から**必須**になった——ソートを外した経路が 1 つでもできると、
-        // 中身が同じでも「変わった」と判定して毎回 index.bin を書き直す。
-        assert_eq!(entries_digest(&a), entries_digest(&b));
     }
 
     #[test]
@@ -3944,356 +3946,8 @@ mod tests {
         );
     }
 
-    /// **`Changed` のとき材料が返る。** これが無いと呼び出し側は索引を建てられず、
-    /// 走っているセッションの索引は最後まで古いままになる（索引が 1 起動ぶん遅れる）。
-    /// 変異: 材料を捨てる実装（現状への回帰）でこの検査が落ちる。
-    #[test]
-    fn background_rescan_returns_material_when_entries_changed() {
-        let _serial = INDEX_LOCK_TEST_GUARD
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = temp_dir("rescan_material_changed");
-        let scan: Vec<ScanPath> = Vec::new();
-        let hash = compute_config_hash(&scan, false);
-        save_cache_sorted_in(&dir, Vec::new(), hash);
-
-        // 空の走査結果に対し、キャッシュ側の digest をわざと食い違わせて Changed にする。
-        let run = try_background_rescan_in(
-            &dir,
-            &scan,
-            false,
-            hash,
-            entries_digest(&[]) ^ 1,
-            current_index_generation(),
-            INDEX_CACHE_VERSION,
-            0,
-        );
-        assert_eq!(run.outcome, RescanOutcome::Changed);
-        assert!(
-            run.material.is_some(),
-            "Changed なら索引の材料が返ること（捨てると 1 起動ぶん遅れる）"
-        );
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// **`RescanRun` は材料と対で、それを走査した対象の同一性を運ぶ。** `apply_rescanned_index`
-    /// （`src-tauri`）はこれを差し替え時点の現在 config から導いた値と照合する——差し替え前後の
-    /// 2 検査どうしの一致だけでは、両方が同じ新しい config を指していても「材料はそれより古い
-    /// config で走査した」ケースを見抜けない（I-1）。変異: `scanned_config_hash` を配線し
-    /// 忘れる実装（`material` は返るがこちらは `None` のまま）でこの検査が落ちる。
-    #[test]
-    fn background_rescan_run_carries_the_scanned_config_hash() {
-        let _serial = INDEX_LOCK_TEST_GUARD
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = temp_dir("rescan_scanned_config_hash");
-        let scan: Vec<ScanPath> = Vec::new();
-        let hash = compute_config_hash(&scan, false);
-        save_cache_sorted_in(&dir, Vec::new(), hash);
-
-        let run = try_background_rescan_in(
-            &dir,
-            &scan,
-            false,
-            hash,
-            entries_digest(&[]) ^ 1,
-            current_index_generation(),
-            INDEX_CACHE_VERSION,
-            0,
-        );
-        assert_eq!(run.outcome, RescanOutcome::Changed);
-        assert_eq!(
-            run.scanned_config_hash,
-            Some(hash),
-            "材料を走査した対象の同一性（scan_identity_hash と同じ値）が運ばれること"
-        );
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// **`Unchanged` では材料を返さない。** 中身が同じなのに差し替えれば、索引 1 本ぶんの
-    /// 常駐を無駄に積むだけである。変異: 常に材料を返す実装で落ちる。
-    #[test]
-    fn background_rescan_returns_no_material_when_unchanged() {
-        let _serial = INDEX_LOCK_TEST_GUARD
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = temp_dir("rescan_material_unchanged");
-        let scan: Vec<ScanPath> = Vec::new();
-        let hash = compute_config_hash(&scan, false);
-        save_cache_sorted_in(&dir, Vec::new(), hash);
-
-        let run = try_background_rescan_in(
-            &dir,
-            &scan,
-            false,
-            hash,
-            entries_digest(&[]),
-            current_index_generation(),
-            INDEX_CACHE_VERSION,
-            0,
-        );
-        assert_eq!(run.outcome, RescanOutcome::Unchanged);
-        assert!(run.material.is_none(), "Unchanged で材料を返してはならない");
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// **`Skipped` でも材料を返さない**（走査すらしていない）。
-    #[test]
-    fn background_rescan_returns_no_material_when_skipped() {
-        let _serial = INDEX_LOCK_TEST_GUARD
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = temp_dir("rescan_material_skipped");
-        let held = INDEX_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-
-        let run = try_background_rescan_in(
-            &dir,
-            &[],
-            false,
-            0,
-            0,
-            current_index_generation(),
-            INDEX_CACHE_VERSION,
-            0,
-        );
-        drop(held);
-        assert_eq!(run.outcome, RescanOutcome::Skipped);
-        assert!(run.material.is_none(), "Skipped で材料を返してはならない");
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// **`try_background_rescan_in` 経由で検証する**（`try_background_rescan` 自体ではない）。
-    /// 後者は `Config::config_dir()` を内部で解決し、`try_background_rescan_in` が Skipped
-    /// 経路でも `start`/`end` の 2 行を書くため、そのまま呼ぶと実 `%APPDATA%\Snotra\
-    /// rescan-log.jsonl` を合成行で汚す（上限 200 行の窓を単体テストが食いつぶす）。
-    /// **失う残余**: `try_background_rescan`（`Config::config_dir()` を解決して委譲するだけの
-    /// 薄いラッパー）を直接覚えるテストがこれで無くなる——受容する。
-    #[test]
-    fn try_background_rescan_in_skips_when_write_lock_held() {
-        let _serial = INDEX_LOCK_TEST_GUARD
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = temp_dir("rescan_skips_when_lock_held");
-        // 権威的なインデックスビルドが書き込みロックを保持している状況を再現する。
-        let _held = INDEX_WRITE_LOCK.lock().unwrap();
-        // 背景再スキャンは書き込みロックを取得できないため、
-        // スキャンも保存もせず Skipped を返さねばならない。
-        let run = try_background_rescan_in(
-            &dir,
-            &[],
-            false,
-            0,
-            entries_digest(&[]),
-            current_index_generation(),
-            INDEX_CACHE_VERSION,
-            0,
-        );
-        assert_eq!(
-            run.outcome,
-            RescanOutcome::Skipped,
-            "background rescan must return Skipped when the index write lock is held"
-        );
-        drop(_held);
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// **`try_background_rescan_in` 経由で検証する**（`BackgroundRescanTask::run` 自体ではない）。
-    /// `run()` も内部で `Config::config_dir()` を解決するため、そのまま呼ぶと実
-    /// `%APPDATA%\Snotra\rescan-log.jsonl` を合成行で汚す。**失う残余**: `run()`（同じく
-    /// `Config::config_dir()` を解決して委譲するだけの薄いラッパー）を直接覚えるテストが
-    /// これで無くなる——受容する。
-    #[test]
-    fn background_rescan_in_reports_unchanged_for_empty_inputs() {
-        let _serial = INDEX_LOCK_TEST_GUARD
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = temp_dir("rescan_in_reports_unchanged");
-        // 空のスキャン対象 → scan_all は空 → 空のキャッシュと一致 → Unchanged。
-        let run = try_background_rescan_in(
-            &dir,
-            &[],
-            false,
-            0,
-            entries_digest(&[]),
-            current_index_generation(),
-            INDEX_CACHE_VERSION,
-            0,
-        );
-        assert_eq!(run.outcome, RescanOutcome::Unchanged);
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn stale_background_rescan_cannot_overwrite_newer_index_generation() {
-        let _serial = INDEX_LOCK_TEST_GUARD
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = temp_dir("stale_background_rescan");
-        let old_hash = 41;
-        let new_hash = 42;
-        let old_generation = current_index_generation();
-
-        with_index_write_lock(|| {
-            save_cache_sorted_in(&dir, Vec::new(), new_hash);
-        });
-
-        let run = try_background_rescan_in(
-            &dir,
-            &[],
-            false,
-            old_hash,
-            entries_digest(&[AppEntry {
-                name: "stale".to_string(),
-                target_path: "C:\\stale.exe".to_string(),
-                is_folder: false,
-            }]),
-            old_generation,
-            INDEX_CACHE_VERSION,
-            0,
-        );
-
-        assert_eq!(run.outcome, RescanOutcome::Skipped);
-        assert!(load_cache_in(&dir, new_hash).is_some());
-        assert!(load_cache_in(&dir, old_hash).is_none());
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn rescan_generation_is_snapshotted_before_cache_load() {
-        let _serial = INDEX_LOCK_TEST_GUARD
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let generation_before_load = current_index_generation();
-
-        let (_, task_generation) = load_with_index_generation(|| {
-            with_index_write_lock(|| {});
-            Some(())
-        })
-        .expect("the injected cache load should succeed");
-
-        assert_eq!(task_generation, generation_before_load);
-        assert_ne!(task_generation, current_index_generation());
-    }
-
-    /// 記録の行を読む小道具。
-    fn rescan_log_lines(dir: &Path) -> Vec<serde_json::Value> {
-        std::fs::read_to_string(rescan_log::log_path_in(dir))
-            .unwrap_or_default()
-            .lines()
-            .filter_map(|l| serde_json::from_str(l).ok())
-            .collect()
-    }
-
-    /// **1 回の再スキャンが同じ `sid` を持つ `start`/`end` の 2 行を残し、`Unchanged` なら
-    /// `save_ms` が `null` であることを固定する。**
-    ///
-    /// **固定できていない性質**: `start` が走査より前に出ること（#1001 の存在理由そのもの）は
-    /// このテストでは検知できない——`prune_in` と `start` の追記を走査の**後ろ**（`end` の直前）
-    /// へ動かす変異でも、戻り値後のファイル内容だけを見るこの検査は通ってしまう。その順序を
-    /// 検知するのは実機での短命セッション観測（12 秒で kill し `start` だけが残ることを見る）
-    /// のみで、CI はこの性質を守らない。
-    #[test]
-    fn background_rescan_writes_a_start_end_pair_sharing_one_sid() {
-        let _serial = INDEX_LOCK_TEST_GUARD
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = temp_dir("rescan_log_pair");
-        let scan: Vec<ScanPath> = Vec::new();
-        save_cache_sorted_in(&dir, Vec::new(), compute_config_hash(&scan, false));
-
-        let run = try_background_rescan_in(
-            &dir,
-            &scan,
-            false,
-            compute_config_hash(&scan, false),
-            entries_digest(&[]),
-            current_index_generation(),
-            INDEX_CACHE_VERSION,
-            312_625,
-        );
-        assert_eq!(run.outcome, RescanOutcome::Unchanged);
-
-        let lines = rescan_log_lines(&dir);
-        assert_eq!(lines.len(), 2, "start と end の 2 行が出る");
-        assert_eq!(lines[0]["ev"], "start");
-        assert_eq!(lines[1]["ev"], "end");
-        assert_eq!(lines[0]["sid"], lines[1]["sid"], "同じ sid で組になる");
-        assert_eq!(
-            lines[0]["cached"], 312_625,
-            "cached は渡した cached_len をそのまま運ぶ（0 への変異を検知する）"
-        );
-        assert_eq!(lines[1]["outcome"], "unchanged");
-        assert!(lines[1]["save_ms"].is_null(), "書かなかったので null");
-        assert!(!lines[1]["scan_ms"].is_null(), "走査はした");
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// **ロック競合でも `end` を書く。** 終端は 1 か所ではない——`Skipped` の経路で
-    /// 黙ると、「起動したが再スキャンは走らなかった」が読めなくなる。
-    #[test]
-    fn background_rescan_records_the_skip_when_the_write_lock_is_held() {
-        let _serial = INDEX_LOCK_TEST_GUARD
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = temp_dir("rescan_log_skip_lock");
-        let guard = INDEX_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-
-        let run = try_background_rescan_in(
-            &dir,
-            &[],
-            false,
-            0,
-            0,
-            current_index_generation(),
-            INDEX_CACHE_VERSION,
-            0,
-        );
-        drop(guard);
-        assert_eq!(run.outcome, RescanOutcome::Skipped);
-
-        let lines = rescan_log_lines(&dir);
-        assert_eq!(lines.len(), 2);
-        assert_eq!(lines[1]["outcome"], "skipped");
-        assert_eq!(lines[1]["skip_reason"], "lock", "世代不一致と区別する");
-        assert!(lines[1]["scan_ms"].is_null(), "走査していない");
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// 世代不一致の skip は `lock` と別の理由として出る。
-    #[test]
-    fn background_rescan_records_the_skip_when_the_generation_moved() {
-        let _serial = INDEX_LOCK_TEST_GUARD
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let dir = temp_dir("rescan_log_skip_generation");
-
-        let stale_generation = current_index_generation().wrapping_sub(1);
-        let run = try_background_rescan_in(
-            &dir,
-            &[],
-            false,
-            0,
-            0,
-            stale_generation,
-            INDEX_CACHE_VERSION,
-            0,
-        );
-        assert_eq!(run.outcome, RescanOutcome::Skipped);
-
-        let lines = rescan_log_lines(&dir);
-        assert_eq!(lines[1]["skip_reason"], "generation");
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    /// **`cached` は索引のエントリ件数である。** 木の節点数と食い違えば、読み手は
-    /// 「何件から何件へ変わったか」を誤読する。
+    /// **木の節点数は索引のエントリ件数である。** `save_cache_sorted_in` は走査結果を木へ
+    /// 組み替えて返すので、件数が食い違えば下流の並列 Vec と木で長さがずれる。
     #[test]
     fn tree_len_is_the_entry_count() {
         let entries = vec![
@@ -4316,27 +3970,6 @@ mod tests {
     }
 
     #[test]
-    fn try_with_index_write_lock_skips_closure_when_lock_held() {
-        use std::sync::atomic::{AtomicBool, Ordering};
-        let _serial = INDEX_LOCK_TEST_GUARD
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        // 権威的なインデックスビルドが書き込みロックを保持している状況を再現する。
-        let _held = INDEX_WRITE_LOCK.lock().unwrap();
-        // ロックを取得できないので、クロージャは実行されず None が返らねばならない。
-        let ran = AtomicBool::new(false);
-        let result = try_with_index_write_lock(|| ran.store(true, Ordering::SeqCst));
-        assert!(
-            !ran.load(Ordering::SeqCst),
-            "closure must not run while the index write lock is held"
-        );
-        assert!(
-            result.is_none(),
-            "try_with_index_write_lock must return None when the lock is held"
-        );
-    }
-
-    #[test]
     fn with_index_write_lock_holds_lock_during_closure() {
         let _serial = INDEX_LOCK_TEST_GUARD
             .lock()
@@ -4348,30 +3981,6 @@ mod tests {
         assert!(
             observed_locked,
             "with_index_write_lock must hold INDEX_WRITE_LOCK while running the closure"
-        );
-    }
-
-    #[test]
-    fn try_with_index_write_lock_runs_closure_when_lock_free() {
-        use std::sync::atomic::{AtomicBool, Ordering};
-        let _serial = INDEX_LOCK_TEST_GUARD
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        // ロックが空いていればクロージャを実行し、Some(結果) を返す。
-        // 回帰テスト: 「スキップ」を通した最小実装が同じ2行でこの経路も満たすため即パスする。
-        let ran = AtomicBool::new(false);
-        let result = try_with_index_write_lock(|| {
-            ran.store(true, Ordering::SeqCst);
-            42
-        });
-        assert!(
-            ran.load(Ordering::SeqCst),
-            "closure must run when the index write lock is free"
-        );
-        assert_eq!(
-            result,
-            Some(42),
-            "try_with_index_write_lock must return Some(closure result) when the lock is free"
         );
     }
 

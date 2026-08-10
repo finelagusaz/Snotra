@@ -302,9 +302,8 @@ fn path_store_cursor_matches_full_rebuild() {
 /// 原文の再構築が `target_path` と 1 バイトも違わないことを、実データの全件で確かめる。
 ///
 /// **正規化版の一致だけでは足りない**——tie-break の遅い経路（`PathStore::cmp_paths`）と
-/// 表示パス（`SearchResult.path`）は原文のバイトに載る。さらに背景再スキャンの digest が
-/// この一致に載るようになった（`indexer` の `DigestSource`）ので、1 バイトのずれは
-/// 「毎起動で再スキャンとアイコン破棄が走り続ける」形で現れる。
+/// 表示パス（`SearchResult.path`）は原文のバイトに載る。1 バイトのずれは、同スコアの並びが
+/// 入れ替わる・表示されたパスで開けない、という形で現れる。
 ///
 /// **原文はファイルシステムを走査して取る。`index.bin` から取ってはならない。**
 /// v7 の `index.bin` は `target_path` を持たないので、そこから読んだ値は既に

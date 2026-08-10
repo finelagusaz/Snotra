@@ -487,7 +487,7 @@ impl SearchEngine {
             // v3 フォールバック: Wave 1 を並列実行（migemo フラグを反映）。
             None => {
                 // v3 は派生文字列を一切持たないので Wave 1 を走らせる（実体へ戻す理由は
-                // [`wave1_from_tree`] の doc）。v3 は背景再スキャンが昇格させるまでの
+                // [`wave1_from_tree`] の doc）。v3 は、ロードの旧版枝が現行版へ書き戻すまでの
                 // 1 回だけ通る経路である。
                 let (lower_names, lower_file_names, kana) = wave1_from_tree(&tree, migemo_enabled);
                 (

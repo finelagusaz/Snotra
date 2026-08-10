@@ -594,6 +594,18 @@ fn cache_bin_file_in(dir: &Path) -> BinFile {
     BinFile::new_in(dir, INDEX_MAGIC, INDEX_CACHE_VERSION, "index.bin")
 }
 
+/// `index.bin` が名乗る最終構築時刻（UNIX 秒）を読む。読めなければ `None`。
+///
+/// **索引本体を読まない。** 設定アプリがこれを呼ぶので、17 MiB の確保を持ち込まない。
+///
+/// **`built_at` が全版で先頭フィールドであることは、観測された性質であって契約ではない**
+/// （v2〜v7 の 6 版で確認した）。新しい版を足すときも先頭へ置くこと——この依存は
+/// `index_cache_on_disk_format_is_stable` の assertion 1 本が固定している。
+pub fn index_built_at_in(dir: &Path) -> Option<u64> {
+    // u64 の postcard varint は最大 10 バイト。
+    cache_bin_file_in(dir).peek_first_field::<u64>(10)
+}
+
 /// `index.bin` に載っているときだけエントリを返す（**走査は絶対にしない**）。実データを
 /// corpus として使うテスト専用。
 ///
@@ -2888,6 +2900,16 @@ mod tests {
              意図的なら INDEX_CACHE_VERSION をバンプし golden を更新すること"
         );
 
+        // **`index_built_at_in` はヘッダー直後の最初のフィールドが `built_at` である
+        // ことに依存している。** フィールドを並べ替えると golden も落ちるが、落ちた側が
+        // 「並べ替えた」だけを報せて依存の所在を報せない。ここで名指ししておく。
+        assert_eq!(
+            crate::binfmt::peek_first_field_from_bytes::<u64>(&bytes, INDEX_MAGIC),
+            Some(1_700_000_000),
+            "ヘッダー直後の最初のフィールドが built_at でなくなった。index_built_at_in が\
+             黙って別の値を返すようになる（表示だけが壊れ、テストは他が全部通る）"
+        );
+
         let restored: IndexCache<'static> =
             try_deserialize_with_header(GOLDEN_V7, INDEX_MAGIC, INDEX_CACHE_VERSION)
                 .expect("凍結 v7 バイトがロードできること");
@@ -3425,6 +3447,63 @@ mod tests {
 
         // config_hash が異なると stale 扱いで None
         assert!(load_cache_in(&dir, config_hash.wrapping_add(1)).is_none());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 設定アプリが最終構築日時を出すための口。**17 MiB を読まない**ことが要点で、
+    /// 読めない・無いときは黙って `None` を返す（表示は「未構築」へ倒れる）。
+    #[test]
+    fn index_built_at_reads_the_timestamp_without_loading_the_index() {
+        let dir = temp_dir("built_at_read");
+        assert_eq!(index_built_at_in(&dir), None, "不在は None");
+
+        let entries = vec![AppEntry {
+            name: "a".into(),
+            target_path: "C:\\a".into(),
+            is_folder: false,
+        }];
+        let _ = save_cache_sorted_in(&dir, entries, 42);
+
+        let built_at = index_built_at_in(&dir).expect("保存した直後は読めること");
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        // 保存は今なので、未来ではなく、かつ極端に古くもない。
+        assert!(
+            built_at <= now,
+            "未来の値を返してはならない: {built_at} > {now}"
+        );
+        assert!(
+            now - built_at < 300,
+            "保存直後の値とかけ離れている: {built_at}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// **旧版でも読める**（`built_at` は全版で先頭フィールドである）。
+    #[test]
+    fn index_built_at_reads_a_legacy_version_too() {
+        let dir = temp_dir("built_at_legacy");
+        let bytes = try_serialize_with_header(
+            INDEX_MAGIC,
+            4,
+            &IndexCacheV4 {
+                built_at: 1_700_000_000,
+                entries: vec![],
+                config_hash: 1,
+                char_masks: vec![],
+                file_name_char_masks: vec![],
+                lower_names: vec![],
+                lower_file_names: vec![],
+                normalized_keys: vec![],
+            },
+        )
+        .expect("serialize");
+        assert!(cache_bin_file_in(&dir).save_bytes(&bytes), "save");
+        assert_eq!(index_built_at_in(&dir), Some(1_700_000_000));
 
         let _ = fs::remove_dir_all(&dir);
     }

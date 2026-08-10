@@ -6,6 +6,7 @@
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::config::Config;
@@ -105,6 +106,23 @@ impl BinFile {
         fs::rename(&tmp, &self.path).is_ok()
     }
 
+    /// ヘッダーを検証し、**その直後の最初のフィールドだけ**を復号する。
+    ///
+    /// **本体を読まない。** 読むのは先頭 `HEADER_LEN + max_payload` バイトだけで、
+    /// 17 MiB の `index.bin` から `built_at` を取り出すために全体を確保しない。
+    ///
+    /// **版は問わない**（`self.version` と一致しなくても読む）。「その値が全版で
+    /// 先頭にある」ことを保証するのは呼び出し側の責務である。ヘッダーが読めない
+    /// （短い・magic 違い）ときと復号できないときは `None`。
+    pub fn peek_first_field<T: DeserializeOwned>(&self, max_payload: usize) -> Option<T> {
+        let f = fs::File::open(&self.path).ok()?;
+        let mut head = Vec::with_capacity(HEADER_LEN + max_payload);
+        f.take((HEADER_LEN + max_payload) as u64)
+            .read_to_end(&mut head)
+            .ok()?;
+        peek_first_field_from_bytes(&head, self.magic)
+    }
+
     /// Delete the file.
     pub fn remove(&self) {
         let _ = fs::remove_file(&self.path);
@@ -144,6 +162,18 @@ pub fn try_serialize_with_header<T: Serialize>(
 pub fn peek_version(bytes: &[u8]) -> Option<u32> {
     let raw: [u8; 4] = bytes.get(4..8)?.try_into().ok()?;
     Some(u32::from_le_bytes(raw))
+}
+
+/// バイト列に対する [`BinFile::peek_first_field`]。golden テストが**保存せずに**
+/// 同じ復号を当てるための口である。
+pub fn peek_first_field_from_bytes<T: DeserializeOwned>(bytes: &[u8], magic: [u8; 4]) -> Option<T> {
+    if bytes.len() < HEADER_LEN || bytes[0..4] != magic {
+        return None;
+    }
+    peek_version(bytes)?;
+    postcard::take_from_bytes::<T>(&bytes[HEADER_LEN..])
+        .ok()
+        .map(|(value, _rest)| value)
 }
 
 /// Result-based deserialization.
@@ -421,6 +451,54 @@ mod tests {
         bytes.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
         let err = try_deserialize_with_header::<Dummy>(&bytes, *b"TEST", 1).unwrap_err();
         assert!(matches!(err, BinError::DeserializeFailed));
+    }
+
+    #[test]
+    fn peek_first_field_reads_only_the_head_and_ignores_the_version() {
+        #[derive(serde::Serialize)]
+        struct Payload {
+            first: u64,
+            rest: Vec<u32>,
+        }
+        let dir = temp_dir("binfile_peek_first");
+        // 版 9 で書く（`BinFile` が名乗る版とわざと違える）。
+        let bytes = try_serialize_with_header(
+            *b"TEST",
+            9,
+            &Payload {
+                first: 1_700_000_000,
+                rest: vec![1, 2, 3],
+            },
+        )
+        .expect("serialize");
+        let bf = BinFile::new_in(&dir, *b"TEST", 1, "data.bin");
+        assert!(bf.save_bytes(&bytes), "save");
+
+        // 版が一致しなくても先頭フィールドは読める（版に依らない口である）。
+        assert_eq!(bf.peek_first_field::<u64>(16), Some(1_700_000_000));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn peek_first_field_rejects_a_foreign_magic_and_a_truncated_file() {
+        let dir = temp_dir("binfile_peek_reject");
+        let bf = BinFile::new_in(&dir, *b"TEST", 1, "data.bin");
+
+        // magic 違い。
+        let other = try_serialize_with_header(*b"XXXX", 1, &7u64).expect("serialize");
+        assert!(bf.save_bytes(&other), "save");
+        assert_eq!(bf.peek_first_field::<u64>(16), None, "magic 不一致は None");
+
+        // ヘッダーより短い。
+        assert!(bf.save_bytes(&[1, 2, 3]), "save");
+        assert_eq!(bf.peek_first_field::<u64>(16), None, "切り詰めは None");
+
+        // ファイル不在。
+        bf.remove();
+        assert_eq!(bf.peek_first_field::<u64>(16), None, "不在は None");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -3341,6 +3341,98 @@ mod tests {
         let _ = fs::remove_dir_all(&current_dir);
     }
 
+    /// **`LoadOrScanStats::cache_save_ms` レベルで固定する。** 上のテストは
+    /// `LoadCacheResult::upgrade_save_ms`（`load_cache_in` の返り値）までしか見ておらず、
+    /// それを呼び出し元の `cache_save_ms` へ運ぶ配線（`load_or_scan_with_stats_in` の
+    /// cache-hit 枝、`cache_save_ms: result.upgrade_save_ms`）自体は固定していない
+    /// ——**最終レビュー Important 1 の実際の欠陥はこの配線が `cache_save_ms: 0` を
+    /// 焼き込んでいたことであり**、`upgrade_save_ms` 単体の検知器はこの配線を落とす
+    /// 退行（`result.upgrade_save_ms` を使わず `0` を書く）では落ちない。
+    #[test]
+    fn load_or_scan_with_stats_reports_upgrade_save_ms_in_cache_save_ms() {
+        // `Write` は `INDEX_WRITE_LOCK` を取る（上のテストと同じ理由）。
+        let _guard = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        let scan = vec![ScanPath {
+            path: "C:\\nonexistent-for-hash-only".into(),
+            extensions: vec![".txt".into()],
+            include_folders: false,
+        }];
+        let config_hash = compute_config_hash(&scan, false);
+
+        // 旧版（v4）: cache-hit しつつ昇格が走るので cache_save_ms が非 0 になること。
+        let legacy_dir = temp_dir("stats_upgrade_save_ms_legacy");
+        let entries = vec![AppEntry {
+            name: "a".into(),
+            target_path: "C:\\a".into(),
+            is_folder: false,
+        }];
+        let bytes = try_serialize_with_header(
+            INDEX_MAGIC,
+            4,
+            &IndexCacheV4 {
+                built_at: 1_700_000_000,
+                entries: entries.clone(),
+                config_hash,
+                char_masks: vec![0; entries.len()],
+                file_name_char_masks: vec![0; entries.len()],
+                lower_names: vec!["a".into()],
+                lower_file_names: vec![None],
+                normalized_keys: vec![],
+            },
+        )
+        .expect("serialize");
+        assert!(cache_bin_file_in(&legacy_dir).save_bytes(&bytes), "save");
+
+        let result = load_or_scan_with_stats_in(&legacy_dir, &scan, false);
+        // **`cache_hit` を先に確かめる。** hash が合わず miss 枝へ落ちた場合も
+        // `cache_save_ms > 0` にはなりうるが、それは cache-miss 枝の独立フェーズとしての
+        // save であって、昇格 save の配線を固定したことにはならない——この assert が
+        // 検知器の前提を保証する。
+        assert!(
+            result.stats.cache_hit,
+            "config_hash を揃えたので cache-hit になること（miss だとこの検知器は無意味になる）"
+        );
+        assert!(
+            result.stats.cache_save_ms > 0,
+            "cache-hit 枝で旧版昇格が走ったら LoadOrScanStats::cache_save_ms が非 0 になること\
+             （load_or_scan_with_stats_in の配線 result.upgrade_save_ms を落とす退行の検知器）"
+        );
+
+        // 現行版（v7）: cache-hit だが昇格しないので cache_save_ms は 0 のまま。
+        let current_dir = temp_dir("stats_upgrade_save_ms_current");
+        let derived = derive_columns(entries);
+        let cache = IndexCache {
+            built_at: 1_700_000_000,
+            names: Cow::Borrowed(&derived.tree.names),
+            is_folder: Cow::Borrowed(&derived.tree.is_folder),
+            parent: Cow::Borrowed(&derived.tree.parent),
+            aux: Cow::Borrowed(&derived.tree.aux),
+            table: Cow::Borrowed(&derived.tree.table),
+            sorted_by_path: derived.tree.sorted_by_path,
+            config_hash,
+            char_masks: Cow::Borrowed(&derived.char_masks),
+            file_name_char_masks: Cow::Borrowed(&derived.file_name_char_masks),
+            lower_names: Cow::Borrowed(&derived.lower_names),
+            lower_file_names: Cow::Borrowed(&derived.lower_file_names),
+        };
+        let bytes =
+            try_serialize_with_header(INDEX_MAGIC, INDEX_CACHE_VERSION, &cache).expect("serialize");
+        assert!(cache_bin_file_in(&current_dir).save_bytes(&bytes), "save");
+
+        let result = load_or_scan_with_stats_in(&current_dir, &scan, false);
+        assert!(result.stats.cache_hit, "現行版も cache-hit であること");
+        assert_eq!(
+            result.stats.cache_save_ms, 0,
+            "現行版は昇格しないので cache_save_ms は 0 のままであること"
+        );
+
+        let _ = fs::remove_dir_all(&legacy_dir);
+        let _ = fs::remove_dir_all(&current_dir);
+    }
+
     /// **v2 の `Write` 枝を独立に固定する。** v2 はマスクを持たない唯一の版であり、
     /// `finish_legacy_read` の `LegacyRead { masks: None, .. }` を通る構造的に他と違う枝
     /// （`Skip` なら `from_tree`、`Write` なら `upgrade_legacy_cache_in` 経由で `derived`）。

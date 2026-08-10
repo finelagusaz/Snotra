@@ -1311,17 +1311,17 @@ impl LauncherController {
             // #1004: Enter は最終クエリの結果をその場で要求するため、worker の往復を待てない（待つ設計は Enter 二度押し・Escape・hide の in-flight を全部抱える）。
             // Enter は 1 回きりで、ユーザーは結果を待っている——ここの同期は正当である。
             let query = self.state.query().to_string();
-            if !query.trim().is_empty()
-                && !self.indexing()
-                && let Some(state) = self.app_handle.try_state::<crate::AppState>()
-            {
-                let results = {
+            let searched = if query.trim().is_empty() || self.indexing() {
+                None
+            } else {
+                self.app_handle.try_state::<crate::AppState>().map(|state| {
                     let mut engine = state.engine.lock().unwrap();
                     engine.search(&query)
-                };
-                self.dispatch.invalidate(); // 同期で差し替える＝in-flight は古い
-                self.state.set_results(results);
-            }
+                })
+            };
+            // **どちらの枝でも同期で行を差し替える**——空クエリ・indexing 中にクリアを落とすと、古い行が残ったまま直後の activate_or_execute がそれを起動する（`run_search_with` の Plain 早期 return が旧実装で担っていた処置である）。
+            self.dispatch.invalidate();
+            self.state.set_results(searched.unwrap_or_default());
             // flush 後の selected は set_results 内の clamp_selected（min クランプ・0 リセットではない）
             // に委ねる——SolidJS parity（resolveActivationTarget → clampSelectedIndex(selected, len)）。
             // trailing 窓内に ↓↑ で動かした非 0 選択は新結果リストへ clamp されたまま引き継がれる

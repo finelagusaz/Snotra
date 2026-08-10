@@ -171,6 +171,17 @@ Describe 'H7 — 失効した検索結果の採り込み' {
         $r = Test-SnotraTraceInvariants -Events $events -Sections $script:OneSection
         $r.Overall['H7'] | Should -Be 'PASS'
     }
+
+    It '`data` を持たない settled でも例外を投げず SKIP へ落ちる（スキーマドリフト耐性）' {
+        # `New-TraceEvent` は必ず `data` を持たせるため、この形だけ生の行を直に組む。
+        $events = @( [pscustomobject]@{ seq = 1; ts_ms = 1001; event = 'egui_search:settled' } )
+        { Test-SnotraTraceInvariants -Events $events -Sections $script:OneSection } | Should -Not -Throw
+
+        $r = Test-SnotraTraceInvariants -Events $events -Sections $script:OneSection
+        $r.JudgeFailed | Should -BeFalse
+        $r.Overall['H7'] | Should -Be 'SKIP'
+        @($r.Unjudgeable | Where-Object { $_.Invariant -eq 'H7' }).Count | Should -Be 1
+    }
 }
 
 Describe 'Test-SnotraTraceInvariants — hide 側の非対称' {

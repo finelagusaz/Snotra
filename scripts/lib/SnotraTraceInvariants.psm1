@@ -386,8 +386,11 @@ function Invoke-SnotraTraceJudgement {
                 # --- H7 ---
                 # 採り込み時点の pending より古い seq が採られたら、失効の規則が破れている。
                 # `pending_seq = 0` は「pending 無し」＝この結果が最新だったことを意味する。
-                $dispatchSeq = ConvertTo-SnotraTraceInt64 (Get-SnotraTraceProperty -InputObject $event.Raw.data -Name 'dispatch_seq')
-                $pendingSeq = ConvertTo-SnotraTraceInt64 (Get-SnotraTraceProperty -InputObject $event.Raw.data -Name 'pending_seq')
+                # `data` の読みは H4 と同じく `Get-SnotraTraceProperty` を経由させる——`$event.Raw.data`
+                # を直接ドット参照すると、`data` を持たない行が混じった瞬間 StrictMode で例外になる。
+                $data = Get-SnotraTraceProperty -InputObject $event.Raw -Name 'data'
+                $dispatchSeq = ConvertTo-SnotraTraceInt64 (Get-SnotraTraceProperty -InputObject $data -Name 'dispatch_seq')
+                $pendingSeq = ConvertTo-SnotraTraceInt64 (Get-SnotraTraceProperty -InputObject $data -Name 'pending_seq')
                 if ($null -eq $dispatchSeq -or $null -eq $pendingSeq) {
                     $unjudgeable += @{
                         Invariant = 'H7'

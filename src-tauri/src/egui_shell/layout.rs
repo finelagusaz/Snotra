@@ -403,9 +403,7 @@ pub fn present_results(i: ResultsInputs) -> ResultsPresentation {
 }
 
 /// フレームの開始時刻を 1 つだけ持ち、前フレームからの間隔を返す（#1004 PR 1）。
-/// **間隔は合否ではなく内訳である**——判定に使うのはフレームの所要時間の側で、
-/// このランタイムはイベント駆動ゆえ健全でも間隔は debounce 幅・打鍵間隔まで開く
-///（`docs/superpowers/specs/2026-08-10-search-worker-design.md` の §3.3 が正本）。
+/// **間隔は合否ではなく内訳である**——判定に使うのはフレームの所要時間の側で、このランタイムはイベント駆動ゆえ健全でも間隔は debounce 幅・打鍵間隔まで開く（`docs/superpowers/specs/2026-08-10-search-worker-design.md` の §3.3 が正本）。
 #[derive(Default)]
 pub struct FrameTimer {
     last_began: Option<Instant>,

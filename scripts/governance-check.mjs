@@ -1554,6 +1554,21 @@ const STALE_LOWER_SNAKE_IDENT = /^([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(\(\))?$/;
 /** 同じ行に在れば、その行の識別子は外部ツールの引数と見なす */
 const EXTERNAL_CMD_LINE = /`(gh|npm|cargo|git|node|pwsh|npx) /;
 
+/** 判定対象の識別子を取り出す。無ければ `null`。
+ *  **修飾形（`::`）は末尾セグメントだけを見る**——型セグメント（PascalCase）を見ない理由は
+ *  「単語 1 つの識別子は対象外」と同じで、外部の型名は語彙源をどう広げても免罪できない
+ *  （`ADR-stale-identifier-detector-scope` の #993 の追記節に測定表がある）。
+ *  **`.` の除外はトークン全体ではなくセグメントへ当てる**——先に当てると
+ *  `icon.rs::encode_batch_binary` の形が素通りする（実測で唯一の真の腐りがこの形だった）。
+ *  **捕獲群を読まない**のは 3 述語と同じ理由である（`scanStaleIdentifiers` のコメント）。 */
+function staleTarget(raw) {
+  const bare = raw.replace(/\(\)$/, "");
+  const seg = bare.includes("::") ? bare.slice(bare.lastIndexOf("::") + 2) : bare;
+  if (seg.includes(".")) return null;
+  if (!STALE_IDENT.test(seg) && !STALE_SNAKE_IDENT.test(seg) && !STALE_LOWER_SNAKE_IDENT.test(seg)) return null;
+  return seg.replace(/\(\)$/, "");
+}
+
 /** 規範の散文。skills / rules / agents の md。
  *  **検査対象の全体ではない**——`staleIdentifierTargets` と分けてあるのは、`runAll` の
  *  「対象 md が 0 件（母集団の欠落）」が `.claude/**` の消滅で鳴り続けるためである
@@ -1619,15 +1634,15 @@ export function scanStaleIdentifiers(snapshot, docs) {
       if (EXTERNAL_CMD_LINE.test(line)) continue;
       for (const m of line.matchAll(/`([^`\n]+)`/g)) {
         const raw = m[1];
-        if (raw.includes("/") || raw.includes(" ") || raw.includes(".")) continue;
-        // **捕獲群を読まない**——`test` で当てて `()` は自分で落とす。マッチ結果の `[1]` を読む形だと、
-        // 2 述語を `|` で 1 本へ畳んだ瞬間に群がずれて `inVocab(undefined)` になり、しかも実語彙は
-        // `undefined` を含むので**赤が出ないまま沈黙する**（複製への変異で実測）。読まなければ
-        // 畳もうが分けようが結果が変わらず、「畳むな」という文書契約自体が要らなくなる
-        if (!STALE_IDENT.test(raw) && !STALE_SNAKE_IDENT.test(raw) && !STALE_LOWER_SNAKE_IDENT.test(raw))
-          continue;
+        if (raw.includes("/") || raw.includes(" ")) continue;
+        // **捕獲群を読まない**——`staleTarget` は `test` で当てて `()` は自分で落とす。マッチ結果の
+        // `[1]` を読む形だと、2 述語を `|` で 1 本へ畳んだ瞬間に群がずれて `inVocab(undefined)` になり、
+        // しかも実語彙は `undefined` を含むので**赤が出ないまま沈黙する**（複製への変異で実測）。
+        // 読まなければ畳もうが分けようが結果が変わらず、「畳むな」という文書契約自体が要らなくなる
+        const target = staleTarget(raw);
+        if (target == null) continue;
         checked += 1;
-        if (!inVocab(raw.replace(/\(\)$/, ""))) {
+        if (!inVocab(target)) {
           findings.push(
             finding(doc, lineNo, `散文に、現行語彙に無い識別子が残っている: \`${raw}\`（production のソースの非コメント本文に無い）`),
           );

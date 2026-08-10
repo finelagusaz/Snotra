@@ -1279,6 +1279,37 @@ describe("G-stale-identifiers checkStaleIdentifiers（規範の散文に残る�
     expect(r.findings).toHaveLength(3);
   });
 
+  // 赤フィクスチャは #984 の**実在の欠陥**——`docs/comment-guidelines.md` の第一原則が模範例として
+  // 指していた関数を同じ PR が削除し、規範の根拠だけが実在しない名前を指す状態になった（#993）。
+  // 緑の対は同じ型の現存メンバで、QUALIFIED_SRC が合成語彙として供給する（実リポジトリに依存させない）。
+  const QUALIFIED_SRC = { "snotra-core/src/a.rs": "fn from_material() {}\nfn encode_batch_binary() {}\n" };
+
+  it("型で修飾した形は末尾セグメントを見る（赤・#984 の実在の欠陥）", () => {
+    const f = run("模範例は `Engine::new_from_cache` である\n", QUALIFIED_SRC);
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("Engine::new_from_cache");
+  });
+
+  it("末尾セグメントが語彙に在れば鳴らない（緑）", () => {
+    expect(run("模範例は `Engine::from_material` である\n", QUALIFIED_SRC)).toEqual([]);
+  });
+
+  it("`.` を含む修飾形も末尾セグメントで判定する（`.` の除外はトークン全体ではなくセグメントへ当てる）", () => {
+    expect(run("参照先は `icon.rs::encode_batch_binary` である\n", QUALIFIED_SRC)).toEqual([]);
+    expect(run("参照先は `icon.rs::encode_missing_binary` である\n", QUALIFIED_SRC)).toHaveLength(1);
+  });
+
+  it("判定対象外の不混入: 型セグメント単語 1 つ・引数つき・パス様の末尾", () => {
+    expect(run("`Section::default()` と `snotra-core::Engine`\n", QUALIFIED_SRC)).toEqual([]);
+    expect(run("`HistoryStore::load(top_n)` と `Color32::from_rgb(...)`\n", QUALIFIED_SRC)).toEqual([]);
+    expect(run("`src-tauri::indexing.rs` を見る\n", QUALIFIED_SRC)).toEqual([]);
+  });
+
+  it("修飾形も照合件数を 1 しか進めない（末尾セグメント 1 つだけを見る）", () => {
+    const r = scanStaleIdentifiers(snap({ ...base, ...QUALIFIED_SRC, [DOC]: "`Engine::new_from_cache`\n" }), [DOC]);
+    expect(r.checked).toBe(1);
+  });
+
   it("読めない文書は母集団の欠落として finding", () => {
     expect(checkStaleIdentifiers(snap(base), ["missing.md"])[0].message).toContain("母集団の欠落");
   });

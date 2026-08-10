@@ -274,7 +274,7 @@ fn measure_real_index_footprint() {
     // **どの版を測ったかを出さないと、この数字は読めない。** 旧版の `index.bin` は
     // フォールバック枝で読まれ、木は `target_path` を実体化してから建て直される
     // ——現行版の削減はそこには現れないのに、出力の見た目は成功時とまったく同じである
-    // （実運用点が旧版のまま残る機序は `snotra-core/CLAUDE.md`「indexer.rs の背景再スキャン」）。
+    // （昇格の機序は `snotra-core/CLAUDE.md`「index.bin 書き込みの排他」）。
     match on_disk_version {
         Some(v) if v == indexer::INDEX_CACHE_VERSION => {
             println!("  on-disk 形式: v{v}（現行）");
@@ -282,8 +282,8 @@ fn measure_real_index_footprint() {
         Some(v) => {
             println!(
                 "  on-disk 形式: v{v} — 旧版である。**以下はフォールバック枝の数字であり、\
-                 現行 v{} の常駐ではない。** 昇格させてから測り直すこと（アプリを 1 回起動して\
-                 背景再スキャンを走らせるか、index.bin を退避して全走査させる）",
+                 現行 v{} の常駐ではない。** 昇格させてから測り直すこと（アプリを 1 回起動\
+                 すればロードの旧版枝が現行版へ書き戻す）",
                 indexer::INDEX_CACHE_VERSION
             );
         }
@@ -301,27 +301,19 @@ fn measure_real_index_footprint() {
     // （足すと二重計上で残余が負に振れる）。分けて出すのは、読むバイト数と deserialize が
     // オンディスク形式の変更に対して**逆向きに振る舞う**ためである。
     println!(
-        "  フェーズ: total {}ms = hash {}ms + cache_load {}ms（うち read {}ms）+ digest {}ms + scan {}ms + sort {}ms + cache_save {}ms（残余 {}ms）",
+        "  フェーズ: total {}ms = hash {}ms + cache_load {}ms（うち read {}ms）+ scan {}ms + sort {}ms + cache_save {}ms（残余 {}ms）",
         s.total_ms,
         s.hash_ms,
         s.cache_load_ms,
         s.cache_read_ms,
-        s.digest_ms,
         s.scan_ms,
         s.sort_ms,
         s.cache_save_ms,
-        s.total_ms.saturating_sub(
-            s.hash_ms + s.cache_load_ms + s.digest_ms + s.scan_ms + s.sort_ms + s.cache_save_ms
-        ),
+        s.total_ms
+            .saturating_sub(s.hash_ms + s.cache_load_ms + s.scan_ms + s.sort_ms + s.cache_save_ms),
     );
 
-    let LoadOrScanResult {
-        material,
-        rescan_task,
-        ..
-    } = result;
-    // 背景再スキャンタスクは src-tauri 側で別スレッドが消費する。常駐計測の対象外。
-    drop(rescan_task);
+    let LoadOrScanResult { material, .. } = result;
 
     // **実運用の起動経路は、ロードと構築の間に PATH スキャンを挟む**（`main.rs` の
     // `load_or_scan_with_stats` → `scan_path_env` → `Engine::from_material`）。この区間は
@@ -405,29 +397,20 @@ fn measure_real_index_footprint() {
     report_scan_all_cost(&config);
 }
 
-/// 背景再スキャンがキャッシュヒットの起動ごとに踏む `scan_all` 区間を測る。
+/// 索引を建て直す契機（初回構築・`/s`・設定変更）が踏む `scan_all` 区間を測る。
 ///
-/// **この関数が測る区間は `scan_all` だけである。** 背景再スキャン経路の残り 3 区間
-/// （`sort` / `digest` / `save`）は `rescan-log.jsonl` がキャッシュヒットの起動ごとに測る
-/// （#1001 受け入れ 1）。
-/// 経路全体の内訳は出力末尾の 1 行が指す。
+/// **この関数が測る区間は `scan_all` だけである。** 再構築経路の残り（`sort` / `save`）は
+/// cache-miss の起動で `LoadOrScanStats` が測る。
 ///
-/// **`LoadOrScanStats` をここの代理に使ってはならない。** あれはロード経路（`load_or_scan_with_stats`）
-/// の計測であり、しかも枝ごとに片方しか埋まらない——cache-hit 枝は `scan_ms` / `sort_ms` /
-/// `cache_save_ms` が 0 で `digest_ms` だけが実数、cache-miss 枝はその逆で `digest_ms` が 0
-/// （`indexer.rs` の該当分岐）。Phase A（このハーネス）は実 `index.bin` を読むため通常
-/// cache-hit 枝を通り、`sort_ms` は常に 0 としか出ない。加えて cache-hit 枝の `digest_ms` は
-/// `digest_over(tree)` であり、背景再スキャンが撃つ `entries_digest(&scanned)` とは別の計算
-/// である——同じ「digest」でも測っている対象が違う。
+/// **`LoadOrScanStats` をここの代理に使ってはならない。** あれはロード経路
+/// （`load_or_scan_with_stats`）の計測であり、しかも枝ごとに片方しか埋まらない——cache-hit 枝は
+/// `scan_ms` / `sort_ms` / `cache_save_ms` が 0 である（`indexer.rs` の該当分岐）。
+/// Phase A（このハーネス）は実 `index.bin` を読むため通常 cache-hit 枝を通り、走査の区間は
+/// **1 つも埋まらない**。
 ///
-/// **広げない理由**: `sort_entries_canonical` は `indexer.rs` の `pub(crate)`、`entries_digest`
-/// はさらに狭い private ゆえ、どちらもこの統合テストからは呼べない。可視性を緩めるか
-/// 計測専用の入口を製品へ足すことは、#1000 が却下した「注入点を製品コードへ足す」と同型になる。
-///
-/// **この区間はどのフェーズ計測にも現れない。** Phase A のロードはキャッシュヒット枝ゆえ
-/// `scan_ms` が 0 で、`rescan_task` は呼び出し側が `drop` する——`cache_load_ms` と
-/// `total_ms` の間に居た全エントリ複製が見えなかったのと同じ形である
-/// （`snotra-core/CLAUDE.md`「indexer.rs の背景再スキャン」）。
+/// **広げない理由**: `sort_entries_canonical` は `indexer.rs` の `pub(crate)` ゆえ、この統合
+/// テストからは呼べない。可視性を緩めるか計測専用の入口を製品へ足すことは、#1000 が却下した
+/// 「注入点を製品コードへ足す」と同型になる。
 ///
 /// **返り値は entries へ混ぜない。** 実走査はファイルシステムの churn で実行ごとにぶれ、
 /// 混ぜると常駐がバイト単位で再現しなくなる。ここで測るのは区間のコストである
@@ -449,7 +432,7 @@ fn report_scan_all_cost(config: &Config) {
     let t1 = snap();
 
     let n = scanned.len();
-    report("scan_all（背景再スキャン経路・常駐外）", t0, t1, n);
+    report("scan_all（再構築経路・常駐外）", t0, t1, n);
     println!("  壁時計: scan_all {ms:.0} ms（{n} 件・実行ごとに数十%ぶれる）");
 
     // **検算は区間の外で行う。** この走査自体が n 件の `String` を確保するので、
@@ -473,8 +456,8 @@ fn report_scan_all_cost(config: &Config) {
         println!("    …ほか {} 件", dups.len() - 20);
     }
     println!(
-        "  ※ この区間は scan_all のみ。背景再スキャン経路の sort / digest / save は \
-         rescan-log.jsonl がキャッシュヒットの起動ごとに測る（#1001 受け入れ 1）"
+        "  ※ この区間は scan_all のみ。再構築経路の sort / save は cache-miss の起動で \
+         LoadOrScanStats が測る"
     );
 }
 
@@ -496,9 +479,9 @@ fn report_cache_bytes(n: usize) {
         return;
     };
 
-    // **版を必ず出す。** 実運用点のファイルが現行版とは限らない——`index.bin` を書き直す契機は
-    // cache-miss と背景再スキャンの `Changed` だけなので、索引の中身が変わらなければ旧版が
-    // 残り続ける。版を見ずに内訳を読むと、既に消したはずのフィールドを「まだある」と誤読する。
+    // **版を必ず出す。** この計器はファイルを直接読むだけで昇格させないので、製品がまだ一度も
+    // ロードしていない `index.bin` は旧版のまま現れる。版を見ずに内訳を読むと、既に消したはずの
+    // フィールドを「まだある」と誤読する。
     println!(
         "\n  --- index.bin の内訳（v{} / {:.2} MiB / payload {:.2} MiB）---",
         b.version,

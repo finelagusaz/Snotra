@@ -96,7 +96,7 @@ pub(crate) fn walk_to_root<N: TreeNodes + ?Sized>(
 /// **この 1 行が、組み立ての向き（原文 / 正規化キー）をまたいで共有される唯一の規則である。**
 /// 原文側（[`raw_path_into`]）と索引側の正規化（`PathStore::normalized_into` と `PathCursor`）は
 /// 走査の形が違うが、区切りの入れ方だけは一致していなければならない——ずれても「短いパス」では
-/// なく「区切りが 1 つ多い／少ないパス」になり、表示パス・tie-break・digest・履歴照合が
+/// なく「区切りが 1 つ多い／少ないパス」になり、表示パス・tie-break・履歴照合が
 /// **正しく見えるまま**すれる。
 ///
 /// 見るのは `\` の 1 バイトだけである（`/` は見ない）。正規化側のバッファは `/` → `\` 変換後で
@@ -111,18 +111,18 @@ pub(crate) fn push_separator(buf: &mut String) {
 /// `i` のフルパスを**原文のまま**組み立てる（小文字化も `/` → `\` 変換も trim もしない）。
 ///
 /// 結果は元の `AppEntry.target_path` とバイト一致する。**この一致が木表現の要石である**
-/// ——背景再スキャンの digest はここで組み直した結果を混ぜるので、1 バイトずれれば
-/// 毎起動で「変わった」と判定され、再スキャンが永久に走り続ける（結果は正しいまま静かに
-/// 遅くなるので挙動テストでは捕まらない）。合成 fixture での保証は
+/// ——`target_path` をディスクにも索引にも持たない以上、原文を要求する消費者（tie-break の
+/// `cmp_paths`・`SearchResult.path`）はすべてここの出力を受け取る。1 バイトずれても
+/// **それらしい**パスが返るので挙動テストでは捕まらない。合成 fixture での保証は
 /// `search/tests/path.rs` の `path_store_cursor_matches_full_rebuild` が常に持ち、実データの
 /// 全件照合は同ファイルの `path_store_raw_matches_target_path_over_real_index` が受け持つ
 /// ——**後者は `#[ignore]` で、原文をファイルシステムの走査から取る**（`index.bin` から
 /// 取ると組み直し同士の比較になり、どれだけ壊れていても落ちない）。開発機で明示的に走らせる
 /// corpus であって保証ではない。
 ///
-/// **digest の 2 実装が一致することは別に固定してある**（`indexer` の
-/// `digest_over_tree_matches_digest_over_scanned_entries`）——そちらは合成 fixture ゆえ
-/// CI でも走り、組み直しが digest を通して同じ値になることを毎回検算する。
+/// **CI で走る接地は `indexer` の `index_tree_raw_matches_frozen_v6_specimen` だけである**
+/// ——v6 の凍結バイト列（木を 1 度も通っていない原文）と組み直しを突き合わせる。合成の
+/// 標本 1 つぶんであり、実データ規模のカバレッジは上の `#[ignore]` 2 本が持つ。
 #[inline]
 pub(crate) fn raw_path_into<N: TreeNodes + ?Sized>(nodes: &N, buf: &mut String, i: usize) {
     let (root, chain, depth) = walk_to_root(nodes, i);
@@ -200,7 +200,7 @@ impl IndexTree {
     /// それは**この旗が存在する理由そのもの**——組み立てずに済ませること——を打ち消す。
     /// 誤って `true` が入ったときの帰結は他の 4 つと違って局所的である: `cmp_paths` が
     /// index 比較の高速路へ入り、**同スコアのエントリどうしの tie-break だけ**がパス順でなく
-    /// 格納順になる。エントリは消えず、panic も再スキャンの暴走も起きず、順序は安定している。
+    /// 格納順になる。エントリは消えず、panic も起きず、順序は安定している。
     /// 上の 4 つ（索引が短くなる・添字 panic・停止しない）とは桁が違うので、全件の組み直しを
     /// 毎起動払う側には倒さない。
     pub fn from_parts(

@@ -10,7 +10,6 @@ pub mod indexer;
 pub mod instant;
 pub mod opener;
 pub mod query;
-pub mod rescan_log;
 pub mod search;
 pub mod ui_types;
 pub mod window_data;

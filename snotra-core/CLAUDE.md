@@ -52,7 +52,6 @@
 - `folder.rs` — フォルダ内エントリの列挙とフィルタ/ソート（責務は `//!`）
 - `indexer.rs` — スキャン対象の列挙・重複排除とインデックスキャッシュ（責務は `//!`）
 - `query.rs` — クエリ/履歴キーの正規化と文字ビットマスク（責務は `//!`）
-- `rescan_log.rs` — 背景再スキャンの in-situ 計器（責務は `//!`）。**アプリはこのファイルを読まない**——消えても壊れても振る舞いが変わらないので `binfmt` の版機構を持たず、**間引きの入力に兼ねさせてはならない**（計器が振る舞いを決める部品に変わると「永遠に間引かれて再スキャンが一度も走らない」が沈黙で起きる）
 - `index_tree.rs` — `target_path` をフォルダ木の接頭辞共有で表す、オンディスクと索引が共有する表現（責務は `//!`）。**辿る規則（`walk_to_root` / `raw_path_into`）はここが唯一持ち、記憶域の並べ方だけを `TreeNodes` が抽象化する**——`indexer` の並列 Vec と `search` の構造体の列が同じ実装を通ることが、ディスクと索引で木がずれないことの根拠である
 - `binfmt.rs` — `magic` + `version` 付きバイナリ入出力の共通処理（責務は `//!`）
 - `error.rs` — crate 共通の error 型（責務は `//!`）
@@ -167,7 +166,7 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 1. **`IndexCache<'a>` 構造体**: 新フィールドを `Cow<'a, [T]>` で追加（owned/borrowed は #461 で `Cow` 統合済み。save は `Cow::Borrowed` で全件 clone 回避、load は `IndexCache<'static>` へ Owned deserialize）
 2. **バージョン番号**: `INDEX_CACHE_VERSION` をバンプ
 3. **旧バージョン用フォールバック構造体**: 旧スキーマを `IndexCacheVN` として残す
-4. **`load_cache()`**: 新バージョン → 旧バージョンのフォールバックチェーンを追加（Cow フィールドは `.into_owned()` で `CachedMasks`/`entries` へ）。**各枝で `LoadCacheResult.version` に読めた版を入れる**——ここを取り違えると背景再スキャンの昇格判定が黙って外れ、旧版が残り続ける（→「indexer.rs の背景再スキャン」）。昇格そのものは `cached_version != INDEX_CACHE_VERSION` の比較ゆえ**新しい版を足すたびに手当てする必要はない**
+4. **`load_cache()`**: 新バージョン → 旧バージョンのフォールバックチェーンを追加（Cow フィールドは `.into_owned()` で `CachedMasks`/`entries` へ）。**各枝で `LoadCacheResult.version` に読めた版を入れる**——鎖のどの枝で読めたのかを外から見る手段はこれしか無く、取り違えても検索結果は正しいまま枝選択の退行が残る（フィールドの doc が正本）。昇格そのものは「旧版枝に入ったこと」が条件ゆえ**新しい版を足すたびに手当てする必要はない**（→「indexer.rs の索引更新の契機」）
 5. **`save_cache_sorted()`**: 新フィールドの計算ロジックを追加（`Cow::Borrowed` で渡す）
 6. **`CachedMasks` 構造体**: 新フィールドを `Option<T>` で追加（旧キャッシュでは None）
 7. **`SearchEngine::new_with_cached_masks()`**: 新パラメータを受け取り、None 時は自前で計算
@@ -192,22 +191,22 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 
 `index.bin` を scan+save する経路は**すべて `INDEX_WRITE_LOCK`（`indexer.rs` の module-level `static Mutex<()>`）を経由する**。`BinFile::save` の tmp→rename は固定 tmp 名（`index.bin.tmp`）での原子的置換であり、単一書き手が前提。複数経路が同時に書くと tmp ファイルを食い合い破損する。
 
-- 権威的書き手（`rebuild_and_save` / `load_or_scan_with_stats` の cache-miss 枝）: `with_index_write_lock`（blocking）で取得
-- 日和見的書き手（`try_background_rescan`）: `try_with_index_write_lock`（`try_lock`、競合時スキップ）。本式ビルドが走っていれば再スキャンは不要
+- 走査して書く経路（`rebuild_and_save` / `load_or_scan_with_stats` の cache-miss 枝）: `with_index_write_lock`（blocking）で取得
+- 走査せずに書く経路（ロードの旧版枝からの形式昇格・`upgrade_legacy_cache_in`）: 同じく `with_index_write_lock`。読めた旧版の走査結果をそのまま現行版で書き直すだけで、索引の中身は変えない
 - `save_cache_sorted` 自身はロックを取らない（呼び出し側が保持する契約）。ロック取得済みのクロージャ内から呼ぶ。`save_cache_sorted` がロックを取ると自己デッドロックする
-- **`index.bin` を書く新しい経路を追加するときは、必ず `with_index_write_lock` / `try_with_index_write_lock` を経由させる**
+- **`index.bin` を書く新しい経路を追加するときは、必ず `with_index_write_lock` を経由させる**
 
-## indexer.rs の背景再スキャン
+## indexer.rs の索引更新の契機
 
-`load_or_scan_with_stats` はキャッシュヒット時、再スキャンを*その場で spawn せず* `LoadOrScanResult.rescan_task`（`Some(BackgroundRescanTask)`）として返す。**呼び出し元は撤去済みで、この値は現在どこからも消費されない**（#1001 で `src-tauri` 側の spawn と結果適用〔`apply_rescanned_index`〕を撤去。core 側の削除も #1001 の後続作業として予定）。撤去前は `src-tauri` が `AppHandle` を持った状態で低優先度スレッドで `task.run()` し、**結末・索引の材料・材料を走査した対象の同一性の組**（`RescanRun { outcome, material, scanned_config_hash }`）を受け取り、材料と `scanned_config_hash` が載る `Changed` のときにアイコンキャッシュを無効化し、走っているセッションの索引をその場で差し替えていた（差し替えの設計判断は設計書 `docs/superpowers/specs/2026-08-10-rescan-applies-its-result-design.md` §2.4・§3 を参照——同文書冒頭に撤去の追記あり）。
+**索引が更新される契機は明示操作の 3 つだけである**（初回構築・`/s` による手動再構築・設定変更による再構築。`SPEC.md` §3.3）。キャッシュヒットの起動は `index.bin` を読んで終わりで、背景での走査は行わない。自動の背景再スキャンを間引くのではなく撤去した根拠と、そこで捨てた設計（`built_at` を使う間引き）の中身は `docs/adr/ADR-rescan-explicit-only.md` が正本。
 
-- ロジック（lock 取得・`scan_all` / `sort_entries_canonical` / `entries_digest` 比較・`save_cache_sorted`）は `snotra-core` が持つ。**spawn とアイコン無効化を `src-tauri` へ委ねる設計だったが、その呼び出し元は撤去済み**——`index.bin` は今も snotra-core の資源、`icons.bin` は src-tauri の資源という所有権の分割は残る
-- **タスクが抱えるのは digest（u64）であって全エントリの複製ではない**（反復 6）。かつては `Vec<AppEntry>` を丸ごと持ち、起動のたびに 624,755 ブロック・62.49 MiB を確保していた。**digest は列の順序に依存する**ので、比較する両辺は必ず `sort_entries_canonical` を通すこと——外すと中身が同じでも「変わった」と判定して `index.bin` を毎回書き直す（結果は正しいまま静かに遅くなるので挙動テストでは捕まらない。検知器は `sorted_comparison_ignores_enumeration_order`）
-- **`cache_load_ms` と `total_ms` の間に処理を足すときは、`LoadOrScanStats` に並ぶ項目を必ず作る**。この複製はそこに居たためどのフェーズ計測にも現れず、起動段の live ブロックの 1/3 を占めたまま見えなかった（`digest_ms` を足して塞いだ。残余は `tests/memory_footprint.rs` が毎回出す）
-- **旧版の `index.bin` を現行版へ書き戻すのは `load_cache_in` の旧版枝（`upgrade_legacy_cache_in`）の責務である。** かつてはここ（背景再スキャン）が担っていたが、`Unchanged` の間は save の契機が来ず、索引の中身が変わらないユーザーの `index.bin` は旧版のまま何日でも残り、新形式の削減を**永久に受け取らない**問題を持っていた（2026-08-07 実測: v5 導入後の実運用点が v4 のまま残り、毎起動で `normalized_keys` 35.98 MiB を読んでは捨てていた。**症状は「遅い」だけで検索結果は正しいまま**ゆえ挙動テストでは捕まらない）。ロードのたびに必ず通る旧版枝へ移すことでこの経路への依存を断った。**「昇格をロード側に置いてはならない」の射程は v7 の枝だけである**——v7 は木を直読みするので `entries: Vec<AppEntry>` が存在せず、木から作り直すと反復 6 で消した 62.5 MiB の複製が復活する。v2〜v6 の枝は走査結果 `cache.entries` を手に持って `IndexTree::build` へ渡す 1 行の置換で済むため、複製は発生しない。検知器は `load_cache_upgrades_a_legacy_format_in_place` と `load_cache_does_not_rewrite_when_the_format_is_current` の対
-- `try_background_rescan` はアイコンキャッシュに触れない。`RescanOutcome::{Skipped, Unchanged, Changed}` で結果を伝え、呼び出し側が `Changed` を見て無効化する
-- スキャンロジックを変更するとき、このバックグラウンドパスにも影響することを意識する
-- **`scan_all` の重複排除は根ごとに `check`/`record` を割り当てる**（`root_roles`）。積むのは「後続の根と重なる」根だけで、先行とだけ重なる根は照合のみでキーを積まない——木の走査は同じディレクトリを二度読まないので、1 回の走査の中で同じ正規化キーが二度現れる経路は**根が入れ子のとき以外に無い**（`dedup_scan_paths` は完全一致マージのみゆえ入れ子の根は表現可能であり、**素で消すことはできない**）。実運用点は最大の根 `C:\` が最後に来るため、その根ぶんの `String` 確保が消える（額は `PERFORMANCE.md`「採用: `scan_all` の `seen` を根ごとの役割（`check`/`record`）で条件づける」が正本）。**検知器は両方向を固定する**（`scan_all_dedups_when_roots_are_nested` / `scan_all_dedups_when_the_child_root_comes_first`）——役割は木の深さではなく**走査順**の関数なので、親が先・子が先で役割が入れ替わり、それでも重複排除が成立することを走査結果で見る。**「片方では捕まらない変異が在る」とは書かない**——2 根の治具でそれを示せる変異は見つかっておらず（役割の入れ替えも結線の破壊も両順序で対称に落ちる）、示せない必然を理由として書けば規範に反する。**退行の射程は 2 段に分かれる**: `root_roles` の役割割り当ての退行（例: 最大の根が積む側に回る）は `root_roles_over_the_real_shape_leave_the_largest_root_inert` が捕まえる——ここは CI で守られる。一方、`Dedup::accept` の照合枝で確保が復活する退行や `scan_all` の結線そのものの退行は、走査結果が同じままなので挙動テストでも `root_roles` の単体テストでも捕まらない。捕まえるのは `tests/memory_footprint.rs` の確保回数だけで、これは `#[ignore]` の手動計測ゆえ CI は守らない
+- **`cache_load_ms` と `total_ms` の間に処理を足すときは、`LoadOrScanStats` に並ぶ項目を必ず作る**（正本はその struct の doc）。反復 6 で実際に踏んだ——ロード直後に居た全エントリ複製がどのフェーズ計測にも現れず、起動段の live ブロックの 1/3 を占めたまま見えなかった。残余は `tests/memory_footprint.rs` が毎回出す
+- **旧版の `index.bin` を現行版へ書き戻すのは `load_cache_in` の旧版枝（`upgrade_legacy_cache_in`）の責務である。** かつては背景再スキャンが担っていたが、索引の中身が変わらない間は save の契機が来ず、そのユーザーの `index.bin` は旧版のまま何日でも残り、新形式の削減を**永久に受け取らない**問題を持っていた（2026-08-07 実測: v5 導入後の実運用点が v4 のまま残り、毎起動で `normalized_keys` 35.98 MiB を読んでは捨てていた。**症状は「遅い」だけで検索結果は正しいまま**ゆえ挙動テストでは捕まらない）。ロードのたびに必ず通る旧版枝へ移すことでこの経路への依存を断った。**「昇格をロード側に置いてはならない」の射程は v7 の枝だけである**——v7 は木を直読みするので `entries: Vec<AppEntry>` が存在せず、木から作り直すと反復 6 で消した 62.5 MiB の複製が復活する。v2〜v6 の枝は走査結果 `cache.entries` を手に持って `IndexTree::build` へ渡す 1 行の置換で済むため、複製は発生しない。検知器は `load_cache_upgrades_a_legacy_format_in_place` と `load_cache_does_not_rewrite_when_the_format_is_current` の対
+- **`save_cache_sorted(_in)` を呼ぶ側は直前に `sort_entries_canonical` を通す契約である**（正本は同関数の doc）。親の解決が整列済みを前提に二分探索するため、崩すと木が平たくなりフルパスが `table` へ実体で戻る。**この契約に CI の検知器は無い**——`upgrade_legacy_cache_in` の昇格テストは整列済みの fixture を使っており、ソートを外す変異では落ちない
+
+## `scan_all` の重複排除
+
+**`scan_all` の重複排除は根ごとに `check`/`record` を割り当てる**（`root_roles`）。積むのは「後続の根と重なる」根だけで、先行とだけ重なる根は照合のみでキーを積まない——木の走査は同じディレクトリを二度読まないので、1 回の走査の中で同じ正規化キーが二度現れる経路は**根が入れ子のとき以外に無い**（`dedup_scan_paths` は完全一致マージのみゆえ入れ子の根は表現可能であり、**素で消すことはできない**）。実運用点は最大の根 `C:\` が最後に来るため、その根ぶんの `String` 確保が消える（額は `PERFORMANCE.md`「採用: `scan_all` の `seen` を根ごとの役割（`check`/`record`）で条件づける」が正本）。**検知器は両方向を固定する**（`scan_all_dedups_when_roots_are_nested` / `scan_all_dedups_when_the_child_root_comes_first`）——役割は木の深さではなく**走査順**の関数なので、親が先・子が先で役割が入れ替わり、それでも重複排除が成立することを走査結果で見る。**「片方では捕まらない変異が在る」とは書かない**——2 根の治具でそれを示せる変異は見つかっておらず（役割の入れ替えも結線の破壊も両順序で対称に落ちる）、示せない必然を理由として書けば規範に反する。**退行の射程は 2 段に分かれる**: `root_roles` の役割割り当ての退行（例: 最大の根が積む側に回る）は `root_roles_over_the_real_shape_leave_the_largest_root_inert` が捕まえる——ここは CI で守られる。一方、`Dedup::accept` の照合枝で確保が復活する退行や `scan_all` の結線そのものの退行は、走査結果が同じままなので挙動テストでも `root_roles` の単体テストでも捕まらない。捕まえるのは `tests/memory_footprint.rs` の確保回数だけで、これは `#[ignore]` の手動計測ゆえ CI は守らない
 
 ## エントリ名の導出ルール
 
@@ -244,9 +243,9 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 
 ### 製品の入口を通るテストは、その経路へ計器を足した瞬間に実 `%APPDATA%\Snotra` を書き始める
 
-**しかもテストは全部通ったままである**（判定が 1 つも変わらないため）。#1013 で背景再スキャンに記録を足したところ、`.run()` 経由＝`Config::config_dir()` 経由の既存テスト 2 本が実 `rescan-log.jsonl` へ書き始めた（実測: 当該ファイルの全 36 行がテスト由来・実起動由来 0 行）。上限つきの記録なら、テスト実行が実運用の窓を食いつぶす。
+**しかもテストは全部通ったままである**（判定が 1 つも変わらないため）。#1013 で当時の背景再スキャンに記録を足したところ、`Config::config_dir()` を内部で解決する入口を通る既存テスト 2 本が実 `rescan-log.jsonl` へ書き始めた（実測: 当該ファイルの全 36 行がテスト由来・実起動由来 0 行）。上限つきの記録なら、テスト実行が実運用の窓を食いつぶす。
 
-- 直し方は **dir 注入の入口**（`try_background_rescan_in` のように `dir: &Path` を取る形）へ寄せること
+- 直し方は **dir 注入の入口**（`load_cache_in` / `save_cache_sorted_in` のように `dir: &Path` を取る形）へ寄せること
 - **`SNOTRA_CONFIG_DIR` で迂回してはならない**——プロセス大域の env であり、並列実行中の他テストの保存先まで動かす
 - **検算は「フルテスト実行の前後でファイルの行数が変わらないこと」を実測する。** 緑であることは根拠にならない
 - 同型の先例が「開発ルール」の `HistoryStore::load()` 禁止（#963）である——**あちらは実データを読む側、こちらは書く側**。読む側は結果が環境で揺れ、書く側は結果が揺れないまま実データを汚す

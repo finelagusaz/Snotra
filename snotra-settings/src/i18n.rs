@@ -85,6 +85,8 @@ pub(crate) enum TrKey {
     // Index tab
     HeadingScanTargets,
     LabelNoScanPaths,
+    LabelIndexLastBuilt,
+    LabelIndexNotBuilt,
     IndexScanExtensionsWithFolders,
     BtnEdit,
     BtnAdd,
@@ -283,6 +285,8 @@ fn ja(key: TrKey) -> &'static str {
         // Index tab
         TrKey::HeadingScanTargets => "スキャン対象",
         TrKey::LabelNoScanPaths => "スキャンパスが設定されていません。",
+        TrKey::LabelIndexLastBuilt => "最終構築:",
+        TrKey::LabelIndexNotBuilt => "未構築",
         TrKey::IndexScanExtensionsWithFolders => "{extensions} (フォルダ含む)",
         TrKey::BtnEdit => "編集",
         TrKey::BtnAdd => "追加…",
@@ -497,6 +501,8 @@ fn en(key: TrKey) -> &'static str {
         // Index tab
         TrKey::HeadingScanTargets => "Scan targets",
         TrKey::LabelNoScanPaths => "No scan paths configured.",
+        TrKey::LabelIndexLastBuilt => "Last built:",
+        TrKey::LabelIndexNotBuilt => "Not built",
         TrKey::IndexScanExtensionsWithFolders => "{extensions} (incl. folders)",
         TrKey::BtnEdit => "Edit",
         TrKey::BtnAdd => "Add…",

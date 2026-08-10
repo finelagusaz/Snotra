@@ -415,15 +415,29 @@ Expected: 送出 → 観測 → 取りこぼし時に一度だけ再注入、と
     # `c:\` は has_path_sep が真になり incremental cache が無効化される＝全件走査の経路。
     # 打鍵から結果までのフレームが予算を超えないことを H6 が判定する（区間は
     # egui_input:changed → egui_search:settled で切れるのでマーカーは要らない）。
-    Send-SnotraKey -VirtualKey 0x43            # c
-    Send-SnotraKey -VirtualKey 0x43 -Up
-    Start-Sleep -Milliseconds 120              # debounce(50ms) の trailing を跨がせる
-    Send-SnotraKeyChord -VirtualKeys @(0x10, 0xBA)   # Shift + ; = :
-    Start-Sleep -Milliseconds 120
-    Send-SnotraKey -VirtualKey 0xDC            # \
-    Send-SnotraKey -VirtualKey 0xDC -Up
-    Start-Sleep -Milliseconds 300              # 全件走査 + 採り込みの完了を待つ
+    #
+    # **ガードは既存の作法に合わせる。** このスクリプトは「失敗が既に在るときはキーを
+    # 注入しない」規律を持ち、1 文字クエリ注入も Escape 注入も同じ条件で守られている
+    # ——窓が出ていない状態で打鍵すると、キーが他のアプリへ飛ぶためである。
+    if ($failures.Count -eq 0 -and $resultsChecked) {
+      # 先行の 1 文字クエリが入力欄に残っているので消してから打つ（既存ブロックの
+      # Backspace と同じ作法。消さないとクエリが "zc:\" になる）。
+      Send-SnotraKey -VirtualKey $VK_BACK
+      Start-Sleep -Milliseconds 50
+      Send-SnotraKey -VirtualKey $VK_BACK -Up
+      Start-Sleep -Milliseconds 50
+      Send-SnotraKey -VirtualKey 0x43            # c
+      Send-SnotraKey -VirtualKey 0x43 -Up
+      Start-Sleep -Milliseconds 120              # debounce(50ms) の trailing を跨がせる
+      Send-SnotraKeyChord -VirtualKeys @(0x10, 0xBA)   # Shift + ; = :
+      Start-Sleep -Milliseconds 120
+      Send-SnotraKey -VirtualKey 0xDC            # \
+      Send-SnotraKey -VirtualKey 0xDC -Up
+      Start-Sleep -Milliseconds 300              # 全件走査 + 採り込みの完了を待つ
+    }
 ```
+
+**注入は show が落ち着いてから打つこと。** 2026-08-10 の実測（release・smoke）では、**show 直後の 5 フレームが 13〜23 ms、hide 直後の 1 フレームが 55 ms** かかっている（定常フレームは 64〜139 µs）。これらが打鍵区間へ混入すると H6 は worker 化の後も赤いままになる。既存の 1 文字クエリ注入の**後ろ**へ置くこの位置なら、初期化のフレームは既に過ぎている——**位置を前へ動かさないこと。**
 
 **`Send-SnotraKeyChord` が Shift 付き単発に使えるか**は Step 1 で読んだ既存の使い方で確かめる。使えないなら `Send-SnotraKey -VirtualKey 0x10`（Shift down）→ `0xBA` down/up → `0x10 -Up` に展開する。
 
@@ -444,9 +458,18 @@ git commit -m "test(smoke): #1004 パスクエリを打鍵注入する"
 
 ---
 
-## Task 5: 不変条件 H6 — 打鍵から結果までのフレームが予算を超えない
+## Task 5: 取り下げ — 不変条件 H6 は置かない
 
-**Files:**
+> **⚠️ このタスクは PR 1 の実測により取り下げた。以下の Step は実装しないこと。** 正本は `docs/superpowers/specs/2026-08-10-search-worker-design.md` の §3.3。理由は 2 つある:
+>
+> 1. **trace の書き込みが 1 本あたり約 10 ms かかり、フレーム時間の計器を汚染する。** 実測では、実質的な処理が無い区間（`issue` と `set_results` しか挟まない）でも trace 間で 12 ms 空いた。一方 `Engine::search` 自身は `egui_search:dispatch` の実測で 7〜162 µs しかない。**予算 16.7 ms は trace 2 本で超える**ので、絶対値での合否判定が成立しない
+> 2. **smoke は常に 1 件の索引を seed し、実運用点では走らせられない**（`index_entries` の実測は 1。scan 対象を上書きする引数が無い）。索引件数のゲートを置けば H6 はどこでも永久に SKIP になり、#930 が戒めた「発火しえない検出器」になる
+>
+> **受け入れ 2 は Task 6 の実運用点 A/B 実測で示す。** smoke に残す不変条件は H7（Task 10）だけで、H7 は seq の大小だけを見るので索引規模にも trace I/O にも依存しない。
+>
+> **番号は詰めない**——Task 6 以降を ledger と brief が番号で参照しているため、この節は取り下げの記録として残す。**以下は取り下げた設計の記録である。**
+
+**Files:**（実施しない）
 - Modify: `scripts/lib/SnotraTraceInvariants.psm1`
 - Modify: `scripts/lib/SnotraTraceInvariants.Tests.ps1`
 
@@ -529,6 +552,12 @@ $script:H6MinIndexEntries = 100000
 # フレーム予算。リフレッシュレートを trace から知る術が無いので 60Hz を下限として使う
 # ——**高リフレッシュレート機では緩い判定になる**（受容する残余。緩い側へ倒すのは
 # 誤検出で smoke を赤くしないため）。
+#
+# **この閾値は実測で裏付けてある**（2026-08-10・release・smoke）: 定常フレームは
+# 64〜139 us（0.1 ms 未満）で、検索は 20 ms。正常時は 2 桁下・異常時は 1 桁上に
+# 分離するので、16.7 ms はどちらからも遠い。**ただし show 直後の 5 フレームは
+# 13〜23 ms・hide 直後の 1 フレームは 55 ms あり、打鍵区間へ混入すれば誤爆する**
+# ——区間を egui_input:changed から egui_search:settled に限るのはそのためである。
 $script:H6FrameBudgetUs = 16700
 ```
 
@@ -622,25 +651,27 @@ Run（3 回）: `$env:SNOTRA_TRACE='1'; ./target/release/snotra.exe 2>&1 | Tee-O
 
 各ログの `egui_frame` から、`egui_input:changed` と `egui_search:settled` に挟まれた区間の `update_us` の p50 / max を出す。
 
-- [ ] **Step 3: 実運用点で H6 が赤いことを確認する**
+- [ ] **Step 3: 検索がフレームを占有していることを内訳で確かめる**
 
-Run: `npm run smoke:egui`（**実運用点の config で**）
-Expected: **H6 が違反を報告する。**
+同じログから、打鍵直後のフレームについて次の 2 つを並べる:
 
-**これが PR 1 の成果である。** 緑なら計器が届いていないので、`update_us` の位置（Task 2 Step 3）と `index_entries`（Task 3 Step 6）を疑う。
+- そのフレームの `update_us`
+- 同じ打鍵の `egui_search:settled` の `since_dispatch_us` と、`egui_search:dispatch` の `elapsed_us`
 
-- [ ] **Step 4: CI 相当の索引規模で SKIP になることを確認する**
+**実運用点では `elapsed_us` が 20 ms 前後になるはずである**（`PERFORMANCE.md`「パスクエリのフレームコスト」の p50 と整合する）。**そこが µs 桁なら索引が実運用点でない**——`[[paths.scan]]` を確認する。
 
-Run: `npm run smoke:egui`（smoke の既定プロファイル = CI と同じ小さい索引）
-Expected: **H6 が SKIP。** Task 4 Step 3 で控えた `index_entries` が閾値未満であることと一致する。
+**trace の書き込みが 1 本あたり約 10 ms 乗ることを念頭に読むこと**（Task 5 の取り下げ理由）。`update_us` の絶対値は汚染されているが、**A/B の両側へ等しく乗るので差分は読める**。実運用点では検索の 20 ms が汚染を上回る。
 
-**FAIL するなら閾値が低すぎる**（CI が赤くなる）。**PASS するなら閾値が効いていない**——どちらも `$script:H6MinIndexEntries` を実測値へ合わせ直す。
+- [ ] **Step 4: PERFORMANCE.md へ記録する**
 
-- [ ] **Step 5: PERFORMANCE.md へ記録する**
+「パスクエリのフレームコスト」の直後へ、日付・release・標本数・p50 / max を既存の表と同じ粒度で書く。**最小値へ畳まない。**
 
-「パスクエリのフレームコスト」の直後へ、日付・release・標本数・p50 / max を既存の表と同じ粒度で書く。**最小値へ畳まない。** 「A 側」であること、B 側は PR 2 で同じ器から採ること、CI では索引規模ゆえ H6 が SKIP になることを明記する。
+書くべきこと:
+- 「A 側」であることと、B 側は PR 2 で**同じ器・同日・同条件**から採ること
+- **`update_us` には trace の書き込み（1 本あたり約 10 ms）が含まれる**こと。読む人が絶対値を実挙動と誤読しないための但し書きである
+- 比較に使う列は `update_us`（A/B 差分）と `elapsed_us`（検索そのもの）の 2 つであること
 
-- [ ] **Step 6: コミットして PR を作る**
+- [ ] **Step 5: コミットして PR を作る**
 
 ```
 git add PERFORMANCE.md
@@ -648,7 +679,7 @@ git commit -m "docs: #1004 打鍵中のフレーム所要の A 側ベースラ�
 git push -u origin HEAD
 ```
 
-PR 本文へ: **「H6 は実運用点で赤い（A 側ゆえ設計どおり）。CI では索引規模で SKIP になる。緑になるのは PR 2 である」**と明記する。
+PR 本文へ: **「H6 は取り下げた（理由は spec の §3.3）。受け入れ 2 は PR 2 で B 側を採って A/B で示す」**と明記する。
 
 ---
 
@@ -1089,23 +1120,28 @@ git commit -m "test(smoke): #1004 H7（失効した検索結果の採り込み�
 
 ---
 
-## Task 11: B 側を測って H6 が緑になることを確認する
+## Task 11: B 側を測って A/B で示す
 
 **Files:**
 - Modify: `PERFORMANCE.md`
 
-- [ ] **Step 1: 実運用点で smoke を走らせる**
+- [ ] **Step 1: smoke で H7 が PASS することを確認する**
 
-Run: `npm run smoke:egui`（実運用点の config で）
-Expected: **H6 / H7 とも PASS。** H6 が SKIP なら小さい索引で走っている。**FAIL なら worker 化が効いていない**——`drain_search` の呼び出し位置（Task 8 Step 4）と、Plain 枝が本当に発行だけになっているかを疑う。
+Run: `npm run smoke:egui`（**smoke 既定のプロファイルでよい**——H7 は seq の大小だけを見るので索引規模に依存しない）
+Expected: **H7 が PASS。** SKIP なら `egui_search:settled` が 1 件も出ていない——`drain_search` の呼び出し位置（Task 8 Step 4）を疑う。**H6 は存在しない**（Task 5 で取り下げた）。
 
-- [ ] **Step 2: B 側を 3 標本採る**
+- [ ] **Step 2: 実運用点で B 側を 3 標本採る**
 
-PR 1 Task 6 Step 1〜2 と**同じ手順・同日・同条件**で採る。**日をまたいで A / B を比べない**（`PERFORMANCE.md`「warm frame は日をまたいで比較しない」）。
+PR 1 Task 6 Step 1〜3 と**同じ手順・同日・同条件**で採る。**日をまたいで A / B を比べない**（`PERFORMANCE.md`「warm frame は日をまたいで比較しない」）。
 
-- [ ] **Step 3: PERFORMANCE.md へ B 側を書く**
+- [ ] **Step 3: PERFORMANCE.md へ B 側を書き、A/B で示す**
 
-A 側の隣へ同じ粒度で。**比べる列は `update_us` の p50 / max と `since_key_us`。** `since_key_us` は**増える**（worker 往復が乗る）——それは設計どおりであり退行ではない。**そう明記する。**
+A 側の隣へ同じ粒度で。**比べる列は 2 つである**:
+
+1. **打鍵直後のフレームの `update_us`** ——ここから検索の 20 ms が消えたことが本題である。**trace の書き込み（1 本あたり約 10 ms）は A/B 両側へ等しく乗るので、差分として読む**
+2. **`egui_search:dispatch` の `elapsed_us`** ——A 側では Plain 枝から出る。**B 側ではこの trace は Plain 枝から消える**（worker へ移ったため）ので、B 側の対応値は「フレームの外で走った」ことの記録として `since_dispatch_us` を併記する
+
+**`since_key_us` は増える**（worker 往復が乗る）——それは設計どおりであり退行ではない。**そう明記する。**
 
 - [ ] **Step 4: コミット**
 

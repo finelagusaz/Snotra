@@ -1214,8 +1214,14 @@ describe("G-stale-identifiers checkStaleIdentifiers（規範の散文に残る�
     expect(f[0].message).toContain("createObjectURL");
   });
 
-  it("外部ツールのコマンドが同じ行に在れば、その行は見ない（除外リストを置かない）", () => {
-    expect(run("母集団は `closingIssuesReferences` ではなく `gh issue list --search x` から取る\n")).toEqual([]);
+  it("コマンドは空白を含むので見ない（除外リストを置かない・行粒度のフィルタ無しで成立する）", () => {
+    expect(run("母集団は `gh issue list --search x` から取る\n")).toEqual([]);
+  });
+
+  it("コマンドと同じ行に単独で書かれた識別子は見る（行粒度フィルタの沈黙経路を閉じた・#993）", () => {
+    const f = run("`npm run governance:check` は `createObjectURL` を見る\n");
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("createObjectURL");
   });
 
   it("判定対象外の不混入: 単語 1 つ・パス・空白入り・コードフェンス内", () => {
@@ -1429,8 +1435,8 @@ describe("G-stale-identifiers の配線（buildChecks が SPEC.md を検査対�
     expect(wired({ ...prose, "SPEC.md": "- `liveCamelWord` を使う\n", "src-tauri/src/a.rs": "let liveCamelWord = 1;\n" })).toEqual([]);
   });
 
-  it("判定対象外の不混入: SPEC.md のフェンス内・外部コマンド行・単語 1 つ", () => {
-    const spec = "```\n`fencedCamelWord`\n```\n- `gh pr view` で `argCamelWord` を見る\n- `expand` する\n";
+  it("判定対象外の不混入: SPEC.md のフェンス内・コマンド span 内・単語 1 つ", () => {
+    const spec = "```\n`fencedCamelWord`\n```\n- `gh pr view --json argCamelWord` を見る\n- `expand` する\n";
     expect(wired({ ...prose, "SPEC.md": spec, "src-tauri/src/a.rs": "let x = 1;\n" })).toEqual([]);
   });
 });

@@ -38,6 +38,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 Import-Module (Join-Path $PSScriptRoot 'lib/SnotraSmoke.psm1') -Force
+# **契約の検査は module 側が持つ**（#1009）。`.ps1` の中に置くと Pester の探索
+# （`scripts/lib` のみ）から外れ、検査自身を測れない。
+Import-Module (Join-Path $PSScriptRoot 'lib/SnotraStartupContract.psm1') -Force
 
 if ($Iterations -lt 1) { throw "Iterations must be >= 1" }
 if ($TerminalTimeoutMs -lt 1000) { throw "TerminalTimeoutMs must be >= 1000" }
@@ -46,161 +49,11 @@ if (-not (Test-Path -LiteralPath $ExePath)) {
 }
 
 # **区間の一覧は Rust 側の `Phase` が正本である。** ここは表示順を決めるだけで、
-# 過不足はキー検査（`Test-StartupPayload`）がペイロード側と突き合わせて捕まえる。
+# 過不足はキー検査（`Test-SnotraStartupPayload`）がペイロード側と突き合わせて捕まえる。
 $PhaseKeys = @(
   'pre_main', 'config_load', 'index_load', 'path_merge', 'history_load',
   'engine_build', 'tauri_init', 'windows_create', 'setup_rest', 'hotkey_register'
 )
-
-<#
-.SYNOPSIS
-1 回ぶんのペイロードが契約を満たすか検査し、破れの一覧を返す（空なら合格）。
-
-.DESCRIPTION
-**下に並べた各項が検査の正本である**（数は書かない——足すたびに腐る）:
-
-1. **キーの過不足** — 全区間の `*_ns` / `*_ms` が在ること。`Set-StrictMode` 下で欠落キーは
-   `$null` ではなく `PropertyNotFoundException` を投げる（実測）ので、存在判定は
-   `PSObject.Properties` で行う。**`null` と「キーが無い」は別である。**
-2. **`null` の規則（双方向）** — 通らなかった区間は `null` になる。説明者は 3 つ:
-   `first_run` / `include_path_env` / `reached_phase` より後ろ（**`ok` の真偽では免除しない**
-   ——一律免除は失敗経路の取り落としを見えなくする）。
-
-   **両向きを検査する。** 「説明されない `null`」だけを見る形は片手落ちで、**スキップした
-   区間に `0` を書く誤りが素通りする**（変異 (f) を書いてみて気づいた——`null` と `0` を
-   区別する設計の要なのに、検査が片方向だった）。枝フラグが「通らない」と言っている区間に
-   値が在るのも同じ重さの破れである。
-3. **恒等式** — `post_main_ns == sum_phase_ns + unmarked_tail_ns`。**ms 表示値の和は検査
-   しない**（丸めは表示境界でだけ行うので、正しくても境界で合わない）。
-
-   **この検査は弱い。** `unmarked_tail_ns` は `post_main - sum_phase` として計算されるので、
-   等式は**構成上ほぼ常に真**である——実際に捕まえるのは `sum_phase > post_main`（飽和が
-   起きる側）だけで、変異「`post_main` を部分和から作る」（同語反復化）は素通りする（実測）。
-4. **外部の壁時計との突き合わせ** — 上の弱さを埋める。ハーネスは `Start-Process` から終端の
-   trace が届くまでを**独立に**測っており、`pre_main + post_main` がそれを超えることはない。
-   **超えたら、計器が内側で辻褄を合わせている**（同語反復化した実装は区間の実測を捨てるので、
-   外から見た経過と食い違う）。下限は置かない——trace の到着はポーリング間隔ぶん遅れる。
-
-   **この検査が見ないもの: 内側の申告が実際より小さくなる方向。** 下限が無いので、終端を
-   ホットキー登録の完了より手前で打ち切る変異は**原理的に素通りする**（#1009 で (j) として
-   実測）。下限を置けば捕まるが、**trace の到着遅れと区別できない**ため置いていない。
-5. **`event` と `ok` / `reason` の整合** — イベント名が意味を運ぶ設計（`ADR-startup-instrument-contract-shape`）
-   ゆえ、**名前と中身が食い違ったら壊れている**。#1009 で実測: ホットキー登録が実際に失敗した
-   起動で `event` だけを `startup:ready` に偽ると、`ok=false` / `reason=hotkey-registration` が
-   正直に載ったまま**それ以前の検査は全部通った**——キーの存在しか見ておらず、値を一度も
-   読んでいなかったためである。
-
-   **この検査が見ないもの: `outcome` そのものの誤り。** `event` と `ok` は同じ `outcome` から
-   導かれるので、`outcome` を取り違える変異は両方が揃って動き素通りする。捕まえるのは
-   `to_json`（`ok`）と `finish`（`event`）という**別の場所の導出が食い違うこと**だけである。
-   `ok` と `reason` の突き合わせはさらに狭い——両者は `to_json` の隣接 2 行が同じ `outcome` から
-   作るので、その 2 行を同時に変異させない限り落ちない。
-6. **`index_load_unattributed_ms` の非負性** — 外側の区間と内側の `LoadOrScanStats.total_ms` の差
-   であり、**Rust 側は `i64` で引くので負値がそのまま出力に現れる**（panic しない）。非負性が
-   2 つの前提（外側が内側を包む・両者が切り捨て）に乗っていて**どちらも機構で守られていない**
-   ことは `startup.rs` の当該ブロックが正本。ここはその前提が破れたことを外から捕まえる。
-#>
-function Test-StartupPayload {
-  [CmdletBinding()]
-  param(
-    [Parameter(Mandatory)]$Data,
-    [Parameter(Mandatory)][string[]]$PhaseKey,
-    # ハーネスが独立に測った「起動〜終端の trace を読むまで」の壁時計（ms）。
-    [Parameter(Mandatory)][double]$ObservedWallClockMs,
-    # trace 行の**イベント名**。ペイロードの外側に在るので別で渡す（検査 5）。
-    [Parameter(Mandatory)][string]$EventName
-  )
-
-  $failures = @()
-  $has = { param($name) $null -ne $Data.PSObject.Properties[$name] }
-
-  # --- 1. キーの過不足 ---
-  foreach ($k in $PhaseKey) {
-    foreach ($suffix in @('_ns', '_ms')) {
-      if (-not (& $has "$k$suffix")) { $failures += "キー欠落: $k$suffix" }
-    }
-  }
-  foreach ($k in @('post_main_ns', 'post_main_ms', 'sum_phase_ns', 'unmarked_tail_ns',
-      'index_load_unattributed_ms', 'reached_phase', 'first_run', 'cache_hit',
-      'include_path_env', 'ok', 'reason')) {
-    if (-not (& $has $k)) { $failures += "キー欠落: $k" }
-  }
-  if ($failures.Count -gt 0) { return $failures }  # 以降は全キーの存在に依存する
-
-  # --- 2. 説明されない null ---
-  # `reached_phase` より後ろは「そこへ到達していない」。到達済みの区間だけを検査対象にする。
-  $reached = $Data.reached_phase
-  $reachedIndex = if ($null -eq $reached) { -1 } else { $PhaseKey.IndexOf([string]$reached) }
-  if ($null -ne $reached -and $reachedIndex -lt 0) {
-    $failures += "reached_phase が未知の区間名: $reached"
-  }
-  foreach ($k in $PhaseKey) {
-    # pre_main は Phase ではない（壁時計。取得失敗なら null で正しく、値が在っても正しい）。
-    if ($k -eq 'pre_main') { continue }
-
-    # この区間が `null` であるべきか。**枝フラグと到達位置だけで決まる。**
-    $i = $PhaseKey.IndexOf($k)
-    $skippedByBranch =
-      ($k -eq 'index_load' -and $Data.first_run) -or
-      ($k -eq 'path_merge' -and -not $Data.include_path_env)
-    $notReached = ($reachedIndex -lt 0) -or ($i -gt $reachedIndex)
-    $shouldBeNull = $skippedByBranch -or $notReached
-
-    $isNull = ($null -eq $Data."${k}_ns")
-    $ctx = "reached_phase=$reached / first_run=$($Data.first_run) / include_path_env=$($Data.include_path_env)"
-
-    if ($isNull -and -not $shouldBeNull) {
-      $failures += "説明されない null: $k（$ctx）"
-    } elseif (-not $isNull -and $skippedByBranch) {
-      # **逆向き。** スキップした区間に値が在る＝`null` と `0` の区別が壊れている
-      # （`notReached` 側は逆向きに検査しない——`reached_phase` は「刻んだ最後」なので
-      # 定義上そこまでは値が在り、矛盾しようがない）。
-      $failures += "null であるべき区間に値がある: $k = $($Data."${k}_ns") ns（$ctx）"
-    }
-  }
-
-  # --- 3. 恒等式（生 ns のみ。ms 表示値の和は検査しない） ---
-  $lhs = [long]$Data.post_main_ns
-  $rhs = [long]$Data.sum_phase_ns + [long]$Data.unmarked_tail_ns
-  if ($lhs -ne $rhs) {
-    $failures += "恒等式の破れ: post_main_ns=$lhs != sum_phase_ns + unmarked_tail_ns = $rhs"
-  }
-
-  # --- 4. 外部の壁時計との突き合わせ ---
-  # **内側の申告が外から見た経過を超えることはない。** 超えたら計器が内側で辻褄を合わせて
-  # いる（同語反復化した実装は区間の実測を捨てるので、外から見た経過と食い違う）。
-  # 下限は置かない——trace の到着はポーリング間隔ぶん遅れるため、内側 < 外側が正常である。
-  $claimedMs = [double]$Data.post_main_ms + $(if ($null -eq $Data.pre_main_ms) { 0 } else { [double]$Data.pre_main_ms })
-  if ($claimedMs -gt $ObservedWallClockMs) {
-    $failures += ("内側の申告が外から見た経過を超えた: pre_main + post_main = ${claimedMs}ms > " +
-      "観測 ${ObservedWallClockMs}ms（計器が内側で辻褄を合わせている疑い）")
-  }
-
-  # --- 5. event と ok / reason の整合 ---
-  # **名前が意味を運ぶなら、名前と中身は一致しなければならない。** 上の 1〜4 はキーの存在と
-  # 数値しか見ないので、`event` を偽った起動を 1 つも捕まえない（#1009 で実測）。
-  $expectedEvent = if ($Data.ok) { 'startup:ready' } else { 'startup:failed' }
-  if ($EventName -ne $expectedEvent) {
-    $failures += "event が ok と食い違う: event=$EventName / ok=$($Data.ok) / reason=$($Data.reason)（期待 $expectedEvent）"
-  }
-  # `reason` は失敗のときだけ在る。**成功時に理由が載るのも同じ重さの破れである**
-  # （どちらかが嘘をついている）。
-  if ($Data.ok -and $null -ne $Data.reason) {
-    $failures += "ok=true なのに reason がある: reason=$($Data.reason)"
-  } elseif (-not $Data.ok -and $null -eq $Data.reason) {
-    $failures += "ok=false なのに reason が null（失敗の理由が読めない）"
-  }
-
-  # --- 6. index_load_unattributed_ms の非負性 ---
-  # `null` は正常（first-run 枝では `LoadOrScanStats` 自体が無い）。値が在るときだけ検める。
-  if ($null -ne $Data.index_load_unattributed_ms -and [long]$Data.index_load_unattributed_ms -lt 0) {
-    $failures += ("index_load_unattributed_ms が負: $($Data.index_load_unattributed_ms)" +
-      "（外側の index_load が内側の LoadOrScanStats.total_ms を下回った——" +
-      "正本は startup.rs の当該ブロック）")
-  }
-
-  return $failures
-}
 
 function Get-SnotraWorkingSetMB {
   param([int]$ProcessId)
@@ -242,8 +95,10 @@ try {
   for ($run = 1; $run -le $Iterations; $run++) {
     Write-Host "Run $run/$Iterations ... " -NoNewline
 
-    Get-Process snotra -ErrorAction SilentlyContinue | Stop-Process -Force
-    Start-Sleep -Milliseconds 300
+    # **終了を待つ**（#872）。待たずに次を起動すると single-instance で即終了し、trace を
+    # 1 行も書かないまま待ちが予算を使い切る。共有ヘルパーが待ちと警告を持つ
+    # （`smoke-egui.ps1` / `smoke-startup.ps1` と同じ経路）。
+    Resolve-SnotraExistingProcess -Policy Stop
 
     $errPath = Join-Path $env:TEMP ("snotra_bench_{0}.err" -f $run)
     $outPath = Join-Path $env:TEMP ("snotra_bench_{0}.out" -f $run)
@@ -278,8 +133,9 @@ try {
       if (-not $proc.HasExited) { $memMB = Get-SnotraWorkingSetMB -ProcessId $proc.Id }
     }
 
-    if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
-    Start-Sleep -Milliseconds 200
+    # ここも待つ（#872）。ループ先頭の `Resolve-SnotraExistingProcess` が拾い直すが、
+    # **落とした直後に次を起動する形を残さない**のが共有ヘルパーの趣旨である。
+    [void](Stop-SnotraProcessAndWait -Process $proc)
 
     if ($null -eq $terminal) {
       # **沈黙を合格と読ませない**（#471 / #690 の型）。
@@ -293,7 +149,7 @@ try {
     # **契約の検査は成功・失敗のどちらの終端でも走らせる。** 失敗した起動でも payload は契約を
     # 守るべきであり、**とくに `event` と `ok` の整合はここを通らないと `startup:ready` を騙る
     # 変異に届かない**——騙られた run は下の失敗分岐へ入らないためである。
-    $contractFailures = Test-StartupPayload -Data $data -PhaseKey $PhaseKeys `
+    $contractFailures = Test-SnotraStartupPayload -Data $data -PhaseKey $PhaseKeys `
       -ObservedWallClockMs $observedMs -EventName $terminal.event
     foreach ($f in $contractFailures) { $failures += "run=$run $f" }
 

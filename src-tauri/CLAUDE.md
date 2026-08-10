@@ -32,8 +32,9 @@ Tauri v2 バイナリ crate。検索 UI（`egui_shell/`・egui + softbuffer）�
 - `working_set.rs` — 非表示アイドル時のプロセスツリー working set 回収（Windows のみ・非 Windows は no-op。責務は `//!`、適用の詳細は本ファイル「working set の能動回収（EmptyWorkingSet）」）
 - `commands/`: ディレクトリモジュール（`mod.rs` + `launch.rs` / `icon.rs` / `window.rs` / `system.rs` / `instant.rs`）。egui view・トレイが共有する core 関数群（旧 `#[tauri::command]` ラッパーと `search.rs` / `config.rs` は #532 SU7 のフロント撤去で消滅）。`launch.rs` は `launch_item_core` / `launch_with_tool_core`（いずれも `pub(crate)`、`instant.rs`・`egui_shell/launcher_controller.rs` から再利用）に加え、トレイメニューからの起動用に `launch_item_with_state` / `launch_with_tool_with_state` / `launch_default_with_state` / `resolve_all_openers` を `pub` で公開
 - `platform/`: ディレクトリモジュール（`mod.rs` + `hotkey.rs` / `tray.rs` / `wndproc.rs`）。Win32 メッセージループスレッド + トレイアイコン + ホットキー + ウィンドウプロシージャ。`hotkey.rs` は core の `ParsedHotkey` だけを Win32 modifier/VKへ変換し、永続文字列を再解釈しない。登録と smoke 注入用 `vks` は同じ変換結果から導く
-- `egui_shell/`: ディレクトリモジュール（`mod.rs` + `lifecycle.rs` / `search_state.rs` / `layout.rs` / `icon_textures.rs` / `notify.rs` / `strings.rs` / `view.rs` / `launcher_controller.rs` / `results_view.rs` / `results_window.rs` / `visual.rs` / `window_coordinator.rs` / `font_stack.rs`）。製品メインウィンドウ（egui/softbuffer）の外殻 + 検索体験（#532 SU2〜SU7・flip 済みで唯一の UI 経路）。以下はファイル別の索引と、`//!` に収まらない横断不変条件:
+- `egui_shell/`: ディレクトリモジュール（`mod.rs` + `lifecycle.rs` / `search_state.rs` / `layout.rs` / `icon_textures.rs` / `notify.rs` / `strings.rs` / `view.rs` / `launcher_controller.rs` / `results_view.rs` / `results_window.rs` / `visual.rs` / `window_coordinator.rs` / `font_stack.rs` / `search_dispatch.rs`）。製品メインウィンドウ（egui/softbuffer）の外殻 + 検索体験（#532 SU2〜SU7・flip 済みで唯一の UI 経路）。以下はファイル別の索引と、`//!` に収まらない横断不変条件:
   - `font_stack.rs` — フォント解決と `set_fonts` 登録（責務は `//!`）
+  - `search_dispatch.rs` — 検索 dispatch の同一性の純粋核（責務は `//!`）
   - `launcher_controller.rs` — 検索セッション層（show を跨ぐ状態・結果・選択・起動・履歴・期限）の所有者（責務は `//!`）
   - `lifecycle.rs` は純粋核（`plan_hotkey` / `blur_should_hide`）
   - `search_state.rs` は検索状態の純粋核（`SearchState` / `interpret` / `QueryIntent`）

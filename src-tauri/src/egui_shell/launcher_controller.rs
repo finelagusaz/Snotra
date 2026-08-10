@@ -130,6 +130,8 @@ pub(super) struct LauncherController {
     notice: crate::egui_shell::NoticeSlot,
     /// notice の単調時刻基準（view 生成時に固定・Instant 差分を Duration で渡す）。
     notice_base: Instant,
+    /// 検索要求の同一性（#1004）。PR 1 では同期経路の計器、PR 2 では worker 結果の裁定に使う。
+    dispatch: crate::egui_shell::SearchDispatch,
 }
 
 impl LauncherController {
@@ -150,6 +152,7 @@ impl LauncherController {
             last_seen_index_generation: 0,
             notice: crate::egui_shell::NoticeSlot::default(),
             notice_base: Instant::now(),
+            dispatch: Default::default(),
         }
     }
 
@@ -763,19 +766,23 @@ impl LauncherController {
                 match self.state.interp(prefix) {
                     QueryIntent::Plain => {
                         if self.state.query().trim().is_empty() || self.indexing() {
+                            // dispatch を通さず同期で差し替える出所ゆえ、in-flight を道連れで失効させる（`SearchDispatch::invalidate` の doc・spec §4.5）。
+                            self.dispatch.invalidate();
                             self.state.set_results(Vec::new());
                             return;
                         }
                         let query = self.state.query().to_string();
                         // 計測は lock 取得込み（フレームを塞ぐ全区間・#634 G-SYNC）。
                         let search_started = std::time::Instant::now();
-                        let results = {
+                        let (results, index_entries) = {
                             let state = match self.app_handle.try_state::<crate::AppState>() {
                                 Some(s) => s,
                                 None => return,
                             };
                             let mut engine = state.engine.lock().unwrap();
-                            engine.search(&query)
+                            // 索引件数は H6 のゲート材料である（判定が意味を持つ規模かを判定器が知る）。**既に lock を握っている区間で取る**——このために lock を増やさない。
+                            let n = engine.entry_count();
+                            (engine.search(&query), n)
                         }; // lock 解放
                         crate::trace::trace(
                             "egui_search:dispatch",
@@ -785,7 +792,20 @@ impl LauncherController {
                                 "elapsed_us": search_started.elapsed().as_micros() as u64,
                             }),
                         );
+                        let seq = self.dispatch.issue(self.last_input_at, search_started);
                         self.state.set_results(results);
+                        if let Some(settled) = self.dispatch.accept(seq, Instant::now()) {
+                            crate::trace::trace(
+                                "egui_search:settled",
+                                serde_json::json!({
+                                    "dispatch_seq": settled.seq,
+                                    "pending_seq": self.dispatch.pending_seq(),
+                                    "index_entries": index_entries,
+                                    "since_key_us": settled.since_key.as_micros() as u64,
+                                    "since_dispatch_us": settled.since_dispatch.as_micros() as u64,
+                                }),
+                            );
+                        }
                     }
                     QueryIntent::Instant {
                         filter_name,

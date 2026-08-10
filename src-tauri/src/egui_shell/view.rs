@@ -36,6 +36,8 @@
 //! フォント解決と登録は `font_stack`（独立モジュールへ切り出した理由は `font_stack.rs` の
 //! `//!`・#666 段 3 タスク 1）。
 
+use std::time::Instant;
+
 use snotra_egui_runtime::{EguiView, RuntimeFrame};
 use tauri::Manager;
 
@@ -111,6 +113,8 @@ pub(crate) struct SearchWindowView {
     // （main 用）を流用してはならない**という当時の不変条件（Important 1）は、memo が別の型に
     // 分かれたことで構造的に保たれる——同一フレーム内で main のブロックが先に
     // `last_set_width` を更新するため、共有すると results が幅の live-reload に追従しなくなる。
+    /// フレーム所要と間隔の計器（#1004 PR 1）。`SNOTRA_TRACE` 無効時も進めてよい（`Instant` 差だけ）。
+    frame_timer: crate::egui_shell::FrameTimer,
 }
 
 impl SearchWindowView {
@@ -122,6 +126,7 @@ impl SearchWindowView {
             last_set_width: 0.0,
             last_set_height: 52.0,
             focus_state_traces_left: 5,
+            frame_timer: Default::default(),
         }
     }
 
@@ -455,6 +460,9 @@ impl EguiView for SearchWindowView {
         // `self.controller.app()` の戻り値を保持したまま `&mut` の遷移メソッドを呼ぶと E0502 に
         // なる。先例は `results_view.rs` の同型のローカル（Task 5 で実際に踏んだ）。
         let app = self.controller.app().clone();
+
+        let frame_started = Instant::now();
+        let frame_interval = self.frame_timer.begin(frame_started);
 
         // #646 PR2 決定 10: 入力欄以外の全域を掴んでドラッグ移動。背景 interact を先に
         // 登録し、後続ウィジェット(TextEdit・toast ボタン)はヒットテストで勝つ(egui は
@@ -1165,6 +1173,14 @@ impl EguiView for SearchWindowView {
                 // `row_height` と同じフレーム冒頭の snapshot から取る（別 lock にしない）
                 background: visual.background,
             },
+        );
+
+        crate::trace::trace(
+            "egui_frame",
+            serde_json::json!({
+                "update_us": frame_started.elapsed().as_micros() as u64,
+                "interval_us": frame_interval.map(|d| d.as_micros() as u64),
+            }),
         );
     }
 }

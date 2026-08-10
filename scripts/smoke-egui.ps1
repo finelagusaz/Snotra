@@ -374,6 +374,47 @@ try {
     }
   }
 
+  # --- パスクエリ打鍵（#1004）----------------------------------------------
+  # `c:\` は has_path_sep が真になり incremental cache が無効化される＝全件走査の経路。
+  # 打鍵から結果までのフレームが予算を超えないことを H6 が判定する（区間は
+  # egui_input:changed → egui_search:settled で切れるのでマーカーは要らない）。
+  # 窓が出ている根拠が要る（$resultsChecked のブロックが egui_results:show を観測済み）ため、
+  # 既存の 1 文字クエリ注入・Escape 注入と同じく $failures.Count -eq 0 でガードする——
+  # 窓が無い状態で注入すると、キューへ送った打鍵が前面の別アプリへ飛ぶ。
+  if ($failures.Count -eq 0 -and $resultsChecked) {
+    # 先行の 1 文字クエリが入力欄に残っているため、消してから打鍵する（既存の再注入前と
+    # 同じ Backspace 作法・356〜362 行）。送らないと "c" が残ったまま "c:\" ではなく
+    # "cc:\" 相当になり、全件走査の経路（has_path_sep）に正しく入らない。
+    Send-SnotraKey -VirtualKey $VK_BACK
+    Start-Sleep -Milliseconds 50
+    Send-SnotraKey -VirtualKey $VK_BACK -Up
+    Start-Sleep -Milliseconds 50
+
+    Send-SnotraKey -VirtualKey 0x43            # c
+    Start-Sleep -Milliseconds 50
+    Send-SnotraKey -VirtualKey 0x43 -Up
+    Start-Sleep -Milliseconds 120              # debounce(50ms) の trailing を跨がせる
+    Send-SnotraKeyChord -VirtualKeys @(0x10, 0xBA)   # Shift + ; = :
+    Start-Sleep -Milliseconds 120
+    Send-SnotraKey -VirtualKey 0xDC            # \
+    Start-Sleep -Milliseconds 50
+    Send-SnotraKey -VirtualKey 0xDC -Up
+    Start-Sleep -Milliseconds 300              # 全件走査 + 採り込みの完了を待つ
+
+    # **打鍵が入ったことを観測する。** 固定 sleep だけで済ませると、3 キーのどれかが
+    # 落ちても $failures が増えず沈黙する。とくに `\` が落ちると has_path_sep が偽のまま
+    # incremental cache の経路に落ち、**全件走査を一度も叩かずに緑を返す**。既存 3 ブロック
+    # （hotkey / 1 文字クエリ / Escape）が例外なく観測を持つのと同じ理由である。
+    # `after_chars -eq 3` は 3 キーすべてが入ったことの証拠——Backspace で空にしてから
+    # "c" "Shift+;（:）" "\" と打つので 3 文字になる。
+    $pathTyped = Wait-SnotraTraceCondition -Path $errPath -TimeoutMs $ObserveTimeoutMs `
+      -Description "パスクエリ 3 文字の入力" `
+      -Predicate { $_.event -eq 'egui_input:changed' -and $_.data.after_chars -eq 3 }.GetNewClosure()
+    if ($null -eq $pathTyped) {
+      $failures += "path query 'c:\' not observed as 3 chars within ${ObserveTimeoutMs}ms"
+    }
+  }
+
   # 表示中に WebView2 プロセスが増えていないこと（グローバル before/after・SU2 G4 と同じ測り方）
   $webviewAfter = @(Get-Process msedgewebview2 -ErrorAction SilentlyContinue).Count
   if ($webviewAfter -gt $webviewBefore) {

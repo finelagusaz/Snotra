@@ -9,7 +9,7 @@
 //! 規則は写さず SSOT へ問う（`AGENTS.md`「検証の作法」の「照合は SSOT に対して行う」）。
 
 use egui::emath::GuiRounding as _;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// path 行のフォントサイズ(#646 決定 9)。view.rs `RowTheme::path_size` と同係数——
 /// 正本はここ(layout の Metrics が同じ値で行高を積算するため。二重定義は行高と描画の
@@ -399,6 +399,21 @@ pub fn present_results(i: ResultsInputs) -> ResultsPresentation {
         ResultsPresentation::Visible { desired_height }
     } else {
         ResultsPresentation::Hidden
+    }
+}
+
+/// フレームの開始時刻を 1 つだけ持ち、前フレームからの間隔を返す（#1004 PR 1）。
+/// **間隔は合否ではなく内訳である**——判定に使うのはフレームの所要時間の側で、このランタイムはイベント駆動ゆえ健全でも間隔は debounce 幅・打鍵間隔まで開く（`docs/superpowers/specs/2026-08-10-search-worker-design.md` の §3.3 が正本）。
+#[derive(Default)]
+pub struct FrameTimer {
+    last_began: Option<Instant>,
+}
+
+impl FrameTimer {
+    pub fn begin(&mut self, now: Instant) -> Option<Duration> {
+        let interval = self.last_began.map(|prev| now.duration_since(prev));
+        self.last_began = Some(now);
+        interval
     }
 }
 
@@ -1076,6 +1091,23 @@ mod tests {
             fake_measure(&out) > 0.0,
             "fallback だけは予算を超えうる（doc の唯一の例外）: {}px > 0.0",
             fake_measure(&out)
+        );
+    }
+
+    #[test]
+    fn frame_timer_reports_interval_from_previous_begin() {
+        let base = Instant::now();
+        let mut t = FrameTimer::default();
+        assert_eq!(t.begin(base), None, "初回は比較元が無い");
+        assert_eq!(
+            t.begin(base + Duration::from_millis(50)),
+            Some(Duration::from_millis(50)),
+            "2 フレーム目は前回 begin からの間隔"
+        );
+        assert_eq!(
+            t.begin(base + Duration::from_millis(70)),
+            Some(Duration::from_millis(20)),
+            "間隔は直前の begin 基準（初回基準ではない）"
         );
     }
 }

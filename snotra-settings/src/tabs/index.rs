@@ -7,10 +7,31 @@ use crate::i18n::{Tr, TrKey};
 use crate::style;
 use crate::tabs::common::{self, ModalState, PickerState};
 
-#[derive(Default)]
 pub struct IndexTabState {
     pub picker: PickerState,
     modal: ModalState<ScanPathFields>,
+    /// 索引の最終構築日時（UNIX 秒）。**タブ状態の生成時（設定アプリ起動時・
+    /// Reset to default 時）に 1 回だけ取得し、毎フレームは再取得しない**
+    /// （`snotra-settings/CLAUDE.md`「フレームごとの重い処理を避ける」規約——
+    /// `index_built_at_in` は `index.bin` を毎回開いて読む I/O を伴う）。
+    ///
+    /// **帰結**: 設定アプリを開いたまま裏で索引が再構築されても、この表示は
+    /// 更新されない。取得し直すには設定アプリを再起動する（または
+    /// Reset to default を経由する）必要がある。最終構築日時は目安表示であり、
+    /// この古さは許容する（brief の要求は「いつ更新したか分かる」ことであり、
+    /// リアルタイム追従ではない）。
+    built_at: Option<u64>,
+}
+
+impl IndexTabState {
+    pub fn new() -> Self {
+        Self {
+            picker: PickerState::default(),
+            modal: ModalState::default(),
+            built_at: Config::config_dir()
+                .and_then(|dir| snotra_core::indexer::index_built_at_in(&dir)),
+        }
+    }
 }
 
 /// スキャンパスモーダルのタブ固有編集フィールド。
@@ -43,12 +64,22 @@ fn format_built_at(dt: &chrono::DateTime<chrono::Local>) -> String {
 
 /// 表示する文字列を決める。**不在・読めない・壊れているを区別しない**——
 /// ユーザーにとってはどれも「まだ構築していない」と同じである。
+///
+/// 壊れている経路は 2 段ある。**`secs` が `i64` に収まらない**（`u64::MAX` 近辺）場合と、
+/// **`i64` には収まるが chrono の表現可能範囲を超える**場合で、それぞれ別の関数
+/// （`i64::try_from` と `timestamp_opt(...).single()`）が `None`/`Err` を返す。
+/// `secs as i64` の `as` キャストは two's complement で wrap し
+/// （`u64::MAX as i64 == -1` は有効なタイムスタンプになる）壊れたファイルへ
+/// もっともらしい誤った日付を表示してしまうため使わない。
 fn built_at_text(built_at: Option<u64>, tr: &Tr) -> String {
     use chrono::TimeZone;
     let Some(secs) = built_at else {
         return tr.t(TrKey::LabelIndexNotBuilt).to_string();
     };
-    match chrono::Local.timestamp_opt(secs as i64, 0).single() {
+    let Ok(secs) = i64::try_from(secs) else {
+        return tr.t(TrKey::LabelIndexNotBuilt).to_string();
+    };
+    match chrono::Local.timestamp_opt(secs, 0).single() {
         Some(dt) => format_built_at(&dt),
         // 範囲外の値（壊れたファイル）も「未構築」へ倒す。
         None => tr.t(TrKey::LabelIndexNotBuilt).to_string(),
@@ -78,14 +109,13 @@ pub fn ui(
         // **索引がいつのものかを示すだけである。** 再構築のボタンは置かない——
         // 設定アプリは別プロセスで、本体との通信路は config.toml と config_watcher
         // しかない（ボタンは通信路の新設を要する・ADR-rescan-explicit-only）。
-        let built_at = snotra_core::config::Config::config_dir()
-            .and_then(|dir| snotra_core::indexer::index_built_at_in(&dir));
+        // `built_at` は毎フレーム取得しない（`IndexTabState::new` のドキュメント参照）。
         style::hint(
             ui,
             &format!(
                 "{} {}",
                 tr.t(TrKey::LabelIndexLastBuilt),
-                built_at_text(built_at, tr)
+                built_at_text(state.built_at, tr)
             ),
         );
 
@@ -243,5 +273,29 @@ mod tests {
     fn an_absent_index_renders_as_not_built() {
         let tr = Tr(Language::Ja);
         assert_eq!(built_at_text(None, &tr), tr.t(TrKey::LabelIndexNotBuilt));
+    }
+
+    /// **`i64` に収まらない値は「未構築」へ倒す。** `i64::try_from` が `Err` を返す経路。
+    /// `secs as i64` の `as` キャストだと two's complement で wrap し
+    /// （`u64::MAX as i64 == -1` は有効なタイムスタンプ）壊れたファイルへもっともらしい
+    /// 誤った日付を表示してしまう——この回帰を防ぐ。
+    #[test]
+    fn a_timestamp_that_does_not_fit_in_i64_renders_as_not_built() {
+        let tr = Tr(Language::Ja);
+        assert_eq!(
+            built_at_text(Some(u64::MAX), &tr),
+            tr.t(TrKey::LabelIndexNotBuilt)
+        );
+    }
+
+    /// **`i64` には収まるが chrono の表現可能範囲を超える値も「未構築」へ倒す。**
+    /// 上のテストとは別の防壁（`timestamp_opt(...).single()` が `None` を返す経路）を測る。
+    #[test]
+    fn a_timestamp_beyond_chronos_range_renders_as_not_built() {
+        let tr = Tr(Language::Ja);
+        assert_eq!(
+            built_at_text(Some(i64::MAX as u64), &tr),
+            tr.t(TrKey::LabelIndexNotBuilt)
+        );
     }
 }

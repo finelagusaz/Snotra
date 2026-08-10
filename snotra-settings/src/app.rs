@@ -179,7 +179,7 @@ impl SettingsApp {
             active_tab: tab,
             status: String::new(),
             status_timer: 0.0,
-            index_state: tabs::index::IndexTabState::default(),
+            index_state: tabs::index::IndexTabState::new(),
             opener_state: tabs::opener::OpenerTabState::new(),
             instant_state: tabs::instant::InstantTabState::default(),
             backup_state: tabs::backup::BackupTabState::default(),
@@ -240,7 +240,7 @@ impl SettingsApp {
         self.draft = Config::normalized_default();
         self.tr = Tr(self.draft.general.language);
         self.hotkey_state = Default::default();
-        self.index_state = tabs::index::IndexTabState::default();
+        self.index_state = tabs::index::IndexTabState::new();
         self.instant_state = tabs::instant::InstantTabState::default();
         self.opener_state = tabs::opener::OpenerTabState::new();
     }

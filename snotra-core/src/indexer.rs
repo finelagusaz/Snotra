@@ -643,7 +643,7 @@ pub fn load_cached_entries(scan: &[ScanPath], show_hidden_system: bool) -> Optio
 /// 実 `%APPDATA%\Snotra` を読み書きし、テスト実行が実運用のデータを動かす（#1013 の Gotcha）。
 ///
 /// **「`load_or_scan` と同じで、ただし〜」と書いてはならない**（かつてそう書いていた）。その関数は #984 で削除され、この doc だけが実在しない名前を基準に自分を説明する状態になっていた。
-pub fn load_or_scan_with_stats_in(
+fn load_or_scan_with_stats_in(
     dir: &Path,
     scan: &[ScanPath],
     show_hidden_system: bool,
@@ -730,6 +730,10 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
     match Config::config_dir() {
         Some(dir) => load_or_scan_with_stats_in(&dir, scan, show_hidden_system),
         None => {
+            // **ここだけ `with_index_write_lock` を経由しない。** 保存先が無いので
+            // `index.bin` を書かず、保護すべき共有資源（tmp→rename の書き込み対象）が
+            // そもそも存在しない——「index.bin を書く経路は排他を経由する」契約
+            // （→「index.bin 書き込みの排他」）が対象を持たないだけで、免除ではない。
             let total_started = Instant::now();
 
             let hash_started = Instant::now();

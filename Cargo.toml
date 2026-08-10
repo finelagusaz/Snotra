@@ -21,6 +21,13 @@ version = "0.1.0"
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"
 invalid_html_tags = "deny"
+# `private_intra_doc_links` は「フラグ無しで建てた doc では private 項目が出ないので link が
+# 死ぬ」という警告だが、このリポジトリの doc 建ては `ci.yml` の
+# `cargo doc --workspace --no-deps --document-private-items` 固定であり、private への link は
+# 実際に解決する（crate は publish せず docs.rs 建ても無いので、フラグ無しで建てる消費者は居ない）。
+# **この allow はリンク切れの検査を弱めない**——存在しないシンボルへの link は
+# 上の `broken_intra_doc_links = "deny"` が引き続き deny で捕まえる（変異注入で実測）。
+private_intra_doc_links = "allow"
 
 # `src-tauri/clippy.toml` の禁止（#900）を、コマンドラインから独立させる（#950）。
 # `disallowed_methods` は **warn 既定**であり、この行が無いと赤くなるのは `ci.yml` と

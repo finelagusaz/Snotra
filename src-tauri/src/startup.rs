@@ -19,6 +19,8 @@
 //! # 区間は網羅列挙する
 //!
 //! 出力は [`Phase`] の全 variant を必ず並べ、通らなかった区間は `null` として出す。
+//! 最後のマークから終端までの残りは `unmarked_tail_ns` として出す（区間の網羅に収まらない
+//! 端数であり、正本は [`Timeline::to_json`] の当該ブロック）。
 //! **累積タイムラインの区間和は telescoping sum であり、総和の検算では「マークを 1 つ
 //! 落とす」誤りを原理的に検出できない**（落ちた区間の時間は隣へ吸収され、等式は崩れない）。
 //! 取り落としを捕まえるのはキーの網羅であって総和ではない。
@@ -37,19 +39,37 @@
 //! 初期化に失敗した後、`setup_hotkey_listener` が bridge 不在をもう一度観測して二つ目の
 //! 失敗行を出す経路が実在する。
 //!
+//! # 二重起動は終端を出さない（受容・2026-08-10 実測）
+//!
+//! `tauri_plugin_single_instance` は 2 つ目のプロセスを**終端も trace も 1 行出さずに**
+//! 落とす（実測: exit code 0 / 95 ms / stderr 0 行）。1 つ目は終端を 1 行のまま保つ。
+//! **これは正しい**——2 つ目は起動していないので、刻む時間軸が無い。
+//!
+//! `bench-startup.ps1` は各 run の前に既存プロセスを落としてから測るので、通常この経路は
+//! 踏まない。**踏んだとしても取り違えは起きない**——`Wait-SnotraTraceCondition` は中断の理由
+//! （本体が終了したことと exit code）と読めた trace の行数を併せて報告するので、予算切れの
+//! タイムアウトとは区別できる。
+//!
 //! # 受容する残余
 //!
-//! **失敗経路（`StartupFailure` のうち `HotkeyRegistration` 以外）は実機で一度も観測して
-//! いない。** bridge の spawn / Win32 初期化 / channel を実際に失敗させる手段が無いためで、
-//! **注入点を製品コードへ足す案は却下した**（2026-08-09 のユーザー判断）——計測しきれない
-//! リスクは残るが、**本来不要なコードがトラブルの原因を作り込む理由にはならない**。
-//! `SNOTRA_FAKE_INITIAL_HOTKEY_FAILURE`（`platform/mod.rs`）のような既存のハッチを増やす
-//! 方向も同じ理由で採らない。
+//! **失敗経路のうち実機で観測したのは `HotkeyRegistration` だけである**（#1009 で、他プロセスに
+//! ホットキーを握らせて実際に `RegisterHotKey` を失敗させた——`scripts/occupy-hotkey.ps1`）。
+//! bridge の spawn / Win32 初期化 / channel を実際に失敗させる手段は無く、
+//! **注入点を製品コードへ足す案は却下した**（`ADR-no-test-only-injection-in-product-code`）
+//! ——計測しきれないリスクは残るが、**本来不要なコードがトラブルの原因を作り込む理由には
+//! ならない**。`SNOTRA_FAKE_INITIAL_HOTKEY_FAILURE`（`platform/mod.rs`）のような既存のハッチを
+//! 増やす方向も同じ理由で採らない（あのハッチが何をするかは `platform/mod.rs` の当該 arm が
+//! 正本。使えば測るものが代理へすり替わる）。
 //!
-//! ゆえに次の 2 つは**書けない**: (a) これらの経路が実際に `startup:failed` を出すこと
+//! ゆえに次の 2 つは**書けない**: (a) 残る失敗経路が実際に `startup:failed` を出すこと
 //! (b) `PlatformBridgePending::wait` の channel 切断が本番でどう起きるか（`recv()` の失敗
 //! 経路は実在するが、thread panic 等の原因は未確定）。守っているのは**写像の網羅性**
 //! （[`StartupFailure::from`] の match と `reason` の一意性）だけである。
+//!
+//! **一度きり性（[`FINISHED`]）を外したときの検知手段は無い**（#1009 実測）。ハーネスは終端を
+//! 1 行以上含む最初の周回で**必ず 1 行だけを返して抜ける**ので、2 行出ていても「2 行ある」ことは
+//! 観測されない（どちらが読まれるかはポーリングの刻みで決まる）。
+//! **製品経路で二重終端を起こす道は上の (a) と同じ**——ADR が測らないと決めた経路に閉じている。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -346,6 +366,18 @@ impl Timeline {
 
         // `load_or_scan_with_stats` の中にある未命名の処理。**first-run 枝では
         // `LoadOrScanStats` 自体が存在しないので `null`**（0 にしない）。
+        //
+        // **`i64` で引くので、負値は panic せず出力に現れる。** 非負であることは 2 つの前提に
+        // 乗っている: (1) 外側の区間（`ConfigLoad` のマーク 〜 `load_or_scan_with_stats` の
+        // 呼び出し後）が内側の `total_ms` を包むこと (2) 両者とも切り捨てであること
+        // （`to_ms` の除算と `Duration::as_millis`）。`a ≥ b ⇒ floor(a) ≥ floor(b)` ゆえ差は非負になる。
+        //
+        // **どちらの前提も機構では守られていない。** マークを呼び出しの手前へ動かす、内側を
+        // 四捨五入へ変える、のどちらでも黙って負へ振れる。**前提が動いた実例がある**——#1023 で
+        // `total_started` の起点が `load_or_scan_with_stats` から `load_or_scan_with_stats_in` の
+        // 入口へ移り、`Config::config_dir()` が内側の外へ出た（包みが広がる向きだったので
+        // 非負性は保たれた）。ゆえに **`bench-startup.ps1` が `>= 0` を検める**（負値の実ペイロードで
+        // 落ちることを実測済み・#1009）。
         m.insert(
             "index_load_unattributed_ms".into(),
             match (
@@ -407,8 +439,10 @@ static FINISHED: AtomicBool = AtomicBool::new(false);
 /// `main()` の先頭で呼ぶ。anchor を据え、プロセス作成からの経過（`pre_main`）を取る。
 ///
 /// **順序は anchor → `pre_main_elapsed()` である**——`pre_main` は「anchor 時点の壁時計」
-/// として測る。creation 時刻は動かないので順序が額を決めるわけではないが、決めておかないと
-/// 実装のたびに揺れる。
+/// として測る。この順序は `pre_main` を anchor 〜 `now()` の間隔ぶん**大きく**出すが、その額は
+/// **中央が 0**（`Instant` で差を取って 0＝分解能未満）・**max 100 ns**（1000 標本・2026-08-10 実測）で、
+/// `pre_main` の粒度（ms）に届かない。**額ではなく再現性のために決めてある**
+/// （[`pre_main_elapsed`] の doc に測定値）。
 pub(crate) fn begin() {
     if !crate::trace::trace_enabled() {
         return;
@@ -469,6 +503,19 @@ pub(crate) fn finish(outcome: Result<(), StartupFailure>) {
 
 /// プロセス作成からの経過。取れなければ `None`（**0 にしない**——測れなかったことと
 /// 0 ms は別である）。
+///
+/// # 順序と誤差（2026-08-10 実測・#1009）
+///
+/// `now` を先に取り、`GetProcessTimes` を後に呼ぶ。**この順序は誤差の向きを決めるが、
+/// 額は `pre_main` の粒度に届かない**——`created` は過去の固定値なので、`now` が早いほど
+/// 差は小さく出る。入れ替えると `now` は `GetProcessTimes` を呼び終えた時刻になるので、
+/// **動く額はその呼び出し 1 回の所要**（min 100 / 中央 200 / max 5400 ns・1000 標本）である。
+/// 実機の `pre_main` は 7.5〜14.8 ms（7 標本・負値と `None` はいずれも 0 件）で、
+/// 最悪の 5400 ns でも 3 桁下にある。
+///
+/// `pre_main` **の値そのものの粒度の下限**は `SystemTime::now()` の分解能で、**min / 中央とも
+/// 100 ns**（200 標本・tight loop で相異なる隣接値の差を取った）。**Rust 側で測った値である**
+/// ——PowerShell で測ると .NET の時計を見ることになり、実際に一桁違った（1500 ns）。
 #[cfg(windows)]
 fn pre_main_elapsed() -> Option<Duration> {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -701,9 +748,9 @@ mod tests {
     fn post_main_is_taken_independently_of_the_partial_sum() {
         // **変異 (h)「`post_main` を部分和から作る」を落とす唯一の検査である。**
         //
-        // 恒等式（検査 3）は `unmarked_tail_ns = post_main - sum_phase` として計算する以上
-        // **構成上ほぼ常に真**であり、同語反復化した実装を通してしまう。ハーネスの外部壁時計
-        // （検査 4）も上限しか縛らないので、内側で小さく辻褄を合わせる形は素通りする
+        // ハーネスの恒等式は `unmarked_tail_ns = post_main - sum_phase` として計算する以上
+        // **構成上ほぼ常に真**であり、同語反復化した実装を通してしまう。外部壁時計との
+        // 突き合わせも上限しか縛らないので、内側で小さく辻褄を合わせる形は素通りする
         // （どちらも実際に変異を当てて素通りを実測した）。
         //
         // ここでは**部分和と食い違う終端値**を渡す。`to_json` が引数を使わず部分和から

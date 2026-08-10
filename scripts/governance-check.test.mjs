@@ -1214,8 +1214,14 @@ describe("G-stale-identifiers checkStaleIdentifiers（規範の散文に残る�
     expect(f[0].message).toContain("createObjectURL");
   });
 
-  it("外部ツールのコマンドが同じ行に在れば、その行は見ない（除外リストを置かない）", () => {
-    expect(run("母集団は `closingIssuesReferences` ではなく `gh issue list --search x` から取る\n")).toEqual([]);
+  it("コマンドは空白を含むので見ない（除外リストを置かない・行粒度のフィルタ無しで成立する）", () => {
+    expect(run("母集団は `gh issue list --search x` から取る\n")).toEqual([]);
+  });
+
+  it("コマンドと同じ行に単独で書かれた識別子は見る（行粒度フィルタの沈黙経路を閉じた・#993）", () => {
+    const f = run("`npm run governance:check` は `createObjectURL` を見る\n");
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("createObjectURL");
   });
 
   it("判定対象外の不混入: 単語 1 つ・パス・空白入り・コードフェンス内", () => {
@@ -1277,6 +1283,37 @@ describe("G-stale-identifiers checkStaleIdentifiers（規範の散文に残る�
     const r = scanStaleIdentifiers(snap({ ...base, [DOC]: "`someName` と `SOME_NAME` と `some_name`\n" }), [DOC]);
     expect(r.checked).toBe(3);
     expect(r.findings).toHaveLength(3);
+  });
+
+  // 赤フィクスチャは #984 の**実在の欠陥**——`docs/comment-guidelines.md` の第一原則が模範例として
+  // 指していた関数を同じ PR が削除し、規範の根拠だけが実在しない名前を指す状態になった（#993）。
+  // 緑の対は同じ型の現存メンバで、QUALIFIED_SRC が合成語彙として供給する（実リポジトリに依存させない）。
+  const QUALIFIED_SRC = { "snotra-core/src/a.rs": "fn from_material() {}\nfn encode_batch_binary() {}\n" };
+
+  it("型で修飾した形は末尾セグメントを見る（赤・#984 の実在の欠陥）", () => {
+    const f = run("模範例は `Engine::new_from_cache` である\n", QUALIFIED_SRC);
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("Engine::new_from_cache");
+  });
+
+  it("末尾セグメントが語彙に在れば鳴らない（緑）", () => {
+    expect(run("模範例は `Engine::from_material` である\n", QUALIFIED_SRC)).toEqual([]);
+  });
+
+  it("`.` を含む修飾形も末尾セグメントで判定する（`.` の除外はトークン全体ではなくセグメントへ当てる）", () => {
+    expect(run("参照先は `icon.rs::encode_batch_binary` である\n", QUALIFIED_SRC)).toEqual([]);
+    expect(run("参照先は `icon.rs::encode_missing_binary` である\n", QUALIFIED_SRC)).toHaveLength(1);
+  });
+
+  it("判定対象外の不混入: 型セグメント単語 1 つ・引数つき・パス様の末尾", () => {
+    expect(run("`Section::default()` と `snotra-core::Engine`\n", QUALIFIED_SRC)).toEqual([]);
+    expect(run("`HistoryStore::load(top_n)` と `Color32::from_rgb(...)`\n", QUALIFIED_SRC)).toEqual([]);
+    expect(run("`src-tauri::indexing.rs` を見る\n", QUALIFIED_SRC)).toEqual([]);
+  });
+
+  it("修飾形も照合件数を 1 しか進めない（末尾セグメント 1 つだけを見る）", () => {
+    const r = scanStaleIdentifiers(snap({ ...base, ...QUALIFIED_SRC, [DOC]: "`Engine::new_from_cache`\n" }), [DOC]);
+    expect(r.checked).toBe(1);
   });
 
   it("読めない文書は母集団の欠落として finding", () => {
@@ -1371,6 +1408,26 @@ describe("G-stale-identifiers の母集団ごとの 0 件検知（兄弟が非�
   });
 });
 
+// #984 の実在の欠陥を凍結したフィクスチャ。`f1827b0:docs/comment-guidelines.md` の当該行の骨格で、
+// **同じ行に `npm` のコマンドと修飾形の名前が同居する**——2 つの穴が同時に効いていた形である（#993）。
+// 片足ずつ戻した測定は `ADR-stale-identifier-detector-scope` の #993 の追記節が持つ（テストからは
+// 実装を変異させられないため、ここで固定するのは「両足そろえば赤い」ことだけである）。
+describe("G-stale-identifiers の凍結フィクスチャ（#984 の実在の欠陥）", () => {
+  const DOC = "docs/comment-guidelines.md";
+  const SRC = { "snotra-core/src/a.rs": "fn from_material() {}\n" };
+  const LINE = (name) => `模範例は \`Engine::${name}\`。\`npm run governance:check\` が見る\n`;
+
+  it("コマンドと同居する行の修飾形が腐っていれば赤", () => {
+    const f = checkStaleIdentifiers(snap({ ...SRC, [DOC]: LINE("new_from_cache") }), [DOC]);
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("Engine::new_from_cache");
+  });
+
+  it("緑の対: 同じ形で末尾セグメントが語彙に在れば鳴らない", () => {
+    expect(checkStaleIdentifiers(snap({ ...SRC, [DOC]: LINE("from_material") }), [DOC])).toEqual([]);
+  });
+});
+
 // 上の describe が固定するのは各関数の戻り値までで、**buildChecks がどちらを検査へ渡すか**は見ていない。
 // `staleTargets` を `staleDocs` へ戻しても実リポジトリの finding は 0 / 照合 1 のまま変わらないため、
 // dogfood テストも証跡の印字も気づけない——軸 B の主張（SPEC.md が検査対象になった）を守るのは
@@ -1398,8 +1455,8 @@ describe("G-stale-identifiers の配線（buildChecks が SPEC.md を検査対�
     expect(wired({ ...prose, "SPEC.md": "- `liveCamelWord` を使う\n", "src-tauri/src/a.rs": "let liveCamelWord = 1;\n" })).toEqual([]);
   });
 
-  it("判定対象外の不混入: SPEC.md のフェンス内・外部コマンド行・単語 1 つ", () => {
-    const spec = "```\n`fencedCamelWord`\n```\n- `gh pr view` で `argCamelWord` を見る\n- `expand` する\n";
+  it("判定対象外の不混入: SPEC.md のフェンス内・コマンド span 内・単語 1 つ", () => {
+    const spec = "```\n`fencedCamelWord`\n```\n- `gh pr view --json argCamelWord` を見る\n- `expand` する\n";
     expect(wired({ ...prose, "SPEC.md": spec, "src-tauri/src/a.rs": "let x = 1;\n" })).toEqual([]);
   });
 });

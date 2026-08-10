@@ -1452,7 +1452,8 @@ function productionOnly(src) {
 // 識別子の実在は誰も見ていなかった。
 //
 // **自称スコープ**（#891 で広げた。射程の内訳は `ADR-stale-identifier-detector-scope` の追記節）。
-// 見るのは次の 3 群の中の**バッククォート内 camelCase / SCREAMING_SNAKE 識別子**だけである:
+// 見るのは次の 3 群の中の**バッククォート内 camelCase / SCREAMING_SNAKE / lowercase snake_case
+// 識別子**だけである（型で修飾した形は末尾セグメントを見る・#993。判定の正本は `staleTarget`）:
 // - `.claude/**` の規範の散文（`staleIdentifierDocs`）
 // - **開発ガイド `docs/**`**（`staleIdentifierGuideDocs`。設計原則・ビルド手順・フック契約・
 //   アーキ説明という性質の違うものが混在する）から**歴史記録 2 種を除いたもの**
@@ -1471,10 +1472,11 @@ function productionOnly(src) {
 //
 // **述語の外に在るもの**は依然として多い。frontmatter の文字列・素の表テキスト・
 // 日本語散文（「リアクティブ制約」等）は構造的に対象外で、#736 が挙げた 10 件のうちこの述語が
-// 届くのは 0 件である（実測）。PascalCase・ドット区切り・式で書かれた腐りも 3 述語の外にある。
+// 届くのは 0 件である（実測）。PascalCase・ドット区切り・式で書かれた腐りも述語の外にある
+// ——**修飾形で見るのは末尾セグメントだけ**なので、型が改名されメンバ名が残った形も鳴らない。
 // **「文書の腐りが機構で捕まる」とは言えない**——言えるのは
-// **「`.md` の散文に camelCase / SCREAMING_SNAKE / lowercase snake_case で書かれた再発は捕まる」**
-// までである。**`.rs` の doc コメントは母集団外**ゆえ、そこに書かれた腐りは捕まらない
+// **「`.md` の散文に camelCase / SCREAMING_SNAKE / lowercase snake_case で書かれた再発は捕まる
+// （型で修飾されていてもよい）」**までである。**`.rs` の doc コメントは母集団外**ゆえ、そこに書かれた腐りは捕まらない
 // （#975 で `.rs` を足す案を測って却下した。理由は外部 API の密度・`ADR-stale-identifier-detector-scope`
 // 「その後（#975・述語へ lowercase snake_case を足し、`.rs` への母集団拡大は却下した）」）。
 // **この検査は #736 の代替ではない**——同 issue は手作業で閉じ、G-stale-identifiers が引き受けるのは再発防止だけである。
@@ -1495,9 +1497,12 @@ function productionOnly(src) {
 // 語彙から外すと同時に検査対象へ入れることで、SSOT と写しが**同時に鳴る**——
 // 「どちらを先に直すか」という向きの問いが構造的に消える。
 //
-// **外部ツールの語彙を構造的に外す**: `gh` / `npm` / `cargo` 等のコマンドが同じ行に在るなら、
-// その行の識別子はコマンドの引数（`--json closingIssuesReferences` 等）である。免除注記の機構を
-// 設けない契約（本ファイル冒頭）を守るため、除外リストではなく行の形で外す。
+// **外部ツールの語彙は空白の規則が外す**: コマンドを書いた span（`gh pr view <PR> --json
+// closingIssuesReferences` 等）は空白を含むので、そもそも判定対象にならない。かつては行に
+// コマンドが在れば**その行ごと**捨てていたが、#993 で撤去した——日本語の長い段落にコマンドを
+// 1 つ書いただけで段落の識別子が全滅する**沈黙経路**であり、しかも空白の規則と役目が重複していた
+// （実測: コマンド span 153 件のすべてが空白を含み、行の述語を置く／置かないで結果が完全一致）。
+// #984 の腐りを隠していたのはこの経路である。
 //
 // **受容する残余**:
 // - 単語 1 つの識別子（`Glob` `expand` `plain`）は対象外である。こぶを 1 つ以上要求しないと、
@@ -1551,8 +1556,20 @@ const STALE_SNAKE_IDENT = /^([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)(\(\))?$/;
  *  **3 述語は先頭文字と字種で相互排他である**（camelCase は `_` を含まず、SCREAMING は先頭が大文字）
  *  ゆえ、どれが当たっても `scanStaleIdentifiers` の照合件数は 1 しか進まない */
 const STALE_LOWER_SNAKE_IDENT = /^([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(\(\))?$/;
-/** 同じ行に在れば、その行の識別子は外部ツールの引数と見なす */
-const EXTERNAL_CMD_LINE = /`(gh|npm|cargo|git|node|pwsh|npx) /;
+/** 判定対象の識別子を取り出す。無ければ `null`。
+ *  **修飾形（`::`）は末尾セグメントだけを見る**——型セグメント（PascalCase）を見ない理由は
+ *  「単語 1 つの識別子は対象外」と同じで、外部の型名は語彙源をどう広げても免罪できない
+ *  （`ADR-stale-identifier-detector-scope` の #993 の追記節に測定表がある）。
+ *  **`.` の除外はトークン全体ではなくセグメントへ当てる**——先に当てると
+ *  `icon.rs::encode_batch_binary` の形が素通りする（実測で唯一の真の腐りがこの形だった）。
+ *  **捕獲群を読まない**のは 3 述語と同じ理由である（`scanStaleIdentifiers` のコメント）。 */
+function staleTarget(raw) {
+  const bare = raw.replace(/\(\)$/, "");
+  const seg = bare.includes("::") ? bare.slice(bare.lastIndexOf("::") + 2) : bare;
+  if (seg.includes(".")) return null;
+  if (!STALE_IDENT.test(seg) && !STALE_SNAKE_IDENT.test(seg) && !STALE_LOWER_SNAKE_IDENT.test(seg)) return null;
+  return seg.replace(/\(\)$/, "");
+}
 
 /** 規範の散文。skills / rules / agents の md。
  *  **検査対象の全体ではない**——`staleIdentifierTargets` と分けてあるのは、`runAll` の
@@ -1616,18 +1633,17 @@ export function scanStaleIdentifiers(snapshot, docs) {
       continue;
     }
     for (const [lineNo, line] of linesOutsideFences(text)) {
-      if (EXTERNAL_CMD_LINE.test(line)) continue;
       for (const m of line.matchAll(/`([^`\n]+)`/g)) {
         const raw = m[1];
-        if (raw.includes("/") || raw.includes(" ") || raw.includes(".")) continue;
-        // **捕獲群を読まない**——`test` で当てて `()` は自分で落とす。マッチ結果の `[1]` を読む形だと、
-        // 2 述語を `|` で 1 本へ畳んだ瞬間に群がずれて `inVocab(undefined)` になり、しかも実語彙は
-        // `undefined` を含むので**赤が出ないまま沈黙する**（複製への変異で実測）。読まなければ
-        // 畳もうが分けようが結果が変わらず、「畳むな」という文書契約自体が要らなくなる
-        if (!STALE_IDENT.test(raw) && !STALE_SNAKE_IDENT.test(raw) && !STALE_LOWER_SNAKE_IDENT.test(raw))
-          continue;
+        if (raw.includes("/") || raw.includes(" ")) continue;
+        // **捕獲群を読まない**——`staleTarget` は `test` で当てて `()` は自分で落とす。マッチ結果の
+        // `[1]` を読む形だと、2 述語を `|` で 1 本へ畳んだ瞬間に群がずれて `inVocab(undefined)` になり、
+        // しかも実語彙は `undefined` を含むので**赤が出ないまま沈黙する**（複製への変異で実測）。
+        // 読まなければ畳もうが分けようが結果が変わらず、「畳むな」という文書契約自体が要らなくなる
+        const target = staleTarget(raw);
+        if (target == null) continue;
         checked += 1;
-        if (!inVocab(raw.replace(/\(\)$/, ""))) {
+        if (!inVocab(target)) {
           findings.push(
             finding(doc, lineNo, `散文に、現行語彙に無い識別子が残っている: \`${raw}\`（production のソースの非コメント本文に無い）`),
           );

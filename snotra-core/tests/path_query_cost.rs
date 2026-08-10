@@ -13,6 +13,10 @@
 //! タイミング測定は環境依存ゆえ CI では回さない。手元で release 実行する（コマンドの
 //! SSOT は `docs/build-commands.md`）。
 //!
+//! **製品レベルの 2 つは実 `index.bin` を書き換えうる。** `load_or_scan_with_stats` は旧版を
+//! 読んだらその場で現行版へ昇格するので、**旧版のロードを測りたければ先に退避すること**
+//! （契約は同関数の doc）。走らせてから気づいても、その版はもう手元に無い。
+//!
 //! # 2 つの層を混ぜない
 //!
 //! - **製品レベル**: [`measure_path_query_frame_cost`] / [`measure_recent_history_cost`] は

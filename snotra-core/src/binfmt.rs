@@ -170,7 +170,9 @@ pub fn peek_first_field_from_bytes<T: DeserializeOwned>(bytes: &[u8], magic: [u8
     if bytes.len() < HEADER_LEN || bytes[0..4] != magic {
         return None;
     }
-    peek_version(bytes)?;
+    // **版は照合しない。** 先頭フィールドが全版で同じ意味を持つことに賭ける口であり
+    // （[`crate::indexer::index_built_at_in`] が旧版の `index.bin` からも読む）、
+    // ここで現行版を要求すると読めるはずのものが読めなくなる。
     postcard::take_from_bytes::<T>(&bytes[HEADER_LEN..])
         .ok()
         .map(|(value, _rest)| value)

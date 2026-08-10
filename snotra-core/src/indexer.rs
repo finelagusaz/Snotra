@@ -500,7 +500,7 @@ struct IndexCache<'a> {
 #[derive(Deserialize)]
 #[cfg_attr(test, derive(Serialize))]
 struct IndexCacheV6 {
-    #[allow(dead_code)]
+    /// 昇格が持ち越す（[`BuiltAt::Carried`]）。**旧版のこの値は死んでいない。**
     built_at: u64,
     entries: Vec<AppEntry>,
     config_hash: u64,
@@ -519,7 +519,7 @@ struct IndexCacheV6 {
 #[derive(Deserialize)]
 #[cfg_attr(test, derive(Serialize))]
 struct IndexCacheV5 {
-    #[allow(dead_code)]
+    /// 昇格が持ち越す（[`BuiltAt::Carried`]）。**旧版のこの値は死んでいない。**
     built_at: u64,
     entries: Vec<AppEntry>,
     config_hash: u64,
@@ -539,7 +539,7 @@ struct IndexCacheV5 {
 #[derive(Deserialize)]
 #[cfg_attr(test, derive(Serialize))]
 struct IndexCacheV4 {
-    #[allow(dead_code)]
+    /// 昇格が持ち越す（[`BuiltAt::Carried`]）。**旧版のこの値は死んでいない。**
     built_at: u64,
     entries: Vec<AppEntry>,
     config_hash: u64,
@@ -554,7 +554,7 @@ struct IndexCacheV4 {
 /// v3 フォールバック用スキーマ（ビットマスクのみ、lower names なし）。
 #[derive(Serialize, Deserialize)]
 struct IndexCacheV3 {
-    #[allow(dead_code)]
+    /// 昇格が持ち越す（[`BuiltAt::Carried`]）。**旧版のこの値は死んでいない。**
     built_at: u64,
     entries: Vec<AppEntry>,
     config_hash: u64,
@@ -567,12 +567,26 @@ struct IndexCacheV3 {
 /// SearchEngine::new() が通常通りマスクを計算する。
 #[derive(Serialize, Deserialize)]
 struct IndexCacheV2 {
-    #[allow(dead_code)]
+    /// 昇格が持ち越す（[`BuiltAt::Carried`]）。**旧版のこの値は死んでいない。**
     built_at: u64,
     entries: Vec<AppEntry>,
     config_hash: u64,
 }
 
+/// `index.bin` の有効性を判定する鍵。**走査対象そのものの同一性だけを表す**（入力の内訳と、
+/// `include_path_env` / `migemo_enabled` を含めない理由は [`scan_identity_hash`] の doc）。
+///
+/// **この値は `index.bin` に焼き込まれ、次の起動が同じ計算で照合する**（[`load_cache_in`] の
+/// 各枝の `config_hash != config_hash` 判定）。ゆえに**入力・順序・ハッシュ関数のどれを変えても
+/// 全ユーザーのキャッシュが一斉に無効になる**——不一致は破損ではなく「設定が変わった」と
+/// 読まれるので、次の起動は cache-miss 枝へ落ちて 22〜30 秒の全走査を払う（索引の更新は
+/// 明示操作だけという設計上、これが自動で走る唯一の場所である）。
+///
+/// **[`DefaultHasher`] の出力は Rust のリリース間で安定しない**（std の契約——値ではなく
+/// アルゴリズムが未規定である）。ツールチェインを上げた版を配ると、設定を何も変えていない
+/// ユーザーが一度だけ全走査を払いうる。**症状は「その日の起動だけ遅い」で、検索結果は
+/// 正しいまま**ゆえ挙動テストでは捕まらない。安定を要求するなら std ではないハッシュへ
+/// 移すことになり、それ自体が同じ一斉無効化を 1 回払う。
 fn compute_config_hash(scan: &[ScanPath], show_hidden_system: bool) -> u64 {
     let mut hasher = DefaultHasher::new();
     for sp in scan {
@@ -652,6 +666,40 @@ pub fn load_cached_entries(scan: &[ScanPath], show_hidden_system: bool) -> Optio
     )
 }
 
+/// 走査して正準の並びへ整列するまで（保存はしない）と、その 2 段の所要時間。
+struct Scanned {
+    entries: Vec<AppEntry>,
+    scan_ms: u128,
+    sort_ms: u128,
+}
+
+/// 全走査して [`sort_entries_canonical`] を通し、2 段を測って返す。
+///
+/// **保存する枝と保存しない枝（`Config::config_dir` が引けないとき）が同じここを通る。**
+/// 書き起こすと計器が 2 部出荷になり、片方だけが段を足したときに `scan_ms` / `sort_ms` の
+/// 意味が枝ごとにずれる——**どちらの枝を測ったのかは `LoadOrScanStats` の値からは
+/// 区別できない**ので、ずれても数字はもっともらしいまま残る。
+///
+/// **`INDEX_WRITE_LOCK` は取らない。** 走査は共有資源に触れないが、保存する枝は
+/// 「走査から保存までを 1 回のロック取得で覆う」ことに依存している（→
+/// [`upgrade_legacy_cache_in`] だけがその例外である理由は `LoadCacheResult::upgrade_save_ms`
+/// の doc）。ゆえにロックの範囲は呼び出し側が決める。
+fn scan_and_sort_timed(scan: &[ScanPath], show_hidden_system: bool) -> Scanned {
+    let scan_started = Instant::now();
+    let mut entries = scan_all(scan, show_hidden_system);
+    let scan_ms = scan_started.elapsed().as_millis();
+
+    let sort_started = Instant::now();
+    sort_entries_canonical(&mut entries);
+    let sort_ms = sort_started.elapsed().as_millis();
+
+    Scanned {
+        entries,
+        scan_ms,
+        sort_ms,
+    }
+}
+
 /// `load_or_scan_with_stats` と同じ手順を `dir` 注入で行う（統合テスト用）。
 ///
 /// **製品の入口（`Config::config_dir()` を解決する側）でテストを書かないこと。**
@@ -699,20 +747,18 @@ fn load_or_scan_with_stats_in(
     // 別ビルドとの index.bin 同時書き込みを防ぐ。
     // フェーズ計測はクロージャの戻り値として持ち出す。
     let (material, scan_ms, sort_ms, cache_save_ms) = with_index_write_lock(|| {
-        let scan_started = Instant::now();
-        let mut entries = scan_all(scan, show_hidden_system);
-        let scan_ms = scan_started.elapsed().as_millis();
-
-        let sort_started = Instant::now();
-        sort_entries_canonical(&mut entries);
-        let sort_ms = sort_started.elapsed().as_millis();
+        let Scanned {
+            entries,
+            scan_ms,
+            sort_ms,
+        } = scan_and_sort_timed(scan, show_hidden_system);
 
         let cache_save_started = Instant::now();
         // **保存が返す木と派生データをそのまま使う。** 走査結果を保存のために建て直させると、
         // 同じ木を 2 回建てることになる（親解決は実測 23 ms）。派生データも同じ理屈で、
         // 保存側が計算して書いたものをここで受け取らないと、下流が全件を実体化してから
         // 建て直すことになる。
-        let (tree, masks) = save_cache_sorted_in(dir, entries, current_hash);
+        let (tree, masks) = save_cache_sorted_in(dir, entries, current_hash, BuiltAt::Scanned);
         let material = IndexMaterial::derived(tree, masks);
         let cache_save_ms = cache_save_started.elapsed().as_millis();
 
@@ -744,6 +790,13 @@ fn load_or_scan_with_stats_in(
 /// 保存先（`Config::config_dir()`）を解決してから [`load_or_scan_with_stats_in`] へ委譲する薄い
 /// 包みである。解決できない環境では保存できないが索引は建てられる——`save_cache_sorted` の
 /// `None` 枝と同じ方針で、走査はして `index.bin` へは書かない。
+///
+/// **cache-hit でも書きうる。** 常に `LegacyUpgrade::Write` で読むので、置かれているのが
+/// 旧版なら**その場で現行版へ書き戻す**（`upgrade_legacy_cache_in`）。ゆえに `#[ignore]` の
+/// 計測ハーネスがこれを呼ぶと、**1 回目の実行が開発者の実 `index.bin` を現行版へ変える**
+/// ——旧版のロードを測りたければ**先に退避すること**。2 回目以降は昇格後の姿しか測れず、
+/// しかも出力は成功時とまったく同じに見える。実データを**書き換えずに**読む口は
+/// [`load_cached_entries`]（`LegacyUpgrade::Skip`）で、既定のスイートはそちらを通る。
 pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> LoadOrScanResult {
     match Config::config_dir() {
         Some(dir) => load_or_scan_with_stats_in(&dir, scan, show_hidden_system),
@@ -754,24 +807,21 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
             // （→「index.bin 書き込みの排他」）が対象を持たないだけで、免除ではない。
             let total_started = Instant::now();
 
-            let hash_started = Instant::now();
-            let _ = compute_config_hash(scan, show_hidden_system);
-            let hash_ms = hash_started.elapsed().as_millis();
-
-            let scan_started = Instant::now();
-            let mut entries = scan_all(scan, show_hidden_system);
-            let scan_ms = scan_started.elapsed().as_millis();
-
-            let sort_started = Instant::now();
-            sort_entries_canonical(&mut entries);
-            let sort_ms = sort_started.elapsed().as_millis();
+            let Scanned {
+                entries,
+                scan_ms,
+                sort_ms,
+            } = scan_and_sort_timed(scan, show_hidden_system);
 
             LoadOrScanResult {
                 material: IndexMaterial::from_tree(IndexTree::build(entries)),
                 cache_changed: true,
                 stats: LoadOrScanStats {
                     cache_hit: false,
-                    hash_ms,
+                    // **照合する相手が居ないので計算しない。** `config_hash` は `index.bin` へ
+                    // 焼き込んで次の起動と突き合わせるための値であり、書かない枝では
+                    // 消費者が居ない（かつては捨てる前提で計算し、この項目を埋めていた）。
+                    hash_ms: 0,
                     cache_load_ms: 0,
                     cache_read_ms: 0,
                     scan_ms,
@@ -800,6 +850,37 @@ pub(crate) fn sort_entries_canonical(entries: &mut [AppEntry]) {
     });
 }
 
+/// `index.bin` へ書く `built_at` の出どころ。
+///
+/// **「走査した時刻」を名乗る値なので、走査していない書き手が現在時刻を打ってはならない。**
+/// 形式昇格（[`upgrade_legacy_cache_in`]）は旧版のバイト列を現行版へ詰め替えるだけで
+/// 走査を伴わないため、ここで現在時刻を打つと**索引の中身は何日も前のまま、名乗る時刻だけが
+/// 今**になる。表示（設定アプリの最終構築日時・[`index_built_at_in`]）はそれを唯一の手がかりに
+/// 「再構築が要ることに気づく」ためにあるので、嘘をつく相手は**最も索引が古い層**——旧版のまま
+/// 放置していたユーザー——に限られる。
+///
+/// **引数にしてあるのは、書き手に選ばせるためではなく選ばざるを得なくするためである。**
+/// 既定を「現在時刻」にすると、走査しない書き手を足した日に何も書かなくても通ってしまう。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BuiltAt {
+    /// いま走査した結果を書く。
+    Scanned,
+    /// 走査していない（形式昇格）。読めた値をそのまま持ち越す。
+    Carried(u64),
+}
+
+impl BuiltAt {
+    fn resolve(self) -> u64 {
+        match self {
+            BuiltAt::Scanned => SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            BuiltAt::Carried(secs) => secs,
+        }
+    }
+}
+
 /// エントリを木へ組み替えて保存し、**その木と、書いたばかりの派生データを返す**。
 ///
 /// **`&[AppEntry]` を借りる形にしてはならない。** v7 が書くのは木であり、木を建てる段は
@@ -813,7 +894,7 @@ fn save_cache_sorted(entries: Vec<AppEntry>, config_hash: u64) -> IndexMaterial 
     let Some(dir) = Config::config_dir() else {
         return IndexMaterial::from_tree(IndexTree::build(entries));
     };
-    let (tree, masks) = save_cache_sorted_in(&dir, entries, config_hash);
+    let (tree, masks) = save_cache_sorted_in(&dir, entries, config_hash, BuiltAt::Scanned);
     IndexMaterial::derived(tree, masks)
 }
 
@@ -908,6 +989,7 @@ fn save_cache_sorted_in(
     dir: &Path,
     entries: Vec<AppEntry>,
     config_hash: u64,
+    built_at: BuiltAt,
 ) -> (IndexTree, CachedMasks) {
     let bf = cache_bin_file_in(dir);
     let derived = derive_columns(entries);
@@ -915,10 +997,7 @@ fn save_cache_sorted_in(
     // Cow::Borrowed で木の列と派生 Vec の全件 clone を避ける。
     // 出力バイト列は Owned 版と同一（golden テストで保証）。
     let cache = IndexCache {
-        built_at: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs(),
+        built_at: built_at.resolve(),
         names: Cow::Borrowed(&derived.tree.names),
         is_folder: Cow::Borrowed(&derived.tree.is_folder),
         parent: Cow::Borrowed(&derived.tree.parent),
@@ -973,6 +1052,13 @@ struct LoadCacheResult {
     /// 旧版昇格（`upgrade_legacy_cache_in`）が走った場合の save 所要時間
     /// （`LoadOrScanStats::cache_save_ms` へ運ぶ）。昇格が走らなかった枝（現行版 v7・
     /// `LegacyUpgrade::Skip`）では 0。
+    ///
+    /// **`INDEX_WRITE_LOCK` の取得待ちを含む。** 昇格は読み終えてからロックを取りに行くので、
+    /// 計測の始点がロックの外にある——**cache-miss 枝の `cache_save_ms` とは非対称で**、
+    /// あちらは scan ごとロックの内側なので待ちが save の数に乗らない。**今のところ待ちは
+    /// 立たない**: 製品の呼び出し元は `main` の起動段の 1 つだけで、もう一方の書き手
+    /// （索引ビルドのスレッド）は `AppHandle` を要求するためその時点でまだ存在しない。
+    /// 待ちが立ちうる書き手を足す日には、この値が「save が遅い」と読める形で嘘をつく。
     upgrade_save_ms: u128,
     /// 実際に読めた形式のバージョン。**現行版とは限らない**——フォールバック経路で読めた
     /// ときは旧版であり、`Write` のときは旧版枝（`upgrade_legacy_cache_in`）がその場で
@@ -1018,12 +1104,17 @@ fn load_cache(config_hash: u64, upgrade: LegacyUpgrade) -> Option<LoadCacheResul
 /// `derive_columns` がこの場で導出した組であり、ディスクから読んだ検証すべき組ではない
 /// （`IndexMaterial` の型 doc）。列長は `derive_columns` が 1 周で 4 本を埋める構成上の
 /// 保証であり、`Option` で失敗を返す理由が無い。
+///
+/// **`built_at` は旧版が名乗っていた値を持ち越す**（[`BuiltAt::Carried`]）。ここは走査しない
+/// 書き手なので、現在時刻を打つと「最後に走査した時刻」の意味が壊れる（理由の正本は
+/// [`BuiltAt`] の doc）。検知器は `upgrade_carries_the_built_at_it_read`。
 fn upgrade_legacy_cache_in(
     dir: &Path,
     mut entries: Vec<AppEntry>,
     config_hash: u64,
     read_ms: u128,
     version: u32,
+    built_at: u64,
 ) -> LoadCacheResult {
     // **他の全呼び出し元と同じく、保存の直前に整列する。** `save_cache_sorted_in` は
     // 名前どおり整列済みの入力を前提とする——ここだけ怠ると、旧版ファイルが現在の
@@ -1033,12 +1124,19 @@ fn upgrade_legacy_cache_in(
     sort_entries_canonical(&mut entries);
     // **`index.bin` を書く経路はすべて書き込みロックを経由する契約である。**
     //
-    // **ここで測る save_ms は cache-miss 枝の `cache_save_ms` と対称に、save のみを測る**
-    // （直前の `sort_entries_canonical` は含めない）。この区間全体は呼び出し元の
-    // `cache_load_started` の計測区間の内側で起きるため、`LoadOrScanStats::cache_save_ms`
-    // へ運んだ値は `cache_load_ms` の**内数**になる（フェーズの和には足さない——doc を参照）。
+    // **ここで測る save_ms はロック取得の待ちを含む**（`Instant::now()` が
+    // `with_index_write_lock` より前にある）。**cache-miss 枝の `cache_save_ms` とは
+    // 非対称である**——あちらは scan + sort + save をまとめて包むロックの内側で計測を
+    // 始めるので、待ちは `scan_ms` より前に落ちて save の数には乗らない。直前の
+    // `sort_entries_canonical` を含めない点だけが両者で揃っている。
+    //
+    // この区間全体は呼び出し元の `cache_load_started` の計測区間の内側で起きるため、
+    // `LoadOrScanStats::cache_save_ms` へ運んだ値は `cache_load_ms` の**内数**になる
+    // （フェーズの和には足さない——doc を参照）。
     let save_started = Instant::now();
-    let (tree, masks) = with_index_write_lock(|| save_cache_sorted_in(dir, entries, config_hash));
+    let (tree, masks) = with_index_write_lock(|| {
+        save_cache_sorted_in(dir, entries, config_hash, BuiltAt::Carried(built_at))
+    });
     let upgrade_save_ms = save_started.elapsed().as_millis();
     LoadCacheResult {
         material: IndexMaterial::derived(tree, masks),
@@ -1057,6 +1155,8 @@ struct LegacyRead {
     entries: Vec<AppEntry>,
     masks: Option<CachedMasks>,
     version: u32,
+    /// 旧版が名乗っていた最終構築時刻。**昇格はこれを持ち越す**（理由は [`BuiltAt`] の doc）。
+    built_at: u64,
 }
 
 /// 旧版枝の出口を一本化する。**`match upgrade` を書くのはここ 1 か所だけである。**
@@ -1077,6 +1177,7 @@ fn finish_legacy_read(
             config_hash,
             read_ms,
             read.version,
+            read.built_at,
         )),
         LegacyUpgrade::Skip => {
             let tree = IndexTree::build(read.entries);
@@ -1097,6 +1198,16 @@ fn finish_legacy_read(
 }
 
 /// `load_cache` と同じ読み込みを `dir` 注入で行う（統合テスト用、issue #429）。
+///
+/// **`INDEX_WRITE_LOCK` を保持したまま呼んではならない。** `LegacyUpgrade::Write` で旧版を
+/// 読むと、この関数は [`upgrade_legacy_cache_in`] 経由で同じロックを取りに行く——
+/// `std::sync::Mutex` は再入できないので、その場で自己デッドロックする（**索引ロードが
+/// 永久に返らない**形なので、テストが落ちるのではなくハングする）。
+///
+/// **ロードは「読むだけ」に見えるが、旧版枝は書き手である**——`load_cache_in` を「読み取り
+/// なのでロックの内側でも安全」と読んだ瞬間にこの罠へ落ちる。実際の呼び出し順は
+/// [`load_or_scan_with_stats_in`] が正本で、そこはロックの**外**でこれを呼び、cache-miss と
+/// 判ってから初めてロックを取る。
 fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option<LoadCacheResult> {
     let bf = cache_bin_file_in(dir);
     let read_started = Instant::now();
@@ -1165,6 +1276,7 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
                 entries: cache.entries,
                 masks: Some(masks),
                 version: 6,
+                built_at: cache.built_at,
             },
         );
     }
@@ -1192,6 +1304,7 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
                 entries: cache.entries,
                 masks: Some(masks),
                 version: 5,
+                built_at: cache.built_at,
             },
         );
     }
@@ -1225,6 +1338,7 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
                 entries: cache.entries,
                 masks: Some(masks),
                 version: 4,
+                built_at: cache.built_at,
             },
         );
     }
@@ -1251,6 +1365,7 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
                 entries: cache.entries,
                 masks: Some(masks),
                 version: 3,
+                built_at: cache.built_at,
             },
         );
     }
@@ -1270,6 +1385,7 @@ fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option
                 entries: cache.entries,
                 masks: None,
                 version: 2,
+                built_at: cache.built_at,
             },
         );
     }
@@ -3099,7 +3215,8 @@ mod tests {
         ];
         let config_hash = 42u64;
 
-        let (_, returned) = save_cache_sorted_in(&dir, entries.clone(), config_hash);
+        let (_, returned) =
+            save_cache_sorted_in(&dir, entries.clone(), config_hash, BuiltAt::Scanned);
 
         let result = load_cache_in(&dir, config_hash, LegacyUpgrade::Skip)
             .expect("load cache written to dir");
@@ -3260,6 +3377,152 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// **昇格は保存の直前に整列する**（`sort_entries_canonical` の契約）。
+    ///
+    /// **3 つの書き手のうち、入力の並びが自分の制御下に無いのはここだけである**——他の 2 つ
+    /// （cache-miss 枝・`rebuild_and_save`）は自分で走査した結果を数行上で整列させるが、昇格が
+    /// 受け取るのは**過去の版が過去の canon で書いたファイル**であり、その並びを今の canon が
+    /// 保証する理由は無い。ゆえに「契約を守り忘れる」以外に「そもそも整列していない入力が
+    /// 来る」経路がここにだけ在る。
+    ///
+    /// **測るのは正しさではなくサイズである。** [`crate::index_tree::IndexTree::build`] は
+    /// 未整列を許容し（親の二分探索が空振りするだけで別の親を返さない）、取りこぼした
+    /// エントリは根になって**自分のフルパスを `table` へ実体で置く**。検索結果は正しいまま
+    /// `index.bin` が太るので、挙動テストでは捕まらない。
+    #[test]
+    fn legacy_upgrade_sorts_before_saving_so_the_tree_stays_shared() {
+        let _guard = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = temp_dir("upgrade_sort");
+
+        // **正準の並びの逆順で置く。** 旧版ファイルが今の canon と違う順序で書かれていた
+        // 場合を治具にする（昇格が整列を怠ると、この並びのまま木を建てることになる）。
+        let entries = vec![
+            AppEntry {
+                name: "c".into(),
+                target_path: "C:\\d\\c.txt".into(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "b".into(),
+                target_path: "C:\\d\\b.txt".into(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "a".into(),
+                target_path: "C:\\d\\a.txt".into(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "d".into(),
+                target_path: "C:\\d".into(),
+                is_folder: true,
+            },
+        ];
+        let bytes = try_serialize_with_header(
+            INDEX_MAGIC,
+            2,
+            &IndexCacheV2 {
+                built_at: 1_700_000_000,
+                entries: entries.clone(),
+                config_hash: 7,
+            },
+        )
+        .expect("serialize");
+        assert!(cache_bin_file_in(&dir).save_bytes(&bytes), "save");
+
+        load_cache_in(&dir, 7, LegacyUpgrade::Write).expect("v2 が読めること");
+
+        let raw = cache_bin_file_in(&dir)
+            .load_bytes()
+            .expect("読み直せること");
+        let written = try_deserialize_with_header::<IndexCache<'static>>(
+            &raw,
+            INDEX_MAGIC,
+            INDEX_CACHE_VERSION,
+        )
+        .expect("現行版で書き戻されていること");
+
+        assert!(
+            written.sorted_by_path,
+            "昇格が整列せずに保存した（`sorted_by_path` が下りている）"
+        );
+        for child in ["C:\\d\\a.txt", "C:\\d\\b.txt", "C:\\d\\c.txt"] {
+            assert!(
+                !written.table.iter().any(|s| s == child),
+                "親が解決されず {child} のフルパスが `table` へ実体で戻った\
+                 ——木が平たくなり `index.bin` が太る（`sort_entries_canonical` の doc）"
+            );
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// **昇格は走査していないので、`built_at` を打ち直さない**（[`BuiltAt`] の doc）。
+    ///
+    /// 打ち直すと、設定アプリが唯一の手がかりにしている「最終構築日時」が、走査していない
+    /// 起動で現在時刻へ進む。嘘をつく相手は**最も索引が古い層**——旧版のまま放置していた
+    /// ユーザー——に限られ、しかも表示はその層に「たった今構築した」と告げる。
+    ///
+    /// **両方向を固定する。** 持ち越し側だけを見ると、`built_at` を定数へ潰す変異
+    /// （走査した書き手も打ち直さなくなる）が素通りする。
+    #[test]
+    fn upgrade_carries_the_built_at_it_read() {
+        // `Write` は `INDEX_WRITE_LOCK` を取る（`upgrade_legacy_cache_in` の doc）。
+        let _guard = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = temp_dir("upgrade_built_at");
+        let entries = vec![AppEntry {
+            name: "a".into(),
+            target_path: "C:\\a".into(),
+            is_folder: false,
+        }];
+        const LEGACY_BUILT_AT: u64 = 1_700_000_000;
+        let bytes = try_serialize_with_header(
+            INDEX_MAGIC,
+            4,
+            &IndexCacheV4 {
+                built_at: LEGACY_BUILT_AT,
+                entries: entries.clone(),
+                config_hash: 42,
+                char_masks: vec![0; entries.len()],
+                file_name_char_masks: vec![0; entries.len()],
+                lower_names: vec!["a".into()],
+                lower_file_names: vec![None],
+                normalized_keys: vec![],
+            },
+        )
+        .expect("serialize");
+        assert!(cache_bin_file_in(&dir).save_bytes(&bytes), "save");
+
+        load_cache_in(&dir, 42, LegacyUpgrade::Write).expect("v4 が読めること");
+
+        assert_eq!(
+            index_built_at_in(&dir),
+            Some(LEGACY_BUILT_AT),
+            "昇格が `built_at` を打ち直している——走査していない起動で\
+             「最終構築日時」が現在時刻へ進む（`BuiltAt` の doc）"
+        );
+
+        // 逆向き: 走査して書く側は現在時刻を打つ。
+        let before = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("UNIX_EPOCH より後")
+            .as_secs();
+        let scanned_dir = temp_dir("scanned_built_at");
+        save_cache_sorted_in(&scanned_dir, entries, 42, BuiltAt::Scanned);
+        let scanned = index_built_at_in(&scanned_dir).expect("書けていること");
+        assert!(
+            scanned >= before,
+            "走査した書き手が `built_at` を進めていない（{scanned} < {before}）"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&scanned_dir);
+    }
+
     /// **旧版昇格の save 時間は `LoadCacheResult::upgrade_save_ms` として見える化されている。**
     ///
     /// 昇格 save（`upgrade_legacy_cache_in` → `save_cache_sorted_in`。旧版起動 1 回だけ発生する
@@ -3369,12 +3632,19 @@ mod tests {
         let config_hash = compute_config_hash(&scan, false);
 
         // 旧版（v4）: cache-hit しつつ昇格が走るので cache_save_ms が非 0 になること。
+        //
+        // **母集団を 1 件にしてはならない。** 判定は `as_millis()` の整数値なので、昇格 save が
+        // 1 ms を切ると「配線は生きているのに 0」で落ちる——実際に 1 件の治具では 8 回中 3 回
+        // 落ちた（近傍のテストが先に同じ経路を通って温めた実行だけが 0 になる）。**時計を
+        // 跨がせるのは閾値ではなく仕事量である。**
         let legacy_dir = temp_dir("stats_upgrade_save_ms_legacy");
-        let entries = vec![AppEntry {
-            name: "a".into(),
-            target_path: "C:\\a".into(),
-            is_folder: false,
-        }];
+        let entries: Vec<AppEntry> = (0..20_000)
+            .map(|i| AppEntry {
+                name: format!("entry{i:05}"),
+                target_path: format!("C:\\dir{:03}\\entry{i:05}.txt", i / 100),
+                is_folder: false,
+            })
+            .collect();
         let bytes = try_serialize_with_header(
             INDEX_MAGIC,
             4,
@@ -3384,8 +3654,8 @@ mod tests {
                 config_hash,
                 char_masks: vec![0; entries.len()],
                 file_name_char_masks: vec![0; entries.len()],
-                lower_names: vec!["a".into()],
-                lower_file_names: vec![None],
+                lower_names: entries.iter().map(|e| e.name.clone()).collect(),
+                lower_file_names: vec![None; entries.len()],
                 normalized_keys: vec![],
             },
         )
@@ -3602,7 +3872,7 @@ mod tests {
             target_path: "C:\\a".into(),
             is_folder: false,
         }];
-        let _ = save_cache_sorted_in(&dir, entries, 42);
+        let _ = save_cache_sorted_in(&dir, entries, 42, BuiltAt::Scanned);
 
         let built_at = index_built_at_in(&dir).expect("保存した直後は読めること");
         let now = SystemTime::now()
@@ -3740,7 +4010,7 @@ mod tests {
         // **現行版**: 製品の save 経路そのものを通す（版のリテラルを書かない——比較相手は
         // `INDEX_CACHE_VERSION` であり、番号を書くとこのコメントだけが版を上げたとき腐る）。
         let dir = temp_dir("version_reported_current");
-        save_cache_sorted_in(&dir, entries.clone(), config_hash);
+        save_cache_sorted_in(&dir, entries.clone(), config_hash, BuiltAt::Scanned);
         assert_eq!(
             load_cache_in(&dir, config_hash, LegacyUpgrade::Skip)
                 .expect("現行版が読めること")
@@ -3964,7 +4234,7 @@ mod tests {
         ];
         let n = entries.len();
         let dir = temp_dir("tree_len_is_entry_count");
-        let (tree, _) = save_cache_sorted_in(&dir, entries, 0);
+        let (tree, _) = save_cache_sorted_in(&dir, entries, 0, BuiltAt::Scanned);
         assert_eq!(tree.len(), n, "木の len は索引のエントリ件数と一致する");
         let _ = fs::remove_dir_all(&dir);
     }

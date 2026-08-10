@@ -766,8 +766,7 @@ impl LauncherController {
                 match self.state.interp(prefix) {
                     QueryIntent::Plain => {
                         if self.state.query().trim().is_empty() || self.indexing() {
-                            // dispatch を通さず同期で差し替える出所ゆえ、in-flight を道連れで失効
-                            // させる（`SearchDispatch::invalidate` の doc・spec §4.5）。
+                            // dispatch を通さず同期で差し替える出所ゆえ、in-flight を道連れで失効させる（`SearchDispatch::invalidate` の doc・spec §4.5）。
                             self.dispatch.invalidate();
                             self.state.set_results(Vec::new());
                             return;
@@ -781,8 +780,7 @@ impl LauncherController {
                                 None => return,
                             };
                             let mut engine = state.engine.lock().unwrap();
-                            // 索引件数は H6 のゲート材料である（判定が意味を持つ規模かを判定器が知る）。
-                            // **既に lock を握っている区間で取る**——このために lock を増やさない。
+                            // 索引件数は H6 のゲート材料である（判定が意味を持つ規模かを判定器が知る）。**既に lock を握っている区間で取る**——このために lock を増やさない。
                             let n = engine.entry_count();
                             (engine.search(&query), n)
                         }; // lock 解放

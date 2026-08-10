@@ -15,6 +15,7 @@ $ErrorActionPreference = 'Stop'
 # | H1 | hidden な窓の中に `egui_results:show` が現れたら異常 | main が hidden なのに results が最前面に残る（#671 PR A′） |
 # | H4 | `egui_results:show` の `rows` が 0 なら異常 | 「件数 0 ⇒ hide」の契約違反（`layout::present_results` の連言②） |
 # | H5 | hide を挟まない連続 `egui_results:show` は異常 | 二重発火抑止（`ResultsWindow.visible` の `swap`）の破れ |
+# | H7 | `egui_search:settled` が `dispatch_seq < pending_seq` で現れたら異常 | 失効した検索結果が行を汚す（#1004） |
 #
 # **判定不能を PASS へ化けさせない**のがこのモジュールの要石である。「該当イベントが無い」
 # 「`rows` が読めない」「main の可視状態が未観測」「窓が閉じていない」「parse できなかった
@@ -27,7 +28,8 @@ $script:EventHideDone = 'egui_hide:done'
 $script:EventShowDone = 'egui_show:done'
 $script:EventResultsShow = 'egui_results:show'
 $script:EventResultsHide = 'egui_results:hide'
-$script:Invariants = @('H1', 'H4', 'H5')
+$script:EventSearchSettled = 'egui_search:settled'
+$script:Invariants = @('H1', 'H4', 'H5', 'H7')
 $script:PseudoSectionTitle = '(最初の項目より前)'
 
 <#
@@ -111,7 +113,7 @@ function Get-SnotraTraceMarker {
 
 <#
 .SYNOPSIS
-H1 / H4 / H5 を判定し、違反を区間へ帰属させる。例外は投げない。
+H1 / H4 / H5 / H7 を判定し、違反を区間へ帰属させる。例外は投げない。
 
 .PARAMETER Events
 `Read-SnotraTraceEvents` が返す parse 済みオブジェクト列。順序は問わない（`seq` で整列する）。
@@ -378,6 +380,36 @@ function Invoke-SnotraTraceJudgement {
                 }
                 $resultsShown = $true
             }
+            $script:EventSearchSettled {
+                $sectionId = Resolve-SnotraTraceSection -Attributable $attributable -Seq $event.Seq
+
+                # --- H7 ---
+                # 採り込み時点の pending より古い seq が採られたら、失効の規則が破れている。
+                # `pending_seq = 0` は「pending 無し」＝この結果が最新だったことを意味する。
+                $dispatchSeq = ConvertTo-SnotraTraceInt64 (Get-SnotraTraceProperty -InputObject $event.Raw.data -Name 'dispatch_seq')
+                $pendingSeq = ConvertTo-SnotraTraceInt64 (Get-SnotraTraceProperty -InputObject $event.Raw.data -Name 'pending_seq')
+                if ($null -eq $dispatchSeq -or $null -eq $pendingSeq) {
+                    $unjudgeable += @{
+                        Invariant = 'H7'
+                        Seq       = $event.Seq
+                        SectionId = $sectionId
+                        Reason    = 'dispatch_seq / pending_seq が読めない'
+                    }
+                } elseif ($pendingSeq -ne 0 -and $dispatchSeq -lt $pendingSeq) {
+                    # **`Message` を持つ hashtable で積む**（`[pscustomobject]` ではない）——
+                    # `Format-SnotraTraceVerdictTable` は違反を `.Seq` / `.Message` で読む。
+                    # StrictMode 下ではその 2 つが無いオブジェクトへアクセスした瞬間に例外になる
+                    # （H1/H4/H5 の既存の形に揃えることでこの経路を避ける）。
+                    $violations += @{
+                        Invariant = 'H7'
+                        Seq       = $event.Seq
+                        SectionId = $sectionId
+                        Message   = "失効した結果を採った: dispatch_seq=$dispatchSeq < pending=$pendingSeq"
+                    }
+                } else {
+                    Add-SnotraTracePass -PassCount $passCount -Invariant 'H7' -SectionId $sectionId
+                }
+            }
         }
     }
 
@@ -633,7 +665,7 @@ function Format-SnotraTraceVerdictTable {
         $lines += "| $($row.Id) | $($row.Title.Replace('|', '\|')) | $($cells -join ' | ') |"
     }
     $lines += ''
-    $lines += 'H1 = hidden な窓に results が現れない / H4 = `rows` が 0 の show が無い / H5 = hide を挟まない連続 show が無い'
+    $lines += 'H1 = hidden な窓に results が現れない / H4 = `rows` が 0 の show が無い / H5 = hide を挟まない連続 show が無い / H7 = pending より古い seq の採り込みが無い'
     $lines += '**SKIP は「判定できなかった」であって合格ではない。** 理由は下の一覧にある。'
     $lines += ''
     $lines += '| 不変条件 | PASS | FAIL | SKIP |'

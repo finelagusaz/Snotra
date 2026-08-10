@@ -1408,6 +1408,26 @@ describe("G-stale-identifiers の母集団ごとの 0 件検知（兄弟が非�
   });
 });
 
+// #984 の実在の欠陥を凍結したフィクスチャ。`f1827b0:docs/comment-guidelines.md` の当該行の骨格で、
+// **同じ行に `npm` のコマンドと修飾形の名前が同居する**——2 つの穴が同時に効いていた形である（#993）。
+// 片足ずつ戻した測定は `ADR-stale-identifier-detector-scope` の #993 の追記節が持つ（テストからは
+// 実装を変異させられないため、ここで固定するのは「両足そろえば赤い」ことだけである）。
+describe("G-stale-identifiers の凍結フィクスチャ（#984 の実在の欠陥）", () => {
+  const DOC = "docs/comment-guidelines.md";
+  const SRC = { "snotra-core/src/a.rs": "fn from_material() {}\n" };
+  const LINE = (name) => `模範例は \`Engine::${name}\`。\`npm run governance:check\` が見る\n`;
+
+  it("コマンドと同居する行の修飾形が腐っていれば赤", () => {
+    const f = checkStaleIdentifiers(snap({ ...SRC, [DOC]: LINE("new_from_cache") }), [DOC]);
+    expect(f).toHaveLength(1);
+    expect(f[0].message).toContain("Engine::new_from_cache");
+  });
+
+  it("緑の対: 同じ形で末尾セグメントが語彙に在れば鳴らない", () => {
+    expect(checkStaleIdentifiers(snap({ ...SRC, [DOC]: LINE("from_material") }), [DOC])).toEqual([]);
+  });
+});
+
 // 上の describe が固定するのは各関数の戻り値までで、**buildChecks がどちらを検査へ渡すか**は見ていない。
 // `staleTargets` を `staleDocs` へ戻しても実リポジトリの finding は 0 / 照合 1 のまま変わらないため、
 // dogfood テストも証跡の印字も気づけない——軸 B の主張（SPEC.md が検査対象になった）を守るのは

@@ -573,6 +573,20 @@ struct IndexCacheV2 {
     config_hash: u64,
 }
 
+/// `index.bin` の有効性を判定する鍵。**走査対象そのものの同一性だけを表す**（入力の内訳と、
+/// `include_path_env` / `migemo_enabled` を含めない理由は [`scan_identity_hash`] の doc）。
+///
+/// **この値は `index.bin` に焼き込まれ、次の起動が同じ計算で照合する**（[`load_cache_in`] の
+/// 各枝の `config_hash != config_hash` 判定）。ゆえに**入力・順序・ハッシュ関数のどれを変えても
+/// 全ユーザーのキャッシュが一斉に無効になる**——不一致は破損ではなく「設定が変わった」と
+/// 読まれるので、次の起動は cache-miss 枝へ落ちて 22〜30 秒の全走査を払う（索引の更新は
+/// 明示操作だけという設計上、これが自動で走る唯一の場所である）。
+///
+/// **[`DefaultHasher`] の出力は Rust のリリース間で安定しない**（std の契約——値ではなく
+/// アルゴリズムが未規定である）。ツールチェインを上げた版を配ると、設定を何も変えていない
+/// ユーザーが一度だけ全走査を払いうる。**症状は「その日の起動だけ遅い」で、検索結果は
+/// 正しいまま**ゆえ挙動テストでは捕まらない。安定を要求するなら std ではないハッシュへ
+/// 移すことになり、それ自体が同じ一斉無効化を 1 回払う。
 fn compute_config_hash(scan: &[ScanPath], show_hidden_system: bool) -> u64 {
     let mut hasher = DefaultHasher::new();
     for sp in scan {
@@ -652,6 +666,40 @@ pub fn load_cached_entries(scan: &[ScanPath], show_hidden_system: bool) -> Optio
     )
 }
 
+/// 走査して正準の並びへ整列するまで（保存はしない）と、その 2 段の所要時間。
+struct Scanned {
+    entries: Vec<AppEntry>,
+    scan_ms: u128,
+    sort_ms: u128,
+}
+
+/// 全走査して [`sort_entries_canonical`] を通し、2 段を測って返す。
+///
+/// **保存する枝と保存しない枝（`Config::config_dir` が引けないとき）が同じここを通る。**
+/// 書き起こすと計器が 2 部出荷になり、片方だけが段を足したときに `scan_ms` / `sort_ms` の
+/// 意味が枝ごとにずれる——**どちらの枝を測ったのかは `LoadOrScanStats` の値からは
+/// 区別できない**ので、ずれても数字はもっともらしいまま残る。
+///
+/// **`INDEX_WRITE_LOCK` は取らない。** 走査は共有資源に触れないが、保存する枝は
+/// 「走査から保存までを 1 回のロック取得で覆う」ことに依存している（→
+/// [`upgrade_legacy_cache_in`] だけがその例外である理由は `LoadCacheResult::upgrade_save_ms`
+/// の doc）。ゆえにロックの範囲は呼び出し側が決める。
+fn scan_and_sort_timed(scan: &[ScanPath], show_hidden_system: bool) -> Scanned {
+    let scan_started = Instant::now();
+    let mut entries = scan_all(scan, show_hidden_system);
+    let scan_ms = scan_started.elapsed().as_millis();
+
+    let sort_started = Instant::now();
+    sort_entries_canonical(&mut entries);
+    let sort_ms = sort_started.elapsed().as_millis();
+
+    Scanned {
+        entries,
+        scan_ms,
+        sort_ms,
+    }
+}
+
 /// `load_or_scan_with_stats` と同じ手順を `dir` 注入で行う（統合テスト用）。
 ///
 /// **製品の入口（`Config::config_dir()` を解決する側）でテストを書かないこと。**
@@ -699,13 +747,11 @@ fn load_or_scan_with_stats_in(
     // 別ビルドとの index.bin 同時書き込みを防ぐ。
     // フェーズ計測はクロージャの戻り値として持ち出す。
     let (material, scan_ms, sort_ms, cache_save_ms) = with_index_write_lock(|| {
-        let scan_started = Instant::now();
-        let mut entries = scan_all(scan, show_hidden_system);
-        let scan_ms = scan_started.elapsed().as_millis();
-
-        let sort_started = Instant::now();
-        sort_entries_canonical(&mut entries);
-        let sort_ms = sort_started.elapsed().as_millis();
+        let Scanned {
+            entries,
+            scan_ms,
+            sort_ms,
+        } = scan_and_sort_timed(scan, show_hidden_system);
 
         let cache_save_started = Instant::now();
         // **保存が返す木と派生データをそのまま使う。** 走査結果を保存のために建て直させると、
@@ -744,6 +790,13 @@ fn load_or_scan_with_stats_in(
 /// 保存先（`Config::config_dir()`）を解決してから [`load_or_scan_with_stats_in`] へ委譲する薄い
 /// 包みである。解決できない環境では保存できないが索引は建てられる——`save_cache_sorted` の
 /// `None` 枝と同じ方針で、走査はして `index.bin` へは書かない。
+///
+/// **cache-hit でも書きうる。** 常に [`LegacyUpgrade::Write`] で読むので、置かれているのが
+/// 旧版なら**その場で現行版へ書き戻す**（[`upgrade_legacy_cache_in`]）。ゆえに `#[ignore]` の
+/// 計測ハーネスがこれを呼ぶと、**1 回目の実行が開発者の実 `index.bin` を現行版へ変える**
+/// ——旧版のロードを測りたければ**先に退避すること**。2 回目以降は昇格後の姿しか測れず、
+/// しかも出力は成功時とまったく同じに見える。実データを**書き換えずに**読む口は
+/// [`load_cached_entries`]（`LegacyUpgrade::Skip`）で、既定のスイートはそちらを通る。
 pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> LoadOrScanResult {
     match Config::config_dir() {
         Some(dir) => load_or_scan_with_stats_in(&dir, scan, show_hidden_system),
@@ -754,24 +807,21 @@ pub fn load_or_scan_with_stats(scan: &[ScanPath], show_hidden_system: bool) -> L
             // （→「index.bin 書き込みの排他」）が対象を持たないだけで、免除ではない。
             let total_started = Instant::now();
 
-            let hash_started = Instant::now();
-            let _ = compute_config_hash(scan, show_hidden_system);
-            let hash_ms = hash_started.elapsed().as_millis();
-
-            let scan_started = Instant::now();
-            let mut entries = scan_all(scan, show_hidden_system);
-            let scan_ms = scan_started.elapsed().as_millis();
-
-            let sort_started = Instant::now();
-            sort_entries_canonical(&mut entries);
-            let sort_ms = sort_started.elapsed().as_millis();
+            let Scanned {
+                entries,
+                scan_ms,
+                sort_ms,
+            } = scan_and_sort_timed(scan, show_hidden_system);
 
             LoadOrScanResult {
                 material: IndexMaterial::from_tree(IndexTree::build(entries)),
                 cache_changed: true,
                 stats: LoadOrScanStats {
                     cache_hit: false,
-                    hash_ms,
+                    // **照合する相手が居ないので計算しない。** `config_hash` は `index.bin` へ
+                    // 焼き込んで次の起動と突き合わせるための値であり、書かない枝では
+                    // 消費者が居ない（かつては捨てる前提で計算し、この項目を埋めていた）。
+                    hash_ms: 0,
                     cache_load_ms: 0,
                     cache_read_ms: 0,
                     scan_ms,
@@ -1148,6 +1198,16 @@ fn finish_legacy_read(
 }
 
 /// `load_cache` と同じ読み込みを `dir` 注入で行う（統合テスト用、issue #429）。
+///
+/// **`INDEX_WRITE_LOCK` を保持したまま呼んではならない。** `LegacyUpgrade::Write` で旧版を
+/// 読むと、この関数は [`upgrade_legacy_cache_in`] 経由で同じロックを取りに行く——
+/// `std::sync::Mutex` は再入できないので、その場で自己デッドロックする（**索引ロードが
+/// 永久に返らない**形なので、テストが落ちるのではなくハングする）。
+///
+/// **ロードは「読むだけ」に見えるが、旧版枝は書き手である**——`load_cache_in` を「読み取り
+/// なのでロックの内側でも安全」と読んだ瞬間にこの罠へ落ちる。実際の呼び出し順は
+/// [`load_or_scan_with_stats_in`] が正本で、そこはロックの**外**でこれを呼び、cache-miss と
+/// 判ってから初めてロックを取る。
 fn load_cache_in(dir: &Path, config_hash: u64, upgrade: LegacyUpgrade) -> Option<LoadCacheResult> {
     let bf = cache_bin_file_in(dir);
     let read_started = Instant::now();
@@ -3313,6 +3373,88 @@ mod tests {
             Some(INDEX_CACHE_VERSION),
             "旧版を読んだ後、ディスクは現行版で書き戻されていること"
         );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// **昇格は保存の直前に整列する**（`sort_entries_canonical` の契約）。
+    ///
+    /// **3 つの書き手のうち、入力の並びが自分の制御下に無いのはここだけである**——他の 2 つ
+    /// （cache-miss 枝・`rebuild_and_save`）は自分で走査した結果を数行上で整列させるが、昇格が
+    /// 受け取るのは**過去の版が過去の canon で書いたファイル**であり、その並びを今の canon が
+    /// 保証する理由は無い。ゆえに「契約を守り忘れる」以外に「そもそも整列していない入力が
+    /// 来る」経路がここにだけ在る。
+    ///
+    /// **測るのは正しさではなくサイズである。** [`crate::index_tree::IndexTree::build`] は
+    /// 未整列を許容し（親の二分探索が空振りするだけで別の親を返さない）、取りこぼした
+    /// エントリは根になって**自分のフルパスを `table` へ実体で置く**。検索結果は正しいまま
+    /// `index.bin` が太るので、挙動テストでは捕まらない。
+    #[test]
+    fn legacy_upgrade_sorts_before_saving_so_the_tree_stays_shared() {
+        let _guard = INDEX_LOCK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = temp_dir("upgrade_sort");
+
+        // **正準の並びの逆順で置く。** 旧版ファイルが今の canon と違う順序で書かれていた
+        // 場合を治具にする（昇格が整列を怠ると、この並びのまま木を建てることになる）。
+        let entries = vec![
+            AppEntry {
+                name: "c".into(),
+                target_path: "C:\\d\\c.txt".into(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "b".into(),
+                target_path: "C:\\d\\b.txt".into(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "a".into(),
+                target_path: "C:\\d\\a.txt".into(),
+                is_folder: false,
+            },
+            AppEntry {
+                name: "d".into(),
+                target_path: "C:\\d".into(),
+                is_folder: true,
+            },
+        ];
+        let bytes = try_serialize_with_header(
+            INDEX_MAGIC,
+            2,
+            &IndexCacheV2 {
+                built_at: 1_700_000_000,
+                entries: entries.clone(),
+                config_hash: 7,
+            },
+        )
+        .expect("serialize");
+        assert!(cache_bin_file_in(&dir).save_bytes(&bytes), "save");
+
+        load_cache_in(&dir, 7, LegacyUpgrade::Write).expect("v2 が読めること");
+
+        let raw = cache_bin_file_in(&dir)
+            .load_bytes()
+            .expect("読み直せること");
+        let written = try_deserialize_with_header::<IndexCache<'static>>(
+            &raw,
+            INDEX_MAGIC,
+            INDEX_CACHE_VERSION,
+        )
+        .expect("現行版で書き戻されていること");
+
+        assert!(
+            written.sorted_by_path,
+            "昇格が整列せずに保存した（`sorted_by_path` が下りている）"
+        );
+        for child in ["C:\\d\\a.txt", "C:\\d\\b.txt", "C:\\d\\c.txt"] {
+            assert!(
+                !written.table.iter().any(|s| s == child),
+                "親が解決されず {child} のフルパスが `table` へ実体で戻った\
+                 ——木が平たくなり `index.bin` が太る（`sort_entries_canonical` の doc）"
+            );
+        }
 
         let _ = fs::remove_dir_all(&dir);
     }

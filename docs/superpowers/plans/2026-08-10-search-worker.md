@@ -702,6 +702,12 @@ PR 本文へ: **「H6 は取り下げた（理由は spec の §3.3）。受け�
 
 ## Task 7: worker の骨格
 
+> **⚠️ Task 7 と Task 8 は 1 つの作業へ統合した（2026-08-11）。** 分けたのは計画の誤りである——`-D warnings` 下で `search_worker.rs` の 4 項目（`SearchRequest` / `SearchMsg` / `coalesce` / `spawn_search_worker`）がすべて `dead_code` で落ちる。**素の bin ビルドでは `#[cfg(test)] mod tests` ごとコンパイルから除外される**ので、テストが `coalesce` を呼んでいても救えない（`--all-targets` は両方をビルドし、素の方で落ちる）。re-export を足しても「未使用 import」が増えるだけで根本は消えない（実測）。
+>
+> **これは Global Constraints が既に禁じていた形である**——「新しい型・関数の導入と呼び出し点の移行は同じタスクに束ねる」。**`#[allow(dead_code)]` で逃げてはならない**: 一時的な黙らせは、Task 8 で呼び出しが入ったあとも残り、将来その API が本当に呼ばれなくなったときの検出を永久に潰す。
+>
+> **実施の形**: Task 7 と Task 8 の Step を通しで行い、**1 コミットにまとめる**。成否の指標は `cargo clippy --workspace --all-targets -- -D warnings` が通ることである。
+
 **Files:**
 - Create: `src-tauri/src/egui_shell/search_worker.rs`
 - Modify: `src-tauri/src/egui_shell/mod.rs`

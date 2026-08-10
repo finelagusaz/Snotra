@@ -11,6 +11,7 @@ mod lifecycle;
 mod notify;
 mod search_dispatch;
 mod search_state;
+mod search_worker;
 // launcher_controller.rs が起動 worker の in-flight 追跡・一時通知で消費する（#532 SU5 Task 4）。
 pub(crate) use notify::{LAUNCH_TIMEOUT, NOTICE_LAUNCH, NoticeSlot};
 // NOTICE_HOTKEY は launcher_controller.rs（hotkey 失敗通知の duration）が、OverlayKind /
@@ -85,6 +86,8 @@ pub(crate) use layout::Debouncer;
 pub(crate) use layout::FrameTimer;
 // launcher_controller.rs が検索 dispatch の同一性（seq 発行・採り込み判定）で消費する（#1004 PR 1: 同期経路の計器、PR 2: worker 結果の裁定）。
 pub(crate) use search_dispatch::SearchDispatch;
+// launcher_controller.rs が Plain 検索の要求送信・結果受信（`drain_search`）で消費する（#1004 PR 2）。
+pub(crate) use search_worker::{SearchMsg, SearchRequest, spawn_search_worker};
 // view.rs が UI 文言（hint/overlay/toast）で、launcher_controller.rs が通知文言（起動失敗・
 // 結果不明・hotkey 登録失敗）で消費する（#532 SU5・言語は lang() が毎フレーム live-read）。
 pub(crate) use strings as ui_strings;

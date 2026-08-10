@@ -132,11 +132,16 @@ pub(super) struct LauncherController {
     notice_base: Instant,
     /// 検索要求の同一性（#1004）。PR 1 では同期経路の計器、PR 2 では worker 結果の裁定に使う。
     dispatch: crate::egui_shell::SearchDispatch,
+    /// Plain 検索の要求を worker へ送る送信端（#1004 PR 2）。
+    search_tx: Sender<crate::egui_shell::SearchRequest>,
+    /// worker からの結果受信端。`drain_search` が毎フレーム吸い出す（#1004 PR 2）。
+    search_rx: Receiver<crate::egui_shell::SearchMsg>,
 }
 
 impl LauncherController {
     pub(super) fn new(app_handle: tauri::AppHandle) -> Self {
         let (folder_tx, folder_rx) = channel();
+        let (search_tx, search_rx) = crate::egui_shell::spawn_search_worker(app_handle.clone());
         Self {
             app_handle,
             blur_grace: crate::egui_shell::BlurGrace::default(),
@@ -153,6 +158,8 @@ impl LauncherController {
             notice: crate::egui_shell::NoticeSlot::default(),
             notice_base: Instant::now(),
             dispatch: Default::default(),
+            search_tx,
+            search_rx,
         }
     }
 
@@ -766,46 +773,18 @@ impl LauncherController {
                 match self.state.interp(prefix) {
                     QueryIntent::Plain => {
                         if self.state.query().trim().is_empty() || self.indexing() {
-                            // dispatch を通さず同期で差し替える出所ゆえ、in-flight を道連れで失効させる（`SearchDispatch::invalidate` の doc・spec §4.5）。
+                            // 空クエリと構築中は**同期でクリアする**（worker を経由させると消した文字が 1 フレーム残る）。同期で差し替える以上、in-flight は失効させる（spec の §4.5）。
                             self.dispatch.invalidate();
                             self.state.set_results(Vec::new());
                             return;
                         }
                         let query = self.state.query().to_string();
-                        // 計測は lock 取得込み（フレームを塞ぐ全区間・#634 G-SYNC）。
-                        let search_started = std::time::Instant::now();
-                        let (results, index_entries) = {
-                            let state = match self.app_handle.try_state::<crate::AppState>() {
-                                Some(s) => s,
-                                None => return,
-                            };
-                            let mut engine = state.engine.lock().unwrap();
-                            // 索引件数は H6 のゲート材料である（判定が意味を持つ規模かを判定器が知る）。**既に lock を握っている区間で取る**——このために lock を増やさない。
-                            let n = engine.entry_count();
-                            (engine.search(&query), n)
-                        }; // lock 解放
-                        crate::trace::trace(
-                            "egui_search:dispatch",
-                            serde_json::json!({
-                                "query_chars": query.chars().count(),
-                                "results": results.len(),
-                                "elapsed_us": search_started.elapsed().as_micros() as u64,
-                            }),
-                        );
-                        let seq = self.dispatch.issue(self.last_input_at, search_started);
-                        self.state.set_results(results);
-                        if let Some(settled) = self.dispatch.accept(seq, Instant::now()) {
-                            crate::trace::trace(
-                                "egui_search:settled",
-                                serde_json::json!({
-                                    "dispatch_seq": settled.seq,
-                                    "pending_seq": self.dispatch.pending_seq(),
-                                    "index_entries": index_entries,
-                                    "since_key_us": settled.since_key.as_micros() as u64,
-                                    "since_dispatch_us": settled.since_dispatch.as_micros() as u64,
-                                }),
-                            );
-                        }
+                        let seq = self.dispatch.issue(self.last_input_at, Instant::now());
+                        // 送信失敗（worker が死んでいる）は無視する——次の打鍵で再送され、表示は前の行を保ったままになる。
+                        let _ = self
+                            .search_tx
+                            .send(crate::egui_shell::SearchRequest { seq, query });
+                        // **結果が届くまで前の行を保つ**（folder cache 未着枝と同じ扱い）。
                     }
                     QueryIntent::Instant {
                         filter_name,
@@ -859,6 +838,39 @@ impl LauncherController {
                     }
                 }
             }
+        }
+    }
+
+    /// worker の結果を採り込む（#1004）。**seq が現 pending と一致するときだけ行を差し替える**——追い越された結果は捨てる。世代は `set_results` が進める（#699 は無傷）。
+    pub(super) fn drain_search(&mut self) {
+        while let Ok(crate::egui_shell::SearchMsg::Done {
+            seq,
+            results,
+            index_entries,
+        }) = self.search_rx.try_recv()
+        {
+            let now = Instant::now();
+            let Some(settled) = self.dispatch.accept(seq, now) else {
+                crate::trace::trace(
+                    "egui_search:dropped",
+                    serde_json::json!({
+                        "dispatch_seq": seq,
+                        "pending_seq": self.dispatch.pending_seq(),
+                    }),
+                );
+                continue;
+            };
+            self.state.set_results(results);
+            crate::trace::trace(
+                "egui_search:settled",
+                serde_json::json!({
+                    "dispatch_seq": settled.seq,
+                    "pending_seq": self.dispatch.pending_seq(),
+                    "index_entries": index_entries,
+                    "since_key_us": settled.since_key.as_micros() as u64,
+                    "since_dispatch_us": settled.since_dispatch.as_micros() as u64,
+                }),
+            );
         }
     }
 

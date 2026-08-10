@@ -37,7 +37,7 @@ PERFORMANCE.md` は #1023 と #1010 を返すが、両者が触ったのはメ�
 
 | # | 変異（注入点） | 実行条件 | 予測される検知器 | 予測 |
 |---|---|---|---|---|
-| (l) | `Test-StartupPayload` の**複製**へ `post_main_ms == pre_main_ms + Σ phase_ms` を足す | 再ビルド不要（Phase 1-0 で保存した実ペイロードへ当てる） | その等式自身 | **赤**（切り捨てゆえ実起動で必ず食い違う） |
+| (l) | `Test-StartupPayload` の**複製**へ **`post_main_ms == Σ phase_ms`** を足す | 再ビルド不要（保存した実ペイロードへ当てる） | その等式自身 | **赤**（切り捨てゆえ実起動で必ず食い違う） |
 | (d) | `Timeline::sum_phase_ns` の返り値を `* 2` | 実 config・release | ハーネス検査 3（恒等式・飽和側）＋ `cargo test`（`sum_of_phase_ns_equals_the_last_mark`） | **赤** |
 | (i) | `finish()` の `post_main` を `anchor.elapsed().saturating_sub(t.last)` へ | 実 config・release | ハーネス検査 3 | **赤** |
 | (c-A) | `main.rs` の `set_branch` を `Branch { first_run: true, cache_hit: false, include_path_env: false }` リテラルへ固定 | **実 config**（実際は first_run=false / cache_hit=true / include_path_env=true） | 検査 2 の逆向き（`null` であるべき区間に値がある）が `index_load` と `path_merge` を名指す | **赤**。ただし **`cache_hit` の偽りは素通り**（説明者に使われていない） |
@@ -102,12 +102,60 @@ PERFORMANCE.md` は #1023 と #1010 を返すが、両者が触ったのはメ�
 
 ### Phase 1 — 変異を当てる（マトリクスの順）
 
-- [ ] (l) を `Test-StartupPayload` の複製へ当て、Phase 0 で保存した実ペイロードで測る
-- [ ] (d) を当てて `npm run bench:startup`（実 config）を走らせ、結果を記録する
-- [ ] (i) を当てて同上
-- [ ] (c-A) を当てて同上。**`cache_hit` の偽りが素通りすることを明示的に確かめる**
-- [ ] (c-B) を当てて `-UseVerificationProfile` で走らせる
-- [ ] (e) を当てて占有下・`-UseVerificationProfile` で走らせる（Phase 0 の対照と比べる）
+- [x] (l) を `Test-StartupPayload` の複製へ当て、保存した実ペイロード（7 標本）で測る
+      → **式の形を実測で確定させた（計画の転記が誤っていた）**。issue の `total == pre_main +
+      Σ phase_ms` は**当てられない**——`total` という項目が出力に無い。私が計画へ転記した
+      `post_main_ms == pre_main_ms + Σ phase_ms` も誤りで、**`pre_main` は `post_main` の外側**
+      （プロセス作成 → main 突入）ゆえ足すと二重になる（実測: `pre+Σ` = 73〜75 に対し
+      `post_main` = 70）。当てられる形は **`post_main_ms == Σ phase_ms`** で、**7/7 で不成立**
+      （差 3〜4 ms・9 区間ぶんの切り捨ての積み上がり）＝**予測どおり赤**。
+      **`git log -S` で確認: この式が過去に在った痕跡は無い**（`bench-startup.ps1` の履歴は計器の
+      着地コミット 1 本のみ）——issue の「再導入する」は事実ではなく、新規に当てる予測だった
+- [x] (d) を当てて `npm run bench:startup`（実 config）を走らせ、結果を記録する
+      → **赤（予測どおり・ただし予測より広い）**。`cargo test -p snotra` が **4 本**落ちた
+      （`sum_of_phase_ns_equals_the_last_mark` / `post_main_is_taken_independently_of_the_partial_sum` /
+      `rounding_happens_only_at_the_display_boundary` / `unmarked_tail_closes_the_sum_when_the_last_phase_never_ran`）。
+      **予測は 1 本だった**——`sum_phase_ns` は 4 本が共有する土台なので、変異は
+      「総和の検算を壊す」より広く効く。ハーネス側も検査 3 で赤
+      （`post_main_ns=75668200 != 151336400`・ちょうど 2 倍）。復元を `git diff` で確認済み
+- [x] (i) を当てて同上
+      → **素通り（予測は「赤」・外れた）**。`cargo test` 241 全緑・ハーネス `passed`。
+      機序: 同語反復化すると `post_main == sum_phase` ゆえ `unmarked_tail = post_main - sum_phase = 0`
+      になり、検査 3 の恒等式は **`X == X + 0` で必ず真**。`bench-startup.ps1` の doc が自ら
+      「同語反復化は素通りする（実測）」と書いていたとおりで、**#1000 で実測済みの (h) と同型**だった
+      ——issue が (i) を「未確認」に数えたのは、基準点の差し替え（anchor 以外のマーク）と
+      同語反復化を別物として数えたためだが、**`sum_phase` を基準にすると両者は同じ形に落ちる**
+- [x] **(i) で予定外の検知器が出た** — `post_main` を anchor から作るのをやめると `anchor` が
+      未使用になり、**`-D warnings` の clippy が最初に落ちる**（`unused variable: anchor`）。
+      **`//!` にも `research.md` の検知器一覧にも無い経路**であり、コンパイラが同語反復化の
+      第一検知器である。ただし `_anchor` にすれば通るので、**弱い**（意図的な変異は素通りできる）
+- [x] **(i) は `hotkey_register` を 0 ms にする** — 同語反復化した `post_main` をそのまま
+      `mark(HotkeyRegister, …)` へ渡すため、差分が構造的に 0 になる。**`PERFORMANCE.md`
+      「計器が計器の欠陥を暴いた」が記録した「7 回とも 0 ms」と同じ署名**が出るが、
+      **検査は 0 を咎めない**（人間の目にしか映らない）
+- [x] (c-A) を当てて同上。**`cache_hit` の偽りが素通りすることを明示的に確かめる**
+      → **赤（予測どおり）**。検査 2 の逆向きが 2 run × 2 区間を名指した:
+      「null であるべき区間に値がある: index_load = 1631800 ns」「同 path_merge = 12668800 ns」。
+      **`cache_hit=False` の偽りは一言も咎められていない**（予測どおり素通り——出力の
+      `cache_hit=False first_run=True path_env=False` に現れているが、どの判定にも使われない）
+- [x] (c-B) を当てて `-UseVerificationProfile` で走らせる
+      → **赤（予測どおり）**。検査 2 の順向きが「説明されない null: path_merge」を 2 run とも出した。
+      **(c-A) と併せて、検査 2 の双方向が両向きとも実証された**
+- [x] (e) を当てて占有下・`-UseVerificationProfile` で走らせる（Phase 0 の対照と比べる）
+      → **完全に素通り（予測どおり）**。ホットキー登録が実際に失敗しているのに `起動計器 passed`。
+      **ペイロードは矛盾を抱えたまま通った**——`ok=False` / `reason=hotkey-registration` は
+      正直に載り、`event` だけが `startup:ready` を騙っている。検査 1〜4 はキーの**存在**しか
+      見ず、**値を一度も読んでいなかった**。Phase 0 の対照（同条件・変異なし）は赤だったので、
+      差は `event` の 1 行だけである
+- [x] **(e) の検知器を足し、同じ変異ビルドで赤くなることを測った** — `Test-StartupPayload` へ
+      検査 5（`event` と `ok` / `reason` の整合）を追加。同一条件で **passed → 赤**へ反転:
+      「event が ok と食い違う: event=startup:ready / ok=False / reason=hotkey-registration
+      （期待 startup:failed）」。**偽陽性も両経路で測った**——正常起動（`ok=true`）は緑、
+      実際に失敗した起動（`ok=false`・変異なし）は「起動が失敗した」1 件のみで検査 5 の行は出ない
+- [x] **検知器の追加が契約検査の母集団を広げた（副産物）** — 以前は `startup:failed` の run が
+      `continue` で検査を飛ばしており、**失敗した起動のペイロードは一度も契約検査を受けて
+      いなかった**。検査 5 は騙られた run（`event=startup:ready`）にも届く必要があるため
+      呼び出し構造を直し、**失敗経路も検査 1〜5 を通るようにした**
 - [ ] (j) を当てて実 config で走らせる
 - [ ] (a)+(j) の同時変異で二重終端を作り、ハーネスの挙動を測る
 - [ ] 各件の結果（赤/素通り・出た文言・機序）を `workspace/plan.md` の下の「実測結果」表へ書き込む

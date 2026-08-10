@@ -80,6 +80,15 @@ $PhaseKeys = @(
    trace が届くまでを**独立に**測っており、`pre_main + post_main` がそれを超えることはない。
    **超えたら、計器が内側で辻褄を合わせている**（同語反復化した実装は区間の実測を捨てるので、
    外から見た経過と食い違う）。下限は置かない——trace の到着はポーリング間隔ぶん遅れる。
+
+   **この検査が見ないもの: 内側の申告が実際より小さくなる方向。** 下限が無いので、終端を
+   ホットキー登録の完了より手前で打ち切る変異は**原理的に素通りする**（#1009 で (j) として
+   実測）。下限を置けば捕まるが、**trace の到着遅れと区別できない**ため置いていない。
+5. **`event` と `ok` / `reason` の整合** — イベント名が意味を運ぶ設計（`ADR-startup-instrument-contract-shape`）
+   ゆえ、**名前と中身が食い違ったら壊れている**。#1009 で実測: ホットキー登録が実際に失敗した
+   起動で `event` だけを `startup:ready` に偽ると、`ok=false` / `reason=hotkey-registration` が
+   正直に載ったまま**検査 1〜4 は全部通った**——キーの存在しか見ておらず、値を一度も読んで
+   いなかったためである。
 #>
 function Test-StartupPayload {
   [CmdletBinding()]
@@ -87,7 +96,9 @@ function Test-StartupPayload {
     [Parameter(Mandatory)]$Data,
     [Parameter(Mandatory)][string[]]$PhaseKey,
     # ハーネスが独立に測った「起動〜終端の trace を読むまで」の壁時計（ms）。
-    [Parameter(Mandatory)][double]$ObservedWallClockMs
+    [Parameter(Mandatory)][double]$ObservedWallClockMs,
+    # trace 行の**イベント名**。ペイロードの外側に在るので別で渡す（検査 5）。
+    [Parameter(Mandatory)][string]$EventName
   )
 
   $failures = @()
@@ -153,6 +164,21 @@ function Test-StartupPayload {
   if ($claimedMs -gt $ObservedWallClockMs) {
     $failures += ("内側の申告が外から見た経過を超えた: pre_main + post_main = ${claimedMs}ms > " +
       "観測 ${ObservedWallClockMs}ms（計器が内側で辻褄を合わせている疑い）")
+  }
+
+  # --- 5. event と ok / reason の整合 ---
+  # **名前が意味を運ぶなら、名前と中身は一致しなければならない。** 上の 1〜4 はキーの存在と
+  # 数値しか見ないので、`event` を偽った起動を 1 つも捕まえない（#1009 で実測）。
+  $expectedEvent = if ($Data.ok) { 'startup:ready' } else { 'startup:failed' }
+  if ($EventName -ne $expectedEvent) {
+    $failures += "event が ok と食い違う: event=$EventName / ok=$($Data.ok) / reason=$($Data.reason)（期待 $expectedEvent）"
+  }
+  # `reason` は失敗のときだけ在る。**成功時に理由が載るのも同じ重さの破れである**
+  # （どちらかが嘘をついている）。
+  if ($Data.ok -and $null -ne $Data.reason) {
+    $failures += "ok=true なのに reason がある: reason=$($Data.reason)"
+  } elseif (-not $Data.ok -and $null -eq $Data.reason) {
+    $failures += "ok=false なのに reason が null（失敗の理由が読めない）"
   }
 
   return $failures
@@ -247,10 +273,17 @@ try {
       # **`reason` はそのまま載せる**（ハーネス側で分類名を書き起こさない——写しが 2 部になる）。
       $failures += "run=$run 起動が失敗した: reason=$($data.reason) / reached_phase=$($data.reached_phase)"
       Write-Host "startup:failed reason=$($data.reason)" -ForegroundColor Red
+      # **契約の検査はここでも走らせる。** 失敗した起動でも payload は契約を守るべきであり、
+      # **とくに検査 5（`event` と `ok` の整合）はここを通らないと `startup:ready` を騙る変異に
+      # 届かない**——騙られた run はこの分岐へ入らないので、下の呼び出しが唯一の関門になる。
+      $contractFailures = Test-StartupPayload -Data $data -PhaseKey $PhaseKeys `
+        -ObservedWallClockMs $observedMs -EventName $terminal.event
+      foreach ($f in $contractFailures) { $failures += "run=$run $f" }
       continue
     }
 
-    $contractFailures = Test-StartupPayload -Data $data -PhaseKey $PhaseKeys -ObservedWallClockMs $observedMs
+    $contractFailures = Test-StartupPayload -Data $data -PhaseKey $PhaseKeys `
+      -ObservedWallClockMs $observedMs -EventName $terminal.event
     foreach ($f in $contractFailures) { $failures += "run=$run $f" }
 
     $row = [ordered]@{ run = $run; memory_MB = $memMB }

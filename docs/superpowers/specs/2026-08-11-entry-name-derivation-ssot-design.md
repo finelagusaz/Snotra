@@ -1,120 +1,79 @@
-# エントリ名導出規則を単一関数へ集約する設計（#997）
+# エントリ名導出規則を現状維持する設計（#997）
 
-`indexer` が `AppEntry.name` を作る規則を crate 内の単一関数へ集約し、通常スキャン、PATH スキャン、`index_tree` のテスト fixture が同じ実装を通るようにする。
+`indexer` が `AppEntry.name` を作る規則は共通関数へ括り出さず、現在のインライン実装を維持する。#997 の直接の起票理由だった別モジュールのテスト fixture は、起票と同じ日の後続変更で利用対象と一緒に撤去されている。
 
-この変更は既存規則に合わせる挙動不変のリファクタである。`SPEC.md` に規則そのものの記載はなく、ファイル名・フォルダ名・非 UTF-8・空名の扱いも変えない。
+この判断は「重複が常に無害」という一般則ではない。現在の実行可能な実装箇所と、抽象化が消せる故障経路を照合した結果である。
 
-## 1. 解消する問題
+## 1. 起票時から変わった前提
 
-現行の production は次の場所でエントリ名をインライン導出している。
+PR #995 の `e72276a` は `IndexTree::absent_paths` のテスト材料として `index_tree.rs::tree_with` を追加した。fixture は folder なら `Path::file_name()`、file なら `Path::file_stem()` という `indexer` の規則を書き写しており、production とは別にずれうる実行可能な写しだった。
 
-- 通常スキャンの folder: `Path::file_name()`
-- 通常スキャンの file: `Path::file_stem()`
-- PATH スキャンの file: `Path::file_stem()`
+#997 はこの fixture を含む状態で起票された。その後の `0bb7b11` がアイコンキャッシュの索引依存を撤去し、`IndexTree::absent_paths` と専用テスト、`tree_with` を一緒に削除した。現在の `main` に `tree_with` と `absent_paths` は存在しない。
 
-PR #995 で `index_tree.rs` の `tree_with` が同じ条件分岐を fixture 内へ書き写し、4 枚目になった。導入時には `.env` のような先頭ドット名を自作の文字列分解で扱い、`Path::file_stem()` と食い違う木を建てた実績がある。fixture 内の assertion でずれを検出する形は、規則そのものの写しを残すため根本解決にならない。
+したがって、「別モジュールの fixture が production とずれる」という直接の故障経路は既に消えている。
 
-## 2. 単一関数の契約
+## 2. 現在の母集団
 
-`snotra-core/src/indexer.rs` の `AppEntry` 付近に次の関数を置く。
+今回対象とする、`Path::file_name()` / `Path::file_stem()` による indexer エントリ名導出は `snotra-core/src/indexer.rs` 内にある。
+
+| 場所 | 対象 | 導出 | 呼び出し側固有の処理 |
+|---|---|---|---|
+| 通常スキャンの folder | folder | `Path::file_name()` | 空名なら自身を追加しないが、再帰走査は続ける |
+| 通常スキャンの file | file | `Path::file_stem()` | 拡張子照合後に空名と重複を除外する |
+| PATH スキャン | file | `Path::file_stem()` | 実行可能拡張子、hidden/system、正規化キー重複を除外する |
+
+`index_tree.rs` と `query.rs` のコメントは木表現と派生文字列共有の根拠を説明する散文であり、名前を導出する実装ではない。`folder.rs` のフォルダ内列挙は拡張子付きの名前を表示・フィルタリングへ使う別概念である。
+
+## 3. 共通関数を作らない理由
+
+残る実装は同じファイル内にあり、各導出は拡張子照合・空名除外・再帰継続・重複排除という呼び出し側固有の制御フローに隣接している。
+
+想定した共通関数は次の条件分岐だけを隠すものだった。
 
 ```rust
-pub(crate) fn entry_name_from_path(path: &Path, is_folder: bool) -> Option<&str>
+fn entry_name_from_path(path: &Path, is_folder: bool) -> Option<&str>
 ```
 
-関数の契約は次のとおりである。
+この関数は呼び出し側固有の除外処理を集約しない。起票理由となった別モジュールの消費者も撤去済みであり、crate 内可視性を与える必要もない。抽象化を追加しても、現在残る故障経路に対して得られる検出力は専用単体テストぶんだけである。その検知器を維持する代価まで含めると、標準ライブラリの呼び出しを各生成点で直接読める現在形より単純にはならない。
 
-- `is_folder == true` なら `path.file_name()` の UTF-8 表現を返す
-- `is_folder == false` なら `path.file_stem()` の UTF-8 表現を返す
-- 対象成分がない、または UTF-8 として表せない場合は `None` を返す
-- 空文字を拒否しない
-- `String` を確保しない
-- fallback や panic を持たない
+通常スキャンと PATH スキャンは対象拡張子や除外条件が別であり、将来も片方だけが変わりうる。名前導出の二行が現在一致していることだけを根拠に、両経路の責務まで同一視しない。
 
-具体的な導出規則の実装上の正本は、この関数とその doc comment とする。`pub(crate)` に留め、crate 外の公開 API は増やさない。
+## 4. 変更内容
 
-## 3. 呼び出し側の責務
+コードは変更しない。`snotra-core/CLAUDE.md`「エントリ名の導出ルール」に、次の判断を一段落で残す。
 
-各呼び出し側は名前の導出だけを共通関数へ委ね、`None`・空文字・所有権の扱いは現在の責務を保つ。
+- #995 で生じた別モジュールの fixture は `0bb7b11` で利用対象と一緒に撤去済み
+- 残る導出は `indexer.rs` 内で呼び出し側固有の除外処理に隣接するため、共通関数へ括り出さない
+- 別モジュールに実行可能な消費者が再び生じた場合は、この判断を再検討する
 
-| 呼び出し側 | 引数 | `None` / 空文字 | 所有化 |
-|---|---|---|---|
-| 通常スキャンの folder | `true` | その folder 自身を追加しない。再帰走査は続ける | `String` へ変換 |
-| 通常スキャンの file | `false` | エントリを追加しない | `String` へ変換 |
-| PATH スキャン | `false` | 候補を追加しない | `String` へ変換 |
-| `index_tree.rs::tree_with` | fixture の `is_folder` | `None` は panic、空文字は assertion failure | `String` へ変換 |
+規則そのものと、`folder.rs` が別の名前を使う理由は現在の記述を維持する。`SPEC.md` は挙動変更がないため触らない。Rust ファイルも変更しない。
 
-production は現在の `.unwrap_or("")` と空名ガードを維持する。fixture は不正な入力を黙って捨てず、テストの組み立て失敗として可視化する。共通関数が返すのは借用 `&str` なので、共通化そのものによる追加確保はない。
+## 5. 完了条件と検証
 
-## 4. 検知器
+現在の母集団は、次の異なる探し方で確認する。
 
-共通関数を production と fixture が共有すると、両者が同じ誤りへ同時に動く可能性がある。そのため、規則そのものは共通関数の単体テストで独立に固定する。
+- Rust 全体の `file_name()` / `file_stem()` 呼び出しを列挙し、`AppEntry.name` の導出に使う箇所を分類する
+- `git log -S 'fn tree_with'` と `git log -S 'absent_paths'` で fixture の生成・撤去履歴を確認する
+- 現在の `index_tree.rs` に `tree_with` / `absent_paths` がないことを確認する
 
-| 入力 | `is_folder` | 期待値 | 固定する境界 |
-|---|---:|---|---|
-| `tool.exe` | `true` | `Some("tool.exe")` | folder はドットを拡張子として剥がさない |
-| `tool.exe` | `false` | `Some("tool")` | file は拡張子を剥がす |
-| `archive.tar.gz` | `false` | `Some("archive.tar")` | 最後の拡張子だけを剥がす |
-| `.env` | `false` | `Some(".env")` | 先頭ドット名を自作分解しない |
-| 空パス | folder / file | `None` | 対象成分がない場合 |
-
-テストは関数を実装する前に追加し、対象関数が存在しない Red を確認する。Green 後に一時的に「常に `file_name()`」「常に `file_stem()`」の 2 変異を入れ、それぞれ file 側・folder 側の期待値で落ちることを確認してから元へ戻す。
-
-呼び出し点の結線は既存テストで確認する。
-
-- 通常スキャンの folder / file 名
-- PATH スキャンの file 名
-- `IndexTree` のパス再構築と `file_key_into` の root / non-root 両腕
-
-`tree_with` にある「写しがずれていないこと」を確かめる専用 assertion は、共通関数の単体テストへ責務を移して削除する。fixture 固有の `None` と空文字の検査は残す。
-
-## 5. 文書の同期
-
-`entry_name_from_path` の doc comment を具体的な導出規則の正本とし、既存の散文は正本への参照へ変える。
-
-| 場所 | 変更 |
-|---|---|
-| `snotra-core/CLAUDE.md`「エントリ名の導出ルール」 | 規則を再掲せず、`indexer::entry_name_from_path` が単一定義であることと、スキャン・fixture が迂回しないことを書く。`folder.rs` の別規則は意図的な差として残す |
-| `snotra-core/src/index_tree.rs` の module doc / `resolve_one` / fixture doc | `file_name()` / `file_stem()` の再掲と「SSOT の関数がない」という記述を、共通関数への参照へ置き換える。木表現に必要な帰結は残す |
-| `snotra-core/src/query.rs` の `measure_derived_sharing` doc | 規則の再掲を共通関数への参照へ置き換え、`is_folder` から推論してはならない理由は残す |
-
-`SPEC.md` は挙動を変更しないため触らない。`folder.rs` はフォルダ内列挙で拡張子付きの名前を使う別概念であり、共通関数へ集約しない。
-
-## 6. 完了条件と検証
-
-`rg` で Rust ソースと関連文書の `file_name()` / `file_stem()`、および「名前導出規則」の記述を再列挙する。production の対象 3 箇所と `tree_with` が `entry_name_from_path` を通り、旧インライン導出と規則の散文コピーが残っていないことを確認する。
-
-本設計書を除く実装差分は `snotra-core/src/indexer.rs`、`snotra-core/src/index_tree.rs`、`snotra-core/src/query.rs`、`snotra-core/CLAUDE.md` に限定する。変更後は `docs/build-commands.md` のカテゴリ A と、ガバナンス文書変更時の検査を実行する。
+変更後はガバナンス文書の必須検査を実行する。
 
 ```text
-cargo fmt --all -- --check
-cargo check --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test -p snotra-core
-cargo doc --workspace --no-deps --document-private-items
 npm run governance:check
 ```
 
-## 7. 却下した案
+Rust ファイルを変更しないため、Rust のビルド・テストは本変更の検証対象に含めない。
 
-### `index_tree.rs` に置く
+## 6. 再検討の条件
 
-木の表現は規則に依存するが、PATH 候補の名前も同じ規則を使う。木を作る前の名前導出まで `index_tree` の責務へ含めると、モジュール境界が実際の所有者より広くなる。
+別モジュールがエントリ名をパスから実際に導出する必要を持った場合、または標準ライブラリとずれる自作分解が再導入された場合は、共通関数を再検討する。そのときは production と新しい消費者が同じ関数を通り、規則自体を独立した単体テストで固定する。
 
-### 共通化せず fixture の検査だけ強化する
+## 7. 触らないもの
 
-抽象化は増えないが、実際にずれた 4 枚目の写しが残る。fixture の assertion はずれの一部を検出できても、導出規則を共有しない構造を解消しない。
-
-### `query.rs` に置く
-
-`query::lower_file_name` は小文字化と accent-folding を含む検索用の派生であり、原文の `AppEntry.name` を返せない。原文名の導出を同じモジュールへ置くと、検索正規化と indexer のエントリ生成という別責務を混ぜる。
-
-## 8. 触らないもの
-
+- `snotra-core/src/indexer.rs`
+- `snotra-core/src/index_tree.rs`
+- `snotra-core/src/query.rs`
+- `snotra-core/src/folder.rs`
+- `SPEC.md`
 - エントリ名の既存規則
 - 非 UTF-8・空名の除外方針
-- `AppEntry` の型と公開フィールド
-- `IndexTree` のオンディスク形式とパス再構築規則
-- `query::lower_file_name`
-- `folder.rs` のフォルダ内列挙
-- `SPEC.md`

@@ -21,7 +21,7 @@ PR を squash マージする。マージで閉じる issue を決めるのは P
 4. マージ後に**必ず**、次の 3 つを確認する。**`gh pr view <PR> --json closingIssuesReferences` を数えるだけでは足りない** — それは PR 本文からその瞬間に再計算される値であって、閉じた事実そのものではない:
    - 取り直した `gh pr view <PR> --json closingIssuesReferences` の全件が意図どおり閉じたか
    - **残すと決めた issue が今も `OPEN` か**（`gh issue view <issue> --json state`）。正しく動いていればそれらは上の一覧に現れない。**ゆえに一覧を数えるだけでは、守りたい当の issue を一度も見ないことになる**
-   - `gh issue list --state closed --search "closed:>=<mergedAt>"`（時刻は `gh pr view <PR> --json mergedAt` で得る）。どちらの一覧にも属さない「知らないうちに閉じた issue」を拾う、唯一の接地した観測点
+   - `gh issue list --state closed --search "closed:>=<mergedAt>"`（時刻は `gh pr view <PR> --json mergedAt --jq .mergedAt` で得る）。どちらの一覧にも属さない「知らないうちに閉じた issue」を拾う、唯一の接地した観測点。**この観測点は空を返す形で沈黙しうる**——`closed:>=` は ISO 8601 でなければ**エラーではなく 0 件**を返し、PowerShell の `ConvertFrom-Json` は `mergedAt` を DateTime へ変換して `08/10/2026 10:26:23` の形へ崩す（2026-08-10 実測。`--jq` で生文字列を取れば起きない）。**ゆえに 0 件で終えてはならない**——上の 1 つ目で閉じたと確認した issue が**この一覧にも現れること**を突き合わせる。現れないなら、閉じなかったのではなく検索が効いていない
    誤って閉じていたら `gh issue reopen <issue>`（close イベントは履歴に残り、close を契機に動く下流は巻き戻らない。**reopen は回復であって、事前確認を省く免罪符ではない**）
 
 **手順 1 の一覧が「閉じる issue のすべて」になるのは、手順 3 を守り、かつ確認からマージまで PR 本文が変わらなかったときだけである。** 本文を凍結する機構は無く、`gh pr merge --auto` は確認とマージを引き離すため**使わない**。

@@ -105,7 +105,7 @@ pwsh -File scripts/visual-input-metrics.ps1 -KeepShots        # 撮った窓を 
 
 #### エージェントが目視項目を自分で実施するとき
 
-`smoke:manual` が実行できないのは合否の記録に `Read-Host` を使うからで、**目視項目の実体（アプリを操作して表示を観測する）は実施できる**（#836 で 11 項目・#870 で日英 2 本の実績）。実施するなら次の 4 点に従う。
+`smoke:manual` が実行できないのは合否の記録に `Read-Host` を使うからで、**目視項目の実体（アプリを操作して表示を観測する）は実施できる**（#836 で 11 項目・#870 で日英 2 本の実績）。実施するなら以下に従う。
 
 - **`scripts/lib/SnotraSmoke.psm1` の関数だけで組む。** `New-SnotraVerificationProfile` / `Start-SnotraProcess` / `Wait-SnotraWindow` / `Set-SnotraForegroundWindow` / `Send-SnotraKey` / `Get-SnotraWindowCapture` で、使い捨てプロファイルの seed から打鍵注入・窓矩形キャプチャまで完結する。**この経路だけが上の画面ロック検出（#866）に守られる**——モジュールに無い操作（マウスの `SetCursorPos` + mouse_event 系（いずれも Win32 API）はいまも無い）を自前 P/Invoke で足すと、その実行は検出の外へ出る。ロック中に走らせればロック画面を撮り、`check:colors` のような判定が無いぶん**誰も気づかない**
 - **撮る前に、その入力が分岐へ入っているかを確かめる**（#872）。中間省略・overflow・clipping は入力が短ければ発生せず、**正常に見える画像が撮れてしまう**。分岐へ確実に入る fixture を用意して初めて測ったことになる（`AGENTS.md`「検証の作法（全タスク共通）」の「観測形が対象を含むか」の視覚版）

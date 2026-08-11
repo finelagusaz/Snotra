@@ -439,11 +439,56 @@ struct PostWidgetInput {
     shift: bool,
 }
 
+/// main 窓の当たり判定を、**描かれた矩形そのもの**に一致させる（`setup` から 1 回だけ）。
+///
+/// egui の既定は `interaction.interact_radius = 5.0`——矩形の**外 5px** までを近傍として
+/// その widget の当たりに含める。`hit_test` は「大きな drag 背景の上に載った小さな click
+/// widget」を助ける枝を持ち、そこで**背景のドラッグを捨てて**近傍の widget へ click も drag も
+/// 渡す。main 窓はまさにその形（背景 = `Sense::drag()` の `max_rect`・入力欄 =
+/// `Sense::click_and_drag()`）ゆえ、バー帯の余白 `Metrics::bar_inset`（既定 7.0）のうち
+/// **内側 5px が入力欄に食われ**、入力欄以外の全域をドラッグして移動可能という
+/// `SPEC.md`「8.2 ウィンドウ位置」の定めが、外側 2px まで痩せていた（実測: 余白 7px のうち
+/// 掴めるのは 2px、残りは I ビーム + クリックで入力欄が focus）。
+///
+/// **書き込み先は global style でなければならない。** ヒットテストが読むのは `Context` の
+/// `memory.options.style()` であり、`ui.style_mut()` の copy-on-write は届かない
+/// （`ui.visuals_mut()` で 3 値を渡す `search_input_ui` とは経路が違う）。
+///
+/// **`all_styles_mut` であって `global_style_mut` ではない**——後者が書くのは**現在テーマの
+/// style だけ**である（`Options::style()` が `dark_style` / `light_style` を選ぶ）。この窓は
+/// テーマ設定に触れないので `theme_preference` は既定の `System` のまま、`system_theme` が
+/// `None` の間は `fallback_theme`（Dark）へ落ちる——**そこへ OS が Light を報せた瞬間、
+/// 書いていない側の style が現役になり修正が黙って消える**（実測: `RawInput.system_theme =
+/// Some(Light)` を 1 フレーム流すだけで 0.0 → 5.0 へ戻る）。現状の `input.rs` は
+/// `system_theme` を積まないため到達しないが、**積む変更は色の追従を足すつもりの誰かが書く**
+/// ものであり、当たり判定が道連れになることを予測できない。両テーマへ書けば費用ゼロで塞がる。
+///
+/// **`setup` は `run_ui` の外**（`EguiWindow::new`）**から呼ばれる**ため、この書き込みは第 1
+/// pass から効く——`src-tauri/clippy.toml` が禁じる #751 の欠陥（root `Ui` が pass 冒頭で掴む
+/// `Arc<Style>` に間に合わない）を、この地点は原理的に持たない。同ファイルが sanctioned な
+/// 解消手段として指定する `#[allow]` + 理由コメントで開ける。
+///
+/// **射程は main 窓の全 widget である**——toast ボタンの当たりも見た目の矩形に一致する
+/// （近傍 5px の助けを失う。矩形自体は変えていない）。results 窓は別 `Context` ゆえ無関係。
+///
+/// **検査が縛るのは適用の帰結だけである**——`bar_margin_belongs_to_the_window_drag_not_the_input_field`
+/// はこの関数を直接呼ぶため、`setup` からの**呼び出しを落とす退行には届かない**
+/// （`SearchWindowView` の構築に `AppHandle` が要り、テストから組めない）。受容する残余であり、
+/// 検知点は実機の目視だけである。
+fn apply_exact_hit_test_style(context: &egui::Context) {
+    // 上の doc のとおり、ここは run_ui の外なので #751 の「当該 pass に届かない」欠陥を持たない。
+    #[allow(clippy::disallowed_methods)]
+    context.all_styles_mut(|style| style.interaction.interact_radius = 0.0);
+}
+
 impl EguiView for SearchWindowView {
     fn setup(&mut self, context: &egui::Context) {
         // `AppHandle` は controller が単独所有する（不変条件 13）。ここで 1 回 clone して
         // ローカルへ置く——`update()` 冒頭と同じ理由（`tauri::State<'_, T>` の借用元問題）。
         let app = self.controller.app().clone();
+        // 当たり判定を描画矩形に一致させる（理由と射程は関数 doc）。**`update()` へ移してはならない**
+        // ——書き込み先は global style であり、root `Ui` が pass 冒頭で掴む snapshot に間に合わない。
+        apply_exact_hit_test_style(context);
         let font_family = super::font_stack::font_family_from_config(&app);
         super::font_stack::configure_japanese_font(context, &font_family);
         self.applied_font_family = font_family;
@@ -1542,6 +1587,142 @@ mod tests {
             seen.into_inner(),
             Some((expected.input_bg, expected.selection, expected.hint)),
             "3 値が子 Ui へ届いていない（適用が子 Ui の生成より後ろに在るか、値が欠けている）"
+        );
+    }
+
+    /// バー余白の 1 点を突いて `(背景がドラッグを取ったか, 入力欄が hover したか)` を返す。
+    ///
+    /// **`update()` の登録順を再現する**——背景ドラッグ（`Sense::drag()` の `max_rect`）が先、
+    /// 入力欄が後。`hit_test` の「大きな drag 背景の上に載った小さな click widget を助ける」枝は
+    /// 背景があって初めて通り、その枝こそが食い込みの実体だからである。
+    ///
+    /// 幾何は既定 config の実値（`Metrics::from_config(15, 6, 28)`: 余白 7・欄高 29）。
+    /// `offset` は入力欄の矩形からの符号付き距離（正 = 外側の余白、負 = 欄の内側）。
+    fn probe_bar_margin(apply_style: bool, offset: f32) -> (bool, bool) {
+        const W: f32 = 600.0;
+        const INSET: f32 = 7.0;
+        const FIELD_H: f32 = 29.0;
+        const BAR_H: f32 = FIELD_H + 2.0 * INSET;
+
+        let ctx = egui::Context::default();
+        if apply_style {
+            super::apply_exact_hit_test_style(&ctx);
+        }
+        let mut buf = String::new();
+        let pos = egui::pos2(W / 2.0, INSET - offset);
+        let mut got = (false, false);
+
+        // frame 0-1: widget を登録（ヒットテストは前フレームの矩形を見る）/ 2: 押下 / 3: 移動
+        for frame in 0..4 {
+            let mut events = vec![egui::Event::PointerMoved(pos)];
+            match frame {
+                2 => events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                }),
+                3 => events = vec![egui::Event::PointerMoved(pos + egui::vec2(10.0, 0.0))],
+                _ => {}
+            }
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(W, BAR_H),
+                )),
+                focused: true,
+                events,
+                ..Default::default()
+            };
+            let _ = ctx.run_ui(input, |ui| {
+                let bg = ui.interact(
+                    ui.max_rect(),
+                    egui::Id::new("main-window-drag"),
+                    egui::Sense::drag(),
+                );
+                let params = SearchInputParams {
+                    input_id: egui::Id::new("search_input"),
+                    restored_search: false,
+                    window_focused: true,
+                    input_editable: true,
+                    inset: INSET,
+                    field_height: FIELD_H,
+                    font: egui::FontId::proportional(15.0),
+                    text_color: egui::Color32::WHITE,
+                };
+                let te = search_input_ui(ui, test_visuals(), &mut buf, &params, |_| String::new());
+                if frame == 3 {
+                    got = (bg.dragged(), te.hovered());
+                }
+            });
+        }
+        got
+    }
+
+    /// 入力欄以外の全域をドラッグして移動可能という `SPEC.md`「8.2 ウィンドウ位置」の定めを、
+    /// 余白の実点で測る。
+    ///
+    /// egui 既定の `interaction.interact_radius = 5.0` は入力欄の当たりを矩形の外 5px へ広げ、
+    /// 余白 7px のうち内側 5px を食っていた（掴めるのは外側 2px だけ・実測）。
+    /// `apply_exact_hit_test_style` はそれを 0 にして判定を描画矩形へ一致させる。
+    ///
+    /// **対照（未適用）を同じ検査に置く**——適用の有無で結果が変わらなければ、この検査は
+    /// 何も縛っていない。**欄の内側**も併せて測る: 判定を縮めた結果、入力欄自身が当たらなく
+    /// なっていないことまで見る。
+    #[test]
+    fn bar_margin_belongs_to_the_window_drag_not_the_input_field() {
+        // **欄の外 1px を突く**——SPEC が言う「入力欄以外」は余白の全域であり、境界の隣から
+        // 掴めなければならない。`interact_radius` がわずかでも残れば落ちる（1.0 で既に食う）。
+        assert_eq!(
+            probe_bar_margin(true, 1.0),
+            (true, false),
+            "余白（欄の外 1px）が窓ドラッグへ渡っていない"
+        );
+        assert_eq!(
+            probe_bar_margin(false, 1.0),
+            (false, true),
+            "対照が成立しない: style 未適用でも食い込みが起きないなら、この検査は何も縛っていない"
+        );
+        assert_eq!(
+            probe_bar_margin(true, -5.0),
+            (false, true),
+            "欄の内側 5px が入力欄に当たらない（判定を縮めすぎている）"
+        );
+    }
+
+    /// OS のテーマが切り替わっても当たり判定が既定へ戻らない（`all_styles_mut` の要）。
+    ///
+    /// `global_style_mut` は**現在テーマの style だけ**を書くため、`system_theme` が Light で
+    /// 届いた瞬間に書いていない側が現役になり、修正が黙って消える。**`theme_preference` は
+    /// 既定の `System` のままで起きる**——この窓はテーマ設定に触れないので、コード側は何も
+    /// していないのに OS の報せだけで倒れる経路である。
+    ///
+    /// **両テーマを直接読む**（`global_style()` は現在テーマしか返さないので、切替を経ずに
+    /// 「書いていない側」を見られない）。
+    #[test]
+    fn hit_test_style_survives_a_system_theme_change() {
+        let ctx = egui::Context::default();
+        super::apply_exact_hit_test_style(&ctx);
+
+        for theme in [egui::Theme::Dark, egui::Theme::Light] {
+            assert_eq!(
+                ctx.style_of(theme).interaction.interact_radius,
+                0.0,
+                "{theme:?} の style へ届いていない（現在テーマだけを書く API を使っている）"
+            );
+        }
+
+        // OS からの報せを 1 フレーム流す（`RawInput.system_theme`）。実経路と同じ形で、
+        // `theme_preference` は `System` のまま現役の style だけが入れ替わる。
+        let input = egui::RawInput {
+            system_theme: Some(egui::Theme::Light),
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input, |_| {});
+        assert_eq!(
+            ctx.global_style().interaction.interact_radius,
+            0.0,
+            "system_theme=Light が届いた後に既定へ戻っている"
         );
     }
 }

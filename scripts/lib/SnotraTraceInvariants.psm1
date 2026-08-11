@@ -15,7 +15,7 @@ $ErrorActionPreference = 'Stop'
 # | H1 | hidden な窓の中に `egui_results:show` が現れたら異常 | main が hidden なのに results が最前面に残る（#671 PR A′） |
 # | H4 | `egui_results:show` の `rows` が 0 なら異常 | 「件数 0 ⇒ hide」の契約違反（`layout::present_results` の連言②） |
 # | H5 | hide を挟まない連続 `egui_results:show` は異常 | 二重発火抑止（`ResultsWindow.visible` の `swap`）の破れ |
-# | H7 | `egui_search:settled` が `dispatch_seq < pending_seq` で現れたら異常 | 失効した検索結果が行を汚す（#1004） |
+# | H7 | `egui_search:settled` が `dispatch_seq < pending_seq` で現れたら異常 | seq 照合そのものが外れた（#1004。**射程は下記のとおり狭い**） |
 #
 # **判定不能を PASS へ化けさせない**のがこのモジュールの要石である。「該当イベントが無い」
 # 「`rows` が読めない」「main の可視状態が未観測」「窓が閉じていない」「parse できなかった
@@ -384,8 +384,19 @@ function Invoke-SnotraTraceJudgement {
                 $sectionId = Resolve-SnotraTraceSection -Attributable $attributable -Seq $event.Seq
 
                 # --- H7 ---
-                # 採り込み時点の pending より古い seq が採られたら、失効の規則が破れている。
+                # 採り込み時点の pending より古い seq が採られたら、seq 照合が外れている。
                 # `pending_seq = 0` は「pending 無し」＝この結果が最新だったことを意味する。
+                #
+                # **射程は狭い。健全な実装では H7 は構造的に発火しえない**——`SearchDispatch::accept`
+                # は成功時に pending を take するので、`egui_search:settled` が出る時点で
+                # `pending_seq` は必ず 0 になる。ゆえに H7 が捕まえるのは「accept の照合を外す」
+                # 形の回帰だけであり、常時 PASS が正常な姿である（故障注入で発火を実測済み・#1004 PR 2）。
+                #
+                # **とくに `dispatch.invalidate()` の呼び忘れは検知しない。** 同期で行を差し替えた
+                # のに invalidate を忘れると pending が残り、worker の結果が届いたとき seq は一致
+                # するので accept は成功する——古い行が生えるのに pending_seq は 0 で PASS になる。
+                # spec §4.5 の規則を守る機構は Task 9 の実装（同期出所すべてへの invalidate）自身
+                # であって、この検知器ではない。
                 # `data` の読みは H4 と同じく `Get-SnotraTraceProperty` を経由させる——`$event.Raw.data`
                 # を直接ドット参照すると、`data` を持たない行が混じった瞬間 StrictMode で例外になる。
                 $data = Get-SnotraTraceProperty -InputObject $event.Raw -Name 'data'

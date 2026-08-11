@@ -392,6 +392,13 @@ function Invoke-SnotraTraceJudgement {
                 # `pending_seq` は必ず 0 になる。ゆえに H7 が捕まえるのは「accept の照合を外す」
                 # 形の回帰だけであり、常時 PASS が正常な姿である（故障注入で発火を実測済み・#1004 PR 2）。
                 #
+                # **その発火のさせ方を書いておく**——#1004 では 2 度失敗した。coalescing を外す変異は
+                # `let _ = rest;` と書くこと: `let _ = rest.count();` は溜まった要求を**消費して捨てる**
+                # ので coalescing と同じ結果になり、追い越しが起きない。それでも発火しないのは
+                # `Debouncer`（leading）がバースト中の再発火を抑えるのに対し実運用点の検索時間が
+                # debounce 幅と拮抗するためで、worker 側へ人工的な遅延を入れて初めて確実に追い越す。一般則は
+                # `docs/development-principles.md`「構造的設計原則と強制の階梯」。
+                #
                 # **とくに `dispatch.invalidate()` の呼び忘れは検知しない。** 同期で行を差し替えた
                 # のに invalidate を忘れると pending が残り、worker の結果が届いたとき seq は一致
                 # するので accept は成功する——古い行が生えるのに pending_seq は 0 で PASS になる。

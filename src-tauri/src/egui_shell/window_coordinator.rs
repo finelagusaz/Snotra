@@ -684,14 +684,11 @@ pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
     else {
         return;
     };
-    // #1032 の調査足場: この engine lock の取得だけを別に測る（`DriveTiming` の doc）。
-    let seg_gap = crate::trace::Segment::start();
     let gap = super::read_config(
         app,
         |c| c.visual.window_gap,
         || super::visual::default_visual().window_gap,
     );
-    GAP_LOCK_US.store(seg_gap.end(), std::sync::atomic::Ordering::Relaxed);
     let (Ok(pos), Ok(size), Ok(scale)) = (
         main.outer_position(),
         main.outer_size(),
@@ -763,47 +760,13 @@ pub(crate) struct DriveResultsInputs {
 /// 呼び出し元はフレームの中なので `RuntimeFrame::event_loop()` から得る。
 /// `drive_results_window` の区間別の所要（#1032 の調査足場）。
 ///
-/// **発火フラグを所要時間で代理しない**——デルタガードが弾いたフレームと、撃って速かった
-/// フレームは µs 桁では区別できない（時計の量子化に載る）。撤去条件は
-/// `crate::trace::TRACE_ELAPSED_US` の doc。
-#[derive(Default)]
-pub(crate) struct DriveTiming {
-    /// hide 側へ倒れた（以降の区間は走っていない）。
-    pub(crate) hidden: bool,
-    pub(crate) pos_us: u64,
-    pub(crate) size_us: u64,
-    /// `ResultsWindow::set_size` が実際に Win32 を撃った。
-    pub(crate) size_fired: bool,
-    pub(crate) show_us: u64,
-    /// `ResultsWindow::show` が可視へ遷移した（raw show を撃った）。
-    pub(crate) show_fired: bool,
-    pub(crate) wake_us: u64,
-    /// `max_results` の engine lock 取得（drive の冒頭・hide 側へ倒れるフレームでも走る）。
-    pub(crate) maxres_us: u64,
-    /// `position_results_below_main` の中の `window_gap` 読み（engine lock）。
-    pub(crate) gap_us: u64,
-}
-
-/// `position_results_below_main` が測った `window_gap` 読みの所要（#1032 の調査足場）。
-///
-/// 返り値で運ばないのは、この関数が `Moved` リスナーとも共用の単一点であり、そちらへ
-/// 戻り値の扱いを増やしたくないためである。**書き手はイベントループスレッドだけ**であり、
-/// `drive_results_window` が同じフレームの中で読み出す。
-///
-/// **窓ハンドルを引けずに早期 return したフレームでは更新されない**ので、そのとき
-/// `drive_results_window` が読むのは前フレームの値である（0 へ戻していない）。実測では
-/// 全フレーム 0〜1 µs でこの取り違えは値に現れないが、**計器としては帰属がずれる**。
-/// 器を A/B で揃える前提を優先して直していない（`crate::trace::TRACE_ELAPSED_US` の doc）。
-static GAP_LOCK_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
 pub(crate) fn drive_results_window(
     app: &tauri::AppHandle,
     el: &snotra_egui_runtime::EventLoopProof,
     i: DriveResultsInputs,
-) -> DriveTiming {
-    let mut t = DriveTiming::default();
+) {
     let Some(results) = app.try_state::<ResultsWindow>() else {
-        return t;
+        return;
     };
     // 連言②の材料（件数）は**クリック逆流の消費後**に読む。③ `plain_hidden` は消費**前**に
     // 読んだ値を受け取る（#752 F2）。**この非対称は意図である**——読み点を揃えて前へ寄せる
@@ -811,11 +774,6 @@ pub(crate) fn drive_results_window(
     // **どちらも呼び出し側が読む**（#749 で driver が view から出たため、読み点は
     // `DriveResultsInputs` を組み立てる式の位置が決める）。
     let count = i.result_count;
-    // #1032: `max_results` の engine lock を単独で測る。**hide 側へ倒れるフレームでも走る**
-    // ——早期 return するフレームが 20〜28 ms かかっていた当の区間である。
-    let seg_maxres = crate::trace::Segment::start();
-    let max_results_value = max_results(app);
-    t.maxres_us = seg_maxres.end();
     // main が hidden の間は results を出さない（#671 PR A′ レビュー Important 1）。
     // main_visible は hide_egui_main が results.hide() の**前**に false へ落とすため、
     // **この読みより前に store が済んでいたフレーム**はここで hide 側へ倒れる。判定式と
@@ -829,7 +787,7 @@ pub(crate) fn drive_results_window(
         main_visible,
         plain_hidden: i.plain_hidden,
         result_count: count,
-        max_results: max_results_value,
+        max_results: max_results(app),
         row_height: i.row_height,
     }) {
         layout::ResultsPresentation::Hidden => {
@@ -839,18 +797,14 @@ pub(crate) fn drive_results_window(
             if results.hide(el) {
                 crate::trace_main("egui_results:hide", serde_json::json!({ "from": "drive" }));
             }
-            t.hidden = true;
-            return t;
+            return;
         }
         layout::ResultsPresentation::Visible { desired_height } => desired_height,
     };
     // 位置: main の外形直下 + gap(物理座標。gap は論理 px を scale で換算)。無ガードの
     // 単一点(position_results_below_main)へ委譲——Moved リスナーと共用する
     // ため、デルタガードはヘルパー側に持たない(#646 PR2 決定 10)。
-    let seg = crate::trace::Segment::start();
     position_results_below_main(app);
-    t.pos_us = seg.end();
-    t.gap_us = GAP_LOCK_US.load(std::sync::atomic::Ordering::Relaxed);
     // 高さは `present_results` が導いた値をそのまま渡す。**作業領域の下端によるクランプは
     // #835 で撤去した**——窓の大きさは表示位置で変わらず、収まらない分は画面外へはみ出す
     // （`layout::results_window_height` の doc・`ADR-results-fixed-height`）。
@@ -859,26 +813,18 @@ pub(crate) fn drive_results_window(
     // `set_size` の実引数と同じであること**——素の値を覚えると、毎フレーム撃つか必要な
     // 再サイズを撃たないかのどちらかになる——は、memo を撃つ側の内側へ入れたことで
     // 構造的に保たれる（渡した値がそのまま memo になる）。
-    let seg = crate::trace::Segment::start();
-    t.size_fired = results.set_size(i.width, desired_height, i.background);
-    t.size_us = seg.end();
+    results.set_size(i.width, desired_height, i.background);
     // フォーカスを奪わない表示（tauri show() は SW_SHOW で活性化する・#646 PR2）。
     // 置き場の理由は上の hide 側コメントと同じ（spec 決定 7）。
-    let seg = crate::trace::Segment::start();
-    t.show_fired = results.show(el, i.background);
-    if t.show_fired {
+    if results.show(el, i.background) {
         crate::trace_main("egui_results:show", serde_json::json!({ "rows": count }));
     }
-    t.show_us = seg.end();
     // 決定 5（#673 spec・#697）: この無条件 wake を edge 化してはならない。results は
     // config 系イベントを一切 listen せず（register_config_wake_listeners は wake_main のみ）、
     // visual-only の config 変更では RowsSnapshot が不変ゆえ snapshot 差分 wake も発火しない。
     // results が新しい色・フォント・行高を描くことを**保証する**唯一の経路がこの
     // level-triggered wake である（入力起因の偶発 wake でも描かれるが、それに依れない）。
-    let seg = crate::trace::Segment::start();
     wake_results(app);
-    t.wake_us = seg.end();
-    t
 }
 
 #[cfg(test)]

@@ -463,16 +463,6 @@ impl EguiView for SearchWindowView {
 
         let frame_started = Instant::now();
         let frame_interval = self.frame_timer.begin(frame_started);
-        // #1032 の調査足場: フレームを区間へ切って `egui_frame` へまとめて載せる。**区間ごとに
-        // trace を吐かない**——1 本約 10 ms が測定行為そのものとして乗るため（`Segment` が
-        // 各区間からその分を控除する）。
-        //
-        // **区間は `update()` を隙間なく覆ってはいない**（`Segment` の境目に行数の読み等が挟まる）。
-        // ゆえに `trace_us` として出しているのは**残差**であって trace の書き込み時間そのもの
-        // ではなく、**和と `update_us` の一致は自明に成り立つ**——計器の網羅を測る検算にはならない。
-        // 区間の切り漏れは残差が不自然に大きいことでしか気づけない。
-        // 撤去条件は `crate::trace::TRACE_ELAPSED_US` の doc。
-        let seg_head = crate::trace::Segment::start();
 
         // #646 PR2 決定 10: 入力欄以外の全域を掴んでドラッグ移動。背景 interact を先に
         // 登録し、後続ウィジェット(TextEdit・toast ボタン)はヒットテストで勝つ(egui は
@@ -494,12 +484,7 @@ impl EguiView for SearchWindowView {
         // `frame.set_clear_color`。ネイティブ背景ブラシだけは**フレーム冒頭に無い**——show 直前
         //（`update()` の外）と、サイズを変えたときの `applied_background` 分岐（`update()` の末尾・
         // spec 決定 3）の 2 か所である。理由の正本は下の「ここに無い」の段落。
-        // #1032 の調査足場: engine lock を取る 1 フレーム 1 回の読み。**dispatch より前なので
-        // 打鍵フレームでは競合しない**——競合するのは hide 直後や Escape 後の再検索が
-        // in-flight なフレームである。
-        let seg_visual = crate::trace::Segment::start();
         let visual = crate::egui_shell::read_visual(&app, &self.applied_font_family);
-        let visual_us = seg_visual.end();
         let metrics = &visual.metrics;
 
         // show 直後の resetForShow の消費（検索セッション側のクリアは controller が行う）。
@@ -761,8 +746,6 @@ impl EguiView for SearchWindowView {
             selection: visual.selection,
             hint: visual.hint,
         };
-        let head_us = seg_head.end();
-        let seg_input = crate::trace::Segment::start();
         let response = search_input_ui(ui, input_visuals, &mut buf, &params, |ui| {
             // hint の書式化（#870）。**フォルダ現在地だけが幅を要る**——収まらないパスを
             // 中間省略し、ドライブと leaf の両方を残す。`add_sized` に渡すのと同じ
@@ -809,8 +792,6 @@ impl EguiView for SearchWindowView {
         if response.changed() {
             self.controller.on_input_changed(buf, in_folder, &ctx);
         }
-        let input_us = seg_input.end();
-        let seg_paint = crate::trace::Segment::start();
         // **かつてここに「窓に focus があるのに入力欄が持たないなら移す」があった**（#872/#936
         // で TextEdit の構築前へ移設）。ここに置くと、そのフレームに載っていた文字は既に
         // 捨てられた後であり、効くのは次のフレームからだった。**移設は挙動を 1 フレーム
@@ -1012,16 +993,8 @@ impl EguiView for SearchWindowView {
         }
 
         // worker の結果を採り込む（#1004）。**行の差し替えはクリック消費より前でなければならない**（#699）。`poll_search_debounce` より前に置くのは、同じフレームで trailing 発火が新しい要求を出す前に、届いた結果を採るためである。
-        let paint_us = seg_paint.end();
-        // **行数を前後で記録する**（#1032）——費用が N に比例するのか、行数によらない固定費
-        // （Win32 の同期呼び出し）なのかを分ける唯一の軸である。
-        let old_rows = self.controller.state().results().len();
-        let seg_drain = crate::trace::Segment::start();
         self.controller.drain_search();
-        let drain_us = seg_drain.end();
-        let new_rows = self.controller.state().results().len();
 
-        let seg_poll = crate::trace::Segment::start();
         // trailing debounce の poll と再 arm（armed の間は毎フレーム残余を要求し直す）。
         self.controller.poll_search_debounce(&ctx);
 
@@ -1040,10 +1013,6 @@ impl EguiView for SearchWindowView {
         // 連言③は**1 フレーム 1 回だけ**読む（#752 F2）。`indexing` は `AtomicBool` の live-read で
         // 同一フレーム内でも変わりうるため、pre/post で 2 回読むと連言③がフレーム内で食い違う。
         // ここで得た値を snapshot 用と `drive_results_window` の両方へ配る。
-        let poll_us = seg_poll.end();
-        let seg_snap = crate::trace::Segment::start();
-        // 行の Vec を実際に複製したフレーム（#1032）。差分が無ければ `matches` だけで済む。
-        let mut snap_stored = false;
         let plain_hidden = crate::egui_shell::plain_results_hidden(
             self.controller.state().view_kind(),
             self.controller.instant_rows_query().is_some(),
@@ -1084,7 +1053,6 @@ impl EguiView for SearchWindowView {
                     };
                     drop(guard);
                     crate::egui_shell::wake_results(&app);
-                    snap_stored = true;
                 }
             }
             // クリック逆流の消費(決定 5): 起動ロジックは main の一箇所に保つ。
@@ -1112,9 +1080,6 @@ impl EguiView for SearchWindowView {
         // #646 PR2 決定 6: main は bar(+status/toast)のみで結果件数には伸縮しない。結果窓の可視性・サイズ・位置も
         // ここ(毎フレーム走る main)が駆動する——hidden 窓は update() が走らず自分では
         // show できない(SU5 要石)。位置 → サイズ → show の順(main の show と同じ制約)。
-        let snap_us = seg_snap.end();
-        let seg_mainwin = crate::trace::Segment::start();
-        let mut main_size_fired = false;
         let height = crate::egui_shell::layout::main_window_height(
             metrics.bar_height,
             has_status.then_some(metrics.toast_height),
@@ -1157,23 +1122,16 @@ impl EguiView for SearchWindowView {
                 );
             }
         }
-        // #1032: `read_window_width` の engine lock。**mainwin 区間が 27〜32 ms 跳ねた当の
-        // 候補である**（もう 1 つの候補は下の `clamp_main_into_work_area` の Win32）。
-        let seg_width = crate::trace::Segment::start();
         let width = self.window_width();
-        let width_us = seg_width.end();
         // 判定式の正本は `layout::size_delta_exceeds`（#749）。results 側と**式だけを共有し、
         // memo は共有しない**（ADR-results-presentation-two-stage 却下 1: `main_size` を results の
         // 導出へ入れない）。高さの導出が show 経路と共有される事実の正本は
         // `src-tauri/CLAUDE.md`「モジュール構成」の `window_coordinator.rs` の項（#755 / #801）。
         // 共有するのは導出であって memo ではない。
-        // #1032: main の `set_size`（+ 色が変わったときの下地の塗り直し）の Win32 実費。
-        let seg_mainsize = crate::trace::Segment::start();
         if crate::egui_shell::layout::size_delta_exceeds(
             (self.last_set_width, self.last_set_height),
             (width, height),
         ) {
-            main_size_fired = true;
             self.last_set_height = height;
             self.last_set_width = width;
             if let Some(window) = app.get_window("main") {
@@ -1190,7 +1148,6 @@ impl EguiView for SearchWindowView {
             }
             ui.ctx().request_repaint();
         }
-        let mainsize_us = seg_mainsize.end();
         // #738: バー矩形を作業領域の内側へ戻す。**ポインタが押されていないフレームだけ**である
         // ——ドラッグ中も戻すと横並びモニター間の移動が封鎖される（機序と作業例、および
         // `was_reset_frame` を OR で足す backstop を実測で却下した経緯は
@@ -1201,19 +1158,14 @@ impl EguiView for SearchWindowView {
         // 置くと results が 1 フレームだけクランプ前の位置へ追従する。`set_position` は
         // `SetWindowPos` を同期で撃つので、ここで戻せば直後の drive は新しい位置を読む
         // （`Moved` イベントの配送を待たない——それは `update()` の終了後になる）。
-        // #1032: 毎フレーム走る Win32（`GetWindowRect` + モニター情報 + 必要なら `SetWindowPos`）。
-        let seg_clamp = crate::trace::Segment::start();
         if !ui.input(|i| i.pointer.any_down()) {
             crate::egui_shell::clamp_main_into_work_area(&app, metrics.bar_height);
         }
-        let clamp_us = seg_clamp.end();
         // **`result_count` はここで読む**（#749）——`take_clicked_for`（クリック逆流の消費・
         // 上のブロック）より**後**でなければならない（#752 F2 / ADR-results-presentation-two-stage）。この式を
         // `plain_hidden` の算出（`show_results` の直前）へ動かすと、行クリック起動フレームで
         // 古い行が 1 フレーム描かれる。`cargo test` では落ちない種類の回帰である。
-        let mainwin_us = seg_mainwin.end();
-        let seg_drive = crate::trace::Segment::start();
-        let drive = crate::egui_shell::drive_results_window(
+        crate::egui_shell::drive_results_window(
             &app,
             frame.event_loop(),
             crate::egui_shell::DriveResultsInputs {
@@ -1226,45 +1178,11 @@ impl EguiView for SearchWindowView {
             },
         );
 
-        let drive_us = seg_drive.end();
-        // #1032: 内訳は**このフレームで trace の書き込みに費やした時間を各区間から控除した値**
-        // である。`trace_us` は `update_us`（生の所要）と内訳の和との**残差**で、trace の
-        // 書き込みに加えて区間の境目に落ちた時間も含む（上の段落）。
-        let update_us = frame_started.elapsed().as_micros() as u64;
-        let parts_us =
-            head_us + input_us + paint_us + drain_us + poll_us + snap_us + mainwin_us + drive_us;
         crate::trace::trace(
             "egui_frame",
             serde_json::json!({
-                "update_us": update_us,
+                "update_us": frame_started.elapsed().as_micros() as u64,
                 "interval_us": frame_interval.map(|d| d.as_micros() as u64),
-                "trace_us": update_us.saturating_sub(parts_us),
-                "head_us": head_us,
-                "input_us": input_us,
-                "paint_us": paint_us,
-                "drain_us": drain_us,
-                "poll_us": poll_us,
-                "snap_us": snap_us,
-                "mainwin_us": mainwin_us,
-                "drive_us": drive_us,
-                // engine lock を取る 4 点と、比較対象の Win32 2 点（#1032 の帰属確定）
-                "lock_visual_us": visual_us,
-                "lock_width_us": width_us,
-                "lock_maxres_us": drive.maxres_us,
-                "lock_gap_us": drive.gap_us,
-                "win_mainsize_us": mainsize_us,
-                "win_clamp_us": clamp_us,
-                "old_rows": old_rows,
-                "new_rows": new_rows,
-                "snap_stored": snap_stored,
-                "main_size_fired": main_size_fired,
-                "drive_hidden": drive.hidden,
-                "drive_pos_us": drive.pos_us,
-                "drive_size_us": drive.size_us,
-                "drive_size_fired": drive.size_fired,
-                "drive_show_us": drive.show_us,
-                "drive_show_fired": drive.show_fired,
-                "drive_wake_us": drive.wake_us,
             }),
         );
     }

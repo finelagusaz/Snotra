@@ -702,6 +702,12 @@ PR 本文へ: **「H6 は取り下げた（理由は spec の §3.3）。受け�
 
 ## Task 7: worker の骨格
 
+> **⚠️ Task 7 と Task 8 は 1 つの作業へ統合した（2026-08-11）。** 分けたのは計画の誤りである——`-D warnings` 下で `search_worker.rs` の 4 項目（`SearchRequest` / `SearchMsg` / `coalesce` / `spawn_search_worker`）がすべて `dead_code` で落ちる。**素の bin ビルドでは `#[cfg(test)] mod tests` ごとコンパイルから除外される**ので、テストが `coalesce` を呼んでいても救えない（`--all-targets` は両方をビルドし、素の方で落ちる）。re-export を足しても「未使用 import」が増えるだけで根本は消えない（実測）。
+>
+> **これは Global Constraints が既に禁じていた形である**——「新しい型・関数の導入と呼び出し点の移行は同じタスクに束ねる」。**`#[allow(dead_code)]` で逃げてはならない**: 一時的な黙らせは、Task 8 で呼び出しが入ったあとも残り、将来その API が本当に呼ばれなくなったときの検出を永久に潰す。
+>
+> **実施の形**: Task 7 と Task 8 の Step を通しで行い、**1 コミットにまとめる**。成否の指標は `cargo clippy --workspace --all-targets -- -D warnings` が通ることである。
+
 **Files:**
 - Create: `src-tauri/src/egui_shell/search_worker.rs`
 - Modify: `src-tauri/src/egui_shell/mod.rs`
@@ -960,7 +966,9 @@ git commit -m "feat(egui): #1004 Plain 検索を worker へ出し seq 照合で�
 
 Run: `grep -n "set_results" src-tauri/src/egui_shell/launcher_controller.rs`
 
-**Task 8 で worker 発行へ変えた Plain 枝を除く全てが対象である。** folder のエラー行・folder の filter 適用・Instant・Command の `/r`・Command のクリア・空クエリのクリア。**`SearchState::reset()` を通る `consume_reset_pending` も対象である。**
+**grep が返した全件を「同期で差し替える／そうでない」へ分類すること。ここに列挙を書かない**——2026-08-11 に実際に起きたとおり、**列挙を書けばそれが上限として読まれ、漏れが漏れのまま通る**（当初この行は 6 件を数えていたが、実際の grep は 9 件返し、`start_launch`（launching 開始時のクリア）と `clear_search`（クエリを空にする単一チョークポイント）が落ちていた。前者は「launching 中は results 窓が hide される」という doc 記載の不変条件への違反経路である）。
+
+**列挙で守ると腐るからこのタスクを不変条件の形にしたのであり、その手順に列挙を書いては本末転倒である。** 判断の基準は 1 つ:「その `set_results` は worker の結果を採り込むものか、それとも同期で行を差し替えるものか」。前者（`drain_search` の中）だけが対象外で、**それ以外はすべて対象である**。`SearchState::reset()` を通る `consume_reset_pending` も含む。
 
 - [ ] **Step 2: 規則を縛るテストを書く**
 
@@ -1009,18 +1017,21 @@ Step 1 で数えた各 `set_results` の直前へ `self.dispatch.invalidate();`�
             // #1004: Enter は最終クエリの結果をその場で要求するため、worker の往復を待てない（待つ設計は Enter 二度押し・Escape・hide の in-flight を全部抱える）。
             // Enter は 1 回きりで、ユーザーは結果を待っている——ここの同期は正当である。
             let query = self.state.query().to_string();
-            if !query.trim().is_empty() && !self.indexing() {
-                if let Some(state) = self.app_handle.try_state::<crate::AppState>() {
-                    let results = {
-                        let mut engine = state.engine.lock().unwrap();
-                        engine.search(&query)
-                    };
-                    self.dispatch.invalidate(); // 同期で差し替える＝in-flight は古い
-                    self.state.set_results(results);
-                }
-            }
+            let searched = if query.trim().is_empty() || self.indexing() {
+                None
+            } else {
+                self.app_handle.try_state::<crate::AppState>().map(|state| {
+                    let mut engine = state.engine.lock().unwrap();
+                    engine.search(&query)
+                })
+            };
+            // **どちらの枝でも同期で行を差し替える**——空クエリ・indexing 中にクリアを落とすと、古い行が残ったまま直後の `activate_or_execute` がそれを起動する（`run_search_with` の Plain 早期 return が旧実装で担っていた処置である）。
+            self.dispatch.invalidate();
+            self.state.set_results(searched.unwrap_or_default());
         }
 ```
+
+**分岐を `Option` へ畳むのは意図的である。** 当初の計画は `if !query.trim().is_empty() && !self.indexing() { … }` の中だけで `invalidate` + `set_results` を呼ぶ形だったが、**ガードが偽のとき何もしない**という欠陥を持っていた（2026-08-11 のレビューで発見）。旧実装では `on_enter` が `run_search_with` を経由し、その Plain 早期 return が空クエリ・indexing 中を同期クリアしていた——**書き換えでその処置が落ちた**。症状は「クエリを空にして 50 ms 以内に Enter すると、古い行が残ったままそれが起動される」である。`Option` へ畳めば「どちらの枝でも `invalidate` + `set_results` を通る」ことが構造で保証され、**片方だけ直す将来の変更**に耐える。
 
 - [ ] **Step 5: 検証**
 
@@ -1090,20 +1101,25 @@ Expected: H7 の 2 テストが FAIL
                     # --- H7 ---
                     # 採り込み時点の pending より古い seq が採られたら、失効の規則が破れている。
                     # `pending_seq = 0` は「pending 無し」＝この結果が最新だったことを意味する。
-                    $dispatchSeq = ConvertTo-SnotraTraceInt64 (Get-SnotraTraceProperty -InputObject $event.Raw.data -Name 'dispatch_seq')
-                    $pendingSeq = ConvertTo-SnotraTraceInt64 (Get-SnotraTraceProperty -InputObject $event.Raw.data -Name 'pending_seq')
+                    # **`data` も `Get-SnotraTraceProperty` の 2 段経由で読む。直接ドット参照しない。**
+                    $data = Get-SnotraTraceProperty -InputObject $event.Raw -Name 'data'
+                    $dispatchSeq = ConvertTo-SnotraTraceInt64 (Get-SnotraTraceProperty -InputObject $data -Name 'dispatch_seq')
+                    $pendingSeq = ConvertTo-SnotraTraceInt64 (Get-SnotraTraceProperty -InputObject $data -Name 'pending_seq')
                     if ($null -eq $dispatchSeq -or $null -eq $pendingSeq) {
                         $unjudgeable += @{ Invariant = 'H7'; Seq = $event.Seq; SectionId = $sectionId; Reason = 'dispatch_seq / pending_seq が読めない' }
                     } elseif ($pendingSeq -ne 0 -and $dispatchSeq -lt $pendingSeq) {
-                        $violations += [pscustomobject]@{
+                        $violations += @{
                             Invariant = 'H7'
+                            Seq       = $event.Seq
                             SectionId = $sectionId
-                            Detail    = "失効した結果を採った: dispatch_seq=$dispatchSeq < pending=$pendingSeq"
+                            Message   = "失効した結果を採った: dispatch_seq=$dispatchSeq < pending=$pendingSeq"
                         }
                     } else {
                         Add-SnotraTracePass -PassCount $passCount -Invariant 'H7' -SectionId $sectionId
                     }
 ```
+
+**形は既存の H1 / H4 / H5 に合わせること**（`hashtable` + `Message` / `Reason`、`Seq` を持つ）。2026-08-11 の実装で当初 `[pscustomobject]` + `Detail` + `$event.Raw.data` の直接ドット参照を指定していたが、**実測で否定された**: StrictMode 下では `data` を持たないイベント 1 件で例外が飛び、**判定器全体が `JudgeFailed=true` になって H1/H4/H5 まで道連れで SKIP する**。モジュール冒頭の doc が「trace 行のスキーマがドリフトしても判定器が落ちないように、プロパティの読みは必ずここを通す」と書いているのはこのためであり、**「判定不能を PASS へ化けさせない」という要石を最悪の形で破る**。
 
 **H7 は索引規模のゲートを持たない**——失効判定の破れは索引の大きさと無関係に現れる。
 

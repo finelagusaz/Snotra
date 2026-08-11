@@ -992,6 +992,9 @@ impl EguiView for SearchWindowView {
             self.controller.handle_toast_action(action, &ctx);
         }
 
+        // worker の結果を採り込む（#1004）。**行の差し替えはクリック消費より前でなければならない**（#699）。`poll_search_debounce` より前に置くのは、同じフレームで trailing 発火が新しい要求を出す前に、届いた結果を採るためである。
+        self.controller.drain_search();
+
         // trailing debounce の poll と再 arm（armed の間は毎フレーム残余を要求し直す）。
         self.controller.poll_search_debounce(&ctx);
 

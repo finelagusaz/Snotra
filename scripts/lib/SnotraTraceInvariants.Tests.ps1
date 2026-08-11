@@ -155,6 +155,35 @@ Describe 'Test-SnotraTraceInvariants — 故意の違反（フォールトイン
     }
 }
 
+Describe 'H7 — 失効した検索結果の採り込み' {
+    It 'dispatch_seq が pending より小さい settled は違反' {
+        $events = @(
+            (New-TraceEvent 1 'egui_search:settled' @{ dispatch_seq = 3; pending_seq = 5; index_entries = 312377 })
+        )
+        $r = Test-SnotraTraceInvariants -Events $events -Sections $script:OneSection
+        $r.Overall['H7'] | Should -Be 'FAIL'
+    }
+
+    It '最新の結果を採るのは正常（pending_seq = 0 は pending 無し）' {
+        $events = @(
+            (New-TraceEvent 1 'egui_search:settled' @{ dispatch_seq = 5; pending_seq = 0; index_entries = 312377 })
+        )
+        $r = Test-SnotraTraceInvariants -Events $events -Sections $script:OneSection
+        $r.Overall['H7'] | Should -Be 'PASS'
+    }
+
+    It '`data` を持たない settled でも例外を投げず SKIP へ落ちる（スキーマドリフト耐性）' {
+        # `New-TraceEvent` は必ず `data` を持たせるため、この形だけ生の行を直に組む。
+        $events = @( [pscustomobject]@{ seq = 1; ts_ms = 1001; event = 'egui_search:settled' } )
+        { Test-SnotraTraceInvariants -Events $events -Sections $script:OneSection } | Should -Not -Throw
+
+        $r = Test-SnotraTraceInvariants -Events $events -Sections $script:OneSection
+        $r.JudgeFailed | Should -BeFalse
+        $r.Overall['H7'] | Should -Be 'SKIP'
+        @($r.Unjudgeable | Where-Object { $_.Invariant -eq 'H7' }).Count | Should -Be 1
+    }
+}
+
 Describe 'Test-SnotraTraceInvariants — hide 側の非対称' {
     It 'egui_results:hide が連続しても H5 は FAIL にならない（hide は要求レベルで無条件に出る）' {
         $events = @(

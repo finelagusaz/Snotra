@@ -47,9 +47,14 @@ pub(crate) fn trace_enabled() -> bool {
 /// この器で採ってあり、実装前には戻れない）。実測では A 側の競合区間が 43,939 µs と出ており
 /// 0 へ潰れてはいないので、#1032 の帰属はこの誤差では覆らない。
 ///
-/// **撤去条件**: #1032 が閉じたら、この静的変数・`Segment`・`view.rs` の区間計装
-/// （`egui_frame` の内訳フィールド）・`window_coordinator::DriveTiming` ・
-/// `ResultsWindow::set_size` の `bool` 返しを一括で消す。
+/// **撤去条件**: #1036（この計器を入れた PR）がマージされたら、直ちに撤去 PR を出す。
+/// **#1032 はその撤去 PR で閉じる**——「#1032 が閉じたら消す」と書くと、閉じるのが撤去
+/// そのものなので条件が自分を指してしまい、誰も撤去を始めない。
+///
+/// **撤去の対象**: この静的変数・`Segment`・`view.rs` の区間計装（`egui_frame` の内訳
+/// フィールド）・`window_coordinator::DriveTiming` と `GAP_LOCK_US`・
+/// `ResultsWindow::set_size` の `bool` 返し。**`PERFORMANCE.md` の実測記録は残す**
+/// （計器は使い捨てだが、測った値は判断の根拠として生き続ける）。
 static TRACE_ELAPSED_US: AtomicU64 = AtomicU64::new(0);
 
 /// 区間の所要から、その区間で吐いた trace の書き込み時間を差し引いて測る（#1032 の調査足場）。

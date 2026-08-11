@@ -52,6 +52,6 @@ windows = { version = "0.62.2", features = [
 # **kittest はテスト専用である**（#872）。`view.rs` の `search_input_ui` を実コードのまま
 # 走らせ、キャレット・focus・`TextEdit` 構築の**並び**を縛る。#938 が入れた単体検査は egui の
 # 意味論だけを固定し、`update()` の並びが後ろへ戻っても通る受容残余を持っていた。
-# 版は `egui = "=0.35.0"` に合わせる（`snotra-settings/Cargo.toml` と同じ指定）。
+# 版は `egui = "=0.36.1"` に合わせる（`snotra-settings/Cargo.toml` と同じ指定）。
 [dev-dependencies]
-egui_kittest = { version = "0.35", default-features = false }
+egui_kittest = { version = "0.36", default-features = false }

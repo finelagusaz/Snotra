@@ -20,6 +20,12 @@ pub(crate) struct InputState {
     /// Escape が永久に効かなくなる——fail-closed の側へ倒れるため、消去点を持つことが
     /// 抑止そのものと同じだけ重要である。
     held_since_focus_gain: HashSet<KeyCode>,
+    /// 現在の修飾キー状態。**egui 0.36 で `RawInput::modifiers` が消え、保持側がこちらへ移った**
+    /// （upstream の `Remove Modifiers from RawInput and make it a egui::Event`）。egui へは
+    /// `Event::ModifiersChanged` として流しつつ、`PointerButton` / `MouseWheel` / `Key` の
+    /// `modifiers` にはここの値を載せる——**両方要る**。イベントだけでは各イベントに載る値が
+    /// 埋まらず、保持だけでは egui 側の `InputState::modifiers` が更新されない。
+    modifiers: egui::Modifiers,
     /// `take()` を通った回数＝egui へフレームを渡した回数（診断のみ・#872/#936）。
     frame_count: u64,
     /// 直近で `take` 行を出した時刻。**心拍を間引くためだけに持つ**——runner では
@@ -114,6 +120,7 @@ impl InputState {
             pointer_pos: egui::Pos2::ZERO,
             started_at: Instant::now(),
             held_since_focus_gain: HashSet::new(),
+            modifiers: egui::Modifiers::default(),
             frame_count: 0,
             last_take_trace: None,
         }
@@ -222,7 +229,13 @@ impl InputState {
                 self.raw.events.push(egui::Event::WindowFocused(*focused));
             }
             WindowEvent::ModifiersChanged(modifiers) => {
-                self.raw.modifiers = modifiers_from_tao(*modifiers);
+                // **保持とイベント送出の両方を行う**（egui 0.36 で `RawInput::modifiers` が
+                // 消えた・`self.modifiers` の doc）。片方だけでは、各イベントに載る値か
+                // egui 側の `InputState::modifiers` のどちらかが更新されない。
+                self.modifiers = modifiers_from_tao(*modifiers);
+                self.raw
+                    .events
+                    .push(egui::Event::ModifiersChanged(self.modifiers));
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.pointer_pos =
@@ -240,7 +253,7 @@ impl InputState {
                         pos: self.pointer_pos,
                         button,
                         pressed: *state == ElementState::Pressed,
-                        modifiers: self.raw.modifiers,
+                        modifiers: self.modifiers,
                     });
                 }
             }
@@ -260,7 +273,7 @@ impl InputState {
                     unit,
                     delta,
                     phase: touch_phase(*phase),
-                    modifiers: self.raw.modifiers,
+                    modifiers: self.modifiers,
                 });
             }
             WindowEvent::KeyboardInput {
@@ -343,7 +356,7 @@ impl InputState {
         }
 
         if let Some(key) = active_key {
-            if pressed && self.raw.modifiers.command {
+            if pressed && self.modifiers.command {
                 match key {
                     egui::Key::C => {
                         self.raw.events.push(egui::Event::Copy);
@@ -373,7 +386,7 @@ impl InputState {
                 physical_key: key_from_key_code(event.physical_key),
                 pressed,
                 repeat: event.repeat,
-                modifiers: self.raw.modifiers,
+                modifiers: self.modifiers,
             });
         }
 

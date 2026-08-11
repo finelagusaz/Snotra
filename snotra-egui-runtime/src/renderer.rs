@@ -64,7 +64,7 @@ impl EguiRenderer {
     pub(crate) fn paint(
         &mut self,
         context: &egui::Context,
-        output: egui::FullOutput,
+        mut output: egui::FullOutput,
         size: PhysicalSize<u32>,
         clear_color: Option<egui::Color32>,
     ) -> Result<PaintOutcome, RuntimeError> {
@@ -78,9 +78,23 @@ impl EguiRenderer {
         let ppp = output.pixels_per_point;
 
         // texture delta（set）を CPU store へ。free は present 成否に依らず後で確定。
-        for (id, delta) in &output.textures_delta.set {
-            raster::apply_texture_delta(&mut self.textures, *id, delta);
+        //
+        // **1 つの `TextureId` に複数の delta が来る**（egui 0.36 で値が `SmallVec` になった）。
+        // **到着順に全部適用すること**——部分更新は前の状態へ重ねる前提で作られており、
+        // 最後の 1 件だけを採ると間の更新が落ちる（フォントアトラスの追記が典型）。
+        //
+        // **参照で舐めずに `drain` で消費する。** egui 0.36 の `TexturesDelta` は `Drop` で
+        // 「未適用の delta が残っていないか」を `debug_assert!` する。参照で読むだけだと中身が
+        // 残ったまま drop され、**debug ビルドが panic する**（release は素通りするので、
+        // 気づかないまま出荷しうる側の差）。free も同じ理由でここで取り出しておく——
+        // **適用は present の後だが、所有権を先に移さないと、下の `?` で早期 return した経路が
+        // 未適用のまま drop する**。
+        for (id, deltas) in output.textures_delta.set.drain() {
+            for delta in deltas {
+                raster::apply_texture_delta(&mut self.textures, id, &delta);
+            }
         }
+        let to_free: Vec<egui::TextureId> = output.textures_delta.free.drain().collect();
         let clipped = context.tessellate(output.shapes, ppp);
         let t_tess = trace.then(std::time::Instant::now);
 
@@ -136,7 +150,7 @@ impl EguiRenderer {
         let present_result = buffer
             .present()
             .map_err(|e| RuntimeError::Present(e.to_string()));
-        for id in &output.textures_delta.free {
+        for id in &to_free {
             self.textures.remove(id);
         }
         present_result?;

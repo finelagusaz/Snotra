@@ -454,6 +454,15 @@ struct PostWidgetInput {
 /// `memory.options.style()` であり、`ui.style_mut()` の copy-on-write は届かない
 /// （`ui.visuals_mut()` で 3 値を渡す `search_input_ui` とは経路が違う）。
 ///
+/// **`all_styles_mut` であって `global_style_mut` ではない**——後者が書くのは**現在テーマの
+/// style だけ**である（`Options::style()` が `dark_style` / `light_style` を選ぶ）。この窓は
+/// テーマ設定に触れないので `theme_preference` は既定の `System` のまま、`system_theme` が
+/// `None` の間は `fallback_theme`（Dark）へ落ちる——**そこへ OS が Light を報せた瞬間、
+/// 書いていない側の style が現役になり修正が黙って消える**（実測: `RawInput.system_theme =
+/// Some(Light)` を 1 フレーム流すだけで 0.0 → 5.0 へ戻る）。現状の `input.rs` は
+/// `system_theme` を積まないため到達しないが、**積む変更は色の追従を足すつもりの誰かが書く**
+/// ものであり、当たり判定が道連れになることを予測できない。両テーマへ書けば費用ゼロで塞がる。
+///
 /// **`setup` は `run_ui` の外**（`EguiWindow::new`）**から呼ばれる**ため、この書き込みは第 1
 /// pass から効く——`src-tauri/clippy.toml` が禁じる #751 の欠陥（root `Ui` が pass 冒頭で掴む
 /// `Arc<Style>` に間に合わない）を、この地点は原理的に持たない。同ファイルが sanctioned な
@@ -469,7 +478,7 @@ struct PostWidgetInput {
 fn apply_exact_hit_test_style(context: &egui::Context) {
     // 上の doc のとおり、ここは run_ui の外なので #751 の「当該 pass に届かない」欠陥を持たない。
     #[allow(clippy::disallowed_methods)]
-    context.global_style_mut(|style| style.interaction.interact_radius = 0.0);
+    context.all_styles_mut(|style| style.interaction.interact_radius = 0.0);
 }
 
 impl EguiView for SearchWindowView {
@@ -1678,6 +1687,42 @@ mod tests {
             probe_bar_margin(true, -5.0),
             (false, true),
             "欄の内側 5px が入力欄に当たらない（判定を縮めすぎている）"
+        );
+    }
+
+    /// OS のテーマが切り替わっても当たり判定が既定へ戻らない（`all_styles_mut` の要）。
+    ///
+    /// `global_style_mut` は**現在テーマの style だけ**を書くため、`system_theme` が Light で
+    /// 届いた瞬間に書いていない側が現役になり、修正が黙って消える。**`theme_preference` は
+    /// 既定の `System` のままで起きる**——この窓はテーマ設定に触れないので、コード側は何も
+    /// していないのに OS の報せだけで倒れる経路である。
+    ///
+    /// **両テーマを直接読む**（`global_style()` は現在テーマしか返さないので、切替を経ずに
+    /// 「書いていない側」を見られない）。
+    #[test]
+    fn hit_test_style_survives_a_system_theme_change() {
+        let ctx = egui::Context::default();
+        super::apply_exact_hit_test_style(&ctx);
+
+        for theme in [egui::Theme::Dark, egui::Theme::Light] {
+            assert_eq!(
+                ctx.style_of(theme).interaction.interact_radius,
+                0.0,
+                "{theme:?} の style へ届いていない（現在テーマだけを書く API を使っている）"
+            );
+        }
+
+        // OS からの報せを 1 フレーム流す（`RawInput.system_theme`）。実経路と同じ形で、
+        // `theme_preference` は `System` のまま現役の style だけが入れ替わる。
+        let input = egui::RawInput {
+            system_theme: Some(egui::Theme::Light),
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input, |_| {});
+        assert_eq!(
+            ctx.global_style().interaction.interact_radius,
+            0.0,
+            "system_theme=Light が届いた後に既定へ戻っている"
         );
     }
 }

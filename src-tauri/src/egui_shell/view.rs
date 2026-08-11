@@ -292,6 +292,23 @@ pub(crate) fn search_input_ui(
     visuals.extreme_bg_color = input_visuals.input_bg;
     visuals.selection.bg_fill = input_visuals.selection;
     visuals.weak_text_color = Some(input_visuals.hint);
+    // **IME 変換中を「選択帯」ではなく「下線」で描く。**
+    //
+    // **上の 3 値とは性質が違う**——あちらは config 由来の色（`InputVisuals`）で毎フレーム
+    // live-read するが、これは固定の表示方式であり config には現れない。同じ `visuals` へ
+    // 書くので位置だけを共有している。
+    //
+    // **egui はこれを Windows でだけ `true`（＝旧表示）にする。** 理由は「`winit` が韓国語 IME
+    // で誤ったカーソル位置を報告する」ことである（egui の `Visuals::ime_composition` の doc）。
+    // **その理由は Snotra に当たらない**——この窓は winit を使わず、tao + 自前の IMM32 処理
+    //（`snotra-egui-runtime/src/windows_ime.rs`）で preedit を取る。
+    //
+    // **旧表示のままだと、変換対象の節が分からない。** `windows_ime.rs` は `GCS_COMPATTR` から
+    // 変換対象を取り出し `ime::active_range_chars` で文字範囲へ直して `Preedit` へ載せているが、
+    // `legacy_visuals` が真だと egui は `cursor_purpose` を `Selection` に固定し、**その範囲を
+    // 一度も参照しない**（`egui/src/widgets/text_edit/builder.rs`）。切り替えて初めて、未確定の
+    // 全体に細い下線・変換対象の節に太い下線が出る（実機で確認・`ime::active_range_chars` の doc）。
+    visuals.ime_composition.legacy_visuals = false;
 
     egui::Frame::new()
         .inner_margin(egui::Margin::same(params.inset.round() as i8))
@@ -1285,6 +1302,112 @@ mod tests {
         let mut out = ctx.run_ui(input, f);
         out.textures_delta.clear();
         out
+    }
+
+    /// IME 変換中のフレームを描き、**水平な**線分を `(x0, x1, 不透明か)` で集める。
+    ///
+    /// **向きで選ぶ**——キャレットも同じ色・太さの `LineSegment` を描くが、あちらは垂直である。
+    /// 色や太さで分けると `Visuals` の既定値に依存するが、向きは表示方式そのものに属する。
+    ///
+    /// **不透明かどうかが「変換対象の節か」を表す**。egui は `inactive_underline_stroke` を
+    /// `active` の `linear_multiply(0.5)` として作るため、未確定の残りは半透明で描かれる。
+    ///
+    /// **preedit を載せた次のフレームを見る**——`TextEdit` がその内容を描くのは 1 フレーム後で、
+    /// 同じフレームの `shapes` にはまだ現れない（実測）。
+    fn preedit_underlines(active: std::ops::Range<usize>) -> Vec<(f32, f32, bool)> {
+        fn walk(shape: &egui::Shape, out: &mut Vec<(f32, f32, bool)>) {
+            match shape {
+                egui::Shape::LineSegment { points, stroke }
+                    if (points[0].y - points[1].y).abs() < f32::EPSILON =>
+                {
+                    out.push((points[0].x, points[1].x, stroke.color.a() == 255));
+                }
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+
+        let params = SearchInputParams {
+            input_id: egui::Id::new("search_input"),
+            restored_search: false,
+            window_focused: true,
+            input_editable: true,
+            inset: 7.0,
+            field_height: 29.0,
+            font: egui::FontId::proportional(15.0),
+            text_color: egui::Color32::WHITE,
+        };
+        let ctx = egui::Context::default();
+        let mut buf = String::new();
+        let mut found = Vec::new();
+        for frame in 0..4 {
+            let events = if frame == 2 {
+                vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text: "へんかんちゅう".to_owned(),
+                    active_range_chars: Some(active.clone()),
+                })]
+            } else {
+                vec![]
+            };
+            let out = run_pass(
+                &ctx,
+                egui::RawInput {
+                    focused: true,
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let _ =
+                        search_input_ui(ui, test_visuals(), &mut buf, &params, |_| String::new());
+                },
+            );
+            if frame == 3 {
+                for clipped in &out.shapes {
+                    walk(&clipped.shape, &mut found);
+                }
+            }
+        }
+        found
+    }
+
+    /// IME 変換中は**選択帯ではなく下線**で描かれ、**変換対象の節が濃い下線で示される**。
+    ///
+    /// `search_input_ui` の入口で `ime_composition.legacy_visuals` を偽へ倒していることが前提で、
+    /// **戻すと下線は 1 本も引かれない**（egui は `cursor_purpose` を `Selection` に固定して
+    /// 選択帯で描く）——変異注入で実測した。egui はこの値を **Windows で既定 `true`** にするため、
+    /// **バージョンを上げた拍子に既定へ戻る類の退行**がありうる。この検査がその検知点である。
+    ///
+    /// **同時に `snotra-egui-runtime` の `ime::active_range_chars` の出口を縛る。** あちらの
+    /// テストは「IMM32 の属性配列 → 文字範囲」の変換だけを測り、**その値が描画へ届くかは見ない**
+    /// ——実際、`legacy_visuals` が既定のままだった間、あの計算は一度も画面に現れていなかった。
+    #[test]
+    fn ime_preedit_paints_underlines_and_marks_the_active_clause() {
+        let head = preedit_underlines(0..3);
+        let tail = preedit_underlines(4..7);
+
+        for (label, lines) in [("先頭", &head), ("末尾", &tail)] {
+            assert!(
+                !lines.is_empty(),
+                "{label}: 下線が 1 本も引かれていない（`legacy_visuals` が真に戻ると選択帯で描かれる）"
+            );
+            assert!(
+                lines.iter().any(|&(_, _, opaque)| opaque),
+                "{label}: 変換対象を示す濃い下線が無い（active_range が届いていない）"
+            );
+        }
+
+        let active_x = |lines: &[(f32, f32, bool)]| {
+            lines
+                .iter()
+                .find(|&&(_, _, opaque)| opaque)
+                .expect("濃い下線は上の assert で存在を確かめてある")
+                .0
+        };
+        let (head_x, tail_x) = (active_x(&head), active_x(&tail));
+        assert!(
+            head_x < tail_x,
+            "変換対象の下線が `active_range_chars` に追随していない（先頭指定 x={head_x} / 末尾指定 x={tail_x}）"
+        );
     }
 
     // `hex_color_parses_and_falls_back` は #673 で `visual.rs` の

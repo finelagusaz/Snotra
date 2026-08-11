@@ -1,5 +1,20 @@
 use std::ops::Range;
 
+/// IMM32 の変換属性（`GCS_COMPATTR`）から、**変換対象の節**の文字範囲を取り出す。
+///
+/// `attributes` は UTF-16 単位で 1 バイトずつ属性が並ぶ。返すのは egui が要求する
+/// **文字単位**の範囲で、単位の読み替えがこの関数の主な仕事である（サロゲートペアを含む
+/// テキストで両者はずれる・下のテストが実測で固定する）。
+///
+/// **この戻り値を消費するのは egui の `paint_ime_preedit_text_visuals` である**——未確定の
+/// 全体に細い下線を、ここで返した範囲に太い下線を引く。`windows_ime.rs` が
+/// `ImeEvent::Preedit { active_range_chars, .. }` に載せて渡す。
+///
+/// **消費されるかは `Visuals::ime_composition.legacy_visuals` に懸かっている。** 真だと egui は
+/// `cursor_purpose` を `Selection` に固定し、**この値を一度も参照せず**変換中を選択帯で描く
+/// ——テストが緑でも画面には何も現れない状態になる。egui はこれを **Windows で既定 `true`**
+/// にするため、**Snotra は `search_input_ui` の入口で偽へ倒している**（理由と経緯は同関数の
+/// 当該コメント）。**その 1 行を戻すと、この関数は計算されるだけで描画へ届かなくなる。**
 pub(crate) fn active_range_chars(
     text: &str,
     attributes: &[u8],

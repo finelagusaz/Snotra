@@ -786,11 +786,22 @@ impl LauncherController {
                         }
                         let query = self.state.query().to_string();
                         let seq = self.dispatch.issue(self.last_input_at, Instant::now());
-                        // 送信失敗（worker が死んでいる）は無視する——次の打鍵で再送され、表示は前の行を保ったままになる。
-                        let _ = self
+                        // 送信できたなら**結果が届くまで前の行を保つ**（folder cache 未着枝と同じ扱い）。
+                        if self
                             .search_tx
-                            .send(crate::egui_shell::SearchRequest { seq, query });
-                        // **結果が届くまで前の行を保つ**（folder cache 未着枝と同じ扱い）。
+                            .send(crate::egui_shell::SearchRequest { seq, query })
+                            .is_err()
+                        {
+                            // **worker が死んでいる。** 無界チャネルゆえ `Err` はこれ以外を意味せず
+                            // （混雑・一時的失敗が存在しない）、死因（早期 return・panic・将来足す
+                            // 経路）を問わず必ずここを通る——死因ごとの塞ぎ方より射程が広い。
+                            // **再送では回復しない**（受け手はもう居ない）ため、前の行を保つと
+                            // 保持が恒久化し、debounce が armed でない Enter が旧クエリの項目を
+                            // 起動する（`on_enter` の flush が「どちらの枝でもクリアする」理由と
+                            // 同じ危険である）。上の空クエリ枝と同じ処置へ合流させる。
+                            self.dispatch.invalidate();
+                            self.state.set_results(Vec::new());
+                        }
                     }
                     QueryIntent::Instant {
                         filter_name,

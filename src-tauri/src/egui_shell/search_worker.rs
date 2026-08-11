@@ -29,6 +29,12 @@ pub fn coalesce(first: SearchRequest, rest: impl Iterator<Item = SearchRequest>)
 }
 
 /// worker を 1 本立てる。`Sender` が drop されると `recv` が Err を返しループが終わる（join はしない・best-effort）。
+///
+/// **逆向きの契約が対である。** この worker の死（`AppState` 不在・engine lock の毒・将来足す
+/// 経路のいずれでも）は、`req_rx` が drop されることで**送信側の `Err`** として現れ、
+/// `LauncherController::run_search_with` の Plain 枝が行をクリアして誤起動を止める。無界チャネル
+/// ゆえ `Err` は「受け手が死んだ」以外を意味しない（混雑による偽陽性が無い）。**検知は 1 要求ぶん
+/// 遅れる**——死を招いた要求は応答もクリアも得ず、次の送信が失敗して初めて現れる。
 pub fn spawn_search_worker(app: tauri::AppHandle) -> (Sender<SearchRequest>, Receiver<SearchMsg>) {
     let (req_tx, req_rx) = channel::<SearchRequest>();
     let (msg_tx, msg_rx) = channel::<SearchMsg>();
@@ -36,10 +42,19 @@ pub fn spawn_search_worker(app: tauri::AppHandle) -> (Sender<SearchRequest>, Rec
         while let Ok(first) = req_rx.recv() {
             // recv で 1 つ取った後、溜まっている分を吸って最後だけ採用する。
             let picked = coalesce(first, req_rx.try_iter());
+            // **死ぬのが正しい。** `continue` にしてはならない——worker が生きたまま要求だけ
+            // 落ちると、送信は成功し続け seq は永久に settle せず、UI は古い行を保ったまま
+            // 無音になる——**沈黙する失敗を選ばない**。ここで抜ければ `req_rx`
+            // が drop され、次の送信が `Err` として送信側へ死を伝える（→ `run_search_with` の
+            // Plain 枝が行をクリアする）。**現に到達しない**（`AppState` は Builder 段階で
+            // manage され `unmanage` の呼び出し点は無い）が、到達したときに沈黙しない形を選ぶ。
             let Some(state) = app.try_state::<crate::AppState>() else {
                 return;
             };
             let (results, index_entries) = {
+                // 毒（poisoned）は debug/test でのみ生じる（release は `panic = "abort"`）。
+                // ここで panic して死ぬのは正しい——不整合な `Engine` で検索を続けると診断が
+                // 濁る。死は上と同じく送信側の `Err` として下流が受け止める。
                 let mut engine = state.engine.lock().unwrap();
                 let n = engine.entry_count();
                 (engine.search(&picked.query), n)

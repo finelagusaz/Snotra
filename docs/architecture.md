@@ -153,35 +153,83 @@ Tauri wry plugin で Tao イベントを受け、egui 入力・Win32 IME composi
 ```mermaid
 sequenceDiagram
     participant User
-    participant View as egui_shell/view.rs・launcher_controller.rs (main)
-    participant State as search_state.rs (純粋核)
-    participant Eng as Engine (snotra-core)
-    participant SE as SearchEngine
-    participant Results as egui_shell/results_view.rs (results 窓)
+    participant View as view.rs・launcher_controller.rs（main 窓の 1 フレーム）
+    participant State as search_state.rs（純粋核）
+    participant Disp as search_dispatch.rs（seq）
+    participant W as search_worker.rs（プロセス寿命 1 本）
+    participant Eng as Engine / SearchEngine (snotra-core)
+    participant Results as results_view.rs（results 窓）
 
+    Note over User,Results: ── 打鍵フレーム ──
     User->>View: キー入力（TextEdit changed）
-    View->>State: interpret(query)（モード判定）
-    View->>View: Debouncer（leading + trailing 50ms）
-    View->>Eng: engine.search(&query)（同期直呼び・IPC なし）
-    Eng->>SE: search_with_options()
+    View->>State: interp(prefix) → QueryIntent
+    alt Results / Plain（非空・非 indexing）
+        View->>View: Debouncer（leading 発火 + trailing 50ms を arm）
+        View->>Disp: issue(seq)
+        View->>W: SearchRequest{seq, query}
+        Note over View: この枝自身は行を差し替えない<br/>（同じ update の後半の drain が前の要求を採ることはある）
+    else Results / Plain（空クエリ・indexing 中）
+        View->>Disp: invalidate()
+        View->>State: set_results(空)（同期。worker 経由だと消した文字が 1 フレーム残る）
+    else Results / Instant
+        View->>View: debounce.cancel()
+        View->>Disp: invalidate()
+        View->>State: set_results(instant 候補)（同期）
+    else Results / Command（/r・部分入力）
+        View->>View: debounce.cancel()
+        View->>Disp: invalidate()
+        View->>State: set_results(履歴 または 空)（同期）
+    else Results / Command（/o /s /q）
+        View->>View: debounce.cancel() → execute_slash
+        View->>State: clear_search（クエリごとクリア）→ コマンド実行。run_search_with を通らない
+    else Folder view
+        View->>Disp: invalidate()
+        View->>State: set_results(error 行 または cache のフィルタ)（同期・I/O 無し）
+        Note over View: cache も error も未着（ロード中）なら<br/>上の 2 つとも呼ばず前フレームの行を保つ
+    else Tool view
+        Note over View: no-op（§18.5: ツール選択中は結果を上書きしない）
+    end
 
-    Note over SE: rayon 並列スコアリング<br/>1. Bitmask プレフィルタ (Fuzzy)<br/>2. match_score (Prefix/Substring/Fuzzy)<br/>3. 履歴ブースト<br/>4. TopK
+    Note over View,W: ここから下は Plain の dispatch だけが辿る
+    W->>W: coalesce（溜まった要求の最後だけ走らせる）
+    W->>Eng: engine.search(&query)（entry_count と合わせ lock はこの区間だけ）
+    Note over Eng: rayon 並列スコアリング（Fuzzy の bitmask プレフィルタ・match_score・<br/>履歴ブースト・TopK。正本は search.rs / search/scoring.rs）
+    Eng-->>W: Vec<SearchResult>
+    W->>View: SearchMsg::Done{seq} + wake_main（worker は Context を持たない・#671 PR D）
 
-    SE-->>Eng: Vec<SearchResult>
-    Eng-->>View: Vec<SearchResult>
-    View->>View: results の位置/サイズ/表示を駆動（window_coordinator::drive_results_window を呼ぶ）
-    View->>Results: RowsSnapshot 発行（Arc<Mutex>）+ request_repaint
+    Note over User,Results: ── 採り込み（同じ update の後半。worker の結果が届くのは次フレーム以降）──
+    View->>View: drain_search()
+    alt seq が pending と一致
+        View->>Disp: accept(seq) → Settled
+        View->>State: set_results（世代はここで進む・#699）
+    else 追い越された結果
+        View->>Disp: accept(seq) → None
+        Note over View: 捨てる（egui_search:dropped）
+    end
+    View->>View: poll_search_debounce（trailing）
+    opt Enter が trailing 窓（50ms）内に来た Plain（should_flush_on_enter）
+        View->>Eng: engine.search（同期・このフレームの中。worker の往復を待てない）
+        View->>Disp: invalidate()
+        View->>State: set_results（最終クエリの結果へ置換してから起動する）
+    end
+    View->>View: Enter の起動（activate_or_execute）→ 可視性判定
+    View->>Results: RowsSnapshot 発行（Arc<Mutex>）+ wake_results（変化したフレームだけ）
+    View->>View: クリック逆流を消費（publish より後・#699）
+    View->>View: 高さ算出 → drive_results_window（位置・サイズ・表示）
     Results->>Results: スナップショット描画 + icon worker spawn（load_icon_pngs → ColorImage → load_texture、#646 PR2 で view.rs から移管）
 
     Note over User,Results: クリックは逆方向フロー（results → main）
     User->>Results: 行クリック
-    Results->>View: clicked index を共有スロットへ積む + main の egui::Context を request_repaint
+    Results->>View: clicked index を共有スロットへ積む + wake_main
     View->>View: 次フレームで clicked を消費し起動（launch_item_core、起動ロジックは main に一元化）
 ```
 
 **補足**:
-- 検索は同期直 `Engine` 呼び（フレームコスト実測 p95 3.5ms/100k・#634）で、supersede/single-flight 機構は不要（同期モデルが並行性を消す・#532 SU3 の要石）
-- 非同期が残るのは folder 展開・アイコン抽出・起動の worker スレッドのみ。per-nav/per-launch channel + フレーム drain で最新のみ採用し、遅着は channel drop で構造的に消滅する
+- **検索が worker へ出ているのは Plain の打鍵だけである**（#1004）。同期直呼びだった頃の「supersede/single-flight は不要」という判断は、**走査している間 UI がフレームを返せず、打鍵に反応しなくなる**ことを理由に覆った。速さの問題ではなく待たせる場所の問題であり、in-flight の追い越しは `SearchDispatch` の seq が引き受ける
+- **例外は Enter である**——trailing 窓内の Enter は worker の往復を待てないため、`on_enter` がその場で同期 `engine.search` を走らせる（判定は `should_flush_on_enter`、正当性の理由は同関数のコメント）。**このフレームだけは検索がフレームに乗る。これは受容している**——結果を確定させる Enter は 1 回だけで、打鍵ごとに払う費用ではない。**IME 変換確定の Enter がここへ紛れないのは、`read_post_widget_input` が `response.changed()` より後で Enter を読むからである**（確定した文字列が state へ入った後の値で起動する・同関数の doc が正本）
+- **同期で `set_results` を呼ぶ出所は `dispatch.invalidate()` を通す**（`search_dispatch.rs` の doc が正本）。同期で差し替えた以上、飛んでいる結果は必ず古い。**射程は `set_results` の呼び出し点である**——`SearchState` の `enter_tool` と `on_escape` は `results` を直に置き換えるので、この規律の外にある（`reset` は呼び出し側の `consume_reset_pending` が `invalidate` を撃つ）。**その 2 つには in-flight が残りうる**: `enter_tool` の呼び出し側は debounce だけを畳んで `dispatch` を触らず、`drain_search` に view 種別のガードは無い。飛んでいた結果が次フレームで tool の行を置き換える並びは構造上ありうる（**未再現の観察である**。trailing 窓内の Shift+Enter は `on_enter` の flush が `invalidate` を撃つので、窓が開くのは flush が発火しない条件に限る）
+- この流れに現れる非同期は、検索 worker・folder 展開・アイコン抽出・起動である（crate 全体の worker はこれで尽きない——`config_watcher` / index build / platform スレッド / updater は別軸）。**この 4 つの中では検索 worker だけが長寿命であり**、folder は per-nav、起動は per-launch、アイコンは未キャッシュぶんの spawn である（都度 spawn を採らなかった理由は `search_worker.rs` の `//!`）。遅着は folder / 起動が channel drop で、検索が seq の不一致で消す
+- **通常の打鍵でフレーム予算を超える主因は、もう検索ではない**。残るのは採り込みフレームの後半（`drain_search` 〜 `drive_results_window`）であり、実測値と内訳は #1032 と `PERFORMANCE.md`
 - `results` は `focusable(false)` の従属窓のため、可視性・サイズ・位置の driver は常に `main` 側にある（hidden 窓は `update()` が走らないため自分では show できない・#646 PR2）
 
 ## 状態遷移（概要）

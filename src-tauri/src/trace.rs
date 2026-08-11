@@ -7,7 +7,12 @@
 //!
 //! The `seq` counter is a single `AtomicU64` shared by both wrappers, so
 //! main.rs and commands events interleave on one monotonic sequence. Trace
-//! output is debug-only (emitted only when `SNOTRA_TRACE` is set).
+//! output is diagnostic-only (emitted only when `SNOTRA_TRACE` is set, in
+//! release builds too).
+//!
+//! Using trace as an instrument has caveats — how much time sits between two
+//! lines, and why separate sections must not each emit one. The canonical text
+//! is in `PERFORMANCE.md`「計測と受け入れ基準」.
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};

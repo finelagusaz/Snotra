@@ -139,7 +139,7 @@ check 系スキル（`/race-check` `/symmetric-check` `/cache-check` `/state-che
 | `.claude/rules/safety-nets.md` | 本書へのポインタ 1 行（トリガー: check 系スキルの新設・変更） | **実測 102 字**（うち本書のパスだけで 35 字） |
 | `/race-check` `/symmetric-check` SKILL.md | 4 スロットを埋め直す | 対象外（skills 本文は `AREA_BUDGET.alwaysLoaded` の母集団外・`docs/adr/ADR-implement-step4-report-slot.md` 帰結） |
 
-設計当時の実測値は `rules 7956/8056 字`（余白 100 字）で、ポインタ 1 行 103 字のために `AREA_BUDGET.rules` の引き上げ（実測 + 100 の形）を要した。この「±100 字の許容差で毎追記に鳴らす」運用は 2026-08-03 に廃され、`AREA_BUDGET` は暴走だけを捕まえる火災報知器になった——一次規範は「書く約束」である（`ADR-doc-promise-over-area-ratchet`）。
+設計当時の実測値は rules 7956/8056 字（余白 100 字）で、ポインタ 1 行 103 字のために面積上限の引き上げ（実測 + 100 の形）を要した。この「±100 字の許容差で毎追記に鳴らす」運用は 2026-08-03 に火災報知器へ退き（`ADR-doc-promise-over-area-ratchet`）、2026-08-11 に上限判定そのものが廃された——面積は計器であり、一次規範は「書く約束」である（`ADR-retire-area-budget`）。
 
 ## 移行の順序
 

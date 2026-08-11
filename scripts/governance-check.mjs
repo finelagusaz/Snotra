@@ -809,14 +809,14 @@ export function checkRulesGlobs(snapshot) {
 
 const SKILL_FILE_RE = /^\.claude\/skills\/[^/]+\/SKILL\.md$/;
 
-/** `.claude/skills/<name>/SKILL.md` の一覧（G-skill-table・G-area-budget の共通母集団） */
+/** `.claude/skills/<name>/SKILL.md` の一覧（G-skill-table・G-area-instrument の共通母集団） */
 function skillFiles(snapshot) {
   return snapshot.files.filter((f) => SKILL_FILE_RE.test(f));
 }
 
 /**
  * `disable-model-invocation: true` の skill 名の集合 = **harness の roster に注入されない skill**。
- * G-skill-table（表が索引すべき対象）と G-area-budget（常時ロード面に載る description）の両方がこの集合で決まるため、
+ * G-skill-table（表が索引すべき対象）と G-area-instrument（常時ロード面に載る description）の両方がこの集合で決まるため、
  * 導出は 1 箇所に閉じる。判定は frontmatter ブロックの中だけを見る——本文が同じキー名に言及する
  * 実例がある（`/retrospective` が `/health-check` の起動方法を説明している）。
  *
@@ -1054,33 +1054,31 @@ export function checkHookFires(snapshot, select = selectChecks) {
 }
 
 // ---------------------------------------------------------------------------
-// G-area-budget — 恒久規範の面積の火災報知器（二面独立）。#593 §2 ・ADR-doc-promise-over-area-ratchet。
-// 一次規範は「書く約束」（`.claude/rules/governance-docs.md`: かぶりなく・必要なことだけ・古い情報を
-// 残さない）であり、この検査は約束の代役ではない——**暴走（気づかないうちの大幅な肥大）だけ**を
-// 捕まえる粗い上限である。追記のたびに数字と格闘する運用（±100 字の ratchet）は、正当な追記に
-// ばかり鳴り・数字に押されて正しい置き場を諦める回避を生んだ実測により #894 の実績調査後に廃した。
-// 「常時ロード」と「rules」を独立の上限で見るのは、常時→rules の面替えで片面だけ見ると総額の
-// 肥大が隠れるため。指標は**文字数（コードポイント・CR 除く）**——行数は「改行を消す」で読む量を
-// 減らさず数字だけ下がる（ADR-area-metric-characters に実測）。CR を除くのは CRLF checkout 対策（#587/#589）。
+// G-area-instrument — 恒久規範の面積の計器（合否を持たない）。ADR-retire-area-budget。
+// **上限判定は廃止した。** 一次規範は「書く約束」（`.claude/rules/governance-docs.md`: かぶりなく・
+// 必要なことだけ・古い情報を残さない）であり、数字はその代役になれない。ratchet 期の 3 発火は
+// すべて正当な追記に対するもので（#894 の実績調査）、続く火災報知器期は 8 日で両面が +30% 育つ間
+// 一度も鳴らなかった——通算 4 観測点で欠陥検出はゼロである。残るのは実測値の報告だけで、
+// 推移は `governance:check` の成功行と git 履歴が運ぶ。
+//
+// **合否を持たない道具でも、母集団の欠落だけは判定する。** 読めない入力の上で出した数字は
+// 静かに誤り、判定が無いぶん誰も気づかない（`check:colors` がロック画面を撮る形と同型）。
+// ゆえにこの検査が残すのは「計器が入力を読めているか」だけである。
+//
+// 指標は**文字数（コードポイント・CR 除く）**——行数は「改行を消す」で読む量を減らさず数字だけ
+// 下がる（ADR-area-metric-characters に実測）。CR を除くのは CRLF checkout 対策（#587/#589）。
 // 常時ロード面には skill の description を含める（毎セッション注入される面）。skills 本文・
 // モジュール CLAUDE.md・docs・ADR は対象外——「その作業に入った者だけが読む面」への退去は
 // #593 が推奨する経路であり、課税すれば登ってほしい階梯を登る側が罰せられる。
+// 二面（常時ロード / rules）を分けて報告するのは、面替えによる片面の肥大が合計では見えないため。
 // ---------------------------------------------------------------------------
 
 /** 常時ロードされる恒久規範ファイル（ルート直下の 2 文書。ほかに skill description が同じ面に載る）。
- *  **保証は狭い**——常時ロード面にファイルが増えてもここへ足さなければ、その面積は `AREA_BUDGET` に
+ *  **保証は狭い**——常時ロード面にファイルが増えてもここへ足さなければ、その面積は報告に
  *  一度も算入されない（2026-08-09 実測: 5000 字の文書を新設して `CLAUDE.md` から `@` で読み込ませても、
  *  計上が動いたのは `CLAUDE.md` 側の 1 行分だけ・#1008）。足し忘れを知るのはファイルシステムであって
  *  この検査ではない。 */
 export const ALWAYS_LOADED_FILES = ["CLAUDE.md", "AGENTS.md"];
-
-/**
- * 火災報知器の上限。実測（2026-08-03: 常時ロード 11961 字・rules 9253 字）の約 1.3 倍へ丸めた——
- * 鳴るのは「気づかないうちに 3 割太った」ときだけで、日常の追記・吸収では鳴らない。
- * 超えたら数字を上げる前に「書く約束」の 3 観点で内容を洗う（ADR-doc-promise-over-area-ratchet）。
- * ±100 字の ratchet 時代の引き上げ・引き下げの台帳（2026-07-26〜08-03・十数回）は git 履歴にある。
- */
-export const AREA_BUDGET = { alwaysLoaded: 15500, rules: 12000 };
 
 /** コードポイント数（CR は除く）。読めなければ null（母集団欠落を上位で検知） */
 function countChars(text) {
@@ -1116,13 +1114,13 @@ export function skillDescriptionArea(snapshot) {
   for (const f of files) {
     const text = snapshot.read(f);
     if (text == null) {
-      findings.push(finding(f, 1, `${f} が読めない（G-area-budget 母集団の欠落）`));
+      findings.push(finding(f, 1, `${f} が読めない（G-area-instrument 母集団の欠落）`));
       continue;
     }
     const m = text.match(/^description:[ \t]*(.*)$/m);
     const v = m ? m[1].trim() : "";
     if (!m || v === "" || v.startsWith("|") || v.startsWith(">")) {
-      findings.push(finding(f, 1, "description が 1 行スカラーでない（G-area-budget が面積を数えられない）"));
+      findings.push(finding(f, 1, "description が 1 行スカラーでない（G-area-instrument が面積を数えられない）"));
       continue;
     }
     total += [...v.replace(/^["']/, "").replace(/["']$/, "")].length;
@@ -1130,39 +1128,23 @@ export function skillDescriptionArea(snapshot) {
   return { total, findings, count: all.length };
 }
 
-export function checkNormativeAreaBudget(snapshot) {
+/**
+ * 計器の母集団だけを見る（面積の大小は判定しない・ADR-retire-area-budget）。
+ * 返す finding はすべて「入力が読めない／空」であり、面積が大きいことは finding にならない。
+ */
+export function checkNormativeAreaInstrument(snapshot) {
   const findings = [];
 
-  const docs = sumChars(snapshot, ALWAYS_LOADED_FILES, "G-area-budget");
+  const docs = sumChars(snapshot, ALWAYS_LOADED_FILES, "G-area-instrument");
   const desc = skillDescriptionArea(snapshot);
   findings.push(...docs.findings, ...desc.findings);
-  if (desc.count === 0) findings.push(finding(".claude/skills", 1, "skills が 0 件（G-area-budget 母集団の欠落）"));
-  const alwaysTotal = docs.total + desc.total;
-  if (alwaysTotal > AREA_BUDGET.alwaysLoaded) {
-    findings.push(
-      finding(
-        "CLAUDE.md",
-        1,
-        `常時ロード規範 ${alwaysTotal} 字 > 上限 ${AREA_BUDGET.alwaysLoaded} 字（火災報知器・ADR-doc-promise-over-area-ratchet）。「書く約束」の 3 観点（かぶり・不要・陳腐化）で内容を洗い、機構吸収か履歴退去で減らす。それでも正当なら AREA_BUDGET.alwaysLoaded を理由コメント付きで更新`,
-      ),
-    );
-  }
+  if (desc.count === 0) findings.push(finding(".claude/skills", 1, "skills が 0 件（G-area-instrument 母集団の欠落）"));
 
   const ruleFiles = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f));
   if (ruleFiles.length === 0) {
-    findings.push(finding(".claude/rules", 1, "rules が 0 件（G-area-budget 母集団の欠落）"));
+    findings.push(finding(".claude/rules", 1, "rules が 0 件（G-area-instrument 母集団の欠落）"));
   } else {
-    const rules = sumChars(snapshot, ruleFiles, "G-area-budget");
-    findings.push(...rules.findings);
-    if (rules.total > AREA_BUDGET.rules) {
-      findings.push(
-        finding(
-          ".claude/rules",
-          1,
-          `rules 合計 ${rules.total} 字 > 上限 ${AREA_BUDGET.rules} 字（火災報知器・ADR-doc-promise-over-area-ratchet）。「書く約束」の 3 観点で内容を洗い、ルーター化で減らす。それでも正当なら AREA_BUDGET.rules を理由コメント付きで更新`,
-        ),
-      );
-    }
+    findings.push(...sumChars(snapshot, ruleFiles, "G-area-instrument").findings);
   }
   return findings;
 }
@@ -1170,11 +1152,11 @@ export function checkNormativeAreaBudget(snapshot) {
 /** evidence 用の実測（検査と同じ母集団・同じ数え方であることを型で担保するための共有関数） */
 export function normativeArea(snapshot) {
   const always =
-    (sumChars(snapshot, ALWAYS_LOADED_FILES, "G-area-budget").total ?? 0) + skillDescriptionArea(snapshot).total;
+    (sumChars(snapshot, ALWAYS_LOADED_FILES, "G-area-instrument").total ?? 0) + skillDescriptionArea(snapshot).total;
   const rules = sumChars(
     snapshot,
     snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)),
-    "G-area-budget",
+    "G-area-instrument",
   ).total;
   return { always, rules };
 }
@@ -1675,7 +1657,7 @@ export function checkStaleIdentifiers(snapshot, docs) {
 // `/plan-review` は `-check` で終わらないため**構造的に外れる**。`/health-check` は
 // 表に現れない（ルート `CLAUDE.md` のスキル表に在り、そちらは G-skill-table が見る）。
 //
-// これで #778 の (a)（表側へ同期義務を 1 行置く）が不要になった——`AGENTS.md` は G-area-budget の常時ロード面で
+// これで #778 の (a)（表側へ同期義務を 1 行置く）が不要になった——`AGENTS.md` は G-area-instrument の常時ロード面で
 // 余裕が小さいため、機構で吸収できるならそちらが安い。
 // ---------------------------------------------------------------------------
 
@@ -1881,7 +1863,7 @@ export function buildChecks(snapshot, sink = {}) {
     { id: "G-skill-table", run: () => checkSkillTable(snapshot) },
     { id: "G-hook-commands", run: () => checkHookCommands(snapshot) },
     { id: "G-hook-fires", run: () => checkHookFires(snapshot) },
-    { id: "G-area-budget", run: () => checkNormativeAreaBudget(snapshot) },
+    { id: "G-area-instrument", run: () => checkNormativeAreaInstrument(snapshot) },
     { id: "G-check-skill-enumeration", run: () => checkCheckSkillEnumeration(snapshot) },
     { id: "G-adr-file-names", run: () => checkAdrFileNames(snapshot) },
     { id: "G-adr-citations", run: () => record("adrCitations", scanAdrCitations(snapshot, adrCitationDocs(snapshot, docs))) },
@@ -1910,7 +1892,7 @@ export function runAll(snapshot) {
   const area = normativeArea(snapshot);
   const rules = snapshot.files.filter((f) => /^\.claude\/rules\/[^/]+\.md$/.test(f)).length;
   const skills = snapshot.files.filter((f) => /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f)).length;
-  const evidence = `検査 ${checks.length} 件 / 対象文書 ${ctx.docs.length} 件 / rules ${rules} 件 / skills ${skills} 件 / 恒久規範 常時ロード ${area.always}/${AREA_BUDGET.alwaysLoaded} 字・rules ${area.rules}/${AREA_BUDGET.rules} 字 / 見出し参照 ${ctx.headingRefs} 件を md ${ctx.refDocs.length} 件 + .rs ${ctx.refSourceDocs.length} 件から照合 / workspace member ${workspaceMembers(snapshot).members.length} 件の lints opt-in / clippy 禁止 ${clippyDisallowedCount(snapshot)} 件 / 散文の識別子 ${ctx.stale} 件を ${ctx.staleTargets.length} 文書から照合 / 近傍の見出し参照 ${ctx.nearRefs} 件 / ADR ${adrFiles(snapshot).length} 本の名前 / ADR の短縮引用 ${ctx.adrCitations} 件`;
+  const evidence = `検査 ${checks.length} 件 / 対象文書 ${ctx.docs.length} 件 / rules ${rules} 件 / skills ${skills} 件 / 恒久規範 常時ロード ${area.always} 字・rules ${area.rules} 字 / 見出し参照 ${ctx.headingRefs} 件を md ${ctx.refDocs.length} 件 + .rs ${ctx.refSourceDocs.length} 件から照合 / workspace member ${workspaceMembers(snapshot).members.length} 件の lints opt-in / clippy 禁止 ${clippyDisallowedCount(snapshot)} 件 / 散文の識別子 ${ctx.stale} 件を ${ctx.staleTargets.length} 文書から照合 / 近傍の見出し参照 ${ctx.nearRefs} 件 / ADR ${adrFiles(snapshot).length} 本の名前 / ADR の短縮引用 ${ctx.adrCitations} 件`;
   return { findings, evidence };
 }
 

@@ -29,9 +29,8 @@ import {
   checkRulesGlobs,
   checkSkillTable,
   globToRegex,
-  checkNormativeAreaBudget,
+  checkNormativeAreaInstrument,
   normativeArea,
-  AREA_BUDGET,
   ALWAYS_LOADED_FILES,
   checkHeadingRefs,
   scanHeadingRefs,
@@ -901,7 +900,7 @@ describe("runAll（空母集団の明示 fail = 沈黙経路の閉塞）", () =>
   });
 });
 
-describe("G-area-budget checkNormativeAreaBudget（二面独立の火災報知器・文字数指標・#593 / ADR-doc-promise-over-area-ratchet）", () => {
+describe("G-area-instrument checkNormativeAreaInstrument（合否を持たない計器・母集団だけを判定・ADR-retire-area-budget）", () => {
   const x = (n) => "x".repeat(n);
   const rule = (p, n) => ({ [`.claude/rules/${p}`]: x(n) });
   const skill = (name, desc) => ({
@@ -909,21 +908,22 @@ describe("G-area-budget checkNormativeAreaBudget（二面独立の火災報知�
   });
   const base = { ...rule("a.md", 1), ...skill("s", "d") };
 
-  it("両面とも基準以内なら findings 無し（緑）", () => {
+  it("母集団が揃っていれば findings 無し（緑）", () => {
     const s = snap({ "CLAUDE.md": x(100), "AGENTS.md": x(100), ...base });
-    expect(checkNormativeAreaBudget(s)).toEqual([]);
+    expect(checkNormativeAreaInstrument(s)).toEqual([]);
   });
 
-  it("常時ロードが基準超過なら finding（赤）", () => {
-    const s = snap({ "CLAUDE.md": x(AREA_BUDGET.alwaysLoaded + 1), "AGENTS.md": "", ...base });
-    const f = checkNormativeAreaBudget(s);
-    expect(f.some((v) => v.message.includes("常時ロード規範") && v.message.includes("> 上限"))).toBe(true);
+  // 守りたい対象 = 「面積の大小はもう合否を持たない」こと（ADR-retire-area-budget）。
+  // 旧 G-area-budget が赤にした 2 形（常時ロード超過・面替えでの rules 超過）を**そのまま**当て、
+  // 緑であることを実測する。上限判定が戻れば（定数を復活させて比較を足せば）この 2 本が落ちる。
+  it("常時ロード面がいくら大きくても finding を出さない（旧・火災報知器の廃止）", () => {
+    const s = snap({ "CLAUDE.md": x(1_000_000), "AGENTS.md": "", ...base });
+    expect(checkNormativeAreaInstrument(s)).toEqual([]);
   });
 
-  it("面替えでは下がらない（rules へ移せば rules 側が超過する）", () => {
-    const s = snap({ "CLAUDE.md": x(10), "AGENTS.md": x(10), ...skill("s", "d"), ...rule("a.md", AREA_BUDGET.rules + 1) });
-    const f = checkNormativeAreaBudget(s);
-    expect(f.some((v) => v.message.includes("rules 合計") && v.message.includes("> 上限"))).toBe(true);
+  it("rules 面がいくら大きくても finding を出さない（面替えにも鳴らない）", () => {
+    const s = snap({ "CLAUDE.md": x(10), "AGENTS.md": x(10), ...skill("s", "d"), ...rule("a.md", 1_000_000) });
+    expect(checkNormativeAreaInstrument(s)).toEqual([]);
   });
 
   it("改行を畳んでも面積は改行のぶんしか下がらない（行数指標の誤った勾配を絶つ・ADR-area-metric-characters の核心）", () => {
@@ -954,7 +954,7 @@ describe("G-area-budget checkNormativeAreaBudget（二面独立の火災報知�
     const longDesc = snap({ "CLAUDE.md": "", "AGENTS.md": "", ...rule("a.md", 1), ...hiddenSkill("h", "d".repeat(50)) });
     expect(normativeArea(longDesc).always).toBe(normativeArea(shortDesc).always);
     // それでも母集団としては数える（skills 0 件の誤検知を出さない）
-    expect(checkNormativeAreaBudget(shortDesc).some((v) => v.file === ".claude/skills")).toBe(false);
+    expect(checkNormativeAreaInstrument(shortDesc).some((v) => v.file === ".claude/skills")).toBe(false);
   });
 
   it("description が 1 行スカラーでなければ finding（数えられない沈黙経路の閉塞）", () => {
@@ -964,21 +964,21 @@ describe("G-area-budget checkNormativeAreaBudget（二面独立の火災報知�
       ...rule("a.md", 1),
       ".claude/skills/s/SKILL.md": "---\nname: s\ndescription: |\n  複数行\n---\n",
     });
-    const f = checkNormativeAreaBudget(s);
+    const f = checkNormativeAreaInstrument(s);
     expect(f.some((v) => v.message.includes("1 行スカラーでない"))).toBe(true);
   });
 
   it("常時ロード文書が読めなければ母集団欠落 finding（沈黙経路の閉塞）", () => {
     const s = snap({ "AGENTS.md": x(1), ...base }); // CLAUDE.md 欠落
-    const f = checkNormativeAreaBudget(s);
+    const f = checkNormativeAreaInstrument(s);
     expect(f.some((v) => v.file === "CLAUDE.md" && v.message.includes("母集団の欠落"))).toBe(true);
   });
 
   it("rules / skills が 0 件なら母集団欠落 finding（グロブ破損の沈黙経路の閉塞）", () => {
     const noRules = snap({ "CLAUDE.md": x(1), "AGENTS.md": x(1), ...skill("s", "d") });
-    expect(checkNormativeAreaBudget(noRules).some((v) => v.file === ".claude/rules")).toBe(true);
+    expect(checkNormativeAreaInstrument(noRules).some((v) => v.file === ".claude/rules")).toBe(true);
     const noSkills = snap({ "CLAUDE.md": x(1), "AGENTS.md": x(1), ...rule("a.md", 1) });
-    expect(checkNormativeAreaBudget(noSkills).some((v) => v.file === ".claude/skills")).toBe(true);
+    expect(checkNormativeAreaInstrument(noSkills).some((v) => v.file === ".claude/skills")).toBe(true);
   });
 
   it("ALWAYS_LOADED_FILES はルート直下の 2 文書", () => {

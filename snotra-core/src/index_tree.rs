@@ -120,6 +120,12 @@ impl NameArena {
     ///
     /// **境界検査は 2 つのスライスが担う**（`offsets[i]` の添字と `blob` の範囲）ので、
     /// 範囲外は panic であって黙った空文字ではない。
+    ///
+    /// **`get_unchecked` にしても速くならない**（実測）。`String` の範囲添字は両端で UTF-8 の
+    /// 文字境界を検査するので、そこがパスクエリの +5% の出所ではないかと疑って測ったが、
+    /// `c:\users` の p50 は 11,905–12,364 µs（安全版 12,104–12,226）で main の
+    /// 11,505–11,520 と重ならないまま、ばらつきだけが広がった。**退行の機序は切り分けて
+    /// いない**——ここに `unsafe` を置く理由が無いことだけが分かっている。
     #[inline]
     pub(crate) fn get(&self, i: usize) -> &str {
         &self.blob[self.offsets[i] as usize..self.offsets[i + 1] as usize]
@@ -204,12 +210,22 @@ impl<'de> Visitor<'de> for NameArenaVisitor {
         f.write_str("a sequence of strings")
     }
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<NameArena, A::Error> {
-        let mut arena = match seq.size_hint() {
-            // 合計バイト数は事前に分からないので `blob` は伸長に任せる（列そのものは
-            // 一度きりのロードであり、`build` のように毎回払う区間ではない）。
-            Some(n) => NameArena::with_capacity(n, 0),
-            None => NameArena::new(),
-        };
+        // **`size_hint` を素で信じてはならない。** これは壊れた `index.bin` が名乗る長さで
+        // あり、4 バイトの化けた varint が 40 億件を名乗りうる。serde の `Vec` 訪問子は
+        // まさにこの理由で事前確保を 1 MiB 相当で頭打ちにしており（`search/build.rs` の
+        // `assemble` の doc がその性質を別の角度から記録している）、**自前の訪問子はその
+        // 保護を自分で持たない限り迂回する**。迂回すると、これまで `Err` → cache-miss →
+        // 再走査へ穏やかに落ちていた壊れ方が、確保失敗＝ release では `panic="abort"` に化ける。
+        //
+        // 実データは 312,108 件で上限を超えるが、超過分は `Vec` の伸長が拾う（1 回の再確保）。
+        const MAX_PREALLOC_BYTES: usize = 1024 * 1024;
+        let cap = seq
+            .size_hint()
+            .unwrap_or(0)
+            .min(MAX_PREALLOC_BYTES / std::mem::size_of::<u32>());
+        // 合計バイト数は事前に分からないので `blob` は伸長に任せる（列そのものは
+        // 一度きりのロードであり、`build` のように毎回払う区間ではない）。
+        let mut arena = NameArena::with_capacity(cap, 0);
         while seq.next_element_seed(StrSink(&mut arena.blob))?.is_some() {
             arena.offsets.push(arena.blob.len() as u32);
         }
@@ -821,6 +837,23 @@ mod tests {
         for (i, want) in names.iter().enumerate() {
             assert_eq!(back.get(i), *want, "{i} 番の切り出しがずれた");
         }
+    }
+
+    /// **壊れた長さプレフィックスは、巨大確保ではなく `Err` で落ちる。**
+    ///
+    /// `index.bin` は自分が書いたファイルだが、化けた 5 バイトの varint は 40 億件を名乗れる。
+    /// `Vec<String>` のときは serde の訪問子が事前確保を頭打ちにしていたので、この入力は
+    /// 「読めなかった」＝ cache-miss ＝再走査へ穏やかに落ちていた。**自前の訪問子は同じ上限を
+    /// 自分で持たない限りそれを迂回する**——迂回すると確保失敗になり、release は
+    /// `panic="abort"` ゆえ**起動そのものが落ちる**（検索結果が変わる形ではないので挙動
+    /// テストでは捕まらない）。
+    #[test]
+    fn corrupt_length_prefix_fails_instead_of_preallocating() {
+        // 要素数だけを名乗り、中身を 1 バイトも持たないバイト列（postcard の varint で
+        // 約 40 億）。**上限を外すと 16 GiB の確保を試みる。**
+        let hostile = [0xFF, 0xFF, 0xFF, 0xFF, 0x0F];
+        let got: Result<NameArena, _> = postcard::from_bytes(&hostile);
+        assert!(got.is_err(), "中身の無い巨大な列を受理してはならない");
     }
 
     /// 空のアリーナ（初回起動の [`IndexTree::empty`]）も往復する。

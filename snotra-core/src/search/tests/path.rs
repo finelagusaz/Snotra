@@ -367,8 +367,9 @@ fn index_tree_file_key_matches_normalize_file_name_key_over_real_index() {
 
     let (mut roots, mut children) = (0usize, 0usize);
     let (mut buf, mut seg) = (String::new(), String::new());
+    let parent = tree.columns().parent.to_vec();
     for (i, want) in expected.iter().enumerate() {
-        if tree.parent[i] == crate::index_tree::NO_PARENT {
+        if parent[i] == crate::index_tree::NO_PARENT {
             roots += 1;
         } else {
             children += 1;

@@ -13,10 +13,13 @@
 //!
 //! # 記憶域の並べ方は 2 通り、辿る規則は 1 つ
 //!
-//! [`IndexTree`] は並列 Vec（SoA）で持ち、索引側の `PathStore` は 1 件 32 B の構造体の列
-//! （AoS）で持つ。**並べ方が違うのは意図的である**——索引は木を辿る段で `parent` と `name` を
+//! [`IndexTree`] は並列 Vec（SoA）で持ち、索引側の `PathStore` は 1 件 12 B の構造体の列
+//! （AoS）で持つ。**並べ方が違うのは意図的である**——索引は木を辿る段で `parent` と `aux` を
 //! 同じ段で読むため、同じキャッシュラインに載るほうがミスが少ない。一方ディスクの形は
 //! 並列 Vec のほうが小さい（`Vec<u32>` は postcard の varint で詰まる）。
+//!
+//! **表示名だけは並べ方が 1 つである。** [`NameArena`] は連結バイト列 + オフセットであり、
+//! ディスクも索引もこの同じ物体を持つ——`PathStore::adopt` は写さずに move する。
 //!
 //! **辿る規則そのものを 2 回書いてはならない。** [`TreeNodes`] が「i 番の親・aux・名前を
 //! どう取るか」だけを抽象化し、[`walk_to_root`] と [`raw_path_into`] は両方の並べ方から
@@ -27,7 +30,12 @@
 //! 両者をまたいで共有されるのは [`push_separator`] の 1 行だけであり、そこが要石ゆえ
 //! 関数として括り出してある。セグメントの変換（trim・小文字化）は依然として 2 か所にある。
 
+use std::fmt;
+
 use rayon::prelude::*;
+use serde::de::{DeserializeSeed, SeqAccess, Visitor};
+use serde::ser::SerializeSeq;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::indexer::AppEntry;
 
@@ -42,6 +50,225 @@ pub(crate) const NO_PARENT: u32 = u32::MAX;
 /// パスになり、しかも黙って通る。** 構築時に上限超過を根へ落とせば（＝自分のフルパスを
 /// 持たせれば）、その状態は表現できなくなる。実データの最大深さは 17 段。
 pub(crate) const CHAIN_CAP: usize = 64;
+
+/// 表示名を 1 本のバイト列へ連結して持つ（要素ごとの確保を持たない）。
+///
+/// **1 エントリ 1 確保をやめるための表現である。** `Vec<String>` は 31 万件で 31 万ブロック
+/// を占め、ロード段の確保の 76%・常駐ブロックの 76% がここだった（実測は `PERFORMANCE.md`
+/// 「採用: 表示名を文字列アリーナで持つ」）。バイト数はほぼ同じでも、**ブロック数はアロケータ
+/// 由来の税を決める**——反復 4・5 が観測した「共有 1 反復あたり構築 +17 ms」の傾きは確保・
+/// 解放の回数に比例していた。
+///
+/// # 線上表現は `Vec<String>` と 1 バイトも違わない
+///
+/// [`Serialize`] は `seq of str` を書き、[`Deserialize`] は同じ列を**要素ごとの `String` を
+/// 作らずに** `blob` へ流し込む（[`StrSink`]）。ゆえに `index.bin` の形式は変わっておらず、
+/// **`INDEX_CACHE_VERSION` のバンプも旧版フォールバックも要らない**。
+///
+/// **この不変を固定するのは `arena_wire_format_is_identical_to_vec_of_string` である。**
+/// `indexer` の `index_cache_on_disk_format_is_stable`（golden bytes）**では足りない**——
+/// あちらの fixture が持つ名前の形しか通らないので、その形に現れないずれは素通りする
+/// （実測: `serialize` に `trim_end` を挟む変異は golden を通り、上のテストだけが落ちた）。
+/// ゆえに**名前の形を混ぜて持つのは上のテストの責務**であり、fixture を痩せさせてはならない。
+///
+/// # 不変条件は検査ではなく構成から従う
+///
+/// `offsets[0] == 0` / 単調非減少 / `offsets.last() == blob.len()` / 各オフセットが UTF-8 の
+/// 文字境界であること——どれも「`&str` を丸ごと押し込む」形からしか作れないので、
+/// **壊れた `index.bin` でも表現できない**（postcard が str の UTF-8 を検証する）。
+/// [`IndexTree::from_parts`] が確かめるのは列の**長さ**の一致だけで足りる。
+#[derive(Clone, Default, PartialEq, Eq)]
+pub(crate) struct NameArena {
+    /// 全要素を連結したバイト列。
+    blob: String,
+    /// 要素 `i` は `blob[offsets[i]..offsets[i + 1]]`。**末尾に番兵を持つ**ので長さは要素数 + 1
+    /// であり、空でも `[0]` が入る（[`Default`] もその形になる）。
+    ///
+    /// `u32` ゆえ `blob` は 4 GiB までである。溢れた場合は切り詰めでオフセットが単調でなく
+    /// なり、[`Self::get`] のスライスが**その場で panic する**——誤った名前を静かに返す形には
+    /// ならない。実データの名前は合計 10 MiB である。
+    offsets: Vec<u32>,
+}
+
+impl NameArena {
+    /// 要素を 1 つも持たないアリーナ。
+    pub(crate) fn new() -> Self {
+        Self {
+            blob: String::new(),
+            offsets: vec![0],
+        }
+    }
+
+    /// `n` 要素・合計 `bytes` バイトを見込んで確保する。
+    ///
+    /// **見込みは `build` が 1 パスで数える。** 伸長に任せると 10 MiB の `blob` が倍々で
+    /// 移し替えられ、消したはずの memcpy がそこへ戻る。
+    fn with_capacity(n: usize, bytes: usize) -> Self {
+        let mut offsets = Vec::with_capacity(n + 1);
+        offsets.push(0);
+        Self {
+            blob: String::with_capacity(bytes),
+            offsets,
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.offsets.len() - 1
+    }
+
+    /// `i` 番の名前。
+    ///
+    /// **境界検査は 2 つのスライスが担う**（`offsets[i]` の添字と `blob` の範囲）ので、
+    /// 範囲外は panic であって黙った空文字ではない。
+    ///
+    /// **`get_unchecked` にしても速くならない**（実測）。`String` の範囲添字は両端で UTF-8 の
+    /// 文字境界を検査するので、そこがパスクエリの約 5% の出所ではないかと疑って測ったが、
+    /// `c:\users` の p50 は 11,905–12,364 µs（安全版 11,760–12,226）で main と重ならないまま、
+    /// ばらつきだけが広がった。**ここに `unsafe` を置く理由は無い。**
+    ///
+    /// 退行の機序そのものは切り分けてある——効いているのは [`raw_path_into`] と
+    /// `PathCursor::append` が通る**全件走査の組み立て**であり、`entry_view` ではない
+    /// （読み口を差し替える変異 2 つで判定した。表は `PERFORMANCE.md`「採用: 表示名を
+    /// 文字列アリーナで持つ」）。**緩和は削減と排他である**——名前を複製して持てば戻るが、
+    /// それは 312,108 個の確保を戻すことに等しい。
+    #[inline]
+    pub(crate) fn get(&self, i: usize) -> &str {
+        &self.blob[self.offsets[i] as usize..self.offsets[i + 1] as usize]
+    }
+
+    /// 末尾へ 1 件足す（[`IndexTree::build`] と [`IndexTree::extend_with_roots`] が使う）。
+    fn push(&mut self, s: &str) {
+        self.blob.push_str(s);
+        self.offsets.push(self.blob.len() as u32);
+    }
+
+    /// **`PathStore` の `shrink_to_fit` と対で呼ぶ**——余剰容量は索引が伸長しないぶん
+    /// 最後まで常駐する（理由は `search/build.rs` の `assemble` の doc）。
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.blob.shrink_to_fit();
+        self.offsets.shrink_to_fit();
+    }
+
+    /// 常駐ヒープの内訳を数えるための素（計測専用・勘定の規約は `search/footprint.rs`）。
+    /// 返すのは `(blob の確保バイト, offsets の確保バイト)`。
+    pub(crate) fn footprint_bytes(&self) -> (usize, usize) {
+        (
+            self.blob.capacity(),
+            self.offsets.capacity() * std::mem::size_of::<u32>(),
+        )
+    }
+}
+
+impl fmt::Debug for NameArena {
+    /// **中身を並べない。** 31 万件を展開すると失敗時の出力がターミナルを埋める。
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NameArena")
+            .field("len", &self.len())
+            .field("bytes", &self.blob.len())
+            .finish()
+    }
+}
+
+impl Serialize for NameArena {
+    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        let mut seq = ser.serialize_seq(Some(self.len()))?;
+        for i in 0..self.len() {
+            seq.serialize_element(self.get(i))?;
+        }
+        seq.end()
+    }
+}
+
+/// 1 要素ぶんを、`String` を作らずに `blob` へ直接流し込む種。
+///
+/// **`next_element::<String>()` にしてはならない**——それでは要素ごとの確保が戻り、この型が
+/// 存在する理由がなくなる。postcard は借用した `&str` を渡すので写しは 1 回の `push_str` で済む。
+struct StrSink<'a>(&'a mut String);
+
+impl<'de> DeserializeSeed<'de> for StrSink<'_> {
+    type Value = ();
+    fn deserialize<D: Deserializer<'de>>(self, de: D) -> Result<(), D::Error> {
+        de.deserialize_str(self)
+    }
+}
+
+impl<'de> Visitor<'de> for StrSink<'_> {
+    type Value = ();
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("a string")
+    }
+    fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<(), E> {
+        self.0.push_str(v);
+        Ok(())
+    }
+    fn visit_borrowed_str<E: serde::de::Error>(self, v: &'de str) -> Result<(), E> {
+        self.0.push_str(v);
+        Ok(())
+    }
+}
+
+struct NameArenaVisitor;
+
+impl<'de> Visitor<'de> for NameArenaVisitor {
+    type Value = NameArena;
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("a sequence of strings")
+    }
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<NameArena, A::Error> {
+        // **`size_hint` を素で信じてはならない。** これは壊れた `index.bin` が名乗る長さで
+        // あり、4 バイトの化けた varint が 40 億件を名乗りうる。serde の `Vec` 訪問子は
+        // まさにこの理由で事前確保を 1 MiB 相当で頭打ちにしており（`search/build.rs` の
+        // `assemble` の doc がその性質を別の角度から記録している）、**自前の訪問子はその
+        // 保護を自分で持たない限り迂回する**。迂回すると、これまで `Err` → cache-miss →
+        // 再走査へ穏やかに落ちていた壊れ方が、確保失敗＝ release では `panic="abort"` に化ける。
+        //
+        // 実データは 312,108 件で上限を超えるが、超過分は `Vec` の伸長が拾う（1 回の再確保）。
+        const MAX_PREALLOC_BYTES: usize = 1024 * 1024;
+        let cap = seq
+            .size_hint()
+            .unwrap_or(0)
+            .min(MAX_PREALLOC_BYTES / std::mem::size_of::<u32>());
+        // 合計バイト数は事前に分からないので `blob` は伸長に任せる（列そのものは
+        // 一度きりのロードであり、`build` のように毎回払う区間ではない）。
+        let mut arena = NameArena::with_capacity(cap, 0);
+        while seq.next_element_seed(StrSink(&mut arena.blob))?.is_some() {
+            arena.offsets.push(arena.blob.len() as u32);
+        }
+        Ok(arena)
+    }
+}
+
+impl<'de> Deserialize<'de> for NameArena {
+    fn deserialize<D: Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
+        de.deserialize_seq(NameArenaVisitor)
+    }
+}
+
+/// [`IndexTree`] の列を借りて見る口（保存側が使う）。
+///
+/// **フィールドに名前を付ける。** `parent` と `aux` はどちらも `Vec<u32>` なので、タプルで
+/// 返すと**取り違えてもコンパイルが通る**——そして取り違えた木は panic せず、パスの組み立てが
+/// 静かに壊れる（`CachedMasks` を組で束ねているのと同じ理屈）。
+pub(crate) struct TreeColumns<'a> {
+    pub(crate) names: &'a NameArena,
+    pub(crate) is_folder: &'a [bool],
+    pub(crate) parent: &'a [u32],
+    pub(crate) aux: &'a [u32],
+    pub(crate) table: &'a [String],
+    pub(crate) sorted_by_path: bool,
+}
+
+/// [`IndexTree`] を列へほどいた形（索引側が組み替えるときに使う）。
+///
+/// **名前を付ける理由は [`TreeColumns`] と同じである。**
+pub(crate) struct OwnedTreeColumns {
+    pub(crate) names: NameArena,
+    pub(crate) is_folder: Vec<bool>,
+    pub(crate) parent: Vec<u32>,
+    pub(crate) aux: Vec<u32>,
+    pub(crate) table: Vec<String>,
+    pub(crate) sorted_by_path: bool,
+}
 
 /// 木の 1 ノードを読む口。**記憶域の並べ方だけを抽象化する**——規則は [`raw_path_into`] が
 /// 唯一持つ。
@@ -139,21 +366,29 @@ pub(crate) fn raw_path_into<N: TreeNodes + ?Sized>(nodes: &N, buf: &mut String, 
 
 /// 木の並列 Vec 表現。`index.bin` が持つ形であり、索引側はこれを受け取って組み替える。
 ///
-/// フィールドを直接触れるのは、`indexer` が保存時に `Cow::Borrowed` で各列をそのまま
-/// シリアライズするためである（全件 clone を避ける）。
+/// **フィールドは private である。** 列を外から見る口は [`Self::columns`]（借用・保存側が
+/// `Cow::Borrowed` で全件 clone を避けるため）と [`Self::into_columns`]（所有・`PathStore` が
+/// 組み替えるため）の 2 つだけで、**組む口は [`Self::from_parts`] / [`Self::build`] /
+/// [`Self::empty`] しかない**。
+///
+/// **これは額ではなく構造の変更である。** 以前は `pub(crate)` ゆえ、crate 内から構造体
+/// リテラルで木を組めた——つまり `from_parts` の検証（列の長さ・`aux` の範囲・`parent < i`・
+/// 深さの上限）を**迂回した木が表現できた**。迂回した木の帰結は `from_parts` の doc が
+/// 4 つ挙げているが、どれも「索引が黙って短くなる」「組み立てが止まらない」の側で、
+/// 検索結果は正しく見える。**表現できなくすればチェックリストが要らなくなる。**
 pub struct IndexTree {
-    /// 表示名。`AppEntry.name` をそのまま移す。
-    pub(crate) names: Vec<String>,
-    pub(crate) is_folder: Vec<bool>,
+    /// 表示名。`AppEntry.name` をそのまま移す（**要素ごとの確保を持たない**・[`NameArena`]）。
+    names: NameArena,
+    is_folder: Vec<bool>,
     /// 各要素の意味は [`TreeNodes::parent_of`]。
-    pub(crate) parent: Vec<u32>,
+    parent: Vec<u32>,
     /// 各要素の意味は [`TreeNodes::aux_of`]。
-    pub(crate) aux: Vec<u32>,
+    aux: Vec<u32>,
     /// 拡張子とフルパスを同居させた intern 表（0 番は空文字で固定）。
     ///
     /// 同居させるのは、組み立ての最後の 1 段（根）が必ずここを引くためである。
     /// 別テーブルにして二分探索させると、**全エントリの組み立てにその探索が乗る**。
-    pub(crate) table: Vec<String>,
+    table: Vec<String>,
     /// フルパスのバイト順に**狭義の単調増加**で並んでいるか。索引側の tie-break が
     /// 「組み立てずに index を比べる」高速路へ入れるかを決める。
     ///
@@ -173,7 +408,7 @@ impl TreeNodes for IndexTree {
     }
     #[inline]
     fn name_of(&self, i: usize) -> &str {
-        &self.names[i]
+        self.names.get(i)
     }
     #[inline]
     fn table_str(&self, id: u32) -> &str {
@@ -203,8 +438,11 @@ impl IndexTree {
     /// 格納順になる。エントリは消えず、panic も起きず、順序は安定している。
     /// 上の 4 つ（索引が短くなる・添字 panic・停止しない）とは桁が違うので、全件の組み直しを
     /// 毎起動払う側には倒さない。
-    pub fn from_parts(
-        names: Vec<String>,
+    ///
+    /// **`pub(crate)` である**——受け取る [`NameArena`] が crate の内側の表現であり、
+    /// `index.bin` を読む経路（`indexer::load_cache_in`）以外に木を列から組む入口は無い。
+    pub(crate) fn from_parts(
+        names: NameArena,
         is_folder: Vec<bool>,
         parent: Vec<u32>,
         aux: Vec<u32>,
@@ -251,7 +489,7 @@ impl IndexTree {
     /// [`Self::from_parts`] もそれを不変条件として検査する。
     pub fn empty() -> Self {
         Self {
-            names: Vec::new(),
+            names: NameArena::new(),
             is_folder: Vec::new(),
             parent: Vec::new(),
             aux: Vec::new(),
@@ -269,12 +507,66 @@ impl IndexTree {
         raw_path_into(self, buf, i);
     }
 
+    /// 列を借りて見る（保存側が `Cow::Borrowed` で全件 clone を避けるための口）。
+    pub(crate) fn columns(&self) -> TreeColumns<'_> {
+        // **`..` を書かない。** 列を足したらここが compile error になるのが要点である
+        // （`SearchEngine::footprint_rows` と同じ規律）。
+        let Self {
+            names,
+            is_folder,
+            parent,
+            aux,
+            table,
+            sorted_by_path,
+        } = self;
+        TreeColumns {
+            names,
+            is_folder,
+            parent,
+            aux,
+            table,
+            sorted_by_path: *sorted_by_path,
+        }
+    }
+
+    /// 列へほどく（索引側が並べ方を組み替えるための口）。
+    ///
+    /// **返した列から木へ戻る道は無い**——[`Self::from_parts`] は検証を通すので、ほどいた列を
+    /// そのまま構造体リテラルへ流し込む形は書けない。
+    pub(crate) fn into_columns(self) -> OwnedTreeColumns {
+        let Self {
+            names,
+            is_folder,
+            parent,
+            aux,
+            table,
+            sorted_by_path,
+        } = self;
+        OwnedTreeColumns {
+            names,
+            is_folder,
+            parent,
+            aux,
+            table,
+            sorted_by_path,
+        }
+    }
+
+    /// `i` の表示名（アリーナの切り出し）。
+    ///
+    /// [`TreeNodes::name_of`] と同じものを返すが、あちらは**辿る規則のための口**である。
+    /// 木そのものを走査する呼び出し元（kana の構築など）はトレイトを import せずに済むよう
+    /// こちらを使う。
+    pub(crate) fn name_at(&self, i: usize) -> &str {
+        self.names.get(i)
+    }
+
     pub fn len(&self) -> usize {
         self.names.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.names.is_empty()
+        self.names.len() == 0
     }
 
     /// 木を `Vec<AppEntry>` へ戻す（フルパスを組み直して実体化する）。
@@ -294,7 +586,7 @@ impl IndexTree {
             .map(|i| {
                 raw_path_into(self, &mut buf, i);
                 AppEntry {
-                    name: self.names[i].clone(),
+                    name: self.names.get(i).to_owned(),
                     target_path: buf.clone(),
                     is_folder: self.is_folder[i],
                 }
@@ -345,7 +637,10 @@ impl IndexTree {
             resolved.iter().map(|r| r.map(|(pi, _)| pi)).collect()
         };
 
-        let mut names = Vec::with_capacity(n);
+        // **アリーナの合計バイト数は先に数える。** 伸長に任せると 10 MiB の `blob` が倍々で
+        // 移し替えられ、最後の 1 回は新旧が同時に生きる——消したはずの確保が peak へ戻る。
+        let name_bytes: usize = entries.iter().map(|e| e.name.len()).sum();
+        let mut names = NameArena::with_capacity(n, name_bytes);
         let mut is_folder_col = Vec::with_capacity(n);
         let mut parent_col = Vec::with_capacity(n);
         let mut aux_col = Vec::with_capacity(n);
@@ -369,7 +664,7 @@ impl IndexTree {
                 }
             };
             depths.push(depth);
-            names.push(name);
+            names.push(&name);
             is_folder_col.push(is_folder);
             parent_col.push(parent);
             aux_col.push(aux_id);
@@ -418,7 +713,7 @@ impl IndexTree {
                 is_folder: entry_is_folder,
             } = entry;
             table.push(target_path);
-            names.push(name);
+            names.push(&name);
             is_folder.push(entry_is_folder);
             parent.push(NO_PARENT);
             aux.push((table.len() - 1) as u32);
@@ -449,7 +744,7 @@ impl IndexTree {
             return;
         }
         seg.clear();
-        seg.push_str(&self.names[i]);
+        seg.push_str(self.names.get(i));
         seg.push_str(self.table_str(self.aux[i]));
         crate::indexer::normalize_entry_key_into(buf, seg);
     }
@@ -565,17 +860,125 @@ mod tests {
     use super::*;
 
     /// `from_parts` が取る 5 列（names / is_folder / parent / aux / table）。
-    type Parts = (Vec<String>, Vec<bool>, Vec<u32>, Vec<u32>, Vec<String>);
+    type Parts = (NameArena, Vec<bool>, Vec<u32>, Vec<u32>, Vec<String>);
+
+    /// 名前の列をアリーナへ詰める（テストの読みやすさのためだけの補助）。
+    fn arena(names: &[&str]) -> NameArena {
+        let mut a = NameArena::new();
+        for n in names {
+            a.push(n);
+        }
+        a
+    }
 
     /// 3 件（根 → 子 → 孫）の健全な列。各テストが 1 か所だけ壊して使う。
     fn healthy_parts() -> Parts {
         (
-            vec!["Projects".into(), "sub".into(), "app".into()],
+            arena(&["Projects", "sub", "app"]),
             vec![true, true, false],
             vec![NO_PARENT, 0, 1],
             vec![2, 0, 1],
             vec![String::new(), ".exe".into(), "C:\\Projects".into()],
         )
+    }
+
+    /// **アリーナの線上表現は `Vec<String>` と 1 バイトも違わない。**
+    ///
+    /// これが `INDEX_CACHE_VERSION` を上げずに `IndexCache.names` の型を替えられた根拠であり、
+    /// 破れると**全ユーザーの `index.bin` が黙って読めなくなる**（版が同じまま形式だけ変わる
+    /// ので、フォールバックの鎖はどの枝も拾わず cache-miss ＝ 22〜30 秒の全走査へ落ちる）。
+    ///
+    /// **`index_cache_on_disk_format_is_stable`（golden bytes）と役割が違う。** あちらは
+    /// `IndexCache` 全体の凍結バイト列を守り、こちらは**なぜそれが凍結されたままでいられるか**
+    /// ——アリーナ単体が seq of str であること——を名指しで固定する。両向きを見る:
+    /// 書いた側が `Vec<String>` と一致することと、`Vec<String>` として書かれた旧バイト列を
+    /// 読み戻せることは別の主張である。
+    #[test]
+    fn arena_wire_format_is_identical_to_vec_of_string() {
+        // 非 ASCII・空文字・区切りを含む名前を混ぜる（**オフセットが UTF-8 の文字境界に
+        // 載ることは、要素を丸ごと押し込む形からしか従わない**）。
+        let names = [
+            "Projects",
+            "",
+            "Ünïcode 名前",
+            "sub",
+            "アプリ",
+            "x",
+            "trailing space ",
+        ];
+        let owned: Vec<String> = names.iter().map(|s| (*s).to_string()).collect();
+
+        let via_vec = postcard::to_allocvec(&owned).expect("Vec<String> を書ける");
+        let via_arena = postcard::to_allocvec(&arena(&names)).expect("NameArena を書ける");
+        assert_eq!(
+            via_vec, via_arena,
+            "アリーナの線上表現が `Vec<String>` とずれた（版を上げずに型を替えた前提が崩れる）"
+        );
+
+        // 逆向き: `Vec<String>` として書かれたバイト列をアリーナで読み戻す。
+        let back: NameArena = postcard::from_bytes(&via_vec).expect("旧バイト列を読める");
+        assert_eq!(back.len(), names.len());
+        for (i, want) in names.iter().enumerate() {
+            assert_eq!(back.get(i), *want, "{i} 番の切り出しがずれた");
+        }
+    }
+
+    /// **壊れた長さプレフィックスは、巨大確保ではなく `Err` で落ちる。**
+    ///
+    /// `index.bin` は自分が書いたファイルだが、化けた 5 バイトの varint は 40 億件を名乗れる。
+    /// `Vec<String>` のときは serde の訪問子が事前確保を頭打ちにしていたので、この入力は
+    /// 「読めなかった」＝ cache-miss ＝再走査へ穏やかに落ちていた。**自前の訪問子は同じ上限を
+    /// 自分で持たない限りそれを迂回する**——迂回すると確保失敗になり、release は
+    /// `panic="abort"` ゆえ**起動そのものが落ちる**（検索結果が変わる形ではないので挙動
+    /// テストでは捕まらない）。
+    #[test]
+    fn corrupt_length_prefix_fails_instead_of_preallocating() {
+        // 要素数だけを名乗り、中身を 1 バイトも持たないバイト列（postcard の varint で
+        // 約 40 億）。**上限を外すと 16 GiB の確保を試みる。**
+        let hostile = [0xFF, 0xFF, 0xFF, 0xFF, 0x0F];
+        let got: Result<NameArena, _> = postcard::from_bytes(&hostile);
+        assert!(got.is_err(), "中身の無い巨大な列を受理してはならない");
+    }
+
+    /// 空のアリーナ（初回起動の [`IndexTree::empty`]）も往復する。
+    ///
+    /// **番兵を持つ表現ゆえ「空」は `offsets == [0]` である。** `Vec::new()` にすると
+    /// `len()` が `0 - 1` で溢れるので、空の形を別に固定しておく。
+    #[test]
+    fn empty_arena_roundtrips_and_reports_zero_len() {
+        let empty = NameArena::new();
+        assert_eq!(empty.len(), 0);
+        let bytes = postcard::to_allocvec(&empty).expect("空を書ける");
+        assert_eq!(bytes, postcard::to_allocvec(&Vec::<String>::new()).unwrap());
+        let back: NameArena = postcard::from_bytes(&bytes).expect("空を読める");
+        assert_eq!(back.len(), 0);
+        assert_eq!(IndexTree::empty().len(), 0);
+    }
+
+    /// **PATH スキャンの追記でアリーナが伸びる**（[`IndexTree::extend_with_roots`]）。
+    ///
+    /// 追記側を忘れると、足したエントリの名前が**直前のエントリの名前として読まれる**——
+    /// オフセットが伸びないので添字は範囲内に収まり、`debug_assert` にも掛からない。
+    /// 件数だけを見るテストでは緑のまま通るので、**組み直したフルパスまで見る**。
+    #[test]
+    fn extend_with_roots_grows_the_name_arena() {
+        let mut tree = IndexTree::build(vec![AppEntry {
+            name: "Projects".into(),
+            target_path: "C:\\Projects".into(),
+            is_folder: true,
+        }]);
+        tree.extend_with_roots(vec![AppEntry {
+            name: "curl".into(),
+            target_path: "C:\\Windows\\System32\\curl.exe".into(),
+            is_folder: false,
+        }]);
+
+        assert_eq!(tree.len(), 2);
+        assert_eq!(tree.name_at(0), "Projects");
+        assert_eq!(tree.name_at(1), "curl");
+        let mut buf = String::new();
+        tree.path_into(&mut buf, 1);
+        assert_eq!(buf, "C:\\Windows\\System32\\curl.exe");
     }
 
     /// 土台。**これが通らないと下の「壊したら弾く」は空虚になる**——`None` はどんな理由でも
@@ -637,7 +1040,7 @@ mod tests {
         //    このケースは緑のままになる（列が空なら aux のループは 1 度も回らない）。
         assert!(
             IndexTree::from_parts(
-                Vec::new(),
+                NameArena::new(),
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
@@ -659,7 +1062,8 @@ mod tests {
         // 5. 深さが CHAIN_CAP 以上。**鎖を実際に伸ばして測る**——上限の値を書き写すと、
         //    定数を変えたときにこのテストだけが古い前提のまま緑になる。
         let n = CHAIN_CAP + 1;
-        let names: Vec<String> = (0..n).map(|i| format!("d{i}")).collect();
+        let deep: Vec<String> = (0..n).map(|i| format!("d{i}")).collect();
+        let names = arena(&deep.iter().map(String::as_str).collect::<Vec<_>>());
         let parent: Vec<u32> = std::iter::once(NO_PARENT)
             .chain((0..n - 1).map(|i| i as u32))
             .collect();

@@ -314,7 +314,7 @@ impl SearchEngine {
             // 信じて読み替えるので**結果が静かにずれる**。上に書いた「判定を全部済ませてから
             // 落とす」も、両方を同時に返すあの関数が構造として保っている。
             let sharing = measure_derived_sharing(
-                &entries.get(i).name,
+                entries.name_at(i),
                 lower_name,
                 lower_file_names[i].as_deref(),
             );
@@ -438,9 +438,12 @@ impl SearchEngine {
         // kana は毎起動再計算する（キャッシュに持たない）。migemo 無効時は空 Vec のまま。
         let kana_for_cached = |tree: &IndexTree| {
             if migemo_enabled {
-                tree.names
-                    .par_iter()
-                    .map(|n| to_kana(&to_lower_folded(n)).into_boxed_str())
+                // **添字で並列化する。** 名前はアリーナの切り出しゆえ `par_iter` を持たない
+                // （持たせるには `IndexedParallelIterator` を自前で書くことになり、
+                // 得るものは同じ分割である）。
+                (0..tree.len())
+                    .into_par_iter()
+                    .map(|i| to_kana(&to_lower_folded(tree.name_at(i))).into_boxed_str())
                     .collect::<Vec<_>>()
             } else {
                 Vec::new()

@@ -25,7 +25,7 @@ use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_
 
 use crate::binfmt::{BinFile, try_deserialize_with_header};
 use crate::config::{Config, ScanPath};
-use crate::index_tree::IndexTree;
+use crate::index_tree::{IndexTree, NameArena};
 use crate::query::{
     file_char_mask, lower_file_name, measure_derived_sharing, name_char_mask, to_lower_folded,
 };
@@ -470,7 +470,15 @@ pub struct LoadOrScanResult {
 struct IndexCache<'a> {
     built_at: u64,
     /// 表示名（`AppEntry.name`）。
-    names: Cow<'a, [String]>,
+    ///
+    /// **型は `Vec<String>` ではなく [`NameArena`] だが、線上のバイト列は変わっていない**
+    /// ——アリーナは `seq of str` として読み書きし、要素ごとの `String` を作らずに 1 本の
+    /// バッファへ流し込む（正本は [`NameArena`] の doc）。ゆえにこの変更は
+    /// `INDEX_CACHE_VERSION` のバンプを伴わず、旧版フォールバックも増えない。
+    /// **検知器は `index_tree` 側の `arena_wire_format_is_identical_to_vec_of_string` である**
+    /// ——下の golden は名前の形を混ぜて持たないので、この一致だけを守る役には立たない
+    /// （射程は [`NameArena`] の doc）。
+    names: Cow<'a, NameArena>,
     is_folder: Cow<'a, [bool]>,
     /// 木の親（`crate::index_tree::TreeNodes::parent_of`）。
     parent: Cow<'a, [u32]>,
@@ -996,14 +1004,15 @@ fn save_cache_sorted_in(
 
     // Cow::Borrowed で木の列と派生 Vec の全件 clone を避ける。
     // 出力バイト列は Owned 版と同一（golden テストで保証）。
+    let derived_cols = derived.tree.columns();
     let cache = IndexCache {
         built_at: built_at.resolve(),
-        names: Cow::Borrowed(&derived.tree.names),
-        is_folder: Cow::Borrowed(&derived.tree.is_folder),
-        parent: Cow::Borrowed(&derived.tree.parent),
-        aux: Cow::Borrowed(&derived.tree.aux),
-        table: Cow::Borrowed(&derived.tree.table),
-        sorted_by_path: derived.tree.sorted_by_path,
+        names: Cow::Borrowed(derived_cols.names),
+        is_folder: Cow::Borrowed(derived_cols.is_folder),
+        parent: Cow::Borrowed(derived_cols.parent),
+        aux: Cow::Borrowed(derived_cols.aux),
+        table: Cow::Borrowed(derived_cols.table),
+        sorted_by_path: derived_cols.sorted_by_path,
         config_hash,
         char_masks: Cow::Borrowed(&derived.char_masks),
         file_name_char_masks: Cow::Borrowed(&derived.file_name_char_masks),
@@ -1958,7 +1967,9 @@ enum EntryRepr<'a> {
     /// 帰属しなければ残余が 0 にならない——そして残余の検算は、列を 1 本落とした誤りと
     /// 旗を落とした誤りを区別しない（実際に 5 列だけを数えて +1 B で落ちた）。
     Tree {
-        names: &'a [String],
+        /// **アリーナだが、線上のバイト列は `seq of str` のままである**（[`NameArena`]）。
+        /// ゆえに `serialized_len` の勘定も帰属の割り方も v7 の頃と変わらない。
+        names: &'a NameArena,
         is_folder: &'a [bool],
         parent: &'a [u32],
         aux: &'a [u32],
@@ -2069,7 +2080,9 @@ impl EntryRepr<'_> {
                 },
                 CacheByteRow {
                     label: "names",
-                    bytes: strs(names),
+                    bytes: (0..names.len())
+                        .map(|i| postcard_str_len(names.get(i)))
+                        .sum(),
                     items: n,
                 },
                 CacheByteRow {
@@ -2680,14 +2693,15 @@ mod tests {
         ];
 
         let tree = IndexTree::build(entries.clone());
+        let tree_cols = tree.columns();
         let cache = IndexCache {
             built_at: 1700000000,
-            names: Cow::Owned(tree.names.clone()),
-            is_folder: Cow::Owned(tree.is_folder.clone()),
-            parent: Cow::Owned(tree.parent.clone()),
-            aux: Cow::Owned(tree.aux.clone()),
-            table: Cow::Owned(tree.table.clone()),
-            sorted_by_path: tree.sorted_by_path,
+            names: Cow::Owned(tree_cols.names.clone()),
+            is_folder: Cow::Owned(tree_cols.is_folder.to_vec()),
+            parent: Cow::Owned(tree_cols.parent.to_vec()),
+            aux: Cow::Owned(tree_cols.aux.to_vec()),
+            table: Cow::Owned(tree_cols.table.to_vec()),
+            sorted_by_path: tree_cols.sorted_by_path,
             config_hash: 12345,
             char_masks: Cow::Owned(vec![0xAB, 0xCD]),
             file_name_char_masks: Cow::Owned(vec![0x12, 0x34]),
@@ -2707,9 +2721,9 @@ mod tests {
 
         assert_eq!(restored.built_at, 1700000000);
         assert_eq!(restored.names.len(), 2);
-        assert_eq!(restored.names[0], "Firefox");
+        assert_eq!(restored.names.get(0), "Firefox");
         assert!(!restored.is_folder[0]);
-        assert_eq!(restored.names[1], "Projects");
+        assert_eq!(restored.names.get(1), "Projects");
         assert!(restored.is_folder[1]);
         assert_eq!(restored.config_hash, 12345);
         // Cow フィールドは into_owned() で Vec に戻して比較（deserialize は Owned ゆえ move）。
@@ -2810,14 +2824,15 @@ mod tests {
 
         // save 経路と同じ Cow::Borrowed で構築する。
         let tree = IndexTree::build(entries.clone());
+        let tree_cols = tree.columns();
         let cache = IndexCache {
             built_at: 1_700_000_000,
-            names: Cow::Borrowed(&tree.names),
-            is_folder: Cow::Borrowed(&tree.is_folder),
-            parent: Cow::Borrowed(&tree.parent),
-            aux: Cow::Borrowed(&tree.aux),
-            table: Cow::Borrowed(&tree.table),
-            sorted_by_path: tree.sorted_by_path,
+            names: Cow::Borrowed(tree_cols.names),
+            is_folder: Cow::Borrowed(tree_cols.is_folder),
+            parent: Cow::Borrowed(tree_cols.parent),
+            aux: Cow::Borrowed(tree_cols.aux),
+            table: Cow::Borrowed(tree_cols.table),
+            sorted_by_path: tree_cols.sorted_by_path,
             config_hash: 12345,
             char_masks: Cow::Borrowed(&char_masks),
             file_name_char_masks: Cow::Borrowed(&file_name_char_masks),
@@ -2848,9 +2863,9 @@ mod tests {
                 .expect("凍結 v7 バイトがロードできること");
         assert!(matches!(restored.names, Cow::Owned(_)));
         assert_eq!(restored.names.len(), 4);
-        assert_eq!(restored.names[0], "Projects");
+        assert_eq!(restored.names.get(0), "Projects");
         assert!(restored.is_folder[0]);
-        assert_eq!(restored.names[1], "app");
+        assert_eq!(restored.names.get(1), "app");
         assert!(!restored.is_folder[1]);
 
         // **木の 3 列は、組み直したフルパスで検算する。** `names` / `is_folder` だけを見ると
@@ -2976,7 +2991,7 @@ mod tests {
         );
         let (tree, masks) = result.material.into_parts();
         assert_eq!(tree.len(), 3);
-        assert_eq!(tree.names[0], "Firefox");
+        assert_eq!(tree.name_at(0), "Firefox");
 
         // 木は `target_path` から建て直される。原文へ戻せることまで見る——v6 の実体を
         // 捨てて木にした段で取りこぼせば、以後この索引のパスは静かに壊れる。
@@ -3048,7 +3063,7 @@ mod tests {
         );
         let (tree, masks) = result.material.into_parts();
         assert_eq!(tree.len(), 2);
-        assert_eq!(tree.names[0], "Firefox");
+        assert_eq!(tree.name_at(0), "Firefox");
 
         let masks = masks.expect("v5 でもマスクは返る");
         match masks.lower {
@@ -3137,7 +3152,7 @@ mod tests {
             load_cache_in(&dir, 12345, LegacyUpgrade::Skip).expect("v4 の index.bin が読めること");
         let (tree, masks) = result.material.into_parts();
         assert_eq!(tree.len(), 2);
-        assert_eq!(tree.names[0], "Firefox");
+        assert_eq!(tree.name_at(0), "Firefox");
         let masks = masks.expect("v4 でもマスクは返る");
         assert_eq!(masks.char_masks, vec![0xABu64, 0xCD]);
         match masks.lower {
@@ -3222,8 +3237,8 @@ mod tests {
             .expect("load cache written to dir");
         let (tree, masks) = result.material.into_parts();
         assert_eq!(tree.len(), 2);
-        assert_eq!(tree.names[0], "Firefox");
-        assert_eq!(tree.names[1], "Projects");
+        assert_eq!(tree.name_at(0), "Firefox");
+        assert_eq!(tree.name_at(1), "Projects");
         let masks = masks.expect("v6 cache should include masks");
 
         // **書いたものと返したものが同一である。** cache-miss の枝はこの返り値をそのまま
@@ -3581,14 +3596,15 @@ mod tests {
         let current_dir = temp_dir("upgrade_save_ms_current");
         let config_hash = 42u64;
         let derived = derive_columns(entries);
+        let derived_cols = derived.tree.columns();
         let cache = IndexCache {
             built_at: 1_700_000_000,
-            names: Cow::Borrowed(&derived.tree.names),
-            is_folder: Cow::Borrowed(&derived.tree.is_folder),
-            parent: Cow::Borrowed(&derived.tree.parent),
-            aux: Cow::Borrowed(&derived.tree.aux),
-            table: Cow::Borrowed(&derived.tree.table),
-            sorted_by_path: derived.tree.sorted_by_path,
+            names: Cow::Borrowed(derived_cols.names),
+            is_folder: Cow::Borrowed(derived_cols.is_folder),
+            parent: Cow::Borrowed(derived_cols.parent),
+            aux: Cow::Borrowed(derived_cols.aux),
+            table: Cow::Borrowed(derived_cols.table),
+            sorted_by_path: derived_cols.sorted_by_path,
             config_hash,
             char_masks: Cow::Borrowed(&derived.char_masks),
             file_name_char_masks: Cow::Borrowed(&derived.file_name_char_masks),
@@ -3680,14 +3696,15 @@ mod tests {
         // 現行版（v7）: cache-hit だが昇格しないので cache_save_ms は 0 のまま。
         let current_dir = temp_dir("stats_upgrade_save_ms_current");
         let derived = derive_columns(entries);
+        let derived_cols = derived.tree.columns();
         let cache = IndexCache {
             built_at: 1_700_000_000,
-            names: Cow::Borrowed(&derived.tree.names),
-            is_folder: Cow::Borrowed(&derived.tree.is_folder),
-            parent: Cow::Borrowed(&derived.tree.parent),
-            aux: Cow::Borrowed(&derived.tree.aux),
-            table: Cow::Borrowed(&derived.tree.table),
-            sorted_by_path: derived.tree.sorted_by_path,
+            names: Cow::Borrowed(derived_cols.names),
+            is_folder: Cow::Borrowed(derived_cols.is_folder),
+            parent: Cow::Borrowed(derived_cols.parent),
+            aux: Cow::Borrowed(derived_cols.aux),
+            table: Cow::Borrowed(derived_cols.table),
+            sorted_by_path: derived_cols.sorted_by_path,
             config_hash,
             char_masks: Cow::Borrowed(&derived.char_masks),
             file_name_char_masks: Cow::Borrowed(&derived.file_name_char_masks),
@@ -3786,14 +3803,15 @@ mod tests {
         }];
         let config_hash = 42u64;
         let derived = derive_columns(entries);
+        let derived_cols = derived.tree.columns();
         let cache = IndexCache {
             built_at: 1_700_000_000,
-            names: Cow::Borrowed(&derived.tree.names),
-            is_folder: Cow::Borrowed(&derived.tree.is_folder),
-            parent: Cow::Borrowed(&derived.tree.parent),
-            aux: Cow::Borrowed(&derived.tree.aux),
-            table: Cow::Borrowed(&derived.tree.table),
-            sorted_by_path: derived.tree.sorted_by_path,
+            names: Cow::Borrowed(derived_cols.names),
+            is_folder: Cow::Borrowed(derived_cols.is_folder),
+            parent: Cow::Borrowed(derived_cols.parent),
+            aux: Cow::Borrowed(derived_cols.aux),
+            table: Cow::Borrowed(derived_cols.table),
+            sorted_by_path: derived_cols.sorted_by_path,
             config_hash,
             char_masks: Cow::Borrowed(&derived.char_masks),
             file_name_char_masks: Cow::Borrowed(&derived.file_name_char_masks),

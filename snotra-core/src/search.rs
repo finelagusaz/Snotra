@@ -374,7 +374,7 @@ impl SearchEngine {
             .map(|i| {
                 let entry = self.entries.get(i);
                 SearchResult {
-                    name: entry.name.to_string(),
+                    name: self.entries.name_at(i).to_string(),
                     // フルパスの組み立ては高々 `max_results` 件に閉じる。
                     path: self.entries.to_path(i),
                     is_folder: entry.is_folder,
@@ -395,7 +395,7 @@ impl SearchEngine {
 
     /// 索引 `i` の表示名。
     pub fn entry_name(&self, i: usize) -> &str {
-        &self.entries.get(i).name
+        self.entries.name_at(i)
     }
 }
 

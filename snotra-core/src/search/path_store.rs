@@ -1,8 +1,12 @@
 //! `target_path` をフォルダ木の接頭辞共有で保持する索引側の表現（#961/#962 に続く反復 3）。
 //!
 //! **木そのもの（何を持ち、どう辿るか）の正本は [`crate::index_tree`] である。** ここが持つ
-//! のは索引側の並べ方（1 件 32 B の構造体の列）と、全件走査に効く 2 つの最適化——[`PathCursor`]
+//! のは索引側の並べ方（1 件 12 B の構造体の列）と、全件走査に効く 2 つの最適化——[`PathCursor`]
 //! と [`PathStore::cmp_paths`] の高速路——だけである。
+//!
+//! **表示名は並べ方を持たない。** [`crate::index_tree::NameArena`] をディスク側からそのまま
+//! move で受け取る（[`PathStore::adopt`]）ので、索引とディスクで表現が分かれるのは
+//! [`CompactEntry`] の 3 列だけである。
 //!
 //! この組み替え自体の実測（実 `index.bin` 312,377 エントリ・`PERFORMANCE.md`
 //! 「`target_path` のフォルダ木接頭辞共有」）: 文字列 35.56 → 0.22 MiB、`entries` の 1 要素
@@ -41,22 +45,26 @@ use std::cmp::Ordering;
 
 use super::footprint::{FootprintRow, boxed_strs, vec_body};
 use crate::index_tree::{
-    IndexTree, NO_PARENT, TreeNodes, push_separator, raw_path_into, walk_to_root,
+    IndexTree, NO_PARENT, NameArena, OwnedTreeColumns, TreeNodes, push_separator, raw_path_into,
+    walk_to_root,
 };
 #[cfg(test)]
 use crate::indexer::AppEntry;
 
-/// 索引 1 件ぶんの圧縮表現（32 B）。`AppEntry`（56 B）から `target_path` の `String` を
-/// 落とし、親の index と `table` の id に置き換えたもの。
+/// 索引 1 件ぶんの圧縮表現（12 B）。`AppEntry`（56 B）から `target_path` の `String` を
+/// 落として親の index と `table` の id に置き換え、表示名は [`PathStore::names`] のアリーナ
+/// へ出したもの。
 ///
 /// `parent` と `aux` を別の並列 Vec へ出さずここに置くのは意図的である——木を辿る段で
-/// `entries[cur].parent` を読み、同じ段で `entries[cur].name` も読むため、**同じキャッシュ
-/// ラインに載るほうがミスが少ない**（別配列にすると 1 段あたり 2 回になる）。
+/// `entries[cur].parent` と `entries[cur].aux` を同じ段で読むため、**同じキャッシュラインに
+/// 載るほうがミスが少ない**（別配列にすると 1 段あたり 2 回になる）。
 /// ビットマスク（`char_masks`）は従来どおり独立した `Vec<u64>` のままであり、
 /// ここへ巻き込んではならない（#110 の 35〜120% 遅化）。
+///
+/// **`name: Box<str>` はここに在った（1 件 16 B・全件で 31 万ブロック）。** アリーナへ出した
+/// ことで 1 要素が 32 → 12 B になり、`entries` の Vec 本体そのものが 9.52 → 3.57 MiB へ縮む
+/// ——**確保回数だけでなく、載る密度でも効いている**（実測は `PERFORMANCE.md`）。
 pub(super) struct CompactEntry {
-    /// 表示名。`AppEntry.name` をそのまま移す（伸長しないので `Box<str>`）。
-    pub(super) name: Box<str>,
     /// 親エントリの index。[`NO_PARENT`] なら親を持たない。
     ///
     /// **必ず自分より小さい**——構築時に `pi < i` で弾いており、循環は表現できない。
@@ -86,6 +94,10 @@ pub(super) struct CompactEntry {
 /// 索引全体のパス表現。`SearchEngine` が `Vec<AppEntry>` の代わりに持つ。
 pub(super) struct PathStore {
     entries: Vec<CompactEntry>,
+    /// 表示名。**[`IndexTree`] のアリーナをそのまま受け取る**（`adopt` は move であり、
+    /// 1 バイトも写さない）。要素ごとの `Box<str>` を持たないのが要点で、詳細は
+    /// [`NameArena`] の doc。
+    names: NameArena,
     /// 拡張子とフルパスを同居させた intern 表（0 番は空文字で固定）。
     ///
     /// 同居させるのは、組み立ての最後の 1 段（根）が必ずここを引くためである。
@@ -125,8 +137,15 @@ impl PathStore {
         self.entries[i].file_name_is_lower_name = true;
     }
 
+    /// `i` の表示名。**アリーナの切り出しである**（[`NameArena::get`]）。
+    #[inline]
+    pub(super) fn name_at(&self, i: usize) -> &str {
+        self.names.get(i)
+    }
+
     pub(super) fn shrink_to_fit(&mut self) {
         self.entries.shrink_to_fit();
+        self.names.shrink_to_fit();
         self.table.shrink_to_fit();
     }
 
@@ -145,13 +164,26 @@ impl PathStore {
         // `bool` ゆえヒープを持たないが、束縛して捨てる形にすることで網羅性は保たれる。
         let Self {
             entries,
+            names,
             table,
             sorted_by_path: _,
         } = self;
-        rows.push(boxed_strs(
-            "PathStore: entries[].name",
-            entries.iter().map(|e| &*e.name),
-        ));
+        // **アリーナは 2 行に割る。** 連結バイト列と切り出しのオフセットは削減の効き方が違う
+        // ——前者は表現を変えても減らず（同じ文字が居る）、後者はアリーナ化で新しく足した額
+        // である。1 行にまとめると「何を払って何を得たか」が読めなくなる。
+        let (blob_bytes, offsets_bytes) = names.footprint_bytes();
+        rows.push(FootprintRow {
+            label: "PathStore: names（アリーナの連結バイト列）",
+            bytes: blob_bytes,
+            blocks: usize::from(blob_bytes > 0),
+            count: names.len(),
+        });
+        rows.push(FootprintRow {
+            label: "PathStore: names（アリーナのオフセット）",
+            bytes: offsets_bytes,
+            blocks: usize::from(offsets_bytes > 0),
+            count: names.len() + 1,
+        });
         rows.push(vec_body::<CompactEntry>(
             "PathStore: entries（Vec 本体）",
             entries.capacity(),
@@ -199,7 +231,7 @@ impl PathStore {
         for d in (0..depth).rev() {
             let idx = chain[d] as usize;
             push_separator(buf);
-            push_segment(buf, &self.entries[idx].name);
+            push_segment(buf, self.names.get(idx));
             push_segment(buf, &self.table[self.entries[idx].aux as usize]);
         }
         // ASCII の小文字化はここで 1 回だけ当てる（`push_segment` の doc を見よ）。
@@ -259,7 +291,7 @@ impl TreeNodes for PathStore {
     }
     #[inline]
     fn name_of(&self, i: usize) -> &str {
-        &self.entries[i].name
+        self.names.get(i)
     }
     #[inline]
     fn table_str(&self, id: u32) -> &str {
@@ -351,7 +383,7 @@ impl PathCursor {
     fn append(&mut self, store: &PathStore, idx: usize) {
         push_separator(&mut self.buf);
         let start = self.buf.len();
-        push_segment(&mut self.buf, &store.entries[idx].name);
+        push_segment(&mut self.buf, store.names.get(idx));
         push_segment(&mut self.buf, &store.table[store.entries[idx].aux as usize]);
         self.buf[start..].make_ascii_lowercase();
         self.stack.push((idx as u32, self.buf.len() as u32));
@@ -425,30 +457,29 @@ impl PathStore {
     /// [`IndexTree::build`] が済ませてあり、`index.bin` から読んだ木では**保存した側が**
     /// 済ませてある——ここが「ディスクの木表現」がロードと構築の両方に効く理由である。
     ///
-    /// 名前は `String` から `Box<str>` へ移す。[`CompactEntry`] を 32 B に保つための 8 B で
-    /// あり、全件で 2.4 MiB に相当する（容量が長さと等しければ確保は起きない）。
+    /// **名前のアリーナは move で受け取る**——ディスクと索引で同じ表現ゆえ、1 バイトも
+    /// 写さない。かつては 1 件ずつ `String` → `Box<str>` へ移していた（31 万件ぶんの
+    /// 付け替え）。
     ///
     /// **長さの一致は [`IndexTree::from_parts`] が確かめている。** ここで `zip` が短い側で
     /// 黙って止まらないのはそのためであり、`zip` 自身が保証するのではない。
     pub(super) fn adopt(tree: IndexTree) -> Self {
-        let IndexTree {
+        let OwnedTreeColumns {
             names,
             is_folder,
             parent,
             aux,
             table,
             sorted_by_path,
-        } = tree;
+        } = tree.into_columns();
         debug_assert_eq!(names.len(), is_folder.len());
         debug_assert_eq!(names.len(), parent.len());
         debug_assert_eq!(names.len(), aux.len());
-        let entries = names
+        let entries = is_folder
             .into_iter()
-            .zip(is_folder)
             .zip(parent)
             .zip(aux)
-            .map(|(((name, is_folder), parent), aux)| CompactEntry {
-                name: name.into_boxed_str(),
+            .map(|((is_folder, parent), aux)| CompactEntry {
                 parent,
                 aux,
                 is_folder,
@@ -459,6 +490,7 @@ impl PathStore {
             .collect();
         Self {
             entries,
+            names,
             table: table.into_iter().map(String::into_boxed_str).collect(),
             sorted_by_path,
         }

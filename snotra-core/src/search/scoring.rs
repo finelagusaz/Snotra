@@ -219,7 +219,7 @@ fn heap_into_results(paths: &PathStore, top_k: BinaryHeap<ScoredEntry>) -> Vec<S
         .map(|r| {
             let entry = paths.get(r.index);
             SearchResult {
-                name: entry.name.to_string(),
+                name: paths.name_at(r.index).to_string(),
                 path: paths.to_path(r.index),
                 is_folder: entry.is_folder,
                 is_error: false,
@@ -280,10 +280,16 @@ impl SearchEngine {
     pub(super) fn entry_view(&self, i: usize) -> EntryView<'_> {
         let entry = self.entries.get(i);
         // 鎖を上から解く（`build.rs` の `assemble`）。`lower_names[i]` の `None` は
-        // 「`entry.name` と同一」、`lower_file_names[i]` の共有旗は「解決後の `lower_name` と
-        // 同一」を意味する。**どちらも追加のメモリ読みを起こさない**——`entry` は既に手元にあり、
-        // 分岐が読むのは同じキャッシュラインに載っている値だけである。
-        let lower_name = self.lower_names[i].as_deref().unwrap_or(&entry.name);
+        // 「表示名と同一」、`lower_file_names[i]` の共有旗は「解決後の `lower_name` と
+        // 同一」を意味する。
+        //
+        // **`None` の枝だけがアリーナを引く。** 表示名は [`PathStore`] の連結バイト列に在り、
+        // `entry` と同じキャッシュラインには載らない（オフセット表と blob の 2 読み）。
+        // 実データでこの枝は 86.6% を通るが、通った先で読むのは**どのみち照合に要る文字列**
+        // であって余分な読みではない。旗の枝（下）は今も分岐だけで済む。
+        let lower_name = self.lower_names[i]
+            .as_deref()
+            .unwrap_or_else(|| self.entries.name_at(i));
         EntryView {
             entry,
             lower_name,

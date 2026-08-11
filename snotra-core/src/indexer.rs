@@ -1004,14 +1004,15 @@ fn save_cache_sorted_in(
 
     // Cow::Borrowed で木の列と派生 Vec の全件 clone を避ける。
     // 出力バイト列は Owned 版と同一（golden テストで保証）。
+    let derived_cols = derived.tree.columns();
     let cache = IndexCache {
         built_at: built_at.resolve(),
-        names: Cow::Borrowed(&derived.tree.names),
-        is_folder: Cow::Borrowed(&derived.tree.is_folder),
-        parent: Cow::Borrowed(&derived.tree.parent),
-        aux: Cow::Borrowed(&derived.tree.aux),
-        table: Cow::Borrowed(&derived.tree.table),
-        sorted_by_path: derived.tree.sorted_by_path,
+        names: Cow::Borrowed(derived_cols.names),
+        is_folder: Cow::Borrowed(derived_cols.is_folder),
+        parent: Cow::Borrowed(derived_cols.parent),
+        aux: Cow::Borrowed(derived_cols.aux),
+        table: Cow::Borrowed(derived_cols.table),
+        sorted_by_path: derived_cols.sorted_by_path,
         config_hash,
         char_masks: Cow::Borrowed(&derived.char_masks),
         file_name_char_masks: Cow::Borrowed(&derived.file_name_char_masks),
@@ -2692,14 +2693,15 @@ mod tests {
         ];
 
         let tree = IndexTree::build(entries.clone());
+        let tree_cols = tree.columns();
         let cache = IndexCache {
             built_at: 1700000000,
-            names: Cow::Owned(tree.names.clone()),
-            is_folder: Cow::Owned(tree.is_folder.clone()),
-            parent: Cow::Owned(tree.parent.clone()),
-            aux: Cow::Owned(tree.aux.clone()),
-            table: Cow::Owned(tree.table.clone()),
-            sorted_by_path: tree.sorted_by_path,
+            names: Cow::Owned(tree_cols.names.clone()),
+            is_folder: Cow::Owned(tree_cols.is_folder.to_vec()),
+            parent: Cow::Owned(tree_cols.parent.to_vec()),
+            aux: Cow::Owned(tree_cols.aux.to_vec()),
+            table: Cow::Owned(tree_cols.table.to_vec()),
+            sorted_by_path: tree_cols.sorted_by_path,
             config_hash: 12345,
             char_masks: Cow::Owned(vec![0xAB, 0xCD]),
             file_name_char_masks: Cow::Owned(vec![0x12, 0x34]),
@@ -2822,14 +2824,15 @@ mod tests {
 
         // save 経路と同じ Cow::Borrowed で構築する。
         let tree = IndexTree::build(entries.clone());
+        let tree_cols = tree.columns();
         let cache = IndexCache {
             built_at: 1_700_000_000,
-            names: Cow::Borrowed(&tree.names),
-            is_folder: Cow::Borrowed(&tree.is_folder),
-            parent: Cow::Borrowed(&tree.parent),
-            aux: Cow::Borrowed(&tree.aux),
-            table: Cow::Borrowed(&tree.table),
-            sorted_by_path: tree.sorted_by_path,
+            names: Cow::Borrowed(tree_cols.names),
+            is_folder: Cow::Borrowed(tree_cols.is_folder),
+            parent: Cow::Borrowed(tree_cols.parent),
+            aux: Cow::Borrowed(tree_cols.aux),
+            table: Cow::Borrowed(tree_cols.table),
+            sorted_by_path: tree_cols.sorted_by_path,
             config_hash: 12345,
             char_masks: Cow::Borrowed(&char_masks),
             file_name_char_masks: Cow::Borrowed(&file_name_char_masks),
@@ -2988,7 +2991,7 @@ mod tests {
         );
         let (tree, masks) = result.material.into_parts();
         assert_eq!(tree.len(), 3);
-        assert_eq!(tree.names.get(0), "Firefox");
+        assert_eq!(tree.name_at(0), "Firefox");
 
         // 木は `target_path` から建て直される。原文へ戻せることまで見る——v6 の実体を
         // 捨てて木にした段で取りこぼせば、以後この索引のパスは静かに壊れる。
@@ -3060,7 +3063,7 @@ mod tests {
         );
         let (tree, masks) = result.material.into_parts();
         assert_eq!(tree.len(), 2);
-        assert_eq!(tree.names.get(0), "Firefox");
+        assert_eq!(tree.name_at(0), "Firefox");
 
         let masks = masks.expect("v5 でもマスクは返る");
         match masks.lower {
@@ -3149,7 +3152,7 @@ mod tests {
             load_cache_in(&dir, 12345, LegacyUpgrade::Skip).expect("v4 の index.bin が読めること");
         let (tree, masks) = result.material.into_parts();
         assert_eq!(tree.len(), 2);
-        assert_eq!(tree.names.get(0), "Firefox");
+        assert_eq!(tree.name_at(0), "Firefox");
         let masks = masks.expect("v4 でもマスクは返る");
         assert_eq!(masks.char_masks, vec![0xABu64, 0xCD]);
         match masks.lower {
@@ -3234,8 +3237,8 @@ mod tests {
             .expect("load cache written to dir");
         let (tree, masks) = result.material.into_parts();
         assert_eq!(tree.len(), 2);
-        assert_eq!(tree.names.get(0), "Firefox");
-        assert_eq!(tree.names.get(1), "Projects");
+        assert_eq!(tree.name_at(0), "Firefox");
+        assert_eq!(tree.name_at(1), "Projects");
         let masks = masks.expect("v6 cache should include masks");
 
         // **書いたものと返したものが同一である。** cache-miss の枝はこの返り値をそのまま
@@ -3593,14 +3596,15 @@ mod tests {
         let current_dir = temp_dir("upgrade_save_ms_current");
         let config_hash = 42u64;
         let derived = derive_columns(entries);
+        let derived_cols = derived.tree.columns();
         let cache = IndexCache {
             built_at: 1_700_000_000,
-            names: Cow::Borrowed(&derived.tree.names),
-            is_folder: Cow::Borrowed(&derived.tree.is_folder),
-            parent: Cow::Borrowed(&derived.tree.parent),
-            aux: Cow::Borrowed(&derived.tree.aux),
-            table: Cow::Borrowed(&derived.tree.table),
-            sorted_by_path: derived.tree.sorted_by_path,
+            names: Cow::Borrowed(derived_cols.names),
+            is_folder: Cow::Borrowed(derived_cols.is_folder),
+            parent: Cow::Borrowed(derived_cols.parent),
+            aux: Cow::Borrowed(derived_cols.aux),
+            table: Cow::Borrowed(derived_cols.table),
+            sorted_by_path: derived_cols.sorted_by_path,
             config_hash,
             char_masks: Cow::Borrowed(&derived.char_masks),
             file_name_char_masks: Cow::Borrowed(&derived.file_name_char_masks),
@@ -3692,14 +3696,15 @@ mod tests {
         // 現行版（v7）: cache-hit だが昇格しないので cache_save_ms は 0 のまま。
         let current_dir = temp_dir("stats_upgrade_save_ms_current");
         let derived = derive_columns(entries);
+        let derived_cols = derived.tree.columns();
         let cache = IndexCache {
             built_at: 1_700_000_000,
-            names: Cow::Borrowed(&derived.tree.names),
-            is_folder: Cow::Borrowed(&derived.tree.is_folder),
-            parent: Cow::Borrowed(&derived.tree.parent),
-            aux: Cow::Borrowed(&derived.tree.aux),
-            table: Cow::Borrowed(&derived.tree.table),
-            sorted_by_path: derived.tree.sorted_by_path,
+            names: Cow::Borrowed(derived_cols.names),
+            is_folder: Cow::Borrowed(derived_cols.is_folder),
+            parent: Cow::Borrowed(derived_cols.parent),
+            aux: Cow::Borrowed(derived_cols.aux),
+            table: Cow::Borrowed(derived_cols.table),
+            sorted_by_path: derived_cols.sorted_by_path,
             config_hash,
             char_masks: Cow::Borrowed(&derived.char_masks),
             file_name_char_masks: Cow::Borrowed(&derived.file_name_char_masks),
@@ -3798,14 +3803,15 @@ mod tests {
         }];
         let config_hash = 42u64;
         let derived = derive_columns(entries);
+        let derived_cols = derived.tree.columns();
         let cache = IndexCache {
             built_at: 1_700_000_000,
-            names: Cow::Borrowed(&derived.tree.names),
-            is_folder: Cow::Borrowed(&derived.tree.is_folder),
-            parent: Cow::Borrowed(&derived.tree.parent),
-            aux: Cow::Borrowed(&derived.tree.aux),
-            table: Cow::Borrowed(&derived.tree.table),
-            sorted_by_path: derived.tree.sorted_by_path,
+            names: Cow::Borrowed(derived_cols.names),
+            is_folder: Cow::Borrowed(derived_cols.is_folder),
+            parent: Cow::Borrowed(derived_cols.parent),
+            aux: Cow::Borrowed(derived_cols.aux),
+            table: Cow::Borrowed(derived_cols.table),
+            sorted_by_path: derived_cols.sorted_by_path,
             config_hash,
             char_masks: Cow::Borrowed(&derived.char_masks),
             file_name_char_masks: Cow::Borrowed(&derived.file_name_char_masks),

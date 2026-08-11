@@ -45,7 +45,8 @@ use std::cmp::Ordering;
 
 use super::footprint::{FootprintRow, boxed_strs, vec_body};
 use crate::index_tree::{
-    IndexTree, NO_PARENT, NameArena, TreeNodes, push_separator, raw_path_into, walk_to_root,
+    IndexTree, NO_PARENT, NameArena, OwnedTreeColumns, TreeNodes, push_separator, raw_path_into,
+    walk_to_root,
 };
 #[cfg(test)]
 use crate::indexer::AppEntry;
@@ -463,14 +464,14 @@ impl PathStore {
     /// **長さの一致は [`IndexTree::from_parts`] が確かめている。** ここで `zip` が短い側で
     /// 黙って止まらないのはそのためであり、`zip` 自身が保証するのではない。
     pub(super) fn adopt(tree: IndexTree) -> Self {
-        let IndexTree {
+        let OwnedTreeColumns {
             names,
             is_folder,
             parent,
             aux,
             table,
             sorted_by_path,
-        } = tree;
+        } = tree.into_columns();
         debug_assert_eq!(names.len(), is_folder.len());
         debug_assert_eq!(names.len(), parent.len());
         debug_assert_eq!(names.len(), aux.len());

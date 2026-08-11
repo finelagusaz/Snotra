@@ -122,10 +122,15 @@ impl NameArena {
     /// 範囲外は panic であって黙った空文字ではない。
     ///
     /// **`get_unchecked` にしても速くならない**（実測）。`String` の範囲添字は両端で UTF-8 の
-    /// 文字境界を検査するので、そこがパスクエリの +5% の出所ではないかと疑って測ったが、
-    /// `c:\users` の p50 は 11,905–12,364 µs（安全版 12,104–12,226）で main の
-    /// 11,505–11,520 と重ならないまま、ばらつきだけが広がった。**退行の機序は切り分けて
-    /// いない**——ここに `unsafe` を置く理由が無いことだけが分かっている。
+    /// 文字境界を検査するので、そこがパスクエリの約 5% の出所ではないかと疑って測ったが、
+    /// `c:\users` の p50 は 11,905–12,364 µs（安全版 11,760–12,226）で main と重ならないまま、
+    /// ばらつきだけが広がった。**ここに `unsafe` を置く理由は無い。**
+    ///
+    /// 退行の機序そのものは切り分けてある——効いているのは [`raw_path_into`] と
+    /// `PathCursor::append` が通る**全件走査の組み立て**であり、`entry_view` ではない
+    /// （読み口を差し替える変異 2 つで判定した。表は `PERFORMANCE.md`「採用: 表示名を
+    /// 文字列アリーナで持つ」）。**緩和は削減と排他である**——名前を複製して持てば戻るが、
+    /// それは 312,108 個の確保を戻すことに等しい。
     #[inline]
     pub(crate) fn get(&self, i: usize) -> &str {
         &self.blob[self.offsets[i] as usize..self.offsets[i + 1] as usize]
@@ -239,6 +244,32 @@ impl<'de> Deserialize<'de> for NameArena {
     }
 }
 
+/// [`IndexTree`] の列を借りて見る口（保存側が使う）。
+///
+/// **フィールドに名前を付ける。** `parent` と `aux` はどちらも `Vec<u32>` なので、タプルで
+/// 返すと**取り違えてもコンパイルが通る**——そして取り違えた木は panic せず、パスの組み立てが
+/// 静かに壊れる（`CachedMasks` を組で束ねているのと同じ理屈）。
+pub(crate) struct TreeColumns<'a> {
+    pub(crate) names: &'a NameArena,
+    pub(crate) is_folder: &'a [bool],
+    pub(crate) parent: &'a [u32],
+    pub(crate) aux: &'a [u32],
+    pub(crate) table: &'a [String],
+    pub(crate) sorted_by_path: bool,
+}
+
+/// [`IndexTree`] を列へほどいた形（索引側が組み替えるときに使う）。
+///
+/// **名前を付ける理由は [`TreeColumns`] と同じである。**
+pub(crate) struct OwnedTreeColumns {
+    pub(crate) names: NameArena,
+    pub(crate) is_folder: Vec<bool>,
+    pub(crate) parent: Vec<u32>,
+    pub(crate) aux: Vec<u32>,
+    pub(crate) table: Vec<String>,
+    pub(crate) sorted_by_path: bool,
+}
+
 /// 木の 1 ノードを読む口。**記憶域の並べ方だけを抽象化する**——規則は [`raw_path_into`] が
 /// 唯一持つ。
 ///
@@ -335,21 +366,29 @@ pub(crate) fn raw_path_into<N: TreeNodes + ?Sized>(nodes: &N, buf: &mut String, 
 
 /// 木の並列 Vec 表現。`index.bin` が持つ形であり、索引側はこれを受け取って組み替える。
 ///
-/// フィールドを直接触れるのは、`indexer` が保存時に `Cow::Borrowed` で各列をそのまま
-/// シリアライズするためである（全件 clone を避ける）。
+/// **フィールドは private である。** 列を外から見る口は [`Self::columns`]（借用・保存側が
+/// `Cow::Borrowed` で全件 clone を避けるため）と [`Self::into_columns`]（所有・`PathStore` が
+/// 組み替えるため）の 2 つだけで、**組む口は [`Self::from_parts`] / [`Self::build`] /
+/// [`Self::empty`] しかない**。
+///
+/// **これは額ではなく構造の変更である。** 以前は `pub(crate)` ゆえ、crate 内から構造体
+/// リテラルで木を組めた——つまり `from_parts` の検証（列の長さ・`aux` の範囲・`parent < i`・
+/// 深さの上限）を**迂回した木が表現できた**。迂回した木の帰結は `from_parts` の doc が
+/// 4 つ挙げているが、どれも「索引が黙って短くなる」「組み立てが止まらない」の側で、
+/// 検索結果は正しく見える。**表現できなくすればチェックリストが要らなくなる。**
 pub struct IndexTree {
     /// 表示名。`AppEntry.name` をそのまま移す（**要素ごとの確保を持たない**・[`NameArena`]）。
-    pub(crate) names: NameArena,
-    pub(crate) is_folder: Vec<bool>,
+    names: NameArena,
+    is_folder: Vec<bool>,
     /// 各要素の意味は [`TreeNodes::parent_of`]。
-    pub(crate) parent: Vec<u32>,
+    parent: Vec<u32>,
     /// 各要素の意味は [`TreeNodes::aux_of`]。
-    pub(crate) aux: Vec<u32>,
+    aux: Vec<u32>,
     /// 拡張子とフルパスを同居させた intern 表（0 番は空文字で固定）。
     ///
     /// 同居させるのは、組み立ての最後の 1 段（根）が必ずここを引くためである。
     /// 別テーブルにして二分探索させると、**全エントリの組み立てにその探索が乗る**。
-    pub(crate) table: Vec<String>,
+    table: Vec<String>,
     /// フルパスのバイト順に**狭義の単調増加**で並んでいるか。索引側の tie-break が
     /// 「組み立てずに index を比べる」高速路へ入れるかを決める。
     ///
@@ -466,6 +505,51 @@ impl IndexTree {
     /// 全件走査で 1 件ごとに確保させないためである。**
     pub fn path_into(&self, buf: &mut String, i: usize) {
         raw_path_into(self, buf, i);
+    }
+
+    /// 列を借りて見る（保存側が `Cow::Borrowed` で全件 clone を避けるための口）。
+    pub(crate) fn columns(&self) -> TreeColumns<'_> {
+        // **`..` を書かない。** 列を足したらここが compile error になるのが要点である
+        // （`SearchEngine::footprint_rows` と同じ規律）。
+        let Self {
+            names,
+            is_folder,
+            parent,
+            aux,
+            table,
+            sorted_by_path,
+        } = self;
+        TreeColumns {
+            names,
+            is_folder,
+            parent,
+            aux,
+            table,
+            sorted_by_path: *sorted_by_path,
+        }
+    }
+
+    /// 列へほどく（索引側が並べ方を組み替えるための口）。
+    ///
+    /// **返した列から木へ戻る道は無い**——[`Self::from_parts`] は検証を通すので、ほどいた列を
+    /// そのまま構造体リテラルへ流し込む形は書けない。
+    pub(crate) fn into_columns(self) -> OwnedTreeColumns {
+        let Self {
+            names,
+            is_folder,
+            parent,
+            aux,
+            table,
+            sorted_by_path,
+        } = self;
+        OwnedTreeColumns {
+            names,
+            is_folder,
+            parent,
+            aux,
+            table,
+            sorted_by_path,
+        }
     }
 
     /// `i` の表示名（アリーナの切り出し）。

@@ -88,6 +88,21 @@ npm run check:colors -- -Interactive      # 判定せず起動し、目視項目
 - **`SNOTRA_CONFIG_DIR` が効いたことは肯定的に確かめる。** 実行後にプロファイル配下へ `*.bin` が生成されていることを見る。効いていなければ本体は実 config を読むため、ピクセルが赤いときに「色が届いていない」と「env が効いていない」を切り分けられない
 - 判定が赤のとき（`-KeepShot` なら緑でも）`target/visual-check/` へスクリーンショットを残す。観測点が背景でない場所を指していないかは、この画像で確認する
 
+#### 入力欄の縦位置が気になる変更では、フォント別に実ピクセルを測る
+
+```powershell
+npm run check:input-metrics                                  # 既定の 8 フォント（日本語 4 + 英語 4）
+pwsh -File scripts/visual-input-metrics.ps1 -Fonts 'Segoe UI;Arial'   # `;` 区切りで絞る
+pwsh -File scripts/visual-input-metrics.ps1 -KeepShots        # 撮った窓を target/ へ残す
+```
+
+- **合否を出さない。道具であって検査ではない。** 出るのは「欄の内側 / キャレットの高さ / 上下余白 / Skew」の表で、読むのは人間である。**毎作業では走らせない**——使う契機は egui / epaint を上げたとき・入力欄の描画や行高やフォント登録に触ったとき・「見え方が変わった気がする」と報告を受けたときである
+- **判定を持たせない理由**: フォント依存で 1px の非対称が構造的に残る（#1045）ため、閾値を置けば「常に緑」か「常に赤」のどちらかへ倒れる。**永久に赤いゲートはゲートが無いのと機能的に同じである**（`check:colors` が #953 で旧述語を捨てたのと同型）
+- **Rust 側の検査では届かない領域を見る。** `view.rs` の `input_text_sits_vertically_centered_for_both_body_and_hint` は egui の**論理座標**で galley を縛るが、実機のフォント解決・softbuffer のラスタライズ・DPI を通らない。2026-08-11 の実測では、論理座標では 8 フォントすべて対称だったのに**実機では 4 種で 1px ずれていた**（Windows 既定の Yu Gothic UI と Segoe UI が両方ずれる側）
+- **前後で撮って突き合わせる使い方を想定している。** egui 0.36.1 への更新では、8 フォントの値が 0.35.0 と一寸違わないことをこの形で確かめた
+- 判定ロジックは `scripts/lib/SnotraInputMetrics.psm1`（純関数・Pester が測る）、起動とキャプチャは `scripts/visual-input-metrics.ps1` が持つ。**値の意味と読み方はモジュールの doc が正本**
+- `check:colors` と同じく **CI では走らない**・**ユーザーの実 config には触れない**（`SNOTRA_CONFIG_DIR` で `target/visual-input-metrics/` を指す）・**画面ロック中は実行できない**
+
 #### エージェントが目視項目を自分で実施するとき
 
 `smoke:manual` が実行できないのは合否の記録に `Read-Host` を使うからで、**目視項目の実体（アプリを操作して表示を観測する）は実施できる**（#836 で 11 項目・#870 で日英 2 本の実績）。実施するなら次の 4 点に従う。

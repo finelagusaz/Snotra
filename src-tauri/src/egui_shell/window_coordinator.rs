@@ -44,19 +44,19 @@ use super::{EguiShellState, ResultsWindow};
 /// AppState 不在(setup 完了前の理論経路のみ)は `visual::default_visual()` から導出——
 /// 理由は本体のコメントに置く。
 pub(crate) fn read_metrics(app: &tauri::AppHandle) -> layout::Metrics {
-    let (f, rp, bp) = app
-        .try_state::<crate::AppState>()
-        .map(|s| {
-            let engine = s.engine.lock().unwrap();
-            let v = &engine.config().visual;
+    let (f, rp, bp) = super::read_config(
+        app,
+        |c| {
+            let v = &c.visual;
             (v.font_size, v.row_padding, v.bar_padding)
-        })
-        .unwrap_or_else(|| {
+        },
+        || {
             // 既定 VisualConfig の正本は `visual::default_visual()`（`LazyLock` 静的）である——
             // ここで `VisualConfig::default()` を組むと String 6 本を毎回確保し、既定源も 2 つになる
             let v = super::visual::default_visual();
             (v.font_size, v.row_padding, v.bar_padding)
-        });
+        },
+    );
     layout::Metrics::from_config(f, rp, bp)
 }
 
@@ -80,9 +80,11 @@ pub(crate) fn read_metrics(app: &tauri::AppHandle) -> layout::Metrics {
 /// AppState 不在は setup 完了前の理論経路のみ（`.manage` は `.setup` より前・`read_metrics` の
 /// doc と同じ）。既定へ落ちるのはそのときだけである。
 pub(crate) fn read_window_width(app: &tauri::AppHandle) -> f64 {
-    app.try_state::<crate::AppState>()
-        .map(|s| f64::from(s.engine.lock().unwrap().config().appearance.window_width))
-        .unwrap_or_else(|| f64::from(AppearanceConfig::default().window_width))
+    super::read_config(
+        app,
+        |c| f64::from(c.appearance.window_width),
+        || f64::from(AppearanceConfig::default().window_width),
+    )
 }
 
 /// index 構築中か（show 経路が status 行の有無を導くために読む）。正本は `AppState.indexing`。
@@ -387,10 +389,11 @@ pub(crate) fn show_egui_main(
     // TurnOffIme は生 HWND(usize) を取るため窓型非依存で &Window 一般化は不要。
     #[cfg(windows)]
     {
-        let ime_control = app
-            .try_state::<crate::AppState>()
-            .map(|s| s.engine.lock().unwrap().config().general.ime_off_on_show)
-            .unwrap_or_else(|| GeneralConfig::default().ime_off_on_show);
+        let ime_control = super::read_config(
+            app,
+            |c| c.general.ime_off_on_show,
+            || GeneralConfig::default().ime_off_on_show,
+        );
         if ime_control
             && let Some(bridge) =
                 app.try_state::<std::sync::Mutex<crate::platform::PlatformBridge>>()
@@ -683,10 +686,11 @@ pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
     };
     // #1032 の調査足場: この engine lock の取得だけを別に測る（`DriveTiming` の doc）。
     let seg_gap = crate::trace::Segment::start();
-    let gap = app
-        .try_state::<crate::AppState>()
-        .map(|s| s.engine.lock().unwrap().config().visual.window_gap)
-        .unwrap_or_else(|| super::visual::default_visual().window_gap);
+    let gap = super::read_config(
+        app,
+        |c| c.visual.window_gap,
+        || super::visual::default_visual().window_gap,
+    );
     GAP_LOCK_US.store(seg_gap.end(), std::sync::atomic::Ordering::Relaxed);
     let (Ok(pos), Ok(size), Ok(scale)) = (
         main.outer_position(),
@@ -709,16 +713,11 @@ pub(crate) fn position_results_below_main(app: &tauri::AppHandle) {
 /// **読み点の制約を持たない**ため `DriveResultsInputs` へは載せず、driver の内側で読む
 /// （#749）——引数を増やすほど、呼び出し側で読み点の違う値を並べて書きたくなる。
 fn max_results(app: &tauri::AppHandle) -> u32 {
-    app.try_state::<crate::AppState>()
-        .map(|s| {
-            s.engine
-                .lock()
-                .unwrap()
-                .config()
-                .appearance
-                .effective_visible_rows() as u32
-        })
-        .unwrap_or_else(|| AppearanceConfig::default().effective_visible_rows() as u32)
+    super::read_config(
+        app,
+        |c| c.appearance.effective_visible_rows() as u32,
+        || AppearanceConfig::default().effective_visible_rows() as u32,
+    )
 }
 
 /// `AppState.main_visible` の live-read。`drive_results_window` が show の事前ゲート

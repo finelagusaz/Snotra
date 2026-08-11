@@ -238,6 +238,8 @@ fn main() {
     startup::mark(startup::Phase::EngineBuild);
 
     let app_state = AppState {
+        // engine が持つのと同じ Arc を渡す（写しではない・`Engine::config_handle` の doc）。
+        config: engine.config_handle(),
         engine: Mutex::new(engine),
         indexing: AtomicBool::new(initial_indexing),
         index_build_started: AtomicBool::new(false),
@@ -449,13 +451,18 @@ fn setup_hotkey_listener(app_handle: &AppHandle) {
                 .map(|s| s.main_visible.load(Ordering::SeqCst))
                 .unwrap_or(false);
             // hotkey_toggle は可視時の hide 判定にしか使わない（plan_hotkey）。`visible &&` で
-            // 短絡し、非表示＝show 経路（最も遅延に敏感）では engine ロックを取らない。
+            // 短絡し、非表示＝show 経路（最も遅延に敏感）では読みそのものを省く。
             // 表示中でも hotkey_toggle=false なら hide せず show 側（再フォーカス/再配置）へ回る。
+            //
+            // **読みは engine ロックを経ない**（#1032）。この短絡はかつて「show 経路で engine
+            // ロックを取らない」ための対策でもあったが、`read_config` が錠そのものを避ける
+            // ようになったので、いまは無駄な読みを省くだけの意味になった。
             let hotkey_toggle = visible
-                && app_state
-                    .as_ref()
-                    .map(|s| s.engine.lock().unwrap().config().general.hotkey_toggle)
-                    .unwrap_or_else(|| GeneralConfig::default().hotkey_toggle);
+                && egui_shell::read_config(
+                    app,
+                    |c| c.general.hotkey_toggle,
+                    || GeneralConfig::default().hotkey_toggle,
+                );
             match egui_shell::plan_hotkey(visible, is_alt_pressed(), hotkey_toggle) {
                 egui_shell::HotkeyPlan::HideNow => {
                     egui_shell::hide_egui_main(app, el);

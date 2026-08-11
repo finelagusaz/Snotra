@@ -3,6 +3,11 @@
 //! `SearchEngine` + `HistoryStore` + `Config` を1つの `Mutex<Engine>` にまとめ、Tauri 側の
 //! 多重ロックを解消する。ロック保持時間を最小化するため、ロック外で扱うスナップショット/
 //! 構築物 `FolderListContext`・`PrebuiltIndex`・`PreparedHistorySave` を公開する。
+//!
+//! **設定だけは外側の `Mutex` を経ずに読める**（#1032・`config_handle` の doc が正本）。
+//! 検索は `&mut self` を要求するので外側の `Mutex` を長く握り、実運用点では 1 回の
+//! `search` が 40〜95 ms 保持する。その間 UI が同じ `Mutex` 越しに設定を読んでいたのが
+//! #1032 の主因だった。
 
 use crate::config::{Config, ScanPath};
 use crate::folder;
@@ -11,6 +16,7 @@ use crate::indexer::{AppEntry, IndexMaterial};
 use crate::search::{SearchEngine, SearchMode, SearchOptions};
 use crate::ui_types::SearchResult;
 use std::path::Path;
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 #[derive(Debug, Clone, Copy)]
 pub struct FolderListContext {
@@ -92,7 +98,15 @@ impl IndexInputs {
 pub struct Engine {
     search_engine: SearchEngine,
     history: HistoryStore,
-    config: Config,
+    /// 設定。**外側の `Mutex<Engine>` とは別の錠の内側にある**（#1032）。
+    ///
+    /// 書き手は `update_config` の 1 本だけで、それは `&mut self` を要求する——**つまり
+    /// 書き込みは外側の `Mutex` の内側でしか起きない**。この非対称が意図である: 読みは
+    /// 外側の錠を要らないが、書きは要る。`complete_index_drain` が
+    /// 「index を swap してから現在の `IndexInputs` と照合する」を原子に行えるのは
+    /// この性質による（#347/#348-A の lost-update 対策）。**`update_config` を
+    /// `&self` へ変えてはならない**——変えた瞬間にその原子性が崩れる。
+    config: Arc<RwLock<Config>>,
     /// インデックスが現在の config の `IndexInputs` を反映していない可能性を表す（issue #347/#348-A）。
     /// `start_index_build`（ビルド要求）が `mark_index_stale` で立て、`complete_index_drain` が
     /// 「ビルド開始時スナップショット == 現在」のときだけ落とす。コヒーレンシ判断を engine Mutex
@@ -106,7 +120,7 @@ impl Engine {
         Self {
             search_engine,
             history,
-            config,
+            config: Arc::new(RwLock::new(config)),
             index_stale: false,
         }
     }
@@ -121,30 +135,37 @@ impl Engine {
         Self {
             search_engine,
             history,
-            config,
+            config: Arc::new(RwLock::new(config)),
             index_stale: false,
         }
     }
 
     pub fn search(&mut self, query: &str) -> Vec<SearchResult> {
-        let mode = SearchMode::from(self.config.search.normal_mode);
-        let boost = SearchOptions::from(&self.config.search);
+        // **3 つの値を 1 つの読みから取る。** `&mut self` ゆえ外側の `Mutex` は保持されており、
+        // 書き手（`update_config`）はそれを要求するので途中で入れ替わることはない——ここで
+        // guard を分けても壊れはしないが、分けない形が「同じ config から導いた 3 つ」である
+        // ことを表す（#1032）。
+        let cfg = self.config.read().unwrap();
+        let mode = SearchMode::from(cfg.search.normal_mode);
+        let boost = SearchOptions::from(&cfg.search);
         // result_limit が取得上限。visible_rows はウィンドウ可視行数のみを制御する。
-        let fetch_limit = self.config.search.effective_result_limit();
+        let fetch_limit = cfg.search.effective_result_limit();
+        drop(cfg);
         self.search_engine
             .search_with_options(query, fetch_limit, &self.history, mode, boost)
     }
 
     pub fn recent_history(&self) -> Vec<SearchResult> {
-        let max = self.config.search.effective_recent_limit();
+        let max = self.config.read().unwrap().search.effective_recent_limit();
         self.search_engine.recent_history(&self.history, max)
     }
 
     pub fn capture_folder_list_context(&self) -> FolderListContext {
+        let cfg = self.config.read().unwrap();
         FolderListContext {
-            mode: SearchMode::from(self.config.search.folder_mode),
-            show_hidden_system: self.config.search.show_hidden_system,
-            max_results: self.config.search.effective_result_limit(),
+            mode: SearchMode::from(cfg.search.folder_mode),
+            show_hidden_system: cfg.search.show_hidden_system,
+            max_results: cfg.search.effective_result_limit(),
         }
     }
 
@@ -195,21 +216,43 @@ impl Engine {
 
     pub fn prepare_history_save_if_dirty(&mut self, threshold: u32) -> Option<PreparedHistorySave> {
         // top_n は現在の config から live-read で渡す（焼き込まない、issue #348）。
-        self.history
-            .prepare_save_if_dirty(threshold, self.config.search.effective_result_limit())
+        let top_n = self.config.read().unwrap().search.effective_result_limit();
+        self.history.prepare_save_if_dirty(threshold, top_n)
     }
 
     pub fn prepare_history_flush(&mut self) -> Option<PreparedHistorySave> {
-        self.history
-            .prepare_flush(self.config.search.effective_result_limit())
+        let top_n = self.config.read().unwrap().search.effective_result_limit();
+        self.history.prepare_flush(top_n)
     }
 
-    pub fn config(&self) -> &Config {
-        &self.config
+    /// 現在の設定を読む。**guard を返す**（#1032 で `&Config` から変わった）。
+    ///
+    /// **保持したまま `update_config` を呼ばないこと**——同じ `RwLock` を読みと書きで
+    /// 二重に取ることになり、同一スレッドで自己デッドロックする。値を使い終えたら落とすか、
+    /// 必要な値をコピーしてから手放す。
+    pub fn config(&self) -> RwLockReadGuard<'_, Config> {
+        self.config.read().unwrap()
     }
 
+    /// 設定を差し替える。**`&mut self` である**（外側の `Mutex<Engine>` を要求する）。
+    ///
+    /// この非対称の理由と、`&self` へ変えてはならない理由は `config` フィールドの doc。
     pub fn update_config(&mut self, config: Config) {
-        self.config = config;
+        *self.config.write().unwrap() = config;
+    }
+
+    /// 設定の共有ハンドルを渡す（#1032）。
+    ///
+    /// **UI が毎フレーム行う live-read を、外側の `Mutex<Engine>` の外へ出すための口である。**
+    /// 検索の worker は `search` の間じゅう外側の `Mutex` を握る（実運用点で 40〜95 ms）ため、
+    /// UI が同じ錠越しに設定を読むと、そのフレームは worker の走査が終わるまで返らない
+    /// （`read_window_width` 単独で 43,939 µs の待ちを実測した・`PERFORMANCE.md`）。
+    ///
+    /// **返すのは同じ `Arc` であって写しではない**——`update_config` の書き込みは、この
+    /// ハンドルを持つ読み手へそのまま届く。別々に持って両方へ書く形にすると、書き手が
+    /// 片方を忘れた瞬間に UI と検索が違う設定で動く。
+    pub fn config_handle(&self) -> Arc<RwLock<Config>> {
+        Arc::clone(&self.config)
     }
 
     /// テスト専用。本番コードは `apply_prebuilt_index` を使う（H-1）。
@@ -238,7 +281,7 @@ impl Engine {
     /// stale なら現在の `IndexInputs` スナップショットを返す（ロック外ビルドの基準）。stale でなければ None。
     pub fn begin_index_drain(&self) -> Option<IndexInputs> {
         if self.index_stale {
-            Some(IndexInputs::from_config(&self.config))
+            Some(IndexInputs::from_config(&self.config.read().unwrap()))
         } else {
             None
         }
@@ -247,11 +290,16 @@ impl Engine {
     /// ロック外で構築した index をスワップし、ビルド開始時スナップショット（`built_from`）と
     /// 現在 config の `IndexInputs` が一致するときだけ stale を落とす。ビルド中に config が
     /// 変わっていれば stale を残し、次の `begin_index_drain` で再ビルドさせる（lost-update を塞ぐ）。
+    ///
+    /// **swap と照合の原子性は外側の `Mutex<Engine>` が守る**（#1032）。この関数は `&mut self`
+    /// を取り、唯一の書き手 `update_config` も `&mut self` を取るので、両者が交錯する並びは
+    /// 構築できない。**config を `RwLock` に移してもこの性質は変わらない**——読みだけが錠の
+    /// 外へ出ており、書きは外側の `Mutex` の内側に留めてある。
     pub fn complete_index_drain(&mut self, index: PrebuiltIndex, built_from: &IndexInputs) {
         self.apply_prebuilt_index(index);
         // ビルド開始時スナップショットと現在の index 入力が一致するときだけ stale を落とす。
         // ビルド中に config が変わっていれば（!=）stale を残し、次の begin_index_drain で再ビルドさせる。
-        if IndexInputs::from_config(&self.config) == *built_from {
+        if IndexInputs::from_config(&self.config.read().unwrap()) == *built_from {
             self.index_stale = false;
         }
     }

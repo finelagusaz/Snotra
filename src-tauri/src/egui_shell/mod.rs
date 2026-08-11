@@ -213,12 +213,13 @@ pub(crate) fn spawn_update_check(app: &tauri::AppHandle) {
         }
         return;
     }
-    let mode = app
-        .try_state::<crate::AppState>()
-        .map(|s| s.engine.lock().unwrap().config().general.auto_update)
+    let mode = read_config(
+        app,
+        |c| c.general.auto_update,
         // AppState は setup 前に managed されるため実運用では到達不能。到達したら
         // 「設定を読めていない」状態なので、勝手に更新を始めない Disabled へ倒す（#648 F）。
-        .unwrap_or(AutoUpdateMode::Disabled);
+        || AutoUpdateMode::Disabled,
+    );
     if mode == AutoUpdateMode::Disabled {
         return;
     }
@@ -389,33 +390,59 @@ fn apply_rounded_corners(window: &tauri::Window) {
     }
 }
 
-/// 1 フレーム分のテーマ値を **lock 1 回**で読み切る（#673 spec 決定 4）。導出は純関数
-/// `visual::visual_snapshot` が持ち、この関数は lock と AppState 不在の面倒だけを見る。
+/// UI が config を読む唯一の口（#1032）。**`engine.lock()` を経てはならない。**
+///
+/// 検索 worker は `engine.search` の間じゅう `Mutex<Engine>` を握る（実運用点で 40〜95 ms）。
+/// UI がその錠越しに config を読むと、フレームは worker の走査が終わるまで返らない
+/// ——`read_window_width` 単独で 43,939 µs の待ちを実測した（`PERFORMANCE.md`「フレーム
+/// 後半の帰属」）。ここが読むのは `AppState.config` で、`Engine` が持つのと同じ `Arc` である
+/// （書き込みは `update_config` の 1 本だけ・`Engine::config_handle` の doc が正本）。
+///
+/// **`read` の中で lock を取る操作を書かないこと**——read guard を保持したまま
+/// `engine.lock()` を要求すると、錠を分けた意味が消えるうえ待ちが両方に乗る。
+///
+/// **1 フレームに何回呼んでもよいが、同じ値の一貫性が要る読みは 1 回にまとめること**
+/// （`read_visual` がテーマ値 3 種を 1 回で読み切るのはそのためである・#673 spec 決定 4）。
+pub(crate) fn read_config<T>(
+    app: &tauri::AppHandle,
+    read: impl FnOnce(&snotra_core::config::Config) -> T,
+    fallback: impl FnOnce() -> T,
+) -> T {
+    match app.try_state::<crate::AppState>() {
+        Some(s) => read(&s.config.read().unwrap()),
+        // AppState 不在は setup 完了前の理論経路のみ（`.manage` は `.setup` より前）。
+        None => fallback(),
+    }
+}
+
+/// 1 フレーム分のテーマ値を **読み 1 回**で読み切る（#673 spec 決定 4）。導出は純関数
+/// `visual::visual_snapshot` が持ち、この関数は読みと AppState 不在の面倒だけを見る。
 ///
 /// **`read_metrics` は残す**（統合しない）——`show_egui_main` が show 経路で高さだけを要り、
 /// 色 parse を払わせないため。両者とも `Metrics::from_config` を正本とするので導出は 1 つ。
 ///
 /// **戻り値を `self.` へ保持しないこと**（寿命は 1 フレーム・`visual.rs` の `//!`）。
 pub(crate) fn read_visual(app: &tauri::AppHandle, applied_font_family: &str) -> VisualSnapshot {
-    match app.try_state::<crate::AppState>() {
-        Some(s) => {
-            let engine = s.engine.lock().unwrap();
-            let config = engine.config();
-            // guard 内で行うのは hex parse と算術と &str 比較まで。I/O や重い確保を足さない。
+    read_config(
+        app,
+        |config| {
+            // 読みの中で行うのは hex parse と算術と &str 比較まで。I/O や重い確保を足さない。
             visual::visual_snapshot(
                 &config.visual,
                 config.appearance.show_icons,
                 applied_font_family,
             )
-        }
-        // AppState 不在（setup 完了前の理論経路のみ）。既定は型から導く——`AppearanceConfig` に
-        // `Default` 実装を与えたことで show_icons のリテラルが不要になった（#795）。
-        None => visual::visual_snapshot(
-            visual::default_visual(),
-            AppearanceConfig::default().show_icons,
-            applied_font_family,
-        ),
-    }
+        },
+        // 既定は型から導く——`AppearanceConfig` に `Default` 実装を与えたことで show_icons の
+        // リテラルが不要になった（#795）。
+        || {
+            visual::visual_snapshot(
+                visual::default_visual(),
+                AppearanceConfig::default().show_icons,
+                applied_font_family,
+            )
+        },
+    )
 }
 
 /// view からの `egui-hide-requested` を受け、hide_egui_main を実行する（**main の** hide の

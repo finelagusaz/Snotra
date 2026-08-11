@@ -103,7 +103,9 @@ fn build_launch_args(args: &str, path: &str) -> Vec<String> {
 fn resolve_opener(path: &str, state: &AppState) -> Option<(String, String)> {
     let is_folder = std::path::Path::new(path).is_dir();
     let engine = state.engine.lock().unwrap();
-    let tools = find_matching_tools(path, is_folder, &engine.config().openers);
+    // guard を束ねる（#1032 で `config()` が `RwLockReadGuard` を返すようになった）。
+    let cfg = engine.config();
+    let tools = find_matching_tools(path, is_folder, &cfg.openers);
     tools.first().map(|t| (t.exe.clone(), t.args.clone()))
 }
 
@@ -152,7 +154,9 @@ pub fn launch_default_with_state(path: &str, state: &AppState) -> LaunchResult {
 pub fn resolve_all_openers(path: &str, state: &AppState) -> Vec<(String, String, String)> {
     let is_folder = std::path::Path::new(path).is_dir();
     let engine = state.engine.lock().unwrap();
-    let tools = find_matching_tools(path, is_folder, &engine.config().openers);
+    // guard を束ねる（`resolve_opener` と同じ理由・#1032）。
+    let cfg = engine.config();
+    let tools = find_matching_tools(path, is_folder, &cfg.openers);
     tools
         .iter()
         .map(|t| (t.name.clone(), t.exe.clone(), t.args.clone()))

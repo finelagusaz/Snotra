@@ -684,9 +684,9 @@ impl LauncherController {
     /// UI 文言の言語（config general.language・起動時一回でなく都度読み——lock 1 回/フレームの
     /// 既存ヘルパー群と同型。SU6 の hot-reload 拡張時もこの読み口のまま動く）。
     pub(super) fn lang(&self) -> snotra_core::config::Language {
-        self.app_handle
-            .try_state::<crate::AppState>()
-            .map(|s| s.engine.lock().unwrap().config().general.language)
+        crate::egui_shell::read_config(
+            &self.app_handle,
+            |c| c.general.language,
             // AppState 不在（setup 完了前の理論経路のみ——`.manage` は `.setup` より前）は OS
             // ロケールから導く（#824 の 2 で決定）。固定の `Ja` は `SPEC.md`「7.6 起動時の設定初期化」
             // の「`ja` で始まれば日本語、それ以外は英語」と食い違っており、到達すれば非 ja 環境で
@@ -694,7 +694,8 @@ impl LauncherController {
             // `GeneralConfig::default()` を経由するのは、`default_language()` を `pub` にすると
             // lib crate の公開面が増えて `dead_code` による到達性の検出を失うためである
             // （`docs/adr/ADR-config-default-fallback-references.md`）。
-            .unwrap_or_else(|| snotra_core::config::GeneralConfig::default().language)
+            || snotra_core::config::GeneralConfig::default().language,
+        )
     }
 
     /// dir を別スレッドで全列挙・全ソートし FolderMsg を channel へ送る（token 付き）。

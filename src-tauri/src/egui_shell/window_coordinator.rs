@@ -789,6 +789,11 @@ pub(crate) struct DriveTiming {
 /// 返り値で運ばないのは、この関数が `Moved` リスナーとも共用の単一点であり、そちらへ
 /// 戻り値の扱いを増やしたくないためである。**書き手はイベントループスレッドだけ**であり、
 /// `drive_results_window` が同じフレームの中で読み出す。
+///
+/// **窓ハンドルを引けずに早期 return したフレームでは更新されない**ので、そのとき
+/// `drive_results_window` が読むのは前フレームの値である（0 へ戻していない）。実測では
+/// 全フレーム 0〜1 µs でこの取り違えは値に現れないが、**計器としては帰属がずれる**。
+/// 器を A/B で揃える前提を優先して直していない（`crate::trace::TRACE_ELAPSED_US` の doc）。
 static GAP_LOCK_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 pub(crate) fn drive_results_window(

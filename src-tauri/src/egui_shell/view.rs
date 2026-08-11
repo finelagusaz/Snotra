@@ -465,8 +465,12 @@ impl EguiView for SearchWindowView {
         let frame_interval = self.frame_timer.begin(frame_started);
         // #1032 の調査足場: フレームを区間へ切って `egui_frame` へまとめて載せる。**区間ごとに
         // trace を吐かない**——1 本約 10 ms が測定行為そのものとして乗るため（`Segment` が
-        // 各区間からその分を控除する）。区間は隙間なく `update()` 全体を覆う——内訳の和が
-        // `update_us` に届かなければ、計器が見落とした区間があるということである。
+        // 各区間からその分を控除する）。
+        //
+        // **区間は `update()` を隙間なく覆ってはいない**（`Segment` の境目に行数の読み等が挟まる）。
+        // ゆえに `trace_us` として出しているのは**残差**であって trace の書き込み時間そのもの
+        // ではなく、**和と `update_us` の一致は自明に成り立つ**——計器の網羅を測る検算にはならない。
+        // 区間の切り漏れは残差が不自然に大きいことでしか気づけない。
         // 撤去条件は `crate::trace::TRACE_ELAPSED_US` の doc。
         let seg_head = crate::trace::Segment::start();
 
@@ -1224,9 +1228,8 @@ impl EguiView for SearchWindowView {
 
         let drive_us = seg_drive.end();
         // #1032: 内訳は**このフレームで trace の書き込みに費やした時間を各区間から控除した値**
-        // である。`trace_us` はその控除の総量で、`update_us`（生の所要）との差が本番で消える分
-        // にあたる。**内訳の和 + `trace_us` が `update_us` に一致すること**が計器自身の検算で、
-        // 一致しなければ区間の切り方に隙間がある。
+        // である。`trace_us` は `update_us`（生の所要）と内訳の和との**残差**で、trace の
+        // 書き込みに加えて区間の境目に落ちた時間も含む（上の段落）。
         let update_us = frame_started.elapsed().as_micros() as u64;
         let parts_us =
             head_us + input_us + paint_us + drain_us + poll_us + snap_us + mainwin_us + drive_us;

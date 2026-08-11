@@ -187,7 +187,7 @@ fn se(score: i64, index: usize, paths: &PathStore) -> ScoredEntry<'_> {
     ScoredEntry {
         score,
         last_launched: 0,
-        lower_name: &paths.get(index).name,
+        lower_name: paths.name_at(index),
         paths,
         index,
     }

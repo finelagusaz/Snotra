@@ -32,6 +32,46 @@ pub(crate) fn trace_enabled() -> bool {
     *ENABLED.get_or_init(|| env_flag("SNOTRA_TRACE"))
 }
 
+/// `trace()` が stderr への書き込みに費やした累積時間（µs・#1032 の調査足場）。
+///
+/// **計器が計器自身を測ってしまうのを防ぐための控除項である。** trace 1 本の書き込みは
+/// 実運用の観測条件（`SNOTRA_TRACE=1` + stderr をファイルへリダイレクト）で約 10 ms かかり
+/// （#1004 PR 1 の実測）、フレームを区間へ切っても差し引かなければ「どの区間が trace を
+/// 吐くか」の表にしかならない。`egui_search:settled` は**行が差し替わったフレームでだけ**
+/// 出るため、#1032 が跳ねると観測した当のフレームと発火条件が一致する。
+///
+/// **撤去条件**: #1032 が閉じたら、この静的変数・`Segment`・`view.rs` の区間計装
+/// （`egui_frame` の内訳フィールド）・`window_coordinator::DriveTiming` ・
+/// `ResultsWindow::set_size` の `bool` 返しを一括で消す。
+static TRACE_ELAPSED_US: AtomicU64 = AtomicU64::new(0);
+
+/// 区間の所要から、その区間で吐いた trace の書き込み時間を差し引いて測る（#1032 の調査足場）。
+///
+/// 撤去条件は `TRACE_ELAPSED_US` の doc。
+pub(crate) struct Segment {
+    at: std::time::Instant,
+    trace_at: u64,
+}
+
+impl Segment {
+    pub(crate) fn start() -> Self {
+        Self {
+            at: std::time::Instant::now(),
+            trace_at: TRACE_ELAPSED_US.load(Ordering::Relaxed),
+        }
+    }
+
+    /// 区間の所要（µs・trace の書き込みを除く）。
+    pub(crate) fn end(self) -> u64 {
+        let raw = self.at.elapsed().as_micros() as u64;
+        let traced = TRACE_ELAPSED_US
+            .load(Ordering::Relaxed)
+            .saturating_sub(self.trace_at);
+        // 控除が所要を上回るのは µs 丸めの ±1 だけである（trace は区間の内側で走る）。
+        raw.saturating_sub(traced)
+    }
+}
+
 /// Emit one `[trace]` JSON line to stderr if `SNOTRA_TRACE` is enabled.
 /// `seq` is a single process-wide monotonic counter shared by every call
 /// site (both `main.rs` and `commands/`), so trace lines from both sides
@@ -46,6 +86,8 @@ pub(crate) fn trace(event: &str, data: serde_json::Value) {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
+    // #1032 の調査足場: 書き込みに費やした時間を控除項へ積む（`TRACE_ELAPSED_US` の doc）。
+    let write_started = std::time::Instant::now();
     eprintln!(
         "[trace] {}",
         json!({
@@ -54,5 +96,9 @@ pub(crate) fn trace(event: &str, data: serde_json::Value) {
             "event": event,
             "data": data,
         })
+    );
+    TRACE_ELAPSED_US.fetch_add(
+        write_started.elapsed().as_micros() as u64,
+        Ordering::Relaxed,
     );
 }

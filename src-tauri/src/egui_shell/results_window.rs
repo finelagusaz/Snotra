@@ -238,10 +238,7 @@ impl ResultsWindow {
     /// 手放すことによる TOCTOU は生じない（書き手は `last_size` の doc のとおり単一スレッド）。
     /// `background` は**リサイズで露出する下地**へ適用する（`apply_native_background` の doc）。
     /// デルタガードの内側で撃つため、同値のフレームでは Win32 を呼ばない。
-    /// **戻り値は Win32 を実際に撃ったかである**（#1032 の調査足場・`show` / `hide` と同型）。
-    /// デルタガードが弾いたフレームと撃って速かったフレームを、所要時間で代理せずに分ける
-    /// ために要る。撤去条件は `crate::trace::TRACE_ELAPSED_US` の doc。
-    pub(crate) fn set_size(&self, width: f64, height: f64, background: egui::Color32) -> bool {
+    pub(crate) fn set_size(&self, width: f64, height: f64, background: egui::Color32) {
         // **scale はデルタガードより前に読む。** memo は論理値のままに保つ（`last_size` の doc）
         // ——物理へ移すと許容 0.5 の意味が scale で変わり、scale 2.0 では論理 0.25 の
         // ガードになる（撃つ頻度が意図せず上がる）。比較する単位と覚える単位を揃える。
@@ -252,7 +249,7 @@ impl ResultsWindow {
         {
             let mut last = self.last_size.lock().unwrap();
             if !crate::egui_shell::layout::size_delta_exceeds(*last, (width, height)) {
-                return false;
+                return;
             }
             *last = (width, height);
         }
@@ -262,7 +259,6 @@ impl ResultsWindow {
             .window
             .set_size(tauri::PhysicalSize::new(width_phys, height_phys));
         self.apply_native_background(background);
-        true
     }
 
     /// サイズ memo を「まだ適用していない」へ戻す（#749・旧 `view.rs` の reset-on-show 2 行）。

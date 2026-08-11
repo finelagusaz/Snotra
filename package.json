@@ -15,6 +15,7 @@
     "smoke:egui": "pwsh -NoProfile -File scripts/smoke-egui.ps1",
     "smoke:manual": "pwsh -NoProfile -File scripts/manual-smoke.ps1",
     "check:colors": "pwsh -NoProfile -File scripts/visual-check-colors.ps1",
+    "check:input-metrics": "pwsh -NoProfile -File scripts/visual-input-metrics.ps1",
     "bench:startup": "pwsh -NoProfile -File scripts/bench-startup.ps1",
     "measure:memory": "pwsh -NoProfile -File scripts/measure-memory.ps1",
     "measure:memory:stages": "pwsh -NoProfile -File scripts/measure-memory-stages.ps1",

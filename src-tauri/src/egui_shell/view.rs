@@ -1269,6 +1269,24 @@ mod tests {
         }
     }
 
+    /// テストで 1 pass 走らせ、**`textures_delta` を消費してから `FullOutput` を返す**。
+    ///
+    /// epaint 0.36 の `TexturesDelta` は未適用の delta を持ったまま drop されると `Drop` の
+    /// `debug_assert!` で落ちる。**製品の消費経路は `snotra-egui-runtime` の `renderer.rs`**
+    /// であり、テストはそこを通さない（`Context` だけを回して shapes や状態を見る）ので、
+    /// 捨てることをここで明示する。**`ctx.run_ui` を直に呼ばず必ずこれを通すこと**——
+    /// 直呼びは egui のフォントアトラスが更新されたフレームでだけ落ち、**入力に依存して
+    /// 落ちたり落ちなかったりする**。
+    fn run_pass(
+        ctx: &egui::Context,
+        input: egui::RawInput,
+        f: impl FnMut(&mut egui::Ui),
+    ) -> egui::FullOutput {
+        let mut out = ctx.run_ui(input, f);
+        out.textures_delta.clear();
+        out
+    }
+
     // `hex_color_parses_and_falls_back` は #673 で `visual.rs` の
     // `hex_parses_valid_and_falls_back_to_config_default` へ移した（hex→Color32 の変換が
     // view から純粋核へ移ったため）。**証明していた命題は 2 つとも移設先で保たれている**
@@ -1315,7 +1333,7 @@ mod tests {
             events: vec![egui::Event::Text("z".to_string())],
             ..Default::default()
         };
-        let _ = ctx.run_ui(input, |ui| {
+        run_pass(&ctx, input, |ui| {
             ui.add(egui::TextEdit::singleline(&mut text).id(id));
         });
 
@@ -1349,7 +1367,7 @@ mod tests {
         let before = egui::Context::default();
         let before_id = egui::Id::new("focus_before_widget");
         let mut before_text = String::new();
-        let _ = before.run_ui(typed(), |ui| {
+        run_pass(&before, typed(), |ui| {
             ui.ctx().memory_mut(|m| m.request_focus(before_id));
             ui.add(egui::TextEdit::singleline(&mut before_text).id(before_id));
         });
@@ -1362,7 +1380,7 @@ mod tests {
         let after = egui::Context::default();
         let after_id = egui::Id::new("focus_after_widget");
         let mut after_text = String::new();
-        let _ = after.run_ui(typed(), |ui| {
+        run_pass(&after, typed(), |ui| {
             let response = ui.add(egui::TextEdit::singleline(&mut after_text).id(after_id));
             response.request_focus();
         });
@@ -1534,7 +1552,7 @@ mod tests {
         let seen = std::cell::RefCell::new(None);
         // **測るのは最初の pass である。** 2 回目以降は global style 経由でも通ってしまうため、
         // 1 pass しか走らせないことがこのテストの要点である（症状の成立条件そのもの）。
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        run_pass(&ctx, egui::RawInput::default(), |ui| {
             let visuals = ui.visuals_mut();
             visuals.extreme_bg_color = input_bg;
             visuals.selection.bg_fill = selection;
@@ -1589,7 +1607,7 @@ mod tests {
         };
 
         let seen = std::cell::RefCell::new(None);
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        run_pass(&ctx, egui::RawInput::default(), |ui| {
             // 読む側は `TextEdit` と同じ解決 getter を使う（生フィールドを見ると実経路を
             // 素通りする——理由は上のテストの doc）。
             let _ = search_input_ui(ui, test_visuals(), &mut buf, &params, |child| {
@@ -1653,7 +1671,7 @@ mod tests {
                 events,
                 ..Default::default()
             };
-            let _ = ctx.run_ui(input, |ui| {
+            run_pass(&ctx, input, |ui| {
                 let bg = ui.interact(
                     ui.max_rect(),
                     egui::Id::new("main-window-drag"),
@@ -1737,7 +1755,7 @@ mod tests {
             system_theme: Some(egui::Theme::Light),
             ..Default::default()
         };
-        let _ = ctx.run_ui(input, |_| {});
+        run_pass(&ctx, input, |_| {});
         assert_eq!(
             ctx.global_style().interaction.interact_radius,
             0.0,
@@ -1781,7 +1799,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut buf = text.to_owned();
         let mut field = egui::Rect::NOTHING;
-        let out = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let out = run_pass(&ctx, egui::RawInput::default(), |ui| {
             field = search_input_ui(ui, test_visuals(), &mut buf, &params, |_| {
                 "検索...".to_owned()
             })

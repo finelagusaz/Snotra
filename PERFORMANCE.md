@@ -510,6 +510,69 @@ UI が一度に止まる時間がここまで縮む。一方**総量は −21% �
 残るのは**結果行が差し替わったフレームの後半処理**である（一時的な計装で `read_visual` は
 1〜5 µs、`drain_search` 以降が 11〜61 ms と実測した）。**これは #1032 へ切り出した。**
 
+#### フレーム後半の帰属 — #1032（2026-08-11・release・実運用点 312,180 件・3 標本 × 2 巡）
+
+B 側が「残るのは結果行が差し替わったフレームの後半処理」と書いた区間を、`update()` 全体を
+隙間なく覆う 8 区間へ切って測り直した。**`trace()` の書き込み時間を各区間から控除する**
+計器（`trace::Segment`）を同時に入れてある——控除しないと「どの区間が trace を吐くか」の表に
+しかならない。2 巡目では engine lock の取得点 4 つと Win32 の 2 点を単独で囲んだ。
+
+**主因は engine `Mutex` の競合である。** worker が 312k の検索で lock を握っている間、UI は
+同じフレームの中で config を読むために同じ lock を取りに行き、そこで待つ。
+
+| 何を測ったか | 実測（µs・跳ねたフレーム） | 区間 |
+|---|---:|---|
+| **`read_window_width` の lock 取得** | **911〜43,939** | mainwin |
+| **`max_results` の lock 取得** | **5,462 / 20,467** | drive（hide 側へ倒れるフレームでも走る） |
+| `read_visual` の lock 取得 | ≤ 24 | head（dispatch より前ゆえ打鍵フレームでは競合しない） |
+| `window_gap` の lock 取得 | ≤ 1 | drive（`position_results_below_main` の内側） |
+| main の `set_size` + 下地 | 583〜5,185 | mainwin |
+| results の `show` 遷移 | 2,734〜6,973 | drive |
+| results の `set_size` | 665〜1,495 | drive |
+| `clamp_main_into_work_area` | 9〜132 | mainwin |
+| snapshot（200 行の `to_vec` 込み） | ≤ 197 | snap |
+| `drain_search`（`set_results` 込み） | ≤ 92 | drain |
+
+**`drive_results_window` の窓操作は主因ではなかった。** #1032 が「決めつけてはならない」と
+書いたとおりで、drive が 20〜28 ms かかったフレームは**Win32 を 1 つも撃っていない**
+（`hidden` へ早期 return した経路であり、そこに残るのは `max_results` の lock だけである）。
+
+**「跳ねるのは行が差し替わったフレームだけ」は誤りである**（#1032 の「事実」節の訂正）。
+lock 待ちは「worker が検索中か」で決まり、そのフレームで採り込んだかとは独立である——
+`old_rows == new_rows == 0` のフレームで 43,964 µs を実測した。
+
+**`update_us` の 50〜96% は trace の書き込みであり本番では 0 になる**（1 本約 10 ms）。
+控除後の実費が 2 ms を超えたのは 69 フレーム中 25 本で、最大 44,886 µs。**規模としては
+#1032 の「20 ms 前後」は本物であり、帰属だけが違う。**
+
+射程外の観測を 1 つ: **hide 直後の 1 フレームだけ head 区間が 37,511〜38,669 µs になる**
+（3 標本とも）。`hide_egui_main` の `trim_idle_working_set`（`EmptyWorkingSet`）が捨てた
+ページを踏み直す再フォールトであり、lock でも行の差し替えでもない。**画面に出ないフレーム
+である**ため体感には乗らないが、`update_us` の分布を読む人が lock 待ちと混同しうる。
+
+#### 設定の読みを engine lock の外へ出す — #1032 の A/B（同じ器・同条件・3 標本）
+
+上の帰属を受けて、`Engine` の `Config` を `Arc<RwLock<Config>>` にし、UI の live-read が
+`Mutex<Engine>` を経ない口（`egui_shell::read_config`）を通るようにした。**書き込みは
+`update_config` の 1 本のまま engine lock の内側に残す**——`complete_index_drain` の
+「index を swap してから現在の `IndexInputs` と照合する」原子性がそこに依るためである。
+
+| 指標 | A 側 | B 側 |
+|---|---:|---:|
+| `read_window_width` の読み max | 43,939 | **7** |
+| `max_results` の読み max | 20,467 | **2** |
+| `mainwin` 区間 max | 43,966 | 3,361 |
+| `drive` 区間 max | 20,470 | 5,054 |
+| 実費 max（`head` を除く・µs） | 44,830 | **6,050** |
+| **60fps 予算（16,700 µs）を超えたフレーム** | **11 本** | **0 本** |
+| 実費 2 ms 超のフレーム（`head` を除く） | 22 / 69 | 11 / 74 |
+
+**打鍵で予算を超えるフレームが無くなった。** B 側に残る最大は results 窓の show 遷移
+（`SW_SHOWNOACTIVATE` + 下地の塗り）で、これは行が 0 → N になる遷移だけに乗る Win32 の実費
+である。`head` を集計から外しているのは、そこに **hide 直後の working set 再フォールト**
+（A 側 37,511〜38,669・B 側 36,401〜52,404）が乗るためで、こちらは #1032 の射程外である
+（画面に出ないフレームであり、lock でも行の差し替えでもない）。
+
 #### 残余
 
 - `drop` 後の残留が 0.00 → **0.11 MiB**。3 回とも同値で、索引規模に対して固定量である。

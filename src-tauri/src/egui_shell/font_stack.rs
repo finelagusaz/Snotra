@@ -9,8 +9,6 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-use tauri::Manager;
-
 static JP_FONT_BYTES: OnceLock<Box<[u8]>> = OnceLock::new();
 
 /// user_font が CJK をカバーするかを判定するプローブ文字。**全点に glyph が無ければカバーしているとみなさない**。
@@ -197,9 +195,11 @@ pub(super) fn configure_japanese_font(context: &egui::Context, font_family: &str
 /// **既定値のリテラルをここへ再手打ちしない**（#795）——`"Segoe UI"` を書くと `config.rs` の
 /// `default_font_family()` と乖離しうる 2 つ目の表現になる。
 pub(super) fn font_family_from_config(app: &tauri::AppHandle) -> String {
-    app.try_state::<crate::AppState>()
-        .map(|s| s.engine.lock().unwrap().config().visual.font_family.clone())
-        .unwrap_or_else(|| super::visual::default_visual().font_family.clone())
+    super::read_config(
+        app,
+        |c| c.visual.font_family.clone(),
+        || super::visual::default_visual().font_family.clone(),
+    )
 }
 
 #[cfg(test)]

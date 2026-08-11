@@ -5,13 +5,23 @@
 //! 単調増加する `index_generation`（`AtomicU64`・#633 の世代カウンタ）を保持する。
 //! `main_visible` は Win32 `is_visible()` の ~35ms レイテンシを回避するキャッシュ。
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
 
+use snotra_core::config::Config;
 use snotra_core::engine::Engine;
 
 pub struct AppState {
     pub engine: Mutex<Engine>,
+    /// 設定の共有ハンドル（`engine` が持つのと**同じ `Arc`**・#1032）。
+    ///
+    /// **UI の毎フレームの live-read はこちらを読む**——`engine` の `Mutex` を経ると、
+    /// 検索 worker が `engine.search` を走らせている間（実運用点で 40〜95 ms）フレームが
+    /// そこで止まる。契約と、写しではないことの理由は `Engine::config_handle` の doc。
+    ///
+    /// **書き手はここには居ない。** 設定を変えるのは `engine.lock().update_config(..)` の
+    /// 1 本だけで、そちらは `&mut Engine` を要求する（`Engine` の `config` フィールドの doc）。
+    pub config: Arc<RwLock<Config>>,
     pub indexing: AtomicBool,
     pub index_build_started: AtomicBool,
     /// Tracks main window visibility to avoid costly Win32 `is_visible()` IPC on hotkey toggle.
@@ -64,17 +74,61 @@ mod tests {
     use snotra_core::history::HistoryStore;
 
     fn test_state() -> AppState {
+        let engine = Engine::new(Vec::new(), HistoryStore::load(), Config::default());
         AppState {
-            engine: Mutex::new(Engine::new(
-                Vec::new(),
-                HistoryStore::load(),
-                Config::default(),
-            )),
+            config: engine.config_handle(),
+            engine: Mutex::new(engine),
             indexing: AtomicBool::new(false),
             index_build_started: AtomicBool::new(false),
             main_visible: AtomicBool::new(false),
             index_generation: AtomicU64::new(0),
         }
+    }
+
+    /// **UI の live-read は engine lock の外で完了する**（#1032）。
+    ///
+    /// worker は `engine.search` の間ずっと engine lock を握る（実運用点で 40〜95 ms）。
+    /// その間に UI が同じ lock を取りに行っていたのが #1032 の主因で、`read_window_width`
+    /// 単独で 43,939 µs の待ちを実測した。**この検査はその待ちが構造的に起きえないことを
+    /// 測る**——engine lock を保持したまま別スレッドが config を読み切れることが受け入れ条件
+    /// である。
+    ///
+    /// **同一スレッドで 2 つの lock を順に取る形にはしない**——別々の `Mutex` / `RwLock` ゆえ
+    /// 必ず成功し、何も測らない。競合を測るには、握っている者と読む者を分ける必要がある。
+    #[test]
+    fn ui_reads_config_while_the_engine_lock_is_held() {
+        let state = std::sync::Arc::new(test_state());
+        let held = state.engine.lock().unwrap(); // worker 役（検索中）
+
+        let reader = std::sync::Arc::clone(&state);
+        let handle = std::thread::spawn(move || {
+            // UI 役。engine lock を一切要求しない。
+            reader.config.read().unwrap().appearance.window_width
+        });
+
+        let width = handle
+            .join()
+            .expect("UI 側の読みは engine lock の保持中に完了しなければならない");
+        assert_eq!(width, Config::default().appearance.window_width);
+        drop(held);
+    }
+
+    /// `AppState.config` と `Engine` は**同じ Arc を共有する**（写しではない・#1032）。
+    ///
+    /// 別々に持って両方へ書く形にすると、同じ事実を 2 か所へ書く誤りになる——書き手が片方を
+    /// 忘れた瞬間に、UI と検索が違う config で動く。
+    #[test]
+    fn app_state_config_is_the_same_arc_the_engine_holds() {
+        let state = test_state();
+        let mut changed = Config::default();
+        changed.appearance.window_width = 999;
+        state.engine.lock().unwrap().update_config(changed);
+
+        assert_eq!(
+            state.config.read().unwrap().appearance.window_width,
+            999,
+            "engine への update_config が AppState 側の読みへ届かなければ、両者は別物である"
+        );
     }
 
     #[test]

@@ -40,12 +40,10 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicU64};
 
     fn test_state(indexing: bool) -> AppState {
+        let engine = Engine::new(Vec::new(), HistoryStore::load(), Config::default());
         AppState {
-            engine: Mutex::new(Engine::new(
-                Vec::new(),
-                HistoryStore::load(),
-                Config::default(),
-            )),
+            config: engine.config_handle(),
+            engine: Mutex::new(engine),
             indexing: AtomicBool::new(indexing),
             index_build_started: AtomicBool::new(false),
             main_visible: AtomicBool::new(false),

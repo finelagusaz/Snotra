@@ -338,6 +338,25 @@ pub(crate) fn search_input_ui(
                     // launching 中も同様に打鍵を止める（Escape/blur/Alt+Q・↑↓は従来どおり通す・
                     // spec 決定 3・4。↑↓は空リストゆえ自然 no-op）。
                     .interactive(params.input_editable)
+                    // **文字を欄の縦中央へ置く。** egui の `TextEdit` は `Align2::LEFT_TOP` を
+                    // 既定に持ち、`add_sized` が欄を `field_height` へ引き伸ばしても galley は
+                    // 上端に留まる——余りが全部下へ落ち、既定 config で上 2px / 下 10px の偏りに
+                    // なっていた（`Metrics::bar_inset` の doc が宣言する「文字の上下に 7」が
+                    // そこで破れる）。**hint・キャレット・IME 帯もこの 1 行で一緒に動く**
+                    //（いずれも galley の位置を起点に描かれるため）——理由と実測は
+                    // `input_text_sits_vertically_centered_for_both_body_and_hint`。
+                    //
+                    // **キャレットと IME 帯には実ピクセルで 1px の非対称が残る**（受容する残余）。
+                    // 論理座標は完全対称だが、キャレットの高さは `galley 高 + expand(1.5)×2` ゆえ
+                    // フォント次第で偶数行になり、欄の内側（既定 27 行）と偶奇が合わないと余りを
+                    // 等分できない。**フォント依存であり、既定 Segoe UI で 3/2・HackGen Console で
+                    // 4/4 になることを実機のスクリーンショットで実測した**。`raster.rs` は
+                    // カバレッジ AA を持たず、feathering の帯の端がピクセル中心と一致するため
+                    // 中間濃度も生まれない——0.5px ずらす実験は**向きが反転しただけ**だった（実測）。
+                    // 消すには 0.25px ずらすか欄高を font 連動で ±1 する必要があり、どちらも
+                    // 幅いっぱいの枠線を半端な位置へ動かす。**細い線の端 1px より枠線 1px の方が
+                    // 目立つ**ため採らない。修正前の偏りは 8px だった。
+                    .vertical_align(egui::Align::Center)
                     .font(params.font.clone())
                     .text_color(params.text_color)
                     // 色を付けない——付けても egui が weak_text_color で上書きする。
@@ -1724,5 +1743,94 @@ mod tests {
             0.0,
             "system_theme=Light が届いた後に既定へ戻っている"
         );
+    }
+
+    /// 入力欄を実コードのまま 1 pass 描き、**空でない galley** の
+    /// `(欄の上端からの余り, 欄の下端までの余り)` を返す。
+    ///
+    /// 幾何は既定 config の導出（`Metrics::from_config(font_size, 6, 28)`）から取る——
+    /// 欄高を検査に書き写すと、`bar_padding` の導出が変わったときにここだけが腐る。
+    ///
+    /// **空 galley を除くのは、text が空のフレームで `TextEdit` がキャレット用に 0 幅の galley を
+    /// 積むためである**（hint の galley と同じ位置に重なる・実測）。除かないと 1 件のはずの
+    /// 測定対象が 2 件になる。
+    fn galley_margins(font_size: u32, text: &str) -> Vec<(f32, f32)> {
+        fn walk(shape: &egui::Shape, out: &mut Vec<(egui::Pos2, f32)>) {
+            match shape {
+                egui::Shape::Text(t) if !t.galley.text().is_empty() => {
+                    out.push((t.pos, t.galley.size().y));
+                }
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+
+        let metrics = crate::egui_shell::layout::Metrics::from_config(font_size, 6, 28);
+        let inset = metrics.bar_inset as f32;
+        let params = SearchInputParams {
+            input_id: egui::Id::new("search_input"),
+            restored_search: false,
+            window_focused: true,
+            input_editable: true,
+            inset,
+            field_height: (metrics.bar_height as f32 - 2.0 * inset).max(1.0),
+            font: egui::FontId::proportional(font_size as f32),
+            text_color: egui::Color32::WHITE,
+        };
+
+        let ctx = egui::Context::default();
+        let mut buf = text.to_owned();
+        let mut field = egui::Rect::NOTHING;
+        let out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            field = search_input_ui(ui, test_visuals(), &mut buf, &params, |_| {
+                "検索...".to_owned()
+            })
+            .rect;
+        });
+
+        let mut texts = Vec::new();
+        for clipped in &out.shapes {
+            walk(&clipped.shape, &mut texts);
+        }
+        texts
+            .into_iter()
+            .map(|(pos, height)| (pos.y - field.top(), field.bottom() - (pos.y + height)))
+            .collect()
+    }
+
+    /// 入力欄の文字は欄の**縦中央**に置かれる（本文・hint とも）。
+    ///
+    /// egui 0.35 の `TextEdit` は `Align2::LEFT_TOP` を既定に持つため（`builder.rs` の
+    /// `TextEdit::default`）、`add_sized` が欄を `field_height` へ引き伸ばしても galley は上端に
+    /// 留まり、余りが全部下へ落ちる。既定 config での修正前の実測は**上 2px / 下 10px** で、
+    /// 上余りは `TextEdit` 既定 `Margin::symmetric(4, 2)` の top ちょうどだった——
+    /// `Metrics::bar_inset` の doc が宣言する「文字の上下に 7」の設計意図がそこで破れていた。
+    ///
+    /// **font_size を 2 通り測る。** 中央は `field_height` と galley 高の差から導かれるので、
+    /// 固定 px を足す実装（`TextEdit::margin` の非対称化）へ差し替わると片方の font で落ちる
+    /// ——`SPEC.md` §11「文字サイズに固定値を書かない」を検査の側から縛る。
+    ///
+    /// **hint も測る。** 本文だけが中央へ寄れば、打鍵の瞬間に文字が上下へ飛ぶ。egui の hint は
+    /// `Align2::LEFT_TOP` を明示して積まれるが、singleline ではその align が効くのは自分の
+    /// cell（= galley 高ちょうど）の中だけで、ブロック全体を動かすのは `align2` の側である
+    ///（`AtomLayout` の `align_size_within_rect`）——ゆえに 1 つの指定で両方が動く。
+    #[test]
+    fn input_text_sits_vertically_centered_for_both_body_and_hint() {
+        for font_size in [15, 24] {
+            for (label, text) in [("本文", "aqgILあいう"), ("hint", "")] {
+                let margins = galley_margins(font_size, text);
+                assert_eq!(
+                    margins.len(),
+                    1,
+                    "{label}（font {font_size}）: 測る galley は 1 つのはず（実際 {margins:?}）"
+                );
+                let (top, bottom) = margins[0];
+                assert!(
+                    (top - bottom).abs() <= 0.5,
+                    "{label}（font {font_size}）: 縦中央から外れている（上 {top} / 下 {bottom}）\
+                     ——`vertical_align` が落ちると egui 既定の上寄せへ戻る"
+                );
+            }
+        }
     }
 }

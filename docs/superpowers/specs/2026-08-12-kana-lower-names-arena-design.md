@@ -93,16 +93,44 @@ blob ごと消えるが、**成立しない**——`to_kana` は `wana_kana` の
 少し伸びること。**`//!` に一行足して明示する**——メモリ専用の消費者が付いたこと、その消費者は
 serde を通らないこと。
 
+### 並列構築を落とさない（設計制約）
+
+**アリーナへの push は逐次だが、逐次化してはならない。** kana の構築は 2 経路あり、
+片方は**並列である**:
+
+| 経路 | 現行 | 通る場面 |
+|---|---|---|
+| `compute_wave1` の kana 枝 | `iter().map().collect()`（逐次・`rayon::join` の 3 本のうち 1 本） | cache-miss（走査 22〜30 秒の内側） |
+| `new_with_cached_masks` の `kana_for_cached` | `into_par_iter().map().collect()`（**並列**） | **キャッシュヒット起動＝毎回** |
+
+`to_kana` の単価は §2 で 3.08 µs/件と実測した。312,108 件を逐次で回せば **約 0.96 秒**であり、
+毎起動に乗る。**素直に push へ書き換えると、常駐 3.5 MiB と引き換えに起動 1 秒を払う。**
+
+ゆえに `kana_for_cached` は「添字の塊ごとに並列で局所アリーナを組み、順に併合する」形にする:
+
+1. 添字を塊へ分け、塊ごとに `(String, Vec<u32>)`（連結バイト列と要素末尾オフセット）を並列に組む
+2. 順序を保ったまま集め（indexed parallel iterator の `collect` は順序を保つ）、
+   連結バイト列を繋いでオフセットを塊の先頭ぶん底上げする
+
+**併合のずれは既存の A/B 突き合わせが捕まえる。** `search/tests/build.rs` は
+`compute_wave1`（逐次）と `kana_for_cached`（並列）を同じ入力で突き合わせており、
+**2 実装のままにしておくことがこの検知器の効力の源である**——両方を同じ併合へ寄せると、
+オフセットの底上げを間違えても両側が同じようにずれて素通りする。
+
 ### 確保の見込み
 
-`with_capacity(n, 0)` とし、オフセット列だけ確保して blob は伸長に任せる（`lower_names` 列と
-同じ形）。`NameArena` の doc は 10 MiB の blob を倍々で移し替える memcpy を戒めているが、
-ここは migemo ON の起動 1 回・約 6 MiB であり、**総バイト数を先に知る手段が
-「全件を `to_kana` してから数える」しかない**——1 パス増やす対価のほうが大きい。
+塊ごとの局所バッファは伸長に任せ、併合先だけ総バイト数（塊の合計）で 1 度確保する。
+`compute_wave1` 側は逐次のまま `with_capacity(n, 0)` でオフセット列だけ確保する
+（`lower_names` 列と同じ形）——**総バイト数を先に知る手段が「全件を `to_kana` してから
+数える」しかなく**、cache-miss 経路では 1 パス増やす対価のほうが大きい。
 
 ## 4. 波及範囲
 
-- `index_tree.rs`: `NameArena::{push, with_capacity}` を `pub(crate)` へ、`is_empty()` を追加、`//!` に一行
+- `index_tree.rs`: `NameArena::{push, with_capacity}` を `pub(crate)` へ、`is_empty()` と
+  §3 の併合の口（塊の `(String, Vec<u32>)` から組む）を追加、`//!` に一行。
+  **serde impl は触らない**（線上表現は無変更）
+- **`to_kana` は `String` を返すので、要素ごとの一時確保は残る**（`*_into` 版が無い）。
+  消すのは**常駐**の per-entry 確保であって、構築中の一時確保ではない
 - `search/build.rs`: `Wave1Strings` の 3 要素目を `NameArena` へ。kana 枝を push へ。
   `compute_kana_char_masks(&NameArena)`。`assemble` の `shrink_to_fit` と
   「両方空 or 両方 `entries.len()`」の `debug_assert` を追随（**不変条件そのものは変えない**）
@@ -132,9 +160,10 @@ serde を通らないこと。
 
 ## 6. 残余リスク
 
-- **`compute_wave1` の kana 枝が逐次の push になる。** 現行も `iter().map().collect()` で
-  逐次だが、rayon の 3 分割のうち 1 本を占めていた。構築時間の退行は
-  `bench_new_migemo_on_off` で見る
+- **構築時間の退行を必ず測る。** §3 の並列を保つ形が効いているかは
+  `bench_new_migemo_on_off`（`compute_wave1` 側）だけでは見えない——毎起動の経路は
+  `kana_for_cached` である。**キャッシュヒット起動の実測（`cache_load_ms` を含む起動段の計測）を
+  対で取る**
 - **`shrink_to_fit` の対を落としても検索結果は変わらない**（余剰容量が最後まで常駐するだけ）。
   検知器は `search/tests/build.rs` の容量検査で、kana 列にも同じ検査を足す
 - §2 の導出案の却下は**この索引・この機体の実測**に基づく。pre-filter の通過率はクエリ依存で

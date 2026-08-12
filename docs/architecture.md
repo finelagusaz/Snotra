@@ -233,6 +233,52 @@ sequenceDiagram
 - 通常の打鍵で残るフレーム費用は、results 窓の show 遷移（`SW_SHOWNOACTIVATE` + 下地の塗り・行が 0 → N のときだけ）と main の `set_size` である。どちらも予算の内側に収まる
 - `results` は `focusable(false)` の従属窓のため、可視性・サイズ・位置の driver は常に `main` 側にある（hidden 窓は `update()` が走らないため自分では show できない・#646 PR2）
 
+### スコアリングの内側（`engine.search` の 1 回）
+
+上図の `engine.search` の中身。**一致条件は軸が 2 本ある**——混ぜると「モードが 7 つある」ように見える。
+
+| 軸 | 中身 | 関係 |
+|---|---|---|
+| モード（config `normal_mode`） | Prefix / Substring / Fuzzy | **排他**。1 クエリで 1 つ（`SearchMode`） |
+| マッチ種別（1 件の中） | name / file_name / kana / path | **OR**。先に成立したものを採る |
+
+**後方一致は無い。** スコア階層の全順序は `search/scoring.rs` の `mod score_tier`（直後の `const _` がコンパイル時に強制）が正本であり、ここに定数を写さない。
+
+処理順（`search_with_options`）:
+
+1. `prepare_query_plan` — クエリ 1 回ぶんの派生（正規化・マスク・UTF-32 needle・path クエリ）
+2. **候補集合を決める** — incremental cache が再利用可なら前回の一致集合、否なら全件
+3. rayon fold で `score_one_entry`（下表）
+4. `TopK` へ push → reduce で task ごとの heap を統合
+5. 上位 K 件だけ所有 `SearchResult` へ変換
+6. incremental cache を更新（top-k から落ちた一致も残す——次の打鍵で候補が縮まないため）
+
+`score_one_entry` の内側は「安い棄却を先に、高い導出を後に」で並ぶ:
+
+| 段 | 単価 | 走る条件 |
+|---|---|---|
+| ビットマスク pre-filter | O(1) | Fuzzy **かつ**非パスクエリ |
+| name / file_name スコア | O(名前長 × クエリ長) | file_name は `has_dot` かつ name が高確度でないとき |
+| kana スコア | O(名前長 × クエリ長) | 上が全滅 **かつ** migemo |
+| 正規化キーの組み立て | 償却 O(自分のセグメント) | パスクエリ、または上が成立 |
+| パスマッチ（部分文字列探索） | O(**フルパス長** × クエリ長) | パスクエリ |
+| 履歴照合 3 種 | O(フルパス長) のハッシュ ×3 | **マッチ成立後のみ** |
+
+**フルパスは表示名より 1 桁近く長い**（実測は `PERFORMANCE.md`「索引の常駐の内訳」）。組み立てが償却で済むのは `PathCursor` が祖先の鎖を持ち回り、大半のエントリで巻き戻して 1 段だけ書き足すからである（鎖が外れたときだけ根まで辿り直す・`search/path_store.rs` が正本）。
+
+#### パスクエリだけが 2 つの絞り込みを同時に失う
+
+通常のクエリを安く保っているのは 2 つの絞り込みで、**`has_path_sep` はその両方を無効にする**:
+
+| 絞り込み | 効果 | パスクエリのとき |
+|---|---|---|
+| incremental cache（`IncrementalCache::can_reuse`） | 候補数を前回の一致集合へ絞る | **無条件で無効**——`norm_query` と `path_query` で正規化が異なり単調性を保証できない |
+| ビットマスク pre-filter | 1 件を O(1) で棄却する | **スキップ**——パスだけで当たるエントリが name/file_name のマスクで落ちるため |
+
+**ゆえにパスクエリは「全件 × 全段」を毎打鍵払う唯一の経路であり、しかも単価がフルパス長に乗る。** 額と改善の履歴は `PERFORMANCE.md`「パスクエリ全走査のコスト」。
+
+**ビットマスクは文字の存在だけを見る**（順序に依存しない）ので、どのモードでも原理的に正しい。Fuzzy 限定なのは正しさではなく費用の判断である（Prefix/Substring は素の `str` 操作が十分安い）。**ただし写すのは `a-z` と `0-9` だけで `\` `:` `.` は落ちる**（`query.rs` の `char_bitmask`）——区切りや拡張子で弾く用途には構造的に使えない。
+
 ## 状態遷移（概要）
 
 ```

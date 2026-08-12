@@ -16,9 +16,14 @@
 //! どちらの列も、`Vec<Option<String>>` / `Vec<LowerFileName>` として書かれたバイト列と 1 バイトも
 //! 違わない。ゆえに `INDEX_CACHE_VERSION` のバンプも旧版フォールバックも要らない。
 //! **この不変を固定するのは下の `*_wire_format_is_identical_to_*` の 2 本であって
-//! golden bytes ではない**——`indexer` の `index_cache_on_disk_format_is_stable` は fixture が
-//! 持つ形しか通らないので、その形に現れないずれは素通りする（[`crate::index_tree::NameArena`]
-//! の doc に実測が書いてある）。
+//! golden bytes ではない。** `indexer` の `index_cache_on_disk_format_is_stable` は fixture が
+//! 持つ形しか通らないので、その形に現れないずれは素通りする——**2 列とも変異注入で実測した**
+//! （2026-08-12。`serialize` に `trim_end` を挟むと、どちらの列でも新設テストだけが落ち、
+//! golden を含む他の 569 本は緑のまま通った）。
+//!
+//! **タグの並べ替えは別である**——`LowerFileNameRef` の variant を入れ替える変異は golden を
+//! 含む 5 本が落ちた。「golden では足りない」の射程は**文字列の中身の形**であって、
+//! 3 状態の網羅ではない。
 
 use std::fmt;
 
@@ -62,8 +67,16 @@ impl Bits {
         self.len += 1;
     }
 
-    /// `i` 番の旗。**範囲外は panic である**（`words` の添字が担う）——黙って `false` を
-    /// 返す形にすると、列の長さがずれたときに「旗が立っていない」と読めてしまう。
+    /// `i` 番の旗。**呼び出し側が `i < len` を保証する契約である。**
+    ///
+    /// **「範囲外は panic する」とは書けない。** ビットは 64 個ずつ確保されるので、
+    /// `len <= i < words.len() * 64` の窓では `words` の添字が範囲内に収まり、release では
+    /// **黙って `false`**（[`OptionalStrArena::get`] としては `None`）を返す。`debug_assert` が
+    /// 撃つのはデバッグ実行だけである。
+    ///
+    /// ここに長さ検査を置かないのは全件走査のホットパスだからで、担保は上位に在る——
+    /// `search/build.rs` の `assemble` が並列列の長さを揃え、
+    /// [`crate::indexer::IndexMaterial::from_untrusted`] がディスクから来た組の列長を検証する。
     #[inline]
     pub(crate) fn get(&self, i: usize) -> bool {
         debug_assert!(i < self.len, "Bits: 範囲外の添字 {i}（長さ {}）", self.len);
@@ -502,14 +515,15 @@ impl LowerFileColumn {
             .count()
     }
 
-    /// 常駐ヒープの内訳を数えるための素（計測専用）。`(blob, offsets, 旗 2 本の合計)`。
-    pub(crate) fn footprint_bytes(&self) -> (usize, usize, usize) {
+    /// 常駐ヒープの内訳を数えるための素（計測専用）。`(blob, offsets, present, same_as_lower)`。
+    ///
+    /// **旗 2 本を足して 1 つで返してはならない。** 呼び出し側（`search/footprint.rs` の
+    /// `arena_part`）は「1 行 = 1 確保」でブロックを数えるので、束ねた瞬間に 1 つ数え落とす
+    /// ——**未帰属 +1 blocks として実測に出た**（2026-08-12。バイトは合っていたので、
+    /// バイトだけを見る検算では捕まらない）。
+    pub(crate) fn footprint_bytes(&self) -> (usize, usize, usize, usize) {
         let (blob, offsets, present) = self.strings.footprint_bytes();
-        (
-            blob,
-            offsets,
-            present + self.same_as_lower.footprint_bytes(),
-        )
+        (blob, offsets, present, self.same_as_lower.footprint_bytes())
     }
 
     /// 余剰容量（検知器専用・[`OptionalStrArena::excess_capacity_bytes`]）。
@@ -717,13 +731,20 @@ mod tests {
         assert_eq!(back.get(1), Some(""), "往復で空文字が `None` へ化けた");
     }
 
-    const FILES: [LowerFileSlot<'static>; 6] = [
+    /// **3 状態すべてに加えて、`Text` の中身の形も混ぜる。** variant のタグだけを網羅した
+    /// fixture では、タグの並べ替えは捕まえられても**文字列の中身をいじる変異**（`trim_end`
+    /// 等）が素通りする——`Absent` / `SameAsLowerName` / `Text("x")` だけの fixture でそれを
+    /// 実測した（2026-08-12）。末尾空白と空文字を持たせるのはそのためであり、
+    /// **痩せさせてはならない。**
+    const FILES: [LowerFileSlot<'static>; 8] = [
         LowerFileSlot::Absent,
         LowerFileSlot::SameAsLowerName,
         LowerFileSlot::Text("tool.exe"),
         LowerFileSlot::Absent,
         LowerFileSlot::Text("アプリ.lnk"),
         LowerFileSlot::SameAsLowerName,
+        LowerFileSlot::Text("trailing space "),
+        LowerFileSlot::Text(""),
     ];
 
     fn file_column() -> LowerFileColumn {

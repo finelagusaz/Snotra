@@ -140,7 +140,7 @@ impl SearchEngine {
         rows.push(arena_part(
             "lower_names（アリーナの連結バイト列）",
             blob,
-            blob,
+            lower_names.len(),
         ));
         rows.push(arena_part(
             "lower_names（アリーナのオフセット）",
@@ -166,11 +166,13 @@ impl SearchEngine {
         }
         rows.push(leaked_files);
 
-        let (blob, offsets, flags) = lower_file_names.footprint_bytes();
+        // **旗は 2 行に分ける。** `arena_part` は「1 行 = 1 確保」でブロックを数えるので、
+        // 2 本を束ねると 1 つ数え落とす（**未帰属 +1 blocks として実測に出た**）。
+        let (blob, offsets, present, same_as_lower) = lower_file_names.footprint_bytes();
         rows.push(arena_part(
             "lower_file_names（アリーナの連結バイト列）",
             blob,
-            blob,
+            lower_file_names.len(),
         ));
         rows.push(arena_part(
             "lower_file_names（アリーナのオフセット）",
@@ -178,9 +180,14 @@ impl SearchEngine {
             lower_file_names.len() + 1,
         ));
         rows.push(arena_part(
-            "lower_file_names（旗 2 本）",
-            flags,
-            lower_file_names.len() * 2,
+            "lower_file_names（present 旗）",
+            present,
+            lower_file_names.len(),
+        ));
+        rows.push(arena_part(
+            "lower_file_names（same_as_lower 旗）",
+            same_as_lower,
+            lower_file_names.len(),
         ));
 
         rows.push(vec_body::<u64>("char_masks", char_masks.capacity()));

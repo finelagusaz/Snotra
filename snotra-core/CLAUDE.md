@@ -28,7 +28,7 @@
   - 逆方向の依存として `normalize_opener_target` が `config.rs::normalize_scan_path_key` / `normalize_extensions`（`pub(crate)`、`paths.scan` の正規化とも共有する汎用ヘルパー）を使う
 - `hotkey.rs` — 永続ホットキー文字列の意味解析とシステムショートカット競合判定（責務は `//!`）。`HotkeyConfig` は serde 互換のため `config.rs` から re-export し、設定検証・UI・Win32 platform は同じ `ParsedHotkey` を消費する。文字列 parser を下流へ複製しない
 - `search.rs` — 検索順位計算・履歴ブースト・incremental search キャッシュ・空クエリ時履歴候補（責務・スコア階層は `//!` と `SearchEngine` の struct doc）。以下は並列 Vec レイアウトの不変条件:
-  - **並列 Vec レイアウト**: `SearchEngine` は `entries` / `lower_names` / `lower_file_names` / `char_masks` / `file_name_char_masks` / `kana_lower_names` / `kana_char_masks` の並列 Vec で cache locality を確保
+  - **並列レイアウト**: `SearchEngine` は `entries` / `lower_names` / `lower_file_names` / `char_masks` / `file_name_char_masks` / `kana_lower_names` / `kana_char_masks` を添字で対応づけた並列の列として持つ（cache locality）。**すべてが `Vec` ではない**——`lower_names` / `lower_file_names` は `str_arena` のアリーナ、表示名は `PathStore` の `NameArena` である。**エントリ数に比例する確保を持つ列は 1 つも残っていない**（`kana_*` は migemo 有効時のみ per-entry・額は `PERFORMANCE.md`「採用: 派生文字列 2 列も文字列アリーナで持つ」）
   - **正規化キー（履歴照合・パスマッチ）は索引に持たない**: `target_path` から `normalize_entry_key_into` で導出し、スレッドローカルのバッファへ詰め直す（唯一の経路は `search/scoring.rs` の `with_normalized_key`）。**畳み込み比較を別実装で書き起こしてはならない**——記録側と照合側が同じ関数を通ることがバイト一致の根拠であり、1 バイトずれると履歴照合が沈黙で外れる（クラッシュせず検索結果も返り、ブーストだけが消える）
   - **`kana_lower_names` / `kana_char_masks` は `migemo_enabled` が true のときのみ構築し、無効時は空 Vec**（migemo 無効ユーザーの死蔵メモリ ~2.1–2.7MB/50k を削る・構築も約 2 倍速、issue #337）。2 つの kana 系 Vec は必ず同時に空/同長（`assemble` の debug_assert が検証）。空 Vec のとき検索ループは `kana_available` 空ガードで `kana_lower_names[i]` アクセスを回避し、Fuzzy pre-filter は `kana_char_masks.is_empty()` チェックで kana 経路を棄却する（構築時 migemo OFF→検索時 ON の窓での panic 防止）
   - **migemo トグルの反映は index 再構築経由**: `update_config` は engine を再構築しないため、`config_watcher` が engine の `IndexInputs` 差分で `start_index_build` を kick する再構築に依存する（#347 Phase 2 で `needs_reindex` は `IndexInputs` に統合）
@@ -52,6 +52,7 @@
 - `folder.rs` — フォルダ内エントリの列挙とフィルタ/ソート（責務は `//!`）
 - `indexer.rs` — スキャン対象の列挙・重複排除とインデックスキャッシュ（責務は `//!`）
 - `query.rs` — クエリ/履歴キーの正規化と文字ビットマスク（責務は `//!`）
+- `str_arena.rs` — 疎な派生文字列の列（`lower_names` / `lower_file_names`）を、要素ごとの確保を持たない表現で保つ（責務は `//!`）。**線上表現は `Vec<Option<String>>` / `Vec<LowerFileName>` のままである**——その一致を守るのは同ファイルの `*_wire_format_is_identical_to_*` 2 本であって golden bytes ではない（射程は `//!`）
 - `index_tree.rs` — `target_path` をフォルダ木の接頭辞共有で表す、オンディスクと索引が共有する表現（責務は `//!`）。**辿る規則（`walk_to_root` / `raw_path_into`）はここが唯一持ち、記憶域の並べ方だけを `TreeNodes` が抽象化する**——`indexer` の並列 Vec と `search` の構造体の列が同じ実装を通ることが、ディスクと索引で木がずれないことの根拠である
 - `binfmt.rs` — `magic` + `version` 付きバイナリ入出力の共通処理（責務は `//!`）
 - `error.rs` — crate 共通の error 型（責務は `//!`）
@@ -174,6 +175,8 @@ raw なデータ構造（`FxHashMap<String, u32>` など）を返す pub API は
 1つでも欠けるとキャッシュヒット時/ミス時で異なる結果を返す。
 
 **版を 1 つ上げると、直前の版が「全ユーザーの `index.bin` が今まさに置かれている版」へ変わる**（反復 10 で 4 件の取りこぼしが同時に出た）。ゆえに 8 番目として、**直前の版を受け取る側を全部数え直す**: (a) `cache_byte_breakdown_in` の鎖（現行版だけを読む形にすると**一番測りたい相手にだけ黙る**）、(b) `load_cache_in_reports_the_version_it_actually_read` の枝（この値だけが昇格判定の入力で、取り違えても**検索結果は正しいまま**）、(c) 直前の版の凍結バイト列を `load_cache_in` 経由で読むテスト（`try_deserialize_with_header` の直呼びでは枝選択・`config_hash` 判定・`CachedLower` の variant・`version` の帰属を 1 つも通らない）。**枝の数を散文に書かないこと**——版を足したときにその数だけが腐り、しかも「揃っている」と読める。
+
+**派生文字列 2 列も同じ形である**（#1003 の次の反復）。`lower_names` は `Cow<'a, LowerNameColumn>`（線上は `seq of Option<str>`）、`lower_file_names` は `Cow<'a, LowerFileColumn>`（線上は 3 variant の `seq of LowerFileName`）で、どちらも要素ごとの `String` を作らない。**`IndexCacheV6` も同じ列の型で読む**——線上表現が v7 と同一だからであり、`Vec<Option<String>>` へ戻すと旧版枝でだけ per-entry の確保が復活する。守るのは `str_arena` の `lower_name_column_wire_format_is_identical_to_vec_of_option_string` / `lower_file_column_wire_format_is_identical_to_vec_of_lower_file_name` で、**2 列とも変異注入で「golden は素通りし、この 2 本だけが落ちる」ことを実測してある**（射程は `str_arena` の `//!`——タグの並べ替えは golden も捕まえる）。
 
 **`names` の型は `Vec<String>` ではないが、線上のバイト列は seq of str である**（#1003）。`IndexCache.names: Cow<'a, NameArena>` は要素ごとの `String` を作らずに 1 本のバッファへ流し込むための表現であり、**線上表現を保っていることが「版を上げずに型を替えられた」根拠のすべてである**。`NameArena` の `Serialize` / `Deserialize` に触るときは、それが**全ユーザーの `index.bin` を版はそのままに読めなくする**変更になりうると承知して触ること（症状は破損ではなく cache-miss ＝ 22〜30 秒の全走査）。守るのは `index_tree.rs` の `arena_wire_format_is_identical_to_vec_of_string` であって golden bytes ではない——**golden の fixture は名前の形を混ぜて持たないので素通りする**（`serialize` に `trim_end` を挟む変異で実測）。
 

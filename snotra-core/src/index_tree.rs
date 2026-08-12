@@ -21,6 +21,10 @@
 //! **表示名だけは並べ方が 1 つである。** [`NameArena`] は連結バイト列 + オフセットであり、
 //! ディスクも索引もこの同じ物体を持つ——`PathStore::adopt` は写さずに move する。
 //!
+//! **[`NameArena`] にはディスクを通らない消費者が 1 つある**——`SearchEngine::kana_lower_names`
+//! （migemo 有効時のみ）。あちらは `index.bin` に保存しないので [`Serialize`] /
+//! [`Deserialize`] を通らず、線上表現の制約もかからない。**共有しているのは表現の核だけである。**
+//!
 //! **辿る規則そのものを 2 回書いてはならない。** [`TreeNodes`] が「i 番の親・aux・名前を
 //! どう取るか」だけを抽象化し、[`walk_to_root`] と [`raw_path_into`] は両方の並べ方から
 //! 同じ 1 つの実装が使われる（単型化されるので索引側の速さは落ちない）。
@@ -115,7 +119,7 @@ impl NameArena {
     ///
     /// **見込みは `build` が 1 パスで数える。** 伸長に任せると 10 MiB の `blob` が倍々で
     /// 移し替えられ、消したはずの memcpy がそこへ戻る。
-    fn with_capacity(n: usize, bytes: usize) -> Self {
+    pub(crate) fn with_capacity(n: usize, bytes: usize) -> Self {
         let mut offsets = Vec::with_capacity(n + 1);
         offsets.push(0);
         Self {
@@ -126,6 +130,38 @@ impl NameArena {
 
     pub(crate) fn len(&self) -> usize {
         self.offsets.len() - 1
+    }
+
+    /// 要素を 1 つも持たないか。
+    ///
+    /// **kana 列の「migemo 無効」がこの形で表される**（`crate::search::SearchEngine` の
+    /// `kana_lower_names`）。`len() == 0` と同値だが、呼び出し側の関心が「空か」である以上、
+    /// 判定を型の側に置く。
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// 塊ごとに並列で組んだ `(連結バイト列, 要素末尾オフセット)` を順に併合する。
+    ///
+    /// **アリーナへの push は逐次だが、逐次化してはならない。** kana 列を毎起動で組む
+    /// `SearchEngine::new_with_cached_masks` は `to_kana`（実測 3.08 µs/件）を全件へ当てるので、
+    /// 逐次で回すと 31 万件で約 1 秒が起動に乗る。塊の中だけ並列に組み、ここで繋ぐ。
+    ///
+    /// **並べ替えない——順序を保つのは渡す側の責務である。** `collect` が順序を保つ
+    /// indexed parallel iterator を通すこと。ここは受け取った順に繋ぐだけで、塊の内容から
+    /// 元の位置を復元する手段を持たない。
+    pub(crate) fn from_chunks(chunks: Vec<(String, Vec<u32>)>) -> Self {
+        let total_bytes: usize = chunks.iter().map(|(blob, _)| blob.len()).sum();
+        let total_len: usize = chunks.iter().map(|(_, offsets)| offsets.len()).sum();
+        let mut arena = Self::with_capacity(total_len, total_bytes);
+        for (blob, offsets) in chunks {
+            // **底上げは塊を繋ぐ前に控える。** `push_str` の後に読むと、その塊ぶんまで
+            // 足した値が基準になり、2 つ目以降が二重に進む。
+            let base = arena.blob.len() as u32;
+            arena.blob.push_str(&blob);
+            arena.offsets.extend(offsets.into_iter().map(|o| o + base));
+        }
+        arena
     }
 
     /// `i` 番の名前。
@@ -160,8 +196,9 @@ impl NameArena {
         &self.blob
     }
 
-    /// 末尾へ 1 件足す（[`IndexTree::build`] と [`IndexTree::extend_with_roots`] が使う）。
-    fn push(&mut self, s: &str) {
+    /// 末尾へ 1 件足す（[`IndexTree::build`] / [`IndexTree::extend_with_roots`] と、
+    /// kana 列を逐次で組む `search::build` の Wave 1 が使う）。
+    pub(crate) fn push(&mut self, s: &str) {
         self.blob.push_str(s);
         self.offsets.push(self.blob.len() as u32);
     }
@@ -171,6 +208,19 @@ impl NameArena {
     pub(crate) fn shrink_to_fit(&mut self) {
         self.blob.shrink_to_fit();
         self.offsets.shrink_to_fit();
+    }
+
+    /// 余剰容量（`shrink_to_fit` が消し残した分）。**検知器専用。**
+    ///
+    /// [`Self::footprint_bytes`] では代用できない——あちらは容量しか返さないので、
+    /// `shrink_to_fit` を外しても「その容量が正しい」としか読めない。余剰は `len` との差に
+    /// しか現れない（`crate::str_arena::OptionalStrArena::excess_capacity_bytes` と同じ理屈で、
+    /// **アリーナには `capacity == n` の形の断言が書けない**——要素数と確保バイトが
+    /// 1 対 1 に対応しないため）。
+    #[cfg(test)]
+    pub(crate) fn excess_capacity_bytes(&self) -> usize {
+        (self.blob.capacity() - self.blob.len())
+            + (self.offsets.capacity() - self.offsets.len()) * std::mem::size_of::<u32>()
     }
 
     /// 常駐ヒープの内訳を数えるための素（計測専用・勘定の規約は `search/footprint.rs`）。
@@ -909,6 +959,49 @@ mod tests {
         for (i, want) in names.iter().enumerate() {
             assert_eq!(back.get(i), *want, "{i} 番の切り出しがずれた");
         }
+    }
+
+    /// 塊ごとに組んだアリーナを併合しても、1 本で組んだものと同じ切り出しになる。
+    ///
+    /// **塊の境界は 1 つでは足りない**——先頭の塊だけ底上げが 0 で正しくなり、2 つ目以降の
+    /// 底上げの誤り（忘れ・二重加算）が素通りする。空の塊も混ぜる（rayon の分割は均等とは
+    /// 限らず、末尾の塊が空になりうる）。
+    #[test]
+    fn from_chunks_concatenates_without_shifting_offsets() {
+        let names = [
+            "projects",
+            "",
+            "ünïcode 名前",
+            "アプリ",
+            "c:\\dir\\sub",
+            "tool.exe",
+        ];
+        let flat = arena(&names);
+
+        let chunks: Vec<(String, Vec<u32>)> =
+            [&names[0..2], &names[2..2], &names[2..5], &names[5..6]]
+                .iter()
+                .map(|part| {
+                    let mut blob = String::new();
+                    let mut offsets = Vec::new();
+                    for s in *part {
+                        blob.push_str(s);
+                        offsets.push(blob.len() as u32);
+                    }
+                    (blob, offsets)
+                })
+                .collect();
+        let merged = NameArena::from_chunks(chunks);
+
+        assert_eq!(merged.len(), names.len(), "併合で件数が変わった");
+        for (i, want) in names.iter().enumerate() {
+            assert_eq!(merged.get(i), *want, "{i} 番の切り出しがずれた");
+        }
+        assert_eq!(
+            merged.blob(),
+            flat.blob(),
+            "連結バイト列が 1 本組みとずれた"
+        );
     }
 
     /// **壊れた長さプレフィックスは、巨大確保ではなく `Err` で落ちる。**

@@ -136,7 +136,8 @@ fn assert_engines_agree(
         // migemo 無効で回る計測環境からは見えない）。空 Vec は上で長さを検証済み。
         if !a.kana_lower_names.is_empty() {
             assert_eq!(
-                a.kana_lower_names[i], b.kana_lower_names[i],
+                a.kana_lower_names.get(i),
+                b.kana_lower_names.get(i),
                 "{label}/migemo={migemo_enabled}: index {i} の kana_lower_name がずれている"
             );
             assert_eq!(
@@ -452,16 +453,19 @@ fn assemble_shrinks_parallel_vecs_to_fit() {
             "file_name_char_masks",
             engine.file_name_char_masks.capacity(),
         ),
-        ("kana_lower_names", engine.kana_lower_names.capacity()),
         ("kana_char_masks", engine.kana_char_masks.capacity()),
     ];
     for (label, capacity) in actual {
         assert_eq!(capacity, n, "{label} に余剰容量が残っている（len = {n}）");
     }
 
-    // **派生文字列 2 本は容量では測れない**（`crate::str_arena`）——アリーナは要素数と確保
-    // バイトが 1 対 1 に対応しないので、`capacity == n` という形の断言が書けない。余剰は
-    // `len` との差にしか現れないので、そこを直接 0 と突き合わせる。
+    // **アリーナ 3 本は容量では測れない**（`crate::str_arena` / `crate::index_tree`）——
+    // アリーナは要素数と確保バイトが 1 対 1 に対応しないので、`capacity == n` という形の
+    // 断言が書けない。余剰は `len` との差にしか現れないので、そこを直接 0 と突き合わせる。
+    //
+    // **`kana_lower_names` はここに居る**（上の `capacity == n` の組ではない）。#1056 で
+    // `Vec<Box<str>>` からアリーナへ移したときに移動しており、**移し忘れるとこの列だけ
+    // `shrink_to_fit` を外しても誰も気づかない**。
     for (label, excess) in [
         ("lower_names", engine.lower_names.excess_capacity_bytes()),
         (
@@ -471,6 +475,24 @@ fn assemble_shrinks_parallel_vecs_to_fit() {
     ] {
         assert_eq!(excess, 0, "{label} に余剰容量が {excess} B 残っている");
     }
+
+    // **kana はこの経路では測れない。** `new_with_cached_masks` の kana は塊を併合して組む
+    // （`NameArena::from_chunks`）ので、合計バイト数ちょうどで確保され余剰が最初から 0 に
+    // なる——`shrink_to_fit` を外しても落ちないことを**変異注入で実測した**（2026-08-12）。
+    // 余剰が乗るのは伸長に任せる `compute_wave1` 側なので、そちらで測る。
+    //
+    // **「測れないから省く」ではなく経路を足すのが正しい**——省くと、kana だけ
+    // `shrink_to_fit` を外しても誰も気づかない状態が残る。
+    let grown = SearchEngine::new_with_migemo(make_entries(&names), true);
+    assert!(
+        !grown.kana_lower_names.is_empty(),
+        "migemo 有効で kana が空では検査が空虚である"
+    );
+    assert_eq!(
+        grown.kana_lower_names.excess_capacity_bytes(),
+        0,
+        "kana_lower_names に余剰容量が残っている（assemble の shrink_to_fit を確認する）"
+    );
 }
 
 /// **`Collapsed`（v6 キャッシュ）経路を通す唯一の検知器。**

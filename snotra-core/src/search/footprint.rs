@@ -199,15 +199,22 @@ impl SearchEngine {
             file_name_char_masks.capacity(),
         ));
 
-        // migemo 無効なら 2 本とも空で、行は 0 のまま残る（**消さない**——「測って 0 だった」と
+        // migemo 無効なら 3 本とも 0 で、行は残る（**消さない**——「測って 0 だった」と
         // 「測っていない」は別物であり、消すと後者に見える）。
-        rows.push(boxed_strs(
-            "kana_lower_names",
-            kana_lower_names.iter().map(|s| &**s),
+        //
+        // **アリーナは 2 行に分ける。** `arena_part` は「1 行 = 1 確保」でブロックを数えるので、
+        // 連結バイト列とオフセットを束ねると 1 つ数え落とす（`lower_file_names` の旗 2 本で
+        // 未帰属 +1 blocks として実測済み）。
+        let (blob, offsets) = kana_lower_names.footprint_bytes();
+        rows.push(arena_part(
+            "kana_lower_names（アリーナの連結バイト列）",
+            blob,
+            kana_lower_names.len(),
         ));
-        rows.push(vec_body::<Box<str>>(
-            "kana_lower_names（Vec 本体）",
-            kana_lower_names.capacity(),
+        rows.push(arena_part(
+            "kana_lower_names（アリーナのオフセット）",
+            offsets,
+            kana_lower_names.len() + 1,
         ));
         rows.push(vec_body::<u64>(
             "kana_char_masks",

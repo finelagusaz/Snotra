@@ -441,12 +441,12 @@ impl SearchEngine {
         };
 
         // kana マッチ: primary_score がない場合のみ試みる（OR 関係）。
-        // kana_available=false（migemo 無効で構築＝空 Vec）のときは
-        // self.kana_lower_names[i] に到達させない（panic ガード）。
+        // kana_available=false（migemo 無効で構築＝空のアリーナ）のときは
+        // self.kana_lower_names.get(i) に到達させない（panic ガード）。
         let kana_score = if primary_score.is_none() && kana_available {
             plan.kana_query
                 .as_deref()
-                .and_then(|kq| kana_substring_score(&self.kana_lower_names[i], kq))
+                .and_then(|kq| kana_substring_score(self.kana_lower_names.get(i), kq))
         } else {
             None
         };

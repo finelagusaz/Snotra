@@ -7,7 +7,7 @@
 
 use rayon::prelude::*;
 
-use crate::index_tree::IndexTree;
+use crate::index_tree::{IndexTree, NameArena};
 use crate::indexer::{AppEntry, CachedLower, CachedMasks, IndexMaterial};
 use crate::query::{
     contains_path_sep, file_char_mask, lower_file_name, measure_derived_sharing, name_char_mask,
@@ -67,12 +67,16 @@ impl DerivedStrings {
 }
 
 /// Wave 1 の出力: `(lower_names, lower_file_names, kana_lower_names)`。
-/// いずれも構築後に伸長しないため `Box<str>` で保持する（容量ワード 8B/要素を節約）。
+/// 前 2 者は構築後に伸長しないため `Box<str>` で保持する（容量ワード 8B/要素を節約）。
+///
+/// **kana だけ表現が違う。** `assemble` が潰し判定を通す前 2 者と違い、kana は測る相手を
+/// 持たないので（`to_kana` はローマ字も変換するため `lower_name` と一致しない）、
+/// ここで既に最終形——[`NameArena`]——になっている。
 ///
 /// **`normalized_keys` はここに無い**——`target_path` からの導出に置き換えて索引から外した
 /// （実測 35.56 MiB。経緯は `PERFORMANCE.md`「パスクエリ全走査のコスト — `normalized_keys` を
 /// 保持するか導出するか」）。
-type Wave1Strings = (Vec<Box<str>>, Vec<Option<Box<str>>>, Vec<Box<str>>);
+type Wave1Strings = (Vec<Box<str>>, Vec<Option<Box<str>>>, NameArena);
 
 /// Wave 1: entries から文字列正規化データを並列構築する。
 /// lower_names / lower_file_names / kana_lower_names は entries への純粋な map であり
@@ -109,14 +113,21 @@ fn compute_wave1(entries: &[AppEntry], migemo_enabled: bool) -> Wave1Strings {
             )
         },
         || {
-            // migemo 無効時は kana を構築しない（空 Vec）。
+            // migemo 無効時は kana を構築しない（空のアリーナ）。
             if migemo_enabled {
-                entries
-                    .iter()
-                    .map(|e| to_kana(&to_lower_folded(&e.name)).into_boxed_str())
-                    .collect::<Vec<_>>()
+                // **ここは逐次のままでよい。** この枝が通るのは cache-miss（走査 22〜30 秒）の
+                // 内側だけで、キャッシュヒット起動が通るのは `new_with_cached_masks` の
+                // `kana_for_cached` である——**あちらは並列を保つ**（そちらの doc が理由を持つ）。
+                //
+                // 合計バイト数は見込まない（`with_capacity` の第 2 引数が 0）——先に知るには
+                // 全件を `to_kana` して数えるしかなく、この枝ではその 1 パスのほうが高くつく。
+                let mut arena = NameArena::with_capacity(entries.len(), 0);
+                for e in entries {
+                    arena.push(&to_kana(&to_lower_folded(&e.name)));
+                }
+                arena
             } else {
-                Vec::new()
+                NameArena::new()
             }
         },
     );
@@ -151,10 +162,9 @@ fn compute_wave2(
 }
 
 /// migemo 有効時の kana pre-filter 用並列 Vec を構築する。kana 未構築時は空 Vec を保つ。
-fn compute_kana_char_masks(kana_lower_names: &[Box<str>]) -> Vec<u64> {
-    kana_lower_names
-        .iter()
-        .map(|name| kana_char_mask(name))
+fn compute_kana_char_masks(kana_lower_names: &NameArena) -> Vec<u64> {
+    (0..kana_lower_names.len())
+        .map(|i| kana_char_mask(kana_lower_names.get(i)))
         .collect()
 }
 
@@ -178,7 +188,7 @@ impl SearchEngine {
         derived: DerivedStrings,
         char_masks: Vec<u64>,
         file_name_char_masks: Vec<u64>,
-        kana: (Vec<Box<str>>, Vec<u64>),
+        kana: (NameArena, Vec<u64>),
     ) -> Self {
         let (mut kana_lower_names, mut kana_char_masks) = kana;
         let mut char_masks = char_masks;
@@ -432,18 +442,38 @@ impl SearchEngine {
             file_name_char_masks,
             lower: cached_lower,
         } = masks;
-        // kana は毎起動再計算する（キャッシュに持たない）。migemo 無効時は空 Vec のまま。
+        // kana は毎起動再計算する（キャッシュに持たない）。migemo 無効時は空のアリーナのまま。
         let kana_for_cached = |tree: &IndexTree| {
             if migemo_enabled {
                 // **添字で並列化する。** 名前はアリーナの切り出しゆえ `par_iter` を持たない
                 // （持たせるには `IndexedParallelIterator` を自前で書くことになり、
                 // 得るものは同じ分割である）。
-                (0..tree.len())
+                //
+                // **塊ごとに組んでから併合する。** アリーナへの push は逐次だが、
+                // **ここを逐次化してはならない**——`to_kana` は 3.08 µs/件（実測）で、
+                // 31 万件なら約 1 秒が**毎起動に**乗る（この経路はキャッシュヒット起動が通る）。
+                // `chunks` + `collect` は順序を保つので、併合は受け取った順に繋ぐだけでよい。
+                //
+                // **`compute_wave1` の kana 枝と 2 実装のままにしてある。** 突き合わせるのは
+                // `search/tests/build.rs` で、片方へ寄せるとその検知器が
+                // 「同じ実装どうしの一致」に化けて併合のずれを捕まえられなくなる。
+                const CHUNK: usize = 4096;
+                let chunks: Vec<(String, Vec<u32>)> = (0..tree.len())
                     .into_par_iter()
-                    .map(|i| to_kana(&to_lower_folded(tree.name_at(i))).into_boxed_str())
-                    .collect::<Vec<_>>()
+                    .chunks(CHUNK)
+                    .map(|idxs| {
+                        let mut blob = String::new();
+                        let mut offsets = Vec::with_capacity(idxs.len());
+                        for i in idxs {
+                            blob.push_str(&to_kana(&to_lower_folded(tree.name_at(i))));
+                            offsets.push(blob.len() as u32);
+                        }
+                        (blob, offsets)
+                    })
+                    .collect();
+                NameArena::from_chunks(chunks)
             } else {
-                Vec::new()
+                NameArena::new()
             }
         };
 
@@ -543,7 +573,7 @@ mod tests {
             },
             Vec::new(),
             Vec::new(),
-            (Vec::new(), Vec::new()),
+            (NameArena::new(), Vec::new()),
         );
     }
 
@@ -566,7 +596,7 @@ mod tests {
             },
             Vec::new(),
             Vec::new(),
-            (Vec::new(), Vec::new()),
+            (NameArena::new(), Vec::new()),
         );
     }
 }

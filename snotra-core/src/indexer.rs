@@ -29,6 +29,7 @@ use crate::index_tree::{IndexTree, NameArena};
 use crate::query::{
     file_char_mask, lower_file_name, measure_derived_sharing, name_char_mask, to_lower_folded,
 };
+use crate::str_arena::{LowerFileColumn, LowerFileSlot, LowerNameColumn};
 
 const INDEX_MAGIC: [u8; 4] = *b"INDX";
 /// `index.bin` の現行フォーマット版。
@@ -87,6 +88,20 @@ pub enum LowerFileName {
     Text(String),
 }
 
+impl LowerFileName {
+    /// 列（[`LowerFileColumn`]）へ積むための借用の形。
+    ///
+    /// **この対応が 1 対 1 であることが、線上表現が変わっていないことの前提である**
+    /// ——3 状態のどれかを別の状態へ写すと、`entry_view` の読み替えが静かにずれる。
+    pub(crate) fn as_slot(&self) -> LowerFileSlot<'_> {
+        match self {
+            Self::Absent => LowerFileSlot::Absent,
+            Self::SameAsLowerName => LowerFileSlot::SameAsLowerName,
+            Self::Text(s) => LowerFileSlot::Text(s),
+        }
+    }
+}
+
 /// キャッシュから復元した派生文字列。**潰し済みか未測定かを型で区別する。**
 ///
 /// **分ける理由は「測り直しが無駄だから」である**（`search/build.rs` の `DerivedStrings` の doc
@@ -99,8 +114,11 @@ pub enum CachedLower {
     /// `assemble` は測り直さず、この潰し方をそのまま索引の表現として使う。
     Collapsed {
         /// `None` = `entries[i].name` と同一。
-        lower_names: Vec<Option<String>>,
-        lower_file_names: Vec<LowerFileName>,
+        ///
+        /// **型は `Vec<Option<String>>` ではなく [`LowerNameColumn`] だが、線上のバイト列は
+        /// 変わっていない**（正本は `crate::str_arena` の doc）——`lower_file_names` も同じ。
+        lower_names: LowerNameColumn,
+        lower_file_names: LowerFileColumn,
     },
     /// v5 / v4。全件が実体を持つ未測定の列。`assemble` が測って潰す。
     Raw {
@@ -494,9 +512,18 @@ struct IndexCache<'a> {
     char_masks: Cow<'a, [u64]>,
     file_name_char_masks: Cow<'a, [u64]>,
     /// `None` = `names[i]` とバイト一致（実データで 86.6%）。
-    lower_names: Cow<'a, [Option<String>]>,
+    ///
+    /// **型は `[Option<String>]` ではなく [`LowerNameColumn`] だが、線上のバイト列は
+    /// 変わっていない**——`names` が [`NameArena`] へ移ったのと同じ理屈で、要素ごとの
+    /// `String` を作らずに 1 本のバッファへ流し込む（正本は `crate::str_arena` の doc）。
+    /// **検知器は `str_arena` 側の `lower_name_column_wire_format_is_identical_to_vec_of_option_string`
+    /// である**——下の golden は名前の形を混ぜて持たないので、この一致を守る役には立たない。
+    lower_names: Cow<'a, LowerNameColumn>,
     /// 3 状態（`LowerFileName`）。「無い」と「`lower_name` と同一」を別の値で表す。
-    lower_file_names: Cow<'a, [LowerFileName]>,
+    ///
+    /// 線上表現は `Vec<LowerFileName>` のままである（`lower_names` と同じ理屈。検知器は
+    /// `lower_file_column_wire_format_is_identical_to_vec_of_lower_file_name`）。
+    lower_file_names: Cow<'a, LowerFileColumn>,
 }
 
 /// v6 フォールバック用スキーマ（`target_path` を全件そのまま持つ旧形式）。
@@ -514,8 +541,11 @@ struct IndexCacheV6 {
     config_hash: u64,
     char_masks: Vec<u64>,
     file_name_char_masks: Vec<u64>,
-    lower_names: Vec<Option<String>>,
-    lower_file_names: Vec<LowerFileName>,
+    /// **v7 と線上表現が同一なので、同じ列の型で読む。** ここを `Vec<Option<String>>` の
+    /// ままにすると、旧版枝でだけ per-entry の `String` が 41,994 個復活し、しかも
+    /// `CachedLower::Collapsed` へ渡すために詰め替えが要る（正本は `crate::str_arena` の doc）。
+    lower_names: LowerNameColumn,
+    lower_file_names: LowerFileColumn,
 }
 
 /// v5 フォールバック用スキーマ（派生文字列を全件そのまま持つ旧形式）。
@@ -918,8 +948,8 @@ pub(crate) struct DerivedColumns {
     pub(crate) tree: IndexTree,
     pub(crate) char_masks: Vec<u64>,
     pub(crate) file_name_char_masks: Vec<u64>,
-    pub(crate) lower_names: Vec<Option<String>>,
-    pub(crate) lower_file_names: Vec<LowerFileName>,
+    pub(crate) lower_names: LowerNameColumn,
+    pub(crate) lower_file_names: LowerFileColumn,
 }
 
 impl DerivedColumns {
@@ -953,17 +983,21 @@ pub(crate) fn derive_columns(entries: Vec<AppEntry>) -> DerivedColumns {
     //
     // 4 本を 1 周で埋める。列ごとの `collect` に分けると、潰す前の `Vec<String>` /
     // `Vec<Option<String>>` の spine が潰した後の spine と重なって生きる区間ができる。
+    //
+    // **派生文字列 2 本はアリーナ（`crate::str_arena`）へ直に積む。** `derive_entry_collapsed`
+    // が返す `String` はここで写して落ちるので、記録側に per-entry の spine は残らない
+    // （`String` そのものの一時確保は残る——それを消すのは別反復である）。
     let len = entries.len();
     let mut char_masks = Vec::with_capacity(len);
     let mut file_name_char_masks = Vec::with_capacity(len);
-    let mut collapsed_lower_names = Vec::with_capacity(len);
-    let mut collapsed_lower_file_names = Vec::with_capacity(len);
+    let mut collapsed_lower_names = LowerNameColumn::with_capacity(len);
+    let mut collapsed_lower_file_names = LowerFileColumn::with_capacity(len);
     for entry in &entries {
         let (char_mask, file_mask, lower_name, lower_file) = derive_entry_collapsed(entry);
         char_masks.push(char_mask);
         file_name_char_masks.push(file_mask);
-        collapsed_lower_names.push(lower_name);
-        collapsed_lower_file_names.push(lower_file);
+        collapsed_lower_names.push(lower_name.as_deref());
+        collapsed_lower_file_names.push(lower_file.as_slot());
     }
 
     // **木を建てるのは派生文字列を導出し終えた後である。** 建てる段が `target_path` を
@@ -1818,8 +1852,8 @@ pub(crate) fn extend_cached_masks(masks: &mut CachedMasks, new_entries: &[AppEnt
                 let (char_mask, file_mask, name, file) = derive_entry_collapsed(entry);
                 masks.char_masks.push(char_mask);
                 masks.file_name_char_masks.push(file_mask);
-                lower_names.push(name);
-                lower_file_names.push(file);
+                lower_names.push(name.as_deref());
+                lower_file_names.push(file.as_slot());
             }
         }
     }
@@ -2247,10 +2281,11 @@ pub fn cache_byte_breakdown_in(dir: &Path) -> Option<CacheByteBreakdown> {
 /// 枠を持たないので、**2 行を入れ替えても長さの和は変わり**、残余 0 の検算はその誤りを
 /// 捕まえない（捕まえるのは項目の欠落と重複だけである）。
 enum LowerRepr<'a> {
-    /// v6: 潰し済み。
+    /// v6 以降: 潰し済み。**列の型で受ける**（線上表現は `Vec<Option<String>>` /
+    /// `Vec<LowerFileName>` のままだが、手に持っている物体は列である）。
     Collapsed {
-        names: &'a [Option<String>],
-        files: &'a [LowerFileName],
+        names: &'a LowerNameColumn,
+        files: &'a LowerFileColumn,
     },
     /// v5 / v4: 全件が実体を持つ。**両版で型も数え方も同一**ゆえ 1 つの variant で足りる
     /// （版そのものは [`CacheByteBreakdown::version`] が正本として持つ）。
@@ -2282,15 +2317,12 @@ fn build_breakdown(
                 bytes: serialized_len(&names)?,
                 // **実体を持つ件数を出す**（列の長さではない）。潰れた分は 1 バイトの
                 // タグにしかならないので、件数と長さの比が共有の効きを表す。
-                items: names.iter().filter(|s| s.is_some()).count(),
+                items: names.count_present(),
             },
             CacheByteRow {
                 label: "lower_file_names（3 状態）",
                 bytes: serialized_len(&files)?,
-                items: files
-                    .iter()
-                    .filter(|f| matches!(f, LowerFileName::Text(_)))
-                    .count(),
+                items: files.count_text(),
             },
         ),
         LowerRepr::Raw { names, files } => (
@@ -2706,11 +2738,15 @@ mod tests {
             char_masks: Cow::Owned(vec![0xAB, 0xCD]),
             file_name_char_masks: Cow::Owned(vec![0x12, 0x34]),
             // v6: `None` = name と同一。ここでは 2 件目がそれに当たる形にしてある。
-            lower_names: Cow::Owned(vec![Some("firefox".to_string()), None]),
-            lower_file_names: Cow::Owned(vec![
-                LowerFileName::Text("firefox.lnk".to_string()),
-                LowerFileName::SameAsLowerName,
-            ]),
+            lower_names: Cow::Owned([Some("firefox"), None].into_iter().collect()),
+            lower_file_names: Cow::Owned(
+                [
+                    LowerFileSlot::Text("firefox.lnk"),
+                    LowerFileSlot::SameAsLowerName,
+                ]
+                .into_iter()
+                .collect(),
+            ),
         };
 
         let bytes =
@@ -2733,14 +2769,14 @@ mod tests {
             vec![0x12u64, 0x34]
         );
         assert_eq!(
-            restored.lower_names.into_owned(),
-            vec![Some("firefox".to_string()), None]
+            restored.lower_names.iter().collect::<Vec<_>>(),
+            vec![Some("firefox"), None]
         );
         assert_eq!(
-            restored.lower_file_names.into_owned(),
+            restored.lower_file_names.iter().collect::<Vec<_>>(),
             vec![
-                LowerFileName::Text("firefox.lnk".to_string()),
-                LowerFileName::SameAsLowerName,
+                LowerFileSlot::Text("firefox.lnk"),
+                LowerFileSlot::SameAsLowerName,
             ]
         );
     }
@@ -2750,8 +2786,8 @@ mod tests {
         Vec<AppEntry>,
         Vec<u64>,
         Vec<u64>,
-        Vec<Option<String>>,
-        Vec<LowerFileName>,
+        LowerNameColumn,
+        LowerFileColumn,
     );
 
     /// 現行 golden の fixture。**版を名前に持たない**——凍結バイト列は版ごとに増えるが、
@@ -2797,18 +2833,17 @@ mod tests {
             vec![0xABu64, 0xCD, 0xEF, 0x21],
             vec![0x12u64, 0x34, 0x56, 0x78],
             // 2・4 件目は `name` と同一（＝落とせる）。
-            vec![
-                Some("projects".to_string()),
-                None,
-                Some("firefox".to_string()),
-                None,
-            ],
-            vec![
-                LowerFileName::Absent,
-                LowerFileName::Text("app.exe".to_string()),
-                LowerFileName::Text("firefox.lnk".to_string()),
-                LowerFileName::SameAsLowerName,
-            ],
+            [Some("projects"), None, Some("firefox"), None]
+                .into_iter()
+                .collect(),
+            [
+                LowerFileSlot::Absent,
+                LowerFileSlot::Text("app.exe"),
+                LowerFileSlot::Text("firefox.lnk"),
+                LowerFileSlot::SameAsLowerName,
+            ]
+            .into_iter()
+            .collect(),
         )
     }
 
@@ -3006,19 +3041,15 @@ mod tests {
                 lower_file_names,
             }) => {
                 assert_eq!(
-                    lower_names,
-                    vec![
-                        Some("firefox".to_string()),
-                        Some("projects".to_string()),
-                        None
-                    ]
+                    lower_names.iter().collect::<Vec<_>>(),
+                    vec![Some("firefox"), Some("projects"), None]
                 );
                 assert_eq!(
-                    lower_file_names,
+                    lower_file_names.iter().collect::<Vec<_>>(),
                     vec![
-                        LowerFileName::Text("firefox.lnk".to_string()),
-                        LowerFileName::Absent,
-                        LowerFileName::SameAsLowerName,
+                        LowerFileSlot::Text("firefox.lnk"),
+                        LowerFileSlot::Absent,
+                        LowerFileSlot::SameAsLowerName,
                     ]
                 );
             }
@@ -3264,16 +3295,16 @@ mod tests {
                 lower_file_names,
             }) => {
                 assert_eq!(
-                    lower_names,
-                    vec![Some("firefox".to_string()), Some("projects".to_string())]
+                    lower_names.iter().collect::<Vec<_>>(),
+                    vec![Some("firefox"), Some("projects")]
                 );
                 assert_eq!(
-                    lower_file_names,
+                    lower_file_names.iter().collect::<Vec<_>>(),
                     vec![
-                        LowerFileName::Text("firefox.lnk".to_string()),
+                        LowerFileSlot::Text("firefox.lnk"),
                         // "C:\\Projects" の file name 成分は "Projects" → "projects" で
                         // `lower_name` と一致する。
-                        LowerFileName::SameAsLowerName,
+                        LowerFileSlot::SameAsLowerName,
                     ]
                 );
             }
@@ -4046,12 +4077,12 @@ mod tests {
             config_hash,
             char_masks: char_masks.clone(),
             file_name_char_masks: file_name_char_masks.clone(),
-            lower_names: lower_names.iter().cloned().map(Some).collect(),
+            lower_names: lower_names.iter().map(|s| Some(s.as_str())).collect(),
             lower_file_names: lower_file_names
                 .iter()
                 .map(|f| match f {
-                    Some(s) => LowerFileName::Text(s.clone()),
-                    None => LowerFileName::Absent,
+                    Some(s) => LowerFileSlot::Text(s),
+                    None => LowerFileSlot::Absent,
                 })
                 .collect(),
         };
@@ -4559,8 +4590,8 @@ mod tests {
             char_masks: vec![0xAB],
             file_name_char_masks: vec![0xCD],
             lower: Some(CachedLower::Collapsed {
-                lower_names: vec![None],
-                lower_file_names: vec![LowerFileName::SameAsLowerName],
+                lower_names: [None].into_iter().collect(),
+                lower_file_names: [LowerFileSlot::SameAsLowerName].into_iter().collect(),
             }),
         };
 
@@ -4588,16 +4619,16 @@ mod tests {
                 lower_file_names,
             }) => {
                 assert_eq!(
-                    lower_names,
-                    vec![None, None, Some("docs".to_string())],
+                    lower_names.iter().collect::<Vec<_>>(),
+                    vec![None, None, Some("docs")],
                     "`name` と同一なら追記側でも落とす"
                 );
                 assert_eq!(
-                    lower_file_names,
+                    lower_file_names.iter().collect::<Vec<_>>(),
                     vec![
-                        LowerFileName::SameAsLowerName,
-                        LowerFileName::Text("tool.exe".to_string()),
-                        LowerFileName::SameAsLowerName,
+                        LowerFileSlot::SameAsLowerName,
+                        LowerFileSlot::Text("tool.exe"),
+                        LowerFileSlot::SameAsLowerName,
                     ]
                 );
             }
@@ -4663,21 +4694,16 @@ mod tests {
 
         // 前提: 潰れることを先に固定する（潰れなくなればこのテストは自明に通ってしまう）。
         assert_eq!(
-            derived.lower_names,
-            vec![
-                Some("tool".to_string()),
-                Some("docs".to_string()),
-                None,
-                Some("root".to_string())
-            ]
+            derived.lower_names.iter().collect::<Vec<_>>(),
+            vec![Some("tool"), Some("docs"), None, Some("root")]
         );
         assert_eq!(
-            derived.lower_file_names,
+            derived.lower_file_names.iter().collect::<Vec<_>>(),
             vec![
-                LowerFileName::Text("tool.exe".to_string()),
-                LowerFileName::SameAsLowerName,
-                LowerFileName::Text("notes.txt".to_string()),
-                LowerFileName::Absent,
+                LowerFileSlot::Text("tool.exe"),
+                LowerFileSlot::SameAsLowerName,
+                LowerFileSlot::Text("notes.txt"),
+                LowerFileSlot::Absent,
             ]
         );
 
@@ -4790,8 +4816,8 @@ mod tests {
             char_masks: vec![0; 2],
             file_name_char_masks: vec![0; 2],
             lower: Some(CachedLower::Collapsed {
-                lower_names: vec![None],
-                lower_file_names: vec![LowerFileName::Absent],
+                lower_names: [None].into_iter().collect(),
+                lower_file_names: [LowerFileSlot::Absent].into_iter().collect(),
             }),
         };
         assert!(

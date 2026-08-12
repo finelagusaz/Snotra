@@ -70,6 +70,20 @@ pub(super) fn vec_body<T>(label: &'static str, capacity: usize) -> FootprintRow 
     }
 }
 
+/// アリーナの部品 1 本（連結バイト列 / オフセット / 旗）の行。
+///
+/// **`vec_body` と分けてある。** あちらは「要素数 × 要素の大きさ」を自分で掛けるが、
+/// アリーナの部品は確保バイトを型の側（`footprint_bytes`）が知っており、ここが掛け算を
+/// 持つと**同じ勘定が 2 か所に住む**。
+pub(super) fn arena_part(label: &'static str, bytes: usize, count: usize) -> FootprintRow {
+    FootprintRow {
+        label,
+        bytes,
+        blocks: usize::from(bytes > 0),
+        count,
+    }
+}
+
 /// `Box<str>` の並びの行（中身のバイトと本数）。
 pub(super) fn boxed_strs<'a>(
     label: &'static str,
@@ -107,52 +121,66 @@ impl SearchEngine {
         let mut rows = Vec::new();
         entries.footprint_rows(&mut rows);
 
-        // `lower_names` も `lower_file_names` と同じ理由で条件つきに割る（下の段落）。
-        // 相手は表示名（アリーナの切り出し）で、**一致する分は「小文字化しても変わらなかった
-        // 名前」**である。
+        // **共有漏れは「件数だけ」の行で出す。** かつては一致する分・しない分をバイトで割って
+        // いたが、実体がアリーナの連結バイト列に入った今、ここでバイトを足すと下のアリーナ行と
+        // **二重計上**になる（帰属 100% の検算が壊れる）。
         //
-        // **`None`（= 表示名と同一）の行を残す。** 潰した後は 0 になるが、
-        // 消すと「測って 0 だった」と「測っていない」が区別できなくなる——この行が 0 に
-        // なったこと自体が、共有が効いている証拠である。
-        let mut lower_split = [
-            FootprintRow::empty("lower_names（= 表示名・未共有）"),
-            FootprintRow::empty("lower_names（≠）"),
-        ];
-        for (i, slot) in lower_names.iter().enumerate() {
-            let Some(s) = slot else { continue };
-            lower_split[usize::from(&**s != entries.name_at(i))].add_str(s);
+        // **それでも行を消さない。** 潰しが効いていれば `count` は 0 になるが、消すと
+        // 「測って 0 だった」と「測っていない」が区別できなくなる——この行が 0 であること
+        // 自体が、`assemble` の共有判定が効いている証拠である。**0 でなくなったら、
+        // 潰す判定か潰す位置が壊れている**（結果は正しいまま削減だけが減るので、挙動テストは
+        // 緑のまま通る種類の誤りである）。
+        let mut leaked_names = FootprintRow::empty("lower_names（= 表示名なのに実体を持つ・件数）");
+        for i in 0..lower_names.len() {
+            leaked_names.count += usize::from(lower_names.get(i) == Some(entries.name_at(i)));
         }
-        rows.extend(lower_split);
-        rows.push(vec_body::<Option<Box<str>>>(
-            "lower_names（Vec 本体）",
-            lower_names.capacity(),
+        rows.push(leaked_names);
+
+        let (blob, offsets, present) = lower_names.footprint_bytes();
+        rows.push(arena_part(
+            "lower_names（アリーナの連結バイト列）",
+            blob,
+            blob,
+        ));
+        rows.push(arena_part(
+            "lower_names（アリーナのオフセット）",
+            offsets,
+            lower_names.len() + 1,
+        ));
+        rows.push(arena_part(
+            "lower_names（present 旗）",
+            present,
+            lower_names.len(),
         ));
 
-        // **`lower_file_names` は 4 つに割る。** folder で `lower_names` と一致する分だけが
-        // 「共有すれば消える」量であり、1 行で出すと候補の見込みが約 2 割甘くなる（file は
-        // 自前の文字列を持ち続け、`Vec` 本体はどの案でも残る）。**条件を label に書いた行に
-        // 割る**ので、上限は読む側の暗算ではなく行の bytes そのものになる。
-        let mut split = [
-            FootprintRow::empty("lower_file_names（folder・= lower_names）"),
-            FootprintRow::empty("lower_file_names（folder・≠）"),
-            FootprintRow::empty("lower_file_names（file・= lower_names）"),
-            FootprintRow::empty("lower_file_names（file・≠）"),
-        ];
-        for (i, slot) in lower_file_names.iter().enumerate() {
-            // `None` は確保を持たない（`Option<Box<str>>` はニッチ最適化で 16 B のまま）。
-            let Some(s) = slot else { continue };
-            let is_folder = entries.get(i).is_folder;
-            // 比較相手は**解決後**の `lower_name`（鎖の上段が潰れていれば表示名）。
-            let lower_name = lower_names[i]
-                .as_deref()
-                .unwrap_or_else(|| entries.name_at(i));
-            let same = lower_name == &**s;
-            split[usize::from(!is_folder) * 2 + usize::from(!same)].add_str(s);
+        // 比較相手は**解決後**の `lower_name`（鎖の上段が潰れていれば表示名）。旗が立って
+        // いる分は列に実体を持たないので、ここへは現れない。
+        let mut leaked_files =
+            FootprintRow::empty("lower_file_names（= lower_names なのに実体を持つ・件数）");
+        for i in 0..lower_file_names.len() {
+            let Some(s) = lower_file_names.text_at(i) else {
+                continue;
+            };
+            let lower_name = lower_names.get(i).unwrap_or_else(|| entries.name_at(i));
+            leaked_files.count += usize::from(lower_name == s);
         }
-        rows.extend(split);
-        rows.push(vec_body::<Option<Box<str>>>(
-            "lower_file_names（Vec 本体）",
-            lower_file_names.capacity(),
+        rows.push(leaked_files);
+
+        let (blob, offsets, flags) = lower_file_names.footprint_bytes();
+        rows.push(arena_part(
+            "lower_file_names（アリーナの連結バイト列）",
+            blob,
+            blob,
+        ));
+        rows.push(arena_part(
+            "lower_file_names（アリーナのオフセット）",
+            offsets,
+            lower_file_names.len() + 1,
+        ));
+        rows.push(arena_part(
+            "lower_file_names（旗 2 本）",
+            flags,
+            lower_file_names.len() * 2,
         ));
 
         rows.push(vec_body::<u64>("char_masks", char_masks.capacity()));

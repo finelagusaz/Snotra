@@ -24,5 +24,6 @@ pub mod instant;
 pub mod opener;
 pub mod query;
 pub mod search;
+pub mod str_arena;
 pub mod ui_types;
 pub mod window_data;

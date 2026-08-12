@@ -77,17 +77,28 @@ pub(crate) const CHAIN_CAP: usize = 64;
 /// 文字境界であること——どれも「`&str` を丸ごと押し込む」形からしか作れないので、
 /// **壊れた `index.bin` でも表現できない**（postcard が str の UTF-8 を検証する）。
 /// [`IndexTree::from_parts`] が確かめるのは列の**長さ**の一致だけで足りる。
-#[derive(Clone, Default, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct NameArena {
     /// 全要素を連結したバイト列。
     blob: String,
     /// 要素 `i` は `blob[offsets[i]..offsets[i + 1]]`。**末尾に番兵を持つ**ので長さは要素数 + 1
-    /// であり、空でも `[0]` が入る（[`Default`] もその形になる）。
+    /// であり、空でも `[0]` が入る（[`Default`] もその形になる——下の手書きの impl が根拠で
+    /// あって、`derive` ではその形にならない）。
     ///
     /// `u32` ゆえ `blob` は 4 GiB までである。溢れた場合は切り詰めでオフセットが単調でなく
     /// なり、[`Self::get`] のスライスが**その場で panic する**——誤った名前を静かに返す形には
     /// ならない。実データの名前は合計 10 MiB である。
     offsets: Vec<u32>,
+}
+
+/// **手書きである。** `#[derive(Default)]` は `offsets` を空にするので [`NameArena::len`] が
+/// `0 - 1` で溢れる——番兵を持つ表現では「空」は `[0]` であって `[]` ではない。呼び出し点は
+/// 今のところ無い（構築は `new` / `with_capacity` / [`Deserialize`] を通る）が、**derive のまま
+/// 残すと「空のアリーナが欲しい」と思った次の書き手が黙って踏む**。
+impl Default for NameArena {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl NameArena {
@@ -948,6 +959,10 @@ mod tests {
     fn empty_arena_roundtrips_and_reports_zero_len() {
         let empty = NameArena::new();
         assert_eq!(empty.len(), 0);
+        // **`Default` も番兵を持つ形でなければならない。** `derive` へ戻すと `offsets` が空に
+        // なり、ここが `0 - 1` の溢れで落ちる（release では黙って巨大な `len()` を返す）。
+        assert_eq!(NameArena::default().len(), 0);
+        assert_eq!(NameArena::default(), empty);
         let bytes = postcard::to_allocvec(&empty).expect("空を書ける");
         assert_eq!(bytes, postcard::to_allocvec(&Vec::<String>::new()).unwrap());
         let back: NameArena = postcard::from_bytes(&bytes).expect("空を読める");

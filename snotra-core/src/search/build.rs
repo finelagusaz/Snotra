@@ -8,11 +8,12 @@
 use rayon::prelude::*;
 
 use crate::index_tree::IndexTree;
-use crate::indexer::{AppEntry, CachedLower, CachedMasks, IndexMaterial, LowerFileName};
+use crate::indexer::{AppEntry, CachedLower, CachedMasks, IndexMaterial};
 use crate::query::{
     file_char_mask, lower_file_name, measure_derived_sharing, name_char_mask, to_kana,
     to_lower_folded,
 };
+use crate::str_arena::{LowerFileColumn, LowerFileSlot, LowerNameColumn};
 
 use super::{IncrementalCache, PathStore, SearchEngine, kana_char_mask};
 
@@ -34,9 +35,12 @@ enum DerivedStrings {
         lower_file_names: Vec<Option<Box<str>>>,
     },
     /// v6 キャッシュ。記録時に `measure_derived_sharing` で測って潰してある。**測り直さない。**
+    ///
+    /// **列はアリーナである**（`crate::str_arena`）——ディスクから読んだ形がそのまま索引の
+    /// 表現になるので、`assemble` は詰め替えない。
     Collapsed {
-        lower_names: Vec<Option<String>>,
-        lower_file_names: Vec<LowerFileName>,
+        lower_names: LowerNameColumn,
+        lower_file_names: LowerFileColumn,
     },
 }
 
@@ -211,44 +215,70 @@ impl SearchEngine {
         // 建つ前には呼べない。位置を控える `Vec<usize>` を挟む形もあるが、**制約に足場で
         // 応えるより、制約が満たされる場所まで展開を遅らせるほうが構造が 1 段浅くなる**
         // （`PathStore::build` は派生文字列を一切見ないので、遅らせる障害は無い）。
-        // **3 つめ（測り直すか）は `match` の中から出す。** 外で `matches!` を取ると、variant を
-        // 足したときに既定値へ黙って落ちる——「測らない」へ倒れれば削減だけが減り、「測る」へ
-        // 倒れれば結果が壊れる。どちらも沈黙するので、コンパイラに列挙させる。
-        let (mut lower_names, mut lower_file_names, needs_measuring) = match derived {
-            DerivedStrings::Measured {
-                lower_names,
-                lower_file_names,
-            } => (
-                lower_names.into_iter().map(Some).collect::<Vec<_>>(),
-                lower_file_names,
-                true,
-            ),
-            // **展開に測定は要らない。** 記録側が `measure_derived_sharing` で測った結果が
-            // そのまま表現になっている——ここで測り直すと、`None` どうしの一致で誤った旗が立つ。
+        // **どちらの枝も、出口では同じ 2 本の列（`crate::str_arena`）になる。** 潰す判定を
+        // 通すかどうかだけが違い、`Collapsed` は記録側が測った結果をそのまま表現として使う
+        // ——ここで測り直すと、`None` どうしの一致で誤った旗が立つ。
+        //
+        // **`match` の中で分ける。** 外で `matches!` を取ると、variant を足したときに既定値へ
+        // 黙って落ちる——「測らない」へ倒れれば削減だけが減り、「測る」へ倒れれば結果が
+        // 壊れる。どちらも沈黙するので、コンパイラに列挙させる。
+        let (mut lower_names, mut lower_file_names) = match derived {
+            // **旗はここで立てる**（`mark_file_name_is_lower_name` は `CompactEntry` の空き
+            // パディングへ書くので、木が建った後でしか呼べない）。ディスクは 3 状態を
+            // `LowerFileName` で運び、メモリは「旗 + `Absent`」で表す——**その 2 状態を
+            // 混ぜてはならない**（`crate::indexer::LowerFileName` の doc）。
             DerivedStrings::Collapsed {
                 lower_names,
                 lower_file_names,
             } => {
-                let files = lower_file_names
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, f)| match f {
-                        LowerFileName::Text(s) => Some(s.into_boxed_str()),
-                        LowerFileName::Absent => None,
-                        LowerFileName::SameAsLowerName => {
-                            entries.mark_file_name_is_lower_name(i);
-                            None
-                        }
-                    })
-                    .collect();
-                (
-                    lower_names
-                        .into_iter()
-                        .map(|o| o.map(String::into_boxed_str))
-                        .collect(),
-                    files,
-                    false,
-                )
+                for i in 0..lower_file_names.len() {
+                    if matches!(lower_file_names.get(i), LowerFileSlot::SameAsLowerName) {
+                        entries.mark_file_name_is_lower_name(i);
+                    }
+                }
+                (lower_names, lower_file_names)
+            }
+            // 重複する派生文字列を落としながら列へ積む。**共有は鎖になっている**:
+            //
+            //   `lower_file_names[i]` → `lower_names[i]` → `entries[i].name`
+            //
+            // **判定を全部済ませてから落とす。** 先に `lower_name` を潰すと、前段の比較相手が
+            // 消えて file name 側の共有を取りこぼす（結果は正しいまま削減だけが減るので、
+            // **挙動テストでは捕まらない**種類の誤りである）。両方を同時に返す
+            // `measure_derived_sharing` と、元の列を書き換えずに新しい列へ積むこの形が、
+            // その順序を構造として保っている。
+            //
+            // **判定は `query::measure_derived_sharing` が正本である。** 記録側
+            // （`indexer::save_cache_sorted_in`）と同じ関数を通ることだけが、ディスクとメモリで
+            // 潰れ方が一致する根拠になる——片方だけ書き換えると、索引はディスクの潰し方を
+            // 信じて読み替えるので**結果が静かにずれる**。
+            //
+            // **`is_folder` で分岐しない。** 一致は indexer の名前導出規則の帰結として実データの
+            // folder 100% に成り立つが、`SearchEngine::new` は任意の `AppEntry` を受け取れる。
+            // 測って落とすので、外れた入力は文字列を持ち続けるだけで**結果は変わらない**。
+            DerivedStrings::Measured {
+                lower_names,
+                lower_file_names,
+            } => {
+                let n = lower_names.len();
+                let mut names = LowerNameColumn::with_capacity(n);
+                let mut files = LowerFileColumn::with_capacity(n);
+                for i in 0..n {
+                    let file = lower_file_names[i].as_deref();
+                    let sharing =
+                        measure_derived_sharing(entries.name_at(i), &lower_names[i], file);
+                    if sharing.file_name_is_lower_name {
+                        entries.mark_file_name_is_lower_name(i);
+                        files.push(LowerFileSlot::SameAsLowerName);
+                    } else {
+                        files.push(match file {
+                            Some(s) => LowerFileSlot::Text(s),
+                            None => LowerFileSlot::Absent,
+                        });
+                    }
+                    names.push((!sharing.lower_name_is_name).then_some(&*lower_names[i]));
+                }
+                (names, files)
             }
         };
         lower_names.shrink_to_fit();
@@ -272,63 +302,7 @@ impl SearchEngine {
             "SearchEngine: kana parallel Vecs must both be empty or match entries length"
         );
 
-        // 重複する派生文字列を落とす。**共有は鎖になっている**:
-        //
-        //   `lower_file_names[i]` → `lower_names[i]` → `entries[i].name`
-        //
-        // 実測の削減は前段 9.71 MiB / 255,961 ブロック、後段 9.80 MiB / 270,355 ブロック。
-        // 読み替えはどちらも `entry_view` の 1 点で、そこでも同じ順に解決する。
-        //
-        // **判定を全部済ませてから落とす。** 先に `lower_names[i]` を潰すと、前段の比較相手が
-        // 消えて file name 側の共有を取りこぼす（結果は正しいまま削減だけが減るので、
-        // **テストでは捕まらない**種類の誤りである）。
-        //
-        // **ビットマスクより後に置く。** `file_name_char_masks` は完全な文字列から導出されて
-        // いなければならず（cache 経由でも Wave 2 経由でも `assemble` 到達時には確定済み）、
-        // 先に潰すと `file_char_mask(None) == 0` になって pre-filter が **false negative** を
-        // 出す（`compute_wave2` の不変条件）。**長さの `debug_assert` より後でもある**——
-        // 長さがずれた入力では、添字の panic ではなく上の診断が先に出るべきである。
-        //
-        // **`is_folder` で分岐しない。** 一致は indexer の名前導出規則の帰結として実データの
-        // folder 100% に成り立つが、`SearchEngine::new` は任意の `AppEntry` を受け取れる。
-        // 測って落とすので、外れた入力は文字列を持ち続けるだけで**結果は変わらない**。
-        //
-        // **この形が最も単純で、かつ速い形でもある。** 構築は 57 → 75 ms（各 3 回の最小値）
-        // 増えるが、比較を rayon へ出しても、比較と解放の両方を出しても**最小値は 75 ms のまま
-        // だった**（3 変種を同一セッションで実測）。並列化では取り戻せないので、いちばん短い
-        // 形を残してある。増分の機序（比較か、255,961 個の `Box<str>` の解放か）は
-        // **切り分けていない**——ここに書けるのは「並列化は効かない」までである。
-        // **`Collapsed` はここを通らない**（旗は展開のその場で立て終えている）。通しても
-        // 結果は変わらない——潰れた要素は下の `let Some(..) else` で素通りする——が、
-        // 312,690 回の比較が丸ごと無駄になる（`DerivedStrings` の doc）。
-        let measured_count = if needs_measuring { entries.len() } else { 0 };
-        for i in 0..measured_count {
-            // ここでの `lower_names[i]` は必ず `Some`（`Measured` を `map(Some)` した直後であり、
-            // このループは各 `i` を 1 度しか通らない）。
-            let Some(lower_name) = lower_names[i].as_deref() else {
-                continue;
-            };
-            // **判定は `query::measure_derived_sharing` が正本である。** 記録側
-            // （`indexer::save_cache_sorted_in`）と同じ関数を通ることだけが、ディスクとメモリで
-            // 潰れ方が一致する根拠になる——片方だけ書き換えると、索引はディスクの潰し方を
-            // 信じて読み替えるので**結果が静かにずれる**。上に書いた「判定を全部済ませてから
-            // 落とす」も、両方を同時に返すあの関数が構造として保っている。
-            let sharing = measure_derived_sharing(
-                entries.name_at(i),
-                lower_name,
-                lower_file_names[i].as_deref(),
-            );
-
-            if sharing.file_name_is_lower_name {
-                entries.mark_file_name_is_lower_name(i);
-                lower_file_names[i] = None;
-            }
-            if sharing.lower_name_is_name {
-                lower_names[i] = None;
-            }
-        }
-
-        // **合流点は `assemble` の末尾そのものである。** 両経路の分岐は上のループの有無だけに
+        // **合流点は `assemble` の末尾そのものである。** 両経路の分岐は上の `match` だけに
         // 絞ってあり、組み立てを別関数へ切り出すと「長さの検証と `shrink_to_fit` を迂回して
         // 直接呼ぶ」経路が表現できてしまう（doc で禁じるより構造で消すほうが強い）。
         Self {

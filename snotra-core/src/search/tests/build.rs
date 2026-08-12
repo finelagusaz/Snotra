@@ -778,6 +778,15 @@ fn entry_view_shared_strings_match_derivation_over_real_index() {
 ///
 /// **名前の長さを揃えない。** 全要素が同じ長さだと、塊の順序が入れ替わってもオフセットが
 /// ずれず、切り出しが偶然一致してしまう。
+///
+/// **A/B ではなく、名前から独立に再導出した値との絶対比較にしてある。** A/B
+/// （`assert_engines_agree`）は 2 つの実装を突き合わせる形なので、**将来どちらかへ寄せた
+/// 日には「同じ実装どうしの一致」に化ける**。絶対比較はその日も成立する。
+///
+/// **実測**（2026-08-12）: `from_chunks` の底上げを落とす変異では、この検知器と
+/// `from_chunks_concatenates_without_shifting_offsets` の 2 本だけが落ち、**A/B 突き合わせは
+/// 1 本も落ちない**。そちらが黙るのは「両側が同じ誤りを持つ」からではなく——変異は B 側の
+/// 経路にしか無い——**塊が 1 つしか出ず底上げが常に 0 だから**である。
 #[test]
 fn kana_column_survives_chunked_parallel_merge() {
     use crate::query::{to_kana, to_lower_folded};

@@ -1085,11 +1085,23 @@ name の Fuzzy スコアリング（`Utf32String` の確保 + nucleo マッチ�
   UTF-8 を復号して 3 通り比べる。**単一 `char` の `contains` は memchr へ落ちるので、3 回に
   分けるほうが速い**——束ねたくなる形が遅いほうである
 
-#### 却下: ビットマスクで厳密に安全にする案
+#### 却下: ビットマスクで厳密に安全にする案（**ビットが足りないからではない**）
 
-`char_masks` で「クエリの文字を含まないエントリ」を弾けば厳密かつ既存の機構で済む、と考えたが
-**成立しない**。`char_bitmask`（`query.rs`）は `a-z` と `0-9` だけを写し、`\` `/` `:` を捨てる
-（`_ => {}`）ので、**区切り文字ではエントリを弾けない**。ゆえに旗を別に測る形になった。
+`char_masks` で「クエリの文字を含まないエントリ」を弾けば厳密かつ既存の機構で済む、と考えた。
+現状 `char_bitmask`（`query.rs`）は `a-z` と `0-9` だけを写して `\` `/` `¥` を捨てる（`_ => {}`）が、
+**64 bit のうち使用は 36 bit で 28 bit 空いている**——載らないのではない。却下の理由は 2 つ:
+
+- **`char_masks` は `index.bin` に永続化されている。** 導出を変えれば `INDEX_CACHE_VERSION` の
+  バンプが要る（`snotra-core/CLAUDE.md`「IndexCache バージョン変更チェックリスト」の 8 項目）。
+  旗 1 つを構築時に測る形は版に触らない
+- **「弾く」形はパスクエリでは誤りである。** 区切りをマスクへ載せてエントリを棄却すると、
+  **パス経由でだけ当たる候補を落とす**（pre-filter を `has_path_sep` でスキップしている理由その
+  ものに戻る）。使えるとしたら「棄却」ではなく**エントリ単位の skip 信号**としてであり、それは
+  大域 1 ビットより細かい
+
+**細粒度案は将来の余地として残る。** 今の大域 1 ビットは、`¥` を含むファイル名が索引に 1 件でも
+入ると全クエリで削減を失う（`¥` は NTFS で合法）。エントリ単位なら失うのはその 1 件だけである。
+**現時点の実測は 0 件 / 312,108 件なので採らない。**
 
 #### 検証
 
@@ -1097,22 +1109,29 @@ name の Fuzzy スコアリング（`Utf32String` の確保 + nucleo マッチ�
   **旗を強制的に立てて最適化を殺した同じエンジン**と実 index 312,108 件 × 10 クエリで突き合わせる。
   **件数の一致では足りない**（パスマッチは同点が出やすく、tie-break の経路が変われば順序だけが動く）
 - 検知器は `fuzzy_name_match_survives_when_display_name_contains_path_separator` **だけ**である
-  ——`has_path_sep` だけで飛ばす変異を当てると既存 572 本と clippy は全て通り、これ 1 本が落ちた
+  ——`has_path_sep` だけで飛ばす変異を当てると**当時の既存 572 本**と clippy は全て通り、これ 1 本が落ちた
 - 旗が**静かに立つ**向き（削減だけが全損し、結果は正しいまま）には
-  `path_env_shaped_entries_do_not_raise_any_name_has_path_sep` を置いた
+  `path_env_merge_does_not_raise_any_name_has_path_sep` を置いた。**PATH 併合の経路
+  （`IndexTree::extend_with_roots`）を実際に通す**——`IndexTree::build` は別実装なので、
+  `build` だけのテストでは併合側の変異を 1 つも捕まえられない。実 index のテストでも代用できない
+  （`index.bin` は PATH 併合の**前**に書かれるので、あちらの入力に PATH エントリは含まれない）
 - `recent_history` は `score_one_entry` を通らない（`with_normalized_key` を直に叩く）ので
   **構造的に影響を受けえない**
 
 #### 計器の限界（**この節の数字すべてに掛かる**）
 
-`sorted_by_path` は 3 値あり、**実運用点だけ反転する**（probe で実測）: on-disk の旗 = true /
-`PathStore::build` の測り直し = true / **実運用点（実起動）= false**。`include_path_env = true` で
+`sorted_by_path` は 3 値あり、**`include_path_env` が真の構成でだけ反転する**（probe で実測）:
+on-disk の旗 = true / `PathStore::build` の測り直し = true / **その構成の実起動 = false**。
 `scan_path_env` が 100 件返し、`IndexTree::extend_with_roots` が無条件で旗を下ろすためである。
 
-**`measure_path_query_frame_cost` は PATH 併合を 1 行も行わない**ので、ハーネスの中は `true` 側に
-居る。`cmp_paths` は false のとき両辺のフルパスを組み立てて比較し、`c:\` は全件同スコアで
-tie-break が総当たりで発火する。**ゆえに実運用の `c:\` は上表より重い可能性が高く、どれだけ
-重いかは測っていない。** 判断は `#1059` が抱える。
+**射程は `include_path_env = true` の構成に限る。既定は `false`**（`config.rs`）——既定構成の
+実起動はハーネスと同じ `true` 側に居る。上の計測に使った開発機の実 config は `true` である。
+
+**`measure_path_query_frame_cost` は PATH 併合を 1 行も行わない**ので、ハーネスの中は常に `true`
+側である。`cmp_paths` は false のとき両辺のフルパスを組み立てて比較し、`c:\` は全件が同スコアに
+なるので tie-break がそこまで落ちやすい（`cmp_paths` は第 4 キーで、score・last_launched・
+lower_name が全同値のときだけ走る）。**ゆえに `include_path_env = true` の実運用では `c:\` が
+上表より重い可能性があり、どれだけ重いかは測っていない。** 判断は `#1059` が抱える。
 
 ### 撤去: アイコン剪定そのもの（#996・反復 12 の最適化ごと消えた）
 

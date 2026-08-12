@@ -114,7 +114,9 @@ impl SearchEngine {
             file_name_char_masks,
             kana_lower_names,
             kana_char_masks,
-            // 確保を持たない `bool`（`SearchEngine` のパディングへ収まる）。行は出さない。
+            // ヒープ確保を持たない `bool` ゆえ行は出さない（この表が数えるのは確保である）。
+            // **「パディングへ収まる」とは書かない**——`SearchEngine` の他メンバは全て align 8 で
+            // 隙間が無く、実体は 8 B の純増である（導出。実測はしていない）。
             any_name_has_path_sep: _,
             incremental_cache,
         } = self;

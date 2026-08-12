@@ -453,26 +453,33 @@ fn fuzzy_name_match_survives_when_display_name_contains_path_separator() {
 /// 立つと `score_one_entry` は全件で name の Fuzzy スコアリングを通し、**削減だけが全損する**。
 /// 結果は正しいままなので、既存の挙動テストは 1 本も落ちない（#1057 のレビュー M-3）。
 ///
-/// PATH 併合（`IndexTree::extend_with_roots`）は表示名をファイル名、`target_path` をフルパスに
-/// して根として積む。**表示名の導出が「根はフルパスを名前にする」へ変われば、PATH を併合する
-/// 構成でだけ削減が消える**——その変更をここで捕まえる。
+/// **併合の経路そのものを通す。** PATH 併合は `IndexTree::extend_with_roots` が表示名をファイル名、
+/// `target_path` をフルパスにして根として積む形で、**`IndexTree::build` は通らない**（別実装）。
+/// ゆえに `build` だけのテストでは併合側の変異を 1 つも捕まえられない。先例は
+/// `search/tests/build.rs` の PATH マージ検証（同じ `build` → `extend_with_roots` →
+/// `new_from_tree` の並び）。
 ///
-/// **射程はエントリの形に限る**（`extend_with_roots` 自体は通らない・`pub(crate)` の合流点が
-/// `IndexMaterial` 側にあるため）。併合の経路そのものの検証は
-/// `skipping_name_scoring_changes_nothing_over_real_index` が実 index で担う。
+/// **実 index のテスト（[`skipping_name_scoring_changes_nothing_over_real_index`]）では代用できない**
+/// ——`index.bin` は PATH 併合の**前**に書かれるので、あちらの入力に PATH エントリは 1 件も
+/// 含まれない。
 #[test]
-fn path_env_shaped_entries_do_not_raise_any_name_has_path_sep() {
-    let entries = vec![
-        make_entry("app", "C:\\tool\\editor\\app.exe"),
-        // PATH 由来の形: 表示名はファイル名、target_path はフルパス。
+fn path_env_merge_does_not_raise_any_name_has_path_sep() {
+    use crate::index_tree::IndexTree;
+
+    let base = vec![make_entry("app", "C:\\tool\\editor\\app.exe")];
+    // PATH 由来の形: 表示名はファイル名、`target_path` はフルパス。根として積まれる。
+    let path_entries = vec![
         make_entry("node.exe", "C:\\Program Files\\nodejs\\node.exe"),
         make_entry("git.exe", "C:\\Program Files\\Git\\cmd\\git.exe"),
     ];
-    let engine = SearchEngine::new_with_migemo(entries, false);
+    let mut tree = IndexTree::build(base);
+    tree.extend_with_roots(path_entries);
+    let engine = SearchEngine::new_from_tree(tree, false);
+
     assert!(
         !engine.any_name_has_path_sep,
-        "PATH 併合の形のエントリで旗が立った。name の Fuzzy スコアリングが全件で走り、\
-         #1057 の削減が全損する（結果は正しいままなので他のテストは落ちない）"
+        "PATH 併合で旗が立った。name の Fuzzy スコアリングが全件で走り #1057 の削減が\
+         全損する（**結果は正しいままなので他のテストは 1 本も落ちない**）"
     );
 }
 

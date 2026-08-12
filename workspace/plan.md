@@ -211,16 +211,52 @@ cargo doc --workspace --no-deps --document-private-items
 
 ### Phase 1 — 案 B
 
-- [ ] Red テストを足す（Fuzzy・区切り入りクエリで name マッチが成立する形）。落ちることを確認
-- [ ] `any_name_has_path_sep` を構築時に測って持つ
-- [ ] `norm_query` が区切りを含むかの派生を `QueryPlan` へ足す（**`has_path_sep` ではない**）
-- [ ] `score_one_entry` にガードを入れる
-- [ ] 変異注入で新テストが対象を見ていることを確かめる
-- [ ] 実 index 全件で結果**と順序**が変わらないことを確かめる
-- [ ] 対のレイテンシ実測（6 経路・**drift 対照つき**）／`users`・`recent_history` の非退行
-- [ ] `cargo test -p snotra-core` 全数 green ／ `cargo doc` 通過
-- [ ] `PERFORMANCE.md` へ実測を書く（計測機を明記）
-- [ ] issue #1057 へ機序の訂正と内訳をコメントする
+- [x] Red テストを足す — `fuzzy_name_match_survives_when_display_name_contains_path_separator`。
+      素朴なガード（`has_path_sep` だけで飛ばす）を当てた状態で **572 passed / 1 failed** で、
+      落ちたのはこの 1 本だけ（**変異注入を兼ねる**）
+- [x] `any_name_has_path_sep` を構築時に測って持つ — `search/build.rs` の `assemble` 末尾。
+      **保守側（`true`）で組んでから測る**ので、測り損ねても現行経路へ倒れる
+- [x] `norm_query` が区切りを含むかの派生を `QueryPlan` へ足す（`has_path_sep` ではない）
+- [x] `score_one_entry` にガードを入れる — file_name 側の `needs_fn_score` も閉じた。
+      **閉じないと `name_score = None` が file_name スコアリングを呼び戻し、削減が半減する**
+- [x] 変異注入で新テストが対象を見ていることを確かめる（上の Red と同じ実行）
+- [x] 判定述語を `crate::query::contains_path_sep` 1 本へ閉じた（**計画外の追加**——
+      クエリ側とエントリ側が別々の判定を持つと最適化の論証そのものが切れるため）
+- [x] **構築コストの退行を潰した**（**計画外の追加**）— 初版は `entry_view` で 1 件ずつ解決し
+      **構築 2 → 26 ms**。アリーナの連結バイト列を 3 本 1 パスずつ舐める形へ変え、
+      `contains([char; 3])` を単一 `char` の 3 回へ戻して **7〜9 ms**（3 標本）。
+      **残る +5 ms は起動 1 回の対価として受容する**（打鍵ごとの -3.5 ms と引き換え）
+- [x] 実 index 全件で結果**と順序**が変わらないことを確かめる —
+      `skipping_name_scoring_changes_nothing_over_real_index`。**旗を強制的に立てて最適化を
+      殺した同じエンジン**と突き合わせ、312,108 件 × 10 クエリで集合・順序とも一致
+- [x] 対のレイテンシ実測（6 経路・drift 対照つき）／`users`・`recent_history` の非退行 — 下表。
+      `recent_history` は `score_one_entry` を通らない（`with_normalized_key` を直に叩く）ので
+      **構造的に影響を受けえない**
+- [x] `cargo test -p snotra-core` 全数 green（**573 passed / 0 failed**）／ `cargo doc` 通過
+- [x] `PERFORMANCE.md` へ実測を書く（計測機を明記）—
+      「採用: パスクエリで name の Fuzzy スコアリングを行わない」。計測機・却下した案
+      （ビットマスク）・対価（構築 +5 ms）・計器の限界（`sorted_by_path`）も記した
+- [x] issue #1057 へ機序の訂正と内訳をコメントする
+- [x] `code-reviewer` レビュー（Critical 0 / High 0・Medium 4 / Low 6）。Medium 4 件を反映:
+      M-1 実測値の写しを `PERFORMANCE.md` 参照へ／M-2 `¥` の断定を条件つきへ／
+      M-3 旗が**静かに立つ**向きの検知器を新設（`path_env_shaped_entries_do_not_raise_*`）／
+      M-4 「2 → 20 ms」の 3 か所の写しを正本参照へ。
+      **観点 4（旗の陳腐化）は構造的に起こりえないと反証された**——`from_material` が
+      material を move で消費するので「建ててから伸ばす」順序が型として書けない
+
+#### 対のレイテンシ実測（p50 µs・同一機 GPD WIN MINI・Fuzzy・実 index 312,108 件）
+
+| クエリ | A | A'（drift 対照） | **B** | 差（A→B） |
+|---|---:|---:|---:|---:|
+| `users`（対照・区切り無し） | 879 | 988 | **906** | A 側の幅の内側 |
+| **`c:\`** | 20,208 | 20,151 | **15,894** | **-4,314**（**1 フレーム 16,700 を下回る**） |
+| `c:\users` | 14,142 | 13,637 | 10,597 | -3,545 |
+| `c:\users\` | 13,689 | 14,682 | 10,641 | -3,048 |
+| `\program files\` | 11,947 | 11,722 | 8,598 | -3,349 |
+| `\zzz-no-such-path\` | 11,656 | 11,912 | 8,669 | -2,987 |
+
+A 側のばらつきは最大 993 µs、削減はその 3〜4 倍。**`c:\` の max 17,092 は依然フレームを超える**
+——「常に落ちる」から「たまに落ちる」への移動である。常駐は 23.50 MiB / 112 blocks で**不変**。
 
 ## 未確定（実装前に潰す）
 

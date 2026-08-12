@@ -39,6 +39,23 @@ pub fn normalize_history_query_key(query: &str) -> Cow<'_, str> {
     }
 }
 
+/// パス区切り文字（`\` `/` `¥`）を 1 つでも含むか。
+///
+/// **クエリ側とエントリ側が同じ述語を通ることが、#1057 の最適化の根拠である。** パスクエリで
+/// name の Fuzzy スコアリングを飛ばしてよいのは「区切りを含む needle は、区切りを含まない
+/// 名前に部分列として存在しえない」からで、**両辺を別々の判定で見た瞬間にその論証が切れる**。
+/// ゆえに片方だけを書き換えられない形（この 1 関数）に閉じる。
+///
+/// `¥`(U+00A5) は日本語 Windows でバックスラッシュとして使われるため含める。
+/// **`contains(['\\', '/', '¥'])` と 1 つに束ねないこと。** 複数 `char` のパターンは
+/// 1 文字ずつ UTF-8 を復号して 3 通り比べるので、索引全件（実運用点で約 11 MiB）へ当てると
+/// **構築が 2 → 26 ms へ伸びる**（実測）。単一 `char` の [`str::contains`] は memchr へ落ちるため、
+/// **3 パスに分けるほうが速い**——束ねたくなる形が遅いほうである。
+#[inline]
+pub fn contains_path_sep(s: &str) -> bool {
+    s.contains('\\') || s.contains('/') || s.contains('\u{00a5}')
+}
+
 /// Compute a character-presence bitmask for a lowercase ASCII string.
 /// Bits 0-25 = 'a'-'z', bits 26-35 = '0'-'9'. All other chars are ignored.
 /// Used by both `SearchEngine` (query-time pre-filter) and `IndexCache` (build-time persistence).

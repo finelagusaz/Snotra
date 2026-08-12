@@ -148,6 +148,18 @@ impl NameArena {
         &self.blob[self.offsets[i] as usize..self.offsets[i + 1] as usize]
     }
 
+    /// 連結バイト列そのもの（**要素の境界を持たない**）。
+    ///
+    /// 用途は「この列のどこかに文字 X が在るか」を **1 パスで**問うことだけである
+    /// （`SearchEngine::any_name_has_path_sep`・#1057）。要素ごとに [`Self::get`] を引く形との
+    /// 差と、そちらを採らない理由は `search/build.rs` の `assemble` が持つ。
+    ///
+    /// **要素を取り出す用途に使わないこと**——境界が無いので、隣接要素をまたいだ部分文字列が
+    /// 偽の一致を作りうる。存在判定は「在れば必ずどれかの要素に在る」向きにしか使えない。
+    pub(crate) fn blob(&self) -> &str {
+        &self.blob
+    }
+
     /// 末尾へ 1 件足す（[`IndexTree::build`] と [`IndexTree::extend_with_roots`] が使う）。
     fn push(&mut self, s: &str) {
         self.blob.push_str(s);

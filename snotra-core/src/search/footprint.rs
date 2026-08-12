@@ -114,6 +114,8 @@ impl SearchEngine {
             file_name_char_masks,
             kana_lower_names,
             kana_char_masks,
+            // 確保を持たない `bool`（`SearchEngine` のパディングへ収まる）。行は出さない。
+            any_name_has_path_sep: _,
             incremental_cache,
         } = self;
 

@@ -10,8 +10,8 @@ use rayon::prelude::*;
 use crate::index_tree::IndexTree;
 use crate::indexer::{AppEntry, CachedLower, CachedMasks, IndexMaterial};
 use crate::query::{
-    file_char_mask, lower_file_name, measure_derived_sharing, name_char_mask, to_kana,
-    to_lower_folded,
+    contains_path_sep, file_char_mask, lower_file_name, measure_derived_sharing, name_char_mask,
+    to_kana, to_lower_folded,
 };
 use crate::str_arena::{LowerFileColumn, LowerFileSlot, LowerNameColumn};
 
@@ -305,7 +305,7 @@ impl SearchEngine {
         // **合流点は `assemble` の末尾そのものである。** 両経路の分岐は上の `match` だけに
         // 絞ってあり、組み立てを別関数へ切り出すと「長さの検証と `shrink_to_fit` を迂回して
         // 直接呼ぶ」経路が表現できてしまう（doc で禁じるより構造で消すほうが強い）。
-        Self {
+        let mut engine = Self {
             entries,
             lower_names,
             lower_file_names,
@@ -313,10 +313,32 @@ impl SearchEngine {
             file_name_char_masks,
             kana_lower_names,
             kana_char_masks,
+            // **保守側で組んでから測る。** `true` は「飛ばさない」＝現行どおりの経路であり、
+            // 測り損ねても結果は変わらず速さだけが落ちる（`SearchEngine::any_name_has_path_sep`
+            // の doc）。`false` で初期化すると、測る前に読む経路が生まれたとき**結果が壊れる側**
+            // へ倒れる。
+            any_name_has_path_sep: true,
             // incremental cache は Default（空 query / 空候補 / mode 未設定）で初期化し、
             // 構築直後の初回検索は必ず full scan になる（#601）。
             incremental_cache: IncrementalCache::default(),
-        }
+        };
+        // **3 本のアリーナの連結バイト列を 1 パスずつ舐める。** `entry_view` で 1 件ずつ
+        // 解決する形は、オフセット表と blob の 2 読みが 31 万件ぶん走って**構築を数倍に伸ばす**
+        // ——額の正本は `PERFORMANCE.md`「採用: パスクエリで name の Fuzzy スコアリングを
+        // 行わない」の「対価」節である（**ここへ写さない**）。
+        //
+        // **これで取りこぼさない**——照合が読む文字列（`entry_view` が返す 2 本）は、どれも
+        // この 3 本のいずれかの部分文字列である。`lower_names` の `None` は表示名を指す
+        // （1 本目）。file name 側は `Text` なら 3 本目、共有旗が立てば解決後の `lower_name` と
+        // 同一なので 1 本目か 2 本目に在る。
+        //
+        // **区切りを含まない名前しか無いのに `true` へ倒れることはあっても、逆は無い。**
+        // 倒れる向きが「飛ばさない＝現行どおり」なので、境界をまたいだ偽の一致
+        // （アリーナは要素の区切りを持たない）が結果を壊すことはない。
+        engine.any_name_has_path_sep = contains_path_sep(engine.entries.names_blob())
+            || contains_path_sep(engine.lower_names.blob())
+            || contains_path_sep(engine.lower_file_names.blob());
+        engine
     }
 
     /// kana_lower_names を**常に**構築する（migemo 有効相当）。テスト・ベンチ・convenience 用。

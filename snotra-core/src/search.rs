@@ -11,6 +11,7 @@ use rayon::prelude::*;
 
 use crate::config::{SearchConfig, SearchHistoryNormalizationConfig};
 use crate::history::HistoryStore;
+use crate::str_arena::{LowerFileColumn, LowerNameColumn};
 use crate::ui_types::SearchResult;
 
 // 構築処理（Wave 1/2・kana マスク・IndexCache 復元・全コンストラクタ）は子モジュールへ分離（#598）。
@@ -122,11 +123,16 @@ pub struct SearchEngine {
     /// CJK——がそれに当たり、実データでは 86.6% を占める。**`Option` で足りるのは
     /// `lower_names` に「無い」という状態が元から無いからである**（`lower_file_names` の
     /// `None` は「file name 成分が無い」を先に意味しており、そちらは旗を別に要した）。
-    /// `Option<Box<str>>` は niche 最適化で `Box<str>` と同じ 16 B ゆえ Vec 本体は動かない。
-    lower_names: Vec<Option<Box<str>>>,
+    /// **型は `Vec<Option<Box<str>>>` ではなく [`LowerNameColumn`]（アリーナ）である**——
+    /// 1 エントリ 1 確保をやめ、spine（16 B × 件数）ごと消すための表現で、線上のバイト列は
+    /// 変わっていない（正本は `crate::str_arena` の doc）。
+    lower_names: LowerNameColumn,
     /// `None` は「file name 成分が無い」。内容が `lower_names[i]` と同一のときは
     /// `CompactEntry::file_name_is_lower_name` が立ち、ここは `None` に潰れている。
-    lower_file_names: Vec<Option<Box<str>>>,
+    ///
+    /// **ディスク側の 3 状態のうち `SameAsLowerName` はここに残らない**（`assemble` が旗へ
+    /// 移す）ので、列としては [`LowerNameColumn`] と同じ 2 状態で足りる。
+    lower_file_names: LowerFileColumn,
     /// Character-presence bitmask for lower_name (a-z: bits 0-25, 0-9: bits 26-35).
     /// Kept as a compact `Vec<u64>` — 8 entries per cache line — so the pre-filter sweep
     /// that discards non-matching candidates before scoring is L1-cache-friendly.

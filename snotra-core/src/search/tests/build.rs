@@ -5,8 +5,9 @@
 
 use super::common::{make_entries, real_index_entries, real_scanned_entries};
 use crate::index_tree::IndexTree;
-use crate::indexer::{AppEntry, CachedLower, CachedMasks, LowerFileName};
+use crate::indexer::{AppEntry, CachedLower, CachedMasks};
 use crate::search::*;
+use crate::str_arena::LowerFileSlot;
 
 /// 潰れの 4 種の出現件数。**非空虚検査の材料**——どれも起きない fixture では「全件一致」が
 /// 空虚になるので、呼び出し側がこれを検算する。
@@ -110,13 +111,13 @@ fn assert_engines_agree(
         // **表現そのものも比べる。** 読み替えが一致していても、片方だけが実体を持ち続けて
         // いれば削減が失われている（結果は正しいままなので挙動テストでは捕まらない）。
         assert_eq!(
-            a.lower_names[i].is_none(),
-            b.lower_names[i].is_none(),
+            a.lower_names.get(i).is_none(),
+            b.lower_names.get(i).is_none(),
             "{label}/migemo={migemo_enabled}: index {i} の lower_names の潰れ方がずれている"
         );
         assert_eq!(
-            a.lower_file_names[i].is_none(),
-            b.lower_file_names[i].is_none(),
+            a.lower_file_names.text_at(i).is_none(),
+            b.lower_file_names.text_at(i).is_none(),
             "{label}/migemo={migemo_enabled}: index {i} の lower_file_names の潰れ方がずれている"
         );
         // マスクは潰す前の完全な文字列から導出されるので、両経路で一致しなければならない。
@@ -163,7 +164,7 @@ fn collapse_census(engine: &SearchEngine, range: std::ops::Range<usize>) -> Coll
     };
     for i in range {
         let view = engine.entry_view(i);
-        c.shared_name += usize::from(engine.lower_names[i].is_none());
+        c.shared_name += usize::from(engine.lower_names.get(i).is_none());
         if view.entry.file_name_is_lower_name {
             c.shared_file += 1;
         } else if view.lower_file_name.is_none() {
@@ -446,8 +447,6 @@ fn assemble_shrinks_parallel_vecs_to_fit() {
     // `shrink_to_fit` が消えたか、アロケータの契約が変わったかのどちらかである。
     let actual = [
         ("entries", engine.entries.capacity()),
-        ("lower_names", engine.lower_names.capacity()),
-        ("lower_file_names", engine.lower_file_names.capacity()),
         ("char_masks", engine.char_masks.capacity()),
         (
             "file_name_char_masks",
@@ -458,6 +457,19 @@ fn assemble_shrinks_parallel_vecs_to_fit() {
     ];
     for (label, capacity) in actual {
         assert_eq!(capacity, n, "{label} に余剰容量が残っている（len = {n}）");
+    }
+
+    // **派生文字列 2 本は容量では測れない**（`crate::str_arena`）——アリーナは要素数と確保
+    // バイトが 1 対 1 に対応しないので、`capacity == n` という形の断言が書けない。余剰は
+    // `len` との差にしか現れないので、そこを直接 0 と突き合わせる。
+    for (label, excess) in [
+        ("lower_names", engine.lower_names.excess_capacity_bytes()),
+        (
+            "lower_file_names",
+            engine.lower_file_names.excess_capacity_bytes(),
+        ),
+    ] {
+        assert_eq!(excess, 0, "{label} に余剰容量が {excess} B 残っている");
     }
 }
 
@@ -507,12 +519,14 @@ fn collapsed_cache_is_not_remeasured_and_absent_file_names_stay_absent() {
             file_name_char_masks: vec![0u64; n],
             lower: Some(CachedLower::Collapsed {
                 // すべて `None` = `name` と同一（3 件とも既に小文字）。
-                lower_names: vec![None, None, None],
-                lower_file_names: vec![
-                    LowerFileName::Absent,
-                    LowerFileName::SameAsLowerName,
-                    LowerFileName::Text("firefox.lnk".to_string()),
-                ],
+                lower_names: [None, None, None].into_iter().collect(),
+                lower_file_names: [
+                    LowerFileSlot::Absent,
+                    LowerFileSlot::SameAsLowerName,
+                    LowerFileSlot::Text("firefox.lnk"),
+                ]
+                .into_iter()
+                .collect(),
             }),
         },
         false,
@@ -533,7 +547,7 @@ fn collapsed_cache_is_not_remeasured_and_absent_file_names_stay_absent() {
     assert_eq!(shared.lower_file_name, Some("same"));
     assert!(shared.entry.file_name_is_lower_name);
     assert!(
-        engine.lower_file_names[1].is_none(),
+        engine.lower_file_names.text_at(1).is_none(),
         "共有するエントリの文字列は落ちていなければ削減にならない"
     );
 
@@ -592,7 +606,7 @@ fn shared_file_name_flag_is_measured_not_inferred_from_is_folder() {
         );
         assert!(!mismatched.entry.file_name_is_lower_name);
         assert!(
-            engine.lower_file_names[0].is_some(),
+            engine.lower_file_names.text_at(0).is_some(),
             "migemo={migemo_enabled}: 共有しないエントリの文字列を落としてはならない"
         );
 
@@ -604,7 +618,7 @@ fn shared_file_name_flag_is_measured_not_inferred_from_is_folder() {
         );
         assert!(shared.entry.file_name_is_lower_name);
         assert!(
-            engine.lower_file_names[1].is_none(),
+            engine.lower_file_names.text_at(1).is_none(),
             "migemo={migemo_enabled}: 共有するエントリの `Box<str>` は落ちていなければ削減にならない"
         );
     }
@@ -646,11 +660,11 @@ fn shared_lower_name_chain_collapses_both_links() {
             "migemo={migemo_enabled}"
         );
         assert!(
-            engine.lower_names[0].is_none(),
+            engine.lower_names.get(0).is_none(),
             "migemo={migemo_enabled}: name と同一なら鎖の上段が落ちる"
         );
         assert!(
-            engine.lower_file_names[0].is_none(),
+            engine.lower_file_names.text_at(0).is_none(),
             "migemo={migemo_enabled}: 上段が落ちても下段は落ちなければならない（順序の検知器）"
         );
 
@@ -662,11 +676,11 @@ fn shared_lower_name_chain_collapses_both_links() {
             "migemo={migemo_enabled}"
         );
         assert!(
-            engine.lower_names[1].is_some(),
+            engine.lower_names.get(1).is_some(),
             "migemo={migemo_enabled}: 小文字化で変わる名前は自前の文字列を持つ"
         );
         assert!(
-            engine.lower_file_names[1].is_none(),
+            engine.lower_file_names.text_at(1).is_none(),
             "migemo={migemo_enabled}: 上段が残っていても下段は共有できる"
         );
     }
@@ -710,7 +724,7 @@ fn entry_view_shared_strings_match_derivation_over_real_index() {
             want_file_name.as_deref(),
             "index {i} で lower_file_name の読み替えが導出とずれている"
         );
-        shared_name += usize::from(engine.lower_names[i].is_none());
+        shared_name += usize::from(engine.lower_names.get(i).is_none());
         shared_file_name += usize::from(view.entry.file_name_is_lower_name);
     }
     let pct = |k: usize| k as f64 * 100.0 / expected.len().max(1) as f64;

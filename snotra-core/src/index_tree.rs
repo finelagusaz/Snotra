@@ -33,11 +33,12 @@
 use std::fmt;
 
 use rayon::prelude::*;
-use serde::de::{DeserializeSeed, SeqAccess, Visitor};
+use serde::de::{SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::indexer::AppEntry;
+use crate::str_arena::{StrSink, capped_capacity};
 
 /// 親を持たないことを表す番兵。このとき `aux` は [`IndexTree::table`] のフルパスを指す。
 pub(crate) const NO_PARENT: u32 = u32::MAX;
@@ -77,17 +78,28 @@ pub(crate) const CHAIN_CAP: usize = 64;
 /// 文字境界であること——どれも「`&str` を丸ごと押し込む」形からしか作れないので、
 /// **壊れた `index.bin` でも表現できない**（postcard が str の UTF-8 を検証する）。
 /// [`IndexTree::from_parts`] が確かめるのは列の**長さ**の一致だけで足りる。
-#[derive(Clone, Default, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct NameArena {
     /// 全要素を連結したバイト列。
     blob: String,
     /// 要素 `i` は `blob[offsets[i]..offsets[i + 1]]`。**末尾に番兵を持つ**ので長さは要素数 + 1
-    /// であり、空でも `[0]` が入る（[`Default`] もその形になる）。
+    /// であり、空でも `[0]` が入る（[`Default`] もその形になる——下の手書きの impl が根拠で
+    /// あって、`derive` ではその形にならない）。
     ///
     /// `u32` ゆえ `blob` は 4 GiB までである。溢れた場合は切り詰めでオフセットが単調でなく
     /// なり、[`Self::get`] のスライスが**その場で panic する**——誤った名前を静かに返す形には
     /// ならない。実データの名前は合計 10 MiB である。
     offsets: Vec<u32>,
+}
+
+/// **手書きである。** `#[derive(Default)]` は `offsets` を空にするので [`NameArena::len`] が
+/// `0 - 1` で溢れる——番兵を持つ表現では「空」は `[0]` であって `[]` ではない。呼び出し点は
+/// 今のところ無い（構築は `new` / `with_capacity` / [`Deserialize`] を通る）が、**derive のまま
+/// 残すと「空のアリーナが欲しい」と思った次の書き手が黙って踏む**。
+impl Default for NameArena {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl NameArena {
@@ -179,34 +191,6 @@ impl Serialize for NameArena {
     }
 }
 
-/// 1 要素ぶんを、`String` を作らずに `blob` へ直接流し込む種。
-///
-/// **`next_element::<String>()` にしてはならない**——それでは要素ごとの確保が戻り、この型が
-/// 存在する理由がなくなる。postcard は借用した `&str` を渡すので写しは 1 回の `push_str` で済む。
-struct StrSink<'a>(&'a mut String);
-
-impl<'de> DeserializeSeed<'de> for StrSink<'_> {
-    type Value = ();
-    fn deserialize<D: Deserializer<'de>>(self, de: D) -> Result<(), D::Error> {
-        de.deserialize_str(self)
-    }
-}
-
-impl<'de> Visitor<'de> for StrSink<'_> {
-    type Value = ();
-    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("a string")
-    }
-    fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<(), E> {
-        self.0.push_str(v);
-        Ok(())
-    }
-    fn visit_borrowed_str<E: serde::de::Error>(self, v: &'de str) -> Result<(), E> {
-        self.0.push_str(v);
-        Ok(())
-    }
-}
-
 struct NameArenaVisitor;
 
 impl<'de> Visitor<'de> for NameArenaVisitor {
@@ -216,21 +200,13 @@ impl<'de> Visitor<'de> for NameArenaVisitor {
     }
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<NameArena, A::Error> {
         // **`size_hint` を素で信じてはならない。** これは壊れた `index.bin` が名乗る長さで
-        // あり、4 バイトの化けた varint が 40 億件を名乗りうる。serde の `Vec` 訪問子は
-        // まさにこの理由で事前確保を 1 MiB 相当で頭打ちにしており（`search/build.rs` の
-        // `assemble` の doc がその性質を別の角度から記録している）、**自前の訪問子はその
-        // 保護を自分で持たない限り迂回する**。迂回すると、これまで `Err` → cache-miss →
-        // 再走査へ穏やかに落ちていた壊れ方が、確保失敗＝ release では `panic="abort"` に化ける。
+        // あり、4 バイトの化けた varint が 40 億件を名乗りうる。頭打ちの理屈と額は
+        // [`capped_capacity`] が持つ（派生文字列の列と同じ導出であり、写しを置かない）。
         //
         // 実データは 312,108 件で上限を超えるが、超過分は `Vec` の伸長が拾う（1 回の再確保）。
-        const MAX_PREALLOC_BYTES: usize = 1024 * 1024;
-        let cap = seq
-            .size_hint()
-            .unwrap_or(0)
-            .min(MAX_PREALLOC_BYTES / std::mem::size_of::<u32>());
         // 合計バイト数は事前に分からないので `blob` は伸長に任せる（列そのものは
         // 一度きりのロードであり、`build` のように毎回払う区間ではない）。
-        let mut arena = NameArena::with_capacity(cap, 0);
+        let mut arena = NameArena::with_capacity(capped_capacity(&seq), 0);
         while seq.next_element_seed(StrSink(&mut arena.blob))?.is_some() {
             arena.offsets.push(arena.blob.len() as u32);
         }
@@ -948,6 +924,10 @@ mod tests {
     fn empty_arena_roundtrips_and_reports_zero_len() {
         let empty = NameArena::new();
         assert_eq!(empty.len(), 0);
+        // **`Default` も番兵を持つ形でなければならない。** `derive` へ戻すと `offsets` が空に
+        // なり、ここが `0 - 1` の溢れで落ちる（release では黙って巨大な `len()` を返す）。
+        assert_eq!(NameArena::default().len(), 0);
+        assert_eq!(NameArena::default(), empty);
         let bytes = postcard::to_allocvec(&empty).expect("空を書ける");
         assert_eq!(bytes, postcard::to_allocvec(&Vec::<String>::new()).unwrap());
         let back: NameArena = postcard::from_bytes(&bytes).expect("空を読める");

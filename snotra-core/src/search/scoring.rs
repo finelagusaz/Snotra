@@ -287,8 +287,9 @@ impl SearchEngine {
         // `entry` と同じキャッシュラインには載らない（オフセット表と blob の 2 読み）。
         // 実データでこの枝は 86.6% を通るが、通った先で読むのは**どのみち照合に要る文字列**
         // であって余分な読みではない。旗の枝（下）は今も分岐だけで済む。
-        let lower_name = self.lower_names[i]
-            .as_deref()
+        let lower_name = self
+            .lower_names
+            .get(i)
             .unwrap_or_else(|| self.entries.name_at(i));
         EntryView {
             entry,
@@ -300,7 +301,7 @@ impl SearchEngine {
             lower_file_name: if entry.file_name_is_lower_name {
                 Some(lower_name)
             } else {
-                self.lower_file_names[i].as_deref()
+                self.lower_file_names.text_at(i)
             },
         }
     }

@@ -487,3 +487,63 @@ impl SearchEngine {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **長さがずれた入力では、添字の panic ではなく名前つきの診断が先に出る。**
+    ///
+    /// `assemble` の潰しの `match` は `lower_names[i]` / `lower_file_names[i]` /
+    /// `entries.name_at(i)` を引くので、長さの検証がそれより後ろへ落ちると**添字 panic が
+    /// 診断を追い越す**——出るのは「index out of bounds」だけになり、どの列がずれたのかを
+    /// 報せない。
+    ///
+    /// **この順序は散文ではなくここが持つ。** かつては `assemble` の中のコメントが
+    /// 「長さの `debug_assert` より後でもある」と書いて守っていたが、潰しの位置を動かす
+    /// 変更でそのコメントごと消え、順序を検算する手段が残らなかった（2026-08-12 のレビューで
+    /// 論点になった）。落として文言を見る形なら、位置を動かした瞬間に落ちる。
+    #[test]
+    #[should_panic(expected = "派生文字列の長さが entries と一致しない")]
+    fn mismatched_derived_length_reports_the_diagnostic_not_an_index_panic() {
+        let tree = IndexTree::build(vec![AppEntry {
+            name: "a".to_string(),
+            target_path: "C:\\a".to_string(),
+            is_folder: false,
+        }]);
+        // 木は 1 件、派生文字列は 0 件。
+        let _ = SearchEngine::assemble(
+            tree,
+            DerivedStrings::Measured {
+                lower_names: Vec::new(),
+                lower_file_names: Vec::new(),
+            },
+            Vec::new(),
+            Vec::new(),
+            (Vec::new(), Vec::new()),
+        );
+    }
+
+    /// 2 本の派生文字列の長さが**互いに**違うときも、添字ではなく診断が出る
+    /// （こちらは [`DerivedStrings::len`] が撃つ——`assemble` の入口で `len()` を呼ぶことが
+    /// その検査を通す唯一の経路であり、片方の長さを直接読む形へ変えると素通りする）。
+    #[test]
+    #[should_panic(expected = "lower_names と lower_file_names の長さが違う")]
+    fn mismatched_pair_length_reports_the_diagnostic_not_an_index_panic() {
+        let tree = IndexTree::build(vec![AppEntry {
+            name: "a".to_string(),
+            target_path: "C:\\a".to_string(),
+            is_folder: false,
+        }]);
+        let _ = SearchEngine::assemble(
+            tree,
+            DerivedStrings::Measured {
+                lower_names: vec!["a".into()],
+                lower_file_names: Vec::new(),
+            },
+            Vec::new(),
+            Vec::new(),
+            (Vec::new(), Vec::new()),
+        );
+    }
+}

@@ -31,7 +31,7 @@
 同じ判断をここへ当てられるかを、**実装前に**測った。
 
 判断の基準は当該設計が置いたもの——**その読みが早期 return の前にあるか後ろにあるか**。
-`kana_lower_names[i]` の読みは `search/scoring.rs` の `score_one_entry` で
+`kana_lower_names.get(i)` の読みは `search/scoring.rs` の `score_one_entry` で
 `primary_score.is_none() && kana_available` のときに走る。つまり**名前・file name で
 マッチしなかった多数派の側**であり、`normalized_keys` の履歴照合（通過後の装飾）とは逆である。
 
@@ -122,9 +122,18 @@ serde を通らないこと。
 （`kana_column_survives_chunked_parallel_merge`）。**塊の大きさは定数を参照し、値を写さない**
 ——写すと定数を増やしたときにテストが黙って射程を失う。
 
-**2 実装を保つ判断そのものは変わらない。** A/B 突き合わせが守るのは「2 つの導出元
-（`AppEntry.name` と `tree.names`）が同じ結果を出すこと」であり、それは併合の結線とは
-別の性質である。
+**A/B 突き合わせが守るのは「2 つの導出元が一致すること」ではない。** 導出元は 1 つである
+——`IndexTree::materialize` の `name` も `IndexTree::name_at` も `self.names.get(i)` を読むので、
+A 側（`new_from_tree` → `materialize` → `compute_wave1`）と B 側（`kana_for_cached`）は
+**同じバイト列に 2 つのアルゴリズムを当てている**。守られるのはアルゴリズムの食い違いであって、
+入力の食い違いではない。
+
+**2 実装を保つのは、入力の型が違うからである。** `compute_wave1` は `&[AppEntry]` を、
+`kana_for_cached` は `&IndexTree` を受け取る。**寄せることは可能であり、寄せても検知器は
+失われない**——底上げは `from_chunks_concatenates_without_shifting_offsets` が、結線は
+`kana_column_survives_chunked_parallel_merge` が絶対比較で捕まえる。今回寄せないのは
+cache-miss 側の額が走査 22〜30 秒に埋もれて利得が無いからであって、**分離が検知器を
+支えているからではない。**
 
 ### 確保の見込み
 

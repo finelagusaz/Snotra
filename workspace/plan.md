@@ -268,7 +268,9 @@ fn compute_kana_char_masks(kana_lower_names: &NameArena) -> Vec<u64> {
 
 - [x] **Step 9: 既存テストの添字を直す（`tests/build.rs`）**
 
-`a.kana_lower_names[i]` → `a.kana_lower_names.get(i)`、`.len()` / `.is_empty()` はそのまま通る。**A/B 突き合わせの構造は変えない**——A 側（`compute_wave1`・逐次）と B 側（`kana_for_cached`・塊併合）が 2 実装のままであることが、Step 6 の併合のずれを捕まえる唯一の経路である。
+`a.kana_lower_names[i]` → `a.kana_lower_names.get(i)`、`.len()` / `.is_empty()` はそのまま通る。**A/B 突き合わせの構造は変えない**——A 側（`compute_wave1`・逐次）と B 側（`kana_for_cached`・塊併合）が 2 実装のままである。
+
+> **この節は実施後に 2 度訂正した**（記録として残す・書き換えではなく追記）。当初ここには「2 実装であることが併合のずれを捕まえる**唯一の経路**である」と書いていたが、(1) fixture が `KANA_CHUNK` に届かず**その経路は一度も走っていなかった**（変異注入で実測）、(2) A/B の導出元は 1 つで（`materialize` も `name_at` も `tree.names` を読む）**2 実装が守るのはアルゴリズムの食い違いだけ**である。正本は設計書 §3。
 
 - [x] **Step 10: 全テストと clippy を通す**
 
@@ -493,3 +495,7 @@ PR 本文には issue #1056 を closing keyword で結ぶ（`Closes #1056`）。
 - **Task 2 は Task 1 へ吸収した。** 既存の `assemble_shrinks_parallel_vecs_to_fit` が `kana_lower_names.capacity()` を見ており、アリーナ化と同時に直さないとコンパイルが通らなかった。新規テストを別に書くと同じ性質の検査が 2 本になるため、既存テストの余剰容量側へ移した
 - **その検知器は `new_with_cached_masks` 経路では発火しない。** `from_chunks` が合計バイト数ちょうどで確保するため余剰が最初から 0 になる。変異注入で実測し、伸長に任せる `new_with_migemo` 側の索引を同テストへ足して発火を確かめた
 - **受け入れ 1 の「3 前後」は実測 2 だった。** 空のアリーナが持つ番兵オフセット 1 ブロックを数えていなかった（設計書 §5 を訂正済み）
+- **計画に無かった作業が 2 つ増えた**（どちらもレビュー由来・Task 5 の反復）:
+  - `KANA_CHUNK` をモジュール定数へ格上げし、`kana_column_survives_chunked_parallel_merge` を新設した。計画は「A/B 突き合わせが併合のずれを捕まえる」前提で書かれていたが、fixture が `KANA_CHUNK` に届かず**その経路は一度も走っていなかった**
+  - `measure_kana_footprint`（#337 の ROI ゲート）を撤去した。製品が捨てた表現を測る計器になっていたため
+- **同じ主張を 2 度訂正した。** 1 度目は「未測定なのに検証済みと書いた」、2 度目は「訂正が過大で、測れば偽と分かる別の主張に置き換えた」。**写しが 5 枚あり、1 度目の訂正は 4 枚しか直していない**（この節の上の Step 9 が残った 1 枚で、しかもそこだけが「唯一の経路」という全称語を持っていた）

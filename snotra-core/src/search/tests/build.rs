@@ -131,7 +131,12 @@ fn assert_engines_agree(
         );
         // **kana 系 2 本も突き合わせる。** ここも同じ導出の 2 実装である——A 側は
         // `compute_wave1` が実体化した `AppEntry.name` から、B 側は `kana_for_cached` が
-        // `tree.names` から導く。比べないと、`migemo_enabled == true` の腕で**追加検証される
+        // `tree.names` から導く。**ただし両者のバイト列は同一である**（`materialize` の
+        // `name` も `name_at` も `self.names.get(i)` を読む）ので、ここが守るのは
+        // **アルゴリズムの食い違い**であって入力の食い違いではない。**塊併合の結線は
+        // ここでは守れない**——fixture が `KANA_CHUNK` に届かず塊が 1 つしか出ないので、
+        // それは `kana_column_survives_chunked_parallel_merge` の役目である。
+        // 比べないと、`migemo_enabled == true` の腕で**追加検証される
         // assertion が 1 件も無い**（migemo 利用者だけがローマ字検索で候補を取り逃す退行は、
         // migemo 無効で回る計測環境からは見えない）。空のときは上で長さを検証済み。
         if !a.kana_lower_names.is_empty() {
@@ -797,6 +802,10 @@ fn kana_column_survives_chunked_parallel_merge() {
         .collect();
 
     // 製品の cache-hit 経路（`kana_for_cached` が塊併合で組む側）を通す。
+    // **製品と同じ並びで木を建てる**（`save_cache_sorted_in` の呼び出し元は必ず通す契約で、
+    // このファイルの他の `derive_columns` 呼び出しも揃えている）。
+    let mut entries = entries;
+    crate::indexer::sort_entries_canonical(&mut entries);
     let (tree, masks) = crate::indexer::derive_columns(entries).into_cached_masks();
     let engine = SearchEngine::new_with_cached_masks(tree, masks, true);
 

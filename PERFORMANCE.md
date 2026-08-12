@@ -1029,9 +1029,11 @@ variant を入れ替える変異は golden を含む 5 本が落ちた——3 �
 
 #### 残り（この反復では触っていない）
 
-- **`kana_lower_names`**（`Vec<Box<str>>`）— migemo ON でのみ現れるもう 1 本の per-entry 列。
-  上のラダーの `migemo=on` 行で blocks が +12 に留まり live だけが残っているのがその姿である。
-  同じ形が当たるが、計測の実運用点は migemo OFF ゆえ受け入れの数字に現れない
+- **`kana_lower_names`**（`Vec<Box<str>>`）— migemo ON でのみ現れる**残る唯一の per-entry 列**。
+  **`migemo=on` 行の blocks が +12 に留まることを「per-entry ではない」と読んではならない**
+  ——ラダーの増分は入力 `Vec<AppEntry>`（2 blocks/entry）の解放を含むので、kana の実体は
+  **on 行と off 行の差**に現れる（N = 100,000 で off −99,990 対 on +12・差 100,002 ≒ N、
+  live で +3.62 MiB）。計測の実運用点は migemo OFF ゆえ受け入れの数字には出ない
 - **記録側（cache-miss）の一時確保** — `derive_entry_collapsed` が返す `String` は列へ写して
   すぐ落ちるが、確保そのものは残る。消すには `_into(&mut String)` の形が要る
 - 第二段（mmap ゼロコピー）は**この反復の外**。成立条件は `index.bin` が postcard ＝整数が
